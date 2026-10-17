@@ -61,6 +61,8 @@ class DataManager:
         self.study_data: Dict[str, float] = {}
         # 设备同步: 其他设备的账 (devsync.SyncService.peer_ledgers), 显示合计用
         self.peer_ledgers = lambda: []
+        # 有设备离线的时间段 [(开始毫秒, 结束毫秒)] (devsync.offline_spans): 正在进行的那段也按它画成空白
+        self.offline_spans = lambda a, b: []
         self.peer_ledgers_by_id = lambda: {}     # {设备 id: 账}
         self.my_id = lambda: ""
         self.mother_id = lambda: None            # 母端的设备 id
@@ -249,7 +251,7 @@ class DataManager:
         recs = list(self.focus_sessions)
         for led in self.peer_ledgers() or []:
             recs += [r for r in (led.get("focus") or []) if isinstance(r, dict)]
-        idle = {}                                  # 专注的开始时刻 → [(空闲开始, 空闲结束)]
+        idle = {}                                  # 专注 / 休息的开始时刻 → [(空闲开始, 空闲结束)]
         for r in recs:
             try:
                 k, st, en = r["k"], datetime.strptime(r["s"], self._TS), datetime.strptime(r["e"], self._TS)
@@ -260,14 +262,18 @@ class DataManager:
             else:
                 segs.append((k, st, en))
         if live and live[1] is not None:
-            segs.append((live[0], live[1], datetime.now()))
-        # 空闲的优先级最高: 同一段专注 (开始时刻相同) 里和空闲重叠的部分不算专注 (哪台设备记的都一样)
+            now = datetime.now()
+            segs.append((live[0], live[1], now))
+            try:                                   # 还没记下来的这一段: 有设备离线的部分现在就画成空白
+                for a, b in self.offline_spans(live[1].timestamp() * 1000, now.timestamp() * 1000):
+                    idle.setdefault(live[1].strftime(self._TS), []).append(
+                        (datetime.fromtimestamp(a / 1000), datetime.fromtimestamp(b / 1000)))
+            except Exception:
+                pass
+        # 空闲的优先级最高: 同一段专注 / 休息 (开始时刻相同) 里和空闲重叠的部分画成空白 (哪台设备记的都一样)
         cut = []
         for kind, st, en in segs:
-            if kind == "study":
-                cut += [(kind, a, b) for a, b in _subtract(st, en, idle.get(st.strftime(self._TS), []))]
-            else:
-                cut.append((kind, st, en))
+            cut += [(kind, a, b) for a, b in _subtract(st, en, idle.get(st.strftime(self._TS), []))]
         for kind, st, en in cut:
             for h in range(24):
                 h0 = day0 + timedelta(hours=h)

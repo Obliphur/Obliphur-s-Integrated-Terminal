@@ -164,11 +164,11 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             checkPendingSettings()
             timer.check()
             checkSetupPeriod()
-            trackOffline()
             // 子端: 母端 2 分钟没同步过了 (关掉了 / 断开了), 开发者模式就关掉
             if (settings.devMode && followsMother() && !motherFresh()) setDevMode(false)
         }
         checkAppLock()
+        trackOffline()                       // 每秒: 同步失败的设备马上算离线 (MECHANICS 8.4)
         if (m - lastAppSample >= Cfg.APP_FOCUS_EVERY) {
             lastAppSample = m
             sampleApp()

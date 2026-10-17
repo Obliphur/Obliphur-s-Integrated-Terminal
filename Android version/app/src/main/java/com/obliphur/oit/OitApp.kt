@@ -90,6 +90,7 @@ class OitApp : Application(), Host {
         }
         core.devChangedHook = { if (s.peers().isNotEmpty()) s.syncNow() }
         core.offlineSpans = { a, b -> s.offlineSpans(a, b) }
+        core.dm.offlineSpans = { a, b -> s.offlineSpans(a, b) }
         core.trackOffline = { s.trackOffline() }
         core.net.peerNet = { com.obliphur.oit.sync.SyncService.peerNet(s.peerLedgers(), core.net.date) }
         core.net.peerUsage = { s.peerLedgers().flatMap { l -> l.optJSONArray("usage")?.let { a -> (0 until a.length()).mapNotNull { a.optJSONObject(it) } } ?: emptyList() } }

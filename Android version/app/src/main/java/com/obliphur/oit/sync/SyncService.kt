@@ -104,6 +104,10 @@ class SyncService(
         const val OFFER_TTL_MS = 1_800_000L
         /** 这么久之内同步过的设备才算"在线" (比较最后操作时间用). */
         const val FRESH_MS = 120_000L
+        /** 设备离线 (Timer 页显示"离线", 这段时间记为空闲, MECHANICS 8.4): 绑定的设备最后一次同步失败, 或者这么久没有它的消息.
+         *  比同步间隔多留 5 秒 (同步本身要花时间, 正好 10 秒会每一轮都闪一下"离线"); 只是转交过来的设备再多等一轮. 同 devsync.OFFLINE_MS. */
+        const val OFFLINE_MS = SYNC_EVERY_MS + 5_000L
+        const val OFFLINE_FWD_MS = 2 * SYNC_EVERY_MS + 5_000L
         const val PAIR_TIMEOUT_MS = 120_000L
         /** 设置里每台设备各自决定的项, 不同步. */
         val LOCAL_SETTINGS = setOf("NET_MODE", "FILTER_MODE", "FONT_SCALE", "CHIME_WAV",
@@ -981,7 +985,8 @@ class SyncService(
     /** 其他设备此刻的状态: (设备 id, 名字, 状态). */
     class DeviceState(val id: String, val name: String, val online: Boolean, val status: JSONObject, val seen: Long)
 
-    /** 其他设备此刻的状态 (绑定的, 和转交过来的). online: 最近 2 分钟内有它的消息. */
+    /** 其他设备此刻的状态 (绑定的, 和转交过来的). online: 绑定的设备最后一次同步没有失败, 而且 OFFLINE_MS 之内有它的消息;
+     *  转交过来的设备 OFFLINE_FWD_MS 之内有消息. 不管它此刻在专注 / 休息 / 空闲, 同步失败就算离线. */
     fun deviceStates(): List<DeviceState> = lock.withLock {
         val now = System.currentTimeMillis()
         val peers = state.getJSONObject("peers")
@@ -992,10 +997,16 @@ class SyncService(
             .filter { it != myId && (peers.has(it) || !gone.has(it)) }
         ids.map { id ->
             val st = status.optJSONObject(id) ?: JSONObject()
-            val name = peers.optJSONObject(id)?.optString("name")?.takeIf { it.isNotEmpty() }
+            val p = peers.optJSONObject(id)
+            val name = p?.optString("name")?.takeIf { it.isNotEmpty() }
                 ?: ledgers.optJSONObject(id)?.optString("name")?.takeIf { it.isNotEmpty() } ?: "?"
-            val seen = st.optLong("ts")
-            DeviceState(id, name, now - seen < FRESH_MS, st, seen)
+            if (p != null) {
+                val seen = maxOf(p.optLong("last_ok"), st.optLong("ts"))
+                DeviceState(id, name, p.optString("last_err").isEmpty() && now - seen < OFFLINE_MS, st, seen)
+            } else {
+                val seen = st.optLong("ts")
+                DeviceState(id, name, now - seen < OFFLINE_FWD_MS, st, seen)
+            }
         }.sortedBy { it.name }
     }
 

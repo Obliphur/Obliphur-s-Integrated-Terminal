@@ -163,6 +163,7 @@ class BreakTimerApp:
         self.sync_runner = devsync.MainRunner()
         self.sync = devsync.SyncService(self.dm.data_dir, PcLocal(self), self.sync_runner)
         self.dm.peer_ledgers = self.sync.peer_ledgers
+        self.dm.offline_spans = self.sync.offline_spans     # 正在进行的那段: 有设备离线的部分画成空白
         self.dm.peer_ledgers_by_id = self.sync.peer_ledgers_by_id
         self.dm.my_id = lambda: self.sync.my_id
         self.dm.mother_id = self.sync.mother_id
@@ -1002,7 +1003,9 @@ class BreakTimerApp:
     def _record_break_end(self):
         """一段休息结束 (自然结束 / 暂停 / 关闭程序): 记入专注计时统计."""
         if self.break_start_wall is not None:
-            self.dm.add_focus_session("break", self.break_start_wall, datetime.now())
+            end = datetime.now()
+            self._cut_offline(self.break_start_wall, end)      # 有设备离线的那段记为空闲
+            self.dm.add_focus_session("break", self.break_start_wall, end)
             self.break_start_wall = None
 
     # ---- 休息结束后迟迟不开始: 提醒 ----
@@ -1249,7 +1252,7 @@ class BreakTimerApp:
         return counted, brk
 
     def _cut_offline(self, start: datetime, end: datetime) -> float:
-        """[start, end] 这段专注里有绑定的设备离线的时间段: 记为空闲 (统计里压过专注), 返回一共多少秒."""
+        """[start, end] 这段专注 / 休息里有绑定的设备离线的时间段: 记为空闲 (统计里压过同一段), 返回一共多少秒."""
         total = 0.0
         try:
             spans = self.sync.offline_spans(start.timestamp() * 1000, end.timestamp() * 1000)
@@ -1522,7 +1525,6 @@ class BreakTimerApp:
         self._keep_awake()
         self._check_dev_follow()
         self._maybe_relay()
-        self.sync.track_offline()
         self._check_idle_nudge()
         self._check_setup_period()
         self.apply_job = self.root.after(5000, self._schedule_apply_check)
@@ -2532,6 +2534,7 @@ class BreakTimerApp:
         if event == "started" and self._update_retry and getattr(config, "UPDATE_CHECK", 1):
             self._update_retry = False
             self.check_update(auto=True)
+        self.sync.track_offline()               # 每秒: 同步失败的设备马上算离线 (MECHANICS 8.4)
         if self.current_page == "timer" and hasattr(self, "lbl_peers"):
             text, off = self._peer_line()
             cfg(self.lbl_peers, text=text, fg=COLORS["warn"] if off else COLORS["text_dim"])

@@ -44,6 +44,10 @@ PROTO = 1
 HTTP_PORT = 17930          # 被占用时依次尝试到 17939
 UDP_PORT = 17931
 SYNC_EVERY = 10            # 秒: 母端每隔这么久向每台子端发一次同步请求
+# 设备离线 (Timer 页显示"离线", 这段专注记为空闲, MECHANICS 8.4): 和它同步失败, 或这么久没有它的消息.
+# 比同步间隔多留 5 秒 (同步本身要花时间, 正好 10 秒会每一轮都闪一下"离线"); 只是转交过来的设备再多等一轮
+OFFLINE_MS = (SYNC_EVERY + 5) * 1000
+OFFLINE_FWD_MS = (2 * SYNC_EVERY + 5) * 1000
 UPDATE_MAX = 160 * 1024 * 1024    # 设备之间直接传的安装包最大多少
 OFFER_TTL = 1800                  # 秒: 发出的安装包多久之内可以来取
 FRESH_MS = 120_000         # 毫秒: 这么久之内同步过的设备才算"在线" (比较最后操作时间用)
@@ -1013,8 +1017,9 @@ class SyncService:
         return True
 
     def device_states(self) -> list:
-        """其他设备此刻的状态 (绑定的, 和转交过来的): [{id, name, online, timer, net, since}].
-        online: 最近 2 分钟内有它的消息."""
+        """其他设备此刻的状态 (绑定的, 和转交过来的): [{id, name, online, timer, net, since, seen}].
+        online: 绑定的设备 —— 最近一次同步没有失败, 而且 OFFLINE_MS 之内有它的消息;
+                转交过来的设备 —— OFFLINE_FWD_MS 之内有它的消息."""
         now = _now_ms()
         with self.lock:
             peers, status = self.state["peers"], self.state["status"]
@@ -1023,14 +1028,20 @@ class SyncService:
             out = []
             for i in ids:
                 st = status.get(i) or {}
-                name = (peers.get(i) or {}).get("name") or (self.state["ledgers"].get(i) or {}).get("name") or "?"
-                out.append({"id": i, "name": str(name), "online": now - float(st.get("ts", 0)) < FRESH_MS,
+                p = peers.get(i)
+                name = (p or {}).get("name") or (self.state["ledgers"].get(i) or {}).get("name") or "?"
+                seen = max(float(st.get("ts", 0)), float((p or {}).get("last_ok") or 0))
+                if p is not None:
+                    online = not p.get("last_err") and now - seen < OFFLINE_MS
+                else:
+                    online = now - seen < OFFLINE_FWD_MS
+                out.append({"id": i, "name": str(name), "online": online,
                             "timer": st.get("timer") or "idle", "net": st.get("net") or "",
-                            "since": st.get("since"), "seen": float(st.get("ts", 0))})
+                            "since": st.get("since"), "seen": seen})
         return sorted(out, key=lambda d: d["name"])
 
     def track_offline(self):
-        """每隔几秒调用一次: 记下每台设备离线的时间段 (从最后一次有它的消息算起, 到重新有消息为止)."""
+        """每秒调用一次: 记下每台设备离线的时间段 (从最后一次有它的消息算起, 到重新有消息为止)."""
         now = _now_ms()
         for d in self.device_states():
             iv = self._offline.setdefault(d["id"], [])
