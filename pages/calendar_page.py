@@ -14,6 +14,8 @@ from .widgets import smooth, cfg
 DAYS = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
 MONTHS_ZH = ("1 月", "2 月", "3 月", "4 月", "5 月", "6 月",
              "7 月", "8 月", "9 月", "10 月", "11 月", "12 月")
+# 合约的黑雾 (MECHANICS 18.3): 日历上随机的学习时长在这个范围里 (小时)
+FOG_MIN, FOG_MAX = 16, 80
 MONTHS_EN = ("January", "February", "March", "April", "May", "June",
              "July", "August", "September", "October", "November", "December")
 
@@ -129,7 +131,7 @@ class CalendarPage(tk.Frame):
                 month_total += hours
         if seed is not None:
             rnd = random.Random(f"{seed}/{prefix}")
-            month_data = {f"{prefix}-{d:02d}": round(rnd.uniform(0, 9), 1)
+            month_data = {f"{prefix}-{d:02d}": round(rnd.uniform(FOG_MIN, FOG_MAX), 1)
                           for d in range(1, 32) if f"{prefix}-{d:02d}" <= today_str}
             cfg(self.lbl_month_total, text=tr("合计: ???"))
         else:

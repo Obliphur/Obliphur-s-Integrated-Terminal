@@ -161,7 +161,7 @@ fun CalendarScreen() {
     val fog = core.contract.fog()
     val data = if (fog) java.util.Random("${core.contract.id}/$prefix".hashCode().toLong()).let { r ->
         (1..ym.lengthOfMonth()).map { ym.atDay(it) }.filter { !it.isAfter(today) }
-            .associate { it.key() to Math.round(r.nextDouble() * 90) / 10.0 }
+            .associate { it.key() to Math.round((16 + r.nextDouble() * 64) * 10) / 10.0 }      // 16 ~ 80 h
     } else core.dm.monthStudy(prefix)
     PageColumn {
         Row(verticalAlignment = Alignment.CenterVertically) {
