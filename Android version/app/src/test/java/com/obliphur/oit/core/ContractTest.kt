@@ -24,7 +24,9 @@ class ContractTest {
         assertTrue(Contract.conflicts("suppress", "isolate"))
         assertFalse(Contract.conflicts("jam", "music"))
         assertTrue(Contract.conflicts("short1", "short2")); assertFalse(Contract.conflicts("seal", "fine"))
-        assertTrue(Contract.GROUPS.indexOf("short") < Contract.GROUPS.indexOf("suppress"))
+        assertTrue(Contract.LAYOUT["short2"]!! < Contract.LAYOUT["suppress"]!!)
+        assertEquals(Contract.SERIES.size + 5, Contract.BOARD_COLS)
+        assertEquals(Contract.SERIES.size + 1, Contract.LAYOUT["fine"])     // 零散的挨着排, 不留空
         assertEquals(listOf("long2", "isolate", "jam"), Contract.clean(listOf("long2", "long1", "x", "isolate", "suppress", "jam")))
         assertEquals(listOf("isolate", "chan2"), Contract.clean(listOf("isolate", "chan2")))
         val best = Contract.clean(listOf("long3", "move2", "info3", "suppress", "jam", "music", "fog", "tired3", "chan2", "last",

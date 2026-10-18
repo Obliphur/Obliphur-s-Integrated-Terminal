@@ -167,7 +167,7 @@ fun ContractScreen() {
     var ask by rememberSaveable { mutableStateOf("") }        // start / end
     val sel = if (active) c.terms else c.draft
     // 词条板最窄要放下每列 64dp 的格子, 再窄就整页缩小
-    val minW = BOARD_BAND + (BOARD_TILE + BOARD_GAP) * Contract.GROUPS.size + BOARD_GAP + 32.dp
+    val minW = BOARD_BAND + (BOARD_TILE + BOARD_GAP) * Contract.BOARD_COLS + BOARD_GAP + 32.dp
     FitToScreen(minW) { Column(Modifier.fillMaxWidth().background(p.bg).padding(horizontal = 16.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -211,7 +211,7 @@ fun ContractScreen() {
         BoxWithConstraints(Modifier.fillMaxWidth().background(p.board)) {
             val bandW = BOARD_BAND
             val gap = BOARD_GAP
-            val n = Contract.GROUPS.size
+            val n = Contract.BOARD_COLS
             val tileW = maxOf(BOARD_TILE, minOf(84.dp, (maxWidth - bandW - gap * (n + 1)) / n))
             Row {
                 Column(Modifier.width(bandW).background(p.band).padding(vertical = gap),
@@ -228,8 +228,9 @@ fun ContractScreen() {
                 }
                 Column(Modifier.padding(gap), verticalArrangement = Arrangement.spacedBy(gap)) {
                     for (lv in 1..Contract.MAX_LEVEL) Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
-                        for (group in Contract.GROUPS) {
-                            val t = Contract.TERMS.firstOrNull { it.group == group && it.level == lv }
+                        // 成系列的每组一列, 零散的在右边挨着排 (Contract.LAYOUT)
+                        for (col in 0 until Contract.BOARD_COLS) {
+                            val t = Contract.TERMS.firstOrNull { it.level == lv && Contract.LAYOUT[it.id] == col }
                             if (t == null) {
                                 Spacer(Modifier.width(tileW).height(44.dp)); continue
                             }

@@ -47,7 +47,19 @@ TERMS = [
     ("last", "last", 1, "最后防线", "违反一次词条即结束合约", ()),
 ]
 BY_ID = {t[0]: t for t in TERMS}
-GROUPS = list(dict.fromkeys(t[1] for t in TERMS))      # 界面上从左到右的列
+GROUPS = list(dict.fromkeys(t[1] for t in TERMS))
+# 词条板的布局: 成系列的每组一列 (左边); 零散的不单独占列, 按等级放进右边的几列, 每一行从左往右挨着排, 不留空.
+SERIES = [g for g in GROUPS if sum(1 for t in TERMS if t[1] == g) > 1]
+_LOOSE = {}
+LAYOUT = {}                                             # 词条 → (列, 等级)
+for _t in TERMS:
+    if _t[1] in SERIES:
+        LAYOUT[_t[0]] = (SERIES.index(_t[1]), _t[2])
+    else:
+        _i = _LOOSE.get(_t[2], 0)
+        _LOOSE[_t[2]] = _i + 1
+        LAYOUT[_t[0]] = (len(SERIES) + _i, _t[2])
+BOARD_COLS = len(SERIES) + max(_LOOSE.values(), default=0)
 MAX_LEVEL = max(t[2] for t in TERMS)
 
 # 软规则: 界面上照样能做, 但会被算作违反, 这个词条降一级 (结算按降级后的等级);
@@ -645,7 +657,9 @@ def _selftest():
     assert clean_terms(["long2", "long1", "x", "isolate", "suppress", "jam"]) == ["long2", "isolate", "jam"]
     assert clean_terms(["isolate", "chan2"]) == ["isolate", "chan2"], "信息隔绝和通道阻塞可以一起选"
     assert duration_of([]) == 4 * 3600 and duration_of(["long3"]) == int(4 * 3600 * 1.6)
-    assert GROUPS.index("short") < GROUPS.index("suppress"), "成系列的在左边, 零散的在右边"
+    assert LAYOUT["short2"][0] < LAYOUT["suppress"][0], "成系列的在左边, 零散的在右边"
+    assert BOARD_COLS == len(SERIES) + 5 and LAYOUT["jam"] == (len(SERIES), 2) and LAYOUT["fine"] == (len(SERIES) + 1, 2),         "零散的词条挨着排, 不留空"
+    assert len(set(LAYOUT.values())) == len(TERMS)
     best = clean_terms(["long3", "move2", "info3", "suppress", "jam", "music", "fog", "tired3", "chan2", "last",
                         "short2", "seal", "fine"])
     assert level_of(best) == 24, level_of(best)

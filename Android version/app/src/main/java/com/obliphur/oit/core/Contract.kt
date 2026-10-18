@@ -50,6 +50,17 @@ class Contract(private val file: File) {
         )
         val BY_ID = TERMS.associateBy { it.id }
         val GROUPS = TERMS.map { it.group }.distinct()
+        /** 词条板的布局: 成系列的每组一列 (左边); 零散的不单独占列, 按等级放进右边的几列, 每一行从左往右挨着排, 不留空. */
+        val SERIES = GROUPS.filter { g -> TERMS.count { it.group == g } > 1 }
+        /** 词条 → 列. */
+        val LAYOUT: Map<String, Int> = run {
+            val loose = HashMap<Int, Int>()
+            TERMS.associate { t ->
+                t.id to if (t.group in SERIES) SERIES.indexOf(t.group)
+                else SERIES.size + loose.getOrDefault(t.level, 0).also { loose[t.level] = it + 1 }
+            }
+        }
+        val BOARD_COLS = (LAYOUT.values.maxOrNull() ?: -1) + 1
         val MAX_LEVEL = TERMS.maxOf { it.level }
         private val ORDER = TERMS.mapIndexed { i, t -> t.id to i }.toMap()
 

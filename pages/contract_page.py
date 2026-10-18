@@ -165,7 +165,7 @@ class ContractPage(tk.Frame):
     def _build_board(self, body):
         P, s = self.P, config.scaled
         self.tw, self.th, self.gap, self.band = s(self.TILE_W), s(self.TILE_H), s(self.GAP), s(self.BAND_W)
-        cols = len(C.GROUPS)
+        cols = C.BOARD_COLS
         self.board_w = self.band + self.gap + cols * (self.tw + self.gap)
         self.board_h = self.gap + C.MAX_LEVEL * (self.th + self.gap) + s(26)
         wrap = tk.Frame(body, bg=P["board"])
@@ -211,22 +211,20 @@ class ContractPage(tk.Frame):
                            font=(config.FONT_FAMILY, max(6, s(7)), "bold"))
             cv.create_text(self.band - s(10), y + self.th / 2, text=str(lv), anchor="e", fill=P["band_text"],
                            font=config.font("h1", bold=True))
-        for col, group in enumerate(C.GROUPS):
+        for tid, g, lv, _n, _d, _x in C.TERMS:
+            col = C.LAYOUT[tid][0]                 # 成系列的每组一列, 零散的在右边挨着排
             x = self.band + self.gap + col * (self.tw + self.gap)
-            for tid, g, lv, _n, _d, _x in C.TERMS:
-                if g != group:
-                    continue
-                y = self.gap + (lv - 1) * (self.th + self.gap)
-                tag = f"t_{tid}"
-                cv.create_polygon(self._hexagon(x, y, self.tw, self.th), fill=P["tile"],
-                                  outline=P["tile_rim4"] if lv >= RIM4 else P["tile_rim"],
-                                  width=3 if lv >= RIM4 else 2, tags=(tag, tag + "_shape"))
-                cv.create_text(x + self.tw / 2, y + self.th / 2, text=marks(lv) + "\n" + term_short(tid),
-                               fill=P["tile_text"], justify="center", width=self.tw * 0.66,
-                               font=(config.FONT_FAMILY, max(6, s(8)), "bold"), tags=(tag, tag + "_text"))
-                cv.tag_bind(tag, "<Button-1>", lambda e, t=tid: self._click(t))
-                cv.tag_bind(tag, "<Enter>", lambda e, t=tid: self._enter(t))
-                cv.tag_bind(tag, "<Leave>", lambda e, t=tid: self._leave(t))
+            y = self.gap + (lv - 1) * (self.th + self.gap)
+            tag = f"t_{tid}"
+            cv.create_polygon(self._hexagon(x, y, self.tw, self.th), fill=P["tile"],
+                              outline=P["tile_rim4"] if lv >= RIM4 else P["tile_rim"],
+                              width=3 if lv >= RIM4 else 2, tags=(tag, tag + "_shape"))
+            cv.create_text(x + self.tw / 2, y + self.th / 2, text=marks(lv) + "\n" + term_short(tid),
+                           fill=P["tile_text"], justify="center", width=self.tw * 0.66,
+                           font=(config.FONT_FAMILY, max(6, s(8)), "bold"), tags=(tag, tag + "_text"))
+            cv.tag_bind(tag, "<Button-1>", lambda e, t=tid: self._click(t))
+            cv.tag_bind(tag, "<Enter>", lambda e, t=tid: self._enter(t))
+            cv.tag_bind(tag, "<Leave>", lambda e, t=tid: self._leave(t))
         # 鼠标停在格子上: 最下面一行写出这个词条的内容
         self.hover_id = cv.create_text(self.band + self.gap, self.board_h - s(13), text="", anchor="w",
                                        fill=P["hint"], font=config.font("small", bold=True))
