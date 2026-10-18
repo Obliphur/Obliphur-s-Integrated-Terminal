@@ -31,6 +31,7 @@ ACHIEVEMENTS = [
 ]
 BY_ID = {a[0]: a for a in ACHIEVEMENTS}
 SLEEP_WORD = "sleeping"
+SUMMIT_LEVEL = 25          # "登顶": 完成危机等级 (结束时) 不低于这个的合约
 LOG_FILES = ("settings_changes.log", "net_requests.log", "window_guard.log")
 
 
@@ -85,7 +86,7 @@ CHECKS = {
     "study12": _study(12),
     "sleep10": _sleep(10),
     # 完成了危机等级 20 及以上的合约 (按结算时的等级, MECHANICS 18)
-    "summit": lambda f: any(h.get("result") == "completed" and int(h.get("level") or 0) >= 20 for h in f.contracts),
+    "summit": lambda f: any(h.get("result") == "completed" and int(h.get("level") or 0) >= SUMMIT_LEVEL for h in f.contracts),
 }
 
 
@@ -237,6 +238,12 @@ def _selftest():
     s2.mark_seen("awake")
     assert "awake" not in AchievementStore(d).unseen
     assert is_english_name("overload") and not is_english_name("苏醒")
+    # 登顶: 完成危机等级 25 及以上的合约
+    f24 = Facts(datetime(2026, 1, 1), datetime(2026, 1, 1), False, {}, {},
+                [{"result": "completed", "level": 24}, {"result": "failed", "level": 26}])
+    assert not CHECKS["summit"](f24)
+    f25 = Facts(datetime(2026, 1, 1), datetime(2026, 1, 1), False, {}, {}, [{"result": "completed", "level": 25}])
+    assert CHECKS["summit"](f25)
     print("achievements selftest ok")
 
 

@@ -23,6 +23,8 @@ class AchFacts(
  */
 class AchievementStore(private val file: File, guessFirst: () -> LocalDateTime) {
     companion object {
+        /** "登顶": 完成危机等级 (结束时) 不低于这个的合约. */
+        const val SUMMIT_LEVEL = 25
         val ALL = listOf(
             Achievement("awake", "苏醒", "Hello World"),
             Achievement("day1", "新晋主管", "你已经度过了与OIT相伴的第一天"),
@@ -71,7 +73,7 @@ class AchievementStore(private val file: File, guessFirst: () -> LocalDateTime) 
             "study12" to study(12.0),
             "sleep10" to sleep(10.0),
             // 完成了危机等级 20 及以上的合约 (按结算时的等级, MECHANICS 18)
-            "summit" to { f -> f.contracts.any { it.optString("result") == "completed" && it.optInt("level") >= 20 } },
+            "summit" to { f -> f.contracts.any { it.optString("result") == "completed" && it.optInt("level") >= SUMMIT_LEVEL } },
         )
 
         /**

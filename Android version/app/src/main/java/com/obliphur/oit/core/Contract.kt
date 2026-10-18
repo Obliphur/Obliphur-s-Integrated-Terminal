@@ -95,7 +95,9 @@ class Contract(private val file: File) {
         val SUPPLY_WARN = listOf(180, 60)
 
         /** 总等级 → 完成合约时给的休息时间 (分钟, 固定; 按结束时的等级). */
-        private val REST_TABLE = listOf(0 to 20, 1 to 24, 4 to 28, 7 to 32, 10 to 36, 13 to 40, 16 to 44, 19 to 50)
+        // 每 3 级一档, 每档多 3 ~ 4 分钟; 25 级 (差不多选满) 起封顶 50 分钟
+        private val REST_TABLE = listOf(0 to 20, 1 to 24, 4 to 27, 7 to 30, 10 to 33, 13 to 37, 16 to 40, 19 to 43,
+            22 to 46, 25 to 50)
 
         /** 乐理之灾: 常见的音乐播放应用 (包名). 视频播放器 (VLC, MX Player …) 不算. */
         val MUSIC_APPS = setOf(
