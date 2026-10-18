@@ -50,4 +50,5 @@ net_usage.json
 
 # 自动发布脚本和它的 GitHub 令牌: 只在本机用
 release.py
+release.bat
 release_token.txt
