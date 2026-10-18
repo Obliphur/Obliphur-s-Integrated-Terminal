@@ -14,6 +14,7 @@ from config import load_json_file, save_json_file
 
 BASE_SECONDS = 4 * 3600          # 合约的初始时长
 IDLE_LIMIT = 30 * 60             # 合约中空闲 (不在专注也不在休息) 超过这么久就结束
+OFFLINE_LIMIT = 15 * 60          # 合约中有绑定的设备离线超过这么久就失败
 VIOLATION_LIMIT = 4              # 初始目标生命值: 每违反一次减一, 减到 0 合约失败
 HISTORY_KEEP = 30
 FRESH_MS = 2 * 60 * 1000         # 合约的主人这么久没同步过: 本机来做自动结束
@@ -288,7 +289,7 @@ class Contract:
         return self.live
 
     def finish(self, result: str, now: datetime = None, by: str = "") -> dict:
-        """结束合约: result = completed / failed / idle / abandoned. 返回这一条记录 (含给出的休息时间)."""
+        """结束合约: result = completed / failed / idle / offline / abandoned. 返回这一条记录 (含给出的休息时间)."""
         if not self.active:
             return {}
         now = (now or datetime.now()).replace(microsecond=0)
@@ -332,6 +333,17 @@ class Contract:
         if now >= end:
             return "completed", end
         return "", None
+
+    def offline_due(self, devices, now: datetime, floor: datetime):
+        """设备离线超过 OFFLINE_LIMIT: (设备名, 失败的时刻) 或 None. devices: [(名字, 离线开始的时刻)];
+        离线从合约开始, 以及 floor (本机这次打开程序的时刻: 本机关着时的事由其他设备判定) 之后才算."""
+        if not self.active or not self.start_at:
+            return None
+        for name, since in devices:
+            since = max(since, self.start_at, floor)
+            if since + timedelta(seconds=OFFLINE_LIMIT) <= now:
+                return name, since + timedelta(seconds=OFFLINE_LIMIT)
+        return None
 
     def idle_left(self, now: datetime):
         """空闲还能持续多久 (秒); 不在空闲时 None."""
@@ -712,6 +724,12 @@ def _selftest():
     assert c.idle_left(t0 + timedelta(hours=1, minutes=10)) == 20 * 60
     assert c.due(t0 + timedelta(hours=1, minutes=31), True) == ("idle", t0 + timedelta(hours=1, minutes=30))
     assert c.due(t0 + timedelta(hours=1, minutes=31), False)[0] == "", "开始专注就不算空闲"
+    # 设备离线 15 分钟失败: 从合约开始 / 本机打开程序之后才算
+    t1 = t0 + timedelta(hours=1)
+    assert c.offline_due([("手机", t0 - timedelta(hours=3))], t0 + timedelta(minutes=14), t0) is None
+    assert c.offline_due([("手机", t0 - timedelta(hours=3))], t0 + timedelta(minutes=16), t0) == \
+        ("手机", t0 + timedelta(minutes=15))
+    assert c.offline_due([("手机", t0)], t1 + timedelta(minutes=10), t1) is None, "本机刚打开"
     # 目标生命值: 默认 4; 退路封锁-I 只有 3, 违反 3 次结束; 整点记录超时未填写也算 (不降词条)
     c.start(["long1"], owner="me", now=t0)
     assert c.violation_limit == 4 and c.life == 4

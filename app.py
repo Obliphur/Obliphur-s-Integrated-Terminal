@@ -131,6 +131,7 @@ class BreakTimerApp:
         self._break_pre = 0.0         # 这次休息里有多少秒是合约开始前积攒的 (放在最后用; 暂停时原样还回去)
         self._break_cid = None        # 这次休息是在哪个合约中开始的 (合约结束后暂停: 只还合约开始前的那部分)
         self._supply_warned = set()   # 支援短缺: 这次休息已经提醒过的 (还差 3 / 1 分钟)
+        self._offline_name = ""       # 合约因为哪台设备离线而失败
         self.rest_base = 0.0          # 刚结束的那段专注换来的休息时间 (秒, 已乘倍率; 合约中已乘疲惫)
         self._contract_seen = None    # 上次看到的合约 (id, 状态): 同步来的开始 / 结束要刷新
         self._focus_checks = 0        # 这一段专注里已经被手动关掉的"还在吗"提醒数
@@ -2095,6 +2096,15 @@ class BreakTimerApp:
         self._check_supply()
         if not c.active:
             return
+        # 绑定的设备离线超过 15 分钟: 合约失败 (看到它离线的设备都可以判定)
+        if self.sync.peers():
+            devices = [(d["name"], datetime.fromtimestamp((d["seen"] or 0) / 1000)) for d in self.sync.device_states()
+                       if not d["online"]]
+            hit = c.offline_due(devices, datetime.now(), datetime.fromtimestamp(self.sync._started_ms / 1000))
+            if hit:
+                self._offline_name = hit[0]
+                self.end_contract("offline", hit[1])
+                return
         if self._owner_away(c.owner):
             why, at = c.due(datetime.now(), self.state in (IDLE, READY_BREAK))
             if why:
@@ -2180,10 +2190,11 @@ class BreakTimerApp:
                 msg += "\n" + tr("积攒的休息时间 +{t}.", t=fmt_ms(reward))
             toast.notice(tr("⚔  合约完成"), msg)
         elif result == "abandoned":
-            toast.info(tr("合约已提前结束."))
+            toast.info(tr("⚔ 行动终止"))
         else:
-            msg = (tr("目标生命值归零 (违反 {n} 次), 合约终止.", n=rec.get("violations", 0)) if result == "failed"
-                   else tr("空闲超过 30 分钟, 合约终止."))
+            msg = {"failed": tr("目标生命值归零 (违反 {n} 次), 合约终止.", n=rec.get("violations", 0)),
+                   "offline": tr("{name} 离线超过 15 分钟, 合约终止.", name=self._offline_name or "?")
+                   }.get(result, tr("空闲超过 30 分钟, 合约终止."))
             if pending >= 1:
                 msg += "\n" + tr("完成后的 {n} 分钟休息时间没有给出.", n=round(pending / 60))
             toast.notice(tr("⚔ 行动失败"), msg)

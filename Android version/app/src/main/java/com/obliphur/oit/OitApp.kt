@@ -90,6 +90,8 @@ class OitApp : Application(), Host {
         }
         core.devChangedHook = { if (s.peers().isNotEmpty()) s.syncNow() }
         core.offlineSpans = { a, b -> s.offlineSpans(a, b) }
+        core.offlineDevices = { s.deviceStates().filter { !it.online }.map { it.name to it.seen } }
+        core.syncStartedMs = { s.startedMs }
         core.dm.offlineSpans = { a, b -> s.offlineSpans(a, b) }
         core.trackOffline = { s.trackOffline() }
         core.net.peerNet = { com.obliphur.oit.sync.SyncService.peerNet(s.peerLedgers(), core.net.date) }

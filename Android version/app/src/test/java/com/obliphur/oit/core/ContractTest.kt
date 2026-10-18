@@ -64,6 +64,10 @@ class ContractTest {
         // 空闲 30 分钟
         assertNull(c.due(t0.plusHours(1), true))
         assertEquals("idle" to t0.plusMinutes(90), c.due(t0.plusMinutes(91), true))
+        // 设备离线 15 分钟失败: 从合约开始 / 本机打开程序之后才算
+        assertNull(c.offlineDue(listOf("手机" to t0.minusHours(3)), t0.plusMinutes(14), t0))
+        assertEquals("手机" to t0.plusMinutes(15), c.offlineDue(listOf("手机" to t0.minusHours(3)), t0.plusMinutes(16), t0))
+        assertNull(c.offlineDue(listOf("手机" to t0), t0.plusMinutes(70), t0.plusHours(1)))
         // 目标生命值: 默认 4, 退路封锁-I 只有 3; 整点记录超时未填写也算 (不降词条)
         assertEquals(4, c.violationLimit)
         c.start(listOf("suppress", "info3", "long1", "retreat1"), "me", t0)

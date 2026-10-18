@@ -165,7 +165,8 @@ class SyncService(
     private val busy = HashSet<String>()
     /** 每台设备离线的时间段 {id: [[开始毫秒, 结束毫秒 (-1 = 还在离线)], …]}, 只在内存里 (MECHANICS 8.4). */
     private val offline = HashMap<String, MutableList<LongArray>>()
-    private val startedMs = System.currentTimeMillis()
+    /** 这次打开程序 (开始同步) 的时刻. */
+    val startedMs = System.currentTimeMillis()
     private val state: JSONObject = load()
 
     init {

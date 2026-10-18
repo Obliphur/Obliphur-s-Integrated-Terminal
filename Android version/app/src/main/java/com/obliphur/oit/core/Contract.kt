@@ -18,6 +18,8 @@ class Contract(private val file: File) {
     companion object {
         const val BASE_SECONDS = 4 * 3600.0
         const val IDLE_LIMIT = 30 * 60.0
+        /** 合约中有绑定的设备离线超过这么久就失败. */
+        const val OFFLINE_LIMIT = 15 * 60.0
         /** 初始目标生命值: 每违反一次减一, 减到 0 合约失败. */
         const val VIOLATION_LIMIT = 4
         const val HISTORY_KEEP = 30
@@ -259,6 +261,18 @@ class Contract(private val file: File) {
             if (!fail.isAfter(if (now.isBefore(end)) now else end)) return "idle" to fail
         }
         if (!now.isBefore(end)) return "completed" to end
+        return null
+    }
+
+    /** 设备离线超过 OFFLINE_LIMIT: (设备名, 失败的时刻) 或 null. devices: (名字, 离线开始的时刻);
+     *  离线从合约开始, 以及 floor (本机这次打开程序的时刻: 本机关着时的事由其他设备判定) 之后才算. */
+    fun offlineDue(devices: List<Pair<String, LocalDateTime>>, now: LocalDateTime, floor: LocalDateTime): Pair<String, LocalDateTime>? {
+        val a = startAt ?: return null
+        for ((name, s) in devices) {
+            val since = listOf(s, a, floor).max()
+            val fail = since.plusSec(OFFLINE_LIMIT)
+            if (!fail.isAfter(now)) return name to fail
+        }
         return null
     }
 
@@ -549,8 +563,10 @@ class Contract(private val file: File) {
 /** 合约结束的结果 → 显示的文字 (中文原文, 由 tr 翻译). */
 fun contractResult(result: String): String = when (result) {
     "completed" -> "完成"
-    "failed" -> "失败: 目标生命值归零"
-    "idle" -> "失败: 空闲超过 30 分钟"
-    "abandoned" -> "提前结束"
+    // 手动提前结束是"行动终止"; 被动结束 (违反 / 空闲 / 设备离线) 是"行动失败"
+    "failed" -> "行动失败: 目标生命值归零"
+    "idle" -> "行动失败: 空闲超过 30 分钟"
+    "offline" -> "行动失败: 设备离线超过 15 分钟"
+    "abandoned" -> "行动终止"
     else -> ""
 }

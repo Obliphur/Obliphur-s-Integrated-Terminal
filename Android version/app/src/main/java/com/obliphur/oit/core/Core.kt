@@ -83,6 +83,12 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     var followsMother: () -> Boolean = { false }
     /** 母端最近 2 分钟内同步过吗. */
     var motherFresh: () -> Boolean = { true }
+    /** 此刻离线的设备: (名字, 最后一次有它消息的时刻, 毫秒). */
+    var offlineDevices: () -> List<Pair<String, Long>> = { emptyList() }
+    /** 本机这次打开程序 (开始同步) 的时刻 (毫秒). */
+    var syncStartedMs: () -> Long = { System.currentTimeMillis() }
+    /** 合约因为哪台设备离线而失败. */
+    private var offlineName = ""
     /** [开始, 结束] (毫秒) 里有绑定的设备离线的时间段. */
     var offlineSpans: (Long, Long) -> List<Pair<Long, Long>> = { _, _ -> emptyList() }
     /** 每 5 秒: 记下设备离线的时间段. */
@@ -555,6 +561,9 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         else contract.bookRestAfter(sec, start)
     }
 
+    private fun Long.toLocalDateTime(): LocalDateTime =
+        LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(this), java.time.ZoneId.systemDefault())
+
     /** 自动的操作由状态的主人做; 主人不在线 (2 分钟没同步) 时本机来做. */
     private fun ownerAway(owner: String) = owner.isEmpty() || owner == myId() || !peerFresh(owner)
 
@@ -578,6 +587,14 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         if (!c.active) return
         contractHours()
         checkSupply()
+        // 绑定的设备离线超过 15 分钟: 合约失败 (看到它离线的设备都可以判定)
+        if (c.active && hasPeers()) {
+            val devices = offlineDevices().map { (n, ms) -> n to ms.toLocalDateTime() }
+            c.offlineDue(devices, LocalDateTime.now(), syncStartedMs().toLocalDateTime())?.let { (name, at) ->
+                offlineName = name
+                endContract("offline", at); return
+            }
+        }
         if (!c.active || !ownerAway(c.owner)) return
         c.due(LocalDateTime.now(), timer.state == TState.IDLE)?.let { (why, at) ->
             endContract(why, at); return
@@ -668,10 +685,13 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
                 if (reward > 0) msg += "\n" + tr("积攒的休息时间 +{t}.", "t" to fmtMs(reward.toDouble()))
                 notice(tr("⚔  合约完成"), msg, listOf(NoticeButton(tr("知道了"), "ok", true)), page = "contract")
             }
-            "abandoned" -> toast(tr("合约已提前结束."))
+            "abandoned" -> toast(tr("⚔ 行动终止"))
             else -> {
-                var msg = if (result == "failed") tr("目标生命值归零 (违反 {n} 次), 合约终止.", "n" to rec.optInt("violations"))
-                else tr("空闲超过 30 分钟, 合约终止.")
+                var msg = when (result) {
+                    "failed" -> tr("目标生命值归零 (违反 {n} 次), 合约终止.", "n" to rec.optInt("violations"))
+                    "offline" -> tr("{name} 离线超过 15 分钟, 合约终止.", "name" to offlineName.ifEmpty { "?" })
+                    else -> tr("空闲超过 30 分钟, 合约终止.")
+                }
                 if (pending >= 1) msg += "\n" + tr("完成后的 {n} 分钟休息时间没有给出.", "n" to Math.round(pending / 60))
                 notice(tr("⚔ 行动失败"), msg, listOf(NoticeButton(tr("知道了"), "ok", true)), page = "contract")
             }
