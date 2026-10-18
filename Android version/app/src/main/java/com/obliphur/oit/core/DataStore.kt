@@ -415,6 +415,8 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
     // ---- 细化规范: 半小时一格 ----
 
     val fillSeconds get() = fillWindow()
+    /** 细化规范的半小时格: 补填时限只有 30 min (补填时限设得更短时照设置). */
+    val halfFillSeconds get() = minOf(fillWindow(), 1800.0)
     val autoValue get() = autoText()
 
     /** i = 0 前半小时, 1 后半小时. 还没分开填过的小时: 前半显示整小时的内容. */
@@ -449,7 +451,7 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
         var changed = false
         for ((key, _, b) in units) {
             val p = key.split("/")
-            if (p.size != 3 || b.plusSec(fillWindow()).isAfter(now)) continue
+            if (p.size != 3 || b.plusSec(halfFillSeconds).isAfter(now)) continue
             val h = p[1].toIntOrNull() ?: continue
             val i = (p[2].toIntOrNull() ?: continue) - 1
             if (halfText(p[0], h, i).isEmpty()) {
@@ -493,7 +495,8 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
         val s = promptSlot ?: return null
         val text = if (promptLen == 30) halfText(s.toLocalDate().key(), s.hour, if (s.minute >= 30) 1 else 0)
             else hourText(s.toLocalDate().key(), s.hour)
-        if (!LocalDateTime.now().isBefore(s.plusMinutes(promptLen.toLong()).plusSec(fillWindow())) || text.isNotEmpty()) {
+        val fill = if (promptLen == 30) halfFillSeconds else fillWindow()
+        if (!LocalDateTime.now().isBefore(s.plusMinutes(promptLen.toLong()).plusSec(fill)) || text.isNotEmpty()) {
             promptSlot = null
             return null
         }

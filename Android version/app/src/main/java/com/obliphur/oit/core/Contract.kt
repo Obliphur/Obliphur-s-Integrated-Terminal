@@ -607,8 +607,8 @@ class Contract(private val file: File) {
         val old = live.optJSONArray("hl")?.strings() ?: emptyList()
         val seen = old.toMutableSet()
         val new = mutableListOf<String>()
-        for ((key, _, b) in hourUnits(now)) {
-            if (key in seen || b.plusSeconds(fillSec).isAfter(now)) continue
+        for ((key, a, b) in hourUnits(now)) {
+            if (key in seen || b.plusSeconds(cellFill(a, b, fillSec)).isAfter(now)) continue
             seen.add(key)
             if (textOf(key) in setOf("", auto)) new.add(key)
         }
@@ -623,9 +623,13 @@ class Contract(private val file: File) {
      *  就不能再改 —— 合约结束了也一样. */
     fun hourLocked(start: LocalDateTime, end: LocalDateTime, text: String, now: LocalDateTime, fillSec: Long,
                    auto: String): Boolean {
-        if (now.isBefore(end.plusSeconds(fillSec)) || text !in setOf("", auto)) return false
+        if (now.isBefore(end.plusSeconds(cellFill(start, end, fillSec))) || text !in setOf("", auto)) return false
         return periods(now, "seal").any { (a, b) -> a.isBefore(end) && start.isBefore(b) }
     }
+
+    /** 记录格的补填时限: 细化规范的半小时格只有 30 min (MECHANICS 18.4). */
+    private fun cellFill(start: LocalDateTime, end: LocalDateTime, fillSec: Long): Long =
+        if (!end.isAfter(start.plusMinutes(30))) minOf(fillSec, 1800L) else fillSec
 
     // ---- 设备同步 ----
 

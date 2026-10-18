@@ -155,14 +155,15 @@ class ContractTest {
         assertEquals(listOf("2026-10-18/9/2", "2026-10-18/10/1"),
             c.hourUnits(LocalDateTime.of(2026, 10, 18, 10, 40)).map { it.first })
         val tx: (String) -> String = { texts[it] ?: "" }
-        assertEquals(emptyList<String>(), c.hourMisses(LocalDateTime.of(2026, 10, 18, 11, 0), fill, tx, "Sleeping"))
-        assertEquals(listOf("2026-10-18/10/1"), c.hourMisses(LocalDateTime.of(2026, 10, 18, 11, 31), fill, tx, "Sleeping"))
-        assertEquals(emptyList<String>(), c.hourMisses(LocalDateTime.of(2026, 10, 18, 11, 40), fill, tx, "Sleeping"))
+        // 细化规范的半小时格补填时限只有 30 min (10:00-10:30 那格 11:00 到期)
+        assertEquals(emptyList<String>(), c.hourMisses(LocalDateTime.of(2026, 10, 18, 10, 59), fill, tx, "Sleeping"))
+        assertEquals(listOf("2026-10-18/10/1"), c.hourMisses(LocalDateTime.of(2026, 10, 18, 11, 1), fill, tx, "Sleeping"))
+        assertEquals(emptyList<String>(), c.hourMisses(LocalDateTime.of(2026, 10, 18, 11, 10), fill, tx, "Sleeping"))
         val a = LocalDateTime.of(2026, 10, 18, 10, 0)
         val b = a.plusMinutes(30)
-        assertFalse(c.hourLocked(a, b, "", LocalDateTime.of(2026, 10, 18, 11, 29), fill, "Sleeping"))
-        assertTrue(c.hourLocked(a, b, "Sleeping", LocalDateTime.of(2026, 10, 18, 11, 31), fill, "Sleeping"))
-        assertFalse(c.hourLocked(a, b, "学习", LocalDateTime.of(2026, 10, 18, 11, 31), fill, "Sleeping"))
+        assertFalse(c.hourLocked(a, b, "", LocalDateTime.of(2026, 10, 18, 10, 59), fill, "Sleeping"))
+        assertTrue(c.hourLocked(a, b, "Sleeping", LocalDateTime.of(2026, 10, 18, 11, 1), fill, "Sleeping"))
+        assertFalse(c.hourLocked(a, b, "学习", LocalDateTime.of(2026, 10, 18, 11, 1), fill, "Sleeping"))
         c.finish("abandoned", LocalDateTime.of(2026, 10, 18, 12, 0))
         assertTrue(c.hourLocked(a, b, "Sleeping", LocalDateTime.of(2026, 10, 19, 0, 0), fill, "Sleeping"))
     }

@@ -744,8 +744,8 @@ class Contract:
         old = list(self.live.get("hl") or [])
         seen = set(old)
         new = []
-        for key, _a, b in self.hour_units(now):
-            if key in seen or b + fill > now:
+        for key, a, b in self.hour_units(now):
+            if key in seen or b + cell_fill(a, b, fill) > now:
                 continue
             seen.add(key)
             if (text_of(key) or "") in ("", auto):
@@ -759,7 +759,7 @@ class Contract:
                     auto: str) -> bool:
         """记录封锁: 和选了这个词条的合约重叠的记录格, 过了填写时限还没填写 (空着 / 超时自动记录),
         就不能再改 —— 合约结束了也一样."""
-        if now < end + fill or (text or "") not in ("", auto):
+        if now < end + cell_fill(start, end, fill) or (text or "") not in ("", auto):
             return False
         return any(a < end and start < b for a, b in self.periods(now, "seal"))
 
@@ -785,6 +785,11 @@ class Contract:
                     have.add(str(h.get("id")))
         self.save()
         return changed
+
+
+def cell_fill(start: datetime, end: datetime, fill: timedelta) -> timedelta:
+    """记录格的补填时限: 细化规范的半小时格只有 30 min (MECHANICS 18.4)."""
+    return min(fill, timedelta(minutes=30)) if end - start <= timedelta(minutes=30) else fill
 
 
 def _selftest():
@@ -943,13 +948,14 @@ def _selftest():
     assert c.hour_forced() and c.fine_hour(datetime(2026, 10, 18, 9)) and not c.fine_hour(datetime(2026, 10, 18, 8))
     units = c.hour_units(datetime(2026, 10, 18, 10, 40))
     assert [u[0] for u in units] == ["2026-10-18/9/2", "2026-10-18/10/1"], units
-    assert c.hour_misses(datetime(2026, 10, 18, 11, 0), fill, texts.get, "Sleeping") == []
-    assert c.hour_misses(datetime(2026, 10, 18, 11, 31), fill, texts.get, "Sleeping") == ["2026-10-18/10/1"]
-    assert c.hour_misses(datetime(2026, 10, 18, 11, 40), fill, texts.get, "Sleeping") == [], "每格只算一次"
+    # 细化规范的半小时格补填时限只有 30 min (10:00-10:30 那格 11:00 到期)
+    assert c.hour_misses(datetime(2026, 10, 18, 10, 59), fill, texts.get, "Sleeping") == []
+    assert c.hour_misses(datetime(2026, 10, 18, 11, 1), fill, texts.get, "Sleeping") == ["2026-10-18/10/1"]
+    assert c.hour_misses(datetime(2026, 10, 18, 11, 10), fill, texts.get, "Sleeping") == [], "每格只算一次"
     a, b = datetime(2026, 10, 18, 10), datetime(2026, 10, 18, 10, 30)
-    assert not c.hour_locked(a, b, "", datetime(2026, 10, 18, 11, 29), fill, "Sleeping")
-    assert c.hour_locked(a, b, "Sleeping", datetime(2026, 10, 18, 11, 31), fill, "Sleeping")
-    assert not c.hour_locked(a, b, "学习", datetime(2026, 10, 18, 11, 31), fill, "Sleeping"), "按时填了的不锁"
+    assert not c.hour_locked(a, b, "", datetime(2026, 10, 18, 10, 59), fill, "Sleeping")
+    assert c.hour_locked(a, b, "Sleeping", datetime(2026, 10, 18, 11, 1), fill, "Sleeping")
+    assert not c.hour_locked(a, b, "学习", datetime(2026, 10, 18, 11, 1), fill, "Sleeping"), "按时填了的不锁"
     c.finish("abandoned", datetime(2026, 10, 18, 12))
     assert c.hour_locked(a, b, "Sleeping", datetime(2026, 10, 19), fill, "Sleeping"), "合约结束后照样锁着"
     assert not c.hour_locked(datetime(2026, 10, 18, 13), datetime(2026, 10, 18, 14), "", datetime(2026, 10, 19),

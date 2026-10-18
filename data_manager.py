@@ -524,7 +524,7 @@ class DataManager:
         changed = False
         for key, _a, b in units:
             parts = key.split("/")
-            if len(parts) != 3 or b + config.FILL_WINDOW > now:
+            if len(parts) != 3 or b + half_fill() > now:
                 continue
             ds, h, i = parts[0], int(parts[1]), int(parts[2]) - 1
             if not self.get_half_text(ds, h, i):
@@ -570,7 +570,8 @@ class DataManager:
             text = self.get_half_text(s.strftime('%Y-%m-%d'), s.hour, 1 if s.minute >= 30 else 0)
         else:
             text = self.get_hour_text(s.strftime('%Y-%m-%d'), s.hour)
-        if datetime.now() >= s + timedelta(minutes=self.prompt_len) + config.FILL_WINDOW or text:
+        fill = half_fill() if self.prompt_len == 30 else config.FILL_WINDOW
+        if datetime.now() >= s + timedelta(minutes=self.prompt_len) + fill or text:
             self.prompt_slot = None
             return None
         return s
@@ -584,6 +585,11 @@ class DataManager:
             os.remove(self.legacy_uninstall_file)
         except OSError:
             pass
+
+
+def half_fill() -> timedelta:
+    """细化规范的半小时格: 补填时限只有 30 min (补填时限设得更短时照设置)."""
+    return min(config.FILL_WINDOW, config.FINE_FILL_WINDOW)
 
 
 def _sum_days(days: dict, prefix: str) -> Dict[str, float]:
