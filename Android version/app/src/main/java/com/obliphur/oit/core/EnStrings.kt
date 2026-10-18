@@ -360,6 +360,7 @@ object EnStrings {
         "应用信息 (电池)" to "App info (battery)",
         "在后台 / 熄屏时同步会被系统暂停" to "The system will pause syncing in the background / with the screen off",
         "去解除" to "Fix",
+        "请允许 OIT 自启动 / 后台运行, 否则在后台或熄屏时可能被系统暂停." to "Please allow OIT to auto-start / run in the background, or the system may pause it in the background or with the screen off.",
         "全部断网" to "blocking everything",
         "禁用名单里的应用" to "blocking listed apps",
         "全屏蔽" to "blocking everything",

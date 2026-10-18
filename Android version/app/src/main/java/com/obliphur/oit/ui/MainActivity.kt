@@ -64,12 +64,20 @@ class MainActivity : ComponentActivity() {
     private val vpnLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         asking = false
         app.applyNet(true)
-        askBattery()                   // VPN 问完了再问电池优化
+        if (firstRun.isNotEmpty()) nextFirstRun() else askBattery()   // VPN 问完了再问电池优化
     }
     private val notifLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
         asking = false
-        ensureVpn()                    // 通知权限问完了再问 VPN, 一次只弹一个系统窗口
+        // 通知权限问完了再问 VPN, 一次只弹一个系统窗口
+        if (firstRun.isNotEmpty()) nextFirstRun() else ensureVpn()
     }
+    /** 第一次打开时依次打开的系统设置页 (电池优化, 精确闹钟, 使用情况访问 ……): 从设置页回来再问下一项. */
+    private val settingsLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        asking = false
+        nextFirstRun()
+    }
+    /** 第一次打开时还没问的权限; 每一项返回 true = 打开了系统窗口 / 设置页, 等它回来. */
+    private val firstRun = ArrayDeque<() -> Boolean>()
     /** 正在等系统的权限窗口 (同时弹两个系统窗口在部分手机上会卡住界面). */
     private var asking = false
     /** 这次打开界面时用的主题. */
@@ -98,11 +106,100 @@ class MainActivity : ComponentActivity() {
     fun startPermissionFlow() {
         if (flowStarted || asking) return
         flowStarted = true
+        if (startFirstRun()) return
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
             asking = true
             notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         } else ensureVpn()
+    }
+
+    /** 记下"第一次打开时的权限已经问过了"; 放在数据目录里, 重置 (删除全部数据) 后会再问一遍. */
+    private val firstRunFlag get() = java.io.File(filesDir, "data/permissions_asked")
+
+    /**
+     * 第一次打开 (欢迎窗口关掉之后): 把需要的权限一项一项都问一遍, 一次只弹一个系统窗口 / 设置页 (MECHANICS 14.1).
+     * 已经有的跳过; 用户在设置页里不给也照样问下一项. 返回 false = 不是第一次, 走平时的流程.
+     */
+    private fun startFirstRun(): Boolean {
+        val flag = firstRunFlag
+        if (flag.exists()) return false
+        runCatching { flag.parentFile?.mkdirs(); flag.writeText(java.time.LocalDateTime.now().toString()) }
+        val pkg = android.net.Uri.parse("package:$packageName")
+        fun settings(i: Intent): Boolean = try {
+            asking = true
+            settingsLauncher.launch(i)
+            true
+        } catch (_: Exception) {
+            asking = false
+            false                       // 这台手机没有这个设置页: 跳过
+        }
+        firstRun.clear()
+        // 通知
+        firstRun.add {
+            if (Build.VERSION.SDK_INT >= 33 &&
+                checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                asking = true
+                notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                true
+            } else false
+        }
+        // VPN (断网)
+        firstRun.add {
+            if (app.core.settings.devMode || app.core.vpnPlan() == com.obliphur.oit.core.VpnPlan.None) false
+            else VpnService.prepare(this)?.let { i ->
+                asking = true
+                vpnLauncher.launch(i)
+                true
+            } ?: run {
+                app.applyNet(true)
+                false
+            }
+        }
+        // 不受电池优化限制 (后台 / 熄屏时计时, 断网, 同步照常)
+        firstRun.add {
+            batteryAsked = true
+            if (com.obliphur.oit.service.Background.batteryIgnored(this)) false
+            else settings(Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, pkg))
+        }
+        // 精确闹钟 (整点提醒, 联网时间到, 休息结束 准时)
+        firstRun.add {
+            if (Build.VERSION.SDK_INT < 31 ||
+                getSystemService(android.app.AlarmManager::class.java).canScheduleExactAlarms()) false
+            else settings(Intent(android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, pkg))
+        }
+        // 使用情况访问 (应用使用时间统计, 锁定应用)
+        firstRun.add {
+            if (com.obliphur.oit.service.AppUsage.permitted(this)) false
+            else settings(Intent(android.provider.Settings.ACTION_USAGE_ACCESS_SETTINGS))
+        }
+        // 显示在其他应用上层 (锁定应用的盖层)
+        firstRun.add {
+            if (com.obliphur.oit.service.AppLock.canOverlay(this)) false
+            else settings(Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, pkg))
+        }
+        // 安装未知应用 (自动更新, 其他设备发来的安装包)
+        firstRun.add {
+            if (packageManager.canRequestPackageInstalls()) false
+            else settings(Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, pkg))
+        }
+        // 手机厂商自己的 自启动 / 后台运行 (查不到有没有打开; 只在有这一页的手机上打开一次)
+        firstRun.add {
+            if (com.obliphur.oit.service.Background.hasOemPage(this)) {
+                app.core.toast(tr("请允许 OIT 自启动 / 后台运行, 否则在后台或熄屏时可能被系统暂停."), "info")
+                com.obliphur.oit.service.Background.openOem(this)
+            }
+            false
+        }
+        nextFirstRun()
+        return true
+    }
+
+    private fun nextFirstRun() {
+        while (!asking) {
+            val step = firstRun.removeFirstOrNull() ?: return
+            if (runCatching { step() }.getOrDefault(false)) return
+        }
     }
 
     /** VPN 被别的 VPN 应用顶掉或停了: 重新申请 / 重新打开. */

@@ -1716,7 +1716,20 @@ class BreakTimerApp:
     def _restart_for_update(self):
         self.restart_requested = True       # main.py 在主循环结束后重新打开程序
         self._update_restart = True         # 更新后马上重开: 不算"关闭程序", 共享的专注不结束
-        self.on_close()
+        try:
+            self.root.withdraw()            # 旧窗口马上消失: 下面的收尾 (保存, 同步, 断网) 可能要几秒
+        except tk.TclError:
+            pass
+        try:
+            self.on_close()
+        finally:
+            # 收尾中途出错 (例如内存里的旧代码碰上刚覆盖的新文件) 时, 以前停在 root.destroy() 之前:
+            # 旧窗口一直开着, main.py 也等不到主循环结束, 不会重新打开程序
+            try:
+                if self.root.winfo_exists():
+                    self.root.destroy()
+            except tk.TclError:
+                pass
 
     def on_sync_changed(self):
         self.refresh_display()
