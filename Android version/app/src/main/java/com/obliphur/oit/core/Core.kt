@@ -429,7 +429,10 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
 
     /** 联网只看网站名单, 应用名单只管锁定应用 (checkAppLock). 局域网通道在每种计划里都保留 (MECHANICS 15). */
     fun vpnPlan(): VpnPlan {
-        if (dm.resetting || net.dead || settings.devMode) return VpnPlan.None
+        if (dm.resetting || net.dead) return VpnPlan.None
+        // 开发者模式不断网. 但绑定了其他设备时仍保留一个全部放行的 VPN (只接管 DNS): 没有 VPN 时
+        // vivo 等手机一离开 OIT 就把它整个冻结, 别的设备连过来等不到回复 (MECHANICS 15.3)
+        if (settings.devMode) return if (hasPeers()) VpnPlan.Dns(false, 0) else VpnPlan.None
         val online = net.online
         val snap = rules.snap
         // 代理-全屏蔽 (Proxy block-all) (设置里的 Adapter): 离线时接管 DNS, 所有域名一律拦截 (不看网站名单,

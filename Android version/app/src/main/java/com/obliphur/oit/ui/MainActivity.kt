@@ -146,7 +146,7 @@ class MainActivity : ComponentActivity() {
         }
         // VPN (断网)
         firstRun.add {
-            if (app.core.settings.devMode || app.core.vpnPlan() == com.obliphur.oit.core.VpnPlan.None) false
+            if (app.core.vpnPlan() == com.obliphur.oit.core.VpnPlan.None) false
             else VpnService.prepare(this)?.let { i ->
                 asking = true
                 vpnLauncher.launch(i)
@@ -204,7 +204,7 @@ class MainActivity : ComponentActivity() {
 
     /** VPN 被别的 VPN 应用顶掉或停了: 重新申请 / 重新打开. */
     private fun ensureVpn() {
-        if (asking || app.core.settings.devMode) return
+        if (asking) return
         if (app.core.vpnPlan() == com.obliphur.oit.core.VpnPlan.None) return
         if (VpnService.prepare(this) != null) requestVpn()
         else {

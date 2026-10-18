@@ -281,6 +281,9 @@ class CoreTest {
         assertTrue(core.settings.devMode)
         assertTrue(core.settings.pending.isEmpty())
         assertEquals(VpnPlan.None, core.vpnPlan())                // 开发者模式: 不断网
+        core.hasPeers = { true }
+        assertEquals(VpnPlan.Dns(false, 0), core.vpnPlan())       // 绑定了设备: 留一个全部放行的 VPN, 免得被冻结
+        core.hasPeers = { false }
         assertEquals("", core.settings.waitTag("DAILY_LIMIT"))
         assertEquals(StageResult.NOCHANGE, core.stageSetting("DAILY_LIMIT", code).first)
         assertFalse(core.settings.devMode)

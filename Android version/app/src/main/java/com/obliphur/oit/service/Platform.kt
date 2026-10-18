@@ -171,6 +171,8 @@ class CoreService : Service() {
             if (++n % 5 == 0) {
                 Notifier.updateStatus(this@CoreService)
                 holdLocks(app.core.hasPeers())
+                // 计划变了才动 VPN (例如开发者模式下刚绑定了设备: 要开一个全部放行的 VPN, 见 Core.vpnPlan)
+                app.applyNet(false)
                 app.maybeRelay()
             }
             handler.postDelayed(this, 1000)
