@@ -343,36 +343,53 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
     OitTheme(theme, fs) {
         CompositionLocalProvider(LocalTick provides v) {
             val o = LocalOit.current
+            // 合约页 (合约页主题不是"跟随界面主题"时): 顶栏和侧边栏换成合约页主题的颜色 (MECHANICS 18)
+            val cp = if (page == "contract") contractColors().takeIf { it.side != null } else null
+            val sideBg = cp?.side ?: o.card
             fun navLabel(key: String, base: String): String = when (key) {
                 "log" -> if (!core.dm.hourEnabled) "$base  (off)" else base + if (core.dm.awaitingSlot() != null) " ●" else ""
                 "settings" -> base + (if (core.settings.pending.isNotEmpty()) "  ⏳${core.settings.pending.size}" else "")
                 else -> base
             }
             ModalNavigationDrawer(drawerState = drawer, drawerContent = {
-                ModalDrawerSheet(drawerContainerColor = o.card) {
-                    Text("OIT", fontWeight = FontWeight.Bold, fontSize = 20.sp, color = o.text,
+                ModalDrawerSheet(drawerContainerColor = sideBg) {
+                    Text("OIT", fontWeight = FontWeight.Bold, fontSize = 20.sp, color = cp?.text ?: o.text,
                         modifier = Modifier.padding(20.dp))
-                    HorizontalDivider(color = o.border)
+                    HorizontalDivider(color = cp?.line ?: o.border)
                     Spacer(Modifier.height(8.dp))
                     for ((key, label) in PAGES) {
                         val on = key == page
-                        Text(navLabel(key, tr(label)), color = if (on) o.accent else o.text, fontSize = 16.sp,
+                        Text(navLabel(key, tr(label)), color = if (cp != null) (if (on) cp.startText else cp.sideText)
+                            else if (on) o.accent else o.text, fontSize = 16.sp,
                             fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
-                            modifier = Modifier.fillMaxWidth().clickable {
+                            modifier = Modifier.fillMaxWidth().background(if (cp != null && on) cp.sideOn else sideBg).clickable {
                                 go(key); scope.launch { drawer.close() }
                             }.padding(horizontal = 24.dp, vertical = 14.dp))
+                    }
+                    // 合约页: 侧边栏下方显示危机等级 (同参考图左下角)
+                    if (cp != null) {
+                        Spacer(Modifier.weight(1f))
+                        val ct = core.contract
+                        Text("CONTINGENCY", color = cp.dim, fontWeight = FontWeight.Bold, fontSize = 12.sp,
+                            modifier = Modifier.padding(start = 24.dp))
+                        Text("${if (ct.active) ct.level else com.obliphur.oit.core.Contract.levelOf(ct.draft)}",
+                            color = cp.text, fontWeight = FontWeight.Bold, fontSize = 44.sp, modifier = Modifier.padding(start = 24.dp))
+                        Text(if (ct.active) tr("合约进行中") else tr("挑战任务"), color = cp.tagText, fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 24.dp, bottom = 20.dp)
+                                .background(cp.tag).padding(horizontal = 8.dp, vertical = 2.dp))
                     }
                 }
             }) {
                 Scaffold(
-                    containerColor = o.bg,
+                    containerColor = cp?.bg ?: o.bg,
                     topBar = {
                         TopAppBar(
                             title = { Text(navLabel(page, tr(PAGES.first { it.first == page }.second))) },
                             navigationIcon = {
-                                TextButton({ scope.launch { drawer.open() } }) { Text("☰", fontSize = 22.sp, color = o.text) }
+                                TextButton({ scope.launch { drawer.open() } }) { Text("☰", fontSize = 22.sp, color = cp?.text ?: o.text) }
                             },
-                            colors = TopAppBarDefaults.topAppBarColors(containerColor = o.bg, titleContentColor = o.text),
+                            colors = TopAppBarDefaults.topAppBarColors(containerColor = cp?.side ?: o.bg,
+                                titleContentColor = cp?.text ?: o.text),
                         )
                     },
                     snackbarHost = {

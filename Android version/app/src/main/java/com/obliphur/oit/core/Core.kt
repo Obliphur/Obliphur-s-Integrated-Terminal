@@ -38,6 +38,8 @@ interface Host {
     fun achievementsUnlocked(ids: List<String>) {}
     /** 违反合约的警报 (res/raw/target_alarm.ogg). */
     fun playAlarm() {}
+    /** 开着的应用 (后台的应用, 包名; 不含 OIT 自己 / 桌面 / 系统界面); 没有使用情况访问权限时 null. */
+    fun openApps(): Set<String>? = null
 }
 
 /** VPN 应该处于的状态 (见 MECHANICS 14.2). */
@@ -94,6 +96,10 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     private var lastTick = mono()
     private var lastCheck = -1e9
     private var lastAppSample = mono()
+    private var lastOpenApps = -1e9
+    /** 后台应用数超过上限: 上一次响警报的时刻 (超着时每 2 分钟再响一次). */
+    private var appsOver = false
+    private var appsAlarmAt = -1e9
     private var appSamples = 0
     private var nextHour = LocalDateTime.now().floorHour().plusHours(1)
 
@@ -193,6 +199,10 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             lastAppSample = m
             sampleApp()
         }
+        if (m - lastOpenApps >= Cfg.OPEN_APPS_EVERY) {
+            lastOpenApps = m
+            checkOpenApps()
+        }
         changed()
         host.scheduleWake(nextWake())
     }
@@ -267,6 +277,34 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             Store.append(File(dir, "window_guard.log"), "LOCK     $why  $app")
         }
         host.lockApp(app, why)
+    }
+
+    /** 后台应用数 (电脑上的任务栏窗口数, MECHANICS 14.6): 只检测, 不关应用. 超过上限时响警报 (超着时每 2 分钟再响一次);
+     *  合约的"通道阻塞"按它算违反 (MECHANICS 18). */
+    private fun checkOpenApps() {
+        if (dm.resetting) return
+        val limitOn = settings.bool("WINDOW_LIMIT_ENABLED")
+        val chan = contract.windowLimit()
+        if (!limitOn && chan == 0) return
+        val n = host.openApps()?.size ?: return
+        if (chan > 0) {
+            val id = contract.windowCheck(n)
+            if (id.isNotEmpty()) {
+                contractViolation(tr("后台应用超过 {n} 个", "n" to chan), id)
+                appsAlarmAt = mono()
+            }
+        }
+        val lim = settings.num("WINDOW_LIMIT").toInt()
+        if (!limitOn || n <= lim) {
+            appsOver = false; return
+        }
+        if (!appsOver || mono() - appsAlarmAt >= Cfg.OPEN_APPS_REPEAT) {
+            appsAlarmAt = mono()
+            host.playAlarm()
+            toast(tr("后台开着 {n} 个应用, 超过上限 {x} 个.", "n" to n, "x" to lim), "warn")
+            Store.append(File(dir, "window_guard.log"), "APPS     $n > $lim")
+        }
+        appsOver = true
     }
 
     private fun sampleApp() {

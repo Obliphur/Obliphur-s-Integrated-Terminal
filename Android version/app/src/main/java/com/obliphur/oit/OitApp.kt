@@ -167,6 +167,8 @@ class OitApp : Application(), Host {
 
     override fun lockExempt(pkg: String, whitelist: Boolean) = com.obliphur.oit.service.AppLock.exempt(this, pkg, whitelist)
 
+    override fun openApps(): Set<String>? = AppUsage.openApps(this)
+
     /** 违反合约的警报 (MECHANICS 18). */
     override fun playAlarm() {
         runCatching {

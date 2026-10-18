@@ -550,5 +550,16 @@ object EnStrings {
         "高机动" to "Mobility",
         "黑雾" to "Black Fog",
         "黑雾笼罩: 合约期间不能查看统计数据." to "Black fog: statistics can't be viewed during the contract.",
+        "合约" to "Contract",
+        "合约详情" to "Details",
+        "🗑  清空" to "🗑  Clear",
+        "挑战任务" to "Challenge",
+        "合约页主题" to "Contract page theme",
+        "危机合约" to "Contingency Contract",
+        "跟随界面主题" to "Follow the interface theme",
+        "后台应用数检测" to "Background app check",
+        "后台应用数上限" to "Background app limit",
+        "后台应用超过 {n} 个" to "more than {n} background apps",
+        "后台开着 {n} 个应用, 超过上限 {x} 个." to "{n} apps open in the background, over the limit of {x}.",
     )
 }

@@ -306,6 +306,14 @@ class Contract(private val file: File) {
         return over && !was
     }
 
+    /** 通道阻塞: 后台的应用数 (Android 上的"窗口数") 超过词条的上限. */
+    fun windowCheck(n: Int): String {
+        val lim = windowLimit()
+        val id = terms.firstOrNull { it in WINDOWS } ?: ""
+        if (lim == 0 || id.isEmpty()) return ""
+        return if (edge("win", n > lim)) id else ""
+    }
+
     /** 乐理之灾: 开着音乐播放应用. */
     fun musicCheck(playing: Boolean): String = if (has("music") && edge("music", playing)) "music" else ""
 

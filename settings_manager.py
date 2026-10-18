@@ -196,6 +196,14 @@ SETTINGS_SCHEMA = [
         "desc": "即时生效.界面配色:经典蓝白,或参考 Claude 的米白 / 炭灰配色.",
     },
     {
+        "key": "CONTRACT_THEME", "label": "合约页主题",
+        "kind": "choice", "apply": APPLY_INSTANT,
+        "choices": [("ops", "危机合约"), ("ui", "跟随界面主题")],
+        "fmt": lambda v: "跟随界面主题" if str(v) == "ui" else "危机合约",
+        "desc": "即时生效.合约页 (和合约页上的侧边栏) 的配色.",
+        "page": "contract",
+    },
+    {
         "key": "UPDATE_CHECK", "label": "打开时检查更新",
         "kind": "choice", "apply": APPLY_INSTANT,
         "choices": [("1", "开启 (ON)"), ("0", "关闭 (OFF)")],
@@ -235,6 +243,7 @@ SETTINGS_PAGES = [
     ("net", "联网"),
     ("rules", "规则"),
     ("log", "整点记录"),
+    ("contract", "合约"),
     ("window", "窗口"),
 ]
 

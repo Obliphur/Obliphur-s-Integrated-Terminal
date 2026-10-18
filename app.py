@@ -467,6 +467,7 @@ class BreakTimerApp:
             if key == "reset":
 
                 tk.Frame(side, bg=card).pack(fill="both", expand=True)
+                self._build_side_contract(side)
             b = tk.Button(
                 side, text=label, anchor="w", width=15,
                 font=config.font("nav"), relief="flat", bd=0,
@@ -505,7 +506,8 @@ class BreakTimerApp:
         yield
         self.pages["contract"] = ContractPage(self.content, self.contract, on_start=self.start_contract,
                                               on_abandon=self.abandon_contract,
-                                              net_used=lambda: self.net.used_all)
+                                              net_used=lambda: self.net.used_all,
+                                              on_change=self._paint_sidebar)
         self._prepare_page(self.pages["contract"])
         self.pages["settings"] = SettingsPage(
             self.content, self.settings,
@@ -654,6 +656,7 @@ class BreakTimerApp:
                     bg=COLORS["bg_card"], fg=COLORS["text"],
                     activebackground=COLORS["border"], activeforeground=COLORS["text"]
                 )
+        self._paint_sidebar()
         # 只把目标页挂到界面上, 其余页收起 (不参与布局 / 重画)
         target = self.pages[key]
         if target.winfo_manager() != "grid":
@@ -680,6 +683,60 @@ class BreakTimerApp:
         self.update_log_badge()
         self.update_settings_badge()
 
+
+    # ---- 合约页上的侧边栏: 换成合约页主题的颜色, 下方显示危机等级 (MECHANICS 18) ----
+
+    def _build_side_contract(self, side):
+        from pages.contract_page import OPS
+        P = OPS
+        fr = tk.Frame(side, bg=P["side"])
+        self.side_contract = fr
+        tk.Label(fr, text="CONTINGENCY", bg=P["side"], fg=P["dim"],
+                 font=config.font("small", bold=True)).pack(anchor="w", padx=14)
+        row = tk.Frame(fr, bg=P["side"])
+        row.pack(fill="x", padx=14)
+        self.side_level = tk.Label(row, text="0", bg=P["side"], fg=P["side_on_text"],
+                                   font=config.font("big", bold=True))
+        self.side_level.pack(side="left")
+        tk.Label(row, text=tr("危机等级"), bg=P["side"], fg=P["side_text"],
+                 font=config.font("small", bold=True)).pack(side="left", anchor="s", padx=(8, 0), pady=(0, 10))
+        self.side_state = tk.Label(fr, text="", bg=P["side_on"], fg=P["side_on_text"],
+                                   font=config.font("small", bold=True), padx=8, pady=2)
+        self.side_state.pack(anchor="w", padx=14, pady=(0, 10))
+
+    def _paint_sidebar(self):
+        """合约页 (主题不是"跟随界面主题"时): 侧边栏换成合约页主题的颜色, 下方显示危机等级; 其他页照常."""
+        if not hasattr(self, "sidebar"):
+            return
+        from pages.contract_page import palette
+        P = palette()
+        on = self.current_page == "contract" and P.get("side")
+        side_bg = P["side"] if on else COLORS["bg_card"]
+        cfg(self.sidebar, bg=side_bg, highlightbackground=P["side_rim"] if on else COLORS["border"])
+        for w in self.sidebar.winfo_children():
+            if isinstance(w, tk.Frame) and w is not getattr(self, "side_contract", None):
+                cfg(w, bg=side_bg)
+        cfg(self.topbar, bg=P["line"] if on else COLORS["accent"])
+        for k, b in self.nav_btns.items():
+            if not on:
+                break
+            if k == self.current_page:
+                cfg(b, bg=P["side_on"], fg=P["side_on_text"], activebackground=P["side_on"],
+                    activeforeground=P["side_on_text"])
+            else:
+                cfg(b, bg=P["side"], fg=P["side_text"], activebackground=P["side_hover"],
+                    activeforeground=P["side_on_text"])
+        fr = getattr(self, "side_contract", None)
+        if fr is None:
+            return
+        if on:
+            c = self.contract
+            lv = c.level if c.active else contract_mod.level_of(c.draft)
+            cfg(self.side_level, text=str(lv))
+            cfg(self.side_state, text=tr("合约进行中") if c.active else tr("挑战任务"))
+            show_pack(fr, fill="x", before=self.nav_btns["reset"])
+        else:
+            hide_pack(fr)
 
     def _build_timer_page(self, body):
         bg, card = COLORS["bg"], COLORS["bg_card"]
@@ -1811,7 +1868,7 @@ class BreakTimerApp:
 
     def after_sync_settings(self, keys):
         """同步来的设置生效之后: 和本机修改生效时一样刷新."""
-        if "LANGUAGE" in keys or "THEME" in keys:
+        if "LANGUAGE" in keys or "THEME" in keys or "CONTRACT_THEME" in keys:
             i18n.init_from_config()
             self.root.after(50, self.rebuild_ui)
             return
@@ -1948,6 +2005,7 @@ class BreakTimerApp:
         if "log" in self.pages:
             self.pages["log"].refresh()
         self._refresh_if_visible("contract")
+        self._paint_sidebar()
         if self.contract.fog() and self.current_page in ("stats", "cal"):
             self.show_page("timer")
 
@@ -1978,6 +2036,8 @@ class BreakTimerApp:
                 if not c.active:
                     return
         self._refresh_if_visible("contract")
+        if self.current_page == "contract":
+            self._paint_sidebar()
 
     def start_contract(self, terms):
         c = self.contract

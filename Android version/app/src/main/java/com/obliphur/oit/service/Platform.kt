@@ -346,6 +346,8 @@ object Chime {
 // ════════════════ 前台应用 (应用使用时间统计) ════════════════
 
 object AppUsage {
+    /** UsageEvents.Event.ACTIVITY_DESTROYED: 公开的 SDK 里没有这个常量 (隐藏 API), 值是固定的 24. */
+    private const val ACTIVITY_DESTROYED = 24
     private var lastQuery = 0L
     private var lastPkg: String? = null
     private var home: Set<String>? = null
@@ -362,6 +364,31 @@ object AppUsage {
             setOf("com.android.systemui", "android")
         home = s
         s
+    }
+
+    /**
+     * 开着的应用 (后台的应用数, MECHANICS 14.6): 最近 6 小时的使用事件里, 还有没被销毁的界面
+     * (最后一个事件是 显示 / 暂停 / 停止, 不是销毁) 的应用. 从最近任务里划掉的应用界面会被销毁, 不算.
+     * 不含 OIT 自己, 桌面和系统界面. 没有使用情况访问权限时 null.
+     */
+    fun openApps(ctx: Context): Set<String>? {
+        if (!permitted(ctx)) return null
+        val usm = ctx.getSystemService(UsageStatsManager::class.java)
+        val now = System.currentTimeMillis()
+        val ev = usm.queryEvents(now - 6 * 3600_000L, now)
+        val e = UsageEvents.Event()
+        val last = HashMap<String, Int>()            // 包名/界面 -> 最后一个事件
+        while (ev.hasNextEvent()) {
+            ev.getNextEvent(e)
+            when (e.eventType) {
+                UsageEvents.Event.ACTIVITY_RESUMED, UsageEvents.Event.ACTIVITY_PAUSED,
+                UsageEvents.Event.ACTIVITY_STOPPED, ACTIVITY_DESTROYED ->
+                    last[e.packageName + "/" + e.className] = e.eventType
+            }
+        }
+        val skip = homes(ctx) + ctx.packageName
+        return last.filter { it.value != ACTIVITY_DESTROYED }.keys
+            .map { it.substringBefore('/') }.filter { it !in skip }.toSet()
     }
 
     /** 包名; "" 是空白 (桌面 / 系统界面 / 锁屏); null 是不计入 (屏幕关闭, 没有权限). */

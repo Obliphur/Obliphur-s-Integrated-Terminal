@@ -93,7 +93,7 @@ def daily_quota(day) -> float:
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.21"                         # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.22"                         # 和 GitHub 上发布的版本号比较 (见 updater.py)
 UPDATE_CHECK = 1                              # 打开程序时检查更新
 UPDATE_AUTO = 1                               # 发现新版本时自动下载安装
 OLD_APP_DIR = "mrsTimer"
@@ -119,8 +119,8 @@ WINDOW_FOCUS_EVERY = 10
 
 
 
-WINDOW_W = 1180
-WINDOW_H = 820
+WINDOW_W = 1280
+WINDOW_H = 860
 MIN_WINDOW_W = 980
 MIN_WINDOW_H = 680
 
@@ -245,6 +245,7 @@ DEFAULT_SETTINGS = {
     "UPDATE_CHECK": UPDATE_CHECK,
     "UPDATE_AUTO": UPDATE_AUTO,
     "THEME": "classic",
+    "CONTRACT_THEME": "ops",
     "TICK_CLAMP": TICK_CLAMP,
     "FILL_WINDOW": int(FILL_WINDOW.total_seconds()),
     "QUICK_MULTIPLIER": QUICK_MULTIPLIER,
@@ -396,6 +397,7 @@ THEMES = {
 THEME_NAMES = tuple(THEMES)
 DEFAULT_THEME = "classic"
 THEME = DEFAULT_THEME
+CONTRACT_THEME = "ops"           # 合约页的主题: "ops" 危机合约 / "ui" 跟随界面主题 (pages/contract_page.py)
 
 COLORS = dict(THEMES[DEFAULT_THEME]["colors"])
 CHART_PALETTE = list(THEMES[DEFAULT_THEME]["chart"])
