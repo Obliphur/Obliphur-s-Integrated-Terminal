@@ -117,7 +117,8 @@ fun SettingsScreen(tab: String, setTab: (String) -> Unit, act: MainActivity) {
         }
         // 作者的话: 设置冷静期的理念 (MECHANICS 1.1)
         if (tab == "basic") Flavor(tr("在设计预期上 只要不是有绝对的正当理由 应该很少有改变能坚持过48h的等待期.\n这是一个理智与本能的抗争的常见结果.\n这个软件的一个理念就是放大理智优势,保留本能空间.") +
-            "\n\n" + tr("'放松'方向的改变会被限制,是在希望未来的某一刻,理智只需要占据短暂的上风,就能阻止这个进程.\n为什么'收紧'也需要限制?作者希望用户不要竭泽而渔.你可能想到多的一个小时学习时间有多有价值 但是可能想不到少的一个小时休息时间会对心理健康有多大的压力.所以请在这一段时间好好考虑少的时间/禁用某些关键网站会对你的生活有什么影响."),
+            "\n\n" + tr("'放松'方向的改变会被限制,是在希望未来的某一刻,理智只需要占据短暂的上风,就能阻止这个进程.\n为什么'收紧'也需要限制?作者希望用户不要竭泽而渔.你可能想到多的一个小时学习时间有多有价值 但是可能想不到少的一个小时休息时间会对心理健康有多大的压力.所以请在这一段时间好好考虑少的时间/禁用某些关键网站会对你的生活有什么影响.") +
+            "\n\n" + tr("如果你很有动力,试试合约!"),
             Modifier.padding(top = 16.dp))
     }
 }
@@ -433,17 +434,40 @@ fun ResetScreen() {
             modifier = Modifier.fillMaxWidth())
         DangerButton(tr("🔄  重置并清除数据"), enabled = confirm.trim() == "RESET") { ask = "reset" }
         Flavor(tr("就这样回到一切之初,修正错误的抉择."))
+        // 解除全部绑定: 要等 24 小时, 期间可以取消; 到时间后和所有设备解除绑定, 各自保留数据
+        val s = OitApp.instance.sync
+        val at = s?.unbindAt
+        if (at != null) {
+            PlainButton(tr("✕  取消解除绑定")) {
+                s.cancelUnbind()
+                OitApp.instance.core.toast(tr("已取消解除绑定."))
+            }
+            Dim(tr("将在 {t} 解除和所有设备的绑定", "t" to java.time.LocalDateTime.ofInstant(
+                java.time.Instant.ofEpochMilli(at), java.time.ZoneId.systemDefault()).format(com.obliphur.oit.core.Fmt.MDHM)))
+        } else {
+            val has = s?.peers()?.isNotEmpty() == true
+            PlainButton(tr("🔗  解除所有绑定"), enabled = has) { ask = "unbind" }
+            if (!has) Dim(tr("没有绑定的设备"))
+        }
         Heading(tr("🗑  卸载"))
         DangerButton(tr("🗑  卸载 OIT"), enabled = confirm.trim() == "RESET") { ask = "uninstall" }
     }
     when (ask) {
-        "reset" -> Confirm(tr("重置确认"), tr("这将永久删除全部数据,不可撤销."), true, { ask = "" }) {
+        "reset" -> Confirm(tr("重置确认"), tr("这将永久删除全部数据,不可撤销.") +
+            if (OitApp.instance.sync?.peers()?.isNotEmpty() == true) "\n" + tr("绑定的设备也会清空数据 (绑定保留).") else "",
+            true, { ask = "" }) {
             confirm = ""
             OitApp.instance.resetAll()
         }
-        "uninstall" -> Confirm(tr("卸载"), tr("这将恢复网络并永久删除全部数据,然后打开系统的卸载确认."), true, { ask = "" }) {
+        "unbind" -> Confirm(tr("🔗  解除所有绑定"), tr("24 小时后解除和所有设备的绑定. 各设备的数据都保留, 期间可以取消."),
+            false, { ask = "" }) {
+            OitApp.instance.sync?.requestUnbind()
+        }
+        "uninstall" -> Confirm(tr("卸载"), tr("这将恢复网络并永久删除全部数据,然后打开系统的卸载确认.") +
+            if (OitApp.instance.sync?.peers()?.isNotEmpty() == true) "\n" + tr("绑定的设备也会清空数据, 并解除和本机的绑定.") else "",
+            true, { ask = "" }) {
             confirm = ""
-            OitApp.instance.resetAll()
+            OitApp.instance.resetAll(uninstall = true)
             ctx.startActivity(Intent(Intent.ACTION_DELETE, Uri.parse("package:${ctx.packageName}")))
         }
     }

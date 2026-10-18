@@ -23,7 +23,7 @@ class Contract(private val file: File) {
         /** 初始目标生命值: 每违反一次减一, 减到 0 合约失败. */
         const val VIOLATION_LIMIT = 4
         const val HISTORY_KEEP = 30
-        const val HARD_LEVEL = 13
+        const val HARD_LEVEL = 20
 
         // 成系列的 (有好几档的) 在前, 界面上放在左边; 零散的 (只有一档的) 在后, 放在右边.
         val TERMS = listOf(

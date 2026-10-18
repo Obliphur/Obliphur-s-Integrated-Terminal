@@ -24,6 +24,13 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
     override fun changed() = core.changed()
     override fun appVersion(): String = com.obliphur.oit.BuildConfig.VERSION_NAME
 
+    /** 别的设备重置 / 卸载了, 请本机也清空数据: 回复对方之后再做 (MECHANICS 9). */
+    override fun wipeRequested(wipeId: String, sender: String, name: String) {
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            app.resetAll(wipeId = wipeId, exclude = sender, by = name)
+        }, 300)
+    }
+
     // ---- 开发者模式: 子端跟着母端 ----
     override fun devMode() = core.settings.devMode
     override fun setDevMode(on: Boolean) {

@@ -327,8 +327,18 @@ def detect_state(paths: Paths, ps=powershell, backend=None) -> dict:
     }
 
 
+def _wipe_and_unpair(my_id: str, peer: dict) -> bool:
+    """请一台绑定的设备清空 OIT 的数据, 并解除和本机的绑定 (MECHANICS 9.1); 对方是不认识清空请求的旧版本时,
+    退回旧的做法: 只让它解除绑定, 删掉它保留的本机数据."""
+    import devsync
+    st = devsync.send_wipe_to(my_id, peer, devsync.SyncService.new_wipe_id(), True)
+    if st == 404:
+        return devsync.send_forget(my_id, peer)
+    return st == 200
+
+
 def forget_peers(paths: Paths, send=None) -> int:
-    """读 sync_state.json, 告诉每台绑定的设备删掉本机的数据. 返回成功通知了几台."""
+    """读 sync_state.json, 请每台绑定的设备清空数据并解除和本机的绑定. 返回成功通知了几台."""
     try:
         with open(os.path.join(paths.data_dir, "sync_state.json"), "r", encoding="utf-8") as f:
             st = json.load(f)
@@ -337,8 +347,7 @@ def forget_peers(paths: Paths, send=None) -> int:
     except Exception:
         return 0
     if send is None:
-        import devsync
-        send = devsync.send_forget
+        send = _wipe_and_unpair
     return sum(1 for p in peers if send(my_id, p))
 
 
@@ -386,10 +395,10 @@ def run_uninstall(paths: Paths, remove_program: bool, log,
         log(tr("   没有被禁用的物理网卡."), "ok")
 
     log(tr("④ 删除数据…"), "info")
-    # 先让绑定的设备删掉它们保留的本机数据 (网络这时已经恢复)
+    # 先请绑定的设备清空数据, 并解除和本机的绑定 (网络这时已经恢复)
     told = forget_peers(paths, forget)
     if told:
-        log(tr("   已通知 {n} 台绑定的设备删除本机的数据.", n=told), "ok")
+        log(tr("   已请 {n} 台绑定的设备清空数据并解除绑定.", n=told), "ok")
     left = delete_data(paths)
     for p in left:
         log(tr("   删不掉 (可能被占用): {p}", p=p), "warn")
@@ -836,7 +845,7 @@ def _selftest():
     assert not looks_like_program_dir(os.path.abspath(os.sep))
     assert not schedule_folder_removal(tmp, spawn=lambda a: None)
 
-    # ── 卸载前通知绑定的设备删掉本机的数据 (读 sync_state.json)
+    # ── 卸载前请绑定的设备清空数据并解除绑定 (读 sync_state.json)
     p = fresh()
     with open(os.path.join(p.data_dir, "sync_state.json"), "w", encoding="utf-8") as f:
         json.dump({"device": {"id": "me"}, "peers": {"a": {"key": "00", "addr": "x", "port": 1},

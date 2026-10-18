@@ -251,6 +251,11 @@ class BreakTimerApp:
         self._recover_focus()
         if self._first_run:
             self.root.after(600, self._show_welcome)
+        who = self.sync.pop_wiped_by()
+        if who:
+            # 别的设备重置 / 卸载时请本机清空了数据 (MECHANICS 9)
+            self.root.after(900, lambda: toast.notice(tr("🔄  数据已清空"),
+                                                      tr("{name} 重置了 OIT, 本机的数据也一起清空了.", name=who)))
         self.root.after(800, self.check_achievements)
 
 
@@ -809,11 +814,6 @@ class BreakTimerApp:
             font=config.font("body", bold=True)
         )
         self.lbl_today.pack(side="left", padx=(0, 30))
-        self.lbl_yesterday = tk.Label(
-            stats_frame, text=tr("昨日: {h:.1f} h").format(h=0.0), bg=card,
-            fg=COLORS["text_dim"], font=config.font("body")
-        )
-        self.lbl_yesterday.pack(side="left")
         # 绑定的其他设备此刻的状态 (MECHANICS 15)
         self.lbl_peers = tk.Label(inner, text="", bg=card, fg=COLORS["text_dim"],
                                   font=config.font("small"), anchor="w", justify="left")
@@ -1566,10 +1566,8 @@ class BreakTimerApp:
     def refresh_display(self):
         if self.contract.fog():
             self.lbl_today.config(text=tr("今日: ???"))
-            self.lbl_yesterday.config(text=tr("昨日: ???"))
             return
         self.lbl_today.config(text=tr("今日: {h:.1f} h").format(h=self.dm.get_today_hours()))
-        self.lbl_yesterday.config(text=tr("昨日: {h:.1f} h").format(h=self.dm.get_yesterday_hours()))
 
 
     def _start_midnight_timer(self):
@@ -1708,6 +1706,7 @@ class BreakTimerApp:
         self._maybe_relay()
         self._check_idle_nudge()
         self._check_setup_period()
+        self._check_unbind()
         self.check_achievements()
         self.apply_job = self.root.after(5000, self._schedule_apply_check)
 
@@ -3126,6 +3125,59 @@ class BreakTimerApp:
         self.btn_reset.state(["disabled"])
 
         flavor(page, tr("就这样回到一切之初,修正错误的抉择."), bg=bg).pack(fill="x", padx=26, pady=(4, 16))
+        self._build_unbind_box(page)
+
+    def _build_unbind_box(self, page):
+        """解除全部绑定: 要等 24 小时, 期间可以取消; 到时间后和所有设备解除绑定, 各自保留数据."""
+        bg = COLORS["bg"]
+        box = tk.Frame(page, bg=bg)
+        box.pack(fill="x", padx=26, pady=(0, 12))
+        self.btn_unbind = ttk.Button(box, text=tr("🔗  解除所有绑定"), command=self.on_unbind)
+        self.btn_unbind.pack(side="left", ipadx=10)
+        self.lbl_unbind = tk.Label(box, text="", bg=bg, fg=COLORS["text_dim"], font=config.font("small"),
+                                   anchor="w", justify="left")
+        self.lbl_unbind.pack(side="left", padx=(12, 0))
+
+    def _sync_unbind_box(self):
+        if not hasattr(self, "btn_unbind"):
+            return
+        at = self.sync.unbind_at
+        if at:
+            when = datetime.fromtimestamp(at / 1000)
+            cfg(self.btn_unbind, text=tr("✕  取消解除绑定"))
+            cfg(self.lbl_unbind, text=tr("将在 {t} 解除和所有设备的绑定", t=f"{when:%m-%d %H:%M}"))
+            self.btn_unbind.state(["!disabled"])
+        else:
+            cfg(self.btn_unbind, text=tr("🔗  解除所有绑定"))
+            peers = self.sync.peers()
+            cfg(self.lbl_unbind, text="" if peers else tr("没有绑定的设备"))
+            self.btn_unbind.state(["!disabled" if peers else "disabled"])
+
+    def on_unbind(self):
+        if self.sync.unbind_at:
+            self.sync.cancel_unbind()
+            self._log_notice("SYNC unbind-all cancelled")
+            toast.info(tr("已取消解除绑定."))
+        else:
+            if not self.sync.peers():
+                return
+            if not toast.ask(tr("24 小时后解除和所有设备的绑定. 各设备的数据都保留, 期间可以取消."),
+                             title=tr("🔗  解除所有绑定")):
+                return
+            self.sync.request_unbind()
+            self._log_notice("SYNC unbind-all requested")
+        self._sync_unbind_box()
+
+    def _check_unbind(self):
+        """每 5 秒: 解除全部绑定的计划到时间了就解除."""
+        try:
+            if self.sync.check_unbind():
+                self._log_notice("SYNC unbind-all done")
+                toast.info(tr("已解除和所有设备的绑定."))
+            if self.current_page == "reset":
+                self._sync_unbind_box()
+        except Exception as e:
+            self._log_window(f"ERROR    unbind {type(e).__name__}: {e}")
 
     def _on_confirm_change(self, *_):
         ok = self.var_confirm.get().strip() == "RESET"
@@ -3133,29 +3185,42 @@ class BreakTimerApp:
 
     def refresh_reset(self):
         self.var_confirm.set("")
+        self._sync_unbind_box()
 
     def on_reset(self):
         if self.var_confirm.get().strip() != "RESET":
             return
         if not toast.ask(
-            tr("这将永久删除全部数据,不可撤销."),
+            tr("这将永久删除全部数据,不可撤销.") + ("\n" + tr("绑定的设备也会清空数据 (绑定保留).")
+                                                    if self.sync.peers() else ""),
             title=tr("重置确认"), danger=True
         ):
             return
         self.do_reset()
 
-    def do_reset(self):
-        """重置: 先解除网络限制 (还原系统代理, 启用网卡), 删除全部数据, 再重新打开程序.
-        新进程找不到设置文件, 就像第一次安装: 弹出介绍窗口, 开始配置期, 网络按默认设置接管."""
+    def do_reset(self, wipe_id: str = None, exclude=(), by: str = ""):
+        """重置: 先请绑定的设备也清空 OIT 的数据 (绑定保留), 解除网络限制 (还原系统代理, 启用网卡),
+        删除全部数据 (只留下设备同步的绑定), 再重新打开程序. 新进程找不到设置文件, 就像第一次安装:
+        弹出介绍窗口, 开始配置期, 网络按默认设置接管.
+        wipe_id / exclude / by: 是别的设备 (名字 by) 请本机清空的 —— 同一个请求转告给本机绑定的其他设备."""
+        if self.dm.resetting:
+            return
         self.dm.resetting = True
         self._cancel_jobs()
         self._close_check_win()
+        kept = None
         try:
-            self.sync.forget_me()          # 其他设备上保留的本机数据也删掉 (MECHANICS 9)
+            self.sync.send_wipe(wipe_id or self.sync.new_wipe_id(), exclude=exclude)   # MECHANICS 9
+            kept = self.sync.kept_state(by)
         except Exception:
             pass
         self.sync.stop()
         self.net.release()
         self.dm.erase_all_data()
+        if kept:
+            try:
+                devsync.write_state(self.sync.file, kept)
+            except OSError:
+                pass
         self.restart_requested = True      # main.py 在主循环结束后重新打开程序
         self.root.destroy()

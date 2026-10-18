@@ -47,6 +47,8 @@ SYNC_EVERY = 10            # 秒: 母端每隔这么久向每台子端发一次�
 # 设备离线 (Timer 页显示"离线", 这段专注记为空闲, MECHANICS 8.4): 和它同步失败, 或这么久没有它的消息.
 # 比同步间隔多留 5 秒 (同步本身要花时间, 正好 10 秒会每一轮都闪一下"离线"); 只是转交过来的设备再多等一轮
 OFFLINE_MS = (SYNC_EVERY + 5) * 1000
+UNBIND_WAIT_MS = 24 * 3600 * 1000       # 解除全部绑定要等这么久 (期间可以取消)
+WIPES_KEEP = 50                         # 记住最近这么多个处理过的清空请求
 OFFLINE_FWD_MS = (2 * SYNC_EVERY + 5) * 1000
 UPDATE_MAX = 160 * 1024 * 1024    # 设备之间直接传的安装包最大多少
 OFFER_TTL = 1800                  # 秒: 发出的安装包多久之内可以来取
@@ -236,13 +238,16 @@ class SyncService:
             with open(self.file, "r", encoding="utf-8") as f:
                 d = json.load(f)
             if isinstance(d, dict):
-                for k in ("peers", "track", "ledgers", "status", "gone"):
+                for k in ("peers", "track", "ledgers", "status", "gone", "wipe_out"):
                     if not isinstance(d.get(k), dict):
                         d[k] = {}
+                if not isinstance(d.get("wipes_seen"), list):
+                    d["wipes_seen"] = []
                 return d
         except Exception:
             pass
-        return {"device": None, "peers": {}, "track": {}, "ledgers": {}, "status": {}, "gone": {}}
+        return {"device": None, "peers": {}, "track": {}, "ledgers": {}, "status": {}, "gone": {},
+                "wipe_out": {}, "wipes_seen": []}
 
     def _save(self):
         if self.dead:
@@ -596,6 +601,130 @@ class SyncService:
                     pass
             threading.Thread(target=go, daemon=True).start()
 
+    # ---- 清空数据 (重置 / 卸载, MECHANICS 9, 15.1) ----
+
+    @staticmethod
+    def new_wipe_id() -> str:
+        return f"{_now_ms()}-{secrets.token_hex(3)}"
+
+    def saw_wipe(self, wipe_id: str) -> bool:
+        """这个清空请求以前处理过吗; 没有就记下 (转告来转告去只处理一次)."""
+        with self.lock:
+            seen = self.state.setdefault("wipes_seen", [])
+            if wipe_id in seen:
+                return True
+            seen.append(wipe_id)
+            del seen[:-WIPES_KEEP]
+        self._save()
+        return False
+
+    def send_wipe(self, wipe_id: str, exclude=(), timeout: float = 3.0):
+        """重置: 请每台绑定的设备 (exclude 除外) 清空 OIT 的数据, 绑定不动. 连不上 (或对方是不认识清空请求的旧版本)
+        的记进 wipe_out, 下次连上时先送到; 送到之前不和它合并数据 (免得它的旧数据又回来). 最多等 timeout 秒."""
+        self.saw_wipe(wipe_id)
+        peers = {pid: p for pid, p in self.peers().items() if pid not in exclude}
+        ok = {}
+
+        def go(pid, p):
+            ok[pid] = send_wipe_to(self.my_id, p, wipe_id, False, timeout) == 200
+        threads = [threading.Thread(target=go, args=(pid, p), daemon=True) for pid, p in peers.items()]
+        for t in threads:
+            t.start()
+        end = time.time() + timeout
+        for t in threads:
+            t.join(max(0.0, end - time.time()))
+        with self.lock:
+            for pid in peers:
+                if not ok.get(pid):
+                    self.state["wipe_out"][pid] = wipe_id
+        self._save()
+
+    def kept_state(self, wiped_by: str = "") -> dict:
+        """重置后留下的同步状态: 本机的 id, 绑定 (密钥, 地址), 已删除的设备, 没送到的清空请求, 解除绑定的计划.
+        账, 状态, 修改时间全部清掉 (所有设备的数据都清空了). wiped_by: 是哪台设备请本机清空的 (重开后提示)."""
+        with self.lock:
+            peers = {k: dict(v, last_err="", init=False) for k, v in self.state["peers"].items()}
+            d = {"device": dict(self.state["device"]), "peers": peers, "track": {}, "ledgers": {}, "status": {},
+                 "gone": dict(self.state["gone"]), "wipe_out": dict(self.state.get("wipe_out") or {}),
+                 "wipes_seen": list(self.state.get("wipes_seen") or [])}
+            if self.state.get("unbind_at"):
+                d["unbind_at"] = self.state["unbind_at"]
+        if wiped_by:
+            d["wiped_by"] = wiped_by
+        return d
+
+    def pop_wiped_by(self) -> str:
+        """重开后: 是哪台设备请本机清空了数据 (只提示一次)."""
+        with self.lock:
+            who = self.state.pop("wiped_by", "")
+        if who:
+            self._save()
+        return str(who)
+
+    def _deliver_wipe(self, peer_id: str, p: dict):
+        """把没送到的清空请求送过去. True 送到了."""
+        wid = (self.state.get("wipe_out") or {}).get(peer_id)
+        if not wid:
+            return True
+        if send_wipe_to(self.my_id, p, wid, False, 4.0) != 200:
+            return False
+        with self.lock:
+            self.state["wipe_out"].pop(peer_id, None)
+        self._save()
+        return True
+
+    def _on_wipe(self, env: dict):
+        """别的设备请本机清空数据 (它重置 / 卸载了). unpair: 同时解除和它的绑定 (卸载)."""
+        sender = str(env.get("from") or "")
+        p = self.peers().get(sender)
+        if not p:
+            return 401, {"error": "unpaired"}
+        try:
+            body = unseal(bytes.fromhex(p["key"]), env)
+        except SealError as e:
+            return 403, {"error": str(e)}
+        wid = str(body.get("wipe") or "")
+        if not wid:
+            return 400, {"error": "bad-request"}
+        name = str(p.get("name") or "?")
+        if body.get("unpair"):
+            self.runner.call(lambda: self.unpair(sender, notify=False))
+        with self.lock:
+            self.state.get("wipe_out", {}).pop(sender, None)    # 它自己也清空了, 本机欠它的清空请求不用再送
+        if not self.saw_wipe(wid):
+            self.runner.call(lambda: self.local.wipe_requested(wid, sender, name))
+        return 200, {}
+
+    # ---- 解除全部绑定 (要等 24 小时, 期间可以取消) ----
+
+    @property
+    def unbind_at(self):
+        """计划解除全部绑定的时刻 (毫秒), 没有计划时 None."""
+        v = self.state.get("unbind_at")
+        return int(v) if v else None
+
+    def request_unbind(self):
+        with self.lock:
+            self.state["unbind_at"] = _now_ms() + UNBIND_WAIT_MS
+        self._save()
+
+    def cancel_unbind(self):
+        with self.lock:
+            self.state.pop("unbind_at", None)
+        self._save()
+
+    def check_unbind(self) -> bool:
+        """到时间了就解除和所有设备的绑定 (通知对方, 各自保留数据). 返回这次解除了没有."""
+        at = self.unbind_at
+        if not at or _now_ms() < at:
+            return False
+        with self.lock:
+            self.state.pop("unbind_at", None)
+        for pid in list(self.peers()):
+            self.unpair(pid, notify=True)
+        self._save()
+        return True
+
     # ---- 文档 (每一项单独记修改时间) ----
 
     def _stamp(self, local_docs: dict) -> dict:
@@ -741,6 +870,16 @@ class SyncService:
 
     def _sync_once(self, peer_id: str, p: dict, init: bool, quiet: bool):
         k = bytes.fromhex(p["key"])
+        if peer_id in (self.state.get("wipe_out") or {}):
+            # 本机重置过, 对方还没清空: 先送清空请求, 送到之前不合并它的数据
+            if self._deliver_wipe(peer_id, p):
+                return None
+            if not quiet:
+                with self.lock:
+                    q = self.state["peers"].get(peer_id)
+                    if q:
+                        q["last_err"] = "wipe-pending"
+            return False
         try:
             if init:
                 # 子端第一次: 只要母端的内容, 自己的文档不发过去
@@ -751,8 +890,8 @@ class SyncService:
             st, reply = self._http(p["addr"], p["port"], "POST", "/oit/v1/sync", env, timeout=10.0)
             if st == 401:
                 raise RuntimeError("unpaired")
-            if st == 409 and reply.get("error") == "initializing":
-                return None             # 对方是子端, 正在向本机要初始化的内容: 不是出错
+            if st == 409 and reply.get("error") in ("initializing", "wipe-pending"):
+                return None             # 对方是子端在初始化, 或对方要先把清空请求送过来: 不是出错
             if st != 200:
                 raise RuntimeError(reply.get("error") or f"HTTP {st}")
             body = unseal(k, reply)
@@ -792,6 +931,8 @@ class SyncService:
             return 401, {"error": "unpaired"}
         if p.get("init"):
             return 409, {"error": "initializing"}
+        if str(env.get("from")) in (self.state.get("wipe_out") or {}):
+            return 409, {"error": "wipe-pending"}      # 先等本机把清空请求送过去, 不收它的旧数据
         k = bytes.fromhex(p["key"])
         try:
             body = unseal(k, env)
@@ -1019,8 +1160,9 @@ class SyncService:
             if not self.proxy_ok():
                 continue
             # 母端向子端发请求; 子端只在还没初始化或按了"立即同步"时向母端发
+            wipe_out = self.state.get("wipe_out") or {}
             peers = {pid: p for pid, p in self.peers().items()
-                     if p.get("mother") == self.my_id or p.get("init") or manual}
+                     if p.get("mother") == self.my_id or p.get("init") or manual or pid in wipe_out}
             failed = [pid for pid in peers if self._sync_with(pid) is False]
             # 有设备连不上: 地址可能变了 (DHCP), 广播找一下再试一次
             if failed and time.time() - last_discover > 60:
@@ -1189,6 +1331,24 @@ def _ipv4_nets() -> list:
 GONE_KEEP_MS = 62 * 86400_000      # 记住"哪台设备已经重置 / 卸载了"多久 (统计只保留本月和上月)
 
 
+def send_wipe_to(my_id: str, peer: dict, wipe_id: str, unpair: bool, timeout: float = 3.0) -> int:
+    """请一台绑定的设备清空 OIT 的数据 (unpair: 同时解除和本机的绑定). 返回 HTTP 状态 (连不上时 0;
+    404 = 对方是不认识清空请求的旧版本). uninstall.py 也用它."""
+    try:
+        env = seal(bytes.fromhex(peer["key"]), my_id, {"wipe": wipe_id, "unpair": bool(unpair)})
+        st, _ = SyncService._http(peer["addr"], peer["port"], "POST", "/oit/v1/wipe", env, timeout=timeout)
+        return st
+    except Exception:
+        return 0
+
+
+def write_state(path: str, state: dict):
+    """重置后把留下的同步状态写回去 (数据目录刚被删掉)."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(state, f, ensure_ascii=False)
+
+
 def send_forget(my_id: str, peer: dict, timeout: float = 3.0) -> bool:
     """告诉一台绑定的设备: 本机要重置 / 卸载了, 解除绑定并删掉本机的数据. uninstall.py 也用它."""
     try:
@@ -1267,6 +1427,8 @@ def _make_handler(svc: SyncService):
                 return self._send(*svc._on_sync(body))
             if self.path == "/oit/v1/unpair":
                 return self._send(*svc._on_unpair(body))
+            if self.path == "/oit/v1/wipe":
+                return self._send(*svc._on_wipe(body))
             if self.path == "/oit/v1/offer":
                 return self._send(*svc._on_offer(body))
             if self.path == "/oit/v1/want":
@@ -1361,6 +1523,11 @@ class _FakeLocal:
 
     def update_failed(self, err):
         self.got = ("failed", err)
+
+    wiped = None
+
+    def wipe_requested(self, wipe_id, sender, name):
+        self.wiped = (wipe_id, sender, name)
 
 
 def _selftest():
@@ -1572,6 +1739,9 @@ def _selftest():
         sx.state["peers"]["zz"] = {"name": "Z", "platform": "android", "addr": "1.2.3.4", "port": 1,
                                    "key": "00", "mother": sx.my_id}
         sx.state["status"]["zz"] = {"ts": 10, "timer": "idle"}
+        sx.state["peers"]["yy"] = dict(sx.state["peers"]["zz"], name="Y")
+        sx.state["unbind_at"] = _now_ms() - 1
+        assert sx.check_unbind() and "yy" not in sx.peers() and sx.unbind_at is None, "到时间解除全部绑定"
         sx.unpair("zz", notify=False)
         sx.merge({"status": {"zz": {"ts": 20, "timer": "idle"}}, "ledgers": {"zz": {"rev": 20, "name": "Z"}}})
         assert "zz" not in sx.state["status"] and "zz" not in sx.state["ledgers"], sx.state
@@ -1580,6 +1750,37 @@ def _selftest():
         sx.state["status"]["old"] = {"ts": _now_ms(), "timer": "idle"}
         sx.state["ledgers"]["old"] = {"rev": 1, "name": "Old"}
         assert sx.device_states() == [] and "old" not in sx.state["status"] and "old" in sx.state["gone"]
+
+        # 清空请求 (新的重置): A 清空数据, 绑定不动; 同一个请求只处理一次
+        assert sa._sync_with(sb.my_id)
+        wid = SyncService.new_wipe_id()
+        sb.send_wipe(wid, timeout=3.0)
+        assert la.wiped == (wid, sb.my_id, "B") and sb.my_id in sa.peers() and not sb.state["wipe_out"]
+        la.wiped = None
+        assert send_wipe_to(sb.my_id, sb.peers()[sa.my_id], wid, False) == 200 and la.wiped is None, "只处理一次"
+        kept = sb.kept_state("A")
+        assert kept["peers"] and not kept["ledgers"] and not kept["track"] and kept["wiped_by"] == "A"
+        # 连不上: 记下来; 送到之前对方的同步不收 (wipe-pending), 下一轮先送清空请求
+        real = sb.state["peers"][sa.my_id]["port"]
+        sb.state["peers"][sa.my_id]["port"] = 1
+        wid2 = SyncService.new_wipe_id()
+        sb.send_wipe(wid2, timeout=1.0)
+        assert sb.state["wipe_out"] == {sa.my_id: wid2} and la.wiped is None
+        sb.state["peers"][sa.my_id]["port"] = real
+        assert sa._sync_with(sb.my_id) is None, "对方要先送清空请求: 不算同步失败"
+        assert sb._sync_with(sa.my_id) is None and la.wiped == (wid2, sb.my_id, "B") and not sb.state["wipe_out"]
+        # 卸载: 清空并解除和它的绑定
+        la.wiped = None
+        assert send_wipe_to(sb.my_id, sb.peers()[sa.my_id], SyncService.new_wipe_id(), True) == 200
+        assert la.wiped and sb.my_id not in sa.peers() and sb.my_id in sa.state["gone"]
+        sa.state["gone"].pop(sb.my_id)
+        sa.state["peers"][sb.my_id] = dict(sb.peers()[sa.my_id], name="B", addr="127.0.0.1", port=sb.port,
+                                           mother=sa.my_id)
+        # 解除全部绑定: 24 小时后才解除, 期间可以取消
+        sb.request_unbind()
+        assert sb.unbind_at and not sb.check_unbind() and sb.peers()
+        sb.cancel_unbind()
+        assert sb.unbind_at is None
 
         # B 重置: 让 A 解除绑定并删掉 A 保留的 B 的数据, A 再转告别的设备 (gone)
         assert sa._sync_with(sb.my_id)

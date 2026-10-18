@@ -85,6 +85,8 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     var motherFresh: () -> Boolean = { true }
     /** 此刻离线的设备: (名字, 最后一次有它消息的时刻, 毫秒). */
     var offlineDevices: () -> List<Pair<String, Long>> = { emptyList() }
+    /** 解除全部绑定的计划到时间了就解除 (返回这次解除了没有). */
+    var checkUnbind: () -> Boolean = { false }
     /** 本机这次打开程序 (开始同步) 的时刻 (毫秒). */
     var syncStartedMs: () -> Long = { System.currentTimeMillis() }
     /** 合约因为哪台设备离线而失败. */
@@ -201,6 +203,10 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             checkPendingSettings()
             timer.check()
             checkSetupPeriod()
+            if (runCatching { checkUnbind() }.getOrDefault(false)) {
+                logNotice("SYNC unbind-all done")
+                toast(tr("已解除和所有设备的绑定."))
+            }
             checkAchievements()
             // 子端: 母端 2 分钟没同步过了 (关掉了 / 断开了), 开发者模式就关掉
             if (settings.devMode && followsMother() && !motherFresh()) setDevMode(false)

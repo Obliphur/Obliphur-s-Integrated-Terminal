@@ -33,7 +33,7 @@ def marks(level: int) -> str:
     return "▲" * int(level)
 
 
-HARD_LEVEL = 13                  # 总等级到这里就提示"难度极大"
+HARD_LEVEL = 20                  # 总等级到这里就提示"难度极大"
 
 RIM4 = 4                         # 这个等级的词条用红色边框
 

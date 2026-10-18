@@ -60,6 +60,7 @@ class OitApp : Application(), Host {
         Notifier.channels(this)
         startSync()
         core.start()
+        wipedNotice()
         CoreService.start(this)
     }
 
@@ -92,6 +93,7 @@ class OitApp : Application(), Host {
         core.offlineSpans = { a, b -> s.offlineSpans(a, b) }
         core.offlineDevices = { s.deviceStates().filter { !it.online }.map { it.name to it.seen } }
         core.syncStartedMs = { s.startedMs }
+        core.checkUnbind = { s.checkUnbind() }
         core.dm.offlineSpans = { a, b -> s.offlineSpans(a, b) }
         core.trackOffline = { s.trackOffline() }
         core.net.peerNet = { com.obliphur.oit.sync.SyncService.peerNet(s.peerLedgers(), core.net.date) }
@@ -350,12 +352,27 @@ class OitApp : Application(), Host {
 
     // ---- 重置 ----
 
-    /** 删除全部数据并像第一次安装那样重新开始 (MECHANICS 9). */
-    fun resetAll() {
-        // 其他设备上保留的本机数据也删掉 (MECHANICS 9). 不能在界面线程上联网: 放到后台线程, 最多等 3 秒
-        sync?.let { s -> Thread { s.forgetMe() }.apply { start(); join(3500) } }
+    /** 删除全部数据并像第一次安装那样重新开始 (MECHANICS 9). 先请绑定的设备也清空数据:
+     *  重置时绑定保留 (只留下设备同步的绑定), 卸载 (uninstall) 时同时解除绑定.
+     *  wipeId / exclude / by: 是别的设备 (名字 by) 请本机清空的 —— 同一个请求转告给本机绑定的其他设备. */
+    @Volatile private var resetting = false
+
+    fun resetAll(wipeId: String? = null, exclude: String? = null, by: String = "", uninstall: Boolean = false) {
+        if (resetting) return
+        resetting = true
+        var kept: org.json.JSONObject? = null
+        // 不能在界面线程上联网: 放到后台线程, 最多等 3.5 秒
+        sync?.let { s ->
+            Thread {
+                runCatching {
+                    s.sendWipe(wipeId ?: com.obliphur.oit.sync.SyncService.newWipeId(), exclude, uninstall)
+                    if (!uninstall) kept = s.keptState(by)
+                }
+            }.apply { start(); join(3500) }
+        }
         sync?.stop()
         core.eraseEverything()
+        kept?.let { com.obliphur.oit.sync.SyncService.writeState(oitDir, it) }
         BlockLog.clear()
         Notifier.syncNotices(this, emptyList())
         core = Core(oitDir, this) { SystemClock.elapsedRealtime() / 1000.0 }
@@ -363,5 +380,14 @@ class OitApp : Application(), Host {
         startSync()
         core.start()
         noticesChanged()
+        resetting = false
+        wipedNotice()
+    }
+
+    /** 别的设备重置 / 卸载时请本机清空了数据: 重开后提示一次. */
+    fun wipedNotice() {
+        val who = sync?.popWipedBy() ?: return
+        if (who.isNotEmpty()) core.notice(tr("🔄  数据已清空"), tr("{name} 重置了 OIT, 本机的数据也一起清空了.", "name" to who),
+            listOf(com.obliphur.oit.core.NoticeButton(tr("知道了"), "ok", true)))
     }
 }
