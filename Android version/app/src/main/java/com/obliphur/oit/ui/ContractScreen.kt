@@ -121,11 +121,16 @@ fun contractColors(): ContractColors {
 }
 
 /** 六边形 (左右两个尖). */
+/** 放进格子里, 居中的正六边形 (平顶). 格子本身也按正六边形的比例 (高 = 宽 × √3 / 2). */
 private val HEX = GenericShape { size, _ ->
-    val k = size.width * 0.2f
-    moveTo(k, 0f); lineTo(size.width - k, 0f); lineTo(size.width, size.height / 2)
-    lineTo(size.width - k, size.height); lineTo(k, size.height); lineTo(0f, size.height / 2); close()
+    val r = minOf(size.width / 2, size.height / SQRT3)
+    val cx = size.width / 2
+    val cy = size.height / 2
+    val hh = r * SQRT3 / 2
+    moveTo(cx - r / 2, cy - hh); lineTo(cx + r / 2, cy - hh); lineTo(cx + r, cy)
+    lineTo(cx + r / 2, cy + hh); lineTo(cx - r / 2, cy + hh); lineTo(cx - r, cy); close()
 }
+private val SQRT3 = kotlin.math.sqrt(3f)
 
 /** 整页缩小到一屏放得下 (手机横屏的高度不够, 词条板也可能太宽): 先按可用宽度 (至少 minWidth) 量一次;
  *  太高时按比例放宽再量一次 (放宽后文字换行少, 缩小得也少), 再整体缩小. 左右空出来的地方是页面的底色. */
@@ -214,10 +219,11 @@ fun ContractScreen() {
             val gap = BOARD_GAP
             val n = Contract.BOARD_COLS
             val tileW = maxOf(BOARD_TILE, minOf(84.dp, (maxWidth - bandW - gap * (n + 1)) / n))
+            val tileH = tileW * (SQRT3 / 2)
             Row {
                 Column(Modifier.width(bandW).background(p.band).padding(vertical = gap),
                     verticalArrangement = Arrangement.spacedBy(gap)) {
-                    for (lv in 1..Contract.MAX_LEVEL) Row(Modifier.height(44.dp).padding(horizontal = 6.dp),
+                    for (lv in 1..Contract.MAX_LEVEL) Row(Modifier.height(tileH).padding(horizontal = 6.dp),
                         verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text("Level", color = p.bandDim, fontSize = 8.sp)
@@ -233,7 +239,7 @@ fun ContractScreen() {
                         for (col in 0 until Contract.BOARD_COLS) {
                             val t = Contract.TERMS.firstOrNull { it.level == lv && Contract.LAYOUT[it.id] == col }
                             if (t == null) {
-                                Spacer(Modifier.width(tileW).height(44.dp)); continue
+                                Spacer(Modifier.width(tileW).height(tileH)); continue
                             }
                             val on = t.id in sel
                             val off = !on && (active || Contract.blockedBy(t.id, sel) != null)
@@ -241,7 +247,7 @@ fun ContractScreen() {
                             val fg = if (on) p.tileOnText else if (off) p.tileOffText else p.tileText
                             val rim = if (t.level >= Contract.RIM_LEVEL) p.tileRim4
                                 else if (on) p.tileOnRim else if (off) p.tileOffRim else p.tileRim
-                            Box(Modifier.width(tileW).height(44.dp).background(fill, HEX)
+                            Box(Modifier.width(tileW).height(tileH).background(fill, HEX)
                                 .border(if (t.level >= Contract.RIM_LEVEL) 3.dp else 2.dp, rim, HEX)
                                 .clickable {
                                     tapped = t.id

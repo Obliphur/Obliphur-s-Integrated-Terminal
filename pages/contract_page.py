@@ -94,7 +94,7 @@ class ContractPage(tk.Frame):
     最下面一条: 清空 | 危机等级 | 时长 / 完成后的休息时间 | 开始行动. 合约进行中时只能看, 不能改.
     颜色按 设置 → 合约 的"合约页主题"."""
 
-    TILE_W, TILE_H, GAP, BAND_W = 68, 64, 7, 148
+    TILE_W, GAP, BAND_W = 68, 7, 148              # 格子是正六边形: 高 = 宽 × √3 / 2
 
     def __init__(self, master, contract, on_start=None, on_abandon=None, net_used=None, on_change=None,
                  blocked=None, rec_text=None, on_stop_screen=None):
@@ -174,7 +174,8 @@ class ContractPage(tk.Frame):
 
     def _build_board(self, body):
         P, s = self.P, config.scaled
-        self.tw, self.th, self.gap, self.band = s(self.TILE_W), s(self.TILE_H), s(self.GAP), s(self.BAND_W)
+        self.tw, self.gap, self.band = s(self.TILE_W), s(self.GAP), s(self.BAND_W)
+        self.th = round(self.tw * math.sqrt(3) / 2)
         cols = C.BOARD_COLS
         self.board_w = self.band + self.gap + cols * (self.tw + self.gap)
         self.board_h = self.gap + C.MAX_LEVEL * (self.th + self.gap) + s(26)
@@ -198,8 +199,10 @@ class ContractPage(tk.Frame):
 
     @staticmethod
     def _hexagon(x, y, w, h):
-        k = w * 0.2
-        return (x + k, y, x + w - k, y, x + w, y + h / 2, x + w - k, y + h, x + k, y + h, x, y + h / 2)
+        """放进 w × h 的格子里, 居中的正六边形 (平顶)."""
+        r = min(w / 2, h / math.sqrt(3))
+        cx, cy, hh = x + w / 2, y + h / 2, r * math.sqrt(3) / 2
+        return (cx - r / 2, cy - hh, cx + r / 2, cy - hh, cx + r, cy, cx + r / 2, cy + hh, cx - r / 2, cy + hh, cx - r, cy)
 
     def _draw_board(self):
         P, cv, s = self.P, self.canvas, config.scaled
