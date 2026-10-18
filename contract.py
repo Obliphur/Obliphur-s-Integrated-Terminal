@@ -80,15 +80,15 @@ SUPPLY_WARN = (180, 60)                         # 支援短缺: 还差这么多�
 # 总等级 → 完成合约时给的休息时间 (分钟, 固定; 按结束时的等级)
 REST_TABLE = [(0, 20), (1, 24), (4, 28), (7, 32), (10, 36), (13, 40), (16, 44), (19, 50)]
 
-# 乐理之灾: 常见的音乐播放软件 (exe 名, 小写) 和音频文件扩展名 (窗口标题里出现就算在放)
+# 乐理之灾: 常见的音乐播放软件 (exe 名, 小写) 和音频文件扩展名 (窗口标题里出现就算在放).
+# 视频播放器 (PotPlayer, VLC, MPC, KMPlayer, Windows 媒体播放器 …) 不在名单里: 只有用它们打开音频文件 (看标题) 才算.
 MUSIC_EXES = {
     "cloudmusic.exe", "qqmusic.exe", "kugou.exe", "kwmusic.exe", "kuwomusic.exe", "spotify.exe",
     "foobar2000.exe", "aimp.exe", "itunes.exe", "applemusic.exe", "music.ui.exe",
-    "microsoft.media.player.exe", "wmplayer.exe", "musicbee.exe", "winamp.exe", "mediamonkey.exe",
+    "musicbee.exe", "winamp.exe", "mediamonkey.exe",
     "dopamine.exe", "lx-music-desktop.exe", "yesplaymusic.exe", "listen1.exe", "tidal.exe",
     "deezer.exe", "amazon music.exe", "qianqian.exe", "baidumusic.exe", "migu music.exe",
-    "musicplayer2.exe", "potplayermini64.exe", "potplayermini.exe", "potplayer.exe", "vlc.exe",
-    "mpc-hc64.exe", "mpc-hc.exe", "mpc-be64.exe", "mpc-be.exe", "kmplayer.exe", "groove.exe",
+    "musicplayer2.exe", "groove.exe",
 }
 AUDIO_EXTS = (".mp3", ".flac", ".wav", ".ogg", ".m4a", ".aac", ".wma", ".ape", ".opus", ".ncm", ".kgm")
 
@@ -649,6 +649,7 @@ class Contract:
 def _selftest():
     import tempfile
     assert level_of(["long3", "isolate", "last"]) == 8
+    assert not {"vlc.exe", "potplayermini64.exe", "mpc-hc64.exe", "wmplayer.exe"} & MUSIC_EXES, "视频播放器不算"
     assert rest_minutes(0) == 20 and rest_minutes(3) == 24 and rest_minutes(4) == 28
     assert rest_minutes(18) == 44 and rest_minutes(19) == 50 and rest_reward(19) == 50 * 60
     assert conflicts("long1", "long3") and conflicts("isolate", "info2"), "同一组互相冲突"

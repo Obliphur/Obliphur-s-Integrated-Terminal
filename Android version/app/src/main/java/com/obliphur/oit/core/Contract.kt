@@ -89,7 +89,7 @@ class Contract(private val file: File) {
         /** 总等级 → 完成合约时给的休息时间 (分钟, 固定; 按结束时的等级). */
         private val REST_TABLE = listOf(0 to 20, 1 to 24, 4 to 28, 7 to 32, 10 to 36, 13 to 40, 16 to 44, 19 to 50)
 
-        /** 乐理之灾: 常见的音乐播放应用 (包名). */
+        /** 乐理之灾: 常见的音乐播放应用 (包名). 视频播放器 (VLC, MX Player …) 不算. */
         val MUSIC_APPS = setOf(
             "com.netease.cloudmusic", "com.tencent.qqmusic", "com.kugou.android", "com.kugou.android.lite",
             "cn.kuwo.player", "cn.kuwo.kwmusichd", "com.spotify.music", "com.apple.android.music",
@@ -98,7 +98,7 @@ class Contract(private val file: File) {
             "com.oppo.music", "com.heytap.music", "com.android.bbkmusic", "com.meizu.media.music",
             "com.tencent.blackkey", "cmccwm.mobilemusic", "com.luna.music", "com.ximalaya.ting.android",
             "com.soundcloud.android", "com.aspiro.tidal", "deezer.android.app", "com.amazon.mp3",
-            "in.krosbits.musicolet", "com.maxmpz.audioplayer", "org.videolan.vlc", "com.poweramp.v3",
+            "in.krosbits.musicolet", "com.maxmpz.audioplayer", "com.poweramp.v3",
             "com.foobar2000.foobar2000", "com.salt.music", "com.kanjian.music",
         )
 
