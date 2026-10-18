@@ -580,7 +580,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         val lv = rec.optInt("level")
         when (result) {
             "completed" -> {
-                var msg = tr("危机等级 {lv} · 休息倍率 ×{m}", "lv" to lv, "m" to numText(Contract.restMult(lv)))
+                var msg = tr("危机等级 {lv}", "lv" to lv)
                 if (reward > 0) msg += "\n" + tr("积攒的休息时间 +{t}.", "t" to fmtMs(reward.toDouble()))
                 notice(tr("⚔  合约完成"), msg, listOf(NoticeButton(tr("知道了"), "ok", true)), page = "contract")
             }
@@ -588,7 +588,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             else -> {
                 var msg = if (result == "failed") tr("违反词条 {n} 次, 合约终止.", "n" to rec.optInt("violations"))
                 else tr("空闲超过 30 分钟, 合约终止.")
-                if (pending >= 1) msg += "\n" + tr("积攒的 {t} 休息时间没有给出.", "t" to fmtMs(pending))
+                if (pending >= 1) msg += "\n" + tr("完成后的 {n} 分钟休息时间没有给出.", "n" to Math.round(pending / 60))
                 notice(tr("⚔  合约失败"), msg, listOf(NoticeButton(tr("知道了"), "ok", true)), page = "contract")
             }
         }

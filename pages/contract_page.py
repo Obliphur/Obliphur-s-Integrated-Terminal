@@ -84,7 +84,7 @@ def palette() -> dict:
 
 class ContractPage(tk.Frame):
     """合约页 (MECHANICS 18): 词条板 (行 = 等级, 列 = 类型, 同一类型在同一列), 下面是已选中的词条 (两栏),
-    最下面一条: 清空 | 危机等级 | 时长 / 休息倍率 | 开始行动. 合约进行中时只能看, 不能改.
+    最下面一条: 清空 | 危机等级 | 时长 / 完成后的休息时间 | 开始行动. 合约进行中时只能看, 不能改.
     颜色按 设置 → 合约 的"合约页主题"."""
 
     TILE_W, TILE_H, GAP, BAND_W = 76, 64, 7, 148
@@ -314,7 +314,7 @@ class ContractPage(tk.Frame):
             lbl.bind("<Configure>", lambda e, l=lbl: l.configure(wraplength=max(80, e.width - 4)))
         self.area.bind_children()
 
-    # ---- 最下面一条: 清空 | 危机等级 | 时长 / 倍率 | 难度提示 | 开始行动 ----
+    # ---- 最下面一条: 清空 | 危机等级 | 时长 / 完成后的休息时间 | 难度提示 | 开始行动 ----
 
     def _button(self, parent, text, bg, hover, fg, command, big=False):
         b = tk.Label(parent, text=text, bg=bg, fg=fg, cursor="hand2",
@@ -401,7 +401,7 @@ class ContractPage(tk.Frame):
         cfg(self.lbl_level, text=str(level))
         self._draw_strip(level)
         info = [tr("时长 {t}", t=fmt_hm(C.duration_of(c.orig if active else sel))),
-                tr("休息倍率 ×{m:g}", m=C.rest_mult(level))]
+                tr("完成后休息 +{n} 分钟", n=C.rest_minutes(level))]
         if orig != level:
             info.insert(0, tr("开始时 {n}", n=orig))
         cfg(self.lbl_info, text="\n".join(info))
@@ -424,8 +424,6 @@ class ContractPage(tk.Frame):
             cfg(self.lbl_left, text=fmt_hms((end - now).total_seconds()))
             cfg(self.lbl_viol, text=tr("违反 {n} / {m}", n=c.violations, m=c.violation_limit))
             live = f"{c.start_at:%H:%M} — {end:%m-%d %H:%M}"
-            if c.reward >= 1:
-                live += "   ·   " + tr("完成后休息 +{t}", t=fmt_ms(c.reward))
             left = c.net_left(self.net_used())
             if left is not None:
                 live += "   ·   " + tr("合约的联网额度还剩 {t}", t=fmt_hm(left))
@@ -449,7 +447,7 @@ class ContractPage(tk.Frame):
             text = tr("上次合约: {r} · 危机等级 {lv} · {when}", r=tr(RESULTS.get(last.get("result"), "")),
                       lv=last.get("level", 0), when=when)
             if last.get("reward"):
-                text += "   ·   " + tr("休息 +{t}", t=fmt_ms(last["reward"]))
+                text += "   ·   " + tr("休息 +{n} 分钟", n=round(last["reward"] / 60))
             cfg(self.lbl_last, text=text)
         else:
             cfg(self.lbl_last, text="")

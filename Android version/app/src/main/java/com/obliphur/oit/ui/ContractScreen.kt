@@ -39,7 +39,6 @@ import com.obliphur.oit.core.Fmt
 import com.obliphur.oit.core.contractResult
 import com.obliphur.oit.core.fmtHm
 import com.obliphur.oit.core.fmtMs
-import com.obliphur.oit.core.numText
 import com.obliphur.oit.core.parseIso
 import com.obliphur.oit.core.secondsBetween
 import com.obliphur.oit.core.tr
@@ -186,7 +185,6 @@ fun ContractScreen() {
                     fontWeight = FontWeight.Bold, fontSize = 18.sp)
             }
             var line = "${c.startAt?.format(Fmt.HM)} — ${end.format(Fmt.MDHM)}"
-            if (c.reward >= 1) line += "   ·   " + tr("完成后休息 +{t}", "t" to fmtMs(c.reward))
             c.netLeft(core.net.usedAll)?.let { line += "   ·   " + tr("合约的联网额度还剩 {t}", "t" to fmtHm(it)) }
             Text(line, color = p.dim, fontSize = 13.sp)
             c.idleLeft(now)?.let {
@@ -293,11 +291,11 @@ fun ContractScreen() {
             val b = parseIso(last.optString("end"))
             var text = tr("上次合约: {r} · 危机等级 {lv} · {when}", "r" to tr(contractResult(last.optString("result"))),
                 "lv" to last.optInt("level"), "when" to if (a != null && b != null) "${a.format(Fmt.MDHM)} — ${b.format(Fmt.HM)}" else "")
-            if (last.optInt("reward") > 0) text += "   ·   " + tr("休息 +{t}", "t" to fmtMs(last.optInt("reward").toDouble()))
+            if (last.optInt("reward") > 0) text += "   ·   " + tr("休息 +{n} 分钟", "n" to Math.round(last.optInt("reward") / 60.0))
             Text(text, color = p.dim, fontSize = 12.sp)
         }
 
-        // 最下面一条: 清空 | 危机等级 | 时长 / 倍率 | 难度提示 | 开始行动
+        // 最下面一条: 清空 | 危机等级 | 时长 / 完成后的休息时间 | 难度提示 | 开始行动
         val level = if (active) c.level else Contract.levelOf(sel)
         val orig = if (active) c.origLevel else level
         Row(Modifier.fillMaxWidth().background(p.bar).padding(horizontal = 12.dp, vertical = 8.dp),
@@ -312,7 +310,7 @@ fun ContractScreen() {
             var info = ""
             if (orig != level) info += tr("开始时 {n}", "n" to orig) + "\n"
             info += tr("时长 {t}", "t" to fmtHm(Contract.durationOf(if (active) c.orig else sel))) + "\n" +
-                tr("休息倍率 ×{m}", "m" to numText(Contract.restMult(level)))
+                tr("完成后休息 +{n} 分钟", "n" to Contract.restMinutes(level))
             Text(info, color = p.text, fontSize = 12.sp, modifier = Modifier.padding(start = 14.dp).weight(1f))
             if (level >= Contract.HARD_LEVEL)
                 Text(tr("⚠  当前合约难度极大 请谨慎行动"), color = p.warn, fontSize = 12.sp, fontWeight = FontWeight.Bold,
@@ -329,13 +327,13 @@ fun ContractScreen() {
             val dur = Contract.durationOf(c.draft)
             Confirm(tr("▶  开始行动"), tr("危机等级 {lv} · 时长 {t} · 到 {at}", "lv" to lv, "t" to fmtHm(dur),
                 "at" to now.plusSeconds(dur.toLong()).format(Fmt.HM)) + "\n" +
-                tr("休息倍率 ×{m}", "m" to numText(Contract.restMult(lv))), true, { ask = "" }) {
+                tr("完成后休息 +{n} 分钟", "n" to Contract.restMinutes(lv)), true, { ask = "" }) {
                 core.startContract(c.draft)
             }
         }
         "end" -> {
             var msg = tr("提前结束合约?")
-            if (c.reward >= 1) msg += "\n" + tr("积攒的 {t} 休息时间不会给出.", "t" to fmtMs(c.reward))
+            if (c.reward >= 1) msg += "\n" + tr("完成后的 {n} 分钟休息时间不会给出.", "n" to Math.round(c.reward / 60))
             Confirm(tr("■  提前结束"), msg, true, { ask = "" }) { core.abandonContract() }
         }
     }

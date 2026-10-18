@@ -61,7 +61,7 @@ class Contract(private val file: File) {
         val REST = mapOf("tired1" to 0.9, "tired2" to 0.75, "tired3" to 0.6)
         val WINDOWS = mapOf("chan1" to 4, "chan2" to 3)
 
-        /** 总等级 → 完成后的休息时间 (分钟, 20 分钟 = ×1); 倍率 = 分钟 / 20, 和"休息时间倍率"相乘. */
+        /** 总等级 → 完成合约时给的休息时间 (分钟, 固定; 按结束时的等级). */
         private val REST_TABLE = listOf(0 to 20, 1 to 24, 4 to 28, 7 to 32, 10 to 36, 13 to 40, 16 to 44, 19 to 50)
 
         /** 乐理之灾: 常见的音乐播放应用 (包名). */
@@ -80,7 +80,8 @@ class Contract(private val file: File) {
         fun levelOf(terms: Collection<String>) = terms.sumOf { BY_ID[it]?.level ?: 0 }
 
         fun restMinutes(level: Int): Int = REST_TABLE.last { level >= it.first }.second
-        fun restMult(level: Int): Double = restMinutes(level) / 20.0
+        /** 完成合约时存进积攒的休息时间的秒数. */
+        fun restReward(level: Int): Int = restMinutes(level) * 60
 
         fun durationOf(terms: Collection<String>): Double =
             BASE_SECONDS * (terms.mapNotNull { DURATION[it] }.maxOrNull() ?: 1.0)
@@ -150,8 +151,8 @@ class Contract(private val file: File) {
     val violationLimit get() = if (has("last")) 1 else VIOLATION_LIMIT
     /** 合约中已经给出的休息时间 (秒, 已乘疲惫). */
     val rest get() = if (active) live.dbl("rest") else 0.0
-    /** 完成时多给的休息时间 (秒) = 合约中给出的休息时间 × (按现在的等级的倍率 - 1); 结算按降级后的等级. */
-    val reward get() = rest * (restMult(level) - 1.0)
+    /** 完成时给的休息时间 (秒): 按现在的等级查表 (固定); 结算按降级后的等级. */
+    val reward get() = if (active) restReward(level).toDouble() else 0.0
     val owner: String get() = live.optString("owner", "")
     val id: Long get() = live.optLong("id", 0)
 
@@ -320,8 +321,8 @@ class Contract(private val file: File) {
     /** 抑制: 用了快速访问. */
     fun quickCheck(): String = if (has("suppress")) "suppress" else ""
 
-    /** 一段专注换来的休息时间 (秒, 已乘"休息时间倍率"). 返回现在就给的部分 (乘了疲惫);
-     *  按总等级多给的部分完成时才给 (reward). */
+    /** 一段专注换来的休息时间 (秒, 已乘"休息时间倍率"). 返回给出的休息时间 (乘了疲惫);
+     *  完成合约的奖励另外按等级给 (reward). */
     fun bookRest(seconds: Double): Double {
         val now = maxOf(0.0, seconds) * restFactor()
         live.put("rest", r1(rest + now))
@@ -329,7 +330,7 @@ class Contract(private val file: File) {
         return now
     }
 
-    /** 完成之后才结束的专注, 开始于刚完成的合约里: 按那个合约的疲惫和倍率给. */
+    /** 完成之后才结束的专注, 开始于刚完成的合约里: 按那个合约的疲惫给. */
     fun bookRestAfter(seconds: Double, start: LocalDateTime): Double {
         val h = last ?: return seconds
         val hs = parseIso(h.optString("start"))
@@ -337,7 +338,7 @@ class Contract(private val file: File) {
         if (h.optString("result") == "completed" && hs != null && he != null && !start.isBefore(hs) && start.isBefore(he)) {
             val t = h.optJSONArray("terms")?.strings() ?: emptyList()
             val f = t.mapNotNull { REST[it] }.minOrNull() ?: 1.0
-            return seconds * f * restMult(h.optInt("level", levelOf(t)))
+            return seconds * f
         }
         return seconds
     }

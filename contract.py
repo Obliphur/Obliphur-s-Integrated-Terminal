@@ -56,7 +56,7 @@ NET_SHARE = {"info1": 0.75, "info2": 0.5, "info3": 0.25, "isolate": 0.0}
 REST = {"tired1": 0.9, "tired2": 0.75, "tired3": 0.6}
 WINDOWS = {"chan1": 4, "chan2": 3}
 
-# 总等级 → 完成后的休息时间 (分钟, 20 分钟 = ×1); 倍率 = 分钟 / 20, 和"休息时间倍率"相乘
+# 总等级 → 完成合约时给的休息时间 (分钟, 固定; 按结束时的等级)
 REST_TABLE = [(0, 20), (1, 24), (4, 28), (7, 32), (10, 36), (13, 40), (16, 44), (19, 50)]
 
 # 乐理之灾: 常见的音乐播放软件 (exe 名, 小写) 和音频文件扩展名 (窗口标题里出现就算在放)
@@ -84,8 +84,9 @@ def rest_minutes(level: int) -> int:
     return out
 
 
-def rest_mult(level: int) -> float:
-    return rest_minutes(level) / 20.0
+def rest_reward(level: int) -> int:
+    """完成合约时存进积攒的休息时间的秒数."""
+    return rest_minutes(level) * 60
 
 
 def duration_of(terms) -> int:
@@ -223,8 +224,8 @@ class Contract:
 
     @property
     def reward(self) -> float:
-        """完成时多给的休息时间 (秒) = 合约中给出的休息时间 × (按现在的等级的倍率 - 1); 结算按降级后的等级."""
-        return self.rest * (rest_mult(self.level) - 1.0)
+        """完成时给的休息时间 (秒): 按现在的等级查表 (固定); 结算按降级后的等级."""
+        return float(rest_reward(self.level)) if self.active else 0.0
 
     @property
     def owner(self) -> str:
@@ -412,9 +413,8 @@ class Contract:
         return min((REST[t] for t in self.terms if t in REST), default=1.0)
 
     def book_rest(self, seconds: float, end: datetime = None) -> float:
-        """一段专注换来的休息时间 (秒, 已乘"休息时间倍率"). 返回现在就给的部分.
-        合约中: 先乘疲惫的倍率; 按总等级多给的部分 (×倍率 - 1) 存进合约, 完成时才给.
-        刚完成的合约里开始的专注 (完成后才结束): 直接按倍率给."""
+        """一段专注换来的休息时间 (秒, 已乘"休息时间倍率"). 返回给出的休息时间.
+        合约中: 乘疲惫的倍率 (记进合约里给出的休息时间). 完成合约的奖励另外按等级给 (reward)."""
         seconds = max(0.0, float(seconds))
         end = end or datetime.now()
         if self.active and self.start_at and self.start_at <= end:
@@ -425,13 +425,13 @@ class Contract:
         return seconds
 
     def book_rest_after(self, seconds: float, start: datetime) -> float:
-        """完成之后才结束的专注, 开始于刚完成的合约里: 按那个合约的疲惫和倍率给."""
+        """完成之后才结束的专注, 开始于刚完成的合约里: 按那个合约的疲惫给."""
         h = self.last
         hs, he = _parse(h.get("start")), _parse(h.get("end"))
         if h.get("result") == "completed" and hs and he and hs <= start < he:
             terms = h.get("terms") or []
             f = min((REST[t] for t in terms if t in REST), default=1.0)
-            return seconds * f * rest_mult(int(h.get("level", level_of(terms))))
+            return seconds * f
         return seconds
 
     def take_first_break(self) -> bool:
@@ -497,7 +497,7 @@ def _selftest():
     import tempfile
     assert level_of(["long3", "isolate", "last"]) == 8
     assert rest_minutes(0) == 20 and rest_minutes(3) == 24 and rest_minutes(4) == 28
-    assert rest_minutes(18) == 44 and rest_minutes(19) == 50 and rest_mult(19) == 2.5
+    assert rest_minutes(18) == 44 and rest_minutes(19) == 50 and rest_reward(19) == 50 * 60
     assert conflicts("long1", "long3") and conflicts("isolate", "info2"), "同一组互相冲突"
     assert not conflicts("isolate", "chan1") and not conflicts("chan2", "isolate") and conflicts("suppress", "isolate")
     assert not conflicts("jam", "music")
@@ -530,9 +530,9 @@ def _selftest():
     assert c.downgrade("music") == "music" and c.term_level("music") == 1 and c.level == 1 + 1 + 1 + 2
     assert c.downgrade("music") == "" and not c.has("music")
     assert c.quick_check() == ""
-    # 休息: 疲惫 ×0.75; 完成时按降级后的等级给 (等级 4 → ×1.4)
+    # 休息: 疲惫 ×0.75; 完成时按降级后的等级给固定的时间 (等级 4 → 28 分钟)
     assert abs(c.book_rest(1000, t0 + timedelta(hours=1)) - 750) < 1e-6
-    assert abs(c.reward - 750 * 0.4) < 1e-6
+    assert c.level == 4 and c.reward == 28 * 60
     # 空闲 30 分钟结束
     assert c.due(t0 + timedelta(hours=1), True) == ("", None)
     assert c.idle_left(t0 + timedelta(hours=1, minutes=10)) == 20 * 60
@@ -553,13 +553,13 @@ def _selftest():
     assert c.hour_locked(datetime(2026, 10, 18, 10), datetime(2026, 10, 18, 13)), "结束后照样锁定"
     assert not c.hour_locked(datetime(2026, 10, 18, 12), datetime(2026, 10, 18, 15))
 
-    # 完成: 给出积攒的休息时间, 第一次休息的结转比例
-    c.start(["last"], owner="me", now=t0)
-    assert c.violation_limit == 1 and c.book_rest(600, t0) == 600 and abs(c.reward - 120) < 1e-6
+    # 完成: 按等级给固定的休息时间 (等级 2 → 24 分钟), 第一次休息的结转比例
+    c.start(["last", "tired1"], owner="me", now=t0)
+    assert c.violation_limit == 1 and abs(c.book_rest(600, t0) - 540) < 1e-6 and c.reward == 24 * 60
     assert c.due(t0 + timedelta(hours=4), False) == ("completed", t0 + timedelta(hours=4))
     rec = c.finish("completed", t0 + timedelta(hours=4, minutes=3))
-    assert rec["reward"] == 120 and rec["end"] == (t0 + timedelta(hours=4)).isoformat()
-    assert c.book_rest_after(600, t0 + timedelta(hours=3)) == 720
+    assert rec["reward"] == 24 * 60 and rec["end"] == (t0 + timedelta(hours=4)).isoformat()
+    assert abs(c.book_rest_after(600, t0 + timedelta(hours=3)) - 540) < 1e-6 and c.reward == 0, "完成后才结束的专注只乘疲惫"
     assert c.book_rest_after(600, t0 + timedelta(hours=5)) == 600
     assert c.take_first_break() and not c.take_first_break()
     assert abs(Contract.first_break_rate(0.8) - 0.9) < 1e-9
@@ -567,7 +567,7 @@ def _selftest():
     # 最近结束的那个, 不是最近开始的那个
     c.start(["long1"], now=t0 - timedelta(days=1))
     c.finish("abandoned", t0 - timedelta(days=1) + timedelta(hours=1))
-    assert c.last["result"] == "completed" and c.book_rest_after(600, t0 + timedelta(hours=3)) == 720
+    assert c.last["result"] == "completed" and abs(c.book_rest_after(600, t0 + timedelta(hours=3)) - 540) < 1e-6
 
     # 同步: 记录按 id 合并
     d = Contract(tempfile.mkdtemp())

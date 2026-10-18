@@ -2048,7 +2048,7 @@ class BreakTimerApp:
         dur = contract_mod.duration_of(terms)
         end = datetime.now() + timedelta(seconds=dur)
         msg = tr("危机等级 {lv} · 时长 {t} · 到 {at}", lv=lv, t=fmt_hm(dur), at=f"{end:%H:%M}")
-        msg += "\n" + tr("休息倍率 ×{m:g}", m=contract_mod.rest_mult(lv))
+        msg += "\n" + tr("完成后休息 +{n} 分钟", n=contract_mod.rest_minutes(lv))
         if not toast.ask(msg, title=tr("▶  开始行动"), ok_text=tr("开始行动"), danger=True):
             return
         c.start(terms, owner=self.sync.my_id)
@@ -2065,7 +2065,7 @@ class BreakTimerApp:
             return
         msg = tr("提前结束合约?")
         if c.reward >= 1:
-            msg += "\n" + tr("积攒的 {t} 休息时间不会给出.", t=fmt_ms(c.reward))
+            msg += "\n" + tr("完成后的 {n} 分钟休息时间不会给出.", n=round(c.reward / 60))
         if not toast.ask(msg, title=tr("■  提前结束"), danger=True):
             return
         self.end_contract("abandoned")
@@ -2089,7 +2089,7 @@ class BreakTimerApp:
         self._contract_changed()
         lv = rec.get("level", 0)
         if result == "completed":
-            msg = tr("危机等级 {lv} · 休息倍率 ×{m:g}", lv=lv, m=contract_mod.rest_mult(lv))
+            msg = tr("危机等级 {lv}", lv=lv)
             if reward > 0:
                 msg += "\n" + tr("积攒的休息时间 +{t}.", t=fmt_ms(reward))
             toast.notice(tr("⚔  合约完成"), msg)
@@ -2099,7 +2099,7 @@ class BreakTimerApp:
             msg = (tr("违反词条 {n} 次, 合约终止.", n=rec.get("violations", 0)) if result == "failed"
                    else tr("空闲超过 30 分钟, 合约终止."))
             if pending >= 1:
-                msg += "\n" + tr("积攒的 {t} 休息时间没有给出.", t=fmt_ms(pending))
+                msg += "\n" + tr("完成后的 {n} 分钟休息时间没有给出.", n=round(pending / 60))
             toast.notice(tr("⚔  合约失败"), msg)
         if self.sync.peers():
             self.sync.sync_now()
