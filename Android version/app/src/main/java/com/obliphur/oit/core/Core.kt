@@ -670,7 +670,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             }
             "abandoned" -> toast(tr("合约已提前结束."))
             else -> {
-                var msg = if (result == "failed") tr("违反词条 {n} 次, 合约终止.", "n" to rec.optInt("violations"))
+                var msg = if (result == "failed") tr("目标生命值归零 (违反 {n} 次), 合约终止.", "n" to rec.optInt("violations"))
                 else tr("空闲超过 30 分钟, 合约终止.")
                 if (pending >= 1) msg += "\n" + tr("完成后的 {n} 分钟休息时间没有给出.", "n" to Math.round(pending / 60))
                 notice(tr("⚔ 行动失败"), msg, listOf(NoticeButton(tr("知道了"), "ok", true)), page = "contract")
@@ -693,7 +693,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             else -> tr("{a} 降为 {b}", "a" to old, "b" to tr(Contract.BY_ID[new]!!.name))
         }
         logNotice("CONTRACT violation ${c.violations}/${c.violationLimit}: ${id.ifEmpty { "-" }} -> ${new.ifEmpty { "-" }}  $why")
-        toast(tr("⚠ 违反合约: {why} ({n} / {m})", "why" to why, "n" to c.violations, "m" to c.violationLimit) +
+        toast(tr("⚠ 违反合约: {why} · 目标生命值 {n} / {m}", "why" to why, "n" to c.life, "m" to c.violationLimit) +
             "\n" + after + "  ·  " + tr("危机等级 {lv}", "lv" to c.level), "warn", long = true)
         if (over) endContract("failed")
         changed()

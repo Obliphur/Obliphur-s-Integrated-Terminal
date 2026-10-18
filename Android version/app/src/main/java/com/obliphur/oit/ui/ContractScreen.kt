@@ -178,13 +178,13 @@ fun ContractScreen() {
             if (active) Text(tr("合约进行中"), color = p.danger, fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(end = 12.dp))
             // 右上角: 合约期间的特别规则 (两栏)
-            val n = if (active) c.violationLimit else if ("last" in c.draft) 1 else Contract.VIOLATION_LIMIT
+            val n = if (active) c.violationLimit else Contract.lifeOf(c.draft)
             Row(Modifier.background(p.rules).border(1.dp, p.rulesRim).padding(horizontal = 8.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(tr("合约期间"), color = p.danger, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                Text(listOf(tr("· 违反 {n} 次 / 空闲 30 分钟: 失败", "n" to n), tr("· 整点记录超时未填写: 违反 1 次"),
-                    tr("· \"我累了\"不可用")).joinToString("\n"), color = p.dim, fontSize = 10.sp, lineHeight = 13.sp)
-                Text(listOf(tr("· 暂停休息: 合约前积攒的时间不打折"),
+                Text(listOf(tr("· 目标生命值 {n}: 违反一次 -1, 归零即失败", "n" to n), tr("· 空闲 30 分钟: 失败"),
+                    tr("· 整点记录超时未填写: 违反 1 次")).joinToString("\n"), color = p.dim, fontSize = 10.sp, lineHeight = 13.sp)
+                Text(listOf(tr("· \"我累了\"不可用"), tr("· 暂停休息: 合约前积攒的时间不打折"),
                     tr("· 合约中得到的休息时间结束后作废 (奖励照常)")).joinToString("\n"),
                     color = p.dim, fontSize = 10.sp, lineHeight = 13.sp)
             }
@@ -196,8 +196,9 @@ fun ContractScreen() {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(hms(secondsBetween(now, end)), color = p.text, fontSize = 34.sp, fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f))
-                Text(tr("违反 {n} / {m}", "n" to c.violations, "m" to c.violationLimit), color = p.danger,
-                    fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                // 目标生命值: 每违反一次减一, 减到 0 合约失败
+                Text(tr("目标生命值") + "  " + "♥".repeat(c.life) + "♡".repeat(c.violationLimit - c.life) +
+                    "  ${c.life} / ${c.violationLimit}", color = p.danger, fontWeight = FontWeight.Bold, fontSize = 18.sp)
             }
             var line = "${c.startAt?.format(Fmt.HM)} — ${end.format(Fmt.MDHM)}"
             c.netLeft(core.net.usedAll)?.let { line += "   ·   " + tr("合约的联网额度还剩 {t}", "t" to fmtHm(it)) }

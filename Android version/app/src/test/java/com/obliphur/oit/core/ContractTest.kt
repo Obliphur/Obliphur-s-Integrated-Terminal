@@ -15,7 +15,10 @@ class ContractTest {
 
     @Test
     fun terms() {
-        assertEquals(8, Contract.levelOf(listOf("long3", "isolate", "last")))
+        assertEquals(10, Contract.levelOf(listOf("long3", "isolate", "last")))
+        assertEquals(4, Contract.lifeOf(emptyList())); assertEquals(3, Contract.lifeOf(listOf("retreat1")))
+        assertEquals(2, Contract.lifeOf(listOf("retreat2"))); assertEquals(1, Contract.lifeOf(listOf("last")))
+        assertTrue(Contract.conflicts("retreat1", "last"))
         assertEquals(20, Contract.restMinutes(0)); assertEquals(24, Contract.restMinutes(3))
         assertEquals(28, Contract.restMinutes(4)); assertEquals(44, Contract.restMinutes(18))
         assertEquals(50 * 60, Contract.restReward(19))
@@ -25,13 +28,13 @@ class ContractTest {
         assertFalse(Contract.conflicts("jam", "music"))
         assertTrue(Contract.conflicts("short1", "short2")); assertFalse(Contract.conflicts("seal", "fine"))
         assertTrue(Contract.LAYOUT["short2"]!! < Contract.LAYOUT["suppress"]!!)
-        assertEquals(Contract.SERIES.size + 5, Contract.BOARD_COLS)
+        assertEquals(Contract.SERIES.size + 4, Contract.BOARD_COLS)
         assertEquals(Contract.SERIES.size + 1, Contract.LAYOUT["fine"])     // 零散的挨着排, 不留空
         assertEquals(listOf("long2", "isolate", "jam"), Contract.clean(listOf("long2", "long1", "x", "isolate", "suppress", "jam")))
         assertEquals(listOf("isolate", "chan2"), Contract.clean(listOf("isolate", "chan2")))
         val best = Contract.clean(listOf("long3", "move2", "info3", "suppress", "jam", "music", "fog", "tired3", "chan2", "last",
             "short2", "seal", "fine"))
-        assertEquals(24, Contract.levelOf(best))
+        assertEquals(26, Contract.levelOf(best))
         assertEquals(4 * 3600 * 1.6, Contract.durationOf(listOf("long3")), 1e-6)
     }
 
@@ -60,14 +63,15 @@ class ContractTest {
         // 空闲 30 分钟
         assertNull(c.due(t0.plusHours(1), true))
         assertEquals("idle" to t0.plusMinutes(90), c.due(t0.plusMinutes(91), true))
-        // 3 次结束; 整点记录超时未填写也算 (不降词条)
-        c.start(listOf("suppress", "info3", "long1"), "me", t0)
-        assertEquals("suppress", c.quickCheck())
+        // 目标生命值: 默认 4, 退路封锁-I 只有 3; 整点记录超时未填写也算 (不降词条)
+        assertEquals(4, c.violationLimit)
+        c.start(listOf("suppress", "info3", "long1", "retreat1"), "me", t0)
+        assertEquals(3, c.life); assertEquals("suppress", c.quickCheck())
         assertEquals(false to "", c.violate("suppress")); assertFalse(c.has("suppress"))
-        assertEquals(false to "", c.violate("")); assertEquals(2, c.violations)
-        assertEquals(true to "info2", c.violate("info3"))
+        assertEquals(false to "", c.violate("")); assertEquals(2, c.violations); assertEquals(1, c.life)
+        assertEquals(true to "info2", c.violate("info3")); assertEquals(0, c.life)
         val rec = c.finish("failed", t0.plusHours(2))!!
-        assertEquals(0, rec.optInt("reward")); assertEquals(3, rec.optInt("level")); assertEquals(5, rec.optInt("orig_level"))
+        assertEquals(0, rec.optInt("reward")); assertEquals(4, rec.optInt("level")); assertEquals(6, rec.optInt("orig_level"))
         assertFalse(c.takeFirstBreak())
     }
 
@@ -79,10 +83,10 @@ class ContractTest {
         c.start(listOf("last", "tired1"), "me", t0)
         assertEquals(1, c.violationLimit)
         assertEquals(540.0, c.bookRest(600.0), 1e-6)
-        assertEquals(24 * 60.0, c.reward, 1e-6)
+        assertEquals(28 * 60.0, c.reward, 1e-6)
         assertEquals("completed" to t0.plusHours(4), c.due(t0.plusHours(4), false))
         val rec = c.finish("completed", t0.plusHours(4).plusMinutes(3))!!
-        assertEquals(24 * 60, rec.optInt("reward"))
+        assertEquals(28 * 60, rec.optInt("reward"))
         assertEquals(0.0, c.reward, 1e-6)
         assertEquals(540.0, c.bookRestAfter(600.0, t0.plusHours(3)), 1e-6)
         assertEquals(600.0, c.bookRestAfter(600.0, t0.plusHours(5)), 1e-6)

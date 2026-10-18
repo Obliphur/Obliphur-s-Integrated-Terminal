@@ -2182,7 +2182,7 @@ class BreakTimerApp:
         elif result == "abandoned":
             toast.info(tr("合约已提前结束."))
         else:
-            msg = (tr("违反词条 {n} 次, 合约终止.", n=rec.get("violations", 0)) if result == "failed"
+            msg = (tr("目标生命值归零 (违反 {n} 次), 合约终止.", n=rec.get("violations", 0)) if result == "failed"
                    else tr("空闲超过 30 分钟, 合约终止."))
             if pending >= 1:
                 msg += "\n" + tr("完成后的 {n} 分钟休息时间没有给出.", n=round(pending / 60))
@@ -2207,7 +2207,7 @@ class BreakTimerApp:
         else:
             after = tr("{a} 降为 {b}", a=old, b=tr(contract_mod.BY_ID[new][3]))
         self._log_notice(f"CONTRACT violation {c.violations}/{c.violation_limit}: {tid or '-'} -> {new or '-'}  {why}")
-        toast.error(tr("⚠ 违反合约: {why} ({n} / {m})", why=why, n=c.violations, m=c.violation_limit)
+        toast.error(tr("⚠ 违反合约: {why} · 目标生命值 {n} / {m}", why=why, n=c.life, m=c.violation_limit)
                     + "\n" + after + "  ·  " + tr("危机等级 {lv}", lv=c.level))
         if over:
             self.end_contract("failed")

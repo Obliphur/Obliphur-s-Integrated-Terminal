@@ -37,7 +37,7 @@ HARD_LEVEL = 13                  # 总等级到这里就提示"难度极大"
 
 RIM4 = 4                         # 这个等级的词条用红色边框
 
-RESULTS = {"completed": "完成", "failed": "失败: 违反词条", "idle": "失败: 空闲超过 30 分钟",
+RESULTS = {"completed": "完成", "failed": "失败: 目标生命值归零", "idle": "失败: 空闲超过 30 分钟",
            "abandoned": "提前结束"}
 
 # 合约页的主题 (设置 → 合约, CONTRACT_THEME). "ops" 起源: 深色页面, 浅灰的词条板, 六边形格子,
@@ -395,11 +395,12 @@ class ContractPage(tk.Frame):
 
     def _rules_text(self):
         """右上角: 合约期间的特别规则 (左栏, 右栏)."""
-        n = self.c.violation_limit if self.c.active else (1 if "last" in self.c.draft else C.VIOLATION_LIMIT)
-        return ("\n".join([tr("· 违反 {n} 次 / 空闲 30 分钟: 失败", n=n),
-                           tr("· 整点记录超时未填写: 违反 1 次"),
-                           tr("· \"我累了\"不可用")]),
-                "\n".join([tr("· 暂停休息: 合约前积攒的时间不打折"),
+        n = self.c.violation_limit if self.c.active else C.life_of(self.c.draft)
+        return ("\n".join([tr("· 目标生命值 {n}: 违反一次 -1, 归零即失败", n=n),
+                           tr("· 空闲 30 分钟: 失败"),
+                           tr("· 整点记录超时未填写: 违反 1 次")]),
+                "\n".join([tr("· \"我累了\"不可用"),
+                           tr("· 暂停休息: 合约前积攒的时间不打折"),
                            tr("· 合约中得到的休息时间结束后作废 (奖励照常)")]))
 
     # ---- 刷新 ----
@@ -467,7 +468,9 @@ class ContractPage(tk.Frame):
             end = c.end_at
             cfg(self.lbl_state, text=tr("合约进行中"))
             cfg(self.lbl_left, text=fmt_hms((end - now).total_seconds()))
-            cfg(self.lbl_viol, text=tr("违反 {n} / {m}", n=c.violations, m=c.violation_limit))
+            # 目标生命值: 每违反一次减一, 减到 0 合约失败
+            cfg(self.lbl_viol, text=tr("目标生命值") + "  " + "♥" * c.life + "♡" * (c.violation_limit - c.life)
+                + f"  {c.life} / {c.violation_limit}")
             live = f"{c.start_at:%H:%M} — {end:%m-%d %H:%M}"
             left = c.net_left(self.net_used())
             if left is not None:

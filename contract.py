@@ -14,7 +14,7 @@ from config import load_json_file, save_json_file
 
 BASE_SECONDS = 4 * 3600          # 合约的初始时长
 IDLE_LIMIT = 30 * 60             # 合约中空闲 (不在专注也不在休息) 超过这么久就结束
-VIOLATION_LIMIT = 3              # 违反词条累计这么多次就结束
+VIOLATION_LIMIT = 4              # 初始目标生命值: 每违反一次减一, 减到 0 合约失败
 HISTORY_KEEP = 30
 FRESH_MS = 2 * 60 * 1000         # 合约的主人这么久没同步过: 本机来做自动结束
 
@@ -36,6 +36,9 @@ TERMS = [
     ("tired3", "tired", 3, "环境:疲惫-III", "期间获得的休息时间为0.6x", ()),
     ("short1", "short", 1, "环境:支援短缺-I", "只能使用合约开始前已保存休息时间的50%", ()),
     ("short2", "short", 2, "环境:支援短缺-II", "不能使用合约开始前已经保存的休息时间", ()),
+    ("retreat1", "retreat", 1, "环境:退路封锁-I", "初始目标生命值为3", ()),
+    ("retreat2", "retreat", 2, "环境:退路封锁-II", "初始目标生命值为2", ()),
+    ("last", "retreat", 3, "最后防线", "初始目标生命值为1", ()),
     ("chan1", "chan", 1, "环境:通道阻塞-I", "期间的最大窗口数改为4", ()),
     ("chan2", "chan", 2, "环境:通道阻塞-II", "期间的最大窗口数改为3", ()),
     ("suppress", "suppress", 1, "环境:抑制", "不能使用快速访问功能", ("isolate",)),
@@ -44,7 +47,6 @@ TERMS = [
     ("fog", "fog", 1, "环境:黑雾", "合约期间 专注时长 成就 日历 统计数据不可见 且无法打开设置", ()),
     ("seal", "seal", 1, "环境:记录封锁", "超过填写时间未填写 则不能再修改该记录", ()),
     ("fine", "fine", 2, "目标:细化规范", "记录变为30min一次", ()),
-    ("last", "last", 1, "最后防线", "违反一次词条即结束合约", ()),
 ]
 BY_ID = {t[0]: t for t in TERMS}
 GROUPS = list(dict.fromkeys(t[1] for t in TERMS))
@@ -74,7 +76,8 @@ NET_SHARE = {"info1": 0.75, "info2": 0.5, "info3": 0.25, "isolate": 0.0}
 REST = {"tired1": 0.9, "tired2": 0.75, "tired3": 0.6}
 WINDOWS = {"chan1": 4, "chan2": 3}
 SUPPLY = {"short1": 0.5, "short2": 0.0}         # 合约开始前积攒的休息时间能用几成
-HOUR_TERMS = {"seal", "fine"}                   # 整点记录的词条: 整点记录关着时, 这次合约中照样开启
+HOUR_TERMS = {"seal", "fine"}
+LIFE = {"retreat1": 3, "retreat2": 2, "last": 1}  # 初始目标生命值 (硬规则)                   # 整点记录的词条: 整点记录关着时, 这次合约中照样开启
 SUPPLY_WARN = (180, 60)                         # 支援短缺: 还差这么多秒就用超时各提醒一次
 
 # 总等级 → 完成合约时给的休息时间 (分钟, 固定; 按结束时的等级)
@@ -95,6 +98,11 @@ AUDIO_EXTS = (".mp3", ".flac", ".wav", ".ogg", ".m4a", ".aac", ".wma", ".ape", "
 
 def level_of(terms) -> int:
     return sum(BY_ID[t][2] for t in terms if t in BY_ID)
+
+
+def life_of(terms) -> int:
+    """选了这些词条时的初始目标生命值."""
+    return min((LIFE[t] for t in terms or [] if t in LIFE), default=VIOLATION_LIMIT)
 
 
 def rest_minutes(level: int) -> int:
@@ -236,7 +244,13 @@ class Contract:
 
     @property
     def violation_limit(self) -> int:
-        return 1 if self.has("last") else VIOLATION_LIMIT
+        """初始目标生命值."""
+        return life_of(self.terms)
+
+    @property
+    def life(self) -> int:
+        """目标生命值还剩多少 (每违反一次减一, 减到 0 合约失败)."""
+        return max(0, self.violation_limit - self.violations)
 
     @property
     def rest(self) -> float:
@@ -648,7 +662,9 @@ class Contract:
 
 def _selftest():
     import tempfile
-    assert level_of(["long3", "isolate", "last"]) == 8
+    assert level_of(["long3", "isolate", "last"]) == 10
+    assert life_of([]) == 4 and life_of(["retreat1"]) == 3 and life_of(["retreat2"]) == 2 and life_of(["last"]) == 1
+    assert conflicts("retreat1", "last") and conflicts("retreat2", "last"), "退路封锁和最后防线是同一组"
     assert not {"vlc.exe", "potplayermini64.exe", "mpc-hc64.exe", "wmplayer.exe"} & MUSIC_EXES, "视频播放器不算"
     assert rest_minutes(0) == 20 and rest_minutes(3) == 24 and rest_minutes(4) == 28
     assert rest_minutes(18) == 44 and rest_minutes(19) == 50 and rest_reward(19) == 50 * 60
@@ -659,11 +675,11 @@ def _selftest():
     assert clean_terms(["isolate", "chan2"]) == ["isolate", "chan2"], "信息隔绝和通道阻塞可以一起选"
     assert duration_of([]) == 4 * 3600 and duration_of(["long3"]) == int(4 * 3600 * 1.6)
     assert LAYOUT["short2"][0] < LAYOUT["suppress"][0], "成系列的在左边, 零散的在右边"
-    assert BOARD_COLS == len(SERIES) + 5 and LAYOUT["jam"] == (len(SERIES), 2) and LAYOUT["fine"] == (len(SERIES) + 1, 2),         "零散的词条挨着排, 不留空"
+    assert BOARD_COLS == len(SERIES) + 4 and LAYOUT["jam"] == (len(SERIES), 2) and LAYOUT["fine"] == (len(SERIES) + 1, 2),         "零散的词条挨着排, 不留空"
     assert len(set(LAYOUT.values())) == len(TERMS)
     best = clean_terms(["long3", "move2", "info3", "suppress", "jam", "music", "fog", "tired3", "chan2", "last",
                         "short2", "seal", "fine"])
-    assert level_of(best) == 24, level_of(best)
+    assert level_of(best) == 26, level_of(best)
 
     c = Contract(tempfile.mkdtemp())
     t0 = datetime(2026, 10, 18, 9, 30)
@@ -695,22 +711,24 @@ def _selftest():
     assert c.idle_left(t0 + timedelta(hours=1, minutes=10)) == 20 * 60
     assert c.due(t0 + timedelta(hours=1, minutes=31), True) == ("idle", t0 + timedelta(hours=1, minutes=30))
     assert c.due(t0 + timedelta(hours=1, minutes=31), False)[0] == "", "开始专注就不算空闲"
-    # 违反 3 次结束; 整点记录超时未填写也算 (不降词条)
-    c.start(["suppress", "info3", "long1"], owner="me", now=t0)
-    assert c.quick_check() == "suppress"
-    assert c.violate("suppress") == (False, "") and not c.has("suppress")
-    assert c.violate("") == (False, "") and c.violations == 2 and c.level == 3 + 1
-    assert c.violate("info3") == (True, "info2")
+    # 目标生命值: 默认 4; 退路封锁-I 只有 3, 违反 3 次结束; 整点记录超时未填写也算 (不降词条)
+    c.start(["long1"], owner="me", now=t0)
+    assert c.violation_limit == 4 and c.life == 4
+    c.start(["suppress", "info3", "long1", "retreat1"], owner="me", now=t0)
+    assert c.violation_limit == 3 and c.life == 3 and c.quick_check() == "suppress"
+    assert c.violate("suppress") == (False, "") and not c.has("suppress") and c.life == 2
+    assert c.violate("") == (False, "") and c.violations == 2 and c.level == 3 + 1 + 1 and c.life == 1
+    assert c.violate("info3") == (True, "info2") and c.life == 0
     rec = c.finish("failed", t0 + timedelta(hours=2))
-    assert rec["reward"] == 0 and rec["orig_level"] == 5 and rec["level"] == 3 and not c.active
+    assert rec["reward"] == 0 and rec["orig_level"] == 6 and rec["level"] == 4 and not c.active
     assert not c.take_first_break()
 
-    # 完成: 按等级给固定的休息时间 (等级 2 → 24 分钟), 第一次休息的结转比例
+    # 完成: 按等级给固定的休息时间 (等级 4 → 28 分钟), 第一次休息的结转比例
     c.start(["last", "tired1"], owner="me", now=t0)
-    assert c.violation_limit == 1 and abs(c.book_rest(600, t0) - 540) < 1e-6 and c.reward == 24 * 60
+    assert c.violation_limit == 1 and abs(c.book_rest(600, t0) - 540) < 1e-6 and c.reward == 28 * 60
     assert c.due(t0 + timedelta(hours=4), False) == ("completed", t0 + timedelta(hours=4))
     rec = c.finish("completed", t0 + timedelta(hours=4, minutes=3))
-    assert rec["reward"] == 24 * 60 and rec["end"] == (t0 + timedelta(hours=4)).isoformat()
+    assert rec["reward"] == 28 * 60 and rec["end"] == (t0 + timedelta(hours=4)).isoformat()
     assert abs(c.book_rest_after(600, t0 + timedelta(hours=3)) - 540) < 1e-6 and c.reward == 0, "完成后才结束的专注只乘疲惫"
     assert c.book_rest_after(600, t0 + timedelta(hours=5)) == 600
     assert c.take_first_break() and not c.take_first_break()

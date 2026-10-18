@@ -18,7 +18,8 @@ class Contract(private val file: File) {
     companion object {
         const val BASE_SECONDS = 4 * 3600.0
         const val IDLE_LIMIT = 30 * 60.0
-        const val VIOLATION_LIMIT = 3
+        /** 初始目标生命值: 每违反一次减一, 减到 0 合约失败. */
+        const val VIOLATION_LIMIT = 4
         const val HISTORY_KEEP = 30
         const val HARD_LEVEL = 13
 
@@ -38,6 +39,9 @@ class Contract(private val file: File) {
             Term("tired3", "tired", 3, "环境:疲惫-III", "期间获得的休息时间为0.6x"),
             Term("short1", "short", 1, "环境:支援短缺-I", "只能使用合约开始前已保存休息时间的50%"),
             Term("short2", "short", 2, "环境:支援短缺-II", "不能使用合约开始前已经保存的休息时间"),
+            Term("retreat1", "retreat", 1, "环境:退路封锁-I", "初始目标生命值为3"),
+            Term("retreat2", "retreat", 2, "环境:退路封锁-II", "初始目标生命值为2"),
+            Term("last", "retreat", 3, "最后防线", "初始目标生命值为1"),
             Term("chan1", "chan", 1, "环境:通道阻塞-I", "期间的最大窗口数改为4"),
             Term("chan2", "chan", 2, "环境:通道阻塞-II", "期间的最大窗口数改为3"),
             Term("suppress", "suppress", 1, "环境:抑制", "不能使用快速访问功能", listOf("isolate")),
@@ -46,7 +50,6 @@ class Contract(private val file: File) {
             Term("fog", "fog", 1, "环境:黑雾", "合约期间 专注时长 成就 日历 统计数据不可见 且无法打开设置"),
             Term("seal", "seal", 1, "环境:记录封锁", "超过填写时间未填写 则不能再修改该记录"),
             Term("fine", "fine", 2, "目标:细化规范", "记录变为30min一次"),
-            Term("last", "last", 1, "最后防线", "违反一次词条即结束合约"),
         )
         val BY_ID = TERMS.associateBy { it.id }
         val GROUPS = TERMS.map { it.group }.distinct()
@@ -83,6 +86,11 @@ class Contract(private val file: File) {
         val SUPPLY = mapOf("short1" to 0.5, "short2" to 0.0)
         /** 整点记录的词条: 整点记录关着时, 这次合约中照样开启. */
         val HOUR_TERMS = setOf("seal", "fine")
+        /** 初始目标生命值 (硬规则). */
+        val LIFE = mapOf("retreat1" to 3, "retreat2" to 2, "last" to 1)
+
+        /** 选了这些词条时的初始目标生命值. */
+        fun lifeOf(terms: Collection<String>): Int = terms.mapNotNull { LIFE[it] }.minOrNull() ?: VIOLATION_LIMIT
         /** 支援短缺: 还差这么多秒就用超时各提醒一次. */
         val SUPPLY_WARN = listOf(180, 60)
 
@@ -173,7 +181,10 @@ class Contract(private val file: File) {
     val orig: List<String> get() = if (active) clean(live.optJSONArray("orig")?.strings() ?: terms) else emptyList()
     val origLevel get() = levelOf(orig)
     val violations get() = if (active) live.optInt("violations", 0) else 0
-    val violationLimit get() = if (has("last")) 1 else VIOLATION_LIMIT
+    /** 初始目标生命值. */
+    val violationLimit get() = lifeOf(terms)
+    /** 目标生命值还剩多少 (每违反一次减一, 减到 0 合约失败). */
+    val life get() = maxOf(0, violationLimit - violations)
     /** 合约中已经给出的休息时间 (秒, 已乘疲惫). */
     val rest get() = if (active) live.dbl("rest") else 0.0
     /** 完成时给的休息时间 (秒): 按现在的等级查表 (固定); 结算按降级后的等级. */
@@ -536,7 +547,7 @@ class Contract(private val file: File) {
 /** 合约结束的结果 → 显示的文字 (中文原文, 由 tr 翻译). */
 fun contractResult(result: String): String = when (result) {
     "completed" -> "完成"
-    "failed" -> "失败: 违反词条"
+    "failed" -> "失败: 目标生命值归零"
     "idle" -> "失败: 空闲超过 30 分钟"
     "abandoned" -> "提前结束"
     else -> ""
