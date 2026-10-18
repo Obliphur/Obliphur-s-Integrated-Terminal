@@ -295,6 +295,71 @@ def enforce(limit: int, windows=None, own_pid: int = None, close=close_window,
     return n, [w for w in victims if close(w["hwnd"])]
 
 
+# ───────────────────────── 合约: 乐理之灾 / 通道阻塞 (MECHANICS 18) ─────────────────────────
+
+def list_processes() -> list:
+    """[(pid, exe 小写)]; 非 Windows 返回空表."""
+    if sys.platform != "win32":
+        return []
+    import ctypes
+    from ctypes import wintypes
+
+    class PE(ctypes.Structure):
+        _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD),
+                    ("th32ProcessID", wintypes.DWORD), ("th32DefaultHeapID", ctypes.c_void_p),
+                    ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
+                    ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", ctypes.c_long),
+                    ("dwFlags", wintypes.DWORD), ("szExeFile", ctypes.c_wchar * 260)]
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    k32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PE)]
+    k32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PE)]
+    snap = k32.CreateToolhelp32Snapshot(0x2, 0)          # TH32CS_SNAPPROCESS
+    if not snap or snap == wintypes.HANDLE(-1).value:
+        return []
+    out = []
+    try:
+        e = PE()
+        e.dwSize = ctypes.sizeof(PE)
+        ok = k32.Process32FirstW(snap, ctypes.byref(e))
+        while ok:
+            out.append((int(e.th32ProcessID), str(e.szExeFile).lower()))
+            ok = k32.Process32NextW(snap, ctypes.byref(e))
+    finally:
+        k32.CloseHandle(snap)
+    return out
+
+
+def audio_title(title: str, exts) -> bool:
+    """窗口标题里有音频文件名 (例如 "song.mp3 - VLC"), 就当作正在用它放音频."""
+    t = str(title or "").lower()
+    for ext in exts:
+        i = t.find(ext)
+        while i > 0:
+            after = t[i + len(ext):i + len(ext) + 1]
+            if not (after.isalnum() or after == "_"):
+                return True
+            i = t.find(ext, i + 1)
+    return False
+
+
+def find_music(music_exes, audio_exts, procs=None, windows=None, own_pid: int = None, exe_of=exe_name):
+    """正在用的音乐播放软件 (进程在就算, 缩到托盘里也照样在放), 或者标题里有音频文件的窗口.
+    返回 (exe, 标题) 或 None. 只查看, 不关."""
+    own_pid = os.getpid() if own_pid is None else own_pid
+    for pid, exe in (list_processes() if procs is None else procs):
+        if exe in music_exes and pid != own_pid:
+            return exe, ""
+    for w in taskbar_windows(windows, own_pid):
+        title = str(w.get("title") or "")
+        if not audio_title(title, audio_exts):
+            continue
+        exe = (exe_of(w.get("pid") or 0) or "").lower()
+        if exe not in PROTECTED_EXES:
+            return exe or "?", title
+    return None
+
+
 def _selftest():
     def win(hwnd, title="w", pid=100, visible=True, cloaked=False, owned=False, ex=0,
             cls="AppWindow"):
@@ -387,6 +452,18 @@ def _selftest():
     assert focus_violation(dict(fg(exe="steam.exe"), owned=True), black, own_pid=99) is None, "对话框先不关"
     assert focus_violation(fg(exe=""), white, own_pid=99) is None, "查不到程序的不关"
     assert focus_violation(None, white, own_pid=99) is None
+
+    # 合约 · 乐理之灾: 音乐软件在运行, 或者标题里有音频文件的窗口
+    exts = (".mp3", ".flac")
+    assert audio_title("Song.MP3 - VLC media player", exts) and audio_title("a.flac", exts)
+    assert not audio_title("player.mp3x - notes", exts) and not audio_title("mp3 converter", exts)
+    wins = [win(2, title="readme", pid=101), win(3, title="b.mp3", pid=102), win(1, title="a.mp3 - Chrome", pid=100)]
+    exes = {100: "chrome.exe", 101: "code.exe", 102: "explorer.exe"}
+    assert find_music({"cloudmusic.exe"}, exts, procs=[(6, "code.exe"), (5, "cloudmusic.exe")], windows=wins,
+                      own_pid=99, exe_of=exes.get) == ("cloudmusic.exe", "")
+    assert find_music({"cloudmusic.exe"}, exts, procs=[(99, "cloudmusic.exe")], windows=wins,
+                      own_pid=99, exe_of=exes.get) == ("chrome.exe", "a.mp3 - Chrome"), "资源管理器不算"
+    assert find_music({"cloudmusic.exe"}, exts, procs=[], windows=wins[:2], own_pid=99, exe_of=exes.get) is None
     return "window_guard selftest OK"
 
 

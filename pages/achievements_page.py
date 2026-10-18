@@ -1,11 +1,10 @@
 import tkinter as tk
-from tkinter import ttk
 
 import config
 from config import COLORS
 from i18n import tr
 from achievements import ACHIEVEMENTS, BY_ID, is_english_name
-from .widgets import ScrollArea, flavor, cfg, wrap_label, show_pack, hide_pack
+from .widgets import flavor, cfg, wrap_label, show_pack, hide_pack
 
 
 def ach_name(aid: str) -> str:
@@ -18,45 +17,42 @@ def ach_text(aid: str) -> str:
     return text if is_english_name(text) else tr(text)
 
 
-class AchievementsPage(tk.Frame):
-    """成就页: 每个成就一张卡片. 没达成的只显示名字 (隐藏成就连名字也不显示), 不显示进度和条件."""
+class AchievementsPanel(tk.Frame):
+    """成就 (设置 → 基本设置的第一块): 每个成就一张卡片. 没达成的只显示名字 (隐藏成就连名字也不显示),
+    不显示进度和条件."""
 
-    def __init__(self, master, store):
-        super().__init__(master, bg=COLORS["bg"])
+    def __init__(self, master, store, bg=None):
+        bg = bg or COLORS["bg"]
+        super().__init__(master, bg=bg)
         self.store = store
-        bg = COLORS["bg"]
 
         hdr = tk.Frame(self, bg=bg)
-        hdr.pack(fill="x", padx=28, pady=(22, 8))
+        hdr.pack(fill="x", pady=(2, 6))
         tk.Label(hdr, text=tr("🏆  成就"), bg=bg, fg=COLORS["text"],
-                 font=config.font("h1", bold=True)).pack(side="left")
+                 font=config.font("h2", bold=True)).pack(side="left")
         self.lbl_count = tk.Label(hdr, text="", bg=bg, fg=COLORS["accent"],
                                   font=config.font("body", bold=True))
         self.lbl_count.pack(side="right")
-        ttk.Separator(self, orient="horizontal", style="UI.TSeparator").pack(fill="x", padx=26)
 
-        self.area = ScrollArea(self, bg=bg)
-        self.area.pack(fill="both", expand=True, padx=(26, 12), pady=(12, 16))
         self.cards = {}
         for aid, *_ in ACHIEVEMENTS:
-            self.cards[aid] = self._card(self.area.inner, aid)
-        self.area.bind_children()
+            self.cards[aid] = self._card(self, aid)
 
     def _card(self, parent, aid):
         card = COLORS["bg_card"]
         fr = tk.Frame(parent, bg=card, highlightbackground=COLORS["border"], highlightthickness=1)
-        fr.pack(fill="x", pady=(0, 8), padx=(0, 10))
-        icon = tk.Label(fr, text="🔒", bg=card, font=config.font("h1"), width=2)
-        icon.pack(side="left", padx=(14, 6), pady=10, anchor="n")
+        fr.pack(fill="x", pady=(0, 6))
+        icon = tk.Label(fr, text="🔒", bg=card, font=config.font("h2"), width=2)
+        icon.pack(side="left", padx=(12, 6), pady=8, anchor="n")
         col = tk.Frame(fr, bg=card)
-        col.pack(side="left", fill="x", expand=True, padx=(0, 14), pady=10)
+        col.pack(side="left", fill="x", expand=True, padx=(0, 12), pady=8)
         top = tk.Frame(col, bg=card)
         top.pack(fill="x")
-        name = tk.Label(top, text="", bg=card, font=config.font("h2", bold=True), anchor="w")
+        name = tk.Label(top, text="", bg=card, font=config.font("body", bold=True), anchor="w")
         name.pack(side="left")
         when = tk.Label(top, text="", bg=card, fg=COLORS["text_dim"], font=config.font("small"))
         when.pack(side="right")
-        text = tk.Label(col, text="", bg=card, fg=COLORS["text"], font=config.font("body"),
+        text = tk.Label(col, text="", bg=card, fg=COLORS["text"], font=config.font("small"),
                         anchor="w", justify="left")
         wrap_label(text, 24)
         note_text = BY_ID[aid][4]
@@ -74,7 +70,7 @@ class AchievementsPage(tk.Frame):
                 cfg(c["name"], text=ach_name(aid), fg=COLORS["text_strong"])
                 cfg(c["when"], text=f"{got:%Y-%m-%d}")
                 cfg(c["text"], text=ach_text(aid))
-                show_pack(c["text"], fill="x", pady=(4, 0))
+                show_pack(c["text"], fill="x", pady=(2, 0))
                 if c["note"] is not None:
                     show_pack(c["note"], fill="x", pady=(6, 0))
             else:
@@ -84,10 +80,6 @@ class AchievementsPage(tk.Frame):
                 hide_pack(c["text"])
                 if c["note"] is not None:
                     hide_pack(c["note"])
-
-    def show(self):
-        self.refresh()
-        self.area.scroll_to_top()
 
 
 class AchievementPopups:

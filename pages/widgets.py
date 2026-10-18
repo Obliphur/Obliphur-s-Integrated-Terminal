@@ -98,6 +98,15 @@ class ScrollArea(tk.Frame):
     def scroll_to_top(self):
         self.canvas.yview_moveto(0.0)
 
+    def scroll_to(self, widget):
+        """滚到 widget (inner 里直接放着的一块) 的顶部."""
+        try:
+            self.update_idletasks()
+            total = max(1, self.inner.winfo_height())
+            self.canvas.yview_moveto(max(0.0, widget.winfo_y() - 4) / total)
+        except Exception:
+            pass
+
 
 class Modal(tk.Toplevel):
 

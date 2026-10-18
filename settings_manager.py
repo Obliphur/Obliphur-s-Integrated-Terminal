@@ -606,8 +606,9 @@ class SettingsManager:
         return value
 
     def apply_to_config(self):
+        over = getattr(config, "CONTRACT_OVERRIDES", None) or {}
         for key in self.effective:
-            setattr(config, key, self.config_value(key))
+            setattr(config, key, over[key] if key in over else self.config_value(key))
         config.SETUP_UNTIL = self.setup_until
 
     # ---- 配置期 ----

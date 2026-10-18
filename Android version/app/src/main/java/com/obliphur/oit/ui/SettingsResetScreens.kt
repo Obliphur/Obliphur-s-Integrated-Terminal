@@ -98,6 +98,8 @@ fun SettingsScreen(tab: String, setTab: (String) -> Unit, act: MainActivity) {
             }
         }
         val delayedOnPage = Schema.ALL.any { it.page == tab && it.delayed }
+        // 成就 (MECHANICS 17): 不再是单独的一页, 放在基本设置里
+        val achAtEnd = tab == "basic"
         if (delayedOnPage) Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 6.dp)) {
             AccentButton(tr("💾 保存本页修改")) { savePage(tab, edits) }
             if (s.pending.isNotEmpty()) PlainButton(tr("✕ 取消全部待生效修改")) {
@@ -105,6 +107,7 @@ fun SettingsScreen(tab: String, setTab: (String) -> Unit, act: MainActivity) {
                 core.toast(tr("已取消 {n} 项待生效修改.", "n" to n)); core.changed()
             }
         }
+        if (achAtEnd) AchievementSection()
         // 作者的话: 设置冷静期的理念 (MECHANICS 1.1)
         if (tab == "basic") Flavor(tr("在设计预期上 只要不是有绝对的正当理由 应该很少有改变能坚持过48h的等待期.\n这是一个理智与本能的抗争的常见结果.\n这个软件的一个理念就是放大理智优势,保留本能空间.") +
             "\n\n" + tr("'放松'方向的改变会被限制,是在希望未来的某一刻,理智只需要占据短暂的上风,就能阻止这个进程.\n为什么'收紧'也需要限制?作者希望用户不要竭泽而渔.你可能想到多的一个小时学习时间有多有价值 但是可能想不到少的一个小时休息时间会对心理健康有多大的压力.所以请在这一段时间好好考虑少的时间/禁用某些关键网站会对你的生活有什么影响."),

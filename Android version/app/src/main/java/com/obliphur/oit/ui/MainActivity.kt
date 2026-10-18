@@ -280,7 +280,7 @@ class MainActivity : ComponentActivity() {
 
 val PAGES = listOf(
     "timer" to "⏱  计时器", "net" to "🌐  联网", "rules" to "🛡  规则", "log" to "📝  整点记录",
-    "cal" to "📅  日历", "stats" to "📊  统计", "ach" to "🏆  成就", "settings" to "⚙  设置", "reset" to "🔄  重置",
+    "cal" to "📅  日历", "stats" to "📊  统计", "contract" to "⚔  合约", "settings" to "⚙  设置", "reset" to "🔄  重置",
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -302,10 +302,19 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
 
     fun go(p: String) {
         val parts = p.split(":")
+        // 合约 · 黑雾 (硬规则): 不能看统计数据
+        if (parts[0] in setOf("stats", "cal") && core.contract.fog()) {
+            core.toast(tr("黑雾笼罩: 合约期间不能查看统计数据."), "warn"); return
+        }
         page = parts[0]
         if (parts.size > 1) settingsTab = parts[1]
     }
     LaunchedEffect(req) { req?.let { go(it); pageRequest.value = null } }
+    // 合约页总是横屏显示, 离开后恢复 (MECHANICS 18.6)
+    LaunchedEffect(page) {
+        act.requestedOrientation = if (page == "contract") android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        else android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+    }
     LaunchedEffect(Unit) { app.navRequests.collect { go(it) } }
     // 欢迎窗口关掉之后 (或者本来就没有) 再依次申请权限
     LaunchedEffect(notices.none { it.tag == "welcome" }) {
@@ -350,7 +359,7 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
                         Text(navLabel(key, tr(label)), color = if (on) o.accent else o.text, fontSize = 16.sp,
                             fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
                             modifier = Modifier.fillMaxWidth().clickable {
-                                page = key; scope.launch { drawer.close() }
+                                go(key); scope.launch { drawer.close() }
                             }.padding(horizontal = 24.dp, vertical = 14.dp))
                     }
                 }
@@ -416,7 +425,7 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
                                 "log" -> HourLogScreen { go(it) }
                                 "cal" -> CalendarScreen()
                                 "stats" -> StatsScreen()
-                                "ach" -> AchievementScreen()
+                                "contract" -> ContractScreen()
                                 "settings" -> SettingsScreen(settingsTab, { settingsTab = it }, act)
                                 "reset" -> ResetScreen()
                             }
@@ -425,7 +434,9 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
                 }
             }
             // 达成成就的提示浮在界面上, 手动关闭才消失 (MECHANICS 17)
-            AchievementPopups { go("ach") }
+            AchievementPopups { AchNav.pending = true; go("settings:basic") }
+            // 黑雾开始时正看着统计 / 日历: 离开
+            if (page in setOf("stats", "cal") && core.contract.fog()) LaunchedEffect(Unit) { page = "timer" }
             notices.firstOrNull()?.let { n ->
                 AlertDialog(
                     onDismissRequest = { core.closeNotice(n.id, null) },

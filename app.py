@@ -18,6 +18,7 @@ import firewall
 import updater
 import shortcut
 import achievements
+import contract as contract_mod
 from sync_local import PcLocal
 from config import (
     COLORS, APP_NAME, IDLE, RUNNING, READY_BREAK, ON_BREAK,
@@ -29,7 +30,7 @@ from net_guard import NetGuard
 from data_manager import DataManager
 from settings_manager import SettingsManager
 from pages import (CalendarPage, HourLogPage, SettingsPage, RulesPage, StatsPage,
-                   AchievementsPage, AchievementPopups)
+                   ContractPage, AchievementPopups)
 from pages.widgets import (frozen, LoadingCover, cfg, flavor,
                            show_pack, hide_pack)
 
@@ -56,6 +57,14 @@ def _enable_per_monitor_dpi():
         windll.user32.SetProcessDPIAware()
     except Exception:
         pass
+
+
+ALARM_WAV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sounds", "target_alarm.wav")
+
+
+def contract_page_results() -> dict:
+    from pages.contract_page import RESULTS
+    return RESULTS
 
 
 def _play_audio_file(path: str) -> bool:
@@ -118,6 +127,9 @@ class BreakTimerApp:
         self._bonus_job = None
         self._timer_extra = None
         self._bonus_break_active = False   # 这一次休息含领到的时间: 可在联网中暂停, 暂停不打折
+        self._contract_break_active = False  # 完成合约后的第一次休息: 暂停时结转比例 1 - (1 - x) / 2
+        self.rest_base = 0.0          # 刚结束的那段专注换来的休息时间 (秒, 已乘倍率; 合约中已乘疲惫)
+        self._contract_seen = None    # 上次看到的合约 (id, 状态): 同步来的开始 / 结束要刷新
         self._focus_checks = 0        # 这一段专注里已经被手动关掉的"还在吗"提醒数
         self._focus_ok = 0.0          # 最后一次确认 (关掉提醒窗) 时已专注的秒数
         self._check_win = None        # 当前开着的"还在吗"提醒窗
@@ -164,6 +176,10 @@ class BreakTimerApp:
         self.ach = achievements.AchievementStore(self.dm.data_dir, lambda: achievements.guess_first_launch(
             self.dm.data_dir, self.settings.setup_until, list(self.dm.study_data) + list(self.dm.hour_days)))
         self.ach.blocked = lambda: self.dm.resetting
+        # 合约 (MECHANICS 18): 先把盖过设置的项套上, 断网方式才会一开始就对
+        self.contract = contract_mod.Contract(self.dm.data_dir)
+        self.contract.blocked = lambda: self.dm.resetting
+        self._apply_contract_overrides()
         self.net = NetGuard(self.dm.data_dir)
         # 设备同步 (MECHANICS 15): 其他设备的账并进额度和统计
         self.sync_runner = devsync.MainRunner()
@@ -443,7 +459,7 @@ class BreakTimerApp:
             "log": tr("📝  整点记录"),
             "cal": tr("📅  日历"),
             "stats": tr("📊  统计"),
-            "ach": tr("🏆  成就"),
+            "contract": tr("⚔  合约"),
             "settings": tr("⚙  设置"),
             "reset": tr("🔄  重置")
         }
@@ -482,12 +498,15 @@ class BreakTimerApp:
             self.content, self.dm,
             on_text_changed=self.update_log_badge,
             on_toggle=self.on_hour_log_toggle,
-            on_open_settings=lambda: self.show_page("settings")
+            on_open_settings=lambda: self.show_page("settings"),
+            locked=self.contract.hour_locked
         )
         self._prepare_page(self.pages["log"])
         yield
-        self.pages["ach"] = AchievementsPage(self.content, self.ach)
-        self._prepare_page(self.pages["ach"])
+        self.pages["contract"] = ContractPage(self.content, self.contract, on_start=self.start_contract,
+                                              on_abandon=self.abandon_contract,
+                                              net_used=lambda: self.net.used_all)
+        self._prepare_page(self.pages["contract"])
         self.pages["settings"] = SettingsPage(
             self.content, self.settings,
             on_changed=self.on_settings_changed, on_sound=self.play_chime,
@@ -500,7 +519,7 @@ class BreakTimerApp:
             on_update_check=lambda: self.check_update(auto=False),
             on_update_install=self.install_update,
             on_update_relay=lambda: self.relay_updates(manual=True),
-            sync=self.sync
+            sync=self.sync, achievements=self.ach
         )
         self._prepare_page(self.pages["settings"])
         yield
@@ -614,6 +633,9 @@ class BreakTimerApp:
         self.app_rules_job = None
 
     def show_page(self, key: str):
+        if key in ("stats", "cal") and self.contract.fog():
+            toast.warn(tr("黑雾笼罩: 合约期间不能查看统计数据."))
+            return
         # 先在冻结状态下刷新目标页、再置顶, 最后整窗一次性显示 —— 避免切换时的撕裂
         with frozen(self.root):
             self._show_page(key)
@@ -643,8 +665,8 @@ class BreakTimerApp:
             self.pages["cal"].show()
         elif key == "stats":
             self.pages["stats"].show()
-        elif key == "ach":
-            self.pages["ach"].show()
+        elif key == "contract":
+            self.pages["contract"].show()
         elif key == "net":
             self.refresh_net(force=True)
         elif key == "rules":
@@ -743,6 +765,7 @@ class BreakTimerApp:
         flavor(body, tr("在第二段区间内 学的时间越长得到的休息时间越长.请尽量长时间地专注."), bg=bg).pack(
             side="bottom", fill="x", padx=26, pady=(0, 22))
         self._sync_timer_buttons()
+        self._sync_bonus_button()
 
         self._set_dot(COLORS["text_dim"])
 
@@ -764,6 +787,7 @@ class BreakTimerApp:
             end_wall = datetime.now()
             elapsed_minutes = (time.monotonic() - self.start_mono) / 60.0
             self.last_t_minutes = elapsed_minutes      # 建议休息时长照常按整段专注算
+            self.rest_base = self._focus_rest(elapsed_minutes, self.start_wall, end_wall)
             off = self._cut_offline(self.start_wall, end_wall)
             self.dm.add_study_session(self.start_wall, end_wall, max(0.0, elapsed_minutes - off / 60.0))
             self.dm.add_focus_session("study", self.start_wall, end_wall)
@@ -796,6 +820,7 @@ class BreakTimerApp:
                 toast.info(tr("还没有积攒的休息时间."))
                 return
             self.last_t_minutes = 0.0
+            self.rest_base = 0.0
             total = int(self.break_carry)
             self._start_break()
             if self.state == ON_BREAK:
@@ -841,6 +866,8 @@ class BreakTimerApp:
         return max(0, int(config.BONUS_BREAK_WEEKLY) - used)
 
     def _on_bonus_click(self):
+        if self.contract.active:
+            return                          # 合约中"我累了"按钮隐藏
         now = time.monotonic()
         window = float(config.BONUS_BREAK_WINDOW)
         if self._bonus_clicks == 0 or now - self._bonus_first > window:
@@ -932,6 +959,10 @@ class BreakTimerApp:
         if bonus:
             self._bonus_break_active = True
             self._timer_extra = {"bonus_pending": False}
+        if not self.contract.active and self.contract.take_first_break():
+            self._contract_break_active = True
+            toast.info(tr("合约完成后的第一次休息: 暂停时剩余时间 ×{r:g} 留给下次.",
+                          r=contract_mod.Contract.first_break_rate(config.BREAK_CARRY_RATE)), timeout=8000)
         if carry > 0 or bonus:
             self._set_break_carry(0)
         self.countdown_seconds = total
@@ -954,8 +985,7 @@ class BreakTimerApp:
 
     def _break_seconds(self) -> int:
         """本次休息总秒数 = 建议休息时长 + 结余."""
-        fval = max(0.0, compute_F(self.last_t_minutes)) * float(config.BREAK_TIME_SCALE)
-        base = int(round(fval * 60.0))
+        base = int(round(max(0.0, self.rest_base)))
         total = base + int(self.break_carry)
         return max(1, total) if total > 0 else 0
 
@@ -996,9 +1026,13 @@ class BreakTimerApp:
         self._record_break_end()
         left = max(0, int(self.countdown_seconds))
         full = self._bonus_break_active
+        rate = float(config.BREAK_CARRY_RATE)
+        if self._contract_break_active:
+            rate = contract_mod.Contract.first_break_rate(rate)
         self._bonus_break_active = False
-        # 领到休息时间后的第一次休息: 暂停时剩余时间全部保留, 不按倍率打折
-        add = left if full else int(round(left * config.BREAK_CARRY_RATE))
+        self._contract_break_active = False
+        # 领到休息时间后的第一次休息: 暂停时剩余时间全部保留, 不按倍率打折 (盖过合约完成后的比例)
+        add = left if full else int(round(left * rate))
         if add > 0:
             self._set_break_carry(self.break_carry + add)
             if not silent:
@@ -1007,7 +1041,7 @@ class BreakTimerApp:
                         left=fmt_ms(left)))
                 else:
                     toast.info(tr("休息已暂停,下次休息 +{add}.").format(
-                        left=fmt_ms(left), r=config.BREAK_CARRY_RATE, add=fmt_ms(add)))
+                        left=fmt_ms(left), r=rate, add=fmt_ms(add)))
         if silent:
             self.state = IDLE
             self.countdown_seconds = 0
@@ -1261,8 +1295,15 @@ class BreakTimerApp:
         counted = max(0.0, minutes - self._cut_offline(start, end) / 60.0)
         self.dm.add_study_session(start, end, counted)
         self.dm.add_focus_session("study", start, end)
-        brk = int(round(max(0.0, compute_F(minutes)) * float(config.BREAK_TIME_SCALE) * 60.0))
+        brk = int(round(self._focus_rest(minutes, start, end)))
         return counted, brk
+
+    def _focus_rest(self, minutes: float, start: datetime, end: datetime) -> float:
+        """一段专注换来的休息时间 (秒): F(t) × 休息时间倍率, 再按合约 (MECHANICS 18) 调整."""
+        sec = max(0.0, compute_F(minutes)) * float(config.BREAK_TIME_SCALE) * 60.0
+        if self.contract.active:
+            return self.contract.book_rest(sec, end)
+        return self.contract.book_rest_after(sec, start) if start else sec
 
     def _cut_offline(self, start: datetime, end: datetime) -> float:
         """[start, end] 这段专注里有绑定的设备离线的时间段: 记为空闲 (统计里压过同一段专注), 返回一共多少秒."""
@@ -1374,8 +1415,14 @@ class BreakTimerApp:
         if self.state == RUNNING:
             elapsed = time.monotonic() - self.start_mono
             cur_m = elapsed / 60.0
+            if self.contract.fog():
+                # 黑雾: 专注时看不到专注时长 (预计休息时长也能推出时长, 一起不显示)
+                self.lbl_time.config(text="?? min")
+                self.lbl_sub.config(text="")
+                self.update_job = self.root.after(200, self.update)
+                return
             self.lbl_time.config(text=f"{cur_m:.2f} min")
-            rem = compute_F(cur_m) * float(config.BREAK_TIME_SCALE)
+            rem = compute_F(cur_m) * float(config.BREAK_TIME_SCALE) * self.contract.rest_factor()
             if rem > 0:
                 self.lbl_sub.config(text=tr("预计停止时的休息时长:  {m:.2f} 分钟").format(m=rem))
             else:
@@ -1398,6 +1445,7 @@ class BreakTimerApp:
                     self.break_start_wall = None      # 这一段由开始休息的那台设备记
                 self._record_break_end()
                 self._bonus_break_active = False
+                self._contract_break_active = False
                 toast.success(tr("休息结束,可以开始下一轮了!"))
                 self.reset_to_idle()
                 self._arm_idle_nudge()
@@ -1410,6 +1458,7 @@ class BreakTimerApp:
         self.start_mono = None
         self.start_wall = None
         self.last_t_minutes = 0.0
+        self.rest_base = 0.0
         self.countdown_seconds = 0
         self._sync_timer_buttons()
         self.lbl_time.config(text="0.00 min")
@@ -1417,6 +1466,10 @@ class BreakTimerApp:
         self._status(tr("准备就绪"), COLORS["text_dim"])
 
     def refresh_display(self):
+        if self.contract.fog():
+            self.lbl_today.config(text=tr("今日: ?? h"))
+            self.lbl_yesterday.config(text=tr("昨日: ?? h"))
+            return
         self.lbl_today.config(text=tr("今日: {h:.1f} h").format(h=self.dm.get_today_hours()))
         self.lbl_yesterday.config(text=tr("昨日: {h:.1f} h").format(h=self.dm.get_yesterday_hours()))
 
@@ -1553,6 +1606,10 @@ class BreakTimerApp:
         if self.shutting_down:
             return
         self._check_windows()
+        try:
+            self._check_contract_windows()
+        except Exception as e:
+            self._log_window(f"ERROR    contract windows {type(e).__name__}: {e}")
         self.window_job = self.root.after(self._window_check_ms(), self._schedule_window_guard)
 
     def _check_windows(self):
@@ -1580,6 +1637,7 @@ class BreakTimerApp:
             lines.append("…")
         toast.warn(tr("窗口超过上限 {x} 个,关闭了:\n{titles}",
                       n=n, x=limit, k=len(closed), titles="\n".join(lines)))
+
 
     # ---- 设备同步 (MECHANICS 15) ----
 
@@ -1609,12 +1667,7 @@ class BreakTimerApp:
     def _timer_auto_ok(self) -> bool:
         """自动结束专注, 记下休息这类没人按按钮的操作, 由状态的主人做;
         主人不在线 (2 分钟没同步) 时本机来做."""
-        owner = self.timer_owner
-        if not owner or owner == self.sync.my_id:
-            return True
-        now = time.time() * 1000
-        return not any(st.get("id") == owner and now - float(st.get("ts", 0)) < devsync.FRESH_MS
-                       for st in self.sync.peer_status())
+        return self._owner_away(self.timer_owner)
 
     def timer_live(self) -> dict:
         owner = self.timer_owner or self.sync.my_id
@@ -1626,7 +1679,8 @@ class BreakTimerApp:
             return {"state": "break", "owner": owner,
                     "break_start": self.break_start_wall.isoformat(timespec="seconds"),
                     "break_end": self.break_end_wall.isoformat(timespec="seconds"),
-                    "bonus": bool(self._bonus_break_active)}
+                    "bonus": bool(self._bonus_break_active),
+                    "cbreak": bool(self._contract_break_active)}
         return {"state": "idle", "owner": owner}
 
     def adopt_timer(self, live: dict):
@@ -1666,6 +1720,7 @@ class BreakTimerApp:
                     self.break_end_wall = end
                     self.countdown_seconds = left
                     self._bonus_break_active = bool(live.get("bonus"))
+                    self._contract_break_active = bool(live.get("cbreak"))
                     self._show_on_break()
                     self.schedule_update()
             else:
@@ -1778,7 +1833,7 @@ class BreakTimerApp:
                 lines.append(f"🔗 {st['name']}: {tr('离线')}")
                 continue
             t = {"running": tr("专注中…"), "break": tr("休息中 ☕")}.get(st.get("timer"), tr("准备就绪"))
-            if st.get("timer") == "running" and st.get("since"):
+            if st.get("timer") == "running" and st.get("since") and not self.contract.fog():
                 try:
                     mins = (datetime.now() - datetime.fromisoformat(st["since"])).total_seconds() / 60
                     t += f" {mins:.0f} min"
@@ -1799,6 +1854,10 @@ class BreakTimerApp:
             self._check_app_rules()
         except Exception as e:
             self._log_window(f"ERROR    app rules {type(e).__name__}: {e}")
+        try:
+            self._check_music()
+        except Exception as e:
+            self._log_window(f"ERROR    music {type(e).__name__}: {e}")
         self.app_rules_job = self.root.after(1000, self._schedule_app_rules)
 
     def _check_app_rules(self):
@@ -1850,6 +1909,223 @@ class BreakTimerApp:
         except Exception as e:
             self._log_window(f"ERROR    focus {type(e).__name__}: {e}")
         self.window_focus_job = self.root.after(self._window_focus_ms(), self._window_focus_tick)
+
+    # ---- 合约 (MECHANICS 18) ----
+
+    def _apply_contract_overrides(self) -> bool:
+        """合约中盖过设置的项 (全频道阻塞干扰: 断网方式) 套到 config 上; 变了才动."""
+        c = self.contract
+        over = c.overrides() if c.active else {}
+        if over == getattr(config, "CONTRACT_OVERRIDES", {}):
+            return False
+        config.CONTRACT_OVERRIDES = over
+        self.settings.apply_to_config()
+        net = getattr(self, "net", None)
+        if net is not None and net.sync_mode():
+            self._log_notice(f"NET_MODE -> {net.net_mode} (contract)")
+        pages = getattr(self, "pages", {})
+        if "rules" in pages:
+            pages["rules"].refresh(force=True)
+        if net is not None and pages:
+            self.refresh_net(force=True)
+        return True
+
+    def _owner_away(self, owner: str) -> bool:
+        """这个状态的主人是本机, 或者主人不在线 (2 分钟没同步): 自动的操作由本机来做."""
+        if not owner or owner == self.sync.my_id:
+            return True
+        now = time.time() * 1000
+        return not any(st.get("id") == owner and now - float(st.get("ts", 0)) < devsync.FRESH_MS
+                       for st in self.sync.peer_status())
+
+    def _contract_changed(self):
+        """合约开始 / 结束之后 (本机或同步来的): 盖过设置的项, "我累了"按钮, 黑雾, 各页面."""
+        self._apply_contract_overrides()
+        self._sync_bonus_button()
+        self.refresh_display()
+        self.refresh_net(force=True)
+        if "log" in self.pages:
+            self.pages["log"].refresh()
+        self._refresh_if_visible("contract")
+        if self.contract.fog() and self.current_page in ("stats", "cal"):
+            self.show_page("timer")
+
+    def _check_contract(self):
+        """每秒: 到时间就完成, 空闲太久就失败 (由合约的主人做), 刷新合约页."""
+        c = self.contract
+        seen = (c.live.get("id"), "active") if c.active else None
+        if seen != self._contract_seen:
+            was = self._contract_seen
+            self._contract_seen = seen
+            self._contract_changed()
+            if was is not None and seen is None and c.last:
+                toast.info(tr("合约已结束: {r}", r=tr(contract_page_results().get(c.last.get("result"), ""))))
+            elif seen is not None and was is not None:
+                toast.info(tr("合约开始."))
+        if not c.active:
+            return
+        self._apply_contract_overrides()
+        if self._owner_away(c.owner):
+            why, at = c.due(datetime.now(), self.state in (IDLE, READY_BREAK))
+            if why:
+                self.end_contract(why, at)
+                return
+            # 信息阻断 / 信息隔绝: 额度是各设备共用的, 只由一台设备判定
+            tid, kind = c.net_check(self.net.used_all, self.net.bonus_all, self.net.remaining, self.net.date)
+            if tid:
+                self.contract_violation(tr("使用了紧急借贷") if kind == "loan" else tr("联网超过了合约的额度"), tid)
+                if not c.active:
+                    return
+        self._refresh_if_visible("contract")
+
+    def start_contract(self, terms):
+        c = self.contract
+        if c.active:
+            return
+        terms = contract_mod.clean_terms(terms)
+        lv = contract_mod.level_of(terms)
+        dur = contract_mod.duration_of(terms)
+        end = datetime.now() + timedelta(seconds=dur)
+        msg = tr("危机等级 {lv} · 时长 {t} · 到 {at}", lv=lv, t=fmt_hm(dur), at=f"{end:%H:%M}")
+        msg += "\n" + tr("休息倍率 ×{m:g}", m=contract_mod.rest_mult(lv))
+        if not toast.ask(msg, title=tr("▶  开始行动"), ok_text=tr("开始行动"), danger=True):
+            return
+        c.start(terms, owner=self.sync.my_id)
+        self._log_notice(f"CONTRACT start level {lv} terms {','.join(terms) or '-'} until {end:%Y-%m-%d %H:%M}")
+        self._contract_seen = (c.live.get("id"), "active")
+        self._contract_changed()
+        toast.success(tr("合约开始."))
+        if self.sync.peers():
+            self.sync.sync_now()
+
+    def abandon_contract(self):
+        c = self.contract
+        if not c.active:
+            return
+        msg = tr("提前结束合约?")
+        if c.reward >= 1:
+            msg += "\n" + tr("积攒的 {t} 休息时间不会给出.", t=fmt_ms(c.reward))
+        if not toast.ask(msg, title=tr("■  提前结束"), danger=True):
+            return
+        self.end_contract("abandoned")
+
+    def end_contract(self, result: str, at: datetime = None):
+        c = self.contract
+        if not c.active:
+            return
+        pending = c.reward
+        rec = c.finish(result, at, by=self.sync.my_id)
+        self._contract_seen = None
+        reward = int(rec.get("reward") or 0)
+        if reward > 0:
+            self._set_break_carry(self.break_carry + reward)
+            if self.state == IDLE:
+                self.lbl_sub.config(text=self._idle_sub_text())
+            self._sync_timer_buttons()
+        self._log_notice(f"CONTRACT {result} level {rec.get('level')} violations {rec.get('violations')} "
+                         f"reward {reward}s")
+        self.check_achievements()
+        self._contract_changed()
+        lv = rec.get("level", 0)
+        if result == "completed":
+            msg = tr("危机等级 {lv} · 休息倍率 ×{m:g}", lv=lv, m=contract_mod.rest_mult(lv))
+            if reward > 0:
+                msg += "\n" + tr("积攒的休息时间 +{t}.", t=fmt_ms(reward))
+            toast.notice(tr("⚔  合约完成"), msg)
+        elif result == "abandoned":
+            toast.info(tr("合约已提前结束."))
+        else:
+            msg = (tr("违反词条 {n} 次, 合约终止.", n=rec.get("violations", 0)) if result == "failed"
+                   else tr("空闲超过 30 分钟, 合约终止."))
+            if pending >= 1:
+                msg += "\n" + tr("积攒的 {t} 休息时间没有给出.", t=fmt_ms(pending))
+            toast.notice(tr("⚔  合约失败"), msg)
+        if self.sync.peers():
+            self.sync.sync_now()
+
+    def contract_violation(self, why: str, tid: str):
+        """违反了词条 tid (软规则): 响警报, 记一次, 这个词条降一级; 到上限就结束合约."""
+        c = self.contract
+        if not c.active or self.dm.resetting or not c.has(tid):
+            return
+        self._play_alarm()
+        old = tr(contract_mod.BY_ID[tid][3])
+        over, new = c.violate(tid)
+        if not new:
+            after = tr("{a} 失效", a=old)
+        elif new == tid:
+            after = tr("{a} 降一级", a=old)
+        else:
+            after = tr("{a} 降为 {b}", a=old, b=tr(contract_mod.BY_ID[new][3]))
+        self._log_notice(f"CONTRACT violation {c.violations}/{c.violation_limit}: {tid} -> {new or '-'}  {why}")
+        toast.error(tr("⚠ 违反合约: {why} ({n} / {m})", why=why, n=c.violations, m=c.violation_limit)
+                    + "\n" + after + "  ·  " + tr("危机等级 {lv}", lv=c.level))
+        if over:
+            self.end_contract("failed")
+        else:
+            self._refresh_if_visible("contract")
+            if self.sync.peers():
+                self.sync.sync_now()
+
+    def on_contract_synced(self, changes: dict):
+        self.contract.merge(changes)
+        self._check_contract()
+
+    def _check_music(self):
+        """乐理之灾: 每 2 秒看一次有没有开着音乐播放软件 / 用别的软件放音频文件 (不关它, 只算违反;
+        开着的这段只算一次, 关掉后再开才再算)."""
+        if not self.contract.has("music") or self.dm.resetting:
+            return
+        self._music_tick = (getattr(self, "_music_tick", 0) + 1) % 2
+        if self._music_tick:
+            return
+        hit = window_guard.find_music(contract_mod.MUSIC_EXES, contract_mod.AUDIO_EXTS)
+        tid = self.contract.music_check(hit is not None)
+        if not tid:
+            return
+        exe, title = hit
+        self._log_window(f"MUSIC    {exe}  {title}")
+        name = exe[:-4] if exe.endswith(".exe") else exe
+        self.contract_violation(tr("用 {exe} 播放音频", exe=name) if title
+                                else tr("打开了音乐播放软件 {exe}", exe=name), tid)
+
+    def _check_contract_windows(self):
+        """通道阻塞: 任务栏上的窗口超过词条的上限 (不关窗口, 只算违反; 越过的那一下算一次)."""
+        c = self.contract
+        lim = c.window_limit()
+        if not lim or self.dm.resetting:
+            return
+        tid = c.window_check(len(window_guard.taskbar_windows()))
+        if tid:
+            self.contract_violation(tr("窗口超过 {n} 个", n=lim), tid)
+
+    def _contract_quick(self):
+        """抑制: 用了快速访问."""
+        tid = self.contract.quick_check()
+        if tid:
+            self.contract_violation(tr("使用了快速访问"), tid)
+
+    def _play_alarm(self):
+        """违反合约的警报 (sounds/target_alarm.wav); 放不出来时蜂鸣."""
+        def run():
+            if _play_audio_file(ALARM_WAV):
+                return
+            try:
+                import winsound
+                for _ in range(3):
+                    winsound.Beep(1400, 140)
+            except Exception:
+                pass
+        threading.Thread(target=run, daemon=True).start()
+
+    def _sync_bonus_button(self):
+        """合约中隐藏"我累了"按钮."""
+        if not hasattr(self, "lbl_bonus"):
+            return
+        if self.contract.active:
+            hide_pack(self.lbl_bonus)
+        else:
+            show_pack(self.lbl_bonus, side="left", padx=(24, 0))
 
     # ---- 配置期 ----
 
@@ -1931,7 +2207,7 @@ class BreakTimerApp:
         study = {d: self.dm._study_all(d) for d in set(self.dm.study_data).union(
             *((led.get("study") or {}) for led in (self.dm.peer_ledgers() or [])))}
         facts = achievements.Facts(datetime.now(), self.ach.first, self.settings.in_setup(),
-                                   study, self.dm.hour_days)
+                                   study, self.dm.hour_days, self.contract.history)
         self._after_achievements(self.ach.check(facts))
 
     def on_achievements_synced(self, changes: dict):
@@ -1939,8 +2215,8 @@ class BreakTimerApp:
         self._after_achievements(self.ach.merge(changes))
 
     def _after_achievements(self, new):
-        if new:
-            self._refresh_if_visible("ach")
+        if new and "settings" in self.pages:
+            self.pages["settings"].refresh_achievements()
         self.ach_popups.sync()
 
     def _open_achievements(self):
@@ -1950,7 +2226,8 @@ class BreakTimerApp:
             self.root.lift()
         except tk.TclError:
             pass
-        self.show_page("ach")
+        self.show_page("settings")
+        self.pages["settings"].show_achievements()
 
     def _after_setup_change(self):
         self.update_settings_badge()
@@ -2380,6 +2657,7 @@ class BreakTimerApp:
             return
         self.var_reason.set("")
         self.refresh_net(force=True)
+        self._contract_quick()
 
     def on_net_loan(self):
         ok, minutes, reason = self._read_net_form()
@@ -2474,10 +2752,11 @@ class BreakTimerApp:
             toast.warn(tr(msg))
             return
         self.refresh_net(force=True)
+        self._contract_quick()
 
     def _net_set_status(self, text: str, color: str):
         # 状态后面写上当前的断网方式, 一眼能看出是不是"代理-全屏蔽 (Proxy block-all)"
-        text = f"{text}  ·  {tr(self.settings.display('NET_MODE'))}"
+        text = f"{text}  ·  {tr(self.settings.display_value('NET_MODE', config.NET_MODE))}"
         cfg(self.net_lbl_status, text=text)
         if self.net_dot_canvas.itemcget(self.net_dot_id, "fill") != color:
             self.net_dot_canvas.itemconfig(self.net_dot_id, fill=color)
@@ -2592,6 +2871,10 @@ class BreakTimerApp:
             self._update_retry = False
             self.check_update(auto=True)
         self.sync.track_offline()               # 每秒: 同步失败的设备马上算离线 (MECHANICS 8.4)
+        try:
+            self._check_contract()
+        except Exception as e:
+            self._log_window(f"ERROR    contract {type(e).__name__}: {e}")
         if self.current_page == "timer" and hasattr(self, "lbl_peers"):
             text, off = self._peer_line()
             cfg(self.lbl_peers, text=text, fg=COLORS["warn"] if off else COLORS["text_dim"])

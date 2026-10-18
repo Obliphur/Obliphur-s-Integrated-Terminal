@@ -17,9 +17,11 @@ class SettingsPage(tk.Frame):
     def __init__(self, master, settings, on_changed=None, on_sound=None,
                  on_dev_mode=None, on_language=None, on_font_scale=None,
                  on_theme=None, on_end_setup=None, updater=None, on_update_check=None,
-                 on_update_install=None, on_update_relay=None, sync=None):
+                 on_update_install=None, on_update_relay=None, sync=None, achievements=None):
         super().__init__(master, bg=COLORS["bg"])
         self.sm = settings
+        self.ach_store = achievements
+        self.ach_panel = None
         self.updater = updater
         self.on_update_check = on_update_check
         self.on_update_install = on_update_install
@@ -105,6 +107,11 @@ class SettingsPage(tk.Frame):
             self.sync_panel.pack(fill="x")
         self._build_page_items("basic")
         self._build_update_card(body)
+        # 成就 (MECHANICS 17): 不再是单独的一页, 放在基本设置里
+        if self.ach_store is not None:
+            from .achievements_page import AchievementsPanel
+            self.ach_panel = AchievementsPanel(body, self.ach_store, bg=bg)
+            self.ach_panel.pack(fill="x", pady=(10, 0))
         # 作者的话: 为什么设置要等 48 小时 (MECHANICS.md 1.1)
         for i, zh in enumerate((
                 "在设计预期上 只要不是有绝对的正当理由 应该很少有改变能坚持过48h的等待期.\n这是一个理智与本能的抗争的常见结果.\n这个软件的一个理念就是放大理智优势,保留本能空间.",
@@ -612,6 +619,17 @@ class SettingsPage(tk.Frame):
             widget.set(path)
 
 
+    def show_achievements(self):
+        """达成提示被点了: 切到基本设置, 滚到成就那一块."""
+        self.show_tab("basic")
+        self.refresh()
+        if self.ach_panel is not None:
+            self.area.scroll_to(self.ach_panel)
+
+    def refresh_achievements(self):
+        if self.ach_panel is not None:
+            self.ach_panel.refresh()
+
     def refresh_sync(self):
         """设备同步那一块单独刷新 (每秒一次, 只在看着基本设置时)."""
         if self.sync_panel is not None and self._tab == "basic":
@@ -619,6 +637,7 @@ class SettingsPage(tk.Frame):
 
     def refresh(self):
         self._refresh_update_card()
+        self.refresh_achievements()
         # 文字翻译不用每次刷新都重设: 换语言时整个界面会重建.
         # 下面只改真正变了的属性 (cfg), 避免每次刷新把几十个控件全部重画一遍.
         if self.setup_card is not None:

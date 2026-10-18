@@ -99,11 +99,14 @@ fun HourLogScreen(go: (String) -> Unit) {
                 val stored = dm.hourText(ds, start.hour)
                 val isWait = awaiting == start
                 val isNow = enabled && !start.isAfter(now) && now.isBefore(end)
+                // 合约 (MECHANICS 18): 和合约重叠的小时, 进入下一个时间段之后就不能再改
+                val locked = ended && core.contract.hourLocked(start, now)
                 HourRow("%02d:00".format(h) + when {
                     isNow -> tr("   ◂ 现在")
                     isWait -> tr("   ◂ 待填写")
+                    locked -> "   🔒"
                     else -> ""
-                }, stored, enabled && ended, isWait || isNow) { text ->
+                }, stored, enabled && ended && !locked, isWait || isNow) { text ->
                     if (text != stored) {
                         dm.setHourText(ds, start.hour, text)
                         if (isWait) Notifier.cancelHour(OitApp.instance)

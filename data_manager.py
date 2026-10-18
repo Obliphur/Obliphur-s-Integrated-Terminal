@@ -299,7 +299,7 @@ class DataManager:
                 d = json.load(f)
             days = d.get("days", {}) if isinstance(d, dict) else {}
         except Exception:
-            days = {}
+            d, days = {}, {}             # 还没有这个文件 (新安装 / 重置后): 以前这里 d 没有定义, 启动就崩溃
         runs = d.get("runs", {}) if isinstance(d, dict) else {}
         self.window_runs = {str(k): [list(r) for r in v if isinstance(r, list) and len(r) == 3]
                             for k, v in (runs.items() if isinstance(runs, dict) else ()) if isinstance(v, list)}

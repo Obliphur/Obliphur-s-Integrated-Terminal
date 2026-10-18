@@ -93,7 +93,7 @@ def daily_quota(day) -> float:
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.18"                         # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.19"                         # 和 GitHub 上发布的版本号比较 (见 updater.py)
 UPDATE_CHECK = 1                              # 打开程序时检查更新
 UPDATE_AUTO = 1                               # 发现新版本时自动下载安装
 OLD_APP_DIR = "mrsTimer"
@@ -209,6 +209,10 @@ def setup_active() -> bool:
 def changes_instant() -> bool:
     """设置 / 名单的修改是否立即生效: 开发者模式或配置期内."""
     return dev_mode_enabled() or setup_active()
+
+
+# 合约中盖过设置的项 (MECHANICS 18): {设置项: 值}, 由 SettingsManager.apply_to_config 套在生效值上面
+CONTRACT_OVERRIDES = {}
 
 
 

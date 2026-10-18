@@ -13,9 +13,11 @@ from .widgets import cfg
 class HourLogPage(tk.Frame):
 
     def __init__(self, master, data_manager, on_text_changed=None, on_toggle=None,
-                 on_open_settings=None):
+                 on_open_settings=None, locked=None):
         super().__init__(master, bg=COLORS["bg"])
         self.dm = data_manager
+        # 合约 (MECHANICS 18): 和合约重叠的小时, 进入下一个时间段之后就不能再改
+        self.locked = locked or (lambda start, now: False)
         self.on_text_changed = on_text_changed
         self.on_toggle = on_toggle
         self.on_open_settings = on_open_settings
@@ -158,10 +160,11 @@ class HourLogPage(tk.Frame):
             start = self._slot_start(h)
             end = start + timedelta(hours=1)
             ended = end <= now
+            locked = ended and self.locked(start, now)
             text = self._get(h)
             if focused is not ent and var.get() != text:
                 var.set(text)
-            cfg(ent, state="normal" if (enabled and ended) else "disabled")
+            cfg(ent, state="normal" if (enabled and ended and not locked) else "disabled")
 
             is_wait = awaiting is not None and awaiting == start
             is_now = enabled and start <= now < end
@@ -170,10 +173,12 @@ class HourLogPage(tk.Frame):
                 label += tr("   ◂ 现在")
             elif is_wait:
                 label += tr("   ◂ 待填写")
+            elif locked:
+                label += "   🔒"
             cfg(lbl,
                 text=label,
                 fg=COLORS["accent"] if (is_wait or is_now) else
-                   (COLORS["text"] if (enabled and ended) else COLORS["text_dim"])
+                   (COLORS["text"] if (enabled and ended and not locked) else COLORS["text_dim"])
             )
             cfg(ent,
                 highlightbackground=COLORS["accent"] if is_wait else COLORS["border"]

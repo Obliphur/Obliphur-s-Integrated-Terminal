@@ -45,6 +45,7 @@ fun TimerScreen() {
     val core = OitApp.instance.core
     val t = core.timer
     val scale = core.settings.num("BREAK_TIME_SCALE")
+    val fog = core.contract.fog()
     PageColumn {
         OitCard {
             val (status, color) = when (t.state) {
@@ -54,10 +55,11 @@ fun TimerScreen() {
             }
             StatusRow(status, color)
             when (t.state) {
-                TState.RUNNING -> {
+                TState.RUNNING -> if (fog) BigText("?? min") else {
+                    // 黑雾: 专注时看不到专注时长 (预计休息时长也能推出时长, 一起不显示)
                     val m = t.elapsed / 60.0
                     BigText("${f2(m)} min")
-                    val rem = computeF(m) * scale
+                    val rem = computeF(m) * scale * core.contract.restFactor()
                     Dim(if (rem > 0) tr("预计停止时的休息时长:  {m} 分钟", "m" to f2(rem)) else tr("预计休息时长: 0.00 分钟"))
                 }
                 TState.ON_BREAK -> {
@@ -74,8 +76,9 @@ fun TimerScreen() {
                 }
             }
             Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-                Text(tr("今日: {h} h", "h" to f1(core.dm.todayHours())), color = o.accent, fontWeight = FontWeight.Bold)
-                Text(tr("昨日: {h} h", "h" to f1(core.dm.yesterdayHours())), color = o.dim)
+                Text(if (fog) tr("今日: ?? h") else tr("今日: {h} h", "h" to f1(core.dm.todayHours())),
+                    color = o.accent, fontWeight = FontWeight.Bold)
+                Text(if (fog) tr("昨日: ?? h") else tr("昨日: {h} h", "h" to f1(core.dm.yesterdayHours())), color = o.dim)
             }
             // 绑定的其他设备此刻的状态 (MECHANICS 15); 有设备离线时提醒离线的那段专注不会被记录 (8.4)
             for (line in peerLines()) Dim(line, Modifier.padding(top = 4.dp), size = 13)
@@ -98,8 +101,8 @@ fun TimerScreen() {
                     PlainButton(tr("☕  开始休息"), enabled = t.breakCarry > 0) { t.onBreakButton() }
                 }
             }
-            // 连点按钮: 按钮上只写这几个字, 不写具体规则
-            PlainButton(t.bonusLabel()) { t.onBonusClick() }
+            // 连点按钮: 按钮上只写这几个字, 不写具体规则; 合约中隐藏
+            if (!core.contract.active) PlainButton(t.bonusLabel()) { t.onBonusClick() }
         }
         Flavor(tr("在第二段区间内 学的时间越长得到的休息时间越长.请尽量长时间地专注."), Modifier.padding(top = 24.dp))
     }
@@ -119,7 +122,7 @@ fun NetScreen() {
     var reason by rememberSaveable { mutableStateOf("") }
     var ask by rememberSaveable { mutableStateOf("") }      // quick / loan / upgrade
     // 状态后面写上当前的断网方式 (代理-全屏蔽 (Proxy block-all) / 代理 - 规则过滤)
-    val mode = "  ·  " + core.settings.display("NET_MODE")
+    val mode = "  ·  " + core.settings.display("NET_MODE", core.netMode())
     PageColumn {
         OitCard {
             // 开发者模式在界面上不显示: 照常显示成离线

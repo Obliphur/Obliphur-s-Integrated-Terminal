@@ -36,6 +36,8 @@ interface Host {
     fun scheduleWake(seconds: Double)
     /** 新达成了成就 (界面上的提示由界面读 Core.ach.unseen 画出; 在后台时可以另外发通知). */
     fun achievementsUnlocked(ids: List<String>) {}
+    /** 违反合约的警报 (res/raw/target_alarm.ogg). */
+    fun playAlarm() {}
 }
 
 /** VPN 应该处于的状态 (见 MECHANICS 14.2). */
@@ -57,6 +59,10 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     val timer: TimerEngine
     /** 成就 (MECHANICS 17). */
     val ach: AchievementStore
+    /** 合约 (MECHANICS 18). */
+    val contract: Contract
+    /** 上次看到的合约 (id): 同步来的开始 / 结束也要让断网方式等跟着变. */
+    private var contractSeen: Long? = null
     private var setupWasActive: Boolean
 
     // ---- 设备同步 (MECHANICS 15) ----
@@ -105,6 +111,8 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             AchievementStore.guessFirstLaunch(dir, settings.setupUntil, dm.study.keys + dm.hourDays.keys)
         }
         ach.blocked = { dm.resetting }
+        contract = Contract(File(dir, "contract.json"))
+        contract.blocked = { dm.resetting }
     }
 
     /** 界面和服务都就位后调用一次. */
@@ -163,6 +171,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             "ended" -> toast(tr("时间到,网络已断开."), "warn")
         }
         timer.tick()
+        checkContract()
 
         if (!now.isBefore(nextHour)) {
             val slot = nextHour.minusHours(1)
@@ -194,6 +203,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         net.pending?.let { c.add((it.at - System.currentTimeMillis()) / 1000.0) }
         if (net.grantLeft > 0) c.add(net.grantLeft)
         timer.nextDeadline()?.let { c.add(it) }
+        contract.endAt?.let { c.add(secondsBetween(LocalDateTime.now(), it)) }
         if (settings.inSetup()) c.add(settings.setupLeftSeconds().toDouble())
         settings.pending.keys.forEach { c.add(settings.pendingLeftSeconds(it).toDouble()) }
         rules.pending.forEach { c.add(secondsBetween(LocalDateTime.now(), it.applyAt)) }
@@ -240,6 +250,11 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         val active = !dm.resetting && !settings.devMode
         val app = if (active) host.foregroundApp() else ""
         if (app == null) return                                  // 屏幕关闭 / 没有权限: 维持原样
+        // 合约 · 乐理之灾 (软规则): 前台是音乐播放应用就算违反 (不锁; 一直开着只算一次)
+        if (contract.has("music")) {
+            val id = contract.musicCheck(app in Contract.MUSIC_APPS)
+            if (id.isNotEmpty()) contractViolation(tr("打开了音乐播放软件 {exe}", "exe" to app), id)
+        }
         val mode = settings.str("FILTER_MODE")
         val why = if (app.isEmpty() || app == "OIT" || host.lockExempt(app, mode == RuleKeys.WHITELIST)) null
         else rules.snap.appAllowed(app, net.online, mode).takeIf { !it.first }?.second
@@ -338,7 +353,8 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     /** 每 5 秒 (以及启动时) 判定一遍. 新达成的显示在界面上方, 直到手动关掉 (界面读 ach.unseen). */
     fun checkAchievements() {
         if (dm.resetting) return
-        val new = ach.check(AchFacts(LocalDateTime.now(), ach.first, settings.inSetup(), dm.studyByDay(), dm.hourDays))
+        val new = ach.check(AchFacts(LocalDateTime.now(), ach.first, settings.inSetup(), dm.studyByDay(), dm.hourDays,
+            contract.history))
         if (new.isNotEmpty()) achievementsUnlocked(new)
     }
 
@@ -417,6 +433,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     fun netQuick(minutes: Int, reason: String): Boolean {
         val err = net.request(minutes, reason.trim(), quick = true)
         if (err != null) { toast(err, "warn"); return false }
+        contractQuick()
         changed()
         return true
     }
@@ -434,6 +451,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     fun netUpgrade(): Boolean {
         val err = net.convertToQuick()
         if (err != null) { toast(err, "warn"); return false }
+        contractQuick()
         changed()
         return true
     }
@@ -462,6 +480,115 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         }
     }
 
+    // ---- 合约 (MECHANICS 18) ----
+
+    /** 生效的断网方式: 合约的"全频道阻塞干扰"期间是代理-全屏蔽 (设置值 adapter), 不改设置, 不计冷却. */
+    fun netMode(): String = if (contract.has("jam")) "adapter" else settings.str("NET_MODE")
+
+    /** 一段专注换来的休息时间 (秒): F(t) × 休息时间倍率, 再按合约调整. */
+    fun focusRest(minutes: Double, start: LocalDateTime, end: LocalDateTime): Double {
+        val sec = maxOf(0.0, computeF(minutes)) * settings.num("BREAK_TIME_SCALE") * 60.0
+        return if (contract.active && contract.startAt?.isAfter(end) == false) contract.bookRest(sec)
+        else contract.bookRestAfter(sec, start)
+    }
+
+    /** 自动的操作由状态的主人做; 主人不在线 (2 分钟没同步) 时本机来做. */
+    private fun ownerAway(owner: String) = owner.isEmpty() || owner == myId() || !peerFresh(owner)
+
+    /** 每秒: 到时间就完成, 空闲太久就失败, 联网用超了算违反 (由合约的主人做). */
+    private fun checkContract() {
+        val c = contract
+        val seen = if (c.active) c.id else null
+        if (seen != contractSeen) {
+            val was = contractSeen
+            contractSeen = seen
+            host.applyNet(false)                 // 全频道阻塞干扰: 断网方式跟着变
+            if (was != null && seen == null) c.last?.let {
+                toast(tr("合约已结束: {r}", "r" to tr(contractResult(it.optString("result")))))
+            }
+        }
+        if (!c.active || !ownerAway(c.owner)) return
+        c.due(LocalDateTime.now(), timer.state == TState.IDLE)?.let { (why, at) ->
+            endContract(why, at); return
+        }
+        c.netCheck(net.usedAll, net.bonusAll, net.remaining, net.date)?.let { (id, kind) ->
+            contractViolation(if (kind == "loan") tr("使用了紧急借贷") else tr("联网超过了合约的额度"), id)
+        }
+    }
+
+    fun startContract(terms: Collection<String>) {
+        if (contract.active) return
+        contract.start(terms, myId())
+        contractSeen = contract.id
+        host.applyNet(false)
+        logNotice("CONTRACT start level ${contract.level} terms ${contract.terms.joinToString(",").ifEmpty { "-" }} until ${contract.endAt?.format(Fmt.YMDHM)}")
+        toast(tr("合约开始."), "success")
+        changed()
+    }
+
+    fun abandonContract() = endContract("abandoned")
+
+    fun endContract(result: String, at: LocalDateTime? = null) {
+        val c = contract
+        if (!c.active) return
+        val pending = c.reward
+        val rec = c.finish(result, at, myId()) ?: return
+        contractSeen = null
+        host.applyNet(false)
+        val reward = rec.optInt("reward", 0)
+        if (reward > 0) timer.syncSet(timer.breakCarry + reward, null, null)
+        checkAchievements()
+        logNotice("CONTRACT $result level ${rec.optInt("level")} violations ${rec.optInt("violations")} reward ${reward}s")
+        val lv = rec.optInt("level")
+        when (result) {
+            "completed" -> {
+                var msg = tr("危机等级 {lv} · 休息倍率 ×{m}", "lv" to lv, "m" to numText(Contract.restMult(lv)))
+                if (reward > 0) msg += "\n" + tr("积攒的休息时间 +{t}.", "t" to fmtMs(reward.toDouble()))
+                notice(tr("⚔  合约完成"), msg, listOf(NoticeButton(tr("知道了"), "ok", true)), page = "contract")
+            }
+            "abandoned" -> toast(tr("合约已提前结束."))
+            else -> {
+                var msg = if (result == "failed") tr("违反词条 {n} 次, 合约终止.", "n" to rec.optInt("violations"))
+                else tr("空闲超过 30 分钟, 合约终止.")
+                if (pending >= 1) msg += "\n" + tr("积攒的 {t} 休息时间没有给出.", "t" to fmtMs(pending))
+                notice(tr("⚔  合约失败"), msg, listOf(NoticeButton(tr("知道了"), "ok", true)), page = "contract")
+            }
+        }
+        changed()
+    }
+
+    /** 违反了词条 id (软规则): 响警报, 记一次, 这个词条降一级; 到上限就结束合约. */
+    fun contractViolation(why: String, id: String) {
+        val c = contract
+        if (!c.active || dm.resetting || !c.has(id)) return
+        host.playAlarm()
+        val old = tr(Contract.BY_ID[id]!!.name)
+        val (over, new) = c.violate(id)
+        val after = when {
+            new.isEmpty() -> tr("{a} 失效", "a" to old)
+            new == id -> tr("{a} 降一级", "a" to old)
+            else -> tr("{a} 降为 {b}", "a" to old, "b" to tr(Contract.BY_ID[new]!!.name))
+        }
+        logNotice("CONTRACT violation ${c.violations}/${c.violationLimit}: $id -> ${new.ifEmpty { "-" }}  $why")
+        toast(tr("⚠ 违反合约: {why} ({n} / {m})", "why" to why, "n" to c.violations, "m" to c.violationLimit) +
+            "\n" + after + "  ·  " + tr("危机等级 {lv}", "lv" to c.level), "warn", long = true)
+        if (over) endContract("failed")
+        changed()
+    }
+
+    /** 抑制: 用了快速访问. */
+    private fun contractQuick() {
+        val id = contract.quickCheck()
+        if (id.isNotEmpty()) contractViolation(tr("使用了快速访问"), id)
+    }
+
+    /** 同步来的合约. */
+    fun mergeContract(changes: Map<String, Any?>) {
+        contract.merge(changes)
+        checkContract()
+        changed()
+    }
+
     // ---- 断网方式 ----
 
     /** 联网只看网站名单, 应用名单只管锁定应用 (checkAppLock). 局域网通道在每种计划里都保留 (MECHANICS 15). */
@@ -474,7 +601,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         val snap = rules.snap
         // 代理-全屏蔽 (Proxy block-all) (设置里的 Adapter): 离线时接管 DNS, 所有域名一律拦截 (不看网站名单,
         // 局域网照常, 设备同步要用); 联网中全部放行. 应用名单照样按过滤名单模式锁定应用 (checkAppLock)
-        if (settings.str("NET_MODE") == "adapter")
+        if (netMode() == "adapter")
             return if (online) VpnPlan.Dns(false, 0) else VpnPlan.Dns(true, 0, blockAll = true)
         // 联网中两种名单模式都全部放行 (MECHANICS 4.1)
         if (online) return VpnPlan.Dns(false, 0)

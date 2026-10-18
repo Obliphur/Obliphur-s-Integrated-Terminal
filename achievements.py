@@ -27,6 +27,7 @@ ACHIEVEMENTS = [
     ("study8", "高效专注", "你在一天内学习了8h,是一个相对比较长的时间.", False, ""),
     ("study12", "overload", "你在一天内学习了12h.这真的是人类可以做到的吗?", False, ""),
     ("sleep10", "冬眠", "睡了10h以上...", False, ""),
+    ("summit", "登顶", "我们是冠军!", True, ""),
 ]
 BY_ID = {a[0]: a for a in ACHIEVEMENTS}
 SLEEP_WORD = "sleeping"
@@ -38,11 +39,14 @@ def is_english_name(name: str) -> bool:
 
 
 class Facts:
-    """判定用的数据. study: {日期: 小时} (所有设备合计); hours: {日期: {小时: 内容}}."""
+    """判定用的数据. study: {日期: 小时} (所有设备合计); hours: {日期: {小时: 内容}};
+    contracts: 结束了的合约 (contract.py 的 history)."""
 
-    def __init__(self, now: datetime, first: datetime, in_setup: bool, study: dict, hours: dict):
+    def __init__(self, now: datetime, first: datetime, in_setup: bool, study: dict, hours: dict,
+                 contracts=None):
         self.now, self.first, self.in_setup = now, first, in_setup
         self.study, self.hours = study, hours
+        self.contracts = contracts or []
 
 
 def sleep_hours(day: dict) -> float:
@@ -80,6 +84,8 @@ CHECKS = {
     "study8": _study(8),
     "study12": _study(12),
     "sleep10": _sleep(10),
+    # 完成了危机等级 20 及以上的合约 (按结算时的等级, MECHANICS 18)
+    "summit": lambda f: any(h.get("result") == "completed" and int(h.get("level") or 0) >= 20 for h in f.contracts),
 }
 
 

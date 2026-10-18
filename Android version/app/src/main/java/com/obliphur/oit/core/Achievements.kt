@@ -13,6 +13,8 @@ data class Achievement(val id: String, val name: String, val text: String, val h
 class AchFacts(
     val now: LocalDateTime, val first: LocalDateTime, val inSetup: Boolean,
     val study: Map<String, Double>, val hours: Map<String, Map<String, String>>,
+    /** 结束了的合约 (Contract.history). */
+    val contracts: List<JSONObject> = emptyList(),
 )
 
 /**
@@ -33,6 +35,7 @@ class AchievementStore(private val file: File, guessFirst: () -> LocalDateTime) 
             Achievement("study8", "高效专注", "你在一天内学习了8h,是一个相对比较长的时间."),
             Achievement("study12", "overload", "你在一天内学习了12h.这真的是人类可以做到的吗?"),
             Achievement("sleep10", "冬眠", "睡了10h以上..."),
+            Achievement("summit", "登顶", "我们是冠军!", hidden = true),
         )
         val BY_ID = ALL.associateBy { it.id }
         val LOG_FILES = listOf("settings_changes.log", "net_requests.log", "window_guard.log")
@@ -67,6 +70,8 @@ class AchievementStore(private val file: File, guessFirst: () -> LocalDateTime) 
             "study8" to study(8.0),
             "study12" to study(12.0),
             "sleep10" to sleep(10.0),
+            // 完成了危机等级 20 及以上的合约 (按结算时的等级, MECHANICS 18)
+            "summit" to { f -> f.contracts.any { it.optString("result") == "completed" && it.optInt("level") >= 20 } },
         )
 
         /**
