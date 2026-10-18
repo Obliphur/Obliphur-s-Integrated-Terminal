@@ -733,7 +733,7 @@ EN = {
     "完成后的 {n} 分钟休息时间不会给出.": "The {n} min break for completing it will not be given.",
     "完成后的 {n} 分钟休息时间没有给出.": "The {n} min break for completing it was not given.",
     "⚔  合约完成": "⚔  Contract completed",
-    "⚔  合约失败": "⚔  Contract failed",
+    "⚔ 行动失败": "⚔  Mission failed",
     "合约已提前结束.": "The contract was ended early.",
     "违反词条 {n} 次, 合约终止.": "Terms violated {n} times; the contract is over.",
     "空闲超过 30 分钟, 合约终止.": "Idle for over 30 minutes; the contract is over.",

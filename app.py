@@ -2186,7 +2186,7 @@ class BreakTimerApp:
                    else tr("空闲超过 30 分钟, 合约终止."))
             if pending >= 1:
                 msg += "\n" + tr("完成后的 {n} 分钟休息时间没有给出.", n=round(pending / 60))
-            toast.notice(tr("⚔  合约失败"), msg)
+            toast.notice(tr("⚔ 行动失败"), msg)
         if self.sync.peers():
             self.sync.sync_now()
 

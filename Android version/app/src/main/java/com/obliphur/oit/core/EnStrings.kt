@@ -477,7 +477,7 @@ object EnStrings {
         "{a} 降为 {b}" to "{a} drops to {b}",
         "■  提前结束" to "■  End early",
         "▶  开始行动" to "▶  Start",
-        "⚔  合约失败" to "⚔  Contract failed",
+        "⚔ 行动失败" to "⚔  Mission failed",
         "⚔  合约完成" to "⚔  Contract completed",
         "⚠  当前合约难度极大 请谨慎行动" to "⚠  This contract is extremely hard. Proceed with caution",
         "⚠ 违反合约: {why} ({n} / {m})" to "⚠ Contract violated: {why} ({n} / {m})",
