@@ -33,9 +33,9 @@ TERMS = [
     ("info2", "info", 2, "环境:信息阻断-II", "只能使用剩余联网时间的50% 且不能使用借贷", ()),
     ("info3", "info", 3, "环境:信息阻断-III", "只能使用剩余联网时间的25% 且不能使用借贷", ()),
     ("isolate", "info", 4, "环境:信息隔绝", "不能使用联网功能 选择时 获得的休息时间为原来的1.3倍", ("music", "silent", "game", "video")),
-    ("tired1", "tired", 1, "环境:疲惫-I", "期间获得的休息时间为0.9x", ()),
-    ("tired2", "tired", 2, "环境:疲惫-II", "期间获得的休息时间为0.75x", ()),
-    ("tired3", "tired", 3, "环境:疲惫-III", "期间获得的休息时间为0.6x", ()),
+    ("tired1", "tired", 1, "环境:疲惫-I", "期间获得的休息时间为0.7x", ()),
+    ("tired2", "tired", 2, "环境:疲惫-II", "期间获得的休息时间为0.6x", ()),
+    ("tired3", "tired", 3, "环境:疲惫-III", "期间获得的休息时间为0.5x", ()),
     ("short1", "short", 1, "环境:支援短缺-I", "只能使用合约开始前已保存休息时间的50%", ()),
     ("short2", "short", 2, "环境:支援短缺-II", "不能使用合约开始前已经保存的休息时间", ()),
     ("retreat1", "retreat", 1, "环境:退路封锁-I", "初始目标生命值为3", ()),
@@ -92,7 +92,8 @@ SINGLE = {"music", "suppress", "silent", "game", "video"}   # 只有一档的软
 
 DURATION = {"long1": 1.2, "long2": 1.4, "long3": 1.6}
 NET_SHARE = {"info1": 0.75, "info2": 0.5, "info3": 0.25, "isolate": 0.0}
-REST = {"tired1": 0.9, "tired2": 0.75, "tired3": 0.6}
+BASE_REST = 0.8                                # 合约中专注换来的休息时间的基础倍率; 有疲惫时换成疲惫的倍率
+REST = {"tired1": 0.7, "tired2": 0.6, "tired3": 0.5}
 REST_BONUS = {"isolate": 1.3}                   # 休息时间额外的乘区 (和疲惫不冲突, 相乘): 信息隔绝 ×1.3
 WINDOWS = {"chan1": 4, "chan2": 3}
 SUPPLY = {"short1": 0.5, "short2": 0.0}         # 合约开始前积攒的休息时间能用几成
@@ -202,8 +203,8 @@ def life_of(terms) -> int:
 
 
 def rest_factor_of(terms) -> float:
-    """合约中专注换来的休息时间乘多少: 疲惫 (取最低的) × 额外的乘区 (信息隔绝 ×1.3)."""
-    f = min((REST[t] for t in terms or [] if t in REST), default=1.0)
+    """合约中专注换来的休息时间乘多少: 基础 ×0.8, 有疲惫时换成疲惫的 (取最低的); 再乘额外的乘区 (信息隔绝 ×1.3)."""
+    f = min((REST[t] for t in terms or [] if t in REST), default=BASE_REST)
     for t in terms or []:
         f *= REST_BONUS.get(t, 1.0)
     return f
@@ -877,15 +878,17 @@ def _selftest():
     assert g.finish("abandoned", t0 + timedelta(hours=1))["net_gift"] == 0
     # 信息隔绝: 休息时间额外 ×1.3 (和疲惫相乘); 降成信息阻断-III 后没有了
     c.start(["isolate", "tired2"], owner="me", now=t0)
-    assert abs(c.rest_factor() - 0.75 * 1.3) < 1e-9 and abs(c.book_rest(1000, t0) - 975) < 1e-6
+    assert abs(c.rest_factor() - 0.6 * 1.3) < 1e-9 and abs(c.book_rest(1000, t0) - 780) < 1e-6
     c.downgrade("isolate")
-    assert c.rest_factor() == 0.75
+    assert c.rest_factor() == 0.6
+    # 没有疲惫: 基础 ×0.8 (信息隔绝照样相乘)
+    assert rest_factor_of([]) == 0.8 and abs(rest_factor_of(["isolate"]) - 0.8 * 1.3) < 1e-9
     c.start(["scar"], owner="me", now=t0)
     assert c.records() == ["screen"] and c.level == 2 and c.violate("scar") == (False, "") and c.terms == []
     c.start(["tired2", "chan1", "long1"], owner="me", now=t0)
     assert c.quick_check() == ""
-    # 休息: 疲惫 ×0.75; 完成时按降级后的等级给固定的时间 (等级 4 → 44 分钟)
-    assert abs(c.book_rest(1000, t0 + timedelta(hours=1)) - 750) < 1e-6
+    # 休息: 疲惫 ×0.6; 完成时按降级后的等级给固定的时间 (等级 4 → 44 分钟)
+    assert abs(c.book_rest(1000, t0 + timedelta(hours=1)) - 600) < 1e-6
     assert c.level == 4 and c.reward == 44 * 60
     # 空闲 30 分钟结束
     assert c.due(t0 + timedelta(hours=1), True) == ("", None)
@@ -912,11 +915,11 @@ def _selftest():
 
     # 完成: 按等级给固定的休息时间 (等级 4 → 44 分钟), 第一次休息的结转比例
     c.start(["last", "tired1"], owner="me", now=t0)
-    assert c.violation_limit == 1 and abs(c.book_rest(600, t0) - 540) < 1e-6 and c.reward == 44 * 60
+    assert c.violation_limit == 1 and abs(c.book_rest(600, t0) - 420) < 1e-6 and c.reward == 44 * 60
     assert c.due(t0 + timedelta(hours=4), False) == ("completed", t0 + timedelta(hours=4))
     rec = c.finish("completed", t0 + timedelta(hours=4, minutes=3))
     assert rec["reward"] == 44 * 60 and rec["end"] == (t0 + timedelta(hours=4)).isoformat()
-    assert abs(c.book_rest_after(600, t0 + timedelta(hours=3)) - 540) < 1e-6 and c.reward == 0, "完成后才结束的专注只乘疲惫"
+    assert abs(c.book_rest_after(600, t0 + timedelta(hours=3)) - 420) < 1e-6 and c.reward == 0, "完成后才结束的专注只乘疲惫"
     assert c.book_rest_after(600, t0 + timedelta(hours=5)) == 600
     assert c.take_first_break() and not c.take_first_break()
     assert abs(Contract.first_break_rate(0.7) - 0.85) < 1e-9
@@ -924,7 +927,7 @@ def _selftest():
     # 最近结束的那个, 不是最近开始的那个
     c.start(["long1"], now=t0 - timedelta(days=1))
     c.finish("abandoned", t0 - timedelta(days=1) + timedelta(hours=1))
-    assert c.last["result"] == "completed" and abs(c.book_rest_after(600, t0 + timedelta(hours=3)) - 540) < 1e-6
+    assert c.last["result"] == "completed" and abs(c.book_rest_after(600, t0 + timedelta(hours=3)) - 420) < 1e-6
 
     # 合约开始前积攒的休息时间 (20 分钟) + 支援短缺-II: 一点都不能用
     c.start(["short2"], owner="me", now=t0, pre=1200)

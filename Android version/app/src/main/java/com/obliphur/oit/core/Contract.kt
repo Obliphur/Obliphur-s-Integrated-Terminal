@@ -37,9 +37,9 @@ class Contract(private val file: File) {
             Term("info3", "info", 3, "环境:信息阻断-III", "只能使用剩余联网时间的25% 且不能使用借贷"),
             Term("isolate", "info", 4, "环境:信息隔绝", "不能使用联网功能 选择时 获得的休息时间为原来的1.3倍",
                 listOf("music", "silent", "game", "video")),
-            Term("tired1", "tired", 1, "环境:疲惫-I", "期间获得的休息时间为0.9x"),
-            Term("tired2", "tired", 2, "环境:疲惫-II", "期间获得的休息时间为0.75x"),
-            Term("tired3", "tired", 3, "环境:疲惫-III", "期间获得的休息时间为0.6x"),
+            Term("tired1", "tired", 1, "环境:疲惫-I", "期间获得的休息时间为0.7x"),
+            Term("tired2", "tired", 2, "环境:疲惫-II", "期间获得的休息时间为0.6x"),
+            Term("tired3", "tired", 3, "环境:疲惫-III", "期间获得的休息时间为0.5x"),
             Term("short1", "short", 1, "环境:支援短缺-I", "只能使用合约开始前已保存休息时间的50%"),
             Term("short2", "short", 2, "环境:支援短缺-II", "不能使用合约开始前已经保存的休息时间"),
             Term("retreat1", "retreat", 1, "环境:退路封锁-I", "初始目标生命值为3"),
@@ -99,12 +99,14 @@ class Contract(private val file: File) {
 
         val DURATION = mapOf("long1" to 1.2, "long2" to 1.4, "long3" to 1.6)
         val NET_SHARE = mapOf("info1" to 0.75, "info2" to 0.5, "info3" to 0.25, "isolate" to 0.0)
-        val REST = mapOf("tired1" to 0.9, "tired2" to 0.75, "tired3" to 0.6)
+        /** 合约中专注换来的休息时间的基础倍率; 有疲惫时换成疲惫的倍率. */
+        const val BASE_REST = 0.8
+        val REST = mapOf("tired1" to 0.7, "tired2" to 0.6, "tired3" to 0.5)
         /** 休息时间额外的乘区 (和疲惫相乘): 信息隔绝 ×1.3. */
         val REST_BONUS = mapOf("isolate" to 1.3)
-        /** 合约中专注换来的休息时间乘多少: 疲惫 (取最低的) × 额外的乘区. */
+        /** 合约中专注换来的休息时间乘多少: 基础 ×0.8, 有疲惫时换成疲惫的 (取最低的); 再乘额外的乘区. */
         fun restFactorOf(terms: Collection<String>): Double =
-            (terms.mapNotNull { REST[it] }.minOrNull() ?: 1.0) * terms.fold(1.0) { f, t -> f * (REST_BONUS[t] ?: 1.0) }
+            (terms.mapNotNull { REST[it] }.minOrNull() ?: BASE_REST) * terms.fold(1.0) { f, t -> f * (REST_BONUS[t] ?: 1.0) }
         /** 录像的词条 → 录什么. */
         val RECORD = mapOf("gaze" to "camera", "scar" to "screen")
         /** 禁止打开某类应用的词条 (每秒看前台应用). */

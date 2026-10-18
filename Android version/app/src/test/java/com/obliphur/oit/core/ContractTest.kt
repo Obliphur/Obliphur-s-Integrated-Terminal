@@ -67,8 +67,8 @@ class ContractTest {
         // 乐理之灾: 只在刚打开的那一下算; 只有 1 级, 降一级就失效
         assertEquals("music", c.banCheck("music", true)); assertEquals("", c.banCheck("music", true)); c.banCheck("music", false)
         assertEquals("", c.downgrade("music")); assertFalse(c.has("music"))
-        // 休息: 疲惫 ×0.75; 完成时按降级后的等级给固定的时间
-        assertEquals(750.0, c.bookRest(1000.0), 1e-6)
+        // 休息: 疲惫 ×0.6; 完成时按降级后的等级给固定的时间
+        assertEquals(600.0, c.bookRest(1000.0), 1e-6)
         assertEquals(Contract.restMinutes(c.level) * 60.0, c.reward, 1e-6)
         // 空闲 30 分钟
         assertNull(c.due(t0.plusHours(1), true))
@@ -94,8 +94,11 @@ class ContractTest {
         assertEquals(false to "", e.violate("gaze")); assertEquals(emptyList<String>(), e.records())
         // 信息隔绝: 休息时间 ×1.3 (和疲惫相乘), 降成信息阻断-III 后没有了
         e.start(listOf("isolate", "tired2"), "me", t0)
-        assertEquals(0.75 * 1.3, e.restFactor(), 1e-9)
-        e.downgrade("isolate"); assertEquals(0.75, e.restFactor(), 1e-9)
+        assertEquals(0.6 * 1.3, e.restFactor(), 1e-9)
+        e.downgrade("isolate"); assertEquals(0.6, e.restFactor(), 1e-9)
+        // 没有疲惫: 基础 ×0.8 (信息隔绝照样相乘)
+        assertEquals(0.8, Contract.restFactorOf(emptyList()), 1e-9)
+        assertEquals(0.8 * 1.3, Contract.restFactorOf(listOf("isolate")), 1e-9)
         // 目标生命值: 默认 4, 退路封锁-I 只有 3; 整点记录超时未填写也算 (不降词条)
         assertEquals(4, c.violationLimit)
         c.start(listOf("suppress", "info3", "long1", "retreat1"), "me", t0)
@@ -115,13 +118,13 @@ class ContractTest {
         val t0 = LocalDateTime.of(2026, 10, 18, 9, 30)
         c.start(listOf("last", "tired1"), "me", t0)
         assertEquals(1, c.violationLimit)
-        assertEquals(540.0, c.bookRest(600.0), 1e-6)
+        assertEquals(420.0, c.bookRest(600.0), 1e-6)
         assertEquals(44 * 60.0, c.reward, 1e-6)
         assertEquals("completed" to t0.plusHours(4), c.due(t0.plusHours(4), false))
         val rec = c.finish("completed", t0.plusHours(4).plusMinutes(3))!!
         assertEquals(44 * 60, rec.optInt("reward"))
         assertEquals(0.0, c.reward, 1e-6)
-        assertEquals(540.0, c.bookRestAfter(600.0, t0.plusHours(3)), 1e-6)
+        assertEquals(420.0, c.bookRestAfter(600.0, t0.plusHours(3)), 1e-6)
         assertEquals(600.0, c.bookRestAfter(600.0, t0.plusHours(5)), 1e-6)
         assertTrue(c.takeFirstBreak()); assertFalse(c.takeFirstBreak())
         assertEquals(0.85, Contract.firstBreakRate(0.7), 1e-9)
