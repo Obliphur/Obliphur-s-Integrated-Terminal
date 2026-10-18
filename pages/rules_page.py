@@ -14,7 +14,7 @@ from netproxy import (
 )
 from netproxy.rules import MODE_BLACKLIST, MODE_WHITELIST, keys_for_mode
 from .widgets import (Modal, ScrollArea, wrap_label, smooth, cfg, flavor,
-                      show_pack, hide_pack, show_grid, hide_grid)
+                      show_pack, hide_pack, hide_grid)
 from . import ai_dialogs
 
 _WHY_TEXT = {
@@ -35,7 +35,8 @@ _PANELS = (
 
 
 class RulesPage(tk.Frame):
-    """🛡 Rules 页:proxy 屏蔽模式的名单.黑 / 白名单二选一,只显示当前模式的两张表."""
+    """🛡 Rules 页:proxy 屏蔽模式的名单.黑 / 白名单二选一,只显示当前模式的两张表.
+    代理-全屏蔽 (Proxy block-all) 下网站一律拦截, 只显示当前模式的应用名单."""
 
     def __init__(self, master, controller, settings=None, on_changed=None,
                  on_open_settings=None, sync=None):
@@ -310,13 +311,17 @@ class RulesPage(tk.Frame):
         net_mode = getattr(config, "NET_MODE", "adapter")
         proxy_on = net_mode in ("proxy", "proxy_all")
         mode = self._mode()
-        active = keys_for_mode(mode)
+        blockall = net_mode == "proxy_all"
+        # 全屏蔽: 网站名单不起作用, 只剩当前模式的应用名单 (MECHANICS 3.2.1)
+        active = keys_for_mode(mode)[1:] if blockall else keys_for_mode(mode)
 
         for key, fr in self._frames.items():
-            if key in active:
-                show_grid(fr)
-            else:
+            if key not in active:
                 hide_grid(fr)
+            elif blockall:
+                self._place(fr, col=0, span=2)
+            else:
+                self._place(fr, col=0 if key in (WHITE_DOMAINS, BLACK_DOMAINS) else 1, span=1)
         for m, b in self.btn_modes.items():
             cfg(b, style="Accent.TButton" if m == mode else "TButton")
         staged = self.settings.staged("FILTER_MODE") if self.settings else None
@@ -333,7 +338,7 @@ class RulesPage(tk.Frame):
             run = tr("运行中") if c.running else tr("未运行")
             text = tr("Proxy 模式 · 本地代理 127.0.0.1:{port} · {run}").format(port=c.port, run=run)
             if net_mode == "proxy_all":
-                text += "\n" + tr("代理-全屏蔽 (Proxy block-all): 离线时全部拦截, 名单不起作用.")
+                text += "\n" + tr("代理-全屏蔽 (Proxy block-all): 离线时除 OIT 内部需要的连接 (本机, 局域网同步) 外, 所有网站一律拦截; 只启用应用名单.")
             cfg(self.lbl_mode, text=text,
                 fg=COLORS["success"] if c.running else COLORS["warn"])
         else:
@@ -375,6 +380,16 @@ class RulesPage(tk.Frame):
                 n = f"  ×{e['count']}" if e["count"] > 1 else ""
                 self.lb_events.insert(
                     "end", f"{t}  {e['host']}{who}  ({tr(_WHY_TEXT.get(e['why'], e['why']))}){n}")
+
+    @staticmethod
+    def _place(fr, col: int, span: int):
+        """名单卡片放到第 col 列 (横跨 span 列); 位置没变就不动 (重复 grid 会触发重新布局)."""
+        if fr.winfo_manager() == "grid":
+            info = fr.grid_info()
+            if int(info.get("column", -1)) == col and int(info.get("columnspan", 1)) == span:
+                return
+        padx = 0 if span > 1 else ((0, 6) if col == 0 else (6, 0))
+        fr.grid(row=0, column=col, columnspan=span, sticky="nsew", padx=padx, pady=(0, 8))
 
     @staticmethod
     def _list_label(key: str) -> str:

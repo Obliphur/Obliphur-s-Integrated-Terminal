@@ -225,8 +225,8 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         private set
 
     private fun checkAppLock() {
-        // 和网络限制一样: 开发者模式 / 重置中 / 全屏蔽 (名单不起作用) 时不锁
-        val active = !dm.resetting && !settings.devMode && settings.str("NET_MODE") == "proxy"
+        // 和网络限制一样: 开发者模式 / 重置中不锁. 两种断网方式都锁 (全屏蔽时只剩应用名单起作用)
+        val active = !dm.resetting && !settings.devMode
         val app = if (active) host.foregroundApp() else ""
         if (app == null) return                                  // 屏幕关闭 / 没有权限: 维持原样
         val mode = settings.str("FILTER_MODE")
@@ -432,7 +432,8 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         if (dm.resetting || net.dead || settings.devMode) return VpnPlan.None
         val online = net.online
         val snap = rules.snap
-        // 代理-全屏蔽 (Proxy block-all) (设置里的 Adapter): 离线时接管 DNS, 所有域名一律拦截; 联网中全部放行
+        // 代理-全屏蔽 (Proxy block-all) (设置里的 Adapter): 离线时接管 DNS, 所有域名一律拦截 (不看网站名单,
+        // 局域网照常, 设备同步要用); 联网中全部放行. 应用名单照样按过滤名单模式锁定应用 (checkAppLock)
         if (settings.str("NET_MODE") == "adapter")
             return if (online) VpnPlan.Dns(false, 0) else VpnPlan.Dns(true, 0, blockAll = true)
         // 联网中两种名单模式都全部放行 (MECHANICS 4.1)

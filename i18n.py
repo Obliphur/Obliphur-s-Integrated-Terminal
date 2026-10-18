@@ -279,7 +279,7 @@ EN = {
     "{domain} —— {visits} 次": "{domain} — {visits} visits",
     "【最近 {days} 天浏览器访问最多的网站(只有域名与次数,无具体网址)】\n{list}": "[Most-visited websites in the last {days} days (domains and counts only, no full URLs)]\n{list}",
     "Adapter:离线时直接禁用物理网卡.Proxy:网卡保持开启,由本地代理按 Rules 页的黑白名单放行 / 拦截.": "Adapter: disables the physical network adapters while offline. Proxy: adapters stay on and a local proxy allows / blocks by the lists on the Rules page.",
-    "仅 Proxy 断网方式下有效.黑名单模式:默认放行,只拦名单内.白名单模式:默认拦截,离线只放行名单内,联网会话中全放行.": "Only applies to the Proxy method. Blacklist: allow by default, block only listed items. Whitelist: block by default; while offline only listed items pass, and everything passes during an online session.",
+    "仅 Proxy / 代理-全屏蔽 (Proxy block-all) 断网方式下有效 (全屏蔽时只看应用名单).黑名单模式:默认放行,只拦名单内.白名单模式:默认拦截,离线只放行名单内,联网会话中全放行.": "Only applies to the Proxy and Proxy · block everything methods (with block everything, only the app lists count). Blacklist: allow by default, block only listed items. Whitelist: block by default; while offline only listed items pass, and everything passes during an online session.",
     # ---- Statistics: 专注计时 ----
     "⏱  专注计时": "⏱  Focus timer",
     "专注": "Focus",
@@ -437,7 +437,8 @@ EN = {
     "新版本 {v} 已下载": "Version {v} downloaded",
     "安装": "Install",
     "代理-全屏蔽 (Proxy block-all)": "Proxy · block everything",
-    "代理-全屏蔽 (Proxy block-all): 离线时全部拦截, 名单不起作用.": "Proxy · block everything: everything is blocked while offline; the lists have no effect.",
+    "代理-全屏蔽 (Proxy block-all): 离线时除 OIT 内部需要的连接 (本机, 局域网同步) 外, 所有网站一律拦截; 只启用应用名单.":
+        "Proxy · block everything: while offline every website is blocked, except the connections OIT itself needs (this computer, LAN sync); only the app lists are in effect.",
     "全屏蔽": "blocking everything",
     # ---- 设备同步 (MECHANICS 15) ----
     "对方": "the other device",

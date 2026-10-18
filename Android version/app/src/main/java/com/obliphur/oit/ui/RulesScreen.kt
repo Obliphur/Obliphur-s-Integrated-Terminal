@@ -88,10 +88,7 @@ fun RulesScreen(go: (String) -> Unit) {
             Text(tr("断网方式") + ": " + core.settings.display("NET_MODE") + "\n" +
                 tr("过滤名单模式") + ": " + core.settings.display("FILTER_MODE"),
                 color = o.text, fontWeight = FontWeight.Bold)
-            if (adapter) {
-                Dim(tr("全屏蔽时名单不起作用."), color = o.warn)
-                PlainButton(tr("去设置里切换断网方式"), modifier = Modifier.padding(top = 6.dp)) { go("settings:net") }
-            }
+            if (adapter) Dim(tr("全屏蔽: 离线时除 OIT 内部需要的连接 (本机, 局域网同步) 外, 所有网站一律拦截; 只启用应用名单."), color = o.warn)
             Dim(tr("本次运行: 放行 {a} · 拦截 {b}", "a" to BlockLog.allowed, "b" to BlockLog.blocked), size = 13)
             FlowRow(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -116,13 +113,17 @@ fun RulesScreen(go: (String) -> Unit) {
 
         Segmented(listOf(RuleKeys.BLACKLIST to tr("黑名单"), RuleKeys.WHITELIST to tr("白名单")), view) { view = it }
         val (dk, ak) = RuleKeys.forMode(view)
-        RulePanel(dk)
+        // 全屏蔽: 网站名单不起作用, 只显示应用名单 (MECHANICS 14.2)
+        val blockAll = core.settings.str("NET_MODE") == "adapter"
+        if (!blockAll) RulePanel(dk)
         RulePanel(ak)
         LockPermissions()
 
         Heading(tr("⏳  等待生效的改动"))
-        if (core.rules.pending.isEmpty()) Dim(tr("没有"))
-        core.rules.pending.toList().forEachIndexed { i, p ->
+        val shownPending = core.rules.pending.toList().withIndex()
+            .filter { !blockAll || it.value.list in listOf(RuleKeys.WHITE_APPS, RuleKeys.BLACK_APPS) }
+        if (shownPending.isEmpty()) Dim(tr("没有"))
+        shownPending.forEach { (i, p) ->
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("${if (p.op == "add") tr("加入") else tr("删除")} · ${tr(PANEL_TITLES[p.list]!!).trim()} · ${p.item}\n" +
                     p.applyAt.format(Fmt.YMDHM), fontSize = 13.sp, color = o.text, modifier = Modifier.weight(1f))

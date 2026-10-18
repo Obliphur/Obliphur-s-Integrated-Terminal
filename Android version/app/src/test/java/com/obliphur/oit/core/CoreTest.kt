@@ -394,8 +394,11 @@ class CoreTest {
         NoHost.fg = "com.game"
         core.tick()
         assertEquals(listOf("com.game:not-whitelisted"), NoHost.locks)
-        // 全屏蔽时名单不起作用: 撤掉锁定
+        // 全屏蔽时应用名单照样起作用 (只剩应用名单)
         core.stageSetting("NET_MODE", "adapter")
+        core.tick()
+        assertEquals("com.game", core.lockedApp)
+        NoHost.fg = "com.code"
         core.tick()
         assertEquals(null, core.lockedApp)
     }

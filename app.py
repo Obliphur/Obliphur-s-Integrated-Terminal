@@ -1773,11 +1773,10 @@ class BreakTimerApp:
         self.app_rules_job = self.root.after(1000, self._schedule_app_rules)
 
     def _check_app_rules(self):
-        """只在 Proxy 断网方式下生效; 开发者模式下不管 (和网络限制一样解除)."""
+        """Proxy / 代理-全屏蔽 (Proxy block-all) 断网方式下生效 (全屏蔽时只剩应用名单起作用);
+        开发者模式下不管 (和网络限制一样解除)."""
         if self.dm.resetting or self.net.dev_mode or self.net.net_mode != "proxy":
             return
-        if getattr(config, "NET_MODE", "") == "proxy_all":
-            return                          # 全屏蔽只管网络, 不看名单
         rules = self.net.proxy.rules
         mode = getattr(config, "FILTER_MODE", "blacklist")
         online = self.net.online

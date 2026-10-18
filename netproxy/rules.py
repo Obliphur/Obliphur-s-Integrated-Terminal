@@ -30,7 +30,8 @@ LIST_KEYS = (WHITE_DOMAINS, WHITE_APPS, BLACK_DOMAINS, BLACK_APPS)
 
 MODE_BLACKLIST = "blacklist"
 MODE_WHITELIST = "whitelist"
-# 代理-全屏蔽 (Proxy block-all) (断网方式 proxy_all): 不看名单, 离线时除本机地址外全部拦截, 联网会话中全部放行
+# 代理-全屏蔽 (Proxy block-all) (断网方式 proxy_all): 联网判定不看名单, 离线时除本机地址外全部拦截,
+# 联网会话中全部放行. 应用名单照样按过滤名单模式 (黑 / 白) 关窗口 (app_allowed, MECHANICS 3.2.1 / 4.7)
 MODE_BLOCKALL = "blockall"
 
 CHANGE_DELAY_HOURS = 48
@@ -399,8 +400,9 @@ def _selftest():
     assert empty.decide("anything.com", "x.exe", False, MODE_WHITELIST) == (False, "offline"), \
         "白名单为空时离线全拦"
     assert keys_for_mode(MODE_WHITELIST) == (WHITE_DOMAINS, WHITE_APPS)
-    # 全屏蔽: 名单不起作用
+    # 全屏蔽: 网站名单 / 应用名单都不放行网站
     assert rs.decide("www.school.edu.cn", "code.exe", False, MODE_BLOCKALL) == (False, "blockall")
+    assert rs.decide("zhihu.com", "steam.exe", False, MODE_BLOCKALL) == (False, "blockall")
     assert rs.decide("zhihu.com", "chrome.exe", True, MODE_BLOCKALL) == (True, "online")
     assert rs.decide("localhost", "", False, MODE_BLOCKALL) == (True, "local")
     assert keys_for_mode("whatever") == (BLACK_DOMAINS, BLACK_APPS)

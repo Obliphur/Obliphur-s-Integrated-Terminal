@@ -247,7 +247,7 @@ object EnStrings {
         "{item} 已在名单里." to "{item} is already on the list.",
         "{item} 不在名单里." to "{item} is not on the list.",
         "格式不对." to "Invalid format.",
-        "全屏蔽时名单不起作用." to "The lists have no effect while blocking everything.",
+        "全屏蔽: 离线时除 OIT 内部需要的连接 (本机, 局域网同步) 外, 所有网站一律拦截; 只启用应用名单." to "Blocking everything: while offline every website is blocked, except the connections OIT itself needs (this device, LAN sync); only the app lists are in effect.",
         "去设置里切换断网方式" to "Switch the cut-off method in Settings",
         "本次运行: 放行 {a} · 拦截 {b}" to "This run: allowed {a} · blocked {b}",
         "🤖 AI 建议" to "🤖 AI suggestions",

@@ -116,7 +116,7 @@ SETTINGS_SCHEMA = [
             ("whitelist", "白名单模式"),
         ],
         "fmt": lambda v: "Whitelist" if v == "whitelist" else "Blacklist",
-        "desc": "仅 Proxy 断网方式下有效.黑名单模式:默认放行,只拦名单内.白名单模式:默认拦截,离线只放行名单内,联网会话中全放行.",
+        "desc": "仅 Proxy / 代理-全屏蔽 (Proxy block-all) 断网方式下有效 (全屏蔽时只看应用名单).黑名单模式:默认放行,只拦名单内.白名单模式:默认拦截,离线只放行名单内,联网会话中全放行.",
         "page": "rules",
     },
     {
