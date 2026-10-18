@@ -230,6 +230,11 @@ class OitApp : Application(), Host {
 
     fun downloadUpdate() {
         toast(Toast(tr("正在下载更新…"), "info", false))
+        // 20 秒后还很慢 (这台手机直连 GitHub 常常只有几十 KB/s): 同时请绑定的设备下载好发过来, 谁先到用谁
+        android.os.Handler(mainLooper).postDelayed({
+            val u = updater
+            if (u.state == "downloading" && u.speed < 200 * 1024 && (u.total <= 0 || u.got < u.total / 2)) askPeersForUpdate(false)
+        }, 20_000)
         updater.download {
             onMain {
                 when (updater.state) {

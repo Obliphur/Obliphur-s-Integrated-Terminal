@@ -391,6 +391,29 @@ private fun PageExtras(tab: String, act: MainActivity) {
             if (!ok) PlainButton(tr("去授予")) { open(Intent(SysSettings.ACTION_USAGE_ACCESS_SETTINGS)) }
         }
     }
+    // 后台应用数怎么数的, 现在算了哪些 (MECHANICS 14.6)
+    if (tab == "window") OitCard {
+        LocalTick.current
+        val exact = AppUsage.usingRecents(ctx)
+        Text(tr("后台应用数"), fontWeight = FontWeight.Bold, color = o.text)
+        Dim(if (exact) tr("精确: 按多任务界面里的应用数") else tr("估计: 最近 6 小时用过、没有被关掉的应用 (从多任务里划掉的可能还算着)"),
+            size = 13, color = if (exact) o.success else o.warn)
+        if (AppUsage.precise(ctx) && !exact && AppUsage.recentsError.isNotEmpty())
+            Dim(tr("读不出最近任务: {e}", "e" to AppUsage.recentsError), size = 12, color = o.warn)
+        // 现在算了哪些应用: 只在开发者模式里显示 (调试用), 正式界面不显示
+        if (OitApp.instance.core.settings.devMode) AppUsage.lastOpen?.let { apps ->
+            val pm = ctx.packageManager
+            val names = apps.map { p -> runCatching { pm.getApplicationLabel(pm.getApplicationInfo(p, 0)).toString() }.getOrDefault(p) }
+            Dim(tr("现在算了 {n} 个", "n" to apps.size) + if (names.isEmpty()) "" else ": " + names.sorted().joinToString(", "), size = 13)
+        }
+        if (!AppUsage.precise(ctx)) {
+            Dim(tr("要精确计数, 需要在电脑上用 adb 给 OIT 授予一次权限 (手机打开 USB 调试 / 无线调试后执行下面两条, 再重新打开 OIT; 卸载重装 OIT 前一直有效):"),
+                size = 12)
+            for (perm in listOf("DUMP", "PACKAGE_USAGE_STATS"))
+                Text("adb shell pm grant ${ctx.packageName} android.permission.$perm", color = o.text, fontSize = 12.sp,
+                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+        }
+    }
 }
 
 // ════════════════ Reset 页 (MECHANICS 9) ════════════════

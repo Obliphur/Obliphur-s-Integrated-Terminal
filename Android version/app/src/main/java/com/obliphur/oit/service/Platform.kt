@@ -380,13 +380,74 @@ object AppUsage {
         return launchable
     }
 
+    /** 有"转储"权限 (DUMP, 普通应用拿不到, 只能用电脑 adb 授予一次) 时直接读系统的最近任务列表.
+     *  系统还要求 PACKAGE_USAGE_STATS 权限本身是授予状态 (也用 adb 授予), 否则 dumpsys 回 "Permission Denial" (显示在设置里). */
+    fun precise(ctx: Context) =
+        ctx.checkSelfPermission("android.permission.DUMP") == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+    @Volatile private var recents: Set<String>? = null
+    @Volatile private var recentsAt = 0L
+    @Volatile private var recentsBusy = false
+    /** 读不出最近任务时的原因 (设置 → 应用 里显示). */
+    @Volatile var recentsError = ""
+        private set
+
+    /** "dumpsys activity recents" 里 "Visible recent tasks" 一段 (多任务界面显示的那些任务) 的应用: 每个任务取根界面的包名. */
+    fun parseRecents(text: String): Set<String>? {
+        val start = text.indexOf("Visible recent tasks")
+        if (start < 0) return null
+        val out = LinkedHashSet<String>()
+        for (block in text.substring(start).split("RecentTaskInfo #").drop(1)) {
+            val pkg = listOf("""baseActivity=\{([^/}\s]+)/""", """realActivity=\{([^/}\s]+)/""", """cmp=([^/}\s]+)/""")
+                .firstNotNullOfOrNull { Regex(it).find(block)?.groupValues?.get(1) } ?: continue
+            out.add(pkg)
+        }
+        return out
+    }
+
+    /** 后台线程里读一遍最近任务 (dumpsys 要几百毫秒, 不能放在界面线程上); 失败时 recents 为 null. */
+    private fun refreshRecents() {
+        if (recentsBusy) return
+        recentsBusy = true
+        Thread {
+            recents = try {
+                val p = ProcessBuilder("dumpsys", "activity", "recents").redirectErrorStream(true).start()
+                val text = p.inputStream.bufferedReader().use { it.readText() }
+                p.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)
+                parseRecents(text).also { recentsError = if (it == null) text.trim().take(200).ifEmpty { "empty output" } else "" }
+            } catch (e: Exception) {
+                recentsError = e.toString().take(200)
+                null
+            }
+            recentsAt = System.currentTimeMillis()
+            recentsBusy = false
+        }.start()
+    }
+
+    /** 读最近任务列表时用的数据是不是可用的 (界面上显示"精确" / "估计"). */
+    fun usingRecents(ctx: Context) = precise(ctx) && recents != null
+
     /**
-     * 开着的应用 (后台的应用数, MECHANICS 14.6): 最近 6 小时的使用事件里, 还有没被销毁的界面
+     * 开着的应用 (后台的应用数, MECHANICS 14.6).
+     * 精确: 有 DUMP 权限时, 就是多任务界面里的任务 (每个任务算它的根应用, 别的应用借用的界面算在根应用里),
+     * 不含 OIT 自己和桌面. 每 10 秒以内读一次.
+     * 估计 (没有 DUMP 权限, 或读不出来): 最近 6 小时的使用事件里, 还有没被销毁的界面
      * (最后一个事件是 显示 / 暂停 / 停止, 不是销毁) 的应用. 从最近任务里划掉的应用界面会被销毁, 不算.
      * 只算桌面上有图标、能点开进入界面的应用: 别的应用借用的界面 (权限弹窗, 安装器, 分享 / 选择器,
      * 输入法, 登录页等没有图标的附属程序) 不算. 不含 OIT 自己, 桌面和系统界面. 没有使用情况访问权限时 null.
+     * 有的手机 (例如 vivo) 根本不记"销毁"事件, 划掉的应用也照样算到 6 小时后: 所以尽量用精确的办法.
      */
-    fun openApps(ctx: Context): Set<String>? {
+    /** 上一次数出来的应用 (设置 → 应用 里列出来). */
+    @Volatile var lastOpen: Set<String>? = null
+        private set
+
+    fun openApps(ctx: Context): Set<String>? = countOpen(ctx).also { lastOpen = it }
+
+    private fun countOpen(ctx: Context): Set<String>? {
+        if (precise(ctx)) {
+            if (System.currentTimeMillis() - recentsAt > 10_000) refreshRecents()
+            recents?.let { r -> return r.filter { it != ctx.packageName && it !in homes(ctx) }.toSet() }
+        }
         if (!permitted(ctx)) return null
         val usm = ctx.getSystemService(UsageStatsManager::class.java)
         val now = System.currentTimeMillis()
