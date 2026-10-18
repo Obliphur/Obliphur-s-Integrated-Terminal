@@ -430,12 +430,12 @@ object AppUsage {
     /**
      * 开着的应用 (后台的应用数, MECHANICS 14.6).
      * 精确: 有 DUMP 权限时, 就是多任务界面里的任务 (每个任务算它的根应用, 别的应用借用的界面算在根应用里),
-     * 不含 OIT 自己和桌面. 每次数的时候在后台重新读一遍, 用的是上一次读到的 (最多晚一个检查间隔).
+     * 含 OIT 自己, 不含桌面. 每次数的时候在后台重新读一遍, 用的是上一次读到的 (最多晚一个检查间隔).
      * 刚启动、第一次还没读完时返回 null (这一次不数): 不然会先用"估计"的办法多算一大堆, 过一会才恢复正常.
      * 估计 (没有 DUMP 权限, 或读不出来): 最近 6 小时的使用事件里, 还有没被销毁的界面
      * (最后一个事件是 显示 / 暂停 / 停止, 不是销毁) 的应用. 从最近任务里划掉的应用界面会被销毁, 不算.
      * 只算桌面上有图标、能点开进入界面的应用: 别的应用借用的界面 (权限弹窗, 安装器, 分享 / 选择器,
-     * 输入法, 登录页等没有图标的附属程序) 不算. 不含 OIT 自己, 桌面和系统界面. 没有使用情况访问权限时 null.
+     * 输入法, 登录页等没有图标的附属程序) 不算. 含 OIT 自己, 不含桌面和系统界面. 没有使用情况访问权限时 null.
      * 有的手机 (例如 vivo) 根本不记"销毁"事件, 划掉的应用也照样算到 6 小时后: 所以尽量用精确的办法.
      */
     /** 上一次数出来的应用 (设置 → 应用 里列出来). */
@@ -447,7 +447,7 @@ object AppUsage {
     private fun countOpen(ctx: Context): Set<String>? {
         if (precise(ctx)) {
             if (System.currentTimeMillis() - recentsAt > 3_000) refreshRecents()
-            recents?.let { r -> return r.filter { it != ctx.packageName && it !in homes(ctx) }.toSet() }
+            recents?.let { r -> return r.filter { it !in homes(ctx) }.toSet() }
             if (recentsAt == 0L || recentsError.isEmpty()) return null      // 第一次还没读完
         }
         if (!permitted(ctx)) return null
@@ -464,7 +464,7 @@ object AppUsage {
                     last[e.packageName + "/" + e.className] = e.eventType
             }
         }
-        val skip = homes(ctx) + ctx.packageName
+        val skip = homes(ctx)
         val apps = launchables(ctx)
         return last.filter { it.value != ACTIVITY_DESTROYED }.keys
             .map { it.substringBefore('/') }.filter { it !in skip && it in apps }.toSet()

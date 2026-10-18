@@ -2156,7 +2156,7 @@ class BreakTimerApp:
         lim = c.window_limit()
         if not lim or self.dm.resetting:
             return
-        tid = c.window_check(len(window_guard.taskbar_windows()))
+        tid = c.window_check(len(window_guard.taskbar_windows(include_own=True)))
         if tid:
             self.contract_violation(tr("窗口超过 {n} 个", n=lim), tid)
 

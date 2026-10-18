@@ -10,7 +10,7 @@
   · 没有所有者窗口 (对话框之类不算), 或者带 WS_EX_APPWINDOW;
   · 不是工具窗口 (WS_EX_TOOLWINDOW) 或不可激活窗口 (WS_EX_NOACTIVATE), 除非带 WS_EX_APPWINDOW;
   · 有标题; 不是桌面 / 任务栏本身.
-OIT 自己的窗口不计数, 也不会被关.
+OIT 自己的窗口也计数, 但不会被关 (超出的部分只从别的窗口里关).
 
 前台程序 (窗口使用时间统计)
 ──────────────────────────
@@ -272,26 +272,28 @@ def check_focus_rules(allowed, close=close_window):
 
 # ───────────────────────── 检查一次 ─────────────────────────
 
-def taskbar_windows(windows=None, own_pid: int = None) -> list:
-    """任务栏上的窗口 (不含 OIT 自己的)."""
+def taskbar_windows(windows=None, own_pid: int = None, include_own: bool = False) -> list:
+    """任务栏上的窗口; include_own=False 时不含 OIT 自己的 (窗口数要算上 OIT 时传 True)."""
     own_pid = os.getpid() if own_pid is None else own_pid
     windows = list_top_windows() if windows is None else windows
-    return [w for w in windows if is_taskbar_window(w) and w.get("pid") != own_pid]
+    return [w for w in windows if is_taskbar_window(w) and (include_own or w.get("pid") != own_pid)]
 
 
 def enforce(limit: int, windows=None, own_pid: int = None, close=close_window,
             rng=random):
-    """窗口数超过 limit 时, 一次随机关掉多出来的 (n - limit) 个.
+    """窗口数 (含 OIT 自己的窗口) 超过 limit 时, 一次随机关掉多出来的 (n - limit) 个; OIT 自己的窗口不关.
     返回 (窗口数, [关掉了的窗口]); 没超过或上限不合法时列表为空."""
+    own_pid = os.getpid() if own_pid is None else own_pid
+    windows = list_top_windows() if windows is None else windows
+    n = len(taskbar_windows(windows, own_pid, include_own=True))
     wins = taskbar_windows(windows, own_pid)
-    n = len(wins)
     try:
         limit = int(limit)
     except (TypeError, ValueError):
         return n, []
     if limit < 1 or n <= limit:
         return n, []
-    victims = rng.sample(wins, n - limit)
+    victims = rng.sample(wins, min(len(wins), n - limit))
     return n, [w for w in victims if close(w["hwnd"])]
 
 
@@ -379,21 +381,26 @@ def _selftest():
     assert not is_taskbar_window(win(1, title="Program Manager", cls="Progman"))
     assert not is_taskbar_window(win(1, cls="Shell_TrayWnd"))
 
-    # 同一个程序的多个窗口各算一个; OIT 自己的窗口不算, 也不会被关
+    # 同一个程序的多个窗口各算一个; OIT 自己的窗口也算, 但不会被关
     ws = [win(1, pid=5), win(2, pid=5), win(3, pid=6), win(4, pid=7),
           win(5, pid=99), win(6, pid=8, owned=True), win(7, pid=8, cloaked=True)]
     assert len(taskbar_windows(ws, own_pid=99)) == 4
+    assert len(taskbar_windows(ws, own_pid=99, include_own=True)) == 5
 
     closed = []
-    n, vs = enforce(4, ws, own_pid=99, close=lambda h: closed.append(h) or True)
-    assert n == 4 and vs == [] and not closed, "等于上限不关"
+    n, vs = enforce(5, ws, own_pid=99, close=lambda h: closed.append(h) or True)
+    assert n == 5 and vs == [] and not closed, "等于上限不关"
 
     ws.append(win(8, pid=9))
     for _ in range(50):
         closed.clear()
-        n, vs = enforce(4, ws, own_pid=99, close=lambda h: closed.append(h) or True)
-        assert n == 5 and len(vs) == 1 and closed == [vs[0]["hwnd"]]
+        n, vs = enforce(5, ws, own_pid=99, close=lambda h: closed.append(h) or True)
+        assert n == 6 and len(vs) == 1 and closed == [vs[0]["hwnd"]]
         assert vs[0]["hwnd"] in (1, 2, 3, 4, 8), "只能关任务栏上的, 且不能关 OIT 自己"
+    # 上限 1, 只有 OIT 自己和一个别的窗口: 只能关那一个
+    closed.clear()
+    n, vs = enforce(1, [win(5, pid=99), win(3, pid=6)], own_pid=99, close=lambda h: closed.append(h) or True)
+    assert n == 2 and closed == [3]
 
     # 随机: 多次检查应该关到不同的窗口
     seen = set()
