@@ -430,7 +430,8 @@ object AppUsage {
     /**
      * 开着的应用 (后台的应用数, MECHANICS 14.6).
      * 精确: 有 DUMP 权限时, 就是多任务界面里的任务 (每个任务算它的根应用, 别的应用借用的界面算在根应用里),
-     * 不含 OIT 自己和桌面. 每 10 秒以内读一次.
+     * 不含 OIT 自己和桌面. 每次数的时候在后台重新读一遍, 用的是上一次读到的 (最多晚一个检查间隔).
+     * 刚启动、第一次还没读完时返回 null (这一次不数): 不然会先用"估计"的办法多算一大堆, 过一会才恢复正常.
      * 估计 (没有 DUMP 权限, 或读不出来): 最近 6 小时的使用事件里, 还有没被销毁的界面
      * (最后一个事件是 显示 / 暂停 / 停止, 不是销毁) 的应用. 从最近任务里划掉的应用界面会被销毁, 不算.
      * 只算桌面上有图标、能点开进入界面的应用: 别的应用借用的界面 (权限弹窗, 安装器, 分享 / 选择器,
@@ -445,8 +446,9 @@ object AppUsage {
 
     private fun countOpen(ctx: Context): Set<String>? {
         if (precise(ctx)) {
-            if (System.currentTimeMillis() - recentsAt > 10_000) refreshRecents()
+            if (System.currentTimeMillis() - recentsAt > 3_000) refreshRecents()
             recents?.let { r -> return r.filter { it != ctx.packageName && it !in homes(ctx) }.toSet() }
+            if (recentsAt == 0L || recentsError.isEmpty()) return null      // 第一次还没读完
         }
         if (!permitted(ctx)) return null
         val usm = ctx.getSystemService(UsageStatsManager::class.java)
