@@ -31,6 +31,12 @@ def _fmt_sec(sec: int) -> str:
     return f"{sec} s" if sec < 180 else _fmt_min(sec)
 
 
+def chime_name(path) -> str:
+    """自选提示音: 只显示文件名."""
+    import os
+    return "🎵 " + os.path.basename(str(path).strip().rstrip("\\/"))
+
+
 def _num_text(x: float) -> str:
     """数字转成填写框里的文字: 去掉多余的 0, 最多 4 位小数."""
     return f"{round(float(x), 4):g}"
@@ -210,8 +216,9 @@ SETTINGS_SCHEMA = [
             ("__builtin__", "内置三音提示音 (推荐)"),
             ("", "Windows 蜂鸣声 (Beep)"),
         ],
+        # 自选的音频只显示文件名, 不显示路径
         "fmt": lambda v: "内置三音提示音" if str(v).strip() in ("", "__builtin__") else (
-            "Windows 蜂鸣声" if str(v) == "__beep__" else str(v)),
+            "Windows 蜂鸣声" if str(v) == "__beep__" else chime_name(v)),
         "desc": "即时生效.可粘贴本地 .wav / .mp3 的完整路径.",
         "page": "log",
     },

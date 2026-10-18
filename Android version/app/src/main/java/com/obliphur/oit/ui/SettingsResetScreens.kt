@@ -235,7 +235,19 @@ private fun ChimePicker() {
         }
     }
     PlainButton(tr("▶ 试听")) { core.previewChime() }
-    if (custom) Dim(Uri.parse(core.settings.str("CHIME_WAV")).lastPathSegment ?: "", size = 11, color = o.dim)
+    // 只显示文件名, 不显示路径
+    if (custom) Dim("🎵 " + audioName(ctx, core.settings.str("CHIME_WAV")), size = 12, color = o.dim)
+}
+
+/** 选好的音频文件的名字 (不含路径). */
+private fun audioName(ctx: android.content.Context, uri: String): String {
+    val u = Uri.parse(uri)
+    runCatching {
+        ctx.contentResolver.query(u, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+            if (c.moveToFirst()) c.getString(0)?.takeIf { it.isNotBlank() }?.let { return it }
+        }
+    }
+    return (u.lastPathSegment ?: "").substringAfterLast('/').substringAfterLast(':')
 }
 
 @Composable

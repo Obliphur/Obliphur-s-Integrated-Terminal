@@ -33,7 +33,7 @@ class AchievementStore(private val file: File, guessFirst: () -> LocalDateTime) 
             Achievement("day365", "一年的鏖战与守望", "一年以来,您的战斗不曾终止,也将继续."),
             Achievement("study4", "专注", "你第一次在一天内学习了4h."),
             Achievement("study8", "高效专注", "你在一天内学习了8h,是一个相对比较长的时间."),
-            Achievement("study12", "overload", "你在一天内学习了12h.这真的是人类可以做到的吗?"),
+            Achievement("study12", "overload", "你在一天内学习了12h.这真的是人类可以做到的吗?", hidden = true),
             Achievement("sleep10", "冬眠", "睡了10h以上..."),
             Achievement("summit", "登顶", "我们是冠军!", hidden = true),
         )

@@ -8,7 +8,7 @@ import config
 import toast
 from config import COLORS
 from i18n import tr
-from settings_manager import APPLY_INSTANT, SCHEMA_BY_KEY, SETTINGS_PAGES, page_specs
+from settings_manager import APPLY_INSTANT, SCHEMA_BY_KEY, SETTINGS_PAGES, page_specs, chime_name
 from .widgets import (ScrollArea, Switch, wrap_label, frozen, smooth, cfg, set_var, flavor,
                       show_pack, hide_pack, show_grid, hide_grid)
 
@@ -399,7 +399,19 @@ class SettingsPage(tk.Frame):
         ctrl.pack(fill="x", padx=12, pady=(6, 4))
 
         custom_var = None
-        if kind in ("choice", "combo", "float"):
+        if key == "CHIME_WAV":
+            var = tk.StringVar()
+            widget = ttk.Combobox(ctrl, textvariable=var, state="readonly", width=28)
+            widget.pack(side="left")
+            custom_var = tk.StringVar()          # 选好的音频文件的完整路径 (不显示)
+            self._track(ttk.Button(ctrl, text=tr("选择音频…"),
+                                   command=lambda: self._pick_wav(widget, custom_var)),
+                        "选择音频…").pack(side="left", padx=(8, 0))
+            self._track(ttk.Button(ctrl, text=tr("▶ 试听"), command=self._preview_chime),
+                        "▶ 试听").pack(side="left", padx=(8, 0))
+            widget.bind("<<ComboboxSelected>>", lambda _e: self._rows["CHIME_WAV"].update(
+                picked=bool(self._rows["CHIME_WAV"]["custom"].get().strip())))
+        elif kind in ("choice", "combo", "float"):
             var = tk.StringVar()
             widget = ttk.Combobox(
                 ctrl, textvariable=var, state="readonly", width=30,
@@ -426,13 +438,6 @@ class SettingsPage(tk.Frame):
         btn = self._track(ttk.Button(ctrl, text=tr("提交修改"), style="Accent.TButton",
                                      command=lambda k=key: self._stage(k)), "提交修改")
         btn.pack(side="left", padx=(8, 0))
-        if key == "CHIME_WAV":
-            self._track(ttk.Button(ctrl, text=tr("选择音频…"),
-                                   command=lambda: self._pick_wav(widget, custom_var)),
-                        "选择音频…").pack(side="left", padx=(8, 0))
-            self._track(ttk.Button(ctrl, text=tr("▶ 试听"),
-                                   command=lambda: (self.on_sound and self.on_sound())),
-                        "▶ 试听").pack(side="left", padx=(8, 0))
 
         pending = tk.Frame(inner, bg=card)
         pending.pack(fill="x", padx=12, pady=(0, 8))
@@ -451,13 +456,27 @@ class SettingsPage(tk.Frame):
             "frame": inner, "custom": custom_var, "badge": badge,
         }
 
-        self._choices_widgets.append((key, widget))
+        if key != "CHIME_WAV":
+            self._choices_widgets.append((key, widget))
 
         area.bind_children()
+
+    def _chime_values(self, path: str = ""):
+        """提示音下拉框的选项: 内置 / 蜂鸣, 以及选好的那个文件 (只显示文件名)."""
+        out = [(v, lab) for v, lab in self.sm.labeled_values("CHIME_WAV", translate=True)]
+        if path:
+            out.append((path, chime_name(path)))
+        return out
 
     def _widget_value(self, key: str):
         spec = SCHEMA_BY_KEY[key]
         row = self._rows[key]
+        if key == "CHIME_WAV":
+            label = row["var"].get().strip()
+            for value, lab in self._chime_values(row["custom"].get().strip()):
+                if lab == label:
+                    return value
+            return self.sm.value(key)
         raw = row["var"].get().strip()
         custom = (row["custom"].get().strip() if row.get("custom") else "")
 
@@ -482,6 +501,19 @@ class SettingsPage(tk.Frame):
         spec = SCHEMA_BY_KEY[key]
         row = self._rows[key]
         current = self.sm.value(key)
+        if key == "CHIME_WAV":
+            path = str(current).strip() if str(current).strip() not in ("", "__builtin__", "__beep__") else ""
+            if row.get("picked"):
+                path = row["custom"].get().strip()     # 选了文件还没提交: 不要被刷新盖掉
+            else:
+                set_var(row["custom"], path)
+            values = self._chime_values(path)
+            labels = [lab for _v, lab in values]
+            if list(row["widget"].cget("values")) != labels:
+                row["widget"].config(values=labels)
+            if not row.get("picked"):
+                set_var(row["var"], self.sm.label_for(key, current, translate=True) or chime_name(current))
+            return
 
         if spec["kind"] in ("choice", "combo", "instant", "float"):
             label = self.sm.label_for(key, current, translate=True)
@@ -499,6 +531,8 @@ class SettingsPage(tk.Frame):
 
     def _stage_now(self, key: str):
         value = self._widget_value(key)
+        if key == "CHIME_WAV":
+            self._rows[key]["picked"] = False
         status, msg = self.sm.stage(key, value)
         if status == "invalid":
             toast.warn(msg)
@@ -604,6 +638,16 @@ class SettingsPage(tk.Frame):
         elif not silent_if_none:
             toast.info(tr("没有需要保存的修改"))
 
+    def _preview_chime(self):
+        """试听下拉框里此刻选中的提示音 (还没提交也可以试听)."""
+        if not self.on_sound:
+            return
+        try:
+            value = self._widget_value("CHIME_WAV")
+        except Exception:
+            value = None
+        self.on_sound(value)
+
     def _pick_wav(self, widget, custom_var=None):
         path = filedialog.askopenfilename(
             title=tr("选择提示音"),
@@ -615,6 +659,10 @@ class SettingsPage(tk.Frame):
             return
         if custom_var is not None:
             custom_var.set(path)
+            values = self._chime_values(path)
+            widget.config(values=[lab for _v, lab in values])
+            widget.set(chime_name(path))
+            self._rows["CHIME_WAV"]["picked"] = True
         else:
             widget.set(path)
 

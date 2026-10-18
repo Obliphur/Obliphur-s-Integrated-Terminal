@@ -1525,7 +1525,8 @@ class BreakTimerApp:
         chime = self._play_chime() if self.sync.is_latest_active() else None
         self._wait_chime(chime, slot)
 
-    def _play_chime(self):
+    def _play_chime(self, choice=None):
+        """choice: 试听时下拉框里选中的 (还没提交); None = 用设置里的."""
         if sys.platform != "win32":
             try:
                 self.root.bell()
@@ -1533,7 +1534,7 @@ class BreakTimerApp:
                 pass
             return None
 
-        path = self.settings.value("CHIME_WAV") or ""
+        path = (self.settings.value("CHIME_WAV") if choice is None else choice) or ""
         if path and not os.path.exists(path):
             path = ""
         builtin = os.path.join(self.dm.data_dir, "chime.wav")
@@ -1556,8 +1557,8 @@ class BreakTimerApp:
         t.start()
         return t
 
-    def play_chime(self):
-        self._play_chime()
+    def play_chime(self, choice=None):
+        self._play_chime(choice)
 
     def _wait_chime(self, t, slot, waited: int = 0):
         # 等提示音放完再提示填写; 自选的音频可能很长, 最多等 10 秒
@@ -1616,7 +1617,7 @@ class BreakTimerApp:
         """超过上限就一次随机关掉多出来的任务栏窗口 (开发者模式下也照常检查)."""
         if not getattr(config, "WINDOW_LIMIT_ENABLED", 0) or self.dm.resetting:
             return
-        limit = int(getattr(config, "WINDOW_LIMIT", 4))
+        limit = int(getattr(config, "WINDOW_LIMIT", 5))
         try:
             n, closed = window_guard.enforce(limit)
         except Exception as e:
