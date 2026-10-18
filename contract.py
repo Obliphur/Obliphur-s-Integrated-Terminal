@@ -29,7 +29,7 @@ TERMS = [
     ("info1", "info", 1, "环境:信息阻断-I", "只能使用剩余联网时间的75% 且不能使用借贷", ()),
     ("info2", "info", 2, "环境:信息阻断-II", "只能使用剩余联网时间的50% 且不能使用借贷", ()),
     ("info3", "info", 3, "环境:信息阻断-III", "只能使用剩余联网时间的25% 且不能使用借贷", ()),
-    ("isolate", "info", 4, "环境:信息隔绝", "不能使用联网功能", ("chan1", "chan2")),
+    ("isolate", "info", 4, "环境:信息隔绝", "不能使用联网功能", ()),
     ("suppress", "suppress", 2, "环境:抑制", "不能使用快速访问功能", ("isolate",)),
     ("jam", "jam", 2, "环境:全频道阻塞干扰", "期间使用proxy block-all模式", ()),
     ("music", "music", 2, "环境:乐理之灾", "期间不能打开音乐播放软件 不能使用外部软件播放mp3等音频文件", ()),
@@ -499,9 +499,10 @@ def _selftest():
     assert rest_minutes(0) == 20 and rest_minutes(3) == 24 and rest_minutes(4) == 28
     assert rest_minutes(18) == 44 and rest_minutes(19) == 50 and rest_mult(19) == 2.5
     assert conflicts("long1", "long3") and conflicts("isolate", "info2"), "同一组互相冲突"
-    assert conflicts("isolate", "chan1") and conflicts("chan2", "isolate") and conflicts("suppress", "isolate")
+    assert not conflicts("isolate", "chan1") and not conflicts("chan2", "isolate") and conflicts("suppress", "isolate")
     assert not conflicts("jam", "music")
-    assert clean_terms(["long2", "long1", "x", "isolate", "chan1", "jam"]) == ["long2", "isolate", "jam"]
+    assert clean_terms(["long2", "long1", "x", "isolate", "suppress", "jam"]) == ["long2", "isolate", "jam"]
+    assert clean_terms(["isolate", "chan2"]) == ["isolate", "chan2"], "信息隔绝和通道阻塞可以一起选"
     assert duration_of([]) == 4 * 3600 and duration_of(["long3"]) == int(4 * 3600 * 1.3)
     best = clean_terms(["long3", "move2", "info3", "suppress", "jam", "music", "fog", "tired3", "chan2", "last"])
     assert level_of(best) == 21, level_of(best)

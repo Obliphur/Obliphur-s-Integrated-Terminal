@@ -31,7 +31,7 @@ class Contract(private val file: File) {
             Term("info1", "info", 1, "环境:信息阻断-I", "只能使用剩余联网时间的75% 且不能使用借贷"),
             Term("info2", "info", 2, "环境:信息阻断-II", "只能使用剩余联网时间的50% 且不能使用借贷"),
             Term("info3", "info", 3, "环境:信息阻断-III", "只能使用剩余联网时间的25% 且不能使用借贷"),
-            Term("isolate", "info", 4, "环境:信息隔绝", "不能使用联网功能", listOf("chan1", "chan2")),
+            Term("isolate", "info", 4, "环境:信息隔绝", "不能使用联网功能"),
             Term("suppress", "suppress", 2, "环境:抑制", "不能使用快速访问功能", listOf("isolate")),
             Term("jam", "jam", 2, "环境:全频道阻塞干扰", "期间使用proxy block-all模式"),
             Term("music", "music", 2, "环境:乐理之灾", "期间不能打开音乐播放软件 不能使用外部软件播放mp3等音频文件"),

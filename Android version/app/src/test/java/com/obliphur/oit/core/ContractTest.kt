@@ -20,9 +20,11 @@ class ContractTest {
         assertEquals(28, Contract.restMinutes(4)); assertEquals(44, Contract.restMinutes(18))
         assertEquals(2.5, Contract.restMult(19), 1e-9)
         assertTrue(Contract.conflicts("long1", "long3") && Contract.conflicts("isolate", "info2"))
-        assertTrue(Contract.conflicts("chan2", "isolate") && Contract.conflicts("suppress", "isolate"))
+        assertFalse(Contract.conflicts("chan2", "isolate") || Contract.conflicts("isolate", "chan1"))
+        assertTrue(Contract.conflicts("suppress", "isolate"))
         assertFalse(Contract.conflicts("jam", "music"))
-        assertEquals(listOf("long2", "isolate", "jam"), Contract.clean(listOf("long2", "long1", "x", "isolate", "chan1", "jam")))
+        assertEquals(listOf("long2", "isolate", "jam"), Contract.clean(listOf("long2", "long1", "x", "isolate", "suppress", "jam")))
+        assertEquals(listOf("isolate", "chan2"), Contract.clean(listOf("isolate", "chan2")))
         val best = Contract.clean(listOf("long3", "move2", "info3", "suppress", "jam", "music", "fog", "tired3", "chan2", "last"))
         assertEquals(21, Contract.levelOf(best))
     }
