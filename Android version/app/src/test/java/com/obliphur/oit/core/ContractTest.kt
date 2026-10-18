@@ -29,13 +29,22 @@ class ContractTest {
         assertFalse(Contract.conflicts("jam", "music"))
         assertTrue(Contract.conflicts("short1", "short2")); assertFalse(Contract.conflicts("seal", "fine"))
         assertTrue(Contract.LAYOUT["short2"]!! < Contract.LAYOUT["suppress"]!!)
-        assertEquals(Contract.SERIES.size + 4, Contract.BOARD_COLS)
+        assertEquals(Contract.SERIES.size + 7, Contract.BOARD_COLS)
         assertEquals(Contract.SERIES.size + 1, Contract.LAYOUT["fine"])     // 零散的挨着排, 不留空
+        // 行为类似的放在一起: 禁止的软件一行挨着, 录像在它们下面, 互联网娱乐的败退在乐理之灾那一列的 4 级
+        val m = Contract.LAYOUT["music"]!!
+        assertEquals((m..m + 3).toList(), Contract.BANS.map { Contract.LAYOUT[it]!! })
+        assertEquals(m, Contract.LAYOUT["gaze"]); assertEquals(m + 1, Contract.LAYOUT["scar"]); assertEquals(m, Contract.LAYOUT["ent"])
+        assertEquals(Contract.LAYOUT["seal"], Contract.LAYOUT["fine"]); assertEquals(Contract.LAYOUT["suppress"], Contract.LAYOUT["jam"])
+        assertTrue(Contract.conflicts("gaze", "scar") && Contract.conflicts("scar", "gaze"))
+        assertTrue(Contract.BANS.all { Contract.conflicts("ent", it) && Contract.conflicts(it, "isolate") })
+        assertTrue(Contract.conflicts("ent", "isolate")); assertFalse(Contract.conflicts("isolate", "tired2"))
+        assertTrue(Contract.SOCIAL_APPS.intersect(Contract.VIDEO_APPS).isEmpty())
         assertEquals(listOf("long2", "isolate", "jam"), Contract.clean(listOf("long2", "long1", "x", "isolate", "suppress", "jam")))
         assertEquals(listOf("isolate", "chan2"), Contract.clean(listOf("isolate", "chan2")))
         val best = Contract.clean(listOf("long3", "move2", "info3", "suppress", "jam", "music", "fog", "tired3", "chan2", "last",
-            "short2", "seal", "fine"))
-        assertEquals(26, Contract.levelOf(best))
+            "short2", "seal", "fine", "silent", "game", "video", "gaze"))
+        assertEquals(31, Contract.levelOf(best))
         assertEquals(4 * 3600 * 1.6, Contract.durationOf(listOf("long3")), 1e-6)
     }
 
@@ -56,7 +65,7 @@ class ContractTest {
         assertEquals("info1" to "loan", c.netCheck(3800.0, 600.0, 0.0, "2026-10-18"))
         assertNull(c.netCheck(3800.0, 600.0, 0.0, "2026-10-18"))
         // 乐理之灾: 只在刚打开的那一下算; 只有 1 级, 降一级就失效
-        assertEquals("music", c.musicCheck(true)); assertEquals("", c.musicCheck(true)); c.musicCheck(false)
+        assertEquals("music", c.banCheck("music", true)); assertEquals("", c.banCheck("music", true)); c.banCheck("music", false)
         assertEquals("", c.downgrade("music")); assertFalse(c.has("music"))
         // 休息: 疲惫 ×0.75; 完成时按降级后的等级给固定的时间
         assertEquals(750.0, c.bookRest(1000.0), 1e-6)
@@ -68,6 +77,18 @@ class ContractTest {
         assertNull(c.offlineDue(listOf("手机" to t0.minusHours(3)), t0.plusMinutes(14), t0))
         assertEquals("手机" to t0.plusMinutes(15), c.offlineDue(listOf("手机" to t0.minusHours(3)), t0.plusMinutes(16), t0))
         assertNull(c.offlineDue(listOf("手机" to t0), t0.plusMinutes(70), t0.plusHours(1)))
+        // 互联网娱乐的败退: 四类都禁止, 每一类各自只在打开的那一下算; 违反时它降一级. 录像的词条违反一次就失效
+        val e = Contract(tmp())
+        e.start(listOf("ent", "gaze", "info3"), "me", t0)
+        assertEquals("ent", e.banTerm("game")); assertEquals(listOf("camera"), e.records())
+        assertEquals("ent", e.banCheck("video", true)); assertEquals("", e.banCheck("video", true))
+        assertEquals(false to "ent", e.violate("ent")); assertEquals(3, e.termLevel("ent"))
+        assertEquals("ent", e.banCheck("silent", true))
+        assertEquals(false to "", e.violate("gaze")); assertEquals(emptyList<String>(), e.records())
+        // 信息隔绝: 休息时间 ×1.3 (和疲惫相乘), 降成信息阻断-III 后没有了
+        e.start(listOf("isolate", "tired2"), "me", t0)
+        assertEquals(0.75 * 1.3, e.restFactor(), 1e-9)
+        e.downgrade("isolate"); assertEquals(0.75, e.restFactor(), 1e-9)
         // 目标生命值: 默认 4, 退路封锁-I 只有 3; 整点记录超时未填写也算 (不降词条)
         assertEquals(4, c.violationLimit)
         c.start(listOf("suppress", "info3", "long1", "retreat1"), "me", t0)

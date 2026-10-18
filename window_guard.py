@@ -362,6 +362,26 @@ def find_music(music_exes, audio_exts, procs=None, windows=None, own_pid: int = 
     return None
 
 
+def find_banned(exes, titles, browsers, site_title, procs=None, windows=None, own_pid: int = None,
+                exe_of=exe_name):
+    """合约禁止打开的一类软件 (无言为真 / 禁游令 / 低帧的诅咒): 进程在就算 (缩到托盘里也算);
+    titles 不空时, 浏览器窗口的标题是这些网站之一也算 (site_title(标题, titles)). 返回 (exe, 标题) 或 None. 只查看, 不关."""
+    own_pid = os.getpid() if own_pid is None else own_pid
+    for pid, exe in (list_processes() if procs is None else procs):
+        if exe in exes and pid != own_pid:
+            return exe, ""
+    if not titles:
+        return None
+    for w in taskbar_windows(windows, own_pid):
+        title = str(w.get("title") or "")
+        if not title:
+            continue
+        exe = (exe_of(w.get("pid") or 0) or "").lower()
+        if exe in browsers and site_title(title, titles):
+            return exe, title
+    return None
+
+
 def _selftest():
     def win(hwnd, title="w", pid=100, visible=True, cloaked=False, owned=False, ex=0,
             cls="AppWindow"):

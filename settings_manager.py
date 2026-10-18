@@ -204,6 +204,14 @@ SETTINGS_SCHEMA = [
         "page": "contract",
     },
     {
+        "key": "REC_ASK", "label": "录像前询问",
+        "kind": "choice", "apply": APPLY_INSTANT,
+        "choices": [("1", "开启 (ON)"), ("0", "关闭 (OFF)")],
+        "fmt": lambda v: "ON" if v else "OFF",
+        "desc": "即时生效.开启时: 开始带录像词条 (目光 / 刻痕) 的合约前再确认一次; 别的设备开始的合约要本机录像时, 先问一次 (拒绝算一次违反).",
+        "page": "record",
+    },
+    {
         "key": "UPDATE_CHECK", "label": "打开时检查更新",
         "kind": "choice", "apply": APPLY_INSTANT,
         "choices": [("1", "开启 (ON)"), ("0", "关闭 (OFF)")],
@@ -244,6 +252,7 @@ SETTINGS_PAGES = [
     ("rules", "规则"),
     ("log", "整点记录"),
     ("contract", "合约"),
+    ("record", "录像"),
     ("window", "窗口"),
 ]
 

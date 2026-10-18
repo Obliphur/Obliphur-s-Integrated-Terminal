@@ -94,10 +94,10 @@ class ContractPage(tk.Frame):
     最下面一条: 清空 | 危机等级 | 时长 / 完成后的休息时间 | 开始行动. 合约进行中时只能看, 不能改.
     颜色按 设置 → 合约 的"合约页主题"."""
 
-    TILE_W, TILE_H, GAP, BAND_W = 76, 64, 7, 148
+    TILE_W, TILE_H, GAP, BAND_W = 68, 64, 7, 148
 
     def __init__(self, master, contract, on_start=None, on_abandon=None, net_used=None, on_change=None,
-                 blocked=None):
+                 blocked=None, rec_text=None, on_stop_screen=None):
         self.P = P = palette()
         super().__init__(master, bg=P["bg"])
         self.c = contract
@@ -106,6 +106,8 @@ class ContractPage(tk.Frame):
         self.on_abandon = on_abandon
         self.on_change = on_change or (lambda: None)  # 选的词条变了 (侧边栏上的危机等级跟着变)
         self.blocked = blocked or (lambda: "")        # 休息 / 联网中不能开始: 按钮上方的提示
+        self.rec_text = rec_text or (lambda: "")      # 目光 / 刻痕: 录像的状态 ("" = 没有在录)
+        self.on_stop_screen = on_stop_screen          # 刻痕: 终止录屏 (算一次违反)
         self._hover = ""
         self._list_key = None
         self._tile_state = {}
@@ -160,6 +162,13 @@ class ContractPage(tk.Frame):
         self.lbl_idle = tk.Label(fr, text="", bg=P["live"], fg=P["idle"], font=config.font("body", bold=True),
                                  anchor="w", justify="left")
         self.lbl_idle.pack(fill="x", padx=16, pady=(0, 10))
+        # 目光 / 刻痕: 录像的状态; 刻痕可以终止录屏 (立即算一次违反)
+        self.rec_row = tk.Frame(fr, bg=P["live"])
+        self.lbl_rec = tk.Label(self.rec_row, text="", bg=P["live"], fg=P["danger"], font=config.font("small", bold=True),
+                                anchor="w", justify="left")
+        self.lbl_rec.pack(side="left")
+        self.btn_stop_rec = self._button(self.rec_row, tr("■ 终止录屏"), P["clear"], P["clear_hover"], P["clear_text"],
+                                         lambda: self.on_stop_screen and self.on_stop_screen())
 
     # ---- 词条板: 左边一条竖写的 "CONTRACT LIST" 和各行的等级, 右边六边形的格子 ----
 
@@ -479,6 +488,16 @@ class ContractPage(tk.Frame):
             cfg(self.lbl_live, text=live)
             idle = c.idle_left(now)
             cfg(self.lbl_idle, text="" if idle is None else tr("空闲中: {t} 后合约终止", t=fmt_ms(idle)))
+            rec = self.rec_text()
+            if rec:
+                cfg(self.lbl_rec, text=rec)
+                show_pack(self.rec_row, fill="x", padx=16, pady=(0, 10))
+                if c.has("scar") and self.on_stop_screen:
+                    show_pack(self.btn_stop_rec, side="right")
+                else:
+                    hide_pack(self.btn_stop_rec)
+            else:
+                hide_pack(self.rec_row)
             if self.live_card.winfo_manager() != "pack":
                 self.live_card.pack(fill="x", pady=(0, 8), before=self.area.inner.pack_slaves()[0])
         else:

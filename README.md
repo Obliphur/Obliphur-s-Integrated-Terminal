@@ -84,6 +84,7 @@ obliphur_terminal/
 │  ├─ procinfo.py        连接 → 发起它的程序
 │  └─ selftest.py        端到端自检
 ├─ window_guard.py       任务栏窗口数上限, 按前台窗口关程序, 前台程序识别
+├─ recorder.py          合约的录像 (摄像头 / 屏幕, Windows 自带的 H.264 编码器)
 ├─ devsync.py            设备同步: 发现, 绑定, 加密, 同步, 安装包直接传输
 ├─ sync_local.py         设备同步 ↔ 本机数据
 ├─ firewall.py           Windows 防火墙: 放行同步端口

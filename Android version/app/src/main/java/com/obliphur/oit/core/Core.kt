@@ -292,11 +292,20 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         val active = !dm.resetting && !settings.devMode
         val app = if (active) host.foregroundApp() else ""
         if (app == null) return                                  // 屏幕关闭 / 没有权限: 维持原样
-        // 合约 · 乐理之灾 (软规则): 前台是音乐播放应用就算违反 (不锁; 一直开着只算一次)
-        if (contract.has("music")) {
-            // 休息中可以听; 休息结束时还开着就算一次
-            val id = contract.musicCheck(timer.state != TState.ON_BREAK && app in Contract.MUSIC_APPS)
-            if (id.isNotEmpty()) contractViolation(tr("打开了音乐播放软件 {exe}", "exe" to app), id)
+        // 合约 · 乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒 (互联网娱乐的败退是四个一起; 软规则):
+        // 前台是这一类应用就算违反 (不锁; 一直开着只算一次). 音乐在休息中可以听, 休息结束时还开着就算一次
+        for (kind in Contract.BANS) {
+            if (contract.banTerm(kind).isEmpty()) continue
+            val hit = app in Contract.banApps(kind) && !(kind == "music" && timer.state == TState.ON_BREAK)
+            val id = contract.banCheck(kind, hit)
+            if (id.isEmpty()) continue
+            contractViolation(when (kind) {
+                "music" -> tr("打开了音乐播放软件 {exe}", "exe" to app)
+                "silent" -> tr("打开了社交 / AI 聊天软件 {exe}", "exe" to app)
+                "game" -> tr("打开了游戏 {exe}", "exe" to app)
+                else -> tr("打开了视频平台 {exe}", "exe" to app)
+            }, id)
+            if (!contract.active) break
         }
         val mode = settings.str("FILTER_MODE")
         val why = if (app.isEmpty() || app == "OIT" || host.lockExempt(app, mode == RuleKeys.WHITELIST)) null

@@ -35,7 +35,8 @@ class Contract(private val file: File) {
             Term("info1", "info", 1, "环境:信息阻断-I", "只能使用剩余联网时间的75% 且不能使用借贷"),
             Term("info2", "info", 2, "环境:信息阻断-II", "只能使用剩余联网时间的50% 且不能使用借贷"),
             Term("info3", "info", 3, "环境:信息阻断-III", "只能使用剩余联网时间的25% 且不能使用借贷"),
-            Term("isolate", "info", 4, "环境:信息隔绝", "不能使用联网功能"),
+            Term("isolate", "info", 4, "环境:信息隔绝", "不能使用联网功能 选择时 获得的休息时间为原来的1.3倍",
+                listOf("music", "silent", "game", "video")),
             Term("tired1", "tired", 1, "环境:疲惫-I", "期间获得的休息时间为0.9x"),
             Term("tired2", "tired", 2, "环境:疲惫-II", "期间获得的休息时间为0.75x"),
             Term("tired3", "tired", 3, "环境:疲惫-III", "期间获得的休息时间为0.6x"),
@@ -46,24 +47,38 @@ class Contract(private val file: File) {
             Term("last", "retreat", 3, "最后防线", "初始目标生命值为1"),
             Term("chan1", "chan", 1, "环境:通道阻塞-I", "期间的最大窗口数改为4"),
             Term("chan2", "chan", 2, "环境:通道阻塞-II", "期间的最大窗口数改为3"),
+            // 零散的按这里的顺序在各自等级的那一行挨着排, 所以行为类似的写在一起 (上下两行也对齐):
+            // 联网 (抑制 / 全频道阻塞干扰), 整点记录 (记录封锁 / 细化规范), 禁止打开的软件
+            // (乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒, 下面是录像: 目光 / 刻痕, 再下面是互联网娱乐的败退), 最后是黑雾.
             Term("suppress", "suppress", 1, "环境:抑制", "不能使用快速访问功能", listOf("isolate")),
             Term("jam", "jam", 2, "环境:全频道阻塞干扰", "期间使用proxy block-all模式"),
-            Term("music", "music", 1, "环境:乐理之灾", "非休息期间不能打开音乐播放软件 不能使用外部软件播放mp3等音频文件"),
-            Term("fog", "fog", 1, "环境:黑雾", "合约期间 专注时长 成就 日历 统计数据不可见 且无法打开设置"),
             Term("seal", "seal", 1, "环境:记录封锁", "超过填写时间未填写 则不能再修改该记录"),
             Term("fine", "fine", 2, "目标:细化规范", "记录变为30min一次"),
+            Term("music", "music", 1, "环境:乐理之灾", "非休息期间不能打开音乐播放软件 不能使用外部软件播放mp3等音频文件"),
+            Term("gaze", "gaze", 2, "环境:目光", "合约期间打开摄像头记录使用者的行为 结束后保存录像 中途禁用摄像头视为违反"),
+            Term("silent", "silent", 1, "环境:无言为真", "合约期间不能打开社交软件和与AI聊天的软件 不能使用社交网站"),
+            Term("scar", "scar", 2, "环境:刻痕", "合约期间录制整个屏幕 结束后保存录像 可以中途终止录屏 但立即视为一次违反",
+                listOf("gaze")),
+            Term("game", "game", 1, "环境:禁游令", "合约期间不能使用游戏和游戏平台"),
+            Term("video", "video", 1, "环境:低帧的诅咒", "合约期间不能使用视频平台"),
+            Term("ent", "ent", 4, "环境:互联网娱乐的败退", "同时有乐理之灾 无言为真 禁游令 低帧的诅咒的效果",
+                listOf("music", "silent", "game", "video", "isolate")),
+            Term("fog", "fog", 1, "环境:黑雾", "合约期间 专注时长 成就 日历 统计数据不可见 且无法打开设置"),
         )
         val BY_ID = TERMS.associateBy { it.id }
         val GROUPS = TERMS.map { it.group }.distinct()
         /** 词条板的布局: 成系列的每组一列 (左边); 零散的不单独占列, 按等级放进右边的几列, 每一行从左往右挨着排, 不留空. */
         val SERIES = GROUPS.filter { g -> TERMS.count { it.group == g } > 1 }
+        /** 放在另一个词条的那一列 (那一列在这个等级的格子空着): 互联网娱乐的败退在乐理之灾那一列的 4 级. */
+        val ALIGN = mapOf("ent" to "music")
         /** 词条 → 列. */
         val LAYOUT: Map<String, Int> = run {
             val loose = HashMap<Int, Int>()
-            TERMS.associate { t ->
+            val m = TERMS.filter { it.id !in ALIGN }.associate { t ->
                 t.id to if (t.group in SERIES) SERIES.indexOf(t.group)
                 else SERIES.size + loose.getOrDefault(t.level, 0).also { loose[t.level] = it + 1 }
             }
+            m + ALIGN.mapValues { m[it.value]!! }
         }
         val BOARD_COLS = (LAYOUT.values.maxOrNull() ?: -1) + 1
         val MAX_LEVEL = TERMS.maxOf { it.level }
@@ -71,18 +86,31 @@ class Contract(private val file: File) {
 
         // 软规则: 界面上照样能做, 但会被算作违反, 这个词条降一级 (结算按降级后的等级);
         // 其余是硬规则, 立即生效 (黑雾, 记录封锁, 细化规范, 全频道阻塞干扰, 持久战, 疲惫).
-        val SOFT = setOf("info1", "info2", "info3", "isolate", "chan1", "chan2", "music", "suppress", "short1", "short2")
+        // 录像 (目光 / 刻痕) 违反一次就失效 (录像停止): 不在 LOWER / SINGLE 里.
+        val SOFT = setOf("info1", "info2", "info3", "isolate", "chan1", "chan2", "music", "suppress", "short1", "short2",
+            "silent", "game", "video", "ent", "gaze", "scar")
         /** 降一级换成哪个词条. */
         val LOWER = mapOf("isolate" to "info3", "info3" to "info2", "info2" to "info1", "chan2" to "chan1",
             "short2" to "short1")
         /** 只有一档的软规则: 降级时等级减一, 减到 0 就失效. */
-        val SINGLE = setOf("music", "suppress")
+        val SINGLE = setOf("music", "suppress", "silent", "game", "video", "ent")
         /** 这个等级的词条用红色边框. */
         const val RIM_LEVEL = 4
 
         val DURATION = mapOf("long1" to 1.2, "long2" to 1.4, "long3" to 1.6)
         val NET_SHARE = mapOf("info1" to 0.75, "info2" to 0.5, "info3" to 0.25, "isolate" to 0.0)
         val REST = mapOf("tired1" to 0.9, "tired2" to 0.75, "tired3" to 0.6)
+        /** 休息时间额外的乘区 (和疲惫相乘): 信息隔绝 ×1.3. */
+        val REST_BONUS = mapOf("isolate" to 1.3)
+        /** 合约中专注换来的休息时间乘多少: 疲惫 (取最低的) × 额外的乘区. */
+        fun restFactorOf(terms: Collection<String>): Double =
+            (terms.mapNotNull { REST[it] }.minOrNull() ?: 1.0) * terms.fold(1.0) { f, t -> f * (REST_BONUS[t] ?: 1.0) }
+        /** 录像的词条 → 录什么. */
+        val RECORD = mapOf("gaze" to "camera", "scar" to "screen")
+        /** 禁止打开某类应用的词条 (每秒看前台应用). */
+        val BANS = listOf("music", "silent", "game", "video")
+        /** 互联网娱乐的败退: 同时有上面四个的效果 (违反时降它). */
+        const val BANS_ALL = "ent"
         val WINDOWS = mapOf("chan1" to 4, "chan2" to 3)
         /** 支援短缺: 合约开始前积攒的休息时间能用几成. */
         val SUPPLY = mapOf("short1" to 0.5, "short2" to 0.0)
@@ -113,6 +141,57 @@ class Contract(private val file: File) {
             "in.krosbits.musicolet", "com.maxmpz.audioplayer", "com.poweramp.v3",
             "com.foobar2000.foobar2000", "com.salt.music", "com.kanjian.music",
         )
+
+        /** 无言为真: 常见的社交应用和与 AI 聊天的应用 (包名). */
+        val SOCIAL_APPS = setOf(
+            "com.tencent.mm", "com.tencent.mobileqq", "com.tencent.tim", "com.tencent.qqlite", "com.sina.weibo",
+            "com.sina.weibolite", "com.zhihu.android", "com.xingin.xhs", "com.baidu.tieba", "com.douban.frodo",
+            "org.telegram.messenger", "org.telegram.messenger.web", "com.discord", "com.whatsapp",
+            "com.facebook.katana", "com.facebook.orca", "com.facebook.lite", "com.instagram.android",
+            "com.twitter.android", "com.reddit.frontpage", "jp.naver.line.android", "com.skype.raider",
+            "org.thoughtcrime.securesms", "com.kakao.talk", "com.instagram.barcelona", "com.soul.android",
+            "com.openai.chatgpt", "com.anthropic.claude", "com.deepseek.chat", "com.larus.nova",
+            "com.moonshot.kimichat", "com.tencent.hunyuan.app.chat", "com.aliyun.tongyi", "com.baidu.newapp",
+            "com.google.android.apps.bard", "com.microsoft.copilot", "ai.perplexity.app.android", "com.poe.android",
+            "ai.x.grok", "com.quark.browser.ai",
+        )
+
+        /** 禁游令: 常见的游戏和游戏平台 (包名). */
+        val GAME_APPS = setOf(
+            "com.tencent.tmgp.sgame", "com.tencent.tmgp.pubgmhd", "com.tencent.lolm", "com.tencent.jkchess",
+            "com.tencent.tmgp.cf", "com.tencent.tmgp.speedmobile", "com.tencent.letsgo", "com.tencent.mf.uam",
+            "com.tencent.tmgp.dnf", "com.tencent.af", "com.tencent.ig", "com.miHoYo.Yuanshen", "com.miHoYo.hkrpg",
+            "com.miHoYo.Nap", "com.miHoYo.bh3", "com.miHoYo.GenshinImpact", "com.HoYoverse.hkrpgoversea",
+            "com.HoYoverse.Nap", "com.kurogame.mingchao", "com.hypergryph.arknights", "com.bilibili.fatego",
+            "com.netease.onmyoji", "com.netease.party", "com.netease.mc", "com.netease.hyxd", "com.netease.sky",
+            "com.netease.dwrg", "com.netease.l22", "com.mojang.minecraftpe", "com.roblox.client",
+            "com.supercell.clashofclans", "com.supercell.clashroyale", "com.supercell.brawlstars",
+            "com.activision.callofduty.shooter", "com.dts.freefireth", "com.innersloth.spacemafia",
+            "com.papegames.infinitynikki", "com.papegames.lysk", "com.lilithgame.roc.gp", "com.taptap",
+            "com.taptap.global", "com.valvesoftware.android.steam.community", "com.huawei.gamebox",
+            "com.xiaomi.gamecenter", "com.vivo.game", "com.nearme.gamecenter", "com.hihonor.gamecenter",
+            "com.netease.gl", "com.yostar.aethergazer", "com.tencent.nrc", "com.gameloft.android.ANMP.GloftA9HM",
+        )
+
+        /** 低帧的诅咒: 常见的视频平台 (包名). 本地的视频播放器 (VLC, MX Player …) 不算. */
+        val VIDEO_APPS = setOf(
+            "tv.danmaku.bili", "com.bilibili.app.in", "tv.danmaku.bilibilihd", "com.bilibili.app.blue",
+            "com.google.android.youtube", "app.revanced.android.youtube", "com.youku.phone", "com.tencent.qqlive",
+            "com.qiyi.video", "com.qiyi.video.lite", "com.hunantv.imgo.activity", "com.ss.android.article.video",
+            "com.ss.android.ugc.aweme", "com.ss.android.ugc.aweme.lite", "com.ss.android.ugc.live",
+            "com.smile.gifmaker", "com.kuaishou.nebula", "com.zhiliaoapp.musically", "com.ss.android.ugc.trill",
+            "air.tv.douyu.android", "com.duowan.kiwi", "tv.twitch.android.app", "com.netflix.mediaclient",
+            "tv.acfundanmaku.video", "com.baidu.haokan", "com.tencent.weishi", "com.mgtv.tv",
+        )
+
+        /** 一类应用 (BANS 之一) 的包名. */
+        fun banApps(kind: String): Set<String> = when (kind) {
+            "music" -> MUSIC_APPS
+            "silent" -> SOCIAL_APPS
+            "game" -> GAME_APPS
+            "video" -> VIDEO_APPS
+            else -> emptySet()
+        }
 
         fun levelOf(terms: Collection<String>) = terms.sumOf { BY_ID[it]?.level ?: 0 }
 
@@ -386,7 +465,7 @@ class Contract(private val file: File) {
         return a.isBefore(slotStart.plusHours(1)) && slotStart.isBefore(b)
     }
     fun windowLimit(): Int = terms.mapNotNull { WINDOWS[it] }.minOrNull() ?: 0
-    fun restFactor(): Double = terms.mapNotNull { REST[it] }.minOrNull() ?: 1.0
+    fun restFactor(): Double = restFactorOf(terms)
 
     // ---- 软规则: 有没有违反 (由调用方算作违反: violate) ----
 
@@ -438,8 +517,18 @@ class Contract(private val file: File) {
         return if (edge("win", n > lim)) id else ""
     }
 
-    /** 乐理之灾: 开着音乐播放应用. */
-    fun musicCheck(playing: Boolean): String = if (has("music") && edge("music", playing)) "music" else ""
+    /** 禁止打开这一类应用 (BANS 之一) 的是哪个词条: 它自己, 或者互联网娱乐的败退; 不禁止时 "". */
+    fun banTerm(kind: String): String = if (has(kind)) kind else if (has(BANS_ALL)) BANS_ALL else ""
+
+    /** 乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒 (或者互联网娱乐的败退): 开着这一类应用.
+     *  每一类只在从没有到有的那一下算一次. 返回要降级的词条. */
+    fun banCheck(kind: String, hit: Boolean): String {
+        val id = banTerm(kind)
+        return if (id.isNotEmpty() && edge(kind, hit)) id else ""
+    }
+
+    /** 合约中要录什么: camera (目光) / screen (刻痕). */
+    fun records(): List<String> = terms.mapNotNull { RECORD[it] }
 
     /** 抑制: 用了快速访问. */
     fun quickCheck(): String = if (has("suppress")) "suppress" else ""
@@ -460,7 +549,7 @@ class Contract(private val file: File) {
         val he = parseIso(h.optString("end"))
         if (h.optString("result") == "completed" && hs != null && he != null && !start.isBefore(hs) && start.isBefore(he)) {
             val t = h.optJSONArray("terms")?.strings() ?: emptyList()
-            val f = t.mapNotNull { REST[it] }.minOrNull() ?: 1.0
+            val f = restFactorOf(t)
             return seconds * f
         }
         return seconds

@@ -1,10 +1,13 @@
 
 
+import os
+import threading
 import tkinter as tk
 from datetime import datetime
 from tkinter import filedialog, ttk
 
 import config
+import recorder
 import toast
 from config import COLORS
 from i18n import tr
@@ -18,11 +21,16 @@ class SettingsPage(tk.Frame):
                  on_dev_mode=None, on_language=None, on_font_scale=None,
                  on_theme=None, on_end_setup=None, updater=None, on_update_check=None,
                  on_update_install=None, on_update_relay=None, sync=None, achievements=None,
-                 on_open_achievements=None):
+                 on_open_achievements=None, data_dir=None, recording=None):
         super().__init__(master, bg=COLORS["bg"])
         self.sm = settings
         self.ach_store = achievements
         self.on_open_achievements = on_open_achievements
+        self.data_dir = data_dir                        # 录像: 数据目录 (recordings/camera, recordings/screen)
+        self.recording = recording or (lambda kind: False)   # 本机此刻在录这一路吗 (正在写的文件不能删)
+        self._rec_lists = {}
+        self._rec_sig = {}
+        self._cam_state = None
         self.lbl_ach_count = None
         self.updater = updater
         self.on_update_check = on_update_check
@@ -121,7 +129,11 @@ class SettingsPage(tk.Frame):
 
         # ---- 其余模块: 上面是选项, 下面是数值 ----
         for key, _text in SETTINGS_PAGES[1:]:
+            if key == "record":
+                self._build_record_page(self.areas[key].inner)
             self._build_page_items(key)
+            if key == "record":
+                self._build_record_lists(self.areas[key].inner)
 
         # ---- 各页共用的底栏 ----
         foot = tk.Frame(self, bg=bg)
@@ -155,6 +167,10 @@ class SettingsPage(tk.Frame):
             if k != key:
                 hide_pack(a)
         show_pack(self.areas[key], fill="both", expand=True)
+        if key == "record":
+            self._rec_sig = {}
+            self._check_camera()
+            self.refresh_records()
         for k, b in self._tab_btns.items():
             if k == key:
                 cfg(b, bg=COLORS["accent"], fg=COLORS["on_accent"])
@@ -700,6 +716,144 @@ class SettingsPage(tk.Frame):
             cfg(self.lbl_ach_count,
                 text=tr("已达成 {n}", n=len(self.ach_store.unlocked)))
 
+    # ---- 录像 (合约的目光 / 刻痕): 权限, 录像文件 ----
+
+    def _card(self, body, title_zh):
+        card = COLORS["bg_card"]
+        fr = tk.Frame(body, bg=card, highlightbackground=COLORS["border"], highlightthickness=1)
+        fr.pack(fill="x", pady=(2, 8))
+        head = tk.Frame(fr, bg=card)
+        head.pack(fill="x", padx=12, pady=(10, 2))
+        self._track(tk.Label(head, text=tr(title_zh), bg=card, fg=COLORS["text"],
+                             font=config.font("body", bold=True)), title_zh).pack(side="left")
+        return fr, head
+
+    def _build_record_page(self, body):
+        card = COLORS["bg_card"]
+        small = config.font("small")
+        fr, head = self._card(body, "📷  摄像头权限")
+        self._track(ttk.Button(head, text=tr("打开系统设置"),
+                               command=lambda: self._open_uri("ms-settings:privacy-webcam")),
+                    "打开系统设置").pack(side="right")
+        self._track(ttk.Button(head, text=tr("重新检查"), command=self._check_camera),
+                    "重新检查").pack(side="right", padx=(0, 6))
+        self.lbl_cam = tk.Label(fr, text="", bg=card, fg=COLORS["text"], font=small, anchor="w", justify="left")
+        self.lbl_cam.pack(fill="x", padx=12, pady=(2, 2))
+        zh = "合约选了「目光」时, 合约期间用摄像头录像. 要在 Windows 设置 → 隐私和安全性 → 摄像头 里允许桌面应用使用摄像头."
+        self._track(wrap_label(tk.Label(fr, text=tr(zh), bg=card, fg=COLORS["text_dim"], font=small, anchor="w", justify="left")), zh).pack(
+            fill="x", padx=12, pady=(0, 10))
+
+        fr, _head = self._card(body, "🖥  屏幕录制权限")
+        zh = ("Windows 不需要单独授权: 合约选了「刻痕」时, 合约期间直接录制整个屏幕 (所有显示器, 每秒 1 帧). "
+              "可以在合约页终止录屏, 但立即算一次违反.")
+        self._track(wrap_label(tk.Label(fr, text=tr(zh), bg=card, fg=COLORS["text_dim"], font=small, anchor="w", justify="left")), zh).pack(
+            fill="x", padx=12, pady=(2, 10))
+
+    def _build_record_lists(self, body):
+        card = COLORS["bg_card"]
+        for kind, title in (("camera", "📷  摄像头录像"), ("screen", "🖥  屏幕录像")):
+            fr, head = self._card(body, title)
+            self._track(ttk.Button(head, text=tr("打开文件夹"), command=lambda k=kind: self._open_folder(k)),
+                        "打开文件夹").pack(side="right")
+            lbl = tk.Label(head, text="", bg=card, fg=COLORS["text_dim"], font=config.font("small"))
+            lbl.pack(side="right", padx=(0, 10))
+            rows = tk.Frame(fr, bg=card)
+            rows.pack(fill="x", padx=12, pady=(2, 10))
+            self._rec_lists[kind] = (lbl, rows)
+        self.areas["record"].bind_children()
+
+    @staticmethod
+    def _open_uri(uri):
+        try:
+            os.startfile(uri)
+        except OSError:
+            pass
+
+    def _open_folder(self, kind):
+        if not self.data_dir:
+            return
+        d = recorder.folder(self.data_dir, kind)
+        os.makedirs(d, exist_ok=True)
+        self._open_uri(d)
+
+    def _check_camera(self):
+        """摄像头: Windows 隐私设置 + 有几个 (在后台线程里查, 要初始化 Media Foundation)."""
+        if self._cam_state == "checking" or not hasattr(self, "lbl_cam"):
+            return
+        self._cam_state = "checking"
+        cfg(self.lbl_cam, text=tr("检查中…"), fg=COLORS["text_dim"])
+
+        def run():
+            res = (recorder.camera_consent(), recorder.camera_count())
+            try:
+                self.after(0, lambda: self._show_camera(*res))
+            except Exception:
+                pass
+        threading.Thread(target=run, daemon=True).start()
+
+    def _show_camera(self, consent, n):
+        self._cam_state = None
+        if consent == "deny":
+            text, color = tr("✗ Windows 不允许桌面应用使用摄像头"), COLORS["danger"]
+        elif not n:
+            text, color = tr("✗ 没有找到摄像头"), COLORS["warn"]
+        else:
+            text, color = tr("✓ 可以使用 · 摄像头 {n} 个", n=n), COLORS["success"]
+        cfg(self.lbl_cam, text=text, fg=color)
+
+    def refresh_records(self):
+        """录像文件的列表 (文件变了才重画)."""
+        if not self.data_dir or self._tab != "record":
+            return
+        card = COLORS["bg_card"]
+        small = config.font("small")
+        for kind, (lbl, rows) in self._rec_lists.items():
+            files = recorder.list_files(self.data_dir, kind)
+            live = self.recording(kind)
+            sig = (live, tuple((f["name"], f["size"] // (1 << 20)) for f in files))
+            if self._rec_sig.get(kind) == sig:
+                continue
+            self._rec_sig[kind] = sig
+            total = sum(f["size"] for f in files)
+            cfg(lbl, text=tr("{n} 个 · {size}", n=len(files), size=_fmt_size(total)))
+            for w in rows.winfo_children():
+                w.destroy()
+            if not files:
+                tk.Label(rows, text=tr("还没有录像."), bg=card, fg=COLORS["text_dim"], font=small,
+                         anchor="w").pack(fill="x")
+            writing = files[0]["path"] if live and files and files[0]["partial"] else ""
+            for f in files[:60]:
+                row = tk.Frame(rows, bg=card)
+                row.pack(fill="x", pady=1)
+                when = f["start"].strftime("%Y-%m-%d %H:%M:%S") if f["start"] else f["name"]
+                note = ""
+                if f["path"] == writing:
+                    note = "  " + tr("● 录制中")
+                elif f["partial"]:
+                    note = "  " + tr("(没有正常保存, 可能放不出来)")
+                tk.Label(row, text=f"{when}   {_fmt_size(f['size'])}{note}", bg=card,
+                         fg=COLORS["danger"] if f["path"] == writing else COLORS["text"], font=small,
+                         anchor="w").pack(side="left")
+                if f["path"] == writing:
+                    continue
+                ttk.Button(row, text=tr("删除"), command=lambda p=f["path"]: self._delete_record(p)).pack(side="right")
+                ttk.Button(row, text=tr("▶ 播放"), command=lambda p=f["path"]: self._open_uri(p)).pack(
+                    side="right", padx=(0, 6))
+            if len(files) > 60:
+                tk.Label(rows, text=tr("还有 {n} 个, 在文件夹里查看.", n=len(files) - 60), bg=card,
+                         fg=COLORS["text_dim"], font=small, anchor="w").pack(fill="x")
+        self.areas["record"].bind_children()
+
+    def _delete_record(self, path):
+        if not toast.ask(tr("删除这个录像?") + "\n" + os.path.basename(path), title=tr("删除录像"), danger=True):
+            return
+        try:
+            os.remove(path)
+        except OSError as e:
+            toast.warn(tr("删除失败: {e}", e=e))
+        self._rec_sig = {}
+        self.refresh_records()
+
     def refresh_sync(self):
         """设备同步那一块单独刷新 (每秒一次, 只在看着基本设置时)."""
         if self.sync_panel is not None and self._tab == "basic":
@@ -707,6 +861,7 @@ class SettingsPage(tk.Frame):
 
     def refresh(self):
         self._refresh_update_card()
+        self.refresh_records()
         self.refresh_achievements()
         # 文字翻译不用每次刷新都重设: 换语言时整个界面会重建.
         # 下面只改真正变了的属性 (cfg), 避免每次刷新把几十个控件全部重画一遍.
@@ -786,3 +941,12 @@ class SettingsPage(tk.Frame):
             cfg(self.lbl_global, text=tr("当前没有待生效的修改."), fg=COLORS["text_dim"])
             if not self.btn_cancel_all.instate(["disabled"]):
                 self.btn_cancel_all.state(["disabled"])
+
+
+def _fmt_size(n: int) -> str:
+    n = float(n)
+    for unit in ("B", "KB", "MB"):
+        if n < 1024:
+            return f"{n:.0f} {unit}"
+        n /= 1024
+    return f"{n:.2f} GB"

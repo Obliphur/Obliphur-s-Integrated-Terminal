@@ -71,7 +71,7 @@ G = 2
 # 设置里每台设备各自决定的项, 不同步
 LOCAL_SETTINGS = {"NET_MODE", "FILTER_MODE", "FONT_SCALE", "CHIME_WAV",
                   "WINDOW_LIMIT_ENABLED", "WINDOW_LIMIT", "WINDOW_FOCUS_ENABLED",
-                  "UPDATE_CHECK", "UPDATE_AUTO"}
+                  "UPDATE_CHECK", "UPDATE_AUTO", "REC_ASK"}
 
 
 # ═══════════════════════ 密码学 ═══════════════════════

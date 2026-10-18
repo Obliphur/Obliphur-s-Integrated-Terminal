@@ -19,6 +19,7 @@ import updater
 import shortcut
 import achievements
 import contract as contract_mod
+import recorder
 from sync_local import PcLocal
 from config import (
     COLORS, APP_NAME, IDLE, RUNNING, READY_BREAK, ON_BREAK,
@@ -134,6 +135,11 @@ class BreakTimerApp:
         self._offline_name = ""       # 合约因为哪台设备离线而失败
         self.rest_base = 0.0          # 刚结束的那段专注换来的休息时间 (秒, 已乘倍率; 合约中已乘疲惫)
         self._contract_seen = None    # 上次看到的合约 (id, 状态): 同步来的开始 / 结束要刷新
+        self._recorders = {}          # 合约的录像 (目光 / 刻痕): camera / screen → recorder.Recorder
+        self._rec_skip = {}           # 本机这个合约不录的: kind → (合约 id, 原因: none 没有摄像头 / ask 等着回答 / declined)
+        self._rec_pending = False     # 开始合约前正在打开摄像头
+        self._rec_retry = {}          # 录像出错 / 询问被关掉后, 什么时候再试 (monotonic)
+        self._rec_started_cid = None  # 在本机开始的合约 (开始时已经确认过录像)
         self._focus_checks = 0        # 这一段专注里已经被手动关掉的"还在吗"提醒数
         self._focus_ok = 0.0          # 最后一次确认 (关掉提醒窗) 时已专注的秒数
         self._check_win = None        # 当前开着的"还在吗"提醒窗
@@ -522,7 +528,9 @@ class BreakTimerApp:
                                               on_abandon=self.abandon_contract,
                                               blocked=self.contract_block,
                                               net_used=lambda: self.net.used_all,
-                                              on_change=self._paint_sidebar)
+                                              on_change=self._paint_sidebar,
+                                              rec_text=self._rec_text,
+                                              on_stop_screen=self.stop_screen_recording)
         self._prepare_page(self.pages["contract"])
         self.pages["settings"] = SettingsPage(
             self.content, self.settings,
@@ -537,7 +545,8 @@ class BreakTimerApp:
             on_update_install=self.install_update,
             on_update_relay=lambda: self.relay_updates(manual=True),
             sync=self.sync, achievements=self.ach,
-            on_open_achievements=self._open_achievements
+            on_open_achievements=self._open_achievements,
+            data_dir=self.dm.data_dir, recording=self.recording
         )
         self._prepare_page(self.pages["settings"])
         yield
@@ -1972,9 +1981,9 @@ class BreakTimerApp:
         except Exception as e:
             self._log_window(f"ERROR    app rules {type(e).__name__}: {e}")
         try:
-            self._check_music()
+            self._check_bans()
         except Exception as e:
-            self._log_window(f"ERROR    music {type(e).__name__}: {e}")
+            self._log_window(f"ERROR    bans {type(e).__name__}: {e}")
         self.app_rules_job = self.root.after(1000, self._schedule_app_rules)
 
     def _check_app_rules(self):
@@ -2087,6 +2096,10 @@ class BreakTimerApp:
                 toast.info(tr("合约已结束: {r}", r=tr(contract_page_results().get(c.last.get("result"), ""))))
             elif seen is not None and was is not None:
                 toast.info(tr("合约开始."))
+        try:
+            self._sync_recorders()
+        except Exception as e:
+            self._log_window(f"ERROR    record {type(e).__name__}: {e}")
         if not c.active:
             self._refresh_if_visible("contract")     # 休息 / 联网中开始按钮变灰
             return
@@ -2129,7 +2142,7 @@ class BreakTimerApp:
 
     def start_contract(self, terms):
         c = self.contract
-        if c.active:
+        if c.active or self._rec_pending:
             return
         why = self.contract_block()
         if why:
@@ -2143,12 +2156,52 @@ class BreakTimerApp:
         msg += "\n" + tr("完成后休息 +{n} 分钟", n=contract_mod.rest_minutes(lv))
         if not toast.ask(msg, title=tr("▶  开始行动"), ok_text=tr("开始行动"), danger=True):
             return
+        rec = self._record_lines(terms)
+        if rec and self.settings.value("REC_ASK") and not toast.ask(
+                "\n".join(rec), title=tr("⚔ 合约要求录像"), ok_text=tr("开始录像")):
+            return
         if self.contract_block():
             return
+        if "gaze" in terms:
+            # 目光: 先把摄像头打开, 打不开就不开始 (免得一开始就算违反)
+            if recorder.camera_consent() == "deny":
+                toast.warn(tr("Windows 的隐私设置不允许桌面应用使用摄像头: 设置 → 隐私和安全性 → 摄像头."))
+                return
+            if not recorder.camera_count():
+                toast.warn(tr("没有找到摄像头, 不能选「目光」."))
+                return
+            self._rec_pending = True
+            self._stop_recorder("camera")
+            r = self._start_recorder("camera")
+            toast.info(tr("正在打开摄像头…"))
+            self._await_camera(terms, r, time.monotonic())
+            return
+        self._begin_contract(terms)
+
+    def _await_camera(self, terms, r, t0):
+        if r.state == "running":
+            self._rec_pending = False
+            self._begin_contract(terms)
+            return
+        if r.state in ("failed", "lost", "stopped") or time.monotonic() - t0 > 15:
+            self._rec_pending = False
+            self._stop_recorder("camera")
+            toast.warn(tr("摄像头打不开, 合约没有开始.") + (f"\n{r.error}" if r.error else ""))
+            return
+        self.root.after(200, lambda: self._await_camera(terms, r, t0))
+
+    def _begin_contract(self, terms):
+        c = self.contract
+        if c.active or self.contract_block():
+            self._stop_recorder("camera")
+            return
+        lv = contract_mod.level_of(terms)
         c.start(terms, owner=self.sync.my_id, pre=self.break_carry)
-        self._log_notice(f"CONTRACT start level {lv} terms {','.join(terms) or '-'} until {end:%Y-%m-%d %H:%M}")
+        self._rec_started_cid = c.live.get("id")
+        self._log_notice(f"CONTRACT start level {lv} terms {','.join(terms) or '-'} until {c.end_at:%Y-%m-%d %H:%M}")
         self._contract_seen = (c.live.get("id"), "active")
         self._contract_changed()
+        self._sync_recorders()
         toast.success(tr("合约开始."))
         if self.sync.peers():
             self.sync.sync_now()
@@ -2265,26 +2318,191 @@ class BreakTimerApp:
         self.contract.merge(changes)
         self._check_contract()
 
-    def _check_music(self):
-        """乐理之灾: 每 2 秒看一次有没有开着音乐播放软件 / 用别的软件放音频文件 (不关它, 只算违反;
-        开着的这段只算一次, 关掉后再开才再算)."""
-        if not self.contract.has("music") or self.dm.resetting:
+    def _check_bans(self):
+        """乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒 (互联网娱乐的败退是四个一起): 每 2 秒看一次有没有开着这一类软件
+        (不关它, 只算违反; 开着的这段只算一次, 关掉后再开才再算). 音乐在休息中不管."""
+        c = self.contract
+        kinds = [k for k in contract_mod.BANS if c.ban_term(k)]
+        if not kinds or self.dm.resetting:
             return
-        self._music_tick = (getattr(self, "_music_tick", 0) + 1) % 2
-        if self._music_tick:
+        self._ban_tick = (getattr(self, "_ban_tick", 0) + 1) % 2
+        if self._ban_tick:
             return
-        if self.state == ON_BREAK:
-            self.contract.music_check(False)        # 休息中可以听; 休息结束时还开着就算一次
+        procs = window_guard.list_processes()
+        wins = None
+        for kind in kinds:
+            if kind == "music":
+                if self.state == ON_BREAK:
+                    c.ban_check("music", False)         # 休息中可以听; 休息结束时还开着就算一次
+                    continue
+                hit = window_guard.find_music(contract_mod.MUSIC_EXES, contract_mod.AUDIO_EXTS, procs=procs)
+            else:
+                if wins is None and kind in contract_mod.BAN_TITLES:
+                    wins = window_guard.taskbar_windows()
+                hit = window_guard.find_banned(contract_mod.BAN_EXES.get(kind, ()), contract_mod.BAN_TITLES.get(kind),
+                                               contract_mod.BROWSER_EXES, contract_mod.site_title,
+                                               procs=procs, windows=wins)
+            tid = c.ban_check(kind, hit is not None)
+            if not tid:
+                continue
+            exe, title = hit
+            self._log_window(f"BAN      {kind}  {exe}  {title}")
+            name = exe[:-4] if exe.endswith(".exe") else exe
+            if kind == "music":
+                why = tr("用 {exe} 播放音频", exe=name) if title else tr("打开了音乐播放软件 {exe}", exe=name)
+            elif title:
+                why = tr("打开了 {site}", site=title[:40])
+            else:
+                why = {"silent": tr("打开了社交 / AI 聊天软件 {exe}", exe=name),
+                       "game": tr("打开了游戏 {exe}", exe=name),
+                       "video": tr("打开了视频平台 {exe}", exe=name)}[kind]
+            self.contract_violation(why, tid)
+            if not c.active:
+                return
+
+    # ---- 合约 · 录像 (目光 / 刻痕, MECHANICS 18.3) ----
+
+    def _start_recorder(self, kind: str):
+        r = recorder.Recorder(self.dm.data_dir, kind,
+                              on_file=lambda path, k=kind: self._log_notice(f"RECORD {k} saved {os.path.basename(path)}"))
+        self._recorders[kind] = r
+        r.start()
+        self._log_notice(f"RECORD {kind} start")
+        return r
+
+    def _stop_recorder(self, kind: str):
+        r = self._recorders.pop(kind, None)
+        if r is not None:
+            threading.Thread(target=r.stop, daemon=True).start()     # Finalize 可能要一两秒, 不卡界面
+            self._log_notice(f"RECORD {kind} stop")
+
+    def _stop_all_recorders(self, wait: float = 0.0):
+        recs = list(self._recorders.values())
+        self._recorders.clear()
+        for r in recs:
+            r.stop(0)
+        for r in recs:
+            r.stop(wait)
+
+    def recording(self, kind: str) -> bool:
+        """本机此刻在录这一路吗 (设置 → 录像: 正在写的文件不能删)."""
+        r = self._recorders.get(kind)
+        return r is not None and r.alive
+
+    def _rec_text(self) -> str:
+        """合约页: 本机录像的状态."""
+        out = []
+        cid = self.contract.live.get("id")
+        for kind, label in (("camera", tr("📷 摄像头")), ("screen", tr("🖥 屏幕"))):
+            if kind not in self.contract.records():
+                continue
+            r = self._recorders.get(kind)
+            skip = self._rec_skip.get(kind)
+            if r is not None and r.state == "running":
+                out.append(label + " " + tr("录像中"))
+            elif r is not None:
+                out.append(label + " " + tr("正在开始录像…"))
+            elif skip and skip[0] == cid and skip[1] == "none":
+                out.append(label + " " + tr("本机没有摄像头, 不录"))
+            elif skip and skip[0] == cid and skip[1] == "ask":
+                out.append(label + " " + tr("等待确认录像"))
+            else:
+                out.append(label + " " + tr("未录像"))
+        return "   ·   ".join(out)
+
+    def _sync_recorders(self):
+        """每秒: 合约要录的 (摄像头 / 屏幕) 在录, 不要录的停下. 摄像头录着录着没了 (被关掉 / 拔掉 / 被禁用),
+        或者打不开, 算违反目光 (本机没有摄像头时不录, 不算). 录屏出错不算, 过一会儿再试."""
+        if self._rec_pending:
             return
-        hit = window_guard.find_music(contract_mod.MUSIC_EXES, contract_mod.AUDIO_EXTS)
-        tid = self.contract.music_check(hit is not None)
-        if not tid:
+        c = self.contract
+        want = set(c.records()) if c.active and not self.dm.resetting else set()
+        cid = c.live.get("id")
+        for kind in recorder.KINDS:
+            r = self._recorders.get(kind)
+            if kind not in want:
+                if r is not None:
+                    self._stop_recorder(kind)
+                continue
+            skip = self._rec_skip.get(kind)
+            if skip and skip[0] == cid:
+                continue
+            if r is None:
+                if time.monotonic() < self._rec_retry.get(kind, 0):
+                    continue
+                if cid != self._rec_started_cid and self.settings.value("REC_ASK"):
+                    self._ask_recording(kind, cid)
+                    continue
+                self._start_recorder(kind)
+                continue
+            if r.state == "failed" and kind == "camera" and r.error == "no camera":
+                self._recorders.pop(kind, None)
+                self._rec_skip[kind] = (cid, "none")
+            elif kind == "camera" and (r.state in ("failed", "lost", "stopped") or r.stalled()):
+                err = r.error
+                self._stop_recorder(kind)
+                self._log_notice(f"RECORD camera lost: {err}")
+                self.contract_violation(tr("摄像头被关闭 / 打不开"), "gaze")
+            elif r.state in ("failed", "lost", "stopped"):
+                self._log_notice(f"RECORD {kind} {r.state}: {r.error}")
+                self._recorders.pop(kind, None)
+                self._rec_retry[kind] = time.monotonic() + 30
+
+    def _ask_recording(self, kind: str, cid):
+        """别的设备开始的合约要录像, 设置里开着"录像前询问": 问一次. 拒绝算一次违反, 这个词条失效;
+        ✕ 关掉: 2 分钟后再问."""
+        self._rec_skip[kind] = (cid, "ask")
+        what = tr("用摄像头录像") if kind == "camera" else tr("录制整个屏幕")
+        tid = "gaze" if kind == "camera" else "scar"
+
+        def yes():
+            if self._rec_skip.get(kind) == (cid, "ask"):
+                self._rec_skip.pop(kind, None)
+            if self.contract.live.get("id") == cid and kind in self.contract.records() and kind not in self._recorders:
+                self._start_recorder(kind)
+
+        def no():
+            self._rec_skip[kind] = (cid, "declined")
+            if self.contract.live.get("id") == cid:
+                self.contract_violation(tr("拒绝了录像"), tid)
+
+        def closed(_opts=None):
+            if self._rec_skip.get(kind) == (cid, "ask"):
+                self._rec_skip.pop(kind, None)
+                self._rec_retry[kind] = time.monotonic() + 120
+
+        dlg = toast.notice(
+            tr("⚔ 合约要求录像"),
+            tr("进行中的合约要求本机{what} ({term}).", what=what, term=tr(contract_mod.BY_ID[tid][3])) + "\n"
+            + tr("录像只保存在本机, 在 设置 → 录像 查看.") + "\n" + tr("拒绝算一次违反, 这个词条失效."),
+            buttons=[(tr("开始录像"), yes, True), (tr("拒绝"), no, False)])
+        try:
+            dlg.bind("<Destroy>", lambda e: e.widget is dlg and self.root.after(100, closed), add="+")
+        except Exception:
+            pass
+
+    def stop_screen_recording(self):
+        """刻痕: 终止录屏 —— 立即算一次违反 (词条失效, 不再录屏); 已经录下的照样保存."""
+        if not self.contract.has("scar"):
             return
-        exe, title = hit
-        self._log_window(f"MUSIC    {exe}  {title}")
-        name = exe[:-4] if exe.endswith(".exe") else exe
-        self.contract_violation(tr("用 {exe} 播放音频", exe=name) if title
-                                else tr("打开了音乐播放软件 {exe}", exe=name), tid)
+        if not toast.ask(tr("终止录屏?") + "\n" + tr("立即算一次违反 (目标生命值 -1), 刻痕失效; 已经录下的部分照样保存."),
+                         title=tr("■ 终止录屏"), danger=True):
+            return
+        if not self.contract.has("scar"):
+            return
+        self._stop_recorder("screen")
+        self.contract_violation(tr("终止了录屏"), "scar")
+
+    def _record_lines(self, terms) -> list:
+        kinds = [contract_mod.RECORD[t] for t in terms if t in contract_mod.RECORD]
+        out = []
+        if "camera" in kinds:
+            out.append(tr("📷 合约期间用摄像头录像 (中途关掉摄像头算违反)"))
+        if "screen" in kinds:
+            out.append(tr("🖥 合约期间录制整个屏幕 (可以在合约页终止, 但算一次违反)"))
+        if out:
+            out.append(tr("录像只保存在本机, 在 设置 → 录像 查看."))
+        return out
 
     def _check_contract_windows(self):
         """通道阻塞: 任务栏上的窗口超过词条的上限 (不关窗口, 只算违反; 越过的那一下算一次)."""
@@ -2529,6 +2747,7 @@ class BreakTimerApp:
                     self.sync.push_final()
                 except Exception:
                     pass
+        self._stop_all_recorders(wait=8.0)     # 把正在录的文件写完 (Finalize)
         self.net.shutdown()
         self.root.destroy()
 
@@ -3215,6 +3434,7 @@ class BreakTimerApp:
         except Exception:
             pass
         self.sync.stop()
+        self._stop_all_recorders(wait=8.0)
         self.net.release()
         self.dm.erase_all_data()
         if kept:

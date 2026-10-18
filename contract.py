@@ -6,6 +6,7 @@ live 和 history 随设备同步 (doc / merge), draft 只留在本机.
 """
 
 import os
+import re
 from datetime import datetime, timedelta
 
 import config
@@ -31,7 +32,7 @@ TERMS = [
     ("info1", "info", 1, "环境:信息阻断-I", "只能使用剩余联网时间的75% 且不能使用借贷", ()),
     ("info2", "info", 2, "环境:信息阻断-II", "只能使用剩余联网时间的50% 且不能使用借贷", ()),
     ("info3", "info", 3, "环境:信息阻断-III", "只能使用剩余联网时间的25% 且不能使用借贷", ()),
-    ("isolate", "info", 4, "环境:信息隔绝", "不能使用联网功能", ()),
+    ("isolate", "info", 4, "环境:信息隔绝", "不能使用联网功能 选择时 获得的休息时间为原来的1.3倍", ("music", "silent", "game", "video")),
     ("tired1", "tired", 1, "环境:疲惫-I", "期间获得的休息时间为0.9x", ()),
     ("tired2", "tired", 2, "环境:疲惫-II", "期间获得的休息时间为0.75x", ()),
     ("tired3", "tired", 3, "环境:疲惫-III", "期间获得的休息时间为0.6x", ()),
@@ -42,12 +43,23 @@ TERMS = [
     ("last", "retreat", 3, "最后防线", "初始目标生命值为1", ()),
     ("chan1", "chan", 1, "环境:通道阻塞-I", "期间的最大窗口数改为4", ()),
     ("chan2", "chan", 2, "环境:通道阻塞-II", "期间的最大窗口数改为3", ()),
+    # 零散的按 TERMS 里的顺序在各自等级的那一行挨着排, 所以行为类似的写在一起 (上下两行也对齐):
+    # 联网 (抑制 / 全频道阻塞干扰), 整点记录 (记录封锁 / 细化规范), 禁止打开的软件
+    # 和它们下面的录像 (目光 / 刻痕), 最后是黑雾.
+# (禁止打开的软件: 乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒)
     ("suppress", "suppress", 1, "环境:抑制", "不能使用快速访问功能", ("isolate",)),
     ("jam", "jam", 2, "环境:全频道阻塞干扰", "期间使用proxy block-all模式", ()),
-    ("music", "music", 1, "环境:乐理之灾", "非休息期间不能打开音乐播放软件 不能使用外部软件播放mp3等音频文件", ()),
-    ("fog", "fog", 1, "环境:黑雾", "合约期间 专注时长 成就 日历 统计数据不可见 且无法打开设置", ()),
     ("seal", "seal", 1, "环境:记录封锁", "超过填写时间未填写 则不能再修改该记录", ()),
     ("fine", "fine", 2, "目标:细化规范", "记录变为30min一次", ()),
+    ("music", "music", 1, "环境:乐理之灾", "非休息期间不能打开音乐播放软件 不能使用外部软件播放mp3等音频文件", ()),
+    ("gaze", "gaze", 2, "环境:目光", "合约期间打开摄像头记录使用者的行为 结束后保存录像 中途禁用摄像头视为违反", ()),
+    ("silent", "silent", 1, "环境:无言为真", "合约期间不能打开社交软件和与AI聊天的软件 不能使用社交网站", ()),
+    ("scar", "scar", 2, "环境:刻痕", "合约期间录制整个屏幕 结束后保存录像 可以中途终止录屏 但立即视为一次违反", ("gaze",)),
+    ("game", "game", 1, "环境:禁游令", "合约期间不能使用游戏和游戏平台", ()),
+    ("video", "video", 1, "环境:低帧的诅咒", "合约期间不能使用视频平台", ()),
+    ("ent", "ent", 4, "环境:互联网娱乐的败退", "同时有乐理之灾 无言为真 禁游令 低帧的诅咒的效果",
+     ("music", "silent", "game", "video", "isolate")),
+    ("fog", "fog", 1, "环境:黑雾", "合约期间 专注时长 成就 日历 统计数据不可见 且无法打开设置", ()),
 ]
 BY_ID = {t[0]: t for t in TERMS}
 GROUPS = list(dict.fromkeys(t[1] for t in TERMS))
@@ -62,23 +74,33 @@ for _t in TERMS:
         _i = _LOOSE.get(_t[2], 0)
         _LOOSE[_t[2]] = _i + 1
         LAYOUT[_t[0]] = (len(SERIES) + _i, _t[2])
+# 放在另一个词条的那一列 (那一列在这个等级的格子空着): 互联网娱乐的败退在乐理之灾那一列的 4 级
+ALIGN = {"ent": "music"}
+for _t, _a in ALIGN.items():
+    LAYOUT[_t] = (LAYOUT[_a][0], BY_ID[_t][2])
 BOARD_COLS = len(SERIES) + max(_LOOSE.values(), default=0)
 MAX_LEVEL = max(t[2] for t in TERMS)
 
 # 软规则: 界面上照样能做, 但会被算作违反, 这个词条降一级 (结算按降级后的等级);
 # 其余是硬规则, 立即生效 (黑雾, 记录封锁, 细化规范, 全频道阻塞干扰, 持久战, 疲惫).
-SOFT = {"info1", "info2", "info3", "isolate", "chan1", "chan2", "music", "suppress", "short1", "short2"}
+# 录像 (目光 / 刻痕) 违反一次就失效 (录像停止): 不在 LOWER / SINGLE 里.
+SOFT = {"info1", "info2", "info3", "isolate", "chan1", "chan2", "music", "suppress", "short1", "short2",
+        "silent", "game", "video", "ent", "gaze", "scar"}
 LOWER = {"isolate": "info3", "info3": "info2", "info2": "info1", "chan2": "chan1",
          "short2": "short1"}                     # 降一级换成哪个词条
-SINGLE = {"music", "suppress"}       # 只有一档的软规则: 降级时等级减一, 减到 0 就失效
+SINGLE = {"music", "suppress", "silent", "game", "video", "ent"}   # 只有一档的软规则: 降级时等级减一, 减到 0 就失效
 
 DURATION = {"long1": 1.2, "long2": 1.4, "long3": 1.6}
 NET_SHARE = {"info1": 0.75, "info2": 0.5, "info3": 0.25, "isolate": 0.0}
 REST = {"tired1": 0.9, "tired2": 0.75, "tired3": 0.6}
+REST_BONUS = {"isolate": 1.3}                   # 休息时间额外的乘区 (和疲惫不冲突, 相乘): 信息隔绝 ×1.3
 WINDOWS = {"chan1": 4, "chan2": 3}
 SUPPLY = {"short1": 0.5, "short2": 0.0}         # 合约开始前积攒的休息时间能用几成
-HOUR_TERMS = {"seal", "fine"}
-LIFE = {"retreat1": 3, "retreat2": 2, "last": 1}  # 初始目标生命值 (硬规则)                   # 整点记录的词条: 整点记录关着时, 这次合约中照样开启
+HOUR_TERMS = {"seal", "fine"}                   # 整点记录的词条: 整点记录关着时, 这次合约中照样开启
+LIFE = {"retreat1": 3, "retreat2": 2, "last": 1}  # 初始目标生命值 (硬规则)
+RECORD = {"gaze": "camera", "scar": "screen"}   # 录像的词条 → 录什么 (recorder.py)
+BANS = ("music", "silent", "game", "video")     # 禁止打开某类软件的词条 (每 2 秒看一次)
+BANS_ALL = "ent"                                # 互联网娱乐的败退: 同时有上面四个的效果 (违反时降它)
 SUPPLY_WARN = (180, 60)                         # 支援短缺: 还差这么多秒就用超时各提醒一次
 
 # 总等级 → 完成合约时给的休息时间 (分钟, 固定; 按结束时的等级)
@@ -97,6 +119,77 @@ MUSIC_EXES = {
 }
 AUDIO_EXTS = (".mp3", ".flac", ".wav", ".ogg", ".m4a", ".aac", ".wma", ".ape", ".opus", ".ncm", ".kgm")
 
+# 无言为真: 常见的社交软件和与 AI 聊天的软件 (exe 名, 小写; 进程在就算, 缩到托盘里也算).
+# 社交网站 / 网页版的 AI: 浏览器窗口的标题里有这些名字 (小写比较; 搜索结果页不算).
+SOCIAL_EXES = {
+    "wechat.exe", "weixin.exe", "qq.exe", "tim.exe", "qqnt.exe", "telegram.exe", "discord.exe",
+    "whatsapp.exe", "line.exe", "skype.exe", "signal.exe", "messenger.exe", "kakaotalk.exe", "weibo.exe",
+    "xiaohongshu.exe",
+    "chatgpt.exe", "claude.exe", "doubao.exe", "kimi.exe", "yuanbao.exe", "tongyi.exe", "qwen.exe",
+    "deepseek.exe", "copilot.exe", "m365copilot.exe", "chatbox.exe", "cherry studio.exe", "poe.exe",
+    "perplexity.exe", "wenxiaoyan.exe",
+}
+SOCIAL_TITLES = {
+    "微博", "weibo", "知乎", "小红书", "百度贴吧", "贴吧", "豆瓣", "qq空间", "微信", "微信网页版",
+    "twitter", "x", "facebook", "instagram", "reddit", "discord", "telegram", "telegram web", "whatsapp",
+    "threads", "chatgpt", "claude", "deepseek", "gemini", "copilot", "microsoft copilot", "豆包", "kimi", "通义",
+    "通义千问", "文心一言", "腾讯元宝", "元宝", "perplexity", "grok", "poe",
+    "claude.ai", "chatgpt.com", "kimi.ai", "chat.deepseek.com", "x.com", "weibo.com", "zhihu.com",
+}
+SEARCH_TITLES = ("搜索", "search")
+
+
+def site_title(title: str, names) -> bool:
+    """浏览器窗口的标题是不是这些网站 (names: 小写的网站名 / 域名) 之一: 标题按 - | _ / 等切开, 有一段就是网站的名字
+    (或者是 "名字 " 后面跟着不含英文字母的说明, 如 "Kimi 智能助手"). 搜索结果页不算 ("知乎 - Google 搜索")."""
+    t = str(title or "").lower()
+    if not t or any(k in t for k in SEARCH_TITLES):
+        return False
+    for seg in re.split(r"\s[-|_–—/·:]\s|[|_–—·]|(?<=[一-鿿])-|-(?=[一-鿿])", t):
+        seg = seg.strip().lstrip("(0123456789) ").strip()
+        if seg in names:
+            return True
+        head, _sp, rest = seg.partition(" ")
+        if head in names and len(head) > 1 and not re.search(r"[a-z]", rest):
+            return True
+    return False
+
+
+# 低帧的诅咒: 常见的视频平台 (客户端的 exe 名, 网页的网站名). 本地的视频播放器 (PotPlayer, VLC …) 不算.
+VIDEO_EXES = {
+    "bilibili.exe", "哔哩哔哩.exe", "youku.exe", "youkuclient.exe", "qqlive.exe", "tencentvideo.exe",
+    "qyclient.exe", "iqiyi.exe", "mgtv.exe", "imgotv.exe", "xigua.exe", "xiguavideo.exe", "douyin.exe",
+    "kuaishou.exe", "douyu.exe", "huyaclient.exe", "huya.exe", "twitch.exe", "netflix.exe", "acfun.exe",
+}
+VIDEO_TITLES = {
+    "哔哩哔哩", "bilibili", "youtube", "优酷", "腾讯视频", "爱奇艺", "芒果tv", "西瓜视频", "抖音", "快手", "tiktok",
+    "twitch", "netflix", "斗鱼", "虎牙", "虎牙直播", "斗鱼直播", "acfun", "niconico", "好看视频", "微信视频号",
+    "bilibili.com", "youtube.com", "douyin.com",
+}
+BROWSER_EXES = {
+    "chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe", "vivaldi.exe", "arc.exe",
+    "360se.exe", "360chrome.exe", "qqbrowser.exe", "sogouexplorer.exe", "2345explorer.exe", "liebao.exe",
+    "quark.exe", "iexplore.exe", "chromium.exe", "yandex.exe", "waterfox.exe", "librewolf.exe", "floorp.exe",
+}
+# 禁游令: 常见的游戏平台和游戏 (exe 名, 小写; 进程在就算)
+GAME_EXES = {
+    "steam.exe", "epicgameslauncher.exe", "wegame.exe", "tgp_daemon.exe", "eadesktop.exe", "origin.exe",
+    "battle.net.exe", "upc.exe", "ubisoftconnect.exe", "galaxyclient.exe", "riotclientservices.exe",
+    "riotclientux.exe", "hyp.exe", "launcher_epic.exe", "rockstarlauncher.exe", "playnite.desktopapp.exe",
+    "leagueclient.exe", "league of legends.exe", "valorant.exe", "valorant-win64-shipping.exe",
+    "yuanshen.exe", "genshinimpact.exe", "starrail.exe", "zenlesszonezero.exe", "bh3.exe",
+    "minecraft.exe", "minecraftlauncher.exe", "cs2.exe", "csgo.exe", "dota2.exe", "overwatch.exe",
+    "tslgame.exe", "gta5.exe", "gta5_enhanced.exe", "eldenring.exe", "hearthstone.exe", "wow.exe",
+    "fortniteclient-win64-shipping.exe", "r5apex.exe", "robloxplayerbeta.exe", "osu!.exe",
+    "narakabladepoint.exe", "rocketleague.exe", "terraria.exe", "stardew valley.exe", "rainbowsix.exe",
+    "destiny2.exe", "warframe.x64.exe", "pathofexile.exe", "pathofexile_x64.exe", "diablo iv.exe",
+    "cod.exe", "blackops6.exe", "palworld-win64-shipping.exe", "helldivers2.exe", "baldur's gate 3.exe",
+    "bg3.exe", "bg3_dx11.exe", "cyberpunk2077.exe", "witcher3.exe", "sekiro.exe", "hollow knight.exe",
+    "deltaforceclient-win64-shipping.exe", "crossfire.exe", "dnf.exe", "4399game.exe",
+}
+BAN_EXES = {"silent": SOCIAL_EXES, "game": GAME_EXES, "video": VIDEO_EXES}
+BAN_TITLES = {"silent": SOCIAL_TITLES, "video": VIDEO_TITLES}   # 只看浏览器的窗口
+
 
 def level_of(terms) -> int:
     return sum(BY_ID[t][2] for t in terms if t in BY_ID)
@@ -105,6 +198,14 @@ def level_of(terms) -> int:
 def life_of(terms) -> int:
     """选了这些词条时的初始目标生命值."""
     return min((LIFE[t] for t in terms or [] if t in LIFE), default=VIOLATION_LIMIT)
+
+
+def rest_factor_of(terms) -> float:
+    """合约中专注换来的休息时间乘多少: 疲惫 (取最低的) × 额外的乘区 (信息隔绝 ×1.3)."""
+    f = min((REST[t] for t in terms or [] if t in REST), default=1.0)
+    for t in terms or []:
+        f *= REST_BONUS.get(t, 1.0)
+    return f
 
 
 def rest_minutes(level: int) -> int:
@@ -444,11 +545,23 @@ class Contract:
             return ""
         return tid if self._edge("win", n > lim) else ""
 
-    def music_check(self, playing: bool) -> str:
-        """乐理之灾: 开着音乐播放软件 / 用别的软件放音频文件."""
-        if not self.has("music"):
+    def ban_term(self, kind: str) -> str:
+        """禁止打开这一类软件 (BANS 之一) 的是哪个词条: 它自己, 或者互联网娱乐的败退; 不禁止时 ""."""
+        if self.has(kind):
+            return kind
+        return BANS_ALL if self.has(BANS_ALL) else ""
+
+    def ban_check(self, kind: str, hit: bool) -> str:
+        """乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒 (或者互联网娱乐的败退): 开着这一类软件.
+        每一类只在从没有到有的那一下算一次. 返回要降级的词条."""
+        tid = self.ban_term(kind)
+        if not tid:
             return ""
-        return "music" if self._edge("music", playing) else ""
+        return tid if self._edge(kind, hit) else ""
+
+    def records(self) -> list:
+        """合约中要录什么: camera (目光) / screen (刻痕)."""
+        return [RECORD[t] for t in self.terms if t in RECORD]
 
     def quick_check(self) -> str:
         """抑制: 用了快速访问."""
@@ -552,7 +665,7 @@ class Contract:
         return bool(a and b and a < slot_start + timedelta(hours=1) and slot_start < b)
 
     def rest_factor(self) -> float:
-        return min((REST[t] for t in self.terms if t in REST), default=1.0)
+        return rest_factor_of(self.terms)
 
     def book_rest(self, seconds: float, end: datetime = None) -> float:
         """一段专注换来的休息时间 (秒, 已乘"休息时间倍率"). 返回给出的休息时间.
@@ -572,8 +685,7 @@ class Contract:
         hs, he = _parse(h.get("start")), _parse(h.get("end"))
         if h.get("result") == "completed" and hs and he and hs <= start < he:
             terms = h.get("terms") or []
-            f = min((REST[t] for t in terms if t in REST), default=1.0)
-            return seconds * f
+            return seconds * rest_factor_of(terms)
         return seconds
 
     def take_first_break(self) -> bool:
@@ -688,11 +800,32 @@ def _selftest():
     assert clean_terms(["isolate", "chan2"]) == ["isolate", "chan2"], "信息隔绝和通道阻塞可以一起选"
     assert duration_of([]) == 4 * 3600 and duration_of(["long3"]) == int(4 * 3600 * 1.6)
     assert LAYOUT["short2"][0] < LAYOUT["suppress"][0], "成系列的在左边, 零散的在右边"
-    assert BOARD_COLS == len(SERIES) + 4 and LAYOUT["jam"] == (len(SERIES), 2) and LAYOUT["fine"] == (len(SERIES) + 1, 2),         "零散的词条挨着排, 不留空"
+    assert BOARD_COLS == len(SERIES) + 7 and LAYOUT["jam"] == (len(SERIES), 2) and LAYOUT["fine"] == (len(SERIES) + 1, 2),         "零散的词条挨着排, 不留空"
     assert len(set(LAYOUT.values())) == len(TERMS)
+    # 行为类似的词条放在一起: 禁止的软件一行挨着, 录像在它们下面; 整点记录 / 联网各自上下对齐
+    assert [LAYOUT[t][0] for t in BANS] == list(range(LAYOUT["music"][0], LAYOUT["music"][0] + 4))
+    assert LAYOUT["gaze"][0] == LAYOUT["music"][0] and LAYOUT["scar"][0] == LAYOUT["silent"][0]
+    assert LAYOUT["seal"][0] == LAYOUT["fine"][0] and LAYOUT["suppress"][0] == LAYOUT["jam"][0]
+    assert conflicts("gaze", "scar") and conflicts("scar", "gaze") and not conflicts("gaze", "music")
+    assert all(conflicts("ent", t) and conflicts(t, "ent") and conflicts("isolate", t) for t in BANS)
+    assert conflicts("ent", "isolate") and not conflicts("ent", "info3") and not conflicts("ent", "gaze")
+    assert LAYOUT["ent"] == (LAYOUT["music"][0], 4), "互联网娱乐的败退在禁止软件的那几列下面"
+    for t in ("ChatGPT", "Claude", "(3) 首页 / X", "如何评价…？ - 知乎 - Google Chrome", "微博-随时随地发现新鲜事",
+              "DeepSeek - 探索未至之境 - Microsoft Edge", "Reddit - Dive into anything", "Kimi 智能助手"):
+        assert site_title(t, SOCIAL_TITLES), t
+    for t in ("CLAUDE.md - obliphur_terminal - Visual Studio Code", "知乎 - Google 搜索", "新标签页",
+              "Claude Code 文档", "微信读书", "Example Domain", "poem - Wikipedia", "【4K】某视频_哔哩哔哩_bilibili"):
+        assert not site_title(t, SOCIAL_TITLES), t
+    for t in ("【4K】某视频_哔哩哔哩_bilibili - Google Chrome", "(12) Some video - YouTube", "爱奇艺-在线视频网站"):
+        assert site_title(t, VIDEO_TITLES), t
+    assert not site_title("youtube-dl - GitHub", VIDEO_TITLES) and not site_title("ChatGPT", VIDEO_TITLES)
+    assert not set(SOCIAL_EXES) & set(VIDEO_EXES) and not SOCIAL_TITLES & VIDEO_TITLES, "一个软件只算一个词条"
     best = clean_terms(["long3", "move2", "info3", "suppress", "jam", "music", "fog", "tired3", "chan2", "last",
-                        "short2", "seal", "fine"])
-    assert level_of(best) == 26, level_of(best)
+                        "short2", "seal", "fine", "silent", "game", "video", "gaze", "scar"])
+    assert "scar" not in best and level_of(best) == 31, level_of(best)
+    best2 = clean_terms(["long3", "move2", "info3", "suppress", "jam", "ent", "fog", "tired3", "chan2", "last",
+                         "short2", "seal", "fine", "gaze"])
+    assert level_of(best2) == 31 and "ent" in best2, best2
 
     c = Contract(tempfile.mkdtemp())
     t0 = datetime(2026, 10, 18, 9, 30)
@@ -713,8 +846,27 @@ def _selftest():
     # 通道阻塞 / 乐理之灾: 只在刚越过的那一下算
     assert c.window_check(5) == "chan1" and c.window_check(6) == "" and c.window_check(3) == ""
     assert c.window_check(5) == "chan1"
-    assert c.music_check(True) == "music" and c.music_check(True) == "" and c.music_check(False) == ""
+    assert c.ban_check("music", True) == "music" and c.ban_check("music", True) == "" and c.ban_check("music", False) == ""
     assert c.downgrade("music") == "" and not c.has("music"), "乐理之灾只有 1 级, 降一级就失效"
+    # 无言为真 / 禁游令: 和乐理之灾一样; 录像 (目光 / 刻痕) 违反一次就失效
+    c.start(["silent", "game", "gaze"], owner="me", now=t0)
+    assert c.level == 4 and c.records() == ["camera"] and c.ban_check("music", True) == ""
+    assert c.ban_check("game", True) == "game" and c.ban_check("game", True) == "" and c.ban_check("silent", True) == "silent"
+    assert c.violate("gaze") == (False, "") and c.records() == [] and c.level == 2
+    assert c.violate("game") == (False, "") and not c.has("game") and c.has("silent")
+    # 互联网娱乐的败退: 四类都禁止, 每一类各自只在打开的那一下算; 违反时它降一级 (4 → 3)
+    c.start(["ent", "info3"], owner="me", now=t0)
+    assert c.ban_term("game") == "ent" and c.ban_check("video", True) == "ent" and c.ban_check("video", True) == ""
+    assert c.ban_check("silent", True) == "ent" and c.violate("ent") == (False, "ent") and c.term_level("ent") == 3
+    assert c.ban_check("silent", True) == "" and c.ban_check("game", True) == "ent"
+    # 信息隔绝: 休息时间额外 ×1.3 (和疲惫相乘); 降成信息阻断-III 后没有了
+    c.start(["isolate", "tired2"], owner="me", now=t0)
+    assert abs(c.rest_factor() - 0.75 * 1.3) < 1e-9 and abs(c.book_rest(1000, t0) - 975) < 1e-6
+    c.downgrade("isolate")
+    assert c.rest_factor() == 0.75
+    c.start(["scar"], owner="me", now=t0)
+    assert c.records() == ["screen"] and c.level == 2 and c.violate("scar") == (False, "") and c.terms == []
+    c.start(["tired2", "chan1", "long1"], owner="me", now=t0)
     assert c.quick_check() == ""
     # 休息: 疲惫 ×0.75; 完成时按降级后的等级给固定的时间 (等级 4 → 44 分钟)
     assert abs(c.book_rest(1000, t0 + timedelta(hours=1)) - 750) < 1e-6
