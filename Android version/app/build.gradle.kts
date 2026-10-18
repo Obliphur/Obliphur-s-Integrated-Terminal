@@ -14,7 +14,7 @@ android {
         targetSdk = 35
         versionCode = 35
         // 和 GitHub 上发布的版本号比较 (见 service/Updater.kt); 桌面版是 config.APP_VERSION
-        versionName = "1.0.33"
+        versionName = "1.0.34"
     }
 
     buildTypes {
