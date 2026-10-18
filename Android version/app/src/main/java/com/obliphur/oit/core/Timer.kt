@@ -351,6 +351,11 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         setCarry(minOf(breakCarry, preLeft.toInt()) + reward)
     }
 
+    /** 合约开始时多给的休息时间 (互联网娱乐的败退), 存进积攒的休息时间. */
+    fun addCarry(seconds: Int) {
+        if (seconds > 0) setCarry(breakCarry + seconds)
+    }
+
     private fun setCarry(seconds: Int) {
         breakCarry = maxOf(0, seconds)
         saveState()

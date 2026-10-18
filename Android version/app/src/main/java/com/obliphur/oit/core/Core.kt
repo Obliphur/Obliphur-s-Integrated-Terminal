@@ -703,11 +703,15 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         if (contract.active) return
         contractBlock().let { if (it.isNotEmpty()) { toast(it, "warn"); return } }
         contract.start(terms, myId(), pre = timer.breakCarry.toDouble())
+        // 互联网娱乐的败退: 积攒的休息时间 +20 分钟 (在 pre 之后加: 算合约中得到的, 合约结束后不留下)
+        val gift = Contract.restGift(contract.terms)
+        timer.addCarry(gift)
         contractSeen = contract.id
         host.applyNet(false)
         syncHourLog()
-        logNotice("CONTRACT start level ${contract.level} terms ${contract.terms.joinToString(",").ifEmpty { "-" }} until ${contract.endAt?.format(Fmt.YMDHM)}")
-        toast(tr("合约开始."), "success")
+        logNotice("CONTRACT start level ${contract.level} terms ${contract.terms.joinToString(",").ifEmpty { "-" }} until ${contract.endAt?.format(Fmt.YMDHM)}" +
+            (if (gift > 0) " gift ${gift}s" else ""))
+        toast(tr("合约开始.") + (if (gift > 0) "\n" + tr("积攒的休息时间 +{t}.", "t" to fmtMs(gift.toDouble())) else ""), "success")
         changed()
     }
 
@@ -722,9 +726,6 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         host.applyNet(false)
         syncHourLog()
         val reward = rec.optInt("reward", 0)
-        // 互联网娱乐的败退: 顺利完成时今天的联网额度 +20 分钟
-        val gift = rec.optInt("net_gift", 0)
-        if (gift > 0) net.addGift(gift.toDouble(), "contract")
         // 合约中得到的休息时间不留下: 只留合约开始前积攒的那部分, 加上奖励
         timer.contractEnded(rec.optDouble("pre_left", 0.0), reward)
         checkAchievements()
@@ -738,7 +739,6 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             "completed" -> {
                 var msg = tr("危机等级 {lv}", "lv" to lv)
                 if (reward > 0) msg += "\n" + tr("积攒的休息时间 +{t}.", "t" to fmtMs(reward.toDouble()))
-                if (gift > 0) msg += "\n" + tr("今天的联网额度 +{n} 分钟.", "n" to gift / 60)
                 notice(tr("⚔  合约完成"), msg, listOf(NoticeButton(tr("知道了"), "ok", true)), page = "contract")
             }
             "abandoned" -> toast(tr("⚔ 行动终止"))

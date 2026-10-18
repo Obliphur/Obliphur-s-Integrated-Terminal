@@ -2228,12 +2228,20 @@ class BreakTimerApp:
             return
         lv = contract_mod.level_of(terms)
         c.start(terms, owner=self.sync.my_id, pre=self.break_carry)
+        # 互联网娱乐的败退: 积攒的休息时间 +20 分钟 (在 pre 之后加: 算合约中得到的, 合约结束后不留下)
+        gift = contract_mod.rest_gift(terms)
+        if gift > 0:
+            self._set_break_carry(self.break_carry + gift)
+            if self.state == IDLE:
+                self.lbl_sub.config(text=self._idle_sub_text())
+            self._sync_timer_buttons()
         self._rec_started_cid = c.live.get("id")
-        self._log_notice(f"CONTRACT start level {lv} terms {','.join(terms) or '-'} until {c.end_at:%Y-%m-%d %H:%M}")
+        self._log_notice(f"CONTRACT start level {lv} terms {','.join(terms) or '-'} until {c.end_at:%Y-%m-%d %H:%M}"
+                         + (f" gift {gift}s" if gift else ""))
         self._contract_seen = (c.live.get("id"), "active")
         self._contract_changed()
         self._sync_recorders()
-        toast.success(tr("合约开始."))
+        toast.success(tr("合约开始.") + ("\n" + tr("积攒的休息时间 +{t}.", t=fmt_ms(gift)) if gift else ""))
         if self.sync.peers():
             self.sync.sync_now()
 
@@ -2257,10 +2265,6 @@ class BreakTimerApp:
         self._contract_seen = None
         reward = int(rec.get("reward") or 0)
         keep = min(int(self.break_carry), int(float(rec.get("pre_left") or 0)))
-        gift = int(rec.get("net_gift") or 0)
-        if gift > 0:
-            self.net.add_gift(gift, "contract")             # 互联网娱乐的败退: 今天的联网额度 +20 分钟
-            self.refresh_net(force=True)
         if reward > 0 or keep != self.break_carry:
             self._set_break_carry(keep + reward)
             if self.state == IDLE:
@@ -2275,8 +2279,6 @@ class BreakTimerApp:
             msg = tr("危机等级 {lv}", lv=lv)
             if reward > 0:
                 msg += "\n" + tr("积攒的休息时间 +{t}.", t=fmt_ms(reward))
-            if gift > 0:
-                msg += "\n" + tr("今天的联网额度 +{n} 分钟.", n=gift // 60)
             toast.notice(tr("⚔  合约完成"), msg)
         elif result == "abandoned":
             toast.info(tr("⚔ 行动终止"))

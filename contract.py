@@ -57,7 +57,7 @@ TERMS = [
     ("scar", "scar", 2, "环境:刻痕", "合约期间录制整个屏幕 结束后保存录像", ("gaze",)),
     ("game", "game", 1, "环境:禁游令", "合约期间不能使用游戏和游戏平台", ()),
     ("video", "video", 1, "环境:低帧的诅咒", "合约期间不能使用视频平台", ()),
-    ("ent", "ent", 4, "环境:互联网娱乐的败退", "同时有乐理之灾 无言为真 禁游令 低帧的诅咒的效果\n违反任意一项即整个失效\n顺利完成合约时今日联网额度+20min",
+    ("ent", "ent", 4, "环境:互联网娱乐的败退", "同时有乐理之灾 无言为真 禁游令 低帧的诅咒的效果\n违反任意一项即整个失效\n合约开始时获得额外20min的休息时间",
      ("music", "silent", "game", "video", "isolate")),
     ("fog", "fog", 1, "环境:黑雾", "合约期间 专注时长 成就 日历 统计数据不可见 且无法打开设置", ()),
 ]
@@ -102,7 +102,7 @@ LIFE = {"retreat1": 3, "retreat2": 2, "last": 1}  # 初始目标生命值 (硬�
 RECORD = {"gaze": "camera", "scar": "screen"}   # 录像的词条 → 录什么 (recorder.py)
 BANS = ("music", "silent", "game", "video")     # 禁止打开某类软件的词条 (每 2 秒看一次)
 BANS_ALL = "ent"                                # 互联网娱乐的败退: 同时有上面四个的效果; 违反任意一项就整个失效
-NET_GIFT = {"ent": 20 * 60}                     # 完成合约时 (这个词条还在) 今天的联网额度多给这么多秒
+REST_GIFT = {"ent": 20 * 60}                    # 合约开始时积攒的休息时间多给这么多秒 (算合约中得到的, 合约结束后不留下)
 SUPPLY_WARN = (180, 60)                         # 支援短缺: 还差这么多秒就用超时各提醒一次
 
 # 总等级 → 完成合约时给的休息时间 (分钟, 固定; 按结束时的等级)
@@ -221,6 +221,11 @@ def rest_minutes(level: int) -> int:
 def rest_reward(level: int) -> int:
     """完成合约时存进积攒的休息时间的秒数."""
     return rest_minutes(level) * 60
+
+
+def rest_gift(terms) -> int:
+    """合约开始时存进积攒的休息时间的秒数 (互联网娱乐的败退: 20 分钟)."""
+    return int(sum(REST_GIFT.get(t, 0) for t in terms or []))
 
 
 def duration_of(terms) -> int:
@@ -398,12 +403,11 @@ class Contract:
         now = (now or datetime.now()).replace(microsecond=0)
         end = min(now, self.end_at or now)
         reward = int(round(self.reward)) if result == "completed" else 0
-        gift = int(sum(NET_GIFT.get(t, 0) for t in self.terms)) if result == "completed" else 0
         rec = {"id": self.live.get("id"), "start": self.live.get("start"), "end": _iso(end),
                "planned": self.live.get("end"), "terms": self.terms, "orig": self.orig,
                "level": self.level, "orig_level": self.orig_level, "cut": dict(self.cut),
                "result": result, "violations": self.violations, "reward": reward,
-               "pre_left": self.pre_left, "net_gift": gift}
+               "pre_left": self.pre_left}
         self.history.append(rec)
         self.live = {"state": "none", "owner": by, "first_break": result == "completed"}
         self.save()
@@ -867,15 +871,8 @@ def _selftest():
     assert c.ban_term("game") == "ent" and c.ban_check("video", True) == "ent" and c.ban_check("video", True) == ""
     assert c.violate("ent") == (False, "") and not c.has("ent") and c.level == 3
     assert c.ban_term("game") == "" and c.ban_check("silent", True) == ""
-    # 完成时还在: 今天的联网额度 +20 分钟; 失效了 / 失败 / 提前结束不给
-    g = Contract(tempfile.mkdtemp())
-    g.start(["ent"], owner="me", now=t0)
-    assert g.finish("completed", t0 + timedelta(hours=5))["net_gift"] == 20 * 60
-    g.start(["ent"], owner="me", now=t0)
-    g.violate("ent")
-    assert g.finish("completed", t0 + timedelta(hours=5))["net_gift"] == 0, "失效了就不给"
-    g.start(["ent"], owner="me", now=t0)
-    assert g.finish("abandoned", t0 + timedelta(hours=1))["net_gift"] == 0
+    # 合约开始时积攒的休息时间 +20 分钟 (不算合约开始前的)
+    assert rest_gift(["ent", "info3"]) == 20 * 60 and rest_gift(["music", "silent"]) == 0
     # 信息隔绝: 休息时间额外 ×1.3 (和疲惫相乘); 降成信息阻断-III 后没有了
     c.start(["isolate", "tired2"], owner="me", now=t0)
     assert abs(c.rest_factor() - 0.6 * 1.3) < 1e-9 and abs(c.book_rest(1000, t0) - 780) < 1e-6

@@ -322,7 +322,6 @@ fun ContractScreen() {
             var text = tr("上次合约: {r} · 危机等级 {lv} · {when}", "r" to tr(contractResult(last.optString("result"))),
                 "lv" to last.optInt("level"), "when" to if (a != null && b != null) "${a.format(Fmt.MDHM)} — ${b.format(Fmt.HM)}" else "")
             if (last.optInt("reward") > 0) text += "   ·   " + tr("休息 +{n} 分钟", "n" to Math.round(last.optInt("reward") / 60.0))
-            if (last.optInt("net_gift") > 0) text += "   ·   " + tr("今日联网额度 +{n} 分钟", "n" to last.optInt("net_gift") / 60)
             Text(text, color = p.dim, fontSize = 12.sp)
         }
 
@@ -342,8 +341,8 @@ fun ContractScreen() {
             if (orig != level) info += tr("开始时 {n}", "n" to orig) + "\n"
             info += tr("时长 {t}", "t" to fmtHm(Contract.durationOf(if (active) c.orig else sel))) + "\n" +
                 tr("完成后休息 +{n} 分钟", "n" to Contract.restMinutes(level))
-            val gift = sel.sumOf { Contract.NET_GIFT[it] ?: 0 }
-            if (gift > 0) info += "\n" + tr("今日联网额度 +{n} 分钟", "n" to gift / 60)
+            val gift = Contract.restGift(sel)
+            if (gift > 0) info += "\n" + tr("开始时休息 +{n} 分钟", "n" to gift / 60)
             Text(info, color = p.text, fontSize = 12.sp, modifier = Modifier.padding(start = 14.dp).weight(1f))
             if (level >= Contract.HARD_LEVEL)
                 Text(tr("⚠  当前合约难度极大 请谨慎行动"), color = p.warn, fontSize = 12.sp, fontWeight = FontWeight.Bold,
