@@ -6,6 +6,7 @@ live 和 history 随设备同步 (doc / merge), draft 只留在本机.
 """
 
 import os
+import random
 import re
 from datetime import datetime, timedelta
 
@@ -43,9 +44,13 @@ TERMS = [
     ("last", "retreat", 3, "最后防线", "初始目标生命值为1", ()),
     ("chan1", "chan", 1, "环境:通道阻塞-I", "期间的最大窗口数改为4", ()),
     ("chan2", "chan", 2, "环境:通道阻塞-II", "期间的最大窗口数改为3", ()),
+    ("deep1", "deep", 1, "目标:纵深推进-I", "专注的时间不能少于40min", ()),
+    ("deep2", "deep", 2, "目标:纵深推进-II", "专注的时间不能少于60min", ()),
+    ("erode1", "erode", 1, "环境:侵蚀-I", "网络申请冷却期改为2x", ("isolate",)),
+    ("erode2", "erode", 2, "环境:侵蚀-II", "网络申请冷却期改为3x", ("isolate",)),
     # 零散的按 TERMS 里的顺序在各自等级的那一行挨着排, 所以行为类似的写在一起 (上下两行也对齐):
     # 联网 (抑制 / 全频道阻塞干扰), 整点记录 (记录封锁 / 细化规范), 禁止打开的软件
-    # 和它们下面的录像 (目光 / 刻痕), 最后是黑雾.
+    # 和它们下面的录像 (目光 / 刻痕), 黑雾, 最后是休息 / 专注 (禁止囤囤鼠! / 静默协议 / 未知变量).
 # (禁止打开的软件: 乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒)
     ("suppress", "suppress", 1, "环境:抑制", "不能使用快速访问功能", ("isolate",)),
     ("jam", "jam", 2, "环境:全频道阻塞干扰", "期间使用proxy block-all模式", ()),
@@ -60,6 +65,9 @@ TERMS = [
     ("ent", "ent", 4, "互联网娱乐的败退", "同时有乐理之灾 无言为真 禁游令 低帧的诅咒的效果\n违反任意一项即整个失效\n合约开始时获得额外20min的休息时间",
      ("music", "silent", "game", "video", "isolate")),
     ("fog", "fog", 1, "环境:黑雾", "合约期间 专注时长 成就 日历 统计数据不可见 且无法打开设置", ()),
+    ("hoard", "hoard", 1, "禁止囤囤鼠!", "不能提前结束休息 但是休息时间获得一个额外乘区1.05x", ()),
+    ("quiet", "quiet", 2, "环境:静默协议", "专注中不能处于联网状态", ("isolate",)),
+    ("unknown", "unknown", 3, "未知变量", "合约开始的第自然数个小时开始时间 从1-2级的 可以选择的词条中随机选中一个启用", ()),
 ]
 BY_ID = {t[0]: t for t in TERMS}
 GROUPS = list(dict.fromkeys(t[1] for t in TERMS))
@@ -80,21 +88,23 @@ for _t, _a in ALIGN.items():
     LAYOUT[_t] = (LAYOUT[_a][0], BY_ID[_t][2])
 BOARD_COLS = len(SERIES) + max(_LOOSE.values(), default=0)
 MAX_LEVEL = max(t[2] for t in TERMS)
+# 词条板翻页: 成系列的一页, 零散的一页 (每页的 [开始列, 结束列)); 窗口放不下一页时界面再往下分
+PAGES = [(0, len(SERIES)), (len(SERIES), BOARD_COLS)]
 
 # 软规则: 界面上照样能做, 但会被算作违反, 这个词条降一级 (结算按降级后的等级);
 # 其余是硬规则, 立即生效 (黑雾, 记录封锁, 细化规范, 全频道阻塞干扰, 持久战, 疲惫).
 # 录像 (目光 / 刻痕) 违反一次就失效 (录像停止): 不在 LOWER / SINGLE 里.
 SOFT = {"info1", "info2", "info3", "isolate", "chan1", "chan2", "music", "suppress", "short1", "short2",
-        "silent", "game", "video", "ent", "gaze", "scar"}
+        "silent", "game", "video", "ent", "gaze", "scar", "deep1", "deep2", "quiet", "unknown"}
 LOWER = {"isolate": "info3", "info3": "info2", "info2": "info1", "chan2": "chan1",
-         "short2": "short1"}                     # 降一级换成哪个词条
-SINGLE = {"music", "suppress", "silent", "game", "video"}   # 只有一档的软规则: 降级时等级减一, 减到 0 就失效
+         "short2": "short1", "deep2": "deep1"}   # 降一级换成哪个词条
+SINGLE = {"music", "suppress", "silent", "game", "video", "quiet"}   # 只有一档的软规则: 降级时等级减一, 减到 0 就失效
 
 DURATION = {"long1": 1.2, "long2": 1.4, "long3": 1.6}
 NET_SHARE = {"info1": 0.75, "info2": 0.5, "info3": 0.25, "isolate": 0.0}
 BASE_REST = 0.8                                # 合约中专注换来的休息时间的基础倍率; 有疲惫时换成疲惫的倍率
 REST = {"tired1": 0.7, "tired2": 0.6, "tired3": 0.5}
-REST_BONUS = {"isolate": 1.3}                   # 休息时间额外的乘区 (和疲惫不冲突, 相乘): 信息隔绝 ×1.3
+REST_BONUS = {"isolate": 1.3, "hoard": 1.05}    # 休息时间额外的乘区 (和疲惫不冲突, 相乘): 信息隔绝 ×1.3, 禁止囤囤鼠! ×1.05
 WINDOWS = {"chan1": 4, "chan2": 3}
 SUPPLY = {"short1": 0.5, "short2": 0.0}         # 合约开始前积攒的休息时间能用几成
 HOUR_TERMS = {"seal", "fine"}                   # 整点记录的词条: 整点记录关着时, 这次合约中照样开启
@@ -104,6 +114,11 @@ BANS = ("music", "silent", "game", "video")     # 禁止打开某类软件的词
 BANS_ALL = "ent"                                # 互联网娱乐的败退: 同时有上面四个的效果; 违反任意一项就整个失效
 REST_GIFT = {"ent": 20 * 60}                    # 合约开始时积攒的休息时间多给这么多秒 (算合约中得到的, 合约结束后不留下)
 SUPPLY_WARN = (180, 60)                         # 支援短缺: 还差这么多秒就用超时各提醒一次
+DEEP = {"deep1": 40 * 60, "deep2": 60 * 60}     # 纵深推进: 一段专注至少这么多秒, 不到就结束算违反
+COOLDOWN_X = {"erode1": 2.0, "erode2": 3.0}     # 侵蚀: 网络申请的冷静期乘多少 (硬规则)
+RANDOM = "unknown"                              # 未知变量: 合约的每个小时开始时随机启用一个 1-2 级的词条
+RANDOM_LEVELS = (1, 2)
+RANDOM_SKIP = {"gaze", "scar"}                  # 不会选中录像的词条
 
 # 总等级 → 完成合约时给的休息时间 (分钟, 固定; 按结束时的等级)
 # 每 3 级一档. 15 级以内每档只多 2 分钟, 16 级起每档多 10 分钟; 25 级 (差不多选满) 起封顶 90 分钟
@@ -336,8 +351,15 @@ class Contract:
         return BY_ID[tid][2] - int(self.cut.get(tid) or 0)
 
     @property
+    def rand(self) -> list:
+        """未知变量随机启用的词条 (不算进危机等级; 可以点击关闭, 算一次违反)."""
+        r = self.live.get("rand") if self.active else None
+        return [t for t in r if t in self.terms] if isinstance(r, list) else []
+
+    @property
     def level(self) -> int:
-        return sum(self.term_level(t) for t in self.terms if t in BY_ID)
+        rand = self.rand
+        return sum(self.term_level(t) for t in self.terms if t in BY_ID and t not in rand)
 
     @property
     def orig(self) -> list:
@@ -391,7 +413,8 @@ class Contract:
                      "terms": terms, "orig": list(terms), "cut": {}, "violations": 0, "rest": 0,
                      "owner": owner, "idle_since": None, "net": None, "first_break": False,
                      "pre": round(pre, 1), "pre_left": round(pre, 1), "pre_used": 0,
-                     "supply": None if share is None else round(pre * share, 1), "hl": []}
+                     "supply": None if share is None else round(pre * share, 1), "hl": [],
+                     "rand": [], "rand_n": 0}
         self._watch = {}
         self.save()
         return self.live
@@ -407,7 +430,7 @@ class Contract:
                "planned": self.live.get("end"), "terms": self.terms, "orig": self.orig,
                "level": self.level, "orig_level": self.orig_level, "cut": dict(self.cut),
                "result": result, "violations": self.violations, "reward": reward,
-               "pre_left": self.pre_left}
+               "pre_left": self.pre_left, "rand": self.rand}
         self.history.append(rec)
         self.live = {"state": "none", "owner": by, "first_break": result == "completed"}
         self.save()
@@ -460,26 +483,32 @@ class Contract:
             return None
         return max(0.0, IDLE_LIMIT - (now - since).total_seconds())
 
-    def violate(self, tid: str):
-        """违反了一次词条 tid: 记一次, 这个词条降一级. 返回 (是否达到了上限, 降级后的词条 / "" = 失效).
-        tid = "": 不是哪个词条的违反 (整点记录超时未填写), 只记一次."""
+    def violate(self, tid: str, drop: bool = False):
+        """违反了一次词条 tid: 记一次, 这个词条降一级 (drop: 直接去掉, 关闭未知变量选中的词条).
+        返回 (是否达到了上限, 降级后的词条 / "" = 失效). tid = "": 不是哪个词条的违反 (整点记录超时未填写), 只记一次."""
         if not self.active:
             return False, ""
-        new = self.downgrade(tid) if tid else ""
+        new = self.downgrade(tid, drop) if tid else ""
         self.live["violations"] = self.violations + 1
         self.save()
         return self.violations >= self.violation_limit, new
 
-    def downgrade(self, tid: str) -> str:
-        """词条降一级: 系列词条换成低一档的, 只有一档的等级减一; 降到底就失效. 返回降级后的词条 ("" = 失效)."""
+    def downgrade(self, tid: str, drop: bool = False) -> str:
+        """词条降一级: 系列词条换成低一档的, 只有一档的等级减一; 降到底就失效 (drop: 直接去掉).
+        返回降级后的词条 ("" = 失效)."""
         terms = self.terms
         if tid not in terms:
             return ""
         old_share = self.net_share()
         old_supply = self._supply_share(terms)
         cut = dict(self.cut)
+        rand = self.rand
         i = terms.index(tid)
-        if tid in LOWER:
+        if drop:
+            terms.pop(i)
+            cut.pop(tid, None)
+            new = ""
+        elif tid in LOWER:
             terms[i] = new = LOWER[tid]
         elif tid in SINGLE and self.term_level(tid) > 1:
             cut[tid] = int(cut.get(tid) or 0) + 1
@@ -490,6 +519,9 @@ class Contract:
             new = ""
         self.live["terms"] = clean_terms(terms)
         self.live["cut"] = cut
+        if tid in rand:                      # 未知变量选中的词条降级后还是它选中的
+            rand = [new if t == tid else t for t in rand if new or t != tid]
+            self.live["rand"] = rand
         # 信息阻断: 降一级 = 多给低一档多出来的那部分额度 (从现在用到的地方算起)
         n = self.live.get("net")
         new_share = self.net_share()
@@ -503,6 +535,55 @@ class Contract:
             self.live["supply"] = round(float(self.live["supply"]) + self.pre * (new_supply - old_supply), 1)
         self.save()
         return new
+
+    # ---- 未知变量: 合约的第 1, 2, 3 … 个小时开始时 (刚开始时也算) 随机启用一个词条 ----
+
+    def random_candidates(self) -> list:
+        """现在能被未知变量选中的词条: 1-2 级, 能选 (没有选着, 也不和选着的冲突), 不是录像;
+        退路封锁不会让目标生命值直接归零."""
+        terms = self.terms
+        out = []
+        for t in TERMS:
+            tid = t[0]
+            if t[2] not in RANDOM_LEVELS or tid in RANDOM_SKIP or tid in terms or blocked_by(tid, terms):
+                continue
+            if tid in LIFE and life_of(terms + [tid]) <= self.violations:
+                continue
+            out.append(tid)
+        return out
+
+    def roll(self, now: datetime, rng=None) -> list:
+        """到了新的一个小时就启用一个词条. 返回这次启用的词条 (只由做自动结束的设备调用)."""
+        if not self.active or not self.has(RANDOM) or not self.start_at:
+            return []
+        end = self.end_at or now
+        due = int((min(now, end) - self.start_at).total_seconds() // 3600) + 1 if now < end else 0
+        done = int(self.live.get("rand_n") or 0)
+        picked = []
+        while done < due:
+            done += 1
+            pool = self.random_candidates()
+            if pool:
+                tid = (rng or random).choice(pool)
+                self._enable(tid)
+                picked.append(tid)
+        if done != int(self.live.get("rand_n") or 0):
+            self.live["rand_n"] = done
+            self.save()
+        return picked
+
+    def _enable(self, tid: str):
+        """合约中途启用一个词条: 开始时才定下来的效果在这里补上 (持久战: 时长; 支援短缺: 能用多少)."""
+        terms = clean_terms(self.terms + [tid])
+        self.live["terms"] = terms
+        self.live["rand"] = self.rand + [tid]
+        if tid in DURATION and self.start_at:
+            end = self.start_at + timedelta(seconds=duration_of(terms))
+            if self.end_at is None or end > self.end_at:
+                self.live["end"] = _iso(end)
+        if tid in SUPPLY:
+            self.live["supply"] = round(max(self.pre * self._supply_share(terms), self.pre_used), 1)
+        self.save()
 
     # ---- 软规则: 有没有违反 (由调用方算作违反: violate) ----
 
@@ -573,6 +654,15 @@ class Contract:
     def quick_check(self) -> str:
         """抑制: 用了快速访问."""
         return "suppress" if self.has("suppress") else ""
+
+    def focus_check(self, seconds: float) -> str:
+        """纵深推进: 结束的这段专注不到要求的时长."""
+        tid = next((t for t in self.terms if t in DEEP), "")
+        return tid if tid and float(seconds) < DEEP[tid] else ""
+
+    def quiet_check(self, hit: bool) -> str:
+        """静默协议: 专注中处于联网状态 (只在刚变成这样的那一下算一次)."""
+        return "quiet" if self.has("quiet") and self._edge("quiet", hit) else ""
 
     # ---- 合约开始前积攒的休息时间 (暂停不打折; 支援短缺) ----
     # 一次休息 = 建议休息时长 + 积攒的休息时间; 先用合约中得到的, 合约开始前积攒的放在最后用.
@@ -659,6 +749,14 @@ class Contract:
 
     def fog(self) -> bool:
         return self.has("fog")
+
+    def no_pause(self) -> bool:
+        """禁止囤囤鼠!: 不能提前结束休息 (硬规则)."""
+        return self.has("hoard")
+
+    def cooldown_factor(self) -> float:
+        """侵蚀: 网络申请的冷静期乘多少."""
+        return max((COOLDOWN_X[t] for t in self.terms if t in COOLDOWN_X), default=1.0)
 
     def hour_forced(self) -> bool:
         """选了整点记录的词条: 整点记录关着时, 这次合约中照样开启."""
@@ -812,7 +910,7 @@ def _selftest():
     assert clean_terms(["isolate", "chan2"]) == ["isolate", "chan2"], "信息隔绝和通道阻塞可以一起选"
     assert duration_of([]) == 4 * 3600 and duration_of(["long3"]) == int(4 * 3600 * 1.6)
     assert LAYOUT["short2"][0] < LAYOUT["suppress"][0], "成系列的在左边, 零散的在右边"
-    assert BOARD_COLS == len(SERIES) + 7 and LAYOUT["jam"] == (len(SERIES), 2) and LAYOUT["fine"] == (len(SERIES) + 1, 2),         "零散的词条挨着排, 不留空"
+    assert BOARD_COLS == len(SERIES) + 8 and LAYOUT["jam"] == (len(SERIES), 2) and LAYOUT["fine"] == (len(SERIES) + 1, 2),         "零散的词条挨着排, 不留空"
     assert len(set(LAYOUT.values())) == len(TERMS)
     # 行为类似的词条放在一起: 禁止的软件一行挨着, 录像在它们下面; 整点记录 / 联网各自上下对齐
     assert [LAYOUT[t][0] for t in BANS] == list(range(LAYOUT["music"][0], LAYOUT["music"][0] + 4))
@@ -873,6 +971,51 @@ def _selftest():
     assert c.ban_term("game") == "" and c.ban_check("silent", True) == ""
     # 合约开始时积攒的休息时间 +20 分钟 (不算合约开始前的)
     assert rest_gift(["ent", "info3"]) == 20 * 60 and rest_gift(["music", "silent"]) == 0
+    # 翻页: 成系列的一页, 零散的一页
+    assert PAGES == [(0, len(SERIES)), (len(SERIES), BOARD_COLS)] and LAYOUT["deep1"][0] < len(SERIES)
+    assert LAYOUT["hoard"][0] >= len(SERIES) and LAYOUT["unknown"] == (len(SERIES), 3)
+    # 侵蚀 / 静默协议和信息隔绝冲突
+    assert conflicts("erode1", "isolate") and conflicts("isolate", "erode2") and conflicts("quiet", "isolate")
+    assert not conflicts("erode1", "info3") and not conflicts("quiet", "jam")
+    # 禁止囤囤鼠!: 不能暂停休息, 休息时间 ×1.05 (和疲惫 / 信息隔绝相乘); 侵蚀: 冷静期 ×2 / ×3
+    c.start(["hoard", "tired1", "erode2"], owner="me", now=t0)
+    assert c.no_pause() and abs(c.rest_factor() - 0.7 * 1.05) < 1e-9 and c.cooldown_factor() == 3.0
+    c.start(["erode1"], owner="me", now=t0)
+    assert not c.no_pause() and c.cooldown_factor() == 2.0 and c.focus_check(60) == "" and c.quiet_check(True) == ""
+    # 纵深推进: 专注不到 40 / 60 分钟算违反; -II 降成 -I
+    c.start(["deep2", "quiet"], owner="me", now=t0)
+    assert c.focus_check(59 * 60) == "deep2" and c.focus_check(60 * 60) == ""
+    assert c.violate("deep2") == (False, "deep1") and c.focus_check(59 * 60) == "" and c.focus_check(39 * 60) == "deep1"
+    # 静默协议: 专注中联网, 只在刚联网的那一下算; 2 级, 降一级还剩 1 级
+    assert c.quiet_check(True) == "quiet" and c.quiet_check(True) == "" and c.quiet_check(False) == ""
+    assert c.violate("quiet") == (False, "quiet") and c.term_level("quiet") == 1 and c.level == 1 + 1
+    # 未知变量: 刚开始和之后每个小时开始时各选一个 1-2 级的词条 (不选录像, 不选冲突的), 不算进危机等级
+    import random as _r
+    c.start(["unknown", "info2", "long1"], owner="me", now=t0, pre=600)
+    pool = c.random_candidates()
+    assert "gaze" not in pool and "scar" not in pool and "info1" not in pool and "long2" not in pool
+    assert "unknown" not in pool and "isolate" not in pool and "music" in pool and "jam" in pool
+    rng = _r.Random(1)
+    first = c.roll(t0, rng)
+    assert len(first) == 1 and c.rand == first and c.level == 3 + 2 + 1 and c.roll(t0 + timedelta(minutes=59), rng) == []
+    more = c.roll(t0 + timedelta(hours=2, minutes=1), rng)
+    assert len(more) == 2 and len(c.rand) == 3 and c.level == 6, "错过的小时补上"
+    assert all(1 <= BY_ID[t][2] <= 2 and t in c.terms for t in c.rand)
+    # 点击关闭: 算一次违反, 直接去掉 (不是降级)
+    t = c.rand[0]
+    assert c.violate(t, drop=True) == (False, "") and t not in c.terms and t not in c.rand and c.violations == 1
+    # 选中持久战: 时长按它延长; 选中支援短缺: 补上能用多少
+    c.start(["unknown"], owner="me", now=t0, pre=600)
+    c._enable("long2")
+    assert c.end_at == t0 + timedelta(seconds=int(4 * 3600 * 1.4)) and c.rand == ["long2"]
+    c._enable("short1")
+    assert c.supply_limit == 300
+    # 退路封锁不会让目标生命值直接归零
+    c.violate("")
+    c.violate("")
+    assert "retreat2" not in c.random_candidates() and "retreat1" in c.random_candidates()
+    rec = c.finish("abandoned", t0 + timedelta(hours=1))
+    assert rec["rand"] == ["long2", "short1"]
     # 信息隔绝: 休息时间额外 ×1.3 (和疲惫相乘); 降成信息阻断-III 后没有了
     c.start(["isolate", "tired2"], owner="me", now=t0)
     assert abs(c.rest_factor() - 0.6 * 1.3) < 1e-9 and abs(c.book_rest(1000, t0) - 780) < 1e-6
@@ -964,11 +1107,11 @@ def _selftest():
     # 同步: 记录按 id 合并
     d = Contract(tempfile.mkdtemp())
     d.merge(c.doc())
-    assert len(d.history) == 5 and not d.active
+    assert len(d.history) == 6 and not d.active
     d.merge({"history": c.doc()["history"]})
-    assert len(d.history) == 5
+    assert len(d.history) == 6
     c2 = Contract(os.path.dirname(c.path))
-    assert len(c2.history) == 5, "写进文件, 重开后仍在"
+    assert len(c2.history) == 6, "写进文件, 重开后仍在"
     return "contract selftest OK"
 
 

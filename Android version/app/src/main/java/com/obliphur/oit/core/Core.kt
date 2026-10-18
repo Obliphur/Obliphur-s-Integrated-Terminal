@@ -537,7 +537,8 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         var rate = 1.0
         // 休息中, 且申请时长不超过剩余休息时间 → 冷静期 ×BREAK_COOLDOWN_RATE
         if (timer.state == TState.ON_BREAK && m * 60 <= timer.countdown) rate = settings.num("BREAK_COOLDOWN_RATE")
-        val err = net.request(m, r, cooldownRate = rate)
+        // 合约的侵蚀: 冷静期 ×2 / ×3
+        val err = net.request(m, r, cooldownRate = rate, cooldownMult = contract.cooldownFactor())
         if (err != null) { toast(err, "warn"); return false }
         changed()
         return true
@@ -639,6 +640,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         if (!c.active) return
         contractHours()
         checkSupply()
+        checkQuiet()
         // 绑定的设备离线超过 15 分钟: 合约失败 (看到它离线的设备都可以判定)
         if (c.active && hasPeers()) {
             val devices = offlineDevices().map { (n, ms) -> n to ms.toLocalDateTime() }
@@ -654,6 +656,31 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         c.netCheck(net.usedAll, net.bonusAll, net.remaining, net.date)?.let { (id, kind) ->
             contractViolation(if (kind == "loan") tr("使用了紧急借贷") else tr("联网超过了合约的额度"), id)
         }
+        if (!c.active) return
+        // 未知变量: 合约的每个小时开始时 (刚开始时也算) 随机启用一个词条
+        val picked = c.roll(LocalDateTime.now())
+        for (id in picked) {
+            logNotice("CONTRACT unknown -> $id")
+            toast(tr("未知变量: 启用了 {name}", "name" to tr(Contract.BY_ID[id]!!.name)), "warn", long = true)
+        }
+        if (picked.isNotEmpty()) {
+            host.applyNet(false)                 // 选中全频道阻塞干扰: 断网方式跟着变
+            syncHourLog()
+        }
+    }
+
+    /** 静默协议: 专注中这台设备处于联网状态 (各设备看自己的). */
+    private fun checkQuiet() {
+        val id = contract.quietCheck(timer.state == TState.RUNNING && net.mode == "online")
+        if (id.isNotEmpty()) contractViolation(tr("专注中处于联网状态"), id)
+    }
+
+    /** 未知变量选中的词条: 点击关闭, 算一次违反. */
+    fun closeRandomTerm(id: String) {
+        if (!contract.active || id !in contract.rand) return
+        contractViolation(tr("关闭了未知变量选中的 {name}", "name" to tr(Contract.BY_ID[id]!!.name)), id, drop = true)
+        host.applyNet(false)
+        syncHourLog()
     }
 
     /** 整点记录 (MECHANICS 18.4): 细化规范的半小时补记; 合约中过了填写时限还没填写算一次违反 (由合约的主人判定). */
@@ -755,13 +782,13 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         changed()
     }
 
-    /** 违反了词条 id (软规则): 响警报, 记一次, 这个词条降一级; 到上限就结束合约. */
-    fun contractViolation(why: String, id: String) {
+    /** 违反了词条 id (软规则): 响警报, 记一次, 这个词条降一级 (drop: 直接去掉); 到上限就结束合约. */
+    fun contractViolation(why: String, id: String, drop: Boolean = false) {
         val c = contract
         if (!c.active || dm.resetting || (id.isNotEmpty() && !c.has(id))) return
         host.playAlarm()
         val old = Contract.BY_ID[id]?.let { tr(it.name) } ?: ""
-        val (over, new) = c.violate(id)
+        val (over, new) = c.violate(id, drop)
         val after = when {
             id.isEmpty() -> tr("违反一次")
             new.isEmpty() -> tr("{a} 失效", "a" to old)

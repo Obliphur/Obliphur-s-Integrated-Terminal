@@ -66,8 +66,14 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
     val elapsed get() = if (state == TState.RUNNING) mono() - startMono else 0.0
     val countdown get() = if (state == TState.ON_BREAK) maxOf(0.0, breakEndMono - mono()) else 0.0
 
-    /** 网络正在使用时不允许暂停休息 —— 领到休息时间后的第一次休息除外. */
-    val breakLocked get() = state == TState.ON_BREAK && core.net.mode == "online" && !bonusBreakActive
+    /** 不能暂停休息的原因 ("" = 可以): 合约的禁止囤囤鼠!; 网络正在使用 (领到休息时间后的第一次休息除外). */
+    val pauseBlock: String get() = when {
+        state != TState.ON_BREAK -> ""
+        core.contract.noPause() -> tr("禁止囤囤鼠!: 合约中不能提前结束休息.")
+        core.net.mode == "online" && !bonusBreakActive -> tr("网络正在使用,不能暂停休息.")
+        else -> ""
+    }
+    val breakLocked get() = pauseBlock.isNotEmpty()
 
     // ---- 两个主按钮 ----
 
@@ -87,10 +93,15 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
                 state = TState.IDLE          // 专注已记下: 先清掉文件里的专注状态
                 saveState()
                 startBreak(announce = true)
+                // 纵深推进: 这段专注不到要求的时长, 算一次违反
+                core.contract.focusCheck(minutes * 60).ifEmpty { null }?.let {
+                    core.contractViolation(tr("专注只有 {m} 分钟 (至少 {n} 分钟)", "m" to minutes.toInt(),
+                        "n" to Contract.DEEP[it]!! / 60), it)
+                }
             }
             TState.ON_BREAK -> {
                 if (breakLocked) {
-                    core.toast(tr("网络正在使用,不能暂停休息."), "warn"); return
+                    core.toast(pauseBlock, "warn"); return
                 }
                 endBreakEarly()
                 if (state == TState.IDLE) onAction()
@@ -239,7 +250,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
     fun endBreakEarly(silent: Boolean = false) {
         if (state != TState.ON_BREAK) return
         if (!silent && breakLocked) {
-            core.toast(tr("网络正在使用,不能暂停休息."), "warn"); return
+            core.toast(pauseBlock, "warn"); return
         }
         if (silent && !autoOk()) breakStartWall = null
         recordBreakEnd()

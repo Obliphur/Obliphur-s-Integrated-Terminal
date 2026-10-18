@@ -47,9 +47,14 @@ class Contract(private val file: File) {
             Term("last", "retreat", 3, "最后防线", "初始目标生命值为1"),
             Term("chan1", "chan", 1, "环境:通道阻塞-I", "期间的最大窗口数改为4"),
             Term("chan2", "chan", 2, "环境:通道阻塞-II", "期间的最大窗口数改为3"),
+            Term("deep1", "deep", 1, "目标:纵深推进-I", "专注的时间不能少于40min"),
+            Term("deep2", "deep", 2, "目标:纵深推进-II", "专注的时间不能少于60min"),
+            Term("erode1", "erode", 1, "环境:侵蚀-I", "网络申请冷却期改为2x", listOf("isolate")),
+            Term("erode2", "erode", 2, "环境:侵蚀-II", "网络申请冷却期改为3x", listOf("isolate")),
             // 零散的按这里的顺序在各自等级的那一行挨着排, 所以行为类似的写在一起 (上下两行也对齐):
             // 联网 (抑制 / 全频道阻塞干扰), 整点记录 (记录封锁 / 细化规范), 禁止打开的软件
-            // (乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒, 下面是录像: 目光 / 刻痕, 再下面是互联网娱乐的败退), 最后是黑雾.
+            // (乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒, 下面是录像: 目光 / 刻痕, 再下面是互联网娱乐的败退), 黑雾,
+            // 最后是休息 / 专注 (禁止囤囤鼠! / 静默协议 / 未知变量).
             Term("suppress", "suppress", 1, "环境:抑制", "不能使用快速访问功能", listOf("isolate")),
             Term("jam", "jam", 2, "环境:全频道阻塞干扰", "期间使用proxy block-all模式"),
             Term("seal", "seal", 1, "环境:记录封锁", "超过填写时间未填写 则不能再修改该记录"),
@@ -64,6 +69,9 @@ class Contract(private val file: File) {
             Term("ent", "ent", 4, "互联网娱乐的败退", "同时有乐理之灾 无言为真 禁游令 低帧的诅咒的效果\n违反任意一项即整个失效\n合约开始时获得额外20min的休息时间",
                 listOf("music", "silent", "game", "video", "isolate")),
             Term("fog", "fog", 1, "环境:黑雾", "合约期间 专注时长 成就 日历 统计数据不可见 且无法打开设置"),
+            Term("hoard", "hoard", 1, "禁止囤囤鼠!", "不能提前结束休息 但是休息时间获得一个额外乘区1.05x"),
+            Term("quiet", "quiet", 2, "环境:静默协议", "专注中不能处于联网状态", listOf("isolate")),
+            Term("unknown", "unknown", 3, "未知变量", "合约开始的第自然数个小时开始时间 从1-2级的 可以选择的词条中随机选中一个启用"),
         )
         val BY_ID = TERMS.associateBy { it.id }
         val GROUPS = TERMS.map { it.group }.distinct()
@@ -82,18 +90,20 @@ class Contract(private val file: File) {
         }
         val BOARD_COLS = (LAYOUT.values.maxOrNull() ?: -1) + 1
         val MAX_LEVEL = TERMS.maxOf { it.level }
+        /** 词条板翻页: 成系列的一页, 零散的一页 (每页的列). */
+        val PAGES = listOf(0 until SERIES.size, SERIES.size until BOARD_COLS)
         private val ORDER = TERMS.mapIndexed { i, t -> t.id to i }.toMap()
 
         // 软规则: 界面上照样能做, 但会被算作违反, 这个词条降一级 (结算按降级后的等级);
         // 其余是硬规则, 立即生效 (黑雾, 记录封锁, 细化规范, 全频道阻塞干扰, 持久战, 疲惫).
         // 录像 (目光 / 刻痕) 违反一次就失效 (录像停止): 不在 LOWER / SINGLE 里.
         val SOFT = setOf("info1", "info2", "info3", "isolate", "chan1", "chan2", "music", "suppress", "short1", "short2",
-            "silent", "game", "video", "ent", "gaze", "scar")
+            "silent", "game", "video", "ent", "gaze", "scar", "deep1", "deep2", "quiet", "unknown")
         /** 降一级换成哪个词条. */
         val LOWER = mapOf("isolate" to "info3", "info3" to "info2", "info2" to "info1", "chan2" to "chan1",
-            "short2" to "short1")
+            "short2" to "short1", "deep2" to "deep1")
         /** 只有一档的软规则: 降级时等级减一, 减到 0 就失效. */
-        val SINGLE = setOf("music", "suppress", "silent", "game", "video")
+        val SINGLE = setOf("music", "suppress", "silent", "game", "video", "quiet")
         /** 这个等级的词条用红色边框. */
         const val RIM_LEVEL = 4
 
@@ -102,8 +112,8 @@ class Contract(private val file: File) {
         /** 合约中专注换来的休息时间的基础倍率; 有疲惫时换成疲惫的倍率. */
         const val BASE_REST = 0.8
         val REST = mapOf("tired1" to 0.7, "tired2" to 0.6, "tired3" to 0.5)
-        /** 休息时间额外的乘区 (和疲惫相乘): 信息隔绝 ×1.3. */
-        val REST_BONUS = mapOf("isolate" to 1.3)
+        /** 休息时间额外的乘区 (和疲惫相乘): 信息隔绝 ×1.3, 禁止囤囤鼠! ×1.05. */
+        val REST_BONUS = mapOf("isolate" to 1.3, "hoard" to 1.05)
         /** 合约中专注换来的休息时间乘多少: 基础 ×0.8, 有疲惫时换成疲惫的 (取最低的); 再乘额外的乘区. */
         fun restFactorOf(terms: Collection<String>): Double =
             (terms.mapNotNull { REST[it] }.minOrNull() ?: BASE_REST) * terms.fold(1.0) { f, t -> f * (REST_BONUS[t] ?: 1.0) }
@@ -127,6 +137,14 @@ class Contract(private val file: File) {
         fun lifeOf(terms: Collection<String>): Int = terms.mapNotNull { LIFE[it] }.minOrNull() ?: VIOLATION_LIMIT
         /** 支援短缺: 还差这么多秒就用超时各提醒一次. */
         val SUPPLY_WARN = listOf(180, 60)
+        /** 纵深推进: 一段专注至少这么多秒, 不到就结束算违反. */
+        val DEEP = mapOf("deep1" to 40 * 60, "deep2" to 60 * 60)
+        /** 侵蚀: 网络申请的冷静期乘多少 (硬规则). */
+        val COOLDOWN_X = mapOf("erode1" to 2.0, "erode2" to 3.0)
+        /** 未知变量: 合约的每个小时开始时随机启用一个 1-2 级的词条; 不会选中录像的词条. */
+        const val RANDOM = "unknown"
+        val RANDOM_LEVELS = 1..2
+        val RANDOM_SKIP = setOf("gaze", "scar")
 
         /** 总等级 → 完成合约时给的休息时间 (分钟, 固定; 按结束时的等级). */
         // 每 3 级一档. 15 级以内每档只多 2 分钟, 16 级起每档多 10 分钟; 25 级 (差不多选满) 起封顶 90 分钟
@@ -265,7 +283,9 @@ class Contract(private val file: File) {
     /** 只有一档的词条被降了几级. */
     private val cut: JSONObject get() = (if (active) live.optJSONObject("cut") else null) ?: JSONObject()
     fun termLevel(id: String) = (BY_ID[id]?.level ?: 0) - cut.optInt(id, 0)
-    val level get() = terms.sumOf { termLevel(it) }
+    /** 未知变量随机启用的词条 (不算进危机等级; 可以点击关闭, 算一次违反). */
+    val rand: List<String> get() = if (active) (live.optJSONArray("rand")?.strings() ?: emptyList()).filter { it in terms } else emptyList()
+    val level get() = rand.let { r -> terms.filter { it !in r }.sumOf { termLevel(it) } }
     /** 开始时选的词条 (降级前). */
     val orig: List<String> get() = if (active) clean(live.optJSONArray("orig")?.strings() ?: terms) else emptyList()
     val origLevel get() = levelOf(orig)
@@ -299,6 +319,7 @@ class Contract(private val file: File) {
             .put("idle_since", JSONObject.NULL).put("net", JSONObject.NULL).put("first_break", false)
             .put("pre", r1(p)).put("pre_left", r1(p)).put("pre_used", 0)
             .put("supply", if (share == null) JSONObject.NULL else r1(p * share)).put("hl", JSONArray())
+            .put("rand", JSONArray()).put("rand_n", 0)
         watch.clear()
         save()
     }
@@ -314,6 +335,7 @@ class Contract(private val file: File) {
             .put("planned", live.optString("end")).put("terms", JSONArray(terms)).put("orig", JSONArray(orig))
             .put("level", level).put("orig_level", origLevel).put("cut", JSONObject(cut.toString()))
             .put("result", result).put("violations", violations).put("reward", give).put("pre_left", preLeft)
+            .put("rand", JSONArray(rand))
         history.add(rec)
         live = JSONObject().put("state", "none").put("owner", by).put("first_break", result == "completed")
         save()
@@ -367,31 +389,36 @@ class Contract(private val file: File) {
         return since?.let { maxOf(0.0, IDLE_LIMIT - secondsBetween(it, now)) }
     }
 
-    /** 违反了词条 id: 记一次, 这个词条降一级. 返回 (是否达到了上限, 降级后的词条 / "" = 失效).
-     *  id = "": 不是哪个词条的违反 (整点记录超时未填写), 只记一次. */
-    fun violate(id: String): Pair<Boolean, String> {
+    /** 违反了词条 id: 记一次, 这个词条降一级 (drop: 直接去掉, 关闭未知变量选中的词条).
+     *  返回 (是否达到了上限, 降级后的词条 / "" = 失效). id = "": 不是哪个词条的违反 (整点记录超时未填写), 只记一次. */
+    fun violate(id: String, drop: Boolean = false): Pair<Boolean, String> {
         if (!active) return false to ""
-        val new = if (id.isEmpty()) "" else downgrade(id)
+        val new = if (id.isEmpty()) "" else downgrade(id, drop)
         live.put("violations", violations + 1)
         save()
         return (violations >= violationLimit) to new
     }
 
-    /** 词条降一级: 系列词条换成低一档的, 只有一档的等级减一; 降到底就失效. 返回降级后的词条 ("" = 失效). */
-    fun downgrade(id: String): String {
+    /** 词条降一级: 系列词条换成低一档的, 只有一档的等级减一; 降到底就失效 (drop: 直接去掉).
+     *  返回降级后的词条 ("" = 失效). */
+    fun downgrade(id: String, drop: Boolean = false): String {
         val t = terms.toMutableList()
         val i = t.indexOf(id)
         if (i < 0) return ""
         val oldShare = netShare()
         val oldSupply = supplyShare(t)
+        val oldRand = rand
         val c = JSONObject(cut.toString())
         val new: String
         when {
+            drop -> { t.removeAt(i); c.remove(id); new = "" }
             id in LOWER -> { new = LOWER[id]!!; t[i] = new }
             id in SINGLE && termLevel(id) > 1 -> { c.put(id, c.optInt(id, 0) + 1); new = id }
             else -> { t.removeAt(i); c.remove(id); new = "" }
         }
         live.put("terms", JSONArray(clean(t))).put("cut", c)
+        // 未知变量选中的词条降级后还是它选中的
+        if (id in oldRand) live.put("rand", JSONArray(oldRand.mapNotNull { if (it == id) new.ifEmpty { null } else it }))
         // 信息阻断: 降一级 = 多给低一档多出来的那部分额度 (从现在用到的地方算起)
         val n = live.optJSONObject("net")
         val newShare = netShare()
@@ -404,6 +431,51 @@ class Contract(private val file: File) {
             live.put("supply", r1(live.dbl("supply") + pre * (newSupply - oldSupply)))
         save()
         return new
+    }
+
+    // ---- 未知变量: 合约的第 1, 2, 3 … 个小时开始时 (刚开始时也算) 随机启用一个词条 ----
+
+    /** 现在能被未知变量选中的词条: 1-2 级, 能选 (没有选着, 也不和选着的冲突), 不是录像;
+     *  退路封锁不会让目标生命值直接归零. */
+    fun randomCandidates(): List<String> {
+        val t = terms
+        return TERMS.map { it.id }.filter { id ->
+            BY_ID[id]!!.level in RANDOM_LEVELS && id !in RANDOM_SKIP && id !in t && blockedBy(id, t) == null &&
+                !(id in LIFE && lifeOf(t + id) <= violations)
+        }
+    }
+
+    /** 到了新的一个小时就启用一个词条. 返回这次启用的词条 (只由做自动结束的设备调用). */
+    fun roll(now: LocalDateTime, rng: kotlin.random.Random = kotlin.random.Random.Default): List<String> {
+        if (!active || !has(RANDOM)) return emptyList()
+        val a = startAt ?: return emptyList()
+        val end = endAt ?: now
+        val due = if (now.isBefore(end)) (secondsBetween(a, now) / 3600).toInt() + 1 else 0
+        var done = live.optInt("rand_n", 0)
+        val picked = mutableListOf<String>()
+        while (done < due) {
+            done++
+            val pool = randomCandidates()
+            if (pool.isNotEmpty()) pool[rng.nextInt(pool.size)].let { enable(it); picked.add(it) }
+        }
+        if (done != live.optInt("rand_n", 0)) {
+            live.put("rand_n", done)
+            save()
+        }
+        return picked
+    }
+
+    /** 合约中途启用一个词条: 开始时才定下来的效果在这里补上 (持久战: 时长; 支援短缺: 能用多少). */
+    fun enable(id: String) {
+        val t = clean(terms + id)
+        live.put("terms", JSONArray(t)).put("rand", JSONArray(rand + id))
+        val a = startAt
+        if (id in DURATION && a != null) {
+            val end = a.plusSec(durationOf(t))
+            if (endAt?.isBefore(end) != false) live.put("end", end.iso())
+        }
+        if (id in SUPPLY) live.put("supply", r1(maxOf(pre * (supplyShare(t) ?: 1.0), preUsed)))
+        save()
     }
 
     // ---- 合约开始前积攒的休息时间 (暂停不打折; 支援短缺) ----
@@ -538,6 +610,21 @@ class Contract(private val file: File) {
 
     /** 抑制: 用了快速访问. */
     fun quickCheck(): String = if (has("suppress")) "suppress" else ""
+
+    /** 纵深推进: 结束的这段专注不到要求的时长. */
+    fun focusCheck(seconds: Double): String {
+        val id = terms.firstOrNull { it in DEEP } ?: return ""
+        return if (seconds < DEEP[id]!!) id else ""
+    }
+
+    /** 静默协议: 专注中处于联网状态 (只在刚变成这样的那一下算一次). */
+    fun quietCheck(hit: Boolean): String = if (has("quiet") && edge("quiet", hit)) "quiet" else ""
+
+    /** 禁止囤囤鼠!: 不能提前结束休息 (硬规则). */
+    fun noPause() = has("hoard")
+
+    /** 侵蚀: 网络申请的冷静期乘多少. */
+    fun cooldownFactor(): Double = terms.mapNotNull { COOLDOWN_X[it] }.maxOrNull() ?: 1.0
 
     /** 一段专注换来的休息时间 (秒, 已乘"休息时间倍率"). 返回给出的休息时间 (乘了疲惫);
      *  完成合约的奖励另外按等级给 (reward). */

@@ -218,7 +218,8 @@ class NetGuard(
         return null
     }
 
-    fun request(minutes: Int, reason: String, quick: Boolean = false, cooldownRate: Double = 1.0): String? {
+    fun request(minutes: Int, reason: String, quick: Boolean = false, cooldownRate: Double = 1.0,
+                cooldownMult: Double = 1.0): String? {
         if (devMode) return tr("已经在联网中.")
         if (online) return tr("已经在联网中.")
         if (pending != null) return tr("已经有一个申请在等待中.")
@@ -235,8 +236,10 @@ class NetGuard(
             return tr("今天只剩 {left} 了.", "left" to fmtHm(remaining)) + extra
         }
         val rate = cooldownRate.coerceIn(0.0, 1.0)
-        pending = NetRequest(minutes, clock() + (cooldown * rate * 1000).toLong(), reason, false)
-        log("REQUEST  $minutes min" + (if (rate < 1.0) " (on break, cooldown ${numText(rate)}x)" else "") + "  reason: $reason")
+        val mult = maxOf(1.0, cooldownMult)             // 合约的侵蚀: 冷静期 ×2 / ×3
+        pending = NetRequest(minutes, clock() + (cooldown * rate * mult * 1000).toLong(), reason, false)
+        log("REQUEST  $minutes min" + (if (rate < 1.0) " (on break, cooldown ${numText(rate)}x)" else "") +
+            (if (mult > 1.0) " (contract, cooldown x${numText(mult)})" else "") + "  reason: $reason")
         return null
     }
 

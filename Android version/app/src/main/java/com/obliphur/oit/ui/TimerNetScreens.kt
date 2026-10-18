@@ -67,7 +67,7 @@ fun TimerScreen() {
                     BigText(fmtMs(left))
                     val s = kotlin.math.ceil(left).toLong()
                     var sub = tr("休息剩余 {m} 分 {s} 秒", "m" to s / 60, "s" to "%02d".format(s % 60))
-                    if (t.breakLocked) sub += "\n" + tr("网络正在使用,不能暂停休息.")
+                    if (t.breakLocked) sub += "\n" + t.pauseBlock
                     Dim(sub)
                 }
                 TState.IDLE -> {

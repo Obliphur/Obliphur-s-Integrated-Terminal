@@ -77,6 +77,7 @@ class ContractColors(
     val tile: Color, val tileText: Color, val tileRim: Color, val tileRim4: Color,
     val tileOn: Color, val tileOnText: Color, val tileOnRim: Color,
     val tileOff: Color, val tileOffText: Color, val tileOffRim: Color,
+    val tileRand: Color, val tileRandText: Color,
     val sel: Color, val selText: Color, val selDim: Color,
     val badgeHi: Color, val badgeHiText: Color, val badgeLo: Color, val badgeLoText: Color,
     val bar: Color, val level: Color, val warn: Color, val start: Color, val startText: Color,
@@ -95,6 +96,7 @@ val OPS_COLORS = ContractColors(
     tile = c(0x45474d), tileText = c(0xf4f4f4), tileRim = c(0x6b6d73), tileRim4 = c(0xff2b3a),
     tileOn = c(0x1d6fc4), tileOnText = c(0xffffff), tileOnRim = c(0x9cc8ff),
     tileOff = c(0xbdbec1), tileOffText = c(0x8e9095), tileOffRim = c(0xa9aaad),
+    tileRand = c(0xf2b33d), tileRandText = c(0x141416),
     sel = c(0x141416), selText = c(0xf2f2f2), selDim = c(0x77797e),
     badgeHi = c(0xc8202f), badgeHiText = c(0xffffff), badgeLo = c(0xf2f2f2), badgeLoText = c(0x141416),
     bar = c(0x26272b), level = c(0xffffff), warn = c(0xffffff), start = c(0x9e1b28), startText = c(0xffffff),
@@ -115,6 +117,7 @@ fun contractColors(): ContractColors {
         tile = o.card, tileText = o.text, tileRim = o.border, tileRim4 = o.danger,
         tileOn = o.danger, tileOnText = o.onAccent, tileOnRim = o.danger,
         tileOff = o.bg, tileOffText = o.border, tileOffRim = o.border,
+        tileRand = o.warn, tileRandText = c(0x141416),
         sel = o.card, selText = o.text, selDim = o.dim,
         badgeHi = o.danger, badgeHiText = o.onAccent, badgeLo = o.border, badgeLoText = o.text,
         bar = o.card, level = o.danger, warn = o.warn, start = o.danger, startText = o.onAccent,
@@ -163,7 +166,8 @@ private fun FitToScreen(minWidth: androidx.compose.ui.unit.Dp, content: @Composa
     }
 }
 
-/** 词条板 (行 = 等级, 列 = 类型, 同一类型在同一列), 下面是已选中的词条 (两栏), 最下面一条: 清空 | 危机等级 | 开始行动.
+/** 词条板 (行 = 等级, 列 = 类型, 同一类型在同一列; 翻页: 成系列的一页, 零散的一页), 下面是已选中的词条 (两栏),
+ *  最下面一条: 清空 | 危机等级 | 开始行动.
  *  合约进行中时只能看. 这一页总是横屏 (Root 里设置), 整页缩小到一屏显示全部 (FitToScreen). 颜色按"合约页主题". */
 @Composable
 fun ContractScreen() {
@@ -174,10 +178,13 @@ fun ContractScreen() {
     val active = c.active
     val now = LocalDateTime.now()
     var tapped by rememberSaveable { mutableStateOf("") }
-    var ask by rememberSaveable { mutableStateOf("") }        // start / end
+    var ask by rememberSaveable { mutableStateOf("") }        // start / end / close:词条
+    var page by rememberSaveable { mutableStateOf(0) }
     val sel = if (active) c.terms else c.draft
-    // 词条板最窄要放下每列 64dp 的格子, 再窄就整页缩小
-    val minW = BOARD_BAND + (BOARD_TILE + BOARD_GAP) * Contract.BOARD_COLS + BOARD_GAP + 32.dp
+    val rand = c.rand
+    // 词条板最窄要放下一页 (列数最多的那页) 每列 64dp 的格子, 再窄就整页缩小
+    val pageCols = Contract.PAGES.maxOf { it.count() }
+    val minW = BOARD_BAND + (BOARD_TILE + BOARD_GAP) * pageCols + BOARD_GAP + 32.dp
     FitToScreen(minW) { Column(Modifier.fillMaxWidth().background(p.bg).padding(horizontal = 16.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -222,7 +229,7 @@ fun ContractScreen() {
         BoxWithConstraints(Modifier.fillMaxWidth().background(p.board)) {
             val bandW = BOARD_BAND
             val gap = BOARD_GAP
-            val n = Contract.BOARD_COLS
+            val n = pageCols
             val tileW = maxOf(BOARD_TILE, minOf(84.dp, (maxWidth - bandW - gap * (n + 1)) / n))
             val tileH = tileW * (SQRT3 / 2)
             Row {
@@ -240,23 +247,27 @@ fun ContractScreen() {
                 }
                 Column(Modifier.padding(gap), verticalArrangement = Arrangement.spacedBy(gap)) {
                     for (lv in 1..Contract.MAX_LEVEL) Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
-                        // 成系列的每组一列, 零散的在右边挨着排 (Contract.LAYOUT)
-                        for (col in 0 until Contract.BOARD_COLS) {
+                        // 成系列的每组一列, 零散的在右边挨着排 (Contract.LAYOUT); 只画这一页的列
+                        for (col in Contract.PAGES[page.coerceIn(0, Contract.PAGES.size - 1)]) {
                             val t = Contract.TERMS.firstOrNull { it.level == lv && Contract.LAYOUT[it.id] == col }
                             if (t == null) {
                                 Spacer(Modifier.width(tileW).height(tileH)); continue
                             }
+                            val picked = t.id in rand               // 未知变量选中的: 黄色, 点按关闭
                             val on = t.id in sel
                             val off = !on && (active || Contract.blockedBy(t.id, sel) != null)
-                            val fill = if (on) p.tileOn else if (off) p.tileOff else p.tile
-                            val fg = if (on) p.tileOnText else if (off) p.tileOffText else p.tileText
-                            val rim = if (t.level >= Contract.RIM_LEVEL) p.tileRim4
+                            val fill = if (picked) p.tileRand else if (on) p.tileOn else if (off) p.tileOff else p.tile
+                            val fg = if (picked) p.tileRandText else if (on) p.tileOnText else if (off) p.tileOffText else p.tileText
+                            val rim = if (picked) p.tileRand else if (t.level >= Contract.RIM_LEVEL) p.tileRim4
                                 else if (on) p.tileOnRim else if (off) p.tileOffRim else p.tileRim
                             Box(Modifier.width(tileW).height(tileH).background(fill, HEX)
                                 .border(if (t.level >= Contract.RIM_LEVEL) 3.dp else 2.dp, rim, HEX)
                                 .clickable {
                                     tapped = t.id
-                                    if (active) return@clickable
+                                    if (active) {
+                                        if (picked) ask = "close:" + t.id
+                                        return@clickable
+                                    }
                                     val cur = c.draft.toMutableList()
                                     if (t.id in cur) cur.remove(t.id)
                                     else if (Contract.blockedBy(t.id, cur) == null) cur.add(t.id)
@@ -272,27 +283,39 @@ fun ContractScreen() {
                 }
             }
         }
-        if (tapped.isNotEmpty()) {
-            var text = "${marks(Contract.BY_ID[tapped]!!.level)}  " + termLine(tapped)
-            val other = Contract.blockedBy(tapped, sel)
-            if (other != null && tapped !in sel) text += "  " + tr("[与 {name} 冲突]", "name" to termName(other))
-            Text(text, color = p.dim, fontSize = 13.sp)
+        // 点过的词条的内容 | 翻页
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            var text = ""
+            if (tapped.isNotEmpty()) {
+                text = "${marks(Contract.BY_ID[tapped]!!.level)}  " + termLine(tapped)
+                val other = Contract.blockedBy(tapped, sel)
+                if (other != null && tapped !in sel) text += "  " + tr("[与 {name} 冲突]", "name" to termName(other))
+                if (tapped in rand) text += "  " + tr("[未知变量选中 · 点击关闭, 算一次违反]")
+            }
+            Text(text, color = p.dim, fontSize = 13.sp, modifier = Modifier.weight(1f))
+            val last = Contract.PAGES.size - 1
+            Text("◀", color = if (page > 0) p.text else p.startOff, fontSize = 20.sp, fontWeight = FontWeight.Bold,
+                modifier = Modifier.clickable(enabled = page > 0) { page-- }.padding(horizontal = 14.dp, vertical = 2.dp))
+            Text("${page + 1} / ${last + 1}", color = p.text, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            Text("▶", color = if (page < last) p.text else p.startOff, fontSize = 20.sp, fontWeight = FontWeight.Bold,
+                modifier = Modifier.clickable(enabled = page < last) { page++ }.padding(horizontal = 14.dp, vertical = 2.dp))
         }
 
-        // 已选中的词条: 黑底, 两栏
-        val rows = if (!active) sel.map { Triple(Contract.BY_ID[it]!!.level, termLine(it), false) }
+        // 已选中的词条: 黑底, 两栏. (等级, 文字, 是否失效, 未知变量选中的词条 / ""); 合约中最后是未知变量选中的 (黄色, 点按关闭)
+        data class SelRow(val lv: Int, val text: String, val void: Boolean, val rand: String = "")
+        val rows = if (!active) sel.map { SelRow(Contract.BY_ID[it]!!.level, termLine(it), false) }
         else c.orig.map { t ->
             val g = Contract.BY_ID[t]!!.group
-            val cur = c.terms.firstOrNull { it == t || Contract.BY_ID[it]!!.group == g }
+            val cur = c.terms.firstOrNull { it !in rand && (it == t || Contract.BY_ID[it]!!.group == g) }
             when {
-                cur == null -> Triple(Contract.BY_ID[t]!!.level, termName(t) + "   " + tr("[已失效]"), true)
-                cur != t -> Triple(c.termLevel(cur), termLine(cur) + "   " +
+                cur == null -> SelRow(Contract.BY_ID[t]!!.level, termName(t) + "   " + tr("[已失效]"), true)
+                cur != t -> SelRow(c.termLevel(cur), termLine(cur) + "   " +
                     tr("[原 {name}]", "name" to termShort(t)), false)
-                c.termLevel(t) < Contract.BY_ID[t]!!.level -> Triple(c.termLevel(t), termLine(t) + "   " +
+                c.termLevel(t) < Contract.BY_ID[t]!!.level -> SelRow(c.termLevel(t), termLine(t) + "   " +
                     tr("[降了 {n} 级]", "n" to Contract.BY_ID[t]!!.level - c.termLevel(t)), false)
-                else -> Triple(c.termLevel(t), termLine(t), false)
+                else -> SelRow(c.termLevel(t), termLine(t), false)
             }
-        }
+        } + rand.map { SelRow(c.termLevel(it), termLine(it) + "   " + tr("[未知变量选中 · 点击关闭]"), false, it) }
         Column(Modifier.fillMaxWidth().background(p.sel).padding(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("CONTRACT SELECTED", color = p.selDim, fontSize = 11.sp, fontWeight = FontWeight.Bold)
@@ -303,14 +326,17 @@ fun ContractScreen() {
             val half = (rows.size + 1) / 2
             Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 for (part in listOf(rows.take(half), rows.drop(half))) Column(Modifier.weight(1f)) {
-                    for ((lv, text, void) in part) Row(Modifier.padding(vertical = 3.dp)) {
+                    for ((lv, text, void, picked) in part) Row(Modifier.padding(vertical = 3.dp)
+                        .clickable(enabled = picked.isNotEmpty()) { ask = "close:$picked" }) {
                         val hi = lv >= 2 && !void
-                        Text(marks(lv).ifEmpty { "—" }, color = if (hi) p.badgeHiText else p.badgeLoText, fontSize = 11.sp,
+                        val badge = if (picked.isNotEmpty()) p.tileRand else if (hi) p.badgeHi else p.badgeLo
+                        Text(marks(lv).ifEmpty { "—" }, fontSize = 11.sp,
+                            color = if (picked.isNotEmpty()) p.tileRandText else if (hi) p.badgeHiText else p.badgeLoText,
                             fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
-                            modifier = Modifier.widthIn(min = 36.dp).background(if (hi) p.badgeHi else p.badgeLo)
+                            modifier = Modifier.widthIn(min = 36.dp).background(badge)
                                 .padding(horizontal = 4.dp, vertical = 1.dp))
-                        Text(text, color = if (void) p.selDim else p.selText, fontSize = 12.sp,
-                            modifier = Modifier.padding(start = 8.dp))
+                        Text(text, color = if (picked.isNotEmpty()) p.tileRand else if (void) p.selDim else p.selText,
+                            fontSize = 12.sp, modifier = Modifier.padding(start = 8.dp))
                     }
                 }
             }
@@ -372,6 +398,12 @@ fun ContractScreen() {
             var msg = tr("提前结束合约?")
             if (c.reward >= 1) msg += "\n" + tr("完成后的 {n} 分钟休息时间不会给出.", "n" to Math.round(c.reward / 60))
             Confirm(tr("■  提前结束"), msg, true, { ask = "" }) { core.abandonContract() }
+        }
+        else -> if (ask.startsWith("close:")) {
+            val id = ask.removePrefix("close:")
+            if (id !in c.rand) ask = ""
+            else Confirm(tr("关闭词条"), tr("关闭未知变量选中的 {name}?", "name" to termName(id)) + "\n" + tr("会算作一次违反."),
+                true, { ask = "" }) { core.closeRandomTerm(id) }
         }
     }
 }

@@ -1,6 +1,5 @@
 import math
 import tkinter as tk
-from tkinter import ttk
 from datetime import datetime
 
 import config
@@ -55,7 +54,8 @@ OPS = {
     "tile": "#45474d", "tile_text": "#f4f4f4", "tile_rim": "#6b6d73", "tile_rim4": "#ff2b3a",
     "tile_on": "#1d6fc4", "tile_on_text": "#ffffff", "tile_on_rim": "#9cc8ff",
     "tile_off": "#bdbec1", "tile_off_text": "#8e9095", "tile_off_rim": "#a9aaad",
-    "hint": "#2c2d31",
+    "tile_rand": "#f2b33d", "tile_rand_text": "#141416", "tile_rand_rim": "#ffd27a",
+    "hint": "#2c2d31", "nav": "#ececec", "nav_off": "#55575c",
     "sel": "#141416", "sel_text": "#f2f2f2", "sel_dim": "#77797e",
     "badge_hi": "#c8202f", "badge_hi_text": "#ffffff", "badge_lo": "#f2f2f2", "badge_lo_text": "#141416",
     "bar": "#26272b", "level": "#ffffff", "warn": "#ffffff",
@@ -81,7 +81,8 @@ def palette() -> dict:
         "tile": c["bg_card"], "tile_text": c["text"], "tile_rim": c["border"], "tile_rim4": c["danger"],
         "tile_on": c["danger"], "tile_on_text": c["on_accent"], "tile_on_rim": c["danger"],
         "tile_off": c["bg"], "tile_off_text": c["border"], "tile_off_rim": c["border"],
-        "hint": c["text_dim"],
+        "tile_rand": c["warn"], "tile_rand_text": "#141416", "tile_rand_rim": c["warn"],
+        "hint": c["text_dim"], "nav": c["text"], "nav_off": c["border"],
         "sel": c["bg_card"], "sel_text": c["text"], "sel_dim": c["text_dim"],
         "badge_hi": c["danger"], "badge_hi_text": c["on_accent"], "badge_lo": c["border"], "badge_lo_text": c["text"],
         "bar": c["bg_card"], "level": c["danger"], "warn": c["warn"],
@@ -96,14 +97,14 @@ def palette() -> dict:
 
 
 class ContractPage(tk.Frame):
-    """合约页 (MECHANICS 18): 词条板 (行 = 等级, 列 = 类型, 同一类型在同一列), 下面是已选中的词条 (两栏),
+    """合约页 (MECHANICS 18): 词条板 (行 = 等级, 列 = 类型, 同一类型在同一列; 翻页), 下面是已选中的词条 (两栏),
     最下面一条: 清空 | 危机等级 | 时长 / 完成后的休息时间 | 开始行动. 合约进行中时只能看, 不能改.
     颜色按 设置 → 合约 的"合约页主题"."""
 
     TILE_W, GAP, BAND_W = 68, 7, 148              # 格子是正六边形: 高 = 宽 × √3 / 2
 
     def __init__(self, master, contract, on_start=None, on_abandon=None, net_used=None, on_change=None,
-                 blocked=None, rec_text=None, on_stop_screen=None):
+                 blocked=None, rec_text=None, on_stop_screen=None, on_close_rand=None):
         self.P = P = palette()
         super().__init__(master, bg=P["bg"])
         self.c = contract
@@ -114,6 +115,7 @@ class ContractPage(tk.Frame):
         self.blocked = blocked or (lambda: "")        # 休息 / 联网中不能开始: 按钮上方的提示
         self.rec_text = rec_text or (lambda: "")      # 目光 / 刻痕: 录像的状态 ("" = 没有在录)
         self.on_stop_screen = on_stop_screen          # 刻痕: 终止录屏 (算一次违反)
+        self.on_close_rand = on_close_rand            # 未知变量选中的词条: 点击关闭 (算一次违反)
         self._hover = ""
         self._list_key = None
         self._tile_state = {}
@@ -176,33 +178,53 @@ class ContractPage(tk.Frame):
         self.btn_stop_rec = self._button(self.rec_row, tr("■ 终止录屏"), P["clear"], P["clear_hover"], P["clear_text"],
                                          lambda: self.on_stop_screen and self.on_stop_screen())
 
-    # ---- 词条板: 左边一条竖写的 "CONTRACT LIST" 和各行的等级, 右边六边形的格子 ----
+    # ---- 词条板: 左边一条竖写的 "CONTRACT LIST" 和各行的等级, 右边六边形的格子; 翻页 (成系列的一页, 零散的一页) ----
 
     def _build_board(self, body):
         P, s = self.P, config.scaled
         self.tw, self.gap, self.band = s(self.TILE_W), s(self.GAP), s(self.BAND_W)
         self.th = round(self.tw * math.sqrt(3) / 2)
-        cols = C.BOARD_COLS
-        self.board_w = self.band + self.gap + cols * (self.tw + self.gap)
         self.hover_h = s(66)                     # 最下面写词条内容的地方: 最多三行 (长的描述自己换行)
         self.board_h = self.gap + C.MAX_LEVEL * (self.th + self.gap) + self.hover_h
-        wrap = tk.Frame(body, bg=P["board"])
-        wrap.pack(fill="x", pady=(0, 6))
-        self.canvas = tk.Canvas(wrap, bg=P["board"], highlightthickness=0, height=self.board_h)
-        self.canvas.pack(fill="x")
-        # 窗口太窄放不下整块词条板时, 下面出一条横向滑动条
-        self.hbar = ttk.Scrollbar(wrap, orient="horizontal", command=self.canvas.xview)
-        self.canvas.configure(xscrollcommand=self.hbar.set, scrollregion=(0, 0, self.board_w, self.board_h))
+        self.page = 0
+        self.pages = list(C.PAGES)
+        self.canvas = tk.Canvas(body, bg=P["board"], highlightthickness=0, height=self.board_h)
+        self.canvas.pack(fill="x", pady=(0, 6))
         self.canvas.bind("<Configure>", self._board_resized)
-        self.canvas.bind("<Shift-MouseWheel>", lambda e: self.canvas.xview_scroll(int(-e.delta / 120), "units"))
         self._draw_board()
+        self._draw_tiles()
 
-    def _board_resized(self, event):
-        if event.width < self.board_w - 2:
-            show_pack(self.hbar, fill="x")
-        else:
-            hide_pack(self.hbar)
-            self.canvas.xview_moveto(0)
+    def _split_pages(self, width: int) -> list:
+        """C.PAGES 里放不下的一页 (窗口太窄) 再分成几页."""
+        per = max(1, (width - self.band - self.gap) // (self.tw + self.gap))
+        out = []
+        for a, b in C.PAGES:
+            size = -(-(b - a) // -(-(b - a) // per))        # 分成几页时每页一样多
+            out += [(i, min(b, i + size)) for i in range(a, b, size)]
+        return out
+
+    def _board_resized(self, _event):
+        # 布局过程中宽度会来回变几次: 等它停下来再按最后的宽度分页 (只重画格子, 不动别的控件的大小)
+        if getattr(self, "_resize_job", None):
+            self.after_cancel(self._resize_job)
+        self._resize_job = self.after(80, self._apply_width)
+
+    def _apply_width(self):
+        self._resize_job = None
+        pages = self._split_pages(self.canvas.winfo_width())
+        if pages != self.pages:
+            first = self.pages[self.page][0]
+            self.pages = pages
+            self.page = next((i for i, (a, b) in enumerate(pages) if a <= first < b), 0)
+            self._draw_tiles()
+            self._paint_tiles()
+
+    def _flip(self, step: int):
+        page = min(len(self.pages) - 1, max(0, self.page + step))
+        if page != self.page:
+            self.page = page
+            self._draw_tiles()
+            self._paint_tiles()
 
     @staticmethod
     def _hexagon(x, y, w, h):
@@ -215,9 +237,10 @@ class ContractPage(tk.Frame):
         P, cv, s = self.P, self.canvas, config.scaled
         cv.create_rectangle(0, 0, self.band, self.board_h, fill=P["band"], outline="")
         # 竖写的标题 (同参考图的 "CONTRACT LIST: 可选合约")
-        cv.create_text(s(22), self.board_h / 2, text="CONTRACT LIST", angle=90, fill=P["band_dim"],
+        mid = (self.board_h - self.hover_h) / 2
+        cv.create_text(s(22), mid, text="CONTRACT LIST", angle=90, fill=P["band_dim"],
                        font=config.font("h2", bold=True))
-        cv.create_text(s(44), self.board_h / 2, text=tr("可选词条"), angle=90, fill=P["band_text"],
+        cv.create_text(s(44), mid, text=tr("可选词条"), angle=90, fill=P["band_text"],
                        font=config.font("body", bold=True))
         for lv in range(1, C.MAX_LEVEL + 1):
             # 每一行的等级: 小字 "Contingency Level" 和一个 ▲ 标记在左, 大数字在右 (同参考图)
@@ -231,29 +254,55 @@ class ContractPage(tk.Frame):
                            font=(config.FONT_FAMILY, max(6, s(7)), "bold"))
             cv.create_text(self.band - s(10), y + self.th / 2, text=str(lv), anchor="e", fill=P["band_text"],
                            font=config.font("h1", bold=True))
+        # 翻页: 左边一条最下面 "◀  1 / 2  ▶"
+        ny = self.board_h - self.hover_h / 2
+        self.nav_prev = cv.create_text(s(26), ny, text="◀", font=config.font("h2", bold=True))
+        self.nav_text = cv.create_text(self.band / 2, ny, text="", fill=P["band_text"], font=config.font("body", bold=True))
+        self.nav_next = cv.create_text(self.band - s(26), ny, text="▶", font=config.font("h2", bold=True))
+        for item, step in ((self.nav_prev, -1), (self.nav_next, 1)):
+            cv.tag_bind(item, "<Button-1>", lambda e, d=step: self._flip(d))
+            cv.tag_bind(item, "<Enter>", lambda e: self.canvas.configure(cursor="hand2"))
+            cv.tag_bind(item, "<Leave>", lambda e: self.canvas.configure(cursor=""))
+        # 鼠标停在格子上: 最下面一行写出这个词条的内容
+        self.hover_id = cv.create_text(self.band + self.gap, self.board_h - self.hover_h + s(4), text="", anchor="nw",
+                                       fill=P["hint"], font=config.font("small", bold=True))
+
+    def _draw_tiles(self):
+        """这一页的格子 (翻页 / 窗口宽度变了时重画)."""
+        P, cv, s = self.P, self.canvas, config.scaled
+        cv.delete("tile")
+        self._tile_state = {}
+        a, b = self.pages[self.page]
         for tid, g, lv, _n, _d, _x in C.TERMS:
             col = C.LAYOUT[tid][0]                 # 成系列的每组一列, 零散的在右边挨着排
-            x = self.band + self.gap + col * (self.tw + self.gap)
+            if not a <= col < b:
+                continue
+            x = self.band + self.gap + (col - a) * (self.tw + self.gap)
             y = self.gap + (lv - 1) * (self.th + self.gap)
             tag = f"t_{tid}"
             cv.create_polygon(self._hexagon(x, y, self.tw, self.th), fill=P["tile"],
                               outline=P["tile_rim4"] if lv >= RIM4 else P["tile_rim"],
-                              width=3 if lv >= RIM4 else 2, tags=(tag, tag + "_shape"))
+                              width=3 if lv >= RIM4 else 2, tags=("tile", tag, tag + "_shape"))
             cv.create_text(x + self.tw / 2, y + self.th / 2, text=marks(lv) + "\n" + term_short(tid),
                            fill=P["tile_text"], justify="center", width=self.tw * 0.66,
-                           font=(config.FONT_FAMILY, max(6, s(8)), "bold"), tags=(tag, tag + "_text"))
+                           font=(config.FONT_FAMILY, max(6, s(8)), "bold"), tags=("tile", tag, tag + "_text"))
             cv.tag_bind(tag, "<Button-1>", lambda e, t=tid: self._click(t))
             cv.tag_bind(tag, "<Enter>", lambda e, t=tid: self._enter(t))
             cv.tag_bind(tag, "<Leave>", lambda e, t=tid: self._leave(t))
-        # 鼠标停在格子上: 最下面一行写出这个词条的内容
-        self.hover_id = cv.create_text(self.band + self.gap, self.board_h - self.hover_h + s(4), text="", anchor="nw",
-                                       fill=P["hint"], font=config.font("small", bold=True))
+        n = len(self.pages)
+        cv.itemconfigure(self.nav_text, text=f"{self.page + 1} / {n}")
+        cv.itemconfigure(self.nav_prev, fill=P["nav"] if self.page > 0 else P["nav_off"])
+        cv.itemconfigure(self.nav_next, fill=P["nav"] if self.page < n - 1 else P["nav_off"])
+        if self._hover:
+            self._leave(self._hover)
 
     def _selected(self):
         return self.c.terms if self.c.active else self.c.draft
 
     def _click(self, tid: str):
         if self.c.active:
+            if tid in self.c.rand and self.on_close_rand:
+                self.on_close_rand(tid)
             return
         sel = list(self.c.draft)
         if tid in sel:
@@ -269,8 +318,11 @@ class ContractPage(tk.Frame):
 
     def _enter(self, tid: str):
         self._hover = tid
-        self.canvas.configure(cursor="arrow" if self.c.active else "hand2")
+        rand = self.c.active and tid in self.c.rand
+        self.canvas.configure(cursor="hand2" if rand or not self.c.active else "arrow")
         text = f"{marks(C.BY_ID[tid][2])}  {term_name(tid)} : {term_desc(tid)}"
+        if rand:
+            text += "   " + tr("[未知变量选中 · 点击关闭, 算一次违反]")
         other = C.blocked_by(tid, self._selected())
         if other and tid not in self._selected():
             text += "   " + tr("[与 {name} 冲突]", name=term_name(other))
@@ -305,23 +357,28 @@ class ContractPage(tk.Frame):
                          font=config.font("body", bold=True))
 
     def _rows(self, sel):
-        """已选中的词条: (等级, 文字, 是否失效). 合约中按开始时选的列出, 降过级的写出降成了什么."""
+        """已选中的词条: (等级, 文字, 是否失效, 未知变量选中的词条 / ""). 合约中按开始时选的列出,
+        降过级的写出降成了什么; 最后是未知变量选中的."""
         c = self.c
         if not c.active:
-            return [(C.BY_ID[t][2], term_line(t), False) for t in sel]
+            return [(C.BY_ID[t][2], term_line(t), False, "") for t in sel]
         out = []
+        rand = c.rand
+        mine = [x for x in c.terms if x not in rand]
         for t in c.orig:
-            now = next((x for x in c.terms if x == t or C.BY_ID[x][1] == C.BY_ID[t][1]), "")
+            now = next((x for x in mine if x == t or C.BY_ID[x][1] == C.BY_ID[t][1]), "")
             if not now:
-                out.append((C.BY_ID[t][2], f"{term_name(t)}   " + tr("[已失效]"), True))
+                out.append((C.BY_ID[t][2], f"{term_name(t)}   " + tr("[已失效]"), True, ""))
             elif now != t:
                 out.append((c.term_level(now), f"{term_line(now)}   "
-                            + tr("[原 {name}]", name=term_short(t)), False))
+                            + tr("[原 {name}]", name=term_short(t)), False, ""))
             else:
                 text = term_line(t)
                 if c.term_level(t) < C.BY_ID[t][2]:
                     text += "   " + tr("[降了 {n} 级]", n=C.BY_ID[t][2] - c.term_level(t))
-                out.append((c.term_level(t), text, False))
+                out.append((c.term_level(t), text, False, ""))
+        for t in rand:
+            out.append((c.term_level(t), f"{term_line(t)}   " + tr("[未知变量选中 · 点击关闭]"), False, t))
         return out
 
     def _fill_list(self, sel):
@@ -337,17 +394,23 @@ class ContractPage(tk.Frame):
             tk.Label(self.list_box, text="—", bg=P["sel"], fg=P["sel_dim"],
                      font=config.font("body")).grid(row=0, column=0, sticky="w")
         half = (len(rows) + 1) // 2           # 先排满左栏, 再排右栏
-        for i, (lv, text, void) in enumerate(rows):
+        for i, (lv, text, void, rand) in enumerate(rows):
             r = tk.Frame(self.list_box, bg=P["sel"])
             r.grid(row=i % half, column=i // half, sticky="we", pady=2, padx=(0, 10))
             hi = lv >= 2 and not void
-            tk.Label(r, text=marks(lv) or "—", bg=P["badge_hi"] if hi else P["badge_lo"],
-                     fg=P["badge_hi_text"] if hi else P["badge_lo_text"], width=4,
+            if rand:
+                badge = (P["tile_rand"], P["tile_rand_text"])
+            else:
+                badge = (P["badge_hi"], P["badge_hi_text"]) if hi else (P["badge_lo"], P["badge_lo_text"])
+            tk.Label(r, text=marks(lv) or "—", bg=badge[0], fg=badge[1], width=4,
                      font=config.font("small", bold=True)).pack(side="left", anchor="n", padx=(0, 8))
-            lbl = tk.Label(r, text=text, bg=P["sel"], fg=P["sel_dim"] if void else P["sel_text"],
-                           font=config.font("small"), anchor="w", justify="left")
+            fg = P["tile_rand"] if rand else P["sel_dim"] if void else P["sel_text"]
+            lbl = tk.Label(r, text=text, bg=P["sel"], fg=fg, font=config.font("small"), anchor="w", justify="left",
+                           cursor="hand2" if rand else "")
             lbl.pack(side="left", fill="x", expand=True)
             lbl.bind("<Configure>", lambda e, l=lbl: l.configure(wraplength=max(80, e.width - 4)))
+            if rand:
+                lbl.bind("<Button-1>", lambda e, t=rand: self.on_close_rand and self.on_close_rand(t))
         self.area.bind_children()
 
     # ---- 最下面一条: 清空 | 危机等级 | 时长 / 完成后的休息时间 | 难度提示 | 开始行动 ----
@@ -428,12 +491,19 @@ class ContractPage(tk.Frame):
     def level(self) -> int:
         return self.c.level if self.c.active else C.level_of(self.c.draft)
 
-    def refresh(self):
-        P, c, now = self.P, self.c, datetime.now()
+    def _paint_tiles(self):
+        """这一页格子的颜色: 选中 / 不能选 / 未知变量选中的 (黄色)."""
+        P, c = self.P, self.c
         active = c.active
         sel = self._selected()
+        rand = c.rand
+        a, b = self.pages[self.page]
         for tid in C.BY_ID:
-            if tid in sel:
+            if not a <= C.LAYOUT[tid][0] < b:
+                continue
+            if tid in rand:
+                st = ("tile_rand", "tile_rand_text", "tile_rand_rim")
+            elif tid in sel:
                 st = ("tile_on", "tile_on_text", "tile_on_rim")
             elif active or C.blocked_by(tid, sel):
                 st = ("tile_off", "tile_off_text", "tile_off_rim")
@@ -441,9 +511,15 @@ class ContractPage(tk.Frame):
                 st = ("tile", "tile_text", "tile_rim")
             if self._tile_state.get(tid) != st:
                 self._tile_state[tid] = st
-                rim = P["tile_rim4"] if C.BY_ID[tid][2] >= RIM4 else P[st[2]]
+                rim = P["tile_rim4"] if C.BY_ID[tid][2] >= RIM4 and tid not in rand else P[st[2]]
                 self.canvas.itemconfigure(f"t_{tid}_shape", fill=P[st[0]], outline=rim)
                 self.canvas.itemconfigure(f"t_{tid}_text", fill=P[st[1]])
+
+    def refresh(self):
+        P, c, now = self.P, self.c, datetime.now()
+        active = c.active
+        sel = self._selected()
+        self._paint_tiles()
         self._fill_list(sel)
 
         level = self.level()

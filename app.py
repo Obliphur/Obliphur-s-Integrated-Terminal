@@ -544,7 +544,8 @@ class BreakTimerApp:
                                               net_used=lambda: self.net.used_all,
                                               on_change=self._paint_sidebar,
                                               rec_text=self._rec_text,
-                                              on_stop_screen=self.stop_screen_recording)
+                                              on_stop_screen=self.stop_screen_recording,
+                                              on_close_rand=self.close_random_term)
         self._prepare_page(self.pages["contract"])
         self.pages["settings"] = SettingsPage(
             self.content, self.settings,
@@ -899,6 +900,11 @@ class BreakTimerApp:
             self.cancel_update()
             # 结束专注后直接进入休息, 不再停在"去休息"这一步
             self._start_break(announce=True)
+            # 纵深推进: 这段专注不到要求的时长, 算一次违反
+            tid = self.contract.focus_check(elapsed_minutes * 60)
+            if tid:
+                self.contract_violation(tr("专注只有 {m} 分钟 (至少 {n} 分钟)", m=int(elapsed_minutes),
+                                           n=contract_mod.DEEP[tid] // 60), tid)
 
         elif self.state == READY_BREAK:
             # 旧流程留下的状态 (正常不会再进入): 按一下照样开始休息
@@ -906,7 +912,7 @@ class BreakTimerApp:
 
         elif self.state == ON_BREAK:
             if self._break_locked():
-                toast.warn(tr("网络正在使用,不能暂停休息."))
+                toast.warn(self._pause_block())
                 return
             self.end_break_early()
             if self.state == IDLE:
@@ -1126,10 +1132,18 @@ class BreakTimerApp:
         self.lbl_sub.config(text=tr("休息吧,倒计时中…"))
         self._sync_break_lock()
 
+    def _pause_block(self) -> str:
+        """不能暂停休息的原因 ("" = 可以): 合约的禁止囤囤鼠!; 网络正在使用 (领到休息时间后的第一次休息除外)."""
+        if self.state != ON_BREAK:
+            return ""
+        if self.contract.no_pause():
+            return tr("禁止囤囤鼠!: 合约中不能提前结束休息.")
+        if self.net.mode == "online" and not self._bonus_break_active:
+            return tr("网络正在使用,不能暂停休息.")
+        return ""
+
     def _break_locked(self) -> bool:
-        """网络正在使用时不允许暂停休息 —— 领到休息时间后的第一次休息除外."""
-        return (self.state == ON_BREAK and self.net.mode == "online"
-                and not self._bonus_break_active)
+        return bool(self._pause_block())
 
     def _sync_break_lock(self):
         if self.state == ON_BREAK:
@@ -1140,7 +1154,7 @@ class BreakTimerApp:
         if self.state != ON_BREAK:
             return
         if not silent and self._break_locked():
-            toast.warn(tr("网络正在使用,不能暂停休息."))
+            toast.warn(self._pause_block())
             return
         if silent and not self._timer_auto_ok():
             self.break_start_wall = None
@@ -1571,7 +1585,7 @@ class BreakTimerApp:
                 self.lbl_time.config(text=f"{m:02d}:{s:02d}")
                 sub = tr("休息剩余 {m} 分 {s:02d} 秒").format(m=m, s=s)
                 if self._break_locked():
-                    sub += "\n" + tr("网络正在使用,不能暂停休息.")
+                    sub += "\n" + self._pause_block()
                 self.lbl_sub.config(text=sub)
                 self.countdown_seconds -= 1
                 self.update_job = self.root.after(1000, self.update)
@@ -2159,6 +2173,21 @@ class BreakTimerApp:
                 self.contract_violation(tr("使用了紧急借贷") if kind == "loan" else tr("联网超过了合约的额度"), tid)
                 if not c.active:
                     return
+            # 未知变量: 合约的每个小时开始时 (刚开始时也算) 随机启用一个词条
+            picked = c.roll(datetime.now())
+            for tid in picked:
+                self._log_notice(f"CONTRACT unknown -> {tid}")
+                toast.warn(tr("未知变量: 启用了 {name}", name=tr(contract_mod.BY_ID[tid][3])), timeout=10000)
+            if picked:
+                self._contract_changed()
+                if self.sync.peers():
+                    self.sync.sync_now()
+        # 静默协议: 专注中这台设备处于联网状态 (各设备看自己的)
+        tid = c.quiet_check(self.state == RUNNING and self.net.mode == "online")
+        if tid:
+            self.contract_violation(tr("专注中处于联网状态"), tid)
+            if not c.active:
+                return
         self._refresh_if_visible("contract")
         if self.current_page == "contract":
             self._paint_sidebar()
@@ -2292,14 +2321,26 @@ class BreakTimerApp:
         if self.sync.peers():
             self.sync.sync_now()
 
-    def contract_violation(self, why: str, tid: str):
-        """违反了词条 tid (软规则): 响警报, 记一次, 这个词条降一级; 到上限就结束合约."""
+    def close_random_term(self, tid: str):
+        """未知变量选中的词条: 点击关闭, 算一次违反."""
+        c = self.contract
+        if not c.active or tid not in c.rand:
+            return
+        name = tr(contract_mod.BY_ID[tid][3])
+        if not toast.ask(tr("关闭未知变量选中的 {name}?", name=name) + "\n" + tr("会算作一次违反."),
+                         title=tr("关闭词条"), danger=True):
+            return
+        self.contract_violation(tr("关闭了未知变量选中的 {name}", name=name), tid, drop=True)
+        self._contract_changed()
+
+    def contract_violation(self, why: str, tid: str, drop: bool = False):
+        """违反了词条 tid (软规则): 响警报, 记一次, 这个词条降一级 (drop: 直接去掉); 到上限就结束合约."""
         c = self.contract
         if not c.active or self.dm.resetting or (tid and not c.has(tid)):
             return
         self._play_alarm()
         old = tr(contract_mod.BY_ID[tid][3]) if tid else ""
-        over, new = c.violate(tid)
+        over, new = c.violate(tid, drop)
         if not tid:
             after = tr("违反一次")
         elif not new:
@@ -3098,7 +3139,8 @@ class BreakTimerApp:
         if self.state == ON_BREAK and minutes * 60 <= self.countdown_seconds:
             # 休息中, 且申请时长不超过剩余休息时间 → 冷静期 ×BREAK_COOLDOWN_RATE
             rate = config.BREAK_COOLDOWN_RATE
-        ok, msg = self.net.request(minutes, reason, cooldown_rate=rate)
+        # 合约的侵蚀: 冷静期 ×2 / ×3
+        ok, msg = self.net.request(minutes, reason, cooldown_rate=rate, cooldown_mult=self.contract.cooldown_factor())
         if not ok:
             toast.warn(tr(msg))
             return

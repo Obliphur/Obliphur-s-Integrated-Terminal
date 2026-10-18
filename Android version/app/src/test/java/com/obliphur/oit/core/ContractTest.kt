@@ -29,7 +29,7 @@ class ContractTest {
         assertFalse(Contract.conflicts("jam", "music"))
         assertTrue(Contract.conflicts("short1", "short2")); assertFalse(Contract.conflicts("seal", "fine"))
         assertTrue(Contract.LAYOUT["short2"]!! < Contract.LAYOUT["suppress"]!!)
-        assertEquals(Contract.SERIES.size + 7, Contract.BOARD_COLS)
+        assertEquals(Contract.SERIES.size + 8, Contract.BOARD_COLS)
         assertEquals(Contract.SERIES.size + 1, Contract.LAYOUT["fine"])     // 零散的挨着排, 不留空
         // 行为类似的放在一起: 禁止的软件一行挨着, 录像在它们下面, 互联网娱乐的败退在乐理之灾那一列的 4 级
         val m = Contract.LAYOUT["music"]!!
@@ -167,5 +167,53 @@ class ContractTest {
         assertFalse(c.hourLocked(a, b, "学习", LocalDateTime.of(2026, 10, 18, 11, 1), fill, "Sleeping"))
         c.finish("abandoned", LocalDateTime.of(2026, 10, 18, 12, 0))
         assertTrue(c.hourLocked(a, b, "Sleeping", LocalDateTime.of(2026, 10, 19, 0, 0), fill, "Sleeping"))
+    }
+
+    @Test
+    fun newTerms() {
+        val t0 = LocalDateTime.of(2026, 10, 18, 9, 30)
+        // 翻页: 成系列的一页, 零散的一页; 侵蚀 / 静默协议和信息隔绝冲突
+        assertEquals(listOf(0 until Contract.SERIES.size, Contract.SERIES.size until Contract.BOARD_COLS), Contract.PAGES)
+        assertTrue(Contract.LAYOUT["deep1"]!! < Contract.SERIES.size && Contract.LAYOUT["hoard"]!! >= Contract.SERIES.size)
+        assertTrue(Contract.conflicts("erode1", "isolate") && Contract.conflicts("isolate", "erode2") && Contract.conflicts("quiet", "isolate"))
+        assertFalse(Contract.conflicts("erode1", "info3") || Contract.conflicts("quiet", "jam"))
+        val c = Contract(tmp())
+        // 禁止囤囤鼠!: 不能暂停休息, 休息时间 ×1.05; 侵蚀: 冷静期 ×2 / ×3
+        c.start(listOf("hoard", "tired1", "erode2"), "me", t0)
+        assertTrue(c.noPause()); assertEquals(0.7 * 1.05, c.restFactor(), 1e-9); assertEquals(3.0, c.cooldownFactor(), 1e-9)
+        c.start(listOf("erode1"), "me", t0)
+        assertFalse(c.noPause()); assertEquals(2.0, c.cooldownFactor(), 1e-9); assertEquals("", c.focusCheck(60.0))
+        // 纵深推进: 专注不到 40 / 60 分钟算违反; -II 降成 -I
+        c.start(listOf("deep2", "quiet"), "me", t0)
+        assertEquals("deep2", c.focusCheck(59 * 60.0)); assertEquals("", c.focusCheck(60 * 60.0))
+        assertEquals(false to "deep1", c.violate("deep2"))
+        assertEquals("", c.focusCheck(59 * 60.0)); assertEquals("deep1", c.focusCheck(39 * 60.0))
+        // 静默协议: 只在刚联网的那一下算; 2 级, 降一级还剩 1 级
+        assertEquals("quiet", c.quietCheck(true)); assertEquals("", c.quietCheck(true)); assertEquals("", c.quietCheck(false))
+        assertEquals(false to "quiet", c.violate("quiet")); assertEquals(1, c.termLevel("quiet")); assertEquals(2, c.level)
+        // 未知变量: 刚开始和之后每个小时开始时各选一个 1-2 级的词条, 不算进危机等级
+        c.start(listOf("unknown", "info2", "long1"), "me", t0, pre = 600.0)
+        val pool = c.randomCandidates()
+        assertTrue("gaze" !in pool && "scar" !in pool && "info1" !in pool && "long2" !in pool && "unknown" !in pool)
+        assertTrue("music" in pool && "jam" in pool)
+        val rng = kotlin.random.Random(1)
+        assertEquals(1, c.roll(t0, rng).size); assertEquals(6, c.level)
+        assertEquals(0, c.roll(t0.plusMinutes(59), rng).size)
+        assertEquals(2, c.roll(t0.plusHours(2).plusMinutes(1), rng).size)
+        assertEquals(3, c.rand.size); assertEquals(6, c.level)
+        assertTrue(c.rand.all { Contract.BY_ID[it]!!.level in 1..2 && it in c.terms })
+        // 点按关闭: 算一次违反, 直接去掉
+        val t = c.rand[0]
+        assertEquals(false to "", c.violate(t, drop = true))
+        assertFalse(t in c.terms || t in c.rand); assertEquals(1, c.violations)
+        // 选中持久战: 时长按它延长; 选中支援短缺: 补上能用多少; 退路封锁不会让目标生命值直接归零
+        c.start(listOf("unknown"), "me", t0, pre = 600.0)
+        c.enable("long2")
+        assertEquals(t0.plusSeconds((4 * 3600 * 1.4).toLong()), c.endAt); assertEquals(listOf("long2"), c.rand)
+        c.enable("short1")
+        assertEquals(300.0, c.supplyLimit!!, 1e-9)
+        c.violate(""); c.violate("")
+        assertTrue("retreat2" !in c.randomCandidates() && "retreat1" in c.randomCandidates())
+        assertEquals(listOf("long2", "short1"), c.finish("abandoned", t0.plusHours(1))!!.optJSONArray("rand")!!.strings())
     }
 }

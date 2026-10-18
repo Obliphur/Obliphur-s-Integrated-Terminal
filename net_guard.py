@@ -451,7 +451,7 @@ class NetGuard:
 
 
     def request(self, minutes: int, reason: str, quick: bool = False,
-                cooldown_rate: float = 1.0):
+                cooldown_rate: float = 1.0, cooldown_mult: float = 1.0):
         if self.dev_mode:
             return False, "Already online."          # 开发者模式在界面上不显示
         if self.online:
@@ -478,14 +478,16 @@ class NetGuard:
                 extra = f" An emergency loan can add up to {fmt_hm(self.loan_left)}."
             return False, f"Only {fmt_hm(self.remaining)} left today.{extra}"
         rate = min(1.0, max(0.0, float(cooldown_rate)))
+        mult = max(1.0, float(cooldown_mult))          # 合约的侵蚀: 冷静期 ×2 / ×3
         self.pending = {
             "minutes": minutes,
-            "at": time.time() + self.cooldown * rate,
+            "at": time.time() + self.cooldown * rate * mult,
             "reason": reason,
             "quick": False,
         }
         self._log(f"REQUEST  {minutes} min"
                   + (f" (on break, cooldown {rate:g}x)" if rate < 1.0 else "")
+                  + (f" (contract, cooldown x{mult:g})" if mult > 1.0 else "")
                   + f"  reason: {reason}")
         return True, ""
 
