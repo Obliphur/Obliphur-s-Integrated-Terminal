@@ -251,7 +251,7 @@ class DataManager:
         recs = list(self.focus_sessions)
         for led in self.peer_ledgers() or []:
             recs += [r for r in (led.get("focus") or []) if isinstance(r, dict)]
-        idle = {}                                  # 专注 / 休息的开始时刻 → [(空闲开始, 空闲结束)]
+        idle = {}                                  # 专注的开始时刻 → [(空闲开始, 空闲结束)]
         for r in recs:
             try:
                 k, st, en = r["k"], datetime.strptime(r["s"], self._TS), datetime.strptime(r["e"], self._TS)
@@ -264,15 +264,19 @@ class DataManager:
         if live and live[1] is not None:
             now = datetime.now()
             segs.append((live[0], live[1], now))
-            try:                                   # 还没记下来的这一段: 有设备离线的部分现在就画成空白
-                for a, b in self.offline_spans(live[1].timestamp() * 1000, now.timestamp() * 1000):
+            try:                                   # 还没记下来的这段专注: 有设备离线的部分现在就画成空白 (休息照常)
+                spans = [] if live[0] == "break" else self.offline_spans(live[1].timestamp() * 1000, now.timestamp() * 1000)
+                for a, b in spans:
                     idle.setdefault(live[1].strftime(self._TS), []).append(
                         (datetime.fromtimestamp(a / 1000), datetime.fromtimestamp(b / 1000)))
             except Exception:
                 pass
-        # 空闲的优先级最高: 同一段专注 / 休息 (开始时刻相同) 里和空闲重叠的部分画成空白 (哪台设备记的都一样)
+        # 空闲的优先级最高: 同一段专注 (开始时刻相同) 里和空闲重叠的部分画成空白 (哪台设备记的都一样); 休息照常
         cut = []
         for kind, st, en in segs:
+            if kind == "break":
+                cut.append((kind, st, en))
+                continue
             cut += [(kind, a, b) for a, b in _subtract(st, en, idle.get(st.strftime(self._TS), []))]
         for kind, st, en in cut:
             for h in range(24):

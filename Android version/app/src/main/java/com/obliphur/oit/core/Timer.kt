@@ -238,8 +238,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
 
     private fun recordBreakEnd(at: LocalDateTime = LocalDateTime.now()) {
         breakStartWall?.let {
-            cutOffline(it, at)                        // 有设备离线的那段记为空闲
-            dm.addFocusSession("break", it, at)
+            dm.addFocusSession("break", it, at)       // 有设备离线也照常记
         }
         breakStartWall = null
     }
@@ -355,7 +354,6 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
                     core.changed()
                     return
                 }
-                cutOffline(st, en)
                 dm.addFocusSession("break", st, en)
             }
             saveState()
@@ -421,7 +419,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         return counted to brk
     }
 
-    /** [start, end] 这段专注 / 休息里有绑定的设备离线的时间段: 记为空闲 (统计里压过同一段), 返回一共多少秒. */
+    /** [start, end] 这段专注里有绑定的设备离线的时间段: 记为空闲 (统计里压过同一段专注), 返回一共多少秒. */
     private fun cutOffline(start: LocalDateTime, end: LocalDateTime): Double {
         val z = java.time.ZoneId.systemDefault()
         var total = 0.0

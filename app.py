@@ -1003,9 +1003,7 @@ class BreakTimerApp:
     def _record_break_end(self):
         """一段休息结束 (自然结束 / 暂停 / 关闭程序): 记入专注计时统计."""
         if self.break_start_wall is not None:
-            end = datetime.now()
-            self._cut_offline(self.break_start_wall, end)      # 有设备离线的那段记为空闲
-            self.dm.add_focus_session("break", self.break_start_wall, end)
+            self.dm.add_focus_session("break", self.break_start_wall, datetime.now())   # 有设备离线也照常记
             self.break_start_wall = None
 
     # ---- 休息结束后迟迟不开始: 提醒 ----
@@ -1252,7 +1250,7 @@ class BreakTimerApp:
         return counted, brk
 
     def _cut_offline(self, start: datetime, end: datetime) -> float:
-        """[start, end] 这段专注 / 休息里有绑定的设备离线的时间段: 记为空闲 (统计里压过同一段), 返回一共多少秒."""
+        """[start, end] 这段专注里有绑定的设备离线的时间段: 记为空闲 (统计里压过同一段专注), 返回一共多少秒."""
         total = 0.0
         try:
             spans = self.sync.offline_spans(start.timestamp() * 1000, end.timestamp() * 1000)

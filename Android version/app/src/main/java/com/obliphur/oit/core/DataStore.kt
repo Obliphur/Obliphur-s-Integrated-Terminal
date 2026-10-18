@@ -200,17 +200,19 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
         if (live != null) {
             val now = LocalDateTime.now()
             all.add(FocusSeg(live.first, live.second, now))
-            // 还没记下来的这一段: 有设备离线的部分现在就画成空白
+            // 还没记下来的这段专注: 有设备离线的部分现在就画成空白 (休息照常)
             val z = java.time.ZoneId.systemDefault()
-            runCatching {
+            if (live.first != "break") runCatching {
                 for ((a, b) in offlineSpans(live.second.atZone(z).toInstant().toEpochMilli(), now.atZone(z).toInstant().toEpochMilli()))
                     all.add(FocusSeg("idle", LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(a), z),
                         LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(b), z), live.second.withNano(0).format(Fmt.TS)))
             }
         }
-        // 空闲的优先级最高: 同一段专注 / 休息 (开始时刻相同) 里和空闲重叠的部分画成空白 (哪台设备记的都一样)
+        // 空闲的优先级最高: 同一段专注 (开始时刻相同) 里和空闲重叠的部分画成空白 (哪台设备记的都一样); 休息照常
         val idle = all.filter { it.kind == "idle" }.groupBy { it.focus }
-        val segs = all.filter { it.kind != "idle" }.flatMap { s -> subtract(s, idle[s.start.withNano(0).format(Fmt.TS)] ?: emptyList()) }
+        val segs = all.filter { it.kind != "idle" }.flatMap { s ->
+            if (s.kind == "break") listOf(s) else subtract(s, idle[s.start.withNano(0).format(Fmt.TS)] ?: emptyList())
+        }
         for (s in segs) {
             if (!s.end.isAfter(d0) || !s.start.isBefore(d0.plusDays(1))) continue
             for (h in 0 until 24) {
