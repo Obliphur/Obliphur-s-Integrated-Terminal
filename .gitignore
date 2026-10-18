@@ -47,3 +47,7 @@ study_log.json
 hour_log.json
 net_usage.json
 *.uninstall.json
+
+# 自动发布脚本和它的 GitHub 令牌: 只在本机用
+release.py
+release_token.txt
