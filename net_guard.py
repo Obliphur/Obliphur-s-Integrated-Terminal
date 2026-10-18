@@ -19,6 +19,7 @@ from data_manager import month_prefixes
 
 
 class NetGuard:
+    gift = 0.0                        # 今天合约奖励的额度 (见 __init__)
 
     def __init__(self, data_dir: str):
         self.dead = False
@@ -35,13 +36,14 @@ class NetGuard:
         self.date = datetime.now().strftime('%Y-%m-%d')
         self.used = 0.0
         self.bonus = 0.0
+        self.gift = 0.0               # 今天合约奖励的额度 (完成带"互联网娱乐的败退"的合约), 不用还
         self.tomorrow_used = 0.0
         self.debt = 0.0
         self.grant_left = 0.0
         self.grant_rate = 1.0
         self.pending = None
         # 设备同步: 其他设备今天的 {used, bonus, tomorrow_used, debt} 之和 (见 devsync.peer_net)
-        self.peer_net = lambda: {"used": 0.0, "bonus": 0.0, "tomorrow_used": 0.0, "debt": 0.0}
+        self.peer_net = lambda: {"used": 0.0, "bonus": 0.0, "tomorrow_used": 0.0, "debt": 0.0, "gift": 0.0}
         # 设备同步: 其他设备的联网会话 (按理由统计用)
         self.peer_usage = lambda: []
         self.proxy = ProxyController(
@@ -100,7 +102,7 @@ class NetGuard:
     def tick_clamp(self) -> float:
         return float(config.TICK_CLAMP)
 
-    _ZERO = {"used": 0.0, "bonus": 0.0, "tomorrow_used": 0.0, "debt": 0.0}
+    _ZERO = {"used": 0.0, "bonus": 0.0, "tomorrow_used": 0.0, "debt": 0.0, "gift": 0.0}
 
     def _pn(self) -> dict:
         fn = getattr(self, "peer_net", None)
@@ -113,6 +115,10 @@ class NetGuard:
     @property
     def bonus_all(self) -> float:
         return self.bonus + self._pn()["bonus"]
+
+    @property
+    def gift_all(self) -> float:
+        return self.gift + float(self._pn().get("gift", 0.0))
 
     @property
     def tomorrow_used_all(self) -> float:
@@ -128,8 +134,8 @@ class NetGuard:
 
     @property
     def today_total(self) -> float:
-        """今天的总额度 = 每日额度 + 今天借到的."""
-        return self.limit + self.bonus_all
+        """今天的总额度 = 每日额度 + 今天借到的 + 今天合约奖励的."""
+        return self.limit + self.bonus_all + self.gift_all
 
     @property
     def remaining(self) -> float:
@@ -203,6 +209,7 @@ class NetGuard:
         if saved == self.date:
             self.used = num("used")
             self.bonus = num("bonus")
+            self.gift = num("gift")
             self.tomorrow_used = num("tomorrow_used")
             self.debt = num("debt")
         elif saved and saved < self.date:
@@ -225,6 +232,7 @@ class NetGuard:
                     "date": self.date,
                     "used": int(self.used),
                     "bonus": int(self.bonus),
+                    "gift": int(self.gift),
                     "tomorrow_used": int(self.tomorrow_used),
                     "debt": int(self.debt),
                 }, f)
@@ -424,6 +432,12 @@ class NetGuard:
                   f"  reason: {reason}")
         return True, ""
 
+    def add_gift(self, seconds: float, reason: str):
+        """合约的奖励: 今天的额度多给 seconds 秒 (不用还, 零点清零)."""
+        self.gift += max(0.0, float(seconds))
+        self._save()
+        self._log(f"GIFT     +{int(seconds // 60)} min today  reason: {reason}")
+
     def can_quick(self, minutes: float):
         need = max(0.0, float(minutes)) * 60.0
         if need <= 0:
@@ -540,6 +554,7 @@ class NetGuard:
         self.debt = max(0.0, self.tomorrow_used)
         self.tomorrow_used = 0.0
         self.bonus = 0.0
+        self.gift = 0.0
         self.used = 0.0
         self._save()
 

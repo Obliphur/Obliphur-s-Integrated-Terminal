@@ -445,6 +445,9 @@ class ContractPage(tk.Frame):
         self._draw_strip(level)
         info = [tr("时长 {t}", t=fmt_hm(C.duration_of(c.orig if active else sel))),
                 tr("完成后休息 +{n} 分钟", n=C.rest_minutes(level))]
+        gift = sum(C.NET_GIFT.get(t, 0) for t in sel)
+        if gift:
+            info.append(tr("今日联网额度 +{n} 分钟", n=gift // 60))
         if orig != level:
             info.insert(0, tr("开始时 {n}", n=orig))
         cfg(self.lbl_info, text="\n".join(info))
@@ -519,6 +522,8 @@ class ContractPage(tk.Frame):
                       lv=last.get("level", 0), when=when)
             if last.get("reward"):
                 text += "   ·   " + tr("休息 +{n} 分钟", n=round(last["reward"] / 60))
+            if last.get("net_gift"):
+                text += "   ·   " + tr("今日联网额度 +{n} 分钟", n=round(last["net_gift"] / 60))
             cfg(self.lbl_last, text=text)
         else:
             cfg(self.lbl_last, text="")

@@ -2226,6 +2226,10 @@ class BreakTimerApp:
         self._contract_seen = None
         reward = int(rec.get("reward") or 0)
         keep = min(int(self.break_carry), int(float(rec.get("pre_left") or 0)))
+        gift = int(rec.get("net_gift") or 0)
+        if gift > 0:
+            self.net.add_gift(gift, "contract")             # 互联网娱乐的败退: 今天的联网额度 +20 分钟
+            self.refresh_net(force=True)
         if reward > 0 or keep != self.break_carry:
             self._set_break_carry(keep + reward)
             if self.state == IDLE:
@@ -2240,6 +2244,8 @@ class BreakTimerApp:
             msg = tr("危机等级 {lv}", lv=lv)
             if reward > 0:
                 msg += "\n" + tr("积攒的休息时间 +{t}.", t=fmt_ms(reward))
+            if gift > 0:
+                msg += "\n" + tr("今天的联网额度 +{n} 分钟.", n=gift // 60)
             toast.notice(tr("⚔  合约完成"), msg)
         elif result == "abandoned":
             toast.info(tr("⚔ 行动终止"))
@@ -3267,6 +3273,8 @@ class BreakTimerApp:
                 left=fmt_hm(n.tomorrow_remaining)))
         if n.debt_all > 0:
             bits.append(tr("今天要先还昨天借的 {debt}").format(debt=fmt_hm(n.debt_all)))
+        if n.gift_all > 0:
+            bits.append(tr("今天合约奖励的联网额度 {t}", t=fmt_hm(n.gift_all)))
         cfg(self.net_lbl_debt, text="\n".join(bits))
 
     def _safe_minutes(self):

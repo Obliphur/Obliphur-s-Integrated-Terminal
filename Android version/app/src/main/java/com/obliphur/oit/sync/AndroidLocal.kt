@@ -69,7 +69,7 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
         val n = core.net
         val dm = core.dm
         val net = JSONObject().put("date", n.date).put("used", Math.round(n.used * 10) / 10.0).put("bonus", n.bonus)
-            .put("tomorrow_used", n.tomorrowUsed).put("debt", n.debt)
+            .put("tomorrow_used", n.tomorrowUsed).put("debt", n.debt).put("gift", n.gift)
         val focus = JSONArray(dm.focus.map { it.json() })
         val window = JSONObject()
         for ((d, day) in dm.windowDays) window.put(d, JSONObject(day.mapValues { Math.round(it.value * 10) / 10.0 }))

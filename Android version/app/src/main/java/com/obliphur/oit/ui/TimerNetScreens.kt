@@ -159,6 +159,7 @@ fun NetScreen() {
             if (n.bonusAll > 0) bits.add(tr("今天已借 {bonus},明天将扣 {cost}(明天剩余 {left})",
                 "bonus" to fmtHm(n.bonusAll), "cost" to fmtHm(n.tomorrowUsedAll), "left" to fmtHm(n.tomorrowRemaining)))
             if (n.debtAll > 0) bits.add(tr("今天要先还昨天借的 {debt}", "debt" to fmtHm(n.debtAll)))
+            if (n.giftAll > 0) bits.add(tr("今天合约奖励的联网额度 {t}", "t" to fmtHm(n.giftAll)))
             if (bits.isNotEmpty()) Dim(bits.joinToString("\n"), size = 13, color = o.warn)
         }
         when (n.mode) {

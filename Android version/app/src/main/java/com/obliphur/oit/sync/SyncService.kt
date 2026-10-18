@@ -151,11 +151,11 @@ class SyncService(
 
         /** 其他设备今天的联网额度用量之和 (只算日期是今天的). */
         fun peerNet(ledgers: List<JSONObject>, date: String): DoubleArray {
-            val out = DoubleArray(4)   // used, bonus, tomorrow_used, debt
+            val out = DoubleArray(5)   // used, bonus, tomorrow_used, debt, gift
             for (l in ledgers) {
                 val n = l.optJSONObject("net") ?: continue
                 if (n.optString("date") != date) continue
-                listOf("used", "bonus", "tomorrow_used", "debt").forEachIndexed { i, k -> out[i] += maxOf(0.0, n.optDouble(k, 0.0)) }
+                listOf("used", "bonus", "tomorrow_used", "debt", "gift").forEachIndexed { i, k -> out[i] += maxOf(0.0, n.optDouble(k, 0.0)) }
             }
             return out
         }

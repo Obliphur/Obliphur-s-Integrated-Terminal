@@ -61,7 +61,7 @@ class Contract(private val file: File) {
                 listOf("gaze")),
             Term("game", "game", 1, "环境:禁游令", "合约期间不能使用游戏和游戏平台"),
             Term("video", "video", 1, "环境:低帧的诅咒", "合约期间不能使用视频平台"),
-            Term("ent", "ent", 4, "环境:互联网娱乐的败退", "同时有乐理之灾 无言为真 禁游令 低帧的诅咒的效果",
+            Term("ent", "ent", 4, "环境:互联网娱乐的败退", "同时有乐理之灾 无言为真 禁游令 低帧的诅咒的效果 违反任意一项即整个失效 顺利完成合约时今日联网额度+20min",
                 listOf("music", "silent", "game", "video", "isolate")),
             Term("fog", "fog", 1, "环境:黑雾", "合约期间 专注时长 成就 日历 统计数据不可见 且无法打开设置"),
         )
@@ -93,7 +93,7 @@ class Contract(private val file: File) {
         val LOWER = mapOf("isolate" to "info3", "info3" to "info2", "info2" to "info1", "chan2" to "chan1",
             "short2" to "short1")
         /** 只有一档的软规则: 降级时等级减一, 减到 0 就失效. */
-        val SINGLE = setOf("music", "suppress", "silent", "game", "video", "ent")
+        val SINGLE = setOf("music", "suppress", "silent", "game", "video")
         /** 这个等级的词条用红色边框. */
         const val RIM_LEVEL = 4
 
@@ -109,8 +109,10 @@ class Contract(private val file: File) {
         val RECORD = mapOf("gaze" to "camera", "scar" to "screen")
         /** 禁止打开某类应用的词条 (每秒看前台应用). */
         val BANS = listOf("music", "silent", "game", "video")
-        /** 互联网娱乐的败退: 同时有上面四个的效果 (违反时降它). */
+        /** 互联网娱乐的败退: 同时有上面四个的效果; 违反任意一项就整个失效. */
         const val BANS_ALL = "ent"
+        /** 完成合约时 (这个词条还在) 今天的联网额度多给这么多秒. */
+        val NET_GIFT = mapOf("ent" to 20 * 60)
         val WINDOWS = mapOf("chan1" to 4, "chan2" to 3)
         /** 支援短缺: 合约开始前积攒的休息时间能用几成. */
         val SUPPLY = mapOf("short1" to 0.5, "short2" to 0.0)
@@ -304,10 +306,12 @@ class Contract(private val file: File) {
         val plan = endAt ?: now
         val end = if (now.isBefore(plan)) now else plan
         val give = if (result == "completed") Math.round(reward).toInt() else 0
+        val gift = if (result == "completed") terms.sumOf { NET_GIFT[it] ?: 0 } else 0
         val rec = JSONObject().put("id", live.optLong("id")).put("start", live.optString("start")).put("end", end.iso())
             .put("planned", live.optString("end")).put("terms", JSONArray(terms)).put("orig", JSONArray(orig))
             .put("level", level).put("orig_level", origLevel).put("cut", JSONObject(cut.toString()))
             .put("result", result).put("violations", violations).put("reward", give).put("pre_left", preLeft)
+            .put("net_gift", gift)
         history.add(rec)
         live = JSONObject().put("state", "none").put("owner", by).put("first_break", result == "completed")
         save()

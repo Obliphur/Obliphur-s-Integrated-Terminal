@@ -57,7 +57,7 @@ TERMS = [
     ("scar", "scar", 2, "环境:刻痕", "合约期间录制整个屏幕 结束后保存录像", ("gaze",)),
     ("game", "game", 1, "环境:禁游令", "合约期间不能使用游戏和游戏平台", ()),
     ("video", "video", 1, "环境:低帧的诅咒", "合约期间不能使用视频平台", ()),
-    ("ent", "ent", 4, "环境:互联网娱乐的败退", "同时有乐理之灾 无言为真 禁游令 低帧的诅咒的效果",
+    ("ent", "ent", 4, "环境:互联网娱乐的败退", "同时有乐理之灾 无言为真 禁游令 低帧的诅咒的效果 违反任意一项即整个失效 顺利完成合约时今日联网额度+20min",
      ("music", "silent", "game", "video", "isolate")),
     ("fog", "fog", 1, "环境:黑雾", "合约期间 专注时长 成就 日历 统计数据不可见 且无法打开设置", ()),
 ]
@@ -88,7 +88,7 @@ SOFT = {"info1", "info2", "info3", "isolate", "chan1", "chan2", "music", "suppre
         "silent", "game", "video", "ent", "gaze", "scar"}
 LOWER = {"isolate": "info3", "info3": "info2", "info2": "info1", "chan2": "chan1",
          "short2": "short1"}                     # 降一级换成哪个词条
-SINGLE = {"music", "suppress", "silent", "game", "video", "ent"}   # 只有一档的软规则: 降级时等级减一, 减到 0 就失效
+SINGLE = {"music", "suppress", "silent", "game", "video"}   # 只有一档的软规则: 降级时等级减一, 减到 0 就失效
 
 DURATION = {"long1": 1.2, "long2": 1.4, "long3": 1.6}
 NET_SHARE = {"info1": 0.75, "info2": 0.5, "info3": 0.25, "isolate": 0.0}
@@ -100,7 +100,8 @@ HOUR_TERMS = {"seal", "fine"}                   # 整点记录的词条: 整点�
 LIFE = {"retreat1": 3, "retreat2": 2, "last": 1}  # 初始目标生命值 (硬规则)
 RECORD = {"gaze": "camera", "scar": "screen"}   # 录像的词条 → 录什么 (recorder.py)
 BANS = ("music", "silent", "game", "video")     # 禁止打开某类软件的词条 (每 2 秒看一次)
-BANS_ALL = "ent"                                # 互联网娱乐的败退: 同时有上面四个的效果 (违反时降它)
+BANS_ALL = "ent"                                # 互联网娱乐的败退: 同时有上面四个的效果; 违反任意一项就整个失效
+NET_GIFT = {"ent": 20 * 60}                     # 完成合约时 (这个词条还在) 今天的联网额度多给这么多秒
 SUPPLY_WARN = (180, 60)                         # 支援短缺: 还差这么多秒就用超时各提醒一次
 
 # 总等级 → 完成合约时给的休息时间 (分钟, 固定; 按结束时的等级)
@@ -396,11 +397,12 @@ class Contract:
         now = (now or datetime.now()).replace(microsecond=0)
         end = min(now, self.end_at or now)
         reward = int(round(self.reward)) if result == "completed" else 0
+        gift = int(sum(NET_GIFT.get(t, 0) for t in self.terms)) if result == "completed" else 0
         rec = {"id": self.live.get("id"), "start": self.live.get("start"), "end": _iso(end),
                "planned": self.live.get("end"), "terms": self.terms, "orig": self.orig,
                "level": self.level, "orig_level": self.orig_level, "cut": dict(self.cut),
                "result": result, "violations": self.violations, "reward": reward,
-               "pre_left": self.pre_left}
+               "pre_left": self.pre_left, "net_gift": gift}
         self.history.append(rec)
         self.live = {"state": "none", "owner": by, "first_break": result == "completed"}
         self.save()
@@ -854,11 +856,20 @@ def _selftest():
     assert c.ban_check("game", True) == "game" and c.ban_check("game", True) == "" and c.ban_check("silent", True) == "silent"
     assert c.violate("gaze") == (False, "") and c.records() == [] and c.level == 2
     assert c.violate("game") == (False, "") and not c.has("game") and c.has("silent")
-    # 互联网娱乐的败退: 四类都禁止, 每一类各自只在打开的那一下算; 违反时它降一级 (4 → 3)
+    # 互联网娱乐的败退: 四类都禁止, 每一类各自只在打开的那一下算; 违反任意一项就整个失效 (四类都放开)
     c.start(["ent", "info3"], owner="me", now=t0)
     assert c.ban_term("game") == "ent" and c.ban_check("video", True) == "ent" and c.ban_check("video", True) == ""
-    assert c.ban_check("silent", True) == "ent" and c.violate("ent") == (False, "ent") and c.term_level("ent") == 3
-    assert c.ban_check("silent", True) == "" and c.ban_check("game", True) == "ent"
+    assert c.violate("ent") == (False, "") and not c.has("ent") and c.level == 3
+    assert c.ban_term("game") == "" and c.ban_check("silent", True) == ""
+    # 完成时还在: 今天的联网额度 +20 分钟; 失效了 / 失败 / 提前结束不给
+    g = Contract(tempfile.mkdtemp())
+    g.start(["ent"], owner="me", now=t0)
+    assert g.finish("completed", t0 + timedelta(hours=5))["net_gift"] == 20 * 60
+    g.start(["ent"], owner="me", now=t0)
+    g.violate("ent")
+    assert g.finish("completed", t0 + timedelta(hours=5))["net_gift"] == 0, "失效了就不给"
+    g.start(["ent"], owner="me", now=t0)
+    assert g.finish("abandoned", t0 + timedelta(hours=1))["net_gift"] == 0
     # 信息隔绝: 休息时间额外 ×1.3 (和疲惫相乘); 降成信息阻断-III 后没有了
     c.start(["isolate", "tired2"], owner="me", now=t0)
     assert abs(c.rest_factor() - 0.75 * 1.3) < 1e-9 and abs(c.book_rest(1000, t0) - 975) < 1e-6

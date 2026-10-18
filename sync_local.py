@@ -87,7 +87,7 @@ class PcLocal:
         dm, n = self.app.dm, self.app.net
         return {
             "net": {"date": n.date, "used": round(n.used, 1), "bonus": n.bonus,
-                    "tomorrow_used": n.tomorrow_used, "debt": n.debt},
+                    "tomorrow_used": n.tomorrow_used, "debt": n.debt, "gift": n.gift},
             "study": {k: round(v, 4) for k, v in dm.study_data.items()},
             "focus": [dict(r) for r in dm.focus_sessions],
             "usage": [dict(r) for r in n.usage],

@@ -82,8 +82,15 @@ class ContractTest {
         e.start(listOf("ent", "gaze", "info3"), "me", t0)
         assertEquals("ent", e.banTerm("game")); assertEquals(listOf("camera"), e.records())
         assertEquals("ent", e.banCheck("video", true)); assertEquals("", e.banCheck("video", true))
-        assertEquals(false to "ent", e.violate("ent")); assertEquals(3, e.termLevel("ent"))
-        assertEquals("ent", e.banCheck("silent", true))
+        // 违反任意一项就整个失效, 四类都放开; 失效了完成时也不给联网额度
+        assertEquals(false to "", e.violate("ent")); assertFalse(e.has("ent"))
+        assertEquals("", e.banTerm("silent")); assertEquals("", e.banCheck("silent", true))
+        assertEquals(0, e.finish("completed", t0.plusHours(5))!!.optInt("net_gift"))
+        e.start(listOf("ent", "gaze"), "me", t0)
+        assertEquals(20 * 60, e.finish("completed", t0.plusHours(5))!!.optInt("net_gift"))
+        e.start(listOf("ent", "gaze"), "me", t0)
+        assertEquals(0, e.finish("abandoned", t0.plusHours(1))!!.optInt("net_gift"))
+        e.start(listOf("ent", "gaze"), "me", t0)
         assertEquals(false to "", e.violate("gaze")); assertEquals(emptyList<String>(), e.records())
         // 信息隔绝: 休息时间 ×1.3 (和疲惫相乘), 降成信息阻断-III 后没有了
         e.start(listOf("isolate", "tired2"), "me", t0)

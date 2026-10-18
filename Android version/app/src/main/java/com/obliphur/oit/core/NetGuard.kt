@@ -23,8 +23,8 @@ class NetGuard(
     /** 状态变了 (联网 / 断网 / 开发者模式) 时调用; force=true 是定期复查. */
     var backend: (force: Boolean) -> Unit = {}
     var dead = false
-    /** 设备同步: 其他设备今天的 [used, bonus, tomorrow_used, debt] 之和 (MECHANICS 15). */
-    var peerNet: () -> DoubleArray = { DoubleArray(4) }
+    /** 设备同步: 其他设备今天的 [used, bonus, tomorrow_used, debt, gift] 之和 (MECHANICS 15). */
+    var peerNet: () -> DoubleArray = { DoubleArray(5) }
     /** 设备同步: 其他设备的联网会话 (按理由统计用). */
     var peerUsage: () -> List<JSONObject> = { emptyList() }
 
@@ -39,6 +39,8 @@ class NetGuard(
         private set
     var used = 0.0
     var bonus = 0.0
+    /** 今天合约奖励的额度 (完成带"互联网娱乐的败退"的合约), 不用还. */
+    var gift = 0.0
     var tomorrowUsed = 0.0
     var debt = 0.0
     @Volatile
@@ -76,8 +78,9 @@ class NetGuard(
     val bonusAll get() = bonus + peerNet()[1]
     val tomorrowUsedAll get() = tomorrowUsed + peerNet()[2]
     val debtAll get() = debt + peerNet()[3]
+    val giftAll get() = gift + peerNet().let { if (it.size > 4) it[4] else 0.0 }
 
-    val todayTotal get() = limit + bonusAll
+    val todayTotal get() = limit + bonusAll + giftAll
     val remaining get() = maxOf(0.0, todayTotal - usedAll - debtAll)
     val tomorrowRemaining get() = maxOf(0.0, tomorrowLimit - tomorrowUsedAll)
     val quickLeft get() = remaining / quickMult
@@ -101,7 +104,7 @@ class NetGuard(
         val saved = d.optString("date", "")
         fun num(k: String) = maxOf(0.0, d.dbl(k))
         if (saved == date) {
-            used = num("used"); bonus = num("bonus")
+            used = num("used"); bonus = num("bonus"); gift = num("gift")
             tomorrowUsed = num("tomorrow_used"); debt = num("debt")
         } else if (saved.isNotEmpty() && saved < date) {
             // 程序关着跨过了零点: 借贷要还的部分照样变成今天的欠款 (隔了几天也一样)
@@ -116,7 +119,8 @@ class NetGuard(
     fun save() {
         if (dead) return
         Store.write(stateFile, JSONObject().put("date", date).put("used", used.toLong())
-            .put("bonus", bonus.toLong()).put("tomorrow_used", tomorrowUsed.toLong()).put("debt", debt.toLong()))
+            .put("bonus", bonus.toLong()).put("gift", gift.toLong()).put("tomorrow_used", tomorrowUsed.toLong())
+            .put("debt", debt.toLong()))
         saveUsage()
         sinceSave = 0.0
     }
@@ -194,6 +198,13 @@ class NetGuard(
         save()
         log("LOAN     +$minutes min today, -${(minutes * loanRate).toInt()} min tomorrow  reason: $reason")
         return null
+    }
+
+    /** 合约的奖励: 今天的额度多给 seconds 秒 (不用还, 零点清零). */
+    fun addGift(seconds: Double, reason: String) {
+        gift += maxOf(0.0, seconds)
+        save()
+        log("GIFT     +${(seconds / 60).toInt()} min today  reason: $reason")
     }
 
     fun canQuick(minutes: Double): String? {
@@ -289,6 +300,7 @@ class NetGuard(
         debt = maxOf(0.0, tomorrowUsed)
         tomorrowUsed = 0.0
         bonus = 0.0
+        gift = 0.0
         used = 0.0
         save()
     }

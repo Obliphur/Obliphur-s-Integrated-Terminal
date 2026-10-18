@@ -1372,7 +1372,7 @@ def _call(obj, name: str, default, *args):
 
 def peer_net(ledgers, date: str) -> dict:
     """其他设备今天的联网额度用量之和 (只算日期是今天的)."""
-    out = {"used": 0.0, "bonus": 0.0, "tomorrow_used": 0.0, "debt": 0.0}
+    out = {"used": 0.0, "bonus": 0.0, "tomorrow_used": 0.0, "debt": 0.0, "gift": 0.0}
     for led in ledgers:
         n = led.get("net") or {}
         if n.get("date") != date:
