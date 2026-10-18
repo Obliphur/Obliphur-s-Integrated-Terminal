@@ -157,7 +157,7 @@ fun CalendarScreen() {
     val today = LocalDate.now()
     val ym = YearMonth.from(today).let { if (last) it.minusMonths(1) else it }
     val prefix = "%d-%02d".format(ym.year, ym.monthValue)
-    // 合约的黑雾 (MECHANICS 18.3): 随机的学习时长, 月份和合计写成 [CENSORED]
+    // 合约的黑雾 (MECHANICS 18.3): 随机的学习时长, 月份和合计写成 ???
     val fog = core.contract.fog()
     val data = if (fog) java.util.Random("${core.contract.id}/$prefix".hashCode().toLong()).let { r ->
         (1..ym.lengthOfMonth()).map { ym.atDay(it) }.filter { !it.isAfter(today) }
@@ -165,11 +165,11 @@ fun CalendarScreen() {
     } else core.dm.monthStudy(prefix)
     PageColumn {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(if (fog) "[CENSORED]" else prefix, fontWeight = FontWeight.Bold, fontSize = 18.sp, color = o.text,
+            Text(if (fog) "???" else prefix, fontWeight = FontWeight.Bold, fontSize = 18.sp, color = o.text,
                 modifier = Modifier.weight(1f))
             Segmented(listOf("last" to tr("‹ 上月"), "this" to tr("本月 ›")), if (last) "last" else "this") { last = it == "last" }
         }
-        Dim(if (fog) tr("合计: [CENSORED]") else tr("合计 {h} h", "h" to f1(data.values.sum())))
+        Dim(if (fog) tr("合计: ???") else tr("合计 {h} h", "h" to f1(data.values.sum())))
         val names = if (OitApp.instance.core.settings.str("LANGUAGE") == "en")
             listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun") else listOf("一", "二", "三", "四", "五", "六", "日")
         Row { names.forEach { Text(it, color = o.dim, textAlign = TextAlign.Center, modifier = Modifier.weight(1f)) } }
@@ -251,9 +251,9 @@ fun StatsScreen() {
         val blank = tr("空白")
         val fog = core.contract.fog()
         val data: Map<String, Double> = if (fog) {
-            // 合约的黑雾 (MECHANICS 18.3): 不显示真正的数据, 10 个没有意义的项, 比例随机, 名字都是 ***
+            // 合约的黑雾 (MECHANICS 18.3): 不显示真正的数据, 10 个没有意义的项, 比例随机, 名字都是 ???
             val r = java.util.Random("${core.contract.id}/$page/$prefix".hashCode().toLong())
-            (0 until FOG_ITEMS).associate { "***" + "\u200b".repeat(it) to (1 + r.nextDouble() * 8) * 3600 }
+            (0 until FOG_ITEMS).associate { "???" + "\u200b".repeat(it) to (1 + r.nextDouble() * 8) * 3600 }
         } else when (page) {
             "log" -> core.dm.hourActivitySeconds(prefix)
             "window" -> core.dm.windowSeconds(prefix, device).entries.groupBy({
@@ -262,7 +262,7 @@ fun StatsScreen() {
             else -> tallyItems(core.net.usageByReason(prefix))
         }
         Text("${if (last) tr("上月") else tr("本月")} · $prefix", fontWeight = FontWeight.Bold, color = o.text)
-        PieBlock(data, pct, if (page == "window" && !fog) blank else null, if (fog) "***" else tr("其他"))
+        PieBlock(data, pct, if (page == "window" && !fog) blank else null, if (fog) "???" else tr("其他"))
     }
 }
 
@@ -353,7 +353,7 @@ private fun FocusBars() {
     for (i in 0 until 7) {
         val day = today.minusDays(i.toLong())
         val hours = if (fog) fogHours(core.contract.id, day, now) else core.dm.focusHours(day, live)
-        Text(if (fog) "[CENSORED]" else "%02d-%02d %s".format(day.monthValue, day.dayOfMonth, weekNames[day.dayOfWeek.value - 1]) +
+        Text(if (fog) "???" else "%02d-%02d %s".format(day.monthValue, day.dayOfMonth, weekNames[day.dayOfWeek.value - 1]) +
             if (i == 0) "  " + tr("今天") else "", fontSize = 12.sp, color = o.dim)
         Canvas(Modifier.fillMaxWidth().height(34.dp).pointerInput(day) {
             detectTapGestures { p -> sel = day to (p.x / size.width * 24).toInt().coerceIn(0, 23) }
@@ -376,7 +376,7 @@ private fun FocusBars() {
     }
     sel?.let { (d, h) ->
         val (s, b) = (if (fog) fogHours(core.contract.id, d, now) else core.dm.focusHours(d, live))[h]
-        Text((if (fog) "[CENSORED] " else "%02d-%02d ".format(d.monthValue, d.dayOfMonth)) +
+        Text((if (fog) "??? " else "%02d-%02d ".format(d.monthValue, d.dayOfMonth)) +
             "%02d:00–%02d:00 · ".format(h, (h + 1) % 24) +
             tr("专注 {s} 分 · 休息 {b} 分", "s" to Math.round(s / 60), "b" to Math.round(b / 60)),
             color = o.text, fontSize = 13.sp)

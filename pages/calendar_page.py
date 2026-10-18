@@ -22,7 +22,7 @@ class CalendarPage(tk.Frame):
     def __init__(self, master, data_manager):
         super().__init__(master, bg=COLORS["bg"])
         self.dm = data_manager
-        # 合约的黑雾 (MECHANICS 18.3): 不为 None 时显示随机的学习时长, 月份和合计写成 [CENSORED]
+        # 合约的黑雾 (MECHANICS 18.3): 不为 None 时显示随机的学习时长, 月份和合计写成 ???
         self.fog = lambda: None
         self.display_year = datetime.now().year
         self.display_month = datetime.now().month
@@ -114,7 +114,7 @@ class CalendarPage(tk.Frame):
             year=self.display_year, month=months[self.display_month - 1]
         )
         seed = self.fog()
-        cfg(self.lbl_month_title, text="[CENSORED]" if seed is not None else title)
+        cfg(self.lbl_month_title, text="???" if seed is not None else title)
         self._apply_day_headers()
 
         cal = calendar.monthcalendar(self.display_year, self.display_month)
@@ -131,7 +131,7 @@ class CalendarPage(tk.Frame):
             rnd = random.Random(f"{seed}/{prefix}")
             month_data = {f"{prefix}-{d:02d}": round(rnd.uniform(0, 9), 1)
                           for d in range(1, 32) if f"{prefix}-{d:02d}" <= today_str}
-            cfg(self.lbl_month_total, text=tr("合计: [CENSORED]"))
+            cfg(self.lbl_month_total, text=tr("合计: ???"))
         else:
             cfg(self.lbl_month_total, text=tr("合计: {h:.1f} h").format(h=month_total))
 

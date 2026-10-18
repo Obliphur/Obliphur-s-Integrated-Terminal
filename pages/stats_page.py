@@ -230,9 +230,9 @@ class StatsPage(tk.Frame):
     def _data(self, prefix: str):
         seed = self.fog()
         if seed is not None:
-            # 黑雾: 不显示真正的数据, 10 个没有意义的项, 比例随机, 名字都是 ***
+            # 黑雾: 不显示真正的数据, 10 个没有意义的项, 比例随机, 名字都是 ???
             rnd = random.Random(f"{seed}/{self.page}/{prefix}")
-            return {"***" + "\u200b" * i: rnd.uniform(1, 9) * 3600 for i in range(FOG_ITEMS)}
+            return {"???" + "\u200b" * i: rnd.uniform(1, 9) * 3600 for i in range(FOG_ITEMS)}
         if self.page == "log":
             return self.dm.hour_activity_seconds(prefix)
         if self.page == "window":
@@ -312,7 +312,7 @@ class StatsPage(tk.Frame):
         col["other"] = [(k, v) for k, v in items if k not in shown]
         slices = [(k, v, self._color(i, k)) for i, (k, v) in enumerate(main)]
         if col["other"]:
-            slices.append(("***" if self.fog() is not None else tr("其他"),
+            slices.append(("???" if self.fog() is not None else tr("其他"),
                            sum(v for _, v in col["other"]), _c("chart_other")))
         col["other_row"] = len(main) if col["other"] else None
         col["grand"] = total
@@ -498,7 +498,7 @@ class StatsPage(tk.Frame):
     @staticmethod
     def _day_label(day: datetime, today: bool, fog: bool = False) -> str:
         if fog:
-            return "[CENSORED]"
+            return "???"
         wd = (WEEKDAYS_EN if is_en() else WEEKDAYS_ZH)[day.weekday()]
         return tr("今天") + f" {wd}" if today else f"{day:%m-%d} {wd}"
 

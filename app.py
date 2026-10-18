@@ -1511,7 +1511,7 @@ class BreakTimerApp:
             cur_m = elapsed / 60.0
             if self.contract.fog():
                 # 黑雾: 专注时看不到专注时长 (预计休息时长也能推出时长, 一起不显示)
-                self.lbl_time.config(text="[CENSORED]")
+                self.lbl_time.config(text="???")
                 self.lbl_sub.config(text="")
                 self.update_job = self.root.after(200, self.update)
                 return
@@ -1564,8 +1564,8 @@ class BreakTimerApp:
 
     def refresh_display(self):
         if self.contract.fog():
-            self.lbl_today.config(text=tr("今日: [CENSORED]"))
-            self.lbl_yesterday.config(text=tr("昨日: [CENSORED]"))
+            self.lbl_today.config(text=tr("今日: ???"))
+            self.lbl_yesterday.config(text=tr("昨日: ???"))
             return
         self.lbl_today.config(text=tr("今日: {h:.1f} h").format(h=self.dm.get_today_hours()))
         self.lbl_yesterday.config(text=tr("昨日: {h:.1f} h").format(h=self.dm.get_yesterday_hours()))

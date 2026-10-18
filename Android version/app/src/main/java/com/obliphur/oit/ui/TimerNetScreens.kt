@@ -55,7 +55,7 @@ fun TimerScreen() {
             }
             StatusRow(status, color)
             when (t.state) {
-                TState.RUNNING -> if (fog) BigText("[CENSORED]") else {
+                TState.RUNNING -> if (fog) BigText("???") else {
                     // 黑雾: 专注时看不到专注时长 (预计休息时长也能推出时长, 一起不显示)
                     val m = t.elapsed / 60.0
                     BigText("${f2(m)} min")
@@ -76,9 +76,9 @@ fun TimerScreen() {
                 }
             }
             Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-                Text(if (fog) tr("今日: [CENSORED]") else tr("今日: {h} h", "h" to f1(core.dm.todayHours())),
+                Text(if (fog) tr("今日: ???") else tr("今日: {h} h", "h" to f1(core.dm.todayHours())),
                     color = o.accent, fontWeight = FontWeight.Bold)
-                Text(if (fog) tr("昨日: [CENSORED]") else tr("昨日: {h} h", "h" to f1(core.dm.yesterdayHours())), color = o.dim)
+                Text(if (fog) tr("昨日: ???") else tr("昨日: {h} h", "h" to f1(core.dm.yesterdayHours())), color = o.dim)
             }
             // 绑定的其他设备此刻的状态 (MECHANICS 15); 有设备离线时提醒离线的那段专注不会被记录 (8.4)
             for (line in peerLines()) Dim(line, Modifier.padding(top = 4.dp), size = 13)
