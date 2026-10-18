@@ -30,7 +30,7 @@ from net_guard import NetGuard
 from data_manager import DataManager
 from settings_manager import SettingsManager
 from pages import (CalendarPage, HourLogPage, SettingsPage, RulesPage, StatsPage,
-                   ContractPage, AchievementPopups)
+                   ContractPage, AchievementsPage, AchievementPopups)
 from pages.widgets import (frozen, LoadingCover, cfg, flavor,
                            show_pack, hide_pack)
 
@@ -416,7 +416,7 @@ class BreakTimerApp:
 
 
     # _layout_steps 每建好一部分 yield 一次 (供加载页前进进度条); 次数 = LAYOUT_STEPS
-    LAYOUT_STEPS = 9
+    LAYOUT_STEPS = 10
 
     def _build_layout(self, parent, cover=None):
         for _ in self._layout_steps(parent):
@@ -521,9 +521,15 @@ class BreakTimerApp:
             on_update_check=lambda: self.check_update(auto=False),
             on_update_install=self.install_update,
             on_update_relay=lambda: self.relay_updates(manual=True),
-            sync=self.sync, achievements=self.ach
+            sync=self.sync, achievements=self.ach,
+            on_open_achievements=self._open_achievements
         )
         self._prepare_page(self.pages["settings"])
+        yield
+        # 成就 (MECHANICS 17): 单独一页, 左侧导航里没有它 (由 设置 → 基本设置 的"🏆 成就"按钮打开)
+        self.pages["ach"] = AchievementsPage(self.content, self.ach,
+                                             on_back=lambda: self.show_page("settings"))
+        self._prepare_page(self.pages["ach"])
         yield
         self.pages["rules"] = RulesPage(
             self.content, self.net.proxy, settings=self.settings, sync=self.sync,
@@ -644,8 +650,10 @@ class BreakTimerApp:
 
     def _show_page(self, key: str):
         self.current_page = key
+        # 成就页是从设置里打开的, 侧边栏仍把"设置"标成当前页 (和手机版的抽屉一样)
+        look = "settings" if key == "ach" else key
         for k, b in self.nav_btns.items():
-            if k == key:
+            if k == look:
                 cfg(b,
                     bg=COLORS["accent"], fg=COLORS["on_accent"],
                     activebackground=COLORS["accent_hover"],
@@ -678,6 +686,8 @@ class BreakTimerApp:
             self.pages["log"].show()
         elif key == "settings":
             self.pages["settings"].refresh()
+        elif key == "ach":
+            self.pages["ach"].show()
         elif key == "reset":
             self.refresh_reset()
         self.update_log_badge()
@@ -2278,6 +2288,8 @@ class BreakTimerApp:
     def _after_achievements(self, new):
         if new and "settings" in self.pages:
             self.pages["settings"].refresh_achievements()
+        if new and self.current_page == "ach" and "ach" in self.pages:
+            self.pages["ach"].refresh()
         self.ach_popups.sync()
 
     def _open_achievements(self):
@@ -2287,8 +2299,7 @@ class BreakTimerApp:
             self.root.lift()
         except tk.TclError:
             pass
-        self.show_page("settings")
-        self.pages["settings"].show_achievements()
+        self.show_page("ach")
 
     def _after_setup_change(self):
         self.update_settings_badge()

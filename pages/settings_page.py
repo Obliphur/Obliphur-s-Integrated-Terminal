@@ -17,11 +17,13 @@ class SettingsPage(tk.Frame):
     def __init__(self, master, settings, on_changed=None, on_sound=None,
                  on_dev_mode=None, on_language=None, on_font_scale=None,
                  on_theme=None, on_end_setup=None, updater=None, on_update_check=None,
-                 on_update_install=None, on_update_relay=None, sync=None, achievements=None):
+                 on_update_install=None, on_update_relay=None, sync=None, achievements=None,
+                 on_open_achievements=None):
         super().__init__(master, bg=COLORS["bg"])
         self.sm = settings
         self.ach_store = achievements
-        self.ach_panel = None
+        self.on_open_achievements = on_open_achievements
+        self.lbl_ach_count = None
         self.updater = updater
         self.on_update_check = on_update_check
         self.on_update_install = on_update_install
@@ -97,21 +99,17 @@ class SettingsPage(tk.Frame):
         for key, _text in SETTINGS_PAGES:
             self.areas[key] = ScrollArea(self.stack, height=420, bg=bg)
 
-        # ---- 基本设置: 配置期, 设备同步, 以及整个程序的外观 (语言 / 字号 / 主题) ----
+        # ---- 基本设置: 配置期, 成就, 设备同步, 以及整个程序的外观 (语言 / 字号 / 主题) ----
         self.area = self.areas["basic"]
         body = self.area.inner
         self._build_setup_card(body)
+        self._build_achievements_card(body)
         if self.sync is not None:
             from .sync_panel import SyncPanel
             self.sync_panel = SyncPanel(body, self.sync)
             self.sync_panel.pack(fill="x")
         self._build_page_items("basic")
         self._build_update_card(body)
-        # 成就 (MECHANICS 17): 不再是单独的一页, 放在基本设置里
-        if self.ach_store is not None:
-            from .achievements_page import AchievementsPanel
-            self.ach_panel = AchievementsPanel(body, self.ach_store, bg=bg)
-            self.ach_panel.pack(fill="x", pady=(10, 0))
         # 作者的话: 为什么设置要等 48 小时 (MECHANICS.md 1.1)
         for i, zh in enumerate((
                 "在设计预期上 只要不是有绝对的正当理由 应该很少有改变能坚持过48h的等待期.\n这是一个理智与本能的抗争的常见结果.\n这个软件的一个理念就是放大理智优势,保留本能空间.",
@@ -667,16 +665,39 @@ class SettingsPage(tk.Frame):
             widget.set(path)
 
 
-    def show_achievements(self):
-        """达成提示被点了: 切到基本设置, 滚到成就那一块."""
-        self.show_tab("basic")
-        self.refresh()
-        if self.ach_panel is not None:
-            self.area.scroll_to(self.ach_panel)
+    def _build_achievements_card(self, body):
+        """成就 (MECHANICS 17): 一栏 + "打开"按钮 (显示已达成的个数), 打开单独的成就页. 和手机版一样."""
+        if self.ach_store is None:
+            return
+        card = COLORS["bg_card"]
+        fr = tk.Frame(body, bg=card, highlightbackground=COLORS["border"],
+                      highlightthickness=1, cursor="hand2")
+        fr.pack(fill="x", pady=(2, 8))
+        row = tk.Frame(fr, bg=card, cursor="hand2")
+        row.pack(fill="x", padx=12, pady=10)
+        title = tk.Label(row, text=tr("🏆  成就"), bg=card, fg=COLORS["text"],
+                         font=config.font("body", bold=True), cursor="hand2")
+        title.pack(side="left")
+        self._track(title, "🏆  成就")
+        self._track(ttk.Button(row, text=tr("打开"), command=self.open_achievements),
+                    "打开").pack(side="right")
+        self.lbl_ach_count = tk.Label(row, text="", bg=card, fg=COLORS["accent"],
+                                      font=config.font("body", bold=True), cursor="hand2")
+        self.lbl_ach_count.pack(side="right", padx=(0, 10))
+        # 整块都能点 (不用非得点到按钮上)
+        for w in (fr, row, title, self.lbl_ach_count):
+            w.bind("<Button-1>", lambda _e: self.open_achievements())
+        self.refresh_achievements()
+
+    def open_achievements(self):
+        """打开成就页 (单独的页, 由主窗口切换过去)."""
+        if self.on_open_achievements is not None:
+            self.on_open_achievements()
 
     def refresh_achievements(self):
-        if self.ach_panel is not None:
-            self.ach_panel.refresh()
+        if self.lbl_ach_count is not None:
+            cfg(self.lbl_ach_count,
+                text=tr("已达成 {n}", n=len(self.ach_store.unlocked)))
 
     def refresh_sync(self):
         """设备同步那一块单独刷新 (每秒一次, 只在看着基本设置时)."""

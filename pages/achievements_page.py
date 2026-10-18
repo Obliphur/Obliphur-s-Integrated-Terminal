@@ -1,10 +1,12 @@
 import tkinter as tk
+from tkinter import ttk
 
 import config
 from config import COLORS
 from i18n import tr
 from achievements import ACHIEVEMENTS, BY_ID, is_english_name
-from .widgets import flavor, cfg, wrap_label, show_pack, hide_pack
+from .widgets import (flavor, cfg, wrap_label, show_pack, hide_pack,
+                      ScrollArea, smooth)
 
 
 def ach_name(aid: str) -> str:
@@ -18,21 +20,13 @@ def ach_text(aid: str) -> str:
 
 
 class AchievementsPanel(tk.Frame):
-    """成就 (设置 → 基本设置的第一块): 每个成就一张卡片. 没达成的只显示名字 (隐藏成就连名字也不显示),
-    不显示进度和条件."""
+    """成就卡片列表: 每个成就一张卡片. 没达成的只显示名字 (隐藏成就连名字也不显示),
+    不显示进度和条件. 标题和已达成的个数由成就页画."""
 
     def __init__(self, master, store, bg=None):
         bg = bg or COLORS["bg"]
         super().__init__(master, bg=bg)
         self.store = store
-
-        hdr = tk.Frame(self, bg=bg)
-        hdr.pack(fill="x", pady=(2, 6))
-        tk.Label(hdr, text=tr("🏆  成就"), bg=bg, fg=COLORS["text"],
-                 font=config.font("h2", bold=True)).pack(side="left")
-        self.lbl_count = tk.Label(hdr, text="", bg=bg, fg=COLORS["accent"],
-                                  font=config.font("body", bold=True))
-        self.lbl_count.pack(side="right")
 
         self.cards = {}
         for aid, *_ in ACHIEVEMENTS:
@@ -61,7 +55,6 @@ class AchievementsPanel(tk.Frame):
 
     def refresh(self):
         s = self.store
-        cfg(self.lbl_count, text=tr("已达成 {n}", n=len(s.unlocked)))
         for aid, _name, _text, hidden, _note in ACHIEVEMENTS:
             c = self.cards[aid]
             got = s.at(aid)
@@ -80,6 +73,47 @@ class AchievementsPanel(tk.Frame):
                 hide_pack(c["text"])
                 if c["note"] is not None:
                     hide_pack(c["note"])
+
+
+class AchievementsPage(tk.Frame):
+    """成就页 (MECHANICS 17): 单独一页, 由 设置 → 基本设置 的"🏆 成就"按钮打开.
+    页面上方显示已达成的个数, 右上方"← 返回设置"回到设置 (和手机版一样)."""
+
+    def __init__(self, master, store, on_back=None):
+        super().__init__(master, bg=COLORS["bg"])
+        self.store = store
+        self.on_back = on_back
+        bg = COLORS["bg"]
+
+        hdr = tk.Frame(self, bg=bg)
+        hdr.pack(fill="x", padx=28, pady=(18, 4))
+        tk.Label(hdr, text=tr("🏆  成就"), bg=bg, fg=COLORS["text"],
+                 font=config.font("h1", bold=True)).pack(side="left")
+        self.btn_back = ttk.Button(hdr, text=tr("← 返回设置"), command=self._back)
+        self.btn_back.pack(side="right")
+        self.lbl_count = tk.Label(hdr, text="", bg=bg, fg=COLORS["accent"],
+                                  font=config.font("body", bold=True))
+        self.lbl_count.pack(side="right", padx=(0, 12))
+
+        self.area = ScrollArea(self, height=420, bg=bg)
+        self.area.pack(fill="both", expand=True, padx=26, pady=(6, 18))
+        self.panel = AchievementsPanel(self.area.inner, store, bg=bg)
+        self.panel.pack(fill="x")
+        self.area.bind_children()
+
+    def _back(self):
+        if self.on_back is not None:
+            self.on_back()
+
+    @smooth
+    def show(self):
+        self.refresh()
+        self.area.scroll_to_top()
+
+    @smooth
+    def refresh(self):
+        self.panel.refresh()
+        cfg(self.lbl_count, text=tr("已达成 {n}", n=len(self.store.unlocked)))
 
 
 class AchievementPopups:

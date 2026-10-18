@@ -82,7 +82,7 @@ class ContractColors(
 
 private fun c(hex: Long) = Color(0xFF000000 or hex)
 
-/** "危机合约": 深色页面, 浅灰的词条板, 六边形格子 (选中的是蓝色), 黑色的已选中词条, 红色的开始按钮. */
+/** "起源": 深色页面, 浅灰的词条板, 六边形格子 (选中的是蓝色), 黑色的已选中词条, 红色的开始按钮. */
 val OPS_COLORS = ContractColors(
     bg = c(0x1f2023), text = c(0xf2f2f2), dim = c(0x9a9ca1), line = c(0xc8202f),
     board = c(0xd6d7da), band = c(0x2c2d31), bandText = c(0xececec), bandDim = c(0x9a9ca1),

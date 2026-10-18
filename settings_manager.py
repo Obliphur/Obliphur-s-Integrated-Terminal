@@ -198,8 +198,8 @@ SETTINGS_SCHEMA = [
     {
         "key": "CONTRACT_THEME", "label": "合约页主题",
         "kind": "choice", "apply": APPLY_INSTANT,
-        "choices": [("ops", "危机合约"), ("ui", "跟随界面主题")],
-        "fmt": lambda v: "跟随界面主题" if str(v) == "ui" else "危机合约",
+        "choices": [("ops", "起源"), ("ui", "跟随界面主题")],
+        "fmt": lambda v: "跟随界面主题" if str(v) == "ui" else "起源",
         "desc": "即时生效.合约页 (和合约页上的侧边栏) 的配色.",
         "page": "contract",
     },

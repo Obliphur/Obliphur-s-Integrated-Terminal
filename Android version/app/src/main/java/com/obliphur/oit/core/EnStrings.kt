@@ -568,7 +568,7 @@ object EnStrings {
         "🗑  清空" to "🗑  Clear",
         "挑战任务" to "Challenge",
         "合约页主题" to "Contract page theme",
-        "危机合约" to "Contingency Contract",
+        "起源" to "Basepoint",
         "跟随界面主题" to "Follow the interface theme",
         "后台应用数检测" to "Background app check",
         "后台应用数上限" to "Background app limit",

@@ -83,7 +83,7 @@ object Schema {
         num("FILL_WINDOW", "整点记录补填时限", "min", 60.0, 1.0, 1440.0, true, 3600.0, "log"),
         // ---- 合约 ----
         Spec("CONTRACT_THEME", "合约页主题", Kind.CHOICE, false, "contract", "ops",
-            choices = listOf("ops" to "危机合约", "ui" to "跟随界面主题")),
+            choices = listOf("ops" to "起源", "ui" to "跟随界面主题")),
         // ---- 窗口 (Android: 应用; 窗口数 = 后台的应用数, 只检测, 超过时响警报, 不关应用) ----
         Spec("WINDOW_LIMIT_ENABLED", "后台应用数检测", Kind.CHOICE, true, "window", "1", choices = ONOFF),
         Spec("WINDOW_FOCUS_ENABLED", "应用使用时间统计", Kind.CHOICE, true, "window", "1", choices = ONOFF),
