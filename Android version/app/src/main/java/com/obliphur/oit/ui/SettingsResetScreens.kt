@@ -303,12 +303,19 @@ private fun PageExtras(tab: String, act: MainActivity) {
                 color = if (ignoring) o.success else o.warn)
             if (restricted) Dim(tr("电池设置为\"受限\": 在后台时 OIT 会被停下"), size = 13, color = o.warn)
             if (data) Dim(tr("限制了后台数据: 移动数据上在后台时不能同步"), size = 13, color = o.warn)
-            Dim(tr("在后台或熄屏时继续同步需要以上限制都解除; 部分手机 (小米, 华为, OPPO, vivo 等) 还要在系统设置里允许 OIT 自启动 / 后台运行, 电池设为\"无限制\"."),
+            bg.lastPauseAt?.let {
+                Dim(tr("本次运行中被系统暂停过 {n} 次, 最近一次 {at} 起停了 {min} 分钟: 这段时间不能同步",
+                    "n" to bg.pauses, "at" to it.format(com.obliphur.oit.core.Fmt.HM), "min" to (bg.lastPauseSec + 59) / 60),
+                    size = 13, color = o.warn)
+            }
+            Dim(tr("在后台或熄屏时继续同步需要以上限制都解除. 部分手机 (vivo, 小米, 华为, OPPO 等) 不管这些, 照样在后台冻结 OIT: 还要在\"后台耗电\"里允许 OIT 后台高耗电 (或把电池设为\"无限制\"), 并允许自启动."),
                 size = 12, color = o.dim)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (!ignoring) PlainButton(tr("解除电池优化")) { bg.requestBattery(ctx) }
                 if (data) PlainButton(tr("允许后台数据")) { bg.dataSaver(ctx) }
-                PlainButton(if (bg.hasOemPage(ctx)) tr("自启动 / 后台运行") else tr("应用信息 (电池)")) { bg.openOem(ctx) }
+                if (bg.hasPowerPage(ctx)) PlainButton(tr("后台耗电 (允许后台高耗电)")) { bg.openPower(ctx) }
+                if (bg.hasAutostart(ctx)) PlainButton(tr("自启动")) { bg.openAutostart(ctx) }
+                PlainButton(tr("应用信息 (电池)")) { bg.appDetails(ctx) }
             }
         }
         "net" -> OitCard {

@@ -159,9 +159,14 @@ class NoticeReceiver : BroadcastReceiver() {
 class CoreService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private var n = 0
+    private var lastRun = 0L
     private val loop = object : Runnable {
         override fun run() {
             val app = OitApp.instance
+            // 唤醒锁拿着却隔了很久才轮到这里: 这段时间 OIT 被系统冻结了 (见 Background.noteGap)
+            val now = SystemClock.elapsedRealtime()
+            if (lastRun > 0) Background.noteGap(now - lastRun, wake != null)
+            lastRun = now
             app.core.tick()
             if (++n % 5 == 0) {
                 Notifier.updateStatus(this@CoreService)

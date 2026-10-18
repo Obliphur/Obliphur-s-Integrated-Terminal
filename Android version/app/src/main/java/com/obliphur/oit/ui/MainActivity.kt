@@ -389,13 +389,20 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
                             }
                         }
                         // 绑定了其他设备, 系统却会在后台 / 熄屏时限制 OIT: 同步会停 (MECHANICS 15.3)
-                        if (core.hasPeers() && !com.obliphur.oit.service.Background.ok(act)) {
+                        // 也包括: 查到 OIT 最近确实被系统冻结过 (手机厂商自己的后台限制, 例如 vivo 没有"允许后台高耗电")
+                        val bgPaused = com.obliphur.oit.service.Background.pausedRecently()
+                        if (core.hasPeers() && (!com.obliphur.oit.service.Background.ok(act) || bgPaused)) {
                             Row(Modifier.fillMaxWidth().background(o.dangerBg).padding(horizontal = 16.dp, vertical = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically) {
-                                Text(tr("在后台 / 熄屏时同步会被系统暂停"), color = o.danger, modifier = Modifier.weight(1f))
+                                Text(if (bgPaused) tr("OIT 在后台被系统暂停过, 这段时间没有同步") else tr("在后台 / 熄屏时同步会被系统暂停"),
+                                    color = o.danger, modifier = Modifier.weight(1f))
                                 DangerButton(tr("去解除")) {
-                                    if (!com.obliphur.oit.service.Background.batteryIgnored(act)) com.obliphur.oit.service.Background.requestBattery(act)
-                                    else go("settings:basic")
+                                    val bg = com.obliphur.oit.service.Background
+                                    when {
+                                        !bg.batteryIgnored(act) -> bg.requestBattery(act)
+                                        bgPaused && bg.hasOemPage(act) -> bg.openOem(act)
+                                        else -> go("settings:basic")
+                                    }
                                 }
                             }
                         }
