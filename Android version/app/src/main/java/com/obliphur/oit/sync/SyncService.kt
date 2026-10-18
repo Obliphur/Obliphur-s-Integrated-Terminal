@@ -83,6 +83,8 @@ class Found(val id: String, val name: String, val platform: String, val addr: St
  */
 /** 记住"哪台设备已经重置 / 卸载了"多久 (统计只保留本月和上月). */
 private const val GONE_KEEP_MS = 62L * 86_400_000
+/** 没有绑定、只是别的设备转交过来的设备, 这么久没有新消息就不再显示, 也不再算"离线" (它多半已经卸载了). 同 devsync.STALE_FWD_MS. */
+private const val STALE_FWD_MS = 24L * 3_600_000
 
 class SyncService(
     dir: File,
@@ -585,6 +587,7 @@ class SyncService(
 
     private fun addPeer(id: String, name: String, platform: String, addr: String, port: Int, k: ByteArray, mother: String) {
         lock.withLock {
+            state.getJSONObject("gone").remove(id)          // 解除过又重新绑定
             state.getJSONObject("peers").put(id, JSONObject().put("name", name).put("platform", platform)
                 .put("addr", addr).put("port", port).put("key", SyncCrypto.hex(k)).put("mother", mother)
                 .put("paired_at", System.currentTimeMillis()).put("last_ok", 0).put("last_err", "")
@@ -653,12 +656,16 @@ class SyncService(
 
     // ---- 解除绑定 ----
 
-    /** forget: 对方重置 / 卸载了 —— 它的数据在所有设备上都删掉 (转告其他设备, 见 gone). */
+    /** 解除绑定, 并删掉本机保留的对方的数据 (账, 状态). 一律记进 gone 并转告其他设备 (同 devsync.unpair):
+     *  以前只有 forget (对方重置 / 卸载了) 时才记, 手动解除的设备 —— 例如没有先解除绑定就卸载了 OIT 的那台 ——
+     *  它的状态会被其他设备 (或解除前已经发出的那一轮同步) 送回来, 之后一直显示"离线", 却不在绑定列表里, 再也解除不掉.
+     *  forget 保留给旧的调用方, 现在和不带它一样. */
+    @Suppress("UNUSED_PARAMETER")
     fun unpair(peerId: String, notify: Boolean = true, forget: Boolean = false) {
         val p = lock.withLock {
             state.getJSONObject("ledgers").remove(peerId)
             state.getJSONObject("status").remove(peerId)
-            if (forget) state.getJSONObject("gone").put(peerId, System.currentTimeMillis())
+            state.getJSONObject("gone").put(peerId, System.currentTimeMillis())
             state.getJSONObject("peers").remove(peerId) as? JSONObject
         }
         save()
@@ -800,10 +807,14 @@ class SyncService(
                 }
             }
             val sts = state.getJSONObject("status")
+            val goneNow = state.getJSONObject("gone")
+            val peersNow = state.getJSONObject("peers")
             snap.optJSONObject("status")?.let { r ->
                 for (did in r.keys()) {
                     if (did == myId) continue
                     val s = r.optJSONObject(did) ?: continue
+                    // 已经解除 / 重置 / 卸载的设备留下的旧状态
+                    if (goneNow.has(did) && !peersNow.has(did) && s.optLong("ts") <= goneNow.optLong(did)) continue
                     if (s.optLong("ts") > (sts.optJSONObject(did)?.optLong("ts", -1) ?: -1)) sts.put(did, s)
                 }
             }
@@ -872,6 +883,8 @@ class SyncService(
             if (st == 409 && reply.optString("error") == "initializing") return null
             if (st != 200) throw IllegalStateException(reply.optString("error", "HTTP $st"))
             val body = SyncCrypto.unseal(k, reply)
+            // 等回复的时候解除了绑定: 回复里的东西不要了 (否则对方的状态又被并回来, 成了解除不掉的"离线"设备)
+            if (!peers().containsKey(peerId)) return false
             runner.call { merge(body.optJSONObject("snap"), init) }
             lock.withLock {
                 state.getJSONObject("peers").optJSONObject(peerId)?.let { q ->
@@ -996,6 +1009,7 @@ class SyncService(
      *  转交过来的设备 OFFLINE_FWD_MS 之内有消息. 不管它此刻在专注 / 休息 / 空闲, 同步失败就算离线. */
     fun deviceStates(): List<DeviceState> = lock.withLock {
         val now = System.currentTimeMillis()
+        if (pruneForwarded(now)) save()
         val peers = state.getJSONObject("peers")
         val status = state.getJSONObject("status")
         val gone = state.getJSONObject("gone")
@@ -1015,6 +1029,25 @@ class SyncService(
                 DeviceState(id, name, now - seen < OFFLINE_FWD_MS, st, seen)
             }
         }.sortedBy { it.name }
+    }
+
+    /** 删掉没有绑定、也不可能再有人转交过来的设备的状态和账 (记进 gone, 免得又被送回来):
+     *  本机一台绑定的设备都没有时全部删掉; 否则删掉 STALE_FWD_MS 之内没有新消息的. 返回删过没有. 同 devsync._prune_forwarded. */
+    private fun pruneForwarded(now: Long): Boolean = lock.withLock {
+        val peers = state.getJSONObject("peers")
+        val status = state.getJSONObject("status")
+        val ledgers = state.getJSONObject("ledgers")
+        val gone = state.getJSONObject("gone")
+        val drop = (status.keys().asSequence() + ledgers.keys().asSequence()).toSet().filter { did ->
+            did != myId && !peers.has(did) &&
+                (peers.length() == 0 || now - (status.optJSONObject(did)?.optLong("ts") ?: 0L) >= STALE_FWD_MS)
+        }
+        for (did in drop) {
+            status.remove(did)
+            ledgers.remove(did)
+            gone.put(did, maxOf(gone.optLong(did), now))
+        }
+        drop.isNotEmpty()
     }
 
     /** 每隔几秒调用一次: 记下每台设备离线的时间段 (从最后一次有它的消息算起, 到重新有消息为止). */

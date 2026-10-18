@@ -50,6 +50,8 @@ OFFLINE_MS = (SYNC_EVERY + 5) * 1000
 OFFLINE_FWD_MS = (2 * SYNC_EVERY + 5) * 1000
 UPDATE_MAX = 160 * 1024 * 1024    # 设备之间直接传的安装包最大多少
 OFFER_TTL = 1800                  # 秒: 发出的安装包多久之内可以来取
+# 没有绑定、只是别的设备转交过来的设备, 这么久没有新消息就不再显示, 也不再算"离线" (它多半已经卸载了)
+STALE_FWD_MS = 24 * 3600_000
 FRESH_MS = 120_000         # 毫秒: 这么久之内同步过的设备才算"在线" (比较最后操作时间用)
 PAIR_TIMEOUT = 120         # 秒: 等对方确认绑定
 TS_SKEW = 300              # 秒: 请求里的时间戳允许和本机相差多少
@@ -493,6 +495,7 @@ class SyncService:
 
     def _add_peer(self, peer_id, info, addr, port, k, mother):
         with self.lock:
+            self.state["gone"].pop(peer_id, None)       # 解除过又重新绑定
             self.state["peers"][peer_id] = {
                 "name": str(info.get("name") or "?"), "platform": str(info.get("platform") or "?"),
                 "addr": addr, "port": int(port), "key": k.hex(), "mother": mother,
@@ -573,13 +576,15 @@ class SyncService:
     # ---- 解除绑定 ----
 
     def unpair(self, peer_id: str, notify: bool = True, forget: bool = False):
-        """forget: 对方重置 / 卸载了 —— 它的数据在所有设备上都删掉 (转告其他设备, 见 gone)."""
+        """解除绑定, 并删掉本机保留的对方的数据 (账, 状态).
+        一律记进 gone 并转告其他设备: 以前只有 forget (对方重置 / 卸载了) 时才记, 手动解除的设备 ——
+        例如没有先解除绑定就卸载了 OIT 的那台 —— 它的状态会被其他设备 (或解除前已经发出的那一轮同步) 送回来,
+        之后一直显示"离线", 却不在绑定列表里, 再也解除不掉. forget 保留给旧的调用方, 现在和不带它一样."""
         with self.lock:
             p = self.state["peers"].pop(peer_id, None)
             self.state["ledgers"].pop(peer_id, None)
             self.state["status"].pop(peer_id, None)
-            if forget:
-                self.state["gone"][peer_id] = _now_ms()
+            self.state["gone"][peer_id] = _now_ms()
         self._save()
         self.local.changed()
         if p and notify:
@@ -677,6 +682,9 @@ class SyncService:
             for did, st in (snap.get("status") or {}).items():
                 if did == my or not isinstance(st, dict):
                     continue
+                if did in self.state["gone"] and did not in self.state["peers"] \
+                        and int(st.get("ts", 0)) <= int(self.state["gone"][did]):
+                    continue                    # 已经解除 / 重置 / 卸载的设备留下的旧状态
                 if int(st.get("ts", 0)) > int((self.state["status"].get(did) or {}).get("ts", -1)):
                     self.state["status"][did] = st
         local = self.local.docs()
@@ -748,6 +756,9 @@ class SyncService:
             if st != 200:
                 raise RuntimeError(reply.get("error") or f"HTTP {st}")
             body = unseal(k, reply)
+            # 等回复的时候解除了绑定: 回复里的东西不要了 (否则对方的状态又被并回来, 成了解除不掉的"离线"设备)
+            if peer_id not in self.peers():
+                return False
             self.runner.call(lambda: self.merge(body.get("snap"), init=init))
             with self.lock:
                 q = self.state["peers"].get(peer_id)
@@ -1021,6 +1032,8 @@ class SyncService:
         online: 绑定的设备 —— 最近一次同步没有失败, 而且 OFFLINE_MS 之内有它的消息;
                 转交过来的设备 —— OFFLINE_FWD_MS 之内有它的消息."""
         now = _now_ms()
+        if self._prune_forwarded(now):
+            self._save()
         with self.lock:
             peers, status = self.state["peers"], self.state["status"]
             ids = (set(peers) | set(status)) - (set(self.state["gone"]) - set(peers))
@@ -1039,6 +1052,24 @@ class SyncService:
                             "timer": st.get("timer") or "idle", "net": st.get("net") or "",
                             "since": st.get("since"), "seen": seen})
         return sorted(out, key=lambda d: d["name"])
+
+    def _prune_forwarded(self, now: float) -> bool:
+        """删掉没有绑定、也不可能再有人转交过来的设备的状态和账 (记进 gone, 免得又被送回来):
+        本机一台绑定的设备都没有时全部删掉; 否则删掉 STALE_FWD_MS 之内没有新消息的. 返回删过没有."""
+        with self.lock:
+            peers, gone = self.state["peers"], self.state["gone"]
+            changed = False
+            for did in set(self.state["status"]) | set(self.state["ledgers"]):
+                if did == self.my_id or did in peers:
+                    continue
+                st = self.state["status"].get(did) or {}
+                if peers and now - float(st.get("ts", 0) or 0) < STALE_FWD_MS:
+                    continue
+                self.state["status"].pop(did, None)
+                self.state["ledgers"].pop(did, None)
+                gone[did] = max(int(gone.get(did, 0)), int(now))
+                changed = True
+            return changed
 
     def track_offline(self):
         """每秒调用一次: 记下每台设备离线的时间段 (从最后一次有它的消息算起, 到重新有消息为止)."""
@@ -1486,6 +1517,20 @@ def _selftest():
         assert sb.outgoing["state"] == "accepted" and lb.cleared == 1, (sb.outgoing, lb.cleared)
         assert not sb.peers()[sa.my_id]["last_err"] and not sa.peers()[sb.my_id]["last_err"]
         assert sa.peers()[sb.my_id]["last_ok"], "子端初始化时母端也记下了这次同步"
+        # 手动解除绑定: 解除后再送来的对方的旧状态 / 旧账不收, 也不会成为解除不掉的"离线"设备
+        sx = SyncService(tempfile.mkdtemp(), _FakeLocal("X"), runner, name="X", http_port=17980, udp_port=17981)
+        sx.state["peers"]["zz"] = {"name": "Z", "platform": "android", "addr": "1.2.3.4", "port": 1,
+                                   "key": "00", "mother": sx.my_id}
+        sx.state["status"]["zz"] = {"ts": 10, "timer": "idle"}
+        sx.unpair("zz", notify=False)
+        sx.merge({"status": {"zz": {"ts": 20, "timer": "idle"}}, "ledgers": {"zz": {"rev": 20, "name": "Z"}}})
+        assert "zz" not in sx.state["status"] and "zz" not in sx.state["ledgers"], sx.state
+        assert not [d for d in sx.device_states() if d["id"] == "zz"]
+        # 旧版本留下的残留: 没有绑定设备时全部清掉
+        sx.state["status"]["old"] = {"ts": _now_ms(), "timer": "idle"}
+        sx.state["ledgers"]["old"] = {"rev": 1, "name": "Old"}
+        assert sx.device_states() == [] and "old" not in sx.state["status"] and "old" in sx.state["gone"]
+
         # B 重置: 让 A 解除绑定并删掉 A 保留的 B 的数据, A 再转告别的设备 (gone)
         assert sa._sync_with(sb.my_id)
         assert sb.my_id in sa.state["ledgers"]
@@ -1511,6 +1556,9 @@ def _selftest():
 
         # 离线的时间段: 从最后一次有消息算起, 到重新有消息为止
         t0 = _now_ms()
+        # dX 是绑定的设备 pY 转交过来的 (本机一台绑定的设备都没有时, 转交过来的不可能还在, 会被清掉)
+        sc.state["peers"]["pY"] = {"name": "Y", "platform": "windows", "addr": "127.0.0.1", "port": 1,
+                                   "key": "00", "mother": "pY", "last_ok": t0, "last_err": ""}
         sc.state["status"]["dX"] = {"ts": t0 - 10 * 60_000, "timer": "running"}
         sc.state["ledgers"]["dX"] = {"rev": 1, "name": "X"}
         states = {d["id"]: d for d in sc.device_states()}
@@ -1523,6 +1571,10 @@ def _selftest():
         spans = sc.offline_spans(t0 - 20 * 60_000, t0 + 60_000)
         assert spans == [(t0 - 10 * 60_000, t0 - 1000)], spans
         assert sc.offline_spans(t0, t0 + 60_000) == [], "重新上线之后不算离线"
+        # 转交过来的设备一天没有消息: 不再显示
+        sc.state["status"]["dX"]["ts"] = t0 - STALE_FWD_MS - 1000
+        assert "dX" not in {d["id"] for d in sc.device_states()} and "dX" in sc.state["gone"]
+        sc.state["peers"].pop("pY")
         runner.call(lambda: sb.unpair(sa.my_id, notify=False))
         # 请求体读不出来 (例如太大): 回 400, 不再冒充"没绑定"
         assert sa._on_sync({})[0] == 400
