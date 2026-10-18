@@ -118,7 +118,8 @@ DEEP = {"deep1": 40 * 60, "deep2": 60 * 60}     # 纵深推进: 一段专注至�
 COOLDOWN_X = {"erode1": 2.0, "erode2": 3.0}     # 侵蚀: 网络申请的冷静期乘多少 (硬规则)
 RANDOM = "unknown"                              # 未知变量: 合约的每个小时开始时随机启用一个 1-2 级的词条
 RANDOM_LEVELS = (1, 2)
-RANDOM_SKIP = {"gaze", "scar"}                  # 不会选中录像的词条
+RANDOM_SKIP = {"gaze", "scar", "long1", "long2"}  # 不会选中录像和持久战的词条
+# 未知变量选中退路封锁 (目标生命值减少后不为 0 才选): 只在选中的那个小时里有效, 这个小时结束时移除
 
 # 总等级 → 完成合约时给的休息时间 (分钟, 固定; 按结束时的等级)
 # 每 3 级一档. 15 级以内每档只多 2 分钟, 16 级起每档多 10 分钟; 25 级 (差不多选满) 起封顶 90 分钟
@@ -553,7 +554,8 @@ class Contract:
         return out
 
     def roll(self, now: datetime, rng=None) -> list:
-        """到了新的一个小时就启用一个词条. 返回这次启用的词条 (只由做自动结束的设备调用)."""
+        """到了新的一个小时就启用一个词条. 返回这次启用的 (现在还在的) 词条 (只由做自动结束的设备调用).
+        程序关着时错过的小时依次补上 (那时选中的退路封锁到了它那个小时的结束就移除)."""
         if not self.active or not self.has(RANDOM) or not self.start_at:
             return []
         end = self.end_at or now
@@ -562,28 +564,51 @@ class Contract:
         picked = []
         while done < due:
             done += 1
+            self.expire(self.start_at + timedelta(hours=done - 1))
             pool = self.random_candidates()
             if pool:
                 tid = (rng or random).choice(pool)
-                self._enable(tid)
+                self._enable(tid, self.start_at + timedelta(hours=done) if tid in LIFE else None)
                 picked.append(tid)
         if done != int(self.live.get("rand_n") or 0):
             self.live["rand_n"] = done
             self.save()
-        return picked
+        self.expire(now)
+        return list(dict.fromkeys(t for t in picked if t in self.rand))
 
-    def _enable(self, tid: str):
-        """合约中途启用一个词条: 开始时才定下来的效果在这里补上 (持久战: 时长; 支援短缺: 能用多少)."""
+    def _enable(self, tid: str, until: datetime = None):
+        """合约中途启用一个词条: 开始时才定下来的效果在这里补上 (支援短缺: 能用多少). until: 到这个时刻移除 (退路封锁)."""
         terms = clean_terms(self.terms + [tid])
         self.live["terms"] = terms
         self.live["rand"] = self.rand + [tid]
-        if tid in DURATION and self.start_at:
-            end = self.start_at + timedelta(seconds=duration_of(terms))
-            if self.end_at is None or end > self.end_at:
-                self.live["end"] = _iso(end)
+        till = dict(self.live.get("rand_until") or {})
+        till.pop(tid, None)
+        if until is not None:
+            till[tid] = _iso(until)
+        self.live["rand_until"] = till
         if tid in SUPPLY:
             self.live["supply"] = round(max(self.pre * self._supply_share(terms), self.pre_used), 1)
         self.save()
+
+    def rand_until(self, tid: str):
+        """未知变量选中的这个词条什么时候移除 (退路封锁: 选中的那个小时结束时); 一直有效时 None."""
+        if tid not in self.rand:
+            return None
+        return _parse((self.live.get("rand_until") or {}).get(tid))
+
+    def expire(self, now: datetime) -> list:
+        """未知变量选中的退路封锁: 那个小时结束了就移除 (不算违反). 返回移除的词条."""
+        till = dict(self.live.get("rand_until") or {}) if self.active else {}
+        gone = [t for t, at in till.items() if _parse(at) is None or _parse(at) <= now]
+        if not gone:
+            return []
+        rand = self.rand
+        out = [t for t in gone if t in rand]
+        self.live["terms"] = [t for t in self.terms if t not in out]
+        self.live["rand"] = [t for t in rand if t not in out]
+        self.live["rand_until"] = {t: at for t, at in till.items() if t not in gone}
+        self.save()
+        return out
 
     # ---- 软规则: 有没有违反 (由调用方算作违反: violate) ----
 
@@ -994,6 +1019,7 @@ def _selftest():
     c.start(["unknown", "info2", "long1"], owner="me", now=t0, pre=600)
     pool = c.random_candidates()
     assert "gaze" not in pool and "scar" not in pool and "info1" not in pool and "long2" not in pool
+    assert not {"long1", "long2", "long3"} & set(pool), "不选持久战"
     assert "unknown" not in pool and "isolate" not in pool and "music" in pool and "jam" in pool
     rng = _r.Random(1)
     first = c.roll(t0, rng)
@@ -1004,18 +1030,31 @@ def _selftest():
     # 点击关闭: 算一次违反, 直接去掉 (不是降级)
     t = c.rand[0]
     assert c.violate(t, drop=True) == (False, "") and t not in c.terms and t not in c.rand and c.violations == 1
-    # 选中持久战: 时长按它延长; 选中支援短缺: 补上能用多少
+    # 选中支援短缺: 补上能用多少
     c.start(["unknown"], owner="me", now=t0, pre=600)
-    c._enable("long2")
-    assert c.end_at == t0 + timedelta(seconds=int(4 * 3600 * 1.4)) and c.rand == ["long2"]
     c._enable("short1")
-    assert c.supply_limit == 300
-    # 退路封锁不会让目标生命值直接归零
+    assert c.supply_limit == 300 and c.rand == ["short1"] and c.rand_until("short1") is None
+    # 退路封锁: 目标生命值减少后不为 0 才选; 只在选中的那个小时里有效, 小时结束时移除 (不算违反)
     c.violate("")
     c.violate("")
     assert "retreat2" not in c.random_candidates() and "retreat1" in c.random_candidates()
+    c.live["rand_n"] = 1
+
+    class _Pick:
+        @staticmethod
+        def choice(pool):
+            return "retreat1" if "retreat1" in pool else pool[0]
+    assert c.roll(t0 + timedelta(hours=1, minutes=5), _Pick) == ["retreat1"]
+    assert c.violation_limit == 3 and c.life == 1 and c.rand_until("retreat1") == t0 + timedelta(hours=2)
+    assert c.expire(t0 + timedelta(hours=1, minutes=59)) == [] and c.has("retreat1")
+    assert c.expire(t0 + timedelta(hours=2)) == ["retreat1"] and not c.has("retreat1") and c.life == 2
+    assert c.violations == 2 and c.rand == ["short1"]
+    # 程序关着时错过的小时依次补上: 第 2 个小时选中的退路封锁到第 3 个小时开始时移除, 第 3 个小时又选中它
+    c.live["rand_n"] = 1
+    assert c.roll(t0 + timedelta(hours=2, minutes=30), _Pick) == ["retreat1"]
+    assert c.rand_until("retreat1") == t0 + timedelta(hours=3) and c.violation_limit == 3
     rec = c.finish("abandoned", t0 + timedelta(hours=1))
-    assert rec["rand"] == ["long2", "short1"]
+    assert rec["rand"][0] == "short1"
     # 信息隔绝: 休息时间额外 ×1.3 (和疲惫相乘); 降成信息阻断-III 后没有了
     c.start(["isolate", "tired2"], owner="me", now=t0)
     assert abs(c.rest_factor() - 0.6 * 1.3) < 1e-9 and abs(c.book_rest(1000, t0) - 780) < 1e-6

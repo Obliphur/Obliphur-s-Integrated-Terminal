@@ -195,6 +195,7 @@ class ContractTest {
         c.start(listOf("unknown", "info2", "long1"), "me", t0, pre = 600.0)
         val pool = c.randomCandidates()
         assertTrue("gaze" !in pool && "scar" !in pool && "info1" !in pool && "long2" !in pool && "unknown" !in pool)
+        assertTrue(pool.none { it.startsWith("long") })              // 不选持久战
         assertTrue("music" in pool && "jam" in pool)
         val rng = kotlin.random.Random(1)
         assertEquals(1, c.roll(t0, rng).size); assertEquals(6, c.level)
@@ -206,14 +207,18 @@ class ContractTest {
         val t = c.rand[0]
         assertEquals(false to "", c.violate(t, drop = true))
         assertFalse(t in c.terms || t in c.rand); assertEquals(1, c.violations)
-        // 选中持久战: 时长按它延长; 选中支援短缺: 补上能用多少; 退路封锁不会让目标生命值直接归零
+        // 选中支援短缺: 补上能用多少
         c.start(listOf("unknown"), "me", t0, pre = 600.0)
-        c.enable("long2")
-        assertEquals(t0.plusSeconds((4 * 3600 * 1.4).toLong()), c.endAt); assertEquals(listOf("long2"), c.rand)
         c.enable("short1")
-        assertEquals(300.0, c.supplyLimit!!, 1e-9)
+        assertEquals(300.0, c.supplyLimit!!, 1e-9); assertEquals(listOf("short1"), c.rand); assertNull(c.randUntil("short1"))
+        // 退路封锁: 目标生命值减少后不为 0 才选; 只在选中的那个小时里有效, 小时结束时移除 (不算违反)
         c.violate(""); c.violate("")
         assertTrue("retreat2" !in c.randomCandidates() && "retreat1" in c.randomCandidates())
-        assertEquals(listOf("long2", "short1"), c.finish("abandoned", t0.plusHours(1))!!.optJSONArray("rand")!!.strings())
+        c.enable("retreat1", t0.plusHours(2))
+        assertEquals(3, c.violationLimit); assertEquals(1, c.life); assertEquals(t0.plusHours(2), c.randUntil("retreat1"))
+        assertEquals(emptyList<String>(), c.expire(t0.plusHours(1).plusMinutes(59))); assertTrue(c.has("retreat1"))
+        assertEquals(listOf("retreat1"), c.expire(t0.plusHours(2)))
+        assertFalse(c.has("retreat1")); assertEquals(2, c.life); assertEquals(2, c.violations); assertEquals(listOf("short1"), c.rand)
+        assertEquals(listOf("short1"), c.finish("abandoned", t0.plusHours(1))!!.optJSONArray("rand")!!.strings())
     }
 }

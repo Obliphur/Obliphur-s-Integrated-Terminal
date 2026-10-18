@@ -2173,12 +2173,17 @@ class BreakTimerApp:
                 self.contract_violation(tr("使用了紧急借贷") if kind == "loan" else tr("联网超过了合约的额度"), tid)
                 if not c.active:
                     return
-            # 未知变量: 合约的每个小时开始时 (刚开始时也算) 随机启用一个词条
-            picked = c.roll(datetime.now())
+            # 未知变量: 合约的每个小时开始时 (刚开始时也算) 随机启用一个词条; 选中的退路封锁那个小时结束时移除
+            now = datetime.now()
+            gone = c.expire(now)
+            for tid in gone:
+                self._log_notice(f"CONTRACT unknown expired {tid}")
+                toast.info(tr("未知变量: {name} 已移除", name=tr(contract_mod.BY_ID[tid][3])))
+            picked = c.roll(now)
             for tid in picked:
                 self._log_notice(f"CONTRACT unknown -> {tid}")
                 toast.warn(tr("未知变量: 启用了 {name}", name=tr(contract_mod.BY_ID[tid][3])), timeout=10000)
-            if picked:
+            if picked or gone:
                 self._contract_changed()
                 if self.sync.peers():
                     self.sync.sync_now()

@@ -900,6 +900,8 @@ EN = {
     "关闭了未知变量选中的 {name}": "Switched off {name} picked by Unknown Variable",
     "[未知变量选中 · 点击关闭, 算一次违反]": "[Picked by Unknown Variable · click to switch off, counts as a violation]",
     "[未知变量选中 · 点击关闭]": "[Picked by Unknown Variable · click to switch off]",
+    "未知变量: {name} 已移除": "Unknown Variable: {name} removed",
+    "[{t} 移除]": "[removed at {t}]",
     "今天合约奖励的联网额度 {t}": "Online quota rewarded by contracts today: {t}",
     "终止录屏?": "Stop the screen recording?",
     "立即算一次违反 (目标生命值 -1), 刻痕失效; 已经录下的部分照样保存.": "This counts as a violation at once (target life -1) and voids Engraving; what was recorded so far is kept.",

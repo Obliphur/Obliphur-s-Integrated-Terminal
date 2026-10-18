@@ -315,7 +315,11 @@ fun ContractScreen() {
                     tr("[降了 {n} 级]", "n" to Contract.BY_ID[t]!!.level - c.termLevel(t)), false)
                 else -> SelRow(c.termLevel(t), termLine(t), false)
             }
-        } + rand.map { SelRow(c.termLevel(it), termLine(it) + "   " + tr("[未知变量选中 · 点击关闭]"), false, it) }
+        } + rand.map { id ->
+            var text = termLine(id) + "   " + tr("[未知变量选中 · 点击关闭]")
+            c.randUntil(id)?.let { text += "   " + tr("[{t} 移除]", "t" to it.format(Fmt.HM)) }
+            SelRow(c.termLevel(id), text, false, id)
+        }
         Column(Modifier.fillMaxWidth().background(p.sel).padding(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("CONTRACT SELECTED", color = p.selDim, fontSize = 11.sp, fontWeight = FontWeight.Bold)

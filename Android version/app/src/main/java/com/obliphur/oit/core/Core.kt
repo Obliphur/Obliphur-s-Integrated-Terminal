@@ -657,13 +657,19 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             contractViolation(if (kind == "loan") tr("使用了紧急借贷") else tr("联网超过了合约的额度"), id)
         }
         if (!c.active) return
-        // 未知变量: 合约的每个小时开始时 (刚开始时也算) 随机启用一个词条
-        val picked = c.roll(LocalDateTime.now())
+        // 未知变量: 合约的每个小时开始时 (刚开始时也算) 随机启用一个词条; 选中的退路封锁那个小时结束时移除
+        val now = LocalDateTime.now()
+        val gone = c.expire(now)
+        for (id in gone) {
+            logNotice("CONTRACT unknown expired $id")
+            toast(tr("未知变量: {name} 已移除", "name" to tr(Contract.BY_ID[id]!!.name)))
+        }
+        val picked = c.roll(now)
         for (id in picked) {
             logNotice("CONTRACT unknown -> $id")
             toast(tr("未知变量: 启用了 {name}", "name" to tr(Contract.BY_ID[id]!!.name)), "warn", long = true)
         }
-        if (picked.isNotEmpty()) {
+        if (picked.isNotEmpty() || gone.isNotEmpty()) {
             host.applyNet(false)                 // 选中全频道阻塞干扰: 断网方式跟着变
             syncHourLog()
         }

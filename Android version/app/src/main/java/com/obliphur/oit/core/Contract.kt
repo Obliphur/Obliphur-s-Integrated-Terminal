@@ -141,10 +141,11 @@ class Contract(private val file: File) {
         val DEEP = mapOf("deep1" to 40 * 60, "deep2" to 60 * 60)
         /** 侵蚀: 网络申请的冷静期乘多少 (硬规则). */
         val COOLDOWN_X = mapOf("erode1" to 2.0, "erode2" to 3.0)
-        /** 未知变量: 合约的每个小时开始时随机启用一个 1-2 级的词条; 不会选中录像的词条. */
+        /** 未知变量: 合约的每个小时开始时随机启用一个 1-2 级的词条; 不会选中录像和持久战的词条.
+         *  选中退路封锁 (目标生命值减少后不为 0 才选): 只在选中的那个小时里有效, 这个小时结束时移除. */
         const val RANDOM = "unknown"
         val RANDOM_LEVELS = 1..2
-        val RANDOM_SKIP = setOf("gaze", "scar")
+        val RANDOM_SKIP = setOf("gaze", "scar", "long1", "long2")
 
         /** 总等级 → 完成合约时给的休息时间 (分钟, 固定; 按结束时的等级). */
         // 每 3 级一档. 15 级以内每档只多 2 分钟, 16 级起每档多 10 分钟; 25 级 (差不多选满) 起封顶 90 分钟
@@ -445,7 +446,8 @@ class Contract(private val file: File) {
         }
     }
 
-    /** 到了新的一个小时就启用一个词条. 返回这次启用的词条 (只由做自动结束的设备调用). */
+    /** 到了新的一个小时就启用一个词条. 返回这次启用的 (现在还在的) 词条 (只由做自动结束的设备调用).
+     *  程序关着时错过的小时依次补上 (那时选中的退路封锁到了它那个小时的结束就移除). */
     fun roll(now: LocalDateTime, rng: kotlin.random.Random = kotlin.random.Random.Default): List<String> {
         if (!active || !has(RANDOM)) return emptyList()
         val a = startAt ?: return emptyList()
@@ -455,27 +457,47 @@ class Contract(private val file: File) {
         val picked = mutableListOf<String>()
         while (done < due) {
             done++
+            expire(a.plusHours((done - 1).toLong()))
             val pool = randomCandidates()
-            if (pool.isNotEmpty()) pool[rng.nextInt(pool.size)].let { enable(it); picked.add(it) }
+            if (pool.isNotEmpty()) pool[rng.nextInt(pool.size)].let {
+                enable(it, if (it in LIFE) a.plusHours(done.toLong()) else null); picked.add(it)
+            }
         }
         if (done != live.optInt("rand_n", 0)) {
             live.put("rand_n", done)
             save()
         }
-        return picked
+        expire(now)
+        return picked.filter { it in rand }.distinct()
     }
 
-    /** 合约中途启用一个词条: 开始时才定下来的效果在这里补上 (持久战: 时长; 支援短缺: 能用多少). */
-    fun enable(id: String) {
+    /** 合约中途启用一个词条: 开始时才定下来的效果在这里补上 (支援短缺: 能用多少). until: 到这个时刻移除 (退路封锁). */
+    fun enable(id: String, until: LocalDateTime? = null) {
         val t = clean(terms + id)
         live.put("terms", JSONArray(t)).put("rand", JSONArray(rand + id))
-        val a = startAt
-        if (id in DURATION && a != null) {
-            val end = a.plusSec(durationOf(t))
-            if (endAt?.isBefore(end) != false) live.put("end", end.iso())
-        }
+        val till = JSONObject((live.optJSONObject("rand_until") ?: JSONObject()).toString())
+        till.remove(id)
+        if (until != null) till.put(id, until.iso())
+        live.put("rand_until", till)
         if (id in SUPPLY) live.put("supply", r1(maxOf(pre * (supplyShare(t) ?: 1.0), preUsed)))
         save()
+    }
+
+    /** 未知变量选中的这个词条什么时候移除 (退路封锁: 选中的那个小时结束时); 一直有效时 null. */
+    fun randUntil(id: String): LocalDateTime? =
+        if (id in rand) parseIso(live.optJSONObject("rand_until")?.strOrNull(id)) else null
+
+    /** 未知变量选中的退路封锁: 那个小时结束了就移除 (不算违反). 返回移除的词条. */
+    fun expire(now: LocalDateTime): List<String> {
+        val till = (if (active) live.optJSONObject("rand_until") else null) ?: return emptyList()
+        val gone = till.keys().asSequence().toList().filter { k -> parseIso(till.strOrNull(k))?.isAfter(now) != true }
+        if (gone.isEmpty()) return emptyList()
+        val r = rand
+        val out = gone.filter { it in r }
+        live.put("terms", JSONArray(terms.filter { it !in out })).put("rand", JSONArray(r.filter { it !in out }))
+        gone.forEach { till.remove(it) }
+        save()
+        return out
     }
 
     // ---- 合约开始前积攒的休息时间 (暂停不打折; 支援短缺) ----

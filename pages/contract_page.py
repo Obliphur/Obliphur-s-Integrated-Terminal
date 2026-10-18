@@ -378,7 +378,11 @@ class ContractPage(tk.Frame):
                     text += "   " + tr("[降了 {n} 级]", n=C.BY_ID[t][2] - c.term_level(t))
                 out.append((c.term_level(t), text, False, ""))
         for t in rand:
-            out.append((c.term_level(t), f"{term_line(t)}   " + tr("[未知变量选中 · 点击关闭]"), False, t))
+            text = f"{term_line(t)}   " + tr("[未知变量选中 · 点击关闭]")
+            until = c.rand_until(t)
+            if until:
+                text += "   " + tr("[{t} 移除]", t=f"{until:%H:%M}")
+            out.append((c.term_level(t), text, False, t))
         return out
 
     def _fill_list(self, sel):
