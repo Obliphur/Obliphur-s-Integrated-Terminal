@@ -17,6 +17,7 @@ import devsync
 import firewall
 import updater
 import shortcut
+import achievements
 from sync_local import PcLocal
 from config import (
     COLORS, APP_NAME, IDLE, RUNNING, READY_BREAK, ON_BREAK,
@@ -27,7 +28,8 @@ from i18n import tr
 from net_guard import NetGuard
 from data_manager import DataManager
 from settings_manager import SettingsManager
-from pages import CalendarPage, HourLogPage, SettingsPage, RulesPage, StatsPage
+from pages import (CalendarPage, HourLogPage, SettingsPage, RulesPage, StatsPage,
+                   AchievementsPage, AchievementPopups)
 from pages.widgets import (frozen, LoadingCover, cfg, flavor,
                            show_pack, hide_pack)
 
@@ -158,6 +160,10 @@ class BreakTimerApp:
         config.UI_SCALE = self.ui_scale * float(self.settings.value("FONT_SCALE") or 1.0)
         self._apply_theme()
         self.dm.hour_enabled = bool(self.settings.value("HOUR_LOG_ENABLED"))
+        # 成就 (MECHANICS 17): 没有存档时 (新安装 / 旧版本升级上来) 估计第一次启动的时刻
+        self.ach = achievements.AchievementStore(self.dm.data_dir, lambda: achievements.guess_first_launch(
+            self.dm.data_dir, self.settings.setup_until, list(self.dm.study_data) + list(self.dm.hour_days)))
+        self.ach.blocked = lambda: self.dm.resetting
         self.net = NetGuard(self.dm.data_dir)
         # 设备同步 (MECHANICS 15): 其他设备的账并进额度和统计
         self.sync_runner = devsync.MainRunner()
@@ -182,6 +188,7 @@ class BreakTimerApp:
         self.var_loan = tk.BooleanVar(value=False)
 
         toast.bind_root(root)
+        self.ach_popups = AchievementPopups(root, self.ach, on_open=self._open_achievements)
         # 先定好窗口大小, 再在加载页后面一页一页地建界面
         self._apply_geometry()
         cover = LoadingCover(root, tr("正在加载…"), "", steps=self.LAYOUT_STEPS).show()
@@ -212,7 +219,7 @@ class BreakTimerApp:
         if getattr(config, "UPDATE_CHECK", 1):
             self.root.after(3000, lambda: self.check_update(auto=True))
 
-        self.root.bind("<Map>", self._on_window_map)
+        self.root.bind("<Map>", self._on_window_map, add="+")
         self.root.bind_all("<ButtonPress>", self._touch, add="+")
         self.root.bind_all("<KeyPress>", self._touch, add="+")
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -223,6 +230,7 @@ class BreakTimerApp:
         self._recover_focus()
         if self._first_run:
             self.root.after(600, self._show_welcome)
+        self.root.after(800, self.check_achievements)
 
 
     def _apply_geometry(self):
@@ -435,6 +443,7 @@ class BreakTimerApp:
             "log": tr("📝  整点记录"),
             "cal": tr("📅  日历"),
             "stats": tr("📊  统计"),
+            "ach": tr("🏆  成就"),
             "settings": tr("⚙  设置"),
             "reset": tr("🔄  重置")
         }
@@ -477,6 +486,8 @@ class BreakTimerApp:
         )
         self._prepare_page(self.pages["log"])
         yield
+        self.pages["ach"] = AchievementsPage(self.content, self.ach)
+        self._prepare_page(self.pages["ach"])
         self.pages["settings"] = SettingsPage(
             self.content, self.settings,
             on_changed=self.on_settings_changed, on_sound=self.play_chime,
@@ -558,6 +569,8 @@ class BreakTimerApp:
         self._apply_geometry()
         self._build_layout(self.root, cover)
         self.show_page(self.current_page or "timer")
+        self.ach_popups.close_all_windows()       # 达成提示按新的主题 / 语言重新画
+        self.ach_popups.sync()
 
         self.refresh_display()
         self.update_log_badge()
@@ -630,6 +643,8 @@ class BreakTimerApp:
             self.pages["cal"].show()
         elif key == "stats":
             self.pages["stats"].show()
+        elif key == "ach":
+            self.pages["ach"].show()
         elif key == "net":
             self.refresh_net(force=True)
         elif key == "rules":
@@ -1525,6 +1540,7 @@ class BreakTimerApp:
         self._maybe_relay()
         self._check_idle_nudge()
         self._check_setup_period()
+        self.check_achievements()
         self.apply_job = self.root.after(5000, self._schedule_apply_check)
 
     # ---- 任务栏窗口数上限 (window_guard.py) ----
@@ -1894,6 +1910,7 @@ class BreakTimerApp:
         self._log_notice("SETUP period ended by user")
         self._after_setup_change()
         toast.info(tr("配置期已结束."))
+        self.check_achievements()
 
     def _check_setup_period(self):
         """配置期自然到期时提示一次, 并刷新界面上的标记."""
@@ -1904,6 +1921,36 @@ class BreakTimerApp:
             self._after_setup_change()
             toast.notice(tr("⏳  配置期结束了"),
                          tr("之后的修改都要等 48 小时."))
+
+    # ---- 成就 (MECHANICS 17) ----
+
+    def check_achievements(self):
+        """每 5 秒 (以及启动时) 判定一遍; 新达成的弹出提示, 浮在窗口上直到手动关掉."""
+        if self.shutting_down or self.dm.resetting:
+            return
+        study = {d: self.dm._study_all(d) for d in set(self.dm.study_data).union(
+            *((led.get("study") or {}) for led in (self.dm.peer_ledgers() or [])))}
+        facts = achievements.Facts(datetime.now(), self.ach.first, self.settings.in_setup(),
+                                   study, self.dm.hour_days)
+        self._after_achievements(self.ach.check(facts))
+
+    def on_achievements_synced(self, changes: dict):
+        """别的设备达成的成就 (设备同步): 本机也算达成, 同样弹出提示."""
+        self._after_achievements(self.ach.merge(changes))
+
+    def _after_achievements(self, new):
+        if new:
+            self._refresh_if_visible("ach")
+        self.ach_popups.sync()
+
+    def _open_achievements(self):
+        try:
+            if self.root.state() in ("iconic", "withdrawn"):
+                self.root.deiconify()
+            self.root.lift()
+        except tk.TclError:
+            pass
+        self.show_page("ach")
 
     def _after_setup_change(self):
         self.update_settings_badge()

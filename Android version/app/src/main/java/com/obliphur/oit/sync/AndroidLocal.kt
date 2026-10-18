@@ -123,7 +123,8 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
             "bonus" to JSONObject().put("week", week).put("used", used),
             // 此刻的专注 / 休息: 哪台设备最后改动就以哪台为准
             "live" to core.timer.liveState())
-        return mapOf("settings" to settings, "hours" to hours, "timer" to timer)
+        // 成就: 哪台设备达成都算 (达成时刻取最早的), 见 MECHANICS 17
+        return mapOf("settings" to settings, "hours" to hours, "timer" to timer, "achievements" to core.ach.doc())
     }
 
     override fun apply(doc: String, changes: Map<String, Any?>) {
@@ -172,6 +173,7 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
                 core.timer.syncSet(carry, b?.optString("week"), b?.optInt("used"))
                 (changes["live"] as? JSONObject)?.let { core.timer.adopt(it) }
             }
+            "achievements" -> core.mergeAchievements(changes)
         }
         core.changed()
     }

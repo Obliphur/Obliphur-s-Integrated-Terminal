@@ -118,6 +118,13 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
         (study[day] ?: 0.0) + peers().sumOf { it.optJSONObject("study")?.optDouble(day, 0.0)?.takeIf { v -> !v.isNaN() } ?: 0.0 }
 
     fun todayHours() = studyAll(todayDate)
+
+    /** 每天的学习时长 (所有设备合计), 成就判定用. */
+    fun studyByDay(): Map<String, Double> {
+        val days = HashSet(study.keys)
+        for (p in peers()) p.optJSONObject("study")?.keys()?.forEach { days.add(it) }
+        return days.associateWith { studyAll(it) }
+    }
     fun yesterdayHours() = studyAll(LocalDate.parse(todayDate).minusDays(1).key())
 
     /** 一段专注计入学习时长; 跨过零点的按时间比例拆到两天. */

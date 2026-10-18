@@ -34,6 +34,8 @@ interface Host {
     fun lockExempt(pkg: String, whitelist: Boolean): Boolean
     fun openPage(page: String)
     fun scheduleWake(seconds: Double)
+    /** 新达成了成就 (界面上的提示由界面读 Core.ach.unseen 画出; 在后台时可以另外发通知). */
+    fun achievementsUnlocked(ids: List<String>) {}
 }
 
 /** VPN 应该处于的状态 (见 MECHANICS 14.2). */
@@ -53,6 +55,8 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     val dm: DataStore
     val net: NetGuard
     val timer: TimerEngine
+    /** 成就 (MECHANICS 17). */
+    val ach: AchievementStore
     private var setupWasActive: Boolean
 
     // ---- 设备同步 (MECHANICS 15) ----
@@ -96,6 +100,11 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         dm.finalizeHours()
         net = NetGuard(dir, settings)
         timer = TimerEngine(this, dir, mono)
+        // 没有存档时 (新安装 / 旧版本升级上来) 估计第一次启动的时刻
+        ach = AchievementStore(File(dir, "achievements.json")) {
+            AchievementStore.guessFirstLaunch(dir, settings.setupUntil, dm.study.keys + dm.hourDays.keys)
+        }
+        ach.blocked = { dm.resetting }
     }
 
     /** 界面和服务都就位后调用一次. */
@@ -104,6 +113,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         host.applyNet(true)               // 程序一启动就进入离线状态
         timer.recover()
         if (firstRun) showWelcome()
+        checkAchievements()
         changed()
     }
 
@@ -164,6 +174,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             checkPendingSettings()
             timer.check()
             checkSetupPeriod()
+            checkAchievements()
             // 子端: 母端 2 分钟没同步过了 (关掉了 / 断开了), 开发者模式就关掉
             if (settings.devMode && followsMother() && !motherFresh()) setDevMode(false)
         }
@@ -318,6 +329,32 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         setupWasActive = false
         logNotice("SETUP period ended by user")
         toast(tr("配置期已结束."))
+        checkAchievements()
+        changed()
+    }
+
+    // ---- 成就 (MECHANICS 17) ----
+
+    /** 每 5 秒 (以及启动时) 判定一遍. 新达成的显示在界面上方, 直到手动关掉 (界面读 ach.unseen). */
+    fun checkAchievements() {
+        if (dm.resetting) return
+        val new = ach.check(AchFacts(LocalDateTime.now(), ach.first, settings.inSetup(), dm.studyByDay(), dm.hourDays))
+        if (new.isNotEmpty()) achievementsUnlocked(new)
+    }
+
+    /** 别的设备达成的成就 (设备同步): 本机也算达成, 同样显示提示. */
+    fun mergeAchievements(changes: Map<String, Any?>) {
+        val new = ach.merge(changes)
+        if (new.isNotEmpty()) achievementsUnlocked(new)
+    }
+
+    private fun achievementsUnlocked(ids: List<String>) {
+        host.achievementsUnlocked(ids)
+        changed()
+    }
+
+    fun closeAchievement(id: String) {
+        ach.markSeen(id)
         changed()
     }
 

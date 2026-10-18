@@ -35,6 +35,7 @@
 | **Hour Log** | 每个整点提示记录上一小时做了什么 |
 | **Calendar** | 按日查看学习时长 |
 | **Statistics** | 活动, 联网理由与各程序前台时间的分布 |
+| **Achievements** | 成就 |
 | **Settings** | 按模块分页的可调参数(含按星期调整联网额度的倍率);多数修改需要等待冷静期才生效;第一页是局域网内多台设备 (电脑 / 手机) 的绑定同步 |
 | **Reset** | 恢复网络并清理数据 |
 
@@ -72,6 +73,7 @@ obliphur_terminal/
 ├─ config.py             默认数值, 主题与字号, 版本号 (APP_VERSION)
 ├─ settings_manager.py   设置项定义, 48 小时冷静期, 配置期
 ├─ data_manager.py       学习时长, 整点记录, 专注时间段, 窗口使用时间 (统计)
+├─ achievements.py       成就: 条件判定与存档
 ├─ net_guard.py          联网额度, 申请 / 快速访问 / 借贷, 断网方式切换
 ├─ netproxy/             本地过滤代理 (Proxy 断网方式)
 │  ├─ server.py          HTTP / HTTPS 隧道代理, 403 拦截页
@@ -99,6 +101,7 @@ obliphur_terminal/
 │  ├─ stats_page.py      统计
 │  ├─ calendar_page.py   日历
 │  ├─ hour_log_page.py   整点记录
+│  ├─ achievements_page.py  成就页, 达成提示
 │  └─ widgets.py         共用控件 (滚动区, 开关, 加载页 …)
 ├─ defaults/             空模板 (名单, AI 配置)
 ├─ MECHANICS.md          各机制的具体规则与数值
@@ -113,6 +116,7 @@ obliphur_terminal/
       │  ├─ Timer.kt     专注计时器
       │  ├─ Rules.kt     黑白名单
       │  ├─ DataStore.kt 统计数据
+      │  ├─ Achievements.kt 成就
       │  ├─ Config.kt    数值, 工具函数
       │  ├─ Store.kt     读写文件
       │  └─ I18n.kt / EnStrings.kt  英文界面

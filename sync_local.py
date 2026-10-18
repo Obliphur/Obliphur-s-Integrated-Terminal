@@ -143,7 +143,8 @@ class PcLocal:
                  "bonus": {"week": d.get("bonus_week") or "", "used": int(d.get("bonus_used", 0) or 0)},
                  # 此刻的专注 / 休息: 哪台设备最后改动就以哪台为准
                  "live": a.timer_live()}
-        return {"settings": settings, "hours": hours, "timer": timer}
+        # 成就: 哪台设备达成都算 (达成时刻取最早的), 见 MECHANICS 17
+        return {"settings": settings, "hours": hours, "timer": timer, "achievements": a.ach.doc()}
 
     def apply(self, doc: str, changes: dict):
         a = self.app
@@ -193,6 +194,8 @@ class PcLocal:
                 a._save_timer_state()
             if isinstance(changes.get("live"), dict):
                 a.adopt_timer(changes["live"])
+        elif doc == "achievements":
+            a.on_achievements_synced(changes)
 
     # ---- 绑定请求 ----
 

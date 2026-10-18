@@ -29,6 +29,35 @@ class CoreTest {
     }
 
     @Test
+    fun achievements() {
+        val d = tmp()
+        File(d, "settings_changes.log").writeText("2026-01-02 03:04:05  SETUP period ended by user\n")
+        val now = LocalDateTime.of(2026, 1, 20, 12, 0)
+        val first = AchievementStore.guessFirstLaunch(d, null, listOf("2026-01-05"), now)
+        assertEquals(LocalDateTime.of(2026, 1, 2, 3, 4, 5), first)
+        val f = File(d, "achievements.json")
+        val s = AchievementStore(f) { first }
+        val hours = mapOf("2026-01-11" to (0 until 9).associate { "$it" to "sleeping" } + mapOf("9" to "Sleeping/学习", "10" to "SLEEPING/吃饭"))
+        val got = s.check(AchFacts(now, first, false, mapOf("2026-01-03" to 4.2), hours))
+        assertEquals(setOf("awake", "day1", "setup_done", "day7", "study4", "sleep10"), got.toSet())
+        assertTrue(s.check(AchFacts(now, first, false, emptyMap(), emptyMap())).isEmpty())
+        // 天数按日期在 00:00 达成
+        val late = LocalDateTime.of(2026, 3, 1, 23, 59)
+        assertTrue(AchievementStore.CHECKS["day1"]!!(AchFacts(LocalDateTime.of(2026, 3, 2, 0, 0, 1), late, true, emptyMap(), emptyMap())))
+        assertFalse(AchievementStore.CHECKS["day1"]!!(AchFacts(LocalDateTime.of(2026, 3, 1, 23, 59, 59),
+            LocalDateTime.of(2026, 3, 1, 0, 0), true, emptyMap(), emptyMap())))
+        val s2 = AchievementStore(f) { now }
+        assertEquals(first, s2.first)
+        assertEquals(got, s2.unseen)
+        assertEquals(listOf("study8"), s2.merge(mapOf("study8" to "2026-01-05T10:00:00", "awake" to "2025-12-31T00:00:00",
+            "nope" to "2026-01-01T00:00:00", "day30" to null)))
+        assertEquals(LocalDateTime.of(2025, 12, 31, 0, 0), s2.unlocked["awake"])
+        s2.markSeen("awake")
+        assertFalse("awake" in AchievementStore(f) { now }.unseen)
+        assertTrue(AchievementStore.isEnglish("overload") && !AchievementStore.isEnglish("苏醒"))
+    }
+
+    @Test
     fun settingsCooldown() {
         val f = File(tmp(), "s.json")
         val m = Settings(f)

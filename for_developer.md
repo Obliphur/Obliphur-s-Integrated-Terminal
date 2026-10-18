@@ -16,4 +16,5 @@ II.同步所有的计时器状态,历史数据,hour log,calendar等等.
 不要写进 mechanics.md.
 
 暂存的需求(开发完了就删掉对应需求)
-
+II.开发新模块:合约(contract)
+需求没写,先别添加这个模块.

@@ -167,6 +167,13 @@ class OitApp : Application(), Host {
 
     override fun lockExempt(pkg: String, whitelist: Boolean) = com.obliphur.oit.service.AppLock.exempt(this, pkg, whitelist)
 
+    override fun achievementsUnlocked(ids: List<String>) {
+        // 界面上的提示由 Root 画出; 不在前台时另外发一条普通通知
+        if (!foreground) for (id in ids) com.obliphur.oit.core.AchievementStore.BY_ID[id]?.let {
+            Notifier.event(this, tr("🏆  达成成就") + ": " + com.obliphur.oit.core.AchievementStore.name(it))
+        }
+    }
+
     override fun openPage(page: String) {
         navRequests.tryEmit(page)
         if (!foreground) startActivity(Intent(this, MainActivity::class.java)

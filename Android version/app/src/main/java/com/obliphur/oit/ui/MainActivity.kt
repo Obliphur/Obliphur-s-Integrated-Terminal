@@ -280,7 +280,7 @@ class MainActivity : ComponentActivity() {
 
 val PAGES = listOf(
     "timer" to "⏱  计时器", "net" to "🌐  联网", "rules" to "🛡  规则", "log" to "📝  整点记录",
-    "cal" to "📅  日历", "stats" to "📊  统计", "settings" to "⚙  设置", "reset" to "🔄  重置",
+    "cal" to "📅  日历", "stats" to "📊  统计", "ach" to "🏆  成就", "settings" to "⚙  设置", "reset" to "🔄  重置",
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -416,6 +416,7 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
                                 "log" -> HourLogScreen { go(it) }
                                 "cal" -> CalendarScreen()
                                 "stats" -> StatsScreen()
+                                "ach" -> AchievementScreen()
                                 "settings" -> SettingsScreen(settingsTab, { settingsTab = it }, act)
                                 "reset" -> ResetScreen()
                             }
@@ -423,6 +424,8 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
                     }
                 }
             }
+            // 达成成就的提示浮在界面上, 手动关闭才消失 (MECHANICS 17)
+            AchievementPopups { go("ach") }
             notices.firstOrNull()?.let { n ->
                 AlertDialog(
                     onDismissRequest = { core.closeNotice(n.id, null) },
