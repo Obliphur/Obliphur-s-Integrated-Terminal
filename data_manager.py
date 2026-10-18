@@ -45,6 +45,8 @@ class DataManager:
         self.legacy_uninstall_file = os.path.join(low_dir, f"{APP_NAME}.uninstall.json")
         self.resetting = False
 
+        # 用户名 (第一次打开时填写, MECHANICS 1.1): {"username": ...}
+        self.profile_file = os.path.join(self.data_dir, 'profile.json')
         self.study_file = os.path.join(self.data_dir, 'study_log.json')
         self.hour_file = os.path.join(self.data_dir, 'hour_log.json')
         # 计时器的每一段专注 / 休息 (起止时刻), Statistics 页画每天的时间分布用; 只留最近 7 天
@@ -577,6 +579,17 @@ class DataManager:
         return s
 
 
+    # ---- 用户名 ----
+
+    @property
+    def username(self) -> str:
+        d = config.load_json_file(self.profile_file, {})
+        return str(d.get("username") or "").strip() if isinstance(d, dict) else ""
+
+    def set_username(self, name: str):
+        if not self.resetting:
+            config.save_json_file(self.profile_file, {"username": str(name).strip()[:USERNAME_MAX]})
+
     def erase_all_data(self):
         """重置: 删除本程序留下的全部数据, 不留任何记录."""
         shutil.rmtree(self.data_dir, ignore_errors=True)
@@ -590,6 +603,9 @@ class DataManager:
 def half_fill() -> timedelta:
     """细化规范的半小时格: 补填时限只有 30 min (补填时限设得更短时照设置)."""
     return min(config.FILL_WINDOW, config.FINE_FILL_WINDOW)
+
+
+USERNAME_MAX = 24
 
 
 def _sum_days(days: dict, prefix: str) -> Dict[str, float]:

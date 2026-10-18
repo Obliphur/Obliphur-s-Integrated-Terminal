@@ -342,6 +342,83 @@ def notice(title: str, message: str, buttons=None, options=None, on_options=None
         return None
 
 
+class NamePrompt(tk.Toplevel):
+    """填写用户名的窗口: 不填就关不掉 (右上角 ✕ 不起作用), 填好按"确定"或回车.
+    置顶但不 grab; 填好后把名字交给 on_done."""
+
+    def __init__(self, master, title: str, message: str, on_done, limit: int = 24):
+        super().__init__(master, bg=config.COLORS["bg"],
+                         highlightbackground=config.COLORS["accent"], highlightthickness=2)
+        self._on_done = on_done
+        self._limit = limit
+        self.title(title)
+        self.resizable(False, False)
+        self.attributes("-topmost", True)
+        self.protocol("WM_DELETE_WINDOW", lambda: None)
+
+        body = tk.Frame(self, bg=config.COLORS["bg"])
+        body.pack(fill="both", expand=True, padx=config.scaled(22), pady=config.scaled(18))
+        tk.Label(
+            body, text=title, bg=config.COLORS["bg"], fg=config.COLORS["text"],
+            font=font_of("h2", bold=True), anchor="w"
+        ).pack(anchor="w", pady=(0, config.scaled(8)))
+        tk.Label(
+            body, text=message, bg=config.COLORS["bg"], fg=config.COLORS["text"],
+            font=font_of("body"), justify="left", anchor="w",
+            wraplength=config.scaled(440)
+        ).pack(anchor="w", fill="x")
+        self.var = tk.StringVar()
+        self.entry = ttk.Entry(body, textvariable=self.var, font=font_of("body"), width=30)
+        self.entry.pack(anchor="w", fill="x", pady=(config.scaled(12), 0))
+        self.entry.bind("<Return>", lambda e: self._ok())
+
+        btns = tk.Frame(self, bg=config.COLORS["bg"])
+        btns.pack(fill="x", padx=config.scaled(22), pady=(0, config.scaled(18)))
+        self.btn = ttk.Button(btns, text=tr("确定"), style="Accent.TButton", command=self._ok,
+                              state="disabled")
+        self.btn.pack(side="right")
+        self.var.trace_add("write", lambda *_: self._changed())
+        self.update_idletasks()
+        w, h = self.winfo_reqwidth(), self.winfo_reqheight()
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        self.geometry(f"{w}x{h}+{max(0, (sw - w) // 2)}+{max(0, (sh - h) // 3)}")
+        try:
+            self.entry.focus_force()
+        except Exception:
+            pass
+
+    def _changed(self):
+        text = self.var.get()
+        if len(text) > self._limit:
+            text = text[:self._limit]
+            self.var.set(text)         # 写回时不会再触发这个回调
+        self.btn.config(state="normal" if text.strip() else "disabled")
+
+    def _ok(self):
+        name = self.var.get().strip()
+        if not name:
+            return
+        try:
+            self.destroy()
+        except Exception:
+            pass
+        self._on_done(name)
+
+
+def prompt_name(title: str, message: str, on_done, limit: int = 24):
+    """弹出填写用户名的窗口 (不填就关不掉), 返回窗口对象 (没有主窗口时返回 None)."""
+    root = _root()
+    _record(f"[name] {title}: {message}", "notice")
+    if root is None:
+        return None
+    try:
+        if not root.winfo_exists():
+            return None
+        return NamePrompt(root, title, message, on_done, limit)
+    except Exception:
+        return None
+
+
 def start_recording():
     _RUNTIME["recording"] = []
     return _RUNTIME["recording"]

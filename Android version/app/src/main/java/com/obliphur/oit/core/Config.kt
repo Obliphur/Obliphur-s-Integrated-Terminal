@@ -40,6 +40,10 @@ object Cfg {
     const val BONUS_BREAK_WINDOW = 60.0
     const val BONUS_BREAK_SECONDS = 20 * 60
     const val BONUS_BREAK_WEEKLY = 2 * 3600
+    /** 一周内第 5 次领"我累了": 弹窗劝调休息时间倍率, 它的下一次修改免等待 (MECHANICS 6.5). */
+    const val BONUS_TIRED_TIMES = 5
+    /** 用户名最多几个字. */
+    const val USERNAME_MAX = 24
 
     // 应用使用时间统计: 每隔这么多秒看一次前台应用
     const val APP_FOCUS_EVERY = 10.0

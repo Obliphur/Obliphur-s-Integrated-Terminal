@@ -15,6 +15,8 @@ class AchFacts(
     val study: Map<String, Double>, val hours: Map<String, Map<String, String>>,
     /** 结束了的合约 (Contract.history). */
     val contracts: List<JSONObject> = emptyList(),
+    /** 积攒的休息时间 (秒). */
+    val carry: Double = 0.0,
 )
 
 /**
@@ -25,6 +27,12 @@ class AchievementStore(private val file: File, guessFirst: () -> LocalDateTime) 
     companion object {
         /** "登顶": 完成危机等级 (结束时) 不低于这个的合约. */
         const val SUMMIT_LEVEL = 25
+        /** "仓鼠": 积攒的休息时间达到 3 小时. */
+        const val HAMSTER_SECONDS = 3 * 3600
+        /** "毋畏天灾": 同一周 (周一 0 点起) 完成的合约数. */
+        const val WEEK_CONTRACTS = 7
+        /** "月度杰出主管": 某一个月的学习时长合计. */
+        const val MONTH_HOURS = 240.0
         val ALL = listOf(
             Achievement("awake", "苏醒", "Hello World"),
             Achievement("day1", "新晋主管", "你已经度过了与OIT相伴的第一天"),
@@ -38,6 +46,10 @@ class AchievementStore(private val file: File, guessFirst: () -> LocalDateTime) 
             Achievement("study12", "overload", "你在一天内学习了12h.这真的是人类可以做到的吗?", hidden = true),
             Achievement("sleep10", "冬眠", "睡了10h以上..."),
             Achievement("summit", "登顶", "我们是冠军!", hidden = true),
+            Achievement("hamster", "仓鼠", "你奇迹般地攒够了三个小时的休息.", hidden = true),
+            Achievement("duel1", "第一次对决", "你完成了第一次危机合约"),
+            Achievement("calamity7", "毋畏天灾", "你在一周内总共完成了7次危机合约"),
+            Achievement("month240", "月度杰出主管", "你在一个月内每天的平均专注时长超过8h,congratulation!", hidden = true),
         )
         val BY_ID = ALL.associateBy { it.id }
         val LOG_FILES = listOf("settings_changes.log", "net_requests.log", "window_guard.log")
@@ -60,6 +72,17 @@ class AchievementStore(private val file: File, guessFirst: () -> LocalDateTime) 
 
         private fun sleep(h: Double): (AchFacts) -> Boolean = { f -> f.hours.values.any { sleepHours(it) >= h - 1e-6 } }
 
+        private fun completed(f: AchFacts) = f.contracts.filter { it.optString("result") == "completed" }
+
+        /** 同一周 (周一 0 点到周日 24 点, 按结束时刻) 完成了 WEEK_CONTRACTS 个合约. */
+        private fun weekContracts(f: AchFacts): Boolean = completed(f).mapNotNull { parseIso(it.optString("end")) }
+            .groupingBy { it.get(java.time.temporal.IsoFields.WEEK_BASED_YEAR) * 100 + it.get(java.time.temporal.IsoFields.WEEK_OF_WEEK_BASED_YEAR) }
+            .eachCount().values.any { it >= WEEK_CONTRACTS }
+
+        /** 某一个月的学习时长合计达到 MONTH_HOURS (所有设备合计). */
+        private fun monthStudy(f: AchFacts): Boolean = f.study.entries.groupBy { it.key.take(7) }
+            .values.any { days -> days.sumOf { it.value } >= MONTH_HOURS - 1e-6 }
+
         val CHECKS: Map<String, (AchFacts) -> Boolean> = mapOf(
             "awake" to { _ -> true },
             "day1" to since(1),
@@ -74,6 +97,10 @@ class AchievementStore(private val file: File, guessFirst: () -> LocalDateTime) 
             "sleep10" to sleep(10.0),
             // 完成了危机等级 20 及以上的合约 (按结算时的等级, MECHANICS 18)
             "summit" to { f -> f.contracts.any { it.optString("result") == "completed" && it.optInt("level") >= SUMMIT_LEVEL } },
+            "hamster" to { f -> f.carry >= HAMSTER_SECONDS },
+            "duel1" to { f -> completed(f).isNotEmpty() },
+            "calamity7" to ::weekContracts,
+            "month240" to ::monthStudy,
         )
 
         /**

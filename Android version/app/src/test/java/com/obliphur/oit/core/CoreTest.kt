@@ -55,6 +55,21 @@ class CoreTest {
         s2.markSeen("awake")
         assertFalse("awake" in AchievementStore(f) { now }.unseen)
         assertTrue(AchievementStore.isEnglish("overload") && !AchievementStore.isEnglish("苏醒"))
+        // 仓鼠 / 第一次对决 / 毋畏天灾 / 月度杰出主管
+        val z = LocalDateTime.of(2026, 1, 1, 0, 0)
+        val c = AchievementStore.CHECKS
+        assertFalse(c["hamster"]!!(AchFacts(z, z, false, emptyMap(), emptyMap(), carry = 3 * 3600 - 1.0)))
+        assertTrue(c["hamster"]!!(AchFacts(z, z, false, emptyMap(), emptyMap(), carry = 3 * 3600.0)))
+        fun rec(result: String, end: String) = org.json.JSONObject().put("result", result).put("end", end)
+        assertTrue(c["duel1"]!!(AchFacts(z, z, false, emptyMap(), emptyMap(), listOf(rec("completed", "2026-10-12T12:00:00")))))
+        assertFalse(c["duel1"]!!(AchFacts(z, z, false, emptyMap(), emptyMap(), listOf(rec("failed", "2026-10-12T12:00:00")))))
+        val six = listOf(12, 13, 14, 15, 16, 18).map { rec("completed", "2026-10-%02dT12:00:00".format(it)) }
+        assertFalse(c["calamity7"]!!(AchFacts(z, z, false, emptyMap(), emptyMap(), six + rec("failed", "2026-10-17T12:00:00"))))
+        assertFalse(c["calamity7"]!!(AchFacts(z, z, false, emptyMap(), emptyMap(), six + rec("completed", "2026-10-19T00:00:01"))))
+        assertTrue(c["calamity7"]!!(AchFacts(z, z, false, emptyMap(), emptyMap(), six + rec("completed", "2026-10-18T23:59:00"))))
+        val oct = (1..30).associate { "2026-10-%02d".format(it) to 8.0 }
+        assertTrue(c["month240"]!!(AchFacts(z, z, false, oct, emptyMap())))
+        assertFalse(c["month240"]!!(AchFacts(z, z, false, oct + ("2026-10-30" to 7.9), emptyMap())))
     }
 
     @Test

@@ -160,7 +160,8 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         val d = readState()
         val w = week()
         val used = if (d.optString("bonus_week") == w) d.optInt("bonus_used", 0) else 0
-        extra = JSONObject().put("bonus_week", w).put("bonus_used", used + add)
+        val count = (if (d.optString("bonus_week") == w) d.optInt("bonus_count", 0) else 0) + 1
+        extra = JSONObject().put("bonus_week", w).put("bonus_used", used + add).put("bonus_count", count)
         var where: String
         mine()
         if (state == TState.ON_BREAK) {
@@ -179,6 +180,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         msg += "\n\n" + tr("这么想休息,也许是真的累了.休息不需要理由.")
         msg += "\n" + tr("不要勉强.")
         core.toast(msg, "success", long = true)
+        if (count == Cfg.BONUS_TIRED_TIMES) core.tiredNotice()
     }
 
     /** 1 分钟内没有点满: 次数清零. */
@@ -357,9 +359,13 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
     /** 设备同步: 本周已领的连点休息时间 (周, 秒). */
     fun bonusState(): Pair<String, Int> = readState().let { it.optString("bonus_week") to it.optInt("bonus_used", 0) }
 
+    /** 设备同步: 本周领了几次. */
+    fun bonusCount(): Int = readState().optInt("bonus_count", 0)
+
     /** 设备同步: 积攒的休息时间 / 本周连点领取的记录 (同步来的值). */
-    fun syncSet(carry: Int?, bonusWeek: String?, bonusUsed: Int?) {
+    fun syncSet(carry: Int?, bonusWeek: String?, bonusUsed: Int?, bonusCount: Int? = null) {
         if (bonusWeek != null) extra = JSONObject().put("bonus_week", bonusWeek).put("bonus_used", bonusUsed ?: 0)
+            .put("bonus_count", bonusCount ?: 0)
         if (carry != null) breakCarry = maxOf(0, carry)
         saveState()
         core.changed()

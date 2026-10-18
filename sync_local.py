@@ -154,7 +154,8 @@ class PcLocal:
 
         d = a._bonus_state()
         timer = {"break_carry": int(a.break_carry),
-                 "bonus": {"week": d.get("bonus_week") or "", "used": int(d.get("bonus_used", 0) or 0)},
+                 "bonus": {"week": d.get("bonus_week") or "", "used": int(d.get("bonus_used", 0) or 0),
+                           "count": int(d.get("bonus_count", 0) or 0)},
                  # 此刻的专注 / 休息: 哪台设备最后改动就以哪台为准
                  "live": a.timer_live()}
         # 成就: 哪台设备达成都算 (达成时刻取最早的), 见 MECHANICS 17
@@ -214,7 +215,8 @@ class PcLocal:
             if "bonus" in changes and isinstance(changes["bonus"], dict):
                 b = changes["bonus"]
                 a._timer_extra = {"bonus_week": str(b.get("week") or ""),
-                                  "bonus_used": int(b.get("used") or 0)}
+                                  "bonus_used": int(b.get("used") or 0),
+                                  "bonus_count": int(b.get("count") or 0)}
             if "break_carry" in changes and changes["break_carry"] is not None:
                 a._set_break_carry(int(changes["break_carry"]))
             else:

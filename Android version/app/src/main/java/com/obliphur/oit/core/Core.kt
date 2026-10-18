@@ -3,6 +3,7 @@ package com.obliphur.oit.core
 import java.io.File
 import java.time.LocalDate
 import java.time.LocalDateTime
+import org.json.JSONObject
 
 data class Toast(val text: String, val kind: String, val long: Boolean)
 data class NoticeButton(val label: String, val action: String, val primary: Boolean)
@@ -51,6 +52,9 @@ sealed class VpnPlan {
     /** 只接管 DNS: filter=true 时按网站名单拦截域名, 否则全部放行. */
     data class Dns(val filter: Boolean, val rulesVersion: Long, val blockAll: Boolean = false) : VpnPlan()
 }
+
+/** 一周内第 5 次领"我累了"时弹窗的文字 (MECHANICS 6.5). */
+const val TIRED_TEXT = "主管{name}你好.我是Obliphur.\n你的休息时间不够吗?你可能暂时还无法做到长时间专注 导致休息效率低下.\n或者说,你处于低谷期,没有什么精力长时间专注.\n没关系.到设置调整休息时间倍率吧,请不要直接卸载,哪怕RESET也好..."
 
 class Core(val dir: File, val host: Host, val mono: () -> Double) {
     val settings = Settings(File(dir, "app_settings.json"))
@@ -140,7 +144,8 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         net.backend = { force -> host.applyNet(force) }
         host.applyNet(true)               // 程序一启动就进入离线状态
         timer.recover()
-        if (firstRun) showWelcome()
+        // 还没有用户名时界面先请用户填写 (MECHANICS 1.1), 填好后再显示介绍窗口
+        if (firstRun && username.isNotEmpty()) showWelcome()
         checkAchievements()
         changed()
     }
@@ -410,6 +415,38 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         if (want != dm.hourEnabled) dm.applyHourEnabled(want)
     }
 
+    // ---- 用户名 (MECHANICS 1.1) ----
+
+    private val profileFile get() = File(dir, "profile.json")
+
+    /** 第一次打开时填写的用户名; 还没填过时是空的. */
+    val username: String get() = Store.readObj(profileFile)?.optString("username")?.trim() ?: ""
+
+    fun setUsername(name: String) {
+        val n = name.trim().take(Cfg.USERNAME_MAX)
+        if (n.isEmpty() || dm.resetting) return
+        Store.write(profileFile, JSONObject().put("username", n))
+        logNotice("USERNAME set: $n")
+        if (firstRun) showWelcome()
+        changed()
+    }
+
+    /** 一周内第 5 次领"我累了" (MECHANICS 6.5): 劝去调休息时间倍率, 它的下一次修改免等待
+     *  (已经有排队中的修改时, 那一项立即生效). */
+    fun tiredNotice() {
+        if (settings.makeDueNow("BREAK_TIME_SCALE")) {
+            logNotice("BREAK_TIME_SCALE pending change applied now — 5 bonus breaks this week")
+            checkPendingSettings()
+        } else if (settings.grantFreeChange("BREAK_TIME_SCALE")) {
+            logNotice("BREAK_TIME_SCALE next change free — 5 bonus breaks this week")
+        }
+        notice(tr("☕  来自 Obliphur"), tr(TIRED_TEXT, "name" to username), listOf(
+            NoticeButton(tr("去设置"), "settings", true), NoticeButton(tr("知道了"), "ok", false))) {
+            if (it == "settings") host.openPage("settings:timer")
+        }
+        changed()
+    }
+
     private fun showWelcome() {
         val msg = tr("联网要先申请,等过冷静期才连上,每天有额度.") + "\n\n" +
             tr("接下来{h}小时是配置期:所有修改立即生效.", "h" to Cfg.SETUP_HOURS) + "\n" +
@@ -435,7 +472,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     fun checkAchievements() {
         if (dm.resetting) return
         val new = ach.check(AchFacts(LocalDateTime.now(), ach.first, settings.inSetup(), dm.studyByDay(), dm.hourDays,
-            contract.history))
+            contract.history, timer.breakCarry.toDouble()))
         if (new.isNotEmpty()) achievementsUnlocked(new)
     }
 

@@ -22,6 +22,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -299,6 +300,8 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
     val snack = remember { SnackbarHostState() }
     var snackKind by remember { mutableStateOf("info") }
     val req by pageRequest.collectAsState()
+    // 还没有用户名: 先填写 (MECHANICS 1.1), 填好之前不显示其他提示窗
+    var needName by remember { mutableStateOf(core.username.isEmpty()) }
 
     fun go(p: String) {
         val parts = p.split(":")
@@ -322,9 +325,10 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
         } else bars.show(androidx.core.view.WindowInsetsCompat.Type.statusBars())
     }
     LaunchedEffect(Unit) { app.navRequests.collect { go(it) } }
-    // 欢迎窗口关掉之后 (或者本来就没有) 再依次申请权限
-    LaunchedEffect(notices.none { it.tag == "welcome" }) {
-        if (notices.none { it.tag == "welcome" }) act.startPermissionFlow()
+    // 填好用户名, 欢迎窗口也关掉之后 (或者本来就没有) 再依次申请权限
+    val welcomeDone = !needName && notices.none { it.tag == "welcome" }
+    LaunchedEffect(welcomeDone) {
+        if (welcomeDone) act.startPermissionFlow()
     }
     LaunchedEffect(Unit) {
         app.toasts.collect {
@@ -466,7 +470,8 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
             AchievementPopups { go("ach") }
             // 黑雾开始时正看着设置 / 成就: 离开
             if (page in setOf("settings", "ach") && core.contract.fog()) LaunchedEffect(Unit) { page = "timer" }
-            notices.firstOrNull()?.let { n ->
+            if (needName) NameDialog { core.setUsername(it); needName = false }
+            else notices.firstOrNull()?.let { n ->
                 AlertDialog(
                     onDismissRequest = { core.closeNotice(n.id, null) },
                     title = { Text(n.title) },
@@ -500,4 +505,29 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
             }
         }
     }
+}
+
+/** 填写用户名 (MECHANICS 1.1): 不填就关不掉. */
+@Composable
+private fun NameDialog(onDone: (String) -> Unit) {
+    val o = com.obliphur.oit.ui.LocalOit.current
+    var name by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = {},
+        title = { Text(tr("👤  你的名字")) },
+        text = {
+            androidx.compose.foundation.layout.Column {
+                Text(tr("初次见面.怎么称呼你?"))
+                OutlinedTextField(name, { name = it.take(com.obliphur.oit.core.Cfg.USERNAME_MAX) }, singleLine = true,
+                    modifier = Modifier.padding(top = 12.dp))
+            }
+        },
+        confirmButton = {
+            TextButton({ onDone(name.trim()) }, enabled = name.isNotBlank()) {
+                Text(tr("确定"), color = if (name.isNotBlank()) o.accent else o.dim)
+            }
+        },
+        containerColor = o.bg,
+        properties = androidx.compose.ui.window.DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
+    )
 }

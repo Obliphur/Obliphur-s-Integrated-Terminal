@@ -237,6 +237,14 @@ class Settings(
     }
 
     /** 给某一项一次"下一次修改免等待". 已经有了就不重复给, 返回是否新给了. */
+    /** 这一项排队中的修改现在就到期 (下一次 promoteDue 生效). 没有排队中的修改时返回 false. */
+    fun makeDueNow(key: String): Boolean {
+        val p = pending[key] ?: return false
+        pending[key] = p.copy(applyAt = now())
+        save()
+        return true
+    }
+
     fun grantFreeChange(key: String): Boolean {
         if (key !in Schema.BY_KEY || key in freeNext) return false
         freeNext.add(key)

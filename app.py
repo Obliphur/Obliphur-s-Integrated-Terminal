@@ -28,7 +28,7 @@ from config import (
 )
 from i18n import tr
 from net_guard import NetGuard
-from data_manager import DataManager
+from data_manager import DataManager, USERNAME_MAX
 from settings_manager import SettingsManager
 from pages import (CalendarPage, HourLogPage, SettingsPage, RulesPage, StatsPage,
                    ContractPage, AchievementsPage, AchievementPopups)
@@ -61,6 +61,17 @@ def _enable_per_monitor_dpi():
 
 
 ALARM_WAV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sounds", "target_alarm.wav")
+
+
+TIRED_TEXT = ("主管{name}你好.我是Obliphur.\n"
+              "你的休息时间不够吗?你可能暂时还无法做到长时间专注 导致休息效率低下.\n"
+              "或者说,你处于低谷期,没有什么精力长时间专注.\n"
+              "没关系.到设置调整休息时间倍率吧,请不要直接卸载,哪怕RESET也好...")
+
+
+def tired_text(name: str) -> str:
+    """一周内第 5 次领"我累了"时弹窗的文字 (MECHANICS 6.5)."""
+    return tr(TIRED_TEXT, name=name or "")
 
 
 def contract_page_results() -> dict:
@@ -255,7 +266,10 @@ class BreakTimerApp:
         atexit.register(self._save_focus_now)
         self.var_confirm.trace_add("write", self._on_confirm_change)
         self._recover_focus()
-        if self._first_run:
+        if not self.dm.username:
+            # 第一次打开 (或者还没填过用户名的旧版本升级上来): 先填用户名, 再显示介绍窗口
+            self.root.after(600, self._ask_username)
+        elif self._first_run:
             self.root.after(600, self._show_welcome)
         who = self.sync.pop_wiped_by()
         if who:
@@ -1007,7 +1021,8 @@ class BreakTimerApp:
         week = "%d-W%02d" % now.isocalendar()[:2]
         d = self._bonus_state()
         used = int(d.get("bonus_used", 0) or 0) if d.get("bonus_week") == week else 0
-        self._timer_extra = {"bonus_week": week, "bonus_used": used + add}
+        count = (int(d.get("bonus_count", 0) or 0) if d.get("bonus_week") == week else 0) + 1
+        self._timer_extra = {"bonus_week": week, "bonus_used": used + add, "bonus_count": count}
         self._mine()
         if self.state == ON_BREAK:
             self.countdown_seconds += add          # 正在休息: 直接加到这次休息里
@@ -1032,6 +1047,22 @@ class BreakTimerApp:
             self.lbl_sub.config(text=self._idle_sub_text())
         self._bonus_show(self._bonus_idle_text())
         self._sync_timer_buttons()
+        if count == int(config.BONUS_TIRED_TIMES):
+            self._tired_notice()
+
+    def _tired_notice(self):
+        """一周内第 5 次领"我累了" (MECHANICS 6.5): 劝去调休息时间倍率, 它的下一次修改免等待
+        (已经有排队中的修改时, 那一项立即生效)."""
+        if self.settings.make_due_now("BREAK_TIME_SCALE"):
+            self._log_notice("BREAK_TIME_SCALE pending change applied now — 5 bonus breaks this week")
+            self.check_pending_settings()
+        elif self.settings.grant_free_change("BREAK_TIME_SCALE"):
+            self._log_notice("BREAK_TIME_SCALE next change free — 5 bonus breaks this week")
+        self.update_settings_badge()
+        if "settings" in self.pages:
+            self.pages["settings"].refresh()
+        toast.notice(tr("☕  来自 Obliphur"), tired_text(self.dm.username), [
+            (tr("去设置"), self._open_detail_settings, True), (tr("知道了"), None, False)])
 
     def _start_break(self, announce: bool = False):
         """开始休息倒计时 = 建议休息时长 + 之前暂停休息结转的时间."""
@@ -2550,6 +2581,14 @@ class BreakTimerApp:
 
     # ---- 配置期 ----
 
+    def _ask_username(self):
+        def done(name):
+            self.dm.set_username(name)
+            self._log_notice(f"USERNAME set: {name}")
+            if self._first_run:
+                self.root.after(200, self._show_welcome)
+        toast.prompt_name(tr("👤  你的名字"), tr("初次见面.怎么称呼你?"), done, limit=USERNAME_MAX)
+
     def _show_welcome(self):
         hours = int(config.SETUP_HOURS)
         msg = (tr("联网要先申请,等过冷静期才连上,每天有额度.")
@@ -2628,7 +2667,8 @@ class BreakTimerApp:
         study = {d: self.dm._study_all(d) for d in set(self.dm.study_data).union(
             *((led.get("study") or {}) for led in (self.dm.peer_ledgers() or [])))}
         facts = achievements.Facts(datetime.now(), self.ach.first, self.settings.in_setup(),
-                                   study, self.dm.hour_days, self.contract.history)
+                                   study, self.dm.hour_days, self.contract.history,
+                                   carry=self.break_carry)
         self._after_achievements(self.ach.check(facts))
 
     def on_achievements_synced(self, changes: dict):

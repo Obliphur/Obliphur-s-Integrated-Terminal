@@ -544,6 +544,15 @@ class SettingsManager:
         self.save()
         return True
 
+    def make_due_now(self, key: str) -> bool:
+        """这一项排队中的修改现在就到期 (下一次 promote_due 生效). 没有排队中的修改时返回 False."""
+        item = self.pending.get(key)
+        if not item:
+            return False
+        item["apply_at"] = self._now()
+        self.save()
+        return True
+
     def wait_tag(self, key: str) -> str:
         """修改这一项是否需要等待: 'instant' 即时生效 / 'setup' 配置期内即时 /
         'free' 这一次免等待 / '' 需要等待 (或开发者模式, 不显示)."""

@@ -28,10 +28,17 @@ ACHIEVEMENTS = [
     ("study12", "overload", "你在一天内学习了12h.这真的是人类可以做到的吗?", True, ""),
     ("sleep10", "冬眠", "睡了10h以上...", False, ""),
     ("summit", "登顶", "我们是冠军!", True, ""),
+    ("hamster", "仓鼠", "你奇迹般地攒够了三个小时的休息.", True, ""),
+    ("duel1", "第一次对决", "你完成了第一次危机合约", False, ""),
+    ("calamity7", "毋畏天灾", "你在一周内总共完成了7次危机合约", False, ""),
+    ("month240", "月度杰出主管", "你在一个月内每天的平均专注时长超过8h,congratulation!", True, ""),
 ]
 BY_ID = {a[0]: a for a in ACHIEVEMENTS}
 SLEEP_WORD = "sleeping"
 SUMMIT_LEVEL = 25          # "登顶": 完成危机等级 (结束时) 不低于这个的合约
+HAMSTER_SECONDS = 3 * 3600  # "仓鼠": 积攒的休息时间达到 3 小时
+WEEK_CONTRACTS = 7         # "毋畏天灾": 同一周 (周一 0 点起) 完成的合约数
+MONTH_HOURS = 240          # "月度杰出主管": 某一个月的学习时长合计
 LOG_FILES = ("settings_changes.log", "net_requests.log", "window_guard.log")
 
 
@@ -41,13 +48,14 @@ def is_english_name(name: str) -> bool:
 
 class Facts:
     """判定用的数据. study: {日期: 小时} (所有设备合计); hours: {日期: {小时: 内容}};
-    contracts: 结束了的合约 (contract.py 的 history)."""
+    contracts: 结束了的合约 (contract.py 的 history); carry: 积攒的休息时间 (秒)."""
 
     def __init__(self, now: datetime, first: datetime, in_setup: bool, study: dict, hours: dict,
-                 contracts=None):
+                 contracts=None, carry: float = 0):
         self.now, self.first, self.in_setup = now, first, in_setup
         self.study, self.hours = study, hours
         self.contracts = contracts or []
+        self.carry = float(carry or 0)
 
 
 def sleep_hours(day: dict) -> float:
@@ -73,6 +81,29 @@ def _sleep(hours: float):
     return lambda f: any(sleep_hours(day) >= hours - 1e-6 for day in f.hours.values())
 
 
+def _completed(f):
+    return [h for h in f.contracts if h.get("result") == "completed"]
+
+
+def _week_contracts(f) -> bool:
+    """同一周 (周一 0 点到周日 24 点, 按结束时刻) 完成了 WEEK_CONTRACTS 个合约."""
+    weeks = {}
+    for h in _completed(f):
+        t = _parse(h.get("end"))
+        if t:
+            w = t.isocalendar()[:2]
+            weeks[w] = weeks.get(w, 0) + 1
+    return any(n >= WEEK_CONTRACTS for n in weeks.values())
+
+
+def _month_study(f) -> bool:
+    """某一个月的学习时长合计达到 MONTH_HOURS (所有设备合计)."""
+    months = {}
+    for ds, v in f.study.items():
+        months[str(ds)[:7]] = months.get(str(ds)[:7], 0.0) + float(v or 0)
+    return any(v >= MONTH_HOURS - 1e-6 for v in months.values())
+
+
 CHECKS = {
     "awake": lambda f: True,
     "day1": _since(1),
@@ -87,6 +118,10 @@ CHECKS = {
     "sleep10": _sleep(10),
     # 完成了危机等级 20 及以上的合约 (按结算时的等级, MECHANICS 18)
     "summit": lambda f: any(h.get("result") == "completed" and int(h.get("level") or 0) >= SUMMIT_LEVEL for h in f.contracts),
+    "hamster": lambda f: f.carry >= HAMSTER_SECONDS,
+    "duel1": lambda f: bool(_completed(f)),
+    "calamity7": _week_contracts,
+    "month240": _month_study,
 }
 
 
@@ -244,6 +279,18 @@ def _selftest():
     assert not CHECKS["summit"](f24)
     f25 = Facts(datetime(2026, 1, 1), datetime(2026, 1, 1), False, {}, {}, [{"result": "completed", "level": 25}])
     assert CHECKS["summit"](f25)
+    # 仓鼠 / 第一次对决 / 毋畏天灾 / 月度杰出主管
+    z = datetime(2026, 1, 1)
+    assert not CHECKS["hamster"](Facts(z, z, False, {}, {}, carry=3 * 3600 - 1))
+    assert CHECKS["hamster"](Facts(z, z, False, {}, {}, carry=3 * 3600))
+    assert CHECKS["duel1"](f25) and not CHECKS["duel1"](Facts(z, z, False, {}, {}, [{"result": "failed"}]))
+    six = [{"result": "completed", "end": f"2026-10-{d:02d}T12:00:00"} for d in (12, 13, 14, 15, 16, 18)]
+    assert not CHECKS["calamity7"](Facts(z, z, False, {}, {}, six + [{"result": "failed", "end": "2026-10-17T12:00:00"}]))
+    assert not CHECKS["calamity7"](Facts(z, z, False, {}, {}, six + [{"result": "completed", "end": "2026-10-19T00:00:01"}]))
+    assert CHECKS["calamity7"](Facts(z, z, False, {}, {}, six + [{"result": "completed", "end": "2026-10-18T23:59:00"}]))
+    oct_ = {f"2026-10-{d:02d}": 8.0 for d in range(1, 31)}
+    assert CHECKS["month240"](Facts(z, z, False, oct_, {}))
+    assert not CHECKS["month240"](Facts(z, z, False, {**oct_, "2026-10-30": 7.9}, {}))
     print("achievements selftest ok")
 
 
