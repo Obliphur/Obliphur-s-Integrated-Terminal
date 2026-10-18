@@ -141,6 +141,12 @@ class PcLocal:
 
         # 规则页的名单不同步 (每台设备自己管, 见 MECHANICS 15.2)
         hours = {f"{ds}/{h}": t for ds, day in a.dm.hour_days.items() for h, t in day.items() if t}
+        # 细化规范的两个半小时 (MECHANICS 18.4): "日期/小时/1" "日期/小时/2"
+        for ds, day in a.dm.hour_halves.items():
+            for h, pair in day.items():
+                for i, t in enumerate(pair if isinstance(pair, list) else []):
+                    if t:
+                        hours[f"{ds}/{h}/{i + 1}"] = t
 
         d = a._bonus_state()
         timer = {"break_carry": int(a.break_carry),
@@ -178,6 +184,17 @@ class PcLocal:
         elif doc == "hours":
             dm = a.dm
             for key, val in changes.items():
+                parts = key.split("/")
+                if len(parts) == 3 and parts[1].isdigit() and parts[2] in ("1", "2"):
+                    ds, h, i = parts[0], parts[1], int(parts[2]) - 1
+                    pair = dm.hour_halves.get(ds, {}).get(h)
+                    pair = list(pair) if isinstance(pair, list) and len(pair) == 2 else ["", ""]
+                    pair[i] = str(val or "")
+                    if any(pair):
+                        dm.hour_halves.setdefault(ds, {})[h] = pair
+                    else:
+                        dm.hour_halves.get(ds, {}).pop(h, None)
+                    continue
                 try:
                     ds, h = key.split("/")
                     int(h)

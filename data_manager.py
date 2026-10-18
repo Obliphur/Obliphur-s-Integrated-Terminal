@@ -67,11 +67,15 @@ class DataManager:
         self.my_id = lambda: ""
         self.mother_id = lambda: None            # 母端的设备 id
         self.hour_days: Dict[str, Dict[str, str]] = {}
+        # 合约的细化规范 (MECHANICS 18.4): 一小时分成两个半小时各填一格 {日期: {小时: [前半, 后半]}};
+        # hour_days 里那一小时是两格用 "/" 连起来的内容, 统计照常按它算.
+        self.hour_halves: Dict[str, Dict[str, list]] = {}
         self.hour_cursor: Optional[datetime] = None
 
         self.hour_enabled = bool(getattr(config, "HOUR_LOG_ENABLED", HOUR_LOG_ENABLED))
         self.today_date = datetime.now().strftime('%Y-%m-%d')
         self.prompt_slot: Optional[datetime] = None
+        self.prompt_len = 60                     # 待填写的那一格有几分钟 (细化规范: 30)
 
         self._migrate_old_data()
         self.load_study_data()
@@ -406,15 +410,18 @@ class DataManager:
             with open(self.hour_file, 'r', encoding='utf-8') as f:
                 d = json.load(f)
             self.hour_days = d.get("days", {})
+            halves = d.get("halves")
+            self.hour_halves = halves if isinstance(halves, dict) else {}
             cur = d.get("cursor")
             self.hour_cursor = datetime.fromisoformat(cur) if cur else None
         except Exception:
-            self.hour_days, self.hour_cursor = {}, None
+            self.hour_days, self.hour_cursor, self.hour_halves = {}, None, {}
         self._prune_hours()
 
     def _prune_hours(self):
         keep = month_prefixes()
         self.hour_days = {k: v for k, v in self.hour_days.items() if k[:7] in keep}
+        self.hour_halves = {k: v for k, v in self.hour_halves.items() if k[:7] in keep and isinstance(v, dict)}
 
     def hour_activity_seconds(self, prefix: str) -> Dict[str, float]:
         """某个月每项活动的总时长(秒).一小时有多项活动时均分."""
@@ -434,7 +441,8 @@ class DataManager:
 
                     "enabled": bool(self.hour_enabled),
                     "cursor": self.hour_cursor.isoformat() if self.hour_cursor else None,
-                    "days": self.hour_days
+                    "days": self.hour_days,
+                    "halves": self.hour_halves
                 }, f, ensure_ascii=False, indent=1)
         except IOError:
             pass
@@ -458,12 +466,72 @@ class DataManager:
         return self.hour_days.get(date_str, {}).get(str(hour), "")
 
     def set_hour_text(self, date_str: str, hour: int, text: str):
+        self.hour_halves.get(date_str, {}).pop(str(hour), None)     # 整小时一起改了: 不再分两格
         day = self.hour_days.setdefault(date_str, {})
         if text:
             day[str(hour)] = text
         else:
             day.pop(str(hour), None)
         self.save_hour_log()
+
+    # ---- 细化规范: 半小时一格 ----
+
+    def get_half_text(self, date_str: str, hour: int, i: int) -> str:
+        """i = 0 前半小时, 1 后半小时. 还没分开填过的小时: 前半显示整小时的内容."""
+        pair = self.hour_halves.get(date_str, {}).get(str(hour))
+        if isinstance(pair, list) and len(pair) == 2:
+            return str(pair[i] or "")
+        return self.get_hour_text(date_str, hour) if i == 0 else ""
+
+    def set_half_text(self, date_str: str, hour: int, i: int, text: str, save: bool = True):
+        pair = [self.get_half_text(date_str, hour, 0), self.get_half_text(date_str, hour, 1)]
+        pair[i] = text
+        day = self.hour_halves.setdefault(date_str, {})
+        if any(pair):
+            day[str(hour)] = pair
+        else:
+            day.pop(str(hour), None)
+        self._join_halves(date_str, hour)
+        if save:
+            self.save_hour_log()
+
+    def _join_halves(self, date_str: str, hour: int):
+        """整小时的内容 = 两个半小时用 "/" 连起来 (一样的只写一次)."""
+        pair = self.hour_halves.get(date_str, {}).get(str(hour)) or ["", ""]
+        parts = [p for p in pair if p]
+        text = "/".join(dict.fromkeys(parts))
+        day = self.hour_days.setdefault(date_str, {})
+        if text:
+            day[str(hour)] = text
+        else:
+            day.pop(str(hour), None)
+
+    def unit_text(self, key: str) -> str:
+        """同步 / 合约用的键: "日期/小时" 整小时, "日期/小时/1" "日期/小时/2" 两个半小时."""
+        parts = key.split("/")
+        try:
+            if len(parts) == 3:
+                return self.get_half_text(parts[0], int(parts[1]), int(parts[2]) - 1)
+            return self.get_hour_text(parts[0], int(parts[1]))
+        except (ValueError, IndexError):
+            return ""
+
+    def finalize_halves(self, units, now: datetime = None):
+        """细化规范的半小时过了补填时限还空着: 记为超时自动记录的内容. units: [(键, 开始, 结束)]."""
+        if not self.hour_enabled:
+            return
+        now = now or datetime.now()
+        changed = False
+        for key, _a, b in units:
+            parts = key.split("/")
+            if len(parts) != 3 or b + config.FILL_WINDOW > now:
+                continue
+            ds, h, i = parts[0], int(parts[1]), int(parts[2]) - 1
+            if not self.get_half_text(ds, h, i):
+                self.set_half_text(ds, h, i, self.auto_text, save=False)
+                changed = True
+        if changed:
+            self.save_hour_log()
 
     def finalize_hours(self):
         now = datetime.now()
@@ -498,8 +566,11 @@ class DataManager:
         s = self.prompt_slot
         if s is None:
             return None
-        if (datetime.now() >= s + timedelta(hours=1) + config.FILL_WINDOW
-                or self.get_hour_text(s.strftime('%Y-%m-%d'), s.hour)):
+        if self.prompt_len == 30:
+            text = self.get_half_text(s.strftime('%Y-%m-%d'), s.hour, 1 if s.minute >= 30 else 0)
+        else:
+            text = self.get_hour_text(s.strftime('%Y-%m-%d'), s.hour)
+        if datetime.now() >= s + timedelta(minutes=self.prompt_len) + config.FILL_WINDOW or text:
             self.prompt_slot = None
             return None
         return s

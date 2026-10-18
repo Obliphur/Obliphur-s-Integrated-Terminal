@@ -20,41 +20,50 @@ FRESH_MS = 2 * 60 * 1000         # 合约的主人这么久没同步过: 本机�
 
 # (id, 组, 等级, 名字, 描述, 冲突的词条)
 # 同一组的词条互相冲突, 界面上排在同一列; 冲突是双向的 (这里只写一边).
+# 成系列的 (有好几档的) 在前, 界面上放在左边; 零散的 (只有一档的) 在后, 放在右边.
 TERMS = [
-    ("long1", "long", 1, "环境:持久战-I", "时长延长为1.1倍", ()),
-    ("long2", "long", 2, "环境:持久战-II", "时长延长为1.2倍", ()),
-    ("long3", "long", 3, "环境:持久战-III", "时长延长为1.3倍", ()),
+    ("long1", "long", 1, "环境:持久战-I", "时长延长为1.2倍", ()),
+    ("long2", "long", 2, "环境:持久战-II", "时长延长为1.4倍", ()),
+    ("long3", "long", 3, "环境:持久战-III", "时长延长为1.6倍", ()),
     ("move1", "move", 1, "目标:高机动-I", "现实中的移动速度加快25%", ()),
     ("move2", "move", 2, "目标:高机动-II", "现实中的移动速度加快50%", ()),
     ("info1", "info", 1, "环境:信息阻断-I", "只能使用剩余联网时间的75% 且不能使用借贷", ()),
     ("info2", "info", 2, "环境:信息阻断-II", "只能使用剩余联网时间的50% 且不能使用借贷", ()),
     ("info3", "info", 3, "环境:信息阻断-III", "只能使用剩余联网时间的25% 且不能使用借贷", ()),
     ("isolate", "info", 4, "环境:信息隔绝", "不能使用联网功能", ()),
-    ("suppress", "suppress", 2, "环境:抑制", "不能使用快速访问功能", ("isolate",)),
-    ("jam", "jam", 2, "环境:全频道阻塞干扰", "期间使用proxy block-all模式", ()),
-    ("music", "music", 2, "环境:乐理之灾", "期间不能打开音乐播放软件 不能使用外部软件播放mp3等音频文件", ()),
-    ("fog", "fog", 1, "环境:黑雾", "期间不能查看统计数据 且在专注时无法看到专注时长", ()),
     ("tired1", "tired", 1, "环境:疲惫-I", "期间获得的休息时间为0.9x", ()),
     ("tired2", "tired", 2, "环境:疲惫-II", "期间获得的休息时间为0.75x", ()),
     ("tired3", "tired", 3, "环境:疲惫-III", "期间获得的休息时间为0.6x", ()),
+    ("short1", "short", 1, "环境:支援短缺-I", "只能使用合约开始前已保存休息时间的50%", ()),
+    ("short2", "short", 2, "环境:支援短缺-II", "不能使用合约开始前已经保存的休息时间", ()),
     ("chan1", "chan", 1, "环境:通道阻塞-I", "期间的最大窗口数改为4", ()),
     ("chan2", "chan", 2, "环境:通道阻塞-II", "期间的最大窗口数改为3", ()),
+    ("suppress", "suppress", 1, "环境:抑制", "不能使用快速访问功能", ("isolate",)),
+    ("jam", "jam", 2, "环境:全频道阻塞干扰", "期间使用proxy block-all模式", ()),
+    ("music", "music", 1, "环境:乐理之灾", "非休息期间不能打开音乐播放软件 不能使用外部软件播放mp3等音频文件", ()),
+    ("fog", "fog", 1, "环境:黑雾", "合约期间 专注时长 成就 日历 统计数据不可见 且无法打开设置", ()),
+    ("seal", "seal", 1, "环境:记录封锁", "超过填写时间未填写 则不能再修改该记录", ()),
+    ("fine", "fine", 2, "目标:细化规范", "记录变为30min一次", ()),
     ("last", "last", 1, "最后防线", "违反一次词条即结束合约", ()),
 ]
 BY_ID = {t[0]: t for t in TERMS}
 GROUPS = list(dict.fromkeys(t[1] for t in TERMS))      # 界面上从左到右的列
 MAX_LEVEL = max(t[2] for t in TERMS)
 
-# 用"不能" / "禁止"描述的词条是软规则: 界面上照样能做, 但会被算作违反, 这个词条降一级 (结算按降级后的等级);
-# 用"无法"描述的 (黑雾) 是硬规则, 立即生效; 全频道阻塞干扰 / 持久战 / 疲惫直接生效.
-SOFT = {"info1", "info2", "info3", "isolate", "chan1", "chan2", "music", "suppress"}
-LOWER = {"isolate": "info3", "info3": "info2", "info2": "info1", "chan2": "chan1"}   # 降一级换成哪个词条
-SINGLE = {"music", "suppress"}       # 只有一档的词条: 降级时等级减一, 减到 0 就失效
+# 软规则: 界面上照样能做, 但会被算作违反, 这个词条降一级 (结算按降级后的等级);
+# 其余是硬规则, 立即生效 (黑雾, 记录封锁, 细化规范, 全频道阻塞干扰, 持久战, 疲惫).
+SOFT = {"info1", "info2", "info3", "isolate", "chan1", "chan2", "music", "suppress", "short1", "short2"}
+LOWER = {"isolate": "info3", "info3": "info2", "info2": "info1", "chan2": "chan1",
+         "short2": "short1"}                     # 降一级换成哪个词条
+SINGLE = {"music", "suppress"}       # 只有一档的软规则: 降级时等级减一, 减到 0 就失效
 
-DURATION = {"long1": 1.1, "long2": 1.2, "long3": 1.3}
+DURATION = {"long1": 1.2, "long2": 1.4, "long3": 1.6}
 NET_SHARE = {"info1": 0.75, "info2": 0.5, "info3": 0.25, "isolate": 0.0}
 REST = {"tired1": 0.9, "tired2": 0.75, "tired3": 0.6}
 WINDOWS = {"chan1": 4, "chan2": 3}
+SUPPLY = {"short1": 0.5, "short2": 0.0}         # 合约开始前积攒的休息时间能用几成
+HOUR_TERMS = {"seal", "fine"}                   # 整点记录的词条: 整点记录关着时, 这次合约中照样开启
+SUPPLY_WARN = (180, 60)                         # 支援短缺: 还差这么多秒就用超时各提醒一次
 
 # 总等级 → 完成合约时给的休息时间 (分钟, 固定; 按结束时的等级)
 REST_TABLE = [(0, 20), (1, 24), (4, 28), (7, 32), (10, 36), (13, 40), (16, 44), (19, 50)]
@@ -235,13 +244,18 @@ class Contract:
         self.draft = clean_terms(terms)
         self.save()
 
-    def start(self, terms, owner: str = "", now: datetime = None) -> dict:
+    def start(self, terms, owner: str = "", now: datetime = None, pre: float = 0) -> dict:
+        """pre: 开始时积攒的休息时间 (秒). 合约中暂停休息时这部分不打折; 支援短缺限制它能用几成."""
         now = (now or datetime.now()).replace(microsecond=0)
         terms = clean_terms(terms)
+        pre = max(0.0, float(pre))
+        share = self._supply_share(terms)
         self.live = {"state": "active", "id": _now_ms(), "start": _iso(now),
                      "end": _iso(now + timedelta(seconds=duration_of(terms))),
                      "terms": terms, "orig": list(terms), "cut": {}, "violations": 0, "rest": 0,
-                     "owner": owner, "idle_since": None, "net": None, "first_break": False}
+                     "owner": owner, "idle_since": None, "net": None, "first_break": False,
+                     "pre": round(pre, 1), "pre_left": round(pre, 1), "pre_used": 0,
+                     "supply": None if share is None else round(pre * share, 1), "hl": []}
         self._watch = {}
         self.save()
         return self.live
@@ -256,7 +270,8 @@ class Contract:
         rec = {"id": self.live.get("id"), "start": self.live.get("start"), "end": _iso(end),
                "planned": self.live.get("end"), "terms": self.terms, "orig": self.orig,
                "level": self.level, "orig_level": self.orig_level, "cut": dict(self.cut),
-               "result": result, "violations": self.violations, "reward": reward}
+               "result": result, "violations": self.violations, "reward": reward,
+               "pre_left": self.pre_left}
         self.history.append(rec)
         self.live = {"state": "none", "owner": by, "first_break": result == "completed"}
         self.save()
@@ -299,10 +314,11 @@ class Contract:
         return max(0.0, IDLE_LIMIT - (now - since).total_seconds())
 
     def violate(self, tid: str):
-        """违反了一次词条 tid: 记一次, 这个词条降一级. 返回 (是否达到了上限, 降级后的词条 / "" = 失效)."""
+        """违反了一次词条 tid: 记一次, 这个词条降一级. 返回 (是否达到了上限, 降级后的词条 / "" = 失效).
+        tid = "": 不是哪个词条的违反 (整点记录超时未填写), 只记一次."""
         if not self.active:
             return False, ""
-        new = self.downgrade(tid)
+        new = self.downgrade(tid) if tid else ""
         self.live["violations"] = self.violations + 1
         self.save()
         return self.violations >= self.violation_limit, new
@@ -313,6 +329,7 @@ class Contract:
         if tid not in terms:
             return ""
         old_share = self.net_share()
+        old_supply = self._supply_share(terms)
         cut = dict(self.cut)
         i = terms.index(tid)
         if tid in LOWER:
@@ -331,6 +348,12 @@ class Contract:
         new_share = self.net_share()
         if isinstance(n, dict) and old_share is not None and new_share is not None:
             n["limit"] = float(n.get("limit") or 0) + float(n.get("base") or 0) * (new_share - old_share)
+        # 支援短缺: 同样多给低一档多出来的那部分; 失效了就不再限制
+        new_supply = self._supply_share(self.live["terms"])
+        if new_supply is None:
+            self.live["supply"] = None
+        elif old_supply is not None and self.live.get("supply") is not None:
+            self.live["supply"] = round(float(self.live["supply"]) + self.pre * (new_supply - old_supply), 1)
         self.save()
         return new
 
@@ -392,6 +415,75 @@ class Contract:
         """抑制: 用了快速访问."""
         return "suppress" if self.has("suppress") else ""
 
+    # ---- 合约开始前积攒的休息时间 (暂停不打折; 支援短缺) ----
+    # 一次休息 = 建议休息时长 + 积攒的休息时间; 先用合约中得到的, 合约开始前积攒的放在最后用.
+
+    @property
+    def pre(self) -> float:
+        """开始时积攒的休息时间 (秒)."""
+        return float(self.live.get("pre") or 0) if self.active else 0.0
+
+    @property
+    def pre_left(self) -> float:
+        """还在积攒的休息时间里的那部分 (没用掉, 也没有拿进正在进行的休息)."""
+        return float(self.live.get("pre_left") or 0) if self.active else 0.0
+
+    @property
+    def pre_used(self) -> float:
+        return float(self.live.get("pre_used") or 0) if self.active else 0.0
+
+    def pre_take(self, carry: float) -> float:
+        """开始休息, 积攒的 carry 秒全部拿进这次休息: 其中合约开始前的有多少 (从 pre_left 里拿走)."""
+        if not self.active:
+            return 0.0
+        x = min(max(0.0, float(carry)), self.pre_left)
+        if x > 0:
+            self.live["pre_left"] = round(self.pre_left - x, 1)
+            self.save()
+        return x
+
+    def pre_settle(self, taken: float, back: float):
+        """一次休息结束 (back = 暂停时还给积攒的那部分合约开始前的时间, 自然结束时 0)."""
+        if not self.active:
+            return
+        taken, back = max(0.0, float(taken)), max(0.0, min(float(taken), float(back)))
+        self.live["pre_left"] = round(self.pre_left + back, 1)
+        self.live["pre_used"] = round(self.pre_used + taken - back, 1)
+        self.save()
+
+    @staticmethod
+    def _supply_share(terms):
+        shares = [SUPPLY[t] for t in terms or [] if t in SUPPLY]
+        return min(shares) if shares else None
+
+    def supply_term(self) -> str:
+        return next((t for t in self.terms if t in SUPPLY), "")
+
+    @property
+    def supply_limit(self):
+        """支援短缺: 合约开始前积攒的休息时间最多能用多少秒 (None = 不限)."""
+        v = self.live.get("supply") if self.supply_term() else None
+        return None if v is None else float(v)
+
+    def supply_until(self, left: float, taken: float):
+        """正在休息 (还剩 left 秒, 这次休息里有 taken 秒是合约开始前的): 再过多少秒就用超了 (None = 这次用不超)."""
+        lim = self.supply_limit
+        if lim is None or taken <= 0:
+            return None
+        cross = float(taken) - (lim - self.pre_used)       # 剩余时间降到这里时用超
+        if cross <= 0:
+            return None
+        return max(0.0, float(left) - cross)
+
+    def supply_check(self, left: float, taken: float) -> str:
+        """支援短缺: 合约开始前积攒的休息时间用超了 (正在休息时按已经用掉的算)."""
+        lim = self.supply_limit
+        tid = self.supply_term()
+        if lim is None or not tid:
+            return ""
+        used = self.pre_used + max(0.0, float(taken) - max(0.0, float(left)))
+        return tid if used > lim + 0.5 else ""
+
     # ---- 词条的效果 ----
 
     def overrides(self) -> dict:
@@ -408,6 +500,17 @@ class Contract:
 
     def fog(self) -> bool:
         return self.has("fog")
+
+    def hour_forced(self) -> bool:
+        """选了整点记录的词条: 整点记录关着时, 这次合约中照样开启."""
+        return any(t in HOUR_TERMS for t in self.terms)
+
+    def fine_hour(self, slot_start: datetime) -> bool:
+        """细化规范: 这一小时 (按开始时刻) 和进行中的合约重叠, 记录改为每 30 分钟一次."""
+        if not self.has("fine"):
+            return False
+        a, b = self.start_at, self.end_at
+        return bool(a and b and a < slot_start + timedelta(hours=1) and slot_start < b)
 
     def rest_factor(self) -> float:
         return min((REST[t] for t in self.terms if t in REST), default=1.0)
@@ -448,26 +551,64 @@ class Contract:
         x = min(1.0, max(0.0, float(x)))
         return 1.0 - (1.0 - x) / 2.0
 
-    # ---- 整点记录的锁定 ----
+    # ---- 整点记录: 超时未填写算一次违反; 记录封锁 ----
 
-    def periods(self, now: datetime = None):
+    def periods(self, now: datetime = None, term: str = ""):
+        """各个合约 (结束了的和进行中的) 的 (开始, 结束); term: 只要选了这个词条的."""
         out = []
         for h in self.history:
             a, b = _parse(h.get("start")), _parse(h.get("end"))
-            if a and b:
+            if a and b and (not term or term in (h.get("orig") or h.get("terms") or [])):
                 out.append((a, b))
-        if self.active and self.start_at:
+        if self.active and self.start_at and (not term or term in self.orig):
             out.append((self.start_at, now or datetime.now()))
         return out
 
-    def hour_locked(self, slot_start: datetime, now: datetime = None) -> bool:
-        """以 slot_start 开始的那一小时: 和合约有重叠, 并且已经进入了它之后的下一个时间段结束之后
-        (也就是那一小时结束后再过一小时), 就不能再改 —— 合约结束了也一样."""
-        now = now or datetime.now()
-        slot_end = slot_start + timedelta(hours=1)
-        if now < slot_end + timedelta(hours=1):
+    def hour_units(self, now: datetime):
+        """进行中的合约里已经结束的记录格: [(键, 开始, 结束)].
+        键是 "日期/小时", 细化规范的两个半小时是 "日期/小时/1" "日期/小时/2"."""
+        if not self.active or not self.start_at:
+            return []
+        a, b = self.start_at, min(now, self.end_at or now)
+        out = []
+        h = a.replace(minute=0, second=0, microsecond=0)
+        while h < b:
+            key = f"{h:%Y-%m-%d}/{h.hour}"
+            if self.fine_hour(h):
+                parts = [(key + "/1", h, h + timedelta(minutes=30)),
+                         (key + "/2", h + timedelta(minutes=30), h + timedelta(hours=1))]
+            else:
+                parts = [(key, h, h + timedelta(hours=1))]
+            out += [p for p in parts if p[1] < b and a < p[2] and p[2] <= now]
+            h += timedelta(hours=1)
+        return out
+
+    def hour_misses(self, now: datetime, fill: timedelta, text_of, auto: str) -> list:
+        """合约中过了填写时限还没填写的记录格 (空着, 或者是超时自动记录的内容): 每格只算一次违反.
+        返回新算的键 (只由做自动结束的设备调用)."""
+        if not self.active:
+            return []
+        old = list(self.live.get("hl") or [])
+        seen = set(old)
+        new = []
+        for key, _a, b in self.hour_units(now):
+            if key in seen or b + fill > now:
+                continue
+            seen.add(key)
+            if (text_of(key) or "") in ("", auto):
+                new.append(key)
+        if len(seen) != len(old):
+            self.live["hl"] = sorted(seen)
+            self.save()
+        return new
+
+    def hour_locked(self, start: datetime, end: datetime, text: str, now: datetime, fill: timedelta,
+                    auto: str) -> bool:
+        """记录封锁: 和选了这个词条的合约重叠的记录格, 过了填写时限还没填写 (空着 / 超时自动记录),
+        就不能再改 —— 合约结束了也一样."""
+        if now < end + fill or (text or "") not in ("", auto):
             return False
-        return any(a < slot_end and slot_start < b for a, b in self.periods(now))
+        return any(a < end and start < b for a, b in self.periods(now, "seal"))
 
     # ---- 设备同步 ----
 
@@ -500,25 +641,27 @@ def _selftest():
     assert rest_minutes(18) == 44 and rest_minutes(19) == 50 and rest_reward(19) == 50 * 60
     assert conflicts("long1", "long3") and conflicts("isolate", "info2"), "同一组互相冲突"
     assert not conflicts("isolate", "chan1") and not conflicts("chan2", "isolate") and conflicts("suppress", "isolate")
-    assert not conflicts("jam", "music")
+    assert not conflicts("jam", "music") and conflicts("short1", "short2") and not conflicts("seal", "fine")
     assert clean_terms(["long2", "long1", "x", "isolate", "suppress", "jam"]) == ["long2", "isolate", "jam"]
     assert clean_terms(["isolate", "chan2"]) == ["isolate", "chan2"], "信息隔绝和通道阻塞可以一起选"
-    assert duration_of([]) == 4 * 3600 and duration_of(["long3"]) == int(4 * 3600 * 1.3)
-    best = clean_terms(["long3", "move2", "info3", "suppress", "jam", "music", "fog", "tired3", "chan2", "last"])
-    assert level_of(best) == 21, level_of(best)
+    assert duration_of([]) == 4 * 3600 and duration_of(["long3"]) == int(4 * 3600 * 1.6)
+    assert GROUPS.index("short") < GROUPS.index("suppress"), "成系列的在左边, 零散的在右边"
+    best = clean_terms(["long3", "move2", "info3", "suppress", "jam", "music", "fog", "tired3", "chan2", "last",
+                        "short2", "seal", "fine"])
+    assert level_of(best) == 24, level_of(best)
 
     c = Contract(tempfile.mkdtemp())
     t0 = datetime(2026, 10, 18, 9, 30)
     c.start(["tired2", "info2", "chan1", "long1", "music"], owner="me", now=t0)
-    assert c.active and c.level == 2 + 2 + 1 + 1 + 2 and c.end_at == t0 + timedelta(seconds=int(4 * 3600 * 1.1))
-    assert c.overrides() == {} and not c.fog()
+    assert c.active and c.level == 2 + 2 + 1 + 1 + 1 and c.end_at == t0 + timedelta(seconds=int(4 * 3600 * 1.2))
+    assert c.overrides() == {} and not c.fog() and not c.hour_forced()
     # 信息阻断-II: 开始时剩 100 分钟, 只能用 50 分钟; 用超了 → 降成 -I, 多给 25 分钟
     assert c.net_check(600, 0, 6000, "2026-10-18") == ("", "")
     assert c.net_left(600) == 3000 and c.net_check(3599, 0, 0, "2026-10-18") == ("", "")
     assert c.net_check(3700, 0, 0, "2026-10-18") == ("info2", "over")
     over, new = c.violate("info2")
-    assert not over and new == "info1" and c.terms == ["long1", "info1", "music", "tired2", "chan1"]
-    assert c.net_left(3700) == 600 + 3000 + 1500 - 3700 and c.level == 7 and c.orig_level == 8
+    assert not over and new == "info1" and c.terms == ["long1", "info1", "tired2", "chan1", "music"], c.terms
+    assert c.net_left(3700) == 600 + 3000 + 1500 - 3700 and c.level == 6 and c.orig_level == 7
     assert c.net_check(3800, 0, 0, "2026-10-18") == ("", "")
     assert c.net_check(3800, 600, 0, "2026-10-18") == ("info1", "loan"), "借贷也算违反"
     assert c.net_check(3800, 600, 0, "2026-10-18") == ("", ""), "同一次借贷只算一次"
@@ -527,8 +670,7 @@ def _selftest():
     assert c.window_check(5) == "chan1" and c.window_check(6) == "" and c.window_check(3) == ""
     assert c.window_check(5) == "chan1"
     assert c.music_check(True) == "music" and c.music_check(True) == "" and c.music_check(False) == ""
-    assert c.downgrade("music") == "music" and c.term_level("music") == 1 and c.level == 1 + 1 + 1 + 2
-    assert c.downgrade("music") == "" and not c.has("music")
+    assert c.downgrade("music") == "" and not c.has("music"), "乐理之灾只有 1 级, 降一级就失效"
     assert c.quick_check() == ""
     # 休息: 疲惫 ×0.75; 完成时按降级后的等级给固定的时间 (等级 4 → 28 分钟)
     assert abs(c.book_rest(1000, t0 + timedelta(hours=1)) - 750) < 1e-6
@@ -538,20 +680,15 @@ def _selftest():
     assert c.idle_left(t0 + timedelta(hours=1, minutes=10)) == 20 * 60
     assert c.due(t0 + timedelta(hours=1, minutes=31), True) == ("idle", t0 + timedelta(hours=1, minutes=30))
     assert c.due(t0 + timedelta(hours=1, minutes=31), False)[0] == "", "开始专注就不算空闲"
-    # 整点记录: 9:00 那一小时和合约重叠, 11:00 起锁定; 8:00 那一小时不重叠
-    assert not c.hour_locked(datetime(2026, 10, 18, 9), datetime(2026, 10, 18, 10, 59))
-    assert c.hour_locked(datetime(2026, 10, 18, 9), datetime(2026, 10, 18, 11))
-    assert not c.hour_locked(datetime(2026, 10, 18, 8), datetime(2026, 10, 18, 12))
-    # 违反 3 次结束
+    # 违反 3 次结束; 整点记录超时未填写也算 (不降词条)
     c.start(["suppress", "info3", "long1"], owner="me", now=t0)
     assert c.quick_check() == "suppress"
-    assert c.violate("suppress") == (False, "suppress") and c.violate("suppress") == (False, "")
+    assert c.violate("suppress") == (False, "") and not c.has("suppress")
+    assert c.violate("") == (False, "") and c.violations == 2 and c.level == 3 + 1
     assert c.violate("info3") == (True, "info2")
     rec = c.finish("failed", t0 + timedelta(hours=2))
-    assert rec["reward"] == 0 and rec["orig_level"] == 6 and rec["level"] == 3 and not c.active
+    assert rec["reward"] == 0 and rec["orig_level"] == 5 and rec["level"] == 3 and not c.active
     assert not c.take_first_break()
-    assert c.hour_locked(datetime(2026, 10, 18, 10), datetime(2026, 10, 18, 13)), "结束后照样锁定"
-    assert not c.hour_locked(datetime(2026, 10, 18, 12), datetime(2026, 10, 18, 15))
 
     # 完成: 按等级给固定的休息时间 (等级 2 → 24 分钟), 第一次休息的结转比例
     c.start(["last", "tired1"], owner="me", now=t0)
@@ -562,21 +699,55 @@ def _selftest():
     assert abs(c.book_rest_after(600, t0 + timedelta(hours=3)) - 540) < 1e-6 and c.reward == 0, "完成后才结束的专注只乘疲惫"
     assert c.book_rest_after(600, t0 + timedelta(hours=5)) == 600
     assert c.take_first_break() and not c.take_first_break()
-    assert abs(Contract.first_break_rate(0.8) - 0.9) < 1e-9
+    assert abs(Contract.first_break_rate(0.7) - 0.85) < 1e-9
 
     # 最近结束的那个, 不是最近开始的那个
     c.start(["long1"], now=t0 - timedelta(days=1))
     c.finish("abandoned", t0 - timedelta(days=1) + timedelta(hours=1))
     assert c.last["result"] == "completed" and abs(c.book_rest_after(600, t0 + timedelta(hours=3)) - 540) < 1e-6
 
+    # 合约开始前积攒的休息时间 (20 分钟) + 支援短缺-II: 一点都不能用
+    c.start(["short2"], owner="me", now=t0, pre=1200)
+    assert c.pre == 1200 and c.pre_left == 1200 and c.supply_limit == 0
+    taken = c.pre_take(1500)                 # 积攒的 25 分钟里有 20 分钟是合约开始前的
+    assert taken == 1200 and c.pre_left == 0
+    # 这次休息 = 建议 10 分钟 + 积攒 25 分钟; 剩余 > 20 分钟时还没用到合约开始前的
+    assert c.supply_until(1800, taken) == 600 and c.supply_check(1300, taken) == ""
+    assert c.supply_check(1100, taken) == "short2"
+    c.pre_settle(taken, 1100)                # 暂停: 合约开始前的 1100 秒原样还回去
+    assert c.pre_left == 1100 and abs(c.pre_used - 100) < 1e-6
+    assert c.violate("short2") == (False, "short1") and c.supply_limit == 600, "降级: 多给 50%"
+    assert c.supply_check(0, 0) == "" and c.supply_until(1100, 1100) == 1100 - (1100 - 500)
+    rec = c.finish("abandoned", t0 + timedelta(hours=1))
+    assert rec["pre_left"] == 1100
+
+    # 整点记录: 超时未填写算违反 (每格一次); 细化规范分成半小时; 记录封锁合约结束后照样锁着
+    fill = timedelta(hours=1)
+    texts = {"2026-10-18/9/2": "学习"}
+    c.start(["seal", "fine"], owner="me", now=t0)
+    assert c.hour_forced() and c.fine_hour(datetime(2026, 10, 18, 9)) and not c.fine_hour(datetime(2026, 10, 18, 8))
+    units = c.hour_units(datetime(2026, 10, 18, 10, 40))
+    assert [u[0] for u in units] == ["2026-10-18/9/2", "2026-10-18/10/1"], units
+    assert c.hour_misses(datetime(2026, 10, 18, 11, 0), fill, texts.get, "Sleeping") == []
+    assert c.hour_misses(datetime(2026, 10, 18, 11, 31), fill, texts.get, "Sleeping") == ["2026-10-18/10/1"]
+    assert c.hour_misses(datetime(2026, 10, 18, 11, 40), fill, texts.get, "Sleeping") == [], "每格只算一次"
+    a, b = datetime(2026, 10, 18, 10), datetime(2026, 10, 18, 10, 30)
+    assert not c.hour_locked(a, b, "", datetime(2026, 10, 18, 11, 29), fill, "Sleeping")
+    assert c.hour_locked(a, b, "Sleeping", datetime(2026, 10, 18, 11, 31), fill, "Sleeping")
+    assert not c.hour_locked(a, b, "学习", datetime(2026, 10, 18, 11, 31), fill, "Sleeping"), "按时填了的不锁"
+    c.finish("abandoned", datetime(2026, 10, 18, 12))
+    assert c.hour_locked(a, b, "Sleeping", datetime(2026, 10, 19), fill, "Sleeping"), "合约结束后照样锁着"
+    assert not c.hour_locked(datetime(2026, 10, 18, 13), datetime(2026, 10, 18, 14), "", datetime(2026, 10, 19),
+                             fill, "Sleeping")
+
     # 同步: 记录按 id 合并
     d = Contract(tempfile.mkdtemp())
     d.merge(c.doc())
-    assert len(d.history) == 3 and not d.active
+    assert len(d.history) == 5 and not d.active
     d.merge({"history": c.doc()["history"]})
-    assert len(d.history) == 3
+    assert len(d.history) == 5
     c2 = Contract(os.path.dirname(c.path))
-    assert len(c2.history) == 3, "写进文件, 重开后仍在"
+    assert len(c2.history) == 5, "写进文件, 重开后仍在"
     return "contract selftest OK"
 
 

@@ -54,6 +54,8 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
 
     override fun updateFailed(error: String) = core.toast(tr("接收新版本失败: {e}", "e" to error), "warn")
 
+    override fun updateRequested(peerId: String): String = if (app.relayUpdates(true, only = peerId)) "" else "busy"
+
     // ---- 账 ----
 
     override fun ledger(): JSONObject {
@@ -117,13 +119,20 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
         // 规则页的名单不同步 (每台设备自己管, 见 MECHANICS 15.2)
         val hours = LinkedHashMap<String, Any?>()
         for ((ds, day) in core.dm.hourDays) for ((h, t) in day) if (t.isNotEmpty()) hours["$ds/$h"] = t
+        // 细化规范的两个半小时 (MECHANICS 18.4): "日期/小时/1" "日期/小时/2"
+        for ((ds, day) in core.dm.hourHalves) for ((h, pair) in day) pair.forEachIndexed { i, t ->
+            if (t.isNotEmpty()) hours["$ds/$h/${i + 1}"] = t
+        }
 
         val (week, used) = core.timer.bonusState()
         val timer = mapOf<String, Any?>("break_carry" to core.timer.breakCarry,
             "bonus" to JSONObject().put("week", week).put("used", used),
             // 此刻的专注 / 休息: 哪台设备最后改动就以哪台为准
             "live" to core.timer.liveState())
-        return mapOf("settings" to settings, "hours" to hours, "timer" to timer)
+        // 成就: 哪台设备达成都算 (达成时刻取最早的), 见 MECHANICS 17
+        // 合约: 进行中的合约以后改的为准, 结束了的合约合并 (MECHANICS 18)
+        return mapOf("settings" to settings, "hours" to hours, "timer" to timer, "achievements" to core.ach.doc(),
+            "contract" to core.contract.doc())
     }
 
     override fun apply(doc: String, changes: Map<String, Any?>) {
@@ -158,6 +167,14 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
             "hours" -> {
                 val dm = core.dm
                 for ((key, v) in changes) {
+                    val parts = key.split("/")
+                    if (parts.size == 3 && parts[1].toIntOrNull() != null && parts[2] in setOf("1", "2")) {
+                        val day = dm.hourHalves.getOrPut(parts[0]) { HashMap() }
+                        val pair = day[parts[1]]?.copyOf() ?: arrayOf("", "")
+                        pair[parts[2].toInt() - 1] = v?.toString() ?: ""
+                        if (pair.any { it.isNotEmpty() }) day[parts[1]] = pair else day.remove(parts[1])
+                        continue
+                    }
                     val ds = key.substringBefore('/')
                     val h = key.substringAfter('/', "").toIntOrNull() ?: continue
                     val day = dm.hourDays.getOrPut(ds) { HashMap() }
@@ -172,6 +189,8 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
                 core.timer.syncSet(carry, b?.optString("week"), b?.optInt("used"))
                 (changes["live"] as? JSONObject)?.let { core.timer.adopt(it) }
             }
+            "achievements" -> core.mergeAchievements(changes)
+            "contract" -> core.mergeContract(changes)
         }
         core.changed()
     }

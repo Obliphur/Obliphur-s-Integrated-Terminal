@@ -41,6 +41,8 @@ interface SyncLocal {
     fun updateDest(version: String): File? = null
     fun updateReceived(file: File, version: String, from: String) {}
     fun updateFailed(error: String) {}
+    /** 绑定的设备请这台设备给它下载新版本并发过去 (它自己从 GitHub 下不动): "" = 好, 否则是原因. */
+    fun updateRequested(peerId: String): String = "unsupported"
 }
 
 /** 在界面线程里执行, 等它做完 (同 devsync.MainRunner). post=null 时直接在当前线程执行 (测试用). */
@@ -83,6 +85,8 @@ class Found(val id: String, val name: String, val platform: String, val addr: St
  */
 /** 记住"哪台设备已经重置 / 卸载了"多久 (统计只保留本月和上月). */
 private const val GONE_KEEP_MS = 62L * 86_400_000
+/** 没有绑定、只是别的设备转交过来的设备, 这么久没有新消息就不再显示, 也不再算"离线" (它多半已经卸载了). 同 devsync.STALE_FWD_MS. */
+private const val STALE_FWD_MS = 24L * 3_600_000
 
 class SyncService(
     dir: File,
@@ -396,6 +400,7 @@ class SyncService(
                     method == "POST" && path == "/oit/v1/sync" -> onSync(body)
                     method == "POST" && path == "/oit/v1/unpair" -> onUnpair(body)
                     method == "POST" && path == "/oit/v1/offer" -> onOffer(body)
+                    method == "POST" && path == "/oit/v1/want" -> onWant(body)
                     else -> 404 to JSONObject().put("error", "not found")
                 }
                 val data = out.toString().toByteArray(Charsets.UTF_8)
@@ -459,6 +464,32 @@ class SyncService(
         if (st == 401) throw IllegalStateException("unpaired")
         if (st != 200) throw IllegalStateException(reply.optString("error", "HTTP $st"))
         return if (reply.optBoolean("ok")) "sent" else reply.optString("why", "declined")
+    }
+
+    /** 请一台绑定的设备给这台下载新版本并发过来 (它那里也许能连上 GitHub, 例如电脑开着代理).
+     *  对方下载好后用 offer 发过来. 返回 "asked", 或对方不肯的原因 ("old" = 对方的 OIT 太旧, 不认这个请求). 在后台线程里调用. */
+    fun requestUpdate(peerId: String): String {
+        val p = peers()[peerId] ?: return "unpaired"
+        val env = SyncCrypto.seal(SyncCrypto.unhex(p.getString("key")), myId, JSONObject().put("want", JSONObject()
+            .put("platform", "android").put("version", local.appVersion())))
+        val (st, reply) = http(p.getString("addr"), p.getInt("port"), "POST", "/oit/v1/want", env, 10_000)
+        if (st == 404) return "old"
+        if (st == 401) throw IllegalStateException("unpaired")
+        if (st != 200) throw IllegalStateException(reply.optString("error", "HTTP $st"))
+        return if (reply.optBoolean("ok")) "asked" else reply.optString("why", "declined")
+    }
+
+    private fun onWant(env: JSONObject): Pair<Int, JSONObject> {
+        val id = env.optString("from")
+        val p = peers()[id] ?: return 401 to JSONObject().put("error", "unpaired")
+        val body = try { SyncCrypto.unseal(SyncCrypto.unhex(p.getString("key")), env) } catch (e: SealError) {
+            return 403 to JSONObject().put("error", e.message)
+        }
+        body.optJSONObject("want") ?: return 400 to JSONObject().put("error", "bad-request")
+        val why = try { runner.call { local.updateRequested(id) } } catch (e: Exception) {
+            return 503 to JSONObject().put("error", e.message)
+        }
+        return 200 to if (why.isEmpty()) JSONObject().put("ok", true) else JSONObject().put("ok", false).put("why", why)
     }
 
     private fun onOffer(env: JSONObject): Pair<Int, JSONObject> {
@@ -585,6 +616,7 @@ class SyncService(
 
     private fun addPeer(id: String, name: String, platform: String, addr: String, port: Int, k: ByteArray, mother: String) {
         lock.withLock {
+            state.getJSONObject("gone").remove(id)          // 解除过又重新绑定
             state.getJSONObject("peers").put(id, JSONObject().put("name", name).put("platform", platform)
                 .put("addr", addr).put("port", port).put("key", SyncCrypto.hex(k)).put("mother", mother)
                 .put("paired_at", System.currentTimeMillis()).put("last_ok", 0).put("last_err", "")
@@ -653,12 +685,16 @@ class SyncService(
 
     // ---- 解除绑定 ----
 
-    /** forget: 对方重置 / 卸载了 —— 它的数据在所有设备上都删掉 (转告其他设备, 见 gone). */
+    /** 解除绑定, 并删掉本机保留的对方的数据 (账, 状态). 一律记进 gone 并转告其他设备 (同 devsync.unpair):
+     *  以前只有 forget (对方重置 / 卸载了) 时才记, 手动解除的设备 —— 例如没有先解除绑定就卸载了 OIT 的那台 ——
+     *  它的状态会被其他设备 (或解除前已经发出的那一轮同步) 送回来, 之后一直显示"离线", 却不在绑定列表里, 再也解除不掉.
+     *  forget 保留给旧的调用方, 现在和不带它一样. */
+    @Suppress("UNUSED_PARAMETER")
     fun unpair(peerId: String, notify: Boolean = true, forget: Boolean = false) {
         val p = lock.withLock {
             state.getJSONObject("ledgers").remove(peerId)
             state.getJSONObject("status").remove(peerId)
-            if (forget) state.getJSONObject("gone").put(peerId, System.currentTimeMillis())
+            state.getJSONObject("gone").put(peerId, System.currentTimeMillis())
             state.getJSONObject("peers").remove(peerId) as? JSONObject
         }
         save()
@@ -800,10 +836,14 @@ class SyncService(
                 }
             }
             val sts = state.getJSONObject("status")
+            val goneNow = state.getJSONObject("gone")
+            val peersNow = state.getJSONObject("peers")
             snap.optJSONObject("status")?.let { r ->
                 for (did in r.keys()) {
                     if (did == myId) continue
                     val s = r.optJSONObject(did) ?: continue
+                    // 已经解除 / 重置 / 卸载的设备留下的旧状态
+                    if (goneNow.has(did) && !peersNow.has(did) && s.optLong("ts") <= goneNow.optLong(did)) continue
                     if (s.optLong("ts") > (sts.optJSONObject(did)?.optLong("ts", -1) ?: -1)) sts.put(did, s)
                 }
             }
@@ -872,6 +912,8 @@ class SyncService(
             if (st == 409 && reply.optString("error") == "initializing") return null
             if (st != 200) throw IllegalStateException(reply.optString("error", "HTTP $st"))
             val body = SyncCrypto.unseal(k, reply)
+            // 等回复的时候解除了绑定: 回复里的东西不要了 (否则对方的状态又被并回来, 成了解除不掉的"离线"设备)
+            if (!peers().containsKey(peerId)) return false
             runner.call { merge(body.optJSONObject("snap"), init) }
             lock.withLock {
                 state.getJSONObject("peers").optJSONObject(peerId)?.let { q ->
@@ -937,15 +979,22 @@ class SyncService(
             if (dead) return
             val wasManual = manual
             manual = false
-            if (!runner.call { proxyOk() }) continue
-            // 母端向子端发请求; 子端只在还没初始化或按了"立即同步"时向母端发
-            val targets = peers().filter { (_, p) -> p.optString("mother") == myId || p.optBoolean("init") || wasManual }.keys
-            val failed = targets.filter { trySync(it) == false }
-            // 有设备连不上: 地址可能变了, 广播找一下再试一次
-            if (failed.isNotEmpty() && System.currentTimeMillis() - lastDiscover > 60_000) {
-                lastDiscover = System.currentTimeMillis()
-                runCatching { discover(1500) }
-                failed.forEach { trySync(it) }
+            // 出了任何错都只跳过这一轮: 以前界面线程 8 秒没空 (OIT 在后台 / 熄屏时被系统放慢) 时
+            // runner.call 抛出的 "main thread busy" 没人接, 同步线程就此退出, 直到重新打开 OIT 都不再同步
+            try {
+                if (!runner.call { proxyOk() }) continue
+                // 母端向子端发请求; 子端只在还没初始化或按了"立即同步"时向母端发
+                val targets = peers().filter { (_, p) -> p.optString("mother") == myId || p.optBoolean("init") || wasManual }.keys
+                val failed = targets.filter { trySync(it) == false }
+                // 有设备连不上: 地址可能变了, 广播找一下再试一次
+                if (failed.isNotEmpty() && System.currentTimeMillis() - lastDiscover > 60_000) {
+                    lastDiscover = System.currentTimeMillis()
+                    runCatching { discover(1500) }
+                    failed.forEach { trySync(it) }
+                }
+            } catch (e: InterruptedException) {
+                if (dead) return
+            } catch (_: Exception) {
             }
         }
     }
@@ -989,6 +1038,7 @@ class SyncService(
      *  转交过来的设备 OFFLINE_FWD_MS 之内有消息. 不管它此刻在专注 / 休息 / 空闲, 同步失败就算离线. */
     fun deviceStates(): List<DeviceState> = lock.withLock {
         val now = System.currentTimeMillis()
+        if (pruneForwarded(now)) save()
         val peers = state.getJSONObject("peers")
         val status = state.getJSONObject("status")
         val gone = state.getJSONObject("gone")
@@ -1008,6 +1058,25 @@ class SyncService(
                 DeviceState(id, name, now - seen < OFFLINE_FWD_MS, st, seen)
             }
         }.sortedBy { it.name }
+    }
+
+    /** 删掉没有绑定、也不可能再有人转交过来的设备的状态和账 (记进 gone, 免得又被送回来):
+     *  本机一台绑定的设备都没有时全部删掉; 否则删掉 STALE_FWD_MS 之内没有新消息的. 返回删过没有. 同 devsync._prune_forwarded. */
+    private fun pruneForwarded(now: Long): Boolean = lock.withLock {
+        val peers = state.getJSONObject("peers")
+        val status = state.getJSONObject("status")
+        val ledgers = state.getJSONObject("ledgers")
+        val gone = state.getJSONObject("gone")
+        val drop = (status.keys().asSequence() + ledgers.keys().asSequence()).toSet().filter { did ->
+            did != myId && !peers.has(did) &&
+                (peers.length() == 0 || now - (status.optJSONObject(did)?.optLong("ts") ?: 0L) >= STALE_FWD_MS)
+        }
+        for (did in drop) {
+            status.remove(did)
+            ledgers.remove(did)
+            gone.put(did, maxOf(gone.optLong(did), now))
+        }
+        drop.isNotEmpty()
     }
 
     /** 每隔几秒调用一次: 记下每台设备离线的时间段 (从最后一次有它的消息算起, 到重新有消息为止). */

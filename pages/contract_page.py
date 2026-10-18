@@ -35,6 +35,8 @@ def marks(level: int) -> str:
 
 HARD_LEVEL = 13                  # 总等级到这里就提示"难度极大"
 
+RIM4 = 4                         # 这个等级的词条用红色边框
+
 RESULTS = {"completed": "完成", "failed": "失败: 违反词条", "idle": "失败: 空闲超过 30 分钟",
            "abandoned": "提前结束"}
 
@@ -43,7 +45,7 @@ RESULTS = {"completed": "完成", "failed": "失败: 违反词条", "idle": "失
 OPS = {
     "bg": "#1f2023", "text": "#f2f2f2", "dim": "#9a9ca1", "line": "#c8202f",
     "board": "#d6d7da", "band": "#2c2d31", "band_text": "#ececec", "band_dim": "#9a9ca1",
-    "tile": "#45474d", "tile_text": "#f4f4f4", "tile_rim": "#a3202c",
+    "tile": "#45474d", "tile_text": "#f4f4f4", "tile_rim": "#6b6d73", "tile_rim4": "#ff2b3a",
     "tile_on": "#1d6fc4", "tile_on_text": "#ffffff", "tile_on_rim": "#9cc8ff",
     "tile_off": "#bdbec1", "tile_off_text": "#8e9095", "tile_off_rim": "#a9aaad",
     "hint": "#2c2d31",
@@ -51,6 +53,8 @@ OPS = {
     "badge_hi": "#c8202f", "badge_hi_text": "#ffffff", "badge_lo": "#f2f2f2", "badge_lo_text": "#141416",
     "bar": "#26272b", "level": "#ffffff", "warn": "#ffffff",
     "start": "#9e1b28", "start_hover": "#bf2433", "start_text": "#ffffff",
+    "start_off": "#4a4b51", "start_off_text": "#8e9095",
+    "rules": "#18181b", "rules_rim": "#3a3b40",
     "clear": "#3a3b40", "clear_hover": "#4a4b51", "clear_text": "#ececec",
     "tag": "#c8202f", "tag_text": "#ffffff",
     "live": "#18181b", "live_rim": "#c8202f", "danger": "#ff4d5a", "idle": "#f2b33d",
@@ -67,7 +71,7 @@ def palette() -> dict:
     return {
         "bg": c["bg"], "text": c["text"], "dim": c["text_dim"], "line": c["border"],
         "board": c["bg"], "band": c["bg_card"], "band_text": c["text"], "band_dim": c["text_dim"],
-        "tile": c["bg_card"], "tile_text": c["text"], "tile_rim": c["border"],
+        "tile": c["bg_card"], "tile_text": c["text"], "tile_rim": c["border"], "tile_rim4": c["danger"],
         "tile_on": c["danger"], "tile_on_text": c["on_accent"], "tile_on_rim": c["danger"],
         "tile_off": c["bg"], "tile_off_text": c["border"], "tile_off_rim": c["border"],
         "hint": c["text_dim"],
@@ -75,6 +79,8 @@ def palette() -> dict:
         "badge_hi": c["danger"], "badge_hi_text": c["on_accent"], "badge_lo": c["border"], "badge_lo_text": c["text"],
         "bar": c["bg_card"], "level": c["danger"], "warn": c["warn"],
         "start": c["danger"], "start_hover": c["danger_hover"], "start_text": c["on_accent"],
+        "start_off": c["border"], "start_off_text": c["text_dim"],
+        "rules": c["bg_card"], "rules_rim": c["border"],
         "clear": c["border"], "clear_hover": c["bg"], "clear_text": c["text"],
         "tag": c["danger"], "tag_text": c["on_accent"],
         "live": c["bg_card"], "live_rim": c["danger"], "danger": c["danger"], "idle": c["warn"],
@@ -89,7 +95,8 @@ class ContractPage(tk.Frame):
 
     TILE_W, TILE_H, GAP, BAND_W = 76, 64, 7, 148
 
-    def __init__(self, master, contract, on_start=None, on_abandon=None, net_used=None, on_change=None):
+    def __init__(self, master, contract, on_start=None, on_abandon=None, net_used=None, on_change=None,
+                 blocked=None):
         self.P = P = palette()
         super().__init__(master, bg=P["bg"])
         self.c = contract
@@ -97,6 +104,7 @@ class ContractPage(tk.Frame):
         self.on_start = on_start
         self.on_abandon = on_abandon
         self.on_change = on_change or (lambda: None)  # 选的词条变了 (侧边栏上的危机等级跟着变)
+        self.blocked = blocked or (lambda: "")        # 休息 / 联网中不能开始: 按钮上方的提示
         self._hover = ""
         self._list_key = None
         self._tile_state = {}
@@ -107,8 +115,17 @@ class ContractPage(tk.Frame):
                  padx=8, pady=2).pack(side="left", anchor="s", pady=(0, 6))
         tk.Label(hdr, text=tr("⚔  合约"), bg=P["bg"], fg=P["text"],
                  font=config.font("h1", bold=True)).pack(side="left", padx=(12, 0))
+        # 右上角: 合约期间的特别规则 (两栏)
+        rules = tk.Frame(hdr, bg=P["rules"], highlightbackground=P["rules_rim"], highlightthickness=1)
+        rules.pack(side="right", anchor="se")
+        tk.Label(rules, text=tr("合约期间"), bg=P["rules"], fg=P["danger"], font=config.font("tiny", bold=True),
+                 anchor="nw").pack(side="left", fill="y", padx=(8, 4), pady=4)
+        self.lbl_rules = [tk.Label(rules, text="", bg=P["rules"], fg=P["dim"], font=config.font("tiny"),
+                                   anchor="nw", justify="left") for _ in range(2)]
+        for lbl in self.lbl_rules:
+            lbl.pack(side="left", fill="y", padx=(4, 8), pady=4)
         self.lbl_state = tk.Label(hdr, text="", bg=P["bg"], fg=P["danger"], font=config.font("body", bold=True))
-        self.lbl_state.pack(side="right")
+        self.lbl_state.pack(side="right", padx=(0, 14))
         tk.Frame(self, bg=P["line"], height=2).pack(fill="x", padx=22)
 
         self.area = ScrollArea(self, bg=P["bg"])
@@ -201,8 +218,9 @@ class ContractPage(tk.Frame):
                     continue
                 y = self.gap + (lv - 1) * (self.th + self.gap)
                 tag = f"t_{tid}"
-                cv.create_polygon(self._hexagon(x, y, self.tw, self.th), fill=P["tile"], outline=P["tile_rim"],
-                                  width=2, tags=(tag, tag + "_shape"))
+                cv.create_polygon(self._hexagon(x, y, self.tw, self.th), fill=P["tile"],
+                                  outline=P["tile_rim4"] if lv >= RIM4 else P["tile_rim"],
+                                  width=3 if lv >= RIM4 else 2, tags=(tag, tag + "_shape"))
                 cv.create_text(x + self.tw / 2, y + self.th / 2, text=marks(lv) + "\n" + term_short(tid),
                                fill=P["tile_text"], justify="center", width=self.tw * 0.66,
                                font=(config.FONT_FAMILY, max(6, s(8)), "bold"), tags=(tag, tag + "_text"))
@@ -343,10 +361,13 @@ class ContractPage(tk.Frame):
         self.lbl_info = tk.Label(inner, text="", bg=P["bar"], fg=P["text"], font=config.font("small"),
                                  anchor="w", justify="left")
         self.lbl_info.pack(side="left", padx=(14, 0))
-        self.btn_start = self._button(inner, tr("开始行动"), P["start"], P["start_hover"], P["start_text"],
+        self.start_box = tk.Frame(inner, bg=P["bar"])
+        self.lbl_block = tk.Label(self.start_box, text="", bg=P["bar"], fg=P["dim"], font=config.font("tiny"))
+        self.btn_start = self._button(self.start_box, tr("开始行动"), P["start"], P["start_hover"], P["start_text"],
                                       self._start, big=True)
-        self.btn_end = self._button(inner, tr("■  提前结束"), P["start"], P["start_hover"], P["start_text"],
-                                    lambda: self.on_abandon and self.on_abandon(), big=True)
+        self.btn_end = self._button(self.start_box, tr("■  提前结束"), P["start"], P["start_hover"],
+                                    P["start_text"], lambda: self.on_abandon and self.on_abandon(), big=True)
+        self.start_box.pack(side="right")
         self.lbl_warn = tk.Label(inner, text=tr("⚠  当前合约难度极大 请谨慎行动"), bg=P["bar"], fg=P["warn"],
                                  font=config.font("small", bold=True), justify="left",
                                  wraplength=s(170))
@@ -371,8 +392,17 @@ class ContractPage(tk.Frame):
             self.on_change()
 
     def _start(self):
-        if not self.c.active and self.on_start:
+        if not self.c.active and self.on_start and not self.blocked():
             self.on_start(list(self.c.draft))
+
+    def _rules_text(self):
+        """右上角: 合约期间的特别规则 (左栏, 右栏)."""
+        n = self.c.violation_limit if self.c.active else (1 if "last" in self.c.draft else C.VIOLATION_LIMIT)
+        return ("\n".join([tr("· 违反 {n} 次 / 空闲 30 分钟: 失败", n=n),
+                           tr("· 整点记录超时未填写: 违反 1 次"),
+                           tr("· \"我累了\"不可用")]),
+                "\n".join([tr("· 暂停休息: 合约前积攒的时间不打折"),
+                           tr("· 合约中得到的休息时间结束后作废 (奖励照常)")]))
 
     # ---- 刷新 ----
 
@@ -392,7 +422,8 @@ class ContractPage(tk.Frame):
                 st = ("tile", "tile_text", "tile_rim")
             if self._tile_state.get(tid) != st:
                 self._tile_state[tid] = st
-                self.canvas.itemconfigure(f"t_{tid}_shape", fill=P[st[0]], outline=P[st[2]])
+                rim = P["tile_rim4"] if C.BY_ID[tid][2] >= RIM4 else P[st[2]]
+                self.canvas.itemconfigure(f"t_{tid}_shape", fill=P[st[0]], outline=rim)
                 self.canvas.itemconfigure(f"t_{tid}_text", fill=P[st[1]])
         self._fill_list(sel)
 
@@ -405,10 +436,26 @@ class ContractPage(tk.Frame):
         if orig != level:
             info.insert(0, tr("开始时 {n}", n=orig))
         cfg(self.lbl_info, text="\n".join(info))
+        for lbl, text in zip(self.lbl_rules, self._rules_text()):
+            cfg(lbl, text=text)
         btn = self.btn_end if active else self.btn_start
         other = self.btn_start if active else self.btn_end
         hide_pack(other)
-        show_pack(btn, side="right")
+        show_pack(btn, side="top", anchor="e")
+        why = "" if active else self.blocked()
+        if why:
+            cfg(self.lbl_block, text=why)
+            show_pack(self.lbl_block, side="top", anchor="e", pady=(0, 2), before=btn)
+        else:
+            hide_pack(self.lbl_block)
+        off = bool(why)
+        if getattr(self, "_start_off", None) != off:
+            self._start_off = off
+            bg, fg = (P["start_off"], P["start_off_text"]) if off else (P["start"], P["start_text"])
+            hover = P["start_off"] if off else P["start_hover"]
+            self.btn_start.configure(bg=bg, fg=fg, cursor="arrow" if off else "hand2")
+            self.btn_start.bind("<Enter>", lambda e: self.btn_start.configure(bg=hover))
+            self.btn_start.bind("<Leave>", lambda e: self.btn_start.configure(bg=bg))
         if level >= HARD_LEVEL:
             show_pack(self.lbl_warn, side="right", padx=(0, 16))
         else:

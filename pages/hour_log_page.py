@@ -13,16 +13,20 @@ from .widgets import cfg
 class HourLogPage(tk.Frame):
 
     def __init__(self, master, data_manager, on_text_changed=None, on_toggle=None,
-                 on_open_settings=None, locked=None):
+                 on_open_settings=None, locked=None, split=None):
         super().__init__(master, bg=COLORS["bg"])
         self.dm = data_manager
-        # 合约 (MECHANICS 18): 和合约重叠的小时, 进入下一个时间段之后就不能再改
-        self.locked = locked or (lambda start, now: False)
+        # 合约 (MECHANICS 18.4): 记录封锁 —— 过了填写时限还没填写的格子不能再改 (开始, 结束, 内容, 现在)
+        self.locked = locked or (lambda start, end, text, now: False)
+        # 细化规范: 这一小时分成两个半小时, 各填一格
+        self.split = split or (lambda start: False)
         self.on_text_changed = on_text_changed
         self.on_toggle = on_toggle
         self.on_open_settings = on_open_settings
         self.view_date = data_manager.today_date
         self.rows = {}
+        self.halves = {}           # 第 i 行的后半小时: (输入框, 内容)
+        self._split = {}           # 第 i 行此刻是不是分成了两格
         self._build()
 
 
@@ -95,7 +99,19 @@ class HourLogPage(tk.Frame):
             ent.pack(side="left", fill="x", expand=True, ipady=4)
             ent.bind("<Return>", lambda e, h=h: self._on_return(h))
             ent.bind("<FocusOut>", lambda e, h=h: self._commit(h))
+            # 细化规范时的后半小时 (平时不显示)
+            var2 = tk.StringVar()
+            ent2 = tk.Entry(
+                row, textvariable=var2, font=config.font("body"), relief="flat",
+                bg=card, fg=COLORS["text"], insertbackground=COLORS["text"],
+                disabledbackground=bg, disabledforeground=COLORS["text_dim"],
+                highlightthickness=1, highlightbackground=COLORS["border"],
+                highlightcolor=COLORS["accent"]
+            )
+            ent2.bind("<Return>", lambda e, h=h: self._on_return(h, 1))
+            ent2.bind("<FocusOut>", lambda e, h=h: self._commit(h, 1))
             self.rows[h] = (lbl, ent, var)
+            self.halves[h] = (ent2, var2)
 
     def _open_settings(self):
         if self.on_open_settings:
@@ -113,8 +129,10 @@ class HourLogPage(tk.Frame):
         d0 = datetime.strptime(self.view_date, '%Y-%m-%d')
         return int((slot - d0).total_seconds() // 3600) + 1
 
-    def _get(self, row: int) -> str:
+    def _get(self, row: int, half=None) -> str:
         s = self._slot_start(row)
+        if half is not None:
+            return self.dm.get_half_text(s.strftime('%Y-%m-%d'), s.hour, half)
         return self.dm.get_hour_text(s.strftime('%Y-%m-%d'), s.hour)
 
     def _scroll_to(self, row: int):
@@ -123,18 +141,22 @@ class HourLogPage(tk.Frame):
         row = min(max(row, 0), total - 1)
         self.canvas.yview_moveto(max(0, row - 2) / float(total))
 
-    def _on_return(self, h: int):
-        self._commit(h)
+    def _on_return(self, h: int, i: int = 0):
+        self._commit(h, i)
         self.canvas.focus_set()
 
-    def _commit(self, h: int):
-        _, ent, var = self.rows[h]
+    def _commit(self, h: int, i: int = 0):
+        ent, var = (self.rows[h][1], self.rows[h][2]) if i == 0 else self.halves[h]
         if str(ent.cget("state")) == "disabled":
             return
         text = var.get().strip()
-        if text != self._get(h):
+        split = self._split.get(h)
+        if text != self._get(h, i if split else None):
             s = self._slot_start(h)
-            self.dm.set_hour_text(s.strftime('%Y-%m-%d'), s.hour, text)
+            if split:
+                self.dm.set_half_text(s.strftime('%Y-%m-%d'), s.hour, i, text)
+            else:
+                self.dm.set_hour_text(s.strftime('%Y-%m-%d'), s.hour, text)
             if self.on_text_changed:
                 self.on_text_changed()
             self.refresh()
@@ -159,14 +181,32 @@ class HourLogPage(tk.Frame):
         for h, (lbl, ent, var) in self.rows.items():
             start = self._slot_start(h)
             end = start + timedelta(hours=1)
-            ended = end <= now
-            locked = ended and self.locked(start, now)
-            text = self._get(h)
-            if focused is not ent and var.get() != text:
-                var.set(text)
-            cfg(ent, state="normal" if (enabled and ended and not locked) else "disabled")
+            ent2, var2 = self.halves[h]
+            split = self.split(start)
+            if split != self._split.get(h):
+                self._split[h] = split
+                if split:
+                    ent2.pack(side="left", fill="x", expand=True, ipady=4, padx=(6, 0))
+                else:
+                    ent2.pack_forget()
+            if split:
+                mid = start + timedelta(minutes=30)
+                cells = [(ent, var, start, mid, self._get(h, 0)), (ent2, var2, mid, end, self._get(h, 1))]
+            else:
+                cells = [(ent, var, start, end, self._get(h))]
+            locked = False
+            for e, v, a, b, text in cells:
+                if focused is not e and v.get() != text:
+                    v.set(text)
+                done = b <= now
+                lock = done and self.locked(a, b, text, now)
+                locked = locked or lock
+                cfg(e, state="normal" if (enabled and done and not lock) else "disabled")
+                wait = awaiting is not None and a <= awaiting < b
+                cfg(e, highlightbackground=COLORS["accent"] if wait else COLORS["border"])
+            ended = end <= now or (split and start + timedelta(minutes=30) <= now)
 
-            is_wait = awaiting is not None and awaiting == start
+            is_wait = awaiting is not None and start <= awaiting < end
             is_now = enabled and start <= now < end
             label = f"{h:02d}:00"
             if is_now:
@@ -180,9 +220,6 @@ class HourLogPage(tk.Frame):
                 fg=COLORS["accent"] if (is_wait or is_now) else
                    (COLORS["text"] if (enabled and ended and not locked) else COLORS["text_dim"])
             )
-            cfg(ent,
-                highlightbackground=COLORS["accent"] if is_wait else COLORS["border"]
-            )
 
     def show(self):
         aw = self.dm.awaiting_slot()
@@ -191,4 +228,4 @@ class HourLogPage(tk.Frame):
         row = self._row_of(aw if aw else now)
         self._scroll_to(row)
         if aw and row in self.rows:
-            self.rows[row][1].focus_set()
+            (self.halves[row][0] if self._split.get(row) and aw.minute >= 30 else self.rows[row][1]).focus_set()

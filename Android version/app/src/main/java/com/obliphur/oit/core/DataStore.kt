@@ -75,11 +75,16 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
 
     val study = HashMap<String, Double>()
     val hourDays = HashMap<String, HashMap<String, String>>()
+    /** 合约的细化规范 (MECHANICS 18.4): 一小时分成两个半小时各填一格 {日期: {小时: [前半, 后半]}};
+     *  hourDays 里那一小时是两格用 "/" 连起来的内容, 统计照常按它算. */
+    val hourHalves = HashMap<String, HashMap<String, Array<String>>>()
     var hourCursor: LocalDateTime? = null
     var hourEnabled = true
     var todayDate: String = LocalDate.now().key()
     /** 正在等待填写的那一小时 (开始时刻). */
     var promptSlot: LocalDateTime? = null
+    /** 待填写的那一格有几分钟 (细化规范: 30). */
+    var promptLen = 60
     val focus = mutableListOf<FocusSeg>()
     val windowDays = HashMap<String, HashMap<String, Double>>()
     /** 设备同步: 其他设备的账 (MECHANICS 15), 显示合计用. */
@@ -118,6 +123,13 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
         (study[day] ?: 0.0) + peers().sumOf { it.optJSONObject("study")?.optDouble(day, 0.0)?.takeIf { v -> !v.isNaN() } ?: 0.0 }
 
     fun todayHours() = studyAll(todayDate)
+
+    /** 每天的学习时长 (所有设备合计), 成就判定用. */
+    fun studyByDay(): Map<String, Double> {
+        val days = HashSet(study.keys)
+        for (p in peers()) p.optJSONObject("study")?.keys()?.forEach { days.add(it) }
+        return days.associateWith { studyAll(it) }
+    }
     fun yesterdayHours() = studyAll(LocalDate.parse(todayDate).minusDays(1).key())
 
     /** 一段专注计入学习时长; 跨过零点的按时间比例拆到两天. */
@@ -348,6 +360,13 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
                 for (h in d.keys()) m[h] = d.optString(h)
                 hourDays[ds] = m
             }
+            val halves = o.optJSONObject("halves") ?: JSONObject()
+            for (ds in halves.keys()) {
+                val d = halves.optJSONObject(ds) ?: continue
+                val m = HashMap<String, Array<String>>()
+                for (h in d.keys()) d.optJSONArray(h)?.let { if (it.length() == 2) m[h] = arrayOf(it.optString(0), it.optString(1)) }
+                hourHalves[ds] = m
+            }
             hourCursor = parseIso(o.optString("cursor", ""))
         }
         pruneHours()
@@ -356,6 +375,7 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
     private fun pruneHours() {
         val (a, b) = monthPrefixes()
         hourDays.keys.removeAll { it.take(7) != a && it.take(7) != b }
+        hourHalves.keys.removeAll { it.take(7) != a && it.take(7) != b }
     }
 
     fun saveHours() {
@@ -363,8 +383,14 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
         pruneHours()
         val days = JSONObject()
         for ((ds, d) in hourDays) days.put(ds, JSONObject(d as Map<*, *>))
+        val halves = JSONObject()
+        for ((ds, d) in hourHalves) {
+            val o = JSONObject()
+            for ((h, pair) in d) o.put(h, JSONArray(pair.toList()))
+            halves.put(ds, o)
+        }
         Store.write(hourFile, JSONObject().put("enabled", hourEnabled)
-            .put("cursor", hourCursor?.iso() ?: JSONObject.NULL).put("days", days))
+            .put("cursor", hourCursor?.iso() ?: JSONObject.NULL).put("days", days).put("halves", halves))
     }
 
     fun hourActivitySeconds(prefix: String): Map<String, Double> =
@@ -380,9 +406,58 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
     fun hourText(date: String, hour: Int): String = hourDays[date]?.get(hour.toString()) ?: ""
 
     fun setHourText(date: String, hour: Int, text: String) {
+        hourHalves[date]?.remove(hour.toString())          // 整小时一起改了: 不再分两格
         val d = hourDays.getOrPut(date) { HashMap() }
         if (text.isNotEmpty()) d[hour.toString()] = text else d.remove(hour.toString())
         saveHours()
+    }
+
+    // ---- 细化规范: 半小时一格 ----
+
+    val fillSeconds get() = fillWindow()
+    val autoValue get() = autoText()
+
+    /** i = 0 前半小时, 1 后半小时. 还没分开填过的小时: 前半显示整小时的内容. */
+    fun halfText(date: String, hour: Int, i: Int): String {
+        val pair = hourHalves[date]?.get(hour.toString())
+        if (pair != null) return pair[i]
+        return if (i == 0) hourText(date, hour) else ""
+    }
+
+    fun setHalfText(date: String, hour: Int, i: Int, text: String, save: Boolean = true) {
+        val pair = arrayOf(halfText(date, hour, 0), halfText(date, hour, 1))
+        pair[i] = text
+        val day = hourHalves.getOrPut(date) { HashMap() }
+        if (pair.any { it.isNotEmpty() }) day[hour.toString()] = pair else day.remove(hour.toString())
+        // 整小时的内容 = 两个半小时用 "/" 连起来 (一样的只写一次)
+        val joined = pair.filter { it.isNotEmpty() }.distinct().joinToString("/")
+        val d = hourDays.getOrPut(date) { HashMap() }
+        if (joined.isNotEmpty()) d[hour.toString()] = joined else d.remove(hour.toString())
+        if (save) saveHours()
+    }
+
+    /** 同步 / 合约用的键: "日期/小时" 整小时, "日期/小时/1" "日期/小时/2" 两个半小时. */
+    fun unitText(key: String): String {
+        val p = key.split("/")
+        val h = p.getOrNull(1)?.toIntOrNull() ?: return ""
+        return if (p.size == 3) halfText(p[0], h, (p[2].toIntOrNull() ?: 1) - 1) else hourText(p[0], h)
+    }
+
+    /** 细化规范的半小时过了补填时限还空着: 记为超时自动记录的内容. */
+    fun finalizeHalves(units: List<Triple<String, LocalDateTime, LocalDateTime>>, now: LocalDateTime = LocalDateTime.now()) {
+        if (!hourEnabled) return
+        var changed = false
+        for ((key, _, b) in units) {
+            val p = key.split("/")
+            if (p.size != 3 || b.plusSec(fillWindow()).isAfter(now)) continue
+            val h = p[1].toIntOrNull() ?: continue
+            val i = (p[2].toIntOrNull() ?: continue) - 1
+            if (halfText(p[0], h, i).isEmpty()) {
+                setHalfText(p[0], h, i, autoText(), save = false)
+                changed = true
+            }
+        }
+        if (changed) saveHours()
     }
 
     /** 超过补填时限还没填写的小时自动记录; 关闭期间的小时最早只补到昨天 23:00. */
@@ -416,8 +491,9 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
     fun awaitingSlot(): LocalDateTime? {
         if (!hourEnabled) return null
         val s = promptSlot ?: return null
-        if (!LocalDateTime.now().isBefore(s.plusHours(1).plusSec(fillWindow()))
-            || hourText(s.toLocalDate().key(), s.hour).isNotEmpty()) {
+        val text = if (promptLen == 30) halfText(s.toLocalDate().key(), s.hour, if (s.minute >= 30) 1 else 0)
+            else hourText(s.toLocalDate().key(), s.hour)
+        if (!LocalDateTime.now().isBefore(s.plusMinutes(promptLen.toLong()).plusSec(fillWindow())) || text.isNotEmpty()) {
             promptSlot = null
             return null
         }

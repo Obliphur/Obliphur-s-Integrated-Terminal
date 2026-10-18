@@ -69,7 +69,8 @@ fun AchievementPopups(onOpen: () -> Unit) {
     LocalTick.current
     val o = LocalOit.current
     val core = OitApp.instance.core
-    val ids = core.ach.unseen.take(3)
+    // 合约的黑雾 (MECHANICS 18.3): 达成提示等合约结束后再弹出
+    val ids = if (core.contract.fog()) emptyList() else core.ach.unseen.take(3)
     if (ids.isEmpty()) return
     Box(Modifier.fillMaxSize().statusBarsPadding().padding(top = 60.dp, end = 12.dp, start = 12.dp),
         contentAlignment = Alignment.TopEnd) {

@@ -94,18 +94,29 @@ fun HourLogScreen(go: (String) -> Unit) {
                 // 每一行的时间是这一小时的结束时刻; 第 0 行是昨天 23:00 ~ 24:00
                 val start = day0.plusHours((h - 1).toLong())
                 val end = start.plusHours(1)
-                val ended = !end.isAfter(now)
                 val ds = start.toLocalDate().key()
-                val stored = dm.hourText(ds, start.hour)
-                val isWait = awaiting == start
+                val isWait = awaiting != null && !awaiting.isBefore(start) && awaiting.isBefore(end)
                 val isNow = enabled && !start.isAfter(now) && now.isBefore(end)
+                // 合约 (MECHANICS 18.4): 细化规范的小时分成两个半小时各填一格;
+                // 记录封锁: 过了填写时限还没填写的格子不能再改
+                val split = core.contract.fineHour(start)
+                val cells = if (split) listOf(
+                    Triple(start, start.plusMinutes(30), dm.halfText(ds, start.hour, 0)),
+                    Triple(start.plusMinutes(30), end, dm.halfText(ds, start.hour, 1)))
+                    else listOf(Triple(start, end, dm.hourText(ds, start.hour)))
+                val editable = cells.map { (a, b, t) ->
+                    enabled && !b.isAfter(now) &&
+                        !core.contract.hourLocked(a, b, t, now, dm.fillSeconds.toLong(), dm.autoValue)
+                }
+                val locked = cells.indices.any { !editable[it] && !cells[it].second.isAfter(now) && enabled }
                 HourRow("%02d:00".format(h) + when {
                     isNow -> tr("   ◂ 现在")
                     isWait -> tr("   ◂ 待填写")
+                    locked -> "   🔒"
                     else -> ""
-                }, stored, enabled && ended, isWait || isNow) { text ->
-                    if (text != stored) {
-                        dm.setHourText(ds, start.hour, text)
+                }, cells.map { it.third }, editable, isWait || isNow) { i, text ->
+                    if (text != cells[i].third) {
+                        if (split) dm.setHalfText(ds, start.hour, i, text) else dm.setHourText(ds, start.hour, text)
                         if (isWait) Notifier.cancelHour(OitApp.instance)
                         core.changed()
                     }
@@ -115,18 +126,23 @@ fun HourLogScreen(go: (String) -> Unit) {
     }
 }
 
+/** 一行: 一格 (整小时) 或两格 (细化规范的两个半小时). */
 @Composable
-private fun HourRow(label: String, stored: String, editable: Boolean, highlight: Boolean, commit: (String) -> Unit) {
+private fun HourRow(label: String, stored: List<String>, editable: List<Boolean>, highlight: Boolean,
+                    commit: (Int, String) -> Unit) {
     val o = LocalOit.current
-    var text by remember(stored) { mutableStateOf(stored) }
     val focus = LocalFocusManager.current
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 3.dp)) {
-        Text(label, color = if (highlight) o.accent else if (editable) o.text else o.dim,
-            fontSize = 14.sp, modifier = Modifier.width(118.dp))
-        OutlinedTextField(text, { text = it }, enabled = editable, singleLine = true,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-            keyboardActions = KeyboardActions(onDone = { commit(text.trim()); focus.clearFocus() }),
-            modifier = Modifier.weight(1f).onFocusChanged { if (!it.isFocused && text.trim() != stored) commit(text.trim()) })
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 3.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(label, color = if (highlight) o.accent else if (editable.any { it }) o.text else o.dim,
+            fontSize = 14.sp, modifier = Modifier.width(if (stored.size > 1) 92.dp else 118.dp))
+        stored.forEachIndexed { i, s ->
+            var text by remember(s) { mutableStateOf(s) }
+            OutlinedTextField(text, { text = it }, enabled = editable[i], singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { commit(i, text.trim()); focus.clearFocus() }),
+                modifier = Modifier.weight(1f).onFocusChanged { if (!it.isFocused && text.trim() != s) commit(i, text.trim()) })
+        }
     }
 }
 
@@ -141,13 +157,19 @@ fun CalendarScreen() {
     val today = LocalDate.now()
     val ym = YearMonth.from(today).let { if (last) it.minusMonths(1) else it }
     val prefix = "%d-%02d".format(ym.year, ym.monthValue)
-    val data = core.dm.monthStudy(prefix)
+    // 合约的黑雾 (MECHANICS 18.3): 随机的学习时长, 月份和合计写成 [CENSORED]
+    val fog = core.contract.fog()
+    val data = if (fog) java.util.Random("${core.contract.id}/$prefix".hashCode().toLong()).let { r ->
+        (1..ym.lengthOfMonth()).map { ym.atDay(it) }.filter { !it.isAfter(today) }
+            .associate { it.key() to Math.round(r.nextDouble() * 90) / 10.0 }
+    } else core.dm.monthStudy(prefix)
     PageColumn {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(prefix, fontWeight = FontWeight.Bold, fontSize = 18.sp, color = o.text, modifier = Modifier.weight(1f))
+            Text(if (fog) "[CENSORED]" else prefix, fontWeight = FontWeight.Bold, fontSize = 18.sp, color = o.text,
+                modifier = Modifier.weight(1f))
             Segmented(listOf("last" to tr("‹ 上月"), "this" to tr("本月 ›")), if (last) "last" else "this") { last = it == "last" }
         }
-        Dim(tr("合计 {h} h", "h" to f1(data.values.sum())))
+        Dim(if (fog) tr("合计: [CENSORED]") else tr("合计 {h} h", "h" to f1(data.values.sum())))
         val names = if (OitApp.instance.core.settings.str("LANGUAGE") == "en")
             listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun") else listOf("一", "二", "三", "四", "五", "六", "日")
         Row { names.forEach { Text(it, color = o.dim, textAlign = TextAlign.Center, modifier = Modifier.weight(1f)) } }
@@ -183,6 +205,8 @@ fun CalendarScreen() {
 
 private const val OTHER_BELOW = 0.01
 private const val OTHER_TIP_LINES = 25
+/** 黑雾: 饼图里填多少个没有意义的项. */
+private const val FOG_ITEMS = 10
 
 @Composable
 fun StatsScreen() {
@@ -225,7 +249,12 @@ fun StatsScreen() {
         val (thisM, lastM) = monthPrefixes()
         val prefix = if (last) lastM else thisM
         val blank = tr("空白")
-        val data: Map<String, Double> = when (page) {
+        val fog = core.contract.fog()
+        val data: Map<String, Double> = if (fog) {
+            // 合约的黑雾 (MECHANICS 18.3): 不显示真正的数据, 10 个没有意义的项, 比例随机, 名字都是 ***
+            val r = java.util.Random("${core.contract.id}/$page/$prefix".hashCode().toLong())
+            (0 until FOG_ITEMS).associate { "***" + "\u200b".repeat(it) to (1 + r.nextDouble() * 8) * 3600 }
+        } else when (page) {
             "log" -> core.dm.hourActivitySeconds(prefix)
             "window" -> core.dm.windowSeconds(prefix, device).entries.groupBy({
                 when (it.key) { "" -> blank; "?" -> tr("未知程序"); "OIT" -> "OIT"; else -> appLabel(ctx, it.key) }
@@ -233,12 +262,12 @@ fun StatsScreen() {
             else -> tallyItems(core.net.usageByReason(prefix))
         }
         Text("${if (last) tr("上月") else tr("本月")} · $prefix", fontWeight = FontWeight.Bold, color = o.text)
-        PieBlock(data, pct, if (page == "window") blank else null)
+        PieBlock(data, pct, if (page == "window" && !fog) blank else null, if (fog) "***" else tr("其他"))
     }
 }
 
 @Composable
-private fun PieBlock(data: Map<String, Double>, pct: Boolean, blankName: String?) {
+private fun PieBlock(data: Map<String, Double>, pct: Boolean, blankName: String?, otherName: String) {
     val o = LocalOit.current
     val items = data.entries.sortedWith(compareBy({ -it.value }, { it.key })).map { it.key to it.value }
     val total = items.sumOf { it.second }
@@ -259,9 +288,8 @@ private fun PieBlock(data: Map<String, Double>, pct: Boolean, blankName: String?
     val other = items.filter { it.first !in shown }
     var ci = 0
     val slices = main.map { (k, v) -> Triple(k, v, if (k == blankName) o.chartEmpty else o.chart[ci++]) }.toMutableList()
-    if (other.isNotEmpty()) slices.add(Triple(tr("其他"), other.sumOf { it.second }, o.chartOther))
+    if (other.isNotEmpty()) slices.add(Triple(otherName, other.sumOf { it.second }, o.chartOther))
     var tip by remember { mutableStateOf(false) }
-    val otherName = tr("其他")
     Canvas(Modifier.fillMaxWidth().aspectRatio(1.6f).pointerInput(slices) {
         detectTapGestures { p ->
             val c = Offset(size.width / 2f, size.height / 2f)
@@ -321,10 +349,11 @@ private fun FocusBars() {
     }
     val weekNames = if (core.settings.str("LANGUAGE") == "en") listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
     else listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+    val fog = core.contract.fog()
     for (i in 0 until 7) {
         val day = today.minusDays(i.toLong())
-        val hours = core.dm.focusHours(day, live)
-        Text("%02d-%02d %s".format(day.monthValue, day.dayOfMonth, weekNames[day.dayOfWeek.value - 1]) +
+        val hours = if (fog) fogHours(core.contract.id, day, now) else core.dm.focusHours(day, live)
+        Text(if (fog) "[CENSORED]" else "%02d-%02d %s".format(day.monthValue, day.dayOfMonth, weekNames[day.dayOfWeek.value - 1]) +
             if (i == 0) "  " + tr("今天") else "", fontSize = 12.sp, color = o.dim)
         Canvas(Modifier.fillMaxWidth().height(34.dp).pointerInput(day) {
             detectTapGestures { p -> sel = day to (p.x / size.width * 24).toInt().coerceIn(0, 23) }
@@ -346,9 +375,20 @@ private fun FocusBars() {
         }
     }
     sel?.let { (d, h) ->
-        val (s, b) = core.dm.focusHours(d, live)[h]
-        Text("%02d-%02d %02d:00–%02d:00 · ".format(d.monthValue, d.dayOfMonth, h, (h + 1) % 24) +
+        val (s, b) = (if (fog) fogHours(core.contract.id, d, now) else core.dm.focusHours(d, live))[h]
+        Text((if (fog) "[CENSORED] " else "%02d-%02d ".format(d.monthValue, d.dayOfMonth)) +
+            "%02d:00–%02d:00 · ".format(h, (h + 1) % 24) +
             tr("专注 {s} 分 · 休息 {b} 分", "s" to Math.round(s / 60), "b" to Math.round(b / 60)),
             color = o.text, fontSize = 13.sp)
+    }
+}
+
+/** 黑雾 (MECHANICS 18.3): 每一小时随机填上专注 / 休息 / 空白 (同一个合约里不变). */
+private fun fogHours(seed: Long, day: LocalDate, now: LocalDateTime): List<Pair<Double, Double>> {
+    val r = java.util.Random("$seed/focus/${day.key()}".hashCode().toLong())
+    return (0 until 24).map { h ->
+        val st = listOf(0.0, 0.0, r.nextDouble() * 3600, 3600.0)[r.nextInt(4)]
+        val br = r.nextDouble() * (3600 - st)
+        if (day.atStartOfDay().plusHours(h.toLong()).isAfter(now)) 0.0 to 0.0 else st to br
     }
 }

@@ -36,7 +36,6 @@ import androidx.compose.ui.unit.sp
 import com.obliphur.oit.OitApp
 import com.obliphur.oit.core.Contract
 import com.obliphur.oit.core.Fmt
-import com.obliphur.oit.core.TState
 import com.obliphur.oit.core.contractResult
 import com.obliphur.oit.core.fmtHm
 import com.obliphur.oit.core.fmtMs
@@ -70,12 +69,13 @@ private fun hms(sec: Double): String {
 class ContractColors(
     val bg: Color, val text: Color, val dim: Color, val line: Color,
     val board: Color, val band: Color, val bandText: Color, val bandDim: Color,
-    val tile: Color, val tileText: Color, val tileRim: Color,
+    val tile: Color, val tileText: Color, val tileRim: Color, val tileRim4: Color,
     val tileOn: Color, val tileOnText: Color, val tileOnRim: Color,
     val tileOff: Color, val tileOffText: Color, val tileOffRim: Color,
     val sel: Color, val selText: Color, val selDim: Color,
     val badgeHi: Color, val badgeHiText: Color, val badgeLo: Color, val badgeLoText: Color,
     val bar: Color, val level: Color, val warn: Color, val start: Color, val startText: Color,
+    val startOff: Color, val startOffText: Color, val rules: Color, val rulesRim: Color,
     val clear: Color, val clearText: Color, val tag: Color, val tagText: Color,
     val live: Color, val liveRim: Color, val danger: Color, val idle: Color,
     val side: Color?, val sideText: Color, val sideOn: Color,
@@ -87,12 +87,13 @@ private fun c(hex: Long) = Color(0xFF000000 or hex)
 val OPS_COLORS = ContractColors(
     bg = c(0x1f2023), text = c(0xf2f2f2), dim = c(0x9a9ca1), line = c(0xc8202f),
     board = c(0xd6d7da), band = c(0x2c2d31), bandText = c(0xececec), bandDim = c(0x9a9ca1),
-    tile = c(0x45474d), tileText = c(0xf4f4f4), tileRim = c(0xa3202c),
+    tile = c(0x45474d), tileText = c(0xf4f4f4), tileRim = c(0x6b6d73), tileRim4 = c(0xff2b3a),
     tileOn = c(0x1d6fc4), tileOnText = c(0xffffff), tileOnRim = c(0x9cc8ff),
     tileOff = c(0xbdbec1), tileOffText = c(0x8e9095), tileOffRim = c(0xa9aaad),
     sel = c(0x141416), selText = c(0xf2f2f2), selDim = c(0x77797e),
     badgeHi = c(0xc8202f), badgeHiText = c(0xffffff), badgeLo = c(0xf2f2f2), badgeLoText = c(0x141416),
     bar = c(0x26272b), level = c(0xffffff), warn = c(0xffffff), start = c(0x9e1b28), startText = c(0xffffff),
+    startOff = c(0x4a4b51), startOffText = c(0x8e9095), rules = c(0x18181b), rulesRim = c(0x3a3b40),
     clear = c(0x3a3b40), clearText = c(0xececec), tag = c(0xc8202f), tagText = c(0xffffff),
     live = c(0x18181b), liveRim = c(0xc8202f), danger = c(0xff4d5a), idle = c(0xf2b33d),
     side = c(0x18191c), sideText = c(0xcfd0d3), sideOn = c(0xc8202f),
@@ -106,12 +107,13 @@ fun contractColors(): ContractColors {
     return ContractColors(
         bg = o.bg, text = o.text, dim = o.dim, line = o.border,
         board = o.bg, band = o.card, bandText = o.text, bandDim = o.dim,
-        tile = o.card, tileText = o.text, tileRim = o.border,
+        tile = o.card, tileText = o.text, tileRim = o.border, tileRim4 = o.danger,
         tileOn = o.danger, tileOnText = o.onAccent, tileOnRim = o.danger,
         tileOff = o.bg, tileOffText = o.border, tileOffRim = o.border,
         sel = o.card, selText = o.text, selDim = o.dim,
         badgeHi = o.danger, badgeHiText = o.onAccent, badgeLo = o.border, badgeLoText = o.text,
         bar = o.card, level = o.danger, warn = o.warn, start = o.danger, startText = o.onAccent,
+        startOff = o.border, startOffText = o.dim, rules = o.card, rulesRim = o.border,
         clear = o.border, clearText = o.text, tag = o.danger, tagText = o.onAccent,
         live = o.card, liveRim = o.danger, danger = o.danger, idle = o.warn,
         side = null, sideText = o.text, sideOn = o.accent,
@@ -160,7 +162,6 @@ fun ContractScreen() {
     val core = OitApp.instance.core
     val c = core.contract
     val active = c.active
-    val hold = !active && (core.timer.state == TState.ON_BREAK || core.net.mode == "online")
     val now = LocalDateTime.now()
     var tapped by rememberSaveable { mutableStateOf("") }
     var ask by rememberSaveable { mutableStateOf("") }        // start / end
@@ -174,7 +175,19 @@ fun ContractScreen() {
                 modifier = Modifier.background(p.tag).padding(horizontal = 8.dp, vertical = 2.dp))
             Text("CONTRACT", color = p.dim, fontWeight = FontWeight.Bold, fontSize = 14.sp,
                 modifier = Modifier.padding(start = 10.dp).weight(1f))
-            if (active) Text(tr("合约进行中"), color = p.danger, fontWeight = FontWeight.Bold)
+            if (active) Text(tr("合约进行中"), color = p.danger, fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(end = 12.dp))
+            // 右上角: 合约期间的特别规则 (两栏)
+            val n = if (active) c.violationLimit else if ("last" in c.draft) 1 else Contract.VIOLATION_LIMIT
+            Row(Modifier.background(p.rules).border(1.dp, p.rulesRim).padding(horizontal = 8.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(tr("合约期间"), color = p.danger, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                Text(listOf(tr("· 违反 {n} 次 / 空闲 30 分钟: 失败", "n" to n), tr("· 整点记录超时未填写: 违反 1 次"),
+                    tr("· \"我累了\"不可用")).joinToString("\n"), color = p.dim, fontSize = 10.sp, lineHeight = 13.sp)
+                Text(listOf(tr("· 暂停休息: 合约前积攒的时间不打折"),
+                    tr("· 合约中得到的休息时间结束后作废 (奖励照常)")).joinToString("\n"),
+                    color = p.dim, fontSize = 10.sp, lineHeight = 13.sp)
+            }
         }
         Box(Modifier.fillMaxWidth().height(2.dp).background(p.line))
 
@@ -224,8 +237,10 @@ fun ContractScreen() {
                             val off = !on && (active || Contract.blockedBy(t.id, sel) != null)
                             val fill = if (on) p.tileOn else if (off) p.tileOff else p.tile
                             val fg = if (on) p.tileOnText else if (off) p.tileOffText else p.tileText
-                            val rim = if (on) p.tileOnRim else if (off) p.tileOffRim else p.tileRim
-                            Box(Modifier.width(tileW).height(44.dp).background(fill, HEX).border(2.dp, rim, HEX)
+                            val rim = if (t.level >= Contract.RIM_LEVEL) p.tileRim4
+                                else if (on) p.tileOnRim else if (off) p.tileOffRim else p.tileRim
+                            Box(Modifier.width(tileW).height(44.dp).background(fill, HEX)
+                                .border(if (t.level >= Contract.RIM_LEVEL) 3.dp else 2.dp, rim, HEX)
                                 .clickable {
                                     tapped = t.id
                                     if (active) return@clickable
@@ -317,13 +332,13 @@ fun ContractScreen() {
             if (level >= Contract.HARD_LEVEL)
                 Text(tr("⚠  当前合约难度极大 请谨慎行动"), color = p.warn, fontSize = 12.sp, fontWeight = FontWeight.Bold,
                     modifier = Modifier.widthIn(max = 170.dp).padding(end = 12.dp))
+            val why = if (active) "" else core.contractBlock()
             Column(horizontalAlignment = Alignment.End) {
-                // 休息 / 联网正在进行: 按钮变灰, 上面多一行小字
-                if (hold) Text(tr("休息或联网进行中,不能开始合约."), color = p.dim, fontSize = 11.sp)
-                Text(if (active) tr("■  提前结束") else tr("开始行动"),
-                    color = if (hold) p.dim else p.startText, fontSize = 18.sp, fontWeight = FontWeight.Bold,
-                    modifier = Modifier.background(if (hold) p.clear else p.start, RoundedCornerShape(2.dp))
-                        .clickable(enabled = !hold) { ask = if (active) "end" else "start" }
+                if (why.isNotEmpty()) Text(why, color = p.dim, fontSize = 10.sp, modifier = Modifier.padding(bottom = 2.dp))
+                Text(if (active) tr("■  提前结束") else tr("开始行动"), color = if (why.isEmpty()) p.startText else p.startOffText,
+                    fontSize = 18.sp, fontWeight = FontWeight.Bold,
+                    modifier = Modifier.background(if (why.isEmpty()) p.start else p.startOff, RoundedCornerShape(2.dp))
+                        .clickable(enabled = why.isEmpty()) { ask = if (active) "end" else "start" }
                         .padding(horizontal = 26.dp, vertical = 12.dp))
             }
         }

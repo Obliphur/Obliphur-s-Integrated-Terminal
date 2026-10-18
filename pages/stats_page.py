@@ -1,4 +1,5 @@
 import math
+import random
 import tkinter as tk
 from datetime import datetime, timedelta
 from tkinter import ttk
@@ -17,6 +18,7 @@ PALETTE = config.CHART_PALETTE
 # 占比低于这个值的项归入「其他」; 鼠标停在「其他」上可以看到具体是哪些
 OTHER_BELOW = 0.01
 OTHER_TIP_LINES = 25
+FOG_ITEMS = 10              # 黑雾: 饼图里填多少个没有意义的项
 
 
 def _c(key: str) -> str:
@@ -47,6 +49,8 @@ class StatsPage(tk.Frame):
         self._focus_days = []
         self._focus_geom = None
         self._tip = None            # 「其他」的悬停提示 (一个无边框的小窗)
+        # 合约的黑雾 (MECHANICS 18.3): 不为 None 时只显示随机的假数据 (同一个合约里不变)
+        self.fog = lambda: None
         self._build()
         self.after(60000, self._focus_tick)
 
@@ -224,6 +228,11 @@ class StatsPage(tk.Frame):
 
 
     def _data(self, prefix: str):
+        seed = self.fog()
+        if seed is not None:
+            # 黑雾: 不显示真正的数据, 10 个没有意义的项, 比例随机, 名字都是 ***
+            rnd = random.Random(f"{seed}/{self.page}/{prefix}")
+            return {"***" + "\u200b" * i: rnd.uniform(1, 9) * 3600 for i in range(FOG_ITEMS)}
         if self.page == "log":
             return self.dm.hour_activity_seconds(prefix)
         if self.page == "window":
@@ -303,7 +312,8 @@ class StatsPage(tk.Frame):
         col["other"] = [(k, v) for k, v in items if k not in shown]
         slices = [(k, v, self._color(i, k)) for i, (k, v) in enumerate(main)]
         if col["other"]:
-            slices.append((tr("其他"), sum(v for _, v in col["other"]), _c("chart_other")))
+            slices.append(("***" if self.fog() is not None else tr("其他"),
+                           sum(v for _, v in col["other"]), _c("chart_other")))
         col["other_row"] = len(main) if col["other"] else None
         col["grand"] = total
         self._draw_pie(col["canvas"], col["size"], slices, total, pct_mode,
@@ -452,6 +462,21 @@ class StatsPage(tk.Frame):
     def _load_focus(self):
         live = self.focus_live() if self.focus_live else None
         today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        seed = self.fog()
+        if seed is not None:
+            # 黑雾: 每一小时随机填上专注 / 休息 / 空白
+            now = datetime.now()
+            self._focus_days = []
+            for i in range(self.dm.FOCUS_DAYS):
+                day = today - timedelta(days=i)
+                rnd = random.Random(f"{seed}/focus/{day:%Y-%m-%d}")
+                hours = []
+                for h in range(24):
+                    st = rnd.choice((0, 0, rnd.uniform(0, 3600), 3600))
+                    br = rnd.uniform(0, 3600 - st)
+                    hours.append((st, br) if day + timedelta(hours=h) <= now else (0.0, 0.0))
+                self._focus_days.append((day, hours))
+            return
         self._focus_days = [
             (today - timedelta(days=i), self.dm.focus_hours(today - timedelta(days=i), live))
             for i in range(self.dm.FOCUS_DAYS)
@@ -471,7 +496,9 @@ class StatsPage(tk.Frame):
             self.after(60000, self._focus_tick)
 
     @staticmethod
-    def _day_label(day: datetime, today: bool) -> str:
+    def _day_label(day: datetime, today: bool, fog: bool = False) -> str:
+        if fog:
+            return "[CENSORED]"
         wd = (WEEKDAYS_EN if is_en() else WEEKDAYS_ZH)[day.weekday()]
         return tr("今天") + f" {wd}" if today else f"{day:%m-%d} {wd}"
 
@@ -509,7 +536,7 @@ class StatsPage(tk.Frame):
             y0 = top + i * (row_h + gap)
             y1 = y0 + row_h
             cv.create_text(config.scaled(12), (y0 + y1) / 2, anchor="w",
-                           text=self._day_label(day, i == 0),
+                           text=self._day_label(day, i == 0, self.fog() is not None),
                            fill=COLORS["text"] if i == 0 else COLORS["text_dim"],
                            font=config.font("small", bold=(i == 0)))
             for h, (st, br) in enumerate(hours):

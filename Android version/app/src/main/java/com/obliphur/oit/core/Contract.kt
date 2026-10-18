@@ -22,25 +22,30 @@ class Contract(private val file: File) {
         const val HISTORY_KEEP = 30
         const val HARD_LEVEL = 13
 
+        // 成系列的 (有好几档的) 在前, 界面上放在左边; 零散的 (只有一档的) 在后, 放在右边.
         val TERMS = listOf(
-            Term("long1", "long", 1, "环境:持久战-I", "时长延长为1.1倍"),
-            Term("long2", "long", 2, "环境:持久战-II", "时长延长为1.2倍"),
-            Term("long3", "long", 3, "环境:持久战-III", "时长延长为1.3倍"),
+            Term("long1", "long", 1, "环境:持久战-I", "时长延长为1.2倍"),
+            Term("long2", "long", 2, "环境:持久战-II", "时长延长为1.4倍"),
+            Term("long3", "long", 3, "环境:持久战-III", "时长延长为1.6倍"),
             Term("move1", "move", 1, "目标:高机动-I", "现实中的移动速度加快25%"),
             Term("move2", "move", 2, "目标:高机动-II", "现实中的移动速度加快50%"),
             Term("info1", "info", 1, "环境:信息阻断-I", "只能使用剩余联网时间的75% 且不能使用借贷"),
             Term("info2", "info", 2, "环境:信息阻断-II", "只能使用剩余联网时间的50% 且不能使用借贷"),
             Term("info3", "info", 3, "环境:信息阻断-III", "只能使用剩余联网时间的25% 且不能使用借贷"),
             Term("isolate", "info", 4, "环境:信息隔绝", "不能使用联网功能"),
-            Term("suppress", "suppress", 2, "环境:抑制", "不能使用快速访问功能", listOf("isolate")),
-            Term("jam", "jam", 2, "环境:全频道阻塞干扰", "期间使用proxy block-all模式"),
-            Term("music", "music", 2, "环境:乐理之灾", "期间不能打开音乐播放软件 不能使用外部软件播放mp3等音频文件"),
-            Term("fog", "fog", 1, "环境:黑雾", "期间不能查看统计数据 且在专注时无法看到专注时长"),
             Term("tired1", "tired", 1, "环境:疲惫-I", "期间获得的休息时间为0.9x"),
             Term("tired2", "tired", 2, "环境:疲惫-II", "期间获得的休息时间为0.75x"),
             Term("tired3", "tired", 3, "环境:疲惫-III", "期间获得的休息时间为0.6x"),
+            Term("short1", "short", 1, "环境:支援短缺-I", "只能使用合约开始前已保存休息时间的50%"),
+            Term("short2", "short", 2, "环境:支援短缺-II", "不能使用合约开始前已经保存的休息时间"),
             Term("chan1", "chan", 1, "环境:通道阻塞-I", "期间的最大窗口数改为4"),
             Term("chan2", "chan", 2, "环境:通道阻塞-II", "期间的最大窗口数改为3"),
+            Term("suppress", "suppress", 1, "环境:抑制", "不能使用快速访问功能", listOf("isolate")),
+            Term("jam", "jam", 2, "环境:全频道阻塞干扰", "期间使用proxy block-all模式"),
+            Term("music", "music", 1, "环境:乐理之灾", "非休息期间不能打开音乐播放软件 不能使用外部软件播放mp3等音频文件"),
+            Term("fog", "fog", 1, "环境:黑雾", "合约期间 专注时长 成就 日历 统计数据不可见 且无法打开设置"),
+            Term("seal", "seal", 1, "环境:记录封锁", "超过填写时间未填写 则不能再修改该记录"),
+            Term("fine", "fine", 2, "目标:细化规范", "记录变为30min一次"),
             Term("last", "last", 1, "最后防线", "违反一次词条即结束合约"),
         )
         val BY_ID = TERMS.associateBy { it.id }
@@ -48,18 +53,27 @@ class Contract(private val file: File) {
         val MAX_LEVEL = TERMS.maxOf { it.level }
         private val ORDER = TERMS.mapIndexed { i, t -> t.id to i }.toMap()
 
-        // 用"不能" / "禁止"描述的词条是软规则: 界面上照样能做, 但会被算作违反, 这个词条降一级 (结算按降级后的等级);
-        // 用"无法"描述的 (黑雾) 是硬规则, 立即生效; 全频道阻塞干扰 / 持久战 / 疲惫直接生效.
-        val SOFT = setOf("info1", "info2", "info3", "isolate", "chan1", "chan2", "music", "suppress")
+        // 软规则: 界面上照样能做, 但会被算作违反, 这个词条降一级 (结算按降级后的等级);
+        // 其余是硬规则, 立即生效 (黑雾, 记录封锁, 细化规范, 全频道阻塞干扰, 持久战, 疲惫).
+        val SOFT = setOf("info1", "info2", "info3", "isolate", "chan1", "chan2", "music", "suppress", "short1", "short2")
         /** 降一级换成哪个词条. */
-        val LOWER = mapOf("isolate" to "info3", "info3" to "info2", "info2" to "info1", "chan2" to "chan1")
-        /** 只有一档的词条: 降级时等级减一, 减到 0 就失效. */
+        val LOWER = mapOf("isolate" to "info3", "info3" to "info2", "info2" to "info1", "chan2" to "chan1",
+            "short2" to "short1")
+        /** 只有一档的软规则: 降级时等级减一, 减到 0 就失效. */
         val SINGLE = setOf("music", "suppress")
+        /** 这个等级的词条用红色边框. */
+        const val RIM_LEVEL = 4
 
-        val DURATION = mapOf("long1" to 1.1, "long2" to 1.2, "long3" to 1.3)
+        val DURATION = mapOf("long1" to 1.2, "long2" to 1.4, "long3" to 1.6)
         val NET_SHARE = mapOf("info1" to 0.75, "info2" to 0.5, "info3" to 0.25, "isolate" to 0.0)
         val REST = mapOf("tired1" to 0.9, "tired2" to 0.75, "tired3" to 0.6)
         val WINDOWS = mapOf("chan1" to 4, "chan2" to 3)
+        /** 支援短缺: 合约开始前积攒的休息时间能用几成. */
+        val SUPPLY = mapOf("short1" to 0.5, "short2" to 0.0)
+        /** 整点记录的词条: 整点记录关着时, 这次合约中照样开启. */
+        val HOUR_TERMS = setOf("seal", "fine")
+        /** 支援短缺: 还差这么多秒就用超时各提醒一次. */
+        val SUPPLY_WARN = listOf(180, 60)
 
         /** 总等级 → 完成合约时给的休息时间 (分钟, 固定; 按结束时的等级). */
         private val REST_TABLE = listOf(0 to 20, 1 to 24, 4 to 28, 7 to 32, 10 to 36, 13 to 40, 16 to 44, 19 to 50)
@@ -161,14 +175,19 @@ class Contract(private val file: File) {
         save()
     }
 
-    fun start(terms: Collection<String>, owner: String, now: LocalDateTime = LocalDateTime.now()) {
+    /** pre: 开始时积攒的休息时间 (秒). 合约中暂停休息时这部分不打折; 支援短缺限制它能用几成. */
+    fun start(terms: Collection<String>, owner: String, now: LocalDateTime = LocalDateTime.now(), pre: Double = 0.0) {
         val t = clean(terms)
         val n = now.withNano(0)
+        val p = maxOf(0.0, pre)
+        val share = supplyShare(t)
         live = JSONObject().put("state", "active").put("id", System.currentTimeMillis())
             .put("start", n.iso()).put("end", n.plusSec(durationOf(t)).iso())
             .put("terms", JSONArray(t)).put("orig", JSONArray(t)).put("cut", JSONObject())
             .put("violations", 0).put("rest", 0).put("owner", owner)
             .put("idle_since", JSONObject.NULL).put("net", JSONObject.NULL).put("first_break", false)
+            .put("pre", r1(p)).put("pre_left", r1(p)).put("pre_used", 0)
+            .put("supply", if (share == null) JSONObject.NULL else r1(p * share)).put("hl", JSONArray())
         watch.clear()
         save()
     }
@@ -183,7 +202,7 @@ class Contract(private val file: File) {
         val rec = JSONObject().put("id", live.optLong("id")).put("start", live.optString("start")).put("end", end.iso())
             .put("planned", live.optString("end")).put("terms", JSONArray(terms)).put("orig", JSONArray(orig))
             .put("level", level).put("orig_level", origLevel).put("cut", JSONObject(cut.toString()))
-            .put("result", result).put("violations", violations).put("reward", give)
+            .put("result", result).put("violations", violations).put("reward", give).put("pre_left", preLeft)
         history.add(rec)
         live = JSONObject().put("state", "none").put("owner", by).put("first_break", result == "completed")
         save()
@@ -225,10 +244,11 @@ class Contract(private val file: File) {
         return since?.let { maxOf(0.0, IDLE_LIMIT - secondsBetween(it, now)) }
     }
 
-    /** 违反了词条 id: 记一次, 这个词条降一级. 返回 (是否达到了上限, 降级后的词条 / "" = 失效). */
+    /** 违反了词条 id: 记一次, 这个词条降一级. 返回 (是否达到了上限, 降级后的词条 / "" = 失效).
+     *  id = "": 不是哪个词条的违反 (整点记录超时未填写), 只记一次. */
     fun violate(id: String): Pair<Boolean, String> {
         if (!active) return false to ""
-        val new = downgrade(id)
+        val new = if (id.isEmpty()) "" else downgrade(id)
         live.put("violations", violations + 1)
         save()
         return (violations >= violationLimit) to new
@@ -240,6 +260,7 @@ class Contract(private val file: File) {
         val i = t.indexOf(id)
         if (i < 0) return ""
         val oldShare = netShare()
+        val oldSupply = supplyShare(t)
         val c = JSONObject(cut.toString())
         val new: String
         when {
@@ -253,8 +274,63 @@ class Contract(private val file: File) {
         val newShare = netShare()
         if (n != null && oldShare != null && newShare != null)
             n.put("limit", n.dbl("limit") + n.dbl("base") * (newShare - oldShare))
+        // 支援短缺: 同样多给低一档多出来的那部分; 失效了就不再限制
+        val newSupply = supplyShare(terms)
+        if (newSupply == null) live.put("supply", JSONObject.NULL)
+        else if (oldSupply != null && !live.isNull("supply"))
+            live.put("supply", r1(live.dbl("supply") + pre * (newSupply - oldSupply)))
         save()
         return new
+    }
+
+    // ---- 合约开始前积攒的休息时间 (暂停不打折; 支援短缺) ----
+    // 一次休息 = 建议休息时长 + 积攒的休息时间; 先用合约中得到的, 合约开始前积攒的放在最后用.
+
+    val pre get() = if (active) live.dbl("pre") else 0.0
+    /** 还在积攒的休息时间里的那部分 (没用掉, 也没有拿进正在进行的休息). */
+    val preLeft get() = if (active) live.dbl("pre_left") else 0.0
+    val preUsed get() = if (active) live.dbl("pre_used") else 0.0
+
+    /** 开始休息, 积攒的 carry 秒全部拿进这次休息: 其中合约开始前的有多少 (从 pre_left 里拿走). */
+    fun preTake(carry: Double): Double {
+        if (!active) return 0.0
+        val x = minOf(maxOf(0.0, carry), preLeft)
+        if (x > 0) {
+            live.put("pre_left", r1(preLeft - x))
+            save()
+        }
+        return x
+    }
+
+    /** 一次休息结束 (back = 暂停时还给积攒的那部分合约开始前的时间, 自然结束时 0). */
+    fun preSettle(taken: Double, back: Double) {
+        if (!active) return
+        val t = maxOf(0.0, taken)
+        val b = back.coerceIn(0.0, t)
+        live.put("pre_left", r1(preLeft + b)).put("pre_used", r1(preUsed + t - b))
+        save()
+    }
+
+    private fun supplyShare(t: Collection<String>): Double? = t.mapNotNull { SUPPLY[it] }.minOrNull()
+    fun supplyTerm(): String = terms.firstOrNull { it in SUPPLY } ?: ""
+    /** 支援短缺: 合约开始前积攒的休息时间最多能用多少秒 (null = 不限). */
+    val supplyLimit: Double? get() = if (supplyTerm().isEmpty() || live.isNull("supply")) null else live.dbl("supply")
+
+    /** 正在休息 (还剩 left 秒, 这次休息里有 taken 秒是合约开始前的): 再过多少秒就用超了 (null = 这次用不超). */
+    fun supplyUntil(left: Double, taken: Double): Double? {
+        val lim = supplyLimit ?: return null
+        if (taken <= 0) return null
+        val cross = taken - (lim - preUsed)
+        if (cross <= 0) return null
+        return maxOf(0.0, left - cross)
+    }
+
+    /** 支援短缺: 合约开始前积攒的休息时间用超了 (正在休息时按已经用掉的算). */
+    fun supplyCheck(left: Double, taken: Double): String {
+        val lim = supplyLimit ?: return ""
+        val id = supplyTerm().ifEmpty { return "" }
+        val used = preUsed + maxOf(0.0, taken - maxOf(0.0, left))
+        return if (used > lim + 0.5) id else ""
     }
 
     // ---- 词条的效果 ----
@@ -262,6 +338,15 @@ class Contract(private val file: File) {
     /** 只能用剩余联网时间的几成 (null = 不限). */
     fun netShare(): Double? = terms.mapNotNull { NET_SHARE[it] }.minOrNull()
     fun fog() = has("fog")
+    /** 选了整点记录的词条: 整点记录关着时, 这次合约中照样开启. */
+    fun hourForced() = terms.any { it in HOUR_TERMS }
+    /** 细化规范: 这一小时 (按开始时刻) 和进行中的合约重叠, 记录改为每 30 分钟一次. */
+    fun fineHour(slotStart: LocalDateTime): Boolean {
+        if (!has("fine")) return false
+        val a = startAt ?: return false
+        val b = endAt ?: return false
+        return a.isBefore(slotStart.plusHours(1)) && slotStart.isBefore(b)
+    }
     fun windowLimit(): Int = terms.mapNotNull { WINDOWS[it] }.minOrNull() ?: 0
     fun restFactor(): Double = terms.mapNotNull { REST[it] }.minOrNull() ?: 1.0
 
@@ -351,23 +436,64 @@ class Contract(private val file: File) {
         return true
     }
 
-    // ---- 整点记录的锁定 ----
+    // ---- 整点记录: 超时未填写算一次违反; 记录封锁 ----
 
-    private fun periods(now: LocalDateTime): List<Pair<LocalDateTime, LocalDateTime>> {
+    /** 各个合约 (结束了的和进行中的) 的 (开始, 结束); term: 只要选了这个词条的. */
+    private fun periods(now: LocalDateTime, term: String = ""): List<Pair<LocalDateTime, LocalDateTime>> {
         val out = history.mapNotNull { h ->
             val a = parseIso(h.optString("start")) ?: return@mapNotNull null
             val b = parseIso(h.optString("end")) ?: return@mapNotNull null
+            val t = (h.optJSONArray("orig") ?: h.optJSONArray("terms"))?.strings() ?: emptyList()
+            if (term.isNotEmpty() && term !in t) return@mapNotNull null
             a to b
         }.toMutableList()
-        startAt?.let { out.add(it to now) }
+        if (term.isEmpty() || term in orig) startAt?.let { out.add(it to now) }
         return out
     }
 
-    /** 以 slotStart 开始的那一小时: 和合约有重叠, 并且它结束后又过了一小时 (进入了下一个时间段之后), 就不能再改. */
-    fun hourLocked(slotStart: LocalDateTime, now: LocalDateTime = LocalDateTime.now()): Boolean {
-        val slotEnd = slotStart.plusHours(1)
-        if (now.isBefore(slotEnd.plusHours(1))) return false
-        return periods(now).any { (a, b) -> a.isBefore(slotEnd) && slotStart.isBefore(b) }
+    /** 进行中的合约里已经结束的记录格: (键, 开始, 结束).
+     *  键是 "日期/小时", 细化规范的两个半小时是 "日期/小时/1" "日期/小时/2". */
+    fun hourUnits(now: LocalDateTime): List<Triple<String, LocalDateTime, LocalDateTime>> {
+        val a = startAt ?: return emptyList()
+        val e = endAt ?: now
+        val b = if (now.isBefore(e)) now else e
+        val out = mutableListOf<Triple<String, LocalDateTime, LocalDateTime>>()
+        var h = a.withMinute(0).withSecond(0).withNano(0)
+        while (h.isBefore(b)) {
+            val key = "${h.toLocalDate()}/${h.hour}"
+            val parts = if (fineHour(h)) listOf(Triple("$key/1", h, h.plusMinutes(30)), Triple("$key/2", h.plusMinutes(30), h.plusHours(1)))
+                else listOf(Triple(key, h, h.plusHours(1)))
+            out += parts.filter { it.second.isBefore(b) && a.isBefore(it.third) && !it.third.isAfter(now) }
+            h = h.plusHours(1)
+        }
+        return out
+    }
+
+    /** 合约中过了填写时限还没填写的记录格 (空着, 或者是超时自动记录的内容): 每格只算一次违反.
+     *  返回新算的键 (只由做自动结束的设备调用). */
+    fun hourMisses(now: LocalDateTime, fillSec: Long, textOf: (String) -> String, auto: String): List<String> {
+        if (!active) return emptyList()
+        val old = live.optJSONArray("hl")?.strings() ?: emptyList()
+        val seen = old.toMutableSet()
+        val new = mutableListOf<String>()
+        for ((key, _, b) in hourUnits(now)) {
+            if (key in seen || b.plusSeconds(fillSec).isAfter(now)) continue
+            seen.add(key)
+            if (textOf(key) in setOf("", auto)) new.add(key)
+        }
+        if (seen.size != old.size) {
+            live.put("hl", JSONArray(seen.sorted()))
+            save()
+        }
+        return new
+    }
+
+    /** 记录封锁: 和选了这个词条的合约重叠的记录格, 过了填写时限还没填写 (空着 / 超时自动记录),
+     *  就不能再改 —— 合约结束了也一样. */
+    fun hourLocked(start: LocalDateTime, end: LocalDateTime, text: String, now: LocalDateTime, fillSec: Long,
+                   auto: String): Boolean {
+        if (now.isBefore(end.plusSeconds(fillSec)) || text !in setOf("", auto)) return false
+        return periods(now, "seal").any { (a, b) -> a.isBefore(end) && start.isBefore(b) }
     }
 
     // ---- 设备同步 ----

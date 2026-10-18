@@ -2,6 +2,7 @@
 
 import tkinter as tk
 import calendar
+import random
 from datetime import datetime
 from tkinter import ttk
 
@@ -21,6 +22,8 @@ class CalendarPage(tk.Frame):
     def __init__(self, master, data_manager):
         super().__init__(master, bg=COLORS["bg"])
         self.dm = data_manager
+        # 合约的黑雾 (MECHANICS 18.3): 不为 None 时显示随机的学习时长, 月份和合计写成 [CENSORED]
+        self.fog = lambda: None
         self.display_year = datetime.now().year
         self.display_month = datetime.now().month
         self.offset = 0            # 0 = 本月, -1 = 上月(只保留这两个月)
@@ -110,7 +113,8 @@ class CalendarPage(tk.Frame):
         title = tr("{year} 年 {month}").format(
             year=self.display_year, month=months[self.display_month - 1]
         )
-        cfg(self.lbl_month_title, text=title)
+        seed = self.fog()
+        cfg(self.lbl_month_title, text="[CENSORED]" if seed is not None else title)
         self._apply_day_headers()
 
         cal = calendar.monthcalendar(self.display_year, self.display_month)
@@ -123,7 +127,13 @@ class CalendarPage(tk.Frame):
             if date_str.startswith(prefix):
                 month_data[date_str] = hours
                 month_total += hours
-        cfg(self.lbl_month_total, text=tr("合计: {h:.1f} h").format(h=month_total))
+        if seed is not None:
+            rnd = random.Random(f"{seed}/{prefix}")
+            month_data = {f"{prefix}-{d:02d}": round(rnd.uniform(0, 9), 1)
+                          for d in range(1, 32) if f"{prefix}-{d:02d}" <= today_str}
+            cfg(self.lbl_month_total, text=tr("合计: [CENSORED]"))
+        else:
+            cfg(self.lbl_month_total, text=tr("合计: {h:.1f} h").format(h=month_total))
 
         for row_idx in range(6):
             week = cal[row_idx] if row_idx < len(cal) else [0] * 7

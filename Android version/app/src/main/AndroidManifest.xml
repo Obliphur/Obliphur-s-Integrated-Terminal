@@ -26,6 +26,13 @@
     <uses-permission
         android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
+    <!-- 精确的后台应用数 (MECHANICS 14.6): 读系统的最近任务列表. 普通安装不会授予, 要用 adb 授予一次
+         (读转储还要求 PACKAGE_USAGE_STATS 这个权限本身也是授予状态, 只开"使用情况访问"不够):
+         adb shell pm grant com.obliphur.oit android.permission.DUMP
+         adb shell pm grant com.obliphur.oit android.permission.PACKAGE_USAGE_STATS -->
+    <uses-permission
+        android:name="android.permission.DUMP"
+        tools:ignore="ProtectedPermissions" />
 
     <application
         android:name=".OitApp"
@@ -39,6 +46,7 @@
             android:name=".ui.MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

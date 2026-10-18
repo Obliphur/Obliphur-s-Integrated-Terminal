@@ -126,12 +126,16 @@ class AchievementPopups:
         self.root, self.store, self.on_open = root, store, on_open
         self.wins = {}                # id -> Toplevel
         self._job = None
+        self.hold = lambda: False     # 合约的黑雾 (MECHANICS 18.3): 达成提示等合约结束后再弹出
         root.bind("<Configure>", self._on_root_configure, add="+")
         root.bind("<Unmap>", self._on_root_unmap, add="+")
         root.bind("<Map>", self._on_root_map, add="+")
 
     def sync(self):
         """把还没被关掉的达成提示显示出来 (最多 MAX_VISIBLE 个)."""
+        if self.hold():
+            self.close_all_windows()
+            return
         for aid in list(self.wins):
             if aid not in self.store.unseen:
                 self._destroy(aid)

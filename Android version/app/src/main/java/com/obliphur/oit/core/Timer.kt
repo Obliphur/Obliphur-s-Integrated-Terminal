@@ -32,6 +32,16 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
     private var bonusFirst = 0.0
     var bonusBreakActive = false
         private set
+    /** 完成合约后的第一次休息: 暂停时结转比例 1 - (1 - x) / 2 (MECHANICS 18). */
+    private var contractBreakActive = false
+    /** 这次休息里有多少秒是合约开始前积攒的 (放在最后用; 暂停时原样还回去). */
+    var breakPre = 0.0
+        private set
+    /** 这次休息是在哪个合约中开始的 (0 = 不是; 合约结束后暂停: 只还合约开始前的那部分). */
+    var breakCid = 0L
+        private set
+    /** 刚结束的那段专注换来的休息时间 (秒, 已乘倍率; 合约中已乘疲惫). */
+    private var restBase = 0.0
     private var focusChecks = 0
     private var focusOk = 0.0
     private var checkId: Int? = null
@@ -55,7 +65,6 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
 
     val elapsed get() = if (state == TState.RUNNING) mono() - startMono else 0.0
     val countdown get() = if (state == TState.ON_BREAK) maxOf(0.0, breakEndMono - mono()) else 0.0
-    private val scale get() = settings.num("BREAK_TIME_SCALE")
 
     /** 网络正在使用时不允许暂停休息 —— 领到休息时间后的第一次休息除外. */
     val breakLocked get() = state == TState.ON_BREAK && core.net.mode == "online" && !bonusBreakActive
@@ -70,6 +79,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
                 val end = LocalDateTime.now()
                 val minutes = (mono() - startMono) / 60.0
                 lastTMinutes = minutes                    // 建议休息时长照常按整段专注算
+                restBase = core.focusRest(minutes, startWall!!, end)
                 val off = cutOffline(startWall!!, end)
                 dm.addStudySession(startWall!!, end, maxOf(0.0, minutes - off / 60.0))
                 dm.addFocusSession("study", startWall, end)
@@ -97,6 +107,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
                     core.toast(tr("还没有积攒的休息时间."), "info"); return
                 }
                 lastTMinutes = 0.0
+                restBase = 0.0
                 val total = breakCarry
                 startBreak()
                 if (state == TState.ON_BREAK) core.toast(tr("开始休息 {t}.", "t" to fmtMs(total.toDouble())), "success")
@@ -125,6 +136,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
     }
 
     fun onBonusClick() {
+        if (core.contract.active) return            // 合约中"我累了"按钮隐藏
         val now = mono()
         if (bonusClicks == 0 || now - bonusFirst > Cfg.BONUS_BREAK_WINDOW) {
             bonusClicks = 0
@@ -181,7 +193,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
 
     /** 本次休息总秒数 = 建议休息时长 + 积攒的休息时间. */
     fun breakSeconds(): Int {
-        val base = Math.round(maxOf(0.0, computeF(lastTMinutes)) * scale * 60.0).toInt()
+        val base = Math.round(maxOf(0.0, restBase)).toInt()
         val total = base + breakCarry
         return if (total > 0) maxOf(1, total) else 0
     }
@@ -198,6 +210,15 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
             bonusBreakActive = true
             extra = JSONObject().put("bonus_pending", false)
         }
+        if (!core.contract.active && core.contract.takeFirstBreak()) {
+            contractBreakActive = true
+            core.toast(tr("合约完成后的第一次休息: 暂停时剩余时间 ×{r} 留给下次.",
+                "r" to numText(Contract.firstBreakRate(settings.num("BREAK_CARRY_RATE")))), "info", long = true)
+        }
+        val c = core.contract
+        breakPre = if (c.active) c.preTake(carry.toDouble()) else 0.0
+        breakCid = if (c.active) c.id else 0L
+        core.supplyWarned.clear()
         breakCarry = 0
         breakEndMono = mono() + total
         state = TState.ON_BREAK
@@ -222,13 +243,29 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         recordBreakEnd()
         val left = countdown.toInt()
         val full = bonusBreakActive
+        var rate = settings.num("BREAK_CARRY_RATE")
+        if (contractBreakActive) rate = Contract.firstBreakRate(rate)
         bonusBreakActive = false
-        // 领到休息时间后的第一次休息: 暂停时剩余时间全部保留, 不按倍率打折
-        val add = if (full) left else Math.round(left * settings.num("BREAK_CARRY_RATE")).toInt()
+        contractBreakActive = false
+        // 合约中: 剩余时间里合约开始前积攒的那部分 (放在最后用) 原样还回去, 不打折;
+        // 合约中开始的休息, 合约已经结束了: 只还这部分 (合约中得到的休息时间不留到合约之后)
+        val pre = minOf(left, breakPre.toInt())
+        val c = core.contract
+        val same = c.active && c.id == breakCid
+        val ended = breakCid != 0L && !same
+        if (same) c.preSettle(breakPre, pre.toDouble())
+        breakPre = 0.0
+        breakCid = 0L
+        // 领到休息时间后的第一次休息: 暂停时剩余时间全部保留, 不按倍率打折 (盖过合约完成后的比例)
+        val add = when {
+            ended -> pre
+            full -> left
+            else -> pre + Math.round((left - pre) * rate).toInt()
+        }
         if (add > 0) {
             breakCarry += add
             if (!silent) {
-                if (full) core.toast(tr("休息已暂停,剩余 {left} 留给下次.", "left" to fmtMs(left.toDouble())), "info")
+                if (full || add == left) core.toast(tr("休息已暂停,剩余 {left} 留给下次.", "left" to fmtMs(left.toDouble())), "info")
                 else core.toast(tr("休息已暂停,下次休息 +{add}.", "add" to fmtMs(add.toDouble())), "info")
             }
         }
@@ -247,6 +284,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         state = TState.IDLE
         startWall = null
         lastTMinutes = 0.0
+        restBase = 0.0
         breakEndMono = 0.0
         saveState()
         core.changed()
@@ -299,10 +337,16 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         val b = if (state == TState.ON_BREAK && breakStartWall != null) JSONObject()
             .put("start", breakStartWall!!.iso())
             .put("end", (breakEndWall ?: LocalDateTime.now().plusSec(countdown)).iso())
-            .put("bonus", bonusBreakActive) else JSONObject.NULL
+            .put("bonus", bonusBreakActive).put("cbreak", contractBreakActive)
+            .put("cpre", breakPre).put("ccid", breakCid) else JSONObject.NULL
         d.put("break", b)
         focusSaved = mono()
         Store.write(file, d)
+    }
+
+    /** 合约结束 (MECHANICS 18.2): 积攒的休息时间只留下合约开始前积攒的那部分, 加上奖励. */
+    fun contractEnded(preLeft: Double, reward: Int) {
+        setCarry(minOf(breakCarry, preLeft.toInt()) + reward)
     }
 
     private fun setCarry(seconds: Int) {
@@ -351,6 +395,9 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
                     breakEndMono = mono() + secondsBetween(now, en)
                     breakEndWall = en
                     bonusBreakActive = brk.optBoolean("bonus", false)
+                    contractBreakActive = brk.optBoolean("cbreak", false)
+                    breakPre = brk.optDouble("cpre", 0.0)
+                    breakCid = brk.optLong("ccid", 0L)
                     core.changed()
                     return
                 }
@@ -415,7 +462,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         val counted = maxOf(0.0, minutes - cutOffline(start, end) / 60.0)
         dm.addStudySession(start, end, counted)
         dm.addFocusSession("study", start, end)
-        val brk = Math.round(maxOf(0.0, computeF(minutes)) * scale * 60.0).toInt()
+        val brk = Math.round(core.focusRest(minutes, start, end)).toInt()
         return counted to brk
     }
 
@@ -522,6 +569,10 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
             if (!autoOk()) breakStartWall = null
             recordBreakEnd(LocalDateTime.now().plusSec(-(mono() - breakEndMono).coerceAtLeast(0.0)))
             bonusBreakActive = false
+            contractBreakActive = false
+            if (core.contract.active && core.contract.id == breakCid) core.contract.preSettle(breakPre, 0.0)
+            breakPre = 0.0
+            breakCid = 0L
             core.toast(tr("休息结束,可以开始下一轮了!"), "success")
             resetToIdle()
             armIdleNudge()
@@ -577,6 +628,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
                 .put("start", sw.iso()).put("checks", focusChecks).put("ok", focusOk.toLong())
             state == TState.ON_BREAK && bs != null && be != null -> JSONObject().put("state", "break").put("owner", o)
                 .put("break_start", bs.iso()).put("break_end", be.iso()).put("bonus", bonusBreakActive)
+                .put("cbreak", contractBreakActive).put("cpre", breakPre).put("ccid", breakCid)
             else -> JSONObject().put("state", "idle").put("owner", o)
         }
     }
@@ -619,6 +671,9 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
                     breakEndWall = end
                     breakEndMono = mono() + left
                     bonusBreakActive = l.optBoolean("bonus")
+                    contractBreakActive = l.optBoolean("cbreak")
+                    breakPre = l.optDouble("cpre", 0.0)
+                    breakCid = l.optLong("ccid", 0L)
                 }
             }
             else -> {
