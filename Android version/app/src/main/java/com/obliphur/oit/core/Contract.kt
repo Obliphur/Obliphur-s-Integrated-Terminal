@@ -61,7 +61,7 @@ class Contract(private val file: File) {
                 listOf("gaze")),
             Term("game", "game", 1, "环境:禁游令", "合约期间不能使用游戏和游戏平台"),
             Term("video", "video", 1, "环境:低帧的诅咒", "合约期间不能使用视频平台"),
-            Term("ent", "ent", 4, "环境:互联网娱乐的败退", "同时有乐理之灾 无言为真 禁游令 低帧的诅咒的效果 违反任意一项即整个失效 顺利完成合约时今日联网额度+20min",
+            Term("ent", "ent", 4, "环境:互联网娱乐的败退", "同时有乐理之灾 无言为真 禁游令 低帧的诅咒的效果\n违反任意一项即整个失效\n顺利完成合约时今日联网额度+20min",
                 listOf("music", "silent", "game", "video", "isolate")),
             Term("fog", "fog", 1, "环境:黑雾", "合约期间 专注时长 成就 日历 统计数据不可见 且无法打开设置"),
         )

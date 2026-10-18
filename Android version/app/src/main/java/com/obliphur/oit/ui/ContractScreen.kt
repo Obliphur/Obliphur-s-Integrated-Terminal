@@ -53,6 +53,11 @@ private val BOARD_GAP = 5.dp
 private fun marks(level: Int) = "▲".repeat(maxOf(0, level))
 private fun termName(id: String) = tr(Contract.BY_ID[id]!!.name)
 private fun termDesc(id: String) = tr(Contract.BY_ID[id]!!.desc)
+/** 名字 : 描述. 描述本身分了几行时 (互联网娱乐的败退), 从下一行开始写, 每一句一行. */
+private fun termLine(id: String): String {
+    val d = termDesc(id)
+    return termName(id) + " :" + (if ('\n' in d) "\n" else " ") + d
+}
 
 /** 格子里的名字: 去掉"环境:" / "目标:", 名字和罗马数字分开 (英文用更短的名字). */
 private fun termShort(id: String): String {
@@ -268,24 +273,24 @@ fun ContractScreen() {
             }
         }
         if (tapped.isNotEmpty()) {
-            var text = "${marks(Contract.BY_ID[tapped]!!.level)}  ${termName(tapped)} : ${termDesc(tapped)}"
+            var text = "${marks(Contract.BY_ID[tapped]!!.level)}  " + termLine(tapped)
             val other = Contract.blockedBy(tapped, sel)
             if (other != null && tapped !in sel) text += "  " + tr("[与 {name} 冲突]", "name" to termName(other))
             Text(text, color = p.dim, fontSize = 13.sp)
         }
 
         // 已选中的词条: 黑底, 两栏
-        val rows = if (!active) sel.map { Triple(Contract.BY_ID[it]!!.level, "${termName(it)} : ${termDesc(it)}", false) }
+        val rows = if (!active) sel.map { Triple(Contract.BY_ID[it]!!.level, termLine(it), false) }
         else c.orig.map { t ->
             val g = Contract.BY_ID[t]!!.group
             val cur = c.terms.firstOrNull { it == t || Contract.BY_ID[it]!!.group == g }
             when {
                 cur == null -> Triple(Contract.BY_ID[t]!!.level, termName(t) + "   " + tr("[已失效]"), true)
-                cur != t -> Triple(c.termLevel(cur), "${termName(cur)} : ${termDesc(cur)}   " +
+                cur != t -> Triple(c.termLevel(cur), termLine(cur) + "   " +
                     tr("[原 {name}]", "name" to termShort(t)), false)
-                c.termLevel(t) < Contract.BY_ID[t]!!.level -> Triple(c.termLevel(t), "${termName(t)} : ${termDesc(t)}   " +
+                c.termLevel(t) < Contract.BY_ID[t]!!.level -> Triple(c.termLevel(t), termLine(t) + "   " +
                     tr("[降了 {n} 级]", "n" to Contract.BY_ID[t]!!.level - c.termLevel(t)), false)
-                else -> Triple(c.termLevel(t), "${termName(t)} : ${termDesc(t)}", false)
+                else -> Triple(c.termLevel(t), termLine(t), false)
             }
         }
         Column(Modifier.fillMaxWidth().background(p.sel).padding(12.dp)) {

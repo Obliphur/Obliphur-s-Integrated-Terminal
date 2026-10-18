@@ -24,6 +24,12 @@ def term_desc(tid: str) -> str:
     return tr(C.BY_ID[tid][4])
 
 
+def term_line(tid: str) -> str:
+    """名字 : 描述. 描述本身分了几行时 (互联网娱乐的败退), 从下一行开始写, 每一句一行."""
+    desc = term_desc(tid)
+    return f"{term_name(tid)} :" + ("\n" if "\n" in desc else " ") + desc
+
+
 def fmt_hms(sec: float) -> str:
     sec = max(0, int(sec))
     return f"{sec // 3600}:{(sec % 3600) // 60:02d}:{sec % 60:02d}"
@@ -178,7 +184,8 @@ class ContractPage(tk.Frame):
         self.th = round(self.tw * math.sqrt(3) / 2)
         cols = C.BOARD_COLS
         self.board_w = self.band + self.gap + cols * (self.tw + self.gap)
-        self.board_h = self.gap + C.MAX_LEVEL * (self.th + self.gap) + s(26)
+        self.hover_h = s(66)                     # 最下面写词条内容的地方: 最多三行 (长的描述自己换行)
+        self.board_h = self.gap + C.MAX_LEVEL * (self.th + self.gap) + self.hover_h
         wrap = tk.Frame(body, bg=P["board"])
         wrap.pack(fill="x", pady=(0, 6))
         self.canvas = tk.Canvas(wrap, bg=P["board"], highlightthickness=0, height=self.board_h)
@@ -239,7 +246,7 @@ class ContractPage(tk.Frame):
             cv.tag_bind(tag, "<Enter>", lambda e, t=tid: self._enter(t))
             cv.tag_bind(tag, "<Leave>", lambda e, t=tid: self._leave(t))
         # 鼠标停在格子上: 最下面一行写出这个词条的内容
-        self.hover_id = cv.create_text(self.band + self.gap, self.board_h - s(13), text="", anchor="w",
+        self.hover_id = cv.create_text(self.band + self.gap, self.board_h - self.hover_h + s(4), text="", anchor="nw",
                                        fill=P["hint"], font=config.font("small", bold=True))
 
     def _selected(self):
@@ -301,17 +308,17 @@ class ContractPage(tk.Frame):
         """已选中的词条: (等级, 文字, 是否失效). 合约中按开始时选的列出, 降过级的写出降成了什么."""
         c = self.c
         if not c.active:
-            return [(C.BY_ID[t][2], f"{term_name(t)} : {term_desc(t)}", False) for t in sel]
+            return [(C.BY_ID[t][2], term_line(t), False) for t in sel]
         out = []
         for t in c.orig:
             now = next((x for x in c.terms if x == t or C.BY_ID[x][1] == C.BY_ID[t][1]), "")
             if not now:
                 out.append((C.BY_ID[t][2], f"{term_name(t)}   " + tr("[已失效]"), True))
             elif now != t:
-                out.append((c.term_level(now), f"{term_name(now)} : {term_desc(now)}   "
+                out.append((c.term_level(now), f"{term_line(now)}   "
                             + tr("[原 {name}]", name=term_short(t)), False))
             else:
-                text = f"{term_name(t)} : {term_desc(t)}"
+                text = term_line(t)
                 if c.term_level(t) < C.BY_ID[t][2]:
                     text += "   " + tr("[降了 {n} 级]", n=C.BY_ID[t][2] - c.term_level(t))
                 out.append((c.term_level(t), text, False))

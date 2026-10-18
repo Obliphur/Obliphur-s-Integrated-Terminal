@@ -817,7 +817,7 @@ EN = {
     "合约期间录制整个屏幕 结束后保存录像": "The whole screen is recorded during the contract and saved afterwards",
     "合约期间不能使用游戏和游戏平台": "No games and no game platforms during the contract",
     "合约期间不能使用视频平台": "No video platforms during the contract",
-    "同时有乐理之灾 无言为真 禁游令 低帧的诅咒的效果 违反任意一项即整个失效 顺利完成合约时今日联网额度+20min": "All the effects of Musical Calamity, Silence Is Truth, Game Ban and Low-Frame Curse; any violation voids it entirely; completing the contract adds 20 min to today's online quota",
+    "同时有乐理之灾 无言为真 禁游令 低帧的诅咒的效果\n违反任意一项即整个失效\n顺利完成合约时今日联网额度+20min": "All the effects of Musical Calamity, Silence Is Truth, Game Ban and Low-Frame Curse\nAny violation voids it entirely\nCompleting the contract adds 20 min to today's online quota",
     "录像": "Recording",
     "录像前询问": "Ask before recording",
     "即时生效.开启时: 开始带录像词条 (目光 / 刻痕) 的合约前再确认一次; 别的设备开始的合约要本机录像时, 先问一次 (拒绝算一次违反).": "Takes effect at once. When on: confirm once more before starting a contract with a recording term (Gaze / Engraving); when a contract started on another device needs this device to record, ask first (declining counts as a violation).",
