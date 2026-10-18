@@ -41,6 +41,8 @@ interface SyncLocal {
     fun updateDest(version: String): File? = null
     fun updateReceived(file: File, version: String, from: String) {}
     fun updateFailed(error: String) {}
+    /** 绑定的设备请这台设备给它下载新版本并发过去 (它自己从 GitHub 下不动): "" = 好, 否则是原因. */
+    fun updateRequested(peerId: String): String = "unsupported"
 }
 
 /** 在界面线程里执行, 等它做完 (同 devsync.MainRunner). post=null 时直接在当前线程执行 (测试用). */
@@ -398,6 +400,7 @@ class SyncService(
                     method == "POST" && path == "/oit/v1/sync" -> onSync(body)
                     method == "POST" && path == "/oit/v1/unpair" -> onUnpair(body)
                     method == "POST" && path == "/oit/v1/offer" -> onOffer(body)
+                    method == "POST" && path == "/oit/v1/want" -> onWant(body)
                     else -> 404 to JSONObject().put("error", "not found")
                 }
                 val data = out.toString().toByteArray(Charsets.UTF_8)
@@ -461,6 +464,32 @@ class SyncService(
         if (st == 401) throw IllegalStateException("unpaired")
         if (st != 200) throw IllegalStateException(reply.optString("error", "HTTP $st"))
         return if (reply.optBoolean("ok")) "sent" else reply.optString("why", "declined")
+    }
+
+    /** 请一台绑定的设备给这台下载新版本并发过来 (它那里也许能连上 GitHub, 例如电脑开着代理).
+     *  对方下载好后用 offer 发过来. 返回 "asked", 或对方不肯的原因 ("old" = 对方的 OIT 太旧, 不认这个请求). 在后台线程里调用. */
+    fun requestUpdate(peerId: String): String {
+        val p = peers()[peerId] ?: return "unpaired"
+        val env = SyncCrypto.seal(SyncCrypto.unhex(p.getString("key")), myId, JSONObject().put("want", JSONObject()
+            .put("platform", "android").put("version", local.appVersion())))
+        val (st, reply) = http(p.getString("addr"), p.getInt("port"), "POST", "/oit/v1/want", env, 10_000)
+        if (st == 404) return "old"
+        if (st == 401) throw IllegalStateException("unpaired")
+        if (st != 200) throw IllegalStateException(reply.optString("error", "HTTP $st"))
+        return if (reply.optBoolean("ok")) "asked" else reply.optString("why", "declined")
+    }
+
+    private fun onWant(env: JSONObject): Pair<Int, JSONObject> {
+        val id = env.optString("from")
+        val p = peers()[id] ?: return 401 to JSONObject().put("error", "unpaired")
+        val body = try { SyncCrypto.unseal(SyncCrypto.unhex(p.getString("key")), env) } catch (e: SealError) {
+            return 403 to JSONObject().put("error", e.message)
+        }
+        body.optJSONObject("want") ?: return 400 to JSONObject().put("error", "bad-request")
+        val why = try { runner.call { local.updateRequested(id) } } catch (e: Exception) {
+            return 503 to JSONObject().put("error", e.message)
+        }
+        return 200 to if (why.isEmpty()) JSONObject().put("ok", true) else JSONObject().put("ok", false).put("why", why)
     }
 
     private fun onOffer(env: JSONObject): Pair<Int, JSONObject> {

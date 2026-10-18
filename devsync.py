@@ -846,6 +846,46 @@ class SyncService:
             v = self.offers.get(token)
         return v[0] if v and v[1] > time.time() and os.path.isfile(v[0]) else None
 
+    def request_update(self, peer_id: str) -> str:
+        """请一台绑定的设备给本机下载新版本并发过来 (本机连 GitHub 下不动时). 对方下载好后用 offer 发过来.
+        返回 'asked', 或对方不肯的原因 ('old' = 对方的 OIT 太旧, 不认这个请求)."""
+        p = self.peers().get(peer_id)
+        if not p:
+            return "unpaired"
+        env = seal(bytes.fromhex(p["key"]), self.my_id, {"want": {
+            "platform": "windows", "version": self.runner.call(self.local.app_version)}})
+        st, reply = self._http(p["addr"], p["port"], "POST", "/oit/v1/want", env, timeout=10.0)
+        if st == 404:
+            return "old"
+        if st == 401:
+            raise RuntimeError("unpaired")
+        if st != 200:
+            raise RuntimeError(reply.get("error") or f"HTTP {st}")
+        return "asked" if reply.get("ok") else str(reply.get("why") or "declined")
+
+    def _on_want(self, env: dict):
+        """绑定的设备请本机给它下载新版本并发过去 (例如手机连 GitHub 下不动, 电脑开着代理)."""
+        pid = str(env.get("from"))
+        p = self.peers().get(pid)
+        if not p:
+            return 401, {"error": "unpaired"}
+        try:
+            body = unseal(bytes.fromhex(p["key"]), env)
+            if not isinstance(body.get("want"), dict):
+                raise ValueError
+        except SealError as e:
+            return 403, {"error": str(e)}
+        except Exception:
+            return 400, {"error": "bad-request"}
+        fn = getattr(self.local, "update_requested", None)
+        if fn is None:
+            return 200, {"ok": False, "why": "unsupported"}
+        try:
+            why = self.runner.call(lambda: fn(pid))
+        except Exception as e:      # noqa: BLE001
+            return 503, {"error": str(e)}
+        return 200, ({"ok": True} if not why else {"ok": False, "why": why})
+
     def _on_offer(self, env: dict):
         p = self.peers().get(str(env.get("from")))
         if not p:
@@ -1229,6 +1269,8 @@ def _make_handler(svc: SyncService):
                 return self._send(*svc._on_unpair(body))
             if self.path == "/oit/v1/offer":
                 return self._send(*svc._on_offer(body))
+            if self.path == "/oit/v1/want":
+                return self._send(*svc._on_want(body))
             self._send(404, {"error": "not found"})
 
         def _send_file(self, path):
@@ -1481,6 +1523,14 @@ def _selftest():
         with sa.lock:                                   # 只有发出去的取件码能取到文件
             tok = next(iter(sa.offers))
         assert sa.offer_file(tok) == pkg and sa.offer_file("0" * 32) is None
+        # 请对方下载新版本发过来 (want): 对方的 local 决定肯不肯
+        la.wanted = []
+        la.update_requested = lambda pid: la.wanted.append(pid) or ""
+        assert sb.request_update(sa.my_id) == "asked" and la.wanted == [sb.my_id]
+        la.update_requested = lambda pid: "busy"
+        assert sb.request_update(sa.my_id) == "busy"
+        del la.update_requested
+        assert sb.request_update(sa.my_id) == "unsupported"
 
         # 关闭前推送 (push_final): 不等回复里的内容, 对方照样并入
         la.docs_["timer"]["live"] = {"state": "idle", "owner": sa.my_id}

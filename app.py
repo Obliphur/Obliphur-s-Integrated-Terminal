@@ -2510,16 +2510,18 @@ class BreakTimerApp:
                 self.relay_updates()
                 return
 
-    def relay_updates(self, manual: bool = False):
+    def relay_updates(self, manual: bool = False, only: str = None) -> bool:
+        """only: 只发给这一台 (它请本机发过去的). 返回 False: 正在发送 / 没有设备."""
         if self._relaying:
             if manual:
                 toast.info(tr("正在发送…"))
-            return
-        peers = {pid: p for pid, p in self.sync.peers().items() if p.get("platform") in ("windows", "android")}
+            return False
+        peers = {pid: p for pid, p in self.sync.peers().items()
+                 if p.get("platform") in ("windows", "android") and (only is None or pid == only)}
         if not peers:
             if manual:
                 toast.info(tr("没有绑定的设备."))
-            return
+            return False
         self._relaying = True
         if manual:
             toast.info(tr("正在给其他设备下载新版本…"))
@@ -2550,6 +2552,7 @@ class BreakTimerApp:
                 self._relaying = False
             self._on_main(lambda: self._report_relay(out, manual))
         threading.Thread(target=run, daemon=True).start()
+        return True
 
     def _report_relay(self, out, manual: bool):
         from pages.sync_panel import sync_error_text

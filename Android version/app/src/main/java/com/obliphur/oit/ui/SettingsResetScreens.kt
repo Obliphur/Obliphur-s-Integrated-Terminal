@@ -29,6 +29,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.foundation.clickable
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -76,6 +77,15 @@ fun SettingsScreen(tab: String, setTab: (String) -> Unit, act: MainActivity) {
                     core.endSetupPeriod()
                 }
             }
+            // 成就 (MECHANICS 17): 单独一页, 从这里打开
+            OitCard(Modifier.clickable { OitApp.instance.navRequests.tryEmit("ach") }) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(tr("🏆  成就"), fontWeight = FontWeight.Bold, color = o.text, modifier = Modifier.weight(1f))
+                    Text(tr("已达成 {n}", "n" to core.ach.unlocked.size), color = o.accent, fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp, modifier = Modifier.padding(end = 10.dp))
+                    PlainButton(tr("打开")) { OitApp.instance.navRequests.tryEmit("ach") }
+                }
+            }
             SyncCard()
         }
 
@@ -98,8 +108,6 @@ fun SettingsScreen(tab: String, setTab: (String) -> Unit, act: MainActivity) {
             }
         }
         val delayedOnPage = Schema.ALL.any { it.page == tab && it.delayed }
-        // 成就 (MECHANICS 17): 不再是单独的一页, 放在基本设置里
-        val achAtEnd = tab == "basic"
         if (delayedOnPage) Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 6.dp)) {
             AccentButton(tr("💾 保存本页修改")) { savePage(tab, edits) }
             if (s.pending.isNotEmpty()) PlainButton(tr("✕ 取消全部待生效修改")) {
@@ -107,7 +115,6 @@ fun SettingsScreen(tab: String, setTab: (String) -> Unit, act: MainActivity) {
                 core.toast(tr("已取消 {n} 项待生效修改.", "n" to n)); core.changed()
             }
         }
-        if (achAtEnd) AchievementSection()
         // 作者的话: 设置冷静期的理念 (MECHANICS 1.1)
         if (tab == "basic") Flavor(tr("在设计预期上 只要不是有绝对的正当理由 应该很少有改变能坚持过48h的等待期.\n这是一个理智与本能的抗争的常见结果.\n这个软件的一个理念就是放大理智优势,保留本能空间.") +
             "\n\n" + tr("'放松'方向的改变会被限制,是在希望未来的某一刻,理智只需要占据短暂的上风,就能阻止这个进程.\n为什么'收紧'也需要限制?作者希望用户不要竭泽而渔.你可能想到多的一个小时学习时间有多有价值 但是可能想不到少的一个小时休息时间会对心理健康有多大的压力.所以请在这一段时间好好考虑少的时间/禁用某些关键网站会对你的生活有什么影响."),
@@ -273,6 +280,15 @@ private fun NumRow(spec: Spec, edits: MutableMap<String, String>, short: Boolean
     }
 }
 
+/** 下载进度: "3.2 / 18.2 MB · 120 KB/s", 重连过时加上次数. */
+private fun updateProgress(u: com.obliphur.oit.service.Updater): String {
+    fun mb(b: Long) = "%.1f".format(b / 1048576.0)
+    var t = mb(u.got) + (if (u.total > 0) " / " + mb(u.total) else "") + " MB"
+    if (u.speed > 0) t += " · ${u.speed / 1024} KB/s"
+    if (u.retry > 0) t += " · " + tr("重连 {n} 次", "n" to u.retry)
+    return t
+}
+
 /** 各页上 Android 特有的权限 / 系统设置入口. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -283,6 +299,7 @@ private fun PageExtras(tab: String, act: MainActivity) {
     fun open(i: Intent) = runCatching { ctx.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
     if (tab == "basic") OitCard {
         // 更新 (MECHANICS 16)
+        LocalTick.current
         val u = app.updater
         Text(tr("⬆  更新"), fontWeight = FontWeight.Bold, color = o.text)
         val state = when (u.state) {
@@ -290,7 +307,7 @@ private fun PageExtras(tab: String, act: MainActivity) {
             "latest" -> tr("已是最新版本")
             "available" -> tr("发现新版本 {v}", "v" to u.latestText)
             "noapk" -> tr("发现新版本 {v}", "v" to u.latestText) + " · " + tr("这个发布里没有安卓安装包")
-            "downloading" -> tr("正在下载更新…")
+            "downloading" -> tr("正在下载更新…") + " " + updateProgress(u)
             "ready" -> tr("新版本 {v} 已下载", "v" to u.latestText)
             "error" -> tr("检查 / 更新失败: {e}", "e" to u.error)
             else -> ""
@@ -299,10 +316,14 @@ private fun PageExtras(tab: String, act: MainActivity) {
             size = 13, color = when (u.state) { "available", "ready" -> o.accent; "error", "noapk" -> o.warn; else -> o.dim })
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 6.dp)) {
             PlainButton(tr("检查更新"), enabled = u.state != "checking" && u.state != "downloading") { app.checkUpdate(auto = false) }
-            if (u.state == "available") AccentButton(tr("立即更新")) { app.downloadUpdate() }
+            if (u.canDownload) AccentButton(if (u.state == "error") tr("重新下载") else tr("立即更新")) { app.downloadUpdate() }
+            if (u.state == "downloading") PlainButton(tr("取消下载")) { u.cancel() }
             if (u.state == "ready") AccentButton(tr("安装")) { u.install() }
+            val peers = app.sync?.peers()?.isNotEmpty() == true
+            // 这台手机连 GitHub 下载慢 / 下不动时: 请绑定的设备 (例如电脑) 下载好再从局域网发过来
+            if (peers && (u.canDownload || u.state == "downloading")) PlainButton(tr("📥 让其他设备发来")) { app.askPeersForUpdate(true) }
             // 给绑定的其他设备下载安装包, 直接从局域网发过去 (对方不用自己去 GitHub 下载)
-            if (app.sync?.peers()?.isNotEmpty() == true) PlainButton(tr("📤 发给其他设备")) { app.relayUpdates(true) }
+            if (peers) PlainButton(tr("📤 发给其他设备")) { app.relayUpdates(true) }
             PlainButton(tr("发布页")) { runCatching { u.openReleasePage() } }
         }
     }

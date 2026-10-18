@@ -364,7 +364,7 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
                     HorizontalDivider(color = cp?.line ?: o.border)
                     Spacer(Modifier.height(8.dp))
                     for ((key, label) in PAGES) {
-                        val on = key == page
+                        val on = key == page || (key == "settings" && page == "ach")
                         Text(navLabel(key, tr(label)), color = if (cp != null) (if (on) cp.startText else cp.sideText)
                             else if (on) o.accent else o.text, fontSize = 16.sp,
                             fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
@@ -390,7 +390,7 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
                     containerColor = cp?.bg ?: o.bg,
                     topBar = {
                         TopAppBar(
-                            title = { Text(navLabel(page, tr(PAGES.first { it.first == page }.second))) },
+                            title = { Text(if (page == "ach") tr("🏆  成就") else navLabel(page, tr(PAGES.first { it.first == page }.second))) },
                             navigationIcon = {
                                 TextButton({ scope.launch { drawer.open() } }) { Text("☰", fontSize = 22.sp, color = cp?.text ?: o.text) }
                             },
@@ -451,6 +451,10 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
                                 "cal" -> CalendarScreen()
                                 "stats" -> StatsScreen()
                                 "contract" -> ContractScreen()
+                                "ach" -> {
+                                    androidx.activity.compose.BackHandler { go("settings:basic") }
+                                    AchievementScreen { go("settings:basic") }
+                                }
                                 "settings" -> SettingsScreen(settingsTab, { settingsTab = it }, act)
                                 "reset" -> ResetScreen()
                             }
@@ -459,7 +463,7 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
                 }
             }
             // 达成成就的提示浮在界面上, 手动关闭才消失 (MECHANICS 17)
-            AchievementPopups { AchNav.pending = true; go("settings:basic") }
+            AchievementPopups { go("ach") }
             // 黑雾开始时正看着统计 / 日历: 离开
             if (page in setOf("stats", "cal") && core.contract.fog()) LaunchedEffect(Unit) { page = "timer" }
             notices.firstOrNull()?.let { n ->

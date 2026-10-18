@@ -54,6 +54,8 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
 
     override fun updateFailed(error: String) = core.toast(tr("接收新版本失败: {e}", "e" to error), "warn")
 
+    override fun updateRequested(peerId: String): String = if (app.relayUpdates(true, only = peerId)) "" else "busy"
+
     // ---- 账 ----
 
     override fun ledger(): JSONObject {

@@ -1,11 +1,6 @@
 package com.obliphur.oit.ui
 
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.relocation.BringIntoViewRequester
-import androidx.compose.foundation.relocation.bringIntoViewRequester
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.remember
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -30,29 +25,16 @@ import com.obliphur.oit.core.AchievementStore
 import com.obliphur.oit.core.Fmt
 import com.obliphur.oit.core.tr
 
-// ════════════════ 成就 (MECHANICS 17): 设置 → 基本设置里的一块 ════════════════
-
-/** 点了达成提示: 打开基本设置后把成就这一块滚到眼前. */
-object AchNav {
-    var pending = false
-}
+// ════════════════ 成就 (MECHANICS 17): 单独一页, 从 设置 → 基本设置 最上面的按钮打开 ════════════════
 
 /** 每个成就一张卡片. 没达成的只显示名字 (隐藏成就连名字也不显示), 不显示进度和条件. */
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun AchievementSection() {
+fun AchievementScreen(onBack: () -> Unit) {
     LocalTick.current
     val o = LocalOit.current
     val ach = OitApp.instance.core.ach
-    val bring = remember { BringIntoViewRequester() }
-    LaunchedEffect(AchNav.pending) {
-        if (AchNav.pending) {
-            AchNav.pending = false
-            kotlinx.coroutines.delay(150)
-            bring.bringIntoView()
-        }
-    }
-    Column(Modifier.bringIntoViewRequester(bring).padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    PageColumn {
+        PlainButton(tr("← 返回设置"), onClick = onBack)
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(tr("🏆  成就"), color = o.text, fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.weight(1f))
             Text(tr("已达成 {n}", "n" to ach.unlocked.size), color = o.accent, fontWeight = FontWeight.Bold, fontSize = 14.sp)

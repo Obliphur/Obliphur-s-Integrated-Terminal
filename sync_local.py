@@ -61,6 +61,10 @@ class PcLocal:
     def update_received(self, path: str, version: str, name: str):
         self.app.on_update_received(path, version, name)
 
+    def update_requested(self, peer_id: str) -> str:
+        """绑定的设备请本机给它下载新版本并发过去: "" = 好, 否则是原因."""
+        return "" if self.app.relay_updates(manual=True, only=peer_id) else "busy"
+
     def update_failed(self, err: str):
         toast.warn(tr("接收新版本失败: {e}", e=err))
 
