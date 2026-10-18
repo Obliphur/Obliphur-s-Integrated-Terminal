@@ -9,13 +9,12 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.GenericShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -27,8 +26,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.obliphur.oit.OitApp
@@ -44,6 +46,10 @@ import com.obliphur.oit.core.tr
 import java.time.LocalDateTime
 
 // ════════════════ 合约页 (MECHANICS 18) ════════════════
+
+private val BOARD_BAND = 64.dp
+private val BOARD_TILE = 64.dp
+private val BOARD_GAP = 5.dp
 
 private fun marks(level: Int) = "▲".repeat(maxOf(0, level))
 private fun termName(id: String) = tr(Contract.BY_ID[id]!!.name)
@@ -119,8 +125,34 @@ private val HEX = GenericShape { size, _ ->
     lineTo(size.width - k, size.height); lineTo(k, size.height); lineTo(0f, size.height / 2); close()
 }
 
+/** 整页缩小到一屏放得下 (手机横屏的高度不够, 词条板也可能太宽): 先按可用宽度 (至少 minWidth) 量一次;
+ *  太高时按比例放宽再量一次 (放宽后文字换行少, 缩小得也少), 再整体缩小. 左右空出来的地方是页面的底色. */
+@Composable
+private fun FitToScreen(minWidth: androidx.compose.ui.unit.Dp, content: @Composable () -> Unit) {
+    SubcomposeLayout(Modifier.fillMaxSize()) { cs ->
+        val w = cs.maxWidth
+        val h = if (cs.hasBoundedHeight) cs.maxHeight else Constraints.Infinity
+        val w1 = maxOf(w, minWidth.roundToPx())
+        val first = subcompose(1, content).map { it.measure(Constraints(minWidth = w1, maxWidth = w1)) }
+        val h1 = maxOf(1, first.maxOfOrNull { it.height } ?: 0)
+        if (w1 <= w && h1 <= h) return@SubcomposeLayout layout(w, h1) { first.forEach { it.placeRelative(0, 0) } }
+        // 高度更不够: 放宽到缩小后正好填满宽度, 再量一次
+        val tall = h1.toLong() * w > h.toLong() * w1
+        val pl = if (!tall) first
+            else subcompose(2, content).map { val wide = (w.toLong() * h1 / h).toInt()
+                it.measure(Constraints(minWidth = wide, maxWidth = wide)) }
+        val w2 = maxOf(1, pl.maxOf { it.width })
+        val h2 = maxOf(1, pl.maxOf { it.height })
+        val sc = minOf(1f, w.toFloat() / w2, if (h == Constraints.Infinity) 1f else h.toFloat() / h2)
+        val x = ((w - w2 * sc) / 2).toInt()
+        layout(w, if (h == Constraints.Infinity) (h2 * sc).toInt() else h) {
+            pl.forEach { it.placeRelativeWithLayer(x, 0) { scaleX = sc; scaleY = sc; transformOrigin = TransformOrigin(0f, 0f) } }
+        }
+    }
+}
+
 /** 词条板 (行 = 等级, 列 = 类型, 同一类型在同一列), 下面是已选中的词条 (两栏), 最下面一条: 清空 | 危机等级 | 开始行动.
- *  合约进行中时只能看. 这一页总是横屏 (Root 里设置). 颜色按"合约页主题". */
+ *  合约进行中时只能看. 这一页总是横屏 (Root 里设置), 整页缩小到一屏显示全部 (FitToScreen). 颜色按"合约页主题". */
 @Composable
 fun ContractScreen() {
     LocalTick.current
@@ -132,8 +164,10 @@ fun ContractScreen() {
     var tapped by rememberSaveable { mutableStateOf("") }
     var ask by rememberSaveable { mutableStateOf("") }        // start / end
     val sel = if (active) c.terms else c.draft
-    Column(Modifier.fillMaxWidth().background(p.bg).padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    // 词条板最窄要放下每列 64dp 的格子, 再窄就整页缩小
+    val minW = BOARD_BAND + (BOARD_TILE + BOARD_GAP) * Contract.GROUPS.size + BOARD_GAP + 32.dp
+    FitToScreen(minW) { Column(Modifier.fillMaxWidth().background(p.bg).padding(horizontal = 16.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(tr("合约详情"), color = p.tagText, fontSize = 12.sp, fontWeight = FontWeight.Bold,
                 modifier = Modifier.background(p.tag).padding(horizontal = 8.dp, vertical = 2.dp))
@@ -160,16 +194,16 @@ fun ContractScreen() {
             }
         }
 
-        // 词条板: 左边一条写着等级, 右边六边形的格子; 放不下时可以左右滑动
+        // 词条板: 左边一条写着等级, 右边六边形的格子
         BoxWithConstraints(Modifier.fillMaxWidth().background(p.board)) {
-            val bandW = 64.dp
-            val gap = 5.dp
+            val bandW = BOARD_BAND
+            val gap = BOARD_GAP
             val n = Contract.GROUPS.size
-            val tileW = maxOf(64.dp, minOf(84.dp, (maxWidth - bandW - gap * (n + 1)) / n))
-            Row(Modifier.horizontalScroll(rememberScrollState())) {
+            val tileW = maxOf(BOARD_TILE, minOf(84.dp, (maxWidth - bandW - gap * (n + 1)) / n))
+            Row {
                 Column(Modifier.width(bandW).background(p.band).padding(vertical = gap),
                     verticalArrangement = Arrangement.spacedBy(gap)) {
-                    for (lv in 1..Contract.MAX_LEVEL) Row(Modifier.height(50.dp).padding(horizontal = 6.dp),
+                    for (lv in 1..Contract.MAX_LEVEL) Row(Modifier.height(44.dp).padding(horizontal = 6.dp),
                         verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text("Level", color = p.bandDim, fontSize = 8.sp)
@@ -184,14 +218,14 @@ fun ContractScreen() {
                         for (group in Contract.GROUPS) {
                             val t = Contract.TERMS.firstOrNull { it.group == group && it.level == lv }
                             if (t == null) {
-                                Spacer(Modifier.width(tileW).height(50.dp)); continue
+                                Spacer(Modifier.width(tileW).height(44.dp)); continue
                             }
                             val on = t.id in sel
                             val off = !on && (active || Contract.blockedBy(t.id, sel) != null)
                             val fill = if (on) p.tileOn else if (off) p.tileOff else p.tile
                             val fg = if (on) p.tileOnText else if (off) p.tileOffText else p.tileText
                             val rim = if (on) p.tileOnRim else if (off) p.tileOffRim else p.tileRim
-                            Box(Modifier.width(tileW).height(50.dp).background(fill, HEX).border(2.dp, rim, HEX)
+                            Box(Modifier.width(tileW).height(44.dp).background(fill, HEX).border(2.dp, rim, HEX)
                                 .clickable {
                                     tapped = t.id
                                     if (active) return@clickable
@@ -288,7 +322,7 @@ fun ContractScreen() {
                 modifier = Modifier.background(p.start, RoundedCornerShape(2.dp))
                     .clickable { ask = if (active) "end" else "start" }.padding(horizontal = 26.dp, vertical = 12.dp))
         }
-    }
+    } }
     when (ask) {
         "start" -> {
             val lv = Contract.levelOf(c.draft)

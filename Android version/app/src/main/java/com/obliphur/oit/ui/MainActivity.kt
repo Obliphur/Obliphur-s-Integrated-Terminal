@@ -311,9 +311,15 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
     }
     LaunchedEffect(req) { req?.let { go(it); pageRequest.value = null } }
     // 合约页总是横屏显示, 离开后恢复 (MECHANICS 18.6)
+    // 合约页也藏起状态栏 (从顶部下滑时临时出现), 让整页在一屏里显示得大一些
     LaunchedEffect(page) {
         act.requestedOrientation = if (page == "contract") android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         else android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        val bars = androidx.core.view.WindowCompat.getInsetsController(act.window, act.window.decorView)
+        if (page == "contract") {
+            bars.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            bars.hide(androidx.core.view.WindowInsetsCompat.Type.statusBars())
+        } else bars.show(androidx.core.view.WindowInsetsCompat.Type.statusBars())
     }
     LaunchedEffect(Unit) { app.navRequests.collect { go(it) } }
     // 欢迎窗口关掉之后 (或者本来就没有) 再依次申请权限
@@ -390,6 +396,8 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
                             },
                             colors = TopAppBarDefaults.topAppBarColors(containerColor = cp?.side ?: o.bg,
                                 titleContentColor = cp?.text ?: o.text),
+                            // 合约页 (横屏) 的顶栏矮一些
+                            expandedHeight = if (page == "contract") 44.dp else TopAppBarDefaults.TopAppBarExpandedHeight,
                         )
                     },
                     snackbarHost = {
@@ -433,7 +441,7 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
                             }
                         }
                         val scroll = rememberScrollState()
-                        val scrollable = page != "log" && page != "stats"
+                        val scrollable = page != "log" && page != "stats" && page != "contract"
                         Column(if (scrollable) Modifier.verticalScroll(scroll) else Modifier.fillMaxSize()) {
                             when (page) {
                                 "timer" -> TimerScreen()

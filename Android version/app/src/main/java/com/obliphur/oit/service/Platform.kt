@@ -366,10 +366,25 @@ object AppUsage {
         s
     }
 
+    /** 桌面上有图标 (能点开进入界面) 的应用; 每 10 分钟重新查一次 (装了 / 卸了应用). */
+    private var launchable: Set<String> = emptySet()
+    private var launchableAt = 0L
+
+    private fun launchables(ctx: Context): Set<String> {
+        val now = System.currentTimeMillis()
+        if (launchable.isEmpty() || now - launchableAt > 600_000) {
+            val i = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+            launchable = ctx.packageManager.queryIntentActivities(i, 0).map { it.activityInfo.packageName }.toSet()
+            launchableAt = now
+        }
+        return launchable
+    }
+
     /**
      * 开着的应用 (后台的应用数, MECHANICS 14.6): 最近 6 小时的使用事件里, 还有没被销毁的界面
      * (最后一个事件是 显示 / 暂停 / 停止, 不是销毁) 的应用. 从最近任务里划掉的应用界面会被销毁, 不算.
-     * 不含 OIT 自己, 桌面和系统界面. 没有使用情况访问权限时 null.
+     * 只算桌面上有图标、能点开进入界面的应用: 别的应用借用的界面 (权限弹窗, 安装器, 分享 / 选择器,
+     * 输入法, 登录页等没有图标的附属程序) 不算. 不含 OIT 自己, 桌面和系统界面. 没有使用情况访问权限时 null.
      */
     fun openApps(ctx: Context): Set<String>? {
         if (!permitted(ctx)) return null
@@ -387,8 +402,9 @@ object AppUsage {
             }
         }
         val skip = homes(ctx) + ctx.packageName
+        val apps = launchables(ctx)
         return last.filter { it.value != ACTIVITY_DESTROYED }.keys
-            .map { it.substringBefore('/') }.filter { it !in skip }.toSet()
+            .map { it.substringBefore('/') }.filter { it !in skip && it in apps }.toSet()
     }
 
     /** 包名; "" 是空白 (桌面 / 系统界面 / 锁屏); null 是不计入 (屏幕关闭, 没有权限). */
