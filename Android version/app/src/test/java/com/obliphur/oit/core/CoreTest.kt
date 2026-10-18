@@ -511,6 +511,30 @@ class CoreTest {
         assertEquals(null, U.pickApk(org.json.JSONObject().put("assets", org.json.JSONArray())))
     }
 
+    /** 休息 / 联网正在进行时不能开始合约 (MECHANICS 18.1); 都结束后才能开始. */
+    @Test
+    fun contractStartNeedsIdleAndOffline() {
+        val core = Core(tmp(), NoHost) { 0.0 }
+        core.timer.syncSet(600, null, null)
+        core.timer.onBreakButton()
+        assertEquals(TState.ON_BREAK, core.timer.state)
+        core.startContract(emptyList())
+        assertFalse(core.contract.active)
+        core.timer.endBreakEarly()
+        assertEquals(TState.IDLE, core.timer.state)
+
+        assertEquals(null, core.net.request(1, "test", quick = true))
+        core.net.tick(0.0)
+        assertEquals("online", core.net.mode)
+        core.startContract(emptyList())
+        assertFalse(core.contract.active)
+
+        core.net.endEarly()
+        assertEquals("offline", core.net.mode)
+        core.startContract(emptyList())
+        assertTrue(core.contract.active)
+    }
+
     @Test
     fun translationsHavePlaceholders() {
         // 英文译文里的占位符必须和中文原文一致

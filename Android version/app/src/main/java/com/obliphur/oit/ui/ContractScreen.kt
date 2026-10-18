@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.sp
 import com.obliphur.oit.OitApp
 import com.obliphur.oit.core.Contract
 import com.obliphur.oit.core.Fmt
+import com.obliphur.oit.core.TState
 import com.obliphur.oit.core.contractResult
 import com.obliphur.oit.core.fmtHm
 import com.obliphur.oit.core.fmtMs
@@ -159,6 +160,7 @@ fun ContractScreen() {
     val core = OitApp.instance.core
     val c = core.contract
     val active = c.active
+    val hold = !active && (core.timer.state == TState.ON_BREAK || core.net.mode == "online")
     val now = LocalDateTime.now()
     var tapped by rememberSaveable { mutableStateOf("") }
     var ask by rememberSaveable { mutableStateOf("") }        // start / end
@@ -315,10 +317,15 @@ fun ContractScreen() {
             if (level >= Contract.HARD_LEVEL)
                 Text(tr("⚠  当前合约难度极大 请谨慎行动"), color = p.warn, fontSize = 12.sp, fontWeight = FontWeight.Bold,
                     modifier = Modifier.widthIn(max = 170.dp).padding(end = 12.dp))
-            Text(if (active) tr("■  提前结束") else tr("开始行动"), color = p.startText, fontSize = 18.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.background(p.start, RoundedCornerShape(2.dp))
-                    .clickable { ask = if (active) "end" else "start" }.padding(horizontal = 26.dp, vertical = 12.dp))
+            Column(horizontalAlignment = Alignment.End) {
+                // 休息 / 联网正在进行: 按钮变灰, 上面多一行小字
+                if (hold) Text(tr("休息或联网进行中,不能开始合约."), color = p.dim, fontSize = 11.sp)
+                Text(if (active) tr("■  提前结束") else tr("开始行动"),
+                    color = if (hold) p.dim else p.startText, fontSize = 18.sp, fontWeight = FontWeight.Bold,
+                    modifier = Modifier.background(if (hold) p.clear else p.start, RoundedCornerShape(2.dp))
+                        .clickable(enabled = !hold) { ask = if (active) "end" else "start" }
+                        .padding(horizontal = 26.dp, vertical = 12.dp))
+            }
         }
     } }
     when (ask) {

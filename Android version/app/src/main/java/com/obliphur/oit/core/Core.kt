@@ -556,6 +556,9 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
 
     fun startContract(terms: Collection<String>) {
         if (contract.active) return
+        if (timer.state == TState.ON_BREAK || net.mode == "online") {
+            toast(tr("休息或联网进行中,不能开始合约."), "warn"); return
+        }
         contract.start(terms, myId())
         contractSeen = contract.id
         host.applyNet(false)

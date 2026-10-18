@@ -507,6 +507,7 @@ class BreakTimerApp:
         self.pages["contract"] = ContractPage(self.content, self.contract, on_start=self.start_contract,
                                               on_abandon=self.abandon_contract,
                                               net_used=lambda: self.net.used_all,
+                                              hold=self._contract_hold,
                                               on_change=self._paint_sidebar)
         self._prepare_page(self.pages["contract"])
         self.pages["settings"] = SettingsPage(
@@ -2032,6 +2033,7 @@ class BreakTimerApp:
             elif seen is not None and was is not None:
                 toast.info(tr("合约开始."))
         if not c.active:
+            self._refresh_if_visible("contract")
             return
         self._apply_contract_overrides()
         if self._owner_away(c.owner):
@@ -2049,9 +2051,16 @@ class BreakTimerApp:
         if self.current_page == "contract":
             self._paint_sidebar()
 
+    def _contract_hold(self) -> bool:
+        """休息 / 联网正在进行: 这时不能开始合约 (合约页的开始行动按钮变灰, 上面一行小字)."""
+        return self.state == ON_BREAK or self.net.mode == "online"
+
     def start_contract(self, terms):
         c = self.contract
         if c.active:
+            return
+        if self._contract_hold():
+            toast.warn(tr("休息或联网进行中,不能开始合约."))
             return
         terms = contract_mod.clean_terms(terms)
         lv = contract_mod.level_of(terms)
@@ -2060,6 +2069,9 @@ class BreakTimerApp:
         msg = tr("危机等级 {lv} · 时长 {t} · 到 {at}", lv=lv, t=fmt_hm(dur), at=f"{end:%H:%M}")
         msg += "\n" + tr("完成后休息 +{n} 分钟", n=contract_mod.rest_minutes(lv))
         if not toast.ask(msg, title=tr("▶  开始行动"), ok_text=tr("开始行动"), danger=True):
+            return
+        if self._contract_hold():            # 确认的这段时间里可能开始了休息 / 联网
+            toast.warn(tr("休息或联网进行中,不能开始合约."))
             return
         c.start(terms, owner=self.sync.my_id)
         self._log_notice(f"CONTRACT start level {lv} terms {','.join(terms) or '-'} until {end:%Y-%m-%d %H:%M}")

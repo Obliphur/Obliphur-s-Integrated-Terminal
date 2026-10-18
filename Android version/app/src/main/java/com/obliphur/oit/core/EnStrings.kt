@@ -487,6 +487,7 @@ object EnStrings {
         "乐理之灾" to "Music Calamity",
         "今日: ?? h" to "Today: ?? h",
         "休息 +{n} 分钟" to "break +{n} min",
+        "休息或联网进行中,不能开始合约." to "A break or network session is in progress; a contract can't be started.",
         "完成后休息 +{n} 分钟" to "Break on completion +{n} min",
         "使用了快速访问" to "used quick access",
         "使用了紧急借贷" to "took an emergency loan",
