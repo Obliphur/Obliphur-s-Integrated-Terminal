@@ -183,16 +183,6 @@ class SyncTest {
             runner.call { sa.merge(JSONObject().put("ledgers", JSONObject().put(sb.myId, JSONObject().put("rev", 5)))) }
             assertFalse(sa.peerLedgersById().containsKey(sb.myId))
             runner.call { sb.unpair(sa.myId, notify = false) }
-            // 手动解除绑定后: 再送来的对方的旧状态不收, 不会成为解除不掉的"离线"设备
-            val old = System.currentTimeMillis() - 1000
-            runner.call { sb.merge(JSONObject().put("status", JSONObject().put(sa.myId, JSONObject().put("ts", old)))) }
-            assertTrue(sb.deviceStates().none { it.id == sa.myId })
-            // 旧版本留下的残留 (没有绑定、也没人转交的设备): 一台绑定的设备都没有时全部清掉
-            runner.call { sb.merge(JSONObject().put("status", JSONObject().put("leftover", JSONObject().put("ts", System.currentTimeMillis())))
-                .put("ledgers", JSONObject().put("leftover", JSONObject().put("rev", 1).put("name", "Old")))) }
-            assertTrue(sb.deviceStates().isEmpty())
-            assertTrue(runner.call { sb.snapshot() }.getJSONObject("gone").has("leftover"))
-            assertTrue(sb.peerLedgers().isEmpty())
         } finally {
             sa.stop(); sb.stop(); main.shutdownNow()
         }

@@ -89,8 +89,7 @@ class ContractPage(tk.Frame):
 
     TILE_W, TILE_H, GAP, BAND_W = 76, 64, 7, 148
 
-    def __init__(self, master, contract, on_start=None, on_abandon=None, net_used=None,
-                 on_change=None, hold=None):
+    def __init__(self, master, contract, on_start=None, on_abandon=None, net_used=None, on_change=None):
         self.P = P = palette()
         super().__init__(master, bg=P["bg"])
         self.c = contract
@@ -98,7 +97,6 @@ class ContractPage(tk.Frame):
         self.on_start = on_start
         self.on_abandon = on_abandon
         self.on_change = on_change or (lambda: None)  # 选的词条变了 (侧边栏上的危机等级跟着变)
-        self.hold = hold or (lambda: False)           # 休息 / 联网正在进行: 不能开始合约
         self._hover = ""
         self._list_key = None
         self._tile_state = {}
@@ -322,17 +320,10 @@ class ContractPage(tk.Frame):
         b = tk.Label(parent, text=text, bg=bg, fg=fg, cursor="hand2",
                      font=config.font("h2" if big else "body", bold=True),
                      padx=config.scaled(34 if big else 16), pady=config.scaled(12 if big else 8))
-        b._bg, b._fg, b._enabled = bg, fg, True
-        b.bind("<Button-1>", lambda e: command() if b._enabled else None)
-        b.bind("<Enter>", lambda e: b.configure(bg=hover) if b._enabled else None)
-        b.bind("<Leave>", lambda e: b.configure(bg=bg) if b._enabled else None)
+        b.bind("<Button-1>", lambda e: command())
+        b.bind("<Enter>", lambda e: b.configure(bg=hover))
+        b.bind("<Leave>", lambda e: b.configure(bg=bg))
         return b
-
-    def _enable_button(self, b, on: bool, off_bg: str, off_fg: str):
-        """按钮可用 / 变灰 (变灰时点不动, 鼠标也不变成手)."""
-        b._enabled = bool(on)
-        cfg(b, bg=b._bg if on else off_bg, fg=b._fg if on else off_fg,
-            cursor="hand2" if on else "arrow")
 
     def _build_bar(self):
         P, s = self.P, config.scaled
@@ -352,13 +343,8 @@ class ContractPage(tk.Frame):
         self.lbl_info = tk.Label(inner, text="", bg=P["bar"], fg=P["text"], font=config.font("small"),
                                  anchor="w", justify="left")
         self.lbl_info.pack(side="left", padx=(14, 0))
-        # 开始行动: 休息 / 联网正在进行时按钮变灰, 上面多一行小字
-        self.start_col = tk.Frame(inner, bg=P["bar"])
-        self.btn_start = self._button(self.start_col, tr("开始行动"), P["start"], P["start_hover"],
-                                      P["start_text"], self._start, big=True)
-        self.btn_start.pack(side="top", anchor="e")
-        self.lbl_hold = tk.Label(self.start_col, text=tr("休息或联网进行中,不能开始合约."), bg=P["bar"],
-                                 fg=P["sel_dim"], font=config.font("small"), anchor="e", justify="right")
+        self.btn_start = self._button(inner, tr("开始行动"), P["start"], P["start_hover"], P["start_text"],
+                                      self._start, big=True)
         self.btn_end = self._button(inner, tr("■  提前结束"), P["start"], P["start_hover"], P["start_text"],
                                     lambda: self.on_abandon and self.on_abandon(), big=True)
         self.lbl_warn = tk.Label(inner, text=tr("⚠  当前合约难度极大 请谨慎行动"), bg=P["bar"], fg=P["warn"],
@@ -385,7 +371,7 @@ class ContractPage(tk.Frame):
             self.on_change()
 
     def _start(self):
-        if not self.c.active and not self.hold() and self.on_start:
+        if not self.c.active and self.on_start:
             self.on_start(list(self.c.draft))
 
     # ---- 刷新 ----
@@ -394,7 +380,7 @@ class ContractPage(tk.Frame):
         return self.c.level if self.c.active else C.level_of(self.c.draft)
 
     def refresh(self):
-        P, c, now, s = self.P, self.c, datetime.now(), config.scaled
+        P, c, now = self.P, self.c, datetime.now()
         active = c.active
         sel = self._selected()
         for tid in C.BY_ID:
@@ -419,20 +405,10 @@ class ContractPage(tk.Frame):
         if orig != level:
             info.insert(0, tr("开始时 {n}", n=orig))
         cfg(self.lbl_info, text="\n".join(info))
-        if active:
-            hide_pack(self.start_col)
-            hide_pack(self.lbl_hold)
-            show_pack(self.btn_end, side="right")
-        else:
-            hide_pack(self.btn_end)
-            show_pack(self.start_col, side="right")
-            held = bool(self.hold())
-            if held:
-                show_pack(self.lbl_hold, side="top", anchor="e", before=self.btn_start,
-                          pady=(0, s(2)))
-            else:
-                hide_pack(self.lbl_hold)
-            self._enable_button(self.btn_start, not held, P["clear"], P["sel_dim"])
+        btn = self.btn_end if active else self.btn_start
+        other = self.btn_start if active else self.btn_end
+        hide_pack(other)
+        show_pack(btn, side="right")
         if level >= HARD_LEVEL:
             show_pack(self.lbl_warn, side="right", padx=(0, 16))
         else:

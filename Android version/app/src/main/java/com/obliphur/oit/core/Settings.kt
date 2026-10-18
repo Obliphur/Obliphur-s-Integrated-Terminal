@@ -81,18 +81,13 @@ object Schema {
                 "Break" to "Break(休息)", "Distracted" to "Distracted(分心)")),
         Spec("CHIME_WAV", "整点提示音", Kind.CHIME, false, "log", ""),
         num("FILL_WINDOW", "整点记录补填时限", "min", 60.0, 1.0, 1440.0, true, 3600.0, "log"),
-        // ---- 合约 ----
-        Spec("CONTRACT_THEME", "合约页主题", Kind.CHOICE, false, "contract", "ops",
-            choices = listOf("ops" to "起源", "ui" to "跟随界面主题")),
-        // ---- 窗口 (Android: 应用; 窗口数 = 后台的应用数, 只检测, 超过时响警报, 不关应用) ----
-        Spec("WINDOW_LIMIT_ENABLED", "后台应用数检测", Kind.CHOICE, true, "window", "1", choices = ONOFF),
+        // ---- 窗口 (Android: 应用) ----
         Spec("WINDOW_FOCUS_ENABLED", "应用使用时间统计", Kind.CHOICE, true, "window", "1", choices = ONOFF),
-        num("WINDOW_LIMIT", "后台应用数上限", "", 1.0, 1.0, 50.0, true, 5.0, "window"),
     )
 
     val PAGES = listOf(
         "basic" to "基本设置", "timer" to "计时器", "net" to "联网",
-        "rules" to "规则", "log" to "整点记录", "contract" to "合约", "window" to "应用",
+        "rules" to "规则", "log" to "整点记录", "window" to "应用",
     )
 
     val BY_KEY = ALL.associateBy { it.key }

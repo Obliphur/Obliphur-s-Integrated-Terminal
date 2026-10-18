@@ -84,8 +84,8 @@ fun RulesScreen(go: (String) -> Unit) {
     var aiSuggest by remember { mutableStateOf(false) }
     PageColumn {
         OitCard {
-            val adapter = core.netMode() == "adapter"
-            Text(tr("断网方式") + ": " + core.settings.display("NET_MODE", core.netMode()) + "\n" +
+            val adapter = core.settings.str("NET_MODE") == "adapter"
+            Text(tr("断网方式") + ": " + core.settings.display("NET_MODE") + "\n" +
                 tr("过滤名单模式") + ": " + core.settings.display("FILTER_MODE"),
                 color = o.text, fontWeight = FontWeight.Bold)
             if (adapter) Dim(tr("全屏蔽: 离线时除 OIT 内部需要的连接 (本机, 局域网同步) 外, 所有网站一律拦截; 只启用应用名单."), color = o.warn)
@@ -114,7 +114,7 @@ fun RulesScreen(go: (String) -> Unit) {
         Segmented(listOf(RuleKeys.BLACKLIST to tr("黑名单"), RuleKeys.WHITELIST to tr("白名单")), view) { view = it }
         val (dk, ak) = RuleKeys.forMode(view)
         // 全屏蔽: 网站名单不起作用, 只显示应用名单 (MECHANICS 14.2)
-        val blockAll = core.netMode() == "adapter"
+        val blockAll = core.settings.str("NET_MODE") == "adapter"
         if (!blockAll) RulePanel(dk)
         RulePanel(ak)
         LockPermissions()
@@ -205,8 +205,7 @@ fun peerLines(): List<String> {
             "break" -> tr("休息中 ☕")
             else -> tr("准备就绪")
         }
-        if (st.optString("timer") == "running" && !OitApp.instance.core.contract.fog())
-            com.obliphur.oit.core.parseIso(st.optString("since"))?.let {
+        if (st.optString("timer") == "running") com.obliphur.oit.core.parseIso(st.optString("since"))?.let {
             t += " " + java.time.Duration.between(it, java.time.LocalDateTime.now()).toMinutes() + " min"
         }
         val net = when (st.optString("net")) { "online" -> tr("联网中"); "pending" -> tr("冷静期中"); else -> "" }
@@ -226,7 +225,7 @@ fun SyncCard() {
     var addr by rememberSaveable { mutableStateOf("") }
     var askMother by remember { mutableStateOf<com.obliphur.oit.sync.Found?>(null) }
     var askUnpair by remember { mutableStateOf<String?>(null) }
-    val proxyOn = core.netMode() == "proxy"
+    val proxyOn = core.settings.str("NET_MODE") == "proxy"
     Heading(tr("🔗  设备同步"))
     OitCard {
         Dim(tr("本机: {name} · 端口 {port}", "name" to s.myName, "port" to s.port) + "  " + localIp(), size = 13)

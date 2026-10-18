@@ -706,7 +706,6 @@ EN = {
     "清空": "Clear",
     "▶  开始行动": "▶  Start",
     "开始行动": "Start operation",
-    "休息或联网进行中,不能开始合约.": "A break or network session is in progress; a contract can't be started.",
     "■  提前结束": "■  End early",
     "合约进行中": "Contract in progress",
     "违反 {n} / {m}": "Violations {n} / {m}",

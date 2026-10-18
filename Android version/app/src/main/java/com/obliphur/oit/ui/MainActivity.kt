@@ -64,20 +64,12 @@ class MainActivity : ComponentActivity() {
     private val vpnLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         asking = false
         app.applyNet(true)
-        if (firstRun.isNotEmpty()) nextFirstRun() else askBattery()   // VPN 问完了再问电池优化
+        askBattery()                   // VPN 问完了再问电池优化
     }
     private val notifLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
         asking = false
-        // 通知权限问完了再问 VPN, 一次只弹一个系统窗口
-        if (firstRun.isNotEmpty()) nextFirstRun() else ensureVpn()
+        ensureVpn()                    // 通知权限问完了再问 VPN, 一次只弹一个系统窗口
     }
-    /** 第一次打开时依次打开的系统设置页 (电池优化, 精确闹钟, 使用情况访问 ……): 从设置页回来再问下一项. */
-    private val settingsLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        asking = false
-        nextFirstRun()
-    }
-    /** 第一次打开时还没问的权限; 每一项返回 true = 打开了系统窗口 / 设置页, 等它回来. */
-    private val firstRun = ArrayDeque<() -> Boolean>()
     /** 正在等系统的权限窗口 (同时弹两个系统窗口在部分手机上会卡住界面). */
     private var asking = false
     /** 这次打开界面时用的主题. */
@@ -106,7 +98,6 @@ class MainActivity : ComponentActivity() {
     fun startPermissionFlow() {
         if (flowStarted || asking) return
         flowStarted = true
-        if (startFirstRun()) return
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
             asking = true
@@ -114,97 +105,9 @@ class MainActivity : ComponentActivity() {
         } else ensureVpn()
     }
 
-    /** 记下"第一次打开时的权限已经问过了"; 放在数据目录里, 重置 (删除全部数据) 后会再问一遍. */
-    private val firstRunFlag get() = java.io.File(filesDir, "data/permissions_asked")
-
-    /**
-     * 第一次打开 (欢迎窗口关掉之后): 把需要的权限一项一项都问一遍, 一次只弹一个系统窗口 / 设置页 (MECHANICS 14.1).
-     * 已经有的跳过; 用户在设置页里不给也照样问下一项. 返回 false = 不是第一次, 走平时的流程.
-     */
-    private fun startFirstRun(): Boolean {
-        val flag = firstRunFlag
-        if (flag.exists()) return false
-        runCatching { flag.parentFile?.mkdirs(); flag.writeText(java.time.LocalDateTime.now().toString()) }
-        val pkg = android.net.Uri.parse("package:$packageName")
-        fun settings(i: Intent): Boolean = try {
-            asking = true
-            settingsLauncher.launch(i)
-            true
-        } catch (_: Exception) {
-            asking = false
-            false                       // 这台手机没有这个设置页: 跳过
-        }
-        firstRun.clear()
-        // 通知
-        firstRun.add {
-            if (Build.VERSION.SDK_INT >= 33 &&
-                checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                asking = true
-                notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                true
-            } else false
-        }
-        // VPN (断网)
-        firstRun.add {
-            if (app.core.vpnPlan() == com.obliphur.oit.core.VpnPlan.None) false
-            else VpnService.prepare(this)?.let { i ->
-                asking = true
-                vpnLauncher.launch(i)
-                true
-            } ?: run {
-                app.applyNet(true)
-                false
-            }
-        }
-        // 不受电池优化限制 (后台 / 熄屏时计时, 断网, 同步照常)
-        firstRun.add {
-            batteryAsked = true
-            if (com.obliphur.oit.service.Background.batteryIgnored(this)) false
-            else settings(Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, pkg))
-        }
-        // 精确闹钟 (整点提醒, 联网时间到, 休息结束 准时)
-        firstRun.add {
-            if (Build.VERSION.SDK_INT < 31 ||
-                getSystemService(android.app.AlarmManager::class.java).canScheduleExactAlarms()) false
-            else settings(Intent(android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, pkg))
-        }
-        // 使用情况访问 (应用使用时间统计, 锁定应用)
-        firstRun.add {
-            if (com.obliphur.oit.service.AppUsage.permitted(this)) false
-            else settings(Intent(android.provider.Settings.ACTION_USAGE_ACCESS_SETTINGS))
-        }
-        // 显示在其他应用上层 (锁定应用的盖层)
-        firstRun.add {
-            if (com.obliphur.oit.service.AppLock.canOverlay(this)) false
-            else settings(Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, pkg))
-        }
-        // 安装未知应用 (自动更新, 其他设备发来的安装包)
-        firstRun.add {
-            if (packageManager.canRequestPackageInstalls()) false
-            else settings(Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, pkg))
-        }
-        // 手机厂商自己的 自启动 / 后台运行 (查不到有没有打开; 只在有这一页的手机上打开一次)
-        firstRun.add {
-            if (com.obliphur.oit.service.Background.hasOemPage(this)) {
-                app.core.toast(tr("请允许 OIT 自启动 / 后台运行, 否则在后台或熄屏时可能被系统暂停."), "info")
-                com.obliphur.oit.service.Background.openOem(this)
-            }
-            false
-        }
-        nextFirstRun()
-        return true
-    }
-
-    private fun nextFirstRun() {
-        while (!asking) {
-            val step = firstRun.removeFirstOrNull() ?: return
-            if (runCatching { step() }.getOrDefault(false)) return
-        }
-    }
-
     /** VPN 被别的 VPN 应用顶掉或停了: 重新申请 / 重新打开. */
     private fun ensureVpn() {
-        if (asking) return
+        if (asking || app.core.settings.devMode) return
         if (app.core.vpnPlan() == com.obliphur.oit.core.VpnPlan.None) return
         if (VpnService.prepare(this) != null) requestVpn()
         else {
@@ -261,8 +164,6 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         app.foreground = true
-        // 前台服务没在运行 (进程是在后台被拉起来的, 当时不允许启动): 趁界面在前台补上, 离开后 OIT 才不会被暂停
-        com.obliphur.oit.service.CoreService.start(this)
         app.core.tick()
         if (app.updateRetry && app.core.settings.bool("UPDATE_CHECK")) {
             app.updateRetry = false
@@ -272,7 +173,6 @@ class MainActivity : ComponentActivity() {
 
     override fun onPause() {
         app.foreground = false
-        com.obliphur.oit.service.CoreService.start(this)
         app.core.saveAll()
         super.onPause()
     }
@@ -280,7 +180,7 @@ class MainActivity : ComponentActivity() {
 
 val PAGES = listOf(
     "timer" to "⏱  计时器", "net" to "🌐  联网", "rules" to "🛡  规则", "log" to "📝  整点记录",
-    "cal" to "📅  日历", "stats" to "📊  统计", "contract" to "⚔  合约", "settings" to "⚙  设置", "reset" to "🔄  重置",
+    "cal" to "📅  日历", "stats" to "📊  统计", "settings" to "⚙  设置", "reset" to "🔄  重置",
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -302,25 +202,10 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
 
     fun go(p: String) {
         val parts = p.split(":")
-        // 合约 · 黑雾 (硬规则): 不能看统计数据
-        if (parts[0] in setOf("stats", "cal") && core.contract.fog()) {
-            core.toast(tr("黑雾笼罩: 合约期间不能查看统计数据."), "warn"); return
-        }
         page = parts[0]
         if (parts.size > 1) settingsTab = parts[1]
     }
     LaunchedEffect(req) { req?.let { go(it); pageRequest.value = null } }
-    // 合约页总是横屏显示, 离开后恢复 (MECHANICS 18.6)
-    // 合约页也藏起状态栏 (从顶部下滑时临时出现), 让整页在一屏里显示得大一些
-    LaunchedEffect(page) {
-        act.requestedOrientation = if (page == "contract") android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-        else android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        val bars = androidx.core.view.WindowCompat.getInsetsController(act.window, act.window.decorView)
-        if (page == "contract") {
-            bars.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            bars.hide(androidx.core.view.WindowInsetsCompat.Type.statusBars())
-        } else bars.show(androidx.core.view.WindowInsetsCompat.Type.statusBars())
-    }
     LaunchedEffect(Unit) { app.navRequests.collect { go(it) } }
     // 欢迎窗口关掉之后 (或者本来就没有) 再依次申请权限
     LaunchedEffect(notices.none { it.tag == "welcome" }) {
@@ -349,55 +234,36 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
     OitTheme(theme, fs) {
         CompositionLocalProvider(LocalTick provides v) {
             val o = LocalOit.current
-            // 合约页 (合约页主题不是"跟随界面主题"时): 顶栏和侧边栏换成合约页主题的颜色 (MECHANICS 18)
-            val cp = if (page == "contract") contractColors().takeIf { it.side != null } else null
-            val sideBg = cp?.side ?: o.card
             fun navLabel(key: String, base: String): String = when (key) {
                 "log" -> if (!core.dm.hourEnabled) "$base  (off)" else base + if (core.dm.awaitingSlot() != null) " ●" else ""
                 "settings" -> base + (if (core.settings.pending.isNotEmpty()) "  ⏳${core.settings.pending.size}" else "")
                 else -> base
             }
             ModalNavigationDrawer(drawerState = drawer, drawerContent = {
-                ModalDrawerSheet(drawerContainerColor = sideBg) {
-                    Text("OIT", fontWeight = FontWeight.Bold, fontSize = 20.sp, color = cp?.text ?: o.text,
+                ModalDrawerSheet(drawerContainerColor = o.card) {
+                    Text("OIT", fontWeight = FontWeight.Bold, fontSize = 20.sp, color = o.text,
                         modifier = Modifier.padding(20.dp))
-                    HorizontalDivider(color = cp?.line ?: o.border)
+                    HorizontalDivider(color = o.border)
                     Spacer(Modifier.height(8.dp))
                     for ((key, label) in PAGES) {
-                        val on = key == page || (key == "settings" && page == "ach")
-                        Text(navLabel(key, tr(label)), color = if (cp != null) (if (on) cp.startText else cp.sideText)
-                            else if (on) o.accent else o.text, fontSize = 16.sp,
+                        val on = key == page
+                        Text(navLabel(key, tr(label)), color = if (on) o.accent else o.text, fontSize = 16.sp,
                             fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
-                            modifier = Modifier.fillMaxWidth().background(if (cp != null && on) cp.sideOn else sideBg).clickable {
-                                go(key); scope.launch { drawer.close() }
+                            modifier = Modifier.fillMaxWidth().clickable {
+                                page = key; scope.launch { drawer.close() }
                             }.padding(horizontal = 24.dp, vertical = 14.dp))
-                    }
-                    // 合约页: 侧边栏下方显示危机等级 (同参考图左下角)
-                    if (cp != null) {
-                        Spacer(Modifier.weight(1f))
-                        val ct = core.contract
-                        Text("CONTINGENCY", color = cp.dim, fontWeight = FontWeight.Bold, fontSize = 12.sp,
-                            modifier = Modifier.padding(start = 24.dp))
-                        Text("${if (ct.active) ct.level else com.obliphur.oit.core.Contract.levelOf(ct.draft)}",
-                            color = cp.text, fontWeight = FontWeight.Bold, fontSize = 44.sp, modifier = Modifier.padding(start = 24.dp))
-                        Text(if (ct.active) tr("合约进行中") else tr("挑战任务"), color = cp.tagText, fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 24.dp, bottom = 20.dp)
-                                .background(cp.tag).padding(horizontal = 8.dp, vertical = 2.dp))
                     }
                 }
             }) {
                 Scaffold(
-                    containerColor = cp?.bg ?: o.bg,
+                    containerColor = o.bg,
                     topBar = {
                         TopAppBar(
-                            title = { Text(if (page == "ach") tr("🏆  成就") else navLabel(page, tr(PAGES.first { it.first == page }.second))) },
+                            title = { Text(navLabel(page, tr(PAGES.first { it.first == page }.second))) },
                             navigationIcon = {
-                                TextButton({ scope.launch { drawer.open() } }) { Text("☰", fontSize = 22.sp, color = cp?.text ?: o.text) }
+                                TextButton({ scope.launch { drawer.open() } }) { Text("☰", fontSize = 22.sp, color = o.text) }
                             },
-                            colors = TopAppBarDefaults.topAppBarColors(containerColor = cp?.side ?: o.bg,
-                                titleContentColor = cp?.text ?: o.text),
-                            // 合约页 (横屏) 的顶栏矮一些
-                            expandedHeight = if (page == "contract") 44.dp else TopAppBarDefaults.TopAppBarExpandedHeight,
+                            colors = TopAppBarDefaults.topAppBarColors(containerColor = o.bg, titleContentColor = o.text),
                         )
                     },
                     snackbarHost = {
@@ -422,26 +288,8 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
                                 DangerButton(tr("重新建立 VPN")) { com.obliphur.oit.service.OitVpnService.rebuild(act) }
                             }
                         }
-                        // 绑定了其他设备, 系统却会在后台 / 熄屏时限制 OIT: 同步会停 (MECHANICS 15.3)
-                        // 也包括: 查到 OIT 最近确实被系统冻结过 (手机厂商自己的后台限制, 例如 vivo 没有"允许后台高耗电")
-                        val bgPaused = com.obliphur.oit.service.Background.pausedRecently()
-                        if (core.hasPeers() && (!com.obliphur.oit.service.Background.ok(act) || bgPaused)) {
-                            Row(Modifier.fillMaxWidth().background(o.dangerBg).padding(horizontal = 16.dp, vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically) {
-                                Text(if (bgPaused) tr("OIT 在后台被系统暂停过, 这段时间没有同步") else tr("在后台 / 熄屏时同步会被系统暂停"),
-                                    color = o.danger, modifier = Modifier.weight(1f))
-                                DangerButton(tr("去解除")) {
-                                    val bg = com.obliphur.oit.service.Background
-                                    when {
-                                        !bg.batteryIgnored(act) -> bg.requestBattery(act)
-                                        bgPaused && bg.hasOemPage(act) -> bg.openOem(act)
-                                        else -> go("settings:basic")
-                                    }
-                                }
-                            }
-                        }
                         val scroll = rememberScrollState()
-                        val scrollable = page != "log" && page != "stats" && page != "contract"
+                        val scrollable = page != "log" && page != "stats"
                         Column(if (scrollable) Modifier.verticalScroll(scroll) else Modifier.fillMaxSize()) {
                             when (page) {
                                 "timer" -> TimerScreen()
@@ -450,11 +298,6 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
                                 "log" -> HourLogScreen { go(it) }
                                 "cal" -> CalendarScreen()
                                 "stats" -> StatsScreen()
-                                "contract" -> ContractScreen()
-                                "ach" -> {
-                                    androidx.activity.compose.BackHandler { go("settings:basic") }
-                                    AchievementScreen { go("settings:basic") }
-                                }
                                 "settings" -> SettingsScreen(settingsTab, { settingsTab = it }, act)
                                 "reset" -> ResetScreen()
                             }
@@ -462,10 +305,6 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
                     }
                 }
             }
-            // 达成成就的提示浮在界面上, 手动关闭才消失 (MECHANICS 17)
-            AchievementPopups { go("ach") }
-            // 黑雾开始时正看着统计 / 日历: 离开
-            if (page in setOf("stats", "cal") && core.contract.fog()) LaunchedEffect(Unit) { page = "timer" }
             notices.firstOrNull()?.let { n ->
                 AlertDialog(
                     onDismissRequest = { core.closeNotice(n.id, null) },

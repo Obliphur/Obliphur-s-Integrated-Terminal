@@ -159,20 +159,13 @@ class NoticeReceiver : BroadcastReceiver() {
 class CoreService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private var n = 0
-    private var lastRun = 0L
     private val loop = object : Runnable {
         override fun run() {
             val app = OitApp.instance
-            // 唤醒锁拿着却隔了很久才轮到这里: 这段时间 OIT 被系统冻结了 (见 Background.noteGap)
-            val now = SystemClock.elapsedRealtime()
-            if (lastRun > 0) Background.noteGap(now - lastRun, wake != null)
-            lastRun = now
             app.core.tick()
             if (++n % 5 == 0) {
                 Notifier.updateStatus(this@CoreService)
                 holdLocks(app.core.hasPeers())
-                // 计划变了才动 VPN (例如开发者模式下刚绑定了设备: 要开一个全部放行的 VPN, 见 Core.vpnPlan)
-                app.applyNet(false)
                 app.maybeRelay()
             }
             handler.postDelayed(this, 1000)
@@ -183,25 +176,13 @@ class CoreService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        foreground()
+        val note = Notifier.status(this)
+        if (Build.VERSION.SDK_INT >= 34) startForeground(Notifier.ID_STATUS, note, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+        else startForeground(Notifier.ID_STATUS, note)
         handler.post(loop)
     }
 
-    private fun foreground() {
-        val note = Notifier.status(this)
-        try {
-            if (Build.VERSION.SDK_INT >= 34) startForeground(Notifier.ID_STATUS, note, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
-            else startForeground(Notifier.ID_STATUS, note)
-        } catch (_: Exception) {
-            // 被系统重新拉起时不允许进入前台 (电池设置为"受限"): 照样运行, 下次打开界面时再进入前台
-        }
-    }
-
-    /** 每次 startForegroundService 之后都要 startForeground (服务已经在运行时也一样), 否则系统会结束 OIT. */
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        foreground()
-        return START_STICKY
-    }
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         OitApp.instance.core.saveAll()
@@ -346,8 +327,6 @@ object Chime {
 // ════════════════ 前台应用 (应用使用时间统计) ════════════════
 
 object AppUsage {
-    /** UsageEvents.Event.ACTIVITY_DESTROYED: 公开的 SDK 里没有这个常量 (隐藏 API), 值是固定的 24. */
-    private const val ACTIVITY_DESTROYED = 24
     private var lastQuery = 0L
     private var lastPkg: String? = null
     private var home: Set<String>? = null
@@ -364,110 +343,6 @@ object AppUsage {
             setOf("com.android.systemui", "android")
         home = s
         s
-    }
-
-    /** 桌面上有图标 (能点开进入界面) 的应用; 每 10 分钟重新查一次 (装了 / 卸了应用). */
-    private var launchable: Set<String> = emptySet()
-    private var launchableAt = 0L
-
-    private fun launchables(ctx: Context): Set<String> {
-        val now = System.currentTimeMillis()
-        if (launchable.isEmpty() || now - launchableAt > 600_000) {
-            val i = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-            launchable = ctx.packageManager.queryIntentActivities(i, 0).map { it.activityInfo.packageName }.toSet()
-            launchableAt = now
-        }
-        return launchable
-    }
-
-    /** 有"转储"权限 (DUMP, 普通应用拿不到, 只能用电脑 adb 授予一次) 时直接读系统的最近任务列表.
-     *  系统还要求 PACKAGE_USAGE_STATS 权限本身是授予状态 (也用 adb 授予), 否则 dumpsys 回 "Permission Denial" (显示在设置里). */
-    fun precise(ctx: Context) =
-        ctx.checkSelfPermission("android.permission.DUMP") == android.content.pm.PackageManager.PERMISSION_GRANTED
-
-    @Volatile private var recents: Set<String>? = null
-    @Volatile private var recentsAt = 0L
-    @Volatile private var recentsBusy = false
-    /** 读不出最近任务时的原因 (设置 → 应用 里显示). */
-    @Volatile var recentsError = ""
-        private set
-
-    /** "dumpsys activity recents" 里 "Visible recent tasks" 一段 (多任务界面显示的那些任务) 的应用: 每个任务取根界面的包名. */
-    fun parseRecents(text: String): Set<String>? {
-        val start = text.indexOf("Visible recent tasks")
-        if (start < 0) return null
-        val out = LinkedHashSet<String>()
-        for (block in text.substring(start).split("RecentTaskInfo #").drop(1)) {
-            val pkg = listOf("""baseActivity=\{([^/}\s]+)/""", """realActivity=\{([^/}\s]+)/""", """cmp=([^/}\s]+)/""")
-                .firstNotNullOfOrNull { Regex(it).find(block)?.groupValues?.get(1) } ?: continue
-            out.add(pkg)
-        }
-        return out
-    }
-
-    /** 后台线程里读一遍最近任务 (dumpsys 要几百毫秒, 不能放在界面线程上); 失败时 recents 为 null. */
-    private fun refreshRecents() {
-        if (recentsBusy) return
-        recentsBusy = true
-        Thread {
-            recents = try {
-                val p = ProcessBuilder("dumpsys", "activity", "recents").redirectErrorStream(true).start()
-                val text = p.inputStream.bufferedReader().use { it.readText() }
-                p.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)
-                parseRecents(text).also { recentsError = if (it == null) text.trim().take(200).ifEmpty { "empty output" } else "" }
-            } catch (e: Exception) {
-                recentsError = e.toString().take(200)
-                null
-            }
-            recentsAt = System.currentTimeMillis()
-            recentsBusy = false
-        }.start()
-    }
-
-    /** 读最近任务列表时用的数据是不是可用的 (界面上显示"精确" / "估计"). */
-    fun usingRecents(ctx: Context) = precise(ctx) && recents != null
-
-    /**
-     * 开着的应用 (后台的应用数, MECHANICS 14.6).
-     * 精确: 有 DUMP 权限时, 就是多任务界面里的任务 (每个任务算它的根应用, 别的应用借用的界面算在根应用里),
-     * 含 OIT 自己, 不含桌面. 每次数的时候在后台重新读一遍, 用的是上一次读到的 (最多晚一个检查间隔).
-     * 刚启动、第一次还没读完时返回 null (这一次不数): 不然会先用"估计"的办法多算一大堆, 过一会才恢复正常.
-     * 估计 (没有 DUMP 权限, 或读不出来): 最近 6 小时的使用事件里, 还有没被销毁的界面
-     * (最后一个事件是 显示 / 暂停 / 停止, 不是销毁) 的应用. 从最近任务里划掉的应用界面会被销毁, 不算.
-     * 只算桌面上有图标、能点开进入界面的应用: 别的应用借用的界面 (权限弹窗, 安装器, 分享 / 选择器,
-     * 输入法, 登录页等没有图标的附属程序) 不算. 含 OIT 自己, 不含桌面和系统界面. 没有使用情况访问权限时 null.
-     * 有的手机 (例如 vivo) 根本不记"销毁"事件, 划掉的应用也照样算到 6 小时后: 所以尽量用精确的办法.
-     */
-    /** 上一次数出来的应用 (设置 → 应用 里列出来). */
-    @Volatile var lastOpen: Set<String>? = null
-        private set
-
-    fun openApps(ctx: Context): Set<String>? = countOpen(ctx).also { lastOpen = it }
-
-    private fun countOpen(ctx: Context): Set<String>? {
-        if (precise(ctx)) {
-            if (System.currentTimeMillis() - recentsAt > 3_000) refreshRecents()
-            recents?.let { r -> return r.filter { it !in homes(ctx) }.toSet() }
-            if (recentsAt == 0L || recentsError.isEmpty()) return null      // 第一次还没读完
-        }
-        if (!permitted(ctx)) return null
-        val usm = ctx.getSystemService(UsageStatsManager::class.java)
-        val now = System.currentTimeMillis()
-        val ev = usm.queryEvents(now - 6 * 3600_000L, now)
-        val e = UsageEvents.Event()
-        val last = HashMap<String, Int>()            // 包名/界面 -> 最后一个事件
-        while (ev.hasNextEvent()) {
-            ev.getNextEvent(e)
-            when (e.eventType) {
-                UsageEvents.Event.ACTIVITY_RESUMED, UsageEvents.Event.ACTIVITY_PAUSED,
-                UsageEvents.Event.ACTIVITY_STOPPED, ACTIVITY_DESTROYED ->
-                    last[e.packageName + "/" + e.className] = e.eventType
-            }
-        }
-        val skip = homes(ctx)
-        val apps = launchables(ctx)
-        return last.filter { it.value != ACTIVITY_DESTROYED }.keys
-            .map { it.substringBefore('/') }.filter { it !in skip && it in apps }.toSet()
     }
 
     /** 包名; "" 是空白 (桌面 / 系统界面 / 锁屏); null 是不计入 (屏幕关闭, 没有权限). */

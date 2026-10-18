@@ -167,26 +167,6 @@ class OitApp : Application(), Host {
 
     override fun lockExempt(pkg: String, whitelist: Boolean) = com.obliphur.oit.service.AppLock.exempt(this, pkg, whitelist)
 
-    override fun openApps(): Set<String>? = AppUsage.openApps(this)
-
-    /** 违反合约的警报 (MECHANICS 18). */
-    override fun playAlarm() {
-        runCatching {
-            val mp = android.media.MediaPlayer.create(this, R.raw.target_alarm,
-                android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_ALARM)
-                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION).build(), 0) ?: return
-            mp.setOnCompletionListener { it.release() }
-            mp.start()
-        }
-    }
-
-    override fun achievementsUnlocked(ids: List<String>) {
-        // 界面上的提示由 Root 画出; 不在前台时另外发一条普通通知
-        if (!foreground) for (id in ids) com.obliphur.oit.core.AchievementStore.BY_ID[id]?.let {
-            Notifier.event(this, tr("🏆  达成成就") + ": " + com.obliphur.oit.core.AchievementStore.name(it))
-        }
-    }
-
     override fun openPage(page: String) {
         navRequests.tryEmit(page)
         if (!foreground) startActivity(Intent(this, MainActivity::class.java)
@@ -230,22 +210,13 @@ class OitApp : Application(), Host {
 
     fun downloadUpdate() {
         toast(Toast(tr("正在下载更新…"), "info", false))
-        // 20 秒后还很慢 (这台手机直连 GitHub 常常只有几十 KB/s): 同时请绑定的设备下载好发过来, 谁先到用谁
-        android.os.Handler(mainLooper).postDelayed({
-            val u = updater
-            if (u.state == "downloading" && u.speed < 200 * 1024 && (u.total <= 0 || u.got < u.total / 2)) askPeersForUpdate(false)
-        }, 20_000)
         updater.download {
             onMain {
                 when (updater.state) {
                     "ready" -> core.notice(tr("⬆  新版本已下载"), tr("新版本 {v} 已下载, 点安装打开系统的安装界面.", "v" to updater.latestText),
                         listOf(com.obliphur.oit.core.NoticeButton(tr("安装"), "install", true),
                             com.obliphur.oit.core.NoticeButton(tr("稍后"), "ok", false))) { if (it == "install") updater.install() }
-                    "error" -> {
-                        toast(Toast(tr("检查 / 更新失败: {e}", "e" to updater.error), "warn", true))
-                        // 从 GitHub 下不动: 请绑定的设备 (例如开着代理的电脑) 下载好发过来
-                        askPeersForUpdate(false)
-                    }
+                    "error" -> toast(Toast(tr("检查 / 更新失败: {e}", "e" to updater.error), "warn", true))
                 }
                 changed()
             }
@@ -270,17 +241,16 @@ class OitApp : Application(), Host {
             }) relayUpdates(false)
     }
 
-    /** only: 只发给这一台 (它请这台设备发过去的). 返回 false: 正在发送 / 没有设备. */
-    fun relayUpdates(manual: Boolean, only: String? = null): Boolean {
-        val s = sync ?: return false
+    fun relayUpdates(manual: Boolean) {
+        val s = sync ?: return
         if (relaying) {
             if (manual) toast(Toast(tr("正在发送…"), "info", false))
-            return false
+            return
         }
-        val peers = s.peers().filter { it.value.optString("platform") in setOf("windows", "android") && (only == null || it.key == only) }
+        val peers = s.peers().filter { it.value.optString("platform") in setOf("windows", "android") }
         if (peers.isEmpty()) {
             if (manual) toast(Toast(tr("没有绑定的设备."), "info", false))
-            return false
+            return
         }
         relaying = true
         if (manual) toast(Toast(tr("正在给其他设备下载新版本…"), "info", false))
@@ -309,30 +279,6 @@ class OitApp : Application(), Host {
                 relaying = false
             }
             onMain { reportRelay(out, manual) }
-        }.start()
-        return true
-    }
-
-    /** 请绑定的设备给这台手机下载新版本并从局域网发过来 (这台手机连 GitHub 下不动时; 对方例如电脑开着代理).
-     *  下载失败时自动请一次 (manual = false 时只在有设备答应时提示). */
-    fun askPeersForUpdate(manual: Boolean) {
-        val s = sync ?: return
-        val peers = s.peers().filter { it.value.optString("platform") in setOf("windows", "android") }
-        if (peers.isEmpty()) {
-            if (manual) toast(Toast(tr("没有绑定的设备."), "info", false))
-            return
-        }
-        Thread {
-            val out = peers.map { (id, p) ->
-                p.optString("name", "?") to try { s.requestUpdate(id) } catch (e: Exception) { e.message ?: e.javaClass.simpleName }
-            }
-            onMain {
-                val words = mapOf("asked" to tr("已请它下载, 下好后会发过来"), "old" to tr("对方的 OIT 版本太旧, 不支持"),
-                    "busy" to tr("对方正在发送, 稍后再试"))
-                val ok = out.any { it.second == "asked" }
-                if (manual || ok) toast(Toast(tr("📥 让其他设备发来") + "\n" + out.joinToString("\n") { (n, st) ->
-                    "$n: " + (words[st] ?: com.obliphur.oit.ui.syncErrorText(st)) }, if (ok) "success" else "info", true))
-            }
         }.start()
     }
 

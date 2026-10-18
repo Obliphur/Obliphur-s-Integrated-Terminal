@@ -54,8 +54,6 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
 
     override fun updateFailed(error: String) = core.toast(tr("接收新版本失败: {e}", "e" to error), "warn")
 
-    override fun updateRequested(peerId: String): String = if (app.relayUpdates(true, only = peerId)) "" else "busy"
-
     // ---- 账 ----
 
     override fun ledger(): JSONObject {
@@ -125,10 +123,7 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
             "bonus" to JSONObject().put("week", week).put("used", used),
             // 此刻的专注 / 休息: 哪台设备最后改动就以哪台为准
             "live" to core.timer.liveState())
-        // 成就: 哪台设备达成都算 (达成时刻取最早的), 见 MECHANICS 17
-        // 合约: 进行中的合约以后改的为准, 结束了的合约合并 (MECHANICS 18)
-        return mapOf("settings" to settings, "hours" to hours, "timer" to timer, "achievements" to core.ach.doc(),
-            "contract" to core.contract.doc())
+        return mapOf("settings" to settings, "hours" to hours, "timer" to timer)
     }
 
     override fun apply(doc: String, changes: Map<String, Any?>) {
@@ -177,8 +172,6 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
                 core.timer.syncSet(carry, b?.optString("week"), b?.optInt("used"))
                 (changes["live"] as? JSONObject)?.let { core.timer.adopt(it) }
             }
-            "achievements" -> core.mergeAchievements(changes)
-            "contract" -> core.mergeContract(changes)
         }
         core.changed()
     }

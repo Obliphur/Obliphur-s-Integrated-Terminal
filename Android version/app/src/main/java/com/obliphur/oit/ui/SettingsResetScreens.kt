@@ -4,6 +4,7 @@ import android.app.AlarmManager
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.PowerManager
 import android.provider.Settings as SysSettings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -29,7 +30,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.foundation.clickable
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -75,15 +75,6 @@ fun SettingsScreen(tab: String, setTab: (String) -> Unit, act: MainActivity) {
                     "m" to (left % 3600) / 60), size = 13)
                 if (ask) Confirm(tr("结束配置期"), tr("结束后每次修改都要等 48 小时,不能撤销."), true, { ask = false }) {
                     core.endSetupPeriod()
-                }
-            }
-            // 成就 (MECHANICS 17): 单独一页, 从这里打开
-            OitCard(Modifier.clickable { OitApp.instance.navRequests.tryEmit("ach") }) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(tr("🏆  成就"), fontWeight = FontWeight.Bold, color = o.text, modifier = Modifier.weight(1f))
-                    Text(tr("已达成 {n}", "n" to core.ach.unlocked.size), color = o.accent, fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp, modifier = Modifier.padding(end = 10.dp))
-                    PlainButton(tr("打开")) { OitApp.instance.navRequests.tryEmit("ach") }
                 }
             }
             SyncCard()
@@ -242,19 +233,7 @@ private fun ChimePicker() {
         }
     }
     PlainButton(tr("▶ 试听")) { core.previewChime() }
-    // 只显示文件名, 不显示路径
-    if (custom) Dim("🎵 " + audioName(ctx, core.settings.str("CHIME_WAV")), size = 12, color = o.dim)
-}
-
-/** 选好的音频文件的名字 (不含路径). */
-private fun audioName(ctx: android.content.Context, uri: String): String {
-    val u = Uri.parse(uri)
-    runCatching {
-        ctx.contentResolver.query(u, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
-            if (c.moveToFirst()) c.getString(0)?.takeIf { it.isNotBlank() }?.let { return it }
-        }
-    }
-    return (u.lastPathSegment ?: "").substringAfterLast('/').substringAfterLast(':')
+    if (custom) Dim(Uri.parse(core.settings.str("CHIME_WAV")).lastPathSegment ?: "", size = 11, color = o.dim)
 }
 
 @Composable
@@ -280,15 +259,6 @@ private fun NumRow(spec: Spec, edits: MutableMap<String, String>, short: Boolean
     }
 }
 
-/** 下载进度: "3.2 / 18.2 MB · 120 KB/s", 重连过时加上次数. */
-private fun updateProgress(u: com.obliphur.oit.service.Updater): String {
-    fun mb(b: Long) = "%.1f".format(b / 1048576.0)
-    var t = mb(u.got) + (if (u.total > 0) " / " + mb(u.total) else "") + " MB"
-    if (u.speed > 0) t += " · ${u.speed / 1024} KB/s"
-    if (u.retry > 0) t += " · " + tr("重连 {n} 次", "n" to u.retry)
-    return t
-}
-
 /** 各页上 Android 特有的权限 / 系统设置入口. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -299,7 +269,6 @@ private fun PageExtras(tab: String, act: MainActivity) {
     fun open(i: Intent) = runCatching { ctx.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
     if (tab == "basic") OitCard {
         // 更新 (MECHANICS 16)
-        LocalTick.current
         val u = app.updater
         Text(tr("⬆  更新"), fontWeight = FontWeight.Bold, color = o.text)
         val state = when (u.state) {
@@ -307,7 +276,7 @@ private fun PageExtras(tab: String, act: MainActivity) {
             "latest" -> tr("已是最新版本")
             "available" -> tr("发现新版本 {v}", "v" to u.latestText)
             "noapk" -> tr("发现新版本 {v}", "v" to u.latestText) + " · " + tr("这个发布里没有安卓安装包")
-            "downloading" -> tr("正在下载更新…") + " " + updateProgress(u)
+            "downloading" -> tr("正在下载更新…")
             "ready" -> tr("新版本 {v} 已下载", "v" to u.latestText)
             "error" -> tr("检查 / 更新失败: {e}", "e" to u.error)
             else -> ""
@@ -316,42 +285,22 @@ private fun PageExtras(tab: String, act: MainActivity) {
             size = 13, color = when (u.state) { "available", "ready" -> o.accent; "error", "noapk" -> o.warn; else -> o.dim })
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 6.dp)) {
             PlainButton(tr("检查更新"), enabled = u.state != "checking" && u.state != "downloading") { app.checkUpdate(auto = false) }
-            if (u.canDownload) AccentButton(if (u.state == "error") tr("重新下载") else tr("立即更新")) { app.downloadUpdate() }
-            if (u.state == "downloading") PlainButton(tr("取消下载")) { u.cancel() }
+            if (u.state == "available") AccentButton(tr("立即更新")) { app.downloadUpdate() }
             if (u.state == "ready") AccentButton(tr("安装")) { u.install() }
-            val peers = app.sync?.peers()?.isNotEmpty() == true
-            // 这台手机连 GitHub 下载慢 / 下不动时: 请绑定的设备 (例如电脑) 下载好再从局域网发过来
-            if (peers && (u.canDownload || u.state == "downloading")) PlainButton(tr("📥 让其他设备发来")) { app.askPeersForUpdate(true) }
             // 给绑定的其他设备下载安装包, 直接从局域网发过去 (对方不用自己去 GitHub 下载)
-            if (peers) PlainButton(tr("📤 发给其他设备")) { app.relayUpdates(true) }
+            if (app.sync?.peers()?.isNotEmpty() == true) PlainButton(tr("📤 发给其他设备")) { app.relayUpdates(true) }
             PlainButton(tr("发布页")) { runCatching { u.openReleasePage() } }
         }
     }
     when (tab) {
         "basic" -> OitCard {
-            // 后台 / 熄屏时系统不暂停 OIT: 计时, 断网, 设备同步照常 (MECHANICS 15.3)
-            val bg = com.obliphur.oit.service.Background
-            val ignoring = bg.batteryIgnored(ctx)
-            val restricted = bg.restricted(ctx)
-            val data = bg.dataRestricted(ctx)
+            val pm = ctx.getSystemService(PowerManager::class.java)
+            val ignoring = pm.isIgnoringBatteryOptimizations(ctx.packageName)
             Text(tr("后台运行"), fontWeight = FontWeight.Bold, color = o.text)
             Dim(if (ignoring) tr("不受电池优化限制") else tr("受电池优化限制"), size = 13,
                 color = if (ignoring) o.success else o.warn)
-            if (restricted) Dim(tr("电池设置为\"受限\": 在后台时 OIT 会被停下"), size = 13, color = o.warn)
-            if (data) Dim(tr("限制了后台数据: 移动数据上在后台时不能同步"), size = 13, color = o.warn)
-            bg.lastPauseAt?.let {
-                Dim(tr("本次运行中被系统暂停过 {n} 次, 最近一次 {at} 起停了 {min} 分钟: 这段时间不能同步",
-                    "n" to bg.pauses, "at" to it.format(com.obliphur.oit.core.Fmt.HM), "min" to (bg.lastPauseSec + 59) / 60),
-                    size = 13, color = o.warn)
-            }
-            Dim(tr("在后台或熄屏时继续同步需要以上限制都解除. 部分手机 (vivo, 小米, 华为, OPPO 等) 不管这些, 照样在后台冻结 OIT: 还要在\"后台耗电\"里允许 OIT 后台高耗电 (或把电池设为\"无限制\"), 并允许自启动."),
-                size = 12, color = o.dim)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (!ignoring) PlainButton(tr("解除电池优化")) { bg.requestBattery(ctx) }
-                if (data) PlainButton(tr("允许后台数据")) { bg.dataSaver(ctx) }
-                if (bg.hasPowerPage(ctx)) PlainButton(tr("后台耗电 (允许后台高耗电)")) { bg.openPower(ctx) }
-                if (bg.hasAutostart(ctx)) PlainButton(tr("自启动")) { bg.openAutostart(ctx) }
-                PlainButton(tr("应用信息 (电池)")) { bg.appDetails(ctx) }
+            if (!ignoring) PlainButton(tr("解除电池优化")) {
+                open(Intent(SysSettings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${ctx.packageName}")))
             }
         }
         "net" -> OitCard {
@@ -389,29 +338,6 @@ private fun PageExtras(tab: String, act: MainActivity) {
             Text(tr("使用情况访问权限"), fontWeight = FontWeight.Bold, color = o.text)
             Dim(if (ok) tr("已授予") else tr("未授予"), size = 13, color = if (ok) o.success else o.warn)
             if (!ok) PlainButton(tr("去授予")) { open(Intent(SysSettings.ACTION_USAGE_ACCESS_SETTINGS)) }
-        }
-    }
-    // 后台应用数怎么数的, 现在算了哪些 (MECHANICS 14.6)
-    if (tab == "window") OitCard {
-        LocalTick.current
-        val exact = AppUsage.usingRecents(ctx)
-        Text(tr("后台应用数"), fontWeight = FontWeight.Bold, color = o.text)
-        Dim(if (exact) tr("精确: 按多任务界面里的应用数") else tr("估计: 最近 6 小时用过、没有被关掉的应用 (从多任务里划掉的可能还算着)"),
-            size = 13, color = if (exact) o.success else o.warn)
-        if (AppUsage.precise(ctx) && !exact && AppUsage.recentsError.isNotEmpty())
-            Dim(tr("读不出最近任务: {e}", "e" to AppUsage.recentsError), size = 12, color = o.warn)
-        // 现在算了哪些应用: 只在开发者模式里显示 (调试用), 正式界面不显示
-        if (OitApp.instance.core.settings.devMode) AppUsage.lastOpen?.let { apps ->
-            val pm = ctx.packageManager
-            val names = apps.map { p -> runCatching { pm.getApplicationLabel(pm.getApplicationInfo(p, 0)).toString() }.getOrDefault(p) }
-            Dim(tr("现在算了 {n} 个", "n" to apps.size) + if (names.isEmpty()) "" else ": " + names.sorted().joinToString(", "), size = 13)
-        }
-        if (!AppUsage.precise(ctx)) {
-            Dim(tr("要精确计数, 需要在电脑上用 adb 给 OIT 授予一次权限 (手机打开 USB 调试 / 无线调试后执行下面两条, 再重新打开 OIT; 卸载重装 OIT 前一直有效):"),
-                size = 12)
-            for (perm in listOf("DUMP", "PACKAGE_USAGE_STATS"))
-                Text("adb shell pm grant ${ctx.packageName} android.permission.$perm", color = o.text, fontSize = 12.sp,
-                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
         }
     }
 }
