@@ -164,6 +164,8 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         app.foreground = true
+        // 前台服务没在运行 (进程是在后台被拉起来的, 当时不允许启动): 趁界面在前台补上, 离开后 OIT 才不会被暂停
+        com.obliphur.oit.service.CoreService.start(this)
         app.core.tick()
         if (app.updateRetry && app.core.settings.bool("UPDATE_CHECK")) {
             app.updateRetry = false
@@ -173,6 +175,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onPause() {
         app.foreground = false
+        com.obliphur.oit.service.CoreService.start(this)
         app.core.saveAll()
         super.onPause()
     }
@@ -286,6 +289,17 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
                                 verticalAlignment = Alignment.CenterVertically) {
                                 Text(tr("断网未生效"), color = o.danger, modifier = Modifier.weight(1f))
                                 DangerButton(tr("重新建立 VPN")) { com.obliphur.oit.service.OitVpnService.rebuild(act) }
+                            }
+                        }
+                        // 绑定了其他设备, 系统却会在后台 / 熄屏时限制 OIT: 同步会停 (MECHANICS 15.3)
+                        if (core.hasPeers() && !com.obliphur.oit.service.Background.ok(act)) {
+                            Row(Modifier.fillMaxWidth().background(o.dangerBg).padding(horizontal = 16.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically) {
+                                Text(tr("在后台 / 熄屏时同步会被系统暂停"), color = o.danger, modifier = Modifier.weight(1f))
+                                DangerButton(tr("去解除")) {
+                                    if (!com.obliphur.oit.service.Background.batteryIgnored(act)) com.obliphur.oit.service.Background.requestBattery(act)
+                                    else go("settings:basic")
+                                }
                             }
                         }
                         val scroll = rememberScrollState()

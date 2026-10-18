@@ -176,13 +176,25 @@ class CoreService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        val note = Notifier.status(this)
-        if (Build.VERSION.SDK_INT >= 34) startForeground(Notifier.ID_STATUS, note, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
-        else startForeground(Notifier.ID_STATUS, note)
+        foreground()
         handler.post(loop)
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
+    private fun foreground() {
+        val note = Notifier.status(this)
+        try {
+            if (Build.VERSION.SDK_INT >= 34) startForeground(Notifier.ID_STATUS, note, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+            else startForeground(Notifier.ID_STATUS, note)
+        } catch (_: Exception) {
+            // 被系统重新拉起时不允许进入前台 (电池设置为"受限"): 照样运行, 下次打开界面时再进入前台
+        }
+    }
+
+    /** 每次 startForegroundService 之后都要 startForeground (服务已经在运行时也一样), 否则系统会结束 OIT. */
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        foreground()
+        return START_STICKY
+    }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         OitApp.instance.core.saveAll()

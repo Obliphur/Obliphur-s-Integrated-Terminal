@@ -937,15 +937,22 @@ class SyncService(
             if (dead) return
             val wasManual = manual
             manual = false
-            if (!runner.call { proxyOk() }) continue
-            // 母端向子端发请求; 子端只在还没初始化或按了"立即同步"时向母端发
-            val targets = peers().filter { (_, p) -> p.optString("mother") == myId || p.optBoolean("init") || wasManual }.keys
-            val failed = targets.filter { trySync(it) == false }
-            // 有设备连不上: 地址可能变了, 广播找一下再试一次
-            if (failed.isNotEmpty() && System.currentTimeMillis() - lastDiscover > 60_000) {
-                lastDiscover = System.currentTimeMillis()
-                runCatching { discover(1500) }
-                failed.forEach { trySync(it) }
+            // 出了任何错都只跳过这一轮: 以前界面线程 8 秒没空 (OIT 在后台 / 熄屏时被系统放慢) 时
+            // runner.call 抛出的 "main thread busy" 没人接, 同步线程就此退出, 直到重新打开 OIT 都不再同步
+            try {
+                if (!runner.call { proxyOk() }) continue
+                // 母端向子端发请求; 子端只在还没初始化或按了"立即同步"时向母端发
+                val targets = peers().filter { (_, p) -> p.optString("mother") == myId || p.optBoolean("init") || wasManual }.keys
+                val failed = targets.filter { trySync(it) == false }
+                // 有设备连不上: 地址可能变了, 广播找一下再试一次
+                if (failed.isNotEmpty() && System.currentTimeMillis() - lastDiscover > 60_000) {
+                    lastDiscover = System.currentTimeMillis()
+                    runCatching { discover(1500) }
+                    failed.forEach { trySync(it) }
+                }
+            } catch (e: InterruptedException) {
+                if (dead) return
+            } catch (_: Exception) {
             }
         }
     }

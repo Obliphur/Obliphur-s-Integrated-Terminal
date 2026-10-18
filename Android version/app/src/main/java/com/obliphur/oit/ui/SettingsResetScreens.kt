@@ -4,7 +4,6 @@ import android.app.AlarmManager
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
-import android.os.PowerManager
 import android.provider.Settings as SysSettings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -294,13 +293,22 @@ private fun PageExtras(tab: String, act: MainActivity) {
     }
     when (tab) {
         "basic" -> OitCard {
-            val pm = ctx.getSystemService(PowerManager::class.java)
-            val ignoring = pm.isIgnoringBatteryOptimizations(ctx.packageName)
+            // 后台 / 熄屏时系统不暂停 OIT: 计时, 断网, 设备同步照常 (MECHANICS 15.3)
+            val bg = com.obliphur.oit.service.Background
+            val ignoring = bg.batteryIgnored(ctx)
+            val restricted = bg.restricted(ctx)
+            val data = bg.dataRestricted(ctx)
             Text(tr("后台运行"), fontWeight = FontWeight.Bold, color = o.text)
             Dim(if (ignoring) tr("不受电池优化限制") else tr("受电池优化限制"), size = 13,
                 color = if (ignoring) o.success else o.warn)
-            if (!ignoring) PlainButton(tr("解除电池优化")) {
-                open(Intent(SysSettings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${ctx.packageName}")))
+            if (restricted) Dim(tr("电池设置为\"受限\": 在后台时 OIT 会被停下"), size = 13, color = o.warn)
+            if (data) Dim(tr("限制了后台数据: 移动数据上在后台时不能同步"), size = 13, color = o.warn)
+            Dim(tr("在后台或熄屏时继续同步需要以上限制都解除; 部分手机 (小米, 华为, OPPO, vivo 等) 还要在系统设置里允许 OIT 自启动 / 后台运行, 电池设为\"无限制\"."),
+                size = 12, color = o.dim)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (!ignoring) PlainButton(tr("解除电池优化")) { bg.requestBattery(ctx) }
+                if (data) PlainButton(tr("允许后台数据")) { bg.dataSaver(ctx) }
+                PlainButton(if (bg.hasOemPage(ctx)) tr("自启动 / 后台运行") else tr("应用信息 (电池)")) { bg.openOem(ctx) }
             }
         }
         "net" -> OitCard {
