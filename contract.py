@@ -82,8 +82,8 @@ LIFE = {"retreat1": 3, "retreat2": 2, "last": 1}  # 初始目标生命值 (硬�
 SUPPLY_WARN = (180, 60)                         # 支援短缺: 还差这么多秒就用超时各提醒一次
 
 # 总等级 → 完成合约时给的休息时间 (分钟, 固定; 按结束时的等级)
-# 每 3 级一档, 每档多 3 ~ 4 分钟; 25 级 (差不多选满) 起封顶 50 分钟
-REST_TABLE = [(0, 20), (1, 24), (4, 27), (7, 30), (10, 33), (13, 37), (16, 40), (19, 43), (22, 46), (25, 50)]
+# 每 3 级一档. 15 级以内每档只多 2 分钟, 16 级起每档多 10 分钟; 25 级 (差不多选满) 起封顶 90 分钟
+REST_TABLE = [(0, 40), (1, 42), (4, 44), (7, 46), (10, 48), (13, 50), (16, 60), (19, 70), (22, 80), (25, 90)]
 
 # 乐理之灾: 常见的音乐播放软件 (exe 名, 小写) 和音频文件扩展名 (窗口标题里出现就算在放).
 # 视频播放器 (PotPlayer, VLC, MPC, KMPlayer, Windows 媒体播放器 …) 不在名单里: 只有用它们打开音频文件 (看标题) 才算.
@@ -679,8 +679,8 @@ def _selftest():
     assert life_of([]) == 4 and life_of(["retreat1"]) == 3 and life_of(["retreat2"]) == 2 and life_of(["last"]) == 1
     assert conflicts("retreat1", "last") and conflicts("retreat2", "last"), "退路封锁和最后防线是同一组"
     assert not {"vlc.exe", "potplayermini64.exe", "mpc-hc64.exe", "wmplayer.exe"} & MUSIC_EXES, "视频播放器不算"
-    assert rest_minutes(0) == 20 and rest_minutes(3) == 24 and rest_minutes(4) == 27
-    assert rest_minutes(18) == 40 and rest_minutes(24) == 46 and rest_minutes(25) == 50 and rest_reward(26) == 50 * 60
+    assert rest_minutes(0) == 40 and rest_minutes(3) == 42 and rest_minutes(4) == 44 and rest_minutes(15) == 50
+    assert rest_minutes(16) == 60 and rest_minutes(24) == 80 and rest_minutes(25) == 90 and rest_reward(26) == 90 * 60
     assert conflicts("long1", "long3") and conflicts("isolate", "info2"), "同一组互相冲突"
     assert not conflicts("isolate", "chan1") and not conflicts("chan2", "isolate") and conflicts("suppress", "isolate")
     assert not conflicts("jam", "music") and conflicts("short1", "short2") and not conflicts("seal", "fine")
@@ -716,9 +716,9 @@ def _selftest():
     assert c.music_check(True) == "music" and c.music_check(True) == "" and c.music_check(False) == ""
     assert c.downgrade("music") == "" and not c.has("music"), "乐理之灾只有 1 级, 降一级就失效"
     assert c.quick_check() == ""
-    # 休息: 疲惫 ×0.75; 完成时按降级后的等级给固定的时间 (等级 4 → 27 分钟)
+    # 休息: 疲惫 ×0.75; 完成时按降级后的等级给固定的时间 (等级 4 → 44 分钟)
     assert abs(c.book_rest(1000, t0 + timedelta(hours=1)) - 750) < 1e-6
-    assert c.level == 4 and c.reward == 27 * 60
+    assert c.level == 4 and c.reward == 44 * 60
     # 空闲 30 分钟结束
     assert c.due(t0 + timedelta(hours=1), True) == ("", None)
     assert c.idle_left(t0 + timedelta(hours=1, minutes=10)) == 20 * 60
@@ -742,12 +742,12 @@ def _selftest():
     assert rec["reward"] == 0 and rec["orig_level"] == 6 and rec["level"] == 4 and not c.active
     assert not c.take_first_break()
 
-    # 完成: 按等级给固定的休息时间 (等级 4 → 27 分钟), 第一次休息的结转比例
+    # 完成: 按等级给固定的休息时间 (等级 4 → 44 分钟), 第一次休息的结转比例
     c.start(["last", "tired1"], owner="me", now=t0)
-    assert c.violation_limit == 1 and abs(c.book_rest(600, t0) - 540) < 1e-6 and c.reward == 27 * 60
+    assert c.violation_limit == 1 and abs(c.book_rest(600, t0) - 540) < 1e-6 and c.reward == 44 * 60
     assert c.due(t0 + timedelta(hours=4), False) == ("completed", t0 + timedelta(hours=4))
     rec = c.finish("completed", t0 + timedelta(hours=4, minutes=3))
-    assert rec["reward"] == 27 * 60 and rec["end"] == (t0 + timedelta(hours=4)).isoformat()
+    assert rec["reward"] == 44 * 60 and rec["end"] == (t0 + timedelta(hours=4)).isoformat()
     assert abs(c.book_rest_after(600, t0 + timedelta(hours=3)) - 540) < 1e-6 and c.reward == 0, "完成后才结束的专注只乘疲惫"
     assert c.book_rest_after(600, t0 + timedelta(hours=5)) == 600
     assert c.take_first_break() and not c.take_first_break()
