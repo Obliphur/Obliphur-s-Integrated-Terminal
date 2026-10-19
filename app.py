@@ -2005,7 +2005,10 @@ class BreakTimerApp:
         for st in self.sync.device_states():
             if not st["online"]:
                 offline.append(st["name"])
-                lines.append(f"🔗 {st['name']}: {tr('离线')}")
+                if st.get("outdated"):
+                    lines.append(f"🔗 {st['name']}: " + tr("离线 (版本 {v} 较低, 请更新)", v=st.get("version")))
+                else:
+                    lines.append(f"🔗 {st['name']}: {tr('离线')}")
                 continue
             t = {"running": tr("专注中…"), "break": tr("休息中 ☕")}.get(st.get("timer"), tr("准备就绪"))
             if st.get("timer") == "running" and st.get("since") and not self.contract.fog():
@@ -2018,6 +2021,10 @@ class BreakTimerApp:
             lines.append(f"🔗 {st.get('name', '?')}: {t}" + (f" · {net}" if net else ""))
         if offline:
             lines.append(tr("⚠ 有设备离线: 离线的这段时间专注不会被记录."))
+        for name, v, newer in self.sync.version_mismatch():
+            if newer:          # 本机版本低: 对方把本机算作离线
+                lines.append(tr("⚠ 本机版本 {me} 低于 {name} ({v}): 其他设备把本机算作离线, 请更新.",
+                                me=config.APP_VERSION, name=name, v=v))
         return "\n".join(lines), bool(offline)
 
     # ---- Rules 页的应用名单: 前台窗口的程序被禁用时立即关掉 (MECHANICS 4.7) ----
@@ -2213,6 +2220,11 @@ class BreakTimerApp:
             return tr("请先结束休息再开始合约")
         if getattr(self, "net", None) is not None and self.net.mode == "online":
             return tr("请先结束联网再开始合约")
+        sync = getattr(self, "sync", None)
+        diff = sync.version_mismatch() if sync is not None else []
+        if diff:
+            name, v, _newer = diff[0]
+            return tr("{name} 的版本 ({v}) 和本机 ({me}) 不一样, 不能开始合约", name=name, v=v, me=config.APP_VERSION)
         return ""
 
     def start_contract(self, terms):

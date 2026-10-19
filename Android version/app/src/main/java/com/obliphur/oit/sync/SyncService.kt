@@ -1177,10 +1177,33 @@ class SyncService(
         return peerStatus().any { it.first == id && now - it.third.optLong("ts") < FRESH_MS }
     }
 
-    /** 其他设备此刻的状态: (设备 id, 名字, 状态). */
-    class DeviceState(val id: String, val name: String, val online: Boolean, val status: JSONObject, val seen: Long)
+    /** 其他设备此刻的状态: (设备 id, 名字, 状态). outdated: 版本比本机低, 算离线. */
+    class DeviceState(val id: String, val name: String, val online: Boolean, val status: JSONObject, val seen: Long,
+                      val version: String = "", val outdated: Boolean = false)
 
-    /** 其他设备此刻的状态 (绑定的, 和转交过来的). online: 绑定的设备最后一次同步没有失败, 而且 OFFLINE_MS 之内有它的消息;
+    /** 绑定的设备里版本和本机不一样的 (知道版本的): (名字, 版本, 是否比本机新). */
+    fun versionMismatch(): List<Triple<String, String, Boolean>> = lock.withLock {
+        val mine = vparse(local.appVersion()) ?: return emptyList()
+        val peers = state.getJSONObject("peers")
+        peers.keys().asSequence().mapNotNull { k ->
+            val p = peers.getJSONObject(k)
+            val v = vparse(p.optString("version")) ?: return@mapNotNull null
+            if (v == mine) null else Triple(p.optString("name", "?"), p.optString("version"), vnewer(v, mine))
+        }.sortedBy { it.first }.toList()
+    }
+
+    /** "1.0.55" → [1, 0, 55]; 没有数字时 null (同 Updater.parseVersion). */
+    private fun vparse(text: String?): List<Int>? {
+        val nums = Regex("\\d+").findAll(text ?: "").map { it.value.toInt() }.take(3).toList()
+        return if (nums.isEmpty()) null else nums + List(3 - nums.size) { 0 }
+    }
+    private fun vnewer(a: List<Int>, b: List<Int>): Boolean {
+        for (i in 0 until 3) if (a[i] != b[i]) return a[i] > b[i]
+        return false
+    }
+
+    /** 其他设备此刻的状态 (绑定的, 和转交过来的). online: 绑定的设备最后一次同步没有失败, 而且 OFFLINE_MS 之内有它的消息,
+     *  版本也不比本机低;
      *  转交过来的设备 OFFLINE_FWD_MS 之内有消息. 不管它此刻在专注 / 休息 / 空闲, 同步失败就算离线. */
     fun deviceStates(): List<DeviceState> = lock.withLock {
         val now = System.currentTimeMillis()
@@ -1191,6 +1214,7 @@ class SyncService(
         val ledgers = state.getJSONObject("ledgers")
         val ids = (peers.keys().asSequence() + status.keys().asSequence()).toSet()
             .filter { it != myId && (peers.has(it) || !gone.has(it)) }
+        val mine = vparse(local.appVersion())
         ids.map { id ->
             val st = status.optJSONObject(id) ?: JSONObject()
             val p = peers.optJSONObject(id)
@@ -1198,7 +1222,9 @@ class SyncService(
                 ?: ledgers.optJSONObject(id)?.optString("name")?.takeIf { it.isNotEmpty() } ?: "?"
             if (p != null) {
                 val seen = maxOf(p.optLong("last_ok"), st.optLong("ts"))
-                DeviceState(id, name, p.optString("last_err").isEmpty() && now - seen < OFFLINE_MS, st, seen)
+                val ver = p.optString("version")
+                val old = mine != null && vparse(ver)?.let { vnewer(mine, it) } == true    // 版本比本机低: 算离线
+                DeviceState(id, name, p.optString("last_err").isEmpty() && now - seen < OFFLINE_MS && !old, st, seen, ver, old)
             } else {
                 val seen = st.optLong("ts")
                 DeviceState(id, name, now - seen < OFFLINE_FWD_MS, st, seen)

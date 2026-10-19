@@ -196,9 +196,10 @@ private fun localIp(): String = try {
 /** 绑定的每台设备此刻的状态, 一台一行; 2 分钟内没有消息的显示"离线". */
 fun peerLines(): List<String> {
     val s = OitApp.instance.sync ?: return emptyList()
-    return s.deviceStates().map { d ->
+    val lines = s.deviceStates().map { d ->
         val name = d.name
         val st = d.status
+        if (d.outdated) return@map "🔗 $name: " + tr("离线 (版本 {v} 较低, 请更新)", "v" to d.version)
         if (!d.online) return@map "🔗 $name: " + tr("离线")
         var t = when (st.optString("timer")) {
             "running" -> tr("专注中…")
@@ -211,6 +212,11 @@ fun peerLines(): List<String> {
         }
         val net = when (st.optString("net")) { "online" -> tr("联网中"); "pending" -> tr("冷静期中"); else -> "" }
         "🔗 $name: $t" + if (net.isNotEmpty()) " · $net" else ""
+    }
+    // 本机版本低: 对方把本机算作离线
+    return lines + s.versionMismatch().filter { it.third }.map { (name, v, _) ->
+        tr("⚠ 本机版本 {me} 低于 {name} ({v}): 其他设备把本机算作离线, 请更新.",
+            "me" to com.obliphur.oit.BuildConfig.VERSION_NAME, "name" to name, "v" to v)
     }
 }
 

@@ -59,7 +59,8 @@ class SyncTest {
         override fun changed() {}
         @Volatile var dev = false
         @Volatile var got: Pair<ByteArray, String>? = null
-        override fun appVersion() = "1.0.0"
+        var version = "1.0.0"
+        override fun appVersion() = version
         override fun devMode() = dev
         override fun setDevMode(on: Boolean) { dev = on }
         override fun updateWanted(platform: String, version: String) = if (platform == "fake") "" else "platform"
@@ -164,6 +165,17 @@ class SyncTest {
             la.dev = false
             assertTrue(sa.syncWith(sb.myId)); assertFalse(lb.dev)
             assertEquals("1.0.0", sa.peers()[sb.myId]!!.optString("version"))
+            // 版本不一样: 版本低的算离线, 两边都知道不一样 (不能开始合约)
+            assertTrue(sa.versionMismatch().isEmpty()); assertTrue(sa.deviceStates().single().online)
+            la.version = "1.0.1"
+            assertTrue(sa.syncWith(sb.myId))
+            val low = sa.deviceStates().single()
+            assertFalse(low.online); assertTrue(low.outdated); assertEquals("1.0.0", low.version)
+            assertEquals(listOf(false), sa.versionMismatch().map { it.third })
+            assertEquals(listOf("1.0.1" to true), sb.versionMismatch().map { it.second to it.third })
+            assertTrue(sb.deviceStates().single().online); assertFalse(sb.deviceStates().single().outdated)
+            la.version = "1.0.0"
+            assertTrue(sa.syncWith(sb.myId)); assertTrue(sa.versionMismatch().isEmpty() && sb.versionMismatch().isEmpty())
             // 安装包直接发给 B, B 核对 SHA-256 后交给本机安装; 平台不对的不要
             val pkg = Files.createTempFile("oit", ".bin").toFile()
             val blob = ByteArray(300_000) { (it * 31 % 251).toByte() }

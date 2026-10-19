@@ -512,6 +512,11 @@ object EnStrings {
         "今日: ???" to "Today: ???",
         "合计: ???" to "Total: ???",
         "请先结束休息再开始合约" to "End the break before starting a contract",
+        "离线 (版本 {v} 较低, 请更新)" to "offline (version {v} is older, please update)",
+        "⚠ 本机版本 {me} 低于 {name} ({v}): 其他设备把本机算作离线, 请更新." to
+            "⚠ This device ({me}) is older than {name} ({v}): other devices count it as offline. Please update.",
+        "{name} 的版本 ({v}) 和本机 ({me}) 不一样, 不能开始合约" to
+            "{name} runs version {v}, this device runs {me}: a contract can't be started",
         "请先结束联网再开始合约" to "Go offline before starting a contract",
         "合约期间" to "During the contract",
         "· 违反 {n} 次 / 空闲 30 分钟: 失败" to "· {n} violations / 30 min idle: failure",

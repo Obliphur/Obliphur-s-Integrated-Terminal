@@ -194,6 +194,12 @@ class MainRunner:
 
 # ═══════════════════════ 同步服务 ═══════════════════════
 
+def _vtuple(text):
+    """'1.0.55' → (1, 0, 55); 没有数字时 None (同 updater.parse_version)."""
+    nums = [int(n) for n in re.findall(r"\d+", str(text or ""))[:3]]
+    return tuple(nums + [0] * (3 - len(nums))) if nums else None
+
+
 def _now_ms() -> int:
     return int(time.time() * 1000)
 
@@ -1210,10 +1216,12 @@ class SyncService:
         return True
 
     def device_states(self) -> list:
-        """其他设备此刻的状态 (绑定的, 和转交过来的): [{id, name, online, timer, net, since, seen}].
-        online: 绑定的设备 —— 最近一次同步没有失败, 而且 OFFLINE_MS 之内有它的消息;
+        """其他设备此刻的状态 (绑定的, 和转交过来的): [{id, name, online, timer, net, since, seen, version, outdated}].
+        online: 绑定的设备 —— 最近一次同步没有失败, 而且 OFFLINE_MS 之内有它的消息, 版本也不比本机低
+                (outdated: 版本比本机低, 算离线);
                 转交过来的设备 —— OFFLINE_FWD_MS 之内有它的消息."""
         now = _now_ms()
+        mine = _vtuple(_call(self.local, "app_version", ""))
         if self._prune_forwarded(now):
             self._save()
         with self.lock:
@@ -1226,14 +1234,27 @@ class SyncService:
                 p = peers.get(i)
                 name = (p or {}).get("name") or (self.state["ledgers"].get(i) or {}).get("name") or "?"
                 seen = max(float(st.get("ts", 0)), float((p or {}).get("last_ok") or 0))
+                ver = str((p or {}).get("version") or "")
+                old = bool(mine and _vtuple(ver) and _vtuple(ver) < mine)
                 if p is not None:
-                    online = not p.get("last_err") and now - seen < OFFLINE_MS
+                    online = not p.get("last_err") and now - seen < OFFLINE_MS and not old
                 else:
                     online = now - seen < OFFLINE_FWD_MS
                 out.append({"id": i, "name": str(name), "online": online,
                             "timer": st.get("timer") or "idle", "net": st.get("net") or "",
-                            "since": st.get("since"), "seen": seen})
+                            "since": st.get("since"), "seen": seen, "version": ver, "outdated": old})
         return sorted(out, key=lambda d: d["name"])
+
+    def version_mismatch(self) -> list:
+        """绑定的设备里版本和本机不一样的 (知道版本的): [(名字, 版本, 是否比本机新)]."""
+        mine = _vtuple(_call(self.local, "app_version", ""))
+        out = []
+        with self.lock:
+            for p in self.state["peers"].values():
+                v = _vtuple(p.get("version"))
+                if mine and v and v != mine:
+                    out.append((str(p.get("name") or "?"), str(p.get("version")), v > mine))
+        return sorted(out)
 
     def _prune_forwarded(self, now: float) -> bool:
         """删掉没有绑定、也不可能再有人转交过来的设备的状态和账 (记进 gone, 免得又被送回来):
@@ -1814,6 +1835,15 @@ def _selftest():
         sc.state["ledgers"]["dX"] = {"rev": 1, "name": "X"}
         states = {d["id"]: d for d in sc.device_states()}
         assert not states["dX"]["online"] and states["dX"]["name"] == "X"
+        # 版本不一样: 版本低的算离线 (本机 1.0.0); 两边都知道版本不一样
+        assert states["pY"]["online"] and sc.version_mismatch() == []
+        sc.state["peers"]["pY"]["version"] = "0.9.9"
+        st = {d["id"]: d for d in sc.device_states()}["pY"]
+        assert not st["online"] and st["outdated"] and sc.version_mismatch() == [("Y", "0.9.9", False)]
+        sc.state["peers"]["pY"]["version"] = "1.0.1"
+        st = {d["id"]: d for d in sc.device_states()}["pY"]
+        assert st["online"] and not st["outdated"] and sc.version_mismatch() == [("Y", "1.0.1", True)]
+        sc.state["peers"]["pY"].pop("version")
         sc.track_offline()
         assert sc.offline_spans(t0 - 20 * 60_000, t0 - 5 * 60_000) == [(t0 - 10 * 60_000, t0 - 5 * 60_000)]
         sc.state["status"]["dX"]["ts"] = t0 - 1000          # 又有消息了
