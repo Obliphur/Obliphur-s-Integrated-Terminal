@@ -83,12 +83,12 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         when (state) {
             TState.IDLE -> {
                 enterFocus(LocalDateTime.now(), mono())
-                if (core.contract.slowBind(startWall!!))       // 阻滞: 这段专注的时间按 90% 增长
-                    core.toast(tr("阻滞: 这段专注的时间按 {p}% 增长", "p" to Math.round(Contract.RANDOM_SLOW * 100)), "warn", long = true)
+                if (core.contract.slowBind(startWall!!))       // 阻滞: 合约内这段时间按 90% 增长
+                    core.toast(tr("阻滞: 合约内这段专注的时间按 {p}% 增长", "p" to Math.round(Contract.RANDOM_SLOW * 100)), "warn", long = true)
             }
             TState.RUNNING -> {
                 val end = LocalDateTime.now()
-                val minutes = (mono() - startMono) / 60.0 * core.contract.focusRate(startWall)   // 阻滞: 按 90% 增长
+                val minutes = core.contract.focusMinutes(startWall, mono() - startMono)   // 阻滞: 只减慢合约内的那部分时间
                 lastTMinutes = minutes                    // 建议休息时长照常按整段专注算
                 restBase = core.focusRest(minutes, startWall!!, end)
                 val off = cutOffline(startWall!!, end)
@@ -371,7 +371,29 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         setCarry(minOf(breakCarry, preLeft.toInt()) + reward)
     }
 
-    /** 合约开始时多给的休息时间 (互联网娱乐的败退), 存进积攒的休息时间. */
+    /** 结束合约前先停止休息 (MECHANICS 18.1): 剩下的休息时间按"暂停休息"算, 合约中得到的部分由 endContract 作废.
+     *  不算禁止囤囤鼠! 的违反 (不是手动提前结束). */
+    fun stopBreakForContract() {
+        if (state != TState.ON_BREAK) return
+        val left = maxOf(0, countdown.toInt())
+        recordBreakEnd()
+        val pre = minOf(left, breakPre.toInt())
+        val c = core.contract
+        val same = c.active && c.id == breakCid
+        if (same) c.preSettle(breakPre, pre.toDouble())
+        var rate = settings.num("BREAK_CARRY_RATE")
+        if (contractBreakActive) rate = Contract.firstBreakRate(rate)
+        val add = if (bonusBreakActive) left else pre + Math.round((left - pre) * rate).toInt()
+        breakPre = 0.0
+        breakCid = 0L
+        bonusBreakActive = false
+        contractBreakActive = false
+        if (add > 0) setCarry(breakCarry + add)
+        resetToIdle()
+        armIdleNudge()
+    }
+
+    /** 合约开始时多给的休息时间 (凑齐的词条组合), 存进积攒的休息时间. */
     fun addCarry(seconds: Int) {
         if (seconds > 0) setCarry(breakCarry + seconds)
     }
@@ -510,7 +532,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
             seconds = ok + (seconds - ok) * Cfg.FOCUS_CHECK_PENALTY
         }
         val end = start.plusSec(seconds)
-        val minutes = seconds / 60.0 * core.contract.focusRate(start)      // 阻滞: 专注时间按 90% 增长
+        val minutes = core.contract.focusMinutes(start, seconds)      // 阻滞: 只减慢合约内的那部分时间
         // 有设备离线的那段记为空闲, 不计入学习时长; 建议休息时长照常按计入前的时长算
         val counted = maxOf(0.0, minutes - cutOffline(start, end) / 60.0)
         dm.addStudySession(start, end, counted)

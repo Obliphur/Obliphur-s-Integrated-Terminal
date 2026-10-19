@@ -299,7 +299,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         val active = !dm.resetting && !settings.devMode
         val app = if (active) host.foregroundApp() else ""
         if (app == null) return                                  // 屏幕关闭 / 没有权限: 维持原样
-        // 合约 · 乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒 (互联网娱乐的败退是四个一起; 软规则):
+        // 合约 · 乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒 (软规则):
         // 前台是这一类应用就算违反 (不锁; 一直开着只算一次). 音乐在休息中可以听, 休息结束时还开着就算一次
         for (kind in Contract.BANS) {
             if (contract.banTerm(kind).isEmpty()) continue
@@ -701,7 +701,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
                 toast(tr("未知变量: 封锁了整点记录 {t} (不能再修改)", "t" to t), "warn", long = true)
             } else toast(tr("未知变量: 没有可以封锁的整点记录, 无事发生"))
             "double" -> toast(tr("未知变量: 这次判定作废, 改为判定两次"))
-            "slow" -> toast(tr("未知变量: 下一次专注启用阻滞 (专注时间按 {p}% 增长)", "p" to Math.round(Contract.RANDOM_SLOW * 100)),
+            "slow" -> toast(tr("未知变量: 下一次专注启用阻滞 (只减慢合约内的时间, 按 {p}% 增长)", "p" to Math.round(Contract.RANDOM_SLOW * 100)),
                 "warn", long = true)
             else -> toast(tr("未知变量: 无事发生"))
         }
@@ -770,7 +770,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         if (contract.active) return
         contractBlock().let { if (it.isNotEmpty()) { toast(it, "warn"); return } }
         contract.start(terms, myId(), pre = timer.breakCarry.toDouble())
-        // 互联网娱乐的败退: 积攒的休息时间 +20 分钟 (在 pre 之后加: 算合约中得到的, 合约结束后不留下)
+        // 凑齐的词条组合: 积攒的休息时间 +N 分钟 (在 pre 之后加: 算合约中得到的, 合约结束后不留下)
         val gift = Contract.restGift(contract.terms)
         timer.addCarry(gift)
         contractSeen = contract.id
@@ -787,6 +787,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     fun endContract(result: String, at: LocalDateTime? = null) {
         val c = contract
         if (!c.active) return
+        timer.stopBreakForContract()      // 结束合约前先停止休息
         val pending = c.reward
         val rec = c.finish(result, at, myId()) ?: return
         contractSeen = null

@@ -20,6 +20,7 @@ OFFLINE_LIMIT = 15 * 60          # 合约中有绑定的设备离线超过这么
 VIOLATION_LIMIT = 4              # 初始目标生命值: 每违反一次减一, 减到 0 合约失败
 HISTORY_KEEP = 30
 FRESH_MS = 2 * 60 * 1000         # 合约的主人这么久没同步过: 本机来做自动结束
+HAS_ADAPTER = os.name == "nt"    # 这台设备有没有 Adapter (禁用网卡) 的断网方式 (手机没有)
 
 # (id, 组, 等级, 名字, 描述, 冲突的词条)
 # 同一组的词条互相冲突, 界面上排在同一列; 冲突是双向的 (这里只写一边).
@@ -30,10 +31,9 @@ TERMS = [
     ("long3", "long", 3, "环境:持久战-III", "时长改为160%", ()),
     ("move1", "move", 1, "目标:高机动-I", "现实中的移动速度改为125%", ()),
     ("move2", "move", 2, "目标:高机动-II", "现实中的移动速度改为150%", ()),
-    ("info1", "info", 1, "环境:信息阻断-I", "可用的剩余联网时间改为75% 且不能使用借贷", ()),
-    ("info2", "info", 2, "环境:信息阻断-II", "可用的剩余联网时间改为50% 且不能使用借贷", ()),
-    ("info3", "info", 3, "环境:信息阻断-III", "可用的剩余联网时间改为25% 且不能使用借贷", ()),
-    ("isolate", "info", 4, "信息隔绝", "不能使用联网功能 选择时 获得的休息时间改为130%", ("music", "silent", "game", "video")),
+    ("info1", "info", 1, "环境:信息阻断-I", "可用的剩余联网时间改为80% 且不能使用借贷", ()),
+    ("info2", "info", 2, "环境:信息阻断-II", "可用的剩余联网时间改为65% 且不能使用借贷", ()),
+    ("info3", "info", 3, "环境:信息阻断-III", "可用的剩余联网时间改为50% 且不能使用借贷", ()),
     ("tired1", "tired", 1, "环境:疲惫-I", "期间获得的休息时间改为70%", ()),
     ("tired2", "tired", 2, "环境:疲惫-II", "期间获得的休息时间改为60%", ()),
     ("tired3", "tired", 3, "环境:疲惫-III", "期间获得的休息时间改为50%", ()),
@@ -41,32 +41,30 @@ TERMS = [
     ("short2", "short", 2, "环境:支援短缺-II", "不能使用合约开始前已经保存的休息时间", ()),
     ("retreat1", "retreat", 1, "环境:退路封锁-I", "初始目标生命值为3", ()),
     ("retreat2", "retreat", 2, "环境:退路封锁-II", "初始目标生命值为2", ()),
-    ("last", "retreat", 3, "最后防线", "初始目标生命值为1\n危机等级每有10级 词条等级增加一级", ()),
+    ("last", "retreat", 3, "最后防线", "初始目标生命值为1", ()),
     ("chan1", "chan", 1, "环境:通道阻塞-I", "期间的最大窗口数改为4", ()),
     ("chan2", "chan", 2, "环境:通道阻塞-II", "期间的最大窗口数改为3", ()),
     ("deep1", "deep", 1, "目标:纵深推进-I", "专注的时间不能少于40min", ()),
     ("deep2", "deep", 2, "目标:纵深推进-II", "专注的时间不能少于60min", ()),
-    ("erode1", "erode", 1, "环境:侵蚀-I", "网络申请冷却期改为200%", ("isolate",)),
-    ("erode2", "erode", 2, "环境:侵蚀-II", "网络申请冷却期改为300%", ("isolate",)),
+    ("erode1", "erode", 1, "环境:侵蚀-I", "网络申请冷却期改为200%", ()),
+    ("erode2", "erode", 2, "环境:侵蚀-II", "网络申请冷却期改为300%", ()),
     # 零散的按 TERMS 里的顺序在各自等级的那一行挨着排, 所以行为类似的写在一起 (上下两行也对齐):
     # 联网 (抑制 / 全频道阻塞干扰), 整点记录 (记录封锁 / 细化规范), 禁止打开的软件
-    # 和它们下面的录像 (目光 / 刻痕), 黑雾, 最后是休息 / 专注 (禁止囤囤鼠! / 静默协议 / 未知变量).
-# (禁止打开的软件: 乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒)
-    ("suppress", "suppress", 1, "环境:抑制", "不能使用快速访问功能", ("isolate",)),
-    ("jam", "jam", 2, "环境:全频道阻塞干扰", "期间使用proxy block-all模式", ()),
+    # 和它们下面的录像 (目光 / 刻痕) 与无言为真 (2 级), 黑雾, 最后是休息 / 专注 (禁止囤囤鼠! / 静默协议 / 未知变量).
+# (禁止打开的软件: 乐理之灾 / 禁游令 / 低帧的诅咒在 1 级挨着; 无言为真是 2 级, 排在录像右边)
+    ("suppress", "suppress", 1, "环境:抑制", "不能使用快速访问功能", ()),
+    ("jam", "jam", 2, "环境:全频道阻塞干扰", "有连接的其他设备时使用proxy block-all模式 没有时使用Adapter模式", ()),
     ("seal", "seal", 1, "环境:记录封锁", "超过填写时间未填写 则不能再修改该记录", ()),
     ("fine", "fine", 2, "目标:细化规范", "记录变为30min一次", ()),
     ("music", "music", 1, "环境:乐理之灾", "非休息期间不能打开音乐播放软件 不能使用外部软件播放mp3等音频文件", ()),
     ("gaze", "gaze", 2, "目光", "合约期间打开摄像头记录使用者的行为 结束后保存录像", ()),
-    ("silent", "silent", 1, "环境:无言为真", "合约期间不能打开社交软件和与AI聊天的软件 不能使用社交网站", ()),
     ("scar", "scar", 2, "刻痕", "合约期间录制整个屏幕 结束后保存录像", ("gaze",)),
+    ("silent", "silent", 2, "环境:无言为真", "合约期间不能打开社交软件和与AI聊天的软件 不能使用社交网站", ()),
     ("game", "game", 1, "环境:禁游令", "合约期间不能使用游戏和游戏平台", ()),
     ("video", "video", 1, "环境:低帧的诅咒", "合约期间不能使用视频平台", ()),
-    ("ent", "ent", 4, "互联网娱乐的败退", "同时有乐理之灾 无言为真 禁游令 低帧的诅咒的效果\n违反任意一项即整个失效\n合约开始时获得额外20min的休息时间",
-     ("music", "silent", "game", "video", "isolate")),
-    ("fog", "fog", 1, "环境:黑雾", "合约期间 专注时长 成就 日历 统计数据不可见 且无法打开设置", ()),
+    ("fog", "fog", 1, "环境:黑雾", "合约期间 专注时长 合约的剩余时间 成就 日历 统计数据不可见 且无法打开设置", ()),
     ("hoard", "hoard", 1, "禁止囤囤鼠!", "不能提前结束休息 但是获得的休息时间改为105%", ()),
-    ("quiet", "quiet", 1, "环境:静默协议", "专注中不能处于联网状态", ("isolate",)),
+    ("quiet", "quiet", 1, "环境:静默协议", "专注中不能处于联网状态", ()),
     ("unknown", "unknown", 3, "未知变量", "合约开始时 以及之后每过一个整小时 从当前可以选择的1-2级词条中随机启用一个或随机施加效果\n选中的词条不算进危机等级", ()),
 ]
 BY_ID = {t[0]: t for t in TERMS}
@@ -82,38 +80,33 @@ for _t in TERMS:
         _i = _LOOSE.get(_t[2], 0)
         _LOOSE[_t[2]] = _i + 1
         LAYOUT[_t[0]] = (len(SERIES) + _i, _t[2])
-# 放在另一个词条的那一列 (那一列在这个等级的格子空着): 互联网娱乐的败退在乐理之灾那一列的 4 级
-ALIGN = {"ent": "music"}
-for _t, _a in ALIGN.items():
-    LAYOUT[_t] = (LAYOUT[_a][0], BY_ID[_t][2])
 BOARD_COLS = len(SERIES) + max(_LOOSE.values(), default=0)
 MAX_LEVEL = max(t[2] for t in TERMS)
-# 词条板翻页: 成系列的一页, 零散的一页 (每页的 [开始列, 结束列)); 窗口放不下一页时界面再往下分
+# 词条板翻页: 成系列的一页, 零散的一页 (每页的 [开始列, 结束列)); 窗口放不下一页时界面再往下分.
+# 第 3 页 (COMBO_PAGE) 是词条组合的效果 (COMBOS), 由界面直接画, 不分列.
 PAGES = [(0, len(SERIES)), (len(SERIES), BOARD_COLS)]
+COMBO_PAGE = len(PAGES)
 
 # 软规则: 界面上照样能做, 但会被算作违反, 这个词条降一级 (结算按降级后的等级);
 # 其余是硬规则, 立即生效 (黑雾, 记录封锁, 细化规范, 全频道阻塞干扰, 持久战, 疲惫).
 # 录像 (目光 / 刻痕) 违反一次就失效 (录像停止): 不在 LOWER / SINGLE 里.
-SOFT = {"info1", "info2", "info3", "isolate", "chan1", "chan2", "music", "suppress", "short1", "short2",
-        "silent", "game", "video", "ent", "gaze", "scar", "deep1", "deep2", "quiet", "hoard", "unknown"}
-LOWER = {"isolate": "info3", "info3": "info2", "info2": "info1", "chan2": "chan1",
+SOFT = {"info1", "info2", "info3", "chan1", "chan2", "music", "suppress", "short1", "short2",
+        "silent", "game", "video", "gaze", "scar", "deep1", "deep2", "quiet", "hoard", "unknown"}
+LOWER = {"info3": "info2", "info2": "info1", "chan2": "chan1",
          "short2": "short1", "deep2": "deep1"}   # 降一级换成哪个词条
 SINGLE = {"music", "suppress", "silent", "game", "video", "quiet", "hoard"}   # 只有一档的软规则: 降级时等级减一, 减到 0 就失效
 
 DURATION = {"long1": 1.2, "long2": 1.4, "long3": 1.6}
-NET_SHARE = {"info1": 0.75, "info2": 0.5, "info3": 0.25, "isolate": 0.0}
+NET_SHARE = {"info1": 0.8, "info2": 0.65, "info3": 0.5}
 BASE_REST = 0.8                                # 合约中专注换来的休息时间的基础倍率; 有疲惫时换成疲惫的倍率
 REST = {"tired1": 0.7, "tired2": 0.6, "tired3": 0.5}
-REST_BONUS = {"isolate": 1.3, "hoard": 1.05}    # 休息时间额外的乘区 (和疲惫不冲突, 相乘): 信息隔绝 ×1.3, 禁止囤囤鼠! ×1.05
+REST_BONUS = {"hoard": 1.05}                    # 休息时间额外的乘区 (和疲惫不冲突, 相乘): 禁止囤囤鼠! ×1.05
 WINDOWS = {"chan1": 4, "chan2": 3}
 SUPPLY = {"short1": 0.5, "short2": 0.0}         # 合约开始前积攒的休息时间能用几成
 HOUR_TERMS = {"seal", "fine"}                   # 整点记录的词条: 整点记录关着时, 这次合约中照样开启
 LIFE = {"retreat1": 3, "retreat2": 2, "last": 1}  # 初始目标生命值 (硬规则)
-LAST, LAST_STEP = "last", 10                     # 最后防线: 危机等级 (不算这份加成) 每有 10 级, 它的等级 +1
 RECORD = {"gaze": "camera", "scar": "screen"}   # 录像的词条 → 录什么 (recorder.py)
 BANS = ("music", "silent", "game", "video")     # 禁止打开某类软件的词条 (每 2 秒看一次)
-BANS_ALL = "ent"                                # 互联网娱乐的败退: 同时有上面四个的效果; 违反任意一项就整个失效
-REST_GIFT = {"ent": 20 * 60}                    # 合约开始时积攒的休息时间多给这么多秒 (算合约中得到的, 合约结束后不留下)
 SUPPLY_WARN = (180, 60)                         # 支援短缺: 还差这么多秒就用超时各提醒一次
 DEEP = {"deep1": 40 * 60, "deep2": 60 * 60}     # 纵深推进: 一段专注至少这么多秒, 不到就结束算违反
 COOLDOWN_X = {"erode1": 2.0, "erode2": 3.0}     # 侵蚀: 网络申请的冷静期乘多少 (硬规则)
@@ -220,15 +213,101 @@ GAME_EXES = {
 BAN_EXES = {"silent": SOCIAL_EXES, "game": GAME_EXES, "video": VIDEO_EXES}
 BAN_TITLES = {"silent": SOCIAL_TITLES, "video": VIDEO_TITLES}   # 只看浏览器的窗口
 
+# 词条组合 (MECHANICS 18.3): 列出的词条 / 词条系列 (任意一档都算) 同时选着时生效, 效果栏的第 3 页列出它们.
+# level: 额外的危机等级; rest: 休息时间的额外乘区; gift: 开始时给的休息时间 (秒); end: 完成时给的休息时间 (秒).
+# 成员因违反失效 (降级不算失效) 时组合不再生效: 危机等级 / 乘区 / 结束后收益都没了, 开始时给的不收回.
+COMBOS = [
+    {"id": "mochi", "name": "打年糕", "color": "white",
+     "reqs": ("tired", "long", "fine", "deep"),
+     "level": 1, "rest": 1.1, "gift": 0, "end": 0,
+     "desc": "额外 1 危机等级\n休息时间 ×110%"},
+    {"id": "nofun", "name": "互联网娱乐的败退", "color": "purple",
+     "reqs": ("music", "silent", "game", "video"),
+     "level": 0, "rest": 1.0, "gift": 20 * 60, "end": 0,
+     "desc": "合约开始时 休息 +20 分钟"},
+    {"id": "flawless", "name": "无懈可击", "color": "gray",
+     "reqs": ("last", "unknown"),
+     "level": 0, "rest": 1.0, "gift": 20 * 60, "end": 0,
+     "desc": "合约开始时 休息 +20 分钟"},
+    {"id": "isolation", "name": "信息隔绝", "color": "red",
+     "reqs": ("info", "chan", "erode", "suppress", "fog", "quiet"),
+     "level": 1, "rest": 1.0, "gift": 0, "end": 10 * 60,
+     "desc": "额外 1 危机等级\n完成合约时 休息 +10 分钟"},
+]
+COMBOS_BY_ID = {c["id"]: c for c in COMBOS}
+COMBO_COLORS = {"white": "#ffffff", "purple": "#b06cf0", "gray": "#9a9ca1", "red": "#ff2b3a"}
+# 组合的要求在界面上怎么写: 成系列的一组只写一个名字
+GROUP_NAMES = {"long": "持久战", "tired": "疲惫", "info": "信息阻断", "chan": "通道阻塞",
+               "erode": "侵蚀", "deep": "纵深推进"}
 
-def last_bonus(base: int, terms) -> int:
-    """最后防线额外的等级: 选着它时, 危机等级 (不算这份加成) 每有 LAST_STEP 级 +1."""
-    return int(base) // LAST_STEP if LAST in (terms or []) else 0
+
+def req_name(req: str) -> str:
+    """组合的要求在界面上怎么写 (系列写系列的名字, 单个词条写去掉"环境:" / "目标:"之后的名字)."""
+    if req in GROUP_NAMES:
+        return GROUP_NAMES[req]
+    name = BY_ID[req][3] if req in BY_ID else str(req)
+    return name.split(":", 1)[-1].split("-", 1)[0]
+
+
+def combo_done(combo, terms) -> bool:
+    """这个词条组合凑齐了没有: 每一条要求都有一个选着的词条 (系列的任意一档都算)."""
+    terms = [t for t in (terms or []) if t in BY_ID]
+    for req in combo["reqs"]:
+        hit = any((BY_ID[t][1] == req) if req in GROUPS else (t == req) for t in terms)
+        if not hit:
+            return False
+    return True
+
+
+def combo_state(combo, terms, orig=None) -> str:
+    """组合的状态: done 凑齐了 / void 开始时凑齐过, 有成员失效了 / open 还没凑齐."""
+    if combo_done(combo, terms):
+        return "done"
+    if orig is not None and combo_done(combo, orig):
+        return "void"
+    return "open"
+
+
+def combo_level(terms) -> int:
+    """凑齐的组合带来的额外危机等级."""
+    return sum(int(c["level"]) for c in COMBOS if combo_done(c, terms))
+
+
+def combo_rest(terms) -> float:
+    """凑齐的组合带来的休息时间乘区."""
+    f = 1.0
+    for c in COMBOS:
+        if combo_done(c, terms):
+            f *= float(c["rest"])
+    return f
+
+
+def combo_gift(terms) -> int:
+    """合约开始时凑齐的组合给的休息时间 (秒, 算合约中得到的)."""
+    return int(sum(int(c["gift"]) for c in COMBOS if combo_done(c, terms)))
+
+
+def combo_end(terms) -> int:
+    """完成合约时凑齐的组合额外给的休息时间 (秒)."""
+    return int(sum(int(c["end"]) for c in COMBOS if combo_done(c, terms)))
+
+
+def combo_marks(terms) -> dict:
+    """凑齐了的组合: 成员词条 → 组合的颜色 (界面上用这个颜色框住它们). 没凑齐的不算."""
+    out = {}
+    for c in COMBOS:
+        if not combo_done(c, terms):
+            continue
+        for t in terms or []:
+            if t not in BY_ID:
+                continue
+            if any((BY_ID[t][1] == req) if req in GROUPS else (t == req) for req in c["reqs"]):
+                out.setdefault(t, COMBO_COLORS[c["color"]])
+    return out
 
 
 def level_of(terms) -> int:
-    base = sum(BY_ID[t][2] for t in terms if t in BY_ID)
-    return base + last_bonus(base, terms)
+    return sum(BY_ID[t][2] for t in terms if t in BY_ID) + combo_level(terms)
 
 
 def life_of(terms) -> int:
@@ -237,11 +316,12 @@ def life_of(terms) -> int:
 
 
 def rest_factor_of(terms) -> float:
-    """合约中专注换来的休息时间乘多少: 基础 ×0.8, 有疲惫时换成疲惫的 (取最低的); 再乘额外的乘区 (信息隔绝 ×1.3)."""
+    """合约中专注换来的休息时间乘多少: 基础 ×0.8, 有疲惫时换成疲惫的 (取最低的);
+    再乘额外的乘区 (禁止囤囤鼠! ×1.05, 打年糕 ×1.1)."""
     f = min((REST[t] for t in terms or [] if t in REST), default=BASE_REST)
     for t in terms or []:
         f *= REST_BONUS.get(t, 1.0)
-    return f
+    return f * combo_rest(terms)
 
 
 def rest_minutes(level: int) -> int:
@@ -250,14 +330,19 @@ def rest_minutes(level: int) -> int:
     return REST_MIN + (2 * span * lv + REST_TOP) // (2 * REST_TOP)    # 四舍五入 (.5 进位)
 
 
-def rest_reward(level: int) -> int:
-    """完成合约时存进积攒的休息时间的秒数."""
-    return rest_minutes(level) * 60
+def rest_reward(level: int, terms=None) -> int:
+    """完成合约时存进积攒的休息时间的秒数 (按等级查表 + 凑齐的组合的结束后收益)."""
+    return rest_minutes(level) * 60 + combo_end(terms or [])
+
+
+def rest_minutes_total(level: int, terms=None) -> int:
+    """完成合约时休息时间一共多少分钟 (界面上写 "完成后休息 +N 分钟")."""
+    return rest_reward(level, terms) // 60
 
 
 def rest_gift(terms) -> int:
-    """合约开始时存进积攒的休息时间的秒数 (互联网娱乐的败退: 20 分钟)."""
-    return int(sum(REST_GIFT.get(t, 0) for t in terms or []))
+    """合约开始时存进积攒的休息时间的秒数 (凑齐的组合给的, 算合约中得到的)."""
+    return combo_gift(terms)
 
 
 def duration_of(terms) -> int:
@@ -404,18 +489,15 @@ class Contract:
         return [t for t in r if t in self.terms] if isinstance(r, list) else []
 
     @property
-    def level(self) -> int:
+    def mine(self) -> list:
+        """开始时选的词条现在还在的 (降级后算现在的; 不算未知变量选中的). 词条组合只看这些."""
         rand = self.rand
-        mine = [t for t in self.terms if t in BY_ID and t not in rand]
-        base = sum(self.term_level(t) for t in mine)
-        return base + last_bonus(base, mine)
+        return [t for t in self.terms if t in BY_ID and t not in rand]
 
     @property
-    def last_extra(self) -> int:
-        """最后防线现在额外的等级 (按现在的危机等级算)."""
-        rand = self.rand
-        mine = [t for t in self.terms if t in BY_ID and t not in rand]
-        return last_bonus(sum(self.term_level(t) for t in mine), mine)
+    def level(self) -> int:
+        mine = self.mine
+        return sum(self.term_level(t) for t in mine) + combo_level(mine)
 
     @property
     def orig(self) -> list:
@@ -447,8 +529,8 @@ class Contract:
 
     @property
     def reward(self) -> float:
-        """完成时给的休息时间 (秒): 按现在的等级查表 (固定); 结算按降级后的等级."""
-        return float(rest_reward(self.level)) if self.active else 0.0
+        """完成时给的休息时间 (秒): 按现在的等级查表, 加上凑齐的组合的结束后收益; 结算按降级后的等级."""
+        return float(rest_reward(self.level, self.mine)) if self.active else 0.0
 
     @property
     def owner(self) -> str:
@@ -733,23 +815,47 @@ class Contract:
         return out
 
     def slow_bind(self, start: datetime) -> bool:
-        """开始专注: 等着的阻滞落到这段专注上 (专注时间按 RANDOM_SLOW 增长). 返回落上了没有."""
+        """开始专注: 等着的阻滞落到这段专注上 (专注时间按 RANDOM_SLOW 增长). 返回落上了没有.
+        阻滞只对合约内的专注生效: 合约已经结束 / 这段专注开始于合约结束之后时不落上."""
         slow = self.live.get("slow") if self.active else None
         if not (isinstance(slow, dict) and slow.get("pending")):
+            return False
+        end = self.end_at
+        if not end or start >= end:
             return False
         self.live["slow"] = {"start": _iso(start)}
         self.save()
         return True
 
-    def focus_rate(self, start: datetime) -> float:
-        """开始于 start 的这段专注的时间按多少增长: 阻滞 RANDOM_SLOW, 否则 1."""
+    def slow_until(self, start: datetime):
+        """阻滞让这段专注按 RANDOM_SLOW 增长到什么时候 (合约结束的时刻); 没有阻滞时 None."""
         if start is None:
-            return 1.0
+            return None
         mark = _iso(start)
         slow = self.live.get("slow") if self.active else None
         if isinstance(slow, dict) and slow.get("start") == mark:
-            return RANDOM_SLOW
-        return RANDOM_SLOW if any(h.get("slow") == mark for h in self.history[-3:]) else 1.0
+            return self.end_at
+        for h in reversed(self.history[-3:]):
+            if h.get("slow") == mark:
+                return _parse(h.get("end"))
+        return None
+
+    def focus_rate(self, start: datetime, now: datetime = None) -> float:
+        """开始于 start 的这段专注现在按多少增长: 阻滞 RANDOM_SLOW (只到合约结束), 之后 1."""
+        until = self.slow_until(start)
+        if until is None:
+            return 1.0
+        return RANDOM_SLOW if (now or datetime.now()) < until else 1.0
+
+    def focus_minutes(self, start: datetime, seconds: float) -> float:
+        """这一段专注计入的分钟数: 阻滞只减慢合约内的那部分时间, 合约结束后的部分按正常速度 (MECHANICS 18.3)."""
+        seconds = max(0.0, float(seconds))
+        until = self.slow_until(start)
+        if until is None or start is None:
+            return seconds / 60.0
+        end = start + timedelta(seconds=seconds)
+        inside = max(0.0, (min(end, until) - start).total_seconds())
+        return (inside * RANDOM_SLOW + (seconds - inside)) / 60.0
 
     @property
     def slow_pending(self) -> bool:
@@ -838,7 +944,7 @@ class Contract:
         return next((t for t in self.terms if t in NET_SHARE), "")
 
     def net_check(self, used: float, bonus: float, raw: float, date: str):
-        """信息阻断 / 信息隔绝: 合约开始时 (以及合约中换日时) 记下当时的剩余额度, 只能用它的几成, 不能借贷.
+        """信息阻断: 合约开始时 (以及合约中换日时) 记下当时的剩余额度, 只能用它的几成, 不能借贷.
         返回 (要降级的词条, "loan" / "over"), 没有违反时 ("", "") (只由做自动结束的设备调用, 额度是各设备共用的).
         已经失效的: 照样按失效时的额度看, 还在继续用超 / 又借贷了就返回它 (只响警报)."""
         tid = self.net_term() or self._lost_of(NET_SHARE)
@@ -892,13 +998,11 @@ class Contract:
         return tid if self._edge("win", n > lim) else ""
 
     def ban_term(self, kind: str) -> str:
-        """禁止打开这一类软件 (BANS 之一) 的是哪个词条: 它自己, 或者互联网娱乐的败退; 不禁止时 ""."""
-        if self.watching(kind):
-            return kind
-        return BANS_ALL if self.watching(BANS_ALL) else ""
+        """禁止打开这一类软件 (BANS 之一) 的是哪个词条: 它自己; 不禁止时 ""."""
+        return kind if self.watching(kind) else ""
 
     def ban_check(self, kind: str, hit: bool) -> str:
-        """乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒 (或者互联网娱乐的败退): 开着这一类软件.
+        """乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒: 开着这一类软件.
         每一类只在从没有到有的那一下算一次. 返回要降级的词条."""
         tid = self.ban_term(kind)
         if not tid:
@@ -1008,9 +1112,13 @@ class Contract:
 
     # ---- 词条的效果 ----
 
-    def overrides(self) -> dict:
-        """合约中盖过设置的项 (config 里的值, 硬规则): 全频道阻塞干扰 → 代理-全屏蔽."""
-        return {"NET_MODE": "proxy_all"} if self.has("jam") else {}
+    def overrides(self, peers: bool = True, adapter: bool = True) -> dict:
+        """合约中盖过设置的项 (config 里的值, 硬规则): 全频道阻塞干扰 → 断网方式.
+        有连接的其他设备时用 代理-全屏蔽 (Proxy block-all) (同步要靠联网); 没有时用 Adapter (禁用网卡).
+        设备没有 Adapter 方式 (手机) 时总是 代理-全屏蔽."""
+        if not self.has("jam"):
+            return {}
+        return {"NET_MODE": "proxy_all" if peers or not adapter else "adapter"}
 
     def window_limit(self) -> int:
         return min((WINDOWS[t] for t in self.terms if t in WINDOWS), default=0)
@@ -1043,7 +1151,16 @@ class Contract:
         return bool(a and b and a < slot_start + timedelta(hours=1) and slot_start < b)
 
     def rest_factor(self) -> float:
-        return rest_factor_of(self.terms)
+        return rest_factor_of(self.mine)
+
+    def combos(self) -> list:
+        """(组合, 状态) 现在的样子: 效果栏 (第 3 页) 照着画."""
+        terms, orig = self.mine, (self.orig if self.active else [])
+        return [(c, combo_state(c, terms, orig if self.active else None)) for c in COMBOS]
+
+    def combo_marks(self) -> dict:
+        """凑齐了的组合的成员词条 → 颜色 (界面上框住它们)."""
+        return combo_marks(self.mine)
 
     def book_rest(self, seconds: float, end: datetime = None) -> float:
         """一段专注换来的休息时间 (秒, 已乘"休息时间倍率"). 返回给出的休息时间.
@@ -1058,11 +1175,12 @@ class Contract:
         return seconds
 
     def book_rest_after(self, seconds: float, start: datetime) -> float:
-        """完成之后才结束的专注, 开始于刚完成的合约里: 按那个合约的疲惫给."""
+        """完成之后才结束的专注, 开始于刚完成的合约里: 按那个合约的疲惫给 (未知变量选中的不算组合)."""
         h = self.last
         hs, he = _parse(h.get("start")), _parse(h.get("end"))
         if h.get("result") == "completed" and hs and he and hs <= start < he:
-            terms = h.get("terms") or []
+            rand = set(h.get("rand") or [])
+            terms = [t for t in (h.get("terms") or []) if t not in rand]
             return seconds * rest_factor_of(terms)
         return seconds
 
@@ -1172,32 +1290,58 @@ def cell_fill(start: datetime, end: datetime, fill: timedelta) -> timedelta:
 
 def _selftest():
     import tempfile
-    assert level_of(["long3", "isolate", "last"]) == 10 + 1, "最后防线: 危机等级每有 10 级 +1"
-    assert level_of(["long3", "isolate"]) == 7 and level_of(["last", "long1"]) == 4
-    assert last_bonus(19, ["last"]) == 1 and last_bonus(20, ["last"]) == 2 and last_bonus(30, ["long3"]) == 0
+    assert level_of(["long3", "tired3", "info3", "last"]) == 12, "最后防线没有额外等级了, 只有初始目标生命值 1"
+    assert level_of(["long3", "tired3"]) == 6 and level_of(["last", "long1"]) == 4
     assert life_of([]) == 4 and life_of(["retreat1"]) == 3 and life_of(["retreat2"]) == 2 and life_of(["last"]) == 1
     assert conflicts("retreat1", "last") and conflicts("retreat2", "last"), "退路封锁和最后防线是同一组"
     assert not {"vlc.exe", "potplayermini64.exe", "mpc-hc64.exe", "wmplayer.exe"} & MUSIC_EXES, "视频播放器不算"
     assert rest_minutes(0) == 20 and rest_minutes(1) == 22 and rest_minutes(4) == 27 and rest_minutes(19) == 55
     assert rest_minutes(37) == 88 and rest_minutes(38) == 90 and rest_minutes(50) == 90 and rest_reward(45) == 90 * 60
     assert all(rest_minutes(i) <= rest_minutes(i + 1) for i in range(40))
-    assert conflicts("long1", "long3") and conflicts("isolate", "info2"), "同一组互相冲突"
-    assert not conflicts("isolate", "chan1") and not conflicts("chan2", "isolate") and conflicts("suppress", "isolate")
-    assert not conflicts("jam", "music") and conflicts("short1", "short2") and not conflicts("seal", "fine")
-    assert clean_terms(["long2", "long1", "x", "isolate", "suppress", "jam"]) == ["long2", "isolate", "jam"]
-    assert clean_terms(["isolate", "chan2"]) == ["isolate", "chan2"], "信息隔绝和通道阻塞可以一起选"
+    # 删掉的两个 4 级词条: 互联网娱乐的败退 变成组合, 信息隔绝 (旧词条) 删了
+    assert "isolate" not in BY_ID and "ent" not in BY_ID and MAX_LEVEL == 3, "没有了 4 级的词条: 词条板不再留那一行"
+    assert BY_ID["silent"][2] == 2, "无言为真调整为 2 级"
+    assert (NET_SHARE["info1"], NET_SHARE["info2"], NET_SHARE["info3"]) == (0.8, 0.65, 0.5), "信息阻断: 80% 65% 50%"
+    assert conflicts("long1", "long3") and conflicts("short1", "short2"), "同一组互相冲突"
+    assert not conflicts("erode1", "info3") and not conflicts("suppress", "quiet") and not conflicts("quiet", "jam")
+    assert not conflicts("erode1", "info2") and not conflicts("suppress", "fog")
+    assert not conflicts("jam", "music") and not conflicts("seal", "fine")
+    assert clean_terms(["long2", "long1", "x", "suppress", "jam"]) == ["long2", "suppress", "jam"]
     assert duration_of([]) == 4 * 3600 and duration_of(["long3"]) == int(4 * 3600 * 1.6)
     assert LAYOUT["short2"][0] < LAYOUT["suppress"][0], "成系列的在左边, 零散的在右边"
-    assert BOARD_COLS == len(SERIES) + 9 and LAYOUT["jam"] == (len(SERIES), 2) and LAYOUT["fine"] == (len(SERIES) + 1, 2),         "零散的词条挨着排, 不留空"
+    assert BOARD_COLS == len(SERIES) + 8 and LAYOUT["jam"] == (len(SERIES), 2) \
+        and LAYOUT["fine"] == (len(SERIES) + 1, 2), "零散的词条挨着排, 不留空"
     assert len(set(LAYOUT.values())) == len(TERMS)
-    # 行为类似的词条放在一起: 禁止的软件一行挨着, 录像在它们下面; 整点记录 / 联网各自上下对齐
-    assert [LAYOUT[t][0] for t in BANS] == list(range(LAYOUT["music"][0], LAYOUT["music"][0] + 4))
-    assert LAYOUT["gaze"][0] == LAYOUT["music"][0] and LAYOUT["scar"][0] == LAYOUT["silent"][0]
+    # 行为类似的词条放在一起: 禁止的软件在 1 级挨着, 录像在它们下面; 无言为真 2 级, 在低帧的诅咒下面
+    assert [LAYOUT[t][0] for t in ("music", "game", "video")] == \
+        [LAYOUT["music"][0], LAYOUT["music"][0] + 1, LAYOUT["music"][0] + 2]
+    assert LAYOUT["gaze"][0] == LAYOUT["music"][0] and LAYOUT["scar"][0] == LAYOUT["game"][0]
+    assert LAYOUT["silent"] == (LAYOUT["video"][0], 2), "无言为真是 2 级"
     assert LAYOUT["seal"][0] == LAYOUT["fine"][0] and LAYOUT["suppress"][0] == LAYOUT["jam"][0]
     assert conflicts("gaze", "scar") and conflicts("scar", "gaze") and not conflicts("gaze", "music")
-    assert all(conflicts("ent", t) and conflicts(t, "ent") and conflicts("isolate", t) for t in BANS)
-    assert conflicts("ent", "isolate") and not conflicts("ent", "info3") and not conflicts("ent", "gaze")
-    assert LAYOUT["ent"] == (LAYOUT["music"][0], 4), "互联网娱乐的败退在禁止软件的那几列下面"
+    assert not conflicts("silent", "music") and not conflicts("silent", "game"), "禁止软件的词条可以一起选"
+
+    # 词条组合: 系列任意一档都算; 凑齐了加危机等级 / 乘区 / 开始时或完成时的休息时间
+    mochi, nofun, flawless, isolation = (COMBOS_BY_ID[i] for i in ("mochi", "nofun", "flawless", "isolation"))
+    assert combo_done(mochi, ["long1", "tired2", "fine", "deep1"])
+    assert not combo_done(mochi, ["long1", "tired2", "fine"]) and not combo_done(mochi, ["long1", "tired2"])
+    assert combo_state(mochi, ["long1", "tired2"]) == "open"
+    assert combo_state(mochi, ["long1", "tired2"], ["long1", "tired2", "fine", "deep1"]) == "void"
+    assert combo_state(mochi, ["long1", "tired2", "fine", "deep1"]) == "done"
+    assert combo_level(["long1", "tired2", "fine", "deep1"]) == 1
+    assert abs(rest_factor_of(["long1", "tired2", "fine", "deep1"]) - 0.6 * 1.1) < 1e-9
+    iso = ["info1", "chan1", "erode1", "suppress", "fog", "quiet"]
+    assert clean_terms(iso) == iso, "信息隔绝组合的词条可以一起选"
+    assert combo_done(isolation, iso) and combo_level(iso) == 1 and combo_end(iso) == 10 * 60
+    assert rest_reward(6, iso) == rest_minutes(6) * 60 + 10 * 60
+    assert rest_minutes_total(6, iso) == rest_minutes(6) + 10
+    assert combo_gift(["music", "silent", "game", "video"]) == 20 * 60, "互联网娱乐的败退: 开始时 +20 分钟"
+    assert combo_gift(["last", "unknown"]) == 20 * 60, "无懈可击: 开始时 +20 分钟"
+    assert combo_marks(["last", "unknown"]) == {"last": COMBO_COLORS["gray"], "unknown": COMBO_COLORS["gray"]}
+    assert combo_marks(["long1", "tired2"]) == {}
+    assert nofun["color"] == "purple" and flawless["color"] == "gray" and isolation["color"] == "red" \
+        and mochi["color"] == "white"
+    assert req_name("deep") == "纵深推进" and req_name("last") == "最后防线" and req_name("silent") == "无言为真"
     for t in ("ChatGPT", "Claude", "(3) 首页 / X", "如何评价…？ - 知乎 - Google Chrome", "微博-随时随地发现新鲜事",
               "DeepSeek - 探索未至之境 - Microsoft Edge", "Reddit - Dive into anything", "Kimi 智能助手"):
         assert site_title(t, SOCIAL_TITLES), t
@@ -1210,55 +1354,76 @@ def _selftest():
     assert not set(SOCIAL_EXES) & set(VIDEO_EXES) and not SOCIAL_TITLES & VIDEO_TITLES, "一个软件只算一个词条"
     best = clean_terms(["long3", "move2", "info3", "suppress", "jam", "music", "fog", "tired3", "chan2", "last",
                         "short2", "seal", "fine", "silent", "game", "video", "gaze", "scar"])
-    assert "scar" not in best and level_of(best) == 31 + 3, level_of(best)
-    best2 = clean_terms(["long3", "move2", "info3", "suppress", "jam", "ent", "fog", "tired3", "chan2", "last",
-                         "short2", "seal", "fine", "gaze"])
-    assert level_of(best2) == 31 + 3 and "ent" in best2, best2
+    assert "scar" not in best and level_of(best) == 32, level_of(best)
+    assert combo_gift(best) == 20 * 60, "互联网娱乐的败退凑齐了"
+    best2 = clean_terms(["info3", "chan2", "erode2", "suppress", "fog", "quiet", "last", "long3", "tired3", "fine"])
+    assert len(best2) == 10, best2
+    assert combo_level(best2) == 1 and level_of(best2) == 21 + 1, level_of(best2)
 
     c = Contract(tempfile.mkdtemp())
     t0 = datetime(2026, 10, 18, 9, 30)
     c.start(["tired2", "info2", "chan1", "long1", "music"], owner="me", now=t0)
     assert c.active and c.level == 2 + 2 + 1 + 1 + 1 and c.end_at == t0 + timedelta(seconds=int(4 * 3600 * 1.2))
     assert c.overrides() == {} and not c.fog() and not c.hour_forced()
-    # 信息阻断-II: 开始时剩 100 分钟, 只能用 50 分钟; 用超了 → 降成 -I, 多给 25 分钟
+    # 信息阻断-II: 开始时剩 100 分钟, 只能用 65 分钟; 用超了 → 降成 -I, 多给 15 分钟
     assert c.net_check(600, 0, 6000, "2026-10-18") == ("", "")
-    assert c.net_left(600) == 3000 and c.net_check(3599, 0, 0, "2026-10-18") == ("", "")
-    assert c.net_check(3700, 0, 0, "2026-10-18") == ("info2", "over")
+    assert c.net_left(600) == 3900 and c.net_check(4499, 0, 0, "2026-10-18") == ("", "")
+    assert c.net_check(4600, 0, 0, "2026-10-18") == ("info2", "over")
     over, new = c.violate("info2")
     assert not over and new == "info1" and c.terms == ["long1", "info1", "tired2", "chan1", "music"], c.terms
-    assert c.net_left(3700) == 600 + 3000 + 1500 - 3700 and c.level == 6 and c.orig_level == 7
-    assert c.net_check(3800, 0, 0, "2026-10-18") == ("", "")
-    assert c.net_check(3800, 600, 0, "2026-10-18") == ("info1", "loan"), "借贷也算违反"
-    assert c.net_check(3800, 600, 0, "2026-10-18") == ("", ""), "同一次借贷只算一次"
+    assert c.net_left(4600) == 600 + 3900 + 900 - 4600 and c.level == 6 and c.orig_level == 7
+    assert c.net_check(4700, 0, 0, "2026-10-18") == ("", "")
+    assert c.net_check(4700, 600, 0, "2026-10-18") == ("info1", "loan"), "借贷也算违反"
+    assert c.net_check(4700, 600, 0, "2026-10-18") == ("", ""), "同一次借贷只算一次"
     assert c.downgrade("info1") == "" and not c.net_term() and c.net_check(9999, 9999, 0, "x") == ("", "")
     # 通道阻塞 / 乐理之灾: 只在刚越过的那一下算
     assert c.window_check(5) == "chan1" and c.window_check(6) == "" and c.window_check(3) == ""
     assert c.window_check(5) == "chan1"
     assert c.ban_check("music", True) == "music" and c.ban_check("music", True) == "" and c.ban_check("music", False) == ""
     assert c.downgrade("music") == "" and not c.has("music"), "乐理之灾只有 1 级, 降一级就失效"
-    # 无言为真 / 禁游令: 和乐理之灾一样; 录像 (目光 / 刻痕) 违反一次就失效
+    # 无言为真 (2 级) / 禁游令: 违反一次降一级, 再违反才失效; 录像 (目光 / 刻痕) 违反一次就失效
     c.start(["silent", "game", "gaze"], owner="me", now=t0)
-    assert c.level == 4 and c.records() == ["camera"] and c.ban_check("music", True) == ""
+    assert c.level == 2 + 1 + 2 and c.records() == ["camera"] and c.ban_check("music", True) == ""
     assert c.ban_check("game", True) == "game" and c.ban_check("game", True) == "" and c.ban_check("silent", True) == "silent"
-    assert c.violate("gaze") == (False, "") and c.records() == [] and c.level == 2
+    assert c.violate("gaze") == (False, "") and c.records() == [] and c.level == 3
     assert c.violate("game") == (False, "") and not c.has("game") and c.has("silent")
-    # 互联网娱乐的败退: 四类都禁止, 每一类各自只在打开的那一下算; 违反任意一项就整个失效 (四类都放开)
-    c.start(["ent", "info3"], owner="me", now=t0)
-    assert c.ban_term("game") == "ent" and c.ban_check("video", True) == "ent" and c.ban_check("video", True) == ""
-    assert c.violate("ent") == (False, "") and not c.has("ent") and c.level == 3
-    # 失效后照样检查: 再次打开只响警报 (echo), 不扣目标生命值; 每个词条 2 分钟最多响一次
-    assert c.lost == ["ent"] and c.ban_term("game") == "ent" and c.ban_check("silent", True) == "ent" and c.echo("ent")
-    assert c.echo_due("ent", t0) and not c.echo_due("ent", t0 + timedelta(seconds=119))
-    assert c.echo_due("ent", t0 + timedelta(seconds=120)) and c.violations == 1
-    # 合约开始时积攒的休息时间 +20 分钟 (不算合约开始前的)
-    assert rest_gift(["ent", "info3"]) == 20 * 60 and rest_gift(["music", "silent"]) == 0
-    # 翻页: 成系列的一页, 零散的一页
+    c.start(["silent"], owner="me", now=t0)
+    assert c.term_level("silent") == 2 and c.level == 2
+    assert c.violate("silent") == (False, "silent") and c.has("silent") and c.term_level("silent") == 1
+    assert c.level == 1
+    assert c.violate("silent") == (False, "") and not c.has("silent") and c.lost == ["silent"]
+    # 互联网娱乐的败退 (词条组合): 四类都禁止, 每一类各自只在打开的那一下算; 开始时休息 +20 分钟
+    c.start(["music", "silent", "game", "video"], owner="me", now=t0)
+    assert c.level == 1 + 2 + 1 + 1 and c.ban_term("game") == "game" and c.ban_check("video", True) == "video"
+    assert c.ban_check("video", True) == "" and rest_gift(c.terms) == 20 * 60
+    # 凑齐的组合: 成员失效 (降级不算) 后组合的效果全部取消, 开始时给的休息时间不收回
+    assert c.combos()[1] == (nofun, "done") and c.combo_marks().get("music") == COMBO_COLORS["purple"]
+    assert c.violate("game") == (False, "") and c.combos()[1] == (nofun, "void")
+    assert c.combo_marks() == {} and rest_gift(c.terms) == 0
+    # 信息隔绝组合: 额外 1 危机等级, 完成时 +10 分钟; 成员失效后都没了
+    c.start(iso, owner="me", now=t0)
+    assert c.combos()[3] == (isolation, "done") and c.level == 6 + 1
+    assert c.reward == rest_minutes(7) * 60 + 10 * 60 and c.combo_marks().get("fog") == COMBO_COLORS["red"]
+    assert c.violate("suppress") == (False, "") and c.combos()[3] == (isolation, "void")
+    assert c.level == 5 and c.reward == rest_minutes(5) * 60
+    # 打年糕组合: 额外 1 危机等级, 休息时间 ×1.1; 纵深推进降级不算失效
+    c.start(["long1", "tired2", "fine", "deep2"], owner="me", now=t0)
+    assert c.combos()[0] == (mochi, "done") and c.level == 2 + 1 + 2 + 2 + 1
+    assert abs(c.rest_factor() - 0.6 * 1.1) < 1e-9
+    assert c.violate("deep2") == (False, "deep1") and c.combos()[0] == (mochi, "done")
+    assert abs(c.rest_factor() - 0.6 * 1.1) < 1e-9, "降级不算失效"
+    assert c.violate("deep1") == (False, "") and c.combos()[0] == (mochi, "void")
+    assert abs(c.rest_factor() - 0.6) < 1e-9, "成员失效了: 乘区取消"
+    # 翻页: 成系列的一页, 零散的一页, 第 3 页是组合效果
     assert PAGES == [(0, len(SERIES)), (len(SERIES), BOARD_COLS)] and LAYOUT["deep1"][0] < len(SERIES)
     assert LAYOUT["hoard"][0] >= len(SERIES) and LAYOUT["unknown"] == (len(SERIES), 3)
-    # 侵蚀 / 静默协议和信息隔绝冲突
-    assert conflicts("erode1", "isolate") and conflicts("isolate", "erode2") and conflicts("quiet", "isolate")
-    assert not conflicts("erode1", "info3") and not conflicts("quiet", "jam")
-    # 禁止囤囤鼠!: 提前结束休息算违反 (软规则, 1 级, 违反一次失效), 休息时间 ×1.05 (和疲惫 / 信息隔绝相乘); 侵蚀: 冷静期 ×2 / ×3
+    assert COMBO_PAGE == len(PAGES) and len(COMBOS) == 4
+    # 全频道阻塞干扰: 有连接的其他设备时用 代理-全屏蔽, 没有时用 Adapter (设备有 Adapter 方式)
+    c.start(["jam"], owner="me", now=t0)
+    assert c.overrides() == {"NET_MODE": "proxy_all"} and c.overrides(peers=True) == {"NET_MODE": "proxy_all"}
+    assert c.overrides(peers=False) == {"NET_MODE": "adapter"}, "没有连接其他设备: 用 Adapter"
+    assert c.overrides(peers=False, adapter=False) == {"NET_MODE": "proxy_all"}, "没有 Adapter 方式的设备总是代理-全屏蔽"
+    # 禁止囤囤鼠!: 提前结束休息算违反 (软规则, 1 级, 违反一次失效), 休息时间 ×1.05 (和疲惫相乘); 侵蚀: 冷静期 ×2 / ×3
     c.start(["hoard", "tired1", "erode2"], owner="me", now=t0)
     assert c.hoard_check() == "hoard" and abs(c.rest_factor() - 0.7 * 1.05) < 1e-9 and c.cooldown_factor() == 3.0
     assert c.violate("hoard") == (False, "") and not c.has("hoard") and abs(c.rest_factor() - 0.7) < 1e-9
@@ -1278,7 +1443,7 @@ def _selftest():
     pool = c.random_candidates()
     assert "gaze" not in pool and "scar" not in pool and "info1" not in pool and "long2" not in pool
     assert not {"long1", "long2", "long3"} & set(pool), "不选持久战"
-    assert "unknown" not in pool and "isolate" not in pool and "music" in pool and "jam" in pool
+    assert "unknown" not in pool and "music" in pool and "jam" in pool
 
     class _Rng:
         """测试用: random() 依次给出 rs 里的数 (用完了给 0 = 抽词条), choice 按 pick 选 (没有时随机)."""
@@ -1367,12 +1532,16 @@ def _selftest():
     # 没有能选的词条: 一定是效果
     c.live["rand_used"] = [t[0] for t in TERMS]
     assert c.random_candidates() == [] and c.roll(t0 + timedelta(hours=3), _Rng([0.7])) == [("none", "")]
-    # 阻滞: 下一次开始的专注时间按 90% 增长 (合约结束了这段专注照样按 90%)
+    # 阻滞: 只减慢合约内那部分专注 (合约结束后恢复正常速度); 合约结束后才开始的专注不生效
     c.live["rand_n"] = 3                       # 合约只有 4 小时: 再判定一次第 4 个小时
     assert c.roll(t0 + timedelta(hours=3, minutes=30), _Rng([0.6])) == [("slow", "")] and c.slow_pending
-    s1 = t0 + timedelta(hours=4, minutes=10)
-    assert c.focus_rate(s1) == 1.0 and c.slow_bind(s1) and not c.slow_pending and not c.slow_bind(s1)
-    assert c.focus_rate(s1) == 0.9 and c.focus_rate(s1 + timedelta(hours=1)) == 1.0
+    late = t0 + timedelta(hours=4, minutes=10)
+    assert not c.slow_bind(late) and c.slow_pending, "合约结束后才开始的专注不落上阻滞"
+    s1 = t0 + timedelta(hours=3, minutes=30)
+    assert c.slow_bind(s1) and not c.slow_pending and not c.slow_bind(s1)
+    assert c.focus_rate(s1, s1) == 0.9 and c.focus_rate(s1, late) == 1.0, "合约结束后不再减慢"
+    # 这段专注: 合约内 30 分钟按 90% 算, 合约结束后的 30 分钟按正常速度
+    assert abs(c.focus_minutes(s1, 3600) - (1800 * 0.9 + 1800) / 60) < 1e-6
     # 封锁一个过了填写时限, 还没被封锁的记录格 (最近 24 小时里的), 合约结束后照样锁着; 填了的也锁
     fill = timedelta(hours=1)
     now = datetime(2026, 10, 18, 12, 10)
@@ -1386,7 +1555,9 @@ def _selftest():
     assert c.lock_cell(now, last, texts.get, "Sleeping", fill) == "2026-10-18/9", "已经封锁的不再选"
     assert c.lock_cell(now, None, None, "Sleeping", fill) == ""
     c.finish("abandoned", now)
-    assert c.hour_locked(a, b, "学习", now + timedelta(days=3), fill, "Sleeping") and c.focus_rate(s1) == 0.9
+    # 合约提前结束了: 之后才开始的这段专注不减速 (阻滞只对合约内的专注生效)
+    assert c.hour_locked(a, b, "学习", now + timedelta(days=3), fill, "Sleeping")
+    assert c.focus_rate(s1) == 1.0 and abs(c.focus_minutes(s1, 3600) - 60) < 1e-6
     # 未知变量启用了整点记录的词条: 这次合约中一直强制开启整点记录
     c.start(["unknown"], owner="me", now=t0)
     assert not c.hour_forced()
@@ -1401,13 +1572,17 @@ def _selftest():
     c.pre_cap(250)
     assert c.pre_left == 250
     c = Contract(tempfile.mkdtemp())          # 上面封锁的记录格会影响后面整点记录的测试
-    # 信息隔绝: 休息时间额外 ×1.3 (和疲惫相乘); 降成信息阻断-III 后没有了
-    c.start(["isolate", "tired2"], owner="me", now=t0)
-    assert abs(c.rest_factor() - 0.6 * 1.3) < 1e-9 and abs(c.book_rest(1000, t0) - 780) < 1e-6
-    c.downgrade("isolate")
-    assert c.rest_factor() == 0.6
-    # 没有疲惫: 基础 ×0.8 (信息隔绝照样相乘)
-    assert rest_factor_of([]) == 0.8 and abs(rest_factor_of(["isolate"]) - 0.8 * 1.3) < 1e-9
+    # 打年糕: 休息时间额外 ×1.1 (和疲惫相乘); 成员降级不算失效, 失效后乘区取消
+    c.start(["long1", "tired2", "fine", "deep2"], owner="me", now=t0)
+    assert abs(c.rest_factor() - 0.6 * 1.1) < 1e-9 and abs(c.book_rest(1000, t0) - 660) < 1e-6
+    assert c.level == 8 and c.combo_marks().get("deep2") == COMBO_COLORS["white"]
+    c.downgrade("deep2")
+    assert abs(c.rest_factor() - 0.6 * 1.1) < 1e-9, "降级不算失效"
+    c.downgrade("deep1")
+    assert abs(c.rest_factor() - 0.6) < 1e-9 and c.level == 5 and c.combo_marks() == {}
+    # 没有疲惫: 基础 ×0.8 (打年糕照样相乘)
+    assert rest_factor_of([]) == 0.8
+    assert abs(rest_factor_of(["long1", "tired2", "fine", "deep1"]) - 0.6 * 1.1) < 1e-9
     c.start(["scar"], owner="me", now=t0)
     assert c.records() == ["screen"] and c.level == 2 and c.violate("scar") == (False, "") and c.terms == []
     c.start(["tired2", "chan1", "long1"], owner="me", now=t0)
@@ -1448,10 +1623,10 @@ def _selftest():
     assert c.quiet_check(False) == "" and c.quiet_check(True) == "quiet" and c.echo("quiet")
     assert c.violations == 3 and c.life == 1
     c.live["violations"] = 0                  # 目标生命值只有 4: 接着测剩下的
-    assert c.net_check(0, 0, 4000, "d") == ("", "") and c.net_check(3100, 0, 0, "d") == ("info1", "over")
-    assert c.violate("info1") == (False, "") and c.net_term() == "" and c.net_check(3100, 0, 0, "d") == ("", ""), "没有继续用"
-    assert c.net_check(3200, 0, 0, "d") == ("info1", "over") and c.net_check(3200, 0, 0, "d") == ("", "")
-    assert c.net_check(3200, 300, 0, "d") == ("info1", "loan") and c.echo("info1")
+    assert c.net_check(0, 0, 4000, "d") == ("", "") and c.net_check(3300, 0, 0, "d") == ("info1", "over")
+    assert c.violate("info1") == (False, "") and c.net_term() == "" and c.net_check(3300, 0, 0, "d") == ("", ""), "没有继续用"
+    assert c.net_check(3400, 0, 0, "d") == ("info1", "over") and c.net_check(3400, 0, 0, "d") == ("", "")
+    assert c.net_check(3400, 300, 0, "d") == ("info1", "loan") and c.echo("info1")
     assert c.supply_check(0, 400) == "short1" and c.violate("short1") == (False, "") and c.supply_limit is None
     assert c.supply_watch() == "short1" and c.supply_check(0, 400) == "" and c.supply_check(0, 400.3) == ""
     assert c.supply_check(0, 410) == "short1" and c.echo("short1")
@@ -1473,10 +1648,10 @@ def _selftest():
     assert c.window_watch() == ("chan2", 3) and not c.echo("chan2")
     assert c.expire(t0 + timedelta(hours=1)) == ["chan2"] and c.window_watch() == ("chan1", 4) and c.echo("chan1")
 
-    # 最后防线: 危机等级 10 → 多 1 级; 降级后不到 10 级就没有了
-    c.start(["last", "long3", "isolate"], owner="me", now=t0)
-    assert c.level == 11 and c.last_extra == 1 and c.orig_level == 11
-    assert c.violate("isolate") == (True, "info3") and c.level == 9 and c.last_extra == 0   # 目标生命值只有 1
+    # 最后防线: 只有初始目标生命值 1, 没有额外的词条等级
+    c.start(["last", "long3", "tired3", "chan1"], owner="me", now=t0)
+    assert c.level == 10 and c.orig_level == 10 and c.violation_limit == 1
+    assert c.violate("chan1") == (True, "") and c.level == 9   # 目标生命值只有 1
 
     # 完成: 按等级给固定的休息时间 (等级 4 → 27 分钟), 第一次休息的结转比例
     c.start(["last", "tired1"], owner="me", now=t0)

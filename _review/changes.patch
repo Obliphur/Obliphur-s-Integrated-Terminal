@@ -1,0 +1,2850 @@
+diff --git a/Android version/app/build.gradle.kts b/Android version/app/build.gradle.kts
+index c74ce26..1051f65 100644
+--- a/Android version/app/build.gradle.kts	
++++ b/Android version/app/build.gradle.kts	
+@@ -12,9 +12,9 @@ android {
+         applicationId = "com.obliphur.oit"
+         minSdk = 29
+         targetSdk = 35
+-        versionCode = 59
++        versionCode = 60
+         // 和 GitHub 上发布的版本号比较 (见 service/Updater.kt); 桌面版是 config.APP_VERSION
+-        versionName = "1.0.58"
++        versionName = "1.0.59"
+     }
+ 
+     buildTypes {
+diff --git a/Android version/app/src/main/java/com/obliphur/oit/core/Contract.kt b/Android version/app/src/main/java/com/obliphur/oit/core/Contract.kt
+index 5c9c2e2..98f69d4 100644
+--- a/Android version/app/src/main/java/com/obliphur/oit/core/Contract.kt	
++++ b/Android version/app/src/main/java/com/obliphur/oit/core/Contract.kt	
+@@ -13,6 +13,12 @@ class Dice(val roll: () -> Double = { kotlin.random.Random.nextDouble() },
+ class Term(val id: String, val group: String, val level: Int, val name: String, val desc: String,
+            val conflicts: List<String> = emptyList())
+ 
++/** 词条组合 (MECHANICS 18.3.1): 列出的词条 / 词条系列 (任意一档都算) 同时选着时生效.
++ *  level: 额外的危机等级; rest: 休息时间的额外乘区; gift: 开始时给的休息时间 (秒); end: 完成时给的休息时间 (秒).
++ *  成员因违反失效 (降级不算失效) 时组合不再生效: 危机等级 / 乘区 / 结束后收益都没了, 开始时给的不收回. */
++class Combo(val id: String, val name: String, val color: String, val reqs: List<String>,
++            val level: Int, val rest: Double, val gift: Int, val end: Int, val desc: String)
++
+ /**
+  * 合约 (MECHANICS 18). 对应桌面版 contract.py.
+  * 存档 contract.json: 进行中的合约 (live), 结束了的合约 (history, 整点记录的锁定也看它), 没开始的草稿 (draft).
+@@ -36,11 +42,9 @@ class Contract(private val file: File) {
+             Term("long3", "long", 3, "环境:持久战-III", "时长改为160%"),
+             Term("move1", "move", 1, "目标:高机动-I", "现实中的移动速度改为125%"),
+             Term("move2", "move", 2, "目标:高机动-II", "现实中的移动速度改为150%"),
+-            Term("info1", "info", 1, "环境:信息阻断-I", "可用的剩余联网时间改为75% 且不能使用借贷"),
+-            Term("info2", "info", 2, "环境:信息阻断-II", "可用的剩余联网时间改为50% 且不能使用借贷"),
+-            Term("info3", "info", 3, "环境:信息阻断-III", "可用的剩余联网时间改为25% 且不能使用借贷"),
+-            Term("isolate", "info", 4, "信息隔绝", "不能使用联网功能 选择时 获得的休息时间改为130%",
+-                listOf("music", "silent", "game", "video")),
++            Term("info1", "info", 1, "环境:信息阻断-I", "可用的剩余联网时间改为80% 且不能使用借贷"),
++            Term("info2", "info", 2, "环境:信息阻断-II", "可用的剩余联网时间改为65% 且不能使用借贷"),
++            Term("info3", "info", 3, "环境:信息阻断-III", "可用的剩余联网时间改为50% 且不能使用借贷"),
+             Term("tired1", "tired", 1, "环境:疲惫-I", "期间获得的休息时间改为70%"),
+             Term("tired2", "tired", 2, "环境:疲惫-II", "期间获得的休息时间改为60%"),
+             Term("tired3", "tired", 3, "环境:疲惫-III", "期间获得的休息时间改为50%"),
+@@ -48,87 +52,77 @@ class Contract(private val file: File) {
+             Term("short2", "short", 2, "环境:支援短缺-II", "不能使用合约开始前已经保存的休息时间"),
+             Term("retreat1", "retreat", 1, "环境:退路封锁-I", "初始目标生命值为3"),
+             Term("retreat2", "retreat", 2, "环境:退路封锁-II", "初始目标生命值为2"),
+-            Term("last", "retreat", 3, "最后防线", "初始目标生命值为1\n危机等级每有10级 词条等级增加一级"),
++            Term("last", "retreat", 3, "最后防线", "初始目标生命值为1"),
+             Term("chan1", "chan", 1, "环境:通道阻塞-I", "期间的最大窗口数改为4"),
+             Term("chan2", "chan", 2, "环境:通道阻塞-II", "期间的最大窗口数改为3"),
+             Term("deep1", "deep", 1, "目标:纵深推进-I", "专注的时间不能少于40min"),
+             Term("deep2", "deep", 2, "目标:纵深推进-II", "专注的时间不能少于60min"),
+-            Term("erode1", "erode", 1, "环境:侵蚀-I", "网络申请冷却期改为200%", listOf("isolate")),
+-            Term("erode2", "erode", 2, "环境:侵蚀-II", "网络申请冷却期改为300%", listOf("isolate")),
++            Term("erode1", "erode", 1, "环境:侵蚀-I", "网络申请冷却期改为200%"),
++            Term("erode2", "erode", 2, "环境:侵蚀-II", "网络申请冷却期改为300%"),
+             // 零散的按这里的顺序在各自等级的那一行挨着排, 所以行为类似的写在一起 (上下两行也对齐):
+             // 联网 (抑制 / 全频道阻塞干扰), 整点记录 (记录封锁 / 细化规范), 禁止打开的软件
+-            // (乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒, 下面是录像: 目光 / 刻痕, 再下面是互联网娱乐的败退), 黑雾,
++            // (乐理之灾 / 禁游令 / 低帧的诅咒在 1 级挨着; 录像 目光 / 刻痕 和 2 级的无言为真在下面), 黑雾,
+             // 最后是休息 / 专注 (禁止囤囤鼠! / 静默协议 / 未知变量).
+-            Term("suppress", "suppress", 1, "环境:抑制", "不能使用快速访问功能", listOf("isolate")),
++            Term("suppress", "suppress", 1, "环境:抑制", "不能使用快速访问功能"),
+             Term("jam", "jam", 2, "环境:全频道阻塞干扰", "期间使用proxy block-all模式"),
+             Term("seal", "seal", 1, "环境:记录封锁", "超过填写时间未填写 则不能再修改该记录"),
+             Term("fine", "fine", 2, "目标:细化规范", "记录变为30min一次"),
+             Term("music", "music", 1, "环境:乐理之灾", "非休息期间不能打开音乐播放软件 不能使用外部软件播放mp3等音频文件"),
+             Term("gaze", "gaze", 2, "目光", "合约期间打开摄像头记录使用者的行为 结束后保存录像"),
+-            Term("silent", "silent", 1, "环境:无言为真", "合约期间不能打开社交软件和与AI聊天的软件 不能使用社交网站"),
+             Term("scar", "scar", 2, "刻痕", "合约期间录制整个屏幕 结束后保存录像",
+                 listOf("gaze")),
++            Term("silent", "silent", 2, "环境:无言为真", "合约期间不能打开社交软件和与AI聊天的软件 不能使用社交网站"),
+             Term("game", "game", 1, "环境:禁游令", "合约期间不能使用游戏和游戏平台"),
+             Term("video", "video", 1, "环境:低帧的诅咒", "合约期间不能使用视频平台"),
+-            Term("ent", "ent", 4, "互联网娱乐的败退", "同时有乐理之灾 无言为真 禁游令 低帧的诅咒的效果\n违反任意一项即整个失效\n合约开始时获得额外20min的休息时间",
+-                listOf("music", "silent", "game", "video", "isolate")),
+-            Term("fog", "fog", 1, "环境:黑雾", "合约期间 专注时长 成就 日历 统计数据不可见 且无法打开设置"),
++            Term("fog", "fog", 1, "环境:黑雾", "合约期间 专注时长 合约的剩余时间 成就 日历 统计数据不可见 且无法打开设置"),
+             Term("hoard", "hoard", 1, "禁止囤囤鼠!", "不能提前结束休息 但是获得的休息时间改为105%"),
+-            Term("quiet", "quiet", 1, "环境:静默协议", "专注中不能处于联网状态", listOf("isolate")),
++            Term("quiet", "quiet", 1, "环境:静默协议", "专注中不能处于联网状态"),
+             Term("unknown", "unknown", 3, "未知变量", "合约开始时 以及之后每过一个整小时 从当前可以选择的1-2级词条中随机启用一个或随机施加效果\n选中的词条不算进危机等级"),
+         )
+         val BY_ID = TERMS.associateBy { it.id }
+         val GROUPS = TERMS.map { it.group }.distinct()
+         /** 词条板的布局: 成系列的每组一列 (左边); 零散的不单独占列, 按等级放进右边的几列, 每一行从左往右挨着排, 不留空. */
+         val SERIES = GROUPS.filter { g -> TERMS.count { it.group == g } > 1 }
+-        /** 放在另一个词条的那一列 (那一列在这个等级的格子空着): 互联网娱乐的败退在乐理之灾那一列的 4 级. */
+-        val ALIGN = mapOf("ent" to "music")
+         /** 词条 → 列. */
+         val LAYOUT: Map<String, Int> = run {
+             val loose = HashMap<Int, Int>()
+-            val m = TERMS.filter { it.id !in ALIGN }.associate { t ->
++            TERMS.associate { t ->
+                 t.id to if (t.group in SERIES) SERIES.indexOf(t.group)
+                 else SERIES.size + loose.getOrDefault(t.level, 0).also { loose[t.level] = it + 1 }
+             }
+-            m + ALIGN.mapValues { m[it.value]!! }
+         }
+         val BOARD_COLS = (LAYOUT.values.maxOrNull() ?: -1) + 1
+         val MAX_LEVEL = TERMS.maxOf { it.level }
+-        /** 词条板翻页: 成系列的一页, 零散的一页 (每页的列). */
++        /** 词条板翻页: 成系列的一页, 零散的一页 (每页的列); 第 3 页 (COMBO_PAGE) 是词条组合的效果. */
+         val PAGES = listOf(0 until SERIES.size, SERIES.size until BOARD_COLS)
++        const val COMBO_PAGE = 2
+         private val ORDER = TERMS.mapIndexed { i, t -> t.id to i }.toMap()
+ 
+         // 软规则: 界面上照样能做, 但会被算作违反, 这个词条降一级 (结算按降级后的等级);
+         // 其余是硬规则, 立即生效 (黑雾, 记录封锁, 细化规范, 全频道阻塞干扰, 持久战, 疲惫).
+         // 录像 (目光 / 刻痕) 违反一次就失效 (录像停止): 不在 LOWER / SINGLE 里.
+-        val SOFT = setOf("info1", "info2", "info3", "isolate", "chan1", "chan2", "music", "suppress", "short1", "short2",
+-            "silent", "game", "video", "ent", "gaze", "scar", "deep1", "deep2", "quiet", "hoard", "unknown")
++        val SOFT = setOf("info1", "info2", "info3", "chan1", "chan2", "music", "suppress", "short1", "short2",
++            "silent", "game", "video", "gaze", "scar", "deep1", "deep2", "quiet", "hoard", "unknown")
+         /** 降一级换成哪个词条. */
+-        val LOWER = mapOf("isolate" to "info3", "info3" to "info2", "info2" to "info1", "chan2" to "chan1",
++        val LOWER = mapOf("info3" to "info2", "info2" to "info1", "chan2" to "chan1",
+             "short2" to "short1", "deep2" to "deep1")
+         /** 只有一档的软规则: 降级时等级减一, 减到 0 就失效. */
+         val SINGLE = setOf("music", "suppress", "silent", "game", "video", "quiet", "hoard")
+-        /** 这个等级的词条用红色边框. */
+-        const val RIM_LEVEL = 4
+ 
+         val DURATION = mapOf("long1" to 1.2, "long2" to 1.4, "long3" to 1.6)
+-        val NET_SHARE = mapOf("info1" to 0.75, "info2" to 0.5, "info3" to 0.25, "isolate" to 0.0)
++        val NET_SHARE = mapOf("info1" to 0.8, "info2" to 0.65, "info3" to 0.5)
+         /** 合约中专注换来的休息时间的基础倍率; 有疲惫时换成疲惫的倍率. */
+         const val BASE_REST = 0.8
+         val REST = mapOf("tired1" to 0.7, "tired2" to 0.6, "tired3" to 0.5)
+-        /** 休息时间额外的乘区 (和疲惫相乘): 信息隔绝 ×1.3, 禁止囤囤鼠! ×1.05. */
+-        val REST_BONUS = mapOf("isolate" to 1.3, "hoard" to 1.05)
+-        /** 合约中专注换来的休息时间乘多少: 基础 ×0.8, 有疲惫时换成疲惫的 (取最低的); 再乘额外的乘区. */
++        /** 休息时间额外的乘区 (和疲惫相乘): 禁止囤囤鼠! ×1.05, 打年糕 ×1.1 (词条组合). */
++        val REST_BONUS = mapOf("hoard" to 1.05)
++        /** 合约中专注换来的休息时间乘多少: 基础 ×0.8, 有疲惫时换成疲惫的 (取最低的); 再乘额外的乘区 / 组合的乘区. */
+         fun restFactorOf(terms: Collection<String>): Double =
+-            (terms.mapNotNull { REST[it] }.minOrNull() ?: BASE_REST) * terms.fold(1.0) { f, t -> f * (REST_BONUS[t] ?: 1.0) }
++            (terms.mapNotNull { REST[it] }.minOrNull() ?: BASE_REST) * terms.fold(1.0) { f, t -> f * (REST_BONUS[t] ?: 1.0) } * comboRest(terms)
+         /** 录像的词条 → 录什么. */
+         val RECORD = mapOf("gaze" to "camera", "scar" to "screen")
+         /** 禁止打开某类应用的词条 (每秒看前台应用). */
+         val BANS = listOf("music", "silent", "game", "video")
+-        /** 互联网娱乐的败退: 同时有上面四个的效果; 违反任意一项就整个失效. */
+-        const val BANS_ALL = "ent"
+-        /** 合约开始时积攒的休息时间多给这么多秒 (算合约中得到的, 合约结束后不留下). */
+-        val REST_GIFT = mapOf("ent" to 20 * 60)
+         val WINDOWS = mapOf("chan1" to 4, "chan2" to 3)
+         /** 支援短缺: 合约开始前积攒的休息时间能用几成. */
+         val SUPPLY = mapOf("short1" to 0.5, "short2" to 0.0)
+@@ -136,9 +130,62 @@ class Contract(private val file: File) {
+         val HOUR_TERMS = setOf("seal", "fine")
+         /** 初始目标生命值 (硬规则). */
+         val LIFE = mapOf("retreat1" to 3, "retreat2" to 2, "last" to 1)
+-        /** 最后防线: 危机等级 (不算这份加成) 每有 LAST_STEP 级, 它的等级 +1. */
+-        const val LAST = "last"
+-        const val LAST_STEP = 10
++
++        // 词条组合 (MECHANICS 18.3.1): 列出的词条 / 词条系列 (任意一档都算) 同时选着时生效, 效果栏的第 3 页列出它们.
++        val COMBOS = listOf(
++            Combo("mochi", "打年糕", "white", listOf("tired", "long", "fine", "deep"), 1, 1.1, 0, 0,
++                "额外 1 危机等级\n休息时间 ×110%"),
++            Combo("nofun", "互联网娱乐的败退", "purple", listOf("music", "silent", "game", "video"), 0, 1.0, 20 * 60, 0,
++                "合约开始时 休息 +20 分钟"),
++            Combo("flawless", "无懈可击", "gray", listOf("last", "unknown"), 0, 1.0, 20 * 60, 0,
++                "合约开始时 休息 +20 分钟"),
++            Combo("isolation", "信息隔绝", "red", listOf("info", "chan", "erode", "suppress", "fog", "quiet"), 1, 1.0, 0, 10 * 60,
++                "额外 1 危机等级\n完成合约时 休息 +10 分钟"),
++        )
++        val COMBOS_BY_ID = COMBOS.associateBy { it.id }
++        val COMBO_COLORS = mapOf("white" to "#ffffff", "purple" to "#b06cf0", "gray" to "#9a9ca1", "red" to "#ff2b3a")
++        /** 组合的要求在界面上怎么写: 成系列的一组只写一个名字. */
++        val GROUP_NAMES = mapOf("long" to "持久战", "tired" to "疲惫", "info" to "信息阻断",
++            "chan" to "通道阻塞", "erode" to "侵蚀", "deep" to "纵深推进")
++
++        fun reqName(req: String): String =
++            GROUP_NAMES[req] ?: (BY_ID[req]?.name ?: req).substringAfter(':').substringBefore('-')
++
++        /** 这个词条组合凑齐了没有: 每一条要求都有一个选着的词条 (系列的任意一档都算). */
++        fun comboDone(combo: Combo, terms: Collection<String>): Boolean {
++            val t = terms.filter { it in BY_ID }
++            return combo.reqs.all { req -> t.any { id -> if (req in GROUPS) BY_ID[id]!!.group == req else id == req } }
++        }
++
++        /** 组合的状态: done 凑齐了 / void 开始时凑齐过, 有成员失效了 / open 还没凑齐. */
++        fun comboState(combo: Combo, terms: Collection<String>, orig: Collection<String>? = null): String = when {
++            comboDone(combo, terms) -> "done"
++            orig != null && comboDone(combo, orig) -> "void"
++            else -> "open"
++        }
++
++        /** 凑齐的组合带来的额外危机等级. */
++        fun comboLevel(terms: Collection<String>): Int = COMBOS.filter { comboDone(it, terms) }.sumOf { it.level }
++        /** 凑齐的组合带来的休息时间乘区. */
++        fun comboRest(terms: Collection<String>): Double = COMBOS.filter { comboDone(it, terms) }.fold(1.0) { f, c -> f * c.rest }
++        /** 合约开始时凑齐的组合给的休息时间 (秒, 算合约中得到的). */
++        fun comboGift(terms: Collection<String>): Int = COMBOS.filter { comboDone(it, terms) }.sumOf { it.gift }
++        /** 完成合约时凑齐的组合额外给的休息时间 (秒). */
++        fun comboEnd(terms: Collection<String>): Int = COMBOS.filter { comboDone(it, terms) }.sumOf { it.end }
++
++        /** 凑齐了的组合的成员词条 → 颜色 (界面上用这个颜色框住它们). 没凑齐的不算. */
++        fun comboMarks(terms: Collection<String>): Map<String, String> {
++            val out = LinkedHashMap<String, String>()
++            for (c in COMBOS) {
++                if (!comboDone(c, terms)) continue
++                for (t in terms) {
++                    if (t !in BY_ID) continue
++                    val hit = c.reqs.any { req -> if (req in GROUPS) BY_ID[t]!!.group == req else t == req }
++                    if (hit && t !in out) out[t] = COMBO_COLORS[c.color]!!
++                }
++            }
++            return out
++        }
+ 
+         /** 选了这些词条时的初始目标生命值. */
+         fun lifeOf(terms: Collection<String>): Int = terms.mapNotNull { LIFE[it] }.minOrNull() ?: VIOLATION_LIMIT
+@@ -250,19 +297,19 @@ class Contract(private val file: File) {
+             else -> emptySet()
+         }
+ 
+-        /** 最后防线额外的等级: 选着它时, 危机等级 (不算这份加成) 每有 LAST_STEP 级 +1. */
+-        fun lastBonus(base: Int, terms: Collection<String>) = if (LAST in terms) base / LAST_STEP else 0
+-
+-        fun levelOf(terms: Collection<String>) = terms.sumOf { BY_ID[it]?.level ?: 0 }.let { it + lastBonus(it, terms) }
++        fun levelOf(terms: Collection<String>) =
++            terms.sumOf { BY_ID[it]?.level ?: 0 } + comboLevel(terms)
+ 
+         fun restMinutes(level: Int): Int {
+             val lv = level.coerceIn(0, REST_TOP)
+             return REST_MIN + (2 * (REST_MAX - REST_MIN) * lv + REST_TOP) / (2 * REST_TOP)   // 四舍五入 (.5 进位)
+         }
+-        /** 完成合约时存进积攒的休息时间的秒数. */
+-        fun restReward(level: Int): Int = restMinutes(level) * 60
+-        /** 合约开始时存进积攒的休息时间的秒数 (互联网娱乐的败退: 20 分钟). */
+-        fun restGift(terms: Collection<String>): Int = terms.sumOf { REST_GIFT[it] ?: 0 }
++        /** 完成合约时存进积攒的休息时间的秒数 (按等级查表 + 凑齐的组合的结束后收益). */
++        fun restReward(level: Int, terms: Collection<String> = emptyList()): Int = restMinutes(level) * 60 + comboEnd(terms)
++        /** 完成合约时休息时间一共多少分钟 (界面上写 "完成后休息 +N 分钟"). */
++        fun restMinutesTotal(level: Int, terms: Collection<String> = emptyList()): Int = restReward(level, terms) / 60
++        /** 合约开始时存进积攒的休息时间的秒数 (凑齐的组合给的, 算合约中得到的). */
++        fun restGift(terms: Collection<String>): Int = comboGift(terms)
+ 
+         fun durationOf(terms: Collection<String>): Double =
+             BASE_SECONDS * (terms.mapNotNull { DURATION[it] }.maxOrNull() ?: 1.0)
+@@ -343,11 +390,9 @@ class Contract(private val file: File) {
+     fun termLevel(id: String) = (BY_ID[id]?.level ?: 0) - cut.optInt(id, 0)
+     /** 未知变量随机启用的词条 (不算进危机等级; 可以点击关闭, 算一次违反). */
+     val rand: List<String> get() = if (active) (live.optJSONArray("rand")?.strings() ?: emptyList()).filter { it in terms } else emptyList()
+-    /** 算进危机等级的词条 (不算未知变量选中的). */
+-    private val counted get() = rand.let { r -> terms.filter { it !in r } }
+-    val level get() = counted.let { m -> m.sumOf { termLevel(it) }.let { it + lastBonus(it, m) } }
+-    /** 最后防线现在额外的等级 (按现在的危机等级算). */
+-    val lastExtra get() = counted.let { m -> lastBonus(m.sumOf { termLevel(it) }, m) }
++    /** 算进危机等级的词条 (开始时选的现在还在的, 降级后算现在的; 不算未知变量选中的). 词条组合只看这些. */
++    val mine get() = rand.let { r -> terms.filter { it !in r } }
++    val level get() = mine.let { m -> m.sumOf { termLevel(it) } + comboLevel(m) }
+     /** 开始时选的词条 (降级前). */
+     val orig: List<String> get() = if (active) clean(live.optJSONArray("orig")?.strings() ?: terms) else emptyList()
+     val origLevel get() = levelOf(orig)
+@@ -358,8 +403,8 @@ class Contract(private val file: File) {
+     val life get() = maxOf(0, violationLimit - violations)
+     /** 合约中已经给出的休息时间 (秒, 已乘疲惫). */
+     val rest get() = if (active) live.dbl("rest") else 0.0
+-    /** 完成时给的休息时间 (秒): 按现在的等级查表 (固定); 结算按降级后的等级. */
+-    val reward get() = if (active) restReward(level).toDouble() else 0.0
++    /** 完成时给的休息时间 (秒): 按现在的等级查表, 加上凑齐的组合的结束后收益; 结算按降级后的等级. */
++    val reward get() = if (active) restReward(level, mine).toDouble() else 0.0
+     val owner: String get() = live.optString("owner", "")
+     val id: Long get() = live.optLong("id", 0)
+ 
+@@ -621,9 +666,12 @@ class Contract(private val file: File) {
+         }
+     }
+ 
+-    /** 开始专注: 等着的阻滞落到这段专注上 (专注时间按 RANDOM_SLOW 增长). 返回落上了没有. */
++    /** 开始专注: 等着的阻滞落到这段专注上 (专注时间按 RANDOM_SLOW 增长). 返回落上了没有.
++     *  阻滞只对合约内的专注生效: 合约已经结束 / 这段专注开始于合约结束之后时不落上. */
+     fun slowBind(start: LocalDateTime): Boolean {
+         if (!slowPending) return false
++        val e = endAt ?: return false
++        if (!start.isBefore(e)) return false
+         live.put("slow", JSONObject().put("start", start.iso()))
+         save()
+         return true
+@@ -631,11 +679,27 @@ class Contract(private val file: File) {
+ 
+     val slowPending: Boolean get() = active && live.optJSONObject("slow")?.optBoolean("pending") == true
+ 
+-    /** 开始于 start 的这段专注的时间按多少增长: 阻滞 RANDOM_SLOW, 否则 1. */
+-    fun focusRate(start: LocalDateTime?): Double {
+-        val mark = start?.iso() ?: return 1.0
+-        if (active && live.optJSONObject("slow")?.optString("start") == mark) return RANDOM_SLOW
+-        return if (history.takeLast(3).any { it.optString("slow") == mark }) RANDOM_SLOW else 1.0
++    /** 阻滞让这段专注按 RANDOM_SLOW 增长到什么时候 (合约结束的时刻); 没有阻滞时 null. */
++    fun slowUntil(start: LocalDateTime?): LocalDateTime? {
++        val mark = start?.iso() ?: return null
++        if (active && live.optJSONObject("slow")?.optString("start") == mark) return endAt
++        return history.takeLast(3).firstOrNull { it.optString("slow") == mark }?.let { parseIso(it.optString("end")) }
++    }
++
++    /** 开始于 start 的这段专注现在按多少增长: 阻滞 RANDOM_SLOW (只到合约结束), 之后 1. */
++    fun focusRate(start: LocalDateTime?, now: LocalDateTime = LocalDateTime.now()): Double {
++        val until = slowUntil(start) ?: return 1.0
++        return if (now.isBefore(until)) RANDOM_SLOW else 1.0
++    }
++
++    /** 这一段专注计入的分钟数: 阻滞只减慢合约内的那部分时间, 合约结束后的部分按正常速度 (MECHANICS 18.3). */
++    fun focusMinutes(start: LocalDateTime?, seconds: Double): Double {
++        val s = maxOf(0.0, seconds)
++        val until = slowUntil(start) ?: return s / 60.0
++        if (start == null) return s / 60.0
++        val left = maxOf(0.0, secondsBetween(start, until))     // 合约里还剩多少秒
++        val inside = minOf(s, left)
++        return (inside * RANDOM_SLOW + (s - inside)) / 60.0
+     }
+ 
+     /** 积攒的休息时间减少到 carry: 合约开始前的那部分最多剩这么多 (先减合约中得到的). */
+@@ -794,7 +858,17 @@ class Contract(private val file: File) {
+         return a.isBefore(slotStart.plusHours(1)) && slotStart.isBefore(b)
+     }
+     fun windowLimit(): Int = terms.mapNotNull { WINDOWS[it] }.minOrNull() ?: 0
+-    fun restFactor(): Double = restFactorOf(terms)
++    fun restFactor(): Double = restFactorOf(mine)
++
++    /** (组合, 状态) 现在的样子: 效果栏 (第 3 页) 照着画. */
++    fun combos(): List<Pair<Combo, String>> {
++        val t = mine
++        val o = if (active) orig else emptyList()
++        return COMBOS.map { it to comboState(it, t, if (active) o else null) }
++    }
++
++    /** 凑齐了的组合的成员词条 → 颜色 (界面上框住它们). */
++    fun comboMarks(): Map<String, String> = comboMarks(mine)
+ 
+     // ---- 软规则: 有没有违反 (由调用方算作违反: violate) ----
+ 
+@@ -859,10 +933,10 @@ class Contract(private val file: File) {
+         return if (edge("win", n > lim)) id else ""
+     }
+ 
+-    /** 禁止打开这一类应用 (BANS 之一) 的是哪个词条: 它自己, 或者互联网娱乐的败退; 不禁止时 "". */
+-    fun banTerm(kind: String): String = if (watching(kind)) kind else if (watching(BANS_ALL)) BANS_ALL else ""
++    /** 禁止打开这一类应用 (BANS 之一) 的是哪个词条: 它自己; 不禁止时 "". */
++    fun banTerm(kind: String): String = if (watching(kind)) kind else ""
+ 
+-    /** 乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒 (或者互联网娱乐的败退): 开着这一类应用.
++    /** 乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒: 开着这一类应用.
+      *  每一类只在从没有到有的那一下算一次. 返回要降级的词条. */
+     fun banCheck(kind: String, hit: Boolean): String {
+         val id = banTerm(kind)
+@@ -899,13 +973,14 @@ class Contract(private val file: File) {
+         return now
+     }
+ 
+-    /** 完成之后才结束的专注, 开始于刚完成的合约里: 按那个合约的疲惫给. */
++    /** 完成之后才结束的专注, 开始于刚完成的合约里: 按那个合约的疲惫给 (未知变量选中的不算组合). */
+     fun bookRestAfter(seconds: Double, start: LocalDateTime): Double {
+         val h = last ?: return seconds
+         val hs = parseIso(h.optString("start"))
+         val he = parseIso(h.optString("end"))
+         if (h.optString("result") == "completed" && hs != null && he != null && !start.isBefore(hs) && start.isBefore(he)) {
+-            val t = h.optJSONArray("terms")?.strings() ?: emptyList()
++            val rand = (h.optJSONArray("rand")?.strings() ?: emptyList()).toSet()
++            val t = (h.optJSONArray("terms")?.strings() ?: emptyList()).filter { it !in rand }
+             val f = restFactorOf(t)
+             return seconds * f
+         }
+diff --git a/Android version/app/src/main/java/com/obliphur/oit/core/Core.kt b/Android version/app/src/main/java/com/obliphur/oit/core/Core.kt
+index b347ec3..9474d88 100644
+--- a/Android version/app/src/main/java/com/obliphur/oit/core/Core.kt	
++++ b/Android version/app/src/main/java/com/obliphur/oit/core/Core.kt	
+@@ -299,7 +299,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
+         val active = !dm.resetting && !settings.devMode
+         val app = if (active) host.foregroundApp() else ""
+         if (app == null) return                                  // 屏幕关闭 / 没有权限: 维持原样
+-        // 合约 · 乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒 (互联网娱乐的败退是四个一起; 软规则):
++        // 合约 · 乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒 (软规则):
+         // 前台是这一类应用就算违反 (不锁; 一直开着只算一次). 音乐在休息中可以听, 休息结束时还开着就算一次
+         for (kind in Contract.BANS) {
+             if (contract.banTerm(kind).isEmpty()) continue
+@@ -701,7 +701,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
+                 toast(tr("未知变量: 封锁了整点记录 {t} (不能再修改)", "t" to t), "warn", long = true)
+             } else toast(tr("未知变量: 没有可以封锁的整点记录, 无事发生"))
+             "double" -> toast(tr("未知变量: 这次判定作废, 改为判定两次"))
+-            "slow" -> toast(tr("未知变量: 下一次专注启用阻滞 (专注时间按 {p}% 增长)", "p" to Math.round(Contract.RANDOM_SLOW * 100)),
++            "slow" -> toast(tr("未知变量: 下一次专注启用阻滞 (只减慢合约内的时间, 按 {p}% 增长)", "p" to Math.round(Contract.RANDOM_SLOW * 100)),
+                 "warn", long = true)
+             else -> toast(tr("未知变量: 无事发生"))
+         }
+@@ -770,7 +770,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
+         if (contract.active) return
+         contractBlock().let { if (it.isNotEmpty()) { toast(it, "warn"); return } }
+         contract.start(terms, myId(), pre = timer.breakCarry.toDouble())
+-        // 互联网娱乐的败退: 积攒的休息时间 +20 分钟 (在 pre 之后加: 算合约中得到的, 合约结束后不留下)
++        // 凑齐的词条组合: 积攒的休息时间 +N 分钟 (在 pre 之后加: 算合约中得到的, 合约结束后不留下)
+         val gift = Contract.restGift(contract.terms)
+         timer.addCarry(gift)
+         contractSeen = contract.id
+@@ -787,6 +787,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
+     fun endContract(result: String, at: LocalDateTime? = null) {
+         val c = contract
+         if (!c.active) return
++        timer.stopBreakForContract()      // 结束合约前先停止休息
+         val pending = c.reward
+         val rec = c.finish(result, at, myId()) ?: return
+         contractSeen = null
+diff --git a/Android version/app/src/main/java/com/obliphur/oit/core/EnStrings.kt b/Android version/app/src/main/java/com/obliphur/oit/core/EnStrings.kt
+index 594ea81..4bf93ca 100644
+--- a/Android version/app/src/main/java/com/obliphur/oit/core/EnStrings.kt	
++++ b/Android version/app/src/main/java/com/obliphur/oit/core/EnStrings.kt	
+@@ -495,7 +495,6 @@ object EnStrings {
+         "[原 {name}]" to "[was {name}]",
+         "[已失效]" to "[void]",
+         "[降了 {n} 级]" to "[down {n} level(s)]",
+-        "[危机等级加成 +{n} 级]" to "[Contingency bonus +{n} level(s)]",
+         "{a} 失效" to "{a} is void",
+         "{a} 降一级" to "{a} drops one level",
+         "{a} 降为 {b}" to "{a} drops to {b}",
+@@ -549,9 +548,9 @@ object EnStrings {
+         "危机等级" to "Contingency level",
+         "危机等级 {lv}" to "Contingency level {lv}",
+         "危机等级 {lv} · 时长 {t} · 到 {at}" to "Contingency level {lv} · {t} · until {at}",
+-        "可用的剩余联网时间改为25% 且不能使用借贷" to "Usable remaining online time set to 25%, and no loans",
++        "可用的剩余联网时间改为80% 且不能使用借贷" to "Usable remaining online time set to 80%, and no loans",
++        "可用的剩余联网时间改为65% 且不能使用借贷" to "Usable remaining online time set to 65%, and no loans",
+         "可用的剩余联网时间改为50% 且不能使用借贷" to "Usable remaining online time set to 50%, and no loans",
+-        "可用的剩余联网时间改为75% 且不能使用借贷" to "Usable remaining online time set to 75%, and no loans",
+         "合约完成后的第一次休息: 暂停时剩余时间 ×{r} 留给下次." to "First break after the contract: pausing keeps ×{r} of the rest for next time.",
+         "合约已结束: {r}" to "Contract over: {r}",
+         "合约开始." to "Contract started.",
+@@ -573,7 +572,7 @@ object EnStrings {
+         "退路封锁" to "Retreat Seal",
+         "初始目标生命值为3" to "Initial target life is 3",
+         "初始目标生命值为2" to "Initial target life is 2",
+-        "初始目标生命值为1\n危机等级每有10级 词条等级增加一级" to "Initial target life is 1\n+1 term level for every 10 Contingency Levels",
++        "初始目标生命值为1" to "Initial target life is 1",
+         "完成" to "Completed",
+         "已选中词条" to "Selected terms",
+         "开始时 {n}" to "At start {n}",
+@@ -588,7 +587,8 @@ object EnStrings {
+         "时长改为160%" to "Duration set to 160%",
+         "最后防线" to "Last Stand",
+         "非休息期间不能打开音乐播放软件 不能使用外部软件播放mp3等音频文件" to "Outside breaks: no music players, and no playing mp3 or other audio files in other programs",
+-        "合约期间 专注时长 成就 日历 统计数据不可见 且无法打开设置" to "Focus time, achievements, calendar and statistics are hidden, and settings can't be opened",
++        "合约期间 专注时长 合约的剩余时间 成就 日历 统计数据不可见 且无法打开设置" to
++            "Focus time, the contract's time left, achievements, calendar and statistics are hidden, and settings can't be opened",
+         "期间使用proxy block-all模式" to "Proxy block-all mode during the contract",
+         "期间的最大窗口数改为3" to "Window limit becomes 3",
+         "期间的最大窗口数改为4" to "Window limit becomes 4",
+@@ -606,12 +606,22 @@ object EnStrings {
+         "禁游令" to "Game Ban",
+         "低帧的诅咒" to "Low-FPS Curse",
+         "互联网娱乐的败退" to "No Fun Online",
++        "打年糕" to "Rice Cake Pounding",
++        "无懈可击" to "Impenetrable",
++        "词条组合" to "Term combos",
++        "已凑齐" to "Complete",
++        "未凑齐" to "Incomplete",
++        "已失效" to "Void",
++        "需要" to "Needs",
++        "凑齐列出的词条 / 词条系列时生效" to "Takes effect when the listed terms / term series are all picked",
++        "额外 1 危机等级\n休息时间 ×110%" to "Extra 1 Contingency Level\nBreak time ×110%",
++        "合约开始时 休息 +20 分钟" to "Break +20 min when the contract starts",
++        "额外 1 危机等级\n完成合约时 休息 +10 分钟" to "Extra 1 Contingency Level\nBreak +10 min on completion",
+         "合约期间打开摄像头记录使用者的行为 结束后保存录像" to "The camera records you during the contract; the video is saved afterwards",
+         "合约期间不能打开社交软件和与AI聊天的软件 不能使用社交网站" to "No social apps, no AI chat apps and no social websites during the contract",
+         "合约期间录制整个屏幕 结束后保存录像" to "The whole screen is recorded during the contract and saved afterwards",
+         "合约期间不能使用游戏和游戏平台" to "No games and no game platforms during the contract",
+         "合约期间不能使用视频平台" to "No video platforms during the contract",
+-        "同时有乐理之灾 无言为真 禁游令 低帧的诅咒的效果\n违反任意一项即整个失效\n合约开始时获得额外20min的休息时间" to "All the effects of Musical Calamity, Silence Is Truth, Game Ban and Low-Frame Curse\nAny violation voids it entirely\nStarting the contract gives an extra 20 min of break time",
+         "开始时休息 +{n} 分钟" to "Break on start +{n} min",
+         "环境:静默协议" to "Env: Silent Protocol",
+         "静默协议" to "Silent Protocol",
+@@ -647,9 +657,10 @@ object EnStrings {
+         "未知变量: 封锁了整点记录 {t} (不能再修改)" to "Unknown Variable: hour log {t} sealed (can't be edited any more)",
+         "未知变量: 没有可以封锁的整点记录, 无事发生" to "Unknown Variable: no hour log cell to seal, nothing happens",
+         "未知变量: 这次判定作废, 改为判定两次" to "Unknown Variable: this roll is void, rolling twice instead",
+-        "未知变量: 下一次专注启用阻滞 (专注时间按 {p}% 增长)" to "Unknown Variable: the next focus is slowed (focus time grows at {p}%)",
++        "未知变量: 下一次专注启用阻滞 (只减慢合约内的时间, 按 {p}% 增长)" to
++            "Unknown Variable: the next focus is slowed (only the in-contract part, grows at {p}%)",
+         "未知变量: 无事发生" to "Unknown Variable: nothing happens",
+-        "阻滞: 这段专注的时间按 {p}% 增长" to "Slowed: this focus grows at {p}%",
++        "阻滞: 合约内这段专注的时间按 {p}% 增长" to "Slowed: the in-contract part of this focus grows at {p}%",
+         "⚠ {why} · {name} 已失效, 不扣目标生命值" to "⚠ {why} · {name} already failed, no target life lost",
+         "未知变量: 抽中了 {name}, {t} 生效" to "Unknown Variable: drew {name}, takes effect at {t}",
+         "[未知变量抽中 · {t} 生效]" to "[Drawn by Unknown Variable · takes effect at {t}]",
+@@ -658,7 +669,6 @@ object EnStrings {
+         "打开了社交 / AI 聊天软件 {exe}" to "opened the social / AI chat app {exe}",
+         "打开了游戏 {exe}" to "opened the game {exe}",
+         "打开了视频平台 {exe}" to "opened the video platform {exe}",
+-        "不能使用联网功能 选择时 获得的休息时间改为130%" to "No network access at all; while selected, break time earned set to 130%",
+         "环境:信息阻断-I" to "Env: Info Blockade-I",
+         "环境:信息阻断-II" to "Env: Info Blockade-II",
+         "环境:信息阻断-III" to "Env: Info Blockade-III",
+diff --git a/Android version/app/src/main/java/com/obliphur/oit/core/Timer.kt b/Android version/app/src/main/java/com/obliphur/oit/core/Timer.kt
+index 64802b1..785f83e 100644
+--- a/Android version/app/src/main/java/com/obliphur/oit/core/Timer.kt	
++++ b/Android version/app/src/main/java/com/obliphur/oit/core/Timer.kt	
+@@ -83,12 +83,12 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
+         when (state) {
+             TState.IDLE -> {
+                 enterFocus(LocalDateTime.now(), mono())
+-                if (core.contract.slowBind(startWall!!))       // 阻滞: 这段专注的时间按 90% 增长
+-                    core.toast(tr("阻滞: 这段专注的时间按 {p}% 增长", "p" to Math.round(Contract.RANDOM_SLOW * 100)), "warn", long = true)
++                if (core.contract.slowBind(startWall!!))       // 阻滞: 合约内这段时间按 90% 增长
++                    core.toast(tr("阻滞: 合约内这段专注的时间按 {p}% 增长", "p" to Math.round(Contract.RANDOM_SLOW * 100)), "warn", long = true)
+             }
+             TState.RUNNING -> {
+                 val end = LocalDateTime.now()
+-                val minutes = (mono() - startMono) / 60.0 * core.contract.focusRate(startWall)   // 阻滞: 按 90% 增长
++                val minutes = core.contract.focusMinutes(startWall, mono() - startMono)   // 阻滞: 只减慢合约内的那部分时间
+                 lastTMinutes = minutes                    // 建议休息时长照常按整段专注算
+                 restBase = core.focusRest(minutes, startWall!!, end)
+                 val off = cutOffline(startWall!!, end)
+@@ -371,7 +371,29 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
+         setCarry(minOf(breakCarry, preLeft.toInt()) + reward)
+     }
+ 
+-    /** 合约开始时多给的休息时间 (互联网娱乐的败退), 存进积攒的休息时间. */
++    /** 结束合约前先停止休息 (MECHANICS 18.1): 剩下的休息时间按"暂停休息"算, 合约中得到的部分由 endContract 作废.
++     *  不算禁止囤囤鼠! 的违反 (不是手动提前结束). */
++    fun stopBreakForContract() {
++        if (state != TState.ON_BREAK) return
++        val left = maxOf(0, countdown.toInt())
++        recordBreakEnd()
++        val pre = minOf(left, breakPre.toInt())
++        val c = core.contract
++        val same = c.active && c.id == breakCid
++        if (same) c.preSettle(breakPre, pre.toDouble())
++        var rate = settings.num("BREAK_CARRY_RATE")
++        if (contractBreakActive) rate = Contract.firstBreakRate(rate)
++        val add = if (bonusBreakActive) left else pre + Math.round((left - pre) * rate).toInt()
++        breakPre = 0.0
++        breakCid = 0L
++        bonusBreakActive = false
++        contractBreakActive = false
++        if (add > 0) setCarry(breakCarry + add)
++        resetToIdle()
++        armIdleNudge()
++    }
++
++    /** 合约开始时多给的休息时间 (凑齐的词条组合), 存进积攒的休息时间. */
+     fun addCarry(seconds: Int) {
+         if (seconds > 0) setCarry(breakCarry + seconds)
+     }
+@@ -510,7 +532,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
+             seconds = ok + (seconds - ok) * Cfg.FOCUS_CHECK_PENALTY
+         }
+         val end = start.plusSec(seconds)
+-        val minutes = seconds / 60.0 * core.contract.focusRate(start)      // 阻滞: 专注时间按 90% 增长
++        val minutes = core.contract.focusMinutes(start, seconds)      // 阻滞: 只减慢合约内的那部分时间
+         // 有设备离线的那段记为空闲, 不计入学习时长; 建议休息时长照常按计入前的时长算
+         val counted = maxOf(0.0, minutes - cutOffline(start, end) / 60.0)
+         dm.addStudySession(start, end, counted)
+diff --git a/Android version/app/src/main/java/com/obliphur/oit/ui/ContractScreen.kt b/Android version/app/src/main/java/com/obliphur/oit/ui/ContractScreen.kt
+index 5563bc3..11a3661 100644
+--- a/Android version/app/src/main/java/com/obliphur/oit/ui/ContractScreen.kt	
++++ b/Android version/app/src/main/java/com/obliphur/oit/ui/ContractScreen.kt	
+@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.Constraints
+ import androidx.compose.ui.unit.dp
+ import androidx.compose.ui.unit.sp
+ import com.obliphur.oit.OitApp
++import com.obliphur.oit.core.Combo
+ import com.obliphur.oit.core.Contract
+ import com.obliphur.oit.core.Fmt
+ import com.obliphur.oit.core.contractResult
+@@ -53,7 +54,7 @@ private val BOARD_GAP = 5.dp
+ private fun marks(level: Int) = "▲".repeat(maxOf(0, level))
+ private fun termName(id: String) = tr(Contract.BY_ID[id]!!.name)
+ private fun termDesc(id: String) = tr(Contract.BY_ID[id]!!.desc)
+-/** 名字 : 描述. 描述本身分了几行时 (互联网娱乐的败退), 从下一行开始写, 每一句一行. */
++/** 名字 : 描述. 描述本身分了几行时, 从下一行开始写, 每一句一行. */
+ private fun termLine(id: String): String {
+     val d = termDesc(id)
+     return termName(id) + " :" + (if ('\n' in d) "\n" else " ") + d
+@@ -74,7 +75,7 @@ private fun hms(sec: Double): String {
+ class ContractColors(
+     val bg: Color, val text: Color, val dim: Color, val line: Color,
+     val board: Color, val band: Color, val bandText: Color, val bandDim: Color,
+-    val tile: Color, val tileText: Color, val tileRim: Color, val tileRim4: Color,
++    val tile: Color, val tileText: Color, val tileRim: Color,
+     val tileOn: Color, val tileOnText: Color, val tileOnRim: Color,
+     val tileOff: Color, val tileOffText: Color, val tileOffRim: Color,
+     val tileRand: Color, val tileRandText: Color,
+@@ -85,6 +86,8 @@ class ContractColors(
+     val clear: Color, val clearText: Color, val tag: Color, val tagText: Color,
+     val live: Color, val liveRim: Color, val danger: Color, val idle: Color,
+     val side: Color?, val sideText: Color, val sideOn: Color,
++    // 词条组合的颜色 (打年糕 白色 / 互联网娱乐的败退 紫色 / 无懈可击 灰色 / 信息隔绝 红色)
++    val comboWhite: Color, val comboPurple: Color, val comboGray: Color, val comboRed: Color,
+ )
+ 
+ private fun c(hex: Long) = Color(0xFF000000 or hex)
+@@ -93,7 +96,7 @@ private fun c(hex: Long) = Color(0xFF000000 or hex)
+ val OPS_COLORS = ContractColors(
+     bg = c(0x1f2023), text = c(0xf2f2f2), dim = c(0x9a9ca1), line = c(0xc8202f),
+     board = c(0xd6d7da), band = c(0x2c2d31), bandText = c(0xececec), bandDim = c(0x9a9ca1),
+-    tile = c(0x45474d), tileText = c(0xf4f4f4), tileRim = c(0x6b6d73), tileRim4 = c(0xff2b3a),
++    tile = c(0x45474d), tileText = c(0xf4f4f4), tileRim = c(0x6b6d73),
+     tileOn = c(0x1d6fc4), tileOnText = c(0xffffff), tileOnRim = c(0x9cc8ff),
+     tileOff = c(0xbdbec1), tileOffText = c(0x8e9095), tileOffRim = c(0xa9aaad),
+     tileRand = c(0xf2b33d), tileRandText = c(0x141416),
+@@ -104,6 +107,7 @@ val OPS_COLORS = ContractColors(
+     clear = c(0x3a3b40), clearText = c(0xececec), tag = c(0xc8202f), tagText = c(0xffffff),
+     live = c(0x18181b), liveRim = c(0xc8202f), danger = c(0xff4d5a), idle = c(0xf2b33d),
+     side = c(0x18191c), sideText = c(0xcfd0d3), sideOn = c(0xc8202f),
++    comboWhite = c(0xffffff), comboPurple = c(0xb06cf0), comboGray = c(0x9a9ca1), comboRed = c(0xff2b3a),
+ )
+ 
+ @Composable
+@@ -114,7 +118,7 @@ fun contractColors(): ContractColors {
+     return ContractColors(
+         bg = o.bg, text = o.text, dim = o.dim, line = o.border,
+         board = o.bg, band = o.card, bandText = o.text, bandDim = o.dim,
+-        tile = o.card, tileText = o.text, tileRim = o.border, tileRim4 = o.danger,
++        tile = o.card, tileText = o.text, tileRim = o.border,
+         tileOn = o.danger, tileOnText = o.onAccent, tileOnRim = o.danger,
+         tileOff = o.bg, tileOffText = o.border, tileOffRim = o.border,
+         tileRand = o.warn, tileRandText = c(0x141416),
+@@ -125,9 +129,34 @@ fun contractColors(): ContractColors {
+         clear = o.border, clearText = o.text, tag = o.danger, tagText = o.onAccent,
+         live = o.card, liveRim = o.danger, danger = o.danger, idle = o.warn,
+         side = null, sideText = o.text, sideOn = o.accent,
++        // 白和灰在浅色主题里用文字色, 免得看不见
++        comboWhite = o.strong, comboPurple = c(0x8b5cf6), comboGray = o.dim, comboRed = o.danger,
+     )
+ }
+ 
++/** 组合的颜色按当前主题的. */
++private fun comboColor(p: ContractColors, combo: Combo): Color = when (combo.color) {
++    "white" -> p.comboWhite
++    "purple" -> p.comboPurple
++    "gray" -> p.comboGray
++    else -> p.comboRed
++}
++
++/** 凑齐了的组合的成员: 词条 → 颜色 (界面上框住它们), 颜色按当前主题的. */
++private fun comboMarksOf(c: Contract, sel: Collection<String>, p: ContractColors): Map<String, Color> {
++    val raw = Contract.comboMarks(sel)
++    if (raw.isEmpty()) return emptyMap()
++    val byHex = Contract.COMBOS.associate { Contract.COMBO_COLORS[it.color]!! to it.color }
++    return raw.mapValues { (_, hex) ->
++        when (byHex[hex]) {
++            "white" -> p.comboWhite
++            "purple" -> p.comboPurple
++            "gray" -> p.comboGray
++            else -> p.comboRed
++        }
++    }
++}
++
+ /** 六边形 (左右两个尖). */
+ /** 放进格子里, 居中的正六边形 (平顶). 格子本身也按正六边形的比例 (高 = 宽 × √3 / 2). */
+ private val HEX = GenericShape { size, _ ->
+@@ -166,7 +195,32 @@ private fun FitToScreen(minWidth: androidx.compose.ui.unit.Dp, content: @Composa
+     }
+ }
+ 
+-/** 词条板 (行 = 等级, 列 = 类型, 同一类型在同一列; 翻页: 成系列的一页, 零散的一页), 下面是已选中的词条 (两栏),
++/** 第 3 页的一块组合: 名字 (组合的颜色) + 状态, 凑齐要哪些词条, 效果. 凑齐了才亮. */
++@Composable
++private fun ComboCard(p: ContractColors, combo: Combo, state: String, modifier: Modifier = Modifier) {
++    val color = comboColor(p, combo)
++    val on = state == "done"
++    val status = when (state) {
++        "done" -> tr("已凑齐")
++        "void" -> tr("已失效")
++        else -> tr("未凑齐")
++    }
++    val rim = if (on) color else if (state == "void") p.tileRim else p.tileOffRim
++    Column(modifier.background(p.sel).border(if (on) 2.dp else 1.dp, rim, RoundedCornerShape(2.dp)).padding(8.dp),
++        verticalArrangement = Arrangement.spacedBy(3.dp)) {
++        Row(verticalAlignment = Alignment.CenterVertically) {
++            Text(tr(combo.name), color = color, fontSize = 13.sp, fontWeight = FontWeight.Bold,
++                modifier = Modifier.weight(1f))
++            Text(status, color = if (on) color else if (state == "void") p.danger else p.selDim,
++                fontSize = 10.sp, fontWeight = FontWeight.Bold)
++        }
++        Text(tr("需要") + "  " + combo.reqs.joinToString(" · ") { tr(Contract.reqName(it)) },
++            color = if (on) p.selText else p.selDim, fontSize = 10.sp, lineHeight = 12.sp)
++        Text(tr(combo.desc), color = if (on) color else p.selDim, fontSize = 10.sp, lineHeight = 12.sp)
++    }
++}
++
++/** 词条板 (行 = 等级, 列 = 类型, 同一类型在同一列; 翻页: 成系列的一页, 零散的一页, 第 3 页是词条组合), 下面是已选中的词条 (两栏),
+  *  最下面一条: 清空 | 危机等级 | 开始行动.
+  *  合约进行中时只能看. 这一页总是横屏 (Root 里设置), 整页缩小到一屏显示全部 (FitToScreen). 颜色按"合约页主题". */
+ @Composable
+@@ -210,14 +264,16 @@ fun ContractScreen() {
+ 
+         if (active) Column(Modifier.fillMaxWidth().background(p.live).border(2.dp, p.liveRim).padding(12.dp)) {
+             val end = c.endAt ?: now
++            val fog = c.fog()
+             Row(verticalAlignment = Alignment.CenterVertically) {
+-                Text(hms(secondsBetween(now, end)), color = p.text, fontSize = 34.sp, fontWeight = FontWeight.Bold,
++                // 黑雾: 看不到合约的剩余时间
++                Text(if (fog) "???" else hms(secondsBetween(now, end)), color = p.text, fontSize = 34.sp, fontWeight = FontWeight.Bold,
+                     modifier = Modifier.weight(1f))
+                 // 目标生命值: 每违反一次减一, 减到 0 合约失败
+                 Text(tr("目标生命值") + "  " + "♥".repeat(c.life) + "♡".repeat(c.violationLimit - c.life) +
+                     "  ${c.life} / ${c.violationLimit}", color = p.danger, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+             }
+-            var line = "${c.startAt?.format(Fmt.HM)} — ${end.format(Fmt.MDHM)}"
++            var line = "${c.startAt?.format(Fmt.HM)} — " + (if (fog) "??:??" else end.format(Fmt.MDHM))
+             c.netLeft(core.net.usedAll)?.let { line += "   ·   " + tr("合约的联网额度还剩 {t}", "t" to fmtHm(it)) }
+             Text(line, color = p.dim, fontSize = 13.sp)
+             c.idleLeft(now)?.let {
+@@ -225,7 +281,9 @@ fun ContractScreen() {
+             }
+         }
+ 
+-        // 词条板: 左边一条写着等级, 右边六边形的格子
++        // 词条板: 左边一条写着等级, 右边六边形的格子; 最后一页是词条组合的效果
++        val comboPage = page == Contract.COMBO_PAGE
++        val comboMarks = comboMarksOf(c, if (active) c.mine else sel, p)
+         BoxWithConstraints(Modifier.fillMaxWidth().background(p.board)) {
+             val bandW = BOARD_BAND
+             val gap = BOARD_GAP
+@@ -235,49 +293,69 @@ fun ContractScreen() {
+             Row {
+                 Column(Modifier.width(bandW).background(p.band).padding(vertical = gap),
+                     verticalArrangement = Arrangement.spacedBy(gap)) {
+-                    for (lv in 1..Contract.MAX_LEVEL) Row(Modifier.height(tileH).padding(horizontal = 6.dp),
+-                        verticalAlignment = Alignment.CenterVertically) {
+-                        Column(Modifier.weight(1f)) {
+-                            Text("Level", color = p.bandDim, fontSize = 8.sp)
+-                            Text("▲", color = p.badgeHi, fontSize = 9.sp,
+-                                modifier = Modifier.background(p.badgeLo).padding(horizontal = 4.dp))
++                    if (comboPage) {
++                        Text("CONTRACT\nEFFECT", color = p.bandDim, fontSize = 9.sp, fontWeight = FontWeight.Bold,
++                            textAlign = TextAlign.Center, lineHeight = 11.sp,
++                            modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
++                        Text(tr("词条组合").chunked(1).joinToString("\n"), color = p.bandText, fontSize = 13.sp,
++                            fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, lineHeight = 15.sp,
++                            modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
++                    } else {
++                        for (lv in 1..Contract.MAX_LEVEL) Row(Modifier.height(tileH).padding(horizontal = 6.dp),
++                            verticalAlignment = Alignment.CenterVertically) {
++                            Column(Modifier.weight(1f)) {
++                                Text("Level", color = p.bandDim, fontSize = 8.sp)
++                                Text("▲", color = p.badgeHi, fontSize = 9.sp,
++                                    modifier = Modifier.background(p.badgeLo).padding(horizontal = 4.dp))
++                            }
++                            Text("$lv", color = p.bandText, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                         }
+-                        Text("$lv", color = p.bandText, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                     }
+                 }
+-                Column(Modifier.padding(gap), verticalArrangement = Arrangement.spacedBy(gap)) {
+-                    for (lv in 1..Contract.MAX_LEVEL) Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
+-                        // 成系列的每组一列, 零散的在右边挨着排 (Contract.LAYOUT); 只画这一页的列
+-                        for (col in Contract.PAGES[page.coerceIn(0, Contract.PAGES.size - 1)]) {
+-                            val t = Contract.TERMS.firstOrNull { it.level == lv && Contract.LAYOUT[it.id] == col }
+-                            if (t == null) {
+-                                Spacer(Modifier.width(tileW).height(tileH)); continue
+-                            }
+-                            val picked = t.id in rand               // 未知变量选中的: 黄色, 点按关闭
+-                            val on = t.id in sel
+-                            val lost = active && !on && t.id in c.lost    // 违反到失效: "未选择"的样子
+-                            val off = !on && !lost && (active || Contract.blockedBy(t.id, sel) != null)
+-                            val fill = if (picked) p.tileRand else if (on) p.tileOn else if (off) p.tileOff else p.tile
+-                            val fg = if (picked) p.tileRandText else if (on) p.tileOnText else if (off) p.tileOffText else p.tileText
+-                            val rim = if (picked) p.tileRand else if (t.level >= Contract.RIM_LEVEL) p.tileRim4
+-                                else if (on) p.tileOnRim else if (off) p.tileOffRim else p.tileRim
+-                            Box(Modifier.width(tileW).height(tileH).background(fill, HEX)
+-                                .border(if (t.level >= Contract.RIM_LEVEL) 3.dp else 2.dp, rim, HEX)
+-                                .clickable {
+-                                    tapped = t.id
+-                                    if (active) {
+-                                        if (picked) ask = "close:" + t.id
+-                                        return@clickable
+-                                    }
+-                                    val cur = c.draft.toMutableList()
+-                                    if (t.id in cur) cur.remove(t.id)
+-                                    else if (Contract.blockedBy(t.id, cur) == null) cur.add(t.id)
+-                                    c.setDraft(cur)
+-                                    core.changed()
+-                                }, contentAlignment = Alignment.Center) {
+-                                Text(marks(t.level) + "\n" + termShort(t.id), color = fg, fontSize = 10.sp, lineHeight = 12.sp,
+-                                    fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
+-                                    modifier = Modifier.padding(horizontal = 8.dp))
++                if (comboPage) {
++                    val combos = if (active) c.combos() else Contract.COMBOS.map { it to Contract.comboState(it, c.draft) }
++                    Column(Modifier.weight(1f).padding(gap), verticalArrangement = Arrangement.spacedBy(gap)) {
++                        for (row in combos.chunked(2)) Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
++                            for ((combo, state) in row) ComboCard(p, combo, state, Modifier.weight(1f))
++                            if (row.size == 1) Spacer(Modifier.weight(1f))
++                        }
++                    }
++                } else {
++                    Column(Modifier.padding(gap), verticalArrangement = Arrangement.spacedBy(gap)) {
++                        for (lv in 1..Contract.MAX_LEVEL) Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
++                            // 成系列的每组一列, 零散的在右边挨着排 (Contract.LAYOUT); 只画这一页的列
++                            for (col in Contract.PAGES[page.coerceIn(0, Contract.PAGES.size - 1)]) {
++                                val t = Contract.TERMS.firstOrNull { it.level == lv && Contract.LAYOUT[it.id] == col }
++                                if (t == null) {
++                                    Spacer(Modifier.width(tileW).height(tileH)); continue
++                                }
++                                val picked = t.id in rand               // 未知变量选中的: 黄色, 点按关闭
++                                val on = t.id in sel
++                                val lost = active && !on && t.id in c.lost    // 违反到失效: "未选择"的样子
++                                val off = !on && !lost && (active || Contract.blockedBy(t.id, sel) != null)
++                                val fill = if (picked) p.tileRand else if (on) p.tileOn else if (off) p.tileOff else p.tile
++                                val fg = if (picked) p.tileRandText else if (on) p.tileOnText else if (off) p.tileOffText else p.tileText
++                                // 凑齐了的组合: 用组合的颜色框住
++                                val cm = comboMarks[t.id]
++                                val rim = if (picked) p.tileRand else cm ?: if (on) p.tileOnRim else if (off) p.tileOffRim else p.tileRim
++                                Box(Modifier.width(tileW).height(tileH).background(fill, HEX)
++                                    .border(if (cm != null) 3.dp else 2.dp, rim, HEX)
++                                    .clickable {
++                                        tapped = t.id
++                                        if (active) {
++                                            if (picked) ask = "close:" + t.id
++                                            return@clickable
++                                        }
++                                        val cur = c.draft.toMutableList()
++                                        if (t.id in cur) cur.remove(t.id)
++                                        else if (Contract.blockedBy(t.id, cur) == null) cur.add(t.id)
++                                        c.setDraft(cur)
++                                        core.changed()
++                                    }, contentAlignment = Alignment.Center) {
++                                    Text(marks(t.level) + "\n" + termShort(t.id), color = fg, fontSize = 10.sp, lineHeight = 12.sp,
++                                        fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
++                                        modifier = Modifier.padding(horizontal = 8.dp))
++                                }
+                             }
+                         }
+                     }
+@@ -287,14 +365,15 @@ fun ContractScreen() {
+         // 点过的词条的内容 | 翻页
+         Row(verticalAlignment = Alignment.CenterVertically) {
+             var text = ""
+-            if (tapped.isNotEmpty()) {
++            if (comboPage) text = tr("凑齐列出的词条 / 词条系列时生效")
++            else if (tapped.isNotEmpty()) {
+                 text = "${marks(Contract.BY_ID[tapped]!!.level)}  " + termLine(tapped)
+                 val other = Contract.blockedBy(tapped, sel)
+                 if (other != null && tapped !in sel) text += "  " + tr("[与 {name} 冲突]", "name" to termName(other))
+                 if (tapped in rand) text += "  " + tr("[未知变量选中 · 点击关闭, 算一次违反]")
+             }
+             Text(text, color = p.dim, fontSize = 13.sp, modifier = Modifier.weight(1f))
+-            val last = Contract.PAGES.size - 1
++            val last = Contract.COMBO_PAGE
+             Text("◀", color = if (page > 0) p.text else p.startOff, fontSize = 20.sp, fontWeight = FontWeight.Bold,
+                 modifier = Modifier.clickable(enabled = page > 0) { page-- }.padding(horizontal = 14.dp, vertical = 2.dp))
+             Text("${page + 1} / ${last + 1}", color = p.text, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+@@ -302,23 +381,19 @@ fun ContractScreen() {
+                 modifier = Modifier.clickable(enabled = page < last) { page++ }.padding(horizontal = 14.dp, vertical = 2.dp))
+         }
+ 
+-        // 已选中的词条: 黑底, 两栏. (等级, 文字, 是否失效, 未知变量选中的词条 / ""); 合约中最后是未知变量选中的 (黄色, 点按关闭)
+-        data class SelRow(val lv: Int, val text: String, val void: Boolean, val rand: String = "")
+-        // 最后防线: 写出危机等级给的额外等级
+-        val extra = if (active) c.lastExtra else Contract.lastBonus(sel.sumOf { Contract.BY_ID[it]?.level ?: 0 }, sel)
+-        fun SelRow.last(id: String) = if (id != Contract.LAST || extra == 0) this
+-            else copy(lv = lv + extra, text = text + "   " + tr("[危机等级加成 +{n} 级]", "n" to extra))
+-        val rows = if (!active) sel.map { SelRow(Contract.BY_ID[it]!!.level, termLine(it), false).last(it) }
++        // 已选中的词条: 黑底, 两栏. (等级, 文字, 是否失效, 未知变量选中的词条 / "", 现在的词条); 合约中最后是未知变量选中的 (黄色, 点按关闭)
++        data class SelRow(val lv: Int, val text: String, val void: Boolean, val rand: String = "", val id: String = "")
++        val rows = if (!active) sel.map { SelRow(Contract.BY_ID[it]!!.level, termLine(it), false, "", it) }
+         else c.orig.map { t ->
+             val g = Contract.BY_ID[t]!!.group
+             val cur = c.terms.firstOrNull { it !in rand && (it == t || Contract.BY_ID[it]!!.group == g) }
+             when {
+                 cur == null -> SelRow(Contract.BY_ID[t]!!.level, termName(t) + "   " + tr("[已失效]"), true)
+                 cur != t -> SelRow(c.termLevel(cur), termLine(cur) + "   " +
+-                    tr("[原 {name}]", "name" to termShort(t)), false)
++                    tr("[原 {name}]", "name" to termShort(t)), false, "", cur)
+                 c.termLevel(t) < Contract.BY_ID[t]!!.level -> SelRow(c.termLevel(t), termLine(t) + "   " +
+-                    tr("[降了 {n} 级]", "n" to Contract.BY_ID[t]!!.level - c.termLevel(t)), false)
+-                else -> SelRow(c.termLevel(t), termLine(t), false).last(t)
++                    tr("[降了 {n} 级]", "n" to Contract.BY_ID[t]!!.level - c.termLevel(t)), false, "", t)
++                else -> SelRow(c.termLevel(t), termLine(t), false, "", t)
+             }
+         } + rand.map { id ->
+             var text = termLine(id) + "   " + tr("[未知变量选中 · 点击关闭]")
+@@ -338,17 +413,21 @@ fun ContractScreen() {
+             val half = (rows.size + 1) / 2
+             Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                 for (part in listOf(rows.take(half), rows.drop(half))) Column(Modifier.weight(1f)) {
+-                    for ((lv, text, void, picked) in part) Row(Modifier.padding(vertical = 3.dp)
+-                        .clickable(enabled = picked.isNotEmpty()) { ask = "close:$picked" }) {
+-                        val hi = lv >= 2 && !void
+-                        val badge = if (picked.isNotEmpty()) p.tileRand else if (hi) p.badgeHi else p.badgeLo
+-                        Text(marks(lv).ifEmpty { "—" }, fontSize = 11.sp,
+-                            color = if (picked.isNotEmpty()) p.tileRandText else if (hi) p.badgeHiText else p.badgeLoText,
+-                            fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
+-                            modifier = Modifier.widthIn(min = 36.dp).background(badge)
+-                                .padding(horizontal = 4.dp, vertical = 1.dp))
+-                        Text(text, color = if (picked.isNotEmpty()) p.tileRand else if (void) p.selDim else p.selText,
+-                            fontSize = 12.sp, modifier = Modifier.padding(start = 8.dp))
++                    for ((lv, text, void, picked, tid) in part) {
++                        val cm = comboMarks[tid]        // 凑齐了的组合: 用组合的颜色框住
++                        Row(Modifier.padding(vertical = 3.dp)
++                            .then(if (cm != null) Modifier.border(2.dp, cm, RoundedCornerShape(2.dp)) else Modifier)
++                            .clickable(enabled = picked.isNotEmpty()) { ask = "close:$picked" }) {
++                            val hi = lv >= 2 && !void
++                            val badge = if (picked.isNotEmpty()) p.tileRand else if (hi) p.badgeHi else p.badgeLo
++                            Text(marks(lv).ifEmpty { "—" }, fontSize = 11.sp,
++                                color = if (picked.isNotEmpty()) p.tileRandText else if (hi) p.badgeHiText else p.badgeLoText,
++                                fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
++                                modifier = Modifier.widthIn(min = 36.dp).background(badge)
++                                    .padding(horizontal = 4.dp, vertical = 1.dp))
++                            Text(text, color = if (picked.isNotEmpty()) p.tileRand else if (void) p.selDim else p.selText,
++                                fontSize = 12.sp, modifier = Modifier.padding(start = 8.dp))
++                        }
+                     }
+                 }
+             }
+@@ -378,7 +457,7 @@ fun ContractScreen() {
+             var info = ""
+             if (orig != level) info += tr("开始时 {n}", "n" to orig) + "\n"
+             info += tr("时长 {t}", "t" to fmtHm(Contract.durationOf(if (active) c.orig else sel))) + "\n" +
+-                tr("完成后休息 +{n} 分钟", "n" to Contract.restMinutes(level))
++                tr("完成后休息 +{n} 分钟", "n" to Contract.restMinutesTotal(level, if (active) c.mine else sel))
+             val gift = Contract.restGift(sel)
+             if (gift > 0) info += "\n" + tr("开始时休息 +{n} 分钟", "n" to gift / 60)
+             Text(info, color = p.text, fontSize = 12.sp, modifier = Modifier.padding(start = 14.dp).weight(1f))
+@@ -402,7 +481,7 @@ fun ContractScreen() {
+             val dur = Contract.durationOf(c.draft)
+             Confirm(tr("▶  开始行动"), tr("危机等级 {lv} · 时长 {t} · 到 {at}", "lv" to lv, "t" to fmtHm(dur),
+                 "at" to now.plusSeconds(dur.toLong()).format(Fmt.HM)) + "\n" +
+-                tr("完成后休息 +{n} 分钟", "n" to Contract.restMinutes(lv)), true, { ask = "" }) {
++                tr("完成后休息 +{n} 分钟", "n" to Contract.restMinutesTotal(lv, c.draft)), true, { ask = "" }) {
+                 core.startContract(c.draft)
+             }
+         }
+diff --git a/Android version/app/src/main/java/com/obliphur/oit/ui/TimerNetScreens.kt b/Android version/app/src/main/java/com/obliphur/oit/ui/TimerNetScreens.kt
+index 7a7cace..2c02ba9 100644
+--- a/Android version/app/src/main/java/com/obliphur/oit/ui/TimerNetScreens.kt	
++++ b/Android version/app/src/main/java/com/obliphur/oit/ui/TimerNetScreens.kt	
+@@ -57,12 +57,12 @@ fun TimerScreen() {
+             when (t.state) {
+                 TState.RUNNING -> if (fog) BigText("???") else {
+                     // 黑雾: 专注时看不到专注时长 (预计休息时长也能推出时长, 一起不显示)
+-                    val rate = t.focusRate                   // 阻滞: 专注时间按 90% 增长
+-                    val m = t.elapsed / 60.0 * rate
++                    val rate = t.focusRate                   // 阻滞: 合约内的那部分时间按 90% 增长
++                    val m = core.contract.focusMinutes(t.startWall, t.elapsed)
+                     BigText("${f2(m)} min")
+                     val rem = computeF(m) * scale * core.contract.restFactor()
+                     Dim(if (rem > 0) tr("预计停止时的休息时长:  {m} 分钟", "m" to f2(rem)) else tr("预计休息时长: 0.00 分钟"))
+-                    if (rate < 1) Dim(tr("阻滞: 这段专注的时间按 {p}% 增长", "p" to Math.round(rate * 100)))
++                    if (rate < 1) Dim(tr("阻滞: 合约内这段专注的时间按 {p}% 增长", "p" to Math.round(rate * 100)))
+                 }
+                 TState.ON_BREAK -> {
+                     val left = t.countdown
+diff --git a/Android version/app/src/test/java/com/obliphur/oit/core/ContractTest.kt b/Android version/app/src/test/java/com/obliphur/oit/core/ContractTest.kt
+index b943abb..e159917 100644
+--- a/Android version/app/src/test/java/com/obliphur/oit/core/ContractTest.kt	
++++ b/Android version/app/src/test/java/com/obliphur/oit/core/ContractTest.kt	
+@@ -15,10 +15,8 @@ class ContractTest {
+ 
+     @Test
+     fun terms() {
+-        assertEquals(10 + 1, Contract.levelOf(listOf("long3", "isolate", "last")))   // 最后防线: 危机等级每有 10 级 +1
+-        assertEquals(7, Contract.levelOf(listOf("long3", "isolate"))); assertEquals(4, Contract.levelOf(listOf("last", "long1")))
+-        assertEquals(1, Contract.lastBonus(19, listOf("last"))); assertEquals(2, Contract.lastBonus(20, listOf("last")))
+-        assertEquals(0, Contract.lastBonus(30, listOf("long3")))
++        assertEquals(12, Contract.levelOf(listOf("long3", "tired3", "info3", "last")))   // 最后防线没有额外等级了
++        assertEquals(6, Contract.levelOf(listOf("long3", "tired3"))); assertEquals(4, Contract.levelOf(listOf("last", "long1")))
+         assertEquals(4, Contract.lifeOf(emptyList())); assertEquals(3, Contract.lifeOf(listOf("retreat1")))
+         assertEquals(2, Contract.lifeOf(listOf("retreat2"))); assertEquals(1, Contract.lifeOf(listOf("last")))
+         assertTrue(Contract.conflicts("retreat1", "last"))
+@@ -27,28 +25,50 @@ class ContractTest {
+         assertEquals(88, Contract.restMinutes(37)); assertEquals(90, Contract.restMinutes(38))
+         assertEquals(90, Contract.restMinutes(50)); assertEquals(90 * 60, Contract.restReward(45))
+         assertTrue((0 until 40).all { Contract.restMinutes(it) <= Contract.restMinutes(it + 1) })
+-        assertTrue(Contract.conflicts("long1", "long3") && Contract.conflicts("isolate", "info2"))
+-        assertFalse(Contract.conflicts("chan2", "isolate") || Contract.conflicts("isolate", "chan1"))
+-        assertTrue(Contract.conflicts("suppress", "isolate"))
++        // 删掉的两个 4 级词条: 互联网娱乐的败退 变成组合, 信息隔绝 (旧词条) 删了
++        assertFalse("isolate" in Contract.BY_ID || "ent" in Contract.BY_ID)
++        assertEquals(3, Contract.MAX_LEVEL)                       // 没有了 4 级的词条: 词条板不再留那一行
++        assertEquals(2, Contract.TERMS.first { it.id == "silent" }.level)   // 无言为真调整为 2 级
++        assertEquals(0.8, Contract.NET_SHARE["info1"]!!, 1e-9)
++        assertEquals(0.65, Contract.NET_SHARE["info2"]!!, 1e-9)
++        assertEquals(0.5, Contract.NET_SHARE["info3"]!!, 1e-9)
++        assertTrue(Contract.conflicts("long1", "long3") && Contract.conflicts("short1", "short2"))
++        assertFalse(Contract.conflicts("chan2", "info2") || Contract.conflicts("erode1", "info3"))
++        assertFalse(Contract.conflicts("suppress", "quiet"))
+         assertFalse(Contract.conflicts("jam", "music"))
+         assertTrue(Contract.conflicts("short1", "short2")); assertFalse(Contract.conflicts("seal", "fine"))
+         assertTrue(Contract.LAYOUT["short2"]!! < Contract.LAYOUT["suppress"]!!)
+-        assertEquals(Contract.SERIES.size + 9, Contract.BOARD_COLS)
++        assertEquals(Contract.SERIES.size + 8, Contract.BOARD_COLS)
+         assertEquals(Contract.SERIES.size + 1, Contract.LAYOUT["fine"])     // 零散的挨着排, 不留空
+-        // 行为类似的放在一起: 禁止的软件一行挨着, 录像在它们下面, 互联网娱乐的败退在乐理之灾那一列的 4 级
++        // 行为类似的放在一起: 禁止的软件 (乐理之灾 / 禁游令 / 低帧的诅咒) 在 1 级挨着, 录像和无言为真在下面的 2 级
+         val m = Contract.LAYOUT["music"]!!
+-        assertEquals((m..m + 3).toList(), Contract.BANS.map { Contract.LAYOUT[it]!! })
+-        assertEquals(m, Contract.LAYOUT["gaze"]); assertEquals(m + 1, Contract.LAYOUT["scar"]); assertEquals(m, Contract.LAYOUT["ent"])
++        assertEquals((m..m + 2).toList(), listOf("music", "game", "video").map { Contract.LAYOUT[it]!! })
++        assertEquals(m, Contract.LAYOUT["gaze"]); assertEquals(m + 1, Contract.LAYOUT["scar"])
++        assertEquals(Contract.LAYOUT["video"], Contract.LAYOUT["silent"])   // 无言为真 2 级, 在低帧的诅咒下面
+         assertEquals(Contract.LAYOUT["seal"], Contract.LAYOUT["fine"]); assertEquals(Contract.LAYOUT["suppress"], Contract.LAYOUT["jam"])
+         assertTrue(Contract.conflicts("gaze", "scar") && Contract.conflicts("scar", "gaze"))
+-        assertTrue(Contract.BANS.all { Contract.conflicts("ent", it) && Contract.conflicts(it, "isolate") })
+-        assertTrue(Contract.conflicts("ent", "isolate")); assertFalse(Contract.conflicts("isolate", "tired2"))
+         assertTrue(Contract.SOCIAL_APPS.intersect(Contract.VIDEO_APPS).isEmpty())
+-        assertEquals(listOf("long2", "isolate", "jam"), Contract.clean(listOf("long2", "long1", "x", "isolate", "suppress", "jam")))
+-        assertEquals(listOf("isolate", "chan2"), Contract.clean(listOf("isolate", "chan2")))
++        assertEquals(listOf("long2", "suppress", "jam"), Contract.clean(listOf("long2", "long1", "x", "suppress", "jam")))
++        // 词条组合: 系列任意一档都算; 凑齐了加危机等级 / 乘区 / 开始时或完成时的休息时间
++        val mochi = Contract.COMBOS_BY_ID["mochi"]!!
++        assertTrue(Contract.comboDone(mochi, listOf("long1", "tired2", "fine", "deep1")))
++        assertFalse(Contract.comboDone(mochi, listOf("long1", "tired2", "fine")))
++        assertEquals("void", Contract.comboState(mochi, listOf("long1", "tired2"), listOf("long1", "tired2", "fine", "deep1")))
++        assertEquals(1, Contract.comboLevel(listOf("long1", "tired2", "fine", "deep1")))
++        assertEquals(0.6 * 1.1, Contract.restFactorOf(listOf("long1", "tired2", "fine", "deep1")), 1e-9)
++        val iso = listOf("info1", "chan1", "erode1", "suppress", "fog", "quiet")
++        assertEquals(iso, Contract.clean(iso))                    // 信息隔绝组合的词条可以一起选
++        assertEquals(1, Contract.comboLevel(iso)); assertEquals(10 * 60, Contract.comboEnd(iso))
++        assertEquals(Contract.restMinutes(6) * 60 + 10 * 60, Contract.restReward(6, iso))
++        assertEquals(20 * 60, Contract.comboGift(listOf("music", "silent", "game", "video")))
++        assertEquals(20 * 60, Contract.comboGift(listOf("last", "unknown")))
++        assertEquals(mapOf("last" to Contract.COMBO_COLORS["gray"]!!, "unknown" to Contract.COMBO_COLORS["gray"]!!),
++            Contract.comboMarks(listOf("last", "unknown")))
++        assertEquals("纵深推进", Contract.reqName("deep")); assertEquals("最后防线", Contract.reqName("last"))
+         val best = Contract.clean(listOf("long3", "move2", "info3", "suppress", "jam", "music", "fog", "tired3", "chan2", "last",
+             "short2", "seal", "fine", "silent", "game", "video", "gaze"))
+-        assertEquals(31 + 3, Contract.levelOf(best))
++        assertEquals(32, Contract.levelOf(best))
++        assertEquals(20 * 60, Contract.restGift(best))             // 互联网娱乐的败退凑齐了
+         assertEquals(4 * 3600 * 1.6, Contract.durationOf(listOf("long3")), 1e-6)
+     }
+ 
+@@ -59,15 +79,15 @@ class ContractTest {
+         c.start(listOf("tired2", "info2", "chan1", "long1", "music"), "me", t0)
+         assertEquals(7, c.level)
+         assertEquals(t0.plusSeconds((4 * 3600 * 1.2).toLong()), c.endAt)
+-        // 信息阻断-II: 开始时剩 100 分钟, 只能用 50 分钟; 用超了 → 降成 -I, 多给 25 分钟
++        // 信息阻断-II: 开始时剩 100 分钟, 只能用 65 分钟; 用超了 → 降成 -I, 多给 15 分钟
+         assertNull(c.netCheck(600.0, 0.0, 6000.0, "2026-10-18"))
+-        assertEquals(3000.0, c.netLeft(600.0)!!, 1e-6)
+-        assertEquals("info2" to "over", c.netCheck(3700.0, 0.0, 0.0, "2026-10-18"))
++        assertEquals(3900.0, c.netLeft(600.0)!!, 1e-6)
++        assertEquals("info2" to "over", c.netCheck(4600.0, 0.0, 0.0, "2026-10-18"))
+         assertEquals(false to "info1", c.violate("info2"))
+         assertEquals(6, c.level); assertEquals(7, c.origLevel)
+-        assertEquals(1400.0, c.netLeft(3700.0)!!, 1e-6)
+-        assertEquals("info1" to "loan", c.netCheck(3800.0, 600.0, 0.0, "2026-10-18"))
+-        assertNull(c.netCheck(3800.0, 600.0, 0.0, "2026-10-18"))
++        assertEquals(800.0, c.netLeft(4600.0)!!, 1e-6)
++        assertEquals("info1" to "loan", c.netCheck(4700.0, 600.0, 0.0, "2026-10-18"))
++        assertNull(c.netCheck(4700.0, 600.0, 0.0, "2026-10-18"))
+         // 乐理之灾: 只在刚打开的那一下算; 只有 1 级, 降一级就失效
+         assertEquals("music", c.banCheck("music", true)); assertEquals("", c.banCheck("music", true)); c.banCheck("music", false)
+         assertEquals("", c.downgrade("music")); assertFalse(c.has("music"))
+@@ -81,28 +101,42 @@ class ContractTest {
+         assertNull(c.offlineDue(listOf("手机" to t0.minusHours(3)), t0.plusMinutes(14), t0))
+         assertEquals("手机" to t0.plusMinutes(15), c.offlineDue(listOf("手机" to t0.minusHours(3)), t0.plusMinutes(16), t0))
+         assertNull(c.offlineDue(listOf("手机" to t0), t0.plusMinutes(70), t0.plusHours(1)))
+-        // 互联网娱乐的败退: 四类都禁止, 每一类各自只在打开的那一下算; 违反时它降一级. 录像的词条违反一次就失效
++        // 互联网娱乐的败退 (词条组合): 四类都禁止, 每一类各自只在打开的那一下算; 开始时休息 +20 分钟
+         val e = Contract(tmp())
+-        e.start(listOf("ent", "gaze", "info3"), "me", t0)
+-        assertEquals("ent", e.banTerm("game")); assertEquals(listOf("camera"), e.records())
+-        assertEquals("ent", e.banCheck("video", true)); assertEquals("", e.banCheck("video", true))
+-        // 违反任意一项就整个失效; 失效后照样检查: 再次打开只响警报 (echo), 不扣目标生命值, 每个词条 2 分钟最多响一次
+-        assertEquals(false to "", e.violate("ent")); assertFalse(e.has("ent")); assertEquals(listOf("ent"), e.lost)
+-        assertEquals("ent", e.banTerm("silent")); assertEquals("ent", e.banCheck("silent", true)); assertTrue(e.echo("ent"))
+-        assertTrue(e.echoDue("ent", t0)); assertFalse(e.echoDue("ent", t0.plusSeconds(119)))
+-        assertTrue(e.echoDue("ent", t0.plusSeconds(120))); assertEquals(1, e.violations)
+-        e.finish("completed", t0.plusHours(5))
+-        // 合约开始时积攒的休息时间 +20 分钟
+-        assertEquals(20 * 60, Contract.restGift(listOf("ent", "gaze"))); assertEquals(0, Contract.restGift(listOf("music")))
+-        e.start(listOf("ent", "gaze"), "me", t0)
+-        assertEquals(false to "", e.violate("gaze")); assertEquals(emptyList<String>(), e.records())
+-        // 信息隔绝: 休息时间 ×1.3 (和疲惫相乘), 降成信息阻断-III 后没有了
+-        e.start(listOf("isolate", "tired2"), "me", t0)
+-        assertEquals(0.6 * 1.3, e.restFactor(), 1e-9)
+-        e.downgrade("isolate"); assertEquals(0.6, e.restFactor(), 1e-9)
+-        // 没有疲惫: 基础 ×0.8 (信息隔绝照样相乘)
++        val nofun = Contract.COMBOS_BY_ID["nofun"]!!
++        val isolation = Contract.COMBOS_BY_ID["isolation"]!!
++        e.start(listOf("music", "silent", "game", "video"), "me", t0)
++        assertEquals(1 + 2 + 1 + 1, e.level); assertEquals("game", e.banTerm("game"))
++        assertEquals("video", e.banCheck("video", true)); assertEquals("", e.banCheck("video", true))
++        assertEquals(20 * 60, Contract.restGift(e.terms))
++        assertEquals("done", e.combos()[1].second)
++        assertEquals(Contract.COMBO_COLORS["purple"], e.comboMarks()["music"])
++        // 成员失效 (降级不算) 后组合的效果全部取消, 开始时给的休息时间不收回
++        assertEquals(false to "", e.violate("game")); assertEquals("void", e.combos()[1].second)
++        assertTrue(e.comboMarks().isEmpty())
++        // 信息隔绝组合: 额外 1 危机等级, 完成时 +10 分钟; 成员失效后都没了
++        val iso = listOf("info1", "chan1", "erode1", "suppress", "fog", "quiet")
++        e.start(iso, "me", t0)
++        assertEquals("done", e.combos()[3].second); assertEquals(7, e.level)
++        assertEquals(Contract.restMinutes(7) * 60.0 + 10 * 60, e.reward, 1e-6)
++        assertEquals(Contract.COMBO_COLORS["red"], e.comboMarks()["fog"])
++        assertEquals(false to "", e.violate("suppress")); assertEquals("void", e.combos()[3].second)
++        assertEquals(5, e.level); assertEquals(Contract.restMinutes(5) * 60.0, e.reward, 1e-6)
++        // 打年糕组合: 额外 1 危机等级, 休息时间 ×1.1; 纵深推进降级不算失效
++        e.start(listOf("long1", "tired2", "fine", "deep2"), "me", t0)
++        assertEquals("done", e.combos()[0].second); assertEquals(8, e.level)
++        assertEquals(0.6 * 1.1, e.restFactor(), 1e-9)
++        assertEquals(false to "deep1", e.violate("deep2")); assertEquals("done", e.combos()[0].second)
++        assertEquals(0.6 * 1.1, e.restFactor(), 1e-9)             // 降级不算失效
++        assertEquals(false to "", e.violate("deep1")); assertEquals("void", e.combos()[0].second)
++        assertEquals(0.6, e.restFactor(), 1e-9)                   // 成员失效了: 乘区取消
++        // 没有疲惫: 基础 ×0.8 (打年糕照样相乘)
+         assertEquals(0.8, Contract.restFactorOf(emptyList()), 1e-9)
+-        assertEquals(0.8 * 1.3, Contract.restFactorOf(listOf("isolate")), 1e-9)
++        assertEquals(0.6 * 1.1, Contract.restFactorOf(listOf("long1", "tired2", "fine", "deep1")), 1e-9)
++        // 录像的词条: 违反一次就失效, 不再录
++        e.start(listOf("scar"), "me", t0)
++        assertEquals(listOf("screen"), e.records()); assertEquals(2, e.level)
++        assertEquals(false to "", e.violate("scar")); assertEquals(emptyList<String>(), e.records())
+         // 目标生命值: 默认 4, 退路封锁-I 只有 3; 整点记录超时未填写也算 (不降词条)
+         assertEquals(4, c.violationLimit)
+         c.start(listOf("suppress", "info3", "long1", "retreat1"), "me", t0)
+@@ -178,11 +212,12 @@ class ContractTest {
+     @Test
+     fun newTerms() {
+         val t0 = LocalDateTime.of(2026, 10, 18, 9, 30)
+-        // 翻页: 成系列的一页, 零散的一页; 侵蚀 / 静默协议和信息隔绝冲突
++        // 翻页: 成系列的一页, 零散的一页, 第 3 页是词条组合
+         assertEquals(listOf(0 until Contract.SERIES.size, Contract.SERIES.size until Contract.BOARD_COLS), Contract.PAGES)
++        assertEquals(2, Contract.COMBO_PAGE)
+         assertTrue(Contract.LAYOUT["deep1"]!! < Contract.SERIES.size && Contract.LAYOUT["hoard"]!! >= Contract.SERIES.size)
+-        assertTrue(Contract.conflicts("erode1", "isolate") && Contract.conflicts("isolate", "erode2") && Contract.conflicts("quiet", "isolate"))
+         assertFalse(Contract.conflicts("erode1", "info3") || Contract.conflicts("quiet", "jam"))
++        assertFalse(Contract.conflicts("suppress", "fog"))
+         val c = Contract(tmp())
+         // 禁止囤囤鼠!: 提前结束休息算违反 (软规则, 1 级, 违反一次失效), 休息时间 ×1.05; 侵蚀: 冷静期 ×2 / ×3
+         c.start(listOf("hoard", "tired1", "erode2"), "me", t0)
+@@ -201,11 +236,11 @@ class ContractTest {
+         assertEquals("", c.quietCheck(false)); assertEquals("quiet", c.quietCheck(true))
+         assertEquals(3, c.violations); assertEquals(1, c.life)
+         c.live.put("violations", 0)                       // 目标生命值只有 4: 接着测剩下的
+-        assertNull(c.netCheck(0.0, 0.0, 4000.0, "d")); assertEquals("info1" to "over", c.netCheck(3100.0, 0.0, 0.0, "d"))
++        assertNull(c.netCheck(0.0, 0.0, 4000.0, "d")); assertEquals("info1" to "over", c.netCheck(3300.0, 0.0, 0.0, "d"))
+         assertEquals(false to "", c.violate("info1")); assertEquals("", c.netTerm())
+-        assertNull(c.netCheck(3100.0, 0.0, 0.0, "d"))                                   // 没有继续用
+-        assertEquals("info1" to "over", c.netCheck(3200.0, 0.0, 0.0, "d")); assertNull(c.netCheck(3200.0, 0.0, 0.0, "d"))
+-        assertEquals("info1" to "loan", c.netCheck(3200.0, 300.0, 0.0, "d")); assertTrue(c.echo("info1"))
++        assertNull(c.netCheck(3300.0, 0.0, 0.0, "d"))                                   // 没有继续用
++        assertEquals("info1" to "over", c.netCheck(3400.0, 0.0, 0.0, "d")); assertNull(c.netCheck(3400.0, 0.0, 0.0, "d"))
++        assertEquals("info1" to "loan", c.netCheck(3400.0, 300.0, 0.0, "d")); assertTrue(c.echo("info1"))
+         assertEquals("short1", c.supplyCheck(0.0, 400.0)); assertEquals(false to "", c.violate("short1")); assertNull(c.supplyLimit)
+         assertEquals("short1", c.supplyWatch()); assertEquals("", c.supplyCheck(0.0, 400.0)); assertEquals("", c.supplyCheck(0.0, 400.3))
+         assertEquals("short1", c.supplyCheck(0.0, 410.0)); assertTrue(c.echo("short1"))
+@@ -227,10 +262,10 @@ class ContractTest {
+         c.enable("chan2", t0.plusHours(1))
+         assertEquals("chan2" to 3, c.windowWatch()); assertFalse(c.echo("chan2"))
+         assertEquals(listOf("chan2"), c.expire(t0.plusHours(1))); assertEquals("chan1" to 4, c.windowWatch()); assertTrue(c.echo("chan1"))
+-        // 最后防线: 危机等级 10 → 多 1 级; 降级后不到 10 级就没有了
+-        c.start(listOf("last", "long3", "isolate"), "me", t0)
+-        assertEquals(11, c.level); assertEquals(1, c.lastExtra); assertEquals(11, c.origLevel)
+-        assertEquals(true to "info3", c.violate("isolate")); assertEquals(9, c.level); assertEquals(0, c.lastExtra)   // 目标生命值只有 1
++        // 最后防线: 只有初始目标生命值 1, 没有额外的词条等级
++        c.start(listOf("last", "long3", "tired3", "chan1"), "me", t0)
++        assertEquals(10, c.level); assertEquals(1, c.violationLimit); assertEquals(10, c.origLevel)
++        assertEquals(true to "", c.violate("chan1")); assertEquals(9, c.level)   // 目标生命值只有 1
+         // 纵深推进: 专注不到 40 / 60 分钟算违反; -II 降成 -I
+         c.start(listOf("deep2", "quiet"), "me", t0)
+         assertEquals("deep2", c.focusCheck(59 * 60.0)); assertEquals("", c.focusCheck(60 * 60.0))
+@@ -326,12 +361,15 @@ class ContractTest {
+         // 没有能选的词条: 一定是效果
+         c.live.put("rand_used", org.json.JSONArray(Contract.TERMS.map { it.id }))
+         assertTrue(c.randomCandidates().isEmpty()); assertEquals(listOf("none" to ""), c.roll(t0.plusHours(3), seq(0.7)))
+-        // 阻滞: 下一次开始的专注时间按 90% 增长 (合约结束了这段专注照样按 90%)
++        // 阻滞: 只减慢合约内那部分专注 (合约结束后恢复正常速度); 合约结束后才开始的专注不生效
+         c.live.put("rand_n", 3)
+         assertEquals(listOf("slow" to ""), c.roll(t0.plusHours(3).plusMinutes(30), seq(0.6))); assertTrue(c.slowPending)
+-        val s1 = t0.plusHours(4).plusMinutes(10)
+-        assertEquals(1.0, c.focusRate(s1), 1e-9); assertTrue(c.slowBind(s1)); assertFalse(c.slowPending); assertFalse(c.slowBind(s1))
+-        assertEquals(0.9, c.focusRate(s1), 1e-9); assertEquals(1.0, c.focusRate(s1.plusHours(1)), 1e-9)
++        assertFalse(c.slowBind(t0.plusHours(4).plusMinutes(10))); assertTrue(c.slowPending)    // 合约结束后才开始的专注
++        val s1 = t0.plusHours(3).plusMinutes(30)
++        assertTrue(c.slowBind(s1)); assertFalse(c.slowPending); assertFalse(c.slowBind(s1))
++        assertEquals(0.9, c.focusRate(s1, s1), 1e-9)
++        assertEquals(1.0, c.focusRate(s1, t0.plusHours(4).plusMinutes(10)), 1e-9)             // 合约结束后不再减慢
++        assertEquals((30 * 60 * 0.9 + 30 * 60) / 60.0, c.focusMinutes(s1, 3600.0), 1e-6)
+         // 封锁一个过了填写时限, 还没被封锁的记录格 (最近 24 小时里的), 合约结束后照样锁着; 填了的也锁
+         val now = LocalDateTime.of(2026, 10, 18, 12, 10)
+         val texts = mapOf("2026-10-18/10" to "学习")
+@@ -344,7 +382,9 @@ class ContractTest {
+         assertEquals("2026-10-18/9", c.lockCell(now, seq(pick = { it - 1 }), textOf, "Sleeping", 3600))   // 已经封锁的不再选
+         assertEquals("", c.lockCell(now, seq(), null, "Sleeping", 3600))
+         c.finish("abandoned", now)
+-        assertTrue(c.hourLocked(a, b, "学习", now.plusDays(3), 3600, "Sleeping")); assertEquals(0.9, c.focusRate(s1), 1e-9)
++        // 合约提前结束了: 之后才开始的这段专注不减速 (阻滞只对合约内的专注生效)
++        assertTrue(c.hourLocked(a, b, "学习", now.plusDays(3), 3600, "Sleeping"))
++        assertEquals(1.0, c.focusRate(s1), 1e-9); assertEquals(60.0, c.focusMinutes(s1, 3600.0), 1e-6)
+         // 未知变量启用了整点记录的词条: 这次合约中一直强制开启整点记录
+         c.start(listOf("unknown"), "me", t0)
+         assertFalse(c.hourForced())
+diff --git a/MECHANICS.md b/MECHANICS.md
+index 06b0031..4776670 100644
+--- a/MECHANICS.md
++++ b/MECHANICS.md
+@@ -917,6 +917,8 @@ Android 版按本文第 1 ~ 11 节实现, 数值和规则都相同. 下面只写
+   - **提前结束**.
+ - 手动提前结束的显示为"**行动终止**"; 被动结束 (目标生命值归零 / 空闲 / 设备离线) 显示为"**行动失败**".
+ - 合约中计时器页的"☕ 我累了"按钮隐藏.
++- **结束合约前先停止休息**: 完成 / 失败 / 提前结束时正在休息的话, 先按"暂停休息"停掉那次休息 (剩余时间里合约开始前积攒的原样留下),
++  然后合约才结束 (18.2). 这不算禁止囤囤鼠! 的违反, 也不弹暂停休息的提示.
+ - 结束时弹出只能手动关闭的提示 (提前结束只是普通提示), 并写入 `settings_changes.log`. 合约页最下方显示上一次合约的结果.
+ - 合约页右上角列出合约期间的特别规则 (目标生命值, 空闲失败, 整点记录超时, "我累了", 暂停休息, 合约中得到的休息时间).
+ 
+@@ -931,18 +933,17 @@ Android 版按本文第 1 ~ 11 节实现, 数值和规则都相同. 下面只写
+ | 完成时给的休息时间 | 20 min | 22 min | 29 min | 38 min | 48 min | 55 min | 57 min | 66 min | 75 min | 84 min | 88 min | 90 min |
+ 
+ - 合约**完成**时, 按上表一次存进积攒的休息时间 (固定的分钟数, 和专注了多久无关, 不乘设置里的"休息时间倍率").
+-  合约中每段专注给出的建议休息时长乘以合约的**基础倍率 0.8** (再乘设置里的"休息时间倍率"); 选了疲惫时换成疲惫的倍率 (见 18.3), 信息隔绝另外相乘.
+-- 合约页最下面一条和开始时的确认直接显示"完成后休息 +N 分钟" (合约中按降级后的等级); 完成时的提示和合约页的"上次合约"显示实际给了多少.
+-  **没有完成** (失败 / 提前结束) 就不给.
+-- 结算按**结束时**的危机等级 (词条降过级的按降级后的, 见 18.3).
+-- **最后防线**的额外等级: 选着最后防线时, 危机等级 (不算这份加成, 算上最后防线自己的 3 级) 每有 10 级, 最后防线多 1 级 (例如 10 → 11, 20 → 22, 36 → 39).
+-  随时按现在的危机等级算: 别的词条降级后不到 10 的倍数, 加成就跟着减少. 已选中的词条列表里写出 "[危机等级加成 +N 级]".
+-- 完成时正在专注: 这段专注结束时 (合约已经完成了), 按那个合约的疲惫给建议休息时长.
++  合约中每段专注给出的建议休息时长乘以合约的**基础倍率 0.8** (再乘设置里的"休息时间倍率"); 选了疲惫时换成疲惫的倍率 (见 18.3),
++  凑齐的词条组合另外相乘 (打年糕 ×1.1, 见 18.3.1).
++- 合约页最下面一条和开始时的确认直接显示"完成后休息 +N 分钟" (合约中按降级后的等级, 算上凑齐的组合的结束后收益);
++  完成时的提示和合约页的"上次合约"显示实际给了多少. **没有完成** (失败 / 提前结束) 就不给.
++- 结算按**结束时**的危机等级 (词条降过级的按降级后的, 凑齐的组合的额外等级算在里面, 见 18.3 / 18.3.1).
++- 完成时正在专注: 这段专注结束时 (合约已经完成了), 按那个合约的疲惫 / 组合乘区给建议休息时长.
+ - **合约开始前积攒的休息时间**: 开始合约时记下积攒的休息时间. 合约中的一次休息 = 建议休息时长 + 积攒的休息时间,
+   先用合约中得到的, 合约开始前积攒的放在**最后**用.
+   - 合约中暂停休息: 剩余时间里合约开始前积攒的那部分原样留下, 不打折; 其余的照常按结转比例 (6.3).
+   - 合约**结束后** (不管怎样结束), 合约中得到的休息时间**作废**: 积攒的休息时间只留下合约开始前积攒的还没用掉的部分, 再加上完成的奖励.
+-    结束时正在进行的那次休息照常走完; 之后暂停的话, 只留下其中合约开始前积攒的那部分.
++    结束合约前先停掉正在进行的休息 (18.1): 其中合约开始前积攒的那部分留下, 合约中得到的部分作废; 之后暂停的话也只留下合约开始前的部分.
+ - **完成合约后的第一次休息**: 暂停时剩余时间留给下次的比例从 x ("暂停休息结转比例", 默认 ×0.7) 变为 **1 - (1 - x) / 2** (默认 ×0.85).
+   这次休息含"我累了"领到的时间时 (6.5) 照样全部保留, 不打折.
+ - 危机等级到 20 时合约页提示"当前合约难度极大 请谨慎行动".
+@@ -950,15 +951,15 @@ Android 版按本文第 1 ~ 11 节实现, 数值和规则都相同. 下面只写
+ ### 18.3 词条
+ 
+ 同一类型的词条互相冲突. 词条板上成系列的 (有好几档的) 每组一列; 零散的 (只有一档的) 不单独占一列, 按等级排在对应的行里从左往右挨着放, 不留空.
+-另外"抑制"和"信息隔绝"冲突; "目光"和"刻痕"冲突; "互联网娱乐的败退"和乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒 / 信息隔绝都冲突;
+-"信息隔绝"也和乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒冲突; 侵蚀-I / II, 静默协议都和信息隔绝冲突.
++另外"目光"和"刻痕"冲突; 退路封锁和最后防线同一列, 互相冲突.
+ 零散的词条里行为类似的放在一起: 联网 (抑制 / 全频道阻塞干扰) 一列, 整点记录 (记录封锁 / 细化规范) 一列,
+-禁止打开的软件 (乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒) 在 1 级挨着, 录像 (目光 / 刻痕) 在它们下面的 2 级, 互联网娱乐的败退在乐理之灾那一列的 4 级;
+-最后是黑雾, 禁止囤囤鼠!, 静默协议 (都是 1 级), 未知变量 (3 级). 两页都是 9 列.
+-和已选中的冲突的词条变灰, 点不了. 4 级的词条用红色边框.
++禁止打开的软件 乐理之灾 / 禁游令 / 低帧的诅咒 在 1 级挨着, 录像 (目光 / 刻痕) 在它们下面的 2 级, 无言为真 (2 级) 在低帧的诅咒下面;
++最后是黑雾, 禁止囤囤鼠!, 静默协议 (都是 1 级), 未知变量 (3 级). 第 1 页 9 列, 第 2 页 8 列. 最高 3 级 (没有 4 级的词条).
++和已选中的冲突的词条变灰, 点不了.
+ 
+-**词条板翻页**: 不用滑动条. 第 1 页是成系列的词条, 第 2 页是零散的词条; 词条板左边一条最下面是 "◀ 1 / 2 ▶", 点箭头翻页.
+-电脑的窗口太窄放不下一页时, 这一页再平均分成几页 (例如 1 / 4); 已选中的词条在下面的列表里照样全部列出.
++**词条板翻页**: 不用滑动条. 第 1 页是成系列的词条, 第 2 页是零散的词条, 第 3 页是**词条组合**的效果 (18.3.1);
++词条板左边一条最下面是 "◀ 1 / 3 ▶", 点箭头翻页. 电脑的窗口太窄放不下一页时, 这一页再平均分成几页 (例如 1 / 4);
++已选中的词条在下面的列表里照样全部列出.
+ 
+ - 词条编写格式: [软硬] [等级] [名称] : [词条描述] [冲突词条]
+ 
+@@ -966,29 +967,27 @@ Android 版按本文第 1 ~ 11 节实现, 数值和规则都相同. 下面只写
+ | --- | --- | --- | --- |
+ | 硬 | 1 / 2 / 3 | 环境:持久战-I / II / III | 时长改为 120% / 140% / 160% |
+ | — | 1 / 2 | 目标:高机动-I / II | 现实中的移动速度改为 125% / 150% (自觉遵守, 程序不检查) |
+-| 软 | 1 / 2 / 3 | 环境:信息阻断-I / II / III | 可用的剩余联网时间改为 75% / 50% / 25%, 且不能使用借贷 |
+-| 软 | 4 | 信息隔绝 | 不能使用联网功能; 选择时, 获得的休息时间改为 130% (和疲惫不冲突, 相乘) |
++| 软 | 1 / 2 / 3 | 环境:信息阻断-I / II / III | 可用的剩余联网时间改为 80% / 65% / 50%, 且不能使用借贷 |
+ | 硬 | 1 / 2 / 3 | 环境:疲惫-I / II / III | 期间获得的休息时间改为 70% / 60% / 50% |
+ | 软 | 1 / 2 | 环境:支援短缺-I / II | 可用的合约开始前已保存休息时间改为 50% / 不能使用合约开始前已经保存的休息时间 |
+ | 软 | 1 / 2 | 环境:通道阻塞-I / II | 期间的最大窗口数改为 4 / 3 |
+ | 软 | 1 / 2 | 目标:纵深推进-I / II | 专注的时间不能少于 40 / 60 min |
+-| 硬 | 1 / 2 | 环境:侵蚀-I / II | 网络申请冷却期改为 200% / 300% (和信息隔绝冲突) |
+-| 软 | 1 | 环境:抑制 | 不能使用快速访问功能 (和信息隔绝冲突) |
+-| 硬 | 2 | 环境:全频道阻塞干扰 | 期间使用 代理-全屏蔽 (Proxy block-all) |
++| 硬 | 1 / 2 | 环境:侵蚀-I / II | 网络申请冷却期改为 200% / 300% |
++| 软 | 1 | 环境:抑制 | 不能使用快速访问功能 |
++| 硬 | 2 | 环境:全频道阻塞干扰 | 有连接的其他设备时使用 代理-全屏蔽 (Proxy block-all); 没有连接其他设备时使用 Adapter (没有 Adapter 方式的设备总是 代理-全屏蔽) |
+ | 软 | 1 | 环境:乐理之灾 | 非休息期间不能打开音乐播放软件, 不能使用外部软件播放 mp3 等音频文件 |
+-| 软 | 1 | 环境:无言为真 | 合约期间不能打开社交软件和与 AI 聊天的软件, 不能使用社交网站 |
++| 软 | 2 | 环境:无言为真 | 合约期间不能打开社交软件和与 AI 聊天的软件, 不能使用社交网站 |
+ | 软 | 1 | 环境:禁游令 | 合约期间不能使用游戏和游戏平台 |
+ | 软 | 1 | 环境:低帧的诅咒 | 合约期间不能使用视频平台 |
+-| 软 | 4 | 互联网娱乐的败退 | 同时有乐理之灾, 无言为真, 禁游令, 低帧的诅咒的效果; 违反任意一项即整个失效; 合约开始时获得额外 20 min 的休息时间 |
+ | 软 | 2 | 目光 | 合约期间打开摄像头记录使用者的行为, 结束后保存录像 (18.8) |
+ | 软 | 2 | 刻痕 | 合约期间录制整个屏幕, 结束后保存录像 (18.8) |
+-| 硬 | 1 | 环境:黑雾 | 合约期间, 专注时长, 成就, 日历, 统计数据不可见, 且无法打开设置 |
++| 硬 | 1 | 环境:黑雾 | 合约期间, 专注时长, 合约的剩余时间, 成就, 日历, 统计数据不可见, 且无法打开设置 |
+ | 硬 | 1 | 环境:记录封锁 | 超过填写时间未填写, 则不能再修改该记录 |
+ | 硬 | 2 | 目标:细化规范 | 记录变为 30 min 一次 |
+ | 硬 | 1 / 2 | 环境:退路封锁-I / II | 初始目标生命值为 3 / 2 |
+-| 硬 | 3 | 最后防线 | 初始目标生命值为 1; 危机等级每有 10 级, 词条等级增加一级 (和退路封锁同一列, 互相冲突) |
+-| 软 | 1 | 禁止囤囤鼠! | 不能提前结束休息, 但是获得的休息时间改为 105% (和疲惫 / 信息隔绝相乘) |
+-| 软 | 1 | 环境:静默协议 | 专注中不能处于联网状态 (和信息隔绝冲突) |
++| 硬 | 3 | 最后防线 | 初始目标生命值为 1 (和退路封锁同一列, 互相冲突) |
++| 软 | 1 | 禁止囤囤鼠! | 不能提前结束休息, 但是获得的休息时间改为 105% (和疲惫相乘) |
++| 软 | 1 | 环境:静默协议 | 专注中不能处于联网状态 |
+ | 软 | 3 | 未知变量 | 合约开始时, 以及之后每过一个整小时, 从当前可以选择的 1-2 级词条中随机启用一个或随机施加效果; 选中的词条不算进危机等级, 可以点击关闭, 但算一次违反 (黄色标记; 刚刚开始也会判定; 不会选中刻痕 / 目光 / 持久战, 不选已经选过的; 抽中后 3 分钟生效, 只在那个小时里有效; 效果见 18.3 各词条的说明) |
+ 
+ 词条的描述里括号中的说明只写在这里, 不写进界面上的词条描述.
+@@ -996,9 +995,9 @@ Android 版按本文第 1 ~ 11 节实现, 数值和规则都相同. 下面只写
+ **软规则** 界面上照样可以做 (照样能联网, 借贷, 快速访问, 开音乐软件, 多开窗口, 用合约开始前积攒的休息时间, 提前结束休息),
+ 但会被算作**违反**: 响警报 (违反的那台设备), 记一次违反, 并把这个词条**降一级**:
+ 
+-- 系列词条换成低一档的: 信息隔绝 → 信息阻断-III → -II → -I → 失效; 通道阻塞-II → -I → 失效; 支援短缺-II → -I → 失效; 纵深推进-II → -I → 失效;
+-- 只有一档的 (乐理之灾, 无言为真, 禁游令, 低帧的诅咒, 抑制, 禁止囤囤鼠!, 静默协议, 都是 1 级) 降一级就失效;
+-  互联网娱乐的败退 (4 级) 违反任意一项就直接失去全部 4 级 (失效), 四类软件都不再禁止;
++- 系列词条换成低一档的: 信息阻断-III → -II → -I → 失效; 通道阻塞-II → -I → 失效; 支援短缺-II → -I → 失效; 纵深推进-II → -I → 失效;
++- 只有一档的 (乐理之灾, 禁游令, 低帧的诅咒, 抑制, 禁止囤囤鼠!, 静默协议, 都是 1 级) 降一级就失效;
++  无言为真是 2 级: 违反一次降成 1 级 (照样禁止), 再违反才失效;
+ - 录像的 (目光, 刻痕) 违反一次就失效, 录像随之停止 (已经录下的照样保存).
+ - **失效后再次触发**: 词条被违反到失效 (降到最低一档后又违反了) 后照样检查, 按失效前最低一档的规则
+   (例如通道阻塞-I 的 4 个窗口, 纵深推进-I 的 40 分钟, 信息阻断-I 失效时的额度, 支援短缺-I 失效时的上限).
+@@ -1013,16 +1012,17 @@ Android 版按本文第 1 ~ 11 节实现, 数值和规则都相同. 下面只写
+ 
+ 各词条怎样算违反 / 怎样生效:
+ 
+-- **信息阻断 / 信息隔绝**: 合约开始时 (以及合约中换日时) 记下当时的剩余额度 (所有设备合计), 能用它的 75% / 50% / 25% / 0%.
+-  用超了 (按额度的消耗算, 快速访问按倍率算) 算一次违反; 降级后多给低一档多出来的那部分 (例如 -II 降成 -I 多给开始时剩余额度的 25%), 再用超再算.
++- **信息阻断**: 合约开始时 (以及合约中换日时) 记下当时的剩余额度 (所有设备合计), 能用它的 80% / 65% / 50%.
++  用超了 (按额度的消耗算, 快速访问按倍率算) 算一次违反; 降级后多给低一档多出来的那部分 (例如 -II 降成 -I 多给开始时剩余额度的 15%), 再用超再算.
+   合约中紧急借贷一次算一次违反. 合约页显示"合约的联网额度还剩 …". 额度是各设备共用的, 由合约的主人 (开始合约的设备, 它 2 分钟没同步时本机) 判定.
+ - **抑制**: 每用一次快速访问 (包括冷静期中改为快速访问) 算一次违反.
+ - **乐理之灾**: 休息中不管. 其余时间电脑每 2 秒看一次: 常见的音乐播放软件 (网易云音乐, QQ 音乐, 酷狗, 酷我, Spotify, foobar2000, AIMP, iTunes, MusicBee 等) 的进程在运行 (缩到托盘里也算),
+   或者任务栏上有窗口的标题里有音频文件名 (`.mp3` `.flac` `.wav` `.ogg` `.m4a` `.aac` `.wma` `.ape` `.opus` …, 例如用浏览器打开 mp3). 不关它们.
+   视频播放器 (PotPlayer, VLC, MPC, KMPlayer, Windows 媒体播放器 …) 开着不算, 只有用它们打开音频文件 (标题里有音频文件名) 才算.
+   从没有到有算一次违反, 一直开着不重复算, 都关掉后再开才再算 (休息结束时还开着, 算一次).
+-- **无言为真 / 禁游令 / 低帧的诅咒** (以及互联网娱乐的败退): 合约期间 (休息中也算) 电脑每 2 秒看一次, 和乐理之灾一样不关它们, 只算违反;
+-  从没有到有算一次, 一直开着不重复算, 关掉后再开才再算. 每一类各自算 (互联网娱乐的败退下, 开着游戏再开视频网站又算一次).
++- **无言为真 / 禁游令 / 低帧的诅咒**: 合约期间 (休息中也算) 电脑每 2 秒看一次, 和乐理之灾一样不关它们, 只算违反;
++  从没有到有算一次, 一直开着不重复算, 关掉后再开才再算. 每一类各自算 (四类都选着时, 开着游戏再开视频网站又算一次).
++  无言为真是 2 级: 违反一次降成 1 级, 再违反才失效.
+   - 无言为真: 常见的社交软件 (微信, QQ, TIM, Telegram, Discord, WhatsApp, LINE, Skype, Signal, 微博, 小红书 …) 和与 AI 聊天的软件
+     (ChatGPT, Claude, 豆包, Kimi, 元宝, 通义, DeepSeek, Copilot, Chatbox, Cherry Studio, Poe, Perplexity …) 的进程在运行 (缩到托盘里也算);
+     或者浏览器的窗口标题是社交网站 / 网页版的 AI (微博, 知乎, 小红书, 贴吧, 豆瓣, X / Twitter, Facebook, Instagram, Reddit, ChatGPT, Claude, DeepSeek, Gemini, Kimi, 豆包 …).
+@@ -1033,11 +1033,9 @@ Android 版按本文第 1 ~ 11 节实现, 数值和规则都相同. 下面只写
+   - 低帧的诅咒: 视频平台的客户端 (哔哩哔哩, 优酷, 腾讯视频, 爱奇艺, 芒果 TV, 西瓜视频, 抖音, 快手, 斗鱼, 虎牙, Netflix …) 的进程在运行,
+     或者浏览器的窗口标题是视频网站 (哔哩哔哩 / bilibili, YouTube, 优酷, 腾讯视频, 爱奇艺, 抖音, TikTok, Twitch, Netflix, AcFun …). 本地的视频播放器 (PotPlayer, VLC …) 不算.
+   - 抖音 / 快手 / TikTok 算视频平台, 不算社交软件 (一个软件只算一个词条).
+-- **互联网娱乐的败退** 合约开始时, 积攒的休息时间 +20 分钟 (由开始合约的那台设备给, 随计时器同步). 合约页最下面一条写出"开始时休息 +20 分钟".
+-  这 20 分钟算合约中得到的休息时间 (不算进合约开始前积攒的那部分): 合约中可以用, 暂停休息时按倍率打折, 合约结束后不留下 (18.2).
+-- **信息隔绝** 的休息时间: 合约中结束的专注, 建议休息时长再乘 1.3 (和基础倍率 / 疲惫相乘, 例如没有疲惫: 0.8 × 1.3, 疲惫-II: 0.6 × 1.3). 降成信息阻断-III 后就没有了.
+ - **禁止囤囤鼠!** (软规则): 合约中休息照样可以提前结束 ("⏸ 暂停休息", 或休息中按"▶ 开始专注"), 但算一次违反, 这个词条失效 (之后没有 ×1.05);
+-  休息中倒计时下面提示"禁止囤囤鼠!: 提前结束休息会算作一次违反.". 关闭程序时照常暂停, 不算违反 (6.3). 合约中结束的专注, 建议休息时长再乘 1.05 (和基础倍率 / 疲惫 / 信息隔绝相乘).
++  休息中倒计时下面提示"禁止囤囤鼠!: 提前结束休息会算作一次违反.". 关闭程序时照常暂停, 不算违反 (6.3).
++  合约中结束的专注, 建议休息时长再乘 1.05 (和基础倍率 / 疲惫相乘).
+ - **纵深推进**: 结束专注 (按"■ 结束专注") 时这段专注不到 40 / 60 分钟, 算一次违反 (照常进入休息). -II 降成 -I 后按 40 分钟算.
+   关闭程序 / 没回应"还在吗"被自动结束的专注不算.
+ - **侵蚀**: 合约中提交的普通申请, 冷静期 ×2 / ×3 (和休息中的 ×0.4 相乘). 快速访问不受影响.
+@@ -1052,7 +1050,8 @@ Android 版按本文第 1 ~ 11 节实现, 数值和规则都相同. 下面只写
+   - **效果** (各自的概率): **15%** 当前的休息时间 -10 分钟; **15%** 随机封锁一个还没被封锁, 已经过了填写时限的整点记录格
+     (最近 24 小时里的; 不管填没填都不能再改, 合约结束后照样锁着; 没有这样的格子就无事发生); **15%** 当前的休息时间 +10 分钟;
+     **15%** 这次判定作废, 改为再判定两次 (每次照样按 75% / 25%; 一个小时最多判定 9 次); **10%** 下一次开始的专注启用**阻滞**:
+-    这段专注的时间按 **90%** 增长 (显示的时长, 计入的学习时长, 建议休息时长, 纵深推进都按它算; 合约结束了这段专注也照样按 90%);
++    这段专注里**合约内**的那部分时间按 **90%** 增长 (显示的时长, 计入的学习时长, 建议休息时长, 纵深推进都按它算);
++    合约结束后这段专注还在走的话, 之后的部分恢复正常速度; 合约结束后才开始的下一次专注不受影响;
+     **30%** 无事发生. 每个效果都弹出提示.
+   - "当前的休息时间": 正在休息时改这次休息的剩余时间 (减少时先减合约中得到的, 合约开始前积攒的放在最后; 减到 0 休息就结束),
+     否则改积攒的休息时间 (不会少于 0; 合约开始前的那部分最多剩下积攒的这么多). 增加的算合约中得到的.
+@@ -1067,8 +1066,12 @@ Android 版按本文第 1 ~ 11 节实现, 数值和规则都相同. 下面只写
+ - **通道阻塞**: 电脑每 30 秒数一次任务栏上的窗口 (数法同第 12 节), 超过 4 / 3 个算一次违反; 一直超着不重复算, 回到上限以内后再超才再算. 不关窗口 (设置里的窗口数上限照常生效).
+ - **支援短缺**: 合约开始前积攒的休息时间 (18.2) 只能用 50% / 0%. 休息中用超了算一次违反 (由合约的主人判定);
+   降级后多给低一档多出来的那部分 (-II 降成 -I 多给 50%). 用到上限前 **3 分钟**和 **1 分钟**各提醒一次.
+-- **全频道阻塞干扰**: 合约期间断网方式换成 代理-全屏蔽 (不改设置, 不用等冷静期), 结束后回到设置里的断网方式.
++- **全频道阻塞干扰**: 合约期间断网方式换掉 (不改设置, 不用等冷静期), 结束后回到设置里的断网方式:
++  绑定了其他设备 (有连接的设备) 时换成 代理-全屏蔽 (Proxy block-all, 同步照常);
++  没有连接其他设备, 而且这台设备有 Adapter (禁用网卡) 方式时换成 Adapter (断得更彻底);
++  没有 Adapter 方式的设备 (手机) 总是 代理-全屏蔽.
+ - **黑雾**: 数据照常记录, 只是看不到:
++  - 合约页不显示合约的剩余时间 (写成 `???`), 结束的时刻也不显示;
+   - 计时器页的今日, 专注中的专注时长显示 `???` (预计休息时长也不显示); 设备状态里不显示专注了几分钟;
+   - 统计页的饼图不显示真正的数据: 10 个没有意义的项, 比例随机, 名字都是 `???`; 专注计时的条形图随机画专注 / 休息 / 空白, 日期写成 `???`;
+   - 日历页每天显示 16 ~ 80 h 之间随机的学习时长, 月份和合计写成 `???`;
+@@ -1078,6 +1081,24 @@ Android 版按本文第 1 ~ 11 节实现, 数值和规则都相同. 下面只写
+ 
+ 警报是 `sounds/target_alarm.wav` (手机: 应用里的 `target_alarm.ogg`), 放不出来时蜂鸣.
+ 
++### 18.3.1 词条组合
++
++- 词条板上**第 3 页**列出 4 个组合 (效果栏, 翻页同 18.3). 列出的**词条 / 词条系列同时选着**时组合生效:
++  成系列的任意一档都算 (疲惫-I / II / III 都行), 零散的要正好是那一个.
++- 生效的组合用组合的颜色写; 已选中的词条列表里和词条板上对应的词条也用这个颜色**框住**; 没凑齐的是灰的.
++- 组合的效果:
++  - **打年糕** (白色): 疲惫, 持久战, 细化规范, 纵深推进 → 额外 **1 危机等级**; 合约中专注换来的休息时间再乘 **110%**.
++  - **互联网娱乐的败退** (紫色): 无言为真, 乐理之灾, 禁游令, 低帧的诅咒 → 合约开始时, 积攒的休息时间 **+20 分钟**.
++  - **无懈可击** (灰色): 最后防线, 未知变量 → 合约开始时, 积攒的休息时间 **+20 分钟**.
++  - **信息隔绝** (红色): 信息阻断, 通道阻塞, 侵蚀, 抑制, 黑雾, 静默协议 → 额外 **1 危机等级**; 合约**完成**时再给 **10 分钟**休息.
++- 组合的额外等级算进危机等级, 完成时的休息时间按算进去的等级查表 (18.2).
++  "开始时"给的休息时间算合约中得到的 (合约结束后不留下, 暂停休息时按倍率打折);
++  "完成时"给的只在合约完成时给 (失败 / 提前结束不给).
++- **成员失效**: 组合里任意一个词条因违反**失效** (降级不算失效, 照样算选着) 时, 组合的效果全部取消 (额外等级, 乘区, 结束后收益);
++  **开始时**已经给的休息时间不收回. 第 3 页上写出"已失效", 词条上的彩色边框也随之消失.
++- 组合只按开局选的词条算: 未知变量临时选中的词条不算成员.
++- 组合不是新的词条: 不占等级, 不在词条板上, 也不参与冲突.
++
+ ### 18.4 整点记录
+ 
+ - 合约中, 和合约重叠的记录格超过补填时限 (7) 还没填写 (空着, 或者是超时自动记录的内容) 算**一次违反** (不降词条), 每格只算一次, 由合约的主人判定.
+@@ -1091,20 +1112,21 @@ Android 版按本文第 1 ~ 11 节实现, 数值和规则都相同. 下面只写
+ 
+ - 合约随设备同步 (15.2): 在一台设备上开始, 其他设备也进入同一个合约; 违反和降级哪台设备发生都算.
+ - 到时间完成, 空闲失败, 联网用超由合约的主人判定 (主人 2 分钟没同步时本机来做), 完成的休息时间由它存进积攒的休息时间 (随计时器同步).
+-- 乐理之灾, 无言为真, 禁游令, 低帧的诅咒, 互联网娱乐的败退, 通道阻塞, 抑制, 静默协议, 纵深推进各设备看自己的; 录像也是各设备录自己的 (18.8).
++- 组合按同步来的词条算, 各设备一样; 组合"开始时"给的休息时间由开始合约的设备加 (随计时器同步), "完成时"的由合约的主人算进奖励.
++- 乐理之灾, 无言为真, 禁游令, 低帧的诅咒, 通道阻塞, 抑制, 静默协议, 纵深推进各设备看自己的; 录像也是各设备录自己的 (18.8).
+   支援短缺, 整点记录超时, 未知变量选词条由合约的主人判定; 支援短缺的提醒每台设备都显示.
+ 
+ ### 18.6 Android
+ 
+ - 合约页总是横屏显示 (离开合约页恢复), 并藏起状态栏 (下滑临时出现), 顶栏矮一些; 一屏放不下时整页按比例缩小, 一次显示全部内容 (两边留出页面底色).
+-- 词条板翻页: 固定两页 (成系列的 / 零散的), 词条板下面一行右边是 "◀ 1 / 2 ▶"; 点过的词条的内容写在同一行左边. 未知变量选中的词条点按 (需确认) 关闭.
+-- 无言为真 / 禁游令 / 低帧的诅咒 / 互联网娱乐的败退: 每秒看前台应用, 是常见的社交 / AI 聊天应用 (微信, QQ, 微博, 知乎, 小红书, ChatGPT, Claude, 豆包, DeepSeek …),
++- 词条板翻页: 固定 3 页 (成系列的 / 零散的 / 词条组合), 词条板下面一行右边是 "◀ 1 / 3 ▶"; 点过的词条 / 组合的内容写在同一行左边. 未知变量选中的词条点按 (需确认) 关闭.
++- 无言为真 / 禁游令 / 低帧的诅咒: 每秒看前台应用, 是常见的社交 / AI 聊天应用 (微信, QQ, 微博, 知乎, 小红书, ChatGPT, Claude, 豆包, DeepSeek …),
+   游戏和游戏平台 (王者荣耀, 和平精英, 原神, 星穹铁道, 我的世界, TapTap, 各手机的游戏中心 …), 视频平台 (哔哩哔哩, YouTube, 抖音, 快手, 腾讯视频, 爱奇艺 …) 就算违反 (不锁). 浏览器里的网站查不到.
+ - 目光 / 刻痕: 手机上不录像 (选了也只有电脑录); 手机上开始的合约选了它们, 绑定的电脑照样录.
+ - 乐理之灾: 休息中不管; 其余时间每秒看前台应用, 是常见的音乐播放应用 (网易云音乐, QQ 音乐, 酷狗, 酷我, Spotify, Apple Music, YouTube Music, 各手机自带的音乐 …) 就算违反 (不锁定); 视频播放器 (VLC 等) 不算. 后台播放查不到.
+-- 黑雾: 合约中达成的成就, 不在前台时的通知也等合约结束后再发.
++- 黑雾: 合约中达成的成就, 不在前台时的通知也等合约结束后再发; 合约页也不显示剩余时间.
+ - 通道阻塞: 按后台应用数 (14.6) 算, 超过 4 / 3 个算一次违反 (越过的那一下算一次), 不关应用.
+-- 全频道阻塞干扰: 对应手机上的 代理-全屏蔽 (14.2).
++- 全频道阻塞干扰: 对应手机上的 代理-全屏蔽 (14.2). 手机没有 Adapter (禁用网卡) 方式, 总是 代理-全屏蔽.
+ 
+ ### 18.8 录像 (目光 / 刻痕, 电脑)
+ 
+@@ -1124,8 +1146,9 @@ Android 版按本文第 1 ~ 11 节实现, 数值和规则都相同. 下面只写
+ 
+ ### 18.7 合约页主题 (设置 → 合约)
+ 
+-- **起源** (默认): 深色页面; 浅灰的词条板, 左边一条竖写的 "CONTRACT LIST" 和各行的等级, 词条是六边形 (可选的深灰带灰边, 选中的蓝色, 冲突 / 合约中不能选的浅灰; 4 级的红边);
+-  下面黑底的 "CONTRACT SELECTED" 已选中词条, 分两栏, 等级写在红色 (2 级及以上) / 白色的小方块里;
++- **起源** (默认): 深色页面; 浅灰的词条板, 左边一条竖写的 "CONTRACT LIST" 和各行的等级, 词条是六边形 (可选的深灰带灰边, 选中的蓝色, 冲突 / 合约中不能选的浅灰;
++  凑齐的组合成员用组合的颜色框住); 词条板第 3 页是词条组合 (CONTRACT EFFECT): 2 × 2 的四块, 名字和颜色条按 18.3.1 的颜色 (打年糕 白, 互联网娱乐的败退 紫, 无懈可击 灰, 信息隔绝 红), 凑齐了才亮;
++  下面黑底的 "CONTRACT SELECTED" 已选中词条, 分两栏, 等级写在红色 (2 级及以上) / 白色的小方块里, 组合成员的行用组合的颜色框住;
+   最下面一条: "🗑 清空", 危机等级 (大数字和一排三角), 时长和完成后的休息时间, 难度提示, 红色的"开始行动" (合约中是"提前结束"; 休息 / 联网中变灰);
+   右上角一小块特别规则.
+   在合约页时侧边栏也换成深色, 当前页是红色, 下方显示 "CONTINGENCY" 和危机等级, 以及"挑战任务" / "合约进行中"; 窗口顶部的细条变成红色. 离开合约页恢复.
+diff --git a/README.md b/README.md
+index ca60ed3..4d22f76 100644
+--- a/README.md
++++ b/README.md
+@@ -35,7 +35,7 @@
+ | **Hour Log** | 每个整点提示记录上一小时做了什么 |
+ | **Calendar** | 按日查看学习时长 |
+ | **Statistics** | 活动, 联网理由与各程序前台时间的分布 |
+-| **Contract** | 合约: 选词条加难度的限时挑战, 完成后按危机等级多给休息时间 |
++| **Contract** | 合约: 选词条加难度的限时挑战, 词条凑成组合有额外效果, 完成后按危机等级多给休息时间 |
+ | **Settings** | 按模块分页的可调参数(含按星期调整联网额度的倍率);多数修改需要等待冷静期才生效 |
+ | **Reset** | 恢复网络并清理数据 |
+ 
+diff --git a/app.py b/app.py
+index 71eca84..dfb267b 100644
+--- a/app.py
++++ b/app.py
+@@ -884,15 +884,16 @@ class BreakTimerApp:
+         if self.state == IDLE:
+             self._enter_focus(datetime.now(), time.monotonic())
+             if self.contract.slow_bind(self.start_wall):
+-                toast.warn(tr("阻滞: 这段专注的时间按 {p}% 增长", p=int(round(contract_mod.RANDOM_SLOW * 100))),
++                toast.warn(tr("阻滞: 合约内这段专注的时间按 {p}% 增长", p=int(round(contract_mod.RANDOM_SLOW * 100))),
+                            timeout=10000)
+                 if self.sync.peers():
+                     self.sync.sync_now()
+ 
+         elif self.state == RUNNING:
+             end_wall = datetime.now()
+-            # 阻滞: 这段专注的时间按 90% 增长
+-            elapsed_minutes = (time.monotonic() - self.start_mono) / 60.0 * self.contract.focus_rate(self.start_wall)
++            # 阻滞: 只减慢合约内那部分专注的时间 (MECHANICS 18.3)
++            elapsed_minutes = self.contract.focus_minutes(
++                self.start_wall, time.monotonic() - self.start_mono)
+             self.last_t_minutes = elapsed_minutes      # 建议休息时长照常按整段专注算
+             self.rest_base = self._focus_rest(elapsed_minutes, self.start_wall, end_wall)
+             off = self._cut_offline(self.start_wall, end_wall)
+@@ -1447,7 +1448,7 @@ class BreakTimerApp:
+             ok = min(max(0.0, float(ok)), seconds)
+             seconds = ok + (seconds - ok) * float(config.FOCUS_CHECK_PENALTY)
+         end = start + timedelta(seconds=seconds)
+-        minutes = seconds / 60.0 * self.contract.focus_rate(start)      # 阻滞: 专注时间按 90% 增长
++        minutes = self.contract.focus_minutes(start, seconds)   # 阻滞: 只减慢合约内的那部分时间
+         # 有设备离线的那段记为空闲, 不计入学习时长; 建议休息时长照常按计入前的时长算
+         counted = max(0.0, minutes - self._cut_offline(start, end) / 60.0)
+         self.dm.add_study_session(start, end, counted)
+@@ -1571,8 +1572,8 @@ class BreakTimerApp:
+     def update(self):
+         if self.state == RUNNING:
+             elapsed = time.monotonic() - self.start_mono
+-            rate = self.contract.focus_rate(self.start_wall)
+-            cur_m = elapsed / 60.0 * rate               # 阻滞: 专注时间按 90% 增长
++            rate = self.contract.focus_rate(self.start_wall)   # 现在还是不是阻滞中 (合约结束后就不再减慢)
++            cur_m = self.contract.focus_minutes(self.start_wall, elapsed)
+             if self.contract.fog():
+                 # 黑雾: 专注时看不到专注时长 (预计休息时长也能推出时长, 一起不显示)
+                 self.lbl_time.config(text="???")
+@@ -2104,10 +2105,18 @@ class BreakTimerApp:
+ 
+     # ---- 合约 (MECHANICS 18) ----
+ 
++    def _contract_peers(self) -> bool:
++        """有没有绑定 / 连接的其他设备 (全频道阻塞干扰要不要用代理-全屏蔽)."""
++        sync = getattr(self, "sync", None)
++        try:
++            return bool(sync.peers()) if sync is not None else True
++        except Exception:
++            return True
++
+     def _apply_contract_overrides(self) -> bool:
+         """合约中盖过设置的项 (全频道阻塞干扰: 断网方式) 套到 config 上; 变了才动."""
+         c = self.contract
+-        over = c.overrides() if c.active else {}
++        over = c.overrides(peers=self._contract_peers(), adapter=contract_mod.HAS_ADAPTER) if c.active else {}
+         if over == getattr(config, "CONTRACT_OVERRIDES", {}):
+             return False
+         config.CONTRACT_OVERRIDES = over
+@@ -2188,7 +2197,7 @@ class BreakTimerApp:
+             if why:
+                 self.end_contract(why, at)
+                 return
+-            # 信息阻断 / 信息隔绝: 额度是各设备共用的, 只由一台设备判定
++            # 信息阻断: 额度是各设备共用的, 只由一台设备判定
+             tid, kind = c.net_check(self.net.used_all, self.net.bonus_all, self.net.remaining, self.net.date)
+             if tid:
+                 self.contract_violation(tr("使用了紧急借贷") if kind == "loan" else tr("联网超过了合约的额度"), tid)
+@@ -2248,7 +2257,7 @@ class BreakTimerApp:
+         dur = contract_mod.duration_of(terms)
+         end = datetime.now() + timedelta(seconds=dur)
+         msg = tr("危机等级 {lv} · 时长 {t} · 到 {at}", lv=lv, t=fmt_hm(dur), at=f"{end:%H:%M}")
+-        msg += "\n" + tr("完成后休息 +{n} 分钟", n=contract_mod.rest_minutes(lv))
++        msg += "\n" + tr("完成后休息 +{n} 分钟", n=contract_mod.rest_minutes_total(lv, terms))
+         if not toast.ask(msg, title=tr("▶  开始行动"), ok_text=tr("开始行动"), danger=True):
+             return
+         rec = self._record_lines(terms)
+@@ -2292,7 +2301,7 @@ class BreakTimerApp:
+             return
+         lv = contract_mod.level_of(terms)
+         c.start(terms, owner=self.sync.my_id, pre=self.break_carry)
+-        # 互联网娱乐的败退: 积攒的休息时间 +20 分钟 (在 pre 之后加: 算合约中得到的, 合约结束后不留下)
++        # 凑齐的词条组合: 积攒的休息时间 +N 分钟 (在 pre 之后加: 算合约中得到的, 合约结束后不留下)
+         gift = contract_mod.rest_gift(terms)
+         if gift > 0:
+             self._set_break_carry(self.break_carry + gift)
+@@ -2320,10 +2329,35 @@ class BreakTimerApp:
+             return
+         self.end_contract("abandoned")
+ 
++    def _stop_break_for_contract(self):
++        """结束合约前先停止休息 (MECHANICS 18.1): 剩下的休息时间按"暂停休息"算.
++        合约开始前积攒的那部分原样留下, 合约中得到的部分由 end_contract 作废; 不算禁止囤囤鼠! 的违反."""
++        if self.state != ON_BREAK:
++            return
++        left = max(0, int(self.countdown_seconds))
++        self._record_break_end()
++        pre = min(left, int(self._break_pre))
++        c = self.contract
++        if c.active and c.live.get("id") == self._break_cid:
++            c.pre_settle(self._break_pre, pre)
++        rate = float(config.BREAK_CARRY_RATE)
++        if self._contract_break_active:
++            rate = contract_mod.Contract.first_break_rate(rate)
++        add = left if self._bonus_break_active else pre + int(round((left - pre) * rate))
++        self._break_pre, self._break_cid = 0.0, None
++        self._bonus_break_active = False
++        self._contract_break_active = False
++        if add > 0:
++            self._set_break_carry(self.break_carry + add)
++        self.reset_to_idle()
++        self._save_timer_state()          # 关掉程序再打开时不能又从休息中恢复
++        self._arm_idle_nudge()
++
+     def end_contract(self, result: str, at: datetime = None):
+         c = self.contract
+         if not c.active:
+             return
++        self._stop_break_for_contract()      # 结束合约前先停止休息
+         pending = c.reward
+         rec = c.finish(result, at, by=self.sync.my_id)
+         self._contract_seen = None
+@@ -2378,7 +2412,7 @@ class BreakTimerApp:
+         elif kind == "double":
+             toast.info(tr("未知变量: 这次判定作废, 改为判定两次"))
+         elif kind == "slow":
+-            toast.warn(tr("未知变量: 下一次专注启用阻滞 (专注时间按 {p}% 增长)",
++            toast.warn(tr("未知变量: 下一次专注启用阻滞 (只减慢合约内的时间, 按 {p}% 增长)",
+                           p=int(round(contract_mod.RANDOM_SLOW * 100))), timeout=10000)
+         else:
+             toast.info(tr("未知变量: 无事发生"))
+@@ -2490,7 +2524,7 @@ class BreakTimerApp:
+         self._check_contract()
+ 
+     def _check_bans(self):
+-        """乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒 (互联网娱乐的败退是四个一起): 每 2 秒看一次有没有开着这一类软件
++        """乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒: 每 2 秒看一次有没有开着这一类软件
+         (不关它, 只算违反; 开着的这段只算一次, 关掉后再开才再算). 音乐在休息中不管."""
+         c = self.contract
+         kinds = [k for k in contract_mod.BANS if c.ban_term(k)]
+diff --git a/config.py b/config.py
+index 526305a..c6ad5f9 100644
+--- a/config.py
++++ b/config.py
+@@ -94,7 +94,7 @@ def daily_quota(day) -> float:
+ 
+ 
+ APP_NAME = "Obliphur's Integrated Terminal"
+-APP_VERSION = "1.0.58"                         # 和 GitHub 上发布的版本号比较 (见 updater.py)
++APP_VERSION = "1.0.59"                         # 和 GitHub 上发布的版本号比较 (见 updater.py)
+ UPDATE_CHECK = 1                              # 打开程序时检查更新
+ UPDATE_AUTO = 1                               # 发现新版本时自动下载安装
+ OLD_APP_DIR = "mrsTimer"
+diff --git a/contract.py b/contract.py
+index c491684..2435db6 100644
+--- a/contract.py
++++ b/contract.py
+@@ -20,6 +20,7 @@ OFFLINE_LIMIT = 15 * 60          # 合约中有绑定的设备离线超过这么
+ VIOLATION_LIMIT = 4              # 初始目标生命值: 每违反一次减一, 减到 0 合约失败
+ HISTORY_KEEP = 30
+ FRESH_MS = 2 * 60 * 1000         # 合约的主人这么久没同步过: 本机来做自动结束
++HAS_ADAPTER = os.name == "nt"    # 这台设备有没有 Adapter (禁用网卡) 的断网方式 (手机没有)
+ 
+ # (id, 组, 等级, 名字, 描述, 冲突的词条)
+ # 同一组的词条互相冲突, 界面上排在同一列; 冲突是双向的 (这里只写一边).
+@@ -30,10 +31,9 @@ TERMS = [
+     ("long3", "long", 3, "环境:持久战-III", "时长改为160%", ()),
+     ("move1", "move", 1, "目标:高机动-I", "现实中的移动速度改为125%", ()),
+     ("move2", "move", 2, "目标:高机动-II", "现实中的移动速度改为150%", ()),
+-    ("info1", "info", 1, "环境:信息阻断-I", "可用的剩余联网时间改为75% 且不能使用借贷", ()),
+-    ("info2", "info", 2, "环境:信息阻断-II", "可用的剩余联网时间改为50% 且不能使用借贷", ()),
+-    ("info3", "info", 3, "环境:信息阻断-III", "可用的剩余联网时间改为25% 且不能使用借贷", ()),
+-    ("isolate", "info", 4, "信息隔绝", "不能使用联网功能 选择时 获得的休息时间改为130%", ("music", "silent", "game", "video")),
++    ("info1", "info", 1, "环境:信息阻断-I", "可用的剩余联网时间改为80% 且不能使用借贷", ()),
++    ("info2", "info", 2, "环境:信息阻断-II", "可用的剩余联网时间改为65% 且不能使用借贷", ()),
++    ("info3", "info", 3, "环境:信息阻断-III", "可用的剩余联网时间改为50% 且不能使用借贷", ()),
+     ("tired1", "tired", 1, "环境:疲惫-I", "期间获得的休息时间改为70%", ()),
+     ("tired2", "tired", 2, "环境:疲惫-II", "期间获得的休息时间改为60%", ()),
+     ("tired3", "tired", 3, "环境:疲惫-III", "期间获得的休息时间改为50%", ()),
+@@ -41,32 +41,30 @@ TERMS = [
+     ("short2", "short", 2, "环境:支援短缺-II", "不能使用合约开始前已经保存的休息时间", ()),
+     ("retreat1", "retreat", 1, "环境:退路封锁-I", "初始目标生命值为3", ()),
+     ("retreat2", "retreat", 2, "环境:退路封锁-II", "初始目标生命值为2", ()),
+-    ("last", "retreat", 3, "最后防线", "初始目标生命值为1\n危机等级每有10级 词条等级增加一级", ()),
++    ("last", "retreat", 3, "最后防线", "初始目标生命值为1", ()),
+     ("chan1", "chan", 1, "环境:通道阻塞-I", "期间的最大窗口数改为4", ()),
+     ("chan2", "chan", 2, "环境:通道阻塞-II", "期间的最大窗口数改为3", ()),
+     ("deep1", "deep", 1, "目标:纵深推进-I", "专注的时间不能少于40min", ()),
+     ("deep2", "deep", 2, "目标:纵深推进-II", "专注的时间不能少于60min", ()),
+-    ("erode1", "erode", 1, "环境:侵蚀-I", "网络申请冷却期改为200%", ("isolate",)),
+-    ("erode2", "erode", 2, "环境:侵蚀-II", "网络申请冷却期改为300%", ("isolate",)),
++    ("erode1", "erode", 1, "环境:侵蚀-I", "网络申请冷却期改为200%", ()),
++    ("erode2", "erode", 2, "环境:侵蚀-II", "网络申请冷却期改为300%", ()),
+     # 零散的按 TERMS 里的顺序在各自等级的那一行挨着排, 所以行为类似的写在一起 (上下两行也对齐):
+     # 联网 (抑制 / 全频道阻塞干扰), 整点记录 (记录封锁 / 细化规范), 禁止打开的软件
+-    # 和它们下面的录像 (目光 / 刻痕), 黑雾, 最后是休息 / 专注 (禁止囤囤鼠! / 静默协议 / 未知变量).
+-# (禁止打开的软件: 乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒)
+-    ("suppress", "suppress", 1, "环境:抑制", "不能使用快速访问功能", ("isolate",)),
+-    ("jam", "jam", 2, "环境:全频道阻塞干扰", "期间使用proxy block-all模式", ()),
++    # 和它们下面的录像 (目光 / 刻痕) 与无言为真 (2 级), 黑雾, 最后是休息 / 专注 (禁止囤囤鼠! / 静默协议 / 未知变量).
++# (禁止打开的软件: 乐理之灾 / 禁游令 / 低帧的诅咒在 1 级挨着; 无言为真是 2 级, 排在录像右边)
++    ("suppress", "suppress", 1, "环境:抑制", "不能使用快速访问功能", ()),
++    ("jam", "jam", 2, "环境:全频道阻塞干扰", "有连接的其他设备时使用proxy block-all模式 没有时使用Adapter模式", ()),
+     ("seal", "seal", 1, "环境:记录封锁", "超过填写时间未填写 则不能再修改该记录", ()),
+     ("fine", "fine", 2, "目标:细化规范", "记录变为30min一次", ()),
+     ("music", "music", 1, "环境:乐理之灾", "非休息期间不能打开音乐播放软件 不能使用外部软件播放mp3等音频文件", ()),
+     ("gaze", "gaze", 2, "目光", "合约期间打开摄像头记录使用者的行为 结束后保存录像", ()),
+-    ("silent", "silent", 1, "环境:无言为真", "合约期间不能打开社交软件和与AI聊天的软件 不能使用社交网站", ()),
+     ("scar", "scar", 2, "刻痕", "合约期间录制整个屏幕 结束后保存录像", ("gaze",)),
++    ("silent", "silent", 2, "环境:无言为真", "合约期间不能打开社交软件和与AI聊天的软件 不能使用社交网站", ()),
+     ("game", "game", 1, "环境:禁游令", "合约期间不能使用游戏和游戏平台", ()),
+     ("video", "video", 1, "环境:低帧的诅咒", "合约期间不能使用视频平台", ()),
+-    ("ent", "ent", 4, "互联网娱乐的败退", "同时有乐理之灾 无言为真 禁游令 低帧的诅咒的效果\n违反任意一项即整个失效\n合约开始时获得额外20min的休息时间",
+-     ("music", "silent", "game", "video", "isolate")),
+-    ("fog", "fog", 1, "环境:黑雾", "合约期间 专注时长 成就 日历 统计数据不可见 且无法打开设置", ()),
++    ("fog", "fog", 1, "环境:黑雾", "合约期间 专注时长 合约的剩余时间 成就 日历 统计数据不可见 且无法打开设置", ()),
+     ("hoard", "hoard", 1, "禁止囤囤鼠!", "不能提前结束休息 但是获得的休息时间改为105%", ()),
+-    ("quiet", "quiet", 1, "环境:静默协议", "专注中不能处于联网状态", ("isolate",)),
++    ("quiet", "quiet", 1, "环境:静默协议", "专注中不能处于联网状态", ()),
+     ("unknown", "unknown", 3, "未知变量", "合约开始时 以及之后每过一个整小时 从当前可以选择的1-2级词条中随机启用一个或随机施加效果\n选中的词条不算进危机等级", ()),
+ ]
+ BY_ID = {t[0]: t for t in TERMS}
+@@ -82,38 +80,33 @@ for _t in TERMS:
+         _i = _LOOSE.get(_t[2], 0)
+         _LOOSE[_t[2]] = _i + 1
+         LAYOUT[_t[0]] = (len(SERIES) + _i, _t[2])
+-# 放在另一个词条的那一列 (那一列在这个等级的格子空着): 互联网娱乐的败退在乐理之灾那一列的 4 级
+-ALIGN = {"ent": "music"}
+-for _t, _a in ALIGN.items():
+-    LAYOUT[_t] = (LAYOUT[_a][0], BY_ID[_t][2])
+ BOARD_COLS = len(SERIES) + max(_LOOSE.values(), default=0)
+ MAX_LEVEL = max(t[2] for t in TERMS)
+-# 词条板翻页: 成系列的一页, 零散的一页 (每页的 [开始列, 结束列)); 窗口放不下一页时界面再往下分
++# 词条板翻页: 成系列的一页, 零散的一页 (每页的 [开始列, 结束列)); 窗口放不下一页时界面再往下分.
++# 第 3 页 (COMBO_PAGE) 是词条组合的效果 (COMBOS), 由界面直接画, 不分列.
+ PAGES = [(0, len(SERIES)), (len(SERIES), BOARD_COLS)]
++COMBO_PAGE = len(PAGES)
+ 
+ # 软规则: 界面上照样能做, 但会被算作违反, 这个词条降一级 (结算按降级后的等级);
+ # 其余是硬规则, 立即生效 (黑雾, 记录封锁, 细化规范, 全频道阻塞干扰, 持久战, 疲惫).
+ # 录像 (目光 / 刻痕) 违反一次就失效 (录像停止): 不在 LOWER / SINGLE 里.
+-SOFT = {"info1", "info2", "info3", "isolate", "chan1", "chan2", "music", "suppress", "short1", "short2",
+-        "silent", "game", "video", "ent", "gaze", "scar", "deep1", "deep2", "quiet", "hoard", "unknown"}
+-LOWER = {"isolate": "info3", "info3": "info2", "info2": "info1", "chan2": "chan1",
++SOFT = {"info1", "info2", "info3", "chan1", "chan2", "music", "suppress", "short1", "short2",
++        "silent", "game", "video", "gaze", "scar", "deep1", "deep2", "quiet", "hoard", "unknown"}
++LOWER = {"info3": "info2", "info2": "info1", "chan2": "chan1",
+          "short2": "short1", "deep2": "deep1"}   # 降一级换成哪个词条
+ SINGLE = {"music", "suppress", "silent", "game", "video", "quiet", "hoard"}   # 只有一档的软规则: 降级时等级减一, 减到 0 就失效
+ 
+ DURATION = {"long1": 1.2, "long2": 1.4, "long3": 1.6}
+-NET_SHARE = {"info1": 0.75, "info2": 0.5, "info3": 0.25, "isolate": 0.0}
++NET_SHARE = {"info1": 0.8, "info2": 0.65, "info3": 0.5}
+ BASE_REST = 0.8                                # 合约中专注换来的休息时间的基础倍率; 有疲惫时换成疲惫的倍率
+ REST = {"tired1": 0.7, "tired2": 0.6, "tired3": 0.5}
+-REST_BONUS = {"isolate": 1.3, "hoard": 1.05}    # 休息时间额外的乘区 (和疲惫不冲突, 相乘): 信息隔绝 ×1.3, 禁止囤囤鼠! ×1.05
++REST_BONUS = {"hoard": 1.05}                    # 休息时间额外的乘区 (和疲惫不冲突, 相乘): 禁止囤囤鼠! ×1.05
+ WINDOWS = {"chan1": 4, "chan2": 3}
+ SUPPLY = {"short1": 0.5, "short2": 0.0}         # 合约开始前积攒的休息时间能用几成
+ HOUR_TERMS = {"seal", "fine"}                   # 整点记录的词条: 整点记录关着时, 这次合约中照样开启
+ LIFE = {"retreat1": 3, "retreat2": 2, "last": 1}  # 初始目标生命值 (硬规则)
+-LAST, LAST_STEP = "last", 10                     # 最后防线: 危机等级 (不算这份加成) 每有 10 级, 它的等级 +1
+ RECORD = {"gaze": "camera", "scar": "screen"}   # 录像的词条 → 录什么 (recorder.py)
+ BANS = ("music", "silent", "game", "video")     # 禁止打开某类软件的词条 (每 2 秒看一次)
+-BANS_ALL = "ent"                                # 互联网娱乐的败退: 同时有上面四个的效果; 违反任意一项就整个失效
+-REST_GIFT = {"ent": 20 * 60}                    # 合约开始时积攒的休息时间多给这么多秒 (算合约中得到的, 合约结束后不留下)
+ SUPPLY_WARN = (180, 60)                         # 支援短缺: 还差这么多秒就用超时各提醒一次
+ DEEP = {"deep1": 40 * 60, "deep2": 60 * 60}     # 纵深推进: 一段专注至少这么多秒, 不到就结束算违反
+ COOLDOWN_X = {"erode1": 2.0, "erode2": 3.0}     # 侵蚀: 网络申请的冷静期乘多少 (硬规则)
+@@ -220,15 +213,101 @@ GAME_EXES = {
+ BAN_EXES = {"silent": SOCIAL_EXES, "game": GAME_EXES, "video": VIDEO_EXES}
+ BAN_TITLES = {"silent": SOCIAL_TITLES, "video": VIDEO_TITLES}   # 只看浏览器的窗口
+ 
++# 词条组合 (MECHANICS 18.3): 列出的词条 / 词条系列 (任意一档都算) 同时选着时生效, 效果栏的第 3 页列出它们.
++# level: 额外的危机等级; rest: 休息时间的额外乘区; gift: 开始时给的休息时间 (秒); end: 完成时给的休息时间 (秒).
++# 成员因违反失效 (降级不算失效) 时组合不再生效: 危机等级 / 乘区 / 结束后收益都没了, 开始时给的不收回.
++COMBOS = [
++    {"id": "mochi", "name": "打年糕", "color": "white",
++     "reqs": ("tired", "long", "fine", "deep"),
++     "level": 1, "rest": 1.1, "gift": 0, "end": 0,
++     "desc": "额外 1 危机等级\n休息时间 ×110%"},
++    {"id": "nofun", "name": "互联网娱乐的败退", "color": "purple",
++     "reqs": ("music", "silent", "game", "video"),
++     "level": 0, "rest": 1.0, "gift": 20 * 60, "end": 0,
++     "desc": "合约开始时 休息 +20 分钟"},
++    {"id": "flawless", "name": "无懈可击", "color": "gray",
++     "reqs": ("last", "unknown"),
++     "level": 0, "rest": 1.0, "gift": 20 * 60, "end": 0,
++     "desc": "合约开始时 休息 +20 分钟"},
++    {"id": "isolation", "name": "信息隔绝", "color": "red",
++     "reqs": ("info", "chan", "erode", "suppress", "fog", "quiet"),
++     "level": 1, "rest": 1.0, "gift": 0, "end": 10 * 60,
++     "desc": "额外 1 危机等级\n完成合约时 休息 +10 分钟"},
++]
++COMBOS_BY_ID = {c["id"]: c for c in COMBOS}
++COMBO_COLORS = {"white": "#ffffff", "purple": "#b06cf0", "gray": "#9a9ca1", "red": "#ff2b3a"}
++# 组合的要求在界面上怎么写: 成系列的一组只写一个名字
++GROUP_NAMES = {"long": "持久战", "tired": "疲惫", "info": "信息阻断", "chan": "通道阻塞",
++               "erode": "侵蚀", "deep": "纵深推进"}
++
++
++def req_name(req: str) -> str:
++    """组合的要求在界面上怎么写 (系列写系列的名字, 单个词条写去掉"环境:" / "目标:"之后的名字)."""
++    if req in GROUP_NAMES:
++        return GROUP_NAMES[req]
++    name = BY_ID[req][3] if req in BY_ID else str(req)
++    return name.split(":", 1)[-1].split("-", 1)[0]
++
++
++def combo_done(combo, terms) -> bool:
++    """这个词条组合凑齐了没有: 每一条要求都有一个选着的词条 (系列的任意一档都算)."""
++    terms = [t for t in (terms or []) if t in BY_ID]
++    for req in combo["reqs"]:
++        hit = any((BY_ID[t][1] == req) if req in GROUPS else (t == req) for t in terms)
++        if not hit:
++            return False
++    return True
++
++
++def combo_state(combo, terms, orig=None) -> str:
++    """组合的状态: done 凑齐了 / void 开始时凑齐过, 有成员失效了 / open 还没凑齐."""
++    if combo_done(combo, terms):
++        return "done"
++    if orig is not None and combo_done(combo, orig):
++        return "void"
++    return "open"
++
+ 
+-def last_bonus(base: int, terms) -> int:
+-    """最后防线额外的等级: 选着它时, 危机等级 (不算这份加成) 每有 LAST_STEP 级 +1."""
+-    return int(base) // LAST_STEP if LAST in (terms or []) else 0
++def combo_level(terms) -> int:
++    """凑齐的组合带来的额外危机等级."""
++    return sum(int(c["level"]) for c in COMBOS if combo_done(c, terms))
++
++
++def combo_rest(terms) -> float:
++    """凑齐的组合带来的休息时间乘区."""
++    f = 1.0
++    for c in COMBOS:
++        if combo_done(c, terms):
++            f *= float(c["rest"])
++    return f
++
++
++def combo_gift(terms) -> int:
++    """合约开始时凑齐的组合给的休息时间 (秒, 算合约中得到的)."""
++    return int(sum(int(c["gift"]) for c in COMBOS if combo_done(c, terms)))
++
++
++def combo_end(terms) -> int:
++    """完成合约时凑齐的组合额外给的休息时间 (秒)."""
++    return int(sum(int(c["end"]) for c in COMBOS if combo_done(c, terms)))
++
++
++def combo_marks(terms) -> dict:
++    """凑齐了的组合: 成员词条 → 组合的颜色 (界面上用这个颜色框住它们). 没凑齐的不算."""
++    out = {}
++    for c in COMBOS:
++        if not combo_done(c, terms):
++            continue
++        for t in terms or []:
++            if t not in BY_ID:
++                continue
++            if any((BY_ID[t][1] == req) if req in GROUPS else (t == req) for req in c["reqs"]):
++                out.setdefault(t, COMBO_COLORS[c["color"]])
++    return out
+ 
+ 
+ def level_of(terms) -> int:
+-    base = sum(BY_ID[t][2] for t in terms if t in BY_ID)
+-    return base + last_bonus(base, terms)
++    return sum(BY_ID[t][2] for t in terms if t in BY_ID) + combo_level(terms)
+ 
+ 
+ def life_of(terms) -> int:
+@@ -237,11 +316,12 @@ def life_of(terms) -> int:
+ 
+ 
+ def rest_factor_of(terms) -> float:
+-    """合约中专注换来的休息时间乘多少: 基础 ×0.8, 有疲惫时换成疲惫的 (取最低的); 再乘额外的乘区 (信息隔绝 ×1.3)."""
++    """合约中专注换来的休息时间乘多少: 基础 ×0.8, 有疲惫时换成疲惫的 (取最低的);
++    再乘额外的乘区 (禁止囤囤鼠! ×1.05, 打年糕 ×1.1)."""
+     f = min((REST[t] for t in terms or [] if t in REST), default=BASE_REST)
+     for t in terms or []:
+         f *= REST_BONUS.get(t, 1.0)
+-    return f
++    return f * combo_rest(terms)
+ 
+ 
+ def rest_minutes(level: int) -> int:
+@@ -250,14 +330,19 @@ def rest_minutes(level: int) -> int:
+     return REST_MIN + (2 * span * lv + REST_TOP) // (2 * REST_TOP)    # 四舍五入 (.5 进位)
+ 
+ 
+-def rest_reward(level: int) -> int:
+-    """完成合约时存进积攒的休息时间的秒数."""
+-    return rest_minutes(level) * 60
++def rest_reward(level: int, terms=None) -> int:
++    """完成合约时存进积攒的休息时间的秒数 (按等级查表 + 凑齐的组合的结束后收益)."""
++    return rest_minutes(level) * 60 + combo_end(terms or [])
++
++
++def rest_minutes_total(level: int, terms=None) -> int:
++    """完成合约时休息时间一共多少分钟 (界面上写 "完成后休息 +N 分钟")."""
++    return rest_reward(level, terms) // 60
+ 
+ 
+ def rest_gift(terms) -> int:
+-    """合约开始时存进积攒的休息时间的秒数 (互联网娱乐的败退: 20 分钟)."""
+-    return int(sum(REST_GIFT.get(t, 0) for t in terms or []))
++    """合约开始时存进积攒的休息时间的秒数 (凑齐的组合给的, 算合约中得到的)."""
++    return combo_gift(terms)
+ 
+ 
+ def duration_of(terms) -> int:
+@@ -404,18 +489,15 @@ class Contract:
+         return [t for t in r if t in self.terms] if isinstance(r, list) else []
+ 
+     @property
+-    def level(self) -> int:
++    def mine(self) -> list:
++        """开始时选的词条现在还在的 (降级后算现在的; 不算未知变量选中的). 词条组合只看这些."""
+         rand = self.rand
+-        mine = [t for t in self.terms if t in BY_ID and t not in rand]
+-        base = sum(self.term_level(t) for t in mine)
+-        return base + last_bonus(base, mine)
++        return [t for t in self.terms if t in BY_ID and t not in rand]
+ 
+     @property
+-    def last_extra(self) -> int:
+-        """最后防线现在额外的等级 (按现在的危机等级算)."""
+-        rand = self.rand
+-        mine = [t for t in self.terms if t in BY_ID and t not in rand]
+-        return last_bonus(sum(self.term_level(t) for t in mine), mine)
++    def level(self) -> int:
++        mine = self.mine
++        return sum(self.term_level(t) for t in mine) + combo_level(mine)
+ 
+     @property
+     def orig(self) -> list:
+@@ -447,8 +529,8 @@ class Contract:
+ 
+     @property
+     def reward(self) -> float:
+-        """完成时给的休息时间 (秒): 按现在的等级查表 (固定); 结算按降级后的等级."""
+-        return float(rest_reward(self.level)) if self.active else 0.0
++        """完成时给的休息时间 (秒): 按现在的等级查表, 加上凑齐的组合的结束后收益; 结算按降级后的等级."""
++        return float(rest_reward(self.level, self.mine)) if self.active else 0.0
+ 
+     @property
+     def owner(self) -> str:
+@@ -733,23 +815,47 @@ class Contract:
+         return out
+ 
+     def slow_bind(self, start: datetime) -> bool:
+-        """开始专注: 等着的阻滞落到这段专注上 (专注时间按 RANDOM_SLOW 增长). 返回落上了没有."""
++        """开始专注: 等着的阻滞落到这段专注上 (专注时间按 RANDOM_SLOW 增长). 返回落上了没有.
++        阻滞只对合约内的专注生效: 合约已经结束 / 这段专注开始于合约结束之后时不落上."""
+         slow = self.live.get("slow") if self.active else None
+         if not (isinstance(slow, dict) and slow.get("pending")):
+             return False
++        end = self.end_at
++        if not end or start >= end:
++            return False
+         self.live["slow"] = {"start": _iso(start)}
+         self.save()
+         return True
+ 
+-    def focus_rate(self, start: datetime) -> float:
+-        """开始于 start 的这段专注的时间按多少增长: 阻滞 RANDOM_SLOW, 否则 1."""
++    def slow_until(self, start: datetime):
++        """阻滞让这段专注按 RANDOM_SLOW 增长到什么时候 (合约结束的时刻); 没有阻滞时 None."""
+         if start is None:
+-            return 1.0
++            return None
+         mark = _iso(start)
+         slow = self.live.get("slow") if self.active else None
+         if isinstance(slow, dict) and slow.get("start") == mark:
+-            return RANDOM_SLOW
+-        return RANDOM_SLOW if any(h.get("slow") == mark for h in self.history[-3:]) else 1.0
++            return self.end_at
++        for h in reversed(self.history[-3:]):
++            if h.get("slow") == mark:
++                return _parse(h.get("end"))
++        return None
++
++    def focus_rate(self, start: datetime, now: datetime = None) -> float:
++        """开始于 start 的这段专注现在按多少增长: 阻滞 RANDOM_SLOW (只到合约结束), 之后 1."""
++        until = self.slow_until(start)
++        if until is None:
++            return 1.0
++        return RANDOM_SLOW if (now or datetime.now()) < until else 1.0
++
++    def focus_minutes(self, start: datetime, seconds: float) -> float:
++        """这一段专注计入的分钟数: 阻滞只减慢合约内的那部分时间, 合约结束后的部分按正常速度 (MECHANICS 18.3)."""
++        seconds = max(0.0, float(seconds))
++        until = self.slow_until(start)
++        if until is None or start is None:
++            return seconds / 60.0
++        end = start + timedelta(seconds=seconds)
++        inside = max(0.0, (min(end, until) - start).total_seconds())
++        return (inside * RANDOM_SLOW + (seconds - inside)) / 60.0
+ 
+     @property
+     def slow_pending(self) -> bool:
+@@ -838,7 +944,7 @@ class Contract:
+         return next((t for t in self.terms if t in NET_SHARE), "")
+ 
+     def net_check(self, used: float, bonus: float, raw: float, date: str):
+-        """信息阻断 / 信息隔绝: 合约开始时 (以及合约中换日时) 记下当时的剩余额度, 只能用它的几成, 不能借贷.
++        """信息阻断: 合约开始时 (以及合约中换日时) 记下当时的剩余额度, 只能用它的几成, 不能借贷.
+         返回 (要降级的词条, "loan" / "over"), 没有违反时 ("", "") (只由做自动结束的设备调用, 额度是各设备共用的).
+         已经失效的: 照样按失效时的额度看, 还在继续用超 / 又借贷了就返回它 (只响警报)."""
+         tid = self.net_term() or self._lost_of(NET_SHARE)
+@@ -892,13 +998,11 @@ class Contract:
+         return tid if self._edge("win", n > lim) else ""
+ 
+     def ban_term(self, kind: str) -> str:
+-        """禁止打开这一类软件 (BANS 之一) 的是哪个词条: 它自己, 或者互联网娱乐的败退; 不禁止时 ""."""
+-        if self.watching(kind):
+-            return kind
+-        return BANS_ALL if self.watching(BANS_ALL) else ""
++        """禁止打开这一类软件 (BANS 之一) 的是哪个词条: 它自己; 不禁止时 ""."""
++        return kind if self.watching(kind) else ""
+ 
+     def ban_check(self, kind: str, hit: bool) -> str:
+-        """乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒 (或者互联网娱乐的败退): 开着这一类软件.
++        """乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒: 开着这一类软件.
+         每一类只在从没有到有的那一下算一次. 返回要降级的词条."""
+         tid = self.ban_term(kind)
+         if not tid:
+@@ -1008,9 +1112,13 @@ class Contract:
+ 
+     # ---- 词条的效果 ----
+ 
+-    def overrides(self) -> dict:
+-        """合约中盖过设置的项 (config 里的值, 硬规则): 全频道阻塞干扰 → 代理-全屏蔽."""
+-        return {"NET_MODE": "proxy_all"} if self.has("jam") else {}
++    def overrides(self, peers: bool = True, adapter: bool = True) -> dict:
++        """合约中盖过设置的项 (config 里的值, 硬规则): 全频道阻塞干扰 → 断网方式.
++        有连接的其他设备时用 代理-全屏蔽 (Proxy block-all) (同步要靠联网); 没有时用 Adapter (禁用网卡).
++        设备没有 Adapter 方式 (手机) 时总是 代理-全屏蔽."""
++        if not self.has("jam"):
++            return {}
++        return {"NET_MODE": "proxy_all" if peers or not adapter else "adapter"}
+ 
+     def window_limit(self) -> int:
+         return min((WINDOWS[t] for t in self.terms if t in WINDOWS), default=0)
+@@ -1043,7 +1151,16 @@ class Contract:
+         return bool(a and b and a < slot_start + timedelta(hours=1) and slot_start < b)
+ 
+     def rest_factor(self) -> float:
+-        return rest_factor_of(self.terms)
++        return rest_factor_of(self.mine)
++
++    def combos(self) -> list:
++        """(组合, 状态) 现在的样子: 效果栏 (第 3 页) 照着画."""
++        terms, orig = self.mine, (self.orig if self.active else [])
++        return [(c, combo_state(c, terms, orig if self.active else None)) for c in COMBOS]
++
++    def combo_marks(self) -> dict:
++        """凑齐了的组合的成员词条 → 颜色 (界面上框住它们)."""
++        return combo_marks(self.mine)
+ 
+     def book_rest(self, seconds: float, end: datetime = None) -> float:
+         """一段专注换来的休息时间 (秒, 已乘"休息时间倍率"). 返回给出的休息时间.
+@@ -1058,11 +1175,12 @@ class Contract:
+         return seconds
+ 
+     def book_rest_after(self, seconds: float, start: datetime) -> float:
+-        """完成之后才结束的专注, 开始于刚完成的合约里: 按那个合约的疲惫给."""
++        """完成之后才结束的专注, 开始于刚完成的合约里: 按那个合约的疲惫给 (未知变量选中的不算组合)."""
+         h = self.last
+         hs, he = _parse(h.get("start")), _parse(h.get("end"))
+         if h.get("result") == "completed" and hs and he and hs <= start < he:
+-            terms = h.get("terms") or []
++            rand = set(h.get("rand") or [])
++            terms = [t for t in (h.get("terms") or []) if t not in rand]
+             return seconds * rest_factor_of(terms)
+         return seconds
+ 
+@@ -1172,32 +1290,58 @@ def cell_fill(start: datetime, end: datetime, fill: timedelta) -> timedelta:
+ 
+ def _selftest():
+     import tempfile
+-    assert level_of(["long3", "isolate", "last"]) == 10 + 1, "最后防线: 危机等级每有 10 级 +1"
+-    assert level_of(["long3", "isolate"]) == 7 and level_of(["last", "long1"]) == 4
+-    assert last_bonus(19, ["last"]) == 1 and last_bonus(20, ["last"]) == 2 and last_bonus(30, ["long3"]) == 0
++    assert level_of(["long3", "tired3", "info3", "last"]) == 12, "最后防线没有额外等级了, 只有初始目标生命值 1"
++    assert level_of(["long3", "tired3"]) == 6 and level_of(["last", "long1"]) == 4
+     assert life_of([]) == 4 and life_of(["retreat1"]) == 3 and life_of(["retreat2"]) == 2 and life_of(["last"]) == 1
+     assert conflicts("retreat1", "last") and conflicts("retreat2", "last"), "退路封锁和最后防线是同一组"
+     assert not {"vlc.exe", "potplayermini64.exe", "mpc-hc64.exe", "wmplayer.exe"} & MUSIC_EXES, "视频播放器不算"
+     assert rest_minutes(0) == 20 and rest_minutes(1) == 22 and rest_minutes(4) == 27 and rest_minutes(19) == 55
+     assert rest_minutes(37) == 88 and rest_minutes(38) == 90 and rest_minutes(50) == 90 and rest_reward(45) == 90 * 60
+     assert all(rest_minutes(i) <= rest_minutes(i + 1) for i in range(40))
+-    assert conflicts("long1", "long3") and conflicts("isolate", "info2"), "同一组互相冲突"
+-    assert not conflicts("isolate", "chan1") and not conflicts("chan2", "isolate") and conflicts("suppress", "isolate")
+-    assert not conflicts("jam", "music") and conflicts("short1", "short2") and not conflicts("seal", "fine")
+-    assert clean_terms(["long2", "long1", "x", "isolate", "suppress", "jam"]) == ["long2", "isolate", "jam"]
+-    assert clean_terms(["isolate", "chan2"]) == ["isolate", "chan2"], "信息隔绝和通道阻塞可以一起选"
++    # 删掉的两个 4 级词条: 互联网娱乐的败退 变成组合, 信息隔绝 (旧词条) 删了
++    assert "isolate" not in BY_ID and "ent" not in BY_ID and MAX_LEVEL == 3, "没有了 4 级的词条: 词条板不再留那一行"
++    assert BY_ID["silent"][2] == 2, "无言为真调整为 2 级"
++    assert (NET_SHARE["info1"], NET_SHARE["info2"], NET_SHARE["info3"]) == (0.8, 0.65, 0.5), "信息阻断: 80% 65% 50%"
++    assert conflicts("long1", "long3") and conflicts("short1", "short2"), "同一组互相冲突"
++    assert not conflicts("erode1", "info3") and not conflicts("suppress", "quiet") and not conflicts("quiet", "jam")
++    assert not conflicts("erode1", "info2") and not conflicts("suppress", "fog")
++    assert not conflicts("jam", "music") and not conflicts("seal", "fine")
++    assert clean_terms(["long2", "long1", "x", "suppress", "jam"]) == ["long2", "suppress", "jam"]
+     assert duration_of([]) == 4 * 3600 and duration_of(["long3"]) == int(4 * 3600 * 1.6)
+     assert LAYOUT["short2"][0] < LAYOUT["suppress"][0], "成系列的在左边, 零散的在右边"
+-    assert BOARD_COLS == len(SERIES) + 9 and LAYOUT["jam"] == (len(SERIES), 2) and LAYOUT["fine"] == (len(SERIES) + 1, 2),         "零散的词条挨着排, 不留空"
++    assert BOARD_COLS == len(SERIES) + 8 and LAYOUT["jam"] == (len(SERIES), 2) \
++        and LAYOUT["fine"] == (len(SERIES) + 1, 2), "零散的词条挨着排, 不留空"
+     assert len(set(LAYOUT.values())) == len(TERMS)
+-    # 行为类似的词条放在一起: 禁止的软件一行挨着, 录像在它们下面; 整点记录 / 联网各自上下对齐
+-    assert [LAYOUT[t][0] for t in BANS] == list(range(LAYOUT["music"][0], LAYOUT["music"][0] + 4))
+-    assert LAYOUT["gaze"][0] == LAYOUT["music"][0] and LAYOUT["scar"][0] == LAYOUT["silent"][0]
++    # 行为类似的词条放在一起: 禁止的软件在 1 级挨着, 录像在它们下面; 无言为真 2 级, 在低帧的诅咒下面
++    assert [LAYOUT[t][0] for t in ("music", "game", "video")] == \
++        [LAYOUT["music"][0], LAYOUT["music"][0] + 1, LAYOUT["music"][0] + 2]
++    assert LAYOUT["gaze"][0] == LAYOUT["music"][0] and LAYOUT["scar"][0] == LAYOUT["game"][0]
++    assert LAYOUT["silent"] == (LAYOUT["video"][0], 2), "无言为真是 2 级"
+     assert LAYOUT["seal"][0] == LAYOUT["fine"][0] and LAYOUT["suppress"][0] == LAYOUT["jam"][0]
+     assert conflicts("gaze", "scar") and conflicts("scar", "gaze") and not conflicts("gaze", "music")
+-    assert all(conflicts("ent", t) and conflicts(t, "ent") and conflicts("isolate", t) for t in BANS)
+-    assert conflicts("ent", "isolate") and not conflicts("ent", "info3") and not conflicts("ent", "gaze")
+-    assert LAYOUT["ent"] == (LAYOUT["music"][0], 4), "互联网娱乐的败退在禁止软件的那几列下面"
++    assert not conflicts("silent", "music") and not conflicts("silent", "game"), "禁止软件的词条可以一起选"
++
++    # 词条组合: 系列任意一档都算; 凑齐了加危机等级 / 乘区 / 开始时或完成时的休息时间
++    mochi, nofun, flawless, isolation = (COMBOS_BY_ID[i] for i in ("mochi", "nofun", "flawless", "isolation"))
++    assert combo_done(mochi, ["long1", "tired2", "fine", "deep1"])
++    assert not combo_done(mochi, ["long1", "tired2", "fine"]) and not combo_done(mochi, ["long1", "tired2"])
++    assert combo_state(mochi, ["long1", "tired2"]) == "open"
++    assert combo_state(mochi, ["long1", "tired2"], ["long1", "tired2", "fine", "deep1"]) == "void"
++    assert combo_state(mochi, ["long1", "tired2", "fine", "deep1"]) == "done"
++    assert combo_level(["long1", "tired2", "fine", "deep1"]) == 1
++    assert abs(rest_factor_of(["long1", "tired2", "fine", "deep1"]) - 0.6 * 1.1) < 1e-9
++    iso = ["info1", "chan1", "erode1", "suppress", "fog", "quiet"]
++    assert clean_terms(iso) == iso, "信息隔绝组合的词条可以一起选"
++    assert combo_done(isolation, iso) and combo_level(iso) == 1 and combo_end(iso) == 10 * 60
++    assert rest_reward(6, iso) == rest_minutes(6) * 60 + 10 * 60
++    assert rest_minutes_total(6, iso) == rest_minutes(6) + 10
++    assert combo_gift(["music", "silent", "game", "video"]) == 20 * 60, "互联网娱乐的败退: 开始时 +20 分钟"
++    assert combo_gift(["last", "unknown"]) == 20 * 60, "无懈可击: 开始时 +20 分钟"
++    assert combo_marks(["last", "unknown"]) == {"last": COMBO_COLORS["gray"], "unknown": COMBO_COLORS["gray"]}
++    assert combo_marks(["long1", "tired2"]) == {}
++    assert nofun["color"] == "purple" and flawless["color"] == "gray" and isolation["color"] == "red" \
++        and mochi["color"] == "white"
++    assert req_name("deep") == "纵深推进" and req_name("last") == "最后防线" and req_name("silent") == "无言为真"
+     for t in ("ChatGPT", "Claude", "(3) 首页 / X", "如何评价…？ - 知乎 - Google Chrome", "微博-随时随地发现新鲜事",
+               "DeepSeek - 探索未至之境 - Microsoft Edge", "Reddit - Dive into anything", "Kimi 智能助手"):
+         assert site_title(t, SOCIAL_TITLES), t
+@@ -1210,55 +1354,76 @@ def _selftest():
+     assert not set(SOCIAL_EXES) & set(VIDEO_EXES) and not SOCIAL_TITLES & VIDEO_TITLES, "一个软件只算一个词条"
+     best = clean_terms(["long3", "move2", "info3", "suppress", "jam", "music", "fog", "tired3", "chan2", "last",
+                         "short2", "seal", "fine", "silent", "game", "video", "gaze", "scar"])
+-    assert "scar" not in best and level_of(best) == 31 + 3, level_of(best)
+-    best2 = clean_terms(["long3", "move2", "info3", "suppress", "jam", "ent", "fog", "tired3", "chan2", "last",
+-                         "short2", "seal", "fine", "gaze"])
+-    assert level_of(best2) == 31 + 3 and "ent" in best2, best2
++    assert "scar" not in best and level_of(best) == 32, level_of(best)
++    assert combo_gift(best) == 20 * 60, "互联网娱乐的败退凑齐了"
++    best2 = clean_terms(["info3", "chan2", "erode2", "suppress", "fog", "quiet", "last", "long3", "tired3", "fine"])
++    assert len(best2) == 10, best2
++    assert combo_level(best2) == 1 and level_of(best2) == 21 + 1, level_of(best2)
+ 
+     c = Contract(tempfile.mkdtemp())
+     t0 = datetime(2026, 10, 18, 9, 30)
+     c.start(["tired2", "info2", "chan1", "long1", "music"], owner="me", now=t0)
+     assert c.active and c.level == 2 + 2 + 1 + 1 + 1 and c.end_at == t0 + timedelta(seconds=int(4 * 3600 * 1.2))
+     assert c.overrides() == {} and not c.fog() and not c.hour_forced()
+-    # 信息阻断-II: 开始时剩 100 分钟, 只能用 50 分钟; 用超了 → 降成 -I, 多给 25 分钟
++    # 信息阻断-II: 开始时剩 100 分钟, 只能用 65 分钟; 用超了 → 降成 -I, 多给 15 分钟
+     assert c.net_check(600, 0, 6000, "2026-10-18") == ("", "")
+-    assert c.net_left(600) == 3000 and c.net_check(3599, 0, 0, "2026-10-18") == ("", "")
+-    assert c.net_check(3700, 0, 0, "2026-10-18") == ("info2", "over")
++    assert c.net_left(600) == 3900 and c.net_check(4499, 0, 0, "2026-10-18") == ("", "")
++    assert c.net_check(4600, 0, 0, "2026-10-18") == ("info2", "over")
+     over, new = c.violate("info2")
+     assert not over and new == "info1" and c.terms == ["long1", "info1", "tired2", "chan1", "music"], c.terms
+-    assert c.net_left(3700) == 600 + 3000 + 1500 - 3700 and c.level == 6 and c.orig_level == 7
+-    assert c.net_check(3800, 0, 0, "2026-10-18") == ("", "")
+-    assert c.net_check(3800, 600, 0, "2026-10-18") == ("info1", "loan"), "借贷也算违反"
+-    assert c.net_check(3800, 600, 0, "2026-10-18") == ("", ""), "同一次借贷只算一次"
++    assert c.net_left(4600) == 600 + 3900 + 900 - 4600 and c.level == 6 and c.orig_level == 7
++    assert c.net_check(4700, 0, 0, "2026-10-18") == ("", "")
++    assert c.net_check(4700, 600, 0, "2026-10-18") == ("info1", "loan"), "借贷也算违反"
++    assert c.net_check(4700, 600, 0, "2026-10-18") == ("", ""), "同一次借贷只算一次"
+     assert c.downgrade("info1") == "" and not c.net_term() and c.net_check(9999, 9999, 0, "x") == ("", "")
+     # 通道阻塞 / 乐理之灾: 只在刚越过的那一下算
+     assert c.window_check(5) == "chan1" and c.window_check(6) == "" and c.window_check(3) == ""
+     assert c.window_check(5) == "chan1"
+     assert c.ban_check("music", True) == "music" and c.ban_check("music", True) == "" and c.ban_check("music", False) == ""
+     assert c.downgrade("music") == "" and not c.has("music"), "乐理之灾只有 1 级, 降一级就失效"
+-    # 无言为真 / 禁游令: 和乐理之灾一样; 录像 (目光 / 刻痕) 违反一次就失效
++    # 无言为真 (2 级) / 禁游令: 违反一次降一级, 再违反才失效; 录像 (目光 / 刻痕) 违反一次就失效
+     c.start(["silent", "game", "gaze"], owner="me", now=t0)
+-    assert c.level == 4 and c.records() == ["camera"] and c.ban_check("music", True) == ""
++    assert c.level == 2 + 1 + 2 and c.records() == ["camera"] and c.ban_check("music", True) == ""
+     assert c.ban_check("game", True) == "game" and c.ban_check("game", True) == "" and c.ban_check("silent", True) == "silent"
+-    assert c.violate("gaze") == (False, "") and c.records() == [] and c.level == 2
++    assert c.violate("gaze") == (False, "") and c.records() == [] and c.level == 3
+     assert c.violate("game") == (False, "") and not c.has("game") and c.has("silent")
+-    # 互联网娱乐的败退: 四类都禁止, 每一类各自只在打开的那一下算; 违反任意一项就整个失效 (四类都放开)
+-    c.start(["ent", "info3"], owner="me", now=t0)
+-    assert c.ban_term("game") == "ent" and c.ban_check("video", True) == "ent" and c.ban_check("video", True) == ""
+-    assert c.violate("ent") == (False, "") and not c.has("ent") and c.level == 3
+-    # 失效后照样检查: 再次打开只响警报 (echo), 不扣目标生命值; 每个词条 2 分钟最多响一次
+-    assert c.lost == ["ent"] and c.ban_term("game") == "ent" and c.ban_check("silent", True) == "ent" and c.echo("ent")
+-    assert c.echo_due("ent", t0) and not c.echo_due("ent", t0 + timedelta(seconds=119))
+-    assert c.echo_due("ent", t0 + timedelta(seconds=120)) and c.violations == 1
+-    # 合约开始时积攒的休息时间 +20 分钟 (不算合约开始前的)
+-    assert rest_gift(["ent", "info3"]) == 20 * 60 and rest_gift(["music", "silent"]) == 0
+-    # 翻页: 成系列的一页, 零散的一页
++    c.start(["silent"], owner="me", now=t0)
++    assert c.term_level("silent") == 2 and c.level == 2
++    assert c.violate("silent") == (False, "silent") and c.has("silent") and c.term_level("silent") == 1
++    assert c.level == 1
++    assert c.violate("silent") == (False, "") and not c.has("silent") and c.lost == ["silent"]
++    # 互联网娱乐的败退 (词条组合): 四类都禁止, 每一类各自只在打开的那一下算; 开始时休息 +20 分钟
++    c.start(["music", "silent", "game", "video"], owner="me", now=t0)
++    assert c.level == 1 + 2 + 1 + 1 and c.ban_term("game") == "game" and c.ban_check("video", True) == "video"
++    assert c.ban_check("video", True) == "" and rest_gift(c.terms) == 20 * 60
++    # 凑齐的组合: 成员失效 (降级不算) 后组合的效果全部取消, 开始时给的休息时间不收回
++    assert c.combos()[1] == (nofun, "done") and c.combo_marks().get("music") == COMBO_COLORS["purple"]
++    assert c.violate("game") == (False, "") and c.combos()[1] == (nofun, "void")
++    assert c.combo_marks() == {} and rest_gift(c.terms) == 0
++    # 信息隔绝组合: 额外 1 危机等级, 完成时 +10 分钟; 成员失效后都没了
++    c.start(iso, owner="me", now=t0)
++    assert c.combos()[3] == (isolation, "done") and c.level == 6 + 1
++    assert c.reward == rest_minutes(7) * 60 + 10 * 60 and c.combo_marks().get("fog") == COMBO_COLORS["red"]
++    assert c.violate("suppress") == (False, "") and c.combos()[3] == (isolation, "void")
++    assert c.level == 5 and c.reward == rest_minutes(5) * 60
++    # 打年糕组合: 额外 1 危机等级, 休息时间 ×1.1; 纵深推进降级不算失效
++    c.start(["long1", "tired2", "fine", "deep2"], owner="me", now=t0)
++    assert c.combos()[0] == (mochi, "done") and c.level == 2 + 1 + 2 + 2 + 1
++    assert abs(c.rest_factor() - 0.6 * 1.1) < 1e-9
++    assert c.violate("deep2") == (False, "deep1") and c.combos()[0] == (mochi, "done")
++    assert abs(c.rest_factor() - 0.6 * 1.1) < 1e-9, "降级不算失效"
++    assert c.violate("deep1") == (False, "") and c.combos()[0] == (mochi, "void")
++    assert abs(c.rest_factor() - 0.6) < 1e-9, "成员失效了: 乘区取消"
++    # 翻页: 成系列的一页, 零散的一页, 第 3 页是组合效果
+     assert PAGES == [(0, len(SERIES)), (len(SERIES), BOARD_COLS)] and LAYOUT["deep1"][0] < len(SERIES)
+     assert LAYOUT["hoard"][0] >= len(SERIES) and LAYOUT["unknown"] == (len(SERIES), 3)
+-    # 侵蚀 / 静默协议和信息隔绝冲突
+-    assert conflicts("erode1", "isolate") and conflicts("isolate", "erode2") and conflicts("quiet", "isolate")
+-    assert not conflicts("erode1", "info3") and not conflicts("quiet", "jam")
+-    # 禁止囤囤鼠!: 提前结束休息算违反 (软规则, 1 级, 违反一次失效), 休息时间 ×1.05 (和疲惫 / 信息隔绝相乘); 侵蚀: 冷静期 ×2 / ×3
++    assert COMBO_PAGE == len(PAGES) and len(COMBOS) == 4
++    # 全频道阻塞干扰: 有连接的其他设备时用 代理-全屏蔽, 没有时用 Adapter (设备有 Adapter 方式)
++    c.start(["jam"], owner="me", now=t0)
++    assert c.overrides() == {"NET_MODE": "proxy_all"} and c.overrides(peers=True) == {"NET_MODE": "proxy_all"}
++    assert c.overrides(peers=False) == {"NET_MODE": "adapter"}, "没有连接其他设备: 用 Adapter"
++    assert c.overrides(peers=False, adapter=False) == {"NET_MODE": "proxy_all"}, "没有 Adapter 方式的设备总是代理-全屏蔽"
++    # 禁止囤囤鼠!: 提前结束休息算违反 (软规则, 1 级, 违反一次失效), 休息时间 ×1.05 (和疲惫相乘); 侵蚀: 冷静期 ×2 / ×3
+     c.start(["hoard", "tired1", "erode2"], owner="me", now=t0)
+     assert c.hoard_check() == "hoard" and abs(c.rest_factor() - 0.7 * 1.05) < 1e-9 and c.cooldown_factor() == 3.0
+     assert c.violate("hoard") == (False, "") and not c.has("hoard") and abs(c.rest_factor() - 0.7) < 1e-9
+@@ -1278,7 +1443,7 @@ def _selftest():
+     pool = c.random_candidates()
+     assert "gaze" not in pool and "scar" not in pool and "info1" not in pool and "long2" not in pool
+     assert not {"long1", "long2", "long3"} & set(pool), "不选持久战"
+-    assert "unknown" not in pool and "isolate" not in pool and "music" in pool and "jam" in pool
++    assert "unknown" not in pool and "music" in pool and "jam" in pool
+ 
+     class _Rng:
+         """测试用: random() 依次给出 rs 里的数 (用完了给 0 = 抽词条), choice 按 pick 选 (没有时随机)."""
+@@ -1367,12 +1532,16 @@ def _selftest():
+     # 没有能选的词条: 一定是效果
+     c.live["rand_used"] = [t[0] for t in TERMS]
+     assert c.random_candidates() == [] and c.roll(t0 + timedelta(hours=3), _Rng([0.7])) == [("none", "")]
+-    # 阻滞: 下一次开始的专注时间按 90% 增长 (合约结束了这段专注照样按 90%)
++    # 阻滞: 只减慢合约内那部分专注 (合约结束后恢复正常速度); 合约结束后才开始的专注不生效
+     c.live["rand_n"] = 3                       # 合约只有 4 小时: 再判定一次第 4 个小时
+     assert c.roll(t0 + timedelta(hours=3, minutes=30), _Rng([0.6])) == [("slow", "")] and c.slow_pending
+-    s1 = t0 + timedelta(hours=4, minutes=10)
+-    assert c.focus_rate(s1) == 1.0 and c.slow_bind(s1) and not c.slow_pending and not c.slow_bind(s1)
+-    assert c.focus_rate(s1) == 0.9 and c.focus_rate(s1 + timedelta(hours=1)) == 1.0
++    late = t0 + timedelta(hours=4, minutes=10)
++    assert not c.slow_bind(late) and c.slow_pending, "合约结束后才开始的专注不落上阻滞"
++    s1 = t0 + timedelta(hours=3, minutes=30)
++    assert c.slow_bind(s1) and not c.slow_pending and not c.slow_bind(s1)
++    assert c.focus_rate(s1, s1) == 0.9 and c.focus_rate(s1, late) == 1.0, "合约结束后不再减慢"
++    # 这段专注: 合约内 30 分钟按 90% 算, 合约结束后的 30 分钟按正常速度
++    assert abs(c.focus_minutes(s1, 3600) - (1800 * 0.9 + 1800) / 60) < 1e-6
+     # 封锁一个过了填写时限, 还没被封锁的记录格 (最近 24 小时里的), 合约结束后照样锁着; 填了的也锁
+     fill = timedelta(hours=1)
+     now = datetime(2026, 10, 18, 12, 10)
+@@ -1386,7 +1555,9 @@ def _selftest():
+     assert c.lock_cell(now, last, texts.get, "Sleeping", fill) == "2026-10-18/9", "已经封锁的不再选"
+     assert c.lock_cell(now, None, None, "Sleeping", fill) == ""
+     c.finish("abandoned", now)
+-    assert c.hour_locked(a, b, "学习", now + timedelta(days=3), fill, "Sleeping") and c.focus_rate(s1) == 0.9
++    # 合约提前结束了: 之后才开始的这段专注不减速 (阻滞只对合约内的专注生效)
++    assert c.hour_locked(a, b, "学习", now + timedelta(days=3), fill, "Sleeping")
++    assert c.focus_rate(s1) == 1.0 and abs(c.focus_minutes(s1, 3600) - 60) < 1e-6
+     # 未知变量启用了整点记录的词条: 这次合约中一直强制开启整点记录
+     c.start(["unknown"], owner="me", now=t0)
+     assert not c.hour_forced()
+@@ -1401,13 +1572,17 @@ def _selftest():
+     c.pre_cap(250)
+     assert c.pre_left == 250
+     c = Contract(tempfile.mkdtemp())          # 上面封锁的记录格会影响后面整点记录的测试
+-    # 信息隔绝: 休息时间额外 ×1.3 (和疲惫相乘); 降成信息阻断-III 后没有了
+-    c.start(["isolate", "tired2"], owner="me", now=t0)
+-    assert abs(c.rest_factor() - 0.6 * 1.3) < 1e-9 and abs(c.book_rest(1000, t0) - 780) < 1e-6
+-    c.downgrade("isolate")
+-    assert c.rest_factor() == 0.6
+-    # 没有疲惫: 基础 ×0.8 (信息隔绝照样相乘)
+-    assert rest_factor_of([]) == 0.8 and abs(rest_factor_of(["isolate"]) - 0.8 * 1.3) < 1e-9
++    # 打年糕: 休息时间额外 ×1.1 (和疲惫相乘); 成员降级不算失效, 失效后乘区取消
++    c.start(["long1", "tired2", "fine", "deep2"], owner="me", now=t0)
++    assert abs(c.rest_factor() - 0.6 * 1.1) < 1e-9 and abs(c.book_rest(1000, t0) - 660) < 1e-6
++    assert c.level == 8 and c.combo_marks().get("deep2") == COMBO_COLORS["white"]
++    c.downgrade("deep2")
++    assert abs(c.rest_factor() - 0.6 * 1.1) < 1e-9, "降级不算失效"
++    c.downgrade("deep1")
++    assert abs(c.rest_factor() - 0.6) < 1e-9 and c.level == 5 and c.combo_marks() == {}
++    # 没有疲惫: 基础 ×0.8 (打年糕照样相乘)
++    assert rest_factor_of([]) == 0.8
++    assert abs(rest_factor_of(["long1", "tired2", "fine", "deep1"]) - 0.6 * 1.1) < 1e-9
+     c.start(["scar"], owner="me", now=t0)
+     assert c.records() == ["screen"] and c.level == 2 and c.violate("scar") == (False, "") and c.terms == []
+     c.start(["tired2", "chan1", "long1"], owner="me", now=t0)
+@@ -1448,10 +1623,10 @@ def _selftest():
+     assert c.quiet_check(False) == "" and c.quiet_check(True) == "quiet" and c.echo("quiet")
+     assert c.violations == 3 and c.life == 1
+     c.live["violations"] = 0                  # 目标生命值只有 4: 接着测剩下的
+-    assert c.net_check(0, 0, 4000, "d") == ("", "") and c.net_check(3100, 0, 0, "d") == ("info1", "over")
+-    assert c.violate("info1") == (False, "") and c.net_term() == "" and c.net_check(3100, 0, 0, "d") == ("", ""), "没有继续用"
+-    assert c.net_check(3200, 0, 0, "d") == ("info1", "over") and c.net_check(3200, 0, 0, "d") == ("", "")
+-    assert c.net_check(3200, 300, 0, "d") == ("info1", "loan") and c.echo("info1")
++    assert c.net_check(0, 0, 4000, "d") == ("", "") and c.net_check(3300, 0, 0, "d") == ("info1", "over")
++    assert c.violate("info1") == (False, "") and c.net_term() == "" and c.net_check(3300, 0, 0, "d") == ("", ""), "没有继续用"
++    assert c.net_check(3400, 0, 0, "d") == ("info1", "over") and c.net_check(3400, 0, 0, "d") == ("", "")
++    assert c.net_check(3400, 300, 0, "d") == ("info1", "loan") and c.echo("info1")
+     assert c.supply_check(0, 400) == "short1" and c.violate("short1") == (False, "") and c.supply_limit is None
+     assert c.supply_watch() == "short1" and c.supply_check(0, 400) == "" and c.supply_check(0, 400.3) == ""
+     assert c.supply_check(0, 410) == "short1" and c.echo("short1")
+@@ -1473,10 +1648,10 @@ def _selftest():
+     assert c.window_watch() == ("chan2", 3) and not c.echo("chan2")
+     assert c.expire(t0 + timedelta(hours=1)) == ["chan2"] and c.window_watch() == ("chan1", 4) and c.echo("chan1")
+ 
+-    # 最后防线: 危机等级 10 → 多 1 级; 降级后不到 10 级就没有了
+-    c.start(["last", "long3", "isolate"], owner="me", now=t0)
+-    assert c.level == 11 and c.last_extra == 1 and c.orig_level == 11
+-    assert c.violate("isolate") == (True, "info3") and c.level == 9 and c.last_extra == 0   # 目标生命值只有 1
++    # 最后防线: 只有初始目标生命值 1, 没有额外的词条等级
++    c.start(["last", "long3", "tired3", "chan1"], owner="me", now=t0)
++    assert c.level == 10 and c.orig_level == 10 and c.violation_limit == 1
++    assert c.violate("chan1") == (True, "") and c.level == 9   # 目标生命值只有 1
+ 
+     # 完成: 按等级给固定的休息时间 (等级 4 → 27 分钟), 第一次休息的结转比例
+     c.start(["last", "tired1"], owner="me", now=t0)
+diff --git a/for_developer.md b/for_developer.md
+index 780d9b5..a260bc3 100644
+--- a/for_developer.md
++++ b/for_developer.md
+@@ -10,9 +10,7 @@ IV.设置按模块分页(顺序同左侧导航,基本设置永远第一页,只
+ I.每10s检测一次双端数据是否同步 由母端对所有设备发送请求 并试图同步 哪个设备的操作最新就以哪端为准.
+ II.同步所有的计时器状态,历史数据,hour log,calendar等等.
+ 但是不要同步rules.
+-同时 hour log的提醒只会在操作记录最新的设备上发出声音.
++III.所有功能实时适配.
+ 
+ 开发者模式
+ 不要写进 mechanics.md.
+-
+-暂存的需求(开发完了就删掉对应需求)
+diff --git a/i18n.py b/i18n.py
+index 0b7942a..dbab791 100644
+--- a/i18n.py
++++ b/i18n.py
+@@ -684,19 +684,19 @@ EN = {
+     "环境:信息阻断-I": "Env: Info Blockade-I",
+     "环境:信息阻断-II": "Env: Info Blockade-II",
+     "环境:信息阻断-III": "Env: Info Blockade-III",
+-    "可用的剩余联网时间改为75% 且不能使用借贷": "Usable remaining online time set to 75%, and no loans",
++    "可用的剩余联网时间改为80% 且不能使用借贷": "Usable remaining online time set to 80%, and no loans",
++    "可用的剩余联网时间改为65% 且不能使用借贷": "Usable remaining online time set to 65%, and no loans",
+     "可用的剩余联网时间改为50% 且不能使用借贷": "Usable remaining online time set to 50%, and no loans",
+-    "可用的剩余联网时间改为25% 且不能使用借贷": "Usable remaining online time set to 25%, and no loans",
+-    "不能使用联网功能": "No network access at all",
+-    "不能使用联网功能 选择时 获得的休息时间改为130%": "No network access at all; while selected, break time earned set to 130%",
+     "环境:抑制": "Env: Suppression",
+     "不能使用快速访问功能": "Quick access cannot be used",
+     "环境:全频道阻塞干扰": "Env: Full-Band Jamming",
+-    "期间使用proxy block-all模式": "Proxy block-all mode during the contract",
++    "有连接的其他设备时使用proxy block-all模式 没有时使用Adapter模式":
++        "Proxy block-all mode while other devices are connected; Adapter mode otherwise",
+     "环境:乐理之灾": "Env: Musical Calamity",
+     "非休息期间不能打开音乐播放软件 不能使用外部软件播放mp3等音频文件": "Outside breaks: no music players, and no playing mp3 or other audio files in other programs",
+     "环境:黑雾": "Env: Black Fog",
+-    "合约期间 专注时长 成就 日历 统计数据不可见 且无法打开设置": "Focus time, achievements, calendar and statistics are hidden, and settings can't be opened",
++    "合约期间 专注时长 合约的剩余时间 成就 日历 统计数据不可见 且无法打开设置":
++        "Focus time, the contract's time left, achievements, calendar and statistics are hidden, and settings can't be opened",
+     "环境:支援短缺-I": "Env: Supply Shortage-I",
+     "环境:支援短缺-II": "Env: Supply Shortage-II",
+     "可用的合约开始前已保存休息时间改为50%": "Usable break time saved before the contract set to 50%",
+@@ -723,6 +723,17 @@ EN = {
+     "高机动": "Mobility",
+     "信息阻断": "Info Cut",
+     "信息隔绝": "Isolation",
++    "打年糕": "Rice Cake Pounding",
++    "无懈可击": "Impenetrable",
++    "词条组合": "Term combos",
++    "已凑齐": "Complete",
++    "未凑齐": "Incomplete",
++    "已失效": "Void",
++    "需要": "Needs",
++    "凑齐列出的词条 / 词条系列时生效": "Takes effect when the listed terms / term series are all picked",
++    "额外 1 危机等级\n休息时间 ×110%": "Extra 1 Contingency Level\nBreak time ×110%",
++    "合约开始时 休息 +20 分钟": "Break +20 min when the contract starts",
++    "额外 1 危机等级\n完成合约时 休息 +10 分钟": "Extra 1 Contingency Level\nBreak +10 min on completion",
+     "抑制": "Suppress",
+     "全频道阻塞干扰": "Jamming",
+     "乐理之灾": "Music Calamity",
+@@ -730,8 +741,7 @@ EN = {
+     "疲惫": "Fatigue",
+     "通道阻塞": "Channels",
+     "最后防线": "Last Stand",
+-    "已选中词条": "Selected terms",
+-    "危机等级": "Contingency level",
++    "已选中词条": "Selected terms",    "危机等级": "Contingency level",
+     "时长 {t}": "Duration {t}",
+     "完成后休息 +{n} 分钟": "Break on completion +{n} min",
+     "⚠  当前合约难度极大 请谨慎行动": "⚠  This contract is extremely hard. Proceed with caution",
+@@ -760,7 +770,7 @@ EN = {
+     "退路封锁": "Retreat Seal",
+     "初始目标生命值为3": "Initial target life is 3",
+     "初始目标生命值为2": "Initial target life is 2",
+-    "初始目标生命值为1\n危机等级每有10级 词条等级增加一级": "Initial target life is 1\n+1 term level for every 10 Contingency Levels",
++    "初始目标生命值为1": "Initial target life is 1",
+     "提前结束": "Ended early",
+     "危机等级 {lv} · 时长 {t} · 到 {at}": "Contingency level {lv} · {t} · until {at}",
+     "合约开始.": "Contract started.",
+@@ -813,7 +823,6 @@ EN = {
+     "开始时 {n}": "At start {n}",
+     "[原 {name}]": "[was {name}]",
+     "[降了 {n} 级]": "[down {n} level(s)]",
+-    "[危机等级加成 +{n} 级]": "[Contingency bonus +{n} level(s)]",
+     "合约的联网额度还剩 {t}": "contract network allowance left {t}",
+     "合约完成后的第一次休息: 暂停时剩余时间 ×{r:g} 留给下次.": "First break after the contract: pausing keeps ×{r:g} of the rest for next time.",
+     # ---- 合约: 禁止的软件 / 录像 (MECHANICS 18.3), 设置 → 录像 ----
+@@ -831,7 +840,6 @@ EN = {
+     "合约期间录制整个屏幕 结束后保存录像": "The whole screen is recorded during the contract and saved afterwards",
+     "合约期间不能使用游戏和游戏平台": "No games and no game platforms during the contract",
+     "合约期间不能使用视频平台": "No video platforms during the contract",
+-    "同时有乐理之灾 无言为真 禁游令 低帧的诅咒的效果\n违反任意一项即整个失效\n合约开始时获得额外20min的休息时间": "All the effects of Musical Calamity, Silence Is Truth, Game Ban and Low-Frame Curse\nAny violation voids it entirely\nStarting the contract gives an extra 20 min of break time",
+     "录像": "Recording",
+     "录像前询问": "Ask before recording",
+     "即时生效.开启时: 开始带录像词条 (目光 / 刻痕) 的合约前再确认一次; 别的设备开始的合约要本机录像时, 先问一次 (拒绝算一次违反).": "Takes effect at once. When on: confirm once more before starting a contract with a recording term (Gaze / Engraving); when a contract started on another device needs this device to record, ask first (declining counts as a violation).",
+@@ -913,10 +921,10 @@ EN = {
+     "未知变量: 封锁了整点记录 {t} (不能再修改)": "Unknown Variable: hour log {t} sealed (can't be edited any more)",
+     "未知变量: 没有可以封锁的整点记录, 无事发生": "Unknown Variable: no hour log cell to seal, nothing happens",
+     "未知变量: 这次判定作废, 改为判定两次": "Unknown Variable: this roll is void, rolling twice instead",
+-    "未知变量: 下一次专注启用阻滞 (专注时间按 {p}% 增长)":
+-        "Unknown Variable: the next focus is slowed (focus time grows at {p}%)",
++    "未知变量: 下一次专注启用阻滞 (只减慢合约内的时间, 按 {p}% 增长)":
++        "Unknown Variable: the next focus is slowed (only the in-contract part, grows at {p}%)",
+     "未知变量: 无事发生": "Unknown Variable: nothing happens",
+-    "阻滞: 这段专注的时间按 {p}% 增长": "Slowed: this focus grows at {p}%",
++    "阻滞: 合约内这段专注的时间按 {p}% 增长": "Slowed: the in-contract part of this focus grows at {p}%",
+     "⚠ {why} · {name} 已失效, 不扣目标生命值": "⚠ {why} · {name} already failed, no target life lost",
+     "未知变量: 抽中了 {name}, {t} 生效": "Unknown Variable: drew {name}, takes effect at {t}",
+     "[未知变量抽中 · {t} 生效]": "[Drawn by Unknown Variable · takes effect at {t}]",
+diff --git a/net_guard.py b/net_guard.py
+index 2fac1c3..6d01034 100644
+--- a/net_guard.py
++++ b/net_guard.py
+@@ -36,7 +36,7 @@ class NetGuard:
+         self.date = datetime.now().strftime('%Y-%m-%d')
+         self.used = 0.0
+         self.bonus = 0.0
+-        self.gift = 0.0               # 今天合约奖励的额度 (完成带"互联网娱乐的败退"的合约), 不用还
++        self.gift = 0.0               # 今天合约奖励的额度, 不用还
+         self.tomorrow_used = 0.0
+         self.debt = 0.0
+         self.grant_left = 0.0
+diff --git a/pages/contract_page.py b/pages/contract_page.py
+index a51d30f..96ea98b 100644
+--- a/pages/contract_page.py
++++ b/pages/contract_page.py
+@@ -24,7 +24,7 @@ def term_desc(tid: str) -> str:
+ 
+ 
+ def term_line(tid: str) -> str:
+-    """名字 : 描述. 描述本身分了几行时 (互联网娱乐的败退), 从下一行开始写, 每一句一行."""
++    """名字 : 描述. 描述本身分了几行时, 从下一行开始写, 每一句一行."""
+     desc = term_desc(tid)
+     return f"{term_name(tid)} :" + ("\n" if "\n" in desc else " ") + desc
+ 
+@@ -40,8 +40,6 @@ def marks(level: int) -> str:
+ 
+ HARD_LEVEL = 20                  # 总等级到这里就提示"难度极大"
+ 
+-RIM4 = 4                         # 这个等级的词条用红色边框
+-
+ # 手动提前结束是"行动终止"; 被动结束 (违反 / 空闲 / 设备离线) 是"行动失败"
+ RESULTS = {"completed": "完成", "failed": "行动失败: 目标生命值归零", "idle": "行动失败: 空闲超过 30 分钟",
+            "offline": "行动失败: 设备离线超过 15 分钟", "abandoned": "行动终止"}
+@@ -67,6 +65,9 @@ OPS = {
+     "live": "#18181b", "live_rim": "#c8202f", "danger": "#ff4d5a", "idle": "#f2b33d",
+     "side": "#18191c", "side_text": "#cfd0d3", "side_on": "#c8202f", "side_on_text": "#ffffff",
+     "side_hover": "#2c2d31", "side_rim": "#2c2d31",
++    # 词条组合的颜色 (打年糕 白色 / 互联网娱乐的败退 紫色 / 无懈可击 灰色 / 信息隔绝 红色)
++    "combo_white": C.COMBO_COLORS["white"], "combo_purple": C.COMBO_COLORS["purple"],
++    "combo_gray": C.COMBO_COLORS["gray"], "combo_red": C.COMBO_COLORS["red"],
+ }
+ 
+ 
+@@ -93,6 +94,9 @@ def palette() -> dict:
+         "tag": c["danger"], "tag_text": c["on_accent"],
+         "live": c["bg_card"], "live_rim": c["danger"], "danger": c["danger"], "idle": c["warn"],
+         "side": None,                      # 侧边栏不变
++        # 组合的颜色: 白 / 紫 / 灰 / 红; 白和灰在浅色主题里用文字色, 免得看不见
++        "combo_white": c["text_strong"], "combo_purple": "#8b5cf6",
++        "combo_gray": c["text_dim"], "combo_red": c["danger"],
+     }
+ 
+ 
+@@ -178,7 +182,8 @@ class ContractPage(tk.Frame):
+         self.btn_stop_rec = self._button(self.rec_row, tr("■ 终止录屏"), P["clear"], P["clear_hover"], P["clear_text"],
+                                          lambda: self.on_stop_screen and self.on_stop_screen())
+ 
+-    # ---- 词条板: 左边一条竖写的 "CONTRACT LIST" 和各行的等级, 右边六边形的格子; 翻页 (成系列的一页, 零散的一页) ----
++    # ---- 词条板: 左边一条竖写的 "CONTRACT LIST" 和各行的等级, 右边六边形的格子; 翻页 (成系列的一页, 零散的一页,
++    #      第 3 页是词条组合的效果) ----
+ 
+     def _build_board(self, body):
+         P, s = self.P, config.scaled
+@@ -187,7 +192,7 @@ class ContractPage(tk.Frame):
+         self.hover_h = s(66)                     # 最下面写词条内容的地方: 最多三行 (长的描述自己换行)
+         self.board_h = self.gap + C.MAX_LEVEL * (self.th + self.gap) + self.hover_h
+         self.page = 0
+-        self.pages = list(C.PAGES)
++        self.pages = list(C.PAGES)               # 前几页是词条的列; 最后一页是组合 (界面直接画)
+         self.canvas = tk.Canvas(body, bg=P["board"], highlightthickness=0, height=self.board_h)
+         self.canvas.pack(fill="x", pady=(0, 6))
+         self.canvas.bind("<Configure>", self._board_resized)
+@@ -203,6 +208,13 @@ class ContractPage(tk.Frame):
+             out += [(i, min(b, i + size)) for i in range(a, b, size)]
+         return out
+ 
++    def _page_count(self) -> int:
++        """总页数: 词条的那几页 + 组合效果的一页."""
++        return len(self.pages) + 1
++
++    def _on_combo_page(self) -> bool:
++        return self.page >= len(self.pages)
++
+     def _board_resized(self, _event):
+         # 布局过程中宽度会来回变几次: 等它停下来再按最后的宽度分页 (只重画格子, 不动别的控件的大小)
+         if getattr(self, "_resize_job", None):
+@@ -213,18 +225,22 @@ class ContractPage(tk.Frame):
+         self._resize_job = None
+         pages = self._split_pages(self.canvas.winfo_width())
+         if pages != self.pages:
+-            first = self.pages[self.page][0]
++            combo = self._on_combo_page()
++            first = None if combo else self.pages[self.page][0]
+             self.pages = pages
+-            self.page = next((i for i, (a, b) in enumerate(pages) if a <= first < b), 0)
++            self.page = len(pages) if combo else \
++                next((i for i, (a, b) in enumerate(pages) if a <= first < b), 0)
+             self._draw_tiles()
+-            self._paint_tiles()
++            if not self._on_combo_page():
++                self._paint_tiles()
+ 
+     def _flip(self, step: int):
+-        page = min(len(self.pages) - 1, max(0, self.page + step))
++        page = min(self._page_count() - 1, max(0, self.page + step))
+         if page != self.page:
+             self.page = page
+             self._draw_tiles()
+-            self._paint_tiles()
++            if not self._on_combo_page():
++                self._paint_tiles()
+ 
+     @staticmethod
+     def _hexagon(x, y, w, h):
+@@ -236,24 +252,24 @@ class ContractPage(tk.Frame):
+     def _draw_board(self):
+         P, cv, s = self.P, self.canvas, config.scaled
+         cv.create_rectangle(0, 0, self.band, self.board_h, fill=P["band"], outline="")
+-        # 竖写的标题 (同参考图的 "CONTRACT LIST: 可选合约")
++        # 竖写的标题 (同参考图的 "CONTRACT LIST: 可选合约"); 组合效果那一页换成 "CONTRACT EFFECT"
+         mid = (self.board_h - self.hover_h) / 2
+-        cv.create_text(s(22), mid, text="CONTRACT LIST", angle=90, fill=P["band_dim"],
+-                       font=config.font("h2", bold=True))
+-        cv.create_text(s(44), mid, text=tr("可选词条"), angle=90, fill=P["band_text"],
+-                       font=config.font("body", bold=True))
++        self.band_title = cv.create_text(s(22), mid, text="CONTRACT LIST", angle=90, fill=P["band_dim"],
++                                         font=config.font("h2", bold=True))
++        self.band_sub = cv.create_text(s(44), mid, text=tr("可选词条"), angle=90, fill=P["band_text"],
++                                       font=config.font("body", bold=True))
+         for lv in range(1, C.MAX_LEVEL + 1):
+             # 每一行的等级: 小字 "Contingency Level" 和一个 ▲ 标记在左, 大数字在右 (同参考图)
+             y = self.gap + (lv - 1) * (self.th + self.gap)
+             x0 = s(62)
+             cv.create_text(x0, y + s(6), text="Contingency\nLevel", anchor="nw", fill=P["band_dim"],
+-                           font=(config.FONT_FAMILY, max(6, s(6))))
++                           font=(config.FONT_FAMILY, max(6, s(6))), tags=("band_lv",))
+             by = y + self.th - s(22)
+-            cv.create_rectangle(x0, by, x0 + s(24), by + s(14), fill=P["badge_lo"], outline="")
++            cv.create_rectangle(x0, by, x0 + s(24), by + s(14), fill=P["badge_lo"], outline="", tags=("band_lv",))
+             cv.create_text(x0 + s(12), by + s(7), text="▲", fill=P["badge_hi"],
+-                           font=(config.FONT_FAMILY, max(6, s(7)), "bold"))
++                           font=(config.FONT_FAMILY, max(6, s(7)), "bold"), tags=("band_lv",))
+             cv.create_text(self.band - s(10), y + self.th / 2, text=str(lv), anchor="e", fill=P["band_text"],
+-                           font=config.font("h1", bold=True))
++                           font=config.font("h1", bold=True), tags=("band_lv",))
+         # 翻页: 左边一条最下面 "◀  1 / 2  ▶"
+         ny = self.board_h - self.hover_h / 2
+         self.nav_prev = cv.create_text(s(26), ny, text="◀", font=config.font("h2", bold=True))
+@@ -265,13 +281,33 @@ class ContractPage(tk.Frame):
+             cv.tag_bind(item, "<Leave>", lambda e: self.canvas.configure(cursor=""))
+         # 鼠标停在格子上: 最下面一行写出这个词条的内容
+         self.hover_id = cv.create_text(self.band + self.gap, self.board_h - self.hover_h + s(4), text="", anchor="nw",
+-                                       fill=P["hint"], font=config.font("small", bold=True))
++                                       fill=P["hint"], font=config.font("small", bold=True), tags=("hover",))
++
++    def _nav(self):
++        """翻页的 "◀ 1 / 3 ▶" 和左右两条的颜色."""
++        P, cv = self.P, self.canvas
++        n = self._page_count()
++        cv.itemconfigure(self.nav_text, text=f"{self.page + 1} / {n}")
++        cv.itemconfigure(self.nav_prev, fill=P["nav"] if self.page > 0 else P["nav_off"])
++        cv.itemconfigure(self.nav_next, fill=P["nav"] if self.page < n - 1 else P["nav_off"])
++        combo = self._on_combo_page()
++        cv.itemconfigure(self.band_title, text="CONTRACT EFFECT" if combo else "CONTRACT LIST")
++        cv.itemconfigure(self.band_sub, text=tr("词条组合") if combo else tr("可选词条"))
++        cv.itemconfigure("band_lv", state="hidden" if combo else "normal")
+ 
+     def _draw_tiles(self):
+         """这一页的格子 (翻页 / 窗口宽度变了时重画)."""
+         P, cv, s = self.P, self.canvas, config.scaled
+         cv.delete("tile")
++        cv.delete("combo")
+         self._tile_state = {}
++        self._leave_all()
++        if self._on_combo_page():
++            self._combo_key = tuple((x["id"], st) for x, st in self._combos())
++            self._draw_combos()
++            self.canvas.itemconfigure(self.hover_id, text=tr("凑齐列出的词条 / 词条系列时生效"))
++            self._nav()
++            return
+         a, b = self.pages[self.page]
+         for tid, g, lv, _n, _d, _x in C.TERMS:
+             col = C.LAYOUT[tid][0]                 # 成系列的每组一列, 零散的在右边挨着排
+@@ -281,21 +317,82 @@ class ContractPage(tk.Frame):
+             y = self.gap + (lv - 1) * (self.th + self.gap)
+             tag = f"t_{tid}"
+             cv.create_polygon(self._hexagon(x, y, self.tw, self.th), fill=P["tile"],
+-                              outline=P["tile_rim4"] if lv >= RIM4 else P["tile_rim"],
+-                              width=3 if lv >= RIM4 else 2, tags=("tile", tag, tag + "_shape"))
++                              outline=P["tile_rim"], width=2, tags=("tile", tag, tag + "_shape"))
+             cv.create_text(x + self.tw / 2, y + self.th / 2, text=marks(lv) + "\n" + term_short(tid),
+                            fill=P["tile_text"], justify="center", width=self.tw * 0.66,
+                            font=(config.FONT_FAMILY, max(6, s(8)), "bold"), tags=("tile", tag, tag + "_text"))
+             cv.tag_bind(tag, "<Button-1>", lambda e, t=tid: self._click(t))
+             cv.tag_bind(tag, "<Enter>", lambda e, t=tid: self._enter(t))
+             cv.tag_bind(tag, "<Leave>", lambda e, t=tid: self._leave(t))
+-        n = len(self.pages)
+-        cv.itemconfigure(self.nav_text, text=f"{self.page + 1} / {n}")
+-        cv.itemconfigure(self.nav_prev, fill=P["nav"] if self.page > 0 else P["nav_off"])
+-        cv.itemconfigure(self.nav_next, fill=P["nav"] if self.page < n - 1 else P["nav_off"])
++        self._nav()
++
++    # ---- 第 3 页: 词条组合的效果 ----
++
++    def _combos(self) -> list:
++        """(组合, 状态): 合约中按现在的看, 没开始时按草稿看."""
++        c = self.c
++        if c.active:
++            return c.combos()
++        return [(x, C.combo_state(x, c.draft)) for x in C.COMBOS]
++
++    def _combo_color(self, combo, key="color") -> str:
++        return self.P.get(f"combo_{combo[key]}", self.P["text"])
++
++    def _draw_combos(self):
++        """4 个组合: 颜色条 + 名字 + 凑齐要哪些词条 + 效果 + 现在凑齐了没有 (2 × 2)."""
++        P, cv, s = self.P, self.canvas, config.scaled
++        cv.delete("combo")
++        x0, y0 = self.band + self.gap, self.gap
++        w = self.canvas.winfo_width() - x0 - self.gap
++        w = max(s(360), w)
++        h = self.board_h - self.hover_h - self.gap
++        cw, ch = (w - self.gap) / 2, (h - self.gap) / 2
++        status = {"done": tr("已凑齐"), "void": tr("已失效"), "open": tr("未凑齐")}
++        for i, (combo, state) in enumerate(self._combos()):
++            cx = x0 + (i % 2) * (cw + self.gap)
++            cy = y0 + (i // 2) * (ch + self.gap)
++            color = self._combo_color(combo)
++            on = state == "done"
++            rim = color if on else (P["tile_off_rim"] if state == "open" else P["tile_rim"])
++            tag = f"c_{combo['id']}"
++            cv.create_rectangle(cx, cy, cx + cw, cy + ch, fill=P["sel"], outline=rim,
++                                width=2 if on else 1, tags=("combo", tag))
++            cv.create_rectangle(cx, cy, cx + s(5), cy + ch, fill=color if on else P["clear"], outline="",
++                                tags=("combo", tag))
++            # 名字 (组合的颜色) 和状态
++            cv.create_text(cx + s(12), cy + s(8), text=tr(combo["name"]), anchor="nw",
++                           fill=color, font=config.font("body", bold=True), tags=("combo", tag))
++            cv.create_text(cx + cw - s(10), cy + s(9), text=status.get(state, ""), anchor="ne",
++                           fill=color if on else (P["danger"] if state == "void" else P["sel_dim"]),
++                           font=config.font("tiny", bold=True), tags=("combo", tag))
++            # 凑齐要哪些词条 (成系列的一组只写一个名字)
++            need = " · ".join(tr(C.req_name(r)) for r in combo["reqs"])
++            cv.create_text(cx + s(12), cy + s(30), text=tr("需要") + "  " + need, anchor="nw",
++                           fill=P["sel_text"] if on else P["sel_dim"], width=cw - s(20),
++                           font=config.font("tiny"), tags=("combo", tag))
++            # 效果
++            cv.create_text(cx + s(12), cy + ch - s(10), text=tr(combo["desc"]), anchor="sw",
++                           fill=color if on else P["sel_dim"], width=cw - s(20),
++                           font=config.font("tiny"), tags=("combo", tag))
++            cv.tag_bind(tag, "<Enter>", lambda e, x=combo: self._combo_hover(x))
++            cv.tag_bind(tag, "<Leave>",
++                        lambda e: self.canvas.itemconfigure(self.hover_id, text=tr("凑齐列出的词条 / 词条系列时生效")))
+         if self._hover:
+             self._leave(self._hover)
+ 
++    def _combo_hover(self, combo):
++        name = tr(combo["name"])
++        need = " · ".join(tr(C.req_name(r)) for r in combo["reqs"])
++        self.canvas.itemconfigure(self.hover_id, text=f"{name}   {tr('需要')}: {need}   ·   {tr(combo['desc'])}")
++        self.canvas.configure(cursor="")
++
++    def _leave_all(self):
++        if self._hover:
++            self._hover = ""
++        self.canvas.itemconfigure(self.hover_id, text="")
++        self.canvas.configure(cursor="")
++
++
+     def _selected(self):
+         return self.c.terms if self.c.active else self.c.draft
+ 
+@@ -356,49 +453,52 @@ class ContractPage(tk.Frame):
+         band.create_text(s(44), h / 2, text=tr("已选中词条"), angle=90, fill=P["sel_text"],
+                          font=config.font("body", bold=True))
+ 
++    def _combo_marks(self) -> dict:
++        """凑齐了的组合的成员词条 → 颜色 (界面上框住它们), 颜色按当前主题的."""
++        c = self.c
++        raw = c.combo_marks() if c.active else C.combo_marks(c.draft)
++        if not raw:
++            return {}
++        by_hex = {C.COMBO_COLORS[x["color"]]: x["color"] for x in C.COMBOS}
++        return {t: self.P.get(f"combo_{by_hex.get(v, 'gray')}", v) for t, v in raw.items()}
++
+     def _rows(self, sel):
+-        """已选中的词条: (等级, 文字, 是否失效, 未知变量选中的词条 / ""). 合约中按开始时选的列出,
++        """已选中的词条: (等级, 文字, 是否失效, 未知变量选中的词条 / "", 现在的词条). 合约中按开始时选的列出,
+         降过级的写出降成了什么; 最后是未知变量选中的."""
+         c = self.c
+-
+-        def last(t, lv, text, extra):
+-            """最后防线: 写出危机等级给的额外等级."""
+-            if t != C.LAST or not extra:
+-                return lv, text
+-            return lv + extra, text + "   " + tr("[危机等级加成 +{n} 级]", n=extra)
+         if not c.active:
+-            extra = C.last_bonus(sum(C.BY_ID[t][2] for t in sel if t in C.BY_ID), sel)
+-            return [(*last(t, C.BY_ID[t][2], term_line(t), extra), False, "") for t in sel]
+-        extra = c.last_extra
++            return [(C.BY_ID[t][2], term_line(t), False, "", t) for t in sel]
+         out = []
+         rand = c.rand
+         mine = [x for x in c.terms if x not in rand]
+         for t in c.orig:
+             now = next((x for x in mine if x == t or C.BY_ID[x][1] == C.BY_ID[t][1]), "")
+             if not now:
+-                out.append((C.BY_ID[t][2], f"{term_name(t)}   " + tr("[已失效]"), True, ""))
++                out.append((C.BY_ID[t][2], f"{term_name(t)}   " + tr("[已失效]"), True, "", ""))
+             elif now != t:
+                 out.append((c.term_level(now), f"{term_line(now)}   "
+-                            + tr("[原 {name}]", name=term_short(t)), False, ""))
++                            + tr("[原 {name}]", name=term_short(t)), False, "", now))
+             else:
+                 text = term_line(t)
+                 if c.term_level(t) < C.BY_ID[t][2]:
+                     text += "   " + tr("[降了 {n} 级]", n=C.BY_ID[t][2] - c.term_level(t))
+-                out.append((*last(t, c.term_level(t), text, extra), False, ""))
++                out.append((c.term_level(t), text, False, "", t))
+         for t in rand:
+             text = f"{term_line(t)}   " + tr("[未知变量选中 · 点击关闭]")
+             until = c.rand_until(t)
+             if until:
+                 text += "   " + tr("[{t} 移除]", t=f"{until:%H:%M}")
+-            out.append((c.term_level(t), text, False, t))
++            out.append((c.term_level(t), text, False, t, t))
+         for t, (at, _b) in c.waiting.items():          # 抽中了还没生效的
+-            out.append((C.BY_ID[t][2], f"{term_line(t)}   " + tr("[未知变量抽中 · {t} 生效]", t=f"{at:%H:%M}"), True, ""))
++            out.append((C.BY_ID[t][2], f"{term_line(t)}   " + tr("[未知变量抽中 · {t} 生效]", t=f"{at:%H:%M}"),
++                        True, "", ""))
+         return out
+ 
+     def _fill_list(self, sel):
+         P = self.P
+         rows = self._rows(sel)
+-        key = tuple(rows)
++        colors = self._combo_marks()
++        key = (tuple(rows), tuple(sorted(colors.items())))
+         if key == self._list_key:
+             return
+         self._list_key = key
+@@ -408,8 +508,10 @@ class ContractPage(tk.Frame):
+             tk.Label(self.list_box, text="—", bg=P["sel"], fg=P["sel_dim"],
+                      font=config.font("body")).grid(row=0, column=0, sticky="w")
+         half = (len(rows) + 1) // 2           # 先排满左栏, 再排右栏
+-        for i, (lv, text, void, rand) in enumerate(rows):
+-            r = tk.Frame(self.list_box, bg=P["sel"])
++        for i, (lv, text, void, rand, tid) in enumerate(rows):
++            color = colors.get(tid, "") if tid else ""
++            r = tk.Frame(self.list_box, bg=P["sel"],
++                         highlightbackground=color or P["sel"], highlightthickness=2 if color else 0)
+             r.grid(row=i % half, column=i // half, sticky="we", pady=2, padx=(0, 10))
+             hi = lv >= 2 and not void
+             if rand:
+@@ -506,12 +608,16 @@ class ContractPage(tk.Frame):
+         return self.c.level if self.c.active else C.level_of(self.c.draft)
+ 
+     def _paint_tiles(self):
+-        """这一页格子的颜色: 选中 / 不能选 / 未知变量选中的 (黄色); 合约中违反到失效的词条是"未选择"的样子."""
++        """这一页格子的颜色: 选中 / 不能选 / 未知变量选中的 (黄色); 合约中违反到失效的词条是"未选择"的样子.
++        凑齐了词条组合的词条用组合的颜色框住."""
+         P, c = self.P, self.c
++        if self._on_combo_page():
++            return
+         active = c.active
+         sel = self._selected()
+         rand = c.rand
+         lost = c.lost
++        marks = self._combo_marks()
+         a, b = self.pages[self.page]
+         for tid in C.BY_ID:
+             if not a <= C.LAYOUT[tid][0] < b:
+@@ -526,10 +632,11 @@ class ContractPage(tk.Frame):
+                 st = ("tile_off", "tile_off_text", "tile_off_rim")
+             else:
+                 st = ("tile", "tile_text", "tile_rim")
+-            if self._tile_state.get(tid) != st:
+-                self._tile_state[tid] = st
+-                rim = P["tile_rim4"] if C.BY_ID[tid][2] >= RIM4 and tid not in rand else P[st[2]]
+-                self.canvas.itemconfigure(f"t_{tid}_shape", fill=P[st[0]], outline=rim)
++            if self._tile_state.get(tid) != (st, marks.get(tid, "")):
++                self._tile_state[tid] = (st, marks.get(tid, ""))
++                rim = marks.get(tid) or P[st[2]]        # 凑齐了的组合: 用组合的颜色框住
++                self.canvas.itemconfigure(f"t_{tid}_shape", fill=P[st[0]], outline=rim,
++                                          width=3 if tid in marks else 2)
+                 self.canvas.itemconfigure(f"t_{tid}_text", fill=P[st[1]])
+ 
+     def refresh(self):
+@@ -541,16 +648,22 @@ class ContractPage(tk.Frame):
+ 
+         level = self.level()
+         orig = c.orig_level if active else level
++        terms = c.mine if active else sel
+         cfg(self.lbl_level, text=str(level))
+         self._draw_strip(level)
+         info = [tr("时长 {t}", t=fmt_hm(C.duration_of(c.orig if active else sel))),
+-                tr("完成后休息 +{n} 分钟", n=C.rest_minutes(level))]
++                tr("完成后休息 +{n} 分钟", n=C.rest_minutes_total(level, terms))]
+         gift = C.rest_gift(sel)
+         if gift:
+             info.append(tr("开始时休息 +{n} 分钟", n=gift // 60))
+         if orig != level:
+             info.insert(0, tr("开始时 {n}", n=orig))
+         cfg(self.lbl_info, text="\n".join(info))
++        if self._on_combo_page():
++            key = tuple((x["id"], st) for x, st in self._combos())
++            if key != getattr(self, "_combo_key", None):
++                self._combo_key = key
++                self._draw_combos()
+         for lbl, text in zip(self.lbl_rules, self._rules_text()):
+             cfg(lbl, text=text)
+         btn = self.btn_end if active else self.btn_start
+@@ -583,11 +696,13 @@ class ContractPage(tk.Frame):
+         if active:
+             end = c.end_at
+             cfg(self.lbl_state, text=tr("合约进行中"))
+-            cfg(self.lbl_left, text=fmt_hms((end - now).total_seconds()))
++            # 黑雾: 看不到合约的剩余时间 (结束的时刻也一起藏起来)
++            fog = c.fog()
++            cfg(self.lbl_left, text="???" if fog else fmt_hms((end - now).total_seconds()))
+             # 目标生命值: 每违反一次减一, 减到 0 合约失败
+             cfg(self.lbl_viol, text=tr("目标生命值") + "  " + "♥" * c.life + "♡" * (c.violation_limit - c.life)
+                 + f"  {c.life} / {c.violation_limit}")
+-            live = f"{c.start_at:%H:%M} — {end:%m-%d %H:%M}"
++            live = f"{c.start_at:%H:%M} — " + ("??:??" if fog else f"{end:%m-%d %H:%M}")
+             left = c.net_left(self.net_used())
+             if left is not None:
+                 live += "   ·   " + tr("合约的联网额度还剩 {t}", t=fmt_hm(left))

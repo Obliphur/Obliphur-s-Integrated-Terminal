@@ -36,7 +36,7 @@ class NetGuard:
         self.date = datetime.now().strftime('%Y-%m-%d')
         self.used = 0.0
         self.bonus = 0.0
-        self.gift = 0.0               # 今天合约奖励的额度 (完成带"互联网娱乐的败退"的合约), 不用还
+        self.gift = 0.0               # 今天合约奖励的额度, 不用还
         self.tomorrow_used = 0.0
         self.debt = 0.0
         self.grant_left = 0.0

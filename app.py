@@ -884,15 +884,16 @@ class BreakTimerApp:
         if self.state == IDLE:
             self._enter_focus(datetime.now(), time.monotonic())
             if self.contract.slow_bind(self.start_wall):
-                toast.warn(tr("阻滞: 这段专注的时间按 {p}% 增长", p=int(round(contract_mod.RANDOM_SLOW * 100))),
+                toast.warn(tr("阻滞: 合约内这段专注的时间按 {p}% 增长", p=int(round(contract_mod.RANDOM_SLOW * 100))),
                            timeout=10000)
                 if self.sync.peers():
                     self.sync.sync_now()
 
         elif self.state == RUNNING:
             end_wall = datetime.now()
-            # 阻滞: 这段专注的时间按 90% 增长
-            elapsed_minutes = (time.monotonic() - self.start_mono) / 60.0 * self.contract.focus_rate(self.start_wall)
+            # 阻滞: 只减慢合约内那部分专注的时间 (MECHANICS 18.3)
+            elapsed_minutes = self.contract.focus_minutes(
+                self.start_wall, time.monotonic() - self.start_mono)
             self.last_t_minutes = elapsed_minutes      # 建议休息时长照常按整段专注算
             self.rest_base = self._focus_rest(elapsed_minutes, self.start_wall, end_wall)
             off = self._cut_offline(self.start_wall, end_wall)
@@ -1447,7 +1448,7 @@ class BreakTimerApp:
             ok = min(max(0.0, float(ok)), seconds)
             seconds = ok + (seconds - ok) * float(config.FOCUS_CHECK_PENALTY)
         end = start + timedelta(seconds=seconds)
-        minutes = seconds / 60.0 * self.contract.focus_rate(start)      # 阻滞: 专注时间按 90% 增长
+        minutes = self.contract.focus_minutes(start, seconds)   # 阻滞: 只减慢合约内的那部分时间
         # 有设备离线的那段记为空闲, 不计入学习时长; 建议休息时长照常按计入前的时长算
         counted = max(0.0, minutes - self._cut_offline(start, end) / 60.0)
         self.dm.add_study_session(start, end, counted)
@@ -1571,8 +1572,8 @@ class BreakTimerApp:
     def update(self):
         if self.state == RUNNING:
             elapsed = time.monotonic() - self.start_mono
-            rate = self.contract.focus_rate(self.start_wall)
-            cur_m = elapsed / 60.0 * rate               # 阻滞: 专注时间按 90% 增长
+            rate = self.contract.focus_rate(self.start_wall)   # 现在还是不是阻滞中 (合约结束后就不再减慢)
+            cur_m = self.contract.focus_minutes(self.start_wall, elapsed)
             if self.contract.fog():
                 # 黑雾: 专注时看不到专注时长 (预计休息时长也能推出时长, 一起不显示)
                 self.lbl_time.config(text="???")
@@ -2104,10 +2105,18 @@ class BreakTimerApp:
 
     # ---- 合约 (MECHANICS 18) ----
 
+    def _contract_peers(self) -> bool:
+        """有没有绑定 / 连接的其他设备 (全频道阻塞干扰要不要用代理-全屏蔽)."""
+        sync = getattr(self, "sync", None)
+        try:
+            return bool(sync.peers()) if sync is not None else True
+        except Exception:
+            return True
+
     def _apply_contract_overrides(self) -> bool:
         """合约中盖过设置的项 (全频道阻塞干扰: 断网方式) 套到 config 上; 变了才动."""
         c = self.contract
-        over = c.overrides() if c.active else {}
+        over = c.overrides(peers=self._contract_peers(), adapter=contract_mod.HAS_ADAPTER) if c.active else {}
         if over == getattr(config, "CONTRACT_OVERRIDES", {}):
             return False
         config.CONTRACT_OVERRIDES = over
@@ -2188,7 +2197,7 @@ class BreakTimerApp:
             if why:
                 self.end_contract(why, at)
                 return
-            # 信息阻断 / 信息隔绝: 额度是各设备共用的, 只由一台设备判定
+            # 信息阻断: 额度是各设备共用的, 只由一台设备判定
             tid, kind = c.net_check(self.net.used_all, self.net.bonus_all, self.net.remaining, self.net.date)
             if tid:
                 self.contract_violation(tr("使用了紧急借贷") if kind == "loan" else tr("联网超过了合约的额度"), tid)
@@ -2248,7 +2257,7 @@ class BreakTimerApp:
         dur = contract_mod.duration_of(terms)
         end = datetime.now() + timedelta(seconds=dur)
         msg = tr("危机等级 {lv} · 时长 {t} · 到 {at}", lv=lv, t=fmt_hm(dur), at=f"{end:%H:%M}")
-        msg += "\n" + tr("完成后休息 +{n} 分钟", n=contract_mod.rest_minutes(lv))
+        msg += "\n" + tr("完成后休息 +{n} 分钟", n=contract_mod.rest_minutes_total(lv, terms))
         if not toast.ask(msg, title=tr("▶  开始行动"), ok_text=tr("开始行动"), danger=True):
             return
         rec = self._record_lines(terms)
@@ -2292,7 +2301,7 @@ class BreakTimerApp:
             return
         lv = contract_mod.level_of(terms)
         c.start(terms, owner=self.sync.my_id, pre=self.break_carry)
-        # 互联网娱乐的败退: 积攒的休息时间 +20 分钟 (在 pre 之后加: 算合约中得到的, 合约结束后不留下)
+        # 凑齐的词条组合: 积攒的休息时间 +N 分钟 (在 pre 之后加: 算合约中得到的, 合约结束后不留下)
         gift = contract_mod.rest_gift(terms)
         if gift > 0:
             self._set_break_carry(self.break_carry + gift)
@@ -2320,10 +2329,35 @@ class BreakTimerApp:
             return
         self.end_contract("abandoned")
 
+    def _stop_break_for_contract(self):
+        """结束合约前先停止休息 (MECHANICS 18.1): 剩下的休息时间按"暂停休息"算.
+        合约开始前积攒的那部分原样留下, 合约中得到的部分由 end_contract 作废; 不算禁止囤囤鼠! 的违反."""
+        if self.state != ON_BREAK:
+            return
+        left = max(0, int(self.countdown_seconds))
+        self._record_break_end()
+        pre = min(left, int(self._break_pre))
+        c = self.contract
+        if c.active and c.live.get("id") == self._break_cid:
+            c.pre_settle(self._break_pre, pre)
+        rate = float(config.BREAK_CARRY_RATE)
+        if self._contract_break_active:
+            rate = contract_mod.Contract.first_break_rate(rate)
+        add = left if self._bonus_break_active else pre + int(round((left - pre) * rate))
+        self._break_pre, self._break_cid = 0.0, None
+        self._bonus_break_active = False
+        self._contract_break_active = False
+        if add > 0:
+            self._set_break_carry(self.break_carry + add)
+        self.reset_to_idle()
+        self._save_timer_state()          # 关掉程序再打开时不能又从休息中恢复
+        self._arm_idle_nudge()
+
     def end_contract(self, result: str, at: datetime = None):
         c = self.contract
         if not c.active:
             return
+        self._stop_break_for_contract()      # 结束合约前先停止休息
         pending = c.reward
         rec = c.finish(result, at, by=self.sync.my_id)
         self._contract_seen = None
@@ -2378,7 +2412,7 @@ class BreakTimerApp:
         elif kind == "double":
             toast.info(tr("未知变量: 这次判定作废, 改为判定两次"))
         elif kind == "slow":
-            toast.warn(tr("未知变量: 下一次专注启用阻滞 (专注时间按 {p}% 增长)",
+            toast.warn(tr("未知变量: 下一次专注启用阻滞 (只减慢合约内的时间, 按 {p}% 增长)",
                           p=int(round(contract_mod.RANDOM_SLOW * 100))), timeout=10000)
         else:
             toast.info(tr("未知变量: 无事发生"))
@@ -2490,7 +2524,7 @@ class BreakTimerApp:
         self._check_contract()
 
     def _check_bans(self):
-        """乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒 (互联网娱乐的败退是四个一起): 每 2 秒看一次有没有开着这一类软件
+        """乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒: 每 2 秒看一次有没有开着这一类软件
         (不关它, 只算违反; 开着的这段只算一次, 关掉后再开才再算). 音乐在休息中不管."""
         c = self.contract
         kinds = [k for k in contract_mod.BANS if c.ban_term(k)]

@@ -15,10 +15,8 @@ class ContractTest {
 
     @Test
     fun terms() {
-        assertEquals(10 + 1, Contract.levelOf(listOf("long3", "isolate", "last")))   // 最后防线: 危机等级每有 10 级 +1
-        assertEquals(7, Contract.levelOf(listOf("long3", "isolate"))); assertEquals(4, Contract.levelOf(listOf("last", "long1")))
-        assertEquals(1, Contract.lastBonus(19, listOf("last"))); assertEquals(2, Contract.lastBonus(20, listOf("last")))
-        assertEquals(0, Contract.lastBonus(30, listOf("long3")))
+        assertEquals(12, Contract.levelOf(listOf("long3", "tired3", "info3", "last")))   // 最后防线没有额外等级了
+        assertEquals(6, Contract.levelOf(listOf("long3", "tired3"))); assertEquals(4, Contract.levelOf(listOf("last", "long1")))
         assertEquals(4, Contract.lifeOf(emptyList())); assertEquals(3, Contract.lifeOf(listOf("retreat1")))
         assertEquals(2, Contract.lifeOf(listOf("retreat2"))); assertEquals(1, Contract.lifeOf(listOf("last")))
         assertTrue(Contract.conflicts("retreat1", "last"))
@@ -27,28 +25,50 @@ class ContractTest {
         assertEquals(88, Contract.restMinutes(37)); assertEquals(90, Contract.restMinutes(38))
         assertEquals(90, Contract.restMinutes(50)); assertEquals(90 * 60, Contract.restReward(45))
         assertTrue((0 until 40).all { Contract.restMinutes(it) <= Contract.restMinutes(it + 1) })
-        assertTrue(Contract.conflicts("long1", "long3") && Contract.conflicts("isolate", "info2"))
-        assertFalse(Contract.conflicts("chan2", "isolate") || Contract.conflicts("isolate", "chan1"))
-        assertTrue(Contract.conflicts("suppress", "isolate"))
+        // 删掉的两个 4 级词条: 互联网娱乐的败退 变成组合, 信息隔绝 (旧词条) 删了
+        assertFalse("isolate" in Contract.BY_ID || "ent" in Contract.BY_ID)
+        assertEquals(3, Contract.MAX_LEVEL)                       // 没有了 4 级的词条: 词条板不再留那一行
+        assertEquals(2, Contract.TERMS.first { it.id == "silent" }.level)   // 无言为真调整为 2 级
+        assertEquals(0.8, Contract.NET_SHARE["info1"]!!, 1e-9)
+        assertEquals(0.65, Contract.NET_SHARE["info2"]!!, 1e-9)
+        assertEquals(0.5, Contract.NET_SHARE["info3"]!!, 1e-9)
+        assertTrue(Contract.conflicts("long1", "long3") && Contract.conflicts("short1", "short2"))
+        assertFalse(Contract.conflicts("chan2", "info2") || Contract.conflicts("erode1", "info3"))
+        assertFalse(Contract.conflicts("suppress", "quiet"))
         assertFalse(Contract.conflicts("jam", "music"))
         assertTrue(Contract.conflicts("short1", "short2")); assertFalse(Contract.conflicts("seal", "fine"))
         assertTrue(Contract.LAYOUT["short2"]!! < Contract.LAYOUT["suppress"]!!)
-        assertEquals(Contract.SERIES.size + 9, Contract.BOARD_COLS)
+        assertEquals(Contract.SERIES.size + 8, Contract.BOARD_COLS)
         assertEquals(Contract.SERIES.size + 1, Contract.LAYOUT["fine"])     // 零散的挨着排, 不留空
-        // 行为类似的放在一起: 禁止的软件一行挨着, 录像在它们下面, 互联网娱乐的败退在乐理之灾那一列的 4 级
+        // 行为类似的放在一起: 禁止的软件 (乐理之灾 / 禁游令 / 低帧的诅咒) 在 1 级挨着, 录像和无言为真在下面的 2 级
         val m = Contract.LAYOUT["music"]!!
-        assertEquals((m..m + 3).toList(), Contract.BANS.map { Contract.LAYOUT[it]!! })
-        assertEquals(m, Contract.LAYOUT["gaze"]); assertEquals(m + 1, Contract.LAYOUT["scar"]); assertEquals(m, Contract.LAYOUT["ent"])
+        assertEquals((m..m + 2).toList(), listOf("music", "game", "video").map { Contract.LAYOUT[it]!! })
+        assertEquals(m, Contract.LAYOUT["gaze"]); assertEquals(m + 1, Contract.LAYOUT["scar"])
+        assertEquals(Contract.LAYOUT["video"], Contract.LAYOUT["silent"])   // 无言为真 2 级, 在低帧的诅咒下面
         assertEquals(Contract.LAYOUT["seal"], Contract.LAYOUT["fine"]); assertEquals(Contract.LAYOUT["suppress"], Contract.LAYOUT["jam"])
         assertTrue(Contract.conflicts("gaze", "scar") && Contract.conflicts("scar", "gaze"))
-        assertTrue(Contract.BANS.all { Contract.conflicts("ent", it) && Contract.conflicts(it, "isolate") })
-        assertTrue(Contract.conflicts("ent", "isolate")); assertFalse(Contract.conflicts("isolate", "tired2"))
         assertTrue(Contract.SOCIAL_APPS.intersect(Contract.VIDEO_APPS).isEmpty())
-        assertEquals(listOf("long2", "isolate", "jam"), Contract.clean(listOf("long2", "long1", "x", "isolate", "suppress", "jam")))
-        assertEquals(listOf("isolate", "chan2"), Contract.clean(listOf("isolate", "chan2")))
+        assertEquals(listOf("long2", "suppress", "jam"), Contract.clean(listOf("long2", "long1", "x", "suppress", "jam")))
+        // 词条组合: 系列任意一档都算; 凑齐了加危机等级 / 乘区 / 开始时或完成时的休息时间
+        val mochi = Contract.COMBOS_BY_ID["mochi"]!!
+        assertTrue(Contract.comboDone(mochi, listOf("long1", "tired2", "fine", "deep1")))
+        assertFalse(Contract.comboDone(mochi, listOf("long1", "tired2", "fine")))
+        assertEquals("void", Contract.comboState(mochi, listOf("long1", "tired2"), listOf("long1", "tired2", "fine", "deep1")))
+        assertEquals(1, Contract.comboLevel(listOf("long1", "tired2", "fine", "deep1")))
+        assertEquals(0.6 * 1.1, Contract.restFactorOf(listOf("long1", "tired2", "fine", "deep1")), 1e-9)
+        val iso = listOf("info1", "chan1", "erode1", "suppress", "fog", "quiet")
+        assertEquals(iso, Contract.clean(iso))                    // 信息隔绝组合的词条可以一起选
+        assertEquals(1, Contract.comboLevel(iso)); assertEquals(10 * 60, Contract.comboEnd(iso))
+        assertEquals(Contract.restMinutes(6) * 60 + 10 * 60, Contract.restReward(6, iso))
+        assertEquals(20 * 60, Contract.comboGift(listOf("music", "silent", "game", "video")))
+        assertEquals(20 * 60, Contract.comboGift(listOf("last", "unknown")))
+        assertEquals(mapOf("last" to Contract.COMBO_COLORS["gray"]!!, "unknown" to Contract.COMBO_COLORS["gray"]!!),
+            Contract.comboMarks(listOf("last", "unknown")))
+        assertEquals("纵深推进", Contract.reqName("deep")); assertEquals("最后防线", Contract.reqName("last"))
         val best = Contract.clean(listOf("long3", "move2", "info3", "suppress", "jam", "music", "fog", "tired3", "chan2", "last",
             "short2", "seal", "fine", "silent", "game", "video", "gaze"))
-        assertEquals(31 + 3, Contract.levelOf(best))
+        assertEquals(32, Contract.levelOf(best))
+        assertEquals(20 * 60, Contract.restGift(best))             // 互联网娱乐的败退凑齐了
         assertEquals(4 * 3600 * 1.6, Contract.durationOf(listOf("long3")), 1e-6)
     }
 
@@ -59,15 +79,15 @@ class ContractTest {
         c.start(listOf("tired2", "info2", "chan1", "long1", "music"), "me", t0)
         assertEquals(7, c.level)
         assertEquals(t0.plusSeconds((4 * 3600 * 1.2).toLong()), c.endAt)
-        // 信息阻断-II: 开始时剩 100 分钟, 只能用 50 分钟; 用超了 → 降成 -I, 多给 25 分钟
+        // 信息阻断-II: 开始时剩 100 分钟, 只能用 65 分钟; 用超了 → 降成 -I, 多给 15 分钟
         assertNull(c.netCheck(600.0, 0.0, 6000.0, "2026-10-18"))
-        assertEquals(3000.0, c.netLeft(600.0)!!, 1e-6)
-        assertEquals("info2" to "over", c.netCheck(3700.0, 0.0, 0.0, "2026-10-18"))
+        assertEquals(3900.0, c.netLeft(600.0)!!, 1e-6)
+        assertEquals("info2" to "over", c.netCheck(4600.0, 0.0, 0.0, "2026-10-18"))
         assertEquals(false to "info1", c.violate("info2"))
         assertEquals(6, c.level); assertEquals(7, c.origLevel)
-        assertEquals(1400.0, c.netLeft(3700.0)!!, 1e-6)
-        assertEquals("info1" to "loan", c.netCheck(3800.0, 600.0, 0.0, "2026-10-18"))
-        assertNull(c.netCheck(3800.0, 600.0, 0.0, "2026-10-18"))
+        assertEquals(800.0, c.netLeft(4600.0)!!, 1e-6)
+        assertEquals("info1" to "loan", c.netCheck(4700.0, 600.0, 0.0, "2026-10-18"))
+        assertNull(c.netCheck(4700.0, 600.0, 0.0, "2026-10-18"))
         // 乐理之灾: 只在刚打开的那一下算; 只有 1 级, 降一级就失效
         assertEquals("music", c.banCheck("music", true)); assertEquals("", c.banCheck("music", true)); c.banCheck("music", false)
         assertEquals("", c.downgrade("music")); assertFalse(c.has("music"))
@@ -81,28 +101,42 @@ class ContractTest {
         assertNull(c.offlineDue(listOf("手机" to t0.minusHours(3)), t0.plusMinutes(14), t0))
         assertEquals("手机" to t0.plusMinutes(15), c.offlineDue(listOf("手机" to t0.minusHours(3)), t0.plusMinutes(16), t0))
         assertNull(c.offlineDue(listOf("手机" to t0), t0.plusMinutes(70), t0.plusHours(1)))
-        // 互联网娱乐的败退: 四类都禁止, 每一类各自只在打开的那一下算; 违反时它降一级. 录像的词条违反一次就失效
+        // 互联网娱乐的败退 (词条组合): 四类都禁止, 每一类各自只在打开的那一下算; 开始时休息 +20 分钟
         val e = Contract(tmp())
-        e.start(listOf("ent", "gaze", "info3"), "me", t0)
-        assertEquals("ent", e.banTerm("game")); assertEquals(listOf("camera"), e.records())
-        assertEquals("ent", e.banCheck("video", true)); assertEquals("", e.banCheck("video", true))
-        // 违反任意一项就整个失效; 失效后照样检查: 再次打开只响警报 (echo), 不扣目标生命值, 每个词条 2 分钟最多响一次
-        assertEquals(false to "", e.violate("ent")); assertFalse(e.has("ent")); assertEquals(listOf("ent"), e.lost)
-        assertEquals("ent", e.banTerm("silent")); assertEquals("ent", e.banCheck("silent", true)); assertTrue(e.echo("ent"))
-        assertTrue(e.echoDue("ent", t0)); assertFalse(e.echoDue("ent", t0.plusSeconds(119)))
-        assertTrue(e.echoDue("ent", t0.plusSeconds(120))); assertEquals(1, e.violations)
-        e.finish("completed", t0.plusHours(5))
-        // 合约开始时积攒的休息时间 +20 分钟
-        assertEquals(20 * 60, Contract.restGift(listOf("ent", "gaze"))); assertEquals(0, Contract.restGift(listOf("music")))
-        e.start(listOf("ent", "gaze"), "me", t0)
-        assertEquals(false to "", e.violate("gaze")); assertEquals(emptyList<String>(), e.records())
-        // 信息隔绝: 休息时间 ×1.3 (和疲惫相乘), 降成信息阻断-III 后没有了
-        e.start(listOf("isolate", "tired2"), "me", t0)
-        assertEquals(0.6 * 1.3, e.restFactor(), 1e-9)
-        e.downgrade("isolate"); assertEquals(0.6, e.restFactor(), 1e-9)
-        // 没有疲惫: 基础 ×0.8 (信息隔绝照样相乘)
+        val nofun = Contract.COMBOS_BY_ID["nofun"]!!
+        val isolation = Contract.COMBOS_BY_ID["isolation"]!!
+        e.start(listOf("music", "silent", "game", "video"), "me", t0)
+        assertEquals(1 + 2 + 1 + 1, e.level); assertEquals("game", e.banTerm("game"))
+        assertEquals("video", e.banCheck("video", true)); assertEquals("", e.banCheck("video", true))
+        assertEquals(20 * 60, Contract.restGift(e.terms))
+        assertEquals("done", e.combos()[1].second)
+        assertEquals(Contract.COMBO_COLORS["purple"], e.comboMarks()["music"])
+        // 成员失效 (降级不算) 后组合的效果全部取消, 开始时给的休息时间不收回
+        assertEquals(false to "", e.violate("game")); assertEquals("void", e.combos()[1].second)
+        assertTrue(e.comboMarks().isEmpty())
+        // 信息隔绝组合: 额外 1 危机等级, 完成时 +10 分钟; 成员失效后都没了
+        val iso = listOf("info1", "chan1", "erode1", "suppress", "fog", "quiet")
+        e.start(iso, "me", t0)
+        assertEquals("done", e.combos()[3].second); assertEquals(7, e.level)
+        assertEquals(Contract.restMinutes(7) * 60.0 + 10 * 60, e.reward, 1e-6)
+        assertEquals(Contract.COMBO_COLORS["red"], e.comboMarks()["fog"])
+        assertEquals(false to "", e.violate("suppress")); assertEquals("void", e.combos()[3].second)
+        assertEquals(5, e.level); assertEquals(Contract.restMinutes(5) * 60.0, e.reward, 1e-6)
+        // 打年糕组合: 额外 1 危机等级, 休息时间 ×1.1; 纵深推进降级不算失效
+        e.start(listOf("long1", "tired2", "fine", "deep2"), "me", t0)
+        assertEquals("done", e.combos()[0].second); assertEquals(8, e.level)
+        assertEquals(0.6 * 1.1, e.restFactor(), 1e-9)
+        assertEquals(false to "deep1", e.violate("deep2")); assertEquals("done", e.combos()[0].second)
+        assertEquals(0.6 * 1.1, e.restFactor(), 1e-9)             // 降级不算失效
+        assertEquals(false to "", e.violate("deep1")); assertEquals("void", e.combos()[0].second)
+        assertEquals(0.6, e.restFactor(), 1e-9)                   // 成员失效了: 乘区取消
+        // 没有疲惫: 基础 ×0.8 (打年糕照样相乘)
         assertEquals(0.8, Contract.restFactorOf(emptyList()), 1e-9)
-        assertEquals(0.8 * 1.3, Contract.restFactorOf(listOf("isolate")), 1e-9)
+        assertEquals(0.6 * 1.1, Contract.restFactorOf(listOf("long1", "tired2", "fine", "deep1")), 1e-9)
+        // 录像的词条: 违反一次就失效, 不再录
+        e.start(listOf("scar"), "me", t0)
+        assertEquals(listOf("screen"), e.records()); assertEquals(2, e.level)
+        assertEquals(false to "", e.violate("scar")); assertEquals(emptyList<String>(), e.records())
         // 目标生命值: 默认 4, 退路封锁-I 只有 3; 整点记录超时未填写也算 (不降词条)
         assertEquals(4, c.violationLimit)
         c.start(listOf("suppress", "info3", "long1", "retreat1"), "me", t0)
@@ -178,11 +212,12 @@ class ContractTest {
     @Test
     fun newTerms() {
         val t0 = LocalDateTime.of(2026, 10, 18, 9, 30)
-        // 翻页: 成系列的一页, 零散的一页; 侵蚀 / 静默协议和信息隔绝冲突
+        // 翻页: 成系列的一页, 零散的一页, 第 3 页是词条组合
         assertEquals(listOf(0 until Contract.SERIES.size, Contract.SERIES.size until Contract.BOARD_COLS), Contract.PAGES)
+        assertEquals(2, Contract.COMBO_PAGE)
         assertTrue(Contract.LAYOUT["deep1"]!! < Contract.SERIES.size && Contract.LAYOUT["hoard"]!! >= Contract.SERIES.size)
-        assertTrue(Contract.conflicts("erode1", "isolate") && Contract.conflicts("isolate", "erode2") && Contract.conflicts("quiet", "isolate"))
         assertFalse(Contract.conflicts("erode1", "info3") || Contract.conflicts("quiet", "jam"))
+        assertFalse(Contract.conflicts("suppress", "fog"))
         val c = Contract(tmp())
         // 禁止囤囤鼠!: 提前结束休息算违反 (软规则, 1 级, 违反一次失效), 休息时间 ×1.05; 侵蚀: 冷静期 ×2 / ×3
         c.start(listOf("hoard", "tired1", "erode2"), "me", t0)
@@ -201,11 +236,11 @@ class ContractTest {
         assertEquals("", c.quietCheck(false)); assertEquals("quiet", c.quietCheck(true))
         assertEquals(3, c.violations); assertEquals(1, c.life)
         c.live.put("violations", 0)                       // 目标生命值只有 4: 接着测剩下的
-        assertNull(c.netCheck(0.0, 0.0, 4000.0, "d")); assertEquals("info1" to "over", c.netCheck(3100.0, 0.0, 0.0, "d"))
+        assertNull(c.netCheck(0.0, 0.0, 4000.0, "d")); assertEquals("info1" to "over", c.netCheck(3300.0, 0.0, 0.0, "d"))
         assertEquals(false to "", c.violate("info1")); assertEquals("", c.netTerm())
-        assertNull(c.netCheck(3100.0, 0.0, 0.0, "d"))                                   // 没有继续用
-        assertEquals("info1" to "over", c.netCheck(3200.0, 0.0, 0.0, "d")); assertNull(c.netCheck(3200.0, 0.0, 0.0, "d"))
-        assertEquals("info1" to "loan", c.netCheck(3200.0, 300.0, 0.0, "d")); assertTrue(c.echo("info1"))
+        assertNull(c.netCheck(3300.0, 0.0, 0.0, "d"))                                   // 没有继续用
+        assertEquals("info1" to "over", c.netCheck(3400.0, 0.0, 0.0, "d")); assertNull(c.netCheck(3400.0, 0.0, 0.0, "d"))
+        assertEquals("info1" to "loan", c.netCheck(3400.0, 300.0, 0.0, "d")); assertTrue(c.echo("info1"))
         assertEquals("short1", c.supplyCheck(0.0, 400.0)); assertEquals(false to "", c.violate("short1")); assertNull(c.supplyLimit)
         assertEquals("short1", c.supplyWatch()); assertEquals("", c.supplyCheck(0.0, 400.0)); assertEquals("", c.supplyCheck(0.0, 400.3))
         assertEquals("short1", c.supplyCheck(0.0, 410.0)); assertTrue(c.echo("short1"))
@@ -227,10 +262,10 @@ class ContractTest {
         c.enable("chan2", t0.plusHours(1))
         assertEquals("chan2" to 3, c.windowWatch()); assertFalse(c.echo("chan2"))
         assertEquals(listOf("chan2"), c.expire(t0.plusHours(1))); assertEquals("chan1" to 4, c.windowWatch()); assertTrue(c.echo("chan1"))
-        // 最后防线: 危机等级 10 → 多 1 级; 降级后不到 10 级就没有了
-        c.start(listOf("last", "long3", "isolate"), "me", t0)
-        assertEquals(11, c.level); assertEquals(1, c.lastExtra); assertEquals(11, c.origLevel)
-        assertEquals(true to "info3", c.violate("isolate")); assertEquals(9, c.level); assertEquals(0, c.lastExtra)   // 目标生命值只有 1
+        // 最后防线: 只有初始目标生命值 1, 没有额外的词条等级
+        c.start(listOf("last", "long3", "tired3", "chan1"), "me", t0)
+        assertEquals(10, c.level); assertEquals(1, c.violationLimit); assertEquals(10, c.origLevel)
+        assertEquals(true to "", c.violate("chan1")); assertEquals(9, c.level)   // 目标生命值只有 1
         // 纵深推进: 专注不到 40 / 60 分钟算违反; -II 降成 -I
         c.start(listOf("deep2", "quiet"), "me", t0)
         assertEquals("deep2", c.focusCheck(59 * 60.0)); assertEquals("", c.focusCheck(60 * 60.0))
@@ -326,12 +361,15 @@ class ContractTest {
         // 没有能选的词条: 一定是效果
         c.live.put("rand_used", org.json.JSONArray(Contract.TERMS.map { it.id }))
         assertTrue(c.randomCandidates().isEmpty()); assertEquals(listOf("none" to ""), c.roll(t0.plusHours(3), seq(0.7)))
-        // 阻滞: 下一次开始的专注时间按 90% 增长 (合约结束了这段专注照样按 90%)
+        // 阻滞: 只减慢合约内那部分专注 (合约结束后恢复正常速度); 合约结束后才开始的专注不生效
         c.live.put("rand_n", 3)
         assertEquals(listOf("slow" to ""), c.roll(t0.plusHours(3).plusMinutes(30), seq(0.6))); assertTrue(c.slowPending)
-        val s1 = t0.plusHours(4).plusMinutes(10)
-        assertEquals(1.0, c.focusRate(s1), 1e-9); assertTrue(c.slowBind(s1)); assertFalse(c.slowPending); assertFalse(c.slowBind(s1))
-        assertEquals(0.9, c.focusRate(s1), 1e-9); assertEquals(1.0, c.focusRate(s1.plusHours(1)), 1e-9)
+        assertFalse(c.slowBind(t0.plusHours(4).plusMinutes(10))); assertTrue(c.slowPending)    // 合约结束后才开始的专注
+        val s1 = t0.plusHours(3).plusMinutes(30)
+        assertTrue(c.slowBind(s1)); assertFalse(c.slowPending); assertFalse(c.slowBind(s1))
+        assertEquals(0.9, c.focusRate(s1, s1), 1e-9)
+        assertEquals(1.0, c.focusRate(s1, t0.plusHours(4).plusMinutes(10)), 1e-9)             // 合约结束后不再减慢
+        assertEquals((30 * 60 * 0.9 + 30 * 60) / 60.0, c.focusMinutes(s1, 3600.0), 1e-6)
         // 封锁一个过了填写时限, 还没被封锁的记录格 (最近 24 小时里的), 合约结束后照样锁着; 填了的也锁
         val now = LocalDateTime.of(2026, 10, 18, 12, 10)
         val texts = mapOf("2026-10-18/10" to "学习")
@@ -344,7 +382,9 @@ class ContractTest {
         assertEquals("2026-10-18/9", c.lockCell(now, seq(pick = { it - 1 }), textOf, "Sleeping", 3600))   // 已经封锁的不再选
         assertEquals("", c.lockCell(now, seq(), null, "Sleeping", 3600))
         c.finish("abandoned", now)
-        assertTrue(c.hourLocked(a, b, "学习", now.plusDays(3), 3600, "Sleeping")); assertEquals(0.9, c.focusRate(s1), 1e-9)
+        // 合约提前结束了: 之后才开始的这段专注不减速 (阻滞只对合约内的专注生效)
+        assertTrue(c.hourLocked(a, b, "学习", now.plusDays(3), 3600, "Sleeping"))
+        assertEquals(1.0, c.focusRate(s1), 1e-9); assertEquals(60.0, c.focusMinutes(s1, 3600.0), 1e-6)
         // 未知变量启用了整点记录的词条: 这次合约中一直强制开启整点记录
         c.start(listOf("unknown"), "me", t0)
         assertFalse(c.hourForced())

@@ -13,6 +13,12 @@ class Dice(val roll: () -> Double = { kotlin.random.Random.nextDouble() },
 class Term(val id: String, val group: String, val level: Int, val name: String, val desc: String,
            val conflicts: List<String> = emptyList())
 
+/** 词条组合 (MECHANICS 18.3.1): 列出的词条 / 词条系列 (任意一档都算) 同时选着时生效.
+ *  level: 额外的危机等级; rest: 休息时间的额外乘区; gift: 开始时给的休息时间 (秒); end: 完成时给的休息时间 (秒).
+ *  成员因违反失效 (降级不算失效) 时组合不再生效: 危机等级 / 乘区 / 结束后收益都没了, 开始时给的不收回. */
+class Combo(val id: String, val name: String, val color: String, val reqs: List<String>,
+            val level: Int, val rest: Double, val gift: Int, val end: Int, val desc: String)
+
 /**
  * 合约 (MECHANICS 18). 对应桌面版 contract.py.
  * 存档 contract.json: 进行中的合约 (live), 结束了的合约 (history, 整点记录的锁定也看它), 没开始的草稿 (draft).
@@ -36,11 +42,9 @@ class Contract(private val file: File) {
             Term("long3", "long", 3, "环境:持久战-III", "时长改为160%"),
             Term("move1", "move", 1, "目标:高机动-I", "现实中的移动速度改为125%"),
             Term("move2", "move", 2, "目标:高机动-II", "现实中的移动速度改为150%"),
-            Term("info1", "info", 1, "环境:信息阻断-I", "可用的剩余联网时间改为75% 且不能使用借贷"),
-            Term("info2", "info", 2, "环境:信息阻断-II", "可用的剩余联网时间改为50% 且不能使用借贷"),
-            Term("info3", "info", 3, "环境:信息阻断-III", "可用的剩余联网时间改为25% 且不能使用借贷"),
-            Term("isolate", "info", 4, "信息隔绝", "不能使用联网功能 选择时 获得的休息时间改为130%",
-                listOf("music", "silent", "game", "video")),
+            Term("info1", "info", 1, "环境:信息阻断-I", "可用的剩余联网时间改为80% 且不能使用借贷"),
+            Term("info2", "info", 2, "环境:信息阻断-II", "可用的剩余联网时间改为65% 且不能使用借贷"),
+            Term("info3", "info", 3, "环境:信息阻断-III", "可用的剩余联网时间改为50% 且不能使用借贷"),
             Term("tired1", "tired", 1, "环境:疲惫-I", "期间获得的休息时间改为70%"),
             Term("tired2", "tired", 2, "环境:疲惫-II", "期间获得的休息时间改为60%"),
             Term("tired3", "tired", 3, "环境:疲惫-III", "期间获得的休息时间改为50%"),
@@ -48,87 +52,77 @@ class Contract(private val file: File) {
             Term("short2", "short", 2, "环境:支援短缺-II", "不能使用合约开始前已经保存的休息时间"),
             Term("retreat1", "retreat", 1, "环境:退路封锁-I", "初始目标生命值为3"),
             Term("retreat2", "retreat", 2, "环境:退路封锁-II", "初始目标生命值为2"),
-            Term("last", "retreat", 3, "最后防线", "初始目标生命值为1\n危机等级每有10级 词条等级增加一级"),
+            Term("last", "retreat", 3, "最后防线", "初始目标生命值为1"),
             Term("chan1", "chan", 1, "环境:通道阻塞-I", "期间的最大窗口数改为4"),
             Term("chan2", "chan", 2, "环境:通道阻塞-II", "期间的最大窗口数改为3"),
             Term("deep1", "deep", 1, "目标:纵深推进-I", "专注的时间不能少于40min"),
             Term("deep2", "deep", 2, "目标:纵深推进-II", "专注的时间不能少于60min"),
-            Term("erode1", "erode", 1, "环境:侵蚀-I", "网络申请冷却期改为200%", listOf("isolate")),
-            Term("erode2", "erode", 2, "环境:侵蚀-II", "网络申请冷却期改为300%", listOf("isolate")),
+            Term("erode1", "erode", 1, "环境:侵蚀-I", "网络申请冷却期改为200%"),
+            Term("erode2", "erode", 2, "环境:侵蚀-II", "网络申请冷却期改为300%"),
             // 零散的按这里的顺序在各自等级的那一行挨着排, 所以行为类似的写在一起 (上下两行也对齐):
             // 联网 (抑制 / 全频道阻塞干扰), 整点记录 (记录封锁 / 细化规范), 禁止打开的软件
-            // (乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒, 下面是录像: 目光 / 刻痕, 再下面是互联网娱乐的败退), 黑雾,
+            // (乐理之灾 / 禁游令 / 低帧的诅咒在 1 级挨着; 录像 目光 / 刻痕 和 2 级的无言为真在下面), 黑雾,
             // 最后是休息 / 专注 (禁止囤囤鼠! / 静默协议 / 未知变量).
-            Term("suppress", "suppress", 1, "环境:抑制", "不能使用快速访问功能", listOf("isolate")),
+            Term("suppress", "suppress", 1, "环境:抑制", "不能使用快速访问功能"),
             Term("jam", "jam", 2, "环境:全频道阻塞干扰", "期间使用proxy block-all模式"),
             Term("seal", "seal", 1, "环境:记录封锁", "超过填写时间未填写 则不能再修改该记录"),
             Term("fine", "fine", 2, "目标:细化规范", "记录变为30min一次"),
             Term("music", "music", 1, "环境:乐理之灾", "非休息期间不能打开音乐播放软件 不能使用外部软件播放mp3等音频文件"),
             Term("gaze", "gaze", 2, "目光", "合约期间打开摄像头记录使用者的行为 结束后保存录像"),
-            Term("silent", "silent", 1, "环境:无言为真", "合约期间不能打开社交软件和与AI聊天的软件 不能使用社交网站"),
             Term("scar", "scar", 2, "刻痕", "合约期间录制整个屏幕 结束后保存录像",
                 listOf("gaze")),
+            Term("silent", "silent", 2, "环境:无言为真", "合约期间不能打开社交软件和与AI聊天的软件 不能使用社交网站"),
             Term("game", "game", 1, "环境:禁游令", "合约期间不能使用游戏和游戏平台"),
             Term("video", "video", 1, "环境:低帧的诅咒", "合约期间不能使用视频平台"),
-            Term("ent", "ent", 4, "互联网娱乐的败退", "同时有乐理之灾 无言为真 禁游令 低帧的诅咒的效果\n违反任意一项即整个失效\n合约开始时获得额外20min的休息时间",
-                listOf("music", "silent", "game", "video", "isolate")),
-            Term("fog", "fog", 1, "环境:黑雾", "合约期间 专注时长 成就 日历 统计数据不可见 且无法打开设置"),
+            Term("fog", "fog", 1, "环境:黑雾", "合约期间 专注时长 合约的剩余时间 成就 日历 统计数据不可见 且无法打开设置"),
             Term("hoard", "hoard", 1, "禁止囤囤鼠!", "不能提前结束休息 但是获得的休息时间改为105%"),
-            Term("quiet", "quiet", 1, "环境:静默协议", "专注中不能处于联网状态", listOf("isolate")),
+            Term("quiet", "quiet", 1, "环境:静默协议", "专注中不能处于联网状态"),
             Term("unknown", "unknown", 3, "未知变量", "合约开始时 以及之后每过一个整小时 从当前可以选择的1-2级词条中随机启用一个或随机施加效果\n选中的词条不算进危机等级"),
         )
         val BY_ID = TERMS.associateBy { it.id }
         val GROUPS = TERMS.map { it.group }.distinct()
         /** 词条板的布局: 成系列的每组一列 (左边); 零散的不单独占列, 按等级放进右边的几列, 每一行从左往右挨着排, 不留空. */
         val SERIES = GROUPS.filter { g -> TERMS.count { it.group == g } > 1 }
-        /** 放在另一个词条的那一列 (那一列在这个等级的格子空着): 互联网娱乐的败退在乐理之灾那一列的 4 级. */
-        val ALIGN = mapOf("ent" to "music")
         /** 词条 → 列. */
         val LAYOUT: Map<String, Int> = run {
             val loose = HashMap<Int, Int>()
-            val m = TERMS.filter { it.id !in ALIGN }.associate { t ->
+            TERMS.associate { t ->
                 t.id to if (t.group in SERIES) SERIES.indexOf(t.group)
                 else SERIES.size + loose.getOrDefault(t.level, 0).also { loose[t.level] = it + 1 }
             }
-            m + ALIGN.mapValues { m[it.value]!! }
         }
         val BOARD_COLS = (LAYOUT.values.maxOrNull() ?: -1) + 1
         val MAX_LEVEL = TERMS.maxOf { it.level }
-        /** 词条板翻页: 成系列的一页, 零散的一页 (每页的列). */
+        /** 词条板翻页: 成系列的一页, 零散的一页 (每页的列); 第 3 页 (COMBO_PAGE) 是词条组合的效果. */
         val PAGES = listOf(0 until SERIES.size, SERIES.size until BOARD_COLS)
+        const val COMBO_PAGE = 2
         private val ORDER = TERMS.mapIndexed { i, t -> t.id to i }.toMap()
 
         // 软规则: 界面上照样能做, 但会被算作违反, 这个词条降一级 (结算按降级后的等级);
         // 其余是硬规则, 立即生效 (黑雾, 记录封锁, 细化规范, 全频道阻塞干扰, 持久战, 疲惫).
         // 录像 (目光 / 刻痕) 违反一次就失效 (录像停止): 不在 LOWER / SINGLE 里.
-        val SOFT = setOf("info1", "info2", "info3", "isolate", "chan1", "chan2", "music", "suppress", "short1", "short2",
-            "silent", "game", "video", "ent", "gaze", "scar", "deep1", "deep2", "quiet", "hoard", "unknown")
+        val SOFT = setOf("info1", "info2", "info3", "chan1", "chan2", "music", "suppress", "short1", "short2",
+            "silent", "game", "video", "gaze", "scar", "deep1", "deep2", "quiet", "hoard", "unknown")
         /** 降一级换成哪个词条. */
-        val LOWER = mapOf("isolate" to "info3", "info3" to "info2", "info2" to "info1", "chan2" to "chan1",
+        val LOWER = mapOf("info3" to "info2", "info2" to "info1", "chan2" to "chan1",
             "short2" to "short1", "deep2" to "deep1")
         /** 只有一档的软规则: 降级时等级减一, 减到 0 就失效. */
         val SINGLE = setOf("music", "suppress", "silent", "game", "video", "quiet", "hoard")
-        /** 这个等级的词条用红色边框. */
-        const val RIM_LEVEL = 4
 
         val DURATION = mapOf("long1" to 1.2, "long2" to 1.4, "long3" to 1.6)
-        val NET_SHARE = mapOf("info1" to 0.75, "info2" to 0.5, "info3" to 0.25, "isolate" to 0.0)
+        val NET_SHARE = mapOf("info1" to 0.8, "info2" to 0.65, "info3" to 0.5)
         /** 合约中专注换来的休息时间的基础倍率; 有疲惫时换成疲惫的倍率. */
         const val BASE_REST = 0.8
         val REST = mapOf("tired1" to 0.7, "tired2" to 0.6, "tired3" to 0.5)
-        /** 休息时间额外的乘区 (和疲惫相乘): 信息隔绝 ×1.3, 禁止囤囤鼠! ×1.05. */
-        val REST_BONUS = mapOf("isolate" to 1.3, "hoard" to 1.05)
-        /** 合约中专注换来的休息时间乘多少: 基础 ×0.8, 有疲惫时换成疲惫的 (取最低的); 再乘额外的乘区. */
+        /** 休息时间额外的乘区 (和疲惫相乘): 禁止囤囤鼠! ×1.05, 打年糕 ×1.1 (词条组合). */
+        val REST_BONUS = mapOf("hoard" to 1.05)
+        /** 合约中专注换来的休息时间乘多少: 基础 ×0.8, 有疲惫时换成疲惫的 (取最低的); 再乘额外的乘区 / 组合的乘区. */
         fun restFactorOf(terms: Collection<String>): Double =
-            (terms.mapNotNull { REST[it] }.minOrNull() ?: BASE_REST) * terms.fold(1.0) { f, t -> f * (REST_BONUS[t] ?: 1.0) }
+            (terms.mapNotNull { REST[it] }.minOrNull() ?: BASE_REST) * terms.fold(1.0) { f, t -> f * (REST_BONUS[t] ?: 1.0) } * comboRest(terms)
         /** 录像的词条 → 录什么. */
         val RECORD = mapOf("gaze" to "camera", "scar" to "screen")
         /** 禁止打开某类应用的词条 (每秒看前台应用). */
         val BANS = listOf("music", "silent", "game", "video")
-        /** 互联网娱乐的败退: 同时有上面四个的效果; 违反任意一项就整个失效. */
-        const val BANS_ALL = "ent"
-        /** 合约开始时积攒的休息时间多给这么多秒 (算合约中得到的, 合约结束后不留下). */
-        val REST_GIFT = mapOf("ent" to 20 * 60)
         val WINDOWS = mapOf("chan1" to 4, "chan2" to 3)
         /** 支援短缺: 合约开始前积攒的休息时间能用几成. */
         val SUPPLY = mapOf("short1" to 0.5, "short2" to 0.0)
@@ -136,9 +130,62 @@ class Contract(private val file: File) {
         val HOUR_TERMS = setOf("seal", "fine")
         /** 初始目标生命值 (硬规则). */
         val LIFE = mapOf("retreat1" to 3, "retreat2" to 2, "last" to 1)
-        /** 最后防线: 危机等级 (不算这份加成) 每有 LAST_STEP 级, 它的等级 +1. */
-        const val LAST = "last"
-        const val LAST_STEP = 10
+
+        // 词条组合 (MECHANICS 18.3.1): 列出的词条 / 词条系列 (任意一档都算) 同时选着时生效, 效果栏的第 3 页列出它们.
+        val COMBOS = listOf(
+            Combo("mochi", "打年糕", "white", listOf("tired", "long", "fine", "deep"), 1, 1.1, 0, 0,
+                "额外 1 危机等级\n休息时间 ×110%"),
+            Combo("nofun", "互联网娱乐的败退", "purple", listOf("music", "silent", "game", "video"), 0, 1.0, 20 * 60, 0,
+                "合约开始时 休息 +20 分钟"),
+            Combo("flawless", "无懈可击", "gray", listOf("last", "unknown"), 0, 1.0, 20 * 60, 0,
+                "合约开始时 休息 +20 分钟"),
+            Combo("isolation", "信息隔绝", "red", listOf("info", "chan", "erode", "suppress", "fog", "quiet"), 1, 1.0, 0, 10 * 60,
+                "额外 1 危机等级\n完成合约时 休息 +10 分钟"),
+        )
+        val COMBOS_BY_ID = COMBOS.associateBy { it.id }
+        val COMBO_COLORS = mapOf("white" to "#ffffff", "purple" to "#b06cf0", "gray" to "#9a9ca1", "red" to "#ff2b3a")
+        /** 组合的要求在界面上怎么写: 成系列的一组只写一个名字. */
+        val GROUP_NAMES = mapOf("long" to "持久战", "tired" to "疲惫", "info" to "信息阻断",
+            "chan" to "通道阻塞", "erode" to "侵蚀", "deep" to "纵深推进")
+
+        fun reqName(req: String): String =
+            GROUP_NAMES[req] ?: (BY_ID[req]?.name ?: req).substringAfter(':').substringBefore('-')
+
+        /** 这个词条组合凑齐了没有: 每一条要求都有一个选着的词条 (系列的任意一档都算). */
+        fun comboDone(combo: Combo, terms: Collection<String>): Boolean {
+            val t = terms.filter { it in BY_ID }
+            return combo.reqs.all { req -> t.any { id -> if (req in GROUPS) BY_ID[id]!!.group == req else id == req } }
+        }
+
+        /** 组合的状态: done 凑齐了 / void 开始时凑齐过, 有成员失效了 / open 还没凑齐. */
+        fun comboState(combo: Combo, terms: Collection<String>, orig: Collection<String>? = null): String = when {
+            comboDone(combo, terms) -> "done"
+            orig != null && comboDone(combo, orig) -> "void"
+            else -> "open"
+        }
+
+        /** 凑齐的组合带来的额外危机等级. */
+        fun comboLevel(terms: Collection<String>): Int = COMBOS.filter { comboDone(it, terms) }.sumOf { it.level }
+        /** 凑齐的组合带来的休息时间乘区. */
+        fun comboRest(terms: Collection<String>): Double = COMBOS.filter { comboDone(it, terms) }.fold(1.0) { f, c -> f * c.rest }
+        /** 合约开始时凑齐的组合给的休息时间 (秒, 算合约中得到的). */
+        fun comboGift(terms: Collection<String>): Int = COMBOS.filter { comboDone(it, terms) }.sumOf { it.gift }
+        /** 完成合约时凑齐的组合额外给的休息时间 (秒). */
+        fun comboEnd(terms: Collection<String>): Int = COMBOS.filter { comboDone(it, terms) }.sumOf { it.end }
+
+        /** 凑齐了的组合的成员词条 → 颜色 (界面上用这个颜色框住它们). 没凑齐的不算. */
+        fun comboMarks(terms: Collection<String>): Map<String, String> {
+            val out = LinkedHashMap<String, String>()
+            for (c in COMBOS) {
+                if (!comboDone(c, terms)) continue
+                for (t in terms) {
+                    if (t !in BY_ID) continue
+                    val hit = c.reqs.any { req -> if (req in GROUPS) BY_ID[t]!!.group == req else t == req }
+                    if (hit && t !in out) out[t] = COMBO_COLORS[c.color]!!
+                }
+            }
+            return out
+        }
 
         /** 选了这些词条时的初始目标生命值. */
         fun lifeOf(terms: Collection<String>): Int = terms.mapNotNull { LIFE[it] }.minOrNull() ?: VIOLATION_LIMIT
@@ -250,19 +297,19 @@ class Contract(private val file: File) {
             else -> emptySet()
         }
 
-        /** 最后防线额外的等级: 选着它时, 危机等级 (不算这份加成) 每有 LAST_STEP 级 +1. */
-        fun lastBonus(base: Int, terms: Collection<String>) = if (LAST in terms) base / LAST_STEP else 0
-
-        fun levelOf(terms: Collection<String>) = terms.sumOf { BY_ID[it]?.level ?: 0 }.let { it + lastBonus(it, terms) }
+        fun levelOf(terms: Collection<String>) =
+            terms.sumOf { BY_ID[it]?.level ?: 0 } + comboLevel(terms)
 
         fun restMinutes(level: Int): Int {
             val lv = level.coerceIn(0, REST_TOP)
             return REST_MIN + (2 * (REST_MAX - REST_MIN) * lv + REST_TOP) / (2 * REST_TOP)   // 四舍五入 (.5 进位)
         }
-        /** 完成合约时存进积攒的休息时间的秒数. */
-        fun restReward(level: Int): Int = restMinutes(level) * 60
-        /** 合约开始时存进积攒的休息时间的秒数 (互联网娱乐的败退: 20 分钟). */
-        fun restGift(terms: Collection<String>): Int = terms.sumOf { REST_GIFT[it] ?: 0 }
+        /** 完成合约时存进积攒的休息时间的秒数 (按等级查表 + 凑齐的组合的结束后收益). */
+        fun restReward(level: Int, terms: Collection<String> = emptyList()): Int = restMinutes(level) * 60 + comboEnd(terms)
+        /** 完成合约时休息时间一共多少分钟 (界面上写 "完成后休息 +N 分钟"). */
+        fun restMinutesTotal(level: Int, terms: Collection<String> = emptyList()): Int = restReward(level, terms) / 60
+        /** 合约开始时存进积攒的休息时间的秒数 (凑齐的组合给的, 算合约中得到的). */
+        fun restGift(terms: Collection<String>): Int = comboGift(terms)
 
         fun durationOf(terms: Collection<String>): Double =
             BASE_SECONDS * (terms.mapNotNull { DURATION[it] }.maxOrNull() ?: 1.0)
@@ -343,11 +390,9 @@ class Contract(private val file: File) {
     fun termLevel(id: String) = (BY_ID[id]?.level ?: 0) - cut.optInt(id, 0)
     /** 未知变量随机启用的词条 (不算进危机等级; 可以点击关闭, 算一次违反). */
     val rand: List<String> get() = if (active) (live.optJSONArray("rand")?.strings() ?: emptyList()).filter { it in terms } else emptyList()
-    /** 算进危机等级的词条 (不算未知变量选中的). */
-    private val counted get() = rand.let { r -> terms.filter { it !in r } }
-    val level get() = counted.let { m -> m.sumOf { termLevel(it) }.let { it + lastBonus(it, m) } }
-    /** 最后防线现在额外的等级 (按现在的危机等级算). */
-    val lastExtra get() = counted.let { m -> lastBonus(m.sumOf { termLevel(it) }, m) }
+    /** 算进危机等级的词条 (开始时选的现在还在的, 降级后算现在的; 不算未知变量选中的). 词条组合只看这些. */
+    val mine get() = rand.let { r -> terms.filter { it !in r } }
+    val level get() = mine.let { m -> m.sumOf { termLevel(it) } + comboLevel(m) }
     /** 开始时选的词条 (降级前). */
     val orig: List<String> get() = if (active) clean(live.optJSONArray("orig")?.strings() ?: terms) else emptyList()
     val origLevel get() = levelOf(orig)
@@ -358,8 +403,8 @@ class Contract(private val file: File) {
     val life get() = maxOf(0, violationLimit - violations)
     /** 合约中已经给出的休息时间 (秒, 已乘疲惫). */
     val rest get() = if (active) live.dbl("rest") else 0.0
-    /** 完成时给的休息时间 (秒): 按现在的等级查表 (固定); 结算按降级后的等级. */
-    val reward get() = if (active) restReward(level).toDouble() else 0.0
+    /** 完成时给的休息时间 (秒): 按现在的等级查表, 加上凑齐的组合的结束后收益; 结算按降级后的等级. */
+    val reward get() = if (active) restReward(level, mine).toDouble() else 0.0
     val owner: String get() = live.optString("owner", "")
     val id: Long get() = live.optLong("id", 0)
 
@@ -621,9 +666,12 @@ class Contract(private val file: File) {
         }
     }
 
-    /** 开始专注: 等着的阻滞落到这段专注上 (专注时间按 RANDOM_SLOW 增长). 返回落上了没有. */
+    /** 开始专注: 等着的阻滞落到这段专注上 (专注时间按 RANDOM_SLOW 增长). 返回落上了没有.
+     *  阻滞只对合约内的专注生效: 合约已经结束 / 这段专注开始于合约结束之后时不落上. */
     fun slowBind(start: LocalDateTime): Boolean {
         if (!slowPending) return false
+        val e = endAt ?: return false
+        if (!start.isBefore(e)) return false
         live.put("slow", JSONObject().put("start", start.iso()))
         save()
         return true
@@ -631,11 +679,27 @@ class Contract(private val file: File) {
 
     val slowPending: Boolean get() = active && live.optJSONObject("slow")?.optBoolean("pending") == true
 
-    /** 开始于 start 的这段专注的时间按多少增长: 阻滞 RANDOM_SLOW, 否则 1. */
-    fun focusRate(start: LocalDateTime?): Double {
-        val mark = start?.iso() ?: return 1.0
-        if (active && live.optJSONObject("slow")?.optString("start") == mark) return RANDOM_SLOW
-        return if (history.takeLast(3).any { it.optString("slow") == mark }) RANDOM_SLOW else 1.0
+    /** 阻滞让这段专注按 RANDOM_SLOW 增长到什么时候 (合约结束的时刻); 没有阻滞时 null. */
+    fun slowUntil(start: LocalDateTime?): LocalDateTime? {
+        val mark = start?.iso() ?: return null
+        if (active && live.optJSONObject("slow")?.optString("start") == mark) return endAt
+        return history.takeLast(3).firstOrNull { it.optString("slow") == mark }?.let { parseIso(it.optString("end")) }
+    }
+
+    /** 开始于 start 的这段专注现在按多少增长: 阻滞 RANDOM_SLOW (只到合约结束), 之后 1. */
+    fun focusRate(start: LocalDateTime?, now: LocalDateTime = LocalDateTime.now()): Double {
+        val until = slowUntil(start) ?: return 1.0
+        return if (now.isBefore(until)) RANDOM_SLOW else 1.0
+    }
+
+    /** 这一段专注计入的分钟数: 阻滞只减慢合约内的那部分时间, 合约结束后的部分按正常速度 (MECHANICS 18.3). */
+    fun focusMinutes(start: LocalDateTime?, seconds: Double): Double {
+        val s = maxOf(0.0, seconds)
+        val until = slowUntil(start) ?: return s / 60.0
+        if (start == null) return s / 60.0
+        val left = maxOf(0.0, secondsBetween(start, until))     // 合约里还剩多少秒
+        val inside = minOf(s, left)
+        return (inside * RANDOM_SLOW + (s - inside)) / 60.0
     }
 
     /** 积攒的休息时间减少到 carry: 合约开始前的那部分最多剩这么多 (先减合约中得到的). */
@@ -794,7 +858,17 @@ class Contract(private val file: File) {
         return a.isBefore(slotStart.plusHours(1)) && slotStart.isBefore(b)
     }
     fun windowLimit(): Int = terms.mapNotNull { WINDOWS[it] }.minOrNull() ?: 0
-    fun restFactor(): Double = restFactorOf(terms)
+    fun restFactor(): Double = restFactorOf(mine)
+
+    /** (组合, 状态) 现在的样子: 效果栏 (第 3 页) 照着画. */
+    fun combos(): List<Pair<Combo, String>> {
+        val t = mine
+        val o = if (active) orig else emptyList()
+        return COMBOS.map { it to comboState(it, t, if (active) o else null) }
+    }
+
+    /** 凑齐了的组合的成员词条 → 颜色 (界面上框住它们). */
+    fun comboMarks(): Map<String, String> = comboMarks(mine)
 
     // ---- 软规则: 有没有违反 (由调用方算作违反: violate) ----
 
@@ -859,10 +933,10 @@ class Contract(private val file: File) {
         return if (edge("win", n > lim)) id else ""
     }
 
-    /** 禁止打开这一类应用 (BANS 之一) 的是哪个词条: 它自己, 或者互联网娱乐的败退; 不禁止时 "". */
-    fun banTerm(kind: String): String = if (watching(kind)) kind else if (watching(BANS_ALL)) BANS_ALL else ""
+    /** 禁止打开这一类应用 (BANS 之一) 的是哪个词条: 它自己; 不禁止时 "". */
+    fun banTerm(kind: String): String = if (watching(kind)) kind else ""
 
-    /** 乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒 (或者互联网娱乐的败退): 开着这一类应用.
+    /** 乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒: 开着这一类应用.
      *  每一类只在从没有到有的那一下算一次. 返回要降级的词条. */
     fun banCheck(kind: String, hit: Boolean): String {
         val id = banTerm(kind)
@@ -899,13 +973,14 @@ class Contract(private val file: File) {
         return now
     }
 
-    /** 完成之后才结束的专注, 开始于刚完成的合约里: 按那个合约的疲惫给. */
+    /** 完成之后才结束的专注, 开始于刚完成的合约里: 按那个合约的疲惫给 (未知变量选中的不算组合). */
     fun bookRestAfter(seconds: Double, start: LocalDateTime): Double {
         val h = last ?: return seconds
         val hs = parseIso(h.optString("start"))
         val he = parseIso(h.optString("end"))
         if (h.optString("result") == "completed" && hs != null && he != null && !start.isBefore(hs) && start.isBefore(he)) {
-            val t = h.optJSONArray("terms")?.strings() ?: emptyList()
+            val rand = (h.optJSONArray("rand")?.strings() ?: emptyList()).toSet()
+            val t = (h.optJSONArray("terms")?.strings() ?: emptyList()).filter { it !in rand }
             val f = restFactorOf(t)
             return seconds * f
         }
