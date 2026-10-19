@@ -599,7 +599,7 @@ class Contract:
 
     def random_candidates(self) -> list:
         """现在能被未知变量选中的词条: 1-2 级, 能选 (没有选着, 也不和选着的冲突), 不是录像;
-        退路封锁不会让目标生命值直接归零."""
+        退路封锁不会让目标生命值直接归零. 已经失效的词条也能再选中 (选中期间违反照常扣目标生命值)."""
         terms = self.terms
         out = []
         for t in TERMS:
@@ -1263,6 +1263,17 @@ def _selftest():
     c._enable("music", t0 + timedelta(hours=1))
     assert c.violate("chan2") == (False, "chan1") and c.violate("music", drop=True) == (False, "") and c.lost == []
     assert c.ban_term("music") == "" and not c.echo("chan2")
+    # 未知变量可以再选中已经失效的词条: 选中期间违反照常扣目标生命值, 移除后又只响警报
+    c.start(["unknown", "music", "chan1"], owner="me", now=t0)
+    assert c.violate("music") == (False, "") and c.violate("chan1") == (False, "") and c.lost == ["music", "chan1"]
+    pool = c.random_candidates()
+    assert "music" in pool and "chan1" in pool and "chan2" in pool
+    c._enable("music", t0 + timedelta(hours=1))
+    assert not c.echo("music") and c.ban_check("music", True) == "music"
+    assert c.violate("music") == (False, "") and c.violations == 3 and c.lost == ["music", "chan1"] and c.echo("music")
+    c._enable("chan2", t0 + timedelta(hours=1))
+    assert c.window_watch() == ("chan2", 3) and not c.echo("chan2")
+    assert c.expire(t0 + timedelta(hours=1)) == ["chan2"] and c.window_watch() == ("chan1", 4) and c.echo("chan1")
 
     # 最后防线: 危机等级 10 → 多 1 级; 降级后不到 10 级就没有了
     c.start(["last", "long3", "isolate"], owner="me", now=t0)

@@ -486,7 +486,7 @@ class Contract(private val file: File) {
     // ---- 未知变量: 合约的第 1, 2, 3 … 个小时开始时 (刚开始时也算) 随机启用一个词条 ----
 
     /** 现在能被未知变量选中的词条: 1-2 级, 能选 (没有选着, 也不和选着的冲突), 不是录像;
-     *  退路封锁不会让目标生命值直接归零. */
+     *  退路封锁不会让目标生命值直接归零. 已经失效的词条也能再选中 (选中期间违反照常扣目标生命值). */
     fun randomCandidates(): List<String> {
         val t = terms
         return TERMS.map { it.id }.filter { id ->

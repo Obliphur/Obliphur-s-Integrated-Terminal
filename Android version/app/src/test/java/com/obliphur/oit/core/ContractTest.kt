@@ -215,6 +215,18 @@ class ContractTest {
         c.enable("music", t0.plusHours(1))
         assertEquals(false to "chan1", c.violate("chan2")); assertEquals(false to "", c.violate("music", drop = true))
         assertEquals(emptyList<String>(), c.lost); assertEquals("", c.banTerm("music")); assertFalse(c.echo("chan2"))
+        // 未知变量可以再选中已经失效的词条: 选中期间违反照常扣目标生命值, 移除后又只响警报
+        c.start(listOf("unknown", "music", "chan1"), "me", t0)
+        assertEquals(false to "", c.violate("music")); assertEquals(false to "", c.violate("chan1"))
+        assertEquals(listOf("music", "chan1"), c.lost)
+        val again = c.randomCandidates()
+        assertTrue("music" in again && "chan1" in again && "chan2" in again)
+        c.enable("music", t0.plusHours(1))
+        assertFalse(c.echo("music")); assertEquals("music", c.banCheck("music", true))
+        assertEquals(false to "", c.violate("music")); assertEquals(3, c.violations); assertTrue(c.echo("music"))
+        c.enable("chan2", t0.plusHours(1))
+        assertEquals("chan2" to 3, c.windowWatch()); assertFalse(c.echo("chan2"))
+        assertEquals(listOf("chan2"), c.expire(t0.plusHours(1))); assertEquals("chan1" to 4, c.windowWatch()); assertTrue(c.echo("chan1"))
         // 最后防线: 危机等级 10 → 多 1 级; 降级后不到 10 级就没有了
         c.start(listOf("last", "long3", "isolate"), "me", t0)
         assertEquals(11, c.level); assertEquals(1, c.lastExtra); assertEquals(11, c.origLevel)
