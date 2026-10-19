@@ -245,9 +245,11 @@ class ContractTest {
         assertTrue("gaze" !in pool && "scar" !in pool && "info1" !in pool && "long2" !in pool && "unknown" !in pool)
         assertTrue(pool.none { it.startsWith("long") })              // 不选持久战
         assertTrue("music" in pool && "jam" in pool)
-        val rng = kotlin.random.Random(1)
+        val r1 = kotlin.random.Random(1)
+        val rng = Dice({ 0.0 }, { r1.nextInt(it) })              // 0 = 一定抽词条
+        fun termsOf(ev: List<Pair<String, String>>) = ev.filter { it.first == "term" }.map { it.second }
         // 抽中后 3 分钟才生效, 只在抽中的那个小时里有效
-        val first = c.roll(t0, rng)
+        val first = termsOf(c.roll(t0, rng))
         assertEquals(1, first.size); assertEquals(emptyList<String>(), c.rand); assertEquals(first, c.waiting.keys.toList())
         assertEquals(t0.plusMinutes(3) to t0.plusHours(1), c.waiting[first[0]]); assertFalse(first[0] in c.randomCandidates())
         assertEquals(emptyList<String>(), c.wake(t0.plusMinutes(2).plusSeconds(59))); assertFalse(c.has(first[0]))
@@ -255,7 +257,7 @@ class ContractTest {
         assertEquals(6, c.level); assertEquals(t0.plusHours(1), c.randUntil(first[0]))
         assertEquals(0, c.roll(t0.plusMinutes(59), rng).size)
         // 错过的小时补上; 同时只有一个, 到时移除不算违反
-        val more = c.roll(t0.plusHours(2).plusMinutes(1), rng)
+        val more = termsOf(c.roll(t0.plusHours(2).plusMinutes(1), rng))
         assertEquals(1, more.size); assertEquals(emptyList<String>(), c.rand)
         assertEquals(more, c.wake(t0.plusHours(2).plusMinutes(3))); assertEquals(more, c.rand); assertEquals(6, c.level)
         assertEquals(t0.plusHours(3), c.randUntil(more[0])); assertEquals(0, c.violations)
@@ -265,7 +267,7 @@ class ContractTest {
         assertEquals(false to "", c.violate(t, drop = true))
         assertFalse(t in c.terms || t in c.rand); assertEquals(1, c.violations)
         // 下一个小时再抽一个, 这个小时结束时移除
-        val nxt = c.roll(t0.plusHours(3), rng)
+        val nxt = termsOf(c.roll(t0.plusHours(3), rng))
         assertEquals(nxt, c.wake(t0.plusHours(3).plusMinutes(5))); assertEquals(nxt, c.rand)
         assertEquals(nxt, c.expire(t0.plusHours(4))); assertEquals(emptyList<String>(), c.rand)
         assertEquals(1, c.violations); assertEquals(6, c.level)
@@ -288,5 +290,71 @@ class ContractTest {
         assertEquals(listOf("retreat1"), c.expire(t0.plusHours(2)))
         assertFalse(c.has("retreat1")); assertEquals(2, c.life); assertEquals(2, c.violations); assertEquals(listOf("short1"), c.rand)
         assertEquals(listOf("short1"), c.finish("abandoned", t0.plusHours(1))!!.optJSONArray("rand")!!.strings())
+    }
+
+    @Test
+    fun unknownEffects() {
+        val t0 = LocalDateTime.of(2026, 10, 18, 9, 30)
+        val c = Contract(tmp())
+        fun seq(vararg rs: Double, pick: (Int) -> Int = { 0 }): Dice {
+            val q = ArrayDeque(rs.toList())
+            return Dice({ q.removeFirstOrNull() ?: 0.0 }, pick)
+        }
+        // 通过违反失效的词条可以再回到词条池, 但只会再被选中一次 (开始时选的, 和未知变量选中的都是)
+        c.start(listOf("unknown", "music"), "me", t0)
+        assertFalse("music" in c.randomCandidates()); assertEquals(false to "", c.violate("music"))
+        assertTrue("music" in c.randomCandidates())                      // 失效了: 回到词条池
+        val idx = c.randomCandidates().indexOf("music")
+        assertEquals(listOf("term" to "music"), c.roll(t0, seq(pick = { idx })))
+        assertEquals(listOf("music"), c.wake(t0.plusMinutes(3)))
+        assertEquals(false to "", c.violate("music")); assertFalse("music" in c.randomCandidates())   // 只会再选中一次
+        c.pick("game", t0)
+        assertEquals(listOf("game"), c.wake(t0.plusMinutes(3))); assertFalse("game" in c.randomCandidates())
+        assertEquals(false to "", c.violate("game", drop = true)); assertTrue("game" in c.randomCandidates())   // 关闭也算违反
+        c.pick("game", t0)
+        assertFalse("game" in c.randomCandidates())
+        // 效果按 15/15/15/15/10/30
+        assertEquals(listOf("rest_cut", "rest_cut", "lock", "rest_add", "double", "slow", "none", "none"),
+            listOf(0.0, 0.149, 0.15, 0.3, 0.45, 0.6, 0.7, 0.999).map { Contract.effect(seq(it)) })
+        // 有能选的词条: 75% 词条, 25% 效果
+        c.start(listOf("unknown"), "me", t0)
+        assertEquals(listOf("rest_cut" to ""), c.roll(t0, seq(0.75, 0.0))); assertTrue(c.waiting.isEmpty())
+        assertEquals(1, c.roll(t0.plusHours(1), seq(0.7499)).size); assertEquals(1, c.waiting.size)
+        // 再判定两次: 这次不生效, 改为判定两次 (这里: 一次词条, 一次 +10 分钟)
+        val ev = c.roll(t0.plusHours(2), seq(0.9, 0.45, 0.0, 0.9, 0.3))
+        assertEquals(listOf("double", "term", "rest_add"), ev.map { it.first }); assertEquals(1, c.waiting.size)
+        // 没有能选的词条: 一定是效果
+        c.live.put("rand_used", org.json.JSONArray(Contract.TERMS.map { it.id }))
+        assertTrue(c.randomCandidates().isEmpty()); assertEquals(listOf("none" to ""), c.roll(t0.plusHours(3), seq(0.7)))
+        // 阻滞: 下一次开始的专注时间按 90% 增长 (合约结束了这段专注照样按 90%)
+        c.live.put("rand_n", 3)
+        assertEquals(listOf("slow" to ""), c.roll(t0.plusHours(3).plusMinutes(30), seq(0.6))); assertTrue(c.slowPending)
+        val s1 = t0.plusHours(4).plusMinutes(10)
+        assertEquals(1.0, c.focusRate(s1), 1e-9); assertTrue(c.slowBind(s1)); assertFalse(c.slowPending); assertFalse(c.slowBind(s1))
+        assertEquals(0.9, c.focusRate(s1), 1e-9); assertEquals(1.0, c.focusRate(s1.plusHours(1)), 1e-9)
+        // 封锁一个过了填写时限, 还没被封锁的记录格 (最近 24 小时里的), 合约结束后照样锁着; 填了的也锁
+        val now = LocalDateTime.of(2026, 10, 18, 12, 10)
+        val texts = mapOf("2026-10-18/10" to "学习")
+        val textOf = { k: String -> texts[k] ?: "" }
+        assertEquals("2026-10-18/10", c.lockCell(now, seq(pick = { it - 1 }), textOf, "Sleeping", 3600))
+        val a = LocalDateTime.of(2026, 10, 18, 10, 0)
+        val b = a.plusHours(1)
+        assertTrue(c.hourLocked(a, b, "学习", now, 3600, "Sleeping"))
+        assertFalse(c.hourLocked(b, b.plusHours(1), "", now, 3600, "Sleeping"))        // 11 点那格还没过填写时限
+        assertEquals("2026-10-18/9", c.lockCell(now, seq(pick = { it - 1 }), textOf, "Sleeping", 3600))   // 已经封锁的不再选
+        assertEquals("", c.lockCell(now, seq(), null, "Sleeping", 3600))
+        c.finish("abandoned", now)
+        assertTrue(c.hourLocked(a, b, "学习", now.plusDays(3), 3600, "Sleeping")); assertEquals(0.9, c.focusRate(s1), 1e-9)
+        // 未知变量启用了整点记录的词条: 这次合约中一直强制开启整点记录
+        c.start(listOf("unknown"), "me", t0)
+        assertFalse(c.hourForced())
+        c.enable("seal", t0.plusHours(1))
+        assertTrue(c.hourForced()); assertEquals(listOf("seal"), c.expire(t0.plusHours(1))); assertTrue(c.hourForced())
+        c.finish("abandoned", t0.plusHours(2))
+        assertFalse(c.hourForced())
+        // 积攒的休息时间减少: 合约开始前的那部分最多剩这么多
+        c.start(listOf("unknown"), "me", t0, pre = 600.0)
+        c.preCap(900.0); assertEquals(600.0, c.preLeft, 1e-9)
+        c.preCap(250.0); assertEquals(250.0, c.preLeft, 1e-9)
     }
 }

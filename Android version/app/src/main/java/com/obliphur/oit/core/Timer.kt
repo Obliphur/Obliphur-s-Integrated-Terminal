@@ -64,6 +64,8 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
     private fun readState(): JSONObject = Store.readObj(file) ?: JSONObject()
 
     val elapsed get() = if (state == TState.RUNNING) mono() - startMono else 0.0
+    /** 这段专注的时间按多少增长: 阻滞 0.9, 否则 1. */
+    val focusRate get() = if (state == TState.RUNNING) core.contract.focusRate(startWall) else 1.0
     val countdown get() = if (state == TState.ON_BREAK) maxOf(0.0, breakEndMono - mono()) else 0.0
 
     /** 不能暂停休息的原因 ("" = 可以): 网络正在使用 (领到休息时间后的第一次休息除外). */
@@ -79,10 +81,14 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
     fun onAction() {
         mine()
         when (state) {
-            TState.IDLE -> enterFocus(LocalDateTime.now(), mono())
+            TState.IDLE -> {
+                enterFocus(LocalDateTime.now(), mono())
+                if (core.contract.slowBind(startWall!!))       // 阻滞: 这段专注的时间按 90% 增长
+                    core.toast(tr("阻滞: 这段专注的时间按 {p}% 增长", "p" to Math.round(Contract.RANDOM_SLOW * 100)), "warn", long = true)
+            }
             TState.RUNNING -> {
                 val end = LocalDateTime.now()
-                val minutes = (mono() - startMono) / 60.0
+                val minutes = (mono() - startMono) / 60.0 * core.contract.focusRate(startWall)   // 阻滞: 按 90% 增长
                 lastTMinutes = minutes                    // 建议休息时长照常按整段专注算
                 restBase = core.focusRest(minutes, startWall!!, end)
                 val off = cutOffline(startWall!!, end)
@@ -370,6 +376,28 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         if (seconds > 0) setCarry(breakCarry + seconds)
     }
 
+    /** 未知变量: 休息时间 +/- delta 秒. 正在休息时改这次休息 (先减合约中得到的, 合约开始前的放在最后),
+     *  否则改积攒的休息时间. */
+    fun adjustBreak(delta: Int) {
+        mine()
+        if (state == TState.ON_BREAK) {
+            val left = countdown.toInt()
+            val new = maxOf(0, left + delta)
+            if (new < left) {
+                val preIn = minOf(left, breakPre.toInt())
+                val lost = maxOf(0, (left - new) - (left - preIn))
+                breakPre = maxOf(0.0, breakPre - lost)
+            }
+            breakEndMono += (new - left)
+            breakEndWall = breakEndWall?.plusSeconds((new - left).toLong())
+            saveState()
+        } else {
+            setCarry(breakCarry + delta)
+            core.contract.preCap(breakCarry.toDouble())
+        }
+        core.changed()
+    }
+
     private fun setCarry(seconds: Int) {
         breakCarry = maxOf(0, seconds)
         saveState()
@@ -482,7 +510,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
             seconds = ok + (seconds - ok) * Cfg.FOCUS_CHECK_PENALTY
         }
         val end = start.plusSec(seconds)
-        val minutes = seconds / 60.0
+        val minutes = seconds / 60.0 * core.contract.focusRate(start)      // 阻滞: 专注时间按 90% 增长
         // 有设备离线的那段记为空闲, 不计入学习时长; 建议休息时长照常按计入前的时长算
         val counted = maxOf(0.0, minutes - cutOffline(start, end) / 60.0)
         dm.addStudySession(start, end, counted)

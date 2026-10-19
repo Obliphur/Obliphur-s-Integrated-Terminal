@@ -57,10 +57,12 @@ fun TimerScreen() {
             when (t.state) {
                 TState.RUNNING -> if (fog) BigText("???") else {
                     // 黑雾: 专注时看不到专注时长 (预计休息时长也能推出时长, 一起不显示)
-                    val m = t.elapsed / 60.0
+                    val rate = t.focusRate                   // 阻滞: 专注时间按 90% 增长
+                    val m = t.elapsed / 60.0 * rate
                     BigText("${f2(m)} min")
                     val rem = computeF(m) * scale * core.contract.restFactor()
                     Dim(if (rem > 0) tr("预计停止时的休息时长:  {m} 分钟", "m" to f2(rem)) else tr("预计休息时长: 0.00 分钟"))
+                    if (rate < 1) Dim(tr("阻滞: 这段专注的时间按 {p}% 增长", "p" to Math.round(rate * 100)))
                 }
                 TState.ON_BREAK -> {
                     val left = t.countdown

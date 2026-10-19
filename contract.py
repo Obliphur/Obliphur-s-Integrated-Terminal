@@ -67,7 +67,7 @@ TERMS = [
     ("fog", "fog", 1, "环境:黑雾", "合约期间 专注时长 成就 日历 统计数据不可见 且无法打开设置", ()),
     ("hoard", "hoard", 1, "禁止囤囤鼠!", "不能提前结束休息 但是获得的休息时间改为105%", ()),
     ("quiet", "quiet", 1, "环境:静默协议", "专注中不能处于联网状态", ("isolate",)),
-    ("unknown", "unknown", 3, "未知变量", "合约开始时 以及之后每过一个整小时 从当前可以选择的1-2级词条中随机启用一个\n选中的词条不算进危机等级", ()),
+    ("unknown", "unknown", 3, "未知变量", "合约开始时 以及之后每过一个整小时 从当前可以选择的1-2级词条中随机启用一个或随机施加效果\n选中的词条不算进危机等级", ()),
 ]
 BY_ID = {t[0]: t for t in TERMS}
 GROUPS = list(dict.fromkeys(t[1] for t in TERMS))
@@ -121,6 +121,13 @@ RANDOM = "unknown"                              # 未知变量: 合约的每个�
 RANDOM_LEVELS = (1, 2)
 RANDOM_SKIP = {"gaze", "scar", "long1", "long2"}  # 不会选中录像和持久战的词条
 RANDOM_DELAY = timedelta(minutes=3)             # 抽中后过这么久才生效
+# 未知变量的每次判定: 有能选的词条时 75% 抽词条, 25% 施加效果; 没有能选的词条时一定是效果.
+# 不选已经选过的词条; 通过违反失效的词条 (开始时选的, 或者未知变量选中的) 可以再回到词条池, 但只会再被选中一次.
+RANDOM_TERM_P = 0.75
+RANDOM_EFFECTS = (("rest_cut", 15), ("lock", 15), ("rest_add", 15), ("double", 15), ("slow", 10), ("none", 30))
+RANDOM_REST = 10 * 60                           # 休息时间 -10 / +10 分钟 (正在休息时改这次休息, 否则改积攒的)
+RANDOM_SLOW = 0.9                               # 阻滞: 下一次专注的时间按 90% 增长
+RANDOM_ROLLS = 9                                # 一个小时里最多判定这么多次 ("再判定两次"连着抽到时)
 # 被违反到失效的词条 (降到最低一档后又违反了) 照样检查: 再次触发只响警报, 不扣目标生命值; 每个词条 2 分钟最多响一次
 ECHO_COOLDOWN = 120
 # 未知变量抽中的词条 3 分钟后生效, 只在抽中的那个小时里有效, 这个小时结束时移除 (不算违反); 同时只有一个.
@@ -480,6 +487,11 @@ class Contract:
                "level": self.level, "orig_level": self.orig_level, "cut": dict(self.cut),
                "result": result, "violations": self.violations, "reward": reward,
                "pre_left": self.pre_left, "rand": self.rand}
+        if self.live.get("locks"):
+            rec["locks"] = list(self.live["locks"])        # 未知变量封锁的记录格: 合约结束后照样锁着
+        slow = self.live.get("slow")
+        if isinstance(slow, dict) and slow.get("start"):
+            rec["slow"] = slow["start"]                   # 阻滞的那段专注可能比合约结束得晚
         self.history.append(rec)
         self.live = {"state": "none", "owner": by, "first_break": result == "completed"}
         self.save()
@@ -571,6 +583,10 @@ class Contract:
         gone = not new and not drop and tid not in rand and tid not in RECORD
         if gone and tid not in self.lost:    # 失效了照样检查, 再次触发只响警报
             self.live["lost"] = self.lost + [tid]
+        if not new and tid in rand:          # 未知变量选中的词条因为违反 (或关闭) 失效: 可以再回到词条池一次
+            viol = list(self.live.get("rand_viol") or [])
+            if tid not in viol:
+                self.live["rand_viol"] = viol + [tid]
         if tid in rand:                      # 未知变量选中的词条降级后还是它选中的 (移除的时刻不变)
             rand = [new if t == tid else t for t in rand if new or t != tid]
             self.live["rand"] = rand
@@ -599,11 +615,17 @@ class Contract:
 
     def random_candidates(self) -> list:
         """现在能被未知变量选中的词条: 1-2 级, 能选 (没有选着, 也不和选着的冲突), 不是录像;
-        退路封锁不会让目标生命值直接归零. 已经失效的词条也能再选中 (选中期间违反照常扣目标生命值)."""
-        terms = self.terms
+        退路封锁不会让目标生命值直接归零. 不选已经选过的; 通过违反失效的词条可以再选中一次
+        (选中期间违反照常扣目标生命值)."""
+        terms = self.terms + list(self.waiting)
+        used = set(self.live.get("rand_used") or [])
+        viol = set(self.lost) | set(self.live.get("rand_viol") or [])
+        again = set(self.live.get("rand_again") or [])
         out = []
         for t in TERMS:
             tid = t[0]
+            if not (tid not in used and tid not in viol) and not (tid in viol and tid not in again):
+                continue
             if t[2] not in RANDOM_LEVELS or tid in RANDOM_SKIP or tid in terms or blocked_by(tid, terms)                     or tid in self.waiting:
                 continue
             if tid in LIFE and life_of(terms + [tid]) <= self.violations:
@@ -611,29 +633,134 @@ class Contract:
             out.append(tid)
         return out
 
-    def roll(self, now: datetime, rng=None) -> list:
-        """到了新的一个小时就抽一个词条: 3 分钟后生效 (wake), 到这个小时结束时移除. 返回这次抽中的词条
-        (只由做自动结束的设备调用). 程序关着时错过的小时依次补上 (那时抽中的到了它那个小时的结束就移除)."""
+    def roll(self, now: datetime, rng=None, text_of=None, auto: str = "", fill: timedelta = None) -> list:
+        """到了新的一个小时就判定一次: 抽一个词条 (3 分钟后生效 (wake), 到这个小时结束时移除) 或者施加一个效果.
+        返回这次的结果 [(种类, 值)]: ("term", 词条) / ("rest_cut", "") / ("rest_add", "") / ("lock", 封锁的格子键或 "")
+        / ("double", "") / ("slow", "") / ("none", ""); 休息时间的增减由调用方做 (只由做自动结束的设备调用).
+        程序关着时错过的小时依次补上 (那时抽中的词条到了它那个小时的结束就移除, 不再返回)."""
         if not self.active or not self.has(RANDOM) or not self.start_at:
             return []
+        rng = rng or random
         end = self.end_at or now
         due = int((min(now, end) - self.start_at).total_seconds() // 3600) + 1 if now < end else 0
         done = int(self.live.get("rand_n") or 0)
-        picked = []
+        out = []
         while done < due:
             done += 1
-            self.expire(self.start_at + timedelta(hours=done - 1))
-            pool = self.random_candidates()
-            if pool:
-                tid = (rng or random).choice(pool)
-                at = self.start_at + timedelta(hours=done - 1)
-                self.live["rand_wait"] = {tid: [_iso(at + RANDOM_DELAY), _iso(at + timedelta(hours=1))]}
-                picked.append(tid)
-        if done != int(self.live.get("rand_n") or 0):
+            at = self.start_at + timedelta(hours=done - 1)
+            self.expire(at)
+            n, k = 1, 0
+            while n > 0 and k < RANDOM_ROLLS:
+                n, k = n - 1, k + 1
+                pool = self.random_candidates()
+                if pool and rng.random() < RANDOM_TERM_P:
+                    tid = rng.choice(pool)
+                    self._pick(tid, at)
+                    out.append(("term", tid))
+                    continue
+                eff = self._effect(rng)
+                if eff == "double":
+                    n += 2
+                elif eff == "slow":
+                    self.live["slow"] = {"pending": True}
+                elif eff == "lock":
+                    out.append(("lock", self.lock_cell(now, rng, text_of, auto, fill)))
+                    continue
+                out.append((eff, ""))
             self.live["rand_n"] = done
             self.save()
         self.expire(now)
-        return list(dict.fromkeys(t for t in picked if t in self.waiting))
+        wait = self.waiting
+        return [e for e in out if e[0] != "term" or e[1] in wait]
+
+    @staticmethod
+    def _effect(rng) -> str:
+        r = rng.random() * sum(w for _e, w in RANDOM_EFFECTS)
+        for eff, w in RANDOM_EFFECTS:
+            if r < w:
+                return eff
+            r -= w
+        return RANDOM_EFFECTS[-1][0]
+
+    def _pick(self, tid: str, at: datetime):
+        """未知变量在 at 开始的这个小时抽中了 tid: 记下选过 (通过违反失效后再选中的记下用掉了这一次)."""
+        viol = set(self.lost) | set(self.live.get("rand_viol") or [])
+        used = list(self.live.get("rand_used") or [])
+        if tid in viol:
+            again = list(self.live.get("rand_again") or [])
+            self.live["rand_again"] = again + [tid]
+        if tid not in used:
+            self.live["rand_used"] = used + [tid]
+        wait = self.waiting
+        wait[tid] = (at + RANDOM_DELAY, at + timedelta(hours=1))
+        self.live["rand_wait"] = {t: [_iso(a), _iso(b)] for t, (a, b) in wait.items()}
+
+    # ---- 未知变量的效果 ----
+
+    def lock_cell(self, now: datetime, rng=None, text_of=None, auto: str = "", fill: timedelta = None) -> str:
+        """随机封锁一个还没被封锁, 已经过了填写时限的整点记录格 (最近 24 小时里的; 合约结束后照样锁着).
+        返回格子的键 ("日期/小时", 细化规范的半小时 "日期/小时/1"); 没有可以封锁的返回 ""."""
+        if not self.active or text_of is None or fill is None:
+            return ""
+        h = (now - timedelta(hours=24)).replace(minute=0, second=0, microsecond=0)
+        pool = []
+        while h + timedelta(hours=1) <= now:
+            key = f"{h:%Y-%m-%d}/{h.hour}"
+            if self.fine_hour(h):
+                cells = [(key + "/1", h, h + timedelta(minutes=30)),
+                         (key + "/2", h + timedelta(minutes=30), h + timedelta(hours=1))]
+            else:
+                cells = [(key, h, h + timedelta(hours=1))]
+            for k, a, b in cells:
+                if b + cell_fill(a, b, fill) <= now and not self.hour_locked(a, b, text_of(k) or "", now, fill, auto):
+                    pool.append((k, a, b))
+            h += timedelta(hours=1)
+        if not pool:
+            return ""
+        k, a, b = (rng or random).choice(pool)
+        self.live["locks"] = list(self.live.get("locks") or []) + [[_iso(a), _iso(b)]]
+        self.save()
+        return k
+
+    def locks(self) -> list:
+        """未知变量封锁的记录格 (所有合约的): [(开始, 结束)]."""
+        out = []
+        for src in [h.get("locks") for h in self.history] + [self.live.get("locks") if self.active else None]:
+            for v in src or []:
+                a, b = (_parse(v[0]), _parse(v[1])) if isinstance(v, (list, tuple)) and len(v) == 2 else (None, None)
+                if a and b:
+                    out.append((a, b))
+        return out
+
+    def slow_bind(self, start: datetime) -> bool:
+        """开始专注: 等着的阻滞落到这段专注上 (专注时间按 RANDOM_SLOW 增长). 返回落上了没有."""
+        slow = self.live.get("slow") if self.active else None
+        if not (isinstance(slow, dict) and slow.get("pending")):
+            return False
+        self.live["slow"] = {"start": _iso(start)}
+        self.save()
+        return True
+
+    def focus_rate(self, start: datetime) -> float:
+        """开始于 start 的这段专注的时间按多少增长: 阻滞 RANDOM_SLOW, 否则 1."""
+        if start is None:
+            return 1.0
+        mark = _iso(start)
+        slow = self.live.get("slow") if self.active else None
+        if isinstance(slow, dict) and slow.get("start") == mark:
+            return RANDOM_SLOW
+        return RANDOM_SLOW if any(h.get("slow") == mark for h in self.history[-3:]) else 1.0
+
+    @property
+    def slow_pending(self) -> bool:
+        slow = self.live.get("slow") if self.active else None
+        return isinstance(slow, dict) and bool(slow.get("pending"))
+
+    def pre_cap(self, carry: float):
+        """积攒的休息时间减少到 carry: 合约开始前的那部分最多剩这么多 (先减合约中得到的)."""
+        if self.active and self.pre_left > float(carry):
+            self.live["pre_left"] = round(max(0.0, float(carry)), 1)
+            self.save()
 
     @property
     def waiting(self) -> dict:
@@ -668,6 +795,8 @@ class Contract:
         terms = clean_terms(self.terms + [tid])
         self.live["terms"] = terms
         self.live["rand"] = self.rand + [tid]
+        if tid in HOUR_TERMS:
+            self.live["hour_forced"] = True          # 整点记录在这次合约中一直开启 (词条移除后也是)
         till = dict(self.live.get("rand_until") or {})
         till.pop(tid, None)
         if until is not None:
@@ -903,8 +1032,8 @@ class Contract:
         return max((COOLDOWN_X[t] for t in self.terms if t in COOLDOWN_X), default=1.0)
 
     def hour_forced(self) -> bool:
-        """选了整点记录的词条: 整点记录关着时, 这次合约中照样开启."""
-        return any(t in HOUR_TERMS for t in self.terms)
+        """选了整点记录的词条: 整点记录关着时, 这次合约中照样开启. 未知变量启用过整点记录的词条: 这次合约中一直开启."""
+        return any(t in HOUR_TERMS for t in self.terms) or (self.active and bool(self.live.get("hour_forced")))
 
     def fine_hour(self, slot_start: datetime) -> bool:
         """细化规范: 这一小时 (按开始时刻) 和进行中的合约重叠, 记录改为每 30 分钟一次."""
@@ -1005,7 +1134,9 @@ class Contract:
     def hour_locked(self, start: datetime, end: datetime, text: str, now: datetime, fill: timedelta,
                     auto: str) -> bool:
         """记录封锁: 和选了这个词条的合约重叠的记录格, 过了填写时限还没填写 (空着 / 超时自动记录),
-        就不能再改 —— 合约结束了也一样."""
+        就不能再改 —— 合约结束了也一样. 未知变量封锁的格子不管填没填都不能再改."""
+        if any(a < end and start < b for a, b in self.locks()):
+            return True
         if now < end + cell_fill(start, end, fill) or (text or "") not in ("", auto):
             return False
         return any(a < end and start < b for a, b in self.periods(now, "seal"))
@@ -1148,15 +1279,29 @@ def _selftest():
     assert "gaze" not in pool and "scar" not in pool and "info1" not in pool and "long2" not in pool
     assert not {"long1", "long2", "long3"} & set(pool), "不选持久战"
     assert "unknown" not in pool and "isolate" not in pool and "music" in pool and "jam" in pool
-    rng = _r.Random(1)
-    first = c.roll(t0, rng)
+
+    class _Rng:
+        """测试用: random() 依次给出 rs 里的数 (用完了给 0 = 抽词条), choice 按 pick 选 (没有时随机)."""
+        def __init__(self, rs=(), pick=None):
+            self.rs, self.pick, self.r = list(rs), pick, _r.Random(1)
+
+        def random(self):
+            return self.rs.pop(0) if self.rs else 0.0
+
+        def choice(self, pool):
+            return self.pick(pool) if self.pick else self.r.choice(pool)
+
+    def _terms(ev):
+        return [v for k, v in ev if k == "term"]
+    rng = _Rng()
+    first = _terms(c.roll(t0, rng))
     assert len(first) == 1 and c.rand == [] and list(c.waiting) == first, "抽中后还没生效"
     assert c.waiting[first[0]] == (t0 + timedelta(minutes=3), t0 + timedelta(hours=1)) and first[0] not in c.random_candidates()
     assert c.wake(t0 + timedelta(minutes=2, seconds=59)) == [] and not c.has(first[0])
     assert c.wake(t0 + timedelta(minutes=3)) == first and c.rand == first and c.waiting == {} and c.level == 3 + 2 + 1
     assert c.roll(t0 + timedelta(minutes=59), rng) == []
     assert c.rand_until(first[0]) == t0 + timedelta(hours=1), "只在抽中的那个小时里有效"
-    more = c.roll(t0 + timedelta(hours=2, minutes=1), rng)
+    more = _terms(c.roll(t0 + timedelta(hours=2, minutes=1), rng))
     assert len(more) == 1 and c.rand == [] and list(c.waiting) == more, "错过的小时补上; 同时只有一个"
     assert c.wake(t0 + timedelta(hours=2, minutes=3)) == more and c.rand == more and c.level == 6
     assert c.rand_until(more[0]) == t0 + timedelta(hours=3) and c.violations == 0, "到时移除不算违反"
@@ -1165,7 +1310,7 @@ def _selftest():
     t = c.rand[0]
     assert c.violate(t, drop=True) == (False, "") and t not in c.terms and t not in c.rand and c.violations == 1
     # 下一个小时开始时再选一个, 这个小时结束时移除
-    nxt = c.roll(t0 + timedelta(hours=3), rng)
+    nxt = _terms(c.roll(t0 + timedelta(hours=3), rng))
     assert c.wake(t0 + timedelta(hours=3, minutes=5)) == nxt and c.rand == nxt
     assert c.expire(t0 + timedelta(hours=4)) == nxt and c.rand == []
     # 还没生效就到了小时结束 (程序关着): 直接去掉, 不再生效
@@ -1187,22 +1332,75 @@ def _selftest():
     assert "retreat2" not in c.random_candidates() and "retreat1" in c.random_candidates()
     c.live["rand_n"] = 1
 
-    class _Pick:
-        @staticmethod
-        def choice(pool):
-            return "retreat1" if "retreat1" in pool else pool[0]
-    assert c.roll(t0 + timedelta(hours=1, minutes=2), _Pick) == ["retreat1"] and c.violation_limit == 4
+    _Pick = _Rng(pick=lambda pool: "retreat1" if "retreat1" in pool else pool[0])
+    assert c.roll(t0 + timedelta(hours=1, minutes=2), _Pick) == [("term", "retreat1")] and c.violation_limit == 4
     assert c.wake(t0 + timedelta(hours=1, minutes=5)) == ["retreat1"]
     assert c.violation_limit == 3 and c.life == 1 and c.rand_until("retreat1") == t0 + timedelta(hours=2)
     assert c.expire(t0 + timedelta(hours=1, minutes=59)) == [] and c.has("retreat1")
     assert c.expire(t0 + timedelta(hours=2)) == ["retreat1"] and not c.has("retreat1") and c.life == 2
     assert c.violations == 2 and c.rand == ["short1"]
-    # 程序关着时错过的小时依次补上: 第 2 个小时选中的退路封锁到第 3 个小时开始时移除, 第 3 个小时又选中它
-    c.live["rand_n"] = 1
-    assert c.roll(t0 + timedelta(hours=2, minutes=30), _Pick) == ["retreat1"] and c.wake(t0 + timedelta(hours=2, minutes=30)) == ["retreat1"]
-    assert c.rand_until("retreat1") == t0 + timedelta(hours=3) and c.violation_limit == 3
+    # 选过的不再选
+    assert "retreat1" not in c.random_candidates() and "retreat2" not in c.random_candidates()
     rec = c.finish("abandoned", t0 + timedelta(hours=1))
     assert rec["rand"][0] == "short1"
+    # 通过违反失效的词条可以再回到词条池, 但只会再被选中一次 (开始时选的, 和未知变量选中的都是)
+    c.start(["unknown", "music"], owner="me", now=t0)
+    assert "music" not in c.random_candidates() and c.violate("music") == (False, "")
+    assert "music" in c.random_candidates(), "失效了: 回到词条池"
+    pick_music = _Rng(pick=lambda pool: "music" if "music" in pool else pool[0])
+    assert c.roll(t0, pick_music) == [("term", "music")] and c.wake(t0 + timedelta(minutes=3)) == ["music"]
+    assert c.violate("music") == (False, "") and "music" not in c.random_candidates(), "只会再选中一次"
+    c._pick("game", t0)
+    assert c.wake(t0 + timedelta(minutes=3)) == ["game"] and "game" not in c.random_candidates()
+    assert c.violate("game", drop=True) == (False, "") and "game" in c.random_candidates(), "关闭也算违反: 回到词条池"
+    c._pick("game", t0)
+    assert "game" not in c.random_candidates() and c.live["rand_again"] == ["music", "game"]
+    # 有能选的词条: 75% 词条, 25% 效果; 效果按 15/15/15/15/10/30
+    assert [Contract._effect(_Rng([x])) for x in (0.0, 0.149, 0.15, 0.3, 0.45, 0.6, 0.7, 0.999)] == \
+        ["rest_cut", "rest_cut", "lock", "rest_add", "double", "slow", "none", "none"]
+    c.start(["unknown"], owner="me", now=t0)
+    assert c.roll(t0, _Rng([0.75, 0.0])) == [("rest_cut", "")] and c.waiting == {}, "0.75 及以上: 效果"
+    assert c.roll(t0 + timedelta(hours=1), _Rng([0.7499])) and len(c.waiting) == 1
+    # 再判定两次: 这次不生效, 改为判定两次 (这里: 一次词条, 一次 +10 分钟)
+    ev = c.roll(t0 + timedelta(hours=2), _Rng([0.9, 0.45, 0.0, 0.9, 0.3]))
+    assert [k for k, _v in ev] == ["double", "term", "rest_add"] and len(c.waiting) == 1, ev
+    # 没有能选的词条: 一定是效果
+    c.live["rand_used"] = [t[0] for t in TERMS]
+    assert c.random_candidates() == [] and c.roll(t0 + timedelta(hours=3), _Rng([0.7])) == [("none", "")]
+    # 阻滞: 下一次开始的专注时间按 90% 增长 (合约结束了这段专注照样按 90%)
+    c.live["rand_n"] = 3                       # 合约只有 4 小时: 再判定一次第 4 个小时
+    assert c.roll(t0 + timedelta(hours=3, minutes=30), _Rng([0.6])) == [("slow", "")] and c.slow_pending
+    s1 = t0 + timedelta(hours=4, minutes=10)
+    assert c.focus_rate(s1) == 1.0 and c.slow_bind(s1) and not c.slow_pending and not c.slow_bind(s1)
+    assert c.focus_rate(s1) == 0.9 and c.focus_rate(s1 + timedelta(hours=1)) == 1.0
+    # 封锁一个过了填写时限, 还没被封锁的记录格 (最近 24 小时里的), 合约结束后照样锁着; 填了的也锁
+    fill = timedelta(hours=1)
+    now = datetime(2026, 10, 18, 12, 10)
+    texts = {"2026-10-18/10": "学习"}
+    only10 = _Rng(pick=lambda pool: next(x for x in pool if x[0] == "2026-10-18/10"))
+    assert c.lock_cell(now, only10, texts.get, "Sleeping", fill) == "2026-10-18/10"
+    a, b = datetime(2026, 10, 18, 10), datetime(2026, 10, 18, 11)
+    assert c.hour_locked(a, b, "学习", now, fill, "Sleeping")
+    assert not c.hour_locked(b, b + timedelta(hours=1), "", now, fill, "Sleeping"), "11 点那格还没过填写时限"
+    last = _Rng(pick=lambda pool: pool[-1])
+    assert c.lock_cell(now, last, texts.get, "Sleeping", fill) == "2026-10-18/9", "已经封锁的不再选"
+    assert c.lock_cell(now, None, None, "Sleeping", fill) == ""
+    c.finish("abandoned", now)
+    assert c.hour_locked(a, b, "学习", now + timedelta(days=3), fill, "Sleeping") and c.focus_rate(s1) == 0.9
+    # 未知变量启用了整点记录的词条: 这次合约中一直强制开启整点记录
+    c.start(["unknown"], owner="me", now=t0)
+    assert not c.hour_forced()
+    c._enable("seal", t0 + timedelta(hours=1))
+    assert c.hour_forced() and c.expire(t0 + timedelta(hours=1)) == ["seal"] and c.hour_forced()
+    c.finish("abandoned", t0 + timedelta(hours=2))
+    assert not c.hour_forced()
+    # 积攒的休息时间减少: 合约开始前的那部分最多剩这么多
+    c.start(["unknown"], owner="me", now=t0, pre=600)
+    c.pre_cap(900)
+    assert c.pre_left == 600
+    c.pre_cap(250)
+    assert c.pre_left == 250
+    c = Contract(tempfile.mkdtemp())          # 上面封锁的记录格会影响后面整点记录的测试
     # 信息隔绝: 休息时间额外 ×1.3 (和疲惫相乘); 降成信息阻断-III 后没有了
     c.start(["isolate", "tired2"], owner="me", now=t0)
     assert abs(c.rest_factor() - 0.6 * 1.3) < 1e-9 and abs(c.book_rest(1000, t0) - 780) < 1e-6
@@ -1334,11 +1532,11 @@ def _selftest():
     # 同步: 记录按 id 合并
     d = Contract(tempfile.mkdtemp())
     d.merge(c.doc())
-    assert len(d.history) == 6 and not d.active
+    assert len(d.history) == len(c.history) and not d.active
     d.merge({"history": c.doc()["history"]})
-    assert len(d.history) == 6
+    assert len(d.history) == len(c.history) >= 3, "同一条记录不重复"
     c2 = Contract(os.path.dirname(c.path))
-    assert len(c2.history) == 6, "写进文件, 重开后仍在"
+    assert len(c2.history) == len(c.history), "写进文件, 重开后仍在"
     return "contract selftest OK"
 
 

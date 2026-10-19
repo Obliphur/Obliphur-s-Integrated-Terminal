@@ -666,15 +666,11 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             logNotice("CONTRACT unknown expired $id")
             toast(tr("未知变量: {name} 已移除", "name" to tr(Contract.BY_ID[id]!!.name)))
         }
-        val picked = c.roll(now)
+        val picked = c.roll(now, Dice(), dm::unitText, dm.autoValue, dm.fillSeconds.toLong())
         val woke = c.wake(now)
-        val wait = c.waiting
-        for (id in picked) {
-            logNotice("CONTRACT unknown -> $id")
-            wait[id]?.let {
-                toast(tr("未知变量: 抽中了 {name}, {t} 生效", "name" to tr(Contract.BY_ID[id]!!.name),
-                    "t" to it.first.format(Fmt.HM)), "warn", long = true)
-            }
+        for ((kind, v) in picked) {
+            logNotice("CONTRACT unknown -> $kind $v")
+            randomEffect(kind, v)
         }
         for (id in woke) {
             logNotice("CONTRACT unknown on $id")
@@ -683,6 +679,31 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         if (picked.isNotEmpty() || woke.isNotEmpty() || gone.isNotEmpty()) {
             host.applyNet(false)                 // 选中全频道阻塞干扰: 断网方式跟着变
             syncHourLog()
+        }
+    }
+
+    /** 未知变量的一次判定结果: 抽中的词条 (提示), 或者效果 (休息时间 ±10 分钟由本机改计时器). */
+    private fun randomEffect(kind: String, v: String) {
+        when (kind) {
+            "term" -> contract.waiting[v]?.let {
+                toast(tr("未知变量: 抽中了 {name}, {t} 生效", "name" to tr(Contract.BY_ID[v]!!.name),
+                    "t" to it.first.format(Fmt.HM)), "warn", long = true)
+            }
+            "rest_cut", "rest_add" -> {
+                val d = if (kind == "rest_add") Contract.RANDOM_REST else -Contract.RANDOM_REST
+                timer.adjustBreak(d)
+                toast(tr(if (d > 0) "未知变量: 休息时间 +{n} 分钟" else "未知变量: 休息时间 -{n} 分钟", "n" to Contract.RANDOM_REST / 60),
+                    "warn", long = true)
+            }
+            "lock" -> if (v.isNotEmpty()) {
+                val p = v.split("/")
+                val t = "${p[0].substring(5)} %02d:%s".format(p[1].toInt(), if (p.size == 3 && p[2] == "2") "30" else "00")
+                toast(tr("未知变量: 封锁了整点记录 {t} (不能再修改)", "t" to t), "warn", long = true)
+            } else toast(tr("未知变量: 没有可以封锁的整点记录, 无事发生"))
+            "double" -> toast(tr("未知变量: 这次判定作废, 改为判定两次"))
+            "slow" -> toast(tr("未知变量: 下一次专注启用阻滞 (专注时间按 {p}% 增长)", "p" to Math.round(Contract.RANDOM_SLOW * 100)),
+                "warn", long = true)
+            else -> toast(tr("未知变量: 无事发生"))
         }
     }
 

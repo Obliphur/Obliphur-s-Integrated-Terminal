@@ -883,10 +883,16 @@ class BreakTimerApp:
         self._mine()
         if self.state == IDLE:
             self._enter_focus(datetime.now(), time.monotonic())
+            if self.contract.slow_bind(self.start_wall):
+                toast.warn(tr("阻滞: 这段专注的时间按 {p}% 增长", p=int(round(contract_mod.RANDOM_SLOW * 100))),
+                           timeout=10000)
+                if self.sync.peers():
+                    self.sync.sync_now()
 
         elif self.state == RUNNING:
             end_wall = datetime.now()
-            elapsed_minutes = (time.monotonic() - self.start_mono) / 60.0
+            # 阻滞: 这段专注的时间按 90% 增长
+            elapsed_minutes = (time.monotonic() - self.start_mono) / 60.0 * self.contract.focus_rate(self.start_wall)
             self.last_t_minutes = elapsed_minutes      # 建议休息时长照常按整段专注算
             self.rest_base = self._focus_rest(elapsed_minutes, self.start_wall, end_wall)
             off = self._cut_offline(self.start_wall, end_wall)
@@ -1441,7 +1447,7 @@ class BreakTimerApp:
             ok = min(max(0.0, float(ok)), seconds)
             seconds = ok + (seconds - ok) * float(config.FOCUS_CHECK_PENALTY)
         end = start + timedelta(seconds=seconds)
-        minutes = seconds / 60.0
+        minutes = seconds / 60.0 * self.contract.focus_rate(start)      # 阻滞: 专注时间按 90% 增长
         # 有设备离线的那段记为空闲, 不计入学习时长; 建议休息时长照常按计入前的时长算
         counted = max(0.0, minutes - self._cut_offline(start, end) / 60.0)
         self.dm.add_study_session(start, end, counted)
@@ -1565,7 +1571,8 @@ class BreakTimerApp:
     def update(self):
         if self.state == RUNNING:
             elapsed = time.monotonic() - self.start_mono
-            cur_m = elapsed / 60.0
+            rate = self.contract.focus_rate(self.start_wall)
+            cur_m = elapsed / 60.0 * rate               # 阻滞: 专注时间按 90% 增长
             if self.contract.fog():
                 # 黑雾: 专注时看不到专注时长 (预计休息时长也能推出时长, 一起不显示)
                 self.lbl_time.config(text="???")
@@ -1575,9 +1582,12 @@ class BreakTimerApp:
             self.lbl_time.config(text=f"{cur_m:.2f} min")
             rem = compute_F(cur_m) * float(config.BREAK_TIME_SCALE) * self.contract.rest_factor()
             if rem > 0:
-                self.lbl_sub.config(text=tr("预计停止时的休息时长:  {m:.2f} 分钟").format(m=rem))
+                sub = tr("预计停止时的休息时长:  {m:.2f} 分钟").format(m=rem)
             else:
-                self.lbl_sub.config(text=tr("预计休息时长: 0.00 分钟"))
+                sub = tr("预计休息时长: 0.00 分钟")
+            if rate < 1:
+                sub += "\n" + tr("阻滞: 这段专注的时间按 {p}% 增长", p=int(round(rate * 100)))
+            self.lbl_sub.config(text=sub)
             self.update_job = self.root.after(200, self.update)
 
         elif self.state == ON_BREAK:
@@ -2190,13 +2200,11 @@ class BreakTimerApp:
             for tid in gone:
                 self._log_notice(f"CONTRACT unknown expired {tid}")
                 toast.info(tr("未知变量: {name} 已移除", name=tr(contract_mod.BY_ID[tid][3])))
-            picked = c.roll(now)
+            picked = c.roll(now, text_of=self.dm.unit_text, auto=self.dm.auto_text, fill=config.FILL_WINDOW)
             woke = c.wake(now)
-            for tid in picked:
-                self._log_notice(f"CONTRACT unknown -> {tid}")
-                if tid in c.waiting:
-                    toast.warn(tr("未知变量: 抽中了 {name}, {t} 生效", name=tr(contract_mod.BY_ID[tid][3]),
-                                  t=f"{c.waiting[tid][0]:%H:%M}"), timeout=10000)
+            for kind, val in picked:
+                self._log_notice(f"CONTRACT unknown -> {kind} {val}")
+                self._random_effect(kind, val)
             for tid in woke:
                 self._log_notice(f"CONTRACT unknown on {tid}")
                 toast.warn(tr("未知变量: 启用了 {name}", name=tr(contract_mod.BY_ID[tid][3])), timeout=10000)
@@ -2347,6 +2355,54 @@ class BreakTimerApp:
             toast.notice(tr("⚔ 行动失败"), msg)
         if self.sync.peers():
             self.sync.sync_now()
+
+    def _random_effect(self, kind: str, val: str):
+        """未知变量的一次判定结果: 抽中的词条 (提示), 或者效果 (休息时间 ±10 分钟由本机改计时器)."""
+        c = self.contract
+        if kind == "term":
+            if val in c.waiting:
+                toast.warn(tr("未知变量: 抽中了 {name}, {t} 生效", name=tr(contract_mod.BY_ID[val][3]),
+                              t=f"{c.waiting[val][0]:%H:%M}"), timeout=10000)
+        elif kind in ("rest_cut", "rest_add"):
+            delta = contract_mod.RANDOM_REST if kind == "rest_add" else -contract_mod.RANDOM_REST
+            self._contract_rest(delta)
+            msg = tr("未知变量: 休息时间 +{n} 分钟") if delta > 0 else tr("未知变量: 休息时间 -{n} 分钟")
+            toast.warn(msg.format(n=contract_mod.RANDOM_REST // 60), timeout=10000)
+        elif kind == "lock":
+            if val:
+                parts = val.split("/")
+                t = f"{parts[0][5:]} {int(parts[1]):02d}:{'30' if parts[2:] == ['2'] else '00'}"
+                toast.warn(tr("未知变量: 封锁了整点记录 {t} (不能再修改)", t=t), timeout=10000)
+            else:
+                toast.info(tr("未知变量: 没有可以封锁的整点记录, 无事发生"))
+        elif kind == "double":
+            toast.info(tr("未知变量: 这次判定作废, 改为判定两次"))
+        elif kind == "slow":
+            toast.warn(tr("未知变量: 下一次专注启用阻滞 (专注时间按 {p}% 增长)",
+                          p=int(round(contract_mod.RANDOM_SLOW * 100))), timeout=10000)
+        else:
+            toast.info(tr("未知变量: 无事发生"))
+
+    def _contract_rest(self, delta: int):
+        """未知变量: 休息时间 +/- delta 秒. 正在休息时改这次休息 (先减合约中得到的, 合约开始前的放在最后),
+        否则改积攒的休息时间."""
+        self._mine()
+        c = self.contract
+        if self.state == ON_BREAK:
+            left = max(0, int(self.countdown_seconds))
+            new = max(0, left + int(delta))
+            if new < left:
+                pre_in = min(left, int(self._break_pre))
+                lost = max(0, (left - new) - (left - pre_in))
+                self._break_pre = max(0.0, float(self._break_pre) - lost)
+            self.countdown_seconds = new
+            if self.break_end_wall is not None:
+                self.break_end_wall += timedelta(seconds=new - left)
+            self._save_timer_state()
+        else:
+            self._set_break_carry(self.break_carry + int(delta))
+            c.pre_cap(self.break_carry)
+        self.refresh_display()
 
     def close_random_term(self, tid: str):
         """未知变量选中的词条: 点击关闭, 算一次违反."""

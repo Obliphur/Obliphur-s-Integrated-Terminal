@@ -6,6 +6,10 @@ import java.io.File
 import java.time.LocalDateTime
 
 /** 词条: id, 组 (同一组互相冲突, 界面上排在同一列), 等级, 名字, 描述, 另外冲突的词条. */
+/** 未知变量用的随机数: roll() 是 [0, 1) 的小数, pick(n) 是 [0, n) 的下标 (测试时可以换成固定的). */
+class Dice(val roll: () -> Double = { kotlin.random.Random.nextDouble() },
+           val pick: (Int) -> Int = { kotlin.random.Random.nextInt(it) })
+
 class Term(val id: String, val group: String, val level: Int, val name: String, val desc: String,
            val conflicts: List<String> = emptyList())
 
@@ -71,7 +75,7 @@ class Contract(private val file: File) {
             Term("fog", "fog", 1, "环境:黑雾", "合约期间 专注时长 成就 日历 统计数据不可见 且无法打开设置"),
             Term("hoard", "hoard", 1, "禁止囤囤鼠!", "不能提前结束休息 但是获得的休息时间改为105%"),
             Term("quiet", "quiet", 1, "环境:静默协议", "专注中不能处于联网状态", listOf("isolate")),
-            Term("unknown", "unknown", 3, "未知变量", "合约开始时 以及之后每过一个整小时 从当前可以选择的1-2级词条中随机启用一个\n选中的词条不算进危机等级"),
+            Term("unknown", "unknown", 3, "未知变量", "合约开始时 以及之后每过一个整小时 从当前可以选择的1-2级词条中随机启用一个或随机施加效果\n选中的词条不算进危机等级"),
         )
         val BY_ID = TERMS.associateBy { it.id }
         val GROUPS = TERMS.map { it.group }.distinct()
@@ -152,6 +156,26 @@ class Contract(private val file: File) {
         val RANDOM_SKIP = setOf("gaze", "scar", "long1", "long2")
         /** 抽中后过这么多分钟才生效. */
         const val RANDOM_DELAY_MIN = 3L
+        /** 未知变量的每次判定: 有能选的词条时 75% 抽词条, 25% 施加效果; 没有能选的词条时一定是效果.
+         *  不选已经选过的词条; 通过违反失效的词条 (开始时选的, 或者未知变量选中的) 可以再回到词条池, 但只会再被选中一次. */
+        const val RANDOM_TERM_P = 0.75
+        val RANDOM_EFFECTS = listOf("rest_cut" to 15, "lock" to 15, "rest_add" to 15, "double" to 15, "slow" to 10, "none" to 30)
+        /** 休息时间 -10 / +10 分钟 (正在休息时改这次休息, 否则改积攒的). */
+        const val RANDOM_REST = 10 * 60
+        /** 阻滞: 下一次专注的时间按 90% 增长. */
+        const val RANDOM_SLOW = 0.9
+        /** 一个小时里最多判定这么多次 ("再判定两次"连着抽到时). */
+        const val RANDOM_ROLLS = 9
+
+        /** 一次判定的效果: 按 RANDOM_EFFECTS 的权重. */
+        fun effect(dice: Dice): String {
+            var r = dice.roll() * RANDOM_EFFECTS.sumOf { it.second }
+            for ((eff, w) in RANDOM_EFFECTS) {
+                if (r < w) return eff
+                r -= w
+            }
+            return RANDOM_EFFECTS.last().first
+        }
         /** 被违反到失效的词条 (降到最低一档后又违反了) 照样检查: 再次触发只响警报, 不扣目标生命值;
          *  每个词条这么多秒最多响一次. */
         const val ECHO_COOLDOWN = 120L
@@ -374,6 +398,8 @@ class Contract(private val file: File) {
             .put("level", level).put("orig_level", origLevel).put("cut", JSONObject(cut.toString()))
             .put("result", result).put("violations", violations).put("reward", give).put("pre_left", preLeft)
             .put("rand", JSONArray(rand))
+        live.optJSONArray("locks")?.let { if (it.length() > 0) rec.put("locks", JSONArray(it.toString())) }   // 封锁的记录格合约结束后照样锁着
+        live.optJSONObject("slow")?.optString("start")?.takeIf { it.isNotEmpty() }?.let { rec.put("slow", it) }
         history.add(rec)
         live = JSONObject().put("state", "none").put("owner", by).put("first_break", result == "completed")
         save()
@@ -457,6 +483,10 @@ class Contract(private val file: File) {
         live.put("terms", JSONArray(clean(t))).put("cut", c)
         val gone = new.isEmpty() && !drop && id !in oldRand && id !in RECORD
         if (gone && id !in lost) live.put("lost", JSONArray(lost + id))   // 失效了照样检查, 再次触发只响警报
+        if (new.isEmpty() && id in oldRand) {        // 未知变量选中的词条因为违反 (或关闭) 失效: 可以再回到词条池一次
+            val viol = live.optJSONArray("rand_viol")?.strings() ?: emptyList()
+            if (id !in viol) live.put("rand_viol", JSONArray(viol + id))
+        }
         // 未知变量选中的词条降级后还是它选中的 (移除的时刻不变)
         if (id in oldRand) {
             live.put("rand", JSONArray(oldRand.mapNotNull { if (it == id) new.ifEmpty { null } else it }))
@@ -486,41 +516,134 @@ class Contract(private val file: File) {
     // ---- 未知变量: 合约的第 1, 2, 3 … 个小时开始时 (刚开始时也算) 随机启用一个词条 ----
 
     /** 现在能被未知变量选中的词条: 1-2 级, 能选 (没有选着, 也不和选着的冲突), 不是录像;
-     *  退路封锁不会让目标生命值直接归零. 已经失效的词条也能再选中 (选中期间违反照常扣目标生命值). */
+     *  退路封锁不会让目标生命值直接归零. 不选已经选过的; 通过违反失效的词条可以再选中一次
+     *  (选中期间违反照常扣目标生命值). */
     fun randomCandidates(): List<String> {
-        val t = terms
+        val t = terms + waiting.keys
+        val used = (live.optJSONArray("rand_used")?.strings() ?: emptyList()).toSet()
+        val viol = lost.toSet() + (live.optJSONArray("rand_viol")?.strings() ?: emptyList())
+        val again = (live.optJSONArray("rand_again")?.strings() ?: emptyList()).toSet()
         return TERMS.map { it.id }.filter { id ->
-            BY_ID[id]!!.level in RANDOM_LEVELS && id !in RANDOM_SKIP && id !in t && blockedBy(id, t) == null &&
-                id !in waiting && !(id in LIFE && lifeOf(t + id) <= violations)
+            ((id !in used && id !in viol) || (id in viol && id !in again)) &&
+                BY_ID[id]!!.level in RANDOM_LEVELS && id !in RANDOM_SKIP && id !in t && blockedBy(id, t) == null &&
+                !(id in LIFE && lifeOf(terms + id) <= violations)
         }
     }
 
-    /** 到了新的一个小时就抽一个词条: 3 分钟后生效 (wake), 到这个小时结束时移除. 返回这次抽中的词条
-     *  (只由做自动结束的设备调用). 程序关着时错过的小时依次补上 (那时抽中的到了它那个小时的结束就移除). */
-    fun roll(now: LocalDateTime, rng: kotlin.random.Random = kotlin.random.Random.Default): List<String> {
+    /** 到了新的一个小时就判定一次: 抽一个词条 (3 分钟后生效 (wake), 到这个小时结束时移除) 或者施加一个效果.
+     *  返回这次的结果 (种类, 值): ("term", 词条) / ("rest_cut", "") / ("rest_add", "") / ("lock", 封锁的格子键或 "")
+     *  / ("double", "") / ("slow", "") / ("none", ""); 休息时间的增减由调用方做 (只由做自动结束的设备调用).
+     *  程序关着时错过的小时依次补上 (那时抽中的词条到了它那个小时的结束就移除, 不再返回). */
+    fun roll(now: LocalDateTime, dice: Dice = Dice(), textOf: ((String) -> String)? = null, auto: String = "",
+             fillSec: Long = 0): List<Pair<String, String>> {
         if (!active || !has(RANDOM)) return emptyList()
         val a = startAt ?: return emptyList()
         val end = endAt ?: now
         val due = if (now.isBefore(end)) (secondsBetween(a, now) / 3600).toInt() + 1 else 0
         var done = live.optInt("rand_n", 0)
-        val picked = mutableListOf<String>()
+        val out = mutableListOf<Pair<String, String>>()
         while (done < due) {
             done++
-            expire(a.plusHours((done - 1).toLong()))
-            val pool = randomCandidates()
-            if (pool.isNotEmpty()) pool[rng.nextInt(pool.size)].let {
-                val at = a.plusHours((done - 1).toLong())
-                putWaiting(mapOf(it to (at.plusMinutes(RANDOM_DELAY_MIN) to at.plusHours(1))))
-                picked.add(it)
+            val at = a.plusHours((done - 1).toLong())
+            expire(at)
+            var n = 1
+            var k = 0
+            while (n > 0 && k < RANDOM_ROLLS) {
+                n--; k++
+                val pool = randomCandidates()
+                if (pool.isNotEmpty() && dice.roll() < RANDOM_TERM_P) {
+                    val id = pool[dice.pick(pool.size)]
+                    pick(id, at)
+                    out.add("term" to id)
+                    continue
+                }
+                when (val eff = effect(dice)) {
+                    "double" -> { n += 2; out.add(eff to "") }
+                    "slow" -> { live.put("slow", JSONObject().put("pending", true)); out.add(eff to "") }
+                    "lock" -> out.add(eff to lockCell(now, dice, textOf, auto, fillSec))
+                    else -> out.add(eff to "")
+                }
             }
-        }
-        if (done != live.optInt("rand_n", 0)) {
             live.put("rand_n", done)
             save()
         }
         expire(now)
         val w = waiting
-        return picked.filter { it in w }.distinct()
+        return out.filter { it.first != "term" || it.second in w }
+    }
+
+    /** 未知变量在 at 开始的这个小时抽中了 id: 记下选过 (通过违反失效后再选中的记下用掉了这一次). */
+    fun pick(id: String, at: LocalDateTime) {
+        val viol = lost.toSet() + (live.optJSONArray("rand_viol")?.strings() ?: emptyList())
+        val used = live.optJSONArray("rand_used")?.strings() ?: emptyList()
+        if (id in viol) live.put("rand_again", JSONArray((live.optJSONArray("rand_again")?.strings() ?: emptyList()) + id))
+        if (id !in used) live.put("rand_used", JSONArray(used + id))
+        putWaiting(waiting + (id to (at.plusMinutes(RANDOM_DELAY_MIN) to at.plusHours(1))))
+    }
+
+    // ---- 未知变量的效果 ----
+
+    /** 随机封锁一个还没被封锁, 已经过了填写时限的整点记录格 (最近 24 小时里的; 合约结束后照样锁着).
+     *  返回格子的键 ("日期/小时", 细化规范的半小时 "日期/小时/1"); 没有可以封锁的返回 "". */
+    fun lockCell(now: LocalDateTime, dice: Dice = Dice(), textOf: ((String) -> String)? = null, auto: String = "",
+                 fillSec: Long = 0): String {
+        if (!active || textOf == null || fillSec <= 0) return ""
+        var h = now.minusHours(24).withMinute(0).withSecond(0).withNano(0)
+        val pool = mutableListOf<Triple<String, LocalDateTime, LocalDateTime>>()
+        while (!h.plusHours(1).isAfter(now)) {
+            val key = "${h.toLocalDate()}/${h.hour}"
+            val cells = if (fineHour(h)) listOf(Triple("$key/1", h, h.plusMinutes(30)), Triple("$key/2", h.plusMinutes(30), h.plusHours(1)))
+                else listOf(Triple(key, h, h.plusHours(1)))
+            for (c in cells) {
+                if (!c.third.plusSeconds(cellFill(c.second, c.third, fillSec)).isAfter(now) &&
+                    !hourLocked(c.second, c.third, textOf(c.first), now, fillSec, auto)) pool.add(c)
+            }
+            h = h.plusHours(1)
+        }
+        if (pool.isEmpty()) return ""
+        val (k, a, b) = pool[dice.pick(pool.size)]
+        val locks = live.optJSONArray("locks") ?: JSONArray()
+        live.put("locks", JSONArray(locks.toString()).put(JSONArray(listOf(a.iso(), b.iso()))))
+        save()
+        return k
+    }
+
+    /** 未知变量封锁的记录格 (所有合约的). */
+    fun locks(): List<Pair<LocalDateTime, LocalDateTime>> {
+        val srcs = history.mapNotNull { it.optJSONArray("locks") } + listOfNotNull(if (active) live.optJSONArray("locks") else null)
+        return srcs.flatMap { arr ->
+            (0 until arr.length()).mapNotNull { i ->
+                val v = arr.optJSONArray(i) ?: return@mapNotNull null
+                val a = parseIso(v.optString(0, "")) ?: return@mapNotNull null
+                val b = parseIso(v.optString(1, "")) ?: return@mapNotNull null
+                a to b
+            }
+        }
+    }
+
+    /** 开始专注: 等着的阻滞落到这段专注上 (专注时间按 RANDOM_SLOW 增长). 返回落上了没有. */
+    fun slowBind(start: LocalDateTime): Boolean {
+        if (!slowPending) return false
+        live.put("slow", JSONObject().put("start", start.iso()))
+        save()
+        return true
+    }
+
+    val slowPending: Boolean get() = active && live.optJSONObject("slow")?.optBoolean("pending") == true
+
+    /** 开始于 start 的这段专注的时间按多少增长: 阻滞 RANDOM_SLOW, 否则 1. */
+    fun focusRate(start: LocalDateTime?): Double {
+        val mark = start?.iso() ?: return 1.0
+        if (active && live.optJSONObject("slow")?.optString("start") == mark) return RANDOM_SLOW
+        return if (history.takeLast(3).any { it.optString("slow") == mark }) RANDOM_SLOW else 1.0
+    }
+
+    /** 积攒的休息时间减少到 carry: 合约开始前的那部分最多剩这么多 (先减合约中得到的). */
+    fun preCap(carry: Double) {
+        if (active && preLeft > carry) {
+            live.put("pre_left", r1(maxOf(0.0, carry)))
+            save()
+        }
     }
 
     /** 未知变量抽中了, 还没生效的词条 → (生效的时刻, 移除的时刻). */
@@ -564,6 +687,7 @@ class Contract(private val file: File) {
     fun enable(id: String, until: LocalDateTime? = null) {
         val t = clean(terms + id)
         live.put("terms", JSONArray(t)).put("rand", JSONArray(rand + id))
+        if (id in HOUR_TERMS) live.put("hour_forced", true)   // 整点记录在这次合约中一直开启 (词条移除后也是)
         val till = JSONObject((live.optJSONObject("rand_until") ?: JSONObject()).toString())
         till.remove(id)
         if (until != null) till.put(id, until.iso())
@@ -661,7 +785,7 @@ class Contract(private val file: File) {
     fun netShare(): Double? = terms.mapNotNull { NET_SHARE[it] }.minOrNull()
     fun fog() = has("fog")
     /** 选了整点记录的词条: 整点记录关着时, 这次合约中照样开启. */
-    fun hourForced() = terms.any { it in HOUR_TERMS }
+    fun hourForced() = terms.any { it in HOUR_TERMS } || (active && live.optBoolean("hour_forced"))
     /** 细化规范: 这一小时 (按开始时刻) 和进行中的合约重叠, 记录改为每 30 分钟一次. */
     fun fineHour(slotStart: LocalDateTime): Boolean {
         if (!has("fine")) return false
@@ -849,9 +973,10 @@ class Contract(private val file: File) {
     }
 
     /** 记录封锁: 和选了这个词条的合约重叠的记录格, 过了填写时限还没填写 (空着 / 超时自动记录),
-     *  就不能再改 —— 合约结束了也一样. */
+     *  就不能再改 —— 合约结束了也一样. 未知变量封锁的格子不管填没填都不能再改. */
     fun hourLocked(start: LocalDateTime, end: LocalDateTime, text: String, now: LocalDateTime, fillSec: Long,
                    auto: String): Boolean {
+        if (locks().any { (a, b) -> a.isBefore(end) && start.isBefore(b) }) return true
         if (now.isBefore(end.plusSeconds(cellFill(start, end, fillSec))) || text !in setOf("", auto)) return false
         return periods(now, "seal").any { (a, b) -> a.isBefore(end) && start.isBefore(b) }
     }
