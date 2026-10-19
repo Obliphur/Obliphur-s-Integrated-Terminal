@@ -144,11 +144,14 @@ class Contract(private val file: File) {
         val DEEP = mapOf("deep1" to 40 * 60, "deep2" to 60 * 60)
         /** 侵蚀: 网络申请的冷静期乘多少 (硬规则). */
         val COOLDOWN_X = mapOf("erode1" to 2.0, "erode2" to 3.0)
-        /** 未知变量: 合约的每个小时开始时随机启用一个 1-2 级的词条; 不会选中录像和持久战的词条.
-         *  选中退路封锁 (目标生命值减少后不为 0 才选): 只在选中的那个小时里有效, 这个小时结束时移除. */
+        /** 未知变量: 合约的每个小时开始时随机抽一个 1-2 级的词条; 不会选中录像和持久战的词条.
+         *  抽中的词条 3 分钟后生效, 只在抽中的那个小时里有效, 这个小时结束时移除 (不算违反); 同时只有一个.
+         *  退路封锁只在目标生命值减少后不为 0 时才选. */
         const val RANDOM = "unknown"
         val RANDOM_LEVELS = 1..2
         val RANDOM_SKIP = setOf("gaze", "scar", "long1", "long2")
+        /** 抽中后过这么多分钟才生效. */
+        const val RANDOM_DELAY_MIN = 3L
 
         /** 总等级 → 完成合约时给的休息时间 (分钟, 固定; 按结束时的等级). */
         // 0 级 20 分钟, 38 级起封顶 90 分钟; 中间每一级按直线填充, 四舍五入到整分钟
@@ -432,8 +435,15 @@ class Contract(private val file: File) {
             else -> { t.removeAt(i); c.remove(id); new = "" }
         }
         live.put("terms", JSONArray(clean(t))).put("cut", c)
-        // 未知变量选中的词条降级后还是它选中的
-        if (id in oldRand) live.put("rand", JSONArray(oldRand.mapNotNull { if (it == id) new.ifEmpty { null } else it }))
+        // 未知变量选中的词条降级后还是它选中的 (移除的时刻不变)
+        if (id in oldRand) {
+            live.put("rand", JSONArray(oldRand.mapNotNull { if (it == id) new.ifEmpty { null } else it }))
+            live.optJSONObject("rand_until")?.let { till ->
+                val at = till.strOrNull(id)
+                till.remove(id)
+                if (new.isNotEmpty() && at != null) till.put(new, at)
+            }
+        }
         // 信息阻断: 降一级 = 多给低一档多出来的那部分额度 (从现在用到的地方算起)
         val n = live.optJSONObject("net")
         val newShare = netShare()
@@ -456,12 +466,12 @@ class Contract(private val file: File) {
         val t = terms
         return TERMS.map { it.id }.filter { id ->
             BY_ID[id]!!.level in RANDOM_LEVELS && id !in RANDOM_SKIP && id !in t && blockedBy(id, t) == null &&
-                !(id in LIFE && lifeOf(t + id) <= violations)
+                id !in waiting && !(id in LIFE && lifeOf(t + id) <= violations)
         }
     }
 
-    /** 到了新的一个小时就启用一个词条. 返回这次启用的 (现在还在的) 词条 (只由做自动结束的设备调用).
-     *  程序关着时错过的小时依次补上 (那时选中的退路封锁到了它那个小时的结束就移除). */
+    /** 到了新的一个小时就抽一个词条: 3 分钟后生效 (wake), 到这个小时结束时移除. 返回这次抽中的词条
+     *  (只由做自动结束的设备调用). 程序关着时错过的小时依次补上 (那时抽中的到了它那个小时的结束就移除). */
     fun roll(now: LocalDateTime, rng: kotlin.random.Random = kotlin.random.Random.Default): List<String> {
         if (!active || !has(RANDOM)) return emptyList()
         val a = startAt ?: return emptyList()
@@ -474,7 +484,9 @@ class Contract(private val file: File) {
             expire(a.plusHours((done - 1).toLong()))
             val pool = randomCandidates()
             if (pool.isNotEmpty()) pool[rng.nextInt(pool.size)].let {
-                enable(it, if (it in LIFE) a.plusHours(done.toLong()) else null); picked.add(it)
+                val at = a.plusHours((done - 1).toLong())
+                putWaiting(mapOf(it to (at.plusMinutes(RANDOM_DELAY_MIN) to at.plusHours(1))))
+                picked.add(it)
             }
         }
         if (done != live.optInt("rand_n", 0)) {
@@ -482,10 +494,48 @@ class Contract(private val file: File) {
             save()
         }
         expire(now)
-        return picked.filter { it in rand }.distinct()
+        val w = waiting
+        return picked.filter { it in w }.distinct()
     }
 
-    /** 合约中途启用一个词条: 开始时才定下来的效果在这里补上 (支援短缺: 能用多少). until: 到这个时刻移除 (退路封锁). */
+    /** 未知变量抽中了, 还没生效的词条 → (生效的时刻, 移除的时刻). */
+    val waiting: Map<String, Pair<LocalDateTime, LocalDateTime>> get() {
+        val w = (if (active) live.optJSONObject("rand_wait") else null) ?: return emptyMap()
+        val out = linkedMapOf<String, Pair<LocalDateTime, LocalDateTime>>()
+        for (k in w.keys()) {
+            val v = w.optJSONArray(k) ?: continue
+            val a = parseIso(v.optString(0, "")) ?: continue
+            val b = parseIso(v.optString(1, "")) ?: continue
+            if (k in BY_ID) out[k] = a to b
+        }
+        return out
+    }
+
+    private fun putWaiting(w: Map<String, Pair<LocalDateTime, LocalDateTime>>) {
+        val o = JSONObject()
+        w.forEach { (k, v) -> o.put(k, JSONArray(listOf(v.first.iso(), v.second.iso()))) }
+        live.put("rand_wait", o)
+    }
+
+    /** 抽中的词条到了生效的时刻就启用 (到它那个小时结束时移除). 返回启用的词条. */
+    fun wake(now: LocalDateTime): List<String> {
+        val w = waiting
+        val due = w.filter { !it.value.first.isAfter(now) }.keys
+        if (due.isEmpty()) return emptyList()
+        putWaiting(w.filterKeys { it !in due })
+        val out = mutableListOf<String>()
+        for (id in due) {
+            val until = w[id]!!.second
+            if (now.isBefore(until) && id !in terms && blockedBy(id, terms) == null) {
+                enable(id, until); out.add(id)
+            }
+        }
+        save()
+        return out
+    }
+
+    /** 合约中途启用一个词条: 开始时才定下来的效果在这里补上 (支援短缺: 能用多少; 信息阻断: 重新记下额度).
+     *  until: 到这个时刻移除. */
     fun enable(id: String, until: LocalDateTime? = null) {
         val t = clean(terms + id)
         live.put("terms", JSONArray(t)).put("rand", JSONArray(rand + id))
@@ -494,15 +544,21 @@ class Contract(private val file: File) {
         if (until != null) till.put(id, until.iso())
         live.put("rand_until", till)
         if (id in SUPPLY) live.put("supply", r1(maxOf(pre * (supplyShare(t) ?: 1.0), preUsed)))
+        if (id in NET_SHARE) live.remove("net")       // 之前选中过又移除了: 按现在的剩余额度重新算
         save()
     }
 
-    /** 未知变量选中的这个词条什么时候移除 (退路封锁: 选中的那个小时结束时); 一直有效时 null. */
+    /** 未知变量选中的这个词条什么时候移除 (选中的那个小时结束时); 一直有效时 null. */
     fun randUntil(id: String): LocalDateTime? =
         if (id in rand) parseIso(live.optJSONObject("rand_until")?.strOrNull(id)) else null
 
-    /** 未知变量选中的退路封锁: 那个小时结束了就移除 (不算违反). 返回移除的词条. */
+    /** 未知变量选中的词条: 那个小时结束了就移除 (不算违反; 还没生效的也去掉). 返回移除的 (已生效的) 词条. */
     fun expire(now: LocalDateTime): List<String> {
+        val w = waiting
+        if (w.values.any { !it.second.isAfter(now) }) {
+            putWaiting(w.filterValues { it.second.isAfter(now) })
+            save()
+        }
         val till = (if (active) live.optJSONObject("rand_until") else null) ?: return emptyList()
         val gone = till.keys().asSequence().toList().filter { k -> parseIso(till.strOrNull(k))?.isAfter(now) != true }
         if (gone.isEmpty()) return emptyList()

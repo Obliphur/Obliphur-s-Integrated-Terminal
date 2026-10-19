@@ -657,7 +657,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             contractViolation(if (kind == "loan") tr("使用了紧急借贷") else tr("联网超过了合约的额度"), id)
         }
         if (!c.active) return
-        // 未知变量: 合约的每个小时开始时 (刚开始时也算) 随机启用一个词条; 选中的退路封锁那个小时结束时移除
+        // 未知变量: 合约的每个小时开始时 (刚开始时也算) 随机抽一个词条, 3 分钟后生效, 那个小时结束时移除
         val now = LocalDateTime.now()
         val gone = c.expire(now)
         for (id in gone) {
@@ -665,11 +665,20 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             toast(tr("未知变量: {name} 已移除", "name" to tr(Contract.BY_ID[id]!!.name)))
         }
         val picked = c.roll(now)
+        val woke = c.wake(now)
+        val wait = c.waiting
         for (id in picked) {
             logNotice("CONTRACT unknown -> $id")
+            wait[id]?.let {
+                toast(tr("未知变量: 抽中了 {name}, {t} 生效", "name" to tr(Contract.BY_ID[id]!!.name),
+                    "t" to it.first.format(Fmt.HM)), "warn", long = true)
+            }
+        }
+        for (id in woke) {
+            logNotice("CONTRACT unknown on $id")
             toast(tr("未知变量: 启用了 {name}", "name" to tr(Contract.BY_ID[id]!!.name)), "warn", long = true)
         }
-        if (picked.isNotEmpty() || gone.isNotEmpty()) {
+        if (picked.isNotEmpty() || woke.isNotEmpty() || gone.isNotEmpty()) {
             host.applyNet(false)                 // 选中全频道阻塞干扰: 断网方式跟着变
             syncHourLog()
         }

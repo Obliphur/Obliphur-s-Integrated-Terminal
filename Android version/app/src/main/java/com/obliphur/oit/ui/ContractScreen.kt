@@ -323,6 +323,9 @@ fun ContractScreen() {
             var text = termLine(id) + "   " + tr("[未知变量选中 · 点击关闭]")
             c.randUntil(id)?.let { text += "   " + tr("[{t} 移除]", "t" to it.format(Fmt.HM)) }
             SelRow(c.termLevel(id), text, false, id)
+        } + c.waiting.map { (id, at) ->        // 抽中了还没生效的
+            SelRow(Contract.BY_ID[id]!!.level, termLine(id) + "   " +
+                tr("[未知变量抽中 · {t} 生效]", "t" to at.first.format(Fmt.HM)), true)
         }
         Column(Modifier.fillMaxWidth().background(p.sel).padding(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {

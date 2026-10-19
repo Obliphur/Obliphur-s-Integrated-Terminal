@@ -637,6 +637,8 @@ object EnStrings {
         "[未知变量选中 · 点击关闭, 算一次违反]" to "[Picked by Unknown Variable · click to switch off, counts as a violation]",
         "[未知变量选中 · 点击关闭]" to "[Picked by Unknown Variable · click to switch off]",
         "未知变量: {name} 已移除" to "Unknown Variable: {name} removed",
+        "未知变量: 抽中了 {name}, {t} 生效" to "Unknown Variable: drew {name}, takes effect at {t}",
+        "[未知变量抽中 · {t} 生效]" to "[Drawn by Unknown Variable · takes effect at {t}]",
         "[{t} 移除]" to "[removed at {t}]",
         "今天合约奖励的联网额度 {t}" to "Online quota rewarded by contracts today: {t}",
         "打开了社交 / AI 聊天软件 {exe}" to "opened the social / AI chat app {exe}",

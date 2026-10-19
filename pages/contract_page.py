@@ -391,6 +391,8 @@ class ContractPage(tk.Frame):
             if until:
                 text += "   " + tr("[{t} 移除]", t=f"{until:%H:%M}")
             out.append((c.term_level(t), text, False, t))
+        for t, (at, _b) in c.waiting.items():          # 抽中了还没生效的
+            out.append((C.BY_ID[t][2], f"{term_line(t)}   " + tr("[未知变量抽中 · {t} 生效]", t=f"{at:%H:%M}"), True, ""))
         return out
 
     def _fill_list(self, sel):

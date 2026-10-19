@@ -207,15 +207,35 @@ class ContractTest {
         assertTrue(pool.none { it.startsWith("long") })              // 不选持久战
         assertTrue("music" in pool && "jam" in pool)
         val rng = kotlin.random.Random(1)
-        assertEquals(1, c.roll(t0, rng).size); assertEquals(6, c.level)
+        // 抽中后 3 分钟才生效, 只在抽中的那个小时里有效
+        val first = c.roll(t0, rng)
+        assertEquals(1, first.size); assertEquals(emptyList<String>(), c.rand); assertEquals(first, c.waiting.keys.toList())
+        assertEquals(t0.plusMinutes(3) to t0.plusHours(1), c.waiting[first[0]]); assertFalse(first[0] in c.randomCandidates())
+        assertEquals(emptyList<String>(), c.wake(t0.plusMinutes(2).plusSeconds(59))); assertFalse(c.has(first[0]))
+        assertEquals(first, c.wake(t0.plusMinutes(3))); assertEquals(first, c.rand); assertTrue(c.waiting.isEmpty())
+        assertEquals(6, c.level); assertEquals(t0.plusHours(1), c.randUntil(first[0]))
         assertEquals(0, c.roll(t0.plusMinutes(59), rng).size)
-        assertEquals(2, c.roll(t0.plusHours(2).plusMinutes(1), rng).size)
-        assertEquals(3, c.rand.size); assertEquals(6, c.level)
+        // 错过的小时补上; 同时只有一个, 到时移除不算违反
+        val more = c.roll(t0.plusHours(2).plusMinutes(1), rng)
+        assertEquals(1, more.size); assertEquals(emptyList<String>(), c.rand)
+        assertEquals(more, c.wake(t0.plusHours(2).plusMinutes(3))); assertEquals(more, c.rand); assertEquals(6, c.level)
+        assertEquals(t0.plusHours(3), c.randUntil(more[0])); assertEquals(0, c.violations)
         assertTrue(c.rand.all { Contract.BY_ID[it]!!.level in 1..2 && it in c.terms })
         // 点按关闭: 算一次违反, 直接去掉
         val t = c.rand[0]
         assertEquals(false to "", c.violate(t, drop = true))
         assertFalse(t in c.terms || t in c.rand); assertEquals(1, c.violations)
+        // 下一个小时再抽一个, 这个小时结束时移除
+        val nxt = c.roll(t0.plusHours(3), rng)
+        assertEquals(nxt, c.wake(t0.plusHours(3).plusMinutes(5))); assertEquals(nxt, c.rand)
+        assertEquals(nxt, c.expire(t0.plusHours(4))); assertEquals(emptyList<String>(), c.rand)
+        assertEquals(1, c.violations); assertEquals(6, c.level)
+        // 选中的词条降级: 还是它选中的, 移除的时刻不变
+        c.start(listOf("unknown"), "me", t0)
+        c.enable("chan2", t0.plusHours(1))
+        assertEquals(false to "chan1", c.violate("chan2")); assertEquals(listOf("chan1"), c.rand)
+        assertEquals(t0.plusHours(1), c.randUntil("chan1"))
+        assertEquals(listOf("chan1"), c.expire(t0.plusHours(1))); assertEquals(listOf("unknown"), c.terms)
         // 选中支援短缺: 补上能用多少
         c.start(listOf("unknown"), "me", t0, pre = 600.0)
         c.enable("short1")
