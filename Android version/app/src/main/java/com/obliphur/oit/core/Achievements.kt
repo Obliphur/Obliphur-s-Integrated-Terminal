@@ -26,7 +26,7 @@ class AchFacts(
 class AchievementStore(private val file: File, guessFirst: () -> LocalDateTime) {
     companion object {
         /** "登顶": 完成危机等级 (结束时) 不低于这个的合约. */
-        const val SUMMIT_LEVEL = 25
+        const val SUMMIT_LEVEL = 38
         /** "仓鼠": 积攒的休息时间达到 3 小时. */
         const val HAMSTER_SECONDS = 3 * 3600
         /** "毋畏天灾": 同一周 (周一 0 点起) 完成的合约数. */

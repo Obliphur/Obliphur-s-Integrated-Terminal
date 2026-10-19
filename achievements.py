@@ -35,7 +35,7 @@ ACHIEVEMENTS = [
 ]
 BY_ID = {a[0]: a for a in ACHIEVEMENTS}
 SLEEP_WORD = "sleeping"
-SUMMIT_LEVEL = 25          # "登顶": 完成危机等级 (结束时) 不低于这个的合约
+SUMMIT_LEVEL = 38          # "登顶": 完成危机等级 (结束时) 不低于这个的合约
 HAMSTER_SECONDS = 3 * 3600  # "仓鼠": 积攒的休息时间达到 3 小时
 WEEK_CONTRACTS = 7         # "毋畏天灾": 同一周 (周一 0 点起) 完成的合约数
 MONTH_HOURS = 240          # "月度杰出主管": 某一个月的学习时长合计
@@ -273,11 +273,11 @@ def _selftest():
     s2.mark_seen("awake")
     assert "awake" not in AchievementStore(d).unseen
     assert is_english_name("overload") and not is_english_name("苏醒")
-    # 登顶: 完成危机等级 25 及以上的合约
+    # 登顶: 完成危机等级 38 及以上的合约
     f24 = Facts(datetime(2026, 1, 1), datetime(2026, 1, 1), False, {}, {},
-                [{"result": "completed", "level": 24}, {"result": "failed", "level": 26}])
+                [{"result": "completed", "level": 37}, {"result": "failed", "level": 39}])
     assert not CHECKS["summit"](f24)
-    f25 = Facts(datetime(2026, 1, 1), datetime(2026, 1, 1), False, {}, {}, [{"result": "completed", "level": 25}])
+    f25 = Facts(datetime(2026, 1, 1), datetime(2026, 1, 1), False, {}, {}, [{"result": "completed", "level": 38}])
     assert CHECKS["summit"](f25)
     # 仓鼠 / 第一次对决 / 毋畏天灾 / 月度杰出主管
     z = datetime(2026, 1, 1)
