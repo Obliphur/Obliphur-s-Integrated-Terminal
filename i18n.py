@@ -760,7 +760,7 @@ EN = {
     "退路封锁": "Retreat Seal",
     "初始目标生命值为3": "Initial target life is 3",
     "初始目标生命值为2": "Initial target life is 2",
-    "初始目标生命值为1": "Initial target life is 1",
+    "初始目标生命值为1\n危机等级每有10级 词条等级增加一级": "Initial target life is 1\n+1 term level for every 10 Contingency Levels",
     "提前结束": "Ended early",
     "危机等级 {lv} · 时长 {t} · 到 {at}": "Contingency level {lv} · {t} · until {at}",
     "合约开始.": "Contract started.",
@@ -808,6 +808,7 @@ EN = {
     "开始时 {n}": "At start {n}",
     "[原 {name}]": "[was {name}]",
     "[降了 {n} 级]": "[down {n} level(s)]",
+    "[危机等级加成 +{n} 级]": "[Contingency bonus +{n} level(s)]",
     "合约的联网额度还剩 {t}": "contract network allowance left {t}",
     "合约完成后的第一次休息: 暂停时剩余时间 ×{r:g} 留给下次.": "First break after the contract: pausing keeps ×{r:g} of the rest for next time.",
     # ---- 合约: 禁止的软件 / 录像 (MECHANICS 18.3), 设置 → 录像 ----

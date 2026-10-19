@@ -360,8 +360,16 @@ class ContractPage(tk.Frame):
         """已选中的词条: (等级, 文字, 是否失效, 未知变量选中的词条 / ""). 合约中按开始时选的列出,
         降过级的写出降成了什么; 最后是未知变量选中的."""
         c = self.c
+
+        def last(t, lv, text, extra):
+            """最后防线: 写出危机等级给的额外等级."""
+            if t != C.LAST or not extra:
+                return lv, text
+            return lv + extra, text + "   " + tr("[危机等级加成 +{n} 级]", n=extra)
         if not c.active:
-            return [(C.BY_ID[t][2], term_line(t), False, "") for t in sel]
+            extra = C.last_bonus(sum(C.BY_ID[t][2] for t in sel if t in C.BY_ID), sel)
+            return [(*last(t, C.BY_ID[t][2], term_line(t), extra), False, "") for t in sel]
+        extra = c.last_extra
         out = []
         rand = c.rand
         mine = [x for x in c.terms if x not in rand]
@@ -376,7 +384,7 @@ class ContractPage(tk.Frame):
                 text = term_line(t)
                 if c.term_level(t) < C.BY_ID[t][2]:
                     text += "   " + tr("[降了 {n} 级]", n=C.BY_ID[t][2] - c.term_level(t))
-                out.append((c.term_level(t), text, False, ""))
+                out.append((*last(t, c.term_level(t), text, extra), False, ""))
         for t in rand:
             text = f"{term_line(t)}   " + tr("[未知变量选中 · 点击关闭]")
             until = c.rand_until(t)

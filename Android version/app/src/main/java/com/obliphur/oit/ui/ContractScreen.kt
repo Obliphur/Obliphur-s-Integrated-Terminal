@@ -303,7 +303,11 @@ fun ContractScreen() {
 
         // 已选中的词条: 黑底, 两栏. (等级, 文字, 是否失效, 未知变量选中的词条 / ""); 合约中最后是未知变量选中的 (黄色, 点按关闭)
         data class SelRow(val lv: Int, val text: String, val void: Boolean, val rand: String = "")
-        val rows = if (!active) sel.map { SelRow(Contract.BY_ID[it]!!.level, termLine(it), false) }
+        // 最后防线: 写出危机等级给的额外等级
+        val extra = if (active) c.lastExtra else Contract.lastBonus(sel.sumOf { Contract.BY_ID[it]?.level ?: 0 }, sel)
+        fun SelRow.last(id: String) = if (id != Contract.LAST || extra == 0) this
+            else copy(lv = lv + extra, text = text + "   " + tr("[危机等级加成 +{n} 级]", "n" to extra))
+        val rows = if (!active) sel.map { SelRow(Contract.BY_ID[it]!!.level, termLine(it), false).last(it) }
         else c.orig.map { t ->
             val g = Contract.BY_ID[t]!!.group
             val cur = c.terms.firstOrNull { it !in rand && (it == t || Contract.BY_ID[it]!!.group == g) }
@@ -313,7 +317,7 @@ fun ContractScreen() {
                     tr("[原 {name}]", "name" to termShort(t)), false)
                 c.termLevel(t) < Contract.BY_ID[t]!!.level -> SelRow(c.termLevel(t), termLine(t) + "   " +
                     tr("[降了 {n} 级]", "n" to Contract.BY_ID[t]!!.level - c.termLevel(t)), false)
-                else -> SelRow(c.termLevel(t), termLine(t), false)
+                else -> SelRow(c.termLevel(t), termLine(t), false).last(t)
             }
         } + rand.map { id ->
             var text = termLine(id) + "   " + tr("[未知变量选中 · 点击关闭]")

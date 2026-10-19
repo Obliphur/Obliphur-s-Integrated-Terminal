@@ -41,7 +41,7 @@ TERMS = [
     ("short2", "short", 2, "环境:支援短缺-II", "不能使用合约开始前已经保存的休息时间", ()),
     ("retreat1", "retreat", 1, "环境:退路封锁-I", "初始目标生命值为3", ()),
     ("retreat2", "retreat", 2, "环境:退路封锁-II", "初始目标生命值为2", ()),
-    ("last", "retreat", 3, "最后防线", "初始目标生命值为1", ()),
+    ("last", "retreat", 3, "最后防线", "初始目标生命值为1\n危机等级每有10级 词条等级增加一级", ()),
     ("chan1", "chan", 1, "环境:通道阻塞-I", "期间的最大窗口数改为4", ()),
     ("chan2", "chan", 2, "环境:通道阻塞-II", "期间的最大窗口数改为3", ()),
     ("deep1", "deep", 1, "目标:纵深推进-I", "专注的时间不能少于40min", ()),
@@ -109,6 +109,7 @@ WINDOWS = {"chan1": 4, "chan2": 3}
 SUPPLY = {"short1": 0.5, "short2": 0.0}         # 合约开始前积攒的休息时间能用几成
 HOUR_TERMS = {"seal", "fine"}                   # 整点记录的词条: 整点记录关着时, 这次合约中照样开启
 LIFE = {"retreat1": 3, "retreat2": 2, "last": 1}  # 初始目标生命值 (硬规则)
+LAST, LAST_STEP = "last", 10                     # 最后防线: 危机等级 (不算这份加成) 每有 10 级, 它的等级 +1
 RECORD = {"gaze": "camera", "scar": "screen"}   # 录像的词条 → 录什么 (recorder.py)
 BANS = ("music", "silent", "game", "video")     # 禁止打开某类软件的词条 (每 2 秒看一次)
 BANS_ALL = "ent"                                # 互联网娱乐的败退: 同时有上面四个的效果; 违反任意一项就整个失效
@@ -209,8 +210,14 @@ BAN_EXES = {"silent": SOCIAL_EXES, "game": GAME_EXES, "video": VIDEO_EXES}
 BAN_TITLES = {"silent": SOCIAL_TITLES, "video": VIDEO_TITLES}   # 只看浏览器的窗口
 
 
+def last_bonus(base: int, terms) -> int:
+    """最后防线额外的等级: 选着它时, 危机等级 (不算这份加成) 每有 LAST_STEP 级 +1."""
+    return int(base) // LAST_STEP if LAST in (terms or []) else 0
+
+
 def level_of(terms) -> int:
-    return sum(BY_ID[t][2] for t in terms if t in BY_ID)
+    base = sum(BY_ID[t][2] for t in terms if t in BY_ID)
+    return base + last_bonus(base, terms)
 
 
 def life_of(terms) -> int:
@@ -360,7 +367,16 @@ class Contract:
     @property
     def level(self) -> int:
         rand = self.rand
-        return sum(self.term_level(t) for t in self.terms if t in BY_ID and t not in rand)
+        mine = [t for t in self.terms if t in BY_ID and t not in rand]
+        base = sum(self.term_level(t) for t in mine)
+        return base + last_bonus(base, mine)
+
+    @property
+    def last_extra(self) -> int:
+        """最后防线现在额外的等级 (按现在的危机等级算)."""
+        rand = self.rand
+        mine = [t for t in self.terms if t in BY_ID and t not in rand]
+        return last_bonus(sum(self.term_level(t) for t in mine), mine)
 
     @property
     def orig(self) -> list:
@@ -922,7 +938,9 @@ def cell_fill(start: datetime, end: datetime, fill: timedelta) -> timedelta:
 
 def _selftest():
     import tempfile
-    assert level_of(["long3", "isolate", "last"]) == 10
+    assert level_of(["long3", "isolate", "last"]) == 10 + 1, "最后防线: 危机等级每有 10 级 +1"
+    assert level_of(["long3", "isolate"]) == 7 and level_of(["last", "long1"]) == 4
+    assert last_bonus(19, ["last"]) == 1 and last_bonus(20, ["last"]) == 2 and last_bonus(30, ["long3"]) == 0
     assert life_of([]) == 4 and life_of(["retreat1"]) == 3 and life_of(["retreat2"]) == 2 and life_of(["last"]) == 1
     assert conflicts("retreat1", "last") and conflicts("retreat2", "last"), "退路封锁和最后防线是同一组"
     assert not {"vlc.exe", "potplayermini64.exe", "mpc-hc64.exe", "wmplayer.exe"} & MUSIC_EXES, "视频播放器不算"
@@ -957,10 +975,10 @@ def _selftest():
     assert not set(SOCIAL_EXES) & set(VIDEO_EXES) and not SOCIAL_TITLES & VIDEO_TITLES, "一个软件只算一个词条"
     best = clean_terms(["long3", "move2", "info3", "suppress", "jam", "music", "fog", "tired3", "chan2", "last",
                         "short2", "seal", "fine", "silent", "game", "video", "gaze", "scar"])
-    assert "scar" not in best and level_of(best) == 31, level_of(best)
+    assert "scar" not in best and level_of(best) == 31 + 3, level_of(best)
     best2 = clean_terms(["long3", "move2", "info3", "suppress", "jam", "ent", "fog", "tired3", "chan2", "last",
                          "short2", "seal", "fine", "gaze"])
-    assert level_of(best2) == 31 and "ent" in best2, best2
+    assert level_of(best2) == 31 + 3 and "ent" in best2, best2
 
     c = Contract(tempfile.mkdtemp())
     t0 = datetime(2026, 10, 18, 9, 30)
@@ -1092,6 +1110,11 @@ def _selftest():
     rec = c.finish("failed", t0 + timedelta(hours=2))
     assert rec["reward"] == 0 and rec["orig_level"] == 6 and rec["level"] == 4 and not c.active
     assert not c.take_first_break()
+
+    # 最后防线: 危机等级 10 → 多 1 级; 降级后不到 10 级就没有了
+    c.start(["last", "long3", "isolate"], owner="me", now=t0)
+    assert c.level == 11 and c.last_extra == 1 and c.orig_level == 11
+    assert c.violate("isolate") == (True, "info3") and c.level == 9 and c.last_extra == 0   # 目标生命值只有 1
 
     # 完成: 按等级给固定的休息时间 (等级 4 → 44 分钟), 第一次休息的结转比例
     c.start(["last", "tired1"], owner="me", now=t0)

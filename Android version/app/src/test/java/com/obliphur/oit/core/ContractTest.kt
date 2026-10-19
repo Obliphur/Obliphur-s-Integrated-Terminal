@@ -15,7 +15,10 @@ class ContractTest {
 
     @Test
     fun terms() {
-        assertEquals(10, Contract.levelOf(listOf("long3", "isolate", "last")))
+        assertEquals(10 + 1, Contract.levelOf(listOf("long3", "isolate", "last")))   // 最后防线: 危机等级每有 10 级 +1
+        assertEquals(7, Contract.levelOf(listOf("long3", "isolate"))); assertEquals(4, Contract.levelOf(listOf("last", "long1")))
+        assertEquals(1, Contract.lastBonus(19, listOf("last"))); assertEquals(2, Contract.lastBonus(20, listOf("last")))
+        assertEquals(0, Contract.lastBonus(30, listOf("long3")))
         assertEquals(4, Contract.lifeOf(emptyList())); assertEquals(3, Contract.lifeOf(listOf("retreat1")))
         assertEquals(2, Contract.lifeOf(listOf("retreat2"))); assertEquals(1, Contract.lifeOf(listOf("last")))
         assertTrue(Contract.conflicts("retreat1", "last"))
@@ -44,7 +47,7 @@ class ContractTest {
         assertEquals(listOf("isolate", "chan2"), Contract.clean(listOf("isolate", "chan2")))
         val best = Contract.clean(listOf("long3", "move2", "info3", "suppress", "jam", "music", "fog", "tired3", "chan2", "last",
             "short2", "seal", "fine", "silent", "game", "video", "gaze"))
-        assertEquals(31, Contract.levelOf(best))
+        assertEquals(31 + 3, Contract.levelOf(best))
         assertEquals(4 * 3600 * 1.6, Contract.durationOf(listOf("long3")), 1e-6)
     }
 
@@ -184,6 +187,10 @@ class ContractTest {
         assertEquals(false to "", c.violate("hoard")); assertEquals("", c.hoardCheck()); assertEquals(0.7, c.restFactor(), 1e-9)
         c.start(listOf("erode1"), "me", t0)
         assertEquals("", c.hoardCheck()); assertEquals(2.0, c.cooldownFactor(), 1e-9); assertEquals("", c.focusCheck(60.0))
+        // 最后防线: 危机等级 10 → 多 1 级; 降级后不到 10 级就没有了
+        c.start(listOf("last", "long3", "isolate"), "me", t0)
+        assertEquals(11, c.level); assertEquals(1, c.lastExtra); assertEquals(11, c.origLevel)
+        assertEquals(true to "info3", c.violate("isolate")); assertEquals(9, c.level); assertEquals(0, c.lastExtra)   // 目标生命值只有 1
         // 纵深推进: 专注不到 40 / 60 分钟算违反; -II 降成 -I
         c.start(listOf("deep2", "quiet"), "me", t0)
         assertEquals("deep2", c.focusCheck(59 * 60.0)); assertEquals("", c.focusCheck(60 * 60.0))

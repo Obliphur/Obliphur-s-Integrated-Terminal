@@ -44,7 +44,7 @@ class Contract(private val file: File) {
             Term("short2", "short", 2, "环境:支援短缺-II", "不能使用合约开始前已经保存的休息时间"),
             Term("retreat1", "retreat", 1, "环境:退路封锁-I", "初始目标生命值为3"),
             Term("retreat2", "retreat", 2, "环境:退路封锁-II", "初始目标生命值为2"),
-            Term("last", "retreat", 3, "最后防线", "初始目标生命值为1"),
+            Term("last", "retreat", 3, "最后防线", "初始目标生命值为1\n危机等级每有10级 词条等级增加一级"),
             Term("chan1", "chan", 1, "环境:通道阻塞-I", "期间的最大窗口数改为4"),
             Term("chan2", "chan", 2, "环境:通道阻塞-II", "期间的最大窗口数改为3"),
             Term("deep1", "deep", 1, "目标:纵深推进-I", "专注的时间不能少于40min"),
@@ -132,6 +132,9 @@ class Contract(private val file: File) {
         val HOUR_TERMS = setOf("seal", "fine")
         /** 初始目标生命值 (硬规则). */
         val LIFE = mapOf("retreat1" to 3, "retreat2" to 2, "last" to 1)
+        /** 最后防线: 危机等级 (不算这份加成) 每有 LAST_STEP 级, 它的等级 +1. */
+        const val LAST = "last"
+        const val LAST_STEP = 10
 
         /** 选了这些词条时的初始目标生命值. */
         fun lifeOf(terms: Collection<String>): Int = terms.mapNotNull { LIFE[it] }.minOrNull() ?: VIOLATION_LIMIT
@@ -216,7 +219,10 @@ class Contract(private val file: File) {
             else -> emptySet()
         }
 
-        fun levelOf(terms: Collection<String>) = terms.sumOf { BY_ID[it]?.level ?: 0 }
+        /** 最后防线额外的等级: 选着它时, 危机等级 (不算这份加成) 每有 LAST_STEP 级 +1. */
+        fun lastBonus(base: Int, terms: Collection<String>) = if (LAST in terms) base / LAST_STEP else 0
+
+        fun levelOf(terms: Collection<String>) = terms.sumOf { BY_ID[it]?.level ?: 0 }.let { it + lastBonus(it, terms) }
 
         fun restMinutes(level: Int): Int = REST_TABLE.last { level >= it.first }.second
         /** 完成合约时存进积攒的休息时间的秒数. */
@@ -286,7 +292,11 @@ class Contract(private val file: File) {
     fun termLevel(id: String) = (BY_ID[id]?.level ?: 0) - cut.optInt(id, 0)
     /** 未知变量随机启用的词条 (不算进危机等级; 可以点击关闭, 算一次违反). */
     val rand: List<String> get() = if (active) (live.optJSONArray("rand")?.strings() ?: emptyList()).filter { it in terms } else emptyList()
-    val level get() = rand.let { r -> terms.filter { it !in r }.sumOf { termLevel(it) } }
+    /** 算进危机等级的词条 (不算未知变量选中的). */
+    private val counted get() = rand.let { r -> terms.filter { it !in r } }
+    val level get() = counted.let { m -> m.sumOf { termLevel(it) }.let { it + lastBonus(it, m) } }
+    /** 最后防线现在额外的等级 (按现在的危机等级算). */
+    val lastExtra get() = counted.let { m -> lastBonus(m.sumOf { termLevel(it) }, m) }
     /** 开始时选的词条 (降级前). */
     val orig: List<String> get() = if (active) clean(live.optJSONArray("orig")?.strings() ?: terms) else emptyList()
     val origLevel get() = levelOf(orig)
