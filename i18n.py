@@ -889,7 +889,7 @@ EN = {
     "网络申请冷却期改为3x": "Network request cooldown ×3",
     "不能提前结束休息 但是休息时间获得一个额外乘区1.05x": "Breaks can't be ended early, but break time gets an extra ×1.05 multiplier",
     "专注中不能处于联网状态": "You can't be online while focusing",
-    "合约开始时 以及之后每过一个整小时 从当前可以选择的1-2级词条中随机启用一个\n选中的词条不算进危机等级 可以点击关闭 但算一次违反": "When the contract starts and every full hour after that, one random level 1-2 term you can still pick is switched on\nPicked terms don't add to the Contingency Level; you can switch one off, but it counts as a violation",
+    "合约开始时 以及之后每过一个整小时 从当前可以选择的1-2级词条中随机启用一个\n选中的词条不算进危机等级": "When the contract starts and every full hour after that, one random level 1-2 term you can still pick is switched on\nPicked terms don't add to the Contingency Level",
     "禁止囤囤鼠!: 提前结束休息会算作一次违反.": "No Hoarding!: ending a break early counts as a violation.",
     "提前结束了休息": "Ended a break early",
     "专注只有 {m} 分钟 (至少 {n} 分钟)": "Focus lasted only {m} min (at least {n} min)",
