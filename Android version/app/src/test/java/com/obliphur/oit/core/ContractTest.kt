@@ -86,9 +86,11 @@ class ContractTest {
         e.start(listOf("ent", "gaze", "info3"), "me", t0)
         assertEquals("ent", e.banTerm("game")); assertEquals(listOf("camera"), e.records())
         assertEquals("ent", e.banCheck("video", true)); assertEquals("", e.banCheck("video", true))
-        // 违反任意一项就整个失效, 四类都放开
-        assertEquals(false to "", e.violate("ent")); assertFalse(e.has("ent"))
-        assertEquals("", e.banTerm("silent")); assertEquals("", e.banCheck("silent", true))
+        // 违反任意一项就整个失效; 失效后照样检查: 再次打开只响警报 (echo), 不扣目标生命值, 每个词条 2 分钟最多响一次
+        assertEquals(false to "", e.violate("ent")); assertFalse(e.has("ent")); assertEquals(listOf("ent"), e.lost)
+        assertEquals("ent", e.banTerm("silent")); assertEquals("ent", e.banCheck("silent", true)); assertTrue(e.echo("ent"))
+        assertTrue(e.echoDue("ent", t0)); assertFalse(e.echoDue("ent", t0.plusSeconds(119)))
+        assertTrue(e.echoDue("ent", t0.plusSeconds(120))); assertEquals(1, e.violations)
         e.finish("completed", t0.plusHours(5))
         // 合约开始时积攒的休息时间 +20 分钟
         assertEquals(20 * 60, Contract.restGift(listOf("ent", "gaze"))); assertEquals(0, Contract.restGift(listOf("music")))
@@ -185,9 +187,34 @@ class ContractTest {
         // 禁止囤囤鼠!: 提前结束休息算违反 (软规则, 1 级, 违反一次失效), 休息时间 ×1.05; 侵蚀: 冷静期 ×2 / ×3
         c.start(listOf("hoard", "tired1", "erode2"), "me", t0)
         assertEquals("hoard", c.hoardCheck()); assertEquals(0.7 * 1.05, c.restFactor(), 1e-9); assertEquals(3.0, c.cooldownFactor(), 1e-9)
-        assertEquals(false to "", c.violate("hoard")); assertEquals("", c.hoardCheck()); assertEquals(0.7, c.restFactor(), 1e-9)
+        assertEquals(false to "", c.violate("hoard")); assertFalse(c.has("hoard")); assertEquals(0.7, c.restFactor(), 1e-9)
+        assertEquals("hoard", c.hoardCheck()); assertTrue(c.echo("hoard"))          // 失效后再提前结束休息: 只响警报
         c.start(listOf("erode1"), "me", t0)
         assertEquals("", c.hoardCheck()); assertEquals(2.0, c.cooldownFactor(), 1e-9); assertEquals("", c.focusCheck(60.0))
+        // 违反到失效的词条照样检查: 再次触发返回它 (echo, 只响警报), 不扣目标生命值
+        c.start(listOf("chan1", "deep1", "quiet", "info1", "short1"), "me", t0, pre = 600.0)
+        assertEquals("chan1", c.windowCheck(5)); assertEquals(false to "", c.violate("chan1"))
+        assertEquals("chan1" to 4, c.windowWatch()); assertEquals("", c.windowCheck(5)); assertEquals("", c.windowCheck(3))
+        assertEquals("chan1", c.windowCheck(5)); assertTrue(c.echo("chan1"))
+        assertEquals(false to "", c.violate("deep1")); assertEquals("deep1", c.focusCheck(39 * 60.0)); assertEquals("", c.focusCheck(40 * 60.0))
+        assertEquals("quiet", c.quietCheck(true)); assertEquals(false to "", c.violate("quiet")); assertEquals("", c.quietCheck(true))
+        assertEquals("", c.quietCheck(false)); assertEquals("quiet", c.quietCheck(true))
+        assertEquals(3, c.violations); assertEquals(1, c.life)
+        c.live.put("violations", 0)                       // 目标生命值只有 4: 接着测剩下的
+        assertNull(c.netCheck(0.0, 0.0, 4000.0, "d")); assertEquals("info1" to "over", c.netCheck(3100.0, 0.0, 0.0, "d"))
+        assertEquals(false to "", c.violate("info1")); assertEquals("", c.netTerm())
+        assertNull(c.netCheck(3100.0, 0.0, 0.0, "d"))                                   // 没有继续用
+        assertEquals("info1" to "over", c.netCheck(3200.0, 0.0, 0.0, "d")); assertNull(c.netCheck(3200.0, 0.0, 0.0, "d"))
+        assertEquals("info1" to "loan", c.netCheck(3200.0, 300.0, 0.0, "d")); assertTrue(c.echo("info1"))
+        assertEquals("short1", c.supplyCheck(0.0, 400.0)); assertEquals(false to "", c.violate("short1")); assertNull(c.supplyLimit)
+        assertEquals("short1", c.supplyWatch()); assertEquals("", c.supplyCheck(0.0, 400.0)); assertEquals("", c.supplyCheck(0.0, 400.3))
+        assertEquals("short1", c.supplyCheck(0.0, 410.0)); assertTrue(c.echo("short1"))
+        assertEquals(2, c.violations); assertEquals(listOf("chan1", "deep1", "quiet", "info1", "short1"), c.lost); assertEquals(0, c.level)
+        // 降级 (还没失效) / 关闭未知变量选中的: 不算失效
+        c.start(listOf("chan2", "unknown"), "me", t0)
+        c.enable("music", t0.plusHours(1))
+        assertEquals(false to "chan1", c.violate("chan2")); assertEquals(false to "", c.violate("music", drop = true))
+        assertEquals(emptyList<String>(), c.lost); assertEquals("", c.banTerm("music")); assertFalse(c.echo("chan2"))
         // 最后防线: 危机等级 10 → 多 1 级; 降级后不到 10 级就没有了
         c.start(listOf("last", "long3", "isolate"), "me", t0)
         assertEquals(11, c.level); assertEquals(1, c.lastExtra); assertEquals(11, c.origLevel)

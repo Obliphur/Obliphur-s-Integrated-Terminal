@@ -121,6 +121,8 @@ RANDOM = "unknown"                              # 未知变量: 合约的每个�
 RANDOM_LEVELS = (1, 2)
 RANDOM_SKIP = {"gaze", "scar", "long1", "long2"}  # 不会选中录像和持久战的词条
 RANDOM_DELAY = timedelta(minutes=3)             # 抽中后过这么久才生效
+# 被违反到失效的词条 (降到最低一档后又违反了) 照样检查: 再次触发只响警报, 不扣目标生命值; 每个词条 2 分钟最多响一次
+ECHO_COOLDOWN = 120
 # 未知变量抽中的词条 3 分钟后生效, 只在抽中的那个小时里有效, 这个小时结束时移除 (不算违反); 同时只有一个.
 # 退路封锁只在目标生命值减少后不为 0 时才选
 
@@ -342,6 +344,36 @@ class Contract:
         return tid in self.terms
 
     @property
+    def lost(self) -> list:
+        """被违反到失效的词条 (失效前的最低一档; 不算未知变量选中的和录像)."""
+        v = self.live.get("lost") if self.active else None
+        return [t for t in v if t in BY_ID] if isinstance(v, list) else []
+
+    def watching(self, tid: str) -> bool:
+        """这个词条要不要检查: 选着, 或者已经被违反到失效."""
+        return self.has(tid) or tid in self.lost
+
+    def echo(self, tid: str) -> bool:
+        """触发的是已经失效的词条: 只响警报, 不扣目标生命值."""
+        return bool(tid) and not self.has(tid) and tid in self.lost
+
+    def echo_due(self, tid: str, now: datetime = None) -> bool:
+        """已失效的词条再次触发的警报: 每个词条 ECHO_COOLDOWN 秒最多响一次 (只记在本机)."""
+        now = now or datetime.now()
+        e = self.__dict__.setdefault("_echo", {})
+        last = e.get(tid)
+        if last is not None and (now - last).total_seconds() < ECHO_COOLDOWN:
+            return False
+        e[tid] = now
+        return True
+
+    def _lost_of(self, table) -> str:
+        """已经失效的词条里属于 table 的那个 (这一类现在没有选着的)."""
+        if any(t in table for t in self.terms):
+            return ""
+        return next((t for t in self.lost if t in table), "")
+
+    @property
     def start_at(self):
         return _parse(self.live.get("start")) if self.active else None
 
@@ -536,6 +568,9 @@ class Contract:
             new = ""
         self.live["terms"] = clean_terms(terms)
         self.live["cut"] = cut
+        gone = not new and not drop and tid not in rand and tid not in RECORD
+        if gone and tid not in self.lost:    # 失效了照样检查, 再次触发只响警报
+            self.live["lost"] = self.lost + [tid]
         if tid in rand:                      # 未知变量选中的词条降级后还是它选中的 (移除的时刻不变)
             rand = [new if t == tid else t for t in rand if new or t != tid]
             self.live["rand"] = rand
@@ -552,6 +587,8 @@ class Contract:
         # 支援短缺: 同样多给低一档多出来的那部分; 失效了就不再限制
         new_supply = self._supply_share(self.live["terms"])
         if new_supply is None:
+            if gone and tid in SUPPLY:       # 失效时的上限留着, 再次用超时响警报
+                self.live["supply_lost"] = self.live.get("supply")
             self.live["supply"] = None
         elif old_supply is not None and self.live.get("supply") is not None:
             self.live["supply"] = round(float(self.live["supply"]) + self.pre * (new_supply - old_supply), 1)
@@ -673,8 +710,9 @@ class Contract:
 
     def net_check(self, used: float, bonus: float, raw: float, date: str):
         """信息阻断 / 信息隔绝: 合约开始时 (以及合约中换日时) 记下当时的剩余额度, 只能用它的几成, 不能借贷.
-        返回 (要降级的词条, "loan" / "over"), 没有违反时 ("", "") (只由做自动结束的设备调用, 额度是各设备共用的)."""
-        tid = self.net_term()
+        返回 (要降级的词条, "loan" / "over"), 没有违反时 ("", "") (只由做自动结束的设备调用, 额度是各设备共用的).
+        已经失效的: 照样按失效时的额度看, 还在继续用超 / 又借贷了就返回它 (只响警报)."""
+        tid = self.net_term() or self._lost_of(NET_SHARE)
         if not tid:
             return "", ""
         n = self.live.get("net")
@@ -688,7 +726,13 @@ class Contract:
             n["bonus"] = round(float(bonus), 1)
             self.save()
             return tid, "loan"
-        if float(used) > float(n.get("limit") or 0) + 0.5:
+        over = float(used) > float(n.get("limit") or 0) + 0.5
+        if tid in self.lost and not self.has(tid):
+            w = self.__dict__.setdefault("_watch", {})
+            last = w.get("net_used", float(used))
+            w["net_used"] = float(used)
+            over = over and float(used) > last + 0.5          # 失效后: 还在继续用才算
+        if over:
             return tid, "over"
         return "", ""
 
@@ -706,19 +750,23 @@ class Contract:
         w[key] = over
         return over and not was
 
+    def window_watch(self):
+        """通道阻塞: (要检查的词条, 窗口数上限); 已经失效的按失效前的上限. 没有时 ("", 0)."""
+        tid = next((t for t in self.terms if t in WINDOWS), "") or self._lost_of(WINDOWS)
+        return tid, (WINDOWS[tid] if tid else 0)
+
     def window_check(self, n: int) -> str:
         """通道阻塞: 任务栏上的窗口数超过词条的上限."""
-        lim = self.window_limit()
-        tid = next((t for t in self.terms if t in WINDOWS), "")
+        tid, lim = self.window_watch()
         if not lim or not tid:
             return ""
         return tid if self._edge("win", n > lim) else ""
 
     def ban_term(self, kind: str) -> str:
         """禁止打开这一类软件 (BANS 之一) 的是哪个词条: 它自己, 或者互联网娱乐的败退; 不禁止时 ""."""
-        if self.has(kind):
+        if self.watching(kind):
             return kind
-        return BANS_ALL if self.has(BANS_ALL) else ""
+        return BANS_ALL if self.watching(BANS_ALL) else ""
 
     def ban_check(self, kind: str, hit: bool) -> str:
         """乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒 (或者互联网娱乐的败退): 开着这一类软件.
@@ -734,16 +782,16 @@ class Contract:
 
     def quick_check(self) -> str:
         """抑制: 用了快速访问."""
-        return "suppress" if self.has("suppress") else ""
+        return "suppress" if self.watching("suppress") else ""
 
     def focus_check(self, seconds: float) -> str:
         """纵深推进: 结束的这段专注不到要求的时长."""
-        tid = next((t for t in self.terms if t in DEEP), "")
+        tid = next((t for t in self.terms if t in DEEP), "") or self._lost_of(DEEP)
         return tid if tid and float(seconds) < DEEP[tid] else ""
 
     def quiet_check(self, hit: bool) -> str:
         """静默协议: 专注中处于联网状态 (只在刚变成这样的那一下算一次)."""
-        return "quiet" if self.has("quiet") and self._edge("quiet", hit) else ""
+        return "quiet" if self.watching("quiet") and self._edge("quiet", hit) else ""
 
     # ---- 合约开始前积攒的休息时间 (暂停不打折; 支援短缺) ----
     # 一次休息 = 建议休息时长 + 积攒的休息时间; 先用合约中得到的, 合约开始前积攒的放在最后用.
@@ -805,13 +853,28 @@ class Contract:
             return None
         return max(0.0, float(left) - cross)
 
+    def supply_watch(self) -> str:
+        """支援短缺要检查的词条: 选着的, 或者已经失效的 (按失效时的上限)."""
+        if self.supply_term():
+            return self.supply_term()
+        return self._lost_of(SUPPLY) if self.live.get("supply_lost") is not None else ""
+
     def supply_check(self, left: float, taken: float) -> str:
-        """支援短缺: 合约开始前积攒的休息时间用超了 (正在休息时按已经用掉的算)."""
-        lim = self.supply_limit
-        tid = self.supply_term()
-        if lim is None or not tid:
-            return ""
+        """支援短缺: 合约开始前积攒的休息时间用超了 (正在休息时按已经用掉的算).
+        已经失效的: 按失效时的上限, 还在继续用就返回它 (只响警报)."""
         used = self.pre_used + max(0.0, float(taken) - max(0.0, float(left)))
+        tid = self.supply_term()
+        if not tid:
+            tid = self.supply_watch()
+            if not tid:
+                return ""
+            w = self.__dict__.setdefault("_watch", {})
+            last = w.get("supply_used", used)
+            w["supply_used"] = used
+            return tid if used > float(self.live["supply_lost"]) + 0.5 and used > last + 0.5 else ""
+        lim = self.supply_limit
+        if lim is None:
+            return ""
         return tid if used > lim + 0.5 else ""
 
     # ---- 词条的效果 ----
@@ -833,7 +896,7 @@ class Contract:
 
     def hoard_check(self) -> str:
         """禁止囤囤鼠!: 提前结束了休息 (软规则: 照样能结束, 算一次违反)."""
-        return "hoard" if self.has("hoard") else ""
+        return "hoard" if self.watching("hoard") else ""
 
     def cooldown_factor(self) -> float:
         """侵蚀: 网络申请的冷静期乘多少."""
@@ -1052,7 +1115,10 @@ def _selftest():
     c.start(["ent", "info3"], owner="me", now=t0)
     assert c.ban_term("game") == "ent" and c.ban_check("video", True) == "ent" and c.ban_check("video", True) == ""
     assert c.violate("ent") == (False, "") and not c.has("ent") and c.level == 3
-    assert c.ban_term("game") == "" and c.ban_check("silent", True) == ""
+    # 失效后照样检查: 再次打开只响警报 (echo), 不扣目标生命值; 每个词条 2 分钟最多响一次
+    assert c.lost == ["ent"] and c.ban_term("game") == "ent" and c.ban_check("silent", True) == "ent" and c.echo("ent")
+    assert c.echo_due("ent", t0) and not c.echo_due("ent", t0 + timedelta(seconds=119))
+    assert c.echo_due("ent", t0 + timedelta(seconds=120)) and c.violations == 1
     # 合约开始时积攒的休息时间 +20 分钟 (不算合约开始前的)
     assert rest_gift(["ent", "info3"]) == 20 * 60 and rest_gift(["music", "silent"]) == 0
     # 翻页: 成系列的一页, 零散的一页
@@ -1064,7 +1130,8 @@ def _selftest():
     # 禁止囤囤鼠!: 提前结束休息算违反 (软规则, 1 级, 违反一次失效), 休息时间 ×1.05 (和疲惫 / 信息隔绝相乘); 侵蚀: 冷静期 ×2 / ×3
     c.start(["hoard", "tired1", "erode2"], owner="me", now=t0)
     assert c.hoard_check() == "hoard" and abs(c.rest_factor() - 0.7 * 1.05) < 1e-9 and c.cooldown_factor() == 3.0
-    assert c.violate("hoard") == (False, "") and c.hoard_check() == "" and abs(c.rest_factor() - 0.7) < 1e-9
+    assert c.violate("hoard") == (False, "") and not c.has("hoard") and abs(c.rest_factor() - 0.7) < 1e-9
+    assert c.hoard_check() == "hoard" and c.echo("hoard"), "失效后再提前结束休息: 只响警报"
     c.start(["erode1"], owner="me", now=t0)
     assert c.hoard_check() == "" and c.cooldown_factor() == 2.0 and c.focus_check(60) == "" and c.quiet_check(True) == ""
     # 纵深推进: 专注不到 40 / 60 分钟算违反; -II 降成 -I
@@ -1172,6 +1239,30 @@ def _selftest():
     rec = c.finish("failed", t0 + timedelta(hours=2))
     assert rec["reward"] == 0 and rec["orig_level"] == 6 and rec["level"] == 4 and not c.active
     assert not c.take_first_break()
+
+    # 违反到失效的词条照样检查: 再次触发返回它 (echo, 只响警报), 不扣目标生命值
+    c.start(["chan1", "deep1", "quiet", "info1", "short1"], owner="me", now=t0, pre=600)
+    assert c.window_check(5) == "chan1" and c.violate("chan1") == (False, "")
+    assert c.window_watch() == ("chan1", 4) and c.window_check(5) == "" and c.window_check(3) == ""
+    assert c.window_check(5) == "chan1" and c.echo("chan1"), "失效后按失效前的上限, 越过的那一下再算"
+    assert c.violate("deep1") == (False, "") and c.focus_check(39 * 60) == "deep1" and c.focus_check(40 * 60) == ""
+    assert c.quiet_check(True) == "quiet" and c.violate("quiet") == (False, "") and c.quiet_check(True) == ""
+    assert c.quiet_check(False) == "" and c.quiet_check(True) == "quiet" and c.echo("quiet")
+    assert c.violations == 3 and c.life == 1
+    c.live["violations"] = 0                  # 目标生命值只有 4: 接着测剩下的
+    assert c.net_check(0, 0, 4000, "d") == ("", "") and c.net_check(3100, 0, 0, "d") == ("info1", "over")
+    assert c.violate("info1") == (False, "") and c.net_term() == "" and c.net_check(3100, 0, 0, "d") == ("", ""), "没有继续用"
+    assert c.net_check(3200, 0, 0, "d") == ("info1", "over") and c.net_check(3200, 0, 0, "d") == ("", "")
+    assert c.net_check(3200, 300, 0, "d") == ("info1", "loan") and c.echo("info1")
+    assert c.supply_check(0, 400) == "short1" and c.violate("short1") == (False, "") and c.supply_limit is None
+    assert c.supply_watch() == "short1" and c.supply_check(0, 400) == "" and c.supply_check(0, 400.3) == ""
+    assert c.supply_check(0, 410) == "short1" and c.echo("short1")
+    assert c.violations == 2 and c.lost == ["chan1", "deep1", "quiet", "info1", "short1"] and c.level == 0
+    # 降级 (还没失效) / 关闭未知变量选中的: 不算失效
+    c.start(["chan2", "unknown"], owner="me", now=t0)
+    c._enable("music", t0 + timedelta(hours=1))
+    assert c.violate("chan2") == (False, "chan1") and c.violate("music", drop=True) == (False, "") and c.lost == []
+    assert c.ban_term("music") == "" and not c.echo("chan2")
 
     # 最后防线: 危机等级 10 → 多 1 级; 降级后不到 10 级就没有了
     c.start(["last", "long3", "isolate"], owner="me", now=t0)

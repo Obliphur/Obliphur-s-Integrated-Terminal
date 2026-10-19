@@ -255,7 +255,8 @@ fun ContractScreen() {
                             }
                             val picked = t.id in rand               // 未知变量选中的: 黄色, 点按关闭
                             val on = t.id in sel
-                            val off = !on && (active || Contract.blockedBy(t.id, sel) != null)
+                            val lost = active && !on && t.id in c.lost    // 违反到失效: "未选择"的样子
+                            val off = !on && !lost && (active || Contract.blockedBy(t.id, sel) != null)
                             val fill = if (picked) p.tileRand else if (on) p.tileOn else if (off) p.tileOff else p.tile
                             val fg = if (picked) p.tileRandText else if (on) p.tileOnText else if (off) p.tileOffText else p.tileText
                             val rim = if (picked) p.tileRand else if (t.level >= Contract.RIM_LEVEL) p.tileRim4

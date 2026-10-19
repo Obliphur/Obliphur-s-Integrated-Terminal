@@ -331,7 +331,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     private fun checkOpenApps() {
         if (dm.resetting) return
         val limitOn = settings.bool("WINDOW_LIMIT_ENABLED")
-        val chan = contract.windowLimit()
+        val chan = contract.windowWatch().second      // 已经失效的按失效前的上限 (再次超过只响警报)
         if (!limitOn && chan == 0) return
         val n = host.openApps()?.size ?: return
         if (chan > 0) {
@@ -718,7 +718,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     /** 支援短缺: 休息用到合约开始前积攒的休息时间之前 3 / 1 分钟各提醒一次; 用超了算一次违反. */
     private fun checkSupply() {
         val c = contract
-        if (timer.state != TState.ON_BREAK || c.supplyTerm().isEmpty() || c.id != timer.breakCid) return
+        if (timer.state != TState.ON_BREAK || c.supplyWatch().isEmpty() || c.id != timer.breakCid) return
         val left = timer.countdown
         val until = c.supplyUntil(left, timer.breakPre)
         for (sec in Contract.SUPPLY_WARN) {
@@ -800,6 +800,16 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     /** 违反了词条 id (软规则): 响警报, 记一次, 这个词条降一级 (drop: 直接去掉); 到上限就结束合约. */
     fun contractViolation(why: String, id: String, drop: Boolean = false) {
         val c = contract
+        if (c.active && !dm.resetting && c.echo(id)) {
+            // 已经失效的词条再次触发: 照常响警报 (每个词条 2 分钟最多一次), 不扣目标生命值
+            if (c.echoDue(id)) {
+                host.playAlarm()
+                logNotice("CONTRACT echo $id  $why")
+                toast(tr("⚠ {why} · {name} 已失效, 不扣目标生命值", "why" to why, "name" to tr(Contract.BY_ID[id]!!.name)),
+                    "warn", long = true)
+            }
+            return
+        }
         if (!c.active || dm.resetting || (id.isNotEmpty() && !c.has(id))) return
         host.playAlarm()
         val old = Contract.BY_ID[id]?.let { tr(it.name) } ?: ""

@@ -506,11 +506,12 @@ class ContractPage(tk.Frame):
         return self.c.level if self.c.active else C.level_of(self.c.draft)
 
     def _paint_tiles(self):
-        """这一页格子的颜色: 选中 / 不能选 / 未知变量选中的 (黄色)."""
+        """这一页格子的颜色: 选中 / 不能选 / 未知变量选中的 (黄色); 合约中违反到失效的词条是"未选择"的样子."""
         P, c = self.P, self.c
         active = c.active
         sel = self._selected()
         rand = c.rand
+        lost = c.lost
         a, b = self.pages[self.page]
         for tid in C.BY_ID:
             if not a <= C.LAYOUT[tid][0] < b:
@@ -519,6 +520,8 @@ class ContractPage(tk.Frame):
                 st = ("tile_rand", "tile_rand_text", "tile_rand_rim")
             elif tid in sel:
                 st = ("tile_on", "tile_on_text", "tile_on_rim")
+            elif active and tid in lost:
+                st = ("tile", "tile_text", "tile_rim")
             elif active or C.blocked_by(tid, sel):
                 st = ("tile_off", "tile_off_text", "tile_off_rim")
             else:

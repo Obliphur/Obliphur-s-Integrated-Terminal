@@ -152,6 +152,9 @@ class Contract(private val file: File) {
         val RANDOM_SKIP = setOf("gaze", "scar", "long1", "long2")
         /** 抽中后过这么多分钟才生效. */
         const val RANDOM_DELAY_MIN = 3L
+        /** 被违反到失效的词条 (降到最低一档后又违反了) 照样检查: 再次触发只响警报, 不扣目标生命值;
+         *  每个词条这么多秒最多响一次. */
+        const val ECHO_COOLDOWN = 120L
 
         /** 总等级 → 完成合约时给的休息时间 (分钟, 固定; 按结束时的等级). */
         // 0 级 20 分钟, 38 级起封顶 90 分钟; 中间每一级按直线填充, 四舍五入到整分钟
@@ -292,6 +295,23 @@ class Contract(private val file: File) {
     val active get() = live.optString("state") == "active"
     val terms: List<String> get() = if (active) live.optJSONArray("terms")?.strings() ?: emptyList() else emptyList()
     fun has(id: String) = id in terms
+    /** 被违反到失效的词条 (失效前的最低一档; 不算未知变量选中的和录像). */
+    val lost: List<String> get() = if (active) (live.optJSONArray("lost")?.strings() ?: emptyList()).filter { it in BY_ID } else emptyList()
+    /** 这个词条要不要检查: 选着, 或者已经被违反到失效. */
+    fun watching(id: String) = has(id) || id in lost
+    /** 触发的是已经失效的词条: 只响警报, 不扣目标生命值. */
+    fun echo(id: String) = id.isNotEmpty() && !has(id) && id in lost
+    private val echoAt = HashMap<String, LocalDateTime>()
+    /** 已失效的词条再次触发的警报: 每个词条 ECHO_COOLDOWN 秒最多响一次 (只记在本机). */
+    fun echoDue(id: String, now: LocalDateTime = LocalDateTime.now()): Boolean {
+        val last = echoAt[id]
+        if (last != null && secondsBetween(last, now) < ECHO_COOLDOWN) return false
+        echoAt[id] = now
+        return true
+    }
+    /** 已经失效的词条里属于 table 的那个 (这一类现在没有选着的). */
+    private fun lostOf(table: Map<String, *>): String =
+        if (terms.any { it in table }) "" else lost.firstOrNull { it in table } ?: ""
     val startAt get() = if (active) parseIso(live.optString("start")) else null
     val endAt get() = if (active) parseIso(live.optString("end")) else null
     /** 只有一档的词条被降了几级. */
@@ -435,6 +455,8 @@ class Contract(private val file: File) {
             else -> { t.removeAt(i); c.remove(id); new = "" }
         }
         live.put("terms", JSONArray(clean(t))).put("cut", c)
+        val gone = new.isEmpty() && !drop && id !in oldRand && id !in RECORD
+        if (gone && id !in lost) live.put("lost", JSONArray(lost + id))   // 失效了照样检查, 再次触发只响警报
         // 未知变量选中的词条降级后还是它选中的 (移除的时刻不变)
         if (id in oldRand) {
             live.put("rand", JSONArray(oldRand.mapNotNull { if (it == id) new.ifEmpty { null } else it }))
@@ -451,7 +473,10 @@ class Contract(private val file: File) {
             n.put("limit", n.dbl("limit") + n.dbl("base") * (newShare - oldShare))
         // 支援短缺: 同样多给低一档多出来的那部分; 失效了就不再限制
         val newSupply = supplyShare(terms)
-        if (newSupply == null) live.put("supply", JSONObject.NULL)
+        if (newSupply == null) {
+            if (gone && id in SUPPLY && !live.isNull("supply")) live.put("supply_lost", live.dbl("supply"))   // 失效时的上限留着
+            live.put("supply", JSONObject.NULL)
+        }
         else if (oldSupply != null && !live.isNull("supply"))
             live.put("supply", r1(live.dbl("supply") + pre * (newSupply - oldSupply)))
         save()
@@ -612,11 +637,21 @@ class Contract(private val file: File) {
         return maxOf(0.0, left - cross)
     }
 
-    /** 支援短缺: 合约开始前积攒的休息时间用超了 (正在休息时按已经用掉的算). */
+    /** 支援短缺要检查的词条: 选着的, 或者已经失效的 (按失效时的上限). */
+    fun supplyWatch(): String = supplyTerm().ifEmpty { if (live.has("supply_lost")) lostOf(SUPPLY) else "" }
+
+    /** 支援短缺: 合约开始前积攒的休息时间用超了 (正在休息时按已经用掉的算).
+     *  已经失效的: 按失效时的上限, 还在继续用就返回它 (只响警报). */
     fun supplyCheck(left: Double, taken: Double): String {
-        val lim = supplyLimit ?: return ""
-        val id = supplyTerm().ifEmpty { return "" }
         val used = preUsed + maxOf(0.0, taken - maxOf(0.0, left))
+        val id = supplyTerm()
+        if (id.isEmpty()) {
+            val l = supplyWatch().ifEmpty { return "" }
+            val last = watchUsed["supply"] ?: used
+            watchUsed["supply"] = used
+            return if (used > live.dbl("supply_lost") + 0.5 && used > last + 0.5) l else ""
+        }
+        val lim = supplyLimit ?: return ""
         return if (used > lim + 0.5) id else ""
     }
 
@@ -642,9 +677,10 @@ class Contract(private val file: File) {
     fun netTerm(): String = terms.firstOrNull { it in NET_SHARE } ?: ""
 
     /** 信息阻断 / 信息隔绝: 合约开始时 (以及合约中换日时) 记下当时的剩余额度, 只能用它的几成, 不能借贷.
-     *  返回 (要降级的词条, "loan" / "over"), 没有违反时 null (只由做自动结束的设备调用, 额度是各设备共用的). */
+     *  返回 (要降级的词条, "loan" / "over"), 没有违反时 null (只由做自动结束的设备调用, 额度是各设备共用的).
+     *  已经失效的: 照样按失效时的额度看, 还在继续用超 / 又借贷了就返回它 (只响警报). */
     fun netCheck(used: Double, bonus: Double, raw: Double, date: String): Pair<String, String>? {
-        val id = netTerm().ifEmpty { return null }
+        val id = netTerm().ifEmpty { lostOf(NET_SHARE) }.ifEmpty { return null }
         val n = live.optJSONObject("net")
         if (n == null || n.optString("date") != date) {
             val r = maxOf(0.0, raw)
@@ -658,8 +694,13 @@ class Contract(private val file: File) {
             save()
             return id to "loan"
         }
-        if (used > n.dbl("limit") + 0.5) return id to "over"
-        return null
+        var over = used > n.dbl("limit") + 0.5
+        if (echo(id)) {                                    // 失效后: 还在继续用才算
+            val last = watchUsed["net"] ?: used
+            watchUsed["net"] = used
+            over = over && used > last + 0.5
+        }
+        return if (over) id to "over" else null
     }
 
     private fun r1(x: Double) = Math.round(x * 10) / 10.0
@@ -673,22 +714,29 @@ class Contract(private val file: File) {
 
     /** 此刻是不是已经超了 (只记在本机): 只在刚越过的那一下算一次违反, 回到限额以内后再越过才再算. */
     private val watch = HashMap<String, Boolean>()
+    /** 失效后的信息阻断 / 支援短缺: 上次看到的用量 (只记在本机). */
+    private val watchUsed = HashMap<String, Double>()
     private fun edge(key: String, over: Boolean): Boolean {
         val was = watch[key] ?: false
         watch[key] = over
         return over && !was
     }
 
+    /** 通道阻塞: (要检查的词条, 上限); 已经失效的按失效前的上限. 没有时 ("", 0). */
+    fun windowWatch(): Pair<String, Int> {
+        val id = (terms.firstOrNull { it in WINDOWS } ?: "").ifEmpty { lostOf(WINDOWS) }
+        return id to (WINDOWS[id] ?: 0)
+    }
+
     /** 通道阻塞: 后台的应用数 (Android 上的"窗口数") 超过词条的上限. */
     fun windowCheck(n: Int): String {
-        val lim = windowLimit()
-        val id = terms.firstOrNull { it in WINDOWS } ?: ""
+        val (id, lim) = windowWatch()
         if (lim == 0 || id.isEmpty()) return ""
         return if (edge("win", n > lim)) id else ""
     }
 
     /** 禁止打开这一类应用 (BANS 之一) 的是哪个词条: 它自己, 或者互联网娱乐的败退; 不禁止时 "". */
-    fun banTerm(kind: String): String = if (has(kind)) kind else if (has(BANS_ALL)) BANS_ALL else ""
+    fun banTerm(kind: String): String = if (watching(kind)) kind else if (watching(BANS_ALL)) BANS_ALL else ""
 
     /** 乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒 (或者互联网娱乐的败退): 开着这一类应用.
      *  每一类只在从没有到有的那一下算一次. 返回要降级的词条. */
@@ -701,19 +749,19 @@ class Contract(private val file: File) {
     fun records(): List<String> = terms.mapNotNull { RECORD[it] }
 
     /** 抑制: 用了快速访问. */
-    fun quickCheck(): String = if (has("suppress")) "suppress" else ""
+    fun quickCheck(): String = if (watching("suppress")) "suppress" else ""
 
     /** 纵深推进: 结束的这段专注不到要求的时长. */
     fun focusCheck(seconds: Double): String {
-        val id = terms.firstOrNull { it in DEEP } ?: return ""
+        val id = (terms.firstOrNull { it in DEEP } ?: "").ifEmpty { lostOf(DEEP) }.ifEmpty { return "" }
         return if (seconds < DEEP[id]!!) id else ""
     }
 
     /** 静默协议: 专注中处于联网状态 (只在刚变成这样的那一下算一次). */
-    fun quietCheck(hit: Boolean): String = if (has("quiet") && edge("quiet", hit)) "quiet" else ""
+    fun quietCheck(hit: Boolean): String = if (watching("quiet") && edge("quiet", hit)) "quiet" else ""
 
     /** 禁止囤囤鼠!: 提前结束了休息 (软规则: 照样能结束, 算一次违反). */
-    fun hoardCheck(): String = if (has("hoard")) "hoard" else ""
+    fun hoardCheck(): String = if (watching("hoard")) "hoard" else ""
 
     /** 侵蚀: 网络申请的冷静期乘多少. */
     fun cooldownFactor(): Double = terms.mapNotNull { COOLDOWN_X[it] }.maxOrNull() ?: 1.0

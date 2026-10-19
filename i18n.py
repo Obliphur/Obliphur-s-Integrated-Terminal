@@ -903,6 +903,7 @@ EN = {
     "[未知变量选中 · 点击关闭, 算一次违反]": "[Picked by Unknown Variable · click to switch off, counts as a violation]",
     "[未知变量选中 · 点击关闭]": "[Picked by Unknown Variable · click to switch off]",
     "未知变量: {name} 已移除": "Unknown Variable: {name} removed",
+    "⚠ {why} · {name} 已失效, 不扣目标生命值": "⚠ {why} · {name} already failed, no target life lost",
     "未知变量: 抽中了 {name}, {t} 生效": "Unknown Variable: drew {name}, takes effect at {t}",
     "[未知变量抽中 · {t} 生效]": "[Drawn by Unknown Variable · takes effect at {t}]",
     "[{t} 移除]": "[removed at {t}]",

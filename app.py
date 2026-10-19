@@ -1588,7 +1588,7 @@ class BreakTimerApp:
                 sub = tr("休息剩余 {m} 分 {s:02d} 秒").format(m=m, s=s)
                 if self._break_locked():
                     sub += "\n" + self._pause_block()
-                elif self.contract.hoard_check():
+                elif self.contract.has("hoard"):
                     sub += "\n" + tr("禁止囤囤鼠!: 提前结束休息会算作一次违反.")
                 self.lbl_sub.config(text=sub)
                 self.countdown_seconds -= 1
@@ -2351,6 +2351,14 @@ class BreakTimerApp:
     def contract_violation(self, why: str, tid: str, drop: bool = False):
         """违反了词条 tid (软规则): 响警报, 记一次, 这个词条降一级 (drop: 直接去掉); 到上限就结束合约."""
         c = self.contract
+        if c.active and not self.dm.resetting and c.echo(tid):
+            # 已经失效的词条再次触发: 照常响警报 (每个词条 2 分钟最多一次), 不扣目标生命值
+            if c.echo_due(tid):
+                self._play_alarm()
+                self._log_notice(f"CONTRACT echo {tid}  {why}")
+                toast.warn(tr("⚠ {why} · {name} 已失效, 不扣目标生命值", why=why,
+                              name=tr(contract_mod.BY_ID[tid][3])), timeout=10000)
+            return
         if not c.active or self.dm.resetting or (tid and not c.has(tid)):
             return
         self._play_alarm()
@@ -2395,7 +2403,7 @@ class BreakTimerApp:
     def _check_supply(self):
         """支援短缺: 休息用到合约开始前积攒的休息时间之前 3 / 1 分钟各提醒一次; 用超了算一次违反."""
         c = self.contract
-        if self.state != ON_BREAK or not c.supply_term() or c.live.get("id") != self._break_cid:
+        if self.state != ON_BREAK or not c.supply_watch() or c.live.get("id") != self._break_cid:
             return
         left = max(0, int(self.countdown_seconds))
         until = c.supply_until(left, self._break_pre)
@@ -2602,7 +2610,7 @@ class BreakTimerApp:
     def _check_contract_windows(self):
         """通道阻塞: 任务栏上的窗口超过词条的上限 (不关窗口, 只算违反; 越过的那一下算一次)."""
         c = self.contract
-        lim = c.window_limit()
+        _tid, lim = c.window_watch()                 # 已经失效的按失效前的上限 (再次超过只响警报)
         if not lim or self.dm.resetting:
             return
         tid = c.window_check(len(window_guard.taskbar_windows(include_own=True)))
