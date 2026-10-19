@@ -1133,11 +1133,9 @@ class BreakTimerApp:
         self._sync_break_lock()
 
     def _pause_block(self) -> str:
-        """不能暂停休息的原因 ("" = 可以): 合约的禁止囤囤鼠!; 网络正在使用 (领到休息时间后的第一次休息除外)."""
+        """不能暂停休息的原因 ("" = 可以): 网络正在使用 (领到休息时间后的第一次休息除外)."""
         if self.state != ON_BREAK:
             return ""
-        if self.contract.no_pause():
-            return tr("禁止囤囤鼠!: 合约中不能提前结束休息.")
         if self.net.mode == "online" and not self._bonus_break_active:
             return tr("网络正在使用,不能暂停休息.")
         return ""
@@ -1197,6 +1195,10 @@ class BreakTimerApp:
         else:
             self.reset_to_idle()
             self._arm_idle_nudge()
+            # 禁止囤囤鼠!: 提前结束休息照样能结束, 算一次违反 (软规则)
+            tid = c.hoard_check()
+            if tid:
+                self.contract_violation(tr("提前结束了休息"), tid)
 
     def _record_break_end(self):
         """一段休息结束 (自然结束 / 暂停 / 关闭程序): 记入专注计时统计."""
@@ -1586,6 +1588,8 @@ class BreakTimerApp:
                 sub = tr("休息剩余 {m} 分 {s:02d} 秒").format(m=m, s=s)
                 if self._break_locked():
                     sub += "\n" + self._pause_block()
+                elif self.contract.hoard_check():
+                    sub += "\n" + tr("禁止囤囤鼠!: 提前结束休息会算作一次违反.")
                 self.lbl_sub.config(text=sub)
                 self.countdown_seconds -= 1
                 self.update_job = self.root.after(1000, self.update)

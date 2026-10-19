@@ -70,8 +70,8 @@ class Contract(private val file: File) {
                 listOf("music", "silent", "game", "video", "isolate")),
             Term("fog", "fog", 1, "环境:黑雾", "合约期间 专注时长 成就 日历 统计数据不可见 且无法打开设置"),
             Term("hoard", "hoard", 1, "禁止囤囤鼠!", "不能提前结束休息 但是休息时间获得一个额外乘区1.05x"),
-            Term("quiet", "quiet", 2, "环境:静默协议", "专注中不能处于联网状态", listOf("isolate")),
-            Term("unknown", "unknown", 3, "未知变量", "合约开始的第自然数个小时开始时间 从1-2级的 可以选择的词条中随机选中一个启用"),
+            Term("quiet", "quiet", 1, "环境:静默协议", "专注中不能处于联网状态", listOf("isolate")),
+            Term("unknown", "unknown", 3, "未知变量", "合约开始时 以及之后每过一个整小时 从当前可以选择的1-2级词条中随机启用一个\n选中的词条不算进危机等级 可以点击关闭 但算一次违反"),
         )
         val BY_ID = TERMS.associateBy { it.id }
         val GROUPS = TERMS.map { it.group }.distinct()
@@ -98,12 +98,12 @@ class Contract(private val file: File) {
         // 其余是硬规则, 立即生效 (黑雾, 记录封锁, 细化规范, 全频道阻塞干扰, 持久战, 疲惫).
         // 录像 (目光 / 刻痕) 违反一次就失效 (录像停止): 不在 LOWER / SINGLE 里.
         val SOFT = setOf("info1", "info2", "info3", "isolate", "chan1", "chan2", "music", "suppress", "short1", "short2",
-            "silent", "game", "video", "ent", "gaze", "scar", "deep1", "deep2", "quiet", "unknown")
+            "silent", "game", "video", "ent", "gaze", "scar", "deep1", "deep2", "quiet", "hoard", "unknown")
         /** 降一级换成哪个词条. */
         val LOWER = mapOf("isolate" to "info3", "info3" to "info2", "info2" to "info1", "chan2" to "chan1",
             "short2" to "short1", "deep2" to "deep1")
         /** 只有一档的软规则: 降级时等级减一, 减到 0 就失效. */
-        val SINGLE = setOf("music", "suppress", "silent", "game", "video", "quiet")
+        val SINGLE = setOf("music", "suppress", "silent", "game", "video", "quiet", "hoard")
         /** 这个等级的词条用红色边框. */
         const val RIM_LEVEL = 4
 
@@ -642,8 +642,8 @@ class Contract(private val file: File) {
     /** 静默协议: 专注中处于联网状态 (只在刚变成这样的那一下算一次). */
     fun quietCheck(hit: Boolean): String = if (has("quiet") && edge("quiet", hit)) "quiet" else ""
 
-    /** 禁止囤囤鼠!: 不能提前结束休息 (硬规则). */
-    fun noPause() = has("hoard")
+    /** 禁止囤囤鼠!: 提前结束了休息 (软规则: 照样能结束, 算一次违反). */
+    fun hoardCheck(): String = if (has("hoard")) "hoard" else ""
 
     /** 侵蚀: 网络申请的冷静期乘多少. */
     fun cooldownFactor(): Double = terms.mapNotNull { COOLDOWN_X[it] }.maxOrNull() ?: 1.0

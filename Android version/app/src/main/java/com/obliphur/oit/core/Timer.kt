@@ -66,10 +66,9 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
     val elapsed get() = if (state == TState.RUNNING) mono() - startMono else 0.0
     val countdown get() = if (state == TState.ON_BREAK) maxOf(0.0, breakEndMono - mono()) else 0.0
 
-    /** 不能暂停休息的原因 ("" = 可以): 合约的禁止囤囤鼠!; 网络正在使用 (领到休息时间后的第一次休息除外). */
+    /** 不能暂停休息的原因 ("" = 可以): 网络正在使用 (领到休息时间后的第一次休息除外). */
     val pauseBlock: String get() = when {
         state != TState.ON_BREAK -> ""
-        core.contract.noPause() -> tr("禁止囤囤鼠!: 合约中不能提前结束休息.")
         core.net.mode == "online" && !bonusBreakActive -> tr("网络正在使用,不能暂停休息.")
         else -> ""
     }
@@ -283,7 +282,11 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
             }
         }
         resetToIdle()
-        if (!silent) armIdleNudge()
+        if (!silent) {
+            armIdleNudge()
+            // 禁止囤囤鼠!: 提前结束休息照样能结束, 算一次违反 (软规则)
+            c.hoardCheck().ifEmpty { null }?.let { core.contractViolation(tr("提前结束了休息"), it) }
+        }
     }
 
     private fun recordBreakEnd(at: LocalDateTime = LocalDateTime.now()) {

@@ -66,8 +66,8 @@ TERMS = [
      ("music", "silent", "game", "video", "isolate")),
     ("fog", "fog", 1, "环境:黑雾", "合约期间 专注时长 成就 日历 统计数据不可见 且无法打开设置", ()),
     ("hoard", "hoard", 1, "禁止囤囤鼠!", "不能提前结束休息 但是休息时间获得一个额外乘区1.05x", ()),
-    ("quiet", "quiet", 2, "环境:静默协议", "专注中不能处于联网状态", ("isolate",)),
-    ("unknown", "unknown", 3, "未知变量", "合约开始的第自然数个小时开始时间 从1-2级的 可以选择的词条中随机选中一个启用", ()),
+    ("quiet", "quiet", 1, "环境:静默协议", "专注中不能处于联网状态", ("isolate",)),
+    ("unknown", "unknown", 3, "未知变量", "合约开始时 以及之后每过一个整小时 从当前可以选择的1-2级词条中随机启用一个\n选中的词条不算进危机等级 可以点击关闭 但算一次违反", ()),
 ]
 BY_ID = {t[0]: t for t in TERMS}
 GROUPS = list(dict.fromkeys(t[1] for t in TERMS))
@@ -95,10 +95,10 @@ PAGES = [(0, len(SERIES)), (len(SERIES), BOARD_COLS)]
 # 其余是硬规则, 立即生效 (黑雾, 记录封锁, 细化规范, 全频道阻塞干扰, 持久战, 疲惫).
 # 录像 (目光 / 刻痕) 违反一次就失效 (录像停止): 不在 LOWER / SINGLE 里.
 SOFT = {"info1", "info2", "info3", "isolate", "chan1", "chan2", "music", "suppress", "short1", "short2",
-        "silent", "game", "video", "ent", "gaze", "scar", "deep1", "deep2", "quiet", "unknown"}
+        "silent", "game", "video", "ent", "gaze", "scar", "deep1", "deep2", "quiet", "hoard", "unknown"}
 LOWER = {"isolate": "info3", "info3": "info2", "info2": "info1", "chan2": "chan1",
          "short2": "short1", "deep2": "deep1"}   # 降一级换成哪个词条
-SINGLE = {"music", "suppress", "silent", "game", "video", "quiet"}   # 只有一档的软规则: 降级时等级减一, 减到 0 就失效
+SINGLE = {"music", "suppress", "silent", "game", "video", "quiet", "hoard"}   # 只有一档的软规则: 降级时等级减一, 减到 0 就失效
 
 DURATION = {"long1": 1.2, "long2": 1.4, "long3": 1.6}
 NET_SHARE = {"info1": 0.75, "info2": 0.5, "info3": 0.25, "isolate": 0.0}
@@ -775,9 +775,9 @@ class Contract:
     def fog(self) -> bool:
         return self.has("fog")
 
-    def no_pause(self) -> bool:
-        """禁止囤囤鼠!: 不能提前结束休息 (硬规则)."""
-        return self.has("hoard")
+    def hoard_check(self) -> str:
+        """禁止囤囤鼠!: 提前结束了休息 (软规则: 照样能结束, 算一次违反)."""
+        return "hoard" if self.has("hoard") else ""
 
     def cooldown_factor(self) -> float:
         """侵蚀: 网络申请的冷静期乘多少."""
@@ -935,7 +935,7 @@ def _selftest():
     assert clean_terms(["isolate", "chan2"]) == ["isolate", "chan2"], "信息隔绝和通道阻塞可以一起选"
     assert duration_of([]) == 4 * 3600 and duration_of(["long3"]) == int(4 * 3600 * 1.6)
     assert LAYOUT["short2"][0] < LAYOUT["suppress"][0], "成系列的在左边, 零散的在右边"
-    assert BOARD_COLS == len(SERIES) + 8 and LAYOUT["jam"] == (len(SERIES), 2) and LAYOUT["fine"] == (len(SERIES) + 1, 2),         "零散的词条挨着排, 不留空"
+    assert BOARD_COLS == len(SERIES) + 9 and LAYOUT["jam"] == (len(SERIES), 2) and LAYOUT["fine"] == (len(SERIES) + 1, 2),         "零散的词条挨着排, 不留空"
     assert len(set(LAYOUT.values())) == len(TERMS)
     # 行为类似的词条放在一起: 禁止的软件一行挨着, 录像在它们下面; 整点记录 / 联网各自上下对齐
     assert [LAYOUT[t][0] for t in BANS] == list(range(LAYOUT["music"][0], LAYOUT["music"][0] + 4))
@@ -1002,18 +1002,19 @@ def _selftest():
     # 侵蚀 / 静默协议和信息隔绝冲突
     assert conflicts("erode1", "isolate") and conflicts("isolate", "erode2") and conflicts("quiet", "isolate")
     assert not conflicts("erode1", "info3") and not conflicts("quiet", "jam")
-    # 禁止囤囤鼠!: 不能暂停休息, 休息时间 ×1.05 (和疲惫 / 信息隔绝相乘); 侵蚀: 冷静期 ×2 / ×3
+    # 禁止囤囤鼠!: 提前结束休息算违反 (软规则, 1 级, 违反一次失效), 休息时间 ×1.05 (和疲惫 / 信息隔绝相乘); 侵蚀: 冷静期 ×2 / ×3
     c.start(["hoard", "tired1", "erode2"], owner="me", now=t0)
-    assert c.no_pause() and abs(c.rest_factor() - 0.7 * 1.05) < 1e-9 and c.cooldown_factor() == 3.0
+    assert c.hoard_check() == "hoard" and abs(c.rest_factor() - 0.7 * 1.05) < 1e-9 and c.cooldown_factor() == 3.0
+    assert c.violate("hoard") == (False, "") and c.hoard_check() == "" and abs(c.rest_factor() - 0.7) < 1e-9
     c.start(["erode1"], owner="me", now=t0)
-    assert not c.no_pause() and c.cooldown_factor() == 2.0 and c.focus_check(60) == "" and c.quiet_check(True) == ""
+    assert c.hoard_check() == "" and c.cooldown_factor() == 2.0 and c.focus_check(60) == "" and c.quiet_check(True) == ""
     # 纵深推进: 专注不到 40 / 60 分钟算违反; -II 降成 -I
     c.start(["deep2", "quiet"], owner="me", now=t0)
     assert c.focus_check(59 * 60) == "deep2" and c.focus_check(60 * 60) == ""
     assert c.violate("deep2") == (False, "deep1") and c.focus_check(59 * 60) == "" and c.focus_check(39 * 60) == "deep1"
-    # 静默协议: 专注中联网, 只在刚联网的那一下算; 2 级, 降一级还剩 1 级
+    # 静默协议: 专注中联网, 只在刚联网的那一下算; 1 级, 违反一次失效
     assert c.quiet_check(True) == "quiet" and c.quiet_check(True) == "" and c.quiet_check(False) == ""
-    assert c.violate("quiet") == (False, "quiet") and c.term_level("quiet") == 1 and c.level == 1 + 1
+    assert c.violate("quiet") == (False, "") and not c.has("quiet") and c.level == 1
     # 未知变量: 刚开始和之后每个小时开始时各选一个 1-2 级的词条 (不选录像, 不选冲突的), 不算进危机等级
     import random as _r
     c.start(["unknown", "info2", "long1"], owner="me", now=t0, pre=600)

@@ -29,7 +29,7 @@ class ContractTest {
         assertFalse(Contract.conflicts("jam", "music"))
         assertTrue(Contract.conflicts("short1", "short2")); assertFalse(Contract.conflicts("seal", "fine"))
         assertTrue(Contract.LAYOUT["short2"]!! < Contract.LAYOUT["suppress"]!!)
-        assertEquals(Contract.SERIES.size + 8, Contract.BOARD_COLS)
+        assertEquals(Contract.SERIES.size + 9, Contract.BOARD_COLS)
         assertEquals(Contract.SERIES.size + 1, Contract.LAYOUT["fine"])     // 零散的挨着排, 不留空
         // 行为类似的放在一起: 禁止的软件一行挨着, 录像在它们下面, 互联网娱乐的败退在乐理之灾那一列的 4 级
         val m = Contract.LAYOUT["music"]!!
@@ -178,19 +178,20 @@ class ContractTest {
         assertTrue(Contract.conflicts("erode1", "isolate") && Contract.conflicts("isolate", "erode2") && Contract.conflicts("quiet", "isolate"))
         assertFalse(Contract.conflicts("erode1", "info3") || Contract.conflicts("quiet", "jam"))
         val c = Contract(tmp())
-        // 禁止囤囤鼠!: 不能暂停休息, 休息时间 ×1.05; 侵蚀: 冷静期 ×2 / ×3
+        // 禁止囤囤鼠!: 提前结束休息算违反 (软规则, 1 级, 违反一次失效), 休息时间 ×1.05; 侵蚀: 冷静期 ×2 / ×3
         c.start(listOf("hoard", "tired1", "erode2"), "me", t0)
-        assertTrue(c.noPause()); assertEquals(0.7 * 1.05, c.restFactor(), 1e-9); assertEquals(3.0, c.cooldownFactor(), 1e-9)
+        assertEquals("hoard", c.hoardCheck()); assertEquals(0.7 * 1.05, c.restFactor(), 1e-9); assertEquals(3.0, c.cooldownFactor(), 1e-9)
+        assertEquals(false to "", c.violate("hoard")); assertEquals("", c.hoardCheck()); assertEquals(0.7, c.restFactor(), 1e-9)
         c.start(listOf("erode1"), "me", t0)
-        assertFalse(c.noPause()); assertEquals(2.0, c.cooldownFactor(), 1e-9); assertEquals("", c.focusCheck(60.0))
+        assertEquals("", c.hoardCheck()); assertEquals(2.0, c.cooldownFactor(), 1e-9); assertEquals("", c.focusCheck(60.0))
         // 纵深推进: 专注不到 40 / 60 分钟算违反; -II 降成 -I
         c.start(listOf("deep2", "quiet"), "me", t0)
         assertEquals("deep2", c.focusCheck(59 * 60.0)); assertEquals("", c.focusCheck(60 * 60.0))
         assertEquals(false to "deep1", c.violate("deep2"))
         assertEquals("", c.focusCheck(59 * 60.0)); assertEquals("deep1", c.focusCheck(39 * 60.0))
-        // 静默协议: 只在刚联网的那一下算; 2 级, 降一级还剩 1 级
+        // 静默协议: 只在刚联网的那一下算; 1 级, 违反一次失效
         assertEquals("quiet", c.quietCheck(true)); assertEquals("", c.quietCheck(true)); assertEquals("", c.quietCheck(false))
-        assertEquals(false to "quiet", c.violate("quiet")); assertEquals(1, c.termLevel("quiet")); assertEquals(2, c.level)
+        assertEquals(false to "", c.violate("quiet")); assertFalse(c.has("quiet")); assertEquals(1, c.level)
         // 未知变量: 刚开始和之后每个小时开始时各选一个 1-2 级的词条, 不算进危机等级
         c.start(listOf("unknown", "info2", "long1"), "me", t0, pre = 600.0)
         val pool = c.randomCandidates()
