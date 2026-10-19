@@ -263,6 +263,9 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         val full = bonusBreakActive
         var rate = settings.num("BREAK_CARRY_RATE")
         if (contractBreakActive) rate = Contract.firstBreakRate(rate)
+        // 睡觉时间 (MECHANICS 19): 窗口内、非合约期间的第一次暂停休息, 结转比例 +5%
+        val night = !silent && !core.contract.active && core.daily.takeBreakNotice()
+        if (night) rate = core.daily.breakRate(rate)
         bonusBreakActive = false
         contractBreakActive = false
         // 合约中: 剩余时间里合约开始前积攒的那部分 (放在最后用) 原样还回去, 不打折;
@@ -292,6 +295,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
             armIdleNudge()
             // 禁止囤囤鼠!: 提前结束休息照样能结束, 算一次违反 (软规则)
             c.hoardCheck().ifEmpty { null }?.let { core.contractViolation(tr("提前结束了休息"), it) }
+            if (night) core.sleepNotice()
         }
     }
 

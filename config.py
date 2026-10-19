@@ -90,6 +90,50 @@ def daily_quota(day) -> float:
     return float(globals().get("DAILY_LIMIT", 0)) * quota_multiplier(day)
 
 
+# 睡觉时间 (设置 → 日常): 周一到周日各自可以改, 默认 23:00 (从 0:00 起的分钟数).
+# 睡觉时间之后 SLEEP_WINDOW 秒之内第一次暂停休息: 弹一段提示, 那次休息的暂停结转比例 +SLEEP_BREAK_BONUS;
+# 合约的结束时间晚于睡觉时间时, 当天第一次按"开始行动"先弹一段提示 (MECHANICS 19).
+SLEEP_DEFAULT = 23 * 60
+SLEEP_WINDOW = 3 * 3600
+SLEEP_BREAK_BONUS = 0.05
+SLEEP_KEYS = ("SLEEP_MON", "SLEEP_TUE", "SLEEP_WED", "SLEEP_THU",
+              "SLEEP_FRI", "SLEEP_SAT", "SLEEP_SUN")
+SLEEP_MON = SLEEP_DEFAULT
+SLEEP_TUE = SLEEP_DEFAULT
+SLEEP_WED = SLEEP_DEFAULT
+SLEEP_THU = SLEEP_DEFAULT
+SLEEP_FRI = SLEEP_DEFAULT
+SLEEP_SAT = SLEEP_DEFAULT
+SLEEP_SUN = SLEEP_DEFAULT
+
+
+def sleep_minutes(day) -> int:
+    """某一天 (date / datetime) 的睡觉时间: 从 0:00 起的分钟数."""
+    try:
+        v = int(round(float(globals().get(SLEEP_KEYS[day.weekday()], SLEEP_DEFAULT))))
+    except (TypeError, ValueError, AttributeError):
+        v = SLEEP_DEFAULT
+    return max(0, min(24 * 60 - 1, v))
+
+
+def sleep_time_on(day) -> datetime:
+    """某一天的睡觉时刻 (按那一天的睡觉时间, 不看别的)."""
+    d = day.date() if isinstance(day, datetime) else day
+    return datetime(d.year, d.month, d.day) + timedelta(minutes=sleep_minutes(d))
+
+
+def last_sleep(now: datetime) -> datetime:
+    """现在之前最近的一次睡觉时刻. 凌晨还没睡时算的是昨天那次 (跨零点)."""
+    t = sleep_time_on(now)
+    return t if t <= now else sleep_time_on(now - timedelta(days=1))
+
+
+def next_sleep(now: datetime) -> datetime:
+    """现在之后最近的一次睡觉时刻."""
+    t = sleep_time_on(now)
+    return t if t > now else sleep_time_on(now + timedelta(days=1))
+
+
 
 
 
@@ -263,6 +307,13 @@ DEFAULT_SETTINGS = {
     "QUOTA_MULT_FRI": QUOTA_MULT_FRI,
     "QUOTA_MULT_SAT": QUOTA_MULT_SAT,
     "QUOTA_MULT_SUN": QUOTA_MULT_SUN,
+    "SLEEP_MON": SLEEP_MON,
+    "SLEEP_TUE": SLEEP_TUE,
+    "SLEEP_WED": SLEEP_WED,
+    "SLEEP_THU": SLEEP_THU,
+    "SLEEP_FRI": SLEEP_FRI,
+    "SLEEP_SAT": SLEEP_SAT,
+    "SLEEP_SUN": SLEEP_SUN,
 }
 
 

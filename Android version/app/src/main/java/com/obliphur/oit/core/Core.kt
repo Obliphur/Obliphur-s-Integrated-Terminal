@@ -59,6 +59,8 @@ const val TIRED_TEXT = "主管{name}你好.我是Obliphur.\n你的休息时间�
 class Core(val dir: File, val host: Host, val mono: () -> Double) {
     val settings = Settings(File(dir, "app_settings.json"))
     val firstRun = settings.fresh
+    /** 睡觉时间的两个提示 (MECHANICS 19). */
+    val daily = Daily(File(dir, "daily.json"), settings)
     val rules: RuleStore
     val dm: DataStore
     val net: NetGuard
@@ -446,6 +448,13 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             NoticeButton(tr("去设置"), "settings", true), NoticeButton(tr("知道了"), "ok", false))) {
             if (it == "settings") host.openPage("settings:timer")
         }
+        changed()
+    }
+
+    /** 睡觉时间之后 3 小时内第一次暂停休息: 提醒去睡觉 (MECHANICS 19). */
+    fun sleepNotice() {
+        notice(tr("🌙  该睡觉了"), daily.sleepText(username),
+            listOf(NoticeButton(tr("晚安"), "ok", true)))
         changed()
     }
 

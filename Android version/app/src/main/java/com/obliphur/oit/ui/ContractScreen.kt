@@ -232,7 +232,8 @@ fun ContractScreen() {
     val active = c.active
     val now = LocalDateTime.now()
     var tapped by rememberSaveable { mutableStateOf("") }
-    var ask by rememberSaveable { mutableStateOf("") }        // start / end / close:词条
+    var ask by rememberSaveable { mutableStateOf("") }        // start / prestart / end / close:词条
+    var preDelay by rememberSaveable { mutableStateOf(0) }    // 睡眠提醒: 至少会延迟多少分钟
     var page by rememberSaveable { mutableStateOf(0) }
     val sel = if (active) c.terms else c.draft
     val rand = c.rand
@@ -470,12 +471,24 @@ fun ContractScreen() {
                 Text(if (active) tr("■  提前结束") else tr("开始行动"), color = if (why.isEmpty()) p.startText else p.startOffText,
                     fontSize = 18.sp, fontWeight = FontWeight.Bold,
                     modifier = Modifier.background(if (why.isEmpty()) p.start else p.startOff, RoundedCornerShape(2.dp))
-                        .clickable(enabled = why.isEmpty()) { ask = if (active) "end" else "start" }
+                        .clickable(enabled = why.isEmpty()) {
+                            if (active) {
+                                ask = "end"
+                            } else {
+                                // 睡觉时间 (MECHANICS 19): 合约结束时间晚于这次要睡的时间时, 当天第一次先确认一次
+                                val end = LocalDateTime.now().plusSeconds(Contract.durationOf(c.draft).toLong())
+                                preDelay = core.daily.contractDelay(end)
+                                ask = if (preDelay > 0) "prestart" else "start"
+                            }
+                        }
                         .padding(horizontal = 26.dp, vertical = 12.dp))
             }
         }
     } }
     when (ask) {
+        "prestart" -> Confirm(tr("🌙  该睡觉了"), core.daily.lateText(preDelay), true, { ask = "" }) {
+            ask = "start"
+        }
         "start" -> {
             val lv = Contract.levelOf(c.draft)
             val dur = Contract.durationOf(c.draft)

@@ -7,7 +7,7 @@ import java.time.Duration
 import java.time.LocalDateTime
 import kotlin.math.abs
 
-enum class Kind { NUM, CHOICE, INSTANT_TEXT, CHIME }
+enum class Kind { NUM, TIME, CHOICE, INSTANT_TEXT, CHIME }
 
 /**
  * 一个设置项. 数值项按 unit 填写, 存储值 = 填写值 × scale (例如按分钟填, 按秒存);
@@ -36,6 +36,11 @@ object Schema {
         integer: Boolean, def: Double, page: String, group: String? = null, short: String? = null,
     ) = Spec(key, label, Kind.NUM, true, page, def, unit, scale, lo, hi, integer,
         group = group, short = short)
+
+    /** 时间项: 按 HH:MM 填写, 存的是从 0:00 起的分钟数 (0 ~ 1439), 和数值项一样排队生效. */
+    private fun time(key: String, label: String, short: String) =
+        Spec(key, label, Kind.TIME, true, "daily", Cfg.SLEEP_DEFAULT.toDouble(),
+            min = 0.0, max = (24 * 60 - 1).toDouble(), integer = true, group = "sleep", short = short)
 
     private val ONOFF = listOf("1" to "开启 (ON)", "0" to "关闭 (OFF)")
 
@@ -88,19 +93,29 @@ object Schema {
         Spec("WINDOW_LIMIT_ENABLED", "后台应用数检测", Kind.CHOICE, true, "window", "1", choices = ONOFF),
         Spec("WINDOW_FOCUS_ENABLED", "应用使用时间统计", Kind.CHOICE, true, "window", "1", choices = ONOFF),
         num("WINDOW_LIMIT", "后台应用数上限", "", 1.0, 1.0, 50.0, true, 5.0, "window"),
+        // ---- 日常: 周一到周日的睡觉时间 (MECHANICS 19) ----
+        time("SLEEP_MON", "周一睡觉时间", "周一"),
+        time("SLEEP_TUE", "周二睡觉时间", "周二"),
+        time("SLEEP_WED", "周三睡觉时间", "周三"),
+        time("SLEEP_THU", "周四睡觉时间", "周四"),
+        time("SLEEP_FRI", "周五睡觉时间", "周五"),
+        time("SLEEP_SAT", "周六睡觉时间", "周六"),
+        time("SLEEP_SUN", "周日睡觉时间", "周日"),
     )
 
     val PAGES = listOf(
         "basic" to "基本设置", "timer" to "计时器", "net" to "联网",
         "rules" to "规则", "log" to "整点记录", "contract" to "合约", "window" to "应用",
+        "daily" to "日常",
     )
 
     val BY_KEY = ALL.associateBy { it.key }
 
-    /** (选项类, 数值类) 两组设置项, 各自按 ALL 里的顺序. */
+    /** (选项类, 数值类) 两组设置项, 各自按 ALL 里的顺序. 时间项算数值类. */
     fun pageSpecs(page: String): Pair<List<Spec>, List<Spec>> {
         val specs = ALL.filter { it.page == page }
-        return specs.filter { it.kind != Kind.NUM } to specs.filter { it.kind == Kind.NUM }
+        val nums = specs.filter { it.kind == Kind.NUM || it.kind == Kind.TIME }
+        return specs.filter { it.kind != Kind.NUM && it.kind != Kind.TIME } to nums
     }
 }
 
@@ -258,7 +273,7 @@ class Settings(
         val spec = Schema.BY_KEY[key] ?: return value
         if (value == null || value == JSONObject.NULL) return null
         return when (spec.kind) {
-            Kind.NUM -> {
+            Kind.NUM, Kind.TIME -> {
                 val x = when (value) {
                     is Boolean -> if (value) 1.0 else 0.0
                     is Number -> value.toDouble()
@@ -285,11 +300,16 @@ class Settings(
         }
     }
 
-    /** 数值项: 必须是数字且在允许范围内. 返回错误信息, 通过时返回 null. */
+    /** 数值项: 必须是数字且在允许范围内. 时间项: 必须是 0 ~ 1439 的分钟数. 返回错误信息, 通过时返回 null. */
     fun validate(key: String, value: Any): String? {
         val spec = Schema.BY_KEY[key] ?: return null
-        if (spec.kind != Kind.NUM) return null
+        if (spec.kind != Kind.NUM && spec.kind != Kind.TIME) return null
         val label = tr(spec.label)
+        if (spec.kind == Kind.TIME) {
+            if (value !is Double || value < spec.min - 1e-9 || value > spec.max + 1e-9)
+                return tr("{label}: 请按 HH:MM 填写 (00:00 ~ 23:59).", "label" to label)
+            return null
+        }
         if (value !is Double) return tr("{label}: 请填写数字.", "label" to label)
         val x = value / spec.scale
         if (x < spec.min - 1e-9 || x > spec.max + 1e-9) {
@@ -390,13 +410,16 @@ class Settings(
 
     fun uiNumber(key: String, value: Any? = null): String {
         val spec = Schema.BY_KEY[key]!!
-        val v = (value ?: raw(key)) as? Double ?: return (value ?: raw(key)).toString()
-        return numText(v / spec.scale)
+        val v = value ?: raw(key)
+        if (spec.kind == Kind.TIME) return slotText(v)
+        val d = v as? Double ?: return v.toString()
+        return numText(d / spec.scale)
     }
 
-    /** 填写框里的文字 → 存储值; 不是数字时原样返回 (stage 会拒绝). */
+    /** 填写框里的文字 → 存储值; 不是数字 / 时间时原样返回 (stage 会拒绝). */
     fun fromUiNumber(key: String, text: String): Any {
         val spec = Schema.BY_KEY[key]!!
+        if (spec.kind == Kind.TIME) return parseSlot(text) ?: text.trim()
         val x = text.trim().toDoubleOrNull() ?: return text.trim()
         return coerce(key, x * spec.scale) ?: text
     }
@@ -410,6 +433,7 @@ class Settings(
                 if (spec.unit == "×") "×${numText(x)}" else if (spec.unit.isEmpty()) numText(x) else "${numText(x)} ${spec.unit}"
             }
             Kind.CHOICE -> spec.choices.firstOrNull { it.first == v.toString() }?.second?.let { tr(it) } ?: v.toString()
+            Kind.TIME -> slotText(v)
             Kind.CHIME -> if (v.toString().isBlank()) tr("内置三音提示音") else tr("自选音频")
             Kind.INSTANT_TEXT -> v.toString()
         }

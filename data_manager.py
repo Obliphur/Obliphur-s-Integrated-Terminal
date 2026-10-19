@@ -55,6 +55,9 @@ class DataManager:
         # 窗口使用时间: {日期: {程序名: 秒}}, 程序名 "" 是空白; 只留本月和上月
         self.window_file = os.path.join(self.data_dir, 'window_usage.json')
         self.window_days: Dict[str, Dict[str, float]] = {}
+        # 日常 (MECHANICS 19): 睡觉时间的提示 / 合约开始时的睡眠提醒已经弹过的日期
+        self.daily_file = os.path.join(self.data_dir, 'daily.json')
+        self.daily: Dict[str, str] = {}
         # 同一份数据按分钟的时间线: {日期: [[开始分钟, 结束分钟, 程序名], …]};
         # 统计页看"全部设备"时用它判断几台设备是不是同时在用 (重叠的分钟以母端为准)
         self.window_runs: Dict[str, list] = {}
@@ -86,6 +89,7 @@ class DataManager:
         self.finalize_hours()
         self.load_focus_log()
         self.load_window_usage()
+        self.load_daily()
 
 
     @property
@@ -589,6 +593,21 @@ class DataManager:
     def set_username(self, name: str):
         if not self.resetting:
             config.save_json_file(self.profile_file, {"username": str(name).strip()[:USERNAME_MAX]})
+
+    # ---- 日常 (MECHANICS 19): 各种"每天只弹一次"的标记 ----
+
+    def load_daily(self):
+        d = config.load_json_file(self.daily_file, {})
+        self.daily = {str(k): str(v) for k, v in d.items()} if isinstance(d, dict) else {}
+
+    def daily_flag(self, key: str) -> str:
+        """这个标记上次是给哪天 (日期 / 睡觉窗口的那天) 用的; 没弹过返回 ""."""
+        return str(self.daily.get(key) or "")
+
+    def set_daily_flag(self, key: str, day: str):
+        self.daily[key] = str(day)
+        if not self.resetting:
+            config.save_json_file(self.daily_file, self.daily)
 
     def erase_all_data(self):
         """重置: 删除本程序留下的全部数据, 不留任何记录."""

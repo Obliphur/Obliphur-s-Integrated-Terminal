@@ -56,6 +56,18 @@ object Cfg {
 
     fun weekdayKey(day: LocalDate): String = WEEKDAY_KEYS[day.dayOfWeek.value - 1]
     fun weekdayKey(d: DayOfWeek): String = WEEKDAY_KEYS[d.value - 1]
+
+    // 睡觉时间 (设置 → 日常): 周一到周日各自可以改, 默认 23:00 (从 0:00 起的分钟数).
+    // 睡觉时间之后 SLEEP_WINDOW 秒里第一次暂停休息: 弹提示, 那次休息的结转比例 +SLEEP_BREAK_BONUS;
+    // 合约结束时间晚于"这次要睡的时间"时, 当天第一次按"开始行动"先弹一次确认 (MECHANICS 19).
+    const val SLEEP_DEFAULT = 23 * 60
+    const val SLEEP_WINDOW = 3 * 3600L
+    const val SLEEP_BREAK_BONUS = 0.05
+    const val SLEEP_KEYS_CSV = "SLEEP_MON,SLEEP_TUE,SLEEP_WED,SLEEP_THU,SLEEP_FRI,SLEEP_SAT,SLEEP_SUN"
+    val SLEEP_KEYS = SLEEP_KEYS_CSV.split(",")
+
+    fun sleepKey(day: LocalDate): String = SLEEP_KEYS[day.dayOfWeek.value - 1]
+    fun sleepKey(d: DayOfWeek): String = SLEEP_KEYS[d.value - 1]
 }
 
 /** 建议休息时长 F(t), t 与结果都以分钟计 (MECHANICS 6.2). */
@@ -73,6 +85,57 @@ fun fmtHm(sec: Double): String {
 fun fmtMs(sec: Double): String {
     val s = maxOf(0L, ceil(sec).toLong())
     return "%02d:%02d".format(s / 60, s % 60)
+}
+
+/** 从 0:00 起的分钟数 → "HH:MM" (设置 → 日常 的睡觉时间). */
+fun slotText(minutes: Any?): String {
+    val raw = (minutes as? Number)?.toDouble() ?: return minutes?.toString() ?: ""
+    val m = Math.round(raw).coerceIn(0L, (24 * 60 - 1).toLong()).toInt()
+    return "%02d:%02d".format(m / 60, m % 60)
+}
+
+/** 填写框里的时间 → 分钟数. 认 "23:00" / "23：00" / "2300" / "23"; 认不出来时 null (stage 会拒绝). */
+fun parseSlot(text: String): Int? {
+    val t = text.trim().replace("：", ":").replace(" ", "")
+    if (t.isEmpty()) return null
+    val h: Int
+    val m: Int
+    if (t.contains(":")) {
+        val head = t.substringBefore(":")
+        val tail = t.substringAfter(":")
+        if (head.isEmpty() || !head.all { it.isDigit() }) return null
+        if (tail.isNotEmpty() && !tail.all { it.isDigit() }) return null
+        h = head.toInt()
+        m = if (tail.isEmpty()) 0 else tail.toInt()
+    } else {
+        if (!t.all { it.isDigit() }) return null
+        if (t.length <= 2) {
+            h = t.toInt(); m = 0
+        } else {
+            h = t.dropLast(2).toInt(); m = t.takeLast(2).toInt()
+        }
+    }
+    if (h !in 0..23 || m !in 0..59) return null
+    return h * 60 + m
+}
+
+/** 某一天的睡觉时间: 从 0:00 起的分钟数 (设置 → 日常, MECHANICS 19). */
+fun sleepMinutes(settings: Settings, day: LocalDate): Int =
+    settings.num(Cfg.sleepKey(day)).toInt().coerceIn(0, 24 * 60 - 1)
+
+fun sleepTimeOn(settings: Settings, day: LocalDate): LocalDateTime =
+    day.atStartOfDay().plusMinutes(sleepMinutes(settings, day).toLong())
+
+/** 现在之前最近的一次睡觉时刻; 凌晨还没睡时算的是昨天那次 (跨零点). */
+fun lastSleep(settings: Settings, now: LocalDateTime): LocalDateTime {
+    val t = sleepTimeOn(settings, now.toLocalDate())
+    return if (!t.isAfter(now)) t else sleepTimeOn(settings, now.toLocalDate().minusDays(1))
+}
+
+/** 现在之后最近的一次睡觉时刻. */
+fun nextSleep(settings: Settings, now: LocalDateTime): LocalDateTime {
+    val t = sleepTimeOn(settings, now.toLocalDate())
+    return if (t.isAfter(now)) t else sleepTimeOn(settings, now.toLocalDate().plusDays(1))
 }
 
 /** 去掉多余的 0, 最多 4 位小数 (同 Python 的 f"{round(x, 4):g}"). */

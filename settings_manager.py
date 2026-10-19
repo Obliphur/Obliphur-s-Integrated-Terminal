@@ -63,6 +63,45 @@ def _num(key: str, label: str, unit: str, scale: float, lo: float, hi: float,
     }
 
 
+def _slot_text(value) -> str:
+    """从 0:00 起的分钟数 → HH:MM."""
+    try:
+        m = int(round(float(value)))
+    except (TypeError, ValueError):
+        return str(value)
+    m = max(0, min(24 * 60 - 1, m))
+    return f"{m // 60:02d}:{m % 60:02d}"
+
+
+def parse_slot(text):
+    """填写框里的时间 → 分钟数. 认 "23:00" / "23：00" / "2300" / "23"; 认不出来时原样返回 (stage 会拒绝)."""
+    t = str(text).strip().replace("：", ":").replace(" ", "")
+    if not t:
+        return t
+    if ":" in t:
+        head, _, tail = t.partition(":")
+        if not (head.isdigit() and (tail == "" or tail.isdigit())):
+            return str(text).strip()
+        h, m = int(head), int(tail or 0)
+    elif t.isdigit():
+        h, m = (int(t), 0) if len(t) <= 2 else (int(t[:-2]), int(t[-2:]))
+    else:
+        return str(text).strip()
+    if not (0 <= h <= 23 and 0 <= m <= 59):
+        return str(text).strip()
+    return h * 60 + m
+
+
+def _time(key: str, label: str, short: str, page: str = "daily"):
+    """时间项: 按 HH:MM 填写, 存的是从 0:00 起的分钟数 (0 ~ 1439). 和数值项一样排在图格里."""
+    return {
+        "key": key, "label": label, "kind": "num", "apply": APPLY_DELAY,
+        "page": page, "unit": "", "scale": 1, "min": 0, "max": 24 * 60 - 1,
+        "integer": True, "fmt": lambda v: _slot_text(v), "desc": "",
+        "short": short, "group": "sleep", "time": True,
+    }
+
+
 SETTINGS_SCHEMA = [
     _num("DAILY_LIMIT", "每日联网额度", "min", 60, 0, 1440, True,
          "每天最多能联网多久.", page="net"),
@@ -101,6 +140,14 @@ SETTINGS_SCHEMA = [
          group="weekday", short="周六"),
     _num("QUOTA_MULT_SUN", "周日联网倍率", "×", 1, 0, 10, False, "", page="net",
          group="weekday", short="周日"),
+    # ---- 日常 (设置 → 日常): 睡觉时间, 周一到周日各自可以改 (MECHANICS 19) ----
+    _time("SLEEP_MON", "周一睡觉时间", "周一"),
+    _time("SLEEP_TUE", "周二睡觉时间", "周二"),
+    _time("SLEEP_WED", "周三睡觉时间", "周三"),
+    _time("SLEEP_THU", "周四睡觉时间", "周四"),
+    _time("SLEEP_FRI", "周五睡觉时间", "周五"),
+    _time("SLEEP_SAT", "周六睡觉时间", "周六"),
+    _time("SLEEP_SUN", "周日睡觉时间", "周日"),
     {
         "key": "NET_MODE", "label": "断网方式",
         "kind": "choice", "apply": APPLY_DELAY,
@@ -244,7 +291,7 @@ for _s in SETTINGS_SCHEMA:
     _s.setdefault("page", "basic")
 
 # 设置页按模块分页, 顺序和左侧导航一致; 基本设置 (整个程序的外观) 永远是第一页.
-# 每页上半部分是选项 / 开关, 下半部分是数值.
+# 每页上半部分是选项 / 开关, 下半部分是数值. 数值按 group 各排一格 (没有 group 的排第一格).
 SETTINGS_PAGES = [
     ("basic", "基本设置"),
     ("timer", "计时器"),
@@ -254,6 +301,7 @@ SETTINGS_PAGES = [
     ("contract", "合约"),
     ("record", "录像"),
     ("window", "窗口"),
+    ("daily", "日常"),
 ]
 
 SCHEMA_BY_KEY = {s["key"]: s for s in SETTINGS_SCHEMA}
@@ -501,11 +549,15 @@ class SettingsManager:
                             label=tr(spec['label']), at=self.staged_apply_text(key))
 
     def validate(self, key: str, value):
-        """数值项: 必须是数字且在允许范围内. 其他项总是通过."""
+        """数值项: 必须是数字且在允许范围内. 时间项: 必须是 0 ~ 1439 的分钟数. 其他项总是通过."""
         spec = SCHEMA_BY_KEY.get(key) or {}
         if spec.get("kind") != "num":
             return True, ""
         label = tr(spec["label"])
+        if spec.get("time"):
+            if isinstance(value, bool) or not isinstance(value, int) or not (0 <= value <= 24 * 60 - 1):
+                return False, tr("{label}: 请按 HH:MM 填写 (00:00 ~ 23:59).", label=label)
+            return True, ""
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             return False, tr("{label}: 请填写数字.", label=label)
         x = value / spec["scale"]
@@ -522,6 +574,8 @@ class SettingsManager:
     def ui_number(self, key: str, value=None) -> str:
         spec = SCHEMA_BY_KEY[key]
         v = self.value(key) if value is None else value
+        if spec.get("time"):
+            return _slot_text(v)
         try:
             return _num_text(float(v) / spec["scale"])
         except (TypeError, ValueError):
@@ -530,6 +584,8 @@ class SettingsManager:
     def from_ui_number(self, key: str, text: str):
         """把填写框里的文字换成存储值; 不是数字时原样返回 (stage 会拒绝)."""
         spec = SCHEMA_BY_KEY[key]
+        if spec.get("time"):
+            return parse_slot(text)
         try:
             x = float(str(text).strip())
         except (TypeError, ValueError):
@@ -761,6 +817,22 @@ def _selftest():
     m3.setup_until = m3._now() - timedelta(seconds=1)
     m3.apply_to_config()
     assert not m3.in_setup() and not config.setup_active()
+
+    # 睡觉时间 (设置 → 日常): 按 HH:MM 填, 存的是分钟数, 默认 23:00 (MECHANICS 19)
+    m4 = SettingsManager(os.path.join(tempfile.mkdtemp(), "settings.json"), delay_hours=48)
+    assert m4.ui_number("SLEEP_MON") == "23:00" and m4.value("SLEEP_SUN") == 23 * 60
+    assert m4.from_ui_number("SLEEP_MON", "22:30") == 22 * 60 + 30
+    assert m4.from_ui_number("SLEEP_MON", "7") == 7 * 60
+    assert m4.from_ui_number("SLEEP_MON", "2300") == 23 * 60
+    assert m4.from_ui_number("SLEEP_TUE", "晚上") == "晚上"
+    assert m4.stage("SLEEP_TUE", "晚上")[0] == "invalid"
+    assert m4.stage("SLEEP_TUE", m4.from_ui_number("SLEEP_TUE", "24:00"))[0] == "invalid"
+    assert m4.stage("SLEEP_TUE", m4.from_ui_number("SLEEP_TUE", "23:00"))[0] == "nochange"
+    assert page_specs("daily")[1][0]["key"] == "SLEEP_MON" and len(page_specs("daily")[1]) == 7
+    m4.start_setup(1)                       # 配置期内立即生效
+    assert m4.stage("SLEEP_MON", m4.from_ui_number("SLEEP_MON", "22:00"))[0] == "instant"
+    assert config.SLEEP_MON == 22 * 60 and config.sleep_minutes(datetime(2026, 10, 19)) == 22 * 60
+    m4.end_setup()
     return "settings_manager selftest OK"
 
 

@@ -106,6 +106,12 @@ fun SettingsScreen(tab: String, setTab: (String) -> Unit, act: MainActivity) {
                         note = "= ${fmtHm(quota)}" + if (dow == today) "  ◂ " + tr("今天") else "")
                 }
             }
+            // 日常: 周一到周日的睡觉时间 (MECHANICS 19)
+            val sleep = nums.filter { it.group == "sleep" }
+            if (sleep.isNotEmpty()) {
+                Heading(tr("睡觉时间"))
+                for (spec in sleep) NumRow(spec, edits, short = true)
+            }
         }
         val delayedOnPage = Schema.ALL.any { it.page == tab && it.delayed }
         if (delayedOnPage) Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 6.dp)) {
@@ -131,11 +137,12 @@ private fun savePage(tab: String, edits: MutableMap<String, String>) {
     val errors = mutableListOf<String>()
     for (spec in Schema.ALL.filter { it.page == tab && it.delayed }) {
         val text = edits[spec.key] ?: continue
-        val value: Any = if (spec.kind == Kind.NUM) s.fromUiNumber(spec.key, text) else text
+        val numeric = spec.kind == Kind.NUM || spec.kind == Kind.TIME
+        val value: Any = if (numeric) s.fromUiNumber(spec.key, text) else text
         // 和排队中的值相同就不再重新排队 (不然等待时间会被重置)
         val cur = s.pending[spec.key]?.value ?: s.raw(spec.key)
-        if (spec.kind == Kind.NUM && value is Double && cur is Double && kotlin.math.abs(value - cur) < 1e-9) continue
-        if (spec.kind != Kind.NUM && value.toString() == cur.toString()) continue
+        if (numeric && value is Double && cur is Double && kotlin.math.abs(value - cur) < 1e-9) continue
+        if (!numeric && value.toString() == cur.toString()) continue
         val (r, msg) = core.stageSetting(spec.key, value)
         when (r) {
             StageResult.INSTANT -> instant++
@@ -219,7 +226,7 @@ private fun OptionRow(spec: Spec, edits: MutableMap<String, String>) {
                 }
             }
             Kind.CHIME -> ChimePicker()
-            Kind.NUM -> {}
+            Kind.NUM, Kind.TIME -> {}
         }
     }
 }
@@ -268,7 +275,8 @@ private fun NumRow(spec: Spec, edits: MutableMap<String, String>, short: Boolean
             Text(tr(if (short) spec.short!! else spec.label), color = o.text, fontSize = 14.sp,
                 modifier = Modifier.width(if (short) 56.dp else 150.dp))
             OutlinedTextField(shown, { edits[spec.key] = it }, singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = if (spec.kind == Kind.TIME) KeyboardType.Text else KeyboardType.Decimal),
                 suffix = { if (spec.unit.isNotEmpty()) Text(spec.unit, color = o.dim) },
                 modifier = Modifier.weight(1f))
             if (note.isNotEmpty()) Text(note, color = o.dim, fontSize = 12.sp, modifier = Modifier.padding(start = 8.dp))

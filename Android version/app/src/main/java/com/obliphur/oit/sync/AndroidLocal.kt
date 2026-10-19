@@ -106,7 +106,7 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
 
     private fun norm(key: String, v: Any?): Any? {
         val spec = Schema.BY_KEY[key] ?: return v
-        return if (spec.kind == Kind.NUM) (v as? Number)?.toDouble() ?: v.toString().toDoubleOrNull()
+        return if (spec.kind == Kind.NUM || spec.kind == Kind.TIME) (v as? Number)?.toDouble() ?: v.toString().toDoubleOrNull()
         else v?.toString() ?: ""
     }
 

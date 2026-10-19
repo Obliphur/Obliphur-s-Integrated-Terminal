@@ -197,12 +197,13 @@ class SettingsPage(tk.Frame):
         choices, nums = page_specs(page)
         for spec in choices:
             self._build_row(body, spec, area)
-        plain = [s for s in nums if not s.get("group")]
-        weekday = [s for s in nums if s.get("group") == "weekday"]
-        if plain:
-            self._build_num_page(body, plain, area)
-        if weekday:
-            self._build_num_page(body, weekday, area)
+        groups = []
+        for spec in nums:
+            g = spec.get("group")
+            if g not in groups:
+                groups.append(g)
+        for g in groups:
+            self._build_num_page(body, [s for s in nums if s.get("group") == g], area)
         area.bind_children()
 
     # ---- 数值项: 直接填写, 一项一行 ----

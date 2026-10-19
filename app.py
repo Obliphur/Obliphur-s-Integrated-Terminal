@@ -20,6 +20,7 @@ import shortcut
 import achievements
 import contract as contract_mod
 import recorder
+import daily
 from sync_local import PcLocal
 from config import (
     COLORS, APP_NAME, IDLE, RUNNING, READY_BREAK, ON_BREAK,
@@ -1077,6 +1078,11 @@ class BreakTimerApp:
         toast.notice(tr("☕  来自 Obliphur"), tired_text(self.dm.username), [
             (tr("去设置"), self._open_detail_settings, True), (tr("知道了"), None, False)])
 
+    def _sleep_notice(self):
+        """睡觉时间之后 3 小时内第一次暂停休息: 提醒去睡觉 (MECHANICS 19)."""
+        toast.notice(tr("🌙  该睡觉了"), daily.sleep_text(self.dm.username),
+                     [(tr("晚安"), None, True)])
+
     def _start_break(self, announce: bool = False):
         """开始休息倒计时 = 建议休息时长 + 之前暂停休息结转的时间."""
         total = self._break_seconds()
@@ -1169,6 +1175,11 @@ class BreakTimerApp:
         rate = float(config.BREAK_CARRY_RATE)
         if self._contract_break_active:
             rate = contract_mod.Contract.first_break_rate(rate)
+        # 睡觉时间 (MECHANICS 19): 窗口内、非合约期间的第一次暂停休息, 结转比例 +5%
+        night = (not silent and not self.contract.active
+                 and daily.take_break_notice(self.dm, datetime.now()))
+        if night:
+            rate = daily.break_rate(rate)
         self._bonus_break_active = False
         self._contract_break_active = False
         # 合约中: 剩余时间里合约开始前积攒的那部分 (放在最后用) 原样还回去, 不打折;
@@ -1206,6 +1217,8 @@ class BreakTimerApp:
             tid = c.hoard_check()
             if tid:
                 self.contract_violation(tr("提前结束了休息"), tid)
+            if night:
+                self._sleep_notice()
 
     def _record_break_end(self):
         """一段休息结束 (自然结束 / 暂停 / 关闭程序): 记入专注计时统计."""
@@ -2253,7 +2266,13 @@ class BreakTimerApp:
         terms = contract_mod.clean_terms(terms)
         lv = contract_mod.level_of(terms)
         dur = contract_mod.duration_of(terms)
-        end = datetime.now() + timedelta(seconds=dur)
+        now = datetime.now()
+        end = now + timedelta(seconds=dur)
+        # 睡觉时间 (MECHANICS 19): 合约结束时间晚于"这次要睡的时间"时, 当天第一次先确认一次
+        late = daily.contract_delay(self.dm, end, now)
+        if late and not toast.ask(daily.late_text(late), title=tr("🌙  该睡觉了"),
+                                  ok_text=tr("开始行动"), danger=True):
+            return
         msg = tr("危机等级 {lv} · 时长 {t} · 到 {at}", lv=lv, t=fmt_hm(dur), at=f"{end:%H:%M}")
         msg += "\n" + tr("完成后休息 +{n} 分钟", n=contract_mod.rest_minutes_total(lv, terms))
         if not toast.ask(msg, title=tr("▶  开始行动"), ok_text=tr("开始行动"), danger=True):
