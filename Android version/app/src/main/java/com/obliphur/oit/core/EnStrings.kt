@@ -640,7 +640,6 @@ object EnStrings {
         "不能提前结束休息 但是获得的休息时间改为105%" to "Breaks can't be ended early, but break time earned set to 105%",
         "专注中不能处于联网状态" to "You can't be online while focusing",
         "合约开始时 以及之后每过一个整小时 从当前可以选择的1-2级词条中随机启用一个或随机施加效果\n选中的词条不算进危机等级" to "When the contract starts and every full hour after that, one random level 1-2 term you can still pick is switched on, or a random effect is applied\nPicked terms don't add to the Contingency Level",
-        "禁止囤囤鼠!: 提前结束休息会算作一次违反." to "No Hoarding!: ending a break early counts as a violation.",
         "提前结束了休息" to "Ended a break early",
         "专注只有 {m} 分钟 (至少 {n} 分钟)" to "Focus lasted only {m} min (at least {n} min)",
         "未知变量: 启用了 {name}" to "Unknown Variable: {name} switched on",

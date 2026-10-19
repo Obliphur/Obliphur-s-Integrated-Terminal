@@ -1599,8 +1599,6 @@ class BreakTimerApp:
                 sub = tr("休息剩余 {m} 分 {s:02d} 秒").format(m=m, s=s)
                 if self._break_locked():
                     sub += "\n" + self._pause_block()
-                elif self.contract.has("hoard"):
-                    sub += "\n" + tr("禁止囤囤鼠!: 提前结束休息会算作一次违反.")
                 self.lbl_sub.config(text=sub)
                 self.countdown_seconds -= 1
                 self.update_job = self.root.after(1000, self.update)
