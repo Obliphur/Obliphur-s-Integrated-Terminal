@@ -24,47 +24,54 @@ HAS_ADAPTER = os.name == "nt"    # 这台设备有没有 Adapter (禁用网卡) 
 
 # (id, 组, 等级, 名字, 描述, 冲突的词条)
 # 同一组的词条互相冲突, 界面上排在同一列; 冲突是双向的 (这里只写一边).
-# 成系列的 (有好几档的) 在前, 界面上放在左边; 零散的 (只有一档的) 在后, 放在右边.
+# 成系列的 (有好几档的) 在前, 界面上放在左边, 一组一列; 同一模块的系列挨在一起.
+# 零散的 (只有一档的) 在后, 放在右边, 按等级排成行; 同一模块的上下对齐 (见下面的注释).
 TERMS = [
+    # ---- 合约本身: 时长, 目标生命值 ----
     ("long1", "long", 1, "环境:持久战-I", "时长改为120%", ()),
     ("long2", "long", 2, "环境:持久战-II", "时长改为140%", ()),
     ("long3", "long", 3, "环境:持久战-III", "时长改为160%", ()),
-    ("move1", "move", 1, "目标:高机动-I", "现实中的移动速度改为125%", ()),
-    ("move2", "move", 2, "目标:高机动-II", "现实中的移动速度改为150%", ()),
-    ("info1", "info", 1, "环境:信息阻断-I", "可用的剩余联网时间改为80% 且不能使用借贷", ()),
-    ("info2", "info", 2, "环境:信息阻断-II", "可用的剩余联网时间改为65% 且不能使用借贷", ()),
-    ("info3", "info", 3, "环境:信息阻断-III", "可用的剩余联网时间改为50% 且不能使用借贷", ()),
+    ("retreat1", "retreat", 1, "环境:退路封锁-I", "初始目标生命值为3", ()),
+    ("retreat2", "retreat", 2, "环境:退路封锁-II", "初始目标生命值为2", ()),
+    ("last", "retreat", 3, "最后防线", "初始目标生命值为1", ()),
+    # ---- 专注 / 休息: 专注的下限, 休息时间的倍率, 合约开始前积攒的休息时间 ----
+    ("deep1", "deep", 1, "目标:纵深推进-I", "专注的时间不能少于40min", ()),
+    ("deep2", "deep", 2, "目标:纵深推进-II", "专注的时间不能少于60min", ()),
     ("tired1", "tired", 1, "环境:疲惫-I", "期间获得的休息时间改为70%", ()),
     ("tired2", "tired", 2, "环境:疲惫-II", "期间获得的休息时间改为60%", ()),
     ("tired3", "tired", 3, "环境:疲惫-III", "期间获得的休息时间改为50%", ()),
     ("short1", "short", 1, "环境:支援短缺-I", "可用的合约开始前已保存休息时间改为50%", ()),
     ("short2", "short", 2, "环境:支援短缺-II", "不能使用合约开始前已经保存的休息时间", ()),
-    ("retreat1", "retreat", 1, "环境:退路封锁-I", "初始目标生命值为3", ()),
-    ("retreat2", "retreat", 2, "环境:退路封锁-II", "初始目标生命值为2", ()),
-    ("last", "retreat", 3, "最后防线", "初始目标生命值为1", ()),
-    ("chan1", "chan", 1, "环境:通道阻塞-I", "期间的最大窗口数改为4", ()),
-    ("chan2", "chan", 2, "环境:通道阻塞-II", "期间的最大窗口数改为3", ()),
-    ("deep1", "deep", 1, "目标:纵深推进-I", "专注的时间不能少于40min", ()),
-    ("deep2", "deep", 2, "目标:纵深推进-II", "专注的时间不能少于60min", ()),
+    # ---- 联网: 剩余额度, 冷静期 ----
+    ("info1", "info", 1, "环境:信息阻断-I", "可用的剩余联网时间改为80% 且不能使用借贷", ()),
+    ("info2", "info", 2, "环境:信息阻断-II", "可用的剩余联网时间改为65% 且不能使用借贷", ()),
+    ("info3", "info", 3, "环境:信息阻断-III", "可用的剩余联网时间改为50% 且不能使用借贷", ()),
     ("erode1", "erode", 1, "环境:侵蚀-I", "网络申请冷却期改为200%", ()),
     ("erode2", "erode", 2, "环境:侵蚀-II", "网络申请冷却期改为300%", ()),
-    # 零散的按 TERMS 里的顺序在各自等级的那一行挨着排, 所以行为类似的写在一起 (上下两行也对齐):
-    # 联网 (抑制 / 全频道阻塞干扰), 整点记录 (记录封锁 / 细化规范), 禁止打开的软件
-    # 和它们下面的录像 (目光 / 刻痕) 与无言为真 (2 级), 黑雾, 最后是休息 / 专注 (禁止囤囤鼠! / 静默协议 / 未知变量).
-# (禁止打开的软件: 乐理之灾 / 禁游令 / 低帧的诅咒在 1 级挨着; 无言为真是 2 级, 排在录像右边)
+    # ---- 窗口 ----
+    ("chan1", "chan", 1, "环境:通道阻塞-I", "期间的最大窗口数改为4", ()),
+    ("chan2", "chan", 2, "环境:通道阻塞-II", "期间的最大窗口数改为3", ()),
+    # ---- 零散的 (只有一档的): 右边, 按等级排成行, 同一模块的放在一起 / 上下对齐 ----
+    # 1 级: 联网 (抑制), 整点记录 (记录封锁), 禁止打开的软件 (乐理之灾 / 禁游令 / 低帧的诅咒),
+    # 现实 (高机动 / 禁足), 黑雾, 休息 (禁止囤囤鼠!), 专注中的联网 (静默协议)
     ("suppress", "suppress", 1, "环境:抑制", "不能使用快速访问功能", ()),
-    ("jam", "jam", 2, "环境:全频道阻塞干扰", "有连接的其他设备时使用proxy block-all模式 没有时使用Adapter模式", ()),
-    ("seal", "seal", 1, "环境:记录封锁", "超过填写时间未填写 则不能再修改该记录", ()),
-    ("fine", "fine", 2, "目标:细化规范", "记录变为30min一次", ()),
+    ("seal", "seal", 1, "环境:记录封锁", "超过填写时间则不能再修改该记录", ()),
     ("music", "music", 1, "环境:乐理之灾", "非休息期间不能打开音乐播放软件 不能使用外部软件播放mp3等音频文件", ()),
-    ("gaze", "gaze", 2, "目光", "合约期间打开摄像头记录使用者的行为 结束后保存录像", ()),
-    ("scar", "scar", 2, "刻痕", "合约期间录制整个屏幕 结束后保存录像", ("gaze",)),
-    ("silent", "silent", 2, "环境:无言为真", "合约期间不能打开社交软件和与AI聊天的软件 不能使用社交网站", ()),
     ("game", "game", 1, "环境:禁游令", "合约期间不能使用游戏和游戏平台", ()),
     ("video", "video", 1, "环境:低帧的诅咒", "合约期间不能使用视频平台", ()),
+    ("move", "move", 1, "目标:高机动", "现实中的移动速度+50%", ()),
+    ("confine", "confine", 1, "目标:禁足", "在非休息时间不能离开工作岗位进行活动", ()),
     ("fog", "fog", 1, "环境:黑雾", "合约期间 专注时长 合约的剩余时间 成就 日历 统计数据不可见 且无法打开设置", ()),
     ("hoard", "hoard", 1, "禁止囤囤鼠!", "不能提前结束休息 但是获得的休息时间改为105%", ()),
     ("quiet", "quiet", 1, "环境:静默协议", "专注中不能处于联网状态", ()),
+    # 2 级: 联网 (全频道阻塞干扰), 整点记录 (细化规范), 禁止打开软件里的 无言为真 (乐理之灾下面),
+    # 录像 (目光 / 刻痕) 在 禁游令 / 低帧的诅咒 下面
+    ("jam", "jam", 2, "环境:全频道阻塞干扰", "有连接的其他设备时使用proxy block-all模式 没有时使用Adapter模式", ()),
+    ("fine", "fine", 2, "目标:细化规范", "记录变为30min一次", ()),
+    ("silent", "silent", 2, "环境:无言为真", "合约期间不能打开社交软件和与AI聊天的软件 不能使用社交网站", ()),
+    ("gaze", "gaze", 2, "目光", "合约期间打开摄像头记录使用者的行为 结束后保存录像", ()),
+    ("scar", "scar", 2, "刻痕", "合约期间录制整个屏幕 结束后保存录像", ("gaze",)),
+    # 3 级: 未知变量
     ("unknown", "unknown", 3, "未知变量", "合约开始时 以及之后每过一个整小时 从当前可以选择的1-2级词条中随机启用一个或随机施加效果\n选中的词条不算进危机等级", ()),
 ]
 BY_ID = {t[0]: t for t in TERMS}
@@ -1309,15 +1316,22 @@ def _selftest():
     assert clean_terms(["long2", "long1", "x", "suppress", "jam"]) == ["long2", "suppress", "jam"]
     assert duration_of([]) == 4 * 3600 and duration_of(["long3"]) == int(4 * 3600 * 1.6)
     assert LAYOUT["short2"][0] < LAYOUT["suppress"][0], "成系列的在左边, 零散的在右边"
-    assert BOARD_COLS == len(SERIES) + 8 and LAYOUT["jam"] == (len(SERIES), 2) \
+    assert BOARD_COLS == len(SERIES) + 10 and LAYOUT["jam"] == (len(SERIES), 2) \
         and LAYOUT["fine"] == (len(SERIES) + 1, 2), "零散的词条挨着排, 不留空"
     assert len(set(LAYOUT.values())) == len(TERMS)
-    # 行为类似的词条放在一起: 禁止的软件在 1 级挨着, 录像在它们下面; 无言为真 2 级, 在低帧的诅咒下面
+    # 行为类似的词条放在一起: 禁止的软件在 1 级挨着; 无言为真 (2 级) 在乐理之灾下面, 录像在禁游令 / 低帧的诅咒下面
     assert [LAYOUT[t][0] for t in ("music", "game", "video")] == \
         [LAYOUT["music"][0], LAYOUT["music"][0] + 1, LAYOUT["music"][0] + 2]
-    assert LAYOUT["gaze"][0] == LAYOUT["music"][0] and LAYOUT["scar"][0] == LAYOUT["game"][0]
-    assert LAYOUT["silent"] == (LAYOUT["video"][0], 2), "无言为真是 2 级"
+    assert LAYOUT["silent"][0] == LAYOUT["music"][0], "无言为真 (2 级) 在乐理之灾下面"
+    assert LAYOUT["gaze"][0] == LAYOUT["game"][0] and LAYOUT["scar"][0] == LAYOUT["video"][0], \
+        "录像 (目光 / 刻痕) 在 禁游令 / 低帧的诅咒 下面"
     assert LAYOUT["seal"][0] == LAYOUT["fine"][0] and LAYOUT["suppress"][0] == LAYOUT["jam"][0]
+    # 高机动只留 1 级 (旧的高机动-I / II 删掉了), 和禁足挨着; 记录封锁的描述换掉了
+    assert "move1" not in BY_ID and "move2" not in BY_ID
+    assert BY_ID["move"][2] == 1 and BY_ID["move"][4] == "现实中的移动速度+50%"
+    assert BY_ID["confine"][2] == 1 and BY_ID["confine"][4] == "在非休息时间不能离开工作岗位进行活动"
+    assert LAYOUT["confine"][0] == LAYOUT["move"][0] + 1, "高机动 / 禁足 挨着"
+    assert BY_ID["seal"][4] == "超过填写时间则不能再修改该记录"
     assert conflicts("gaze", "scar") and conflicts("scar", "gaze") and not conflicts("gaze", "music")
     assert not conflicts("silent", "music") and not conflicts("silent", "game"), "禁止软件的词条可以一起选"
 
@@ -1330,7 +1344,7 @@ def _selftest():
     assert combo_state(mochi, ["long1", "tired2", "fine", "deep1"]) == "done"
     assert combo_level(["long1", "tired2", "fine", "deep1"]) == 1
     assert abs(rest_factor_of(["long1", "tired2", "fine", "deep1"]) - 0.6 * 1.1) < 1e-9
-    iso = ["info1", "chan1", "erode1", "suppress", "fog", "quiet"]
+    iso = ["info1", "erode1", "chan1", "suppress", "fog", "quiet"]
     assert clean_terms(iso) == iso, "信息隔绝组合的词条可以一起选"
     assert combo_done(isolation, iso) and combo_level(iso) == 1 and combo_end(iso) == 10 * 60
     assert rest_reward(6, iso) == rest_minutes(6) * 60 + 10 * 60
@@ -1352,7 +1366,7 @@ def _selftest():
         assert site_title(t, VIDEO_TITLES), t
     assert not site_title("youtube-dl - GitHub", VIDEO_TITLES) and not site_title("ChatGPT", VIDEO_TITLES)
     assert not set(SOCIAL_EXES) & set(VIDEO_EXES) and not SOCIAL_TITLES & VIDEO_TITLES, "一个软件只算一个词条"
-    best = clean_terms(["long3", "move2", "info3", "suppress", "jam", "music", "fog", "tired3", "chan2", "last",
+    best = clean_terms(["long3", "erode2", "info3", "suppress", "jam", "music", "fog", "tired3", "chan2", "last",
                         "short2", "seal", "fine", "silent", "game", "video", "gaze", "scar"])
     assert "scar" not in best and level_of(best) == 32, level_of(best)
     assert combo_gift(best) == 20 * 60, "互联网娱乐的败退凑齐了"
@@ -1370,7 +1384,7 @@ def _selftest():
     assert c.net_left(600) == 3900 and c.net_check(4499, 0, 0, "2026-10-18") == ("", "")
     assert c.net_check(4600, 0, 0, "2026-10-18") == ("info2", "over")
     over, new = c.violate("info2")
-    assert not over and new == "info1" and c.terms == ["long1", "info1", "tired2", "chan1", "music"], c.terms
+    assert not over and new == "info1" and c.terms == ["long1", "tired2", "info1", "chan1", "music"], c.terms
     assert c.net_left(4600) == 600 + 3900 + 900 - 4600 and c.level == 6 and c.orig_level == 7
     assert c.net_check(4700, 0, 0, "2026-10-18") == ("", "")
     assert c.net_check(4700, 600, 0, "2026-10-18") == ("info1", "loan"), "借贷也算违反"

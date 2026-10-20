@@ -38,14 +38,22 @@ class ContractTest {
         assertFalse(Contract.conflicts("jam", "music"))
         assertTrue(Contract.conflicts("short1", "short2")); assertFalse(Contract.conflicts("seal", "fine"))
         assertTrue(Contract.LAYOUT["short2"]!! < Contract.LAYOUT["suppress"]!!)
-        assertEquals(Contract.SERIES.size + 8, Contract.BOARD_COLS)
+        assertEquals(Contract.SERIES.size + 10, Contract.BOARD_COLS)
         assertEquals(Contract.SERIES.size + 1, Contract.LAYOUT["fine"])     // 零散的挨着排, 不留空
-        // 行为类似的放在一起: 禁止的软件 (乐理之灾 / 禁游令 / 低帧的诅咒) 在 1 级挨着, 录像和无言为真在下面的 2 级
+        // 行为类似的放在一起: 禁止的软件 (乐理之灾 / 禁游令 / 低帧的诅咒) 在 1 级挨着;
+        // 无言为真 (2 级) 在乐理之灾下面, 录像在禁游令 / 低帧的诅咒下面
         val m = Contract.LAYOUT["music"]!!
         assertEquals((m..m + 2).toList(), listOf("music", "game", "video").map { Contract.LAYOUT[it]!! })
-        assertEquals(m, Contract.LAYOUT["gaze"]); assertEquals(m + 1, Contract.LAYOUT["scar"])
-        assertEquals(Contract.LAYOUT["video"], Contract.LAYOUT["silent"])   // 无言为真 2 级, 在低帧的诅咒下面
+        assertEquals(m + 1, Contract.LAYOUT["gaze"]); assertEquals(m + 2, Contract.LAYOUT["scar"])
+        assertEquals(Contract.LAYOUT["music"], Contract.LAYOUT["silent"])   // 无言为真 2 级, 在乐理之灾下面
         assertEquals(Contract.LAYOUT["seal"], Contract.LAYOUT["fine"]); assertEquals(Contract.LAYOUT["suppress"], Contract.LAYOUT["jam"])
+        // 高机动只留 1 级 (旧的高机动-I / II 删掉了), 和禁足挨着; 记录封锁的描述换掉了
+        assertFalse("move1" in Contract.BY_ID || "move2" in Contract.BY_ID)
+        assertEquals(1, Contract.BY_ID["move"]!!.level)
+        assertEquals("现实中的移动速度+50%", Contract.BY_ID["move"]!!.desc)
+        assertEquals(1, Contract.BY_ID["confine"]!!.level)
+        assertEquals(Contract.LAYOUT["move"]!! + 1, Contract.LAYOUT["confine"])
+        assertEquals("超过填写时间则不能再修改该记录", Contract.BY_ID["seal"]!!.desc)
         assertTrue(Contract.conflicts("gaze", "scar") && Contract.conflicts("scar", "gaze"))
         assertTrue(Contract.SOCIAL_APPS.intersect(Contract.VIDEO_APPS).isEmpty())
         assertEquals(listOf("long2", "suppress", "jam"), Contract.clean(listOf("long2", "long1", "x", "suppress", "jam")))
@@ -56,7 +64,7 @@ class ContractTest {
         assertEquals("void", Contract.comboState(mochi, listOf("long1", "tired2"), listOf("long1", "tired2", "fine", "deep1")))
         assertEquals(1, Contract.comboLevel(listOf("long1", "tired2", "fine", "deep1")))
         assertEquals(0.6 * 1.1, Contract.restFactorOf(listOf("long1", "tired2", "fine", "deep1")), 1e-9)
-        val iso = listOf("info1", "chan1", "erode1", "suppress", "fog", "quiet")
+        val iso = listOf("info1", "erode1", "chan1", "suppress", "fog", "quiet")
         assertEquals(iso, Contract.clean(iso))                    // 信息隔绝组合的词条可以一起选
         assertEquals(1, Contract.comboLevel(iso)); assertEquals(10 * 60, Contract.comboEnd(iso))
         assertEquals(Contract.restMinutes(6) * 60 + 10 * 60, Contract.restReward(6, iso))
@@ -65,7 +73,7 @@ class ContractTest {
         assertEquals(mapOf("last" to Contract.COMBO_COLORS["gray"]!!, "unknown" to Contract.COMBO_COLORS["gray"]!!),
             Contract.comboMarks(listOf("last", "unknown")))
         assertEquals("纵深推进", Contract.reqName("deep")); assertEquals("最后防线", Contract.reqName("last"))
-        val best = Contract.clean(listOf("long3", "move2", "info3", "suppress", "jam", "music", "fog", "tired3", "chan2", "last",
+        val best = Contract.clean(listOf("long3", "erode2", "info3", "suppress", "jam", "music", "fog", "tired3", "chan2", "last",
             "short2", "seal", "fine", "silent", "game", "video", "gaze"))
         assertEquals(32, Contract.levelOf(best))
         assertEquals(20 * 60, Contract.restGift(best))             // 互联网娱乐的败退凑齐了
@@ -115,7 +123,7 @@ class ContractTest {
         assertEquals(false to "", e.violate("game")); assertEquals("void", e.combos()[1].second)
         assertTrue(e.comboMarks().isEmpty())
         // 信息隔绝组合: 额外 1 危机等级, 完成时 +10 分钟; 成员失效后都没了
-        val iso = listOf("info1", "chan1", "erode1", "suppress", "fog", "quiet")
+        val iso = listOf("info1", "erode1", "chan1", "suppress", "fog", "quiet")
         e.start(iso, "me", t0)
         assertEquals("done", e.combos()[3].second); assertEquals(7, e.level)
         assertEquals(Contract.restMinutes(7) * 60.0 + 10 * 60, e.reward, 1e-6)
