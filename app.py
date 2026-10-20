@@ -170,7 +170,8 @@ class BreakTimerApp:
         self.hourly_job = None
         self.net_job = None
         self.window_job = None        # 任务栏窗口数上限的检查 (与界面无关, 重建界面时不中断)
-        self._win_over = False        # 专注中窗口数是不是已经超过上限 (只在刚超过时提醒一次)
+        self._win_over = False        # 专注中窗口数是不是已经超过上限
+        self._win_warn_at = 0.0       # 上一次提醒的时刻 (monotonic); 0 = 还没提醒过
         self.prestart = prestart.Prestart()   # 提前启动 (仅 PC, MECHANICS 20)
         self.prestart_job = None
         self.window_focus_job = None  # 窗口使用时间统计: 每隔几秒看一次前台程序
@@ -1898,10 +1899,11 @@ class BreakTimerApp:
         self.window_job = self.root.after(self._window_check_ms(), self._schedule_window_guard)
 
     def _check_windows(self):
-        """专注中窗口数超过上限就提醒一次 (不再关窗口); 回到上限以内后再超才再提醒."""
+        """专注中窗口数超过上限: 提醒 + 响一次违约音效; 提醒后 2 分钟冷却, 还没解决再响一次."""
         if self.dm.resetting or not getattr(config, "WINDOW_LIMIT_ENABLED", 0) \
                 or self.state != RUNNING:
             self._win_over = False
+            self._win_warn_at = 0.0
             return
         limit = int(getattr(config, "WINDOW_LIMIT", 5))
         try:
@@ -1910,10 +1912,18 @@ class BreakTimerApp:
             self._log_window(f"ERROR    {type(e).__name__}: {e}")
             return
         over = n > limit
-        if over and not self._win_over:
+        if not over:
+            self._win_over = False
+            self._win_warn_at = 0.0
+            return
+        now = time.monotonic()
+        cooldown = float(getattr(config, "WINDOW_WARN_COOLDOWN", 120))
+        if window_guard.remind_due(True, self._win_warn_at, now, cooldown):
+            self._win_warn_at = now
             self._log_window(f"OVER     {n} > {limit}")
             toast.warn(tr("窗口超过上限 {x} 个 (现在 {n} 个), 关掉一些吧.", n=n, x=limit))
-        self._win_over = over
+            self._play_alarm()                       # 和违约同一个音效 (MECHANICS 12)
+        self._win_over = True
 
 
     # ---- 设备同步 (MECHANICS 15) ----

@@ -117,8 +117,9 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     private var lastCheck = -1e9
     private var lastAppSample = mono()
     private var lastOpenApps = -1e9
-    /** 专注中后台应用数是不是已经超过上限: 只在刚超过时提醒一次. */
+    /** 专注中后台应用数是不是已经超过上限; 上一次响警报的时刻 (超着时每 OPEN_APPS_REPEAT 秒再响一次). */
     private var appsOver = false
+    private var appsAlarmAt = -1e9
     private var appSamples = 0
     private var nextHour = nextHalf(LocalDateTime.now())
 
@@ -385,7 +386,8 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         if (!limitOn || n <= lim) {
             appsOver = false; return
         }
-        if (!appsOver) {                              // 刚超过: 提醒一次 (回到上限以内后再超才再提醒)
+        if (!appsOver || mono() - appsAlarmAt >= Cfg.OPEN_APPS_REPEAT) {
+            appsAlarmAt = mono()
             host.playAlarm()
             toast(tr("后台开着 {n} 个应用, 超过上限 {x} 个.", "n" to n, "x" to lim), "warn")
             Store.append(File(dir, "window_guard.log"), "APPS     $n > $lim")

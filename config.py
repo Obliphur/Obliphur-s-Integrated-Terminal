@@ -138,7 +138,7 @@ def next_sleep(now: datetime) -> datetime:
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.75"                         # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.76"                         # 和 GitHub 上发布的版本号比较 (见 updater.py)
 UPDATE_CHECK = 1                              # 打开程序时检查更新
 UPDATE_AUTO = 1                               # 发现新版本时自动下载安装
 OLD_APP_DIR = "mrsTimer"
@@ -151,11 +151,12 @@ LANGUAGE = "zh"
 NET_MODE = "proxy"                            # "adapter" 禁用网卡 / "proxy" 本地代理过滤 / "proxy_all" 代理-全屏蔽 (Proxy block-all)
 FILTER_MODE = "blacklist"                     # proxy 模式下生效的名单:"blacklist" / "whitelist"
 
-# 任务栏窗口数上限: 每 WINDOW_CHECK_EVERY 秒数一次任务栏上的窗口 (同一程序的多个窗口各算一个),
-# 超过 WINDOW_LIMIT 个就随机关掉多出来的 (见 window_guard.py)
+# 任务栏窗口数上限: 每 WINDOW_CHECK_EVERY 秒数一次任务栏上的窗口 (同一程序的多个窗口各算一个), 超过 WINDOW_LIMIT 个
+# 就提醒并响一次违约音效; 提醒之后 WINDOW_WARN_COOLDOWN 秒内不重复, 过了还没解决再响 (见 window_guard.py)
 WINDOW_LIMIT_ENABLED = 1
 WINDOW_LIMIT = 5
 WINDOW_CHECK_EVERY = 30
+WINDOW_WARN_COOLDOWN = 120                   # 窗口数超限的提醒冷却 (秒)
 # 窗口使用时间统计: 每 WINDOW_FOCUS_EVERY 秒看一次前台窗口属于哪个程序, 把这几秒记给它
 # (见 window_guard.foreground_program, DataManager.add_window_time). 桌面,文件资源管理器和命令行窗口记为空白.
 WINDOW_FOCUS_ENABLED = 1

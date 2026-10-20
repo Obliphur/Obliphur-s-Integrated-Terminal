@@ -326,6 +326,14 @@ def count_windows(windows=None, own_pid: int = None, exclude_pids=None) -> int:
     return len(taskbar_windows(windows, own_pid, include_own=True, exclude_pids=exclude_pids))
 
 
+def remind_due(over: bool, last_at: float, now: float, cooldown: float = 120.0) -> bool:
+    """窗口数超限的提醒到时间了吗: 刚超过时立刻提醒; 之后每次隔 cooldown 秒 (还没解决就再响一次).
+    回到上限以内以后调用方把 last_at 清零."""
+    if not over:
+        return False
+    return last_at <= 0 or (now - last_at) >= max(1.0, float(cooldown))
+
+
 # ───────────────────────── 合约: 乐理之灾 / 通道阻塞 (MECHANICS 18) ─────────────────────────
 
 def list_processes() -> list:
@@ -447,6 +455,10 @@ def _selftest():
     # 提前启动 (MECHANICS 20) 的程序: 窗口显示出来也不算进窗口数
     assert count_windows(ws, own_pid=99, exclude_pids={5}) == 4
     assert count_windows(ws, own_pid=99, exclude_pids={5, 6, 99}) == 2
+    # 提醒冷却: 刚超过立刻提醒, 之后每 2 分钟一次 (还没解决就再响)
+    assert remind_due(True, 0.0, 1000.0) and not remind_due(True, 1000.0, 1060.0)
+    assert remind_due(True, 1000.0, 1120.0) and not remind_due(False, 0.0, 1000.0)
+    assert remind_due(True, 990.0, 1000.0, 30) is False and remind_due(True, 970.0, 1000.0, 30)
     assert count_windows(ws, own_pid=99, exclude_pids=set()) == 6
 
     # 前台程序
