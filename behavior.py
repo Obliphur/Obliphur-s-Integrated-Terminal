@@ -238,6 +238,18 @@ class Behavior:
             self.save()
         return self.tick(now, can_reward=can_reward)
 
+    def yield_to_contract(self, at: datetime, now: datetime = None):
+        """合约和外出不能同时进行 (MECHANICS 21.1). 同步来的合约和进行中的外出撞上时, 外出让路:
+        在合约开始的时刻结束 (外出比合约开始得晚就整次作废, 什么都不记). 返回被结束的外出, 没有时 None."""
+        now = (now or datetime.now()).replace(microsecond=0)
+        o = self.active(now)
+        if o is None:
+            return None
+        at = (at or now).replace(microsecond=0)
+        o["stopped"] = min(max(at, o["start"]), now, o["end"])
+        self.save()
+        return o
+
     def _latest_unstopped(self, now: datetime = None):
         out = [o for o in self.outings if self._stopped(o) is None]
         return max(out, key=lambda o: o["start"]) if out else None
@@ -412,7 +424,8 @@ class Behavior:
         if self._mode_since is not None and hour_end <= self._mode_since:
             return ""
         for o in self.outings:
-            if o["start"] < hour_end and self._effective_end(o) > hour_start:
+            end = self._effective_end(o)
+            if o["start"] < hour_end and end > hour_start and end > o["start"]:   # 作废的外出 (0 长度) 不算
                 return str(getattr(config, "OUTING_TEXT", config.OUTING_TEXT) or config.OUTING_TEXT)
         return str(getattr(config, "REST_TEXT", config.REST_TEXT) or config.REST_TEXT)
 
@@ -581,6 +594,23 @@ def _selftest():
         assert ev["reward"] == 0 and ev["hours"] == 0, ev
         assert not b7.focus_segments(datetime(2026, 10, 19, 0, 0),
                                      now=datetime(2026, 10, 19, 10, 30)), "不足 1 小时不画"
+
+        # 合约和外出撞上 (同步来的): 外出在合约开始时结束; 比合约晚开始的外出整次作废
+        b8 = Behavior(tempfile.mkdtemp(), now=at)
+        b8.start(5, datetime(2026, 10, 19, 10, 0))
+        o = b8.yield_to_contract(datetime(2026, 10, 19, 12, 30), datetime(2026, 10, 19, 12, 31))
+        assert o is not None and o["stopped"] == datetime(2026, 10, 19, 12, 30), o
+        assert b8.active(datetime(2026, 10, 19, 12, 31)) is None
+        assert b8.yield_to_contract(datetime(2026, 10, 19, 12, 30)) is None, "没有外出时什么都不做"
+        assert abs(b8.recorded_hours(o) - 2) < 1e-9
+        b9 = Behavior(tempfile.mkdtemp(), now=at)
+        b9.start(3, datetime(2026, 10, 19, 15, 20))
+        o = b9.yield_to_contract(datetime(2026, 10, 19, 15, 0), datetime(2026, 10, 19, 15, 21))
+        assert o["stopped"] == o["start"] and b9.recorded_hours(o) == 0
+        assert b9.quota_factor(datetime(2026, 10, 19)) == 1.0 and not b9.days()
+        assert b9.hour_auto_text(datetime(2026, 10, 19, 15, 0)) == config.REST_TEXT, "作废的外出不填「外出」"
+        ev = b9.tick(datetime(2026, 10, 19, 15, 22))
+        assert ev["reward"] == 0, ev
 
         # 模式切回自由学习: 没有外出, 不填整点记录
         config.BEHAVIOR_MODE = config.BEHAVIOR_FREE

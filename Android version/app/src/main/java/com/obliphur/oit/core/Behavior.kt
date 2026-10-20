@@ -169,6 +169,20 @@ class Behavior(
         return tick(t, canReward)
     }
 
+    /** 合约和外出不能同时进行 (MECHANICS 21.1). 同步来的合约和进行中的外出撞上时, 外出让路:
+     *  在合约开始的时刻结束 (外出比合约开始得晚就整次作废, 什么都不记). 返回被结束的外出, 没有时 null. */
+    fun yieldToContract(contractStart: LocalDateTime?, at: LocalDateTime = now()): Outing? {
+        val t = at.withNano(0)
+        val o = active(t) ?: return null
+        var s = (contractStart ?: t).withNano(0)
+        if (s < o.start) s = o.start
+        if (s > t) s = t
+        if (s > o.end) s = o.end
+        o.stopped = s
+        save()
+        return o
+    }
+
     /** 到时间的外出自动结束; 把还没发的休息时间发掉. */
     fun tick(at: LocalDateTime = now(), canReward: (Outing) -> Boolean = { true }): BehaviorEnd {
         val t = at.withNano(0)
@@ -308,7 +322,8 @@ class Behavior(
         if (since != null && !hourEnd.isAfter(since)) return ""
         val at = now()
         for (o in outings) {
-            if (o.start < hourEnd && o.effectiveEnd(at) > hourStart) {
+            val end = o.effectiveEnd(at)
+            if (o.start < hourEnd && end > hourStart && end > o.start) {      // 作废的外出 (0 长度) 不算
                 return settings.str("OUTING_TEXT").ifBlank { Cfg.OUTING_TEXT }
             }
         }

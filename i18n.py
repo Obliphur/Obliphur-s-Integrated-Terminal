@@ -390,6 +390,7 @@ EN = {
     "外出中, 先结束外出再开始专注.": "You're out. End the outing before focusing.",
     "外出中, 先结束外出再休息.": "You're out. End the outing before taking a break.",
     "合约中不能外出.": "You can't go out during a contract.",
+    "合约进行中, 外出已结束.": "A contract is running, so the outing has ended.",
     "请先结束专注 / 休息再外出.": "Finish focusing / the break before going out.",
     "请先结束外出再开始合约.": "End the outing before starting a contract.",
     "请先结束外出再开始合约": "End the outing before starting a contract.",

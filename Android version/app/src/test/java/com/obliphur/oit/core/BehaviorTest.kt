@@ -151,4 +151,32 @@ class BehaviorTest {
         assertEquals(StageResult.STAGED, s.stage("BEHAVIOR_MODE", "work").first)
         assertTrue(s.pendingLeftSeconds("BEHAVIOR_MODE") > 167 * 3600)
     }
+
+    @Test
+    fun yieldToContract() {
+        // 合约和外出撞上 (同步来的): 外出在合约开始时结束; 比合约晚开始的外出整次作废
+        var clock = at(2026, 10, 19, 0, 0)
+        val s = settings()
+        val b = Behavior(tmp(), s) { clock }
+        assertEquals("", b.start(5, "dev", at(2026, 10, 19, 10, 0)))
+        clock = at(2026, 10, 19, 12, 31)
+        val o = b.yieldToContract(at(2026, 10, 19, 12, 30), clock)
+        assertNotNull(o)
+        assertEquals(at(2026, 10, 19, 12, 30), o!!.stopped)
+        assertNull(b.active(clock))
+        assertNull(b.yieldToContract(at(2026, 10, 19, 12, 30), clock))
+        assertEquals(2.0, b.recordedHours(o, clock), 1e-9)
+
+        clock = at(2026, 10, 19, 0, 0)
+        val b2 = Behavior(tmp(), s) { clock }
+        assertEquals("", b2.start(3, "dev", at(2026, 10, 19, 15, 20)))
+        clock = at(2026, 10, 19, 15, 21)
+        val o2 = b2.yieldToContract(at(2026, 10, 19, 15, 0), clock)!!
+        assertEquals(o2.start, o2.stopped)
+        assertEquals(0.0, b2.recordedHours(o2, clock), 1e-9)
+        assertEquals(1.0, b2.quotaFactor(LocalDate.of(2026, 10, 19)), 1e-9)
+        assertTrue(b2.days().isEmpty())
+        assertEquals("休息", b2.hourAutoText(at(2026, 10, 19, 15, 0)))
+        assertEquals(0, b2.tick(clock) { true }.reward)
+    }
 }

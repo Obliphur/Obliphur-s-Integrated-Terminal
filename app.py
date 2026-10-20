@@ -1083,6 +1083,13 @@ class BreakTimerApp:
                                         max_hours=int(config.OUTING_MAX_HOURS))
 
     def _start_outing(self, hours: int):
+        # 填时长的窗口开着时, 可能已经开始了合约 / 专注 (MECHANICS 21.1)
+        if self.contract.active:
+            toast.warn(tr("合约中不能外出."))
+            return
+        if self.state != IDLE:
+            toast.warn(tr("请先结束专注 / 休息再外出."))
+            return
         ok, msg, o = self.behavior.start(hours, owner=(self.sync.my_id or ""))
         if not ok:
             toast.warn(tr(msg))
@@ -1136,6 +1143,16 @@ class BreakTimerApp:
         if not self.behavior.enabled() and self.behavior.active(now) is not None:
             self._apply_outing_result(self.behavior.stop(now, can_reward=self._can_reward_outing))
             was = True
+        c = getattr(self, "contract", None)
+        if c is not None and c.active and self.behavior.active(now) is not None:
+            # 别的设备同步来的合约 / 外出撞上了: 外出在合约开始时结束 (MECHANICS 21.1)
+            o = self.behavior.yield_to_contract(c.start_at, now)
+            if o is not None:
+                self._log_notice(f"OUTING yield to contract, stopped {o['stopped']:%Y-%m-%d %H:%M}")
+                toast.warn(tr("合约进行中, 外出已结束."))
+                was = True
+                if self.sync.peers():
+                    self.sync.sync_now()
         ev = self.behavior.tick(now, can_reward=self._can_reward_outing)
         if ev.get("reward"):
             self._apply_outing_result(ev)

@@ -541,6 +541,14 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         if (!behavior.enabled() && behavior.active() != null) {
             applyBehaviorEnd(behavior.stop(::canRewardOuting))
         }
+        if (contract.active && behavior.active() != null) {
+            // 别的设备同步来的合约 / 外出撞上了: 外出在合约开始时结束 (MECHANICS 21.1)
+            behavior.yieldToContract(contract.startAt)?.let { o ->
+                logNotice("OUTING yield to contract, stopped ${o.stopped?.format(Fmt.YMDHM)}")
+                toast(tr("合约进行中, 外出已结束."), "warn")
+                changed()
+            }
+        }
         applyBehaviorEnd(behavior.tick(canReward = ::canRewardOuting))
     }
 
