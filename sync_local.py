@@ -75,6 +75,10 @@ class PcLocal:
     def auto_text(self) -> str:
         return self.app.dm.auto_text
 
+    def auto_text_for(self, key: str) -> str:
+        """整点记录里这一格的自动填充内容 (行为模式会按小时变, MECHANICS 21)."""
+        return self.app.dm.auto_text_for_key(key)
+
     def changed(self):
         try:
             self.app.on_sync_changed()
@@ -105,6 +109,7 @@ class PcLocal:
         dm.window_days = {}
         dm.window_runs = {}
         dm.save_window_usage(force=True)
+        self.app.behavior.clear_history()
         n.usage = []
         n._session = None
         n._usage_dirty = True
@@ -160,8 +165,9 @@ class PcLocal:
                  "live": a.timer_live()}
         # 成就: 哪台设备达成都算 (达成时刻取最早的), 见 MECHANICS 17
         # 合约: 进行中的合约以后改的为准, 结束了的合约合并 (MECHANICS 18)
+        # 行为模式的外出: 每一项单独比较, 计时 / 统计跟着它走 (MECHANICS 21)
         return {"settings": settings, "hours": hours, "timer": timer, "achievements": a.ach.doc(),
-                "contract": a.contract.doc()}
+                "contract": a.contract.doc(), "behavior": a.behavior.doc()}
 
     def apply(self, doc: str, changes: dict):
         a = self.app
@@ -227,6 +233,9 @@ class PcLocal:
             a.on_achievements_synced(changes)
         elif doc == "contract":
             a.on_contract_synced(changes)
+        elif doc == "behavior":
+            a.behavior.merge(changes)
+            a.after_behavior_synced()
 
     # ---- 绑定请求 ----
 

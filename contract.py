@@ -745,7 +745,7 @@ class Contract:
             out.append(tid)
         return out
 
-    def roll(self, now: datetime, rng=None, text_of=None, auto: str = "", fill: timedelta = None) -> list:
+    def roll(self, now: datetime, rng=None, text_of=None, auto="", fill: timedelta = None) -> list:
         """到了新的一个小时就判定一次: 抽一个词条 (3 分钟后生效 (wake), 到这个小时结束时移除) 或者施加一个效果.
         返回这次的结果 [(种类, 值)]: ("term", 词条) / ("rest_cut", "") / ("rest_add", "") / ("lock", 封锁的格子键或 "")
         / ("double", "") / ("slow", "") / ("none", ""); 休息时间的增减由调用方做 (只由做自动结束的设备调用).
@@ -809,7 +809,7 @@ class Contract:
 
     # ---- 未知变量的效果 ----
 
-    def lock_cell(self, now: datetime, rng=None, text_of=None, auto: str = "", fill: timedelta = None) -> str:
+    def lock_cell(self, now: datetime, rng=None, text_of=None, auto="", fill: timedelta = None) -> str:
         """随机封锁一个还没被封锁, 已经过了填写时限的整点记录格 (最近 24 小时里的; 合约结束后照样锁着).
         返回格子的键 ("日期/小时", 细化规范的半小时 "日期/小时/1"); 没有可以封锁的返回 ""."""
         if not self.active or text_of is None or fill is None:
@@ -824,7 +824,7 @@ class Contract:
             else:
                 cells = [(key, h, h + timedelta(hours=1))]
             for k, a, b in cells:
-                if b + cell_fill(a, b, fill) <= now and not self.hour_locked(a, b, text_of(k) or "", now, fill, auto):
+                if b + cell_fill(a, b, fill) <= now and not self.hour_locked(a, b, text_of(k) or "", now, fill, auto, k):
                     pool.append((k, a, b))
             h += timedelta(hours=1)
         if not pool:
@@ -1263,9 +1263,10 @@ class Contract:
             h += timedelta(hours=1)
         return out
 
-    def hour_misses(self, now: datetime, fill: timedelta, text_of, auto: str) -> list:
+    def hour_misses(self, now: datetime, fill: timedelta, text_of, auto) -> list:
         """合约中过了填写时限还没填写的记录格 (空着, 或者是超时自动记录的内容): 每格只算一次违反.
-        返回新算的键 (只由做自动结束的设备调用)."""
+        返回新算的键 (只由做自动结束的设备调用).
+        auto: 超时自动记录的内容, 或者 (键) → 那一小时的自动记录内容的函数 (行为模式)."""
         if not self.active:
             return []
         old = list(self.live.get("hl") or [])
@@ -1275,20 +1276,29 @@ class Contract:
             if key in seen or b + cell_fill(a, b, fill) > now:
                 continue
             seen.add(key)
-            if (text_of(key) or "") in ("", auto):
+            if self._is_auto(text_of(key) or "", key, auto):
                 new.append(key)
         if len(seen) != len(old):
             self.live["hl"] = sorted(seen)
             self.save()
         return new
 
+    @staticmethod
+    def _is_auto(text: str, key: str, auto) -> bool:
+        try:
+            wanted = str(auto(key)) if callable(auto) else str(auto or "")
+        except Exception:
+            wanted = "" if callable(auto) else str(auto or "")
+        return str(text or "") in ("", wanted)
+
     def hour_locked(self, start: datetime, end: datetime, text: str, now: datetime, fill: timedelta,
-                    auto: str) -> bool:
+                    auto, key: str = "") -> bool:
         """记录封锁: 和选了这个词条的合约重叠的记录格, 过了填写时限还没填写 (空着 / 超时自动记录),
         就不能再改 —— 合约结束了也一样. 未知变量封锁的格子不管填没填都不能再改."""
         if any(a < end and start < b for a, b in self.locks()):
             return True
-        if now < end + cell_fill(start, end, fill) or (text or "") not in ("", auto):
+        key = key or f"{start:%Y-%m-%d}/{start.hour}"
+        if now < end + cell_fill(start, end, fill) or not self._is_auto(text, key, auto):
             return False
         return any(a < end and start < b for a, b in self.periods(now, "seal"))
 

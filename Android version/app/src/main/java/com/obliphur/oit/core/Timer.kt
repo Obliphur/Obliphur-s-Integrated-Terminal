@@ -80,6 +80,9 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
 
     fun onAction() {
         mine()
+        if (state == TState.IDLE && core.behavior.active() != null) {
+            core.toast(tr("外出中, 先结束外出再开始专注.")); return
+        }
         when (state) {
             TState.IDLE -> {
                 enterFocus(LocalDateTime.now(), mono())
@@ -117,6 +120,9 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
 
     fun onBreakButton() {
         mine()
+        if (state == TState.IDLE && core.behavior.active() != null) {
+            core.toast(tr("外出中, 先结束外出再休息.")); return
+        }
         when (state) {
             TState.IDLE -> {
                 if (breakCarry <= 0) {

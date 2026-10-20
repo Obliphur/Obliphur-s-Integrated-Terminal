@@ -44,6 +44,9 @@ class NetGuard:
         self.pending = None
         # 设备同步: 其他设备今天的 {used, bonus, tomorrow_used, debt} 之和 (见 devsync.peer_net)
         self.peer_net = lambda: {"used": 0.0, "bonus": 0.0, "tomorrow_used": 0.0, "debt": 0.0, "gift": 0.0}
+        # 行为模式 (MECHANICS 21): 有外出的日子额度 ×0.2; 正在外出时冷静期 ×0.3
+        self.quota_factor = lambda day: 1.0
+        self.cooldown_factor = lambda now: 1.0
         # 设备同步: 其他设备的联网会话 (按理由统计用)
         self.peer_usage = lambda: []
         self.proxy = ProxyController(
@@ -78,13 +81,35 @@ class NetGuard:
 
     @property
     def limit(self) -> float:
-        """今天的每日额度 = DAILY_LIMIT × 今天(星期几)的倍率."""
-        return config.daily_quota(self._day())
+        """今天的每日额度 = DAILY_LIMIT × 今天(星期几)的倍率 × 行为模式的外出倍率."""
+        return config.daily_quota(self._day()) * self._quota_factor(self._day())
 
     @property
     def tomorrow_limit(self) -> float:
         """明天的每日额度, 按明天是星期几算 (紧急借贷借的是它)."""
-        return config.daily_quota(self._day(1))
+        return config.daily_quota(self._day(1)) * self._quota_factor(self._day(1))
+
+    def _quota_factor(self, day) -> float:
+        try:
+            return max(0.0, float(self.quota_factor(day)))
+        except Exception:
+            return 1.0
+
+    def _cooldown_factor(self, now: datetime = None) -> float:
+        try:
+            return max(0.0, float(self.cooldown_factor(now or datetime.now())))
+        except Exception:
+            return 1.0
+
+    @property
+    def outing_factor(self) -> float:
+        """今天的额度因为外出变成多少 (1.0 = 没有打折)."""
+        return self._quota_factor(self._day())
+
+    @property
+    def outing_cooldown(self) -> float:
+        """现在的联网冷静期因为外出变成多少 (1.0 = 没有打折)."""
+        return self._cooldown_factor()
 
     @property
     def quota_multiplier(self) -> float:
@@ -477,7 +502,7 @@ class NetGuard:
             if self.loan_left >= 60:
                 extra = f" An emergency loan can add up to {fmt_hm(self.loan_left)}."
             return False, f"Only {fmt_hm(self.remaining)} left today.{extra}"
-        rate = min(1.0, max(0.0, float(cooldown_rate)))
+        rate = min(1.0, max(0.0, float(cooldown_rate) * self._cooldown_factor()))
         mult = max(1.0, float(cooldown_mult))          # 合约的侵蚀: 冷静期 ×2 / ×3
         self.pending = {
             "minutes": minutes,
@@ -486,7 +511,7 @@ class NetGuard:
             "quick": False,
         }
         self._log(f"REQUEST  {minutes} min"
-                  + (f" (on break, cooldown {rate:g}x)" if rate < 1.0 else "")
+                  + (f" (cooldown {rate:g}x)" if rate < 1.0 else "")
                   + (f" (contract, cooldown x{mult:g})" if mult > 1.0 else "")
                   + f"  reason: {reason}")
         return True, ""

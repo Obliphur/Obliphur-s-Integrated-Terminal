@@ -1,20 +1,24 @@
 package com.obliphur.oit.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.text.font.FontWeight
@@ -30,6 +34,7 @@ import com.obliphur.oit.core.f2
 import com.obliphur.oit.core.fmtHm
 import com.obliphur.oit.core.fmtMs
 import com.obliphur.oit.core.numText
+import com.obliphur.oit.core.secondsBetween
 import com.obliphur.oit.core.tr
 import java.time.Instant
 import java.time.LocalDateTime
@@ -46,15 +51,24 @@ fun TimerScreen() {
     val t = core.timer
     val scale = core.settings.num("BREAK_TIME_SCALE")
     val fog = core.contract.fog()
+    val outing = core.outing
+    var askOuting by rememberSaveable { mutableStateOf(false) }
+    var outingHours by rememberSaveable { mutableStateOf("2") }
+    var askEnd by rememberSaveable { mutableStateOf(false) }
     PageColumn {
         OitCard {
-            val (status, color) = when (t.state) {
-                TState.RUNNING -> tr("专注中…") to o.accent
-                TState.ON_BREAK -> tr("休息中 ☕") to o.warn
-                TState.IDLE -> tr("准备就绪") to o.dim
+            val (status, color) = when {
+                outing != null -> tr("外出中 🚪") to o.warn
+                t.state == TState.RUNNING -> tr("专注中…") to o.accent
+                t.state == TState.ON_BREAK -> tr("休息中 ☕") to o.warn
+                else -> tr("准备就绪") to o.dim
             }
             StatusRow(status, color)
-            when (t.state) {
+            if (outing != null) {
+                val left = maxOf(0.0, secondsBetween(LocalDateTime.now(), outing.end))
+                BigText(fmtHm(left))
+                Dim(tr("外出中 · 已经记录 {h} 小时", "h" to numText(core.behavior.recordedHours(outing))))
+            } else when (t.state) {
                 TState.RUNNING -> if (fog) BigText("???") else {
                     // 黑雾: 专注时看不到专注时长 (预计休息时长也能推出时长, 一起不显示)
                     val rate = t.focusRate                   // 阻滞: 合约内的那部分时间按 90% 增长
@@ -87,25 +101,66 @@ fun TimerScreen() {
                 Dim(tr("⚠ 有设备离线: 离线的这段时间专注不会被记录."), Modifier.padding(top = 4.dp), size = 13, color = o.warn)
         }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            val locked = t.breakLocked
-            when (t.state) {
-                TState.RUNNING -> {
-                    AccentButton(tr("■  结束专注")) { t.onAction() }
-                    PlainButton(tr("☕  开始休息"), enabled = false) {}
+            if (outing != null) {
+                PlainButton(tr("🚪  结束外出")) { askEnd = true }
+            } else {
+                val locked = t.breakLocked
+                when (t.state) {
+                    TState.RUNNING -> {
+                        AccentButton(tr("■  结束专注")) { t.onAction() }
+                        PlainButton(tr("☕  开始休息"), enabled = false) {}
+                    }
+                    TState.ON_BREAK -> {
+                        AccentButton(tr("▶  开始专注"), enabled = !locked) { t.onAction() }
+                        PlainButton(tr("⏸  暂停休息"), enabled = !locked) { t.onBreakButton() }
+                    }
+                    TState.IDLE -> {
+                        AccentButton(tr("▶  开始专注")) { t.onAction() }
+                        PlainButton(tr("☕  开始休息"), enabled = t.breakCarry > 0) { t.onBreakButton() }
+                    }
                 }
-                TState.ON_BREAK -> {
-                    AccentButton(tr("▶  开始专注"), enabled = !locked) { t.onAction() }
-                    PlainButton(tr("⏸  暂停休息"), enabled = !locked) { t.onBreakButton() }
-                }
-                TState.IDLE -> {
-                    AccentButton(tr("▶  开始专注")) { t.onAction() }
-                    PlainButton(tr("☕  开始休息"), enabled = t.breakCarry > 0) { t.onBreakButton() }
-                }
+                if (core.behavior.enabled()) PlainButton(tr("🚪  外出")) { askOuting = true }
+                // 连点按钮: 按钮上只写这几个字, 不写具体规则; 合约中 / 外出中隐藏
+                if (!core.contract.active) PlainButton(t.bonusLabel()) { t.onBonusClick() }
             }
-            // 连点按钮: 按钮上只写这几个字, 不写具体规则; 合约中隐藏
-            if (!core.contract.active) PlainButton(t.bonusLabel()) { t.onBonusClick() }
         }
         Flavor(tr("在第二段区间内 学的时间越长得到的休息时间越长.请尽量长时间地专注."), Modifier.padding(top = 24.dp))
+    }
+    if (askOuting) {
+        AlertDialog(
+            onDismissRequest = { askOuting = false },
+            title = { Text(tr("🚪  外出")) },
+            text = {
+                Column {
+                    Text(tr("持续多少小时?"))
+                    OutlinedTextField(outingHours, { outingHours = it.filter(Char::isDigit).take(3) },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
+                }
+            },
+            confirmButton = {
+                TextButton({
+                    val h = outingHours.toIntOrNull()
+                    if (h == null) { core.toast(tr("请填写整数小时."), "warn"); return@TextButton }
+                    val err = core.startOuting(h)
+                    if (err.isNotEmpty()) { core.toast(err, "warn"); return@TextButton }
+                    askOuting = false
+                }) { Text(tr("开始外出"), color = o.accent) }
+            },
+            dismissButton = { TextButton({ askOuting = false }) { Text(tr("取消"), color = o.dim) } },
+            containerColor = o.bg,
+        )
+    }
+    if (askEnd) {
+        val cur = outing
+        if (cur == null) askEnd = false
+        else Confirm(tr("结束外出?"),
+            tr("已经记录了 {h} 小时. 现在结束外出吗?", "h" to numText(core.behavior.recordedHours(cur))),
+            true, { askEnd = false }) {
+            askEnd = false
+            core.stopOuting()
+        }
     }
 }
 
@@ -158,6 +213,9 @@ fun NetScreen() {
             val mult = n.quotaMultiplier
             if (kotlin.math.abs(mult - 1.0) > 1e-9) bits.add(tr("今天的联网倍率 ×{m}: 每日额度 {base} → 今天 {quota}",
                 "m" to numText(mult), "base" to fmtHm(core.settings.num("DAILY_LIMIT")), "quota" to fmtHm(n.limit)))
+            if (kotlin.math.abs(n.outingFactor - 1.0) > 1e-9) bits.add(tr("外出: 今天的联网额度 ×{f} (每日额度 {base} → 今天 {quota})",
+                "f" to numText(n.outingFactor), "base" to fmtHm(core.settings.num("DAILY_LIMIT")), "quota" to fmtHm(n.limit)))
+            if (n.outingCooldown < 1.0) bits.add(tr("外出中: 联网冷静期 ×{f}", "f" to numText(n.outingCooldown)))
             if (n.bonusAll > 0) bits.add(tr("今天已借 {bonus},明天将扣 {cost}(明天剩余 {left})",
                 "bonus" to fmtHm(n.bonusAll), "cost" to fmtHm(n.tomorrowUsedAll), "left" to fmtHm(n.tomorrowRemaining)))
             if (n.debtAll > 0) bits.add(tr("今天要先还昨天借的 {debt}", "debt" to fmtHm(n.debtAll)))

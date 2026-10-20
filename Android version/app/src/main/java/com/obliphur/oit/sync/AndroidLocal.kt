@@ -21,6 +21,7 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
     /** 手机上两种断网方式都是代理 (全屏蔽 / 规则过滤), 局域网都保留, 所以都可以同步. */
     override fun netMode() = "proxy"
     override fun autoText() = core.settings.str("AUTO_TEXT")
+    override fun autoTextFor(key: String) = core.dm.autoTextForKey(key)
     override fun changed() = core.changed()
     override fun appVersion(): String = com.obliphur.oit.BuildConfig.VERSION_NAME
 
@@ -85,6 +86,7 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
     override fun clearHistory() {
         core.dm.clearHistoryForSync()
         core.net.clearUsageForSync()
+        core.behavior.clearHistory()
     }
 
     // ---- 状态 ----
@@ -138,8 +140,9 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
             "live" to core.timer.liveState())
         // 成就: 哪台设备达成都算 (达成时刻取最早的), 见 MECHANICS 17
         // 合约: 进行中的合约以后改的为准, 结束了的合约合并 (MECHANICS 18)
+        // 行为模式的外出: 每一项单独比较, 计时 / 统计跟着它走 (MECHANICS 21)
         return mapOf("settings" to settings, "hours" to hours, "timer" to timer, "achievements" to core.ach.doc(),
-            "contract" to core.contract.doc())
+            "contract" to core.contract.doc(), "behavior" to core.behavior.doc())
     }
 
     override fun apply(doc: String, changes: Map<String, Any?>) {
@@ -198,6 +201,10 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
             }
             "achievements" -> core.mergeAchievements(changes)
             "contract" -> core.mergeContract(changes)
+            "behavior" -> {
+                core.behavior.merge(changes)
+                core.behaviorTick()
+            }
         }
         core.changed()
     }

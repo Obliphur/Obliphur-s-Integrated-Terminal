@@ -109,7 +109,7 @@ fun SettingsScreen(tab: String, setTab: (String) -> Unit, act: MainActivity) {
             // 日常: 周一到周日的睡觉时间 (MECHANICS 19)
             val sleep = nums.filter { it.group == "sleep" }
             if (sleep.isNotEmpty()) {
-                Heading(tr("睡觉时间"))
+                Heading(tr("🌙  睡觉时间"))
                 for (spec in sleep) NumRow(spec, edits, short = true)
             }
         }
@@ -223,6 +223,19 @@ private fun OptionRow(spec: Spec, edits: MutableMap<String, String>) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(custom, { custom = it }, singleLine = true, modifier = Modifier.weight(1f))
                     TextButton({ if (custom.isNotBlank()) core.stageSetting(spec.key, custom.trim()) }) { Text(tr("应用"), color = o.accent) }
+                }
+            }
+            Kind.TEXT -> {
+                val cur = s.str(spec.key)
+                var custom by remember(cur) { mutableStateOf(cur) }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(custom, { custom = it }, singleLine = true, modifier = Modifier.weight(1f))
+                    TextButton({
+                        if (custom.isNotBlank()) {
+                            val (status, msg) = core.stageSetting(spec.key, custom.trim())
+                            if (status != StageResult.INVALID) core.toast(msg)
+                        }
+                    }) { Text(tr("应用修改"), color = o.accent) }
                 }
             }
             Kind.CHIME -> ChimePicker()

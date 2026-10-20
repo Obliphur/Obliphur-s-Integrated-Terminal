@@ -27,6 +27,9 @@ class NetGuard(
     var peerNet: () -> DoubleArray = { DoubleArray(5) }
     /** 设备同步: 其他设备的联网会话 (按理由统计用). */
     var peerUsage: () -> List<JSONObject> = { emptyList() }
+    /** 行为模式 (MECHANICS 21): 有外出的日子额度 ×0.2; 正在外出时冷静期 ×0.3. */
+    var quotaFactor: (LocalDate) -> Double = { 1.0 }
+    var cooldownFactor: (LocalDateTime) -> Double = { 1.0 }
 
     private val stateFile = File(dir, "net_state.json")
     private val logFile = File(dir, "net_requests.log")
@@ -64,9 +67,17 @@ class NetGuard(
     private fun day(offset: Long = 0): LocalDate =
         runCatching { LocalDate.parse(date) }.getOrElse { LocalDate.now() }.plusDays(offset)
 
-    val limit get() = settings.dailyQuota(day())
-    val tomorrowLimit get() = settings.dailyQuota(day(1))
+    private fun qf(day: LocalDate): Double = runCatching { maxOf(0.0, quotaFactor(day)) }.getOrDefault(1.0)
+    private fun cf(now: LocalDateTime = LocalDateTime.now()): Double =
+        runCatching { maxOf(0.0, cooldownFactor(now)) }.getOrDefault(1.0)
+
+    val limit get() = settings.dailyQuota(day()) * qf(day())
+    val tomorrowLimit get() = settings.dailyQuota(day(1)) * qf(day(1))
     val quotaMultiplier get() = settings.quotaMultiplier(day())
+    /** 今天的额度因为外出变成多少 (1.0 = 没有打折). */
+    val outingFactor get() = qf(day())
+    /** 现在的联网冷静期因为外出变成多少. */
+    val outingCooldown get() = cf()
     val cooldown get() = settings.num("COOLDOWN")
     val enforceEvery get() = maxOf(5.0, settings.num("ENFORCE_EVERY"))
     val tickClamp get() = settings.num("TICK_CLAMP")
@@ -235,10 +246,10 @@ class NetGuard(
             if (loanLeft >= 60) extra = tr("紧急借贷最多还能借 {max}.", "max" to fmtHm(loanLeft))
             return tr("今天只剩 {left} 了.", "left" to fmtHm(remaining)) + extra
         }
-        val rate = cooldownRate.coerceIn(0.0, 1.0)
+        val rate = (cooldownRate * cf()).coerceIn(0.0, 1.0)
         val mult = maxOf(1.0, cooldownMult)             // 合约的侵蚀: 冷静期 ×2 / ×3
         pending = NetRequest(minutes, clock() + (cooldown * rate * mult * 1000).toLong(), reason, false)
-        log("REQUEST  $minutes min" + (if (rate < 1.0) " (on break, cooldown ${numText(rate)}x)" else "") +
+        log("REQUEST  $minutes min" + (if (rate < 1.0) " (cooldown ${numText(rate)}x)" else "") +
             (if (mult > 1.0) " (contract, cooldown x${numText(mult)})" else "") + "  reason: $reason")
         return null
     }

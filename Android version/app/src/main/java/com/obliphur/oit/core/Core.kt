@@ -63,6 +63,8 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     val firstRun = settings.fresh
     /** 睡觉时间的两个提示 (MECHANICS 19). */
     val daily = Daily(File(dir, "daily.json"), settings)
+    /** 行为模式 / 外出 (MECHANICS 21). */
+    val behavior = Behavior(File(dir, "behavior.json"), settings)
     val rules: RuleStore
     val dm: DataStore
     val net: NetGuard
@@ -132,13 +134,23 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         if (now.minute < 30) now.floorHour().plusMinutes(30) else now.floorHour().plusHours(1)
 
     init {
-        if (firstRun) settings.startSetup()
+        if (firstRun) {
+            settings.startSetup()
+            // 第一次打开时可以设置行为模式 (这一次立即生效); 之后再改要等 7 天 (MECHANICS 21)
+            settings.grantFreeChange("BEHAVIOR_MODE")
+        }
         setupWasActive = settings.inSetup()
         rules = RuleStore(File(dir, "net_rules.json")).also { it.instant = { settings.changesInstant() } }
         dm = DataStore(dir, { settings.num("FILL_WINDOW") }, { settings.str("AUTO_TEXT") })
+        dm.extraStudy = { day -> behavior.studyHours(LocalDate.parse(day)) }
+        dm.extraDays = { behavior.days() }
+        dm.extraFocus = { day -> behavior.focusSegments(day) }
+        dm.hourAutoText = { hour -> behavior.hourAutoText(hour) }
         dm.hourEnabled = settings.bool("HOUR_LOG_ENABLED")
         dm.finalizeHours()
         net = NetGuard(dir, settings)
+        net.quotaFactor = { day -> behavior.quotaFactor(day) }
+        net.cooldownFactor = { at -> behavior.cooldownFactor(at) }
         timer = TimerEngine(this, dir, mono)
         // 没有存档时 (新安装 / 旧版本升级上来) 估计第一次启动的时刻
         ach = AchievementStore(File(dir, "achievements.json")) {
@@ -155,6 +167,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         net.backend = { force -> host.applyNet(force) }
         host.applyNet(true)               // 程序一启动就进入离线状态
         timer.recover()
+        behaviorTick()
         // 还没有用户名时界面先请用户填写 (MECHANICS 1.1), 填好后再显示介绍窗口
         if (firstRun && username.isNotEmpty()) showWelcome()
         checkAchievements()
@@ -236,6 +249,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         }
         timer.tick()
         checkContract()
+        behaviorTick()
 
         if (!now.isBefore(nextHour)) {
             val at = nextHour
@@ -275,6 +289,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         net.pending?.let { c.add((it.at - System.currentTimeMillis()) / 1000.0) }
         if (net.grantLeft > 0) c.add(net.grantLeft)
         timer.nextDeadline()?.let { c.add(it) }
+        behavior.active()?.let { c.add(secondsBetween(LocalDateTime.now(), it.end)) }
         contract.endAt?.let { c.add(secondsBetween(LocalDateTime.now(), it)) }
         if (settings.inSetup()) c.add(settings.setupLeftSeconds().toDouble())
         settings.pending.keys.forEach { c.add(settings.pendingLeftSeconds(it).toDouble()) }
@@ -428,6 +443,10 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     /** 设置项生效之后 (立即生效或冷静期到期). */
     fun afterSettingsApplied(keys: Collection<String>) {
         if ("HOUR_LOG_ENABLED" in keys) syncHourLog()
+        if ("BEHAVIOR_MODE" in keys) {
+            behavior.syncMode()
+            if (!behavior.enabled() && behavior.active() != null) behavior.stop(::canRewardOuting)
+        }
         if (keys.any { it == "NET_MODE" || it == "FILTER_MODE" }) {
             host.applyNet(false)
             if ("NET_MODE" in keys) net.log("MODE     switched to ${settings.str("NET_MODE")}")
@@ -495,10 +514,61 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         changed()
     }
 
+    // ---- 行为模式 / 外出 (MECHANICS 21) ----
+
+    /** 现在正在外出吗. */
+    val outing: Outing? get() = behavior.active()
+
+    /** 休息时间只由开始这次外出的设备发 (和计时器的记录只记一次一样). */
+    private fun canRewardOuting(o: Outing): Boolean {
+        if (!hasPeers()) return true
+        return o.owner.isEmpty() || o.owner == myId()
+    }
+
+    private fun applyBehaviorEnd(ev: BehaviorEnd) {
+        if (ev.reward > 0) {
+            timer.addCarry(ev.reward)
+            toast(tr("外出结束: 记录了 {h} 小时, 获得 {t} 休息时间.",
+                "h" to numText(ev.hours), "t" to fmtMs(ev.reward.toDouble())), "success", long = true)
+        } else if (ev.ended.isNotEmpty()) {
+            toast(tr("外出结束."))
+        }
+    }
+
+    /** 每秒: 到时间的外出自动结束, 发休息时间. */
+    fun behaviorTick() {
+        behavior.syncMode()
+        if (!behavior.enabled() && behavior.active() != null) {
+            applyBehaviorEnd(behavior.stop(::canRewardOuting))
+        }
+        applyBehaviorEnd(behavior.tick(canReward = ::canRewardOuting))
+    }
+
+    /** 开始外出. 返回 "" = 好, 否则是原因 (界面直接显示). */
+    fun startOuting(hours: Int): String {
+        if (contract.active) return tr("合约中不能外出.")
+        if (timer.state != TState.IDLE) return tr("请先结束专注 / 休息再外出.")
+        val err = behavior.start(hours, myId())
+        if (err.isEmpty()) {
+            val end = behavior.active()?.end
+            logNotice("OUTING start ${hours}h" + (end?.let { " until ${it.format(Fmt.YMDHM)}" } ?: ""))
+            toast(tr("外出 {h} 小时, 到 {at} 结束.", "h" to hours,
+                "at" to (end?.format(Fmt.MDHM) ?: "")), "success")
+            changed()
+        }
+        return err
+    }
+
+    fun stopOuting() {
+        applyBehaviorEnd(behavior.stop(::canRewardOuting))
+        changed()
+    }
+
     private fun showWelcome() {
         val msg = tr("联网要先申请,等过冷静期才连上,每天有额度.") + "\n\n" +
             tr("接下来{h}小时是配置期:所有修改立即生效.", "h" to Cfg.SETUP_HOURS) + "\n" +
-            tr("之后每次修改都要等 48 小时.")
+            tr("之后每次修改都要等 48 小时.") + "\n\n" +
+            tr("第一次可以在 设置 → 日常 选择行为模式 (这一次立即生效).")
         notice(tr("👋  欢迎使用 OIT"), msg, listOf(
             NoticeButton(tr("去设置"), "settings", true), NoticeButton(tr("开始使用"), "ok", false)), tag = "welcome") {
             if (it == "settings") host.openPage("settings:basic")
@@ -712,7 +782,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             logNotice("CONTRACT unknown expired $id")
             toast(tr("未知变量: {name} 已移除", "name" to tr(Contract.BY_ID[id]!!.name)))
         }
-        val picked = c.roll(now, Dice(), dm::unitText, dm.autoValue, dm.fillSeconds.toLong())
+        val picked = c.roll(now, Dice(), dm::unitText, dm.autoValue, dm.fillSeconds.toLong(), dm::autoTextForKey)
         val woke = c.wake(now)
         for ((kind, v) in picked) {
             logNotice("CONTRACT unknown -> $kind $v")
@@ -774,7 +844,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         val now = LocalDateTime.now()
         dm.finalizeHalves(c.hourUnits(now), now)
         if (!ownerAway(c.owner)) return
-        for (key in c.hourMisses(now, dm.fillSeconds.toLong(), dm::unitText, dm.autoValue)) {
+        for (key in c.hourMisses(now, dm.fillSeconds.toLong(), dm::unitText, dm.autoValue, dm::autoTextForKey)) {
             val p = key.split("/")
             val h = p[1].toInt()
             val label = if (p.size == 3) "%02d:%s".format(h, if (p[2] == "1") "30" else "00")
@@ -803,9 +873,10 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         }
     }
 
-    /** 休息 / 联网中不能开始合约: 返回提示 (没有限制时 ""). */
+    /** 休息 / 联网 / 外出中不能开始合约: 返回提示 (没有限制时 ""). */
     fun contractBlock(): String {
         if (timer.state == TState.ON_BREAK) return tr("请先结束休息再开始合约")
+        if (behavior.active() != null) return tr("请先结束外出再开始合约")
         if (net.mode == "online") return tr("请先结束联网再开始合约")
         val diff = versionMismatch().firstOrNull() ?: return ""
         return tr("{name} 的版本 ({v}) 和本机 ({me}) 不一样, 不能开始合约", "name" to diff.first, "v" to diff.second,
@@ -948,6 +1019,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         dm.resetting = true
         net.release()
         host.applyNet(false)          // 计划是 None: 关掉 VPN, 恢复网络
+        behavior.erase()
         dm.eraseAll()
     }
 }

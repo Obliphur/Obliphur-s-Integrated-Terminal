@@ -134,11 +134,36 @@ def next_sleep(now: datetime) -> datetime:
     return t if t > now else sleep_time_on(now + timedelta(days=1))
 
 
+# 行为模式 (设置 → 日常, MECHANICS 21): 第一次打开软件时可以选, 之后修改要等 24 × 7 小时.
+# 封闭式管理 / 工作: 专注页多一个"外出"按钮, 外出期间按下面的规则记录.
+BEHAVIOR_CLOSED = "closed"
+BEHAVIOR_WORK = "work"
+BEHAVIOR_FREE = "free"
+BEHAVIOR_MODES = (BEHAVIOR_CLOSED, BEHAVIOR_WORK, BEHAVIOR_FREE)
+BEHAVIOR_MODE = BEHAVIOR_FREE
+BEHAVIOR_DELAY_HOURS = 24 * 7
+# 整点记录在外出期间的自动填充: 外出的小时 → 外出, 其他时间 → 休息 (都可以在设置 → 日常 改, 48 小时生效).
+OUTING_TEXT = "外出"
+REST_TEXT = "休息"
+# 记录规则 (MECHANICS 21): 每天最多记 10 小时; 7:00 ~ 23:00 之内的部分按 80% 专注 / 20% 休息填充.
+OUTING_WINDOW_START = 7 * 60
+OUTING_WINDOW_END = 23 * 60
+OUTING_DAILY_CAP = 10 * 3600
+OUTING_FOCUS_SHARE = 0.8
+# 外出结束: 被记录的小时数 × 6 分钟, 最多 3 小时.
+OUTING_REST_PER_HOUR = 6 * 60
+OUTING_REST_MAX = 3 * 3600
+# 外出期间: 当天的联网额度 ×0.2, 联网冷静期 ×0.3.
+OUTING_QUOTA_FACTOR = 0.2
+OUTING_COOLDOWN_FACTOR = 0.3
+OUTING_MAX_HOURS = 24 * 7
+
+
 
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.81"                         # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.82"                         # 和 GitHub 上发布的版本号比较 (见 updater.py)
 UPDATE_CHECK = 1                              # 打开程序时检查更新
 UPDATE_AUTO = 1                               # 发现新版本时自动下载安装
 OLD_APP_DIR = "mrsTimer"
@@ -315,6 +340,9 @@ DEFAULT_SETTINGS = {
     "SLEEP_FRI": SLEEP_FRI,
     "SLEEP_SAT": SLEEP_SAT,
     "SLEEP_SUN": SLEEP_SUN,
+    "BEHAVIOR_MODE": BEHAVIOR_MODE,
+    "OUTING_TEXT": OUTING_TEXT,
+    "REST_TEXT": REST_TEXT,
 }
 
 

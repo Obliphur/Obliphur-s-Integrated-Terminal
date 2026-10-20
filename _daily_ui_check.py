@@ -21,6 +21,20 @@ assert "daily" in page._tab_btns and page._tab_btns["daily"].cget("text") == "�
 page.show_tab("daily")
 page.refresh()
 root.update_idletasks()
+# 行为模式 (MECHANICS 21) 在最上面, 两个自动记录文本也是选项
+assert "BEHAVIOR_MODE" in page._rows, "日常页应该有行为模式"
+assert page._rows["BEHAVIOR_MODE"]["var"].get() == "自由学习"
+assert "OUTING_TEXT" in page._rows and "REST_TEXT" in page._rows
+assert page._rows["OUTING_TEXT"]["var"].get() == "外出"
+assert page._rows["REST_TEXT"]["var"].get() == "休息"
+# 文本项: 提交后排队, 填写框回到当前值
+page._rows["OUTING_TEXT"]["var"].set("上班")
+page._stage("OUTING_TEXT")
+assert sm.is_staged("OUTING_TEXT")
+assert page._rows["OUTING_TEXT"]["var"].get() == "外出"
+sm.cancel("OUTING_TEXT")
+assert any(isinstance(w, tk.Label) and w.cget("text") == "🌙  睡觉时间"
+           for w, _k, _t in page._i18n_widgets), "睡眠时间要有标题"
 keys = [f"SLEEP_{d}" for d in ("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")]
 for k in keys:
     assert k in page._num_rows, f"{k} 应该有填写框"

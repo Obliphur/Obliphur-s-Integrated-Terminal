@@ -101,9 +101,9 @@ class DailyTest {
         val (r, _) = s.stage("SLEEP_WED", s.fromUiNumber("SLEEP_WED", "22:30"))
         assertEquals(StageResult.STAGED, r)
         assertEquals(1350.0, s.pending["SLEEP_WED"]!!.value as Double, 1e-9)
-        // 日常页在设置里, 7 项都是时间项, 归在"数值"那一组
+        // 日常页: 行为模式 / 两个自动记录文本是选项, 周一到周日 7 项睡觉时间是数值
         val (opts, nums) = Schema.pageSpecs("daily")
-        assertTrue(opts.isEmpty())
+        assertEquals(listOf("BEHAVIOR_MODE", "OUTING_TEXT", "REST_TEXT"), opts.map { it.key })
         assertEquals(Cfg.SLEEP_KEYS, nums.map { it.key })
         assertTrue(nums.all { it.kind == Kind.TIME })
     }

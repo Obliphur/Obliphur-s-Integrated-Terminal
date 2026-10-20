@@ -27,14 +27,14 @@
 
 | 页面 | 作用 |
 | --- | --- |
-| **Timer** | 专注计时,结束后给出建议休息时长 |
+| **Timer** | 专注计时,结束后给出建议休息时长; 行为模式下多一个"外出" |
 | **Network** | 申请制联网:冷静期后自动联网,到点断网;另有快速访问与紧急借贷 |
 | **Rules** | Proxy 模式下的网站 / 应用黑白名单 (被禁用的程序窗口一到前台就关掉),可让 AI 给出建议 |
 | **Hour Log** | 每个整点提示记录上一小时做了什么 |
 | **Calendar** | 按日查看学习时长 |
 | **Statistics** | 活动, 联网理由, 各程序前台时间的分布, 最近顺利完成的合约与最近的违规记录 |
 | **Contract** | 合约: 选词条加难度的限时挑战|
-| **Settings** | 按模块分页的可调参数 |
+| **Settings** | 按模块分页的可调参数 (日常页: 睡觉时间, 行为模式) |
 | **Reset** | 恢复网络并清理数据 |
 
 断网有两种方式:**Adapter** 直接禁用网卡;**Proxy** 通过系统代理过滤,不读取系统代理的程序不受其限制.
@@ -71,6 +71,8 @@ obliphur_terminal/
 ├─ config.py             默认数值, 主题与字号, 版本号 (APP_VERSION)
 ├─ settings_manager.py   设置项定义, 48 小时冷静期, 配置期
 ├─ data_manager.py       学习时长, 整点记录, 专注时间段, 窗口使用时间 (统计)
+├─ daily.py              睡觉时间 (设置 → 日常)
+├─ behavior.py           行为模式 / 外出 (可选, 统计与整点记录叠加)
 ├─ achievements.py       成就: 条件判定与存档
 ├─ contract.py           合约: 词条, 违反与降级, 休息倍率, 整点记录锁定
 ├─ net_guard.py          联网额度, 申请 / 快速访问 / 借贷, 断网方式切换
@@ -103,6 +105,7 @@ obliphur_terminal/
 │  ├─ stats_page.py      统计
 │  ├─ calendar_page.py   日历
 │  ├─ hour_log_page.py   整点记录
+│  ├─ outing_dialog.py   外出的时长窗口
 │  ├─ achievements_page.py  成就页 (设置 → 基本设置 → 🏆 成就), 达成提示
 │  ├─ contract_page.py   合约页
 │  ├─ prestart_dialog.py 提前启动的程序清单弹窗
@@ -119,6 +122,8 @@ obliphur_terminal/
       │  ├─ Settings.kt  设置项与冷静期
       │  ├─ NetGuard.kt  联网额度与申请
       │  ├─ Timer.kt     专注计时器
+      │  ├─ Daily.kt     睡觉时间
+      │  ├─ Behavior.kt  行为模式 / 外出
       │  ├─ Rules.kt     黑白名单
       │  ├─ DataStore.kt 统计数据
       │  ├─ Achievements.kt 成就

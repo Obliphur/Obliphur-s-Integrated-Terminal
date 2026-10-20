@@ -24,6 +24,8 @@ import kotlin.concurrent.withLock
 interface SyncLocal {
     fun netMode(): String
     fun autoText(): String
+    /** 整点记录里这一格的自动填充内容 (行为模式会按小时变, MECHANICS 21). */
+    fun autoTextFor(key: String): String = autoText()
     fun ledger(): JSONObject
     /** {文档: {项: 值}}, 值是 JSONObject / JSONArray / String / Number / null. */
     fun docs(): Map<String, Map<String, Any?>>
@@ -895,10 +897,10 @@ class SyncService(
         return out
     }
 
-    private fun wins(doc: String, mt: Long, v: Any?, cur: Pair<Long, Any?>): Boolean {
+    private fun wins(doc: String, key: String, mt: Long, v: Any?, cur: Pair<Long, Any?>): Boolean {
         if (doc == "hours") {
-            // 超时自动记录的内容永远让位给自己填写的内容
-            val auto = local.autoText()
+            // 超时自动记录的内容永远让位给自己填写的内容 (行为模式按小时有不同的自动内容)
+            val auto = local.autoTextFor(key)
             val rAuto = v == auto
             val lAuto = cur.second == auto
             val lHas = cur.second != null && cur.second.toString().isNotEmpty()
@@ -1001,7 +1003,7 @@ class SyncService(
                     val mt = e.optLong(0)
                     val v = unwire(e.opt(1))
                     val cur = mine[key]
-                    if (init || cur == null || wins(doc, mt, v, cur)) {
+                    if (init || cur == null || wins(doc, key, mt, v, cur)) {
                         if (cur == null || canon(cur.second) != canon(v)) changes[key] = v
                         t.put(key, JSONArray().put(hash(v)).put(mt))
                     }

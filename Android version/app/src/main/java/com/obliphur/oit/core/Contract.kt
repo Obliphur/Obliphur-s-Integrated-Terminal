@@ -608,7 +608,7 @@ class Contract(private val file: File) {
      *  / ("double", "") / ("slow", "") / ("none", ""); 休息时间的增减由调用方做 (只由做自动结束的设备调用).
      *  程序关着时错过的小时依次补上 (那时抽中的词条到了它那个小时的结束就移除, 不再返回). */
     fun roll(now: LocalDateTime, dice: Dice = Dice(), textOf: ((String) -> String)? = null, auto: String = "",
-             fillSec: Long = 0): List<Pair<String, String>> {
+             fillSec: Long = 0, autoOf: ((String) -> String)? = null): List<Pair<String, String>> {
         if (!active || !has(RANDOM)) return emptyList()
         val a = startAt ?: return emptyList()
         val end = endAt ?: now
@@ -633,7 +633,7 @@ class Contract(private val file: File) {
                 when (val eff = effect(dice)) {
                     "double" -> { n += 2; out.add(eff to "") }
                     "slow" -> { live.put("slow", JSONObject().put("pending", true)); out.add(eff to "") }
-                    "lock" -> out.add(eff to lockCell(now, dice, textOf, auto, fillSec))
+                    "lock" -> out.add(eff to lockCell(now, dice, textOf, auto, fillSec, autoOf))
                     else -> out.add(eff to "")
                 }
             }
@@ -659,7 +659,7 @@ class Contract(private val file: File) {
     /** 随机封锁一个还没被封锁, 已经过了填写时限的整点记录格 (最近 24 小时里的; 合约结束后照样锁着).
      *  返回格子的键 ("日期/小时", 细化规范的半小时 "日期/小时/1"); 没有可以封锁的返回 "". */
     fun lockCell(now: LocalDateTime, dice: Dice = Dice(), textOf: ((String) -> String)? = null, auto: String = "",
-                 fillSec: Long = 0): String {
+                 fillSec: Long = 0, autoOf: ((String) -> String)? = null): String {
         if (!active || textOf == null || fillSec <= 0) return ""
         var h = now.minusHours(24).withMinute(0).withSecond(0).withNano(0)
         val pool = mutableListOf<Triple<String, LocalDateTime, LocalDateTime>>()
@@ -669,7 +669,7 @@ class Contract(private val file: File) {
                 else listOf(Triple(key, h, h.plusHours(1)))
             for (c in cells) {
                 if (!c.third.plusSeconds(cellFill(c.second, c.third, fillSec)).isAfter(now) &&
-                    !hourLocked(c.second, c.third, textOf(c.first), now, fillSec, auto)) pool.add(c)
+                    !hourLocked(c.second, c.third, textOf(c.first), now, fillSec, auto, autoOf, c.first)) pool.add(c)
             }
             h = h.plusHours(1)
         }
@@ -1063,7 +1063,8 @@ class Contract(private val file: File) {
 
     /** 合约中过了填写时限还没填写的记录格 (空着, 或者是超时自动记录的内容): 每格只算一次违反.
      *  返回新算的键 (只由做自动结束的设备调用). */
-    fun hourMisses(now: LocalDateTime, fillSec: Long, textOf: (String) -> String, auto: String): List<String> {
+    fun hourMisses(now: LocalDateTime, fillSec: Long, textOf: (String) -> String, auto: String,
+                   autoOf: ((String) -> String)? = null): List<String> {
         if (!active) return emptyList()
         val old = live.optJSONArray("hl")?.strings() ?: emptyList()
         val seen = old.toMutableSet()
@@ -1071,7 +1072,7 @@ class Contract(private val file: File) {
         for ((key, a, b) in hourUnits(now)) {
             if (key in seen || b.plusSeconds(cellFill(a, b, fillSec)).isAfter(now)) continue
             seen.add(key)
-            if (textOf(key) in setOf("", auto)) new.add(key)
+            if (isAuto(textOf(key), key, auto, autoOf)) new.add(key)
         }
         if (seen.size != old.size) {
             live.put("hl", JSONArray(seen.sorted()))
@@ -1080,12 +1081,18 @@ class Contract(private val file: File) {
         return new
     }
 
+    private fun isAuto(text: String, key: String, auto: String, autoOf: ((String) -> String)?): Boolean {
+        val wanted = try { autoOf?.invoke(key) ?: auto } catch (e: Exception) { auto }
+        return text in setOf("", wanted)
+    }
+
     /** 记录封锁: 和选了这个词条的合约重叠的记录格, 过了填写时限还没填写 (空着 / 超时自动记录),
      *  就不能再改 —— 合约结束了也一样. 未知变量封锁的格子不管填没填都不能再改. */
     fun hourLocked(start: LocalDateTime, end: LocalDateTime, text: String, now: LocalDateTime, fillSec: Long,
-                   auto: String): Boolean {
+                   auto: String, autoOf: ((String) -> String)? = null, key: String = ""): Boolean {
         if (locks().any { (a, b) -> a.isBefore(end) && start.isBefore(b) }) return true
-        if (now.isBefore(end.plusSeconds(cellFill(start, end, fillSec))) || text !in setOf("", auto)) return false
+        val k = key.ifBlank { "${start.toLocalDate().key()}/${start.hour}" }
+        if (now.isBefore(end.plusSeconds(cellFill(start, end, fillSec))) || !isAuto(text, k, auto, autoOf)) return false
         return periods(now, "seal").any { (a, b) -> a.isBefore(end) && start.isBefore(b) }
     }
 

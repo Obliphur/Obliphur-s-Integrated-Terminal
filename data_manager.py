@@ -34,7 +34,7 @@ USERNAME_MAX = 24
 
 
 class DataManager:
-    def __init__(self):
+    def __init__(self, hour_auto_text=None):
         low_dir = os.path.join(
             os.environ.get('USERPROFILE', os.path.expanduser('~')),
             'AppData', 'LocalLow'
@@ -43,6 +43,8 @@ class DataManager:
         self.data_dir = os.path.join(low_dir, APP_NAME)
         os.makedirs(self.data_dir, exist_ok=True)
         self.old_dir = os.path.join(low_dir, OLD_APP_DIR)
+        # 行为模式按小时变化的自动填充内容 (MECHANICS 21); 要在 finalize_hours 之前接上
+        self.hour_auto_text = hour_auto_text or (lambda hour: "")
 
 
         # 旧版本在数据目录外记录卸载次数的文件; 现在不再记录, 重置时一并删除
@@ -71,6 +73,11 @@ class DataManager:
         self._window_dirty = False
 
         self.study_data: Dict[str, float] = {}
+        # 行为模式的外出记录 (MECHANICS 21): 不写进 study_log / focus_log, 显示时叠加.
+        # app 启动时接上 behavior.Behavior 的对应方法.
+        self.extra_study = lambda day: 0.0          # (日期字符串) → 当天外出的专注小时
+        self.extra_days = lambda: set()             # 有外出的日期字符串
+        self.extra_focus = lambda day: []           # (某一天) → [(kind, 开始, 结束)]
         # 设备同步: 其他设备的账 (devsync.SyncService.peer_ledgers), 显示合计用
         self.peer_ledgers = lambda: []
         # 有设备离线的时间段 [(开始毫秒, 结束毫秒)] (devsync.offline_spans): 正在进行的那段也按它画成空白
@@ -103,6 +110,27 @@ class DataManager:
     @property
     def auto_text(self) -> str:
         return str(getattr(config, "AUTO_TEXT", AUTO_TEXT))
+
+    def auto_text_for_hour(self, hour_start: datetime) -> str:
+        """这一小时的超时自动记录内容: 行为模式优先 (MECHANICS 21), 否则用全局的那一项."""
+        try:
+            text = self.hour_auto_text(hour_start)
+        except Exception:
+            text = ""
+        return str(text) if str(text) else self.auto_text
+
+    def auto_text_for_key(self, key: str) -> str:
+        """整点记录的键 ("日期/小时" 或 "日期/小时/1") → 这一小时的自动记录内容."""
+        parts = str(key or "").split("/")
+        try:
+            day = datetime.strptime(parts[0], "%Y-%m-%d")
+            h = int(parts[1])
+            return self.auto_text_for_hour(day.replace(hour=h, minute=0, second=0, microsecond=0))
+        except (ValueError, IndexError, TypeError):
+            return self.auto_text
+
+    def is_auto_text(self, text, key: str) -> bool:
+        return str(text or "") in ("", self.auto_text_for_key(key))
 
 
     def _migrate_old_data(self):
@@ -145,6 +173,10 @@ class DataManager:
                 total += float((led.get("study") or {}).get(day, 0.0))
             except (TypeError, ValueError, AttributeError):
                 pass
+        try:
+            total += float(self.extra_study(day))
+        except Exception:
+            pass
         return total
 
     def get_today_hours(self) -> float:
@@ -193,6 +225,10 @@ class DataManager:
         days = {k for k in self.study_data if k.startswith(prefix)}
         for led in self.peer_ledgers() or []:
             days |= {k for k in (led.get("study") or {}) if str(k).startswith(prefix)}
+        try:
+            days |= {k for k in self.extra_days() if str(k).startswith(prefix)}
+        except Exception:
+            pass
         return {k: self._study_all(k) for k in days}
 
 
@@ -289,6 +325,11 @@ class DataManager:
                         (datetime.fromtimestamp(a / 1000), datetime.fromtimestamp(b / 1000)))
             except Exception:
                 pass
+        # 行为模式的外出 (MECHANICS 21): 8:2 填充出来的专注 / 休息, 和普通的段落一起画
+        try:
+            segs += [(k, st, en) for k, st, en in self.extra_focus(day)]
+        except Exception:
+            pass
         # 空闲的优先级最高: 同一段专注 (开始时刻相同) 里和空闲重叠的部分画成空白 (哪台设备记的都一样); 休息照常
         cut = []
         for kind, st, en in segs:
@@ -542,7 +583,11 @@ class DataManager:
                 continue
             ds, h, i = parts[0], int(parts[1]), int(parts[2]) - 1
             if not self.get_half_text(ds, h, i):
-                self.set_half_text(ds, h, i, self.auto_text, save=False)
+                try:
+                    hour0 = datetime.strptime(ds, "%Y-%m-%d").replace(hour=h)
+                except ValueError:
+                    continue
+                self.set_half_text(ds, h, i, self.auto_text_for_hour(hour0), save=False)
                 changed = True
         if changed:
             self.save_hour_log()
@@ -568,7 +613,7 @@ class DataManager:
             ds, h = self.hour_cursor.strftime('%Y-%m-%d'), self.hour_cursor.hour
 
             if not self.get_hour_text(ds, h):
-                self.hour_days.setdefault(ds, {})[str(h)] = self.auto_text
+                self.hour_days.setdefault(ds, {})[str(h)] = self.auto_text_for_hour(self.hour_cursor)
             self.hour_cursor += timedelta(hours=1)
             changed = True
         if changed:

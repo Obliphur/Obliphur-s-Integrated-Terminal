@@ -203,6 +203,12 @@ class SettingsPage(tk.Frame):
             if g not in groups:
                 groups.append(g)
         for g in groups:
+            if page == "daily" and g == "sleep":
+                # 日常页的睡眠时间: 以前只有 7 行没有标题, 补一个标题说明 (MECHANICS 19)
+                self._track(tk.Label(
+                    body, text=tr("🌙  睡觉时间"), bg=COLORS["bg"], fg=COLORS["text"],
+                    font=config.font("body", bold=True), anchor="w"), "🌙  睡觉时间").pack(
+                    fill="x", pady=(10, 4))
             self._build_num_page(body, [s for s in nums if s.get("group") == g], area)
         area.bind_children()
 
@@ -443,6 +449,11 @@ class SettingsPage(tk.Frame):
                 custom_var = tk.StringVar()
                 ttk.Entry(ctrl, textvariable=custom_var, width=24).pack(
                     side="left", padx=(8, 0))
+        elif kind == "text":
+            # 自由填写的一行字 (行为模式的外出 / 休息自动记录内容)
+            var = tk.StringVar()
+            widget = ttk.Entry(ctrl, textvariable=var, width=30)
+            widget.pack(side="left")
         else:
             var = tk.StringVar()
             widget = ttk.Entry(ctrl, textvariable=var, width=30)
@@ -472,7 +483,7 @@ class SettingsPage(tk.Frame):
             "frame": inner, "custom": custom_var, "badge": badge,
         }
 
-        if key != "CHIME_WAV":
+        if key != "CHIME_WAV" and kind in ("choice", "combo", "float"):
             self._choices_widgets.append((key, widget))
 
         area.bind_children()

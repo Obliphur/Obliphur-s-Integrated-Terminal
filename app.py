@@ -21,6 +21,7 @@ import achievements
 import contract as contract_mod
 import recorder
 import daily
+import behavior
 import prestart
 from sync_local import PcLocal
 from config import (
@@ -35,6 +36,7 @@ from settings_manager import SettingsManager
 from pages import (CalendarPage, HourLogPage, SettingsPage, RulesPage, StatsPage,
                    ContractPage, AchievementsPage, AchievementPopups)
 from pages.prestart_dialog import PrestartDialog
+from pages.outing_dialog import OutingDialog
 from pages.widgets import (frozen, LoadingCover, cfg, flavor,
                            show_pack, hide_pack)
 
@@ -75,6 +77,14 @@ TIRED_TEXT = ("主管{name}你好.我是Obliphur.\n"
 def tired_text(name: str) -> str:
     """一周内第 5 次领"我累了"时弹窗的文字 (MECHANICS 6.5)."""
     return tr(TIRED_TEXT, name=name or "")
+
+
+def _hours_text(h) -> str:
+    """外出记录的小时数, 最多一位小数 (2.0 → "2")."""
+    try:
+        return f"{round(float(h), 1):g}"
+    except (TypeError, ValueError):
+        return "0"
 
 
 def contract_page_results() -> dict:
@@ -187,19 +197,29 @@ class BreakTimerApp:
 
 
 
-        self.dm = DataManager()
-        self.timer_file = os.path.join(self.dm.data_dir, "timer_state.json")
-        self.break_carry = self._load_break_carry()
         self.settings = SettingsManager()
         # 第一次打开软件 (还没有设置文件): 开始 72 小时配置期, 界面建好后弹出介绍
         self._first_run = self.settings.fresh
         if self._first_run:
             self.settings.start_setup()
+            # 第一次打开时可以设置行为模式 (这一次立即生效); 之后再改要等 7 天 (MECHANICS 21)
+            self.settings.grant_free_change("BEHAVIOR_MODE")
         self._setup_was_active = self.settings.in_setup()
         i18n.init_from_config()
         config.UI_SCALE = self.ui_scale * float(self.settings.value("FONT_SCALE") or 1.0)
         self._apply_theme()
+        # 行为模式 / 外出 (MECHANICS 21): 不写 study_log / focus_log, 显示时叠加.
+        # 要在 DataManager 里补记整点记录之前接上, 否则启动时会先用普通的自动记录内容补一遍.
+        self.behavior = behavior.Behavior(config.app_data_dir())
+        self.dm = DataManager(hour_auto_text=self.behavior.hour_auto_text)
+        self.timer_file = os.path.join(self.dm.data_dir, "timer_state.json")
+        self.break_carry = self._load_break_carry()
         self.dm.hour_enabled = bool(self.settings.value("HOUR_LOG_ENABLED"))
+        self.dm.extra_study = self.behavior.study_hours
+        self.dm.extra_days = self.behavior.days
+        self.dm.extra_focus = self.behavior.focus_segments
+        self._outing_win = None
+        self._outing_was_active = False
         # 成就 (MECHANICS 17): 没有存档时 (新安装 / 旧版本升级上来) 估计第一次启动的时刻
         self.ach = achievements.AchievementStore(self.dm.data_dir, lambda: achievements.guess_first_launch(
             self.dm.data_dir, self.settings.setup_until, list(self.dm.study_data) + list(self.dm.hour_days)))
@@ -209,6 +229,8 @@ class BreakTimerApp:
         self.contract.blocked = lambda: self.dm.resetting
         self._apply_contract_overrides()
         self.net = NetGuard(self.dm.data_dir)
+        self.net.quota_factor = self.behavior.quota_factor
+        self.net.cooldown_factor = self.behavior.cooldown_factor
         # 设备同步 (MECHANICS 15): 其他设备的账并进额度和统计
         self.sync_runner = devsync.MainRunner()
         self.sync = devsync.SyncService(self.dm.data_dir, PcLocal(self), self.sync_runner)
@@ -243,6 +265,7 @@ class BreakTimerApp:
             self.refresh_display()
             self.update_log_badge()
             self.update_settings_badge()
+            self._behavior_tick(initial=True)
         finally:
             with frozen(root):
                 cover.close()
@@ -543,7 +566,7 @@ class BreakTimerApp:
             on_toggle=self.on_hour_log_toggle,
             on_open_settings=lambda: self.show_page("settings"),
             locked=lambda a, b, text, now: self.contract.hour_locked(
-                a, b, text, now, config.FILL_WINDOW, self.dm.auto_text),
+                a, b, text, now, config.FILL_WINDOW, self.dm.auto_text_for_key),
             split=self.contract.fine_hour
         )
         self._prepare_page(self.pages["log"])
@@ -872,6 +895,9 @@ class BreakTimerApp:
         # 提前启动 (仅 PC, MECHANICS 20): 专注中把选中的程序先跑起来, 窗口藏起来 + 静音
         self.btn_prestart = ttk.Button(btns, text=tr("⏩  提前启动"), command=self._prestart_click)
 
+        # 行为模式 (MECHANICS 21): 封闭式管理 / 工作 时才出现
+        self.btn_outing = ttk.Button(btns, text=tr("🚪  外出"), command=self._outing_click)
+
         # 连点按钮: 1 分钟内连点 10 次, 换 20 分钟休息时间 (每周最多 2 小时)
         self.lbl_bonus = ttk.Button(btns, text="", command=self._on_bonus_click)
         self.lbl_bonus.pack(side="left", padx=(24, 0))
@@ -896,6 +922,9 @@ class BreakTimerApp:
         """主按钮: 空闲 → 开始专注; 专注中 → 结束专注 (直接进入休息);
         休息中 → 暂停休息并马上开始专注."""
         self._mine()
+        if self.behavior.active() is not None and self.state == IDLE:
+            toast.info(tr("外出中, 先结束外出再开始专注."))
+            return
         if self.state == IDLE:
             self._enter_focus(datetime.now(), time.monotonic())
             if self.contract.slow_bind(self.start_wall):
@@ -943,6 +972,9 @@ class BreakTimerApp:
     def on_break_button(self):
         """副按钮: 空闲 → 用积攒的休息时间直接开始休息; 休息中 → 暂停休息."""
         self._mine()
+        if self.behavior.active() is not None and self.state == IDLE:
+            toast.info(tr("外出中, 先结束外出再休息."))
+            return
         if self.state == IDLE:
             if self.break_carry <= 0:
                 toast.info(tr("还没有积攒的休息时间."))
@@ -961,8 +993,12 @@ class BreakTimerApp:
         if not hasattr(self, "btn_break"):
             return
         locked = self._break_locked()
+        outing = self.behavior.active()
         try:
-            if self.state == RUNNING:
+            if outing is not None:
+                self.btn_action.config(text=tr("🚪  外出中"), state="disabled")
+                self.btn_break.config(text=tr("☕  开始休息"), state="disabled")
+            elif self.state == RUNNING:
                 self.btn_action.config(text=tr("■  结束专注"), state="!disabled")
                 self.btn_break.config(text=tr("☕  开始休息"), state="disabled")
             elif self.state == ON_BREAK:
@@ -979,6 +1015,146 @@ class BreakTimerApp:
         except Exception:
             pass
         self._sync_prestart_button()
+        self._sync_outing_button()
+
+    def _sync_outing_button(self):
+        """外出按钮: 只有封闭式管理 / 工作 时出现; 外出中变成"结束外出"."""
+        btn = getattr(self, "btn_outing", None)
+        if btn is None:
+            return
+        try:
+            if not self.behavior.enabled():
+                if btn.winfo_ismapped():
+                    btn.pack_forget()
+                return
+            active = self.behavior.active()
+            text = tr("🚪  结束外出") if active is not None else tr("🚪  外出")
+            if btn.cget("text") != text:
+                btn.config(text=text)
+            if not btn.winfo_ismapped():
+                try:
+                    btn.pack(side="left", ipadx=8, padx=(18, 0), before=self.lbl_bonus)
+                except Exception:
+                    btn.pack(side="left", ipadx=8, padx=(18, 0))
+        except Exception:
+            pass
+
+    # ---- 行为模式: 外出 (MECHANICS 21) ----
+
+    def _can_reward_outing(self, outing=None) -> bool:
+        """休息时间只由开始这次外出的设备发 (和计时器的记录只记一次一样)."""
+        try:
+            mine = self.sync.my_id
+            if not mine or not self.sync.peers():
+                return True
+        except Exception:
+            return True
+        owner = str((outing or {}).get("owner") or "")
+        return not owner or owner == mine
+
+    def _outing_click(self):
+        if not self.behavior.enabled():
+            return
+        active = self.behavior.active()
+        if active is not None:
+            h = self.behavior.recorded_hours(active)
+            if toast.ask(
+                tr("结束外出?"),
+                tr("已经记录了 {h} 小时. 现在结束外出吗?").format(h=_hours_text(h)),
+                ok_text=tr("结束外出"), danger=True
+            ):
+                self._end_outing()
+            return
+        if self.contract.active:
+            toast.warn(tr("合约中不能外出."))
+            return
+        if self.state != IDLE:
+            toast.warn(tr("请先结束专注 / 休息再外出."))
+            return
+        win = getattr(self, "_outing_win", None)
+        try:
+            if win is not None and win.winfo_exists():
+                win.lift()
+                return
+        except Exception:
+            pass
+        self._outing_win = None
+        self._outing_win = OutingDialog(self.root, self._start_outing,
+                                        max_hours=int(config.OUTING_MAX_HOURS))
+
+    def _start_outing(self, hours: int):
+        ok, msg, o = self.behavior.start(hours, owner=(self.sync.my_id or ""))
+        if not ok:
+            toast.warn(tr(msg))
+            return
+        self._outing_was_active = True
+        self._log_notice(f"OUTING start {hours}h until {o['end']:%Y-%m-%d %H:%M}")
+        toast.success(tr("外出 {h} 小时, 到 {at} 结束.").format(
+            h=hours, at=f"{o['end']:%m-%d %H:%M}"))
+        self._sync_timer_buttons()
+        self._behavior_tick()
+        if self.sync.peers():
+            self.sync.sync_now()
+
+    def _end_outing(self):
+        res = self.behavior.stop(can_reward=self._can_reward_outing)
+        self._outing_was_active = False
+        self._apply_outing_result(res)
+        self._sync_timer_buttons()
+        if self.state == IDLE:
+            self.reset_to_idle()
+        if self.sync.peers():
+            self.sync.sync_now()
+
+    def _apply_outing_result(self, res: dict) -> bool:
+        reward = int((res or {}).get("reward") or 0)
+        if reward <= 0:
+            return False
+        hours = float((res or {}).get("hours") or 0)
+        self._set_break_carry(self.break_carry + reward)
+        toast.success(tr("外出结束: 记录了 {h} 小时, 获得 {t} 休息时间.").format(
+            h=_hours_text(hours), t=fmt_ms(reward)), timeout=10000)
+        self._sync_bonus_button()
+        self._refresh_if_visible("stats", "cal")
+        return True
+
+    def _show_outing(self, active: dict):
+        now = datetime.now()
+        left = max(0, int((active["end"] - now).total_seconds()))
+        h = self.behavior.recorded_hours(active, now)
+        self.lbl_time.config(text=fmt_hm(left))
+        self.lbl_sub.config(text=tr("外出中 · 已经记录 {h} 小时").format(h=_hours_text(h)))
+        self._status(tr("外出中 🚪"), COLORS["warn"])
+
+    def _behavior_tick(self, initial: bool = False):
+        """每秒: 到时间的外出自动结束, 发休息时间; 外出中更新 Timer 页."""
+        if self.shutting_down or not hasattr(self, "behavior"):
+            return
+        now = datetime.now()
+        was = self._outing_was_active
+        self.behavior.sync_mode(now)
+        if not self.behavior.enabled() and self.behavior.active(now) is not None:
+            self._apply_outing_result(self.behavior.stop(now, can_reward=self._can_reward_outing))
+            was = True
+        ev = self.behavior.tick(now, can_reward=self._can_reward_outing)
+        if ev.get("reward"):
+            self._apply_outing_result(ev)
+            was = True
+        elif ev.get("ended"):
+            toast.info(tr("外出结束."))
+            was = True
+            if self.sync.peers():
+                self.sync.sync_now()
+        active = self.behavior.active(now)
+        if active is not None:
+            self._outing_was_active = True
+            if self.state == IDLE:
+                self._show_outing(active)
+        elif (was or self._outing_was_active) and self.state == IDLE:
+            self._outing_was_active = False
+            self.reset_to_idle()
+        self._sync_outing_button()
+        self._sync_bonus_button()
 
     def _sync_prestart_button(self):
         """提前启动按钮: 专注中显示; 选过以后在操作空窗期里变成"提前终止"."""
@@ -986,7 +1162,8 @@ class BreakTimerApp:
         if btn is None:
             return
         try:
-            show = self.state == RUNNING and (not self.prestart.chosen or self.prestart.in_grace)
+            show = (self.state == RUNNING and not self.behavior.active()
+                    and (not self.prestart.chosen or self.prestart.in_grace))
             text = tr("⏹  提前终止") if self.prestart.in_grace else tr("⏩  提前启动")
             if btn.cget("text") != text:
                 btn.config(text=text)
@@ -1049,6 +1226,7 @@ class BreakTimerApp:
         """每秒: 跟着这些进程 (含子进程); 空窗期过了 (或提前终止) 就藏窗口 / 静音; 专注结束就放出来."""
         if self.shutting_down:
             return
+        self._behavior_tick()
         if self.prestart.active and self.state != RUNNING:
             self.prestart.stop()
             self._sync_timer_buttons()
@@ -1341,6 +1519,8 @@ class BreakTimerApp:
         按墙上时间算, 电脑睡眠醒来后错过的几次只补弹一次."""
         if self.idle_since is None:
             return
+        if self.behavior.active() is not None:
+            return                          # 外出中不提醒"该开始下一轮了"
         if self.state != IDLE:
             self.idle_since = None          # 已经开始下一轮 (或别的状态), 不再提醒
             return
@@ -1364,7 +1544,7 @@ class BreakTimerApp:
             [(tr("▶  开始专注"), self._start_from_nudge, True), (tr("知道了"), None, False)])
 
     def _start_from_nudge(self):
-        if self.state == IDLE:
+        if self.state == IDLE and self.behavior.active() is None:
             self.show_page("timer")
             self.on_action()
 
@@ -1667,7 +1847,10 @@ class BreakTimerApp:
     def _restore_timer_view(self):
         """界面重建 (换语言 / 字号) 后按当前状态恢复计时器页."""
         self._sync_timer_buttons()
-        if self.state == RUNNING:
+        active = self.behavior.active()
+        if active is not None and self.state == IDLE:
+            self._show_outing(active)
+        elif self.state == RUNNING:
             self._status(tr("专注中…"), COLORS["accent"])
             self.schedule_update()
         elif self.state == READY_BREAK:
@@ -1742,9 +1925,13 @@ class BreakTimerApp:
         self.rest_base = 0.0
         self.countdown_seconds = 0
         self._sync_timer_buttons()
-        self.lbl_time.config(text="0.00 min")
-        self.lbl_sub.config(text=self._idle_sub_text())
-        self._status(tr("准备就绪"), COLORS["text_dim"])
+        active = self.behavior.active() if getattr(self, "behavior", None) is not None else None
+        if active is not None:
+            self._show_outing(active)
+        else:
+            self.lbl_time.config(text="0.00 min")
+            self.lbl_sub.config(text=self._idle_sub_text())
+            self._status(tr("准备就绪"), COLORS["text_dim"])
 
     def refresh_display(self):
         if self.contract.fog():
@@ -2117,12 +2304,24 @@ class BreakTimerApp:
             return
         if "HOUR_LOG_ENABLED" in keys:
             self._sync_hour_log_setting()
+        if "BEHAVIOR_MODE" in keys and getattr(self, "behavior", None) is not None:
+            self.behavior.sync_mode()
+            self._behavior_tick()
         if "FILTER_MODE" in keys and "rules" in self.pages:
             self.pages["rules"].refresh(force=True)
         if "settings" in self.pages:
             self.pages["settings"].refresh()
         self.update_settings_badge()
         self.refresh_net(force=True)
+
+    def after_behavior_synced(self):
+        """同步来的外出记录: 刷新按钮 / 倒计时; 到时间还没发的休息时间由本机发 (如果是主人)."""
+        if getattr(self, "behavior", None) is None:
+            return
+        self.behavior.sync_mode()
+        self._behavior_tick()
+        self._sync_timer_buttons()
+        self._refresh_if_visible("stats", "cal")
 
     def _peer_line(self):
         """Timer 页: 绑定的每台设备此刻的状态; 有设备离线时提醒离线的那段专注不会被记录. 返回 (文字, 有离线吗)."""
@@ -2324,7 +2523,8 @@ class BreakTimerApp:
             for tid in gone:
                 self._log_notice(f"CONTRACT unknown expired {tid}")
                 toast.info(tr("未知变量: {name} 已移除", name=tr(contract_mod.BY_ID[tid][3])))
-            picked = c.roll(now, text_of=self.dm.unit_text, auto=self.dm.auto_text, fill=config.FILL_WINDOW)
+            picked = c.roll(now, text_of=self.dm.unit_text, auto=self.dm.auto_text_for_key,
+                            fill=config.FILL_WINDOW)
             woke = c.wake(now)
             for kind, val in picked:
                 self._log_notice(f"CONTRACT unknown -> {kind} {val}")
@@ -2347,9 +2547,11 @@ class BreakTimerApp:
             self._paint_sidebar()
 
     def contract_block(self) -> str:
-        """休息 / 联网中不能开始合约: 返回提示 (没有限制时 "")."""
+        """休息 / 联网 / 外出中不能开始合约: 返回提示 (没有限制时 "")."""
         if self.state == ON_BREAK:
             return tr("请先结束休息再开始合约")
+        if getattr(self, "behavior", None) is not None and self.behavior.active() is not None:
+            return tr("请先结束外出再开始合约")
         if getattr(self, "net", None) is not None and self.net.mode == "online":
             return tr("请先结束联网再开始合约")
         sync = getattr(self, "sync", None)
@@ -2617,7 +2819,8 @@ class BreakTimerApp:
         self.dm.finalize_halves(units, now)
         if not self._owner_away(c.owner):
             return
-        for key in c.hour_misses(now, config.FILL_WINDOW, self.dm.unit_text, self.dm.auto_text):
+        for key in c.hour_misses(now, config.FILL_WINDOW, self.dm.unit_text,
+                                 self.dm.auto_text_for_key):
             parts = key.split("/")
             label = f"{int(parts[1]):02d}:{'30' if parts[2:] == ['1'] else '00'}" if len(parts) == 3 \
                 else f"{(int(parts[1]) + 1) % 24:02d}:00"
@@ -2867,10 +3070,10 @@ class BreakTimerApp:
         threading.Thread(target=run, daemon=True).start()
 
     def _sync_bonus_button(self):
-        """合约中隐藏"我累了"按钮."""
+        """合约中 / 外出中隐藏"我累了"按钮."""
         if not hasattr(self, "lbl_bonus"):
             return
-        if self.contract.active:
+        if self.contract.active or self.behavior.active() is not None:
             hide_pack(self.lbl_bonus)
         else:
             show_pack(self.lbl_bonus, side="left", padx=(24, 0))
@@ -2889,7 +3092,8 @@ class BreakTimerApp:
         hours = int(config.SETUP_HOURS)
         msg = (tr("联网要先申请,等过冷静期才连上,每天有额度.")
                + "\n\n" + tr("接下来{h}小时是配置期:所有修改立即生效.").format(h=hours)
-               + "\n" + tr("之后每次修改都要等 48 小时."))
+               + "\n" + tr("之后每次修改都要等 48 小时.")
+               + "\n\n" + tr("第一次可以在 设置 → 日常 选择行为模式 (这一次立即生效)."))
         # 快捷方式的三个选项就放在介绍窗口里, 点"开始使用"或"去设置"时照勾选的做
         toast.notice(tr("👋  欢迎使用 OIT"), msg, [
             (tr("去设置"), self._open_basic_settings, True), (tr("开始使用"), None, False)],
@@ -3007,6 +3211,9 @@ class BreakTimerApp:
         self._sync_hour_log_setting()
         if "NET_MODE" in due:
             self.net.sync_mode()
+        if "BEHAVIOR_MODE" in due:
+            self.behavior.sync_mode()
+            self._behavior_tick()
         if "rules" in self.pages:
             self.pages["rules"].refresh(force=True)
         self.pages["settings"].refresh()
@@ -3121,6 +3328,12 @@ class BreakTimerApp:
             self._log_notice(f"NET_MODE -> {self.net.net_mode}")
         if status != "instant":
             return
+        if key in ("BEHAVIOR_MODE", "OUTING_TEXT", "REST_TEXT") and \
+                getattr(self, "behavior", None) is not None:
+            self.behavior.sync_mode()
+            self._behavior_tick()
+            if "log" in self.pages:
+                self.pages["log"].refresh()
         if key in ("HOUR_LOG_ENABLED", "AUTO_TEXT", "FILL_WINDOW", None):
 
             if key in ("AUTO_TEXT", "FILL_WINDOW", None):
@@ -3609,6 +3822,12 @@ class BreakTimerApp:
         if abs(mult - 1.0) > 1e-9:
             bits.append(tr("今天的联网倍率 ×{m}: 每日额度 {base} → 今天 {quota}").format(
                 m=f"{mult:g}", base=fmt_hm(float(config.DAILY_LIMIT)), quota=fmt_hm(n.limit)))
+        if abs(n.outing_factor - 1.0) > 1e-9:
+            bits.append(tr("外出: 今天的联网额度 ×{f} (每日额度 {base} → 今天 {quota})").format(
+                f=f"{n.outing_factor:g}", base=fmt_hm(float(config.DAILY_LIMIT)),
+                quota=fmt_hm(n.limit)))
+        if n.outing_cooldown < 1.0:
+            bits.append(tr("外出中: 联网冷静期 ×{f}").format(f=f"{n.outing_cooldown:g}"))
         if n.bonus_all > 0:
             bits.append(tr("今天已借 {bonus},明天将扣 {cost}(明天剩余 {left})").format(
                 bonus=fmt_hm(n.bonus_all), cost=fmt_hm(n.tomorrow_used_all),

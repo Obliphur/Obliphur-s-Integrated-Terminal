@@ -107,7 +107,8 @@ fun HourLogScreen(go: (String) -> Unit) {
                     else listOf(Triple(start, end, dm.hourText(ds, start.hour)))
                 val editable = cells.map { (a, b, t) ->
                     enabled && !b.isAfter(now) &&
-                        !core.contract.hourLocked(a, b, t, now, dm.fillSeconds.toLong(), dm.autoValue)
+                        !core.contract.hourLocked(a, b, t, now, dm.fillSeconds.toLong(), dm.autoValue,
+                            dm::autoTextForKey)
                 }
                 val locked = cells.indices.any { !editable[it] && !cells[it].second.isAfter(now) && enabled }
                 HourRow("%02d:00".format(h) + when {

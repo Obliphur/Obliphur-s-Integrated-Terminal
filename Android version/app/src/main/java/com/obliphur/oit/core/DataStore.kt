@@ -96,6 +96,12 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
     var motherId: () -> String? = { null }
     val windowRuns = HashMap<String, MutableList<WinRun>>()
     private var windowDirty = false
+    /** 行为模式的外出记录 (MECHANICS 21): 不写进 study_log / focus_log, 显示时叠加. */
+    var extraStudy: (String) -> Double = { 0.0 }
+    var extraDays: () -> Set<String> = { emptySet() }
+    var extraFocus: (LocalDate) -> List<BehaviorSeg> = { emptyList() }
+    /** 某一小时的整点记录自动填充内容; "" = 用普通的 AUTO_TEXT. */
+    var hourAutoText: (LocalDateTime) -> String = { "" }
 
     init {
         dir.mkdirs()
@@ -120,7 +126,8 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
     }
 
     private fun studyAll(day: String): Double =
-        (study[day] ?: 0.0) + peers().sumOf { it.optJSONObject("study")?.optDouble(day, 0.0)?.takeIf { v -> !v.isNaN() } ?: 0.0 }
+        (study[day] ?: 0.0) + peers().sumOf { it.optJSONObject("study")?.optDouble(day, 0.0)?.takeIf { v -> !v.isNaN() } ?: 0.0 } +
+            (runCatching { extraStudy(day) }.getOrDefault(0.0))
 
     fun todayHours() = studyAll(todayDate)
 
@@ -128,6 +135,7 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
     fun studyByDay(): Map<String, Double> {
         val days = HashSet(study.keys)
         for (p in peers()) p.optJSONObject("study")?.keys()?.forEach { days.add(it) }
+        days.addAll(runCatching { extraDays() }.getOrDefault(emptySet()))
         return days.associateWith { studyAll(it) }
     }
     fun yesterdayHours() = studyAll(LocalDate.parse(todayDate).minusDays(1).key())
@@ -162,6 +170,7 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
     fun monthStudy(prefix: String): Map<String, Double> {
         val days = study.keys.filter { it.startsWith(prefix) }.toMutableSet()
         for (l in peers()) l.optJSONObject("study")?.keys()?.forEach { if (it.startsWith(prefix)) days.add(it) }
+        runCatching { extraDays() }.getOrDefault(emptySet()).forEach { if (it.startsWith(prefix)) days.add(it) }
         return days.associateWith { studyAll(it) }
     }
 
@@ -219,6 +228,10 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
                     all.add(FocusSeg("idle", LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(a), z),
                         LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(b), z), live.second.withNano(0).format(Fmt.TS)))
             }
+        }
+        // 行为模式的外出: 8:2 填充出来的专注 / 休息, 和普通的段落一起画 (MECHANICS 21)
+        runCatching { extraFocus(day) }.getOrDefault(emptyList()).forEach {
+            all.add(FocusSeg(it.kind, it.start, it.end))
         }
         // 空闲的优先级最高: 同一段专注 (开始时刻相同) 里和空闲重叠的部分画成空白 (哪台设备记的都一样); 休息照常
         val idle = all.filter { it.kind == "idle" }.groupBy { it.focus }
@@ -419,6 +432,18 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
     val halfFillSeconds get() = minOf(fillWindow(), 1800.0)
     val autoValue get() = autoText()
 
+    /** 这一小时的超时自动记录内容: 行为模式优先, 否则用全局的那一项. */
+    fun autoTextFor(hourStart: LocalDateTime): String =
+        runCatching { hourAutoText(hourStart) }.getOrDefault("").ifBlank { autoText() }
+
+    /** 整点记录的键 ("日期/小时" 或 "日期/小时/1") → 自动记录内容. */
+    fun autoTextForKey(key: String): String {
+        val parts = key.split("/")
+        return runCatching {
+            LocalDate.parse(parts[0]).atStartOfDay().plusHours((parts[1].toInt()).toLong())
+        }.getOrNull()?.let { autoTextFor(it) } ?: autoText()
+    }
+
     /** i = 0 前半小时, 1 后半小时. 还没分开填过的小时: 前半显示整小时的内容. */
     fun halfText(date: String, hour: Int, i: Int): String {
         val pair = hourHalves[date]?.get(hour.toString())
@@ -455,7 +480,8 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
             val h = p[1].toIntOrNull() ?: continue
             val i = (p[2].toIntOrNull() ?: continue) - 1
             if (halfText(p[0], h, i).isEmpty()) {
-                setHalfText(p[0], h, i, autoText(), save = false)
+                val hour0 = runCatching { LocalDate.parse(p[0]).atStartOfDay().plusHours(h.toLong()) }.getOrNull()
+                setHalfText(p[0], h, i, hour0?.let { autoTextFor(it) } ?: autoText(), save = false)
                 changed = true
             }
         }
@@ -482,7 +508,7 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
         var changed = c != cur
         while (!c.plusHours(1).plusSec(fillWindow()).isAfter(now)) {
             val ds = c.toLocalDate().key()
-            if (hourText(ds, c.hour).isEmpty()) hourDays.getOrPut(ds) { HashMap() }[c.hour.toString()] = autoText()
+            if (hourText(ds, c.hour).isEmpty()) hourDays.getOrPut(ds) { HashMap() }[c.hour.toString()] = autoTextFor(c)
             c = c.plusHours(1)
             changed = true
         }

@@ -140,7 +140,35 @@ SETTINGS_SCHEMA = [
          group="weekday", short="周六"),
     _num("QUOTA_MULT_SUN", "周日联网倍率", "×", 1, 0, 10, False, "", page="net",
          group="weekday", short="周日"),
-    # ---- 日常 (设置 → 日常): 睡觉时间, 周一到周日各自可以改 (MECHANICS 19) ----
+    # ---- 日常 (设置 → 日常): 行为模式 (MECHANICS 21) ----
+    {
+        "key": "BEHAVIOR_MODE", "label": "行为模式",
+        "kind": "choice", "apply": APPLY_DELAY,
+        "choices": [
+            ("closed", "封闭式管理"),
+            ("work", "工作"),
+            ("free", "自由学习"),
+        ],
+        "fmt": lambda v: {"closed": "封闭式管理", "work": "工作"}.get(str(v), "自由学习"),
+        "desc": "封闭式管理 / 工作: 专注页多一个「外出」按钮, 外出期间按 MECHANICS 21 记录. "
+                "第一次选择立即生效, 之后修改要等 7 天 (168 小时).",
+        "page": "daily", "delay_hours": config.BEHAVIOR_DELAY_HOURS, "no_setup": True,
+    },
+    {
+        "key": "OUTING_TEXT", "label": "外出自动记录内容",
+        "kind": "text", "apply": APPLY_DELAY,
+        "fmt": lambda v: str(v),
+        "desc": "行为模式下, 整点记录里外出那段时间的超时自动填充内容.",
+        "page": "daily",
+    },
+    {
+        "key": "REST_TEXT", "label": "其他时间自动记录内容",
+        "kind": "text", "apply": APPLY_DELAY,
+        "fmt": lambda v: str(v),
+        "desc": "行为模式下, 没有外出时整点记录的超时自动填充内容.",
+        "page": "daily",
+    },
+    # ---- 日常: 睡觉时间, 周一到周日各自可以改 (MECHANICS 19) ----
     _time("SLEEP_MON", "周一睡觉时间", "周一"),
     _time("SLEEP_TUE", "周二睡觉时间", "周二"),
     _time("SLEEP_WED", "周三睡觉时间", "周三"),
@@ -508,7 +536,10 @@ class SettingsManager:
         ok, msg = self.validate(key, value)
         if not ok:
             return "invalid", msg
-        if spec["apply"] == APPLY_INSTANT or config.changes_instant():
+        # 行为模式有自己的 7 天冷静期, 配置期也不提前生效 (第一次打开时给的一次免等待除外)
+        instant = (spec["apply"] == APPLY_INSTANT or config.dev_mode_enabled()
+                   or (config.setup_active() and not spec.get("no_setup")))
+        if instant:
             self.effective[key] = value
             self.since[key] = f"{self._now():%Y-%m-%d %H:%M}"
             self.changed[key] = True
@@ -542,7 +573,8 @@ class SettingsManager:
         self.pending[key] = {
             "value": value,
             "requested_at": f"{now:%Y-%m-%d %H:%M}",
-            "apply_at": now + self.delay,
+            "apply_at": now + timedelta(hours=float(spec.get("delay_hours") or
+                                                    self.delay.total_seconds() / 3600.0)),
         }
         self.save()
         return "staged", tr("{label} 已提交,将于 {at}.",
@@ -617,7 +649,7 @@ class SettingsManager:
             return "instant"
         if config.dev_mode_enabled():
             return ""                   # 开发者模式在界面上不显示
-        if config.setup_active():
+        if config.setup_active() and not spec.get("no_setup"):
             return "setup"
         if key in self.free_next:
             return "free"
@@ -643,8 +675,13 @@ class SettingsManager:
 
     def promote_due(self) -> list:
         now = self._now()
-        dev = config.changes_instant()
-        due = [k for k, v in self.pending.items() if dev or v["apply_at"] <= now]
+        dev = config.dev_mode_enabled()
+        setup = config.setup_active()
+        due = []
+        for k, v in self.pending.items():
+            spec = SCHEMA_BY_KEY.get(k) or {}
+            if v["apply_at"] <= now or dev or (setup and not spec.get("no_setup")):
+                due.append(k)
         for k in due:
             self.effective[k] = self.pending[k]["value"]
             self.since[k] = f"{now:%Y-%m-%d %H:%M}"
@@ -689,7 +726,7 @@ class SettingsManager:
                 return 1.0
         if key == "THEME":
             return str(value) if str(value) in config.THEMES else config.DEFAULT_THEME
-        if key in ("LANGUAGE", "AUTO_TEXT"):
+        if key in ("LANGUAGE", "AUTO_TEXT", "OUTING_TEXT", "REST_TEXT"):
             return str(value)
         if key == "CHIME_WAV":
             return "" if str(value).strip() in ("", "__builtin__") else str(value)
@@ -833,6 +870,30 @@ def _selftest():
     assert m4.stage("SLEEP_MON", m4.from_ui_number("SLEEP_MON", "22:00"))[0] == "instant"
     assert config.SLEEP_MON == 22 * 60 and config.sleep_minutes(datetime(2026, 10, 19)) == 22 * 60
     m4.end_setup()
+
+    # 行为模式 (MECHANICS 21): 配置期也要等 7 天; 第一次打开时给的一次免等待除外
+    m5 = SettingsManager(os.path.join(tempfile.mkdtemp(), "settings.json"), delay_hours=48)
+    assert page_specs("daily")[0][0]["key"] == "BEHAVIOR_MODE", "日常页最上面是行为模式"
+    assert SCHEMA_BY_KEY["BEHAVIOR_MODE"]["delay_hours"] == 24 * 7
+    m5.start_setup(1)
+    assert m5.wait_tag("BEHAVIOR_MODE") == ""
+    st, msg = m5.stage("BEHAVIOR_MODE", "closed")
+    assert st == "staged", (st, msg)
+    assert 167 * 3600 < m5.pending_left_seconds("BEHAVIOR_MODE") <= 168 * 3600
+    m5.cancel("BEHAVIOR_MODE")
+    assert m5.grant_free_change("BEHAVIOR_MODE") and m5.wait_tag("BEHAVIOR_MODE") == "free"
+    st, msg = m5.stage("BEHAVIOR_MODE", "closed")
+    assert st == "instant" and config.BEHAVIOR_MODE == "closed", (st, msg)
+    m5.end_setup()
+    st, _msg = m5.stage("BEHAVIOR_MODE", "work")
+    assert st == "staged", "第二次修改要等 7 天"
+    assert 167 * 3600 < m5.pending_left_seconds("BEHAVIOR_MODE") <= 168 * 3600
+    # 自动记录内容: 文本项, 48 小时
+    st, _msg = m5.stage("OUTING_TEXT", "上班")
+    assert st == "staged" and m5.value("OUTING_TEXT") == "外出"
+    m5.pending["OUTING_TEXT"]["apply_at"] = m5._now() - timedelta(seconds=1)
+    assert m5.promote_due() == ["OUTING_TEXT"] and config.OUTING_TEXT == "上班"
+    config.OUTING_TEXT, config.BEHAVIOR_MODE = "外出", config.BEHAVIOR_FREE
     return "settings_manager selftest OK"
 
 

@@ -69,6 +69,27 @@ object Cfg {
 
     fun sleepKey(day: LocalDate): String = SLEEP_KEYS[day.dayOfWeek.value - 1]
     fun sleepKey(d: DayOfWeek): String = SLEEP_KEYS[d.value - 1]
+
+    // 行为模式 (设置 → 日常, MECHANICS 21): 第一次打开时可以选, 之后修改要等 24 × 7 小时.
+    const val BEHAVIOR_CLOSED = "closed"
+    const val BEHAVIOR_WORK = "work"
+    const val BEHAVIOR_FREE = "free"
+    val BEHAVIOR_MODES = listOf(BEHAVIOR_CLOSED, BEHAVIOR_WORK, BEHAVIOR_FREE)
+    const val BEHAVIOR_DELAY_HOURS = 24 * 7L
+    const val OUTING_TEXT = "外出"
+    const val REST_TEXT = "休息"
+    // 每天最多记 10 小时; 7:00 ~ 23:00 之内的部分按 80% 专注 / 20% 休息填充.
+    const val OUTING_WINDOW_START = 7 * 60
+    const val OUTING_WINDOW_END = 23 * 60
+    const val OUTING_DAILY_CAP = 10 * 3600.0
+    const val OUTING_FOCUS_SHARE = 0.8
+    // 外出结束: 被记录的小时数 × 6 分钟, 最多 3 小时.
+    const val OUTING_REST_PER_HOUR = 6 * 60.0
+    const val OUTING_REST_MAX = 3 * 3600
+    // 外出期间: 当天的联网额度 ×0.2, 联网冷静期 ×0.3.
+    const val OUTING_QUOTA_FACTOR = 0.2
+    const val OUTING_COOLDOWN_FACTOR = 0.3
+    const val OUTING_MAX_HOURS = 24 * 7
 }
 
 /** 建议休息时长 F(t), t 与结果都以分钟计 (MECHANICS 6.2). */

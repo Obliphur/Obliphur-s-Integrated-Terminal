@@ -10,8 +10,8 @@
           (只用标准库; Android 版 sync/SyncCrypto.kt 是同一套算法)
 
 同步的内容分三类 (见 snapshot()):
-    docs     共享文档: 设置, 整点记录, 计时器 (此刻的专注 / 休息, 积攒的休息时间), 成就. 每一项单独记修改时间,
-             新的覆盖旧的. 规则页的名单和过滤模式不同步
+    docs     共享文档: 设置, 整点记录, 计时器 (此刻的专注 / 休息, 积攒的休息时间), 成就, 合约, 行为模式的外出.
+              每一项单独记修改时间, 新的覆盖旧的. 规则页的名单和过滤模式不同步
     ledgers  各设备自己的账: 今天的联网额度用量 / 借贷, 学习时长, 专注时间段, 联网理由, 窗口时间.
              互相转交, 每台设备显示的是所有设备的合计
     status   各设备此刻的状态 (专注 / 休息 / 联网) 和最后一次操作的时间 (整点提示音只在最后操作的设备上响)
@@ -750,11 +750,11 @@ class SyncService:
             out[doc] = {key: [t[key][1], kv.get(key)] for key in t}
         return out
 
-    def _wins(self, doc, mt, val, cur) -> bool:
+    def _wins(self, doc, key, mt, val, cur) -> bool:
         cur_mt, cur_val = cur
         if doc == "hours":
-            # 超时自动记录的内容永远让位给自己填写的内容
-            auto = self.local.auto_text()
+            # 超时自动记录的内容永远让位给自己填写的内容 (行为模式按小时有不同的自动内容)
+            auto = _call(self.local, "auto_text_for", None, key) or self.local.auto_text()
             r_auto, l_auto = val == auto, cur_val == auto
             if r_auto and cur_val and not l_auto:
                 return False
@@ -837,7 +837,7 @@ class SyncService:
                 except Exception:
                     continue
                 cur = mine.get(key)
-                if init or cur is None or self._wins(doc, mt, val, cur):
+                if init or cur is None or self._wins(doc, key, mt, val, cur):
                     if cur is None or cur[1] != val:
                         changes[key] = val
                     track.setdefault(doc, {})[key] = [_hash(val), mt]

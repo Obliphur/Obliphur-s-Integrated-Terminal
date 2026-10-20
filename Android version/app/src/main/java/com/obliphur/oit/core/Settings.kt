@@ -7,7 +7,7 @@ import java.time.Duration
 import java.time.LocalDateTime
 import kotlin.math.abs
 
-enum class Kind { NUM, TIME, CHOICE, INSTANT_TEXT, CHIME }
+enum class Kind { NUM, TIME, CHOICE, INSTANT_TEXT, TEXT, CHIME }
 
 /**
  * 一个设置项. 数值项按 unit 填写, 存储值 = 填写值 × scale (例如按分钟填, 按秒存);
@@ -28,6 +28,10 @@ data class Spec(
     val choices: List<Pair<String, String>> = emptyList(),
     val group: String? = null,
     val short: String? = null,
+    /** 这一项自己的冷静期 (小时); null = 默认的 48 小时. 行为模式是 24 × 7 小时. */
+    val delayHours: Long? = null,
+    /** 配置期也不提前生效 (只有第一次打开时给的一次免等待能立即生效). */
+    val noSetup: Boolean = false,
 )
 
 object Schema {
@@ -93,6 +97,12 @@ object Schema {
         Spec("WINDOW_LIMIT_ENABLED", "后台应用数检测", Kind.CHOICE, true, "window", "1", choices = ONOFF),
         Spec("WINDOW_FOCUS_ENABLED", "应用使用时间统计", Kind.CHOICE, true, "window", "1", choices = ONOFF),
         num("WINDOW_LIMIT", "后台应用数上限", "", 1.0, 1.0, 50.0, true, 5.0, "window"),
+        // ---- 日常: 行为模式 / 外出 (MECHANICS 21) ----
+        Spec("BEHAVIOR_MODE", "行为模式", Kind.CHOICE, true, "daily", Cfg.BEHAVIOR_FREE,
+            choices = listOf("closed" to "封闭式管理", "work" to "工作", "free" to "自由学习"),
+            delayHours = Cfg.BEHAVIOR_DELAY_HOURS, noSetup = true),
+        Spec("OUTING_TEXT", "外出自动记录内容", Kind.TEXT, true, "daily", Cfg.OUTING_TEXT),
+        Spec("REST_TEXT", "其他时间自动记录内容", Kind.TEXT, true, "daily", Cfg.REST_TEXT),
         // ---- 日常: 周一到周日的睡觉时间 (MECHANICS 19) ----
         time("SLEEP_MON", "周一睡觉时间", "周一"),
         time("SLEEP_TUE", "周二睡觉时间", "周二"),
@@ -245,7 +255,7 @@ class Settings(
         return when {
             !spec.delayed -> "instant"
             devMode -> ""                     // 开发者模式在界面上不显示
-            inSetup() -> "setup"
+            inSetup() && !spec.noSetup -> "setup"
             key in freeNext -> "free"
             else -> ""
         }
@@ -330,7 +340,8 @@ class Settings(
         validate(key, value)?.let { return StageResult.INVALID to it }
         val label = tr(spec.label)
         val t = now()
-        if (!spec.delayed || changesInstant()) {
+        // 行为模式有自己的 7 天冷静期, 配置期也不提前生效 (第一次打开时给的一次免等待除外)
+        if (!spec.delayed || devMode || (inSetup() && !spec.noSetup)) {
             applyNow(key, value, t)
             return StageResult.INSTANT to tr("{label} 已立即生效.", "label" to label)
         }
@@ -347,7 +358,8 @@ class Settings(
             applyNow(key, value, t)
             return StageResult.INSTANT to tr("{label} 已立即生效.", "label" to label)
         }
-        pending[key] = Pending(value, t.format(Fmt.YMDHM), t.plus(delay))
+        pending[key] = Pending(value, t.format(Fmt.YMDHM),
+            t.plusHours(spec.delayHours ?: delay.toHours()))
         save()
         return StageResult.STAGED to tr("{label} 已提交,将于 {at}.", "label" to label,
             "at" to pending[key]!!.applyAt.format(Fmt.YMDHM))
@@ -378,8 +390,11 @@ class Settings(
     /** 到期 (或配置期 / 开发者模式) 的修改生效. 返回生效的项. */
     fun promoteDue(): List<String> {
         val t = now()
-        val instant = changesInstant()
-        val due = pending.filter { instant || !it.value.applyAt.isAfter(t) }.keys.toList()
+        val setup = inSetup()
+        val due = pending.filter { (k, p) ->
+            val spec = Schema.BY_KEY[k]
+            p.applyAt <= t || devMode || (setup && spec?.noSetup != true)
+        }.keys.toList()
         for (k in due) {
             effective[k] = pending[k]!!.value
             since[k] = t.format(Fmt.YMDHM)
@@ -435,7 +450,7 @@ class Settings(
             Kind.CHOICE -> spec.choices.firstOrNull { it.first == v.toString() }?.second?.let { tr(it) } ?: v.toString()
             Kind.TIME -> slotText(v)
             Kind.CHIME -> if (v.toString().isBlank()) tr("内置三音提示音") else tr("自选音频")
-            Kind.INSTANT_TEXT -> v.toString()
+            Kind.INSTANT_TEXT, Kind.TEXT -> v.toString()
         }
     }
 }
