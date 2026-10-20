@@ -144,9 +144,9 @@ class Contract(private val file: File) {
                 "额外 1 危机等级\n休息时间 ×110%"),
             Combo("nofun", "互联网娱乐的败退", "purple", listOf("music", "silent", "game", "video"), 0, 1.0, 20 * 60, 0,
                 "合约开始时 休息 +20 分钟"),
-            Combo("flawless", "无懈可击", "gray", listOf("last", "unknown"), 0, 1.0, 20 * 60, 0,
+            Combo("flawless", "无懈可击", "gray", listOf("last", "unknown", "move", "confine"), 0, 1.0, 20 * 60, 0,
                 "合约开始时 休息 +20 分钟"),
-            Combo("isolation", "信息隔绝", "red", listOf("info", "chan", "erode", "suppress", "fog", "quiet"), 1, 1.0, 0, 10 * 60,
+            Combo("isolation", "信息隔绝", "red", listOf("info", "chan", "erode", "suppress", "fog", "quiet", "jam"), 1, 1.0, 0, 10 * 60,
                 "额外 1 危机等级\n完成合约时 休息 +10 分钟"),
         )
         val COMBOS_BY_ID = COMBOS.associateBy { it.id }

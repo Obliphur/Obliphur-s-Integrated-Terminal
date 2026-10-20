@@ -64,14 +64,16 @@ class ContractTest {
         assertEquals("void", Contract.comboState(mochi, listOf("long1", "tired2"), listOf("long1", "tired2", "fine", "deep1")))
         assertEquals(1, Contract.comboLevel(listOf("long1", "tired2", "fine", "deep1")))
         assertEquals(0.6 * 1.1, Contract.restFactorOf(listOf("long1", "tired2", "fine", "deep1")), 1e-9)
-        val iso = listOf("info1", "erode1", "chan1", "suppress", "fog", "quiet")
+        val iso = listOf("info1", "erode1", "chan1", "suppress", "fog", "quiet", "jam")
         assertEquals(iso, Contract.clean(iso))                    // 信息隔绝组合的词条可以一起选
         assertEquals(1, Contract.comboLevel(iso)); assertEquals(10 * 60, Contract.comboEnd(iso))
-        assertEquals(Contract.restMinutes(6) * 60 + 10 * 60, Contract.restReward(6, iso))
+        assertEquals(Contract.restMinutes(8) * 60 + 10 * 60, Contract.restReward(8, iso))
         assertEquals(20 * 60, Contract.comboGift(listOf("music", "silent", "game", "video")))
-        assertEquals(20 * 60, Contract.comboGift(listOf("last", "unknown")))
-        assertEquals(mapOf("last" to Contract.COMBO_COLORS["gray"]!!, "unknown" to Contract.COMBO_COLORS["gray"]!!),
-            Contract.comboMarks(listOf("last", "unknown")))
+        assertEquals(0, Contract.comboGift(listOf("last", "unknown")))          // 还差 禁足 / 高机动
+        assertEquals(20 * 60, Contract.comboGift(listOf("last", "unknown", "move", "confine")))
+        assertEquals(mapOf("last" to Contract.COMBO_COLORS["gray"]!!, "unknown" to Contract.COMBO_COLORS["gray"]!!,
+            "move" to Contract.COMBO_COLORS["gray"]!!, "confine" to Contract.COMBO_COLORS["gray"]!!),
+            Contract.comboMarks(listOf("last", "unknown", "move", "confine")))
         assertEquals("纵深推进", Contract.reqName("deep")); assertEquals("最后防线", Contract.reqName("last"))
         val best = Contract.clean(listOf("long3", "erode2", "info3", "suppress", "jam", "music", "fog", "tired3", "chan2", "last",
             "short2", "seal", "fine", "silent", "game", "video", "gaze"))
@@ -123,13 +125,13 @@ class ContractTest {
         assertEquals(false to "", e.violate("game")); assertEquals("void", e.combos()[1].second)
         assertTrue(e.comboMarks().isEmpty())
         // 信息隔绝组合: 额外 1 危机等级, 完成时 +10 分钟; 成员失效后都没了
-        val iso = listOf("info1", "erode1", "chan1", "suppress", "fog", "quiet")
+        val iso = listOf("info1", "erode1", "chan1", "suppress", "fog", "quiet", "jam")
         e.start(iso, "me", t0)
-        assertEquals("done", e.combos()[3].second); assertEquals(7, e.level)
-        assertEquals(Contract.restMinutes(7) * 60.0 + 10 * 60, e.reward, 1e-6)
+        assertEquals("done", e.combos()[3].second); assertEquals(9, e.level)
+        assertEquals(Contract.restMinutes(9) * 60.0 + 10 * 60, e.reward, 1e-6)
         assertEquals(Contract.COMBO_COLORS["red"], e.comboMarks()["fog"])
         assertEquals(false to "", e.violate("suppress")); assertEquals("void", e.combos()[3].second)
-        assertEquals(5, e.level); assertEquals(Contract.restMinutes(5) * 60.0, e.reward, 1e-6)
+        assertEquals(7, e.level); assertEquals(Contract.restMinutes(7) * 60.0, e.reward, 1e-6)
         // 打年糕组合: 额外 1 危机等级, 休息时间 ×1.1; 纵深推进降级不算失效
         e.start(listOf("long1", "tired2", "fine", "deep2"), "me", t0)
         assertEquals("done", e.combos()[0].second); assertEquals(8, e.level)

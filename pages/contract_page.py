@@ -370,8 +370,9 @@ class ContractPage(tk.Frame):
             cv.create_text(cx + s(12), cy + s(30), text=tr("需要") + "  " + need, anchor="nw",
                            fill=P["sel_text"] if on else P["sel_dim"], width=cw - s(20),
                            font=config.font("tiny"), tags=("combo", tag))
-            # 效果
-            cv.create_text(cx + s(12), cy + ch - s(10), text=tr(combo["desc"]), anchor="sw",
+            # 效果: 写成一行 (太窄时自己换行), 贴在卡片最下面, 免得和上面的"需要"叠在一起
+            desc = tr(combo["desc"]).replace("\n", "  ·  ")
+            cv.create_text(cx + s(12), cy + ch - s(6), text=desc, anchor="sw",
                            fill=color if on else P["sel_dim"], width=cw - s(20),
                            font=config.font("tiny"), tags=("combo", tag))
             cv.tag_bind(tag, "<Enter>", lambda e, x=combo: self._combo_hover(x))

@@ -48,5 +48,25 @@ assert "move" not in c.draft and "confine" in c.draft
 # 记录封锁的新描述
 assert C.BY_ID["seal"][4] == "超过填写时间则不能再修改该记录"
 
+# 第 3 页: 组合效果. 要凑的词条多了以后, "需要" 那行不能压到下面的效果文字
+import i18n
+
+
+def check_combos(label):
+    page.page = page._page_count() - 1
+    page._draw_tiles()
+    root.update_idletasks()
+    for combo in C.COMBOS:
+        texts = [i for i in page.canvas.find_withtag(f"c_{combo['id']}") if page.canvas.type(i) == "text"]
+        assert len(texts) == 4, (combo["name"], len(texts))
+        need, desc = page.canvas.bbox(texts[2]), page.canvas.bbox(texts[3])
+        assert need[3] <= desc[1], (label, combo["name"], need, desc)
+
+
+check_combos("zh")
+i18n.set_language("en")
+check_combos("en")
+i18n.set_language("zh")
+
 root.destroy()
 print("contract board check OK")

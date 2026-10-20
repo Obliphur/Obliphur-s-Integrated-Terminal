@@ -233,11 +233,11 @@ COMBOS = [
      "level": 0, "rest": 1.0, "gift": 20 * 60, "end": 0,
      "desc": "合约开始时 休息 +20 分钟"},
     {"id": "flawless", "name": "无懈可击", "color": "gray",
-     "reqs": ("last", "unknown"),
+     "reqs": ("last", "unknown", "move", "confine"),
      "level": 0, "rest": 1.0, "gift": 20 * 60, "end": 0,
      "desc": "合约开始时 休息 +20 分钟"},
     {"id": "isolation", "name": "信息隔绝", "color": "red",
-     "reqs": ("info", "chan", "erode", "suppress", "fog", "quiet"),
+     "reqs": ("info", "chan", "erode", "suppress", "fog", "quiet", "jam"),
      "level": 1, "rest": 1.0, "gift": 0, "end": 10 * 60,
      "desc": "额外 1 危机等级\n完成合约时 休息 +10 分钟"},
 ]
@@ -1344,14 +1344,16 @@ def _selftest():
     assert combo_state(mochi, ["long1", "tired2", "fine", "deep1"]) == "done"
     assert combo_level(["long1", "tired2", "fine", "deep1"]) == 1
     assert abs(rest_factor_of(["long1", "tired2", "fine", "deep1"]) - 0.6 * 1.1) < 1e-9
-    iso = ["info1", "erode1", "chan1", "suppress", "fog", "quiet"]
+    iso = ["info1", "erode1", "chan1", "suppress", "fog", "quiet", "jam"]
     assert clean_terms(iso) == iso, "信息隔绝组合的词条可以一起选"
     assert combo_done(isolation, iso) and combo_level(iso) == 1 and combo_end(iso) == 10 * 60
     assert rest_reward(6, iso) == rest_minutes(6) * 60 + 10 * 60
     assert rest_minutes_total(6, iso) == rest_minutes(6) + 10
     assert combo_gift(["music", "silent", "game", "video"]) == 20 * 60, "互联网娱乐的败退: 开始时 +20 分钟"
-    assert combo_gift(["last", "unknown"]) == 20 * 60, "无懈可击: 开始时 +20 分钟"
-    assert combo_marks(["last", "unknown"]) == {"last": COMBO_COLORS["gray"], "unknown": COMBO_COLORS["gray"]}
+    assert combo_gift(["last", "unknown"]) == 0, "无懈可击: 还差 禁足 / 高机动"
+    assert combo_gift(["last", "unknown", "move", "confine"]) == 20 * 60, "无懈可击: 开始时 +20 分钟"
+    assert combo_marks(["last", "unknown", "move", "confine"]) == \
+        {t: COMBO_COLORS["gray"] for t in ("last", "unknown", "move", "confine")}
     assert combo_marks(["long1", "tired2"]) == {}
     assert nofun["color"] == "purple" and flawless["color"] == "gray" and isolation["color"] == "red" \
         and mochi["color"] == "white"
@@ -1370,9 +1372,9 @@ def _selftest():
                         "short2", "seal", "fine", "silent", "game", "video", "gaze", "scar"])
     assert "scar" not in best and level_of(best) == 32, level_of(best)
     assert combo_gift(best) == 20 * 60, "互联网娱乐的败退凑齐了"
-    best2 = clean_terms(["info3", "chan2", "erode2", "suppress", "fog", "quiet", "last", "long3", "tired3", "fine"])
-    assert len(best2) == 10, best2
-    assert combo_level(best2) == 1 and level_of(best2) == 21 + 1, level_of(best2)
+    best2 = clean_terms(["info3", "chan2", "erode2", "suppress", "fog", "quiet", "jam", "last", "long3", "tired3", "fine"])
+    assert len(best2) == 11, best2
+    assert combo_level(best2) == 1 and level_of(best2) == 23 + 1, level_of(best2)
 
     c = Contract(tempfile.mkdtemp())
     t0 = datetime(2026, 10, 18, 9, 30)
@@ -1416,10 +1418,10 @@ def _selftest():
     assert c.combo_marks() == {} and rest_gift(c.terms) == 0
     # 信息隔绝组合: 额外 1 危机等级, 完成时 +10 分钟; 成员失效后都没了
     c.start(iso, owner="me", now=t0)
-    assert c.combos()[3] == (isolation, "done") and c.level == 6 + 1
-    assert c.reward == rest_minutes(7) * 60 + 10 * 60 and c.combo_marks().get("fog") == COMBO_COLORS["red"]
+    assert c.combos()[3] == (isolation, "done") and c.level == 8 + 1
+    assert c.reward == rest_minutes(9) * 60 + 10 * 60 and c.combo_marks().get("fog") == COMBO_COLORS["red"]
     assert c.violate("suppress") == (False, "") and c.combos()[3] == (isolation, "void")
-    assert c.level == 5 and c.reward == rest_minutes(5) * 60
+    assert c.level == 7 and c.reward == rest_minutes(7) * 60
     # 打年糕组合: 额外 1 危机等级, 休息时间 ×1.1; 纵深推进降级不算失效
     c.start(["long1", "tired2", "fine", "deep2"], owner="me", now=t0)
     assert c.combos()[0] == (mochi, "done") and c.level == 2 + 1 + 2 + 2 + 1
