@@ -605,8 +605,8 @@ object EnStrings {
         "合约期间 专注时长 合约的剩余时间 成就 日历 统计数据不可见 且无法打开设置" to
             "Focus time, the contract's time left, achievements, calendar and statistics are hidden, and settings can't be opened",
         "期间使用proxy block-all模式" to "Proxy block-all mode during the contract",
-        "期间的最大窗口数改为3" to "Window limit becomes 3",
-        "期间的最大窗口数改为4" to "Window limit becomes 4",
+        "在专注期间的最大窗口数改为3" to "Window limit becomes 3 during focus",
+        "在专注期间的最大窗口数改为4" to "Window limit becomes 4 during focus",
         "期间获得的休息时间改为60%" to "Break time earned during the contract set to 60%",
         "期间获得的休息时间改为50%" to "Break time earned during the contract set to 50%",
         "期间获得的休息时间改为70%" to "Break time earned during the contract set to 70%",
