@@ -49,6 +49,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.obliphur.oit.OitApp
+import com.obliphur.oit.core.Contract
 import com.obliphur.oit.core.f1
 import com.obliphur.oit.core.fmtHm
 import com.obliphur.oit.core.key
@@ -208,6 +209,68 @@ private const val OTHER_TIP_LINES = 25
 /** 黑雾: 饼图里填多少个没有意义的项. */
 private const val FOG_ITEMS = 10
 
+/** 统计页的合约记录: 看最近几个顺利完成的合约 (黑雾时补满这么多条). */
+private const val CONTRACT_ROWS = 5
+
+/** 统计页的一条合约记录: 等级 = 初始等级-失效等级 (没有失效时只有初始等级); 词条 (名字, 是不是失效了). */
+private data class ContractRow(val a: Int, val b: Int, val terms: List<Pair<String, Boolean>>)
+
+private fun levelText(a: Int, b: Int): String = if (a == b) "$a" else "$a-$b"
+
+/** 黑雾: 5 条假记录 (初始等级 99 ~ -50, 失效等级 1 ~ 30; 词条随机填充), 同一个合约里不变. */
+private fun fogContractRows(seed: Long): List<ContractRow> {
+    val names = Contract.TERMS.map { it.name }
+    return (0 until CONTRACT_ROWS).map { i ->
+        val rnd = java.util.Random("$seed/contracts/$i".hashCode().toLong())
+        val picked = names.shuffled(rnd).take(2 + rnd.nextInt(4))
+        ContractRow(rnd.nextInt(150) - 50, 1 + rnd.nextInt(30),
+            picked.map { it to (rnd.nextInt(100) < 35) })
+    }
+}
+
+/** 统计页: 最近 5 条顺利完成的合约 (等级, 点开看词条; 失效的变灰; 黑雾时是假数据). */
+@Composable
+private fun ContractRecords() {
+    val o = LocalOit.current
+    val core = OitApp.instance.core
+    val c = core.contract
+    var open by remember { mutableStateOf<ContractRow?>(null) }
+    val fog = c.fog()
+    val rows = remember(fog, c.id, c.history.size) {
+        if (fog) fogContractRows(c.id)
+        else Contract.recentCompleted(c.history, CONTRACT_ROWS).map {
+            ContractRow(it.optInt("orig_level"), it.optInt("level"), Contract.termsOfRecord(it))
+        }
+    }
+    OitCard {
+        Text(tr("⚔  合约记录"), fontWeight = FontWeight.Bold, color = o.text, fontSize = 16.sp)
+        Dim(tr("最近 5 条顺利完成的合约 · 等级: 初始-失效 · 点击查看词条"), size = 12)
+        if (rows.isEmpty()) Dim(tr("还没有顺利完成的合约."), size = 13)
+        for (r in rows) {
+            Row(Modifier.fillMaxWidth().clickable { open = r }.padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Text(tr("等级"), color = o.dim, fontSize = 12.sp, modifier = Modifier.padding(end = 10.dp))
+                Text(levelText(r.a, r.b), color = o.accent, fontWeight = FontWeight.Bold, fontSize = 18.sp,
+                    modifier = Modifier.weight(1f))
+                Text(tr("点击查看词条"), color = o.dim, fontSize = 12.sp)
+            }
+        }
+    }
+    open?.let { r ->
+        AlertDialog(onDismissRequest = { open = null },
+            title = { Text(tr("⚔  合约词条"), fontWeight = FontWeight.Bold) },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    Text(tr("等级 {lv}", "lv" to levelText(r.a, r.b)), color = o.accent,
+                        fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 6.dp))
+                    for ((name, void) in r.terms)
+                        Text(tr(name), color = if (void) o.dim else o.text, fontSize = 14.sp)
+                }
+            },
+            confirmButton = { TextButton({ open = null }) { Text(tr("关闭")) } })
+    }
+}
+
 @Composable
 fun StatsScreen() {
     LocalTick.current
@@ -228,10 +291,15 @@ fun StatsScreen() {
             add("net" to tr("🌐  联网理由"))
             add("focus" to tr("⏱  专注计时"))
             add("window" to tr("📱  应用"))
+            add("contracts" to tr("⚔  合约"))
         }
         Segmented(tabs, page) { page = it }
         if (page == "focus") {
             FocusBars()
+            return@Column
+        }
+        if (page == "contracts") {
+            ContractRecords()
             return@Column
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from tkinter import ttk
 
 import config
+import contract as C
 import window_guard
 from config import COLORS, fmt_hm
 from data_manager import month_prefixes, tally_items
@@ -19,6 +20,7 @@ PALETTE = config.CHART_PALETTE
 OTHER_BELOW = 0.01
 OTHER_TIP_LINES = 25
 FOG_ITEMS = 10              # 黑雾: 饼图里填多少个没有意义的项
+CONTRACT_ROWS = 5           # 统计页的合约记录: 看最近几个顺利完成的合约 (黑雾时补满这么多条)
 
 
 def _c(key: str) -> str:
@@ -27,6 +29,59 @@ def _c(key: str) -> str:
 
 WEEKDAYS_ZH = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
 WEEKDAYS_EN = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+
+def _int(v) -> int:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _level_text(a, b) -> str:
+    """一条合约的等级: "初始等级-失效等级"; 结算等级和初始一样 (没有失效) 时只写初始等级.
+    负数直接带负号 (只有黑雾的假初始等级会是负数), 例如 -8-5."""
+    a, b = _int(a), _int(b)
+    return str(a) if a == b else f"{a}-{b}"
+
+
+def _fog_contracts(seed) -> list:
+    """黑雾: 5 条假记录 (初始等级 99 ~ -50, 失效等级 1 ~ 30; 词条随机填充); 真实条数不到 5 条时也补满."""
+    names = [t[3] for t in C.TERMS]
+    out = []
+    for i in range(CONTRACT_ROWS):
+        rnd = random.Random(f"{seed}/contracts/{i}")
+        terms = [(n, rnd.random() < 0.35) for n in rnd.sample(names, rnd.randint(2, 5))]
+        out.append(((rnd.randint(-50, 99), rnd.randint(1, 30)), terms))
+    return out
+
+
+class ContractTermsDialog(tk.Toplevel):
+    """统计页: 一条合约记录的具体词条 (失效的变灰)."""
+
+    def __init__(self, master, a, b, terms: list):
+        super().__init__(master, bg=COLORS["bg"], highlightbackground=COLORS["accent"],
+                         highlightthickness=2)
+        self.title(tr("⚔  合约词条"))
+        self.resizable(False, False)
+        self.attributes("-topmost", True)
+        body = tk.Frame(self, bg=COLORS["bg"])
+        body.pack(padx=22, pady=18)
+        tk.Label(body, text=tr("⚔  合约词条"), bg=COLORS["bg"], fg=COLORS["text"],
+                 font=config.font("h2", bold=True), anchor="w").pack(anchor="w")
+        tk.Label(body, text=tr("等级 {lv}", lv=_level_text(a, b)), bg=COLORS["bg"],
+                 fg=COLORS["accent"], font=config.font("body", bold=True),
+                 anchor="w").pack(anchor="w", pady=(2, 8))
+        for name, void in terms or []:
+            tk.Label(body, text=tr(name), bg=COLORS["bg"],
+                     fg=COLORS["text_dim"] if void else COLORS["text"],
+                     font=config.font("body"), anchor="w").pack(anchor="w")
+        ttk.Button(body, text=tr("关闭"), style="Accent.TButton",
+                   command=self.destroy).pack(anchor="e", pady=(12, 0))
+        self.update_idletasks()
+        w, h = self.winfo_reqwidth(), self.winfo_reqheight()
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        self.geometry(f"{w}x{h}+{max(0, (sw - w) // 2)}+{max(0, (sh - h) // 3)}")
 
 
 class StatsPage(tk.Frame):
@@ -51,6 +106,9 @@ class StatsPage(tk.Frame):
         self._tip = None            # 「其他」的悬停提示 (一个无边框的小窗)
         # 合约的黑雾 (MECHANICS 18.3): 不为 None 时只显示随机的假数据 (同一个合约里不变)
         self.fog = lambda: None
+        # 合约记录页的数据来源: 合约的 history (顺利完成的那几条)
+        self.contract_log = lambda: []
+        self._contract_sig = None
         self._build()
         self.after(60000, self._focus_tick)
 
@@ -81,7 +139,8 @@ class StatsPage(tk.Frame):
         bar.pack(fill="x", padx=26, pady=(8, 8))
         self.tab_btns = {}
         for key, text in (("log", tr("📝  整点记录")), ("net", tr("🌐  联网理由")),
-                          ("focus", tr("⏱  专注计时")), ("window", tr("🪟  窗口"))):
+                          ("focus", tr("⏱  专注计时")), ("window", tr("🪟  窗口")),
+                          ("contracts", tr("⚔  合约"))):
             b = tk.Button(
                 bar, text=text, relief="flat", bd=0, padx=14, pady=6,
                 font=config.font("body", bold=True), cursor="hand2",
@@ -130,6 +189,21 @@ class StatsPage(tk.Frame):
         self.focus_cv.bind("<Configure>", lambda e: self._draw_focus())
         self.focus_cv.bind("<Motion>", self._focus_hover)
         self.focus_cv.bind("<Leave>", lambda e: self.focus_cv.delete("tip"))
+
+        # 合约记录页: 最近 5 条顺利完成的合约 (黑雾时是 5 条假数据)
+        card = COLORS["bg_card"]
+        self.contracts_body = tk.Frame(self, bg=card,
+                                       highlightbackground=COLORS["border"], highlightthickness=1)
+        head = tk.Frame(self.contracts_body, bg=card)
+        head.pack(fill="x", padx=16, pady=(12, 2))
+        tk.Label(head, text=tr("⚔  合约记录"), bg=card, fg=COLORS["text"],
+                 font=config.font("h2", bold=True)).pack(side="left")
+        tk.Label(self.contracts_body,
+                 text=tr("最近 5 条顺利完成的合约 · 等级: 初始-失效 · 点击查看词条"),
+                 bg=card, fg=COLORS["text_dim"], font=config.font("small"),
+                 anchor="w").pack(fill="x", padx=16, pady=(0, 8))
+        self.contract_rows = tk.Frame(self.contracts_body, bg=card)
+        self.contract_rows.pack(fill="both", expand=True, padx=10, pady=(0, 12))
 
         # 一张卡片: 上面是月份和合计, 下面左边饼图, 右边图例
         card = COLORS["bg_card"]
@@ -270,9 +344,20 @@ class StatsPage(tk.Frame):
             self.tab_btns["net"].pack(side="left", padx=(0, 4))
             self.tab_btns["focus"].pack(side="left", padx=(0, 4))
             self.tab_btns["window"].pack(side="left", padx=(0, 4))
+            self.tab_btns["contracts"].pack(side="left", padx=(0, 4))
         self._style_buttons()
         self._sync_device_bar()
 
+        if self.page == "contracts":
+            hide_pack(self.month_bar)
+            hide_pack(self.mode_bar)
+            hide_pack(self.focus_legend)
+            hide_pack(self.focus_body)
+            hide_pack(self.pie_body)
+            show_pack(self.contracts_body, fill="both", expand=True, padx=26, pady=(10, 16))
+            self._draw_contracts()
+            return
+        hide_pack(self.contracts_body)
         if self.page == "focus":
             hide_pack(self.month_bar)
             hide_pack(self.mode_bar)
@@ -291,6 +376,54 @@ class StatsPage(tk.Frame):
         this, last = month_prefixes()
         name, prefix = (tr("上月"), last) if self.month == "last" else (tr("本月"), this)
         self._draw_column(self.cols[0], f"{name} · {prefix}", self._data(prefix))
+
+    # ---- 合约记录 (过去 5 条顺利完成的合约, MECHANICS 8.1) ----
+
+    def _contract_rows_data(self) -> list:
+        """[((初始等级, 失效等级), [(词条名, 失效?)])]; 黑雾时是 5 条假数据."""
+        seed = self.fog()
+        if seed is not None:
+            return _fog_contracts(seed)
+        recs = C.recent_completed(self.contract_log(), CONTRACT_ROWS)
+        return [((int(r.get("orig_level") or 0), int(r.get("level") or 0)),
+                 C.terms_of_record(r)) for r in recs]
+
+    def _draw_contracts(self):
+        data = self._contract_rows_data()
+        sig = tuple((a, b, tuple(terms)) for (a, b), terms in data)
+        if sig == self._contract_sig:
+            return
+        self._contract_sig = sig
+        for w in self.contract_rows.winfo_children():
+            w.destroy()
+        if not data:
+            tk.Label(self.contract_rows, text=tr("还没有顺利完成的合约."),
+                     bg=COLORS["bg_card"], fg=COLORS["text_dim"],
+                     font=config.font("body"), anchor="w").pack(anchor="w", padx=8, pady=8)
+            return
+        for (a, b), terms in data:
+            self._contract_row(a, b, terms).pack(fill="x", padx=6, pady=(0, 6))
+
+    def _contract_row(self, a: int, b: int, terms: list) -> tk.Frame:
+        card = COLORS["bg_card"]
+        row = tk.Frame(self.contract_rows, bg=card, cursor="hand2",
+                       highlightbackground=COLORS["border"], highlightthickness=1)
+        tk.Label(row, text=tr("等级"), bg=card, fg=COLORS["text_dim"],
+                 font=config.font("small")).pack(side="left", padx=(14, 8), pady=10)
+        tk.Label(row, text=_level_text(a, b), bg=card, fg=COLORS["accent"],
+                 font=config.font("h2", bold=True)).pack(side="left")
+        tk.Label(row, text=tr("点击查看词条"), bg=card, fg=COLORS["text_dim"],
+                 font=config.font("small")).pack(side="right", padx=14)
+        for w in [row] + list(row.winfo_children()):
+            w.bind("<Button-1>", lambda e, aa=a, bb=b, tt=terms: self._show_contract(aa, bb, tt))
+        return row
+
+    def _show_contract(self, a: int, b: int, terms: list):
+        """点一条合约记录: 弹出具体词条 (失效的变灰)."""
+        try:
+            ContractTermsDialog(self.winfo_toplevel(), a, b, terms)
+        except Exception:
+            pass
 
     def _draw_column(self, col, title: str, data: dict):
         pct_mode = self.mode[self.page] == "pct"

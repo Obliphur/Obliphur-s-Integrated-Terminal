@@ -73,7 +73,7 @@ class Contract(private val file: File) {
             Term("move", "move", 1, "目标:高机动", "现实中的移动速度+50%"),
             Term("confine", "confine", 1, "目标:禁足", "在非休息时间不能离开工作岗位进行活动"),
             Term("fog", "fog", 1, "环境:黑雾", "合约期间 专注时长 合约的剩余时间 成就 日历 统计数据不可见 且无法打开设置"),
-            Term("hoard", "hoard", 1, "禁止囤囤鼠!", "不能提前结束休息 但是获得的休息时间改为105%"),
+            Term("hoard", "hoard", 1, "禁止囤囤鼠!", "不能提前结束休息 但是获得的休息时间改为110%"),
             Term("quiet", "quiet", 1, "环境:静默协议", "专注中不能处于联网状态"),
             // 2 级: 联网 (全频道阻塞干扰), 整点记录 (细化规范), 禁止打开软件里的 无言为真 (乐理之灾下面),
             // 录像 (目光 / 刻痕) 在 禁游令 / 低帧的诅咒 下面
@@ -121,8 +121,8 @@ class Contract(private val file: File) {
         /** 合约中专注换来的休息时间的基础倍率; 有疲惫时换成疲惫的倍率. */
         const val BASE_REST = 0.8
         val REST = mapOf("tired1" to 0.7, "tired2" to 0.6, "tired3" to 0.5)
-        /** 休息时间额外的乘区 (和疲惫相乘): 禁止囤囤鼠! ×1.05, 打年糕 ×1.1 (词条组合). */
-        val REST_BONUS = mapOf("hoard" to 1.05)
+        /** 休息时间额外的乘区 (和疲惫相乘): 禁止囤囤鼠! ×1.1, 打年糕 ×1.2 (词条组合). */
+        val REST_BONUS = mapOf("hoard" to 1.1)
         /** 合约中专注换来的休息时间乘多少: 基础 ×0.8, 有疲惫时换成疲惫的 (取最低的); 再乘额外的乘区 / 组合的乘区. */
         fun restFactorOf(terms: Collection<String>): Double =
             (terms.mapNotNull { REST[it] }.minOrNull() ?: BASE_REST) * terms.fold(1.0) { f, t -> f * (REST_BONUS[t] ?: 1.0) } * comboRest(terms)
@@ -140,8 +140,8 @@ class Contract(private val file: File) {
 
         // 词条组合 (MECHANICS 18.3.1): 列出的词条 / 词条系列 (任意一档都算) 同时选着时生效, 效果栏的第 3 页列出它们.
         val COMBOS = listOf(
-            Combo("mochi", "打年糕", "white", listOf("tired", "long", "fine", "deep"), 1, 1.1, 0, 0,
-                "额外 1 危机等级\n休息时间 ×110%"),
+            Combo("mochi", "打年糕", "white", listOf("tired", "long", "fine", "deep"), 1, 1.2, 0, 0,
+                "额外 1 危机等级\n休息时间 ×120%"),
             Combo("nofun", "互联网娱乐的败退", "purple", listOf("music", "silent", "game", "video"), 0, 1.0, 20 * 60, 0,
                 "合约开始时 休息 +20 分钟"),
             Combo("flawless", "无懈可击", "gray", listOf("last", "unknown", "move", "confine"), 0, 1.0, 20 * 60, 0,
@@ -337,6 +337,27 @@ class Contract(private val file: File) {
             val out = mutableListOf<String>()
             for (t in terms) if (t in BY_ID && t !in out && blockedBy(t, out) == null) out.add(t)
             return out.sortedBy { ORDER[it] }
+        }
+
+        /** 统计页用: 最近 n 个顺利完成的合约 (按结束时刻从新到旧). */
+        fun recentCompleted(history: List<JSONObject>, n: Int = 5): List<JSONObject> =
+            history.filter { it.optString("result") == "completed" && it.optString("end").isNotEmpty() }
+                .sortedByDescending { it.optString("end") }
+                .take(maxOf(0, n))
+
+        /** 统计页看一个合约的词条: [(名字, 是不是失效了)], 按开始时的顺序; 降级的按降级后的名字. */
+        fun termsOfRecord(rec: JSONObject): List<Pair<String, Boolean>> {
+            val last = HashMap<String, String>()
+            for (t in rec.optJSONArray("terms")?.strings() ?: emptyList()) {
+                BY_ID[t]?.let { last[it.group] = t }
+            }
+            val out = mutableListOf<Pair<String, Boolean>>()
+            for (t in rec.optJSONArray("orig")?.strings() ?: emptyList()) {
+                val spec = BY_ID[t] ?: continue
+                val ft = last[spec.group]
+                out.add((BY_ID[ft ?: t]?.name ?: spec.name) to (ft == null))
+            }
+            return out
         }
 
         /** 完成合约后的第一次休息: 暂停时的结转比例 1 - (1 - x) / 2. */

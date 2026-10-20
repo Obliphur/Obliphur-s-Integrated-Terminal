@@ -1,5 +1,7 @@
 package com.obliphur.oit.core
 
+import org.json.JSONArray
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -63,7 +65,7 @@ class ContractTest {
         assertFalse(Contract.comboDone(mochi, listOf("long1", "tired2", "fine")))
         assertEquals("void", Contract.comboState(mochi, listOf("long1", "tired2"), listOf("long1", "tired2", "fine", "deep1")))
         assertEquals(1, Contract.comboLevel(listOf("long1", "tired2", "fine", "deep1")))
-        assertEquals(0.6 * 1.1, Contract.restFactorOf(listOf("long1", "tired2", "fine", "deep1")), 1e-9)
+        assertEquals(0.6 * 1.2, Contract.restFactorOf(listOf("long1", "tired2", "fine", "deep1")), 1e-9)
         val iso = listOf("info1", "erode1", "chan1", "suppress", "fog", "quiet", "jam")
         assertEquals(iso, Contract.clean(iso))                    // 信息隔绝组合的词条可以一起选
         assertEquals(1, Contract.comboLevel(iso)); assertEquals(10 * 60, Contract.comboEnd(iso))
@@ -75,6 +77,21 @@ class ContractTest {
             "move" to Contract.COMBO_COLORS["gray"]!!, "confine" to Contract.COMBO_COLORS["gray"]!!),
             Contract.comboMarks(listOf("last", "unknown", "move", "confine")))
         assertEquals("纵深推进", Contract.reqName("deep")); assertEquals("最后防线", Contract.reqName("last"))
+        // 统计页: 最近 5 个顺利完成的合约; 词条按开始时的顺序, 降级的写降级后的名字, 失效的标出来
+        val results = listOf("completed", "failed", "completed", "abandoned", "completed", "completed", "completed")
+        val hist = (1..7).map { i ->
+            JSONObject().put("id", i).put("end", "2026-10-%02dT10:00:00".format(i))
+                .put("result", results[i - 1]).put("level", i).put("orig_level", i + 2)
+        }
+        assertEquals(listOf(7, 6, 5, 3, 1), Contract.recentCompleted(hist, 5).map { it.optInt("level") })
+        assertEquals(2, Contract.recentCompleted(hist, 2).size)
+        assertTrue(Contract.recentCompleted(emptyList()).isEmpty())
+        assertTrue(Contract.recentCompleted(listOf(JSONObject().put("result", "completed"))).isEmpty())
+        val rec = JSONObject()
+            .put("orig", JSONArray(listOf("long3", "tired3", "silent", "music")))
+            .put("terms", JSONArray(listOf("long3", "tired2", "silent")))
+        assertEquals(listOf("环境:持久战-III" to false, "环境:疲惫-II" to false,
+            "环境:无言为真" to false, "环境:乐理之灾" to true), Contract.termsOfRecord(rec))
         val best = Contract.clean(listOf("long3", "erode2", "info3", "suppress", "jam", "music", "fog", "tired3", "chan2", "last",
             "short2", "seal", "fine", "silent", "game", "video", "gaze"))
         assertEquals(32, Contract.levelOf(best))
@@ -132,17 +149,17 @@ class ContractTest {
         assertEquals(Contract.COMBO_COLORS["red"], e.comboMarks()["fog"])
         assertEquals(false to "", e.violate("suppress")); assertEquals("void", e.combos()[3].second)
         assertEquals(7, e.level); assertEquals(Contract.restMinutes(7) * 60.0, e.reward, 1e-6)
-        // 打年糕组合: 额外 1 危机等级, 休息时间 ×1.1; 纵深推进降级不算失效
+        // 打年糕组合: 额外 1 危机等级, 休息时间 ×1.2; 纵深推进降级不算失效
         e.start(listOf("long1", "tired2", "fine", "deep2"), "me", t0)
         assertEquals("done", e.combos()[0].second); assertEquals(8, e.level)
-        assertEquals(0.6 * 1.1, e.restFactor(), 1e-9)
+        assertEquals(0.6 * 1.2, e.restFactor(), 1e-9)
         assertEquals(false to "deep1", e.violate("deep2")); assertEquals("done", e.combos()[0].second)
-        assertEquals(0.6 * 1.1, e.restFactor(), 1e-9)             // 降级不算失效
+        assertEquals(0.6 * 1.2, e.restFactor(), 1e-9)             // 降级不算失效
         assertEquals(false to "", e.violate("deep1")); assertEquals("void", e.combos()[0].second)
         assertEquals(0.6, e.restFactor(), 1e-9)                   // 成员失效了: 乘区取消
         // 没有疲惫: 基础 ×0.8 (打年糕照样相乘)
         assertEquals(0.8, Contract.restFactorOf(emptyList()), 1e-9)
-        assertEquals(0.6 * 1.1, Contract.restFactorOf(listOf("long1", "tired2", "fine", "deep1")), 1e-9)
+        assertEquals(0.6 * 1.2, Contract.restFactorOf(listOf("long1", "tired2", "fine", "deep1")), 1e-9)
         // 录像的词条: 违反一次就失效, 不再录
         e.start(listOf("scar"), "me", t0)
         assertEquals(listOf("screen"), e.records()); assertEquals(2, e.level)
@@ -229,9 +246,9 @@ class ContractTest {
         assertFalse(Contract.conflicts("erode1", "info3") || Contract.conflicts("quiet", "jam"))
         assertFalse(Contract.conflicts("suppress", "fog"))
         val c = Contract(tmp())
-        // 禁止囤囤鼠!: 提前结束休息算违反 (软规则, 1 级, 违反一次失效), 休息时间 ×1.05; 侵蚀: 冷静期 ×2 / ×3
+        // 禁止囤囤鼠!: 提前结束休息算违反 (软规则, 1 级, 违反一次失效), 休息时间 ×1.1; 侵蚀: 冷静期 ×2 / ×3
         c.start(listOf("hoard", "tired1", "erode2"), "me", t0)
-        assertEquals("hoard", c.hoardCheck()); assertEquals(0.7 * 1.05, c.restFactor(), 1e-9); assertEquals(3.0, c.cooldownFactor(), 1e-9)
+        assertEquals("hoard", c.hoardCheck()); assertEquals(0.7 * 1.1, c.restFactor(), 1e-9); assertEquals(3.0, c.cooldownFactor(), 1e-9)
         assertEquals(false to "", c.violate("hoard")); assertFalse(c.has("hoard")); assertEquals(0.7, c.restFactor(), 1e-9)
         assertEquals("hoard", c.hoardCheck()); assertTrue(c.echo("hoard"))          // 失效后再提前结束休息: 只响警报
         c.start(listOf("erode1"), "me", t0)

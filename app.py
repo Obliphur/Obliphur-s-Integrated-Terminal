@@ -526,6 +526,7 @@ class BreakTimerApp:
         self.pages["stats"] = StatsPage(self.content, self.dm, self.net,
                                         focus_live=self._focus_live)
         self.pages["stats"].fog = self._fog_seed
+        self.pages["stats"].contract_log = lambda: self.contract.history
         self._prepare_page(self.pages["stats"])
         yield
         self.pages["log"] = HourLogPage(

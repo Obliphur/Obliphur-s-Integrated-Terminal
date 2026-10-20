@@ -62,7 +62,7 @@ TERMS = [
     ("move", "move", 1, "目标:高机动", "现实中的移动速度+50%", ()),
     ("confine", "confine", 1, "目标:禁足", "在非休息时间不能离开工作岗位进行活动", ()),
     ("fog", "fog", 1, "环境:黑雾", "合约期间 专注时长 合约的剩余时间 成就 日历 统计数据不可见 且无法打开设置", ()),
-    ("hoard", "hoard", 1, "禁止囤囤鼠!", "不能提前结束休息 但是获得的休息时间改为105%", ()),
+    ("hoard", "hoard", 1, "禁止囤囤鼠!", "不能提前结束休息 但是获得的休息时间改为110%", ()),
     ("quiet", "quiet", 1, "环境:静默协议", "专注中不能处于联网状态", ()),
     # 2 级: 联网 (全频道阻塞干扰), 整点记录 (细化规范), 禁止打开软件里的 无言为真 (乐理之灾下面),
     # 录像 (目光 / 刻痕) 在 禁游令 / 低帧的诅咒 下面
@@ -107,7 +107,7 @@ DURATION = {"long1": 1.2, "long2": 1.4, "long3": 1.6}
 NET_SHARE = {"info1": 0.8, "info2": 0.65, "info3": 0.5}
 BASE_REST = 0.8                                # 合约中专注换来的休息时间的基础倍率; 有疲惫时换成疲惫的倍率
 REST = {"tired1": 0.7, "tired2": 0.6, "tired3": 0.5}
-REST_BONUS = {"hoard": 1.05}                    # 休息时间额外的乘区 (和疲惫不冲突, 相乘): 禁止囤囤鼠! ×1.05
+REST_BONUS = {"hoard": 1.1}                     # 休息时间额外的乘区 (和疲惫不冲突, 相乘): 禁止囤囤鼠! ×1.1
 WINDOWS = {"chan1": 4, "chan2": 3}
 SUPPLY = {"short1": 0.5, "short2": 0.0}         # 合约开始前积攒的休息时间能用几成
 HOUR_TERMS = {"seal", "fine"}                   # 整点记录的词条: 整点记录关着时, 这次合约中照样开启
@@ -226,8 +226,8 @@ BAN_TITLES = {"silent": SOCIAL_TITLES, "video": VIDEO_TITLES}   # 只看浏览�
 COMBOS = [
     {"id": "mochi", "name": "打年糕", "color": "white",
      "reqs": ("tired", "long", "fine", "deep"),
-     "level": 1, "rest": 1.1, "gift": 0, "end": 0,
-     "desc": "额外 1 危机等级\n休息时间 ×110%"},
+     "level": 1, "rest": 1.2, "gift": 0, "end": 0,
+     "desc": "额外 1 危机等级\n休息时间 ×120%"},
     {"id": "nofun", "name": "互联网娱乐的败退", "color": "purple",
      "reqs": ("music", "silent", "game", "video"),
      "level": 0, "rest": 1.0, "gift": 20 * 60, "end": 0,
@@ -324,7 +324,7 @@ def life_of(terms) -> int:
 
 def rest_factor_of(terms) -> float:
     """合约中专注换来的休息时间乘多少: 基础 ×0.8, 有疲惫时换成疲惫的 (取最低的);
-    再乘额外的乘区 (禁止囤囤鼠! ×1.05, 打年糕 ×1.1)."""
+    再乘额外的乘区 (禁止囤囤鼠! ×1.1, 打年糕 ×1.2)."""
     f = min((REST[t] for t in terms or [] if t in REST), default=BASE_REST)
     for t in terms or []:
         f *= REST_BONUS.get(t, 1.0)
@@ -387,6 +387,30 @@ def clean_terms(terms) -> list:
 
 def _iso(t: datetime) -> str:
     return t.replace(microsecond=0).isoformat(timespec="seconds")
+
+
+def recent_completed(history, n: int = 5) -> list:
+    """统计页用: 最近 n 个顺利完成的合约 (按结束时刻从新到旧); 黑雾时调用方自己造假数据."""
+    done = [h for h in (history or [])
+            if isinstance(h, dict) and h.get("result") == "completed" and h.get("end")]
+    return sorted(done, key=lambda h: str(h.get("end")), reverse=True)[:max(0, int(n))]
+
+
+def terms_of_record(rec: dict) -> list:
+    """统计页看一个合约的词条: [(名字, 是不是失效了)], 按开始时的顺序.
+    降级的按降级后的名字 (疲惫-III 降成 -II 就写 -II); 开始时选了、结束时已经失效的用原来的名字, 标成失效."""
+    rec = rec if isinstance(rec, dict) else {}
+    final = {}
+    for t in rec.get("terms") or []:
+        if t in BY_ID:
+            final[BY_ID[t][1]] = t
+    out = []
+    for t in rec.get("orig") or []:
+        if t not in BY_ID:
+            continue
+        ft = final.get(BY_ID[t][1])
+        out.append((BY_ID[ft or t][3], ft is None))
+    return out
 
 
 def _parse(text):
@@ -1343,7 +1367,7 @@ def _selftest():
     assert combo_state(mochi, ["long1", "tired2"], ["long1", "tired2", "fine", "deep1"]) == "void"
     assert combo_state(mochi, ["long1", "tired2", "fine", "deep1"]) == "done"
     assert combo_level(["long1", "tired2", "fine", "deep1"]) == 1
-    assert abs(rest_factor_of(["long1", "tired2", "fine", "deep1"]) - 0.6 * 1.1) < 1e-9
+    assert abs(rest_factor_of(["long1", "tired2", "fine", "deep1"]) - 0.6 * 1.2) < 1e-9
     iso = ["info1", "erode1", "chan1", "suppress", "fog", "quiet", "jam"]
     assert clean_terms(iso) == iso, "信息隔绝组合的词条可以一起选"
     assert combo_done(isolation, iso) and combo_level(iso) == 1 and combo_end(iso) == 10 * 60
@@ -1358,6 +1382,19 @@ def _selftest():
     assert nofun["color"] == "purple" and flawless["color"] == "gray" and isolation["color"] == "red" \
         and mochi["color"] == "white"
     assert req_name("deep") == "纵深推进" and req_name("last") == "最后防线" and req_name("silent") == "无言为真"
+    # 统计页: 最近 5 个顺利完成的合约 (失败的 / 提前结束的不要)
+    hist = [{"end": f"2026-10-{i:02d}T10:00:00", "result": r, "level": i, "orig_level": i + 2}
+            for i, r in enumerate(["completed", "failed", "completed", "abandoned",
+                                   "completed", "completed", "completed"], 1)]
+    got = recent_completed(hist, 5)
+    assert [h["level"] for h in got] == [7, 6, 5, 3, 1], got
+    assert recent_completed(hist, 2) == got[:2] and recent_completed([]) == []
+    assert recent_completed([{"end": "", "result": "completed"}]) == [], "没有结束时刻的不算"
+    # 统计页看词条: 降级的按降级后的名字, 失效的标出来
+    rec = {"orig": ["long3", "tired3", "silent", "music"], "terms": ["long3", "tired2", "silent"]}
+    assert terms_of_record(rec) == [("环境:持久战-III", False), ("环境:疲惫-II", False),
+                                    ("环境:无言为真", False), ("环境:乐理之灾", True)]
+    assert terms_of_record({}) == [] and terms_of_record(None) == []
     for t in ("ChatGPT", "Claude", "(3) 首页 / X", "如何评价…？ - 知乎 - Google Chrome", "微博-随时随地发现新鲜事",
               "DeepSeek - 探索未至之境 - Microsoft Edge", "Reddit - Dive into anything", "Kimi 智能助手"):
         assert site_title(t, SOCIAL_TITLES), t
@@ -1422,12 +1459,12 @@ def _selftest():
     assert c.reward == rest_minutes(9) * 60 + 10 * 60 and c.combo_marks().get("fog") == COMBO_COLORS["red"]
     assert c.violate("suppress") == (False, "") and c.combos()[3] == (isolation, "void")
     assert c.level == 7 and c.reward == rest_minutes(7) * 60
-    # 打年糕组合: 额外 1 危机等级, 休息时间 ×1.1; 纵深推进降级不算失效
+    # 打年糕组合: 额外 1 危机等级, 休息时间 ×1.2; 纵深推进降级不算失效
     c.start(["long1", "tired2", "fine", "deep2"], owner="me", now=t0)
     assert c.combos()[0] == (mochi, "done") and c.level == 2 + 1 + 2 + 2 + 1
-    assert abs(c.rest_factor() - 0.6 * 1.1) < 1e-9
+    assert abs(c.rest_factor() - 0.6 * 1.2) < 1e-9
     assert c.violate("deep2") == (False, "deep1") and c.combos()[0] == (mochi, "done")
-    assert abs(c.rest_factor() - 0.6 * 1.1) < 1e-9, "降级不算失效"
+    assert abs(c.rest_factor() - 0.6 * 1.2) < 1e-9, "降级不算失效"
     assert c.violate("deep1") == (False, "") and c.combos()[0] == (mochi, "void")
     assert abs(c.rest_factor() - 0.6) < 1e-9, "成员失效了: 乘区取消"
     # 翻页: 成系列的一页, 零散的一页, 第 3 页是组合效果
@@ -1439,9 +1476,9 @@ def _selftest():
     assert c.overrides() == {"NET_MODE": "proxy_all"} and c.overrides(peers=True) == {"NET_MODE": "proxy_all"}
     assert c.overrides(peers=False) == {"NET_MODE": "adapter"}, "没有连接其他设备: 用 Adapter"
     assert c.overrides(peers=False, adapter=False) == {"NET_MODE": "proxy_all"}, "没有 Adapter 方式的设备总是代理-全屏蔽"
-    # 禁止囤囤鼠!: 提前结束休息算违反 (软规则, 1 级, 违反一次失效), 休息时间 ×1.05 (和疲惫相乘); 侵蚀: 冷静期 ×2 / ×3
+    # 禁止囤囤鼠!: 提前结束休息算违反 (软规则, 1 级, 违反一次失效), 休息时间 ×1.1 (和疲惫相乘); 侵蚀: 冷静期 ×2 / ×3
     c.start(["hoard", "tired1", "erode2"], owner="me", now=t0)
-    assert c.hoard_check() == "hoard" and abs(c.rest_factor() - 0.7 * 1.05) < 1e-9 and c.cooldown_factor() == 3.0
+    assert c.hoard_check() == "hoard" and abs(c.rest_factor() - 0.7 * 1.1) < 1e-9 and c.cooldown_factor() == 3.0
     assert c.violate("hoard") == (False, "") and not c.has("hoard") and abs(c.rest_factor() - 0.7) < 1e-9
     assert c.hoard_check() == "hoard" and c.echo("hoard"), "失效后再提前结束休息: 只响警报"
     c.start(["erode1"], owner="me", now=t0)
@@ -1588,17 +1625,17 @@ def _selftest():
     c.pre_cap(250)
     assert c.pre_left == 250
     c = Contract(tempfile.mkdtemp())          # 上面封锁的记录格会影响后面整点记录的测试
-    # 打年糕: 休息时间额外 ×1.1 (和疲惫相乘); 成员降级不算失效, 失效后乘区取消
+    # 打年糕: 休息时间额外 ×1.2 (和疲惫相乘); 成员降级不算失效, 失效后乘区取消
     c.start(["long1", "tired2", "fine", "deep2"], owner="me", now=t0)
-    assert abs(c.rest_factor() - 0.6 * 1.1) < 1e-9 and abs(c.book_rest(1000, t0) - 660) < 1e-6
+    assert abs(c.rest_factor() - 0.6 * 1.2) < 1e-9 and abs(c.book_rest(1000, t0) - 720) < 1e-6
     assert c.level == 8 and c.combo_marks().get("deep2") == COMBO_COLORS["white"]
     c.downgrade("deep2")
-    assert abs(c.rest_factor() - 0.6 * 1.1) < 1e-9, "降级不算失效"
+    assert abs(c.rest_factor() - 0.6 * 1.2) < 1e-9, "降级不算失效"
     c.downgrade("deep1")
     assert abs(c.rest_factor() - 0.6) < 1e-9 and c.level == 5 and c.combo_marks() == {}
     # 没有疲惫: 基础 ×0.8 (打年糕照样相乘)
     assert rest_factor_of([]) == 0.8
-    assert abs(rest_factor_of(["long1", "tired2", "fine", "deep1"]) - 0.6 * 1.1) < 1e-9
+    assert abs(rest_factor_of(["long1", "tired2", "fine", "deep1"]) - 0.6 * 1.2) < 1e-9
     c.start(["scar"], owner="me", now=t0)
     assert c.records() == ["screen"] and c.level == 2 and c.violate("scar") == (False, "") and c.terms == []
     c.start(["tired2", "chan1", "long1"], owner="me", now=t0)
