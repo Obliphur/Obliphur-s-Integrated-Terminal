@@ -44,12 +44,12 @@ object Cfg {
     const val BONUS_TIRED_TIMES = 5
     /** 用户名最多几个字. */
     const val USERNAME_MAX = 24
+    const val VIOLATION_KEEP = 15        // 违规记录只留最近这么多条 (MECHANICS 8.1)
 
     // 应用使用时间统计: 每隔这么多秒看一次前台应用
     const val APP_FOCUS_EVERY = 10.0
-    /** 每隔多久数一次后台的应用; 超过上限一直没降下来时, 每隔多久再响一次警报. */
+    /** 专注时每隔多久数一次后台的应用 (超过上限只提醒一次, 回到上限以内后再超才再提醒). */
     const val OPEN_APPS_EVERY = 10.0
-    const val OPEN_APPS_REPEAT = 120.0
 
     const val WEEKDAY_KEYS_CSV = "QUOTA_MULT_MON,QUOTA_MULT_TUE,QUOTA_MULT_WED,QUOTA_MULT_THU,QUOTA_MULT_FRI,QUOTA_MULT_SAT,QUOTA_MULT_SUN"
     val WEEKDAY_KEYS = WEEKDAY_KEYS_CSV.split(",")

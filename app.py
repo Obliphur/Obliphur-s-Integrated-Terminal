@@ -21,6 +21,7 @@ import achievements
 import contract as contract_mod
 import recorder
 import daily
+import prestart
 from sync_local import PcLocal
 from config import (
     COLORS, APP_NAME, IDLE, RUNNING, READY_BREAK, ON_BREAK,
@@ -33,6 +34,7 @@ from data_manager import DataManager, USERNAME_MAX
 from settings_manager import SettingsManager
 from pages import (CalendarPage, HourLogPage, SettingsPage, RulesPage, StatsPage,
                    ContractPage, AchievementsPage, AchievementPopups)
+from pages.prestart_dialog import PrestartDialog
 from pages.widgets import (frozen, LoadingCover, cfg, flavor,
                            show_pack, hide_pack)
 
@@ -168,6 +170,9 @@ class BreakTimerApp:
         self.hourly_job = None
         self.net_job = None
         self.window_job = None        # 任务栏窗口数上限的检查 (与界面无关, 重建界面时不中断)
+        self._win_over = False        # 专注中窗口数是不是已经超过上限 (只在刚超过时提醒一次)
+        self.prestart = prestart.Prestart()   # 提前启动 (仅 PC, MECHANICS 20)
+        self.prestart_job = None
         self.window_focus_job = None  # 窗口使用时间统计: 每隔几秒看一次前台程序
         self._window_focus_ticks = 0
         self.app_rules_job = None     # Rules 页的应用名单: 每秒看一次前台窗口
@@ -246,6 +251,7 @@ class BreakTimerApp:
         self._schedule_apply_check()
         self._net_tick()
         self.window_job = self.root.after(5000, self._schedule_window_guard)
+        self.prestart_job = self.root.after(1000, self._prestart_tick)
         self.window_focus_job = self.root.after(self._window_focus_ms(), self._window_focus_tick)
         self.app_rules_job = self.root.after(1000, self._schedule_app_rules)
         try:
@@ -527,6 +533,7 @@ class BreakTimerApp:
                                         focus_live=self._focus_live)
         self.pages["stats"].fog = self._fog_seed
         self.pages["stats"].contract_log = lambda: self.contract.history
+        self.pages["stats"].violation_log = lambda: self.dm.recent_violations()
         self._prepare_page(self.pages["stats"])
         yield
         self.pages["log"] = HourLogPage(
@@ -670,6 +677,7 @@ class BreakTimerApp:
                     getattr(self, "window_job", None),
                     getattr(self, "window_focus_job", None),
                     getattr(self, "app_rules_job", None),
+                    getattr(self, "prestart_job", None),
                     getattr(self, "sync_job", None)):
             if not job:
                 continue
@@ -680,6 +688,7 @@ class BreakTimerApp:
         self.midnight_job = self.hourly_job = self.update_job = None
         self.net_job = self.apply_job = self.window_job = self.window_focus_job = None
         self.app_rules_job = None
+        self.prestart_job = None
 
     def show_page(self, key: str):
         if key in ("settings", "ach") and self.contract.fog():
@@ -859,6 +868,9 @@ class BreakTimerApp:
         )
         self.btn_break.pack(side="left", ipadx=10, padx=(10, 0))
 
+        # 提前启动 (仅 PC, MECHANICS 20): 专注中把选中的程序先跑起来, 窗口藏起来 + 静音
+        self.btn_prestart = ttk.Button(btns, text=tr("⏩  提前启动"), command=self._prestart_click)
+
         # 连点按钮: 1 分钟内连点 10 次, 换 20 分钟休息时间 (每周最多 2 小时)
         self.lbl_bonus = ttk.Button(btns, text="", command=self._on_bonus_click)
         self.lbl_bonus.pack(side="left", padx=(24, 0))
@@ -944,7 +956,7 @@ class BreakTimerApp:
             self.end_break_early()
 
     def _sync_timer_buttons(self):
-        """按当前状态设置两个按钮的文字与可用状态."""
+        """按当前状态设置两个按钮的文字与可用状态; 提前启动按钮只在专注中、还没选过时出现."""
         if not hasattr(self, "btn_break"):
             return
         locked = self._break_locked()
@@ -963,6 +975,84 @@ class BreakTimerApp:
                 self.btn_action.config(text=tr("▶  开始专注"), state="!disabled")
                 self.btn_break.config(text=tr("☕  开始休息"),
                                       state="!disabled" if self.break_carry > 0 else "disabled")
+        except Exception:
+            pass
+        self._sync_prestart_button()
+
+    def _sync_prestart_button(self):
+        """提前启动按钮: 专注中、还没选过时显示; 选过 / 不在专注时藏起来."""
+        btn = getattr(self, "btn_prestart", None)
+        if btn is None:
+            return
+        try:
+            show = self.state == RUNNING and not self.prestart.chosen
+            if show and not btn.winfo_ismapped():
+                try:
+                    btn.pack(side="left", ipadx=6, padx=(18, 0), before=self.lbl_bonus)
+                except Exception:
+                    btn.pack(side="left", ipadx=6, padx=(18, 0))
+            elif not show and btn.winfo_ismapped():
+                btn.pack_forget()
+        except Exception:
+            pass
+
+    # ---- 提前启动 (仅 PC, MECHANICS 20) ----
+
+    def _prestart_click(self):
+        """专注中点"提前启动": 扫一遍程序, 弹窗选至多两个."""
+        if self.state != RUNNING or self.prestart.chosen:
+            return
+        win = getattr(self, "_prestart_win", None)
+        try:
+            if win is not None and win.winfo_exists():
+                win.lift()
+                return
+        except Exception:
+            pass
+        self._prestart_win = None
+        try:
+            apps = prestart.scan_programs()
+        except Exception as e:
+            toast.warn(tr("扫描程序失败: {e}", e=f"{type(e).__name__}: {e}"))
+            return
+        if not apps:
+            toast.warn(tr("没有找到可以提前启动的程序."))
+            return
+        self._prestart_win = PrestartDialog(self.root, apps, self._prestart_chosen,
+                                           limit=prestart.MAX_APPS)
+
+    def _prestart_chosen(self, items):
+        """选好了: 启动 (没在跑的), 藏窗口, 静音. 选完按钮就藏起来, 这次专注不能再改."""
+        if not items or self.state != RUNNING:
+            return
+        failed = self.prestart.start(items)
+        names = "、".join(str(i.get("name") or i.get("exe")) for i in items)
+        msg = tr("提前启动: {names}. 窗口藏起来了, 静音; 结束专注时放出来.", names=names)
+        if failed:
+            msg += "\n" + tr("打不开: {names}", names="、".join(failed))
+        toast.info(msg, timeout=8000)
+        self._log_notice("PRESTART " + ", ".join(str(i.get("exe")) for i in items))
+        self._sync_timer_buttons()
+
+    def _prestart_tick(self):
+        """每秒: 跟着这些进程 (含子进程) 藏窗口 / 静音; 专注结束就全部放出来."""
+        if self.shutting_down:
+            return
+        if self.prestart.active and self.state != RUNNING:
+            self.prestart.stop()
+            self._sync_timer_buttons()
+        if self.prestart.active:
+            try:
+                self.prestart.step()
+            except Exception as e:
+                self._log_window(f"ERROR    prestart {type(e).__name__}: {e}")
+        self._sync_prestart_exempt()
+        self.prestart_job = self.root.after(1000, self._prestart_tick)
+
+    def _sync_prestart_exempt(self):
+        """提前启动的程序可以无视网站 / 应用名单联网 (MECHANICS 20); 代理-全屏蔽照样拦."""
+        try:
+            self.net.proxy.rules.exempt = self.prestart.exe_names()
         except Exception:
             pass
 
@@ -1808,30 +1898,22 @@ class BreakTimerApp:
         self.window_job = self.root.after(self._window_check_ms(), self._schedule_window_guard)
 
     def _check_windows(self):
-        """超过上限就一次随机关掉多出来的任务栏窗口 (开发者模式下也照常检查)."""
-        if not getattr(config, "WINDOW_LIMIT_ENABLED", 0) or self.dm.resetting:
+        """专注中窗口数超过上限就提醒一次 (不再关窗口); 回到上限以内后再超才再提醒."""
+        if self.dm.resetting or not getattr(config, "WINDOW_LIMIT_ENABLED", 0) \
+                or self.state != RUNNING:
+            self._win_over = False
             return
         limit = int(getattr(config, "WINDOW_LIMIT", 5))
         try:
-            n, closed = window_guard.enforce(limit)
+            n = window_guard.count_windows(exclude_pids=self.prestart.pids)
         except Exception as e:
             self._log_window(f"ERROR    {type(e).__name__}: {e}")
             return
-        if not closed:
-            return
-        lines = []
-        for w in closed:
-            title = str(w.get("title") or "").strip()
-            exe = window_guard.exe_name(w.get("pid") or 0)
-            self._log_window(f"CLOSE    {n} > {limit}  {exe or '?'}  {title}")
-            if len(title) > 50:
-                title = title[:47] + "..."
-            if len(lines) < 8:
-                lines.append(f"• {title} ({exe})" if exe else f"• {title}")
-        if len(closed) > 8:
-            lines.append("…")
-        toast.warn(tr("窗口超过上限 {x} 个,关闭了:\n{titles}",
-                      n=n, x=limit, k=len(closed), titles="\n".join(lines)))
+        over = n > limit
+        if over and not self._win_over:
+            self._log_window(f"OVER     {n} > {limit}")
+            toast.warn(tr("窗口超过上限 {x} 个 (现在 {n} 个), 关掉一些吧.", n=n, x=limit))
+        self._win_over = over
 
 
     # ---- 设备同步 (MECHANICS 15) ----
@@ -2128,7 +2210,7 @@ class BreakTimerApp:
     def _apply_contract_overrides(self) -> bool:
         """合约中盖过设置的项 (全频道阻塞干扰: 断网方式) 套到 config 上; 变了才动."""
         c = self.contract
-        over = c.overrides(peers=self._contract_peers(), adapter=contract_mod.HAS_ADAPTER) if c.active else {}
+        over = c.overrides() if c.active else {}
         if over == getattr(config, "CONTRACT_OVERRIDES", {}):
             return False
         config.CONTRACT_OVERRIDES = over
@@ -2493,8 +2575,10 @@ class BreakTimerApp:
         else:
             after = tr("{a} 降为 {b}", a=old, b=tr(contract_mod.BY_ID[new][3]))
         self._log_notice(f"CONTRACT violation {c.violations}/{c.violation_limit}: {tid or '-'} -> {new or '-'}  {why}")
-        toast.error(tr("⚠ 违反合约: {why} · 目标生命值 {n} / {m}", why=why, n=c.life, m=c.violation_limit)
-                    + "\n" + after + "  ·  " + tr("危机等级 {lv}", lv=c.level))
+        msg = (tr("⚠ 违反合约: {why} · 目标生命值 {n} / {m}", why=why, n=c.life, m=c.violation_limit)
+               + "\n" + after + "  ·  " + tr("危机等级 {lv}", lv=c.level))
+        toast.error(msg)
+        self.dm.add_violation(msg)               # 违规记录页 (MECHANICS 8.1): 内容照搬这段提示
         if over:
             self.end_contract("failed")
         else:
@@ -2728,12 +2812,17 @@ class BreakTimerApp:
         return out
 
     def _check_contract_windows(self):
-        """通道阻塞: 任务栏上的窗口超过词条的上限 (不关窗口, 只算违反; 越过的那一下算一次)."""
+        """通道阻塞: 专注中任务栏上的窗口超过词条的上限 (不关窗口, 只算违反; 越过的那一下算一次)."""
         c = self.contract
         _tid, lim = c.window_watch()                 # 已经失效的按失效前的上限 (再次超过只响警报)
         if not lim or self.dm.resetting:
             return
-        tid = c.window_check(len(window_guard.taskbar_windows(include_own=True)))
+        if self.state != RUNNING:                    # 只在专注时段算, 离开专注重新计
+            c.window_reset()
+            return
+        n = len(window_guard.taskbar_windows(include_own=True,
+                                             exclude_pids=self.prestart.pids))
+        tid = c.window_check(n)
         if tid:
             self.contract_violation(tr("窗口超过 {n} 个", n=lim), tid)
 
@@ -2955,6 +3044,11 @@ class BreakTimerApp:
 
 
     def on_close(self):
+        # 提前启动藏起来的窗口要放出来, 不然关掉 OIT 以后它们一直藏着
+        try:
+            self.prestart.stop()
+        except Exception:
+            pass
         # 绑定了其他设备: 关闭程序就结束共享的专注, 并马上告诉其他设备 (MECHANICS 8.2)
         ended = False
         if self.state == RUNNING and self.start_mono is not None and self.sync.peers() \

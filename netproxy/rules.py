@@ -111,6 +111,9 @@ class RuleStore:
         self.delay = timedelta(hours=delay_hours)
         self._now = now or datetime.now
         self.dev_getter = lambda: False          # 开发者模式 / 配置期:改动不用等
+        # 提前启动的程序 (MECHANICS 20): 不看网站 / 应用名单, 直接放行 (代理-全屏蔽照样拦).
+        # 由 app.py 在提前启动期间每秒钟更新成这些程序的 exe 名.
+        self.exempt = set()
         self._lock = threading.RLock()
         self.lists = {k: [] for k in LIST_KEYS}
         self.pending = []
@@ -315,6 +318,8 @@ class RuleStore:
             return (True, "online") if online else (False, "blockall")
         if online:
             return True, "online"           # 联网会话中两种名单模式都全部放行 (MECHANICS 4.1)
+        if exe and exe in self.exempt:
+            return True, "prestart"         # 提前启动的程序: 不看名单 (MECHANICS 20)
         if mode == MODE_WHITELIST:
             for r in s[WHITE_DOMAINS]:
                 if domain_match(host, r):
@@ -333,6 +338,8 @@ class RuleStore:
         (允许?, 原因). 原因: online / whitelist-app / not-whitelisted / blacklist-app / default-allow"""
         exe = norm_app(exe) if exe else ""
         s = self._snap
+        if exe and exe in self.exempt:
+            return True, "prestart"         # 提前启动的程序: 不看名单 (MECHANICS 20)
         if mode == MODE_WHITELIST:
             if online:
                 return True, "online"
@@ -412,6 +419,17 @@ def _selftest():
     assert rs.app_allowed("code.exe", False, MODE_WHITELIST) == (True, "whitelist-app")
     assert rs.app_allowed("chrome.exe", False, MODE_WHITELIST) == (False, "not-whitelisted")
     assert rs.app_allowed("chrome.exe", True, MODE_WHITELIST) == (True, "online")
+
+    # 提前启动 (MECHANICS 20): 不看名单, 但代理-全屏蔽照样拦
+    rs.exempt = {"steam.exe"}
+    assert rs.decide("zhihu.com", "steam.exe", False, MODE_BLACKLIST) == (True, "prestart")
+    assert rs.decide("www.school.edu.cn", "steam.exe", False, MODE_WHITELIST) == (True, "prestart")
+    assert rs.decide("bilibili.com", "chrome.exe", False, MODE_BLACKLIST) == (False, "blacklist-domain")
+    assert rs.decide("zhihu.com", "steam.exe", False, MODE_BLOCKALL) == (False, "blockall")
+    assert rs.app_allowed("steam.exe", False, MODE_BLACKLIST) == (True, "prestart")
+    assert rs.app_allowed("steam.exe", False, MODE_WHITELIST) == (True, "prestart")
+    assert rs.app_allowed("chrome.exe", False, MODE_WHITELIST) == (False, "not-whitelisted")
+    rs.exempt = set()
 
     # 删除一律要等
     assert rs.remove(BLACK_DOMAINS, "bilibili.com")[0] == "staged"

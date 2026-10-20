@@ -20,7 +20,6 @@ OFFLINE_LIMIT = 15 * 60          # 合约中有绑定的设备离线超过这么
 VIOLATION_LIMIT = 4              # 初始目标生命值: 每违反一次减一, 减到 0 合约失败
 HISTORY_KEEP = 30
 FRESH_MS = 2 * 60 * 1000         # 合约的主人这么久没同步过: 本机来做自动结束
-HAS_ADAPTER = os.name == "nt"    # 这台设备有没有 Adapter (禁用网卡) 的断网方式 (手机没有)
 
 # (id, 组, 等级, 名字, 描述, 冲突的词条)
 # 同一组的词条互相冲突, 界面上排在同一列; 冲突是双向的 (这里只写一边).
@@ -66,7 +65,7 @@ TERMS = [
     ("quiet", "quiet", 1, "环境:静默协议", "专注中不能处于联网状态", ()),
     # 2 级: 联网 (全频道阻塞干扰), 整点记录 (细化规范), 禁止打开软件里的 无言为真 (乐理之灾下面),
     # 录像 (目光 / 刻痕) 在 禁游令 / 低帧的诅咒 下面
-    ("jam", "jam", 2, "环境:全频道阻塞干扰", "有连接的其他设备时使用proxy block-all模式 没有时使用Adapter模式", ()),
+    ("jam", "jam", 2, "环境:全频道阻塞干扰", "期间使用proxy block-all模式", ()),
     ("fine", "fine", 2, "目标:细化规范", "记录变为30min一次", ()),
     ("silent", "silent", 2, "环境:无言为真", "合约期间不能打开社交软件和与AI聊天的软件 不能使用社交网站", ()),
     ("gaze", "gaze", 2, "目光", "合约期间打开摄像头记录使用者的行为 结束后保存录像", ()),
@@ -1022,11 +1021,15 @@ class Contract:
         return tid, (WINDOWS[tid] if tid else 0)
 
     def window_check(self, n: int) -> str:
-        """通道阻塞: 任务栏上的窗口数超过词条的上限."""
+        """通道阻塞: 专注中任务栏上的窗口数超过词条的上限 (越过的那一下算一次)."""
         tid, lim = self.window_watch()
         if not lim or not tid:
             return ""
         return tid if self._edge("win", n > lim) else ""
+
+    def window_reset(self):
+        """离开专注时段: 通道阻塞的"越过"状态清掉, 下次专注重新算."""
+        self._edge("win", False)
 
     def ban_term(self, kind: str) -> str:
         """禁止打开这一类软件 (BANS 之一) 的是哪个词条: 它自己; 不禁止时 ""."""
@@ -1143,13 +1146,12 @@ class Contract:
 
     # ---- 词条的效果 ----
 
-    def overrides(self, peers: bool = True, adapter: bool = True) -> dict:
-        """合约中盖过设置的项 (config 里的值, 硬规则): 全频道阻塞干扰 → 断网方式.
-        有连接的其他设备时用 代理-全屏蔽 (Proxy block-all) (同步要靠联网); 没有时用 Adapter (禁用网卡).
-        设备没有 Adapter 方式 (手机) 时总是 代理-全屏蔽."""
+    def overrides(self) -> dict:
+        """合约中盖过设置的项 (config 里的值, 硬规则): 全频道阻塞干扰 → 断网方式换成
+        代理-全屏蔽 (Proxy block-all), 合约结束后回到设置里的断网方式."""
         if not self.has("jam"):
             return {}
-        return {"NET_MODE": "proxy_all" if peers or not adapter else "adapter"}
+        return {"NET_MODE": "proxy_all"}
 
     def window_limit(self) -> int:
         return min((WINDOWS[t] for t in self.terms if t in WINDOWS), default=0)
@@ -1471,11 +1473,10 @@ def _selftest():
     assert PAGES == [(0, len(SERIES)), (len(SERIES), BOARD_COLS)] and LAYOUT["deep1"][0] < len(SERIES)
     assert LAYOUT["hoard"][0] >= len(SERIES) and LAYOUT["unknown"] == (len(SERIES), 3)
     assert COMBO_PAGE == len(PAGES) and len(COMBOS) == 4
-    # 全频道阻塞干扰: 有连接的其他设备时用 代理-全屏蔽, 没有时用 Adapter (设备有 Adapter 方式)
+    # 全频道阻塞干扰: 合约期间一律换成 代理-全屏蔽 (proxy block-all), 结束回到设置里的断网方式
     c.start(["jam"], owner="me", now=t0)
-    assert c.overrides() == {"NET_MODE": "proxy_all"} and c.overrides(peers=True) == {"NET_MODE": "proxy_all"}
-    assert c.overrides(peers=False) == {"NET_MODE": "adapter"}, "没有连接其他设备: 用 Adapter"
-    assert c.overrides(peers=False, adapter=False) == {"NET_MODE": "proxy_all"}, "没有 Adapter 方式的设备总是代理-全屏蔽"
+    assert c.overrides() == {"NET_MODE": "proxy_all"}
+    assert c.overrides() == {"NET_MODE": "proxy_all"}
     # 禁止囤囤鼠!: 提前结束休息算违反 (软规则, 1 级, 违反一次失效), 休息时间 ×1.1 (和疲惫相乘); 侵蚀: 冷静期 ×2 / ×3
     c.start(["hoard", "tired1", "erode2"], owner="me", now=t0)
     assert c.hoard_check() == "hoard" and abs(c.rest_factor() - 0.7 * 1.1) < 1e-9 and c.cooldown_factor() == 3.0
@@ -1671,6 +1672,8 @@ def _selftest():
     assert c.window_check(5) == "chan1" and c.violate("chan1") == (False, "")
     assert c.window_watch() == ("chan1", 4) and c.window_check(5) == "" and c.window_check(3) == ""
     assert c.window_check(5) == "chan1" and c.echo("chan1"), "失效后按失效前的上限, 越过的那一下再算"
+    c.window_reset()                          # 离开专注时段: 下次专注重新算
+    assert c.window_check(5) == "chan1"
     assert c.violate("deep1") == (False, "") and c.focus_check(39 * 60) == "deep1" and c.focus_check(40 * 60) == ""
     assert c.quiet_check(True) == "quiet" and c.violate("quiet") == (False, "") and c.quiet_check(True) == ""
     assert c.quiet_check(False) == "" and c.quiet_check(True) == "quiet" and c.echo("quiet")

@@ -124,7 +124,7 @@ SETTINGS_SCHEMA = [
     _num("FILL_WINDOW", "整点记录补填时限", "min", 60, 1, 1440, True,
          "整点过后多久之内还能补填;超时自动记为「超时自动记录内容」.", page="log"),
     _num("WINDOW_LIMIT", "窗口数上限", "", 1, 1, 50, True,
-         "任务栏上最多同时开着几个窗口;超过时一次随机关掉多出来的.", page="window"),
+         "任务栏上最多同时开着几个窗口; 专注中超过时提醒 (不关窗口).", page="window"),
     # ---- 星期倍率 (联网页的第二块): 当天联网额度 = 每日联网额度 × 当天倍率 ----
     _num("QUOTA_MULT_MON", "周一联网倍率", "×", 1, 0, 10, False, "", page="net",
          group="weekday", short="周一"),
@@ -177,7 +177,7 @@ SETTINGS_SCHEMA = [
         "kind": "choice", "apply": APPLY_DELAY,
         "choices": [("1", "开启 (ON)"), ("0", "关闭 (OFF)")],
         "fmt": lambda v: "ON" if v else "OFF",
-        "desc": "每 30 秒数一次任务栏上的窗口,超过「窗口数上限」就随机关掉多出来的.",
+        "desc": "专注时每 30 秒数一次任务栏上的窗口,超过「窗口数上限」就提醒一次 (不关窗口).",
         "page": "window",
     },
     {

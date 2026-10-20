@@ -508,6 +508,23 @@ class CoreTest {
         assertEquals(1800.0, combineWindow(listOf(phone, mother), "2026-10")["tv.danmaku.bili"]!!, 0.0)
     }
 
+    /** 违规记录: 只留最近 15 条, 新的在前; 换一个 Core 也能读回来 (MECHANICS 8.1). */
+    @Test
+    fun violationRecords() {
+        val dir = tmp()
+        val core = Core(dir, NoHost) { 0.0 }
+        for (i in 0 until 20) core.addViolation("⚠ 违反合约: 第 $i 次")
+        val rows = core.recentViolations()
+        assertEquals(Cfg.VIOLATION_KEEP, rows.size)
+        assertEquals(Cfg.VIOLATION_KEEP, 15)
+        assertTrue(rows.first().second.contains("第 19 次"))
+        assertTrue(rows.last().second.contains("第 5 次"))
+        val again = Core(dir, NoHost) { 0.0 }
+        assertEquals(rows, again.recentViolations())
+        again.addViolation("   ")                                   // 空文字不算
+        assertEquals(Cfg.VIOLATION_KEEP, again.recentViolations().size)
+    }
+
     @Test
     fun updateVersionRules() {
         // 和桌面版 updater.py 的自检同样的例子

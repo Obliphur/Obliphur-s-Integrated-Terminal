@@ -258,6 +258,8 @@ class ContractTest {
         assertEquals("chan1", c.windowCheck(5)); assertEquals(false to "", c.violate("chan1"))
         assertEquals("chan1" to 4, c.windowWatch()); assertEquals("", c.windowCheck(5)); assertEquals("", c.windowCheck(3))
         assertEquals("chan1", c.windowCheck(5)); assertTrue(c.echo("chan1"))
+        c.windowReset()                                  // 离开专注时段: 下次专注重新算
+        assertEquals("chan1", c.windowCheck(5))
         assertEquals(false to "", c.violate("deep1")); assertEquals("deep1", c.focusCheck(39 * 60.0)); assertEquals("", c.focusCheck(40 * 60.0))
         assertEquals("quiet", c.quietCheck(true)); assertEquals(false to "", c.violate("quiet")); assertEquals("", c.quietCheck(true))
         assertEquals("", c.quietCheck(false)); assertEquals("quiet", c.quietCheck(true))

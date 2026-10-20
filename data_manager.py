@@ -29,6 +29,10 @@ def split_items(text: str):
     return [p.strip() for p in parts if p.strip()]
 
 
+VIOLATION_KEEP = 15          # 违规记录只留最近这么多条 (MECHANICS 8.1)
+USERNAME_MAX = 24
+
+
 class DataManager:
     def __init__(self):
         low_dir = os.path.join(
@@ -58,6 +62,9 @@ class DataManager:
         # 日常 (MECHANICS 19): 睡觉时间的提示 / 合约开始时的睡眠提醒已经弹过的日期
         self.daily_file = os.path.join(self.data_dir, 'daily.json')
         self.daily: Dict[str, str] = {}
+        # 违规记录 (MECHANICS 8.1): 最近 VIOLATION_KEEP 条合约违规的提示文字, 新的在后
+        self.violations_file = os.path.join(self.data_dir, 'violations.json')
+        self.violations: list = []
         # 同一份数据按分钟的时间线: {日期: [[开始分钟, 结束分钟, 程序名], …]};
         # 统计页看"全部设备"时用它判断几台设备是不是同时在用 (重叠的分钟以母端为准)
         self.window_runs: Dict[str, list] = {}
@@ -90,6 +97,7 @@ class DataManager:
         self.load_focus_log()
         self.load_window_usage()
         self.load_daily()
+        self.load_violations()
 
 
     @property
@@ -609,6 +617,27 @@ class DataManager:
         if not self.resetting:
             config.save_json_file(self.daily_file, self.daily)
 
+    # ---- 违规记录 (MECHANICS 8.1): 最近 15 条合约违规的提示文字 ----
+
+    def load_violations(self):
+        d = config.load_json_file(self.violations_file, [])
+        self.violations = ([x for x in d if isinstance(x, dict) and str(x.get("text") or "").strip()]
+                           if isinstance(d, list) else [])[-VIOLATION_KEEP:]
+
+    def add_violation(self, text: str):
+        """记一条违规 (text = 弹出的那段提示); 只留最近 15 条."""
+        text = str(text or "").strip()
+        if not text:
+            return
+        self.violations.append({"at": f"{datetime.now():%Y-%m-%d %H:%M}", "text": text})
+        self.violations = self.violations[-VIOLATION_KEEP:]
+        if not self.resetting:
+            config.save_json_file(self.violations_file, self.violations)
+
+    def recent_violations(self, n: int = VIOLATION_KEEP) -> list:
+        """最近的违规: 新的在前."""
+        return list(self.violations[-max(0, int(n)):])[::-1]
+
     def erase_all_data(self):
         """重置: 删除本程序留下的全部数据, 不留任何记录."""
         shutil.rmtree(self.data_dir, ignore_errors=True)
@@ -622,9 +651,6 @@ class DataManager:
 def half_fill() -> timedelta:
     """细化规范的半小时格: 补填时限只有 30 min (补填时限设得更短时照设置)."""
     return min(config.FILL_WINDOW, config.FINE_FILL_WINDOW)
-
-
-USERNAME_MAX = 24
 
 
 def _sum_days(days: dict, prefix: str) -> Dict[str, float]:

@@ -21,6 +21,7 @@ OTHER_BELOW = 0.01
 OTHER_TIP_LINES = 25
 FOG_ITEMS = 10              # 黑雾: 饼图里填多少个没有意义的项
 CONTRACT_ROWS = 5           # 统计页的合约记录: 看最近几个顺利完成的合约 (黑雾时补满这么多条)
+VIOLATION_ROWS = 15         # 违规记录页: 最多留几条 (黑雾时补满, 内容全是 ???)
 
 
 def _c(key: str) -> str:
@@ -109,6 +110,10 @@ class StatsPage(tk.Frame):
         # 合约记录页的数据来源: 合约的 history (顺利完成的那几条)
         self.contract_log = lambda: []
         self._contract_sig = None
+        # 违规记录页的数据来源: 最近 15 条违规的提示文字 (新的在前)
+        self.violation_log = lambda: []
+        self._violation_sig = None
+        self.contract_mode = "done"        # 合约页: "done" 通过记录 / "violations" 违规记录
         self._build()
         self.after(60000, self._focus_tick)
 
@@ -161,6 +166,18 @@ class StatsPage(tk.Frame):
         tk.Label(self.mode_bar, text=tr("显示:"), bg=bg, fg=COLORS["text_dim"],
                  font=config.font("small")).pack(side="right", padx=(0, 2))
 
+        # 合约页: 通过记录 / 违规记录 (通过记录在左; 和上面的显示方式同一个样式)
+        self.contract_mode_bar = tk.Frame(bar, bg=bg)
+        self.contract_btns = {}
+        for key, text in (("done", tr("通过记录")), ("violations", tr("违规记录"))):
+            b = tk.Button(
+                self.contract_mode_bar, text=text, relief="flat", bd=0, padx=12, pady=6,
+                font=config.font("small"), cursor="hand2",
+                command=lambda k=key: self._set_contract_mode(k)
+            )
+            b.pack(side="left", padx=(0, 4))
+            self.contract_btns[key] = b
+
         # 专注计时页的图例
         self.focus_legend = tk.Frame(bar, bg=bg)
         for color, text in ((_c("focus_study"), tr("专注")), (_c("focus_break"), tr("休息")),
@@ -190,20 +207,27 @@ class StatsPage(tk.Frame):
         self.focus_cv.bind("<Motion>", self._focus_hover)
         self.focus_cv.bind("<Leave>", lambda e: self.focus_cv.delete("tip"))
 
-        # 合约记录页: 最近 5 条顺利完成的合约 (黑雾时是 5 条假数据)
+        # 合约记录 (通过记录): 最近 5 条顺利完成的合约 (黑雾时是 5 条假数据)
         card = COLORS["bg_card"]
         self.contracts_body = tk.Frame(self, bg=card,
                                        highlightbackground=COLORS["border"], highlightthickness=1)
         head = tk.Frame(self.contracts_body, bg=card)
-        head.pack(fill="x", padx=16, pady=(12, 2))
+        head.pack(fill="x", padx=16, pady=(12, 8))
         tk.Label(head, text=tr("⚔  合约记录"), bg=card, fg=COLORS["text"],
                  font=config.font("h2", bold=True)).pack(side="left")
-        tk.Label(self.contracts_body,
-                 text=tr("最近 5 条顺利完成的合约 · 等级: 初始-失效 · 点击查看词条"),
-                 bg=card, fg=COLORS["text_dim"], font=config.font("small"),
-                 anchor="w").pack(fill="x", padx=16, pady=(0, 8))
         self.contract_rows = tk.Frame(self.contracts_body, bg=card)
         self.contract_rows.pack(fill="both", expand=True, padx=10, pady=(0, 12))
+
+        # 违规记录: 最近 15 条合约违规的提示文字 (黑雾时全部是 ???, 不足 15 条补满)
+        self.violations_body = tk.Frame(self, bg=card,
+                                        highlightbackground=COLORS["border"], highlightthickness=1)
+        head = tk.Frame(self.violations_body, bg=card)
+        head.pack(fill="x", padx=16, pady=(12, 8))
+        tk.Label(head, text=tr("⚠  违规记录"), bg=card, fg=COLORS["text"],
+                 font=config.font("h2", bold=True)).pack(side="left")
+        self.violation_area = ScrollArea(self.violations_body, height=config.scaled(430), bg=card)
+        self.violation_area.pack(fill="both", expand=True, padx=10, pady=(0, 12))
+        self.violation_rows = self.violation_area.inner
 
         # 一张卡片: 上面是月份和合计, 下面左边饼图, 右边图例
         card = COLORS["bg_card"]
@@ -233,6 +257,8 @@ class StatsPage(tk.Frame):
 
     @smooth
     def _set_page(self, key: str):
+        if key == "contracts":
+            self.contract_mode = "done"      # 每次打开合约页都从"通过记录"开始
         self.page = key
         self.refresh()
 
@@ -280,6 +306,12 @@ class StatsPage(tk.Frame):
         self.mode[self.page] = key
         self.refresh()
 
+    @smooth
+    def _set_contract_mode(self, key: str):
+        """合约页: 通过记录 / 违规记录."""
+        self.contract_mode = key
+        self.refresh()
+
     def _style_buttons(self):
         for key, b in self.tab_btns.items():
             on = key == self.page
@@ -296,6 +328,11 @@ class StatsPage(tk.Frame):
         cur = self.mode.get(self.page, "pct")
         for key, b in self.mode_btns.items():
             on = key == cur
+            cfg(b, bg=COLORS["text"] if on else COLORS["bg_card"],
+                     fg=COLORS["bg"] if on else COLORS["text_dim"],
+                     activebackground=COLORS["border"], activeforeground=COLORS["text"])
+        for key, b in self.contract_btns.items():
+            on = key == self.contract_mode
             cfg(b, bg=COLORS["text"] if on else COLORS["bg_card"],
                      fg=COLORS["bg"] if on else COLORS["text_dim"],
                      activebackground=COLORS["border"], activeforeground=COLORS["text"])
@@ -354,10 +391,19 @@ class StatsPage(tk.Frame):
             hide_pack(self.focus_legend)
             hide_pack(self.focus_body)
             hide_pack(self.pie_body)
-            show_pack(self.contracts_body, fill="both", expand=True, padx=26, pady=(10, 16))
-            self._draw_contracts()
+            show_pack(self.contract_mode_bar, side="right")
+            if self.contract_mode == "violations":
+                hide_pack(self.contracts_body)
+                show_pack(self.violations_body, fill="both", expand=True, padx=26, pady=(10, 16))
+                self._draw_violations()
+            else:
+                hide_pack(self.violations_body)
+                show_pack(self.contracts_body, fill="both", expand=True, padx=26, pady=(10, 16))
+                self._draw_contracts()
             return
+        hide_pack(self.contract_mode_bar)
         hide_pack(self.contracts_body)
+        hide_pack(self.violations_body)
         if self.page == "focus":
             hide_pack(self.month_bar)
             hide_pack(self.mode_bar)
@@ -424,6 +470,47 @@ class StatsPage(tk.Frame):
             ContractTermsDialog(self.winfo_toplevel(), a, b, terms)
         except Exception:
             pass
+
+    # ---- 违规记录 (最近 15 条违规的提示文字, MECHANICS 8.1) ----
+
+    def _violation_rows_data(self) -> list:
+        """[(时间, 文字)]; 黑雾时是 15 条 ??? (不足 15 条补满)."""
+        if self.fog() is not None:
+            return [("???", "???")] * VIOLATION_ROWS
+        data = []
+        for rec in list(self.violation_log() or [])[:VIOLATION_ROWS]:
+            if not isinstance(rec, dict):
+                continue
+            text = str(rec.get("text") or "").strip()
+            if text:
+                data.append((str(rec.get("at") or "???"), text))
+        return data
+
+    def _draw_violations(self):
+        data = self._violation_rows_data()
+        sig = tuple(data)
+        if sig == self._violation_sig:
+            return
+        self._violation_sig = sig
+        card = COLORS["bg_card"]
+        for w in self.violation_rows.winfo_children():
+            w.destroy()
+        if not data:
+            tk.Label(self.violation_rows, text=tr("还没有违规记录."), bg=card,
+                     fg=COLORS["text_dim"], font=config.font("body"), anchor="w").pack(
+                anchor="w", padx=8, pady=8)
+            return
+        for at, text in data:
+            row = tk.Frame(self.violation_rows, bg=card,
+                           highlightbackground=COLORS["border"], highlightthickness=1)
+            row.pack(fill="x", padx=6, pady=(0, 6))
+            tk.Label(row, text=at, bg=card, fg=COLORS["text_dim"],
+                     font=config.font("small"), anchor="w").pack(fill="x", padx=14, pady=(8, 0))
+            lbl = tk.Label(row, text=text, bg=card, fg=COLORS["text"], font=config.font("body"),
+                           anchor="w", justify="left", wraplength=config.scaled(640))
+            lbl.pack(fill="x", padx=14, pady=(2, 8))
+            row.bind("<Configure>",
+                     lambda e, l=lbl: l.config(wraplength=max(config.scaled(200), e.width - config.scaled(40))))
 
     def _draw_column(self, col, title: str, data: dict):
         pct_mode = self.mode[self.page] == "pct"

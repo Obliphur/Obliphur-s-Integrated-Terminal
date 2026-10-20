@@ -14,6 +14,18 @@ _current = DEFAULT_LANGUAGE
 EN = {
     "确定": "OK",
     "取消": "Cancel",
+    # ---- 提前启动 (仅 PC, MECHANICS 20) ----
+    "⏩  提前启动": "⏩  Pre-start",
+    "挑至多 {n} 个程序: 现在就启动 (或接管已在运行的), 窗口藏起来、静音; 结束专注时再放出来.":
+        "Pick up to {n} programs: they start now (or are taken over if already running) with their windows hidden and muted; they're released when the focus ends.",
+    "搜索": "Search",
+    "已选 {n}/{m}": "{n}/{m} selected",
+    "正在运行": "running",
+    "扫描程序失败: {e}": "Scanning for programs failed: {e}",
+    "没有找到可以提前启动的程序.": "No pre-startable programs were found.",
+    "提前启动: {names}. 窗口藏起来了, 静音; 结束专注时放出来.":
+        "Pre-started: {names}. Windows hidden and muted; released when the focus ends.",
+    "打不开: {names}": "Couldn't open: {names}",
     "当前": "Current",
     "立即生效中…": "applying…",
     "名单改动已生效:": "List changes now in effect:",
@@ -398,8 +410,8 @@ EN = {
     # ---- window_guard (任务栏窗口数上限) ----
     "任务栏窗口数上限": "Taskbar window limit",
     "窗口数上限": "Max windows",
-    "任务栏上最多同时开着几个窗口;超过时一次随机关掉多出来的.": "How many windows may be open on the taskbar at once; any extra are closed at random.",
-    "每 30 秒数一次任务栏上的窗口,超过「窗口数上限」就随机关掉多出来的.": "Counts the taskbar windows every 30 seconds and closes random extras beyond \"Max windows\".",
+    "任务栏上最多同时开着几个窗口; 专注中超过时提醒 (不关窗口).": "How many windows may be open on the taskbar at once; during focus you're reminded when over (nothing gets closed).",
+    "专注时每 30 秒数一次任务栏上的窗口,超过「窗口数上限」就提醒一次 (不关窗口).": "During focus, counts the taskbar windows every 30 seconds and reminds you once when over \"Max windows\" (nothing gets closed).",
     # ---- 窗口使用时间统计 ----
     "窗口使用时间统计": "Window time tracking",
     "{exe} 在黑名单里,已关闭窗口.": "{exe} is on the blacklist; its window was closed.",
@@ -543,7 +555,7 @@ EN = {
     "快速访问跳过冷静期立刻联网,额度按 ×{a:g} 消耗.": "Quick access skips the cooldown and goes online now; quota is used at {a:g}x.",
     "立刻结束冷静期并联网?额度按 ×{a:g} 消耗.": "End the cooldown and go online now? Quota is used at {a:g}x.",
     "⚡ 快速访问 ×{a:g}": "⚡ Quick access ×{a:g}",
-    "窗口超过上限 {x} 个,关闭了:\n{titles}": "Over the {x}-window limit. Closed:\n{titles}",
+    "窗口超过上限 {x} 个 (现在 {n} 个), 关掉一些吧.": "Over the {x}-window limit (now {n}), close some windows.",
     "这将永久删除全部数据,不可撤销.": "This permanently deletes all data and can't be undone.",
     "只读取浏览器历史里的域名和访问次数,不保存,不上传.": "Only reads domains and visit counts from browser history; nothing is saved or uploaded.",
     "Adapter 模式 · 规则未启用": "Adapter mode · rules inactive",
@@ -704,8 +716,7 @@ EN = {
     "环境:抑制": "Env: Suppression",
     "不能使用快速访问功能": "Quick access cannot be used",
     "环境:全频道阻塞干扰": "Env: Full-Band Jamming",
-    "有连接的其他设备时使用proxy block-all模式 没有时使用Adapter模式":
-        "Proxy block-all mode while other devices are connected; Adapter mode otherwise",
+    "期间使用proxy block-all模式": "Proxy block-all mode during the contract",
     "环境:乐理之灾": "Env: Musical Calamity",
     "非休息期间不能打开音乐播放软件 不能使用外部软件播放mp3等音频文件": "Outside breaks: no music players, and no playing mp3 or other audio files in other programs",
     "环境:黑雾": "Env: Black Fog",
@@ -798,9 +809,13 @@ EN = {
     "等级 {lv}": "Level {lv}",
     "⚔  合约记录": "⚔  Contract records",
     "⚔  合约词条": "⚔  Contract terms",
-    "最近 5 条顺利完成的合约 · 等级: 初始-失效 · 点击查看词条": "Last 5 completed contracts · level: initial-void · click one for its terms",
     "点击查看词条": "click for terms",
     "还没有顺利完成的合约.": "No completed contracts yet.",
+    # ---- 统计页: 违规记录 ----
+    "⚠  违规记录": "⚠  Violations",
+    "通过记录": "Completed",
+    "违规记录": "Violations",
+    "还没有违规记录.": "No violations yet.",
     "⚔ 行动失败": "⚔  Mission failed",
     "空闲超过 30 分钟, 合约终止.": "Idle for over 30 minutes; the contract is over.",
     "合约已结束: {r}": "Contract over: {r}",

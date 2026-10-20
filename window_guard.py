@@ -1,16 +1,17 @@
 """
 任务栏窗口数上限
 ────────────────
-每隔 WINDOW_CHECK_EVERY 秒数一次任务栏上的窗口 (同一个程序的多个窗口各算一个),
-超过 WINDOW_LIMIT 个就一次随机关掉多出来的那几个, 让窗口数回到上限.
-关闭是发 WM_CLOSE —— 和点右上角的 ✕ 一样, 有未保存内容的程序会照常弹出"是否保存".
+专注中每 WINDOW_CHECK_EVERY 秒数一次任务栏上的窗口 (同一个程序的多个窗口各算一个),
+超过 WINDOW_LIMIT 个就提醒一次 (不再随机关窗口); 回到上限以内后再超才再提醒.
+合约的"通道阻塞"也按这个数算违反 (contract.window_check), 同样只在专注中算.
+休息 / 空闲时数都不数.
 
 "在任务栏上" 的判定 (和 Windows 自己的规则一致):
   · 可见, 没有被 DWM 隐藏 (cloaked: 其他虚拟桌面上的窗口, 挂起的 UWP 窗口等);
   · 没有所有者窗口 (对话框之类不算), 或者带 WS_EX_APPWINDOW;
   · 不是工具窗口 (WS_EX_TOOLWINDOW) 或不可激活窗口 (WS_EX_NOACTIVATE), 除非带 WS_EX_APPWINDOW;
   · 有标题; 不是桌面 / 任务栏本身.
-OIT 自己的窗口也计数, 但不会被关 (超出的部分只从别的窗口里关).
+OIT 自己的窗口也计数.
 
 前台程序 (窗口使用时间统计)
 ──────────────────────────
@@ -30,7 +31,6 @@ check_focus_rules() 每秒看一次前台窗口: 它的程序在黑名单里 (�
 
 import os
 import sys
-import random
 
 WS_EX_TOOLWINDOW = 0x00000080
 WS_EX_APPWINDOW = 0x00040000
@@ -39,6 +39,8 @@ GWL_EXSTYLE = -20
 GW_OWNER = 4
 DWMWA_CLOAKED = 14
 WM_CLOSE = 0x0010
+SW_HIDE = 0
+SW_SHOWNOACTIVATE = 4
 
 # 桌面, 任务栏, 开始菜单之类: 满足上面的条件也不算
 SHELL_CLASSES = {
@@ -93,6 +95,8 @@ def _load_api():
     user32.GetForegroundWindow.restype = wintypes.HWND
     user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM,
                                     wintypes.LPARAM]
+    user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+    user32.IsWindow.argtypes = [wintypes.HWND]
     dwmapi.DwmGetWindowAttribute.argtypes = [wintypes.HWND, wintypes.DWORD,
                                              ctypes.c_void_p, wintypes.DWORD]
     _api = (ctypes, wintypes, user32, dwmapi, proc)
@@ -161,6 +165,38 @@ def close_window(hwnd) -> bool:
         return False
     _ct, _wt, user32, _dwm, _p = _load_api()
     return bool(user32.PostMessageW(hwnd, WM_CLOSE, 0, 0))
+
+
+def window_alive(hwnd) -> bool:
+    if sys.platform != "win32" or not hwnd:
+        return False
+    _ct, _wt, user32, _dwm, _p = _load_api()
+    return bool(user32.IsWindow(hwnd))
+
+
+def is_iconic(hwnd) -> bool:
+    """最小化的窗口 (提前启动不碰它: 本来就看不见)."""
+    if sys.platform != "win32" or not hwnd:
+        return False
+    _ct, _wt, user32, _dwm, _p = _load_api()
+    user32.IsIconic.argtypes = [_wt.HWND]
+    return bool(user32.IsIconic(hwnd))
+
+
+def hide_window(hwnd) -> bool:
+    """藏起一个窗口 (不结束进程). 提前启动用它把程序窗口藏起来."""
+    if sys.platform != "win32" or not hwnd:
+        return False
+    _ct, _wt, user32, _dwm, _p = _load_api()
+    return bool(user32.ShowWindow(hwnd, SW_HIDE))
+
+
+def show_window(hwnd) -> bool:
+    """把藏起来的窗口显示出来 (不抢焦点)."""
+    if sys.platform != "win32" or not hwnd:
+        return False
+    _ct, _wt, user32, _dwm, _p = _load_api()
+    return bool(user32.ShowWindow(hwnd, SW_SHOWNOACTIVATE))
 
 
 # ───────────────────────── 前台程序 ─────────────────────────
@@ -272,35 +308,33 @@ def check_focus_rules(allowed, close=close_window):
 
 # ───────────────────────── 检查一次 ─────────────────────────
 
-def taskbar_windows(windows=None, own_pid: int = None, include_own: bool = False) -> list:
-    """任务栏上的窗口; include_own=False 时不含 OIT 自己的 (窗口数要算上 OIT 时传 True)."""
+def taskbar_windows(windows=None, own_pid: int = None, include_own: bool = False,
+                    exclude_pids=None) -> list:
+    """任务栏上的窗口; include_own=False 时不含 OIT 自己的 (窗口数要算上 OIT 时传 True).
+    exclude_pids: 这些进程的窗口不算 (提前启动的程序, MECHANICS 20)."""
     own_pid = os.getpid() if own_pid is None else own_pid
+    skip = set(exclude_pids or ())
     windows = list_top_windows() if windows is None else windows
-    return [w for w in windows if is_taskbar_window(w) and (include_own or w.get("pid") != own_pid)]
+    return [w for w in windows
+            if is_taskbar_window(w) and (include_own or w.get("pid") != own_pid)
+            and w.get("pid") not in skip]
 
 
-def enforce(limit: int, windows=None, own_pid: int = None, close=close_window,
-            rng=random):
-    """窗口数 (含 OIT 自己的窗口) 超过 limit 时, 一次随机关掉多出来的 (n - limit) 个; OIT 自己的窗口不关.
-    返回 (窗口数, [关掉了的窗口]); 没超过或上限不合法时列表为空."""
-    own_pid = os.getpid() if own_pid is None else own_pid
-    windows = list_top_windows() if windows is None else windows
-    n = len(taskbar_windows(windows, own_pid, include_own=True))
-    wins = taskbar_windows(windows, own_pid)
-    try:
-        limit = int(limit)
-    except (TypeError, ValueError):
-        return n, []
-    if limit < 1 or n <= limit:
-        return n, []
-    victims = rng.sample(wins, min(len(wins), n - limit))
-    return n, [w for w in victims if close(w["hwnd"])]
+def count_windows(windows=None, own_pid: int = None, exclude_pids=None) -> int:
+    """任务栏上的窗口数 (含 OIT 自己的窗口); 专注中超过上限就提醒 (由调用方比较).
+    提前启动的程序 (exclude_pids) 显示的窗口也不算."""
+    return len(taskbar_windows(windows, own_pid, include_own=True, exclude_pids=exclude_pids))
 
 
 # ───────────────────────── 合约: 乐理之灾 / 通道阻塞 (MECHANICS 18) ─────────────────────────
 
 def list_processes() -> list:
     """[(pid, exe 小写)]; 非 Windows 返回空表."""
+    return [(pid, exe) for pid, _ppid, exe in list_processes_full()]
+
+
+def list_processes_full() -> list:
+    """[(pid, 父进程 pid, exe 小写)]; 非 Windows 返回空表 (提前启动要顺着父子进程找)."""
     if sys.platform != "win32":
         return []
     import ctypes
@@ -325,7 +359,7 @@ def list_processes() -> list:
         e.dwSize = ctypes.sizeof(PE)
         ok = k32.Process32FirstW(snap, ctypes.byref(e))
         while ok:
-            out.append((int(e.th32ProcessID), str(e.szExeFile).lower()))
+            out.append((int(e.th32ProcessID), int(e.th32ParentProcessID), str(e.szExeFile).lower()))
             ok = k32.Process32NextW(snap, ctypes.byref(e))
     finally:
         k32.CloseHandle(snap)
@@ -401,49 +435,19 @@ def _selftest():
     assert not is_taskbar_window(win(1, title="Program Manager", cls="Progman"))
     assert not is_taskbar_window(win(1, cls="Shell_TrayWnd"))
 
-    # 同一个程序的多个窗口各算一个; OIT 自己的窗口也算, 但不会被关
+    # 同一个程序的多个窗口各算一个; OIT 自己的窗口也算 (只是数, 不再关)
     ws = [win(1, pid=5), win(2, pid=5), win(3, pid=6), win(4, pid=7),
           win(5, pid=99), win(6, pid=8, owned=True), win(7, pid=8, cloaked=True)]
     assert len(taskbar_windows(ws, own_pid=99)) == 4
     assert len(taskbar_windows(ws, own_pid=99, include_own=True)) == 5
-
-    closed = []
-    n, vs = enforce(5, ws, own_pid=99, close=lambda h: closed.append(h) or True)
-    assert n == 5 and vs == [] and not closed, "等于上限不关"
-
+    assert count_windows(ws, own_pid=99) == 5
     ws.append(win(8, pid=9))
-    for _ in range(50):
-        closed.clear()
-        n, vs = enforce(5, ws, own_pid=99, close=lambda h: closed.append(h) or True)
-        assert n == 6 and len(vs) == 1 and closed == [vs[0]["hwnd"]]
-        assert vs[0]["hwnd"] in (1, 2, 3, 4, 8), "只能关任务栏上的, 且不能关 OIT 自己"
-    # 上限 1, 只有 OIT 自己和一个别的窗口: 只能关那一个
-    closed.clear()
-    n, vs = enforce(1, [win(5, pid=99), win(3, pid=6)], own_pid=99, close=lambda h: closed.append(h) or True)
-    assert n == 2 and closed == [3]
-
-    # 随机: 多次检查应该关到不同的窗口
-    seen = set()
-    for i in range(200):
-        _n, vs = enforce(4, ws, own_pid=99, close=lambda h: True, rng=random.Random(i))
-        seen.add(vs[0]["hwnd"])
-    assert seen == {1, 2, 3, 4, 8}, seen
-
-    # 超出很多: 一次关到上限, 不重复关同一个
-    many = [win(i, pid=i) for i in range(1, 20)]
-    for i in range(20):
-        closed.clear()
-        n, vs = enforce(4, many, own_pid=0, close=lambda h: closed.append(h) or True,
-                        rng=random.Random(i))
-        assert n == 19 and len(vs) == 15 and len(set(closed)) == 15
-        assert len(taskbar_windows([w for w in many if w["hwnd"] not in closed], 0)) == 4
-
-    # 关闭失败的不算进结果 / 上限不合法
-    n, vs = enforce(4, many, own_pid=0, close=lambda h: h % 2 == 0)
-    assert all(w["hwnd"] % 2 == 0 for w in vs) and len(vs) < 15
-    assert enforce(4, many, own_pid=0, close=lambda h: False)[1] == []
-    assert enforce("x", many, own_pid=0, close=lambda h: True)[1] == []
-    assert enforce(0, many, own_pid=0, close=lambda h: True)[1] == []
+    assert count_windows(ws, own_pid=99) == 6, "多一个任务栏窗口就多一个"
+    assert count_windows([win(i, pid=i) for i in range(1, 20)], own_pid=0) == 19
+    # 提前启动 (MECHANICS 20) 的程序: 窗口显示出来也不算进窗口数
+    assert count_windows(ws, own_pid=99, exclude_pids={5}) == 4
+    assert count_windows(ws, own_pid=99, exclude_pids={5, 6, 99}) == 2
+    assert count_windows(ws, own_pid=99, exclude_pids=set()) == 6
 
     # 前台程序
     def fg(cls="Chrome_WidgetWin_1", pid=100, exe="chrome.exe", hwnd=1):

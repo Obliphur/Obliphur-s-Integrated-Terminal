@@ -3,6 +3,8 @@ package com.obliphur.oit.core
 import java.io.File
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
+import org.json.JSONArray
 import org.json.JSONObject
 
 data class Toast(val text: String, val kind: String, val long: Boolean)
@@ -115,11 +117,14 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     private var lastCheck = -1e9
     private var lastAppSample = mono()
     private var lastOpenApps = -1e9
-    /** 后台应用数超过上限: 上一次响警报的时刻 (超着时每 2 分钟再响一次). */
+    /** 专注中后台应用数是不是已经超过上限: 只在刚超过时提醒一次. */
     private var appsOver = false
-    private var appsAlarmAt = -1e9
     private var appSamples = 0
     private var nextHour = nextHalf(LocalDateTime.now())
+
+    // 违规记录 (MECHANICS 8.1): 最近 15 条合约违规的提示文字 (新的在后); init 里要读, 所以先声明
+    private val violationsFile = File(dir, "violations.json")
+    private val violations = ArrayList<Pair<String, String>>()      // (时间, 提示文字)
 
     /** 下一个整点或半点 (半点只在合约的细化规范时响铃, MECHANICS 18.4). */
     private fun nextHalf(now: LocalDateTime): LocalDateTime =
@@ -141,6 +146,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         ach.blocked = { dm.resetting }
         contract = Contract(File(dir, "contract.json"))
         contract.blocked = { dm.resetting }
+        loadViolations()
     }
 
     /** 界面和服务都就位后调用一次. */
@@ -183,6 +189,34 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     }
 
     private fun logNotice(text: String) = Store.append(File(dir, "settings_changes.log"), text)
+
+    // ---- 违规记录 (MECHANICS 8.1): 最近 15 条合约违规的提示文字 (新的在后) ----
+
+    private fun loadViolations() {
+        violations.clear()
+        val arr = Store.readObj(violationsFile)?.optJSONArray("items") ?: return
+        for (o in arr.objects()) {
+            val text = o.optString("text").trim()
+            if (text.isNotEmpty()) violations.add(o.optString("at") to text)
+        }
+        while (violations.size > Cfg.VIOLATION_KEEP) violations.removeAt(0)
+    }
+
+    /** 记一条违规 (text = 弹出的那段提示); 只留最近 15 条. */
+    fun addViolation(text: String) {
+        val t = text.trim()
+        if (t.isEmpty() || dm.resetting) return
+        violations.add(LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")) to t)
+        while (violations.size > Cfg.VIOLATION_KEEP) violations.removeAt(0)
+        val arr = JSONArray()
+        for ((at, s) in violations) arr.put(JSONObject().put("at", at).put("text", s))
+        Store.write(violationsFile, JSONObject().put("items", arr))
+    }
+
+    /** 最近的违规: 新的在前. */
+    fun recentViolations(n: Int = Cfg.VIOLATION_KEEP): List<Pair<String, String>> =
+        violations.takeLast(n.coerceAtLeast(0)).reversed()
+
 
     // ---- 定时 ----
 
@@ -334,23 +368,24 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
      *  合约的"通道阻塞"按它算违反 (MECHANICS 18). */
     private fun checkOpenApps() {
         if (dm.resetting) return
+        val focusing = timer.state == TState.RUNNING
         val limitOn = settings.bool("WINDOW_LIMIT_ENABLED")
         val chan = contract.windowWatch().second      // 已经失效的按失效前的上限 (再次超过只响警报)
-        if (!limitOn && chan == 0) return
+        if (!focusing) {
+            appsOver = false
+            contract.windowReset()          // 离开专注: 通道阻塞下次专注重新算
+            return
+        }
         val n = host.openApps()?.size ?: return
         if (chan > 0) {
             val id = contract.windowCheck(n)
-            if (id.isNotEmpty()) {
-                contractViolation(tr("后台应用超过 {n} 个", "n" to chan), id)
-                appsAlarmAt = mono()
-            }
+            if (id.isNotEmpty()) contractViolation(tr("后台应用超过 {n} 个", "n" to chan), id)
         }
         val lim = settings.num("WINDOW_LIMIT").toInt()
         if (!limitOn || n <= lim) {
             appsOver = false; return
         }
-        if (!appsOver || mono() - appsAlarmAt >= Cfg.OPEN_APPS_REPEAT) {
-            appsAlarmAt = mono()
+        if (!appsOver) {                              // 刚超过: 提醒一次 (回到上限以内后再超才再提醒)
             host.playAlarm()
             toast(tr("后台开着 {n} 个应用, 超过上限 {x} 个.", "n" to n, "x" to lim), "warn")
             Store.append(File(dir, "window_guard.log"), "APPS     $n > $lim")
@@ -856,8 +891,10 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             else -> tr("{a} 降为 {b}", "a" to old, "b" to tr(Contract.BY_ID[new]!!.name))
         }
         logNotice("CONTRACT violation ${c.violations}/${c.violationLimit}: ${id.ifEmpty { "-" }} -> ${new.ifEmpty { "-" }}  $why")
-        toast(tr("⚠ 违反合约: {why} · 目标生命值 {n} / {m}", "why" to why, "n" to c.life, "m" to c.violationLimit) +
-            "\n" + after + "  ·  " + tr("危机等级 {lv}", "lv" to c.level), "warn", long = true)
+        val msg = tr("⚠ 违反合约: {why} · 目标生命值 {n} / {m}", "why" to why, "n" to c.life, "m" to c.violationLimit) +
+            "\n" + after + "  ·  " + tr("危机等级 {lv}", "lv" to c.level)
+        toast(msg, "warn", long = true)
+        addViolation(msg)               // 违规记录页 (MECHANICS 8.1): 内容照搬这段提示
         if (over) endContract("failed")
         changed()
     }
@@ -885,7 +922,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         if (settings.devMode) return if (hasPeers()) VpnPlan.Dns(false, 0) else VpnPlan.None
         val online = net.online
         val snap = rules.snap
-        // 代理-全屏蔽 (Proxy block-all) (设置里的 Adapter): 离线时接管 DNS, 所有域名一律拦截 (不看网站名单,
+        // 代理-全屏蔽 (Proxy block-all): 离线时接管 DNS, 所有域名一律拦截 (不看网站名单,
         // 局域网照常, 设备同步要用); 联网中全部放行. 应用名单照样按过滤名单模式锁定应用 (checkAppLock)
         if (netMode() == "adapter")
             return if (online) VpnPlan.Dns(false, 0) else VpnPlan.Dns(true, 0, blockAll = true)

@@ -47,13 +47,18 @@ _SKIP_EXE = {
     "dllhost.exe", "regsvr32.exe", "mshta.exe", "wscript.exe", "cscript.exe",
     "java.exe", "javaw.exe", "javac.exe", "7z.exe", "7za.exe", "tar.exe",
     "curl.exe", "wget.exe", "ffmpeg.exe", "ffplay.exe", "ffprobe.exe",
-    "git.exe", "git-bash.exe", "bash.exe", "wsl.exe", "wt.exe",
+    "git.exe", "git-bash.exe", "bash.exe", "wsl.exe", "wt.exe", "run.exe",
 }
 _SKIP_NAME_HINT = ("update", "updater", "uninstall", "卸载", "helper", "redistributable",
                    "runtime", "visual c++", "sdk", "driver", "驱动", "framework",
                    "release notes", "license", "readme", "read me", "help", "manual",
                    "documentation", "更多", "more", "what is new", "what's new",
-                   "getting started", "welcome to", "start menu")
+                   "getting started", "welcome to", "start menu",
+                   # 安装器 / 卸载器 / 系统工具 / 驱动 / 配置项: 提前启动 (prestart.py) 里这些都不是"正常程序"
+                   "setup", "install", "安装", "系统", "配置", "服务", "service",
+                   "registry", "注册表", "控制面板", "管理工具", "cmd", "powershell",
+                   # 运行时和辅助进程 (Python / Node / SSH 代理 …), 不是给人用的程序
+                   "python", "node.js", "askpass", "ssh", "crash", "daemon")
 # 一眼就知道不是"需要联网的程序"的可执行文件(系统组件,输入法,驱动管理器……).
 # 与 _SKIP_EXE 的区别:这里是**子串**匹配,专门拦掉安装器/卸载器这一类变体名.
 _SKIP_EXE_HINT = ("favicon.exe", "dfshim", "wab.exe", "wabmig",
@@ -63,7 +68,12 @@ _SKIP_EXE_HINT = ("favicon.exe", "dfshim", "wab.exe", "wabmig",
                   "narrator", "osk.exe", "perfmon", "iscsicpl.exe",
                   "dfrgui", "cleanmgr", "windowsmail", "onenotelauncher",
                   "unins", "setup.exe", "installer.exe", "install.exe",
-                  "update.exe", "updater.exe")
+                  "update.exe", "updater.exe",
+                  # 运行时 / 辅助进程: python 3.13 / node / claude-ssh-askpass 这种
+                  "python", "node.exe", "askpass", "ssh-", "crashpad", "crashreport",
+                  # 系统组件 / 包管理器 / Store 应用的后台部分
+                  "pip", "idle3", "winget", "windowspackagemanager", "xboxpcapp",
+                  "messagehost", "recoverydrive")
 
 # Windows 自带的系统工具 / 管理单元.它们都在开始菜单里,但对"该放行哪个程序"
 # 毫无参考价值,还会把真正的应用挤出上限(清单多了 120 条根本读不下去).
@@ -90,6 +100,29 @@ _SKIP_NAME_EXACT = {
 }
 _SKIP_NAME_PREFIX = ("windows ", "microsoft ")
 _SKIP_NAME_SUFFIX = (" help", " tools", " saves & logs", " release notes")
+
+
+def is_normal_app(name: str, exe: str) -> bool:
+    """这个名字 + exe 像不像"正常的程序" (提前启动的程序清单用).
+
+    去掉: 安装器 / 卸载器 (setup, uninstall, unins000 …), 更新器, 系统工具 / 驱动 /
+    配置项 (.cpl / .msc / 控制面板 / 注册表 / 服务 …), 以及上面几张跳过表里的东西.
+    只看名字和 exe 文件名, 不打开任何文件.
+    """
+    name = _clean_app_name(name)
+    low = name.lower()
+    base = os.path.basename(str(exe or "")).strip().lower()
+    if not name or not base.endswith(".exe"):
+        return False
+    if base in _SKIP_EXE or any(h in base for h in _SKIP_EXE_HINT):
+        return False
+    if any(h in low for h in _SKIP_NAME_HINT):
+        return False
+    if low in _SKIP_NAME_EXACT or low.startswith(_SKIP_NAME_PREFIX):
+        return False
+    if any(low.endswith(s) for s in _SKIP_NAME_SUFFIX):
+        return False
+    return True
 
 
 def _clean_app_name(name: str) -> str:

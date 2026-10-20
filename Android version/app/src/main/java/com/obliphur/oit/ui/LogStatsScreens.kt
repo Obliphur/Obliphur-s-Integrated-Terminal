@@ -212,6 +212,9 @@ private const val FOG_ITEMS = 10
 /** 统计页的合约记录: 看最近几个顺利完成的合约 (黑雾时补满这么多条). */
 private const val CONTRACT_ROWS = 5
 
+/** 违规记录页: 最多留几条 (黑雾时补满, 内容全是 ???). */
+private const val VIOLATION_ROWS = 15
+
 /** 统计页的一条合约记录: 等级 = 初始等级-失效等级 (没有失效时只有初始等级); 词条 (名字, 是不是失效了). */
 private data class ContractRow(val a: Int, val b: Int, val terms: List<Pair<String, Boolean>>)
 
@@ -244,7 +247,6 @@ private fun ContractRecords() {
     }
     OitCard {
         Text(tr("⚔  合约记录"), fontWeight = FontWeight.Bold, color = o.text, fontSize = 16.sp)
-        Dim(tr("最近 5 条顺利完成的合约 · 等级: 初始-失效 · 点击查看词条"), size = 12)
         if (rows.isEmpty()) Dim(tr("还没有顺利完成的合约."), size = 13)
         for (r in rows) {
             Row(Modifier.fillMaxWidth().clickable { open = r }.padding(vertical = 8.dp),
@@ -271,6 +273,26 @@ private fun ContractRecords() {
     }
 }
 
+/** 统计页: 最近 15 条合约违规的提示文字 (黑雾时全部是 ???, 不足 15 条补满). */
+@Composable
+private fun ViolationRecords() {
+    LocalTick.current
+    val o = LocalOit.current
+    val core = OitApp.instance.core
+    val fog = core.contract.fog()
+    val rows = if (fog) List(VIOLATION_ROWS) { "???" to "???" } else core.recentViolations(VIOLATION_ROWS)
+    OitCard {
+        Text(tr("⚠  违规记录"), fontWeight = FontWeight.Bold, color = o.text, fontSize = 16.sp)
+        if (rows.isEmpty()) Dim(tr("还没有违规记录."), size = 13)
+        for ((at, text) in rows) {
+            Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                Text(at, color = o.dim, fontSize = 11.sp)
+                Text(text, color = o.text, fontSize = 14.sp)
+            }
+        }
+    }
+}
+
 @Composable
 fun StatsScreen() {
     LocalTick.current
@@ -281,6 +303,7 @@ fun StatsScreen() {
     var page by rememberSaveable { mutableStateOf(if (logOn) "log" else "net") }
     if (!logOn && page == "log") page = "net"
     var last by rememberSaveable { mutableStateOf(false) }
+    var cmode by rememberSaveable { mutableStateOf("done") }      // 合约页: 通过记录 / 违规记录
     var device by rememberSaveable { mutableStateOf("all") }      // 应用页看哪台设备
     val modes = remember { mutableStateOf(mapOf<String, String>()) }
     val pct = (modes.value[page] ?: "pct") == "pct"
@@ -293,13 +316,17 @@ fun StatsScreen() {
             add("window" to tr("📱  应用"))
             add("contracts" to tr("⚔  合约"))
         }
-        Segmented(tabs, page) { page = it }
+        Segmented(tabs, page) {
+            page = it
+            if (it == "contracts") cmode = "done"      // 每次打开合约页都从"通过记录"开始
+        }
         if (page == "focus") {
             FocusBars()
             return@Column
         }
         if (page == "contracts") {
-            ContractRecords()
+            Segmented(listOf("done" to tr("通过记录"), "violations" to tr("违规记录")), cmode) { cmode = it }
+            if (cmode == "violations") ViolationRecords() else ContractRecords()
             return@Column
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

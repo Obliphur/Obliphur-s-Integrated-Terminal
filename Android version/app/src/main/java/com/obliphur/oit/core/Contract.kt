@@ -954,11 +954,16 @@ class Contract(private val file: File) {
         return id to (WINDOWS[id] ?: 0)
     }
 
-    /** 通道阻塞: 后台的应用数 (Android 上的"窗口数") 超过词条的上限. */
+    /** 通道阻塞: 专注中后台的应用数 (Android 上的"窗口数") 超过词条的上限 (越过的那一下算一次). */
     fun windowCheck(n: Int): String {
         val (id, lim) = windowWatch()
         if (lim == 0 || id.isEmpty()) return ""
         return if (edge("win", n > lim)) id else ""
+    }
+
+    /** 离开专注时段: 通道阻塞的"越过"状态清掉, 下次专注重新算. */
+    fun windowReset() {
+        edge("win", false)
     }
 
     /** 禁止打开这一类应用 (BANS 之一) 的是哪个词条: 它自己; 不禁止时 "". */
