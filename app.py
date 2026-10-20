@@ -981,12 +981,15 @@ class BreakTimerApp:
         self._sync_prestart_button()
 
     def _sync_prestart_button(self):
-        """提前启动按钮: 专注中、还没选过时显示; 选过 / 不在专注时藏起来."""
+        """提前启动按钮: 专注中显示; 选过以后在操作空窗期里变成"提前终止"."""
         btn = getattr(self, "btn_prestart", None)
         if btn is None:
             return
         try:
-            show = self.state == RUNNING and not self.prestart.chosen
+            show = self.state == RUNNING and (not self.prestart.chosen or self.prestart.in_grace)
+            text = tr("⏹  提前终止") if self.prestart.in_grace else tr("⏩  提前启动")
+            if btn.cget("text") != text:
+                btn.config(text=text)
             if show and not btn.winfo_ismapped():
                 try:
                     btn.pack(side="left", ipadx=6, padx=(18, 0), before=self.lbl_bonus)
@@ -1000,8 +1003,15 @@ class BreakTimerApp:
     # ---- 提前启动 (仅 PC, MECHANICS 20) ----
 
     def _prestart_click(self):
-        """专注中点"提前启动": 扫一遍程序, 弹窗选至多两个."""
-        if self.state != RUNNING or self.prestart.chosen:
+        """专注中点"提前启动": 扫一遍程序, 弹窗选至多两个; 空窗期里点它就是"提前终止"."""
+        if self.state != RUNNING:
+            return
+        if self.prestart.in_grace:                   # 操作空窗期: 提前终止, 马上藏 + 静音
+            self.prestart.terminate()
+            toast.info(tr("提前终止: 现在就藏起来并静音."))
+            self._sync_prestart_button()
+            return
+        if self.prestart.chosen:
             return
         win = getattr(self, "_prestart_win", None)
         try:
@@ -1023,12 +1033,12 @@ class BreakTimerApp:
                                            limit=prestart.MAX_APPS)
 
     def _prestart_chosen(self, items):
-        """选好了: 启动 (没在跑的), 藏窗口, 静音. 选完按钮就藏起来, 这次专注不能再改."""
+        """选好了: 启动 (没在跑的), 进入 3 分钟的操作空窗期; 空窗期过了才藏窗口 / 静音."""
         if not items or self.state != RUNNING:
             return
         failed = self.prestart.start(items)
         names = "、".join(str(i.get("name") or i.get("exe")) for i in items)
-        msg = tr("提前启动: {names}. 窗口藏起来了, 静音; 结束专注时放出来.", names=names)
+        msg = tr("提前启动: {names}. 3 分钟内可以先操作, 之后窗口藏起来、静音.", names=names)
         if failed:
             msg += "\n" + tr("打不开: {names}", names="、".join(failed))
         toast.info(msg, timeout=8000)
@@ -1036,7 +1046,7 @@ class BreakTimerApp:
         self._sync_timer_buttons()
 
     def _prestart_tick(self):
-        """每秒: 跟着这些进程 (含子进程) 藏窗口 / 静音; 专注结束就全部放出来."""
+        """每秒: 跟着这些进程 (含子进程); 空窗期过了 (或提前终止) 就藏窗口 / 静音; 专注结束就放出来."""
         if self.shutting_down:
             return
         if self.prestart.active and self.state != RUNNING:
@@ -1048,6 +1058,7 @@ class BreakTimerApp:
             except Exception as e:
                 self._log_window(f"ERROR    prestart {type(e).__name__}: {e}")
         self._sync_prestart_exempt()
+        self._sync_prestart_button()
         self.prestart_job = self.root.after(1000, self._prestart_tick)
 
     def _sync_prestart_exempt(self):

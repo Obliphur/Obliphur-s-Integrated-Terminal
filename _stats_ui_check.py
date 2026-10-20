@@ -159,6 +159,9 @@ assert len(rows) == VIOLATION_ROWS, len(rows)
 texts0 = [w.cget("text") for w in rows[0].winfo_children() if isinstance(w, tk.Label)]
 assert any("第 19 次" in t for t in texts0) and any("目标生命值" in t for t in texts0), texts0
 assert texts0[0].count(":") == 1, texts0          # 上面一行是时间
+# 滚动: 整条违规记录栏都能滚 (不只是右边的滚动条)
+assert page.violation_area.canvas.bind("<MouseWheel>")
+assert all(r.bind("<MouseWheel>") for r in rows), "每一行都要绑上滚轮"
 
 # 两个板块都不再有小字描述
 small = []

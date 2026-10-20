@@ -16,15 +16,25 @@ EN = {
     "取消": "Cancel",
     # ---- 提前启动 (仅 PC, MECHANICS 20) ----
     "⏩  提前启动": "⏩  Pre-start",
-    "挑至多 {n} 个程序: 现在就启动 (或接管已在运行的), 窗口藏起来、静音; 结束专注时再放出来.":
-        "Pick up to {n} programs: they start now (or are taken over if already running) with their windows hidden and muted; they're released when the focus ends.",
+    "⏹  提前终止": "⏹  End early",
+    "提前终止: 现在就藏起来并静音.": "Ended early: hiding and muting now.",
+    "挑至多 {n} 个程序: 点确定后有 3 分钟可以先操作, 之后窗口藏起来、静音; 结束专注时再放出来.":
+        "Pick up to {n} programs: after OK you get 3 minutes to set them up, then their windows are hidden and muted; released when the focus ends.",
     "搜索": "Search",
+    "📂  打开文件管理器": "📂  Open File Explorer",
+    "打开文件管理器查找程序": "Find a program",
+    "程序": "Programs",
+    "快捷方式": "Shortcuts",
+    "所有文件": "All files",
+    "不是正常的程序": "Not a normal program",
+    "这个文件不能提前启动: {p}": "This file can't be pre-started: {p}",
+    "没有匹配的程序.": "No matching programs.",
     "已选 {n}/{m}": "{n}/{m} selected",
     "正在运行": "running",
     "扫描程序失败: {e}": "Scanning for programs failed: {e}",
     "没有找到可以提前启动的程序.": "No pre-startable programs were found.",
-    "提前启动: {names}. 窗口藏起来了, 静音; 结束专注时放出来.":
-        "Pre-started: {names}. Windows hidden and muted; released when the focus ends.",
+    "提前启动: {names}. 3 分钟内可以先操作, 之后窗口藏起来、静音.":
+        "Pre-started: {names}. You have 3 minutes to set them up; after that their windows are hidden and muted.",
     "打不开: {names}": "Couldn't open: {names}",
     "当前": "Current",
     "立即生效中…": "applying…",

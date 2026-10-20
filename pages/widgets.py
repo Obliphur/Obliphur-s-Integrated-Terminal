@@ -74,19 +74,22 @@ class ScrollArea(tk.Frame):
             "<Configure>",
             lambda e: self.canvas.itemconfig(self._win, width=e.width)
         )
-        self._wheel_bound = set()
+        self._wheel_bound = set()       # 兼容: 以前按 winfo_id 记绑定, 现在用控件上的 _oit_wheel
         self.bind_children()
         self.canvas.bind("<MouseWheel>", self._wheel)
 
     def bind_children(self):
+        """给 inner 里现有的所有控件绑上滚轮 (动态加进来的控件要再调一次).
+
+        标记放在控件对象上而不是 winfo_id(): 控件销毁重建时 id 可能会被重用,
+        那样新控件就绑不上了 (提前启动的清单每次点都重画)."""
         def walk(w):
-            try:
-                key = w.winfo_id()
-            except Exception:
-                return
-            if key not in self._wheel_bound:
-                self._wheel_bound.add(key)
-                w.bind("<MouseWheel>", self._wheel, add="+")
+            if not getattr(w, "_oit_wheel", False):
+                try:
+                    w.bind("<MouseWheel>", self._wheel, add="+")
+                    w._oit_wheel = True
+                except Exception:
+                    return
             for c in w.winfo_children():
                 walk(c)
         walk(self.inner)

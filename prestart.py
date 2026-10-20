@@ -11,17 +11,22 @@
   · 把它们自己的音频会话静音 (audiomute.py), 不动别的程序.
 - 结束专注: 藏起来的窗口全部显示出来 (不抢焦点), 取消静音.
 
+选好程序以后先有 GRACE_SECONDS (3 分钟) 的**操作空窗期**: 程序照常显示、不静音, 方便先登录 / 下载;
+这期间 Timer 页的按钮变成"提前终止", 点它或者等空窗期结束, 才开始藏窗口 / 静音.
+
     python prestart.py            自检 (不启动、不碰真实窗口, 只测挑程序和进程树)
 """
 
 import os
 import sys
+import time
 
 import audiomute
 import window_guard
 
 
 MAX_APPS = 2                     # 一次专注最多提前启动几个程序
+GRACE_SECONDS = 180.0            # 选好以后的"操作空窗期": 这么多秒内程序照常显示, 之后才藏 / 静音
 
 
 def _clean(name: str) -> str:
@@ -167,6 +172,29 @@ def scan_programs() -> list:
     return out
 
 
+def program_from_path(path: str):
+    """从文件管理器里挑的程序 (.exe / .lnk) → {"name", "exe", "launch", "running"}.
+
+    同样要过"正常程序"的过滤 (安装器 / 卸载器 / 系统工具之类返回 None)."""
+    path = str(path or "").strip()
+    if not path or not os.path.isfile(path):
+        return None
+    low = path.lower()
+    base = os.path.basename(path)
+    if low.endswith(".lnk"):
+        exe = _exe_of_link(path)
+        if not exe:
+            return None
+    elif low.endswith(".exe"):
+        exe = base.lower()
+    else:
+        return None
+    name = _clean(os.path.splitext(base)[0])
+    if not name or not _normal(name, exe):
+        return None
+    return {"name": name, "exe": exe, "launch": path, "running": exe in _running_exes()}
+
+
 def descendants(pids, procs=None) -> set:
     """pids 以及它们派生出来的子进程 (启动器 → 游戏这种)."""
     procs = window_guard.list_processes_full() if procs is None else procs
@@ -182,26 +210,39 @@ def descendants(pids, procs=None) -> set:
 
 
 class Prestart:
-    """一次专注的"提前启动": 启动、藏窗口、静音; 专注结束时全部放出来."""
+    """一次专注的"提前启动": 启动、藏窗口、静音; 专注结束时全部放出来.
+
+    MECHANICS 20: 选好以后先有 GRACE_SECONDS 的**操作空窗期** (程序照常显示、不出声地跑着),
+    这期间按钮是"提前终止"; 点它或者等空窗期结束, 才开始藏窗口 / 静音.
+    """
 
     def __init__(self):
         self.items = []          # 选中的程序 {"name", "exe", "launch", "running"}
         self.active = False
         self.pids = set()        # 跟踪的进程 (含子进程)
         self.hidden = set()      # 藏起来的窗口
+        self.phase = ""          # "" 没开始 / "grace" 操作空窗期 / "active" 藏窗口 + 静音
+        self.grace_until = 0.0   # 操作空窗期结束的时刻 (monotonic)
         self._exes = set()
 
     @property
     def chosen(self) -> bool:
-        """这次专注已经选过了 (按钮要藏起来, 不可更改)."""
+        """这次专注已经选过了 (不能再改选)."""
         return bool(self.items)
 
+    @property
+    def in_grace(self) -> bool:
+        """还在操作空窗期 (程序还没被藏起来 / 静音)."""
+        return self.active and self.phase == "grace"
+
     def start(self, items) -> list:
-        """开始: 没在运行的程序启动它, 然后马上藏窗口 + 静音. 返回启动失败的名字."""
+        """开始: 没在运行的程序启动它, 进入 GRACE_SECONDS 的操作空窗期. 返回启动失败的名字."""
         self.items = [dict(it) for it in (items or [])][:MAX_APPS]
         self.active = True
         self.pids = set()
         self.hidden = set()
+        self.phase = "grace"
+        self.grace_until = time.monotonic() + GRACE_SECONDS
         self._exes = {str(it.get("exe") or "").lower() for it in self.items if it.get("exe")}
         failed = []
         for it in self.items:
@@ -211,8 +252,15 @@ class Prestart:
                 os.startfile(it["launch"])
             except OSError:
                 failed.append(str(it.get("name") or it.get("exe") or "?"))
-        self.step()
+        self.step()                  # 空窗期里只认进程, 不藏窗口
         return failed
+
+    def terminate(self):
+        """提前终止操作空窗期: 立刻开始藏窗口 / 静音."""
+        if self.active and self.phase == "grace":
+            self.grace_until = 0.0
+            self.phase = "active"
+            self.step()
 
     def exe_names(self) -> set:
         """跟踪的进程 (含子进程) 的 exe 名: 网络名单放行它们用 (MECHANICS 20).
@@ -226,7 +274,7 @@ class Prestart:
         return {exe for pid, _ppid, exe in procs if pid in self.pids}
 
     def step(self):
-        """每秒调一次: 找进程 (含新出现的子进程), 藏窗口, 静音."""
+        """每秒调一次: 找进程 (含新出现的子进程); 空窗期过了才藏窗口, 静音."""
         if not self.active:
             return
         try:
@@ -237,6 +285,10 @@ class Prestart:
         pids = descendants(pids, procs)
         pids.discard(os.getpid())
         self.pids = pids
+        if self.phase == "grace":
+            if time.monotonic() < self.grace_until:
+                return                   # 操作空窗期: 什么都不藏、不静音
+            self.phase = "active"
         try:
             for w in window_guard.list_top_windows():
                 hwnd = w.get("hwnd")
@@ -257,6 +309,8 @@ class Prestart:
     def stop(self):
         """结束专注: 显示藏起来的窗口 (不抢焦点), 取消静音."""
         self.active = False
+        self.phase = ""
+        self.grace_until = 0.0
         for hwnd in list(self.hidden):
             try:
                 if window_guard.window_alive(hwnd):

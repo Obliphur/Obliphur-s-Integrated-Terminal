@@ -499,6 +499,7 @@ class StatsPage(tk.Frame):
             tk.Label(self.violation_rows, text=tr("还没有违规记录."), bg=card,
                      fg=COLORS["text_dim"], font=config.font("body"), anchor="w").pack(
                 anchor="w", padx=8, pady=8)
+            self.violation_area.bind_children()      # 整条栏都能滚
             return
         for at, text in data:
             row = tk.Frame(self.violation_rows, bg=card,
@@ -511,6 +512,7 @@ class StatsPage(tk.Frame):
             lbl.pack(fill="x", padx=14, pady=(2, 8))
             row.bind("<Configure>",
                      lambda e, l=lbl: l.config(wraplength=max(config.scaled(200), e.width - config.scaled(40))))
+        self.violation_area.bind_children()          # 整条栏都能滚 (不只是右边那一条滚动条)
 
     def _draw_column(self, col, title: str, data: dict):
         pct_mode = self.mode[self.page] == "pct"
