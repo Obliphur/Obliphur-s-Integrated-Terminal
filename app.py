@@ -3840,9 +3840,8 @@ class BreakTimerApp:
             bits.append(tr("今天的联网倍率 ×{m}: 每日额度 {base} → 今天 {quota}").format(
                 m=f"{mult:g}", base=fmt_hm(float(config.DAILY_LIMIT)), quota=fmt_hm(n.limit)))
         if abs(n.outing_factor - 1.0) > 1e-9:
-            bits.append(tr("外出: 今天的联网额度 ×{f} (每日额度 {base} → 今天 {quota})").format(
-                f=f"{n.outing_factor:g}", base=fmt_hm(float(config.DAILY_LIMIT)),
-                quota=fmt_hm(n.limit)))
+            bits.append(tr("外出: 今天只能用总额度的 {p}% (总额度 {full} → 能用 {total})").format(
+                p=f"{n.outing_factor * 100:g}", full=fmt_hm(n.full_total), total=fmt_hm(n.today_total)))
         if n.outing_cooldown < 1.0:
             bits.append(tr("外出中: 联网冷静期 ×{f}").format(f=f"{n.outing_cooldown:g}"))
         if n.bonus_all > 0:

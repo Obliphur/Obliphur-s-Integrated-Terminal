@@ -349,6 +349,24 @@ class CoreTest {
         assertTrue(ban().isEmpty())
     }
 
+    /** 外出的日子只能用总额度 (每日额度 + 借到的 + 合约奖励) 的 20% (MECHANICS 21.4). */
+    @Test
+    fun outingUsesTwentyPercentOfTotal() {
+        val core = Core(tmp(), NoHost) { 0.0 }
+        val n = core.net
+        val base = n.limit
+        n.bonus = 1800.0; n.gift = 600.0; n.used = 300.0; n.debt = 0.0
+        n.quotaFactor = { 0.2 }
+        assertEquals(base, n.limit, 1e-6)                          // 每日额度本身不打折
+        assertEquals(base + 2400.0, n.fullTotal, 1e-6)
+        assertEquals((base + 2400.0) * 0.2, n.todayTotal, 1e-6)
+        assertEquals((base + 2400.0) * 0.2 - 300.0, n.remaining, 1e-6)
+        n.used = 1e6
+        assertEquals(0.0, n.remaining, 0.0)                        // 外出前已经用掉的照常算
+        n.quotaFactor = { 1.0 }
+        assertEquals(base + 2400.0, n.todayTotal, 1e-6)
+    }
+
     /** 每日联网额度填 325799 = 开 / 关开发者模式: 不是真的修改, 不排队. */
     @Test
     fun devToggle() {

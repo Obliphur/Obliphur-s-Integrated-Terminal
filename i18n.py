@@ -394,8 +394,8 @@ EN = {
     "请先结束专注 / 休息再外出.": "Finish focusing / the break before going out.",
     "请先结束外出再开始合约.": "End the outing before starting a contract.",
     "请先结束外出再开始合约": "End the outing before starting a contract.",
-    "外出: 今天的联网额度 ×{f} (每日额度 {base} → 今天 {quota})":
-        "Outing: today's network quota ×{f} (daily quota {base} → today {quota})",
+    "外出: 今天只能用总额度的 {p}% (总额度 {full} → 能用 {total})":
+        "Outing: only {p}% of today's total quota can be used (total {full} → usable {total})",
     "外出中: 联网冷静期 ×{f}": "Out: network cooldown ×{f}",
     "当前行为模式没有外出.": "The current behavior mode has no outings.",
     "持续时间必须是整数小时.": "The duration must be a whole number of hours.",

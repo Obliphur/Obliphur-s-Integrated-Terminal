@@ -81,13 +81,13 @@ class NetGuard:
 
     @property
     def limit(self) -> float:
-        """今天的每日额度 = DAILY_LIMIT × 今天(星期几)的倍率 × 行为模式的外出倍率."""
-        return config.daily_quota(self._day()) * self._quota_factor(self._day())
+        """今天的每日额度 = DAILY_LIMIT × 今天(星期几)的倍率. 外出的 20% 不在这里, 见 today_total."""
+        return config.daily_quota(self._day())
 
     @property
     def tomorrow_limit(self) -> float:
         """明天的每日额度, 按明天是星期几算 (紧急借贷借的是它)."""
-        return config.daily_quota(self._day(1)) * self._quota_factor(self._day(1))
+        return config.daily_quota(self._day(1))
 
     def _quota_factor(self, day) -> float:
         try:
@@ -103,7 +103,7 @@ class NetGuard:
 
     @property
     def outing_factor(self) -> float:
-        """今天的额度因为外出变成多少 (1.0 = 没有打折)."""
+        """外出的日子今天的总额度只能用几成 (1.0 = 没有限制)."""
         return self._quota_factor(self._day())
 
     @property
@@ -158,9 +158,14 @@ class NetGuard:
         return self.used + self._pn()["used"]
 
     @property
-    def today_total(self) -> float:
+    def full_total(self) -> float:
         """今天的总额度 = 每日额度 + 今天借到的 + 今天合约奖励的."""
         return self.limit + self.bonus_all + self.gift_all
+
+    @property
+    def today_total(self) -> float:
+        """今天能用的额度: 有外出的日子只能用总额度的 20% (MECHANICS 21.4), 平时就是总额度."""
+        return self.full_total * self._quota_factor(self._day())
 
     @property
     def remaining(self) -> float:

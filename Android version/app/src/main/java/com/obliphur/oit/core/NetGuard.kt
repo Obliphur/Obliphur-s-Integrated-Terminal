@@ -71,10 +71,11 @@ class NetGuard(
     private fun cf(now: LocalDateTime = LocalDateTime.now()): Double =
         runCatching { maxOf(0.0, cooldownFactor(now)) }.getOrDefault(1.0)
 
-    val limit get() = settings.dailyQuota(day()) * qf(day())
-    val tomorrowLimit get() = settings.dailyQuota(day(1)) * qf(day(1))
+    /** 今天的每日额度 (× 星期倍率). 外出的 20% 不在这里, 见 todayTotal. */
+    val limit get() = settings.dailyQuota(day())
+    val tomorrowLimit get() = settings.dailyQuota(day(1))
     val quotaMultiplier get() = settings.quotaMultiplier(day())
-    /** 今天的额度因为外出变成多少 (1.0 = 没有打折). */
+    /** 外出的日子今天的总额度只能用几成 (1.0 = 没有限制). */
     val outingFactor get() = qf(day())
     /** 现在的联网冷静期因为外出变成多少. */
     val outingCooldown get() = cf()
@@ -91,7 +92,10 @@ class NetGuard(
     val debtAll get() = debt + peerNet()[3]
     val giftAll get() = gift + peerNet().let { if (it.size > 4) it[4] else 0.0 }
 
-    val todayTotal get() = limit + bonusAll + giftAll
+    /** 今天的总额度 = 每日额度 + 今天借到的 + 今天合约奖励的. */
+    val fullTotal get() = limit + bonusAll + giftAll
+    /** 今天能用的额度: 有外出的日子只能用总额度的 20% (MECHANICS 21.4), 平时就是总额度. */
+    val todayTotal get() = fullTotal * qf(day())
     val remaining get() = maxOf(0.0, todayTotal - usedAll - debtAll)
     val tomorrowRemaining get() = maxOf(0.0, tomorrowLimit - tomorrowUsedAll)
     val quickLeft get() = remaining / quickMult

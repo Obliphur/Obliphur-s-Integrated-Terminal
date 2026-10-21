@@ -53,7 +53,7 @@ try:
     assert b.stop(datetime(2026, 10, 19, 14, 0), can_reward=True)["reward"] == 0
     assert abs(dm._study_all("2026-10-19") - 3.2) < 1e-9
 
-    # 联网额度: 有外出的日子 ×0.2 (NetGuard 每次用时现读)
+    # 联网额度: 有外出的日子只能用总额度 (每日额度 + 借到的 + 合约奖励) 的 20% (NetGuard 每次用时现读)
     from net_guard import NetGuard
     keep_limit = config.DAILY_LIMIT
     config.DAILY_LIMIT = 3600
@@ -63,8 +63,15 @@ try:
         ng.date = "2026-10-19"
         ng.quota_factor = b.quota_factor
         ng.cooldown_factor = b.cooldown_factor
-        assert abs(ng.limit - 720) < 1e-6, ng.limit
+        ng.bonus, ng.gift, ng.used, ng.debt = 1800.0, 600.0, 300.0, 0.0
+        assert abs(ng.limit - 3600) < 1e-6, ng.limit
         assert abs(ng.outing_factor - 0.2) < 1e-9
+        assert abs(ng.full_total - 6000) < 1e-6 and abs(ng.today_total - 1200) < 1e-6, ng.today_total
+        assert abs(ng.remaining - 900) < 1e-6, ng.remaining
+        ng.used = 1500.0
+        assert ng.remaining == 0.0, "外出前已经用掉的照常算"
+        ng.quota_factor = lambda day: 1.0
+        assert abs(ng.today_total - 6000) < 1e-6
     finally:
         config.DAILY_LIMIT = keep_limit
 

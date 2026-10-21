@@ -213,8 +213,8 @@ fun NetScreen() {
             val mult = n.quotaMultiplier
             if (kotlin.math.abs(mult - 1.0) > 1e-9) bits.add(tr("今天的联网倍率 ×{m}: 每日额度 {base} → 今天 {quota}",
                 "m" to numText(mult), "base" to fmtHm(core.settings.num("DAILY_LIMIT")), "quota" to fmtHm(n.limit)))
-            if (kotlin.math.abs(n.outingFactor - 1.0) > 1e-9) bits.add(tr("外出: 今天的联网额度 ×{f} (每日额度 {base} → 今天 {quota})",
-                "f" to numText(n.outingFactor), "base" to fmtHm(core.settings.num("DAILY_LIMIT")), "quota" to fmtHm(n.limit)))
+            if (kotlin.math.abs(n.outingFactor - 1.0) > 1e-9) bits.add(tr("外出: 今天只能用总额度的 {p}% (总额度 {full} → 能用 {total})",
+                "p" to numText(n.outingFactor * 100), "full" to fmtHm(n.fullTotal), "total" to fmtHm(n.todayTotal)))
             if (n.outingCooldown < 1.0) bits.add(tr("外出中: 联网冷静期 ×{f}", "f" to numText(n.outingCooldown)))
             if (n.bonusAll > 0) bits.add(tr("今天已借 {bonus},明天将扣 {cost}(明天剩余 {left})",
                 "bonus" to fmtHm(n.bonusAll), "cost" to fmtHm(n.tomorrowUsedAll), "left" to fmtHm(n.tomorrowRemaining)))
