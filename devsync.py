@@ -36,6 +36,7 @@ import queue
 import re
 import secrets
 import socket
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -50,6 +51,9 @@ OFFLINE_MS = (SYNC_EVERY + 5) * 1000
 UNBIND_WAIT_MS = 24 * 3600 * 1000       # 解除全部绑定要等这么久 (期间可以取消)
 WIPES_KEEP = 50                         # 记住最近这么多个处理过的清空请求
 OFFLINE_FWD_MS = (2 * SYNC_EVERY + 5) * 1000
+# 关机 (MECHANICS 15.4): 一台设备最后发来的状态写着"收到关机指令" (off), 或者电量低于这么多 (%, 没在充电) 时突然离线,
+# 算作"关机": 效果和在线一样 (不算离线, 专注不记空闲, 合约不因它失败), 只是不同步. 重新同步上就恢复正常.
+LOW_BATTERY = 2
 UPDATE_MAX = 160 * 1024 * 1024    # 设备之间直接传的安装包最大多少
 OFFER_TTL = 1800                  # 秒: 发出的安装包多久之内可以来取
 # 没有绑定、只是别的设备转交过来的设备, 这么久没有新消息就不再显示, 也不再算"离线" (它多半已经卸载了)
@@ -1216,10 +1220,11 @@ class SyncService:
         return True
 
     def device_states(self) -> list:
-        """其他设备此刻的状态 (绑定的, 和转交过来的): [{id, name, online, timer, net, since, seen, version, outdated}].
+        """其他设备此刻的状态 (绑定的, 和转交过来的): [{id, name, online, off, timer, net, since, seen, version, outdated}].
         online: 绑定的设备 —— 最近一次同步没有失败, 而且 OFFLINE_MS 之内有它的消息, 版本也不比本机低
                 (outdated: 版本比本机低, 算离线);
-                转交过来的设备 —— OFFLINE_FWD_MS 之内有它的消息."""
+                转交过来的设备 —— OFFLINE_FWD_MS 之内有它的消息.
+        off: 关机 —— 连不上了, 但它最后的状态是收到关机指令 / 电量低于 LOW_BATTERY%; 这时 online 也是 True (效果和在线一样)."""
         now = _now_ms()
         mine = _vtuple(_call(self.local, "app_version", ""))
         if self._prune_forwarded(now):
@@ -1240,7 +1245,8 @@ class SyncService:
                     online = not p.get("last_err") and now - seen < OFFLINE_MS and not old
                 else:
                     online = now - seen < OFFLINE_FWD_MS
-                out.append({"id": i, "name": str(name), "online": online,
+                off = not online and not old and went_off(st)
+                out.append({"id": i, "name": str(name), "online": online or off, "off": off,
                             "timer": st.get("timer") or "idle", "net": st.get("net") or "",
                             "since": st.get("since"), "seen": seen, "version": ver, "outdated": old})
         return sorted(out, key=lambda d: d["name"])
@@ -1310,6 +1316,40 @@ class SyncService:
         with self.lock:
             return [dict(v, id=k, name=(self.state["ledgers"].get(k) or {}).get("name", "?"))
                     for k, v in self.state["status"].items() if k != self.my_id]
+
+
+def went_off(st: dict) -> bool:
+    """这台设备最后发来的状态: 收到了关机指令, 或者电量低于 LOW_BATTERY% (没在充电)."""
+    if not isinstance(st, dict):
+        return False
+    if st.get("off"):
+        return True
+    try:
+        b = st.get("battery")
+        return b is not None and float(b) < LOW_BATTERY
+    except (TypeError, ValueError):
+        return False
+
+
+def battery_percent():
+    """本机电量 (%, 只在用电池供电时); 台式机 / 插着电 / 查不到时 None."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+
+        class _SPS(ctypes.Structure):
+            _fields_ = [("ACLineStatus", ctypes.c_ubyte), ("BatteryFlag", ctypes.c_ubyte),
+                        ("BatteryLifePercent", ctypes.c_ubyte), ("SystemStatusFlag", ctypes.c_ubyte),
+                        ("BatteryLifeTime", ctypes.c_ulong), ("BatteryFullLifeTime", ctypes.c_ulong)]
+        s = _SPS()
+        if not ctypes.windll.kernel32.GetSystemPowerStatus(ctypes.byref(s)):
+            return None
+        if s.ACLineStatus != 0 or s.BatteryFlag & 128 or s.BatteryLifePercent > 100:
+            return None                   # 插着电 / 没有电池 / 不知道
+        return int(s.BatteryLifePercent)
+    except Exception:
+        return None
 
 
 def _ipv4_nets() -> list:
@@ -1852,6 +1892,24 @@ def _selftest():
         spans = sc.offline_spans(t0 - 20 * 60_000, t0 + 60_000)
         assert spans == [(t0 - 10 * 60_000, t0 - 1000)], spans
         assert sc.offline_spans(t0, t0 + 60_000) == [], "重新上线之后不算离线"
+        # 关机 (MECHANICS 15.4): 最后的状态是收到关机指令 / 电量低于 2% 时突然离线 → 关机, 效果和在线一样
+        sc.state["peers"]["pY"]["last_err"] = "timeout"
+        sc.state["status"]["pY"] = {"ts": t0 - 60_000, "timer": "running", "battery": 1}
+        st = {d["id"]: d for d in sc.device_states()}["pY"]
+        assert st["online"] and st["off"], st
+        sc.state["status"]["pY"]["battery"] = 2
+        st = {d["id"]: d for d in sc.device_states()}["pY"]
+        assert not st["online"] and not st["off"], "电量 2% 不算"
+        sc.state["status"]["pY"]["off"] = True
+        assert {d["id"]: d for d in sc.device_states()}["pY"]["off"]
+        sc.state["peers"]["pY"]["version"] = "0.9.9"
+        st = {d["id"]: d for d in sc.device_states()}["pY"]
+        assert not st["online"] and not st["off"], "版本低的照样算离线"
+        sc.state["peers"]["pY"].pop("version")
+        sc.state["peers"]["pY"]["last_err"] = ""
+        sc.state["status"]["pY"] = {"ts": t0, "timer": "idle"}
+        assert went_off({"off": True}) and went_off({"battery": 0}) and not went_off({"battery": None})
+        assert not went_off({}) and not went_off(None)
         # 转交过来的设备一天没有消息: 不再显示
         sc.state["status"]["dX"]["ts"] = t0 - STALE_FWD_MS - 1000
         assert "dX" not in {d["id"] for d in sc.device_states()} and "dX" in sc.state["gone"]

@@ -18,6 +18,19 @@ import java.nio.file.Files
 import java.util.concurrent.Executors
 
 class SyncTest {
+    /** 关机 (MECHANICS 15.4): 最后的状态写着收到关机指令, 或者电量低于 2% (同 devsync.went_off). */
+    @Test
+    fun wentOffMatchesDesktop() {
+        val w = { st: JSONObject? -> SyncService.wentOff(st) }
+        assertTrue(w(JSONObject().put("off", true)))
+        assertTrue(w(JSONObject().put("battery", 1)))
+        assertTrue(w(JSONObject().put("battery", 0)))
+        assertFalse(w(JSONObject().put("battery", 2)))
+        assertFalse(w(JSONObject().put("timer", "idle")))
+        assertFalse(w(JSONObject().put("battery", JSONObject.NULL)))
+        assertFalse(w(null))
+    }
+
     @Test
     fun cryptoMatchesDesktop() {
         // 和 devsync.py 自检里的固定输入 / 输出一样: 两端算法逐字节一致

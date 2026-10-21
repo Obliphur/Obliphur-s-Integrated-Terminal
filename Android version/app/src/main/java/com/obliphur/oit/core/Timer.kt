@@ -363,7 +363,9 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         // owner: 重开时原样恢复, 同步的计时器状态才不会因为"主人变了"被当成新的改动 (盖掉其他设备更新的状态)
         val f = if (state == TState.RUNNING && startWall != null) JSONObject()
             .put("start", startWall!!.iso()).put("alive", LocalDateTime.now().iso())
-            .put("checks", focusChecks).put("ok", focusOk.toLong()).put("owner", owner) else JSONObject.NULL
+            .put("checks", focusChecks).put("ok", focusOk.toLong()).put("owner", owner)
+            // 关机 / 电量很低: 重新打开时不把关着的这段记成空闲, 跟着其他设备 (MECHANICS 15.4)
+            .put("off", runCatching { core.wentOff() }.getOrDefault(false)) else JSONObject.NULL
         d.put("focus", f)
         // Android: 休息也写进文件, 进程被系统回收后照样接着倒计时
         val b = if (state == TState.ON_BREAK && breakStartWall != null) JSONObject()
@@ -504,10 +506,12 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         owner = rec.optString("owner")
         if (core.hasPeers() && secondsBetween(alive, now) > Cfg.CLOSED_GAP) {
             // 绑定了其他设备, 共享的专注中 OIT 被关掉了: 关掉的这段记为空闲 (总统计里优先级最高),
-            // 专注照常恢复, 等第一次同步看其他设备是不是已经结束了它, 没有就由本机终止 (checkClosePending)
-            dm.addFocusSession("idle", alive, now, start)
+            // 专注照常恢复, 等第一次同步看其他设备是不是已经结束了它, 没有就由本机终止 (checkClosePending).
+            // 本机是关机 / 没电了 (MECHANICS 15.4): 其他设备把本机算作在线, 这段不记空闲; 同步上了就跟着它们
+            val off = rec.optBoolean("off")
+            if (!off) dm.addFocusSession("idle", alive, now, start)
             enterFocus(start, mono() - secondsBetween(start, now), checks, ok)
-            closePending = ClosePending(start, alive, mono(), System.currentTimeMillis())
+            closePending = ClosePending(start, alive, mono(), System.currentTimeMillis(), off, now)
             return
         }
         if (secondsBetween(alive, now) <= Cfg.FOCUS_RESUME_GAP) {
@@ -571,7 +575,8 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         checkId = null
     }
 
-    private class ClosePending(val start: LocalDateTime, val alive: LocalDateTime, val mono: Double, val ms: Long)
+    private class ClosePending(val start: LocalDateTime, val alive: LocalDateTime, val mono: Double, val ms: Long,
+                               val off: Boolean = false, val reopened: LocalDateTime = alive)
     private var closePending: ClosePending? = null
 
     /** 上次在共享的专注中 OIT 被关掉了 (recover): 第一次同步之后 (最多等 CLOSED_DECIDE_WAIT 秒),
@@ -581,6 +586,15 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         if (!core.syncedSince(p.ms) && mono() - p.mono < Cfg.CLOSED_DECIDE_WAIT) return
         closePending = null
         if (state != TState.RUNNING || startWall != p.start) return   // 其他设备已经结束了这段专注
+        if (p.off) {
+            if (core.syncedSince(p.ms)) {
+                // 关机期间其他设备把本机算作在线, 共享的专注照常进行: 接着计时
+                core.toast(tr("关机期间共享的专注照常进行, 已接着计时."), "info", long = true)
+                return
+            }
+            // 没能和任何设备同步上: 和普通的被关掉一样, 关着的那段记为空闲, 专注终止
+            dm.addFocusSession("idle", p.alive, p.reopened, p.start)
+        }
         var sec = secondsBetween(p.start, p.alive)
         val limit = Cfg.FOCUS_CHECK_EVERY * (focusChecks + 1) + Cfg.FOCUS_CHECK_GRACE
         val penalized = sec >= limit

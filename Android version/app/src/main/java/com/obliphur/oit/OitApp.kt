@@ -62,6 +62,43 @@ class OitApp : Application(), Host {
         core.start()
         wipedNotice()
         CoreService.start(this)
+        listenShutdown()
+    }
+
+    /** 收到了系统的关机指令 (MECHANICS 15.4). */
+    @Volatile var powerOff = false
+        private set
+
+    /** 本机电量 (%, 只在没充电时); 查不到 / 正在充电时 null. */
+    fun battery(): Int? = runCatching {
+        val bm = getSystemService(android.os.BatteryManager::class.java) ?: return null
+        if (bm.isCharging) return null
+        bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY).takeIf { it in 0..100 }
+    }.getOrNull()
+
+    /** 关机 (包括电量耗尽时的自动关机): 存下专注状态 (记上"关机"), 和绑定的设备同步一轮, 让它们把本机算作"关机" ——
+     *  效果和在线一样, 不会因为本机离线把专注记成空闲 / 让合约失败. 同步要用界面线程, 所以在后台线程里等. */
+    private fun listenShutdown() {
+        val f = android.content.IntentFilter(android.content.Intent.ACTION_SHUTDOWN).apply {
+            addAction("android.intent.action.QUICKBOOT_POWEROFF")          // 部分厂商的快速关机
+            addAction("com.htc.intent.action.QUICKBOOT_POWEROFF")
+        }
+        val r = object : android.content.BroadcastReceiver() {
+            override fun onReceive(ctx: android.content.Context, intent: android.content.Intent) {
+                powerOff = true
+                runCatching { core.timer.saveNow() }
+                val s = sync ?: return
+                if (s.peers().isEmpty()) return
+                val pending = goAsync()
+                Thread {
+                    try { s.pushFinal(3000) } finally { pending.finish() }
+                }.apply { isDaemon = true }.start()
+            }
+        }
+        runCatching {
+            if (android.os.Build.VERSION.SDK_INT >= 33) registerReceiver(r, f, android.content.Context.RECEIVER_EXPORTED)
+            else registerReceiver(r, f)
+        }
     }
 
     private fun deviceName(): String =
@@ -84,6 +121,7 @@ class OitApp : Application(), Host {
         core.isLatestActive = { s.isLatestActive() }
         core.hasPeers = { s.peers().isNotEmpty() }
         core.syncedSince = { ms -> s.peers().values.any { it.optLong("last_ok") >= ms } }
+        core.wentOff = { powerOff || (battery()?.let { it < com.obliphur.oit.sync.SyncService.LOW_BATTERY } == true) }
         core.followsMother = { s.motherId()?.let { it != s.myId } == true }
         core.motherFresh = {
             val m = s.motherId()

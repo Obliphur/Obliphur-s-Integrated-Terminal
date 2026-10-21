@@ -128,6 +128,18 @@ class SyncService(
          *  比同步间隔多留 5 秒 (同步本身要花时间, 正好 10 秒会每一轮都闪一下"离线"); 只是转交过来的设备再多等一轮. 同 devsync.OFFLINE_MS. */
         const val OFFLINE_MS = SYNC_EVERY_MS + 5_000L
         const val OFFLINE_FWD_MS = 2 * SYNC_EVERY_MS + 5_000L
+        /** 关机 (MECHANICS 15.4): 一台设备最后发来的状态写着"收到关机指令" (off), 或者电量低于这么多 (%, 没在充电) 时突然离线,
+         *  算作"关机": 效果和在线一样 (不算离线, 专注不记空闲, 合约不因它失败), 只是不同步. 同 devsync.LOW_BATTERY. */
+        const val LOW_BATTERY = 2
+
+        /** 这台设备最后发来的状态: 收到了关机指令, 或者电量低于 LOW_BATTERY%. 同 devsync.went_off. */
+        fun wentOff(st: JSONObject?): Boolean {
+            if (st == null) return false
+            if (st.optBoolean("off")) return true
+            if (!st.has("battery") || st.isNull("battery")) return false
+            val b = st.optDouble("battery", Double.NaN)
+            return !b.isNaN() && b < LOW_BATTERY
+        }
         const val PAIR_TIMEOUT_MS = 120_000L
         /** 设置里每台设备各自决定的项, 不同步. */
         val LOCAL_SETTINGS = setOf("NET_MODE", "FILTER_MODE", "FONT_SCALE", "CHIME_WAV",
@@ -856,6 +868,15 @@ class SyncService(
         return true
     }
 
+    /** 收到关机指令 (MECHANICS 15.4): 和每台绑定的设备同步一轮 (子端平时不主动发), 让它们知道本机关机了.
+     *  在后台线程里调用 (同步要用界面线程拼内容), 最多等 timeoutMs. */
+    fun pushFinal(timeoutMs: Long = 3000) {
+        val ids = peers().filterValues { !it.optBoolean("init") }.keys.toList()
+        val threads = ids.map { id -> Thread { runCatching { syncWith(id) } }.apply { isDaemon = true; start() } }
+        val end = System.currentTimeMillis() + timeoutMs
+        for (t in threads) t.join(maxOf(1L, end - System.currentTimeMillis()))
+    }
+
     /** 重置 / 卸载前: 让每台绑定的设备解除绑定, 并删掉它们保留的本机的数据 (账, 状态);
      *  它们再转告各自绑定的设备 (见 gone). 在后台线程里调用, 最多等 timeoutMs. */
     fun forgetMe(timeoutMs: Int = 3000) {
@@ -1180,8 +1201,9 @@ class SyncService(
     }
 
     /** 其他设备此刻的状态: (设备 id, 名字, 状态). outdated: 版本比本机低, 算离线. */
+    /** off: 关机 (连不上了, 但它最后的状态是收到关机指令 / 电量很低); 这时 online 也是 true (效果和在线一样). */
     class DeviceState(val id: String, val name: String, val online: Boolean, val status: JSONObject, val seen: Long,
-                      val version: String = "", val outdated: Boolean = false)
+                      val version: String = "", val outdated: Boolean = false, val off: Boolean = false)
 
     /** 绑定的设备里版本和本机不一样的 (知道版本的): (名字, 版本, 是否比本机新). */
     fun versionMismatch(): List<Triple<String, String, Boolean>> = lock.withLock {
@@ -1226,10 +1248,14 @@ class SyncService(
                 val seen = maxOf(p.optLong("last_ok"), st.optLong("ts"))
                 val ver = p.optString("version")
                 val old = mine != null && vparse(ver)?.let { vnewer(mine, it) } == true    // 版本比本机低: 算离线
-                DeviceState(id, name, p.optString("last_err").isEmpty() && now - seen < OFFLINE_MS && !old, st, seen, ver, old)
+                val online = p.optString("last_err").isEmpty() && now - seen < OFFLINE_MS && !old
+                val off = !online && !old && wentOff(st)
+                DeviceState(id, name, online || off, st, seen, ver, old, off)
             } else {
                 val seen = st.optLong("ts")
-                DeviceState(id, name, now - seen < OFFLINE_FWD_MS, st, seen)
+                val online = now - seen < OFFLINE_FWD_MS
+                val off = !online && wentOff(st)
+                DeviceState(id, name, online || off, st, seen, off = off)
             }
         }.sortedBy { it.name }
     }

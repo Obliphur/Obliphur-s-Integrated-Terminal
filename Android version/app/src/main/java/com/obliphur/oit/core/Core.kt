@@ -113,6 +113,8 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     var devChangedHook: () -> Unit = {}
     /** 绑定的设备里有没有哪台在这个时刻 (毫秒) 之后同步成功过. */
     var syncedSince: (Long) -> Boolean = { false }
+    /** 本机这次停下来算不算关机: 收到了关机指令, 或者电量很低 (MECHANICS 15.4). */
+    var wentOff: () -> Boolean = { false }
 
     val notices = mutableListOf<Notice>()
     private var nextNoticeId = 1

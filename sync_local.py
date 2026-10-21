@@ -121,6 +121,12 @@ class PcLocal:
         from config import RUNNING, ON_BREAK
         a, n = self.app, self.app.net
         st = {"timer": "idle", "net": n.mode, "last_op": int(a.last_op)}
+        # 关机 (MECHANICS 15.4): 收到关机指令 / 电量很低时突然离线, 其他设备把本机算作"关机" (效果和在线一样)
+        if getattr(a, "power_off", False):
+            st["off"] = True
+        bat = getattr(a, "battery", None)
+        if bat is not None:
+            st["battery"] = int(bat)
         if a.state == RUNNING and a.start_wall:
             st.update(timer="running", since=a.start_wall.isoformat(timespec="seconds"))
         elif a.state == ON_BREAK:

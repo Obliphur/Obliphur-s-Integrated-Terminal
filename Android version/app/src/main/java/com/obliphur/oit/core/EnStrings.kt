@@ -533,6 +533,8 @@ object EnStrings {
         "合约中不能外出." to "You can't go out during a contract.",
         "合约进行中, 外出已结束." to "A contract is running, so the outing has ended.",
         "屏蔽社交应用的网络" to "social apps cut off",
+        "关机" to "Powered off",
+        "关机期间共享的专注照常进行, 已接着计时." to "The shared focus kept going while this device was off; timing resumed.",
         "请先结束专注 / 休息再外出." to "Finish focusing / the break before going out.",
         "请先结束外出再开始合约." to "End the outing before starting a contract.",
         "请先结束外出再开始合约" to "End the outing before starting a contract.",

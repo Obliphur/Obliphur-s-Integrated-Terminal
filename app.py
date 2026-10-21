@@ -170,6 +170,10 @@ class BreakTimerApp:
         self._focus_saved = 0.0       # 上一次把专注状态写进文件的时刻 (monotonic)
         # 绑定了其他设备, 上次在共享的专注中 OIT 被关掉了: 等第一次同步后决定要不要终止这段专注 (MECHANICS 8.2)
         self._close_pending = None
+        # 关机 (MECHANICS 15.4): 收到系统的关机指令 (power_off), 本机电量 (只在用电池时, 其他时候 None)
+        self.power_off = False
+        self.battery = None
+        self._battery_at = 0.0
         self._relaying = False        # 正在给其他设备下载 / 发送安装包
         self._relayed = set()         # (设备, 版本): 这次运行里已经发过的
         self._awake = False           # 正在阻止系统睡眠 (专注 / 休息中, 屏幕可以照常关掉)
@@ -293,7 +297,7 @@ class BreakTimerApp:
         self.root.bind_all("<KeyPress>", self._touch, add="+")
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         # 关机 / 注销时 Windows 会先通知窗口; 程序因异常退出时 atexit 也会跑. 都先存下专注状态
-        self.root.protocol("WM_SAVE_YOURSELF", self._save_focus_now)
+        self.root.protocol("WM_SAVE_YOURSELF", self._on_power_off)
         atexit.register(self._save_focus_now)
         self.var_confirm.trace_add("write", self._on_confirm_change)
         self._recover_focus()
@@ -1613,7 +1617,34 @@ class BreakTimerApp:
                 "checks": int(self._focus_checks),
                 "ok": int(self._focus_ok),
                 # 重开时原样恢复, 同步的计时器状态才不会因为"主人变了"被当成新的改动 (盖掉其他设备更新的状态)
-                "owner": self.timer_owner}
+                "owner": self.timer_owner,
+                # 关机 / 电量很低: 重新打开时不把关着的这段记成空闲, 跟着其他设备 (MECHANICS 15.4)
+                "off": bool(self._went_off())}
+
+    def _on_power_off(self):
+        """Windows 要关机 / 注销了 (MECHANICS 15.4): 存下专注状态 (记上"关机"), 告诉其他设备本机关机了 ——
+        它们把本机算作"关机" (效果和在线一样), 不会因为本机离线把专注记成空闲 / 让合约失败.
+        关机被取消 (程序 1 分钟后还在运行) 时恢复正常."""
+        self.power_off = True
+        self._save_focus_now()
+        try:
+            if self.sync.peers():
+                self.sync.push_final(timeout=2.0)
+        except Exception:
+            pass
+        try:
+            self.root.after(60_000, self._power_off_cancelled)
+        except Exception:
+            pass
+
+    def _power_off_cancelled(self):
+        self.power_off = False
+        if self.state == RUNNING:
+            self._save_timer_state()
+
+    def _went_off(self) -> bool:
+        """本机这次停下来算不算关机: 收到了关机指令, 或者电量很低 (见 devsync.went_off)."""
+        return self.power_off or (self.battery is not None and self.battery < devsync.LOW_BATTERY)
 
     def _save_focus_now(self):
         self.dm.save_window_usage()
@@ -1659,11 +1690,14 @@ class BreakTimerApp:
         self.timer_owner = str(rec.get("owner") or "")
         if self.sync.peers() and gap > float(config.CLOSED_GAP):
             # 绑定了其他设备, 共享的专注中 OIT 被关掉了: 关掉的这段记为空闲 (总统计里优先级最高),
-            # 专注照常恢复, 等第一次同步看其他设备是不是已经结束了它, 没有就由本机终止 (_check_close_pending)
-            self.dm.add_focus_session("idle", alive, now, focus=start)
+            # 专注照常恢复, 等第一次同步看其他设备是不是已经结束了它, 没有就由本机终止 (_check_close_pending).
+            # 本机是关机 / 没电了 (MECHANICS 15.4): 其他设备把本机算作在线, 这段不记空闲; 同步上了就跟着它们
+            off = bool(rec.get("off"))
+            if not off:
+                self.dm.add_focus_session("idle", alive, now, focus=start)
             self._enter_focus(start, time.monotonic() - (now - start).total_seconds(), checks, ok)
             self._close_pending = {"start": start, "alive": alive, "t": time.monotonic(),
-                                   "ms": int(time.time() * 1000)}
+                                   "ms": int(time.time() * 1000), "off": off, "now": now}
             return
         if gap <= float(config.FOCUS_RESUME_GAP):
             self._enter_focus(start, time.monotonic() - (now - start).total_seconds(), checks, ok)
@@ -1707,6 +1741,13 @@ class BreakTimerApp:
         self._close_pending = None
         if self.state != RUNNING or self.start_wall != p["start"]:
             return                             # 其他设备已经结束了这段专注, 本机照着切换过了
+        if p.get("off"):
+            if self.sync.synced_since(p["ms"]):
+                # 关机期间其他设备把本机算作在线, 共享的专注照常进行: 接着计时
+                toast.info(tr("关机期间共享的专注照常进行, 已接着计时."), timeout=8000)
+                return
+            # 没能和任何设备同步上: 和普通的被关掉一样, 关着的那段记为空闲, 专注终止
+            self.dm.add_focus_session("idle", p["alive"], p["now"], focus=p["start"])
         start, alive = p["start"], p["alive"]
         sec = (alive - start).total_seconds()
         limit = float(config.FOCUS_CHECK_EVERY) * (self._focus_checks + 1) + float(config.FOCUS_CHECK_GRACE)
@@ -2345,6 +2386,9 @@ class BreakTimerApp:
         lines = []
         offline = []
         for st in self.sync.device_states():
+            if st.get("off"):
+                lines.append(f"🔗 {st['name']}: {tr('关机')}")     # 效果和在线一样, 只是不同步 (15.4)
+                continue
             if not st["online"]:
                 offline.append(st["name"])
                 if st.get("outdated"):
@@ -3876,6 +3920,9 @@ class BreakTimerApp:
         if event == "started" and self._update_retry and getattr(config, "UPDATE_CHECK", 1):
             self._update_retry = False
             self.check_update(auto=True)
+        if time.monotonic() - self._battery_at >= 20:   # 本机电量: 发给其他设备 (MECHANICS 15.4)
+            self._battery_at = time.monotonic()
+            self.battery = devsync.battery_percent()
         self.sync.track_offline()               # 每秒: 同步失败的设备马上算离线 (MECHANICS 8.4)
         try:
             self._check_contract()

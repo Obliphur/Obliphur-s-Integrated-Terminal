@@ -397,6 +397,8 @@ EN = {
     "外出: 今天只能用总额度的 {p}% (总额度 {full} → 能用 {total})":
         "Outing: only {p}% of today's total quota can be used (total {full} → usable {total})",
     "外出中: 联网冷静期 ×{f}": "Out: network cooldown ×{f}",
+    "关机": "Powered off",
+    "关机期间共享的专注照常进行, 已接着计时.": "The shared focus kept going while this device was off; timing resumed.",
     "当前行为模式没有外出.": "The current behavior mode has no outings.",
     "持续时间必须是整数小时.": "The duration must be a whole number of hours.",
     "已经在外面了.": "You're already out.",
