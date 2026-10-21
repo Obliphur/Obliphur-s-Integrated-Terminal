@@ -54,7 +54,7 @@ sealed class VpnPlan {
     /** 只接管 DNS: filter=true 时按网站名单拦截域名, 否则全部放行.
      *  blockApps 不为空时 (合约的无言为真, MECHANICS 18.6) 这些应用的网络全部屏蔽: 见 OitVpnService. */
     data class Dns(val filter: Boolean, val rulesVersion: Long, val blockAll: Boolean = false,
-                   val blockApps: Set<String> = emptySet()) : VpnPlan()
+                   val blockApps: Set<String> = emptySet(), val blockDomains: Set<String> = emptySet()) : VpnPlan()
 }
 
 /** 一周内第 5 次领"我累了"时弹窗的文字 (MECHANICS 6.5). */
@@ -1095,19 +1095,20 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         val snap = rules.snap
         // 合约的网络禁令 (休息中也算): 乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒 的应用网络全部屏蔽 (MECHANICS 18.3, 18.6)
         val ban = contract.bannedApps()
+        val sites = contract.bannedDomains()          // 这一类的网站也封锁 (联网中也一样)
         // 代理-全屏蔽 (Proxy block-all): 离线时接管 DNS, 所有域名一律拦截 (不看网站名单,
         // 局域网照常, 设备同步要用); 联网中全部放行. 应用名单照样按过滤名单模式锁定应用 (checkAppLock)
         if (netMode() == "adapter")
-            return if (online) VpnPlan.Dns(false, 0, blockApps = ban) else VpnPlan.Dns(true, 0, blockAll = true, blockApps = ban)
+            return if (online) VpnPlan.Dns(false, 0, blockApps = ban, blockDomains = sites) else VpnPlan.Dns(true, 0, blockAll = true, blockApps = ban, blockDomains = sites)
         // 联网中两种名单模式都全部放行 (MECHANICS 4.1)
-        if (online) return VpnPlan.Dns(false, 0, blockApps = ban)
+        if (online) return VpnPlan.Dns(false, 0, blockApps = ban, blockDomains = sites)
         if (settings.str("FILTER_MODE") == RuleKeys.WHITELIST) {
             // 网站白名单为空 = 什么网站都不能上: 全部流量进 VPN (比按 DNS 拦更彻底)
             if (snap.lists[RuleKeys.WHITE_DOMAINS]!!.isEmpty()) return VpnPlan.BlockAll(keepLan = true)
-            return VpnPlan.Dns(true, snap.version, blockApps = ban)
+            return VpnPlan.Dns(true, snap.version, blockApps = ban, blockDomains = sites)
         }
-        if (snap.lists[RuleKeys.BLACK_DOMAINS]!!.isEmpty()) return VpnPlan.Dns(false, 0, blockApps = ban)
-        return VpnPlan.Dns(true, snap.version, blockApps = ban)
+        if (snap.lists[RuleKeys.BLACK_DOMAINS]!!.isEmpty()) return VpnPlan.Dns(false, 0, blockApps = ban, blockDomains = sites)
+        return VpnPlan.Dns(true, snap.version, blockApps = ban, blockDomains = sites)
     }
 
     // ---- 重置 ----

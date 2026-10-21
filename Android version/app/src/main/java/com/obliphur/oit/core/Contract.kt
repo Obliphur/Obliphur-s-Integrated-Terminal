@@ -296,6 +296,36 @@ class Contract(private val file: File) {
             "tv.acfundanmaku.video", "com.baidu.haokan", "com.tencent.weishi", "com.mgtv.tv",
         )
 
+        /** 网络禁令也封锁这一类的网站 (MECHANICS 18.3): 域名本身和它的子域名; 优先级最高, 联网申请也解除不了. 同 contract.py 的 BAN_DOMAINS. */
+        val BAN_DOMAINS: Map<String, Set<String>> = mapOf(
+            "music" to setOf(
+                "music.163.com", "y.qq.com", "kugou.com", "kuwo.cn", "music.migu.cn", "qianqian.com", "ximalaya.com",
+                "spotify.com", "music.apple.com", "music.youtube.com", "soundcloud.com", "deezer.com", "tidal.com",
+                "music.amazon.com", "pandora.com",
+            ),
+            "silent" to setOf(
+                "weibo.com", "weibo.cn", "zhihu.com", "xiaohongshu.com", "tieba.baidu.com", "douban.com",
+                "qzone.qq.com", "wx.qq.com", "web.wechat.com", "twitter.com", "x.com", "facebook.com",
+                "instagram.com", "threads.net", "reddit.com", "discord.com", "telegram.org", "t.me",
+                "web.whatsapp.com", "line.me", "chatgpt.com", "chat.openai.com", "claude.ai", "chat.deepseek.com",
+                "gemini.google.com", "kimi.moonshot.cn", "kimi.com", "doubao.com", "yuanbao.tencent.com",
+                "tongyi.aliyun.com", "tongyi.com", "yiyan.baidu.com", "copilot.microsoft.com", "poe.com",
+                "perplexity.ai", "grok.com", "character.ai",
+            ),
+            "game" to setOf(
+                "steampowered.com", "steamcommunity.com", "epicgames.com", "wegame.com.cn", "ea.com", "battle.net",
+                "blizzard.com", "ubisoft.com", "gog.com", "riotgames.com", "leagueoflegends.com", "mihoyo.com",
+                "hoyoverse.com", "taptap.cn", "taptap.io", "4399.com", "7k7k.com", "roblox.com", "minecraft.net",
+                "poki.com", "crazygames.com", "itch.io", "xbox.com", "playstation.com",
+            ),
+            "video" to setOf(
+                "bilibili.com", "b23.tv", "youtube.com", "youtu.be", "youku.com", "v.qq.com", "iqiyi.com",
+                "mgtv.com", "ixigua.com", "douyin.com", "kuaishou.com", "tiktok.com", "douyu.com", "huya.com",
+                "twitch.tv", "netflix.com", "acfun.cn", "nicovideo.jp", "haokan.baidu.com", "weishi.qq.com",
+                "channels.weixin.qq.com",
+            ),
+        )
+
         /** 一类应用 (BANS 之一) 的包名. */
         fun banApps(kind: String): Set<String> = when (kind) {
             "music" -> MUSIC_APPS
@@ -548,6 +578,9 @@ class Contract(private val file: File) {
 
     /** 现在禁止联网的应用 (包名). */
     fun bannedApps(): Set<String> = netBans().flatMap { banApps(it) }.toSet()
+
+    /** 现在封锁的网站 (域名, 子域名也算). */
+    fun bannedDomains(): Set<String> = netBans().flatMap { BAN_DOMAINS[it] ?: emptySet() }.toSet()
 
     /** 点击词条可以解除网络禁令: 开始时选的 (未知变量选中的照旧是点击关闭). */
     fun canLift(id: String): Boolean = active && id in BANS && has(id) && id !in rand

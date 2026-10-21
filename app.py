@@ -3056,9 +3056,11 @@ class BreakTimerApp:
         """乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒 (MECHANICS 18.3): 这些软件禁止联网 (打开它们不算违反).
         每秒: 过滤代理按 exe 名拦; 每 5 秒: 给正在运行的这些程序加 / 删防火墙出站规则 (不走系统代理的也拦住)."""
         c = self.contract
-        banned = c.banned_exes() if (c.active and not self.dm.resetting and not config.dev_mode_enabled()) else set()
+        on = c.active and not self.dm.resetting and not config.dev_mode_enabled()
+        banned = c.banned_exes() if on else set()
         try:
             self.net.proxy.rules.banned = banned
+            self.net.proxy.rules.banned_domains = c.banned_domains() if on else set()   # 这一类的网站也封锁
         except Exception:
             pass
         if (banned or self.appban.paths) and not self._appban_busy and time.monotonic() - self._appban_at >= 5:

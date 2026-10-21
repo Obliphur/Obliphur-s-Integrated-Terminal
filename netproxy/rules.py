@@ -116,6 +116,7 @@ class RuleStore:
         self.exempt = set()
         # 合约的网络禁令 (MECHANICS 18.3): 这些程序禁止联网 (联网会话 / 提前启动都不放行). app.py 每秒更新.
         self.banned = set()
+        self.banned_domains = set()              # 同上: 这些网站 (含子域名) 也封锁
         self._lock = threading.RLock()
         self.lists = {k: [] for k in LIST_KEYS}
         self.pending = []
@@ -318,6 +319,8 @@ class RuleStore:
             return True, "local"
         if exe and exe in self.banned:
             return False, "ban"              # 合约的网络禁令: 什么时候都不放行 (MECHANICS 18.3)
+        if self.banned_domains and any(domain_match(host, d) for d in self.banned_domains):
+            return False, "ban"              # 网络禁令的网站: 联网会话 / 白名单 / 提前启动都放行不了
         if online:
             return True, "online"           # 联网会话中全部放行 (MECHANICS 4.1)
         if exe and exe in self.exempt:
@@ -441,6 +444,11 @@ def _selftest():
     assert rs.decide("localhost", "steam.exe", False, MODE_BLACKLIST) == (True, "local")
     assert rs.decide("zhihu.com", "chrome.exe", True, MODE_BLACKLIST) == (True, "online")
     rs.banned = set()
+    rs.banned_domains = {"bilibili.com"}
+    assert rs.decide("www.bilibili.com", "chrome.exe", True, MODE_BLACKLIST) == (False, "ban"), "联网中也封锁"
+    assert rs.decide("bilibili.com", "chrome.exe", False, MODE_WHITELIST) == (False, "ban")
+    assert rs.decide("notbilibili.com", "chrome.exe", True, MODE_BLACKLIST) == (True, "online")
+    rs.banned_domains = set()
     rs.exempt = set()
 
     # 删除一律要等

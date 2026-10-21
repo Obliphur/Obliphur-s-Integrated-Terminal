@@ -219,6 +219,35 @@ GAME_EXES = {
 }
 BAN_EXES = {"silent": SOCIAL_EXES, "game": GAME_EXES, "video": VIDEO_EXES}
 NET_BAN_EXES = {"music": MUSIC_EXES, "silent": SOCIAL_EXES, "game": GAME_EXES, "video": VIDEO_EXES}   # 禁止联网的程序
+# 网络禁令也封锁这一类的网站 (MECHANICS 18.3): 域名本身和它的子域名; 优先级最高, 联网申请也解除不了
+BAN_DOMAINS = {
+    "music": (
+        "music.163.com", "y.qq.com", "kugou.com", "kuwo.cn", "music.migu.cn", "qianqian.com", "ximalaya.com",
+        "spotify.com", "music.apple.com", "music.youtube.com", "soundcloud.com", "deezer.com", "tidal.com",
+        "music.amazon.com", "pandora.com",
+    ),
+    "silent": (
+        "weibo.com", "weibo.cn", "zhihu.com", "xiaohongshu.com", "tieba.baidu.com", "douban.com",
+        "qzone.qq.com", "wx.qq.com", "web.wechat.com", "twitter.com", "x.com", "facebook.com",
+        "instagram.com", "threads.net", "reddit.com", "discord.com", "telegram.org", "t.me",
+        "web.whatsapp.com", "line.me", "chatgpt.com", "chat.openai.com", "claude.ai", "chat.deepseek.com",
+        "gemini.google.com", "kimi.moonshot.cn", "kimi.com", "doubao.com", "yuanbao.tencent.com",
+        "tongyi.aliyun.com", "tongyi.com", "yiyan.baidu.com", "copilot.microsoft.com", "poe.com",
+        "perplexity.ai", "grok.com", "character.ai",
+    ),
+    "game": (
+        "steampowered.com", "steamcommunity.com", "epicgames.com", "wegame.com.cn", "ea.com", "battle.net",
+        "blizzard.com", "ubisoft.com", "gog.com", "riotgames.com", "leagueoflegends.com", "mihoyo.com",
+        "hoyoverse.com", "taptap.cn", "taptap.io", "4399.com", "7k7k.com", "roblox.com", "minecraft.net",
+        "poki.com", "crazygames.com", "itch.io", "xbox.com", "playstation.com",
+    ),
+    "video": (
+        "bilibili.com", "b23.tv", "youtube.com", "youtu.be", "youku.com", "v.qq.com", "iqiyi.com",
+        "mgtv.com", "ixigua.com", "douyin.com", "kuaishou.com", "tiktok.com", "douyu.com", "huya.com",
+        "twitch.tv", "netflix.com", "acfun.cn", "nicovideo.jp", "haokan.baidu.com", "weishi.qq.com",
+        "channels.weixin.qq.com",
+    ),
+}
 BAN_TITLES = {"silent": SOCIAL_TITLES, "video": VIDEO_TITLES}   # 只看浏览器的窗口
 
 # 词条组合 (MECHANICS 18.3): 列出的词条 / 词条系列 (任意一档都算) 同时选着时生效, 效果栏的第 3 页列出它们.
@@ -675,6 +704,13 @@ class Contract:
         out = set()
         for k in self.net_bans():
             out |= set(NET_BAN_EXES.get(k, ()))
+        return out
+
+    def banned_domains(self) -> set:
+        """现在封锁的网站 (域名, 子域名也算)."""
+        out = set()
+        for k in self.net_bans():
+            out |= set(BAN_DOMAINS.get(k, ()))
         return out
 
     def can_lift(self, tid: str) -> bool:
@@ -1610,8 +1646,10 @@ def _selftest():
     assert cb.net_bans() == ["music", "silent", "game", "video"]
     assert "steam.exe" in cb.banned_exes() and "wechat.exe" in cb.banned_exes() and "cloudmusic.exe" in cb.banned_exes()
     assert cb.lift_cost("silent") == 2 and cb.lift_cost("music") == 1
+    assert {"bilibili.com", "zhihu.com", "claude.ai", "music.163.com", "steampowered.com"} <= cb.banned_domains()
     assert cb.lift_ban("silent") == (False, 2) and cb.life == cb.violation_limit - 2
     assert not cb.has("silent") and "silent" not in cb.net_bans() and "wechat.exe" not in cb.banned_exes()
+    assert "zhihu.com" not in cb.banned_domains() and "bilibili.com" in cb.banned_domains()
     assert dict((x["id"], s) for x, s in cb.combos())["nofun"] == "void" and not cb.echo("silent")
     assert cb.lift_ban("silent") == (False, 0), "已经解除了"
     assert cb.lift_ban("music") == (False, 1) and cb.life == 1

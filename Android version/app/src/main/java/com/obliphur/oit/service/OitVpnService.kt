@@ -163,8 +163,14 @@ class OitVpnService : VpnService() {
             if (p.dstPort != 53) return
             val host = Dns.qname(p.payload) ?: return
             BlockLog.seen(host)
+            // 合约的网络禁令封锁的网站: 优先级最高, 联网中 / 白名单都放行不了 (MECHANICS 18.3)
+            if (plan.blockDomains.isNotEmpty() && plan.blockDomains.any { com.obliphur.oit.core.domainMatch(host, it) }) {
+                BlockLog.add(host, owner(p).firstOrNull() ?: "?")
+                Dns.nxdomain(p.payload)?.let { write(Packets.buildReply(p, it)) }
+                return
+            }
             if (apps.isNotEmpty()) {
-                // 无言为真: 屏蔽的应用查什么都回 NXDOMAIN
+                // 网络禁令: 屏蔽的应用查什么都回 NXDOMAIN
                 val pkg = owner(p).firstOrNull { it in apps }
                 if (pkg != null) {
                     BlockLog.add(host, pkg)
@@ -321,7 +327,8 @@ class OitVpnService : VpnService() {
     private fun modeOf(p: VpnPlan, apps: Set<String>) = when {
         p is VpnPlan.BlockAll -> Mode.DROP
         apps.isEmpty() -> Mode.DNS
-        p is VpnPlan.Dns && !p.filter -> Mode.APPS
+        // 全部放行, 也没有要封锁的网站时: 只把屏蔽的应用放进 VPN. 有要封锁的网站就得接管所有应用的 DNS (FORWARD)
+        p is VpnPlan.Dns && !p.filter && p.blockDomains.isEmpty() -> Mode.APPS
         else -> Mode.FORWARD
     }
 

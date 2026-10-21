@@ -355,8 +355,12 @@ class CoreTest {
         // 四个一起: 互联网娱乐的败退凑齐; 解除一个后组合失效, 开始时给的不收回
         core.contract.start(listOf("music", "silent", "game", "video"), "dev")
         assertEquals(Contract.MUSIC_APPS + Contract.SOCIAL_APPS + Contract.GAME_APPS + Contract.VIDEO_APPS, ban())
+        // 这一类的网站也封锁 (联网中也一样)
+        val sites = (core.vpnPlan() as VpnPlan.Dns).blockDomains
+        assertTrue("bilibili.com" in sites && "zhihu.com" in sites && "steampowered.com" in sites && "music.163.com" in sites)
         assertEquals(1, core.contract.liftCost("game"))
         assertEquals(false to 1, core.contract.liftBan("game"))
+        assertFalse("steampowered.com" in (core.vpnPlan() as VpnPlan.Dns).blockDomains)
         assertEquals("void", core.contract.combos().first { it.first.id == "nofun" }.second)
         assertFalse(core.contract.echo("game"))
         assertEquals(false to 0, core.contract.liftBan("game"))
