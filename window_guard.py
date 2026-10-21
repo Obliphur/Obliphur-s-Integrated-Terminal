@@ -103,6 +103,41 @@ def _load_api():
     return _api
 
 
+_vdm = None
+
+
+def on_current_desktop(hwnd):
+    """这个窗口在不在当前的虚拟桌面上 (Windows 的 IVirtualDesktopManager); 查不出来 (不是 Windows, 接口不可用) 时 None.
+    只在界面线程里调用 (COM 按线程初始化)."""
+    global _vdm
+    if sys.platform != "win32" or not hwnd:
+        return None
+    import ctypes
+    from ctypes import wintypes
+    try:
+        ole32 = ctypes.windll.ole32
+        if _vdm is None:
+            ole32.CoInitialize(None)
+            clsid, iid = (ctypes.c_byte * 16)(), (ctypes.c_byte * 16)()
+            ole32.CLSIDFromString("{AA509086-5CA9-4C25-8F95-589D3C07B48A}", ctypes.byref(clsid))
+            ole32.CLSIDFromString("{A5CD92FF-29BE-454C-8D04-D82879FB3F1B}", ctypes.byref(iid))
+            ptr = ctypes.c_void_p()
+            if ole32.CoCreateInstance(ctypes.byref(clsid), None, 0x17, ctypes.byref(iid), ctypes.byref(ptr)) != 0                     or not ptr.value:
+                _vdm = False
+                return None
+            _vdm = ptr
+        if not _vdm:
+            return None
+        vtbl = ctypes.cast(_vdm, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p)))[0]
+        fn = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, wintypes.HWND, ctypes.POINTER(wintypes.BOOL))(vtbl[3])
+        res = wintypes.BOOL(1)
+        if fn(_vdm, hwnd, ctypes.byref(res)) != 0:
+            return None                     # 例如窗口藏起来了 / 还没显示: 当作查不出来
+        return bool(res.value)
+    except Exception:
+        return None
+
+
 def _describe(hwnd) -> dict:
     ctypes, wintypes, user32, dwmapi, _proc = _load_api()
     buf = ctypes.create_unicode_buffer(256)

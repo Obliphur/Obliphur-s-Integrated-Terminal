@@ -613,6 +613,7 @@ EN = {
     "请在{at}之前关掉这个窗口,否则专注会自动结束.": "Close this window before {at}, or focus ends automatically.",
     "没有确认的部分按×{p:g}计入,共计入{m:.1f}分钟.": "Unconfirmed time counts at ×{p:g}; {m:.1f} min counted in total.",
     "积攒的休息时间 +{t}.": "Saved break time +{t}.",
+    "回到了 OIT 所在的桌面. 切到其他桌面期间本机算作离线.": "Back on OIT's desktop. This PC counted as offline while you were on another desktop.",
     "📁  文件通道": "📁  File channel",
     "还没有绑定的设备 (设置 → 基本设置 → 设备同步).": "No bound devices yet (Settings → Basic → Device sync).",
     "发给": "Send to",

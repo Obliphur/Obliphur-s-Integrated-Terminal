@@ -197,6 +197,8 @@ class BreakTimerApp:
         self._win_over = False        # 专注中窗口数是不是已经超过上限
         self._win_warn_at = 0.0       # 上一次提醒的时刻 (monotonic); 0 = 还没提醒过
         self._win_ages = window_guard.WindowAges()   # 每个窗口开了多久: 超过 2 分钟才计入窗口数 (MECHANICS 12)
+        self._desk_away = False       # 用户切到了 OIT 不在的虚拟桌面: 本机算作离线 (MECHANICS 15.7)
+        self._desk_at = 0.0
         self.prestart = prestart.Prestart()   # 提前启动 (仅 PC, MECHANICS 20)
         self.prestart_job = None
         self.window_focus_job = None  # 窗口使用时间统计: 每隔几秒看一次前台程序
@@ -260,6 +262,7 @@ class BreakTimerApp:
         self.net.peer_net = lambda: devsync.peer_net(self.sync.peer_ledgers(), self.net.date)
         # 联网状态随设备同步 (MECHANICS 2.8): 同一次联网由发起的设备扣额度, 它不在线时由本机扣
         self.net.my_id = lambda: self.sync.my_id
+        self.sync.away = lambda: self._desk_away
         self.file_channel = FileChannel(self)                  # 文件通道 (MECHANICS 15.6)
         self.net.charge_ok = self._owner_away
         self.net.peer_usage = lambda: [r for led in self.sync.peer_ledgers()
@@ -2804,6 +2807,26 @@ class BreakTimerApp:
         """黑雾: 整点记录假内容用的编号 (开始合约时抽好); 没有黑雾时 None."""
         return self.contract.fog_words() if self.contract.fog() else None
 
+    def _check_desktop(self):
+        """每 2 秒: OIT 的窗口在不在当前的虚拟桌面上 (MECHANICS 15.7). 切到别的桌面期间本机算作离线 ——
+        不同步, 也不接受同步, 其他设备照常把本机算作离线, 本机也把它们算作离线 (专注里这段记为空闲, 合约的离线判定 …)."""
+        if sys.platform != "win32" or time.monotonic() - self._desk_at < 2:
+            return
+        self._desk_at = time.monotonic()
+        try:
+            import ctypes
+            hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
+        except Exception:
+            return
+        away = window_guard.on_current_desktop(hwnd) is False
+        if away == self._desk_away:
+            return
+        self._desk_away = away
+        self._log_notice("DESKTOP  " + ("left OIT's virtual desktop: offline" if away else "back on OIT's virtual desktop"))
+        if not away and self.sync.peers():
+            toast.info(tr("回到了 OIT 所在的桌面. 切到其他桌面期间本机算作离线."), timeout=8000)
+            self.sync.sync_now()
+
     def adopt_net(self, live: dict):
         """别的设备上改动了联网状态 (申请 / 联网 / 结束): 照着切换 (MECHANICS 2.8)."""
         event = self.net.adopt(live)
@@ -4260,6 +4283,7 @@ class BreakTimerApp:
             self._update_retry = False
             self.check_update(auto=True)
         self._beat_power()
+        self._check_desktop()
         if time.monotonic() - self._battery_at >= 20:   # 本机电量: 发给其他设备 (MECHANICS 15.4)
             self._battery_at = time.monotonic()
             self.battery = devsync.battery_percent()

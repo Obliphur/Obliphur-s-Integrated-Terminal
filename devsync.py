@@ -245,6 +245,8 @@ class SyncService:
         self.outgoing = None      # 本机发起的绑定 {state, code, name, …}
         self.found = {}           # id -> 广播找到的设备
         self.offers = {}          # token -> (文件, 过期时刻[, (密钥, nonce)]): 发给其他设备的安装包 / 文件, 等对方来取
+        # 本机算作离线吗 (电脑: 用户切到了 OIT 不在的虚拟桌面, MECHANICS 15.7): 这时不同步, 也不接受同步
+        self.away = lambda: False
         self._httpd = None
         self._udp = None
         self._wake = threading.Event()
@@ -957,6 +959,8 @@ class SyncService:
     def _on_sync(self, env: dict):
         if not self.proxy_ok():
             return 409, {"error": "not-proxy"}
+        if _call(self, "away", False):
+            return 503, {"error": "away"}             # 本机算作离线 (15.7): 对方同步失败, 把本机算作离线
         if not env.get("from"):
             # 请求体读不出来 (例如超过大小上限): 以前当成"没绑定"回 401, 对方会显示 unpaired
             return 400, {"error": "bad-request"}
@@ -1289,7 +1293,7 @@ class SyncService:
         """界面线程, 程序关闭前: 把本机此刻的内容发给每台设备 (不等回复里的内容, 最多等 timeout 秒).
         例如共享的专注因为本机关闭而结束了, 其他设备要马上照着结束 (MECHANICS 8.2).
         force: 不看断网方式 (换成 Adapter 之前的最后一次)."""
-        if not force and not self.proxy_ok():
+        if not force and (not self.proxy_ok() or _call(self, "away", False)):
             return
         peers = {pid: p for pid, p in self.peers().items() if not p.get("init")}
         if not peers:
@@ -1326,7 +1330,7 @@ class SyncService:
             manual, self._manual = getattr(self, "_manual", False), False
             if self.dead:
                 return
-            if not self.proxy_ok():
+            if not self.proxy_ok() or _call(self, "away", False):
                 continue
             # 母端向子端发请求; 子端只在还没初始化或按了"立即同步"时向母端发
             wipe_out = self.state.get("wipe_out") or {}
@@ -2033,6 +2037,12 @@ def _selftest():
             assert not os.path.exists(dest + "2") and not os.path.exists(dest + "2.part")
         del lb.file_offered
         assert sa.send_file(sb.my_id, src) == "unsupported"
+
+        # 本机算作离线 (15.7, 电脑切到了 OIT 不在的虚拟桌面): 不接受同步, 对方同步失败
+        sa.away = lambda: True
+        assert sb._sync_with(sa.my_id) is False, "对方同步失败, 把本机算作离线"
+        sa.away = lambda: False
+        assert sb._sync_with(sa.my_id) is True
         assert safe_name("..\\x\\a/b:c?.png") == "b_c_.png" and safe_name("C:\\x\\y.txt") == "y.txt"
         assert safe_name(" . ") == "file"
 
