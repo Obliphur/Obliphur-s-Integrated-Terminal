@@ -15,8 +15,8 @@ from config import load_json_file, save_json_file
 
 
 BASE_SECONDS = 4 * 3600          # 合约的初始时长
-IDLE_LIMIT = 30 * 60             # 合约中空闲 (不在专注也不在休息) 超过这么久就结束
-OFFLINE_LIMIT = 15 * 60          # 合约中有绑定的设备离线超过这么久就失败
+IDLE_LIMIT = 15 * 60             # 合约中空闲 (不在专注也不在休息) 超过这么久就结束
+OFFLINE_LIMIT = IDLE_LIMIT       # 合约中有绑定的设备离线超过这么久就失败 (和空闲共用这 15 分钟)
 VIOLATION_LIMIT = 4              # 初始目标生命值: 每违反一次减一, 减到 0 合约失败
 HISTORY_KEEP = 30
 FRESH_MS = 2 * 60 * 1000         # 合约的主人这么久没同步过: 本机来做自动结束
@@ -677,11 +677,15 @@ class Contract:
 
     def offline_due(self, devices, now: datetime, floor: datetime):
         """设备离线超过 OFFLINE_LIMIT: (设备名, 失败的时刻) 或 None. devices: [(名字, 离线开始的时刻)];
-        离线从合约开始, 以及 floor (本机这次打开程序的时刻: 本机关着时的事由其他设备判定) 之后才算."""
+        离线从合约开始, 以及 floor (本机这次打开程序的时刻: 本机关着时的事由其他设备判定) 之后才算.
+        空闲和设备离线共用这 15 分钟 (MECHANICS 18.1): 离线时合约也在空闲, 就从两者里先开始的那个算起."""
         if not self.active or not self.start_at:
             return None
+        idle = _parse(self.live.get("idle_since"))
         for name, since in devices:
             since = max(since, self.start_at, floor)
+            if idle is not None:
+                since = min(since, max(idle, self.start_at))
             if since + timedelta(seconds=OFFLINE_LIMIT) <= now:
                 return name, since + timedelta(seconds=OFFLINE_LIMIT)
         return None
@@ -1865,11 +1869,14 @@ def _selftest():
     # 休息: 疲惫 ×0.6; 完成时按降级后的等级给固定的时间 (等级 4 → 27 分钟)
     assert abs(c.book_rest(1000, t0 + timedelta(hours=1)) - 600) < 1e-6
     assert c.level == 4 and c.reward == 27 * 60
-    # 空闲 30 分钟结束
+    # 空闲 15 分钟结束
     assert c.due(t0 + timedelta(hours=1), True) == ("", None)
-    assert c.idle_left(t0 + timedelta(hours=1, minutes=10)) == 20 * 60
-    assert c.due(t0 + timedelta(hours=1, minutes=31), True) == ("idle", t0 + timedelta(hours=1, minutes=30))
-    assert c.due(t0 + timedelta(hours=1, minutes=31), False)[0] == "", "开始专注就不算空闲"
+    assert c.idle_left(t0 + timedelta(hours=1, minutes=10)) == 5 * 60
+    # 空闲和设备离线共用 15 分钟: 空闲 10 分钟后有设备离线, 再过 5 分钟就失败 (从空闲开始算)
+    assert c.offline_due([("手机", t0 + timedelta(hours=1, minutes=10))], t0 + timedelta(hours=1, minutes=14), t0) is None
+    assert c.offline_due([("手机", t0 + timedelta(hours=1, minutes=10))], t0 + timedelta(hours=1, minutes=15), t0) ==         ("手机", t0 + timedelta(hours=1, minutes=15))
+    assert c.due(t0 + timedelta(hours=1, minutes=16), True) == ("idle", t0 + timedelta(hours=1, minutes=15))
+    assert c.due(t0 + timedelta(hours=1, minutes=16), False)[0] == "", "开始专注就不算空闲"
     # 设备离线 15 分钟失败: 从合约开始 / 本机打开程序之后才算
     t1 = t0 + timedelta(hours=1)
     assert c.offline_due([("手机", t0 - timedelta(hours=3))], t0 + timedelta(minutes=14), t0) is None

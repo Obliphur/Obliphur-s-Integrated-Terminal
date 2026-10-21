@@ -1028,7 +1028,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
                 var msg = when (result) {
                     "failed" -> tr("目标生命值归零 (违反 {n} 次), 合约终止.", "n" to rec.optInt("violations"))
                     "offline" -> tr("{name} 离线超过 15 分钟, 合约终止.", "name" to offlineName.ifEmpty { "?" })
-                    else -> tr("空闲超过 30 分钟, 合约终止.")
+                    else -> tr("空闲超过 15 分钟, 合约终止.")
                 }
                 if (pending >= 1) msg += "\n" + tr("完成后的 {n} 分钟休息时间没有给出.", "n" to Math.round(pending / 60))
                 notice(tr("⚔ 行动失败"), msg, listOf(NoticeButton(tr("知道了"), "ok", true)), page = "contract")

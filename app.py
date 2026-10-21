@@ -2913,7 +2913,7 @@ class BreakTimerApp:
         else:
             msg = {"failed": tr("目标生命值归零 (违反 {n} 次), 合约终止.", n=rec.get("violations", 0)),
                    "offline": tr("{name} 离线超过 15 分钟, 合约终止.", name=self._offline_name or "?")
-                   }.get(result, tr("空闲超过 30 分钟, 合约终止."))
+                   }.get(result, tr("空闲超过 15 分钟, 合约终止."))
             if pending >= 1:
                 msg += "\n" + tr("完成后的 {n} 分钟休息时间没有给出.", n=round(pending / 60))
             toast.notice(tr("⚔ 行动失败"), msg)

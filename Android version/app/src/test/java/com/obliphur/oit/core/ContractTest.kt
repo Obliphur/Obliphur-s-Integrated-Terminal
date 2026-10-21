@@ -124,9 +124,11 @@ class ContractTest {
         // 休息: 疲惫 ×0.6; 完成时按降级后的等级给固定的时间
         assertEquals(600.0, c.bookRest(1000.0), 1e-6)
         assertEquals(Contract.restMinutes(c.level) * 60.0, c.reward, 1e-6)
-        // 空闲 30 分钟
+        // 空闲 15 分钟; 和设备离线共用 (空闲 10 分钟后有设备离线, 再过 5 分钟就失败)
         assertNull(c.due(t0.plusHours(1), true))
-        assertEquals("idle" to t0.plusMinutes(90), c.due(t0.plusMinutes(91), true))
+        assertNull(c.offlineDue(listOf("手机" to t0.plusMinutes(70)), t0.plusMinutes(74), t0))
+        assertEquals("手机" to t0.plusMinutes(75), c.offlineDue(listOf("手机" to t0.plusMinutes(70)), t0.plusMinutes(75), t0))
+        assertEquals("idle" to t0.plusMinutes(75), c.due(t0.plusMinutes(76), true))
         // 设备离线 15 分钟失败: 从合约开始 / 本机打开程序之后才算
         assertNull(c.offlineDue(listOf("手机" to t0.minusHours(3)), t0.plusMinutes(14), t0))
         assertEquals("手机" to t0.plusMinutes(15), c.offlineDue(listOf("手机" to t0.minusHours(3)), t0.plusMinutes(16), t0))

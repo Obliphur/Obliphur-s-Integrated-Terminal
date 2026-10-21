@@ -41,7 +41,7 @@ def marks(level: int) -> str:
 HARD_LEVEL = 20                  # 总等级到这里就提示"难度极大"
 
 # 手动提前结束是"行动终止"; 被动结束 (违反 / 空闲 / 设备离线) 是"行动失败"
-RESULTS = {"completed": "完成", "failed": "行动失败: 目标生命值归零", "idle": "行动失败: 空闲超过 30 分钟",
+RESULTS = {"completed": "完成", "failed": "行动失败: 目标生命值归零", "idle": "行动失败: 空闲超过 15 分钟",
            "offline": "行动失败: 设备离线超过 15 分钟", "abandoned": "行动终止"}
 
 # 合约页的主题 (设置 → 合约, CONTRACT_THEME). "ops" 起源: 深色页面, 浅灰的词条板, 六边形格子,
@@ -612,7 +612,7 @@ class ContractPage(tk.Frame):
         """右上角: 合约期间的特别规则 (左栏, 右栏)."""
         n = self.c.violation_limit if self.c.active else C.life_of(self.c.draft)
         return ("\n".join([tr("· 目标生命值 {n}: 违反一次 -1, 归零即失败", n=n),
-                           tr("· 空闲 30 分钟 / 设备离线 15 分钟: 失败"),
+                           tr("· 空闲 / 设备离线共 15 分钟: 失败"),
                            tr("· 整点记录超时未填写: 违反 1 次")]),
                 "\n".join([tr("· \"我累了\"不可用"),
                            tr("· 暂停休息: 合约前积攒的时间不打折"),
