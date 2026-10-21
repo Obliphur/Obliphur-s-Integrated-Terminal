@@ -61,7 +61,7 @@ TERMS = [
     ("move", "move", 1, "目标:高机动", "现实中的移动速度+50%", ()),
     ("confine", "confine", 1, "目标:禁足", "在非休息时间不能离开工作岗位进行活动", ()),
     ("fog", "fog", 1, "环境:黑雾", "合约期间 专注时长 合约的剩余时间 成就 日历 统计数据不可见 且无法打开设置", ()),
-    ("hoard", "hoard", 1, "禁止囤囤鼠!", "不能提前结束休息 但是获得的休息时间改为110%", ()),
+    ("hoard", "hoard", 1, "禁止囤囤鼠!", "不能提前结束休息 但是获得的休息时间改为110%", ("short1", "short2")),
     ("quiet", "quiet", 1, "环境:静默协议", "专注中不能处于联网状态", ()),
     # 2 级: 联网 (全频道阻塞干扰), 整点记录 (细化规范), 禁止打开软件里的 无言为真 (乐理之灾下面),
     # 录像 (目光 / 刻痕) 在 禁游令 / 低帧的诅咒 下面
@@ -1368,6 +1368,8 @@ def _selftest():
     assert LAYOUT["confine"][0] == LAYOUT["move"][0] + 1, "高机动 / 禁足 挨着"
     assert BY_ID["seal"][4] == "超过填写时间则不能再修改该记录"
     assert conflicts("gaze", "scar") and conflicts("scar", "gaze") and not conflicts("gaze", "music")
+    assert conflicts("hoard", "short1") and conflicts("short2", "hoard"), "禁止囤囤鼠! 和支援短缺冲突"
+    assert clean_terms(["short1", "hoard"]) == ["short1"]
     assert not conflicts("silent", "music") and not conflicts("silent", "game"), "禁止软件的词条可以一起选"
 
     # 词条组合: 系列任意一档都算; 凑齐了加危机等级 / 乘区 / 开始时或完成时的休息时间
