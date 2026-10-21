@@ -13,6 +13,7 @@ import config
 import i18n
 import toast
 import window_guard
+import appban
 import autostart
 import devsync
 import firewall
@@ -178,6 +179,10 @@ class BreakTimerApp:
         # 开机自启动 (MECHANICS 3.4): 任务计划程序里的任务开着 ("on") 才算; 关机前提 (15.4)
         self.autostart_state = "unknown"
         self._autostart_at = 0.0
+        # 合约的网络禁令 (MECHANICS 18.3): 防火墙出站规则 (过滤代理之外的程序), 每 5 秒按正在运行的程序调整
+        self.appban = appban.AppBan()
+        self._appban_at = 0.0
+        self._appban_busy = False
         self._relaying = False        # 正在给其他设备下载 / 发送安装包
         self._relayed = set()         # (设备, 版本): 这次运行里已经发过的
         self._awake = False           # 正在阻止系统睡眠 (专注 / 休息中, 屏幕可以照常关掉)
@@ -293,6 +298,8 @@ class BreakTimerApp:
         self._pump_sync()
         # 防火墙放行同步端口, 否则别的设备找不到本机 / 连不进来 (MECHANICS 15.3). netsh 较慢, 放到后台
         threading.Thread(target=self._check_firewall, daemon=True).start()
+        # 合约的网络禁令: 上次留下的防火墙规则 (例如崩溃时没来得及删) 先删掉, 之后按合约重新加
+        threading.Thread(target=self._appban_sync, args=(set(),), daemon=True).start()
         # 开机自启动: 默认开启 (第一次运行时建好), 用户关掉了就不再打开 (MECHANICS 3.4)
         threading.Thread(target=self._check_autostart, args=(True,), daemon=True).start()
         if getattr(config, "UPDATE_CHECK", 1):
@@ -588,7 +595,8 @@ class BreakTimerApp:
                                               on_change=self._paint_sidebar,
                                               rec_text=self._rec_text,
                                               on_stop_screen=self.stop_screen_recording,
-                                              on_close_rand=self.close_random_term)
+                                              on_close_rand=self.close_random_term,
+                                              on_lift_ban=self.lift_net_ban)
         self._prepare_page(self.pages["contract"])
         self.pages["settings"] = SettingsPage(
             self.content, self.settings,
@@ -2439,7 +2447,7 @@ class BreakTimerApp:
         except Exception as e:
             self._log_window(f"ERROR    app rules {type(e).__name__}: {e}")
         try:
-            self._check_bans()
+            self._apply_net_bans()
         except Exception as e:
             self._log_window(f"ERROR    bans {type(e).__name__}: {e}")
         self.app_rules_job = self.root.after(1000, self._schedule_app_rules)
@@ -2926,47 +2934,60 @@ class BreakTimerApp:
         self.contract.merge(changes)
         self._check_contract()
 
-    def _check_bans(self):
-        """乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒: 每 2 秒看一次有没有开着这一类软件
-        (不关它, 只算违反; 开着的这段只算一次, 关掉后再开才再算). 音乐在休息中不管."""
+    def _apply_net_bans(self):
+        """乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒 (MECHANICS 18.3): 这些软件禁止联网 (打开它们不算违反).
+        每秒: 过滤代理按 exe 名拦; 每 5 秒: 给正在运行的这些程序加 / 删防火墙出站规则 (不走系统代理的也拦住)."""
         c = self.contract
-        kinds = [k for k in contract_mod.BANS if c.ban_term(k)]
-        if not kinds or self.dm.resetting:
-            return
-        self._ban_tick = (getattr(self, "_ban_tick", 0) + 1) % 2
-        if self._ban_tick:
-            return
-        procs = window_guard.list_processes()
-        wins = None
-        for kind in kinds:
-            if kind == "music":
-                if self.state == ON_BREAK:
-                    c.ban_check("music", False)         # 休息中可以听; 休息结束时还开着就算一次
-                    continue
-                hit = window_guard.find_music(contract_mod.MUSIC_EXES, contract_mod.AUDIO_EXTS, procs=procs)
+        banned = c.banned_exes() if (c.active and not self.dm.resetting and not config.dev_mode_enabled()) else set()
+        try:
+            self.net.proxy.rules.banned = banned
+        except Exception:
+            pass
+        if (banned or self.appban.paths) and not self._appban_busy and time.monotonic() - self._appban_at >= 5:
+            self._appban_at = time.monotonic()
+            self._appban_busy = True
+            threading.Thread(target=self._appban_sync, args=(banned,), daemon=True).start()
+
+    def _appban_sync(self, banned):
+        try:
+            if banned:
+                self.appban.sync(appban.process_paths(banned))
             else:
-                if wins is None and kind in contract_mod.BAN_TITLES:
-                    wins = window_guard.taskbar_windows()
-                hit = window_guard.find_banned(contract_mod.BAN_EXES.get(kind, ()), contract_mod.BAN_TITLES.get(kind),
-                                               contract_mod.BROWSER_EXES, contract_mod.site_title,
-                                               procs=procs, windows=wins)
-            tid = c.ban_check(kind, hit is not None)
-            if not tid:
-                continue
-            exe, title = hit
-            self._log_window(f"BAN      {kind}  {exe}  {title}")
-            name = exe[:-4] if exe.endswith(".exe") else exe
-            if kind == "music":
-                why = tr("用 {exe} 播放音频", exe=name) if title else tr("打开了音乐播放软件 {exe}", exe=name)
-            elif title:
-                why = tr("打开了 {site}", site=title[:40])
-            else:
-                why = {"silent": tr("打开了社交 / AI 聊天软件 {exe}", exe=name),
-                       "game": tr("打开了游戏 {exe}", exe=name),
-                       "video": tr("打开了视频平台 {exe}", exe=name)}[kind]
-            self.contract_violation(why, tid)
-            if not c.active:
-                return
+                self.appban.clear_all()
+        except Exception as e:
+            self._log_window(f"ERROR    appban {type(e).__name__}: {e}")
+        finally:
+            self._appban_busy = False
+
+    def lift_net_ban(self, tid: str):
+        """合约页上点击乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒: 解除这一类软件的网络禁令,
+        扣掉词条等级那么多目标生命值 (MECHANICS 18.3). 先确认."""
+        c = self.contract
+        if not c.can_lift(tid):
+            return
+        name = tr(contract_mod.BY_ID[tid][3])
+        n = c.lift_cost(tid)
+        msg = tr("解除「{name}」的网络禁令?", name=name) + "\n" + \
+            tr("将扣除目标生命值 {n} (现在 {life} / {m}).", n=n, life=c.life, m=c.violation_limit)
+        if n >= c.life:
+            msg += "\n" + tr("目标生命值会归零, 合约失败.")
+        if not toast.ask(msg, title=tr("解除网络禁令"), ok_text=tr("解除"), danger=True):
+            return
+        if not c.can_lift(tid):
+            return
+        over, n = c.lift_ban(tid)
+        self._log_notice(f"CONTRACT lift ban {tid} -{n}: {c.violations}/{c.violation_limit}")
+        text = (tr("解除了「{name}」的网络禁令 · 目标生命值 -{n} ({life} / {m})", name=name, n=n,
+                   life=c.life, m=c.violation_limit) + "\n" + tr("危机等级 {lv}", lv=c.level))
+        toast.warn(text)
+        self.dm.add_violation(text)              # 违规记录页 (MECHANICS 8.1): 目标生命值的变化都记下来
+        self._apply_net_bans()
+        if over:
+            self.end_contract("failed")
+            return
+        self._contract_changed()
+        if self.sync.peers():
+            self.sync.sync_now()
 
     # ---- 合约 · 录像 (目光 / 刻痕, MECHANICS 18.3) ----
 

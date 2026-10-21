@@ -24,6 +24,7 @@ RECHECK_EVERY = 1.0          # 已建立的连接每隔多久重新过一遍规�
 _REASON_ZH = {
     "offline": "当前离线,只放行网站白名单",
     "blockall": "当前离线,全屏蔽",
+    "ban": "合约: 这个软件禁止联网",
     "blacklist-app": "该应用在黑名单中",
     "blacklist-domain": "该网站在黑名单中",
     "self": "禁止回环到代理自身",

@@ -55,9 +55,9 @@ TERMS = [
     # 现实 (高机动 / 禁足), 黑雾, 休息 (禁止囤囤鼠!), 专注中的联网 (静默协议)
     ("suppress", "suppress", 1, "环境:抑制", "不能使用快速访问功能", ()),
     ("seal", "seal", 1, "环境:记录封锁", "超过填写时间则不能再修改该记录", ()),
-    ("music", "music", 1, "环境:乐理之灾", "非休息期间不能打开音乐播放软件 不能使用外部软件播放mp3等音频文件", ()),
-    ("game", "game", 1, "环境:禁游令", "合约期间不能使用游戏和游戏平台", ()),
-    ("video", "video", 1, "环境:低帧的诅咒", "合约期间不能使用视频平台", ()),
+    ("music", "music", 1, "环境:乐理之灾", "合约期间音乐播放软件禁止联网 可以通过点击解除网络禁令", ()),
+    ("game", "game", 1, "环境:禁游令", "合约期间游戏和游戏平台禁止联网 可以通过点击解除网络禁令", ()),
+    ("video", "video", 1, "环境:低帧的诅咒", "合约期间视频平台禁止联网 可以通过点击解除网络禁令", ()),
     ("move", "move", 1, "目标:高机动", "现实中的移动速度+50%", ()),
     ("confine", "confine", 1, "目标:禁足", "在非休息时间不能离开工作岗位进行活动", ()),
     ("fog", "fog", 1, "环境:黑雾", "合约期间 专注时长 合约的剩余时间 成就 日历 统计数据不可见 且无法打开设置", ()),
@@ -67,7 +67,7 @@ TERMS = [
     # 录像 (目光 / 刻痕) 在 禁游令 / 低帧的诅咒 下面
     ("jam", "jam", 2, "环境:全频道阻塞干扰", "期间使用proxy block-all模式", ()),
     ("fine", "fine", 2, "目标:细化规范", "记录变为30min一次", ()),
-    ("silent", "silent", 2, "环境:无言为真", "合约期间不能打开社交软件和与AI聊天的软件 不能使用社交网站", ()),
+    ("silent", "silent", 2, "环境:无言为真", "合约期间社交软件和与AI聊天的软件禁止联网 可以通过点击解除网络禁令", ()),
     ("gaze", "gaze", 2, "目光", "合约期间打开摄像头记录使用者的行为 结束后保存录像", ()),
     ("scar", "scar", 2, "刻痕", "合约期间录制整个屏幕 结束后保存录像", ("gaze",)),
     # 3 级: 未知变量
@@ -112,7 +112,8 @@ SUPPLY = {"short1": 0.5, "short2": 0.0}         # 合约开始前积攒的休息
 HOUR_TERMS = {"seal", "fine"}                   # 整点记录的词条: 整点记录关着时, 这次合约中照样开启
 LIFE = {"retreat1": 3, "retreat2": 2, "last": 1}  # 初始目标生命值 (硬规则)
 RECORD = {"gaze": "camera", "scar": "screen"}   # 录像的词条 → 录什么 (recorder.py)
-BANS = ("music", "silent", "game", "video")     # 禁止打开某类软件的词条 (每 2 秒看一次)
+# 网络禁令 (MECHANICS 18.3): 这一类软件合约期间禁止联网 (打开它们不算违反); 点击词条可以解除, 扣掉词条等级那么多目标生命值
+BANS = ("music", "silent", "game", "video")
 SUPPLY_WARN = (180, 60)                         # 支援短缺: 还差这么多秒就用超时各提醒一次
 DEEP = {"deep1": 40 * 60, "deep2": 60 * 60}     # 纵深推进: 一段专注至少这么多秒, 不到就结束算违反
 COOLDOWN_X = {"erode1": 2.0, "erode2": 3.0}     # 侵蚀: 网络申请的冷静期乘多少 (硬规则)
@@ -217,6 +218,7 @@ GAME_EXES = {
     "deltaforceclient-win64-shipping.exe", "crossfire.exe", "dnf.exe", "4399game.exe",
 }
 BAN_EXES = {"silent": SOCIAL_EXES, "game": GAME_EXES, "video": VIDEO_EXES}
+NET_BAN_EXES = {"music": MUSIC_EXES, "silent": SOCIAL_EXES, "game": GAME_EXES, "video": VIDEO_EXES}   # 禁止联网的程序
 BAN_TITLES = {"silent": SOCIAL_TITLES, "video": VIDEO_TITLES}   # 只看浏览器的窗口
 
 # 词条组合 (MECHANICS 18.3): 列出的词条 / 词条系列 (任意一档都算) 同时选着时生效, 效果栏的第 3 页列出它们.
@@ -655,6 +657,38 @@ class Contract:
         if since is None:
             return None
         return max(0.0, IDLE_LIMIT - (now - since).total_seconds())
+
+    # ---- 网络禁令: 乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒 (MECHANICS 18.3) ----
+
+    def net_bans(self) -> list:
+        """现在禁止联网的几类 (BANS 之一; 未知变量选中的也算)."""
+        return [k for k in BANS if self.has(k)] if self.active else []
+
+    def banned_exes(self) -> set:
+        """现在禁止联网的程序 (exe 名, 小写)."""
+        out = set()
+        for k in self.net_bans():
+            out |= set(NET_BAN_EXES.get(k, ()))
+        return out
+
+    def can_lift(self, tid: str) -> bool:
+        """点击词条可以解除网络禁令: 开始时选的 (未知变量选中的照旧是点击关闭)."""
+        return self.active and tid in BANS and self.has(tid) and tid not in self.rand
+
+    def lift_cost(self, tid: str) -> int:
+        """解除网络禁令扣多少目标生命值: 词条现在的等级."""
+        return max(1, self.term_level(tid))
+
+    def lift_ban(self, tid: str):
+        """解除网络禁令: 扣掉 lift_cost 点目标生命值, 去掉这个词条 (组合里算成员失效; 不算违反, 也不会再响警报).
+        返回 (是否达到了上限, 扣了几点); 不能解除时 (False, 0)."""
+        if not self.can_lift(tid):
+            return False, 0
+        n = self.lift_cost(tid)
+        self.downgrade(tid, drop=True)
+        self.live["violations"] = self.violations + n
+        self.save()
+        return self.violations >= self.violation_limit, n
 
     def violate(self, tid: str, drop: bool = False):
         """违反了一次词条 tid: 记一次, 这个词条降一级 (drop: 直接去掉, 关闭未知变量选中的词条).
@@ -1448,6 +1482,18 @@ def _selftest():
     assert c.ban_check("music", True) == "music" and c.ban_check("music", True) == "" and c.ban_check("music", False) == ""
     assert c.downgrade("music") == "" and not c.has("music"), "乐理之灾只有 1 级, 降一级就失效"
     # 无言为真 (2 级) / 禁游令: 违反一次降一级, 再违反才失效; 录像 (目光 / 刻痕) 违反一次就失效
+    # 网络禁令: 点击解除, 扣词条等级那么多目标生命值, 词条去掉 (组合算成员失效)
+    cb = Contract(tempfile.mkdtemp())
+    cb.start(["music", "silent", "game", "video"], owner="me", now=t0)
+    assert cb.net_bans() == ["music", "silent", "game", "video"]
+    assert "steam.exe" in cb.banned_exes() and "wechat.exe" in cb.banned_exes() and "cloudmusic.exe" in cb.banned_exes()
+    assert cb.lift_cost("silent") == 2 and cb.lift_cost("music") == 1
+    assert cb.lift_ban("silent") == (False, 2) and cb.life == cb.violation_limit - 2
+    assert not cb.has("silent") and "silent" not in cb.net_bans() and "wechat.exe" not in cb.banned_exes()
+    assert dict((x["id"], s) for x, s in cb.combos())["nofun"] == "void" and not cb.echo("silent")
+    assert cb.lift_ban("silent") == (False, 0), "已经解除了"
+    assert cb.lift_ban("music") == (False, 1) and cb.life == 1
+    assert cb.lift_ban("game") == (True, 1), "目标生命值归零"
     c.start(["silent", "game", "gaze"], owner="me", now=t0)
     assert c.level == 2 + 1 + 2 and c.records() == ["camera"] and c.ban_check("music", True) == ""
     assert c.ban_check("game", True) == "game" and c.ban_check("game", True) == "" and c.ban_check("silent", True) == "silent"

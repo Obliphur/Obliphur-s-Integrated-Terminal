@@ -66,7 +66,7 @@ object BlockLog {
  * 断网的实际执行者 (MECHANICS 14.2). 一个 VpnService, 按 [VpnPlan] 建立接口:
  *  - BlockAll: 默认路由进 VPN, 读出来的包直接丢掉 = 断网;
  *  - Dns: 只把一个假的 DNS 地址路由进来, 按网站名单回 NXDOMAIN 或转发给真正的 DNS.
- *  - Dns 带 blockApps (合约的无言为真, MECHANICS 18.6): 这些应用的网络全部屏蔽.
+ *  - Dns 带 blockApps (合约的网络禁令: 乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒, MECHANICS 18.3 / 18.6): 这些应用的网络全部屏蔽.
  *    全部放行时只把这些应用放进 VPN, 包一律丢掉 ([Mode.APPS]); 要按名单过滤时全部流量进 VPN,
  *    这些应用的丢掉, 其余的由 [Forwarder] 代发 ([Mode.FORWARD]).
  * 应用名单不在这里处理 (只管锁定应用, 见 Core.checkAppLock).
@@ -104,7 +104,7 @@ class OitVpnService : VpnService() {
             private set
         @Volatile var lastError: String? = null
             private set
-        /** 正在屏蔽无言为真的应用的网络 (设置页显示). */
+        /** 正在屏蔽合约禁止联网的应用 (设置页显示). */
         @Volatile var appBlock = false
             private set
 

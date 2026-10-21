@@ -38,6 +38,7 @@ from netproxy.sysproxy import SystemProxy, parse_proxy_server
 from netproxy.server import DEFAULT_PORT
 import firewall
 import autostart
+import appban
 
 
 CONFIRM_WORD = "UNINSTALL"
@@ -410,6 +411,8 @@ def run_uninstall(paths: Paths, remove_program: bool, log,
     fw_left = firewall.remove(fw_run) if fw_run else firewall.remove()
     for name in fw_left:
         log(tr("   防火墙规则删不掉: {name}", name=name), "warn")
+    # 合约网络禁令的防火墙出站规则 (appban.py; 合约中关掉程序时会留着)
+    (appban.AppBan(fw_run) if fw_run else appban.AppBan()).clear_all()
     # 开机自启动的计划任务 (autostart.py)
     if not (autostart.remove(task_run) if task_run else autostart.remove()):
         log(tr("   开机自启动的计划任务删不掉: {name}", name=autostart.TASK_NAME), "warn")

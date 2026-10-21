@@ -114,6 +114,8 @@ class RuleStore:
         # 提前启动的程序 (MECHANICS 20): 不看网站 / 应用名单, 直接放行 (代理-全屏蔽照样拦).
         # 由 app.py 在提前启动期间每秒钟更新成这些程序的 exe 名.
         self.exempt = set()
+        # 合约的网络禁令 (MECHANICS 18.3): 这些程序禁止联网 (联网会话 / 提前启动都不放行). app.py 每秒更新.
+        self.banned = set()
         self._lock = threading.RLock()
         self.lists = {k: [] for k in LIST_KEYS}
         self.pending = []
@@ -314,6 +316,8 @@ class RuleStore:
         s = self._snap
         if host in _LOOPBACK or host.startswith("127."):
             return True, "local"
+        if exe and exe in self.banned:
+            return False, "ban"              # 合约的网络禁令: 什么时候都不放行 (MECHANICS 18.3)
         if online:
             return True, "online"           # 联网会话中全部放行 (MECHANICS 4.1)
         if exe and exe in self.exempt:
@@ -430,6 +434,13 @@ def _selftest():
     assert rs.app_allowed("steam.exe", False, MODE_BLACKLIST) == (True, "prestart")
     assert rs.app_allowed("steam.exe", False, MODE_WHITELIST) == (True, "prestart")
     assert rs.app_allowed("chrome.exe", False, MODE_WHITELIST) == (False, "not-whitelisted")
+    # 合约的网络禁令: 联网中 / 提前启动也拦
+    rs.banned = {"steam.exe"}
+    assert rs.decide("store.steampowered.com", "steam.exe", True, MODE_BLACKLIST) == (False, "ban")
+    assert rs.decide("zhihu.com", "steam.exe", False, MODE_BLOCKALL) == (False, "ban")
+    assert rs.decide("localhost", "steam.exe", False, MODE_BLACKLIST) == (True, "local")
+    assert rs.decide("zhihu.com", "chrome.exe", True, MODE_BLACKLIST) == (True, "online")
+    rs.banned = set()
     rs.exempt = set()
 
     # 删除一律要等

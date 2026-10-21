@@ -67,9 +67,9 @@ class Contract(private val file: File) {
             // 现实 (高机动 / 禁足), 黑雾, 休息 (禁止囤囤鼠!), 专注中的联网 (静默协议)
             Term("suppress", "suppress", 1, "环境:抑制", "不能使用快速访问功能"),
             Term("seal", "seal", 1, "环境:记录封锁", "超过填写时间则不能再修改该记录"),
-            Term("music", "music", 1, "环境:乐理之灾", "非休息期间不能打开音乐播放软件 不能使用外部软件播放mp3等音频文件"),
-            Term("game", "game", 1, "环境:禁游令", "合约期间不能使用游戏和游戏平台"),
-            Term("video", "video", 1, "环境:低帧的诅咒", "合约期间不能使用视频平台"),
+            Term("music", "music", 1, "环境:乐理之灾", "合约期间音乐播放软件禁止联网 可以通过点击解除网络禁令"),
+            Term("game", "game", 1, "环境:禁游令", "合约期间游戏和游戏平台禁止联网 可以通过点击解除网络禁令"),
+            Term("video", "video", 1, "环境:低帧的诅咒", "合约期间视频平台禁止联网 可以通过点击解除网络禁令"),
             Term("move", "move", 1, "目标:高机动", "现实中的移动速度+50%"),
             Term("confine", "confine", 1, "目标:禁足", "在非休息时间不能离开工作岗位进行活动"),
             Term("fog", "fog", 1, "环境:黑雾", "合约期间 专注时长 合约的剩余时间 成就 日历 统计数据不可见 且无法打开设置"),
@@ -80,7 +80,7 @@ class Contract(private val file: File) {
             // 录像 (目光 / 刻痕) 在 禁游令 / 低帧的诅咒 下面
             Term("jam", "jam", 2, "环境:全频道阻塞干扰", "期间使用proxy block-all模式"),
             Term("fine", "fine", 2, "目标:细化规范", "记录变为30min一次"),
-            Term("silent", "silent", 2, "环境:无言为真", "合约期间不能打开社交软件和与AI聊天的软件 不能使用社交网站"),
+            Term("silent", "silent", 2, "环境:无言为真", "合约期间社交软件和与AI聊天的软件禁止联网 可以通过点击解除网络禁令"),
             Term("gaze", "gaze", 2, "目光", "合约期间打开摄像头记录使用者的行为 结束后保存录像"),
             Term("scar", "scar", 2, "刻痕", "合约期间录制整个屏幕 结束后保存录像",
                 listOf("gaze")),
@@ -525,6 +525,31 @@ class Contract(private val file: File) {
     fun idleLeft(now: LocalDateTime): Double? {
         val since = if (active) parseIso(live.strOrNull("idle_since")) else null
         return since?.let { maxOf(0.0, IDLE_LIMIT - secondsBetween(it, now)) }
+    }
+
+    // ---- 网络禁令: 乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒 (MECHANICS 18.3) ----
+
+    /** 现在禁止联网的几类 (BANS 之一; 未知变量选中的也算). */
+    fun netBans(): List<String> = if (active) BANS.filter { has(it) } else emptyList()
+
+    /** 现在禁止联网的应用 (包名). */
+    fun bannedApps(): Set<String> = netBans().flatMap { banApps(it) }.toSet()
+
+    /** 点击词条可以解除网络禁令: 开始时选的 (未知变量选中的照旧是点击关闭). */
+    fun canLift(id: String): Boolean = active && id in BANS && has(id) && id !in rand
+
+    /** 解除网络禁令扣多少目标生命值: 词条现在的等级. */
+    fun liftCost(id: String): Int = maxOf(1, termLevel(id))
+
+    /** 解除网络禁令: 扣掉 liftCost 点目标生命值, 去掉这个词条 (组合里算成员失效; 不算违反, 也不会再响警报).
+     *  返回 (是否达到了上限, 扣了几点); 不能解除时 (false, 0). 同 contract.py 的 lift_ban. */
+    fun liftBan(id: String): Pair<Boolean, Int> {
+        if (!canLift(id)) return false to 0
+        val n = liftCost(id)
+        downgrade(id, drop = true)
+        live.put("violations", violations + n)
+        save()
+        return (violations >= violationLimit) to n
     }
 
     /** 违反了词条 id: 记一次, 这个词条降一级 (drop: 直接去掉, 关闭未知变量选中的词条).

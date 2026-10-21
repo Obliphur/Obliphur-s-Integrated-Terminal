@@ -344,9 +344,23 @@ class CoreTest {
         assertTrue(ban().isEmpty())
         core.endContract("abandoned")
         core.contract.start(listOf("silent", "music"), "dev")
-        assertEquals(Contract.SOCIAL_APPS, ban())
+        assertEquals(Contract.SOCIAL_APPS + Contract.MUSIC_APPS, ban())     // 乐理之灾也禁止联网
+        // 点击解除网络禁令: 扣词条等级那么多目标生命值, 这一类的网络放开
+        val life = core.contract.life
+        core.liftNetBan("silent")
+        assertEquals(life - 2, core.contract.life)
+        assertEquals(Contract.MUSIC_APPS, ban())
         core.endContract("abandoned")
         assertTrue(ban().isEmpty())
+        // 四个一起: 互联网娱乐的败退凑齐; 解除一个后组合失效, 开始时给的不收回
+        core.contract.start(listOf("music", "silent", "game", "video"), "dev")
+        assertEquals(Contract.MUSIC_APPS + Contract.SOCIAL_APPS + Contract.GAME_APPS + Contract.VIDEO_APPS, ban())
+        assertEquals(1, core.contract.liftCost("game"))
+        assertEquals(false to 1, core.contract.liftBan("game"))
+        assertEquals("void", core.contract.combos().first { it.first.id == "nofun" }.second)
+        assertFalse(core.contract.echo("game"))
+        assertEquals(false to 0, core.contract.liftBan("game"))
+        core.endContract("abandoned")
     }
 
     /** 外出的日子只能用总额度 (每日额度 + 借到的 + 合约奖励) 的 20% (MECHANICS 21.4). */

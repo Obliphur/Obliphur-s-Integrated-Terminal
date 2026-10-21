@@ -53,6 +53,8 @@ OPS = {
     "tile_on": "#1d6fc4", "tile_on_text": "#ffffff", "tile_on_rim": "#9cc8ff",
     "tile_off": "#bdbec1", "tile_off_text": "#8e9095", "tile_off_rim": "#a9aaad",
     "tile_rand": "#f2b33d", "tile_rand_text": "#141416", "tile_rand_rim": "#ffd27a",
+    # 合约中禁止联网的词条 (乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒): 紫色, 点击解除网络禁令 (MECHANICS 18.3)
+    "tile_ban": "#7c3aed", "tile_ban_text": "#ffffff", "tile_ban_rim": "#c4a1ff",
     "hint": "#2c2d31", "nav": "#ececec", "nav_off": "#55575c",
     "sel": "#141416", "sel_text": "#f2f2f2", "sel_dim": "#77797e",
     "badge_hi": "#c8202f", "badge_hi_text": "#ffffff", "badge_lo": "#f2f2f2", "badge_lo_text": "#141416",
@@ -83,6 +85,7 @@ def palette() -> dict:
         "tile_on": c["danger"], "tile_on_text": c["on_accent"], "tile_on_rim": c["danger"],
         "tile_off": c["bg"], "tile_off_text": c["border"], "tile_off_rim": c["border"],
         "tile_rand": c["warn"], "tile_rand_text": "#141416", "tile_rand_rim": c["warn"],
+        "tile_ban": "#8b5cf6", "tile_ban_text": "#ffffff", "tile_ban_rim": "#8b5cf6",
         "hint": c["text_dim"], "nav": c["text"], "nav_off": c["border"],
         "sel": c["bg_card"], "sel_text": c["text"], "sel_dim": c["text_dim"],
         "badge_hi": c["danger"], "badge_hi_text": c["on_accent"], "badge_lo": c["border"], "badge_lo_text": c["text"],
@@ -108,7 +111,7 @@ class ContractPage(tk.Frame):
     TILE_W, GAP, BAND_W = 68, 7, 148              # 格子是正六边形: 高 = 宽 × √3 / 2
 
     def __init__(self, master, contract, on_start=None, on_abandon=None, net_used=None, on_change=None,
-                 blocked=None, rec_text=None, on_stop_screen=None, on_close_rand=None):
+                 blocked=None, rec_text=None, on_stop_screen=None, on_close_rand=None, on_lift_ban=None):
         self.P = P = palette()
         super().__init__(master, bg=P["bg"])
         self.c = contract
@@ -120,6 +123,7 @@ class ContractPage(tk.Frame):
         self.rec_text = rec_text or (lambda: "")      # 目光 / 刻痕: 录像的状态 ("" = 没有在录)
         self.on_stop_screen = on_stop_screen          # 刻痕: 终止录屏 (算一次违反)
         self.on_close_rand = on_close_rand            # 未知变量选中的词条: 点击关闭 (算一次违反)
+        self.on_lift_ban = on_lift_ban                # 禁止联网的词条 (紫色): 点击解除网络禁令, 扣目标生命值
         self._hover = ""
         self._list_key = None
         self._tile_state = {}
@@ -401,6 +405,8 @@ class ContractPage(tk.Frame):
         if self.c.active:
             if tid in self.c.rand and self.on_close_rand:
                 self.on_close_rand(tid)
+            elif self.c.can_lift(tid) and self.on_lift_ban:
+                self.on_lift_ban(tid)
             return
         sel = list(self.c.draft)
         if tid in sel:
@@ -417,10 +423,13 @@ class ContractPage(tk.Frame):
     def _enter(self, tid: str):
         self._hover = tid
         rand = self.c.active and tid in self.c.rand
-        self.canvas.configure(cursor="hand2" if rand or not self.c.active else "arrow")
+        ban = self.c.can_lift(tid)
+        self.canvas.configure(cursor="hand2" if rand or ban or not self.c.active else "arrow")
         text = f"{marks(C.BY_ID[tid][2])}  {term_name(tid)} : {term_desc(tid)}"
         if rand:
             text += "   " + tr("[未知变量选中 · 点击关闭, 算一次违反]")
+        elif ban:
+            text += "   " + tr("[禁止联网中 · 点击解除, 目标生命值 -{n}]", n=self.c.lift_cost(tid))
         other = C.blocked_by(tid, self._selected())
         if other and tid not in self._selected():
             text += "   " + tr("[与 {name} 冲突]", name=term_name(other))
@@ -511,23 +520,29 @@ class ContractPage(tk.Frame):
         half = (len(rows) + 1) // 2           # 先排满左栏, 再排右栏
         for i, (lv, text, void, rand, tid) in enumerate(rows):
             color = colors.get(tid, "") if tid else ""
+            ban = bool(tid) and self.c.can_lift(tid)       # 禁止联网中 (紫色): 点击解除网络禁令
             r = tk.Frame(self.list_box, bg=P["sel"],
                          highlightbackground=color or P["sel"], highlightthickness=2 if color else 0)
             r.grid(row=i % half, column=i // half, sticky="we", pady=2, padx=(0, 10))
             hi = lv >= 2 and not void
             if rand:
                 badge = (P["tile_rand"], P["tile_rand_text"])
+            elif ban:
+                badge = (P["tile_ban"], P["tile_ban_text"])
             else:
                 badge = (P["badge_hi"], P["badge_hi_text"]) if hi else (P["badge_lo"], P["badge_lo_text"])
             tk.Label(r, text=marks(lv) or "—", bg=badge[0], fg=badge[1], width=4,
                      font=config.font("small", bold=True)).pack(side="left", anchor="n", padx=(0, 8))
-            fg = P["tile_rand"] if rand else P["sel_dim"] if void else P["sel_text"]
-            lbl = tk.Label(r, text=text, bg=P["sel"], fg=fg, font=config.font("small"), anchor="w", justify="left",
-                           cursor="hand2" if rand else "")
+            fg = P["tile_rand"] if rand else P["tile_ban_rim"] if ban else P["sel_dim"] if void else P["sel_text"]
+            lbl = tk.Label(r, text=text + ("   " + tr("[禁止联网 · 点击解除]") if ban else ""), bg=P["sel"], fg=fg,
+                           font=config.font("small"), anchor="w", justify="left",
+                           cursor="hand2" if rand or ban else "")
             lbl.pack(side="left", fill="x", expand=True)
             lbl.bind("<Configure>", lambda e, l=lbl: l.configure(wraplength=max(80, e.width - 4)))
             if rand:
                 lbl.bind("<Button-1>", lambda e, t=rand: self.on_close_rand and self.on_close_rand(t))
+            elif ban:
+                lbl.bind("<Button-1>", lambda e, t=tid: self.on_lift_ban and self.on_lift_ban(t))
         self.area.bind_children()
 
     # ---- 最下面一条: 清空 | 危机等级 | 时长 / 完成后的休息时间 | 难度提示 | 开始行动 ----
@@ -625,6 +640,8 @@ class ContractPage(tk.Frame):
                 continue
             if tid in rand:
                 st = ("tile_rand", "tile_rand_text", "tile_rand_rim")
+            elif active and c.can_lift(tid):
+                st = ("tile_ban", "tile_ban_text", "tile_ban_rim")      # 禁止联网中: 点击解除
             elif tid in sel:
                 st = ("tile_on", "tile_on_text", "tile_on_rim")
             elif active and tid in lost:

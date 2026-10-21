@@ -79,6 +79,8 @@ class ContractColors(
     val tileOn: Color, val tileOnText: Color, val tileOnRim: Color,
     val tileOff: Color, val tileOffText: Color, val tileOffRim: Color,
     val tileRand: Color, val tileRandText: Color,
+    // 合约中禁止联网的词条 (乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒): 紫色, 点按解除网络禁令 (MECHANICS 18.3)
+    val tileBan: Color, val tileBanText: Color, val tileBanRim: Color,
     val sel: Color, val selText: Color, val selDim: Color,
     val badgeHi: Color, val badgeHiText: Color, val badgeLo: Color, val badgeLoText: Color,
     val bar: Color, val level: Color, val warn: Color, val start: Color, val startText: Color,
@@ -100,6 +102,7 @@ val OPS_COLORS = ContractColors(
     tileOn = c(0x1d6fc4), tileOnText = c(0xffffff), tileOnRim = c(0x9cc8ff),
     tileOff = c(0xbdbec1), tileOffText = c(0x8e9095), tileOffRim = c(0xa9aaad),
     tileRand = c(0xf2b33d), tileRandText = c(0x141416),
+    tileBan = c(0x7c3aed), tileBanText = c(0xffffff), tileBanRim = c(0xc4a1ff),
     sel = c(0x141416), selText = c(0xf2f2f2), selDim = c(0x77797e),
     badgeHi = c(0xc8202f), badgeHiText = c(0xffffff), badgeLo = c(0xf2f2f2), badgeLoText = c(0x141416),
     bar = c(0x26272b), level = c(0xffffff), warn = c(0xffffff), start = c(0x9e1b28), startText = c(0xffffff),
@@ -122,6 +125,7 @@ fun contractColors(): ContractColors {
         tileOn = o.danger, tileOnText = o.onAccent, tileOnRim = o.danger,
         tileOff = o.bg, tileOffText = o.border, tileOffRim = o.border,
         tileRand = o.warn, tileRandText = c(0x141416),
+        tileBan = c(0x8b5cf6), tileBanText = c(0xffffff), tileBanRim = c(0x8b5cf6),
         sel = o.card, selText = o.text, selDim = o.dim,
         badgeHi = o.danger, badgeHiText = o.onAccent, badgeLo = o.border, badgeLoText = o.text,
         bar = o.card, level = o.danger, warn = o.warn, start = o.danger, startText = o.onAccent,
@@ -331,20 +335,22 @@ fun ContractScreen() {
                                     Spacer(Modifier.width(tileW).height(tileH)); continue
                                 }
                                 val picked = t.id in rand               // 未知变量选中的: 黄色, 点按关闭
+                                val ban = active && c.canLift(t.id)     // 禁止联网中: 紫色, 点按解除网络禁令
                                 val on = t.id in sel
                                 val lost = active && !on && t.id in c.lost    // 违反到失效: "未选择"的样子
                                 val off = !on && !lost && (active || Contract.blockedBy(t.id, sel) != null)
-                                val fill = if (picked) p.tileRand else if (on) p.tileOn else if (off) p.tileOff else p.tile
-                                val fg = if (picked) p.tileRandText else if (on) p.tileOnText else if (off) p.tileOffText else p.tileText
+                                val fill = if (picked) p.tileRand else if (ban) p.tileBan else if (on) p.tileOn else if (off) p.tileOff else p.tile
+                                val fg = if (picked) p.tileRandText else if (ban) p.tileBanText else if (on) p.tileOnText else if (off) p.tileOffText else p.tileText
                                 // 凑齐了的组合: 用组合的颜色框住
                                 val cm = comboMarks[t.id]
-                                val rim = if (picked) p.tileRand else cm ?: if (on) p.tileOnRim else if (off) p.tileOffRim else p.tileRim
+                                val rim = if (picked) p.tileRand else cm ?: if (ban) p.tileBanRim else if (on) p.tileOnRim else if (off) p.tileOffRim else p.tileRim
                                 Box(Modifier.width(tileW).height(tileH).background(fill, HEX)
                                     .border(if (cm != null) 3.dp else 2.dp, rim, HEX)
                                     .clickable {
                                         tapped = t.id
                                         if (active) {
                                             if (picked) ask = "close:" + t.id
+                                            else if (ban) ask = "lift:" + t.id
                                             return@clickable
                                         }
                                         val cur = c.draft.toMutableList()
@@ -372,6 +378,7 @@ fun ContractScreen() {
                 val other = Contract.blockedBy(tapped, sel)
                 if (other != null && tapped !in sel) text += "  " + tr("[与 {name} 冲突]", "name" to termName(other))
                 if (tapped in rand) text += "  " + tr("[未知变量选中 · 点击关闭, 算一次违反]")
+                else if (active && c.canLift(tapped)) text += "  " + tr("[禁止联网中 · 点击解除, 目标生命值 -{n}]", "n" to c.liftCost(tapped))
             }
             Text(text, color = p.dim, fontSize = 13.sp, modifier = Modifier.weight(1f))
             val last = Contract.COMBO_PAGE
@@ -416,17 +423,19 @@ fun ContractScreen() {
                 for (part in listOf(rows.take(half), rows.drop(half))) Column(Modifier.weight(1f)) {
                     for ((lv, text, void, picked, tid) in part) {
                         val cm = comboMarks[tid]        // 凑齐了的组合: 用组合的颜色框住
+                        val ban = active && tid.isNotEmpty() && picked.isEmpty() && c.canLift(tid)   // 禁止联网中: 点按解除
                         Row(Modifier.padding(vertical = 3.dp)
                             .then(if (cm != null) Modifier.border(2.dp, cm, RoundedCornerShape(2.dp)) else Modifier)
-                            .clickable(enabled = picked.isNotEmpty()) { ask = "close:$picked" }) {
+                            .clickable(enabled = picked.isNotEmpty() || ban) { ask = if (ban) "lift:$tid" else "close:$picked" }) {
                             val hi = lv >= 2 && !void
-                            val badge = if (picked.isNotEmpty()) p.tileRand else if (hi) p.badgeHi else p.badgeLo
+                            val badge = if (picked.isNotEmpty()) p.tileRand else if (ban) p.tileBan else if (hi) p.badgeHi else p.badgeLo
                             Text(marks(lv).ifEmpty { "—" }, fontSize = 11.sp,
-                                color = if (picked.isNotEmpty()) p.tileRandText else if (hi) p.badgeHiText else p.badgeLoText,
+                                color = if (picked.isNotEmpty()) p.tileRandText else if (ban) p.tileBanText else if (hi) p.badgeHiText else p.badgeLoText,
                                 fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
                                 modifier = Modifier.widthIn(min = 36.dp).background(badge)
                                     .padding(horizontal = 4.dp, vertical = 1.dp))
-                            Text(text, color = if (picked.isNotEmpty()) p.tileRand else if (void) p.selDim else p.selText,
+                            Text(text + if (ban) "   " + tr("[禁止联网 · 点击解除]") else "",
+                                color = if (picked.isNotEmpty()) p.tileRand else if (ban) p.tileBanRim else if (void) p.selDim else p.selText,
                                 fontSize = 12.sp, modifier = Modifier.padding(start = 8.dp))
                         }
                     }
@@ -504,7 +513,17 @@ fun ContractScreen() {
             if (c.reward >= 1) msg += "\n" + tr("完成后的 {n} 分钟休息时间不会给出.", "n" to Math.round(c.reward / 60))
             Confirm(tr("■  提前结束"), msg, true, { ask = "" }) { core.abandonContract() }
         }
-        else -> if (ask.startsWith("close:")) {
+        else -> if (ask.startsWith("lift:")) {
+            val id = ask.removePrefix("lift:")
+            if (!c.canLift(id)) ask = ""
+            else {
+                val n = c.liftCost(id)
+                var msg = tr("解除「{name}」的网络禁令?", "name" to termName(id)) + "\n" +
+                    tr("将扣除目标生命值 {n} (现在 {life} / {m}).", "n" to n, "life" to c.life, "m" to c.violationLimit)
+                if (n >= c.life) msg += "\n" + tr("目标生命值会归零, 合约失败.")
+                Confirm(tr("解除网络禁令"), msg, true, { ask = "" }) { core.liftNetBan(id) }
+            }
+        } else if (ask.startsWith("close:")) {
             val id = ask.removePrefix("close:")
             if (id !in c.rand) ask = ""
             else Confirm(tr("关闭词条"), tr("关闭未知变量选中的 {name}?", "name" to termName(id)) + "\n" + tr("会算作一次违反."),

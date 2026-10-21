@@ -355,21 +355,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         val active = !dm.resetting && !settings.devMode
         val app = if (active) host.foregroundApp() else ""
         if (app == null) return                                  // 屏幕关闭 / 没有权限: 维持原样
-        // 合约 · 乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒 (软规则):
-        // 前台是这一类应用就算违反 (不锁; 一直开着只算一次). 音乐在休息中可以听, 休息结束时还开着就算一次
-        for (kind in Contract.BANS) {
-            if (contract.banTerm(kind).isEmpty()) continue
-            val hit = app in Contract.banApps(kind) && !(kind == "music" && timer.state == TState.ON_BREAK)
-            val id = contract.banCheck(kind, hit)
-            if (id.isEmpty()) continue
-            contractViolation(when (kind) {
-                "music" -> tr("打开了音乐播放软件 {exe}", "exe" to app)
-                "silent" -> tr("打开了社交 / AI 聊天软件 {exe}", "exe" to app)
-                "game" -> tr("打开了游戏 {exe}", "exe" to app)
-                else -> tr("打开了视频平台 {exe}", "exe" to app)
-            }, id)
-            if (!contract.active) break
-        }
+        // 合约 · 乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒: 打开它们不算违反, 只是禁止联网 (vpnPlan, MECHANICS 18.3)
         val mode = settings.str("FILTER_MODE")
         val why = if (app.isEmpty() || app == "OIT" || host.lockExempt(app, mode == RuleKeys.WHITELIST)) null
         else rules.snap.appAllowed(app, net.online, mode).takeIf { !it.first }?.second
@@ -842,6 +828,24 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     }
 
     /** 未知变量选中的词条: 点击关闭, 算一次违反. */
+    /** 合约页上点击乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒: 解除这一类应用的网络禁令,
+     *  扣掉词条等级那么多目标生命值 (MECHANICS 18.3). 界面先确认. */
+    fun liftNetBan(id: String) {
+        val c = contract
+        if (!c.canLift(id)) return
+        val name = tr(Contract.BY_ID[id]!!.name)
+        val (over, n) = c.liftBan(id)
+        logNotice("CONTRACT lift ban $id -$n: ${c.violations}/${c.violationLimit}")
+        val text = tr("解除了「{name}」的网络禁令 · 目标生命值 -{n} ({life} / {m})", "name" to name, "n" to n,
+            "life" to c.life, "m" to c.violationLimit) + "\n" + tr("危机等级 {lv}", "lv" to c.level)
+        toast(text, "warn", long = true)
+        addViolation(text)               // 违规记录页 (MECHANICS 8.1): 目标生命值的变化都记下来
+        host.applyNet(false)             // 这一类应用的网络放开
+        if (over) endContract("failed")
+        syncHourLog()
+        changed()
+    }
+
     fun closeRandomTerm(id: String) {
         if (!contract.active || id !in contract.rand) return
         contractViolation(tr("关闭了未知变量选中的 {name}", "name" to tr(Contract.BY_ID[id]!!.name)), id, drop = true)
@@ -981,7 +985,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         toast(msg, "warn", long = true)
         addViolation(msg)               // 违规记录页 (MECHANICS 8.1): 内容照搬这段提示
         if (over) endContract("failed")
-        else if (id == "silent" && new.isEmpty()) host.applyNet(false)   // 无言为真失效: 不再屏蔽社交应用的网络
+        else if (id in Contract.BANS && new.isEmpty()) host.applyNet(false)   // 禁止联网的词条失效: 这一类应用的网络放开
         changed()
     }
 
@@ -1009,8 +1013,8 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         if (settings.devMode) return if (hasPeers()) VpnPlan.Dns(false, 0) else VpnPlan.None
         val online = net.online
         val snap = rules.snap
-        // 合约的无言为真 (休息中也算): 社交 / AI 聊天应用的网络全部屏蔽 (MECHANICS 18.6)
-        val ban = if (contract.active && contract.has("silent")) Contract.SOCIAL_APPS else emptySet()
+        // 合约的网络禁令 (休息中也算): 乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒 的应用网络全部屏蔽 (MECHANICS 18.3, 18.6)
+        val ban = contract.bannedApps()
         // 代理-全屏蔽 (Proxy block-all): 离线时接管 DNS, 所有域名一律拦截 (不看网站名单,
         // 局域网照常, 设备同步要用); 联网中全部放行. 应用名单照样按过滤名单模式锁定应用 (checkAppLock)
         if (netMode() == "adapter")

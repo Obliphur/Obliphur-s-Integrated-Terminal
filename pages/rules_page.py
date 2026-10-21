@@ -24,6 +24,7 @@ _WHY_TEXT = {
     "self": "回环",
     "not-whitelisted": "不在白名单",
     "blockall": "全屏蔽",
+    "ban": "合约禁止联网",
 }
 
 _PANELS = (
