@@ -454,6 +454,13 @@ def _now_ms() -> int:
     return int(datetime.now().timestamp() * 1000)
 
 
+# 黑雾 (18.3): 一天 48 个半小时各一句假内容. 只存编号, 显示时对词池长度取余 (词池变了也能用, 中英文共用).
+FOG_SLOTS = 48
+
+
+def _fog_words(rnd) -> list:
+    return [[rnd.randrange(1 << 16) for _ in range(3)] for _ in range(FOG_SLOTS)]
+
 class Contract:
     def __init__(self, data_dir: str):
         self.path = os.path.join(data_dir, "contract.json")
@@ -619,7 +626,7 @@ class Contract:
                      "owner": owner, "idle_since": None, "net": None, "first_break": False,
                      "pre": round(pre, 1), "pre_left": round(pre, 1), "pre_used": 0,
                      "supply": None if share is None else round(pre * share, 1), "hl": [],
-                     "rand": [], "rand_n": 0}
+                     "rand": [], "rand_n": 0, "fog_words": _fog_words(random.Random())}
         self._watch = {}
         self.save()
         return self.live
@@ -1243,6 +1250,14 @@ class Contract:
 
     def fog(self) -> bool:
         return self.has("fog")
+
+    def fog_words(self) -> list:
+        """黑雾时整点记录的假内容: 开始合约时抽好的 FOG_SLOTS 组 [动词, 量词, 名词] 编号 (随合约同步, 两端一样).
+        以前开始的合约没有这一项: 用合约 id 当种子补一份."""
+        w = self.live.get("fog_words") if self.active else None
+        if isinstance(w, list) and w and all(isinstance(x, list) and len(x) == 3 for x in w):
+            return w
+        return _fog_words(random.Random(str(self.live.get("id"))))
 
     def hoard_check(self) -> str:
         """禁止囤囤鼠!: 提前结束了休息 (软规则: 照样能结束, 算一次违反)."""
@@ -1989,6 +2004,16 @@ def _selftest():
     assert c.hour_locked(a, b, "Sleeping", datetime(2026, 10, 19), fill, "Sleeping"), "合约结束后照样锁着"
     assert not c.hour_locked(datetime(2026, 10, 18, 13), datetime(2026, 10, 18, 14), "", datetime(2026, 10, 19),
                              fill, "Sleeping")
+
+    # 黑雾: 整点记录的假内容开始合约时就抽好, 跟着合约同步, 两端一样
+    fa, fb = Contract(tempfile.mkdtemp()), Contract(tempfile.mkdtemp())
+    fa.start(["fog"], "A")
+    w = fa.fog_words()
+    assert len(w) == FOG_SLOTS and w == fa.live["fog_words"]
+    fb.merge({"live": fa.doc()["live"]})
+    assert fb.fog_words() == w, "同步来的合约: 同一份"
+    fa.live.pop("fog_words")
+    assert len(fa.fog_words()) == FOG_SLOTS and fa.fog_words() == fa.fog_words(), "以前开始的合约: 按 id 补一份"
 
     # 同步: 记录按 id 合并
     d = Contract(tempfile.mkdtemp())

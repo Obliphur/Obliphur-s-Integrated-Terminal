@@ -10,6 +10,12 @@ import java.time.LocalDateTime
 class Dice(val roll: () -> Double = { kotlin.random.Random.nextDouble() },
            val pick: (Int) -> Int = { kotlin.random.Random.nextInt(it) })
 
+/** 黑雾 (18.3): 一天 48 个半小时各一句假内容. 只存编号, 显示时对词池长度取余 (词池变了也能用, 中英文共用). */
+const val FOG_SLOTS = 48
+
+fun fogWordsJson(r: java.util.Random): JSONArray =
+    JSONArray((0 until FOG_SLOTS).map { JSONArray(List(3) { r.nextInt(1 shl 16) }) })
+
 class Term(val id: String, val group: String, val level: Int, val name: String, val desc: String,
            val conflicts: List<String> = emptyList())
 
@@ -499,7 +505,7 @@ class Contract(private val file: File) {
             .put("idle_since", JSONObject.NULL).put("net", JSONObject.NULL).put("first_break", false)
             .put("pre", r1(p)).put("pre_left", r1(p)).put("pre_used", 0)
             .put("supply", if (share == null) JSONObject.NULL else r1(p * share)).put("hl", JSONArray())
-            .put("rand", JSONArray()).put("rand_n", 0)
+            .put("rand", JSONArray()).put("rand_n", 0).put("fog_words", fogWordsJson(java.util.Random()))
         watch.clear()
         save()
     }
@@ -952,6 +958,15 @@ class Contract(private val file: File) {
     /** 只能用剩余联网时间的几成 (null = 不限). */
     fun netShare(): Double? = terms.mapNotNull { NET_SHARE[it] }.minOrNull()
     fun fog() = has("fog")
+
+    /** 黑雾时整点记录的假内容: 开始合约时抽好的 FOG_SLOTS 组 [动词, 量词, 名词] 编号 (随合约同步, 两端一样).
+     *  以前开始的合约没有这一项: 用合约 id 当种子补一份. 同 contract.py 的 fog_words. */
+    fun fogWords(): List<IntArray> {
+        val w = if (active) live.optJSONArray("fog_words") else null
+        val arr = if (w != null && w.length() > 0 && (0 until w.length()).all { w.optJSONArray(it)?.length() == 3 }) w
+            else fogWordsJson(java.util.Random(id))
+        return (0 until arr.length()).map { i -> arr.getJSONArray(i).let { a -> IntArray(3) { a.optInt(it) } } }
+    }
     /** 选了整点记录的词条: 整点记录关着时, 这次合约中照样开启. */
     fun hourForced() = terms.any { it in HOUR_TERMS } || (active && live.optBoolean("hour_forced"))
     /** 细化规范: 这一小时 (按开始时刻) 和进行中的合约重叠, 记录改为每 30 分钟一次. */

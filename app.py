@@ -587,7 +587,7 @@ class BreakTimerApp:
             locked=lambda a, b, text, now: self.contract.hour_locked(
                 a, b, text, now, config.FILL_WINDOW, self.dm.auto_text_for_key),
             split=self.contract.fine_hour,
-            fog=self._fog_seed,                              # 黑雾: 只露出"现在"和待填写的格子 (18.3)
+            fog=self._fog_words,                             # 黑雾: 只露出"现在"和待填写的格子 (18.3)
             sealed=lambda a, b: self.contract.hour_sealed(a, b)   # 记录封锁: 按 Enter 提交前先确认
         )
         self._prepare_page(self.pages["log"])
@@ -2655,6 +2655,10 @@ class BreakTimerApp:
     def _fog_seed(self):
         """黑雾: 统计 / 日历显示假数据用的种子 (同一个合约里不变); 没有黑雾时 None."""
         return self.contract.live.get("id") if self.contract.fog() else None
+
+    def _fog_words(self):
+        """黑雾: 整点记录假内容用的编号 (开始合约时抽好); 没有黑雾时 None."""
+        return self.contract.fog_words() if self.contract.fog() else None
 
     def _owner_away(self, owner: str) -> bool:
         """这个状态的主人是本机, 或者主人不在线 (2 分钟没同步): 自动的操作由本机来做."""

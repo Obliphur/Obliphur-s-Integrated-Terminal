@@ -433,4 +433,19 @@ class ContractTest {
         c.preCap(900.0); assertEquals(600.0, c.preLeft, 1e-9)
         c.preCap(250.0); assertEquals(250.0, c.preLeft, 1e-9)
     }
+
+    /** 黑雾 (18.3): 整点记录的假内容开始合约时就抽好, 跟着合约同步, 两端一样. */
+    @Test
+    fun fogWordsPickedAtStart() {
+        val a = Contract(tmp())
+        val b = Contract(tmp())
+        a.start(listOf("fog"), "A")
+        val w = a.fogWords()
+        assertEquals(FOG_SLOTS, w.size)
+        assertEquals(FOG_SLOTS, a.live.getJSONArray("fog_words").length())
+        b.merge(mapOf("live" to a.doc()["live"]))
+        assertTrue("同步来的合约: 同一份", w.indices.all { w[it].contentEquals(b.fogWords()[it]) })
+        a.live.remove("fog_words")                     // 以前开始的合约: 按 id 补一份, 每次一样
+        assertTrue(a.fogWords().size == FOG_SLOTS && a.fogWords()[7].contentEquals(a.fogWords()[7]))
+    }
 }

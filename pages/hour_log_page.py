@@ -1,6 +1,5 @@
 
 
-import random
 import tkinter as tk
 from tkinter import ttk
 from datetime import datetime, timedelta
@@ -12,25 +11,31 @@ from i18n import tr
 from .widgets import cfg
 
 
-# 黑雾 (MECHANICS 18.3) 时盖住的格子里的假内容: 动词 + 量词 + 名词 随机拼起来 (每个词池 60 个, 中文每个词两个字),
-# 词都取自 Minecraft Wiki 的"村民"条目 (中文 / 英文). 界面是英文时用英文的.
+# 黑雾 (MECHANICS 18.3) 时盖住的格子里的假内容: 动词 + 量词 + 名词 拼起来 (中文每个词两个字).
+# 词取自 Minecraft Wiki 的"村民"条目 (每个词池 60 个) 和 PRTS 的"水月"条目 (动词 40, 量词 20, 名词 40).
+# 界面是英文时用英文的.
 _ZH_VERBS = (
     "生成", "治愈", "掉落", "繁殖", "交易", "工作", "游荡", "聚集", "玩耍", "回家", "睡觉", "认领", "拾取", "分享", "耕作", "逃跑", "注视", "交谈",
     "收割", "躲避", "寻找", "起床", "攀爬", "打开", "放弃", "绑定", "破坏", "传送", "检测", "传播", "合并", "攻击", "装备", "催熟", "播种", "收获",
     "制作", "检查", "购买", "出售", "补货", "庆祝", "发射", "敲响", "观察", "追逐", "跳跃", "奔跑", "成长", "感染", "转换", "命名", "叫醒", "种植",
-    "投掷", "摇头", "熬夜", "消耗", "储存", "升级",
+    "投掷", "摇头", "熬夜", "消耗", "储存", "升级", "伏击", "隐匿", "部署", "阻挡", "回复", "触发", "充能", "束缚", "晕眩", "流失", "拖拽", "击杀",
+    "歼灭", "进驻", "生产", "编入", "通关", "阻止", "劫掠", "坐视", "探索", "察觉", "索要", "审视", "见证", "迷失", "怀疑", "延长", "割下", "询问",
+    "摒弃", "预见", "诞生", "回归", "滋润", "盘踞", "汲取", "改造", "孕育", "招募",
 )
 _ZH_QUANTS = (
     "一个", "两个", "三个", "五个", "八个", "十个", "几个", "每个", "一块", "三块", "六块", "半块", "一组", "两组", "半组", "每组", "一格", "八格",
     "十格", "一张", "两张", "几张", "每张", "一次", "两次", "几次", "一枚", "十枚", "几枚", "一种", "五种", "七种", "几种", "一条", "两条", "几条",
     "一名", "三名", "五名", "一颗", "九颗", "几颗", "一件", "两件", "几件", "一片", "几片", "一层", "两层", "一级", "五级", "一只", "两只", "几只",
-    "一些", "许多", "少量", "多个", "四块", "四组",
+    "一些", "许多", "少量", "多个", "四块", "四组", "一棵", "两棵", "每棵", "一粒", "几粒", "一口", "半口", "三口", "一株", "每株", "两名", "每名",
+    "一套", "整套", "一群", "那群", "一帮", "那帮", "三秒", "两阶",
 )
 _ZH_NOUNS = (
     "村民", "村庄", "职业", "面包", "小麦", "骨粉", "农民", "渔夫", "牧师", "屠夫", "石匠", "皮匠", "傻子", "盔甲", "物品", "方块", "僵尸", "女巫",
     "粒子", "言论", "声望", "折扣", "礼物", "火箭", "房屋", "梯子", "屋顶", "教堂", "码头", "书架", "讲台", "木桶", "高炉", "砂轮", "作物", "耕地",
     "雪屋", "苹果", "南瓜", "徽章", "服装", "袍子", "帽子", "围裙", "眼镜", "手套", "头巾", "羽毛", "箭袋", "矿车", "蝙蝠", "骆驼", "熊猫", "狐狸",
-    "兔子", "绵羊", "海龟", "山羊", "青蛙", "羊驼",
+    "兔子", "绵羊", "海龟", "山羊", "青蛙", "羊驼", "干员", "技能", "天赋", "模组", "证章", "使者", "孩子", "舌尖", "恐鱼", "匪徒", "学者", "血肉",
+    "纽带", "知识", "工具", "种子", "新芽", "野兽", "大树", "树苗", "族群", "洪流", "土壤", "幼子", "养分", "物种", "土地", "海洋", "星球", "环境",
+    "食物", "锚点", "信物", "角色", "表情", "敌人", "弹道", "地块", "合同", "档案",
 )
 _EN_VERBS = (
     "trade", "breed", "spawn", "cure", "drop", "wander", "gather", "play", "sleep", "claim", "share", "farm",
@@ -38,7 +43,11 @@ _EN_VERBS = (
     "craft", "heal", "gossip", "work", "explore", "buy", "sell", "restock", "celebrate", "launch", "ring",
     "forget", "migrate", "summon", "carry", "chase", "shear", "wear", "consume", "collect", "deposit",
     "attack", "avoid", "push", "grow", "rest", "unlock", "tend", "scan", "reach", "emit", "count", "store",
-    "refresh", "despawn", "inhabit",
+    "refresh", "despawn", "inhabit", "ambush", "conceal", "deploy", "block", "recover", "trigger", "charge",
+    "bind", "stun", "drain", "drag", "slay", "annihilate", "station", "produce", "enlist", "clear", "prevent",
+    "plunder", "ignore", "probe", "notice", "demand", "examine", "witness", "misplace", "doubt", "extend",
+    "sever", "question", "discard", "foresee", "beget", "return", "nourish", "occupy", "absorb", "reshape",
+    "nurture", "recruit",
 )
 _EN_QUANTS = (
     "a stack of", "a block of", "a slot of", "a piece of", "a batch of", "a handful of", "two stacks of",
@@ -52,7 +61,10 @@ _EN_QUANTS = (
     "ten slots of", "ten pieces of", "ten batches of", "ten handfuls of", "twelve stacks of",
     "twelve blocks of", "twelve slots of", "twelve pieces of", "twelve batches of", "twelve handfuls of",
     "several stacks of", "several blocks of", "several slots of", "several pieces of", "several batches of",
-    "several handfuls of",
+    "several handfuls of", "a tree of", "two trees of", "every tree of", "a grain of", "a few grains of",
+    "a mouthful of", "half a mouthful of", "three mouthfuls of", "a sprout of", "every sprout of",
+    "two squads of", "every squad of", "a set of", "a full set of", "a swarm of", "that swarm of", "a gang of",
+    "that gang of", "three seconds of", "two tiers of",
 )
 _EN_NOUNS = (
     "villagers", "emeralds", "beds", "bells", "carrots", "potatoes", "beetroots", "seeds", "pumpkins",
@@ -61,16 +73,21 @@ _EN_NOUNS = (
     "fishermen", "nitwits", "babies", "particles", "doors", "ladders", "trapdoors", "chickens", "cats",
     "wolves", "composters", "barrels", "lecterns", "looms", "grindstones", "smokers", "stonecutters",
     "cauldrons", "apples", "saddles", "carpets", "books", "maps", "gifts", "rockets", "badges", "outfits",
-    "hats", "aprons", "gloves", "crops", "igloos", "ravagers", "dispensers", "pistons",
+    "hats", "aprons", "gloves", "crops", "igloos", "ravagers", "dispensers", "pistons", "operators", "skills",
+    "talents", "modules", "insignias", "envoys", "children", "tongues", "seaborn", "bandits", "scholars",
+    "flesh", "bonds", "lore", "tools", "kernels", "sprouts", "beasts", "oaks", "saplings", "tribes",
+    "torrents", "soils", "offspring", "nutrients", "species", "lands", "oceans", "planets", "habitats",
+    "meals", "anchors", "tokens", "characters", "expressions", "enemies", "projectiles", "tiles", "contracts",
+    "dossiers",
 )
 
 
-def fog_noise(seed, key: str) -> str:
-    """黑雾时一个格子的假内容: 同一个合约里同一个格子不变 (不会每秒闪)."""
-    rnd = random.Random(f"{seed}|{key}")
+def fog_noise(words, at: datetime) -> str:
+    """黑雾时一个格子的假内容: words 是开始合约时抽好的编号 (contract.fog_words), 按这一格是一天里的第几个半小时取."""
+    v, q, n = words[(at.hour * 2 + at.minute // 30) % len(words)]
     if i18n.is_en():
-        return f"{rnd.choice(_EN_VERBS).capitalize()} {rnd.choice(_EN_QUANTS)} {rnd.choice(_EN_NOUNS)}"
-    return rnd.choice(_ZH_VERBS) + rnd.choice(_ZH_QUANTS) + rnd.choice(_ZH_NOUNS)
+        return f"{_EN_VERBS[v % len(_EN_VERBS)].capitalize()} {_EN_QUANTS[q % len(_EN_QUANTS)]} {_EN_NOUNS[n % len(_EN_NOUNS)]}"
+    return _ZH_VERBS[v % len(_ZH_VERBS)] + _ZH_QUANTS[q % len(_ZH_QUANTS)] + _ZH_NOUNS[n % len(_ZH_NOUNS)]
 
 
 class HourLogPage(tk.Frame):
@@ -271,7 +288,7 @@ class HourLogPage(tk.Frame):
         awaiting = self.dm.awaiting_slot()
         focused = self.focus_get()
         try:
-            seed = self.fog()
+            seed = self.fog()                   # 黑雾时是开始合约时抽好的假内容编号
         except Exception:
             seed = None
         for h, (lbl, ent, var) in self.rows.items():
@@ -297,7 +314,7 @@ class HourLogPage(tk.Frame):
                 hidden = seed is not None and not (a <= now < b or wait)     # 黑雾: 只露出"现在"和待填写的格子
                 shown = shown or not hidden
                 if hidden:
-                    noise = fog_noise(seed, f"{a:%Y-%m-%d %H:%M}")
+                    noise = fog_noise(seed, a)
                     if v.get() != noise:
                         v.set(noise)
                     cfg(e, state="disabled", highlightbackground=COLORS["border"])

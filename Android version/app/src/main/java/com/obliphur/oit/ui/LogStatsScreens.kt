@@ -50,7 +50,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.obliphur.oit.OitApp
 import com.obliphur.oit.core.Contract
-import com.obliphur.oit.core.Fmt
 import com.obliphur.oit.core.f1
 import com.obliphur.oit.core.fmtHm
 import com.obliphur.oit.core.key
@@ -66,64 +65,84 @@ import kotlin.math.atan2
 
 // ════════════════ Hour Log 页 (MECHANICS 7) ════════════════
 
-/** 黑雾 (MECHANICS 18.3) 时盖住的格子里的假内容: 动词 + 量词 + 名词 随机拼起来 (每个词池 60 个, 中文每个词两个字),
- *  词都取自 Minecraft Wiki 的"村民"条目 (中文 / 英文). 同 hour_log_page.py. */
+/** 黑雾 (MECHANICS 18.3) 时盖住的格子里的假内容: 动词 + 量词 + 名词 拼起来 (中文每个词两个字).
+ *  词取自 Minecraft Wiki 的"村民"条目 (每个词池 60 个) 和 PRTS 的"水月"条目 (动词 40, 量词 20, 名词 40).
+ *  同 hour_log_page.py. */
 private val FOG_ZH_VERBS = listOf(
-    "生成", "治愈", "掉落", "繁殖", "交易", "工作", "游荡", "聚集", "玩耍", "回家", "睡觉", "认领", "拾取", "分享", "耕作", "逃跑", "注视", "交谈", "收割",
-    "躲避", "寻找", "起床", "攀爬", "打开", "放弃", "绑定", "破坏", "传送", "检测", "传播", "合并", "攻击", "装备", "催熟", "播种", "收获", "制作", "检查",
-    "购买", "出售", "补货", "庆祝", "发射", "敲响", "观察", "追逐", "跳跃", "奔跑", "成长", "感染", "转换", "命名", "叫醒", "种植", "投掷", "摇头", "熬夜",
-    "消耗", "储存", "升级",
+    "生成", "治愈", "掉落", "繁殖", "交易", "工作", "游荡", "聚集", "玩耍", "回家", "睡觉", "认领", "拾取", "分享", "耕作", "逃跑", "注视", "交谈",
+    "收割", "躲避", "寻找", "起床", "攀爬", "打开", "放弃", "绑定", "破坏", "传送", "检测", "传播", "合并", "攻击", "装备", "催熟", "播种", "收获",
+    "制作", "检查", "购买", "出售", "补货", "庆祝", "发射", "敲响", "观察", "追逐", "跳跃", "奔跑", "成长", "感染", "转换", "命名", "叫醒", "种植",
+    "投掷", "摇头", "熬夜", "消耗", "储存", "升级", "伏击", "隐匿", "部署", "阻挡", "回复", "触发", "充能", "束缚", "晕眩", "流失", "拖拽", "击杀",
+    "歼灭", "进驻", "生产", "编入", "通关", "阻止", "劫掠", "坐视", "探索", "察觉", "索要", "审视", "见证", "迷失", "怀疑", "延长", "割下", "询问",
+    "摒弃", "预见", "诞生", "回归", "滋润", "盘踞", "汲取", "改造", "孕育", "招募"
 )
 private val FOG_ZH_QUANTS = listOf(
-    "一个", "两个", "三个", "五个", "八个", "十个", "几个", "每个", "一块", "三块", "六块", "半块", "一组", "两组", "半组", "每组", "一格", "八格", "十格",
-    "一张", "两张", "几张", "每张", "一次", "两次", "几次", "一枚", "十枚", "几枚", "一种", "五种", "七种", "几种", "一条", "两条", "几条", "一名", "三名",
-    "五名", "一颗", "九颗", "几颗", "一件", "两件", "几件", "一片", "几片", "一层", "两层", "一级", "五级", "一只", "两只", "几只", "一些", "许多", "少量",
-    "多个", "四块", "四组",
+    "一个", "两个", "三个", "五个", "八个", "十个", "几个", "每个", "一块", "三块", "六块", "半块", "一组", "两组", "半组", "每组", "一格", "八格",
+    "十格", "一张", "两张", "几张", "每张", "一次", "两次", "几次", "一枚", "十枚", "几枚", "一种", "五种", "七种", "几种", "一条", "两条", "几条",
+    "一名", "三名", "五名", "一颗", "九颗", "几颗", "一件", "两件", "几件", "一片", "几片", "一层", "两层", "一级", "五级", "一只", "两只", "几只",
+    "一些", "许多", "少量", "多个", "四块", "四组", "一棵", "两棵", "每棵", "一粒", "几粒", "一口", "半口", "三口", "一株", "每株", "两名", "每名",
+    "一套", "整套", "一群", "那群", "一帮", "那帮", "三秒", "两阶"
 )
 private val FOG_ZH_NOUNS = listOf(
-    "村民", "村庄", "职业", "面包", "小麦", "骨粉", "农民", "渔夫", "牧师", "屠夫", "石匠", "皮匠", "傻子", "盔甲", "物品", "方块", "僵尸", "女巫", "粒子",
-    "言论", "声望", "折扣", "礼物", "火箭", "房屋", "梯子", "屋顶", "教堂", "码头", "书架", "讲台", "木桶", "高炉", "砂轮", "作物", "耕地", "雪屋", "苹果",
-    "南瓜", "徽章", "服装", "袍子", "帽子", "围裙", "眼镜", "手套", "头巾", "羽毛", "箭袋", "矿车", "蝙蝠", "骆驼", "熊猫", "狐狸", "兔子", "绵羊", "海龟",
-    "山羊", "青蛙", "羊驼",
+    "村民", "村庄", "职业", "面包", "小麦", "骨粉", "农民", "渔夫", "牧师", "屠夫", "石匠", "皮匠", "傻子", "盔甲", "物品", "方块", "僵尸", "女巫",
+    "粒子", "言论", "声望", "折扣", "礼物", "火箭", "房屋", "梯子", "屋顶", "教堂", "码头", "书架", "讲台", "木桶", "高炉", "砂轮", "作物", "耕地",
+    "雪屋", "苹果", "南瓜", "徽章", "服装", "袍子", "帽子", "围裙", "眼镜", "手套", "头巾", "羽毛", "箭袋", "矿车", "蝙蝠", "骆驼", "熊猫", "狐狸",
+    "兔子", "绵羊", "海龟", "山羊", "青蛙", "羊驼", "干员", "技能", "天赋", "模组", "证章", "使者", "孩子", "舌尖", "恐鱼", "匪徒", "学者", "血肉",
+    "纽带", "知识", "工具", "种子", "新芽", "野兽", "大树", "树苗", "族群", "洪流", "土壤", "幼子", "养分", "物种", "土地", "海洋", "星球", "环境",
+    "食物", "锚点", "信物", "角色", "表情", "敌人", "弹道", "地块", "合同", "档案"
 )
 private val FOG_EN_VERBS = listOf(
-    "trade", "breed", "spawn", "cure", "drop", "wander", "gather", "play", "sleep", "claim", "share", "farm", "flee",
-    "stare", "harvest", "plant", "throw", "pick", "equip", "climb", "open", "close", "jump", "sprint", "craft",
-    "heal", "gossip", "work", "explore", "buy", "sell", "restock", "celebrate", "launch", "ring", "forget",
-    "migrate", "summon", "carry", "chase", "shear", "wear", "consume", "collect", "deposit", "attack", "avoid",
-    "push", "grow", "rest", "unlock", "tend", "scan", "reach", "emit", "count", "store", "refresh", "despawn",
-    "inhabit",
+    "trade", "breed", "spawn", "cure", "drop", "wander", "gather", "play", "sleep", "claim", "share", "farm",
+    "flee", "stare", "harvest", "plant", "throw", "pick", "equip", "climb", "open", "close", "jump", "sprint",
+    "craft", "heal", "gossip", "work", "explore", "buy", "sell", "restock", "celebrate", "launch", "ring",
+    "forget", "migrate", "summon", "carry", "chase", "shear", "wear", "consume", "collect", "deposit",
+    "attack", "avoid", "push", "grow", "rest", "unlock", "tend", "scan", "reach", "emit", "count", "store",
+    "refresh", "despawn", "inhabit", "ambush", "conceal", "deploy", "block", "recover", "trigger", "charge",
+    "bind", "stun", "drain", "drag", "slay", "annihilate", "station", "produce", "enlist", "clear", "prevent",
+    "plunder", "ignore", "probe", "notice", "demand", "examine", "witness", "misplace", "doubt", "extend",
+    "sever", "question", "discard", "foresee", "beget", "return", "nourish", "occupy", "absorb", "reshape",
+    "nurture", "recruit"
 )
 private val FOG_EN_QUANTS = listOf(
     "a stack of", "a block of", "a slot of", "a piece of", "a batch of", "a handful of", "two stacks of",
     "two blocks of", "two slots of", "two pieces of", "two batches of", "two handfuls of", "three stacks of",
     "three blocks of", "three slots of", "three pieces of", "three batches of", "three handfuls of",
-    "four stacks of", "four blocks of", "four slots of", "four pieces of", "four batches of", "four handfuls of",
-    "five stacks of", "five blocks of", "five slots of", "five pieces of", "five batches of", "five handfuls of",
-    "six stacks of", "six blocks of", "six slots of", "six pieces of", "six batches of", "six handfuls of",
-    "eight stacks of", "eight blocks of", "eight slots of", "eight pieces of", "eight batches of",
-    "eight handfuls of", "ten stacks of", "ten blocks of", "ten slots of", "ten pieces of", "ten batches of",
-    "ten handfuls of", "twelve stacks of", "twelve blocks of", "twelve slots of", "twelve pieces of",
-    "twelve batches of", "twelve handfuls of", "several stacks of", "several blocks of", "several slots of",
-    "several pieces of", "several batches of", "several handfuls of",
+    "four stacks of", "four blocks of", "four slots of", "four pieces of", "four batches of",
+    "four handfuls of", "five stacks of", "five blocks of", "five slots of", "five pieces of",
+    "five batches of", "five handfuls of", "six stacks of", "six blocks of", "six slots of", "six pieces of",
+    "six batches of", "six handfuls of", "eight stacks of", "eight blocks of", "eight slots of",
+    "eight pieces of", "eight batches of", "eight handfuls of", "ten stacks of", "ten blocks of",
+    "ten slots of", "ten pieces of", "ten batches of", "ten handfuls of", "twelve stacks of",
+    "twelve blocks of", "twelve slots of", "twelve pieces of", "twelve batches of", "twelve handfuls of",
+    "several stacks of", "several blocks of", "several slots of", "several pieces of", "several batches of",
+    "several handfuls of", "a tree of", "two trees of", "every tree of", "a grain of", "a few grains of",
+    "a mouthful of", "half a mouthful of", "three mouthfuls of", "a sprout of", "every sprout of",
+    "two squads of", "every squad of", "a set of", "a full set of", "a swarm of", "that swarm of", "a gang of",
+    "that gang of", "three seconds of", "two tiers of"
 )
 private val FOG_EN_NOUNS = listOf(
-    "villagers", "emeralds", "beds", "bells", "carrots", "potatoes", "beetroots", "seeds", "pumpkins", "golems",
-    "zombies", "pillagers", "witches", "farmers", "clerics", "librarians", "masons", "shepherds", "fletchers",
-    "butchers", "armorers", "toolsmiths", "cartographers", "leatherworkers", "weaponsmiths", "fishermen", "nitwits",
-    "babies", "particles", "doors", "ladders", "trapdoors", "chickens", "cats", "wolves", "composters", "barrels",
-    "lecterns", "looms", "grindstones", "smokers", "stonecutters", "cauldrons", "apples", "saddles", "carpets",
-    "books", "maps", "gifts", "rockets", "badges", "outfits", "hats", "aprons", "gloves", "crops", "igloos",
-    "ravagers", "dispensers", "pistons",
+    "villagers", "emeralds", "beds", "bells", "carrots", "potatoes", "beetroots", "seeds", "pumpkins",
+    "golems", "zombies", "pillagers", "witches", "farmers", "clerics", "librarians", "masons", "shepherds",
+    "fletchers", "butchers", "armorers", "toolsmiths", "cartographers", "leatherworkers", "weaponsmiths",
+    "fishermen", "nitwits", "babies", "particles", "doors", "ladders", "trapdoors", "chickens", "cats",
+    "wolves", "composters", "barrels", "lecterns", "looms", "grindstones", "smokers", "stonecutters",
+    "cauldrons", "apples", "saddles", "carpets", "books", "maps", "gifts", "rockets", "badges", "outfits",
+    "hats", "aprons", "gloves", "crops", "igloos", "ravagers", "dispensers", "pistons", "operators", "skills",
+    "talents", "modules", "insignias", "envoys", "children", "tongues", "seaborn", "bandits", "scholars",
+    "flesh", "bonds", "lore", "tools", "kernels", "sprouts", "beasts", "oaks", "saplings", "tribes",
+    "torrents", "soils", "offspring", "nutrients", "species", "lands", "oceans", "planets", "habitats",
+    "meals", "anchors", "tokens", "characters", "expressions", "enemies", "projectiles", "tiles", "contracts",
+    "dossiers"
 )
 
-/** 黑雾时一个格子的假内容, 例如"收割三块面包" / "Harvest two stacks of carrots": 同一个合约里同一个格子不变 (不会每秒闪). */
-private fun fogNoise(seed: Long, key: String): String {
-    val r = java.util.Random("$seed|$key".hashCode().toLong())
-    fun <T> List<T>.pick() = this[r.nextInt(size)]
+/** 黑雾时一个格子的假内容, 例如"收割三块面包" / "Harvest two stacks of carrots":
+ *  words 是开始合约时抽好的编号 (Contract.fogWords), 按这一格是一天里的第几个半小时取. */
+private fun fogNoise(words: List<IntArray>, at: java.time.LocalDateTime): String {
+    val (v, q, n) = words[(at.hour * 2 + at.minute / 30) % words.size].toList()
+    fun List<String>.at(i: Int) = this[i % size]
     return if (com.obliphur.oit.core.I18n.lang == "en")
-        "${FOG_EN_VERBS.pick().replaceFirstChar { it.uppercase() }} ${FOG_EN_QUANTS.pick()} ${FOG_EN_NOUNS.pick()}"
-    else FOG_ZH_VERBS.pick() + FOG_ZH_QUANTS.pick() + FOG_ZH_NOUNS.pick()
+        "${FOG_EN_VERBS.at(v).replaceFirstChar { it.uppercase() }} ${FOG_EN_QUANTS.at(q)} ${FOG_EN_NOUNS.at(n)}"
+    else FOG_ZH_VERBS.at(v) + FOG_ZH_QUANTS.at(q) + FOG_ZH_NOUNS.at(n)
 }
 
 @Composable
@@ -168,6 +187,7 @@ fun HourLogScreen(go: (String) -> Unit) {
                     else listOf(Triple(start, end, dm.hourText(ds, start.hour)))
                 // 黑雾 (18.3): 除了"现在"的格子和待填写的格子, 时间写 ???, 内容是随机字符, 不能改
                 val fog = core.contract.fog()
+                val fogWords = if (fog) core.contract.fogWords() else emptyList()
                 val hidden = cells.map { (a, b, _) ->
                     val wait = awaiting != null && !awaiting.isBefore(a) && awaiting.isBefore(b)
                     fog && !(!now.isBefore(a) && now.isBefore(b)) && !wait
@@ -178,7 +198,7 @@ fun HourLogScreen(go: (String) -> Unit) {
                             dm::autoTextForKey)
                 }
                 val locked = cells.indices.any { !hidden[it] && !editable[it] && !cells[it].second.isAfter(now) && enabled }
-                val shown = cells.mapIndexed { i, (a, _, t) -> if (hidden[i]) fogNoise(core.contract.id, a.format(Fmt.TS)) else t }
+                val shown = cells.mapIndexed { i, (a, _, t) -> if (hidden[i]) fogNoise(fogWords, a) else t }
                 val sealed = cells.map { (a, b, _) -> core.contract.hourSealed(a, b, now) }
                 HourRow(if (hidden.all { it }) "???" else "%02d:00".format(h) + when {
                     isNow -> tr("   ◂ 现在")
