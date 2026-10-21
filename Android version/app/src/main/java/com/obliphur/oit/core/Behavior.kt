@@ -274,9 +274,9 @@ class Behavior(
         return ws to we
     }
 
-    /** 某一天外出记录出来的一段段: 每一段按被记录的小时数 (向下取整) 填充;
-     *  7:00 ~ 睡觉时间之内按 80/20 分, 夜里只算休息 (睡觉时间不在整点时, 那一小时睡觉前的部分照样分);
-     *  不足 1 小时的部分不计, 也不画. */
+    /** 某一天外出记录出来的一段段: 每一段按被记录的小时数 (向下取整, 每天最多 10 小时) 填充,
+     *  先填 7:00 ~ 睡觉时间之内的部分 (按时间顺序, 每小时 80/20 分), 还有剩下的才填夜里 (只算休息) ——
+     *  夜里的小时不占白天的名额. 睡觉时间不在整点时, 那一小时睡觉前的部分照样分. 没记录的部分不画. */
     fun focusSegments(day: LocalDate, at: LocalDateTime = now()): List<BehaviorSeg> {
         val d0 = day.atStartOfDay()
         val out = mutableListOf<BehaviorSeg>()
@@ -284,26 +284,37 @@ class Behavior(
             val hours = recordedHoursOn(o, d0, at)
             if (hours <= 0) continue
             val ov = overlap(o, d0, at) ?: continue
-            val a = ov.first
-            val end = minOf(a.plusSec(hours * 3600.0), d0.plusDays(1))
-            var cur = a
-            while (cur < end) {
-                val h0 = cur.floorHour()
-                val h1 = h0.plusHours(1)
-                val pe = if (end < h1) end else h1
-                val sec = secondsBetween(cur, pe)
-                if (sec <= 0) break
-                val we = fillWindow(cur).second
-                val b = maxOf(cur, minOf(pe, we))          // 睡觉前的部分到 b 为止
-                if (b > cur) {
-                    val mid = cur.plusSec(secondsBetween(cur, b) * Cfg.OUTING_FOCUS_SHARE)
-                    if (mid > cur) out.add(BehaviorSeg("study", cur, mid))
-                    if (b > mid) out.add(BehaviorSeg("break", mid, b))
-                }
-                if (pe > b) out.add(BehaviorSeg("break", b, pe))   // 睡觉时间以后 / 7:00 之前: 只算休息
+            // 按整点和睡觉时间切成小段, 标上在不在 7:00 ~ 睡觉时间里
+            val pieces = mutableListOf<Triple<LocalDateTime, LocalDateTime, Boolean>>()
+            var cur = ov.first
+            val z = ov.second
+            while (cur < z) {
+                val h1 = cur.floorHour().plusHours(1)
+                val (ws, we) = fillWindow(cur)
+                val inside = !cur.isBefore(ws) && cur < we
+                var pe = minOf(z, h1)
+                if (inside) pe = minOf(pe, we)
+                pieces.add(Triple(cur, pe, inside))
                 cur = pe
             }
+            // 记录的小时数先给白天的小段, 剩下的再给夜里的
+            var left = hours * 3600.0
+            for (want in listOf(true, false)) {
+                for ((a, b0, inside) in pieces) {
+                    if (inside != want || left <= 0) continue
+                    val b = minOf(b0, a.plusSec(left))
+                    left -= secondsBetween(a, b)
+                    if (!inside) {
+                        out.add(BehaviorSeg("break", a, b))      // 睡觉时间以后 / 7:00 之前: 只算休息
+                        continue
+                    }
+                    val mid = a.plusSec(secondsBetween(a, b) * Cfg.OUTING_FOCUS_SHARE)
+                    if (mid > a) out.add(BehaviorSeg("study", a, mid))
+                    if (b > mid) out.add(BehaviorSeg("break", mid, b))
+                }
+            }
         }
+        out.sortBy { it.start }
         return out
     }
 

@@ -358,13 +358,14 @@ class Behavior:
     def focus_segments(self, day, now: datetime = None):
         """某一天外出记录出来的一段段 (kind, 开始, 结束): study / break.
 
-        每一段按**被记录的小时数** (向下取整) 填充: 7:00 ~ 睡觉时间之内按 80% / 20% 分开,
-        夜里只算休息. 睡觉时间不在整点 (例如 23:30) 时, 那一小时睡觉前的部分照样按 80% / 20% 分.
-        不足 1 小时的部分不计, 也不画.
+        每一段按**被记录的小时数** (向下取整, 每天最多 10 小时) 填充, 先填 7:00 ~ 睡觉时间之内的部分
+        (按时间顺序, 每小时 80% / 20% 分开), 还有剩下的才填夜里 (只算休息) —— 夜里的小时不占白天的名额.
+        睡觉时间不在整点 (例如 23:30) 时, 那一小时睡觉前的部分照样按 80% / 20% 分. 没记录的部分不画.
         """
         now = now or datetime.now()
         d0 = _day0(day)
         out = []
+        share = float(config.OUTING_FOCUS_SHARE)
         for o in self.sorted():
             hours = self._recorded_hours_on(o, d0, now)
             if hours <= 0:
@@ -372,28 +373,33 @@ class Behavior:
             ov = self._overlap(o, d0, now)
             if not ov:
                 continue
-            a = ov[0]
-            end = min(a + timedelta(hours=hours), d0 + timedelta(days=1))
-            cur = a
-            while cur < end:
-                h0 = cur.replace(minute=0, second=0, microsecond=0)
-                h1 = h0 + timedelta(hours=1)
-                pe = min(end, h1)
-                sec = (pe - cur).total_seconds()
-                if sec <= 0:
-                    break
+            # 按整点和睡觉时间切成小段, 标上在不在 7:00 ~ 睡觉时间里
+            pieces = []
+            cur, z = ov
+            while cur < z:
+                h1 = cur.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
                 ws, we = fill_window(cur)
-                b = max(cur, min(pe, we))           # 睡觉前的部分到 b 为止
-                if b > cur:
-                    study = (b - cur).total_seconds() * float(config.OUTING_FOCUS_SHARE)
-                    mid = cur + timedelta(seconds=study)
-                    if mid > cur:
-                        out.append(("study", cur, mid))
+                inside = ws <= cur < we
+                pe = min(z, h1, we) if inside else min(z, h1)
+                pieces.append((cur, pe, inside))
+                cur = pe
+            # 记录的小时数先给白天的小段, 剩下的再给夜里的
+            left = hours * 3600.0
+            for want in (True, False):
+                for a, b, inside in pieces:
+                    if inside != want or left <= 0:
+                        continue
+                    b = min(b, a + timedelta(seconds=left))
+                    left -= (b - a).total_seconds()
+                    if not inside:
+                        out.append(("break", a, b))       # 睡觉时间以后 / 7:00 之前: 只算休息
+                        continue
+                    mid = a + timedelta(seconds=(b - a).total_seconds() * share)
+                    if mid > a:
+                        out.append(("study", a, mid))
                     if b > mid:
                         out.append(("break", mid, b))
-                if pe > b:
-                    out.append(("break", b, pe))      # 睡觉时间以后 / 7:00 之前: 只算休息
-                cur = pe
+        out.sort(key=lambda s: s[1])
         return out
 
     def study_hours(self, day, now: datetime = None) -> float:
@@ -620,6 +626,19 @@ def _selftest():
         assert b9.hour_auto_text(datetime(2026, 10, 19, 15, 0)) == config.REST_TEXT, "作废的外出不填「外出」"
         ev = b9.tick(datetime(2026, 10, 19, 15, 22))
         assert ev["reward"] == 0, ev
+
+        # 住校一周: 周日 18:00 ~ 周五 18:00 (120h). 每天 10 小时的名额先给 7:00 ~ 23:00, 夜里不占名额
+        b12 = Behavior(tempfile.mkdtemp(), now=at)
+        b12.start(120, datetime(2026, 10, 18, 18, 0))
+        n = datetime(2026, 10, 24, 0, 0)
+        got = [round(b12.study_hours(datetime(2026, 10, 18) + timedelta(days=i), n), 6) for i in range(6)]
+        assert got == [4.0, 8.0, 8.0, 8.0, 8.0, 8.0], got
+        o12 = b12.sorted()[0]
+        assert [b12._recorded_hours_on(o12, datetime(2026, 10, 18) + timedelta(days=i), n) for i in range(6)] ==             [6, 10, 10, 10, 10, 10]
+        segs = b12.focus_segments(datetime(2026, 10, 19), n)
+        assert segs[0] == ("study", datetime(2026, 10, 19, 7, 0), datetime(2026, 10, 19, 7, 48)), segs[:2]
+        assert all(datetime(2026, 10, 19, 7) <= a and b <= datetime(2026, 10, 19, 17) for k, a, b in segs), "名额都在白天"
+        assert abs(b12.recorded_hours(o12, n) - 56) < 1e-9, b12.recorded_hours(o12, n)
 
         # 填充到睡觉时间为止 (MECHANICS 21.2): 周一睡觉时间 23:30 → 23:00 ~ 23:30 照样 80% / 20%, 之后只休息
         sleep_keep = (config.SLEEP_MON, config.SLEEP_TUE)

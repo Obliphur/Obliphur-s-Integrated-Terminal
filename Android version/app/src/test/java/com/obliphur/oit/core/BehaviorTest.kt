@@ -207,4 +207,20 @@ class BehaviorTest {
         assertEquals(0.8, b2.studyHours(LocalDate.of(2026, 10, 19), clock), 1e-9)
         assertEquals(0.4, b2.studyHours(LocalDate.of(2026, 10, 20), clock), 1e-9)
     }
+
+    @Test
+    fun boardingWeekDaytimeFirst() {
+        // 住校一周: 周日 18:00 ~ 周五 18:00 (120h). 每天 10 小时的名额先给 7:00 ~ 23:00, 夜里不占名额
+        var clock = at(2026, 10, 18, 0, 0)
+        val b = Behavior(tmp(), settings()) { clock }
+        assertEquals("", b.start(120, "dev", at(2026, 10, 18, 18, 0)))
+        clock = at(2026, 10, 24, 0, 0)
+        val got = (0L until 6L).map { Math.round(b.studyHours(LocalDate.of(2026, 10, 18).plusDays(it), clock) * 1e6) / 1e6 }
+        assertEquals(listOf(4.0, 8.0, 8.0, 8.0, 8.0, 8.0), got)
+        val segs = b.focusSegments(LocalDate.of(2026, 10, 19), clock)
+        assertEquals(at(2026, 10, 19, 7, 0), segs.first().start)
+        assertEquals("study", segs.first().kind)
+        assertTrue(segs.all { !it.start.isBefore(at(2026, 10, 19, 7, 0)) && !it.end.isAfter(at(2026, 10, 19, 17, 0)) })
+        assertEquals(56.0, b.recordedHours(b.sorted().first(), clock), 1e-9)
+    }
 }
