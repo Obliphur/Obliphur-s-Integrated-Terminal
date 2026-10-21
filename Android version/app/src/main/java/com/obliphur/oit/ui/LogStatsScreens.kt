@@ -66,45 +66,64 @@ import kotlin.math.atan2
 
 // ════════════════ Hour Log 页 (MECHANICS 7) ════════════════
 
-/** 黑雾 (MECHANICS 18.3) 时盖住的格子里显示的假内容: 动词 + 量词 + 名词 随机拼起来 (中文每个词两个字, 每个词池 30 个, 不限主题).
- *  同 hour_log_page.py 的 _FOG_ZH / _FOG_EN. */
-private val FOG_ZH = listOf(
-    listOf("压力", "完成", "封禁", "整理", "研究", "修理", "收集", "打磨", "观察", "照顾", "擦拭", "搬运", "计算", "描绘", "测量", "种植", "清洗", "拆解",
-        "组装", "追踪", "烘焙", "晾晒", "驯服", "收容", "护送", "召唤", "唤醒", "安抚", "喂养", "拥抱"),
-    listOf("一个", "一些", "两只", "三张", "一堆", "一把", "半箱", "几块", "一串", "一盒", "十根", "一碗", "几朵", "一片", "两袋", "一排", "一束", "几颗",
-        "一杯", "整筐", "一群", "一位", "一队", "一窝", "一对", "一车", "七个", "一船", "一屋", "一桶"),
-    listOf("内卫", "海嗣", "村民", "鞘翅", "菲林", "主管", "西瓜", "星星", "书架", "雨伞", "风筝", "键盘", "月亮", "枕头", "蘑菇", "台灯", "钢琴", "贝壳",
-        "积木", "毛线", "云朵", "窗帘", "硬币", "蜡烛", "橘子", "邮票", "企鹅", "海獭", "灯塔", "水母"))
-private val FOG_EN_VERB = listOf("Pressure", "Complete", "Ban", "Sort", "Study", "Repair", "Collect", "Polish", "Watch", "Tend", "Wipe", "Carry",
-    "Count", "Sketch", "Measure", "Plant", "Wash", "Dismantle", "Assemble", "Track", "Bake", "Dry", "Tame",
-    "Contain", "Escort", "Summon", "Wake", "Soothe", "Feed", "Hug")
-/** (量词, 后面的名词用单数吗). */
-private val FOG_EN_QTY = listOf("a" to true, "some" to false, "two" to false, "three" to false, "a pile of" to false, "a handful of" to false,
-    "half a crate of" to false, "a few" to false, "a string of" to false, "a box of" to false, "ten" to false,
-    "a bowl of" to false, "several" to false, "one" to true, "two bags of" to false, "a row of" to false,
-    "a bunch of" to false, "a dozen" to false, "a cup of" to false, "a basket of" to false, "a flock of" to false,
-    "the last" to true, "a squad of" to false, "a nest of" to false, "a pair of" to false, "a cartload of" to false,
-    "seven" to false, "a boatload of" to false, "a roomful of" to false, "a bucket of" to false)
-private val FOG_EN_NOUN = listOf("guard" to "guards", "Seaborn" to "Seaborn", "villager" to "villagers", "elytra" to "elytra",
-    "Feline" to "Felines", "supervisor" to "supervisors", "watermelon" to "watermelons", "star" to "stars",
-    "bookshelf" to "bookshelves", "umbrella" to "umbrellas", "kite" to "kites", "keyboard" to "keyboards",
-    "moon" to "moons", "pillow" to "pillows", "mushroom" to "mushrooms", "lamp" to "lamps", "piano" to "pianos",
-    "seashell" to "seashells", "toy block" to "toy blocks", "ball of yarn" to "balls of yarn", "cloud" to "clouds",
-    "curtain" to "curtains", "coin" to "coins", "candle" to "candles", "orange" to "oranges", "stamp" to "stamps",
-    "penguin" to "penguins", "otter" to "otters", "lighthouse" to "lighthouses", "jellyfish" to "jellyfish")
+/** 黑雾 (MECHANICS 18.3) 时盖住的格子里的假内容: 动词 + 量词 + 名词 随机拼起来 (每个词池 60 个, 中文每个词两个字),
+ *  词都取自 Minecraft Wiki 的"村民"条目 (中文 / 英文). 同 hour_log_page.py. */
+private val FOG_ZH_VERBS = listOf(
+    "生成", "治愈", "掉落", "繁殖", "交易", "工作", "游荡", "聚集", "玩耍", "回家", "睡觉", "认领", "拾取", "分享", "耕作", "逃跑", "注视", "交谈", "收割",
+    "躲避", "寻找", "起床", "攀爬", "打开", "放弃", "绑定", "破坏", "传送", "检测", "传播", "合并", "攻击", "装备", "催熟", "播种", "收获", "制作", "检查",
+    "购买", "出售", "补货", "庆祝", "发射", "敲响", "观察", "追逐", "跳跃", "奔跑", "成长", "感染", "转换", "命名", "叫醒", "种植", "投掷", "摇头", "熬夜",
+    "消耗", "储存", "升级",
+)
+private val FOG_ZH_QUANTS = listOf(
+    "一个", "两个", "三个", "五个", "八个", "十个", "几个", "每个", "一块", "三块", "六块", "半块", "一组", "两组", "半组", "每组", "一格", "八格", "十格",
+    "一张", "两张", "几张", "每张", "一次", "两次", "几次", "一枚", "十枚", "几枚", "一种", "五种", "七种", "几种", "一条", "两条", "几条", "一名", "三名",
+    "五名", "一颗", "九颗", "几颗", "一件", "两件", "几件", "一片", "几片", "一层", "两层", "一级", "五级", "一只", "两只", "几只", "一些", "许多", "少量",
+    "多个", "四块", "四组",
+)
+private val FOG_ZH_NOUNS = listOf(
+    "村民", "村庄", "职业", "面包", "小麦", "骨粉", "农民", "渔夫", "牧师", "屠夫", "石匠", "皮匠", "傻子", "盔甲", "物品", "方块", "僵尸", "女巫", "粒子",
+    "言论", "声望", "折扣", "礼物", "火箭", "房屋", "梯子", "屋顶", "教堂", "码头", "书架", "讲台", "木桶", "高炉", "砂轮", "作物", "耕地", "雪屋", "苹果",
+    "南瓜", "徽章", "服装", "袍子", "帽子", "围裙", "眼镜", "手套", "头巾", "羽毛", "箭袋", "矿车", "蝙蝠", "骆驼", "熊猫", "狐狸", "兔子", "绵羊", "海龟",
+    "山羊", "青蛙", "羊驼",
+)
+private val FOG_EN_VERBS = listOf(
+    "trade", "breed", "spawn", "cure", "drop", "wander", "gather", "play", "sleep", "claim", "share", "farm", "flee",
+    "stare", "harvest", "plant", "throw", "pick", "equip", "climb", "open", "close", "jump", "sprint", "craft",
+    "heal", "gossip", "work", "explore", "buy", "sell", "restock", "celebrate", "launch", "ring", "forget",
+    "migrate", "summon", "carry", "chase", "shear", "wear", "consume", "collect", "deposit", "attack", "avoid",
+    "push", "grow", "rest", "unlock", "tend", "scan", "reach", "emit", "count", "store", "refresh", "despawn",
+    "inhabit",
+)
+private val FOG_EN_QUANTS = listOf(
+    "a stack of", "a block of", "a slot of", "a piece of", "a batch of", "a handful of", "two stacks of",
+    "two blocks of", "two slots of", "two pieces of", "two batches of", "two handfuls of", "three stacks of",
+    "three blocks of", "three slots of", "three pieces of", "three batches of", "three handfuls of",
+    "four stacks of", "four blocks of", "four slots of", "four pieces of", "four batches of", "four handfuls of",
+    "five stacks of", "five blocks of", "five slots of", "five pieces of", "five batches of", "five handfuls of",
+    "six stacks of", "six blocks of", "six slots of", "six pieces of", "six batches of", "six handfuls of",
+    "eight stacks of", "eight blocks of", "eight slots of", "eight pieces of", "eight batches of",
+    "eight handfuls of", "ten stacks of", "ten blocks of", "ten slots of", "ten pieces of", "ten batches of",
+    "ten handfuls of", "twelve stacks of", "twelve blocks of", "twelve slots of", "twelve pieces of",
+    "twelve batches of", "twelve handfuls of", "several stacks of", "several blocks of", "several slots of",
+    "several pieces of", "several batches of", "several handfuls of",
+)
+private val FOG_EN_NOUNS = listOf(
+    "villagers", "emeralds", "beds", "bells", "carrots", "potatoes", "beetroots", "seeds", "pumpkins", "golems",
+    "zombies", "pillagers", "witches", "farmers", "clerics", "librarians", "masons", "shepherds", "fletchers",
+    "butchers", "armorers", "toolsmiths", "cartographers", "leatherworkers", "weaponsmiths", "fishermen", "nitwits",
+    "babies", "particles", "doors", "ladders", "trapdoors", "chickens", "cats", "wolves", "composters", "barrels",
+    "lecterns", "looms", "grindstones", "smokers", "stonecutters", "cauldrons", "apples", "saddles", "carpets",
+    "books", "maps", "gifts", "rockets", "badges", "outfits", "hats", "aprons", "gloves", "crops", "igloos",
+    "ravagers", "dispensers", "pistons",
+)
 
-/** 黑雾时一个格子的假内容, 例如"整理一个西瓜" / "Sort a watermelon": 同一个合约里同一个格子不变 (不会每秒闪). */
+/** 黑雾时一个格子的假内容, 例如"收割三块面包" / "Harvest two stacks of carrots": 同一个合约里同一个格子不变 (不会每秒闪). */
 private fun fogNoise(seed: Long, key: String): String {
     val r = java.util.Random("$seed|$key".hashCode().toLong())
-    if (com.obliphur.oit.core.I18n.lang == "en") {
-        val verb = FOG_EN_VERB[r.nextInt(FOG_EN_VERB.size)]
-        var (qty, single) = FOG_EN_QTY[r.nextInt(FOG_EN_QTY.size)]
-        val noun = FOG_EN_NOUN[r.nextInt(FOG_EN_NOUN.size)]
-        val word = if (single) noun.first else noun.second
-        if (qty == "a" && word.first().lowercaseChar() in "aeiou") qty = "an"     // an umbrella / an orange
-        return "$verb $qty $word"
-    }
-    return FOG_ZH.joinToString("") { it[r.nextInt(it.size)] }
+    fun <T> List<T>.pick() = this[r.nextInt(size)]
+    return if (com.obliphur.oit.core.I18n.lang == "en")
+        "${FOG_EN_VERBS.pick().replaceFirstChar { it.uppercase() }} ${FOG_EN_QUANTS.pick()} ${FOG_EN_NOUNS.pick()}"
+    else FOG_ZH_VERBS.pick() + FOG_ZH_QUANTS.pick() + FOG_ZH_NOUNS.pick()
 }
 
 @Composable

@@ -6,52 +6,71 @@ from tkinter import ttk
 from datetime import datetime, timedelta
 
 import config
+import i18n
 from config import COLORS
 from i18n import tr
 from .widgets import cfg
 
 
-# 黑雾 (MECHANICS 18.3) 时盖住的格子里显示的假内容: 动词 + 量词 + 名词 随机拼起来 (中文每个词两个字, 每个词池 30 个, 不限主题)
-_FOG_ZH = (
-    ['压力', '完成', '封禁', '整理', '研究', '修理', '收集', '打磨', '观察', '照顾', '擦拭', '搬运', '计算', '描绘', '测量', '种植', '清洗', '拆解',
-     '组装', '追踪', '烘焙', '晾晒', '驯服', '收容', '护送', '召唤', '唤醒', '安抚', '喂养', '拥抱'],
-    ['一个', '一些', '两只', '三张', '一堆', '一把', '半箱', '几块', '一串', '一盒', '十根', '一碗', '几朵', '一片', '两袋', '一排', '一束', '几颗',
-     '一杯', '整筐', '一群', '一位', '一队', '一窝', '一对', '一车', '七个', '一船', '一屋', '一桶'],
-    ['内卫', '海嗣', '村民', '鞘翅', '菲林', '主管', '西瓜', '星星', '书架', '雨伞', '风筝', '键盘', '月亮', '枕头', '蘑菇', '台灯', '钢琴', '贝壳',
-     '积木', '毛线', '云朵', '窗帘', '硬币', '蜡烛', '橘子', '邮票', '企鹅', '海獭', '灯塔', '水母'],
+# 黑雾 (MECHANICS 18.3) 时盖住的格子里的假内容: 动词 + 量词 + 名词 随机拼起来 (每个词池 60 个, 中文每个词两个字),
+# 词都取自 Minecraft Wiki 的"村民"条目 (中文 / 英文). 界面是英文时用英文的.
+_ZH_VERBS = (
+    "生成", "治愈", "掉落", "繁殖", "交易", "工作", "游荡", "聚集", "玩耍", "回家", "睡觉", "认领", "拾取", "分享", "耕作", "逃跑", "注视", "交谈",
+    "收割", "躲避", "寻找", "起床", "攀爬", "打开", "放弃", "绑定", "破坏", "传送", "检测", "传播", "合并", "攻击", "装备", "催熟", "播种", "收获",
+    "制作", "检查", "购买", "出售", "补货", "庆祝", "发射", "敲响", "观察", "追逐", "跳跃", "奔跑", "成长", "感染", "转换", "命名", "叫醒", "种植",
+    "投掷", "摇头", "熬夜", "消耗", "储存", "升级",
 )
-# 英文同样的拼法: (量词, 后面的名词用单数吗); (单数, 复数)
-_FOG_EN = (
-    ['Pressure', 'Complete', 'Ban', 'Sort', 'Study', 'Repair', 'Collect', 'Polish', 'Watch', 'Tend', 'Wipe', 'Carry',
-     'Count', 'Sketch', 'Measure', 'Plant', 'Wash', 'Dismantle', 'Assemble', 'Track', 'Bake', 'Dry', 'Tame',
-     'Contain', 'Escort', 'Summon', 'Wake', 'Soothe', 'Feed', 'Hug'],
-    [('a', True), ('some', False), ('two', False), ('three', False), ('a pile of', False), ('a handful of', False),
-     ('half a crate of', False), ('a few', False), ('a string of', False), ('a box of', False), ('ten', False),
-     ('a bowl of', False), ('several', False), ('one', True), ('two bags of', False), ('a row of', False),
-     ('a bunch of', False), ('a dozen', False), ('a cup of', False), ('a basket of', False), ('a flock of', False),
-     ('the last', True), ('a squad of', False), ('a nest of', False), ('a pair of', False), ('a cartload of', False),
-     ('seven', False), ('a boatload of', False), ('a roomful of', False), ('a bucket of', False)],
-    [('guard', 'guards'), ('Seaborn', 'Seaborn'), ('villager', 'villagers'), ('elytra', 'elytra'),
-     ('Feline', 'Felines'), ('supervisor', 'supervisors'), ('watermelon', 'watermelons'), ('star', 'stars'),
-     ('bookshelf', 'bookshelves'), ('umbrella', 'umbrellas'), ('kite', 'kites'), ('keyboard', 'keyboards'),
-     ('moon', 'moons'), ('pillow', 'pillows'), ('mushroom', 'mushrooms'), ('lamp', 'lamps'), ('piano', 'pianos'),
-     ('seashell', 'seashells'), ('toy block', 'toy blocks'), ('ball of yarn', 'balls of yarn'), ('cloud', 'clouds'),
-     ('curtain', 'curtains'), ('coin', 'coins'), ('candle', 'candles'), ('orange', 'oranges'), ('stamp', 'stamps'),
-     ('penguin', 'penguins'), ('otter', 'otters'), ('lighthouse', 'lighthouses'), ('jellyfish', 'jellyfish')],
+_ZH_QUANTS = (
+    "一个", "两个", "三个", "五个", "八个", "十个", "几个", "每个", "一块", "三块", "六块", "半块", "一组", "两组", "半组", "每组", "一格", "八格",
+    "十格", "一张", "两张", "几张", "每张", "一次", "两次", "几次", "一枚", "十枚", "几枚", "一种", "五种", "七种", "几种", "一条", "两条", "几条",
+    "一名", "三名", "五名", "一颗", "九颗", "几颗", "一件", "两件", "几件", "一片", "几片", "一层", "两层", "一级", "五级", "一只", "两只", "几只",
+    "一些", "许多", "少量", "多个", "四块", "四组",
+)
+_ZH_NOUNS = (
+    "村民", "村庄", "职业", "面包", "小麦", "骨粉", "农民", "渔夫", "牧师", "屠夫", "石匠", "皮匠", "傻子", "盔甲", "物品", "方块", "僵尸", "女巫",
+    "粒子", "言论", "声望", "折扣", "礼物", "火箭", "房屋", "梯子", "屋顶", "教堂", "码头", "书架", "讲台", "木桶", "高炉", "砂轮", "作物", "耕地",
+    "雪屋", "苹果", "南瓜", "徽章", "服装", "袍子", "帽子", "围裙", "眼镜", "手套", "头巾", "羽毛", "箭袋", "矿车", "蝙蝠", "骆驼", "熊猫", "狐狸",
+    "兔子", "绵羊", "海龟", "山羊", "青蛙", "羊驼",
+)
+_EN_VERBS = (
+    "trade", "breed", "spawn", "cure", "drop", "wander", "gather", "play", "sleep", "claim", "share", "farm",
+    "flee", "stare", "harvest", "plant", "throw", "pick", "equip", "climb", "open", "close", "jump", "sprint",
+    "craft", "heal", "gossip", "work", "explore", "buy", "sell", "restock", "celebrate", "launch", "ring",
+    "forget", "migrate", "summon", "carry", "chase", "shear", "wear", "consume", "collect", "deposit",
+    "attack", "avoid", "push", "grow", "rest", "unlock", "tend", "scan", "reach", "emit", "count", "store",
+    "refresh", "despawn", "inhabit",
+)
+_EN_QUANTS = (
+    "a stack of", "a block of", "a slot of", "a piece of", "a batch of", "a handful of", "two stacks of",
+    "two blocks of", "two slots of", "two pieces of", "two batches of", "two handfuls of", "three stacks of",
+    "three blocks of", "three slots of", "three pieces of", "three batches of", "three handfuls of",
+    "four stacks of", "four blocks of", "four slots of", "four pieces of", "four batches of",
+    "four handfuls of", "five stacks of", "five blocks of", "five slots of", "five pieces of",
+    "five batches of", "five handfuls of", "six stacks of", "six blocks of", "six slots of", "six pieces of",
+    "six batches of", "six handfuls of", "eight stacks of", "eight blocks of", "eight slots of",
+    "eight pieces of", "eight batches of", "eight handfuls of", "ten stacks of", "ten blocks of",
+    "ten slots of", "ten pieces of", "ten batches of", "ten handfuls of", "twelve stacks of",
+    "twelve blocks of", "twelve slots of", "twelve pieces of", "twelve batches of", "twelve handfuls of",
+    "several stacks of", "several blocks of", "several slots of", "several pieces of", "several batches of",
+    "several handfuls of",
+)
+_EN_NOUNS = (
+    "villagers", "emeralds", "beds", "bells", "carrots", "potatoes", "beetroots", "seeds", "pumpkins",
+    "golems", "zombies", "pillagers", "witches", "farmers", "clerics", "librarians", "masons", "shepherds",
+    "fletchers", "butchers", "armorers", "toolsmiths", "cartographers", "leatherworkers", "weaponsmiths",
+    "fishermen", "nitwits", "babies", "particles", "doors", "ladders", "trapdoors", "chickens", "cats",
+    "wolves", "composters", "barrels", "lecterns", "looms", "grindstones", "smokers", "stonecutters",
+    "cauldrons", "apples", "saddles", "carpets", "books", "maps", "gifts", "rockets", "badges", "outfits",
+    "hats", "aprons", "gloves", "crops", "igloos", "ravagers", "dispensers", "pistons",
 )
 
 
 def fog_noise(seed, key: str) -> str:
-    """黑雾时一个格子的假内容, 例如"整理一个西瓜" / "Sort a watermelon": 同一个合约里同一个格子不变 (不会每秒闪)."""
-    import i18n
+    """黑雾时一个格子的假内容: 同一个合约里同一个格子不变 (不会每秒闪)."""
     rnd = random.Random(f"{seed}|{key}")
-    if i18n.get_language() == "en":
-        verb, (qty, single), noun = rnd.choice(_FOG_EN[0]), rnd.choice(_FOG_EN[1]), rnd.choice(_FOG_EN[2])
-        word = noun[0] if single else noun[1]
-        if qty == "a" and word[:1].lower() in "aeiou":
-            qty = "an"                              # an umbrella / an orange
-        return f"{verb} {qty} {word}"
-    return "".join(rnd.choice(pool) for pool in _FOG_ZH)
+    if i18n.is_en():
+        return f"{rnd.choice(_EN_VERBS).capitalize()} {rnd.choice(_EN_QUANTS)} {rnd.choice(_EN_NOUNS)}"
+    return rnd.choice(_ZH_VERBS) + rnd.choice(_ZH_QUANTS) + rnd.choice(_ZH_NOUNS)
 
 
 class HourLogPage(tk.Frame):
