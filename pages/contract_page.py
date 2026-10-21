@@ -721,7 +721,8 @@ class ContractPage(tk.Frame):
             # 目标生命值: 每违反一次减一, 减到 0 合约失败
             cfg(self.lbl_viol, text=tr("目标生命值") + "  " + "♥" * c.life + "♡" * (c.violation_limit - c.life)
                 + f"  {c.life} / {c.violation_limit}")
-            live = f"{c.start_at:%H:%M} — " + ("??:??" if fog else f"{end:%m-%d %H:%M}")
+            # 黑雾: 开始和结束的时刻都不显示
+            live = ("??:??" if fog else f"{c.start_at:%H:%M}") + " — " + ("??:??" if fog else f"{end:%m-%d %H:%M}")
             left = c.net_left(self.net_used())
             if left is not None:
                 live += "   ·   " + tr("合约的联网额度还剩 {t}", t=fmt_hm(left))

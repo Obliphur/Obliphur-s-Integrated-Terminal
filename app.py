@@ -2476,6 +2476,8 @@ class BreakTimerApp:
         from pages.contract_page import RESULTS, term_short
         a0, a1 = contract_mod._parse(b.get("start")), contract_mod._parse(b.get("end"))
         when = f"{a0:%m-%d %H:%M} — {a1:%H:%M}" if a0 and a1 else "?"
+        if self.contract.fog():
+            when = "??:?? — ??:??"                   # 黑雾: 不显示合约的开始 / 结束时刻
         state = tr("进行中") if not b.get("result") else tr(RESULTS.get(b["result"], b["result"]))
         terms = " · ".join(term_short(t) for t in b.get("terms") or [] if t in contract_mod.BY_ID) or "—"
         return tr("{when} · 危机等级 {lv} · {state}", when=when, lv=b.get("level", 0), state=state) + "\n    " + terms

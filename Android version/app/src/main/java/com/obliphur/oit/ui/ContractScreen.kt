@@ -278,7 +278,8 @@ fun ContractScreen() {
                 Text(tr("目标生命值") + "  " + "♥".repeat(c.life) + "♡".repeat(c.violationLimit - c.life) +
                     "  ${c.life} / ${c.violationLimit}", color = p.danger, fontWeight = FontWeight.Bold, fontSize = 18.sp)
             }
-            var line = "${c.startAt?.format(Fmt.HM)} — " + (if (fog) "??:??" else end.format(Fmt.MDHM))
+            // 黑雾: 开始和结束的时刻都不显示
+            var line = (if (fog) "??:??" else c.startAt?.format(Fmt.HM) ?: "") + " — " + (if (fog) "??:??" else end.format(Fmt.MDHM))
             c.netLeft(core.net.usedAll)?.let { line += "   ·   " + tr("合约的联网额度还剩 {t}", "t" to fmtHm(it)) }
             Text(line, color = p.dim, fontSize = 13.sp)
             c.idleLeft(now)?.let {

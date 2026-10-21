@@ -253,7 +253,8 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         val (a, b) = c.conflicts.first()
         fun line(x: org.json.JSONObject): String {
             val s0 = parseIso(x.optString("start")); val s1 = parseIso(x.optString("end"))
-            val whenText = if (s0 != null && s1 != null) "${s0.format(Fmt.MDHM)} — ${s1.format(Fmt.HM)}" else "?"
+            val whenText = if (c.fog()) "??:?? — ??:??"           // 黑雾: 不显示合约的开始 / 结束时刻
+                else if (s0 != null && s1 != null) "${s0.format(Fmt.MDHM)} — ${s1.format(Fmt.HM)}" else "?"
             val state = if (x.optString("result").isEmpty()) tr("进行中") else tr(contractResult(x.optString("result")))
             return tr("{when} · 危机等级 {lv} · {state}", "when" to whenText, "lv" to x.optInt("level"), "state" to state)
         }
