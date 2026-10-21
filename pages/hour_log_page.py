@@ -12,7 +12,8 @@ from .widgets import cfg
 
 
 # 黑雾 (MECHANICS 18.3) 时盖住的格子里的假内容: 动词 + 量词 + 名词 拼起来 (中文每个词两个字).
-# 词取自 Minecraft Wiki 的"村民"条目 (每个词池 60 个) 和 PRTS 的"水月"条目 (动词 40, 量词 20, 名词 40).
+# 词取自 Minecraft Wiki 的"村民"条目 (每个词池 60 个), PRTS 的"水月"条目 (动词 40, 量词 20, 名词 40)
+# 和脑叶公司 Wiki 的"T-01-31 沉默乐团"条目 (动词 50, 名词 50).
 # 界面是英文时用英文的.
 _ZH_VERBS = (
     "生成", "治愈", "掉落", "繁殖", "交易", "工作", "游荡", "聚集", "玩耍", "回家", "睡觉", "认领", "拾取", "分享", "耕作", "逃跑", "注视", "交谈",
@@ -20,7 +21,10 @@ _ZH_VERBS = (
     "制作", "检查", "购买", "出售", "补货", "庆祝", "发射", "敲响", "观察", "追逐", "跳跃", "奔跑", "成长", "感染", "转换", "命名", "叫醒", "种植",
     "投掷", "摇头", "熬夜", "消耗", "储存", "升级", "伏击", "隐匿", "部署", "阻挡", "回复", "触发", "充能", "束缚", "晕眩", "流失", "拖拽", "击杀",
     "歼灭", "进驻", "生产", "编入", "通关", "阻止", "劫掠", "坐视", "探索", "察觉", "索要", "审视", "见证", "迷失", "怀疑", "延长", "割下", "询问",
-    "摒弃", "预见", "诞生", "回归", "滋润", "盘踞", "汲取", "改造", "孕育", "招募",
+    "摒弃", "预见", "诞生", "回归", "滋润", "盘踞", "汲取", "改造", "孕育", "招募", "演奏", "指挥", "突破", "收容", "减少", "免疫", "镇压", "指派",
+    "选定", "归零", "遮蔽", "覆盖", "遮挡", "锁定", "暂停", "拉开", "衰减", "推进", "屏蔽", "警告", "清零", "登上", "扩散", "杀死", "合上", "消失",
+    "抵挡", "派遣", "调离", "施加", "呼叫", "丢失", "离开", "研发", "挥舞", "淹没", "献上", "构筑", "吸收", "穿戴", "评判", "领导", "协调", "传达",
+    "丧失", "陶醉", "唤醒", "加快", "点燃", "鼓掌",
 )
 _ZH_QUANTS = (
     "一个", "两个", "三个", "五个", "八个", "十个", "几个", "每个", "一块", "三块", "六块", "半块", "一组", "两组", "半组", "每组", "一格", "八格",
@@ -35,7 +39,10 @@ _ZH_NOUNS = (
     "雪屋", "苹果", "南瓜", "徽章", "服装", "袍子", "帽子", "围裙", "眼镜", "手套", "头巾", "羽毛", "箭袋", "矿车", "蝙蝠", "骆驼", "熊猫", "狐狸",
     "兔子", "绵羊", "海龟", "山羊", "青蛙", "羊驼", "干员", "技能", "天赋", "模组", "证章", "使者", "孩子", "舌尖", "恐鱼", "匪徒", "学者", "血肉",
     "纽带", "知识", "工具", "种子", "新芽", "野兽", "大树", "树苗", "族群", "洪流", "土壤", "幼子", "养分", "物种", "土地", "海洋", "星球", "环境",
-    "食物", "锚点", "信物", "角色", "表情", "敌人", "弹道", "地块", "合同", "档案",
+    "食物", "锚点", "信物", "角色", "表情", "敌人", "弹道", "地块", "合同", "档案", "乐团", "模特", "支柱", "底盘", "乐队", "实体", "废墟", "帷幕",
+    "乐章", "员工", "主管", "幕布", "镜头", "屏幕", "视野", "指令", "音符", "弱点", "灵魂", "职员", "噪音", "能量", "舞台", "掌声", "武器", "护甲",
+    "镰刀", "总谱", "音乐", "末日", "交响", "饰品", "艺术", "公司", "乐谱", "神态", "举止", "风度", "听众", "内涵", "记忆", "心灵", "活物", "部门",
+    "节奏", "萨满", "礼赞", "护盾", "子弹", "设施",
 )
 _EN_VERBS = (
     "trade", "breed", "spawn", "cure", "drop", "wander", "gather", "play", "sleep", "claim", "share", "farm",
@@ -47,7 +54,11 @@ _EN_VERBS = (
     "bind", "stun", "drain", "drag", "slay", "annihilate", "station", "produce", "enlist", "clear", "prevent",
     "plunder", "ignore", "probe", "notice", "demand", "examine", "witness", "misplace", "doubt", "extend",
     "sever", "question", "discard", "foresee", "beget", "return", "nourish", "occupy", "absorb", "reshape",
-    "nurture", "recruit",
+    "nurture", "recruit", "perform", "conduct", "breach", "contain", "reduce", "resist", "suppress", "assign",
+    "select", "nullify", "shroud", "cover", "obscure", "lock", "pause", "unveil", "dampen", "advance", "mute",
+    "warn", "wipe", "mount", "spread", "kill", "shut", "vanish", "withstand", "dispatch", "withdraw", "apply",
+    "call", "lose", "leave", "develop", "wield", "drown", "offer", "assemble", "soak", "don", "judge", "lead",
+    "coordinate", "convey", "forfeit", "savor", "awaken", "hasten", "ignite", "applaud",
 )
 _EN_QUANTS = (
     "a stack of", "a block of", "a slot of", "a piece of", "a batch of", "a handful of", "two stacks of",
@@ -78,7 +89,12 @@ _EN_NOUNS = (
     "flesh", "bonds", "lore", "tools", "kernels", "sprouts", "beasts", "oaks", "saplings", "tribes",
     "torrents", "soils", "offspring", "nutrients", "species", "lands", "oceans", "planets", "habitats",
     "meals", "anchors", "tokens", "characters", "expressions", "enemies", "projectiles", "tiles", "contracts",
-    "dossiers",
+    "dossiers", "orchestras", "mannequins", "pillars", "chassis", "bands", "entities", "ruins", "veils",
+    "movements", "employees", "managers", "curtains", "cameras", "screens", "sightlines", "commands", "notes",
+    "weaknesses", "souls", "clerks", "noises", "energy", "stages", "applause", "weapons", "armor", "scythes",
+    "scores", "music", "doomsdays", "symphonies", "accessories", "artworks", "companies", "librettos",
+    "demeanors", "manners", "graces", "audiences", "meanings", "memories", "minds", "creatures", "departments",
+    "rhythms", "shamans", "tributes", "shields", "bullets", "facilities",
 )
 
 
