@@ -179,4 +179,32 @@ class BehaviorTest {
         assertEquals("休息", b2.hourAutoText(at(2026, 10, 19, 15, 0)))
         assertEquals(0, b2.tick(clock) { true }.reward)
     }
+
+    @Test
+    fun fillUntilSleepTime() {
+        // 填充到睡觉时间为止 (MECHANICS 21.2): 周一睡觉时间 23:30 → 23:00 ~ 23:30 照样 80% / 20%, 之后只休息
+        var clock = at(2026, 10, 19, 0, 0)
+        val s = settings()
+        s.effective["SLEEP_MON"] = 23 * 60 + 30.0
+        val b = Behavior(tmp(), s) { clock }
+        assertEquals("", b.start(2, "dev", at(2026, 10, 19, 22, 0)))
+        clock = at(2026, 10, 20, 1, 0)
+        val segs = b.focusSegments(LocalDate.of(2026, 10, 19), clock)
+        val study = segs.filter { it.kind == "study" }.sumOf { secondsBetween(it.start, it.end) }
+        assertEquals(0.8 * 5400, study, 1e-6)
+        assertTrue(segs.any { it.kind == "study" && it.start == at(2026, 10, 19, 23, 0) && it.end == at(2026, 10, 19, 23, 24) })
+        assertTrue(segs.any { it.kind == "break" && it.start == at(2026, 10, 19, 23, 30) && it.end == at(2026, 10, 20, 0, 0) })
+
+        // 睡觉时间在凌晨 00:30 (周一 / 周二都是): 周一 23:00 ~ 周二 00:30 都按 80% / 20%
+        s.effective["SLEEP_MON"] = 30.0
+        s.effective["SLEEP_TUE"] = 30.0
+        assertEquals(at(2026, 10, 19, 7, 0) to at(2026, 10, 20, 0, 30), b.fillWindow(at(2026, 10, 19, 23, 0)))
+        assertEquals(at(2026, 10, 19, 7, 0) to at(2026, 10, 20, 0, 30), b.fillWindow(at(2026, 10, 20, 3, 0)))
+        clock = at(2026, 10, 19, 0, 0)
+        val b2 = Behavior(tmp(), s) { clock }
+        assertEquals("", b2.start(2, "dev", at(2026, 10, 19, 23, 0)))
+        clock = at(2026, 10, 20, 2, 0)
+        assertEquals(0.8, b2.studyHours(LocalDate.of(2026, 10, 19), clock), 1e-9)
+        assertEquals(0.4, b2.studyHours(LocalDate.of(2026, 10, 20), clock), 1e-9)
+    }
 }

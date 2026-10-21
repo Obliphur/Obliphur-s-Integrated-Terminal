@@ -265,8 +265,18 @@ class Behavior(
         return out
     }
 
+    /** t 所在的那段可以按 80% / 20% 填充的时段: [7:00, 这之后的第一次睡觉时间) (MECHANICS 21.2).
+     *  睡觉时间在凌晨 (例如 00:30) 时跨零点; 最晚到第二天 7:00. t 在这段之外时它就是 t 之前最近的那段. */
+    fun fillWindow(t: LocalDateTime): Pair<LocalDateTime, LocalDateTime> {
+        val lo = Cfg.OUTING_WINDOW_START.toLong()
+        val ws = t.minusMinutes(lo).toLocalDate().atStartOfDay().plusMinutes(lo)
+        val we = minOf(nextSleep(settings, ws), ws.plusDays(1))
+        return ws to we
+    }
+
     /** 某一天外出记录出来的一段段: 每一段按被记录的小时数 (向下取整) 填充;
-     *  7:00~23:00 之内按 80/20 分, 夜里只算休息; 不足 1 小时的部分不计, 也不画. */
+     *  7:00 ~ 睡觉时间之内按 80/20 分, 夜里只算休息 (睡觉时间不在整点时, 那一小时睡觉前的部分照样分);
+     *  不足 1 小时的部分不计, 也不画. */
     fun focusSegments(day: LocalDate, at: LocalDateTime = now()): List<BehaviorSeg> {
         val d0 = day.atStartOfDay()
         val out = mutableListOf<BehaviorSeg>()
@@ -283,15 +293,14 @@ class Behavior(
                 val pe = if (end < h1) end else h1
                 val sec = secondsBetween(cur, pe)
                 if (sec <= 0) break
-                val minutes = h0.hour * 60
-                if (minutes in Cfg.OUTING_WINDOW_START until Cfg.OUTING_WINDOW_END) {
-                    val study = sec * Cfg.OUTING_FOCUS_SHARE
-                    val mid = cur.plusSec(study)
+                val we = fillWindow(cur).second
+                val b = maxOf(cur, minOf(pe, we))          // 睡觉前的部分到 b 为止
+                if (b > cur) {
+                    val mid = cur.plusSec(secondsBetween(cur, b) * Cfg.OUTING_FOCUS_SHARE)
                     if (mid > cur) out.add(BehaviorSeg("study", cur, mid))
-                    if (pe > mid) out.add(BehaviorSeg("break", mid, pe))
-                } else {
-                    out.add(BehaviorSeg("break", cur, pe))
+                    if (b > mid) out.add(BehaviorSeg("break", mid, b))
                 }
+                if (pe > b) out.add(BehaviorSeg("break", b, pe))   // 睡觉时间以后 / 7:00 之前: 只算休息
                 cur = pe
             }
         }

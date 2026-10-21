@@ -6,7 +6,7 @@
 - 封闭式管理 / 工作: Timer 页多一个"外出"按钮, 可以设置持续多少小时 (可以跨天).
   外出期间按下面的规则记录, 不写 study_log / focus_log, 统计和日历显示时叠加:
     * 每天最多记 10 小时; 每一段 (每个自然日) 向下取整 (不足 1 小时的部分不计).
-    * 7:00 ~ 23:00 之内的部分按 80% 专注 / 20% 休息填充到专注计时和统计;
+    * 7:00 ~ 睡觉时间 (MECHANICS 19, 按星期) 之内的部分按 80% 专注 / 20% 休息填充到专注计时和统计;
       其他时间 (夜里) 只算休息.
     * 整点记录的超时自动填充: 外出的小时 → 「外出」, 其他时间 → 「休息」
       (这两个文字可以在 设置 → 日常 改, 48 小时生效).
@@ -42,6 +42,15 @@ def _dt(text):
         return datetime.strptime(str(text), _TS)
     except (TypeError, ValueError):
         return None
+
+
+def fill_window(t: datetime):
+    """t 所在的那段可以按 80% / 20% 填充的时段: [7:00, 这之后的第一次睡觉时间) (MECHANICS 21.2).
+    睡觉时间在凌晨 (例如 00:30) 时跨零点; 最晚到第二天 7:00. t 在这段之外时它就是 t 之前最近的那段."""
+    lo = timedelta(minutes=int(config.OUTING_WINDOW_START))
+    ws = _day0(t - lo) + lo
+    we = min(config.next_sleep(ws), ws + timedelta(days=1))
+    return ws, we
 
 
 def _day0(d):
@@ -349,14 +358,13 @@ class Behavior:
     def focus_segments(self, day, now: datetime = None):
         """某一天外出记录出来的一段段 (kind, 开始, 结束): study / break.
 
-        每一段按**被记录的小时数** (向下取整) 填充: 7:00 ~ 23:00 之内按 80% / 20% 分开,
-        夜里只算休息. 不足 1 小时的部分不计, 也不画.
+        每一段按**被记录的小时数** (向下取整) 填充: 7:00 ~ 睡觉时间之内按 80% / 20% 分开,
+        夜里只算休息. 睡觉时间不在整点 (例如 23:30) 时, 那一小时睡觉前的部分照样按 80% / 20% 分.
+        不足 1 小时的部分不计, 也不画.
         """
         now = now or datetime.now()
         d0 = _day0(day)
         out = []
-        lo = int(config.OUTING_WINDOW_START)
-        hi = int(config.OUTING_WINDOW_END)
         for o in self.sorted():
             hours = self._recorded_hours_on(o, d0, now)
             if hours <= 0:
@@ -374,16 +382,17 @@ class Behavior:
                 sec = (pe - cur).total_seconds()
                 if sec <= 0:
                     break
-                minutes = h0.hour * 60
-                if lo <= minutes < hi:
-                    study = sec * float(config.OUTING_FOCUS_SHARE)
+                ws, we = fill_window(cur)
+                b = max(cur, min(pe, we))           # 睡觉前的部分到 b 为止
+                if b > cur:
+                    study = (b - cur).total_seconds() * float(config.OUTING_FOCUS_SHARE)
                     mid = cur + timedelta(seconds=study)
                     if mid > cur:
                         out.append(("study", cur, mid))
-                    if pe > mid:
-                        out.append(("break", mid, pe))
-                else:
-                    out.append(("break", cur, pe))
+                    if b > mid:
+                        out.append(("break", mid, b))
+                if pe > b:
+                    out.append(("break", b, pe))      # 睡觉时间以后 / 7:00 之前: 只算休息
                 cur = pe
         return out
 
@@ -611,6 +620,34 @@ def _selftest():
         assert b9.hour_auto_text(datetime(2026, 10, 19, 15, 0)) == config.REST_TEXT, "作废的外出不填「外出」"
         ev = b9.tick(datetime(2026, 10, 19, 15, 22))
         assert ev["reward"] == 0, ev
+
+        # 填充到睡觉时间为止 (MECHANICS 21.2): 周一睡觉时间 23:30 → 23:00 ~ 23:30 照样 80% / 20%, 之后只休息
+        sleep_keep = (config.SLEEP_MON, config.SLEEP_TUE)
+        try:
+            config.SLEEP_MON = 23 * 60 + 30
+            b10 = Behavior(tempfile.mkdtemp(), now=at)
+            b10.start(2, datetime(2026, 10, 19, 22, 0))
+            b10.stop(datetime(2026, 10, 20, 0, 0))
+            segs = b10.focus_segments(datetime(2026, 10, 19), now=datetime(2026, 10, 20, 1, 0))
+            st = sum((b - a).total_seconds() for k, a, b in segs if k == "study")
+            assert abs(st - 0.8 * 5400) < 1e-6, (st, segs)
+            assert ("break", datetime(2026, 10, 19, 23, 30), datetime(2026, 10, 20, 0, 0)) in segs, segs
+            assert ("study", datetime(2026, 10, 19, 23, 0), datetime(2026, 10, 19, 23, 24)) in segs, segs
+            # 睡觉时间在凌晨 00:30 (周一 / 周二都是): 周一 23:00 ~ 周二 00:30 都按 80% / 20%
+            config.SLEEP_MON = config.SLEEP_TUE = 30
+            assert fill_window(datetime(2026, 10, 19, 23, 0)) == (datetime(2026, 10, 19, 7, 0),
+                                                                   datetime(2026, 10, 20, 0, 30))
+            assert fill_window(datetime(2026, 10, 20, 3, 0)) == (datetime(2026, 10, 19, 7, 0),
+                                                                  datetime(2026, 10, 20, 0, 30)), "凌晨算前一天那段"
+            b11 = Behavior(tempfile.mkdtemp(), now=at)
+            b11.start(2, datetime(2026, 10, 19, 23, 0))
+            b11.stop(datetime(2026, 10, 20, 1, 0))
+            n = datetime(2026, 10, 20, 2, 0)
+            st1 = b11.study_hours(datetime(2026, 10, 19), n)
+            st2 = b11.study_hours(datetime(2026, 10, 20), n)
+            assert abs(st1 - 0.8) < 1e-9 and abs(st2 - 0.4) < 1e-9, (st1, st2)
+        finally:
+            config.SLEEP_MON, config.SLEEP_TUE = sleep_keep
 
         # 模式切回自由学习: 没有外出, 不填整点记录
         config.BEHAVIOR_MODE = config.BEHAVIOR_FREE

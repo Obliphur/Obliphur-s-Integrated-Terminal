@@ -78,9 +78,8 @@ object Cfg {
     const val BEHAVIOR_DELAY_HOURS = 24 * 7L
     const val OUTING_TEXT = "外出"
     const val REST_TEXT = "休息"
-    // 每天最多记 10 小时; 7:00 ~ 23:00 之内的部分按 80% 专注 / 20% 休息填充.
+    // 每天最多记 10 小时; 7:00 ~ 睡觉时间 (SLEEP_*) 之内的部分按 80% 专注 / 20% 休息填充.
     const val OUTING_WINDOW_START = 7 * 60
-    const val OUTING_WINDOW_END = 23 * 60
     const val OUTING_DAILY_CAP = 10 * 3600.0
     const val OUTING_FOCUS_SHARE = 0.8
     // 外出结束: 被记录的小时数 × 6 分钟, 最多 3 小时.
