@@ -431,6 +431,9 @@ class Contract:
         self.live = {"state": "none"}
         self.history = []
         self.draft = []
+        # 时间重叠的两个合约只能留一个 (MECHANICS 15.5): 作废了的合约 id (随同步), 等用户选的冲突 (只在本机)
+        self.voided = set()
+        self.conflicts = []                   # [(a, b)]: 两个合约的摘要 (见 _brief), a 是本机原来的
         self._watch = {}                      # 软规则: 此刻是不是已经超了 (只记在本机)
         self.blocked = lambda: False          # 重置中: 不写文件
         self.load()
@@ -447,12 +450,15 @@ class Contract:
             self.live["terms"] = clean_terms(self.live.get("terms"))
         self.history = [h for h in (d.get("history") or []) if isinstance(h, dict) and h.get("start")]
         self.draft = clean_terms(d.get("draft"))
+        self.voided = {str(x) for x in (d.get("void") or []) if x}
+        self.conflicts = [(a, b) for a, b in (d.get("conflicts") or []) if isinstance(a, dict) and isinstance(b, dict)]
 
     def save(self):
         if self.blocked():
             return
         self.history = sorted(self.history, key=lambda h: str(h.get("end")))[-HISTORY_KEEP:]
-        save_json_file(self.path, {"live": self.live, "history": self.history, "draft": self.draft})
+        save_json_file(self.path, {"live": self.live, "history": self.history, "draft": self.draft,
+                                   "void": sorted(self.voided), "conflicts": [list(c) for c in self.conflicts]})
 
     # ---- 进行中的合约 ----
 
@@ -1338,23 +1344,103 @@ class Contract:
     # ---- 设备同步 ----
 
     def doc(self) -> dict:
-        return {"live": dict(self.live), "history": [dict(h) for h in self.history]}
+        out = {"live": dict(self.live), "history": [dict(h) for h in self.history]}
+        for vid in self.voided:
+            out["void:" + vid] = 1                # 每个作废的 id 单独一项: 同步时只会增加
+        return out
+
+    # ---- 时间重叠的两个合约 (例如一台设备用 Adapter 断网期间各自开始了合约, MECHANICS 15.5) ----
+
+    @staticmethod
+    def _brief(rec: dict, live: bool) -> dict:
+        """冲突里一个合约的摘要: id, 起止, 危机等级, 词条, 结果 ("" = 进行中); 进行中的带上整个 live (保留它时恢复)."""
+        terms = list(rec.get("terms") or [])
+        rand = set(rec.get("rand") or [])
+        mine = [t for t in terms if t in BY_ID and t not in rand]
+        out = {"id": str(rec.get("id")), "start": rec.get("start"), "end": rec.get("end"),
+               "level": int(rec.get("level") or (sum(BY_ID[t][2] for t in mine) + combo_level(mine))),
+               "terms": terms, "result": "" if live else str(rec.get("result") or "")}
+        if live:
+            out["live"] = dict(rec)
+        return out
+
+    @staticmethod
+    def _overlap(a: dict, b: dict) -> bool:
+        sa, ea, sb, eb = _parse(a.get("start")), _parse(a.get("end")), _parse(b.get("start")), _parse(b.get("end"))
+        return bool(sa and ea and sb and eb and sa < eb and sb < ea)
+
+    def _add_conflict(self, mine: dict, theirs: dict):
+        ids = {mine["id"], theirs["id"]}
+        if mine["id"] == theirs["id"] or ids & self.voided:
+            return
+        if any({a["id"], b["id"]} == ids for a, b in self.conflicts):
+            return
+        self.conflicts.append((mine, theirs))
+
+    def resolve_conflict(self, keep_id: str) -> bool:
+        """用户选了留下 keep_id: 另一个作废 (进行中的直接结束, 不给奖励; 记录里删掉), 留下的要是被盖掉的进行中合约就恢复它.
+        已经给出的休息时间不收回. 返回有没有处理."""
+        keep_id = str(keep_id)
+        hit = next((c for c in self.conflicts if keep_id in (c[0]["id"], c[1]["id"])), None)
+        if hit is None:
+            return False
+        keep = hit[0] if hit[0]["id"] == keep_id else hit[1]
+        drop = hit[1] if keep is hit[0] else hit[0]
+        self.voided.add(drop["id"])
+        self._apply_voids()
+        if keep.get("live") and not self.active and keep_id not in {str(h.get("id")) for h in self.history}:
+            self.live = dict(keep["live"])        # 留下的是被同步盖掉的那个进行中合约: 恢复 (之后随同步)
+            self.live["terms"] = clean_terms(self.live.get("terms"))
+        self.save()
+        return True
+
+    def _apply_voids(self) -> bool:
+        """作废的合约: 进行中的结束 (不给奖励, 不留记录), 记录里删掉, 相关的冲突不用再问. 返回进行中的合约变了没有."""
+        changed = False
+        if self.active and str(self.live.get("id")) in self.voided:
+            self.live = {"state": "none", "owner": self.live.get("owner") or ""}
+            self._watch = {}
+            changed = True
+        self.history = [h for h in self.history if str(h.get("id")) not in self.voided]
+        self.conflicts = [(a, b) for a, b in self.conflicts if not ({a["id"], b["id"]} & self.voided)]
+        return changed
 
     def merge(self, changes: dict) -> bool:
-        """同步来的改动. 进行中的合约: 后改的覆盖先改的; 记录: 合并 (按 id). 返回进行中的合约是否变了."""
+        """同步来的改动. 进行中的合约: 后改的覆盖先改的; 记录: 合并 (按 id). 返回进行中的合约是否变了.
+        两个不同的合约时间重叠 (进行中的被另一个盖掉, 或者送来的记录和本机的重叠): 记下冲突, 让用户选留哪个 (15.5)."""
         changed = False
+        for key in changes:
+            if str(key).startswith("void:") and changes[key]:
+                self.voided.add(str(key)[5:])
+        mine_live = self._brief(self.live, True) if self.active else None
+        ended = {str(h.get("id")) for h in (changes.get("history") or []) if isinstance(h, dict)}
+        ended |= {str(h.get("id")) for h in self.history}
+        if mine_live and mine_live["id"] in ended:
+            mine_live = None                         # 本机这个合约在别的设备上已经结束了: 正常切换, 不算冲突
         if isinstance(changes.get("live"), dict) and changes["live"].get("state") in ("active", "none"):
-            if changes["live"] != self.live:
-                self.live = dict(changes["live"])
+            new = changes["live"]
+            if str(new.get("id")) in self.voided and new.get("state") == "active":
+                new = None                           # 已经作废的合约又被送回来: 不收
+            if new is not None and new != self.live:
+                if mine_live and new.get("state") == "active" and str(new.get("id")) != mine_live["id"]:
+                    self._add_conflict(mine_live, self._brief(new, True))
+                self.live = dict(new)
                 if self.active:
                     self.live["terms"] = clean_terms(self.live.get("terms"))
                 changed = True
         if isinstance(changes.get("history"), list):
             have = {str(h.get("id")) for h in self.history}
+            local = [self._brief(h, False) for h in self.history] + ([mine_live] if mine_live else [])
             for h in changes["history"]:
-                if isinstance(h, dict) and h.get("start") and str(h.get("id")) not in have:
+                hid = str(h.get("id")) if isinstance(h, dict) else ""
+                if isinstance(h, dict) and h.get("start") and hid not in have and hid not in self.voided:
+                    for loc in local:
+                        if loc["id"] != hid and self._overlap(loc, h):
+                            self._add_conflict(loc, self._brief(h, False))
                     self.history.append(dict(h))
-                    have.add(str(h.get("id")))
+                    have.add(hid)
+        if self._apply_voids():
+            changed = True
         self.save()
         return changed
 
@@ -1482,6 +1568,42 @@ def _selftest():
     assert c.ban_check("music", True) == "music" and c.ban_check("music", True) == "" and c.ban_check("music", False) == ""
     assert c.downgrade("music") == "" and not c.has("music"), "乐理之灾只有 1 级, 降一级就失效"
     # 无言为真 (2 级) / 禁游令: 违反一次降一级, 再违反才失效; 录像 (目光 / 刻痕) 违反一次就失效
+    # 时间重叠的两个合约 (15.5): 进行中的被同步盖掉 → 记下冲突; 选了留下哪个, 另一个作废 (随同步)
+    ka, kb = Contract(tempfile.mkdtemp()), Contract(tempfile.mkdtemp())
+    ka.start(["long1"], owner="A", now=t0)
+    kb.start(["music", "game"], owner="B", now=t0 + timedelta(minutes=30))
+    a_id, b_id = str(ka.live["id"]), str(kb.live["id"])
+    assert a_id != b_id
+    assert ka.merge({"live": kb.doc()["live"]}) and ka.live["id"] == kb.live["id"]
+    assert len(ka.conflicts) == 1 and {ka.conflicts[0][0]["id"], ka.conflicts[0][1]["id"]} == {a_id, b_id}
+    assert ka.resolve_conflict(a_id) and str(ka.live["id"]) == a_id and b_id in ka.voided and not ka.conflicts
+    assert ka.doc()["void:" + b_id] == 1
+    assert kb.merge({"void:" + b_id: 1}) and not kb.active, "作废的进行中合约在另一台设备上也结束"
+    assert not kb.merge({"live": dict(ka.live, id=int(b_id))}) or str(kb.live.get("id")) != b_id, "作废的不再收"
+    # 送来的记录和本机的记录时间重叠 → 冲突; 留下送来的, 本机的删掉
+    kc, kd = Contract(tempfile.mkdtemp()), Contract(tempfile.mkdtemp())
+    kc.start(["long1"], owner="C", now=t0)
+    kc.finish("completed", t0 + timedelta(hours=2))
+    kd.start(["fog"], owner="D", now=t0 + timedelta(hours=1))
+    kd.finish("abandoned", t0 + timedelta(hours=3))
+    kc.merge({"history": kd.doc()["history"]})
+    assert len(kc.conflicts) == 1 and len(kc.history) == 2
+    keep = kc.conflicts[0][1]["id"]
+    assert kc.resolve_conflict(keep) and [str(h["id"]) for h in kc.history] == [keep]
+    # 正常情况: 别的设备结束了这个合约又开始了新的 (送来的记录里有本机的这个) → 不算冲突
+    kf, kg = Contract(tempfile.mkdtemp()), Contract(tempfile.mkdtemp())
+    kf.start(["long1"], owner="F", now=t0)
+    kg.merge(kf.doc())
+    kg.finish("abandoned", t0 + timedelta(minutes=10))
+    kg.start(["fog"], owner="G", now=t0 + timedelta(minutes=11))
+    kf.merge(kg.doc())
+    assert not kf.conflicts and str(kf.live["id"]) == str(kg.live["id"])
+    # 不重叠的不算
+    ke = Contract(tempfile.mkdtemp())
+    ke.merge({"history": [dict(kd.history[0], id=999, start=_iso(t0 + timedelta(days=1)), end=_iso(t0 + timedelta(days=1, hours=1)))]})
+    ke.merge({"history": [dict(kd.history[0], id=998, start=_iso(t0 + timedelta(days=2)), end=_iso(t0 + timedelta(days=2, hours=1)))]})
+    assert not ke.conflicts
+
     # 网络禁令: 点击解除, 扣词条等级那么多目标生命值, 词条去掉 (组合算成员失效)
     cb = Contract(tempfile.mkdtemp())
     cb.start(["music", "silent", "game", "video"], owner="me", now=t0)

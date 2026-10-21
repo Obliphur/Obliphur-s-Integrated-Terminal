@@ -200,6 +200,7 @@ fun peerLines(): List<String> {
         val name = d.name
         val st = d.status
         if (d.outdated) return@map "🔗 $name: " + tr("离线 (版本 {v} 较低, 请更新)", "v" to d.version)
+        if (d.netOff) return@map "🔗 $name: " + tr("断网")      // 换成了 Adapter: 效果和在线一样, 只是不同步 (15.5)
         if (d.off) return@map "🔗 $name: " + tr("关机")          // 效果和在线一样, 只是不同步 (MECHANICS 15.4)
         if (!d.online) return@map "🔗 $name: " + tr("离线")
         var t = when (st.optString("timer")) {

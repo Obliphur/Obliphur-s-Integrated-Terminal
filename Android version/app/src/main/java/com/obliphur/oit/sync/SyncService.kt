@@ -869,6 +869,16 @@ class SyncService(
         return true
     }
 
+    /** 其他设备从 Adapter 断网回来了: (设备 id, 开始毫秒, 结束毫秒), 取出后清空 (本机据此处理自己记录里的重叠, 15.5). */
+    fun popAdapterBack(): List<Triple<String, Long, Long>> = lock.withLock {
+        val o = state.optJSONObject("adapter_back") ?: return emptyList()
+        val out = o.keys().asSequence().mapNotNull { k ->
+            o.optJSONArray(k)?.let { Triple(k, it.optLong(0), it.optLong(1)) }
+        }.toList()
+        if (out.isNotEmpty()) { state.put("adapter_back", JSONObject()); save() }
+        out
+    }
+
     /** 收到关机指令 (MECHANICS 15.4): 和每台绑定的设备同步一轮 (子端平时不主动发), 让它们知道本机关机了.
      *  在后台线程里调用 (同步要用界面线程拼内容), 最多等 timeoutMs. */
     fun pushFinal(timeoutMs: Long = 3000) {
@@ -1005,7 +1015,16 @@ class SyncService(
                     val s = r.optJSONObject(did) ?: continue
                     // 已经解除 / 重置 / 卸载的设备留下的旧状态
                     if (goneNow.has(did) && !peersNow.has(did) && s.optLong("ts") <= goneNow.optLong(did)) continue
-                    if (s.optLong("ts") > (sts.optJSONObject(did)?.optLong("ts", -1) ?: -1)) sts.put(did, s)
+                    val old = sts.optJSONObject(did)
+                    if (s.optLong("ts") > (old?.optLong("ts", -1) ?: -1)) {
+                        // 它从 Adapter 断网回来了: 断网期间的记录要处理重叠 (MECHANICS 15.5)
+                        val was = old?.optLong("adapter", 0L) ?: 0L
+                        if (was > 0 && s.optLong("adapter", 0L) <= 0) {
+                            if (state.optJSONObject("adapter_back") == null) state.put("adapter_back", JSONObject())
+                            state.getJSONObject("adapter_back").put(did, JSONArray().put(was).put(System.currentTimeMillis()))
+                        }
+                        sts.put(did, s)
+                    }
                 }
             }
         }
@@ -1117,7 +1136,10 @@ class SyncService(
             return 403 to JSONObject().put("error", e.message)
         }
         val snap = body.optJSONObject("snap") ?: JSONObject()
-        if (snap.optJSONObject("device")?.optString("net_mode") != "proxy") return 409 to JSONObject().put("error", "peer-not-proxy")
+        val dev = snap.optJSONObject("device")
+        // 换成 Adapter 之前的最后一次 (MECHANICS 15.5): 对方自己的状态写着"断网", 照收
+        val farewell = snap.optJSONObject("status")?.optJSONObject(dev?.optString("id") ?: "")?.optLong("adapter", 0L)?.let { it > 0 } == true
+        if (dev?.optString("net_mode") != "proxy" && !farewell) return 409 to JSONObject().put("error", "peer-not-proxy")
         val mine = try {
             runner.call { merge(snap); snapshot() }
         } catch (e: Exception) {
@@ -1204,7 +1226,9 @@ class SyncService(
     /** 其他设备此刻的状态: (设备 id, 名字, 状态). outdated: 版本比本机低, 算离线. */
     /** off: 关机 (连不上了, 但它最后的状态是收到关机指令 / 电量很低); 这时 online 也是 true (效果和在线一样). */
     class DeviceState(val id: String, val name: String, val online: Boolean, val status: JSONObject, val seen: Long,
-                      val version: String = "", val outdated: Boolean = false, val off: Boolean = false)
+                      val version: String = "", val outdated: Boolean = false, val off: Boolean = false,
+                      /** 断网: 它换成了 Adapter 断网方式, 走之前告诉了大家 (MECHANICS 15.5); 不同步, 效果和在线一样. */
+                      val netOff: Boolean = false)
 
     /** 绑定的设备里版本和本机不一样的 (知道版本的): (名字, 版本, 是否比本机新). */
     fun versionMismatch(): List<Triple<String, String, Boolean>> = lock.withLock {
@@ -1250,13 +1274,15 @@ class SyncService(
                 val ver = p.optString("version")
                 val old = mine != null && vparse(ver)?.let { vnewer(mine, it) } == true    // 版本比本机低: 算离线
                 val online = p.optString("last_err").isEmpty() && now - seen < OFFLINE_MS && !old
-                val off = !online && !old && wentOff(st)
-                DeviceState(id, name, online || off, st, seen, ver, old, off)
+                val netOff = !online && !old && st.optLong("adapter", 0L) > 0      // 换成了 Adapter 断网 (15.5)
+                val off = !online && !old && !netOff && wentOff(st)
+                DeviceState(id, name, online || off || netOff, st, seen, ver, old, off, netOff)
             } else {
                 val seen = st.optLong("ts")
                 val online = now - seen < OFFLINE_FWD_MS
-                val off = !online && wentOff(st)
-                DeviceState(id, name, online || off, st, seen, off = off)
+                val netOff = !online && st.optLong("adapter", 0L) > 0
+                val off = !online && !netOff && wentOff(st)
+                DeviceState(id, name, online || off || netOff, st, seen, off = off, netOff = netOff)
             }
         }.sortedBy { it.name }
     }
@@ -1299,14 +1325,32 @@ class SyncService(
     }
 
     /** [start, end] 里有任意一台设备离线的时间段 (合并过的). */
+    /** 本机关机 (收到关机指令 / 没电) 的这段 [a, b] (MECHANICS 15.4): 本机之后记下的专注里这段记为空闲, 不计入统计. */
+    fun addSelfOff(aMs: Long, bMs: Long) {
+        if (bMs <= aMs) return
+        val floor = System.currentTimeMillis() - 26 * 3600_000L
+        lock.withLock {
+            val old = state.optJSONArray("self_off") ?: JSONArray()
+            val keep = JSONArray()
+            for (i in 0 until old.length()) old.optJSONArray(i)?.let { if (it.optLong(1) > floor) keep.put(it) }
+            keep.put(JSONArray().put(aMs).put(bMs))
+            state.put("self_off", keep)
+            save()
+        }
+    }
+
+    private fun selfOff(): List<LongArray> = lock.withLock {
+        val arr = state.optJSONArray("self_off") ?: return emptyList()
+        (0 until arr.length()).mapNotNull { i -> arr.optJSONArray(i)?.let { longArrayOf(it.optLong(0), it.optLong(1)) } }
+    }
+
+    /** [start, end] 里有任意一台设备离线的时间段 (合并过的); 也包括本机关机的那几段 (15.4). */
     fun offlineSpans(startMs: Long, endMs: Long): List<Pair<Long, Long>> {
         val now = System.currentTimeMillis()
-        val spans = synchronized(offline) {
-            offline.values.flatten().mapNotNull {
-                val a = maxOf(it[0], startMs)
-                val b = minOf(if (it[1] < 0) now else it[1], endMs)
-                if (b > a) a to b else null
-            }
+        val spans = (synchronized(offline) { offline.values.flatten() } + selfOff()).mapNotNull {
+            val a = maxOf(it[0], startMs)
+            val b = minOf(if (it[1] < 0) now else it[1], endMs)
+            if (b > a) a to b else null
         }.sortedBy { it.first }
         val out = mutableListOf<Pair<Long, Long>>()
         for ((a, b) in spans) {

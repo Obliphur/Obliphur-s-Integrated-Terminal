@@ -372,6 +372,9 @@ class Contract(private val file: File) {
         private set
     /** 重置中: 不写文件. */
     var blocked: () -> Boolean = { false }
+    /** 时间重叠的两个合约只能留一个 (MECHANICS 15.5): 作废了的合约 id (随同步); 等用户选的冲突 (只在本机, first 是本机原来的). */
+    val voided = mutableSetOf<String>()
+    val conflicts = mutableListOf<Pair<JSONObject, JSONObject>>()
 
     init {
         val d = Store.readObj(file)
@@ -380,6 +383,15 @@ class Contract(private val file: File) {
             if (active) live.put("terms", JSONArray(clean(live.optJSONArray("terms")?.strings() ?: emptyList())))
             d.optJSONArray("history")?.objects()?.filter { it.has("start") }?.let { history.addAll(it) }
             draft = clean(d.optJSONArray("draft")?.strings() ?: emptyList())
+            d.optJSONArray("void")?.strings()?.let { voided.addAll(it) }
+            d.optJSONArray("conflicts")?.let { arr ->
+                for (i in 0 until arr.length()) {
+                    val p = arr.optJSONArray(i) ?: continue
+                    val a = p.optJSONObject(0) ?: continue
+                    val b = p.optJSONObject(1) ?: continue
+                    conflicts.add(a to b)
+                }
+            }
         }
     }
 
@@ -387,7 +399,9 @@ class Contract(private val file: File) {
         if (blocked()) return
         history.sortBy { it.optString("end") }
         while (history.size > HISTORY_KEEP) history.removeAt(0)
-        Store.write(file, JSONObject().put("live", live).put("history", JSONArray(history)).put("draft", JSONArray(draft)))
+        Store.write(file, JSONObject().put("live", live).put("history", JSONArray(history)).put("draft", JSONArray(draft))
+            .put("void", JSONArray(voided.sorted()))
+            .put("conflicts", JSONArray(conflicts.map { JSONArray().put(it.first).put(it.second) })))
     }
 
     // ---- 进行中的合约 ----
@@ -1127,26 +1141,100 @@ class Contract(private val file: File) {
 
     // ---- 设备同步 ----
 
-    fun doc(): Map<String, Any?> = mapOf("live" to JSONObject(live.toString()), "history" to JSONArray(history.map { JSONObject(it.toString()) }))
+    fun doc(): Map<String, Any?> {
+        val out = mutableMapOf<String, Any?>("live" to JSONObject(live.toString()),
+            "history" to JSONArray(history.map { JSONObject(it.toString()) }))
+        for (v in voided) out["void:$v"] = 1          // 每个作废的 id 单独一项: 同步时只会增加
+        return out
+    }
 
-    /** 同步来的改动. 进行中的合约: 后改的覆盖先改的; 记录: 合并 (按 id). */
+    // ---- 时间重叠的两个合约 (例如一台设备用 Adapter 断网期间各自开始了合约, MECHANICS 15.5) ----
+
+    /** 冲突里一个合约的摘要: id, 起止, 危机等级, 词条, 结果 ("" = 进行中); 进行中的带上整个 live (保留它时恢复). 同 contract.py 的 _brief. */
+    private fun brief(rec: JSONObject, isLive: Boolean): JSONObject {
+        val terms = rec.optJSONArray("terms")?.strings() ?: emptyList()
+        val rnd = (rec.optJSONArray("rand")?.strings() ?: emptyList()).toSet()
+        val m = terms.filter { it in BY_ID && it !in rnd }
+        val lv = rec.optInt("level", 0).takeIf { it > 0 } ?: (m.sumOf { BY_ID[it]!!.level } + comboLevel(m))
+        val out = JSONObject().put("id", rec.opt("id")?.toString() ?: "").put("start", rec.optString("start"))
+            .put("end", rec.optString("end")).put("level", lv).put("terms", JSONArray(terms))
+            .put("result", if (isLive) "" else rec.optString("result"))
+        if (isLive) out.put("live", JSONObject(rec.toString()))
+        return out
+    }
+
+    private fun overlaps(a: JSONObject, b: JSONObject): Boolean {
+        val sa = parseIso(a.optString("start")) ?: return false
+        val ea = parseIso(a.optString("end")) ?: return false
+        val sb = parseIso(b.optString("start")) ?: return false
+        val eb = parseIso(b.optString("end")) ?: return false
+        return sa.isBefore(eb) && sb.isBefore(ea)
+    }
+
+    private fun addConflict(mine: JSONObject, theirs: JSONObject) {
+        val ids = setOf(mine.optString("id"), theirs.optString("id"))
+        if (ids.size < 2 || ids.any { it in voided }) return
+        if (conflicts.any { setOf(it.first.optString("id"), it.second.optString("id")) == ids }) return
+        conflicts.add(mine to theirs)
+    }
+
+    /** 用户选了留下 keepId: 另一个作废 (进行中的直接结束, 不给奖励; 记录里删掉), 留下的要是被盖掉的进行中合约就恢复它.
+     *  已经给出的休息时间不收回. 返回有没有处理. 同 contract.py 的 resolve_conflict. */
+    fun resolveConflict(keepId: String): Boolean {
+        val hit = conflicts.firstOrNull { keepId == it.first.optString("id") || keepId == it.second.optString("id") } ?: return false
+        val keep = if (hit.first.optString("id") == keepId) hit.first else hit.second
+        val drop = if (keep === hit.first) hit.second else hit.first
+        voided.add(drop.optString("id"))
+        applyVoids()
+        val kept = keep.optJSONObject("live")
+        if (kept != null && !active && history.none { it.opt("id")?.toString() == keepId }) {
+            live = JSONObject(kept.toString())       // 留下的是被同步盖掉的那个进行中合约: 恢复 (之后随同步)
+            live.put("terms", JSONArray(clean(live.optJSONArray("terms")?.strings() ?: emptyList())))
+        }
+        save()
+        return true
+    }
+
+    /** 作废的合约: 进行中的结束 (不给奖励, 不留记录), 记录里删掉, 相关的冲突不用再问. */
+    private fun applyVoids() {
+        if (active && live.opt("id")?.toString() in voided) {
+            live = JSONObject().put("state", "none").put("owner", live.optString("owner"))
+            watch.clear()
+        }
+        history.removeAll { it.opt("id")?.toString() in voided }
+        conflicts.removeAll { it.first.optString("id") in voided || it.second.optString("id") in voided }
+    }
+
+    /** 同步来的改动. 进行中的合约: 后改的覆盖先改的; 记录: 合并 (按 id).
+     *  两个不同的合约时间重叠 (进行中的被另一个盖掉, 或者送来的记录和本机的重叠): 记下冲突, 让用户选留哪个 (15.5). */
     fun merge(changes: Map<String, Any?>) {
+        for ((k, v) in changes) if (k.startsWith("void:") && v != null && v != JSONObject.NULL) voided.add(k.removePrefix("void:"))
+        val incoming = (changes["history"] as? JSONArray)?.objects() ?: emptyList()
+        val ended = (incoming.map { it.opt("id")?.toString() } + history.map { it.opt("id")?.toString() }).toSet()
+        // 本机这个合约在别的设备上已经结束了 (送来的记录里有它): 正常切换, 不算冲突
+        val mineLive = if (active && live.opt("id")?.toString() !in ended) brief(live, true) else null
         (changes["live"] as? JSONObject)?.let { l ->
-            if (l.optString("state") in setOf("active", "none") && l.toString() != live.toString()) {
+            val gone = l.optString("state") == "active" && l.opt("id")?.toString() in voided   // 已经作废的又被送回来: 不收
+            if (!gone && l.optString("state") in setOf("active", "none") && l.toString() != live.toString()) {
+                if (mineLive != null && l.optString("state") == "active" && l.opt("id")?.toString() != mineLive.optString("id"))
+                    addConflict(mineLive, brief(l, true))
                 live = JSONObject(l.toString())
                 if (active) live.put("terms", JSONArray(clean(live.optJSONArray("terms")?.strings() ?: emptyList())))
             }
         }
-        (changes["history"] as? JSONArray)?.let { arr ->
+        if (incoming.isNotEmpty()) {
             val have = history.map { it.opt("id")?.toString() }.toMutableSet()
-            for (h in arr.objects()) {
+            val local = history.map { brief(it, false) } + listOfNotNull(mineLive)
+            for (h in incoming) {
                 val id = h.opt("id")?.toString()
-                if (h.has("start") && id !in have) {
+                if (h.has("start") && id !in have && id !in voided) {
+                    for (loc in local) if (loc.optString("id") != id && overlaps(loc, h)) addConflict(loc, brief(h, false))
                     history.add(JSONObject(h.toString()))
                     have.add(id)
                 }
             }
         }
+        applyVoids()
         save()
     }
 }

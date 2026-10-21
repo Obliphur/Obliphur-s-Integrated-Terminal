@@ -102,7 +102,7 @@ class OitApp : Application(), Host {
         val r = object : android.content.BroadcastReceiver() {
             override fun onReceive(ctx: android.content.Context, intent: android.content.Intent) {
                 powerOff = true
-                runCatching { core.timer.saveNow() }
+                runCatching { core.beatPower(force = true); core.timer.saveNow() }
                 val s = sync ?: return
                 if (s.peers().isEmpty()) return
                 val pending = goAsync()
@@ -137,6 +137,8 @@ class OitApp : Application(), Host {
         core.isLatestActive = { s.isLatestActive() }
         core.hasPeers = { s.peers().isNotEmpty() }
         core.syncedSince = { ms -> s.peers().values.any { it.optLong("last_ok") >= ms } }
+        core.popAdapterBack = { s.popAdapterBack() }
+        core.addSelfOff = { a, b -> s.addSelfOff(a, b) }
         core.wentOff = { autostartOk() && (powerOff || (battery()?.let { it < com.obliphur.oit.sync.SyncService.LOW_BATTERY } == true)) }
         core.followsMother = { s.motherId()?.let { it != s.myId } == true }
         core.motherFresh = {

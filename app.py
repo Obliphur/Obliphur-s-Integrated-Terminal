@@ -250,6 +250,7 @@ class BreakTimerApp:
         self.dm.peer_ledgers = self.sync.peer_ledgers
         self.dm.offline_spans = self.sync.offline_spans     # 正在进行的那段: 有设备离线的部分画成空白
         self.dm.peer_ledgers_by_id = self.sync.peer_ledgers_by_id
+        self.net.before_adapter = self._before_adapter        # 换成 Adapter 之前: 告诉其他设备本机断网了 (15.5)
         self.dm.my_id = lambda: self.sync.my_id
         self.dm.mother_id = self.sync.mother_id
         self.net.peer_net = lambda: devsync.peer_net(self.sync.peer_ledgers(), self.net.date)
@@ -313,6 +314,7 @@ class BreakTimerApp:
         self.root.protocol("WM_SAVE_YOURSELF", self._on_power_off)
         atexit.register(self._save_focus_now)
         self.var_confirm.trace_add("write", self._on_confirm_change)
+        self._note_power_back()
         self._recover_focus()
         if not self.dm.username:
             # 第一次打开 (或者还没填过用户名的旧版本升级上来): 先填用户名, 再显示介绍窗口
@@ -1640,6 +1642,7 @@ class BreakTimerApp:
         它们把本机算作"关机" (效果和在线一样), 不会因为本机离线把专注记成空闲 / 让合约失败.
         关机被取消 (程序 1 分钟后还在运行) 时恢复正常."""
         self.power_off = True
+        self._beat_power(force=True)
         self._save_focus_now()
         try:
             if self.sync.peers():
@@ -1650,6 +1653,29 @@ class BreakTimerApp:
             self.root.after(60_000, self._power_off_cancelled)
         except Exception:
             pass
+
+    # 关机的时间段 (MECHANICS 15.4): 每 30 秒写一次 power.json (此刻, 算不算关机); 重新打开时据此知道关了多久
+    def _power_file(self) -> str:
+        return os.path.join(self.dm.data_dir, "power.json")
+
+    def _beat_power(self, force: bool = False):
+        if not force and time.monotonic() - getattr(self, "_power_at", 0.0) < 30:
+            return
+        self._power_at = time.monotonic()
+        save_json_file(self._power_file(), {"alive": int(time.time() * 1000), "off": bool(self._went_off())})
+
+    def _note_power_back(self):
+        """启动时: 上次是关机 / 没电停下的, 关着的这段 [最后一次心跳, 现在] 记下来 —— 本机之后记下的专注里这段记为空闲, 不计入统计."""
+        d = load_json_file(self._power_file(), {})
+        try:
+            alive, off = int(d.get("alive") or 0), bool(d.get("off"))
+        except (TypeError, ValueError, AttributeError):
+            return
+        now = int(time.time() * 1000)
+        if off and alive and now - alive > float(config.CLOSED_GAP) * 1000:
+            self.sync.add_self_off(alive, now)
+            self._log_notice(f"POWER    was off {datetime.fromtimestamp(alive / 1000):%m-%d %H:%M} ~ now")
+        self._beat_power(force=True)
 
     def _power_off_cancelled(self):
         self.power_off = False
@@ -2405,6 +2431,95 @@ class BreakTimerApp:
         self._sync_timer_buttons()
         self._refresh_if_visible("stats", "cal")
 
+    # ---- Adapter 断网 (MECHANICS 15.5) ----
+
+    def _before_adapter(self):
+        """马上要换成 Adapter (网卡还在): 本机状态设为"断网"发给每台设备, 之后不再同步. 其他设备把本机算作在线."""
+        if not self.sync.peers():
+            return
+        self._log_notice("SYNC     adapter: telling peers this device goes offline")
+        try:
+            self.sync.mark_adapter()
+        except Exception as e:
+            self._log_window(f"ERROR    adapter farewell {type(e).__name__}: {e}")
+
+    def _check_adapter_overlap(self):
+        """每秒: 断网期间和其他设备重叠的记录, 按 休息 > 专注 > 空闲 处理 (只改本机自己的记录, MECHANICS 15.5).
+        本机断网回来: 第一次同步上之后和每台设备比一遍 (一样的由本机去掉); 别的设备断网回来: 和它比一遍."""
+        if self.net.net_mode == "proxy":
+            self.sync.note_proxy_back()
+        todo = []
+        win = self.sync.adapter_window()
+        if win and self.sync.synced_since(win[1]):
+            led = self.sync.peer_ledgers_by_id() or {}
+            todo += [(did, win[0], win[1], True) for did in led]
+            self.sync.clear_adapter()
+        todo += [(did, a, b, False) for did, a, b in self.sync.pop_adapter_back()]
+        total = {"study": 0.0, "break": 0.0, "idle": 0.0}
+        for did, a, b, mine in todo:
+            led = (self.sync.peer_ledgers_by_id() or {}).get(did) or {}
+            res = self.dm.resolve_overlap(led.get("focus") or [], datetime.fromtimestamp(a / 1000),
+                                          datetime.fromtimestamp(b / 1000), tie_mine=mine)
+            for k in total:
+                total[k] += res.get(k, 0.0)
+            self._log_notice(f"SYNC     adapter overlap with {did} ({'mine' if mine else 'theirs'}): {res}")
+        if any(v > 0 for v in total.values()):
+            toast.info(tr("断网期间和其他设备重叠的记录已按 休息 > 专注 > 空闲 处理: 去掉了专注 {s}, 休息 {b}, 空闲 {i}.",
+                          s=fmt_hm(total["study"]), b=fmt_hm(total["break"]), i=fmt_hm(total["idle"])), timeout=10000)
+            self._refresh_if_visible("stats", "cal")
+            self.refresh_display()
+            if self.sync.peers():
+                self.sync.sync_now()
+
+    def _contract_line(self, b: dict) -> str:
+        """冲突对话框里一个合约的一行: 起止, 危机等级, 结果 / 进行中, 词条."""
+        from pages.contract_page import RESULTS, term_short
+        a0, a1 = contract_mod._parse(b.get("start")), contract_mod._parse(b.get("end"))
+        when = f"{a0:%m-%d %H:%M} — {a1:%H:%M}" if a0 and a1 else "?"
+        state = tr("进行中") if not b.get("result") else tr(RESULTS.get(b["result"], b["result"]))
+        terms = " · ".join(term_short(t) for t in b.get("terms") or [] if t in contract_mod.BY_ID) or "—"
+        return tr("{when} · 危机等级 {lv} · {state}", when=when, lv=b.get("level", 0), state=state) + "\n    " + terms
+
+    def _check_contract_conflicts(self):
+        """时间重叠的两个合约 (MECHANICS 15.5): 问用户留哪个. 关掉窗口不选的话 1 分钟后再问."""
+        c = self.contract
+        win = getattr(self, "_conflict_win", None)
+        if not c.conflicts:
+            if win is not None:
+                try:
+                    win.destroy()                    # 在别的设备上已经选过了
+                except Exception:
+                    pass
+                self._conflict_win = None
+            return
+        try:
+            if win is not None and win.winfo_exists():
+                return
+        except Exception:
+            pass
+        if time.monotonic() < getattr(self, "_conflict_next", 0.0):
+            return
+        self._conflict_next = time.monotonic() + 60
+        a, b = c.conflicts[0]
+        msg = (tr("断网期间两台设备各自进行了合约, 时间有重叠. 只能保留一个, 另一个作废 (已经给出的休息时间不收回).")
+               + "\n\nA  " + self._contract_line(a) + "\n\nB  " + self._contract_line(b))
+        self._conflict_win = toast.notice(tr("⚔ 合约冲突"), msg, buttons=[
+            (tr("保留 A"), lambda i=a["id"]: self._keep_contract(i), True),
+            (tr("保留 B"), lambda i=b["id"]: self._keep_contract(i), True),
+        ])
+
+    def _keep_contract(self, keep_id: str):
+        c = self.contract
+        if not c.resolve_conflict(keep_id):
+            return
+        self._conflict_win = None
+        self._conflict_next = 0.0
+        self._log_notice(f"CONTRACT conflict: keep {keep_id}")
+        self._check_contract()
+        self._contract_changed()
+        if self.sync.peers():
+            self.sync.sync_now()
+
     def _peer_line(self):
         """Timer 页: 绑定的每台设备此刻的状态; 有设备离线时提醒离线的那段专注不会被记录. 返回 (文字, 有离线吗)."""
         lines = []
@@ -2412,6 +2527,9 @@ class BreakTimerApp:
         for st in self.sync.device_states():
             if st.get("off"):
                 lines.append(f"🔗 {st['name']}: {tr('关机')}")     # 效果和在线一样, 只是不同步 (15.4)
+                continue
+            if st.get("net_off"):
+                lines.append(f"🔗 {st['name']}: {tr('断网')}")     # 换成了 Adapter: 效果和在线一样, 只是不同步 (15.5)
                 continue
             if not st["online"]:
                 offline.append(st["name"])
@@ -3957,12 +4075,18 @@ class BreakTimerApp:
         if event == "started" and self._update_retry and getattr(config, "UPDATE_CHECK", 1):
             self._update_retry = False
             self.check_update(auto=True)
+        self._beat_power()
         if time.monotonic() - self._battery_at >= 20:   # 本机电量: 发给其他设备 (MECHANICS 15.4)
             self._battery_at = time.monotonic()
             self.battery = devsync.battery_percent()
         if time.monotonic() - self._autostart_at >= 300 and self.autostart_state != "unknown":
             self._autostart_at = time.monotonic()        # 开机自启动有没有被用户关掉: 5 分钟看一次
             threading.Thread(target=self._check_autostart, daemon=True).start()
+        try:
+            self._check_adapter_overlap()
+            self._check_contract_conflicts()
+        except Exception as e:
+            self._log_window(f"ERROR    adapter overlap {type(e).__name__}: {e}")
         self.sync.track_offline()               # 每秒: 同步失败的设备马上算离线 (MECHANICS 8.4)
         try:
             self._check_contract()

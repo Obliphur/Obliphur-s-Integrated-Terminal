@@ -125,6 +125,12 @@ class PcLocal:
         if getattr(a, "power_off", False):
             st["off"] = True
         st["auto"] = bool(getattr(a, "autostart_on", False))      # 开机自启动开着 (MECHANICS 3.4): 关机的前提
+        try:
+            since = a.sync.adapter_since()                        # 换成了 Adapter: "断网" (MECHANICS 15.5)
+        except Exception:
+            since = 0
+        if since:
+            st["adapter"] = int(since)
         bat = getattr(a, "battery", None)
         if bat is not None:
             st["battery"] = int(bat)

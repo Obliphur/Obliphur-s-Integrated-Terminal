@@ -556,8 +556,26 @@ class SettingsPage(tk.Frame):
         with frozen(self):
             return self._stage_now(key)
 
+    def _adapter_ok(self, key: str, value) -> bool:
+        """绑定了其他设备时选 Adapter 断网方式: 先警告 (MECHANICS 15.5). 取消时把选项改回去."""
+        if key != "NET_MODE" or value != "adapter" or self.sm.value(key) == "adapter":
+            return True
+        try:
+            peers = bool(self.sync and self.sync.peers())
+        except Exception:
+            peers = False
+        if not peers:
+            return True
+        if toast.ask(tr("该模式没有正确适配所有功能,你真的要选择这个模式吗?"), title=tr("Adapter 断网方式"),
+                     ok_text=tr("选择"), danger=True):
+            return True
+        self._sync_widget(key)
+        return False
+
     def _stage_now(self, key: str):
         value = self._widget_value(key)
+        if not self._adapter_ok(key, value):
+            return
         if key == "CHIME_WAV":
             self._rows[key]["picked"] = False
         status, msg = self.sm.stage(key, value)
@@ -627,6 +645,8 @@ class SettingsPage(tk.Frame):
                 continue
             if value == self.sm.value(key):
                 same += 1
+                continue
+            if not self._adapter_ok(key, value):
                 continue
             status, msg = self.sm.stage(key, value)
             if status == "staged":

@@ -825,7 +825,11 @@ class SyncService:
                 if did in self.state["gone"] and did not in self.state["peers"] \
                         and int(st.get("ts", 0)) <= int(self.state["gone"][did]):
                     continue                    # 已经解除 / 重置 / 卸载的设备留下的旧状态
-                if int(st.get("ts", 0)) > int((self.state["status"].get(did) or {}).get("ts", -1)):
+                old_st = self.state["status"].get(did) or {}
+                if int(st.get("ts", 0)) > int(old_st.get("ts", -1)):
+                    if old_st.get("adapter") and not st.get("adapter"):
+                        # 它从 Adapter 断网回来了: 断网期间的记录要处理重叠 (MECHANICS 15.5)
+                        self.state.setdefault("adapter_back", {})[did] = [int(old_st["adapter"]), _now_ms()]
                     self.state["status"][did] = st
         local = self.local.docs()
         stamped = self._stamp(local)
@@ -950,7 +954,9 @@ class SyncService:
         except SealError as e:
             return 403, {"error": str(e)}
         snap = body.get("snap") or {}
-        if (snap.get("device") or {}).get("net_mode") != "proxy":
+        dev = snap.get("device") or {}
+        farewell = bool(((snap.get("status") or {}).get(str(dev.get("id") or "")) or {}).get("adapter"))
+        if dev.get("net_mode") != "proxy" and not farewell:      # 换成 Adapter 之前的最后一次 (15.5) 照收
             return 409, {"error": "peer-not-proxy"}
         try:
             self.runner.call(lambda: self.merge(snap))
@@ -1128,10 +1134,11 @@ class SyncService:
         for t in threads:
             t.join(max(0.0, end - time.time()))
 
-    def push_final(self, timeout: float = 3.0):
+    def push_final(self, timeout: float = 3.0, force: bool = False):
         """界面线程, 程序关闭前: 把本机此刻的内容发给每台设备 (不等回复里的内容, 最多等 timeout 秒).
-        例如共享的专注因为本机关闭而结束了, 其他设备要马上照着结束 (MECHANICS 8.2)."""
-        if not self.proxy_ok():
+        例如共享的专注因为本机关闭而结束了, 其他设备要马上照着结束 (MECHANICS 8.2).
+        force: 不看断网方式 (换成 Adapter 之前的最后一次)."""
+        if not force and not self.proxy_ok():
             return
         peers = {pid: p for pid, p in self.peers().items() if not p.get("init")}
         if not peers:
@@ -1225,7 +1232,9 @@ class SyncService:
         online: 绑定的设备 —— 最近一次同步没有失败, 而且 OFFLINE_MS 之内有它的消息, 版本也不比本机低
                 (outdated: 版本比本机低, 算离线);
                 转交过来的设备 —— OFFLINE_FWD_MS 之内有它的消息.
-        off: 关机 —— 连不上了, 但它最后的状态是收到关机指令 / 电量低于 LOW_BATTERY%; 这时 online 也是 True (效果和在线一样)."""
+        off: 关机 —— 连不上了, 但它最后的状态是收到关机指令 / 电量低于 LOW_BATTERY%; 这时 online 也是 True (效果和在线一样).
+        net_off: 断网 —— 它换成了 Adapter 断网方式, 走之前告诉了大家 (MECHANICS 15.5); 不同步, 效果也和在线一样.
+        本机自己在 Adapter 断网期间, 其他设备都算在线 (连不上是本机的原因, 不把专注记成空闲)."""
         now = _now_ms()
         mine = _vtuple(_call(self.local, "app_version", ""))
         if self._prune_forwarded(now):
@@ -1246,11 +1255,57 @@ class SyncService:
                     online = not p.get("last_err") and now - seen < OFFLINE_MS and not old
                 else:
                     online = now - seen < OFFLINE_FWD_MS
-                off = not online and not old and went_off(st)
-                out.append({"id": i, "name": str(name), "online": online or off, "off": off,
+                net_off = not online and not old and bool(st.get("adapter"))
+                off = not online and not old and not net_off and went_off(st)
+                if not online and not old and self.adapter_since():
+                    online = True                       # 本机在 Adapter 断网: 别人都算在线
+                out.append({"id": i, "name": str(name), "online": online or off or net_off, "off": off,
+                            "net_off": net_off,
                             "timer": st.get("timer") or "idle", "net": st.get("net") or "",
                             "since": st.get("since"), "seen": seen, "version": ver, "outdated": old})
         return sorted(out, key=lambda d: d["name"])
+
+    # ---- Adapter 断网 (MECHANICS 15.5) ----
+
+    def adapter_since(self) -> int:
+        """本机从什么时候 (毫秒) 开始用 Adapter 断网, 不在断网时 0."""
+        return int(self.state.get("adapter_since") or 0) if not self.state.get("adapter_end") else 0
+
+    def mark_adapter(self):
+        """本机马上要换成 Adapter (之后不再同步): 记下开始的时刻, 并把本机状态 ("断网") 发给每台设备."""
+        with self.lock:
+            if not self.state.get("adapter_since") or self.state.get("adapter_end"):
+                self.state["adapter_since"] = _now_ms()
+                self.state.pop("adapter_end", None)
+        self._save()
+        self.push_final(timeout=2.0, force=True)
+
+    def adapter_window(self):
+        """Adapter 断网结束了 (换回了 Proxy): (开始, 结束) 毫秒; 还在断网 / 没有断网过时 None."""
+        a, b = int(self.state.get("adapter_since") or 0), int(self.state.get("adapter_end") or 0)
+        return (a, b) if a and b else None
+
+    def note_proxy_back(self):
+        """本机换回了 Proxy: 断网结束的时刻 (之后第一次同步上时按 休息 > 专注 > 空闲 处理重叠)."""
+        if self.state.get("adapter_since") and not self.state.get("adapter_end"):
+            with self.lock:
+                self.state["adapter_end"] = _now_ms()
+            self._save()
+
+    def clear_adapter(self):
+        with self.lock:
+            self.state.pop("adapter_since", None)
+            self.state.pop("adapter_end", None)
+        self._save()
+
+    def pop_adapter_back(self) -> list:
+        """其他设备从 Adapter 断网回来了: [(设备 id, 开始毫秒, 结束毫秒)], 取出后清空 (本机据此处理自己记录里的重叠)."""
+        with self.lock:
+            out = [(did, int(v[0]), int(v[1])) for did, v in (self.state.get("adapter_back") or {}).items()]
+            self.state["adapter_back"] = {}
+        if out:
+            self._save()
+        return out
 
     def version_mismatch(self) -> list:
         """绑定的设备里版本和本机不一样的 (知道版本的): [(名字, 版本, 是否比本机新)]."""
@@ -1295,11 +1350,22 @@ class SyncService:
         for k in list(self._offline):
             self._offline[k] = [v for v in self._offline[k] if v[1] is None or v[1] > floor]
 
+    def add_self_off(self, a_ms: int, b_ms: int):
+        """本机关机 (收到关机指令 / 没电) 的这段 [a, b] (MECHANICS 15.4): 本机之后记下的专注里这段记为空闲, 不计入统计."""
+        if b_ms <= a_ms:
+            return
+        floor = _now_ms() - 26 * 3600_000
+        with self.lock:
+            keep = [v for v in (self.state.get("self_off") or []) if isinstance(v, list) and len(v) == 2 and v[1] > floor]
+            keep.append([int(a_ms), int(b_ms)])
+            self.state["self_off"] = keep
+        self._save()
+
     def offline_spans(self, start_ms: float, end_ms: float) -> list:
-        """[start, end] 里有任意一台设备离线的时间段 (合并过的) [(开始毫秒, 结束毫秒)]."""
+        """[start, end] 里有任意一台设备离线的时间段 (合并过的) [(开始毫秒, 结束毫秒)]; 也包括本机关机的那几段 (15.4)."""
         now = _now_ms()
         spans = []
-        for iv in self._offline.values():
+        for iv in list(self._offline.values()) + [self.state.get("self_off") or []]:
             for a, b in iv:
                 a, b = max(a, start_ms), min(b if b is not None else now, end_ms)
                 if b > a:
@@ -1912,6 +1978,31 @@ def _selftest():
         sc.state["peers"]["pY"].pop("version")
         sc.state["peers"]["pY"]["last_err"] = ""
         sc.state["status"]["pY"] = {"ts": t0, "timer": "idle"}
+        # 本机关机的那段 (15.4) 也算进离线的时间段: 本机之后记下的专注里这段记为空闲
+        sc.add_self_off(t0 - 50 * 60_000, t0 - 40 * 60_000)
+        assert (t0 - 50 * 60_000, t0 - 40 * 60_000) in sc.offline_spans(t0 - 60 * 60_000, t0 - 30 * 60_000)
+        sc.state["self_off"] = []
+        # 断网 (15.5): 最后的状态写着 adapter → 断网, 效果和在线一样; 回来时记下断网的那一段
+        sc.state["peers"]["pY"]["last_err"] = "timeout"
+        sc.state["status"]["pY"] = {"ts": t0 - 60_000, "timer": "running", "adapter": t0 - 3_600_000}
+        st = {d["id"]: d for d in sc.device_states()}["pY"]
+        assert st["online"] and st["net_off"] and not st["off"], st
+        sc.merge({"status": {"pY": {"ts": t0 + 1, "timer": "idle"}}})
+        back = sc.pop_adapter_back()
+        assert [(d, a) for d, a, _b in back] == [("pY", t0 - 3_600_000)] and sc.pop_adapter_back() == []
+        sc.state["peers"]["pY"]["last_err"] = ""
+        sc.state["status"]["pY"] = {"ts": t0, "timer": "idle"}
+        # 本机断网期间: 其他设备都算在线; 换回 Proxy 后记下结束的时刻
+        sc.state["adapter_since"] = t0 - 1000
+        sc.state["peers"]["pY"]["last_err"] = "unreachable"
+        assert {d["id"]: d for d in sc.device_states()}["pY"]["online"] and sc.adapter_since() == t0 - 1000
+        assert sc.adapter_window() is None
+        sc.note_proxy_back()
+        w = sc.adapter_window()
+        assert w and w[0] == t0 - 1000 and sc.adapter_since() == 0
+        sc.clear_adapter()
+        assert sc.adapter_window() is None
+        sc.state["peers"]["pY"]["last_err"] = ""
         assert went_off({"off": True, "auto": True}) and went_off({"battery": 0, "auto": True})
         assert not went_off({"battery": None, "auto": True}) and not went_off({"off": True})
         assert not went_off({}) and not went_off(None)

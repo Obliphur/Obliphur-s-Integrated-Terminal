@@ -46,6 +46,8 @@ class NetGuard:
         self.peer_net = lambda: {"used": 0.0, "bonus": 0.0, "tomorrow_used": 0.0, "debt": 0.0, "gift": 0.0}
         # 行为模式 (MECHANICS 21): 有外出的日子额度 ×0.2; 正在外出时冷静期 ×0.3
         self.quota_factor = lambda day: 1.0
+        # 换成 Adapter (禁用网卡) 之前调用: 设备同步先把本机的"断网"状态发出去 (MECHANICS 15.5)
+        self.before_adapter = lambda: None
         self.cooldown_factor = lambda now: 1.0
         # 设备同步: 其他设备的联网会话 (按理由统计用)
         self.peer_usage = lambda: []
@@ -428,6 +430,10 @@ class NetGuard:
         if self.net_mode == "proxy":
             self.q.put(self._enter_proxy)
         else:
+            try:
+                self.before_adapter()       # 网卡还在: 先告诉其他设备本机要断网了
+            except Exception:
+                pass
             self.q.put(self._cmd(self.online))
             self.q.put(lambda: self.proxy.stop(restore=True))
         self._log(f"MODE     switched to {self.net_mode}")

@@ -257,6 +257,53 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
     }
 
     /** s 去掉 holes 里各段之后剩下的部分. */
+    // ---- 断网 (Adapter) 期间的重叠 (MECHANICS 15.5) ----
+
+    /** 一台设备用 Adapter 断网 (不同步) 的这段 [start, end] 里, 本机和其他设备各自记的专注计时有重叠时:
+     *  按 休息 > 专注 > 空闲 叠加 —— 本机的记录被别的设备优先级更高的记录盖住的部分删掉;
+     *  一样的只由断网的那台设备删 (tieMine; 手机不会是断网的那台). 每台设备只改自己的记录, 删掉的专注同时从学习时长里扣掉.
+     *  返回 {kind: 删掉的秒数}. 同 data_manager.resolve_overlap. */
+    fun resolveOverlap(peerRecs: List<JSONObject>, start: LocalDateTime, end: LocalDateTime, tieMine: Boolean): Map<String, Double> {
+        val out = mutableMapOf("study" to 0.0, "break" to 0.0, "idle" to 0.0)
+        if (!end.isAfter(start)) return out
+        val rank = mapOf("break" to 3, "study" to 2, "idle" to 1)
+        val peers = peerRecs.mapNotNull { r ->
+            val a = runCatching { LocalDateTime.parse(r.optString("s"), Fmt.TS) }.getOrNull() ?: return@mapNotNull null
+            val b = runCatching { LocalDateTime.parse(r.optString("e"), Fmt.TS) }.getOrNull() ?: return@mapNotNull null
+            val k = r.optString("k")
+            val x = maxOf(a, start)
+            val y = minOf(b, end)
+            if (k in rank && y.isAfter(x)) FocusSeg(k, x, y) else null
+        }
+        if (peers.isEmpty()) return out
+        val kept = mutableListOf<FocusSeg>()
+        val cut = HashMap<String, Double>()
+        for (r in focus) {
+            val mine = rank[r.kind] ?: 0
+            val cover = peers.filter { val pk = rank[it.kind]!!; pk > mine || (pk == mine && tieMine) }
+            val pieces = if (cover.isEmpty()) listOf(r) else subtract(r, cover)
+            val removed = secondsBetween(r.start, r.end) - pieces.sumOf { secondsBetween(it.start, it.end) }
+            if (removed <= 0) { kept.add(r); continue }
+            out[r.kind] = (out[r.kind] ?: 0.0) + removed
+            if (r.kind == "study") for (gone in subtract(r, pieces)) {       // 被删掉的那几段, 按天扣学习时长
+                var x = gone.start
+                while (x < gone.end) {
+                    val nxt = minOf(gone.end, x.floorDay().plusDays(1))
+                    val ds = x.toLocalDate().key()
+                    cut[ds] = (cut[ds] ?: 0.0) + secondsBetween(x, nxt)
+                    x = nxt
+                }
+            }
+            for (p in pieces) if (secondsBetween(p.start, p.end) >= 1) kept.add(FocusSeg(r.kind, p.start, p.end, r.focus))
+        }
+        focus.clear()
+        focus.addAll(kept)
+        for ((ds, sec) in cut) study[ds]?.let { study[ds] = maxOf(0.0, it - sec / 3600.0) }
+        saveFocus()
+        if (cut.isNotEmpty()) saveStudy()
+        return out
+    }
+
     private fun subtract(s: FocusSeg, holes: List<FocusSeg>): List<FocusSeg> {
         var pieces = listOf(s.start to s.end)
         for (h in holes) pieces = pieces.flatMap { (a, b) ->

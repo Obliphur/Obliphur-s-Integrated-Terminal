@@ -115,6 +115,12 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     var syncedSince: (Long) -> Boolean = { false }
     /** 本机这次停下来算不算关机: 收到了关机指令, 或者电量很低 (MECHANICS 15.4). */
     var wentOff: () -> Boolean = { false }
+    /** 其他设备从 Adapter 断网回来了: (设备 id, 开始毫秒, 结束毫秒) (MECHANICS 15.5). */
+    var popAdapterBack: () -> List<Triple<String, Long, Long>> = { emptyList() }
+    /** 本机关机的那段 (MECHANICS 15.4): 记下来, 之后记下的专注里这段记为空闲, 不计入统计. */
+    var addSelfOff: (Long, Long) -> Unit = { _, _ -> }
+    private var powerAt = -1e9
+    private var conflictNotice = -1
 
     val notices = mutableListOf<Notice>()
     private var nextNoticeId = 1
@@ -170,6 +176,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     fun start() {
         net.backend = { force -> host.applyNet(force) }
         host.applyNet(true)               // 程序一启动就进入离线状态
+        notePowerBack()
         timer.recover()
         behaviorTick()
         // 还没有用户名时界面先请用户填写 (MECHANICS 1.1), 填好后再显示介绍窗口
@@ -193,6 +200,77 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     }
 
     fun noticeOpen(id: Int) = notices.any { it.id == id }
+
+    // 关机的时间段 (MECHANICS 15.4): 每 30 秒写一次 power.json (此刻, 算不算关机); 重新打开时据此知道关了多久
+    private val powerFile get() = File(dir, "power.json")
+
+    fun beatPower(force: Boolean = false) {
+        val m = mono()
+        if (!force && m - powerAt < 30) return
+        powerAt = m
+        Store.write(powerFile, JSONObject().put("alive", System.currentTimeMillis())
+            .put("off", runCatching { wentOff() }.getOrDefault(false)))
+    }
+
+    private fun notePowerBack() {
+        val d = Store.readObj(powerFile)
+        val alive = d?.optLong("alive", 0L) ?: 0L
+        val now = System.currentTimeMillis()
+        if (d != null && d.optBoolean("off") && alive > 0 && now - alive > Cfg.CLOSED_GAP * 1000) {
+            addSelfOff(alive, now)
+            logNotice("POWER    was off since ${java.time.Instant.ofEpochMilli(alive)}")
+        }
+        beatPower(force = true)
+    }
+
+    /** 别的设备断网回来: 断网期间重叠的记录按 休息 > 专注 > 空闲 处理 (只改本机的, MECHANICS 15.5). */
+    private fun checkAdapterBack() {
+        val z = java.time.ZoneId.systemDefault()
+        var s = 0.0; var b = 0.0; var i = 0.0
+        for ((did, a, e) in popAdapterBack()) {
+            val led = dm.peersById()[did] ?: continue
+            val recs = led.optJSONArray("focus")?.objects() ?: emptyList()
+            val r = dm.resolveOverlap(recs, LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(a), z),
+                LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(e), z), tieMine = false)
+            s += r["study"] ?: 0.0; b += r["break"] ?: 0.0; i += r["idle"] ?: 0.0
+        }
+        if (s + b + i > 0) {
+            toast(tr("断网期间和其他设备重叠的记录已按 休息 > 专注 > 空闲 处理: 去掉了专注 {s}, 休息 {b}, 空闲 {i}.",
+                "s" to fmtHm(s), "b" to fmtHm(b), "i" to fmtHm(i)), "info", long = true)
+            changed()
+        }
+    }
+
+    /** 时间重叠的两个合约 (MECHANICS 15.5): 问用户留哪个; 在别的设备上选过了就撤掉提示. */
+    private fun checkContractConflicts() {
+        val c = contract
+        if (c.conflicts.isEmpty()) {
+            if (conflictNotice >= 0 && noticeOpen(conflictNotice)) dismissNotice(conflictNotice)
+            conflictNotice = -1
+            return
+        }
+        if (conflictNotice >= 0 && noticeOpen(conflictNotice)) return
+        val (a, b) = c.conflicts.first()
+        fun line(x: org.json.JSONObject): String {
+            val s0 = parseIso(x.optString("start")); val s1 = parseIso(x.optString("end"))
+            val whenText = if (s0 != null && s1 != null) "${s0.format(Fmt.MDHM)} — ${s1.format(Fmt.HM)}" else "?"
+            val state = if (x.optString("result").isEmpty()) tr("进行中") else tr(contractResult(x.optString("result")))
+            return tr("{when} · 危机等级 {lv} · {state}", "when" to whenText, "lv" to x.optInt("level"), "state" to state)
+        }
+        val msg = tr("断网期间两台设备各自进行了合约, 时间有重叠. 只能保留一个, 另一个作废 (已经给出的休息时间不收回).") +
+            "\n\nA  " + line(a) + "\n\nB  " + line(b)
+        conflictNotice = notice(tr("⚔ 合约冲突"), msg, listOf(NoticeButton(tr("保留 A"), "a", true), NoticeButton(tr("保留 B"), "b", true)),
+            page = "contract") { act ->
+            conflictNotice = -1
+            val keep = when (act) { "a" -> a.optString("id"); "b" -> b.optString("id"); else -> null } ?: return@notice
+            if (c.resolveConflict(keep)) {
+                logNotice("CONTRACT conflict: keep $keep")
+                host.applyNet(false)
+                syncHourLog()
+                changed()
+            }
+        }
+    }
 
     fun closeNotice(id: Int, action: String?) {
         val n = notices.firstOrNull { it.id == id } ?: return
@@ -252,6 +330,8 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             "ended" -> toast(tr("时间到,网络已断开."), "warn")
         }
         timer.tick()
+        beatPower()
+        runCatching { checkAdapterBack(); checkContractConflicts() }
         checkContract()
         behaviorTick()
 
