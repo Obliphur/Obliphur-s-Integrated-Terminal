@@ -459,7 +459,8 @@ fun ContractScreen() {
             if (orig != level) info += tr("开始时 {n}", "n" to orig) + "\n"
             info += tr("时长 {t}", "t" to fmtHm(Contract.durationOf(if (active) c.orig else sel))) + "\n" +
                 tr("完成后休息 +{n} 分钟", "n" to Contract.restMinutesTotal(level, if (active) c.mine else sel))
-            val gift = Contract.restGift(sel)
+            // 合约中: 开始时已经给出的 (按开始时选的词条算, 之后成员失效 / 未知变量选中都不变, MECHANICS 18.3.1)
+            val gift = Contract.restGift(if (active) c.orig else sel)
             if (gift > 0) info += "\n" + tr("开始时休息 +{n} 分钟", "n" to gift / 60)
             Text(info, color = p.text, fontSize = 12.sp, modifier = Modifier.padding(start = 14.dp).weight(1f))
             if (level >= Contract.HARD_LEVEL)

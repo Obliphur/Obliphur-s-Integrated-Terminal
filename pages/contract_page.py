@@ -654,7 +654,8 @@ class ContractPage(tk.Frame):
         self._draw_strip(level)
         info = [tr("时长 {t}", t=fmt_hm(C.duration_of(c.orig if active else sel))),
                 tr("完成后休息 +{n} 分钟", n=C.rest_minutes_total(level, terms))]
-        gift = C.rest_gift(sel)
+        # 合约中: 开始时已经给出的 (按开始时选的词条算, 之后成员失效 / 未知变量选中都不变, MECHANICS 18.3.1)
+        gift = C.rest_gift(c.orig if active else sel)
         if gift:
             info.append(tr("开始时休息 +{n} 分钟", n=gift // 60))
         if orig != level:
