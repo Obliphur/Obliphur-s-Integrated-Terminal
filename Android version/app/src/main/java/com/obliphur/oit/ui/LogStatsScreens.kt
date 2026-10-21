@@ -66,15 +66,27 @@ import kotlin.math.atan2
 
 // ════════════════ Hour Log 页 (MECHANICS 7) ════════════════
 
-/** 黑雾 (MECHANICS 18.3) 时盖住的格子里显示的随机字符. 同 hour_log_page.py 的 _NOISE. */
-private const val FOG_NOISE = "的一是在不了有和人这中大为上个国我以要他时来用们生到作地于出就分对成会可主发年动同工也能下过子说产种面而方后多定行学法" +
-    "所民得经十三之进着等部度家电力里如水化高自二理起小物现实加量都两体制机当使点从业本去把性好应开它合还因由其些然前外天" +
-    "▓▒░█■□◆◇※＃＠％＆ABCDEFGHJKLMNPQRSTUVWXYZ"
+/** 黑雾 (MECHANICS 18.3) 时盖住的格子里显示的假内容: 动词 + 量词 + 名词 随机拼起来 (中文每个词两个字, 每个词池 20 个).
+ *  同 hour_log_page.py 的 _FOG_ZH / _FOG_EN. */
+private val FOG_ZH = listOf(
+    listOf("压力", "整理", "研究", "修理", "收集", "打磨", "观察", "照顾", "擦拭", "搬运", "计算", "描绘", "测量", "种植", "清洗", "拆解", "组装", "追踪", "烘焙", "晾晒"),
+    listOf("一个", "一些", "两只", "三张", "一堆", "一把", "半箱", "几块", "一串", "一盒", "十根", "一碗", "几朵", "一片", "两袋", "一排", "一束", "几颗", "一杯", "整筐"),
+    listOf("西瓜", "星星", "书架", "雨伞", "风筝", "键盘", "月亮", "枕头", "蘑菇", "台灯", "钢琴", "贝壳", "积木", "毛线", "云朵", "窗帘", "硬币", "蜡烛", "橘子", "邮票"))
+private val FOG_EN_VERB = listOf("Pressure", "Sort", "Study", "Repair", "Collect", "Polish", "Watch", "Tend", "Wipe", "Carry", "Count", "Sketch", "Measure", "Plant", "Wash", "Dismantle", "Assemble", "Track", "Bake", "Dry")
+/** (量词, 后面的名词用单数吗). */
+private val FOG_EN_QTY = listOf("a" to true, "some" to false, "two" to false, "three" to false, "a pile of" to false, "a handful of" to false, "half a crate of" to false, "a few" to false, "a string of" to false, "a box of" to false, "ten" to false, "a bowl of" to false, "several" to false, "one" to true, "two bags of" to false, "a row of" to false, "a bunch of" to false, "a dozen" to false, "a cup of" to false, "a basket of" to false)
+private val FOG_EN_NOUN = listOf("watermelon" to "watermelons", "star" to "stars", "bookshelf" to "bookshelves", "umbrella" to "umbrellas", "kite" to "kites", "keyboard" to "keyboards", "moon" to "moons", "pillow" to "pillows", "mushroom" to "mushrooms", "lamp" to "lamps", "piano" to "pianos", "seashell" to "seashells", "toy block" to "toy blocks", "ball of yarn" to "balls of yarn", "cloud" to "clouds", "curtain" to "curtains", "coin" to "coins", "candle" to "candles", "orange" to "oranges", "stamp" to "stamps")
 
-/** 黑雾时一个格子的假内容: 同一个合约里同一个格子不变 (不会每秒闪). */
+/** 黑雾时一个格子的假内容, 例如"整理一个西瓜" / "Sort a watermelon": 同一个合约里同一个格子不变 (不会每秒闪). */
 private fun fogNoise(seed: Long, key: String): String {
     val r = java.util.Random("$seed|$key".hashCode().toLong())
-    return (0 until 3 + r.nextInt(8)).map { FOG_NOISE[r.nextInt(FOG_NOISE.length)] }.joinToString("")
+    if (com.obliphur.oit.core.I18n.lang == "en") {
+        val verb = FOG_EN_VERB[r.nextInt(20)]
+        val (qty, single) = FOG_EN_QTY[r.nextInt(20)]
+        val noun = FOG_EN_NOUN[r.nextInt(20)]
+        return "$verb $qty ${if (single) noun.first else noun.second}"
+    }
+    return FOG_ZH.joinToString("") { it[r.nextInt(it.size)] }
 }
 
 @Composable

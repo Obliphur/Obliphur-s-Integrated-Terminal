@@ -11,16 +11,23 @@ from i18n import tr
 from .widgets import cfg
 
 
-# 黑雾 (MECHANICS 18.3) 时盖住的格子里显示的随机字符
-_NOISE = ("的一是在不了有和人这中大为上个国我以要他时来用们生到作地于出就分对成会可主发年动同工也能下过子说产种面而方后多定行学法"
-          "所民得经十三之进着等部度家电力里如水化高自二理起小物现实加量都两体制机当使点从业本去把性好应开它合还因由其些然前外天"
-          "▓▒░█■□◆◇※＃＠％＆ABCDEFGHJKLMNPQRSTUVWXYZ")
+# 黑雾 (MECHANICS 18.3) 时盖住的格子里显示的假内容: 动词 + 量词 + 名词 随机拼起来 (中文每个词两个字, 每个词池 20 个)
+_FOG_ZH = (['压力', '整理', '研究', '修理', '收集', '打磨', '观察', '照顾', '擦拭', '搬运', '计算', '描绘', '测量', '种植', '清洗', '拆解', '组装', '追踪', '烘焙', '晾晒'],
+           ['一个', '一些', '两只', '三张', '一堆', '一把', '半箱', '几块', '一串', '一盒', '十根', '一碗', '几朵', '一片', '两袋', '一排', '一束', '几颗', '一杯', '整筐'],
+           ['西瓜', '星星', '书架', '雨伞', '风筝', '键盘', '月亮', '枕头', '蘑菇', '台灯', '钢琴', '贝壳', '积木', '毛线', '云朵', '窗帘', '硬币', '蜡烛', '橘子', '邮票'])
+_FOG_EN = (['Pressure', 'Sort', 'Study', 'Repair', 'Collect', 'Polish', 'Watch', 'Tend', 'Wipe', 'Carry', 'Count', 'Sketch', 'Measure', 'Plant', 'Wash', 'Dismantle', 'Assemble', 'Track', 'Bake', 'Dry'],
+           [('a', True), ('some', False), ('two', False), ('three', False), ('a pile of', False), ('a handful of', False), ('half a crate of', False), ('a few', False), ('a string of', False), ('a box of', False), ('ten', False), ('a bowl of', False), ('several', False), ('one', True), ('two bags of', False), ('a row of', False), ('a bunch of', False), ('a dozen', False), ('a cup of', False), ('a basket of', False)],
+           [('watermelon', 'watermelons'), ('star', 'stars'), ('bookshelf', 'bookshelves'), ('umbrella', 'umbrellas'), ('kite', 'kites'), ('keyboard', 'keyboards'), ('moon', 'moons'), ('pillow', 'pillows'), ('mushroom', 'mushrooms'), ('lamp', 'lamps'), ('piano', 'pianos'), ('seashell', 'seashells'), ('toy block', 'toy blocks'), ('ball of yarn', 'balls of yarn'), ('cloud', 'clouds'), ('curtain', 'curtains'), ('coin', 'coins'), ('candle', 'candles'), ('orange', 'oranges'), ('stamp', 'stamps')])
 
 
 def fog_noise(seed, key: str) -> str:
-    """黑雾时一个格子的假内容: 同一个合约里同一个格子不变 (不会每秒闪)."""
+    """黑雾时一个格子的假内容, 例如"整理一个西瓜" / "Sort a watermelon": 同一个合约里同一个格子不变 (不会每秒闪)."""
+    import i18n
     rnd = random.Random(f"{seed}|{key}")
-    return "".join(rnd.choice(_NOISE) for _ in range(rnd.randint(3, 10)))
+    if i18n.get_language() == "en":
+        verb, (qty, single), noun = rnd.choice(_FOG_EN[0]), rnd.choice(_FOG_EN[1]), rnd.choice(_FOG_EN[2])
+        return f"{verb} {qty} {noun[0] if single else noun[1]}"
+    return "".join(rnd.choice(pool) for pool in _FOG_ZH)
 
 
 class HourLogPage(tk.Frame):
