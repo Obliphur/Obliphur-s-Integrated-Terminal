@@ -654,14 +654,21 @@ class CoreTest {
         assertEquals(TState.RUNNING, core.timer.state)
         clock += 60.0
         core.tick()
-        assertEquals(1, NoHost.alarms)               // 刚超过: 响一次
+        assertEquals(0, NoHost.alarms)               // 应用刚看到: 开着不到 2 分钟不算
+        clock += 120.0
+        core.tick()
+        assertEquals(1, NoHost.alarms)               // 开着超过 2 分钟, 超过上限: 响一次
         assertTrue(NoHost.toasts.any { it.text.contains("超过上限") })
         clock += 60.0
         core.tick()
         assertEquals(1, NoHost.alarms)               // 冷却中: 不重复
+        NoHost.openApps = (1..5).map { "app$it" }.toSet() + setOf("new1", "new2")
         clock += 120.0
         core.tick()
-        assertEquals(2, NoHost.alarms)               // 过了冷却还没解决: 再响
+        assertEquals(1, NoHost.alarms)               // 剩下 5 个老的 + 2 个刚开的: 不算超过
+        clock += 125.0
+        core.tick()
+        assertEquals(2, NoHost.alarms)               // 新开的也满 2 分钟了: 再响
         NoHost.openApps = null
     }
 

@@ -51,6 +51,8 @@ object Cfg {
     /** 专注时每隔多久数一次后台的应用 (超过上限就提醒并响一次违约音效, 之后每 OPEN_APPS_REPEAT 秒再响). */
     const val OPEN_APPS_EVERY = 10.0
     const val OPEN_APPS_REPEAT = 120.0
+    /** 后台应用开着超过这么多秒才计入后台应用数 (上限, 通道阻塞; MECHANICS 12 / 14.6). */
+    const val APP_MIN_AGE = 120.0
 
     const val WEEKDAY_KEYS_CSV = "QUOTA_MULT_MON,QUOTA_MULT_TUE,QUOTA_MULT_WED,QUOTA_MULT_THU,QUOTA_MULT_FRI,QUOTA_MULT_SAT,QUOTA_MULT_SUN"
     val WEEKDAY_KEYS = WEEKDAY_KEYS_CSV.split(",")

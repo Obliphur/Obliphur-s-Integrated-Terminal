@@ -326,6 +326,25 @@ def count_windows(windows=None, own_pid: int = None, exclude_pids=None) -> int:
     return len(taskbar_windows(windows, own_pid, include_own=True, exclude_pids=exclude_pids))
 
 
+class WindowAges:
+    """每个窗口第一次被看到的时刻 (MECHANICS 12): 开着超过 min_age 秒的窗口才计入窗口数.
+    按 (hwnd, 进程) 认窗口; 窗口关掉后忘掉, 再打开重新算. OIT 启动前就开着的窗口从第一次看到时算起."""
+
+    def __init__(self):
+        self.first = {}
+
+    @staticmethod
+    def _key(w: dict):
+        return w.get("hwnd"), w.get("pid")
+
+    def update(self, windows, now: float):
+        keys = {self._key(w) for w in windows}
+        self.first = {k: self.first.get(k, now) for k in keys}
+
+    def old(self, windows, now: float, min_age: float) -> list:
+        return [w for w in windows if now - self.first.get(self._key(w), now) >= float(min_age)]
+
+
 def remind_due(over: bool, last_at: float, now: float, cooldown: float = 120.0) -> bool:
     """窗口数超限的提醒到时间了吗: 刚超过时立刻提醒; 之后每次隔 cooldown 秒 (还没解决就再响一次).
     回到上限以内以后调用方把 last_at 清零."""
@@ -431,6 +450,16 @@ def _selftest():
                 "cloaked": cloaked, "owned": owned, "exstyle": ex, "cls": cls}
 
     # 判定规则
+    # 开着超过 2 分钟的窗口才计入 (WindowAges)
+    ages = WindowAges()
+    ws = [win(1), win(2)]
+    ages.update(ws, 1000.0)
+    assert ages.old(ws, 1000.0, 120) == []
+    ages.update(ws + [win(3)], 1060.0)
+    assert [w["hwnd"] for w in ages.old(ws + [win(3)], 1120.0, 120)] == [1, 2], "第 3 个才开 1 分钟"
+    ages.update([win(2), win(3)], 1200.0)
+    assert [w["hwnd"] for w in ages.old([win(1), win(2), win(3)], 1200.0, 120)] == [2, 3], "关掉的忘掉, 再出现重新算"
+    assert ages.old([win(3, pid=7)], 1200.0, 120) == [], "同一个句柄换了进程算新窗口"
     assert is_taskbar_window(win(1))
     assert not is_taskbar_window(win(1, visible=False))
     assert not is_taskbar_window(win(1, cloaked=True))

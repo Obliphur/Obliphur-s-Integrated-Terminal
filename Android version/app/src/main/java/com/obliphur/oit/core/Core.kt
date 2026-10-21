@@ -133,6 +133,8 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     private var lastOpenApps = -1e9
     /** 专注中后台应用数是不是已经超过上限; 上一次响警报的时刻 (超着时每 OPEN_APPS_REPEAT 秒再响一次). */
     private var appsOver = false
+    /** 每个后台应用第一次被看到的时刻 (mono): 开着超过 2 分钟才计入后台应用数. */
+    private val appSeen = HashMap<String, Double>()
     private var appsAlarmAt = -1e9
     private var appSamples = 0
     private var nextHour = nextHalf(LocalDateTime.now())
@@ -472,12 +474,19 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         val focusing = timer.state == TState.RUNNING
         val limitOn = settings.bool("WINDOW_LIMIT_ENABLED")
         val chan = contract.windowWatch().second      // 已经失效的按失效前的上限 (再次超过只响警报)
+        // 不在专注时也记着各应用开了多久, 开始专注时早就开着的应用马上算; 用不到这两项时不数
+        val apps = if (limitOn || chan > 0) host.openApps() else null.also { appSeen.clear() }
+        if (apps != null) {
+            appSeen.keys.retainAll(apps)
+            for (a in apps) appSeen.getOrPut(a) { mono() }
+        }
         if (!focusing) {
             appsOver = false
             contract.windowReset()          // 离开专注: 通道阻塞下次专注重新算
             return
         }
-        val n = host.openApps()?.size ?: return
+        apps ?: return
+        val n = apps.count { mono() - (appSeen[it] ?: mono()) >= Cfg.APP_MIN_AGE }
         if (chan > 0) {
             val id = contract.windowCheck(n)
             if (id.isNotEmpty()) contractViolation(tr("后台应用超过 {n} 个", "n" to chan), id)
