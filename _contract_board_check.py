@@ -46,7 +46,7 @@ assert "confine" in c.draft, c.draft
 page._click("move")
 assert "move" not in c.draft and "confine" in c.draft
 # 记录封锁的新描述
-assert C.BY_ID["seal"][4] == "超过填写时间则不能再修改该记录"
+assert C.BY_ID["seal"][4] == "无法修改已经被填写的格子 (包括自动填写和手动填写)"
 
 # 第 3 页: 组合效果. 要凑的词条多了以后, "需要" 那行不能压到下面的效果文字
 import i18n

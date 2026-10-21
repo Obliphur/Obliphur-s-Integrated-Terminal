@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.obliphur.oit.OitApp
 import com.obliphur.oit.core.Contract
+import com.obliphur.oit.core.Fmt
 import com.obliphur.oit.core.f1
 import com.obliphur.oit.core.fmtHm
 import com.obliphur.oit.core.key
@@ -64,6 +65,17 @@ import java.time.YearMonth
 import kotlin.math.atan2
 
 // ════════════════ Hour Log 页 (MECHANICS 7) ════════════════
+
+/** 黑雾 (MECHANICS 18.3) 时盖住的格子里显示的随机字符. 同 hour_log_page.py 的 _NOISE. */
+private const val FOG_NOISE = "的一是在不了有和人这中大为上个国我以要他时来用们生到作地于出就分对成会可主发年动同工也能下过子说产种面而方后多定行学法" +
+    "所民得经十三之进着等部度家电力里如水化高自二理起小物现实加量都两体制机当使点从业本去把性好应开它合还因由其些然前外天" +
+    "▓▒░█■□◆◇※＃＠％＆ABCDEFGHJKLMNPQRSTUVWXYZ"
+
+/** 黑雾时一个格子的假内容: 同一个合约里同一个格子不变 (不会每秒闪). */
+private fun fogNoise(seed: Long, key: String): String {
+    val r = java.util.Random("$seed|$key".hashCode().toLong())
+    return (0 until 3 + r.nextInt(8)).map { FOG_NOISE[r.nextInt(FOG_NOISE.length)] }.joinToString("")
+}
 
 @Composable
 fun HourLogScreen(go: (String) -> Unit) {
@@ -99,24 +111,32 @@ fun HourLogScreen(go: (String) -> Unit) {
                 val isWait = awaiting != null && !awaiting.isBefore(start) && awaiting.isBefore(end)
                 val isNow = enabled && !start.isAfter(now) && now.isBefore(end)
                 // 合约 (MECHANICS 18.4): 细化规范的小时分成两个半小时各填一格;
-                // 记录封锁: 过了填写时限的格子 (不管填没填) 不能再改
+                // 记录封锁: 已经填写了的格子 (手动 / 自动) 不能再改, 提交前先确认
                 val split = core.contract.fineHour(start)
                 val cells = if (split) listOf(
                     Triple(start, start.plusMinutes(30), dm.halfText(ds, start.hour, 0)),
                     Triple(start.plusMinutes(30), end, dm.halfText(ds, start.hour, 1)))
                     else listOf(Triple(start, end, dm.hourText(ds, start.hour)))
-                val editable = cells.map { (a, b, t) ->
-                    enabled && !b.isAfter(now) &&
+                // 黑雾 (18.3): 除了"现在"的格子和待填写的格子, 时间写 ???, 内容是随机字符, 不能改
+                val fog = core.contract.fog()
+                val hidden = cells.map { (a, b, _) ->
+                    val wait = awaiting != null && !awaiting.isBefore(a) && awaiting.isBefore(b)
+                    fog && !(!now.isBefore(a) && now.isBefore(b)) && !wait
+                }
+                val editable = cells.mapIndexed { i, (a, b, t) ->
+                    !hidden[i] && enabled && !b.isAfter(now) &&
                         !core.contract.hourLocked(a, b, t, now, dm.fillSeconds.toLong(), dm.autoValue,
                             dm::autoTextForKey)
                 }
-                val locked = cells.indices.any { !editable[it] && !cells[it].second.isAfter(now) && enabled }
-                HourRow("%02d:00".format(h) + when {
+                val locked = cells.indices.any { !hidden[it] && !editable[it] && !cells[it].second.isAfter(now) && enabled }
+                val shown = cells.mapIndexed { i, (a, _, t) -> if (hidden[i]) fogNoise(core.contract.id, a.format(Fmt.TS)) else t }
+                val sealed = cells.map { (a, b, _) -> core.contract.hourSealed(a, b, now) }
+                HourRow(if (hidden.all { it }) "???" else "%02d:00".format(h) + when {
                     isNow -> tr("   ◂ 现在")
                     isWait -> tr("   ◂ 待填写")
                     locked -> "   🔒"
                     else -> ""
-                }, cells.map { it.third }, editable, isWait || isNow) { i, text ->
+                }, shown, editable, isWait || isNow, sealed) { i, text ->
                     if (text != cells[i].third) {
                         if (split) dm.setHalfText(ds, start.hour, i, text) else dm.setHourText(ds, start.hour, text)
                         if (isWait) Notifier.cancelHour(OitApp.instance)
@@ -128,12 +148,14 @@ fun HourLogScreen(go: (String) -> Unit) {
     }
 }
 
-/** 一行: 一格 (整小时) 或两格 (细化规范的两个半小时). */
+/** 一行: 一格 (整小时) 或两格 (细化规范的两个半小时).
+ *  sealed: 记录封锁的格子 —— 只有按完成 (Enter) 并确认后才保存, 离开输入框时不保存 (写了的留着). */
 @Composable
 private fun HourRow(label: String, stored: List<String>, editable: List<Boolean>, highlight: Boolean,
-                    commit: (Int, String) -> Unit) {
+                    sealed: List<Boolean> = stored.map { false }, commit: (Int, String) -> Unit) {
     val o = LocalOit.current
     val focus = LocalFocusManager.current
+    var ask by remember { mutableStateOf<Pair<Int, String>?>(null) }
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 3.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(label, color = if (highlight) o.accent else if (editable.any { it }) o.text else o.dim,
@@ -142,8 +164,22 @@ private fun HourRow(label: String, stored: List<String>, editable: List<Boolean>
             var text by remember(s) { mutableStateOf(s) }
             OutlinedTextField(text, { text = it }, enabled = editable[i], singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = { commit(i, text.trim()); focus.clearFocus() }),
-                modifier = Modifier.weight(1f).onFocusChanged { if (!it.isFocused && text.trim() != s) commit(i, text.trim()) })
+                keyboardActions = KeyboardActions(onDone = {
+                    val t = text.trim()
+                    if (sealed[i] && t.isNotEmpty() && t != s) ask = i to t     // 记录封锁: 先确认
+                    else { commit(i, t); focus.clearFocus() }
+                }),
+                modifier = Modifier.weight(1f).onFocusChanged {
+                    if (!it.isFocused && text.trim() != s && !(sealed[i] && text.trim().isNotEmpty())) commit(i, text.trim())
+                })
+        }
+    }
+    ask?.let { (i, t) ->
+        Confirm(tr("确认修改"), tr("确认修改这个格子吗?") + "\n" + tr("记录封锁: 填写后就不能再修改了.") + "\n\n" + t,
+            false, { ask = null }) {
+            ask = null
+            commit(i, t)
+            focus.clearFocus()
         }
     }
 }

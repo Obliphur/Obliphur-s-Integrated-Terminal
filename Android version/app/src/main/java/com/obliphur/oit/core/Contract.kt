@@ -66,7 +66,7 @@ class Contract(private val file: File) {
             // 1 级: 联网 (抑制), 整点记录 (记录封锁), 禁止打开的软件 (乐理之灾 / 禁游令 / 低帧的诅咒),
             // 现实 (高机动 / 禁足), 黑雾, 休息 (禁止囤囤鼠!), 专注中的联网 (静默协议)
             Term("suppress", "suppress", 1, "环境:抑制", "不能使用快速访问功能"),
-            Term("seal", "seal", 1, "环境:记录封锁", "超过填写时间则不能再修改该记录"),
+            Term("seal", "seal", 1, "环境:记录封锁", "无法修改已经被填写的格子 (包括自动填写和手动填写)"),
             Term("music", "music", 1, "环境:乐理之灾", "合约期间音乐播放软件禁止联网 可以通过点击解除网络禁令"),
             Term("game", "game", 1, "环境:禁游令", "合约期间游戏和游戏平台禁止联网 可以通过点击解除网络禁令"),
             Term("video", "video", 1, "环境:低帧的诅咒", "合约期间视频平台禁止联网 可以通过点击解除网络禁令"),
@@ -1159,12 +1159,16 @@ class Contract(private val file: File) {
         return text in setOf("", wanted)
     }
 
-    /** 记录封锁: 和选了这个词条的合约重叠的记录格, 过了填写时限就不能再改 (不管填没填, 填了什么)
-     *  —— 合约结束了也一样. 未知变量封锁的格子也是不管填没填都不能再改. */
+    /** 这个记录格在记录封锁的范围里 (填写后就不能再改, 界面上提交前先确认). 同 contract.py 的 hour_sealed. */
+    fun hourSealed(start: LocalDateTime, end: LocalDateTime, now: LocalDateTime = LocalDateTime.now()): Boolean =
+        periods(now, "seal").any { (a, b) -> a.isBefore(end) && start.isBefore(b) }
+
+    /** 记录封锁: 和选了这个词条的合约重叠的记录格, 已经填写了的 (自己填的, 或者超时自动记录的) 就不能再改,
+     *  没填的照常能填 —— 合约结束了也一样. 未知变量封锁的格子不管填没填都不能再改. */
     fun hourLocked(start: LocalDateTime, end: LocalDateTime, text: String, now: LocalDateTime, fillSec: Long,
                    auto: String, autoOf: ((String) -> String)? = null, key: String = ""): Boolean {
         if (locks().any { (a, b) -> a.isBefore(end) && start.isBefore(b) }) return true
-        if (now.isBefore(end.plusSeconds(cellFill(start, end, fillSec)))) return false
+        if (text.isBlank()) return false          // 没填的照常能填; 已经填写了的 (手动 / 自动) 不能再改
         return periods(now, "seal").any { (a, b) -> a.isBefore(end) && start.isBefore(b) }
     }
 

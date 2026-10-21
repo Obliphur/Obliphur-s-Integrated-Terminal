@@ -586,7 +586,9 @@ class BreakTimerApp:
             on_open_settings=lambda: self.show_page("settings"),
             locked=lambda a, b, text, now: self.contract.hour_locked(
                 a, b, text, now, config.FILL_WINDOW, self.dm.auto_text_for_key),
-            split=self.contract.fine_hour
+            split=self.contract.fine_hour,
+            fog=self._fog_seed,                              # 黑雾: 只露出"现在"和待填写的格子 (18.3)
+            sealed=lambda a, b: self.contract.hour_sealed(a, b)   # 记录封锁: 按 Enter 提交前先确认
         )
         self._prepare_page(self.pages["log"])
         yield

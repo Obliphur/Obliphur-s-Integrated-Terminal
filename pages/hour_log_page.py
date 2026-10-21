@@ -1,5 +1,6 @@
 
 
+import random
 import tkinter as tk
 from tkinter import ttk
 from datetime import datetime, timedelta
@@ -10,16 +11,34 @@ from i18n import tr
 from .widgets import cfg
 
 
+# 黑雾 (MECHANICS 18.3) 时盖住的格子里显示的随机字符
+_NOISE = ("的一是在不了有和人这中大为上个国我以要他时来用们生到作地于出就分对成会可主发年动同工也能下过子说产种面而方后多定行学法"
+          "所民得经十三之进着等部度家电力里如水化高自二理起小物现实加量都两体制机当使点从业本去把性好应开它合还因由其些然前外天"
+          "▓▒░█■□◆◇※＃＠％＆ABCDEFGHJKLMNPQRSTUVWXYZ")
+
+
+def fog_noise(seed, key: str) -> str:
+    """黑雾时一个格子的假内容: 同一个合约里同一个格子不变 (不会每秒闪)."""
+    rnd = random.Random(f"{seed}|{key}")
+    return "".join(rnd.choice(_NOISE) for _ in range(rnd.randint(3, 10)))
+
+
 class HourLogPage(tk.Frame):
 
     def __init__(self, master, data_manager, on_text_changed=None, on_toggle=None,
-                 on_open_settings=None, locked=None, split=None):
+                 on_open_settings=None, locked=None, split=None, fog=None, sealed=None):
         super().__init__(master, bg=COLORS["bg"])
         self.dm = data_manager
-        # 合约 (MECHANICS 18.4): 记录封锁 —— 过了填写时限的格子 (不管填没填) 不能再改 (开始, 结束, 内容, 现在)
+        # 合约 (MECHANICS 18.4): 记录封锁 —— 已经填写了的格子 (手动 / 自动) 不能再改 (开始, 结束, 内容, 现在)
         self.locked = locked or (lambda start, end, text, now: False)
         # 细化规范: 这一小时分成两个半小时, 各填一格
         self.split = split or (lambda start: False)
+        # 黑雾: 返回这个合约的种子 (没有黑雾时 None). 除了"现在"的格子和待填写的格子, 其他格子的时间写 ???, 内容是随机字符
+        self.fog = fog or (lambda: None)
+        # 记录封锁: 这个格子填写后就不能再改 (开始, 结束). 这种格子只在按 Enter 并确认后才保存,
+        # 离开输入框时不保存, 写了的内容留着 (草稿), 等按 Enter
+        self.sealed = sealed or (lambda start, end: False)
+        self._drafts = {}          # (行, 第几格) → 没保存的内容
         self.on_text_changed = on_text_changed
         self.on_toggle = on_toggle
         self.on_open_settings = on_open_settings
@@ -98,6 +117,7 @@ class HourLogPage(tk.Frame):
             )
             ent.pack(side="left", fill="x", expand=True, ipady=4)
             ent.bind("<Return>", lambda e, h=h: self._on_return(h))
+            ent.bind("<KP_Enter>", lambda e, h=h: self._on_return(h))
             ent.bind("<FocusOut>", lambda e, h=h: self._commit(h))
             # 细化规范时的后半小时 (平时不显示)
             var2 = tk.StringVar()
@@ -109,6 +129,7 @@ class HourLogPage(tk.Frame):
                 highlightcolor=COLORS["accent"]
             )
             ent2.bind("<Return>", lambda e, h=h: self._on_return(h, 1))
+            ent2.bind("<KP_Enter>", lambda e, h=h: self._on_return(h, 1))
             ent2.bind("<FocusOut>", lambda e, h=h: self._commit(h, 1))
             self.rows[h] = (lbl, ent, var)
             self.halves[h] = (ent2, var2)
@@ -142,16 +163,37 @@ class HourLogPage(tk.Frame):
         self.canvas.yview_moveto(max(0, row - 2) / float(total))
 
     def _on_return(self, h: int, i: int = 0):
-        self._commit(h, i)
+        if self._commit(h, i, enter=True) is False:
+            return "break"                         # 没确认: 留在输入框里
         self.canvas.focus_set()
+        return "break"
 
-    def _commit(self, h: int, i: int = 0):
+    def _cell(self, h: int, i: int):
+        s = self._slot_start(h)
+        if self._split.get(h):
+            a = s + timedelta(minutes=30 * i)
+            return a, a + timedelta(minutes=30)
+        return s, s + timedelta(hours=1)
+
+    def _commit(self, h: int, i: int = 0, enter: bool = False):
         ent, var = (self.rows[h][1], self.rows[h][2]) if i == 0 else self.halves[h]
         if str(ent.cget("state")) == "disabled":
-            return
+            return None
         text = var.get().strip()
         split = self._split.get(h)
         if text != self._get(h, i if split else None):
+            a, b = self._cell(h, i)
+            if text and self.sealed(a, b):
+                # 记录封锁 (MECHANICS 18.4): 填写后就不能再改 —— 只有按 Enter 并确认才保存
+                if not enter:
+                    self._drafts[(h, i)] = var.get()
+                    return None
+                import toast
+                if not toast.ask(tr("确认修改这个格子吗?") + "\n" + tr("记录封锁: 填写后就不能再修改了.") + "\n\n" + text,
+                                 title=tr("确认修改"), ok_text=tr("确认修改")):
+                    self._drafts[(h, i)] = var.get()
+                    return False
+            self._drafts.pop((h, i), None)
             s = self._slot_start(h)
             if split:
                 self.dm.set_half_text(s.strftime('%Y-%m-%d'), s.hour, i, text)
@@ -178,6 +220,10 @@ class HourLogPage(tk.Frame):
 
         awaiting = self.dm.awaiting_slot()
         focused = self.focus_get()
+        try:
+            seed = self.fog()
+        except Exception:
+            seed = None
         for h, (lbl, ent, var) in self.rows.items():
             start = self._slot_start(h)
             end = start + timedelta(hours=1)
@@ -195,21 +241,37 @@ class HourLogPage(tk.Frame):
             else:
                 cells = [(ent, var, start, end, self._get(h))]
             locked = False
-            for e, v, a, b, text in cells:
-                if focused is not e and v.get() != text:
-                    v.set(text)
+            shown = False                           # 黑雾时这一行有没有露出来的格子
+            for i, (e, v, a, b, text) in enumerate(cells):
+                wait = awaiting is not None and a <= awaiting < b
+                hidden = seed is not None and not (a <= now < b or wait)     # 黑雾: 只露出"现在"和待填写的格子
+                shown = shown or not hidden
+                if hidden:
+                    noise = fog_noise(seed, f"{a:%Y-%m-%d %H:%M}")
+                    if v.get() != noise:
+                        v.set(noise)
+                    cfg(e, state="disabled", highlightbackground=COLORS["border"])
+                    continue
+                draft = self._drafts.get((h, i))
+                if draft is not None and (text or not draft.strip()):
+                    self._drafts.pop((h, i), None)            # 已经有内容了 (例如同步来的) / 草稿清空了: 不再留草稿
+                    draft = None
+                shown_text = draft if draft is not None else text
+                if focused is not e and v.get() != shown_text:
+                    v.set(shown_text)
                 done = b <= now
                 lock = done and self.locked(a, b, text, now)
                 locked = locked or lock
                 cfg(e, state="normal" if (enabled and done and not lock) else "disabled")
-                wait = awaiting is not None and a <= awaiting < b
                 cfg(e, highlightbackground=COLORS["accent"] if wait else COLORS["border"])
             ended = end <= now or (split and start + timedelta(minutes=30) <= now)
 
             is_wait = awaiting is not None and start <= awaiting < end
             is_now = enabled and start <= now < end
-            label = f"{h:02d}:00"
-            if is_now:
+            label = f"{h:02d}:00" if seed is None or shown else "???"
+            if seed is not None and not shown:
+                pass
+            elif is_now:
                 label += tr("   ◂ 现在")
             elif is_wait:
                 label += tr("   ◂ 待填写")

@@ -513,6 +513,9 @@ EN = {
     "代理-全屏蔽 (Proxy block-all): 离线时除 OIT 内部需要的连接 (本机, 局域网同步) 外, 所有网站一律拦截; 只启用应用名单.":
         "Proxy · block everything: while offline every website is blocked, except the connections OIT itself needs (this computer, LAN sync); only the app lists are in effect.",
     "全屏蔽": "blocking everything",
+    "确认修改这个格子吗?": "Save this entry?",
+    "记录封锁: 填写后就不能再修改了.": "Record Seal: once filled, it can't be changed again.",
+    "确认修改": "Confirm",
     "{when} · 危机等级 {lv} · {state}": "{when} · Contingency level {lv} · {state}",
     "进行中": "In progress",
     "断网期间两台设备各自进行了合约, 时间有重叠. 只能保留一个, 另一个作废 (已经给出的休息时间不收回).": "While a device was offline, two contracts ran at overlapping times. Keep one; the other is voided (break time already given is kept).",
@@ -801,7 +804,7 @@ EN = {
     "可用的合约开始前已保存休息时间改为50%": "Usable break time saved before the contract set to 50%",
     "不能使用合约开始前已经保存的休息时间": "Break time saved before the contract can't be used",
     "环境:记录封锁": "Env: Record Seal",
-    "超过填写时间则不能再修改该记录": "An hour log entry past its fill deadline can never be changed",
+    "无法修改已经被填写的格子 (包括自动填写和手动填写)": "Hour log entries that are already filled can't be changed (filled automatically or by hand)",
     "目标:细化规范": "Target: Fine Protocol",
     "记录变为30min一次": "Hour log entries every 30 min",
     "支援短缺": "Shortage",

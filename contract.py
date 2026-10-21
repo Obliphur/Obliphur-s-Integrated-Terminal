@@ -54,7 +54,7 @@ TERMS = [
     # 1 级: 联网 (抑制), 整点记录 (记录封锁), 禁止打开的软件 (乐理之灾 / 禁游令 / 低帧的诅咒),
     # 现实 (高机动 / 禁足), 黑雾, 休息 (禁止囤囤鼠!), 专注中的联网 (静默协议)
     ("suppress", "suppress", 1, "环境:抑制", "不能使用快速访问功能", ()),
-    ("seal", "seal", 1, "环境:记录封锁", "超过填写时间则不能再修改该记录", ()),
+    ("seal", "seal", 1, "环境:记录封锁", "无法修改已经被填写的格子 (包括自动填写和手动填写)", ()),
     ("music", "music", 1, "环境:乐理之灾", "合约期间音乐播放软件禁止联网 可以通过点击解除网络禁令", ()),
     ("game", "game", 1, "环境:禁游令", "合约期间游戏和游戏平台禁止联网 可以通过点击解除网络禁令", ()),
     ("video", "video", 1, "环境:低帧的诅咒", "合约期间视频平台禁止联网 可以通过点击解除网络禁令", ()),
@@ -1367,13 +1367,17 @@ class Contract:
             wanted = "" if callable(auto) else str(auto or "")
         return str(text or "") in ("", wanted)
 
+    def hour_sealed(self, start: datetime, end: datetime, now: datetime = None) -> bool:
+        """这个记录格在记录封锁的范围里 (填写后就不能再改, 界面上提交前先确认)."""
+        return any(a < end and start < b for a, b in self.periods(now or datetime.now(), "seal"))
+
     def hour_locked(self, start: datetime, end: datetime, text: str, now: datetime, fill: timedelta,
                     auto, key: str = "") -> bool:
-        """记录封锁: 和选了这个词条的合约重叠的记录格, 过了填写时限就不能再改 (不管填没填, 填了什么)
-        —— 合约结束了也一样. 未知变量封锁的格子也是不管填没填都不能再改."""
+        """记录封锁: 和选了这个词条的合约重叠的记录格, 已经填写了的 (自己填的, 或者超时自动记录的) 就不能再改,
+        没填的照常能填 —— 合约结束了也一样. 未知变量封锁的格子不管填没填都不能再改."""
         if any(a < end and start < b for a, b in self.locks()):
             return True
-        if now < end + cell_fill(start, end, fill):
+        if not str(text or "").strip():
             return False
         return any(a < end and start < b for a, b in self.periods(now, "seal"))
 
@@ -1522,7 +1526,7 @@ def _selftest():
     assert BY_ID["move"][2] == 1 and BY_ID["move"][4] == "现实中的移动速度+50%"
     assert BY_ID["confine"][2] == 1 and BY_ID["confine"][4] == "在非休息时间不能离开工作岗位进行活动"
     assert LAYOUT["confine"][0] == LAYOUT["move"][0] + 1, "高机动 / 禁足 挨着"
-    assert BY_ID["seal"][4] == "超过填写时间则不能再修改该记录"
+    assert BY_ID["seal"][4] == "无法修改已经被填写的格子 (包括自动填写和手动填写)"
     assert conflicts("gaze", "scar") and conflicts("scar", "gaze") and not conflicts("gaze", "music")
     assert conflicts("hoard", "short1") and conflicts("short2", "hoard"), "禁止囤囤鼠! 和支援短缺冲突"
     assert clean_terms(["short1", "hoard"]) == ["short1"]
@@ -1972,7 +1976,8 @@ def _selftest():
     assert not c.hour_locked(a, b, "", datetime(2026, 10, 18, 10, 59), fill, "Sleeping")
     assert c.hour_locked(a, b, "Sleeping", datetime(2026, 10, 18, 11, 1), fill, "Sleeping")
     assert c.hour_locked(a, b, "学习", datetime(2026, 10, 18, 11, 1), fill, "Sleeping"), "过了时限, 填了的也锁"
-    assert not c.hour_locked(a, b, "学习", datetime(2026, 10, 18, 10, 59), fill, "Sleeping"), "时限之内照样能改"
+    assert c.hour_locked(a, b, "学习", datetime(2026, 10, 18, 10, 59), fill, "Sleeping"), "填写了就不能再改 (时限之内也一样)"
+    assert not c.hour_locked(a, b, "", datetime(2026, 10, 18, 11, 30), fill, "Sleeping"), "没填的照常能填"
     c.finish("abandoned", datetime(2026, 10, 18, 12))
     assert c.hour_locked(a, b, "Sleeping", datetime(2026, 10, 19), fill, "Sleeping"), "合约结束后照样锁着"
     assert not c.hour_locked(datetime(2026, 10, 18, 13), datetime(2026, 10, 18, 14), "", datetime(2026, 10, 19),

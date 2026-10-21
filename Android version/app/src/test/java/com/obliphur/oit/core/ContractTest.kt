@@ -58,7 +58,7 @@ class ContractTest {
         assertEquals("现实中的移动速度+50%", Contract.BY_ID["move"]!!.desc)
         assertEquals(1, Contract.BY_ID["confine"]!!.level)
         assertEquals(Contract.LAYOUT["move"]!! + 1, Contract.LAYOUT["confine"])
-        assertEquals("超过填写时间则不能再修改该记录", Contract.BY_ID["seal"]!!.desc)
+        assertEquals("无法修改已经被填写的格子 (包括自动填写和手动填写)", Contract.BY_ID["seal"]!!.desc)
         assertTrue(Contract.conflicts("gaze", "scar") && Contract.conflicts("scar", "gaze"))
         assertTrue(Contract.SOCIAL_APPS.intersect(Contract.VIDEO_APPS).isEmpty())
         assertEquals(listOf("long2", "suppress", "jam"), Contract.clean(listOf("long2", "long1", "x", "suppress", "jam")))
@@ -235,7 +235,8 @@ class ContractTest {
         assertFalse(c.hourLocked(a, b, "", LocalDateTime.of(2026, 10, 18, 10, 59), fill, "Sleeping"))
         assertTrue(c.hourLocked(a, b, "Sleeping", LocalDateTime.of(2026, 10, 18, 11, 1), fill, "Sleeping"))
         assertTrue(c.hourLocked(a, b, "学习", LocalDateTime.of(2026, 10, 18, 11, 1), fill, "Sleeping"))     // 过了时限, 填了的也锁
-        assertFalse(c.hourLocked(a, b, "学习", LocalDateTime.of(2026, 10, 18, 10, 59), fill, "Sleeping"))   // 时限之内照样能改
+        assertTrue(c.hourLocked(a, b, "学习", LocalDateTime.of(2026, 10, 18, 10, 59), fill, "Sleeping"))    // 填写了就不能再改
+        assertFalse(c.hourLocked(a, b, "", LocalDateTime.of(2026, 10, 18, 11, 30), fill, "Sleeping"))      // 没填的照常能填
         c.finish("abandoned", LocalDateTime.of(2026, 10, 18, 12, 0))
         assertTrue(c.hourLocked(a, b, "Sleeping", LocalDateTime.of(2026, 10, 19, 0, 0), fill, "Sleeping"))
     }
