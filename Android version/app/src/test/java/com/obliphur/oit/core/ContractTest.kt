@@ -231,7 +231,8 @@ class ContractTest {
         val b = a.plusMinutes(30)
         assertFalse(c.hourLocked(a, b, "", LocalDateTime.of(2026, 10, 18, 10, 59), fill, "Sleeping"))
         assertTrue(c.hourLocked(a, b, "Sleeping", LocalDateTime.of(2026, 10, 18, 11, 1), fill, "Sleeping"))
-        assertFalse(c.hourLocked(a, b, "学习", LocalDateTime.of(2026, 10, 18, 11, 1), fill, "Sleeping"))
+        assertTrue(c.hourLocked(a, b, "学习", LocalDateTime.of(2026, 10, 18, 11, 1), fill, "Sleeping"))     // 过了时限, 填了的也锁
+        assertFalse(c.hourLocked(a, b, "学习", LocalDateTime.of(2026, 10, 18, 10, 59), fill, "Sleeping"))   // 时限之内照样能改
         c.finish("abandoned", LocalDateTime.of(2026, 10, 18, 12, 0))
         assertTrue(c.hourLocked(a, b, "Sleeping", LocalDateTime.of(2026, 10, 19, 0, 0), fill, "Sleeping"))
     }

@@ -388,7 +388,7 @@ private fun PageExtras(tab: String, act: MainActivity) {
             Dim(when {
                 app.vpnNeedsPermission -> tr("没有 VPN 权限")
                 OitVpnService.leak -> tr("断网未生效")
-                running -> tr("运行中") + " · " + kind
+                running -> tr("运行中") + " · " + kind + (if (OitVpnService.appBlock) " · " + tr("屏蔽社交应用的网络") else "")
                 else -> tr("未运行")
             }, size = 13, color = if (running && !OitVpnService.leak) o.success else o.warn)
             OitVpnService.lastError?.let { Dim(it, size = 11, color = o.dim) }

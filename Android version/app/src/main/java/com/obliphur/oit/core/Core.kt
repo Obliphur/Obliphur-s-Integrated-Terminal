@@ -51,8 +51,10 @@ sealed class VpnPlan {
     object None : VpnPlan()
     /** 全部流量进 VPN 后丢弃. keepLan: 局域网地址不进 VPN (设备同步要用). */
     data class BlockAll(val keepLan: Boolean = false) : VpnPlan()
-    /** 只接管 DNS: filter=true 时按网站名单拦截域名, 否则全部放行. */
-    data class Dns(val filter: Boolean, val rulesVersion: Long, val blockAll: Boolean = false) : VpnPlan()
+    /** 只接管 DNS: filter=true 时按网站名单拦截域名, 否则全部放行.
+     *  blockApps 不为空时 (合约的无言为真, MECHANICS 18.6) 这些应用的网络全部屏蔽: 见 OitVpnService. */
+    data class Dns(val filter: Boolean, val rulesVersion: Long, val blockAll: Boolean = false,
+                   val blockApps: Set<String> = emptySet()) : VpnPlan()
 }
 
 /** 一周内第 5 次领"我累了"时弹窗的文字 (MECHANICS 6.5). */
@@ -977,6 +979,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         toast(msg, "warn", long = true)
         addViolation(msg)               // 违规记录页 (MECHANICS 8.1): 内容照搬这段提示
         if (over) endContract("failed")
+        else if (id == "silent" && new.isEmpty()) host.applyNet(false)   // 无言为真失效: 不再屏蔽社交应用的网络
         changed()
     }
 
@@ -990,6 +993,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     fun mergeContract(changes: Map<String, Any?>) {
         contract.merge(changes)
         checkContract()
+        host.applyNet(false)            // 别的设备上词条变了 (无言为真失效等): 计划变了才动 VPN
         changed()
     }
 
@@ -1003,19 +1007,21 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         if (settings.devMode) return if (hasPeers()) VpnPlan.Dns(false, 0) else VpnPlan.None
         val online = net.online
         val snap = rules.snap
+        // 合约的无言为真 (休息中也算): 社交 / AI 聊天应用的网络全部屏蔽 (MECHANICS 18.6)
+        val ban = if (contract.active && contract.has("silent")) Contract.SOCIAL_APPS else emptySet()
         // 代理-全屏蔽 (Proxy block-all): 离线时接管 DNS, 所有域名一律拦截 (不看网站名单,
         // 局域网照常, 设备同步要用); 联网中全部放行. 应用名单照样按过滤名单模式锁定应用 (checkAppLock)
         if (netMode() == "adapter")
-            return if (online) VpnPlan.Dns(false, 0) else VpnPlan.Dns(true, 0, blockAll = true)
+            return if (online) VpnPlan.Dns(false, 0, blockApps = ban) else VpnPlan.Dns(true, 0, blockAll = true, blockApps = ban)
         // 联网中两种名单模式都全部放行 (MECHANICS 4.1)
-        if (online) return VpnPlan.Dns(false, 0)
+        if (online) return VpnPlan.Dns(false, 0, blockApps = ban)
         if (settings.str("FILTER_MODE") == RuleKeys.WHITELIST) {
             // 网站白名单为空 = 什么网站都不能上: 全部流量进 VPN (比按 DNS 拦更彻底)
             if (snap.lists[RuleKeys.WHITE_DOMAINS]!!.isEmpty()) return VpnPlan.BlockAll(keepLan = true)
-            return VpnPlan.Dns(true, snap.version)
+            return VpnPlan.Dns(true, snap.version, blockApps = ban)
         }
-        if (snap.lists[RuleKeys.BLACK_DOMAINS]!!.isEmpty()) return VpnPlan.Dns(false, 0)
-        return VpnPlan.Dns(true, snap.version)
+        if (snap.lists[RuleKeys.BLACK_DOMAINS]!!.isEmpty()) return VpnPlan.Dns(false, 0, blockApps = ban)
+        return VpnPlan.Dns(true, snap.version, blockApps = ban)
     }
 
     // ---- 重置 ----

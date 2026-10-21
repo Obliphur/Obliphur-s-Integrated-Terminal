@@ -1086,13 +1086,12 @@ class Contract(private val file: File) {
         return text in setOf("", wanted)
     }
 
-    /** 记录封锁: 和选了这个词条的合约重叠的记录格, 过了填写时限还没填写 (空着 / 超时自动记录),
-     *  就不能再改 —— 合约结束了也一样. 未知变量封锁的格子不管填没填都不能再改. */
+    /** 记录封锁: 和选了这个词条的合约重叠的记录格, 过了填写时限就不能再改 (不管填没填, 填了什么)
+     *  —— 合约结束了也一样. 未知变量封锁的格子也是不管填没填都不能再改. */
     fun hourLocked(start: LocalDateTime, end: LocalDateTime, text: String, now: LocalDateTime, fillSec: Long,
                    auto: String, autoOf: ((String) -> String)? = null, key: String = ""): Boolean {
         if (locks().any { (a, b) -> a.isBefore(end) && start.isBefore(b) }) return true
-        val k = key.ifBlank { "${start.toLocalDate().key()}/${start.hour}" }
-        if (now.isBefore(end.plusSeconds(cellFill(start, end, fillSec))) || !isAuto(text, k, auto, autoOf)) return false
+        if (now.isBefore(end.plusSeconds(cellFill(start, end, fillSec)))) return false
         return periods(now, "seal").any { (a, b) -> a.isBefore(end) && start.isBefore(b) }
     }
 

@@ -66,6 +66,9 @@ object BlockLog {
  * 断网的实际执行者 (MECHANICS 14.2). 一个 VpnService, 按 [VpnPlan] 建立接口:
  *  - BlockAll: 默认路由进 VPN, 读出来的包直接丢掉 = 断网;
  *  - Dns: 只把一个假的 DNS 地址路由进来, 按网站名单回 NXDOMAIN 或转发给真正的 DNS.
+ *  - Dns 带 blockApps (合约的无言为真, MECHANICS 18.6): 这些应用的网络全部屏蔽.
+ *    全部放行时只把这些应用放进 VPN, 包一律丢掉 ([Mode.APPS]); 要按名单过滤时全部流量进 VPN,
+ *    这些应用的丢掉, 其余的由 [Forwarder] 代发 ([Mode.FORWARD]).
  * 应用名单不在这里处理 (只管锁定应用, 见 Core.checkAppLock).
  * 换计划时先建好新接口再关旧的, 切换过程中不留空档.
  */
@@ -101,6 +104,9 @@ class OitVpnService : VpnService() {
             private set
         @Volatile var lastError: String? = null
             private set
+        /** 正在屏蔽无言为真的应用的网络 (设置页显示). */
+        @Volatile var appBlock = false
+            private set
 
         fun apply(ctx: Context) {
             ctx.startService(Intent(ctx, OitVpnService::class.java).setAction(ACTION_APPLY))
@@ -116,7 +122,11 @@ class OitVpnService : VpnService() {
         }
     }
 
-    private inner class Session(val pfd: ParcelFileDescriptor, val plan: VpnPlan) {
+    /** 接口怎样建的: 只接管 DNS / 全部进 VPN 后丢掉 / 只有屏蔽的应用进 VPN 后丢掉 / 全部进 VPN, 屏蔽的应用丢掉, 其余转发. */
+    private enum class Mode { DNS, DROP, APPS, FORWARD }
+
+    private inner class Session(val pfd: ParcelFileDescriptor, val plan: VpnPlan, val mode: Mode,
+                                val apps: Set<String>) {
         @Volatile var alive = true
         private val out = FileOutputStream(pfd.fileDescriptor)
         val thread = Thread({ loop() }, "oit-vpn").apply { isDaemon = true }
@@ -131,8 +141,16 @@ class OitVpnService : VpnService() {
                     if (Os.poll(pfds, 1000) <= 0) continue
                     val n = input.read(buf)
                     if (n <= 0) continue
-                    if (plan is VpnPlan.Dns) handle(buf, n, plan)
-                    // BlockAll: 丢掉
+                    when (mode) {
+                        Mode.DNS -> handle(buf, n, plan as VpnPlan.Dns)
+                        Mode.FORWARD -> {
+                            val dns = Packets.parseUdp(buf, n)?.takeIf { it.dstPort == 53 }
+                            if (dns != null) handle(buf, n, plan as VpnPlan.Dns)
+                            else forwarder?.offer(buf.copyOf(n))
+                        }
+                        // BlockAll / 只有屏蔽的应用在 VPN 里: 丢掉
+                        Mode.DROP, Mode.APPS -> {}
+                    }
                 } catch (e: Exception) {
                     if (!alive) break
                     SystemClock.sleep(50)
@@ -145,6 +163,15 @@ class OitVpnService : VpnService() {
             if (p.dstPort != 53) return
             val host = Dns.qname(p.payload) ?: return
             BlockLog.seen(host)
+            if (apps.isNotEmpty()) {
+                // 无言为真: 屏蔽的应用查什么都回 NXDOMAIN
+                val pkg = owner(p).firstOrNull { it in apps }
+                if (pkg != null) {
+                    BlockLog.add(host, pkg)
+                    Dns.nxdomain(p.payload)?.let { write(Packets.buildReply(p, it)) }
+                    return
+                }
+            }
             if (plan.filter) {
                 val core = OitApp.instance.core
                 // 全屏蔽: 除本机地址以外一律拦截; 否则按网站名单
@@ -192,14 +219,18 @@ class OitVpnService : VpnService() {
 
     private val pool = Executors.newFixedThreadPool(8)
     private var session: Session? = null
+    /** 全部流量进 VPN 时的转发 (Mode.FORWARD). 换接口时留着, 已经建立的连接不断. */
+    private var forwarder: Forwarder? = null
 
     // 发起 DNS 查询的应用: uid → 包名, 缓存 30 秒
     private val uidCache = ConcurrentHashMap<Int, Pair<Long, List<String>>>()
-    private fun owner(p: UdpPacket): List<String> {
+    private fun owner(p: UdpPacket): List<String> =
+        owner(OsConstants.IPPROTO_UDP, InetSocketAddress(p.srcAddr, p.srcPort), InetSocketAddress(p.dstAddr, p.dstPort))
+
+    private fun owner(proto: Int, src: InetSocketAddress, dst: InetSocketAddress): List<String> {
         val cm = getSystemService(ConnectivityManager::class.java)
         val uid = try {
-            cm.getConnectionOwnerUid(OsConstants.IPPROTO_UDP,
-                InetSocketAddress(p.srcAddr, p.srcPort), InetSocketAddress(p.dstAddr, p.dstPort))
+            cm.getConnectionOwnerUid(proto, src, dst)
         } catch (e: Exception) {
             -1
         }
@@ -282,11 +313,25 @@ class OitVpnService : VpnService() {
 
     private fun blocking(p: VpnPlan?) = p is VpnPlan.BlockAll
 
+    /** 要屏蔽的应用里装了的 (一个都没装时不另外处理: 空的允许列表等于所有应用都进 VPN). */
+    private fun installed(apps: Set<String>): Set<String> = apps.filter {
+        runCatching { packageManager.getApplicationInfo(it, 0) }.isSuccess
+    }.toSet()
+
+    private fun modeOf(p: VpnPlan, apps: Set<String>) = when {
+        p is VpnPlan.BlockAll -> Mode.DROP
+        apps.isEmpty() -> Mode.DNS
+        p is VpnPlan.Dns && !p.filter -> Mode.APPS
+        else -> Mode.FORWARD
+    }
+
     private fun establish(want: VpnPlan, retry: Boolean = true) {
         val p = want
-        // 在"只接管 DNS"和"全部路由进 VPN"之间切换时, 先关掉旧接口再建新的.
+        val apps = if (p is VpnPlan.Dns) installed(p.blockApps) else emptySet()
+        val mode = modeOf(p, apps)
+        // 路由的样子变了 (例如"只接管 DNS"和"全部路由进 VPN"之间) 时, 先关掉旧接口再建新的.
         // 原地更新路由在部分系统上不生效, 会出现"断网方式是 Adapter 但离线时仍能上网".
-        if (session != null && blocking(plan) != blocking(p)) {
+        if (session != null && session?.mode != mode) {
             session?.close()
             session = null
             plan = null
@@ -306,9 +351,25 @@ class OitVpnService : VpnService() {
                     b.addRoute("0.0.0.0", 0); b.addRoute("::", 0)
                 }
             }
-            is VpnPlan.Dns -> {
-                b.addDnsServer(V4_DNS); b.addRoute(V4_DNS, 32)
-                b.addDnsServer(V6_DNS); b.addRoute(V6_DNS, 128)
+            is VpnPlan.Dns -> when (mode) {
+                Mode.APPS -> {
+                    // 全部放行, 只有屏蔽的应用进 VPN: 它们的包全部丢掉 (局域网也不留)
+                    for (a in apps) runCatching { b.addAllowedApplication(a) }
+                    b.addRoute("0.0.0.0", 0); b.addRoute("::", 0)
+                }
+                Mode.FORWARD -> {
+                    // 全部流量进 VPN (局域网除外, 设备同步要用): DNS 照常过滤, 屏蔽的应用丢掉, 其余转发. OIT 自己不进来
+                    runCatching { b.addDisallowedApplication(packageName) }
+                    b.addDnsServer(V4_DNS); b.addRoute(V4_DNS, 32)
+                    b.addDnsServer(V6_DNS); b.addRoute(V6_DNS, 128)
+                    for ((a, n) in WAN_V4) b.addRoute(a, n)
+                    b.addRoute("2000::", 3)
+                    excludeLocalNets(b)
+                }
+                else -> {
+                    b.addDnsServer(V4_DNS); b.addRoute(V4_DNS, 32)
+                    b.addDnsServer(V6_DNS); b.addRoute(V6_DNS, 128)
+                }
             }
             VpnPlan.None -> return
         }
@@ -326,8 +387,15 @@ class OitVpnService : VpnService() {
         }
         lastError = null
         val old = session
-        session = Session(pfd, p).also { it.thread.start() }
+        if (mode == Mode.FORWARD && forwarder == null) {
+            forwarder = Forwarder(this, { session?.write(it) }) { proto, src, dst ->
+                val ban = session?.apps ?: emptySet()
+                owner(proto, src, dst).firstOrNull { it in ban }
+            }
+        } else if (mode != Mode.FORWARD) stopForwarder()
+        session = Session(pfd, p, mode, apps).also { it.thread.start() }
         plan = p
+        appBlock = mode == Mode.APPS || mode == Mode.FORWARD
         old?.close()
         leak = false
         OitApp.instance.vpnChanged()
@@ -361,8 +429,15 @@ class OitVpnService : VpnService() {
         }, "oit-vpn-check").apply { isDaemon = true }.start()
     }
 
+    private fun stopForwarder() {
+        forwarder?.close()
+        forwarder = null
+    }
+
     private fun teardown() {
         leak = false
+        appBlock = false
+        stopForwarder()
         session?.close()
         session = null
         plan = null

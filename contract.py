@@ -1293,12 +1293,11 @@ class Contract:
 
     def hour_locked(self, start: datetime, end: datetime, text: str, now: datetime, fill: timedelta,
                     auto, key: str = "") -> bool:
-        """记录封锁: 和选了这个词条的合约重叠的记录格, 过了填写时限还没填写 (空着 / 超时自动记录),
-        就不能再改 —— 合约结束了也一样. 未知变量封锁的格子不管填没填都不能再改."""
+        """记录封锁: 和选了这个词条的合约重叠的记录格, 过了填写时限就不能再改 (不管填没填, 填了什么)
+        —— 合约结束了也一样. 未知变量封锁的格子也是不管填没填都不能再改."""
         if any(a < end and start < b for a, b in self.locks()):
             return True
-        key = key or f"{start:%Y-%m-%d}/{start.hour}"
-        if now < end + cell_fill(start, end, fill) or not self._is_auto(text, key, auto):
+        if now < end + cell_fill(start, end, fill):
             return False
         return any(a < end and start < b for a, b in self.periods(now, "seal"))
 
@@ -1764,7 +1763,8 @@ def _selftest():
     a, b = datetime(2026, 10, 18, 10), datetime(2026, 10, 18, 10, 30)
     assert not c.hour_locked(a, b, "", datetime(2026, 10, 18, 10, 59), fill, "Sleeping")
     assert c.hour_locked(a, b, "Sleeping", datetime(2026, 10, 18, 11, 1), fill, "Sleeping")
-    assert not c.hour_locked(a, b, "学习", datetime(2026, 10, 18, 11, 1), fill, "Sleeping"), "按时填了的不锁"
+    assert c.hour_locked(a, b, "学习", datetime(2026, 10, 18, 11, 1), fill, "Sleeping"), "过了时限, 填了的也锁"
+    assert not c.hour_locked(a, b, "学习", datetime(2026, 10, 18, 10, 59), fill, "Sleeping"), "时限之内照样能改"
     c.finish("abandoned", datetime(2026, 10, 18, 12))
     assert c.hour_locked(a, b, "Sleeping", datetime(2026, 10, 19), fill, "Sleeping"), "合约结束后照样锁着"
     assert not c.hour_locked(datetime(2026, 10, 18, 13), datetime(2026, 10, 18, 14), "", datetime(2026, 10, 19),

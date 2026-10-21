@@ -320,6 +320,35 @@ class CoreTest {
         assertTrue(lanOpen(core.vpnPlan()))
     }
 
+    /** 合约的无言为真: VPN 计划里带上要屏蔽网络的社交应用; 词条失效或合约结束后去掉 (MECHANICS 18.6). */
+    @Test
+    fun vpnPlanBlocksSocialAppsForSilent() {
+        val core = Core(tmp(), NoHost) { 0.0 }
+        fun ban() = (core.vpnPlan() as VpnPlan.Dns).blockApps
+        assertTrue(ban().isEmpty())
+        core.contract.start(listOf("silent"), "dev")
+        assertEquals(Contract.SOCIAL_APPS, ban())
+        core.rules.add(RuleKeys.BLACK_DOMAINS, "bilibili.com")
+        assertTrue((core.vpnPlan() as VpnPlan.Dns).filter)
+        assertEquals(Contract.SOCIAL_APPS, ban())
+        // 网站白名单为空: 本来就全部断网, 不另外处理
+        core.stageSetting("FILTER_MODE", RuleKeys.WHITELIST)
+        assertEquals(VpnPlan.BlockAll(keepLan = true), core.vpnPlan())
+        core.stageSetting("FILTER_MODE", RuleKeys.BLACKLIST)
+        core.stageSetting("NET_MODE", "adapter")
+        assertEquals(Contract.SOCIAL_APPS, ban())
+        // 违反一次降成 1 级: 照样屏蔽; 再违反失效: 不再屏蔽
+        core.contract.violate("silent")
+        assertEquals(Contract.SOCIAL_APPS, ban())
+        core.contract.violate("silent")
+        assertTrue(ban().isEmpty())
+        core.endContract("abandoned")
+        core.contract.start(listOf("silent", "music"), "dev")
+        assertEquals(Contract.SOCIAL_APPS, ban())
+        core.endContract("abandoned")
+        assertTrue(ban().isEmpty())
+    }
+
     /** 每日联网额度填 325799 = 开 / 关开发者模式: 不是真的修改, 不排队. */
     @Test
     fun devToggle() {

@@ -116,7 +116,7 @@ CHECKS = {
     "study8": _study(8),
     "study12": _study(12),
     "sleep10": _sleep(10),
-    # 完成了危机等级 20 及以上的合约 (按结算时的等级, MECHANICS 18)
+    # 完成了危机等级 38 及以上的合约 (按结算时的等级, MECHANICS 18)
     "summit": lambda f: any(h.get("result") == "completed" and int(h.get("level") or 0) >= SUMMIT_LEVEL for h in f.contracts),
     "hamster": lambda f: f.carry >= HAMSTER_SECONDS,
     "duel1": lambda f: bool(_completed(f)),

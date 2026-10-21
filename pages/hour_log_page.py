@@ -16,7 +16,7 @@ class HourLogPage(tk.Frame):
                  on_open_settings=None, locked=None, split=None):
         super().__init__(master, bg=COLORS["bg"])
         self.dm = data_manager
-        # 合约 (MECHANICS 18.4): 记录封锁 —— 过了填写时限还没填写的格子不能再改 (开始, 结束, 内容, 现在)
+        # 合约 (MECHANICS 18.4): 记录封锁 —— 过了填写时限的格子 (不管填没填) 不能再改 (开始, 结束, 内容, 现在)
         self.locked = locked or (lambda start, end, text, now: False)
         # 细化规范: 这一小时分成两个半小时, 各填一格
         self.split = split or (lambda start: False)

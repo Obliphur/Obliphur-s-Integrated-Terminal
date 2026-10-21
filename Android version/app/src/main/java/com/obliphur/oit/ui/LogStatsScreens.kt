@@ -99,7 +99,7 @@ fun HourLogScreen(go: (String) -> Unit) {
                 val isWait = awaiting != null && !awaiting.isBefore(start) && awaiting.isBefore(end)
                 val isNow = enabled && !start.isAfter(now) && now.isBefore(end)
                 // 合约 (MECHANICS 18.4): 细化规范的小时分成两个半小时各填一格;
-                // 记录封锁: 过了填写时限还没填写的格子不能再改
+                // 记录封锁: 过了填写时限的格子 (不管填没填) 不能再改
                 val split = core.contract.fineHour(start)
                 val cells = if (split) listOf(
                     Triple(start, start.plusMinutes(30), dm.halfText(ds, start.hour, 0)),
