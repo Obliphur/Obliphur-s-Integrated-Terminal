@@ -65,6 +65,22 @@ class OitApp : Application(), Host {
         listenShutdown()
     }
 
+    /** 这次开机后 OIT 是被系统自动启动的 (开机自启动没被关掉, MECHANICS 14.8): BootReceiver 记下的开机次数等于现在的.
+     *  厂商的"自启动"开关查不到, 只能这样事后确认; 还没确认过 (例如装好后还没重启过) 时算没开. */
+    fun autostartOk(): Boolean {
+        val now = bootCount()
+        return now >= 0 && getSharedPreferences("oit_boot", MODE_PRIVATE).getInt("boot_seen", -2) == now
+    }
+
+    fun noteBootStart() {
+        val n = bootCount()
+        if (n >= 0) getSharedPreferences("oit_boot", MODE_PRIVATE).edit().putInt("boot_seen", n).apply()
+    }
+
+    private fun bootCount(): Int = runCatching {
+        android.provider.Settings.Global.getInt(contentResolver, android.provider.Settings.Global.BOOT_COUNT, -1)
+    }.getOrDefault(-1)
+
     /** 收到了系统的关机指令 (MECHANICS 15.4). */
     @Volatile var powerOff = false
         private set
@@ -121,7 +137,7 @@ class OitApp : Application(), Host {
         core.isLatestActive = { s.isLatestActive() }
         core.hasPeers = { s.peers().isNotEmpty() }
         core.syncedSince = { ms -> s.peers().values.any { it.optLong("last_ok") >= ms } }
-        core.wentOff = { powerOff || (battery()?.let { it < com.obliphur.oit.sync.SyncService.LOW_BATTERY } == true) }
+        core.wentOff = { autostartOk() && (powerOff || (battery()?.let { it < com.obliphur.oit.sync.SyncService.LOW_BATTERY } == true)) }
         core.followsMother = { s.motherId()?.let { it != s.myId } == true }
         core.motherFresh = {
             val m = s.motherId()

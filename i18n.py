@@ -670,6 +670,7 @@ EN = {
     "🔄  数据已清空": "🔄  Data cleared",
     "{name} 重置了 OIT, 本机的数据也一起清空了.": "{name} reset OIT, so this device's data was cleared too.",
     "   防火墙规则删不掉: {name}": "   Could not delete the firewall rule: {name}",
+    "   开机自启动的计划任务删不掉: {name}": "   Could not delete the start-at-logon task: {name}",
     "   删不掉 (可能被占用): {p}": "   Could not delete (possibly in use): {p}",
     "   数据已全部删除.": "   All data erased.",
     "⑤ 删除程序文件夹…": "⑤ Removing the program folder…",

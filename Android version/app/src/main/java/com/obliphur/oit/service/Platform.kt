@@ -260,6 +260,8 @@ class AlarmReceiver : BroadcastReceiver() {
 
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(ctx: Context, intent: Intent) {
+        // 开机自启动成功了 (MECHANICS 14.8): 记下这是第几次开机, 关机的前提 (15.4)
+        if (intent.action == Intent.ACTION_BOOT_COMPLETED) OitApp.instance.noteBootStart()
         CoreService.start(ctx)
         OitApp.instance.applyNet(true)
     }

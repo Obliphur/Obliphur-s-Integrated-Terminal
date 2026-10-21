@@ -97,6 +97,7 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
         val st = JSONObject().put("timer", "idle").put("net", n.mode).put("last_op", core.lastOp)
         // 关机 (MECHANICS 15.4): 收到关机指令 / 电量很低时突然离线, 其他设备把本机算作"关机" (效果和在线一样)
         if (app.powerOff) st.put("off", true)
+        st.put("auto", app.autostartOk())        // 开机自启动成功过 (这次开机): 关机的前提 (MECHANICS 14.8)
         app.battery()?.let { st.put("battery", it) }
         when (t.state) {
             TState.RUNNING -> st.put("timer", "running").put("since", t.startWall?.iso())

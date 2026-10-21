@@ -124,6 +124,7 @@ class PcLocal:
         # 关机 (MECHANICS 15.4): 收到关机指令 / 电量很低时突然离线, 其他设备把本机算作"关机" (效果和在线一样)
         if getattr(a, "power_off", False):
             st["off"] = True
+        st["auto"] = bool(getattr(a, "autostart_on", False))      # 开机自启动开着 (MECHANICS 3.4): 关机的前提
         bat = getattr(a, "battery", None)
         if bat is not None:
             st["battery"] = int(bat)

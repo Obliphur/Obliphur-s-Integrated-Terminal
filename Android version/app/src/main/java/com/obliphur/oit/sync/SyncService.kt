@@ -129,12 +129,13 @@ class SyncService(
         const val OFFLINE_MS = SYNC_EVERY_MS + 5_000L
         const val OFFLINE_FWD_MS = 2 * SYNC_EVERY_MS + 5_000L
         /** 关机 (MECHANICS 15.4): 一台设备最后发来的状态写着"收到关机指令" (off), 或者电量低于这么多 (%, 没在充电) 时突然离线,
-         *  算作"关机": 效果和在线一样 (不算离线, 专注不记空闲, 合约不因它失败), 只是不同步. 同 devsync.LOW_BATTERY. */
+         *  算作"关机": 效果和在线一样 (不算离线, 专注不记空闲, 合约不因它失败), 只是不同步. 同 devsync.LOW_BATTERY.
+         *  前提是它开着开机自启动 (状态里 auto): 没开 / 开不了的照旧算"离线". */
         const val LOW_BATTERY = 2
 
-        /** 这台设备最后发来的状态: 收到了关机指令, 或者电量低于 LOW_BATTERY%. 同 devsync.went_off. */
+        /** 这台设备最后发来的状态: 开着开机自启动 (auto), 并且收到了关机指令 / 电量低于 LOW_BATTERY%. 同 devsync.went_off. */
         fun wentOff(st: JSONObject?): Boolean {
-            if (st == null) return false
+            if (st == null || !st.optBoolean("auto")) return false
             if (st.optBoolean("off")) return true
             if (!st.has("battery") || st.isNull("battery")) return false
             val b = st.optDouble("battery", Double.NaN)

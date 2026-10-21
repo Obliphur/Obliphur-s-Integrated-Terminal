@@ -53,6 +53,7 @@ WIPES_KEEP = 50                         # 记住最近这么多个处理过的�
 OFFLINE_FWD_MS = (2 * SYNC_EVERY + 5) * 1000
 # 关机 (MECHANICS 15.4): 一台设备最后发来的状态写着"收到关机指令" (off), 或者电量低于这么多 (%, 没在充电) 时突然离线,
 # 算作"关机": 效果和在线一样 (不算离线, 专注不记空闲, 合约不因它失败), 只是不同步. 重新同步上就恢复正常.
+# 前提是它开着开机自启动 (状态里 auto, MECHANICS 3.4 / 14.8): 没开 / 开不了的照旧算"离线".
 LOW_BATTERY = 2
 UPDATE_MAX = 160 * 1024 * 1024    # 设备之间直接传的安装包最大多少
 OFFER_TTL = 1800                  # 秒: 发出的安装包多久之内可以来取
@@ -1319,8 +1320,8 @@ class SyncService:
 
 
 def went_off(st: dict) -> bool:
-    """这台设备最后发来的状态: 收到了关机指令, 或者电量低于 LOW_BATTERY% (没在充电)."""
-    if not isinstance(st, dict):
+    """这台设备最后发来的状态: 开着开机自启动, 并且收到了关机指令 / 电量低于 LOW_BATTERY% (没在充电)."""
+    if not isinstance(st, dict) or not st.get("auto"):
         return False
     if st.get("off"):
         return True
@@ -1894,7 +1895,10 @@ def _selftest():
         assert sc.offline_spans(t0, t0 + 60_000) == [], "重新上线之后不算离线"
         # 关机 (MECHANICS 15.4): 最后的状态是收到关机指令 / 电量低于 2% 时突然离线 → 关机, 效果和在线一样
         sc.state["peers"]["pY"]["last_err"] = "timeout"
-        sc.state["status"]["pY"] = {"ts": t0 - 60_000, "timer": "running", "battery": 1}
+        sc.state["status"]["pY"] = {"ts": t0 - 60_000, "timer": "running", "battery": 1, "auto": False}
+        st = {d["id"]: d for d in sc.device_states()}["pY"]
+        assert not st["online"] and not st["off"], "没开开机自启动: 照旧算离线"
+        sc.state["status"]["pY"]["auto"] = True
         st = {d["id"]: d for d in sc.device_states()}["pY"]
         assert st["online"] and st["off"], st
         sc.state["status"]["pY"]["battery"] = 2
@@ -1908,7 +1912,8 @@ def _selftest():
         sc.state["peers"]["pY"].pop("version")
         sc.state["peers"]["pY"]["last_err"] = ""
         sc.state["status"]["pY"] = {"ts": t0, "timer": "idle"}
-        assert went_off({"off": True}) and went_off({"battery": 0}) and not went_off({"battery": None})
+        assert went_off({"off": True, "auto": True}) and went_off({"battery": 0, "auto": True})
+        assert not went_off({"battery": None, "auto": True}) and not went_off({"off": True})
         assert not went_off({}) and not went_off(None)
         # 转交过来的设备一天没有消息: 不再显示
         sc.state["status"]["dX"]["ts"] = t0 - STALE_FWD_MS - 1000

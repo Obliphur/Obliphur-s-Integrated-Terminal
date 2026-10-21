@@ -37,6 +37,7 @@ from i18n import tr
 from netproxy.sysproxy import SystemProxy, parse_proxy_server
 from netproxy.server import DEFAULT_PORT
 import firewall
+import autostart
 
 
 CONFIRM_WORD = "UNINSTALL"
@@ -352,7 +353,8 @@ def forget_peers(paths: Paths, send=None) -> int:
 
 
 def run_uninstall(paths: Paths, remove_program: bool, log,
-                  ps=powershell, backend=None, kill_run=None, spawn=None, fw_run=None, forget=None) -> bool:
+                  ps=powershell, backend=None, kill_run=None, spawn=None, fw_run=None, forget=None,
+                  task_run=None) -> bool:
     """按顺序执行; log(文本, 级别) 级别为 info / ok / warn. 返回网络是否已完全恢复."""
     ok = True
 
@@ -408,6 +410,9 @@ def run_uninstall(paths: Paths, remove_program: bool, log,
     fw_left = firewall.remove(fw_run) if fw_run else firewall.remove()
     for name in fw_left:
         log(tr("   防火墙规则删不掉: {name}", name=name), "warn")
+    # 开机自启动的计划任务 (autostart.py)
+    if not (autostart.remove(task_run) if task_run else autostart.remove()):
+        log(tr("   开机自启动的计划任务删不掉: {name}", name=autostart.TASK_NAME), "warn")
 
     if remove_program:
         log(tr("⑤ 删除程序文件夹…"), "info")
@@ -804,7 +809,7 @@ def _selftest():
     be = MemoryBackend({"ProxyEnable": 1, "ProxyServer": "127.0.0.1:17890"})
     ok = run_uninstall(p, True, lambda t, lv: logs.append((lv, t)), ps=fake_ps,
                        backend=be, kill_run=lambda a: killed.append(a) or 0,
-                       spawn=spawned.append, fw_run=fw_fake)
+                       spawn=spawned.append, fw_run=fw_fake, task_run=lambda a, timeout=30: (1, ""))
     assert ok, logs
     assert fw_calls and all(c[:3] == ["netsh", "advfirewall", "firewall"] for c in fw_calls)
     assert killed and killed[0][:3] == ["taskkill", "/PID", "4321"] and "/T" in killed[0]
@@ -820,7 +825,7 @@ def _selftest():
     # ── 数据一定会删 (没有保留数据的选项)
     p = fresh()
     ok = run_uninstall(p, False, lambda t, lv: None, ps=fake_ps,
-                       backend=MemoryBackend({"ProxyEnable": 0}), kill_run=lambda a: 0, fw_run=fw_fake)
+                       backend=MemoryBackend({"ProxyEnable": 0}), kill_run=lambda a: 0, fw_run=fw_fake, task_run=lambda a, timeout=30: (1, ""))
     assert ok and not os.path.exists(p.data_dir) and os.path.isdir(prog)
     p = fresh()
 
@@ -832,7 +837,7 @@ def _selftest():
             return 0, "以太网"
         return 1, "denied"
     ok = run_uninstall(p, False, lambda t, lv: None, ps=stuck_ps,
-                       backend=MemoryBackend({}), kill_run=lambda a: 1, fw_run=fw_fake)
+                       backend=MemoryBackend({}), kill_run=lambda a: 1, fw_run=fw_fake, task_run=lambda a, timeout=30: (1, ""))
     assert not ok
 
     # ── 数据目录名字不对时不删 (环境变量异常的保护)

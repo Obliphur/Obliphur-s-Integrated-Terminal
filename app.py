@@ -13,6 +13,7 @@ import config
 import i18n
 import toast
 import window_guard
+import autostart
 import devsync
 import firewall
 import updater
@@ -174,6 +175,9 @@ class BreakTimerApp:
         self.power_off = False
         self.battery = None
         self._battery_at = 0.0
+        # 开机自启动 (MECHANICS 3.4): 任务计划程序里的任务开着 ("on") 才算; 关机前提 (15.4)
+        self.autostart_state = "unknown"
+        self._autostart_at = 0.0
         self._relaying = False        # 正在给其他设备下载 / 发送安装包
         self._relayed = set()         # (设备, 版本): 这次运行里已经发过的
         self._awake = False           # 正在阻止系统睡眠 (专注 / 休息中, 屏幕可以照常关掉)
@@ -289,6 +293,8 @@ class BreakTimerApp:
         self._pump_sync()
         # 防火墙放行同步端口, 否则别的设备找不到本机 / 连不进来 (MECHANICS 15.3). netsh 较慢, 放到后台
         threading.Thread(target=self._check_firewall, daemon=True).start()
+        # 开机自启动: 默认开启 (第一次运行时建好), 用户关掉了就不再打开 (MECHANICS 3.4)
+        threading.Thread(target=self._check_autostart, args=(True,), daemon=True).start()
         if getattr(config, "UPDATE_CHECK", 1):
             self.root.after(3000, lambda: self.check_update(auto=True))
 
@@ -1643,8 +1649,8 @@ class BreakTimerApp:
             self._save_timer_state()
 
     def _went_off(self) -> bool:
-        """本机这次停下来算不算关机: 收到了关机指令, 或者电量很低 (见 devsync.went_off)."""
-        return self.power_off or (self.battery is not None and self.battery < devsync.LOW_BATTERY)
+        """本机这次停下来算不算关机: 开着开机自启动, 并且收到了关机指令 / 电量很低 (见 devsync.went_off)."""
+        return self.autostart_on and (self.power_off or (self.battery is not None and self.battery < devsync.LOW_BATTERY))
 
     def _save_focus_now(self):
         self.dm.save_window_usage()
@@ -2183,6 +2189,16 @@ class BreakTimerApp:
 
 
     # ---- 设备同步 (MECHANICS 15) ----
+
+    def _check_autostart(self, first: bool = False):
+        try:
+            self.autostart_state = (autostart.ensure(self.dm.data_dir) if first else autostart.state())
+        except Exception:
+            self.autostart_state = "error"
+
+    @property
+    def autostart_on(self) -> bool:
+        return self.autostart_state == "on"
 
     def _check_firewall(self):
         try:
@@ -3923,6 +3939,9 @@ class BreakTimerApp:
         if time.monotonic() - self._battery_at >= 20:   # 本机电量: 发给其他设备 (MECHANICS 15.4)
             self._battery_at = time.monotonic()
             self.battery = devsync.battery_percent()
+        if time.monotonic() - self._autostart_at >= 300 and self.autostart_state != "unknown":
+            self._autostart_at = time.monotonic()        # 开机自启动有没有被用户关掉: 5 分钟看一次
+            threading.Thread(target=self._check_autostart, daemon=True).start()
         self.sync.track_offline()               # 每秒: 同步失败的设备马上算离线 (MECHANICS 8.4)
         try:
             self._check_contract()

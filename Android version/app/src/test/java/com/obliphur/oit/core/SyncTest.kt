@@ -22,12 +22,15 @@ class SyncTest {
     @Test
     fun wentOffMatchesDesktop() {
         val w = { st: JSONObject? -> SyncService.wentOff(st) }
-        assertTrue(w(JSONObject().put("off", true)))
-        assertTrue(w(JSONObject().put("battery", 1)))
-        assertTrue(w(JSONObject().put("battery", 0)))
-        assertFalse(w(JSONObject().put("battery", 2)))
-        assertFalse(w(JSONObject().put("timer", "idle")))
-        assertFalse(w(JSONObject().put("battery", JSONObject.NULL)))
+        fun a(o: JSONObject) = o.put("auto", true)
+        assertTrue(w(a(JSONObject().put("off", true))))
+        assertTrue(w(a(JSONObject().put("battery", 1))))
+        assertTrue(w(a(JSONObject().put("battery", 0))))
+        assertFalse(w(a(JSONObject().put("battery", 2))))
+        assertFalse(w(a(JSONObject().put("timer", "idle"))))
+        assertFalse(w(a(JSONObject().put("battery", JSONObject.NULL))))
+        assertFalse(w(JSONObject().put("off", true)))                 // 没开开机自启动: 照旧算离线
+        assertFalse(w(JSONObject().put("off", true).put("auto", false)))
         assertFalse(w(null))
     }
 
