@@ -66,25 +66,43 @@ import kotlin.math.atan2
 
 // ════════════════ Hour Log 页 (MECHANICS 7) ════════════════
 
-/** 黑雾 (MECHANICS 18.3) 时盖住的格子里显示的假内容: 动词 + 量词 + 名词 随机拼起来 (中文每个词两个字, 每个词池 20 个).
+/** 黑雾 (MECHANICS 18.3) 时盖住的格子里显示的假内容: 动词 + 量词 + 名词 随机拼起来 (中文每个词两个字, 每个词池 30 个, 不限主题).
  *  同 hour_log_page.py 的 _FOG_ZH / _FOG_EN. */
 private val FOG_ZH = listOf(
-    listOf("压力", "整理", "研究", "修理", "收集", "打磨", "观察", "照顾", "擦拭", "搬运", "计算", "描绘", "测量", "种植", "清洗", "拆解", "组装", "追踪", "烘焙", "晾晒"),
-    listOf("一个", "一些", "两只", "三张", "一堆", "一把", "半箱", "几块", "一串", "一盒", "十根", "一碗", "几朵", "一片", "两袋", "一排", "一束", "几颗", "一杯", "整筐"),
-    listOf("西瓜", "星星", "书架", "雨伞", "风筝", "键盘", "月亮", "枕头", "蘑菇", "台灯", "钢琴", "贝壳", "积木", "毛线", "云朵", "窗帘", "硬币", "蜡烛", "橘子", "邮票"))
-private val FOG_EN_VERB = listOf("Pressure", "Sort", "Study", "Repair", "Collect", "Polish", "Watch", "Tend", "Wipe", "Carry", "Count", "Sketch", "Measure", "Plant", "Wash", "Dismantle", "Assemble", "Track", "Bake", "Dry")
+    listOf("压力", "完成", "封禁", "整理", "研究", "修理", "收集", "打磨", "观察", "照顾", "擦拭", "搬运", "计算", "描绘", "测量", "种植", "清洗", "拆解",
+        "组装", "追踪", "烘焙", "晾晒", "驯服", "收容", "护送", "召唤", "唤醒", "安抚", "喂养", "拥抱"),
+    listOf("一个", "一些", "两只", "三张", "一堆", "一把", "半箱", "几块", "一串", "一盒", "十根", "一碗", "几朵", "一片", "两袋", "一排", "一束", "几颗",
+        "一杯", "整筐", "一群", "一位", "一队", "一窝", "一对", "一车", "七个", "一船", "一屋", "一桶"),
+    listOf("内卫", "海嗣", "村民", "鞘翅", "菲林", "主管", "西瓜", "星星", "书架", "雨伞", "风筝", "键盘", "月亮", "枕头", "蘑菇", "台灯", "钢琴", "贝壳",
+        "积木", "毛线", "云朵", "窗帘", "硬币", "蜡烛", "橘子", "邮票", "企鹅", "海獭", "灯塔", "水母"))
+private val FOG_EN_VERB = listOf("Pressure", "Complete", "Ban", "Sort", "Study", "Repair", "Collect", "Polish", "Watch", "Tend", "Wipe", "Carry",
+    "Count", "Sketch", "Measure", "Plant", "Wash", "Dismantle", "Assemble", "Track", "Bake", "Dry", "Tame",
+    "Contain", "Escort", "Summon", "Wake", "Soothe", "Feed", "Hug")
 /** (量词, 后面的名词用单数吗). */
-private val FOG_EN_QTY = listOf("a" to true, "some" to false, "two" to false, "three" to false, "a pile of" to false, "a handful of" to false, "half a crate of" to false, "a few" to false, "a string of" to false, "a box of" to false, "ten" to false, "a bowl of" to false, "several" to false, "one" to true, "two bags of" to false, "a row of" to false, "a bunch of" to false, "a dozen" to false, "a cup of" to false, "a basket of" to false)
-private val FOG_EN_NOUN = listOf("watermelon" to "watermelons", "star" to "stars", "bookshelf" to "bookshelves", "umbrella" to "umbrellas", "kite" to "kites", "keyboard" to "keyboards", "moon" to "moons", "pillow" to "pillows", "mushroom" to "mushrooms", "lamp" to "lamps", "piano" to "pianos", "seashell" to "seashells", "toy block" to "toy blocks", "ball of yarn" to "balls of yarn", "cloud" to "clouds", "curtain" to "curtains", "coin" to "coins", "candle" to "candles", "orange" to "oranges", "stamp" to "stamps")
+private val FOG_EN_QTY = listOf("a" to true, "some" to false, "two" to false, "three" to false, "a pile of" to false, "a handful of" to false,
+    "half a crate of" to false, "a few" to false, "a string of" to false, "a box of" to false, "ten" to false,
+    "a bowl of" to false, "several" to false, "one" to true, "two bags of" to false, "a row of" to false,
+    "a bunch of" to false, "a dozen" to false, "a cup of" to false, "a basket of" to false, "a flock of" to false,
+    "the last" to true, "a squad of" to false, "a nest of" to false, "a pair of" to false, "a cartload of" to false,
+    "seven" to false, "a boatload of" to false, "a roomful of" to false, "a bucket of" to false)
+private val FOG_EN_NOUN = listOf("guard" to "guards", "Seaborn" to "Seaborn", "villager" to "villagers", "elytra" to "elytra",
+    "Feline" to "Felines", "supervisor" to "supervisors", "watermelon" to "watermelons", "star" to "stars",
+    "bookshelf" to "bookshelves", "umbrella" to "umbrellas", "kite" to "kites", "keyboard" to "keyboards",
+    "moon" to "moons", "pillow" to "pillows", "mushroom" to "mushrooms", "lamp" to "lamps", "piano" to "pianos",
+    "seashell" to "seashells", "toy block" to "toy blocks", "ball of yarn" to "balls of yarn", "cloud" to "clouds",
+    "curtain" to "curtains", "coin" to "coins", "candle" to "candles", "orange" to "oranges", "stamp" to "stamps",
+    "penguin" to "penguins", "otter" to "otters", "lighthouse" to "lighthouses", "jellyfish" to "jellyfish")
 
 /** 黑雾时一个格子的假内容, 例如"整理一个西瓜" / "Sort a watermelon": 同一个合约里同一个格子不变 (不会每秒闪). */
 private fun fogNoise(seed: Long, key: String): String {
     val r = java.util.Random("$seed|$key".hashCode().toLong())
     if (com.obliphur.oit.core.I18n.lang == "en") {
-        val verb = FOG_EN_VERB[r.nextInt(20)]
-        val (qty, single) = FOG_EN_QTY[r.nextInt(20)]
-        val noun = FOG_EN_NOUN[r.nextInt(20)]
-        return "$verb $qty ${if (single) noun.first else noun.second}"
+        val verb = FOG_EN_VERB[r.nextInt(FOG_EN_VERB.size)]
+        var (qty, single) = FOG_EN_QTY[r.nextInt(FOG_EN_QTY.size)]
+        val noun = FOG_EN_NOUN[r.nextInt(FOG_EN_NOUN.size)]
+        val word = if (single) noun.first else noun.second
+        if (qty == "a" && word.first().lowercaseChar() in "aeiou") qty = "an"     // an umbrella / an orange
+        return "$verb $qty $word"
     }
     return FOG_ZH.joinToString("") { it[r.nextInt(it.size)] }
 }

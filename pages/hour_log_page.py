@@ -11,13 +11,34 @@ from i18n import tr
 from .widgets import cfg
 
 
-# 黑雾 (MECHANICS 18.3) 时盖住的格子里显示的假内容: 动词 + 量词 + 名词 随机拼起来 (中文每个词两个字, 每个词池 20 个)
-_FOG_ZH = (['压力', '整理', '研究', '修理', '收集', '打磨', '观察', '照顾', '擦拭', '搬运', '计算', '描绘', '测量', '种植', '清洗', '拆解', '组装', '追踪', '烘焙', '晾晒'],
-           ['一个', '一些', '两只', '三张', '一堆', '一把', '半箱', '几块', '一串', '一盒', '十根', '一碗', '几朵', '一片', '两袋', '一排', '一束', '几颗', '一杯', '整筐'],
-           ['西瓜', '星星', '书架', '雨伞', '风筝', '键盘', '月亮', '枕头', '蘑菇', '台灯', '钢琴', '贝壳', '积木', '毛线', '云朵', '窗帘', '硬币', '蜡烛', '橘子', '邮票'])
-_FOG_EN = (['Pressure', 'Sort', 'Study', 'Repair', 'Collect', 'Polish', 'Watch', 'Tend', 'Wipe', 'Carry', 'Count', 'Sketch', 'Measure', 'Plant', 'Wash', 'Dismantle', 'Assemble', 'Track', 'Bake', 'Dry'],
-           [('a', True), ('some', False), ('two', False), ('three', False), ('a pile of', False), ('a handful of', False), ('half a crate of', False), ('a few', False), ('a string of', False), ('a box of', False), ('ten', False), ('a bowl of', False), ('several', False), ('one', True), ('two bags of', False), ('a row of', False), ('a bunch of', False), ('a dozen', False), ('a cup of', False), ('a basket of', False)],
-           [('watermelon', 'watermelons'), ('star', 'stars'), ('bookshelf', 'bookshelves'), ('umbrella', 'umbrellas'), ('kite', 'kites'), ('keyboard', 'keyboards'), ('moon', 'moons'), ('pillow', 'pillows'), ('mushroom', 'mushrooms'), ('lamp', 'lamps'), ('piano', 'pianos'), ('seashell', 'seashells'), ('toy block', 'toy blocks'), ('ball of yarn', 'balls of yarn'), ('cloud', 'clouds'), ('curtain', 'curtains'), ('coin', 'coins'), ('candle', 'candles'), ('orange', 'oranges'), ('stamp', 'stamps')])
+# 黑雾 (MECHANICS 18.3) 时盖住的格子里显示的假内容: 动词 + 量词 + 名词 随机拼起来 (中文每个词两个字, 每个词池 30 个, 不限主题)
+_FOG_ZH = (
+    ['压力', '完成', '封禁', '整理', '研究', '修理', '收集', '打磨', '观察', '照顾', '擦拭', '搬运', '计算', '描绘', '测量', '种植', '清洗', '拆解',
+     '组装', '追踪', '烘焙', '晾晒', '驯服', '收容', '护送', '召唤', '唤醒', '安抚', '喂养', '拥抱'],
+    ['一个', '一些', '两只', '三张', '一堆', '一把', '半箱', '几块', '一串', '一盒', '十根', '一碗', '几朵', '一片', '两袋', '一排', '一束', '几颗',
+     '一杯', '整筐', '一群', '一位', '一队', '一窝', '一对', '一车', '七个', '一船', '一屋', '一桶'],
+    ['内卫', '海嗣', '村民', '鞘翅', '菲林', '主管', '西瓜', '星星', '书架', '雨伞', '风筝', '键盘', '月亮', '枕头', '蘑菇', '台灯', '钢琴', '贝壳',
+     '积木', '毛线', '云朵', '窗帘', '硬币', '蜡烛', '橘子', '邮票', '企鹅', '海獭', '灯塔', '水母'],
+)
+# 英文同样的拼法: (量词, 后面的名词用单数吗); (单数, 复数)
+_FOG_EN = (
+    ['Pressure', 'Complete', 'Ban', 'Sort', 'Study', 'Repair', 'Collect', 'Polish', 'Watch', 'Tend', 'Wipe', 'Carry',
+     'Count', 'Sketch', 'Measure', 'Plant', 'Wash', 'Dismantle', 'Assemble', 'Track', 'Bake', 'Dry', 'Tame',
+     'Contain', 'Escort', 'Summon', 'Wake', 'Soothe', 'Feed', 'Hug'],
+    [('a', True), ('some', False), ('two', False), ('three', False), ('a pile of', False), ('a handful of', False),
+     ('half a crate of', False), ('a few', False), ('a string of', False), ('a box of', False), ('ten', False),
+     ('a bowl of', False), ('several', False), ('one', True), ('two bags of', False), ('a row of', False),
+     ('a bunch of', False), ('a dozen', False), ('a cup of', False), ('a basket of', False), ('a flock of', False),
+     ('the last', True), ('a squad of', False), ('a nest of', False), ('a pair of', False), ('a cartload of', False),
+     ('seven', False), ('a boatload of', False), ('a roomful of', False), ('a bucket of', False)],
+    [('guard', 'guards'), ('Seaborn', 'Seaborn'), ('villager', 'villagers'), ('elytra', 'elytra'),
+     ('Feline', 'Felines'), ('supervisor', 'supervisors'), ('watermelon', 'watermelons'), ('star', 'stars'),
+     ('bookshelf', 'bookshelves'), ('umbrella', 'umbrellas'), ('kite', 'kites'), ('keyboard', 'keyboards'),
+     ('moon', 'moons'), ('pillow', 'pillows'), ('mushroom', 'mushrooms'), ('lamp', 'lamps'), ('piano', 'pianos'),
+     ('seashell', 'seashells'), ('toy block', 'toy blocks'), ('ball of yarn', 'balls of yarn'), ('cloud', 'clouds'),
+     ('curtain', 'curtains'), ('coin', 'coins'), ('candle', 'candles'), ('orange', 'oranges'), ('stamp', 'stamps'),
+     ('penguin', 'penguins'), ('otter', 'otters'), ('lighthouse', 'lighthouses'), ('jellyfish', 'jellyfish')],
+)
 
 
 def fog_noise(seed, key: str) -> str:
@@ -26,7 +47,10 @@ def fog_noise(seed, key: str) -> str:
     rnd = random.Random(f"{seed}|{key}")
     if i18n.get_language() == "en":
         verb, (qty, single), noun = rnd.choice(_FOG_EN[0]), rnd.choice(_FOG_EN[1]), rnd.choice(_FOG_EN[2])
-        return f"{verb} {qty} {noun[0] if single else noun[1]}"
+        word = noun[0] if single else noun[1]
+        if qty == "a" and word[:1].lower() in "aeiou":
+            qty = "an"                              # an umbrella / an orange
+        return f"{verb} {qty} {word}"
     return "".join(rnd.choice(pool) for pool in _FOG_ZH)
 
 
