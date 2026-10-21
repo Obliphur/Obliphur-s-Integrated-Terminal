@@ -22,10 +22,10 @@ class ContractTest {
         assertEquals(4, Contract.lifeOf(emptyList())); assertEquals(3, Contract.lifeOf(listOf("retreat1")))
         assertEquals(2, Contract.lifeOf(listOf("retreat2"))); assertEquals(1, Contract.lifeOf(listOf("last")))
         assertTrue(Contract.conflicts("retreat1", "last"))
-        assertEquals(20, Contract.restMinutes(0)); assertEquals(22, Contract.restMinutes(1))
-        assertEquals(27, Contract.restMinutes(4)); assertEquals(55, Contract.restMinutes(19))
-        assertEquals(88, Contract.restMinutes(37)); assertEquals(90, Contract.restMinutes(38))
-        assertEquals(90, Contract.restMinutes(50)); assertEquals(90 * 60, Contract.restReward(45))
+        assertEquals(20, Contract.restMinutes(0)); assertEquals(21, Contract.restMinutes(1))
+        assertEquals(24, Contract.restMinutes(4)); assertEquals(40, Contract.restMinutes(19))
+        assertEquals(59, Contract.restMinutes(37)); assertEquals(60, Contract.restMinutes(38))
+        assertEquals(60, Contract.restMinutes(50)); assertEquals(60 * 60, Contract.restReward(45))
         assertTrue((0 until 40).all { Contract.restMinutes(it) <= Contract.restMinutes(it + 1) })
         // 删掉的两个 4 级词条: 互联网娱乐的败退 变成组合, 信息隔绝 (旧词条) 删了
         assertFalse("isolate" in Contract.BY_ID || "ent" in Contract.BY_ID)
@@ -189,10 +189,10 @@ class ContractTest {
         c.start(listOf("last", "tired1"), "me", t0)
         assertEquals(1, c.violationLimit)
         assertEquals(420.0, c.bookRest(600.0), 1e-6)
-        assertEquals(27 * 60.0, c.reward, 1e-6)
+        assertEquals(24 * 60.0, c.reward, 1e-6)
         assertEquals("completed" to t0.plusHours(4), c.due(t0.plusHours(4), false))
         val rec = c.finish("completed", t0.plusHours(4).plusMinutes(3))!!
-        assertEquals(27 * 60, rec.optInt("reward"))
+        assertEquals(24 * 60, rec.optInt("reward"))
         assertEquals(0.0, c.reward, 1e-6)
         assertEquals(420.0, c.bookRestAfter(600.0, t0.plusHours(3)), 1e-6)
         assertEquals(600.0, c.bookRestAfter(600.0, t0.plusHours(5)), 1e-6)
@@ -302,9 +302,9 @@ class ContractTest {
         c.start(listOf("last", "long3", "tired3", "chan1"), "me", t0)
         assertEquals(10, c.level); assertEquals(1, c.violationLimit); assertEquals(10, c.origLevel)
         assertEquals(true to "", c.violate("chan1")); assertEquals(9, c.level)   // 目标生命值只有 1
-        // 纵深推进: 专注不到 40 / 60 分钟算违反; -II 降成 -I
+        // 纵深推进: 专注不到 40 / 80 分钟算违反; -II 降成 -I
         c.start(listOf("deep2", "quiet"), "me", t0)
-        assertEquals("deep2", c.focusCheck(59 * 60.0)); assertEquals("", c.focusCheck(60 * 60.0))
+        assertEquals("deep2", c.focusCheck(79 * 60.0)); assertEquals("", c.focusCheck(80 * 60.0))
         assertEquals(false to "deep1", c.violate("deep2"))
         assertEquals("", c.focusCheck(59 * 60.0)); assertEquals("deep1", c.focusCheck(39 * 60.0))
         // 静默协议: 只在刚联网的那一下算; 1 级, 违反一次失效
@@ -443,6 +443,13 @@ class ContractTest {
         val w = a.fogWords()
         assertEquals(FOG_SLOTS, w.size)
         assertEquals(FOG_SLOTS, a.live.getJSONArray("fog_words").length())
+        assertTrue("一次抽的词不重复", (0 until 3).all { k -> w.map { it[k] }.toSet().size == FOG_SLOTS })
+        // 词池大小和抽词用的 FOG_POOL 一致
+        assertEquals(listOf(150, 80, 150), FOG_POOL.toList())
+        assertEquals(FOG_POOL.toList(), listOf(com.obliphur.oit.ui.FOG_ZH_VERBS.size, com.obliphur.oit.ui.FOG_ZH_QUANTS.size,
+            com.obliphur.oit.ui.FOG_ZH_NOUNS.size))
+        assertEquals(FOG_POOL.toList(), listOf(com.obliphur.oit.ui.FOG_EN_VERBS.size, com.obliphur.oit.ui.FOG_EN_QUANTS.size,
+            com.obliphur.oit.ui.FOG_EN_NOUNS.size))
         b.merge(mapOf("live" to a.doc()["live"]))
         assertTrue("同步来的合约: 同一份", w.indices.all { w[it].contentEquals(b.fogWords()[it]) })
         a.live.remove("fog_words")                     // 以前开始的合约: 按 id 补一份, 每次一样

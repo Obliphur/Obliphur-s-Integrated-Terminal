@@ -69,7 +69,7 @@ import kotlin.math.atan2
  *  词取自 Minecraft Wiki 的"村民"条目 (每个词池 60 个), PRTS 的"水月"条目 (动词 40, 量词 20, 名词 40)
  *  和脑叶公司 Wiki 的"T-01-31 沉默乐团"条目 (动词 50, 名词 50).
  *  同 hour_log_page.py. */
-private val FOG_ZH_VERBS = listOf(
+internal val FOG_ZH_VERBS = listOf(
     "生成", "治愈", "掉落", "繁殖", "交易", "工作", "游荡", "聚集", "玩耍", "回家", "睡觉", "认领", "拾取", "分享", "耕作", "逃跑", "注视", "交谈",
     "收割", "躲避", "寻找", "起床", "攀爬", "打开", "放弃", "绑定", "破坏", "传送", "检测", "传播", "合并", "攻击", "装备", "催熟", "播种", "收获",
     "制作", "检查", "购买", "出售", "补货", "庆祝", "发射", "敲响", "观察", "追逐", "跳跃", "奔跑", "成长", "感染", "转换", "命名", "叫醒", "种植",
@@ -80,14 +80,14 @@ private val FOG_ZH_VERBS = listOf(
     "抵挡", "派遣", "调离", "施加", "呼叫", "丢失", "离开", "研发", "挥舞", "淹没", "献上", "构筑", "吸收", "穿戴", "评判", "领导", "协调", "传达",
     "丧失", "陶醉", "唤醒", "加快", "点燃", "鼓掌"
 )
-private val FOG_ZH_QUANTS = listOf(
+internal val FOG_ZH_QUANTS = listOf(
     "一个", "两个", "三个", "五个", "八个", "十个", "几个", "每个", "一块", "三块", "六块", "半块", "一组", "两组", "半组", "每组", "一格", "八格",
     "十格", "一张", "两张", "几张", "每张", "一次", "两次", "几次", "一枚", "十枚", "几枚", "一种", "五种", "七种", "几种", "一条", "两条", "几条",
     "一名", "三名", "五名", "一颗", "九颗", "几颗", "一件", "两件", "几件", "一片", "几片", "一层", "两层", "一级", "五级", "一只", "两只", "几只",
     "一些", "许多", "少量", "多个", "四块", "四组", "一棵", "两棵", "每棵", "一粒", "几粒", "一口", "半口", "三口", "一株", "每株", "两名", "每名",
     "一套", "整套", "一群", "那群", "一帮", "那帮", "三秒", "两阶"
 )
-private val FOG_ZH_NOUNS = listOf(
+internal val FOG_ZH_NOUNS = listOf(
     "村民", "村庄", "职业", "面包", "小麦", "骨粉", "农民", "渔夫", "牧师", "屠夫", "石匠", "皮匠", "傻子", "盔甲", "物品", "方块", "僵尸", "女巫",
     "粒子", "言论", "声望", "折扣", "礼物", "火箭", "房屋", "梯子", "屋顶", "教堂", "码头", "书架", "讲台", "木桶", "高炉", "砂轮", "作物", "耕地",
     "雪屋", "苹果", "南瓜", "徽章", "服装", "袍子", "帽子", "围裙", "眼镜", "手套", "头巾", "羽毛", "箭袋", "矿车", "蝙蝠", "骆驼", "熊猫", "狐狸",
@@ -98,7 +98,7 @@ private val FOG_ZH_NOUNS = listOf(
     "镰刀", "总谱", "音乐", "末日", "交响", "饰品", "艺术", "公司", "乐谱", "神态", "举止", "风度", "听众", "内涵", "记忆", "心灵", "活物", "部门",
     "节奏", "萨满", "礼赞", "护盾", "子弹", "设施"
 )
-private val FOG_EN_VERBS = listOf(
+internal val FOG_EN_VERBS = listOf(
     "trade", "breed", "spawn", "cure", "drop", "wander", "gather", "play", "sleep", "claim", "share", "farm",
     "flee", "stare", "harvest", "plant", "throw", "pick", "equip", "climb", "open", "close", "jump", "sprint",
     "craft", "heal", "gossip", "work", "explore", "buy", "sell", "restock", "celebrate", "launch", "ring",
@@ -114,7 +114,7 @@ private val FOG_EN_VERBS = listOf(
     "call", "lose", "leave", "develop", "wield", "drown", "offer", "assemble", "soak", "don", "judge", "lead",
     "coordinate", "convey", "forfeit", "savor", "awaken", "hasten", "ignite", "applaud"
 )
-private val FOG_EN_QUANTS = listOf(
+internal val FOG_EN_QUANTS = listOf(
     "a stack of", "a block of", "a slot of", "a piece of", "a batch of", "a handful of", "two stacks of",
     "two blocks of", "two slots of", "two pieces of", "two batches of", "two handfuls of", "three stacks of",
     "three blocks of", "three slots of", "three pieces of", "three batches of", "three handfuls of",
@@ -131,7 +131,7 @@ private val FOG_EN_QUANTS = listOf(
     "two squads of", "every squad of", "a set of", "a full set of", "a swarm of", "that swarm of", "a gang of",
     "that gang of", "three seconds of", "two tiers of"
 )
-private val FOG_EN_NOUNS = listOf(
+internal val FOG_EN_NOUNS = listOf(
     "villagers", "emeralds", "beds", "bells", "carrots", "potatoes", "beetroots", "seeds", "pumpkins",
     "golems", "zombies", "pillagers", "witches", "farmers", "clerics", "librarians", "masons", "shepherds",
     "fletchers", "butchers", "armorers", "toolsmiths", "cartographers", "leatherworkers", "weaponsmiths",
@@ -196,14 +196,16 @@ fun HourLogScreen(go: (String) -> Unit) {
                 val isNow = enabled && !start.isAfter(now) && now.isBefore(end)
                 // 合约 (MECHANICS 18.4): 细化规范的小时分成两个半小时各填一格;
                 // 记录封锁: 已经填写了的格子 (手动 / 自动) 不能再改, 提交前先确认
-                val split = core.contract.fineHour(start)
+                // 黑雾 (18.3): 除了"现在"的格子和待填写的格子, 时间写 ???, 内容是随机字符, 不能改
+                val fog = core.contract.fog()
+                val fogWords = if (fog) core.contract.fogWords() else emptyList()
+                // 细化规范 + 黑雾: 盖住的行也都分成两格 (只是显示)
+                val split = core.contract.fineHour(start) || (fog && core.contract.has("fine") &&
+                    !(!start.isAfter(now) && now.isBefore(end)) && !isWait)
                 val cells = if (split) listOf(
                     Triple(start, start.plusMinutes(30), dm.halfText(ds, start.hour, 0)),
                     Triple(start.plusMinutes(30), end, dm.halfText(ds, start.hour, 1)))
                     else listOf(Triple(start, end, dm.hourText(ds, start.hour)))
-                // 黑雾 (18.3): 除了"现在"的格子和待填写的格子, 时间写 ???, 内容是随机字符, 不能改
-                val fog = core.contract.fog()
-                val fogWords = if (fog) core.contract.fogWords() else emptyList()
                 val hidden = cells.map { (a, b, _) ->
                     val wait = awaiting != null && !awaiting.isBefore(a) && awaiting.isBefore(b)
                     fog && !(!now.isBefore(a) && now.isBefore(b)) && !wait

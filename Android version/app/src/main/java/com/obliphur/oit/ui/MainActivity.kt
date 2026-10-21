@@ -382,7 +382,8 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
                         val ct = core.contract
                         Text("CONTINGENCY", color = cp.dim, fontWeight = FontWeight.Bold, fontSize = 12.sp,
                             modifier = Modifier.padding(start = 24.dp))
-                        Text("${if (ct.active) ct.level else com.obliphur.oit.core.Contract.levelOf(ct.draft)}",
+                        Text(if (ct.active) com.obliphur.oit.core.Contract.levelLabel(ct.level, ct.origLevel)
+                            else "${com.obliphur.oit.core.Contract.levelOf(ct.draft)}",
                             color = cp.text, fontWeight = FontWeight.Bold, fontSize = 44.sp, modifier = Modifier.padding(start = 24.dp))
                         Text(if (ct.active) tr("合约进行中") else tr("挑战任务"), color = cp.tagText, fontSize = 12.sp,
                             fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 24.dp, bottom = 20.dp)

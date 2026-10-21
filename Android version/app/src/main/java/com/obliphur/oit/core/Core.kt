@@ -107,6 +107,8 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     private var offlineName = ""
     /** [开始, 结束] (毫秒) 里有绑定的设备离线的时间段. */
     var offlineSpans: (Long, Long) -> List<Pair<Long, Long>> = { _, _ -> emptyList() }
+    /** 本机关机的那几段 (15.4): 本机这段的数据不计入专注计时. */
+    var selfOffSpans: (Long, Long) -> List<Pair<Long, Long>> = { _, _ -> emptyList() }
     /** 每 5 秒: 记下设备离线的时间段. */
     var trackOffline: () -> Unit = {}
     /** 母端的开发者模式变了: 马上同步给子端. */
@@ -175,7 +177,10 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     /** 界面和服务都就位后调用一次. */
     fun start() {
         net.backend = { force -> host.applyNet(force) }
-        host.applyNet(true)               // 程序一启动就进入离线状态
+        // 联网状态随设备同步 (MECHANICS 2.8): 同一次联网由发起的设备扣额度, 它不在线时由本机扣
+        net.myId = { myId() }
+        net.chargeOk = { ownerAway(it) }
+        host.applyNet(true)               // 程序一启动先按存下的联网状态 (多半是离线) 设好
         notePowerBack()
         timer.recover()
         behaviorTick()
@@ -316,6 +321,15 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
 
 
     // ---- 定时 ----
+
+    /** 别的设备上改动了联网状态 (申请 / 联网 / 结束): 照着切换 (MECHANICS 2.8). */
+    fun adoptNet(live: JSONObject) {
+        when (net.adopt(live)) {
+            "started" -> toast(tr("网络已开启."), "success")
+            "ended" -> toast(tr("联网已在其他设备上结束,网络已断开."), "warn")
+        }
+        changed()
+    }
 
     /** 大约每秒调用一次 (服务里的循环, 以及从睡眠中被闹钟叫醒时). */
     fun tick() {

@@ -101,7 +101,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
                 restBase = core.focusRest(minutes, startWall!!, end)
                 val off = cutOffline(startWall!!, end)
                 dm.addStudySession(startWall!!, end, maxOf(0.0, minutes - off / 60.0))
-                dm.addFocusSession("study", startWall, end)
+                addStudyPieces(startWall!!, end)
                 closeCheck()
                 state = TState.IDLE          // 专注已记下: 先清掉文件里的专注状态
                 saveState()
@@ -535,6 +535,13 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         if (alive.isBefore(start)) alive = start
         if (alive.isAfter(now)) alive = now
         owner = rec.optString("owner")
+        if (rec.optBoolean("off") && secondsBetween(alive, now) > Cfg.CLOSED_GAP) {
+            // 本机是关机 / 没电停下的 (MECHANICS 15.4): 效果和在线一样, 专注照常接着计时 ("还在吗"照常按开始时刻算);
+            // 关着的这段本机的数据不计入 (见 cutOffline). 绑定了其他设备时, 同步上以后跟着它们
+            enterFocus(start, mono() - secondsBetween(start, now), checks, ok)
+            core.toast(tr("关机期间专注照常进行, 已接着计时."), "info", long = true)
+            return
+        }
         if (core.hasPeers() && secondsBetween(alive, now) > Cfg.CLOSED_GAP) {
             // 绑定了其他设备, 共享的专注中 OIT 被关掉了: 关掉的这段记为空闲 (总统计里优先级最高),
             // 专注照常恢复, 等第一次同步看其他设备是不是已经结束了它, 没有就由本机终止 (checkClosePending).
@@ -557,6 +564,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         val (minutes, brkSec) = bookFocus(start, sec, if (penalized) ok else null)
         setCarry(breakCarry + brkSec)
         addAutoRest(brkSec)
+        if (!rec.optBoolean("off")) deepCheckClosed(start, sec)
         if (minutes <= 0) return
         var msg: String
         if (penalized) {
@@ -582,22 +590,49 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         // 有设备离线的那段记为空闲, 不计入学习时长; 建议休息时长照常按计入前的时长算
         val counted = maxOf(0.0, minutes - cutOffline(start, end) / 60.0)
         dm.addStudySession(start, end, counted)
-        dm.addFocusSession("study", start, end)
+        addStudyPieces(start, end)
         val brk = Math.round(core.focusRest(minutes, start, end)).toInt()
         return counted to brk
     }
 
-    /** [start, end] 这段专注里有绑定的设备离线的时间段: 记为空闲 (统计里压过同一段专注), 返回一共多少秒. */
+    /** OIT 被关掉 (不是关机) 导致专注停止: 照样按纵深推进检查这段专注够不够长 (18.3). */
+    private fun deepCheckClosed(start: LocalDateTime, seconds: Double) {
+        val minutes = core.contract.focusMinutes(start, seconds)
+        core.contract.focusCheck(minutes * 60).ifEmpty { null }?.let {
+            core.contractViolation(tr("专注只有 {m} 分钟 (至少 {n} 分钟)", "m" to minutes.toInt(),
+                "n" to Contract.DEEP[it]!! / 60), it)
+        }
+    }
+
+    private fun ms(t: LocalDateTime) = t.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+    private fun wall(ms: Long) = LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(ms), java.time.ZoneId.systemDefault())
+
+    /** [start, end] 这段专注里不计入学习时长的部分, 返回一共多少秒:
+     *  有绑定的设备离线的时间段记为空闲 (统计里压过同一段专注);
+     *  本机关机的时间段 (MECHANICS 15.4) 本机的数据不计入 (见 addStudyPieces), 只有关机的设备 (没有别的设备记下专注 / 休息) 时记为空闲. */
     private fun cutOffline(start: LocalDateTime, end: LocalDateTime): Double {
-        val z = java.time.ZoneId.systemDefault()
+        val spans = core.offlineSpans(ms(start), ms(end)).filter { it.second > it.first }
+        val mine = core.selfOffSpans(ms(start), ms(end)).filter { it.second > it.first }
+        val idle = spans + mine.filter { (a, b) -> !dm.peerActive(wall(a), wall(b)) }
+        for ((a, b) in idle) dm.addFocusSession("idle", wall(a), wall(b), start)
         var total = 0.0
-        for ((a, b) in core.offlineSpans(start.atZone(z).toInstant().toEpochMilli(), end.atZone(z).toInstant().toEpochMilli())) {
-            if (b <= a) continue
-            dm.addFocusSession("idle", LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(a), z),
-                LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(b), z), start)
-            total += (b - a) / 1000.0
+        var last: Long? = null
+        for ((a0, b) in (spans + mine).sortedBy { it.first }) {      // 合并后的长度 (两种重叠时不重复算)
+            val a = if (last != null && a0 < last) last else a0
+            if (b > a) total += (b - a) / 1000.0
+            last = if (last == null) b else maxOf(last, b)
         }
         return total
+    }
+
+    /** 记下本机这段专注; 本机关机的那几段 (MECHANICS 15.4) 不记, 不参与专注计时的计算. */
+    private fun addStudyPieces(start: LocalDateTime, end: LocalDateTime) {
+        var a = start
+        for ((x, y) in core.selfOffSpans(ms(start), ms(end))) {
+            if (wall(x).isAfter(a)) dm.addFocusSession("study", a, wall(x))
+            if (wall(y).isAfter(a)) a = wall(y)
+        }
+        if (end.isAfter(a)) dm.addFocusSession("study", a, end)
     }
 
     // ---- 专注中每 1.5 小时: 还在吗 (6.6) ----
@@ -637,6 +672,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         resetToIdle()
         setCarry(breakCarry + brk)
         addAutoRest(brk)
+        if (!p.off) deepCheckClosed(p.start, sec)
         var msg = tr("这台设备上的 OIT 在 {at} 被关掉了, 共享的专注已终止.", "at" to p.alive.format(Fmt.MDHM))
         msg += "\n" + tr("专注记到被关掉时为止: 计入 {m} 分钟; 关掉的这段记为空闲.", "m" to f1(minutes))
         if (brk > 0) msg += "\n" + tr("积攒的休息时间 +{t}.", "t" to fmtMs(brk.toDouble())) + "\n" + tr("立即开始专注:先进行一次休息时间的折算")

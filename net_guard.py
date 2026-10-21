@@ -51,6 +51,15 @@ class NetGuard:
         self.cooldown_factor = lambda now: 1.0
         # 设备同步: 其他设备的联网会话 (按理由统计用)
         self.peer_usage = lambda: []
+        # 联网状态 (申请中 / 联网中, MECHANICS 2.8): 随设备同步, 关掉程序再打开时接着用.
+        # live_id: 这一状态的编号 (每次改动换一个); live_owner: 发起的设备, 由它扣额度 (它不在线时由本机扣)
+        self.my_id = lambda: ""
+        self.charge_ok = lambda owner: True
+        self.live_id = ""
+        self.live_owner = ""
+        self.grant_end = 0.0                  # 这次联网到几点 (墙上时间, 秒)
+        self._grant_info = {}                 # 这次联网的理由 / 申请的分钟数
+        self._saved_live = None
         self.proxy = ProxyController(
             data_dir, mode_getter=lambda: ("blockall" if getattr(config, "NET_MODE", "") == "proxy_all"
                                            else getattr(config, "FILTER_MODE", "blacklist")),
@@ -71,6 +80,10 @@ class NetGuard:
             self.block()
             # 上次是 Proxy 方式关闭的: 系统代理还指向已经退出的过滤代理, 联网时也连不上. 还原掉
             self.q.put(lambda: self.proxy.stop(restore=True))
+        # 关闭前的联网状态: 申请还在等就接着等, 联网还没到时间就接着联网 (到原来的结束时刻为止)
+        if self._saved_live and not self.dev_mode:
+            self.adopt(self._saved_live)
+        self._saved_live = None
 
 
     def _day(self, offset: int = 0):
@@ -238,6 +251,8 @@ class NetGuard:
             except (TypeError, ValueError):
                 return 0.0
 
+        if isinstance(d.get("live"), dict):
+            self._saved_live = d["live"]          # __init__ 最后照着恢复
         if saved == self.date:
             self.used = num("used")
             self.bonus = num("bonus")
@@ -267,6 +282,7 @@ class NetGuard:
                     "gift": int(self.gift),
                     "tomorrow_used": int(self.tomorrow_used),
                     "debt": int(self.debt),
+                    "live": self.live(),
                 }, f)
         except IOError:
             pass
@@ -504,6 +520,7 @@ class NetGuard:
                 return False, msg
             self.pending = {"minutes": minutes, "at": time.time(),
                             "reason": reason, "quick": True}
+            self._touch()
             self._log(f"QUICK    {minutes} min (cost {int(minutes * config.QUICK_MULTIPLIER)} min quota)"
                       f"  reason: {reason}")
             return True, ""
@@ -521,6 +538,7 @@ class NetGuard:
             "reason": reason,
             "quick": False,
         }
+        self._touch()
         self._log(f"REQUEST  {minutes} min"
                   + (f" (cooldown {rate:g}x)" if rate < 1.0 else "")
                   + (f" (contract, cooldown x{mult:g})" if mult > 1.0 else "")
@@ -538,6 +556,7 @@ class NetGuard:
             return False, msg
         self.pending = {"minutes": p["minutes"], "at": time.time(),
                         "reason": p.get("reason", ""), "quick": True}
+        self._touch()
         self._log(f"QUICK    upgrade {p['minutes']} min "
                   f"(cost {int(p['minutes'] * config.QUICK_MULTIPLIER)} min quota)")
         return True, ""
@@ -546,13 +565,16 @@ class NetGuard:
         if self.pending:
             p = self.pending
             self._log(f"CANCEL   {p['minutes']} min {'quick ' if p.get('quick') else ''}request")
+            self._touch()
         self.pending = None
+        self._save()
 
     def end_early(self):
         if self.dev_mode:
             return
         if self.online:
             self._log(f"END      early, {int(self.grant_left)}s unused")
+            self._touch()
         self._reset_grant()
         self.block()
         self._save()
@@ -561,16 +583,100 @@ class NetGuard:
         self.grant_left = 0.0
         self.grant_rate = 1.0
         self._grant_is_quick = False
+        self.grant_end = 0.0
+        self._grant_info = {}
         if self._session is not None:
             self._session = None
             self._save_usage()
 
     def shutdown(self):
-        self.pending = None
-        self._reset_grant()
+        """关闭程序: 断网 (fail-closed), 联网状态留在文件里, 下次打开时接着用 (2.7)."""
         self._save()
         if not self.dev_mode:
             self.block(sync=True)
+
+    # ---- 联网状态: 随设备同步, 关掉程序再打开时接着用 (MECHANICS 2.8) ----
+
+    def _touch(self):
+        """本机改动了联网状态: 换一个编号, 本机成为发起的设备."""
+        self.live_id = str(int(time.time() * 1000))
+        self.live_owner = self.my_id() or ""
+
+    def live(self) -> dict:
+        """此刻的联网状态 (只用墙上时间, 没有改动时内容不变; 只用整数: at 毫秒, end 秒, rate ×100, 两端写法一样)."""
+        base = {"id": getattr(self, "live_id", ""), "owner": getattr(self, "live_owner", "")}
+        if getattr(self, "grant_left", 0) > 0 and getattr(self, "grant_end", 0) and not self.dev_mode:
+            return dict(base, state="online", end=int(self.grant_end), rate=int(round(self.grant_rate * 100)),
+                        quick=bool(getattr(self, "_grant_is_quick", False)),
+                        reason=str(self._grant_info.get("reason", "")),
+                        minutes=int(self._grant_info.get("minutes", 0)))
+        if getattr(self, "pending", None):
+            p = self.pending
+            return dict(base, state="pending", at=int(round(float(p["at"]) * 1000)), minutes=int(p["minutes"]),
+                        reason=str(p.get("reason", "")), quick=bool(p.get("quick")))
+        return dict(base, state="offline")
+
+    def _grant(self, end: float, rate: float, quick: bool, reason: str, minutes: int, left: float = None) -> bool:
+        """联网到 end (墙上时间) 为止; 已经过了就不联网. left: 本机刚批下来的秒数 (不用按 end 再算)."""
+        self._reset_grant()
+        left = float(end) - time.time() if left is None else float(left)
+        if left <= 0:
+            return False
+        self.grant_left = left
+        self.grant_end = float(end)
+        self.grant_rate = float(rate)
+        self._grant_is_quick = bool(quick)
+        self._grant_info = {"reason": reason, "minutes": int(minutes)}
+        if self.charge_ok(self.live_owner):
+            self._open_session(reason, quick, minutes)
+        self.unblock()
+        return True
+
+    def adopt(self, live: dict):
+        """别的设备上 (或关闭前) 的联网状态: 照着切换. 返回 "started" / "ended" / None."""
+        if not isinstance(live, dict) or self.dead or self.dev_mode:
+            return None
+        lid = str(live.get("id") or "")
+        if not lid:
+            return None
+        if lid == self.live_id:
+            # 同一次联网, 各设备算出的结束时刻差一两秒: 对齐到同步来的, 免得来回改
+            if live.get("state") == "online" and self.online and self.grant_end:
+                try:
+                    end = float(live.get("end") or 0)
+                except (TypeError, ValueError):
+                    return None
+                if end and end != self.grant_end:
+                    self.grant_left = max(0.0, self.grant_left + end - self.grant_end)
+                    self.grant_end = end
+            return None
+        was = self.online
+        self.live_id, self.live_owner = lid, str(live.get("owner") or "")
+        st = live.get("state")
+        event = None
+        try:
+            if st == "online":
+                self.pending = None
+                if self._grant(float(live.get("end") or 0), int(live.get("rate") or 100) / 100.0, bool(live.get("quick")),
+                               str(live.get("reason") or ""), int(live.get("minutes") or 0)):
+                    event = None if was else "started"
+                elif was:
+                    self.block()
+                    event = "ended"
+            else:
+                if was:
+                    self._reset_grant()
+                    self.block()
+                    event = "ended"
+                self.pending = None
+                if st == "pending":
+                    self.pending = {"minutes": int(live.get("minutes") or 0), "at": int(live.get("at") or 0) / 1000.0,
+                                    "reason": str(live.get("reason") or ""), "quick": bool(live.get("quick"))}
+        except (TypeError, ValueError):
+            return None
+        self._log(f"SYNC     net state {st} from {self.live_owner or '?'}")
+        self._save()
+        return event
 
     def release(self):
         self.dead = True
@@ -616,12 +722,10 @@ class NetGuard:
             quick = bool(p.get("quick"))
             rate = max(1.0, float(config.QUICK_MULTIPLIER)) if quick else 1.0
             secs = min(p["minutes"] * 60.0, self.remaining / rate)
-            if secs > 0:
-                self.grant_left = secs
-                self.grant_rate = rate
-                self._grant_is_quick = quick
-                self._open_session(p.get("reason", ""), quick, p["minutes"])
-                self.unblock()
+            # 编号接着申请的, 各设备算出来的一样 (结束时刻差一两秒的, 同步时对齐)
+            self.live_id = (self.live_id or str(int(p["at"] * 1000))) + "g"
+            if secs > 0 and self._grant(round(time.time() + secs), rate, quick, p.get("reason", ""), p["minutes"],
+                                        left=secs):
                 self._save()
                 self._log(f"START    {int(secs // 60)} min granted"
                           + (f" (quick, {rate:g}x)" if quick else ""))
@@ -631,11 +735,15 @@ class NetGuard:
         if self.online:
             dt = min(max(dt, 0.0), self.tick_clamp, self.grant_left)
             self.grant_left -= dt
-            self._count_online(dt)
-
-            self.used += dt * self.grant_rate
+            if self.grant_end and self.grant_end - time.time() < self.grant_left - 1:
+                self.grant_left = max(0.0, self.grant_end - time.time())   # 按墙上时间到点 (电脑睡眠过等)
+            # 同一次联网在各设备上一起进行: 只由发起的设备扣额度 (它不在线时由本机扣)
+            if self.charge_ok(self.live_owner):
+                self._count_online(dt)
+                self.used += dt * self.grant_rate
 
             if self.grant_left <= 1e-6:
+                self.live_id += "e"
                 self._reset_grant()
                 self.block()
                 self._save()
@@ -917,6 +1025,47 @@ def _selftest():
         finally:
             for k, v in saved_mult.items():
                 setattr(config, k, v)
+
+        # 联网状态随设备同步 / 关掉再打开时接着用 (MECHANICS 2.8)
+        def fresh(me):
+            g = NetGuard.__new__(NetGuard)
+            g.dead, g.date = False, _dt.datetime.now().strftime('%Y-%m-%d')
+            g.used = g.bonus = g.gift = g.tomorrow_used = g.debt = 0.0
+            g.grant_left, g.grant_rate, g.pending, g.usage, g._session = 0.0, 1.0, None, [], None
+            g._usage_dirty, g.live_id, g.live_owner, g.grant_end, g._grant_info = False, "", "", 0.0, {}
+            g.state_file = os.path.join(tempfile.mkdtemp(), "net_state.json")
+            g.usage_file = g.state_file + ".usage"
+            g.log_file = g.state_file + ".log"
+            g.peer_net = lambda: {"used": 0.0, "bonus": 0.0, "tomorrow_used": 0.0, "debt": 0.0, "gift": 0.0}
+            g.quota_factor = g.cooldown_factor = lambda *_: 1.0
+            g.my_id = lambda: me
+            g.charge_ok = lambda owner: owner == me
+            g.block = g.unblock = lambda *a, **k: None
+            return g
+        a, b = fresh("A"), fresh("B")
+        ok, msg = a.request(20, "查资料")
+        assert ok and a.live()["state"] == "pending" and a.live()["owner"] == "A"
+        assert b.adopt(a.live()) is None and b.mode == "pending" and b.live() == a.live(), "申请同步过去, 内容一样"
+        a.pending["at"] = b.pending["at"] = time.time() - 1
+        a.tick(0.0); b.tick(0.0)
+        assert a.online and b.online and a.live()["id"] == b.live()["id"] == a.live_id
+        b.adopt(a.live())
+        assert a.live() == b.live(), "结束时刻对齐"
+        a.tick(60.0); b.tick(60.0)
+        assert abs(a.used - 60) < 1e-6 and b.used == 0.0, "同一次联网只由发起的设备扣额度"
+        b.end_early()
+        assert a.adopt(b.live()) == "ended" and not a.online, "在别的设备上提前结束"
+        # 关掉再打开: 文件里的联网状态
+        c = fresh("C")
+        ok, msg = c.request(10, "x", quick=True)
+        c.tick(0.0)
+        assert c.online
+        c._save()
+        d = fresh("C")
+        d.state_file = c.state_file
+        d._saved_live = None
+        d._load()
+        assert d._saved_live and d.adopt(d._saved_live) == "started" and d.online and abs(d.grant_left - 600) < 2
         return "net_guard selftest OK"
     finally:
         (config.DAILY_LIMIT, config.COOLDOWN,

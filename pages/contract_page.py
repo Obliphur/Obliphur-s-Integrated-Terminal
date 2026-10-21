@@ -667,7 +667,7 @@ class ContractPage(tk.Frame):
         level = self.level()
         orig = c.orig_level if active else level
         terms = c.mine if active else sel
-        cfg(self.lbl_level, text=str(level))
+        cfg(self.lbl_level, text=C.level_label(level, orig))       # 扣过等级: 最终等级[最初等级-扣的等级]
         self._draw_strip(level)
         info = [tr("时长 {t}", t=fmt_hm(C.duration_of(c.orig if active else sel))),
                 tr("完成后休息 +{n} 分钟", n=C.rest_minutes_total(level, terms))]
@@ -675,8 +675,6 @@ class ContractPage(tk.Frame):
         gift = C.rest_gift(c.orig if active else sel)
         if gift:
             info.append(tr("开始时休息 +{n} 分钟", n=gift // 60))
-        if orig != level:
-            info.insert(0, tr("开始时 {n}", n=orig))
         cfg(self.lbl_info, text="\n".join(info))
         if self._on_combo_page():
             key = tuple((x["id"], st) for x, st in self._combos())

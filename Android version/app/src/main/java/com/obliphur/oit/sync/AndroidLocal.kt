@@ -141,7 +141,9 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
         val timer = mapOf<String, Any?>("break_carry" to core.timer.breakCarry, "auto_rest" to core.timer.autoRest,
             "bonus" to JSONObject().put("week", week).put("used", used).put("count", core.timer.bonusCount()),
             // 此刻的专注 / 休息: 哪台设备最后改动就以哪台为准
-            "live" to core.timer.liveState())
+            "live" to core.timer.liveState(),
+            // 联网状态 (申请中 / 联网中, MECHANICS 2.8): 同上
+            "net" to core.net.live())
         // 成就: 哪台设备达成都算 (达成时刻取最早的), 见 MECHANICS 17
         // 合约: 进行中的合约以后改的为准, 结束了的合约合并 (MECHANICS 18)
         // 行为模式的外出: 每一项单独比较, 计时 / 统计跟着它走 (MECHANICS 21)
@@ -203,6 +205,7 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
                 core.timer.syncSet(carry, b?.optString("week"), b?.optInt("used"), b?.optInt("count"),
                     (changes["auto_rest"] as? Number)?.toInt())
                 (changes["live"] as? JSONObject)?.let { core.timer.adopt(it) }
+                (changes["net"] as? JSONObject)?.let { core.adoptNet(it) }
             }
             "achievements" -> core.mergeAchievements(changes)
             "contract" -> core.mergeContract(changes)

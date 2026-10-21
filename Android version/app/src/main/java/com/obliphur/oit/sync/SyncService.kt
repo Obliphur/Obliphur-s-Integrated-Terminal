@@ -1344,10 +1344,17 @@ class SyncService(
         (0 until arr.length()).mapNotNull { i -> arr.optJSONArray(i)?.let { longArrayOf(it.optLong(0), it.optLong(1)) } }
     }
 
-    /** [start, end] 里有任意一台设备离线的时间段 (合并过的); 也包括本机关机的那几段 (15.4). */
-    fun offlineSpans(startMs: Long, endMs: Long): List<Pair<Long, Long>> {
+    /** [start, end] 里本机关机的那几段 (15.4). */
+    fun selfOffSpans(startMs: Long, endMs: Long): List<Pair<Long, Long>> = selfOff().mapNotNull {
+        val a = maxOf(it[0], startMs)
+        val b = minOf(it[1], endMs)
+        if (b > a) a to b else null
+    }.sortedBy { it.first }
+
+    /** [start, end] 里有任意一台设备离线的时间段 (合并过的); own: 也包括本机关机的那几段 (15.4). */
+    fun offlineSpans(startMs: Long, endMs: Long, own: Boolean = true): List<Pair<Long, Long>> {
         val now = System.currentTimeMillis()
-        val spans = (synchronized(offline) { offline.values.flatten() } + selfOff()).mapNotNull {
+        val spans = (synchronized(offline) { offline.values.flatten() } + (if (own) selfOff() else emptyList())).mapNotNull {
             val a = maxOf(it[0], startMs)
             val b = minOf(if (it[1] < 0) now else it[1], endMs)
             if (b > a) a to b else null

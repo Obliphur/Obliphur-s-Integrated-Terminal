@@ -146,7 +146,8 @@ class OitApp : Application(), Host {
             m == null || System.currentTimeMillis() - (s.peers()[m]?.optLong("last_ok") ?: 0L) < com.obliphur.oit.sync.SyncService.FRESH_MS
         }
         core.devChangedHook = { if (s.peers().isNotEmpty()) s.syncNow() }
-        core.offlineSpans = { a, b -> s.offlineSpans(a, b) }
+        core.offlineSpans = { a, b -> s.offlineSpans(a, b, own = false) }
+        core.selfOffSpans = { a, b -> s.selfOffSpans(a, b) }
         core.offlineDevices = { s.deviceStates().filter { !it.online }.map { it.name to it.seen } }
         core.versionMismatch = { s.versionMismatch() }
         core.syncStartedMs = { s.startedMs }

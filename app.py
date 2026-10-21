@@ -256,6 +256,9 @@ class BreakTimerApp:
         self.dm.my_id = lambda: self.sync.my_id
         self.dm.mother_id = self.sync.mother_id
         self.net.peer_net = lambda: devsync.peer_net(self.sync.peer_ledgers(), self.net.date)
+        # 联网状态随设备同步 (MECHANICS 2.8): 同一次联网由发起的设备扣额度, 它不在线时由本机扣
+        self.net.my_id = lambda: self.sync.my_id
+        self.net.charge_ok = self._owner_away
         self.net.peer_usage = lambda: [r for led in self.sync.peer_ledgers()
                                        for r in (led.get("usage") or [])]
         self.sync_job = None
@@ -317,6 +320,7 @@ class BreakTimerApp:
         atexit.register(self._save_focus_now)
         self.var_confirm.trace_add("write", self._on_confirm_change)
         self._note_power_back()
+        self._recover_break()
         self._recover_focus()
         if not self.dm.username:
             # 第一次打开 (或者还没填过用户名的旧版本升级上来): 先填用户名, 再显示介绍窗口
@@ -589,6 +593,7 @@ class BreakTimerApp:
             locked=lambda a, b, text, now: self.contract.hour_locked(
                 a, b, text, now, config.FILL_WINDOW, self.dm.auto_text_for_key),
             split=self.contract.fine_hour,
+            split_all=lambda: self.contract.has("fine"),     # 细化规范 + 黑雾: 所有格子都分成两段 (18.3)
             fog=self._fog_words,                             # 黑雾: 只露出"现在"和待填写的格子 (18.3)
             sealed=lambda a, b: self.contract.hour_sealed(a, b)   # 记录封锁: 按 Enter 提交前先确认
         )
@@ -839,8 +844,7 @@ class BreakTimerApp:
             return
         if on:
             c = self.contract
-            lv = c.level if c.active else contract_mod.level_of(c.draft)
-            cfg(self.side_level, text=str(lv))
+            cfg(self.side_level, text=c.level_text())
             cfg(self.side_state, text=tr("合约进行中") if c.active else tr("挑战任务"))
             show_pack(fr, fill="x", before=self.nav_btns["reset"])
         else:
@@ -967,7 +971,7 @@ class BreakTimerApp:
             self.rest_base = self._focus_rest(elapsed_minutes, self.start_wall, end_wall)
             off = self._cut_offline(self.start_wall, end_wall)
             self.dm.add_study_session(self.start_wall, end_wall, max(0.0, elapsed_minutes - off / 60.0))
-            self.dm.add_focus_session("study", self.start_wall, end_wall)
+            self._add_study_pieces(self.start_wall, end_wall)
             self._close_check_win()
             self.state = READY_BREAK          # 专注已记下: 先清掉文件里的专注状态
             self._save_timer_state()
@@ -1652,6 +1656,8 @@ class BreakTimerApp:
         d["break_carry"] = self.break_carry
         d["auto_rest"] = int(getattr(self, "auto_rest", 0))
         d["focus"] = self._focus_record()
+        # 进行中的休息: 关掉程序再打开时接着休息 (6.3)
+        d["break"] = self.timer_live() if self.state == ON_BREAK and self.break_end_wall is not None else None
         self._focus_saved = time.monotonic()
         save_json_file(self.timer_file, d)
 
@@ -1721,7 +1727,7 @@ class BreakTimerApp:
 
     def _save_focus_now(self):
         self.dm.save_window_usage()
-        if self.state == RUNNING and not self.dm.resetting:
+        if self.state in (RUNNING, ON_BREAK) and not self.dm.resetting:
             try:
                 self._save_timer_state()
             except Exception:
@@ -1740,6 +1746,47 @@ class BreakTimerApp:
         self._sync_timer_buttons()
         self._save_timer_state()
         self.schedule_update()
+
+    def _resume_break(self, live: dict, end: datetime, left: int):
+        """照着计时器状态 (同步来的 / 关闭前存下的) 进入休息, 还剩 left 秒."""
+        self.state = ON_BREAK
+        self.start_wall = None
+        self.break_start_wall = datetime.fromisoformat(live["break_start"])
+        self.break_end_wall = end
+        self.countdown_seconds = left
+        self._bonus_break_active = bool(live.get("bonus"))
+        self._contract_break_active = bool(live.get("cbreak"))
+        self._break_pre = float(live.get("cpre") or 0)
+        self._break_cid = live.get("ccid")
+        self._show_on_break()
+        self.schedule_update()
+
+    def _recover_break(self):
+        """启动时: 上次关闭时在休息 → 还没到结束时刻就接着休息; 已经过了就记下这段休息, 回到空闲 (6.3)."""
+        rec = self._bonus_state().get("break")
+        if not isinstance(rec, dict) or rec.get("state") != "break":
+            return
+        now = datetime.now()
+        try:
+            start = datetime.fromisoformat(rec["break_start"])
+            end = datetime.fromisoformat(rec["break_end"])
+        except (KeyError, TypeError, ValueError):
+            self._save_timer_state()          # 记录坏了: 丢掉
+            return
+        self.timer_owner = str(rec.get("owner") or "")
+        left = int((end - now).total_seconds())
+        if left > 0 and start <= now:
+            self._resume_break(rec, end, left)
+            self._save_timer_state()
+            toast.info(tr("上次休息时程序退出了.已接着休息(到 {at}).", at=f"{end:%H:%M}"), timeout=8000)
+            return
+        if start < end <= now:
+            self.dm.add_focus_session("break", start, end)
+            c = self.contract
+            if c.active and c.live.get("id") == rec.get("ccid"):
+                c.pre_settle(float(rec.get("cpre") or 0), 0)
+            self.idle_since, self._nudges = end, 0      # 休息结束后迟迟不开始的提醒照常从结束时刻算 (6.4)
+        self._save_timer_state()
 
     def _recover_focus(self):
         """启动时: 上次退出时还在专注 → 不久前退出就接着计时, 否则记到最后一次保存为止."""
@@ -1761,6 +1808,12 @@ class BreakTimerApp:
         alive = min(max(alive, start), now)
         gap = (now - alive).total_seconds()
         self.timer_owner = str(rec.get("owner") or "")
+        if rec.get("off") and gap > float(config.CLOSED_GAP):
+            # 本机是关机 / 没电停下的 (MECHANICS 15.4): 效果和在线一样, 专注照常接着计时 ("还在吗"照常按开始时刻算);
+            # 关着的这段本机的数据不计入 (见 _cut_offline). 绑定了其他设备时, 同步上以后跟着它们
+            self._enter_focus(start, time.monotonic() - (now - start).total_seconds(), checks, ok)
+            toast.info(tr("关机期间专注照常进行, 已接着计时."), timeout=8000)
+            return
         if self.sync.peers() and gap > float(config.CLOSED_GAP):
             # 绑定了其他设备, 共享的专注中 OIT 被关掉了: 关掉的这段记为空闲 (总统计里优先级最高),
             # 专注照常恢复, 等第一次同步看其他设备是不是已经结束了它, 没有就由本机终止 (_check_close_pending).
@@ -1786,6 +1839,8 @@ class BreakTimerApp:
         minutes, brk = self._book_focus(start, sec, ok if penalized else None)
         self._set_break_carry(self.break_carry + brk)   # 同时清掉文件里的专注状态
         self._add_auto_rest(brk)
+        if not rec.get("off"):
+            self._deep_check_closed(start, sec)
         self.refresh_display()
         if minutes <= 0:
             return
@@ -1836,6 +1891,8 @@ class BreakTimerApp:
         self.reset_to_idle()
         self._set_break_carry(self.break_carry + brk)
         self._add_auto_rest(brk)
+        if not p.get("off"):
+            self._deep_check_closed(start, sec)
         self.lbl_sub.config(text=self._idle_sub_text())
         self.refresh_display()
         self._refresh_if_visible("stats", "cal")
@@ -1857,6 +1914,8 @@ class BreakTimerApp:
         self.reset_to_idle()
         self.break_carry += brk
         self._add_auto_rest(brk)                 # 同时写进文件
+        if not self._went_off():
+            self._deep_check_closed(start, elapsed)
 
     def _keep_awake(self):
         """专注 / 休息中不让系统自动睡眠 (屏幕照常可以关掉), 计时和同步不会停."""
@@ -1884,9 +1943,17 @@ class BreakTimerApp:
         # 有设备离线的那段记为空闲, 不计入学习时长; 建议休息时长照常按计入前的时长算
         counted = max(0.0, minutes - self._cut_offline(start, end) / 60.0)
         self.dm.add_study_session(start, end, counted)
-        self.dm.add_focus_session("study", start, end)
+        self._add_study_pieces(start, end)
         brk = int(round(self._focus_rest(minutes, start, end)))
         return counted, brk
+
+    def _deep_check_closed(self, start: datetime, seconds: float):
+        """OIT 被关掉 (不是关机) 导致专注停止: 照样按纵深推进检查这段专注够不够长 (18.3)."""
+        minutes = self.contract.focus_minutes(start, seconds)
+        tid = self.contract.focus_check(minutes * 60)
+        if tid:
+            self.contract_violation(tr("专注只有 {m} 分钟 (至少 {n} 分钟)", m=int(minutes),
+                                       n=contract_mod.DEEP[tid] // 60), tid)
 
     def _focus_rest(self, minutes: float, start: datetime, end: datetime) -> float:
         """一段专注换来的休息时间 (秒): F(t) × 休息时间倍率, 再按合约 (MECHANICS 18) 调整."""
@@ -1896,17 +1963,46 @@ class BreakTimerApp:
         return self.contract.book_rest_after(sec, start) if start else sec
 
     def _cut_offline(self, start: datetime, end: datetime) -> float:
-        """[start, end] 这段专注里有绑定的设备离线的时间段: 记为空闲 (统计里压过同一段专注), 返回一共多少秒."""
-        total = 0.0
+        """[start, end] 这段专注里不计入学习时长的部分, 返回一共多少秒:
+        - 有绑定的设备离线的时间段: 记为空闲 (统计里压过同一段专注);
+        - 本机关机的时间段 (MECHANICS 15.4): 本机的数据不计入 (见 _add_study_pieces);
+          这段只有关机的设备 (没有别的设备记下专注 / 休息) 时记为空闲."""
+        a_ms, b_ms = start.timestamp() * 1000, end.timestamp() * 1000
         try:
-            spans = self.sync.offline_spans(start.timestamp() * 1000, end.timestamp() * 1000)
+            spans = self.sync.offline_spans(a_ms, b_ms, own=False)
+            mine = self.sync.self_off_spans(a_ms, b_ms)
         except Exception:
             return 0.0
-        for a, b in spans:
+        idle = list(spans)
+        for a, b in mine:
+            if not self.dm.peer_active(datetime.fromtimestamp(a / 1000), datetime.fromtimestamp(b / 1000)):
+                idle.append((a, b))
+        for a, b in idle:
             self.dm.add_focus_session("idle", datetime.fromtimestamp(a / 1000), datetime.fromtimestamp(b / 1000),
                                       focus=start)
-            total += (b - a) / 1000.0
+        total, last = 0.0, None
+        for a, b in sorted(list(spans) + list(mine)):          # 合并后的长度 (两种重叠时不重复算)
+            if last is not None and a < last:
+                a = last
+            if b > a:
+                total += (b - a) / 1000.0
+            last = b if last is None else max(last, b)
         return total
+
+    def _add_study_pieces(self, start: datetime, end: datetime):
+        """记下本机这段专注; 本机关机的那几段 (MECHANICS 15.4) 不记, 不参与专注计时的计算."""
+        try:
+            mine = self.sync.self_off_spans(start.timestamp() * 1000, end.timestamp() * 1000)
+        except Exception:
+            mine = []
+        a = start
+        for x, y in mine:
+            x, y = datetime.fromtimestamp(x / 1000), datetime.fromtimestamp(y / 1000)
+            if x > a:
+                self.dm.add_focus_session("study", a, x)
+            a = max(a, y)
+        if end > a:
+            self.dm.add_focus_session("study", a, end)
 
     # ---- 专注中每 1.5 小时: 还在吗 ----
 
@@ -2070,6 +2166,8 @@ class BreakTimerApp:
             self.lbl_time.config(text="0.00 min")
             self.lbl_sub.config(text=self._idle_sub_text())
             self._status(tr("准备就绪"), COLORS["text_dim"])
+        if hasattr(self, "timer_file"):
+            self._save_timer_state()            # 清掉文件里的进行中的休息, 重开时不会再记一遍
 
     def refresh_display(self):
         if self.contract.fog():
@@ -2348,17 +2446,7 @@ class BreakTimerApp:
                 if left <= 0:
                     self.reset_to_idle()
                 else:
-                    self.state = ON_BREAK
-                    self.start_wall = None
-                    self.break_start_wall = datetime.fromisoformat(live["break_start"])
-                    self.break_end_wall = end
-                    self.countdown_seconds = left
-                    self._bonus_break_active = bool(live.get("bonus"))
-                    self._contract_break_active = bool(live.get("cbreak"))
-                    self._break_pre = float(live.get("cpre") or 0)
-                    self._break_cid = live.get("ccid")
-                    self._show_on_break()
-                    self.schedule_update()
+                    self._resume_break(live, end, left)
             else:
                 self.break_start_wall = None
                 self.reset_to_idle()
@@ -2697,6 +2785,16 @@ class BreakTimerApp:
     def _fog_words(self):
         """黑雾: 整点记录假内容用的编号 (开始合约时抽好); 没有黑雾时 None."""
         return self.contract.fog_words() if self.contract.fog() else None
+
+    def adopt_net(self, live: dict):
+        """别的设备上改动了联网状态 (申请 / 联网 / 结束): 照着切换 (MECHANICS 2.8)."""
+        event = self.net.adopt(live)
+        self.refresh_net(force=True)
+        self._sync_break_lock()
+        if event == "started":
+            toast.success(tr("网络已开启."))
+        elif event == "ended":
+            toast.warn(tr("联网已在其他设备上结束,网络已断开."))
 
     def _owner_away(self, owner: str) -> bool:
         """这个状态的主人是本机, 或者主人不在线 (2 分钟没同步): 自动的操作由本机来做."""
@@ -3548,8 +3646,8 @@ class BreakTimerApp:
                 and not getattr(self, "_update_restart", False):
             self._end_focus_for_close()
             ended = True
-        self._save_focus_now()      # 专注中关闭 (没有绑定设备): 状态留在文件里, 下次打开时接着算 (见 _recover_focus)
-        self.end_break_early(silent=True)
+        # 专注 / 休息中关闭: 状态留在文件里, 下次打开时接着算 (见 _recover_focus / _recover_break)
+        self._save_focus_now()
         self._cancel_jobs()
         if ended:
             try:

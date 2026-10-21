@@ -127,12 +127,7 @@ class RulesPage(tk.Frame):
         ttk.Button(pf, text=tr("✕ 取消选中"), command=self._cancel_pending).pack(
             side="left", padx=(8, 0))
 
-        tk.Label(body, text=tr("🚫  最近被拦截的请求"), bg=bg, fg=COLORS["text"],
-                 font=config.font("body", bold=True)).pack(anchor="w", pady=(12, 2))
-        self.lb_events = tk.Listbox(body, height=7, activestyle="none",
-                                    font=config.font("small"), exportselection=False,
-                                    highlightbackground=COLORS["border"])
-        self.lb_events.pack(fill="x", pady=(0, 14))
+        tk.Frame(body, bg=bg, height=14).pack(fill="x")
         self.area.bind_children()
 
     def _make_panel(self, parent, key, title, row, col):
@@ -369,18 +364,6 @@ class RulesPage(tk.Frame):
             self.lb_pending.delete(0, "end")
             for line in pend:
                 self.lb_pending.insert("end", line)
-
-
-        seq = (c.event_seq, sum(e["count"] for e in c.events))
-        if force or self._shown.get("_events") != seq:
-            self._shown["_events"] = seq
-            self.lb_events.delete(0, "end")
-            for e in reversed(list(c.events)[-30:]):
-                t = datetime.fromtimestamp(e["ts"]).strftime("%H:%M:%S")
-                who = f"  [{e['exe']}]" if e["exe"] else ""
-                n = f"  ×{e['count']}" if e["count"] > 1 else ""
-                self.lb_events.insert(
-                    "end", f"{t}  {e['host']}{who}  ({tr(_WHY_TEXT.get(e['why'], e['why']))}){n}")
 
     @staticmethod
     def _place(fr, col: int, span: int):

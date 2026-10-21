@@ -458,6 +458,40 @@ class CoreTest {
         assertEquals(20 * 60.0, total, 5.0)
     }
 
+    /** 联网状态随设备同步, 同一次联网只由发起的设备扣额度; 关掉再打开时接着用 (MECHANICS 2.8). */
+    @Test
+    fun netStateSharedAndKept() {
+        var now = 1_000_000L
+        fun guard(dir: File, me: String) = NetGuard(dir, Settings(File(dir, "s.json"))) { now }.also {
+            it.myId = { me }
+            it.chargeOk = { owner -> owner == me }
+        }
+        val a = guard(tmp(), "A")
+        val b = guard(tmp(), "B")
+        assertNull(a.request(10, "查资料"))
+        assertNull(b.adopt(a.live()))
+        assertEquals("pending", b.mode)
+        assertEquals(a.live().toString(), b.live().toString())
+        now += 301_000
+        assertEquals("started", a.tick(1.0)); assertEquals("started", b.tick(1.0))
+        assertEquals(a.liveId, b.liveId)
+        a.tick(20.0); b.tick(20.0)
+        assertTrue(a.used > 19 && b.used == 0.0)                 // 只由发起的设备扣额度
+        b.endEarly()
+        assertEquals("ended", a.adopt(b.live()))
+        assertFalse(a.online)
+        // 关掉再打开: 文件里的联网状态
+        val dir = tmp()
+        val c = guard(dir, "C")
+        assertNull(c.request(10, "x", quick = true))
+        assertEquals("started", c.tick(0.0))
+        c.save()
+        now += 60_000
+        val d = guard(dir, "C")
+        assertTrue(d.online)
+        assertEquals(540.0, d.grantLeft, 2.0)
+    }
+
     /** 非手动结束的专注 (MECHANICS 6.8): 接着手动开始专注 → 它留下的休息时间先折算一次; 开始休息 → 不折算. */
     @Test
     fun autoEndedFocusRestSettlesOnNextFocus() {

@@ -175,7 +175,9 @@ class PcLocal:
                  "bonus": {"week": d.get("bonus_week") or "", "used": int(d.get("bonus_used", 0) or 0),
                            "count": int(d.get("bonus_count", 0) or 0)},
                  # 此刻的专注 / 休息: 哪台设备最后改动就以哪台为准
-                 "live": a.timer_live()}
+                 "live": a.timer_live(),
+                 # 联网状态 (申请中 / 联网中, MECHANICS 2.8): 同上
+                 "net": a.net.live()}
         # 成就: 哪台设备达成都算 (达成时刻取最早的), 见 MECHANICS 17
         # 合约: 进行中的合约以后改的为准, 结束了的合约合并 (MECHANICS 18)
         # 行为模式的外出: 每一项单独比较, 计时 / 统计跟着它走 (MECHANICS 21)
@@ -244,6 +246,8 @@ class PcLocal:
                 a._set_break_carry(a.break_carry)
             if isinstance(changes.get("live"), dict):
                 a.adopt_timer(changes["live"])
+            if isinstance(changes.get("net"), dict):
+                a.adopt_net(changes["net"])
         elif doc == "achievements":
             a.on_achievements_synced(changes)
         elif doc == "contract":

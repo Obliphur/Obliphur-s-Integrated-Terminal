@@ -131,14 +131,6 @@ fun RulesScreen(go: (String) -> Unit) {
             }
         }
 
-        Heading(tr("🚫  最近被拦截的请求"))
-        val ev = BlockLog.recent(30)
-        if (ev.isEmpty()) Dim(tr("没有"))
-        val ctx = LocalContext.current
-        for (e in ev) {
-            Text("${e.time.format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss"))}  ${e.host}  (${appLabel(ctx, e.app)})" +
-                if (e.count > 1) "  ×${e.count}" else "", fontSize = 12.sp, color = o.dim)
-        }
     }
     if (aiSettings) AiSettingsDialog { aiSettings = false }
     if (aiSuggest) AiSuggestDialog(view) { aiSuggest = false }

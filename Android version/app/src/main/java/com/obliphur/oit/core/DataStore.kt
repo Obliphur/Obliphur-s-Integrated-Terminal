@@ -212,6 +212,10 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
         saveFocus()
     }
 
+    /** [start, end] 里有没有别的设备记下的专注 / 休息 (本机关机时有没有别的设备在用, MECHANICS 15.4). */
+    fun peerActive(start: LocalDateTime, end: LocalDateTime): Boolean =
+        peerFocus().any { (it.kind == "study" || it.kind == "break") && it.start.isBefore(end) && start.isBefore(it.end) }
+
     /** 某一天 24 个小时各自的 (专注秒数, 休息秒数). live: 正在进行的一段 (kind, start). */
     fun focusHours(day: LocalDate, live: Pair<String, LocalDateTime>?): List<Pair<Double, Double>> {
         val d0 = day.atStartOfDay()

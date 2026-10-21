@@ -1361,11 +1361,22 @@ class SyncService:
             self.state["self_off"] = keep
         self._save()
 
-    def offline_spans(self, start_ms: float, end_ms: float) -> list:
-        """[start, end] 里有任意一台设备离线的时间段 (合并过的) [(开始毫秒, 结束毫秒)]; 也包括本机关机的那几段 (15.4)."""
+    def self_off_spans(self, start_ms: float, end_ms: float) -> list:
+        """[start, end] 里本机关机的那几段 (15.4) [(开始毫秒, 结束毫秒)]."""
+        out = []
+        for v in self.state.get("self_off") or []:
+            if isinstance(v, list) and len(v) == 2:
+                a, b = max(v[0], start_ms), min(v[1], end_ms)
+                if b > a:
+                    out.append((a, b))
+        return sorted(out)
+
+    def offline_spans(self, start_ms: float, end_ms: float, own: bool = True) -> list:
+        """[start, end] 里有任意一台设备离线的时间段 (合并过的) [(开始毫秒, 结束毫秒)];
+        own: 也包括本机关机的那几段 (15.4)."""
         now = _now_ms()
         spans = []
-        for iv in list(self._offline.values()) + [self.state.get("self_off") or []]:
+        for iv in list(self._offline.values()) + ([self.state.get("self_off") or []] if own else []):
             for a, b in iv:
                 a, b = max(a, start_ms), min(b if b is not None else now, end_ms)
                 if b > a:

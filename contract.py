@@ -35,7 +35,7 @@ TERMS = [
     ("last", "retreat", 3, "最后防线", "初始目标生命值为1", ()),
     # ---- 专注 / 休息: 专注的下限, 休息时间的倍率, 合约开始前积攒的休息时间 ----
     ("deep1", "deep", 1, "目标:纵深推进-I", "专注的时间不能少于40min", ()),
-    ("deep2", "deep", 2, "目标:纵深推进-II", "专注的时间不能少于60min", ()),
+    ("deep2", "deep", 2, "目标:纵深推进-II", "专注的时间不能少于80min", ()),
     ("tired1", "tired", 1, "环境:疲惫-I", "期间获得的休息时间改为70%", ()),
     ("tired2", "tired", 2, "环境:疲惫-II", "期间获得的休息时间改为60%", ()),
     ("tired3", "tired", 3, "环境:疲惫-III", "期间获得的休息时间改为50%", ()),
@@ -115,7 +115,7 @@ RECORD = {"gaze": "camera", "scar": "screen"}   # 录像的词条 → 录什么 
 # 网络禁令 (MECHANICS 18.3): 这一类软件合约期间禁止联网 (打开它们不算违反); 点击词条可以解除, 扣掉词条等级那么多目标生命值
 BANS = ("music", "silent", "game", "video")
 SUPPLY_WARN = (180, 60)                         # 支援短缺: 还差这么多秒就用超时各提醒一次
-DEEP = {"deep1": 40 * 60, "deep2": 60 * 60}     # 纵深推进: 一段专注至少这么多秒, 不到就结束算违反
+DEEP = {"deep1": 40 * 60, "deep2": 80 * 60}     # 纵深推进: 一段专注至少这么多秒, 不到就结束算违反
 COOLDOWN_X = {"erode1": 2.0, "erode2": 3.0}     # 侵蚀: 网络申请的冷静期乘多少 (硬规则)
 RANDOM = "unknown"                              # 未知变量: 合约的每个小时开始时随机启用一个 1-2 级的词条, 那个小时结束时移除
 RANDOM_LEVELS = (1, 2)
@@ -135,7 +135,7 @@ ECHO_COOLDOWN = 120
 
 # 总等级 → 完成合约时给的休息时间 (分钟, 固定; 按结束时的等级)
 # 0 级 20 分钟, 38 级起封顶 90 分钟; 中间每一级按直线填充, 四舍五入到整分钟
-REST_MIN, REST_MAX, REST_TOP = 20, 90, 38
+REST_MIN, REST_MAX, REST_TOP = 20, 60, 38
 
 # 乐理之灾: 常见的音乐播放软件 (exe 名, 小写) 和音频文件扩展名 (窗口标题里出现就算在放).
 # 视频播放器 (PotPlayer, VLC, MPC, KMPlayer, Windows 媒体播放器 …) 不在名单里: 只有用它们打开音频文件 (看标题) 才算.
@@ -361,6 +361,11 @@ def rest_factor_of(terms) -> float:
     return f * combo_rest(terms)
 
 
+def level_label(level: int, orig: int) -> str:
+    """危机等级的写法: 扣过等级时写成 最终等级[最初等级-扣的等级], 例如 9[12-3]; 没扣过只写最终等级."""
+    return f"{level}[{orig}-{orig - level}]" if orig > level else str(level)
+
+
 def rest_minutes(level: int) -> int:
     lv = min(max(0, int(level)), REST_TOP)
     span = REST_MAX - REST_MIN
@@ -454,12 +459,15 @@ def _now_ms() -> int:
     return int(datetime.now().timestamp() * 1000)
 
 
-# 黑雾 (18.3): 一天 48 个半小时各一句假内容. 只存编号, 显示时对词池长度取余 (词池变了也能用, 中英文共用).
+# 黑雾 (18.3): 一天 48 个半小时各一句假内容. 只存编号, 显示时对词池长度取余 (中英文共用).
+# FOG_POOL: 动词 / 量词 / 名词词池的大小 (同 pages/hour_log_page.py 和 Android 的词池); 一次抽的 48 句里每类词都不重复.
 FOG_SLOTS = 48
+FOG_POOL = (150, 80, 150)
 
 
 def _fog_words(rnd) -> list:
-    return [[rnd.randrange(1 << 16) for _ in range(3)] for _ in range(FOG_SLOTS)]
+    cols = [rnd.sample(range(n), FOG_SLOTS) for n in FOG_POOL]
+    return [[c[i] for c in cols] for i in range(FOG_SLOTS)]
 
 class Contract:
     def __init__(self, data_dir: str):
@@ -581,6 +589,10 @@ class Contract:
     @property
     def orig_level(self) -> int:
         return level_of(self.orig)
+
+    def level_text(self) -> str:
+        """合约页 / 侧边栏上的危机等级 (见 level_label); 没有进行中的合约时按草稿算."""
+        return level_label(self.level, self.orig_level) if self.active else str(level_of(self.draft))
 
     @property
     def violations(self) -> int:
@@ -1516,8 +1528,9 @@ def _selftest():
     assert life_of([]) == 4 and life_of(["retreat1"]) == 3 and life_of(["retreat2"]) == 2 and life_of(["last"]) == 1
     assert conflicts("retreat1", "last") and conflicts("retreat2", "last"), "退路封锁和最后防线是同一组"
     assert not {"vlc.exe", "potplayermini64.exe", "mpc-hc64.exe", "wmplayer.exe"} & MUSIC_EXES, "视频播放器不算"
-    assert rest_minutes(0) == 20 and rest_minutes(1) == 22 and rest_minutes(4) == 27 and rest_minutes(19) == 55
-    assert rest_minutes(37) == 88 and rest_minutes(38) == 90 and rest_minutes(50) == 90 and rest_reward(45) == 90 * 60
+    assert level_label(9, 12) == "9[12-3]" and level_label(12, 12) == "12" and level_label(13, 12) == "13"
+    assert rest_minutes(0) == 20 and rest_minutes(1) == 21 and rest_minutes(4) == 24 and rest_minutes(19) == 40
+    assert rest_minutes(37) == 59 and rest_minutes(38) == 60 and rest_minutes(50) == 60 and rest_reward(45) == 60 * 60
     assert all(rest_minutes(i) <= rest_minutes(i + 1) for i in range(40))
     # 删掉的两个 4 级词条: 互联网娱乐的败退 变成组合, 信息隔绝 (旧词条) 删了
     assert "isolate" not in BY_ID and "ent" not in BY_ID and MAX_LEVEL == 3, "没有了 4 级的词条: 词条板不再留那一行"
@@ -1724,9 +1737,9 @@ def _selftest():
     assert c.hoard_check() == "hoard" and c.echo("hoard"), "失效后再提前结束休息: 只响警报"
     c.start(["erode1"], owner="me", now=t0)
     assert c.hoard_check() == "" and c.cooldown_factor() == 2.0 and c.focus_check(60) == "" and c.quiet_check(True) == ""
-    # 纵深推进: 专注不到 40 / 60 分钟算违反; -II 降成 -I
+    # 纵深推进: 专注不到 40 / 80 分钟算违反; -II 降成 -I
     c.start(["deep2", "quiet"], owner="me", now=t0)
-    assert c.focus_check(59 * 60) == "deep2" and c.focus_check(60 * 60) == ""
+    assert c.focus_check(79 * 60) == "deep2" and c.focus_check(80 * 60) == ""
     assert c.violate("deep2") == (False, "deep1") and c.focus_check(59 * 60) == "" and c.focus_check(39 * 60) == "deep1"
     # 静默协议: 专注中联网, 只在刚联网的那一下算; 1 级, 违反一次失效
     assert c.quiet_check(True) == "quiet" and c.quiet_check(True) == "" and c.quiet_check(False) == ""
@@ -1883,7 +1896,7 @@ def _selftest():
     assert c.quick_check() == ""
     # 休息: 疲惫 ×0.6; 完成时按降级后的等级给固定的时间 (等级 4 → 27 分钟)
     assert abs(c.book_rest(1000, t0 + timedelta(hours=1)) - 600) < 1e-6
-    assert c.level == 4 and c.reward == 27 * 60
+    assert c.level == 4 and c.reward == 24 * 60
     # 空闲 15 分钟结束
     assert c.due(t0 + timedelta(hours=1), True) == ("", None)
     assert c.idle_left(t0 + timedelta(hours=1, minutes=10)) == 5 * 60
@@ -1954,10 +1967,10 @@ def _selftest():
 
     # 完成: 按等级给固定的休息时间 (等级 4 → 27 分钟), 第一次休息的结转比例
     c.start(["last", "tired1"], owner="me", now=t0)
-    assert c.violation_limit == 1 and abs(c.book_rest(600, t0) - 420) < 1e-6 and c.reward == 27 * 60
+    assert c.violation_limit == 1 and abs(c.book_rest(600, t0) - 420) < 1e-6 and c.reward == 24 * 60
     assert c.due(t0 + timedelta(hours=4), False) == ("completed", t0 + timedelta(hours=4))
     rec = c.finish("completed", t0 + timedelta(hours=4, minutes=3))
-    assert rec["reward"] == 27 * 60 and rec["end"] == (t0 + timedelta(hours=4)).isoformat()
+    assert rec["reward"] == 24 * 60 and rec["end"] == (t0 + timedelta(hours=4)).isoformat()
     assert abs(c.book_rest_after(600, t0 + timedelta(hours=3)) - 420) < 1e-6 and c.reward == 0, "完成后才结束的专注只乘疲惫"
     assert c.book_rest_after(600, t0 + timedelta(hours=5)) == 600
     assert c.take_first_break() and not c.take_first_break()
@@ -2010,6 +2023,7 @@ def _selftest():
     fa.start(["fog"], "A")
     w = fa.fog_words()
     assert len(w) == FOG_SLOTS and w == fa.live["fog_words"]
+    assert all(len({x[k] for x in w}) == FOG_SLOTS for k in range(3)), "一次抽的词不重复"
     fb.merge({"live": fa.doc()["live"]})
     assert fb.fog_words() == w, "同步来的合约: 同一份"
     fa.live.pop("fog_words")

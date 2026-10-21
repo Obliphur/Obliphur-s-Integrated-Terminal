@@ -10,11 +10,15 @@ import java.time.LocalDateTime
 class Dice(val roll: () -> Double = { kotlin.random.Random.nextDouble() },
            val pick: (Int) -> Int = { kotlin.random.Random.nextInt(it) })
 
-/** 黑雾 (18.3): 一天 48 个半小时各一句假内容. 只存编号, 显示时对词池长度取余 (词池变了也能用, 中英文共用). */
+/** 黑雾 (18.3): 一天 48 个半小时各一句假内容. 只存编号, 显示时对词池长度取余 (中英文共用).
+ *  FOG_POOL: 动词 / 量词 / 名词词池的大小 (同 LogStatsScreens.kt 的词池); 一次抽的 48 句里每类词都不重复. */
 const val FOG_SLOTS = 48
+val FOG_POOL = intArrayOf(150, 80, 150)
 
-fun fogWordsJson(r: java.util.Random): JSONArray =
-    JSONArray((0 until FOG_SLOTS).map { JSONArray(List(3) { r.nextInt(1 shl 16) }) })
+fun fogWordsJson(r: java.util.Random): JSONArray {
+    val cols = FOG_POOL.map { n -> (0 until n).shuffled(r).take(FOG_SLOTS) }
+    return JSONArray((0 until FOG_SLOTS).map { i -> JSONArray(cols.map { it[i] }) })
+}
 
 class Term(val id: String, val group: String, val level: Int, val name: String, val desc: String,
            val conflicts: List<String> = emptyList())
@@ -53,7 +57,7 @@ class Contract(private val file: File) {
             Term("last", "retreat", 3, "最后防线", "初始目标生命值为1"),
             // ---- 专注 / 休息: 专注的下限, 休息时间的倍率, 合约开始前积攒的休息时间 ----
             Term("deep1", "deep", 1, "目标:纵深推进-I", "专注的时间不能少于40min"),
-            Term("deep2", "deep", 2, "目标:纵深推进-II", "专注的时间不能少于60min"),
+            Term("deep2", "deep", 2, "目标:纵深推进-II", "专注的时间不能少于80min"),
             Term("tired1", "tired", 1, "环境:疲惫-I", "期间获得的休息时间改为70%"),
             Term("tired2", "tired", 2, "环境:疲惫-II", "期间获得的休息时间改为60%"),
             Term("tired3", "tired", 3, "环境:疲惫-III", "期间获得的休息时间改为50%"),
@@ -206,7 +210,7 @@ class Contract(private val file: File) {
         /** 支援短缺: 还差这么多秒就用超时各提醒一次. */
         val SUPPLY_WARN = listOf(180, 60)
         /** 纵深推进: 一段专注至少这么多秒, 不到就结束算违反. */
-        val DEEP = mapOf("deep1" to 40 * 60, "deep2" to 60 * 60)
+        val DEEP = mapOf("deep1" to 40 * 60, "deep2" to 80 * 60)
         /** 侵蚀: 网络申请的冷静期乘多少 (硬规则). */
         val COOLDOWN_X = mapOf("erode1" to 2.0, "erode2" to 3.0)
         /** 未知变量: 合约的每个小时开始时随机抽一个 1-2 级的词条; 不会选中录像和持久战的词条.
@@ -244,7 +248,7 @@ class Contract(private val file: File) {
         /** 总等级 → 完成合约时给的休息时间 (分钟, 固定; 按结束时的等级). */
         // 0 级 20 分钟, 38 级起封顶 90 分钟; 中间每一级按直线填充, 四舍五入到整分钟
         private const val REST_MIN = 20
-        private const val REST_MAX = 90
+        private const val REST_MAX = 60
         private const val REST_TOP = 38
 
         /** 乐理之灾: 常见的音乐播放应用 (包名). 视频播放器 (VLC, MX Player …) 不算. */
@@ -344,6 +348,8 @@ class Contract(private val file: File) {
         fun levelOf(terms: Collection<String>) =
             terms.sumOf { BY_ID[it]?.level ?: 0 } + comboLevel(terms)
 
+        /** 危机等级的写法: 扣过等级时写成 最终等级[最初等级-扣的等级], 例如 9[12-3]; 没扣过只写最终等级. */
+        fun levelLabel(level: Int, orig: Int): String = if (orig > level) "$level[$orig-${orig - level}]" else "$level"
         fun restMinutes(level: Int): Int {
             val lv = level.coerceIn(0, REST_TOP)
             return REST_MIN + (2 * (REST_MAX - REST_MIN) * lv + REST_TOP) / (2 * REST_TOP)   // 四舍五入 (.5 进位)

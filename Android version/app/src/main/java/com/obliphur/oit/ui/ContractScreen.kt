@@ -463,10 +463,10 @@ fun ContractScreen() {
                     .clickable { c.setDraft(emptyList()); core.changed() }.padding(horizontal = 14.dp, vertical = 8.dp))
             Column(Modifier.padding(start = 16.dp)) {
                 Text(tr("危机等级"), color = p.dim, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                Text("$level", color = p.level, fontSize = 32.sp, fontWeight = FontWeight.Bold)
+                // 扣过等级: 最终等级[最初等级-扣的等级]
+                Text(Contract.levelLabel(level, orig), color = p.level, fontSize = 32.sp, fontWeight = FontWeight.Bold)
             }
             var info = ""
-            if (orig != level) info += tr("开始时 {n}", "n" to orig) + "\n"
             info += tr("时长 {t}", "t" to fmtHm(Contract.durationOf(if (active) c.orig else sel))) + "\n" +
                 tr("完成后休息 +{n} 分钟", "n" to Contract.restMinutesTotal(level, if (active) c.mine else sel))
             // 合约中: 开始时已经给出的 (按开始时选的词条算, 之后成员失效 / 未知变量选中都不变, MECHANICS 18.3.1)

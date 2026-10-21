@@ -109,7 +109,8 @@ def fog_noise(words, at: datetime) -> str:
 class HourLogPage(tk.Frame):
 
     def __init__(self, master, data_manager, on_text_changed=None, on_toggle=None,
-                 on_open_settings=None, locked=None, split=None, fog=None, sealed=None):
+                 on_open_settings=None, locked=None, split=None, fog=None, sealed=None,
+                 split_all=None):
         super().__init__(master, bg=COLORS["bg"])
         self.dm = data_manager
         # 合约 (MECHANICS 18.4): 记录封锁 —— 已经填写了的格子 (手动 / 自动) 不能再改 (开始, 结束, 内容, 现在)
@@ -118,6 +119,7 @@ class HourLogPage(tk.Frame):
         self.split = split or (lambda start: False)
         # 黑雾: 返回这个合约的种子 (没有黑雾时 None). 除了"现在"的格子和待填写的格子, 其他格子的时间写 ???, 内容是随机字符
         self.fog = fog or (lambda: None)
+        self.split_all = split_all or (lambda: False)
         # 记录封锁: 这个格子填写后就不能再改 (开始, 结束). 这种格子只在按 Enter 并确认后才保存,
         # 离开输入框时不保存, 写了的内容留着 (草稿), 等按 Enter
         self.sealed = sealed or (lambda start, end: False)
@@ -312,6 +314,8 @@ class HourLogPage(tk.Frame):
             end = start + timedelta(hours=1)
             ent2, var2 = self.halves[h]
             split = self.split(start)
+            if not split and seed is not None and self.split_all()                     and not (start <= now < end or (awaiting is not None and start <= awaiting < end)):
+                split = True                        # 细化规范 + 黑雾: 盖住的行也都分成两格 (只是显示)
             if split != self._split.get(h):
                 self._split[h] = split
                 if split:

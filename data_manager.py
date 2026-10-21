@@ -294,6 +294,18 @@ class DataManager:
         self.focus_sessions.append(rec)
         self.save_focus_log()
 
+    def peer_active(self, start: datetime, end: datetime) -> bool:
+        """[start, end] 里有没有别的设备记下的专注 / 休息 (本机关机时有没有别的设备在用, MECHANICS 15.4)."""
+        for led in self.peer_ledgers() or []:
+            for r in led.get("focus") or []:
+                try:
+                    if r.get("k") in ("study", "break") and \
+                            datetime.strptime(r["s"], self._TS) < end and start < datetime.strptime(r["e"], self._TS):
+                        return True
+                except (AttributeError, KeyError, TypeError, ValueError):
+                    continue
+        return False
+
     def focus_hours(self, day: datetime, live=None):
         """某一天 24 个小时各自的 (专注秒数, 休息秒数).
 

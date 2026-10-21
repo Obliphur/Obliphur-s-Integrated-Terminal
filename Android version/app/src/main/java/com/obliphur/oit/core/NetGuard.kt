@@ -30,6 +30,18 @@ class NetGuard(
     /** 行为模式 (MECHANICS 21): 有外出的日子额度 ×0.2; 正在外出时冷静期 ×0.3. */
     var quotaFactor: (LocalDate) -> Double = { 1.0 }
     var cooldownFactor: (LocalDateTime) -> Double = { 1.0 }
+    /** 联网状态 (申请中 / 联网中, MECHANICS 2.8) 随设备同步, 关掉程序再打开时接着用.
+     *  liveId: 这一状态的编号 (每次改动换一个); liveOwner: 发起的设备, 由它扣额度 (它不在线时由本机扣). */
+    var myId: () -> String = { "" }
+    var chargeOk: (String) -> Boolean = { true }
+    var liveId = ""
+        private set
+    var liveOwner = ""
+        private set
+    /** 这次联网到几点 (墙上时间, 毫秒). */
+    private var grantEnd = 0L
+    private var grantReason = ""
+    private var grantMinutes = 0
 
     private val stateFile = File(dir, "net_state.json")
     private val logFile = File(dir, "net_requests.log")
@@ -62,6 +74,8 @@ class NetGuard(
     init {
         load()
         loadUsage()
+        // 关闭前的联网状态: 申请还在等就接着等, 联网还没到时间就接着联网 (到原来的结束时刻为止)
+        Store.readObj(stateFile)?.optJSONObject("live")?.let { adopt(it, apply = false) }
     }
 
     private fun day(offset: Long = 0): LocalDate =
@@ -135,7 +149,7 @@ class NetGuard(
         if (dead) return
         Store.write(stateFile, JSONObject().put("date", date).put("used", used.toLong())
             .put("bonus", bonus.toLong()).put("gift", gift.toLong()).put("tomorrow_used", tomorrowUsed.toLong())
-            .put("debt", debt.toLong()))
+            .put("debt", debt.toLong()).put("live", live()))
         saveUsage()
         sinceSave = 0.0
     }
@@ -242,6 +256,7 @@ class NetGuard(
         if (quick) {
             canQuick(minutes.toDouble())?.let { return it }
             pending = NetRequest(minutes, clock(), reason, true)
+            touch()
             log("QUICK    $minutes min (cost ${(minutes * quickMult).toInt()} min quota)  reason: $reason")
             return null
         }
@@ -253,6 +268,7 @@ class NetGuard(
         val rate = (cooldownRate * cf()).coerceIn(0.0, 1.0)
         val mult = maxOf(1.0, cooldownMult)             // 合约的侵蚀: 冷静期 ×2 / ×3
         pending = NetRequest(minutes, clock() + (cooldown * rate * mult * 1000).toLong(), reason, false)
+        touch()
         log("REQUEST  $minutes min" + (if (rate < 1.0) " (cooldown ${numText(rate)}x)" else "") +
             (if (mult > 1.0) " (contract, cooldown x${numText(mult)})" else "") + "  reason: $reason")
         return null
@@ -263,18 +279,26 @@ class NetGuard(
         if (p.quick) return tr("这个申请已经是快速访问了.")
         canQuick(p.minutes.toDouble())?.let { return it }
         pending = NetRequest(p.minutes, clock(), p.reason, true)
+        touch()
         log("QUICK    upgrade ${p.minutes} min (cost ${(p.minutes * quickMult).toInt()} min quota)")
         return null
     }
 
     fun cancel() {
-        pending?.let { log("CANCEL   ${it.minutes} min ${if (it.quick) "quick " else ""}request") }
+        pending?.let {
+            log("CANCEL   ${it.minutes} min ${if (it.quick) "quick " else ""}request")
+            touch()
+        }
         pending = null
+        save()
     }
 
     fun endEarly() {
         if (devMode) return
-        if (online) log("END      early, ${grantLeft.toInt()}s unused")
+        if (online) {
+            log("END      early, ${grantLeft.toInt()}s unused")
+            touch()
+        }
         resetGrant()
         backend(false)
         save()
@@ -284,10 +308,90 @@ class NetGuard(
         grantLeft = 0.0
         grantRate = 1.0
         grantQuick = false
+        grantEnd = 0L
+        grantReason = ""
+        grantMinutes = 0
         if (session != null) {
             session = null
             saveUsage()
         }
+    }
+
+    // ---- 联网状态: 随设备同步, 关掉程序再打开时接着用 (MECHANICS 2.8) ----
+
+    /** 本机改动了联网状态: 换一个编号, 本机成为发起的设备. */
+    private fun touch() {
+        liveId = clock().toString()
+        liveOwner = myId()
+    }
+
+    /** 此刻的联网状态 (只用墙上时间, 没有改动时内容不变; 只用整数: at 毫秒, end 秒, rate ×100). 同 net_guard.py 的 live. */
+    fun live(): JSONObject {
+        val o = JSONObject().put("id", liveId).put("owner", liveOwner)
+        val p = pending
+        return when {
+            grantLeft > 0 && grantEnd > 0 && !devMode -> o.put("state", "online").put("end", grantEnd / 1000)
+                .put("rate", Math.round(grantRate * 100)).put("quick", grantQuick).put("reason", grantReason).put("minutes", grantMinutes)
+            p != null -> o.put("state", "pending").put("at", p.at).put("minutes", p.minutes)
+                .put("reason", p.reason).put("quick", p.quick)
+            else -> o.put("state", "offline")
+        }
+    }
+
+    /** 联网到 endMs (墙上时间) 为止; 已经过了就不联网. left: 本机刚批下来的秒数. */
+    private fun grant(endMs: Long, rate: Double, quick: Boolean, reason: String, minutes: Int, left: Double? = null): Boolean {
+        resetGrant()
+        val secs = left ?: ((endMs - clock()) / 1000.0)
+        if (secs <= 0) return false
+        grantLeft = secs
+        grantEnd = endMs
+        grantRate = rate
+        grantQuick = quick
+        grantReason = reason
+        grantMinutes = minutes
+        if (chargeOk(liveOwner)) openSession(reason, quick, minutes)
+        return true
+    }
+
+    /** 别的设备上 (或关闭前) 的联网状态: 照着切换. apply=false: 只改状态, 不动后端 (启动时). 返回 "started" / "ended" / null. */
+    fun adopt(live: JSONObject, apply: Boolean = true): String? {
+        if (dead || devMode) return null
+        val lid = live.optString("id")
+        if (lid.isEmpty()) return null
+        val st = live.optString("state")
+        if (lid == liveId) {
+            // 同一次联网, 各设备算出的结束时刻差一两秒: 对齐到同步来的, 免得来回改
+            val end = live.optLong("end") * 1000
+            if (st == "online" && online && grantEnd > 0 && end > 0 && end != grantEnd) {
+                grantLeft = maxOf(0.0, grantLeft + (end - grantEnd) / 1000.0)
+                grantEnd = end
+            }
+            return null
+        }
+        val was = online
+        liveId = lid
+        liveOwner = live.optString("owner")
+        var event: String? = null
+        if (st == "online") {
+            pending = null
+            if (grant(live.optLong("end") * 1000, live.optInt("rate", 100) / 100.0, live.optBoolean("quick"),
+                    live.optString("reason"), live.optInt("minutes"))) {
+                if (!was) event = "started"
+            } else if (was) event = "ended"
+        } else {
+            if (was) {
+                resetGrant()
+                event = "ended"
+            }
+            pending = if (st == "pending") NetRequest(live.optInt("minutes"), live.optLong("at"),
+                live.optString("reason"), live.optBoolean("quick")) else null
+        }
+        if (apply) {
+            log("SYNC     net state $st from ${liveOwner.ifEmpty { "?" }}")
+            backend(false)
+            save()
+        }
+        return event
     }
 
     /** 程序启动 / 结束时: 排队中的申请取消, 进行中的会话结束, 断网. */
@@ -343,11 +447,9 @@ class NetGuard(
             resetGrant()
             val rate = if (p.quick) maxOf(1.0, quickMult) else 1.0
             val secs = minOf(p.minutes * 60.0, remaining / rate)
-            if (secs > 0) {
-                grantLeft = secs
-                grantRate = rate
-                grantQuick = p.quick
-                openSession(p.reason, p.quick, p.minutes)
+            // 编号接着申请的, 各设备算出来的一样 (结束时刻差一两秒的, 同步时对齐)
+            liveId = liveId.ifEmpty { p.at.toString() } + "g"
+            if (secs > 0 && grant(Math.round(clock() / 1000.0 + secs) * 1000, rate, p.quick, p.reason, p.minutes, left = secs)) {
                 backend(false)
                 save()
                 log("START    ${(secs / 60).toInt()} min granted" + if (p.quick) " (quick, ${numText(rate)}x)" else "")
@@ -360,10 +462,16 @@ class NetGuard(
         if (grantLeft > 0) {
             val dt = minOf(dtRaw, tickClamp, grantLeft)
             grantLeft -= dt
-            countOnline(dt)
-            used += dt * grantRate
+            if (grantEnd > 0 && (grantEnd - clock()) / 1000.0 < grantLeft - 1)
+                grantLeft = maxOf(0.0, (grantEnd - clock()) / 1000.0)      // 按墙上时间到点 (设备睡眠过等)
+            // 同一次联网在各设备上一起进行: 只由发起的设备扣额度 (它不在线时由本机扣)
+            if (chargeOk(liveOwner)) {
+                countOnline(dt)
+                used += dt * grantRate
+            }
             sinceSave += dt
             if (grantLeft <= 1e-6) {
+                liveId += "e"
                 resetGrant()
                 backend(false)
                 save()
