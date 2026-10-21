@@ -138,7 +138,7 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
         }
 
         val (week, used) = core.timer.bonusState()
-        val timer = mapOf<String, Any?>("break_carry" to core.timer.breakCarry,
+        val timer = mapOf<String, Any?>("break_carry" to core.timer.breakCarry, "auto_rest" to core.timer.autoRest,
             "bonus" to JSONObject().put("week", week).put("used", used).put("count", core.timer.bonusCount()),
             // 此刻的专注 / 休息: 哪台设备最后改动就以哪台为准
             "live" to core.timer.liveState())
@@ -200,7 +200,8 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
             "timer" -> {
                 val b = changes["bonus"] as? JSONObject
                 val carry = (changes["break_carry"] as? Number)?.toInt()
-                core.timer.syncSet(carry, b?.optString("week"), b?.optInt("used"), b?.optInt("count"))
+                core.timer.syncSet(carry, b?.optString("week"), b?.optInt("used"), b?.optInt("count"),
+                    (changes["auto_rest"] as? Number)?.toInt())
                 (changes["live"] as? JSONObject)?.let { core.timer.adopt(it) }
             }
             "achievements" -> core.mergeAchievements(changes)

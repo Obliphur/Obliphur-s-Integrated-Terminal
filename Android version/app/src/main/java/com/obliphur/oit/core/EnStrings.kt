@@ -440,6 +440,8 @@ object EnStrings {
         "预计休息时长: 0.00 分钟" to "Projected break: 0.00 min",
         "休息剩余 {m} 分 {s} 秒" to "Break ends in {m}m {s}s",
         "积攒的休息时间: {c}" to "Saved-up break time: {c}",
+        "立即开始专注:先进行一次休息时间的折算" to "Start focusing right away: this break time gets discounted once first",
+        "休息时间折算: 专注自动结束留下的 {a} ×{r} = {k}." to "Break time discounted: {a} left by the auto-ended focus ×{r} = {k}.",
         "今日: {h} h" to "Today: {h} h",
         "绑定的设备也会清空数据 (绑定保留)." to "Paired devices will clear their data too (they stay paired).",
         "绑定的设备也会清空数据, 并解除和本机的绑定." to "Paired devices will clear their data too, and be unpaired from this phone.",

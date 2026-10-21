@@ -613,6 +613,8 @@ EN = {
     "请在{at}之前关掉这个窗口,否则专注会自动结束.": "Close this window before {at}, or focus ends automatically.",
     "没有确认的部分按×{p:g}计入,共计入{m:.1f}分钟.": "Unconfirmed time counts at ×{p:g}; {m:.1f} min counted in total.",
     "积攒的休息时间 +{t}.": "Saved break time +{t}.",
+    "立即开始专注:先进行一次休息时间的折算": "Start focusing right away: this break time gets discounted once first",
+    "休息时间折算: 专注自动结束留下的 {a} ×{r:g} = {k}.": "Break time discounted: {a} left by the auto-ended focus ×{r:g} = {k}.",
     "⏹  专注已终止": "⏹  Focus ended",
     "这台设备上的 OIT 在 {at} 被关掉了, 共享的专注已终止.":
         "OIT on this device was closed at {at}, so the shared focus has been ended.",

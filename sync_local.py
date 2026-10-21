@@ -171,7 +171,7 @@ class PcLocal:
                         hours[f"{ds}/{h}/{i + 1}"] = t
 
         d = a._bonus_state()
-        timer = {"break_carry": int(a.break_carry),
+        timer = {"break_carry": int(a.break_carry), "auto_rest": int(a.auto_rest),
                  "bonus": {"week": d.get("bonus_week") or "", "used": int(d.get("bonus_used", 0) or 0),
                            "count": int(d.get("bonus_count", 0) or 0)},
                  # 此刻的专注 / 休息: 哪台设备最后改动就以哪台为准
@@ -236,10 +236,12 @@ class PcLocal:
                 a._timer_extra = {"bonus_week": str(b.get("week") or ""),
                                   "bonus_used": int(b.get("used") or 0),
                                   "bonus_count": int(b.get("count") or 0)}
+            if "auto_rest" in changes and changes["auto_rest"] is not None:
+                a.auto_rest = max(0, int(changes["auto_rest"]))
             if "break_carry" in changes and changes["break_carry"] is not None:
                 a._set_break_carry(int(changes["break_carry"]))
             else:
-                a._save_timer_state()
+                a._set_break_carry(a.break_carry)
             if isinstance(changes.get("live"), dict):
                 a.adopt_timer(changes["live"])
         elif doc == "achievements":

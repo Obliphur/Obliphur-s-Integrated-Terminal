@@ -89,6 +89,7 @@ fun TimerScreen() {
                 TState.IDLE -> {
                     BigText("0.00 min")
                     if (t.breakCarry > 0) Dim(tr("积攒的休息时间: {c}", "c" to fmtMs(t.breakCarry.toDouble())))
+                    if (t.autoRest > 0) Dim(tr("立即开始专注:先进行一次休息时间的折算"))
                 }
             }
             Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(24.dp)) {

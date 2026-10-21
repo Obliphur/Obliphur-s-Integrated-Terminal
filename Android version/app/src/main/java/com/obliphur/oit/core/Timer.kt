@@ -50,6 +50,9 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         private set
     var breakCarry = 0
         private set
+    /** 非手动结束的专注 (没回应"还在吗", 程序退出, 共享的专注被终止) 存进积攒的休息时间、还没折算的部分 (6.8). */
+    var autoRest = 0
+        private set
     private var extra: JSONObject? = null
     /** 设备同步: 最后改动计时器状态的设备 (空 = 本机); 自动结束 / 记录由它做. */
     var owner = ""
@@ -59,6 +62,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
 
     init {
         breakCarry = maxOf(0, readState().optInt("break_carry", 0))
+        autoRest = readState().optInt("auto_rest", 0).coerceIn(0, breakCarry)
     }
 
     private fun readState(): JSONObject = Store.readObj(file) ?: JSONObject()
@@ -85,6 +89,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         }
         when (state) {
             TState.IDLE -> {
+                settleAutoRest()                 // 非手动结束的专注留下的休息时间: 先折算一次 (6.8)
                 enterFocus(LocalDateTime.now(), mono())
                 if (core.contract.slowBind(startWall!!))       // 阻滞: 合约内这段时间按 90% 增长
                     core.toast(tr("阻滞: 合约内这段专注的时间按 {p}% 增长", "p" to Math.round(Contract.RANDOM_SLOW * 100)), "warn", long = true)
@@ -244,6 +249,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         breakCid = if (c.active) c.id else 0L
         core.supplyWarned.clear()
         breakCarry = 0
+        autoRest = 0                             // 一起用进这次休息, 结束休息时照常折算 (6.8)
         breakEndMono = mono() + total
         state = TState.ON_BREAK
         breakStartWall = LocalDateTime.now().withNano(0)
@@ -360,6 +366,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         extra?.let { e -> for (k in e.keys()) d.put(k, e.get(k)) }
         extra = null
         d.put("break_carry", breakCarry)
+        d.put("auto_rest", autoRest)
         // owner: 重开时原样恢复, 同步的计时器状态才不会因为"主人变了"被当成新的改动 (盖掉其他设备更新的状态)
         val f = if (state == TState.RUNNING && startWall != null) JSONObject()
             .put("start", startWall!!.iso()).put("alive", LocalDateTime.now().iso())
@@ -434,7 +441,29 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
 
     private fun setCarry(seconds: Int) {
         breakCarry = maxOf(0, seconds)
+        autoRest = minOf(autoRest, breakCarry)
         saveState()
+    }
+
+    /** 非手动结束的专注: 休息时间存进积攒的休息时间, 记下这部分还没折算 (6.8). */
+    private fun addAutoRest(seconds: Int) {
+        autoRest = minOf(breakCarry, autoRest + maxOf(0, seconds))
+        saveState()
+    }
+
+    /** 手动开始专注 (6.8): 非手动结束的专注留下的那部分休息时间, 先按暂停休息的结转比例折算一次. */
+    private fun settleAutoRest() {
+        val a = minOf(autoRest, breakCarry)
+        autoRest = 0
+        if (a <= 0) {
+            saveState(); return
+        }
+        val rate = settings.num("BREAK_CARRY_RATE")
+        val keep = Math.round(a * rate).toInt()
+        setCarry(breakCarry - (a - keep))
+        if (core.contract.active) core.contract.preCap(breakCarry.toDouble())
+        core.toast(tr("休息时间折算: 专注自动结束留下的 {a} ×{r} = {k}.", "a" to fmtMs(a.toDouble()),
+            "r" to numText(rate), "k" to fmtMs(keep.toDouble())), "info", long = true)
     }
 
     /** 设备同步: 本周已领的连点休息时间 (周, 秒). */
@@ -444,10 +473,12 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
     fun bonusCount(): Int = readState().optInt("bonus_count", 0)
 
     /** 设备同步: 积攒的休息时间 / 本周连点领取的记录 (同步来的值). */
-    fun syncSet(carry: Int?, bonusWeek: String?, bonusUsed: Int?, bonusCount: Int? = null) {
+    fun syncSet(carry: Int?, bonusWeek: String?, bonusUsed: Int?, bonusCount: Int? = null, auto: Int? = null) {
         if (bonusWeek != null) extra = JSONObject().put("bonus_week", bonusWeek).put("bonus_used", bonusUsed ?: 0)
             .put("bonus_count", bonusCount ?: 0)
         if (carry != null) breakCarry = maxOf(0, carry)
+        if (auto != null) autoRest = maxOf(0, auto)
+        autoRest = minOf(autoRest, breakCarry)
         saveState()
         core.changed()
     }
@@ -525,6 +556,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         if (penalized) sec = limit
         val (minutes, brkSec) = bookFocus(start, sec, if (penalized) ok else null)
         setCarry(breakCarry + brkSec)
+        addAutoRest(brkSec)
         if (minutes <= 0) return
         var msg: String
         if (penalized) {
@@ -534,7 +566,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         } else {
             msg = tr("上次专注时程序退出了,专注记到 {at} 为止: 计入 {m} 分钟.", "at" to alive.format(Fmt.MDHM), "m" to f1(minutes))
         }
-        if (brkSec > 0) msg += "\n" + tr("积攒的休息时间 +{t}.", "t" to fmtMs(brkSec.toDouble()))
+        if (brkSec > 0) msg += "\n" + tr("积攒的休息时间 +{t}.", "t" to fmtMs(brkSec.toDouble())) + "\n" + tr("立即开始专注:先进行一次休息时间的折算")
         core.notice(tr("⏱  上次的专注已记录"), msg, listOf(NoticeButton(tr("知道了"), "ok", true)), page = "timer")
     }
 
@@ -604,9 +636,10 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         mine()                                     // 终止由本机做, 其他设备照着结束
         resetToIdle()
         setCarry(breakCarry + brk)
+        addAutoRest(brk)
         var msg = tr("这台设备上的 OIT 在 {at} 被关掉了, 共享的专注已终止.", "at" to p.alive.format(Fmt.MDHM))
         msg += "\n" + tr("专注记到被关掉时为止: 计入 {m} 分钟; 关掉的这段记为空闲.", "m" to f1(minutes))
-        if (brk > 0) msg += "\n" + tr("积攒的休息时间 +{t}.", "t" to fmtMs(brk.toDouble()))
+        if (brk > 0) msg += "\n" + tr("积攒的休息时间 +{t}.", "t" to fmtMs(brk.toDouble())) + "\n" + tr("立即开始专注:先进行一次休息时间的折算")
         core.notice(tr("⏹  专注已终止"), msg, listOf(NoticeButton(tr("知道了"), "ok", true)), page = "timer")
     }
 
@@ -651,10 +684,11 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         val (minutes, brk) = bookFocus(start, seconds, ok)
         resetToIdle()
         setCarry(breakCarry + brk)
+        addAutoRest(brk)
         var msg = tr("提醒窗{n}分钟内没有被关掉,专注已在{at}自动结束.",
             "n" to Math.round(Cfg.FOCUS_CHECK_GRACE / 60).toInt(), "at" to start.plusSec(seconds).format(Fmt.HM))
         msg += "\n" + tr("没有确认的部分按×{p}计入,共计入{m}分钟.", "p" to numText(Cfg.FOCUS_CHECK_PENALTY), "m" to f1(minutes))
-        if (brk > 0) msg += "\n" + tr("积攒的休息时间 +{t}.", "t" to fmtMs(brk.toDouble()))
+        if (brk > 0) msg += "\n" + tr("积攒的休息时间 +{t}.", "t" to fmtMs(brk.toDouble())) + "\n" + tr("立即开始专注:先进行一次休息时间的折算")
         core.notice(tr("⏹  专注已自动结束"), msg, listOf(NoticeButton(tr("知道了"), "ok", true)), page = "timer")
     }
 

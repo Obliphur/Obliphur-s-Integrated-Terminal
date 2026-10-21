@@ -227,6 +227,8 @@ class BreakTimerApp:
         self.dm = DataManager(hour_auto_text=self.behavior.hour_auto_text)
         self.timer_file = os.path.join(self.dm.data_dir, "timer_state.json")
         self.break_carry = self._load_break_carry()
+        # 非手动结束的专注 (没回应"还在吗", 程序退出, 共享的专注被终止) 存进积攒的休息时间、还没折算的部分 (6.8)
+        self.auto_rest = min(self.break_carry, self._load_timer_int("auto_rest"))
         self.dm.hour_enabled = bool(self.settings.value("HOUR_LOG_ENABLED"))
         self.dm.extra_study = self.behavior.study_hours
         self.dm.extra_days = self.behavior.days
@@ -948,6 +950,7 @@ class BreakTimerApp:
             toast.info(tr("外出中, 先结束外出再开始专注."))
             return
         if self.state == IDLE:
+            self._settle_auto_rest()             # 非手动结束的专注留下的休息时间: 先折算一次 (6.8)
             self._enter_focus(datetime.now(), time.monotonic())
             if self.contract.slow_bind(self.start_wall):
                 toast.warn(tr("阻滞: 合约内这段专注的时间按 {p}% 增长", p=int(round(contract_mod.RANDOM_SLOW * 100))),
@@ -1423,6 +1426,7 @@ class BreakTimerApp:
         self._break_pre = c.pre_take(carry) if c.active else 0.0
         self._break_cid = c.live.get("id") if c.active else None
         self._supply_warned = set()
+        self.auto_rest = 0                       # 一起用进这次休息, 结束休息时照常折算 (6.8)
         if carry > 0 or bonus:
             self._set_break_carry(0)
         self.countdown_seconds = total
@@ -1597,20 +1601,46 @@ class BreakTimerApp:
 
     def _idle_sub_text(self) -> str:
         if self.break_carry > 0:
-            return tr("积攒的休息时间: {c}").format(
+            text = tr("积攒的休息时间: {c}").format(
                 c=fmt_ms(self.break_carry))
+            if self.auto_rest > 0:
+                text += "\n" + tr("立即开始专注:先进行一次休息时间的折算")
+            return text
         return ""
 
     def _load_break_carry(self) -> int:
+        return self._load_timer_int("break_carry")
+
+    def _load_timer_int(self, key: str) -> int:
         d = load_json_file(self.timer_file, {})
         try:
-            return max(0, int(d.get("break_carry", 0))) if isinstance(d, dict) else 0
+            return max(0, int(d.get(key, 0))) if isinstance(d, dict) else 0
         except (TypeError, ValueError):
             return 0
 
     def _set_break_carry(self, seconds: int):
         self.break_carry = max(0, int(seconds))
+        self.auto_rest = min(int(getattr(self, "auto_rest", 0)), self.break_carry)
         self._save_timer_state()
+
+    def _add_auto_rest(self, seconds: int):
+        """非手动结束的专注: 休息时间存进积攒的休息时间, 记下这部分还没折算 (6.8)."""
+        self.auto_rest = min(self.break_carry, self.auto_rest + max(0, int(seconds)))
+        self._save_timer_state()
+
+    def _settle_auto_rest(self):
+        """手动开始专注 (6.8): 非手动结束的专注留下的那部分休息时间, 先按暂停休息的结转比例折算一次."""
+        a = min(int(self.auto_rest), int(self.break_carry))
+        self.auto_rest = 0
+        if a <= 0:
+            self._save_timer_state()
+            return
+        keep = int(round(a * float(config.BREAK_CARRY_RATE)))
+        self._set_break_carry(self.break_carry - (a - keep))
+        if self.contract.active:
+            self.contract.pre_cap(self.break_carry)
+        toast.info(tr("休息时间折算: 专注自动结束留下的 {a} ×{r:g} = {k}.", a=fmt_ms(a),
+                      r=float(config.BREAK_CARRY_RATE), k=fmt_ms(keep)), timeout=8000)
 
     def _save_timer_state(self):
         """timer_state.json: 积攒的休息时间 + 本周连点领取的记录 + 进行中的专注."""
@@ -1620,6 +1650,7 @@ class BreakTimerApp:
         d.update(getattr(self, "_timer_extra", None) or {})
         self._timer_extra = None
         d["break_carry"] = self.break_carry
+        d["auto_rest"] = int(getattr(self, "auto_rest", 0))
         d["focus"] = self._focus_record()
         self._focus_saved = time.monotonic()
         save_json_file(self.timer_file, d)
@@ -1754,6 +1785,7 @@ class BreakTimerApp:
             sec = limit
         minutes, brk = self._book_focus(start, sec, ok if penalized else None)
         self._set_break_carry(self.break_carry + brk)   # 同时清掉文件里的专注状态
+        self._add_auto_rest(brk)
         self.refresh_display()
         if minutes <= 0:
             return
@@ -1769,6 +1801,7 @@ class BreakTimerApp:
                 at=f"{alive:%m-%d %H:%M}", m=minutes)
         if brk > 0:
             msg += "\n" + tr("积攒的休息时间 +{t}.").format(t=fmt_ms(brk))
+            msg += "\n" + tr("立即开始专注:先进行一次休息时间的折算")
         toast.notice(tr("⏱  上次的专注已记录"), msg)
 
     def _check_close_pending(self):
@@ -1802,12 +1835,15 @@ class BreakTimerApp:
         self._mine()                           # 终止由本机做, 其他设备照着结束
         self.reset_to_idle()
         self._set_break_carry(self.break_carry + brk)
+        self._add_auto_rest(brk)
+        self.lbl_sub.config(text=self._idle_sub_text())
         self.refresh_display()
         self._refresh_if_visible("stats", "cal")
         msg = tr("这台设备上的 OIT 在 {at} 被关掉了, 共享的专注已终止.").format(at=f"{alive:%m-%d %H:%M}")
         msg += "\n" + tr("专注记到被关掉时为止: 计入 {m:.1f} 分钟; 关掉的这段记为空闲.").format(m=minutes)
         if brk > 0:
             msg += "\n" + tr("积攒的休息时间 +{t}.").format(t=fmt_ms(brk))
+            msg += "\n" + tr("立即开始专注:先进行一次休息时间的折算")
         toast.notice(tr("⏹  专注已终止"), msg)
 
     def _end_focus_for_close(self):
@@ -1820,7 +1856,7 @@ class BreakTimerApp:
         self._mine()
         self.reset_to_idle()
         self.break_carry += brk
-        self._save_timer_state()
+        self._add_auto_rest(brk)                 # 同时写进文件
 
     def _keep_awake(self):
         """专注 / 休息中不让系统自动睡眠 (屏幕照常可以关掉), 计时和同步不会停."""
@@ -1930,6 +1966,7 @@ class BreakTimerApp:
         minutes, brk = self._book_focus(start, seconds, ok)
         self.reset_to_idle()
         self._set_break_carry(self.break_carry + brk)   # 同时清掉文件里的专注状态
+        self._add_auto_rest(brk)
         self.lbl_sub.config(text=self._idle_sub_text())
         self._sync_timer_buttons()
         self.refresh_display()
@@ -1942,6 +1979,7 @@ class BreakTimerApp:
             p=float(config.FOCUS_CHECK_PENALTY), m=minutes)
         if brk > 0:
             msg += "\n" + tr("积攒的休息时间 +{t}.").format(t=fmt_ms(brk))
+            msg += "\n" + tr("立即开始专注:先进行一次休息时间的折算")
         toast.notice(tr("⏹  专注已自动结束"), msg)
 
     def _restore_timer_view(self):

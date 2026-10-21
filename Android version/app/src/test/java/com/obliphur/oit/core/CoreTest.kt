@@ -458,6 +458,35 @@ class CoreTest {
         assertEquals(20 * 60.0, total, 5.0)
     }
 
+    /** 非手动结束的专注 (MECHANICS 6.8): 接着手动开始专注 → 它留下的休息时间先折算一次; 开始休息 → 不折算. */
+    @Test
+    fun autoEndedFocusRestSettlesOnNextFocus() {
+        fun autoEnded(): Core {
+            var clock = 1000.0
+            val core = Core(tmp(), NoHost) { clock }
+            core.endSetupPeriod()
+            core.timer.onAction()                                // 开始专注
+            clock += Cfg.FOCUS_CHECK_EVERY + Cfg.FOCUS_CHECK_GRACE + 5
+            core.timer.check()                                   // 没回应"还在吗": 自动结束
+            return core
+        }
+        val a = autoEnded()
+        assertEquals(TState.IDLE, a.timer.state)
+        val carry = a.timer.breakCarry
+        assertTrue(carry > 0 && a.timer.autoRest == carry)
+        a.timer.onAction()                                       // 立即开始专注: 先折算
+        assertEquals(TState.RUNNING, a.timer.state)
+        assertEquals(Math.round(carry * 0.7).toInt(), a.timer.breakCarry)
+        assertEquals(0, a.timer.autoRest)
+
+        val b = autoEnded()
+        val carryB = b.timer.breakCarry
+        b.timer.onBreakButton()                                  // 开始休息: 不立即折算, 整段用进这次休息
+        assertEquals(TState.ON_BREAK, b.timer.state)
+        assertEquals(0, b.timer.autoRest)
+        assertEquals(carryB.toDouble(), b.timer.countdown, 1.0)
+    }
+
     /** 有设备离线时: 专注照常, 休息照常算, 但离线的那段记为空闲, 不计入学习时长 (MECHANICS 8.4). */
     @Test
     fun offlineStretchIsIdle() {
