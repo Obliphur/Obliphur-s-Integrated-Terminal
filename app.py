@@ -597,6 +597,7 @@ class BreakTimerApp:
                 a, b, text, now, config.FILL_WINDOW, self.dm.auto_text_for_key),
             split=self.contract.fine_hour,
             split_all=lambda: self.contract.has("fine"),     # 细化规范 + 黑雾: 所有格子都分成两段 (18.3)
+            on_filled=self._seal_extra,                      # 记录封锁: 完成填写时另外封锁两个格子 (18.4)
             fog=self._fog_words,                             # 黑雾: 只露出"现在"和待填写的格子 (18.3)
             sealed=lambda a, b: self.contract.hour_sealed(a, b)   # 记录封锁: 按 Enter 提交前先确认
         )
@@ -3077,6 +3078,26 @@ class BreakTimerApp:
         if self.sync.peers():
             self.sync.sync_now()
 
+    def _seal_extra(self):
+        """记录封锁 (18.4): 完成了一次填写, 另外随机封锁两个可以封锁的格子."""
+        c = self.contract
+        keys = c.seal_extra(datetime.now(), text_of=self.dm.unit_text, auto=self.dm.auto_text_for_key,
+                            fill=config.FILL_WINDOW)
+        if not keys:
+            return
+        self._log_notice(f"CONTRACT seal locks {', '.join(keys)}")
+        toast.warn(tr("记录封锁: 另外封锁了 {t} (不能再修改)", t=", ".join(self._cell_label(k) for k in keys)),
+                   timeout=10000)
+        self._contract_changed()
+        if self.sync.peers():
+            self.sync.sync_now()
+
+    @staticmethod
+    def _cell_label(key: str) -> str:
+        """整点记录格的键 ("日期/小时", 细化规范的半小时 "日期/小时/1") → "10-18 09:00"."""
+        parts = key.split("/")
+        return f"{parts[0][5:]} {int(parts[1]):02d}:{'30' if parts[2:] == ['2'] else '00'}"
+
     def _random_effect(self, kind: str, val: str):
         """未知变量的一次判定结果: 抽中的词条 (提示), 或者效果 (休息时间 ±10 分钟由本机改计时器)."""
         c = self.contract
@@ -3091,9 +3112,7 @@ class BreakTimerApp:
             toast.warn(msg.format(n=contract_mod.RANDOM_REST // 60), timeout=10000)
         elif kind == "lock":
             if val:
-                parts = val.split("/")
-                t = f"{parts[0][5:]} {int(parts[1]):02d}:{'30' if parts[2:] == ['2'] else '00'}"
-                toast.warn(tr("未知变量: 封锁了整点记录 {t} (不能再修改)", t=t), timeout=10000)
+                toast.warn(tr("未知变量: 封锁了整点记录 {t} (不能再修改)", t=self._cell_label(val)), timeout=10000)
             else:
                 toast.info(tr("未知变量: 没有可以封锁的整点记录, 无事发生"))
         elif kind == "double":

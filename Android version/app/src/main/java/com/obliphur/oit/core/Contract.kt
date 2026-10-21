@@ -76,7 +76,7 @@ class Contract(private val file: File) {
             // 1 级: 联网 (抑制), 整点记录 (记录封锁), 禁止打开的软件 (乐理之灾 / 禁游令 / 低帧的诅咒),
             // 现实 (高机动 / 禁足), 黑雾, 休息 (禁止囤囤鼠!), 专注中的联网 (静默协议)
             Term("suppress", "suppress", 1, "环境:抑制", "不能使用快速访问功能"),
-            Term("seal", "seal", 1, "环境:记录封锁", "无法修改已经被填写的格子 (包括自动填写和手动填写)"),
+            Term("seal", "seal", 1, "环境:记录封锁", "无法修改已经被填写的格子 (包括自动填写和手动填写); 每次完成填写时, 另外随机封锁两个可以封锁的格子"),
             Term("music", "music", 1, "环境:乐理之灾", "合约期间音乐播放软件禁止联网 可以通过点击解除网络禁令"),
             Term("game", "game", 1, "环境:禁游令", "合约期间游戏和游戏平台禁止联网 可以通过点击解除网络禁令"),
             Term("video", "video", 1, "环境:低帧的诅咒", "合约期间视频平台禁止联网 可以通过点击解除网络禁令"),
@@ -211,6 +211,8 @@ class Contract(private val file: File) {
         val SUPPLY_WARN = listOf(180, 60)
         /** 纵深推进: 一段专注至少这么多秒, 不到就结束算违反. */
         val DEEP = mapOf("deep1" to 40 * 60, "deep2" to 80 * 60)
+        /** 记录封锁: 每次完成填写时另外随机封锁几个格子. */
+        const val SEAL_EXTRA = 2
         /** 侵蚀: 网络申请的冷静期乘多少 (硬规则). */
         val COOLDOWN_X = mapOf("erode1" to 2.0, "erode2" to 3.0)
         /** 未知变量: 合约的每个小时开始时随机抽一个 1-2 级的词条; 不会选中录像和持久战的词条.
@@ -769,7 +771,21 @@ class Contract(private val file: File) {
         return k
     }
 
-    /** 未知变量封锁的记录格 (所有合约的). */
+    /** 记录封锁 (18.4): 每次完成填写时, 另外随机封锁 SEAL_EXTRA 个可以封锁的格子 (挑法同未知变量的 lockCell).
+     *  返回封锁了的格子的键. 同 contract.py 的 seal_extra. */
+    fun sealExtra(now: LocalDateTime, dice: Dice = Dice(), textOf: ((String) -> String)? = null, auto: String = "",
+                  fillSec: Long = 0, autoOf: ((String) -> String)? = null): List<String> {
+        if (!active || !has("seal")) return emptyList()
+        val out = mutableListOf<String>()
+        repeat(SEAL_EXTRA) {
+            val k = lockCell(now, dice, textOf, auto, fillSec, autoOf)
+            if (k.isEmpty()) return out
+            out.add(k)
+        }
+        return out
+    }
+
+    /** 未知变量 / 记录封锁 另外封锁的记录格 (所有合约的). */
     fun locks(): List<Pair<LocalDateTime, LocalDateTime>> {
         val srcs = history.mapNotNull { it.optJSONArray("locks") } + listOfNotNull(if (active) live.optJSONArray("locks") else null)
         return srcs.flatMap { arr ->

@@ -110,7 +110,7 @@ class HourLogPage(tk.Frame):
 
     def __init__(self, master, data_manager, on_text_changed=None, on_toggle=None,
                  on_open_settings=None, locked=None, split=None, fog=None, sealed=None,
-                 split_all=None):
+                 split_all=None, on_filled=None):
         super().__init__(master, bg=COLORS["bg"])
         self.dm = data_manager
         # 合约 (MECHANICS 18.4): 记录封锁 —— 已经填写了的格子 (手动 / 自动) 不能再改 (开始, 结束, 内容, 现在)
@@ -120,6 +120,7 @@ class HourLogPage(tk.Frame):
         # 黑雾: 返回这个合约的种子 (没有黑雾时 None). 除了"现在"的格子和待填写的格子, 其他格子的时间写 ???, 内容是随机字符
         self.fog = fog or (lambda: None)
         self.split_all = split_all or (lambda: False)
+        self.on_filled = on_filled or (lambda: None)  # 空着的格子填上了 (记录封锁另外封锁两个格子)
         # 记录封锁: 这个格子填写后就不能再改 (开始, 结束). 这种格子只在按 Enter 并确认后才保存,
         # 离开输入框时不保存, 写了的内容留着 (草稿), 等按 Enter
         self.sealed = sealed or (lambda start, end: False)
@@ -279,6 +280,7 @@ class HourLogPage(tk.Frame):
                     self._drafts[(h, i)] = var.get()
                     return False
             self._drafts.pop((h, i), None)
+            was = self._get(h, i if split else None)
             s = self._slot_start(h)
             if split:
                 self.dm.set_half_text(s.strftime('%Y-%m-%d'), s.hour, i, text)
@@ -286,6 +288,8 @@ class HourLogPage(tk.Frame):
                 self.dm.set_hour_text(s.strftime('%Y-%m-%d'), s.hour, text)
             if self.on_text_changed:
                 self.on_text_changed()
+            if text and not str(was or "").strip():
+                self.on_filled()
             self.refresh()
 
 

@@ -333,6 +333,23 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         changed()
     }
 
+    /** 记录封锁 (MECHANICS 18.4): 完成了一次填写, 另外随机封锁两个可以封锁的格子. */
+    fun sealExtra() {
+        val keys = contract.sealExtra(LocalDateTime.now(), Dice(), dm::unitText, dm.autoValue, dm.fillSeconds.toLong(),
+            dm::autoTextForKey)
+        if (keys.isEmpty()) return
+        logNotice("CONTRACT seal locks ${keys.joinToString(", ")}")
+        toast(tr("记录封锁: 另外封锁了 {t} (不能再修改)", "t" to keys.joinToString(", ") { cellLabel(it) }), "warn", long = true)
+        syncHourLog()
+        changed()
+    }
+
+    /** 整点记录格的键 ("日期/小时", 细化规范的半小时 "日期/小时/1") → "10-18 09:00". */
+    private fun cellLabel(key: String): String {
+        val p = key.split("/")
+        return "${p[0].drop(5)} %02d:%s".format(p[1].toInt(), if (p.getOrNull(2) == "2") "30" else "00")
+    }
+
     /** 大约每秒调用一次 (服务里的循环, 以及从睡眠中被闹钟叫醒时). */
     fun tick() {
         if (dm.resetting) return

@@ -227,6 +227,7 @@ fun HourLogScreen(go: (String) -> Unit) {
                     if (text != cells[i].third) {
                         if (split) dm.setHalfText(ds, start.hour, i, text) else dm.setHourText(ds, start.hour, text)
                         if (isWait) Notifier.cancelHour(OitApp.instance)
+                        if (text.isNotBlank() && cells[i].third.isBlank()) core.sealExtra()   // 记录封锁: 另外封锁两个格子
                         core.changed()
                     }
                 }

@@ -54,7 +54,7 @@ TERMS = [
     # 1 级: 联网 (抑制), 整点记录 (记录封锁), 禁止打开的软件 (乐理之灾 / 禁游令 / 低帧的诅咒),
     # 现实 (高机动 / 禁足), 黑雾, 休息 (禁止囤囤鼠!), 专注中的联网 (静默协议)
     ("suppress", "suppress", 1, "环境:抑制", "不能使用快速访问功能", ()),
-    ("seal", "seal", 1, "环境:记录封锁", "无法修改已经被填写的格子 (包括自动填写和手动填写)", ()),
+    ("seal", "seal", 1, "环境:记录封锁", "无法修改已经被填写的格子 (包括自动填写和手动填写); 每次完成填写时, 另外随机封锁两个可以封锁的格子", ()),
     ("music", "music", 1, "环境:乐理之灾", "合约期间音乐播放软件禁止联网 可以通过点击解除网络禁令", ()),
     ("game", "game", 1, "环境:禁游令", "合约期间游戏和游戏平台禁止联网 可以通过点击解除网络禁令", ()),
     ("video", "video", 1, "环境:低帧的诅咒", "合约期间视频平台禁止联网 可以通过点击解除网络禁令", ()),
@@ -115,7 +115,8 @@ RECORD = {"gaze": "camera", "scar": "screen"}   # 录像的词条 → 录什么 
 # 网络禁令 (MECHANICS 18.3): 这一类软件合约期间禁止联网 (打开它们不算违反); 点击词条可以解除, 扣掉词条等级那么多目标生命值
 BANS = ("music", "silent", "game", "video")
 SUPPLY_WARN = (180, 60)                         # 支援短缺: 还差这么多秒就用超时各提醒一次
-DEEP = {"deep1": 40 * 60, "deep2": 80 * 60}     # 纵深推进: 一段专注至少这么多秒, 不到就结束算违反
+DEEP = {"deep1": 40 * 60, "deep2": 80 * 60}
+SEAL_EXTRA = 2                                  # 记录封锁: 每次完成填写时另外随机封锁几个格子     # 纵深推进: 一段专注至少这么多秒, 不到就结束算违反
 COOLDOWN_X = {"erode1": 2.0, "erode2": 3.0}     # 侵蚀: 网络申请的冷静期乘多少 (硬规则)
 RANDOM = "unknown"                              # 未知变量: 合约的每个小时开始时随机启用一个 1-2 级的词条, 那个小时结束时移除
 RANDOM_LEVELS = (1, 2)
@@ -933,8 +934,21 @@ class Contract:
         self.save()
         return k
 
+    def seal_extra(self, now: datetime, rng=None, text_of=None, auto="", fill: timedelta = None) -> list:
+        """记录封锁 (18.4): 每次完成填写时, 另外随机封锁 SEAL_EXTRA 个可以封锁的格子 (挑法同未知变量的 lock_cell).
+        返回封锁了的格子的键; 没有选记录封锁 / 没有可以封锁的时少于 SEAL_EXTRA 个."""
+        if not self.active or not self.has("seal"):
+            return []
+        out = []
+        for _ in range(SEAL_EXTRA):
+            k = self.lock_cell(now, rng, text_of, auto, fill)
+            if not k:
+                break
+            out.append(k)
+        return out
+
     def locks(self) -> list:
-        """未知变量封锁的记录格 (所有合约的): [(开始, 结束)]."""
+        """未知变量 / 记录封锁 另外封锁的记录格 (所有合约的): [(开始, 结束)]."""
         out = []
         for src in [h.get("locks") for h in self.history] + [self.live.get("locks") if self.active else None]:
             for v in src or []:
@@ -1558,7 +1572,7 @@ def _selftest():
     assert BY_ID["move"][2] == 1 and BY_ID["move"][4] == "现实中的移动速度+50%"
     assert BY_ID["confine"][2] == 1 and BY_ID["confine"][4] == "在非休息时间不能离开工作岗位进行活动"
     assert LAYOUT["confine"][0] == LAYOUT["move"][0] + 1, "高机动 / 禁足 挨着"
-    assert BY_ID["seal"][4] == "无法修改已经被填写的格子 (包括自动填写和手动填写)"
+    assert BY_ID["seal"][4] == "无法修改已经被填写的格子 (包括自动填写和手动填写); 每次完成填写时, 另外随机封锁两个可以封锁的格子"
     assert conflicts("gaze", "scar") and conflicts("scar", "gaze") and not conflicts("gaze", "music")
     assert conflicts("hoard", "short1") and conflicts("short2", "hoard"), "禁止囤囤鼠! 和支援短缺冲突"
     assert clean_terms(["short1", "hoard"]) == ["short1"]
@@ -1861,6 +1875,13 @@ def _selftest():
     last = _Rng(pick=lambda pool: pool[-1])
     assert c.lock_cell(now, last, texts.get, "Sleeping", fill) == "2026-10-18/9", "已经封锁的不再选"
     assert c.lock_cell(now, None, None, "Sleeping", fill) == ""
+    # 记录封锁: 每次完成填写时另外封锁两个; 没选记录封锁时不封
+    assert c.seal_extra(now, None, texts.get, "Sleeping", fill) == [], "没选记录封锁"
+    c.live["terms"] = list(c.terms) + ["seal"]
+    n0 = len(c.locks())
+    got = c.seal_extra(now, None, texts.get, "Sleeping", fill)
+    assert len(got) == 2 and len(set(got)) == 2 and len(c.locks()) == n0 + 2, got
+    c.live["terms"] = [t for t in c.terms if t != "seal"]
     c.finish("abandoned", now)
     # 合约提前结束了: 之后才开始的这段专注不减速 (阻滞只对合约内的专注生效)
     assert c.hour_locked(a, b, "学习", now + timedelta(days=3), fill, "Sleeping")

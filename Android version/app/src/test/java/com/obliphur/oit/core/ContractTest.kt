@@ -58,7 +58,7 @@ class ContractTest {
         assertEquals("现实中的移动速度+50%", Contract.BY_ID["move"]!!.desc)
         assertEquals(1, Contract.BY_ID["confine"]!!.level)
         assertEquals(Contract.LAYOUT["move"]!! + 1, Contract.LAYOUT["confine"])
-        assertEquals("无法修改已经被填写的格子 (包括自动填写和手动填写)", Contract.BY_ID["seal"]!!.desc)
+        assertEquals("无法修改已经被填写的格子 (包括自动填写和手动填写); 每次完成填写时, 另外随机封锁两个可以封锁的格子", Contract.BY_ID["seal"]!!.desc)
         assertTrue(Contract.conflicts("gaze", "scar") && Contract.conflicts("scar", "gaze"))
         assertTrue(Contract.SOCIAL_APPS.intersect(Contract.VIDEO_APPS).isEmpty())
         assertEquals(listOf("long2", "suppress", "jam"), Contract.clean(listOf("long2", "long1", "x", "suppress", "jam")))
@@ -417,6 +417,13 @@ class ContractTest {
         assertFalse(c.hourLocked(b, b.plusHours(1), "", now, 3600, "Sleeping"))        // 11 点那格还没过填写时限
         assertEquals("2026-10-18/9", c.lockCell(now, seq(pick = { it - 1 }), textOf, "Sleeping", 3600))   // 已经封锁的不再选
         assertEquals("", c.lockCell(now, seq(), null, "Sleeping", 3600))
+        // 记录封锁: 每次完成填写时另外封锁两个; 没选记录封锁时不封
+        assertTrue(c.sealExtra(now, seq(), textOf, "Sleeping", 3600).isEmpty())
+        c.live.put("terms", org.json.JSONArray(c.terms + "seal"))
+        val n0 = c.locks().size
+        val got = c.sealExtra(now, seq(pick = { it - 1 }), textOf, "Sleeping", 3600)
+        assertEquals(2, got.toSet().size)
+        assertEquals(n0 + 2, c.locks().size)
         c.finish("abandoned", now)
         // 合约提前结束了: 之后才开始的这段专注不减速 (阻滞只对合约内的专注生效)
         assertTrue(c.hourLocked(a, b, "学习", now.plusDays(3), 3600, "Sleeping"))
