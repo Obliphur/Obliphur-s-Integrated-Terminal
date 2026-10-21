@@ -181,6 +181,7 @@ fun NetScreen() {
     // 状态后面写上当前的断网方式 (代理-全屏蔽 (Proxy block-all) / 代理 - 规则过滤)
     val mode = "  ·  " + core.settings.display("NET_MODE", core.netMode())
     PageColumn {
+        FileChannelButton()                       // 文件通道 (MECHANICS 15.6)
         OitCard {
             // 开发者模式在界面上不显示: 照常显示成离线
             when (n.mode) {

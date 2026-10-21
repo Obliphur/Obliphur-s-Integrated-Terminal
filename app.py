@@ -39,6 +39,7 @@ from pages import (CalendarPage, HourLogPage, SettingsPage, RulesPage, StatsPage
                    ContractPage, AchievementsPage, AchievementPopups)
 from pages.prestart_dialog import PrestartDialog
 from pages.outing_dialog import OutingDialog
+from pages.file_channel import FileChannel
 from pages.widgets import (frozen, LoadingCover, cfg, flavor,
                            show_pack, hide_pack)
 
@@ -258,6 +259,7 @@ class BreakTimerApp:
         self.net.peer_net = lambda: devsync.peer_net(self.sync.peer_ledgers(), self.net.date)
         # 联网状态随设备同步 (MECHANICS 2.8): 同一次联网由发起的设备扣额度, 它不在线时由本机扣
         self.net.my_id = lambda: self.sync.my_id
+        self.file_channel = FileChannel(self)                  # 文件通道 (MECHANICS 15.6)
         self.net.charge_ok = self._owner_away
         self.net.peer_usage = lambda: [r for led in self.sync.peer_ledgers()
                                        for r in (led.get("usage") or [])]
@@ -3866,7 +3868,9 @@ class BreakTimerApp:
         tk.Label(
             hdr, text=tr("🌐  联网申请"), bg=bg, fg=COLORS["text"],
             font=config.font("h1", bold=True)
-        ).pack(anchor="w")
+        ).pack(side="left", anchor="w")
+        # 文件通道 (MECHANICS 15.6): 把文件 / 图片发给绑定的设备
+        ttk.Button(hdr, text=tr("📁  文件通道"), command=self.file_channel.open).pack(side="right")
 
         ttk.Separator(page, orient="horizontal", style="UI.TSeparator").pack(fill="x", padx=26)
 

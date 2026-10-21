@@ -47,6 +47,11 @@ interface SyncLocal {
     fun updateRequested(peerId: String): String = "unsupported"
     /** 别的设备 (名字 name) 重置 / 卸载了, 请本机也清空数据 (MECHANICS 9). */
     fun wipeRequested(wipeId: String, sender: String, name: String) {}
+    /** 文件通道 (MECHANICS 15.6): 设备 who 要发文件过来 (o: name / size / sha256 / token / nonce).
+     *  "" = 要 (之后调用 fetchFile 去取), 否则是不要的原因. */
+    fun fileOffered(peerId: String, who: String, o: JSONObject): String = "unsupported"
+    /** 文件通道: 对方收到了本机发的文件. */
+    fun fileDelivered(who: String, name: String) {}
 }
 
 /** 在界面线程里执行, 等它做完 (同 devsync.MainRunner). post=null 时直接在当前线程执行 (测试用). */
@@ -122,6 +127,8 @@ class SyncService(
         /** 设备之间直接传的安装包最大多少; 发出的安装包多久之内可以来取. */
         const val UPDATE_MAX = 160L * 1024 * 1024
         const val OFFER_TTL_MS = 1_800_000L
+        /** 文件通道 (MECHANICS 15.6) 一次最多传多大. */
+        const val FILE_MAX = 1L shl 30
         /** 这么久之内同步过的设备才算"在线" (比较最后操作时间用). */
         const val FRESH_MS = 120_000L
         /** 设备离线 (Timer 页显示"离线", 这段时间记为空闲, MECHANICS 8.4): 绑定的设备最后一次同步失败, 或者这么久没有它的消息.
@@ -421,7 +428,9 @@ class SyncService(
                 val body = try { if (raw.isEmpty()) JSONObject() else JSONObject(String(raw, Charsets.UTF_8)) } catch (e: Exception) { JSONObject() }
                 val ip = c.inetAddress.hostAddress ?: ""
                 if (method == "GET" && path.startsWith("/oit/v1/file/")) {
-                    serveFile(c, offerFile(path.substringAfterLast('/')))
+                    val token = path.substringAfterLast('/')
+                    val fo = fileOffers[token]?.takeIf { it.expires > System.currentTimeMillis() }
+                    if (fo != null) serveStream(c, fo) else serveFile(c, offerFile(token))
                     return@use
                 }
                 val (code, out) = when {
@@ -433,6 +442,8 @@ class SyncService(
                     method == "POST" && path == "/oit/v1/wipe" -> onWipe(body)
                     method == "POST" && path == "/oit/v1/offer" -> onOffer(body)
                     method == "POST" && path == "/oit/v1/want" -> onWant(body)
+                    method == "POST" && path == "/oit/v1/send" -> onSend(body)
+                    method == "POST" && path == "/oit/v1/got" -> onGot(body)
                     else -> 404 to JSONObject().put("error", "not found")
                 }
                 val data = out.toString().toByteArray(Charsets.UTF_8)
@@ -470,6 +481,143 @@ class SyncService(
             "Connection: close\r\n\r\n").toByteArray())
         f.inputStream().use { it.copyTo(out, 65536) }
         out.flush()
+    }
+
+    // ---- 文件通道 (MECHANICS 15.6): 把文件 / 图片发给一台绑定的设备 ----
+
+    private class FileOffer(val name: String, val size: Long, val open: () -> java.io.InputStream,
+                            val fk: ByteArray, val nonce: ByteArray, val expires: Long)
+
+    private val fileOffers = java.util.concurrent.ConcurrentHashMap<String, FileOffer>()
+
+    /** 文件通道: 内容加密后发. */
+    private fun serveStream(c: Socket, fo: FileOffer) {
+        c.soTimeout = 60_000
+        val out = c.getOutputStream()
+        out.write(("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: ${fo.size}\r\n" +
+            "Connection: close\r\n\r\n").toByteArray())
+        var off = 0L
+        fo.open().use { inp ->
+            val buf = ByteArray(65536)
+            while (true) {
+                val n = inp.read(buf)
+                if (n < 0) break
+                SyncCrypto.fileXor(fo.fk, fo.nonce, off, buf, n)
+                out.write(buf, 0, n)
+                off += n
+            }
+        }
+        out.flush()
+    }
+
+    /** 先发签名的说明 (文件名, 大小, SHA-256, 取件码, nonce), 对方同意后来取 (内容加密传).
+     *  open: 每次调用打开一次文件. 返回 "sent", 或对方不要的原因 ("old" = 对方的 OIT 太旧). 在后台线程里调用. */
+    fun sendFile(peerId: String, name: String, size: Long, open: () -> java.io.InputStream): String {
+        val p = peers()[peerId] ?: return "unpaired"
+        if (size <= 0 || size > FILE_MAX) return "size"
+        val md = MessageDigest.getInstance("SHA-256")
+        var n = 0L
+        open().use { inp ->
+            val buf = ByteArray(65536)
+            while (true) {
+                val r = inp.read(buf)
+                if (r < 0) break
+                md.update(buf, 0, r)
+                n += r
+            }
+        }
+        if (n != size) return "size"
+        val k = SyncCrypto.unhex(p.getString("key"))
+        val token = SyncCrypto.hex(ByteArray(16).also { SecureRandom().nextBytes(it) })
+        val nonce = ByteArray(16).also { SecureRandom().nextBytes(it) }
+        val now = System.currentTimeMillis()
+        fileOffers.entries.removeAll { it.value.expires < now }
+        fileOffers[token] = FileOffer(name, size, open, SyncCrypto.fileKey(k), nonce, now + OFFER_TTL_MS)
+        val env = SyncCrypto.seal(k, myId, JSONObject().put("send", JSONObject().put("name", name).put("size", size)
+            .put("sha256", SyncCrypto.hex(md.digest())).put("token", token).put("nonce", SyncCrypto.hex(nonce))))
+        val (st, reply) = http(p.getString("addr"), p.getInt("port"), "POST", "/oit/v1/send", env, 10_000)
+        if (st == 404) return "old"
+        if (st == 401) throw IllegalStateException("unpaired")
+        if (st != 200) throw IllegalStateException(reply.optString("error", "HTTP $st"))
+        return if (reply.optBoolean("ok")) "sent" else reply.optString("why", "declined")
+    }
+
+    private fun onSend(env: JSONObject): Pair<Int, JSONObject> {
+        val bad = 400 to JSONObject().put("error", "bad-request")
+        val id = env.optString("from")
+        val p = peers()[id] ?: return 401 to JSONObject().put("error", "unpaired")
+        val body = try { SyncCrypto.unseal(SyncCrypto.unhex(p.getString("key")), env) } catch (e: SealError) {
+            return 403 to JSONObject().put("error", e.message)
+        }
+        val o = body.optJSONObject("send") ?: return bad
+        val size = o.optLong("size")
+        val hex32 = Regex("[0-9a-f]{32}")
+        if (size <= 0 || size > FILE_MAX || !Regex("[0-9a-f]{64}").matches(o.optString("sha256")) ||
+            !hex32.matches(o.optString("token")) || !hex32.matches(o.optString("nonce"))) return bad
+        val clean = JSONObject().put("name", SyncCrypto.safeName(o.optString("name"))).put("size", size)
+            .put("sha256", o.optString("sha256")).put("token", o.optString("token")).put("nonce", o.optString("nonce"))
+        val why = try { runner.call { local.fileOffered(id, p.optString("name", "?"), clean) } } catch (e: Exception) {
+            return 503 to JSONObject().put("error", e.message)
+        }
+        return 200 to if (why.isEmpty()) JSONObject().put("ok", true) else JSONObject().put("ok", false).put("why", why)
+    }
+
+    /** 在后台线程里调用: 到发来说明的那台设备上取文件, 解密, 核对大小和 SHA-256, 写到 dest; 告诉对方收到了.
+     *  出错时删掉 dest, 抛出异常. */
+    fun fetchFile(peerId: String, o: JSONObject, dest: File) {
+        val p = peers()[peerId] ?: throw IllegalStateException("unpaired")
+        val k = SyncCrypto.unhex(p.getString("key"))
+        val fk = SyncCrypto.fileKey(k)
+        val nonce = SyncCrypto.unhex(o.getString("nonce"))
+        val size = o.getLong("size")
+        val md = MessageDigest.getInstance("SHA-256")
+        var n = 0L
+        try {
+            Socket().use { s ->
+                s.connect(InetSocketAddress(p.getString("addr"), p.getInt("port")), 6000)
+                s.soTimeout = 30_000
+                s.getOutputStream().apply {
+                    write("GET /oit/v1/file/${o.getString("token")} HTTP/1.1\r\nHost: oit\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray())
+                    flush()
+                }
+                val inp = BufferedInputStream(s.getInputStream())
+                val status = readLine(inp)
+                while (readLine(inp).isNotEmpty()) { /* 跳过响应头 */ }
+                if (status.split(" ").getOrNull(1) != "200") throw IllegalStateException(status)
+                dest.outputStream().use { out ->
+                    val buf = ByteArray(65536)
+                    while (true) {
+                        val r = inp.read(buf)
+                        if (r < 0) break
+                        if (n + r > size) throw IllegalStateException("size mismatch")
+                        SyncCrypto.fileXor(fk, nonce, n, buf, r)
+                        n += r
+                        md.update(buf, 0, r)
+                        out.write(buf, 0, r)
+                    }
+                }
+            }
+            if (n != size || SyncCrypto.hex(md.digest()) != o.getString("sha256")) throw IllegalStateException("checksum mismatch")
+        } catch (e: Exception) {
+            dest.delete()
+            throw e
+        }
+        runCatching {                    // 告诉对方收到了 (旧版本不认, 不要紧)
+            val env = SyncCrypto.seal(k, myId, JSONObject().put("got", JSONObject().put("token", o.getString("token"))))
+            http(p.getString("addr"), p.getInt("port"), "POST", "/oit/v1/got", env, 5_000)
+        }
+    }
+
+    private fun onGot(env: JSONObject): Pair<Int, JSONObject> {
+        val p = peers()[env.optString("from")] ?: return 401 to JSONObject().put("error", "unpaired")
+        val body = try { SyncCrypto.unseal(SyncCrypto.unhex(p.getString("key")), env) } catch (e: SealError) {
+            return 403 to JSONObject().put("error", e.message)
+        }
+        val token = body.optJSONObject("got")?.optString("token") ?: return 400 to JSONObject().put("error", "bad-request")
+        fileOffers.remove(token)?.let { fo ->
+            runCatching { runner.call { local.fileDelivered(p.optString("name", "?"), fo.name) } }
+        }
+        return 200 to JSONObject().put("ok", true)
     }
 
     /** 把安装包发给一台设备: 先发签名的说明 (平台, 版本, 大小, SHA-256, 取件码), 对方再来取文件, 取到后核对.

@@ -72,6 +72,34 @@ object SyncCrypto {
 
     private fun tsBytes(ts: Long) = ByteArray(8) { (ts ushr (56 - it * 8)).toByte() }
 
+    /** 文件通道 (MECHANICS 15.6) 的加密密钥 (由绑定时的密钥算出). 同 devsync.file_key. */
+    fun fileKey(k: ByteArray): ByteArray = hmac(k, "file".toByteArray())
+
+    /** 文件通道: data[0, len) 和密钥流原地异或 (加密 / 解密一样), 这段在文件里从 offset 开始.
+     *  密钥流第 i 个 32 字节 = SHA-256(密钥 + nonce + i). 同 devsync.file_xor. */
+    fun fileXor(fk: ByteArray, nonce: ByteArray, offset: Long, data: ByteArray, len: Int = data.size) {
+        val md = MessageDigest.getInstance("SHA-256")
+        var pos = 0
+        while (pos < len) {
+            val abs = offset + pos
+            val block = abs / 32
+            val skip = (abs % 32).toInt()
+            md.update(fk)
+            md.update(nonce)
+            md.update(tsBytes(block))
+            val ks = md.digest()
+            val n = minOf(32 - skip, len - pos)
+            for (j in 0 until n) data[pos + j] = (data[pos + j].toInt() xor ks[skip + j].toInt()).toByte()
+            pos += n
+        }
+    }
+
+    /** 别的设备发来的文件名: 只留文件名本身, 去掉路径和不允许的字符. 同 devsync.safe_name. */
+    fun safeName(name: String): String {
+        val base = name.split('/', '\\').last().replace(Regex("[<>:\"|?*\\x00-\\x1f]"), "_").trim(' ', '.')
+        return base.take(180).ifEmpty { "file" }
+    }
+
     fun seal(k: ByteArray, sender: String, obj: JSONObject, nonce: ByteArray? = null, ts: Long? = null): JSONObject {
         val n = nonce ?: ByteArray(16).also { rnd.nextBytes(it) }
         val t = ts ?: System.currentTimeMillis()

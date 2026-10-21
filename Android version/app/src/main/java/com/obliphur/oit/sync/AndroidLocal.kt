@@ -64,6 +64,35 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
 
     override fun updateRequested(peerId: String): String = if (app.relayUpdates(true, only = peerId)) "" else "busy"
 
+    /** 文件通道 (MECHANICS 15.6): 手机直接收下, 存进 图片/OIT (图片) 或 下载/OIT (其他), 存好后提示. */
+    override fun fileOffered(peerId: String, who: String, o: JSONObject): String {
+        val s = app.sync ?: return "busy"
+        val name = o.optString("name")
+        core.toast(tr("正在接收 {name}…", "name" to name), "info")
+        Thread {
+            val tmp = java.io.File(java.io.File(app.cacheDir, "incoming").apply { mkdirs() }, o.optString("token"))
+            val result = runCatching {
+                s.fetchFile(peerId, o, tmp)
+                com.obliphur.oit.service.SharedFiles.save(app, tmp, name)
+            }
+            tmp.delete()
+            app.main {
+                result.onSuccess { where ->
+                    core.notice(tr("📁  收到文件"), tr("{who} 发来文件: {name} ({size})", "who" to who, "name" to name,
+                        "size" to com.obliphur.oit.ui.fmtSize(o.optLong("size"))) + "\n" + tr("已保存: {path}", "path" to where),
+                        listOf(NoticeButton(tr("知道了"), "ok", true)))
+                }.onFailure { e ->
+                    core.toast(tr("接收失败: {e}", "e" to (e.message ?: e.javaClass.simpleName)), "warn")
+                }
+                core.changed()
+            }
+        }.start()
+        return ""
+    }
+
+    override fun fileDelivered(who: String, name: String) =
+        core.toast(tr("{who} 已收到 {name}.", "who" to who, "name" to name), "success")
+
     // ---- 账 ----
 
     override fun ledger(): JSONObject {

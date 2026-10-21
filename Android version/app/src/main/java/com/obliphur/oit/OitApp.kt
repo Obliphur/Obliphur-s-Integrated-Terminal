@@ -265,6 +265,11 @@ class OitApp : Application(), Host {
 
     private fun onMain(fn: () -> Unit) = android.os.Handler(mainLooper).post(fn)
 
+    /** 在界面线程里执行 (后台线程做完后回来更新界面用). */
+    fun main(fn: () -> Unit) {
+        android.os.Handler(mainLooper).post(fn)
+    }
+
     /** 每次打开界面时 (设置里开着"打开时检查更新"). */
     fun checkUpdateOnOpen() {
         if (core.settings.bool("UPDATE_CHECK")) checkUpdate(auto = true)

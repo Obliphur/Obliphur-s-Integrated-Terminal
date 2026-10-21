@@ -57,6 +57,7 @@ OFFLINE_FWD_MS = (2 * SYNC_EVERY + 5) * 1000
 LOW_BATTERY = 2
 UPDATE_MAX = 160 * 1024 * 1024    # 设备之间直接传的安装包最大多少
 OFFER_TTL = 1800                  # 秒: 发出的安装包多久之内可以来取
+FILE_MAX = 1 << 30                # 文件通道 (MECHANICS 15.6) 一次最多传多大
 # 没有绑定、只是别的设备转交过来的设备, 这么久没有新消息就不再显示, 也不再算"离线" (它多半已经卸载了)
 STALE_FWD_MS = 24 * 3600_000
 FRESH_MS = 120_000         # 毫秒: 这么久之内同步过的设备才算"在线" (比较最后操作时间用)
@@ -114,6 +115,24 @@ def _keystream_xor(enc: bytes, nonce: bytes, data: bytes) -> bytes:
         for j in range(min(32, len(data) - i)):
             out[i + j] = data[i + j] ^ block[j]
     return bytes(out)
+
+
+def file_key(k: bytes) -> bytes:
+    """文件通道的加密密钥 (由绑定时的密钥算出)."""
+    return _h(k, b"file")
+
+
+def file_xor(fk: bytes, nonce: bytes, offset: int, data: bytes) -> bytes:
+    """文件通道: 文件内容和密钥流异或 (加密 / 解密一样). 密钥流第 i 个 32 字节 = SHA-256(密钥 + nonce + i),
+    可以从任意位置 offset 开始接着算. 同 Android 的 SyncCrypto.fileXor."""
+    if not data:
+        return b""
+    first, skip = divmod(int(offset), 32)
+    count = (skip + len(data) + 31) // 32
+    pre = fk + nonce
+    stream = b"".join(hashlib.sha256(pre + (first + i).to_bytes(8, "big")).digest() for i in range(count))
+    ks = stream[skip:skip + len(data)]
+    return (int.from_bytes(data, "big") ^ int.from_bytes(ks, "big")).to_bytes(len(data), "big")
 
 
 def seal(k: bytes, sender: str, obj, nonce: bytes = None, ts: int = None) -> dict:
@@ -225,7 +244,7 @@ class SyncService:
         self.incoming = {}        # token -> 别人发来的绑定请求
         self.outgoing = None      # 本机发起的绑定 {state, code, name, …}
         self.found = {}           # id -> 广播找到的设备
-        self.offers = {}          # token -> (文件, 过期时刻): 发给其他设备的安装包, 等对方来取
+        self.offers = {}          # token -> (文件, 过期时刻[, (密钥, nonce)]): 发给其他设备的安装包 / 文件, 等对方来取
         self._httpd = None
         self._udp = None
         self._wake = threading.Event()
@@ -1000,9 +1019,141 @@ class SyncService:
         return "sent" if reply.get("ok") else str(reply.get("why") or "declined")
 
     def offer_file(self, token: str):
+        return self.offer_get(token)[0]
+
+    def offer_get(self, token: str):
+        """(文件, 加密用的 (密钥, nonce) 或 None); 没有 / 过期了是 (None, None)."""
         with self.lock:
             v = self.offers.get(token)
-        return v[0] if v and v[1] > time.time() and os.path.isfile(v[0]) else None
+        if v and v[1] > time.time() and os.path.isfile(v[0]):
+            return v[0], (v[2] if len(v) > 2 else None)
+        return None, None
+
+    # ---- 文件通道 (MECHANICS 15.6): 把文件 / 图片发给一台绑定的设备 ----
+
+    def send_file(self, peer_id: str, path: str) -> str:
+        """后台线程: 先发签名的说明 (文件名, 大小, SHA-256, 取件码, nonce), 对方同意后来取 (内容加密传).
+        返回 'sent', 或对方不要的原因 ('old' = 对方的 OIT 太旧)."""
+        p = self.peers().get(peer_id)
+        if not p:
+            return "unpaired"
+        size = os.path.getsize(path)
+        if not 0 < size <= FILE_MAX:
+            return "size"
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 16), b""):
+                h.update(chunk)
+        token, nonce = secrets.token_hex(16), secrets.token_bytes(16)
+        k = bytes.fromhex(p["key"])
+        now = time.time()
+        with self.lock:
+            self.offers = {t: v for t, v in self.offers.items() if v[1] > now}
+            self.offers[token] = (path, now + OFFER_TTL, (file_key(k), nonce))
+        env = seal(k, self.my_id, {"send": {"name": os.path.basename(path), "size": size, "sha256": h.hexdigest(),
+                                            "token": token, "nonce": nonce.hex()}})
+        st, reply = self._http(p["addr"], p["port"], "POST", "/oit/v1/send", env, timeout=10.0)
+        if st == 404:
+            return "old"
+        if st == 401:
+            raise RuntimeError("unpaired")
+        if st != 200:
+            raise RuntimeError(reply.get("error") or f"HTTP {st}")
+        return "sent" if reply.get("ok") else str(reply.get("why") or "declined")
+
+    def _on_send(self, env: dict):
+        """别的设备要发文件过来: 核对说明, 交给本机 (问用户存到哪里 / 直接存), 本机决定后再来取 (fetch_file)."""
+        pid = str(env.get("from"))
+        p = self.peers().get(pid)
+        if not p:
+            return 401, {"error": "unpaired"}
+        try:
+            o = unseal(bytes.fromhex(p["key"]), env)["send"]
+            o = {"name": str(o["name"]), "size": int(o["size"]), "sha256": str(o["sha256"]),
+                 "token": str(o["token"]), "nonce": str(o["nonce"])}
+        except SealError as e:
+            return 403, {"error": str(e)}
+        except Exception:
+            return 400, {"error": "bad-request"}
+        if not (0 < o["size"] <= FILE_MAX) or not re.fullmatch(r"[0-9a-f]{64}", o["sha256"]) \
+                or not re.fullmatch(r"[0-9a-f]{32}", o["token"]) or not re.fullmatch(r"[0-9a-f]{32}", o["nonce"]):
+            return 400, {"error": "bad-request"}
+        o["name"] = safe_name(o["name"])
+        fn = getattr(self.local, "file_offered", None)
+        if fn is None:
+            return 200, {"ok": False, "why": "unsupported"}
+        try:
+            why = self.runner.call(lambda: fn(pid, str(p.get("name") or "?"), o))
+        except Exception as e:      # noqa: BLE001
+            return 503, {"error": str(e)}
+        return 200, ({"ok": True} if not why else {"ok": False, "why": why})
+
+    def fetch_file(self, peer_id: str, o: dict, dest: str):
+        """后台线程: 到发来说明的那台设备上取文件, 解密, 核对大小和 SHA-256, 写到 dest; 告诉对方收到了.
+        出错时删掉 dest, 抛出异常."""
+        p = self.peers().get(peer_id)
+        if not p:
+            raise RuntimeError("unpaired")
+        k = bytes.fromhex(p["key"])
+        fk, nonce = file_key(k), bytes.fromhex(o["nonce"])
+        h, n, size = hashlib.sha256(), 0, int(o["size"])
+        tmp = dest + ".part"
+        try:
+            conn = http.client.HTTPConnection(p["addr"], int(p["port"]), timeout=30)
+            try:
+                conn.request("GET", f"/oit/v1/file/{o['token']}", headers={"Content-Length": "0", "Connection": "close"})
+                r = conn.getresponse()
+                if r.status != 200:
+                    raise RuntimeError(f"HTTP {r.status}")
+                with open(tmp, "wb") as f:
+                    while True:
+                        chunk = r.read(1 << 16)
+                        if not chunk:
+                            break
+                        if n + len(chunk) > size:
+                            raise ValueError("size mismatch")
+                        plain = file_xor(fk, nonce, n, chunk)
+                        n += len(chunk)
+                        h.update(plain)
+                        f.write(plain)
+            finally:
+                conn.close()
+            if n != size or h.hexdigest() != o["sha256"]:
+                raise ValueError("checksum mismatch")
+            os.replace(tmp, dest)
+        except Exception:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            raise
+        try:                         # 告诉对方收到了 (旧版本不认, 不要紧)
+            env = seal(k, self.my_id, {"got": {"token": o["token"]}})
+            self._http(p["addr"], p["port"], "POST", "/oit/v1/got", env, timeout=5.0)
+        except Exception:
+            pass
+
+    def _on_got(self, env: dict):
+        pid = str(env.get("from"))
+        p = self.peers().get(pid)
+        if not p:
+            return 401, {"error": "unpaired"}
+        try:
+            token = str(unseal(bytes.fromhex(p["key"]), env)["got"]["token"])
+        except SealError as e:
+            return 403, {"error": str(e)}
+        except Exception:
+            return 400, {"error": "bad-request"}
+        with self.lock:
+            v = self.offers.pop(token, None)
+        if v and len(v) > 2:
+            fn = getattr(self.local, "file_delivered", None)
+            if fn is not None:
+                try:
+                    self.runner.call(lambda: fn(str(p.get("name") or "?"), os.path.basename(v[0])))
+                except Exception:
+                    pass
+        return 200, {"ok": True}
 
     def request_update(self, peer_id: str) -> str:
         """请一台绑定的设备给本机下载新版本并发过来 (本机连 GitHub 下不动时). 对方下载好后用 offer 发过来.
@@ -1498,6 +1649,13 @@ def send_forget(my_id: str, peer: dict, timeout: float = 3.0) -> bool:
         return False
 
 
+def safe_name(name: str) -> str:
+    """别的设备发来的文件名: 只留文件名本身, 去掉路径和 Windows 不允许的字符."""
+    name = re.split(r"[\\/]", str(name or ""))[-1]
+    name = re.sub(r'[<>:"|?*\x00-\x1f]', "_", name).strip(" .")
+    return name[:180] or "file"
+
+
 def _call(obj, name: str, default, *args):
     """本机接口里可选的方法 (测试用的 _FakeLocal 不一定有)."""
     fn = getattr(obj, name, None)
@@ -1551,7 +1709,7 @@ def _make_handler(svc: SyncService):
 
         def do_GET(self):
             if self.path.startswith("/oit/v1/file/"):
-                return self._send_file(svc.offer_file(self.path.rsplit("/", 1)[-1]))
+                return self._send_file(*svc.offer_get(self.path.rsplit("/", 1)[-1]))
             if self.path == "/oit/v1/hello":
                 return self._send(200, svc.device_info())
             if self.path.startswith("/oit/v1/pair/"):
@@ -1572,9 +1730,14 @@ def _make_handler(svc: SyncService):
                 return self._send(*svc._on_offer(body))
             if self.path == "/oit/v1/want":
                 return self._send(*svc._on_want(body))
+            if self.path == "/oit/v1/send":
+                return self._send(*svc._on_send(body))
+            if self.path == "/oit/v1/got":
+                return self._send(*svc._on_got(body))
             self._send(404, {"error": "not found"})
 
-        def _send_file(self, path):
+        def _send_file(self, path, enc=None):
+            """enc: 文件通道的 (密钥, nonce), 内容加密后发; 安装包 (None) 原样发."""
             if not path:
                 return self._send(404, {"error": "not found"})
             self.send_response(200)
@@ -1582,9 +1745,11 @@ def _make_handler(svc: SyncService):
             self.send_header("Content-Length", str(os.path.getsize(path)))
             self.send_header("Connection", "close")
             self.end_headers()
+            off = 0
             with open(path, "rb") as f:
                 for chunk in iter(lambda: f.read(1 << 16), b""):
-                    self.wfile.write(chunk)
+                    self.wfile.write(file_xor(enc[0], enc[1], off, chunk) if enc else chunk)
+                    off += len(chunk)
     return H
 
 
@@ -1837,6 +2002,39 @@ def _selftest():
         assert sb.request_update(sa.my_id) == "busy"
         del la.update_requested
         assert sb.request_update(sa.my_id) == "unsupported"
+
+        # 文件通道 (15.6): B 同意后来取, 内容加密传, 核对 SHA-256; 取完告诉 A
+        offered, delivered = [], []
+        lb.file_offered = lambda pid, who, o: offered.append((pid, who, o)) or ""
+        la.file_delivered = lambda who, name: delivered.append((who, name))
+        src = os.path.join(tempfile.mkdtemp(), "照片 1.png")
+        blob2 = os.urandom(150_000)
+        with open(src, "wb") as f:
+            f.write(blob2)
+        assert sa.send_file(sb.my_id, src) == "sent"
+        pid, who, o = offered[0]
+        assert pid == sa.my_id and who == "A" and o["name"] == "照片 1.png" and o["size"] == len(blob2)
+        pa = sb.peers()[sa.my_id]
+        c = http.client.HTTPConnection(pa["addr"], int(pa["port"]), timeout=5)
+        c.request("GET", f"/oit/v1/file/{o['token']}")
+        raw = c.getresponse().read()
+        c.close()
+        assert len(raw) == len(blob2) and raw != blob2, "传的内容是加密的"
+        dest = os.path.join(tempfile.mkdtemp(), "x.png")
+        sb.fetch_file(pid, o, dest)
+        with open(dest, "rb") as f:
+            assert f.read() == blob2
+        assert delivered == [("B", "照片 1.png")] and sa.offer_get(o["token"]) == (None, None), "取完就不能再取"
+        bad = dict(offered[0][2], sha256="0" * 64)
+        try:
+            sb.fetch_file(pid, bad, dest + "2")
+            raise AssertionError("取不到 / 核对不上要报错")
+        except (RuntimeError, ValueError):
+            assert not os.path.exists(dest + "2") and not os.path.exists(dest + "2.part")
+        del lb.file_offered
+        assert sa.send_file(sb.my_id, src) == "unsupported"
+        assert safe_name("..\\x\\a/b:c?.png") == "b_c_.png" and safe_name("C:\\x\\y.txt") == "y.txt"
+        assert safe_name(" . ") == "file"
 
         # 关闭前推送 (push_final): 不等回复里的内容, 对方照样并入
         la.docs_["timer"]["live"] = {"state": "idle", "owner": sa.my_id}

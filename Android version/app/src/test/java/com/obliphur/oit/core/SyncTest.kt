@@ -225,4 +225,28 @@ class SyncTest {
             sa.stop(); sb.stop(); main.shutdownNow()
         }
     }
+
+    /** 文件通道 (MECHANICS 15.6): 加密和桌面版 devsync.file_xor 一样, 可以从任意位置接着算; 文件名去掉路径. */
+    @Test
+    fun fileChannelCipher() {
+        val fk = SyncCrypto.fileKey(ByteArray(32) { 1 })
+        val nonce = ByteArray(16) { it.toByte() }
+        fun data() = ByteArray(768) { (it % 256).toByte() }
+        val a = data().also { SyncCrypto.fileXor(fk, nonce, 0, it) }
+        assertEquals("b14cf71db18ec6e7a7af4da53b79cd35f72d52faa4811d7d396d34d848fa6a06", SyncCrypto.hex(SyncCrypto.sha256(a)))
+        val b = data().also { SyncCrypto.fileXor(fk, nonce, 37, it) }
+        assertEquals("d2950937ce7f5bc87e54fd9df488894e85c80cb9e3e0cfd3caeee0742930b9c2", SyncCrypto.hex(SyncCrypto.sha256(b)))
+        // 分几段解密 (段长不是 32 的倍数) 照样还原
+        var off = 0
+        for (step in listOf(7, 100, 33, 628)) {
+            val part = a.copyOfRange(off, off + step)
+            SyncCrypto.fileXor(fk, nonce, off.toLong(), part)
+            part.copyInto(a, off)
+            off += step
+        }
+        assertTrue(a.contentEquals(data()))
+        assertEquals("b_c_.png", SyncCrypto.safeName("..\\x\\a/b:c?.png"))
+        assertEquals("y.txt", SyncCrypto.safeName("C:\\x\\y.txt"))
+        assertEquals("file", SyncCrypto.safeName(" . "))
+    }
 }

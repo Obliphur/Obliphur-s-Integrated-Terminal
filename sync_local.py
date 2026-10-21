@@ -68,6 +68,13 @@ class PcLocal:
     def update_failed(self, err: str):
         toast.warn(tr("接收新版本失败: {e}", e=err))
 
+    def file_offered(self, peer_id: str, who: str, o: dict) -> str:
+        """文件通道 (MECHANICS 15.6): 别的设备要发文件过来, 问用户存到哪里."""
+        return self.app.file_channel.offered(peer_id, who, o)
+
+    def file_delivered(self, who: str, name: str):
+        self.app.file_channel.delivered(who, name)
+
     def wipe_requested(self, wipe_id: str, sender: str, name: str):
         """别的设备重置 / 卸载了, 请本机也清空数据 (MECHANICS 9): 回复对方之后再做 (重置会关闭程序)."""
         self.app.root.after(300, lambda: self.app.do_reset(wipe_id=wipe_id, exclude=(sender,), by=name))

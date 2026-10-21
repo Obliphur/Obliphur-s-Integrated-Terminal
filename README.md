@@ -28,7 +28,7 @@
 | 页面 | 作用 |
 | --- | --- |
 | **Timer** | 专注计时,结束后给出建议休息时长; 行为模式下多一个"外出" |
-| **Network** | 申请制联网:冷静期后自动联网,到点断网;另有快速访问与紧急借贷 |
+| **Network** | 申请制联网:冷静期后自动联网,到点断网;另有快速访问与紧急借贷; "📁 文件通道" 在绑定的手机和电脑之间传文件 / 图片 |
 | **Rules** | Proxy 模式下的网站 / 应用黑白名单 (被禁用的程序窗口一到前台就关掉),可让 AI 给出建议 |
 | **Hour Log** | 每个整点提示记录上一小时做了什么 |
 | **Calendar** | 按日查看学习时长 |
@@ -87,7 +87,7 @@ obliphur_terminal/
 ├─ prestart.py           提前启动 (仅 PC): 专注中先跑起程序, 藏窗口 + 静音, 结束专注放出来
 ├─ audiomute.py          按进程静音 / 取消静音 (音频会话, 提前启动用)
 ├─ recorder.py          合约的录像 (摄像头 / 屏幕, Windows 自带的 H.264 编码器)
-├─ devsync.py            设备同步: 发现, 绑定, 加密, 同步, 安装包直接传输
+├─ devsync.py            设备同步: 发现, 绑定, 加密, 同步, 安装包 / 文件直接传输
 ├─ sync_local.py         设备同步 ↔ 本机数据
 ├─ firewall.py           Windows 防火墙: 放行同步端口
 ├─ updater.py            从 GitHub 检查 / 安装更新
@@ -100,7 +100,8 @@ obliphur_terminal/
 ├─ pages/                各页面的界面
 │  ├─ settings_page.py   设置 (按模块分页)
 │  ├─ sync_panel.py      设备同步 (设置 → 基本设置)
-│  ├─ rules_page.py      规则 (名单, 拦截记录)
+│  ├─ rules_page.py      规则 (名单)
+│  ├─ file_channel.py    文件通道: 发文件 / 图片给绑定的设备
 │  ├─ ai_dialogs.py      AI 建议的对话框
 │  ├─ stats_page.py      统计
 │  ├─ calendar_page.py   日历
