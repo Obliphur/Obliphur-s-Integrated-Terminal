@@ -1257,7 +1257,7 @@ class BreakTimerApp:
         self.prestart_job = self.root.after(1000, self._prestart_tick)
 
     def _sync_prestart_exempt(self):
-        """提前启动的程序可以无视网站 / 应用名单联网 (MECHANICS 20); 代理-全屏蔽照样拦."""
+        """提前启动的程序联网不受网站 / 应用名单和代理-全屏蔽限制 (MECHANICS 20)."""
         try:
             self.net.proxy.rules.exempt = self.prestart.exe_names()
         except Exception:

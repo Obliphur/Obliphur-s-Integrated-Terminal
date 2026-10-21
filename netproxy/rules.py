@@ -314,12 +314,12 @@ class RuleStore:
         s = self._snap
         if host in _LOOPBACK or host.startswith("127."):
             return True, "local"
-        if mode == MODE_BLOCKALL:
-            return (True, "online") if online else (False, "blockall")
         if online:
-            return True, "online"           # 联网会话中两种名单模式都全部放行 (MECHANICS 4.1)
+            return True, "online"           # 联网会话中全部放行 (MECHANICS 4.1)
         if exe and exe in self.exempt:
-            return True, "prestart"         # 提前启动的程序: 不看名单 (MECHANICS 20)
+            return True, "prestart"         # 提前启动的程序: 代理-全屏蔽和名单都不拦 (MECHANICS 20)
+        if mode == MODE_BLOCKALL:
+            return False, "blockall"
         if mode == MODE_WHITELIST:
             for r in s[WHITE_DOMAINS]:
                 if domain_match(host, r):
@@ -420,12 +420,13 @@ def _selftest():
     assert rs.app_allowed("chrome.exe", False, MODE_WHITELIST) == (False, "not-whitelisted")
     assert rs.app_allowed("chrome.exe", True, MODE_WHITELIST) == (True, "online")
 
-    # 提前启动 (MECHANICS 20): 不看名单, 但代理-全屏蔽照样拦
+    # 提前启动 (MECHANICS 20): 名单和代理-全屏蔽都不拦
     rs.exempt = {"steam.exe"}
     assert rs.decide("zhihu.com", "steam.exe", False, MODE_BLACKLIST) == (True, "prestart")
     assert rs.decide("www.school.edu.cn", "steam.exe", False, MODE_WHITELIST) == (True, "prestart")
     assert rs.decide("bilibili.com", "chrome.exe", False, MODE_BLACKLIST) == (False, "blacklist-domain")
-    assert rs.decide("zhihu.com", "steam.exe", False, MODE_BLOCKALL) == (False, "blockall")
+    assert rs.decide("zhihu.com", "steam.exe", False, MODE_BLOCKALL) == (True, "prestart")
+    assert rs.decide("zhihu.com", "chrome.exe", False, MODE_BLOCKALL) == (False, "blockall"), "别的程序照样拦"
     assert rs.app_allowed("steam.exe", False, MODE_BLACKLIST) == (True, "prestart")
     assert rs.app_allowed("steam.exe", False, MODE_WHITELIST) == (True, "prestart")
     assert rs.app_allowed("chrome.exe", False, MODE_WHITELIST) == (False, "not-whitelisted")
