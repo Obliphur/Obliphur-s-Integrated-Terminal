@@ -1198,34 +1198,47 @@ def _sample_bytes(sample):
 
 
 def _fit(ptr, size, sw, sh, stride, dw, dh) -> bytes:
-    """一帧 RGB32 (源 sw×sh, 行距 stride 字节, 可正可负) 放进 dw×dh 的画布 (从上往下): 居中, 小了补黑, 大了裁掉."""
+    """一帧 RGB32 (源 sw×sh, 行距 stride 字节, 可正可负) 等比缩放后放进 dw×dh 的画布 (从上往下):
+    保持宽高比, 居中, 周围补黑 (横屏画布放竖屏内容时左右留黑, 反之上下留黑). 用最近邻缩放 (录屏 1 fps, 够用)."""
     src = ctypes.string_at(ptr, size)
+    astride = abs(stride)
     row = dw * 4
-    out = bytearray(row * dh)
-    oy = (dh - sh) // 2
-    copy_h = min(sh, dh - oy) if oy >= 0 else min(sh + oy, dh)
-    ox = (dw - sw) // 2
-    for i in range(max(0, copy_h if oy >= 0 else dh)):
-        sy = i + (0 if oy >= 0 else -oy)
-        dy = i + (oy if oy >= 0 else 0)
-        if sy >= sh or dy >= dh:
-            break
-        soff = (sy if stride > 0 else (sh - 1 - sy)) * abs(stride)
-        if ox >= 0:
-            w = min(sw, dw - ox) * 4
-            out[dy * row + ox * 4: dy * row + ox * 4 + w] = src[soff: soff + w]
-        else:
-            w = min(dw, sw + ox) * 4
-            out[dy * row: dy * row + w] = src[soff - ox * 4: soff - ox * 4 + w]
+    out = bytearray(row * dh)                       # 全黑画布
+    if sw <= 0 or sh <= 0:
+        return bytes(out)
+    scale = min(dw / sw, dh / sh)                   # 等比缩放到刚好放进画布 (contain)
+    iw = max(2, min(dw, int(sw * scale)) & ~1)      # 内容区大小 (取偶)
+    ih = max(2, min(dh, int(sh * scale)) & ~1)
+    ox, oy = (dw - iw) // 2, (dh - ih) // 2         # 居中
+    same_w = (iw == sw)
+    xmap = None if same_w else [min(sw - 1, x * sw // iw) * 4 for x in range(iw)]
+    for dyi in range(ih):
+        sy = min(sh - 1, dyi * sh // ih)
+        soff = (sy if stride > 0 else (sh - 1 - sy)) * astride
+        scaled = src[soff: soff + iw * 4] if same_w else b"".join(src[soff + xb: soff + xb + 4] for xb in xmap)
+        dy = oy + dyi
+        out[dy * row + ox * 4: dy * row + ox * 4 + len(scaled)] = scaled
     return bytes(out)
 
 
-def _reencode_concat(out_path, inputs, fps=SCREEN_FPS):
-    """把几个 mp4 (已解密) 按顺序解码 → 重新编码接成一个 (画面统一到第一段的大小; 有声音的接声音).
-    每一段的时间戳接在上一段后面. 只用 Media Foundation. 返回输出的 (宽, 高)."""
+def _canvas(dims):
+    """合并画布的大小和朝向 (MECHANICS 18.8): 参与的设备里有横屏 (宽 > 高) 的 → 整段按横屏, 否则按竖屏.
+    画布取同朝向里面积最大的那一段的分辨率 (保持分辨率不变); 不同朝向的内容靠 _fit 等比缩放后留黑兼容."""
+    dims = [(w, h) for w, h in dims if w > 0 and h > 0]
+    if not dims:
+        return None
+    land = any(w > h for w, h in dims)
+    same = [(w, h) for w, h in dims if (w > h) == land] or dims
+    w, h = max(same, key=lambda d: d[0] * d[1])
+    return w // 2 * 2, h // 2 * 2
+
+
+def _reencode_concat(out_path, inputs, fps=SCREEN_FPS, size=None):
+    """把几个 mp4 (已解密) 按顺序解码 → 重新编码接成一个 (画面统一到 size 给的画布, 没给时用第一段的大小;
+    每一段等比缩放居中留黑, 不同朝向也兼容; 只接画面). 每一段的时间戳接在上一段后面. 返回输出的 (宽, 高)."""
     lib = _startup()
     writer = None
-    dw = dh = 0
+    dw, dh = (size or (0, 0))
     try:
         base = 0                                    # 累计时间 (100ns): 这一段的时间戳要加上它
         for path in inputs:
@@ -1253,7 +1266,8 @@ def _reencode_concat(out_path, inputs, fps=SCREEN_FPS):
                     stride = sw * 4
                 has_audio = False       # 合并后的总览只接画面 (各段自己的文件里留着声音)
                 if writer is None:
-                    dw, dh = min(sw, SCREEN_WIDTH) // 2 * 2, sh // 2 * 2
+                    if not (dw and dh):                     # 没给画布: 用第一段的大小 (同以前)
+                        dw, dh = min(sw, SCREEN_WIDTH) // 2 * 2, sh // 2 * 2
                     writer = _Writer(lib, out_path, dw, dh, fps, SCREEN_BITRATE, audio=has_audio)
                 rd = ctypes.WINFUNCTYPE(HRESULT, c_void_p, c_ulong, c_ulong, POINTER(c_ulong), POINTER(c_ulong),
                                         POINTER(ctypes.c_longlong), POINTER(c_void_p))(
@@ -1343,7 +1357,14 @@ def merge(data_dir: str, cid: str, extra=()) -> str:
             else:
                 plain.append(p)
         raw = os.path.join(work, "merged.mp4")
-        _reencode_concat(raw, plain)
+        # 画布的朝向 / 大小: 有横屏设备参与就按横屏, 否则按竖屏; 竖屏内容在横屏画布里左右留黑 (MECHANICS 18.8)
+        dims = []
+        for p in plain:
+            try:
+                dims.append(_dims(p))
+            except Exception:       # noqa: BLE001
+                pass
+        _reencode_concat(raw, plain, size=_canvas(dims))
         d = folder(data_dir, "merged")
         os.makedirs(d, exist_ok=True)
         stem = when(segs[0]).strftime("%Y%m%d-%H%M%S")

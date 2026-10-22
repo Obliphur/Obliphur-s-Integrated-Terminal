@@ -86,7 +86,9 @@ class RecordService : Service() {
 
     // ---------------------------------------------------------------- 摄像头 (目光)
 
-    private fun micOn() = OitApp.instance.core.settings.bool("REC_MIC")
+    /** 录麦克风: 设置开着, 而且真的有 RECORD_AUDIO 权限 (没权限就只录画面, 不让整段录像失败). */
+    private fun micOn() = OitApp.instance.core.settings.bool("REC_MIC") &&
+        checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED
 
     private fun newPart(kind: String): Pair<File, File> {
         val cache = RecCrypto.workDir(cacheDir, kind).apply { mkdirs() }
@@ -114,6 +116,9 @@ class RecordService : Service() {
     }
 
     private fun startCam() {
+        if (checkSelfPermission(android.Manifest.permission.CAMERA) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            fail("camera", Exception("no camera permission")); return
+        }
         try {
             val mgr = getSystemService(CAMERA_SERVICE) as CameraManager
             val id = mgr.cameraIdList.firstOrNull {

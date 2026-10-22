@@ -63,13 +63,19 @@ class RecordManager(private val app: OitApp) {
                 continue
             }
             if (skipCid[kind] == cidKey(cid)) continue
-            if (st.startsWith("failed")) {                          // 录像出错 / 没授权: 这个合约暂时别再试, 30 秒后重来
-                core.logRecord("$kind skip ($cid): ${st.removePrefix("failed:")}")
-                stop(kind); skipCid[kind] = cidKey(cid); retryAt[kind] = now + 30_000
+            if (st.startsWith("failed")) {
+                val why = st.removePrefix("failed:")
+                core.logRecord("$kind failed ($cid): $why")
+                stop(kind)
+                // 本机没有摄像头: 这个合约不再试 (不算违反); 其他 (权限 / 被占用 / 出错): 过一会儿重试
+                if (kind == "camera" && why.contains("no camera")) skipCid[kind] = cidKey(cid)
+                else retryAt[kind] = now + 15_000
                 continue
             }
             if (recording(kind)) continue
             if (now < (retryAt[kind] ?: 0)) continue
+            // 摄像头要先有 CAMERA 权限才开始 (没有就等界面申请, needCamera 已置位), 否则会一开就失败
+            if (kind == "camera" && !granted(android.Manifest.permission.CAMERA)) continue
             start(kind)
         }
         // 换了合约: 清掉上一个合约的跳过记录
@@ -78,6 +84,7 @@ class RecordManager(private val app: OitApp) {
 
     private fun cidKey(cid: String) = cid.hashCode().toLong()
     private fun recording(kind: String) = RecordService.state[kind] == "running"
+    private fun granted(p: String) = app.checkSelfPermission(p) == android.content.pm.PackageManager.PERMISSION_GRANTED
 
     private fun start(kind: String) {
         when (kind) {
