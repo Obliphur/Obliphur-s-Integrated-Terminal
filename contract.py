@@ -27,9 +27,9 @@ FRESH_MS = 2 * 60 * 1000         # 合约的主人这么久没同步过: 本机�
 TERMS = [
     # ==== 第 1 页 ====
     # ---- 合约本身: 时长, 目标生命值 ----
-    ("long1", "long", 1, "环境:持久战-I", "时长改为120%, 休息时长×110%", ()),
-    ("long2", "long", 2, "环境:持久战-II", "时长改为140%, 休息时长×120%", ()),
-    ("long3", "long", 3, "环境:持久战-III", "时长改为160%, 休息时长×130%", ()),
+    ("long1", "long", 1, "环境:持久战-I", "时长改为120%, 结算休息时长×110%", ()),
+    ("long2", "long", 2, "环境:持久战-II", "时长改为140%, 结算休息时长×120%", ()),
+    ("long3", "long", 3, "环境:持久战-III", "时长改为160%, 结算休息时长×130%", ()),
     ("retreat1", "retreat", 1, "环境:退路封锁-I", "初始目标生命值为3", ()),
     ("retreat2", "retreat", 2, "环境:退路封锁-II", "初始目标生命值为2", ()),
     ("last", "retreat", 3, "最后防线", "初始目标生命值为1", ()),
@@ -108,7 +108,8 @@ DURATION = {"long1": 1.2, "long2": 1.4, "long3": 1.6}
 NET_SHARE = {"info1": 0.8, "info2": 0.65, "info3": 0.5}
 BASE_REST = 0.8                                # 合约中专注换来的休息时间的基础倍率; 有疲惫时换成疲惫的倍率
 REST = {"tired1": 0.7, "tired2": 0.6, "tired3": 0.5}
-REST_BONUS = {"hoard": 1.1, "long1": 1.1, "long2": 1.2, "long3": 1.3}   # 休息时间额外的乘区 (相乘): 禁止囤囤鼠! ×1.1; 持久战 ×110/120/130%
+REST_BONUS = {"hoard": 1.1}                     # 休息时间额外的乘区 (和疲惫不冲突, 相乘): 禁止囤囤鼠! ×1.1
+LONG_REWARD = {"long1": 1.1, "long2": 1.2, "long3": 1.3}   # 持久战: 完成合约的结算休息时长 ×110 / 120 / 130%
 WINDOWS = {"chan1": 4, "chan2": 3}
 SUPPLY = {"short1": 0.5, "short2": 0.0}         # 合约开始前积攒的休息时间能用几成
 HOUR_TERMS = {"seal", "fine"}                   # 整点记录的词条: 整点记录关着时, 这次合约中照样开启
@@ -357,7 +358,7 @@ def life_of(terms) -> int:
 
 def rest_factor_of(terms) -> float:
     """合约中专注换来的休息时间乘多少: 基础 ×0.8, 有疲惫时换成疲惫的 (取最低的);
-    再乘额外的乘区 (持久战 ×1.1/1.2/1.3, 禁止囤囤鼠! ×1.1, 打年糕 ×1.2; 都相乘)."""
+    再乘额外的乘区 (禁止囤囤鼠! ×1.1, 打年糕 ×1.2)."""
     f = min((REST[t] for t in terms or [] if t in REST), default=BASE_REST)
     for t in terms or []:
         f *= REST_BONUS.get(t, 1.0)
@@ -376,8 +377,11 @@ def rest_minutes(level: int) -> int:
 
 
 def rest_reward(level: int, terms=None) -> int:
-    """完成合约时存进积攒的休息时间的秒数 (按等级查表 + 凑齐的组合的结束后收益)."""
-    return rest_minutes(level) * 60 + combo_end(terms or [])
+    """完成合约时存进积攒的休息时间的秒数 (按等级查表 + 凑齐的组合的结束后收益, 再乘持久战的结算休息时长倍率)."""
+    terms = terms or []
+    base = rest_minutes(level) * 60 + combo_end(terms)
+    mult = next((LONG_REWARD[t] for t in terms if t in LONG_REWARD), 1.0)
+    return int(round(base * mult))
 
 
 def rest_minutes_total(level: int, terms=None) -> int:
@@ -1563,6 +1567,9 @@ def _selftest():
     assert level_label(9, 12) == "9[12-3]" and level_label(12, 12) == "12" and level_label(13, 12) == "13"
     assert rest_minutes(0) == 20 and rest_minutes(1) == 21 and rest_minutes(4) == 24 and rest_minutes(19) == 40
     assert rest_minutes(37) == 59 and rest_minutes(38) == 60 and rest_minutes(50) == 60 and rest_reward(45) == 60 * 60
+    # 持久战: 结算的休息时长 ×110 / 120 / 130% (只影响完成合约的奖励, 不影响合约中每段专注换来的休息)
+    assert rest_reward(10, ["long1"]) == round(rest_minutes(10) * 60 * 1.1)
+    assert rest_reward(10, ["long3"]) == round(rest_minutes(10) * 60 * 1.3) and rest_reward(10, ["tired2"]) == rest_minutes(10) * 60
     assert all(rest_minutes(i) <= rest_minutes(i + 1) for i in range(40))
     # 删掉的两个 4 级词条: 互联网娱乐的败退 变成组合, 信息隔绝 (旧词条) 删了
     assert "isolate" not in BY_ID and "ent" not in BY_ID and MAX_LEVEL == 3, "没有了 4 级的词条: 词条板不再留那一行"
@@ -1612,7 +1619,7 @@ def _selftest():
     assert combo_state(mochi, ["long1", "tired2"], ["long1", "tired2", "fine", "deep1"]) == "void"
     assert combo_state(mochi, ["long1", "tired2", "fine", "deep1"]) == "done"
     assert combo_level(["long1", "tired2", "fine", "deep1"]) == 1
-    assert abs(rest_factor_of(["long1", "tired2", "fine", "deep1"]) - 0.6 * 1.1 * 1.2) < 1e-9
+    assert abs(rest_factor_of(["long1", "tired2", "fine", "deep1"]) - 0.6 * 1.2) < 1e-9
     iso = ["info1", "erode1", "chan1", "suppress", "fog", "quiet", "jam"]
     assert sorted(clean_terms(iso)) == sorted(iso), "信息隔绝组合的词条可以一起选"
     assert combo_done(isolation, iso) and combo_level(iso) == 1 and combo_end(iso) == 10 * 60
@@ -1758,11 +1765,11 @@ def _selftest():
     # 打年糕组合: 额外 1 危机等级, 休息时间 ×1.2; 纵深推进降级不算失效
     c.start(["long1", "tired2", "fine", "deep2"], owner="me", now=t0)
     assert c.combos()[0] == (mochi, "done") and c.level == 2 + 1 + 2 + 2 + 1
-    assert abs(c.rest_factor() - 0.6 * 1.1 * 1.2) < 1e-9
+    assert abs(c.rest_factor() - 0.6 * 1.2) < 1e-9
     assert c.violate("deep2") == (False, "deep1") and c.combos()[0] == (mochi, "done")
-    assert abs(c.rest_factor() - 0.6 * 1.1 * 1.2) < 1e-9, "降级不算失效"
+    assert abs(c.rest_factor() - 0.6 * 1.2) < 1e-9, "降级不算失效"
     assert c.violate("deep1") == (False, "") and c.combos()[0] == (mochi, "void")
-    assert abs(c.rest_factor() - 0.6 * 1.1) < 1e-9, "打年糕乘区取消, 持久战的 ×1.1 还在"
+    assert abs(c.rest_factor() - 0.6) < 1e-9, "成员失效了: 乘区取消"
     # 翻页: 词条两页, 第 3 页是组合效果
     assert PAGES == [(0, 10), (10, BOARD_COLS)] and BOARD_COLS == 20 and LAYOUT["unknown"] == (19, 3)
     assert COMBO_PAGE == len(PAGES) and len(COMBOS) == 4
@@ -1931,15 +1938,15 @@ def _selftest():
     c = Contract(tempfile.mkdtemp())          # 上面封锁的记录格会影响后面整点记录的测试
     # 打年糕: 休息时间额外 ×1.2 (和疲惫相乘); 成员降级不算失效, 失效后乘区取消
     c.start(["long1", "tired2", "fine", "deep2"], owner="me", now=t0)
-    assert abs(c.rest_factor() - 0.6 * 1.1 * 1.2) < 1e-9 and abs(c.book_rest(1000, t0) - 792) < 1e-6
+    assert abs(c.rest_factor() - 0.6 * 1.2) < 1e-9 and abs(c.book_rest(1000, t0) - 720) < 1e-6
     assert c.level == 8 and c.combo_marks().get("deep2") == COMBO_COLORS["white"]
     c.downgrade("deep2")
-    assert abs(c.rest_factor() - 0.6 * 1.1 * 1.2) < 1e-9, "降级不算失效"
+    assert abs(c.rest_factor() - 0.6 * 1.2) < 1e-9, "降级不算失效"
     c.downgrade("deep1")
-    assert abs(c.rest_factor() - 0.6 * 1.1) < 1e-9 and c.level == 5 and c.combo_marks() == {}
+    assert abs(c.rest_factor() - 0.6) < 1e-9 and c.level == 5 and c.combo_marks() == {}
     # 没有疲惫: 基础 ×0.8 (打年糕照样相乘)
     assert rest_factor_of([]) == 0.8
-    assert abs(rest_factor_of(["long1", "tired2", "fine", "deep1"]) - 0.6 * 1.1 * 1.2) < 1e-9
+    assert abs(rest_factor_of(["long1", "tired2", "fine", "deep1"]) - 0.6 * 1.2) < 1e-9
     c.start(["scar"], owner="me", now=t0)
     assert c.records() == ["screen"] and c.level == 1 and c.violate("scar") == (False, "") and c.terms == []
     # 目光: 只由开始时选定的设备 (cam) 录; 没有 cam 的 (旧版本) 各台电脑都录. 前置失效了高机动 / 禁足照样在
@@ -1952,9 +1959,9 @@ def _selftest():
     assert c.cam == "" and c.records("pc") == ["camera"]
     c.start(["tired2", "chan1", "long1"], owner="me", now=t0)
     assert c.quick_check() == ""
-    # 休息: 疲惫 ×0.6 × 持久战 long1 ×1.1 = 0.66; 完成时按降级后的等级给固定的时间 (等级 4 → 27 分钟)
-    assert abs(c.book_rest(1000, t0 + timedelta(hours=1)) - 660) < 1e-6
-    assert c.level == 4 and c.reward == 24 * 60
+    # 休息: 疲惫 ×0.6; 完成时按降级后的等级给固定的时间 (等级 4 → 27 分钟)
+    assert abs(c.book_rest(1000, t0 + timedelta(hours=1)) - 600) < 1e-6
+    assert c.level == 4 and c.reward == round(24 * 60 * 1.1), "持久战 long1: 结算休息时长 ×110%"
     # 空闲 15 分钟结束
     assert c.due(t0 + timedelta(hours=1), True) == ("", None)
     assert c.idle_left(t0 + timedelta(hours=1, minutes=10)) == 5 * 60

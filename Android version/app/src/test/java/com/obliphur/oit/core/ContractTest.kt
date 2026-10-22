@@ -26,6 +26,10 @@ class ContractTest {
         assertEquals(24, Contract.restMinutes(4)); assertEquals(40, Contract.restMinutes(19))
         assertEquals(59, Contract.restMinutes(37)); assertEquals(60, Contract.restMinutes(38))
         assertEquals(60, Contract.restMinutes(50)); assertEquals(60 * 60, Contract.restReward(45))
+        // 持久战: 结算的休息时长 ×110 / 120 / 130% (只影响完成奖励, 不影响合约中每段专注换来的休息)
+        assertEquals(Math.round(Contract.restMinutes(10) * 60 * 1.1).toInt(), Contract.restReward(10, listOf("long1")))
+        assertEquals(Math.round(Contract.restMinutes(10) * 60 * 1.3).toInt(), Contract.restReward(10, listOf("long3")))
+        assertEquals(Contract.restMinutes(10) * 60, Contract.restReward(10, listOf("tired2")))
         assertTrue((0 until 40).all { Contract.restMinutes(it) <= Contract.restMinutes(it + 1) })
         // 删掉的两个 4 级词条: 互联网娱乐的败退 变成组合, 信息隔绝 (旧词条) 删了
         assertFalse("isolate" in Contract.BY_ID || "ent" in Contract.BY_ID)
@@ -76,7 +80,7 @@ class ContractTest {
         assertFalse(Contract.comboDone(mochi, listOf("long1", "tired2", "fine")))
         assertEquals("void", Contract.comboState(mochi, listOf("long1", "tired2"), listOf("long1", "tired2", "fine", "deep1")))
         assertEquals(1, Contract.comboLevel(listOf("long1", "tired2", "fine", "deep1")))
-        assertEquals(0.6 * 1.1 * 1.2, Contract.restFactorOf(listOf("long1", "tired2", "fine", "deep1")), 1e-9)
+        assertEquals(0.6 * 1.2, Contract.restFactorOf(listOf("long1", "tired2", "fine", "deep1")), 1e-9)
         val iso = listOf("info1", "erode1", "chan1", "suppress", "fog", "quiet", "jam")
         assertEquals(iso.sorted(), Contract.clean(iso).sorted())  // 信息隔绝组合的词条可以一起选
         assertEquals(1, Contract.comboLevel(iso)); assertEquals(10 * 60, Contract.comboEnd(iso))
@@ -128,9 +132,9 @@ class ContractTest {
         // 乐理之灾: 只在刚打开的那一下算; 只有 1 级, 降一级就失效
         assertEquals("music", c.banCheck("music", true)); assertEquals("", c.banCheck("music", true)); c.banCheck("music", false)
         assertEquals("", c.downgrade("music")); assertFalse(c.has("music"))
-        // 休息: 疲惫 ×0.6 × 持久战 long1 ×1.1 = 0.66; 完成时按降级后的等级给固定的时间
-        assertEquals(660.0, c.bookRest(1000.0), 1e-6)
-        assertEquals(Contract.restMinutes(c.level) * 60.0, c.reward, 1e-6)
+        // 休息: 疲惫 ×0.6; 完成时按降级后的等级给固定的时间
+        assertEquals(600.0, c.bookRest(1000.0), 1e-6)
+        assertEquals(Math.round(Contract.restMinutes(c.level) * 60 * 1.1).toDouble(), c.reward, 1e-6)   // 持久战 long1: 结算 ×110%
         // 空闲 15 分钟; 和设备离线共用 (空闲 10 分钟后有设备离线, 再过 5 分钟就失败)
         assertNull(c.due(t0.plusHours(1), true))
         assertNull(c.offlineDue(listOf("手机" to t0.plusMinutes(70)), t0.plusMinutes(74), t0))
@@ -164,14 +168,14 @@ class ContractTest {
         // 打年糕组合: 额外 1 危机等级, 休息时间 ×1.2; 纵深推进降级不算失效
         e.start(listOf("long1", "tired2", "fine", "deep2"), "me", t0)
         assertEquals("done", e.combos()[0].second); assertEquals(8, e.level)
-        assertEquals(0.6 * 1.1 * 1.2, e.restFactor(), 1e-9)
+        assertEquals(0.6 * 1.2, e.restFactor(), 1e-9)
         assertEquals(false to "deep1", e.violate("deep2")); assertEquals("done", e.combos()[0].second)
-        assertEquals(0.6 * 1.1 * 1.2, e.restFactor(), 1e-9)       // 降级不算失效
+        assertEquals(0.6 * 1.2, e.restFactor(), 1e-9)             // 降级不算失效
         assertEquals(false to "", e.violate("deep1")); assertEquals("void", e.combos()[0].second)
-        assertEquals(0.6 * 1.1, e.restFactor(), 1e-9)             // 打年糕乘区取消, 持久战 ×1.1 还在
+        assertEquals(0.6, e.restFactor(), 1e-9)                   // 成员失效了: 乘区取消
         // 没有疲惫: 基础 ×0.8 (打年糕照样相乘)
         assertEquals(0.8, Contract.restFactorOf(emptyList()), 1e-9)
-        assertEquals(0.6 * 1.1 * 1.2, Contract.restFactorOf(listOf("long1", "tired2", "fine", "deep1")), 1e-9)
+        assertEquals(0.6 * 1.2, Contract.restFactorOf(listOf("long1", "tired2", "fine", "deep1")), 1e-9)
         // 录像的词条: 违反一次就失效, 不再录
         e.start(listOf("scar"), "me", t0)
         assertEquals(listOf("screen"), e.records()); assertEquals(1, e.level)

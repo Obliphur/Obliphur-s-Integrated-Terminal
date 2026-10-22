@@ -689,9 +689,9 @@ object EnStrings {
         "提前结束" to "Ended early",
         "提前结束合约?" to "End the contract early?",
         "时长 {t}" to "Duration {t}",
-        "时长改为120%, 休息时长×110%" to "Duration set to 120%, break time ×110%",
-        "时长改为140%, 休息时长×120%" to "Duration set to 140%, break time ×120%",
-        "时长改为160%, 休息时长×130%" to "Duration set to 160%, break time ×130%",
+        "时长改为120%, 结算休息时长×110%" to "Duration set to 120%, completion break ×110%",
+        "时长改为140%, 结算休息时长×120%" to "Duration set to 140%, completion break ×120%",
+        "时长改为160%, 结算休息时长×130%" to "Duration set to 160%, completion break ×130%",
         "最后防线" to "Last Stand",
         "合约期间音乐播放软件禁止联网 可以通过点击解除网络禁令" to "Music players can't go online during the contract. Tap to lift the network ban",
         "合约期间 专注时长 合约的剩余时间 成就 日历 统计数据不可见 且无法打开设置" to

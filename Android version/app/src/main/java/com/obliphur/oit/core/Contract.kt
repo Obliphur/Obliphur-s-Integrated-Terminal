@@ -49,9 +49,9 @@ class Contract(private val file: File) {
         // 零散的 (只有一档的) 在后, 放在右边, 按等级排成行; 同一模块的上下对齐.
         val TERMS = listOf(
             // ==== 第 1 页 ====
-            Term("long1", "long", 1, "环境:持久战-I", "时长改为120%, 休息时长×110%"),
-            Term("long2", "long", 2, "环境:持久战-II", "时长改为140%, 休息时长×120%"),
-            Term("long3", "long", 3, "环境:持久战-III", "时长改为160%, 休息时长×130%"),
+            Term("long1", "long", 1, "环境:持久战-I", "时长改为120%, 结算休息时长×110%"),
+            Term("long2", "long", 2, "环境:持久战-II", "时长改为140%, 结算休息时长×120%"),
+            Term("long3", "long", 3, "环境:持久战-III", "时长改为160%, 结算休息时长×130%"),
             Term("retreat1", "retreat", 1, "环境:退路封锁-I", "初始目标生命值为3"),
             Term("retreat2", "retreat", 2, "环境:退路封锁-II", "初始目标生命值为2"),
             Term("last", "retreat", 3, "最后防线", "初始目标生命值为1"),
@@ -129,8 +129,10 @@ class Contract(private val file: File) {
         /** 合约中专注换来的休息时间的基础倍率; 有疲惫时换成疲惫的倍率. */
         const val BASE_REST = 0.8
         val REST = mapOf("tired1" to 0.7, "tired2" to 0.6, "tired3" to 0.5)
-        /** 休息时间额外的乘区 (相乘): 禁止囤囤鼠! ×1.1, 持久战 ×1.1/1.2/1.3, 打年糕 ×1.2 (词条组合). */
-        val REST_BONUS = mapOf("hoard" to 1.1, "long1" to 1.1, "long2" to 1.2, "long3" to 1.3)
+        /** 休息时间额外的乘区 (和疲惫相乘): 禁止囤囤鼠! ×1.1, 打年糕 ×1.2 (词条组合). */
+        val REST_BONUS = mapOf("hoard" to 1.1)
+        /** 持久战: 完成合约的结算休息时长 ×110 / 120 / 130%. */
+        val LONG_REWARD = mapOf("long1" to 1.1, "long2" to 1.2, "long3" to 1.3)
         /** 合约中专注换来的休息时间乘多少: 基础 ×0.8, 有疲惫时换成疲惫的 (取最低的); 再乘额外的乘区 / 组合的乘区. */
         fun restFactorOf(terms: Collection<String>): Double =
             (terms.mapNotNull { REST[it] }.minOrNull() ?: BASE_REST) * terms.fold(1.0) { f, t -> f * (REST_BONUS[t] ?: 1.0) } * comboRest(terms)
@@ -354,7 +356,8 @@ class Contract(private val file: File) {
             return REST_MIN + (2 * (REST_MAX - REST_MIN) * lv + REST_TOP) / (2 * REST_TOP)   // 四舍五入 (.5 进位)
         }
         /** 完成合约时存进积攒的休息时间的秒数 (按等级查表 + 凑齐的组合的结束后收益). */
-        fun restReward(level: Int, terms: Collection<String> = emptyList()): Int = restMinutes(level) * 60 + comboEnd(terms)
+        fun restReward(level: Int, terms: Collection<String> = emptyList()): Int =
+            Math.round((restMinutes(level) * 60 + comboEnd(terms)) * (terms.firstNotNullOfOrNull { LONG_REWARD[it] } ?: 1.0)).toInt()
         /** 完成合约时休息时间一共多少分钟 (界面上写 "完成后休息 +N 分钟"). */
         fun restMinutesTotal(level: Int, terms: Collection<String> = emptyList()): Int = restReward(level, terms) / 60
         /** 合约开始时存进积攒的休息时间的秒数 (凑齐的组合给的, 算合约中得到的). */
