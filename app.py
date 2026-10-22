@@ -2333,7 +2333,8 @@ class BreakTimerApp:
         if self.shutting_down:
             return
         ws = self._aged_windows()
-        self._check_windows(None if ws is None else len(ws))
+        # 同一个程序的多个窗口算一个, 浏览器的每个窗口各算一个 (窗口数上限和通道阻塞一样, MECHANICS 12)
+        self._check_windows(None if ws is None else window_guard.channel_count(ws, contract_mod.BROWSER_EXES))
         try:
             self._check_contract_windows(ws)
         except Exception as e:
@@ -2357,7 +2358,7 @@ class BreakTimerApp:
 
     def _check_windows(self, n):
         """专注中窗口数超过上限: 提醒 + 响一次违约音效; 提醒后 2 分钟冷却, 还没解决再响一次.
-        n: 开着超过 2 分钟的窗口数 (_aged_windows)."""
+        n: 开着超过 2 分钟的窗口数 (_aged_windows; 同一个程序的多个窗口算一个, 浏览器的各算一个)."""
         if self.dm.resetting or not getattr(config, "WINDOW_LIMIT_ENABLED", 0) \
                 or self.state != RUNNING:
             self._win_over = False

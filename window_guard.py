@@ -381,7 +381,7 @@ class WindowAges:
 
 
 def channel_count(windows, browsers, exe_of=None) -> int:
-    """合约的通道阻塞 (MECHANICS 18.3) 数的窗口数: 同一个程序的多个窗口算一个, 浏览器 (browsers 里的 exe) 的每个窗口各算一个.
+    """窗口数上限 (MECHANICS 12) 和合约的通道阻塞 (18.3) 数的窗口数: 同一个程序的多个窗口算一个, 浏览器 (browsers 里的 exe) 的每个窗口各算一个.
     查不出程序名的窗口按进程算."""
     exe_of = exe_of or exe_name
     names, n, seen = {}, 0, set()
