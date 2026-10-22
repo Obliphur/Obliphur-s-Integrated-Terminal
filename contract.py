@@ -65,7 +65,7 @@ TERMS = [
     ("video", "video", 1, "环境:低帧的诅咒", "合约期间视频平台禁止联网 可以通过点击解除网络禁令", ()),
     # ---- 录像 (目光 / 刻痕), 现实 (高机动 / 禁足: 前置条件是目光) ----
     ("gaze", "gaze", 1, "目光", "合约期间用电脑或手机的摄像头记录使用者的行为 结束后保存录像", ()),
-    ("scar", "scar", 2, "刻痕", "合约期间录制整个屏幕 结束后保存录像", ()),
+    ("scar", "scar", 1, "刻痕", "合约期间录制整个屏幕 结束后保存录像", ()),
     ("move", "move", 1, "目标:高机动", "现实中的移动速度+50%", ()),
     ("confine", "confine", 1, "目标:禁足", "在非休息时间不能离开工作岗位进行活动", ()),
     # ---- 黑雾, 未知变量 ----
@@ -78,14 +78,15 @@ GROUPS = list(dict.fromkeys(t[1] for t in TERMS))
 NEEDS = {"move": "gaze", "confine": "gaze"}
 # 词条板 (MECHANICS 18.3): 每一列从上往下按等级 (1 → 3), 同一类的放在一列, 相似的挨着; 两页各 18 个词条.
 BOARD = [
-    # 第 1 页: 合约本身, 专注, 休息, 整点记录
+    # 第 1 页 (0-9): 合约本身, 专注, 休息, 整点记录, 联网 (额度 / 冷静期)
     ("long1", "long2", "long3"), ("retreat1", "retreat2", "last"), ("deep1", "deep2"), ("chan1", "chan2"),
     ("tired1", "tired2", "tired3"), ("short1", "short2"), ("hoard",), ("seal", "fine"),
-    # 第 2 页: 联网, 网络禁令, 录像, 现实, 黑雾 / 未知变量
-    ("info1", "info2", "info3"), ("erode1", "erode2"), ("suppress", "jam"), ("quiet",), ("music", "silent"),
-    ("game",), ("video",), ("gaze", "scar"), ("move",), ("confine",), ("fog", "unknown"),
+    ("info1", "info2", "info3"), ("erode1", "erode2"),
+    # 第 2 页 (10-19): 联网 (快速访问 / 静默), 网络禁令, 录像, 现实, 黑雾 / 未知变量
+    ("suppress", "jam"), ("quiet",), ("music", "silent"), ("game",), ("video",),
+    ("gaze",), ("scar",), ("move",), ("confine",), ("fog", "unknown"),
 ]
-PAGE_SPLIT = 8                                          # 第 1 页的列数
+PAGE_SPLIT = 10                                         # 第 1 页的列数 (两页各 10 列, 均匀分布)
 LAYOUT = {t: (i, BY_ID[t][2]) for i, col in enumerate(BOARD) for t in col}   # 词条 → (列, 等级)
 BOARD_COLS = len(BOARD)
 MAX_LEVEL = max(t[2] for t in TERMS)
@@ -1587,23 +1588,24 @@ def _selftest():
     assert sorted(t for col in BOARD for t in col) == sorted(BY_ID) and len(set(LAYOUT.values())) == len(TERMS)
     assert all([BY_ID[t][2] for t in col] == sorted({BY_ID[t][2] for t in col}) for col in BOARD)
     assert all(len({LAYOUT[t][0] for t in BY_ID if BY_ID[t][1] == g}) == 1 for g in GROUPS)
-    assert [sum(len(col) for col in BOARD[a:b]) for a, b in PAGES] == [18, 18]
+    assert len(BOARD) == 20 and [a for a, b in PAGES] + [PAGES[-1][1]] == [0, 10, 20], "两页各 10 列"
+    assert [sum(len(col) for col in BOARD[a:b]) for a, b in PAGES] == [23, 13]
     assert [t[0] for t in TERMS] == [t for col in BOARD for t in col], "TERMS 的顺序同词条板"
-    # 相似的放在一起: 无言为真在乐理之灾下面, 刻痕在目光下面, 细化规范在记录封锁下面, 全频道阻塞干扰在抑制下面
-    for up, down in (("music", "silent"), ("gaze", "scar"), ("seal", "fine"), ("suppress", "jam"), ("fog", "unknown")):
+    # 相似的放在一起: 无言为真在乐理之灾下面, 细化规范在记录封锁下面, 全频道阻塞干扰在抑制下面 (目光 / 刻痕现在都是 1 级, 各占一列)
+    for up, down in (("music", "silent"), ("seal", "fine"), ("suppress", "jam"), ("fog", "unknown")):
         assert LAYOUT[up][0] == LAYOUT[down][0], (up, down)
-    assert [LAYOUT[t][0] for t in ("music", "game", "video", "gaze", "move", "confine")] == \
-        list(range(LAYOUT["music"][0], LAYOUT["music"][0] + 6)), "网络禁令, 录像, 现实挨着"
+    assert [LAYOUT[t][0] for t in ("music", "game", "video", "gaze", "scar", "move", "confine")] == \
+        list(range(LAYOUT["music"][0], LAYOUT["music"][0] + 7)), "网络禁令, 录像, 现实挨着"
     assert LAYOUT["hoard"][0] == LAYOUT["short1"][0] + 1 and LAYOUT["chan1"][0] == LAYOUT["deep1"][0] + 1
-    assert LAYOUT["deep1"][0] < PAGE_SPLIT <= LAYOUT["info1"][0] and LAYOUT["seal"][0] < PAGE_SPLIT
+    assert LAYOUT["deep1"][0] < PAGE_SPLIT and LAYOUT["info1"][0] < PAGE_SPLIT <= LAYOUT["suppress"][0] and LAYOUT["seal"][0] < PAGE_SPLIT
     # 高机动只留 1 级 (旧的高机动-I / II 删掉了), 和禁足挨着; 记录封锁的描述换掉了
     assert "move1" not in BY_ID and "move2" not in BY_ID
     assert BY_ID["move"][2] == 1 and BY_ID["move"][4] == "现实中的移动速度+50%"
     assert BY_ID["confine"][2] == 1 and BY_ID["confine"][4] == "在非休息时间不能离开工作岗位进行活动"
     assert LAYOUT["confine"][0] == LAYOUT["move"][0] + 1, "高机动 / 禁足 挨着"
     assert BY_ID["seal"][4] == "无法修改已经被填写的格子 (包括自动填写和手动填写); 每次完成填写时, 另外随机封锁两个可以封锁的格子"
-    # 目光: 1 级, 不再和刻痕冲突; 高机动 / 禁足的前置条件是目光
-    assert BY_ID["gaze"][2] == 1 and not conflicts("gaze", "scar") and not conflicts("gaze", "music")
+    # 目光 / 刻痕: 都是 1 级, 不再冲突; 高机动 / 禁足的前置条件是目光
+    assert BY_ID["gaze"][2] == 1 and BY_ID["scar"][2] == 1 and not conflicts("gaze", "scar") and not conflicts("gaze", "music")
     assert needs_of("move", []) == "gaze" and needs_of("confine", ["scar"]) == "gaze" and needs_of("move", ["gaze"]) == ""
     assert needs_of("music", []) == "" and clean_terms(["move", "music"]) == ["music", "move"]
     assert clean_terms(["move", "confine", "music"], prereq=True) == ["music"], "没选目光: 高机动 / 禁足去掉"
@@ -1661,7 +1663,7 @@ def _selftest():
     assert not set(SOCIAL_EXES) & set(VIDEO_EXES) and not SOCIAL_TITLES & VIDEO_TITLES, "一个软件只算一个词条"
     best = clean_terms(["long3", "erode2", "info3", "suppress", "jam", "music", "fog", "tired3", "chan2", "last",
                         "short2", "seal", "fine", "silent", "game", "video", "gaze", "scar"])
-    assert "scar" in best and level_of(best) == 33, level_of(best)
+    assert "scar" in best and level_of(best) == 32, level_of(best)
     assert combo_gift(best) == 20 * 60, "互联网娱乐的败退凑齐了"
     best2 = clean_terms(["info3", "chan2", "erode2", "suppress", "fog", "quiet", "jam", "last", "long3", "tired3", "fine"])
     assert len(best2) == 11, best2
@@ -1772,7 +1774,7 @@ def _selftest():
     assert c.violate("deep1") == (False, "") and c.combos()[0] == (mochi, "void")
     assert abs(c.rest_factor() - 0.6) < 1e-9, "成员失效了: 乘区取消"
     # 翻页: 词条两页, 第 3 页是组合效果
-    assert PAGES == [(0, 8), (8, BOARD_COLS)] and BOARD_COLS == 19 and LAYOUT["unknown"] == (18, 3)
+    assert PAGES == [(0, 10), (10, BOARD_COLS)] and BOARD_COLS == 20 and LAYOUT["unknown"] == (19, 3)
     assert COMBO_PAGE == len(PAGES) and len(COMBOS) == 4
     # 全频道阻塞干扰: 合约期间一律换成 代理-全屏蔽 (proxy block-all), 结束回到设置里的断网方式
     c.start(["jam"], owner="me", now=t0)
@@ -1947,7 +1949,7 @@ def _selftest():
     assert rest_factor_of([]) == 0.8
     assert abs(rest_factor_of(["long1", "tired2", "fine", "deep1"]) - 0.6 * 1.2) < 1e-9
     c.start(["scar"], owner="me", now=t0)
-    assert c.records() == ["screen"] and c.level == 2 and c.violate("scar") == (False, "") and c.terms == []
+    assert c.records() == ["screen"] and c.level == 1 and c.violate("scar") == (False, "") and c.terms == []
     # 目光: 只由开始时选定的设备 (cam) 录; 没有 cam 的 (旧版本) 各台电脑都录. 前置失效了高机动 / 禁足照样在
     c.start(["gaze", "scar", "move"], owner="me", now=t0, cam="phone")
     assert c.cam == "phone" and c.records("pc") == ["screen"] and c.records("phone") == ["camera", "screen"]

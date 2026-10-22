@@ -82,7 +82,7 @@ class Contract(private val file: File) {
             Term("game", "game", 1, "环境:禁游令", "合约期间游戏和游戏平台禁止联网 可以通过点击解除网络禁令"),
             Term("video", "video", 1, "环境:低帧的诅咒", "合约期间视频平台禁止联网 可以通过点击解除网络禁令"),
             Term("gaze", "gaze", 1, "目光", "合约期间用电脑或手机的摄像头记录使用者的行为 结束后保存录像"),
-            Term("scar", "scar", 2, "刻痕", "合约期间录制整个屏幕 结束后保存录像"),
+            Term("scar", "scar", 1, "刻痕", "合约期间录制整个屏幕 结束后保存录像"),
             Term("move", "move", 1, "目标:高机动", "现实中的移动速度+50%"),
             Term("confine", "confine", 1, "目标:禁足", "在非休息时间不能离开工作岗位进行活动"),
             Term("fog", "fog", 1, "环境:黑雾", "合约期间 专注时长 合约的剩余时间 成就 日历 统计数据不可见 且无法打开设置"),
@@ -94,14 +94,16 @@ class Contract(private val file: File) {
         val NEEDS = mapOf("move" to "gaze", "confine" to "gaze")
         /** 词条板: 每一列从上往下按等级, 同一类的放在一列, 相似的挨着; 两页各 18 个词条. 同 contract.py 的 BOARD. */
         val BOARD = listOf(
+            // 第 1 页 (0-9): 合约, 专注, 休息, 整点记录, 联网 (额度 / 冷静期)
             listOf("long1", "long2", "long3"), listOf("retreat1", "retreat2", "last"), listOf("deep1", "deep2"),
             listOf("chan1", "chan2"), listOf("tired1", "tired2", "tired3"), listOf("short1", "short2"),
             listOf("hoard"), listOf("seal", "fine"),
-            listOf("info1", "info2", "info3"), listOf("erode1", "erode2"), listOf("suppress", "jam"), listOf("quiet"),
-            listOf("music", "silent"), listOf("game"), listOf("video"), listOf("gaze", "scar"), listOf("move"),
-            listOf("confine"), listOf("fog", "unknown"),
+            listOf("info1", "info2", "info3"), listOf("erode1", "erode2"),
+            // 第 2 页 (10-19): 联网 (快速访问 / 静默), 网络禁令, 录像, 现实, 黑雾 / 未知变量
+            listOf("suppress", "jam"), listOf("quiet"), listOf("music", "silent"), listOf("game"), listOf("video"),
+            listOf("gaze"), listOf("scar"), listOf("move"), listOf("confine"), listOf("fog", "unknown"),
         )
-        const val PAGE_SPLIT = 8                 // 第 1 页的列数
+        const val PAGE_SPLIT = 10                // 第 1 页的列数 (两页各 10 列, 均匀分布)
         /** 词条 → 列. */
         val LAYOUT: Map<String, Int> = BOARD.withIndex().flatMap { (i, col) -> col.map { it to i } }.toMap()
         val BOARD_COLS = BOARD.size

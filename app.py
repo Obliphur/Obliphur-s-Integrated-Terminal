@@ -3461,16 +3461,12 @@ class BreakTimerApp:
         选不选是用户自己的决定 (MECHANICS 18.8). 返回要不要选上."""
         if tid == "gaze":
             return toast.ask(
-                tr("「目光」会在合约期间用电脑或手机的摄像头录下你的样子 (可带声音), 结束后保存.") + "\n"
-                + tr("录像经过加密, 只能在 OIT 里查看和播放 (设置 → 录像), 不会被网盘 / 相册自动上传.") + "\n"
-                + tr("选不选由你决定."),
-                title=tr("⚠ 目光: 摄像头录像"), ok_text=tr("我知道, 选上"), danger=True)
+                tr("该词条会使用摄像头记录你的行为(和声音,可在设置关闭),但记录的视频会被加密,只能在OIT终端查看,防止自动上传类似的功能泄露隐私."),
+                title=tr("主管!"), ok_text=tr("确定"), cancel_text=tr("取消"), danger=True)
         if tid == "scar":
             return toast.ask(
-                tr("「刻痕」会在合约期间录下焦点设备的屏幕 (可带声音): 哪台设备在操作就录哪台, 每 10 秒切换一次.") + "\n"
-                + tr("合约结束后, 各设备录下的片段会传到一台电脑上合并成一个视频 (传输前会再确认).") + "\n"
-                + tr("录像经过加密, 只能在 OIT 里查看和播放. 选不选由你决定."),
-                title=tr("⚠ 刻痕: 屏幕录像"), ok_text=tr("我知道, 选上"), danger=True)
+                tr("该词条会使用录屏记录你的行为(和系统声音,可在设置关闭),但记录的视频会被加密,只能在OIT终端查看,防止自动上传类似的功能泄露隐私."),
+                title=tr("主管!"), ok_text=tr("确定"), cancel_text=tr("取消"), danger=True)
         return True
 
     def _scar_focus(self) -> str:

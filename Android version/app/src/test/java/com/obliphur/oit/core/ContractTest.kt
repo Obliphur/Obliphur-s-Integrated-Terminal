@@ -45,14 +45,14 @@ class ContractTest {
         assertTrue(Contract.LAYOUT["short2"]!! < Contract.LAYOUT["suppress"]!!)
         // 词条板: 每个词条正好一格, 两页各 18; 同一组在同一列
         assertEquals(Contract.BY_ID.keys.sorted(), Contract.BOARD.flatten().sorted())
-        assertEquals(19, Contract.BOARD_COLS)
-        assertEquals(listOf(18, 18), Contract.PAGES.map { pg -> pg.sumOf { Contract.BOARD[it].size } })
-        // 相似的放在一起: 无言为真在乐理之灾下面, 刻痕在目光下面, 细化规范在记录封锁下面
+        assertEquals(20, Contract.BOARD_COLS)
+        assertEquals(listOf(23, 13), Contract.PAGES.map { pg -> pg.sumOf { Contract.BOARD[it].size } })
+        // 相似的放在一起: 无言为真在乐理之灾下面, 细化规范在记录封锁下面 (目光 / 刻痕现在都是 1 级, 各占一列, 挨着)
         val m = Contract.LAYOUT["music"]!!
-        assertEquals((m..m + 5).toList(),
-            listOf("music", "game", "video", "gaze", "move", "confine").map { Contract.LAYOUT[it]!! })
+        assertEquals((m..m + 6).toList(),
+            listOf("music", "game", "video", "gaze", "scar", "move", "confine").map { Contract.LAYOUT[it]!! })
         assertEquals(Contract.LAYOUT["music"], Contract.LAYOUT["silent"])
-        assertEquals(Contract.LAYOUT["gaze"], Contract.LAYOUT["scar"])
+        assertEquals(Contract.LAYOUT["gaze"]!! + 1, Contract.LAYOUT["scar"])
         assertEquals(Contract.LAYOUT["seal"], Contract.LAYOUT["fine"]); assertEquals(Contract.LAYOUT["suppress"], Contract.LAYOUT["jam"])
         // 高机动只留 1 级 (旧的高机动-I / II 删掉了), 和禁足挨着; 记录封锁的描述换掉了
         assertFalse("move1" in Contract.BY_ID || "move2" in Contract.BY_ID)
@@ -61,8 +61,8 @@ class ContractTest {
         assertEquals(1, Contract.BY_ID["confine"]!!.level)
         assertEquals(Contract.LAYOUT["move"]!! + 1, Contract.LAYOUT["confine"])
         assertEquals("无法修改已经被填写的格子 (包括自动填写和手动填写); 每次完成填写时, 另外随机封锁两个可以封锁的格子", Contract.BY_ID["seal"]!!.desc)
-        // 目光: 1 级, 不再和刻痕冲突; 高机动 / 禁足的前置条件是目光
-        assertEquals(1, Contract.BY_ID["gaze"]!!.level)
+        // 目光 / 刻痕: 都是 1 级, 不再冲突; 高机动 / 禁足的前置条件是目光
+        assertEquals(1, Contract.BY_ID["gaze"]!!.level); assertEquals(1, Contract.BY_ID["scar"]!!.level)
         assertFalse(Contract.conflicts("gaze", "scar"))
         assertEquals("gaze", Contract.needsOf("move", emptyList()))
         assertNull(Contract.needsOf("move", listOf("gaze")))
@@ -104,7 +104,7 @@ class ContractTest {
             "环境:无言为真" to false, "环境:乐理之灾" to true), Contract.termsOfRecord(rec))
         val best = Contract.clean(listOf("long3", "erode2", "info3", "suppress", "jam", "music", "fog", "tired3", "chan2", "last",
             "short2", "seal", "fine", "silent", "game", "video", "gaze", "scar"))
-        assertEquals(33, Contract.levelOf(best))
+        assertEquals(32, Contract.levelOf(best))
         assertEquals(20 * 60, Contract.restGift(best))             // 互联网娱乐的败退凑齐了
         assertEquals(4 * 3600 * 1.6, Contract.durationOf(listOf("long3")), 1e-6)
     }
@@ -174,7 +174,7 @@ class ContractTest {
         assertEquals(0.6 * 1.2, Contract.restFactorOf(listOf("long1", "tired2", "fine", "deep1")), 1e-9)
         // 录像的词条: 违反一次就失效, 不再录
         e.start(listOf("scar"), "me", t0)
-        assertEquals(listOf("screen"), e.records()); assertEquals(2, e.level)
+        assertEquals(listOf("screen"), e.records()); assertEquals(1, e.level)
         assertEquals(false to "", e.violate("scar")); assertEquals(emptyList<String>(), e.records())
         // 目光: 只由选定的设备 (cam) 录; 高机动 / 禁足前置是目光
         e.start(listOf("gaze", "scar", "move"), "me", t0, cam = "phone")
@@ -271,7 +271,7 @@ class ContractTest {
         // 翻页: 词条两页, 第 3 页是词条组合
         assertEquals(listOf(0 until Contract.PAGE_SPLIT, Contract.PAGE_SPLIT until Contract.BOARD_COLS), Contract.PAGES)
         assertEquals(2, Contract.COMBO_PAGE)
-        assertTrue(Contract.LAYOUT["deep1"]!! < Contract.PAGE_SPLIT && Contract.LAYOUT["info1"]!! >= Contract.PAGE_SPLIT)
+        assertTrue(Contract.LAYOUT["deep1"]!! < Contract.PAGE_SPLIT && Contract.LAYOUT["info1"]!! < Contract.PAGE_SPLIT && Contract.LAYOUT["suppress"]!! >= Contract.PAGE_SPLIT)
         assertFalse(Contract.conflicts("erode1", "info3") || Contract.conflicts("quiet", "jam"))
         assertFalse(Contract.conflicts("suppress", "fog"))
         val c = Contract(tmp())

@@ -12,6 +12,12 @@ _current = DEFAULT_LANGUAGE
 
 
 EN = {
+    # ---- 录像词条警告 (目光 / 刻痕, MECHANICS 18.8) ----
+    "主管!": "Director!",
+    "该词条会使用摄像头记录你的行为(和声音,可在设置关闭),但记录的视频会被加密,只能在OIT终端查看,防止自动上传类似的功能泄露隐私.":
+        "This term uses the camera to record what you do (with sound, which you can turn off in settings), but the video is encrypted and can only be viewed in the OIT terminal, so features like auto-upload can't leak your privacy.",
+    "该词条会使用录屏记录你的行为(和系统声音,可在设置关闭),但记录的视频会被加密,只能在OIT终端查看,防止自动上传类似的功能泄露隐私.":
+        "This term uses screen recording to record what you do (with system sound, which you can turn off in settings), but the video is encrypted and can only be viewed in the OIT terminal, so features like auto-upload can't leak your privacy.",
     # ---- 手机端录像界面补充 (MECHANICS 18.8) ----
     "合约录像中: {what}": "Recording for the contract: {what}",
     "录像经过加密, 只能在 OIT 里查看 (设置 → 录像).": "Recordings are encrypted and can only be viewed inside OIT (Settings → Recording).",
