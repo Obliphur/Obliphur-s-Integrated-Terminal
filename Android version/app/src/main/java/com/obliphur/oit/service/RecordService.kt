@@ -159,6 +159,19 @@ class RecordService : Service() {
         } catch (e: Exception) { fail("camera", e) }
     }
 
+    /** 摄像头实际支持的录制尺寸里, 挑最接近 640×480 的 (取不到就退回 640×480). */
+    private fun camSize(mgr: CameraManager, id: String): Pair<Int, Int> {
+        val target = 640 * 480
+        val sizes = runCatching {
+            mgr.getCameraCharacteristics(id)
+                .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+                ?.getOutputSizes(MediaRecorder::class.java)
+        }.getOrNull()
+        val s = sizes?.filter { it.width <= 1280 && it.height <= 1280 }
+            ?.minByOrNull { kotlin.math.abs(it.width * it.height - target) }
+        return if (s != null) s.width to s.height else 640 to 480
+    }
+
     private inner class CamJob(val mgr: CameraManager, val id: String) {
         private val part: File; private val fin: File
         private var rec: MediaRecorder? = null
@@ -168,7 +181,10 @@ class RecordService : Service() {
         init { val (p, f) = newPart("camera"); part = p; fin = f }
 
         fun start() {
-            rec = buildRecorder(part, 480, 360, 5, 160_000)
+            // 用摄像头 / MediaRecorder 真正支持的尺寸 (480×360 这类不是标准采集尺寸, 很多手机不支持, prepare 会失败);
+            // 在支持的尺寸里挑最接近 640×480 的 (压一下但保证能录)
+            val (cw, ch) = camSize(mgr, id)
+            rec = buildRecorder(part, cw, ch, 5, 160_000)
             @Suppress("MissingPermission")
             mgr.openCamera(id, object : CameraDevice.StateCallback() {
                 override fun onOpened(d: CameraDevice) {
