@@ -42,8 +42,8 @@ FOCUS_EVERY = 10                  # 刻痕: 每这么多秒判定一次焦点设
 SCREEN_FPS = 1
 SCREEN_WIDTH = 960               # 画面缩到最宽这么多 (压一下画质 / 体积; 合并画布也按它封顶)
 SCREEN_BITRATE = 200_000
-CAMERA_FPS = 5
-CAMERA_BITRATE = 160_000
+CAMERA_FPS = 15
+CAMERA_BITRATE = 360_000
 CAMERA_SIZE = (480, 360)
 CAMERA_STALL = 12                 # 摄像头这么多秒没有新画面: 视为被关掉了
 
@@ -390,16 +390,21 @@ class _MF:
 
 
 def _startup():
+    """初始化 COM + Media Foundation. 返回 (lib, 是否由本次调用初始化了 COM).
+    界面线程 (Tk 把主线程设成了 STA 套间) 里调用时, CoInitializeEx(MTA) 会返回 RPC_E_CHANGED_MODE 失败 —— 这时
+    绝不能再 CoUninitialize, 否则会把 Tk 的套间多释放一次, 之后界面一用到 COM (文件对话框 / 打开文件 / 剪贴板) 就卡死."""
     lib = _MF.get()
-    lib.ole.CoInitializeEx(None, 0)                       # 多线程套间
+    hr = c_long(lib.ole.CoInitializeEx(None, 0)).value   # 多线程套间 (worker 线程)
+    own = hr == 0                                        # S_OK: 本次负责 CoUninitialize; S_FALSE / 失败: 不碰 (同 audiomute)
     _check(lib.plat.MFStartup(MF_VERSION, 0), "MFStartup")
-    return lib
+    return lib, own
 
 
-def _shutdown(lib):
+def _shutdown(lib, own=True):
     try:
         lib.plat.MFShutdown()
-        lib.ole.CoUninitialize()
+        if own:
+            lib.ole.CoUninitialize()
     except Exception:
         pass
 
@@ -771,7 +776,7 @@ def _free_activates(lib, arr, n):
 def camera_count() -> int:
     """有几个摄像头 (出错时 0). 会初始化一次 Media Foundation, 不要在界面线程里频繁调用."""
     try:
-        lib = _startup()
+        lib, own = _startup()
     except Exception:
         return 0
     try:
@@ -781,7 +786,7 @@ def camera_count() -> int:
     except Exception:
         return 0
     finally:
-        _shutdown(lib)
+        _shutdown(lib, own)
 
 
 def camera_consent() -> str:
@@ -959,7 +964,7 @@ class Recorder(threading.Thread):
 
     def run(self):
         try:
-            lib = _startup()
+            lib, own = _startup()
         except Exception as e:
             self.state, self.error = "failed", f"Media Foundation: {e}"
             return
@@ -975,7 +980,7 @@ class Recorder(threading.Thread):
             if self.state in ("starting", "running"):
                 self.state = "stopped"
             self._audio_close()
-            _shutdown(lib)
+            _shutdown(lib, own)
 
     # ---- 屏幕 ----
 
@@ -1260,7 +1265,7 @@ def _canvas(info):
 def _reencode_concat(out_path, inputs, fps=SCREEN_FPS, size=None):
     """把几个 mp4 (已解密) 按顺序解码 → 重新编码接成一个 (画面统一到 size 给的画布, 没给时用第一段的大小;
     每一段等比缩放居中留黑, 不同朝向也兼容; 只接画面). 每一段的时间戳接在上一段后面. 返回输出的 (宽, 高)."""
-    lib = _startup()
+    lib, own = _startup()
     writer = None
     dw, dh = (size or (0, 0))
     try:
@@ -1343,7 +1348,7 @@ def _reencode_concat(out_path, inputs, fps=SCREEN_FPS, size=None):
     finally:
         if writer is not None:
             writer.close()
-        _shutdown(lib)
+        _shutdown(lib, own)
 
 
 def _safe_cid(cid: str) -> str:
@@ -1474,7 +1479,7 @@ def merge(data_dir: str, cid: str, kind: str = "screen", extra=()) -> str:
 
 def _dims(path: str):
     """mp4 画面的宽高."""
-    lib = _startup()
+    lib, own = _startup()
     reader = c_void_p()
     try:
         _check(lib.rw.MFCreateSourceReaderFromURL(ctypes.c_wchar_p(path), None, byref(reader)), "open")
@@ -1488,12 +1493,12 @@ def _dims(path: str):
             _release(t)
     finally:
         _release(reader)
-        _shutdown(lib)
+        _shutdown(lib, own)
 
 
 def _streams(path: str) -> int:
     """mp4 里有几路 (画面 + 声音), 用 Source Reader 数."""
-    lib = _startup()
+    lib, own = _startup()
     reader = c_void_p()
     try:
         _check(lib.rw.MFCreateSourceReaderFromURL(ctypes.c_wchar_p(path), None, byref(reader)), "open")
@@ -1510,7 +1515,7 @@ def _streams(path: str) -> int:
         return n
     finally:
         _release(reader)
-        _shutdown(lib)
+        _shutdown(lib, own)
 
 
 def _selftest(data_dir=None, seconds=3, audio=(True, True)):

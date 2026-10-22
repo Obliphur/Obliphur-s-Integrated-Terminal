@@ -184,7 +184,7 @@ class RecordService : Service() {
             // 用摄像头 / MediaRecorder 真正支持的尺寸 (480×360 这类不是标准采集尺寸, 很多手机不支持, prepare 会失败);
             // 在支持的尺寸里挑最接近 640×480 的 (压一下但保证能录)
             val (cw, ch) = camSize(mgr, id)
-            rec = buildRecorder(part, cw, ch, 5, 160_000)
+            rec = buildRecorder(part, cw, ch, 15, 360_000)
             @Suppress("MissingPermission")
             mgr.openCamera(id, object : CameraDevice.StateCallback() {
                 override fun onOpened(d: CameraDevice) {

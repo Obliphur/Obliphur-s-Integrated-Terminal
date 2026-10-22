@@ -3125,19 +3125,26 @@ class BreakTimerApp:
 
     def _after_contract(self, cid: str, owner: str, kinds):
         """录像结束 (MECHANICS 18.8): 本机是合约主人 → 合并各路并把最终录像同步给所有设备;
-        不是主人 → 把本机录的片段 (各路) 自动发给主人合并 (不再逐条询问)."""
+        不是主人 → 把本机录的片段 (各路) 自动发给主人合并 (不再逐条询问).
+        注意: 这里把正在录的 recorder 交给后台线程去 stop + 等加密, 不能先 _stop_recorder 把它丢掉 ——
+        否则合并 / 发送时最后一段 (录屏常常整段就一个, 结束时才加密) 还没落盘就扫不到, 结果就是 0 个."""
         if not cid:
             return
+        recs = {}
         for kind in kinds:
-            self._stop_recorder(kind)
+            r = self._recorders.pop(kind, None)
+            recs[kind] = r
+            if r is not None:
+                self._log_notice(f"RECORD {kind} stop")
         if owner and owner == self.sync.my_id:
             for kind in kinds:
-                self._merge_and_share(cid, kind)
+                self._merge_and_share(cid, kind, recs.get(kind))
         else:
-            self._send_segments(cid, owner, kinds)
+            self._send_segments(cid, owner, kinds, recs)
 
-    def _merge_and_share(self, cid: str, kind: str):
-        """合约主人: 把本机的 + 收到的片段接成一个视频, 再把最终结果同步给所有设备. 收到新片段时会再调用 (重合并 + 重发)."""
+    def _merge_and_share(self, cid: str, kind: str, rec=None):
+        """合约主人: 把本机的 + 收到的片段接成一个视频, 再把最终结果同步给所有设备. 收到新片段时会再调用 (重合并 + 重发).
+        rec: 刚结束的这一路 recorder (有的话先 stop + 等最后一段加密, 再扫描片段)."""
         key = (cid, kind)
         if not cid or key in self._merging:
             return
@@ -3145,9 +3152,9 @@ class BreakTimerApp:
         def run():
             self._merging.add(key)
             try:
-                r = self._recorders.get(kind)
-                if r is not None:
-                    r.wait_sealed(12.0)
+                if rec is not None:
+                    rec.stop(12.0)                 # 录完当前片段 (Finalize)
+                    rec.wait_sealed(12.0)          # 等最后一段加密进数据目录
                 if not recorder.files_of(self.dm.data_dir, kind, cid) \
                         and not os.path.isdir(recorder.incoming_dir(self.dm.data_dir, cid, kind)):
                     return
@@ -3175,18 +3182,23 @@ class BreakTimerApp:
             except Exception as e:      # noqa: BLE001
                 self._log_notice(f"RECORD share {cid}/{kind} to {s['id']} failed: {e}")
 
-    def _send_segments(self, cid: str, owner: str, kinds):
-        """不是合约主人的设备: 把本机录的片段 (各路) 自动发给主人合并 (MECHANICS 18.8)."""
+    def _send_segments(self, cid: str, owner: str, kinds, recs=None):
+        """不是合约主人的设备: 把本机录的片段 (各路) 自动发给主人合并 (MECHANICS 18.8).
+        recs: 刚结束的各路 recorder (先 stop + 等加密, 否则最后一段还没落盘就发不出去)."""
+        recs = recs or {}
+
         def go():
+            for kind in kinds:                     # 先把本机还在录的收尾 (不管主人在不在线, 片段都要落盘)
+                r = recs.get(kind)
+                if r is not None:
+                    r.stop(12.0)
+                    r.wait_sealed(12.0)
             p = self.sync.peers().get(owner)
             online = any(s["id"] == owner and s.get("online") for s in self.sync.device_states())
             # 主人必须是在线的电脑 (手机不能合并); 不是就先留在本机
             if not p or not online or not str(p.get("platform", "")).lower().startswith("win"):
                 return
             for kind in kinds:
-                r = self._recorders.get(kind)
-                if r is not None:
-                    r.wait_sealed(12.0)
                 segs = [s for s in recorder.files_of(self.dm.data_dir, kind, cid) if not s.get("partial")]
                 ok = 0
                 for s in segs:
