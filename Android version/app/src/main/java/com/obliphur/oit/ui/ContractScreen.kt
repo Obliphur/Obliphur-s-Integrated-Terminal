@@ -481,8 +481,11 @@ fun ContractScreen() {
                 Text(tr("⚠  当前合约难度极大 请谨慎行动"), color = p.warn, fontSize = 12.sp, fontWeight = FontWeight.Bold,
                     modifier = Modifier.widthIn(max = 170.dp).padding(end = 12.dp))
             val why = if (active) "" else core.contractBlock()
-            Column(horizontalAlignment = Alignment.End) {
-                if (why.isNotEmpty()) Text(why, color = p.dim, fontSize = 10.sp, modifier = Modifier.padding(bottom = 2.dp))
+            // 合约中正在录像 (目光 / 刻痕) 时多一个"终止录像"按钮: 和"提前结束"同时出现时, 终止录像在左, 提前结束在右;
+            // 否则 (只有一个按钮) 还按原来的靠右 (MECHANICS 18.8)
+            val recording = active && (OitApp.instance.recordManager.isRecording("camera") ||
+                OitApp.instance.recordManager.isRecording("screen"))
+            val endBtn: @Composable () -> Unit = {
                 Text(if (active) tr("■  提前结束") else tr("开始行动"), color = if (why.isEmpty()) p.startText else p.startOffText,
                     fontSize = 18.sp, fontWeight = FontWeight.Bold,
                     modifier = Modifier.background(if (why.isEmpty()) p.start else p.startOff, RoundedCornerShape(2.dp))
@@ -497,6 +500,19 @@ fun ContractScreen() {
                             }
                         }
                         .padding(horizontal = 26.dp, vertical = 12.dp))
+            }
+            if (recording) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(tr("■  终止录像"), color = p.clearText, fontSize = 15.sp, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.background(p.clear, RoundedCornerShape(2.dp))
+                            .clickable { ask = "stoprec" }.padding(horizontal = 16.dp, vertical = 12.dp))
+                    endBtn()
+                }
+            } else {
+                Column(horizontalAlignment = Alignment.End) {
+                    if (why.isNotEmpty()) Text(why, color = p.dim, fontSize = 10.sp, modifier = Modifier.padding(bottom = 2.dp))
+                    endBtn()
+                }
             }
         }
     } }
@@ -533,6 +549,19 @@ fun ContractScreen() {
             if (id !in c.rand) ask = ""
             else Confirm(tr("关闭词条"), tr("关闭未知变量选中的 {name}?", "name" to termName(id)) + "\n" + tr("会算作一次违反."),
                 true, { ask = "" }) { core.closeRandomTerm(id) }
+        } else if (ask == "stoprec") {
+            // 终止录像 (目光 / 刻痕): 停掉本机正在录的那几路, 每一路各算一次违反 (那个词条失效), 已录的照样保存
+            val recs = listOf("screen" to "scar", "camera" to "gaze")
+                .filter { OitApp.instance.recordManager.isRecording(it.first) && c.has(it.second) }
+            if (recs.isEmpty()) ask = ""
+            else Confirm(tr("■ 终止录像"),
+                tr("立即停止录像 (目光 / 刻痕), 每一路各算一次违反 (目标生命值 -1), 对应词条失效; 已经录下的部分照样保存."),
+                true, { ask = "" }) {
+                for ((kind, term) in recs) {
+                    OitApp.instance.recordManager.forceStop(kind)
+                    core.contractViolation(tr("终止了录像"), term)
+                }
+            }
         } else if (ask.startsWith("pickwarn:")) {
             // 目光 / 刻痕: 选上前提示会录像 + 加密 (MECHANICS 18.8). 选不选由用户决定.
             val id = ask.removePrefix("pickwarn:")

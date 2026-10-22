@@ -106,6 +106,12 @@ class RecordManager(private val app: OitApp) {
     /** 本机此刻在录这一路吗 (设置 → 录像: 正在写的不能删). */
     fun isRecording(kind: String) = recording(kind)
 
+    /** 用户在合约页手动终止这一路录像 (算违反, 调用处负责记违反): 停掉, 并且这个合约不再自动重开. */
+    fun forceStop(kind: String) {
+        stop(kind)
+        skipCid[kind] = cidKey(core.contract.live.optString("id", ""))
+    }
+
     // ---------------------------------------------------------------- 焦点设备 (刻痕)
 
     private fun scarFocus(): String {

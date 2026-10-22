@@ -1237,5 +1237,10 @@ object EnStrings {
         "主管!" to "Director!",
         "该词条会使用摄像头记录你的行为(和声音,可在设置关闭),但记录的视频会被加密,只能在OIT终端查看,防止自动上传类似的功能泄露隐私." to "This term uses the camera to record what you do (with sound, which you can turn off in settings), but the video is encrypted and can only be viewed in the OIT terminal, so features like auto-upload can't leak your privacy.",
         "该词条会使用录屏记录你的行为(和系统声音,可在设置关闭),但记录的视频会被加密,只能在OIT终端查看,防止自动上传类似的功能泄露隐私." to "This term uses screen recording to record what you do (with system sound, which you can turn off in settings), but the video is encrypted and can only be viewed in the OIT terminal, so features like auto-upload can't leak your privacy.",
+        // ---- 由 merge_en.py 从 i18n.py 补充 (录像等) ----
+        "■  终止录像" to "■  Stop recording",
+        "■ 终止录像" to "■ Stop recording",
+        "终止了录像" to "stopped the recording",
+        "立即停止录像 (目光 / 刻痕), 每一路各算一次违反 (目标生命值 -1), 对应词条失效; 已经录下的部分照样保存." to "Stop recording now (Gaze / Engraving); each stream counts as one violation (target HP -1) and that term is voided; what's already recorded is kept.",
     )
 }

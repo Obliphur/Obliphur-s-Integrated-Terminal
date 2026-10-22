@@ -521,26 +521,30 @@ class SyncService(
 
     fun sendFile(peerId: String, name: String, size: Long, cid: String = "", open: () -> java.io.InputStream): String {
         val p = peers()[peerId] ?: return "unpaired"
-        if (size <= 0 || size > FILE_MAX) return "size"
+        // 真正的大小以读到的字节数为准 (内容提供者报的 size 常常缺失 / 不准, 不能据此判"文件过大")
         val md = MessageDigest.getInstance("SHA-256")
         var n = 0L
-        open().use { inp ->
-            val buf = ByteArray(65536)
-            while (true) {
-                val r = inp.read(buf)
-                if (r < 0) break
-                md.update(buf, 0, r)
-                n += r
+        try {
+            open().use { inp ->
+                val buf = ByteArray(65536)
+                while (true) {
+                    val r = inp.read(buf)
+                    if (r < 0) break
+                    md.update(buf, 0, r)
+                    n += r
+                }
             }
+        } catch (e: Exception) {
+            return "size"
         }
-        if (n != size) return "size"
+        if (n <= 0 || n > FILE_MAX) return "size"
         val k = SyncCrypto.unhex(p.getString("key"))
         val token = SyncCrypto.hex(ByteArray(16).also { SecureRandom().nextBytes(it) })
         val nonce = ByteArray(16).also { SecureRandom().nextBytes(it) }
         val now = System.currentTimeMillis()
         fileOffers.entries.removeAll { it.value.expires < now }
-        fileOffers[token] = FileOffer(name, size, open, SyncCrypto.fileKey(k), nonce, now + OFFER_TTL_MS)
-        val send = JSONObject().put("name", name).put("size", size)
+        fileOffers[token] = FileOffer(name, n, open, SyncCrypto.fileKey(k), nonce, now + OFFER_TTL_MS)
+        val send = JSONObject().put("name", name).put("size", n)
             .put("sha256", SyncCrypto.hex(md.digest())).put("token", token).put("nonce", SyncCrypto.hex(nonce))
         if (cid.isNotEmpty()) send.put("cid", cid)
         val env = SyncCrypto.seal(k, myId, JSONObject().put("send", send))

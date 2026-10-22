@@ -138,7 +138,7 @@ class RecordService : Service() {
         init { val (p, f) = newPart("camera"); part = p; fin = f }
 
         fun start() {
-            rec = buildRecorder(part, 640, 480, 5, 240_000)
+            rec = buildRecorder(part, 480, 360, 5, 160_000)
             @Suppress("MissingPermission")
             mgr.openCamera(id, object : CameraDevice.StateCallback() {
                 override fun onOpened(d: CameraDevice) {
@@ -202,10 +202,10 @@ class RecordService : Service() {
             @Suppress("DEPRECATION")
             (getSystemService(WINDOW_SERVICE) as WindowManager).defaultDisplay.getRealMetrics(dm)
             var w = dm.widthPixels; var hgt = dm.heightPixels
-            val cap = 1280
+            val cap = 960
             if (maxOf(w, hgt) > cap) { val s = cap.toDouble() / maxOf(w, hgt); w = even((w * s).toInt()); hgt = even((hgt * s).toInt()) }
             else { w = even(w); hgt = even(hgt) }
-            rec = buildRecorder(part, w, hgt, 5, 800_000)
+            rec = buildRecorder(part, w, hgt, 5, 450_000)
             proj.registerCallback(cb, h)
             runCatching {
                 vd = proj.createVirtualDisplay("oit-rec", w, hgt, dm.densityDpi,

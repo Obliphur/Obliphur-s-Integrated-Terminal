@@ -96,7 +96,7 @@ fun FileChannelButton() {
             TextButton({
                 val f = file
                 val s = app.sync
-                if (f == null || f.third <= 0 || s == null) {
+                if (f == null || s == null) {       // 大小未知 (f.third < 0) 也能发: 真正大小按读到的字节算
                     app.core.toast(tr("先选择一个文件."), "warn"); return@TextButton
                 }
                 val who = devices.firstOrNull { it.id == target }?.name ?: "?"

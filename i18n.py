@@ -12,6 +12,12 @@ _current = DEFAULT_LANGUAGE
 
 
 EN = {
+    # ---- 终止录像 (手机合约页, MECHANICS 18.8) ----
+    "■  终止录像": "■  Stop recording",
+    "■ 终止录像": "■ Stop recording",
+    "终止了录像": "stopped the recording",
+    "立即停止录像 (目光 / 刻痕), 每一路各算一次违反 (目标生命值 -1), 对应词条失效; 已经录下的部分照样保存.":
+        "Stop recording now (Gaze / Engraving); each stream counts as one violation (target HP -1) and that term is voided; what's already recorded is kept.",
     # ---- 录像词条警告 (目光 / 刻痕, MECHANICS 18.8) ----
     "主管!": "Director!",
     "该词条会使用摄像头记录你的行为(和声音,可在设置关闭),但记录的视频会被加密,只能在OIT终端查看,防止自动上传类似的功能泄露隐私.":

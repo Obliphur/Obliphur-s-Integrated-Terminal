@@ -40,11 +40,11 @@ AUDIO_LAG = 0.25                  # 声音比画面晚这么多秒写 (等采集
 SEGMENT = 30 * 60                 # 每个文件最长 30 分钟
 FOCUS_EVERY = 10                  # 刻痕: 每这么多秒判定一次焦点设备 (MECHANICS 18.8)
 SCREEN_FPS = 1
-SCREEN_WIDTH = 1280
-SCREEN_BITRATE = 320_000
+SCREEN_WIDTH = 960               # 画面缩到最宽这么多 (压一下画质 / 体积; 合并画布也按它封顶)
+SCREEN_BITRATE = 200_000
 CAMERA_FPS = 5
-CAMERA_BITRATE = 240_000
-CAMERA_SIZE = (640, 480)
+CAMERA_BITRATE = 160_000
+CAMERA_SIZE = (480, 360)
 CAMERA_STALL = 12                 # 摄像头这么多秒没有新画面: 视为被关掉了
 
 
@@ -1197,10 +1197,26 @@ def _sample_bytes(sample):
     return p, n.value, buf
 
 
-def _fit(ptr, size, sw, sh, stride, dw, dh) -> bytes:
+def _rotate90(src: bytes, sw, sh, stride) -> tuple:
+    """RGB32 源 (sw×sh, 行距 stride 可正负) 顺时针转 90°: 返回 (新 bytes, 新宽=sh, 新高=sw, 新行距=sh*4, 从上往下).
+    只在"参与的全是竖屏设备、却冒出一帧横屏画面"时用 (MECHANICS 18.8), 把横屏画面转正."""
+    astride = abs(stride)
+    nw, nh = sh, sw
+    nrow = nw * 4
+    out = bytearray(nrow * nh)
+    for ny in range(nh):                 # ny: 0..sw-1
+        sx = ny
+        for nx in range(nw):             # nx: 0..sh-1
+            sy = sh - 1 - nx
+            soff = (sy if stride > 0 else (sh - 1 - sy)) * astride + sx * 4
+            doff = ny * nrow + nx * 4
+            out[doff: doff + 4] = src[soff: soff + 4]
+    return bytes(out), nw, nh, nrow
+
+
+def _fit(src: bytes, sw, sh, stride, dw, dh) -> bytes:
     """一帧 RGB32 (源 sw×sh, 行距 stride 字节, 可正可负) 等比缩放后放进 dw×dh 的画布 (从上往下):
     保持宽高比, 居中, 周围补黑 (横屏画布放竖屏内容时左右留黑, 反之上下留黑). 用最近邻缩放 (录屏 1 fps, 够用)."""
-    src = ctypes.string_at(ptr, size)
     astride = abs(stride)
     row = dw * 4
     out = bytearray(row * dh)                       # 全黑画布
@@ -1221,16 +1237,24 @@ def _fit(ptr, size, sw, sh, stride, dw, dh) -> bytes:
     return bytes(out)
 
 
-def _canvas(dims):
-    """合并画布的大小和朝向 (MECHANICS 18.8): 参与的设备里有横屏 (宽 > 高) 的 → 整段按横屏, 否则按竖屏.
-    画布取同朝向里面积最大的那一段的分辨率 (保持分辨率不变); 不同朝向的内容靠 _fit 等比缩放后留黑兼容."""
-    dims = [(w, h) for w, h in dims if w > 0 and h > 0]
-    if not dims:
+def _canvas(info):
+    """合并画布的大小和朝向 (MECHANICS 18.8). info: [(宽, 高, 是不是本机录的)].
+    - 有横屏设备参与就按横屏: 本机 (电脑, 横屏设备) 录过, 或片段里横屏占多数; 否则 (全是竖屏手机) 按竖屏.
+    - 画布取同朝向里面积最大的那段 (保持分辨率不变), 最长边再压到不超过 SCREEN_WIDTH (压一下体积).
+    - 不同朝向的内容: 横屏画布里的竖屏内容左右留黑; 竖屏画布里的横屏画面直接转正 (见 _reencode_concat / _rotate90)."""
+    info = [(w, h, loc) for w, h, loc in info if w > 0 and h > 0]
+    if not info:
         return None
-    land = any(w > h for w, h in dims)
-    same = [(w, h) for w, h in dims if (w > h) == land] or dims
+    n_land = sum(1 for w, h, _ in info if w > h)
+    n_port = len(info) - n_land
+    has_local = any(loc for _, _, loc in info)
+    land = has_local or (n_land > 0 and n_land >= n_port)
+    same = [(w, h) for w, h, _ in info if (w > h) == land] or [(w, h) for w, h, _ in info]
     w, h = max(same, key=lambda d: d[0] * d[1])
-    return w // 2 * 2, h // 2 * 2
+    m = max(w, h)
+    if m > SCREEN_WIDTH:
+        w, h = round(w * SCREEN_WIDTH / m), round(h * SCREEN_WIDTH / m)
+    return max(2, w // 2 * 2), max(2, h // 2 * 2)
 
 
 def _reencode_concat(out_path, inputs, fps=SCREEN_FPS, size=None):
@@ -1269,6 +1293,8 @@ def _reencode_concat(out_path, inputs, fps=SCREEN_FPS, size=None):
                     if not (dw and dh):                     # 没给画布: 用第一段的大小 (同以前)
                         dw, dh = min(sw, SCREEN_WIDTH) // 2 * 2, sh // 2 * 2
                     writer = _Writer(lib, out_path, dw, dh, fps, SCREEN_BITRATE, audio=has_audio)
+                # 竖屏画布里冒出横屏画面 (全是竖屏设备, 中途有横屏) → 把这一段的每帧转正 (MECHANICS 18.8)
+                rotate = dw < dh and sw > sh
                 rd = ctypes.WINFUNCTYPE(HRESULT, c_void_p, c_ulong, c_ulong, POINTER(c_ulong), POINTER(c_ulong),
                                         POINTER(ctypes.c_longlong), POINTER(c_void_p))(
                     ctypes.cast(reader, POINTER(POINTER(c_void_p)))[0][9])
@@ -1295,7 +1321,11 @@ def _reencode_concat(out_path, inputs, fps=SCREEN_FPS, size=None):
                         stream = writer.stream
                         ptr, size, buf = _sample_bytes(sample)
                         try:
-                            frame = _fit(ptr, size, sw, sh, stride, dw, dh)
+                            src = ctypes.string_at(ptr, size)
+                            fw, fh, fstride = sw, sh, stride
+                            if rotate:
+                                src, fw, fh, fstride = _rotate90(src, sw, sh, stride)
+                            frame = _fit(src, fw, fh, fstride, dw, dh)
                             data = ctypes.create_string_buffer(frame, len(frame))
                             writer.write_bytes(data, len(frame), base + ts.value, dur.value, stream=stream)
                         finally:
@@ -1332,8 +1362,8 @@ def merge(data_dir: str, cid: str, extra=()) -> str:
                 got.append(os.path.join(inc, n))
     except OSError:
         pass
-    segs = list(files_of(data_dir, "screen", cid)) + [
-        {"path": p, "name": os.path.basename(p), "start": None} for p in list(extra) + got]
+    segs = [dict(s, local=True) for s in files_of(data_dir, "screen", cid)] + [
+        {"path": p, "name": os.path.basename(p), "start": None, "local": False} for p in list(extra) + got]
     segs = [s for s in segs if not s.get("partial")]
     if not segs:
         return ""
@@ -1346,25 +1376,27 @@ def merge(data_dir: str, cid: str, extra=()) -> str:
         segs.sort(key=lambda s: s["name"])
     work = os.path.join(work_dir(data_dir, "merged"), cid)
     os.makedirs(work, exist_ok=True)
-    plain = []
+    plain = []          # [(解密后的 mp4 路径, 是不是本机录的)]
     try:
         for i, s in enumerate(segs):
             p = s["path"]
             if p.lower().endswith(EXT):
                 out = os.path.join(work, f"{i:04d}.mp4")
                 decrypt_file(p, out)
-                plain.append(out)
+                plain.append((out, s.get("local", False)))
             else:
-                plain.append(p)
+                plain.append((p, s.get("local", False)))
         raw = os.path.join(work, "merged.mp4")
-        # 画布的朝向 / 大小: 有横屏设备参与就按横屏, 否则按竖屏; 竖屏内容在横屏画布里左右留黑 (MECHANICS 18.8)
-        dims = []
-        for p in plain:
+        # 画布的朝向 / 大小 (MECHANICS 18.8): 有横屏设备 (本机电脑录过, 或横屏片段占多数) 就按横屏, 否则按竖屏;
+        # 横屏画布里的竖屏内容左右留黑, 竖屏画布里冒出的横屏画面转正
+        info = []
+        for p, loc in plain:
             try:
-                dims.append(_dims(p))
+                w, h = _dims(p)
+                info.append((w, h, loc))
             except Exception:       # noqa: BLE001
                 pass
-        _reencode_concat(raw, plain, size=_canvas(dims))
+        _reencode_concat(raw, [p for p, _ in plain], size=_canvas(info))
         d = folder(data_dir, "merged")
         os.makedirs(d, exist_ok=True)
         stem = when(segs[0]).strftime("%Y%m%d-%H%M%S")
