@@ -43,14 +43,16 @@ class ContractTest {
         assertEquals(listOf("short1"), Contract.clean(listOf("short1", "hoard")))
         assertTrue(Contract.conflicts("short1", "short2")); assertFalse(Contract.conflicts("seal", "fine"))
         assertTrue(Contract.LAYOUT["short2"]!! < Contract.LAYOUT["suppress"]!!)
-        assertEquals(Contract.SERIES.size + 10, Contract.BOARD_COLS)
-        assertEquals(Contract.SERIES.size + 1, Contract.LAYOUT["fine"])     // 零散的挨着排, 不留空
-        // 行为类似的放在一起: 禁止的软件 (乐理之灾 / 禁游令 / 低帧的诅咒) 在 1 级挨着;
-        // 无言为真 (2 级) 在乐理之灾下面, 录像在禁游令 / 低帧的诅咒下面
+        // 词条板: 每个词条正好一格, 两页各 18; 同一组在同一列
+        assertEquals(Contract.BY_ID.keys.sorted(), Contract.BOARD.flatten().sorted())
+        assertEquals(19, Contract.BOARD_COLS)
+        assertEquals(listOf(18, 18), Contract.PAGES.map { pg -> pg.sumOf { Contract.BOARD[it].size } })
+        // 相似的放在一起: 无言为真在乐理之灾下面, 刻痕在目光下面, 细化规范在记录封锁下面
         val m = Contract.LAYOUT["music"]!!
-        assertEquals((m..m + 2).toList(), listOf("music", "game", "video").map { Contract.LAYOUT[it]!! })
-        assertEquals(m + 1, Contract.LAYOUT["gaze"]); assertEquals(m + 2, Contract.LAYOUT["scar"])
-        assertEquals(Contract.LAYOUT["music"], Contract.LAYOUT["silent"])   // 无言为真 2 级, 在乐理之灾下面
+        assertEquals((m..m + 5).toList(),
+            listOf("music", "game", "video", "gaze", "move", "confine").map { Contract.LAYOUT[it]!! })
+        assertEquals(Contract.LAYOUT["music"], Contract.LAYOUT["silent"])
+        assertEquals(Contract.LAYOUT["gaze"], Contract.LAYOUT["scar"])
         assertEquals(Contract.LAYOUT["seal"], Contract.LAYOUT["fine"]); assertEquals(Contract.LAYOUT["suppress"], Contract.LAYOUT["jam"])
         // 高机动只留 1 级 (旧的高机动-I / II 删掉了), 和禁足挨着; 记录封锁的描述换掉了
         assertFalse("move1" in Contract.BY_ID || "move2" in Contract.BY_ID)
@@ -59,7 +61,13 @@ class ContractTest {
         assertEquals(1, Contract.BY_ID["confine"]!!.level)
         assertEquals(Contract.LAYOUT["move"]!! + 1, Contract.LAYOUT["confine"])
         assertEquals("无法修改已经被填写的格子 (包括自动填写和手动填写); 每次完成填写时, 另外随机封锁两个可以封锁的格子", Contract.BY_ID["seal"]!!.desc)
-        assertTrue(Contract.conflicts("gaze", "scar") && Contract.conflicts("scar", "gaze"))
+        // 目光: 1 级, 不再和刻痕冲突; 高机动 / 禁足的前置条件是目光
+        assertEquals(1, Contract.BY_ID["gaze"]!!.level)
+        assertFalse(Contract.conflicts("gaze", "scar"))
+        assertEquals("gaze", Contract.needsOf("move", emptyList()))
+        assertNull(Contract.needsOf("move", listOf("gaze")))
+        assertEquals(listOf("music"), Contract.clean(listOf("move", "confine", "music"), prereq = true))
+        assertEquals(listOf("gaze", "scar", "confine"), Contract.clean(listOf("confine", "gaze", "scar"), prereq = true))
         assertTrue(Contract.SOCIAL_APPS.intersect(Contract.VIDEO_APPS).isEmpty())
         assertEquals(listOf("long2", "suppress", "jam"), Contract.clean(listOf("long2", "long1", "x", "suppress", "jam")))
         // 词条组合: 系列任意一档都算; 凑齐了加危机等级 / 乘区 / 开始时或完成时的休息时间
@@ -70,15 +78,14 @@ class ContractTest {
         assertEquals(1, Contract.comboLevel(listOf("long1", "tired2", "fine", "deep1")))
         assertEquals(0.6 * 1.2, Contract.restFactorOf(listOf("long1", "tired2", "fine", "deep1")), 1e-9)
         val iso = listOf("info1", "erode1", "chan1", "suppress", "fog", "quiet", "jam")
-        assertEquals(iso, Contract.clean(iso))                    // 信息隔绝组合的词条可以一起选
+        assertEquals(iso.sorted(), Contract.clean(iso).sorted())  // 信息隔绝组合的词条可以一起选
         assertEquals(1, Contract.comboLevel(iso)); assertEquals(10 * 60, Contract.comboEnd(iso))
         assertEquals(Contract.restMinutes(8) * 60 + 10 * 60, Contract.restReward(8, iso))
         assertEquals(20 * 60, Contract.comboGift(listOf("music", "silent", "game", "video")))
-        assertEquals(0, Contract.comboGift(listOf("last", "unknown")))          // 还差 禁足 / 高机动
-        assertEquals(20 * 60, Contract.comboGift(listOf("last", "unknown", "move", "confine")))
-        assertEquals(mapOf("last" to Contract.COMBO_COLORS["gray"]!!, "unknown" to Contract.COMBO_COLORS["gray"]!!,
-            "move" to Contract.COMBO_COLORS["gray"]!!, "confine" to Contract.COMBO_COLORS["gray"]!!),
-            Contract.comboMarks(listOf("last", "unknown", "move", "confine")))
+        assertEquals(0, Contract.comboGift(listOf("last", "unknown", "move", "confine")))   // 还差 目光 / 刻痕
+        val flaw = listOf("last", "unknown", "move", "confine", "gaze", "scar")
+        assertEquals(20 * 60, Contract.comboGift(flaw))
+        assertEquals(flaw.associateWith { Contract.COMBO_COLORS["gray"]!! }, Contract.comboMarks(flaw))
         assertEquals("纵深推进", Contract.reqName("deep")); assertEquals("最后防线", Contract.reqName("last"))
         // 统计页: 最近 5 个顺利完成的合约; 词条按开始时的顺序, 降级的写降级后的名字, 失效的标出来
         val results = listOf("completed", "failed", "completed", "abandoned", "completed", "completed", "completed")
@@ -96,8 +103,8 @@ class ContractTest {
         assertEquals(listOf("环境:持久战-III" to false, "环境:疲惫-II" to false,
             "环境:无言为真" to false, "环境:乐理之灾" to true), Contract.termsOfRecord(rec))
         val best = Contract.clean(listOf("long3", "erode2", "info3", "suppress", "jam", "music", "fog", "tired3", "chan2", "last",
-            "short2", "seal", "fine", "silent", "game", "video", "gaze"))
-        assertEquals(32, Contract.levelOf(best))
+            "short2", "seal", "fine", "silent", "game", "video", "gaze", "scar"))
+        assertEquals(33, Contract.levelOf(best))
         assertEquals(20 * 60, Contract.restGift(best))             // 互联网娱乐的败退凑齐了
         assertEquals(4 * 3600 * 1.6, Contract.durationOf(listOf("long3")), 1e-6)
     }
@@ -169,6 +176,13 @@ class ContractTest {
         e.start(listOf("scar"), "me", t0)
         assertEquals(listOf("screen"), e.records()); assertEquals(2, e.level)
         assertEquals(false to "", e.violate("scar")); assertEquals(emptyList<String>(), e.records())
+        // 目光: 只由选定的设备 (cam) 录; 高机动 / 禁足前置是目光
+        e.start(listOf("gaze", "scar", "move"), "me", t0, cam = "phone")
+        assertEquals("phone", e.cam)
+        assertEquals(listOf("screen"), e.records("pc")); assertEquals(listOf("camera", "screen"), e.records("phone"))
+        assertEquals(false to "", e.violate("gaze")); assertEquals(listOf("scar", "move"), e.terms)
+        e.start(listOf("move", "scar"), "me", t0, cam = "pc")
+        assertEquals(listOf("scar"), e.terms); assertEquals("", e.cam)
         // 目标生命值: 默认 4, 退路封锁-I 只有 3; 整点记录超时未填写也算 (不降词条)
         assertEquals(4, c.violationLimit)
         c.start(listOf("suppress", "info3", "long1", "retreat1"), "me", t0)
@@ -254,10 +268,10 @@ class ContractTest {
     @Test
     fun newTerms() {
         val t0 = LocalDateTime.of(2026, 10, 18, 9, 30)
-        // 翻页: 成系列的一页, 零散的一页, 第 3 页是词条组合
-        assertEquals(listOf(0 until Contract.SERIES.size, Contract.SERIES.size until Contract.BOARD_COLS), Contract.PAGES)
+        // 翻页: 词条两页, 第 3 页是词条组合
+        assertEquals(listOf(0 until Contract.PAGE_SPLIT, Contract.PAGE_SPLIT until Contract.BOARD_COLS), Contract.PAGES)
         assertEquals(2, Contract.COMBO_PAGE)
-        assertTrue(Contract.LAYOUT["deep1"]!! < Contract.SERIES.size && Contract.LAYOUT["hoard"]!! >= Contract.SERIES.size)
+        assertTrue(Contract.LAYOUT["deep1"]!! < Contract.PAGE_SPLIT && Contract.LAYOUT["info1"]!! >= Contract.PAGE_SPLIT)
         assertFalse(Contract.conflicts("erode1", "info3") || Contract.conflicts("quiet", "jam"))
         assertFalse(Contract.conflicts("suppress", "fog"))
         val c = Contract(tmp())
@@ -322,6 +336,7 @@ class ContractTest {
         c.start(listOf("unknown", "info2", "long1"), "me", t0, pre = 600.0)
         val pool = c.randomCandidates()
         assertTrue("gaze" !in pool && "scar" !in pool && "info1" !in pool && "long2" !in pool && "unknown" !in pool)
+        assertTrue("move" !in pool && "confine" !in pool)            // 没选目光: 不选高机动 / 禁足
         assertTrue(pool.none { it.startsWith("long") })              // 不选持久战
         assertTrue("music" in pool && "jam" in pool)
         val r1 = kotlin.random.Random(1)

@@ -753,6 +753,13 @@ class DataManager:
 
     def erase_all_data(self):
         """重置: 删除本程序留下的全部数据, 不留任何记录."""
+        try:
+            import recorder
+            for kind in recorder.KINDS:
+                shutil.rmtree(recorder.work_dir(self.data_dir, kind), ignore_errors=True)
+            shutil.rmtree(recorder.play_dir(), ignore_errors=True)
+        except Exception:
+            pass
         shutil.rmtree(self.data_dir, ignore_errors=True)
         shutil.rmtree(self.old_dir, ignore_errors=True)
         try:

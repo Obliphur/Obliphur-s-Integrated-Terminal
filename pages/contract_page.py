@@ -111,7 +111,8 @@ class ContractPage(tk.Frame):
     TILE_W, GAP, BAND_W = 68, 7, 148              # 格子是正六边形: 高 = 宽 × √3 / 2
 
     def __init__(self, master, contract, on_start=None, on_abandon=None, net_used=None, on_change=None,
-                 blocked=None, rec_text=None, on_stop_screen=None, on_close_rand=None, on_lift_ban=None):
+                 blocked=None, rec_text=None, on_stop_screen=None, on_close_rand=None, on_lift_ban=None,
+                 on_pick=None):
         self.P = P = palette()
         super().__init__(master, bg=P["bg"])
         self.c = contract
@@ -124,6 +125,7 @@ class ContractPage(tk.Frame):
         self.on_stop_screen = on_stop_screen          # 刻痕: 终止录屏 (算一次违反)
         self.on_close_rand = on_close_rand            # 未知变量选中的词条: 点击关闭 (算一次违反)
         self.on_lift_ban = on_lift_ban                # 禁止联网的词条 (紫色): 点击解除网络禁令, 扣目标生命值
+        self.on_pick = on_pick or (lambda tid: True)  # 选中某个词条前的警告 (录像): 返回要不要选
         self._hover = ""
         self._list_key = None
         self._tile_state = {}
@@ -412,6 +414,8 @@ class ContractPage(tk.Frame):
         if tid in sel:
             sel.remove(tid)
         elif C.blocked_by(tid, sel):
+            return
+        elif not self.on_pick(tid):             # 录像等词条选中前先警告; 用户不同意就不选
             return
         else:
             sel.append(tid)

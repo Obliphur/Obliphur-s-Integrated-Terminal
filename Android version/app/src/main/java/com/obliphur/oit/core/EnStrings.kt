@@ -722,6 +722,7 @@ object EnStrings {
         "合约开始时 休息 +20 分钟" to "Break +20 min when the contract starts",
         "额外 1 危机等级\n完成合约时 休息 +10 分钟" to "Extra 1 Contingency Level\nBreak +10 min on completion",
         "合约期间打开摄像头记录使用者的行为 结束后保存录像" to "The camera records you during the contract; the video is saved afterwards",
+        "合约期间用电脑或手机的摄像头记录使用者的行为 结束后保存录像" to "A computer or phone camera records you during the contract; the video is saved afterwards",
         "合约期间社交软件和与AI聊天的软件禁止联网 可以通过点击解除网络禁令" to "Social apps and AI chat apps can't go online during the contract. Tap to lift the network ban",
         "合约期间录制整个屏幕 结束后保存录像" to "The whole screen is recorded during the contract and saved afterwards",
         "合约期间游戏和游戏平台禁止联网 可以通过点击解除网络禁令" to "Games and game platforms can't go online during the contract. Tap to lift the network ban",

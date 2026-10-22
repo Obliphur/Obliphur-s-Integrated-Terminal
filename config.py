@@ -162,7 +162,7 @@ OUTING_MAX_HOURS = 24 * 7
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.112"                         # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.113"                         # 和 GitHub 上发布的版本号比较 (见 updater.py)
 UPDATE_CHECK = 1                              # 打开程序时检查更新
 UPDATE_AUTO = 1                               # 发现新版本时自动下载安装
 OLD_APP_DIR = "mrsTimer"
@@ -319,6 +319,8 @@ DEFAULT_SETTINGS = {
     "THEME": "classic",
     "CONTRACT_THEME": "ops",
     "REC_ASK": 1,
+    "REC_MIC": 1,
+    "REC_SYSTEM": 1,
     "TICK_CLAMP": TICK_CLAMP,
     "FILL_WINDOW": int(FILL_WINDOW.total_seconds()),
     "QUICK_MULTIPLIER": QUICK_MULTIPLIER,
@@ -481,6 +483,8 @@ THEME_NAMES = tuple(THEMES)
 DEFAULT_THEME = "classic"
 THEME = DEFAULT_THEME
 REC_ASK = 1                      # 录像前询问 (合约的目光 / 刻痕, 设置 → 录像)
+REC_MIC = 1                      # 录像时录麦克风 (外部音); 默认开 (设置 → 录像, 不同步)
+REC_SYSTEM = 1                   # 录像时录系统音; 默认开 (设置 → 录像, 不同步)
 CONTRACT_THEME = "ops"           # 合约页的主题: "ops" 起源 / "ui" 跟随界面主题 (pages/contract_page.py)
 
 COLORS = dict(THEMES[DEFAULT_THEME]["colors"])

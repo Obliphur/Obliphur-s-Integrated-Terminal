@@ -48,71 +48,66 @@ class Contract(private val file: File) {
         // 成系列的 (有好几档的) 在前, 界面上放在左边, 一组一列; 同一模块的系列挨在一起.
         // 零散的 (只有一档的) 在后, 放在右边, 按等级排成行; 同一模块的上下对齐.
         val TERMS = listOf(
-            // ---- 合约本身: 时长, 目标生命值 ----
+            // ==== 第 1 页 ====
             Term("long1", "long", 1, "环境:持久战-I", "时长改为120%"),
             Term("long2", "long", 2, "环境:持久战-II", "时长改为140%"),
             Term("long3", "long", 3, "环境:持久战-III", "时长改为160%"),
             Term("retreat1", "retreat", 1, "环境:退路封锁-I", "初始目标生命值为3"),
             Term("retreat2", "retreat", 2, "环境:退路封锁-II", "初始目标生命值为2"),
             Term("last", "retreat", 3, "最后防线", "初始目标生命值为1"),
-            // ---- 专注 / 休息: 专注的下限, 休息时间的倍率, 合约开始前积攒的休息时间 ----
             Term("deep1", "deep", 1, "目标:纵深推进-I", "专注的时间不能少于40min"),
             Term("deep2", "deep", 2, "目标:纵深推进-II", "专注的时间不能少于80min"),
+            Term("chan1", "chan", 1, "环境:通道阻塞-I", "在专注期间的最大窗口数改为4"),
+            Term("chan2", "chan", 2, "环境:通道阻塞-II", "在专注期间的最大窗口数改为3"),
             Term("tired1", "tired", 1, "环境:疲惫-I", "期间获得的休息时间改为70%"),
             Term("tired2", "tired", 2, "环境:疲惫-II", "期间获得的休息时间改为60%"),
             Term("tired3", "tired", 3, "环境:疲惫-III", "期间获得的休息时间改为50%"),
             Term("short1", "short", 1, "环境:支援短缺-I", "可用的合约开始前已保存休息时间改为50%"),
             Term("short2", "short", 2, "环境:支援短缺-II", "不能使用合约开始前已经保存的休息时间"),
-            // ---- 联网: 剩余额度, 冷静期 ----
+            Term("hoard", "hoard", 1, "禁止囤囤鼠!", "不能提前结束休息 但是获得的休息时间改为110%",
+                listOf("short1", "short2")),
+            Term("seal", "seal", 1, "环境:记录封锁", "无法修改已经被填写的格子 (包括自动填写和手动填写); 每次完成填写时, 另外随机封锁两个可以封锁的格子"),
+            Term("fine", "fine", 2, "目标:细化规范", "记录变为30min一次"),
+            // ==== 第 2 页 ====
             Term("info1", "info", 1, "环境:信息阻断-I", "可用的剩余联网时间改为80% 且不能使用借贷"),
             Term("info2", "info", 2, "环境:信息阻断-II", "可用的剩余联网时间改为65% 且不能使用借贷"),
             Term("info3", "info", 3, "环境:信息阻断-III", "可用的剩余联网时间改为50% 且不能使用借贷"),
             Term("erode1", "erode", 1, "环境:侵蚀-I", "网络申请冷却期改为200%"),
             Term("erode2", "erode", 2, "环境:侵蚀-II", "网络申请冷却期改为300%"),
-            // ---- 窗口 ----
-            Term("chan1", "chan", 1, "环境:通道阻塞-I", "在专注期间的最大窗口数改为4"),
-            Term("chan2", "chan", 2, "环境:通道阻塞-II", "在专注期间的最大窗口数改为3"),
-            // ---- 零散的 (只有一档的): 右边, 按等级排成行, 同一模块的放在一起 / 上下对齐 ----
-            // 1 级: 联网 (抑制), 整点记录 (记录封锁), 禁止打开的软件 (乐理之灾 / 禁游令 / 低帧的诅咒),
-            // 现实 (高机动 / 禁足), 黑雾, 休息 (禁止囤囤鼠!), 专注中的联网 (静默协议)
             Term("suppress", "suppress", 1, "环境:抑制", "不能使用快速访问功能"),
-            Term("seal", "seal", 1, "环境:记录封锁", "无法修改已经被填写的格子 (包括自动填写和手动填写); 每次完成填写时, 另外随机封锁两个可以封锁的格子"),
+            Term("jam", "jam", 2, "环境:全频道阻塞干扰", "期间使用proxy block-all模式"),
+            Term("quiet", "quiet", 1, "环境:静默协议", "专注中不能处于联网状态"),
             Term("music", "music", 1, "环境:乐理之灾", "合约期间音乐播放软件禁止联网 可以通过点击解除网络禁令"),
+            Term("silent", "silent", 2, "环境:无言为真", "合约期间社交软件和与AI聊天的软件禁止联网 可以通过点击解除网络禁令"),
             Term("game", "game", 1, "环境:禁游令", "合约期间游戏和游戏平台禁止联网 可以通过点击解除网络禁令"),
             Term("video", "video", 1, "环境:低帧的诅咒", "合约期间视频平台禁止联网 可以通过点击解除网络禁令"),
+            Term("gaze", "gaze", 1, "目光", "合约期间用电脑或手机的摄像头记录使用者的行为 结束后保存录像"),
+            Term("scar", "scar", 2, "刻痕", "合约期间录制整个屏幕 结束后保存录像"),
             Term("move", "move", 1, "目标:高机动", "现实中的移动速度+50%"),
             Term("confine", "confine", 1, "目标:禁足", "在非休息时间不能离开工作岗位进行活动"),
             Term("fog", "fog", 1, "环境:黑雾", "合约期间 专注时长 合约的剩余时间 成就 日历 统计数据不可见 且无法打开设置"),
-            Term("hoard", "hoard", 1, "禁止囤囤鼠!", "不能提前结束休息 但是获得的休息时间改为110%",
-                listOf("short1", "short2")),
-            Term("quiet", "quiet", 1, "环境:静默协议", "专注中不能处于联网状态"),
-            // 2 级: 联网 (全频道阻塞干扰), 整点记录 (细化规范), 禁止打开软件里的 无言为真 (乐理之灾下面),
-            // 录像 (目光 / 刻痕) 在 禁游令 / 低帧的诅咒 下面
-            Term("jam", "jam", 2, "环境:全频道阻塞干扰", "期间使用proxy block-all模式"),
-            Term("fine", "fine", 2, "目标:细化规范", "记录变为30min一次"),
-            Term("silent", "silent", 2, "环境:无言为真", "合约期间社交软件和与AI聊天的软件禁止联网 可以通过点击解除网络禁令"),
-            Term("gaze", "gaze", 2, "目光", "合约期间打开摄像头记录使用者的行为 结束后保存录像"),
-            Term("scar", "scar", 2, "刻痕", "合约期间录制整个屏幕 结束后保存录像",
-                listOf("gaze")),
-            // 3 级: 未知变量
             Term("unknown", "unknown", 3, "未知变量", "合约开始时 以及之后每过一个整小时 从当前可以选择的1-2级词条中随机启用一个或随机施加效果\n选中的词条不算进危机等级"),
         )
         val BY_ID = TERMS.associateBy { it.id }
         val GROUPS = TERMS.map { it.group }.distinct()
-        /** 词条板的布局: 成系列的每组一列 (左边); 零散的不单独占列, 按等级放进右边的几列, 每一行从左往右挨着排, 不留空. */
-        val SERIES = GROUPS.filter { g -> TERMS.count { it.group == g } > 1 }
+        /** 前置条件: 选了后面的词条才能选这个 (MECHANICS 18.3); 去掉前置的词条时它也一起去掉. 合约中前置失效了不影响. */
+        val NEEDS = mapOf("move" to "gaze", "confine" to "gaze")
+        /** 词条板: 每一列从上往下按等级, 同一类的放在一列, 相似的挨着; 两页各 18 个词条. 同 contract.py 的 BOARD. */
+        val BOARD = listOf(
+            listOf("long1", "long2", "long3"), listOf("retreat1", "retreat2", "last"), listOf("deep1", "deep2"),
+            listOf("chan1", "chan2"), listOf("tired1", "tired2", "tired3"), listOf("short1", "short2"),
+            listOf("hoard"), listOf("seal", "fine"),
+            listOf("info1", "info2", "info3"), listOf("erode1", "erode2"), listOf("suppress", "jam"), listOf("quiet"),
+            listOf("music", "silent"), listOf("game"), listOf("video"), listOf("gaze", "scar"), listOf("move"),
+            listOf("confine"), listOf("fog", "unknown"),
+        )
+        const val PAGE_SPLIT = 8                 // 第 1 页的列数
         /** 词条 → 列. */
-        val LAYOUT: Map<String, Int> = run {
-            val loose = HashMap<Int, Int>()
-            TERMS.associate { t ->
-                t.id to if (t.group in SERIES) SERIES.indexOf(t.group)
-                else SERIES.size + loose.getOrDefault(t.level, 0).also { loose[t.level] = it + 1 }
-            }
-        }
-        val BOARD_COLS = (LAYOUT.values.maxOrNull() ?: -1) + 1
+        val LAYOUT: Map<String, Int> = BOARD.withIndex().flatMap { (i, col) -> col.map { it to i } }.toMap()
+        val BOARD_COLS = BOARD.size
         val MAX_LEVEL = TERMS.maxOf { it.level }
-        /** 词条板翻页: 成系列的一页, 零散的一页 (每页的列); 第 3 页 (COMBO_PAGE) 是词条组合的效果. */
-        val PAGES = listOf(0 until SERIES.size, SERIES.size until BOARD_COLS)
+        /** 词条板翻页: 词条两页 (每页的列), 第 3 页 (COMBO_PAGE) 是词条组合的效果. */
+        val PAGES = listOf(0 until PAGE_SPLIT, PAGE_SPLIT until BOARD_COLS)
         const val COMBO_PAGE = 2
         private val ORDER = TERMS.mapIndexed { i, t -> t.id to i }.toMap()
 
@@ -155,7 +150,7 @@ class Contract(private val file: File) {
                 "额外 1 危机等级\n休息时间 ×120%"),
             Combo("nofun", "互联网娱乐的败退", "purple", listOf("music", "silent", "game", "video"), 0, 1.0, 20 * 60, 0,
                 "合约开始时 休息 +20 分钟"),
-            Combo("flawless", "无懈可击", "gray", listOf("last", "unknown", "move", "confine"), 0, 1.0, 20 * 60, 0,
+            Combo("flawless", "无懈可击", "gray", listOf("last", "unknown", "move", "confine", "gaze", "scar"), 0, 1.0, 20 * 60, 0,
                 "合约开始时 休息 +20 分钟"),
             Combo("isolation", "信息隔绝", "red", listOf("info", "chan", "erode", "suppress", "fog", "quiet", "jam"), 1, 1.0, 0, 10 * 60,
                 "额外 1 危机等级\n完成合约时 休息 +10 分钟"),
@@ -377,10 +372,16 @@ class Contract(private val file: File) {
         fun blockedBy(id: String, selected: Collection<String>): String? =
             selected.firstOrNull { it != id && conflicts(id, it) }
 
-        /** 去掉不认识的和互相冲突的 (后面的让位给前面的), 按 TERMS 的顺序. */
-        fun clean(terms: Collection<String>): List<String> {
-            val out = mutableListOf<String>()
+        /** id 的前置条件 (NEEDS) 没有选着时返回它, 否则 null. */
+        fun needsOf(id: String, selected: Collection<String>): String? =
+            NEEDS[id]?.takeIf { it !in selected }
+
+        /** 去掉不认识的和互相冲突的 (后面的让位给前面的), 按 TERMS 的顺序.
+         *  prereq: 也去掉前置条件没选的 (选词条 / 开始合约时; 合约中前置失效了不去掉). */
+        fun clean(terms: Collection<String>, prereq: Boolean = false): List<String> {
+            var out = mutableListOf<String>()
             for (t in terms) if (t in BY_ID && t !in out && blockedBy(t, out) == null) out.add(t)
+            if (prereq) out = out.filter { needsOf(it, out) == null }.toMutableList()
             return out.sortedBy { ORDER[it] }
         }
 
@@ -496,13 +497,14 @@ class Contract(private val file: File) {
     val id: Long get() = live.optLong("id", 0)
 
     fun setDraft(terms: Collection<String>) {
-        draft = clean(terms)
+        draft = clean(terms, prereq = true)
         save()
     }
 
     /** pre: 开始时积攒的休息时间 (秒). 合约中暂停休息时这部分不打折; 支援短缺限制它能用几成. */
-    fun start(terms: Collection<String>, owner: String, now: LocalDateTime = LocalDateTime.now(), pre: Double = 0.0) {
-        val t = clean(terms)
+    fun start(terms: Collection<String>, owner: String, now: LocalDateTime = LocalDateTime.now(), pre: Double = 0.0,
+              cam: String = "") {
+        val t = clean(terms, prereq = true)
         val n = now.withNano(0)
         val p = maxOf(0.0, pre)
         val share = supplyShare(t)
@@ -514,6 +516,7 @@ class Contract(private val file: File) {
             .put("pre", r1(p)).put("pre_left", r1(p)).put("pre_used", 0)
             .put("supply", if (share == null) JSONObject.NULL else r1(p * share)).put("hl", JSONArray())
             .put("rand", JSONArray()).put("rand_n", 0).put("fog_words", fogWordsJson(java.util.Random()))
+        if ("gaze" in t && cam.isNotEmpty()) live.put("cam", cam)
         watch.clear()
         save()
     }
@@ -689,7 +692,7 @@ class Contract(private val file: File) {
         return TERMS.map { it.id }.filter { id ->
             ((id !in used && id !in viol) || (id in viol && id !in again)) &&
                 BY_ID[id]!!.level in RANDOM_LEVELS && id !in RANDOM_SKIP && id !in t && blockedBy(id, t) == null &&
-                !(id in LIFE && lifeOf(terms + id) <= violations)
+                needsOf(id, t) == null && !(id in LIFE && lifeOf(terms + id) <= violations)
         }
     }
 
@@ -871,7 +874,7 @@ class Contract(private val file: File) {
         val out = mutableListOf<String>()
         for (id in due) {
             val until = w[id]!!.second
-            if (now.isBefore(until) && id !in terms && blockedBy(id, terms) == null) {
+            if (now.isBefore(until) && id !in terms && blockedBy(id, terms) == null && needsOf(id, terms) == null) {
                 enable(id, until); out.add(id)
             }
         }
@@ -1090,8 +1093,17 @@ class Contract(private val file: File) {
         return if (id.isNotEmpty() && edge(kind, hit)) id else ""
     }
 
-    /** 合约中要录什么: camera (目光) / screen (刻痕). */
-    fun records(): List<String> = terms.mapNotNull { RECORD[it] }
+    /** 合约中要录什么: camera (目光) / screen (刻痕).
+     *  me: 本机的设备 id —— 目光只由开始时选定的那台设备 (cam) 录; 没有记下 cam 的 (旧版本开始的) 各台都录. */
+    fun records(me: String? = null): List<String> {
+        val out = terms.mapNotNull { RECORD[it] }.toMutableList()
+        val c = cam
+        if (me != null && c.isNotEmpty() && c != me) out.remove("camera")
+        return out
+    }
+
+    /** 目光由哪台设备的摄像头录 (设备 id; "" = 没有记下). */
+    val cam: String get() = if (active) live.optString("cam", "") else ""
 
     /** 抑制: 用了快速访问. */
     fun quickCheck(): String = if (watching("suppress")) "suppress" else ""

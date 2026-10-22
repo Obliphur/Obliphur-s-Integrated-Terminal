@@ -167,6 +167,8 @@ class BreakTimerApp:
         self._rec_pending = False     # 开始合约前正在打开摄像头
         self._rec_retry = {}          # 录像出错 / 询问被关掉后, 什么时候再试 (monotonic)
         self._rec_started_cid = None  # 在本机开始的合约 (开始时已经确认过录像)
+        self._scar_focus_id = None    # 刻痕的焦点设备 (录屏的那台); 每 10 秒判定一次
+        self._scar_focus_at = 0.0
         self._focus_checks = 0        # 这一段专注里已经被手动关掉的"还在吗"提醒数
         self._focus_ok = 0.0          # 最后一次确认 (关掉提醒窗) 时已专注的秒数
         self._check_win = None        # 当前开着的"还在吗"提醒窗
@@ -312,6 +314,8 @@ class BreakTimerApp:
         threading.Thread(target=self._check_firewall, daemon=True).start()
         # 合约的网络禁令: 上次留下的防火墙规则 (例如崩溃时没来得及删) 先删掉, 之后按合约重新加
         threading.Thread(target=self._appban_sync, args=(set(),), daemon=True).start()
+        # 录像 (目光 / 刻痕): 上次没来得及加密的 (崩溃时留在临时文件夹里的, 旧版本留在数据目录里的 mp4) 先加密起来
+        threading.Thread(target=lambda: recorder.seal_leftovers(self.dm.data_dir), daemon=True).start()
         # 开机自启动: 默认开启 (第一次运行时建好), 用户关掉了就不再打开 (MECHANICS 3.4)
         threading.Thread(target=self._check_autostart, args=(True,), daemon=True).start()
         if getattr(config, "UPDATE_CHECK", 1):
@@ -614,7 +618,8 @@ class BreakTimerApp:
                                               rec_text=self._rec_text,
                                               on_stop_screen=self.stop_screen_recording,
                                               on_close_rand=self.close_random_term,
-                                              on_lift_ban=self.lift_net_ban)
+                                              on_lift_ban=self.lift_net_ban,
+                                              on_pick=self._warn_pick_term)
         self._prepare_page(self.pages["contract"])
         self.pages["settings"] = SettingsPage(
             self.content, self.settings,
@@ -2978,21 +2983,32 @@ class BreakTimerApp:
             return
         if self.contract_block():
             return
+        self._pending_cam = ""
         if "gaze" in terms:
-            # 目光: 先把摄像头打开, 打不开就不开始 (免得一开始就算违反)
-            if recorder.camera_consent() == "deny":
-                toast.warn(tr("Windows 的隐私设置不允许桌面应用使用摄像头: 设置 → 隐私和安全性 → 摄像头."))
+            # 目光: 可以用本机摄像头, 也可以用绑定的手机的摄像头 (MECHANICS 18.8). 本机能录就本机录, 否则找手机.
+            if recorder.camera_consent() != "deny" and recorder.camera_count():
+                self._pending_cam = self.sync.my_id
+                self._rec_pending = True
+                self._stop_recorder("camera")
+                r = self._start_recorder("camera")
+                toast.info(tr("正在打开摄像头…"))
+                self._await_camera(terms, r, time.monotonic())
                 return
-            if not recorder.camera_count():
-                toast.warn(tr("没有找到摄像头, 不能选「目光」."))
+            phone = self._camera_phone()
+            if not phone:
+                toast.warn(tr("没有可用的摄像头: 本机没有摄像头, 也没有绑定在线的手机.") + "\n"
+                           + tr("「目光」需要本机或手机有摄像头."))
                 return
-            self._rec_pending = True
-            self._stop_recorder("camera")
-            r = self._start_recorder("camera")
-            toast.info(tr("正在打开摄像头…"))
-            self._await_camera(terms, r, time.monotonic())
-            return
+            self._pending_cam = phone
         self._begin_contract(terms)
+
+    def _camera_phone(self) -> str:
+        """绑定的、在线的手机 (目光可以用它的摄像头录): 返回设备 id, 没有则 ""."""
+        plat = self.sync.peers()
+        for s in self.sync.device_states():
+            if s.get("online") and str((plat.get(s["id"]) or {}).get("platform", "")).lower().startswith("android"):
+                return s["id"]
+        return ""
 
     def _await_camera(self, terms, r, t0):
         if r.state == "running":
@@ -3012,7 +3028,7 @@ class BreakTimerApp:
             self._stop_recorder("camera")
             return
         lv = contract_mod.level_of(terms)
-        c.start(terms, owner=self.sync.my_id, pre=self.break_carry)
+        c.start(terms, owner=self.sync.my_id, pre=self.break_carry, cam=getattr(self, "_pending_cam", ""))
         # 凑齐的词条组合: 积攒的休息时间 +N 分钟 (在 pre 之后加: 算合约中得到的, 合约结束后不留下)
         gift = contract_mod.rest_gift(terms)
         if gift > 0:
@@ -3101,6 +3117,36 @@ class BreakTimerApp:
             toast.notice(tr("⚔ 行动失败"), msg)
         if self.sync.peers():
             self.sync.sync_now()
+        if "scar" in set(rec.get("orig") or []) | set(rec.get("terms") or []):
+            self._merge_contract(str(rec.get("id") or ""))
+
+    def _merge_contract(self, cid: str):
+        """刻痕 (MECHANICS 18.8): 合约结束后把本机这次合约的录屏片段按时间接成一个视频 (加密保存).
+        跨设备的片段 (别的设备录的那几段) 需要先传到本机 —— 见文件通道; 这里先合并本机已有的."""
+        if not cid:
+            return
+        self._stop_recorder("screen")
+
+        def run():
+            r = self._recorders.get("screen")
+            if r is not None:
+                r.wait_sealed(12.0)
+            if not recorder.files_of(self.dm.data_dir, "screen", cid):
+                return
+            try:
+                path = recorder.merge(self.dm.data_dir, cid)
+            except Exception as e:      # noqa: BLE001
+                self._log_notice(f"RECORD merge {cid} failed: {e}")
+                return
+            if not path:
+                return
+            self._log_notice(f"RECORD merged {cid} -> {os.path.basename(path)}")
+            try:
+                self.root.after(0, lambda: (toast.info(tr("刻痕: 本次录屏已合并, 在 设置 → 录像 查看.")),
+                                            self._refresh_if_visible("settings")))
+            except Exception:
+                pass
+        threading.Thread(target=run, daemon=True, name=f"merge-{cid}").start()
 
     def _seal_extra(self):
         """记录封锁 (18.4): 完成了一次填写, 另外随机封锁两个可以封锁的格子."""
@@ -3316,12 +3362,61 @@ class BreakTimerApp:
     # ---- 合约 · 录像 (目光 / 刻痕, MECHANICS 18.3) ----
 
     def _start_recorder(self, kind: str):
-        r = recorder.Recorder(self.dm.data_dir, kind,
+        r = recorder.Recorder(self.dm.data_dir, kind, audio=self._rec_audio, tag=str(self.contract.live.get("id") or ""),
                               on_file=lambda path, k=kind: self._log_notice(f"RECORD {k} saved {os.path.basename(path)}"))
         self._recorders[kind] = r
         r.start()
         self._log_notice(f"RECORD {kind} start")
         return r
+
+    def _rec_audio(self):
+        """录像要不要录声音 (设置 → 录像, 默认都录): (麦克风, 系统音)."""
+        return bool(self.settings.value("REC_MIC")), bool(self.settings.value("REC_SYSTEM"))
+
+    def _warn_pick_term(self, tid: str) -> bool:
+        """选中录像词条 (目光 / 刻痕) 前警告一次: 会录下什么, 加密只能在 OIT 里看, 刻痕会在各设备间传输合并.
+        选不选是用户自己的决定 (MECHANICS 18.8). 返回要不要选上."""
+        if tid == "gaze":
+            return toast.ask(
+                tr("「目光」会在合约期间用电脑或手机的摄像头录下你的样子 (可带声音), 结束后保存.") + "\n"
+                + tr("录像经过加密, 只能在 OIT 里查看和播放 (设置 → 录像), 不会被网盘 / 相册自动上传.") + "\n"
+                + tr("选不选由你决定."),
+                title=tr("⚠ 目光: 摄像头录像"), ok_text=tr("我知道, 选上"), danger=True)
+        if tid == "scar":
+            return toast.ask(
+                tr("「刻痕」会在合约期间录下焦点设备的屏幕 (可带声音): 哪台设备在操作就录哪台, 每 10 秒切换一次.") + "\n"
+                + tr("合约结束后, 各设备录下的片段会传到一台电脑上合并成一个视频 (传输前会再确认).") + "\n"
+                + tr("录像经过加密, 只能在 OIT 里查看和播放. 选不选由你决定."),
+                title=tr("⚠ 刻痕: 屏幕录像"), ok_text=tr("我知道, 选上"), danger=True)
+        return True
+
+    def _scar_focus(self) -> str:
+        """刻痕的焦点设备 (MECHANICS 18.8): 哪台设备有操作就录哪台的屏幕, 每 10 秒判定一次;
+        10 秒内两台都有操作时优先录电脑. 都没有操作时保持上一个焦点设备. 返回焦点设备的 id."""
+        mono = time.monotonic()
+        if self._scar_focus_id and mono - self._scar_focus_at < recorder.FOCUS_EVERY:
+            return self._scar_focus_id
+        self._scar_focus_at = mono
+        nowms = time.time() * 1000
+        win = recorder.FOCUS_EVERY * 1000
+        cands = [(True, float(self.last_op), self.sync.my_id)]        # 本机 (电脑)
+        plat = self.sync.peers()
+        stat = {s["id"]: s for s in self.sync.peer_status()}
+        for s in self.sync.device_states():
+            if not s.get("online"):
+                continue
+            did = s["id"]
+            is_pc = str((plat.get(did) or {}).get("platform", "")).lower().startswith("win")
+            cands.append((is_pc, float((stat.get(did) or {}).get("last_op", 0)), did))
+        active = [c for c in cands if nowms - c[1] <= win]
+        if not active:
+            if self._scar_focus_id in {c[2] for c in cands}:
+                return self._scar_focus_id                           # 都没操作: 保持上一个焦点设备
+            active = cands
+        if any(c[0] for c in active):
+            active = [c for c in active if c[0]]                      # 两台都有操作: 优先电脑
+        self._scar_focus_id = max(active, key=lambda c: c[1])[2]
+        return self._scar_focus_id
 
     def _stop_recorder(self, kind: str):
         r = self._recorders.pop(kind, None)
@@ -3336,6 +3431,8 @@ class BreakTimerApp:
             r.stop(0)
         for r in recs:
             r.stop(wait)
+            if wait:
+                r.wait_sealed(wait)
 
     def recording(self, kind: str) -> bool:
         """本机此刻在录这一路吗 (设置 → 录像: 正在写的文件不能删)."""
@@ -3369,7 +3466,10 @@ class BreakTimerApp:
         if self._rec_pending:
             return
         c = self.contract
-        want = set(c.records()) if c.active and not self.dm.resetting else set()
+        want = set(c.records(self.sync.my_id)) if c.active and not self.dm.resetting else set()
+        # 刻痕: 只有焦点设备录屏 (哪台有操作录哪台, 每 10 秒判定一次; 两台都有操作时录电脑, MECHANICS 18.8)
+        if "screen" in want and self._scar_focus() != self.sync.my_id:
+            want.discard("screen")
         cid = c.live.get("id")
         for kind in recorder.KINDS:
             r = self._recorders.get(kind)

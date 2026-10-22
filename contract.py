@@ -22,10 +22,10 @@ HISTORY_KEEP = 30
 FRESH_MS = 2 * 60 * 1000         # 合约的主人这么久没同步过: 本机来做自动结束
 
 # (id, 组, 等级, 名字, 描述, 冲突的词条)
-# 同一组的词条互相冲突, 界面上排在同一列; 冲突是双向的 (这里只写一边).
-# 成系列的 (有好几档的) 在前, 界面上放在左边, 一组一列; 同一模块的系列挨在一起.
-# 零散的 (只有一档的) 在后, 放在右边, 按等级排成行; 同一模块的上下对齐 (见下面的注释).
+# 同一组的词条互相冲突 (系列的各档在同一列); 冲突是双向的 (这里只写一边).
+# 顺序同词条板 (BOARD): 第 1 页 合约本身 / 专注 / 休息 / 整点记录, 第 2 页 联网 / 网络禁令 / 录像 / 现实 / 黑雾 / 未知变量.
 TERMS = [
+    # ==== 第 1 页 ====
     # ---- 合约本身: 时长, 目标生命值 ----
     ("long1", "long", 1, "环境:持久战-I", "时长改为120%", ()),
     ("long2", "long", 2, "环境:持久战-II", "时长改为140%", ()),
@@ -33,64 +33,65 @@ TERMS = [
     ("retreat1", "retreat", 1, "环境:退路封锁-I", "初始目标生命值为3", ()),
     ("retreat2", "retreat", 2, "环境:退路封锁-II", "初始目标生命值为2", ()),
     ("last", "retreat", 3, "最后防线", "初始目标生命值为1", ()),
-    # ---- 专注 / 休息: 专注的下限, 休息时间的倍率, 合约开始前积攒的休息时间 ----
+    # ---- 专注: 专注的下限, 专注中的窗口数 ----
     ("deep1", "deep", 1, "目标:纵深推进-I", "专注的时间不能少于40min", ()),
     ("deep2", "deep", 2, "目标:纵深推进-II", "专注的时间不能少于80min", ()),
+    ("chan1", "chan", 1, "环境:通道阻塞-I", "在专注期间的最大窗口数改为4", ()),
+    ("chan2", "chan", 2, "环境:通道阻塞-II", "在专注期间的最大窗口数改为3", ()),
+    # ---- 休息: 休息时间的倍率, 合约开始前积攒的休息时间 ----
     ("tired1", "tired", 1, "环境:疲惫-I", "期间获得的休息时间改为70%", ()),
     ("tired2", "tired", 2, "环境:疲惫-II", "期间获得的休息时间改为60%", ()),
     ("tired3", "tired", 3, "环境:疲惫-III", "期间获得的休息时间改为50%", ()),
     ("short1", "short", 1, "环境:支援短缺-I", "可用的合约开始前已保存休息时间改为50%", ()),
     ("short2", "short", 2, "环境:支援短缺-II", "不能使用合约开始前已经保存的休息时间", ()),
-    # ---- 联网: 剩余额度, 冷静期 ----
+    ("hoard", "hoard", 1, "禁止囤囤鼠!", "不能提前结束休息 但是获得的休息时间改为110%", ("short1", "short2")),
+    # ---- 整点记录 ----
+    ("seal", "seal", 1, "环境:记录封锁", "无法修改已经被填写的格子 (包括自动填写和手动填写); 每次完成填写时, 另外随机封锁两个可以封锁的格子", ()),
+    ("fine", "fine", 2, "目标:细化规范", "记录变为30min一次", ()),
+    # ==== 第 2 页 ====
+    # ---- 联网: 剩余额度, 冷静期, 快速访问, 断网方式, 专注中的联网 ----
     ("info1", "info", 1, "环境:信息阻断-I", "可用的剩余联网时间改为80% 且不能使用借贷", ()),
     ("info2", "info", 2, "环境:信息阻断-II", "可用的剩余联网时间改为65% 且不能使用借贷", ()),
     ("info3", "info", 3, "环境:信息阻断-III", "可用的剩余联网时间改为50% 且不能使用借贷", ()),
     ("erode1", "erode", 1, "环境:侵蚀-I", "网络申请冷却期改为200%", ()),
     ("erode2", "erode", 2, "环境:侵蚀-II", "网络申请冷却期改为300%", ()),
-    # ---- 窗口 ----
-    ("chan1", "chan", 1, "环境:通道阻塞-I", "在专注期间的最大窗口数改为4", ()),
-    ("chan2", "chan", 2, "环境:通道阻塞-II", "在专注期间的最大窗口数改为3", ()),
-    # ---- 零散的 (只有一档的): 右边, 按等级排成行, 同一模块的放在一起 / 上下对齐 ----
-    # 1 级: 联网 (抑制), 整点记录 (记录封锁), 禁止打开的软件 (乐理之灾 / 禁游令 / 低帧的诅咒),
-    # 现实 (高机动 / 禁足), 黑雾, 休息 (禁止囤囤鼠!), 专注中的联网 (静默协议)
     ("suppress", "suppress", 1, "环境:抑制", "不能使用快速访问功能", ()),
-    ("seal", "seal", 1, "环境:记录封锁", "无法修改已经被填写的格子 (包括自动填写和手动填写); 每次完成填写时, 另外随机封锁两个可以封锁的格子", ()),
+    ("jam", "jam", 2, "环境:全频道阻塞干扰", "期间使用proxy block-all模式", ()),
+    ("quiet", "quiet", 1, "环境:静默协议", "专注中不能处于联网状态", ()),
+    # ---- 网络禁令: 这一类软件 / 网站禁止联网 ----
     ("music", "music", 1, "环境:乐理之灾", "合约期间音乐播放软件禁止联网 可以通过点击解除网络禁令", ()),
+    ("silent", "silent", 2, "环境:无言为真", "合约期间社交软件和与AI聊天的软件禁止联网 可以通过点击解除网络禁令", ()),
     ("game", "game", 1, "环境:禁游令", "合约期间游戏和游戏平台禁止联网 可以通过点击解除网络禁令", ()),
     ("video", "video", 1, "环境:低帧的诅咒", "合约期间视频平台禁止联网 可以通过点击解除网络禁令", ()),
+    # ---- 录像 (目光 / 刻痕), 现实 (高机动 / 禁足: 前置条件是目光) ----
+    ("gaze", "gaze", 1, "目光", "合约期间用电脑或手机的摄像头记录使用者的行为 结束后保存录像", ()),
+    ("scar", "scar", 2, "刻痕", "合约期间录制整个屏幕 结束后保存录像", ()),
     ("move", "move", 1, "目标:高机动", "现实中的移动速度+50%", ()),
     ("confine", "confine", 1, "目标:禁足", "在非休息时间不能离开工作岗位进行活动", ()),
+    # ---- 黑雾, 未知变量 ----
     ("fog", "fog", 1, "环境:黑雾", "合约期间 专注时长 合约的剩余时间 成就 日历 统计数据不可见 且无法打开设置", ()),
-    ("hoard", "hoard", 1, "禁止囤囤鼠!", "不能提前结束休息 但是获得的休息时间改为110%", ("short1", "short2")),
-    ("quiet", "quiet", 1, "环境:静默协议", "专注中不能处于联网状态", ()),
-    # 2 级: 联网 (全频道阻塞干扰), 整点记录 (细化规范), 禁止打开软件里的 无言为真 (乐理之灾下面),
-    # 录像 (目光 / 刻痕) 在 禁游令 / 低帧的诅咒 下面
-    ("jam", "jam", 2, "环境:全频道阻塞干扰", "期间使用proxy block-all模式", ()),
-    ("fine", "fine", 2, "目标:细化规范", "记录变为30min一次", ()),
-    ("silent", "silent", 2, "环境:无言为真", "合约期间社交软件和与AI聊天的软件禁止联网 可以通过点击解除网络禁令", ()),
-    ("gaze", "gaze", 2, "目光", "合约期间打开摄像头记录使用者的行为 结束后保存录像", ()),
-    ("scar", "scar", 2, "刻痕", "合约期间录制整个屏幕 结束后保存录像", ("gaze",)),
-    # 3 级: 未知变量
     ("unknown", "unknown", 3, "未知变量", "合约开始时 以及之后每过一个整小时 从当前可以选择的1-2级词条中随机启用一个或随机施加效果\n选中的词条不算进危机等级", ()),
 ]
 BY_ID = {t[0]: t for t in TERMS}
 GROUPS = list(dict.fromkeys(t[1] for t in TERMS))
-# 词条板的布局: 成系列的每组一列 (左边); 零散的不单独占列, 按等级放进右边的几列, 每一行从左往右挨着排, 不留空.
-SERIES = [g for g in GROUPS if sum(1 for t in TERMS if t[1] == g) > 1]
-_LOOSE = {}
-LAYOUT = {}                                             # 词条 → (列, 等级)
-for _t in TERMS:
-    if _t[1] in SERIES:
-        LAYOUT[_t[0]] = (SERIES.index(_t[1]), _t[2])
-    else:
-        _i = _LOOSE.get(_t[2], 0)
-        _LOOSE[_t[2]] = _i + 1
-        LAYOUT[_t[0]] = (len(SERIES) + _i, _t[2])
-BOARD_COLS = len(SERIES) + max(_LOOSE.values(), default=0)
+# 前置条件: 选了后面的词条才能选这个 (MECHANICS 18.3); 去掉前置的词条时它也一起去掉. 合约中前置失效了不影响.
+NEEDS = {"move": "gaze", "confine": "gaze"}
+# 词条板 (MECHANICS 18.3): 每一列从上往下按等级 (1 → 3), 同一类的放在一列, 相似的挨着; 两页各 18 个词条.
+BOARD = [
+    # 第 1 页: 合约本身, 专注, 休息, 整点记录
+    ("long1", "long2", "long3"), ("retreat1", "retreat2", "last"), ("deep1", "deep2"), ("chan1", "chan2"),
+    ("tired1", "tired2", "tired3"), ("short1", "short2"), ("hoard",), ("seal", "fine"),
+    # 第 2 页: 联网, 网络禁令, 录像, 现实, 黑雾 / 未知变量
+    ("info1", "info2", "info3"), ("erode1", "erode2"), ("suppress", "jam"), ("quiet",), ("music", "silent"),
+    ("game",), ("video",), ("gaze", "scar"), ("move",), ("confine",), ("fog", "unknown"),
+]
+PAGE_SPLIT = 8                                          # 第 1 页的列数
+LAYOUT = {t: (i, BY_ID[t][2]) for i, col in enumerate(BOARD) for t in col}   # 词条 → (列, 等级)
+BOARD_COLS = len(BOARD)
 MAX_LEVEL = max(t[2] for t in TERMS)
-# 词条板翻页: 成系列的一页, 零散的一页 (每页的 [开始列, 结束列)); 窗口放不下一页时界面再往下分.
+# 词条板翻页 (每页的 [开始列, 结束列)); 窗口放不下一页时界面再往下分.
 # 第 3 页 (COMBO_PAGE) 是词条组合的效果 (COMBOS), 由界面直接画, 不分列.
-PAGES = [(0, len(SERIES)), (len(SERIES), BOARD_COLS)]
+PAGES = [(0, PAGE_SPLIT), (PAGE_SPLIT, BOARD_COLS)]
 COMBO_PAGE = len(PAGES)
 
 # 软规则: 界面上照样能做, 但会被算作违反, 这个词条降一级 (结算按降级后的等级);
@@ -115,8 +116,8 @@ RECORD = {"gaze": "camera", "scar": "screen"}   # 录像的词条 → 录什么 
 # 网络禁令 (MECHANICS 18.3): 这一类软件合约期间禁止联网 (打开它们不算违反); 点击词条可以解除, 扣掉词条等级那么多目标生命值
 BANS = ("music", "silent", "game", "video")
 SUPPLY_WARN = (180, 60)                         # 支援短缺: 还差这么多秒就用超时各提醒一次
-DEEP = {"deep1": 40 * 60, "deep2": 80 * 60}
-SEAL_EXTRA = 2                                  # 记录封锁: 每次完成填写时另外随机封锁几个格子     # 纵深推进: 一段专注至少这么多秒, 不到就结束算违反
+DEEP = {"deep1": 40 * 60, "deep2": 80 * 60}     # 纵深推进: 一段专注至少这么多秒, 不到就结束算违反
+SEAL_EXTRA = 2                                  # 记录封锁: 每次完成填写时另外随机封锁几个格子
 COOLDOWN_X = {"erode1": 2.0, "erode2": 3.0}     # 侵蚀: 网络申请的冷静期乘多少 (硬规则)
 RANDOM = "unknown"                              # 未知变量: 合约的每个小时开始时随机启用一个 1-2 级的词条, 那个小时结束时移除
 RANDOM_LEVELS = (1, 2)
@@ -264,7 +265,7 @@ COMBOS = [
      "level": 0, "rest": 1.0, "gift": 20 * 60, "end": 0,
      "desc": "合约开始时 休息 +20 分钟"},
     {"id": "flawless", "name": "无懈可击", "color": "gray",
-     "reqs": ("last", "unknown", "move", "confine"),
+     "reqs": ("last", "unknown", "move", "confine", "gaze", "scar"),
      "level": 0, "rest": 1.0, "gift": 20 * 60, "end": 0,
      "desc": "合约开始时 休息 +20 分钟"},
     {"id": "isolation", "name": "信息隔绝", "color": "red",
@@ -411,12 +412,21 @@ def blocked_by(tid: str, selected) -> str:
     return ""
 
 
-def clean_terms(terms) -> list:
-    """去掉不认识的和互相冲突的 (后面的让位给前面的), 按 TERMS 的顺序."""
+def needs_of(tid: str, selected) -> str:
+    """tid 的前置条件 (NEEDS) 没有选着时返回它, 否则 ""."""
+    need = NEEDS.get(tid, "")
+    return need if need and need not in (selected or []) else ""
+
+
+def clean_terms(terms, prereq: bool = False) -> list:
+    """去掉不认识的和互相冲突的 (后面的让位给前面的), 按 TERMS 的顺序.
+    prereq: 也去掉前置条件没选的 (选词条 / 开始合约时; 合约中前置失效了不去掉)."""
     out = []
     for t in terms or []:
         if t in BY_ID and t not in out and not blocked_by(t, out):
             out.append(t)
+    if prereq:
+        out = [t for t in out if not needs_of(t, out)]
     order = {t[0]: i for i, t in enumerate(TERMS)}
     return sorted(out, key=order.get)
 
@@ -624,13 +634,14 @@ class Contract:
         return str(self.live.get("owner") or "")
 
     def set_draft(self, terms):
-        self.draft = clean_terms(terms)
+        self.draft = clean_terms(terms, prereq=True)
         self.save()
 
-    def start(self, terms, owner: str = "", now: datetime = None, pre: float = 0) -> dict:
-        """pre: 开始时积攒的休息时间 (秒). 合约中暂停休息时这部分不打折; 支援短缺限制它能用几成."""
+    def start(self, terms, owner: str = "", now: datetime = None, pre: float = 0, cam: str = "") -> dict:
+        """pre: 开始时积攒的休息时间 (秒). 合约中暂停休息时这部分不打折; 支援短缺限制它能用几成.
+        cam: 目光由哪台设备的摄像头录 (设备 id, MECHANICS 18.8)."""
         now = (now or datetime.now()).replace(microsecond=0)
-        terms = clean_terms(terms)
+        terms = clean_terms(terms, prereq=True)
         pre = max(0.0, float(pre))
         share = self._supply_share(terms)
         self.live = {"state": "active", "id": _now_ms(), "start": _iso(now),
@@ -640,6 +651,8 @@ class Contract:
                      "pre": round(pre, 1), "pre_left": round(pre, 1), "pre_used": 0,
                      "supply": None if share is None else round(pre * share, 1), "hl": [],
                      "rand": [], "rand_n": 0, "fog_words": _fog_words(random.Random())}
+        if "gaze" in terms and cam:
+            self.live["cam"] = str(cam)
         self._watch = {}
         self.save()
         return self.live
@@ -838,7 +851,8 @@ class Contract:
             tid = t[0]
             if not (tid not in used and tid not in viol) and not (tid in viol and tid not in again):
                 continue
-            if t[2] not in RANDOM_LEVELS or tid in RANDOM_SKIP or tid in terms or blocked_by(tid, terms)                     or tid in self.waiting:
+            if t[2] not in RANDOM_LEVELS or tid in RANDOM_SKIP or tid in terms or blocked_by(tid, terms) \
+                    or needs_of(tid, terms) or tid in self.waiting:
                 continue
             if tid in LIFE and life_of(terms + [tid]) <= self.violations:
                 continue
@@ -1032,7 +1046,7 @@ class Contract:
         out = []
         for t in due:
             a, b = wait[t]
-            if now < b and t not in self.terms and not blocked_by(t, self.terms):
+            if now < b and t not in self.terms and not blocked_by(t, self.terms) and not needs_of(t, self.terms):
                 self._enable(t, b)
                 out.append(t)
         self.save()
@@ -1156,9 +1170,19 @@ class Contract:
             return ""
         return tid if self._edge(kind, hit) else ""
 
-    def records(self) -> list:
-        """合约中要录什么: camera (目光) / screen (刻痕)."""
-        return [RECORD[t] for t in self.terms if t in RECORD]
+    def records(self, me: str = None) -> list:
+        """合约中要录什么: camera (目光) / screen (刻痕).
+        me: 本机的设备 id —— 目光只由开始时选定的那台设备 (cam) 录; 没有记下 cam 的 (旧版本开始的) 各台电脑都录."""
+        out = [RECORD[t] for t in self.terms if t in RECORD]
+        cam = self.cam
+        if me is not None and cam and cam != me and "camera" in out:
+            out.remove("camera")
+        return out
+
+    @property
+    def cam(self) -> str:
+        """目光由哪台设备的摄像头录 (设备 id; "" = 没有记下)."""
+        return str(self.live.get("cam") or "") if self.active else ""
 
     def quick_check(self) -> str:
         """抑制: 用了快速访问."""
@@ -1559,24 +1583,31 @@ def _selftest():
     assert not conflicts("jam", "music") and not conflicts("seal", "fine")
     assert clean_terms(["long2", "long1", "x", "suppress", "jam"]) == ["long2", "suppress", "jam"]
     assert duration_of([]) == 4 * 3600 and duration_of(["long3"]) == int(4 * 3600 * 1.6)
-    assert LAYOUT["short2"][0] < LAYOUT["suppress"][0], "成系列的在左边, 零散的在右边"
-    assert BOARD_COLS == len(SERIES) + 10 and LAYOUT["jam"] == (len(SERIES), 2) \
-        and LAYOUT["fine"] == (len(SERIES) + 1, 2), "零散的词条挨着排, 不留空"
-    assert len(set(LAYOUT.values())) == len(TERMS)
-    # 行为类似的词条放在一起: 禁止的软件在 1 级挨着; 无言为真 (2 级) 在乐理之灾下面, 录像在禁游令 / 低帧的诅咒下面
-    assert [LAYOUT[t][0] for t in ("music", "game", "video")] == \
-        [LAYOUT["music"][0], LAYOUT["music"][0] + 1, LAYOUT["music"][0] + 2]
-    assert LAYOUT["silent"][0] == LAYOUT["music"][0], "无言为真 (2 级) 在乐理之灾下面"
-    assert LAYOUT["gaze"][0] == LAYOUT["game"][0] and LAYOUT["scar"][0] == LAYOUT["video"][0], \
-        "录像 (目光 / 刻痕) 在 禁游令 / 低帧的诅咒 下面"
-    assert LAYOUT["seal"][0] == LAYOUT["fine"][0] and LAYOUT["suppress"][0] == LAYOUT["jam"][0]
+    # 词条板: 每个词条正好一格, 一列里每个等级最多一个; 同一组 (系列) 在同一列; 两页各 18 个词条
+    assert sorted(t for col in BOARD for t in col) == sorted(BY_ID) and len(set(LAYOUT.values())) == len(TERMS)
+    assert all([BY_ID[t][2] for t in col] == sorted({BY_ID[t][2] for t in col}) for col in BOARD)
+    assert all(len({LAYOUT[t][0] for t in BY_ID if BY_ID[t][1] == g}) == 1 for g in GROUPS)
+    assert [sum(len(col) for col in BOARD[a:b]) for a, b in PAGES] == [18, 18]
+    assert [t[0] for t in TERMS] == [t for col in BOARD for t in col], "TERMS 的顺序同词条板"
+    # 相似的放在一起: 无言为真在乐理之灾下面, 刻痕在目光下面, 细化规范在记录封锁下面, 全频道阻塞干扰在抑制下面
+    for up, down in (("music", "silent"), ("gaze", "scar"), ("seal", "fine"), ("suppress", "jam"), ("fog", "unknown")):
+        assert LAYOUT[up][0] == LAYOUT[down][0], (up, down)
+    assert [LAYOUT[t][0] for t in ("music", "game", "video", "gaze", "move", "confine")] == \
+        list(range(LAYOUT["music"][0], LAYOUT["music"][0] + 6)), "网络禁令, 录像, 现实挨着"
+    assert LAYOUT["hoard"][0] == LAYOUT["short1"][0] + 1 and LAYOUT["chan1"][0] == LAYOUT["deep1"][0] + 1
+    assert LAYOUT["deep1"][0] < PAGE_SPLIT <= LAYOUT["info1"][0] and LAYOUT["seal"][0] < PAGE_SPLIT
     # 高机动只留 1 级 (旧的高机动-I / II 删掉了), 和禁足挨着; 记录封锁的描述换掉了
     assert "move1" not in BY_ID and "move2" not in BY_ID
     assert BY_ID["move"][2] == 1 and BY_ID["move"][4] == "现实中的移动速度+50%"
     assert BY_ID["confine"][2] == 1 and BY_ID["confine"][4] == "在非休息时间不能离开工作岗位进行活动"
     assert LAYOUT["confine"][0] == LAYOUT["move"][0] + 1, "高机动 / 禁足 挨着"
     assert BY_ID["seal"][4] == "无法修改已经被填写的格子 (包括自动填写和手动填写); 每次完成填写时, 另外随机封锁两个可以封锁的格子"
-    assert conflicts("gaze", "scar") and conflicts("scar", "gaze") and not conflicts("gaze", "music")
+    # 目光: 1 级, 不再和刻痕冲突; 高机动 / 禁足的前置条件是目光
+    assert BY_ID["gaze"][2] == 1 and not conflicts("gaze", "scar") and not conflicts("gaze", "music")
+    assert needs_of("move", []) == "gaze" and needs_of("confine", ["scar"]) == "gaze" and needs_of("move", ["gaze"]) == ""
+    assert needs_of("music", []) == "" and clean_terms(["move", "music"]) == ["music", "move"]
+    assert clean_terms(["move", "confine", "music"], prereq=True) == ["music"], "没选目光: 高机动 / 禁足去掉"
+    assert clean_terms(["confine", "gaze", "scar"], prereq=True) == ["gaze", "scar", "confine"]
     assert conflicts("hoard", "short1") and conflicts("short2", "hoard"), "禁止囤囤鼠! 和支援短缺冲突"
     assert clean_terms(["short1", "hoard"]) == ["short1"]
     assert not conflicts("silent", "music") and not conflicts("silent", "game"), "禁止软件的词条可以一起选"
@@ -1591,15 +1622,16 @@ def _selftest():
     assert combo_level(["long1", "tired2", "fine", "deep1"]) == 1
     assert abs(rest_factor_of(["long1", "tired2", "fine", "deep1"]) - 0.6 * 1.2) < 1e-9
     iso = ["info1", "erode1", "chan1", "suppress", "fog", "quiet", "jam"]
-    assert clean_terms(iso) == iso, "信息隔绝组合的词条可以一起选"
+    assert sorted(clean_terms(iso)) == sorted(iso), "信息隔绝组合的词条可以一起选"
     assert combo_done(isolation, iso) and combo_level(iso) == 1 and combo_end(iso) == 10 * 60
     assert rest_reward(6, iso) == rest_minutes(6) * 60 + 10 * 60
     assert rest_minutes_total(6, iso) == rest_minutes(6) + 10
     assert combo_gift(["music", "silent", "game", "video"]) == 20 * 60, "互联网娱乐的败退: 开始时 +20 分钟"
-    assert combo_gift(["last", "unknown"]) == 0, "无懈可击: 还差 禁足 / 高机动"
-    assert combo_gift(["last", "unknown", "move", "confine"]) == 20 * 60, "无懈可击: 开始时 +20 分钟"
-    assert combo_marks(["last", "unknown", "move", "confine"]) == \
-        {t: COMBO_COLORS["gray"] for t in ("last", "unknown", "move", "confine")}
+    assert combo_gift(["last", "unknown"]) == 0, "无懈可击: 还差 禁足 / 高机动 / 目光 / 刻痕"
+    assert combo_gift(["last", "unknown", "move", "confine"]) == 0, "无懈可击: 还差 目光 / 刻痕"
+    flaw = ["last", "unknown", "move", "confine", "gaze", "scar"]
+    assert combo_gift(flaw) == 20 * 60, "无懈可击: 开始时 +20 分钟"
+    assert combo_marks(flaw) == {t: COMBO_COLORS["gray"] for t in flaw}
     assert combo_marks(["long1", "tired2"]) == {}
     assert nofun["color"] == "purple" and flawless["color"] == "gray" and isolation["color"] == "red" \
         and mochi["color"] == "white"
@@ -1629,7 +1661,7 @@ def _selftest():
     assert not set(SOCIAL_EXES) & set(VIDEO_EXES) and not SOCIAL_TITLES & VIDEO_TITLES, "一个软件只算一个词条"
     best = clean_terms(["long3", "erode2", "info3", "suppress", "jam", "music", "fog", "tired3", "chan2", "last",
                         "short2", "seal", "fine", "silent", "game", "video", "gaze", "scar"])
-    assert "scar" not in best and level_of(best) == 32, level_of(best)
+    assert "scar" in best and level_of(best) == 33, level_of(best)
     assert combo_gift(best) == 20 * 60, "互联网娱乐的败退凑齐了"
     best2 = clean_terms(["info3", "chan2", "erode2", "suppress", "fog", "quiet", "jam", "last", "long3", "tired3", "fine"])
     assert len(best2) == 11, best2
@@ -1645,7 +1677,7 @@ def _selftest():
     assert c.net_left(600) == 3900 and c.net_check(4499, 0, 0, "2026-10-18") == ("", "")
     assert c.net_check(4600, 0, 0, "2026-10-18") == ("info2", "over")
     over, new = c.violate("info2")
-    assert not over and new == "info1" and c.terms == ["long1", "tired2", "info1", "chan1", "music"], c.terms
+    assert not over and new == "info1" and c.terms == ["long1", "chan1", "tired2", "info1", "music"], c.terms
     assert c.net_left(4600) == 600 + 3900 + 900 - 4600 and c.level == 6 and c.orig_level == 7
     assert c.net_check(4700, 0, 0, "2026-10-18") == ("", "")
     assert c.net_check(4700, 600, 0, "2026-10-18") == ("info1", "loan"), "借贷也算违反"
@@ -1708,7 +1740,7 @@ def _selftest():
     assert cb.lift_ban("music") == (False, 1) and cb.life == 1
     assert cb.lift_ban("game") == (True, 1), "目标生命值归零"
     c.start(["silent", "game", "gaze"], owner="me", now=t0)
-    assert c.level == 2 + 1 + 2 and c.records() == ["camera"] and c.ban_check("music", True) == ""
+    assert c.level == 2 + 1 + 1 and c.records() == ["camera"] and c.ban_check("music", True) == ""
     assert c.ban_check("game", True) == "game" and c.ban_check("game", True) == "" and c.ban_check("silent", True) == "silent"
     assert c.violate("gaze") == (False, "") and c.records() == [] and c.level == 3
     assert c.violate("game") == (False, "") and not c.has("game") and c.has("silent")
@@ -1739,9 +1771,8 @@ def _selftest():
     assert abs(c.rest_factor() - 0.6 * 1.2) < 1e-9, "降级不算失效"
     assert c.violate("deep1") == (False, "") and c.combos()[0] == (mochi, "void")
     assert abs(c.rest_factor() - 0.6) < 1e-9, "成员失效了: 乘区取消"
-    # 翻页: 成系列的一页, 零散的一页, 第 3 页是组合效果
-    assert PAGES == [(0, len(SERIES)), (len(SERIES), BOARD_COLS)] and LAYOUT["deep1"][0] < len(SERIES)
-    assert LAYOUT["hoard"][0] >= len(SERIES) and LAYOUT["unknown"] == (len(SERIES), 3)
+    # 翻页: 词条两页, 第 3 页是组合效果
+    assert PAGES == [(0, 8), (8, BOARD_COLS)] and BOARD_COLS == 19 and LAYOUT["unknown"] == (18, 3)
     assert COMBO_PAGE == len(PAGES) and len(COMBOS) == 4
     # 全频道阻塞干扰: 合约期间一律换成 代理-全屏蔽 (proxy block-all), 结束回到设置里的断网方式
     c.start(["jam"], owner="me", now=t0)
@@ -1766,6 +1797,7 @@ def _selftest():
     c.start(["unknown", "info2", "long1"], owner="me", now=t0, pre=600)
     pool = c.random_candidates()
     assert "gaze" not in pool and "scar" not in pool and "info1" not in pool and "long2" not in pool
+    assert "move" not in pool and "confine" not in pool, "没选目光: 不选高机动 / 禁足"
     assert not {"long1", "long2", "long3"} & set(pool), "不选持久战"
     assert "unknown" not in pool and "music" in pool and "jam" in pool
 
@@ -1916,6 +1948,14 @@ def _selftest():
     assert abs(rest_factor_of(["long1", "tired2", "fine", "deep1"]) - 0.6 * 1.2) < 1e-9
     c.start(["scar"], owner="me", now=t0)
     assert c.records() == ["screen"] and c.level == 2 and c.violate("scar") == (False, "") and c.terms == []
+    # 目光: 只由开始时选定的设备 (cam) 录; 没有 cam 的 (旧版本) 各台电脑都录. 前置失效了高机动 / 禁足照样在
+    c.start(["gaze", "scar", "move"], owner="me", now=t0, cam="phone")
+    assert c.cam == "phone" and c.records("pc") == ["screen"] and c.records("phone") == ["camera", "screen"]
+    assert c.violate("gaze") == (False, "") and c.terms == ["scar", "move"]
+    c.start(["move", "scar"], owner="me", now=t0, cam="pc")
+    assert c.terms == ["scar"] and c.cam == "" and c.records("x") == ["screen"], "没选目光: 不记 cam, 高机动去掉"
+    c.start(["gaze"], owner="me", now=t0)
+    assert c.cam == "" and c.records("pc") == ["camera"]
     c.start(["tired2", "chan1", "long1"], owner="me", now=t0)
     assert c.quick_check() == ""
     # 休息: 疲惫 ×0.6; 完成时按降级后的等级给固定的时间 (等级 4 → 27 分钟)

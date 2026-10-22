@@ -783,7 +783,7 @@ class SettingsPage(tk.Frame):
 
     def _build_record_lists(self, body):
         card = COLORS["bg_card"]
-        for kind, title in (("camera", "📷  摄像头录像"), ("screen", "🖥  屏幕录像")):
+        for kind, title in (("camera", "📷  摄像头录像"), ("screen", "🖥  屏幕录像"), ("merged", "🎬  合并的录屏")):
             fr, head = self._card(body, title)
             self._track(ttk.Button(head, text=tr("打开文件夹"), command=lambda k=kind: self._open_folder(k)),
                         "打开文件夹").pack(side="right")
@@ -869,12 +869,19 @@ class SettingsPage(tk.Frame):
                 if f["path"] == writing:
                     continue
                 ttk.Button(row, text=tr("删除"), command=lambda p=f["path"]: self._delete_record(p)).pack(side="right")
-                ttk.Button(row, text=tr("▶ 播放"), command=lambda p=f["path"]: self._open_uri(p)).pack(
+                ttk.Button(row, text=tr("▶ 播放"), command=lambda p=f["path"]: self._play_record(p)).pack(
                     side="right", padx=(0, 6))
             if len(files) > 60:
                 tk.Label(rows, text=tr("还有 {n} 个, 在文件夹里查看.", n=len(files) - 60), bg=card,
                          fg=COLORS["text_dim"], font=small, anchor="w").pack(fill="x")
         self.areas["record"].bind_children()
+
+    def _play_record(self, path):
+        """录像是加密的 (.oitv): 解密到临时文件夹再用系统默认的播放器打开."""
+        try:
+            recorder.play(path)
+        except Exception as e:      # noqa: BLE001
+            toast.warn(tr("打不开这个录像: {e}", e=e))
 
     def _delete_record(self, path):
         if not toast.ask(tr("删除这个录像?") + "\n" + os.path.basename(path), title=tr("删除录像"), danger=True):

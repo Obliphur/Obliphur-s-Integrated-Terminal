@@ -287,6 +287,22 @@ SETTINGS_SCHEMA = [
         "page": "record",
     },
     {
+        "key": "REC_MIC", "label": "录麦克风 (外部音)",
+        "kind": "choice", "apply": APPLY_INSTANT,
+        "choices": [("1", "开启 (ON)"), ("0", "关闭 (OFF)")],
+        "fmt": lambda v: "ON" if v else "OFF",
+        "desc": "即时生效.录像 (目光 / 刻痕) 时是否录下麦克风的声音.每台设备各自设置, 不同步.",
+        "page": "record",
+    },
+    {
+        "key": "REC_SYSTEM", "label": "录系统音",
+        "kind": "choice", "apply": APPLY_INSTANT,
+        "choices": [("1", "开启 (ON)"), ("0", "关闭 (OFF)")],
+        "fmt": lambda v: "ON" if v else "OFF",
+        "desc": "即时生效.录像 (目光 / 刻痕) 时是否录下电脑正在播放的声音.每台设备各自设置, 不同步.",
+        "page": "record",
+    },
+    {
         "key": "UPDATE_CHECK", "label": "打开时检查更新",
         "kind": "choice", "apply": APPLY_INSTANT,
         "choices": [("1", "开启 (ON)"), ("0", "关闭 (OFF)")],
