@@ -800,14 +800,23 @@ class Contract(private val file: File) {
      *  返回封锁了的格子的键. 同 contract.py 的 seal_extra. */
     fun sealExtra(now: LocalDateTime, dice: Dice = Dice(), textOf: ((String) -> String)? = null, auto: String = "",
                   fillSec: Long = 0, autoOf: ((String) -> String)? = null): List<String> {
-        if (!active || !has("seal")) return emptyList()
-        val out = mutableListOf<String>()
-        repeat(SEAL_EXTRA) {
-            val k = lockCell(now, dice, textOf, auto, fillSec, autoOf)
-            if (k.isEmpty()) return out
-            out.add(k)
-        }
-        return out
+        if (!active || !has("seal") || textOf == null || fillSec <= 0) return emptyList()
+        // 过了填写时限的格子都已经填写了 (超时自动记录), 记录封锁下本来就锁着 —— 可以封锁的是合约里还能填的格子:
+        // 还在填写时限里的、还没结束的 (到合约结束为止)
+        val pool = hourUnits(now, ahead = true).filter { (k, a, b) ->
+            !hourLocked(a, b, textOf(k), now, fillSec, auto, autoOf, k)
+        }.toMutableList()
+        val picks = mutableListOf<Triple<String, LocalDateTime, LocalDateTime>>()
+        repeat(minOf(SEAL_EXTRA, pool.size)) { picks.add(pool.removeAt(dice.pick(pool.size))) }
+        if (picks.isEmpty()) return emptyList()
+        val locks = JSONArray((live.optJSONArray("locks") ?: JSONArray()).toString())
+        picks.forEach { (_, a, b) -> locks.put(JSONArray(listOf(a.iso(), b.iso()))) }
+        live.put("locks", locks)
+        // 封锁时还没填写, 之后也填不了: 超时自动记录不算违反
+        val hl = live.optJSONArray("hl")?.strings() ?: emptyList()
+        live.put("hl", JSONArray((hl + picks.map { it.first }).toSortedSet().toList()))
+        save()
+        return picks.map { it.first }
     }
 
     /** 未知变量 / 记录封锁 另外封锁的记录格 (所有合约的). */
@@ -1193,17 +1202,17 @@ class Contract(private val file: File) {
 
     /** 进行中的合约里已经结束的记录格: (键, 开始, 结束).
      *  键是 "日期/小时", 细化规范的两个半小时是 "日期/小时/1" "日期/小时/2". */
-    fun hourUnits(now: LocalDateTime): List<Triple<String, LocalDateTime, LocalDateTime>> {
+    fun hourUnits(now: LocalDateTime, ahead: Boolean = false): List<Triple<String, LocalDateTime, LocalDateTime>> {
         val a = startAt ?: return emptyList()
         val e = endAt ?: now
-        val b = if (now.isBefore(e)) now else e
+        val b = if (ahead || !now.isBefore(e)) e else now     // ahead: 还没结束的也要 (到合约结束为止)
         val out = mutableListOf<Triple<String, LocalDateTime, LocalDateTime>>()
         var h = a.withMinute(0).withSecond(0).withNano(0)
         while (h.isBefore(b)) {
             val key = "${h.toLocalDate()}/${h.hour}"
             val parts = if (fineHour(h)) listOf(Triple("$key/1", h, h.plusMinutes(30)), Triple("$key/2", h.plusMinutes(30), h.plusHours(1)))
                 else listOf(Triple(key, h, h.plusHours(1)))
-            out += parts.filter { it.second.isBefore(b) && a.isBefore(it.third) && !it.third.isAfter(now) }
+            out += parts.filter { it.second.isBefore(b) && a.isBefore(it.third) && (ahead || !it.third.isAfter(now)) }
             h = h.plusHours(1)
         }
         return out

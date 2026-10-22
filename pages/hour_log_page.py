@@ -351,7 +351,7 @@ class HourLogPage(tk.Frame):
                 if focused is not e and v.get() != shown_text:
                     v.set(shown_text)
                 done = b <= now
-                lock = done and self.locked(a, b, text, now)
+                lock = self.locked(a, b, text, now)     # 记录封锁另外封锁的格子: 还没结束的也锁着
                 locked = locked or lock
                 cfg(e, state="normal" if (enabled and done and not lock) else "disabled")
                 cfg(e, highlightbackground=COLORS["accent"] if wait else COLORS["border"])

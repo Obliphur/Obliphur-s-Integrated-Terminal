@@ -448,11 +448,20 @@ class ContractTest {
         assertTrue(c.sealExtra(now, seq(), textOf, "Sleeping", 3600).isEmpty())
         c.live.put("terms", org.json.JSONArray(c.terms + "seal"))
         val n0 = c.locks().size
-        val now2 = LocalDateTime.of(2026, 10, 18, 14, 0)        // 合约 09:30–13:30 内, 9 / 10 点已锁, 还剩 11 / 12 点可封
+        val now2 = LocalDateTime.of(2026, 10, 18, 14, 0)        // 合约 09:30–13:30 内, 9 / 10 点已锁, 还剩 11 / 12 / 13 点可封
+        val left = setOf("2026-10-18/11", "2026-10-18/12", "2026-10-18/13")
         val got = c.sealExtra(now2, seq(pick = { it - 1 }), textOf, "Sleeping", 3600)
         assertEquals(2, got.toSet().size)
-        assertTrue(got.all { it == "2026-10-18/11" || it == "2026-10-18/12" })
+        assertTrue(got.all { it in left })
         assertEquals(n0 + 2, c.locks().size)
+        assertTrue(c.live.getJSONArray("hl").strings().containsAll(got))     // 封锁时还没填写: 超时自动记录不算违反
+        // 实际情况: 过了填写时限的格子都自动记录了 (记录封锁下已经锁着), 只能封还能填的 / 还没结束的格子 (到合约结束为止)
+        c.live.put("locks", org.json.JSONArray()).put("hl", org.json.JSONArray())
+        val auto = mapOf("2026-10-18/9" to "Sleeping", "2026-10-18/10" to "学习")
+        val got2 = c.sealExtra(LocalDateTime.of(2026, 10, 18, 11, 20), seq(pick = { 0 }), { auto[it] ?: "" }, "Sleeping", 3600)
+        assertEquals(2, got2.size); assertTrue(got2.all { it in left })
+        val misses = c.hourMisses(LocalDateTime.of(2026, 10, 18, 15, 0), 3600, { "" }, "Sleeping")
+        assertTrue(misses.isNotEmpty() && misses.none { it in got2 })           // 封锁的空格子不算违反
         c.finish("abandoned", now)
         // 合约提前结束了: 另外封锁的格子解除; 之后才开始的这段专注不减速 (阻滞只对合约内的专注生效)
         assertFalse(c.hourLocked(a, b, "学习", now.plusDays(3), 3600, "Sleeping"))

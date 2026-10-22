@@ -2269,6 +2269,9 @@ class BreakTimerApp:
                 slot, length = at - timedelta(minutes=30), 30   # 后半小时
             else:
                 slot, length = hour, 60
+        if self._slot_locked(slot, length):
+            self.update_log_badge()                         # 记录封锁另外封锁了这一格: 填不了, 不提示
+            return
         # 绑定了其他设备时, 只有最后有人操作的那台响 (其他设备只标出待填写)
         chime = self._play_chime() if self.sync.is_latest_active() else None
         self._wait_chime(chime, slot, length=length)
@@ -3295,11 +3298,20 @@ class BreakTimerApp:
         if not keys:
             return
         self._log_notice(f"CONTRACT seal locks {', '.join(keys)}")
+        aw = self.dm.awaiting_slot()
+        if aw is not None and self._slot_locked(aw, self.dm.prompt_len):
+            self.dm.prompt_slot = None                      # 待填写的那格被封锁了: 不再等它
+            self.update_log_badge()
         toast.warn(tr("记录封锁: 另外封锁了 {t} (不能再修改)", t=", ".join(self._cell_label(k) for k in keys)),
                    timeout=10000)
         self._contract_changed()
         if self.sync.peers():
             self.sync.sync_now()
+
+    def _slot_locked(self, slot: datetime, length: int) -> bool:
+        """这个记录格被未知变量 / 记录封锁另外封锁了 (填不了)."""
+        return self.contract.hour_locked(slot, slot + timedelta(minutes=length), "", datetime.now(),
+                                         config.FILL_WINDOW, self.dm.auto_text_for_key)
 
     @staticmethod
     def _cell_label(key: str) -> str:

@@ -172,11 +172,22 @@ class RecordService : Service() {
         return if (s != null) s.width to s.height else 640 to 480
     }
 
+    /** 测光用的 ImageReader 的尺寸: 摄像头支持的 YUV 尺寸里最小的 (不小于 320×240; 取不到就 320×240). */
+    private fun meterSize(mgr: CameraManager, id: String): Pair<Int, Int> {
+        val s = runCatching {
+            mgr.getCameraCharacteristics(id)
+                .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+                ?.getOutputSizes(android.graphics.ImageFormat.YUV_420_888)
+        }.getOrNull()?.filter { it.width >= 320 && it.height >= 240 }?.minByOrNull { it.width * it.height }
+        return if (s != null) s.width to s.height else 320 to 240
+    }
+
     private inner class CamJob(val mgr: CameraManager, val id: String) {
         private val part: File; private val fin: File
         private var rec: MediaRecorder? = null
         private var device: CameraDevice? = null
         private var session: CameraCaptureSession? = null
+        private var meter: android.media.ImageReader? = null
         @Volatile private var closed = false
         init { val (p, f) = newPart("camera"); part = p; fin = f }
 
@@ -184,20 +195,36 @@ class RecordService : Service() {
             // 用摄像头 / MediaRecorder 真正支持的尺寸 (480×360 这类不是标准采集尺寸, 很多手机不支持, prepare 会失败);
             // 在支持的尺寸里挑最接近 640×480 的 (压一下但保证能录)
             val (cw, ch) = camSize(mgr, id)
-            rec = buildRecorder(part, cw, ch, 15, 360_000)
+            rec = buildRecorder(part, cw, ch, CAMERA_FPS, 360_000)
+            // 每秒 CAMERA_FPS 帧: 摄像头连续出画面到一个小的 ImageReader (只为了让自动曝光 / 对焦一直跑着, 画面直接丢掉),
+            // 每 1 / CAMERA_FPS 秒单独拍一帧送进 MediaRecorder (setVideoFrameRate 只是提示, 连续送多少帧就录多少帧)
+            val (mw, mh) = meterSize(mgr, id)
+            meter = android.media.ImageReader.newInstance(mw, mh, android.graphics.ImageFormat.YUV_420_888, 2).apply {
+                setOnImageAvailableListener({ r -> runCatching { r.acquireLatestImage()?.close() } }, h)
+            }
             @Suppress("MissingPermission")
             mgr.openCamera(id, object : CameraDevice.StateCallback() {
                 override fun onOpened(d: CameraDevice) {
                     device = d
                     val surface = rec!!.surface
+                    val meterSurface = meter!!.surface
                     @Suppress("DEPRECATION")
-                    d.createCaptureSession(listOf(surface), object : CameraCaptureSession.StateCallback() {
+                    d.createCaptureSession(listOf(surface, meterSurface), object : CameraCaptureSession.StateCallback() {
                         override fun onConfigured(s: CameraCaptureSession) {
                             if (closed) return
                             session = s
-                            val req = d.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply { addTarget(surface) }
-                            s.setRepeatingRequest(req.build(), null, h)
-                            runCatching { rec!!.start() }.onFailure { fail("camera", it as Exception) }
+                            val run = d.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply { addTarget(meterSurface) }
+                            s.setRepeatingRequest(run.build(), null, h)
+                            val shot = d.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply { addTarget(surface) }.build()
+                            runCatching { rec!!.start() }.onFailure { fail("camera", it as Exception); return }
+                            val tick = object : Runnable {
+                                override fun run() {
+                                    if (closed) return
+                                    runCatching { s.capture(shot, null, h) }
+                                    h.postDelayed(this, 1000L / CAMERA_FPS)
+                                }
+                            }
+                            h.post(tick)
                         }
                         override fun onConfigureFailed(s: CameraCaptureSession) = fail("camera", Exception("session"))
                     }, h)
@@ -214,6 +241,7 @@ class RecordService : Service() {
             runCatching { rec?.stop() }
             runCatching { rec?.release() }
             runCatching { device?.close() }
+            runCatching { meter?.close() }
             seal("camera", part, fin)
         }
     }
@@ -297,6 +325,8 @@ class RecordService : Service() {
     }
 
     companion object {
+        /** 目光 (摄像头) 每秒录几帧. */
+        const val CAMERA_FPS = 1
         const val ACT_CAMERA = "oit.rec.camera"
         const val ACT_SCREEN = "oit.rec.screen"
         const val ACT_STOP_CAMERA = "oit.rec.stop_camera"

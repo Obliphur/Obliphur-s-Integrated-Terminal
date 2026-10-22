@@ -338,12 +338,17 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         changed()
     }
 
+    /** 这个记录格被未知变量 / 记录封锁另外封锁了 (填不了). */
+    private fun slotLocked(slot: LocalDateTime, len: Int) =
+        contract.hourLocked(slot, slot.plusMinutes(len.toLong()), "", LocalDateTime.now(), dm.fillSeconds.toLong(), dm.autoValue)
+
     /** 记录封锁 (MECHANICS 18.4): 完成了一次填写, 另外随机封锁两个可以封锁的格子. */
     fun sealExtra() {
         val keys = contract.sealExtra(LocalDateTime.now(), Dice(), dm::unitText, dm.autoValue, dm.fillSeconds.toLong(),
             dm::autoTextForKey)
         if (keys.isEmpty()) return
         logNotice("CONTRACT seal locks ${keys.joinToString(", ")}")
+        dm.awaitingSlot()?.let { if (slotLocked(it, dm.promptLen)) dm.promptSlot = null }   // 待填写的那格被封锁了: 不再等它
         toast(tr("记录封锁: 另外封锁了 {t} (不能再修改)", "t" to keys.joinToString(", ") { cellLabel(it) }), "warn", long = true)
         syncHourLog()
         changed()
@@ -444,6 +449,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             if (contract.fineHour(hour)) { slot = at.minusMinutes(30); len = 30 }   // 后半小时
             else { slot = hour; len = 60 }
         }
+        if (slotLocked(slot, len)) { changed(); return }            // 记录封锁另外封锁了这一格: 填不了, 不提示
         // 绑定了其他设备时, 只有最后有人操作的那台响 (其他设备只标出待填写)
         if (!isLatestActive()) {
             dm.promptSlot = slot

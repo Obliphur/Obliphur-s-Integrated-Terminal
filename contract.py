@@ -970,15 +970,24 @@ class Contract:
     def seal_extra(self, now: datetime, rng=None, text_of=None, auto="", fill: timedelta = None) -> list:
         """记录封锁 (18.4): 每次完成填写时, 另外随机封锁 SEAL_EXTRA 个可以封锁的格子 (挑法同未知变量的 lock_cell).
         返回封锁了的格子的键; 没有选记录封锁 / 没有可以封锁的时少于 SEAL_EXTRA 个."""
-        if not self.active or not self.has("seal"):
+        if not self.active or not self.has("seal") or text_of is None or fill is None:
             return []
-        out = []
-        for _ in range(SEAL_EXTRA):
-            k = self.lock_cell(now, rng, text_of, auto, fill)
-            if not k:
-                break
-            out.append(k)
-        return out
+        # 过了填写时限的格子都已经填写了 (超时自动记录), 记录封锁下本来就锁着 —— 可以封锁的是合约里还能填的格子:
+        # 还在填写时限里的、还没结束的 (到合约结束为止)
+        pool = [(k, a, b) for k, a, b in self.hour_units(now, ahead=True)
+                if not self.hour_locked(a, b, text_of(k) or "", now, fill, auto, k)]
+        picks = []
+        for _ in range(min(SEAL_EXTRA, len(pool))):
+            p = (rng or random).choice(pool)
+            pool.remove(p)
+            picks.append(p)
+        if not picks:
+            return []
+        self.live["locks"] = list(self.live.get("locks") or []) + [[_iso(a), _iso(b)] for _k, a, b in picks]
+        # 封锁时还没填写, 之后也填不了: 超时自动记录不算违反
+        self.live["hl"] = sorted(set(self.live.get("hl") or []) | {k for k, _a, _b in picks})
+        self.save()
+        return [k for k, _a, _b in picks]
 
     def locks(self) -> list:
         """未知变量 / 记录封锁 另外封锁的记录格 (只算进行中的合约的; 合约结束后解除): [(开始, 结束)]."""
@@ -1408,12 +1417,13 @@ class Contract:
             out.append((self.start_at, now or datetime.now()))
         return out
 
-    def hour_units(self, now: datetime):
+    def hour_units(self, now: datetime, ahead: bool = False):
         """进行中的合约里已经结束的记录格: [(键, 开始, 结束)].
-        键是 "日期/小时", 细化规范的两个半小时是 "日期/小时/1" "日期/小时/2"."""
+        键是 "日期/小时", 细化规范的两个半小时是 "日期/小时/1" "日期/小时/2".
+        ahead: 还没结束的也要 (到合约结束为止)."""
         if not self.active or not self.start_at:
             return []
-        a, b = self.start_at, min(now, self.end_at or now)
+        a, b = self.start_at, (self.end_at or now) if ahead else min(now, self.end_at or now)
         out = []
         h = a.replace(minute=0, second=0, microsecond=0)
         while h < b:
@@ -1423,7 +1433,7 @@ class Contract:
                          (key + "/2", h + timedelta(minutes=30), h + timedelta(hours=1))]
             else:
                 parts = [(key, h, h + timedelta(hours=1))]
-            out += [p for p in parts if p[1] < b and a < p[2] and p[2] <= now]
+            out += [p for p in parts if p[1] < b and a < p[2] and (ahead or p[2] <= now)]
             h += timedelta(hours=1)
         return out
 
@@ -1942,10 +1952,19 @@ def _selftest():
     assert c.seal_extra(now, None, texts.get, "Sleeping", fill) == [], "没选记录封锁"
     c.live["terms"] = list(c.terms) + ["seal"]
     n0 = len(c.locks())
-    now2 = datetime(2026, 10, 18, 14, 0)          # 合约 09:30–13:30 内, 9 / 10 点已锁, 还剩 11 / 12 点可封
+    now2 = datetime(2026, 10, 18, 14, 0)          # 合约 09:30–13:30 内, 9 / 10 点已锁, 还剩 11 / 12 / 13 点可封
     got = c.seal_extra(now2, None, texts.get, "Sleeping", fill)
     assert len(got) == 2 and len(set(got)) == 2 and len(c.locks()) == n0 + 2, got
-    assert all(k in ("2026-10-18/11", "2026-10-18/12") for k in got), got
+    assert all(k in ("2026-10-18/11", "2026-10-18/12", "2026-10-18/13") for k in got), got
+    assert set(got) <= set(c.live["hl"]), "封锁时还没填写: 超时自动记录不算违反"
+    # 实际情况: 过了填写时限的格子都自动记录了 (记录封锁下已经锁着), 只能封还能填的 / 还没结束的格子 (到合约结束为止)
+    c.live["locks"], c.live["hl"] = [], []
+    now3 = datetime(2026, 10, 18, 11, 20)
+    auto = {"2026-10-18/9": "Sleeping", "2026-10-18/10": "学习"}
+    got = c.seal_extra(now3, None, auto.get, "Sleeping", fill)
+    assert len(got) == 2 and all(k in ("2026-10-18/11", "2026-10-18/12", "2026-10-18/13") for k in got), got
+    misses = c.hour_misses(datetime(2026, 10, 18, 15), fill, lambda k: "", "Sleeping")
+    assert misses and not set(got) & set(misses), "封锁的空格子不算违反"
     c.live["terms"] = [t for t in c.terms if t != "seal"]
     c.finish("abandoned", now)
     # 合约提前结束了: 另外封锁的格子解除; 之后才开始的这段专注不减速 (阻滞只对合约内的专注生效)

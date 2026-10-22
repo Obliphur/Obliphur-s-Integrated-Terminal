@@ -215,7 +215,10 @@ fun HourLogScreen(go: (String) -> Unit) {
                         !core.contract.hourLocked(a, b, t, now, dm.fillSeconds.toLong(), dm.autoValue,
                             dm::autoTextForKey)
                 }
-                val locked = cells.indices.any { !hidden[it] && !editable[it] && !cells[it].second.isAfter(now) && enabled }
+                // 🔒: 结束了还不能改的; 记录封锁另外封锁的还没结束的格子也标上
+                val locked = cells.indices.any { i -> val (a, b, t) = cells[i]
+                    !hidden[i] && enabled && (!editable[i] && !b.isAfter(now) ||
+                        core.contract.hourLocked(a, b, t, now, dm.fillSeconds.toLong(), dm.autoValue, dm::autoTextForKey)) }
                 val shown = cells.mapIndexed { i, (a, _, t) -> if (hidden[i]) fogNoise(fogWords, a) else t }
                 val sealed = cells.map { (a, b, _) -> core.contract.hourSealed(a, b, now) }
                 HourRow(if (hidden.all { it }) "???" else "%02d:00".format(h) + when {
