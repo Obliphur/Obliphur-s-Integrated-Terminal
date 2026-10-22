@@ -669,7 +669,7 @@ class Contract:
                "planned": self.live.get("end"), "terms": self.terms, "orig": self.orig,
                "level": self.level, "orig_level": self.orig_level, "cut": dict(self.cut),
                "result": result, "violations": self.violations, "reward": reward,
-               "pre_left": self.pre_left, "rand": self.rand}
+               "pre_left": self.pre_left, "rand": self.rand, "owner": self.live.get("owner", "")}
         if self.live.get("locks"):
             rec["locks"] = list(self.live["locks"])        # 未知变量 / 记录封锁另外封锁的记录格 (记录用; 合约结束后解除)
         slow = self.live.get("slow")
