@@ -185,7 +185,7 @@ class ContractPage(tk.Frame):
         self.lbl_rec = tk.Label(self.rec_row, text="", bg=P["live"], fg=P["danger"], font=config.font("small", bold=True),
                                 anchor="w", justify="left")
         self.lbl_rec.pack(side="left")
-        self.btn_stop_rec = self._button(self.rec_row, tr("■ 终止录屏"), P["clear"], P["clear_hover"], P["clear_text"],
+        self.btn_stop_rec = self._button(self.rec_row, tr("■ 终止录像"), P["clear"], P["clear_hover"], P["clear_text"],
                                          lambda: self.on_stop_screen and self.on_stop_screen())
 
     # ---- 词条板: 左边一条竖写的 "CONTRACT LIST" 和各行的等级, 右边六边形的格子; 翻页 (成系列的一页, 零散的一页,
@@ -735,7 +735,8 @@ class ContractPage(tk.Frame):
             if rec:
                 cfg(self.lbl_rec, text=rec)
                 show_pack(self.rec_row, fill="x", padx=16, pady=(0, 10))
-                if c.has("scar") and self.on_stop_screen:
+                # 任意一端都能终止整个录制过程 (18.8): 只要还有在录的词条就显示
+                if self.on_stop_screen and (c.has("gaze") or c.has("scar")):
                     show_pack(self.btn_stop_rec, side="right")
                 else:
                     hide_pack(self.btn_stop_rec)

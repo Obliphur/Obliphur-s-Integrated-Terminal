@@ -57,6 +57,8 @@ interface SyncLocal {
     fun recOffered(peerId: String, who: String, o: JSONObject): String = "unsupported"
     /** 录像 (MECHANICS 18.8): 别的设备删了某个合约某一路的录像, 本机也删掉. */
     fun recDeleted(cid: String, kind: String) {}
+    /** 录像 (MECHANICS 18.8): 别的设备终止了录制, 本机也停 (违反随合约同步). */
+    fun recStop(cid: String) {}
 }
 
 /** 在界面线程里执行, 等它做完 (同 devsync.MainRunner). post=null 时直接在当前线程执行 (测试用). */
@@ -450,6 +452,7 @@ class SyncService(
                     method == "POST" && path == "/oit/v1/send" -> onSend(body)
                     method == "POST" && path == "/oit/v1/got" -> onGot(body)
                     method == "POST" && path == "/oit/v1/recdel" -> onRecDel(body)
+                    method == "POST" && path == "/oit/v1/recstop" -> onRecStop(body)
                     else -> 404 to JSONObject().put("error", "not found")
                 }
                 val data = out.toString().toByteArray(Charsets.UTF_8)
@@ -571,6 +574,27 @@ class SyncService(
                 JSONObject().put("recdel", JSONObject().put("cid", c).put("kind", k)))
             runCatching { http(p.getString("addr"), p.getInt("port"), "POST", "/oit/v1/recdel", env, 5_000) }
         }
+    }
+
+    /** 终止整个录制过程 (MECHANICS 18.8): 通知所有绑定设备停止录像 (违反随合约同步). 后台线程里调用. */
+    fun stopRecording(cid: String) {
+        val c = cid.filter { it.isLetterOrDigit() }.take(24)
+        for ((_, p) in peers()) {
+            val env = SyncCrypto.seal(SyncCrypto.unhex(p.getString("key")), myId,
+                JSONObject().put("recstop", JSONObject().put("cid", c)))
+            runCatching { http(p.getString("addr"), p.getInt("port"), "POST", "/oit/v1/recstop", env, 5_000) }
+        }
+    }
+
+    private fun onRecStop(env: JSONObject): Pair<Int, JSONObject> {
+        val id = env.optString("from")
+        val p = peers()[id] ?: return 401 to JSONObject().put("error", "unpaired")
+        val raw = try { SyncCrypto.unseal(SyncCrypto.unhex(p.getString("key")), env).getJSONObject("recstop") } catch (e: Exception) {
+            return 400 to JSONObject().put("error", "bad-request")
+        }
+        val cid = raw.optString("cid").filter { it.isLetterOrDigit() }.take(24)
+        runCatching { runner.call { local.recStop(cid) } }
+        return 200 to JSONObject().put("ok", true)
     }
 
     private fun onRecDel(env: JSONObject): Pair<Int, JSONObject> {

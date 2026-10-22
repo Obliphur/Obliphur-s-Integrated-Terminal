@@ -12,6 +12,13 @@ _current = DEFAULT_LANGUAGE
 
 
 EN = {
+    # ---- 录像状态同步 / 终止整个录制 (MECHANICS 18.8) ----
+    "{who} 录像中": "{who} recording",
+    "终止整个录制过程?": "Stop the whole recording?",
+    "正在录的每一路各算一次违反 (目标生命值 -1), 对应词条失效; 所有设备都会停止录像, 已经录下的照样保存.":
+        "Each active recording stream counts as one violation (target HP -1) and that term is voided; all devices stop recording, and what's already recorded is kept.",
+    "终止整个录制过程? 正在录的每一路各算一次违反 (目标生命值 -1), 对应词条失效; 所有设备都会停止录像, 已经录下的照样保存.":
+        "Stop the whole recording? Each active recording stream counts as one violation (target HP -1) and that term is voided; all devices stop recording, and what's already recorded is kept.",
     # ---- 录像同步 / 删除 / 列表 (MECHANICS 18.8) ----
     "绑定的设备上也会删掉.": "It will be deleted on the bound devices too.",
     "● 录制中, 结束后合并并同步.": "● Recording; it will be merged and synced when it ends.",

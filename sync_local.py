@@ -83,6 +83,10 @@ class PcLocal:
         """录像 (MECHANICS 18.8): 别的设备删了某个录像, 本机也删掉."""
         self.app.rec_deleted(cid, kind)
 
+    def rec_stop(self, cid: str):
+        """录像 (MECHANICS 18.8): 别的设备终止了录制, 本机也停 (违反随合约同步)."""
+        self.app.rec_stop(cid)
+
     def wipe_requested(self, wipe_id: str, sender: str, name: str):
         """别的设备重置 / 卸载了, 请本机也清空数据 (MECHANICS 9): 回复对方之后再做 (重置会关闭程序)."""
         self.app.root.after(300, lambda: self.app.do_reset(wipe_id=wipe_id, exclude=(sender,), by=name))
@@ -155,6 +159,9 @@ class PcLocal:
             st.update(timer="break", left=int(a.countdown_seconds))
         if n.mode == "online":
             st["net_left"] = int(n.grant_left)
+        rec = [k for k in ("camera", "screen") if a.recording(k)]   # 本机此刻在录的几路 (合约页同步显示, 18.8)
+        if rec:
+            st["rec"] = rec
         return st
 
     # ---- 文档 ----

@@ -100,6 +100,9 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
     /** 录像 (MECHANICS 18.8): 别的设备删了某个录像, 本机也删掉. */
     override fun recDeleted(cid: String, kind: String) = app.recordManager.recordingDeleted(cid, kind)
 
+    /** 录像 (MECHANICS 18.8): 别的设备终止了录制, 本机也停. */
+    override fun recStop(cid: String) = app.recordManager.recStop(cid)
+
     // ---- 账 ----
 
     override fun ledger(): JSONObject {
@@ -141,6 +144,9 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
             else -> {}
         }
         if (n.mode == "online") st.put("net_left", n.grantLeft.toInt())
+        // 本机此刻在录的几路 (合约页同步显示, MECHANICS 18.8)
+        val rec = com.obliphur.oit.core.RecCrypto.KINDS.filter { app.recordManager.isRecording(it) }
+        if (rec.isNotEmpty()) st.put("rec", org.json.JSONArray(rec))
         return st
     }
 

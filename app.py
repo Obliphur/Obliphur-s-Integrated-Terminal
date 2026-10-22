@@ -617,7 +617,7 @@ class BreakTimerApp:
                                               net_used=lambda: self.net.used_all,
                                               on_change=self._paint_sidebar,
                                               rec_text=self._rec_text,
-                                              on_stop_screen=self.stop_screen_recording,
+                                              on_stop_screen=self.terminate_recording,
                                               on_close_rand=self.close_random_term,
                                               on_lift_ban=self.lift_net_ban,
                                               on_pick=self._warn_pick_term)
@@ -3537,17 +3537,33 @@ class BreakTimerApp:
         return r is not None and r.alive
 
     def _rec_text(self) -> str:
-        """合约页: 本机录像的状态."""
+        """合约页: 录像的状态 —— 各设备在录哪一路也同步显示 (MECHANICS 18.8)."""
         out = []
         cid = self.contract.live.get("id")
+        # 别的设备此刻在录的几路 (同步来的状态): kind -> [设备名]
+        peer_rec = {}
+        try:
+            online = {s["id"] for s in self.sync.device_states() if s.get("online")}
+            for s in self.sync.peer_status():
+                if s.get("id") not in online:
+                    continue
+                for k in (s.get("rec") or []):
+                    peer_rec.setdefault(k, []).append(str(s.get("name") or "?"))
+        except Exception:      # noqa: BLE001
+            pass
         for kind, label in (("camera", tr("📷 摄像头")), ("screen", tr("🖥 屏幕"))):
             if kind not in self.contract.records():
                 continue
+            who = []
+            if self.recording(kind):
+                who.append(tr("本机"))
+            who += peer_rec.get(kind, [])
+            if who:
+                out.append(label + " " + tr("{who} 录像中", who="、".join(who)))
+                continue
             r = self._recorders.get(kind)
             skip = self._rec_skip.get(kind)
-            if r is not None and r.state == "running":
-                out.append(label + " " + tr("录像中"))
-            elif r is not None:
+            if r is not None:
                 out.append(label + " " + tr("正在开始录像…"))
             elif skip and skip[0] == cid and skip[1] == "none":
                 out.append(label + " " + tr("本机没有摄像头, 不录"))
@@ -3631,17 +3647,36 @@ class BreakTimerApp:
         except Exception:
             pass
 
-    def stop_screen_recording(self):
-        """刻痕: 终止录屏 —— 立即算一次违反 (词条失效, 不再录屏); 已经录下的照样保存."""
-        if not self.contract.has("scar"):
+    def terminate_recording(self):
+        """终止整个录制过程 (MECHANICS 18.8): 任意一端都能终止 —— 正在录的每一路各算一次违反 (对应词条失效),
+        停掉本机的录像并通知所有设备也停 (违反随合约同步). 已经录下的照样保存."""
+        terms = [t for t, k in contract_mod.RECORD.items() if self.contract.has(t) and k in self.contract.records()]
+        if not terms:
             return
-        if not toast.ask(tr("终止录屏?") + "\n" + tr("立即算一次违反 (目标生命值 -1), 刻痕失效; 已经录下的部分照样保存."),
-                         title=tr("■ 终止录屏"), danger=True):
+        if not toast.ask(
+                tr("终止整个录制过程?") + "\n"
+                + tr("正在录的每一路各算一次违反 (目标生命值 -1), 对应词条失效; 所有设备都会停止录像, 已经录下的照样保存."),
+                title=tr("■ 终止录像"), danger=True):
             return
-        if not self.contract.has("scar"):
+        cid = str(self.contract.live.get("id") or "")
+        for t in terms:
+            if self.contract.has(t):
+                self._stop_recorder(contract_mod.RECORD[t])
+                self.contract_violation(tr("终止了录像"), t)
+        self.rec_stop(cid)
+        if self.sync.peers():
+            threading.Thread(target=lambda: self.sync.stop_recording(cid), daemon=True).start()
+            self.sync.sync_now()
+
+    def rec_stop(self, cid: str):
+        """别的设备 (或本机) 终止了录制 (MECHANICS 18.8): 停掉本机正在录的各路, 这个合约不再自动重开 (违反随合约同步)."""
+        cur = str(self.contract.live.get("id") or "")
+        if cid and cur and cid != cur:
             return
-        self._stop_recorder("screen")
-        self.contract_violation(tr("终止了录屏"), "scar")
+        for kind in recorder.KINDS:
+            if kind in self._recorders:
+                self._stop_recorder(kind)
+            self._rec_skip[kind] = (cur, "stopped")
 
     def _record_lines(self, terms) -> list:
         kinds = [contract_mod.RECORD[t] for t in terms if t in contract_mod.RECORD]

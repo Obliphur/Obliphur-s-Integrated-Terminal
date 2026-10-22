@@ -1084,6 +1084,37 @@ class SyncService:
             except Exception:       # noqa: BLE001
                 pass
 
+    def stop_recording(self, cid: str):
+        """终止整个录制过程 (MECHANICS 18.8): 通知所有绑定设备停止录像 (违反随合约同步). 后台线程里调用."""
+        cid = re.sub(r"[^0-9A-Za-z]", "", str(cid))[:24]
+        for pid, p in list(self.peers().items()):
+            env = seal(bytes.fromhex(p["key"]), self.my_id, {"recstop": {"cid": cid}})
+            try:
+                self._http(p["addr"], p["port"], "POST", "/oit/v1/recstop", env, timeout=5.0)
+            except Exception:       # noqa: BLE001
+                pass
+
+    def _on_recstop(self, env: dict):
+        """别的设备终止了录制: 本机也停."""
+        pid = str(env.get("from"))
+        p = self.peers().get(pid)
+        if not p:
+            return 401, {"error": "unpaired"}
+        try:
+            raw = unseal(bytes.fromhex(p["key"]), env)["recstop"]
+            cid = re.sub(r"[^0-9A-Za-z]", "", str(raw["cid"]))[:24]
+        except SealError as e:
+            return 403, {"error": str(e)}
+        except Exception:
+            return 400, {"error": "bad-request"}
+        fn = getattr(self.local, "rec_stop", None)
+        if fn is not None:
+            try:
+                self.runner.call(lambda: fn(cid))
+            except Exception:       # noqa: BLE001
+                pass
+        return 200, {"ok": True}
+
     def _on_recdel(self, env: dict):
         """别的设备删了某个录像: 本机也删掉对应的 (按 合约 id + 路)."""
         pid = str(env.get("from"))
@@ -1795,6 +1826,8 @@ def _make_handler(svc: SyncService):
                 return self._send(*svc._on_got(body))
             if self.path == "/oit/v1/recdel":
                 return self._send(*svc._on_recdel(body))
+            if self.path == "/oit/v1/recstop":
+                return self._send(*svc._on_recstop(body))
             self._send(404, {"error": "not found"})
 
         def _send_file(self, path, enc=None):

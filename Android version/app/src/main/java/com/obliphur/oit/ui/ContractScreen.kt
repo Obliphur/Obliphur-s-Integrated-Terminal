@@ -227,6 +227,27 @@ private fun ComboCard(p: ContractColors, combo: Combo, state: String, modifier: 
 /** 词条板 (行 = 等级, 列 = 类型, 同一类型在同一列; 翻页: 成系列的一页, 零散的一页, 第 3 页是词条组合), 下面是已选中的词条 (两栏),
  *  最下面一条: 清空 | 危机等级 | 开始行动.
  *  合约进行中时只能看. 这一页总是横屏 (Root 里设置), 整页缩小到一屏显示全部 (FitToScreen). 颜色按"合约页主题". */
+/** 合约页的录像状态 (MECHANICS 18.8): 各设备在录哪一路也同步显示. */
+private fun recStatus(c: Contract): String {
+    val app = OitApp.instance
+    val recs = c.records()
+    val peerRec = HashMap<String, MutableList<String>>()
+    app.sync?.deviceStates()?.forEach { d ->
+        if (!d.online) return@forEach
+        val arr = d.status.optJSONArray("rec") ?: return@forEach
+        for (i in 0 until arr.length()) peerRec.getOrPut(arr.getString(i)) { mutableListOf() }.add(d.name)
+    }
+    val parts = ArrayList<String>()
+    for ((kind, label) in listOf("camera" to tr("📷 摄像头"), "screen" to tr("🖥 屏幕"))) {
+        if (kind !in recs) continue
+        val who = ArrayList<String>()
+        if (app.recordManager.isRecording(kind)) who.add(tr("本机"))
+        who.addAll(peerRec[kind] ?: emptyList())
+        parts.add(label + " " + if (who.isNotEmpty()) tr("{who} 录像中", "who" to who.joinToString("、")) else tr("未录像"))
+    }
+    return parts.joinToString("   ·   ")
+}
+
 @Composable
 fun ContractScreen() {
     LocalTick.current
@@ -457,6 +478,13 @@ fun ContractScreen() {
             Text(text, color = p.dim, fontSize = 12.sp)
         }
 
+        // 录像状态 (目光 / 刻痕): 各设备在录哪一路也同步显示 (MECHANICS 18.8)
+        if (active && c.records().isNotEmpty()) {
+            val rec = recStatus(c)
+            if (rec.isNotEmpty()) Text(rec, color = p.danger, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                modifier = Modifier.fillMaxWidth().background(p.live).padding(horizontal = 16.dp, vertical = 4.dp))
+        }
+
         // 最下面一条: 清空 | 危机等级 | 时长 / 完成后的休息时间 | 难度提示 | 开始行动
         val level = if (active) c.level else Contract.levelOf(sel)
         val orig = if (active) c.origLevel else level
@@ -481,10 +509,9 @@ fun ContractScreen() {
                 Text(tr("⚠  当前合约难度极大 请谨慎行动"), color = p.warn, fontSize = 12.sp, fontWeight = FontWeight.Bold,
                     modifier = Modifier.widthIn(max = 170.dp).padding(end = 12.dp))
             val why = if (active) "" else core.contractBlock()
-            // 合约中正在录像 (目光 / 刻痕) 时多一个"终止录像"按钮: 和"提前结束"同时出现时, 终止录像在左, 提前结束在右;
-            // 否则 (只有一个按钮) 还按原来的靠右 (MECHANICS 18.8)
-            val recording = active && (OitApp.instance.recordManager.isRecording("camera") ||
-                OitApp.instance.recordManager.isRecording("screen"))
+            // 合约中只要还有在录的词条 (任意设备) 就多一个"终止录像"按钮 (任意一端都能终止整个录制, MECHANICS 18.8):
+            // 和"提前结束"同时出现时, 终止录像在左, 提前结束在右; 否则 (只有一个按钮) 还按原来的靠右
+            val recording = active && c.records().isNotEmpty()
             val endBtn: @Composable () -> Unit = {
                 Text(if (active) tr("■  提前结束") else tr("开始行动"), color = if (why.isEmpty()) p.startText else p.startOffText,
                     fontSize = 18.sp, fontWeight = FontWeight.Bold,
@@ -550,18 +577,11 @@ fun ContractScreen() {
             else Confirm(tr("关闭词条"), tr("关闭未知变量选中的 {name}?", "name" to termName(id)) + "\n" + tr("会算作一次违反."),
                 true, { ask = "" }) { core.closeRandomTerm(id) }
         } else if (ask == "stoprec") {
-            // 终止录像 (目光 / 刻痕): 停掉本机正在录的那几路, 每一路各算一次违反 (那个词条失效), 已录的照样保存
-            val recs = listOf("screen" to "scar", "camera" to "gaze")
-                .filter { OitApp.instance.recordManager.isRecording(it.first) && c.has(it.second) }
-            if (recs.isEmpty()) ask = ""
+            // 终止整个录制过程 (任意一端都能终止, MECHANICS 18.8): 正在录的每一路各算一次违反, 所有设备都停, 已录的照样保存
+            if (c.records().isEmpty()) ask = ""
             else Confirm(tr("■ 终止录像"),
-                tr("立即停止录像 (目光 / 刻痕), 每一路各算一次违反 (目标生命值 -1), 对应词条失效; 已经录下的部分照样保存."),
-                true, { ask = "" }) {
-                for ((kind, term) in recs) {
-                    OitApp.instance.recordManager.forceStop(kind)
-                    core.contractViolation(tr("终止了录像"), term)
-                }
-            }
+                tr("终止整个录制过程? 正在录的每一路各算一次违反 (目标生命值 -1), 对应词条失效; 所有设备都会停止录像, 已经录下的照样保存."),
+                true, { ask = "" }) { OitApp.instance.recordManager.terminate() }
         } else if (ask.startsWith("pickwarn:")) {
             // 目光 / 刻痕: 选上前提示会录像 + 加密 (MECHANICS 18.8). 选不选由用户决定.
             val id = ask.removePrefix("pickwarn:")

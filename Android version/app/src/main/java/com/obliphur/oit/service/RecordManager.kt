@@ -4,6 +4,7 @@ import android.content.Intent
 import android.os.SystemClock
 import com.obliphur.oit.OitApp
 import com.obliphur.oit.core.RecCrypto
+import com.obliphur.oit.core.tr
 import org.json.JSONObject
 import java.io.File
 
@@ -203,6 +204,29 @@ class RecordManager(private val app: OitApp) {
     /** 别的设备删了某个录像 (MECHANICS 18.8): 本机也删掉对应的最终录像. */
     fun recordingDeleted(cid: String, kind: String) {
         if (RecCrypto.deleteMerged(dataDir, cid, kind)) { core.logRecord("deleted $cid/$kind (synced)"); core.changed() }
+    }
+
+    /** 终止整个录制过程 (MECHANICS 18.8): 任意一端都能终止 —— 正在录的每一路各算一次违反 (对应词条失效),
+     *  停掉本机并通知所有设备也停 (违反随合约同步). 返回终止了几路 (0 表示没有在录的词条). */
+    fun terminate(): Int {
+        val c = core.contract
+        val terms = listOf("camera" to "gaze", "screen" to "scar")
+            .filter { it.first in c.records() && c.has(it.second) }
+        if (terms.isEmpty()) return 0
+        val cid = c.live.optString("id", "")
+        for ((kind, term) in terms) { forceStop(kind); core.contractViolation(tr("终止了录像"), term) }
+        recStop(cid)
+        val sync = app.sync
+        if (sync != null && sync.peers().isNotEmpty())
+            Thread { sync.stopRecording(cid); sync.syncNow() }.apply { isDaemon = true }.start()
+        return terms.size
+    }
+
+    /** 别的设备 (或本机) 终止了录制 (MECHANICS 18.8): 停掉本机正在录的各路, 这个合约不再自动重开 (违反随合约同步). */
+    fun recStop(cid: String) {
+        val cur = core.contract.live.optString("id", "")
+        if (cid.isNotEmpty() && cur.isNotEmpty() && cid != cur) return
+        for (kind in RecCrypto.KINDS) { stop(kind); skipCid[kind] = cidKey(cur) }
     }
 
     /** 用户在 设置 → 录像 删掉一个录像: 本机删, 并通知所有绑定设备也删 (MECHANICS 18.8). */
