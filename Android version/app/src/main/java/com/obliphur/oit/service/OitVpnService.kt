@@ -326,10 +326,12 @@ class OitVpnService : VpnService() {
 
     private fun modeOf(p: VpnPlan, apps: Set<String>) = when {
         p is VpnPlan.BlockAll -> Mode.DROP
-        apps.isEmpty() -> Mode.DNS
-        // 全部放行, 也没有要封锁的网站时: 只把屏蔽的应用放进 VPN. 有要封锁的网站就得接管所有应用的 DNS (FORWARD)
-        p is VpnPlan.Dns && !p.filter && p.blockDomains.isEmpty() -> Mode.APPS
-        else -> Mode.FORWARD
+        // 有网站过滤 / 要封锁的网站: 全部流量进 VPN (FORWARD), 才能堵住 DoH / DoT / QUIC 绕过明文 DNS 过滤;
+        // 否则 (只接管 DNS 时) 社交平台用自带的加密 DNS 直接解析, 屏蔽不干净 (#3)
+        p is VpnPlan.Dns && (p.filter || p.blockDomains.isNotEmpty()) -> Mode.FORWARD
+        // 只封锁应用、不过滤网站: 只把这些应用放进 VPN 丢掉
+        apps.isNotEmpty() -> Mode.APPS
+        else -> Mode.DNS
     }
 
     private fun establish(want: VpnPlan, retry: Boolean = true) {

@@ -27,9 +27,9 @@ FRESH_MS = 2 * 60 * 1000         # 合约的主人这么久没同步过: 本机�
 TERMS = [
     # ==== 第 1 页 ====
     # ---- 合约本身: 时长, 目标生命值 ----
-    ("long1", "long", 1, "环境:持久战-I", "时长改为120%", ()),
-    ("long2", "long", 2, "环境:持久战-II", "时长改为140%", ()),
-    ("long3", "long", 3, "环境:持久战-III", "时长改为160%", ()),
+    ("long1", "long", 1, "环境:持久战-I", "时长改为120%, 休息时长×110%", ()),
+    ("long2", "long", 2, "环境:持久战-II", "时长改为140%, 休息时长×120%", ()),
+    ("long3", "long", 3, "环境:持久战-III", "时长改为160%, 休息时长×130%", ()),
     ("retreat1", "retreat", 1, "环境:退路封锁-I", "初始目标生命值为3", ()),
     ("retreat2", "retreat", 2, "环境:退路封锁-II", "初始目标生命值为2", ()),
     ("last", "retreat", 3, "最后防线", "初始目标生命值为1", ()),
@@ -39,9 +39,9 @@ TERMS = [
     ("chan1", "chan", 1, "环境:通道阻塞-I", "在专注期间的最大窗口数改为4", ()),
     ("chan2", "chan", 2, "环境:通道阻塞-II", "在专注期间的最大窗口数改为3", ()),
     # ---- 休息: 休息时间的倍率, 合约开始前积攒的休息时间 ----
-    ("tired1", "tired", 1, "环境:疲惫-I", "期间获得的休息时间改为70%", ()),
-    ("tired2", "tired", 2, "环境:疲惫-II", "期间获得的休息时间改为60%", ()),
-    ("tired3", "tired", 3, "环境:疲惫-III", "期间获得的休息时间改为50%", ()),
+    ("tired1", "tired", 1, "环境:疲惫-I", "基础休息倍率由80%改为70%", ()),
+    ("tired2", "tired", 2, "环境:疲惫-II", "基础休息倍率由80%改为60%", ()),
+    ("tired3", "tired", 3, "环境:疲惫-III", "基础休息倍率由80%改为50%", ()),
     ("short1", "short", 1, "环境:支援短缺-I", "可用的合约开始前已保存休息时间改为50%", ()),
     ("short2", "short", 2, "环境:支援短缺-II", "不能使用合约开始前已经保存的休息时间", ()),
     ("hoard", "hoard", 1, "禁止囤囤鼠!", "不能提前结束休息 但是获得的休息时间改为110%", ("short1", "short2")),
@@ -108,7 +108,7 @@ DURATION = {"long1": 1.2, "long2": 1.4, "long3": 1.6}
 NET_SHARE = {"info1": 0.8, "info2": 0.65, "info3": 0.5}
 BASE_REST = 0.8                                # 合约中专注换来的休息时间的基础倍率; 有疲惫时换成疲惫的倍率
 REST = {"tired1": 0.7, "tired2": 0.6, "tired3": 0.5}
-REST_BONUS = {"hoard": 1.1}                     # 休息时间额外的乘区 (和疲惫不冲突, 相乘): 禁止囤囤鼠! ×1.1
+REST_BONUS = {"hoard": 1.1, "long1": 1.1, "long2": 1.2, "long3": 1.3}   # 休息时间额外的乘区 (相乘): 禁止囤囤鼠! ×1.1; 持久战 ×110/120/130%
 WINDOWS = {"chan1": 4, "chan2": 3}
 SUPPLY = {"short1": 0.5, "short2": 0.0}         # 合约开始前积攒的休息时间能用几成
 HOUR_TERMS = {"seal", "fine"}                   # 整点记录的词条: 整点记录关着时, 这次合约中照样开启
@@ -357,7 +357,7 @@ def life_of(terms) -> int:
 
 def rest_factor_of(terms) -> float:
     """合约中专注换来的休息时间乘多少: 基础 ×0.8, 有疲惫时换成疲惫的 (取最低的);
-    再乘额外的乘区 (禁止囤囤鼠! ×1.1, 打年糕 ×1.2)."""
+    再乘额外的乘区 (持久战 ×1.1/1.2/1.3, 禁止囤囤鼠! ×1.1, 打年糕 ×1.2; 都相乘)."""
     f = min((REST[t] for t in terms or [] if t in REST), default=BASE_REST)
     for t in terms or []:
         f *= REST_BONUS.get(t, 1.0)
@@ -925,23 +925,13 @@ class Contract:
     # ---- 未知变量的效果 ----
 
     def lock_cell(self, now: datetime, rng=None, text_of=None, auto="", fill: timedelta = None) -> str:
-        """随机封锁一个还没被封锁, 已经过了填写时限的整点记录格 (最近 24 小时里的; 合约结束后解除).
-        返回格子的键 ("日期/小时", 细化规范的半小时 "日期/小时/1"); 没有可以封锁的返回 ""."""
+        """随机封锁一个还没被封锁, 已经过了填写时限的整点记录格 (只在合约期间内的, 合约结束后解除).
+        返回格子的键 ("日期/小时", 细化规范的半小时 "日期/小时/1"); 没有可以封锁的返回 "".
+        用 hour_units 取格子 —— 只有和合约重叠的真实格子, 不会多出合约开始前 (昨天) / 细化规范切出来的不存在的格子."""
         if not self.active or text_of is None or fill is None:
             return ""
-        h = (now - timedelta(hours=24)).replace(minute=0, second=0, microsecond=0)
-        pool = []
-        while h + timedelta(hours=1) <= now:
-            key = f"{h:%Y-%m-%d}/{h.hour}"
-            if self.fine_hour(h):
-                cells = [(key + "/1", h, h + timedelta(minutes=30)),
-                         (key + "/2", h + timedelta(minutes=30), h + timedelta(hours=1))]
-            else:
-                cells = [(key, h, h + timedelta(hours=1))]
-            for k, a, b in cells:
-                if b + cell_fill(a, b, fill) <= now and not self.hour_locked(a, b, text_of(k) or "", now, fill, auto, k):
-                    pool.append((k, a, b))
-            h += timedelta(hours=1)
+        pool = [(k, a, b) for k, a, b in self.hour_units(now)
+                if b + cell_fill(a, b, fill) <= now and not self.hour_locked(a, b, text_of(k) or "", now, fill, auto, k)]
         if not pool:
             return ""
         k, a, b = (rng or random).choice(pool)
@@ -1622,7 +1612,7 @@ def _selftest():
     assert combo_state(mochi, ["long1", "tired2"], ["long1", "tired2", "fine", "deep1"]) == "void"
     assert combo_state(mochi, ["long1", "tired2", "fine", "deep1"]) == "done"
     assert combo_level(["long1", "tired2", "fine", "deep1"]) == 1
-    assert abs(rest_factor_of(["long1", "tired2", "fine", "deep1"]) - 0.6 * 1.2) < 1e-9
+    assert abs(rest_factor_of(["long1", "tired2", "fine", "deep1"]) - 0.6 * 1.1 * 1.2) < 1e-9
     iso = ["info1", "erode1", "chan1", "suppress", "fog", "quiet", "jam"]
     assert sorted(clean_terms(iso)) == sorted(iso), "信息隔绝组合的词条可以一起选"
     assert combo_done(isolation, iso) and combo_level(iso) == 1 and combo_end(iso) == 10 * 60
@@ -1768,11 +1758,11 @@ def _selftest():
     # 打年糕组合: 额外 1 危机等级, 休息时间 ×1.2; 纵深推进降级不算失效
     c.start(["long1", "tired2", "fine", "deep2"], owner="me", now=t0)
     assert c.combos()[0] == (mochi, "done") and c.level == 2 + 1 + 2 + 2 + 1
-    assert abs(c.rest_factor() - 0.6 * 1.2) < 1e-9
+    assert abs(c.rest_factor() - 0.6 * 1.1 * 1.2) < 1e-9
     assert c.violate("deep2") == (False, "deep1") and c.combos()[0] == (mochi, "done")
-    assert abs(c.rest_factor() - 0.6 * 1.2) < 1e-9, "降级不算失效"
+    assert abs(c.rest_factor() - 0.6 * 1.1 * 1.2) < 1e-9, "降级不算失效"
     assert c.violate("deep1") == (False, "") and c.combos()[0] == (mochi, "void")
-    assert abs(c.rest_factor() - 0.6) < 1e-9, "成员失效了: 乘区取消"
+    assert abs(c.rest_factor() - 0.6 * 1.1) < 1e-9, "打年糕乘区取消, 持久战的 ×1.1 还在"
     # 翻页: 词条两页, 第 3 页是组合效果
     assert PAGES == [(0, 10), (10, BOARD_COLS)] and BOARD_COLS == 20 and LAYOUT["unknown"] == (19, 3)
     assert COMBO_PAGE == len(PAGES) and len(COMBOS) == 4
@@ -1912,12 +1902,14 @@ def _selftest():
     last = _Rng(pick=lambda pool: pool[-1])
     assert c.lock_cell(now, last, texts.get, "Sleeping", fill) == "2026-10-18/9", "已经封锁的不再选"
     assert c.lock_cell(now, None, None, "Sleeping", fill) == ""
-    # 记录封锁: 每次完成填写时另外封锁两个; 没选记录封锁时不封
+    # 记录封锁: 每次完成填写时另外封锁两个; 没选记录封锁时不封. 只封合约期间内的格子 (不会多出昨天 / 合约外的, #7)
     assert c.seal_extra(now, None, texts.get, "Sleeping", fill) == [], "没选记录封锁"
     c.live["terms"] = list(c.terms) + ["seal"]
     n0 = len(c.locks())
-    got = c.seal_extra(now, None, texts.get, "Sleeping", fill)
+    now2 = datetime(2026, 10, 18, 14, 0)          # 合约 09:30–13:30 内, 9 / 10 点已锁, 还剩 11 / 12 点可封
+    got = c.seal_extra(now2, None, texts.get, "Sleeping", fill)
     assert len(got) == 2 and len(set(got)) == 2 and len(c.locks()) == n0 + 2, got
+    assert all(k in ("2026-10-18/11", "2026-10-18/12") for k in got), got
     c.live["terms"] = [t for t in c.terms if t != "seal"]
     c.finish("abandoned", now)
     # 合约提前结束了: 另外封锁的格子解除; 之后才开始的这段专注不减速 (阻滞只对合约内的专注生效)
@@ -1939,15 +1931,15 @@ def _selftest():
     c = Contract(tempfile.mkdtemp())          # 上面封锁的记录格会影响后面整点记录的测试
     # 打年糕: 休息时间额外 ×1.2 (和疲惫相乘); 成员降级不算失效, 失效后乘区取消
     c.start(["long1", "tired2", "fine", "deep2"], owner="me", now=t0)
-    assert abs(c.rest_factor() - 0.6 * 1.2) < 1e-9 and abs(c.book_rest(1000, t0) - 720) < 1e-6
+    assert abs(c.rest_factor() - 0.6 * 1.1 * 1.2) < 1e-9 and abs(c.book_rest(1000, t0) - 792) < 1e-6
     assert c.level == 8 and c.combo_marks().get("deep2") == COMBO_COLORS["white"]
     c.downgrade("deep2")
-    assert abs(c.rest_factor() - 0.6 * 1.2) < 1e-9, "降级不算失效"
+    assert abs(c.rest_factor() - 0.6 * 1.1 * 1.2) < 1e-9, "降级不算失效"
     c.downgrade("deep1")
-    assert abs(c.rest_factor() - 0.6) < 1e-9 and c.level == 5 and c.combo_marks() == {}
+    assert abs(c.rest_factor() - 0.6 * 1.1) < 1e-9 and c.level == 5 and c.combo_marks() == {}
     # 没有疲惫: 基础 ×0.8 (打年糕照样相乘)
     assert rest_factor_of([]) == 0.8
-    assert abs(rest_factor_of(["long1", "tired2", "fine", "deep1"]) - 0.6 * 1.2) < 1e-9
+    assert abs(rest_factor_of(["long1", "tired2", "fine", "deep1"]) - 0.6 * 1.1 * 1.2) < 1e-9
     c.start(["scar"], owner="me", now=t0)
     assert c.records() == ["screen"] and c.level == 1 and c.violate("scar") == (False, "") and c.terms == []
     # 目光: 只由开始时选定的设备 (cam) 录; 没有 cam 的 (旧版本) 各台电脑都录. 前置失效了高机动 / 禁足照样在
@@ -1960,8 +1952,8 @@ def _selftest():
     assert c.cam == "" and c.records("pc") == ["camera"]
     c.start(["tired2", "chan1", "long1"], owner="me", now=t0)
     assert c.quick_check() == ""
-    # 休息: 疲惫 ×0.6; 完成时按降级后的等级给固定的时间 (等级 4 → 27 分钟)
-    assert abs(c.book_rest(1000, t0 + timedelta(hours=1)) - 600) < 1e-6
+    # 休息: 疲惫 ×0.6 × 持久战 long1 ×1.1 = 0.66; 完成时按降级后的等级给固定的时间 (等级 4 → 27 分钟)
+    assert abs(c.book_rest(1000, t0 + timedelta(hours=1)) - 660) < 1e-6
     assert c.level == 4 and c.reward == 24 * 60
     # 空闲 15 分钟结束
     assert c.due(t0 + timedelta(hours=1), True) == ("", None)

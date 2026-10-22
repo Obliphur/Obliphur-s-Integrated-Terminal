@@ -158,6 +158,7 @@ class BreakTimerApp:
         self._contract_break_active = False  # 完成合约后的第一次休息: 暂停时结转比例 1 - (1 - x) / 2
         self._break_pre = 0.0         # 这次休息里有多少秒是合约开始前积攒的 (放在最后用; 暂停时原样还回去)
         self._break_cid = None        # 这次休息是在哪个合约中开始的 (合约结束后暂停: 只还合约开始前的那部分)
+        self._contract_rest_over = False  # 合约在休息中自然结束了, 这次休息继续 (手动暂停立即清空合约内获得的时间, 自然走完变空闲)
         self._supply_warned = set()   # 支援短缺: 这次休息已经提醒过的 (还差 3 / 1 分钟)
         self._offline_name = ""       # 合约因为哪台设备离线而失败
         self.rest_base = 0.0          # 刚结束的那段专注换来的休息时间 (秒, 已乘倍率; 合约中已乘疲惫)
@@ -282,6 +283,7 @@ class BreakTimerApp:
         self.var_loan = tk.BooleanVar(value=False)
 
         toast.bind_root(root)
+        toast.set_fog(self.contract.fog)         # 黑雾: 遮住除违规记录外的所有提示 (显示 [???], 18.3)
         self.ach_popups = AchievementPopups(root, self.ach, on_open=self._open_achievements)
         self.ach_popups.hold = lambda: self.contract.fog()
         # 先定好窗口大小, 再在加载页后面一页一页地建界面
@@ -564,7 +566,6 @@ class BreakTimerApp:
             if key == "reset":
 
                 tk.Frame(side, bg=card).pack(fill="both", expand=True)
-                self._build_side_contract(side)
             b = tk.Button(
                 side, text=label, anchor="w", width=15,
                 font=config.font("nav"), relief="flat", bd=0,
@@ -810,28 +811,10 @@ class BreakTimerApp:
         self.update_settings_badge()
 
 
-    # ---- 合约页上的侧边栏: 换成合约页主题的颜色, 下方显示危机等级 (MECHANICS 18) ----
-
-    def _build_side_contract(self, side):
-        from pages.contract_page import OPS
-        P = OPS
-        fr = tk.Frame(side, bg=P["side"])
-        self.side_contract = fr
-        tk.Label(fr, text="CONTINGENCY", bg=P["side"], fg=P["dim"],
-                 font=config.font("small", bold=True)).pack(anchor="w", padx=14)
-        row = tk.Frame(fr, bg=P["side"])
-        row.pack(fill="x", padx=14)
-        self.side_level = tk.Label(row, text="0", bg=P["side"], fg=P["side_on_text"],
-                                   font=config.font("big", bold=True))
-        self.side_level.pack(side="left")
-        tk.Label(row, text=tr("危机等级"), bg=P["side"], fg=P["side_text"],
-                 font=config.font("small", bold=True)).pack(side="left", anchor="s", padx=(8, 0), pady=(0, 10))
-        self.side_state = tk.Label(fr, text="", bg=P["side_on"], fg=P["side_on_text"],
-                                   font=config.font("small", bold=True), padx=8, pady=2)
-        self.side_state.pack(anchor="w", padx=14, pady=(0, 10))
+    # ---- 合约页上的侧边栏: 换成合约页主题的颜色 (MECHANICS 18) ----
 
     def _paint_sidebar(self):
-        """合约页 (主题不是"跟随界面主题"时): 侧边栏换成合约页主题的颜色, 下方显示危机等级; 其他页照常."""
+        """合约页 (主题不是"跟随界面主题"时): 侧边栏换成合约页主题的颜色; 其他页照常."""
         if not hasattr(self, "sidebar"):
             return
         from pages.contract_page import palette
@@ -840,7 +823,7 @@ class BreakTimerApp:
         side_bg = P["side"] if on else COLORS["bg_card"]
         cfg(self.sidebar, bg=side_bg, highlightbackground=P["side_rim"] if on else COLORS["border"])
         for w in self.sidebar.winfo_children():
-            if isinstance(w, tk.Frame) and w is not getattr(self, "side_contract", None):
+            if isinstance(w, tk.Frame):
                 cfg(w, bg=side_bg)
         cfg(self.topbar, bg=P["line"] if on else COLORS["accent"])
         for k, b in self.nav_btns.items():
@@ -852,16 +835,6 @@ class BreakTimerApp:
             else:
                 cfg(b, bg=P["side"], fg=P["side_text"], activebackground=P["side_hover"],
                     activeforeground=P["side_on_text"])
-        fr = getattr(self, "side_contract", None)
-        if fr is None:
-            return
-        if on:
-            c = self.contract
-            cfg(self.side_level, text=c.level_text())
-            cfg(self.side_state, text=tr("合约进行中") if c.active else tr("挑战任务"))
-            show_pack(fr, fill="x", before=self.nav_btns["reset"])
-        else:
-            hide_pack(fr)
 
     def _build_timer_page(self, body):
         bg, card = COLORS["bg"], COLORS["bg_card"]
@@ -1442,6 +1415,7 @@ class BreakTimerApp:
         c = self.contract
         self._break_pre = c.pre_take(carry) if c.active else 0.0
         self._break_cid = c.live.get("id") if c.active else None
+        self._contract_rest_over = False
         self._supply_warned = set()
         self.auto_rest = 0                       # 一起用进这次休息, 结束休息时照常折算 (6.8)
         if carry > 0 or bonus:
@@ -1551,6 +1525,7 @@ class BreakTimerApp:
         if silent:
             self.state = IDLE
             self.countdown_seconds = 0
+            self._contract_rest_over = False
         else:
             self.reset_to_idle()
             self._arm_idle_nudge()
@@ -1771,6 +1746,7 @@ class BreakTimerApp:
         self._contract_break_active = bool(live.get("cbreak"))
         self._break_pre = float(live.get("cpre") or 0)
         self._break_cid = live.get("ccid")
+        self._contract_rest_over = bool(live.get("crestover"))
         self._show_on_break()
         self.schedule_update()
 
@@ -2035,6 +2011,11 @@ class BreakTimerApp:
             return
         if self._close_pending:
             return                             # 先等 _check_close_pending 决定这段专注还要不要
+        # 绑定的设备非关机离线累计超过 5 分钟: 自动结束专注 (MECHANICS 15.4; 关机算在线, 不计)
+        if self.sync.peers() and self._timer_auto_ok() \
+                and self._offline_secs(self.start_wall) >= float(config.OFFLINE_FOCUS_END):
+            self._offline_end_focus(time.monotonic() - self.start_mono)
+            return
         if self._check_win is not None and not self._check_win.alive():
             self._check_win = None             # 被手动关掉了 = 人还在
             self._mine()
@@ -2094,6 +2075,35 @@ class BreakTimerApp:
             msg += "\n" + tr("立即开始专注:先进行一次休息时间的折算")
         toast.notice(tr("⏹  专注已自动结束"), msg)
 
+    def _offline_secs(self, start: datetime) -> float:
+        """这段专注里绑定设备非关机离线累计了多少秒 (关机算在线, 不计)."""
+        try:
+            spans = self.sync.offline_spans(start.timestamp() * 1000, time.time() * 1000, own=False)
+        except Exception:
+            return 0.0
+        return sum((b - a) for a, b in spans) / 1000.0
+
+    def _offline_end_focus(self, seconds: float):
+        """绑定设备非关机离线累计超过 5 分钟: 自动结束专注 (MECHANICS 15.4). 休息时间存进积攒的休息时间."""
+        start = self.start_wall
+        self._close_check_win()
+        self.cancel_update()
+        minutes, brk = self._book_focus(start, seconds)
+        self._mine()                             # 离线判定由本机做, 其他设备照着结束
+        self.reset_to_idle()
+        self._set_break_carry(self.break_carry + brk)
+        self._add_auto_rest(brk)
+        self._deep_check_closed(start, seconds)  # 任何原因停止都查纵深推进
+        self.lbl_sub.config(text=self._idle_sub_text())
+        self._sync_timer_buttons()
+        self.refresh_display()
+        self._refresh_if_visible("stats", "cal")
+        msg = tr("绑定的设备离线累计超过 {n} 分钟, 专注已自动结束.").format(n=int(float(config.OFFLINE_FOCUS_END) // 60))
+        if brk > 0:
+            msg += "\n" + tr("积攒的休息时间 +{t}.").format(t=fmt_ms(brk))
+            msg += "\n" + tr("立即开始专注:先进行一次休息时间的折算")
+        toast.notice(tr("⏹  专注已自动结束"), msg)
+
     def _restore_timer_view(self):
         """界面重建 (换语言 / 字号) 后按当前状态恢复计时器页."""
         self._sync_timer_buttons()
@@ -2146,6 +2156,10 @@ class BreakTimerApp:
                 s = self.countdown_seconds % 60
                 self.lbl_time.config(text=f"{m:02d}:{s:02d}")
                 sub = tr("休息剩余 {m} 分 {s:02d} 秒").format(m=m, s=s)
+                if self._contract_rest_over:
+                    sub += "\n" + tr("暂停休息: 立即消耗所有的合约休息时间, 但是不对正常休息打折")
+                elif self.contract.active and self._break_pre > 0:
+                    sub += "\n" + tr("合约前保存的休息时间: {t}").format(t=fmt_ms(int(self._break_pre)))
                 if self._break_locked():
                     sub += "\n" + self._pause_block()
                 self.lbl_sub.config(text=sub)
@@ -2174,6 +2188,7 @@ class BreakTimerApp:
         self.last_t_minutes = 0.0
         self.rest_base = 0.0
         self.countdown_seconds = 0
+        self._contract_rest_over = False
         self._sync_timer_buttons()
         active = self.behavior.active() if getattr(self, "behavior", None) is not None else None
         if active is not None:
@@ -2443,7 +2458,8 @@ class BreakTimerApp:
                     "break_end": self.break_end_wall.isoformat(timespec="seconds"),
                     "bonus": bool(self._bonus_break_active),
                     "cbreak": bool(self._contract_break_active),
-                    "cpre": round(float(self._break_pre), 1), "ccid": self._break_cid}
+                    "cpre": round(float(self._break_pre), 1), "ccid": self._break_cid,
+                    "crestover": bool(self._contract_rest_over)}
         return {"state": "idle", "owner": owner}
 
     def adopt_timer(self, live: dict):
@@ -3089,7 +3105,14 @@ class BreakTimerApp:
         c = self.contract
         if not c.active:
             return
-        self._stop_break_for_contract()      # 结束合约前先停止休息
+        # 合约自然结束 (非手动"提前结束") 时正在休息: 不立即结束这次休息, 继续休息 (仍算合约内的休息);
+        # 结算奖励照常计入积攒的休息时间; 手动暂停会清空合约内获得的时间, 自然走完变空闲 (MECHANICS 18.1)
+        rest_over = (result != "abandoned" and self.state == ON_BREAK
+                     and self._break_cid is not None and self._break_cid == c.live.get("id"))
+        if rest_over:
+            self._contract_rest_over = True
+        else:
+            self._stop_break_for_contract()      # 结束合约前先停止休息
         pending = c.reward
         rec = c.finish(result, at, by=self.sync.my_id)
         self._contract_seen = None

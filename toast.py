@@ -12,7 +12,23 @@ _RUNTIME = {
     "toasts": [],
     "queue": [],
     "recording": None,
+    "fog": None,          # () -> bool: 黑雾中. 黑雾时普通提示 (info/success/warn) 一律显示为 [???] (违规记录用 error, 不遮)
 }
+
+FOG_TEXT = "[???]"
+
+
+def set_fog(fn):
+    """注入"现在是不是黑雾"的判断 (黑雾: 合约期间看不到各种提示, MECHANICS 18.3)."""
+    _RUNTIME["fog"] = fn
+
+
+def _fogged() -> bool:
+    fn = _RUNTIME["fog"]
+    try:
+        return bool(fn and fn())
+    except Exception:
+        return False
 
 KIND_STYLE = {
     "info": ("accent", 4200),
@@ -139,6 +155,8 @@ def _record(text: str, kind: str):
 def toast(text, kind: str = "info", timeout=None):
     text = str(text)
     _record(text, kind)
+    if kind != "error" and _fogged():      # 黑雾: 遮住除违规记录 (error) 外的所有提示
+        text = FOG_TEXT
     if len(_RUNTIME["toasts"]) >= MAX_VISIBLE:
         _RUNTIME["queue"].append((text, kind, timeout))
         return None

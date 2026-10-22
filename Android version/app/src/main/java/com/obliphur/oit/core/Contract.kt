@@ -49,9 +49,9 @@ class Contract(private val file: File) {
         // 零散的 (只有一档的) 在后, 放在右边, 按等级排成行; 同一模块的上下对齐.
         val TERMS = listOf(
             // ==== 第 1 页 ====
-            Term("long1", "long", 1, "环境:持久战-I", "时长改为120%"),
-            Term("long2", "long", 2, "环境:持久战-II", "时长改为140%"),
-            Term("long3", "long", 3, "环境:持久战-III", "时长改为160%"),
+            Term("long1", "long", 1, "环境:持久战-I", "时长改为120%, 休息时长×110%"),
+            Term("long2", "long", 2, "环境:持久战-II", "时长改为140%, 休息时长×120%"),
+            Term("long3", "long", 3, "环境:持久战-III", "时长改为160%, 休息时长×130%"),
             Term("retreat1", "retreat", 1, "环境:退路封锁-I", "初始目标生命值为3"),
             Term("retreat2", "retreat", 2, "环境:退路封锁-II", "初始目标生命值为2"),
             Term("last", "retreat", 3, "最后防线", "初始目标生命值为1"),
@@ -59,9 +59,9 @@ class Contract(private val file: File) {
             Term("deep2", "deep", 2, "目标:纵深推进-II", "专注的时间不能少于80min"),
             Term("chan1", "chan", 1, "环境:通道阻塞-I", "在专注期间的最大窗口数改为4"),
             Term("chan2", "chan", 2, "环境:通道阻塞-II", "在专注期间的最大窗口数改为3"),
-            Term("tired1", "tired", 1, "环境:疲惫-I", "期间获得的休息时间改为70%"),
-            Term("tired2", "tired", 2, "环境:疲惫-II", "期间获得的休息时间改为60%"),
-            Term("tired3", "tired", 3, "环境:疲惫-III", "期间获得的休息时间改为50%"),
+            Term("tired1", "tired", 1, "环境:疲惫-I", "基础休息倍率由80%改为70%"),
+            Term("tired2", "tired", 2, "环境:疲惫-II", "基础休息倍率由80%改为60%"),
+            Term("tired3", "tired", 3, "环境:疲惫-III", "基础休息倍率由80%改为50%"),
             Term("short1", "short", 1, "环境:支援短缺-I", "可用的合约开始前已保存休息时间改为50%"),
             Term("short2", "short", 2, "环境:支援短缺-II", "不能使用合约开始前已经保存的休息时间"),
             Term("hoard", "hoard", 1, "禁止囤囤鼠!", "不能提前结束休息 但是获得的休息时间改为110%",
@@ -129,8 +129,8 @@ class Contract(private val file: File) {
         /** 合约中专注换来的休息时间的基础倍率; 有疲惫时换成疲惫的倍率. */
         const val BASE_REST = 0.8
         val REST = mapOf("tired1" to 0.7, "tired2" to 0.6, "tired3" to 0.5)
-        /** 休息时间额外的乘区 (和疲惫相乘): 禁止囤囤鼠! ×1.1, 打年糕 ×1.2 (词条组合). */
-        val REST_BONUS = mapOf("hoard" to 1.1)
+        /** 休息时间额外的乘区 (相乘): 禁止囤囤鼠! ×1.1, 持久战 ×1.1/1.2/1.3, 打年糕 ×1.2 (词条组合). */
+        val REST_BONUS = mapOf("hoard" to 1.1, "long1" to 1.1, "long2" to 1.2, "long3" to 1.3)
         /** 合约中专注换来的休息时间乘多少: 基础 ×0.8, 有疲惫时换成疲惫的 (取最低的); 再乘额外的乘区 / 组合的乘区. */
         fun restFactorOf(terms: Collection<String>): Double =
             (terms.mapNotNull { REST[it] }.minOrNull() ?: BASE_REST) * terms.fold(1.0) { f, t -> f * (REST_BONUS[t] ?: 1.0) } * comboRest(terms)
@@ -756,17 +756,10 @@ class Contract(private val file: File) {
     fun lockCell(now: LocalDateTime, dice: Dice = Dice(), textOf: ((String) -> String)? = null, auto: String = "",
                  fillSec: Long = 0, autoOf: ((String) -> String)? = null): String {
         if (!active || textOf == null || fillSec <= 0) return ""
-        var h = now.minusHours(24).withMinute(0).withSecond(0).withNano(0)
-        val pool = mutableListOf<Triple<String, LocalDateTime, LocalDateTime>>()
-        while (!h.plusHours(1).isAfter(now)) {
-            val key = "${h.toLocalDate()}/${h.hour}"
-            val cells = if (fineHour(h)) listOf(Triple("$key/1", h, h.plusMinutes(30)), Triple("$key/2", h.plusMinutes(30), h.plusHours(1)))
-                else listOf(Triple(key, h, h.plusHours(1)))
-            for (c in cells) {
-                if (!c.third.plusSeconds(cellFill(c.second, c.third, fillSec)).isAfter(now) &&
-                    !hourLocked(c.second, c.third, textOf(c.first), now, fillSec, auto, autoOf, c.first)) pool.add(c)
-            }
-            h = h.plusHours(1)
+        // 用 hourUnits 取格子 —— 只有和合约重叠的真实格子, 不会多出合约开始前 (昨天) / 细化规范切出来的不存在的格子
+        val pool = hourUnits(now).filter { (k, a, b) ->
+            !b.plusSeconds(cellFill(a, b, fillSec)).isAfter(now) &&
+                !hourLocked(a, b, textOf(k), now, fillSec, auto, autoOf, k)
         }
         if (pool.isEmpty()) return ""
         val (k, a, b) = pool[dice.pick(pool.size)]

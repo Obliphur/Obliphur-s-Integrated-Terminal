@@ -54,6 +54,14 @@ class Forwarder(
         const val INBOX_LIMIT = 4096
     }
 
+    /** 常见公共 DoH / DoT 解析器 (Firefox / Chrome / 社交应用写死用来绕过系统 DNS 的): 443 端口连它们一律丢掉. */
+    private val dohResolvers: Set<InetAddress> = listOf(
+        "1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4", "9.9.9.9", "149.112.112.112",
+        "208.67.222.222", "208.67.220.220", "94.140.14.14", "94.140.15.15",
+        "2606:4700:4700::1111", "2606:4700:4700::1001", "2001:4860:4860::8888", "2001:4860:4860::8844",
+        "2620:fe::fe", "2620:fe::9",
+    ).mapNotNull { runCatching { InetAddress.getByName(it) }.getOrNull() }.toSet()
+
     /** 从 VPN 读到的一个 IP 包 (只看 TCP / UDP). */
     private class Ip(val b: ByteArray, val v6: Boolean, val src: ByteArray, val dst: ByteArray,
                      val proto: Int, val off: Int, val end: Int)
@@ -240,10 +248,20 @@ class Forwarder(
 
     private fun sockAddr(ip: ByteArray, port: Int) = InetSocketAddress(InetAddress.getByAddress(ip), port)
 
-    /** 新连接: 名单里的应用发的就丢掉 (结果缓存一段时间). */
+    /** 会绕过明文 DNS 过滤的加密 DNS / QUIC: DoT (853)、QUIC / DoH3 (UDP 443)、写死到公共 DoH 解析器 (443).
+     *  全部丢掉, 逼应用回到明文 DNS (由 VPN 的 DNS 过滤处理), 否则社交平台用自带的加密 DNS 绕过, 屏蔽不干净. */
+    private fun bypassesDns(proto: Int, dport: Int, dstIp: ByteArray): Boolean {
+        if (dport == 853) return true                              // DoT
+        if (proto == UDP && dport == 443) return true              // QUIC / HTTP3 (含 DoH3)
+        if (dport == 443 && runCatching { InetAddress.getByAddress(dstIp) in dohResolvers }.getOrDefault(false)) return true
+        return false
+    }
+
+    /** 新连接: 名单里的应用发的 / 加密 DNS 绕过的就丢掉 (结果缓存一段时间). */
     private fun isDropped(key: String, proto: Int, ip: Ip, sport: Int, dport: Int): Boolean {
         val now = SystemClock.elapsedRealtime()
         if (dropped.containsKey(key)) { dropped[key] = now; return true }
+        if (bypassesDns(proto, dport, ip.dst)) { dropped[key] = now; return true }
         val pkg = runCatching {
             blocked(if (proto == TCP) OsConstants.IPPROTO_TCP else OsConstants.IPPROTO_UDP,
                 sockAddr(ip.src, sport), sockAddr(ip.dst, dport))

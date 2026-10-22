@@ -22,9 +22,12 @@ object Cfg {
     const val IDLE_NUDGE_EVERY = 60 * 60L
 
     // 专注中的"还在吗"
-    const val FOCUS_CHECK_EVERY = 90 * 60.0
+    const val FOCUS_CHECK_EVERY = 60 * 60.0
     const val FOCUS_CHECK_GRACE = 30 * 60.0
     const val FOCUS_CHECK_PENALTY = 0.3
+
+    // 绑定的设备非关机离线累计超过这么多秒 (MECHANICS 15.4): 自动结束专注 (关机算在线, 不计)
+    const val OFFLINE_FOCUS_END = 5 * 60.0
 
     // 专注状态写盘与恢复
     const val FOCUS_SAVE_EVERY = 4 * 60.0

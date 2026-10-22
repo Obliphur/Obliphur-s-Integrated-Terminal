@@ -194,7 +194,9 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
 
     // ---- 提示 ----
 
-    fun toast(text: String, kind: String = "info", long: Boolean = false) = host.toast(Toast(text, kind, long))
+    // 黑雾: 遮住除违规记录 (error) 外的所有提示, 显示为 [???] (MECHANICS 18.3)
+    fun toast(text: String, kind: String = "info", long: Boolean = false) =
+        host.toast(Toast(if (kind != "error" && contract.fog()) "[???]" else text, kind, long))
 
     fun changed() = host.changed()
 
@@ -1044,7 +1046,11 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     fun endContract(result: String, at: LocalDateTime? = null) {
         val c = contract
         if (!c.active) return
-        timer.stopBreakForContract()      // 结束合约前先停止休息
+        // 合约自然结束 (非手动"提前结束") 时正在休息: 不立即结束这次休息, 继续休息 (仍算合约内的休息);
+        // 奖励照常计入积攒的休息时间; 手动暂停清空合约内获得的时间, 自然走完变空闲 (MECHANICS 18.1)
+        val restOver = result != "abandoned" && timer.state == TState.ON_BREAK &&
+            timer.breakCid != 0L && timer.breakCid == c.id
+        if (restOver) timer.contractRestOver = true else timer.stopBreakForContract()
         val pending = c.reward
         val rec = c.finish(result, at, myId()) ?: return
         contractSeen = null
@@ -1106,7 +1112,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         logNotice("CONTRACT violation ${c.violations}/${c.violationLimit}: ${id.ifEmpty { "-" }} -> ${new.ifEmpty { "-" }}  $why")
         val msg = tr("⚠ 违反合约: {why} · 目标生命值 {n} / {m}", "why" to why, "n" to c.life, "m" to c.violationLimit) +
             "\n" + after + "  ·  " + tr("危机等级 {lv}", "lv" to c.level)
-        toast(msg, "warn", long = true)
+        toast(msg, "error", long = true)   // 违规记录: 黑雾中也照常显示 (error 不遮)
         addViolation(msg)               // 违规记录页 (MECHANICS 8.1): 内容照搬这段提示
         if (over) endContract("failed")
         else if (id in Contract.BANS && new.isEmpty()) host.applyNet(false)   // 禁止联网的词条失效: 这一类应用的网络放开

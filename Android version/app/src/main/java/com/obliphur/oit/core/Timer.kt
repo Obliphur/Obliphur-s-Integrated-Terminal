@@ -40,6 +40,8 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
     /** 这次休息是在哪个合约中开始的 (0 = 不是; 合约结束后暂停: 只还合约开始前的那部分). */
     var breakCid = 0L
         private set
+    /** 合约在休息中自然结束了, 这次休息继续 (手动暂停立即清空合约内获得的时间, 自然走完变空闲). */
+    var contractRestOver = false
     /** 刚结束的那段专注换来的休息时间 (秒, 已乘倍率; 合约中已乘疲惫). */
     private var restBase = 0.0
     private var focusChecks = 0
@@ -247,6 +249,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         val c = core.contract
         breakPre = if (c.active) c.preTake(carry.toDouble()) else 0.0
         breakCid = if (c.active) c.id else 0L
+        contractRestOver = false
         core.supplyWarned.clear()
         breakCarry = 0
         autoRest = 0                             // 一起用进这次休息, 结束休息时照常折算 (6.8)
@@ -324,6 +327,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         lastTMinutes = 0.0
         restBase = 0.0
         breakEndMono = 0.0
+        contractRestOver = false
         saveState()
         core.changed()
     }
@@ -379,7 +383,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
             .put("start", breakStartWall!!.iso())
             .put("end", (breakEndWall ?: LocalDateTime.now().plusSec(countdown)).iso())
             .put("bonus", bonusBreakActive).put("cbreak", contractBreakActive)
-            .put("cpre", breakPre).put("ccid", breakCid) else JSONObject.NULL
+            .put("cpre", breakPre).put("ccid", breakCid).put("crestover", contractRestOver) else JSONObject.NULL
         d.put("break", b)
         focusSaved = mono()
         Store.write(file, d)
@@ -516,6 +520,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
                     contractBreakActive = brk.optBoolean("cbreak", false)
                     breakPre = brk.optDouble("cpre", 0.0)
                     breakCid = brk.optLong("ccid", 0L)
+                    contractRestOver = brk.optBoolean("crestover", false)
                     core.changed()
                     return
                 }
@@ -685,6 +690,10 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
             closeCheck(); return
         }
         if (closePending != null) return         // 先等 checkClosePending 决定这段专注还要不要
+        // 绑定的设备非关机离线累计超过 5 分钟: 自动结束专注 (MECHANICS 15.4; 关机算在线, 不计)
+        if (core.hasPeers() && autoOk() && offlineSecs(startWall!!) >= Cfg.OFFLINE_FOCUS_END) {
+            offlineEndFocus(mono() - startMono); return
+        }
         val el = mono() - startMono
         val mark = Cfg.FOCUS_CHECK_EVERY * (focusChecks + 1)
         if (el >= mark + Cfg.FOCUS_CHECK_GRACE) {
@@ -711,6 +720,26 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         }
         // 绑定了其他设备时写得勤一些: 被关掉之后才知道是什么时候关的
         if (mono() - focusSaved >= if (core.hasPeers()) Cfg.FOCUS_ALIVE_EVERY else Cfg.FOCUS_SAVE_EVERY) saveState()
+    }
+
+    /** 这段专注里绑定设备非关机离线累计了多少秒 (关机算在线, 不计). */
+    private fun offlineSecs(start: LocalDateTime): Double =
+        core.offlineSpans(ms(start), ms(LocalDateTime.now())).filter { it.second > it.first }
+            .sumOf { (a, b) -> (b - a) / 1000.0 }
+
+    /** 绑定设备非关机离线累计超过 5 分钟: 自动结束专注 (MECHANICS 15.4). 休息时间存进积攒的休息时间. */
+    private fun offlineEndFocus(seconds: Double) {
+        val start = startWall!!
+        closeCheck()
+        val (_, brk) = bookFocus(start, seconds, null)
+        mine()                                     // 离线判定由本机做, 其他设备照着结束
+        resetToIdle()
+        setCarry(breakCarry + brk)
+        addAutoRest(brk)
+        deepCheckClosed(start, seconds)            // 任何原因停止都查纵深推进
+        var msg = tr("绑定的设备离线累计超过 {n} 分钟, 专注已自动结束.", "n" to (Cfg.OFFLINE_FOCUS_END / 60).toInt())
+        if (brk > 0) msg += "\n" + tr("积攒的休息时间 +{t}.", "t" to fmtMs(brk.toDouble())) + "\n" + tr("立即开始专注:先进行一次休息时间的折算")
+        core.notice(tr("⏹  专注已自动结束"), msg, listOf(NoticeButton(tr("知道了"), "ok", true)), page = "timer")
     }
 
     /** 提醒窗没人关: 自动结束专注. 不开始休息倒计时 (人不在), 休息时间存进积攒的休息时间. */
@@ -801,6 +830,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
             state == TState.ON_BREAK && bs != null && be != null -> JSONObject().put("state", "break").put("owner", o)
                 .put("break_start", bs.iso()).put("break_end", be.iso()).put("bonus", bonusBreakActive)
                 .put("cbreak", contractBreakActive).put("cpre", breakPre).put("ccid", breakCid)
+                .put("crestover", contractRestOver)
             else -> JSONObject().put("state", "idle").put("owner", o)
         }
     }
@@ -846,6 +876,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
                     contractBreakActive = l.optBoolean("cbreak")
                     breakPre = l.optDouble("cpre", 0.0)
                     breakCid = l.optLong("ccid", 0L)
+                    contractRestOver = l.optBoolean("crestover", false)
                 }
             }
             else -> {

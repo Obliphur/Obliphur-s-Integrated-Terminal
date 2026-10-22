@@ -412,19 +412,6 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
                                 go(key); scope.launch { drawer.close() }
                             }.padding(horizontal = 24.dp, vertical = 14.dp))
                     }
-                    // 合约页: 侧边栏下方显示危机等级 (同参考图左下角)
-                    if (cp != null) {
-                        Spacer(Modifier.weight(1f))
-                        val ct = core.contract
-                        Text("CONTINGENCY", color = cp.dim, fontWeight = FontWeight.Bold, fontSize = 12.sp,
-                            modifier = Modifier.padding(start = 24.dp))
-                        Text(if (ct.active) com.obliphur.oit.core.Contract.levelLabel(ct.level, ct.origLevel)
-                            else "${com.obliphur.oit.core.Contract.levelOf(ct.draft)}",
-                            color = cp.text, fontWeight = FontWeight.Bold, fontSize = 44.sp, modifier = Modifier.padding(start = 24.dp))
-                        Text(if (ct.active) tr("合约进行中") else tr("挑战任务"), color = cp.tagText, fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 24.dp, bottom = 20.dp)
-                                .background(cp.tag).padding(horizontal = 8.dp, vertical = 2.dp))
-                    }
                 }
             }) {
                 Scaffold(
@@ -443,7 +430,7 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
                     },
                     snackbarHost = {
                         SnackbarHost(snack) { d ->
-                            val c = when (snackKind) { "success" -> o.success; "warn" -> o.warn; else -> o.accent }
+                            val c = when (snackKind) { "success" -> o.success; "warn" -> o.warn; "error" -> o.danger; else -> o.accent }
                             Snackbar(d, containerColor = o.card, contentColor = o.text, actionColor = c,
                                 shape = RoundedCornerShape(8.dp), modifier = Modifier.padding(8.dp))
                         }

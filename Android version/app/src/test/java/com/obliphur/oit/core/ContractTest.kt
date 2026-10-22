@@ -76,7 +76,7 @@ class ContractTest {
         assertFalse(Contract.comboDone(mochi, listOf("long1", "tired2", "fine")))
         assertEquals("void", Contract.comboState(mochi, listOf("long1", "tired2"), listOf("long1", "tired2", "fine", "deep1")))
         assertEquals(1, Contract.comboLevel(listOf("long1", "tired2", "fine", "deep1")))
-        assertEquals(0.6 * 1.2, Contract.restFactorOf(listOf("long1", "tired2", "fine", "deep1")), 1e-9)
+        assertEquals(0.6 * 1.1 * 1.2, Contract.restFactorOf(listOf("long1", "tired2", "fine", "deep1")), 1e-9)
         val iso = listOf("info1", "erode1", "chan1", "suppress", "fog", "quiet", "jam")
         assertEquals(iso.sorted(), Contract.clean(iso).sorted())  // 信息隔绝组合的词条可以一起选
         assertEquals(1, Contract.comboLevel(iso)); assertEquals(10 * 60, Contract.comboEnd(iso))
@@ -128,8 +128,8 @@ class ContractTest {
         // 乐理之灾: 只在刚打开的那一下算; 只有 1 级, 降一级就失效
         assertEquals("music", c.banCheck("music", true)); assertEquals("", c.banCheck("music", true)); c.banCheck("music", false)
         assertEquals("", c.downgrade("music")); assertFalse(c.has("music"))
-        // 休息: 疲惫 ×0.6; 完成时按降级后的等级给固定的时间
-        assertEquals(600.0, c.bookRest(1000.0), 1e-6)
+        // 休息: 疲惫 ×0.6 × 持久战 long1 ×1.1 = 0.66; 完成时按降级后的等级给固定的时间
+        assertEquals(660.0, c.bookRest(1000.0), 1e-6)
         assertEquals(Contract.restMinutes(c.level) * 60.0, c.reward, 1e-6)
         // 空闲 15 分钟; 和设备离线共用 (空闲 10 分钟后有设备离线, 再过 5 分钟就失败)
         assertNull(c.due(t0.plusHours(1), true))
@@ -164,14 +164,14 @@ class ContractTest {
         // 打年糕组合: 额外 1 危机等级, 休息时间 ×1.2; 纵深推进降级不算失效
         e.start(listOf("long1", "tired2", "fine", "deep2"), "me", t0)
         assertEquals("done", e.combos()[0].second); assertEquals(8, e.level)
-        assertEquals(0.6 * 1.2, e.restFactor(), 1e-9)
+        assertEquals(0.6 * 1.1 * 1.2, e.restFactor(), 1e-9)
         assertEquals(false to "deep1", e.violate("deep2")); assertEquals("done", e.combos()[0].second)
-        assertEquals(0.6 * 1.2, e.restFactor(), 1e-9)             // 降级不算失效
+        assertEquals(0.6 * 1.1 * 1.2, e.restFactor(), 1e-9)       // 降级不算失效
         assertEquals(false to "", e.violate("deep1")); assertEquals("void", e.combos()[0].second)
-        assertEquals(0.6, e.restFactor(), 1e-9)                   // 成员失效了: 乘区取消
+        assertEquals(0.6 * 1.1, e.restFactor(), 1e-9)             // 打年糕乘区取消, 持久战 ×1.1 还在
         // 没有疲惫: 基础 ×0.8 (打年糕照样相乘)
         assertEquals(0.8, Contract.restFactorOf(emptyList()), 1e-9)
-        assertEquals(0.6 * 1.2, Contract.restFactorOf(listOf("long1", "tired2", "fine", "deep1")), 1e-9)
+        assertEquals(0.6 * 1.1 * 1.2, Contract.restFactorOf(listOf("long1", "tired2", "fine", "deep1")), 1e-9)
         // 录像的词条: 违反一次就失效, 不再录
         e.start(listOf("scar"), "me", t0)
         assertEquals(listOf("screen"), e.records()); assertEquals(1, e.level)
@@ -440,12 +440,14 @@ class ContractTest {
         assertFalse(c.hourLocked(b, b.plusHours(1), "", now, 3600, "Sleeping"))        // 11 点那格还没过填写时限
         assertEquals("2026-10-18/9", c.lockCell(now, seq(pick = { it - 1 }), textOf, "Sleeping", 3600))   // 已经封锁的不再选
         assertEquals("", c.lockCell(now, seq(), null, "Sleeping", 3600))
-        // 记录封锁: 每次完成填写时另外封锁两个; 没选记录封锁时不封
+        // 记录封锁: 每次完成填写时另外封锁两个; 没选记录封锁时不封. 只封合约期间内的格子 (不会多出昨天 / 合约外的, #7)
         assertTrue(c.sealExtra(now, seq(), textOf, "Sleeping", 3600).isEmpty())
         c.live.put("terms", org.json.JSONArray(c.terms + "seal"))
         val n0 = c.locks().size
-        val got = c.sealExtra(now, seq(pick = { it - 1 }), textOf, "Sleeping", 3600)
+        val now2 = LocalDateTime.of(2026, 10, 18, 14, 0)        // 合约 09:30–13:30 内, 9 / 10 点已锁, 还剩 11 / 12 点可封
+        val got = c.sealExtra(now2, seq(pick = { it - 1 }), textOf, "Sleeping", 3600)
         assertEquals(2, got.toSet().size)
+        assertTrue(got.all { it == "2026-10-18/11" || it == "2026-10-18/12" })
         assertEquals(n0 + 2, c.locks().size)
         c.finish("abandoned", now)
         // 合约提前结束了: 另外封锁的格子解除; 之后才开始的这段专注不减速 (阻滞只对合约内的专注生效)

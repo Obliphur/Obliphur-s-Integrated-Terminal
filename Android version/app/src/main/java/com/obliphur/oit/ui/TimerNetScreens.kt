@@ -83,6 +83,8 @@ fun TimerScreen() {
                     BigText(fmtMs(left))
                     val s = kotlin.math.ceil(left).toLong()
                     var sub = tr("休息剩余 {m} 分 {s} 秒", "m" to s / 60, "s" to "%02d".format(s % 60))
+                    if (t.contractRestOver) sub += "\n" + tr("暂停休息: 立即消耗所有的合约休息时间, 但是不对正常休息打折")
+                    else if (core.contract.active && t.breakPre > 0) sub += "\n" + tr("合约前保存的休息时间: {t}", "t" to fmtMs(t.breakPre.toInt().toDouble()))
                     if (t.breakLocked) sub += "\n" + t.pauseBlock
                     Dim(sub)
                 }
