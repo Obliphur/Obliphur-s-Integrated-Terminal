@@ -294,6 +294,9 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
 
     private fun logNotice(text: String) = Store.append(File(dir, "settings_changes.log"), text)
 
+    /** 录像 (MECHANICS 18.8) 的日志: 开始 / 保存 / 出错 / 跨设备传输, 记到单独的 record.log. */
+    fun logRecord(text: String) = Store.append(File(dir, "record.log"), "RECORD $text")
+
     // ---- 违规记录 (MECHANICS 8.1): 最近 15 条合约违规的提示文字 (新的在后) ----
 
     private fun loadViolations() {

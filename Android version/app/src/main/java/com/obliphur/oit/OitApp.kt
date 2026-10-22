@@ -13,6 +13,7 @@ import com.obliphur.oit.core.I18n
 import com.obliphur.oit.core.Notice
 import com.obliphur.oit.core.Toast
 import com.obliphur.oit.core.VpnPlan
+import com.obliphur.oit.core.RecCrypto
 import com.obliphur.oit.core.tr
 import com.obliphur.oit.service.AppUsage
 import com.obliphur.oit.service.BlockLog
@@ -63,6 +64,35 @@ class OitApp : Application(), Host {
         wipedNotice()
         CoreService.start(this)
         listenShutdown()
+        // 上次没加密完的录像 (被强杀时留在缓存里的) 开机时补上加密 (MECHANICS 18.8)
+        Thread { runCatching { RecCrypto.sealLeftovers(oitDir, cacheDir) } }.apply { isDaemon = true }.start()
+    }
+
+    /** 合约录像的调度 (MECHANICS 18.8): CoreService 每秒 tick 一次. */
+    val recordManager by lazy { com.obliphur.oit.service.RecordManager(this) }
+
+    /** 录屏的系统授权 (每次用一次; MainActivity 弹出授权后存进来, RecordManager 取用). */
+    @Volatile var recProjection: Pair<Int, Intent>? = null
+
+    /** 本机不是合约主人: 问一次用户, 同意就把本次刻痕录的屏幕片段发给主人 (在线的电脑) 合并 (MECHANICS 18.8). */
+    fun askSendSegments(cid: String, owner: String, name: String, files: List<File>, total: Long) = main {
+        val s = sync ?: return@main
+        if (!s.peers().containsKey(owner)) return@main
+        core.notice(tr("🎬 刻痕: 发送录屏片段"),
+            tr("本次刻痕: 本机录了 {n} 段屏幕 ({size}).", "n" to files.size, "size" to com.obliphur.oit.ui.fmtSize(total)) + "\n"
+                + tr("发给 {name} 合并成一个视频吗? (加密传输)", "name" to name),
+            listOf(com.obliphur.oit.core.NoticeButton(tr("发送"), "send", true),
+                com.obliphur.oit.core.NoticeButton(tr("不发"), "no", false)),
+            onClose = onClose@{ act ->
+                if (act != "send") return@onClose
+                Thread {
+                    var ok = 0
+                    for (f in files) runCatching { if (s.sendFile(owner, f, cid) == "sent") ok++ }
+                        .onFailure { core.logRecord("send $cid failed: ${it.message}") }
+                    core.logRecord("sent $ok/${files.size} scar segments for $cid to $owner")
+                    main { if (ok > 0) core.toast(tr("已发送 {n} 段录屏给 {name} 合并.", "n" to ok, "name" to name), "success") }
+                }.apply { isDaemon = true }.start()
+            })
     }
 
     /** 这次开机后 OIT 是被系统自动启动的 (开机自启动没被关掉, MECHANICS 14.8): BootReceiver 记下的开机次数等于现在的.

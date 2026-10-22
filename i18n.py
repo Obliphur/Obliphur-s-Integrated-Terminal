@@ -12,6 +12,23 @@ _current = DEFAULT_LANGUAGE
 
 
 EN = {
+    # ---- 手机端录像界面补充 (MECHANICS 18.8) ----
+    "合约录像中: {what}": "Recording for the contract: {what}",
+    "录像经过加密, 只能在 OIT 里查看 (设置 → 录像).": "Recordings are encrypted and can only be viewed inside OIT (Settings → Recording).",
+    "摄像头": "Camera",
+    "屏幕": "Screen",
+    "🎬  录像": "🎬  Recording",
+    "目光 (摄像头) 和刻痕 (屏幕) 录下的视频经过加密, 只能在这里 (OIT 内) 查看和播放, 不会被网盘 / 相册自动上传.":
+        "Videos from Gaze (camera) and Engraving (screen) are encrypted and can only be viewed and played here, inside OIT; cloud drives / galleries can't auto-upload them.",
+    "刻痕录的是\"焦点设备\"的屏幕: 哪台在操作就录哪台. 各设备录的片段结束后会传到合约主人 (一台电脑) 那里合并成一个视频; 手机上只能逐段查看, 合并后的视频在那台电脑上.":
+        "Engraving records the \"focus device\" screen: whichever device is in use gets recorded. When the contract ends, each device's clips are sent to the contract owner (a computer) and merged into one video; on the phone you can only view clips one by one, and the merged video lives on that computer.",
+    "🎞 合并的录屏": "🎞 Merged screen recordings",
+    "📷 摄像头 (目光)": "📷 Camera (Gaze)",
+    "🖥 屏幕 (刻痕)": "🖥 Screen (Engraving)",
+    "(未写完)": "(unfinished)",
+    "播放": "Play",
+    "不发": "Don't send",
+    "还没有录像.": "No recordings yet.",
     "确定": "OK",
     "取消": "Cancel",
     # ---- 提前启动 (仅 PC, MECHANICS 20) ----

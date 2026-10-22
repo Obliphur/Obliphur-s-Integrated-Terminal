@@ -2,4 +2,6 @@
 <!-- 更新: 下载好的安装包放在缓存目录的 updates/ 里, 交给系统安装界面 -->
 <paths>
     <cache-path name="updates" path="updates/" />
+    <!-- 录像播放: .oitv 解密到缓存的 oit_play/ 再用系统播放器打开 (MECHANICS 18.8) -->
+    <cache-path name="oit_play" path="oit_play/" />
 </paths>

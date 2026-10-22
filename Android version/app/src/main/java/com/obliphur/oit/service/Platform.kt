@@ -48,6 +48,7 @@ object Notifier {
     private const val ID_EVENT = 2
     private const val ID_HOUR = 3
     private const val ID_VPN = 4
+    const val ID_RECORD = 5
     private const val NOTICE_BASE = 1000
 
     private val posted = HashSet<Int>()
@@ -89,6 +90,16 @@ object Notifier {
 
     fun updateStatus(ctx: Context) {
         ctx.getSystemService(NotificationManager::class.java).notify(ID_STATUS, status(ctx))
+    }
+
+    /** 合约录像的前台服务通知 (MECHANICS 18.8): 系统要求录屏 / 摄像头时有一个常驻通知. */
+    fun recording(ctx: Context, cam: Boolean, screen: Boolean): Notification {
+        val what = listOfNotNull(if (cam) tr("摄像头") else null, if (screen) tr("屏幕") else null)
+            .joinToString(" + ").ifEmpty { tr("录像") }
+        return builder(ctx, CH_STATUS).setContentTitle(tr("合约录像中: {what}", "what" to what))
+            .setContentText(tr("录像经过加密, 只能在 OIT 里查看 (设置 → 录像)."))
+            .setOngoing(true).setOnlyAlertOnce(true).setShowWhen(false)
+            .setContentIntent(openIntent(ctx, "settings", 5)).build()
     }
 
     fun event(ctx: Context, text: String) {
@@ -168,6 +179,7 @@ class CoreService : Service() {
             if (lastRun > 0) Background.noteGap(now - lastRun, wake != null)
             lastRun = now
             app.core.tick()
+            runCatching { app.recordManager.tick() }      // 合约录像的开始 / 停止 (MECHANICS 18.8)
             if (++n % 5 == 0) {
                 Notifier.updateStatus(this@CoreService)
                 holdLocks(app.core.hasPeers())

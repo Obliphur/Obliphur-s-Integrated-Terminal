@@ -356,7 +356,11 @@ fun ContractScreen() {
                                         }
                                         val cur = c.draft.toMutableList()
                                         if (t.id in cur) cur.remove(t.id)
-                                        else if (Contract.blockedBy(t.id, cur) == null) cur.add(t.id)
+                                        else if (Contract.blockedBy(t.id, cur) == null) {
+                                            // 目光 / 刻痕: 选上前先提示会录像 + 加密 (MECHANICS 18.8)
+                                            if (t.id == "gaze" || t.id == "scar") { ask = "pickwarn:" + t.id; return@clickable }
+                                            cur.add(t.id)
+                                        }
                                         c.setDraft(cur)
                                         core.changed()
                                     }, contentAlignment = Alignment.Center) {
@@ -529,6 +533,22 @@ fun ContractScreen() {
             if (id !in c.rand) ask = ""
             else Confirm(tr("关闭词条"), tr("关闭未知变量选中的 {name}?", "name" to termName(id)) + "\n" + tr("会算作一次违反."),
                 true, { ask = "" }) { core.closeRandomTerm(id) }
+        } else if (ask.startsWith("pickwarn:")) {
+            // 目光 / 刻痕: 选上前提示会录像 + 加密 (MECHANICS 18.8). 选不选由用户决定.
+            val id = ask.removePrefix("pickwarn:")
+            val title = if (id == "gaze") tr("⚠ 目光: 摄像头录像") else tr("⚠ 刻痕: 屏幕录像")
+            val msg = if (id == "gaze")
+                tr("「目光」会在合约期间用电脑或手机的摄像头录下你的样子 (可带声音), 结束后保存.") + "\n" +
+                tr("录像经过加密, 只能在 OIT 里查看和播放 (设置 → 录像), 不会被网盘 / 相册自动上传.") + "\n" +
+                tr("选不选由你决定.")
+            else
+                tr("「刻痕」会在合约期间录下焦点设备的屏幕 (可带声音): 哪台设备在操作就录哪台, 每 10 秒切换一次.") + "\n" +
+                tr("合约结束后, 各设备录下的片段会传到一台电脑上合并成一个视频 (传输前会再确认).") + "\n" +
+                tr("录像经过加密, 只能在 OIT 里查看和播放. 选不选由你决定.")
+            Confirm(title, msg, true, { ask = "" }) {
+                val cur = c.draft.toMutableList()
+                if (id !in cur && Contract.blockedBy(id, cur) == null) { cur.add(id); c.setDraft(cur); core.changed() }
+            }
         }
     }
 }

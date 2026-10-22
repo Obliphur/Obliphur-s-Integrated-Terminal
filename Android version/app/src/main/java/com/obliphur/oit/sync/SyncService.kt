@@ -52,6 +52,9 @@ interface SyncLocal {
     fun fileOffered(peerId: String, who: String, o: JSONObject): String = "unsupported"
     /** 文件通道: 对方收到了本机发的文件. */
     fun fileDelivered(who: String, name: String) {}
+    /** 刻痕的录屏片段 (MECHANICS 18.8): 别的设备发来某个合约 (o.cid) 的片段, 合约主人自动收下合并, 不问用户.
+     *  "" = 要 (之后 fetchFile 去取), 否则是不要的原因. */
+    fun recOffered(peerId: String, who: String, o: JSONObject): String = "unsupported"
 }
 
 /** 在界面线程里执行, 等它做完 (同 devsync.MainRunner). post=null 时直接在当前线程执行 (测试用). */
@@ -512,7 +515,11 @@ class SyncService(
 
     /** 先发签名的说明 (文件名, 大小, SHA-256, 取件码, nonce), 对方同意后来取 (内容加密传).
      *  open: 每次调用打开一次文件. 返回 "sent", 或对方不要的原因 ("old" = 对方的 OIT 太旧). 在后台线程里调用. */
-    fun sendFile(peerId: String, name: String, size: Long, open: () -> java.io.InputStream): String {
+    /** 刻痕的录屏片段 (MECHANICS 18.8): 发给合约主人合并. cid = 合约 id (对方自动收下, 不问存到哪里). */
+    fun sendFile(peerId: String, file: File, cid: String = ""): String =
+        sendFile(peerId, file.name, file.length(), cid) { file.inputStream() }
+
+    fun sendFile(peerId: String, name: String, size: Long, cid: String = "", open: () -> java.io.InputStream): String {
         val p = peers()[peerId] ?: return "unpaired"
         if (size <= 0 || size > FILE_MAX) return "size"
         val md = MessageDigest.getInstance("SHA-256")
@@ -533,8 +540,10 @@ class SyncService(
         val now = System.currentTimeMillis()
         fileOffers.entries.removeAll { it.value.expires < now }
         fileOffers[token] = FileOffer(name, size, open, SyncCrypto.fileKey(k), nonce, now + OFFER_TTL_MS)
-        val env = SyncCrypto.seal(k, myId, JSONObject().put("send", JSONObject().put("name", name).put("size", size)
-            .put("sha256", SyncCrypto.hex(md.digest())).put("token", token).put("nonce", SyncCrypto.hex(nonce))))
+        val send = JSONObject().put("name", name).put("size", size)
+            .put("sha256", SyncCrypto.hex(md.digest())).put("token", token).put("nonce", SyncCrypto.hex(nonce))
+        if (cid.isNotEmpty()) send.put("cid", cid)
+        val env = SyncCrypto.seal(k, myId, JSONObject().put("send", send))
         val (st, reply) = http(p.getString("addr"), p.getInt("port"), "POST", "/oit/v1/send", env, 10_000)
         if (st == 404) return "old"
         if (st == 401) throw IllegalStateException("unpaired")
@@ -556,7 +565,13 @@ class SyncService(
             !hex32.matches(o.optString("token")) || !hex32.matches(o.optString("nonce"))) return bad
         val clean = JSONObject().put("name", SyncCrypto.safeName(o.optString("name"))).put("size", size)
             .put("sha256", o.optString("sha256")).put("token", o.optString("token")).put("nonce", o.optString("nonce"))
-        val why = try { runner.call { local.fileOffered(id, p.optString("name", "?"), clean) } } catch (e: Exception) {
+        // 刻痕的录屏片段 (18.8): 带 cid 的发给 recOffered (合约主人自动收下合并), 不走 fileOffered (不问用户存到哪里)
+        val cid = o.optString("cid").filter { it.isLetterOrDigit() }.take(24)
+        if (cid.isNotEmpty()) clean.put("cid", cid)
+        val why = try {
+            runner.call { if (cid.isNotEmpty()) local.recOffered(id, p.optString("name", "?"), clean)
+                          else local.fileOffered(id, p.optString("name", "?"), clean) }
+        } catch (e: Exception) {
             return 503 to JSONObject().put("error", e.message)
         }
         return 200 to if (why.isEmpty()) JSONObject().put("ok", true) else JSONObject().put("ok", false).put("why", why)

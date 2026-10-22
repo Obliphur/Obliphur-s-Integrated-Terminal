@@ -11,6 +11,12 @@
     <!-- 绑定了其他设备时熄屏也保持 CPU / Wi-Fi 醒着, 别的设备随时能连进来 -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- 合约录像 (MECHANICS 18.8): 目光 → 摄像头, 刻痕 → 录屏, 可带麦克风声音 -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
@@ -62,6 +68,12 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Self-control focus timer and network quota enforcement" />
         </service>
+
+        <!-- 合约录像 (MECHANICS 18.8): 摄像头 / 录屏 / 麦克风各自的前台服务类型 -->
+        <service
+            android:name=".service.RecordService"
+            android:exported="false"
+            android:foregroundServiceType="camera|microphone|mediaProjection" />
 
         <service
             android:name=".service.OitVpnService"

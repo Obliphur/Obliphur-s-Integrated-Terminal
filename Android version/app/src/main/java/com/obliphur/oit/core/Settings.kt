@@ -93,6 +93,9 @@ object Schema {
         // ---- 合约 ----
         Spec("CONTRACT_THEME", "合约页主题", Kind.CHOICE, false, "contract", "ops",
             choices = listOf("ops" to "起源", "ui" to "跟随界面主题")),
+        // ---- 录像 (目光 / 刻痕, MECHANICS 18.8): 要不要录声音 (默认都录). 手机上录屏录不到系统音 ----
+        Spec("REC_MIC", "录麦克风 (外部音)", Kind.CHOICE, false, "record", "1", choices = ONOFF),
+        Spec("REC_SYSTEM", "录系统音", Kind.CHOICE, false, "record", "1", choices = ONOFF),
         // ---- 窗口 (Android: 应用; 窗口数 = 后台的应用数, 只检测, 超过时响警报, 不关应用) ----
         Spec("WINDOW_LIMIT_ENABLED", "后台应用数检测", Kind.CHOICE, true, "window", "1", choices = ONOFF),
         Spec("WINDOW_FOCUS_ENABLED", "应用使用时间统计", Kind.CHOICE, true, "window", "1", choices = ONOFF),
@@ -116,7 +119,7 @@ object Schema {
     val PAGES = listOf(
         "basic" to "基本设置", "timer" to "计时器", "net" to "联网",
         "rules" to "规则", "log" to "整点记录", "contract" to "合约", "window" to "应用",
-        "daily" to "日常",
+        "record" to "录像", "daily" to "日常",
     )
 
     val BY_KEY = ALL.associateBy { it.key }

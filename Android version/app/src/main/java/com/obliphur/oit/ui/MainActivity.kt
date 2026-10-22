@@ -77,6 +77,34 @@ class MainActivity : ComponentActivity() {
         asking = false
         nextFirstRun()
     }
+    // ---- 合约录像 (MECHANICS 18.8): 摄像头 / 麦克风权限, 录屏授权 ----
+    private val recPermLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        asking = false
+    }
+    private val projLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+        asking = false
+        if (r.resultCode == RESULT_OK && r.data != null) app.recProjection = r.resultCode to r.data!!
+        else recProjCooldown = System.currentTimeMillis() + 60_000   // 拒绝了: 一分钟内不再弹
+    }
+    private var recProjCooldown = 0L
+
+    /** 界面在前台时补齐录像需要的权限 / 授权 (RecordManager 发现缺了什么就置位 needPerms / needProjection). */
+    fun ensureRecordConsent() {
+        if (asking) return
+        val rm = app.recordManager
+        if (rm.needPerms) {
+            val need = buildList {
+                if (rm.needCamera) add(Manifest.permission.CAMERA)
+                if (rm.needAudio) add(Manifest.permission.RECORD_AUDIO)
+            }.filter { checkSelfPermission(it) != android.content.pm.PackageManager.PERMISSION_GRANTED }
+            if (need.isNotEmpty()) { asking = true; recPermLauncher.launch(need.toTypedArray()); return }
+        }
+        if (rm.needProjection && app.recProjection == null && System.currentTimeMillis() >= recProjCooldown) {
+            val mpm = getSystemService(android.media.projection.MediaProjectionManager::class.java)
+            asking = true; projLauncher.launch(mpm.createScreenCaptureIntent())
+        }
+    }
+
     /** 第一次打开时还没问的权限; 每一项返回 true = 打开了系统窗口 / 设置页, 等它回来. */
     private val firstRun = ArrayDeque<() -> Boolean>()
     /** 正在等系统的权限窗口 (同时弹两个系统窗口在部分手机上会卡住界面). */
@@ -265,6 +293,7 @@ class MainActivity : ComponentActivity() {
         // 前台服务没在运行 (进程是在后台被拉起来的, 当时不允许启动): 趁界面在前台补上, 离开后 OIT 才不会被暂停
         com.obliphur.oit.service.CoreService.start(this)
         app.core.tick()
+        app.recordManager.tick(); ensureRecordConsent()
         if (app.updateRetry && app.core.settings.bool("UPDATE_CHECK")) {
             app.updateRetry = false
             app.checkUpdate(auto = true)
@@ -325,6 +354,13 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
         } else bars.show(androidx.core.view.WindowInsetsCompat.Type.statusBars())
     }
     LaunchedEffect(Unit) { app.navRequests.collect { go(it) } }
+    // 合约录像 (MECHANICS 18.8): 界面在前台时, 若合约要录像却缺权限 / 录屏授权, 隔一会儿看一次, 需要就弹窗
+    LaunchedEffect(Unit) {
+        while (true) {
+            if (app.recordManager.needPerms || app.recordManager.needProjection) act.ensureRecordConsent()
+            kotlinx.coroutines.delay(1500)
+        }
+    }
     // 填好用户名, 欢迎窗口也关掉之后 (或者本来就没有) 再依次申请权限
     val welcomeDone = !needName && notices.none { it.tag == "welcome" }
     LaunchedEffect(welcomeDone) {

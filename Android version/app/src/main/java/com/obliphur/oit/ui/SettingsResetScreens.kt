@@ -412,6 +412,7 @@ private fun PageExtras(tab: String, act: MainActivity) {
             Dim(if (ok) tr("已授予") else tr("未授予"), size = 13, color = if (ok) o.success else o.warn)
             if (!ok) PlainButton(tr("去授予")) { open(Intent(SysSettings.ACTION_USAGE_ACCESS_SETTINGS)) }
         }
+        "record" -> RecordingsCard(act)
     }
     // 后台应用数怎么数的, 现在算了哪些 (MECHANICS 14.6)
     if (tab == "window") OitCard {
@@ -434,6 +435,56 @@ private fun PageExtras(tab: String, act: MainActivity) {
             for (perm in listOf("DUMP", "PACKAGE_USAGE_STATS"))
                 Text("adb shell pm grant ${ctx.packageName} android.permission.$perm", color = o.text, fontSize = 12.sp,
                     fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+        }
+    }
+}
+
+// ════════════════ 录像 (目光 / 刻痕, MECHANICS 18.8) ════════════════
+
+@Composable
+private fun RecordingsCard(act: MainActivity) {
+    LocalTick.current
+    val o = LocalOit.current
+    val ctx = LocalContext.current
+    val app = OitApp.instance
+    val dataDir = java.io.File(ctx.filesDir, "data")
+
+    fun play(f: java.io.File) {
+        runCatching {
+            val mp4 = com.obliphur.oit.core.RecCrypto.decryptToCache(ctx.cacheDir, f)
+            val uri = androidx.core.content.FileProvider.getUriForFile(ctx, "${ctx.packageName}.files", mp4)
+            ctx.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "video/mp4")
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK))
+        }.onFailure { app.core.toast(tr("打不开这个录像: {e}", "e" to (it.message ?: "?")), "warn") }
+    }
+
+    OitCard {
+        Text(tr("🎬  录像"), fontWeight = FontWeight.Bold, color = o.text)
+        Dim(tr("目光 (摄像头) 和刻痕 (屏幕) 录下的视频经过加密, 只能在这里 (OIT 内) 查看和播放, 不会被网盘 / 相册自动上传."),
+            size = 12, color = o.dim)
+        Dim(tr("刻痕录的是\"焦点设备\"的屏幕: 哪台在操作就录哪台. 各设备录的片段结束后会传到合约主人 (一台电脑) 那里合并成一个视频; 手机上只能逐段查看, 合并后的视频在那台电脑上."),
+            size = 12, color = o.dim)
+    }
+
+    for ((kind, label) in listOf("merged" to tr("🎞 合并的录屏"), "camera" to tr("📷 摄像头 (目光)"), "screen" to tr("🖥 屏幕 (刻痕)"))) {
+        val files = com.obliphur.oit.core.RecCrypto.list(dataDir, kind, if (kind == "merged") null else ctx.cacheDir)
+        OitCard {
+            val total = files.sumOf { it.size }
+            Text(label + "   " + tr("{n} 个 · {size}", "n" to files.size, "size" to fmtSize(total)),
+                fontWeight = FontWeight.Bold, color = o.text)
+            if (files.isEmpty()) Dim(tr("还没有录像."), size = 13, color = o.dim)
+            for (rec in files.take(40)) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
+                    val when0 = rec.start?.format(com.obliphur.oit.core.Fmt.YMDHM) ?: rec.name
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(when0 + (if (rec.partial) "  " + tr("(未写完)") else ""), color = o.text, fontSize = 13.sp)
+                        Dim(fmtSize(rec.size), size = 11, color = o.dim)
+                    }
+                    if (!rec.partial) PlainButton(tr("播放")) { play(rec.file) }
+                    val recording = app.recordManager.isRecording(kind)
+                    if (!recording) PlainButton(tr("删除")) { rec.file.delete(); app.core.changed() }
+                }
+            }
         }
     }
 }
