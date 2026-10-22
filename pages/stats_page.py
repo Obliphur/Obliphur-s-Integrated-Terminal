@@ -11,6 +11,7 @@ from config import COLORS, fmt_hm
 from data_manager import month_prefixes, tally_items
 from i18n import tr, is_en
 from .widgets import ScrollArea, smooth, cfg, show_pack, hide_pack
+from .contract_page import term_line, term_short, marks   # 合约记录按合约页的逻辑显示词条
 
 
 # 图表颜色都跟随当前主题 (config.CHART_PALETTE / COLORS 会在切换主题时原地更新)
@@ -39,28 +40,27 @@ def _int(v) -> int:
         return 0
 
 
-def _level_text(a, b) -> str:
-    """一条合约的等级: "初始等级-失效等级"; 结算等级和初始一样 (没有失效) 时只写初始等级.
-    负数直接带负号 (只有黑雾的假初始等级会是负数), 例如 -8-5."""
-    a, b = _int(a), _int(b)
-    return str(a) if a == b else f"{a}-{b}"
+def _level_text(orig, level) -> str:
+    """一条合约的等级, 和合约页一样: 最终等级[最初等级-扣的等级] (没扣过只写最终等级)."""
+    return C.level_label(_int(level), _int(orig))
 
 
 def _fog_contracts(seed) -> list:
-    """黑雾: 5 条假记录 (初始等级 99 ~ -50, 失效等级 1 ~ 30; 词条随机填充); 真实条数不到 5 条时也补满."""
-    names = [t[3] for t in C.TERMS]
+    """黑雾: 5 条假记录 (初始等级 0 ~ 99, 失效等级 1 ~ 30; 词条随机填充); 真实条数不到 5 条时也补满.
+    每条: ((初始等级, 失效等级), 和 record_rows 一样的词条行 [(等级, 词条 id, 是否失效, 原词条 id)])."""
+    ids = [t[0] for t in C.TERMS]
     out = []
     for i in range(CONTRACT_ROWS):
         rnd = random.Random(f"{seed}/contracts/{i}")
-        terms = [(n, rnd.random() < 0.35) for n in rnd.sample(names, rnd.randint(2, 5))]
-        out.append(((rnd.randint(-50, 99), rnd.randint(1, 30)), terms))
+        rows = [(C.BY_ID[t][2], t, rnd.random() < 0.35, "") for t in rnd.sample(ids, rnd.randint(2, 5))]
+        out.append(((rnd.randint(0, 99), rnd.randint(1, 30)), rows))
     return out
 
 
 class ContractTermsDialog(tk.Toplevel):
     """统计页: 一条合约记录的具体词条 (失效的变灰)."""
 
-    def __init__(self, master, a, b, terms: list):
+    def __init__(self, master, a, b, rows: list):
         super().__init__(master, bg=COLORS["bg"], highlightbackground=COLORS["accent"],
                          highlightthickness=2)
         self.title(tr("⚔  合约词条"))
@@ -73,10 +73,20 @@ class ContractTermsDialog(tk.Toplevel):
         tk.Label(body, text=tr("等级 {lv}", lv=_level_text(a, b)), bg=COLORS["bg"],
                  fg=COLORS["accent"], font=config.font("body", bold=True),
                  anchor="w").pack(anchor="w", pady=(2, 8))
-        for name, void in terms or []:
-            tk.Label(body, text=tr(name), bg=COLORS["bg"],
-                     fg=COLORS["text_dim"] if void else COLORS["text"],
-                     font=config.font("body"), anchor="w").pack(anchor="w")
+        # 和合约页一样: 等级三角 + 名字:描述 + [原 X] / [已失效], 失效的变灰
+        for lv, tid, void, orig in rows or []:
+            text = term_line(tid)
+            if orig:
+                text += "   " + tr("[原 {name}]", name=term_short(orig))
+            if void:
+                text += "   " + tr("[已失效]")
+            r = tk.Frame(body, bg=COLORS["bg"])
+            r.pack(anchor="w", fill="x", pady=1)
+            tk.Label(r, text=marks(lv) or "—", bg=COLORS["bg"],
+                     fg=COLORS["text_dim"] if void else COLORS["accent"], width=4, anchor="nw",
+                     font=config.font("small", bold=True)).pack(side="left", anchor="n", padx=(0, 8))
+            tk.Label(r, text=text, bg=COLORS["bg"], fg=COLORS["text_dim"] if void else COLORS["text"],
+                     font=config.font("body"), anchor="w", justify="left").pack(side="left", fill="x", expand=True)
         ttk.Button(body, text=tr("关闭"), style="Accent.TButton",
                    command=self.destroy).pack(anchor="e", pady=(12, 0))
         self.update_idletasks()
@@ -426,13 +436,14 @@ class StatsPage(tk.Frame):
     # ---- 合约记录 (过去 5 条顺利完成的合约, MECHANICS 8.1) ----
 
     def _contract_rows_data(self) -> list:
-        """[((初始等级, 失效等级), [(词条名, 失效?)])]; 黑雾时是 5 条假数据."""
+        """[((初始等级, 失效等级), [(等级, 词条 id, 失效?, 原词条 id)])]; 黑雾时是 5 条假数据.
+        词条行和合约页一样 (record_rows)."""
         seed = self.fog()
         if seed is not None:
             return _fog_contracts(seed)
         recs = C.recent_completed(self.contract_log(), CONTRACT_ROWS)
-        return [((int(r.get("orig_level") or 0), int(r.get("level") or 0)),
-                 C.terms_of_record(r)) for r in recs]
+        return [((int(r.get("orig_level") or r.get("level") or 0), int(r.get("level") or 0)),
+                 C.record_rows(r)) for r in recs]
 
     def _draw_contracts(self):
         data = self._contract_rows_data()

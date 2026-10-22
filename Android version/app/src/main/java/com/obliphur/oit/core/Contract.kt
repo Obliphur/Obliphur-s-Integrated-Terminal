@@ -23,6 +23,9 @@ fun fogWordsJson(r: java.util.Random): JSONArray {
 class Term(val id: String, val group: String, val level: Int, val name: String, val desc: String,
            val conflicts: List<String> = emptyList())
 
+/** 统计页的合约记录的一行 (和合约页一样): 等级, 要显示的词条 id, 是否失效, 降级前的原词条 id 或 "". */
+data class RecRow(val level: Int, val id: String, val void: Boolean, val orig: String)
+
 /** 词条组合 (MECHANICS 18.3.1): 列出的词条 / 词条系列 (任意一档都算) 同时选着时生效.
  *  level: 额外的危机等级; rest: 休息时间的额外乘区; gift: 开始时给的休息时间 (秒); end: 完成时给的休息时间 (秒).
  *  成员因违反失效 (降级不算失效) 时组合不再生效: 危机等级 / 乘区 / 结束后收益都没了, 开始时给的不收回. */
@@ -407,6 +410,27 @@ class Contract(private val file: File) {
                 val spec = BY_ID[t] ?: continue
                 val ft = last[spec.group]
                 out.add((BY_ID[ft ?: t]?.name ?: spec.name) to (ft == null))
+            }
+            return out
+        }
+
+        /** 统计页的合约记录: 和合约页一样地列出词条. (等级, 要显示的词条 id, 是否失效, 降级前的原词条 id 或 "").
+         *  按开始时 (orig) 的顺序, 未知变量选中的放最后; 降级的显示降成的 + 原词条, 失效的显示原词条并标失效. */
+        fun recordRows(rec: JSONObject): List<RecRow> {
+            val rand = (rec.optJSONArray("rand")?.strings() ?: emptyList()).toSet()
+            val mine = (rec.optJSONArray("terms")?.strings() ?: emptyList()).filter { it in BY_ID && it !in rand }
+            val out = mutableListOf<RecRow>()
+            for (t in rec.optJSONArray("orig")?.strings() ?: emptyList()) {
+                val spec = BY_ID[t] ?: continue
+                val now = mine.firstOrNull { it == t || BY_ID[it]?.group == spec.group } ?: ""
+                when {
+                    now.isEmpty() -> out.add(RecRow(spec.level, t, true, ""))
+                    now != t -> out.add(RecRow(BY_ID[now]!!.level, now, false, t))
+                    else -> out.add(RecRow(spec.level, t, false, ""))
+                }
+            }
+            for (t in rec.optJSONArray("terms")?.strings() ?: emptyList()) {
+                if (t in BY_ID && t in rand) out.add(RecRow(BY_ID[t]!!.level, t, false, ""))
             }
             return out
         }

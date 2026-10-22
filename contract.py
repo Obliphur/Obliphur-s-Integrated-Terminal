@@ -464,6 +464,30 @@ def terms_of_record(rec: dict) -> list:
     return out
 
 
+def record_rows(rec: dict) -> list:
+    """统计页的合约记录: 和合约页 (pages/contract_page.py 的 _rows "合约进行中"分支) 一样地列出词条.
+    返回 [(等级, 要显示的词条 id, 是否失效, 降级前的原词条 id 或 "")], 按开始时 (orig) 的顺序, 未知变量选中的放最后.
+    降级的显示降成的那个 + 原词条; 失效的显示原词条并标失效; 等级取要显示的那个词条的级别."""
+    rec = rec if isinstance(rec, dict) else {}
+    rand = set(rec.get("rand") or [])
+    mine = [t for t in (rec.get("terms") or []) if t in BY_ID and t not in rand]
+    out = []
+    for t in rec.get("orig") or []:
+        if t not in BY_ID:
+            continue
+        now = next((x for x in mine if x == t or BY_ID[x][1] == BY_ID[t][1]), "")
+        if not now:
+            out.append((BY_ID[t][2], t, True, ""))            # 已失效: 显示原名
+        elif now != t:
+            out.append((BY_ID[now][2], now, False, t))        # 降级: 显示降成的, 标 [原 ...]
+        else:
+            out.append((BY_ID[t][2], t, False, ""))
+    for t in rec.get("terms") or []:                          # 未知变量选中的放最后
+        if t in BY_ID and t in rand:
+            out.append((BY_ID[t][2], t, False, ""))
+    return out
+
+
 def _parse(text):
     try:
         return datetime.fromisoformat(str(text)) if text else None
@@ -1648,6 +1672,11 @@ def _selftest():
     assert terms_of_record(rec) == [("环境:持久战-III", False), ("环境:疲惫-II", False),
                                     ("环境:无言为真", False), ("环境:乐理之灾", True)]
     assert terms_of_record({}) == [] and terms_of_record(None) == []
+    # 和合约页一样的词条行: 等级 + 要显示的词条 + 失效 + 降级前的原词条
+    rr = record_rows(rec)
+    assert rr[0] == (BY_ID["long3"][2], "long3", False, "") and rr[1] == (BY_ID["tired2"][2], "tired2", False, "tired3")
+    assert rr[2] == (BY_ID["silent"][2], "silent", False, "") and rr[3] == (BY_ID["music"][2], "music", True, "")
+    assert record_rows({}) == [] and record_rows(None) == []
     for t in ("ChatGPT", "Claude", "(3) 首页 / X", "如何评价…？ - 知乎 - Google Chrome", "微博-随时随地发现新鲜事",
               "DeepSeek - 探索未至之境 - Microsoft Edge", "Reddit - Dive into anything", "Kimi 智能助手"):
         assert site_title(t, SOCIAL_TITLES), t

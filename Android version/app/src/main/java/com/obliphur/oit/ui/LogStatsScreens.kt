@@ -340,19 +340,20 @@ private const val CONTRACT_ROWS = 5
 /** 违规记录页: 最多留几条 (黑雾时补满, 内容全是 ???). */
 private const val VIOLATION_ROWS = 15
 
-/** 统计页的一条合约记录: 等级 = 初始等级-失效等级 (没有失效时只有初始等级); 词条 (名字, 是不是失效了). */
-private data class ContractRow(val a: Int, val b: Int, val terms: List<Pair<String, Boolean>>)
+/** 统计页的一条合约记录: a = 初始等级, b = 失效等级; rows 和合约页一样的词条行. */
+private data class ContractRow(val a: Int, val b: Int, val rows: List<com.obliphur.oit.core.RecRow>)
 
-private fun levelText(a: Int, b: Int): String = if (a == b) "$a" else "$a-$b"
+/** 和合约页一样: 最终等级[最初等级-扣的等级] (没扣过只写最终等级). */
+private fun levelText(orig: Int, level: Int): String = Contract.levelLabel(level, orig)
 
-/** 黑雾: 5 条假记录 (初始等级 99 ~ -50, 失效等级 1 ~ 30; 词条随机填充), 同一个合约里不变. */
+/** 黑雾: 5 条假记录 (初始等级 0 ~ 99, 失效等级 1 ~ 30; 词条随机填充), 同一个合约里不变. */
 private fun fogContractRows(seed: Long): List<ContractRow> {
-    val names = Contract.TERMS.map { it.name }
+    val ids = Contract.TERMS.map { it.id }
     return (0 until CONTRACT_ROWS).map { i ->
         val rnd = java.util.Random("$seed/contracts/$i".hashCode().toLong())
-        val picked = names.shuffled(rnd).take(2 + rnd.nextInt(4))
-        ContractRow(rnd.nextInt(150) - 50, 1 + rnd.nextInt(30),
-            picked.map { it to (rnd.nextInt(100) < 35) })
+        val picked = ids.shuffled(rnd).take(2 + rnd.nextInt(4))
+        ContractRow(rnd.nextInt(100), 1 + rnd.nextInt(30),
+            picked.map { com.obliphur.oit.core.RecRow(Contract.BY_ID[it]!!.level, it, rnd.nextInt(100) < 35, "") })
     }
 }
 
@@ -367,7 +368,8 @@ private fun ContractRecords() {
     val rows = remember(fog, c.id, c.history.size) {
         if (fog) fogContractRows(c.id)
         else Contract.recentCompleted(c.history, CONTRACT_ROWS).map {
-            ContractRow(it.optInt("orig_level"), it.optInt("level"), Contract.termsOfRecord(it))
+            val level = it.optInt("level")
+            ContractRow(if (it.has("orig_level")) it.optInt("orig_level") else level, level, Contract.recordRows(it))
         }
     }
     OitCard {
@@ -390,8 +392,17 @@ private fun ContractRecords() {
                 Column(Modifier.verticalScroll(rememberScrollState())) {
                     Text(tr("等级 {lv}", "lv" to levelText(r.a, r.b)), color = o.accent,
                         fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 6.dp))
-                    for ((name, void) in r.terms)
-                        Text(tr(name), color = if (void) o.dim else o.text, fontSize = 14.sp)
+                    // 和合约页一样: 等级三角 + 名字:描述 + [原 X] / [已失效], 失效的变灰
+                    for ((lv, tid, void, orig) in r.rows) {
+                        var text = termLine(tid)
+                        if (orig.isNotEmpty()) text += "   " + tr("[原 {name}]", "name" to termShort(orig))
+                        if (void) text += "   " + tr("[已失效]")
+                        Row(Modifier.padding(vertical = 2.dp)) {
+                            Text(marks(lv).ifEmpty { "—" }, color = if (void) o.dim else o.accent,
+                                fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.padding(end = 8.dp))
+                            Text(text, color = if (void) o.dim else o.text, fontSize = 14.sp)
+                        }
+                    }
                 }
             },
             confirmButton = { TextButton({ open = null }) { Text(tr("关闭")) } })

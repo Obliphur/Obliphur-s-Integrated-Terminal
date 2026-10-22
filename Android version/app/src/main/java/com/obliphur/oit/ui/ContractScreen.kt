@@ -51,17 +51,17 @@ private val BOARD_BAND = 64.dp
 private val BOARD_TILE = 64.dp
 private val BOARD_GAP = 5.dp
 
-private fun marks(level: Int) = "▲".repeat(maxOf(0, level))
-private fun termName(id: String) = tr(Contract.BY_ID[id]!!.name)
+internal fun marks(level: Int) = "▲".repeat(maxOf(0, level))
+internal fun termName(id: String) = tr(Contract.BY_ID[id]!!.name)
 private fun termDesc(id: String) = tr(Contract.BY_ID[id]!!.desc)
 /** 名字 : 描述. 描述本身分了几行时, 从下一行开始写, 每一句一行. */
-private fun termLine(id: String): String {
+internal fun termLine(id: String): String {
     val d = termDesc(id)
     return termName(id) + " :" + (if ('\n' in d) "\n" else " ") + d
 }
 
 /** 格子里的名字: 去掉"环境:" / "目标:", 名字和罗马数字分开 (英文用更短的名字). */
-private fun termShort(id: String): String {
+internal fun termShort(id: String): String {
     val base = Contract.BY_ID[id]!!.name.substringAfter(':')
     return (tr(base.substringBefore('-')) + " " + base.substringAfter('-', "")).trim()
 }
