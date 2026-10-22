@@ -530,7 +530,7 @@ class Contract(private val file: File) {
             .put("level", level).put("orig_level", origLevel).put("cut", JSONObject(cut.toString()))
             .put("result", result).put("violations", violations).put("reward", give).put("pre_left", preLeft)
             .put("rand", JSONArray(rand))
-        live.optJSONArray("locks")?.let { if (it.length() > 0) rec.put("locks", JSONArray(it.toString())) }   // 封锁的记录格合约结束后照样锁着
+        live.optJSONArray("locks")?.let { if (it.length() > 0) rec.put("locks", JSONArray(it.toString())) }   // 封锁的记录格 (记录用; 合约结束后解除)
         live.optJSONObject("slow")?.optString("start")?.takeIf { it.isNotEmpty() }?.let { rec.put("slow", it) }
         history.add(rec)
         live = JSONObject().put("state", "none").put("owner", by).put("first_break", result == "completed")
@@ -746,7 +746,7 @@ class Contract(private val file: File) {
 
     // ---- 未知变量的效果 ----
 
-    /** 随机封锁一个还没被封锁, 已经过了填写时限的整点记录格 (最近 24 小时里的; 合约结束后照样锁着).
+    /** 随机封锁一个还没被封锁, 已经过了填写时限的整点记录格 (最近 24 小时里的; 合约结束后解除).
      *  返回格子的键 ("日期/小时", 细化规范的半小时 "日期/小时/1"); 没有可以封锁的返回 "". */
     fun lockCell(now: LocalDateTime, dice: Dice = Dice(), textOf: ((String) -> String)? = null, auto: String = "",
                  fillSec: Long = 0, autoOf: ((String) -> String)? = null): String {
@@ -787,7 +787,8 @@ class Contract(private val file: File) {
 
     /** 未知变量 / 记录封锁 另外封锁的记录格 (所有合约的). */
     fun locks(): List<Pair<LocalDateTime, LocalDateTime>> {
-        val srcs = history.mapNotNull { it.optJSONArray("locks") } + listOfNotNull(if (active) live.optJSONArray("locks") else null)
+        // 只算进行中的合约的; 合约结束后解除
+        val srcs = listOfNotNull(if (active) live.optJSONArray("locks") else null)
         return srcs.flatMap { arr ->
             (0 until arr.length()).mapNotNull { i ->
                 val v = arr.optJSONArray(i) ?: return@mapNotNull null
@@ -1199,17 +1200,21 @@ class Contract(private val file: File) {
         return text in setOf("", wanted)
     }
 
-    /** 这个记录格在记录封锁的范围里 (填写后就不能再改, 界面上提交前先确认). 同 contract.py 的 hour_sealed. */
-    fun hourSealed(start: LocalDateTime, end: LocalDateTime, now: LocalDateTime = LocalDateTime.now()): Boolean =
-        periods(now, "seal").any { (a, b) -> a.isBefore(end) && start.isBefore(b) }
+    /** 这个记录格在记录封锁的范围里 (填写后就不能再改, 界面上提交前先确认): 只在进行中、选了记录封锁的合约里,
+     *  和这个合约重叠的格子. 合约结束后 / 没选记录封锁时都不算. 同 contract.py 的 hour_sealed. */
+    fun hourSealed(start: LocalDateTime, end: LocalDateTime, now: LocalDateTime = LocalDateTime.now()): Boolean {
+        val a = startAt ?: return false
+        if (!active || !("seal" in orig || has("seal"))) return false
+        return a.isBefore(end) && start.isBefore(now)
+    }
 
-    /** 记录封锁: 和选了这个词条的合约重叠的记录格, 已经填写了的 (自己填的, 或者超时自动记录的) 就不能再改,
-     *  没填的照常能填 —— 合约结束了也一样. 未知变量封锁的格子不管填没填都不能再改. */
+    /** 记录封锁: 进行中的合约选了这个词条时, 和合约重叠的记录格已经填写了的 (自己填的, 或者超时自动记录的) 就不能再改,
+     *  没填的照常能填. 未知变量 / 记录封锁另外封锁的格子不管填没填都不能再改. 合约结束后全部恢复. */
     fun hourLocked(start: LocalDateTime, end: LocalDateTime, text: String, now: LocalDateTime, fillSec: Long,
                    auto: String, autoOf: ((String) -> String)? = null, key: String = ""): Boolean {
         if (locks().any { (a, b) -> a.isBefore(end) && start.isBefore(b) }) return true
         if (text.isBlank()) return false          // 没填的照常能填; 已经填写了的 (手动 / 自动) 不能再改
-        return periods(now, "seal").any { (a, b) -> a.isBefore(end) && start.isBefore(b) }
+        return hourSealed(start, end, now)
     }
 
     /** 记录格的补填时限: 细化规范的半小时格只有 30 min (MECHANICS 18.4). */

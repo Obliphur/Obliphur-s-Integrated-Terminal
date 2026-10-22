@@ -240,7 +240,15 @@ class ContractTest {
         assertTrue(c.hourLocked(a, b, "学习", LocalDateTime.of(2026, 10, 18, 10, 59), fill, "Sleeping"))    // 填写了就不能再改
         assertFalse(c.hourLocked(a, b, "", LocalDateTime.of(2026, 10, 18, 11, 30), fill, "Sleeping"))      // 没填的照常能填
         c.finish("abandoned", LocalDateTime.of(2026, 10, 18, 12, 0))
-        assertTrue(c.hourLocked(a, b, "Sleeping", LocalDateTime.of(2026, 10, 19, 0, 0), fill, "Sleeping"))
+        assertFalse(c.hourLocked(a, b, "Sleeping", LocalDateTime.of(2026, 10, 19, 0, 0), fill, "Sleeping"))   // 合约结束后恢复
+        assertFalse(c.hourSealed(a, b, LocalDateTime.of(2026, 10, 19, 0, 0)))                                // 不用确认
+        // 没选记录封锁: 不用确认, 不锁, 不另外封锁
+        val nos = Contract(tmp())
+        nos.start(listOf("long1"), "me", LocalDateTime.of(2026, 10, 18, 9, 10))
+        val at = LocalDateTime.of(2026, 10, 18, 11, 0)
+        assertFalse(nos.hourSealed(a, b, at))
+        assertFalse(nos.hourLocked(a, b, "学习", at, fill, "Sleeping"))
+        assertTrue(nos.sealExtra(at, Dice(), { "" }, "Sleeping", fill).isEmpty())
     }
 
     @Test
@@ -425,8 +433,8 @@ class ContractTest {
         assertEquals(2, got.toSet().size)
         assertEquals(n0 + 2, c.locks().size)
         c.finish("abandoned", now)
-        // 合约提前结束了: 之后才开始的这段专注不减速 (阻滞只对合约内的专注生效)
-        assertTrue(c.hourLocked(a, b, "学习", now.plusDays(3), 3600, "Sleeping"))
+        // 合约提前结束了: 另外封锁的格子解除; 之后才开始的这段专注不减速 (阻滞只对合约内的专注生效)
+        assertFalse(c.hourLocked(a, b, "学习", now.plusDays(3), 3600, "Sleeping"))
         assertEquals(1.0, c.focusRate(s1), 1e-9); assertEquals(60.0, c.focusMinutes(s1, 3600.0), 1e-6)
         // 未知变量启用了整点记录的词条: 这次合约中一直强制开启整点记录
         c.start(listOf("unknown"), "me", t0)
