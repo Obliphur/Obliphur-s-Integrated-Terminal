@@ -1302,11 +1302,24 @@ def _reencode_concat(out_path, inputs, fps=SCREEN_FPS):
         _shutdown(lib)
 
 
+def incoming_dir(data_dir: str, cid: str) -> str:
+    """刻痕: 从别的设备收到的录屏片段先放这里 (按合约 id), 合并时一起用."""
+    return os.path.join(data_dir, "recordings", "incoming", re.sub(r"[^0-9A-Za-z]", "", str(cid))[:24] or "x")
+
+
 def merge(data_dir: str, cid: str, extra=()) -> str:
-    """刻痕 (MECHANICS 18.8): 把这个合约的录屏片段 (本机的 + extra 里从别的设备取来的 .oitv) 按时间接成一个视频,
+    """刻痕 (MECHANICS 18.8): 把这个合约的录屏片段 (本机的 + 从别的设备收到的 + extra) 按时间接成一个视频,
     加密存进 recordings/merged. 返回合并后的路径 (没有片段时 "")."""
+    inc = incoming_dir(data_dir, cid)
+    got = []
+    try:
+        for n in os.listdir(inc):
+            if n.lower().endswith(EXT):
+                got.append(os.path.join(inc, n))
+    except OSError:
+        pass
     segs = list(files_of(data_dir, "screen", cid)) + [
-        {"path": p, "name": os.path.basename(p), "start": None} for p in extra]
+        {"path": p, "name": os.path.basename(p), "start": None} for p in list(extra) + got]
     segs = [s for s in segs if not s.get("partial")]
     if not segs:
         return ""

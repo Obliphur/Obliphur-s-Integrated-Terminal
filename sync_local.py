@@ -75,6 +75,10 @@ class PcLocal:
     def file_delivered(self, who: str, name: str):
         self.app.file_channel.delivered(who, name)
 
+    def rec_offered(self, peer_id: str, who: str, o: dict) -> str:
+        """刻痕 (MECHANICS 18.8): 别的设备把它录的那段屏幕发过来给本机 (合约主人) 合并. 自动收下, 不问用户."""
+        return self.app.recording_offered(peer_id, who, o)
+
     def wipe_requested(self, wipe_id: str, sender: str, name: str):
         """别的设备重置 / 卸载了, 请本机也清空数据 (MECHANICS 9): 回复对方之后再做 (重置会关闭程序)."""
         self.app.root.after(300, lambda: self.app.do_reset(wipe_id=wipe_id, exclude=(sender,), by=name))

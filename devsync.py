@@ -1035,8 +1035,9 @@ class SyncService:
 
     # ---- 文件通道 (MECHANICS 15.6): 把文件 / 图片发给一台绑定的设备 ----
 
-    def send_file(self, peer_id: str, path: str) -> str:
+    def send_file(self, peer_id: str, path: str, cid: str = "") -> str:
         """后台线程: 先发签名的说明 (文件名, 大小, SHA-256, 取件码, nonce), 对方同意后来取 (内容加密传).
+        cid: 不为空时这是刻痕的录屏片段 (MECHANICS 18.8), 发给合约主人合并 (对方自动收下, 不问存到哪里).
         返回 'sent', 或对方不要的原因 ('old' = 对方的 OIT 太旧)."""
         p = self.peers().get(peer_id)
         if not p:
@@ -1054,8 +1055,11 @@ class SyncService:
         with self.lock:
             self.offers = {t: v for t, v in self.offers.items() if v[1] > now}
             self.offers[token] = (path, now + OFFER_TTL, (file_key(k), nonce))
-        env = seal(k, self.my_id, {"send": {"name": os.path.basename(path), "size": size, "sha256": h.hexdigest(),
-                                            "token": token, "nonce": nonce.hex()}})
+        offer = {"name": os.path.basename(path), "size": size, "sha256": h.hexdigest(),
+                 "token": token, "nonce": nonce.hex()}
+        if cid:
+            offer["cid"] = str(cid)
+        env = seal(k, self.my_id, {"send": offer})
         st, reply = self._http(p["addr"], p["port"], "POST", "/oit/v1/send", env, timeout=10.0)
         if st == 404:
             return "old"
@@ -1072,9 +1076,11 @@ class SyncService:
         if not p:
             return 401, {"error": "unpaired"}
         try:
-            o = unseal(bytes.fromhex(p["key"]), env)["send"]
-            o = {"name": str(o["name"]), "size": int(o["size"]), "sha256": str(o["sha256"]),
-                 "token": str(o["token"]), "nonce": str(o["nonce"])}
+            raw = unseal(bytes.fromhex(p["key"]), env)["send"]
+            o = {"name": str(raw["name"]), "size": int(raw["size"]), "sha256": str(raw["sha256"]),
+                 "token": str(raw["token"]), "nonce": str(raw["nonce"])}
+            if raw.get("cid"):
+                o["cid"] = re.sub(r"[^0-9A-Za-z]", "", str(raw["cid"]))[:24]
         except SealError as e:
             return 403, {"error": str(e)}
         except Exception:
@@ -1083,6 +1089,16 @@ class SyncService:
                 or not re.fullmatch(r"[0-9a-f]{32}", o["token"]) or not re.fullmatch(r"[0-9a-f]{32}", o["nonce"]):
             return 400, {"error": "bad-request"}
         o["name"] = safe_name(o["name"])
+        # 刻痕的录屏片段 (18.8): 合约主人自动收下合并, 不问用户存到哪里
+        if o.get("cid"):
+            fn = getattr(self.local, "rec_offered", None)
+            if fn is None:
+                return 200, {"ok": False, "why": "unsupported"}
+            try:
+                why = self.runner.call(lambda: fn(pid, str(p.get("name") or "?"), o))
+            except Exception as e:      # noqa: BLE001
+                return 503, {"error": str(e)}
+            return 200, ({"ok": True} if not why else {"ok": False, "why": why})
         fn = getattr(self.local, "file_offered", None)
         if fn is None:
             return 200, {"ok": False, "why": "unsupported"}
@@ -2037,6 +2053,19 @@ def _selftest():
             assert not os.path.exists(dest + "2") and not os.path.exists(dest + "2.part")
         del lb.file_offered
         assert sa.send_file(sb.my_id, src) == "unsupported"
+
+        # 刻痕的录屏片段 (18.8): 带 cid 发送, 走 rec_offered (主人自动收下, 不走 file_offered)
+        recs = []
+        lb.rec_offered = lambda pid, who, o: recs.append((pid, who, o)) or ""
+        assert sa.send_file(sb.my_id, src, cid="c123") == "sent"
+        pid2, who2, o2 = recs[0]
+        assert pid2 == sa.my_id and o2.get("cid") == "c123" and o2["name"] == "照片 1.png"
+        rd = os.path.join(tempfile.mkdtemp(), "seg.oitv")
+        sb.fetch_file(pid2, o2, rd)
+        with open(rd, "rb") as f:
+            assert f.read() == blob2
+        del lb.rec_offered
+        assert sa.send_file(sb.my_id, src, cid="c123") == "unsupported"
 
         # 本机算作离线 (15.7, 电脑切到了 OIT 不在的虚拟桌面): 不接受同步, 对方同步失败
         sa.away = lambda: True
