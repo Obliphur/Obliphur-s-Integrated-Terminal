@@ -380,6 +380,29 @@ class WindowAges:
         return [w for w in windows if now - self.first.get(self._key(w), now) >= float(min_age)]
 
 
+def channel_count(windows, browsers, exe_of=None) -> int:
+    """合约的通道阻塞 (MECHANICS 18.3) 数的窗口数: 同一个程序的多个窗口算一个, 浏览器 (browsers 里的 exe) 的每个窗口各算一个.
+    查不出程序名的窗口按进程算."""
+    exe_of = exe_of or exe_name
+    names, n, seen = {}, 0, set()
+    for w in windows:
+        pid = w.get("pid")
+        if pid not in names:
+            try:
+                names[pid] = str(exe_of(pid) or "").lower()
+            except Exception:
+                names[pid] = ""
+        exe = names[pid]
+        if exe and exe in browsers:
+            n += 1
+            continue
+        key = exe or ("pid", pid)
+        if key not in seen:
+            seen.add(key)
+            n += 1
+    return n
+
+
 def remind_due(over: bool, last_at: float, now: float, cooldown: float = 120.0) -> bool:
     """窗口数超限的提醒到时间了吗: 刚超过时立刻提醒; 之后每次隔 cooldown 秒 (还没解决就再响一次).
     回到上限以内以后调用方把 last_at 清零."""
@@ -485,6 +508,10 @@ def _selftest():
                 "cloaked": cloaked, "owned": owned, "exstyle": ex, "cls": cls}
 
     # 判定规则
+    # 通道阻塞: 同一个程序的多个窗口算一个, 浏览器的各算一个
+    exes = {1: "explorer.exe", 2: "Explorer.EXE", 3: "chrome.exe", 4: "", 5: "code.exe"}
+    ws = [win(1, pid=1), win(2, pid=2), win(3, pid=3), win(4, pid=3), win(5, pid=4), win(6, pid=4), win(7, pid=5)]
+    assert channel_count(ws, {"chrome.exe"}, exes.get) == 5, "explorer 两个进程算一个 + chrome 2 + 查不出名字的进程 1 + code 1"
     # 开着超过 2 分钟的窗口才计入 (WindowAges)
     ages = WindowAges()
     ws = [win(1), win(2)]

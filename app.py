@@ -2332,16 +2332,16 @@ class BreakTimerApp:
     def _schedule_window_guard(self):
         if self.shutting_down:
             return
-        n = self._aged_windows()
-        self._check_windows(n)
+        ws = self._aged_windows()
+        self._check_windows(None if ws is None else len(ws))
         try:
-            self._check_contract_windows(n)
+            self._check_contract_windows(ws)
         except Exception as e:
             self._log_window(f"ERROR    contract windows {type(e).__name__}: {e}")
         self.window_job = self.root.after(self._window_check_ms(), self._schedule_window_guard)
 
     def _aged_windows(self):
-        """任务栏上开着超过 WINDOW_MIN_AGE 秒的窗口数 (MECHANICS 12); 数不出来时 None.
+        """任务栏上开着超过 WINDOW_MIN_AGE 秒的窗口 (MECHANICS 12); 数不出来时 None.
         不在专注时也记着各窗口开了多久, 开始专注时早就开着的窗口马上算."""
         if self.dm.resetting or not (getattr(config, "WINDOW_LIMIT_ENABLED", 0) or self.contract.window_watch()[1]):
             self._win_ages.first = {}
@@ -2353,7 +2353,7 @@ class BreakTimerApp:
             return None
         now = time.monotonic()
         self._win_ages.update(ws, now)
-        return len(self._win_ages.old(ws, now, float(getattr(config, "WINDOW_MIN_AGE", 120))))
+        return self._win_ages.old(ws, now, float(getattr(config, "WINDOW_MIN_AGE", 120)))
 
     def _check_windows(self, n):
         """专注中窗口数超过上限: 提醒 + 响一次违约音效; 提醒后 2 分钟冷却, 还没解决再响一次.
@@ -3456,8 +3456,9 @@ class BreakTimerApp:
             out.append(tr("录像只保存在本机, 在 设置 → 录像 查看."))
         return out
 
-    def _check_contract_windows(self, n):
-        """通道阻塞: 专注中任务栏上的窗口 (开着超过 2 分钟的, n) 超过词条的上限 (不关窗口, 只算违反; 越过的那一下算一次)."""
+    def _check_contract_windows(self, ws):
+        """通道阻塞: 专注中任务栏上的窗口 (开着超过 2 分钟的, ws) 超过词条的上限 (不关窗口, 只算违反; 越过的那一下算一次).
+        同一个程序的多个窗口算一个, 浏览器的每个窗口各算一个."""
         c = self.contract
         _tid, lim = c.window_watch()                 # 已经失效的按失效前的上限 (再次超过只响警报)
         if not lim or self.dm.resetting:
@@ -3465,9 +3466,9 @@ class BreakTimerApp:
         if self.state != RUNNING:                    # 只在专注时段算, 离开专注重新计
             c.window_reset()
             return
-        if n is None:
+        if ws is None:
             return
-        tid = c.window_check(n)
+        tid = c.window_check(window_guard.channel_count(ws, contract_mod.BROWSER_EXES))
         if tid:
             self.contract_violation(tr("窗口超过 {n} 个", n=lim), tid)
 
