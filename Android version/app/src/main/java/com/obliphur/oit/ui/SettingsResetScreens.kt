@@ -462,27 +462,32 @@ private fun RecordingsCard(act: MainActivity) {
         Text(tr("🎬  录像"), fontWeight = FontWeight.Bold, color = o.text)
         Dim(tr("目光 (摄像头) 和刻痕 (屏幕) 录下的视频经过加密, 只能在这里 (OIT 内) 查看和播放, 不会被网盘 / 相册自动上传."),
             size = 12, color = o.dim)
-        Dim(tr("刻痕录的是\"焦点设备\"的屏幕: 哪台在操作就录哪台. 各设备录的片段结束后会传到合约主人 (一台电脑) 那里合并成一个视频; 手机上只能逐段查看, 合并后的视频在那台电脑上."),
+        Dim(tr("这里只展示最终合并好的录像, 各设备间自动同步 (删除也会同步); 合并在合约主人 (一台电脑) 上进行."),
             size = 12, color = o.dim)
     }
 
-    for ((kind, label) in listOf("merged" to tr("🎞 合并的录屏"), "camera" to tr("📷 摄像头 (目光)"), "screen" to tr("🖥 屏幕 (刻痕)"))) {
-        val files = com.obliphur.oit.core.RecCrypto.list(dataDir, kind, if (kind == "merged") null else ctx.cacheDir)
+    // 只展示最终 (合并 / 同步好) 的录像, 不展示片段 (MECHANICS 18.8)
+    for ((kind, label) in listOf("camera" to tr("📷 摄像头 (目光)"), "screen" to tr("🖥 屏幕 (刻痕)"))) {
+        val files = com.obliphur.oit.core.RecCrypto.listMerged(dataDir, kind)
+        val recording = app.recordManager.isRecording(kind)
         OitCard {
             val total = files.sumOf { it.size }
             Text(label + "   " + tr("{n} 个 · {size}", "n" to files.size, "size" to fmtSize(total)),
                 fontWeight = FontWeight.Bold, color = o.text)
-            if (files.isEmpty()) Dim(tr("还没有录像."), size = 13, color = o.dim)
+            if (files.isEmpty())
+                Dim(if (recording) tr("● 录制中, 结束后合并并同步.") else tr("还没有录像."),
+                    size = 13, color = if (recording) o.danger else o.dim)
             for (rec in files.take(40)) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
                     val when0 = rec.start?.format(com.obliphur.oit.core.Fmt.YMDHM) ?: rec.name
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(when0 + (if (rec.partial) "  " + tr("(未写完)") else ""), color = o.text, fontSize = 13.sp)
+                        Text(when0, color = o.text, fontSize = 13.sp)
                         Dim(fmtSize(rec.size), size = 11, color = o.dim)
                     }
-                    if (!rec.partial) PlainButton(tr("播放")) { play(rec.file) }
-                    val recording = app.recordManager.isRecording(kind)
-                    if (!recording) PlainButton(tr("删除")) { rec.file.delete(); app.core.changed() }
+                    PlainButton(tr("播放")) { play(rec.file) }
+                    PlainButton(tr("删除")) {
+                        app.recordManager.deleteRecording(com.obliphur.oit.core.RecCrypto.cidOf(rec.name), kind)
+                    }
                 }
             }
         }

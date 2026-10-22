@@ -21,13 +21,14 @@ class SettingsPage(tk.Frame):
                  on_dev_mode=None, on_language=None, on_font_scale=None,
                  on_theme=None, on_end_setup=None, updater=None, on_update_check=None,
                  on_update_install=None, on_update_relay=None, sync=None, achievements=None,
-                 on_open_achievements=None, data_dir=None, recording=None):
+                 on_open_achievements=None, data_dir=None, recording=None, on_delete_record=None):
         super().__init__(master, bg=COLORS["bg"])
         self.sm = settings
         self.ach_store = achievements
         self.on_open_achievements = on_open_achievements
-        self.data_dir = data_dir                        # 录像: 数据目录 (recordings/camera, recordings/screen)
-        self.recording = recording or (lambda kind: False)   # 本机此刻在录这一路吗 (正在写的文件不能删)
+        self.data_dir = data_dir                        # 录像: 数据目录 (recordings/merged/<kind>)
+        self.recording = recording or (lambda kind: False)   # 本机此刻在录这一路吗 (合约页"录像中"用)
+        self.on_delete_record = on_delete_record or (lambda cid, kind: None)   # 删录像 (并同步删除给别的设备)
         self._rec_lists = {}
         self._rec_sig = {}
         self._cam_state = None
@@ -783,7 +784,8 @@ class SettingsPage(tk.Frame):
 
     def _build_record_lists(self, body):
         card = COLORS["bg_card"]
-        for kind, title in (("camera", "📷  摄像头录像"), ("screen", "🖥  屏幕录像"), ("merged", "🎬  合并的录屏")):
+        # 只展示最终 (合并 / 同步好) 的录像, 不展示片段 (MECHANICS 18.8)
+        for kind, title in (("camera", "📷  摄像头 (目光)"), ("screen", "🖥  屏幕 (刻痕)")):
             fr, head = self._card(body, title)
             self._track(ttk.Button(head, text=tr("打开文件夹"), command=lambda k=kind: self._open_folder(k)),
                         "打开文件夹").pack(side="right")
@@ -804,7 +806,7 @@ class SettingsPage(tk.Frame):
     def _open_folder(self, kind):
         if not self.data_dir:
             return
-        d = recorder.folder(self.data_dir, kind)
+        d = recorder.merged_dir(self.data_dir, kind)
         os.makedirs(d, exist_ok=True)
         self._open_uri(d)
 
@@ -840,7 +842,7 @@ class SettingsPage(tk.Frame):
         card = COLORS["bg_card"]
         small = config.font("small")
         for kind, (lbl, rows) in self._rec_lists.items():
-            files = recorder.list_files(self.data_dir, kind)
+            files = recorder.list_merged(self.data_dir, kind)
             live = self.recording(kind)
             sig = (live, tuple((f["name"], f["size"] // (1 << 20)) for f in files))
             if self._rec_sig.get(kind) == sig:
@@ -851,24 +853,17 @@ class SettingsPage(tk.Frame):
             for w in rows.winfo_children():
                 w.destroy()
             if not files:
-                tk.Label(rows, text=tr("还没有录像."), bg=card, fg=COLORS["text_dim"], font=small,
+                tk.Label(rows, text=tr("● 录制中, 结束后合并并同步.") if live else tr("还没有录像."),
+                         bg=card, fg=COLORS["danger"] if live else COLORS["text_dim"], font=small,
                          anchor="w").pack(fill="x")
-            writing = files[0]["path"] if live and files and files[0]["partial"] else ""
             for f in files[:60]:
                 row = tk.Frame(rows, bg=card)
                 row.pack(fill="x", pady=1)
                 when = f["start"].strftime("%Y-%m-%d %H:%M:%S") if f["start"] else f["name"]
-                note = ""
-                if f["path"] == writing:
-                    note = "  " + tr("● 录制中")
-                elif f["partial"]:
-                    note = "  " + tr("(没有正常保存, 可能放不出来)")
-                tk.Label(row, text=f"{when}   {_fmt_size(f['size'])}{note}", bg=card,
-                         fg=COLORS["danger"] if f["path"] == writing else COLORS["text"], font=small,
-                         anchor="w").pack(side="left")
-                if f["path"] == writing:
-                    continue
-                ttk.Button(row, text=tr("删除"), command=lambda p=f["path"]: self._delete_record(p)).pack(side="right")
+                tk.Label(row, text=f"{when}   {_fmt_size(f['size'])}", bg=card,
+                         fg=COLORS["text"], font=small, anchor="w").pack(side="left")
+                ttk.Button(row, text=tr("删除"),
+                           command=lambda p=f["path"], k=kind: self._delete_record(p, k)).pack(side="right")
                 ttk.Button(row, text=tr("▶ 播放"), command=lambda p=f["path"]: self._play_record(p)).pack(
                     side="right", padx=(0, 6))
             if len(files) > 60:
@@ -883,13 +878,10 @@ class SettingsPage(tk.Frame):
         except Exception as e:      # noqa: BLE001
             toast.warn(tr("打不开这个录像: {e}", e=e))
 
-    def _delete_record(self, path):
-        if not toast.ask(tr("删除这个录像?") + "\n" + os.path.basename(path), title=tr("删除录像"), danger=True):
+    def _delete_record(self, path, kind):
+        if not toast.ask(tr("删除这个录像?") + "\n" + tr("绑定的设备上也会删掉."), title=tr("删除录像"), danger=True):
             return
-        try:
-            os.remove(path)
-        except OSError as e:
-            toast.warn(tr("删除失败: {e}", e=e))
+        self.on_delete_record(recorder.cid_of(os.path.basename(path)), kind)
         self._rec_sig = {}
         self.refresh_records()
 

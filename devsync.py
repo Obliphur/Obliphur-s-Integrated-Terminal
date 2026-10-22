@@ -1035,9 +1035,10 @@ class SyncService:
 
     # ---- 文件通道 (MECHANICS 15.6): 把文件 / 图片发给一台绑定的设备 ----
 
-    def send_file(self, peer_id: str, path: str, cid: str = "") -> str:
+    def send_file(self, peer_id: str, path: str, cid: str = "", kind: str = "", final: bool = False) -> str:
         """后台线程: 先发签名的说明 (文件名, 大小, SHA-256, 取件码, nonce), 对方同意后来取 (内容加密传).
-        cid: 不为空时这是刻痕的录屏片段 (MECHANICS 18.8), 发给合约主人合并 (对方自动收下, 不问存到哪里).
+        cid: 不为空时这是合约录像 (MECHANICS 18.8), 对方自动收下 (不问用户存到哪里): kind = camera / screen;
+        final=True 时是合约主人合并好的最终录像 (对方直接存进 merged 展示), 否则是片段 (发给主人合并).
         返回 'sent', 或对方不要的原因 ('old' = 对方的 OIT 太旧)."""
         p = self.peers().get(peer_id)
         if not p:
@@ -1059,6 +1060,9 @@ class SyncService:
                  "token": token, "nonce": nonce.hex()}
         if cid:
             offer["cid"] = str(cid)
+            offer["kind"] = "camera" if kind == "camera" else "screen"
+            if final:
+                offer["final"] = True
         env = seal(k, self.my_id, {"send": offer})
         st, reply = self._http(p["addr"], p["port"], "POST", "/oit/v1/send", env, timeout=10.0)
         if st == 404:
@@ -1068,6 +1072,39 @@ class SyncService:
         if st != 200:
             raise RuntimeError(reply.get("error") or f"HTTP {st}")
         return "sent" if reply.get("ok") else str(reply.get("why") or "declined")
+
+    def del_recording(self, cid: str, kind: str):
+        """删掉某个合约某一路合并好的录像时, 通知所有绑定的设备也删 (MECHANICS 18.8). 后台线程里调用."""
+        cid = re.sub(r"[^0-9A-Za-z]", "", str(cid))[:24]
+        kind = "camera" if kind == "camera" else "screen"
+        for pid, p in list(self.peers().items()):
+            env = seal(bytes.fromhex(p["key"]), self.my_id, {"recdel": {"cid": cid, "kind": kind}})
+            try:
+                self._http(p["addr"], p["port"], "POST", "/oit/v1/recdel", env, timeout=5.0)
+            except Exception:       # noqa: BLE001
+                pass
+
+    def _on_recdel(self, env: dict):
+        """别的设备删了某个录像: 本机也删掉对应的 (按 合约 id + 路)."""
+        pid = str(env.get("from"))
+        p = self.peers().get(pid)
+        if not p:
+            return 401, {"error": "unpaired"}
+        try:
+            raw = unseal(bytes.fromhex(p["key"]), env)["recdel"]
+            cid = re.sub(r"[^0-9A-Za-z]", "", str(raw["cid"]))[:24]
+            kind = "camera" if str(raw.get("kind")) == "camera" else "screen"
+        except SealError as e:
+            return 403, {"error": str(e)}
+        except Exception:
+            return 400, {"error": "bad-request"}
+        fn = getattr(self.local, "rec_deleted", None)
+        if fn is not None:
+            try:
+                self.runner.call(lambda: fn(cid, kind))
+            except Exception:       # noqa: BLE001
+                pass
+        return 200, {"ok": True}
 
     def _on_send(self, env: dict):
         """别的设备要发文件过来: 核对说明, 交给本机 (问用户存到哪里 / 直接存), 本机决定后再来取 (fetch_file)."""
@@ -1081,6 +1118,8 @@ class SyncService:
                  "token": str(raw["token"]), "nonce": str(raw["nonce"])}
             if raw.get("cid"):
                 o["cid"] = re.sub(r"[^0-9A-Za-z]", "", str(raw["cid"]))[:24]
+                o["kind"] = "camera" if str(raw.get("kind")) == "camera" else "screen"
+                o["final"] = bool(raw.get("final"))
         except SealError as e:
             return 403, {"error": str(e)}
         except Exception:
@@ -1754,6 +1793,8 @@ def _make_handler(svc: SyncService):
                 return self._send(*svc._on_send(body))
             if self.path == "/oit/v1/got":
                 return self._send(*svc._on_got(body))
+            if self.path == "/oit/v1/recdel":
+                return self._send(*svc._on_recdel(body))
             self._send(404, {"error": "not found"})
 
         def _send_file(self, path, enc=None):

@@ -84,6 +84,11 @@ class RecordManager(private val app: OitApp) {
 
     private fun cidKey(cid: String) = cid.hashCode().toLong()
     private fun recording(kind: String) = RecordService.state[kind] == "running"
+
+    /** 屏幕又亮了 (MECHANICS 18.8): 熄屏可能把摄像头录像弄断了, 清掉重试冷却, 下一拍 (tick) 立刻接上. */
+    fun onScreenOn() {
+        retryAt.remove("camera")
+    }
     private fun granted(p: String) = app.checkSelfPermission(p) == android.content.pm.PackageManager.PERMISSION_GRANTED
 
     private fun start(kind: String) {
@@ -144,32 +149,36 @@ class RecordManager(private val app: OitApp) {
     private fun afterContract(cid: String, owner: String) {
         stop("camera"); stop("screen")
         val me = core.myId()
+        // 手机不能合并 (没有 Media Foundation): 本机是主人时片段留在本机 (设置 → 录像 还看不到最终结果, 要电脑合并);
+        // 不是主人时, 把本机录的各路片段自动发给主人 (在线的电脑) 合并 + 同步回来 (MECHANICS 18.8)
         if (owner.isEmpty() || owner == me) {
-            // 本机是主人: 手机还不能合并 (没有 Media Foundation), 片段留在本机
-            Thread {
-                Thread.sleep(1500)
-                val segs = RecCrypto.filesOf(dataDir, "screen", cid)
-                if (segs.isNotEmpty()) core.logRecord("owner on phone: ${segs.size} scar segments kept (merge on a PC)")
-            }.apply { isDaemon = true }.start()
+            core.logRecord("owner on phone: segments kept for $cid (merge on a PC)")
             return
         }
         Thread {
             Thread.sleep(1500)                                          // 等最后一段封装 (加密) 完
-            val segs = RecCrypto.filesOf(dataDir, "screen", cid).filter { !it.partial }
-            if (segs.isEmpty()) return@Thread
             val sync = app.sync ?: return@Thread
             val p = sync.peers()[owner] ?: return@Thread
             val online = sync.deviceStates().any { it.id == owner && it.online }
             if (!online || !p.optString("platform").lowercase().startsWith("win")) return@Thread   // 主人必须是在线的电脑
-            app.askSendSegments(cid, owner, p.optString("name", "?"), segs.map { it.file }, segs.sumOf { it.size })
+            for (kind in RecCrypto.KINDS) {
+                val segs = RecCrypto.filesOf(dataDir, kind, cid).filter { !it.partial }
+                var ok = 0
+                for (s in segs) runCatching { if (sync.sendFile(owner, s.file, cid, kind) == "sent") ok++ }
+                    .onFailure { core.logRecord("send $cid/$kind failed: ${it.message}") }
+                if (segs.isNotEmpty()) core.logRecord("sent $ok/${segs.size} $kind segments for $cid to $owner")
+            }
         }.apply { isDaemon = true }.start()
     }
 
-    /** 收到别的设备发来的刻痕片段 (MECHANICS 18.8): 存进 incoming/<cid>. 手机不能合并, 只收下留着. 返回 "" 表示收下. */
+    /** 收到别的设备发来的录像 (MECHANICS 18.8): final 是合约主人发来的最终录像 (直接存进 merged 展示);
+     *  否则是片段 (本机手机不能合并, 只收下留着). 返回 "" 表示收下. */
     fun recordingOffered(peerId: String, who: String, o: JSONObject): String {
         val cid = o.optString("cid")
+        val kind = if (o.optString("kind") == "camera") "camera" else "screen"
         if (cid.isEmpty()) return "bad-request"
-        val d = RecCrypto.incomingDir(dataDir, cid)
+        val finalRec = o.optBoolean("final")
+        val d = (if (finalRec) File(app.cacheDir, "recv") else RecCrypto.incomingDir(dataDir, cid, kind))
         if (!d.exists() && !d.mkdirs()) return "busy"
         var dest = File(d, com.obliphur.oit.sync.SyncCrypto.safeName(o.optString("name")))
         var n = 1
@@ -181,10 +190,28 @@ class RecordManager(private val app: OitApp) {
         val sync = app.sync ?: return "busy"
         Thread {
             runCatching { sync.fetchFile(peerId, o, dest) }
-                .onFailure { core.logRecord("recv $cid failed: ${it.message}") }
-                .onSuccess { core.logRecord("recv $cid segment ${dest.name} from $who (kept; merge on a PC)") }
+                .onFailure { core.logRecord("recv $cid/$kind failed: ${it.message}") }
+                .onSuccess {
+                    if (finalRec) { RecCrypto.storeMerged(dataDir, cid, kind, dest); core.logRecord("got merged $cid/$kind from $who") }
+                    else core.logRecord("recv $cid/$kind segment from $who (kept; merge on a PC)")
+                    core.changed()
+                }
         }.apply { isDaemon = true }.start()
         return ""
+    }
+
+    /** 别的设备删了某个录像 (MECHANICS 18.8): 本机也删掉对应的最终录像. */
+    fun recordingDeleted(cid: String, kind: String) {
+        if (RecCrypto.deleteMerged(dataDir, cid, kind)) { core.logRecord("deleted $cid/$kind (synced)"); core.changed() }
+    }
+
+    /** 用户在 设置 → 录像 删掉一个录像: 本机删, 并通知所有绑定设备也删 (MECHANICS 18.8). */
+    fun deleteRecording(cid: String, kind: String) {
+        RecCrypto.deleteMerged(dataDir, cid, kind)
+        val sync = app.sync
+        if (sync != null && sync.peers().isNotEmpty())
+            Thread { sync.delRecording(cid, kind) }.apply { isDaemon = true }.start()
+        core.changed()
     }
 
     companion object { const val FOCUS_EVERY_MS = 10_000L }

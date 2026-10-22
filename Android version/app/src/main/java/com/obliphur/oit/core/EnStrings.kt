@@ -1242,5 +1242,11 @@ object EnStrings {
         "■ 终止录像" to "■ Stop recording",
         "终止了录像" to "stopped the recording",
         "立即停止录像 (目光 / 刻痕), 每一路各算一次违反 (目标生命值 -1), 对应词条失效; 已经录下的部分照样保存." to "Stop recording now (Gaze / Engraving); each stream counts as one violation (target HP -1) and that term is voided; what's already recorded is kept.",
+        // ---- 由 merge_en.py 从 i18n.py 补充 (录像等) ----
+        "绑定的设备上也会删掉." to "It will be deleted on the bound devices too.",
+        "● 录制中, 结束后合并并同步." to "● Recording; it will be merged and synced when it ends.",
+        "📷  摄像头 (目光)" to "📷  Camera (Gaze)",
+        "🖥  屏幕 (刻痕)" to "🖥  Screen (Engraving)",
+        "这里只展示最终合并好的录像, 各设备间自动同步 (删除也会同步); 合并在合约主人 (一台电脑) 上进行." to "Only the final merged recordings are shown here; they sync automatically between devices (deletions sync too). Merging happens on the contract owner (a computer).",
     )
 }

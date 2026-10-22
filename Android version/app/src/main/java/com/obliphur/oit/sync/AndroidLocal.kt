@@ -93,9 +93,12 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
     override fun fileDelivered(who: String, name: String) =
         core.toast(tr("{who} 已收到 {name}.", "who" to who, "name" to name), "success")
 
-    /** 刻痕的录屏片段 (MECHANICS 18.8): 交给录像调度收下 (存进 incoming/<cid>). */
+    /** 合约录像 (MECHANICS 18.8): 交给录像调度收下 (片段存进 incoming, 最终录像存进 merged 展示). */
     override fun recOffered(peerId: String, who: String, o: JSONObject): String =
         app.recordManager.recordingOffered(peerId, who, o)
+
+    /** 录像 (MECHANICS 18.8): 别的设备删了某个录像, 本机也删掉. */
+    override fun recDeleted(cid: String, kind: String) = app.recordManager.recordingDeleted(cid, kind)
 
     // ---- 账 ----
 

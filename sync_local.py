@@ -76,8 +76,12 @@ class PcLocal:
         self.app.file_channel.delivered(who, name)
 
     def rec_offered(self, peer_id: str, who: str, o: dict) -> str:
-        """刻痕 (MECHANICS 18.8): 别的设备把它录的那段屏幕发过来给本机 (合约主人) 合并. 自动收下, 不问用户."""
+        """录像 (MECHANICS 18.8): 别的设备把它录的片段 / 合并好的最终录像发过来. 自动收下, 不问用户."""
         return self.app.recording_offered(peer_id, who, o)
+
+    def rec_deleted(self, cid: str, kind: str):
+        """录像 (MECHANICS 18.8): 别的设备删了某个录像, 本机也删掉."""
+        self.app.rec_deleted(cid, kind)
 
     def wipe_requested(self, wipe_id: str, sender: str, name: str):
         """别的设备重置 / 卸载了, 请本机也清空数据 (MECHANICS 9): 回复对方之后再做 (重置会关闭程序)."""

@@ -36,8 +36,35 @@ class RecordService : Service() {
     private val h = Handler(thread.looper)
     private var cam: CamJob? = null
     private var screen: ScreenJob? = null
+    private var screenLock: android.os.PowerManager.WakeLock? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    // 录像期间屏幕不自动熄灭 (MECHANICS 18.8); 熄屏后摄像头可能断, 亮屏时自动接上 (通知 RecordManager 立刻重试)
+    private val screenOn = object : android.content.BroadcastReceiver() {
+        override fun onReceive(c: android.content.Context?, i: Intent?) {
+            if (i?.action == Intent.ACTION_SCREEN_ON) OitApp.instance.recordManager.onScreenOn()
+        }
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        runCatching { registerReceiver(screenOn, android.content.IntentFilter(Intent.ACTION_SCREEN_ON)) }
+    }
+
+    /** 录像时拿一个屏幕唤醒锁, 让屏幕不自动熄灭 (停录时放开). */
+    @Suppress("DEPRECATION", "WakelockTimeout")
+    private fun keepScreen(on: Boolean) {
+        if (on && screenLock == null) {
+            screenLock = runCatching {
+                (getSystemService(POWER_SERVICE) as android.os.PowerManager)
+                    .newWakeLock(android.os.PowerManager.SCREEN_BRIGHT_WAKE_LOCK, "oit:rec").apply { acquire() }
+            }.getOrNull()
+        } else if (!on) {
+            runCatching { screenLock?.release() }
+            screenLock = null
+        }
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action
@@ -53,13 +80,16 @@ class RecordService : Service() {
                 ACT_STOP_SCREEN -> { screen?.stop(); screen = null }
             }
             if (cam == null && screen == null) {
+                keepScreen(false)
                 stopForeground(STOP_FOREGROUND_REMOVE); stopSelf()
-            } else enterForeground(cam != null, screen != null)
+            } else { enterForeground(cam != null, screen != null); keepScreen(true) }
         }
         return START_NOT_STICKY
     }
 
     override fun onDestroy() {
+        keepScreen(false)
+        runCatching { unregisterReceiver(screenOn) }
         h.post { cam?.stop(); screen?.stop(); cam = null; screen = null }
         h.postDelayed({ thread.quitSafely() }, 500)
         state.clear()

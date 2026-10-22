@@ -169,6 +169,7 @@ class BreakTimerApp:
         self._rec_started_cid = None  # 在本机开始的合约 (开始时已经确认过录像)
         self._scar_focus_id = None    # 刻痕的焦点设备 (录屏的那台); 每 10 秒判定一次
         self._scar_focus_at = 0.0
+        self._merging = set()         # 正在合并的 (cid, kind), 防止重入
         self._focus_checks = 0        # 这一段专注里已经被手动关掉的"还在吗"提醒数
         self._focus_ok = 0.0          # 最后一次确认 (关掉提醒窗) 时已专注的秒数
         self._check_win = None        # 当前开着的"还在吗"提醒窗
@@ -635,7 +636,7 @@ class BreakTimerApp:
             on_update_relay=lambda: self.relay_updates(manual=True),
             sync=self.sync, achievements=self.ach,
             on_open_achievements=self._open_achievements,
-            data_dir=self.dm.data_dir, recording=self.recording
+            data_dir=self.dm.data_dir, recording=self.recording, on_delete_record=self.delete_recording
         )
         self._prepare_page(self.pages["settings"])
         yield
@@ -3117,97 +3118,96 @@ class BreakTimerApp:
             toast.notice(tr("⚔ 行动失败"), msg)
         if self.sync.peers():
             self.sync.sync_now()
-        if "scar" in set(rec.get("orig") or []) | set(rec.get("terms") or []):
-            self._after_scar(str(rec.get("id") or ""), str(rec.get("owner") or ""))
+        rec_terms = set(rec.get("orig") or []) | set(rec.get("terms") or [])
+        kinds = [k for t, k in contract_mod.RECORD.items() if t in rec_terms]
+        if kinds:
+            self._after_contract(str(rec.get("id") or ""), str(rec.get("owner") or ""), kinds)
 
-    def _after_scar(self, cid: str, owner: str):
-        """刻痕结束 (MECHANICS 18.8): 合约主人 (开始合约的那台, owner) 合并所有片段;
-        别的设备把本机录的几段发给主人合并 (发之前问一次用户)."""
+    def _after_contract(self, cid: str, owner: str, kinds):
+        """录像结束 (MECHANICS 18.8): 本机是合约主人 → 合并各路并把最终录像同步给所有设备;
+        不是主人 → 把本机录的片段 (各路) 自动发给主人合并 (不再逐条询问)."""
         if not cid:
             return
-        self._stop_recorder("screen")
+        for kind in kinds:
+            self._stop_recorder(kind)
         if owner and owner == self.sync.my_id:
-            self._merge_contract(cid)
+            for kind in kinds:
+                self._merge_and_share(cid, kind)
         else:
-            self._offer_scar_segments(cid, owner)
+            self._send_segments(cid, owner, kinds)
 
-    def _merge_contract(self, cid: str):
-        """合约主人: 把本机的 + 收到的录屏片段接成一个视频 (加密保存). 收到新片段时会再调用一次 (重合并)."""
-        if not cid or getattr(self, "_merging", None) == cid:
+    def _merge_and_share(self, cid: str, kind: str):
+        """合约主人: 把本机的 + 收到的片段接成一个视频, 再把最终结果同步给所有设备. 收到新片段时会再调用 (重合并 + 重发)."""
+        key = (cid, kind)
+        if not cid or key in self._merging:
             return
 
         def run():
-            self._merging = cid
+            self._merging.add(key)
             try:
-                r = self._recorders.get("screen")
+                r = self._recorders.get(kind)
                 if r is not None:
                     r.wait_sealed(12.0)
-                if not recorder.files_of(self.dm.data_dir, "screen", cid) \
-                        and not os.path.isdir(recorder.incoming_dir(self.dm.data_dir, cid)):
+                if not recorder.files_of(self.dm.data_dir, kind, cid) \
+                        and not os.path.isdir(recorder.incoming_dir(self.dm.data_dir, cid, kind)):
                     return
                 try:
-                    path = recorder.merge(self.dm.data_dir, cid)
+                    path = recorder.merge(self.dm.data_dir, cid, kind)
                 except Exception as e:      # noqa: BLE001
-                    self._log_notice(f"RECORD merge {cid} failed: {e}")
+                    self._log_notice(f"RECORD merge {cid}/{kind} failed: {e}")
                     return
                 if not path:
                     return
-                self._log_notice(f"RECORD merged {cid} -> {os.path.basename(path)}")
-                self.root.after(0, lambda: (toast.info(tr("刻痕: 本次录屏已合并, 在 设置 → 录像 查看.")),
-                                            self._refresh_if_visible("settings")))
+                self._log_notice(f"RECORD merged {cid}/{kind} -> {os.path.basename(path)}")
+                self.root.after(0, lambda: self._refresh_if_visible("settings"))
+                self._distribute_merged(cid, kind, path)
             finally:
-                if self._merging == cid:
-                    self._merging = None
-        threading.Thread(target=run, daemon=True, name=f"merge-{cid}").start()
+                self._merging.discard(key)
+        threading.Thread(target=run, daemon=True, name=f"merge-{cid}-{kind}").start()
 
-    def _offer_scar_segments(self, cid: str, owner: str):
-        """不是合约主人的设备: 把本机录的几段屏幕发给主人合并 (MECHANICS 18.8), 发之前问一次用户."""
+    def _distribute_merged(self, cid: str, kind: str, path: str):
+        """合约主人: 把合并好的最终录像自动同步给所有在线的绑定设备 (不问)."""
+        for s in self.sync.device_states():
+            if not s.get("online") or s["id"] == self.sync.my_id:
+                continue
+            try:
+                self.sync.send_file(s["id"], path, cid=cid, kind=kind, final=True)
+            except Exception as e:      # noqa: BLE001
+                self._log_notice(f"RECORD share {cid}/{kind} to {s['id']} failed: {e}")
+
+    def _send_segments(self, cid: str, owner: str, kinds):
+        """不是合约主人的设备: 把本机录的片段 (各路) 自动发给主人合并 (MECHANICS 18.8)."""
         def go():
-            r = self._recorders.get("screen")
-            if r is not None:
-                r.wait_sealed(12.0)
-            segs = recorder.files_of(self.dm.data_dir, "screen", cid)
-            segs = [s for s in segs if not s.get("partial")]
-            if not segs:
-                return
             p = self.sync.peers().get(owner)
-            # 主人必须是在线的电脑 (手机还不能合并); 不是就先留在本机, 以后再说
             online = any(s["id"] == owner and s.get("online") for s in self.sync.device_states())
+            # 主人必须是在线的电脑 (手机不能合并); 不是就先留在本机
             if not p or not online or not str(p.get("platform", "")).lower().startswith("win"):
                 return
-            name = str(p.get("name") or "?")
-            self.root.after(0, lambda: self._ask_send_segments(cid, owner, segs, name))
-        threading.Thread(target=go, daemon=True, name=f"scar-offer-{cid}").start()
-
-    def _ask_send_segments(self, cid, owner, segs, name):
-        if not self.sync.peers().get(owner):
-            return
-        total = sum(s["size"] for s in segs)
-        if not toast.ask(
-                tr("本次刻痕: 本机录了 {n} 段屏幕 ({size}).", n=len(segs), size=fmt_size(total)) + "\n"
-                + tr("发给 {name} 合并成一个视频吗? (加密传输)", name=name),
-                title=tr("🎬 刻痕: 发送录屏片段"), ok_text=tr("发送")):
-            return
-
-        def send():
-            ok = 0
-            for s in segs:
-                try:
-                    if self.sync.send_file(owner, s["path"], cid=cid) == "sent":
-                        ok += 1
-                except Exception as e:      # noqa: BLE001
-                    self._log_notice(f"RECORD send {cid} failed: {e}")
-            self._log_notice(f"RECORD sent {ok}/{len(segs)} scar segments for {cid} to {owner}")
-            self.root.after(0, lambda: toast.info(
-                tr("已发送 {n} 段录屏给 {name} 合并.", n=ok, name=name)) if ok else None)
-        threading.Thread(target=send, daemon=True, name=f"scar-send-{cid}").start()
+            for kind in kinds:
+                r = self._recorders.get(kind)
+                if r is not None:
+                    r.wait_sealed(12.0)
+                segs = [s for s in recorder.files_of(self.dm.data_dir, kind, cid) if not s.get("partial")]
+                ok = 0
+                for s in segs:
+                    try:
+                        if self.sync.send_file(owner, s["path"], cid=cid, kind=kind) == "sent":
+                            ok += 1
+                    except Exception as e:      # noqa: BLE001
+                        self._log_notice(f"RECORD send {cid}/{kind} failed: {e}")
+                if segs:
+                    self._log_notice(f"RECORD sent {ok}/{len(segs)} {kind} segments for {cid} to {owner}")
+        threading.Thread(target=go, daemon=True, name=f"rec-send-{cid}").start()
 
     def recording_offered(self, peer_id: str, who: str, o: dict) -> str:
-        """合约主人收到别的设备发来的录屏片段 (MECHANICS 18.8): 存进 incoming/<cid>, 取好后重新合并."""
+        """收到别的设备发来的录像 (MECHANICS 18.8): final 是合约主人发来的最终录像 (直接存进 merged 展示);
+        否则是片段 (本机是主人, 存进 incoming, 重合并 + 重同步)."""
         cid = str(o.get("cid") or "")
-        if not cid:
+        kind = str(o.get("kind") or "screen")
+        if not cid or kind not in recorder.KINDS:
             return "bad-request"
-        d = recorder.incoming_dir(self.dm.data_dir, cid)
+        final = bool(o.get("final"))
+        d = recorder.work_dir(self.dm.data_dir, "recv") if final else recorder.incoming_dir(self.dm.data_dir, cid, kind)
         try:
             os.makedirs(d, exist_ok=True)
         except OSError:
@@ -3223,13 +3223,31 @@ class BreakTimerApp:
             try:
                 self.sync.fetch_file(peer_id, o, dest)
             except Exception as e:      # noqa: BLE001
-                self._log_notice(f"RECORD recv {cid} failed: {e}")
+                self._log_notice(f"RECORD recv {cid}/{kind} failed: {e}")
                 return
-            self._log_notice(f"RECORD recv {cid} segment {os.path.basename(dest)} from {who}")
-            # 主人: 收到后重新合并 (稍等一下, 让同一批的几段都到了再合)
-            self.root.after(4000, lambda: self._merge_contract(cid))
-        threading.Thread(target=pull, daemon=True, name=f"scar-recv-{cid}").start()
+            if final:
+                recorder.merged_file(self.dm.data_dir, cid, kind, dest)
+                self._log_notice(f"RECORD got merged {cid}/{kind} from {who}")
+                self.root.after(0, lambda: self._refresh_if_visible("settings"))
+            else:
+                self._log_notice(f"RECORD recv {cid}/{kind} segment from {who}")
+                # 主人: 收到后重新合并 (稍等一下, 让同一批的几段都到了再合)
+                self.root.after(4000, lambda: self._merge_and_share(cid, kind))
+        threading.Thread(target=pull, daemon=True, name=f"rec-recv-{cid}").start()
         return ""
+
+    def rec_deleted(self, cid: str, kind: str):
+        """别的设备删了某个录像 (MECHANICS 18.8): 本机也删掉对应的合并录像."""
+        if recorder.delete_merged(self.dm.data_dir, cid, kind):
+            self._log_notice(f"RECORD deleted {cid}/{kind} (synced)")
+            self.root.after(0, lambda: self._refresh_if_visible("settings"))
+
+    def delete_recording(self, cid: str, kind: str):
+        """用户在 设置 → 录像 删掉一个录像: 本机删, 并通知所有绑定设备也删 (MECHANICS 18.8)."""
+        recorder.delete_merged(self.dm.data_dir, cid, kind)
+        if self.sync.peers():
+            threading.Thread(target=lambda: self.sync.del_recording(cid, kind), daemon=True).start()
+        self._refresh_if_visible("settings")
 
     def _seal_extra(self):
         """记录封锁 (18.4): 完成了一次填写, 另外随机封锁两个可以封锁的格子."""

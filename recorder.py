@@ -1346,15 +1346,77 @@ def _reencode_concat(out_path, inputs, fps=SCREEN_FPS, size=None):
         _shutdown(lib)
 
 
-def incoming_dir(data_dir: str, cid: str) -> str:
-    """刻痕: 从别的设备收到的录屏片段先放这里 (按合约 id), 合并时一起用."""
-    return os.path.join(data_dir, "recordings", "incoming", re.sub(r"[^0-9A-Za-z]", "", str(cid))[:24] or "x")
+def _safe_cid(cid: str) -> str:
+    return re.sub(r"[^0-9A-Za-z]", "", str(cid))[:24] or "x"
 
 
-def merge(data_dir: str, cid: str, extra=()) -> str:
-    """刻痕 (MECHANICS 18.8): 把这个合约的录屏片段 (本机的 + 从别的设备收到的 + extra) 按时间接成一个视频,
-    加密存进 recordings/merged. 返回合并后的路径 (没有片段时 "")."""
-    inc = incoming_dir(data_dir, cid)
+def incoming_dir(data_dir: str, cid: str, kind: str = "screen") -> str:
+    """从别的设备收到的某一路 (camera / screen) 录像片段先放这里 (按合约 id), 合并时一起用."""
+    return os.path.join(data_dir, "recordings", "incoming", _safe_cid(cid), kind)
+
+
+def merged_dir(data_dir: str, kind: str) -> str:
+    """合并 / 同步好的最终录像 (camera / screen) 存这里; 界面只展示这里的 (不展示片段)."""
+    return os.path.join(data_dir, "recordings", "merged", kind)
+
+
+def merged_file(data_dir: str, cid: str, kind: str, src: str):
+    """别的设备 (合约主人) 发来的已经合并好的最终录像: 直接存进 merged/<kind> (替换这个合约旧的), 不再合并."""
+    d = merged_dir(data_dir, kind)
+    os.makedirs(d, exist_ok=True)
+    for n in os.listdir(d):                       # 同一个合约的旧结果先删掉 (重合并后会再发来)
+        if cid_of(n) == _safe_cid(cid):
+            _remove(os.path.join(d, n))
+    stem = datetime.now().strftime("%Y%m%d-%H%M%S")
+    dst = os.path.join(d, f"{stem}__{_safe_cid(cid)}{EXT}")
+    try:
+        os.replace(src, dst)
+    except OSError:
+        shutil.move(src, dst)
+    return dst
+
+
+def list_merged(data_dir: str, kind: str) -> list:
+    """合并 / 同步好的最终录像 (camera / screen), 新的在前: [{path, name, size, start, partial}]. 界面只展示这些."""
+    out = []
+    try:
+        names = os.listdir(merged_dir(data_dir, kind))
+    except OSError:
+        return out
+    for n in names:
+        if not n.lower().endswith(EXT):
+            continue
+        p = os.path.join(merged_dir(data_dir, kind), n)
+        try:
+            size = os.path.getsize(p)
+        except OSError:
+            continue
+        try:
+            start = datetime.strptime(n[:15], "%Y%m%d-%H%M%S")
+        except ValueError:
+            start = None
+        out.append({"path": p, "name": n, "size": size, "start": start, "partial": False})
+    out.sort(key=lambda f: (f["start"] or datetime.min, f["name"]), reverse=True)
+    return out
+
+
+def delete_merged(data_dir: str, cid: str, kind: str) -> bool:
+    """删掉某个合约某一路合并好的最终录像 (删除要在设备间同步, MECHANICS 18.8)."""
+    removed = False
+    try:
+        for n in os.listdir(merged_dir(data_dir, kind)):
+            if cid_of(n) == _safe_cid(cid):
+                _remove(os.path.join(merged_dir(data_dir, kind), n))
+                removed = True
+    except OSError:
+        pass
+    return removed
+
+
+def merge(data_dir: str, cid: str, kind: str = "screen", extra=()) -> str:
+    """MECHANICS 18.8: 把这个合约某一路 (camera / screen) 的录像片段 (本机的 + 从别的设备收到的 + extra)
+    按时间接成一个视频, 加密存进 merged/<kind>. 返回合并后的路径 (没有片段时 "")."""
+    inc = incoming_dir(data_dir, cid, kind)
     got = []
     try:
         for n in os.listdir(inc):
@@ -1362,7 +1424,7 @@ def merge(data_dir: str, cid: str, extra=()) -> str:
                 got.append(os.path.join(inc, n))
     except OSError:
         pass
-    segs = [dict(s, local=True) for s in files_of(data_dir, "screen", cid)] + [
+    segs = [dict(s, local=True) for s in files_of(data_dir, kind, cid)] + [
         {"path": p, "name": os.path.basename(p), "start": None, "local": False} for p in list(extra) + got]
     segs = [s for s in segs if not s.get("partial")]
     if not segs:
@@ -1397,10 +1459,13 @@ def merge(data_dir: str, cid: str, extra=()) -> str:
             except Exception:       # noqa: BLE001
                 pass
         _reencode_concat(raw, [p for p, _ in plain], size=_canvas(info))
-        d = folder(data_dir, "merged")
+        d = merged_dir(data_dir, kind)
         os.makedirs(d, exist_ok=True)
+        for n in os.listdir(d):                   # 这个合约这一路的旧结果先删 (本次重新合并盖掉)
+            if cid_of(n) == _safe_cid(cid):
+                _remove(os.path.join(d, n))
         stem = when(segs[0]).strftime("%Y%m%d-%H%M%S")
-        dst = os.path.join(d, f"{stem}__{cid}{EXT}")
+        dst = os.path.join(d, f"{stem}__{_safe_cid(cid)}{EXT}")
         encrypt_file(raw, dst)
         return dst
     finally:

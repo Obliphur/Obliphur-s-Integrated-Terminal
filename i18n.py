@@ -12,6 +12,15 @@ _current = DEFAULT_LANGUAGE
 
 
 EN = {
+    # ---- 录像同步 / 删除 / 列表 (MECHANICS 18.8) ----
+    "绑定的设备上也会删掉.": "It will be deleted on the bound devices too.",
+    "● 录制中, 结束后合并并同步.": "● Recording; it will be merged and synced when it ends.",
+    "📷  摄像头 (目光)": "📷  Camera (Gaze)",
+    "🖥  屏幕 (刻痕)": "🖥  Screen (Engraving)",
+    "📷 摄像头 (目光)": "📷 Camera (Gaze)",
+    "🖥 屏幕 (刻痕)": "🖥 Screen (Engraving)",
+    "这里只展示最终合并好的录像, 各设备间自动同步 (删除也会同步); 合并在合约主人 (一台电脑) 上进行.":
+        "Only the final merged recordings are shown here; they sync automatically between devices (deletions sync too). Merging happens on the contract owner (a computer).",
     # ---- 终止录像 (手机合约页, MECHANICS 18.8) ----
     "■  终止录像": "■  Stop recording",
     "■ 终止录像": "■ Stop recording",

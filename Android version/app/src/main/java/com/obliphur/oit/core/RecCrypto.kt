@@ -42,11 +42,43 @@ object RecCrypto {
     /** 正在写的 (还没加密的) mp4 放在缓存里 (cacheDir/oit_rec/<kind>), 不在数据目录. */
     fun workDir(cacheDir: File, kind: String) = File(File(cacheDir, "oit_rec"), kind)
 
-    /** 别的设备发来的刻痕片段先放这里 (按合约 id), 合并时一起用. */
-    fun incomingDir(dataDir: File, cid: String) =
-        File(File(File(dataDir, "recordings"), "incoming"), safeCid(cid))
+    /** 别的设备发来的某一路 (camera / screen) 片段先放这里 (按合约 id), 合并时一起用. */
+    fun incomingDir(dataDir: File, cid: String, kind: String) =
+        File(File(File(File(dataDir, "recordings"), "incoming"), safeCid(cid)), kind)
+
+    /** 合并 / 同步好的最终录像 (camera / screen) 存这里; 界面只展示这里的 (不展示片段). */
+    fun mergedDir(dataDir: File, kind: String) = File(File(File(dataDir, "recordings"), "merged"), kind)
 
     fun safeCid(cid: String) = cid.filter { it.isLetterOrDigit() }.take(24).ifEmpty { "x" }
+
+    /** 别的设备 (合约主人) 发来的已经合并好的最终录像: 直接存进 merged/<kind> (替换这个合约旧的), 不再合并. */
+    fun storeMerged(dataDir: File, cid: String, kind: String, src: File): File {
+        val d = mergedDir(dataDir, kind).apply { mkdirs() }
+        d.listFiles()?.forEach { if (cidOf(it.name) == safeCid(cid)) it.delete() }
+        val stem = java.time.LocalDateTime.now().format(STAMP)
+        val dst = File(d, "${stem}__${safeCid(cid)}$EXT")
+        if (!src.renameTo(dst)) { src.copyTo(dst, overwrite = true); src.delete() }
+        return dst
+    }
+
+    /** 某一路合并好的最终录像, 新的在前. */
+    fun listMerged(dataDir: File, kind: String): List<Rec> {
+        val out = ArrayList<Rec>()
+        for (f in mergedDir(dataDir, kind).listFiles() ?: emptyArray()) {
+            if (!f.name.lowercase().endsWith(EXT)) continue
+            val start = runCatching { LocalDateTime.parse(f.name.take(15), STAMP) }.getOrNull()
+            out.add(Rec(f, f.name, f.length(), start, false))
+        }
+        out.sortWith(compareByDescending<Rec> { it.start ?: LocalDateTime.MIN }.thenByDescending { it.name })
+        return out
+    }
+
+    /** 删掉某个合约某一路合并好的最终录像 (删除要在设备间同步). */
+    fun deleteMerged(dataDir: File, cid: String, kind: String): Boolean {
+        var removed = false
+        mergedDir(dataDir, kind).listFiles()?.forEach { if (cidOf(it.name) == safeCid(cid)) { it.delete(); removed = true } }
+        return removed
+    }
 
     /** 文件名里的合约 id (录像按它合并): "…__<cid>.ext" → cid; 没有则 "". */
     fun cidOf(name: String): String {
