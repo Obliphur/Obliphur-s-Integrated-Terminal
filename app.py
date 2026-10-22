@@ -1961,7 +1961,8 @@ class BreakTimerApp:
         return counted, brk
 
     def _deep_check_closed(self, start: datetime, seconds: float):
-        """OIT 被关掉 (不是关机) 导致专注停止: 照样按纵深推进检查这段专注够不够长 (18.3)."""
+        """专注停止 (手动结束 / 提醒超时自动结束 / OIT 被关掉等, 非关机) 时按纵深推进检查这段够不够长 (18.3).
+        关机 / 断电导致的停止由调用方用 off 判断豁免 (MECHANICS 15.4), 不走到这里."""
         minutes = self.contract.focus_minutes(start, seconds)
         tid = self.contract.focus_check(minutes * 60)
         if tid:
@@ -2073,9 +2074,11 @@ class BreakTimerApp:
         self._close_check_win()
         self.cancel_update()
         minutes, brk = self._book_focus(start, seconds, ok)
+        self._mine()                             # 自动结束由本机做, 其他设备照着结束
         self.reset_to_idle()
         self._set_break_carry(self.break_carry + brk)   # 同时清掉文件里的专注状态
         self._add_auto_rest(brk)
+        self._deep_check_closed(start, seconds)  # 纵深推进: 自动结束的这段也查够不够长 (任何原因停止都查)
         self.lbl_sub.config(text=self._idle_sub_text())
         self._sync_timer_buttons()
         self.refresh_display()

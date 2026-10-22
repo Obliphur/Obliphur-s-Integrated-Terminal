@@ -595,7 +595,8 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         return counted to brk
     }
 
-    /** OIT 被关掉 (不是关机) 导致专注停止: 照样按纵深推进检查这段专注够不够长 (18.3). */
+    /** 专注停止 (手动结束 / 提醒超时自动结束 / OIT 被关掉等, 非关机) 时按纵深推进检查这段够不够长 (18.3).
+     *  关机 / 断电导致的停止由调用方用 off 判断豁免 (MECHANICS 15.4), 不走到这里. */
     private fun deepCheckClosed(start: LocalDateTime, seconds: Double) {
         val minutes = core.contract.focusMinutes(start, seconds)
         core.contract.focusCheck(minutes * 60).ifEmpty { null }?.let {
@@ -718,9 +719,11 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         val ok = minOf(focusOk, seconds)
         closeCheck()
         val (minutes, brk) = bookFocus(start, seconds, ok)
+        mine()                                     // 自动结束由本机做, 其他设备照着结束
         resetToIdle()
         setCarry(breakCarry + brk)
         addAutoRest(brk)
+        deepCheckClosed(start, seconds)            // 纵深推进: 自动结束的这段也查够不够长 (任何原因停止都查)
         var msg = tr("提醒窗{n}分钟内没有被关掉,专注已在{at}自动结束.",
             "n" to Math.round(Cfg.FOCUS_CHECK_GRACE / 60).toInt(), "at" to start.plusSec(seconds).format(Fmt.HM))
         msg += "\n" + tr("没有确认的部分按×{p}计入,共计入{m}分钟.", "p" to numText(Cfg.FOCUS_CHECK_PENALTY), "m" to f1(minutes))
