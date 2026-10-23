@@ -513,4 +513,18 @@ class ContractTest {
         assertTrue(Contract.recordMarks(rec).isEmpty())
         assertEquals(listOf("long3", "music"), Contract.recordRows(rec).take(2).map { it.id })
     }
+
+    @Test
+    fun focusTags() {
+        // 专注的标签 (按开始时刻): 开始于合约里是那个合约 ("合约"专注), 否则 0 ("普通"专注)
+        val c = Contract(tmp())
+        val t0 = LocalDateTime.of(2026, 10, 20, 9, 0)
+        c.start(listOf("long1"), "me", t0)
+        val id = c.id
+        assertEquals(id, c.focusTag(t0.plusHours(1))); assertEquals(0L, c.focusTag(t0.minusMinutes(1)))
+        assertFalse(c.completed(id))
+        c.finish("completed", t0.plusHours(4).plusMinutes(48))
+        assertEquals(id, c.focusTag(t0.plusHours(4))); assertTrue(c.completed(id))
+        assertEquals(0L, c.focusTag(t0.plusHours(5)))
+    }
 }

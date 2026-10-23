@@ -188,7 +188,7 @@ fun HourLogScreen(go: (String) -> Unit) {
         }
         LazyColumn(state = list, modifier = Modifier.fillMaxSize().padding(top = 8.dp)) {
             items(24) { h ->
-                // 每一行的时间是这一小时的结束时刻; 第 0 行是昨天 23:00 ~ 24:00
+                // 每一行左边写这一小时的起点; 第 0 行是昨天 23:00 ~ 24:00
                 val start = day0.plusHours((h - 1).toLong())
                 val end = start.plusHours(1)
                 val ds = start.toLocalDate().key()
@@ -221,7 +221,7 @@ fun HourLogScreen(go: (String) -> Unit) {
                         core.contract.hourLocked(a, b, t, now, dm.fillSeconds.toLong(), dm.autoValue, dm::autoTextForKey)) }
                 val shown = cells.mapIndexed { i, (a, _, t) -> if (hidden[i]) fogNoise(fogWords, a) else t }
                 val sealed = cells.map { (a, b, _) -> core.contract.hourSealed(a, b, now) }
-                HourRow(if (hidden.all { it }) "???" else "%02d:00".format(h) + when {
+                HourRow(if (hidden.all { it }) "???" else "%02d:00".format(start.hour) + when {   // 左边写这一小时的起点
                     isNow -> tr("   ◂ 现在")
                     isWait -> tr("   ◂ 待填写")
                     locked -> "   🔒"
@@ -370,8 +370,8 @@ private fun ContractRecords() {
     val c = core.contract
     var open by remember { mutableStateOf<ContractRow?>(null) }
     val fog = c.fog()
-    // 组合的颜色 (白色在浅色主题里换成最深的文字色)
-    val tint = mapOf("white" to o.strong, "purple" to Color(0xffb06cf0), "gray" to Color(0xff9a9ca1), "red" to Color(0xffff2b3a))
+    // 组合的颜色 (黄色在两种主题里都用深一点的黄, 浅色背景上也看得清)
+    val tint = mapOf("yellow" to Color(0xffd9a400), "purple" to Color(0xffb06cf0), "gray" to Color(0xff9a9ca1), "red" to Color(0xffff2b3a))
     val rows = remember(fog, c.id, c.history.size) {
         if (fog) fogContractRows(c.id)
         else Contract.recentCompleted(c.history, CONTRACT_ROWS).map {

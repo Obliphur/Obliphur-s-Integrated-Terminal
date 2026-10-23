@@ -39,6 +39,8 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         private set
     /** 这次休息是在哪个合约中开始的 (0 = 不是; 合约结束后暂停: 只还合约开始前的那部分). */
     var breakCid = 0L
+    /** 刚结束的那段专注的标签 (开始于哪个合约, 0 = 普通专注): 下一次休息按它的规则. */
+    private var restTag = 0L
         private set
     /** 合约在休息中自然结束了, 这次休息继续 (手动暂停立即清空合约内获得的时间, 自然走完变空闲). */
     var contractRestOver = false
@@ -105,6 +107,8 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
                 dm.addStudySession(startWall!!, end, maxOf(0.0, minutes - off / 60.0))
                 addStudyPieces(startWall!!, end)
                 closeCheck()
+                // 合约专注 (开始于合约里) 的下一次休息按合约规则 (合约在专注中完成了也一样, MECHANICS 18.2)
+                restTag = core.contract.focusTag(startWall)
                 state = TState.IDLE          // 专注已记下: 先清掉文件里的专注状态
                 saveState()
                 startBreak(announce = true)
@@ -137,6 +141,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
                 }
                 lastTMinutes = 0.0
                 restBase = 0.0
+                restTag = 0L                         // 不是接着专注的休息: 按普通规则
                 val total = breakCarry
                 startBreak()
                 if (state == TState.ON_BREAK) core.toast(tr("开始休息 {t}.", "t" to fmtMs(total.toDouble())), "success")
@@ -236,20 +241,26 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
             resetToIdle(); return
         }
         val carry = breakCarry
+        val tag = restTag
+        restTag = 0L
+        val c = core.contract
+        // 合约专注的下一次休息, 合约已经完成了: 仍按合约规则 —— 这段专注换来的是合约休息时间 (暂停时清空),
+        // 积攒的休息时间 (合约开始前剩下的 + 完成奖励) 是正常休息时间, 放在最后用, 暂停时原样留下不打折
+        val after = !c.active && c.completed(tag)
         val bonus = readState().optBoolean("bonus_pending", false)
         if (bonus) {
             bonusBreakActive = true
             extra = JSONObject().put("bonus_pending", false)
         }
-        if (!core.contract.active && core.contract.takeFirstBreak()) {
+        if (!c.active && !after && c.takeFirstBreak()) {
             contractBreakActive = true
             core.toast(tr("合约完成后的第一次休息: 暂停时剩余时间 ×{r} 留给下次.",
                 "r" to numText(Contract.firstBreakRate(settings.num("BREAK_CARRY_RATE")))), "info", long = true)
         }
-        val c = core.contract
         breakPre = if (c.active) c.preTake(carry.toDouble()) else 0.0
         breakCid = if (c.active) c.id else 0L
         contractRestOver = false
+        if (after) { breakPre = carry.toDouble(); breakCid = tag; contractRestOver = true }
         core.supplyWarned.clear()
         breakCarry = 0
         autoRest = 0                             // 一起用进这次休息, 结束休息时照常折算 (6.8)
@@ -413,6 +424,21 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         contractBreakActive = false
         if (add > 0) setCarry(breakCarry + add)
         resetToIdle()
+        armIdleNudge()
+    }
+
+    /** 合约非自然结束 (失败 / 手动终止, MECHANICS 18.1): 正在进行的专注立即结束. 学习时长照常记,
+     *  这段专注换来的休息时间是合约中获得的, 随合约一起清空 —— 不开始休息, 回到空闲. */
+    fun stopFocusForContract() {
+        if (state != TState.RUNNING) return
+        val start = startWall ?: return
+        val sec = mono() - startMono
+        closeCheck()
+        bookFocus(start, sec, null)              // 休息时间不要
+        restTag = 0L
+        mine()
+        resetToIdle()
+        saveState()
         armIdleNudge()
     }
 

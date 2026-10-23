@@ -1149,6 +1149,8 @@ object EnStrings {
         "合约完成后的第一次休息: 暂停时剩余时间 ×{r:g} 留给下次." to "First break after the contract: pausing keeps ×{r:g} of the rest for next time.",
         "录像" to "Recording",
         "录像前询问" to "Ask before recording",
+        "只在专注期间录像" to "Record only while focusing",
+        "即时生效.开启时: 目光 / 刻痕只在专注期间录像 (休息 / 空闲时停下, 不算违反), 各段最后自动拼接成一个视频; 关闭时整个合约期间都录." to "Takes effect at once. When on: Gaze / Engraving record only while you focus (they pause during breaks / idle, not a violation), and the pieces are joined into one video at the end; when off, they record for the whole contract.",
         "录麦克风 (外部音)" to "Record microphone (external sound)",
         "录系统音" to "Record system sound",
         "即时生效.录像 (目光 / 刻痕) 时是否录下麦克风的声音.每台设备各自设置, 不同步." to "Takes effect at once. Whether recordings (Gaze / Engraving) include the microphone. Each device sets its own; not synced.",

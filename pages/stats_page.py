@@ -74,8 +74,8 @@ class ContractTermsDialog(tk.Toplevel):
                  fg=COLORS["accent"], font=config.font("body", bold=True),
                  anchor="w").pack(anchor="w", pady=(2, 8))
         # 和合约页一样: 等级三角 + 名字:描述 + [原 X] / [已失效], 失效的变灰;
-        # 完成时凑齐的组合: 成员已经放在一起置顶 (record_rows), 用组合的颜色写 (白色在浅色主题里换成最深的文字色)
-        tint = {"white": COLORS.get("text_strong", COLORS["text"]), "purple": C.COMBO_COLORS["purple"],
+        # 完成时凑齐的组合: 成员已经放在一起置顶 (record_rows), 用组合的颜色写 (黄色用深一点的, 浅色主题里也看得清)
+        tint = {"yellow": "#d9a400", "purple": C.COMBO_COLORS["purple"],
                 "gray": C.COMBO_COLORS["gray"], "red": C.COMBO_COLORS["red"]}
         combos = combos or {}
         for lv, tid, void, orig in rows or []:

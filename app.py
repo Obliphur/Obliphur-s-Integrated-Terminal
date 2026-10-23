@@ -158,6 +158,7 @@ class BreakTimerApp:
         self._contract_break_active = False  # 完成合约后的第一次休息: 暂停时结转比例 1 - (1 - x) / 2
         self._break_pre = 0.0         # 这次休息里有多少秒是合约开始前积攒的 (放在最后用; 暂停时原样还回去)
         self._break_cid = None        # 这次休息是在哪个合约中开始的 (合约结束后暂停: 只还合约开始前的那部分)
+        self._rest_tag = ""           # 刚结束的那段专注的标签 (开始于哪个合约, "" = 普通专注): 下一次休息按它的规则
         self._contract_rest_over = False  # 合约在休息中自然结束了, 这次休息继续 (手动暂停立即清空合约内获得的时间, 自然走完变空闲)
         self._supply_warned = set()   # 支援短缺: 这次休息已经提醒过的 (还差 3 / 1 分钟)
         self._offline_name = ""       # 合约因为哪台设备离线而失败
@@ -168,6 +169,7 @@ class BreakTimerApp:
         self._rec_pending = False     # 开始合约前正在打开摄像头
         self._rec_retry = {}          # 录像出错 / 询问被关掉后, 什么时候再试 (monotonic)
         self._rec_started_cid = None  # 在本机开始的合约 (开始时已经确认过录像)
+        self._rec_ok = set()          # 别的设备开始的合约, 本机答应过录像的 (路, 合约 id)
         self._scar_focus_id = None    # 刻痕的焦点设备 (录屏的那台); 每 10 秒判定一次
         self._scar_focus_at = 0.0
         self._merging = set()         # 正在合并的 (cid, kind), 防止重入
@@ -964,6 +966,8 @@ class BreakTimerApp:
             self.refresh_display()
 
             self.cancel_update()
+            # 合约专注 (开始于合约里) 的下一次休息按合约规则 (合约在专注中完成了也一样, MECHANICS 18.2)
+            self._rest_tag = self.contract.focus_tag(self.start_wall)
             # 结束专注后直接进入休息, 不再停在"去休息"这一步
             self._start_break(announce=True)
             # 纵深推进: 这段专注不到要求的时长, 算一次违反
@@ -996,6 +1000,7 @@ class BreakTimerApp:
                 return
             self.last_t_minutes = 0.0
             self.rest_base = 0.0
+            self._rest_tag = ""                  # 不是接着专注的休息: 按普通规则
             total = int(self.break_carry)
             self._start_break()
             if self.state == ON_BREAK:
@@ -1404,18 +1409,24 @@ class BreakTimerApp:
             self.reset_to_idle()
             return
         carry = int(self.break_carry)
+        tag, self._rest_tag = self._rest_tag, ""
+        c = self.contract
+        # 合约专注的下一次休息, 合约已经完成了: 仍按合约规则 —— 这段专注换来的是合约休息时间 (暂停时清空),
+        # 积攒的休息时间 (合约开始前剩下的 + 完成奖励) 是正常休息时间, 放在最后用, 暂停时原样留下不打折
+        after = (not c.active) and c.completed(tag)
         bonus = bool(self._bonus_state().get("bonus_pending"))
         if bonus:
             self._bonus_break_active = True
             self._timer_extra = {"bonus_pending": False}
-        if not self.contract.active and self.contract.take_first_break():
+        if not c.active and not after and c.take_first_break():
             self._contract_break_active = True
             toast.info(tr("合约完成后的第一次休息: 暂停时剩余时间 ×{r:g} 留给下次.",
                           r=contract_mod.Contract.first_break_rate(config.BREAK_CARRY_RATE)), timeout=8000)
-        c = self.contract
         self._break_pre = c.pre_take(carry) if c.active else 0.0
         self._break_cid = c.live.get("id") if c.active else None
         self._contract_rest_over = False
+        if after:
+            self._break_pre, self._break_cid, self._contract_rest_over = float(carry), tag, True
         self._supply_warned = set()
         self.auto_rest = 0                       # 一起用进这次休息, 结束休息时照常折算 (6.8)
         if carry > 0 or bonus:
@@ -2893,6 +2904,10 @@ class BreakTimerApp:
     def _check_contract(self):
         """每秒: 到时间就完成, 空闲太久就失败 (由合约的主人做), 刷新合约页."""
         c = self.contract
+        # 整点记录的词条 (记录封锁 / 细化规范) 可能随同步 / 未知变量中途出现: 每秒看一次要不要强制开启整点记录 (18.4),
+        # 不然整点记录关着的设备上既不响提示音, 也不能填写, 超时也不判定
+        if (bool(self.settings.value("HOUR_LOG_ENABLED")) or c.hour_forced()) != self.dm.hour_enabled:
+            self._sync_hour_log_setting()
         seen = (c.live.get("id"), "active") if c.active else None
         if seen != self._contract_seen:
             was = self._contract_seen
@@ -3104,18 +3119,40 @@ class BreakTimerApp:
         self._save_timer_state()          # 关掉程序再打开时不能又从休息中恢复
         self._arm_idle_nudge()
 
+    def _stop_focus_for_contract(self):
+        """合约非自然结束 (失败 / 手动终止, MECHANICS 18.1): 正在进行的专注立即结束. 学习时长照常记,
+        这段专注换来的休息时间是合约中获得的, 随合约一起清空 —— 不开始休息, 回到空闲."""
+        if self.state == READY_BREAK:
+            self.reset_to_idle()
+            self._save_timer_state()
+            return
+        if self.state != RUNNING or self.start_wall is None:
+            return
+        start = self.start_wall
+        elapsed = time.monotonic() - self.start_mono
+        self._close_check_win()
+        self.cancel_update()
+        self._book_focus(start, elapsed)         # 休息时间不要
+        self._rest_tag = ""
+        self._mine()
+        self.reset_to_idle()
+        self._save_timer_state()
+        self._arm_idle_nudge()
+
     def end_contract(self, result: str, at: datetime = None):
         c = self.contract
         if not c.active:
             return
-        # 合约自然结束 (非手动"提前结束") 时正在休息: 不立即结束这次休息, 继续休息 (仍算合约内的休息);
-        # 结算奖励照常计入积攒的休息时间; 手动暂停会清空合约内获得的时间, 自然走完变空闲 (MECHANICS 18.1)
-        rest_over = (result != "abandoned" and self.state == ON_BREAK
+        # 合约完成时正在休息: 不立即结束这次休息, 继续休息 (仍算合约内的休息);
+        # 结算奖励照常计入积攒的休息时间 (算正常休息时间); 手动暂停会清空合约内获得的时间, 自然走完变空闲 (MECHANICS 18.1)
+        rest_over = (result == "completed" and self.state == ON_BREAK
                      and self._break_cid is not None and self._break_cid == c.live.get("id"))
         if rest_over:
             self._contract_rest_over = True
         else:
             self._stop_break_for_contract()      # 结束合约前先停止休息
+        if result != "completed":
+            self._stop_focus_for_contract()      # 失败 / 手动终止: 正在进行的专注也立即结束 (不给休息时间)
         pending = c.reward
         rec = c.finish(result, at, by=self.sync.my_id)
         self._contract_seen = None
@@ -3633,6 +3670,9 @@ class BreakTimerApp:
         # 刻痕: 只有焦点设备录屏 (哪台有操作录哪台, 每 10 秒判定一次; 两台都有操作时录电脑, MECHANICS 18.8)
         if "screen" in want and self._scar_focus() != self.sync.my_id:
             want.discard("screen")
+        # 只在专注期间录像 (设置 → 录像, 默认开启): 休息 / 空闲时停下 (不算违反), 再开始专注时另起一段, 最后拼接成一个视频
+        if self.settings.value("REC_FOCUS_ONLY") and self.state != RUNNING:
+            want = set()
         cid = c.live.get("id")
         for kind in recorder.KINDS:
             r = self._recorders.get(kind)
@@ -3646,7 +3686,7 @@ class BreakTimerApp:
             if r is None:
                 if time.monotonic() < self._rec_retry.get(kind, 0):
                     continue
-                if cid != self._rec_started_cid and self.settings.value("REC_ASK"):
+                if cid != self._rec_started_cid and self.settings.value("REC_ASK") and (kind, cid) not in self._rec_ok:
                     self._ask_recording(kind, cid)
                     continue
                 self._start_recorder(kind)
@@ -3672,6 +3712,7 @@ class BreakTimerApp:
         tid = "gaze" if kind == "camera" else "scar"
 
         def yes():
+            self._rec_ok.add((kind, cid))          # 这次合约答应过了: 只在专注期间录像时, 之后每次开始专注不再问
             if self._rec_skip.get(kind) == (cid, "ask"):
                 self._rec_skip.pop(kind, None)
             if self.contract.live.get("id") == cid and kind in self.contract.records() and kind not in self._recorders:

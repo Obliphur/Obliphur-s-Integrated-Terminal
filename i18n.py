@@ -1037,6 +1037,8 @@ EN = {
     "合约期间视频平台禁止联网 可以通过点击解除网络禁令": "Video platforms can't go online during the contract. Tap to lift the network ban",
     "录像": "Recording",
     "录像前询问": "Ask before recording",
+    "只在专注期间录像": "Record only while focusing",
+    "即时生效.开启时: 目光 / 刻痕只在专注期间录像 (休息 / 空闲时停下, 不算违反), 各段最后自动拼接成一个视频; 关闭时整个合约期间都录.": "Takes effect at once. When on: Gaze / Engraving record only while you focus (they pause during breaks / idle, not a violation), and the pieces are joined into one video at the end; when off, they record for the whole contract.",
     "录麦克风 (外部音)": "Record microphone (external sound)",
     "录系统音": "Record system sound",
     "即时生效.录像 (目光 / 刻痕) 时是否录下麦克风的声音.每台设备各自设置, 不同步.": "Takes effect at once. Whether recordings (Gaze / Engraving) include the microphone. Each device sets its own; not synced.",

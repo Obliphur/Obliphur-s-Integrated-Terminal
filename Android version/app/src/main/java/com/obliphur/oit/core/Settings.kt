@@ -94,6 +94,7 @@ object Schema {
         Spec("CONTRACT_THEME", "合约页主题", Kind.CHOICE, false, "contract", "ops",
             choices = listOf("ops" to "起源", "ui" to "跟随界面主题")),
         // ---- 录像 (目光 / 刻痕, MECHANICS 18.8): 要不要录声音 (默认都录). 手机上录屏录不到系统音 ----
+        Spec("REC_FOCUS_ONLY", "只在专注期间录像", Kind.CHOICE, false, "record", "1", choices = ONOFF),   // 随设备同步
         Spec("REC_MIC", "录麦克风 (外部音)", Kind.CHOICE, false, "record", "1", choices = ONOFF),
         Spec("REC_SYSTEM", "录系统音", Kind.CHOICE, false, "record", "1", choices = ONOFF),
         // ---- 窗口 (Android: 应用; 窗口数 = 后台的应用数, 只检测, 超过时响警报, 不关应用) ----

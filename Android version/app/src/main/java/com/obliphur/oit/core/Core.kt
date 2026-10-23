@@ -871,6 +871,9 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     /** 每秒: 到时间就完成, 空闲太久就失败, 联网用超了算违反 (由合约的主人做). */
     private fun checkContract() {
         val c = contract
+        // 整点记录的词条 (记录封锁 / 细化规范) 可能随同步 / 未知变量中途出现: 每秒看一次要不要强制开启整点记录 (18.4),
+        // 不然整点记录关着的设备上既不响提示音, 也不能填写, 超时也不判定
+        if ((settings.bool("HOUR_LOG_ENABLED") || c.hourForced()) != dm.hourEnabled) { syncHourLog(); changed() }
         val seen = if (c.active) c.id else null
         if (seen != contractSeen) {
             val was = contractSeen
@@ -995,8 +998,13 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         for (key in c.hourMisses(now, dm.fillSeconds.toLong(), dm::unitText, dm.autoValue, dm::autoTextForKey)) {
             val p = key.split("/")
             val h = p[1].toInt()
-            val label = if (p.size == 3) "%02d:%s".format(h, if (p[2] == "1") "30" else "00")
-                else "%02d:00".format((h + 1) % 24)
+            // 写这一格的起点 (同整点记录页)
+            val label = "%02d:%s".format(h, if (p.size == 3 && p[2] == "2") "30" else "00")
+            if (timer.state == TState.ON_BREAK) {
+                // 休息期间到了填写时限还没填: 不扣目标生命值 (这一格照样算过, 不会之后再算)
+                logNotice("CONTRACT hour miss $key during break: not counted")
+                continue
+            }
             contractViolation(tr("整点记录 {t} 超时未填写", "t" to label), "")
             if (!c.active) return
         }
@@ -1052,11 +1060,12 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     fun endContract(result: String, at: LocalDateTime? = null) {
         val c = contract
         if (!c.active) return
-        // 合约自然结束 (非手动"提前结束") 时正在休息: 不立即结束这次休息, 继续休息 (仍算合约内的休息);
-        // 奖励照常计入积攒的休息时间; 手动暂停清空合约内获得的时间, 自然走完变空闲 (MECHANICS 18.1)
-        val restOver = result != "abandoned" && timer.state == TState.ON_BREAK &&
+        // 合约完成时正在休息: 不立即结束这次休息, 继续休息 (仍算合约内的休息);
+        // 奖励照常计入积攒的休息时间 (算正常休息时间); 手动暂停清空合约内获得的时间, 自然走完变空闲 (MECHANICS 18.1)
+        val restOver = result == "completed" && timer.state == TState.ON_BREAK &&
             timer.breakCid != 0L && timer.breakCid == c.id
         if (restOver) timer.contractRestOver = true else timer.stopBreakForContract()
+        if (result != "completed") timer.stopFocusForContract()   // 失败 / 手动终止: 正在进行的专注也立即结束 (不给休息时间)
         val pending = c.reward
         val rec = c.finish(result, at, myId()) ?: return
         contractSeen = null

@@ -279,6 +279,14 @@ SETTINGS_SCHEMA = [
         "page": "contract",
     },
     {
+        "key": "REC_FOCUS_ONLY", "label": "只在专注期间录像",
+        "kind": "choice", "apply": APPLY_INSTANT,
+        "choices": [("1", "开启 (ON)"), ("0", "关闭 (OFF)")],
+        "fmt": lambda v: "ON" if v else "OFF",
+        "desc": "即时生效.开启时: 目光 / 刻痕只在专注期间录像 (休息 / 空闲时停下, 不算违反), 各段最后自动拼接成一个视频; 关闭时整个合约期间都录.",
+        "page": "record",
+    },
+    {
         "key": "REC_ASK", "label": "录像前询问",
         "kind": "choice", "apply": APPLY_INSTANT,
         "choices": [("1", "开启 (ON)"), ("0", "关闭 (OFF)")],

@@ -195,7 +195,7 @@ class RecordService : Service() {
             // 用摄像头 / MediaRecorder 真正支持的尺寸 (480×360 这类不是标准采集尺寸, 很多手机不支持, prepare 会失败);
             // 在支持的尺寸里挑最接近 640×480 的 (压一下但保证能录)
             val (cw, ch) = camSize(mgr, id)
-            rec = buildRecorder(part, cw, ch, CAMERA_FPS, 360_000)
+            rec = buildRecorder(part, cw, ch, CAMERA_FPS, CAMERA_BITRATE, CAMERA_AUDIO_BITRATE)
             // 每秒 CAMERA_FPS 帧: 摄像头连续出画面到一个小的 ImageReader (只为了让自动曝光 / 对焦一直跑着, 画面直接丢掉),
             // 每 1 / CAMERA_FPS 秒单独拍一帧送进 MediaRecorder (setVideoFrameRate 只是提示, 连续送多少帧就录多少帧)
             val (mw, mh) = meterSize(mgr, id)
@@ -302,7 +302,7 @@ class RecordService : Service() {
     private fun even(x: Int) = if (x % 2 == 0) x else x - 1
 
     /** 一路录像的 MediaRecorder: H.264 + (开着麦克风时) AAC, 写到 part. video source 由调用处用 surface 接. */
-    private fun buildRecorder(part: File, w: Int, hgt: Int, fps: Int, bitrate: Int): MediaRecorder {
+    private fun buildRecorder(part: File, w: Int, hgt: Int, fps: Int, bitrate: Int, audioBitrate: Int = 128_000): MediaRecorder {
         val mic = micOn()
         @Suppress("DEPRECATION")
         val r = if (Build.VERSION.SDK_INT >= 31) MediaRecorder(this) else MediaRecorder()
@@ -310,7 +310,7 @@ class RecordService : Service() {
         r.setVideoSource(MediaRecorder.VideoSource.SURFACE)
         r.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
         r.setVideoEncoder(MediaRecorder.VideoEncoder.H264)
-        if (mic) { r.setAudioEncoder(MediaRecorder.AudioEncoder.AAC); r.setAudioEncodingBitRate(128_000); r.setAudioSamplingRate(48_000) }
+        if (mic) { r.setAudioEncoder(MediaRecorder.AudioEncoder.AAC); r.setAudioEncodingBitRate(audioBitrate); r.setAudioSamplingRate(48_000) }
         r.setVideoSize(w, hgt)
         r.setVideoFrameRate(fps)
         r.setVideoEncodingBitRate(bitrate)
@@ -327,6 +327,9 @@ class RecordService : Service() {
     companion object {
         /** 目光 (摄像头) 每秒录几帧. */
         const val CAMERA_FPS = 1
+        /** 目光每秒只有 1 帧: 码率压低, 文件小 (要传给电脑合并 / 同步, 不能太大). */
+        const val CAMERA_BITRATE = 64_000
+        const val CAMERA_AUDIO_BITRATE = 64_000
         const val ACT_CAMERA = "oit.rec.camera"
         const val ACT_SCREEN = "oit.rec.screen"
         const val ACT_STOP_CAMERA = "oit.rec.stop_camera"

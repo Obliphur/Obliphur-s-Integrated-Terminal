@@ -184,7 +184,7 @@ class HourLogPage(tk.Frame):
         )
         self.canvas.bind("<MouseWheel>", self._on_wheel)
 
-        # 第 i 行 = 以 i:00 结束的那一小时;00:00 行是昨天 23:00–24:00.
+        # 第 i 行 = 以 i:00 结束的那一小时 (左边写起点); 最上面一行是昨天 23:00–24:00.
         for h in range(24):
             row = tk.Frame(self.inner, bg=bg)
             row.pack(fill="x", padx=10, pady=2)
@@ -359,7 +359,7 @@ class HourLogPage(tk.Frame):
 
             is_wait = awaiting is not None and start <= awaiting < end
             is_now = enabled and start <= now < end
-            label = f"{h:02d}:00" if seed is None or shown else "???"
+            label = f"{start.hour:02d}:00" if seed is None or shown else "???"   # 左边写这一小时的起点
             if seed is not None and not shown:
                 pass
             elif is_now:

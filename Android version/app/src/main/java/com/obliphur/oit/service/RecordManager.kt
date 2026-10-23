@@ -50,6 +50,8 @@ class RecordManager(private val app: OitApp) {
         val want = if (c.active && !core.dm.resetting && me.isNotEmpty()) c.records(me).toMutableSet() else mutableSetOf()
         // 刻痕: 只有焦点设备录屏
         if ("screen" in want && scarFocus() != me) want.remove("screen")
+        // 只在专注期间录像 (设置 → 录像, 默认开启): 休息 / 空闲时停下 (不算违反), 再开始专注时另起一段, 最后拼接成一个视频
+        if (core.settings.bool("REC_FOCUS_ONLY") && core.timer.state != com.obliphur.oit.core.TState.RUNNING) want.clear()
 
         needProjection = "screen" in want && app.recProjection == null && !recording("screen")
         needCamera = "camera" in want

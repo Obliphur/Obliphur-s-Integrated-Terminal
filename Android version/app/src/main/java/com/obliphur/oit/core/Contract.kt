@@ -153,7 +153,7 @@ class Contract(private val file: File) {
 
         // 词条组合 (MECHANICS 18.3.1): 列出的词条 / 词条系列 (任意一档都算) 同时选着时生效, 效果栏的第 3 页列出它们.
         val COMBOS = listOf(
-            Combo("mochi", "打年糕", "white", listOf("tired", "long", "fine", "deep"), 1, 1.2, 0, 0,
+            Combo("mochi", "打年糕", "yellow", listOf("tired", "long", "fine", "deep"), 1, 1.2, 0, 0,
                 "额外 1 危机等级\n休息时间 ×120%"),
             Combo("nofun", "互联网娱乐的败退", "purple", listOf("music", "silent", "game", "video"), 0, 1.0, 20 * 60, 0,
                 "合约开始时 休息 +20 分钟"),
@@ -163,7 +163,7 @@ class Contract(private val file: File) {
                 "额外 1 危机等级\n完成合约时 休息 +10 分钟"),
         )
         val COMBOS_BY_ID = COMBOS.associateBy { it.id }
-        val COMBO_COLORS = mapOf("white" to "#ffffff", "purple" to "#b06cf0", "gray" to "#9a9ca1", "red" to "#ff2b3a")
+        val COMBO_COLORS = mapOf("yellow" to "#ffd23f", "purple" to "#b06cf0", "gray" to "#9a9ca1", "red" to "#ff2b3a")
         /** 组合的要求在界面上怎么写: 成系列的一组只写一个名字. */
         val GROUP_NAMES = mapOf("long" to "持久战", "tired" to "疲惫", "info" to "信息阻断",
             "chan" to "通道阻塞", "erode" to "侵蚀", "deep" to "纵深推进")
@@ -1183,6 +1183,24 @@ class Contract(private val file: File) {
         return now
     }
 
+    /** 一段专注的标签, 按开始时刻 (MECHANICS 18.2): 开始于哪个合约里 (进行中的, 或已经结束的) 就是那个合约的 id
+     *  ("合约"专注), 不在任何合约里是 0 ("普通"专注). 同 contract.py 的 focus_tag. */
+    fun focusTag(start: LocalDateTime?): Long {
+        if (start == null) return 0L
+        val a = startAt
+        if (active && a != null && !a.isAfter(start)) return id
+        for (h in history) {
+            val hs = parseIso(h.optString("start")) ?: continue
+            val he = parseIso(h.optString("end")) ?: continue
+            if (!start.isBefore(hs) && start.isBefore(he)) return h.optLong("id", 0L)
+        }
+        return 0L
+    }
+
+    /** 这个 id 的合约已经顺利完成了. */
+    fun completed(cid: Long): Boolean =
+        cid != 0L && history.any { it.optLong("id", 0L) == cid && it.optString("result") == "completed" }
+
     /** 完成之后才结束的专注, 开始于刚完成的合约里: 按那个合约的疲惫给 (未知变量选中的不算组合). */
     fun bookRestAfter(seconds: Double, start: LocalDateTime): Double {
         val h = last ?: return seconds
@@ -1352,6 +1370,25 @@ class Contract(private val file: File) {
 
     /** 同步来的改动. 进行中的合约: 后改的覆盖先改的; 记录: 合并 (按 id).
      *  两个不同的合约时间重叠 (进行中的被另一个盖掉, 或者送来的记录和本机的重叠): 记下冲突, 让用户选留哪个 (15.5). */
+    /** 同一个合约的进行中状态整个按"后改的"覆盖: 别的设备几乎同时改了别的东西时, 本机刚记下的违反 (例如整点记录超时)
+     *  会被盖掉, 目标生命值就像没扣. 违反次数只增不减, 算过的记录格 / 另外封锁的格子只增不删: 取两边的并. 同 contract.py 的 _keep_counts. */
+    private fun keepCounts(mine: JSONObject, new: JSONObject): JSONObject {
+        if (mine.optString("state") != "active" || new.optString("state") != "active" ||
+            mine.opt("id")?.toString() != new.opt("id")?.toString()) return new
+        new.put("violations", maxOf(mine.optInt("violations"), new.optInt("violations")))
+        val hl = ((new.optJSONArray("hl")?.strings() ?: emptyList()) + (mine.optJSONArray("hl")?.strings() ?: emptyList())).toSortedSet()
+        new.put("hl", JSONArray(hl.toList()))
+        val locks = (new.optJSONArray("locks") ?: JSONArray()).let { JSONArray(it.toString()) }
+        val have = (0 until locks.length()).map { locks.optJSONArray(it)?.toString() }.toMutableSet()
+        val mineLocks = mine.optJSONArray("locks") ?: JSONArray()
+        for (i in 0 until mineLocks.length()) {
+            val v = mineLocks.optJSONArray(i) ?: continue
+            if (have.add(v.toString())) locks.put(JSONArray(v.toString()))
+        }
+        if (locks.length() > 0) new.put("locks", locks)
+        return new
+    }
+
     fun merge(changes: Map<String, Any?>) {
         for ((k, v) in changes) if (k.startsWith("void:") && v != null && v != JSONObject.NULL) voided.add(k.removePrefix("void:"))
         val incoming = (changes["history"] as? JSONArray)?.objects() ?: emptyList()
@@ -1363,7 +1400,7 @@ class Contract(private val file: File) {
             if (!gone && l.optString("state") in setOf("active", "none") && l.toString() != live.toString()) {
                 if (mineLive != null && l.optString("state") == "active" && l.opt("id")?.toString() != mineLive.optString("id"))
                     addConflict(mineLive, brief(l, true))
-                live = JSONObject(l.toString())
+                live = keepCounts(live, JSONObject(l.toString()))
                 if (active) live.put("terms", JSONArray(clean(live.optJSONArray("terms")?.strings() ?: emptyList())))
             }
         }

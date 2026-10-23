@@ -258,7 +258,7 @@ BAN_TITLES = {"silent": SOCIAL_TITLES, "video": VIDEO_TITLES}   # 只看浏览�
 # level: 额外的危机等级; rest: 休息时间的额外乘区; gift: 开始时给的休息时间 (秒); end: 完成时给的休息时间 (秒).
 # 成员因违反失效 (降级不算失效) 时组合不再生效: 危机等级 / 乘区 / 结束后收益都没了, 开始时给的不收回.
 COMBOS = [
-    {"id": "mochi", "name": "打年糕", "color": "white",
+    {"id": "mochi", "name": "打年糕", "color": "yellow",
      "reqs": ("tired", "long", "fine", "deep"),
      "level": 1, "rest": 1.2, "gift": 0, "end": 0,
      "desc": "额外 1 危机等级\n休息时间 ×120%"},
@@ -276,7 +276,7 @@ COMBOS = [
      "desc": "额外 1 危机等级\n完成合约时 休息 +10 分钟"},
 ]
 COMBOS_BY_ID = {c["id"]: c for c in COMBOS}
-COMBO_COLORS = {"white": "#ffffff", "purple": "#b06cf0", "gray": "#9a9ca1", "red": "#ff2b3a"}
+COMBO_COLORS = {"yellow": "#ffd23f", "purple": "#b06cf0", "gray": "#9a9ca1", "red": "#ff2b3a"}
 # 组合的要求在界面上怎么写: 成系列的一组只写一个名字
 GROUP_NAMES = {"long": "持久战", "tired": "疲惫", "info": "信息阻断", "chan": "通道阻塞",
                "erode": "侵蚀", "deep": "纵深推进"}
@@ -1410,6 +1410,23 @@ class Contract:
             return seconds * rest_factor_of(terms)
         return seconds
 
+    def focus_tag(self, start: datetime) -> str:
+        """一段专注的标签, 按开始时刻 (MECHANICS 18.2): 开始于哪个合约里 (进行中的, 或已经结束的) 就是那个合约的 id
+        ("合约"专注), 不在任何合约里是 "" ("普通"专注)."""
+        if start is None:
+            return ""
+        if self.active and self.start_at and self.start_at <= start:
+            return str(self.live.get("id"))
+        for h in self.history:
+            hs, he = _parse(h.get("start")), _parse(h.get("end"))
+            if hs and he and hs <= start < he:
+                return str(h.get("id"))
+        return ""
+
+    def completed(self, cid: str) -> bool:
+        """这个 id 的合约已经顺利完成了."""
+        return bool(cid) and any(str(h.get("id")) == str(cid) and h.get("result") == "completed" for h in self.history)
+
     def take_first_break(self) -> bool:
         """完成合约后的第一次休息: 用掉这个标记."""
         if self.active or not self.live.get("first_break"):
@@ -1555,6 +1572,22 @@ class Contract:
         self.save()
         return True
 
+    @staticmethod
+    def _keep_counts(mine: dict, new: dict) -> dict:
+        """同一个合约的进行中状态整个按"后改的"覆盖: 别的设备几乎同时改了别的东西时, 本机刚记下的违反 (例如整点记录超时)
+        会被盖掉, 目标生命值就像没扣. 违反次数只增不减, 算过的记录格 / 另外封锁的格子只增不删: 取两边的并."""
+        if not (isinstance(mine, dict) and mine.get("state") == "active" and new.get("state") == "active"
+                and str(mine.get("id")) == str(new.get("id"))):
+            return new
+        out = dict(new)
+        out["violations"] = max(int(mine.get("violations") or 0), int(new.get("violations") or 0))
+        out["hl"] = sorted(set(new.get("hl") or []) | set(mine.get("hl") or []))
+        locks = [list(v) for v in new.get("locks") or []]
+        locks += [list(v) for v in mine.get("locks") or [] if list(v) not in locks]
+        if locks:
+            out["locks"] = locks
+        return out
+
     def _apply_voids(self) -> bool:
         """作废的合约: 进行中的结束 (不给奖励, 不留记录), 记录里删掉, 相关的冲突不用再问. 返回进行中的合约变了没有."""
         changed = False
@@ -1585,6 +1618,7 @@ class Contract:
             if new is not None and new != self.live:
                 if mine_live and new.get("state") == "active" and str(new.get("id")) != mine_live["id"]:
                     self._add_conflict(mine_live, self._brief(new, True))
+                new = self._keep_counts(self.live, new)
                 self.live = dict(new)
                 if self.active:
                     self.live["terms"] = clean_terms(self.live.get("terms"))
@@ -1687,7 +1721,7 @@ def _selftest():
     assert combo_marks(flaw) == {t: COMBO_COLORS["gray"] for t in flaw}
     assert combo_marks(["long1", "tired2"]) == {}
     assert nofun["color"] == "purple" and flawless["color"] == "gray" and isolation["color"] == "red" \
-        and mochi["color"] == "white"
+        and mochi["color"] == "yellow"
     assert req_name("deep") == "纵深推进" and req_name("last") == "最后防线" and req_name("silent") == "无言为真"
     # 统计页: 最近 5 个顺利完成的合约 (失败的 / 提前结束的不要)
     hist = [{"end": f"2026-10-{i:02d}T10:00:00", "result": r, "level": i, "orig_level": i + 2}
@@ -2016,7 +2050,7 @@ def _selftest():
     # 打年糕: 休息时间额外 ×1.2 (和疲惫相乘); 成员降级不算失效, 失效后乘区取消
     c.start(["long1", "tired2", "fine", "deep2"], owner="me", now=t0)
     assert abs(c.rest_factor() - 0.6 * 1.2) < 1e-9 and abs(c.book_rest(1000, t0) - 720) < 1e-6
-    assert c.level == 8 and c.combo_marks().get("deep2") == COMBO_COLORS["white"]
+    assert c.level == 8 and c.combo_marks().get("deep2") == COMBO_COLORS["yellow"]
     c.downgrade("deep2")
     assert abs(c.rest_factor() - 0.6 * 1.2) < 1e-9, "降级不算失效"
     c.downgrade("deep1")
@@ -2176,6 +2210,14 @@ def _selftest():
     assert fb.fog_words() == w, "同步来的合约: 同一份"
     fa.live.pop("fog_words")
     assert len(fa.fog_words()) == FOG_SLOTS and fa.fog_words() == fa.fog_words(), "以前开始的合约: 按 id 补一份"
+    # 同一个合约: 别的设备后改的进行中状态不会把本机刚记下的违反 / 算过的记录格盖掉
+    old_b = dict(fb.live)
+    fb.violate("")
+    fb.live["hl"] = ["2026-10-18/9"]
+    fb.merge({"live": dict(old_b, rec={"x": 1})})
+    assert fb.violations == 1 and fb.live["hl"] == ["2026-10-18/9"] and fb.live["rec"] == {"x": 1}
+    fb.merge({"live": dict(old_b, violations=3)})
+    assert fb.violations == 3, "别的设备违反得更多: 照收"
 
     # 同步: 记录按 id 合并
     d = Contract(tempfile.mkdtemp())
@@ -2185,6 +2227,16 @@ def _selftest():
     assert len(d.history) == len(c.history) >= 3, "同一条记录不重复"
     c2 = Contract(os.path.dirname(c.path))
     assert len(c2.history) == len(c.history), "写进文件, 重开后仍在"
+    # 专注的标签 (按开始时刻): 开始于合约里是那个合约 ("合约"专注), 否则 "" ("普通"专注)
+    g = Contract(tempfile.mkdtemp())
+    g0 = datetime(2026, 10, 20, 9, 0)
+    g.start(["long1"], "me", now=g0)
+    gid = str(g.live["id"])
+    assert g.focus_tag(g0 + timedelta(hours=1)) == gid and g.focus_tag(g0 - timedelta(minutes=1)) == ""
+    assert not g.completed(gid)
+    g.finish("completed", g0 + timedelta(hours=4, minutes=48))
+    assert g.focus_tag(g0 + timedelta(hours=4)) == gid and g.completed(gid), "合约结束后照样认得出来"
+    assert g.focus_tag(g0 + timedelta(hours=5)) == "" and not g.completed("")
     return "contract selftest OK"
 
 

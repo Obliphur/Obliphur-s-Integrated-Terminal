@@ -43,7 +43,8 @@ SCREEN_FPS = 1
 SCREEN_WIDTH = 960               # 画面缩到最宽这么多 (压一下画质 / 体积; 合并画布也按它封顶)
 SCREEN_BITRATE = 200_000
 CAMERA_FPS = 1
-CAMERA_BITRATE = 360_000
+CAMERA_BITRATE = 64_000           # 目光每秒只有 1 帧: 码率压低, 文件小 (传给别的设备合并 / 同步时不会太大)
+CAMERA_AUDIO_BYTES = 12_000       # 目光的声音 AAC 96 kbps (Media Foundation 的 AAC 编码器支持的最低一档)
 CAMERA_SIZE = (480, 360)
 CAMERA_STALL = 12                 # 摄像头这么多秒没有新画面: 视为被关掉了
 
@@ -425,8 +426,9 @@ class _Writer:
     """H.264 / mp4 的 Sink Writer: 输入是 RGB32 (input_type) 或者按 width/height 建的上下正向 RGB32.
     audio: 另外加一路 AAC (输入 16 位 PCM, AUDIO_RATE, AUDIO_CH)."""
 
-    def __init__(self, lib, path, width, height, fps, bitrate, input_type=None, audio=False):
+    def __init__(self, lib, path, width, height, fps, bitrate, input_type=None, audio=False, audio_bytes=AUDIO_BYTES):
         self.lib = lib
+        self.audio_bytes = audio_bytes
         self.writer = c_void_p()
         self.stream = c_ulong()
         self.astream = None
@@ -482,7 +484,7 @@ class _Writer:
             _set_u32(out, MF_MT_AUDIO_BITS_PER_SAMPLE, 16)
             _set_u32(out, MF_MT_AUDIO_SAMPLES_PER_SECOND, AUDIO_RATE)
             _set_u32(out, MF_MT_AUDIO_NUM_CHANNELS, AUDIO_CH)
-            _set_u32(out, MF_MT_AUDIO_AVG_BYTES_PER_SECOND, AUDIO_BYTES)
+            _set_u32(out, MF_MT_AUDIO_AVG_BYTES_PER_SECOND, self.audio_bytes)
             _com(self.writer, 3, out, byref(stream), argtypes=(c_void_p, POINTER(c_ulong)), what="AddStream(audio)")
         finally:
             _release(out)
@@ -1081,7 +1083,8 @@ class Recorder(threading.Thread):
         while not self._stop.is_set():
             part, final = self._new_path()
             audio = self._audio_open(lib)
-            w = _Writer(lib, part, width, height, CAMERA_FPS, CAMERA_BITRATE, input_type=cur, audio=audio)
+            w = _Writer(lib, part, width, height, CAMERA_FPS, CAMERA_BITRATE, input_type=cur, audio=audio,
+                        audio_bytes=CAMERA_AUDIO_BYTES)
             seg0 = time.monotonic()
             last = -1e9
             k = 0
@@ -1262,7 +1265,7 @@ def _canvas(info):
     return max(2, w // 2 * 2), max(2, h // 2 * 2)
 
 
-def _reencode_concat(out_path, inputs, fps=SCREEN_FPS, size=None):
+def _reencode_concat(out_path, inputs, fps=SCREEN_FPS, size=None, bitrate=SCREEN_BITRATE):
     """把几个 mp4 (已解密) 按顺序解码 → 重新编码接成一个 (画面统一到 size 给的画布, 没给时用第一段的大小;
     每一段等比缩放居中留黑, 不同朝向也兼容; 只接画面). 每一段的时间戳接在上一段后面. 返回输出的 (宽, 高)."""
     lib, own = _startup()
@@ -1297,7 +1300,7 @@ def _reencode_concat(out_path, inputs, fps=SCREEN_FPS, size=None):
                 if writer is None:
                     if not (dw and dh):                     # 没给画布: 用第一段的大小 (同以前)
                         dw, dh = min(sw, SCREEN_WIDTH) // 2 * 2, sh // 2 * 2
-                    writer = _Writer(lib, out_path, dw, dh, fps, SCREEN_BITRATE, audio=has_audio)
+                    writer = _Writer(lib, out_path, dw, dh, fps, bitrate, audio=has_audio)
                 # 竖屏画布里冒出横屏画面 (全是竖屏设备, 中途有横屏) → 把这一段的每帧转正 (MECHANICS 18.8)
                 rotate = dw < dh and sw > sh
                 rd = ctypes.WINFUNCTYPE(HRESULT, c_void_p, c_ulong, c_ulong, POINTER(c_ulong), POINTER(c_ulong),
@@ -1463,7 +1466,9 @@ def merge(data_dir: str, cid: str, kind: str = "screen", extra=()) -> str:
                 info.append((w, h, loc))
             except Exception:       # noqa: BLE001
                 pass
-        _reencode_concat(raw, [p for p, _ in plain], size=_canvas(info))
+        # 目光 (摄像头) 的合并结果按目光的码率压 (要同步给所有设备, 不能太大)
+        _reencode_concat(raw, [p for p, _ in plain], size=_canvas(info),
+                         bitrate=CAMERA_BITRATE if kind == "camera" else SCREEN_BITRATE)
         d = merged_dir(data_dir, kind)
         os.makedirs(d, exist_ok=True)
         for n in os.listdir(d):                   # 这个合约这一路的旧结果先删 (本次重新合并盖掉)
