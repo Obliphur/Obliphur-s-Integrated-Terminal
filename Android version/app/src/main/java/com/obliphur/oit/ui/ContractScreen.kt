@@ -88,8 +88,8 @@ class ContractColors(
     val clear: Color, val clearText: Color, val tag: Color, val tagText: Color,
     val live: Color, val liveRim: Color, val danger: Color, val idle: Color,
     val side: Color?, val sideText: Color, val sideOn: Color,
-    // 词条组合的颜色 (打年糕 黄色 / 互联网娱乐的败退 紫色 / 无懈可击 灰色 / 信息隔绝 红色)
-    val comboYellow: Color, val comboPurple: Color, val comboGray: Color, val comboRed: Color,
+    // 词条组合的颜色 (打年糕 黄色 / 互联网娱乐的败退 紫色 / 无懈可击 深蓝色 / 信息隔绝 红色)
+    val comboYellow: Color, val comboPurple: Color, val comboBlue: Color, val comboRed: Color,
 )
 
 private fun c(hex: Long) = Color(0xFF000000 or hex)
@@ -110,7 +110,7 @@ val OPS_COLORS = ContractColors(
     clear = c(0x3a3b40), clearText = c(0xececec), tag = c(0xc8202f), tagText = c(0xffffff),
     live = c(0x18181b), liveRim = c(0xc8202f), danger = c(0xff4d5a), idle = c(0xf2b33d),
     side = c(0x18191c), sideText = c(0xcfd0d3), sideOn = c(0xc8202f),
-    comboYellow = c(0xffd23f), comboPurple = c(0xb06cf0), comboGray = c(0x9a9ca1), comboRed = c(0xff2b3a),
+    comboYellow = c(0xffd23f), comboPurple = c(0xb06cf0), comboBlue = c(0x2456c7), comboRed = c(0xff2b3a),
 )
 
 @Composable
@@ -134,7 +134,7 @@ fun contractColors(): ContractColors {
         live = o.card, liveRim = o.danger, danger = o.danger, idle = o.warn,
         side = null, sideText = o.text, sideOn = o.accent,
         // 白和灰在浅色主题里用文字色, 免得看不见
-        comboYellow = c(0xd9a400), comboPurple = c(0x8b5cf6), comboGray = o.dim, comboRed = o.danger,
+        comboYellow = c(0xd9a400), comboPurple = c(0x8b5cf6), comboBlue = c(0x2456c7), comboRed = o.danger,
     )
 }
 
@@ -142,7 +142,7 @@ fun contractColors(): ContractColors {
 private fun comboColor(p: ContractColors, combo: Combo): Color = when (combo.color) {
     "yellow" -> p.comboYellow
     "purple" -> p.comboPurple
-    "gray" -> p.comboGray
+    "blue" -> p.comboBlue
     else -> p.comboRed
 }
 
@@ -155,7 +155,7 @@ private fun comboMarksOf(c: Contract, sel: Collection<String>, p: ContractColors
         when (byHex[hex]) {
             "yellow" -> p.comboYellow
             "purple" -> p.comboPurple
-            "gray" -> p.comboGray
+            "blue" -> p.comboBlue
             else -> p.comboRed
         }
     }

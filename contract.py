@@ -266,7 +266,7 @@ COMBOS = [
      "reqs": ("music", "silent", "game", "video"),
      "level": 0, "rest": 1.0, "gift": 20 * 60, "end": 0,
      "desc": "合约开始时 休息 +20 分钟"},
-    {"id": "flawless", "name": "无懈可击", "color": "gray",
+    {"id": "flawless", "name": "无懈可击", "color": "blue",
      "reqs": ("last", "unknown", "move", "confine", "gaze", "scar"),
      "level": 0, "rest": 1.0, "gift": 20 * 60, "end": 0,
      "desc": "合约开始时 休息 +20 分钟"},
@@ -276,7 +276,7 @@ COMBOS = [
      "desc": "额外 1 危机等级\n完成合约时 休息 +10 分钟"},
 ]
 COMBOS_BY_ID = {c["id"]: c for c in COMBOS}
-COMBO_COLORS = {"yellow": "#ffd23f", "purple": "#b06cf0", "gray": "#9a9ca1", "red": "#ff2b3a"}
+COMBO_COLORS = {"yellow": "#ffd23f", "purple": "#b06cf0", "blue": "#2456c7", "red": "#ff2b3a"}
 # 组合的要求在界面上怎么写: 成系列的一组只写一个名字
 GROUP_NAMES = {"long": "持久战", "tired": "疲惫", "info": "信息阻断", "chan": "通道阻塞",
                "erode": "侵蚀", "deep": "纵深推进"}
@@ -1718,9 +1718,9 @@ def _selftest():
     assert combo_gift(["last", "unknown", "move", "confine"]) == 0, "无懈可击: 还差 目光 / 刻痕"
     flaw = ["last", "unknown", "move", "confine", "gaze", "scar"]
     assert combo_gift(flaw) == 20 * 60, "无懈可击: 开始时 +20 分钟"
-    assert combo_marks(flaw) == {t: COMBO_COLORS["gray"] for t in flaw}
+    assert combo_marks(flaw) == {t: COMBO_COLORS["blue"] for t in flaw}
     assert combo_marks(["long1", "tired2"]) == {}
-    assert nofun["color"] == "purple" and flawless["color"] == "gray" and isolation["color"] == "red" \
+    assert nofun["color"] == "purple" and flawless["color"] == "blue" and isolation["color"] == "red" \
         and mochi["color"] == "yellow"
     assert req_name("deep") == "纵深推进" and req_name("last") == "最后防线" and req_name("silent") == "无言为真"
     # 统计页: 最近 5 个顺利完成的合约 (失败的 / 提前结束的不要)

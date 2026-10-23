@@ -89,7 +89,7 @@ class ContractTest {
         assertEquals(0, Contract.comboGift(listOf("last", "unknown", "move", "confine")))   // 还差 目光 / 刻痕
         val flaw = listOf("last", "unknown", "move", "confine", "gaze", "scar")
         assertEquals(20 * 60, Contract.comboGift(flaw))
-        assertEquals(flaw.associateWith { Contract.COMBO_COLORS["gray"]!! }, Contract.comboMarks(flaw))
+        assertEquals(flaw.associateWith { Contract.COMBO_COLORS["blue"]!! }, Contract.comboMarks(flaw))
         assertEquals("纵深推进", Contract.reqName("deep")); assertEquals("最后防线", Contract.reqName("last"))
         // 统计页: 最近 5 个顺利完成的合约; 词条按开始时的顺序, 降级的写降级后的名字, 失效的标出来
         val results = listOf("completed", "failed", "completed", "abandoned", "completed", "completed", "completed")

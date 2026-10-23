@@ -157,13 +157,13 @@ class Contract(private val file: File) {
                 "额外 1 危机等级\n休息时间 ×120%"),
             Combo("nofun", "互联网娱乐的败退", "purple", listOf("music", "silent", "game", "video"), 0, 1.0, 20 * 60, 0,
                 "合约开始时 休息 +20 分钟"),
-            Combo("flawless", "无懈可击", "gray", listOf("last", "unknown", "move", "confine", "gaze", "scar"), 0, 1.0, 20 * 60, 0,
+            Combo("flawless", "无懈可击", "blue", listOf("last", "unknown", "move", "confine", "gaze", "scar"), 0, 1.0, 20 * 60, 0,
                 "合约开始时 休息 +20 分钟"),
             Combo("isolation", "信息隔绝", "red", listOf("info", "chan", "erode", "suppress", "fog", "quiet", "jam"), 1, 1.0, 0, 10 * 60,
                 "额外 1 危机等级\n完成合约时 休息 +10 分钟"),
         )
         val COMBOS_BY_ID = COMBOS.associateBy { it.id }
-        val COMBO_COLORS = mapOf("yellow" to "#ffd23f", "purple" to "#b06cf0", "gray" to "#9a9ca1", "red" to "#ff2b3a")
+        val COMBO_COLORS = mapOf("yellow" to "#ffd23f", "purple" to "#b06cf0", "blue" to "#2456c7", "red" to "#ff2b3a")
         /** 组合的要求在界面上怎么写: 成系列的一组只写一个名字. */
         val GROUP_NAMES = mapOf("long" to "持久战", "tired" to "疲惫", "info" to "信息阻断",
             "chan" to "通道阻塞", "erode" to "侵蚀", "deep" to "纵深推进")

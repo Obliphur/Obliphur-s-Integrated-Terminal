@@ -67,9 +67,9 @@ OPS = {
     "live": "#18181b", "live_rim": "#c8202f", "danger": "#ff4d5a", "idle": "#f2b33d",
     "side": "#18191c", "side_text": "#cfd0d3", "side_on": "#c8202f", "side_on_text": "#ffffff",
     "side_hover": "#2c2d31", "side_rim": "#2c2d31",
-    # 词条组合的颜色 (打年糕 黄色 / 互联网娱乐的败退 紫色 / 无懈可击 灰色 / 信息隔绝 红色)
+    # 词条组合的颜色 (打年糕 黄色 / 互联网娱乐的败退 紫色 / 无懈可击 深蓝色 / 信息隔绝 红色)
     "combo_yellow": C.COMBO_COLORS["yellow"], "combo_purple": C.COMBO_COLORS["purple"],
-    "combo_gray": C.COMBO_COLORS["gray"], "combo_red": C.COMBO_COLORS["red"],
+    "combo_blue": C.COMBO_COLORS["blue"], "combo_red": C.COMBO_COLORS["red"],
 }
 
 
@@ -99,7 +99,7 @@ def palette() -> dict:
         "side": None,                      # 侧边栏不变
         # 组合的颜色: 白 / 紫 / 灰 / 红; 白和灰在浅色主题里用文字色, 免得看不见
         "combo_yellow": "#d9a400", "combo_purple": "#8b5cf6",
-        "combo_gray": c["text_dim"], "combo_red": c["danger"],
+        "combo_blue": "#2456c7", "combo_red": c["danger"],
     }
 
 
@@ -474,7 +474,7 @@ class ContractPage(tk.Frame):
         if not raw:
             return {}
         by_hex = {C.COMBO_COLORS[x["color"]]: x["color"] for x in C.COMBOS}
-        return {t: self.P.get(f"combo_{by_hex.get(v, 'gray')}", v) for t, v in raw.items()}
+        return {t: self.P.get(f"combo_{by_hex.get(v, 'blue')}", v) for t, v in raw.items()}
 
     def _rows(self, sel):
         """已选中的词条: (等级, 文字, 是否失效, 未知变量选中的词条 / "", 现在的词条). 合约中按开始时选的列出,

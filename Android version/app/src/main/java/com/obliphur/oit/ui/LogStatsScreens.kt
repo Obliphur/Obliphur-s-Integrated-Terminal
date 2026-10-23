@@ -371,7 +371,7 @@ private fun ContractRecords() {
     var open by remember { mutableStateOf<ContractRow?>(null) }
     val fog = c.fog()
     // 组合的颜色 (黄色在两种主题里都用深一点的黄, 浅色背景上也看得清)
-    val tint = mapOf("yellow" to Color(0xffd9a400), "purple" to Color(0xffb06cf0), "gray" to Color(0xff9a9ca1), "red" to Color(0xffff2b3a))
+    val tint = mapOf("yellow" to Color(0xffd9a400), "purple" to Color(0xffb06cf0), "blue" to Color(0xff2456c7), "red" to Color(0xffff2b3a))
     val rows = remember(fog, c.id, c.history.size) {
         if (fog) fogContractRows(c.id)
         else Contract.recentCompleted(c.history, CONTRACT_ROWS).map {
