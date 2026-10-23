@@ -1340,16 +1340,20 @@ def _fit(src: bytes, sw, sh, stride, dw, dh) -> bytes:
     return bytes(out)
 
 
-def _canvas(info):
+def _canvas(info, weights=None):
     """合并画布的大小和朝向 (MECHANICS 18.8). info: [(宽, 高, 是不是本机录的)].
+    weights: 每段的分量 (目光按录了多久, 用文件大小代替); 给了就按横 / 竖各录了多久定朝向, 不按段数.
     - 有横屏设备参与就按横屏: 本机 (电脑, 横屏设备) 录过, 或片段里横屏占多数; 否则 (全是竖屏手机) 按竖屏.
     - 画布取同朝向里面积最大的那段 (保持分辨率不变), 最长边再压到不超过 SCREEN_WIDTH (压一下体积).
     - 不同朝向的内容: 横屏画布里的竖屏内容左右留黑; 竖屏画布里的横屏画面直接转正 (见 _reencode_concat / _rotate90)."""
-    info = [(w, h, loc) for w, h, loc in info if w > 0 and h > 0]
+    if weights is None:
+        weights = [1] * len(info)
+    pairs = [(d, wt) for d, wt in zip(info, weights) if d[0] > 0 and d[1] > 0]
+    info = [d for d, _ in pairs]
     if not info:
         return None
-    n_land = sum(1 for w, h, _ in info if w > h)
-    n_port = len(info) - n_land
+    n_land = sum(wt for (w, h, _), wt in pairs if w > h)
+    n_port = sum(wt for (w, h, _), wt in pairs if w <= h)
     has_local = any(loc for _, _, loc in info)
     land = has_local or (n_land > 0 and n_land >= n_port)
     same = [(w, h) for w, h, _ in info if (w > h) == land] or [(w, h) for w, h, _ in info]
@@ -1559,15 +1563,17 @@ def merge(data_dir: str, cid: str, kind: str = "screen", extra=()) -> str:
         raw = os.path.join(work, "merged.mp4")
         # 画布的朝向 / 大小 (MECHANICS 18.8): 有横屏设备 (本机电脑录过, 或横屏片段占多数) 就按横屏, 否则按竖屏;
         # 横屏画布里的竖屏内容左右留黑, 竖屏画布里冒出的横屏画面转正
-        info = []
+        info, weights = [], []
         for p, loc in plain:
             try:
                 w, h = _dims(p)
                 info.append((w, h, loc))
+                # 目光: 按横 / 竖各录了多久定画布的朝向 (手机横过来录了大半场, 就是横的), 码率固定, 用文件大小代替时长
+                weights.append(max(1, os.path.getsize(p)) if kind == "camera" else 1)
             except Exception:       # noqa: BLE001
                 pass
         # 目光 (摄像头) 的合并结果按目光的码率压 (要同步给所有设备, 不能太大)
-        _reencode_concat(raw, [p for p, _ in plain], size=_canvas(info),
+        _reencode_concat(raw, [p for p, _ in plain], size=_canvas(info, weights),
                          bitrate=CAMERA_BITRATE if kind == "camera" else SCREEN_BITRATE, fit_turn=kind != "camera")
         d = merged_dir(data_dir, kind)
         os.makedirs(d, exist_ok=True)

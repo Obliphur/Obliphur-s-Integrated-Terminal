@@ -54,8 +54,13 @@ class RecordService : Service() {
     }
 
     // ---- 目光跟着手机的朝向转 (MECHANICS 18.8): 陀螺仪 / 加速度计给出手机转了多少度 ----
-    /** 手机此刻的朝向 (顺时针转了 0 / 90 / 180 / 270 度, 平放 / 读不出时保持上一个). */
-    @Volatile private var devDeg = 0
+    /** 手机此刻的朝向 (顺时针转了 0 / 90 / 180 / 270 度, 平放 / 读不出时保持上一个).
+     *  记在 companion 里: 服务每次开始专注都会重新创建, 不能每次都从"竖着"算起. */
+    private var devDeg: Int
+        get() = lastDeg
+        set(v) { lastDeg = v }
+    /** 这个服务启动后收到过朝向了没有 (开摄像头前先等一下, 第一段就按真实的朝向录). */
+    @Volatile private var gotDeg = false
     private var turnAt = 0L
 
     private val orient by lazy { object : android.view.OrientationEventListener(this) {
@@ -64,7 +69,9 @@ class RecordService : Service() {
             // 只在明确靠近某个方向 (±30°) 时才换, 斜着拿的时候不来回跳
             val snap = ((o + 45) / 90 * 90) % 360
             val off = Math.floorMod(o - snap + 180, 360) - 180
-            if (kotlin.math.abs(off) > 30 || snap == devDeg) return
+            if (kotlin.math.abs(off) > 30) return
+            gotDeg = true
+            if (snap == devDeg) return
             devDeg = snap
             // 转过去停稳 2 秒: 正在录的目光另起一段, 新的一段按新的朝向录 (画面转正, 横拍 / 竖拍跟着变)
             val at = android.os.SystemClock.elapsedRealtime()
@@ -107,17 +114,17 @@ class RecordService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action
         // startForegroundService 之后必须尽快进入前台: 类型按这次要录的几路算 (停止指令时按剩下的)
-        val wantCam = cam != null || action == ACT_CAMERA
+        val wantCam = cam != null || camPending || action == ACT_CAMERA
         val wantScreen = screen != null || action == ACT_SCREEN
         enterForeground(wantCam, wantScreen)
         h.post {
             when (action) {
-                ACT_CAMERA -> if (cam == null) startCam()
+                ACT_CAMERA -> if (cam == null) startCamWhenOriented(0)
                 ACT_SCREEN -> if (screen == null) startScreen(intent)
-                ACT_STOP_CAMERA -> { cam?.stop(); cam = null }
+                ACT_STOP_CAMERA -> { camPending = false; cam?.stop(); cam = null }
                 ACT_STOP_SCREEN -> { screen?.stop(); screen = null }
             }
-            if (cam == null && screen == null) {
+            if (cam == null && !camPending && screen == null) {
                 keepScreen(false)
                 stopForeground(STOP_FOREGROUND_REMOVE); stopSelf()
             } else { enterForeground(cam != null, screen != null); keepScreen(true) }
@@ -183,6 +190,18 @@ class RecordService : Service() {
             .onFailure { OitApp.instance.core.logRecord("seal $kind failed: ${it.message}") }
             .onSuccess { OitApp.instance.core.logRecord("$kind saved ${it.name}") }
     }
+
+    /** 先等收到手机的朝向 (最多 1.5 秒) 再开摄像头, 第一段就按真实的朝向写旋转标记 (MECHANICS 18.8). */
+    private fun startCamWhenOriented(tries: Int) {
+        if (cam != null) { camPending = false; return }
+        if (tries > 0 && !camPending) return                     // 等的时候被叫停了
+        if (gotDeg || tries >= 5 || !orient.canDetectOrientation()) { camPending = false; startCam(); return }
+        camPending = true
+        h.postDelayed({ startCamWhenOriented(tries + 1) }, 300)
+    }
+
+    /** 正在等朝向, 马上就要开摄像头 (这时服务不能因为"什么都没在录"而停掉). */
+    private var camPending = false
 
     private fun startCam() {
         if (checkSelfPermission(android.Manifest.permission.CAMERA) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
@@ -382,6 +401,8 @@ class RecordService : Service() {
     companion object {
         /** 目光 (摄像头) 每秒录几帧. */
         const val CAMERA_FPS = 1
+        /** 最后知道的手机朝向 (跨服务实例保留). */
+        @Volatile private var lastDeg = 0
         /** 目光每秒只有 1 帧: 码率压低, 文件小 (要传给电脑合并 / 同步, 不能太大). */
         const val CAMERA_BITRATE = 64_000
         const val CAMERA_AUDIO_BITRATE = 64_000
