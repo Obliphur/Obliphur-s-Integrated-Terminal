@@ -721,8 +721,6 @@ class Contract:
                "pre_left": self.pre_left, "rand": self.rand, "owner": self.live.get("owner", "")}
         if self.live.get("locks"):
             rec["locks"] = list(self.live["locks"])        # 未知变量 / 记录封锁另外封锁的记录格 (选了记录封锁的合约结束后照样锁着)
-        if self.live.get("fine_h"):
-            rec["fine_h"] = list(self.live["fine_h"])      # 细化规范分成两格的小时 (结束时还没填完的半小时照样能填)
         slow = self.live.get("slow")
         if isinstance(slow, dict) and slow.get("start"):
             rec["slow"] = slow["start"]                   # 阻滞的那段专注可能比合约结束得晚
@@ -1392,20 +1390,18 @@ class Contract:
         """选了整点记录的词条: 整点记录关着时, 这次合约中照样开启. 未知变量启用过整点记录的词条: 这次合约中一直开启."""
         return any(t in HOUR_TERMS for t in self.terms) or (self.active and bool(self.live.get("hour_forced")))
 
-    def fine_hour(self, slot_start: datetime, now: datetime = None) -> bool:
+    def fine_hour(self, slot_start: datetime) -> bool:
         """细化规范: 这一小时 (按开始时刻) 和进行中的合约重叠, 记录改为每 30 分钟一次.
-        细化规范生效过的小时 (mark_fine 记下的) 一直分成两格: 词条中途去掉 (未知变量到时移除) 时, 还没到的那半小时照样提示 / 填写 / 算超时;
-        合约结束后, 结束前分成两格的小时到后半小时的补填时限为止照样分两格."""
-        key = _iso(slot_start.replace(minute=0, second=0, microsecond=0))
-        if self.active:
-            if key in (self.live.get("fine_h") or []):
-                return True
-            if not self.has("fine"):
-                return False
-            a, b = self.start_at, self.end_at
-            return bool(a and b and a < slot_start + timedelta(hours=1) and slot_start < b)
-        now = now or datetime.now()
-        return key in (self.last.get("fine_h") or [])             and slot_start + timedelta(hours=1) + config.FINE_FILL_WINDOW > now
+        细化规范生效过的小时 (mark_fine 记下的) 合约中一直分成两格: 词条中途去掉 (未知变量到时移除) 时, 还没到的那半小时照样提示 / 填写 / 算超时.
+        合约结束后全部恢复成一小时一格 (不留多出来的格子)."""
+        if not self.active:
+            return False
+        if _iso(slot_start.replace(minute=0, second=0, microsecond=0)) in (self.live.get("fine_h") or []):
+            return True
+        if not self.has("fine"):
+            return False
+        a, b = self.start_at, self.end_at
+        return bool(a and b and a < slot_start + timedelta(hours=1) and slot_start < b)
 
     def mark_fine(self, now: datetime) -> bool:
         """细化规范生效时记下这个钟点 (每秒调用): 之后词条没了, 这一小时也照样分成两格. 返回记了没有."""
@@ -2310,8 +2306,7 @@ def _selftest():
     keys = [k for k, _a, _b in f.hour_units(datetime(2026, 10, 20, 11, 5))]
     assert keys == ["2026-10-20/9", "2026-10-20/10/1", "2026-10-20/10/2"], keys
     f.finish("abandoned", datetime(2026, 10, 20, 10, 50))
-    assert f.fine_hour(datetime(2026, 10, 20, 10), now=datetime(2026, 10, 20, 11, 20)), "结束后到后半小时的补填时限为止"
-    assert not f.fine_hour(datetime(2026, 10, 20, 10), now=datetime(2026, 10, 20, 11, 31))
+    assert not f.fine_hour(datetime(2026, 10, 20, 10)), "合约结束后恢复成一小时一格, 不留多出来的格子"
 
     # 黑雾 (软): 一个钟点里切到计时器以外的页面满 FOG_SWITCHES 次算一次违反; 换钟点清零
     f.start(["fog"], "me", now=f0)

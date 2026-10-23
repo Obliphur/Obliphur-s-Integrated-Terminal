@@ -2900,6 +2900,10 @@ class BreakTimerApp:
         self._sync_bonus_button()
         self.refresh_display()
         self.refresh_net(force=True)
+        s = self.dm.prompt_slot
+        if s is not None and self.dm.prompt_len == 30 and not self.contract.fine_hour(s):
+            self.dm.prompt_slot = None           # 合约结束, 细化规范的半小时格合回一格: 不再等那半小时
+            self.update_log_badge()
         if "log" in self.pages:
             self.pages["log"].refresh()
         self._refresh_if_visible("contract")

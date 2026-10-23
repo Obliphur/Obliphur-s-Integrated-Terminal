@@ -882,6 +882,8 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             contractSeen = seen
             host.applyNet(false)                 // 全频道阻塞干扰: 断网方式跟着变
             syncHourLog()
+            // 合约结束, 细化规范的半小时格合回一格: 不再等那半小时
+            dm.promptSlot?.let { if (dm.promptLen == 30 && !c.fineHour(it)) dm.promptSlot = null }
             if (!c.fog() && heldAchievements.isNotEmpty()) {
                 host.achievementsUnlocked(heldAchievements.toList())
                 heldAchievements.clear()

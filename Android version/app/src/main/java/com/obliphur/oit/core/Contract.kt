@@ -585,7 +585,6 @@ class Contract(private val file: File) {
             .put("result", result).put("violations", violations).put("reward", give).put("pre_left", preLeft)
             .put("rand", JSONArray(rand))
         live.optJSONArray("locks")?.let { if (it.length() > 0) rec.put("locks", JSONArray(it.toString())) }   // 封锁的记录格 (选了记录封锁的合约结束后照样锁着)
-        live.optJSONArray("fine_h")?.let { if (it.length() > 0) rec.put("fine_h", JSONArray(it.toString())) }   // 细化规范分成两格的小时
         live.optJSONObject("slow")?.optString("start")?.takeIf { it.isNotEmpty() }?.let { rec.put("slow", it) }
         history.add(rec)
         live = JSONObject().put("state", "none").put("owner", by).put("first_break", result == "completed")
@@ -1058,18 +1057,15 @@ class Contract(private val file: File) {
     /** 选了整点记录的词条: 整点记录关着时, 这次合约中照样开启. */
     fun hourForced() = terms.any { it in HOUR_TERMS } || (active && live.optBoolean("hour_forced"))
     /** 细化规范: 这一小时 (按开始时刻) 和进行中的合约重叠, 记录改为每 30 分钟一次.
-     *  细化规范生效过的小时 (markFine 记下的) 一直分成两格; 合约结束后到后半小时的补填时限为止照样分两格. 同 contract.py 的 fine_hour. */
-    fun fineHour(slotStart: LocalDateTime, now: LocalDateTime = LocalDateTime.now()): Boolean {
+     *  细化规范生效过的小时 (markFine 记下的) 合约中一直分成两格; 合约结束后全部恢复成一小时一格. 同 contract.py 的 fine_hour. */
+    fun fineHour(slotStart: LocalDateTime): Boolean {
+        if (!active) return false
         val key = slotStart.withMinute(0).withSecond(0).withNano(0).iso()
-        if (active) {
-            if (key in (live.optJSONArray("fine_h")?.strings() ?: emptyList())) return true
-            if (!has("fine")) return false
-            val a = startAt ?: return false
-            val b = endAt ?: return false
-            return a.isBefore(slotStart.plusHours(1)) && slotStart.isBefore(b)
-        }
-        val marks = last?.optJSONArray("fine_h")?.strings() ?: return false
-        return key in marks && slotStart.plusHours(1).plusMinutes(30).isAfter(now)
+        if (key in (live.optJSONArray("fine_h")?.strings() ?: emptyList())) return true
+        if (!has("fine")) return false
+        val a = startAt ?: return false
+        val b = endAt ?: return false
+        return a.isBefore(slotStart.plusHours(1)) && slotStart.isBefore(b)
     }
 
     /** 细化规范生效时记下这个钟点 (每秒调用): 之后词条没了, 这一小时也照样分成两格. 返回记了没有. */
