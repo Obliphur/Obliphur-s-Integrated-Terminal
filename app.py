@@ -3882,10 +3882,10 @@ class BreakTimerApp:
         threading.Thread(target=run, daemon=True).start()
 
     def _sync_bonus_button(self):
-        """合约中 / 外出中隐藏"我累了"按钮."""
+        """合约中 / 外出中 / 本周已经领完时隐藏"我累了"按钮 (下周一再出现)."""
         if not hasattr(self, "lbl_bonus"):
             return
-        if self.contract.active or self.behavior.active() is not None:
+        if self.contract.active or self.behavior.active() is not None or self._bonus_left_this_week() <= 0:
             hide_pack(self.lbl_bonus)
         else:
             show_pack(self.lbl_bonus, side="left", padx=(24, 0))
@@ -4695,6 +4695,7 @@ class BreakTimerApp:
             self._check_contract()
         except Exception as e:
             self._log_window(f"ERROR    contract {type(e).__name__}: {e}")
+        self._sync_bonus_button()               # "我累了": 本周领完了就藏起来, 新的一周 (或同步来的领取记录) 随之变化
         if self.current_page == "timer" and hasattr(self, "lbl_peers"):
             text, off = self._peer_line()
             cfg(self.lbl_peers, text=text, fg=COLORS["warn"] if off else COLORS["text_dim"])

@@ -124,7 +124,8 @@ fun TimerScreen() {
                 }
                 if (core.behavior.enabled()) PlainButton(tr("🚪  外出")) { askOuting = true }
                 // 连点按钮: 按钮上只写这几个字, 不写具体规则; 合约中 / 外出中隐藏
-                if (!core.contract.active) PlainButton(t.bonusLabel()) { t.onBonusClick() }
+                // 合约中 / 本周已经领完时隐藏 (下周一再出现)
+                if (!core.contract.active && t.bonusLeftThisWeek() > 0) PlainButton(t.bonusLabel()) { t.onBonusClick() }
             }
         }
         Flavor(tr("在第二段区间内 学的时间越长得到的休息时间越长.请尽量长时间地专注."), Modifier.padding(top = 24.dp))
