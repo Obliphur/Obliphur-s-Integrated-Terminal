@@ -50,7 +50,34 @@ class RecordService : Service() {
     override fun onCreate() {
         super.onCreate()
         runCatching { registerReceiver(screenOn, android.content.IntentFilter(Intent.ACTION_SCREEN_ON)) }
+        runCatching { if (orient.canDetectOrientation()) orient.enable() }
     }
+
+    // ---- 目光跟着手机的朝向转 (MECHANICS 18.8): 陀螺仪 / 加速度计给出手机转了多少度 ----
+    /** 手机此刻的朝向 (顺时针转了 0 / 90 / 180 / 270 度, 平放 / 读不出时保持上一个). */
+    @Volatile private var devDeg = 0
+    private var turnAt = 0L
+
+    private val orient by lazy { object : android.view.OrientationEventListener(this) {
+        override fun onOrientationChanged(o: Int) {
+            if (o == ORIENTATION_UNKNOWN) return
+            // 只在明确靠近某个方向 (±30°) 时才换, 斜着拿的时候不来回跳
+            val snap = ((o + 45) / 90 * 90) % 360
+            val off = Math.floorMod(o - snap + 180, 360) - 180
+            if (kotlin.math.abs(off) > 30 || snap == devDeg) return
+            devDeg = snap
+            // 转过去停稳 2 秒: 正在录的目光另起一段, 新的一段按新的朝向录 (画面转正, 横拍 / 竖拍跟着变)
+            val at = android.os.SystemClock.elapsedRealtime()
+            turnAt = at
+            h.postDelayed({
+                val c = cam
+                if (turnAt == at && c != null && c.devDeg != devDeg) {
+                    c.stop()
+                    cam = CamJob(c.mgr, c.id).also { it.start() }
+                }
+            }, 2000)
+        }
+    } }
 
     /** 录像时拿一个屏幕唤醒锁, 让屏幕不自动熄灭 (停录时放开). */
     @Suppress("DEPRECATION", "WakelockTimeout")
@@ -88,6 +115,7 @@ class RecordService : Service() {
     }
 
     override fun onDestroy() {
+        runCatching { orient.disable() }
         keepScreen(false)
         runCatching { unregisterReceiver(screenOn) }
         h.post { cam?.stop(); screen?.stop(); cam = null; screen = null }
@@ -189,13 +217,15 @@ class RecordService : Service() {
         private var session: CameraCaptureSession? = null
         private var meter: android.media.ImageReader? = null
         @Volatile private var closed = false
+        /** 这一段开始时手机的朝向 (MECHANICS 18.8): 按它写 mp4 的旋转标记; 手机转了就另起一段. */
+        val devDeg = this@RecordService.devDeg
         init { val (p, f) = newPart("camera"); part = p; fin = f }
 
         fun start() {
             // 用摄像头 / MediaRecorder 真正支持的尺寸 (480×360 这类不是标准采集尺寸, 很多手机不支持, prepare 会失败);
             // 在支持的尺寸里挑最接近 640×480 的 (压一下但保证能录)
             val (cw, ch) = camSize(mgr, id)
-            rec = buildRecorder(part, cw, ch, CAMERA_FPS, CAMERA_BITRATE, CAMERA_AUDIO_BITRATE)
+            rec = buildRecorder(part, cw, ch, CAMERA_FPS, CAMERA_BITRATE, CAMERA_AUDIO_BITRATE, hint(mgr, id, devDeg))
             // 每秒 CAMERA_FPS 帧: 摄像头连续出画面到一个小的 ImageReader (只为了让自动曝光 / 对焦一直跑着, 画面直接丢掉),
             // 每 1 / CAMERA_FPS 秒单独拍一帧送进 MediaRecorder (setVideoFrameRate 只是提示, 连续送多少帧就录多少帧)
             val (mw, mh) = meterSize(mgr, id)
@@ -302,7 +332,17 @@ class RecordService : Service() {
     private fun even(x: Int) = if (x % 2 == 0) x else x - 1
 
     /** 一路录像的 MediaRecorder: H.264 + (开着麦克风时) AAC, 写到 part. video source 由调用处用 surface 接. */
-    private fun buildRecorder(part: File, w: Int, hgt: Int, fps: Int, bitrate: Int, audioBitrate: Int = 128_000): MediaRecorder {
+    /** 目光的 mp4 播放时要顺时针转多少度才是正的 (摄像头装在机身里的角度 + 手机此刻的朝向; 前置摄像头是镜像的, 反着算).
+     *  同 Camera2 文档里 JPEG_ORIENTATION 的算法. 电脑合并时按这个标记把画面转正. */
+    private fun hint(mgr: CameraManager, id: String, dev: Int): Int {
+        val ch = runCatching { mgr.getCameraCharacteristics(id) }.getOrNull() ?: return 0
+        val sensor = ch.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
+        val front = ch.get(CameraCharacteristics.LENS_FACING) == CameraMetadata.LENS_FACING_FRONT
+        return Math.floorMod(sensor + (if (front) -dev else dev), 360)
+    }
+
+    private fun buildRecorder(part: File, w: Int, hgt: Int, fps: Int, bitrate: Int, audioBitrate: Int = 128_000,
+                              orientation: Int = 0): MediaRecorder {
         val mic = micOn()
         @Suppress("DEPRECATION")
         val r = if (Build.VERSION.SDK_INT >= 31) MediaRecorder(this) else MediaRecorder()
@@ -314,6 +354,7 @@ class RecordService : Service() {
         r.setVideoSize(w, hgt)
         r.setVideoFrameRate(fps)
         r.setVideoEncodingBitRate(bitrate)
+        if (orientation != 0) r.setOrientationHint(orientation)
         r.setOutputFile(part.absolutePath)
         r.prepare()
         return r

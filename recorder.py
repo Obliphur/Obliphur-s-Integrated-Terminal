@@ -283,6 +283,7 @@ MF_MT_FRAME_SIZE = _guid("1652c33d-d6b2-4012-b834-72030849a37d")
 MF_MT_FRAME_RATE = _guid("c459a2e8-3d2c-4e44-b132-fee5156c7bb0")
 MF_MT_PIXEL_ASPECT_RATIO = _guid("c6376a1e-8d0a-4027-be45-6d9a0ad39bb6")
 MF_MT_DEFAULT_STRIDE = _guid("644b4e48-1e02-4516-b0eb-c01ca9d49ac6")
+MF_MT_VIDEO_ROTATION = _guid("c380465d-2271-428c-9b83-ecea3b4a85c1")   # mp4 的旋转标记 (手机按陀螺仪写的), 顺时针度数
 MFMediaType_Audio = _guid("73647561-0000-0010-8000-00AA00389B71")
 MFAudioFormat_AAC = _guid("00001610-0000-0010-8000-00AA00389B71")
 MFAudioFormat_PCM = _guid("00000001-0000-0010-8000-00AA00389B71")
@@ -1173,6 +1174,20 @@ def _reader_type(lib, reader, stream, major, subtype, setup=None):
     return cur
 
 
+def _video_rotation(reader) -> int:
+    """这段视频播放时要顺时针转多少度 (0 / 90 / 180 / 270): 手机录目光时按陀螺仪写进 mp4 的旋转标记 (MECHANICS 18.8).
+    Source Reader 解出来的画面是没转过的, 合并时要自己转."""
+    t = c_void_p()
+    try:
+        _com(reader, 5, MF_SOURCE_READER_FIRST_VIDEO_STREAM, 0, byref(t),
+             argtypes=(c_ulong, c_ulong, POINTER(c_void_p)), what="GetNativeMediaType")
+        return int(_get_u32(t, MF_MT_VIDEO_ROTATION)) % 360
+    except MFError:
+        return 0
+    finally:
+        _release(t)
+
+
 def _find_streams(reader):
     """Source Reader 里画面 / 声音分别是第几路 (mp4 里顺序不一定): 返回 (画面流号, 声音流号), 没有的为 -1."""
     vi = ai = -1
@@ -1205,21 +1220,42 @@ def _sample_bytes(sample):
     return p, n.value, buf
 
 
+def _topdown(src: bytes, sw, sh, stride) -> bytes:
+    """RGB32 (sw×sh, 行距 stride 可正负, 可能带行尾填充) → 紧凑、从上往下的 bytes."""
+    astride, row = abs(stride), sw * 4
+    if stride == row:
+        return bytes(src[:row * sh])
+    rows = [src[y * astride: y * astride + row] for y in range(sh)]
+    if stride < 0:
+        rows.reverse()
+    return b"".join(rows)
+
+
+def _rotate(src: bytes, sw, sh, stride, deg: int) -> tuple:
+    """RGB32 源 (sw×sh, 行距 stride 可正负) 顺时针转 deg (90 / 180 / 270) 度.
+    返回 (新 bytes, 新宽, 新高, 新行距, 从上往下). 按 4 字节一个像素整列切片, 不逐像素循环 (几小时的录像也够快)."""
+    a = array.array("I")
+    a.frombytes(_topdown(src, sw, sh, stride))
+    deg %= 360
+    if deg == 180:
+        a.reverse()
+        return a.tobytes(), sw, sh, sw * 4
+    out = array.array("I")
+    if deg == 90:                       # 新的第 ny 行 = 原来的第 ny 列, 从下往上
+        for x in range(sw):
+            out.extend(a[(sh - 1) * sw + x::-sw])
+    elif deg == 270:                    # 新的第 ny 行 = 原来的倒数第 ny 列, 从上往下
+        for x in range(sw - 1, -1, -1):
+            out.extend(a[x::sw])
+    else:
+        return a.tobytes(), sw, sh, sw * 4
+    return out.tobytes(), sh, sw, sh * 4
+
+
 def _rotate90(src: bytes, sw, sh, stride) -> tuple:
     """RGB32 源 (sw×sh, 行距 stride 可正负) 顺时针转 90°: 返回 (新 bytes, 新宽=sh, 新高=sw, 新行距=sh*4, 从上往下).
     只在"参与的全是竖屏设备、却冒出一帧横屏画面"时用 (MECHANICS 18.8), 把横屏画面转正."""
-    astride = abs(stride)
-    nw, nh = sh, sw
-    nrow = nw * 4
-    out = bytearray(nrow * nh)
-    for ny in range(nh):                 # ny: 0..sw-1
-        sx = ny
-        for nx in range(nw):             # nx: 0..sh-1
-            sy = sh - 1 - nx
-            soff = (sy if stride > 0 else (sh - 1 - sy)) * astride + sx * 4
-            doff = ny * nrow + nx * 4
-            out[doff: doff + 4] = src[soff: soff + 4]
-    return bytes(out), nw, nh, nrow
+    return _rotate(src, sw, sh, stride, 90)
 
 
 def _fit(src: bytes, sw, sh, stride, dw, dh) -> bytes:
@@ -1296,13 +1332,15 @@ def _reencode_concat(out_path, inputs, fps=SCREEN_FPS, size=None, bitrate=SCREEN
                     stride = sw * 4
                 if not stride:
                     stride = sw * 4
+                turn = _video_rotation(reader)              # 手机按陀螺仪写的旋转标记: 先把画面转正
+                ew, eh = (sh, sw) if turn in (90, 270) else (sw, sh)
                 has_audio = False       # 合并后的总览只接画面 (各段自己的文件里留着声音)
                 if writer is None:
-                    if not (dw and dh):                     # 没给画布: 用第一段的大小 (同以前)
-                        dw, dh = min(sw, SCREEN_WIDTH) // 2 * 2, sh // 2 * 2
+                    if not (dw and dh):                     # 没给画布: 用第一段 (转正后) 的大小 (同以前)
+                        dw, dh = min(ew, SCREEN_WIDTH) // 2 * 2, eh // 2 * 2
                     writer = _Writer(lib, out_path, dw, dh, fps, bitrate, audio=has_audio)
                 # 竖屏画布里冒出横屏画面 (全是竖屏设备, 中途有横屏) → 把这一段的每帧转正 (MECHANICS 18.8)
-                rotate = dw < dh and sw > sh
+                rotate = dw < dh and ew > eh
                 rd = ctypes.WINFUNCTYPE(HRESULT, c_void_p, c_ulong, c_ulong, POINTER(c_ulong), POINTER(c_ulong),
                                         POINTER(ctypes.c_longlong), POINTER(c_void_p))(
                     ctypes.cast(reader, POINTER(POINTER(c_void_p)))[0][9])
@@ -1331,8 +1369,10 @@ def _reencode_concat(out_path, inputs, fps=SCREEN_FPS, size=None, bitrate=SCREEN
                         try:
                             src = ctypes.string_at(ptr, size)
                             fw, fh, fstride = sw, sh, stride
+                            if turn:
+                                src, fw, fh, fstride = _rotate(src, fw, fh, fstride, turn)
                             if rotate:
-                                src, fw, fh, fstride = _rotate90(src, sw, sh, stride)
+                                src, fw, fh, fstride = _rotate90(src, fw, fh, fstride)
                             frame = _fit(src, fw, fh, fstride, dw, dh)
                             data = ctypes.create_string_buffer(frame, len(frame))
                             writer.write_bytes(data, len(frame), base + ts.value, dur.value, stream=stream)
@@ -1483,7 +1523,7 @@ def merge(data_dir: str, cid: str, kind: str = "screen", extra=()) -> str:
 
 
 def _dims(path: str):
-    """mp4 画面的宽高."""
+    """mp4 画面 (按旋转标记转正后) 的宽高."""
     lib, own = _startup()
     reader = c_void_p()
     try:
@@ -1493,7 +1533,8 @@ def _dims(path: str):
              argtypes=(c_ulong, POINTER(c_void_p)), what="GetCurrentMediaType")
         try:
             fs = _get_u64(t, MF_MT_FRAME_SIZE)
-            return fs >> 32, fs & 0xFFFFFFFF
+            w, h = fs >> 32, fs & 0xFFFFFFFF
+            return (h, w) if _video_rotation(reader) in (90, 270) else (w, h)
         finally:
             _release(t)
     finally:
