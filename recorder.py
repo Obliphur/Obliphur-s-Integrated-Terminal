@@ -563,6 +563,62 @@ class WAVEFORMATEX(ctypes.Structure):
                 ("wBitsPerSample", wintypes.WORD), ("cbSize", wintypes.WORD)]
 
 
+class PROPERTYKEY(ctypes.Structure):
+    _fields_ = [("fmtid", GUID), ("pid", wintypes.DWORD)]
+
+
+class PROPVARIANT(ctypes.Structure):
+    _fields_ = [("vt", ctypes.c_ushort), ("r1", ctypes.c_ushort), ("r2", ctypes.c_ushort), ("r3", ctypes.c_ushort),
+                ("p", c_void_p), ("p2", c_void_p)]
+
+
+PKEY_Device_EnumeratorName = PROPERTYKEY(_guid("a45c254e-df1c-4efd-8020-67d146a850e0"), 24)
+
+
+def _enumerator(dev) -> str:
+    """音频设备是从哪条总线来的 ("BTHHFENUM" / "BTHENUM" = 蓝牙, "HDAUDIO", "USB" …); 读不出时 ""."""
+    st, v = c_void_p(), PROPVARIANT()
+    try:
+        _com(dev, 4, 0, byref(st), argtypes=(wintypes.DWORD, POINTER(c_void_p)), what="OpenPropertyStore")
+        _com(st, 5, byref(PKEY_Device_EnumeratorName), byref(v),
+             argtypes=(POINTER(PROPERTYKEY), POINTER(PROPVARIANT)), what="GetValue")
+        return ctypes.wstring_at(v.p) if v.vt == 31 and v.p else ""
+    except MFError:
+        return ""
+    finally:
+        _release(st)
+
+
+def _is_bluetooth(dev) -> bool:
+    return _enumerator(dev).upper().startswith("BTH")
+
+
+def _mic_device(en):
+    """录目光 / 刻痕用的麦克风: 默认的录音设备, 但**不用蓝牙耳机的麦克风** —— 一打开它, Windows 就把耳机从立体声 (A2DP)
+    切到免提 (HFP), 正在放的声音全都听不到了. 默认的是蓝牙时换一个不是蓝牙的; 没有就不录麦克风 (抛 MFError)."""
+    dev = c_void_p()
+    try:
+        _com(en, 4, 1, 0, byref(dev), argtypes=(c_int, c_int, POINTER(c_void_p)), what="GetDefaultAudioEndpoint")
+        if not _is_bluetooth(dev):
+            return dev
+    except MFError:
+        pass
+    _release(dev)
+    col, n = c_void_p(), c_uint()
+    try:
+        _com(en, 3, 1, 1, byref(col), argtypes=(c_int, wintypes.DWORD, POINTER(c_void_p)), what="EnumAudioEndpoints")
+        _com(col, 3, byref(n), argtypes=(POINTER(c_uint),), what="GetCount")
+        for i in range(n.value):
+            d = c_void_p()
+            _com(col, 4, i, byref(d), argtypes=(c_uint, POINTER(c_void_p)), what="Item")
+            if not _is_bluetooth(d):
+                return d
+            _release(d)
+    finally:
+        _release(col)
+    raise MFError("only a bluetooth headset mic (would cut its sound): mic not recorded")
+
+
 class _Capture:
     """一路声音: 默认的麦克风 (loopback=False) 或系统播放的声音 (loopback=True), 转成 16 位 PCM 立体声 48 kHz.
     采到的数据攒在 buf 里."""
@@ -575,8 +631,11 @@ class _Capture:
         try:
             _check(lib.ole.CoCreateInstance(byref(CLSID_MMDeviceEnumerator), None, 0x17,
                                             byref(IID_IMMDeviceEnumerator), byref(en)), "CoCreateInstance")
-            _com(en, 4, 0 if loopback else 1, 0, byref(dev), argtypes=(c_int, c_int, POINTER(c_void_p)),
-                 what="GetDefaultAudioEndpoint")
+            if loopback:
+                _com(en, 4, 0, 0, byref(dev), argtypes=(c_int, c_int, POINTER(c_void_p)),
+                     what="GetDefaultAudioEndpoint")
+            else:
+                dev = _mic_device(en)
             _com(dev, 3, byref(IID_IAudioClient), 0x17, None, byref(client),
                  argtypes=(POINTER(GUID), wintypes.DWORD, c_void_p, POINTER(c_void_p)), what="Activate")
             fmt = WAVEFORMATEX(1, AUDIO_CH, AUDIO_RATE, AUDIO_RATE * 2 * AUDIO_CH, 2 * AUDIO_CH, 16, 0)
@@ -1301,7 +1360,7 @@ def _canvas(info):
     return max(2, w // 2 * 2), max(2, h // 2 * 2)
 
 
-def _reencode_concat(out_path, inputs, fps=SCREEN_FPS, size=None, bitrate=SCREEN_BITRATE):
+def _reencode_concat(out_path, inputs, fps=SCREEN_FPS, size=None, bitrate=SCREEN_BITRATE, fit_turn=True):
     """把几个 mp4 (已解密) 按顺序解码 → 重新编码接成一个 (画面统一到 size 给的画布, 没给时用第一段的大小;
     每一段等比缩放居中留黑, 不同朝向也兼容; 只接画面). 每一段的时间戳接在上一段后面. 返回输出的 (宽, 高)."""
     lib, own = _startup()
@@ -1340,7 +1399,8 @@ def _reencode_concat(out_path, inputs, fps=SCREEN_FPS, size=None, bitrate=SCREEN
                         dw, dh = min(ew, SCREEN_WIDTH) // 2 * 2, eh // 2 * 2
                     writer = _Writer(lib, out_path, dw, dh, fps, bitrate, audio=has_audio)
                 # 竖屏画布里冒出横屏画面 (全是竖屏设备, 中途有横屏) → 把这一段的每帧转正 (MECHANICS 18.8)
-                rotate = dw < dh and ew > eh
+                # (目光不这样做: 每段已经按手机的朝向转正了, 横着拿手机录的就是横的, 放进竖画布时上下留黑; fit_turn=False)
+                rotate = fit_turn and dw < dh and ew > eh
                 rd = ctypes.WINFUNCTYPE(HRESULT, c_void_p, c_ulong, c_ulong, POINTER(c_ulong), POINTER(c_ulong),
                                         POINTER(ctypes.c_longlong), POINTER(c_void_p))(
                     ctypes.cast(reader, POINTER(POINTER(c_void_p)))[0][9])
@@ -1508,7 +1568,7 @@ def merge(data_dir: str, cid: str, kind: str = "screen", extra=()) -> str:
                 pass
         # 目光 (摄像头) 的合并结果按目光的码率压 (要同步给所有设备, 不能太大)
         _reencode_concat(raw, [p for p, _ in plain], size=_canvas(info),
-                         bitrate=CAMERA_BITRATE if kind == "camera" else SCREEN_BITRATE)
+                         bitrate=CAMERA_BITRATE if kind == "camera" else SCREEN_BITRATE, fit_turn=kind != "camera")
         d = merged_dir(data_dir, kind)
         os.makedirs(d, exist_ok=True)
         for n in os.listdir(d):                   # 这个合约这一路的旧结果先删 (本次重新合并盖掉)

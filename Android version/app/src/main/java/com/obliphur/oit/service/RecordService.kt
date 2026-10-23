@@ -72,8 +72,19 @@ class RecordService : Service() {
             h.postDelayed({
                 val c = cam
                 if (turnAt == at && c != null && c.devDeg != devDeg) {
+                    OitApp.instance.core.logRecord("camera turned to $devDeg: new segment")
+                    // 等上一段的摄像头真正关掉再开新的 (马上重开很多手机会报"摄像头被占用", 这一段就录不成)
+                    var opened = false
+                    val reopen = Runnable {
+                        if (!opened && cam == null && state["camera"] == "running") {
+                            opened = true
+                            cam = CamJob(c.mgr, c.id).also { it.start() }
+                        }
+                    }
+                    c.onClosed = { h.post(reopen) }
                     c.stop()
-                    cam = CamJob(c.mgr, c.id).also { it.start() }
+                    cam = null
+                    h.postDelayed(reopen, 3000)              // 收不到"已关闭"的回调时也接着录
                 }
             }, 2000)
         }
@@ -217,6 +228,8 @@ class RecordService : Service() {
         private var session: CameraCaptureSession? = null
         private var meter: android.media.ImageReader? = null
         @Volatile private var closed = false
+        /** 摄像头真正关掉之后 (手机转了, 换一段时用). */
+        @Volatile var onClosed: (() -> Unit)? = null
         /** 这一段开始时手机的朝向 (MECHANICS 18.8): 按它写 mp4 的旋转标记; 手机转了就另起一段. */
         val devDeg = this@RecordService.devDeg
         init { val (p, f) = newPart("camera"); part = p; fin = f }
@@ -259,6 +272,7 @@ class RecordService : Service() {
                         override fun onConfigureFailed(s: CameraCaptureSession) = fail("camera", Exception("session"))
                     }, h)
                 }
+                override fun onClosed(d: CameraDevice) { onClosed?.invoke(); onClosed = null }
                 override fun onDisconnected(d: CameraDevice) { fail("camera", Exception("disconnected")); stop() }
                 override fun onError(d: CameraDevice, err: Int) { fail("camera", Exception("camera error $err")) }
             }, h)
