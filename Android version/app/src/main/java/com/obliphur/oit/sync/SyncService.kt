@@ -181,8 +181,15 @@ class SyncService(
         /** 其他设备今天的联网额度用量之和 (只算日期是今天的). */
         fun peerNet(ledgers: List<JSONObject>, date: String): DoubleArray {
             val out = DoubleArray(5)   // used, bonus, tomorrow_used, debt, gift
+            // 还停在昨天的设备 (还没跨日 / 跨日后还没同步过来): 按它跨日后的样子算 —— 昨天借的 (明天扣的) 变成今天的欠款,
+            // 其余清零. 这样本机一跨日额度就是对的, 不用等那台设备同步. 同 devsync.py 的 peer_net
+            val yesterday = runCatching { java.time.LocalDate.parse(date).minusDays(1).toString() }.getOrNull()
             for (l in ledgers) {
                 val n = l.optJSONObject("net") ?: continue
+                if (yesterday != null && n.optString("date") == yesterday) {
+                    out[3] += maxOf(0.0, n.optDouble("tomorrow_used", 0.0))
+                    continue
+                }
                 if (n.optString("date") != date) continue
                 listOf("used", "bonus", "tomorrow_used", "debt", "gift").forEachIndexed { i, k -> out[i] += maxOf(0.0, n.optDouble(k, 0.0)) }
             }

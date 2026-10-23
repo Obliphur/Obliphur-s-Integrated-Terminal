@@ -432,6 +432,26 @@ class Contract(private val file: File) {
             for (t in rec.optJSONArray("terms")?.strings() ?: emptyList()) {
                 if (t in BY_ID && t in rand) out.add(RecRow(BY_ID[t]!!.level, t, false, ""))
             }
+            // 完成时凑齐了、没有失效的组合: 成员放在一起置顶 (按组合的顺序), 其余照旧
+            val marks = recordMarks(rec)
+            val order = COMBOS.withIndex().associate { (i, c) -> c.id to i }
+            val top = out.filter { it.id in marks && !it.void }.sortedBy { order[marks[it.id]] }
+            return top + out.filter { it !in top }
+        }
+
+        /** 统计页的合约记录: 完成时凑齐了的组合 (没有失效的) 的成员词条 → 组合 id (界面上用组合的颜色写它们).
+         *  按结束时的词条算, 未知变量选中的不算 (同合约中的组合). 同 contract.py 的 record_marks. */
+        fun recordMarks(rec: JSONObject): Map<String, String> {
+            val rand = (rec.optJSONArray("rand")?.strings() ?: emptyList()).toSet()
+            val mine = (rec.optJSONArray("terms")?.strings() ?: emptyList()).filter { it in BY_ID && it !in rand }
+            val out = LinkedHashMap<String, String>()
+            for (c in COMBOS) {
+                if (!comboDone(c, mine)) continue
+                for (t in mine) {
+                    val hit = c.reqs.any { req -> if (req in GROUPS) BY_ID[t]!!.group == req else t == req }
+                    if (hit && t !in out) out[t] = c.id
+                }
+            }
             return out
         }
 

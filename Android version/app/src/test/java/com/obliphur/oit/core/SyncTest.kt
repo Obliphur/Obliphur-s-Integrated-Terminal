@@ -249,4 +249,14 @@ class SyncTest {
         assertEquals("y.txt", SyncCrypto.safeName("C:\\x\\y.txt"))
         assertEquals("file", SyncCrypto.safeName(" . "))
     }
+
+    @Test
+    fun peerNetYesterday() {
+        // 还停在昨天的设备: 昨天借的变成今天的欠款, 其余不算
+        val led = listOf(org.json.JSONObject().put("net", org.json.JSONObject().put("date", "2026-01-01")
+            .put("used", 600.0).put("bonus", 1200.0).put("tomorrow_used", 2400.0)))
+        assertEquals(listOf(0.0, 0.0, 0.0, 2400.0, 0.0), SyncService.peerNet(led, "2026-01-02").toList())
+        assertEquals(0.0, SyncService.peerNet(led, "2026-01-03")[3], 0.0)
+        assertEquals(0.0, SyncService.peerNet(led, "2026-01-01")[3], 0.0)
+    }
 }

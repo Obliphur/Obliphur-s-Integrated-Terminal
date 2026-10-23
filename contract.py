@@ -485,6 +485,26 @@ def record_rows(rec: dict) -> list:
     for t in rec.get("terms") or []:                          # 未知变量选中的放最后
         if t in BY_ID and t in rand:
             out.append((BY_ID[t][2], t, False, ""))
+    # 完成时凑齐了、没有失效的组合: 成员放在一起置顶 (按组合的顺序), 其余照旧
+    marks = record_marks(rec)
+    order = {c["id"]: i for i, c in enumerate(COMBOS)}
+    top = sorted([r for r in out if r[1] in marks and not r[2]], key=lambda r: order[marks[r[1]]])
+    return top + [r for r in out if r not in top]
+
+
+def record_marks(rec: dict) -> dict:
+    """统计页的合约记录: 完成时凑齐了的组合 (没有失效的) 的成员词条 → 组合 id (界面上用组合的颜色写它们).
+    按结束时的词条算, 未知变量选中的不算 (同合约中的组合)."""
+    rec = rec if isinstance(rec, dict) else {}
+    rand = set(rec.get("rand") or [])
+    mine = [t for t in (rec.get("terms") or []) if t in BY_ID and t not in rand]
+    out = {}
+    for c in COMBOS:
+        if not combo_done(c, mine):
+            continue
+        for t in mine:
+            if any((BY_ID[t][1] == req) if req in GROUPS else (t == req) for req in c["reqs"]):
+                out.setdefault(t, c["id"])
     return out
 
 
@@ -1687,6 +1707,15 @@ def _selftest():
     assert rr[0] == (BY_ID["long3"][2], "long3", False, "") and rr[1] == (BY_ID["tired2"][2], "tired2", False, "tired3")
     assert rr[2] == (BY_ID["silent"][2], "silent", False, "") and rr[3] == (BY_ID["music"][2], "music", True, "")
     assert record_rows({}) == [] and record_rows(None) == []
+    assert record_marks(rec) == {}, "没有凑齐的组合"
+    # 完成时凑齐了的组合: 成员放在一起置顶; 有成员失效了的组合不算
+    fun4 = ["music", "silent", "game", "video"]
+    rec2 = {"orig": ["long3", "music", "tired2", "silent", "game", "video"],
+            "terms": ["long3", "music", "tired2", "silent", "game", "video"]}
+    assert [r[1] for r in record_rows(rec2)] == fun4 + ["long3", "tired2"]
+    assert record_marks(rec2) == {t: "nofun" for t in fun4}
+    rec2["terms"] = ["long3", "tired2", "silent", "game", "video"]
+    assert record_marks(rec2) == {} and [r[1] for r in record_rows(rec2)][:2] == ["long3", "music"], "乐理之灾失效了: 组合不算"
     for t in ("ChatGPT", "Claude", "(3) 首页 / X", "如何评价…？ - 知乎 - Google Chrome", "微博-随时随地发现新鲜事",
               "DeepSeek - 探索未至之境 - Microsoft Edge", "Reddit - Dive into anything", "Kimi 智能助手"):
         assert site_title(t, SOCIAL_TITLES), t

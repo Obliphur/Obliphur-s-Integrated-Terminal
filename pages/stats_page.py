@@ -47,20 +47,20 @@ def _level_text(orig, level) -> str:
 
 def _fog_contracts(seed) -> list:
     """黑雾: 5 条假记录 (初始等级 0 ~ 99, 失效等级 1 ~ 30; 词条随机填充); 真实条数不到 5 条时也补满.
-    每条: ((初始等级, 失效等级), 和 record_rows 一样的词条行 [(等级, 词条 id, 是否失效, 原词条 id)])."""
+    每条: ((初始等级, 失效等级), 和 record_rows 一样的词条行 [(等级, 词条 id, 是否失效, 原词条 id)], {} (没有组合))."""
     ids = [t[0] for t in C.TERMS]
     out = []
     for i in range(CONTRACT_ROWS):
         rnd = random.Random(f"{seed}/contracts/{i}")
         rows = [(C.BY_ID[t][2], t, rnd.random() < 0.35, "") for t in rnd.sample(ids, rnd.randint(2, 5))]
-        out.append(((rnd.randint(0, 99), rnd.randint(1, 30)), rows))
+        out.append(((rnd.randint(0, 99), rnd.randint(1, 30)), rows, {}))
     return out
 
 
 class ContractTermsDialog(tk.Toplevel):
     """统计页: 一条合约记录的具体词条 (失效的变灰)."""
 
-    def __init__(self, master, a, b, rows: list):
+    def __init__(self, master, a, b, rows: list, combos: dict = None):
         super().__init__(master, bg=COLORS["bg"], highlightbackground=COLORS["accent"],
                          highlightthickness=2)
         self.title(tr("⚔  合约词条"))
@@ -73,8 +73,14 @@ class ContractTermsDialog(tk.Toplevel):
         tk.Label(body, text=tr("等级 {lv}", lv=_level_text(a, b)), bg=COLORS["bg"],
                  fg=COLORS["accent"], font=config.font("body", bold=True),
                  anchor="w").pack(anchor="w", pady=(2, 8))
-        # 和合约页一样: 等级三角 + 名字:描述 + [原 X] / [已失效], 失效的变灰
+        # 和合约页一样: 等级三角 + 名字:描述 + [原 X] / [已失效], 失效的变灰;
+        # 完成时凑齐的组合: 成员已经放在一起置顶 (record_rows), 用组合的颜色写 (白色在浅色主题里换成最深的文字色)
+        tint = {"white": COLORS.get("text_strong", COLORS["text"]), "purple": C.COMBO_COLORS["purple"],
+                "gray": C.COMBO_COLORS["gray"], "red": C.COMBO_COLORS["red"]}
+        combos = combos or {}
         for lv, tid, void, orig in rows or []:
+            combo = C.COMBOS_BY_ID.get(combos.get(tid, ""))
+            fg = tint[combo["color"]] if combo and not void else None
             text = term_line(tid)
             if orig:
                 text += "   " + tr("[原 {name}]", name=term_short(orig))
@@ -83,9 +89,9 @@ class ContractTermsDialog(tk.Toplevel):
             r = tk.Frame(body, bg=COLORS["bg"])
             r.pack(anchor="w", fill="x", pady=1)
             tk.Label(r, text=marks(lv) or "—", bg=COLORS["bg"],
-                     fg=COLORS["text_dim"] if void else COLORS["accent"], width=4, anchor="nw",
+                     fg=COLORS["text_dim"] if void else (fg or COLORS["accent"]), width=4, anchor="nw",
                      font=config.font("small", bold=True)).pack(side="left", anchor="n", padx=(0, 8))
-            tk.Label(r, text=text, bg=COLORS["bg"], fg=COLORS["text_dim"] if void else COLORS["text"],
+            tk.Label(r, text=text, bg=COLORS["bg"], fg=COLORS["text_dim"] if void else (fg or COLORS["text"]),
                      font=config.font("body"), anchor="w", justify="left").pack(side="left", fill="x", expand=True)
         ttk.Button(body, text=tr("关闭"), style="Accent.TButton",
                    command=self.destroy).pack(anchor="e", pady=(12, 0))
@@ -436,18 +442,18 @@ class StatsPage(tk.Frame):
     # ---- 合约记录 (过去 5 条顺利完成的合约, MECHANICS 8.1) ----
 
     def _contract_rows_data(self) -> list:
-        """[((初始等级, 失效等级), [(等级, 词条 id, 失效?, 原词条 id)])]; 黑雾时是 5 条假数据.
-        词条行和合约页一样 (record_rows)."""
+        """[((初始等级, 失效等级), [(等级, 词条 id, 失效?, 原词条 id)], {组合成员: 组合 id})]; 黑雾时是 5 条假数据.
+        词条行和合约页一样 (record_rows); 完成时凑齐的组合的成员置顶 (record_marks)."""
         seed = self.fog()
         if seed is not None:
             return _fog_contracts(seed)
         recs = C.recent_completed(self.contract_log(), CONTRACT_ROWS)
         return [((int(r.get("orig_level") or r.get("level") or 0), int(r.get("level") or 0)),
-                 C.record_rows(r)) for r in recs]
+                 C.record_rows(r), C.record_marks(r)) for r in recs]
 
     def _draw_contracts(self):
         data = self._contract_rows_data()
-        sig = tuple((a, b, tuple(terms)) for (a, b), terms in data)
+        sig = tuple((a, b, tuple(terms), tuple(sorted(cm.items()))) for (a, b), terms, cm in data)
         if sig == self._contract_sig:
             return
         self._contract_sig = sig
@@ -458,10 +464,10 @@ class StatsPage(tk.Frame):
                      bg=COLORS["bg_card"], fg=COLORS["text_dim"],
                      font=config.font("body"), anchor="w").pack(anchor="w", padx=8, pady=8)
             return
-        for (a, b), terms in data:
-            self._contract_row(a, b, terms).pack(fill="x", padx=6, pady=(0, 6))
+        for (a, b), terms, cm in data:
+            self._contract_row(a, b, terms, cm).pack(fill="x", padx=6, pady=(0, 6))
 
-    def _contract_row(self, a: int, b: int, terms: list) -> tk.Frame:
+    def _contract_row(self, a: int, b: int, terms: list, cm: dict) -> tk.Frame:
         card = COLORS["bg_card"]
         row = tk.Frame(self.contract_rows, bg=card, cursor="hand2",
                        highlightbackground=COLORS["border"], highlightthickness=1)
@@ -472,13 +478,13 @@ class StatsPage(tk.Frame):
         tk.Label(row, text=tr("点击查看词条"), bg=card, fg=COLORS["text_dim"],
                  font=config.font("small")).pack(side="right", padx=14)
         for w in [row] + list(row.winfo_children()):
-            w.bind("<Button-1>", lambda e, aa=a, bb=b, tt=terms: self._show_contract(aa, bb, tt))
+            w.bind("<Button-1>", lambda e, aa=a, bb=b, tt=terms, mm=cm: self._show_contract(aa, bb, tt, mm))
         return row
 
-    def _show_contract(self, a: int, b: int, terms: list):
-        """点一条合约记录: 弹出具体词条 (失效的变灰)."""
+    def _show_contract(self, a: int, b: int, terms: list, cm: dict = None):
+        """点一条合约记录: 弹出具体词条 (失效的变灰, 凑齐的组合的成员置顶并用组合的颜色写)."""
         try:
-            ContractTermsDialog(self.winfo_toplevel(), a, b, terms)
+            ContractTermsDialog(self.winfo_toplevel(), a, b, terms, cm)
         except Exception:
             pass
 

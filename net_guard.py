@@ -704,16 +704,16 @@ class NetGuard:
 
 
     def tick(self, dt: float):
+        today = datetime.now().strftime('%Y-%m-%d')
+        if today != self.date:
+            self._rollover(today)                 # 开发者模式下也照常跨日, 关掉开发者模式时额度已经是今天的
+
         if self.dev_mode:
 
             if self.pending:
                 self.pending = None
                 self._log("DEV      pending request dropped (developer mode)")
             return None
-
-        today = datetime.now().strftime('%Y-%m-%d')
-        if today != self.date:
-            self._rollover(today)
 
         event = None
         if self.pending and time.time() >= self.pending["at"]:

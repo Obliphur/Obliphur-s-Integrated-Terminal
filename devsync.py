@@ -39,6 +39,7 @@ import socket
 import sys
 import threading
 import time
+from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PROTO = 1
@@ -1758,10 +1759,22 @@ def _call(obj, name: str, default, *args):
 
 
 def peer_net(ledgers, date: str) -> dict:
-    """其他设备今天的联网额度用量之和 (只算日期是今天的)."""
+    """其他设备今天的联网额度用量之和 (只算日期是今天的).
+    还停在昨天的设备 (还没跨日 / 跨日后还没同步过来): 按它跨日后的样子算 —— 昨天借的 (明天扣的) 变成今天的欠款,
+    其余清零. 这样本机一跨日额度就是对的, 不用等那台设备同步."""
     out = {"used": 0.0, "bonus": 0.0, "tomorrow_used": 0.0, "debt": 0.0, "gift": 0.0}
+    try:
+        yesterday = (datetime.strptime(str(date), "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+    except ValueError:
+        yesterday = None
     for led in ledgers:
         n = led.get("net") or {}
+        if yesterday and n.get("date") == yesterday:
+            try:
+                out["debt"] += max(0.0, float(n.get("tomorrow_used", 0)))
+            except (TypeError, ValueError):
+                pass
+            continue
         if n.get("date") != date:
             continue
         for k in out:
@@ -2052,6 +2065,10 @@ def _selftest():
         assert la.docs_["hours"]["2026-01-01/11"] == "吃饭"
         assert lb.docs_["rules"]["black_domains"] == ["bilibili.com"]
         assert peer_net(sa.peer_ledgers(), "2026-01-01")["used"] == 600.0
+        # 还停在昨天的设备: 昨天借的变成今天的欠款, 其余不算
+        led = [{"net": {"date": "2026-01-01", "used": 600.0, "bonus": 1200.0, "tomorrow_used": 2400.0}}]
+        assert peer_net(led, "2026-01-02") == {"used": 0.0, "bonus": 0.0, "tomorrow_used": 0.0, "debt": 2400.0, "gift": 0.0}
+        assert peer_net(led, "2026-01-03")["debt"] == 0.0 and peer_net(led, "2026-01-01")["debt"] == 0.0
         # 自动记录让位给自己填写的
         la.docs_["hours"]["2026-01-01/12"] = "写作业"
         lb.docs_["hours"]["2026-01-01/12"] = "Sleeping"

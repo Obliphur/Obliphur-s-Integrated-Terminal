@@ -430,6 +430,8 @@ class NetGuard(
     /** 大约每秒调用一次. 返回 "started" / "ended" / null. */
     fun tick(dtIn: Double): String? {
         if (dead) return null
+        val today = LocalDate.now().key()
+        if (today != date) rollover(today)            // 开发者模式下也照常跨日, 关掉开发者模式时额度已经是今天的
         if (devMode) {
             if (pending != null) {
                 pending = null
@@ -437,8 +439,6 @@ class NetGuard(
             }
             return null
         }
-        val today = LocalDate.now().key()
-        if (today != date) rollover(today)
 
         var event: String? = null
         val p = pending

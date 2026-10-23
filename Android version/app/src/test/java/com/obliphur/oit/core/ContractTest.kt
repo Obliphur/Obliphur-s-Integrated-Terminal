@@ -500,4 +500,17 @@ class ContractTest {
         a.live.remove("fog_words")                     // 以前开始的合约: 按 id 补一份, 每次一样
         assertTrue(a.fogWords().size == FOG_SLOTS && a.fogWords()[7].contentEquals(a.fogWords()[7]))
     }
+
+    @Test
+    fun recordCombos() {
+        // 统计页的合约记录: 完成时凑齐了的组合, 成员放在一起置顶; 有成员失效了的组合不算
+        val fun4 = listOf("music", "silent", "game", "video")
+        val rec = org.json.JSONObject().put("orig", org.json.JSONArray(listOf("long3", "music", "tired2", "silent", "game", "video")))
+            .put("terms", org.json.JSONArray(listOf("long3", "music", "tired2", "silent", "game", "video")))
+        assertEquals(fun4 + listOf("long3", "tired2"), Contract.recordRows(rec).map { it.id })
+        assertEquals(fun4.associateWith { "nofun" }, Contract.recordMarks(rec))
+        rec.put("terms", org.json.JSONArray(listOf("long3", "tired2", "silent", "game", "video")))
+        assertTrue(Contract.recordMarks(rec).isEmpty())
+        assertEquals(listOf("long3", "music"), Contract.recordRows(rec).take(2).map { it.id })
+    }
 }

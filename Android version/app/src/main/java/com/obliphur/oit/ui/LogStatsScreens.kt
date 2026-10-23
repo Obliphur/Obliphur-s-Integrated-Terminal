@@ -344,7 +344,9 @@ private const val CONTRACT_ROWS = 5
 private const val VIOLATION_ROWS = 15
 
 /** 统计页的一条合约记录: a = 初始等级, b = 失效等级; rows 和合约页一样的词条行. */
-private data class ContractRow(val a: Int, val b: Int, val rows: List<com.obliphur.oit.core.RecRow>)
+/** combos: 完成时凑齐的组合的成员 → 组合 id (Contract.recordMarks). */
+private data class ContractRow(val a: Int, val b: Int, val rows: List<com.obliphur.oit.core.RecRow>,
+                               val combos: Map<String, String> = emptyMap())
 
 /** 和合约页一样: 最终等级[最初等级-扣的等级] (没扣过只写最终等级). */
 private fun levelText(orig: Int, level: Int): String = Contract.levelLabel(level, orig)
@@ -368,11 +370,14 @@ private fun ContractRecords() {
     val c = core.contract
     var open by remember { mutableStateOf<ContractRow?>(null) }
     val fog = c.fog()
+    // 组合的颜色 (白色在浅色主题里换成最深的文字色)
+    val tint = mapOf("white" to o.strong, "purple" to Color(0xffb06cf0), "gray" to Color(0xff9a9ca1), "red" to Color(0xffff2b3a))
     val rows = remember(fog, c.id, c.history.size) {
         if (fog) fogContractRows(c.id)
         else Contract.recentCompleted(c.history, CONTRACT_ROWS).map {
             val level = it.optInt("level")
-            ContractRow(if (it.has("orig_level")) it.optInt("orig_level") else level, level, Contract.recordRows(it))
+            ContractRow(if (it.has("orig_level")) it.optInt("orig_level") else level, level, Contract.recordRows(it),
+                Contract.recordMarks(it))
         }
     }
     OitCard {
@@ -395,15 +400,17 @@ private fun ContractRecords() {
                 Column(Modifier.verticalScroll(rememberScrollState())) {
                     Text(tr("等级 {lv}", "lv" to levelText(r.a, r.b)), color = o.accent,
                         fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 6.dp))
-                    // 和合约页一样: 等级三角 + 名字:描述 + [原 X] / [已失效], 失效的变灰
+                    // 和合约页一样: 等级三角 + 名字:描述 + [原 X] / [已失效], 失效的变灰;
+                    // 完成时凑齐的组合: 成员已经放在一起置顶 (recordRows), 用组合的颜色写
                     for ((lv, tid, void, orig) in r.rows) {
+                        val fg = if (void) null else Contract.COMBOS.firstOrNull { it.id == r.combos[tid] }?.let { tint[it.color] }
                         var text = termLine(tid)
                         if (orig.isNotEmpty()) text += "   " + tr("[原 {name}]", "name" to termShort(orig))
                         if (void) text += "   " + tr("[已失效]")
                         Row(Modifier.padding(vertical = 2.dp)) {
-                            Text(marks(lv).ifEmpty { "—" }, color = if (void) o.dim else o.accent,
+                            Text(marks(lv).ifEmpty { "—" }, color = if (void) o.dim else fg ?: o.accent,
                                 fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.padding(end = 8.dp))
-                            Text(text, color = if (void) o.dim else o.text, fontSize = 14.sp)
+                            Text(text, color = if (void) o.dim else fg ?: o.text, fontSize = 14.sp)
                         }
                     }
                 }
