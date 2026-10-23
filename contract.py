@@ -36,8 +36,8 @@ TERMS = [
     # ---- 专注: 专注的下限, 专注中的窗口数 ----
     ("deep1", "deep", 1, "目标:纵深推进-I", "专注的时间不能少于40min", ()),
     ("deep2", "deep", 2, "目标:纵深推进-II", "专注的时间不能少于80min", ()),
-    ("chan1", "chan", 1, "环境:通道阻塞-I", "在专注期间的最大窗口数改为4", ()),
-    ("chan2", "chan", 2, "环境:通道阻塞-II", "在专注期间的最大窗口数改为3", ()),
+    ("chan1", "chan", 1, "环境:通道阻塞-I", "在专注期间的最大窗口数改为5", ()),
+    ("chan2", "chan", 2, "环境:通道阻塞-II", "在专注期间的最大窗口数改为4", ()),
     # ---- 休息: 休息时间的倍率, 合约开始前积攒的休息时间 ----
     ("tired1", "tired", 1, "环境:疲惫-I", "基础休息倍率由80%改为70%", ()),
     ("tired2", "tired", 2, "环境:疲惫-II", "基础休息倍率由80%改为60%", ()),
@@ -96,10 +96,10 @@ PAGES = [(0, PAGE_SPLIT), (PAGE_SPLIT, BOARD_COLS)]
 COMBO_PAGE = len(PAGES)
 
 # 软规则: 界面上照样能做, 但会被算作违反, 这个词条降一级 (结算按降级后的等级);
-# 其余是硬规则, 立即生效 (黑雾, 记录封锁, 细化规范, 全频道阻塞干扰, 持久战, 疲惫).
+# 其余是硬规则, 立即生效 (记录封锁, 细化规范, 全频道阻塞干扰, 持久战, 疲惫).
 # 录像 (目光 / 刻痕) 违反一次就失效 (录像停止): 不在 LOWER / SINGLE 里.
 SOFT = {"info1", "info2", "info3", "chan1", "chan2", "music", "suppress", "short1", "short2",
-        "silent", "game", "video", "gaze", "scar", "deep1", "deep2", "quiet", "hoard", "unknown"}
+        "silent", "game", "video", "gaze", "scar", "deep1", "deep2", "quiet", "hoard", "unknown", "fog"}
 LOWER = {"info3": "info2", "info2": "info1", "chan2": "chan1",
          "short2": "short1", "deep2": "deep1"}   # 降一级换成哪个词条
 SINGLE = {"music", "suppress", "silent", "game", "video", "quiet", "hoard"}   # 只有一档的软规则: 降级时等级减一, 减到 0 就失效
@@ -110,7 +110,7 @@ BASE_REST = 0.8                                # 合约中专注换来的休息�
 REST = {"tired1": 0.7, "tired2": 0.6, "tired3": 0.5}
 REST_BONUS = {"hoard": 1.1}                     # 休息时间额外的乘区 (和疲惫不冲突, 相乘): 禁止囤囤鼠! ×1.1
 LONG_REWARD = {"long1": 1.1, "long2": 1.2, "long3": 1.3}   # 持久战: 完成合约的结算休息时长 ×110 / 120 / 130%
-WINDOWS = {"chan1": 4, "chan2": 3}
+WINDOWS = {"chan1": 5, "chan2": 4}
 SUPPLY = {"short1": 0.5, "short2": 0.0}         # 合约开始前积攒的休息时间能用几成
 HOUR_TERMS = {"seal", "fine"}                   # 整点记录的词条: 整点记录关着时, 这次合约中照样开启
 LIFE = {"retreat1": 3, "retreat2": 2, "last": 1}  # 初始目标生命值 (硬规则)
@@ -119,6 +119,7 @@ RECORD = {"gaze": "camera", "scar": "screen"}   # 录像的词条 → 录什么 
 BANS = ("music", "silent", "game", "video")
 SUPPLY_WARN = (180, 60)                         # 支援短缺: 还差这么多秒就用超时各提醒一次
 DEEP = {"deep1": 40 * 60, "deep2": 80 * 60}     # 纵深推进: 一段专注至少这么多秒, 不到就结束算违反
+FOG_SWITCHES = 50                               # 黑雾 (软): 合约中切到计时器以外的页面满这么多次算一次违反, 每个钟点清零
 SEAL_EXTRA = 2                                  # 记录封锁: 每次完成填写时另外随机封锁几个格子
 COOLDOWN_X = {"erode1": 2.0, "erode2": 3.0}     # 侵蚀: 网络申请的冷静期乘多少 (硬规则)
 RANDOM = "unknown"                              # 未知变量: 合约的每个小时开始时随机启用一个 1-2 级的词条, 那个小时结束时移除
@@ -522,7 +523,7 @@ def _now_ms() -> int:
 # 黑雾 (18.3): 一天 48 个半小时各一句假内容. 只存编号, 显示时对词池长度取余 (中英文共用).
 # FOG_POOL: 动词 / 量词 / 名词词池的大小 (同 pages/hour_log_page.py 和 Android 的词池); 一次抽的 48 句里每类词都不重复.
 FOG_SLOTS = 48
-FOG_POOL = (150, 80, 150)
+FOG_POOL = (125, 80, 150)
 
 
 def _fog_words(rnd) -> list:
@@ -720,6 +721,8 @@ class Contract:
                "pre_left": self.pre_left, "rand": self.rand, "owner": self.live.get("owner", "")}
         if self.live.get("locks"):
             rec["locks"] = list(self.live["locks"])        # 未知变量 / 记录封锁另外封锁的记录格 (选了记录封锁的合约结束后照样锁着)
+        if self.live.get("fine_h"):
+            rec["fine_h"] = list(self.live["fine_h"])      # 细化规范分成两格的小时 (结束时还没填完的半小时照样能填)
         slow = self.live.get("slow")
         if isinstance(slow, dict) and slow.get("start"):
             rec["slow"] = slow["start"]                   # 阻滞的那段专注可能比合约结束得晚
@@ -994,8 +997,9 @@ class Contract:
             return []
         # 过了填写时限的格子都已经填写了 (超时自动记录), 记录封锁下本来就锁着 —— 可以封锁的是合约里还能填的格子:
         # 还在填写时限里的、还没结束的 (到合约结束为止)
+        # 只挑今天的格子 (跨天的合约里昨天 / 明天的格子不在今天的整点记录页上)
         pool = [(k, a, b) for k, a, b in self.hour_units(now, ahead=True)
-                if not self.hour_locked(a, b, text_of(k) or "", now, fill, auto, k)]
+                if a.date() == now.date() and not self.hour_locked(a, b, text_of(k) or "", now, fill, auto, k)]
         picks = []
         for _ in range(min(SEAL_EXTRA, len(pool))):
             p = (rng or random).choice(pool)
@@ -1198,6 +1202,17 @@ class Contract:
         w[key] = over
         return over and not was
 
+    def fog_switch(self, now: datetime) -> str:
+        """黑雾: 合约中要切到计时器以外的页面 (打不开的设置也算) 记一次; 这个钟点里满 FOG_SWITCHES 次返回 "fog"
+        (算一次违反, 重新计). 每个钟点清零; 计数只记在本机. 失效后照样数 (再次触发只响警报)."""
+        if not self.active or not self.watching("fog"):
+            return ""
+        hour = _iso(now.replace(minute=0, second=0, microsecond=0))
+        h, n = self.__dict__.get("_fog_n") or ("", 0)
+        n = n + 1 if h == hour else 1
+        self._fog_n = (hour, 0 if n >= FOG_SWITCHES else n)
+        return "fog" if n >= FOG_SWITCHES else ""
+
     def window_watch(self):
         """通道阻塞: (要检查的词条, 窗口数上限); 已经失效的按失效前的上限. 没有时 ("", 0)."""
         tid = next((t for t in self.terms if t in WINDOWS), "") or self._lost_of(WINDOWS)
@@ -1377,12 +1392,32 @@ class Contract:
         """选了整点记录的词条: 整点记录关着时, 这次合约中照样开启. 未知变量启用过整点记录的词条: 这次合约中一直开启."""
         return any(t in HOUR_TERMS for t in self.terms) or (self.active and bool(self.live.get("hour_forced")))
 
-    def fine_hour(self, slot_start: datetime) -> bool:
-        """细化规范: 这一小时 (按开始时刻) 和进行中的合约重叠, 记录改为每 30 分钟一次."""
-        if not self.has("fine"):
+    def fine_hour(self, slot_start: datetime, now: datetime = None) -> bool:
+        """细化规范: 这一小时 (按开始时刻) 和进行中的合约重叠, 记录改为每 30 分钟一次.
+        细化规范生效过的小时 (mark_fine 记下的) 一直分成两格: 词条中途去掉 (未知变量到时移除) 时, 还没到的那半小时照样提示 / 填写 / 算超时;
+        合约结束后, 结束前分成两格的小时到后半小时的补填时限为止照样分两格."""
+        key = _iso(slot_start.replace(minute=0, second=0, microsecond=0))
+        if self.active:
+            if key in (self.live.get("fine_h") or []):
+                return True
+            if not self.has("fine"):
+                return False
+            a, b = self.start_at, self.end_at
+            return bool(a and b and a < slot_start + timedelta(hours=1) and slot_start < b)
+        now = now or datetime.now()
+        return key in (self.last.get("fine_h") or [])             and slot_start + timedelta(hours=1) + config.FINE_FILL_WINDOW > now
+
+    def mark_fine(self, now: datetime) -> bool:
+        """细化规范生效时记下这个钟点 (每秒调用): 之后词条没了, 这一小时也照样分成两格. 返回记了没有."""
+        if not self.active or not self.has("fine"):
             return False
-        a, b = self.start_at, self.end_at
-        return bool(a and b and a < slot_start + timedelta(hours=1) and slot_start < b)
+        key = _iso(now.replace(minute=0, second=0, microsecond=0))
+        marks = list(self.live.get("fine_h") or [])
+        if key in marks:
+            return False
+        self.live["fine_h"] = marks + [key]
+        self.save()
+        return True
 
     def rest_factor(self) -> float:
         return rest_factor_of(self.mine)
@@ -1597,6 +1632,9 @@ class Contract:
         out = dict(new)
         out["violations"] = max(int(mine.get("violations") or 0), int(new.get("violations") or 0))
         out["hl"] = sorted(set(new.get("hl") or []) | set(mine.get("hl") or []))
+        fine_h = sorted(set(new.get("fine_h") or []) | set(mine.get("fine_h") or []))
+        if fine_h:
+            out["fine_h"] = fine_h
         locks = [list(v) for v in new.get("locks") or []]
         locks += [list(v) for v in mine.get("locks") or [] if list(v) not in locks]
         if locks:
@@ -1800,8 +1838,8 @@ def _selftest():
     assert c.net_check(4700, 600, 0, "2026-10-18") == ("", ""), "同一次借贷只算一次"
     assert c.downgrade("info1") == "" and not c.net_term() and c.net_check(9999, 9999, 0, "x") == ("", "")
     # 通道阻塞 / 乐理之灾: 只在刚越过的那一下算
-    assert c.window_check(5) == "chan1" and c.window_check(6) == "" and c.window_check(3) == ""
-    assert c.window_check(5) == "chan1"
+    assert c.window_check(6) == "chan1" and c.window_check(7) == "" and c.window_check(4) == ""
+    assert c.window_check(6) == "chan1"
     assert c.ban_check("music", True) == "music" and c.ban_check("music", True) == "" and c.ban_check("music", False) == ""
     assert c.downgrade("music") == "" and not c.has("music"), "乐理之灾只有 1 级, 降一级就失效"
     # 无言为真 (2 级) / 禁游令: 违反一次降一级, 再违反才失效; 录像 (目光 / 刻痕) 违反一次就失效
@@ -2116,11 +2154,11 @@ def _selftest():
 
     # 违反到失效的词条照样检查: 再次触发返回它 (echo, 只响警报), 不扣目标生命值
     c.start(["chan1", "deep1", "quiet", "info1", "short1"], owner="me", now=t0, pre=600)
-    assert c.window_check(5) == "chan1" and c.violate("chan1") == (False, "")
-    assert c.window_watch() == ("chan1", 4) and c.window_check(5) == "" and c.window_check(3) == ""
-    assert c.window_check(5) == "chan1" and c.echo("chan1"), "失效后按失效前的上限, 越过的那一下再算"
+    assert c.window_check(6) == "chan1" and c.violate("chan1") == (False, "")
+    assert c.window_watch() == ("chan1", 5) and c.window_check(6) == "" and c.window_check(4) == ""
+    assert c.window_check(6) == "chan1" and c.echo("chan1"), "失效后按失效前的上限, 越过的那一下再算"
     c.window_reset()                          # 离开专注时段: 下次专注重新算
-    assert c.window_check(5) == "chan1"
+    assert c.window_check(6) == "chan1"
     assert c.violate("deep1") == (False, "") and c.focus_check(39 * 60) == "deep1" and c.focus_check(40 * 60) == ""
     assert c.quiet_check(True) == "quiet" and c.violate("quiet") == (False, "") and c.quiet_check(True) == ""
     assert c.quiet_check(False) == "" and c.quiet_check(True) == "quiet" and c.echo("quiet")
@@ -2148,8 +2186,8 @@ def _selftest():
     assert not c.echo("music") and c.ban_check("music", True) == "music"
     assert c.violate("music") == (False, "") and c.violations == 3 and c.lost == ["music", "chan1"] and c.echo("music")
     c._enable("chan2", t0 + timedelta(hours=1))
-    assert c.window_watch() == ("chan2", 3) and not c.echo("chan2")
-    assert c.expire(t0 + timedelta(hours=1)) == ["chan2"] and c.window_watch() == ("chan1", 4) and c.echo("chan1")
+    assert c.window_watch() == ("chan2", 4) and not c.echo("chan2")
+    assert c.expire(t0 + timedelta(hours=1)) == ["chan2"] and c.window_watch() == ("chan1", 5) and c.echo("chan1")
 
     # 最后防线: 只有初始目标生命值 1, 没有额外的词条等级
     c.start(["last", "long3", "tired3", "chan1"], owner="me", now=t0)
@@ -2260,6 +2298,35 @@ def _selftest():
     g.finish("completed", g0 + timedelta(hours=4, minutes=48))
     assert g.focus_tag(g0 + timedelta(hours=4)) == gid and g.completed(gid), "合约结束后照样认得出来"
     assert g.focus_tag(g0 + timedelta(hours=5)) == "" and not g.completed("")
+
+    # 细化规范生效过的小时一直分两格: 未知变量的细化规范到时移除后, 后半小时照样算
+    f = Contract(tempfile.mkdtemp())
+    f0 = datetime(2026, 10, 20, 9, 10)
+    f.start(["unknown"], "me", now=f0)
+    f.live["terms"] = ["unknown", "fine"]
+    assert f.mark_fine(datetime(2026, 10, 20, 10, 5)) and not f.mark_fine(datetime(2026, 10, 20, 10, 40))
+    f.live["terms"] = ["unknown"]                       # 10:10 到时移除
+    assert f.fine_hour(datetime(2026, 10, 20, 10)) and not f.fine_hour(datetime(2026, 10, 20, 11))
+    keys = [k for k, _a, _b in f.hour_units(datetime(2026, 10, 20, 11, 5))]
+    assert keys == ["2026-10-20/9", "2026-10-20/10/1", "2026-10-20/10/2"], keys
+    f.finish("abandoned", datetime(2026, 10, 20, 10, 50))
+    assert f.fine_hour(datetime(2026, 10, 20, 10), now=datetime(2026, 10, 20, 11, 20)), "结束后到后半小时的补填时限为止"
+    assert not f.fine_hour(datetime(2026, 10, 20, 10), now=datetime(2026, 10, 20, 11, 31))
+
+    # 黑雾 (软): 一个钟点里切到计时器以外的页面满 FOG_SWITCHES 次算一次违反; 换钟点清零
+    f.start(["fog"], "me", now=f0)
+    t = datetime(2026, 10, 20, 9, 20)
+    assert all(f.fog_switch(t) == "" for _ in range(FOG_SWITCHES - 1)) and f.fog_switch(t) == "fog"
+    assert f.fog_switch(t) == ""
+    assert all(f.fog_switch(t) == "" for _ in range(FOG_SWITCHES - 3)) and f.fog_switch(t + timedelta(hours=1)) == ""
+    assert f.violate("fog") == (False, "") and not f.fog() and f.echo("fog"), "黑雾只有 1 级: 违反就失效, 之后只响警报"
+
+    # 记录封锁: 跨天的合约只封锁今天的格子
+    f.finish("abandoned", datetime(2026, 10, 20, 9, 30))
+    f.start(["seal"], "me", now=datetime(2026, 10, 20, 22, 10))
+    picked = f.seal_extra(datetime(2026, 10, 20, 23, 50), rng=random.Random(1), text_of=lambda k: "",
+                          auto="", fill=timedelta(hours=1))
+    assert sorted(picked) == ["2026-10-20/22", "2026-10-20/23"], picked     # 明天 00:00 之后的不挑
     return "contract selftest OK"
 
 

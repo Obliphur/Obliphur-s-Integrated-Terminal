@@ -334,7 +334,9 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
 
     fun go(p: String) {
         val parts = p.split(":")
-        // 合约 · 黑雾 (硬规则): 无法打开设置 (成就页在设置里)
+        // 合约 · 黑雾 (软规则): 要切到计时器以外的页面记一次, 一个钟点里满 50 次算一次违反 (MECHANICS 18.3)
+        if (parts[0] != page && parts[0] != "timer") core.fogSwitch()
+        // 黑雾: 无法打开设置 (成就页在设置里)
         if (parts[0] in setOf("settings", "ach") && core.contract.fog()) {
             core.toast(tr("黑雾笼罩: 合约期间无法打开设置."), "warn"); return
         }

@@ -1364,11 +1364,51 @@ def _canvas(info, weights=None):
     return max(2, w // 2 * 2), max(2, h // 2 * 2)
 
 
-def _reencode_concat(out_path, inputs, fps=SCREEN_FPS, size=None, bitrate=SCREEN_BITRATE, fit_turn=True):
+def _pcm_setup(t):
+    """合并时把声音解成和录像一样的 PCM (16 位, AUDIO_RATE, AUDIO_CH); Source Reader 自己转采样率 / 声道."""
+    _set_u32(t, MF_MT_AUDIO_BITS_PER_SAMPLE, 16)
+    _set_u32(t, MF_MT_AUDIO_SAMPLES_PER_SECOND, AUDIO_RATE)
+    _set_u32(t, MF_MT_AUDIO_NUM_CHANNELS, AUDIO_CH)
+    _set_u32(t, MF_MT_AUDIO_BLOCK_ALIGNMENT, 2 * AUDIO_CH)
+    _set_u32(t, MF_MT_AUDIO_AVG_BYTES_PER_SECOND, AUDIO_RATE * 2 * AUDIO_CH)
+
+
+def _pcm_type(lib, reader, stream):
+    """这一段的声音解成 PCM: 返回 (媒体类型, 是不是单声道); 解不成 AUDIO_RATE 的 16 位单 / 双声道时 (None, False)."""
+    for setup in (_pcm_setup, lambda t: _set_u32(t, MF_MT_AUDIO_BITS_PER_SAMPLE, 16)):
+        try:
+            cur = _reader_type(lib, reader, stream, MFMediaType_Audio, MFAudioFormat_PCM, setup)
+        except MFError:
+            continue
+        try:
+            rate, ch = _get_u32(cur, MF_MT_AUDIO_SAMPLES_PER_SECOND), _get_u32(cur, MF_MT_AUDIO_NUM_CHANNELS)
+            bits = _get_u32(cur, MF_MT_AUDIO_BITS_PER_SAMPLE)
+        except MFError:
+            rate = ch = bits = 0
+        if rate == AUDIO_RATE and bits == 16 and ch in (1, AUDIO_CH):
+            return cur, ch == 1
+        _release(cur)
+    return None, False
+
+
+def _stereo(pcm: bytes) -> bytes:
+    """16 位单声道 → 双声道 (左右一样)."""
+    a = array.array("h")
+    a.frombytes(pcm[:len(pcm) // 2 * 2])
+    out = array.array("h", bytes(len(a) * 4))
+    out[0::2] = a
+    out[1::2] = a
+    return out.tobytes()
+
+
+def _reencode_concat(out_path, inputs, fps=SCREEN_FPS, size=None, bitrate=SCREEN_BITRATE, fit_turn=True,
+                     audio=False, audio_bytes=AUDIO_BYTES):
     """把几个 mp4 (已解密) 按顺序解码 → 重新编码接成一个 (画面统一到 size 给的画布, 没给时用第一段的大小;
-    每一段等比缩放居中留黑, 不同朝向也兼容; 只接画面). 每一段的时间戳接在上一段后面. 返回输出的 (宽, 高)."""
+    每一段等比缩放居中留黑, 不同朝向也兼容). 每一段的时间戳接在上一段后面. 返回输出的 (宽, 高).
+    audio: 声音也接上 (目光; 各段的声音解成 PCM 重新编码成 AAC), 否则只接画面."""
     lib, own = _startup()
     writer = None
+    wrote_audio = False
     dw, dh = (size or (0, 0))
     try:
         base = 0                                    # 累计时间 (100ns): 这一段的时间戳要加上它
@@ -1382,7 +1422,7 @@ def _reencode_concat(out_path, inputs, fps=SCREEN_FPS, size=None, bitrate=SCREEN
                 _release(attrs)
             vcur = acur = None
             try:
-                vidx, _aidx = _find_streams(reader)
+                vidx, aidx = _find_streams(reader)
                 if vidx < 0:
                     continue
                 vcur = _reader_type(lib, reader, MF_SOURCE_READER_FIRST_VIDEO_STREAM, MFMediaType_Video,
@@ -1397,11 +1437,13 @@ def _reencode_concat(out_path, inputs, fps=SCREEN_FPS, size=None, bitrate=SCREEN
                     stride = sw * 4
                 turn = _video_rotation(reader)              # 手机按陀螺仪写的旋转标记: 先把画面转正
                 ew, eh = (sh, sw) if turn in (90, 270) else (sw, sh)
-                has_audio = False       # 合并后的总览只接画面 (各段自己的文件里留着声音)
+                mono = False
+                if audio and aidx >= 0:
+                    acur, mono = _pcm_type(lib, reader, aidx)      # 解不成 PCM 的这一段没有声音
                 if writer is None:
                     if not (dw and dh):                     # 没给画布: 用第一段 (转正后) 的大小 (同以前)
                         dw, dh = min(ew, SCREEN_WIDTH) // 2 * 2, eh // 2 * 2
-                    writer = _Writer(lib, out_path, dw, dh, fps, bitrate, audio=has_audio)
+                    writer = _Writer(lib, out_path, dw, dh, fps, bitrate, audio=audio, audio_bytes=audio_bytes)
                 # 竖屏画布里冒出横屏画面 (全是竖屏设备, 中途有横屏) → 把这一段的每帧转正 (MECHANICS 18.8)
                 # (目光不这样做: 每段已经按手机的朝向转正了, 横着拿手机录的就是横的, 放进竖画布时上下留黑; fit_turn=False)
                 rotate = fit_turn and dw < dh and ew > eh
@@ -1426,7 +1468,19 @@ def _reencode_concat(out_path, inputs, fps=SCREEN_FPS, size=None, bitrate=SCREEN
                             _com(sample, 37, byref(dur), argtypes=(POINTER(ctypes.c_longlong),), what="GetSampleDuration")
                         except MFError:
                             dur.value = 0
-                        if idx.value != vidx:        # 只接画面 (声音在各段自己的文件里)
+                        if acur is not None and idx.value == aidx:
+                            ptr, size, buf = _sample_bytes(sample)
+                            try:
+                                pcm = ctypes.string_at(ptr, size)
+                            finally:
+                                _com(buf, 4, what="Unlock")
+                                _release(buf)
+                            if writer.astream is not None and pcm:
+                                writer.write_audio(_stereo(pcm) if mono else pcm, base + ts.value, dur.value)
+                                wrote_audio = True
+                                seg_end = max(seg_end, base + ts.value + dur.value)
+                            continue
+                        if idx.value != vidx:
                             continue
                         stream = writer.stream
                         ptr, size, buf = _sample_bytes(sample)
@@ -1454,6 +1508,10 @@ def _reencode_concat(out_path, inputs, fps=SCREEN_FPS, size=None, bitrate=SCREEN
         return dw, dh
     finally:
         if writer is not None:
+            if writer.astream is not None and not wrote_audio:
+                # 加了声音这一路却一段声音都没有: 写一小段静音, 不然 Finalize 失败, 整个文件坏掉
+                n = AUDIO_RATE // 50
+                writer.write_audio(bytes(n * 2 * AUDIO_CH), 0, n * 10_000_000 // AUDIO_RATE)
             writer.close()
         _shutdown(lib, own)
 
@@ -1573,8 +1631,11 @@ def merge(data_dir: str, cid: str, kind: str = "screen", extra=()) -> str:
             except Exception:       # noqa: BLE001
                 pass
         # 目光 (摄像头) 的合并结果按目光的码率压 (要同步给所有设备, 不能太大)
+        # 目光的声音也接上 (手机录的是单声道 48 kHz AAC, 解成 PCM 再编码); 刻痕只接画面
+        cam = kind == "camera"
         _reencode_concat(raw, [p for p, _ in plain], size=_canvas(info, weights),
-                         bitrate=CAMERA_BITRATE if kind == "camera" else SCREEN_BITRATE, fit_turn=kind != "camera")
+                         bitrate=CAMERA_BITRATE if cam else SCREEN_BITRATE, fit_turn=not cam,
+                         audio=cam, audio_bytes=CAMERA_AUDIO_BYTES)
         d = merged_dir(data_dir, kind)
         os.makedirs(d, exist_ok=True)
         for n in os.listdir(d):                   # 这个合约这一路的旧结果先删 (本次重新合并盖掉)

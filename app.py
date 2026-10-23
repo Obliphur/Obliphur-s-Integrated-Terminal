@@ -763,6 +763,11 @@ class BreakTimerApp:
         self.prestart_job = None
 
     def show_page(self, key: str):
+        # 合约 · 黑雾 (软规则): 要切到计时器以外的页面记一次, 一个钟点里满 50 次算一次违反 (MECHANICS 18.3)
+        if key != "timer" and key != getattr(self, "current_page", None):
+            tid = self.contract.fog_switch(datetime.now())
+            if tid:
+                self.contract_violation(tr("黑雾中频繁切换页面"), tid)
         if key in ("settings", "ach") and self.contract.fog():
             toast.warn(tr("黑雾笼罩: 合约期间无法打开设置."))
             return
@@ -2405,7 +2410,7 @@ class BreakTimerApp:
             self._win_over = False
             self._win_warn_at = 0.0
             return
-        limit = int(getattr(config, "WINDOW_LIMIT", 5))
+        limit = int(getattr(config, "WINDOW_LIMIT", 6))
         if n is None:
             return
         over = n > limit
@@ -2928,6 +2933,8 @@ class BreakTimerApp:
             self._refresh_if_visible("contract")     # 休息 / 联网中开始按钮变灰
             return
         self._apply_contract_overrides()
+        if c.mark_fine(datetime.now()):          # 细化规范生效过的小时一直分两格 (未知变量到时移除后也是, 18.4)
+            self._refresh_if_visible("log")
         self._contract_hours()
         self._check_supply()
         if not c.active:
@@ -3529,8 +3536,7 @@ class BreakTimerApp:
         for key in c.hour_misses(now, config.FILL_WINDOW, self.dm.unit_text,
                                  self.dm.auto_text_for_key):
             parts = key.split("/")
-            label = f"{int(parts[1]):02d}:{'30' if parts[2:] == ['1'] else '00'}" if len(parts) == 3 \
-                else f"{(int(parts[1]) + 1) % 24:02d}:00"
+            label = f"{int(parts[1]):02d}:{'30' if parts[2:] == ['2'] else '00'}"   # 写这一格的起点 (同整点记录页)
             self.contract_violation(tr("整点记录 {t} 超时未填写", t=label), "")
             if not c.active:
                 return

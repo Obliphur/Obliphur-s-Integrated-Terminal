@@ -291,11 +291,11 @@ class ContractTest {
         assertEquals("", c.hoardCheck()); assertEquals(2.0, c.cooldownFactor(), 1e-9); assertEquals("", c.focusCheck(60.0))
         // 违反到失效的词条照样检查: 再次触发返回它 (echo, 只响警报), 不扣目标生命值
         c.start(listOf("chan1", "deep1", "quiet", "info1", "short1"), "me", t0, pre = 600.0)
-        assertEquals("chan1", c.windowCheck(5)); assertEquals(false to "", c.violate("chan1"))
-        assertEquals("chan1" to 4, c.windowWatch()); assertEquals("", c.windowCheck(5)); assertEquals("", c.windowCheck(3))
-        assertEquals("chan1", c.windowCheck(5)); assertTrue(c.echo("chan1"))
+        assertEquals("chan1", c.windowCheck(6)); assertEquals(false to "", c.violate("chan1"))
+        assertEquals("chan1" to 5, c.windowWatch()); assertEquals("", c.windowCheck(6)); assertEquals("", c.windowCheck(4))
+        assertEquals("chan1", c.windowCheck(6)); assertTrue(c.echo("chan1"))
         c.windowReset()                                  // 离开专注时段: 下次专注重新算
-        assertEquals("chan1", c.windowCheck(5))
+        assertEquals("chan1", c.windowCheck(6))
         assertEquals(false to "", c.violate("deep1")); assertEquals("deep1", c.focusCheck(39 * 60.0)); assertEquals("", c.focusCheck(40 * 60.0))
         assertEquals("quiet", c.quietCheck(true)); assertEquals(false to "", c.violate("quiet")); assertEquals("", c.quietCheck(true))
         assertEquals("", c.quietCheck(false)); assertEquals("quiet", c.quietCheck(true))
@@ -325,8 +325,8 @@ class ContractTest {
         assertFalse(c.echo("music")); assertEquals("music", c.banCheck("music", true))
         assertEquals(false to "", c.violate("music")); assertEquals(3, c.violations); assertTrue(c.echo("music"))
         c.enable("chan2", t0.plusHours(1))
-        assertEquals("chan2" to 3, c.windowWatch()); assertFalse(c.echo("chan2"))
-        assertEquals(listOf("chan2"), c.expire(t0.plusHours(1))); assertEquals("chan1" to 4, c.windowWatch()); assertTrue(c.echo("chan1"))
+        assertEquals("chan2" to 4, c.windowWatch()); assertFalse(c.echo("chan2"))
+        assertEquals(listOf("chan2"), c.expire(t0.plusHours(1))); assertEquals("chan1" to 5, c.windowWatch()); assertTrue(c.echo("chan1"))
         // 最后防线: 只有初始目标生命值 1, 没有额外的词条等级
         c.start(listOf("last", "long3", "tired3", "chan1"), "me", t0)
         assertEquals(10, c.level); assertEquals(1, c.violationLimit); assertEquals(10, c.origLevel)
@@ -493,7 +493,7 @@ class ContractTest {
         assertEquals(FOG_SLOTS, a.live.getJSONArray("fog_words").length())
         assertTrue("一次抽的词不重复", (0 until 3).all { k -> w.map { it[k] }.toSet().size == FOG_SLOTS })
         // 词池大小和抽词用的 FOG_POOL 一致
-        assertEquals(listOf(150, 80, 150), FOG_POOL.toList())
+        assertEquals(listOf(125, 80, 150), FOG_POOL.toList())
         assertEquals(FOG_POOL.toList(), listOf(com.obliphur.oit.ui.FOG_ZH_VERBS.size, com.obliphur.oit.ui.FOG_ZH_QUANTS.size,
             com.obliphur.oit.ui.FOG_ZH_NOUNS.size))
         assertEquals(FOG_POOL.toList(), listOf(com.obliphur.oit.ui.FOG_EN_VERBS.size, com.obliphur.oit.ui.FOG_EN_QUANTS.size,

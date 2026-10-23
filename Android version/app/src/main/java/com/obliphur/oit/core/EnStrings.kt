@@ -697,8 +697,9 @@ object EnStrings {
         "合约期间 专注时长 合约的剩余时间 成就 日历 统计数据不可见 且无法打开设置" to
             "Focus time, the contract's time left, achievements, calendar and statistics are hidden, and settings can't be opened",
         "期间使用proxy block-all模式" to "Proxy block-all mode during the contract",
-        "在专注期间的最大窗口数改为3" to "Window limit becomes 3 during focus",
         "在专注期间的最大窗口数改为4" to "Window limit becomes 4 during focus",
+        "在专注期间的最大窗口数改为5" to "Window limit becomes 5 during focus",
+        "黑雾中频繁切换页面" to "switched pages too often in the Black Fog",
         "基础休息倍率由80%改为60%" to "Base break multiplier changed from 80% to 60%",
         "基础休息倍率由80%改为50%" to "Base break multiplier changed from 80% to 50%",
         "基础休息倍率由80%改为70%" to "Base break multiplier changed from 80% to 70%",

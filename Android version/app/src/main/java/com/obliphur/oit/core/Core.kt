@@ -202,7 +202,9 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
 
     fun notice(title: String, message: String, buttons: List<NoticeButton>, page: String? = null,
                tag: String = "", onClose: (String?) -> Unit = {}): Int {
-        val n = Notice(nextNoticeId++, title, message, buttons, page, onClose, tag)
+        // 黑雾: 只能手动关闭的提醒 (也是系统通知) 一样遮住内容, 例如专注记了多少分钟; 合约冲突要靠内容选, 不遮
+        val shown = if (contract.fog() && tag != "conflict") "[???]" else message
+        val n = Notice(nextNoticeId++, title, shown, buttons, page, onClose, tag)
         notices.add(n)
         host.noticesChanged()
         return n.id
@@ -270,7 +272,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         val msg = tr("断网期间两台设备各自进行了合约, 时间有重叠. 只能保留一个, 另一个作废 (已经给出的休息时间不收回).") +
             "\n\nA  " + line(a) + "\n\nB  " + line(b)
         conflictNotice = notice(tr("⚔ 合约冲突"), msg, listOf(NoticeButton(tr("保留 A"), "a", true), NoticeButton(tr("保留 B"), "b", true)),
-            page = "contract") { act ->
+            page = "contract", tag = "conflict") { act ->
             conflictNotice = -1
             val keep = when (act) { "a" -> a.optString("id"); "b" -> b.optString("id"); else -> null } ?: return@notice
             if (c.resolveConflict(keep)) {
@@ -889,6 +891,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             }
         }
         if (!c.active) return
+        if (c.markFine(LocalDateTime.now())) changed()   // 细化规范生效过的小时一直分两格 (未知变量到时移除后也是, 18.4)
         contractHours()
         checkSupply()
         checkQuiet()
@@ -1102,6 +1105,12 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     }
 
     /** 违反了词条 id (软规则): 响警报, 记一次, 这个词条降一级 (drop: 直接去掉); 到上限就结束合约. */
+    /** 黑雾 (MECHANICS 18.3): 要切到计时器以外的页面 (界面上调用). */
+    fun fogSwitch() {
+        val id = contract.fogSwitch(LocalDateTime.now())
+        if (id.isNotEmpty()) contractViolation(tr("黑雾中频繁切换页面"), id)
+    }
+
     fun contractViolation(why: String, id: String, drop: Boolean = false) {
         val c = contract
         if (c.active && !dm.resetting && c.echo(id)) {

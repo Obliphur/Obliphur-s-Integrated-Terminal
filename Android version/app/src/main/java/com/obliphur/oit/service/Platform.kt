@@ -73,7 +73,8 @@ object Notifier {
         val core = OitApp.instance.core
         val t = core.timer
         val timer = when (t.state) {
-            TState.RUNNING -> tr("专注中…") + "  " + f2(t.elapsed / 60) + " min"
+            // 黑雾 (MECHANICS 18.3): 常驻通知里也看不到专注时长
+            TState.RUNNING -> tr("专注中…") + "  " + (if (core.contract.fog()) "???" else f2(t.elapsed / 60)) + " min"
             TState.ON_BREAK -> tr("休息中 ☕") + "  " + fmtMs(t.countdown)
             TState.IDLE -> tr("准备就绪")
         }

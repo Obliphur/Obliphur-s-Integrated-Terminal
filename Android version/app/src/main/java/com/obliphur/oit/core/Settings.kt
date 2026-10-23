@@ -100,7 +100,7 @@ object Schema {
         // ---- 窗口 (Android: 应用; 窗口数 = 后台的应用数, 只检测, 超过时响警报, 不关应用) ----
         Spec("WINDOW_LIMIT_ENABLED", "后台应用数检测", Kind.CHOICE, true, "window", "1", choices = ONOFF),
         Spec("WINDOW_FOCUS_ENABLED", "应用使用时间统计", Kind.CHOICE, true, "window", "1", choices = ONOFF),
-        num("WINDOW_LIMIT", "后台应用数上限", "", 1.0, 1.0, 50.0, true, 5.0, "window"),
+        num("WINDOW_LIMIT", "后台应用数上限", "", 1.0, 1.0, 50.0, true, 6.0, "window"),
         // ---- 日常: 行为模式 / 外出 (MECHANICS 21) ----
         Spec("BEHAVIOR_MODE", "行为模式", Kind.CHOICE, true, "daily", Cfg.BEHAVIOR_FREE,
             choices = listOf("closed" to "封闭式管理", "work" to "工作", "free" to "自由学习"),

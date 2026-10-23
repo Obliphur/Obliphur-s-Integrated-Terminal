@@ -13,7 +13,7 @@ class Dice(val roll: () -> Double = { kotlin.random.Random.nextDouble() },
 /** 黑雾 (18.3): 一天 48 个半小时各一句假内容. 只存编号, 显示时对词池长度取余 (中英文共用).
  *  FOG_POOL: 动词 / 量词 / 名词词池的大小 (同 LogStatsScreens.kt 的词池); 一次抽的 48 句里每类词都不重复. */
 const val FOG_SLOTS = 48
-val FOG_POOL = intArrayOf(150, 80, 150)
+val FOG_POOL = intArrayOf(125, 80, 150)
 
 fun fogWordsJson(r: java.util.Random): JSONArray {
     val cols = FOG_POOL.map { n -> (0 until n).shuffled(r).take(FOG_SLOTS) }
@@ -60,8 +60,8 @@ class Contract(private val file: File) {
             Term("last", "retreat", 3, "最后防线", "初始目标生命值为1"),
             Term("deep1", "deep", 1, "目标:纵深推进-I", "专注的时间不能少于40min"),
             Term("deep2", "deep", 2, "目标:纵深推进-II", "专注的时间不能少于80min"),
-            Term("chan1", "chan", 1, "环境:通道阻塞-I", "在专注期间的最大窗口数改为4"),
-            Term("chan2", "chan", 2, "环境:通道阻塞-II", "在专注期间的最大窗口数改为3"),
+            Term("chan1", "chan", 1, "环境:通道阻塞-I", "在专注期间的最大窗口数改为5"),
+            Term("chan2", "chan", 2, "环境:通道阻塞-II", "在专注期间的最大窗口数改为4"),
             Term("tired1", "tired", 1, "环境:疲惫-I", "基础休息倍率由80%改为70%"),
             Term("tired2", "tired", 2, "环境:疲惫-II", "基础休息倍率由80%改为60%"),
             Term("tired3", "tired", 3, "环境:疲惫-III", "基础休息倍率由80%改为50%"),
@@ -117,10 +117,10 @@ class Contract(private val file: File) {
         private val ORDER = TERMS.mapIndexed { i, t -> t.id to i }.toMap()
 
         // 软规则: 界面上照样能做, 但会被算作违反, 这个词条降一级 (结算按降级后的等级);
-        // 其余是硬规则, 立即生效 (黑雾, 记录封锁, 细化规范, 全频道阻塞干扰, 持久战, 疲惫).
+        // 其余是硬规则, 立即生效 (记录封锁, 细化规范, 全频道阻塞干扰, 持久战, 疲惫).
         // 录像 (目光 / 刻痕) 违反一次就失效 (录像停止): 不在 LOWER / SINGLE 里.
         val SOFT = setOf("info1", "info2", "info3", "chan1", "chan2", "music", "suppress", "short1", "short2",
-            "silent", "game", "video", "gaze", "scar", "deep1", "deep2", "quiet", "hoard", "unknown")
+            "silent", "game", "video", "gaze", "scar", "deep1", "deep2", "quiet", "hoard", "unknown", "fog")
         /** 降一级换成哪个词条. */
         val LOWER = mapOf("info3" to "info2", "info2" to "info1", "chan2" to "chan1",
             "short2" to "short1", "deep2" to "deep1")
@@ -143,7 +143,7 @@ class Contract(private val file: File) {
         val RECORD = mapOf("gaze" to "camera", "scar" to "screen")
         /** 禁止打开某类应用的词条 (每秒看前台应用). */
         val BANS = listOf("music", "silent", "game", "video")
-        val WINDOWS = mapOf("chan1" to 4, "chan2" to 3)
+        val WINDOWS = mapOf("chan1" to 5, "chan2" to 4)
         /** 支援短缺: 合约开始前积攒的休息时间能用几成. */
         val SUPPLY = mapOf("short1" to 0.5, "short2" to 0.0)
         /** 整点记录的词条: 整点记录关着时, 这次合约中照样开启. */
@@ -214,6 +214,8 @@ class Contract(private val file: File) {
         /** 纵深推进: 一段专注至少这么多秒, 不到就结束算违反. */
         val DEEP = mapOf("deep1" to 40 * 60, "deep2" to 80 * 60)
         /** 记录封锁: 每次完成填写时另外随机封锁几个格子. */
+        /** 黑雾 (软): 合约中切到计时器以外的页面满这么多次算一次违反, 每个钟点清零. */
+        const val FOG_SWITCHES = 50
         const val SEAL_EXTRA = 2
         /** 侵蚀: 网络申请的冷静期乘多少 (硬规则). */
         val COOLDOWN_X = mapOf("erode1" to 2.0, "erode2" to 3.0)
@@ -583,6 +585,7 @@ class Contract(private val file: File) {
             .put("result", result).put("violations", violations).put("reward", give).put("pre_left", preLeft)
             .put("rand", JSONArray(rand))
         live.optJSONArray("locks")?.let { if (it.length() > 0) rec.put("locks", JSONArray(it.toString())) }   // 封锁的记录格 (选了记录封锁的合约结束后照样锁着)
+        live.optJSONArray("fine_h")?.let { if (it.length() > 0) rec.put("fine_h", JSONArray(it.toString())) }   // 细化规范分成两格的小时
         live.optJSONObject("slow")?.optString("start")?.takeIf { it.isNotEmpty() }?.let { rec.put("slow", it) }
         history.add(rec)
         live = JSONObject().put("state", "none").put("owner", by).put("first_break", result == "completed")
@@ -823,8 +826,9 @@ class Contract(private val file: File) {
         if (!active || !has("seal") || textOf == null || fillSec <= 0) return emptyList()
         // 过了填写时限的格子都已经填写了 (超时自动记录), 记录封锁下本来就锁着 —— 可以封锁的是合约里还能填的格子:
         // 还在填写时限里的、还没结束的 (到合约结束为止)
+        // 只挑今天的格子 (跨天的合约里昨天 / 明天的格子不在今天的整点记录页上)
         val pool = hourUnits(now, ahead = true).filter { (k, a, b) ->
-            !hourLocked(a, b, textOf(k), now, fillSec, auto, autoOf, k)
+            a.toLocalDate() == now.toLocalDate() && !hourLocked(a, b, textOf(k), now, fillSec, auto, autoOf, k)
         }.toMutableList()
         val picks = mutableListOf<Triple<String, LocalDateTime, LocalDateTime>>()
         repeat(minOf(SEAL_EXTRA, pool.size)) { picks.add(pool.removeAt(dice.pick(pool.size))) }
@@ -1053,12 +1057,30 @@ class Contract(private val file: File) {
     }
     /** 选了整点记录的词条: 整点记录关着时, 这次合约中照样开启. */
     fun hourForced() = terms.any { it in HOUR_TERMS } || (active && live.optBoolean("hour_forced"))
-    /** 细化规范: 这一小时 (按开始时刻) 和进行中的合约重叠, 记录改为每 30 分钟一次. */
-    fun fineHour(slotStart: LocalDateTime): Boolean {
-        if (!has("fine")) return false
-        val a = startAt ?: return false
-        val b = endAt ?: return false
-        return a.isBefore(slotStart.plusHours(1)) && slotStart.isBefore(b)
+    /** 细化规范: 这一小时 (按开始时刻) 和进行中的合约重叠, 记录改为每 30 分钟一次.
+     *  细化规范生效过的小时 (markFine 记下的) 一直分成两格; 合约结束后到后半小时的补填时限为止照样分两格. 同 contract.py 的 fine_hour. */
+    fun fineHour(slotStart: LocalDateTime, now: LocalDateTime = LocalDateTime.now()): Boolean {
+        val key = slotStart.withMinute(0).withSecond(0).withNano(0).iso()
+        if (active) {
+            if (key in (live.optJSONArray("fine_h")?.strings() ?: emptyList())) return true
+            if (!has("fine")) return false
+            val a = startAt ?: return false
+            val b = endAt ?: return false
+            return a.isBefore(slotStart.plusHours(1)) && slotStart.isBefore(b)
+        }
+        val marks = last?.optJSONArray("fine_h")?.strings() ?: return false
+        return key in marks && slotStart.plusHours(1).plusMinutes(30).isAfter(now)
+    }
+
+    /** 细化规范生效时记下这个钟点 (每秒调用): 之后词条没了, 这一小时也照样分成两格. 返回记了没有. */
+    fun markFine(now: LocalDateTime): Boolean {
+        if (!active || !has("fine")) return false
+        val key = now.withMinute(0).withSecond(0).withNano(0).iso()
+        val marks = live.optJSONArray("fine_h")?.strings() ?: emptyList()
+        if (key in marks) return false
+        live.put("fine_h", JSONArray(marks + key))
+        save()
+        return true
     }
     fun windowLimit(): Int = terms.mapNotNull { WINDOWS[it] }.minOrNull() ?: 0
     fun restFactor(): Double = restFactorOf(mine)
@@ -1121,6 +1143,19 @@ class Contract(private val file: File) {
         val was = watch[key] ?: false
         watch[key] = over
         return over && !was
+    }
+
+    /** 黑雾: 这个钟点里要切到计时器以外的页面的次数 (只记在本机). */
+    private var fogN = "" to 0
+
+    /** 黑雾: 合约中要切到计时器以外的页面 (打不开的设置也算) 记一次; 这个钟点里满 FOG_SWITCHES 次返回 "fog"
+     *  (算一次违反, 重新计). 每个钟点清零. 失效后照样数 (再次触发只响警报). 同 contract.py 的 fog_switch. */
+    fun fogSwitch(now: LocalDateTime): String {
+        if (!active || !watching("fog")) return ""
+        val hour = now.withMinute(0).withSecond(0).withNano(0).iso()
+        val n = if (fogN.first == hour) fogN.second + 1 else 1
+        fogN = hour to (if (n >= FOG_SWITCHES) 0 else n)
+        return if (n >= FOG_SWITCHES) "fog" else ""
     }
 
     /** 通道阻塞: (要检查的词条, 上限); 已经失效的按失效前的上限. 没有时 ("", 0). */
@@ -1390,6 +1425,8 @@ class Contract(private val file: File) {
         new.put("violations", maxOf(mine.optInt("violations"), new.optInt("violations")))
         val hl = ((new.optJSONArray("hl")?.strings() ?: emptyList()) + (mine.optJSONArray("hl")?.strings() ?: emptyList())).toSortedSet()
         new.put("hl", JSONArray(hl.toList()))
+        val fineH = ((new.optJSONArray("fine_h")?.strings() ?: emptyList()) + (mine.optJSONArray("fine_h")?.strings() ?: emptyList())).toSortedSet()
+        if (fineH.isNotEmpty()) new.put("fine_h", JSONArray(fineH.toList()))
         val locks = (new.optJSONArray("locks") ?: JSONArray()).let { JSONArray(it.toString()) }
         val have = (0 until locks.length()).map { locks.optJSONArray(it)?.toString() }.toMutableSet()
         val mineLocks = mine.optJSONArray("locks") ?: JSONArray()

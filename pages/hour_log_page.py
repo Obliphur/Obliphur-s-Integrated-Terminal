@@ -16,15 +16,13 @@ from .widgets import cfg
 # 和脑叶公司 Wiki 的"T-01-31 沉默乐团"条目 (动词 50, 名词 50).
 # 界面是英文时用英文的.
 _ZH_VERBS = (
-    "生成", "治愈", "掉落", "繁殖", "交易", "工作", "游荡", "聚集", "玩耍", "回家", "睡觉", "认领", "拾取", "分享", "耕作", "逃跑", "注视", "交谈",
-    "收割", "躲避", "寻找", "起床", "攀爬", "打开", "放弃", "绑定", "破坏", "传送", "检测", "传播", "合并", "攻击", "装备", "催熟", "播种", "收获",
-    "制作", "检查", "购买", "出售", "补货", "庆祝", "发射", "敲响", "观察", "追逐", "跳跃", "奔跑", "成长", "感染", "转换", "命名", "叫醒", "种植",
-    "投掷", "摇头", "熬夜", "消耗", "储存", "升级", "伏击", "隐匿", "部署", "阻挡", "回复", "触发", "充能", "束缚", "晕眩", "流失", "拖拽", "击杀",
-    "歼灭", "进驻", "生产", "编入", "通关", "阻止", "劫掠", "坐视", "探索", "察觉", "索要", "审视", "见证", "迷失", "怀疑", "延长", "割下", "询问",
-    "摒弃", "预见", "诞生", "回归", "滋润", "盘踞", "汲取", "改造", "孕育", "招募", "演奏", "指挥", "突破", "收容", "减少", "免疫", "镇压", "指派",
-    "选定", "归零", "遮蔽", "覆盖", "遮挡", "锁定", "暂停", "拉开", "衰减", "推进", "屏蔽", "警告", "清零", "登上", "扩散", "杀死", "合上", "消失",
-    "抵挡", "派遣", "调离", "施加", "呼叫", "丢失", "离开", "研发", "挥舞", "淹没", "献上", "构筑", "吸收", "穿戴", "评判", "领导", "协调", "传达",
-    "丧失", "陶醉", "唤醒", "加快", "点燃", "鼓掌",
+    "生成", "治愈", "掉落", "繁殖", "交易", "聚集", "认领", "拾取", "分享", "耕作", "注视", "收割", "躲避", "寻找", "攀爬", "打开", "放弃", "绑定",
+    "破坏", "传送", "检测", "传播", "合并", "攻击", "装备", "催熟", "播种", "收获", "制作", "检查", "购买", "出售", "庆祝", "发射", "敲响", "观察",
+    "追逐", "感染", "转换", "命名", "叫醒", "种植", "投掷", "消耗", "储存", "升级", "伏击", "隐匿", "部署", "阻挡", "回复", "触发", "充能", "束缚",
+    "拖拽", "击杀", "歼灭", "进驻", "生产", "编入", "通关", "阻止", "劫掠", "坐视", "探索", "察觉", "索要", "审视", "见证", "怀疑", "延长", "割下",
+    "询问", "摒弃", "预见", "滋润", "盘踞", "汲取", "改造", "孕育", "招募", "演奏", "指挥", "突破", "收容", "减少", "免疫", "镇压", "指派", "选定",
+    "遮蔽", "覆盖", "遮挡", "锁定", "暂停", "拉开", "推进", "屏蔽", "警告", "清零", "登上", "杀死", "合上", "抵挡", "派遣", "调离", "施加", "呼叫",
+    "丢失", "离开", "研发", "挥舞", "淹没", "献上", "构筑", "吸收", "穿戴", "评判", "领导", "协调", "传达", "丧失", "唤醒", "加快", "点燃",
 )
 _ZH_QUANTS = (
     "一个", "两个", "三个", "五个", "八个", "十个", "几个", "每个", "一块", "三块", "六块", "半块", "一组", "两组", "半组", "每组", "一格", "八格",
@@ -45,19 +43,17 @@ _ZH_NOUNS = (
     "节奏", "萨满", "礼赞", "护盾", "子弹", "设施",
 )
 _EN_VERBS = (
-    "trade", "breed", "spawn", "cure", "drop", "wander", "gather", "play", "sleep", "claim", "share", "farm",
-    "flee", "stare", "harvest", "plant", "throw", "pick", "equip", "climb", "open", "close", "jump", "sprint",
-    "craft", "heal", "gossip", "work", "explore", "buy", "sell", "restock", "celebrate", "launch", "ring",
-    "forget", "migrate", "summon", "carry", "chase", "shear", "wear", "consume", "collect", "deposit",
-    "attack", "avoid", "push", "grow", "rest", "unlock", "tend", "scan", "reach", "emit", "count", "store",
-    "refresh", "despawn", "inhabit", "ambush", "conceal", "deploy", "block", "recover", "trigger", "charge",
-    "bind", "stun", "drain", "drag", "slay", "annihilate", "station", "produce", "enlist", "clear", "prevent",
-    "plunder", "ignore", "probe", "notice", "demand", "examine", "witness", "misplace", "doubt", "extend",
-    "sever", "question", "discard", "foresee", "beget", "return", "nourish", "occupy", "absorb", "reshape",
-    "nurture", "recruit", "perform", "conduct", "breach", "contain", "reduce", "resist", "suppress", "assign",
-    "select", "nullify", "shroud", "cover", "obscure", "lock", "pause", "unveil", "dampen", "advance", "mute",
-    "warn", "wipe", "mount", "spread", "kill", "shut", "vanish", "withstand", "dispatch", "withdraw", "apply",
-    "call", "lose", "leave", "develop", "wield", "drown", "offer", "assemble", "soak", "don", "judge", "lead",
+    "trade", "breed", "spawn", "cure", "drop", "gather", "claim", "share", "harvest", "plant", "throw",
+    "pick", "equip", "open", "close", "craft", "heal", "explore", "buy", "sell", "restock", "launch", "ring",
+    "summon", "carry", "chase", "shear", "wear", "consume", "collect", "deposit", "attack", "avoid", "push",
+    "unlock", "tend", "scan", "store", "refresh", "inhabit", "ambush", "conceal", "deploy", "block",
+    "recover", "trigger", "charge", "bind", "stun", "drain", "drag", "slay", "annihilate", "station",
+    "produce", "enlist", "clear", "prevent", "plunder", "ignore", "probe", "notice", "demand", "examine",
+    "witness", "misplace", "doubt", "extend", "sever", "question", "discard", "foresee", "beget", "nourish",
+    "occupy", "absorb", "reshape", "nurture", "recruit", "perform", "conduct", "breach", "contain", "reduce",
+    "resist", "suppress", "assign", "select", "nullify", "shroud", "cover", "obscure", "lock", "unveil",
+    "dampen", "mute", "warn", "wipe", "mount", "spread", "kill", "shut", "withstand", "dispatch", "withdraw",
+    "apply", "call", "lose", "develop", "wield", "drown", "offer", "assemble", "soak", "don", "judge", "lead",
     "coordinate", "convey", "forfeit", "savor", "awaken", "hasten", "ignite", "applaud",
 )
 _EN_QUANTS = (
