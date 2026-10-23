@@ -549,9 +549,8 @@ fun ContractScreen() {
         }
         "start" -> {
             val lv = Contract.levelOf(c.draft)
-            val dur = Contract.durationOf(c.draft)
-            Confirm(tr("▶  开始行动"), tr("危机等级 {lv} · 时长 {t} · 到 {at}", "lv" to lv, "t" to fmtHm(dur),
-                "at" to now.plusSeconds(dur.toLong()).format(Fmt.HM)) + "\n" +
+            // 不显示时长和结束时刻
+            Confirm(tr("▶  开始行动"), tr("危机等级 {lv}", "lv" to lv) + "\n" +
                 tr("完成后休息 +{n} 分钟", "n" to Contract.restMinutesTotal(lv, c.draft)), true, { ask = "" }) {
                 core.startContract(c.draft)
             }

@@ -2996,7 +2996,7 @@ class BreakTimerApp:
         if late and not toast.ask(daily.late_text(late), title=tr("🌙  该睡觉了"),
                                   ok_text=tr("开始行动"), danger=True):
             return
-        msg = tr("危机等级 {lv} · 时长 {t} · 到 {at}", lv=lv, t=fmt_hm(dur), at=f"{end:%H:%M}")
+        msg = tr("危机等级 {lv}", lv=lv)                        # 不显示时长和结束时刻
         msg += "\n" + tr("完成后休息 +{n} 分钟", n=contract_mod.rest_minutes_total(lv, terms))
         if not toast.ask(msg, title=tr("▶  开始行动"), ok_text=tr("开始行动"), danger=True):
             return
