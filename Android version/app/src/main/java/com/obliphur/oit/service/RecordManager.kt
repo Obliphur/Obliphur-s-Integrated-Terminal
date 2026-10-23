@@ -28,6 +28,10 @@ class RecordManager(private val app: OitApp) {
     private val retryAt = HashMap<String, Long>()
     private var activeCid = ""
     private var activeOwner = ""
+    private var camSince = 0L                            // 这一段摄像头录像从什么时候开始 (每 30 分钟换一段)
+    private var flushAt = 0L
+    @Volatile private var flushing = false
+    private val outboxFile get() = File(dataDir, "rec_outbox.json")
 
     /** 界面该做的事 (MainActivity 每次可见时看一眼): 要录屏授权 / 要摄像头 + 麦克风权限. */
     @Volatile var needProjection = false
@@ -59,6 +63,16 @@ class RecordManager(private val app: OitApp) {
         needPerms = needCamera || needAudio
 
         val now = SystemClock.elapsedRealtime()
+        // 摄像头每 30 分钟换一段 (同电脑): 一段不会太大 (文件通道一次最多 1 GB), 出事时也只丢最后一段
+        if (recording("camera") && camSince > 0 && now - camSince >= SEGMENT_MS) {
+            stop("camera")
+            camSince = 0L
+        }
+        // 没发出去的片段 (主人当时不在线 / 还没封装完 / 传输失败): 每 30 秒再试一次
+        if (now >= flushAt && !flushing && outboxFile.exists()) {
+            flushAt = now + 30_000
+            flushOutbox()
+        }
         for (kind in RecCrypto.KINDS) {
             val st = RecordService.state[kind] ?: ""
             if (kind !in want) {
@@ -96,7 +110,7 @@ class RecordManager(private val app: OitApp) {
 
     private fun start(kind: String) {
         when (kind) {
-            "camera" -> RecordService.command(app, RecordService.ACT_CAMERA)
+            "camera" -> { RecordService.command(app, RecordService.ACT_CAMERA); camSince = SystemClock.elapsedRealtime() }
             "screen" -> {
                 val p = app.recProjection ?: return             // 没有授权: 等界面弹出授权 (needProjection)
                 app.recProjection = null                         // 授权一次只用一次
@@ -158,20 +172,59 @@ class RecordManager(private val app: OitApp) {
             core.logRecord("owner on phone: segments kept for $cid (merge on a PC)")
             return
         }
+        // 记进待发送的清单 (存在数据目录里, 重开 OIT 也还在), 由 tick 每 30 秒试一次:
+        // 等这个合约的片段都封装 (加密) 完, 主人是在线的电脑时把各路片段全部发出去, 全部发成功才划掉
+        val box = readOutbox()
+        if ((0 until box.length()).none { box.optJSONObject(it)?.optString("cid") == cid }) {
+            box.put(JSONObject().put("cid", cid).put("owner", owner).put("at", System.currentTimeMillis()))
+            com.obliphur.oit.core.Store.write(outboxFile, JSONObject().put("items", box))
+        }
+        flushAt = 0L
+    }
+
+    private fun readOutbox(): org.json.JSONArray =
+        com.obliphur.oit.core.Store.readObj(outboxFile)?.optJSONArray("items") ?: org.json.JSONArray()
+
+    /** 把待发送清单里的片段发给各自的合约主人 (后台线程). 片段在接收端按文件名覆盖, 重发不会重复. */
+    private fun flushOutbox() {
+        val sync = app.sync ?: return
+        flushing = true
         Thread {
-            Thread.sleep(1500)                                          // 等最后一段封装 (加密) 完
-            val sync = app.sync ?: return@Thread
-            val p = sync.peers()[owner] ?: return@Thread
-            val online = sync.deviceStates().any { it.id == owner && it.online }
-            if (!online || !p.optString("platform").lowercase().startsWith("win")) return@Thread   // 主人必须是在线的电脑
-            for (kind in RecCrypto.KINDS) {
-                val segs = RecCrypto.filesOf(dataDir, kind, cid).filter { !it.partial }
-                var ok = 0
-                for (s in segs) runCatching { if (sync.sendFile(owner, s.file, cid, kind) == "sent") ok++ }
-                    .onFailure { core.logRecord("send $cid/$kind failed: ${it.message}") }
-                if (segs.isNotEmpty()) core.logRecord("sent $ok/${segs.size} $kind segments for $cid to $owner")
-            }
+            try {
+                val box = readOutbox()
+                val left = org.json.JSONArray()
+                val now = System.currentTimeMillis()
+                for (i in 0 until box.length()) {
+                    val e = box.optJSONObject(i) ?: continue
+                    val cid = e.optString("cid"); val owner = e.optString("owner")
+                    if (cid.isEmpty() || now - e.optLong("at") > OUTBOX_DAYS * 86_400_000L) continue   // 太久了: 放弃 (片段仍在本机)
+                    if (!sendAll(sync, cid, owner)) left.put(e)
+                }
+                if (left.length() == 0) outboxFile.delete()
+                else com.obliphur.oit.core.Store.write(outboxFile, JSONObject().put("items", left))
+            } finally { flushing = false }
         }.apply { isDaemon = true }.start()
+    }
+
+    /** 这个合约的各路片段全部发给主人了吗 (还在写 / 封装的、主人不在线 / 不是电脑时返回 false, 等下次). */
+    private fun sendAll(sync: com.obliphur.oit.sync.SyncService, cid: String, owner: String): Boolean {
+        if (RecCrypto.KINDS.any { k -> RecCrypto.filesOf(dataDir, k, cid, cacheDir).any { it.partial } }) return false
+        val p = sync.peers()[owner] ?: return true                     // 已经解绑了: 不用再发
+        val online = sync.deviceStates().any { it.id == owner && it.online }
+        if (!online || !p.optString("platform").lowercase().startsWith("win")) return false   // 主人必须是在线的电脑
+        var all = true
+        for (kind in RecCrypto.KINDS) {
+            val segs = RecCrypto.filesOf(dataDir, kind, cid).filter { !it.partial }
+            var ok = 0
+            for (s in segs) {
+                val r = runCatching { sync.sendFile(owner, s.file, cid, kind) }
+                    .onFailure { core.logRecord("send $cid/$kind failed: ${it.message}") }.getOrNull()
+                if (r == "sent") ok++ else if (r != null) core.logRecord("send $cid/$kind ${s.name}: $r")
+            }
+            if (ok < segs.size) all = false
+            if (segs.isNotEmpty()) core.logRecord("sent $ok/${segs.size} $kind segments for $cid to $owner")
+        }
+        return all
     }
 
     /** 收到别的设备发来的录像 (MECHANICS 18.8): final 是合约主人发来的最终录像 (直接存进 merged 展示);
@@ -185,7 +238,8 @@ class RecordManager(private val app: OitApp) {
         if (!d.exists() && !d.mkdirs()) return "busy"
         var dest = File(d, com.obliphur.oit.sync.SyncCrypto.safeName(o.optString("name")))
         var n = 1
-        while (dest.exists()) {
+        // 片段的文件名 (开始时刻 + 合约 id) 是唯一的: 同名的就是同一段 (对方重发), 直接覆盖, 不能合并两次
+        while (finalRec && dest.exists()) {
             val base = o.optString("name")
             val stem = base.substringBeforeLast('.', base); val ext = base.substringAfterLast('.', "")
             dest = File(d, com.obliphur.oit.sync.SyncCrypto.safeName(stem + "-" + n + (if (ext.isEmpty()) "" else ".$ext"))); n++
@@ -240,5 +294,12 @@ class RecordManager(private val app: OitApp) {
         core.changed()
     }
 
-    companion object { const val FOCUS_EVERY_MS = 10_000L }
+
+    companion object {
+        const val FOCUS_EVERY_MS = 10_000L
+        /** 摄像头每这么久换一段 (同电脑的 recorder.SEGMENT). */
+        const val SEGMENT_MS = 30 * 60 * 1000L
+        /** 没发出去的片段最多再试几天. */
+        const val OUTBOX_DAYS = 7
+    }
 }

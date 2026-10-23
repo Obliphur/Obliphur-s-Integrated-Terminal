@@ -655,6 +655,8 @@ class SyncService(
         val size = o.getLong("size")
         val md = MessageDigest.getInstance("SHA-256")
         var n = 0L
+        // 先写临时文件, 校验通过再换上 (同名的旧文件 —— 例如对方重发的同一个片段 —— 传输失败时保留原样)
+        val tmp = File(dest.path + ".part")
         try {
             Socket().use { s ->
                 s.connect(InetSocketAddress(p.getString("addr"), p.getInt("port")), 6000)
@@ -667,7 +669,7 @@ class SyncService(
                 val status = readLine(inp)
                 while (readLine(inp).isNotEmpty()) { /* 跳过响应头 */ }
                 if (status.split(" ").getOrNull(1) != "200") throw IllegalStateException(status)
-                dest.outputStream().use { out ->
+                tmp.outputStream().use { out ->
                     val buf = ByteArray(65536)
                     while (true) {
                         val r = inp.read(buf)
@@ -681,8 +683,10 @@ class SyncService(
                 }
             }
             if (n != size || SyncCrypto.hex(md.digest()) != o.getString("sha256")) throw IllegalStateException("checksum mismatch")
+            if (dest.exists()) dest.delete()
+            if (!tmp.renameTo(dest)) throw IllegalStateException("rename")
         } catch (e: Exception) {
-            dest.delete()
+            tmp.delete()
             throw e
         }
         runCatching {                    // 告诉对方收到了 (旧版本不认, 不要紧)

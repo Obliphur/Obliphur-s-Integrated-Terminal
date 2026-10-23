@@ -170,6 +170,9 @@ class BreakTimerApp:
         self._rec_retry = {}          # 录像出错 / 询问被关掉后, 什么时候再试 (monotonic)
         self._rec_started_cid = None  # 在本机开始的合约 (开始时已经确认过录像)
         self._rec_ok = set()          # 别的设备开始的合约, 本机答应过录像的 (路, 合约 id)
+        self._outbox_lock = threading.Lock()   # 待发给合约主人的录像片段 (rec_outbox.json)
+        self._outbox_busy = False
+        self._outbox_at = 0.0
         self._scar_focus_id = None    # 刻痕的焦点设备 (录屏的那台); 每 10 秒判定一次
         self._scar_focus_at = 0.0
         self._merging = set()         # 正在合并的 (cid, kind), 防止重入
@@ -3258,24 +3261,86 @@ class BreakTimerApp:
                 r = recs.get(kind)
                 if r is not None:
                     r.stop(12.0)
-                    r.wait_sealed(12.0)
-            p = self.sync.peers().get(owner)
-            online = any(s["id"] == owner and s.get("online") for s in self.sync.device_states())
-            # 主人必须是在线的电脑 (手机不能合并); 不是就先留在本机
-            if not p or not online or not str(p.get("platform", "")).lower().startswith("win"):
-                return
-            for kind in kinds:
-                segs = [s for s in recorder.files_of(self.dm.data_dir, kind, cid) if not s.get("partial")]
-                ok = 0
-                for s in segs:
-                    try:
-                        if self.sync.send_file(owner, s["path"], cid=cid, kind=kind) == "sent":
-                            ok += 1
-                    except Exception as e:      # noqa: BLE001
-                        self._log_notice(f"RECORD send {cid}/{kind} failed: {e}")
-                if segs:
-                    self._log_notice(f"RECORD sent {ok}/{len(segs)} {kind} segments for {cid} to {owner}")
+                    r.wait_sealed(60.0)
+            # 记进待发送的清单 (存在数据目录里, 重开 OIT 也还在), 每 30 秒试一次, 全部发成功才划掉
+            with self._outbox_lock:
+                box = self._outbox_read()
+                if not any(e.get("cid") == cid for e in box):
+                    box.append({"cid": cid, "owner": owner, "at": time.time()})
+                    self._outbox_write(box)
+            self._flush_outbox()
         threading.Thread(target=go, daemon=True, name=f"rec-send-{cid}").start()
+
+    def _outbox_path(self) -> str:
+        return os.path.join(self.dm.data_dir, "rec_outbox.json")
+
+    def _outbox_read(self) -> list:
+        d = config.load_json_file(self._outbox_path(), {})
+        return [e for e in (d.get("items") or []) if isinstance(e, dict)] if isinstance(d, dict) else []
+
+    def _outbox_write(self, box: list):
+        if box:
+            config.save_json_file(self._outbox_path(), {"items": box})
+        else:
+            try:
+                os.remove(self._outbox_path())
+            except OSError:
+                pass
+
+    def _flush_outbox(self):
+        """待发送清单里的片段发给各自的合约主人 (主人当时不在线 / 传输失败的, 之后再试). 接收端按文件名覆盖, 重发不会重复."""
+        if self._outbox_busy:
+            return
+        self._outbox_busy = True
+
+        def run():
+            try:
+                with self._outbox_lock:
+                    box = self._outbox_read()
+                left = []
+                for e in box:
+                    cid, owner = str(e.get("cid") or ""), str(e.get("owner") or "")
+                    if not cid or time.time() - float(e.get("at") or 0) > 7 * 86400:
+                        continue                   # 太久了: 放弃 (片段仍在本机)
+                    if not self._send_all(cid, owner):
+                        left.append(e)
+                with self._outbox_lock:
+                    # 发送期间又加进来的 (另一个合约) 也留着
+                    sent = {e.get("cid") for e in box} - {e.get("cid") for e in left}
+                    self._outbox_write([e for e in self._outbox_read() if e.get("cid") not in sent])
+            finally:
+                self._outbox_busy = False
+        threading.Thread(target=run, daemon=True, name="rec-outbox").start()
+
+    def _send_all(self, cid: str, owner: str) -> bool:
+        """这个合约本机录的各路片段全部发给主人了吗 (主人不在线 / 不是电脑时返回 False, 等下次)."""
+        if any(str(getattr(r, "tag", "")) == cid for r in self._recorders.values()):
+            return False                           # 还在录 (同一个合约)
+        p = self.sync.peers().get(owner)
+        if not p:
+            return True                            # 已经解绑了: 不用再发
+        online = any(s["id"] == owner and s.get("online") for s in self.sync.device_states())
+        # 主人必须是在线的电脑 (手机不能合并); 不是就先留在本机
+        if not online or not str(p.get("platform", "")).lower().startswith("win"):
+            return False
+        done = True
+        for kind in recorder.KINDS:
+            segs = [s for s in recorder.files_of(self.dm.data_dir, kind, cid) if not s.get("partial")]
+            ok = 0
+            for s in segs:
+                try:
+                    r = self.sync.send_file(owner, s["path"], cid=cid, kind=kind)
+                    if r == "sent":
+                        ok += 1
+                    else:
+                        self._log_notice(f"RECORD send {cid}/{kind} {s['name']}: {r}")
+                except Exception as e:      # noqa: BLE001
+                    self._log_notice(f"RECORD send {cid}/{kind} failed: {e}")
+            if ok < len(segs):
+                done = False
+            if segs:
+                self._log_notice(f"RECORD sent {ok}/{len(segs)} {kind} segments for {cid} to {owner}")
+        return done
 
     def recording_offered(self, peer_id: str, who: str, o: dict) -> str:
         """收到别的设备发来的录像 (MECHANICS 18.8): final 是合约主人发来的最终录像 (直接存进 merged 展示);
@@ -3292,7 +3357,8 @@ class BreakTimerApp:
             return "busy"
         dest = os.path.join(d, devsync.safe_name(o["name"]))
         n = 1
-        while os.path.exists(dest):
+        # 片段的文件名 (开始时刻 + 合约 id) 是唯一的: 同名的就是同一段 (对方重发), 直接覆盖, 不能合并两次
+        while final and os.path.exists(dest):
             stem, ext = os.path.splitext(os.path.basename(o["name"]))
             dest = os.path.join(d, devsync.safe_name(f"{stem}-{n}{ext}"))
             n += 1
@@ -4621,6 +4687,10 @@ class BreakTimerApp:
         except Exception as e:
             self._log_window(f"ERROR    adapter overlap {type(e).__name__}: {e}")
         self.sync.track_offline()               # 每秒: 同步失败的设备马上算离线 (MECHANICS 8.4)
+        if time.monotonic() - self._outbox_at >= 30:   # 没发出去的录像片段: 每 30 秒再试一次 (18.8)
+            self._outbox_at = time.monotonic()
+            if os.path.exists(self._outbox_path()):
+                self._flush_outbox()
         try:
             self._check_contract()
         except Exception as e:
