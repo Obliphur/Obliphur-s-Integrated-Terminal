@@ -582,7 +582,7 @@ class Contract(private val file: File) {
             .put("level", level).put("orig_level", origLevel).put("cut", JSONObject(cut.toString()))
             .put("result", result).put("violations", violations).put("reward", give).put("pre_left", preLeft)
             .put("rand", JSONArray(rand))
-        live.optJSONArray("locks")?.let { if (it.length() > 0) rec.put("locks", JSONArray(it.toString())) }   // 封锁的记录格 (记录用; 合约结束后解除)
+        live.optJSONArray("locks")?.let { if (it.length() > 0) rec.put("locks", JSONArray(it.toString())) }   // 封锁的记录格 (选了记录封锁的合约结束后照样锁着)
         live.optJSONObject("slow")?.optString("start")?.takeIf { it.isNotEmpty() }?.let { rec.put("slow", it) }
         history.add(rec)
         live = JSONObject().put("state", "none").put("owner", by).put("first_break", result == "completed")
@@ -841,16 +841,23 @@ class Contract(private val file: File) {
 
     /** 未知变量 / 记录封锁 另外封锁的记录格 (所有合约的). */
     fun locks(): List<Pair<LocalDateTime, LocalDateTime>> {
-        // 只算进行中的合约的; 合约结束后解除
-        val srcs = listOfNotNull(if (active) live.optJSONArray("locks") else null)
-        return srcs.flatMap { arr ->
+        // 进行中的合约的都算; 结束了的合约里, 选了记录封锁的那些照样锁着 (没选记录封锁的, 未知变量封锁的格子合约结束后解除)
+        val srcs = listOfNotNull(if (active) live.optJSONArray("locks")?.let { it to null } else null) +
+            sealedRecs().mapNotNull { h -> h.optJSONArray("locks")?.let { it to parseIso(h.optString("end")) } }
+        return srcs.flatMap { (arr, until) ->
             (0 until arr.length()).mapNotNull { i ->
                 val v = arr.optJSONArray(i) ?: return@mapNotNull null
                 val a = parseIso(v.optString(0, "")) ?: return@mapNotNull null
                 val b = parseIso(v.optString(1, "")) ?: return@mapNotNull null
-                a to b
+                // 提前结束的合约: 结束之后才开始的格子 (当时预先封锁的) 不再锁
+                if (until != null && !a.isBefore(until)) null else a to b
             }
         }
+    }
+
+    /** 结束了的、选了记录封锁的合约 (开始时选的, 或结束时还在的): 它们封锁的格子合约结束后照样锁着. */
+    private fun sealedRecs(): List<JSONObject> = history.filter { h ->
+        "seal" in (h.optJSONArray("orig")?.strings() ?: emptyList()) || "seal" in (h.optJSONArray("terms")?.strings() ?: emptyList())
     }
 
     /** 开始专注: 等着的阻滞落到这段专注上 (专注时间按 RANDOM_SLOW 增长). 返回落上了没有.
@@ -1284,9 +1291,14 @@ class Contract(private val file: File) {
     /** 这个记录格在记录封锁的范围里 (填写后就不能再改, 界面上提交前先确认): 只在进行中、选了记录封锁的合约里,
      *  和这个合约重叠的格子. 合约结束后 / 没选记录封锁时都不算. 同 contract.py 的 hour_sealed. */
     fun hourSealed(start: LocalDateTime, end: LocalDateTime, now: LocalDateTime = LocalDateTime.now()): Boolean {
-        val a = startAt ?: return false
-        if (!active || !("seal" in orig || has("seal"))) return false
-        return a.isBefore(end) && start.isBefore(now)
+        if (!start.isBefore(now)) return false
+        val a = startAt
+        if (active && a != null && ("seal" in orig || has("seal")) && a.isBefore(end)) return true
+        // 选了记录封锁的合约结束后照样锁着: 和它重叠的格子
+        return sealedRecs().any { h ->
+            val hs = parseIso(h.optString("start")); val he = parseIso(h.optString("end"))
+            hs != null && he != null && hs.isBefore(end) && start.isBefore(he)
+        }
     }
 
     /** 记录封锁: 进行中的合约选了这个词条时, 和合约重叠的记录格已经填写了的 (自己填的, 或者超时自动记录的) 就不能再改,
