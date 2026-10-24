@@ -727,7 +727,7 @@ class Contract:
                "result": result, "violations": self.violations, "reward": reward,
                "pre_left": self.pre_left, "rand": self.rand, "owner": self.live.get("owner", "")}
         if self.live.get("locks"):
-            rec["locks"] = list(self.live["locks"])        # 未知变量 / 记录封锁另外封锁的记录格 (选了记录封锁的合约结束后照样锁着)
+            rec["locks"] = list(self.live["locks"])        # 未知变量 / 记录封锁另外封锁的记录格 (只留作记录, 合约结束后不再锁)
         slow = self.live.get("slow")
         if isinstance(slow, dict) and slow.get("start"):
             rec["slow"] = slow["start"]                   # 阻滞的那段专注可能比合约结束得晚
@@ -1029,22 +1029,13 @@ class Contract:
         self.save()
         return [k for k, _a, _b in picks]
 
-    def _sealed_recs(self) -> list:
-        """结束了的、选了记录封锁的合约 (开始时选的, 或结束时还在的): 它们封锁的格子合约结束后照样锁着."""
-        return [h for h in self.history if "seal" in (h.get("orig") or []) or "seal" in (h.get("terms") or [])]
-
     def locks(self) -> list:
-        """未知变量 / 记录封锁 另外封锁的记录格: [(开始, 结束)]. 进行中的合约的都算;
-        结束了的合约里, 选了记录封锁的那些照样锁着 (没选记录封锁的, 未知变量封锁的格子合约结束后解除)."""
+        """未知变量 / 记录封锁 另外封锁的记录格: [(开始, 结束)]. 只有进行中的合约的; 合约结束后全部解除."""
         out = []
-        srcs = [(self.live.get("locks") if self.active else None, None)]
-        srcs += [(h.get("locks"), _parse(h.get("end"))) for h in self._sealed_recs()]
-        for src, until in srcs:
-            for v in src or []:
-                a, b = (_parse(v[0]), _parse(v[1])) if isinstance(v, (list, tuple)) and len(v) == 2 else (None, None)
-                # 提前结束的合约: 结束之后才开始的格子 (当时预先封锁的) 不再锁
-                if a and b and (until is None or a < until):
-                    out.append((a, b))
+        for v in (self.live.get("locks") if self.active else None) or []:
+            a, b = (_parse(v[0]), _parse(v[1])) if isinstance(v, (list, tuple)) and len(v) == 2 else (None, None)
+            if a and b:
+                out.append((a, b))
         return out
 
     def slow_bind(self, start: datetime) -> bool:
@@ -1631,17 +1622,11 @@ class Contract:
 
     def hour_sealed(self, start: datetime, end: datetime, now: datetime = None) -> bool:
         """这个记录格在记录封锁的范围里 (填写后就不能再改, 界面上提交前先确认):
-        和选了记录封锁的合约 (进行中的, 或已经结束的) 重叠的格子. 合约结束后照样锁着; 没选记录封锁时不算."""
+        进行中、选了记录封锁的合约里, 和合约重叠的格子. 合约结束后 / 没选记录封锁时都不算."""
         now = now or datetime.now()
         if start >= now:
             return False
-        if self.active and self.start_at and ("seal" in self.orig or self.has("seal")) and self.start_at < end:
-            return True
-        for h in self._sealed_recs():
-            a, b = _parse(h.get("start")), _parse(h.get("end"))
-            if a and b and a < end and start < b:
-                return True
-        return False
+        return bool(self.active and self.start_at and ("seal" in self.orig or self.has("seal")) and self.start_at < end)
 
     def hour_locked(self, start: datetime, end: datetime, text: str, now: datetime, fill: timedelta,
                     auto, key: str = "") -> bool:
@@ -2355,17 +2340,14 @@ def _selftest():
     assert c.hour_locked(a, b, "学习", datetime(2026, 10, 18, 11, 1), fill, "Sleeping"), "过了时限, 填了的也锁"
     assert c.hour_locked(a, b, "学习", datetime(2026, 10, 18, 10, 59), fill, "Sleeping"), "填写了就不能再改 (时限之内也一样)"
     assert not c.hour_locked(a, b, "", datetime(2026, 10, 18, 11, 30), fill, "Sleeping"), "没填的照常能填"
+    c.live["locks"] = [["2026-10-18T09:00:00", "2026-10-18T09:30:00"]]
+    assert c.hour_locked(datetime(2026, 10, 18, 9), datetime(2026, 10, 18, 9, 30), "", datetime(2026, 10, 18, 11), fill,
+                         "Sleeping"), "另外封锁的格子合约中不能填"
     c.finish("abandoned", datetime(2026, 10, 18, 12))
-    assert c.hour_locked(a, b, "Sleeping", datetime(2026, 10, 19), fill, "Sleeping"), "合约结束后照样锁着"
-    assert c.hour_sealed(a, b, datetime(2026, 10, 19)), "合约结束后填写也要确认 (填了就锁)"
-    assert not c.hour_locked(a, b, "", datetime(2026, 10, 19), fill, "Sleeping"), "没填的照常能填"
-    sealed_rec = next(h for h in c.history if h.get("end") == "2026-10-18T12:00:00")
-    sealed_rec["locks"] = [["2026-10-18T09:00:00", "2026-10-18T09:30:00"], ["2026-10-18T13:00:00", "2026-10-18T14:00:00"]]
-    assert c.hour_locked(datetime(2026, 10, 18, 9), datetime(2026, 10, 18, 9, 30), "", datetime(2026, 10, 19), fill, "Sleeping"),         "另外封锁的格子合约结束后照样锁着"
-    assert not c.hour_locked(datetime(2026, 10, 18, 13), datetime(2026, 10, 18, 14), "", datetime(2026, 10, 19), fill,
-                             "Sleeping"), "合约提前结束: 之后的格子不再锁"
-    late = datetime(2026, 10, 18, 13)
-    assert not c.hour_sealed(late, late + timedelta(hours=1), datetime(2026, 10, 19)), "合约之后的格子不受影响"
+    assert not c.hour_locked(a, b, "Sleeping", datetime(2026, 10, 19), fill, "Sleeping"), "合约结束后解除"
+    assert not c.hour_sealed(a, b, datetime(2026, 10, 19)), "合约结束后填写不用确认"
+    assert not c.locks() and not c.hour_locked(datetime(2026, 10, 18, 9), datetime(2026, 10, 18, 9, 30), "",
+                                                datetime(2026, 10, 19), fill, "Sleeping"), "另外封锁的格子合约结束后解除"
     nos = Contract(tempfile.mkdtemp())
     nos.start(["long1"], owner="me", now=t0)
     assert not nos.hour_sealed(a, b, datetime(2026, 10, 18, 11)), "没选记录封锁: 不用确认"

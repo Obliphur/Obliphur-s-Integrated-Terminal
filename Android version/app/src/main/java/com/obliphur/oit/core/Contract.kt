@@ -858,25 +858,15 @@ class Contract(private val file: File) {
         return picks.map { it.first }
     }
 
-    /** 未知变量 / 记录封锁 另外封锁的记录格 (所有合约的). */
+    /** 未知变量 / 记录封锁 另外封锁的记录格: 只有进行中的合约的; 合约结束后全部解除. */
     fun locks(): List<Pair<LocalDateTime, LocalDateTime>> {
-        // 进行中的合约的都算; 结束了的合约里, 选了记录封锁的那些照样锁着 (没选记录封锁的, 未知变量封锁的格子合约结束后解除)
-        val srcs = listOfNotNull(if (active) live.optJSONArray("locks")?.let { it to null } else null) +
-            sealedRecs().mapNotNull { h -> h.optJSONArray("locks")?.let { it to parseIso(h.optString("end")) } }
-        return srcs.flatMap { (arr, until) ->
-            (0 until arr.length()).mapNotNull { i ->
-                val v = arr.optJSONArray(i) ?: return@mapNotNull null
-                val a = parseIso(v.optString(0, "")) ?: return@mapNotNull null
-                val b = parseIso(v.optString(1, "")) ?: return@mapNotNull null
-                // 提前结束的合约: 结束之后才开始的格子 (当时预先封锁的) 不再锁
-                if (until != null && !a.isBefore(until)) null else a to b
-            }
+        val arr = (if (active) live.optJSONArray("locks") else null) ?: return emptyList()
+        return (0 until arr.length()).mapNotNull { i ->
+            val v = arr.optJSONArray(i) ?: return@mapNotNull null
+            val a = parseIso(v.optString(0, "")) ?: return@mapNotNull null
+            val b = parseIso(v.optString(1, "")) ?: return@mapNotNull null
+            a to b
         }
-    }
-
-    /** 结束了的、选了记录封锁的合约 (开始时选的, 或结束时还在的): 它们封锁的格子合约结束后照样锁着. */
-    private fun sealedRecs(): List<JSONObject> = history.filter { h ->
-        "seal" in (h.optJSONArray("orig")?.strings() ?: emptyList()) || "seal" in (h.optJSONArray("terms")?.strings() ?: emptyList())
     }
 
     /** 开始专注: 等着的阻滞落到这段专注上 (专注时间按 RANDOM_SLOW 增长). 返回落上了没有.
@@ -1405,12 +1395,7 @@ class Contract(private val file: File) {
     fun hourSealed(start: LocalDateTime, end: LocalDateTime, now: LocalDateTime = LocalDateTime.now()): Boolean {
         if (!start.isBefore(now)) return false
         val a = startAt
-        if (active && a != null && ("seal" in orig || has("seal")) && a.isBefore(end)) return true
-        // 选了记录封锁的合约结束后照样锁着: 和它重叠的格子
-        return sealedRecs().any { h ->
-            val hs = parseIso(h.optString("start")); val he = parseIso(h.optString("end"))
-            hs != null && he != null && hs.isBefore(end) && start.isBefore(he)
-        }
+        return active && a != null && ("seal" in orig || has("seal")) && a.isBefore(end)
     }
 
     /** 记录封锁: 进行中的合约选了这个词条时, 和合约重叠的记录格已经填写了的 (自己填的, 或者超时自动记录的) 就不能再改,

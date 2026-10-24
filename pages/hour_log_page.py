@@ -310,6 +310,7 @@ class HourLogPage(tk.Frame):
             seed = self.fog()                   # 黑雾时是开始合约时抽好的假内容编号
         except Exception:
             seed = None
+        pending = []                                # 不再封锁 (合约结束了) 的格子里留着的草稿: 直接保存
         for h, (lbl, ent, var) in self.rows.items():
             start = self._slot_start(h)
             end = start + timedelta(hours=1)
@@ -345,6 +346,8 @@ class HourLogPage(tk.Frame):
                     self._drafts.pop((h, i), None)            # 已经有内容了 (例如同步来的) / 草稿清空了: 不再留草稿
                     draft = None
                 shown_text = draft if draft is not None else text
+                if draft is not None and not self.sealed(a, b):
+                    pending.append((h, i))
                 if focused is not e and v.get() != shown_text:
                     v.set(shown_text)
                 done = b <= now
@@ -370,6 +373,8 @@ class HourLogPage(tk.Frame):
                 fg=COLORS["accent"] if (is_wait or is_now) else
                    (COLORS["text"] if (enabled and ended and not locked) else COLORS["text_dim"])
             )
+        for h, i in pending:
+            self.after_idle(self._commit, h, i)
 
     def show(self):
         aw = self.dm.awaiting_slot()
