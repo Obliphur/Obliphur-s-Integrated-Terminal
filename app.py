@@ -4775,6 +4775,22 @@ class BreakTimerApp:
 
         flavor(page, tr("就这样回到一切之初,修正错误的抉择."), bg=bg).pack(fill="x", padx=26, pady=(4, 16))
 
+    def _check_offline_chime(self):
+        """每 5 秒: 有绑定的设备刚离线时, 在焦点设备 (最后有人操作的那台) 上响一次提示音 (MECHANICS 15.2)."""
+        try:
+            peers = self.sync.peers()
+            now_off = {st["id"] for st in self.sync.device_states() if st["id"] in peers and not st["online"]}
+        except Exception:
+            return
+        was = getattr(self, "_offline_seen", None)
+        self._offline_seen = now_off
+        if was is None or not (now_off - was) or not self.sync.is_latest_active():
+            return                                   # 刚打开时已经离线的不响
+        names = ", ".join(str(peers[i].get("name") or "?") for i in sorted(now_off - was))
+        self._log_notice(f"SYNC offline {names}")
+        self._play_chime()
+        toast.warn(tr("{name} 离线了.", name=names))
+
     def _check_unbind(self):
         """每 5 秒: 冷静期到了的解除绑定就解除, 并请那台设备清空全部数据 (MECHANICS 15.1)."""
         try:
