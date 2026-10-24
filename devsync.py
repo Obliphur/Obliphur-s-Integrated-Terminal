@@ -677,13 +677,13 @@ class SyncService:
     def kept_state(self, wiped_by: str = "", leave: bool = False) -> dict:
         """重置后留下的同步状态: 本机的 id, 绑定 (密钥, 地址), 已删除的设备, 没送到的清空请求, 解除绑定的计划.
         账, 状态, 修改时间全部清掉 (所有设备的数据都清空了). wiped_by: 是哪台设备请本机清空的 (重开后提示).
-        leave: 别的设备解除了和本机的绑定 (15.1): 绑定也全部清掉, 只留本机的 id."""
+        leave: 是别的设备解除了和本机的绑定 (15.1): 只重置本机, 和其他设备的绑定照样留着 (只用来重开后提示)."""
         with self.lock:
-            peers = {} if leave else {k: dict(v, last_err="", init=False) for k, v in self.state["peers"].items()}
+            peers = {k: dict(v, last_err="", init=False) for k, v in self.state["peers"].items()}
             d = {"device": dict(self.state["device"]), "peers": peers, "track": {}, "ledgers": {}, "status": {},
                  "gone": dict(self.state["gone"]), "wipes_seen": list(self.state.get("wipes_seen") or []),
-                 "wipe_out": {} if leave else dict(self.state.get("wipe_out") or {}),
-                 "unbinds": {} if leave else dict(self.state.get("unbinds") or {}),
+                 "wipe_out": dict(self.state.get("wipe_out") or {}),
+                 "unbinds": dict(self.state.get("unbinds") or {}),
                  "evict_out": dict(self.state.get("evict_out") or {})}
         if wiped_by:
             d["wiped_by"] = wiped_by
@@ -762,7 +762,7 @@ class SyncService:
         self._save()
 
     def check_unbind(self) -> list:
-        """每 5 秒: 冷静期到了的解除绑定 —— 解除, 并请那台设备清空全部数据 (它也解除和其他设备的绑定).
+        """每 5 秒: 冷静期到了的解除绑定 —— 解除, 并请那台设备重置 (只清空它自己的数据).
         对方离线时清空请求留在 evict_out, 每 EVICT_RETRY 秒再送, 直到送到 (或 GONE_KEEP_MS 之后放弃).
         返回这次解除了的设备的名字."""
         now = _now_ms()
@@ -1766,7 +1766,7 @@ GONE_KEEP_MS = 62 * 86400_000      # 记住"哪台设备已经重置 / 卸载了
 def send_wipe_to(my_id: str, peer: dict, wipe_id: str, unpair: bool, timeout: float = 3.0, leave: bool = False) -> int:
     """请一台绑定的设备清空 OIT 的数据 (unpair: 同时解除和本机的绑定). 返回 HTTP 状态 (连不上时 0;
     404 = 对方是不认识清空请求的旧版本). uninstall.py 也用它.
-    leave: 本机解除了和它的绑定 (15.1): 它清空全部数据, 也解除和其他设备的绑定, 不再转告."""
+    leave: 本机解除了和它的绑定 (15.1): 只重置它自己 (清空数据), 不再转告其他设备."""
     try:
         env = seal(bytes.fromhex(peer["key"]), my_id, {"wipe": wipe_id, "unpair": bool(unpair), "leave": bool(leave)})
         st, _ = SyncService._http(peer["addr"], peer["port"], "POST", "/oit/v1/wipe", env, timeout=timeout)
@@ -2296,7 +2296,7 @@ def _selftest():
         sa.state["gone"].pop(sb.my_id)
         sa.state["peers"][sb.my_id] = dict(sb.peers()[sa.my_id], name="B", addr="127.0.0.1", port=sb.port,
                                            mother=sa.my_id)
-        # 解除绑定: 48 小时后才解除, 期间可以取消; 到时间后解除, 并请对方清空全部数据 (它也解除和别的设备的绑定)
+        # 解除绑定: 48 小时后才解除, 期间可以取消; 到时间后解除, 并请对方重置 (只清空它自己的数据)
         assert not sb.request_unbind(sa.my_id)
         assert sb.unbind_at(sa.my_id) and sb.check_unbind() == [] and sa.my_id in sb.peers()
         sb.cancel_unbind(sa.my_id)
@@ -2313,7 +2313,7 @@ def _selftest():
         assert la.wiped and la.wiped[3:] == ("leave",) and sb.my_id not in sa.peers(), la.wiped
         assert not sb.state["evict_out"], "送到了就不再送"
         kept = sa.kept_state("B", leave=True)
-        assert not kept["peers"] and kept["wiped_leave"] and not kept["unbinds"]
+        assert kept["wiped_leave"] and not kept["ledgers"]
         sa.state["gone"].pop(sb.my_id)
         sa.state["peers"][sb.my_id] = dict(keep_a, name="B", addr="127.0.0.1",
                                            port=sb.port, mother=sa.my_id)

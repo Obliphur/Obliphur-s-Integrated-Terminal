@@ -438,9 +438,8 @@ class OitApp : Application(), Host {
         sync?.let { s ->
             Thread {
                 runCatching {
-                    // leave: 别的设备解除了和本机的绑定 (15.1): 不转告, 让其他设备解除和本机的绑定 (删掉本机的数据)
-                    if (leave) s.forgetMe(3000)
-                    else s.sendWipe(wipeId ?: com.obliphur.oit.sync.SyncService.newWipeId(), exclude, uninstall)
+                    // leave: 别的设备解除了和本机的绑定 (15.1): 只重置本机, 不转告其他设备
+                    if (!leave) s.sendWipe(wipeId ?: com.obliphur.oit.sync.SyncService.newWipeId(), exclude, uninstall)
                     if (!uninstall) kept = s.keptState(by, leave)
                 }
             }.apply { start(); join(3500) }

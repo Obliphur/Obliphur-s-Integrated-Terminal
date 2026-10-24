@@ -4800,7 +4800,7 @@ class BreakTimerApp:
         删除全部数据 (只留下设备同步的绑定), 再重新打开程序. 新进程找不到设置文件, 就像第一次安装:
         弹出介绍窗口, 开始配置期, 网络按默认设置接管.
         wipe_id / exclude / by: 是别的设备 (名字 by) 请本机清空的 —— 同一个请求转告给本机绑定的其他设备.
-        leave: 是它解除了和本机的绑定 (15.1): 不转告, 让其他设备解除和本机的绑定 (删掉本机的数据), 本机的绑定也全部清掉."""
+        leave: 是它解除了和本机的绑定 (15.1): 只重置本机, 不转告其他设备 (和它们的绑定照样留着)."""
         if self.dm.resetting:
             return
         self.dm.resetting = True
@@ -4808,9 +4808,7 @@ class BreakTimerApp:
         self._close_check_win()
         kept = None
         try:
-            if leave:
-                self.sync.forget_me()
-            else:
+            if not leave:
                 self.sync.send_wipe(wipe_id or self.sync.new_wipe_id(), exclude=exclude)   # MECHANICS 9
             kept = self.sync.kept_state(by, leave)
         except Exception:

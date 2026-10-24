@@ -26,7 +26,7 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
     override fun appVersion(): String = com.obliphur.oit.BuildConfig.VERSION_NAME
 
     /** 别的设备重置 / 卸载了, 请本机也清空数据: 回复对方之后再做 (MECHANICS 9).
-     *  leave: 它解除了和本机的绑定 (15.1): 本机清空全部数据, 也解除和其他设备的绑定. */
+     *  leave: 它解除了和本机的绑定 (15.1): 只重置本机, 不转告其他设备. */
     override fun wipeRequested(wipeId: String, sender: String, name: String, leave: Boolean) {
         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
             app.resetAll(wipeId = wipeId, exclude = sender, by = name, leave = leave)
