@@ -119,6 +119,7 @@ object RecCrypto {
         val d = folder(dataDir, kind).apply { mkdirs() }
         var name = src.name
         if (name.endsWith(".mp4", true)) name = name.dropLast(4)
+        if (name.endsWith(PART)) name = name.dropLast(PART.length)   // 被强杀时没改名的 (.recording.mp4): 封装后就是写完的片段
         var dst = File(d, name + EXT)
         var n = 1
         while (dst.exists()) { dst = File(d, "$name-$n$EXT"); n++ }
@@ -164,7 +165,9 @@ object RecCrypto {
             val low = f.name.lowercase()
             val ext = listOf(EXT, ".mp4").firstOrNull { low.endsWith(it) } ?: continue
             var stem = f.name.dropLast(ext.length)
-            val partial = stem.endsWith(PART) || ext == ".mp4"
+            // 只有缓存里的 mp4 是正在写的; 数据目录里的 .oitv 都已经写完 (以前被强杀后封装的 .recording.oitv 也算写完,
+            // 否则这个合约的片段会因为"还在写"永远发不出去)
+            val partial = ext == ".mp4"
             if (stem.endsWith(PART)) stem = stem.dropLast(PART.length)
             val start = runCatching { LocalDateTime.parse(stem.take(15), STAMP) }.getOrNull()
             out.add(Rec(f, f.name, f.length(), start, partial))

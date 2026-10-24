@@ -208,6 +208,8 @@ class RecordManager(private val app: OitApp) {
 
     /** 这个合约的各路片段全部发给主人了吗 (还在写 / 封装的、主人不在线 / 不是电脑时返回 false, 等下次). */
     private fun sendAll(sync: com.obliphur.oit.sync.SyncService, cid: String, owner: String): Boolean {
+        // 现在没在录: 缓存里留下的 mp4 (熄屏 / 被系统停掉时没封装的) 先封装起来, 不再当成"还在写"一直等
+        if (RecCrypto.KINDS.none { recording(it) }) runCatching { RecCrypto.sealLeftovers(dataDir, cacheDir) }
         if (RecCrypto.KINDS.any { k -> RecCrypto.filesOf(dataDir, k, cid, cacheDir).any { it.partial } }) return false
         val p = sync.peers()[owner] ?: return true                     // 已经解绑了: 不用再发
         val online = sync.deviceStates().any { it.id == owner && it.online }

@@ -176,6 +176,7 @@ class BreakTimerApp:
         self._scar_focus_id = None    # 刻痕的焦点设备 (录屏的那台); 每 10 秒判定一次
         self._scar_focus_at = 0.0
         self._merging = set()         # 正在合并的 (cid, kind), 防止重入
+        self._merge_again = set()     # 合并中又收到了新片段的 (cid, kind): 合并完再合并一次
         self._focus_checks = 0        # 这一段专注里已经被手动关掉的"还在吗"提醒数
         self._focus_ok = 0.0          # 最后一次确认 (关掉提醒窗) 时已专注的秒数
         self._check_win = None        # 当前开着的"还在吗"提醒窗
@@ -3235,11 +3236,14 @@ class BreakTimerApp:
         """合约主人: 把本机的 + 收到的片段接成一个视频, 再把最终结果同步给所有设备. 收到新片段时会再调用 (重合并 + 重发).
         rec: 刚结束的这一路 recorder (有的话先 stop + 等最后一段加密, 再扫描片段)."""
         key = (cid, kind)
-        if not cid or key in self._merging:
+        if not cid:
             return
+        if key in self._merging:
+            self._merge_again.add(key)      # 正在合并时又收到片段: 合并完再合并一次 (长的录像合并要好几分钟)
+            return
+        self._merging.add(key)
 
         def run():
-            self._merging.add(key)
             try:
                 if rec is not None:
                     rec.stop(12.0)                 # 录完当前片段 (Finalize)
@@ -3259,6 +3263,9 @@ class BreakTimerApp:
                 self._distribute_merged(cid, kind, path)
             finally:
                 self._merging.discard(key)
+                if key in self._merge_again:
+                    self._merge_again.discard(key)
+                    self.root.after(0, lambda: self._merge_and_share(cid, kind))
         threading.Thread(target=run, daemon=True, name=f"merge-{cid}-{kind}").start()
 
     def _distribute_merged(self, cid: str, kind: str, path: str):

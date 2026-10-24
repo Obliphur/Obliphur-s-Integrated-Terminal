@@ -1621,15 +1621,19 @@ def merge(data_dir: str, cid: str, kind: str = "screen", extra=()) -> str:
         raw = os.path.join(work, "merged.mp4")
         # 画布的朝向 / 大小 (MECHANICS 18.8): 有横屏设备 (本机电脑录过, 或横屏片段占多数) 就按横屏, 否则按竖屏;
         # 横屏画布里的竖屏内容左右留黑, 竖屏画布里冒出的横屏画面转正
-        info, weights = [], []
+        info, weights, ok = [], [], []
         for p, loc in plain:
             try:
                 w, h = _dims(p)
-                info.append((w, h, loc))
-                # 目光: 按横 / 竖各录了多久定画布的朝向 (手机横过来录了大半场, 就是横的), 码率固定, 用文件大小代替时长
-                weights.append(max(1, os.path.getsize(p)) if kind == "camera" else 1)
             except Exception:       # noqa: BLE001
-                pass
+                continue            # 打不开的片段 (例如手机上 OIT 被强杀时没写完的) 跳过, 不让整个合并失败
+            info.append((w, h, loc))
+            ok.append((p, loc))
+            # 目光: 按横 / 竖各录了多久定画布的朝向 (手机横过来录了大半场, 就是横的), 码率固定, 用文件大小代替时长
+            weights.append(max(1, os.path.getsize(p)) if kind == "camera" else 1)
+        plain = ok
+        if not plain:
+            return ""
         # 目光 (摄像头) 的合并结果按目光的码率压 (要同步给所有设备, 不能太大)
         # 目光的声音也接上 (手机录的是单声道 48 kHz AAC, 解成 PCM 再编码); 刻痕只接画面
         cam = kind == "camera"
