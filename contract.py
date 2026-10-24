@@ -386,10 +386,20 @@ def rest_reward(level: int, terms=None) -> int:
     return int(round(base * mult))
 
 
+REST_SHARE_FROM = 0.3                          # k 不超过这个时一点不给
+REST_SHARE_NEAR = 0.6                          # k 趋近 1 (还没完成) 时给到的比例; 完成 (k = 1) 才给全部
+
+
 def rest_share(k: float) -> float:
-    """合约结束时给出完成奖励的几成: k = 进行了多久 / 总时长, f(k) = k² (f(0) = 0, f(1) = 1, f'' > 0: 越到后面涨得越快)."""
+    """合约结束时给出完成奖励的几成: k = 进行了多久 / 总时长.
+    k <= 0.3: 0; 0.3 < k < 1: 0.6 * ((k - 0.3) / 0.7)² (f'' > 0, 越到后面涨得越快, k → 1 时趋近 0.6); k = 1: 1."""
     k = min(1.0, max(0.0, float(k)))
-    return k * k
+    if k >= 1.0:
+        return 1.0
+    if k <= REST_SHARE_FROM:
+        return 0.0
+    x = (k - REST_SHARE_FROM) / (1.0 - REST_SHARE_FROM)
+    return REST_SHARE_NEAR * x * x
 
 
 def rest_minutes_total(level: int, terms=None) -> int:
@@ -2294,7 +2304,10 @@ def _selftest():
     full = c.reward
     assert c.reward_at(t0) == 0 and c.reward_at(t0 + timedelta(hours=5)) == round(full), "k = 0: 0%, k = 1: 100%"
     rec = c.finish("failed", t0 + timedelta(hours=2))
-    assert rec["reward"] == round(full * (7200 / 17280) ** 2), "没有完成: 按进行的比例 k² 给"
+    assert rec["reward"] == round(full * 0.6 * ((7200 / 17280 - 0.3) / 0.7) ** 2), "没有完成: 按进行的比例 f(k) 给"
+    assert rest_share(0.0) == 0.0 and rest_share(0.3) == 0.0 and rest_share(1.0) == 1.0
+    assert abs(rest_share(0.65) - 0.15) < 1e-9 and 0.599 < rest_share(0.9999) < 0.6, "k → 1⁻ 趋近 0.6"
+    assert rest_share(0.5) - rest_share(0.4) < rest_share(0.9) - rest_share(0.8), "f'' > 0"
     assert rec["orig_level"] == 6 and rec["level"] == 4 and not c.active
     assert not c.take_first_break()
 

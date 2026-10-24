@@ -365,8 +365,15 @@ class Contract(private val file: File) {
         /** 完成合约时存进积攒的休息时间的秒数 (按等级查表 + 凑齐的组合的结束后收益). */
         fun restReward(level: Int, terms: Collection<String> = emptyList()): Int =
             Math.round((restMinutes(level) * 60 + comboEnd(terms)) * (terms.firstNotNullOfOrNull { LONG_REWARD[it] } ?: 1.0)).toInt()
-        /** 合约结束时给出完成奖励的几成: k = 进行了多久 / 总时长, f(k) = k² (f(0) = 0, f(1) = 1, f'' > 0). */
-        fun restShare(k: Double): Double { val x = k.coerceIn(0.0, 1.0); return x * x }
+        /** 合约结束时给出完成奖励的几成: k = 进行了多久 / 总时长.
+         *  k <= 0.3: 0; 0.3 < k < 1: 0.6 * ((k - 0.3) / 0.7)² (f'' > 0, k → 1 时趋近 0.6); k = 1: 1. 同 contract.py. */
+        fun restShare(k: Double): Double {
+            val x = k.coerceIn(0.0, 1.0)
+            if (x >= 1.0) return 1.0
+            if (x <= 0.3) return 0.0
+            val t = (x - 0.3) / 0.7
+            return 0.6 * t * t
+        }
         /** 完成合约时休息时间一共多少分钟 (界面上写 "完成后休息 +N 分钟"). */
         fun restMinutesTotal(level: Int, terms: Collection<String> = emptyList()): Int = restReward(level, terms) / 60
         /** 合约开始时存进积攒的休息时间的秒数 (凑齐的组合给的, 算合约中得到的). */

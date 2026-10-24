@@ -197,8 +197,10 @@ class ContractTest {
         val full = c.reward
         assertEquals(0, c.rewardAt(t0)); assertEquals(Math.round(full).toInt(), c.rewardAt(t0.plusHours(5)))
         val rec = c.finish("failed", t0.plusHours(2))!!
-        // 没有完成: 按进行的比例 k² 给 (持久战-I: 4.8 小时里进行了 2 小时)
-        assertEquals(Math.round(full * Math.pow(7200.0 / 17280.0, 2.0)).toInt(), rec.optInt("reward")); assertEquals(4, rec.optInt("level")); assertEquals(6, rec.optInt("orig_level"))
+        // 没有完成: 按进行的比例 f(k) 给 (持久战-I: 4.8 小时里进行了 2 小时)
+        assertEquals(Math.round(full * 0.6 * Math.pow((7200.0 / 17280.0 - 0.3) / 0.7, 2.0)).toInt(), rec.optInt("reward"))
+        assertEquals(0.0, Contract.restShare(0.3), 1e-12); assertEquals(1.0, Contract.restShare(1.0), 1e-12)
+        assertEquals(0.15, Contract.restShare(0.65), 1e-9); assertTrue(Contract.restShare(0.9999) in 0.599..0.6); assertEquals(4, rec.optInt("level")); assertEquals(6, rec.optInt("orig_level"))
         assertFalse(c.takeFirstBreak())
     }
 
