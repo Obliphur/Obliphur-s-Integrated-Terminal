@@ -158,11 +158,11 @@ class CoreTest {
         assertEquals(true to "default-allow", s.decide("notbilibili.com", false, B))
         // 应用名单只管锁定
         assertEquals(false to "blacklist-app", s.appAllowed("com.steam", false, B))
-        assertEquals(false to "blacklist-app", s.appAllowed("com.steam", true, B))
+        assertEquals(true to "rest", s.appAllowed("com.steam", true, B))   // 休息中全部放行
         assertEquals(true to "default-allow", s.appAllowed("com.code", false, B))
         assertEquals(true to "whitelist-app", s.appAllowed("com.code", false, W))
         assertEquals(false to "not-whitelisted", s.appAllowed("com.steam", false, W))
-        assertEquals(true to "online", s.appAllowed("com.steam", true, W))
+        assertEquals(true to "rest", s.appAllowed("com.steam", true, W))
         // 删除一律要等; 等待中再加回 = 取消
         assertEquals(RuleResult.STAGED, rs.remove(RuleKeys.BLACK_DOMAINS, "bilibili.com").first)
         assertEquals(RuleResult.STAGED, rs.remove(RuleKeys.BLACK_DOMAINS, "bilibili.com").first)

@@ -299,13 +299,23 @@ fun SyncCard() {
             }
             val st = live[pid]?.takeIf { now - it.optLong("ts") < 60_000 }
             val busy = when (st?.optString("timer")) { "running" -> tr("专注中…"); "break" -> tr("休息中 ☕"); else -> "" }
+            // 解除绑定 (MECHANICS 15.1): 冷静期 48 小时, 期间可以取消
+            val unbindAt = s.unbindAt(pid)
+            val planText = unbindAt?.let {
+                tr("将在 {t} 解除绑定", "t" to java.time.LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(it),
+                    java.time.ZoneId.systemDefault()).format(com.obliphur.oit.core.Fmt.MDHM))
+            } ?: ""
             Column(Modifier.padding(vertical = 4.dp)) {
                 Text("${p.optString("name")} (${p.optString("platform")})", color = o.text)
-                Dim(listOf(role, whenText, busy).filter { it.isNotEmpty() }.joinToString("  ·  "), size = 12,
+                Dim(listOf(role, whenText, busy, planText).filter { it.isNotEmpty() }.joinToString("  ·  "), size = 12,
                     color = if (err.isNotEmpty()) o.warn else o.dim)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     PlainButton(tr("立即同步")) { s.syncNow() }
-                    PlainButton(tr("解除绑定")) { askUnpair = pid }
+                    if (unbindAt != null) PlainButton(tr("✕  取消解除绑定")) {
+                        s.cancelUnbind(pid)
+                        OitApp.instance.core.toast(tr("已取消解除绑定."))
+                    }
+                    else PlainButton(tr("解除绑定")) { askUnpair = pid }
                 }
             }
         }
@@ -316,8 +326,12 @@ fun SyncCard() {
         }
     }
     askUnpair?.let { pid ->
-        Confirm(tr("解除绑定"), tr("解除和 {name} 的绑定?", "name" to (s.peers()[pid]?.optString("name") ?: "?")), true,
-            { askUnpair = null }) { s.unpair(pid) }
+        val peer = s.peers()[pid]
+        val name = peer?.optString("name") ?: "?"
+        // 对方已经解除了 / 重置过 (unpaired): 直接解除; 否则 48 小时后解除, 并清空对方的全部数据
+        val msg = if (peer?.optString("last_err") == "unpaired") tr("解除和 {name} 的绑定?", "name" to name)
+            else tr("48 小时后解除和 {name} 的绑定, 并清空 {name} 上的全部数据. 期间可以取消.", "name" to name)
+        Confirm(tr("解除绑定"), msg, true, { askUnpair = null }) { s.requestUnbind(pid) }
     }
 }
 

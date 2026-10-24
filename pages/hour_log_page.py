@@ -105,7 +105,7 @@ def fog_noise(words, at: datetime) -> str:
 class HourLogPage(tk.Frame):
 
     def __init__(self, master, data_manager, on_text_changed=None, on_toggle=None,
-                 on_open_settings=None, locked=None, split=None, fog=None, sealed=None,
+                 on_open_settings=None, locked=None, split=None, fog=None, sealed=None, rest=None,
                  split_all=None, on_filled=None):
         super().__init__(master, bg=COLORS["bg"])
         self.dm = data_manager
@@ -115,6 +115,7 @@ class HourLogPage(tk.Frame):
         self.split = split or (lambda start: False)
         # 黑雾: 返回这个合约的种子 (没有黑雾时 None). 除了"现在"的格子和待填写的格子, 其他格子的时间写 ???, 内容是随机字符
         self.fog = fog or (lambda: None)
+        self.rest = rest or (lambda a, b, text: False)   # 休息中没填写的格子: 黑雾不盖住, 自己填写之前一直能填 (18.4)
         self.split_all = split_all or (lambda: False)
         self.on_filled = on_filled or (lambda: None)  # 空着的格子填上了 (记录封锁另外封锁两个格子)
         # 记录封锁: 这个格子填写后就不能再改 (开始, 结束). 这种格子只在按 Enter 并确认后才保存,
@@ -331,7 +332,7 @@ class HourLogPage(tk.Frame):
             shown = False                           # 黑雾时这一行有没有露出来的格子
             for i, (e, v, a, b, text) in enumerate(cells):
                 wait = awaiting is not None and a <= awaiting < b
-                hidden = seed is not None and not (a <= now < b or wait)     # 黑雾: 只露出"现在"和待填写的格子
+                hidden = seed is not None and not (a <= now < b or wait or self.rest(a, b, text))   # 黑雾: 只露出"现在"、待填写的和休息中没填写的格子
                 shown = shown or not hidden
                 if hidden:
                     noise = fog_noise(seed, a)

@@ -159,6 +159,7 @@ class OitApp : Application(), Host {
         core.selfOffSpans = { a, b -> s.selfOffSpans(a, b) }
         core.offlineDevices = { s.deviceStates().filter { !it.online }.map { it.name to it.seen } }
         core.versionMismatch = { s.versionMismatch() }
+        core.offlinePeers = { val peers = s.peers(); s.deviceStates().filter { !it.online && it.id in peers }.associate { it.id to it.name } }
         core.syncStartedMs = { s.startedMs }
         core.checkUnbind = { s.checkUnbind() }
         core.dm.offlineSpans = { a, b -> s.offlineSpans(a, b) }
@@ -429,7 +430,7 @@ class OitApp : Application(), Host {
      *  wipeId / exclude / by: 是别的设备 (名字 by) 请本机清空的 —— 同一个请求转告给本机绑定的其他设备. */
     @Volatile private var resetting = false
 
-    fun resetAll(wipeId: String? = null, exclude: String? = null, by: String = "", uninstall: Boolean = false) {
+    fun resetAll(wipeId: String? = null, exclude: String? = null, by: String = "", uninstall: Boolean = false, leave: Boolean = false) {
         if (resetting) return
         resetting = true
         var kept: org.json.JSONObject? = null
@@ -437,8 +438,10 @@ class OitApp : Application(), Host {
         sync?.let { s ->
             Thread {
                 runCatching {
-                    s.sendWipe(wipeId ?: com.obliphur.oit.sync.SyncService.newWipeId(), exclude, uninstall)
-                    if (!uninstall) kept = s.keptState(by)
+                    // leave: 别的设备解除了和本机的绑定 (15.1): 不转告, 让其他设备解除和本机的绑定 (删掉本机的数据)
+                    if (leave) s.forgetMe(3000)
+                    else s.sendWipe(wipeId ?: com.obliphur.oit.sync.SyncService.newWipeId(), exclude, uninstall)
+                    if (!uninstall) kept = s.keptState(by, leave)
                 }
             }.apply { start(); join(3500) }
         }
@@ -458,8 +461,10 @@ class OitApp : Application(), Host {
 
     /** 别的设备重置 / 卸载时请本机清空了数据: 重开后提示一次. */
     fun wipedNotice() {
-        val who = sync?.popWipedBy() ?: return
-        if (who.isNotEmpty()) core.notice(tr("🔄  数据已清空"), tr("{name} 重置了 OIT, 本机的数据也一起清空了.", "name" to who),
+        val (who, leave) = sync?.popWipedBy() ?: return
+        if (who.isNotEmpty()) core.notice(tr("🔄  数据已清空"),
+            if (leave) tr("{name} 解除了和本机的绑定, 本机的数据已经清空.", "name" to who)
+            else tr("{name} 重置了 OIT, 本机的数据也一起清空了.", "name" to who),
             listOf(com.obliphur.oit.core.NoticeButton(tr("知道了"), "ok", true)))
     }
 }

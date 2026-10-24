@@ -87,9 +87,10 @@ class PcLocal:
         """录像 (MECHANICS 18.8): 别的设备终止了录制, 本机也停 (违反随合约同步)."""
         self.app.rec_stop(cid)
 
-    def wipe_requested(self, wipe_id: str, sender: str, name: str):
-        """别的设备重置 / 卸载了, 请本机也清空数据 (MECHANICS 9): 回复对方之后再做 (重置会关闭程序)."""
-        self.app.root.after(300, lambda: self.app.do_reset(wipe_id=wipe_id, exclude=(sender,), by=name))
+    def wipe_requested(self, wipe_id: str, sender: str, name: str, leave: bool = False):
+        """别的设备重置 / 卸载了, 请本机也清空数据 (MECHANICS 9): 回复对方之后再做 (重置会关闭程序).
+        leave: 它解除了和本机的绑定 (15.1): 本机清空全部数据, 也解除和其他设备的绑定."""
+        self.app.root.after(300, lambda: self.app.do_reset(wipe_id=wipe_id, exclude=(sender,), by=name, leave=leave))
 
     def auto_text(self) -> str:
         return self.app.dm.auto_text

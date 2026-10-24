@@ -136,14 +136,25 @@ class SyncPanel(tk.Frame):
         self.sync.cancel_pairing()
 
     def _sync_unpair(self):
+        """解除绑定 (MECHANICS 15.1): 冷静期 48 小时, 期间再按一次取消; 到时间后解除, 并清空那台设备上的全部数据."""
         sel = self.lb_peers.curselection()
         if not sel or sel[0] >= len(self._peer_ids):
             toast.warn(tr("先在上面选一台设备."))
             return
         pid = self._peer_ids[sel[0]]
-        name = self.sync.peers().get(pid, {}).get("name", "?")
-        if toast.ask(tr("解除和 {name} 的绑定?", name=name), title=tr("解除绑定"), danger=True):
-            self.sync.unpair(pid)
+        p = self.sync.peers().get(pid, {})
+        name = p.get("name", "?")
+        if self.sync.unbind_at(pid):
+            if toast.ask(tr("取消解除和 {name} 的绑定?", name=name), title=tr("✕  取消解除绑定")):
+                self.sync.cancel_unbind(pid)
+                toast.info(tr("已取消解除绑定."))
+            return
+        if p.get("last_err") == "unpaired":
+            msg = tr("解除和 {name} 的绑定?", name=name)          # 对方已经解除了 / 重置过: 直接解除
+        else:
+            msg = tr("48 小时后解除和 {name} 的绑定, 并清空 {name} 上的全部数据. 期间可以取消.", name=name)
+        if toast.ask(msg, title=tr("解除绑定"), danger=True):
+            self.sync.request_unbind(pid)
 
     def refresh(self):
         s = self.sync
@@ -205,6 +216,9 @@ class SyncPanel(tk.Frame):
                 when = tr("上次同步 {t}", t=datetime.fromtimestamp(p["last_ok"] / 1000).strftime("%H:%M:%S"))
             else:
                 when = tr("还没同步过")
+            at = s.unbind_at(pid)
+            if at:
+                when = tr("将在 {t} 解除绑定", t=datetime.fromtimestamp(at / 1000).strftime("%m-%d %H:%M"))
             live = ""
             stt = status.get(pid)
             if stt and now - float(stt.get("ts", 0)) < 60_000:

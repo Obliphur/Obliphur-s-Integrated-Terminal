@@ -194,8 +194,11 @@ class ContractTest {
         assertEquals(false to "", c.violate("suppress")); assertFalse(c.has("suppress"))
         assertEquals(false to "", c.violate("")); assertEquals(2, c.violations); assertEquals(1, c.life)
         assertEquals(true to "info2", c.violate("info3")); assertEquals(0, c.life)
+        val full = c.reward
+        assertEquals(0, c.rewardAt(t0)); assertEquals(Math.round(full).toInt(), c.rewardAt(t0.plusHours(5)))
         val rec = c.finish("failed", t0.plusHours(2))!!
-        assertEquals(0, rec.optInt("reward")); assertEquals(4, rec.optInt("level")); assertEquals(6, rec.optInt("orig_level"))
+        // 没有完成: 按进行的比例 k² 给 (持久战-I: 4.8 小时里进行了 2 小时)
+        assertEquals(Math.round(full * Math.pow(7200.0 / 17280.0, 2.0)).toInt(), rec.optInt("reward")); assertEquals(4, rec.optInt("level")); assertEquals(6, rec.optInt("orig_level"))
         assertFalse(c.takeFirstBreak())
     }
 
@@ -480,6 +483,32 @@ class ContractTest {
         c.start(listOf("unknown"), "me", t0, pre = 600.0)
         c.preCap(900.0); assertEquals(600.0, c.preLeft, 1e-9)
         c.preCap(250.0); assertEquals(250.0, c.preLeft, 1e-9)
+    }
+
+    /** 黑雾 / 全频道阻塞干扰的计数随同步, 各设备加起来算; 休息中没填写的记录格 (18.3, 18.4). */
+    @Test
+    fun talliesAndRestCells() {
+        val c = Contract(tmp())
+        val t0 = LocalDateTime.of(2026, 10, 20, 9, 10)
+        val t = t0.plusMinutes(10)
+        c.start(listOf("fog", "jam"), "me", t0)
+        repeat(30) { c.fogSwitch(t, "phone") }
+        val other = JSONObject(c.live.toString())
+        other.put("tally", JSONObject().put("fog", JSONObject().put("h", t.withMinute(0).withSecond(0).iso())
+            .put("n", JSONObject().put("phone", 10).put("pc", 19)).put("used", 0)))
+        c.merge(mapOf("live" to other))
+        assertEquals(49, c.tallyCount("fog", t)); assertEquals("fog", c.fogSwitch(t, "phone")); assertEquals(0, c.tallyCount("fog", t))
+        repeat(Contract.JAM_BLOCKS - 1) { assertEquals("", c.jamBlock(t, "phone")) }
+        assertEquals("jam", c.jamBlock(t, "phone"))
+        assertEquals(false to "jam", c.violate("jam")); assertTrue(c.has("jam"))
+        // 休息中没填写的格子: 超时不算违反, 记录封锁也不锁; 自己填写之后照常
+        c.start(listOf("fog", "seal"), "me", t0)
+        val r0 = t0.withMinute(0).plusHours(1)
+        assertTrue(c.markRestCells(r0.plusMinutes(65), 3600, { "" }, "Sleeping"))
+        assertTrue(c.restCell(r0, r0.plusHours(1), "Sleeping", "Sleeping"))
+        assertFalse("${r0.toLocalDate()}/${r0.hour}" in c.hourMisses(r0.plusMinutes(121), 3600, { "" }, "Sleeping"))
+        assertFalse(c.hourLocked(r0, r0.plusHours(1), "Sleeping", r0.plusHours(3), 3600, "Sleeping"))
+        assertTrue(c.hourLocked(r0, r0.plusHours(1), "读书", r0.plusHours(3), 3600, "Sleeping"))
     }
 
     /** 黑雾 (18.3): 整点记录的假内容开始合约时就抽好, 跟着合约同步, 两端一样. */

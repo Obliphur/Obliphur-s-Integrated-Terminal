@@ -152,10 +152,11 @@ def _record(text: str, kind: str):
         _RUNTIME["recording"].append((kind, text))
 
 
-def toast(text, kind: str = "info", timeout=None):
+def toast(text, kind: str = "info", timeout=None, clear: bool = False):
+    """clear: 词条自己的提示 (支援短缺, 未知变量), 黑雾也不遮."""
     text = str(text)
     _record(text, kind)
-    if kind != "error" and _fogged():      # 黑雾: 遮住除违规记录 (error) 外的所有提示
+    if kind != "error" and not clear and _fogged():      # 黑雾: 遮住除违规记录 (error) 和词条提示外的所有提示
         text = FOG_TEXT
     if len(_RUNTIME["toasts"]) >= MAX_VISIBLE:
         _RUNTIME["queue"].append((text, kind, timeout))
@@ -164,16 +165,16 @@ def toast(text, kind: str = "info", timeout=None):
     return None
 
 
-def info(text, timeout=None):
-    return toast(text, "info", timeout)
+def info(text, timeout=None, clear=False):
+    return toast(text, "info", timeout, clear)
 
 
-def success(text, timeout=None):
-    return toast(text, "success", timeout)
+def success(text, timeout=None, clear=False):
+    return toast(text, "success", timeout, clear)
 
 
-def warn(text, timeout=None):
-    return toast(text, "warn", timeout)
+def warn(text, timeout=None, clear=False):
+    return toast(text, "warn", timeout, clear)
 
 
 def error(text, timeout=None):

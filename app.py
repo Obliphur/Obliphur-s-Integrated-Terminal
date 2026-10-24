@@ -345,11 +345,12 @@ class BreakTimerApp:
             self.root.after(600, self._ask_username)
         elif self._first_run:
             self.root.after(600, self._show_welcome)
-        who = self.sync.pop_wiped_by()
+        who, leave = self.sync.pop_wiped_by()
         if who:
-            # 别的设备重置 / 卸载时请本机清空了数据 (MECHANICS 9)
-            self.root.after(900, lambda: toast.notice(tr("🔄  数据已清空"),
-                                                      tr("{name} 重置了 OIT, 本机的数据也一起清空了.", name=who)))
+            # 别的设备重置 / 卸载时请本机清空了数据 (MECHANICS 9); 别的设备解除了和本机的绑定 (15.1)
+            msg = (tr("{name} 解除了和本机的绑定, 本机的数据已经清空.", name=who) if leave
+                   else tr("{name} 重置了 OIT, 本机的数据也一起清空了.", name=who))
+            self.root.after(900, lambda: toast.notice(tr("🔄  数据已清空"), msg))
         self.root.after(800, self.check_achievements)
 
 
@@ -613,6 +614,7 @@ class BreakTimerApp:
             split_all=lambda: self.contract.has("fine"),     # 细化规范 + 黑雾: 所有格子都分成两段 (18.3)
             on_filled=self._seal_extra,                      # 记录封锁: 完成填写时另外封锁两个格子 (18.4)
             fog=self._fog_words,                             # 黑雾: 只露出"现在"和待填写的格子 (18.3)
+            rest=lambda a, b, text: self.contract.rest_cell(a, b, text, self.dm.auto_text_for_key),   # 休息中没填写的格子也露出来
             sealed=lambda a, b: self.contract.hour_sealed(a, b)   # 记录封锁: 按 Enter 提交前先确认
         )
         self._prepare_page(self.pages["log"])
@@ -765,7 +767,7 @@ class BreakTimerApp:
     def show_page(self, key: str):
         # 合约 · 黑雾 (软规则): 要切到计时器以外的页面记一次, 一个钟点里满 50 次算一次违反 (MECHANICS 18.3)
         if key != "timer" and key != getattr(self, "current_page", None):
-            tid = self.contract.fog_switch(datetime.now())
+            tid = self.contract.fog_switch(datetime.now(), self.sync.my_id)
             if tid:
                 self.contract_violation(tr("黑雾中频繁切换页面"), tid)
         if key in ("settings", "ach") and self.contract.fog():
@@ -2366,6 +2368,7 @@ class BreakTimerApp:
         self._check_idle_nudge()
         self._check_setup_period()
         self._check_unbind()
+        self._check_offline_chime()
         self.check_achievements()
         self.apply_job = self.root.after(5000, self._schedule_apply_check)
 
@@ -2776,8 +2779,8 @@ class BreakTimerApp:
             return
         rules = self.net.proxy.rules
         mode = getattr(config, "FILTER_MODE", "blacklist")
-        online = self.net.online
-        hit = window_guard.check_focus_rules(lambda exe: rules.app_allowed(exe, online, mode))
+        rest = self.state == ON_BREAK              # 只管专注 / 空闲, 休息中全部放行; 和联不联网无关 (4.1)
+        hit = window_guard.check_focus_rules(lambda exe: rules.app_allowed(exe, rest, mode))
         if not hit:
             return
         exe, title, why = hit
@@ -2792,6 +2795,10 @@ class BreakTimerApp:
             msg = (tr("{exe} 在黑名单里,已关闭窗口.", exe=exe) if why == "blacklist-app"
                    else tr("{exe} 不在白名单里,已关闭窗口.", exe=exe))
             toast.warn(msg)
+            # 全频道阻塞干扰 (软): 被禁止的程序 (同一个程序 5 秒内算一次) 这个钟点里各设备合计满 20 次算一次违反
+            tid = self.contract.jam_block(datetime.now(), self.sync.my_id)
+            if tid:
+                self.contract_violation(tr("全频道阻塞干扰中频繁打开被禁止的程序"), tid)
 
     # ---- 窗口使用时间统计 ----
 
@@ -2968,7 +2975,7 @@ class BreakTimerApp:
             gone = c.expire(now)
             for tid in gone:
                 self._log_notice(f"CONTRACT unknown expired {tid}")
-                toast.info(tr("未知变量: {name} 已移除", name=tr(contract_mod.BY_ID[tid][3])))
+                toast.info(tr("未知变量: {name} 已移除", name=tr(contract_mod.BY_ID[tid][3])), clear=True)
             picked = c.roll(now, text_of=self.dm.unit_text, auto=self.dm.auto_text_for_key,
                             fill=config.FILL_WINDOW)
             woke = c.wake(now)
@@ -2977,7 +2984,7 @@ class BreakTimerApp:
                 self._random_effect(kind, val)
             for tid in woke:
                 self._log_notice(f"CONTRACT unknown on {tid}")
-                toast.warn(tr("未知变量: 启用了 {name}", name=tr(contract_mod.BY_ID[tid][3])), timeout=10000)
+                toast.warn(tr("未知变量: 启用了 {name}", name=tr(contract_mod.BY_ID[tid][3])), timeout=10000, clear=True)
             if picked or woke or gone:
                 self._contract_changed()
                 if self.sync.peers():
@@ -3104,7 +3111,8 @@ class BreakTimerApp:
             return
         msg = tr("提前结束合约?")
         if c.reward >= 1:
-            msg += "\n" + tr("完成后的 {n} 分钟休息时间不会给出.", n=round(c.reward / 60))
+            msg += "\n" + tr("现在结束只给 {m} 分钟休息时间 (完成给 {n} 分钟).",
+                             m=round(c.reward_at(datetime.now()) / 60), n=round(c.reward / 60))
         if not toast.ask(msg, title=tr("■  提前结束"), danger=True):
             return
         self.end_contract("abandoned")
@@ -3188,13 +3196,14 @@ class BreakTimerApp:
                 msg += "\n" + tr("积攒的休息时间 +{t}.", t=fmt_ms(reward))
             toast.notice(tr("⚔  合约完成"), msg)
         elif result == "abandoned":
-            toast.info(tr("⚔ 行动终止"))
+            toast.info(tr("⚔ 行动终止") + ("\n" + tr("积攒的休息时间 +{t}.", t=fmt_ms(reward)) if reward > 0 else ""))
         else:
             msg = {"failed": tr("目标生命值归零 (违反 {n} 次), 合约终止.", n=rec.get("violations", 0)),
                    "offline": tr("{name} 离线超过 15 分钟, 合约终止.", name=self._offline_name or "?")
                    }.get(result, tr("空闲超过 15 分钟, 合约终止."))
             if pending >= 1:
-                msg += "\n" + tr("完成后的 {n} 分钟休息时间没有给出.", n=round(pending / 60))
+                msg += "\n" + tr("按进行的比例给出 {m} 分钟休息时间 (完成给 {n} 分钟).",
+                                 m=round(reward / 60), n=round(pending / 60))
             toast.notice(tr("⚔ 行动失败"), msg)
         if self.sync.peers():
             self.sync.sync_now()
@@ -3439,24 +3448,24 @@ class BreakTimerApp:
         if kind == "term":
             if val in c.waiting:
                 toast.warn(tr("未知变量: 抽中了 {name}, {t} 生效", name=tr(contract_mod.BY_ID[val][3]),
-                              t=f"{c.waiting[val][0]:%H:%M}"), timeout=10000)
+                              t=f"{c.waiting[val][0]:%H:%M}"), timeout=10000, clear=True)
         elif kind in ("rest_cut", "rest_add"):
             delta = contract_mod.RANDOM_REST if kind == "rest_add" else -contract_mod.RANDOM_REST
             self._contract_rest(delta)
             msg = tr("未知变量: 休息时间 +{n} 分钟") if delta > 0 else tr("未知变量: 休息时间 -{n} 分钟")
-            toast.warn(msg.format(n=contract_mod.RANDOM_REST // 60), timeout=10000)
+            toast.warn(msg.format(n=contract_mod.RANDOM_REST // 60), timeout=10000, clear=True)
         elif kind == "lock":
             if val:
-                toast.warn(tr("未知变量: 封锁了整点记录 {t} (不能再修改)", t=self._cell_label(val)), timeout=10000)
+                toast.warn(tr("未知变量: 封锁了整点记录 {t} (不能再修改)", t=self._cell_label(val)), timeout=10000, clear=True)
             else:
-                toast.info(tr("未知变量: 没有可以封锁的整点记录, 无事发生"))
+                toast.info(tr("未知变量: 没有可以封锁的整点记录, 无事发生"), clear=True)
         elif kind == "double":
-            toast.info(tr("未知变量: 这次判定作废, 改为判定两次"))
+            toast.info(tr("未知变量: 这次判定作废, 改为判定两次"), clear=True)
         elif kind == "slow":
             toast.warn(tr("未知变量: 下一次专注启用阻滞 (只减慢合约内的时间, 按 {p}% 增长)",
-                          p=int(round(contract_mod.RANDOM_SLOW * 100))), timeout=10000)
+                          p=int(round(contract_mod.RANDOM_SLOW * 100))), timeout=10000, clear=True)
         else:
-            toast.info(tr("未知变量: 无事发生"))
+            toast.info(tr("未知变量: 无事发生"), clear=True)
 
     def _contract_rest(self, delta: int):
         """未知变量: 休息时间 +/- delta 秒. 正在休息时改这次休息 (先减合约中得到的, 合约开始前的放在最后),
@@ -3535,6 +3544,10 @@ class BreakTimerApp:
         now = datetime.now()
         units = c.hour_units(now)
         self.dm.finalize_halves(units, now)
+        if self.state == ON_BREAK and c.mark_rest_cells(now, config.FILL_WINDOW, self.dm.unit_text,
+                                                         self.dm.auto_text_for_key):
+            if self.current_page == "log":
+                self.pages["log"].refresh()
         if not self._owner_away(c.owner):
             return
         for key in c.hour_misses(now, config.FILL_WINDOW, self.dm.unit_text,
@@ -3556,7 +3569,7 @@ class BreakTimerApp:
             key = (self._break_cid, round(c.supply_limit or 0), sec)
             if until is not None and 0 < until <= sec and key not in self._supply_warned:
                 self._supply_warned.add(key)
-                toast.warn(tr("支援短缺: {n} 分钟后将超出可用的合约开始前休息时间", n=sec // 60), timeout=10000)
+                toast.warn(tr("支援短缺: {n} 分钟后将超出可用的合约开始前休息时间", n=sec // 60), timeout=10000, clear=True)
         if self._owner_away(c.owner):
             tid = c.supply_check(left, self._break_pre)
             if tid:
@@ -4754,57 +4767,13 @@ class BreakTimerApp:
         self.btn_reset.state(["disabled"])
 
         flavor(page, tr("就这样回到一切之初,修正错误的抉择."), bg=bg).pack(fill="x", padx=26, pady=(4, 16))
-        self._build_unbind_box(page)
-
-    def _build_unbind_box(self, page):
-        """解除全部绑定: 要等 24 小时, 期间可以取消; 到时间后和所有设备解除绑定, 各自保留数据."""
-        bg = COLORS["bg"]
-        box = tk.Frame(page, bg=bg)
-        box.pack(fill="x", padx=26, pady=(0, 12))
-        self.btn_unbind = ttk.Button(box, text=tr("🔗  解除所有绑定"), command=self.on_unbind)
-        self.btn_unbind.pack(side="left", ipadx=10)
-        self.lbl_unbind = tk.Label(box, text="", bg=bg, fg=COLORS["text_dim"], font=config.font("small"),
-                                   anchor="w", justify="left")
-        self.lbl_unbind.pack(side="left", padx=(12, 0))
-
-    def _sync_unbind_box(self):
-        if not hasattr(self, "btn_unbind"):
-            return
-        at = self.sync.unbind_at
-        if at:
-            when = datetime.fromtimestamp(at / 1000)
-            cfg(self.btn_unbind, text=tr("✕  取消解除绑定"))
-            cfg(self.lbl_unbind, text=tr("将在 {t} 解除和所有设备的绑定", t=f"{when:%m-%d %H:%M}"))
-            self.btn_unbind.state(["!disabled"])
-        else:
-            cfg(self.btn_unbind, text=tr("🔗  解除所有绑定"))
-            peers = self.sync.peers()
-            cfg(self.lbl_unbind, text="" if peers else tr("没有绑定的设备"))
-            self.btn_unbind.state(["!disabled" if peers else "disabled"])
-
-    def on_unbind(self):
-        if self.sync.unbind_at:
-            self.sync.cancel_unbind()
-            self._log_notice("SYNC unbind-all cancelled")
-            toast.info(tr("已取消解除绑定."))
-        else:
-            if not self.sync.peers():
-                return
-            if not toast.ask(tr("24 小时后解除和所有设备的绑定. 各设备的数据都保留, 期间可以取消."),
-                             title=tr("🔗  解除所有绑定")):
-                return
-            self.sync.request_unbind()
-            self._log_notice("SYNC unbind-all requested")
-        self._sync_unbind_box()
 
     def _check_unbind(self):
-        """每 5 秒: 解除全部绑定的计划到时间了就解除."""
+        """每 5 秒: 冷静期到了的解除绑定就解除, 并请那台设备清空全部数据 (MECHANICS 15.1)."""
         try:
-            if self.sync.check_unbind():
-                self._log_notice("SYNC unbind-all done")
-                toast.info(tr("已解除和所有设备的绑定."))
-            if self.current_page == "reset":
-                self._sync_unbind_box()
+            for name in self.sync.check_unbind():
+                self._log_notice(f"SYNC unbind done {name}")
+                toast.info(tr("已解除和 {name} 的绑定, {name} 上的数据会被清空 (离线时等它上线).", name=name))
         except Exception as e:
             self._log_window(f"ERROR    unbind {type(e).__name__}: {e}")
 
@@ -4814,7 +4783,6 @@ class BreakTimerApp:
 
     def refresh_reset(self):
         self.var_confirm.set("")
-        self._sync_unbind_box()
 
     def on_reset(self):
         if self.var_confirm.get().strip() != "RESET":
@@ -4827,11 +4795,12 @@ class BreakTimerApp:
             return
         self.do_reset()
 
-    def do_reset(self, wipe_id: str = None, exclude=(), by: str = ""):
+    def do_reset(self, wipe_id: str = None, exclude=(), by: str = "", leave: bool = False):
         """重置: 先请绑定的设备也清空 OIT 的数据 (绑定保留), 解除网络限制 (还原系统代理, 启用网卡),
         删除全部数据 (只留下设备同步的绑定), 再重新打开程序. 新进程找不到设置文件, 就像第一次安装:
         弹出介绍窗口, 开始配置期, 网络按默认设置接管.
-        wipe_id / exclude / by: 是别的设备 (名字 by) 请本机清空的 —— 同一个请求转告给本机绑定的其他设备."""
+        wipe_id / exclude / by: 是别的设备 (名字 by) 请本机清空的 —— 同一个请求转告给本机绑定的其他设备.
+        leave: 是它解除了和本机的绑定 (15.1): 不转告, 让其他设备解除和本机的绑定 (删掉本机的数据), 本机的绑定也全部清掉."""
         if self.dm.resetting:
             return
         self.dm.resetting = True
@@ -4839,8 +4808,11 @@ class BreakTimerApp:
         self._close_check_win()
         kept = None
         try:
-            self.sync.send_wipe(wipe_id or self.sync.new_wipe_id(), exclude=exclude)   # MECHANICS 9
-            kept = self.sync.kept_state(by)
+            if leave:
+                self.sync.forget_me()
+            else:
+                self.sync.send_wipe(wipe_id or self.sync.new_wipe_id(), exclude=exclude)   # MECHANICS 9
+            kept = self.sync.kept_state(by, leave)
         except Exception:
             pass
         self.sync.stop()

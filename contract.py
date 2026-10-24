@@ -96,13 +96,13 @@ PAGES = [(0, PAGE_SPLIT), (PAGE_SPLIT, BOARD_COLS)]
 COMBO_PAGE = len(PAGES)
 
 # 软规则: 界面上照样能做, 但会被算作违反, 这个词条降一级 (结算按降级后的等级);
-# 其余是硬规则, 立即生效 (记录封锁, 细化规范, 全频道阻塞干扰, 持久战, 疲惫).
+# 其余是硬规则, 立即生效 (记录封锁, 细化规范, 持久战, 疲惫).
 # 录像 (目光 / 刻痕) 违反一次就失效 (录像停止): 不在 LOWER / SINGLE 里.
 SOFT = {"info1", "info2", "info3", "chan1", "chan2", "music", "suppress", "short1", "short2",
-        "silent", "game", "video", "gaze", "scar", "deep1", "deep2", "quiet", "hoard", "unknown", "fog"}
+        "silent", "game", "video", "gaze", "scar", "deep1", "deep2", "quiet", "hoard", "unknown", "fog", "jam"}
 LOWER = {"info3": "info2", "info2": "info1", "chan2": "chan1",
          "short2": "short1", "deep2": "deep1"}   # 降一级换成哪个词条
-SINGLE = {"music", "suppress", "silent", "game", "video", "quiet", "hoard"}   # 只有一档的软规则: 降级时等级减一, 减到 0 就失效
+SINGLE = {"music", "suppress", "silent", "game", "video", "quiet", "hoard", "jam"}   # 只有一档的软规则: 降级时等级减一, 减到 0 就失效
 
 DURATION = {"long1": 1.2, "long2": 1.4, "long3": 1.6}
 NET_SHARE = {"info1": 0.8, "info2": 0.65, "info3": 0.5}
@@ -120,6 +120,7 @@ BANS = ("music", "silent", "game", "video")
 SUPPLY_WARN = (180, 60)                         # 支援短缺: 还差这么多秒就用超时各提醒一次
 DEEP = {"deep1": 40 * 60, "deep2": 80 * 60}     # 纵深推进: 一段专注至少这么多秒, 不到就结束算违反
 FOG_SWITCHES = 50                               # 黑雾 (软): 合约中切到计时器以外的页面满这么多次算一次违反, 每个钟点清零
+JAM_BLOCKS = 20                                 # 全频道阻塞干扰 (软): 打开的程序被名单禁止满这么多次算一次违反, 每个钟点清零
 SEAL_EXTRA = 2                                  # 记录封锁: 每次完成填写时另外随机封锁几个格子
 COOLDOWN_X = {"erode1": 2.0, "erode2": 3.0}     # 侵蚀: 网络申请的冷静期乘多少 (硬规则)
 RANDOM = "unknown"                              # 未知变量: 合约的每个小时开始时随机启用一个 1-2 级的词条, 那个小时结束时移除
@@ -383,6 +384,12 @@ def rest_reward(level: int, terms=None) -> int:
     base = rest_minutes(level) * 60 + combo_end(terms)
     mult = next((LONG_REWARD[t] for t in terms if t in LONG_REWARD), 1.0)
     return int(round(base * mult))
+
+
+def rest_share(k: float) -> float:
+    """合约结束时给出完成奖励的几成: k = 进行了多久 / 总时长, f(k) = k² (f(0) = 0, f(1) = 1, f'' > 0: 越到后面涨得越快)."""
+    k = min(1.0, max(0.0, float(k)))
+    return k * k
 
 
 def rest_minutes_total(level: int, terms=None) -> int:
@@ -713,7 +720,7 @@ class Contract:
             return {}
         now = (now or datetime.now()).replace(microsecond=0)
         end = min(now, self.end_at or now)
-        reward = int(round(self.reward)) if result == "completed" else 0
+        reward = int(round(self.reward * rest_share(1.0 if result == "completed" else self.progress(end))))
         rec = {"id": self.live.get("id"), "start": self.live.get("start"), "end": _iso(end),
                "planned": self.live.get("end"), "terms": self.terms, "orig": self.orig,
                "level": self.level, "orig_level": self.orig_level, "cut": dict(self.cut),
@@ -728,6 +735,17 @@ class Contract:
         self.live = {"state": "none", "owner": by, "first_break": result == "completed"}
         self.save()
         return rec
+
+    def progress(self, now: datetime) -> float:
+        """k = 合约进行了多久 / 总时长 (0 ~ 1)."""
+        a, b = self.start_at, self.end_at
+        if not (a and b) or b <= a:
+            return 0.0
+        return min(1.0, max(0.0, (now - a).total_seconds() / (b - a).total_seconds()))
+
+    def reward_at(self, now: datetime) -> int:
+        """现在结束能给多少休息时间 (秒, 见 rest_share)."""
+        return int(round(self.reward * rest_share(self.progress(now)))) if self.active else 0
 
     @property
     def last(self) -> dict:
@@ -1200,16 +1218,45 @@ class Contract:
         w[key] = over
         return over and not was
 
-    def fog_switch(self, now: datetime) -> str:
-        """黑雾: 合约中要切到计时器以外的页面 (打不开的设置也算) 记一次; 这个钟点里满 FOG_SWITCHES 次返回 "fog"
-        (算一次违反, 重新计). 每个钟点清零; 计数只记在本机. 失效后照样数 (再次触发只响警报)."""
+    def _tally(self, kind: str, now: datetime, me: str, limit: int) -> bool:
+        """软词条的计数 (黑雾的切页面, 全频道阻塞干扰被禁止的程序): 每台设备记自己的次数, 存在合约里随同步, 各设备加起来算;
+        这个钟点里每满 limit 次返回 True (算一次违反, 用掉的记在 used). 换钟点清零."""
+        hour = _iso(now.replace(minute=0, second=0, microsecond=0))
+        t = self.live.get("tally") if isinstance(self.live.get("tally"), dict) else {}
+        k = t.get(kind) if isinstance(t.get(kind), dict) else {}
+        if k.get("h") != hour:
+            k = {"h": hour, "n": {}, "used": 0}
+        n = dict(k.get("n") or {})
+        n[me or "?"] = int(n.get(me or "?") or 0) + 1
+        k = {"h": hour, "n": n, "used": int(k.get("used") or 0)}
+        hit = sum(n.values()) - k["used"] >= limit
+        if hit:
+            k["used"] += limit
+        self.live["tally"] = dict(t, **{kind: k})
+        self.save()
+        return hit
+
+    def tally_count(self, kind: str, now: datetime) -> int:
+        """这个钟点里还没算成违反的次数 (各设备合计)."""
+        k = (self.live.get("tally") or {}).get(kind) if self.active else None
+        hour = _iso(now.replace(minute=0, second=0, microsecond=0))
+        if not isinstance(k, dict) or k.get("h") != hour:
+            return 0
+        return sum(int(v or 0) for v in (k.get("n") or {}).values()) - int(k.get("used") or 0)
+
+    def fog_switch(self, now: datetime, me: str = "") -> str:
+        """黑雾: 合约中要切到计时器以外的页面 (打不开的设置也算) 记一次; 这个钟点里 (各设备合计) 满 FOG_SWITCHES 次返回 "fog"
+        (算一次违反, 重新计). 每个钟点清零. 失效后照样数 (再次触发只响警报)."""
         if not self.active or not self.watching("fog"):
             return ""
-        hour = _iso(now.replace(minute=0, second=0, microsecond=0))
-        h, n = self.__dict__.get("_fog_n") or ("", 0)
-        n = n + 1 if h == hour else 1
-        self._fog_n = (hour, 0 if n >= FOG_SWITCHES else n)
-        return "fog" if n >= FOG_SWITCHES else ""
+        return "fog" if self._tally("fog", now, me, FOG_SWITCHES) else ""
+
+    def jam_block(self, now: datetime, me: str = "") -> str:
+        """全频道阻塞干扰: 打开的程序 / 应用被名单禁止 (关掉窗口 / 锁住) 记一次; 这个钟点里 (各设备合计) 满 JAM_BLOCKS 次返回 "jam"
+        (算一次违反, 重新计). 每个钟点清零. 失效后照样数 (再次触发只响警报)."""
+        if not self.active or not self.watching("jam"):
+            return ""
+        return "jam" if self._tally("jam", now, me, JAM_BLOCKS) else ""
 
     def window_watch(self):
         """通道阻塞: (要检查的词条, 窗口数上限); 已经失效的按失效前的上限. 没有时 ("", 0)."""
@@ -1522,11 +1569,12 @@ class Contract:
         old = list(self.live.get("hl") or [])
         seen = set(old)
         new = []
+        rest = set(self.live.get("rest_h") or [])
         for key, a, b in self.hour_units(now):
             if key in seen or b + cell_fill(a, b, fill) > now:
                 continue
             seen.add(key)
-            if self._is_auto(text_of(key) or "", key, auto):
+            if key not in rest and self._is_auto(text_of(key) or "", key, auto):   # 休息中没填写的不算违反
                 new.append(key)
         if len(seen) != len(old):
             self.live["hl"] = sorted(seen)
@@ -1540,6 +1588,46 @@ class Contract:
         except Exception:
             wanted = "" if callable(auto) else str(auto or "")
         return str(text or "") in ("", wanted)
+
+    def mark_rest_cells(self, now: datetime, fill: timedelta, text_of, auto) -> bool:
+        """休息中 (每秒调用): 合约里还在补填时限里, 还没填写 (空着 / 超时自动记录的内容) 的记录格记下来 (rest_h, 随同步只增不删).
+        这些格子之后超时不算违反, 黑雾不盖住, 一直能填 (记录封锁也不锁), 自己填写了以后才照常 (MECHANICS 18.4). 返回记下了新的没有."""
+        if not self.active:
+            return False
+        have = set(self.live.get("rest_h") or [])
+        new = {key for key, a, b in self.hour_units(now)
+               if key not in have and now < b + cell_fill(a, b, fill) and self._is_auto(text_of(key) or "", key, auto)}
+        if not new:
+            return False
+        self.live["rest_h"] = sorted(have | new)
+        self.save()
+        return True
+
+    @staticmethod
+    def _key_span(key: str):
+        """记录格的键 → (开始, 结束)."""
+        parts = str(key).split("/")
+        try:
+            h = datetime.strptime(parts[0], "%Y-%m-%d").replace(hour=int(parts[1]))
+        except (ValueError, IndexError):
+            return None
+        if len(parts) == 3:
+            a = h + timedelta(minutes=30 if parts[2] == "2" else 0)
+            return a, a + timedelta(minutes=30)
+        return h, h + timedelta(hours=1)
+
+    def rest_cell(self, start: datetime, end: datetime, text: str, auto) -> bool:
+        """休息中没填写的记录格 (mark_rest_cells), 现在还没自己填写: 黑雾不盖住, 能填."""
+        if not self.active:
+            return False
+        key = f"{start:%Y-%m-%d}/{start.hour}"
+        if not self._is_auto(str(text or ""), key, auto):
+            return False
+        for k in self.live.get("rest_h") or []:
+            span = self._key_span(k)
+            if span and span[0] < end and start < span[1]:
+                return True
+        return False
 
     def hour_sealed(self, start: datetime, end: datetime, now: datetime = None) -> bool:
         """这个记录格在记录封锁的范围里 (填写后就不能再改, 界面上提交前先确认):
@@ -1559,6 +1647,8 @@ class Contract:
                     auto, key: str = "") -> bool:
         """记录封锁: 进行中的合约选了这个词条时, 和合约重叠的记录格已经填写了的 (自己填的, 或者超时自动记录的) 就不能再改,
         没填的照常能填. 未知变量 / 记录封锁另外封锁的格子不管填没填都不能再改. 合约结束后全部恢复."""
+        if self.rest_cell(start, end, text, auto):
+            return False                     # 休息中没填写的格子: 自己填写之前一直能填
         if any(a < end and start < b for a, b in self.locks()):
             return True
         if not str(text or "").strip():
@@ -1628,6 +1718,9 @@ class Contract:
         out = dict(new)
         out["violations"] = max(int(mine.get("violations") or 0), int(new.get("violations") or 0))
         out["hl"] = sorted(set(new.get("hl") or []) | set(mine.get("hl") or []))
+        rest_h = sorted(set(new.get("rest_h") or []) | set(mine.get("rest_h") or []))
+        if rest_h:
+            out["rest_h"] = rest_h
         fine_h = sorted(set(new.get("fine_h") or []) | set(mine.get("fine_h") or []))
         if fine_h:
             out["fine_h"] = fine_h
@@ -1635,6 +1728,27 @@ class Contract:
         locks += [list(v) for v in mine.get("locks") or [] if list(v) not in locks]
         if locks:
             out["locks"] = locks
+        tally = Contract._keep_tally(mine.get("tally"), new.get("tally"))
+        if tally:
+            out["tally"] = tally
+        return out
+
+    @staticmethod
+    def _keep_tally(a, b) -> dict:
+        """计数 (_tally) 的合并: 同一个钟点每台设备取大的, 用掉的取大的; 不同钟点取后面的."""
+        a = a if isinstance(a, dict) else {}
+        b = b if isinstance(b, dict) else {}
+        out = {}
+        for kind in set(a) | set(b):
+            x, y = a.get(kind), b.get(kind)
+            x, y = (x if isinstance(x, dict) else None), (y if isinstance(y, dict) else None)
+            if not x or not y or str(x.get("h")) != str(y.get("h")):
+                out[kind] = max((v for v in (x, y) if v), key=lambda v: str(v.get("h")))
+                continue
+            n = dict(x.get("n") or {})
+            for dev, v in (y.get("n") or {}).items():
+                n[dev] = max(int(n.get(dev) or 0), int(v or 0))
+            out[kind] = {"h": x.get("h"), "n": n, "used": max(int(x.get("used") or 0), int(y.get("used") or 0))}
         return out
 
     def _apply_voids(self) -> bool:
@@ -2144,8 +2258,11 @@ def _selftest():
     assert c.violate("suppress") == (False, "") and not c.has("suppress") and c.life == 2
     assert c.violate("") == (False, "") and c.violations == 2 and c.level == 3 + 1 + 1 and c.life == 1
     assert c.violate("info3") == (True, "info2") and c.life == 0
+    full = c.reward
+    assert c.reward_at(t0) == 0 and c.reward_at(t0 + timedelta(hours=5)) == round(full), "k = 0: 0%, k = 1: 100%"
     rec = c.finish("failed", t0 + timedelta(hours=2))
-    assert rec["reward"] == 0 and rec["orig_level"] == 6 and rec["level"] == 4 and not c.active
+    assert rec["reward"] == round(full * (7200 / 17280) ** 2), "没有完成: 按进行的比例 k² 给"
+    assert rec["orig_level"] == 6 and rec["level"] == 4 and not c.active
     assert not c.take_first_break()
 
     # 违反到失效的词条照样检查: 再次触发返回它 (echo, 只响警报), 不扣目标生命值
@@ -2315,6 +2432,27 @@ def _selftest():
     assert f.fog_switch(t) == ""
     assert all(f.fog_switch(t) == "" for _ in range(FOG_SWITCHES - 3)) and f.fog_switch(t + timedelta(hours=1)) == ""
     assert f.violate("fog") == (False, "") and not f.fog() and f.echo("fog"), "黑雾只有 1 级: 违反就失效, 之后只响警报"
+    # 计数随同步: 两台设备各自记的次数加起来算 (同一个钟点每台取大的)
+    f.start(["fog", "jam"], "me", now=f0)
+    for _ in range(30):
+        f.fog_switch(t, "pc")
+    other = dict(f.live, tally={"fog": {"h": f.live["tally"]["fog"]["h"], "n": {"pc": 10, "phone": 19}, "used": 0}})
+    f.merge({"live": other})
+    assert f.tally_count("fog", t) == 49 and f.fog_switch(t, "pc") == "fog" and f.tally_count("fog", t) == 0
+    # 全频道阻塞干扰 (软): 被禁止的程序满 JAM_BLOCKS 次算一次违反; 2 级, 降一级还在
+    assert all(f.jam_block(t, "pc") == "" for _ in range(JAM_BLOCKS - 1)) and f.jam_block(t, "pc") == "jam"
+    assert f.violate("jam") == (False, "jam") and f.has("jam") and f.overrides()
+    # 休息中没填写的记录格: 超时不算违反, 黑雾不盖住, 记录封锁也不锁, 自己填写之后照常
+    f.start(["fog", "seal"], "me", now=f0)
+    texts = {}
+    r0 = f0.replace(minute=0) + timedelta(hours=1)
+    key = f"{r0:%Y-%m-%d}/{r0.hour}"
+    assert f.mark_rest_cells(r0 + timedelta(hours=1, minutes=5), timedelta(hours=1), texts.get, "Sleeping")
+    assert key in f.live["rest_h"] and f.rest_cell(r0, r0 + timedelta(hours=1), "Sleeping", "Sleeping")
+    assert key not in f.hour_misses(r0 + timedelta(hours=2, minutes=1), timedelta(hours=1), texts.get, "Sleeping")
+    assert not f.hour_locked(r0, r0 + timedelta(hours=1), "Sleeping", r0 + timedelta(hours=3), timedelta(hours=1), "Sleeping")
+    assert f.hour_locked(r0, r0 + timedelta(hours=1), "读书", r0 + timedelta(hours=3), timedelta(hours=1), "Sleeping")
+    assert not f.rest_cell(r0, r0 + timedelta(hours=1), "读书", "Sleeping"), "自己填写之后照常盖住"
 
     # 记录封锁: 跨天的合约只封锁今天的格子
     f.finish("abandoned", datetime(2026, 10, 20, 9, 30))

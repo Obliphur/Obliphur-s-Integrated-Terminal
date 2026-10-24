@@ -90,9 +90,10 @@ class RuleSnap(val lists: Map<String, List<String>>, val version: Long) {
 
     /** 前台应用能不能用 (应用名单, MECHANICS 14.6, 对应桌面版 4.7). 不能用的会被锁定.
      *  (允许?, 原因). 原因: online / whitelist-app / not-whitelisted / blacklist-app / default-allow */
-    fun appAllowed(pkg: String, online: Boolean, mode: String): Pair<Boolean, String> {
+    /** 应用名单只管专注 / 空闲, 休息中 (rest) 全部放行; 和联不联网无关 (MECHANICS 4.1). */
+    fun appAllowed(pkg: String, rest: Boolean, mode: String): Pair<Boolean, String> {
+        if (rest) return true to "rest"
         if (mode == RuleKeys.WHITELIST) {
-            if (online) return true to "online"
             if (pkg in apps[RuleKeys.WHITE_APPS]!!) return true to "whitelist-app"
             return false to "not-whitelisted"
         }

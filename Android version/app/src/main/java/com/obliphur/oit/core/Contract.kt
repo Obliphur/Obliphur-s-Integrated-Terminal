@@ -117,15 +117,15 @@ class Contract(private val file: File) {
         private val ORDER = TERMS.mapIndexed { i, t -> t.id to i }.toMap()
 
         // 软规则: 界面上照样能做, 但会被算作违反, 这个词条降一级 (结算按降级后的等级);
-        // 其余是硬规则, 立即生效 (记录封锁, 细化规范, 全频道阻塞干扰, 持久战, 疲惫).
+        // 其余是硬规则, 立即生效 (记录封锁, 细化规范, 持久战, 疲惫).
         // 录像 (目光 / 刻痕) 违反一次就失效 (录像停止): 不在 LOWER / SINGLE 里.
         val SOFT = setOf("info1", "info2", "info3", "chan1", "chan2", "music", "suppress", "short1", "short2",
-            "silent", "game", "video", "gaze", "scar", "deep1", "deep2", "quiet", "hoard", "unknown", "fog")
+            "silent", "game", "video", "gaze", "scar", "deep1", "deep2", "quiet", "hoard", "unknown", "fog", "jam")
         /** 降一级换成哪个词条. */
         val LOWER = mapOf("info3" to "info2", "info2" to "info1", "chan2" to "chan1",
             "short2" to "short1", "deep2" to "deep1")
         /** 只有一档的软规则: 降级时等级减一, 减到 0 就失效. */
-        val SINGLE = setOf("music", "suppress", "silent", "game", "video", "quiet", "hoard")
+        val SINGLE = setOf("music", "suppress", "silent", "game", "video", "quiet", "hoard", "jam")
 
         val DURATION = mapOf("long1" to 1.2, "long2" to 1.4, "long3" to 1.6)
         val NET_SHARE = mapOf("info1" to 0.8, "info2" to 0.65, "info3" to 0.5)
@@ -213,9 +213,11 @@ class Contract(private val file: File) {
         val SUPPLY_WARN = listOf(180, 60)
         /** 纵深推进: 一段专注至少这么多秒, 不到就结束算违反. */
         val DEEP = mapOf("deep1" to 40 * 60, "deep2" to 80 * 60)
-        /** 记录封锁: 每次完成填写时另外随机封锁几个格子. */
         /** 黑雾 (软): 合约中切到计时器以外的页面满这么多次算一次违反, 每个钟点清零. */
         const val FOG_SWITCHES = 50
+        /** 全频道阻塞干扰 (软): 打开的程序 / 应用被名单禁止满这么多次算一次违反, 每个钟点清零. */
+        const val JAM_BLOCKS = 20
+        /** 记录封锁: 每次完成填写时另外随机封锁几个格子. */
         const val SEAL_EXTRA = 2
         /** 侵蚀: 网络申请的冷静期乘多少 (硬规则). */
         val COOLDOWN_X = mapOf("erode1" to 2.0, "erode2" to 3.0)
@@ -363,6 +365,8 @@ class Contract(private val file: File) {
         /** 完成合约时存进积攒的休息时间的秒数 (按等级查表 + 凑齐的组合的结束后收益). */
         fun restReward(level: Int, terms: Collection<String> = emptyList()): Int =
             Math.round((restMinutes(level) * 60 + comboEnd(terms)) * (terms.firstNotNullOfOrNull { LONG_REWARD[it] } ?: 1.0)).toInt()
+        /** 合约结束时给出完成奖励的几成: k = 进行了多久 / 总时长, f(k) = k² (f(0) = 0, f(1) = 1, f'' > 0). */
+        fun restShare(k: Double): Double { val x = k.coerceIn(0.0, 1.0); return x * x }
         /** 完成合约时休息时间一共多少分钟 (界面上写 "完成后休息 +N 分钟"). */
         fun restMinutesTotal(level: Int, terms: Collection<String> = emptyList()): Int = restReward(level, terms) / 60
         /** 合约开始时存进积攒的休息时间的秒数 (凑齐的组合给的, 算合约中得到的). */
@@ -578,7 +582,7 @@ class Contract(private val file: File) {
         val now = (at ?: LocalDateTime.now()).withNano(0)
         val plan = endAt ?: now
         val end = if (now.isBefore(plan)) now else plan
-        val give = if (result == "completed") Math.round(reward).toInt() else 0
+        val give = Math.round(reward * restShare(if (result == "completed") 1.0 else progress(end))).toInt()
         val rec = JSONObject().put("id", live.optLong("id")).put("start", live.optString("start")).put("end", end.iso())
             .put("planned", live.optString("end")).put("terms", JSONArray(terms)).put("orig", JSONArray(orig))
             .put("level", level).put("orig_level", origLevel).put("cut", JSONObject(cut.toString()))
@@ -591,6 +595,18 @@ class Contract(private val file: File) {
         save()
         return rec
     }
+
+    /** k = 合约进行了多久 / 总时长 (0 ~ 1). */
+    fun progress(now: LocalDateTime): Double {
+        val a = startAt ?: return 0.0
+        val b = endAt ?: return 0.0
+        val total = java.time.Duration.between(a, b).seconds.toDouble()
+        if (total <= 0) return 0.0
+        return (java.time.Duration.between(a, now).seconds / total).coerceIn(0.0, 1.0)
+    }
+
+    /** 现在结束能给多少休息时间 (秒, 见 restShare). */
+    fun rewardAt(now: LocalDateTime): Int = if (active) Math.round(reward * restShare(progress(now))).toInt() else 0
 
     /** 最近结束的一个合约. */
     val last: JSONObject? get() = history.maxByOrNull { it.optString("end") }
@@ -1141,17 +1157,45 @@ class Contract(private val file: File) {
         return over && !was
     }
 
-    /** 黑雾: 这个钟点里要切到计时器以外的页面的次数 (只记在本机). */
-    private var fogN = "" to 0
-
-    /** 黑雾: 合约中要切到计时器以外的页面 (打不开的设置也算) 记一次; 这个钟点里满 FOG_SWITCHES 次返回 "fog"
-     *  (算一次违反, 重新计). 每个钟点清零. 失效后照样数 (再次触发只响警报). 同 contract.py 的 fog_switch. */
-    fun fogSwitch(now: LocalDateTime): String {
-        if (!active || !watching("fog")) return ""
+    /** 软词条的计数 (黑雾的切页面, 全频道阻塞干扰被禁止的程序): 每台设备记自己的次数, 存在合约里随同步, 各设备加起来算;
+     *  这个钟点里每满 limit 次返回 true (算一次违反, 用掉的记在 used). 换钟点清零. 同 contract.py 的 _tally. */
+    private fun tally(kind: String, now: LocalDateTime, me: String, limit: Int): Boolean {
         val hour = now.withMinute(0).withSecond(0).withNano(0).iso()
-        val n = if (fogN.first == hour) fogN.second + 1 else 1
-        fogN = hour to (if (n >= FOG_SWITCHES) 0 else n)
-        return if (n >= FOG_SWITCHES) "fog" else ""
+        val t = live.optJSONObject("tally") ?: JSONObject()
+        var k = t.optJSONObject(kind)
+        if (k == null || k.optString("h") != hour) k = JSONObject().put("h", hour).put("n", JSONObject()).put("used", 0)
+        val n = k.optJSONObject("n") ?: JSONObject()
+        val dev = me.ifEmpty { "?" }
+        n.put(dev, n.optInt(dev) + 1)
+        k.put("n", n)
+        val total = n.keys().asSequence().sumOf { n.optInt(it) }
+        val hit = total - k.optInt("used") >= limit
+        if (hit) k.put("used", k.optInt("used") + limit)
+        live.put("tally", t.put(kind, k))
+        save()
+        return hit
+    }
+
+    /** 这个钟点里还没算成违反的次数 (各设备合计). */
+    fun tallyCount(kind: String, now: LocalDateTime): Int {
+        val k = if (active) live.optJSONObject("tally")?.optJSONObject(kind) else null
+        if (k == null || k.optString("h") != now.withMinute(0).withSecond(0).withNano(0).iso()) return 0
+        val n = k.optJSONObject("n") ?: return 0
+        return n.keys().asSequence().sumOf { n.optInt(it) } - k.optInt("used")
+    }
+
+    /** 黑雾: 合约中要切到计时器以外的页面 (打不开的设置也算) 记一次; 这个钟点里 (各设备合计) 满 FOG_SWITCHES 次返回 "fog"
+     *  (算一次违反, 重新计). 每个钟点清零. 失效后照样数 (再次触发只响警报). 同 contract.py 的 fog_switch. */
+    fun fogSwitch(now: LocalDateTime, me: String = ""): String {
+        if (!active || !watching("fog")) return ""
+        return if (tally("fog", now, me, FOG_SWITCHES)) "fog" else ""
+    }
+
+    /** 全频道阻塞干扰: 打开的应用被名单禁止 (锁住) 记一次; 这个钟点里 (各设备合计) 满 JAM_BLOCKS 次返回 "jam"
+     *  (算一次违反, 重新计). 每个钟点清零. 失效后照样数. 同 contract.py 的 jam_block. */
+    fun jamBlock(now: LocalDateTime, me: String = ""): String {
+        if (!active || !watching("jam")) return ""
+        return if (tally("jam", now, me, JAM_BLOCKS)) "jam" else ""
     }
 
     /** 通道阻塞: (要检查的词条, 上限); 已经失效的按失效前的上限. 没有时 ("", 0). */
@@ -1302,16 +1346,53 @@ class Contract(private val file: File) {
         val old = live.optJSONArray("hl")?.strings() ?: emptyList()
         val seen = old.toMutableSet()
         val new = mutableListOf<String>()
+        val rest = live.optJSONArray("rest_h")?.strings()?.toSet() ?: emptySet()
         for ((key, a, b) in hourUnits(now)) {
             if (key in seen || b.plusSeconds(cellFill(a, b, fillSec)).isAfter(now)) continue
             seen.add(key)
-            if (isAuto(textOf(key), key, auto, autoOf)) new.add(key)
+            if (key !in rest && isAuto(textOf(key), key, auto, autoOf)) new.add(key)   // 休息中没填写的不算违反
         }
         if (seen.size != old.size) {
             live.put("hl", JSONArray(seen.sorted()))
             save()
         }
         return new
+    }
+
+    /** 休息中 (每秒调用): 合约里还在补填时限里, 还没填写 (空着 / 超时自动记录的内容) 的记录格记下来 (rest_h, 随同步只增不删).
+     *  这些格子之后超时不算违反, 黑雾不盖住, 一直能填 (记录封锁也不锁), 自己填写了以后才照常 (MECHANICS 18.4). 同 contract.py. */
+    fun markRestCells(now: LocalDateTime, fillSec: Long, textOf: (String) -> String, auto: String,
+                      autoOf: ((String) -> String)? = null): Boolean {
+        if (!active) return false
+        val have = live.optJSONArray("rest_h")?.strings()?.toSet() ?: emptySet()
+        val new = hourUnits(now).filter { (key, a, b) ->
+            key !in have && now.isBefore(b.plusSeconds(cellFill(a, b, fillSec))) && isAuto(textOf(key), key, auto, autoOf)
+        }.map { it.first }
+        if (new.isEmpty()) return false
+        live.put("rest_h", JSONArray((have + new).sorted()))
+        save()
+        return true
+    }
+
+    /** 记录格的键 → (开始, 结束). */
+    private fun keySpan(key: String): Pair<LocalDateTime, LocalDateTime>? {
+        val p = key.split("/")
+        val h = runCatching { java.time.LocalDate.parse(p[0]).atTime(p[1].toInt(), 0) }.getOrNull() ?: return null
+        if (p.size == 3) {
+            val a = h.plusMinutes(if (p[2] == "2") 30 else 0)
+            return a to a.plusMinutes(30)
+        }
+        return h to h.plusHours(1)
+    }
+
+    /** 休息中没填写的记录格 (markRestCells), 现在还没自己填写: 黑雾不盖住, 能填. */
+    fun restCell(start: LocalDateTime, end: LocalDateTime, text: String, auto: String, autoOf: ((String) -> String)? = null): Boolean {
+        if (!active) return false
+        val key = "${start.toLocalDate()}/${start.hour}"
+        if (!isAuto(text, key, auto, autoOf)) return false
+        return (live.optJSONArray("rest_h")?.strings() ?: emptyList()).any { k ->
+            keySpan(k)?.let { (a, b) -> a.isBefore(end) && start.isBefore(b) } ?: false
+        }
     }
 
     private fun isAuto(text: String, key: String, auto: String, autoOf: ((String) -> String)?): Boolean {
@@ -1336,6 +1417,7 @@ class Contract(private val file: File) {
      *  没填的照常能填. 未知变量 / 记录封锁另外封锁的格子不管填没填都不能再改. 合约结束后全部恢复. */
     fun hourLocked(start: LocalDateTime, end: LocalDateTime, text: String, now: LocalDateTime, fillSec: Long,
                    auto: String, autoOf: ((String) -> String)? = null, key: String = ""): Boolean {
+        if (restCell(start, end, text, auto, autoOf)) return false   // 休息中没填写的格子: 自己填写之前一直能填
         if (locks().any { (a, b) -> a.isBefore(end) && start.isBefore(b) }) return true
         if (text.isBlank()) return false          // 没填的照常能填; 已经填写了的 (手动 / 自动) 不能再改
         return hourSealed(start, end, now)
@@ -1421,6 +1503,8 @@ class Contract(private val file: File) {
         new.put("violations", maxOf(mine.optInt("violations"), new.optInt("violations")))
         val hl = ((new.optJSONArray("hl")?.strings() ?: emptyList()) + (mine.optJSONArray("hl")?.strings() ?: emptyList())).toSortedSet()
         new.put("hl", JSONArray(hl.toList()))
+        val restH = ((new.optJSONArray("rest_h")?.strings() ?: emptyList()) + (mine.optJSONArray("rest_h")?.strings() ?: emptyList())).toSortedSet()
+        if (restH.isNotEmpty()) new.put("rest_h", JSONArray(restH.toList()))
         val fineH = ((new.optJSONArray("fine_h")?.strings() ?: emptyList()) + (mine.optJSONArray("fine_h")?.strings() ?: emptyList())).toSortedSet()
         if (fineH.isNotEmpty()) new.put("fine_h", JSONArray(fineH.toList()))
         val locks = (new.optJSONArray("locks") ?: JSONArray()).let { JSONArray(it.toString()) }
@@ -1431,7 +1515,28 @@ class Contract(private val file: File) {
             if (have.add(v.toString())) locks.put(JSONArray(v.toString()))
         }
         if (locks.length() > 0) new.put("locks", locks)
+        keepTally(mine.optJSONObject("tally"), new.optJSONObject("tally"))?.let { new.put("tally", it) }
         return new
+    }
+
+    /** 计数 (tally) 的合并: 同一个钟点每台设备取大的, 用掉的取大的; 不同钟点取后面的. */
+    private fun keepTally(a: JSONObject?, b: JSONObject?): JSONObject? {
+        if (a == null && b == null) return null
+        val out = JSONObject()
+        val kinds = (a?.keys()?.asSequence()?.toList() ?: emptyList()) + (b?.keys()?.asSequence()?.toList() ?: emptyList())
+        for (kind in kinds.toSet()) {
+            val x = a?.optJSONObject(kind)
+            val y = b?.optJSONObject(kind)
+            if (x == null || y == null || x.optString("h") != y.optString("h")) {
+                out.put(kind, listOfNotNull(x, y).maxByOrNull { it.optString("h") })
+                continue
+            }
+            val n = JSONObject((x.optJSONObject("n") ?: JSONObject()).toString())
+            val yn = y.optJSONObject("n") ?: JSONObject()
+            for (dev in yn.keys()) n.put(dev, maxOf(n.optInt(dev), yn.optInt(dev)))
+            out.put(kind, JSONObject().put("h", x.optString("h")).put("n", n).put("used", maxOf(x.optInt("used"), y.optInt("used"))))
+        }
+        return out
     }
 
     fun merge(changes: Map<String, Any?>) {

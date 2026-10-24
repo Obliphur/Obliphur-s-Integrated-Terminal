@@ -31,7 +31,7 @@ LIST_KEYS = (WHITE_DOMAINS, WHITE_APPS, BLACK_DOMAINS, BLACK_APPS)
 MODE_BLACKLIST = "blacklist"
 MODE_WHITELIST = "whitelist"
 # 代理-全屏蔽 (Proxy block-all) (断网方式 proxy_all): 联网判定不看名单, 离线时除本机地址外全部拦截,
-# 联网会话中全部放行. 应用名单照样按过滤名单模式 (黑 / 白) 关窗口 (app_allowed, MECHANICS 3.2.1 / 4.7)
+# 联网会话中全部放行. 应用名单照样按过滤名单模式 (黑 / 白) 关窗口, 只在专注 / 空闲时, 和联不联网无关 (app_allowed, MECHANICS 3.2.1 / 4.7)
 MODE_BLOCKALL = "blockall"
 
 CHANGE_DELAY_HOURS = 48
@@ -340,16 +340,16 @@ class RuleStore:
         return True, "default-allow"
 
 
-    def app_allowed(self, exe: str, online: bool, mode: str = MODE_BLACKLIST):
-        """前台窗口的程序能不能用 (Rules 页的应用名单, 见 MECHANICS 4.7).
-        (允许?, 原因). 原因: online / whitelist-app / not-whitelisted / blacklist-app / default-allow"""
+    def app_allowed(self, exe: str, rest: bool, mode: str = MODE_BLACKLIST):
+        """前台窗口的程序能不能用 (Rules 页的应用名单, 见 MECHANICS 4.7). 只管专注 / 空闲, 休息中 (rest) 全部放行; 和联不联网无关.
+        (允许?, 原因). 原因: rest / whitelist-app / not-whitelisted / blacklist-app / default-allow"""
         exe = norm_app(exe) if exe else ""
         s = self._snap
         if exe and exe in self.exempt:
             return True, "prestart"         # 提前启动的程序: 不看名单 (MECHANICS 20)
+        if rest:
+            return True, "rest"
         if mode == MODE_WHITELIST:
-            if online:
-                return True, "online"
             if exe and exe in s[WHITE_APPS]:
                 return True, "whitelist-app"
             return False, "not-whitelisted"
@@ -425,7 +425,8 @@ def _selftest():
     assert rs.app_allowed("chrome.exe", True, MODE_BLACKLIST)[0]
     assert rs.app_allowed("code.exe", False, MODE_WHITELIST) == (True, "whitelist-app")
     assert rs.app_allowed("chrome.exe", False, MODE_WHITELIST) == (False, "not-whitelisted")
-    assert rs.app_allowed("chrome.exe", True, MODE_WHITELIST) == (True, "online")
+    assert rs.app_allowed("chrome.exe", True, MODE_WHITELIST) == (True, "rest")
+    assert rs.app_allowed("steam.exe", True, MODE_BLACKLIST) == (True, "rest"), "休息中全部放行"
 
     # 提前启动 (MECHANICS 20): 名单和代理-全屏蔽都不拦
     rs.exempt = {"steam.exe"}

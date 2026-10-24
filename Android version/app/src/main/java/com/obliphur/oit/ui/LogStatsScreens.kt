@@ -202,9 +202,11 @@ fun HourLogScreen(go: (String) -> Unit) {
                     Triple(start, start.plusMinutes(30), dm.halfText(ds, start.hour, 0)),
                     Triple(start.plusMinutes(30), end, dm.halfText(ds, start.hour, 1)))
                     else listOf(Triple(start, end, dm.hourText(ds, start.hour)))
-                val hidden = cells.map { (a, b, _) ->
+                val hidden = cells.map { (a, b, t) ->
                     val wait = awaiting != null && !awaiting.isBefore(a) && awaiting.isBefore(b)
-                    fog && !(!now.isBefore(a) && now.isBefore(b)) && !wait
+                    // 休息中没填写的格子也露出来, 自己填写之后才盖住 (18.4)
+                    fog && !(!now.isBefore(a) && now.isBefore(b)) && !wait &&
+                        !core.contract.restCell(a, b, t, dm.autoValue, dm::autoTextForKey)
                 }
                 val editable = cells.mapIndexed { i, (a, b, t) ->
                     !hidden[i] && enabled && !b.isAfter(now) &&

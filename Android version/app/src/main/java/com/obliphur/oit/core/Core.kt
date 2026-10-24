@@ -99,8 +99,12 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     var offlineDevices: () -> List<Pair<String, Long>> = { emptyList() }
     /** 绑定的设备里版本和本机不一样的: (名字, 版本, 是否比本机新). 不一样时不能开始合约. */
     var versionMismatch: () -> List<Triple<String, String, Boolean>> = { emptyList() }
-    /** 解除全部绑定的计划到时间了就解除 (返回这次解除了没有). */
-    var checkUnbind: () -> Boolean = { false }
+    /** 冷静期到了的解除绑定就解除, 并请那台设备清空全部数据 (返回这次解除了的设备的名字, MECHANICS 15.1). */
+    var checkUnbind: () -> List<String> = { emptyList() }
+    /** 此刻离线的绑定的设备: id → 名字. */
+    var offlinePeers: () -> Map<String, String> = { emptyMap() }
+    /** 上一次看到的离线设备 (null = 还没看过: 刚打开时已经离线的不响). */
+    private var offlineSeen: Set<String>? = null
     /** 本机这次打开程序 (开始同步) 的时刻 (毫秒). */
     var syncStartedMs: () -> Long = { System.currentTimeMillis() }
     /** 合约因为哪台设备离线而失败. */
@@ -194,9 +198,9 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
 
     // ---- 提示 ----
 
-    // 黑雾: 遮住除违规记录 (error) 外的所有提示, 显示为 [???] (MECHANICS 18.3)
-    fun toast(text: String, kind: String = "info", long: Boolean = false) =
-        host.toast(Toast(if (kind != "error" && contract.fog()) "[???]" else text, kind, long))
+    // 黑雾: 遮住除违规记录 (error) 外的所有提示, 显示为 [???] (MECHANICS 18.3); clear: 词条自己的提示 (支援短缺, 未知变量) 不遮
+    fun toast(text: String, kind: String = "info", long: Boolean = false, clear: Boolean = false) =
+        host.toast(Toast(if (kind != "error" && !clear && contract.fog()) "[???]" else text, kind, long))
 
     fun changed() = host.changed()
 
@@ -391,10 +395,11 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             checkPendingSettings()
             timer.check()
             checkSetupPeriod()
-            if (runCatching { checkUnbind() }.getOrDefault(false)) {
-                logNotice("SYNC unbind-all done")
-                toast(tr("已解除和所有设备的绑定."))
+            for (name in runCatching { checkUnbind() }.getOrDefault(emptyList())) {
+                logNotice("SYNC unbind done $name")
+                toast(tr("已解除和 {name} 的绑定, {name} 上的数据会被清空 (离线时等它上线).", "name" to name))
             }
+            checkOfflineChime()
             checkAchievements()
             // 子端: 母端 2 分钟没同步过了 (关掉了 / 断开了), 开发者模式就关掉
             if (settings.devMode && followsMother() && !motherFresh()) setDevMode(false)
@@ -471,6 +476,19 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
 
     fun previewChime() = host.playChime {}
 
+    /** 有绑定的设备刚离线时, 在焦点设备 (最后有人操作的那台) 上响一次提示音 (MECHANICS 15.2). */
+    private fun checkOfflineChime() {
+        val off = runCatching { offlinePeers() }.getOrNull() ?: return
+        val was = offlineSeen
+        offlineSeen = off.keys
+        val fresh = if (was == null) emptySet() else off.keys - was
+        if (fresh.isEmpty() || !isLatestActive()) return
+        val names = fresh.sorted().joinToString(", ") { off[it] ?: "?" }
+        logNotice("SYNC offline $names")
+        host.playChime {}
+        toast(tr("{name} 离线了.", "name" to names), "warn")
+    }
+
     // ---- 应用名单: 锁定前台应用 (MECHANICS 14.6, 对应桌面版 4.7) ----
 
     /** 此刻被锁定的应用. */
@@ -485,7 +503,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         // 合约 · 乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒: 打开它们不算违反, 只是禁止联网 (vpnPlan, MECHANICS 18.3)
         val mode = settings.str("FILTER_MODE")
         val why = if (app.isEmpty() || app == "OIT" || host.lockExempt(app, mode == RuleKeys.WHITELIST)) null
-        else rules.snap.appAllowed(app, net.online, mode).takeIf { !it.first }?.second
+        else rules.snap.appAllowed(app, timer.state == TState.ON_BREAK, mode).takeIf { !it.first }?.second
         if (why == null) {
             if (lockedApp != null) { lockedApp = null; host.unlockApp() }
             return
@@ -493,6 +511,9 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         if (lockedApp != app) {
             lockedApp = app
             Store.append(File(dir, "window_guard.log"), "LOCK     $why  $app")
+            // 全频道阻塞干扰 (软): 打开被禁止的应用, 这个钟点里各设备合计满 20 次算一次违反
+            val id = contract.jamBlock(LocalDateTime.now(), myId())
+            if (id.isNotEmpty()) contractViolation(tr("全频道阻塞干扰中频繁打开被禁止的程序"), id)
         }
         host.lockApp(app, why)
     }
@@ -918,7 +939,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         val gone = c.expire(now)
         for (id in gone) {
             logNotice("CONTRACT unknown expired $id")
-            toast(tr("未知变量: {name} 已移除", "name" to tr(Contract.BY_ID[id]!!.name)))
+            toast(tr("未知变量: {name} 已移除", "name" to tr(Contract.BY_ID[id]!!.name)), clear = true)
         }
         val picked = c.roll(now, Dice(), dm::unitText, dm.autoValue, dm.fillSeconds.toLong(), dm::autoTextForKey)
         val woke = c.wake(now)
@@ -928,7 +949,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         }
         for (id in woke) {
             logNotice("CONTRACT unknown on $id")
-            toast(tr("未知变量: 启用了 {name}", "name" to tr(Contract.BY_ID[id]!!.name)), "warn", long = true)
+            toast(tr("未知变量: 启用了 {name}", "name" to tr(Contract.BY_ID[id]!!.name)), "warn", long = true, clear = true)
         }
         if (picked.isNotEmpty() || woke.isNotEmpty() || gone.isNotEmpty()) {
             host.applyNet(false)                 // 选中全频道阻塞干扰: 断网方式跟着变
@@ -941,23 +962,23 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         when (kind) {
             "term" -> contract.waiting[v]?.let {
                 toast(tr("未知变量: 抽中了 {name}, {t} 生效", "name" to tr(Contract.BY_ID[v]!!.name),
-                    "t" to it.first.format(Fmt.HM)), "warn", long = true)
+                    "t" to it.first.format(Fmt.HM)), "warn", long = true, clear = true)
             }
             "rest_cut", "rest_add" -> {
                 val d = if (kind == "rest_add") Contract.RANDOM_REST else -Contract.RANDOM_REST
                 timer.adjustBreak(d)
                 toast(tr(if (d > 0) "未知变量: 休息时间 +{n} 分钟" else "未知变量: 休息时间 -{n} 分钟", "n" to Contract.RANDOM_REST / 60),
-                    "warn", long = true)
+                    "warn", long = true, clear = true)
             }
             "lock" -> if (v.isNotEmpty()) {
                 val p = v.split("/")
                 val t = "${p[0].substring(5)} %02d:%s".format(p[1].toInt(), if (p.size == 3 && p[2] == "2") "30" else "00")
-                toast(tr("未知变量: 封锁了整点记录 {t} (不能再修改)", "t" to t), "warn", long = true)
-            } else toast(tr("未知变量: 没有可以封锁的整点记录, 无事发生"))
-            "double" -> toast(tr("未知变量: 这次判定作废, 改为判定两次"))
+                toast(tr("未知变量: 封锁了整点记录 {t} (不能再修改)", "t" to t), "warn", long = true, clear = true)
+            } else toast(tr("未知变量: 没有可以封锁的整点记录, 无事发生"), clear = true)
+            "double" -> toast(tr("未知变量: 这次判定作废, 改为判定两次"), clear = true)
             "slow" -> toast(tr("未知变量: 下一次专注启用阻滞 (只减慢合约内的时间, 按 {p}% 增长)", "p" to Math.round(Contract.RANDOM_SLOW * 100)),
-                "warn", long = true)
-            else -> toast(tr("未知变量: 无事发生"))
+                "warn", long = true, clear = true)
+            else -> toast(tr("未知变量: 无事发生"), clear = true)
         }
     }
 
@@ -999,6 +1020,8 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         if (!dm.hourEnabled) return
         val now = LocalDateTime.now()
         dm.finalizeHalves(c.hourUnits(now), now)
+        if (timer.state == TState.ON_BREAK && c.markRestCells(now, dm.fillSeconds.toLong(), dm::unitText, dm.autoValue, dm::autoTextForKey))
+            changed()
         if (!ownerAway(c.owner)) return
         for (key in c.hourMisses(now, dm.fillSeconds.toLong(), dm::unitText, dm.autoValue, dm::autoTextForKey)) {
             val p = key.split("/")
@@ -1025,7 +1048,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             val key = "${c.id}/${Math.round(c.supplyLimit ?: 0.0)}/$sec"
             if (until != null && until > 0 && until <= sec && key !in supplyWarned) {
                 supplyWarned.add(key)
-                toast(tr("支援短缺: {n} 分钟后将超出可用的合约开始前休息时间", "n" to sec / 60), "warn", long = true)
+                toast(tr("支援短缺: {n} 分钟后将超出可用的合约开始前休息时间", "n" to sec / 60), "warn", long = true, clear = true)
             }
         }
         if (ownerAway(c.owner)) {
@@ -1092,14 +1115,15 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
                 if (reward > 0) msg += "\n" + tr("积攒的休息时间 +{t}.", "t" to fmtMs(reward.toDouble()))
                 notice(tr("⚔  合约完成"), msg, listOf(NoticeButton(tr("知道了"), "ok", true)), page = "contract")
             }
-            "abandoned" -> toast(tr("⚔ 行动终止"))
+            "abandoned" -> toast(tr("⚔ 行动终止") + if (reward > 0) "\n" + tr("积攒的休息时间 +{t}.", "t" to fmtMs(reward.toDouble())) else "")
             else -> {
                 var msg = when (result) {
                     "failed" -> tr("目标生命值归零 (违反 {n} 次), 合约终止.", "n" to rec.optInt("violations"))
                     "offline" -> tr("{name} 离线超过 15 分钟, 合约终止.", "name" to offlineName.ifEmpty { "?" })
                     else -> tr("空闲超过 15 分钟, 合约终止.")
                 }
-                if (pending >= 1) msg += "\n" + tr("完成后的 {n} 分钟休息时间没有给出.", "n" to Math.round(pending / 60))
+                if (pending >= 1) msg += "\n" + tr("按进行的比例给出 {m} 分钟休息时间 (完成给 {n} 分钟).",
+                    "m" to Math.round(reward / 60.0), "n" to Math.round(pending / 60))
                 notice(tr("⚔ 行动失败"), msg, listOf(NoticeButton(tr("知道了"), "ok", true)), page = "contract")
             }
         }
@@ -1109,7 +1133,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     /** 违反了词条 id (软规则): 响警报, 记一次, 这个词条降一级 (drop: 直接去掉); 到上限就结束合约. */
     /** 黑雾 (MECHANICS 18.3): 要切到计时器以外的页面 (界面上调用). */
     fun fogSwitch() {
-        val id = contract.fogSwitch(LocalDateTime.now())
+        val id = contract.fogSwitch(LocalDateTime.now(), myId())
         if (id.isNotEmpty()) contractViolation(tr("黑雾中频繁切换页面"), id)
     }
 

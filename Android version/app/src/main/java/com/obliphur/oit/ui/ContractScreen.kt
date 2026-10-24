@@ -557,7 +557,8 @@ fun ContractScreen() {
         }
         "end" -> {
             var msg = tr("提前结束合约?")
-            if (c.reward >= 1) msg += "\n" + tr("完成后的 {n} 分钟休息时间不会给出.", "n" to Math.round(c.reward / 60))
+            if (c.reward >= 1) msg += "\n" + tr("现在结束只给 {m} 分钟休息时间 (完成给 {n} 分钟).",
+                "m" to Math.round(c.rewardAt(java.time.LocalDateTime.now()) / 60.0), "n" to Math.round(c.reward / 60))
             Confirm(tr("■  提前结束"), msg, true, { ask = "" }) { core.abandonContract() }
         }
         else -> if (ask.startsWith("lift:")) {
