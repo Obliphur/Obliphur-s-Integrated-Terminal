@@ -397,8 +397,8 @@ EN = {
         "Loosening changes are held back in the hope that, at some future moment, reason only needs to win for a short while to stop the process.\nWhy hold back tightening too? The author hopes you won't drain the pond to catch the fish. You may see how valuable one more hour of study is, but not how much pressure one less hour of rest puts on your mental health. So use this time to think about how less time, or blocking certain key sites, would affect your life.",
     "你们贴心的作者已经考虑到了戒断反应和设置参数的资料查询需要,所以默认是放行的.\n在完成初始设置后,各项设置的修改限制才会生效.\n不过作者更喜欢用Adapter模式.":
         "Your thoughtful author has already considered withdrawal symptoms and the need to look things up while configuring, so everything is allowed by default.\nThe limits on changing settings only take effect after the initial setup.\nThat said, the author prefers Adapter mode.",
-    "你们贴心的作者已经考虑到了戒断反应和设置参数的资料查询需要,所以默认是放行的.\n在完成初始设置后,各项设置的修改限制才会生效.\n作者比较喜欢用proxy block-all.":
-        "Your thoughtful author has already considered withdrawal symptoms and the need to look things up while configuring, so everything is allowed by default.\nThe limits on changing settings only take effect after the initial setup.\nThe author rather likes proxy block-all.",
+    "你们贴心的作者已经考虑到了戒断反应和设置参数的资料查询需要,所以默认是放行的.\n在完成初始设置后,各项设置的修改限制才会生效.\n作者比较喜欢用proxy block-all.\n对了,应用黑白名单只针对空闲与专注时段,休息时段全部放行,但是联网需要另外申请.":
+        "Your thoughtful author has already considered withdrawal symptoms and the need to look things up while configuring, so everything is allowed by default.\nThe limits on changing settings only take effect after the initial setup.\nThe author rather likes proxy block-all.\nBy the way, the app blacklist / whitelist only applies during idle and focus periods; everything is allowed during breaks, but going online still needs a separate request.",
     "在第二段区间内 学的时间越长得到的休息时间越长.请尽量长时间地专注.":
         "Within the second range, the longer you study, the more break time you earn. Try to stay focused as long as you can.",
     "学的时间越长得到的休息时间越长.请尽量长时间地专注.": "The longer you study, the more break time you earn. Try to stay focused as long as you can.",

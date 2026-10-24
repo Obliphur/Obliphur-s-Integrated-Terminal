@@ -271,7 +271,7 @@ object EnStrings {
         "🤖 AI 建议" to "🤖 AI suggestions",
         "⚙ 模型" to "⚙ Model",
         "切换到{mode}: {at}" to "Switching to {mode}: {at}",
-        "你们贴心的作者已经考虑到了戒断反应和设置参数的资料查询需要,所以默认是放行的.\n在完成初始设置后,各项设置的修改限制才会生效.\n作者比较喜欢用proxy block-all." to "Your thoughtful author has already considered withdrawal symptoms and the need to look things up while configuring, so everything is allowed by default.\nThe limits on changing settings only take effect after the initial setup.\nThe author rather likes proxy block-all.",
+        "你们贴心的作者已经考虑到了戒断反应和设置参数的资料查询需要,所以默认是放行的.\n在完成初始设置后,各项设置的修改限制才会生效.\n作者比较喜欢用proxy block-all.\n对了,应用黑白名单只针对空闲与专注时段,休息时段全部放行,但是联网需要另外申请." to "Your thoughtful author has already considered withdrawal symptoms and the need to look things up while configuring, so everything is allowed by default.\nThe limits on changing settings only take effect after the initial setup.\nThe author rather likes proxy block-all.\nBy the way, the app blacklist / whitelist only applies during idle and focus periods; everything is allowed during breaks, but going online still needs a separate request.",
         "黑名单" to "Blacklist",
         "白名单" to "Whitelist",
         "⏳  等待生效的改动" to "⏳  Pending changes",

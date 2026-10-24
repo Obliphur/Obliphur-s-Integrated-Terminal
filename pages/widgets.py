@@ -176,6 +176,20 @@ def flavor(parent, text: str, bg: str = None, pad: int = 24):
     lbl.pack(side="left", fill="x", expand=True, padx=(config.scaled(10), 0), pady=2)
     wrap_label(lbl, pad + config.scaled(14))
     fr.label = lbl
+
+    # 滚轮: 鼠标停在风味文本上时, 滚动它所在的那个可以滚动的区域 (往上找最近的带滚动条的 Canvas).
+    # 不靠 ScrollFrame.bind_children —— 页面建好以后才加进来的风味文本它绑不上.
+    def wheel(e):
+        w = fr.master
+        while w is not None:
+            if isinstance(w, tk.Canvas) and str(w.cget("yscrollcommand")):
+                w.yview_scroll(int(-e.delta / 120), "units")
+                break
+            w = w.master
+        return "break"
+    for w in [fr] + fr.winfo_children():
+        w.bind("<MouseWheel>", wheel)
+        w._oit_wheel = True              # ScrollFrame.bind_children 不要再绑一次 (会滚两倍)
     return fr
 
 

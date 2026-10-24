@@ -109,7 +109,7 @@ fun RulesScreen(go: (String) -> Unit) {
                     "at" to core.settings.applyAtText("FILTER_MODE")), size = 13, color = o.warn)
             }
         }
-        Flavor(tr("你们贴心的作者已经考虑到了戒断反应和设置参数的资料查询需要,所以默认是放行的.\n在完成初始设置后,各项设置的修改限制才会生效.\n作者比较喜欢用proxy block-all."))
+        Flavor(tr("你们贴心的作者已经考虑到了戒断反应和设置参数的资料查询需要,所以默认是放行的.\n在完成初始设置后,各项设置的修改限制才会生效.\n作者比较喜欢用proxy block-all.\n对了,应用黑白名单只针对空闲与专注时段,休息时段全部放行,但是联网需要另外申请."))
 
         Segmented(listOf(RuleKeys.BLACKLIST to tr("黑名单"), RuleKeys.WHITELIST to tr("白名单")), view) { view = it }
         val (dk, ak) = RuleKeys.forMode(view)

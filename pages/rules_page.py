@@ -106,7 +106,7 @@ class RulesPage(tk.Frame):
 
         # 作者的话: 为什么默认放行 (MECHANICS.md 4.1)
         flavor(body, tr(
-            "你们贴心的作者已经考虑到了戒断反应和设置参数的资料查询需要,所以默认是放行的.\n在完成初始设置后,各项设置的修改限制才会生效.\n作者比较喜欢用proxy block-all."), bg=bg).pack(fill="x", pady=(0, 10))
+            "你们贴心的作者已经考虑到了戒断反应和设置参数的资料查询需要,所以默认是放行的.\n在完成初始设置后,各项设置的修改限制才会生效.\n作者比较喜欢用proxy block-all.\n对了,应用黑白名单只针对空闲与专注时段,休息时段全部放行,但是联网需要另外申请."), bg=bg).pack(fill="x", pady=(0, 10))
 
         grid = tk.Frame(body, bg=bg)
         grid.pack(fill="x")
