@@ -1022,6 +1022,8 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         dm.finalizeHalves(c.hourUnits(now), now)
         if (timer.state == TState.ON_BREAK && c.markRestCells(now, dm.fillSeconds.toLong(), dm::unitText, dm.autoValue, dm::autoTextForKey))
             changed()
+        // 记录封锁: 合约里填写了的整小时格记下来, 合约结束后照样锁着 (18.4)
+        if (c.sealFilled(now, dm::unitText, dm.autoValue, dm::autoTextForKey)) changed()
         if (!ownerAway(c.owner)) return
         for (key in c.hourMisses(now, dm.fillSeconds.toLong(), dm::unitText, dm.autoValue, dm::autoTextForKey)) {
             val p = key.split("/")

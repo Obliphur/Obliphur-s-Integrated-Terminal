@@ -3555,6 +3555,11 @@ class BreakTimerApp:
                                                          self.dm.auto_text_for_key):
             if self.current_page == "log":
                 self.pages["log"].refresh()
+        # 记录封锁: 合约里填写了的整小时格记下来, 合约结束后照样锁着 (18.4)
+        if c.seal_filled(now, self.dm.unit_text, self.dm.auto_text_for_key):
+            self._refresh_if_visible("log")
+            if self.sync.peers():
+                self.sync.sync_now()
         if not self._owner_away(c.owner):
             return
         for key in c.hour_misses(now, config.FILL_WINDOW, self.dm.unit_text,

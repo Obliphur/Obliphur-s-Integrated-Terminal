@@ -726,8 +726,8 @@ class Contract:
                "level": self.level, "orig_level": self.orig_level, "cut": dict(self.cut),
                "result": result, "violations": self.violations, "reward": reward,
                "pre_left": self.pre_left, "rand": self.rand, "owner": self.live.get("owner", "")}
-        if self.live.get("locks"):
-            rec["locks"] = list(self.live["locks"])        # 未知变量 / 记录封锁另外封锁的记录格 (只留作记录, 合约结束后不再锁)
+        if self.live.get("seals"):
+            rec["seals"] = list(self.live["seals"])        # 封锁了的记录格 (合约结束后照样锁着)
         slow = self.live.get("slow")
         if isinstance(slow, dict) and slow.get("start"):
             rec["slow"] = slow["start"]                   # 阻滞的那段专注可能比合约结束得晚
@@ -991,31 +991,55 @@ class Contract:
 
     # ---- 未知变量的效果 ----
 
+    # ---- 封锁 (未知变量 / 记录封锁, MECHANICS 18.4): 只锁已经填写了的整小时格, 合约结束后照样锁着 ----
+    # 存在 "seals" 里 ([开始, 结束] 都是整小时). 旧版本的 "locks" (会锁还没填写 / 细化规范的半小时格) 不再算.
+
+    def _filled(self, a: datetime, key: str, text: str, text_of, auto) -> bool:
+        """这一小时已经填写了 (自己填的或超时自动记录的): 细化规范的小时要两个半小时都填了; 休息中没填写的格子 (rest_cell) 不算."""
+        if not str(text or "").strip():
+            return False
+        if self.fine_hour(a) and not all(str(text_of(f"{key}/{i}") or "").strip() for i in (1, 2)):
+            return False
+        return not self.rest_cell(a, a + timedelta(hours=1), text, auto)
+
+    def lock_pool(self, now: datetime, text_of, auto, fill: timedelta) -> list:
+        """可以封锁的格子: 今天的整点记录页上的一行 (昨天 23:00 ~ 今天 23:00, 整小时, 不是细化规范 / 黑雾切出来的半小时格),
+        已经结束、已经填写了、还没被锁. [(键, 开始, 结束)]."""
+        day0 = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        out = []
+        for r in range(24):
+            a = day0 + timedelta(hours=r - 1)
+            b = a + timedelta(hours=1)
+            if b > now:
+                break
+            key = f"{a:%Y-%m-%d}/{a.hour}"
+            text = str(text_of(key) or "")
+            if self._filled(a, key, text, text_of, auto) and not self.hour_locked(a, b, text, now, fill, auto, key):
+                out.append((key, a, b))
+        return out
+
+    def _add_seals(self, spans) -> None:
+        have = [list(v) for v in self.live.get("seals") or []]
+        self.live["seals"] = have + [[_iso(a), _iso(b)] for a, b in spans if [_iso(a), _iso(b)] not in have]
+
     def lock_cell(self, now: datetime, rng=None, text_of=None, auto="", fill: timedelta = None) -> str:
-        """随机封锁一个还没被封锁, 已经过了填写时限的整点记录格 (只在合约期间内的, 合约结束后解除).
-        返回格子的键 ("日期/小时", 细化规范的半小时 "日期/小时/1"); 没有可以封锁的返回 "".
-        用 hour_units 取格子 —— 只有和合约重叠的真实格子, 不会多出合约开始前 (昨天) / 细化规范切出来的不存在的格子."""
+        """未知变量: 随机封锁一个可以封锁的格子 (lock_pool). 返回格子的键 ("日期/小时"); 没有可以封锁的返回 ""."""
         if not self.active or text_of is None or fill is None:
             return ""
-        pool = [(k, a, b) for k, a, b in self.hour_units(now)
-                if b + cell_fill(a, b, fill) <= now and not self.hour_locked(a, b, text_of(k) or "", now, fill, auto, k)]
+        pool = self.lock_pool(now, text_of, auto, fill)
         if not pool:
             return ""
         k, a, b = (rng or random).choice(pool)
-        self.live["locks"] = list(self.live.get("locks") or []) + [[_iso(a), _iso(b)]]
+        self._add_seals([(a, b)])
         self.save()
         return k
 
     def seal_extra(self, now: datetime, rng=None, text_of=None, auto="", fill: timedelta = None) -> list:
-        """记录封锁 (18.4): 每次完成填写时, 另外随机封锁 SEAL_EXTRA 个可以封锁的格子 (挑法同未知变量的 lock_cell).
+        """记录封锁 (18.4): 每次完成填写时, 另外随机封锁 SEAL_EXTRA 个可以封锁的格子 (lock_pool).
         返回封锁了的格子的键; 没有选记录封锁 / 没有可以封锁的时少于 SEAL_EXTRA 个."""
         if not self.active or not self.has("seal") or text_of is None or fill is None:
             return []
-        # 过了填写时限的格子都已经填写了 (超时自动记录), 记录封锁下本来就锁着 —— 可以封锁的是合约里还能填的格子:
-        # 还在填写时限里的、还没结束的 (到合约结束为止)
-        # 只挑今天的格子 (跨天的合约里昨天 / 明天的格子不在今天的整点记录页上)
-        pool = [(k, a, b) for k, a, b in self.hour_units(now, ahead=True)
-                if a.date() == now.date() and not self.hour_locked(a, b, text_of(k) or "", now, fill, auto, k)]
+        pool = self.lock_pool(now, text_of, auto, fill)
         picks = []
         for _ in range(min(SEAL_EXTRA, len(pool))):
             p = (rng or random).choice(pool)
@@ -1023,19 +1047,43 @@ class Contract:
             picks.append(p)
         if not picks:
             return []
-        self.live["locks"] = list(self.live.get("locks") or []) + [[_iso(a), _iso(b)] for _k, a, b in picks]
-        # 封锁时还没填写, 之后也填不了: 超时自动记录不算违反
-        self.live["hl"] = sorted(set(self.live.get("hl") or []) | {k for k, _a, _b in picks})
+        self._add_seals([(a, b) for _k, a, b in picks])
         self.save()
         return [k for k, _a, _b in picks]
 
+    def seal_filled(self, now: datetime, text_of, auto) -> bool:
+        """记录封锁 (每秒调用): 和合约重叠、已经结束、已经填写了的整小时格记进 seals, 合约结束后照样锁着.
+        只记今天的整点记录页上的行. 返回记了新的没有."""
+        if not self.active or not self.start_at or not ("seal" in self.orig or self.has("seal")):
+            return False
+        have = {tuple(v) for v in (self.live.get("seals") or []) if isinstance(v, (list, tuple))}
+        day0 = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        new = []
+        for r in range(24):
+            a = day0 + timedelta(hours=r - 1)
+            b = a + timedelta(hours=1)
+            if b > now:
+                break
+            if not (self.start_at < b) or (_iso(a), _iso(b)) in have:
+                continue
+            key = f"{a:%Y-%m-%d}/{a.hour}"
+            if self._filled(a, key, str(text_of(key) or ""), text_of, auto):
+                new.append((a, b))
+        if not new:
+            return False
+        self._add_seals(new)
+        self.save()
+        return True
+
     def locks(self) -> list:
-        """未知变量 / 记录封锁 另外封锁的记录格: [(开始, 结束)]. 只有进行中的合约的; 合约结束后全部解除."""
+        """封锁了的记录格: [(开始, 结束)]. 进行中的合约的, 加上结束了的所有合约的 (合约结束后照样锁着)."""
         out = []
-        for v in (self.live.get("locks") if self.active else None) or []:
-            a, b = (_parse(v[0]), _parse(v[1])) if isinstance(v, (list, tuple)) and len(v) == 2 else (None, None)
-            if a and b:
-                out.append((a, b))
+        srcs = [self.live.get("seals") if self.active else None] + [h.get("seals") for h in self.history]
+        for src in srcs:
+            for v in src or []:
+                a, b = (_parse(v[0]), _parse(v[1])) if isinstance(v, (list, tuple)) and len(v) == 2 else (None, None)
+                if a and b:
+                    out.append((a, b))
         return out
 
     def slow_bind(self, start: datetime) -> bool:
@@ -1631,7 +1679,7 @@ class Contract:
     def hour_locked(self, start: datetime, end: datetime, text: str, now: datetime, fill: timedelta,
                     auto, key: str = "") -> bool:
         """记录封锁: 进行中的合约选了这个词条时, 和合约重叠的记录格已经填写了的 (自己填的, 或者超时自动记录的) 就不能再改,
-        没填的照常能填. 未知变量 / 记录封锁另外封锁的格子不管填没填都不能再改. 合约结束后全部恢复."""
+        没填的照常能填 (这条只在合约中). 封锁了的格子 (seals, 都是填写了的) 合约结束后照样锁着."""
         if self.rest_cell(start, end, text, auto):
             return False                     # 休息中没填写的格子: 自己填写之前一直能填
         if any(a < end and start < b for a, b in self.locks()):
@@ -1709,10 +1757,10 @@ class Contract:
         fine_h = sorted(set(new.get("fine_h") or []) | set(mine.get("fine_h") or []))
         if fine_h:
             out["fine_h"] = fine_h
-        locks = [list(v) for v in new.get("locks") or []]
-        locks += [list(v) for v in mine.get("locks") or [] if list(v) not in locks]
-        if locks:
-            out["locks"] = locks
+        seals = [list(v) for v in new.get("seals") or []]
+        seals += [list(v) for v in mine.get("seals") or [] if list(v) not in seals]
+        if seals:
+            out["seals"] = seals
         tally = Contract._keep_tally(mine.get("tally"), new.get("tally"))
         if tally:
             out["tally"] = tally
@@ -2147,39 +2195,39 @@ def _selftest():
     assert c.focus_rate(s1, s1) == 0.9 and c.focus_rate(s1, late) == 1.0, "合约结束后不再减慢"
     # 这段专注: 合约内 30 分钟按 90% 算, 合约结束后的 30 分钟按正常速度
     assert abs(c.focus_minutes(s1, 3600) - (1800 * 0.9 + 1800) / 60) < 1e-6
-    # 封锁一个过了填写时限, 还没被封锁的记录格 (最近 24 小时里的); 填了的也锁
+    # 封锁 (MECHANICS 18.4): 只挑今天整点记录页上已经结束、已经填写了的整小时格; 没填的不挑
     fill = timedelta(hours=1)
     now = datetime(2026, 10, 18, 12, 10)
-    texts = {"2026-10-18/10": "学习"}
+    texts = {"2026-10-18/10": "学习", "2026-10-18/8": "Sleeping"}
+    pool = [k for k, _a, _b in c.lock_pool(now, texts.get, "Sleeping", fill)]
+    assert pool == ["2026-10-18/8", "2026-10-18/10"], pool       # 9 / 11 点没填, 12 点还没结束
     only10 = _Rng(pick=lambda pool: next(x for x in pool if x[0] == "2026-10-18/10"))
     assert c.lock_cell(now, only10, texts.get, "Sleeping", fill) == "2026-10-18/10"
     a, b = datetime(2026, 10, 18, 10), datetime(2026, 10, 18, 11)
     assert c.hour_locked(a, b, "学习", now, fill, "Sleeping")
-    assert not c.hour_locked(b, b + timedelta(hours=1), "", now, fill, "Sleeping"), "11 点那格还没过填写时限"
+    assert not c.hour_locked(b, b + timedelta(hours=1), "", now, fill, "Sleeping"), "没填的不锁"
     last = _Rng(pick=lambda pool: pool[-1])
-    assert c.lock_cell(now, last, texts.get, "Sleeping", fill) == "2026-10-18/9", "已经封锁的不再选"
+    assert c.lock_cell(now, last, texts.get, "Sleeping", fill) == "2026-10-18/8", "已经封锁的不再选"
+    assert c.lock_cell(now, last, texts.get, "Sleeping", fill) == "", "没有可以封锁的"
     assert c.lock_cell(now, None, None, "Sleeping", fill) == ""
-    # 记录封锁: 每次完成填写时另外封锁两个; 没选记录封锁时不封. 只封合约期间内的格子 (不会多出昨天 / 合约外的, #7)
+    # 记录封锁: 每次完成填写时另外封锁两个; 没选记录封锁时不封. 合约里填了的本来就锁着, 挑的是别的填了的格子
     assert c.seal_extra(now, None, texts.get, "Sleeping", fill) == [], "没选记录封锁"
     c.live["terms"] = list(c.terms) + ["seal"]
+    texts.update({"2026-10-18/6": "Sleeping", "2026-10-18/7": "吃饭", "2026-10-18/11": "读书", "2026-10-18/12": "学习"})
     n0 = len(c.locks())
-    now2 = datetime(2026, 10, 18, 14, 0)          # 合约 09:30–13:30 内, 9 / 10 点已锁, 还剩 11 / 12 / 13 点可封
+    now2 = datetime(2026, 10, 18, 14, 0)
     got = c.seal_extra(now2, None, texts.get, "Sleeping", fill)
-    assert len(got) == 2 and len(set(got)) == 2 and len(c.locks()) == n0 + 2, got
-    assert all(k in ("2026-10-18/11", "2026-10-18/12", "2026-10-18/13") for k in got), got
-    assert set(got) <= set(c.live["hl"]), "封锁时还没填写: 超时自动记录不算违反"
-    # 实际情况: 过了填写时限的格子都自动记录了 (记录封锁下已经锁着), 只能封还能填的 / 还没结束的格子 (到合约结束为止)
-    c.live["locks"], c.live["hl"] = [], []
-    now3 = datetime(2026, 10, 18, 11, 20)
-    auto = {"2026-10-18/9": "Sleeping", "2026-10-18/10": "学习"}
-    got = c.seal_extra(now3, None, auto.get, "Sleeping", fill)
-    assert len(got) == 2 and all(k in ("2026-10-18/11", "2026-10-18/12", "2026-10-18/13") for k in got), got
-    misses = c.hour_misses(datetime(2026, 10, 18, 15), fill, lambda k: "", "Sleeping")
-    assert misses and not set(got) & set(misses), "封锁的空格子不算违反"
+    assert sorted(got) == ["2026-10-18/6", "2026-10-18/7"] and len(c.locks()) == n0 + 2, got
+    assert c.seal_extra(now2, None, texts.get, "Sleeping", fill) == [], "合约里填了的本来就锁着, 没有别的可封"
+    assert c.seal_filled(now2, texts.get, "Sleeping") and not c.seal_filled(now2, texts.get, "Sleeping")
     c.live["terms"] = [t for t in c.terms if t != "seal"]
     c.finish("abandoned", now)
-    # 合约提前结束了: 另外封锁的格子解除; 之后才开始的这段专注不减速 (阻滞只对合约内的专注生效)
-    assert not c.hour_locked(a, b, "学习", now + timedelta(days=3), fill, "Sleeping"), "合约结束后解除封锁"
+    # 合约结束后: 封锁了的 (都是填写了的) 照样锁着, 没填的照常能填, 填写不用确认; 之后才开始的这段专注不减速
+    later = now + timedelta(days=3)
+    assert c.hour_locked(a, b, "学习", later, fill, "Sleeping"), "合约结束后照样锁着"
+    assert c.hour_locked(datetime(2026, 10, 18, 11), datetime(2026, 10, 18, 12), "读书", later, fill, "Sleeping")
+    assert not c.hour_locked(datetime(2026, 10, 18, 9), datetime(2026, 10, 18, 10), "", later, fill, "Sleeping")
+    assert not c.hour_sealed(datetime(2026, 10, 18, 9), datetime(2026, 10, 18, 10), later)
     assert c.focus_rate(s1) == 1.0 and abs(c.focus_minutes(s1, 3600) - 60) < 1e-6
     # 未知变量启用了整点记录的词条: 这次合约中一直强制开启整点记录
     c.start(["unknown"], owner="me", now=t0)
@@ -2340,14 +2388,23 @@ def _selftest():
     assert c.hour_locked(a, b, "学习", datetime(2026, 10, 18, 11, 1), fill, "Sleeping"), "过了时限, 填了的也锁"
     assert c.hour_locked(a, b, "学习", datetime(2026, 10, 18, 10, 59), fill, "Sleeping"), "填写了就不能再改 (时限之内也一样)"
     assert not c.hour_locked(a, b, "", datetime(2026, 10, 18, 11, 30), fill, "Sleeping"), "没填的照常能填"
-    c.live["locks"] = [["2026-10-18T09:00:00", "2026-10-18T09:30:00"]]
-    assert c.hour_locked(datetime(2026, 10, 18, 9), datetime(2026, 10, 18, 9, 30), "", datetime(2026, 10, 18, 11), fill,
-                         "Sleeping"), "另外封锁的格子合约中不能填"
+    # 细化规范: 两个半小时都填了的整小时格才封锁 (不锁半小时格)
+    t2 = {"2026-10-18/10": "学习", "2026-10-18/10/1": "学习", "2026-10-18/10/2": ""}
+    now4 = datetime(2026, 10, 18, 11, 10)
+    assert not c.seal_filled(now4, t2.get, "Sleeping"), "后半小时没填: 不封"
+    assert not c.lock_pool(now4, t2.get, "Sleeping", fill), "后半小时没填: 不能封锁"
+    t2.update({"2026-10-18/10/2": "吃饭", "2026-10-18/10": "学习/吃饭"})
+    assert c.seal_filled(now4, t2.get, "Sleeping") and not c.seal_filled(now4, t2.get, "Sleeping")
+    assert c.live["seals"] == [["2026-10-18T10:00:00", "2026-10-18T11:00:00"]]
     c.finish("abandoned", datetime(2026, 10, 18, 12))
-    assert not c.hour_locked(a, b, "Sleeping", datetime(2026, 10, 19), fill, "Sleeping"), "合约结束后解除"
+    assert c.hour_locked(a, b, "学习", datetime(2026, 10, 19), fill, "Sleeping"), "合约结束后照样锁着"
     assert not c.hour_sealed(a, b, datetime(2026, 10, 19)), "合约结束后填写不用确认"
-    assert not c.locks() and not c.hour_locked(datetime(2026, 10, 18, 9), datetime(2026, 10, 18, 9, 30), "",
-                                                datetime(2026, 10, 19), fill, "Sleeping"), "另外封锁的格子合约结束后解除"
+    assert not c.hour_locked(datetime(2026, 10, 18, 9), datetime(2026, 10, 18, 9, 30), "", datetime(2026, 10, 19), fill,
+                             "Sleeping"), "没填的照常能填"
+    old = dict(c.history[-1], seals=None, locks=[["2026-10-18T09:00:00", "2026-10-18T09:30:00"]])
+    c.history[-1] = old
+    assert not c.hour_locked(datetime(2026, 10, 18, 9), datetime(2026, 10, 18, 9, 30), "", datetime(2026, 10, 19), fill,
+                             "Sleeping"), "旧版本的 locks 不再算"
     nos = Contract(tempfile.mkdtemp())
     nos.start(["long1"], owner="me", now=t0)
     assert not nos.hour_sealed(a, b, datetime(2026, 10, 18, 11)), "没选记录封锁: 不用确认"
@@ -2439,9 +2496,10 @@ def _selftest():
     # 记录封锁: 跨天的合约只封锁今天的格子
     f.finish("abandoned", datetime(2026, 10, 20, 9, 30))
     f.start(["seal"], "me", now=datetime(2026, 10, 20, 22, 10))
-    picked = f.seal_extra(datetime(2026, 10, 20, 23, 50), rng=random.Random(1), text_of=lambda k: "",
+    picked = f.seal_extra(datetime(2026, 10, 20, 23, 50), rng=random.Random(1), text_of=lambda k: "x",
                           auto="", fill=timedelta(hours=1))
-    assert sorted(picked) == ["2026-10-20/22", "2026-10-20/23"], picked     # 明天 00:00 之后的不挑
+    rows = {f"2026-10-19/23"} | {f"2026-10-20/{h}" for h in range(22)}       # 今天页上的行, 22 点 (合约里) 本来就锁着
+    assert len(picked) == 2 and set(picked) <= rows, picked
     return "contract selftest OK"
 
 

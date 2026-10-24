@@ -588,7 +588,7 @@ class Contract(private val file: File) {
             .put("level", level).put("orig_level", origLevel).put("cut", JSONObject(cut.toString()))
             .put("result", result).put("violations", violations).put("reward", give).put("pre_left", preLeft)
             .put("rand", JSONArray(rand))
-        live.optJSONArray("locks")?.let { if (it.length() > 0) rec.put("locks", JSONArray(it.toString())) }   // 封锁的记录格 (选了记录封锁的合约结束后照样锁着)
+        live.optJSONArray("seals")?.let { if (it.length() > 0) rec.put("seals", JSONArray(it.toString())) }   // 封锁了的记录格 (合约结束后照样锁着)
         live.optJSONObject("slow")?.optString("start")?.takeIf { it.isNotEmpty() }?.let { rec.put("slow", it) }
         history.add(rec)
         live = JSONObject().put("state", "none").put("owner", by).put("first_break", result == "completed")
@@ -816,56 +816,89 @@ class Contract(private val file: File) {
 
     // ---- 未知变量的效果 ----
 
-    /** 随机封锁一个还没被封锁, 已经过了填写时限的整点记录格 (最近 24 小时里的; 合约结束后解除).
-     *  返回格子的键 ("日期/小时", 细化规范的半小时 "日期/小时/1"); 没有可以封锁的返回 "". */
+    // ---- 封锁 (未知变量 / 记录封锁, MECHANICS 18.4): 只锁已经填写了的整小时格, 合约结束后照样锁着 ----
+    // 存在 "seals" 里 ([开始, 结束] 都是整小时). 旧版本的 "locks" (会锁还没填写 / 细化规范的半小时格) 不再算. 同 contract.py.
+
+    /** 这一小时已经填写了 (自己填的或超时自动记录的): 细化规范的小时要两个半小时都填了; 休息中没填写的格子不算. */
+    private fun filled(a: LocalDateTime, key: String, text: String, textOf: (String) -> String, auto: String,
+                       autoOf: ((String) -> String)?): Boolean {
+        if (text.isBlank()) return false
+        if (fineHour(a) && !listOf(1, 2).all { textOf("$key/$it").isNotBlank() }) return false
+        return !restCell(a, a.plusHours(1), text, auto, autoOf)
+    }
+
+    /** 今天的整点记录页上的行 (昨天 23:00 ~ 今天 23:00, 整小时) 中已经结束的: (键, 开始, 结束). */
+    private fun todayRows(now: LocalDateTime): List<Triple<String, LocalDateTime, LocalDateTime>> {
+        val day0 = now.toLocalDate().atStartOfDay()
+        return (0 until 24).map { r -> day0.plusHours((r - 1).toLong()) }
+            .filter { !it.plusHours(1).isAfter(now) }
+            .map { a -> Triple("${a.toLocalDate()}/${a.hour}", a, a.plusHours(1)) }
+    }
+
+    /** 可以封锁的格子: 今天的整点记录页上的一行, 已经结束、已经填写了、还没被锁. */
+    fun lockPool(now: LocalDateTime, textOf: (String) -> String, auto: String, fillSec: Long,
+                 autoOf: ((String) -> String)? = null): List<Triple<String, LocalDateTime, LocalDateTime>> =
+        todayRows(now).filter { (k, a, b) ->
+            val t = textOf(k)
+            filled(a, k, t, textOf, auto, autoOf) && !hourLocked(a, b, t, now, fillSec, auto, autoOf, k)
+        }
+
+    private fun addSeals(spans: List<Pair<LocalDateTime, LocalDateTime>>) {
+        val arr = JSONArray((live.optJSONArray("seals") ?: JSONArray()).toString())
+        val have = (0 until arr.length()).map { arr.optJSONArray(it)?.toString() }.toMutableSet()
+        spans.forEach { (a, b) -> val v = JSONArray(listOf(a.iso(), b.iso())); if (have.add(v.toString())) arr.put(v) }
+        live.put("seals", arr)
+    }
+
+    /** 未知变量: 随机封锁一个可以封锁的格子 (lockPool). 返回格子的键 ("日期/小时"); 没有可以封锁的返回 "". */
     fun lockCell(now: LocalDateTime, dice: Dice = Dice(), textOf: ((String) -> String)? = null, auto: String = "",
                  fillSec: Long = 0, autoOf: ((String) -> String)? = null): String {
         if (!active || textOf == null || fillSec <= 0) return ""
-        // 用 hourUnits 取格子 —— 只有和合约重叠的真实格子, 不会多出合约开始前 (昨天) / 细化规范切出来的不存在的格子
-        val pool = hourUnits(now).filter { (k, a, b) ->
-            !b.plusSeconds(cellFill(a, b, fillSec)).isAfter(now) &&
-                !hourLocked(a, b, textOf(k), now, fillSec, auto, autoOf, k)
-        }
+        val pool = lockPool(now, textOf, auto, fillSec, autoOf)
         if (pool.isEmpty()) return ""
         val (k, a, b) = pool[dice.pick(pool.size)]
-        val locks = live.optJSONArray("locks") ?: JSONArray()
-        live.put("locks", JSONArray(locks.toString()).put(JSONArray(listOf(a.iso(), b.iso()))))
+        addSeals(listOf(a to b))
         save()
         return k
     }
 
-    /** 记录封锁 (18.4): 每次完成填写时, 另外随机封锁 SEAL_EXTRA 个可以封锁的格子 (挑法同未知变量的 lockCell).
-     *  返回封锁了的格子的键. 同 contract.py 的 seal_extra. */
+    /** 记录封锁 (18.4): 每次完成填写时, 另外随机封锁 SEAL_EXTRA 个可以封锁的格子 (lockPool). */
     fun sealExtra(now: LocalDateTime, dice: Dice = Dice(), textOf: ((String) -> String)? = null, auto: String = "",
                   fillSec: Long = 0, autoOf: ((String) -> String)? = null): List<String> {
         if (!active || !has("seal") || textOf == null || fillSec <= 0) return emptyList()
-        // 过了填写时限的格子都已经填写了 (超时自动记录), 记录封锁下本来就锁着 —— 可以封锁的是合约里还能填的格子:
-        // 还在填写时限里的、还没结束的 (到合约结束为止)
-        // 只挑今天的格子 (跨天的合约里昨天 / 明天的格子不在今天的整点记录页上)
-        val pool = hourUnits(now, ahead = true).filter { (k, a, b) ->
-            a.toLocalDate() == now.toLocalDate() && !hourLocked(a, b, textOf(k), now, fillSec, auto, autoOf, k)
-        }.toMutableList()
+        val pool = lockPool(now, textOf, auto, fillSec, autoOf).toMutableList()
         val picks = mutableListOf<Triple<String, LocalDateTime, LocalDateTime>>()
         repeat(minOf(SEAL_EXTRA, pool.size)) { picks.add(pool.removeAt(dice.pick(pool.size))) }
         if (picks.isEmpty()) return emptyList()
-        val locks = JSONArray((live.optJSONArray("locks") ?: JSONArray()).toString())
-        picks.forEach { (_, a, b) -> locks.put(JSONArray(listOf(a.iso(), b.iso()))) }
-        live.put("locks", locks)
-        // 封锁时还没填写, 之后也填不了: 超时自动记录不算违反
-        val hl = live.optJSONArray("hl")?.strings() ?: emptyList()
-        live.put("hl", JSONArray((hl + picks.map { it.first }).toSortedSet().toList()))
+        addSeals(picks.map { it.second to it.third })
         save()
         return picks.map { it.first }
     }
 
-    /** 未知变量 / 记录封锁 另外封锁的记录格: 只有进行中的合约的; 合约结束后全部解除. */
+    /** 记录封锁 (每秒调用): 和合约重叠、已经结束、已经填写了的整小时格记进 seals, 合约结束后照样锁着. 返回记了新的没有. */
+    fun sealFilled(now: LocalDateTime, textOf: (String) -> String, auto: String, autoOf: ((String) -> String)? = null): Boolean {
+        val s0 = startAt
+        if (!active || s0 == null || !("seal" in orig || has("seal"))) return false
+        val have = (live.optJSONArray("seals") ?: JSONArray()).let { arr -> (0 until arr.length()).mapNotNull { arr.optJSONArray(it)?.toString() }.toSet() }
+        val new = todayRows(now).filter { (k, a, b) ->
+            s0.isBefore(b) && JSONArray(listOf(a.iso(), b.iso())).toString() !in have && filled(a, k, textOf(k), textOf, auto, autoOf)
+        }
+        if (new.isEmpty()) return false
+        addSeals(new.map { it.second to it.third })
+        save()
+        return true
+    }
+
+    /** 封锁了的记录格: 进行中的合约的, 加上结束了的所有合约的 (合约结束后照样锁着). */
     fun locks(): List<Pair<LocalDateTime, LocalDateTime>> {
-        val arr = (if (active) live.optJSONArray("locks") else null) ?: return emptyList()
-        return (0 until arr.length()).mapNotNull { i ->
-            val v = arr.optJSONArray(i) ?: return@mapNotNull null
-            val a = parseIso(v.optString(0, "")) ?: return@mapNotNull null
-            val b = parseIso(v.optString(1, "")) ?: return@mapNotNull null
-            a to b
+        val srcs = listOfNotNull(if (active) live.optJSONArray("seals") else null) + history.mapNotNull { it.optJSONArray("seals") }
+        return srcs.flatMap { arr ->
+            (0 until arr.length()).mapNotNull { i ->
+                val v = arr.optJSONArray(i) ?: return@mapNotNull null
+                val a = parseIso(v.optString(0, "")) ?: return@mapNotNull null
+                val b = parseIso(v.optString(1, "")) ?: return@mapNotNull null
+                a to b
+            }
         }
     }
 
@@ -1399,7 +1432,7 @@ class Contract(private val file: File) {
     }
 
     /** 记录封锁: 进行中的合约选了这个词条时, 和合约重叠的记录格已经填写了的 (自己填的, 或者超时自动记录的) 就不能再改,
-     *  没填的照常能填. 未知变量 / 记录封锁另外封锁的格子不管填没填都不能再改. 合约结束后全部恢复. */
+     *  没填的照常能填 (这条只在合约中). 封锁了的格子 (seals, 都是填写了的) 合约结束后照样锁着. */
     fun hourLocked(start: LocalDateTime, end: LocalDateTime, text: String, now: LocalDateTime, fillSec: Long,
                    auto: String, autoOf: ((String) -> String)? = null, key: String = ""): Boolean {
         if (restCell(start, end, text, auto, autoOf)) return false   // 休息中没填写的格子: 自己填写之前一直能填
@@ -1492,14 +1525,14 @@ class Contract(private val file: File) {
         if (restH.isNotEmpty()) new.put("rest_h", JSONArray(restH.toList()))
         val fineH = ((new.optJSONArray("fine_h")?.strings() ?: emptyList()) + (mine.optJSONArray("fine_h")?.strings() ?: emptyList())).toSortedSet()
         if (fineH.isNotEmpty()) new.put("fine_h", JSONArray(fineH.toList()))
-        val locks = (new.optJSONArray("locks") ?: JSONArray()).let { JSONArray(it.toString()) }
+        val locks = (new.optJSONArray("seals") ?: JSONArray()).let { JSONArray(it.toString()) }
         val have = (0 until locks.length()).map { locks.optJSONArray(it)?.toString() }.toMutableSet()
-        val mineLocks = mine.optJSONArray("locks") ?: JSONArray()
+        val mineLocks = mine.optJSONArray("seals") ?: JSONArray()
         for (i in 0 until mineLocks.length()) {
             val v = mineLocks.optJSONArray(i) ?: continue
             if (have.add(v.toString())) locks.put(JSONArray(v.toString()))
         }
-        if (locks.length() > 0) new.put("locks", locks)
+        if (locks.length() > 0) new.put("seals", locks)
         keepTally(mine.optJSONObject("tally"), new.optJSONObject("tally"))?.let { new.put("tally", it) }
         return new
     }

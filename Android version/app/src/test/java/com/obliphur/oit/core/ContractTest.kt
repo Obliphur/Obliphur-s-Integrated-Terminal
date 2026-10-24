@@ -260,14 +260,19 @@ class ContractTest {
         assertTrue(c.hourLocked(a, b, "学习", LocalDateTime.of(2026, 10, 18, 11, 1), fill, "Sleeping"))     // 过了时限, 填了的也锁
         assertTrue(c.hourLocked(a, b, "学习", LocalDateTime.of(2026, 10, 18, 10, 59), fill, "Sleeping"))    // 填写了就不能再改
         assertFalse(c.hourLocked(a, b, "", LocalDateTime.of(2026, 10, 18, 11, 30), fill, "Sleeping"))      // 没填的照常能填
-        c.live.put("locks", org.json.JSONArray().put(org.json.JSONArray().put("2026-10-18T09:00:00").put("2026-10-18T09:30:00")))
-        val l0 = LocalDateTime.of(2026, 10, 18, 9, 0)
-        assertTrue(c.hourLocked(l0, l0.plusMinutes(30), "", LocalDateTime.of(2026, 10, 18, 11, 0), fill, "Sleeping"))  // 另外封锁的格子合约中不能填
+        // 细化规范: 两个半小时都填了的整小时格才封锁 (不锁半小时格)
+        val t2 = mutableMapOf("2026-10-18/10" to "学习", "2026-10-18/10/1" to "学习", "2026-10-18/10/2" to "")
+        val t2of = { k: String -> t2[k] ?: "" }
+        val now4 = LocalDateTime.of(2026, 10, 18, 11, 10)
+        assertFalse(c.sealFilled(now4, t2of, "Sleeping"))                      // 后半小时没填: 不封
+        assertTrue(c.lockPool(now4, t2of, "Sleeping", fill).isEmpty())
+        t2["2026-10-18/10/2"] = "吃饭"; t2["2026-10-18/10"] = "学习/吃饭"
+        assertTrue(c.sealFilled(now4, t2of, "Sleeping")); assertFalse(c.sealFilled(now4, t2of, "Sleeping"))
         c.finish("abandoned", LocalDateTime.of(2026, 10, 18, 12, 0))
-        assertFalse(c.hourLocked(a, b, "Sleeping", LocalDateTime.of(2026, 10, 19, 0, 0), fill, "Sleeping"))   // 合约结束后解除
-        assertFalse(c.hourSealed(a, b, LocalDateTime.of(2026, 10, 19, 0, 0)))                                // 合约结束后填写不用确认
-        assertTrue(c.locks().isEmpty())
-        assertFalse(c.hourLocked(l0, l0.plusMinutes(30), "", LocalDateTime.of(2026, 10, 19, 0, 0), fill, "Sleeping"))  // 另外封锁的也解除
+        assertTrue(c.hourLocked(a, b, "学习", LocalDateTime.of(2026, 10, 19, 0, 0), fill, "Sleeping"))     // 合约结束后照样锁着
+        assertFalse(c.hourSealed(a, b, LocalDateTime.of(2026, 10, 19, 0, 0)))                            // 合约结束后填写不用确认
+        val h9 = LocalDateTime.of(2026, 10, 18, 9, 0)
+        assertFalse(c.hourLocked(h9, h9.plusMinutes(30), "", LocalDateTime.of(2026, 10, 19, 0, 0), fill, "Sleeping"))  // 没填的照常能填
         // 没选记录封锁: 不用确认, 不锁, 不另外封锁
         val nos = Contract(tmp())
         nos.start(listOf("long1"), "me", LocalDateTime.of(2026, 10, 18, 9, 10))
@@ -441,38 +446,37 @@ class ContractTest {
         assertEquals(0.9, c.focusRate(s1, s1), 1e-9)
         assertEquals(1.0, c.focusRate(s1, t0.plusHours(4).plusMinutes(10)), 1e-9)             // 合约结束后不再减慢
         assertEquals((30 * 60 * 0.9 + 30 * 60) / 60.0, c.focusMinutes(s1, 3600.0), 1e-6)
-        // 封锁一个过了填写时限, 还没被封锁的记录格 (最近 24 小时里的), 合约结束后照样锁着; 填了的也锁
+        // 封锁 (MECHANICS 18.4): 只挑今天整点记录页上已经结束、已经填写了的整小时格; 没填的不挑
         val now = LocalDateTime.of(2026, 10, 18, 12, 10)
-        val texts = mapOf("2026-10-18/10" to "学习")
+        val texts = mutableMapOf("2026-10-18/10" to "学习", "2026-10-18/8" to "Sleeping")
         val textOf = { k: String -> texts[k] ?: "" }
+        assertEquals(listOf("2026-10-18/8", "2026-10-18/10"), c.lockPool(now, textOf, "Sleeping", 3600).map { it.first })
         assertEquals("2026-10-18/10", c.lockCell(now, seq(pick = { it - 1 }), textOf, "Sleeping", 3600))
         val a = LocalDateTime.of(2026, 10, 18, 10, 0)
         val b = a.plusHours(1)
         assertTrue(c.hourLocked(a, b, "学习", now, 3600, "Sleeping"))
-        assertFalse(c.hourLocked(b, b.plusHours(1), "", now, 3600, "Sleeping"))        // 11 点那格还没过填写时限
-        assertEquals("2026-10-18/9", c.lockCell(now, seq(pick = { it - 1 }), textOf, "Sleeping", 3600))   // 已经封锁的不再选
+        assertFalse(c.hourLocked(b, b.plusHours(1), "", now, 3600, "Sleeping"))        // 没填的不锁
+        assertEquals("2026-10-18/8", c.lockCell(now, seq(pick = { it - 1 }), textOf, "Sleeping", 3600))   // 已经封锁的不再选
+        assertEquals("", c.lockCell(now, seq(), textOf, "Sleeping", 3600))                                 // 没有可以封锁的
         assertEquals("", c.lockCell(now, seq(), null, "Sleeping", 3600))
-        // 记录封锁: 每次完成填写时另外封锁两个; 没选记录封锁时不封. 只封合约期间内的格子 (不会多出昨天 / 合约外的, #7)
+        // 记录封锁: 每次完成填写时另外封锁两个; 合约里填了的本来就锁着, 挑的是别的填了的格子
         assertTrue(c.sealExtra(now, seq(), textOf, "Sleeping", 3600).isEmpty())
         c.live.put("terms", org.json.JSONArray(c.terms + "seal"))
+        texts.putAll(mapOf("2026-10-18/6" to "Sleeping", "2026-10-18/7" to "吃饭", "2026-10-18/11" to "读书", "2026-10-18/12" to "学习"))
         val n0 = c.locks().size
-        val now2 = LocalDateTime.of(2026, 10, 18, 14, 0)        // 合约 09:30–13:30 内, 9 / 10 点已锁, 还剩 11 / 12 / 13 点可封
-        val left = setOf("2026-10-18/11", "2026-10-18/12", "2026-10-18/13")
+        val now2 = LocalDateTime.of(2026, 10, 18, 14, 0)
         val got = c.sealExtra(now2, seq(pick = { it - 1 }), textOf, "Sleeping", 3600)
-        assertEquals(2, got.toSet().size)
-        assertTrue(got.all { it in left })
+        assertEquals(listOf("2026-10-18/6", "2026-10-18/7"), got.sorted())
         assertEquals(n0 + 2, c.locks().size)
-        assertTrue(c.live.getJSONArray("hl").strings().containsAll(got))     // 封锁时还没填写: 超时自动记录不算违反
-        // 实际情况: 过了填写时限的格子都自动记录了 (记录封锁下已经锁着), 只能封还能填的 / 还没结束的格子 (到合约结束为止)
-        c.live.put("locks", org.json.JSONArray()).put("hl", org.json.JSONArray())
-        val auto = mapOf("2026-10-18/9" to "Sleeping", "2026-10-18/10" to "学习")
-        val got2 = c.sealExtra(LocalDateTime.of(2026, 10, 18, 11, 20), seq(pick = { 0 }), { auto[it] ?: "" }, "Sleeping", 3600)
-        assertEquals(2, got2.size); assertTrue(got2.all { it in left })
-        val misses = c.hourMisses(LocalDateTime.of(2026, 10, 18, 15, 0), 3600, { "" }, "Sleeping")
-        assertTrue(misses.isNotEmpty() && misses.none { it in got2 })           // 封锁的空格子不算违反
+        assertTrue(c.sealExtra(now2, seq(), textOf, "Sleeping", 3600).isEmpty())
+        assertTrue(c.sealFilled(now2, textOf, "Sleeping")); assertFalse(c.sealFilled(now2, textOf, "Sleeping"))
         c.finish("abandoned", now)
-        // 合约提前结束了: 记录封锁全部解除; 之后才开始的这段专注不减速 (阻滞只对合约内的专注生效)
-        assertFalse(c.hourLocked(a, b, "学习", now.plusDays(3), 3600, "Sleeping"))
+        // 合约结束后: 封锁了的 (都是填写了的) 照样锁着, 没填的照常能填, 填写不用确认; 之后才开始的这段专注不减速
+        val later = now.plusDays(3)
+        assertTrue(c.hourLocked(a, b, "学习", later, 3600, "Sleeping"))
+        assertTrue(c.hourLocked(b, b.plusHours(1), "读书", later, 3600, "Sleeping"))
+        assertFalse(c.hourLocked(a.minusHours(1), a, "", later, 3600, "Sleeping"))
+        assertFalse(c.hourSealed(a.minusHours(1), a, later))
         assertEquals(1.0, c.focusRate(s1), 1e-9); assertEquals(60.0, c.focusMinutes(s1, 3600.0), 1e-6)
         // 未知变量启用了整点记录的词条: 这次合约中一直强制开启整点记录
         c.start(listOf("unknown"), "me", t0)
