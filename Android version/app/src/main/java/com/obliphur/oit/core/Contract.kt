@@ -365,6 +365,21 @@ class Contract(private val file: File) {
         /** 完成合约时存进积攒的休息时间的秒数 (按等级查表 + 凑齐的组合的结束后收益). */
         fun restReward(level: Int, terms: Collection<String> = emptyList()): Int =
             Math.round((restMinutes(level) * 60 + comboEnd(terms)) * (terms.firstNotNullOfOrNull { LONG_REWARD[it] } ?: 1.0)).toInt()
+        /** 第 n 次 (n >= 1) "还在吗"提醒在开始专注后多少秒 (MECHANICS 6.6).
+         *  普通专注: 每 every 秒一次; 合约专注: 每次间隔 40 ~ 60 分钟里随机的整分钟,
+         *  按开始专注的时刻 (精确到秒) 和第几次用 FNV-1a 算, 同 contract.py 的 check_mark (电脑和手机一样). */
+        fun checkMark(n: Int, start: LocalDateTime?, contract: Boolean, every: Double): Double {
+            if (!contract || start == null) return every * n
+            val key = start.format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"))
+            return (1..n).sumOf { i -> 60.0 * (40 + fnv("$key/$i") % 21) }
+        }
+
+        private fun fnv(text: String): Long {
+            var h = 0x811C9DC5L
+            for (b in text.toByteArray(Charsets.UTF_8)) h = ((h xor (b.toLong() and 0xFF)) * 0x01000193L) and 0xFFFFFFFFL
+            return h
+        }
+
         /** 合约结束时给出完成奖励的几成: k = 进行了多久 / 总时长.
          *  k <= 0.3: 0; 0.3 < k < 1: 0.6 * ((k - 0.3) / 0.7)² (f'' > 0, k → 1 时趋近 0.6); k = 1: 1. 同 contract.py. */
         fun restShare(k: Double): Double {

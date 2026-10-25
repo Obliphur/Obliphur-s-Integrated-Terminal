@@ -185,6 +185,7 @@ object EnStrings {
         "⏱  上次的专注已记录" to "⏱  Last focus session recorded",
         "⏱  还在专注吗?" to "⏱  Still focusing?",
         "已经专注 {t} 了." to "You've been focusing for {t}.",
+        "已经专注 {n} 分钟了." to "You've been focusing for {n} minutes.",
         "请在{at}之前关掉这个窗口,否则专注会自动结束." to "Close this window before {at}, or focus ends automatically.",
         "还在,继续专注" to "Still here, keep going",
         "■  结束专注" to "■  End focus",

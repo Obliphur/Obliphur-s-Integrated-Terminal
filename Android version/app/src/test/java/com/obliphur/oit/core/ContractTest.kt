@@ -201,6 +201,10 @@ class ContractTest {
         assertEquals(Math.round(full * 0.6 * Math.pow((7200.0 / 17280.0 - 0.3) / 0.7, 2.0)).toInt(), rec.optInt("reward"))
         assertEquals(0.0, Contract.restShare(0.3), 1e-12); assertEquals(1.0, Contract.restShare(1.0), 1e-12)
         assertEquals(0.15, Contract.restShare(0.65), 1e-9); assertTrue(Contract.restShare(0.9999) in 0.599..0.6); assertEquals(4, rec.optInt("level")); assertEquals(6, rec.optInt("orig_level"))
+        // "还在吗": 普通专注每小时; 合约专注每次随机 40 ~ 60 分钟, 和电脑上算的一样 (contract.py 自检用同一组数)
+        val cs = LocalDateTime.of(2026, 10, 25, 9, 30, 15)
+        assertEquals(7200.0, Contract.checkMark(2, cs, false, 3600.0), 1e-9)
+        assertEquals(listOf(51.0, 108.0, 149.0, 196.0), (1..4).map { Contract.checkMark(it, cs, true, 3600.0) / 60 })
         assertFalse(c.takeFirstBreak())
     }
 

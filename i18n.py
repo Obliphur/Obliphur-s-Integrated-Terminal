@@ -407,6 +407,7 @@ EN = {
     # ---- 专注中: 还在吗 / 异常退出后恢复 ----
     "⏱  还在专注吗?": "⏱  Still focusing?",
     "已经专注 {t} 了.": "You've been focusing for {t}.",
+    "已经专注 {n} 分钟了.": "You've been focusing for {n} minutes.",
     "还在,继续专注": "Still here, keep going",
     "⏹  专注已自动结束": "⏹  Focus ended automatically",
     "提醒窗{n}分钟内没有被关掉,专注已在{at}自动结束.": "The reminder wasn't closed within {n} minutes, so focus ended automatically at {at}.",

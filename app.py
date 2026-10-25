@@ -1843,7 +1843,7 @@ class BreakTimerApp:
             return
         # 退出很久了: 专注记到最后一次保存为止, 对应的休息时间存进积攒的休息时间
         sec = (alive - start).total_seconds()
-        limit = float(config.FOCUS_CHECK_EVERY) * (checks + 1) + float(config.FOCUS_CHECK_GRACE)
+        limit = self._check_mark(checks + 1, start) + float(config.FOCUS_CHECK_GRACE)
         penalized = sec >= limit
         if penalized:
             sec = limit
@@ -1891,7 +1891,7 @@ class BreakTimerApp:
             self.dm.add_focus_session("idle", p["alive"], p["now"], focus=p["start"])
         start, alive = p["start"], p["alive"]
         sec = (alive - start).total_seconds()
-        limit = float(config.FOCUS_CHECK_EVERY) * (self._focus_checks + 1) + float(config.FOCUS_CHECK_GRACE)
+        limit = self._check_mark(self._focus_checks + 1, start) + float(config.FOCUS_CHECK_GRACE)
         penalized = sec >= limit
         if penalized:
             sec = limit
@@ -2044,26 +2044,37 @@ class BreakTimerApp:
             self._focus_checks += 1
             self._focus_ok = time.monotonic() - self.start_mono
             self._save_timer_state()
-        every = float(config.FOCUS_CHECK_EVERY)
         grace = float(config.FOCUS_CHECK_GRACE)
         elapsed = time.monotonic() - self.start_mono
-        mark = every * (self._focus_checks + 1)
+        mark = self._check_mark(self._focus_checks + 1)
         if elapsed >= mark + grace:
             if self._timer_auto_ok():          # 别的设备是主人时等它结束, 结果同步过来
                 self._auto_end_focus(mark + grace)
             return
         if elapsed >= mark and self._check_win is None:
             due = datetime.now() + timedelta(seconds=mark + grace - elapsed)
+            # 合约专注: 写准确的分钟数 (间隔是随机的); 黑雾时不写专注了多久 (18.3)
+            if not self.contract.focus_tag(self.start_wall):
+                spent = tr("已经专注 {t} 了.").format(t=fmt_hm(mark)) + "\n"
+            elif self.contract.fog():
+                spent = ""
+            else:
+                spent = tr("已经专注 {n} 分钟了.").format(n=int(round(mark / 60))) + "\n"
             self._check_win = toast.notice(
                 tr("⏱  还在专注吗?"),
-                tr("已经专注 {t} 了.").format(t=fmt_hm(mark)) + "\n"
-                + tr("请在{at}之前关掉这个窗口,否则专注会自动结束.").format(
+                spent + tr("请在{at}之前关掉这个窗口,否则专注会自动结束.").format(
                     at=f"{due:%H:%M}", p=float(config.FOCUS_CHECK_PENALTY)),
                 [(tr("还在,继续专注"), None, True), (tr("■  结束专注"), self._end_from_check, False)])
         # 绑定了其他设备时写得勤一些: 被关掉之后才知道是什么时候关的
         every = float(config.FOCUS_ALIVE_EVERY if self.sync.peers() else config.FOCUS_SAVE_EVERY)
         if time.monotonic() - self._focus_saved >= every:
             self._save_timer_state()
+
+    def _check_mark(self, n: int, start: datetime = None) -> float:
+        """第 n 次"还在吗"提醒在开始专注后多少秒: 合约专注每次随机 40 ~ 60 分钟 (contract.check_mark)."""
+        start = start or self.start_wall
+        return contract_mod.check_mark(n, start, bool(self.contract.focus_tag(start)),
+                                       float(config.FOCUS_CHECK_EVERY))
 
     def _end_from_check(self):
         if self.state == RUNNING:
@@ -4794,7 +4805,7 @@ class BreakTimerApp:
         names = ", ".join(str(peers[i].get("name") or "?") for i in sorted(now_off - was))
         self._log_notice(f"SYNC offline {names}")
         self._play_chime()
-        toast.warn(tr("{name} 离线了.", name=names))
+        toast.warn(tr("{name} 离线了.", name=names), clear=True)   # 离线消息黑雾也不遮 (18.3)
 
     def _check_unbind(self):
         """每 5 秒: 冷静期到了的解除绑定就解除, 并请那台设备清空全部数据 (MECHANICS 15.1)."""

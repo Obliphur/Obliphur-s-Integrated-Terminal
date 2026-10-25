@@ -589,7 +589,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
             return
         }
         var sec = secondsBetween(start, alive)
-        val limit = Cfg.FOCUS_CHECK_EVERY * (checks + 1) + Cfg.FOCUS_CHECK_GRACE
+        val limit = checkMark(checks + 1, start) + Cfg.FOCUS_CHECK_GRACE
         val penalized = sec >= limit
         if (penalized) sec = limit
         val (minutes, brkSec) = bookFocus(start, sec, if (penalized) ok else null)
@@ -695,7 +695,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
             dm.addFocusSession("idle", p.alive, p.reopened, p.start)
         }
         var sec = secondsBetween(p.start, p.alive)
-        val limit = Cfg.FOCUS_CHECK_EVERY * (focusChecks + 1) + Cfg.FOCUS_CHECK_GRACE
+        val limit = checkMark(focusChecks + 1, p.start) + Cfg.FOCUS_CHECK_GRACE
         val penalized = sec >= limit
         if (penalized) sec = limit
         closeCheck()
@@ -711,6 +711,10 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         core.notice(tr("⏹  专注已终止"), msg, listOf(NoticeButton(tr("知道了"), "ok", true)), page = "timer")
     }
 
+    /** 第 n 次"还在吗"提醒在开始专注后多少秒: 合约专注每次随机 40 ~ 60 分钟 (Contract.checkMark). */
+    private fun checkMark(n: Int, start: LocalDateTime? = startWall): Double =
+        Contract.checkMark(n, start, core.contract.focusTag(start) != 0L, Cfg.FOCUS_CHECK_EVERY)
+
     private fun checkFocus() {
         if (state != TState.RUNNING) {
             closeCheck(); return
@@ -721,7 +725,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
             offlineEndFocus(mono() - startMono); return
         }
         val el = mono() - startMono
-        val mark = Cfg.FOCUS_CHECK_EVERY * (focusChecks + 1)
+        val mark = checkMark(focusChecks + 1)
         if (el >= mark + Cfg.FOCUS_CHECK_GRACE) {
             // 别的设备是这个状态的主人时等它结束, 结果会同步过来
             if (autoOk()) autoEndFocus(mark + Cfg.FOCUS_CHECK_GRACE)
@@ -729,11 +733,16 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         }
         if (el >= mark && checkId == null) {
             val due = LocalDateTime.now().plusSec(mark + Cfg.FOCUS_CHECK_GRACE - el)
+            // 合约专注: 写准确的分钟数 (间隔是随机的); 黑雾时不写专注了多久 (18.3), 其余照常显示
+            val spent = when {
+                core.contract.focusTag(startWall) == 0L -> tr("已经专注 {t} 了.", "t" to fmtHm(mark)) + "\n"
+                core.contract.active && core.contract.fog() -> ""
+                else -> tr("已经专注 {n} 分钟了.", "n" to Math.round(mark / 60).toInt()) + "\n"
+            }
             checkId = core.notice(tr("⏱  还在专注吗?"),
-                tr("已经专注 {t} 了.", "t" to fmtHm(mark)) + "\n" +
-                    tr("请在{at}之前关掉这个窗口,否则专注会自动结束.", "at" to due.format(Fmt.HM)),
+                spent + tr("请在{at}之前关掉这个窗口,否则专注会自动结束.", "at" to due.format(Fmt.HM)),
                 listOf(NoticeButton(tr("还在,继续专注"), "ok", true), NoticeButton(tr("■  结束专注"), "end", false)),
-                page = "timer") { action ->
+                page = "timer", tag = "check") { action ->
                 checkId = null
                 if (state != TState.RUNNING) return@notice
                 // 被手动关掉了 = 人还在
@@ -817,7 +826,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
     fun nextDeadline(): Double? = when (state) {
         TState.ON_BREAK -> countdown
         TState.RUNNING -> {
-            val mark = Cfg.FOCUS_CHECK_EVERY * (focusChecks + 1)
+            val mark = checkMark(focusChecks + 1)
             val el = elapsed
             if (el < mark) mark - el else maxOf(0.0, mark + Cfg.FOCUS_CHECK_GRACE - el)
         }

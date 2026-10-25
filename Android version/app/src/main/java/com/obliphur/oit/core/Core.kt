@@ -206,8 +206,9 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
 
     fun notice(title: String, message: String, buttons: List<NoticeButton>, page: String? = null,
                tag: String = "", onClose: (String?) -> Unit = {}): Int {
-        // 黑雾: 只能手动关闭的提醒 (也是系统通知) 一样遮住内容, 例如专注记了多少分钟; 合约冲突要靠内容选, 不遮
-        val shown = if (contract.fog() && tag != "conflict") "[???]" else message
+        // 黑雾: 只能手动关闭的提醒 (也是系统通知) 一样遮住内容, 例如专注记了多少分钟; 合约冲突要靠内容选, 不遮;
+        // "还在吗"自己在黑雾时不写专注了多久, 不遮 (要看到最晚关闭的时刻)
+        val shown = if (contract.fog() && tag != "conflict" && tag != "check") "[???]" else message
         val n = Notice(nextNoticeId++, title, shown, buttons, page, onClose, tag)
         notices.add(n)
         host.noticesChanged()
@@ -486,7 +487,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         val names = fresh.sorted().joinToString(", ") { off[it] ?: "?" }
         logNotice("SYNC offline $names")
         host.playChime {}
-        toast(tr("{name} 离线了.", "name" to names), "warn")
+        toast(tr("{name} 离线了.", "name" to names), "warn", clear = true)   // 离线消息黑雾也不遮 (18.3)
     }
 
     // ---- 应用名单: 锁定前台应用 (MECHANICS 14.6, 对应桌面版 4.7) ----

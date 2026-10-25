@@ -386,6 +386,28 @@ def rest_reward(level: int, terms=None) -> int:
     return int(round(base * mult))
 
 
+CHECK_MIN, CHECK_MAX = 40, 60                  # 合约专注的"还在吗"间隔: 每次随机 40 ~ 60 分钟 (MECHANICS 6.6)
+
+
+def _fnv(text: str) -> int:
+    """FNV-1a 32 位: 各设备 (电脑 / 手机) 用同样的算法, 算出同样的间隔, 不用另外同步."""
+    h = 0x811C9DC5
+    for b in text.encode("utf-8"):
+        h = ((h ^ b) * 0x01000193) & 0xFFFFFFFF
+    return h
+
+
+def check_mark(n: int, start: datetime, contract: bool, every: float) -> float:
+    """第 n 次 (n >= 1) "还在吗"提醒在开始专注后多少秒.
+    普通专注: 每 every 秒一次; 合约专注 (focus_tag 不空): 每次间隔 40 ~ 60 分钟里随机的整分钟,
+    按开始专注的时刻 (精确到秒) 和第几次算, 同一段专注在各设备上一样."""
+    if not contract or start is None:
+        return every * n
+    key = f"{start:%Y-%m-%dT%H:%M:%S}"
+    span = CHECK_MAX - CHECK_MIN + 1
+    return float(sum(60 * (CHECK_MIN + _fnv(f"{key}/{i}") % span) for i in range(1, n + 1)))
+
+
 REST_SHARE_FROM = 0.3                          # k 不超过这个时一点不给
 REST_SHARE_NEAR = 0.6                          # k 趋近 1 (还没完成) 时给到的比例; 完成 (k = 1) 才给全部
 
@@ -2308,6 +2330,12 @@ def _selftest():
     assert rest_share(0.0) == 0.0 and rest_share(0.3) == 0.0 and rest_share(1.0) == 1.0
     assert abs(rest_share(0.65) - 0.15) < 1e-9 and 0.599 < rest_share(0.9999) < 0.6, "k → 1⁻ 趋近 0.6"
     assert rest_share(0.5) - rest_share(0.4) < rest_share(0.9) - rest_share(0.8), "f'' > 0"
+    # "还在吗": 普通专注每小时; 合约专注每次随机 40 ~ 60 分钟, 由开始时刻决定 (手机端 ContractTest 用同一组数)
+    cs = datetime(2026, 10, 25, 9, 30, 15)
+    assert check_mark(2, cs, False, 3600) == 7200
+    assert [check_mark(n, cs, True, 3600) / 60 for n in range(1, 5)] == [51, 108, 149, 196]
+    gaps = {int(check_mark(1, cs + timedelta(seconds=i), True, 3600) // 60) for i in range(3000)}
+    assert min(gaps) == 40 and max(gaps) == 60
     assert rec["orig_level"] == 6 and rec["level"] == 4 and not c.active
     assert not c.take_first_break()
 
