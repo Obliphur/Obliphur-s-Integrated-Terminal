@@ -3056,8 +3056,18 @@ class BreakTimerApp:
             return
         self._pending_cam = ""
         if "gaze" in terms:
-            # 目光: 可以用本机摄像头, 也可以用绑定的手机的摄像头 (MECHANICS 18.8). 本机能录就本机录, 否则找手机.
-            if recorder.camera_consent() != "deny" and recorder.camera_count():
+            # 目光: 用设置 → 录像里选的那台 (本机的某个摄像头 / 在线的手机); 没选 (自动) 时
+            # 本机能录就本机录, 否则找绑定的手机 (MECHANICS 18.8).
+            how, which = self._camera_choice()
+            if how == "phone":
+                phone = self._camera_phone(which)
+                if phone:
+                    self._pending_cam = phone
+                    self._begin_contract(terms)
+                    return
+                self._log_notice("RECORD camera choice: the phone camera is not online, falling back")
+            local_ok = recorder.camera_consent() != "deny" and recorder.camera_count()
+            if local_ok:
                 self._pending_cam = self.sync.my_id
                 self._rec_pending = True
                 self._stop_recorder("camera")
@@ -3073,10 +3083,32 @@ class BreakTimerApp:
             self._pending_cam = phone
         self._begin_contract(terms)
 
-    def _camera_phone(self) -> str:
-        """绑定的、在线的手机 (目光可以用它的摄像头录): 返回设备 id, 没有则 ""."""
+    def _camera_choice(self) -> tuple:
+        """设置 → 录像 里选的摄像头: ("auto" / "pc" / "phone", 摄像头 id / 设备 id)."""
+        raw = str(self.settings.value("REC_CAMERA") or "").strip()
+        if raw.startswith("pc|"):
+            return "pc", raw[3:]
+        if raw.startswith("phone|"):
+            return "phone", raw[6:]
+        return "auto", ""
+
+    def _local_camera_id(self) -> str:
+        """本机录像用哪一台摄像头 (camera_devices 的 id); "" = 自动 (第一台)."""
+        how, which = self._camera_choice()
+        return which if how == "pc" else ""
+
+    def _camera_phone(self, want: str = "") -> str:
+        """绑定的、在线的手机 (目光可以用它的摄像头录): 返回设备 id, 没有则 "".
+        want: 想用哪一台 (不在线 / 不是手机 / 没绑定 → ""). 不给时找任意一台在线的手机."""
         plat = self.sync.peers()
-        for s in self.sync.device_states():
+        states = self.sync.device_states()
+        if want:
+            p = plat.get(want) or {}
+            if str(p.get("platform", "")).lower().startswith("android") \
+                    and any(s["id"] == want and s.get("online") for s in states):
+                return want
+            return ""
+        for s in states:
             if s.get("online") and str((plat.get(s["id"]) or {}).get("platform", "")).lower().startswith("android"):
                 return s["id"]
         return ""
@@ -3100,6 +3132,12 @@ class BreakTimerApp:
             return
         lv = contract_mod.level_of(terms)
         c.start(terms, owner=self.sync.my_id, pre=self.break_carry, cam=getattr(self, "_pending_cam", ""))
+        # 目光: 摄像头在合约开始前就打开了 (要先确认能录), 那时的 recorder 还不知道合约 id;
+        # 现在补上, 不然这一段 / 这一整场录像在结束后按合约 id 找不到 (MECHANICS 18.8).
+        cid = str(c.live.get("id") or "")
+        for r in self._recorders.values():
+            if not r.tag:                      # 只有合约开始前打开的录像才没有 tag
+                r.set_tag(cid)
         # 凑齐的词条组合: 积攒的休息时间 +N 分钟 (在 pre 之后加: 算合约中得到的, 合约结束后不留下)
         gift = contract_mod.rest_gift(terms)
         if gift > 0:
@@ -3663,6 +3701,7 @@ class BreakTimerApp:
 
     def _start_recorder(self, kind: str):
         r = recorder.Recorder(self.dm.data_dir, kind, audio=self._rec_audio, tag=str(self.contract.live.get("id") or ""),
+                              camera=self._local_camera_id() if kind == "camera" else "",
                               on_file=lambda path, k=kind: self._log_notice(f"RECORD {k} saved {os.path.basename(path)}"))
         self._recorders[kind] = r
         r.start()

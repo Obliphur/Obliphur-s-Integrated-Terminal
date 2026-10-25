@@ -325,6 +325,7 @@ DEFAULT_SETTINGS = {
     "REC_ASK": 1,
     "REC_MIC": 1,
     "REC_SYSTEM": 1,
+    "REC_CAMERA": "",
     "TICK_CLAMP": TICK_CLAMP,
     "FILL_WINDOW": int(FILL_WINDOW.total_seconds()),
     "QUICK_MULTIPLIER": QUICK_MULTIPLIER,
@@ -490,6 +491,7 @@ REC_FOCUS_ONLY = 1               # 目光 / 刻痕只在专注期间录像 (设�
 REC_ASK = 1                      # 录像前询问 (合约的目光 / 刻痕, 设置 → 录像)
 REC_MIC = 1                      # 录像时录麦克风 (外部音); 默认开 (设置 → 录像, 不同步)
 REC_SYSTEM = 1                   # 录像时录系统音; 默认开 (设置 → 录像, 不同步)
+REC_CAMERA = ""                  # 目光用哪台摄像头: "" 自动 / "pc|<id>" 本机 / "phone|<设备 id>" 手机 (不同步)
 CONTRACT_THEME = "ops"           # 合约页的主题: "ops" 起源 / "ui" 跟随界面主题 (pages/contract_page.py)
 
 COLORS = dict(THEMES[DEFAULT_THEME]["colors"])

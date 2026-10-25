@@ -311,6 +311,14 @@ SETTINGS_SCHEMA = [
         "page": "record",
     },
     {
+        # 界面在 设置 → 录像 的"选择摄像头"卡片里自己画 (本机摄像头要后台枚举, 在线的手机随同步变化),
+        # 这里只负责保存 / 同步那一个值. 每台设备各自设置.
+        "key": "REC_CAMERA", "label": "摄像头", "kind": "combo", "apply": APPLY_INSTANT,
+        "choices": [], "fmt": lambda v: "自动" if not str(v or "").strip() else str(v),
+        "desc": "即时生效.合约选了「目光」时用哪台设备的摄像头录像:本机的某个摄像头,或者一台在线的手机.",
+        "page": "record", "hidden": True,
+    },
+    {
         "key": "UPDATE_CHECK", "label": "打开时检查更新",
         "kind": "choice", "apply": APPLY_INSTANT,
         "choices": [("1", "开启 (ON)"), ("0", "关闭 (OFF)")],
@@ -361,8 +369,9 @@ assert {s["page"] for s in SETTINGS_SCHEMA} <= {k for k, _ in SETTINGS_PAGES}
 
 
 def page_specs(page: str):
-    """(选项类, 数值类) 两组设置项, 各自按 SETTINGS_SCHEMA 里的顺序."""
-    specs = [s for s in SETTINGS_SCHEMA if s["page"] == page]
+    """(选项类, 数值类) 两组设置项, 各自按 SETTINGS_SCHEMA 里的顺序.
+    hidden: 界面自己画的项 (例如摄像头选择), 不按普通行画, 也不参加"保存本页修改"."""
+    specs = [s for s in SETTINGS_SCHEMA if s["page"] == page and not s.get("hidden")]
     return ([s for s in specs if s["kind"] != "num"],
             [s for s in specs if s["kind"] == "num"])
 

@@ -298,6 +298,7 @@ MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING = _guid("fb394f3d-ccf1-42ee-bbb3-f9b845
 MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE = _guid("c60ac5fe-252a-478f-a0ef-bc8fa5f7cad3")
 MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID = _guid("8ac3587a-4ae7-42d8-99e0-0a6013eef90f")
 MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME = _guid("60d0e559-52f8-4fa2-bbce-acdb34a8ec01")
+MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK = _guid("58f0aad8-22bf-4f8a-bb3d-d2c4978c6e2f")
 IID_IMFMediaSource = _guid("279a808d-aec7-40c8-9c6b-a6b492c78a66")
 
 MF_VERSION = 0x00020070
@@ -373,6 +374,15 @@ def _get_guid(obj, key):
     g = GUID()
     _com(obj, _GET_GUID, byref(key), byref(g), argtypes=(POINTER(GUID), POINTER(GUID)), what="GetGUID")
     return g
+
+
+def _get_string(obj, key) -> str:
+    """IMFAttributes 里的字符串 (设备名字 / symbolic link), 读不出来时 ""."""
+    buf = ctypes.create_unicode_buffer(1024)
+    n = c_uint()
+    _com(obj, 12, byref(key), ctypes.cast(buf, c_void_p), c_uint(len(buf)), byref(n),
+         argtypes=(POINTER(GUID), c_void_p, c_uint, POINTER(c_uint)), what="GetString")
+    return buf.value
 
 
 class _MF:
@@ -835,6 +845,63 @@ def _free_activates(lib, arr, n):
         lib.ole.CoTaskMemFree(arr)
 
 
+def _camera_name(dev) -> str:
+    try:
+        return _get_string(dev, MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME).strip()
+    except MFError:
+        return ""
+
+
+def _camera_link(dev) -> str:
+    try:
+        return _get_string(dev, MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK).strip()
+    except MFError:
+        return ""
+
+
+def camera_devices() -> list:
+    """本机的摄像头: [{"id", "name"}], 设置 → 录像 里选 (MECHANICS 18.8).
+    id 优先用设备的 symbolic link (稳定, 换 USB 口也认得出); 没有时 "name|<名字>".
+    和 camera_count 一样会初始化一次 Media Foundation, 不要在界面线程里频繁调用. 出错时 []."""
+    try:
+        lib, own = _startup()
+    except Exception:
+        return []
+    try:
+        arr, n = _camera_activates(lib)
+        try:
+            out = []
+            for i in range(n):
+                name = _camera_name(arr[i]) or f"Camera {i + 1}"
+                out.append({"id": _camera_link(arr[i]) or f"name|{name}", "name": name})
+            return out
+        finally:
+            _free_activates(lib, arr, n)
+    except Exception:
+        return []
+    finally:
+        _shutdown(lib, own)
+
+
+def _camera_index(arr, n, wanted: str) -> int:
+    """要用第几个摄像头 (设置 → 录像 选的那台). wanted: camera_devices 的 id (或名字);
+    没有选 / 找不到时用第一个 (和以前一样)."""
+    wanted = str(wanted or "").strip()
+    if not wanted or n <= 1:
+        return 0
+    by_name = -1
+    for i in range(n):
+        name = _camera_name(arr[i])
+        dev_id = _camera_link(arr[i]) or f"name|{name}"
+        if dev_id == wanted:
+            return i
+        if wanted.startswith("name|") and name == wanted[5:]:
+            return i
+        if by_name < 0 and wanted == name:
+            by_name = i
+    return by_name if by_name >= 0 else 0
+
+
 def camera_count() -> int:
     """有几个摄像头 (出错时 0). 会初始化一次 Media Foundation, 不要在界面线程里频繁调用."""
     try:
@@ -907,11 +974,13 @@ class Recorder(threading.Thread):
     """一路录像 (kind = camera / screen). state: starting → running → stopped;
     出错时 failed (没能开始) / lost (录着录着摄像头没了). error 是说明."""
 
-    def __init__(self, data_dir: str, kind: str, on_file=None, audio=None, tag=""):
+    def __init__(self, data_dir: str, kind: str, on_file=None, audio=None, tag="", camera=""):
         super().__init__(daemon=True, name=f"rec-{kind}")
         self.data_dir = data_dir
         self.kind = kind
-        self.tag = re.sub(r"[^0-9A-Za-z]", "", str(tag))[:24]   # 合约 id: 文件名里带上, 结束后按它合并 (18.8)
+        self._tag_lock = threading.Lock()
+        self.tag = self._clean_tag(tag)         # 合约 id: 文件名里带上, 结束后按它合并 (18.8)
+        self.camera = str(camera or "")         # 本机的哪一台摄像头 (camera_devices 的 id; "" = 第一台)
         self.on_file = on_file                 # 写完一个文件 (加密好) 时调用 (路径)
         self.audio = audio or (lambda: (False, False))   # () → (录麦克风, 录系统音); 每段开始时 / 改了时重新打开
         self._aud = None
@@ -933,12 +1002,27 @@ class Recorder(threading.Thread):
     def alive(self) -> bool:
         return self.state in ("starting", "running")
 
+    @staticmethod
+    def _clean_tag(tag) -> str:
+        return re.sub(r"[^0-9A-Za-z]", "", str(tag))[:24]
+
+    def set_tag(self, tag: str):
+        """合约 id 要等合约真正开始才有 (目光: 先打开摄像头, 打开了才开始合约).
+        之后写 / 已经写完的这一段都按新的 tag 命名, 否则结束后按合约 id 找不到录像 (18.8)."""
+        with self._tag_lock:
+            self.tag = self._clean_tag(tag)
+
+    def _tag_text(self) -> str:
+        with self._tag_lock:
+            return self.tag
+
     def _new_path(self):
         d = work_dir(self.data_dir, self.kind)
         os.makedirs(d, exist_ok=True)
         out = folder(self.data_dir, self.kind)
         stem = datetime.now().strftime("%Y%m%d-%H%M%S")
-        suffix = f"__{self.tag}" if self.tag else ""
+        tag = self._tag_text()
+        suffix = f"__{tag}" if tag else ""
         n = 0
         while True:
             name = stem + (f"-{n}" if n else "") + suffix
@@ -949,9 +1033,30 @@ class Recorder(threading.Thread):
                 return part, final
             n += 1
 
+    def _final_path(self, part: str) -> str:
+        """这一段写完后的正式名字: 用现在的 tag (可能从 "" 改成了合约 id), 并避开已有的片段 / 录像."""
+        base = os.path.basename(part)
+        if base.lower().endswith(PART + ".mp4"):
+            base = base[:-len(PART) - 4]
+        elif base.lower().endswith(".mp4"):
+            base = base[:-4]
+        stem, _sep, _old = base.partition("__")          # 去掉开始写时的 tag
+        out = folder(self.data_dir, self.kind)
+        tag = self._tag_text()
+        n = 0
+        while True:
+            name = stem + (f"-{n}" if n else "") + (f"__{tag}" if tag else "")
+            final = os.path.join(os.path.dirname(part), name + ".mp4")
+            if os.path.abspath(final).lower() == os.path.abspath(part).lower():
+                return final
+            if not os.path.exists(final) and not os.path.exists(os.path.join(out, name + EXT)):
+                return final
+            n += 1
+
     def _done(self, part, final):
         """一段写完了: 改成正式的名字, 在另一个线程里加密进数据目录 (不耽误下一段)."""
         self.writing = ""
+        final = self._final_path(part)
         try:
             os.replace(part, final)
         except OSError:
@@ -1088,7 +1193,8 @@ class Recorder(threading.Thread):
             raise MFError("没有找到摄像头")
         source = c_void_p()
         try:
-            _com(arr[0], 33, byref(IID_IMFMediaSource), byref(source),
+            idx = _camera_index(arr, n, self.camera)
+            _com(arr[idx], 33, byref(IID_IMFMediaSource), byref(source),
                  argtypes=(POINTER(GUID), POINTER(c_void_p)), what="ActivateObject")
         finally:
             _free_activates(lib, arr, n)
@@ -1746,6 +1852,12 @@ def _selftest(data_dir=None, seconds=3, audio=(True, True)):
     decrypt_file(mp, mo)
     assert _streams(mo) == 1 and os.path.getsize(mp) > 1000, (mp, _streams(mo))
     merged = f", merged {_dims(mo)}"
+    # 目光: 摄像头要在合约开始前先打开 (那时还不知道合约 id), 合约开始后再补上 tag ——
+    # 这一段 / 这一整场录像结束时都要能按合约 id 找到 (否则就是"摄像头录像存不下来").
+    late = Recorder(d, "screen")
+    late.set_tag("late1")
+    part = os.path.join(work_dir(d, "screen"), "20260101-000000.recording.mp4")
+    assert os.path.basename(late._final_path(part)) == "20260101-000000__late1.mp4", late._final_path(part)
     return (f"recorder selftest OK ({r.frames} frames, {files[0]['size']} bytes, streams {n}, "
             f"cameras: {camera_count()}{merged}{', audio: ' + note if note else ''})"), d
 
