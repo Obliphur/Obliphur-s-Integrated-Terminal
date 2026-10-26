@@ -1171,7 +1171,7 @@ object EnStrings {
         "⚠ 目光: 摄像头录像" to "⚠ Gaze: camera recording",
         "⚠ 刻痕: 屏幕录像" to "⚠ Engraving: screen recording",
         "「目光」会在合约期间用电脑或手机的摄像头录下你的样子 (可带声音), 结束后保存." to "\"Gaze\" records you with a computer or phone camera during the contract (sound optional) and saves it afterwards.",
-        "「刻痕」会在合约期间录下焦点设备的屏幕 (可带声音): 哪台设备在操作就录哪台, 每 10 秒切换一次." to "\"Engraving\" records the focus device's screen during the contract (sound optional): whichever device you're using gets recorded, switching every 10 seconds.",
+        "「刻痕」会在合约期间录下焦点设备的屏幕 (可带声音): 哪台设备在操作就录哪台, 每 20 秒切换一次." to "\"Engraving\" records the focus device's screen during the contract (sound optional): whichever device you're using gets recorded, switching every 20 seconds.",
         "合约结束后, 各设备录下的片段会传到一台电脑上合并成一个视频 (传输前会再确认)." to "After the contract ends, each device's clips are sent to one computer and merged into a single video (you'll confirm before any transfer).",
         "录像经过加密, 只能在 OIT 里查看和播放 (设置 → 录像), 不会被网盘 / 相册自动上传." to "Recordings are encrypted and can only be viewed and played inside OIT (Settings → Recording); cloud drives / galleries can't auto-upload them.",
         "录像经过加密, 只能在 OIT 里查看和播放. 选不选由你决定." to "Recordings are encrypted and can only be viewed and played inside OIT. The choice is yours.",

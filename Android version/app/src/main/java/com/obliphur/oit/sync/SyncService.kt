@@ -133,7 +133,7 @@ class SyncService(
         const val HTTP_PORT = 17930
         const val UDP_PORT = 17931
         /** 母端每隔这么久向每台子端发一次同步请求. */
-        const val SYNC_EVERY_MS = 10_000L
+        const val SYNC_EVERY_MS = 20_000L
         /** 设备之间直接传的安装包最大多少; 发出的安装包多久之内可以来取. */
         const val UPDATE_MAX = 160L * 1024 * 1024
         const val OFFER_TTL_MS = 1_800_000L
@@ -142,7 +142,7 @@ class SyncService(
         /** 这么久之内同步过的设备才算"在线" (比较最后操作时间用). */
         const val FRESH_MS = 120_000L
         /** 设备离线 (Timer 页显示"离线", 这段时间记为空闲, MECHANICS 8.4): 绑定的设备最后一次同步失败, 或者这么久没有它的消息.
-         *  比同步间隔多留 5 秒 (同步本身要花时间, 正好 10 秒会每一轮都闪一下"离线"); 只是转交过来的设备再多等一轮. 同 devsync.OFFLINE_MS. */
+         *  比同步间隔多留 5 秒 (同步本身要花时间, 正好 20 秒会每一轮都闪一下"离线"); 只是转交过来的设备再多等一轮. 同 devsync.OFFLINE_MS. */
         const val OFFLINE_MS = SYNC_EVERY_MS + 5_000L
         const val OFFLINE_FWD_MS = 2 * SYNC_EVERY_MS + 5_000L
         /** 关机 (MECHANICS 15.4): 一台设备最后发来的状态写着"收到关机指令" (off), 或者电量低于这么多 (%, 没在充电) 时突然离线,
@@ -944,7 +944,7 @@ class SyncService(
 
     /** 本机是子端, 刚接受了绑定: 向母端要初始化的内容.
      *  发起方要等下一次查询 (每 1.5 秒) 才知道已经接受, 在那之前它还不认识本机, 会回 401 ——
-     *  以前只试一次, 失败后要等 30 秒的下一轮, 这期间一直显示"同步失败: unpaired". */
+     *  以前只试一次, 失败后要等 20 秒的下一轮, 这期间一直显示"同步失败: unpaired". */
     private fun initAfterAccept(peerId: String) {
         repeat(12) {
             if (dead || peerId !in peers()) return

@@ -173,7 +173,7 @@ class BreakTimerApp:
         self._outbox_lock = threading.Lock()   # 待发给合约主人的录像片段 (rec_outbox.json)
         self._outbox_busy = False
         self._outbox_at = 0.0
-        self._scar_focus_id = None    # 刻痕的焦点设备 (录屏的那台); 每 10 秒判定一次
+        self._scar_focus_id = None    # 刻痕的焦点设备 (录屏的那台); 每 20 秒判定一次
         self._scar_focus_at = 0.0
         self._merging = set()         # 正在合并的 (cid, kind), 防止重入
         self._merge_again = set()     # 合并中又收到了新片段的 (cid, kind): 合并完再合并一次
@@ -3726,8 +3726,8 @@ class BreakTimerApp:
         return True
 
     def _scar_focus(self) -> str:
-        """刻痕的焦点设备 (MECHANICS 18.8): 哪台设备有操作就录哪台的屏幕, 每 10 秒判定一次;
-        10 秒内两台都有操作时优先录电脑. 都没有操作时保持上一个焦点设备. 返回焦点设备的 id."""
+        """刻痕的焦点设备 (MECHANICS 18.8): 哪台设备有操作就录哪台的屏幕, 每 20 秒判定一次;
+        20 秒内两台都有操作时优先录电脑. 都没有操作时保持上一个焦点设备. 返回焦点设备的 id."""
         mono = time.monotonic()
         if self._scar_focus_id and mono - self._scar_focus_at < recorder.FOCUS_EVERY:
             return self._scar_focus_id
@@ -3818,7 +3818,7 @@ class BreakTimerApp:
             return
         c = self.contract
         want = set(c.records(self.sync.my_id)) if c.active and not self.dm.resetting else set()
-        # 刻痕: 只有焦点设备录屏 (哪台有操作录哪台, 每 10 秒判定一次; 两台都有操作时录电脑, MECHANICS 18.8)
+        # 刻痕: 只有焦点设备录屏 (哪台有操作录哪台, 每 20 秒判定一次; 两台都有操作时录电脑, MECHANICS 18.8)
         if "screen" in want and self._scar_focus() != self.sync.my_id:
             want.discard("screen")
         # 只在专注期间录像 (设置 → 录像, 默认开启): 休息 / 空闲时停下 (不算违反), 再开始专注时另起一段, 最后拼接成一个视频

@@ -11,7 +11,7 @@ import java.io.File
 /**
  * 合约录像的调度 (MECHANICS 18.8): 每秒看合约要录什么 (目光 → 摄像头, 刻痕 → 屏幕), 指挥 [RecordService] 开始 / 停止.
  * - 目光只由开始时选定的那台设备录 (records(myId)); 本机被选中才录.
- * - 刻痕只有"焦点设备"录屏: 哪台设备在操作就录哪台, 每 10 秒判定一次; 两台都有操作时优先电脑; 都没操作时保持上一个.
+ * - 刻痕只有"焦点设备"录屏: 哪台设备在操作就录哪台, 每 20 秒判定一次; 两台都有操作时优先电脑; 都没操作时保持上一个.
  *   手机上的"操作"= 正在用 OIT (core.lastOp).
  * - 录屏需要系统授权 (每次一个): 没有授权且界面在前台时, 请界面弹出授权 (needProjection); 拿到后存在 OitApp.recProjection.
  * - 合约结束后, 刻痕的片段要合并成一个视频: 本机不是合约主人时, 问一次用户, 同意就把片段发给主人 (在线的电脑) 合并;
@@ -298,7 +298,7 @@ class RecordManager(private val app: OitApp) {
 
 
     companion object {
-        const val FOCUS_EVERY_MS = 10_000L
+        const val FOCUS_EVERY_MS = 20_000L
         /** 摄像头每这么久换一段 (同电脑的 recorder.SEGMENT). */
         const val SEGMENT_MS = 30 * 60 * 1000L
         /** 没发出去的片段最多再试几天. */
