@@ -44,8 +44,8 @@ HARD_LEVEL = 20                  # 总等级到这里就提示"难度极大"
 RESULTS = {"completed": "完成", "failed": "行动失败: 目标生命值归零", "idle": "行动失败: 空闲超过 15 分钟",
            "offline": "行动失败: 设备离线超过 15 分钟", "abandoned": "行动终止"}
 
-# 合约页的主题 (设置 → 合约, CONTRACT_THEME). "ops" 起源: 深色页面, 浅灰的词条板, 六边形格子,
-# 黑色的已选中词条, 红色的开始按钮; 侧边栏在合约页也换成这一套颜色.
+# 合约页固定使用自己的「起源」主题: 深色页面, 浅灰的词条板, 六边形格子, 黑色的已选中词条,
+# 红色的开始按钮; 侧边栏在合约页也换成这一套颜色. 它不跟随界面主题, 字体也用自己的默认字体.
 OPS = {
     "bg": "#1f2023", "text": "#f2f2f2", "dim": "#9a9ca1", "line": "#c8202f",
     "board": "#d6d7da", "band": "#2c2d31", "band_text": "#ececec", "band_dim": "#9a9ca1",
@@ -74,39 +74,14 @@ OPS = {
 
 
 def palette() -> dict:
-    """当前合约页主题的颜色. "ui" = 跟随界面主题."""
-    if getattr(config, "CONTRACT_THEME", "ops") != "ui":
-        return OPS
-    c = COLORS
-    return {
-        "bg": c["bg"], "text": c["text"], "dim": c["text_dim"], "line": c["border"],
-        "board": c["bg"], "band": c["bg_card"], "band_text": c["text"], "band_dim": c["text_dim"],
-        "tile": c["bg_card"], "tile_text": c["text"], "tile_rim": c["border"], "tile_rim4": c["danger"],
-        "tile_on": c["danger"], "tile_on_text": c["on_accent"], "tile_on_rim": c["danger"],
-        "tile_off": c["bg"], "tile_off_text": c["border"], "tile_off_rim": c["border"],
-        "tile_rand": c["warn"], "tile_rand_text": "#141416", "tile_rand_rim": c["warn"],
-        "tile_ban": "#8b5cf6", "tile_ban_text": "#ffffff", "tile_ban_rim": "#8b5cf6",
-        "hint": c["text_dim"], "nav": c["text"], "nav_off": c["border"],
-        "sel": c["bg_card"], "sel_text": c["text"], "sel_dim": c["text_dim"],
-        "badge_hi": c["danger"], "badge_hi_text": c["on_accent"], "badge_lo": c["border"], "badge_lo_text": c["text"],
-        "bar": c["bg_card"], "level": c["danger"], "warn": c["warn"],
-        "start": c["danger"], "start_hover": c["danger_hover"], "start_text": c["on_accent"],
-        "start_off": c["border"], "start_off_text": c["text_dim"],
-        "rules": c["bg_card"], "rules_rim": c["border"],
-        "clear": c["border"], "clear_hover": c["bg"], "clear_text": c["text"],
-        "tag": c["danger"], "tag_text": c["on_accent"],
-        "live": c["bg_card"], "live_rim": c["danger"], "danger": c["danger"], "idle": c["warn"],
-        "side": None,                      # 侧边栏不变
-        # 组合的颜色: 白 / 紫 / 灰 / 红; 白和灰在浅色主题里用文字色, 免得看不见
-        "combo_yellow": "#d9a400", "combo_purple": "#8b5cf6",
-        "combo_blue": "#2456c7", "combo_red": c["danger"],
-    }
+    """合约页固定使用自己的「起源」主题, 不跟随界面主题 (颜色和字体都是)."""
+    return OPS
 
 
 class ContractPage(tk.Frame):
     """合约页 (MECHANICS 18): 词条板 (行 = 等级, 列 = 类型, 同一类型在同一列; 翻页), 下面是已选中的词条 (两栏),
     最下面一条: 清空 | 危机等级 | 时长 / 完成后的休息时间 | 开始行动. 合约进行中时只能看, 不能改.
-    颜色按 设置 → 合约 的"合约页主题"."""
+    颜色 / 字体都用合约页自己的「起源」样式, 不跟随界面主题."""
 
     TILE_W, GAP, BAND_W = 68, 7, 148              # 格子是正六边形: 高 = 宽 × √3 / 2
 
@@ -132,20 +107,20 @@ class ContractPage(tk.Frame):
 
         hdr = tk.Frame(self, bg=P["bg"])
         hdr.pack(fill="x", padx=24, pady=(18, 6))
-        tk.Label(hdr, text=tr("合约详情"), bg=P["tag"], fg=P["tag_text"], font=config.font("small", bold=True),
+        tk.Label(hdr, text=tr("合约详情"), bg=P["tag"], fg=P["tag_text"], font=config.contract_font("small", bold=True),
                  padx=8, pady=2).pack(side="left", anchor="s", pady=(0, 6))
         tk.Label(hdr, text=tr("⚔  合约"), bg=P["bg"], fg=P["text"],
-                 font=config.font("h1", bold=True)).pack(side="left", padx=(12, 0))
+                 font=config.contract_font("h1", bold=True)).pack(side="left", padx=(12, 0))
         # 右上角: 合约期间的特别规则 (两栏)
         rules = tk.Frame(hdr, bg=P["rules"], highlightbackground=P["rules_rim"], highlightthickness=1)
         rules.pack(side="right", anchor="se")
-        tk.Label(rules, text=tr("合约期间"), bg=P["rules"], fg=P["danger"], font=config.font("tiny", bold=True),
+        tk.Label(rules, text=tr("合约期间"), bg=P["rules"], fg=P["danger"], font=config.contract_font("tiny", bold=True),
                  anchor="nw").pack(side="left", fill="y", padx=(8, 4), pady=4)
-        self.lbl_rules = [tk.Label(rules, text="", bg=P["rules"], fg=P["dim"], font=config.font("tiny"),
+        self.lbl_rules = [tk.Label(rules, text="", bg=P["rules"], fg=P["dim"], font=config.contract_font("tiny"),
                                    anchor="nw", justify="left") for _ in range(2)]
         for lbl in self.lbl_rules:
             lbl.pack(side="left", fill="y", padx=(4, 8), pady=4)
-        self.lbl_state = tk.Label(hdr, text="", bg=P["bg"], fg=P["danger"], font=config.font("body", bold=True))
+        self.lbl_state = tk.Label(hdr, text="", bg=P["bg"], fg=P["danger"], font=config.contract_font("body", bold=True))
         self.lbl_state.pack(side="right", padx=(0, 14))
         tk.Frame(self, bg=P["line"], height=2).pack(fill="x", padx=22)
 
@@ -155,7 +130,7 @@ class ContractPage(tk.Frame):
         self._build_live(body)
         self._build_board(body)
         self._build_selected(body)
-        self.lbl_last = tk.Label(body, text="", bg=P["bg"], fg=P["dim"], font=config.font("small"),
+        self.lbl_last = tk.Label(body, text="", bg=P["bg"], fg=P["dim"], font=config.contract_font("small"),
                                  anchor="w", justify="left")
         self.lbl_last.pack(fill="x", pady=(8, 4))
         self._build_bar()
@@ -170,19 +145,19 @@ class ContractPage(tk.Frame):
         top = tk.Frame(fr, bg=P["live"])
         top.pack(fill="x", padx=16, pady=(10, 0))
         self.lbl_left = tk.Label(top, text="", bg=P["live"], fg=P["text"],
-                                 font=config.font("big", bold=True), anchor="w")
+                                 font=config.contract_font("big", bold=True), anchor="w")
         self.lbl_left.pack(side="left")
-        self.lbl_viol = tk.Label(top, text="", bg=P["live"], fg=P["danger"], font=config.font("h2", bold=True))
+        self.lbl_viol = tk.Label(top, text="", bg=P["live"], fg=P["danger"], font=config.contract_font("h2", bold=True))
         self.lbl_viol.pack(side="right")
-        self.lbl_live = tk.Label(fr, text="", bg=P["live"], fg=P["dim"], font=config.font("body"),
+        self.lbl_live = tk.Label(fr, text="", bg=P["live"], fg=P["dim"], font=config.contract_font("body"),
                                  anchor="w", justify="left")
         self.lbl_live.pack(fill="x", padx=16, pady=(0, 2))
-        self.lbl_idle = tk.Label(fr, text="", bg=P["live"], fg=P["idle"], font=config.font("body", bold=True),
+        self.lbl_idle = tk.Label(fr, text="", bg=P["live"], fg=P["idle"], font=config.contract_font("body", bold=True),
                                  anchor="w", justify="left")
         self.lbl_idle.pack(fill="x", padx=16, pady=(0, 10))
         # 目光 / 刻痕: 录像的状态; 刻痕可以终止录屏 (立即算一次违反)
         self.rec_row = tk.Frame(fr, bg=P["live"])
-        self.lbl_rec = tk.Label(self.rec_row, text="", bg=P["live"], fg=P["danger"], font=config.font("small", bold=True),
+        self.lbl_rec = tk.Label(self.rec_row, text="", bg=P["live"], fg=P["danger"], font=config.contract_font("small", bold=True),
                                 anchor="w", justify="left")
         self.lbl_rec.pack(side="left")
         self.btn_stop_rec = self._button(self.rec_row, tr("■ 终止录像"), P["clear"], P["clear_hover"], P["clear_text"],
@@ -261,33 +236,33 @@ class ContractPage(tk.Frame):
         # 竖写的标题 (同参考图的 "CONTRACT LIST: 可选合约"); 组合效果那一页换成 "CONTRACT EFFECT"
         mid = (self.board_h - self.hover_h) / 2
         self.band_title = cv.create_text(s(22), mid, text="CONTRACT LIST", angle=90, fill=P["band_dim"],
-                                         font=config.font("h2", bold=True))
+                                         font=config.contract_font("h2", bold=True))
         self.band_sub = cv.create_text(s(44), mid, text=tr("可选词条"), angle=90, fill=P["band_text"],
-                                       font=config.font("body", bold=True))
+                                       font=config.contract_font("body", bold=True))
         for lv in range(1, C.MAX_LEVEL + 1):
             # 每一行的等级: 小字 "Contingency Level" 和一个 ▲ 标记在左, 大数字在右 (同参考图)
             y = self.gap + (lv - 1) * (self.th + self.gap)
             x0 = s(62)
             cv.create_text(x0, y + s(6), text="Contingency\nLevel", anchor="nw", fill=P["band_dim"],
-                           font=(config.FONT_FAMILY, max(6, s(6))), tags=("band_lv",))
+                           font=(config.FONT_FAMILY_DEFAULT, max(6, s(6))), tags=("band_lv",))
             by = y + self.th - s(22)
             cv.create_rectangle(x0, by, x0 + s(24), by + s(14), fill=P["badge_lo"], outline="", tags=("band_lv",))
             cv.create_text(x0 + s(12), by + s(7), text="▲", fill=P["badge_hi"],
-                           font=(config.FONT_FAMILY, max(6, s(7)), "bold"), tags=("band_lv",))
+                           font=(config.FONT_FAMILY_DEFAULT, max(6, s(7)), "bold"), tags=("band_lv",))
             cv.create_text(self.band - s(10), y + self.th / 2, text=str(lv), anchor="e", fill=P["band_text"],
-                           font=config.font("h1", bold=True), tags=("band_lv",))
+                           font=config.contract_font("h1", bold=True), tags=("band_lv",))
         # 翻页: 左边一条最下面 "◀  1 / 2  ▶"
         ny = self.board_h - self.hover_h / 2
-        self.nav_prev = cv.create_text(s(26), ny, text="◀", font=config.font("h2", bold=True))
-        self.nav_text = cv.create_text(self.band / 2, ny, text="", fill=P["band_text"], font=config.font("body", bold=True))
-        self.nav_next = cv.create_text(self.band - s(26), ny, text="▶", font=config.font("h2", bold=True))
+        self.nav_prev = cv.create_text(s(26), ny, text="◀", font=config.contract_font("h2", bold=True))
+        self.nav_text = cv.create_text(self.band / 2, ny, text="", fill=P["band_text"], font=config.contract_font("body", bold=True))
+        self.nav_next = cv.create_text(self.band - s(26), ny, text="▶", font=config.contract_font("h2", bold=True))
         for item, step in ((self.nav_prev, -1), (self.nav_next, 1)):
             cv.tag_bind(item, "<Button-1>", lambda e, d=step: self._flip(d))
             cv.tag_bind(item, "<Enter>", lambda e: self.canvas.configure(cursor="hand2"))
             cv.tag_bind(item, "<Leave>", lambda e: self.canvas.configure(cursor=""))
         # 鼠标停在格子上: 最下面一行写出这个词条的内容
         self.hover_id = cv.create_text(self.band + self.gap, self.board_h - self.hover_h + s(4), text="", anchor="nw",
-                                       fill=P["hint"], font=config.font("small", bold=True), tags=("hover",))
+                                       fill=P["hint"], font=config.contract_font("small", bold=True), tags=("hover",))
 
     def _nav(self):
         """翻页的 "◀ 1 / 3 ▶" 和左右两条的颜色."""
@@ -326,7 +301,7 @@ class ContractPage(tk.Frame):
                               outline=P["tile_rim"], width=2, tags=("tile", tag, tag + "_shape"))
             cv.create_text(x + self.tw / 2, y + self.th / 2, text=marks(lv) + "\n" + term_short(tid),
                            fill=P["tile_text"], justify="center", width=self.tw * 0.66,
-                           font=(config.FONT_FAMILY, max(6, s(8)), "bold"), tags=("tile", tag, tag + "_text"))
+                           font=(config.FONT_FAMILY_DEFAULT, max(6, s(8)), "bold"), tags=("tile", tag, tag + "_text"))
             cv.tag_bind(tag, "<Button-1>", lambda e, t=tid: self._click(t))
             cv.tag_bind(tag, "<Enter>", lambda e, t=tid: self._enter(t))
             cv.tag_bind(tag, "<Leave>", lambda e, t=tid: self._leave(t))
@@ -367,20 +342,20 @@ class ContractPage(tk.Frame):
                                 tags=("combo", tag))
             # 名字 (组合的颜色) 和状态
             cv.create_text(cx + s(12), cy + s(8), text=tr(combo["name"]), anchor="nw",
-                           fill=color, font=config.font("body", bold=True), tags=("combo", tag))
+                           fill=color, font=config.contract_font("body", bold=True), tags=("combo", tag))
             cv.create_text(cx + cw - s(10), cy + s(9), text=status.get(state, ""), anchor="ne",
                            fill=color if on else (P["danger"] if state == "void" else P["sel_dim"]),
-                           font=config.font("tiny", bold=True), tags=("combo", tag))
+                           font=config.contract_font("tiny", bold=True), tags=("combo", tag))
             # 凑齐要哪些词条 (成系列的一组只写一个名字)
             need = " · ".join(tr(C.req_name(r)) for r in combo["reqs"])
             cv.create_text(cx + s(12), cy + s(30), text=tr("需要") + "  " + need, anchor="nw",
                            fill=P["sel_text"] if on else P["sel_dim"], width=cw - s(20),
-                           font=config.font("tiny"), tags=("combo", tag))
+                           font=config.contract_font("tiny"), tags=("combo", tag))
             # 效果: 写成一行 (太窄时自己换行), 贴在卡片最下面, 免得和上面的"需要"叠在一起
             desc = tr(combo["desc"]).replace("\n", "  ·  ")
             cv.create_text(cx + s(12), cy + ch - s(6), text=desc, anchor="sw",
                            fill=color if on else P["sel_dim"], width=cw - s(20),
-                           font=config.font("tiny"), tags=("combo", tag))
+                           font=config.contract_font("tiny"), tags=("combo", tag))
             cv.tag_bind(tag, "<Enter>", lambda e, x=combo: self._combo_hover(x))
             cv.tag_bind(tag, "<Leave>",
                         lambda e: self.canvas.itemconfigure(self.hover_id, text=tr("凑齐列出的词条 / 词条系列时生效")))
@@ -463,9 +438,9 @@ class ContractPage(tk.Frame):
         P, s = self.P, config.scaled
         band.delete("all")
         band.create_text(s(22), h / 2, text="CONTRACT SELECTED", angle=90, fill=P["sel_dim"],
-                         font=config.font("small", bold=True))
+                         font=config.contract_font("small", bold=True))
         band.create_text(s(44), h / 2, text=tr("已选中词条"), angle=90, fill=P["sel_text"],
-                         font=config.font("body", bold=True))
+                         font=config.contract_font("body", bold=True))
 
     def _combo_marks(self) -> dict:
         """凑齐了的组合的成员词条 → 颜色 (界面上框住它们), 颜色按当前主题的."""
@@ -520,7 +495,7 @@ class ContractPage(tk.Frame):
             w.destroy()
         if not rows:
             tk.Label(self.list_box, text="—", bg=P["sel"], fg=P["sel_dim"],
-                     font=config.font("body")).grid(row=0, column=0, sticky="w")
+                     font=config.contract_font("body")).grid(row=0, column=0, sticky="w")
         half = (len(rows) + 1) // 2           # 先排满左栏, 再排右栏
         for i, (lv, text, void, rand, tid) in enumerate(rows):
             color = colors.get(tid, "") if tid else ""
@@ -536,10 +511,10 @@ class ContractPage(tk.Frame):
             else:
                 badge = (P["badge_hi"], P["badge_hi_text"]) if hi else (P["badge_lo"], P["badge_lo_text"])
             tk.Label(r, text=marks(lv) or "—", bg=badge[0], fg=badge[1], width=4,
-                     font=config.font("small", bold=True)).pack(side="left", anchor="n", padx=(0, 8))
+                     font=config.contract_font("small", bold=True)).pack(side="left", anchor="n", padx=(0, 8))
             fg = P["tile_rand"] if rand else P["tile_ban_rim"] if ban else P["sel_dim"] if void else P["sel_text"]
             lbl = tk.Label(r, text=text + ("   " + tr("[禁止联网 · 点击解除]") if ban else ""), bg=P["sel"], fg=fg,
-                           font=config.font("small"), anchor="w", justify="left",
+                           font=config.contract_font("small"), anchor="w", justify="left",
                            cursor="hand2" if rand or ban else "")
             lbl.pack(side="left", fill="x", expand=True)
             lbl.bind("<Configure>", lambda e, l=lbl: l.configure(wraplength=max(80, e.width - 4)))
@@ -553,7 +528,7 @@ class ContractPage(tk.Frame):
 
     def _button(self, parent, text, bg, hover, fg, command, big=False):
         b = tk.Label(parent, text=text, bg=bg, fg=fg, cursor="hand2",
-                     font=config.font("h2" if big else "body", bold=True),
+                     font=config.contract_font("h2" if big else "body", bold=True),
                      padx=config.scaled(34 if big else 16), pady=config.scaled(12 if big else 8))
         b.bind("<Button-1>", lambda e: command())
         b.bind("<Enter>", lambda e: b.configure(bg=hover))
@@ -570,23 +545,23 @@ class ContractPage(tk.Frame):
         self.btn_clear.pack(side="left")
         lv = tk.Frame(inner, bg=P["bar"])
         lv.pack(side="left", padx=(20, 0))
-        tk.Label(lv, text=tr("危机等级"), bg=P["bar"], fg=P["dim"], font=config.font("small", bold=True)).pack(anchor="w")
-        self.lbl_level = tk.Label(lv, text="0", bg=P["bar"], fg=P["level"], font=config.font("big", bold=True))
+        tk.Label(lv, text=tr("危机等级"), bg=P["bar"], fg=P["dim"], font=config.contract_font("small", bold=True)).pack(anchor="w")
+        self.lbl_level = tk.Label(lv, text="0", bg=P["bar"], fg=P["level"], font=config.contract_font("big", bold=True))
         self.lbl_level.pack(anchor="w")
         self.strip = tk.Canvas(inner, bg=P["bar"], highlightthickness=0, width=s(120), height=s(30))
         self.strip.pack(side="left", padx=(10, 0))
-        self.lbl_info = tk.Label(inner, text="", bg=P["bar"], fg=P["text"], font=config.font("small"),
+        self.lbl_info = tk.Label(inner, text="", bg=P["bar"], fg=P["text"], font=config.contract_font("small"),
                                  anchor="w", justify="left")
         self.lbl_info.pack(side="left", padx=(14, 0))
         self.start_box = tk.Frame(inner, bg=P["bar"])
-        self.lbl_block = tk.Label(self.start_box, text="", bg=P["bar"], fg=P["dim"], font=config.font("tiny"))
+        self.lbl_block = tk.Label(self.start_box, text="", bg=P["bar"], fg=P["dim"], font=config.contract_font("tiny"))
         self.btn_start = self._button(self.start_box, tr("开始行动"), P["start"], P["start_hover"], P["start_text"],
                                       self._start, big=True)
         self.btn_end = self._button(self.start_box, tr("■  提前结束"), P["start"], P["start_hover"],
                                     P["start_text"], lambda: self.on_abandon and self.on_abandon(), big=True)
         self.start_box.pack(side="right")
         self.lbl_warn = tk.Label(inner, text=tr("⚠  当前合约难度极大 请谨慎行动"), bg=P["bar"], fg=P["warn"],
-                                 font=config.font("small", bold=True), justify="left",
+                                 font=config.contract_font("small", bold=True), justify="left",
                                  wraplength=s(170))
 
     def _draw_strip(self, level: int):

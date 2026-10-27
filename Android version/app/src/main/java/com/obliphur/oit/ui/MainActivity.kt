@@ -290,6 +290,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         app.foreground = true
+        app.core.uiForeground = true
         // 前台服务没在运行 (进程是在后台被拉起来的, 当时不允许启动): 趁界面在前台补上, 离开后 OIT 才不会被暂停
         com.obliphur.oit.service.CoreService.start(this)
         app.core.tick()
@@ -302,6 +303,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onPause() {
         app.foreground = false
+        app.core.uiForeground = false
+        runCatching { app.core.prescript.pageChanged() }     // 指令 V: 退到后台就作废
         com.obliphur.oit.service.CoreService.start(this)
         app.core.saveAll()
         super.onPause()
@@ -323,6 +326,9 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
     val theme = act.uiTheme
     val fs = core.settings.str("FONT_SCALE").toFloatOrNull() ?: 1f
     var page by rememberSaveable { mutableStateOf("timer") }
+    // 指令是都市之意主题独占的页面, 放在所有页面的第一位 (MECHANICS 22)
+    val pages = if (theme == "urban_will") listOf("prescript" to "📜  指令") + PAGES else PAGES
+    var prescriptBack by rememberSaveable { mutableStateOf("timer") }
     var settingsTab by rememberSaveable { mutableStateOf("basic") }
     val drawer = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -340,17 +346,32 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
         if (parts[0] in setOf("settings", "ach") && core.contract.fog()) {
             core.toast(tr("黑雾笼罩: 合约期间无法打开设置."), "warn"); return
         }
+        if (parts[0] == "prescript" && page != "prescript") prescriptBack = page
         page = parts[0]
         if (parts.size > 1) settingsTab = parts[1]
     }
     LaunchedEffect(req) { req?.let { go(it); pageRequest.value = null } }
+    // 都市之意的像素字体: 第一次用时下载 (不放进安装包), 下不下来隔一分钟重试
+    LaunchedEffect(theme) {
+        if (theme != "urban_will") return@LaunchedEffect
+        if (!PixelFont.present(act)) core.toast(tr("正在下载像素字体 (5 MB)…"), "info")
+        var failed = false
+        while (!PixelFont.ensure(act)) {
+            if (!failed) core.toast(tr("像素字体没有下载下来, 稍后自动重试."), "warn")
+            failed = true
+            kotlinx.coroutines.delay(60_000)
+        }
+        if (failed) core.toast(tr("像素字体已下载."), "success")
+    }
     // 合约页总是横屏显示, 离开后恢复 (MECHANICS 18.6)
     // 合约页也藏起状态栏 (从顶部下滑时临时出现), 让整页在一屏里显示得大一些
     LaunchedEffect(page) {
+        core.currentPage = page
+        runCatching { core.prescript.pageChanged() }          // 指令 V 要一直停在指令页, VI 要连续停在统计页
         act.requestedOrientation = if (page == "contract") android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         else android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         val bars = androidx.core.view.WindowCompat.getInsetsController(act.window, act.window.decorView)
-        if (page == "contract") {
+        if (page == "contract" || page == "prescript") {
             bars.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             bars.hide(androidx.core.view.WindowInsetsCompat.Type.statusBars())
         } else bars.show(androidx.core.view.WindowInsetsCompat.Type.statusBars())
@@ -405,7 +426,7 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
                         modifier = Modifier.padding(20.dp))
                     HorizontalDivider(color = cp?.line ?: o.border)
                     Spacer(Modifier.height(8.dp))
-                    for ((key, label) in PAGES) {
+                    for ((key, label) in pages) {
                         val on = key == page || (key == "settings" && page == "ach")
                         Text(navLabel(key, tr(label)), color = if (cp != null) (if (on) cp.startText else cp.sideText)
                             else if (on) o.accent else o.text, fontSize = 16.sp,
@@ -420,7 +441,7 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
                     containerColor = cp?.bg ?: o.bg,
                     topBar = {
                         TopAppBar(
-                            title = { Text(if (page == "ach") tr("🏆  成就") else navLabel(page, tr(PAGES.first { it.first == page }.second))) },
+                            title = { Text(if (page == "ach") tr("🏆  成就") else navLabel(page, tr(pages.first { it.first == page }.second))) },
                             navigationIcon = {
                                 TextButton({ scope.launch { drawer.open() } }) { Text("☰", fontSize = 22.sp, color = cp?.text ?: o.text) }
                             },
@@ -492,6 +513,10 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
                     }
                 }
             }
+            // 指令页整页盖在界面上 (遮住顶栏), 左上角 × 或返回键退出
+            if (page == "prescript") PrescriptScreen { go(prescriptBack.takeIf { it != "prescript" } ?: "timer") }
+            // 换走了都市之意主题: 指令页不存在了
+            if (page == "prescript" && theme != "urban_will") LaunchedEffect(Unit) { page = "timer" }
             // 达成成就的提示浮在界面上, 手动关闭才消失 (MECHANICS 17)
             AchievementPopups { go("ach") }
             // 黑雾开始时正看着设置 / 成就: 离开

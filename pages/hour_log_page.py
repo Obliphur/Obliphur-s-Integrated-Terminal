@@ -196,7 +196,7 @@ class HourLogPage(tk.Frame):
                 bg=card, fg=COLORS["text"], insertbackground=COLORS["text"],
                 disabledbackground=bg, disabledforeground=COLORS["text_dim"],
                 highlightthickness=1, highlightbackground=COLORS["border"],
-                highlightcolor=COLORS["accent"]
+                highlightcolor=COLORS.get("input_focus", COLORS["accent"])
             )
             ent.pack(side="left", fill="x", expand=True, ipady=4)
             ent.bind("<Return>", lambda e, h=h: self._on_return(h))
@@ -209,7 +209,7 @@ class HourLogPage(tk.Frame):
                 bg=card, fg=COLORS["text"], insertbackground=COLORS["text"],
                 disabledbackground=bg, disabledforeground=COLORS["text_dim"],
                 highlightthickness=1, highlightbackground=COLORS["border"],
-                highlightcolor=COLORS["accent"]
+                highlightcolor=COLORS.get("input_focus", COLORS["accent"])
             )
             ent2.bind("<Return>", lambda e, h=h: self._on_return(h, 1))
             ent2.bind("<KP_Enter>", lambda e, h=h: self._on_return(h, 1))

@@ -602,3 +602,167 @@ class LoadingCover(tk.Frame):
             self.destroy()
         except Exception:
             pass
+
+
+class FocusGlow:
+    """都市之意: 给获得焦点的输入框 / 下拉框套一圈镂空的暖色灯圈.
+
+    用四块很窄的 Canvas 贴在控件外侧 (放在控件下面一层), 中间保持透明 ——
+    不改变控件本身的边框, 也不挡输入. 灯圈颜色 / 宽度来自主题的 focus_halo.
+    """
+
+    INPUTS = (tk.Entry, tk.Text, tk.Listbox, ttk.Entry, ttk.Combobox, ttk.Spinbox)
+
+    def __init__(self, root):
+        self.root = root
+        self.widget = None
+        self.parent = None
+        self.strips = []
+        self._job = None
+        self._geom = None
+        root.bind_all("<FocusIn>", self._on_focus, add="+")
+        root.bind_all("<FocusOut>", self._on_blur, add="+")
+
+    # ---- 主题 ----
+
+    def _halo(self):
+        return (getattr(config, "THEME_DATA", None) or {}).get("focus_halo")
+
+    def _colors(self):
+        halo = self._halo() or {}
+        return halo.get("colors") or ("#2A1B0C", "#5C3C16", "#A8702C", "#E7C082")
+
+    def _pad(self):
+        return int((self._halo() or {}).get("pad") or len(self._colors()))
+
+    # ---- 事件 ----
+
+    def _on_focus(self, event):
+        if not self._halo():
+            return
+        w = event.widget
+        if not isinstance(w, self.INPUTS):
+            return
+        self.show(w)
+
+    def _on_blur(self, event):
+        if self.widget is not None and event.widget is self.widget:
+            self.hide()
+
+    # ---- 绘制 ----
+
+    def show(self, widget):
+        if self.widget is widget and self.strips:
+            self._place()
+            return
+        self.hide()
+        halo = self._halo()
+        if not halo:
+            return
+        try:
+            parent = widget.winfo_toplevel()
+        except Exception:
+            return
+        if parent is None:
+            return
+        self.widget = widget
+        self.parent = parent
+        self._geom = None
+        bg = COLORS.get("bg", "#000000")
+        for name in ("top", "bottom", "left", "right"):
+            c = tk.Canvas(parent, bg=bg, highlightthickness=0, bd=0,
+                          takefocus=0, cursor="arrow")
+            c._oit_glow = name
+            c.bind("<Button-1>", lambda e, w=widget: w.focus_set())
+            self.strips.append(c)
+        self._place()
+        self._job = self.root.after(90, self._tick)
+
+    def _paint(self, w, h, pad, colors):
+        for name, c in zip(("top", "bottom", "left", "right"), self.strips):
+            c.delete("all")
+            if name in ("top", "bottom"):
+                width, height = w + pad * 2, pad
+                c.configure(width=width, height=height)
+                for i, color in enumerate(colors):
+                    y = i if name == "top" else (pad - 1 - i)
+                    c.create_line(0, y + 0.5, width, y + 0.5, fill=color)
+            else:
+                width, height = pad, h
+                c.configure(width=width, height=height)
+                for i, color in enumerate(colors):
+                    x = i if name == "left" else (pad - 1 - i)
+                    c.create_line(x + 0.5, 0, x + 0.5, height, fill=color)
+
+    def _place(self):
+        w = self.widget
+        if w is None:
+            return
+        try:
+            if not w.winfo_exists() or not w.winfo_ismapped():
+                self.hide()
+                return
+        except Exception:
+            self.hide()
+            return
+        if not self._halo():
+            self.hide()
+            return
+        pad = self._pad()
+        colors = self._colors()
+        try:
+            x = w.winfo_rootx() - self.parent.winfo_rootx()
+            y = w.winfo_rooty() - self.parent.winfo_rooty()
+        except Exception:
+            x, y = w.winfo_x(), w.winfo_y()
+        ww, hh = w.winfo_width(), w.winfo_height()
+        if ww <= 1 or hh <= 1:
+            return
+        if self._geom != (x, y, ww, hh, pad, tuple(colors)):
+            self._paint(ww, hh, pad, colors)
+            self._geom = (x, y, ww, hh, pad, tuple(colors))
+        boxes = {
+            "top":    (x - pad, y - pad, ww + pad * 2, pad),
+            "bottom": (x - pad, y + hh, ww + pad * 2, pad),
+            "left":   (x - pad, y, pad, hh),
+            "right":  (x + ww, y, pad, hh),
+        }
+        for c in self.strips:
+            bx, by, bw, bh = boxes[c._oit_glow]
+            c.place(x=bx, y=by, width=bw, height=bh)
+            try:
+                c.lift()
+            except Exception:
+                pass
+
+    def _tick(self):
+        self._job = None
+        if not self.widget or not self._halo():
+            self.hide()
+            return
+        try:
+            self._place()
+        except Exception:
+            self.hide()
+            return
+        self._job = self.root.after(90, self._tick)
+
+    def hide(self):
+        if self._job is not None:
+            try:
+                self.root.after_cancel(self._job)
+            except Exception:
+                pass
+            self._job = None
+        for c in self.strips:
+            try:
+                c.destroy()
+            except Exception:
+                pass
+        self.strips = []
+        self.widget = None
+        self.parent = None
+        self._geom = None
+
+    def close(self):
+        self.hide()

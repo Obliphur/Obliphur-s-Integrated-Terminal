@@ -184,6 +184,20 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         core.changed()
     }
 
+    /** 指令给的休息时间 (MECHANICS 22.3): 正在休息就加进这次休息, 否则存进积攒的休息时间. */
+    fun grantRest(seconds: Int) {
+        if (seconds <= 0 || dm.resetting) return
+        mine()
+        if (state == TState.ON_BREAK) {
+            breakEndMono += seconds
+            breakEndWall = breakEndWall?.plusSeconds(seconds.toLong())
+            saveState()
+        } else {
+            setCarry(breakCarry + seconds)
+        }
+        core.changed()
+    }
+
     private fun grantBonus() {
         val left = bonusLeftThisWeek()
         if (left <= 0) {

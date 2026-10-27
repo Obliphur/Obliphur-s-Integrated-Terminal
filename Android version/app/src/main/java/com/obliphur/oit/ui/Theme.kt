@@ -5,10 +5,12 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.Density
 
 /** 一整套颜色 (同桌面版 config.THEMES). 程序各处只从这里取色. */
@@ -40,6 +42,12 @@ val THEMES = mapOf(
         c("#8fb47a"), c("#e0a458"), c("#43423d"), c("#e5705e"), c("#3a2925"),
         c("#ffffff"), c("#77756e"), c("#3d3c38"), c("#2d2d2b"), c("#d97757"), c("#8fa673"),
         listOf("#d97757", "#7eaedb", "#8fa673", "#ddb28f", "#ad8fca", "#5fa89e", "#cc6f91", "#c2a457", "#8090b5").map(::c)),
+    // 都市之意 (同桌面版 themes/urban_will): 全黑底色, 不画卡片边框; 独占「指令」页
+    "urban_will" to OitColors(true,
+        c("#000000"), c("#000000"), c("#a5f3ff"), c("#e8f7f6"), c("#6f8f8c"), c("#ffffff"),
+        c("#7ee0b8"), c("#e7c082"), c("#0b1b1d"), c("#ff5c72"), c("#000000"),
+        c("#000000"), c("#3f5b5a"), c("#0a1414"), c("#050909"), c("#a5f3ff"), c("#7ee0b8"),
+        listOf("#a5f3ff", "#7ee0b8", "#e7c082", "#ff7a8c", "#8fa8ff", "#63d4d4", "#d39cff", "#b7e36b", "#ffa45c").map(::c)),
 )
 
 val LocalOit = staticCompositionLocalOf { THEMES["classic"]!! }
@@ -62,6 +70,10 @@ fun OitTheme(theme: String, fontScale: Float, content: @Composable () -> Unit) {
     )
     val d = LocalDensity.current
     CompositionLocalProvider(LocalOit provides o, LocalDensity provides Density(d.density, d.fontScale * fontScale)) {
-        MaterialTheme(colorScheme = scheme, content = content)
+        // 都市之意: 字体下载好之后整个界面换成像素字体 (没下载好之前用系统字体)
+        val pixel = if (theme == "urban_will") PixelFont.family.value else null
+        MaterialTheme(colorScheme = scheme) {
+            if (pixel != null) ProvideTextStyle(TextStyle(fontFamily = pixel), content) else content()
+        }
     }
 }

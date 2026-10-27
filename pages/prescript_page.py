@@ -1,0 +1,386 @@
+"""指令 (Prescript) 页: 都市之意主题独占, 放在左侧导航第一位.
+
+整页盖在窗口上 (遮住侧边栏), 样子参照 https://fuming-397.github.io/command-receiver/ :
+黑底, 居中一张图标、蓝色代码、白色正文和 "- 接收指令 -". 不显示任何时间 / 限时.
+左上角一个几乎看不见的退出按钮, 或者按 ESC.
+
+判定 / 计时 / 存档都在 prescript.py; 这一页只负责画.
+"""
+
+import ctypes
+import os
+import random
+import sys
+from datetime import datetime
+import tkinter as tk
+import tkinter.font as tkfont
+
+import config
+from config import COLORS
+from i18n import tr
+from prescript import pad_code
+
+IDLE_TEXT = "谨遵指令之意"
+SCRAMBLE_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()_+-=[]{}|;:,.?"
+GLOW = "#2C6670"          # 蓝色代码的光晕
+BTN_HOVER = "#FF0000"
+BTN_DISABLED = "#444444"
+EXIT_DIM = "#2A3535"
+
+
+def _mix(c1: str, c2: str, k: float) -> str:
+    a = [int(c1[i:i + 2], 16) for i in (1, 3, 5)]
+    b = [int(c2[i:i + 2], 16) for i in (1, 3, 5)]
+    return "#" + "".join(f"{round(x + (y - x) * k):02X}" for x, y in zip(a, b))
+
+
+class GlowText(tk.Canvas):
+    """一行带光晕的字 (Tk 没有 text-shadow, 用几份暗色的字错开一像素叠出来)."""
+
+    PAD = 4
+    OFFSETS = ((-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, 1), (-1, 1), (1, -1))
+
+    def __init__(self, master, font, fg, glow, bg):
+        super().__init__(master, bg=bg, highlightthickness=0, bd=0)
+        self._font = tkfont.Font(font=font)
+        self._fg, self._glow = fg, glow
+        self.set_text("", "")
+
+    def set_text(self, text: str, reserve: str = None):
+        reserve = text if reserve is None else reserve
+        width = max(self._font.measure(text), self._font.measure(reserve)) + 2 * self.PAD
+        height = self._font.metrics("linespace") + 2 * self.PAD
+        self.configure(width=width, height=height)
+        self.delete("all")
+        cx, cy = width / 2, height / 2
+        for dx, dy in self.OFFSETS:
+            self.create_text(cx + dx, cy + dy, text=text, font=self._font, fill=self._glow)
+        self.create_text(cx, cy, text=text, font=self._font, fill=self._fg)
+
+
+class PrescriptPage(tk.Frame):
+    """黑底居中: 图标 / 蓝色代码 / 正文 / "- 接收指令 -"; 左上角一个不显眼的退出."""
+
+    def __init__(self, master, engine, on_exit=None):
+        super().__init__(master, bg="#000000")
+        self.engine = engine
+        self.on_exit = on_exit
+        self._active = False          # 页面正在显示: 文字变化才播动画
+        self._visit_since = ""        # 这一次打开页面的时刻: 只显示这之后给出的代码
+        self._tick_job = None
+        self._body = None             # 正文当前的目标文字
+        self._codes = None            # 蓝色代码当前的目标文字 (list)
+        self._body_gen = 0
+        self._code_gen = 0
+        self._body_busy = False
+        self._code_busy = False
+        self._body_job = None
+        self._code_job = None
+        self._code_lines = []
+        self._btn_color = "#FFFFFF"
+        self._btn_job = None
+        self._btn_hover = False
+        self._image = None
+        self._build()
+        top = self.winfo_toplevel()
+        self._esc_id = top.bind("<Escape>", self._on_escape, add="+")
+        self.bind("<Destroy>", self._on_destroy, add="+")
+
+    # ---- 界面 ----
+
+    def _build(self):
+        bg = "#000000"
+        self.main = tk.Frame(self, bg=bg)
+        self.main.place(relx=0.5, rely=0.5, anchor="center")
+
+        self._load_image()
+        if self._image is not None:
+            tk.Label(self.main, image=self._image, bg=bg, bd=0).pack(pady=(0, config.scaled(10)))
+
+        self.code_box = tk.Frame(self.main, bg=bg)
+        self.code_box.pack()
+
+        self.lbl_body = tk.Label(
+            self.main, text="", bg=bg, fg=COLORS.get("text_strong", "#FFFFFF"),
+            font=config.font("body"), justify="center", anchor="center",
+            wraplength=config.scaled(420)
+        )
+        self.lbl_body.pack(pady=(config.scaled(4), config.scaled(18)))
+
+        self.btn = tk.Label(
+            self.main, text=tr("- 接收指令 -"), bg=bg, fg=self._btn_color,
+            font=config.font("btn"), cursor="hand2"
+        )
+        self.btn.pack()
+        self.btn.bind("<Button-1>", self._on_click)
+        self.btn.bind("<Enter>", lambda e: self._hover(True))
+        self.btn.bind("<Leave>", lambda e: self._hover(False))
+
+        self.btn_exit = tk.Label(
+            self, text="×", bg=bg, fg=EXIT_DIM, font=config.font("body"),
+            cursor="hand2", padx=8, pady=2
+        )
+        self.btn_exit.place(x=4, y=2)
+        self.btn_exit.bind("<Button-1>", lambda e: self._exit())
+        self.btn_exit.bind("<Enter>", lambda e: self.btn_exit.configure(fg=COLORS["text_dim"]))
+        self.btn_exit.bind("<Leave>", lambda e: self.btn_exit.configure(fg=EXIT_DIM))
+
+        # 正文的换行宽度跟着窗口走 (网页是窗口宽度的一半, 至少 320).
+        self.bind("<Configure>", self._on_resize, add="+")
+
+    def _load_image(self):
+        path = config.asset_path("themes", "urban_will", "image", "Index.png")
+        if not os.path.isfile(path):
+            return
+        try:
+            img = tk.PhotoImage(file=path)
+            target = config.scaled(128)
+            if img.width() > target:
+                img = img.subsample(max(1, round(img.width() / target)))
+            elif img.width() < target:
+                img = img.zoom(max(1, round(target / img.width())))
+            self._image = img
+        except Exception:
+            self._image = None
+
+    def _on_resize(self, event):
+        if event.widget is not self:
+            return
+        width = max(config.scaled(320), int(event.width * 0.5))
+        if int(self.lbl_body.cget("wraplength")) != width:
+            self.lbl_body.configure(wraplength=width)
+
+    # ---- 显示 / 退出 ----
+
+    def show(self):
+        """盖到窗口上之后调用."""
+        self._active = False
+        self._visit_since = datetime.now().replace(microsecond=0).isoformat(timespec="seconds")
+        self.refresh()                      # 先按当前状态直接画出来, 不播动画
+        self._active = True
+        self.engine.settle_rewards()        # 新给出的蓝色代码会通过 on_change 播动画
+        self.refresh()
+        self._start_tick()
+        try:
+            self.focus_set()
+        except tk.TclError:
+            pass
+
+    def hide(self):
+        self._active = False
+        self._stop_tick()
+
+    def _exit(self):
+        if self.on_exit is not None:
+            self.on_exit()
+
+    def _on_escape(self, event=None):
+        try:
+            if self.winfo_ismapped():
+                self._exit()
+        except tk.TclError:
+            pass
+
+    # ---- 刷新 ----
+
+    def refresh(self):
+        # 开发者模式下可能同时有几条: 一条一行, 先领的在上面.
+        bodies = [tr(c.get("body", "")) for c in self.engine.actives()]
+        body = chr(10).join(bodies) if bodies else tr(IDLE_TEXT)
+        codes = [pad_code(str(g.get("code") or "")) for g in self._fresh_grants()]
+        codes = codes or [pad_code("NONE")]
+        if body != self._body:
+            self._body = body
+            self._set_body(body)
+        if codes != self._codes:
+            self._codes = codes
+            self._set_codes(codes)
+        self._sync_button()
+
+    def _fresh_grants(self):
+        """只显示这一次打开页面之后给出的代码, 而且不到 3 分钟的不写出来 (再次打开显示 _%NONE%.)."""
+        out = []
+        for g in self.engine.granted_today():
+            try:
+                seconds = int(g.get("seconds") or 0)
+            except (TypeError, ValueError):
+                seconds = 0
+            if str(g.get("at") or "") >= self._visit_since and seconds >= 180:
+                out.append(g)
+        return out
+
+    def _set_body(self, text):
+        self._body_gen += 1
+        gen = self._body_gen
+        self._cancel("_body_job")
+        if not self._active or not text:
+            self._body_busy = False
+            self.lbl_body.configure(text=text)
+            return
+        self._body_busy = True
+        self.lbl_body.configure(text="")
+        self._type_body(text, 1, gen)
+
+    def _type_body(self, text, n, gen):
+        """逐字打出来, 每字 50 ms."""
+        if gen != self._body_gen:
+            return
+        self.lbl_body.configure(text=text[:n])
+        if n >= len(text):
+            self._body_busy = False
+            self._body_job = None
+            return
+        self._body_job = self.after(50, lambda: self._type_body(text, n + 1, gen))
+
+    def _ensure_lines(self, count):
+        color = COLORS.get("accent", "#A5F3FF")
+        while len(self._code_lines) < count:
+            line = GlowText(self.code_box, config.font("h2", bold=True), color, GLOW, "#000000")
+            line.pack()
+            self._code_lines.append(line)
+        while len(self._code_lines) > count:
+            self._code_lines.pop().destroy()
+
+    def _set_codes(self, codes):
+        self._code_gen += 1
+        gen = self._code_gen
+        self._cancel("_code_job")
+        self._ensure_lines(len(codes))
+        if not self._active:
+            self._code_busy = False
+            for line, text in zip(self._code_lines, codes):
+                line.set_text(text)
+            return
+        self._code_busy = True
+        self._scramble(codes, -1, 0, gen)
+
+    def _scramble(self, codes, done, tick, gen):
+        """乱码刷新 (25 ms 一次), 每 100 ms 多定下一个字, 和网页一样."""
+        if gen != self._code_gen:
+            return
+        longest = max(len(c) for c in codes)
+        if tick and tick % 4 == 0:
+            done += 1
+        if done >= longest - 1:
+            for line, text in zip(self._code_lines, codes):
+                line.set_text(text)
+            self._code_busy = False
+            self._code_job = None
+            return
+        for line, text in zip(self._code_lines, codes):
+            shown = "".join(
+                ch if i <= done else random.choice(SCRAMBLE_CHARS)
+                for i, ch in enumerate(text)
+            )
+            line.set_text(shown, text)
+        self._code_job = self.after(25, lambda: self._scramble(codes, done, tick + 1, gen))
+
+    # ---- 按钮 ----
+
+    def _sync_button(self):
+        can = self.engine.can_draw()
+        self.btn.configure(cursor="hand2" if can else "arrow")
+        if not can:
+            self._set_btn_color(BTN_DISABLED, instant=True)
+        else:
+            self._set_btn_color(BTN_HOVER if self._btn_hover else "#FFFFFF")
+
+    def _hover(self, on):
+        self._btn_hover = on
+        if self.engine.can_draw():
+            self._set_btn_color(BTN_HOVER if on else "#FFFFFF")
+
+    def _set_btn_color(self, target, instant=False):
+        """颜色在 0.5 s 里渐变 (网页上的 transition)."""
+        if self._btn_job is not None:
+            self.after_cancel(self._btn_job)
+            self._btn_job = None
+        if instant:
+            self._btn_color = target
+            self.btn.configure(fg=target)
+            return
+        start = self._btn_color
+        if start == target:
+            return
+
+        def step(i):
+            self._btn_job = None
+            k = i / 10
+            self._btn_color = _mix(start, target, k)
+            self.btn.configure(fg=self._btn_color)
+            if i < 10:
+                self._btn_job = self.after(50, lambda: step(i + 1))
+
+        step(1)
+
+    def _on_click(self, event=None):
+        if self._body_busy or self._code_busy or not self.engine.can_draw():
+            return
+        if self.engine.draw() is not None:
+            self._play_sound()
+        self.refresh()
+
+    def _play_sound(self):
+        """接收指令的 "滴答" 音效 (三个里随机一个); 文件不在或播不出来就算了."""
+        if sys.platform != "win32":
+            return
+        name = f"ticktock_type{random.randint(1, 3)}.mp3"
+        path = config.asset_path("themes", "urban_will", "audio", name)
+        if not os.path.isfile(path):
+            return
+        try:
+            mci = ctypes.windll.winmm.mciSendStringW
+            alias = "oit_prescript"
+            mci(f"close {alias}", None, 0, None)
+            if mci(f'open "{path}" type mpegvideo alias {alias}', None, 0, None) == 0:
+                mci(f"play {alias}", None, 0, None)
+        except Exception:
+            pass
+
+    # ---- 每秒检查 (整点一过按钮就恢复) ----
+
+    def _start_tick(self):
+        if self._tick_job is None:
+            self._tick_job = self.after(1000, self._tick)
+
+    def _stop_tick(self):
+        if self._tick_job is not None:
+            try:
+                self.after_cancel(self._tick_job)
+            except Exception:
+                pass
+            self._tick_job = None
+
+    def _tick(self):
+        self._tick_job = None
+        if not self.winfo_exists() or not self._active:
+            return
+        try:
+            self.refresh()
+        except Exception:
+            pass
+        self._tick_job = self.after(1000, self._tick)
+
+    # ---- 清理 ----
+
+    def _cancel(self, name):
+        job = getattr(self, name)
+        if job is not None:
+            try:
+                self.after_cancel(job)
+            except Exception:
+                pass
+            setattr(self, name, None)
+
+    def _on_destroy(self, event):
+        if event.widget is not self:
+            return
+        self._active = False
+        self._body_gen += 1
+        self._code_gen += 1
+        for name in ("_tick_job", "_body_job", "_code_job", "_btn_job"):
+            self._cancel(name)
+        try:
+            self.winfo_toplevel().unbind("<Escape>", self._esc_id)
+        except Exception:
+            pass

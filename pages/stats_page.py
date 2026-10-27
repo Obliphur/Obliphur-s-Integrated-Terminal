@@ -304,9 +304,10 @@ class StatsPage(tk.Frame):
             self.device = "all"
         for k, b in self.device_btns.items():
             on = k == self.device
-            cfg(b, bg=COLORS["text"] if on else COLORS["bg_card"],
-                fg=COLORS["bg"] if on else COLORS["text"],
-                activebackground=COLORS["border"], activeforeground=COLORS["text"])
+            cfg(b, bg=COLORS.get("chip_fill", COLORS["text"]) if on else COLORS["bg_card"],
+                fg=COLORS.get("chip_text", COLORS["bg"]) if on else COLORS["text"],
+                activebackground=COLORS.get("chip_fill_hover", COLORS["border"]),
+                activeforeground=COLORS["text"])
         if show:
             show_pack(self.device_bar, fill="x", padx=26, pady=(0, 8), before=self.sep)
         else:
@@ -331,27 +332,29 @@ class StatsPage(tk.Frame):
     def _style_buttons(self):
         for key, b in self.tab_btns.items():
             on = key == self.page
-            cfg(b, bg=COLORS["accent"] if on else COLORS["bg_card"],
-                     fg=COLORS["on_accent"] if on else COLORS["text"],
-                     activebackground=COLORS["accent_hover"] if on else COLORS["border"],
-                     activeforeground=COLORS["on_accent"] if on else COLORS["text"])
+            cfg(b, bg=COLORS.get("accent_fill", COLORS["accent"]) if on else COLORS["bg_card"],
+                     fg=COLORS.get("on_accent_fill", COLORS["on_accent"]) if on else COLORS["text"],
+                     activebackground=COLORS.get("accent_fill_hover", COLORS["accent_hover"]) if on else COLORS["border"],
+                     activeforeground=COLORS.get("on_accent_fill", COLORS["on_accent"]) if on else COLORS["text"])
         for key, b in self.month_btns.items():
             on = key == self.month
-            cfg(b, bg=COLORS["accent"] if on else COLORS["bg_card"],
-                     fg=COLORS["on_accent"] if on else COLORS["text"],
-                     activebackground=COLORS["accent_hover"] if on else COLORS["border"],
-                     activeforeground=COLORS["on_accent"] if on else COLORS["text"])
+            cfg(b, bg=COLORS.get("accent_fill", COLORS["accent"]) if on else COLORS["bg_card"],
+                     fg=COLORS.get("on_accent_fill", COLORS["on_accent"]) if on else COLORS["text"],
+                     activebackground=COLORS.get("accent_fill_hover", COLORS["accent_hover"]) if on else COLORS["border"],
+                     activeforeground=COLORS.get("on_accent_fill", COLORS["on_accent"]) if on else COLORS["text"])
         cur = self.mode.get(self.page, "pct")
         for key, b in self.mode_btns.items():
             on = key == cur
-            cfg(b, bg=COLORS["text"] if on else COLORS["bg_card"],
-                     fg=COLORS["bg"] if on else COLORS["text_dim"],
-                     activebackground=COLORS["border"], activeforeground=COLORS["text"])
+            cfg(b, bg=COLORS.get("chip_fill", COLORS["text"]) if on else COLORS["bg_card"],
+                     fg=COLORS.get("chip_text", COLORS["bg"]) if on else COLORS["text_dim"],
+                     activebackground=COLORS.get("chip_fill_hover", COLORS["border"]),
+                     activeforeground=COLORS["text"])
         for key, b in self.contract_btns.items():
             on = key == self.contract_mode
-            cfg(b, bg=COLORS["text"] if on else COLORS["bg_card"],
-                     fg=COLORS["bg"] if on else COLORS["text_dim"],
-                     activebackground=COLORS["border"], activeforeground=COLORS["text"])
+            cfg(b, bg=COLORS.get("chip_fill", COLORS["text"]) if on else COLORS["bg_card"],
+                     fg=COLORS.get("chip_text", COLORS["bg"]) if on else COLORS["text_dim"],
+                     activebackground=COLORS.get("chip_fill_hover", COLORS["border"]),
+                     activeforeground=COLORS["text"])
 
 
     def _data(self, prefix: str):

@@ -69,10 +69,12 @@ obliphur_terminal/
 ├─ main.py               入口: 申请管理员权限, 启动界面
 ├─ app.py                主窗口: 各页面, 计时器, 联网页, 定时检查, 关闭 / 重置
 ├─ config.py             默认数值, 主题与字号, 版本号 (APP_VERSION)
+├─ themes/               界面主题 (classic / claude / urban_will; 都市之意的字体和预览都在里面)
 ├─ settings_manager.py   设置项定义, 48 小时冷静期, 配置期
 ├─ data_manager.py       学习时长, 整点记录, 专注时间段, 窗口使用时间 (统计)
 ├─ daily.py              睡觉时间 (设置 → 日常)
 ├─ behavior.py           行为模式 / 外出 (可选, 统计与整点记录叠加)
+├─ prescript.py          指令: 都市之意主题独占的抽取 / 计时 / 存档
 ├─ achievements.py       成就: 条件判定与存档
 ├─ contract.py           合约: 词条, 违反与降级, 休息倍率, 整点记录锁定
 ├─ net_guard.py          联网额度, 申请 / 快速访问 / 借贷, 断网方式切换
@@ -109,6 +111,7 @@ obliphur_terminal/
 │  ├─ outing_dialog.py   外出的时长窗口
 │  ├─ achievements_page.py  成就页 (设置 → 基本设置 → 🏆 成就), 达成提示
 │  ├─ contract_page.py   合约页
+│  ├─ prescript_page.py  指令页 (都市之意主题独占)
 │  ├─ prestart_dialog.py 提前启动的程序清单弹窗
 │  └─ widgets.py         共用控件 (滚动区, 开关, 加载页 …)
 ├─ defaults/             空模板 (名单, AI 配置)

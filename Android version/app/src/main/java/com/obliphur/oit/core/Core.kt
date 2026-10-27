@@ -75,6 +75,11 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     val ach: AchievementStore
     /** 合约 (MECHANICS 18). */
     val contract: Contract
+    /** 指令 (Prescript, 都市之意主题独占, MECHANICS 22). */
+    val prescript: PrescriptEngine
+    /** 界面当前页 (指令的 V / VI 要看) 和界面是不是在前台 (退到后台相当于电脑版的最小化). */
+    @Volatile var currentPage = "timer"
+    @Volatile var uiForeground = true
     /** 上次看到的合约 (id): 同步来的开始 / 结束也要让断网方式等跟着变. */
     private var contractSeen: Long? = null
     /** 支援短缺: 这次休息已经提醒过的 (还差 3 / 1 分钟). */
@@ -177,7 +182,32 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         ach.blocked = { dm.resetting }
         contract = Contract(File(dir, "contract.json"))
         contract.blocked = { dm.resetting }
+        prescript = PrescriptEngine(
+            File(dir, "prescript.json"),
+            stateFn = { when (timer.state) { TState.RUNNING -> "focus"; TState.ON_BREAK -> "break"; else -> "idle" } },
+            todayHoursFn = { todayHoursLive() },
+            contractsFn = { contract.history.toList() },
+            pageFn = { currentPage },
+            minimizedFn = { !uiForeground },
+            grantRestFn = { seconds, code ->
+                logNotice("PRESCRIPT +${seconds}s $code".trimEnd())
+                timer.grantRest(seconds)
+            },
+            blockedFn = { dm.resetting },
+            devFn = { settings.devMode },
+            onChange = { changed() },
+        )
         loadViolations()
+    }
+
+    /** 今天的专注小时数, 包括正在进行、还没记进统计的这一段. */
+    private fun todayHoursLive(): Double {
+        var hours = dm.todayHours()
+        if (timer.state == TState.RUNNING) {
+            val sinceMidnight = secondsBetween(LocalDate.now().atStartOfDay(), LocalDateTime.now())
+            hours += minOf(timer.elapsed, sinceMidnight) / 3600.0
+        }
+        return hours
     }
 
     /** 界面和服务都就位后调用一次. */
@@ -381,6 +411,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             "ended" -> toast(tr("时间到,网络已断开."), "warn")
         }
         timer.tick()
+        runCatching { prescript.tick() }
         beatPower()
         runCatching { checkAdapterBack(); checkContractConflicts() }
         checkContract()
@@ -568,6 +599,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         dm.saveWindows()
         timer.saveNow()
         net.save()
+        prescript.save()
     }
 
     // ---- 设置 ----

@@ -57,7 +57,7 @@ object Schema {
                 "1.3" to "很大 (130%)", "1.5" to "极大 (150%)")),
         Spec("THEME", "界面主题", Kind.CHOICE, false, "basic", "classic",
             choices = listOf("classic" to "经典 (蓝白)", "claude" to "Claude (浅色)",
-                "claude_dark" to "Claude (深色)")),
+                "claude_dark" to "Claude (深色)", "urban_will" to "都市之意")),
         Spec("UPDATE_CHECK", "打开时检查更新", Kind.CHOICE, false, "basic", "1", choices = ONOFF),
         Spec("UPDATE_AUTO", "自动更新", Kind.CHOICE, false, "basic", "1", choices = ONOFF),
         // ---- 计时器 ----

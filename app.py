@@ -25,6 +25,7 @@ import recorder
 import daily
 import behavior
 import prestart
+import prescript
 from sync_local import PcLocal
 from config import (
     COLORS, APP_NAME, IDLE, RUNNING, READY_BREAK, ON_BREAK,
@@ -36,11 +37,11 @@ from net_guard import NetGuard
 from data_manager import DataManager, USERNAME_MAX
 from settings_manager import SettingsManager
 from pages import (CalendarPage, HourLogPage, SettingsPage, RulesPage, StatsPage,
-                   ContractPage, AchievementsPage, AchievementPopups)
+                   ContractPage, AchievementsPage, AchievementPopups, PrescriptPage)
 from pages.prestart_dialog import PrestartDialog
 from pages.outing_dialog import OutingDialog
 from pages.file_channel import FileChannel, fmt_size
-from pages.widgets import (frozen, LoadingCover, cfg, flavor,
+from pages.widgets import (frozen, LoadingCover, FocusGlow, cfg, flavor,
                            show_pack, hide_pack)
 
 
@@ -235,6 +236,7 @@ class BreakTimerApp:
         i18n.init_from_config()
         config.UI_SCALE = self.ui_scale * float(self.settings.value("FONT_SCALE") or 1.0)
         self._apply_theme()
+        self.focus_glow = FocusGlow(self.root)
         # 行为模式 / 外出 (MECHANICS 21): 不写 study_log / focus_log, 显示时叠加.
         # 要在 DataManager 里补记整点记录之前接上, 否则启动时会先用普通的自动记录内容补一遍.
         self.behavior = behavior.Behavior(config.app_data_dir())
@@ -278,6 +280,22 @@ class BreakTimerApp:
         self.net.peer_usage = lambda: [r for led in self.sync.peer_ledgers()
                                        for r in (led.get("usage") or [])]
         self.sync_job = None
+        # 指令 (Prescript): 都市之意主题独占的模块; 判定和存档不依赖界面, 主题切走也继续走.
+        self.prescripts = prescript.PrescriptEngine(
+            self.dm.data_dir,
+            state_fn=lambda: ("focus" if self.state == RUNNING else
+                              "break" if self.state == ON_BREAK else "idle"),
+            today_hours_fn=self._today_hours_live,
+            contracts_fn=lambda: self.contract.history,
+            page_fn=lambda: self.current_page,
+            minimized_fn=lambda: self.root.state() in ("iconic", "withdrawn"),
+            grant_rest_fn=self._grant_prescript_rest,
+            username_fn=lambda: self.dm.username,
+            blocked_fn=lambda: self.dm.resetting,
+            on_change=self._prescript_changed,
+            dev_fn=config.dev_mode_enabled,
+        )
+        self.prescript_job = None
         self.updater = updater.Updater()
         self._update_retry = False     # 打开时检查失败了 (例如 Adapter 离线): 下一次联网时再查
         self._net_view = None
@@ -309,6 +327,11 @@ class BreakTimerApp:
         self._start_midnight_timer()
         self._schedule_hourly()
         self._schedule_apply_check()
+        try:
+            self.prescripts.tick()
+        except Exception as e:
+            self._log_window(f"ERROR    prescript tick {type(e).__name__}: {e}")
+        self.prescript_job = self.root.after(1000, self._prescript_tick)
         self._net_tick()
         self.window_job = self.root.after(5000, self._schedule_window_guard)
         self.prestart_job = self.root.after(1000, self._prestart_tick)
@@ -331,6 +354,7 @@ class BreakTimerApp:
             self.root.after(3000, lambda: self.check_update(auto=True))
 
         self.root.bind("<Map>", self._on_window_map, add="+")
+        self.root.bind("<Unmap>", self._on_window_unmap, add="+")
         self.root.bind_all("<ButtonPress>", self._touch, add="+")
         self.root.bind_all("<KeyPress>", self._touch, add="+")
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -370,7 +394,7 @@ class BreakTimerApp:
         for name in ("TkDefaultFont", "TkTextFont", "TkMenuFont", "TkHeadingFont"):
             try:
                 f = tkfont.nametofont(name)
-                f.configure(family=config.FONT_FAMILY, size=config.scaled(config.FONT_SIZE["body"]))
+                f.configure(family=config.FONT_FAMILY, size=config.font("body")[1])
             except Exception:
                 pass
 
@@ -393,9 +417,18 @@ class BreakTimerApp:
             r.option_add(f"*{cls}.foreground", t["list_fg"], "interactive")
             r.option_add(f"*{cls}.selectBackground", t["list_select"], "interactive")
             r.option_add(f"*{cls}.selectForeground", t["list_on_select"], "interactive")
-            r.option_add(f"*{cls}.highlightColor", COLORS["accent"], "interactive")
+            r.option_add(f"*{cls}.highlightColor", COLORS.get("focus", COLORS["accent"]), "interactive")
         r.option_add("*Text.insertBackground", t["list_fg"], "interactive")
         r.option_add("*Button.highlightThickness", 0, "interactive")
+        r.option_add("*Frame.highlightColor", COLORS["bg"], "interactive")
+        r.option_add("*Frame.highlightBackground", COLORS["bg"], "interactive")
+        r.option_add("*Entry.highlightColor", COLORS.get("input_focus", COLORS["accent"]), "interactive")
+        if (config.THEME_DATA or {}).get("seamless"):
+            # 全黑主题: 去掉 Listbox / Text 自带的 3D 边框和灰线, 让它们融进背景.
+            for cls in ("Listbox", "Text"):
+                r.option_add(f"*{cls}.borderWidth", 0, "interactive")
+                r.option_add(f"*{cls}.relief", "flat", "interactive")
+                r.option_add(f"*{cls}.highlightThickness", 0, "interactive")
         r.option_add("*TCombobox*Listbox.background", t["list_bg"], "interactive")
         r.option_add("*TCombobox*Listbox.foreground", t["list_fg"], "interactive")
         r.option_add("*TCombobox*Listbox.selectBackground", t["list_select"], "interactive")
@@ -409,7 +442,7 @@ class BreakTimerApp:
             import ctypes
             self.root.update_idletasks()
             hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
-            dark = ctypes.c_int(1 if config.THEME.endswith("_dark") else 0)
+            dark = ctypes.c_int(1 if getattr(config, "THEME_DARK", config.THEME.endswith("_dark")) else 0)
             for attr in (20, 19):   # DWMWA_USE_IMMERSIVE_DARK_MODE (新 / 旧版本号)
                 if ctypes.windll.dwmapi.DwmSetWindowAttribute(
                         hwnd, attr, ctypes.byref(dark), ctypes.sizeof(dark)) == 0:
@@ -423,6 +456,9 @@ class BreakTimerApp:
         ac, tx = COLORS["accent"], COLORS["text"]
         td = COLORS["text_dim"]
         on_ac = COLORS["on_accent"]
+        acf = COLORS.get("accent_fill", ac)
+        on_acf = COLORS.get("on_accent_fill", on_ac)
+        acf_hover = COLORS.get("accent_fill_hover", COLORS["accent_hover"])
         t = config.TTK_COLORS
 
         # clam 的基础色: 普通按钮 / 输入框 / 滚动条 / 下拉框等都从这里取色
@@ -439,12 +475,44 @@ class BreakTimerApp:
               background=[("disabled", t["frame"]), ("pressed", t["dark"]),
                           ("active", t["frame_hover"])],
               foreground=[("disabled", t["disabled_fg"])])
-        s.map("TCombobox",
-              fieldbackground=[("readonly", "focus", t["select"]),
-                               ("readonly", t["frame"]), ("disabled", t["frame"])],
-              foreground=[("readonly", "focus", t["on_select"]),
-                          ("disabled", t["disabled_fg"])],
-              background=[("active", t["frame_hover"]), ("pressed", t["frame_hover"])])
+        if (config.THEME_DATA or {}).get("focus_halo"):
+            # 有暖色焦点灯圈的主题: 下拉框获得焦点时字段保持黑底 (镂空), 只靠灯圈提示.
+            s.configure("TCombobox", bordercolor=t["border"], lightcolor=t["light"],
+                        darkcolor=t["dark"], focuscolor=t["border"])
+            s.map("TCombobox",
+                  bordercolor=[("focus", t["border"])],
+                  lightcolor=[("focus", t["light"])],
+                  darkcolor=[("focus", t["dark"])],
+                  focuscolor=[("focus", t["border"])],
+                  fieldbackground=[("readonly", t["field"]), ("disabled", t["frame"])],
+                  foreground=[("readonly", t["on_select"]),
+                              ("disabled", t["disabled_fg"])],
+                  background=[("active", t["frame_hover"]), ("pressed", t["frame_hover"])])
+            for cls in ("TEntry", "TSpinbox"):
+                s.configure(cls, bordercolor=t["border"], lightcolor=t["light"],
+                            darkcolor=t["dark"], fieldbackground=t["field"],
+                            focuscolor=t["border"])
+                s.map(cls,
+                      bordercolor=[("focus", t["border"])],
+                      lightcolor=[("focus", t["light"])],
+                      darkcolor=[("focus", t["dark"])],
+                      focuscolor=[("focus", t["border"])])
+        else:
+            # 从有灯圈的主题切回来时, 把 Combobox / Entry 的焦点色和边框恢复成普通主题的.
+            s.configure("TCombobox", bordercolor=t["border"], lightcolor=t["light"],
+                        darkcolor=t["dark"], focuscolor=t["border"])
+            s.map("TCombobox",
+                  bordercolor=[], lightcolor=[], darkcolor=[], focuscolor=[],
+                  fieldbackground=[("readonly", "focus", t["select"]),
+                                   ("readonly", t["frame"]), ("disabled", t["frame"])],
+                  foreground=[("readonly", "focus", t["on_select"]),
+                              ("disabled", t["disabled_fg"])],
+                  background=[("active", t["frame_hover"]), ("pressed", t["frame_hover"])])
+            for cls in ("TEntry", "TSpinbox"):
+                s.configure(cls, bordercolor=t["border"], lightcolor=t["light"],
+                            darkcolor=t["dark"], fieldbackground=t["field"],
+                            focuscolor=t["border"])
+                s.map(cls, bordercolor=[], lightcolor=[], darkcolor=[], focuscolor=[])
         s.map("TEntry", fieldbackground=[("readonly", t["frame"]),
                                          ("disabled", t["frame"])])
         s.map("TSpinbox", fieldbackground=[("readonly", t["frame"]),
@@ -461,7 +529,7 @@ class BreakTimerApp:
         s.configure("TFrame", background=bg)
 
         s.configure("Card.TFrame", background=card)
-        s.configure("TopBar.TFrame", background=COLORS["accent"])
+        s.configure("TopBar.TFrame", background=COLORS.get("topbar", ac))
 
         s.configure("UI.TLabel", background=bg, foreground=td, font=config.font("body"))
         s.configure("UI.Bold.TLabel", background=bg, foreground=tx, font=config.font("body", bold=True))
@@ -474,25 +542,32 @@ class BreakTimerApp:
 
         s.configure(
             "Accent.TButton",
-            background=ac, foreground=on_ac,
-            bordercolor=ac, lightcolor=ac, darkcolor=ac,
+            background=acf, foreground=on_acf,
+            bordercolor=acf, lightcolor=acf, darkcolor=acf,
             font=config.font("body", bold=True),
             borderwidth=0, focusthickness=0, padding=(18, 10)
         )
         s.map(
             "Accent.TButton",
             background=[("disabled", COLORS["accent_disabled"]),
-                        ("active", COLORS["accent_hover"])],
+                        ("active", acf_hover)],
             foreground=[("disabled", COLORS["on_accent_disabled"])],
             bordercolor=[("disabled", COLORS["accent_disabled"]),
-                         ("active", COLORS["accent_hover"])],
+                         ("active", acf_hover)],
             lightcolor=[("disabled", COLORS["accent_disabled"]),
-                        ("active", COLORS["accent_hover"])],
+                        ("active", acf_hover)],
             darkcolor=[("disabled", COLORS["accent_disabled"]),
-                       ("active", COLORS["accent_hover"])]
+                       ("active", acf_hover)]
         )
 
-        s.configure("UI.TSeparator", background=COLORS["border"])
+        s.configure("UI.TSeparator", background=COLORS["border"],
+                    lightcolor=COLORS["border"], darkcolor=COLORS["border"],
+                    bordercolor=COLORS["border"])
+        if (config.THEME_DATA or {}).get("seamless"):
+            # 全黑主题不需要分隔线: 清空布局, 连那条 1px 灰线也不画.
+            s.layout("UI.TSeparator", [])
+        else:
+            s.layout("UI.TSeparator", s.layout("TSeparator"))
         s.configure(
             "Quota.Horizontal.TProgressbar",
             troughcolor=COLORS["border"], background=ac,
@@ -500,24 +575,27 @@ class BreakTimerApp:
             borderwidth=0, thickness=8
         )
         dg = COLORS["danger"]
+        df = COLORS.get("danger_fill", dg)
+        df_hover = COLORS.get("danger_fill_hover", COLORS["danger_hover"])
+        on_df = COLORS.get("on_danger_fill", on_ac)
         s.configure(
             "Danger.TButton",
-            background=dg, foreground=on_ac,
-            bordercolor=dg, lightcolor=dg, darkcolor=dg,
+            background=df, foreground=on_df,
+            bordercolor=df, lightcolor=df, darkcolor=df,
             font=config.font("body", bold=True),
             borderwidth=0, focusthickness=0, padding=(18, 10)
         )
         s.map(
             "Danger.TButton",
             background=[("disabled", COLORS["danger_disabled"]),
-                        ("active", COLORS["danger_hover"])],
+                        ("active", df_hover)],
             foreground=[("disabled", on_ac)],
             bordercolor=[("disabled", COLORS["danger_disabled"]),
-                         ("active", COLORS["danger_hover"])],
+                         ("active", df_hover)],
             lightcolor=[("disabled", COLORS["danger_disabled"]),
-                        ("active", COLORS["danger_hover"])],
+                        ("active", df_hover)],
             darkcolor=[("disabled", COLORS["danger_disabled"]),
-                       ("active", COLORS["danger_hover"])]
+                       ("active", df_hover)]
         )
 
 
@@ -542,7 +620,7 @@ class BreakTimerApp:
     def _layout_steps(self, parent):
         bg, card = COLORS["bg"], COLORS["bg_card"]
 
-        self.topbar = tk.Frame(parent, bg=COLORS["accent"], height=4)
+        self.topbar = tk.Frame(parent, bg=COLORS.get("topbar", COLORS["accent"]), height=4)
         self.topbar.pack(fill="x")
 
         self.shell = tk.Frame(parent, bg=bg)
@@ -558,7 +636,11 @@ class BreakTimerApp:
         self.nav_btns = {}
 
 
-        self.nav_labels = {
+        self.nav_labels = {}
+        # 指令是都市之意主题独占的模块, 放在所有模块的第一位.
+        if self._prescript_enabled():
+            self.nav_labels["prescript"] = tr("📜  指令")
+        self.nav_labels.update({
             "timer": tr("⏱  计时器"),
             "net": tr("🌐  联网"),
             "rules": tr("🛡  规则"),
@@ -568,7 +650,7 @@ class BreakTimerApp:
             "contract": tr("⚔  合约"),
             "settings": tr("⚙  设置"),
             "reset": tr("🔄  重置")
-        }
+        })
         for key, label in self.nav_labels.items():
             if key == "reset":
 
@@ -589,6 +671,10 @@ class BreakTimerApp:
         self.content.grid_columnconfigure(0, weight=1)
 
         self.pages = {}
+        if self._prescript_enabled():
+            # 指令页整页盖在窗口上 (遮住侧边栏), 不放进 content 的 grid.
+            self.pages["prescript"] = PrescriptPage(
+                self.shell, self.prescripts, on_exit=self._exit_prescript)
         yield
 
         # 只有当前页挂在界面上 (grid), 其余页 grid_remove:
@@ -718,7 +804,8 @@ class BreakTimerApp:
         self.nav_btns = {}
         self._apply_geometry()
         self._build_layout(self.root, cover)
-        self.show_page(self.current_page or "timer")
+        key = self.current_page if self.current_page in self.pages else "timer"
+        self.show_page(key)
         self.ach_popups.close_all_windows()       # 达成提示按新的主题 / 语言重新画
         self.ach_popups.sync()
 
@@ -737,6 +824,18 @@ class BreakTimerApp:
 
     def on_theme_changed(self):
         self.rebuild_ui()
+        # 切到都市之意时弹一次: 标题 + 那段话 + 确定 (只在用户主动换主题时出现).
+        if config.THEME == "urban_will":
+            self.root.after(120, self._city_will_notice)
+
+    def _city_will_notice(self):
+        if config.THEME != "urban_will" or self.shutting_down:
+            return
+        toast.notice(
+            tr("都市之意"),
+            tr("也许我们时刻都在随波逐流,只不过是被赋予了选择漂流对象的那一缕所谓的自由..."),
+            [(tr("确定"), None, True)],
+        )
 
     def on_font_scale_changed(self):
         self.ui_scale = config.detect_ui_scale()
@@ -747,12 +846,17 @@ class BreakTimerApp:
 
     def _cancel_jobs(self):
         self.shutting_down = True
+        try:
+            self.focus_glow.close()
+        except Exception:
+            pass
         for job in (self.midnight_job, self.hourly_job, self.update_job,
                     self.net_job, getattr(self, "apply_job", None),
                     getattr(self, "window_job", None),
                     getattr(self, "window_focus_job", None),
                     getattr(self, "app_rules_job", None),
                     getattr(self, "prestart_job", None),
+                    getattr(self, "prescript_job", None),
                     getattr(self, "sync_job", None)):
             if not job:
                 continue
@@ -764,6 +868,11 @@ class BreakTimerApp:
         self.net_job = self.apply_job = self.window_job = self.window_focus_job = None
         self.app_rules_job = None
         self.prestart_job = None
+        self.prescript_job = None
+        try:
+            self.prescripts.save()
+        except Exception:
+            pass
 
     def show_page(self, key: str):
         # 合约 · 黑雾 (软规则): 要切到计时器以外的页面记一次, 一个钟点里满 50 次算一次违反 (MECHANICS 18.3)
@@ -779,30 +888,56 @@ class BreakTimerApp:
             self._show_page(key)
 
     def _show_page(self, key: str):
+        if key == "prescript" and getattr(self, "current_page", "") != "prescript":
+            self._prescript_back = getattr(self, "current_page", "timer")
         self.current_page = key
+        # V 要求一直在指令页, VI 要连续停留: 切页的这一刻就判一次, 不用等下一秒的 tick.
+        try:
+            self.prescripts.page_changed()
+        except Exception:
+            pass
         # 成就页是从设置里打开的, 侧边栏仍把"设置"标成当前页 (和手机版的抽屉一样)
         look = "settings" if key == "ach" else key
         for k, b in self.nav_btns.items():
             if k == look:
                 cfg(b,
-                    bg=COLORS["accent"], fg=COLORS["on_accent"],
-                    activebackground=COLORS["accent_hover"],
-                    activeforeground=COLORS["on_accent"]
+                    bg=COLORS.get("accent_fill", COLORS["accent"]),
+                    fg=COLORS.get("on_accent_fill", COLORS["on_accent"]),
+                    activebackground=COLORS.get("accent_fill_hover", COLORS["accent_hover"]),
+                    activeforeground=COLORS.get("on_accent_fill", COLORS["on_accent"])
                 )
             else:
                 cfg(b,
                     bg=COLORS["bg_card"], fg=COLORS["text"],
                     activebackground=COLORS["border"], activeforeground=COLORS["text"]
                 )
+        # 合约页连侧边栏字体也用自己的默认字体, 不跟界面主题的像素字体.
+        nav_font = config.contract_font("nav") if key == "contract" else config.font("nav")
+        for b in self.nav_btns.values():
+            try:
+                b.configure(font=nav_font)
+            except Exception:
+                pass
         self._paint_sidebar()
         # 只把目标页挂到界面上, 其余页收起 (不参与布局 / 重画)
         target = self.pages[key]
-        if target.winfo_manager() != "grid":
+        if key != "prescript" and target.winfo_manager() != "grid":
             target.grid(row=0, column=0, sticky="nsew")
         for k, f in self.pages.items():
-            if k != key and f.winfo_manager() == "grid":
+            if k == key:
+                continue
+            if k == "prescript":
+                if f.winfo_manager() == "place":
+                    f.place_forget()
+                    f.hide()
+            elif f.winfo_manager() == "grid":
                 f.grid_remove()
-        if key == "cal":
+        if key == "prescript":
+            page = self.pages["prescript"]
+            page.place(x=0, y=0, relwidth=1, relheight=1)
+            page.lift()
+            page.show()
+        elif key == "cal":
             self.pages["cal"].show()
         elif key == "stats":
             self.pages["stats"].show()
@@ -838,7 +973,7 @@ class BreakTimerApp:
         for w in self.sidebar.winfo_children():
             if isinstance(w, tk.Frame):
                 cfg(w, bg=side_bg)
-        cfg(self.topbar, bg=P["line"] if on else COLORS["accent"])
+        cfg(self.topbar, bg=P["line"] if on else COLORS.get("topbar", COLORS["accent"]))
         for k, b in self.nav_btns.items():
             if not on:
                 break
@@ -2367,6 +2502,16 @@ class BreakTimerApp:
             self.check_pending_settings()
 
 
+    def _on_window_unmap(self, event):
+        """OIT 最小化 / 藏起来: V 要求不能最小化, 等窗口状态更新后马上判一次."""
+        if event.widget is not self.root:
+            return
+        try:
+            self.root.after(0, self.prescripts.page_changed)
+        except Exception:
+            pass
+
+
     def _schedule_apply_check(self):
         if self.shutting_down:
             return
@@ -2618,7 +2763,7 @@ class BreakTimerApp:
 
     def after_sync_settings(self, keys):
         """同步来的设置生效之后: 和本机修改生效时一样刷新."""
-        if "LANGUAGE" in keys or "THEME" in keys or "CONTRACT_THEME" in keys:
+        if "LANGUAGE" in keys or "THEME" in keys:
             i18n.init_from_config()
             self.root.after(50, self.rebuild_ui)
             return
@@ -4248,6 +4393,65 @@ class BreakTimerApp:
         if staged:
             mark += f"  ⏳{staged}"
         cfg(b, text=self.nav_labels["settings"] + mark)
+
+
+    # ---- 指令 (Prescript, 都市之意主题独占) ----
+
+    def _prescript_enabled(self) -> bool:
+        return getattr(config, "THEME", "") == "urban_will"
+
+    def _today_hours_live(self) -> float:
+        """今天的专注小时数, 包括正在进行、还没记进 study_log 的这一段."""
+        hours = float(self.dm.get_today_hours())
+        if self.state == RUNNING and self.start_wall is not None:
+            now = datetime.now()
+            start = max(self.start_wall,
+                        now.replace(hour=0, minute=0, second=0, microsecond=0))
+            if now > start:
+                hours += (now - start).total_seconds() / 3600.0
+        return hours
+
+    def _prescript_tick(self):
+        self.prescript_job = None
+        try:
+            if not self.dm.resetting:
+                self.prescripts.tick()
+        except Exception as e:
+            self._log_window(f"ERROR    prescript tick {type(e).__name__}: {e}")
+        if not self.shutting_down:
+            self.prescript_job = self.root.after(1000, self._prescript_tick)
+
+    def _exit_prescript(self):
+        back = getattr(self, "_prescript_back", "timer")
+        self.show_page(back if back in self.pages and back != "prescript" else "timer")
+
+    def _prescript_changed(self):
+        page = getattr(self, "pages", {}).get("prescript")
+        if page is None:
+            return
+        try:
+            page.refresh()
+        except Exception:
+            pass
+
+    def _grant_prescript_rest(self, seconds: int, code: str = ""):
+        """指令给的休息时间: 正在休息就加进这次休息, 否则存进积攒的休息时间."""
+        seconds = max(0, int(seconds))
+        if seconds <= 0 or self.dm.resetting:
+            return
+        self._log_notice(f"PRESCRIPT +{seconds}s {code}".rstrip())
+        if self.state == ON_BREAK:
+            self.countdown_seconds += seconds
+            if self.break_end_wall is not None:
+                self.break_end_wall += timedelta(seconds=seconds)
+            self._save_timer_state()
+        else:
+            self._set_break_carry(self.break_carry + seconds)
+            if self.state == IDLE and hasattr(self, "lbl_sub"):
+                try:
+                    self.lbl_sub.config(text=self._idle_sub_text())
+                except Exception:
+                    pass
 
 
     # ---- 开发者模式跟着母端 (设备同步) ----

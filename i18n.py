@@ -235,7 +235,8 @@ EN = {
     "经典 (蓝白)": "Classic (blue & white)",
     "Claude (浅色)": "Claude (light)",
     "Claude (深色)": "Claude (dark)",
-    "即时生效.界面配色:经典蓝白,或参考 Claude 的米白 / 炭灰配色.": "Instant. Color scheme: classic blue & white, or the Claude-style cream / charcoal look.",
+    "都市之意": "The Will of the City",
+    "即时生效.界面配色:经典蓝白,参考 Claude 的米白 / 炭灰,或全黑像素风的都市之意.": "Instant. Color scheme: classic blue & white, Claude-style cream / charcoal, or the pure black + pixel font of The Will of the City.",
     "开启 (ON)": "ON",
     "关闭 (OFF)": "OFF",
     "⚠  警告:这会永久删除全部数据": "⚠  Warning: this permanently erases ALL data",
@@ -1183,6 +1184,19 @@ EN = {
     "没有找到摄像头, 不能选「目光」.": "No camera found; \"The Gaze\" can't be used.",
     "正在打开摄像头…": "Opening the camera…",
     "摄像头打不开, 合约没有开始.": "The camera couldn't be opened; the contract didn't start.",
+    # ---- 指令 (Prescript, 都市之意主题, MECHANICS 22) ----
+    "也许我们时刻都在随波逐流,只不过是被赋予了选择漂流对象的那一缕所谓的自由...":
+        "Perhaps we are always drifting with the current; all we are given is that sliver of so-called freedom to choose what we drift toward...",
+    "📜  指令": "📜  Prescript",
+    "- 接收指令 -": "- Receive prescript -",
+    "谨遵指令之意": "Abide by the will of the prescript",
+    "接下来的1h专注50min.": "Focus for 50 min within the next hour.",
+    "完成一次至少{n}级的合约.": "Complete a contract of at least level {n}.",
+    "休息20min.": "Rest for 20 min.",
+    "今天专注至少{n} h": "Focus for at least {n} h today",
+    "立即停下任何活动,接下来的5min什么也不做.":
+        "Stop everything now and do nothing for the next 5 min.",
+    "检查你的统计数据,并作简要反思.": "Check your statistics and reflect briefly.",
 }
 
 
@@ -1263,14 +1277,14 @@ def tr(zh: str, **kwargs) -> str:
     else:
         matched = _match_template(zh)
         if matched is not None:
-            return matched
+            return config.pixel_safe(matched)
         text = zh
     if kwargs:
         try:
-            return text.format(**kwargs)
+            return config.pixel_safe(text.format(**kwargs))
         except (KeyError, IndexError, ValueError, AttributeError):
-            return text
-    return text
+            return config.pixel_safe(text)
+    return config.pixel_safe(text)
 
 
 def init_from_config():

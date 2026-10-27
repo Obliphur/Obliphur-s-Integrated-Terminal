@@ -2,6 +2,7 @@
 
 import sys
 import os
+import re
 import math
 import threading
 import tkinter as tk
@@ -165,7 +166,7 @@ OUTING_MAX_HOURS = 24 * 7
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.151"                         # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.152"                         # 和 GitHub 上发布的版本号比较 (见 updater.py)
 UPDATE_CHECK = 1                              # 打开程序时检查更新
 UPDATE_AUTO = 1                               # 发现新版本时自动下载安装
 OLD_APP_DIR = "mrsTimer"
@@ -217,6 +218,22 @@ FONT_SIZE = {
 }
 
 
+# ---- 像素字体主题用的字号 (像素, 不是磅) ----
+# Unifont 的字形按 16px 设计, 所以正文字号取 16 的整数倍最清楚; 这里按界面字号整体缩放.
+# 其余主题照旧用 FONT_SIZE (磅).
+PIXEL_FONT_SIZE = {
+    "h1": 32,
+    "h2": 24,
+    "big": 64,
+    "body": 16,
+    "small": 16,
+    "tiny": 14,
+    "nav": 16,
+    "btn": 16,
+    "log": 14,
+}
+
+
 def detect_ui_scale() -> float:
     if sys.platform != "win32":
         return 1.0
@@ -244,11 +261,26 @@ def scaled(px: float) -> int:
     return int(round(px * ui_scale()))
 
 
+THEME_PIXEL = False               # 当前主题是否使用像素字体 (字号按 PIXEL_FONT_SIZE 换算)
+
+
 def font(size_key: str = "body", bold: bool = False, family: str = None):
     size = FONT_SIZE.get(size_key, FONT_SIZE["body"])
     if family is None:
         family = FONT_FAMILY
+    if THEME_PIXEL and family in (FONT_FAMILY, FONT_MONO):
+        # 像素字体: Tk 的负数字号 = 像素高度. 这样不会被 DPI / 磅值四舍五入弄糊.
+        px = PIXEL_FONT_SIZE.get(size_key, PIXEL_FONT_SIZE["body"])
+        px = max(8, int(round(px * ui_scale())))
+        return (family, -px, "bold") if bold else (family, -px)
     return (family, max(8, scaled(size)), "bold") if bold else (family, max(8, scaled(size)))
+
+
+def contract_font(size_key: str = "body", bold: bool = False):
+    """合约页自己的字体: 永远用默认字体, 不跟随界面主题 (包括都市之意的 Unifont)."""
+    size = FONT_SIZE.get(size_key, FONT_SIZE["body"])
+    size = max(8, scaled(size))
+    return (FONT_FAMILY_DEFAULT, size, "bold") if bold else (FONT_FAMILY_DEFAULT, size)
 
 
 
@@ -320,7 +352,6 @@ DEFAULT_SETTINGS = {
     "UPDATE_CHECK": UPDATE_CHECK,
     "UPDATE_AUTO": UPDATE_AUTO,
     "THEME": "classic",
-    "CONTRACT_THEME": "ops",
     "REC_FOCUS_ONLY": 1,
     "REC_ASK": 1,
     "REC_MIC": 1,
@@ -360,159 +391,135 @@ DEFAULT_SETTINGS = {
 # ttk 一项是 clam 主题的底色 (输入框/滚动条/普通按钮等系统控件用),
 # 经典主题里填的就是 clam 的原始默认值, 所以经典主题外观和以前一样.
 
-THEMES = {
-    "classic": {
-        "colors": {
-            "bg":           "#ffffff",
-            "bg_card":      "#f8f9fa",
-            "accent":       "#2563eb",
-            "accent_hover": "#1d4ed8",
-            "text":         "#1e293b",
-            "text_dim":     "#64748b",
-            "text_strong":  "#0f172a",
-            "success":      "#16a34a",
-            "warn":         "#d97706",
-            "border":       "#e2e8f0",
-            "danger":       "#dc2626",
-            "danger_hover": "#b91c1c",
-            "danger_bg":    "#fef2f2",
-            "on_accent":    "#ffffff",
-            "accent_disabled":    "#94a3b8",
-            "on_accent_disabled": "#cbd5e1",
-            "danger_disabled":    "#fca5a5",
-            "switch_off":   "#cbd5e1",
-            "chart_other":  "#94a3b8",
-            "chart_empty":  "#e2e8f0",
-            "chart_future": "#f1f5f9",
-            "focus_study":  "#2563eb",
-            "focus_break":  "#16a34a",
-        },
-        "chart": (
-            "#2563eb", "#16a34a", "#d97706", "#dc2626", "#7c3aed",
-            "#0891b2", "#db2777", "#65a30d", "#ea580c",
-        ),
-        "ttk": {
-            "frame": "#dcdad5", "frame_hover": "#eeebe7", "fg": "#000000",
-            "field": "#ffffff", "border": "#9e9a91", "light": "#eeebe7",
-            "dark": "#cfcdc8", "trough": "#bab5ab", "select": "#4a6984",
-            "on_select": "#ffffff", "disabled_fg": "#999999",
-            "list_bg": "#ffffff", "list_fg": "#000000",
-            "list_select": "#0078d7", "list_on_select": "#ffffff",
-        },
-    },
+from themes import THEMES
 
-    # 参考 Claude 的浅色界面: 通体米白, 卡片只靠细描边区分, 陶土橙强调色.
-    "claude": {
-        "colors": {
-            "bg":           "#faf9f5",
-            "bg_card":      "#faf9f5",
-            "accent":       "#c96442",
-            "accent_hover": "#b25535",
-            "text":         "#141413",
-            "text_dim":     "#73726c",
-            "text_strong":  "#141413",
-            "success":      "#5b7f4a",
-            "warn":         "#b8741a",
-            "border":       "#e6e3d8",
-            "danger":       "#b5412f",
-            "danger_hover": "#9a3424",
-            "danger_bg":    "#f8ebe5",
-            "on_accent":    "#ffffff",
-            "accent_disabled":    "#dcb4a5",
-            "on_accent_disabled": "#fbf4f0",
-            "danger_disabled":    "#e0aca2",
-            "switch_off":   "#d4d1c6",
-            "chart_other":  "#b3b0a6",
-            "chart_empty":  "#e6e3d9",
-            "chart_future": "#f4f2eb",
-            "focus_study":  "#c96442",
-            "focus_break":  "#788c5d",
-        },
-        "chart": (
-            "#c96442", "#6a9bcc", "#788c5d", "#d4a27f", "#9b7bb8",
-            "#4a8f86", "#b5577a", "#a68a3e", "#5e6b8a",
-        ),
-        "ttk": {
-            "frame": "#faf9f5", "frame_hover": "#f0eee6", "fg": "#141413",
-            "field": "#ffffff", "border": "#d9d6cb", "light": "#faf9f5",
-            "dark": "#e8e5db", "trough": "#ebe8df", "select": "#f1d8cc",
-            "on_select": "#141413", "disabled_fg": "#a8a69e",
-            "list_bg": "#ffffff", "list_fg": "#141413",
-            "list_select": "#f1d8cc", "list_on_select": "#141413",
-        },
-    },
-
-    # 参考 Claude 的深色界面: 炭灰底色, 亮一点的陶土橙.
-    "claude_dark": {
-        "colors": {
-            "bg":           "#262624",
-            "bg_card":      "#30302e",
-            "accent":       "#d97757",
-            "accent_hover": "#e38b6d",
-            "text":         "#f5f4ee",
-            "text_dim":     "#a3a199",
-            "text_strong":  "#ffffff",
-            "success":      "#8fb47a",
-            "warn":         "#e0a458",
-            "border":       "#43423d",
-            "danger":       "#e5705e",
-            "danger_hover": "#ee8676",
-            "danger_bg":    "#3a2925",
-            "on_accent":    "#ffffff",
-            "accent_disabled":    "#5e4339",
-            "on_accent_disabled": "#9a877e",
-            "danger_disabled":    "#5e3a34",
-            "switch_off":   "#55544e",
-            "chart_other":  "#77756e",
-            "chart_empty":  "#3d3c38",
-            "chart_future": "#2d2d2b",
-            "focus_study":  "#d97757",
-            "focus_break":  "#8fa673",
-        },
-        "chart": (
-            "#d97757", "#7eaedb", "#8fa673", "#ddb28f", "#ad8fca",
-            "#5fa89e", "#cc6f91", "#c2a457", "#8090b5",
-        ),
-        "ttk": {
-            "frame": "#3a3a37", "frame_hover": "#46453f", "fg": "#f5f4ee",
-            "field": "#1f1e1d", "border": "#4d4c46", "light": "#3a3a37",
-            "dark": "#2f2f2c", "trough": "#2b2b29", "select": "#6a4334",
-            "on_select": "#ffffff", "disabled_fg": "#6f6d66",
-            "list_bg": "#1f1e1d", "list_fg": "#f5f4ee",
-            "list_select": "#6a4334", "list_on_select": "#ffffff",
-        },
-    },
-}
 
 THEME_NAMES = tuple(THEMES)
 DEFAULT_THEME = "classic"
 THEME = DEFAULT_THEME
+THEME_DATA = {}                   # 当前主题的完整数据 (含 focus_halo 等主题专属配置)
+THEME_DARK = False
+FONT_FAMILY_DEFAULT = FONT_FAMILY
+FONT_MONO_DEFAULT = FONT_MONO
+_FONTS_LOADED = set()
+_PIXEL_SAFE_CACHE = {}
 REC_FOCUS_ONLY = 1               # 目光 / 刻痕只在专注期间录像 (设置 → 录像, 随设备同步)
 REC_ASK = 1                      # 录像前询问 (合约的目光 / 刻痕, 设置 → 录像)
 REC_MIC = 1                      # 录像时录麦克风 (外部音); 默认开 (设置 → 录像, 不同步)
 REC_SYSTEM = 1                   # 录像时录系统音; 默认开 (设置 → 录像, 不同步)
 REC_CAMERA = ""                  # 目光用哪台摄像头: "" 自动 / "pc|<id>" 本机 / "phone|<设备 id>" 手机 (不同步)
-CONTRACT_THEME = "ops"           # 合约页的主题: "ops" 起源 / "ui" 跟随界面主题 (pages/contract_page.py)
 
 COLORS = dict(THEMES[DEFAULT_THEME]["colors"])
 CHART_PALETTE = list(THEMES[DEFAULT_THEME]["chart"])
 TTK_COLORS = dict(THEMES[DEFAULT_THEME]["ttk"])
 
 
+def asset_path(*parts) -> str:
+    """程序自带资源的绝对路径 (打包后也从解包目录找)."""
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, *parts)
+
+
+def _register_private_font(path: str) -> bool:
+    """把字体文件只注册给本进程 (不改系统字体). Tk / GDI 之后就能按字体名使用."""
+    if sys.platform != "win32" or not path or path in _FONTS_LOADED:
+        return bool(path in _FONTS_LOADED)
+    if not os.path.isfile(path):
+        return False
+    try:
+        gdi = ctypes.windll.gdi32
+        gdi.AddFontResourceExW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint, ctypes.c_void_p]
+        gdi.AddFontResourceExW.restype = ctypes.c_int
+        if gdi.AddFontResourceExW(path, 0x10, None):     # FR_PRIVATE
+            _FONTS_LOADED.add(path)
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _activate_theme_font(theme: dict) -> bool:
+    """按主题切换 FONT_FAMILY / FONT_MONO / THEME_PIXEL. 加载失败时退回默认字体."""
+    global FONT_FAMILY, FONT_MONO, THEME_PIXEL
+    spec = theme.get("font")
+    if not spec:
+        FONT_FAMILY = FONT_FAMILY_DEFAULT
+        FONT_MONO = FONT_MONO_DEFAULT
+        THEME_PIXEL = False
+        return True
+    path = asset_path(*spec["file"]) if spec.get("file") else ""
+    if _register_private_font(path):
+        FONT_FAMILY = spec.get("family") or FONT_FAMILY_DEFAULT
+        FONT_MONO = spec.get("mono") or FONT_FAMILY
+        THEME_PIXEL = bool(spec.get("pixel"))
+        return True
+    FONT_FAMILY = FONT_FAMILY_DEFAULT
+    FONT_MONO = FONT_MONO_DEFAULT
+    THEME_PIXEL = False
+    return False
+
+
 def apply_theme(name: str = None) -> str:
     """把 COLORS / CHART_PALETTE / TTK_COLORS 换成指定主题的颜色 (原地修改,
-    已经 import 了 COLORS 的模块也能看到). 未知名字退回默认主题. 返回实际主题名."""
-    global THEME
+    已经 import 了 COLORS 的模块也能看到), 并按主题切换字体. 未知名字退回默认主题.
+    返回实际主题名."""
+    global THEME, THEME_DARK, THEME_DATA
     if name not in THEMES:
         name = DEFAULT_THEME
     t = THEMES[name]
+    THEME_DATA = t
     COLORS.clear()
     COLORS.update(t["colors"])
+    COLORS.setdefault("topbar", COLORS["accent"])
+    # 选中 / 强调块的填充色: 默认就是强调色本身 (经典 / Claude 保持原样);
+    # 都市之意换成深青底 + 亮青字, 不在黑底上铺大块亮色.
+    COLORS.setdefault("accent_fill", COLORS["accent"])
+    COLORS.setdefault("accent_fill_hover", COLORS["accent_hover"])
+    COLORS.setdefault("on_accent_fill", COLORS["on_accent"])
+    COLORS.setdefault("chip_fill", COLORS["text"])
+    COLORS.setdefault("chip_fill_hover", COLORS["border"])
+    COLORS.setdefault("chip_text", COLORS["bg"])
+    COLORS.setdefault("focus", COLORS["accent"])
+    COLORS.setdefault("input_focus", COLORS["accent"])
+    COLORS.setdefault("danger_fill", COLORS["danger"])
+    COLORS.setdefault("danger_fill_hover", COLORS["danger_hover"])
+    COLORS.setdefault("on_danger_fill", COLORS["on_accent"])
     CHART_PALETTE[:] = t["chart"]
     TTK_COLORS.clear()
     TTK_COLORS.update(t["ttk"])
     THEME = name
+    THEME_DARK = bool(t.get("dark"))
+    _activate_theme_font(t)
     return name
+
+
+# 都市之意: 不画图标. 把 emoji / 符号图标从界面文字里去掉 (Unifont 没有这些字形,
+# 留在界面上会变成方框); 普通箭头 / 几何符号仍保留.
+_ICON_TEXT = re.compile(
+    "[\U0001F000-\U0001FAFF"      # emoji
+    "\u21A9-\u21AA\u21BB"         # ↩ ↪ ↻ (按钮图标, Unifont 缺字)
+    "\u2300-\u23FF"               # ⏱ ⏩ ⏳ 等
+    "\u2600-\u27BF"               # ⚔ ⚙ ⚡ ⚠ ☕ ✕ 等
+    "\u2B00-\u2BFF"               # ⬆ ⬇ 等
+    "\uFE0F\u200D\u20E3]"         # emoji 变体 / 连接符 / 键帽
+)
+
+
+def pixel_safe(text):
+    """像素字体主题下把图标字符从文字里拿掉 (图标的空格一起去掉)."""
+    if not THEME_PIXEL or not isinstance(text, str) or not text:
+        return text
+    cached = _PIXEL_SAFE_CACHE.get(text)
+    if cached is not None:
+        return cached
+    out = _ICON_TEXT.sub("\x00", text)
+    out = re.sub("\x00[ \t]*", "", out)
+    out = re.sub("[ \t]*\x00", "", out)
+    out = out.replace("\x00", "").rstrip()
+    if len(_PIXEL_SAFE_CACHE) > 2000:
+        _PIXEL_SAFE_CACHE.clear()
+    _PIXEL_SAFE_CACHE[text] = out
+    return out
 
 
 
