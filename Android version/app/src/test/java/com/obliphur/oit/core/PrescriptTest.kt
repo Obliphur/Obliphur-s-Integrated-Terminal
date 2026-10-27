@@ -38,6 +38,8 @@ class PrescriptTest {
         assertEquals("REST3", Prescript.codeFor(1.0))
         assertEquals("REST0.3", Prescript.codeFor(0.1))
         assertEquals("_%NONE%.", Prescript.padCode("NONE"))
+        assertEquals("_FOCUS%.", Prescript.padCode(Prescript.typeCode("I")))
+        assertEquals(8, Prescript.padCode(Prescript.typeCode("II")).length)
         assertEquals("_REST3%.", Prescript.padCode("REST3"))
         assertEquals("_REST20.", Prescript.padCode("REST20"))
         assertEquals("REST0.3.", Prescript.padCode("REST0.3"))

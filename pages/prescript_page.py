@@ -11,6 +11,7 @@ import ctypes
 import os
 import random
 import sys
+import time
 from datetime import datetime
 import tkinter as tk
 import tkinter.font as tkfont
@@ -18,9 +19,10 @@ import tkinter.font as tkfont
 import config
 from config import COLORS
 from i18n import tr
-from prescript import pad_code
+from prescript import pad_code, type_code
 
 IDLE_TEXT = "谨遵指令之意"
+SOUND_ALIAS = "oit_prescript"
 SCRAMBLE_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()_+-=[]{}|;:,.?"
 GLOW = "#2C6670"          # 蓝色代码的光晕
 BTN_HOVER = "#FF0000"
@@ -71,6 +73,7 @@ class PrescriptPage(tk.Frame):
         self._body = None             # 正文当前的目标文字
         self._codes = None            # 蓝色代码当前的目标文字 (list)
         self._body_gen = 0
+        self._scramble_ms = 0         # 这一次蓝色代码变动要多久 (0 = 默认); 领取时等于音效的长度
         self._code_gen = 0
         self._body_busy = False
         self._code_busy = False
@@ -187,8 +190,13 @@ class PrescriptPage(tk.Frame):
         # 开发者模式下可能同时有几条: 一条一行, 先领的在上面.
         bodies = [tr(c.get("body", "")) for c in self.engine.actives()]
         body = chr(10).join(bodies) if bodies else tr(IDLE_TEXT)
-        codes = [pad_code(str(g.get("code") or "")) for g in self._fresh_grants()]
-        codes = codes or [pad_code("NONE")]
+        # 有进行中的指令: 蓝色代码是这条指令的词 (一条一行); 没有就看这次打开之后结算出的奖励, 再没有就是 _%NONE%.
+        actives = self.engine.actives()
+        if actives:
+            codes = [pad_code(type_code(c.get("type"))) for c in actives]
+        else:
+            codes = [pad_code(str(g.get("code") or "")) for g in self._fresh_grants()]
+            codes = codes or [pad_code("NONE")]
         if body != self._body:
             self._body = body
             self._set_body(body)
@@ -252,28 +260,30 @@ class PrescriptPage(tk.Frame):
                 line.set_text(text)
             return
         self._code_busy = True
-        self._scramble(codes, -1, 0, gen)
+        longest = max(len(c) for c in codes)
+        total = (self._scramble_ms or 100 * longest) / 1000.0
+        self._scramble(codes, time.monotonic(), total, gen)
 
-    def _scramble(self, codes, done, tick, gen):
-        """乱码刷新 (25 ms 一次), 每 100 ms 多定下一个字, 和网页一样."""
+    def _scramble(self, codes, start, total, gen):
+        """乱码每 25 ms 刷新一次, 在 total 秒里从左到右一个个定下来 (领取时 total 就是音效的长度)."""
         if gen != self._code_gen:
             return
         longest = max(len(c) for c in codes)
-        if tick and tick % 4 == 0:
-            done += 1
-        if done >= longest - 1:
+        elapsed = time.monotonic() - start
+        if elapsed >= total:
             for line, text in zip(self._code_lines, codes):
                 line.set_text(text)
             self._code_busy = False
             self._code_job = None
             return
+        done = int(elapsed / total * longest) - 1
         for line, text in zip(self._code_lines, codes):
             shown = "".join(
                 ch if i <= done else random.choice(SCRAMBLE_CHARS)
                 for i, ch in enumerate(text)
             )
             line.set_text(shown, text)
-        self._code_job = self.after(25, lambda: self._scramble(codes, done, tick + 1, gen))
+        self._code_job = self.after(25, lambda: self._scramble(codes, start, total, gen))
 
     # ---- 按钮 ----
 
@@ -316,26 +326,58 @@ class PrescriptPage(tk.Frame):
     def _on_click(self, event=None):
         if self._body_busy or self._code_busy or not self.engine.can_draw():
             return
-        if self.engine.draw() is not None:
-            self._play_sound()
-        self.refresh()
+        # 先把音效打开、量出长度: 蓝色代码变动的时长和音效一样长.
+        length_ms = self._open_sound()
+        self._scramble_ms = length_ms
+        try:
+            drawn = self.engine.draw() is not None
+            if drawn:
+                self._play_sound()
+            else:
+                self._close_sound()
+            self.refresh()
+        finally:
+            self._scramble_ms = 0
 
-    def _play_sound(self):
-        """接收指令的 "滴答" 音效 (三个里随机一个); 文件不在或播不出来就算了."""
+    def _mci(self, command, want_text=False):
+        buf = ctypes.create_unicode_buffer(64)
+        code = ctypes.windll.winmm.mciSendStringW(command, buf, 63, None)
+        return (code, buf.value) if want_text else code
+
+    def _open_sound(self) -> int:
+        """接收指令的 "滴答" 音效 (三个里随机一个): 打开并返回长度 (毫秒); 文件不在或打不开返回 0."""
+        self._sound_open = False
         if sys.platform != "win32":
-            return
+            return 0
         name = f"ticktock_type{random.randint(1, 3)}.mp3"
         path = config.asset_path("themes", "urban_will", "audio", name)
         if not os.path.isfile(path):
-            return
+            return 0
         try:
-            mci = ctypes.windll.winmm.mciSendStringW
-            alias = "oit_prescript"
-            mci(f"close {alias}", None, 0, None)
-            if mci(f'open "{path}" type mpegvideo alias {alias}', None, 0, None) == 0:
-                mci(f"play {alias}", None, 0, None)
+            self._mci(f"close {SOUND_ALIAS}")
+            if self._mci(f'open "{path}" type mpegvideo alias {SOUND_ALIAS}') != 0:
+                return 0
+            self._mci(f"set {SOUND_ALIAS} time format milliseconds")
+            code, text = self._mci(f"status {SOUND_ALIAS} length", want_text=True)
+            self._sound_open = True
+            return int(text) if code == 0 and text.isdigit() else 0
         except Exception:
-            pass
+            return 0
+
+    def _play_sound(self):
+        if getattr(self, "_sound_open", False):
+            try:
+                self._mci(f"play {SOUND_ALIAS} from 0")
+            except Exception:
+                pass
+
+    def _close_sound(self):
+        if getattr(self, "_sound_open", False):
+            try:
+                self._mci(f"close {SOUND_ALIAS}")
+            except Exception:
+                pass
+            self._sound_open = False
 
     # ---- 每秒检查 (整点一过按钮就恢复) ----
 

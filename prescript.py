@@ -39,6 +39,8 @@ REFLECT_TARGET = 3 * 60         # VI: 统计页连续停留 3 分钟
 DAILY_T_TARGET = 10.0           # 今天完成的指令 t 合计到 10
 DAILY_BONUS_SECONDS = 20 * 60   # 额外 20 分钟休息
 
+# 每条指令的蓝色代码用的词 (补位后正好 8 个字符以内)
+TYPE_WORDS = {"I": "FOCUS", "II": "CONTRACT", "III": "REST", "IV": "DAILY", "V": "STOP", "VI": "REFLECT"}
 CODE_WIDTH = 8                  # 蓝色代码的宽度 (和网页上的指令代码一样, 8 个字符)
 CODE_LEFT = "_%"                # 左边补位, 从最外面一格开始依次用
 CODE_RIGHT = "%."               # 右边补位, 从最里面一格往外依次用 (最后一格是 .)
@@ -109,6 +111,11 @@ def pad_code(code: str) -> str:
     right = gap - left
     return ((CODE_LEFT * CODE_WIDTH)[:left] + code
             + (CODE_RIGHT * CODE_WIDTH)[CODE_WIDTH * 2 - right:])
+
+
+def type_code(kind) -> str:
+    """一条指令的蓝色代码正文 (还没补位): I → "FOCUS"."""
+    return TYPE_WORDS.get(str(kind), "NONE")
 
 
 def fmt_clock(seconds) -> str:
@@ -737,6 +744,7 @@ def _selftest():
 
         # 代码格式
         assert code_for(1) == "REST3" and code_for(0.1) == "REST0.3"
+        assert pad_code(type_code("I")) == "_FOCUS%." and len(pad_code(type_code("II"))) == CODE_WIDTH
         assert pad_code("NONE") == "_%NONE%." and pad_code("REST3") == "_REST3%."
         assert pad_code("REST20") == "_REST20." and pad_code("REST0.3") == "REST0.3."
         assert pad_code("1h*3min") == "_REST3%." and pad_code("20min") == "_REST20."

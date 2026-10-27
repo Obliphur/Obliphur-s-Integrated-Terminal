@@ -54,6 +54,11 @@ object Prescript {
 
     fun codeFor(t: Double): String = restCode(t * 3)
 
+    /** 每条指令的蓝色代码用的词 (补位后正好 8 个字符以内). */
+    val TYPE_WORDS = mapOf("I" to "FOCUS", "II" to "CONTRACT", "III" to "REST", "IV" to "DAILY", "V" to "STOP", "VI" to "REFLECT")
+
+    fun typeCode(kind: String): String = TYPE_WORDS[kind] ?: "NONE"
+
     private val LEGACY_H = Regex("^(\\d+(?:\\.\\d+)?)h\\*3min$")
     private val LEGACY_MIN = Regex("^(\\d+(?:\\.\\d+)?)min$")
 

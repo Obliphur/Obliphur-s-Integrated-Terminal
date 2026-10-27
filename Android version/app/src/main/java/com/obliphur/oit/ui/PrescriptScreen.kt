@@ -74,12 +74,18 @@ fun PrescriptScreen(onExit: () -> Unit) {
         }
     }
     val bodyTarget = if (bodies.isEmpty()) tr("谨遵指令之意") else bodies.joinToString("\n")
-    val fresh = eng.grantedToday().filter { it.optString("at") >= visitSince && it.optInt("seconds", 0) >= 180 }
-    val codesTarget = fresh.map { Prescript.padCode(it.optString("code")) }.ifEmpty { listOf(Prescript.padCode("NONE")) }
+    // 有进行中的指令: 蓝色代码是这条指令的词 (一条一行); 没有就看这次打开之后结算出的奖励, 再没有就是 _%NONE%.
+    val actives = eng.actives()
+    val codesTarget = if (actives.isNotEmpty()) actives.map { Prescript.padCode(Prescript.typeCode(it.optString("type"))) }
+    else eng.grantedToday().filter { it.optString("at") >= visitSince && it.optInt("seconds", 0) >= 180 }
+        .map { Prescript.padCode(it.optString("code")) }.ifEmpty { listOf(Prescript.padCode("NONE")) }
 
     // ---- 动画: 第一次直接显示, 之后变了才播 ----
     var bodyShown by remember { mutableStateOf(bodyTarget) }
     var codesShown by remember { mutableStateOf(codesTarget) }
+    // 领取时蓝色代码变动的时长 = 音效的长度 (毫秒) 和记下它的时刻; 超过 2 秒没用上就作废
+    var scrambleMs by remember { mutableStateOf(0) }
+    var scrambleAt by remember { mutableStateOf(0L) }
     LaunchedEffect(bodyTarget) {
         if (bodyShown == bodyTarget) return@LaunchedEffect
         for (i in 1..bodyTarget.length) {                // 逐字打出来, 每字 50 ms
@@ -91,16 +97,16 @@ fun PrescriptScreen(onExit: () -> Unit) {
     LaunchedEffect(codesTarget) {
         if (codesShown == codesTarget) return@LaunchedEffect
         val longest = codesTarget.maxOf { it.length }
-        var done = -1
-        var tick = 0
-        while (true) {                                    // 乱码 25 ms 刷新一次, 每 100 ms 多定下一个字
-            if (tick > 0 && tick % 4 == 0) done++
-            if (done >= longest - 1) break
+        val total = if (scrambleMs > 0 && System.nanoTime() - scrambleAt < 2_000_000_000L) scrambleMs.toDouble() else 100.0 * longest
+        val start = System.nanoTime()
+        while (true) {                                    // 乱码 25 ms 刷新一次, 在 total 毫秒里从左到右一个个定下来
+            val elapsed = (System.nanoTime() - start) / 1e6
+            if (elapsed >= total) break
+            val done = (elapsed / total * longest).toInt() - 1
             codesShown = codesTarget.map { t ->
                 t.mapIndexed { i, ch -> if (i <= done) ch else SCRAMBLE_CHARS.random() }.joinToString("")
             }
             delay(25)
-            tick++
         }
         codesShown = codesTarget
     }
@@ -134,7 +140,11 @@ fun PrescriptScreen(onExit: () -> Unit) {
             Text(
                 tr("- 接收指令 -"), color = color, fontSize = 16.sp, textAlign = TextAlign.Center,
                 modifier = Modifier.clickable(interactionSource = src, indication = null, enabled = can) {
-                    if (eng.draw() != null) playSound(ctx)
+                    // 先把音效准备好、量出长度: 蓝色代码变动的时长和音效一样长
+                    val mp = openSound(ctx)
+                    scrambleMs = mp?.duration ?: 0
+                    scrambleAt = System.nanoTime()
+                    if (eng.draw() != null) mp?.start() else mp?.release()
                 }.padding(12.dp),
             )
         }
@@ -145,13 +155,10 @@ fun PrescriptScreen(onExit: () -> Unit) {
     }
 }
 
-/** 接收指令的 "滴答" 音效 (三个里随机一个). */
-private fun playSound(ctx: android.content.Context) {
-    try {
-        val res = listOf(R.raw.ticktock_type1, R.raw.ticktock_type2, R.raw.ticktock_type3).random()
-        val mp = android.media.MediaPlayer.create(ctx, res) ?: return
-        mp.setOnCompletionListener { it.release() }
-        mp.start()
-    } catch (_: Exception) {
-    }
+/** 接收指令的 "滴答" 音效 (三个里随机一个), 准备好但还没播; 放完自动释放. */
+private fun openSound(ctx: android.content.Context): android.media.MediaPlayer? = try {
+    val res = listOf(R.raw.ticktock_type1, R.raw.ticktock_type2, R.raw.ticktock_type3).random()
+    android.media.MediaPlayer.create(ctx, res)?.also { mp -> mp.setOnCompletionListener { it.release() } }
+} catch (_: Exception) {
+    null
 }
