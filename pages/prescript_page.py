@@ -187,13 +187,12 @@ class PrescriptPage(tk.Frame):
     # ---- 刷新 ----
 
     def refresh(self):
-        # 开发者模式下可能同时有几条: 一条一行, 先领的在上面.
-        bodies = [tr(c.get("body", "")) for c in self.engine.actives()]
-        body = chr(10).join(bodies) if bodies else tr(IDLE_TEXT)
-        # 有进行中的指令: 蓝色代码是这条指令的词 (一条一行); 没有就看这次打开之后结算出的奖励, 再没有就是 _%NONE%.
-        actives = self.engine.actives()
-        if actives:
-            codes = [pad_code(type_code(c.get("type"))) for c in actives]
+        # 永远只显示最新的一条指令 (开发者模式下同时有几条, 旧的在后台照常判定, 不显示).
+        cur = self.engine.current
+        body = tr(cur.get("body", "")) if cur else tr(IDLE_TEXT)
+        # 有进行中的指令: 蓝色代码是这条指令的词; 没有就看这次打开之后结算出的奖励, 再没有就是 _%NONE%.
+        if cur:
+            codes = [pad_code(type_code(cur.get("type")))]
         else:
             codes = [pad_code(str(g.get("code") or "")) for g in self._fresh_grants()]
             codes = codes or [pad_code("NONE")]

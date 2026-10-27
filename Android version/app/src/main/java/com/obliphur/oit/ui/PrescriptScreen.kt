@@ -65,18 +65,18 @@ fun PrescriptScreen(onExit: () -> Unit) {
     LaunchedEffect(Unit) { eng.settleRewards() }
 
     // ---- 目标文字 ----
-    val bodies = eng.actives().map { cur ->
-        val n = if (cur.isNull("n")) 0 else cur.optInt("n")
-        when (cur.optString("type")) {
+    // 永远只显示最新的一条指令 (开发者模式下同时有几条, 旧的在后台照常判定, 不显示)
+    val latest = eng.current
+    val bodyTarget = if (latest == null) tr("谨遵指令之意") else {
+        val n = if (latest.isNull("n")) 0 else latest.optInt("n")
+        when (latest.optString("type")) {
             "II" -> tr("完成一次至少{n}级的合约.", "n" to n)
             "IV" -> tr("今天专注至少{n} h", "n" to n)
-            else -> tr(cur.optString("body"))
+            else -> tr(latest.optString("body"))
         }
     }
-    val bodyTarget = if (bodies.isEmpty()) tr("谨遵指令之意") else bodies.joinToString("\n")
-    // 有进行中的指令: 蓝色代码是这条指令的词 (一条一行); 没有就看这次打开之后结算出的奖励, 再没有就是 _%NONE%.
-    val actives = eng.actives()
-    val codesTarget = if (actives.isNotEmpty()) actives.map { Prescript.padCode(Prescript.typeCode(it.optString("type"))) }
+    // 有进行中的指令: 蓝色代码是这条指令的词; 没有就看这次打开之后结算出的奖励, 再没有就是 _%NONE%.
+    val codesTarget = if (latest != null) listOf(Prescript.padCode(Prescript.typeCode(latest.optString("type"))))
     else eng.grantedToday().filter { it.optString("at") >= visitSince && it.optInt("seconds", 0) >= 180 }
         .map { Prescript.padCode(it.optString("code")) }.ifEmpty { listOf(Prescript.padCode("NONE")) }
 
