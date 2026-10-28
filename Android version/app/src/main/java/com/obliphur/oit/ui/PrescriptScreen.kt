@@ -92,8 +92,13 @@ fun PrescriptScreen(onExit: () -> Unit) {
     // 领取时蓝色代码变动的时长 = 音效的长度 (毫秒) 和记下它的时刻; 超过 2 秒没用上就作废
     var scrambleMs by remember { mutableStateOf(0) }
     var scrambleAt by remember { mutableStateOf(0L) }
-    LaunchedEffect(bodyTarget) {
-        if (bodyShown == bodyTarget) return@LaunchedEffect
+    // 每领取成功一次 +1: 抽到和上一条一样的指令 (文字没变) 也要重新播动画
+    var drawGen by remember { mutableStateOf(0) }
+    val handled = remember { intArrayOf(0, 0) }
+    LaunchedEffect(bodyTarget, drawGen) {
+        val forced = drawGen != handled[0]
+        handled[0] = drawGen
+        if (bodyShown == bodyTarget && !forced) return@LaunchedEffect
         if (vEnded) { bodyShown = bodyTarget; return@LaunchedEffect }
         for (i in 1..bodyTarget.length) {                // 逐字打出来, 每字 50 ms
             bodyShown = bodyTarget.take(i)
@@ -101,8 +106,10 @@ fun PrescriptScreen(onExit: () -> Unit) {
         }
         bodyShown = bodyTarget
     }
-    LaunchedEffect(codesTarget) {
-        if (codesShown == codesTarget) return@LaunchedEffect
+    LaunchedEffect(codesTarget, drawGen) {
+        val forced = drawGen != handled[1]
+        handled[1] = drawGen
+        if (codesShown == codesTarget && !forced) return@LaunchedEffect
         if (vEnded) { codesShown = codesTarget; return@LaunchedEffect }
         val longest = codesTarget.maxOf { it.length }
         val total = if (scrambleMs > 0 && System.nanoTime() - scrambleAt < 2_000_000_000L) scrambleMs.toDouble() else 100.0 * longest
@@ -152,7 +159,7 @@ fun PrescriptScreen(onExit: () -> Unit) {
                     val mp = openSound(ctx)
                     scrambleMs = mp?.duration ?: 0
                     scrambleAt = System.nanoTime()
-                    if (eng.draw() != null) mp?.start() else mp?.release()
+                    if (eng.draw() != null) { drawGen++; mp?.start() } else mp?.release()
                 }.padding(12.dp),
             )
         }

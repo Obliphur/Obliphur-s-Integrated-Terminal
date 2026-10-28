@@ -166,7 +166,7 @@ OUTING_MAX_HOURS = 24 * 7
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.171"                         # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.172"                         # 和 GitHub 上发布的版本号比较 (见 updater.py)
 UPDATE_CHECK = 1                              # 打开程序时检查更新
 UPDATE_AUTO = 1                               # 发现新版本时自动下载安装
 OLD_APP_DIR = "mrsTimer"
@@ -276,10 +276,33 @@ def font(size_key: str = "body", bold: bool = False, family: str = None):
     return (family, max(8, scaled(size)), "bold") if bold else (family, max(8, scaled(size)))
 
 
+def _contract_pixel_family():
+    """合约页主题是都市之意时的像素字体名 (字体文件加载不了 = None, 退回默认字体)."""
+    if CONTRACT_THEME == "urban":
+        spec = THEMES["urban_will"]["font"]
+        if _register_private_font(asset_path(*spec["file"])):
+            return spec["family"]
+    return None
+
+
 def contract_font(size_key: str = "body", bold: bool = False):
-    """合约页自己的字体: 永远用默认字体, 不跟随界面主题 (包括都市之意的 Unifont)."""
+    """合约页自己的字体, 不跟随界面主题: 默认字体; 合约页主题是都市之意时用 Unifont 像素字体 (字号同像素字体主题)."""
+    family = _contract_pixel_family()
+    if family:
+        px = max(8, int(round(PIXEL_FONT_SIZE.get(size_key, PIXEL_FONT_SIZE["body"]) * ui_scale())))
+        return (family, -px, "bold") if bold else (family, -px)
     size = FONT_SIZE.get(size_key, FONT_SIZE["body"])
     size = max(8, scaled(size))
+    return (FONT_FAMILY_DEFAULT, size, "bold") if bold else (FONT_FAMILY_DEFAULT, size)
+
+
+def contract_mini(pt: int, bold: bool = False, px: int = 14):
+    """合约页格子 / 等级标记用的小字: 默认字体 pt 磅; 都市之意用像素字体 px 像素 (Unifont 太小就糊)."""
+    family = _contract_pixel_family()
+    if family:
+        px = max(8, int(round(px * ui_scale())))
+        return (family, -px, "bold") if bold else (family, -px)
+    size = max(6, scaled(pt))
     return (FONT_FAMILY_DEFAULT, size, "bold") if bold else (FONT_FAMILY_DEFAULT, size)
 
 
@@ -404,7 +427,7 @@ FONT_FAMILY_DEFAULT = FONT_FAMILY
 FONT_MONO_DEFAULT = FONT_MONO
 _FONTS_LOADED = set()
 _PIXEL_SAFE_CACHE = {}
-CONTRACT_THEME = "ops"           # 合约页主题: ops 起源 / deep 渊默 (设置 → 基本设置, 不同步; 开始合约时记进合约)
+CONTRACT_THEME = "ops"           # 合约页主题: ops 起源 / urban 都市之意 (设置 → 基本设置, 不同步; 开始合约时记进合约)
 REC_FOCUS_ONLY = 1               # 目光 / 刻痕只在专注期间录像 (设置 → 录像, 随设备同步)
 REC_ASK = 1                      # 录像前询问 (合约的目光 / 刻痕, 设置 → 录像)
 REC_MIC = 1                      # 录像时录麦克风 (外部音); 默认开 (设置 → 录像, 不同步)

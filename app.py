@@ -980,7 +980,7 @@ class BreakTimerApp:
         for w in self.sidebar.winfo_children():
             if isinstance(w, tk.Frame):
                 cfg(w, bg=side_bg)
-        cfg(self.topbar, bg=P["line"] if on else COLORS.get("topbar", COLORS["accent"]))
+        cfg(self.topbar, bg=P.get("topbar", P["line"]) if on else COLORS.get("topbar", COLORS["accent"]))
         for k, b in self.nav_btns.items():
             if not on:
                 break

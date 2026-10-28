@@ -355,8 +355,9 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
     }
     LaunchedEffect(req) { req?.let { go(it); pageRequest.value = null } }
     // 都市之意的像素字体: 第一次用时下载 (不放进安装包), 下不下来隔一分钟重试
-    LaunchedEffect(theme) {
-        if (theme != "urban_will") return@LaunchedEffect
+    val contractUrban = core.settings.str("CONTRACT_THEME") == "urban"      // 合约页主题选了都市之意也要这个字体
+    LaunchedEffect(theme, contractUrban) {
+        if (theme != "urban_will" && !contractUrban) return@LaunchedEffect
         if (!PixelFont.present(act)) core.toast(tr("正在下载像素字体 (5 MB)…"), "info")
         var failed = false
         while (!PixelFont.ensure(act)) {
@@ -504,7 +505,13 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
                                 "log" -> HourLogScreen { go(it) }
                                 "cal" -> CalendarScreen()
                                 "stats" -> StatsScreen()
-                                "contract" -> ContractScreen()
+                                "contract" -> {
+                                    // 合约页主题是都市之意: 合约页换成像素字体 (没下载好之前用系统字体)
+                                    val px = if (core.settings.str("CONTRACT_THEME") == "urban") PixelFont.family.value else null
+                                    if (px != null) androidx.compose.material3.ProvideTextStyle(
+                                        androidx.compose.ui.text.TextStyle(fontFamily = px)) { ContractScreen() }
+                                    else ContractScreen()
+                                }
                                 "ach" -> {
                                     androidx.activity.compose.BackHandler { go("settings:basic") }
                                     AchievementScreen { go("settings:basic") }

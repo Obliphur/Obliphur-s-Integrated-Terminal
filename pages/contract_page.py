@@ -46,7 +46,7 @@ RESULTS = {"completed": "完成", "failed": "行动失败: 目标生命值归零
 
 # 合约页用自己的主题, 不跟随界面主题 (字体也用自己的默认字体), 在 设置 → 合约页主题 里选 (MECHANICS 18.7):
 # 「起源」: 深色页面, 浅灰的词条板, 六边形格子, 黑色的已选中词条, 红色的开始按钮;
-# 「渊默」: 参考渊默行动的配色: 深绿灰的页面, 绿灰的词条板和格子, 深绿色的选中, 橙色的标签 / 开始按钮.
+# 「都市之意」: 参考界面主题「都市之意」的配色: 全黑的页面, 青色的标签 / 分隔线 / 开始按钮 / 选中的格子, 暖金色的随机词条.
 # 侧边栏在合约页也换成这一套颜色.
 OPS = {
     "bg": "#1f2023", "text": "#f2f2f2", "dim": "#9a9ca1", "line": "#c8202f",
@@ -76,33 +76,34 @@ OPS = {
     "tag_name": "合约详情", "brand": "",
 }
 
-DEEP = {
+URBAN = {
     **OPS,
-    "bg": "#000000", "text": "#e8f2ec", "dim": "#8cc2a0", "line": "#e0782b",
-    "board": "#053922", "band": "#031f14", "band_text": "#e3f0e6", "band_dim": "#86bf9b",
-    "tile": "#14593a", "tile_text": "#eef6f0", "tile_rim": "#58a073", "tile_rim4": "#e0782b",
-    "tile_on": "#1c9c4f", "tile_on_text": "#ffffff", "tile_on_rim": "#8ff2b3",
-    "tile_off": "#0c4a31", "tile_off_text": "#3f7a52", "tile_off_rim": "#1b5a3c",
-    "tile_rand": "#f0a04a", "tile_rand_text": "#041c11", "tile_rand_rim": "#ffc27a",
-    "tile_ban": "#6d56c9", "tile_ban_rim": "#bdaef5",
-    "hint": "#cfe8d8", "nav": "#e3f0e6", "nav_off": "#3f7a52",
-    "sel": "#041c11", "sel_text": "#e8f2ec", "sel_dim": "#5fa07a",
-    "badge_hi": "#e0782b", "badge_lo": "#e8f2ec", "badge_lo_text": "#041c11",
-    "bar": "#053922", "start": "#c4631e", "start_hover": "#e07a2f",
-    "start_off": "#2f5a3f", "start_off_text": "#86bf9b",
-    "rules": "#041c11", "rules_rim": "#2b6a45",
-    "clear": "#2a5c3a", "clear_hover": "#37784b", "clear_text": "#e3f0e6",
-    "tag": "#e0782b",
-    "live": "#041c11", "live_rim": "#e0782b", "danger": "#ff9a5c", "idle": "#f0a04a",
-    "side": "#041c11", "side_text": "#bdd4c3", "side_on": "#1c9c4f",
-    "side_hover": "#053922", "side_rim": "#053922",
-    "tag_name": "渊默行动", "brand": "OPERATION DEEPNESS",
+    "bg": "#000000", "text": "#e8f7f6", "dim": "#6f8f8c", "line": "#a5f3ff", "topbar": "#000000",
+    "board": "#050a0a", "band": "#000000", "band_text": "#a5f3ff", "band_dim": "#6f8f8c",
+    "tile": "#0a2a2d", "tile_text": "#e8f7f6", "tile_rim": "#2e4a4a", "tile_rim4": "#e7c082",
+    "tile_on": "#a5f3ff", "tile_on_text": "#000000", "tile_on_rim": "#d6faff",
+    "tile_off": "#050909", "tile_off_text": "#3f5b5a", "tile_off_rim": "#1a2b2b",
+    "tile_rand": "#e7c082", "tile_rand_text": "#000000", "tile_rand_rim": "#f5d49a",
+    "tile_ban": "#6b4fbf", "tile_ban_rim": "#d39cff",
+    "hint": "#a5f3ff", "nav": "#e8f7f6", "nav_off": "#3f5b5a",
+    "sel": "#062226", "sel_text": "#a5f3ff", "sel_dim": "#6f8f8c",
+    "badge_hi": "#a5f3ff", "badge_hi_text": "#000000", "badge_lo": "#e8f7f6", "badge_lo_text": "#000000",
+    "bar": "#050a0a", "level": "#ffffff", "warn": "#e7c082",
+    "start": "#a5f3ff", "start_hover": "#d6faff", "start_text": "#000000",
+    "start_off": "#1a2b2b", "start_off_text": "#5e7f7c",
+    "rules": "#000000", "rules_rim": "#2e4a4a",
+    "clear": "#12383c", "clear_hover": "#1a4e52", "clear_text": "#a5f3ff",
+    "tag": "#a5f3ff", "tag_text": "#000000",
+    "live": "#000000", "live_rim": "#a5f3ff", "danger": "#ff5c72", "idle": "#e7c082",
+    "side": "#000000", "side_text": "#6f8f8c", "side_on": "#a5f3ff", "side_on_text": "#000000",
+    "side_hover": "#0b1b1d", "side_rim": "#000000",
+    "tag_name": "都市之意", "brand": "THE WILL OF THE CITY",
 }
-PALETTES = {"ops": OPS, "deep": DEEP}
+PALETTES = {"ops": OPS, "urban": URBAN}
 
 
 def theme() -> str:
-    """现在用的合约页主题 (设置 → 基本设置 → 合约页主题): ops 起源 / deep 渊默."""
+    """现在用的合约页主题 (设置 → 基本设置 → 合约页主题): ops 起源 / urban 都市之意."""
     t = str(getattr(config, "CONTRACT_THEME", "") or "")
     return t if t in PALETTES else C.DEFAULT_THEME
 
@@ -115,7 +116,7 @@ def palette() -> dict:
 class ContractPage(tk.Frame):
     """合约页 (MECHANICS 18): 词条板 (行 = 等级, 列 = 类型, 同一类型在同一列; 翻页), 下面是已选中的词条 (两栏),
     最下面一条: 清空 | 危机等级 | 时长 / 完成后的休息时间 | 开始行动. 合约进行中时只能看, 不能改.
-    颜色 / 字体都用合约页自己的样式 (起源 / 渊默), 不跟随界面主题."""
+    颜色 / 字体都用合约页自己的样式 (起源 / 都市之意), 不跟随界面主题."""
 
     TILE_W, GAP, BAND_W = 68, 7, 148              # 格子是正六边形: 高 = 宽 × √3 / 2
 
@@ -281,12 +282,12 @@ class ContractPage(tk.Frame):
             # 每一行的等级: 小字 "Contingency Level" 和一个 ▲ 标记在左, 大数字在右 (同参考图)
             y = self.gap + (lv - 1) * (self.th + self.gap)
             x0 = s(62)
-            cv.create_text(x0, y + s(6), text="Contingency\nLevel", anchor="nw", fill=P["band_dim"],
-                           font=(config.FONT_FAMILY_DEFAULT, max(6, s(6))), tags=("band_lv",))
+            cv.create_text(x0, y + s(6), text="LV" if self.theme == "urban" else "Contingency\nLevel", anchor="nw",
+                           fill=P["band_dim"], font=config.contract_mini(6), tags=("band_lv",))
             by = y + self.th - s(22)
             cv.create_rectangle(x0, by, x0 + s(24), by + s(14), fill=P["badge_lo"], outline="", tags=("band_lv",))
             cv.create_text(x0 + s(12), by + s(7), text="▲", fill=P["badge_hi"],
-                           font=(config.FONT_FAMILY_DEFAULT, max(6, s(7)), "bold"), tags=("band_lv",))
+                           font=config.contract_mini(7, True), tags=("band_lv",))
             cv.create_text(self.band - s(10), y + self.th / 2, text=str(lv), anchor="e", fill=P["band_text"],
                            font=config.contract_font("h1", bold=True), tags=("band_lv",))
         # 翻页: 左边一条最下面 "◀  1 / 2  ▶"
@@ -338,8 +339,8 @@ class ContractPage(tk.Frame):
             cv.create_polygon(self._hexagon(x, y, self.tw, self.th), fill=P["tile"],
                               outline=P["tile_rim"], width=2, tags=("tile", tag, tag + "_shape"))
             cv.create_text(x + self.tw / 2, y + self.th / 2, text=marks(lv) + "\n" + term_short(tid),
-                           fill=P["tile_text"], justify="center", width=self.tw * 0.66,
-                           font=(config.FONT_FAMILY_DEFAULT, max(6, s(8)), "bold"), tags=("tile", tag, tag + "_text"))
+                           fill=P["tile_text"], justify="center", width=self.tw * (0.98 if self.theme == "urban" else 0.66),
+                           font=config.contract_mini(8, True), tags=("tile", tag, tag + "_text"))
             cv.tag_bind(tag, "<Button-1>", lambda e, t=tid: self._click(t))
             cv.tag_bind(tag, "<Enter>", lambda e, t=tid: self._enter(t))
             cv.tag_bind(tag, "<Leave>", lambda e, t=tid: self._leave(t))

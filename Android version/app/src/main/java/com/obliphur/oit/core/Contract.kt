@@ -164,15 +164,15 @@ class Contract(private val file: File) {
         )
         val COMBOS_BY_ID = COMBOS.associateBy { it.id }
 
-        // 合约主题 (MECHANICS 18.7): 起源 / 渊默. 开始合约时用的主题记在合约里 (随同步), 完成合约时按它结算:
+        // 合约主题 (MECHANICS 18.7): 起源 / 都市之意. 开始合约时用的主题记在合约里 (随同步), 完成合约时按它结算:
         // 主题绑定的那个词条组合凑齐着, 结算休息时间额外 +5 分钟 (和组合自己的"完成时给的"一样先加上, 再乘持久战).
         // "" = 没有主题 (开始时没记, 例如旧版本开始的合约 / 选了"跟随界面主题"): 没有这一项加成. 同 contract.py.
-        val THEMES = mapOf("ops" to "起源", "deep" to "渊默")
+        val THEMES = mapOf("ops" to "起源", "urban" to "都市之意")
         const val DEFAULT_THEME = "ops"
-        val THEME_COMBO = mapOf("ops" to "flawless", "deep" to "isolation")
+        val THEME_COMBO = mapOf("ops" to "flawless", "urban" to "isolation")
         const val THEME_END = 5 * 60
 
-        /** 设置里的合约页主题 (ops / deep / ui) → 记进合约的主题 (ui 和不认识的 = ""). */
+        /** 设置里的合约页主题 (ops / urban / ui) → 记进合约的主题 (ui 和不认识的 = ""). */
         fun cleanTheme(theme: String?): String = if (theme != null && theme in THEMES) theme else ""
         /** 主题加成: 主题绑定的组合凑齐着时, 完成合约额外给的休息时间 (秒). */
         fun themeEnd(terms: Collection<String>, theme: String = ""): Int {
@@ -591,7 +591,7 @@ class Contract(private val file: File) {
     val life get() = maxOf(0, violationLimit - violations)
     /** 合约中已经给出的休息时间 (秒, 已乘疲惫). */
     val rest get() = if (active) live.dbl("rest") else 0.0
-    /** 开始合约时用的主题 (起源 ops / 渊默 deep; 没记的 = ""). */
+    /** 开始合约时用的主题 (起源 ops / 都市之意 urban; 没记的 = ""). */
     val theme: String get() = if (active) cleanTheme(live.optString("theme", "")) else ""
     /** 完成时给的休息时间 (秒): 按现在的等级查表, 加上凑齐的组合的结束后收益和主题加成; 结算按降级后的等级. */
     val reward get() = if (active) restReward(level, mine, theme).toDouble() else 0.0

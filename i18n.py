@@ -1025,13 +1025,11 @@ EN = {
     "合约页主题": "Contract page theme",
     "起源": "Basepoint",
     "跟随界面主题": "Follow the interface theme",
-    "渊默": "Deepness",
-    "渊默行动": "Operation Deepness",
-    "起源: 完成合约时 休息额外 +5 分钟": "Basepoint: +5 min extra rest when the contract is completed",
-    "渊默: 完成合约时 休息额外 +5 分钟": "Deepness: +5 min extra rest when the contract is completed",
-    "即时生效 (重建界面).合约页的样式: 起源 (深灰红) 或渊默 (深绿橙, 参考渊默行动).开始合约时记进这次合约: 起源 + 无懈可击, 或渊默 + 信息隔绝 凑齐着完成合约, 结算休息时间额外 +5 分钟.每台设备各自设置, 不同步.":
-        "Instant (rebuilds the UI). Style of the contract page: Basepoint (dark grey and red) or Deepness (dark green and orange, after Operation Deepness). "
-        "It is recorded in the contract when it starts: completing with Impenetrable under Basepoint, or Isolation under Deepness, "
+        "起源: 完成合约时 休息额外 +5 分钟": "Basepoint: +5 min extra rest when the contract is completed",
+    "都市之意: 完成合约时 休息额外 +5 分钟": "The Will of the City: +5 min extra rest when the contract is completed",
+    "即时生效 (重建界面).合约页的样式: 起源 (深灰红) 或都市之意 (全黑青色, 参考都市之意主题).开始合约时记进这次合约: 起源 + 无懈可击, 或都市之意 + 信息隔绝 凑齐着完成合约, 结算休息时间额外 +5 分钟.每台设备各自设置, 不同步.":
+        "Instant (rebuilds the UI). Style of the contract page: Basepoint (dark grey and red) or The Will of the City (pure black and cyan, after the interface theme of the same name). "
+        "It is recorded in the contract when it starts: completing with Impenetrable under Basepoint, or Isolation under The Will of the City, "
         "gives +5 min extra settlement rest. Set per device, not synced.",
     "即时生效.合约页 (和合约页上的侧边栏) 的配色.": "Takes effect at once. Colors of the contract page (and its sidebar).",
     "开始时 {n}": "At start {n}",

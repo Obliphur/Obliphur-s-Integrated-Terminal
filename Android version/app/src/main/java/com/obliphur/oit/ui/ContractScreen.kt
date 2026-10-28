@@ -115,31 +115,31 @@ val OPS_COLORS = ContractColors(
     comboYellow = c(0xffd23f), comboPurple = c(0xb06cf0), comboBlue = c(0x2456c7), comboRed = c(0xff2b3a),
 )
 
-/** "渊默": 参考渊默行动的配色: 深绿灰的页面, 绿灰的词条板和格子, 深绿色的选中, 橙色的标签 / 开始按钮 (同电脑版 DEEP). */
-val DEEP_COLORS = ContractColors(
-    bg = c(0x000000), text = c(0xe8f2ec), dim = c(0x8cc2a0), line = c(0xe0782b),
-    board = c(0x053922), band = c(0x031f14), bandText = c(0xe3f0e6), bandDim = c(0x86bf9b),
-    tile = c(0x14593a), tileText = c(0xeef6f0), tileRim = c(0x58a073),
-    tileOn = c(0x1c9c4f), tileOnText = c(0xffffff), tileOnRim = c(0x8ff2b3),
-    tileOff = c(0x0c4a31), tileOffText = c(0x3f7a52), tileOffRim = c(0x1b5a3c),
-    tileRand = c(0xf0a04a), tileRandText = c(0x041c11),
-    tileBan = c(0x6d56c9), tileBanText = c(0xffffff), tileBanRim = c(0xbdaef5),
-    sel = c(0x041c11), selText = c(0xe8f2ec), selDim = c(0x5fa07a),
-    badgeHi = c(0xe0782b), badgeHiText = c(0xffffff), badgeLo = c(0xe8f2ec), badgeLoText = c(0x041c11),
-    bar = c(0x053922), level = c(0xffffff), warn = c(0xffffff), start = c(0xc4631e), startText = c(0xffffff),
-    startOff = c(0x2f5a3f), startOffText = c(0x86bf9b), rules = c(0x041c11), rulesRim = c(0x2b6a45),
-    clear = c(0x2a5c3a), clearText = c(0xe3f0e6), tag = c(0xe0782b), tagText = c(0xffffff),
-    live = c(0x041c11), liveRim = c(0xe0782b), danger = c(0xff9a5c), idle = c(0xf0a04a),
-    side = c(0x041c11), sideText = c(0xbdd4c3), sideOn = c(0x1c9c4f),
+/** "都市之意": 参考界面主题「都市之意」的配色: 全黑的页面, 青色的标签 / 分隔线 / 开始按钮 / 选中的格子, 暖金色的随机词条 (同电脑版 URBAN). */
+val URBAN_COLORS = ContractColors(
+    bg = c(0x000000), text = c(0xe8f7f6), dim = c(0x6f8f8c), line = c(0xa5f3ff),
+    board = c(0x050a0a), band = c(0x000000), bandText = c(0xa5f3ff), bandDim = c(0x6f8f8c),
+    tile = c(0x0a2a2d), tileText = c(0xe8f7f6), tileRim = c(0x2e4a4a),
+    tileOn = c(0xa5f3ff), tileOnText = c(0x000000), tileOnRim = c(0xd6faff),
+    tileOff = c(0x050909), tileOffText = c(0x3f5b5a), tileOffRim = c(0x1a2b2b),
+    tileRand = c(0xe7c082), tileRandText = c(0x000000),
+    tileBan = c(0x6b4fbf), tileBanText = c(0xffffff), tileBanRim = c(0xd39cff),
+    sel = c(0x062226), selText = c(0xa5f3ff), selDim = c(0x6f8f8c),
+    badgeHi = c(0xa5f3ff), badgeHiText = c(0x000000), badgeLo = c(0xe8f7f6), badgeLoText = c(0x000000),
+    bar = c(0x050a0a), level = c(0xffffff), warn = c(0xe7c082), start = c(0xa5f3ff), startText = c(0x000000),
+    startOff = c(0x1a2b2b), startOffText = c(0x5e7f7c), rules = c(0x000000), rulesRim = c(0x2e4a4a),
+    clear = c(0x12383c), clearText = c(0xa5f3ff), tag = c(0xa5f3ff), tagText = c(0x000000),
+    live = c(0x000000), liveRim = c(0xa5f3ff), danger = c(0xff5c72), idle = c(0xe7c082),
+    side = c(0x000000), sideText = c(0x6f8f8c), sideOn = c(0xa5f3ff),
     comboYellow = c(0xffd23f), comboPurple = c(0xb06cf0), comboBlue = c(0x2456c7), comboRed = c(0xff2b3a),
-    tagName = "渊默行动", brand = "OPERATION DEEPNESS",
+    tagName = "都市之意", brand = "THE WILL OF THE CITY",
 )
 
 @Composable
 fun contractColors(): ContractColors {
     val core = OitApp.instance.core
     when (core.settings.str("CONTRACT_THEME")) {
-        "deep" -> return DEEP_COLORS
+        "urban" -> return URBAN_COLORS
         "ui" -> {}
         else -> return OPS_COLORS
     }

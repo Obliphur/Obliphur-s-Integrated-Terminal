@@ -189,7 +189,8 @@ class PrescriptPage(tk.Frame):
 
     # ---- 刷新 ----
 
-    def refresh(self):
+    def refresh(self, force=False):
+        # force: 刚领取时用 -- 抽到和上一条一样的指令 (文字没变) 也要重新播动画.
         # 永远只显示最新的一条指令 (开发者模式下同时有几条, 旧的在后台照常判定, 不显示).
         cur = self.engine.current
         body = self._body_text(cur) if cur else tr(IDLE_TEXT)
@@ -202,10 +203,10 @@ class PrescriptPage(tk.Frame):
         # V 结束 (完成 / 作废) 之后立刻回到最初等待领取的样子, 不播动画
         instant = self._prev_type == "V" and not cur
         self._prev_type = str(cur.get("type") or "") if cur else ""
-        if body != self._body:
+        if force or body != self._body:
             self._body = body
             self._set_body(body, instant)
-        if codes != self._codes:
+        if force or codes != self._codes:
             self._codes = codes
             self._set_codes(codes, instant)
         self._sync_button()
@@ -350,7 +351,7 @@ class PrescriptPage(tk.Frame):
                 self._play_sound()
             else:
                 self._close_sound()
-            self.refresh()
+            self.refresh(force=drawn)
         finally:
             self._scramble_ms = 0
 

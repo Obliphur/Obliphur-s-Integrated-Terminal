@@ -31,7 +31,7 @@ GNU Unifont 像素字体；输入框 / 下拉框获得焦点时套一圈镂空�
 
 ## 合约页
 
-合约页使用自己的「起源」/「渊默」主题（`pages/contract_page.py::OPS` / `DEEP`）和默认字体，
+合约页使用自己的「起源」/「都市之意」主题（`pages/contract_page.py::OPS` / `URBAN`）和字体（都市之意合约页用 Unifont，起源用默认字体），
 不跟随这里的全黑 / Unifont 设置。
 
 ## 预览
