@@ -222,7 +222,7 @@ fun HourLogScreen(go: (String) -> Unit) {
                 HourRow(if (hidden.all { it }) "???" else "%02d:00".format(start.hour) + when {   // 左边写这一小时的起点
                     isNow -> tr("   ◂ 现在")
                     isWait -> tr("   ◂ 待填写")
-                    locked -> "   🔒"
+                    locked -> com.obliphur.oit.core.I18n.ic("   🔒")
                     else -> ""
                 }, shown, editable, isWait || isNow, sealed) { i, text ->
                     if (text != cells[i].third) {

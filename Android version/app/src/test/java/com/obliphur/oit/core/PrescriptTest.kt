@@ -49,6 +49,24 @@ class PrescriptTest {
     }
 
     @Test
+    fun noIconsTheme() {
+        I18n.noIcons = true
+        try {
+            assertEquals("计时器", I18n.ic("⏱  计时器"))
+            assertEquals("设置", I18n.ic("⚙  设置"))
+            assertEquals("指令", tr("📜  指令"))
+            assertEquals("整点记录", I18n.ic("📝  整点记录"))
+            assertEquals("设置  2", I18n.ic("⚙  设置") + "  2")
+            assertEquals("×", I18n.ic("✕"))
+            assertEquals("≡", I18n.ic("☰"))
+            assertEquals("◂ 现在", I18n.ic("◂ 现在"))
+        } finally {
+            I18n.noIcons = false
+        }
+        assertEquals("⏱  计时器", I18n.ic("⏱  计时器"))
+    }
+
+    @Test
     fun drawCooldown() {
         val env = Env()
         val eng = env.engine()

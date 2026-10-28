@@ -43,7 +43,7 @@ fun AchievementScreen(onBack: () -> Unit) {
             val got = ach.unlocked[a.id]
             OitCard {
                 Row(verticalAlignment = Alignment.Top) {
-                    Text(if (got != null) "🏆" else "🔒", fontSize = 22.sp, color = if (got != null) o.accent else o.dim,
+                    Text(com.obliphur.oit.core.I18n.ic(if (got != null) "🏆" else "🔒"), fontSize = 22.sp, color = if (got != null) o.accent else o.dim,
                         modifier = Modifier.padding(end = 12.dp))
                     Column(Modifier.weight(1f)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -88,7 +88,7 @@ fun AchievementPopups(onOpen: () -> Unit) {
                             modifier = Modifier.padding(top = 2.dp))
                         Text(AchievementStore.text(a), color = o.text, fontSize = 13.sp, modifier = Modifier.padding(top = 2.dp))
                     }
-                    Text("✕", color = o.dim, fontSize = 16.sp,
+                    Text(com.obliphur.oit.core.I18n.ic("✕"), color = o.dim, fontSize = 16.sp,
                         modifier = Modifier.clickable { core.closeAchievement(id) }.padding(horizontal = 12.dp, vertical = 2.dp))
                 }
             }

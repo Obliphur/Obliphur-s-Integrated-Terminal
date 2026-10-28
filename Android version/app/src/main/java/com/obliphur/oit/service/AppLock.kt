@@ -103,7 +103,7 @@ object AppLock {
             gravity = Gravity.CENTER
             setBackgroundColor(0xF2111418.toInt())
             setPadding(dp(32f), dp(32f), dp(32f), dp(32f))
-            addView(TextView(ctx).apply { this.text = "🔒"; textSize = 56f; gravity = Gravity.CENTER })
+            addView(TextView(ctx).apply { this.text = com.obliphur.oit.core.I18n.ic("🔒"); textSize = 56f; gravity = Gravity.CENTER })
             addView(t)
             addView(Button(ctx).apply {
                 this.text = tr("回到桌面")

@@ -205,7 +205,7 @@ fun peerLines(): List<String> {
             t += " " + java.time.Duration.between(it, java.time.LocalDateTime.now()).toMinutes() + " min"
         }
         val net = when (st.optString("net")) { "online" -> tr("联网中"); "pending" -> tr("冷静期中"); else -> "" }
-        "🔗 $name: $t" + if (net.isNotEmpty()) " · $net" else ""
+        com.obliphur.oit.core.I18n.ic("🔗 $name: $t") + if (net.isNotEmpty()) " · $net" else ""
     }
     // 本机版本低: 对方把本机算作离线
     return lines + s.versionMismatch().filter { it.third }.map { (name, v, _) ->
@@ -367,7 +367,7 @@ private fun RulePanel(key: String) {
                     if (p != null) Dim((if (p.op == "add") tr("⏳ 待加入") else tr("⏳ 待删除")) + " · " +
                         p.applyAt.format(Fmt.YMDHM), size = 11, color = o.warn)
                 }
-                TextButton({ val (r, it2) = core.rules.remove(key, item); ruleToast(r, it2) }) { Text("✕", color = o.danger) }
+                TextButton({ val (r, it2) = core.rules.remove(key, item); ruleToast(r, it2) }) { Text(com.obliphur.oit.core.I18n.ic("✕"), color = o.danger) }
             }
         }
     }
@@ -492,7 +492,7 @@ fun AiSuggestDialog(mode: String, onDismiss: () -> Unit) {
                                 Checkbox(on, { results[i] = Triple(list, s, it) })
                                 Column {
                                     Text((if (RuleKeys.isApp(list)) appLabel(ctx, s.item) + "  " else "") + s.item +
-                                        if (s.extra) "  ✦" else "", color = o.text, fontSize = 14.sp)
+                                        if (s.extra) com.obliphur.oit.core.I18n.ic("  ✦") else "", color = o.text, fontSize = 14.sp)
                                     if (s.reason.isNotEmpty()) Dim(s.reason, size = 12)
                                 }
                             }

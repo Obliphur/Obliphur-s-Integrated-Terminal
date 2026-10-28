@@ -54,6 +54,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.obliphur.oit.OitApp
+import com.obliphur.oit.core.I18n
 import com.obliphur.oit.core.tr
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
@@ -324,6 +325,7 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
     val notices by app.notices.collectAsState()
     val core = app.core
     val theme = act.uiTheme
+    I18n.noIcons = theme == "urban_will"          // 都市之意不画图标
     val fs = core.settings.str("FONT_SCALE").toFloatOrNull() ?: 1f
     var page by rememberSaveable { mutableStateOf("timer") }
     // 指令是都市之意主题独占的页面, 放在所有页面的第一位 (MECHANICS 22)
@@ -419,7 +421,7 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
                 "log" -> if (!core.dm.hourEnabled) "$base  (off)" else base + if (core.dm.awaitingSlot() != null) " ●" else ""
                 "settings" -> base + (if (core.settings.pending.isNotEmpty()) "  ⏳${core.settings.pending.size}" else "")
                 else -> base
-            }
+            }.let { I18n.ic(it) }
             ModalNavigationDrawer(drawerState = drawer, drawerContent = {
                 ModalDrawerSheet(drawerContainerColor = sideBg) {
                     Text("OIT", fontWeight = FontWeight.Bold, fontSize = 20.sp, color = cp?.text ?: o.text,
@@ -443,7 +445,7 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
                         TopAppBar(
                             title = { Text(if (page == "ach") tr("🏆  成就") else navLabel(page, tr(pages.first { it.first == page }.second))) },
                             navigationIcon = {
-                                TextButton({ scope.launch { drawer.open() } }) { Text("☰", fontSize = 22.sp, color = cp?.text ?: o.text) }
+                                TextButton({ scope.launch { drawer.open() } }) { Text(I18n.ic("☰"), fontSize = 22.sp, color = cp?.text ?: o.text) }
                             },
                             colors = TopAppBarDefaults.topAppBarColors(containerColor = cp?.side ?: o.bg,
                                 titleContentColor = cp?.text ?: o.text),

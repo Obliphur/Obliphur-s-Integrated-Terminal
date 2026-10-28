@@ -180,7 +180,7 @@ private fun PendingLine(key: String) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(tr("待生效: {v} · {at}", "v" to core.settings.display(key, p.value), "at" to core.settings.applyAtText(key)),
             color = o.warn, fontSize = 12.sp, modifier = Modifier.weight(1f))
-        TextButton({ core.settings.cancel(key); core.changed() }) { Text("✕", color = o.danger) }
+        TextButton({ core.settings.cancel(key); core.changed() }) { Text(com.obliphur.oit.core.I18n.ic("✕"), color = o.danger) }
     }
 }
 
