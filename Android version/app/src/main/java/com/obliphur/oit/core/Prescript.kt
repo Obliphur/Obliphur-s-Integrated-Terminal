@@ -33,7 +33,7 @@ object Prescript {
 
     val IDLE_ENTRIES = linkedMapOf(
         "V" to IdleEntry("立即停下任何活动,接下来的5min什么也不做.", 5, "STOP", emptyList()),
-        "VII" to IdleEntry("到开阔场地进行运动,持续20min.", 20, "EXERCISE", listOf(intArrayOf(6, 30, 7, 30))),
+        "VII" to IdleEntry("到开阔场地进行运动,持续20min.", 20, "EXERCISE", listOf(intArrayOf(5, 30, 7, 30))),
         "VIII" to IdleEntry("进行一次淋浴.", 10, "SHOWER", listOf(intArrayOf(13, 0, 14, 30), intArrayOf(19, 0, 20, 0))),
         "IX" to IdleEntry("凝视天空.", 5, "GAZE", listOf(intArrayOf(9, 0, 10, 0), intArrayOf(21, 0, 22, 30))),
         "X" to IdleEntry("记录,核对并反思这一天的活动.", 0, "RECORD", listOf(intArrayOf(23, 0, 24, 0))),

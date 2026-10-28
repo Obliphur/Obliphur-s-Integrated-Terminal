@@ -38,7 +38,7 @@ EXPIRY_SECONDS = {
 IDLE_ENTRIES = {
     "V": {"body": "立即停下任何活动,接下来的5min什么也不做.", "minutes": 5, "word": "STOP", "windows": ()},
     "VII": {"body": "到开阔场地进行运动,持续20min.", "minutes": 20, "word": "EXERCISE",
-            "windows": ((6, 30, 7, 30),)},
+            "windows": ((5, 30, 7, 30),)},
     "VIII": {"body": "进行一次淋浴.", "minutes": 10, "word": "SHOWER",
              "windows": ((13, 0, 14, 30), (19, 0, 20, 0))},
     "IX": {"body": "凝视天空.", "minutes": 5, "word": "GAZE",
@@ -1056,7 +1056,7 @@ def _selftest():
         def at(h, m=0):
             return t0.replace(hour=h, minute=m)
         eng._data["run"] = []
-        assert eng.idle_boost(at(6, 29)) == "V" and eng.idle_boost(at(6, 30)) == "VII"
+        assert eng.idle_boost(at(5, 29)) == "V" and eng.idle_boost(at(5, 30)) == "VII"
         assert eng.idle_boost(at(7, 29)) == "VII" and eng.idle_boost(at(7, 30)) == "V"
         assert eng.idle_boost(at(13)) == "VIII" and eng.idle_boost(at(14, 29)) == "VIII" and eng.idle_boost(at(14, 30)) == "V"
         assert eng.idle_boost(at(19, 30)) == "VIII" and eng.idle_boost(at(20, 30)) == "XI"

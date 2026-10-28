@@ -207,7 +207,7 @@ class PrescriptTest {
     @Test
     fun idleEntriesAreBoostedByTimeOfDay() {
         val eng = Env().engine()
-        assertEquals("V", eng.idleBoost(at(6, 29)));  assertEquals("VII", eng.idleBoost(at(6, 30)))
+        assertEquals("V", eng.idleBoost(at(5, 29)));  assertEquals("VII", eng.idleBoost(at(5, 30)))
         assertEquals("VII", eng.idleBoost(at(7, 29))); assertEquals("V", eng.idleBoost(at(7, 30)))
         assertEquals("VIII", eng.idleBoost(at(13)));  assertEquals("VIII", eng.idleBoost(at(14, 29)))
         assertEquals("V", eng.idleBoost(at(14, 30)))
