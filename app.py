@@ -297,6 +297,7 @@ class BreakTimerApp:
             dev_fn=config.dev_mode_enabled,
             pause_media_fn=media_pause.pause_all,
             remaining_rest_fn=self._prescript_remaining_rest,
+            contract_active_fn=lambda: self.contract.active,
         )
         self.prescript_job = None
         self.updater = updater.Updater()

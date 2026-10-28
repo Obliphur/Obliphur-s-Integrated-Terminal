@@ -108,6 +108,8 @@ class PrescriptEngine(
     private val pauseMediaFn: (() -> Unit)? = null,
     /** 用户剩余的休息时间 (秒): 休息中是这次休息的倒计时, 否则是积攒的休息时间. */
     private val remainingRestFn: () -> Double = { 0.0 },
+    /** 现在有没有进行中的合约 (合约期间抽不到 VI). */
+    private val contractActiveFn: () -> Boolean = { false },
     private val onChange: (() -> Unit)? = null,
     private val rng: Random = Random.Default,
 ) {
@@ -206,6 +208,7 @@ class PrescriptEngine(
             return todayHoursFn() < daily.optDouble("n_iv", 8.0) - 1e-9
         }
         if (kind == "V") return page() == "prescript" && !minimized()
+        if (kind == "VI") return !(try { contractActiveFn() } catch (_: Exception) { false })   // 合约期间抽不到 VI
         return true
     }
 

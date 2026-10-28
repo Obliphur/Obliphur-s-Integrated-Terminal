@@ -165,12 +165,13 @@ class PrescriptEngine:
     on_change()       -> 状态变了, 让指令页刷新
     dev_fn()          -> 开发者模式: 领取没有冷却, 同时最多留 3 条
     pause_media_fn()  -> 领取 V 时暂停后台正在播放的音频 / 视频
+    contract_active_fn() -> 现在有没有进行中的合约 (合约期间抽不到 VI)
     remaining_rest_fn() -> 用户剩余的休息时间 (秒): 休息中是这次休息的倒计时, 否则是积攒的休息时间
     """
 
     def __init__(self, data_dir, *, state_fn=None, today_hours_fn=None, contracts_fn=None,
                  page_fn=None, minimized_fn=None, grant_rest_fn=None, username_fn=None,
-                 blocked_fn=None, on_change=None, dev_fn=None, pause_media_fn=None, remaining_rest_fn=None, rng=None):
+                 blocked_fn=None, on_change=None, dev_fn=None, pause_media_fn=None, remaining_rest_fn=None, contract_active_fn=None, rng=None):
         self.path = os.path.join(data_dir, "prescript.json")
         self.state_fn = state_fn or (lambda: "idle")
         self.today_hours_fn = today_hours_fn or (lambda: 0.0)
@@ -183,6 +184,7 @@ class PrescriptEngine:
         self.dev_fn = dev_fn or (lambda: False)
         self.pause_media_fn = pause_media_fn
         self.remaining_rest_fn = remaining_rest_fn or (lambda: 0.0)
+        self.contract_active_fn = contract_active_fn or (lambda: False)
         self.on_change = on_change
         self.rng = rng or random.Random()
         self._username = ""
@@ -336,6 +338,11 @@ class PrescriptEngine:
                 return True
         if kind == "V":
             return self._page() == "prescript" and not self._minimized()
+        if kind == "VI":
+            try:
+                return not self.contract_active_fn()     # 合约期间抽不到 VI
+            except Exception:       # noqa: BLE001
+                return True
         return True
 
     def _page(self) -> str:
@@ -874,6 +881,13 @@ def _selftest():
         state["mode"] = "focus"
         eng.tick(t2 + timedelta(hours=2))
         assert eng.current is None and eng._data["history"][-1]["result"] == "expired"
+
+        # 合约期间抽不到 VI: 它的概率平分给同池其他还能抽到的指令
+        eng.contract_active_fn = lambda: True
+        assert eng._weights("focus", t2)[5] == 0.0 and abs(sum(eng._weights("focus", t2)) - 1.0) < 1e-9
+        assert eng._weights("break", t2)[5] == 0.0
+        eng.contract_active_fn = lambda: False
+        assert eng._weights("focus", t2)[5] > 0.0
 
         # III: 休息分钟数 = 剩余休息时间的 50%, 最多 30 分钟; t = 休息时间 (小时) × 2
         assert rest_minutes(3000) == 25 and rest_minutes(7200) == 30 and rest_minutes(0) == 1

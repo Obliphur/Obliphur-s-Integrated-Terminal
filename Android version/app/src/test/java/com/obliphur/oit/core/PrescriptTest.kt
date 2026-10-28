@@ -119,6 +119,26 @@ class PrescriptTest {
     }
 
     @Test
+    fun noReflectDuringContract() {
+        val dir = Files.createTempDirectory("oit").toFile()
+        var active = true
+        val rng = kotlin.random.Random(7)
+        val eng = PrescriptEngine(File(dir, "prescript.json"), stateFn = { "focus" }, contractActiveFn = { active }, rng = rng)
+        var seen = false
+        repeat(300) { i ->
+            val c = eng.draw(t0.plusHours(i.toLong() * 2))!!
+            if (c.getString("type") == "VI") seen = true
+        }
+        assertFalse("合约期间不会抽到 VI", seen)
+        active = false
+        repeat(1000) { i ->
+            val c = eng.draw(t0.plusHours(1000L + i * 2))!!
+            if (c.getString("type") == "VI") seen = true
+        }
+        assertTrue("没有合约时抽得到 VI", seen)
+    }
+
+    @Test
     fun drawingVPausesMedia() {
         val dir = Files.createTempDirectory("oit").toFile()
         var paused = 0
