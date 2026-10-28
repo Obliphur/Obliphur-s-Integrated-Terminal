@@ -52,3 +52,9 @@ net_usage.json
 release.py
 release.bat
 release_token.txt
+
+# 测试 / 检查 / 预览类的本地工具和它们的输出: 只在本机用, 不提交
+_*_check.py
+_ui_debug.py
+themes/urban_will/preview.py
+themes/urban_will/screenshots/

@@ -11,8 +11,7 @@ GNU Unifont 像素字体；输入框 / 下拉框获得焦点时套一圈镂空�
 
 - `__init__.py` — 主题数据：颜色、字体元数据、`focus_halo` 灯圈颜色。
 - `fonts/` — Unifont 字体和许可证。
-- `preview.py` — 开发用预览：隔离用户目录启动一个只画界面的 OIT，把各页截图到 `screenshots/`。
-- `screenshots/` — 预览截图（试作阶段）。
+- `preview.py` — 开发用预览（只在本机，已加入 `.gitignore`，不在仓库里）：隔离用户目录启动一个只画界面的 OIT，把各页截图到 `screenshots/`（同样不提交）。
 
 ## 字体
 
