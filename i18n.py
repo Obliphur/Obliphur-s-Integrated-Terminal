@@ -1188,6 +1188,7 @@ EN = {
     "也许我们时刻都在随波逐流,只不过是被赋予了选择漂流对象的那一缕所谓的自由...":
         "Perhaps we are always drifting with the current; all we are given is that sliver of so-called freedom to choose what we drift toward...",
     "📜  指令": "📜  Prescript",
+    "指令终端": "Prescript Terminal",
     "- 接收指令 -": "- Receive prescript -",
     "谨遵指令之意": "Abide by the will of the prescript",
     "接下来的1h专注50min.": "Focus for 50 min within the next hour.",

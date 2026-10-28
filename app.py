@@ -412,6 +412,8 @@ class BreakTimerApp:
         self.style.theme_use("clam")
         self._theme_ttk()
         self._apply_titlebar()
+        # 都市之意: 主窗口标题是"指令终端" (其他主题用程序名)
+        self.root.title(tr("指令终端") if getattr(config, "THEME", "") == "urban_will" else APP_NAME)
 
     def _apply_tk_options(self):
         """没有单独指定颜色的 tk 控件 (列表框, 多行文本, 下拉框弹出列表) 的默认色."""
