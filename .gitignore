@@ -58,3 +58,7 @@ _*_check.py
 _ui_debug.py
 themes/urban_will/preview.py
 themes/urban_will/screenshots/
+# 屏幕截图不进项目 (for_developer.md)
+screenshots/
+_review/*.png
+.tmp_ps_shots/

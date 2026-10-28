@@ -11,7 +11,7 @@ GNU Unifont 像素字体；输入框 / 下拉框获得焦点时套一圈镂空�
 
 - `__init__.py` — 主题数据：颜色、字体元数据、`focus_halo` 灯圈颜色。
 - `fonts/` — Unifont 字体和许可证。
-- `preview.py` — 开发用预览（只在本机，已加入 `.gitignore`，不在仓库里）：隔离用户目录启动一个只画界面的 OIT，把各页截图到 `screenshots/`（同样不提交）。
+- `preview.py` — 开发用预览（只在本机，已加入 `.gitignore`，不在仓库里）：隔离用户目录启动一个只画界面的 OIT，把各页截图到系统临时目录（不放进项目，见 `for_developer.md`）。
 
 ## 字体
 
@@ -43,4 +43,4 @@ python themes/urban_will/preview.py
 ```
 
 脚本会把预览用户目录放到系统临时目录，不碰真实 `%USERPROFILE%` 下的 OIT 数据。
-截图输出到 `themes/urban_will/screenshots/`。
+截图输出到系统临时目录下的 `oit_urban_screenshots/`，看完就删，不要留在项目里。
