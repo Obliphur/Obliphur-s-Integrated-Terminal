@@ -166,7 +166,7 @@ OUTING_MAX_HOURS = 24 * 7
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.172"                         # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.173"                         # 和 GitHub 上发布的版本号比较 (见 updater.py)
 UPDATE_CHECK = 1                              # 打开程序时检查更新
 UPDATE_AUTO = 1                               # 发现新版本时自动下载安装
 OLD_APP_DIR = "mrsTimer"
@@ -482,6 +482,42 @@ def _activate_theme_font(theme: dict) -> bool:
     FONT_MONO = FONT_MONO_DEFAULT
     THEME_PIXEL = False
     return False
+
+
+def apply_titlebar(win) -> None:
+    """Windows 10/11: 深色主题时让这个窗口的标题栏也变成深色 (浅色主题还原)."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        hwnd = ctypes.windll.user32.GetParent(win.winfo_id())
+        dark = ctypes.c_int(1 if THEME_DARK else 0)
+        for attr in (20, 19):   # DWMWA_USE_IMMERSIVE_DARK_MODE (新 / 旧版本号)
+            if ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, attr, ctypes.byref(dark), ctypes.sizeof(dark)) == 0:
+                break
+    except Exception:
+        pass
+
+
+def _on_first_map(event, win) -> None:
+    if event.widget is not win:
+        return
+    apply_titlebar(win)
+
+
+def install_titlebar_hook() -> None:
+    """所有弹窗 (tk.Toplevel) 一创建就按当前主题设置标题栏颜色, 不用每个弹窗各写一遍."""
+    if getattr(tk.Toplevel, "_oit_titlebar", False):
+        return
+    orig = tk.Toplevel.__init__
+
+    def init(self, *args, **kwargs):
+        orig(self, *args, **kwargs)
+        # 窗口显示出来之后才有标题栏的窗口句柄, 所以等第一次 <Map> 再设置
+        self.bind("<Map>", lambda e, w=self: _on_first_map(e, w), add="+")
+
+    tk.Toplevel.__init__ = init
+    tk.Toplevel._oit_titlebar = True
 
 
 def apply_theme(name: str = None) -> str:

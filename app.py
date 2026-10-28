@@ -441,20 +441,10 @@ class BreakTimerApp:
         r.option_add("*TCombobox*Listbox.selectForeground", t["list_on_select"], "interactive")
 
     def _apply_titlebar(self):
-        """Windows 10/11: 深色主题时让标题栏也变成深色."""
-        if sys.platform != "win32":
-            return
-        try:
-            import ctypes
-            self.root.update_idletasks()
-            hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
-            dark = ctypes.c_int(1 if getattr(config, "THEME_DARK", config.THEME.endswith("_dark")) else 0)
-            for attr in (20, 19):   # DWMWA_USE_IMMERSIVE_DARK_MODE (新 / 旧版本号)
-                if ctypes.windll.dwmapi.DwmSetWindowAttribute(
-                        hwnd, attr, ctypes.byref(dark), ctypes.sizeof(dark)) == 0:
-                    break
-        except Exception:
-            pass
+        """Windows 10/11: 深色主题时让标题栏也变成深色 (之后创建的弹窗由 config.install_titlebar_hook 处理)."""
+        config.install_titlebar_hook()
+        self.root.update_idletasks()
+        config.apply_titlebar(self.root)
 
     def _theme_ttk(self):
         s = self.style
