@@ -10,7 +10,7 @@ THEME = {
     "font": {
         "family": "Unifont",
         "mono": "Unifont",
-        "file": ("themes", "urban_will", "font", "unifont-16.0.04-oit.ttf"),
+        "file": ("themes", "urban_will", "fonts", "unifont-16.0.04-oit.ttf"),
         "pixel": True,
     },
     # 输入框 / 下拉框获得焦点时的镂空暖色灯圈 (从外到内)

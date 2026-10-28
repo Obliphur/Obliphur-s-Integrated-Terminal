@@ -10,15 +10,15 @@ GNU Unifont 像素字体；输入框 / 下拉框获得焦点时套一圈镂空�
 ## 目录
 
 - `__init__.py` — 主题数据：颜色、字体元数据、`focus_halo` 灯圈颜色。
-- `font/` — Unifont 字体和许可证。
+- `fonts/` — Unifont 字体和许可证。
 - `preview.py` — 开发用预览：隔离用户目录启动一个只画界面的 OIT，把各页截图到 `screenshots/`。
 - `screenshots/` — 预览截图（试作阶段）。
 
 ## 字体
 
 - 来源：[GNU Unifont 16.0.04](https://unifoundry.com/pub/unifont/unifont-16.0.04/)
-  （TrueType 构建，GNU GPLv2+，带字体嵌入例外；见 `font/LICENSE-unifont.txt`）。
-- `font/unifont-16.0.04-oit.ttf` 在原版基础上只改了竖排度量：
+  （TrueType 构建，GNU GPLv2+，带字体嵌入例外；见 `fonts/LICENSE-unifont.txt`）。
+- `fonts/unifont-16.0.04-oit.ttf` 在原版基础上只改了竖排度量：
   `unitsPerEm = 1024`，把 `hhea.descent` / `OS/2.sTypoDescender` 从 `-128` 改到 `-384`、
   `OS/2.usWinDescent` 从 `128` 改到 `384`。16px 字号下行距从 16px 变成 20px，
   多行中文才不会贴在一起；字形本身没有改。

@@ -74,6 +74,8 @@ class PrescriptPage(tk.Frame):
         self._codes = None            # 蓝色代码当前的目标文字 (list)
         self._body_gen = 0
         self._scramble_ms = 0         # 这一次蓝色代码变动要多久 (0 = 默认); 领取时等于音效的长度
+        self._sound_job = None
+        self._sound_len = 0
         self._code_gen = 0
         self._body_busy = False
         self._code_busy = False
@@ -359,7 +361,8 @@ class PrescriptPage(tk.Frame):
             self._mci(f"set {SOUND_ALIAS} time format milliseconds")
             code, text = self._mci(f"status {SOUND_ALIAS} length", want_text=True)
             self._sound_open = True
-            return int(text) if code == 0 and text.isdigit() else 0
+            self._sound_len = int(text) if code == 0 and text.isdigit() else 0
+            return self._sound_len
         except Exception:
             return 0
 
@@ -369,8 +372,12 @@ class PrescriptPage(tk.Frame):
                 self._mci(f"play {SOUND_ALIAS} from 0")
             except Exception:
                 pass
+            # 放完就关掉: 音效文件一直开着的话, 更新程序覆盖它会失败 (WinError 32)
+            self._cancel("_sound_job")
+            self._sound_job = self.after(getattr(self, "_sound_len", 0) + 500, self._close_sound)
 
     def _close_sound(self):
+        self._sound_job = None
         if getattr(self, "_sound_open", False):
             try:
                 self._mci(f"close {SOUND_ALIAS}")
@@ -419,8 +426,9 @@ class PrescriptPage(tk.Frame):
         self._active = False
         self._body_gen += 1
         self._code_gen += 1
-        for name in ("_tick_job", "_body_job", "_code_job", "_btn_job"):
+        for name in ("_tick_job", "_body_job", "_code_job", "_btn_job", "_sound_job"):
             self._cancel(name)
+        self._close_sound()
         try:
             self.winfo_toplevel().unbind("<Escape>", self._esc_id)
         except Exception:

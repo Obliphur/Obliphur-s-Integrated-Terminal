@@ -22,6 +22,7 @@ import hashlib
 import json
 import os
 import re
+import filecmp
 import shutil
 import tempfile
 import threading
@@ -211,8 +212,18 @@ def download(src, dest: str):
         raise
 
 
+def _same_file(a: str, b: str) -> bool:
+    try:
+        return os.path.getsize(a) == os.path.getsize(b) and filecmp.cmp(a, b, shallow=False)
+    except OSError:
+        return False
+
+
 def install_zip(zip_path: str, target: str) -> int:
-    """把压缩包里的程序文件覆盖到 target. 返回覆盖的文件数. 找不到程序文件时抛 ValueError."""
+    """把压缩包里的程序文件覆盖到 target. 返回覆盖的文件数. 找不到程序文件时抛 ValueError.
+
+    内容没变的文件不动 (运行中被占用的文件, 例如私有加载的字体, 覆盖会失败: WinError 32);
+    有变化但被占用的资源文件跳过, 留到下一次; 被占用的 .py 才算失败."""
     tmp = tempfile.mkdtemp(prefix="oit-update-")
     try:
         with zipfile.ZipFile(zip_path) as z:
@@ -230,6 +241,7 @@ def install_zip(zip_path: str, target: str) -> int:
         if root is None:
             raise ValueError("main.py / app.py not found in the archive")
         n = 0
+        locked = []
         for dirpath, dirnames, filenames in os.walk(root):
             dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
             rel = os.path.relpath(dirpath, root)
@@ -238,8 +250,17 @@ def install_zip(zip_path: str, target: str) -> int:
             for f in filenames:
                 if f.endswith((".pyc", ".pyo")):
                     continue
-                shutil.copy2(os.path.join(dirpath, f), os.path.join(dest_dir, f))
-                n += 1
+                src, dst = os.path.join(dirpath, f), os.path.join(dest_dir, f)
+                if os.path.exists(dst) and _same_file(src, dst):
+                    continue
+                try:
+                    shutil.copy2(src, dst)
+                    n += 1
+                except OSError as e:                  # 文件被别的程序 (包括 OIT 自己) 占用
+                    if not f.endswith(".py"):
+                        locked.append(dst)
+                        continue
+                    raise e
         return n
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -454,6 +475,24 @@ def _selftest():
     with open(os.path.join(target, "keep.txt"), "w") as f:
         f.write("mine")
     assert install_zip(zp, target) == 3
+    assert install_zip(zp, target) == 0                # 内容没变: 一个都不覆盖
+    with zipfile.ZipFile(zp, "a") as z:
+        z.writestr("Obliphur-OIT-abc/themes/font.ttf", "v1")
+    os.makedirs(os.path.join(target, "themes"))
+    with open(os.path.join(target, "themes", "font.ttf"), "w") as f:
+        f.write("old")
+    real_copy = shutil.copy2
+
+    def locked_copy(a, b, *args, **kw):
+        if str(b).endswith(".ttf"):
+            raise PermissionError(13, "in use")
+        return real_copy(a, b, *args, **kw)
+    shutil.copy2 = locked_copy
+    try:
+        install_zip(zp, target)                        # 被占用的资源文件: 跳过, 不算失败
+    finally:
+        shutil.copy2 = real_copy
+    assert open(os.path.join(target, "themes", "font.ttf")).read() == "old"
     assert open(os.path.join(target, "main.py")).read() == "print('new')"
     assert os.path.exists(os.path.join(target, "pages", "settings_page.py"))
     assert not os.path.exists(os.path.join(target, "Android version"))
