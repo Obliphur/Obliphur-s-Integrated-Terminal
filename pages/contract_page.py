@@ -229,7 +229,11 @@ class ContractPage(tk.Frame):
         return out
 
     def _page_count(self) -> int:
-        return len(self.pages)
+        """总页数: 词条的那几页 + 组合效果的一页."""
+        return len(self.pages) + 1
+
+    def _on_combo_page(self) -> bool:
+        return self.page >= len(self.pages)
 
     def _board_resized(self, _event):
         # 布局过程中宽度会来回变几次: 等它停下来再按最后的宽度分页 (只重画格子, 不动别的控件的大小)
@@ -241,18 +245,22 @@ class ContractPage(tk.Frame):
         self._resize_job = None
         pages = self._split_pages(self.canvas.winfo_width())
         if pages != self.pages:
-            first = self.pages[self.page][0]
+            combo = self._on_combo_page()
+            first = None if combo else self.pages[self.page][0]
             self.pages = pages
-            self.page = next((i for i, (a, b) in enumerate(pages) if a <= first < b), 0)
+            self.page = len(pages) if combo else \
+                next((i for i, (a, b) in enumerate(pages) if a <= first < b), 0)
             self._draw_tiles()
-            self._paint_tiles()
+            if not self._on_combo_page():
+                self._paint_tiles()
 
     def _flip(self, step: int):
         page = min(self._page_count() - 1, max(0, self.page + step))
         if page != self.page:
             self.page = page
             self._draw_tiles()
-            self._paint_tiles()
+            if not self._on_combo_page():
+                self._paint_tiles()
 
     @staticmethod
     def _hexagon(x, y, w, h):
@@ -264,7 +272,7 @@ class ContractPage(tk.Frame):
     def _draw_board(self):
         P, cv, s = self.P, self.canvas, config.scaled
         cv.create_rectangle(0, 0, self.band, self.board_h, fill=P["band"], outline="")
-        # 竖写的标题 (同参考图的 "CONTRACT LIST: 可选合约")
+        # 竖写的标题 (同参考图的 "CONTRACT LIST: 可选合约"); 组合效果那一页换成 "CONTRACT EFFECT"
         mid = (self.board_h - self.hover_h) / 2
         self.band_title = cv.create_text(s(22), mid, text="CONTRACT LIST", angle=90, fill=P["band_dim"],
                                          font=config.contract_font("h2", bold=True))
@@ -302,6 +310,10 @@ class ContractPage(tk.Frame):
         cv.itemconfigure(self.nav_text, text=f"{self.page + 1} / {n}")
         cv.itemconfigure(self.nav_prev, fill=P["nav"] if self.page > 0 else P["nav_off"])
         cv.itemconfigure(self.nav_next, fill=P["nav"] if self.page < n - 1 else P["nav_off"])
+        combo = self._on_combo_page()
+        cv.itemconfigure(self.band_title, text="CONTRACT EFFECT" if combo else "CONTRACT LIST")
+        cv.itemconfigure(self.band_sub, text=tr("词条组合") if combo else tr("可选词条"))
+        cv.itemconfigure("band_lv", state="hidden" if combo else "normal")
 
     def _draw_tiles(self):
         """这一页的格子 (翻页 / 窗口宽度变了时重画)."""
@@ -310,6 +322,12 @@ class ContractPage(tk.Frame):
         cv.delete("combo")
         self._tile_state = {}
         self._leave_all()
+        if self._on_combo_page():
+            self._combo_key = tuple((x["id"], st) for x, st in self._combos())
+            self._draw_combos()
+            self.canvas.itemconfigure(self.hover_id, text=tr("凑齐列出的词条 / 词条系列时生效"))
+            self._nav()
+            return
         a, b = self.pages[self.page]
         for tid, g, lv, _n, _d, _x in C.TERMS:
             col = C.LAYOUT[tid][0]                 # 成系列的每组一列, 零散的在右边挨着排
@@ -328,9 +346,70 @@ class ContractPage(tk.Frame):
             cv.tag_bind(tag, "<Leave>", lambda e, t=tid: self._leave(t))
         self._nav()
 
+    # ---- 第 3 页: 词条组合的效果 ----
+
+    def _combos(self) -> list:
+        """(组合, 状态): 合约中按现在的看, 没开始时按草稿看."""
+        c = self.c
+        if c.active:
+            return c.combos()
+        return [(x, C.combo_state(x, c.draft)) for x in C.COMBOS]
+
     def _bonus_theme(self) -> str:
         """完成合约时按哪个主题结算: 进行中的合约按开始时记下的, 没开始时按现在选的."""
         return self.c.theme if self.c.active else self.theme
+
+    def _combo_desc(self, combo) -> str:
+        """组合的效果 (翻译好的); 主题绑定的组合多一行主题加成."""
+        note = C.theme_note(combo, self._bonus_theme())
+        return tr(combo["desc"]) + ("\n" + tr(note) if note else "")
+
+    def _combo_color(self, combo, key="color") -> str:
+        return self.P.get(f"combo_{combo[key]}", self.P["text"])
+
+    def _draw_combos(self):
+        """4 个组合: 颜色条 + 名字 + 凑齐要哪些词条 + 效果 + 现在凑齐了没有 (2 × 2)."""
+        P, cv, s = self.P, self.canvas, config.scaled
+        cv.delete("combo")
+        x0, y0 = self.band + self.gap, self.gap
+        w = self.canvas.winfo_width() - x0 - self.gap
+        w = max(s(360), w)
+        h = self.board_h - self.hover_h - self.gap
+        cw, ch = (w - self.gap) / 2, (h - self.gap) / 2
+        status = {"done": tr("已凑齐"), "void": tr("已失效"), "open": tr("未凑齐")}
+        for i, (combo, state) in enumerate(self._combos()):
+            cx = x0 + (i % 2) * (cw + self.gap)
+            cy = y0 + (i // 2) * (ch + self.gap)
+            color = self._combo_color(combo)
+            on = state == "done"
+            rim = color if on else (P["tile_off_rim"] if state == "open" else P["tile_rim"])
+            tag = f"c_{combo['id']}"
+            cv.create_rectangle(cx, cy, cx + cw, cy + ch, fill=P["sel"], outline=rim,
+                                width=2 if on else 1, tags=("combo", tag))
+            cv.create_rectangle(cx, cy, cx + s(5), cy + ch, fill=color if on else P["clear"], outline="",
+                                tags=("combo", tag))
+            # 名字 (组合的颜色) 和状态
+            cv.create_text(cx + s(12), cy + s(8), text=tr(combo["name"]), anchor="nw",
+                           fill=color, font=config.contract_font("body", bold=True), tags=("combo", tag))
+            cv.create_text(cx + cw - s(10), cy + s(9), text=status.get(state, ""), anchor="ne",
+                           fill=color if on else (P["danger"] if state == "void" else P["sel_dim"]),
+                           font=config.contract_font("tiny", bold=True), tags=("combo", tag))
+            # 凑齐要哪些词条 (成系列的一组只写一个名字)
+            need = " · ".join(tr(C.req_name(r)) for r in combo["reqs"])
+            cv.create_text(cx + s(12), cy + s(30), text=tr("需要") + "  " + need, anchor="nw",
+                           fill=P["sel_text"] if on else P["sel_dim"], width=cw - s(20),
+                           font=config.contract_font("tiny"), tags=("combo", tag))
+            cv.tag_bind(tag, "<Enter>", lambda e, x=combo: self._combo_hover(x))
+            cv.tag_bind(tag, "<Leave>",
+                        lambda e: self.canvas.itemconfigure(self.hover_id, text=tr("凑齐列出的词条 / 词条系列时生效")))
+        if self._hover:
+            self._leave(self._hover)
+
+    def _combo_hover(self, combo):
+        name = tr(combo["name"])
+        need = " · ".join(tr(C.req_name(r)) for r in combo["reqs"])
+        self.canvas.itemconfigure(self.hover_id, text=f"{name}   {tr('需要')}: {need}   ·   {self._combo_desc(combo)}")
+        self.canvas.configure(cursor="")
 
     def _leave_all(self):
         if self._hover:
@@ -570,6 +649,8 @@ class ContractPage(tk.Frame):
         """这一页格子的颜色: 选中 / 不能选 / 未知变量选中的 (黄色); 合约中违反到失效的词条是"未选择"的样子.
         凑齐了词条组合的词条用组合的颜色框住."""
         P, c = self.P, self.c
+        if self._on_combo_page():
+            return
         active = c.active
         sel = self._selected()
         rand = c.rand
@@ -617,6 +698,11 @@ class ContractPage(tk.Frame):
         if gift:
             info.append(tr("开始时休息 +{n} 分钟", n=gift // 60))
         cfg(self.lbl_info, text="\n".join(info))
+        if self._on_combo_page():
+            key = tuple((x["id"], st) for x, st in self._combos())
+            if key != getattr(self, "_combo_key", None):
+                self._combo_key = key
+                self._draw_combos()
         for lbl, text in zip(self.lbl_rules, self._rules_text()):
             cfg(lbl, text=text)
         btn = self.btn_end if active else self.btn_start

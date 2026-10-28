@@ -317,8 +317,9 @@ class ContractTest {
     @Test
     fun newTerms() {
         val t0 = LocalDateTime.of(2026, 10, 18, 9, 30)
-        // 翻页: 词条两页
+        // 翻页: 词条两页, 第 3 页是词条组合
         assertEquals(listOf(0 until Contract.PAGE_SPLIT, Contract.PAGE_SPLIT until Contract.BOARD_COLS), Contract.PAGES)
+        assertEquals(2, Contract.COMBO_PAGE)
         assertTrue(Contract.LAYOUT["deep1"]!! < Contract.PAGE_SPLIT && Contract.LAYOUT["info1"]!! < Contract.PAGE_SPLIT && Contract.LAYOUT["suppress"]!! >= Contract.PAGE_SPLIT)
         assertFalse(Contract.conflicts("erode1", "info3") || Contract.conflicts("quiet", "jam"))
         assertFalse(Contract.conflicts("suppress", "fog"))

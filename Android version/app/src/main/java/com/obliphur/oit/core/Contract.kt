@@ -111,8 +111,9 @@ class Contract(private val file: File) {
         val LAYOUT: Map<String, Int> = BOARD.withIndex().flatMap { (i, col) -> col.map { it to i } }.toMap()
         val BOARD_COLS = BOARD.size
         val MAX_LEVEL = TERMS.maxOf { it.level }
-        /** 词条板翻页: 词条两页 (每页的列). */
+        /** 词条板翻页: 词条两页 (每页的列), 第 3 页 (COMBO_PAGE) 是词条组合 (只写名字和要哪些词条). */
         val PAGES = listOf(0 until PAGE_SPLIT, PAGE_SPLIT until BOARD_COLS)
+        const val COMBO_PAGE = 2
         private val ORDER = TERMS.mapIndexed { i, t -> t.id to i }.toMap()
 
         // 软规则: 界面上照样能做, 但会被算作违反, 这个词条降一级 (结算按降级后的等级);
