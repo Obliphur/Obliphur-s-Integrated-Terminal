@@ -111,9 +111,8 @@ class Contract(private val file: File) {
         val LAYOUT: Map<String, Int> = BOARD.withIndex().flatMap { (i, col) -> col.map { it to i } }.toMap()
         val BOARD_COLS = BOARD.size
         val MAX_LEVEL = TERMS.maxOf { it.level }
-        /** 词条板翻页: 词条两页 (每页的列), 第 3 页 (COMBO_PAGE) 是词条组合的效果. */
+        /** 词条板翻页: 词条两页 (每页的列). */
         val PAGES = listOf(0 until PAGE_SPLIT, PAGE_SPLIT until BOARD_COLS)
-        const val COMBO_PAGE = 2
         private val ORDER = TERMS.mapIndexed { i, t -> t.id to i }.toMap()
 
         // 软规则: 界面上照样能做, 但会被算作违反, 这个词条降一级 (结算按降级后的等级);
@@ -165,11 +164,11 @@ class Contract(private val file: File) {
         val COMBOS_BY_ID = COMBOS.associateBy { it.id }
 
         // 合约主题 (MECHANICS 18.7): 起源 / 都市之意. 开始合约时用的主题记在合约里 (随同步), 完成合约时按它结算:
-        // 主题绑定的那个词条组合凑齐着, 结算休息时间额外 +5 分钟 (和组合自己的"完成时给的"一样先加上, 再乘持久战).
+        // 起源 + 无懈可击 凑齐着, 结算休息时间额外 +5 分钟 (和组合自己的"完成时给的"一样先加上, 再乘持久战); 都市之意没有加成.
         // "" = 没有主题 (开始时没记, 例如旧版本开始的合约 / 选了"跟随界面主题"): 没有这一项加成. 同 contract.py.
         val THEMES = mapOf("ops" to "起源", "urban" to "都市之意")
         const val DEFAULT_THEME = "ops"
-        val THEME_COMBO = mapOf("ops" to "flawless", "urban" to "isolation")
+        val THEME_COMBO = mapOf("ops" to "flawless")      // 主题 -> 绑定的组合 (没有的主题没有加成)
         const val THEME_END = 5 * 60
 
         /** 设置里的合约页主题 (ops / urban / ui) → 记进合约的主题 (ui 和不认识的 = ""). */

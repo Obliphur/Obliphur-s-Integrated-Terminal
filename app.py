@@ -141,7 +141,7 @@ class BreakTimerApp:
             pass
 
         root.title(APP_NAME)
-        root.resizable(False, False)
+        root.resizable(True, True)              # 可以最大化 / 拖边缘改大小 (最小尺寸见 _apply_geometry)
         self.style = ttk.Style(root)
 
 
@@ -314,8 +314,8 @@ class BreakTimerApp:
         toast.set_fog(self.contract.fog)         # 黑雾: 遮住除违规记录外的所有提示 (显示 [???], 18.3)
         self.ach_popups = AchievementPopups(root, self.ach, on_open=self._open_achievements)
         self.ach_popups.hold = lambda: self.contract.fog()
-        # 先定好窗口大小, 再在加载页后面一页一页地建界面
-        self._apply_geometry()
+        # 先定好窗口大小和位置 (屏幕正中), 再在加载页后面一页一页地建界面
+        self._apply_geometry(initial=True)
         cover = LoadingCover(root, tr("正在加载…"), "", steps=self.LAYOUT_STEPS).show()
         try:
             self._build_layout(root, cover)
@@ -383,17 +383,29 @@ class BreakTimerApp:
         self.root.after(800, self.check_achievements)
 
 
-    def _apply_geometry(self):
-        w = config.scaled(config.WINDOW_W)
-        h = config.scaled(config.WINDOW_H)
-        try:
-            sw = self.root.winfo_screenwidth()
-            sh = self.root.winfo_screenheight()
-            w = min(w, int(sw * 0.96))
-            h = min(h, int(sh * 0.92) - 40)
-        except Exception:
-            pass
-        self.root.geometry(f"{w}x{h}")
+    def _work_area(self):
+        """主屏幕去掉任务栏之后的区域 (左, 上, 右, 下); 取不到就用整个屏幕."""
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                from ctypes import wintypes
+                rect = wintypes.RECT()
+                if ctypes.windll.user32.SystemParametersInfoW(48, 0, ctypes.byref(rect), 0):      # SPI_GETWORKAREA
+                    return rect.left, rect.top, rect.right, rect.bottom
+            except Exception:
+                pass
+        return 0, 0, self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+
+    def _apply_geometry(self, initial=False):
+        """initial: 程序刚打开时设窗口大小, 并放到屏幕正中; 重建界面 (换主题 / 语言) 时不动窗口的大小和位置."""
+        if initial:
+            left, top, right, bottom = self._work_area()
+            frame = config.scaled(40)                    # 标题栏和边框的高度: 居中时把它算进窗口高度
+            w = min(config.scaled(config.WINDOW_W), int((right - left) * 0.96))
+            h = min(config.scaled(config.WINDOW_H), int((bottom - top) * 0.96) - frame)
+            x = left + max(0, (right - left - w) // 2)
+            y = top + max(0, (bottom - top - h - frame) // 2)
+            self.root.geometry(f"{w}x{h}+{x}+{y}")
         self.root.minsize(config.scaled(config.MIN_WINDOW_W), config.scaled(config.MIN_WINDOW_H))
         for name in ("TkDefaultFont", "TkTextFont", "TkMenuFont", "TkHeadingFont"):
             try:

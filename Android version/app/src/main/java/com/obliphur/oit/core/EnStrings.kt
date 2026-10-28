@@ -850,7 +850,6 @@ object EnStrings {
         "起源" to "Basepoint",
         "跟随界面主题" to "Follow the interface theme",
         "起源: 完成合约时 休息额外 +5 分钟" to "Basepoint: +5 min extra rest when the contract is completed",
-        "都市之意: 完成合约时 休息额外 +5 分钟" to "The Will of the City: +5 min extra rest when the contract is completed",
         "后台应用数检测" to "Background app check",
         "后台应用数上限" to "Background app limit",
         "后台应用超过 {n} 个" to "more than {n} background apps",

@@ -90,22 +90,21 @@ class ContractTest {
         val flaw = listOf("last", "unknown", "move", "confine", "gaze", "scar")
         assertEquals(20 * 60, Contract.comboGift(flaw))
         assertEquals(flaw.associateWith { Contract.COMBO_COLORS["blue"]!! }, Contract.comboMarks(flaw))
-        // 合约主题: 起源 + 无懈可击 / 都市之意 + 信息隔绝 完成时休息额外 +5 分钟 (别的主题 / 没有主题 / 组合没凑齐都没有)
+        // 合约主题: 起源 + 无懈可击 完成时休息额外 +5 分钟 (别的主题 / 没有主题 / 组合没凑齐都没有; 都市之意没有加成)
         assertEquals(5 * 60, Contract.themeEnd(flaw, "ops")); assertEquals(0, Contract.themeEnd(flaw, "urban"))
-        assertEquals(0, Contract.themeEnd(flaw, "")); assertEquals(5 * 60, Contract.themeEnd(iso, "urban"))
+        assertEquals(0, Contract.themeEnd(flaw, "")); assertEquals(0, Contract.themeEnd(iso, "urban"))
         assertEquals(0, Contract.themeEnd(iso, "ops")); assertEquals(0, Contract.themeEnd(iso, "bogus"))
         assertEquals(0, Contract.themeEnd(listOf("last", "unknown", "move", "confine", "gaze"), "ops"))   // 无懈可击没凑齐
-        assertEquals(15 * 60, Contract.comboEnd(iso, "urban")); assertEquals(5 * 60, Contract.comboEnd(flaw, "ops"))
+        assertEquals(10 * 60, Contract.comboEnd(iso, "urban")); assertEquals(5 * 60, Contract.comboEnd(flaw, "ops"))
         assertEquals(10 * 60, Contract.comboEnd(iso))
-        assertEquals(Contract.restMinutes(6) * 60 + 15 * 60, Contract.restReward(6, iso, "urban"))
+        assertEquals(Contract.restReward(6, iso), Contract.restReward(6, iso, "urban"))
         assertEquals(Contract.restReward(6, iso), Contract.restReward(6, iso, "ops"))
         assertEquals(Contract.restMinutes(9) * 60 + 5 * 60, Contract.restReward(9, flaw, "ops"))
         assertEquals(Contract.restMinutes(9) * 60, Contract.restReward(9, flaw, "urban"))
-        assertEquals(Contract.restMinutes(6) + 15, Contract.restMinutesTotal(6, iso, "urban"))
-        assertEquals(Math.round((Contract.restMinutes(6) * 60 + 15 * 60) * 1.1).toInt(), Contract.restReward(6, iso + "long1", "urban"))
-        assertEquals("都市之意: 完成合约时 休息额外 +5 分钟", Contract.themeNote(Contract.COMBOS_BY_ID["isolation"]!!, "urban"))
-        assertEquals("", Contract.themeNote(Contract.COMBOS_BY_ID["isolation"]!!, "ops"))
-        assertEquals("", Contract.themeNote(mochi, "urban")); assertEquals("", Contract.themeNote(Contract.COMBOS_BY_ID["flawless"]!!, ""))
+        assertEquals(Contract.restMinutes(6) + 10, Contract.restMinutesTotal(6, iso, "urban"))
+        assertEquals("起源: 完成合约时 休息额外 +5 分钟", Contract.themeNote(Contract.COMBOS_BY_ID["flawless"]!!, "ops"))
+        assertEquals("", Contract.themeNote(Contract.COMBOS_BY_ID["isolation"]!!, "urban"))
+        assertEquals("", Contract.themeNote(Contract.COMBOS_BY_ID["isolation"]!!, "ops")); assertEquals("", Contract.themeNote(Contract.COMBOS_BY_ID["flawless"]!!, ""))
         assertEquals("urban", Contract.cleanTheme("urban")); assertEquals("", Contract.cleanTheme("ui"))
         assertEquals("纵深推进", Contract.reqName("deep")); assertEquals("最后防线", Contract.reqName("last"))
         // 统计页: 最近 5 个顺利完成的合约; 词条按开始时的顺序, 降级的写降级后的名字, 失效的标出来
@@ -182,10 +181,10 @@ class ContractTest {
         assertEquals(Contract.COMBO_COLORS["red"], e.comboMarks()["fog"])
         assertEquals(false to "", e.violate("suppress")); assertEquals("void", e.combos()[3].second)
         assertEquals(7, e.level); assertEquals(Contract.restMinutes(7) * 60.0, e.reward, 1e-6)
-        // 合约主题记在合约里 (同步 / 结算都按它): 都市之意 + 信息隔绝 完成时 +5 分钟; 成员失效后这一项也没了
+        // 合约主题记在合约里 (同步 / 结算都按它): 都市之意没有加成
         assertEquals("", e.theme)
         e.start(iso, "me", t0, theme = "urban")
-        assertEquals("urban", e.theme); assertEquals(Contract.restMinutes(9) * 60.0 + 15 * 60, e.reward, 1e-6)
+        assertEquals("urban", e.theme); assertEquals(Contract.restMinutes(9) * 60.0 + 10 * 60, e.reward, 1e-6)
         assertEquals(false to "", e.violate("suppress")); assertEquals(Contract.restMinutes(7) * 60.0, e.reward, 1e-6)
         assertEquals("urban", e.finish("completed", t0.plusHours(9))!!.optString("theme")); assertEquals("", e.theme)
         e.start(iso, "me", t0, theme = "ops")
@@ -318,9 +317,8 @@ class ContractTest {
     @Test
     fun newTerms() {
         val t0 = LocalDateTime.of(2026, 10, 18, 9, 30)
-        // 翻页: 词条两页, 第 3 页是词条组合
+        // 翻页: 词条两页
         assertEquals(listOf(0 until Contract.PAGE_SPLIT, Contract.PAGE_SPLIT until Contract.BOARD_COLS), Contract.PAGES)
-        assertEquals(2, Contract.COMBO_PAGE)
         assertTrue(Contract.LAYOUT["deep1"]!! < Contract.PAGE_SPLIT && Contract.LAYOUT["info1"]!! < Contract.PAGE_SPLIT && Contract.LAYOUT["suppress"]!! >= Contract.PAGE_SPLIT)
         assertFalse(Contract.conflicts("erode1", "info3") || Contract.conflicts("quiet", "jam"))
         assertFalse(Contract.conflicts("suppress", "fog"))

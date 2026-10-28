@@ -225,35 +225,7 @@ private fun FitToScreen(minWidth: androidx.compose.ui.unit.Dp, content: @Composa
     }
 }
 
-/** 第 3 页的一块组合: 名字 (组合的颜色) + 状态, 凑齐要哪些词条, 效果. 凑齐了才亮. */
-@Composable
-private fun ComboCard(p: ContractColors, combo: Combo, state: String, theme: String, modifier: Modifier = Modifier) {
-    val color = comboColor(p, combo)
-    val on = state == "done"
-    val status = when (state) {
-        "done" -> tr("已凑齐")
-        "void" -> tr("已失效")
-        else -> tr("未凑齐")
-    }
-    val rim = if (on) color else if (state == "void") p.tileRim else p.tileOffRim
-    Column(modifier.background(p.sel).border(if (on) 2.dp else 1.dp, rim, RoundedCornerShape(2.dp)).padding(8.dp),
-        verticalArrangement = Arrangement.spacedBy(3.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(tr(combo.name), color = color, fontSize = 13.sp, fontWeight = FontWeight.Bold,
-                modifier = Modifier.weight(1f))
-            Text(status, color = if (on) color else if (state == "void") p.danger else p.selDim,
-                fontSize = 10.sp, fontWeight = FontWeight.Bold)
-        }
-        Text(tr("需要") + "  " + combo.reqs.joinToString(" · ") { tr(Contract.reqName(it)) },
-            color = if (on) p.selText else p.selDim, fontSize = 10.sp, lineHeight = 12.sp)
-        // 主题绑定的组合多一行主题加成
-        val note = Contract.themeNote(combo, theme)
-        Text(tr(combo.desc) + if (note.isNotEmpty()) "\n" + tr(note) else "", color = if (on) color else p.selDim,
-            fontSize = 10.sp, lineHeight = 12.sp)
-    }
-}
-
-/** 词条板 (行 = 等级, 列 = 类型, 同一类型在同一列; 翻页: 成系列的一页, 零散的一页, 第 3 页是词条组合), 下面是已选中的词条 (两栏),
+/** 词条板 (行 = 等级, 列 = 类型, 同一类型在同一列; 翻页: 成系列的一页, 零散的一页), 下面是已选中的词条 (两栏),
  *  最下面一条: 清空 | 危机等级 | 开始行动.
  *  合约进行中时只能看. 这一页总是横屏 (Root 里设置), 整页缩小到一屏显示全部 (FitToScreen). 颜色按"合约页主题". */
 /** 合约页的录像状态 (MECHANICS 18.8): 各设备在录哪一路也同步显示. */
@@ -339,8 +311,7 @@ fun ContractScreen() {
             }
         }
 
-        // 词条板: 左边一条写着等级, 右边六边形的格子; 最后一页是词条组合的效果
-        val comboPage = page == Contract.COMBO_PAGE
+        // 词条板: 左边一条写着等级, 右边六边形的格子
         val comboMarks = comboMarksOf(c, if (active) c.mine else sel, p)
         BoxWithConstraints(Modifier.fillMaxWidth().background(p.board)) {
             val bandW = BOARD_BAND
@@ -351,75 +322,56 @@ fun ContractScreen() {
             Row {
                 Column(Modifier.width(bandW).background(p.band).padding(vertical = gap),
                     verticalArrangement = Arrangement.spacedBy(gap)) {
-                    if (comboPage) {
-                        Text("CONTRACT\nEFFECT", color = p.bandDim, fontSize = 9.sp, fontWeight = FontWeight.Bold,
-                            textAlign = TextAlign.Center, lineHeight = 11.sp,
-                            modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
-                        Text(tr("词条组合").chunked(1).joinToString("\n"), color = p.bandText, fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, lineHeight = 15.sp,
-                            modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
-                    } else {
-                        for (lv in 1..Contract.MAX_LEVEL) Row(Modifier.height(tileH).padding(horizontal = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text("Level", color = p.bandDim, fontSize = 8.sp)
-                                Text("▲", color = p.badgeHi, fontSize = 9.sp,
-                                    modifier = Modifier.background(p.badgeLo).padding(horizontal = 4.dp))
-                            }
-                            Text("$lv", color = p.bandText, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                    for (lv in 1..Contract.MAX_LEVEL) Row(Modifier.height(tileH).padding(horizontal = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Level", color = p.bandDim, fontSize = 8.sp)
+                            Text("▲", color = p.badgeHi, fontSize = 9.sp,
+                                modifier = Modifier.background(p.badgeLo).padding(horizontal = 4.dp))
                         }
+                        Text("$lv", color = p.bandText, fontSize = 24.sp, fontWeight = FontWeight.Bold)
                     }
                 }
-                if (comboPage) {
-                    val combos = if (active) c.combos() else Contract.COMBOS.map { it to Contract.comboState(it, c.draft) }
-                    Column(Modifier.weight(1f).padding(gap), verticalArrangement = Arrangement.spacedBy(gap)) {
-                        for (row in combos.chunked(2)) Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
-                            for ((combo, state) in row) ComboCard(p, combo, state, bonusTheme, Modifier.weight(1f))
-                            if (row.size == 1) Spacer(Modifier.weight(1f))
-                        }
-                    }
-                } else {
-                    Column(Modifier.padding(gap), verticalArrangement = Arrangement.spacedBy(gap)) {
-                        for (lv in 1..Contract.MAX_LEVEL) Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
-                            // 成系列的每组一列, 零散的在右边挨着排 (Contract.LAYOUT); 只画这一页的列
-                            for (col in Contract.PAGES[page.coerceIn(0, Contract.PAGES.size - 1)]) {
-                                val t = Contract.TERMS.firstOrNull { it.level == lv && Contract.LAYOUT[it.id] == col }
-                                if (t == null) {
-                                    Spacer(Modifier.width(tileW).height(tileH)); continue
-                                }
-                                val picked = t.id in rand               // 未知变量选中的: 黄色, 点按关闭
-                                val ban = active && c.canLift(t.id)     // 禁止联网中: 紫色, 点按解除网络禁令
-                                val on = t.id in sel
-                                val lost = active && !on && t.id in c.lost    // 违反到失效: "未选择"的样子
-                                val off = !on && !lost && (active || Contract.blockedBy(t.id, sel) != null)
-                                val fill = if (picked) p.tileRand else if (ban) p.tileBan else if (on) p.tileOn else if (off) p.tileOff else p.tile
-                                val fg = if (picked) p.tileRandText else if (ban) p.tileBanText else if (on) p.tileOnText else if (off) p.tileOffText else p.tileText
-                                // 凑齐了的组合: 用组合的颜色框住
-                                val cm = comboMarks[t.id]
-                                val rim = if (picked) p.tileRand else cm ?: if (ban) p.tileBanRim else if (on) p.tileOnRim else if (off) p.tileOffRim else p.tileRim
-                                Box(Modifier.width(tileW).height(tileH).background(fill, HEX)
-                                    .border(if (cm != null) 3.dp else 2.dp, rim, HEX)
-                                    .clickable {
-                                        tapped = t.id
-                                        if (active) {
-                                            if (picked) ask = "close:" + t.id
-                                            else if (ban) ask = "lift:" + t.id
-                                            return@clickable
-                                        }
-                                        val cur = c.draft.toMutableList()
-                                        if (t.id in cur) cur.remove(t.id)
-                                        else if (Contract.blockedBy(t.id, cur) == null) {
-                                            // 目光 / 刻痕: 选上前先提示会录像 + 加密 (MECHANICS 18.8)
-                                            if (t.id == "gaze" || t.id == "scar") { ask = "pickwarn:" + t.id; return@clickable }
-                                            cur.add(t.id)
-                                        }
-                                        c.setDraft(cur)
-                                        core.changed()
-                                    }, contentAlignment = Alignment.Center) {
-                                    Text(marks(t.level) + "\n" + termShort(t.id), color = fg, fontSize = 10.sp, lineHeight = 12.sp,
-                                        fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
-                                        modifier = Modifier.padding(horizontal = 8.dp))
-                                }
+                Column(Modifier.padding(gap), verticalArrangement = Arrangement.spacedBy(gap)) {
+                    for (lv in 1..Contract.MAX_LEVEL) Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
+                        // 成系列的每组一列, 零散的在右边挨着排 (Contract.LAYOUT); 只画这一页的列
+                        for (col in Contract.PAGES[page.coerceIn(0, Contract.PAGES.size - 1)]) {
+                            val t = Contract.TERMS.firstOrNull { it.level == lv && Contract.LAYOUT[it.id] == col }
+                            if (t == null) {
+                                Spacer(Modifier.width(tileW).height(tileH)); continue
+                            }
+                            val picked = t.id in rand               // 未知变量选中的: 黄色, 点按关闭
+                            val ban = active && c.canLift(t.id)     // 禁止联网中: 紫色, 点按解除网络禁令
+                            val on = t.id in sel
+                            val lost = active && !on && t.id in c.lost    // 违反到失效: "未选择"的样子
+                            val off = !on && !lost && (active || Contract.blockedBy(t.id, sel) != null)
+                            val fill = if (picked) p.tileRand else if (ban) p.tileBan else if (on) p.tileOn else if (off) p.tileOff else p.tile
+                            val fg = if (picked) p.tileRandText else if (ban) p.tileBanText else if (on) p.tileOnText else if (off) p.tileOffText else p.tileText
+                            // 凑齐了的组合: 用组合的颜色框住
+                            val cm = comboMarks[t.id]
+                            val rim = if (picked) p.tileRand else cm ?: if (ban) p.tileBanRim else if (on) p.tileOnRim else if (off) p.tileOffRim else p.tileRim
+                            Box(Modifier.width(tileW).height(tileH).background(fill, HEX)
+                                .border(if (cm != null) 3.dp else 2.dp, rim, HEX)
+                                .clickable {
+                                    tapped = t.id
+                                    if (active) {
+                                        if (picked) ask = "close:" + t.id
+                                        else if (ban) ask = "lift:" + t.id
+                                        return@clickable
+                                    }
+                                    val cur = c.draft.toMutableList()
+                                    if (t.id in cur) cur.remove(t.id)
+                                    else if (Contract.blockedBy(t.id, cur) == null) {
+                                        // 目光 / 刻痕: 选上前先提示会录像 + 加密 (MECHANICS 18.8)
+                                        if (t.id == "gaze" || t.id == "scar") { ask = "pickwarn:" + t.id; return@clickable }
+                                        cur.add(t.id)
+                                    }
+                                    c.setDraft(cur)
+                                    core.changed()
+                                }, contentAlignment = Alignment.Center) {
+                                Text(marks(t.level) + "\n" + termShort(t.id), color = fg, fontSize = 10.sp, lineHeight = 12.sp,
+                                    fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
+                                    modifier = Modifier.padding(horizontal = 8.dp))
                             }
                         }
                     }
@@ -429,8 +381,7 @@ fun ContractScreen() {
         // 点过的词条的内容 | 翻页
         Row(verticalAlignment = Alignment.CenterVertically) {
             var text = ""
-            if (comboPage) text = tr("凑齐列出的词条 / 词条系列时生效")
-            else if (tapped.isNotEmpty()) {
+            if (tapped.isNotEmpty()) {
                 text = "${marks(Contract.BY_ID[tapped]!!.level)}  " + termLine(tapped)
                 val other = Contract.blockedBy(tapped, sel)
                 if (other != null && tapped !in sel) text += "  " + tr("[与 {name} 冲突]", "name" to termName(other))
@@ -438,7 +389,7 @@ fun ContractScreen() {
                 else if (active && c.canLift(tapped)) text += "  " + tr("[禁止联网中 · 点击解除, 目标生命值 -{n}]", "n" to c.liftCost(tapped))
             }
             Text(text, color = p.dim, fontSize = 13.sp, modifier = Modifier.weight(1f))
-            val last = Contract.COMBO_PAGE
+            val last = Contract.PAGES.size - 1
             Text("◀", color = if (page > 0) p.text else p.startOff, fontSize = 20.sp, fontWeight = FontWeight.Bold,
                 modifier = Modifier.clickable(enabled = page > 0) { page-- }.padding(horizontal = 14.dp, vertical = 2.dp))
             Text("${page + 1} / ${last + 1}", color = p.text, fontSize = 14.sp, fontWeight = FontWeight.Bold)

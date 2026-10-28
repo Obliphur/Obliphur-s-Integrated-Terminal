@@ -280,11 +280,11 @@ COMBOS = [
 COMBOS_BY_ID = {c["id"]: c for c in COMBOS}
 
 # 合约主题 (MECHANICS 18.7): 起源 / 都市之意. 开始合约时用的主题记在合约里 (随同步), 完成合约时按它结算:
-# 主题绑定的那个词条组合凑齐着, 结算休息时间额外 +5 分钟 (和组合自己的"完成时给的"一样先加上, 再乘持久战).
+# 起源 + 无懈可击 凑齐着, 结算休息时间额外 +5 分钟 (和组合自己的"完成时给的"一样先加上, 再乘持久战); 都市之意没有加成.
 # "" = 没有主题 (开始时没记, 例如旧版本开始的合约 / 手机上选了"跟随界面主题"): 没有这一项加成.
 THEMES = {"ops": "起源", "urban": "都市之意"}
 DEFAULT_THEME = "ops"
-THEME_COMBO = {"ops": "flawless", "urban": "isolation"}
+THEME_COMBO = {"ops": "flawless"}      # 主题 -> 绑定的组合 (没有的主题没有加成)
 THEME_END = 5 * 60
 
 
@@ -302,7 +302,7 @@ def theme_end(terms, theme="") -> int:
 def theme_note(combo, theme="") -> str:
     """组合栏里这个组合的主题加成说明 (这个组合不是主题绑定的就是 "")."""
     theme = clean_theme(theme)
-    if theme and THEME_COMBO[theme] == combo["id"]:
+    if theme and THEME_COMBO.get(theme) == combo["id"]:
         return f"{THEMES[theme]}: 完成合约时 休息额外 +{THEME_END // 60} 分钟"
     return ""
 COMBO_COLORS = {"yellow": "#ffd23f", "purple": "#b06cf0", "blue": "#2456c7", "red": "#ff2b3a"}
@@ -1988,17 +1988,16 @@ def _selftest():
     assert nofun["color"] == "purple" and flawless["color"] == "blue" and isolation["color"] == "red" \
         and mochi["color"] == "yellow"
     assert req_name("deep") == "纵深推进" and req_name("last") == "最后防线" and req_name("silent") == "无言为真"
-    # 合约主题: 起源 + 无懈可击 / 都市之意 + 信息隔绝 完成时休息额外 +5 分钟 (别的主题 / 没有主题 / 组合没凑齐都没有)
+    # 合约主题: 起源 + 无懈可击 完成时休息额外 +5 分钟 (别的主题 / 没有主题 / 组合没凑齐都没有; 都市之意没有加成)
     assert theme_end(flaw, "ops") == 5 * 60 and theme_end(flaw, "urban") == 0 and theme_end(flaw, "") == 0
-    assert theme_end(iso, "urban") == 5 * 60 and theme_end(iso, "ops") == 0 and theme_end(iso, "bogus") == 0
+    assert theme_end(iso, "urban") == 0 and theme_end(iso, "ops") == 0 and theme_end(iso, "bogus") == 0
     assert theme_end(["last", "unknown", "move", "confine", "gaze"], "ops") == 0, "无懈可击没凑齐"
-    assert combo_end(iso, "urban") == 15 * 60 and combo_end(flaw, "ops") == 5 * 60 and combo_end(iso) == 10 * 60
-    assert rest_reward(6, iso, "urban") == rest_minutes(6) * 60 + 15 * 60 and rest_reward(6, iso, "ops") == rest_reward(6, iso)
+    assert combo_end(iso, "urban") == 10 * 60 and combo_end(flaw, "ops") == 5 * 60 and combo_end(iso) == 10 * 60
+    assert rest_reward(6, iso, "urban") == rest_reward(6, iso) and rest_reward(6, iso, "ops") == rest_reward(6, iso)
     assert rest_reward(9, flaw, "ops") == rest_minutes(9) * 60 + 5 * 60 and rest_reward(9, flaw, "urban") == rest_minutes(9) * 60
-    assert rest_minutes_total(6, iso, "urban") == rest_minutes(6) + 15
-    assert rest_reward(6, iso + ["long1"], "urban") == round((rest_minutes(6) * 60 + 15 * 60) * 1.1), "持久战连主题加成一起乘"
-    assert theme_note(isolation, "urban") == "都市之意: 完成合约时 休息额外 +5 分钟" and theme_note(flawless, "ops")
-    assert theme_note(isolation, "ops") == "" and theme_note(mochi, "urban") == "" and theme_note(flawless, "") == ""
+    assert rest_minutes_total(6, iso, "urban") == rest_minutes(6) + 10
+    assert theme_note(flawless, "ops") == "起源: 完成合约时 休息额外 +5 分钟"
+    assert theme_note(isolation, "urban") == "" and theme_note(isolation, "ops") == "" and theme_note(flawless, "") == ""
     # 统计页: 最近 5 个顺利完成的合约 (失败的 / 提前结束的不要)
     hist = [{"end": f"2026-10-{i:02d}T10:00:00", "result": r, "level": i, "orig_level": i + 2}
             for i, r in enumerate(["completed", "failed", "completed", "abandoned",
@@ -2140,9 +2139,9 @@ def _selftest():
     assert c.reward == rest_minutes(9) * 60 + 10 * 60 and c.combo_marks().get("fog") == COMBO_COLORS["red"]
     assert c.violate("suppress") == (False, "") and c.combos()[3] == (isolation, "void")
     assert c.level == 7 and c.reward == rest_minutes(7) * 60
-    # 合约主题记在合约里 (同步 / 结算都按它): 都市之意 + 信息隔绝 完成时 +5 分钟; 成员失效后这一项也没了
+    # 合约主题记在合约里 (同步 / 结算都按它): 都市之意没有加成
     assert c.theme == "" and c.start(iso, owner="me", now=t0, theme="urban")["theme"] == "urban" and c.theme == "urban"
-    assert c.reward == rest_minutes(9) * 60 + 15 * 60
+    assert c.reward == rest_minutes(9) * 60 + 10 * 60
     assert c.violate("suppress") == (False, "") and c.reward == rest_minutes(7) * 60
     assert c.finish("completed", now=t0 + timedelta(hours=9))["theme"] == "urban" and c.theme == ""
     c.start(iso, owner="me", now=t0, theme="ops")
