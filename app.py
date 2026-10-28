@@ -5048,7 +5048,8 @@ class BreakTimerApp:
         """每 5 秒: 有绑定的设备刚离线时, 在焦点设备 (最后有人操作的那台) 上响一次提示音 (MECHANICS 15.2)."""
         try:
             peers = self.sync.peers()
-            now_off = {st["id"] for st in self.sync.device_states() if st["id"] in peers and not st["online"]}
+            sts = {st["id"]: st for st in self.sync.device_states() if st["id"] in peers and not st["online"]}
+            now_off = set(sts)
         except Exception:
             return
         was = getattr(self, "_offline_seen", None)
@@ -5056,7 +5057,11 @@ class BreakTimerApp:
         if was is None or not (now_off - was) or not self.sync.is_latest_active():
             return                                   # 刚打开时已经离线的不响
         names = ", ".join(str(peers[i].get("name") or "?") for i in sorted(now_off - was))
-        self._log_notice(f"SYNC offline {names}")
+        # 记下为什么算离线 (最近一次同步失败的原因, 多久没有它的消息), 以后好查
+        why = "; ".join(f"{peers[i].get('name') or '?'}: err={sts[i].get('err') or '-'} "
+                        f"silent={int((time.time() * 1000 - float(sts[i].get('seen') or 0)) / 1000)}s"
+                        f"{' outdated' if sts[i].get('outdated') else ''}" for i in sorted(now_off - was))
+        self._log_notice(f"SYNC offline {names} ({why})")
         self._play_chime()
         toast.warn(tr("{name} 离线了.", name=names), clear=True)   # 离线消息黑雾也不遮 (18.3)
 

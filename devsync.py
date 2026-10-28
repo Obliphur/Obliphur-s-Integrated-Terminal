@@ -46,13 +46,18 @@ PROTO = 1
 HTTP_PORT = 17930          # 被占用时依次尝试到 17939
 UDP_PORT = 17931
 SYNC_EVERY = 20            # 秒: 母端每隔这么久向每台子端发一次同步请求
-# 设备离线 (Timer 页显示"离线", 这段专注记为空闲, MECHANICS 8.4): 和它同步失败, 或这么久没有它的消息.
-# 比同步间隔多留 5 秒 (同步本身要花时间, 正好 20 秒会每一轮都闪一下"离线"); 只是转交过来的设备再多等一轮
-OFFLINE_MS = (SYNC_EVERY + 5) * 1000
+SYNC_CONNECT = 5           # 秒: 连不上 (对方不在这个地址) 就去重新找地址, 不必久等
+SYNC_READ = 30             # 秒: 连上之后等回复. 手机被系统短暂冻结 / Wi-Fi 休眠时会 8 ~ 20 秒才回, 等得太短会白白算成失败
+# 设备离线 (Timer 页显示"离线", 这段专注记为空闲, MECHANICS 8.4): 这么久没有它的消息 (同步失败也要等这么久,
+# 只有 HARD_ERRORS 里这几种明确的失败立刻算). 留够三轮同步: 偶尔一次超时 / 对方卡几秒, 下一轮就恢复了, 不该闪一下"离线";
+# 离线的那段仍从最后一次有消息的时刻算起, 所以真的离线时专注记录不会少记; 只是转交过来的设备再多等一轮
+OFFLINE_MS = 3 * SYNC_EVERY * 1000
+# 同步失败的原因里, 下面这几种说明对方明确不接受 / 不在线 (不是偶然的网络问题): 不等 OFFLINE_MS, 马上算离线
+HARD_ERRORS = ("unpaired", "wipe-pending", "away", "peer-not-proxy", "not-proxy")
 UNBIND_WAIT_MS = 48 * 3600 * 1000       # 解除绑定要等这么久 (冷静期, 期间可以取消)
 EVICT_RETRY = 30                        # 秒: 解除绑定后还没送到的清空请求, 每隔这么久再送一次
 WIPES_KEEP = 50                         # 记住最近这么多个处理过的清空请求
-OFFLINE_FWD_MS = (2 * SYNC_EVERY + 5) * 1000
+OFFLINE_FWD_MS = OFFLINE_MS + (SYNC_EVERY + 5) * 1000
 # 关机 (MECHANICS 15.4): 一台设备最后发来的状态写着"收到关机指令" (off), 或者电量低于这么多 (%, 没在充电) 时突然离线,
 # 算作"关机": 效果和在线一样 (不算离线, 专注不记空闲, 合约不因它失败), 只是不同步. 重新同步上就恢复正常.
 # 前提是它开着开机自启动 (状态里 auto, MECHANICS 3.4 / 14.8): 没开 / 开不了的照旧算"离线".
@@ -253,6 +258,7 @@ class SyncService:
         self._httpd = None
         self._udp = None
         self._wake = threading.Event()
+        self._last_discover = 0.0
         self._busy = set()        # 正在和哪些设备同步 (同一台设备不同时跑两轮)
         # 每台设备离线的时间段 {id: [[开始毫秒, 结束毫秒或 None], …]}, 只在内存里 (MECHANICS 8.4)
         self._offline = {}
@@ -451,9 +457,13 @@ class SyncService:
     # ---- HTTP 客户端 ----
 
     @staticmethod
-    def _http(addr: str, port: int, method: str, path: str, body=None, timeout: float = 6.0):
+    def _http(addr: str, port: int, method: str, path: str, body=None, timeout: float = 6.0, read_timeout: float = None):
+        """timeout: 连接和读取各等多久; read_timeout: 连上之后等回复另算 (不给就和 timeout 一样)."""
         conn = http.client.HTTPConnection(addr, int(port), timeout=timeout)
         try:
+            if read_timeout is not None:
+                conn.connect()
+                conn.sock.settimeout(read_timeout)
             data = json.dumps(body).encode("utf-8") if body is not None else b""
             # GET 也写明 Content-Length: 0 —— 旧版手机端没有它时会一直读到连接关闭, 卡到超时 (timed out)
             conn.request(method, path, body=data,
@@ -976,7 +986,8 @@ class SyncService:
             else:
                 snap = self.runner.call(self.snapshot)
             env = seal(k, self.my_id, {"snap": snap, "init": init})
-            st, reply = self._http(p["addr"], p["port"], "POST", "/oit/v1/sync", env, timeout=10.0)
+            st, reply = self._http(p["addr"], p["port"], "POST", "/oit/v1/sync", env,
+                                   timeout=SYNC_CONNECT, read_timeout=SYNC_READ)
             if st == 401:
                 raise RuntimeError("unpaired")
             if st == 409 and reply.get("error") in ("initializing", "wipe-pending"):
@@ -1462,7 +1473,6 @@ class SyncService:
         self._wake.set()
 
     def _sync_loop(self):
-        last_discover = 0.0
         while not self.dead:
             self._wake.wait(SYNC_EVERY)
             self._wake.clear()
@@ -1473,18 +1483,34 @@ class SyncService:
                 continue
             # 母端向子端发请求; 子端只在还没初始化或按了"立即同步"时向母端发
             wipe_out = self.state.get("wipe_out") or {}
-            peers = {pid: p for pid, p in self.peers().items()
-                     if p.get("mother") == self.my_id or p.get("init") or manual or pid in wipe_out}
-            failed = [pid for pid in peers if self._sync_with(pid) is False]
-            # 有设备连不上: 地址可能变了 (DHCP), 广播找一下再试一次
-            if failed and time.time() - last_discover > 60:
-                last_discover = time.time()
+            peers = [pid for pid, p in self.peers().items()
+                     if p.get("mother") == self.my_id or p.get("init") or manual or pid in wipe_out]
+            # 每台设备各用一个线程: 一台卡住 (最多等 SYNC_READ 秒) 不拖慢别的设备, 每轮的间隔也不会被拉长.
+            # 上一轮还没完的设备这轮跳过 (_sync_with 返回 None)
+            for pid in peers:
+                threading.Thread(target=self._sync_peer, args=(pid,), daemon=True).start()
+
+    def _sync_peer(self, pid: str):
+        """一台设备的一轮同步. 失败了马上原地再试一次 (偶尔一次连接被重置 / 刚好卡住, 不该让下一整轮才恢复);
+        还不行, 地址可能变了 (DHCP): 广播找一下 (每分钟最多一次) 再试."""
+        try:
+            if self._sync_with(pid) is not False:
+                return
+            time.sleep(1.0)
+            if self._sync_with(pid) is not False:
+                return
+            with self.lock:
+                ok = time.time() - self._last_discover > 60
+                if ok:
+                    self._last_discover = time.time()
+            if ok:
                 try:
                     self.discover(1.5)
                 except OSError:
-                    pass
-                for pid in failed:
-                    self._sync_with(pid)
+                    return
+                self._sync_with(pid)
+        except Exception:       # noqa: BLE001 —— 一台设备出错不影响别的设备, 也不让这个线程留下报错
+            pass
 
     # ---- 给本机其他部分用: 其他设备的账 ----
 
@@ -1523,8 +1549,8 @@ class SyncService:
 
     def device_states(self) -> list:
         """其他设备此刻的状态 (绑定的, 和转交过来的): [{id, name, online, off, timer, net, since, seen, version, outdated}].
-        online: 绑定的设备 —— 最近一次同步没有失败, 而且 OFFLINE_MS 之内有它的消息, 版本也不比本机低
-                (outdated: 版本比本机低, 算离线);
+        online: 绑定的设备 —— OFFLINE_MS 之内有它的消息 (同步偶然失败一两次不算, 除非是 HARD_ERRORS 里明确的失败),
+                版本也不比本机低 (outdated: 版本比本机低, 算离线);
                 转交过来的设备 —— OFFLINE_FWD_MS 之内有它的消息.
         off: 关机 —— 连不上了, 但它最后的状态是收到关机指令 / 电量低于 LOW_BATTERY%; 这时 online 也是 True (效果和在线一样).
         net_off: 断网 —— 它换成了 Adapter 断网方式, 走之前告诉了大家 (MECHANICS 15.5); 不同步, 效果也和在线一样.
@@ -1545,8 +1571,9 @@ class SyncService:
                 seen = max(float(st.get("ts", 0)), float((p or {}).get("last_ok") or 0))
                 ver = str((p or {}).get("version") or "")
                 old = bool(mine and _vtuple(ver) and _vtuple(ver) < mine)
+                err = str((p or {}).get("last_err") or "")
                 if p is not None:
-                    online = not p.get("last_err") and now - seen < OFFLINE_MS and not old
+                    online = err not in HARD_ERRORS and now - seen < OFFLINE_MS and not old
                 else:
                     online = now - seen < OFFLINE_FWD_MS
                 net_off = not online and not old and bool(st.get("adapter"))
@@ -1556,7 +1583,8 @@ class SyncService:
                 out.append({"id": i, "name": str(name), "online": online or off or net_off, "off": off,
                             "net_off": net_off,
                             "timer": st.get("timer") or "idle", "net": st.get("net") or "",
-                            "since": st.get("since"), "seen": seen, "version": ver, "outdated": old})
+                            "since": st.get("since"), "seen": seen, "version": ver, "outdated": old,
+                            "err": err})
         return sorted(out, key=lambda d: d["name"])
 
     # ---- Adapter 断网 (MECHANICS 15.5) ----
@@ -2370,6 +2398,16 @@ def _selftest():
         spans = sc.offline_spans(t0 - 20 * 60_000, t0 + 60_000)
         assert spans == [(t0 - 10 * 60_000, t0 - 1000)], spans
         assert sc.offline_spans(t0, t0 + 60_000) == [], "重新上线之后不算离线"
+        # 同步偶然失败 (超时 / 对方卡了几秒): 还在 OFFLINE_MS 之内有它的消息就不算离线; 明确的失败 (away …) 马上算
+        sc.state["peers"]["pY"]["last_err"] = "timed out"
+        assert {d["id"]: d for d in sc.device_states()}["pY"]["online"], "偶然一次超时不算离线"
+        sc.state["peers"]["pY"]["last_ok"] = t0 - OFFLINE_MS - 1000
+        st = {d["id"]: d for d in sc.device_states()}["pY"]
+        assert not st["online"] and st["err"] == "timed out", "一直没有消息: 算离线"
+        sc.state["peers"]["pY"]["last_ok"] = t0
+        sc.state["peers"]["pY"]["last_err"] = "away"
+        assert not {d["id"]: d for d in sc.device_states()}["pY"]["online"], "对方明确不接受: 马上算离线"
+        sc.state["peers"]["pY"]["last_ok"] = t0 - 2 * OFFLINE_MS
         # 关机 (MECHANICS 15.4): 最后的状态是收到关机指令 / 电量低于 2% 时突然离线 → 关机, 效果和在线一样
         sc.state["peers"]["pY"]["last_err"] = "timeout"
         sc.state["status"]["pY"] = {"ts": t0 - 60_000, "timer": "running", "battery": 1, "auto": False}
@@ -2389,19 +2427,22 @@ def _selftest():
         sc.state["peers"]["pY"].pop("version")
         sc.state["peers"]["pY"]["last_err"] = ""
         sc.state["status"]["pY"] = {"ts": t0, "timer": "idle"}
+        sc.state["peers"]["pY"]["last_ok"] = t0
         # 本机关机的那段 (15.4) 也算进离线的时间段: 本机之后记下的专注里这段记为空闲
         sc.add_self_off(t0 - 50 * 60_000, t0 - 40 * 60_000)
         assert (t0 - 50 * 60_000, t0 - 40 * 60_000) in sc.offline_spans(t0 - 60 * 60_000, t0 - 30 * 60_000)
         sc.state["self_off"] = []
         # 断网 (15.5): 最后的状态写着 adapter → 断网, 效果和在线一样; 回来时记下断网的那一段
         sc.state["peers"]["pY"]["last_err"] = "timeout"
-        sc.state["status"]["pY"] = {"ts": t0 - 60_000, "timer": "running", "adapter": t0 - 3_600_000}
+        sc.state["peers"]["pY"]["last_ok"] = t0 - 2 * OFFLINE_MS
+        sc.state["status"]["pY"] = {"ts": t0 - 60_000 - OFFLINE_MS, "timer": "running", "adapter": t0 - 3_600_000}
         st = {d["id"]: d for d in sc.device_states()}["pY"]
         assert st["online"] and st["net_off"] and not st["off"], st
         sc.merge({"status": {"pY": {"ts": t0 + 1, "timer": "idle"}}})
         back = sc.pop_adapter_back()
         assert [(d, a) for d, a, _b in back] == [("pY", t0 - 3_600_000)] and sc.pop_adapter_back() == []
         sc.state["peers"]["pY"]["last_err"] = ""
+        sc.state["peers"]["pY"]["last_ok"] = t0
         sc.state["status"]["pY"] = {"ts": t0, "timer": "idle"}
         # 本机断网期间: 其他设备都算在线; 换回 Proxy 后记下结束的时刻
         sc.state["adapter_since"] = t0 - 1000

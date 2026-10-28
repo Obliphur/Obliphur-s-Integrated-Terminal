@@ -141,10 +141,17 @@ class SyncService(
         const val FILE_MAX = 1L shl 30
         /** 这么久之内同步过的设备才算"在线" (比较最后操作时间用). */
         const val FRESH_MS = 120_000L
-        /** 设备离线 (Timer 页显示"离线", 这段时间记为空闲, MECHANICS 8.4): 绑定的设备最后一次同步失败, 或者这么久没有它的消息.
-         *  比同步间隔多留 5 秒 (同步本身要花时间, 正好 20 秒会每一轮都闪一下"离线"); 只是转交过来的设备再多等一轮. 同 devsync.OFFLINE_MS. */
-        const val OFFLINE_MS = SYNC_EVERY_MS + 5_000L
-        const val OFFLINE_FWD_MS = 2 * SYNC_EVERY_MS + 5_000L
+        /** 同步时连不上 (对方不在这个地址) 就去重新找地址, 不必久等; 连上之后等回复: 对方被系统短暂冻结 / Wi-Fi 休眠时
+         *  会 8 ~ 20 秒才回, 等得太短会白白算成失败. 同 devsync.SYNC_CONNECT / SYNC_READ. */
+        const val SYNC_CONNECT_MS = 5_000
+        const val SYNC_READ_MS = 30_000
+        /** 设备离线 (Timer 页显示"离线", 这段时间记为空闲, MECHANICS 8.4): 这么久没有它的消息 (同步失败也要等这么久,
+         *  只有 HARD_ERRORS 里这几种明确的失败立刻算). 留够三轮同步: 偶尔一次超时 / 对方卡几秒, 下一轮就恢复了, 不该闪一下"离线";
+         *  离线的那段仍从最后一次有消息的时刻算起, 真的离线时专注记录不会少记; 只是转交过来的设备再多等一轮. 同 devsync.OFFLINE_MS. */
+        const val OFFLINE_MS = 3 * SYNC_EVERY_MS
+        const val OFFLINE_FWD_MS = OFFLINE_MS + SYNC_EVERY_MS + 5_000L
+        /** 同步失败的原因里, 这几种说明对方明确不接受 / 不在线 (不是偶然的网络问题): 不等 OFFLINE_MS, 马上算离线. */
+        val HARD_ERRORS = setOf("unpaired", "wipe-pending", "away", "peer-not-proxy", "not-proxy")
         /** 关机 (MECHANICS 15.4): 一台设备最后发来的状态写着"收到关机指令" (off), 或者电量低于这么多 (%, 没在充电) 时突然离线,
          *  算作"关机": 效果和在线一样 (不算离线, 专注不记空闲, 合约不因它失败), 只是不同步. 同 devsync.LOW_BATTERY.
          *  前提是它开着开机自启动 (状态里 auto): 没开 / 开不了的照旧算"离线". */
@@ -409,10 +416,11 @@ class SyncService(
         return Triple(first, headers, body)
     }
 
-    private fun http(addr: String, port: Int, method: String, path: String, body: JSONObject?, timeoutMs: Int = 6000): Pair<Int, JSONObject> {
+    private fun http(addr: String, port: Int, method: String, path: String, body: JSONObject?, timeoutMs: Int = 6000,
+                     readTimeoutMs: Int = timeoutMs): Pair<Int, JSONObject> {
         Socket().use { s ->
             s.connect(InetSocketAddress(addr, port), timeoutMs)
-            s.soTimeout = timeoutMs
+            s.soTimeout = readTimeoutMs
             val data = body?.toString()?.toByteArray(Charsets.UTF_8) ?: ByteArray(0)
             val head = "$method $path HTTP/1.1\r\nHost: $addr:$port\r\nContent-Type: application/json\r\n" +
                 "Content-Length: ${data.size}\r\nConnection: close\r\n\r\n"
@@ -1389,7 +1397,7 @@ class SyncService(
                 if (init) snapshot().put("docs", JSONObject()).put("ledgers", JSONObject()) else snapshot()
             }
             val env = SyncCrypto.seal(k, myId, JSONObject().put("snap", snap).put("init", init))
-            val (st, reply) = http(p.getString("addr"), p.getInt("port"), "POST", "/oit/v1/sync", env, 10_000)
+            val (st, reply) = http(p.getString("addr"), p.getInt("port"), "POST", "/oit/v1/sync", env, SYNC_CONNECT_MS, SYNC_READ_MS)
             if (st == 401) throw IllegalStateException("unpaired")
             // 对方是子端, 正在向本机要初始化的内容: 不是出错
             if (st == 409 && reply.optString("error") in setOf("initializing", "wipe-pending")) return null
@@ -1420,7 +1428,9 @@ class SyncService(
     }
 
     private fun onSync(env: JSONObject): Pair<Int, JSONObject> {
-        if (!runner.call { proxyOk() }) return 409 to JSONObject().put("error", "not-proxy")
+        // 界面线程 8 秒没空 (被系统放慢 / 刚解冻): 回 503 让对方下一轮再来, 不要让这个请求半路断掉
+        val proxy = try { runner.call { proxyOk() } } catch (e: Exception) { return 503 to JSONObject().put("error", e.message ?: "busy") }
+        if (!proxy) return 409 to JSONObject().put("error", "not-proxy")
         val from = env.optString("from")
         // 请求体读不出来 (例如超过大小上限): 以前当成"没绑定"回 401, 对方会显示 unpaired
         if (from.isEmpty()) return 400 to JSONObject().put("error", "bad-request")
@@ -1458,7 +1468,6 @@ class SyncService(
     }
 
     private fun syncLoop() {
-        var lastDiscover = 0L
         while (!dead) {
             synchronized(wake) {
                 if (!woken) wake.wait(SYNC_EVERY_MS)
@@ -1474,17 +1483,33 @@ class SyncService(
                 // 母端向子端发请求; 子端只在还没初始化或按了"立即同步"时向母端发
                 val wipeOut = lock.withLock { state.getJSONObject("wipe_out").keys().asSequence().toSet() }
                 val targets = peers().filter { (id, p) -> p.optString("mother") == myId || p.optBoolean("init") || wasManual || id in wipeOut }.keys
-                val failed = targets.filter { trySync(it) == false }
-                // 有设备连不上: 地址可能变了, 广播找一下再试一次
-                if (failed.isNotEmpty() && System.currentTimeMillis() - lastDiscover > 60_000) {
-                    lastDiscover = System.currentTimeMillis()
-                    runCatching { discover(1500) }
-                    failed.forEach { trySync(it) }
-                }
+                // 每台设备各用一个线程: 一台卡住 (最多等 SYNC_READ_MS) 不拖慢别的设备, 每轮的间隔也不会被拉长.
+                // 上一轮还没完的设备这轮跳过 (trySync 返回 null)
+                for (id in targets) Thread({ syncPeer(id) }, "oit-sync-$id").apply { isDaemon = true }.start()
             } catch (e: InterruptedException) {
                 if (dead) return
             } catch (_: Exception) {
             }
+        }
+    }
+
+    @Volatile private var lastDiscover = 0L
+
+    /** 一台设备的一轮同步. 失败了马上原地再试一次 (偶尔一次连接被重置 / 刚好卡住, 不该让下一整轮才恢复);
+     *  还不行, 地址可能变了: 广播找一下 (每分钟最多一次) 再试. */
+    private fun syncPeer(id: String) {
+        try {
+            if (trySync(id) != false) return
+            Thread.sleep(1000)
+            if (trySync(id) != false) return
+            val go = synchronized(wake) {
+                (System.currentTimeMillis() - lastDiscover > 60_000).also { if (it) lastDiscover = System.currentTimeMillis() }
+            }
+            if (go) {
+                runCatching { discover(1500) }
+                trySync(id)
+            }
+        } catch (_: Exception) {
         }
     }
 
@@ -1525,7 +1550,9 @@ class SyncService(
     class DeviceState(val id: String, val name: String, val online: Boolean, val status: JSONObject, val seen: Long,
                       val version: String = "", val outdated: Boolean = false, val off: Boolean = false,
                       /** 断网: 它换成了 Adapter 断网方式, 走之前告诉了大家 (MECHANICS 15.5); 不同步, 效果和在线一样. */
-                      val netOff: Boolean = false)
+                      val netOff: Boolean = false,
+                      /** 最近一次同步失败的原因 (没有失败时 ""), 写进日志好查"为什么离线". */
+                      val err: String = "")
 
     /** 绑定的设备里版本和本机不一样的 (知道版本的): (名字, 版本, 是否比本机新). */
     fun versionMismatch(): List<Triple<String, String, Boolean>> = lock.withLock {
@@ -1548,9 +1575,9 @@ class SyncService(
         return false
     }
 
-    /** 其他设备此刻的状态 (绑定的, 和转交过来的). online: 绑定的设备最后一次同步没有失败, 而且 OFFLINE_MS 之内有它的消息,
-     *  版本也不比本机低;
-     *  转交过来的设备 OFFLINE_FWD_MS 之内有消息. 不管它此刻在专注 / 休息 / 空闲, 同步失败就算离线. */
+    /** 其他设备此刻的状态 (绑定的, 和转交过来的). online: 绑定的设备 OFFLINE_MS 之内有它的消息 (同步偶然失败一两次不算,
+     *  除非是 HARD_ERRORS 里明确的失败), 版本也不比本机低;
+     *  转交过来的设备 OFFLINE_FWD_MS 之内有消息. 不管它此刻在专注 / 休息 / 空闲, 一直没有消息就算离线. */
     fun deviceStates(): List<DeviceState> = lock.withLock {
         val now = System.currentTimeMillis()
         if (pruneForwarded(now)) save()
@@ -1570,10 +1597,11 @@ class SyncService(
                 val seen = maxOf(p.optLong("last_ok"), st.optLong("ts"))
                 val ver = p.optString("version")
                 val old = mine != null && vparse(ver)?.let { vnewer(mine, it) } == true    // 版本比本机低: 算离线
-                val online = p.optString("last_err").isEmpty() && now - seen < OFFLINE_MS && !old
+                val err = p.optString("last_err")
+                val online = err !in HARD_ERRORS && now - seen < OFFLINE_MS && !old
                 val netOff = !online && !old && st.optLong("adapter", 0L) > 0      // 换成了 Adapter 断网 (15.5)
                 val off = !online && !old && !netOff && wentOff(st)
-                DeviceState(id, name, online || off || netOff, st, seen, ver, old, off, netOff)
+                DeviceState(id, name, online || off || netOff, st, seen, ver, old, off, netOff, err)
             } else {
                 val seen = st.optLong("ts")
                 val online = now - seen < OFFLINE_FWD_MS
