@@ -4475,7 +4475,7 @@ class BreakTimerApp:
             path = config.asset_path("themes", "urban_will", "image", "prescript_mark.png")
             try:
                 img = tk.PhotoImage(file=path)
-                target = config.scaled(32)
+                target = config.scaled(20)
                 self._mark_img = img.subsample(max(1, round(img.width() / target)))
             except Exception:
                 self._mark_img = False
@@ -4530,10 +4530,13 @@ class BreakTimerApp:
             pass
 
     def _make_mark(self, name, b, img):
-        """标记: 按钮右端的一个小图 (不压在文字上). 点它等于点按钮, 鼠标移上去按钮照样高亮."""
+        """标记: 按钮一端的一个小图 (不压在文字上). 点它等于点按钮, 鼠标移上去按钮照样高亮."""
         lab = tk.Label(b, image=img, bd=0, highlightthickness=0, cursor="hand2",
                        bg=self._mark_bg(b, False))
-        lab.place(relx=1.0, x=-6, rely=0.5, anchor="e")
+        if name.startswith("nav:"):          # 侧边栏的文字靠左: 标记放右端; 专注 / 休息按钮的文字居中: 放左端
+            lab.place(relx=1.0, x=-6, rely=0.5, anchor="e")
+        else:
+            lab.place(relx=0.0, x=6, rely=0.5, anchor="w")
 
         def click(_e=None):
             try:
