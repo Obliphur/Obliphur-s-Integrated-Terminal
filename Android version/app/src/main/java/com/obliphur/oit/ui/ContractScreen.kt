@@ -225,9 +225,9 @@ private fun FitToScreen(minWidth: androidx.compose.ui.unit.Dp, content: @Composa
     }
 }
 
-/** 第 3 页的一块组合: 名字 (组合的颜色) + 状态, 凑齐要哪些词条. 凑齐了才亮. 效果不写在块里 (鼠标停在上面 / 最下面一行才写). */
+/** 第 3 页的一块组合: 名字 (组合的颜色) + 状态, 凑齐要哪些词条. 凑齐了才亮. 效果不写在块里 (点一下, 词条板下面一行才写). */
 @Composable
-private fun ComboCard(p: ContractColors, combo: Combo, state: String, modifier: Modifier = Modifier) {
+private fun ComboCard(p: ContractColors, combo: Combo, state: String, modifier: Modifier = Modifier, onClick: () -> Unit = {}) {
     val color = comboColor(p, combo)
     val on = state == "done"
     val status = when (state) {
@@ -236,7 +236,7 @@ private fun ComboCard(p: ContractColors, combo: Combo, state: String, modifier: 
         else -> tr("未凑齐")
     }
     val rim = if (on) color else if (state == "void") p.tileRim else p.tileOffRim
-    Column(modifier.background(p.sel).border(if (on) 2.dp else 1.dp, rim, RoundedCornerShape(2.dp)).padding(8.dp),
+    Column(modifier.background(p.sel).border(if (on) 2.dp else 1.dp, rim, RoundedCornerShape(2.dp)).clickable { onClick() }.padding(8.dp),
         verticalArrangement = Arrangement.spacedBy(3.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(tr(combo.name), color = color, fontSize = 13.sp, fontWeight = FontWeight.Bold,
@@ -282,6 +282,7 @@ fun ContractScreen() {
     val active = c.active
     val now = LocalDateTime.now()
     var tapped by rememberSaveable { mutableStateOf("") }
+    var tappedCombo by rememberSaveable { mutableStateOf("") }     // 组合页点过的组合: 效果写在词条板下面一行
     var ask by rememberSaveable { mutableStateOf("") }        // start / prestart / end / close:词条
     var preDelay by rememberSaveable { mutableStateOf(0) }    // 睡眠提醒: 至少会延迟多少分钟
     var page by rememberSaveable { mutableStateOf(0) }
@@ -370,7 +371,7 @@ fun ContractScreen() {
                     val combos = if (active) c.combos() else Contract.COMBOS.map { it to Contract.comboState(it, c.draft) }
                     Column(Modifier.weight(1f).padding(gap), verticalArrangement = Arrangement.spacedBy(gap)) {
                         for (row in combos.chunked(2)) Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
-                            for ((combo, state) in row) ComboCard(p, combo, state, Modifier.weight(1f))
+                            for ((combo, state) in row) ComboCard(p, combo, state, Modifier.weight(1f)) { tappedCombo = combo.id }
                             if (row.size == 1) Spacer(Modifier.weight(1f))
                         }
                     }
@@ -425,8 +426,14 @@ fun ContractScreen() {
         // 点过的词条的内容 | 翻页
         Row(verticalAlignment = Alignment.CenterVertically) {
             var text = ""
-            if (comboPage) text = tr("凑齐列出的词条 / 词条系列时生效")
-            else if (tapped.isNotEmpty()) {
+            if (comboPage) {
+                val tc = Contract.COMBOS_BY_ID[tappedCombo]
+                text = if (tc == null) tr("凑齐列出的词条 / 词条系列时生效") else {
+                    val note = Contract.themeNote(tc, bonusTheme)
+                    tr(tc.name) + "   " + tr("需要") + ": " + tc.reqs.joinToString(" · ") { tr(Contract.reqName(it)) } +
+                        "   ·   " + tr(tc.desc).replace("\n", "  ·  ") + if (note.isNotEmpty()) "  ·  " + tr(note) else ""
+                }
+            } else if (tapped.isNotEmpty()) {
                 text = "${marks(Contract.BY_ID[tapped]!!.level)}  " + termLine(tapped)
                 val other = Contract.blockedBy(tapped, sel)
                 if (other != null && tapped !in sel) text += "  " + tr("[与 {name} 冲突]", "name" to termName(other))
