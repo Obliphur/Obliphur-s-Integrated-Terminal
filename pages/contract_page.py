@@ -78,7 +78,7 @@ OPS = {
 
 DEEP = {
     **OPS,
-    "bg": "#062718", "text": "#e8f2ec", "dim": "#8cc2a0", "line": "#e0782b",
+    "bg": "#000000", "text": "#e8f2ec", "dim": "#8cc2a0", "line": "#e0782b",
     "board": "#78a589", "band": "#053922", "band_text": "#e3f0e6", "band_dim": "#86bf9b",
     "tile": "#14593a", "tile_text": "#eef6f0", "tile_rim": "#58a073", "tile_rim4": "#e0782b",
     "tile_on": "#1c9c4f", "tile_on_text": "#ffffff", "tile_on_rim": "#8ff2b3",

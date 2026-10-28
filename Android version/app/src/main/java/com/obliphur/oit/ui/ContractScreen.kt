@@ -117,7 +117,7 @@ val OPS_COLORS = ContractColors(
 
 /** "渊默": 参考渊默行动的配色: 深绿灰的页面, 绿灰的词条板和格子, 深绿色的选中, 橙色的标签 / 开始按钮 (同电脑版 DEEP). */
 val DEEP_COLORS = ContractColors(
-    bg = c(0x062718), text = c(0xe8f2ec), dim = c(0x8cc2a0), line = c(0xe0782b),
+    bg = c(0x000000), text = c(0xe8f2ec), dim = c(0x8cc2a0), line = c(0xe0782b),
     board = c(0x78a589), band = c(0x053922), bandText = c(0xe3f0e6), bandDim = c(0x86bf9b),
     tile = c(0x14593a), tileText = c(0xeef6f0), tileRim = c(0x58a073),
     tileOn = c(0x1c9c4f), tileOnText = c(0xffffff), tileOnRim = c(0x8ff2b3),
