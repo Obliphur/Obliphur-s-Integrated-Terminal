@@ -730,6 +730,7 @@ class BreakTimerApp:
             on_language=self.on_language_changed,
             on_font_scale=self.on_font_scale_changed,
             on_theme=self.on_theme_changed,
+            on_contract_theme=self.rebuild_ui,
             on_end_setup=self.end_setup_period,
             updater=self.updater,
             on_update_check=lambda: self.check_update(auto=False),

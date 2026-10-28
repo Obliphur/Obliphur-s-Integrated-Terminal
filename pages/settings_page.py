@@ -21,7 +21,8 @@ class SettingsPage(tk.Frame):
                  on_dev_mode=None, on_language=None, on_font_scale=None,
                  on_theme=None, on_end_setup=None, updater=None, on_update_check=None,
                  on_update_install=None, on_update_relay=None, sync=None, achievements=None,
-                 on_open_achievements=None, data_dir=None, recording=None, on_delete_record=None):
+                 on_open_achievements=None, data_dir=None, recording=None, on_delete_record=None,
+                 on_contract_theme=None):
         super().__init__(master, bg=COLORS["bg"])
         self.sm = settings
         self.ach_store = achievements
@@ -49,6 +50,7 @@ class SettingsPage(tk.Frame):
         self.on_language = on_language
         self.on_font_scale = on_font_scale
         self.on_theme = on_theme
+        self.on_contract_theme = on_contract_theme
         self.on_end_setup = on_end_setup
         self.setup_card = None
         self._rows = {}          # 选项类设置的行 (各页上半部分)
@@ -606,8 +608,11 @@ class SettingsPage(tk.Frame):
         if "FONT_SCALE" in keys and self.on_font_scale:
             self.on_font_scale()
             return True
-        if ("THEME" in keys or "CONTRACT_THEME" in keys) and self.on_theme:
+        if "THEME" in keys and self.on_theme:
             self.on_theme()
+            return True
+        if "CONTRACT_THEME" in keys and self.on_contract_theme:      # 只重建界面, 不弹界面主题的提示
+            self.on_contract_theme()
             return True
         return False
 
