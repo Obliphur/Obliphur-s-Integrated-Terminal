@@ -11,6 +11,11 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -68,9 +73,9 @@ fun PrescriptScreen(onExit: () -> Unit) {
     // ---- 目标文字 ----
     // 永远只显示最新的一条指令 (开发者模式下同时有几条, 旧的在后台照常判定, 不显示)
     val latest = eng.current
-    // V 结束 (完成 / 作废) 之后立刻回到等待领取的样子, 不播动画
+    // 空闲词条结束 (完成 / 作废) 之后立刻回到等待领取的样子, 不播动画
     val prevType = remember { arrayOf("") }
-    val vEnded = prevType[0] == "V" && latest == null
+    val vEnded = prevType[0] in Prescript.IDLE_ENTRIES && latest == null
     SideEffect { prevType[0] = latest?.optString("type") ?: "" }
     val bodyTarget = if (latest == null) tr("谨遵指令之意") else {
         val n = if (latest.isNull("n")) 0 else latest.optInt("n")
@@ -128,6 +133,16 @@ fun PrescriptScreen(onExit: () -> Unit) {
     val busy = bodyShown != bodyTarget || codesShown != codesTarget
     val can = eng.canDraw() && !busy
 
+    // X 词条: 领到之后 (正文打完了) 自动打开一次输入框; 这条指令没了输入框也收起来
+    var editing by remember { mutableStateOf(false) }
+    var editorFor by remember { mutableStateOf("") }
+    val isLog = latest?.optString("type") == "X"
+    LaunchedEffect(isLog, latest?.optString("id"), busy) {
+        if (!isLog) editing = false
+        else if (!busy && editorFor != latest?.optString("id")) { editorFor = latest?.optString("id") ?: ""; editing = true }
+    }
+    BackHandler(enabled = editing) { eng.abandonLog(); editing = false }       // 没保存就关: 等于没改, 作废
+
     Box(Modifier.fillMaxSize().background(Color.Black).navigationBarsPadding()) {
         Column(
             Modifier.align(Alignment.Center).fillMaxWidth(0.85f),
@@ -166,6 +181,40 @@ fun PrescriptScreen(onExit: () -> Unit) {
         Text(
             "×", color = Color(0xFF2A3535), fontSize = 20.sp,
             modifier = Modifier.align(Alignment.TopStart).clickable { onExit() }.padding(horizontal = 14.dp, vertical = 8.dp),
+        )
+        if (editing && isLog) LogEditor(
+            initial = eng.logPrefill(),
+            onSave = { eng.submitLog(it); editing = false },
+            onClose = { eng.abandonLog(); editing = false },
+        )
+    }
+}
+
+/** X 词条的输入框: 整页盖在指令页上, 像一个普通的 txt (黑底白字, 蓝色光标). */
+@Composable
+private fun LogEditor(initial: String, onSave: (String) -> Unit, onClose: () -> Unit) {
+    var text by remember { mutableStateOf(initial) }
+    Box(Modifier.fillMaxSize().background(Color.Black).imePadding().clickable(enabled = false) {}) {
+        Column(Modifier.align(Alignment.Center).fillMaxWidth(0.92f).fillMaxHeight(0.8f)) {
+            Box(
+                Modifier.weight(1f).fillMaxWidth().border(1.dp, Color(0xFF2A3535))
+                    .background(Color(0xFF050505)).padding(12.dp),
+            ) {
+                BasicTextField(
+                    value = text, onValueChange = { text = it },
+                    textStyle = TextStyle(color = Color.White, fontSize = 14.sp),
+                    cursorBrush = SolidColor(CODE_BLUE),
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+            Text(
+                tr("- 保存 -"), color = Color.White, fontSize = 16.sp, textAlign = TextAlign.End,
+                modifier = Modifier.fillMaxWidth().clickable { onSave(text) }.padding(top = 10.dp, bottom = 6.dp, end = 4.dp),
+            )
+        }
+        Text(
+            "×", color = Color(0xFF2A3535), fontSize = 20.sp,
+            modifier = Modifier.align(Alignment.TopStart).clickable { onClose() }.padding(horizontal = 14.dp, vertical = 8.dp),
         )
     }
 }

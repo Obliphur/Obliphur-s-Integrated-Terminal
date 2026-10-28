@@ -12,6 +12,7 @@ import kotlin.random.Random
  * 时间都按墙上时间算; 关掉程序期间照常流逝.
  */
 object Prescript {
+    /** 池子里的六列; V 是空闲词条 (见 IDLE_ENTRIES). */
     val TYPES = listOf("I", "II", "III", "IV", "V", "VI")
 
     /** 每个池子里六条指令的概率: I, II, III, IV, V, VI */
@@ -21,9 +22,35 @@ object Prescript {
         "idle" to doubleArrayOf(0.1, 0.02, 0.02, 0.04, 0.80, 0.02),
     )
 
-    /** 领取后多久作废 (秒); IV 在这一天结束时作废. */
-    val EXPIRY_SECONDS = mapOf("I" to 3600L, "II" to 8 * 3600L, "III" to 3600L, "V" to 300L, "VI" to 3600L)
-    val FIXED_T = mapOf("I" to 1.0, "III" to 1.0, "IV" to 1.0, "V" to 0.1, "VI" to 1.0)
+    /** 领取后多久作废 (秒); IV 在这一天结束时作废. 空闲词条 (IDLE_ENTRIES) 没有时限. */
+    val EXPIRY_SECONDS = mapOf("I" to 3600L, "II" to 8 * 3600L, "III" to 3600L, "VI" to 3600L)
+
+    /**
+     * 空闲池里 V 那 0.8 由这几个词条平分. body 正文; minutes 自动完成要几分钟 (0 = 没有计时);
+     * word 蓝色代码的词; windows 设备时间的哪几段里它的概率被抬高 (起止时分, 左闭右开).
+     */
+    class IdleEntry(val body: String, val minutes: Int, val word: String, val windows: List<IntArray>)
+
+    val IDLE_ENTRIES = linkedMapOf(
+        "V" to IdleEntry("立即停下任何活动,接下来的5min什么也不做.", 5, "STOP", emptyList()),
+        "VII" to IdleEntry("到开阔场地进行运动,持续20min.", 20, "EXERCISE", listOf(intArrayOf(6, 30, 7, 30))),
+        "VIII" to IdleEntry("进行一次淋浴.", 10, "SHOWER", listOf(intArrayOf(13, 0, 14, 30), intArrayOf(19, 0, 20, 0))),
+        "IX" to IdleEntry("凝视天空.", 5, "GAZE", listOf(intArrayOf(9, 0, 10, 0), intArrayOf(21, 0, 22, 30))),
+        "X" to IdleEntry("记录,核对并反思这一天的活动.", 0, "RECORD", listOf(intArrayOf(23, 0, 24, 0))),
+        "XI" to IdleEntry("打扫并整理房间.", 15, "CLEAN", listOf(intArrayOf(11, 0, 12, 0), intArrayOf(20, 0, 21, 0))),
+    )
+    val IDLE_KINDS: List<String> = IDLE_ENTRIES.keys.toList()
+    val ALL_TYPES: List<String> = TYPES + IDLE_KINDS.filter { it !in TYPES }
+    /** 时间段对得上的词条拿走这一格概率的 80%, 其余词条平分剩下的. */
+    const val IDLE_BOOST = 0.8
+    /** 每次空闲池抽取之后, 下一次改抽专注池的概率; 没触发 +25%, 触发后回到 25%. */
+    const val FOCUS_CHANCE_START = 0.25
+    const val FOCUS_CHANCE_STEP = 0.25
+    const val LOG_KEEP_DAYS = 30
+
+    /** t = 分钟数 × 0.02 (5 分钟 0.1); X 没有计时, t 固定 0.1. */
+    val FIXED_T: Map<String, Double> = mapOf("I" to 1.0, "III" to 1.0, "IV" to 1.0, "VI" to 1.0) +
+        IDLE_ENTRIES.mapValues { (_, e) -> if (e.minutes == 0) 0.1 else Math.round(e.minutes * 0.02 * 1000) / 1000.0 }
     const val FOCUS_TARGET = 50 * 60.0
     /** III (旧存档里没有分钟数的): 20 分钟休息. */
     const val BREAK_TARGET = 20 * 60.0
@@ -36,7 +63,7 @@ object Prescript {
     const val CODE_WIDTH = 8
     const val CODE_LEFT = "_%"
     const val CODE_RIGHT = "%."
-    /** 每个用户同时最多持有几条指令, 满了就不能再领. */
+    /** 每个用户同时最多持有几条指令, 满了就不能再领 (没有领取冷却). */
     const val KEEP = 3
     const val DEV_KEEP = KEEP
 
@@ -67,7 +94,8 @@ object Prescript {
         (remainingSeconds * REST_SHARE / 60).toInt().coerceIn(1, REST_MAX_MIN)
 
     /** 每条指令的蓝色代码用的词 (补位后正好 8 个字符以内). */
-    val TYPE_WORDS = mapOf("I" to "FOCUS", "II" to "CONTRACT", "III" to "REST", "IV" to "DAILY", "V" to "STOP", "VI" to "REFLECT")
+    val TYPE_WORDS: Map<String, String> = mapOf("I" to "FOCUS", "II" to "CONTRACT", "III" to "REST", "IV" to "DAILY", "VI" to "REFLECT") +
+        IDLE_ENTRIES.mapValues { it.value.word }
 
     fun typeCode(kind: String): String = TYPE_WORDS[kind] ?: "NONE"
 
@@ -108,7 +136,7 @@ class PrescriptEngine(
     private val grantRestFn: ((Int, String) -> Unit)? = null,
     private val blockedFn: () -> Boolean = { false },
     private val devFn: () -> Boolean = { false },
-    /** 领取 V 时暂停后台正在播放的音频 / 视频. */
+    /** 领取空闲词条 (IDLE_ENTRIES) 时暂停后台正在播放的音频 / 视频. */
     private val pauseMediaFn: (() -> Unit)? = null,
     /** 用户剩余的休息时间 (秒): 休息中是这次休息的倒计时, 否则是积攒的休息时间. */
     private val remainingRestFn: () -> Double = { 0.0 },
@@ -117,6 +145,8 @@ class PrescriptEngine(
     private val onChange: (() -> Unit)? = null,
     /** 有一条指令被完成了 (播完成音效). */
     private val onComplete: (() -> Unit)? = null,
+    /** 今天的整点记录 (没启用返回空串), X 词条的输入框第一段. */
+    private val hourLogFn: () -> String = { "" },
     private val rng: Random = Random.Default,
 ) {
     private var data: JSONObject = load()
@@ -132,14 +162,15 @@ class PrescriptEngine(
 
     private fun load(): JSONObject {
         val d = Store.readObj(file) ?: JSONObject()
-        for (k in listOf("pending", "granted", "history", "extra")) {
+        for (k in listOf("pending", "granted", "history", "extra", "run", "closes")) {
             if (d.optJSONArray(k) == null) d.put(k, JSONArray())
         }
-        if (d.optJSONObject("daily") == null) d.put("daily", JSONObject())
+        for (k in listOf("daily", "logs")) if (d.optJSONObject(k) == null) d.put(k, JSONObject())
         if (d.optJSONObject("current") == null) d.put("current", JSONObject.NULL)
-        for (k in listOf("last_draw")) if (!d.has(k)) d.put(k, JSONObject.NULL)
         for (k in listOf("last_pool", "last_type")) if (!d.has(k)) d.put(k, "")
-        if (!d.has("v_reset")) d.put("v_reset", false)
+        if (!d.has("force_focus")) d.put("force_focus", false)
+        val chance = d.optDouble("focus_chance", Prescript.FOCUS_CHANCE_START)
+        d.put("focus_chance", if (chance.isNaN()) Prescript.FOCUS_CHANCE_START else chance.coerceIn(0.0, 1.0))
         return d
     }
 
@@ -170,6 +201,7 @@ class PrescriptEngine(
                 finish("expired", now.toLocalDate().atStartOfDay(), save = false, notify = false, settle = false, cur = cur)
             }
         }
+        data.put("run", JSONArray())
         for (k in daily.keys().asSequence().toList()) daily.remove(k)
         daily.put("date", day)
             .put("n_ii", rng.nextInt(1, 21))
@@ -201,15 +233,12 @@ class PrescriptEngine(
     private fun page(): String = try { pageFn() } catch (_: Exception) { "" }
     private fun minimized(): Boolean = try { minimizedFn() } catch (_: Exception) { true }
 
+    /** 现在能不能领: 没有冷却, 但手里已经有 KEEP 条就领不了; 专注指令 (I) 没完成 / 作废之前也不能领新的. */
     @Synchronized
     fun canDraw(now: LocalDateTime = LocalDateTime.now()): Boolean {
-        if (actives().size >= Prescript.KEEP) return false           // 手里满了就领不了
-        if (dev()) return true                                       // 开发者模式: 没有冷却
-        if (data.optBoolean("v_reset")) return true
-        val last = parseIso(data.optString("last_draw")) ?: return true
-        if (last.isAfter(now)) return true
-        val boundary = last.floorHour().plusHours(1)
-        return !now.isBefore(boundary)
+        val acts = actives()
+        if (acts.size >= Prescript.KEEP) return false
+        return acts.none { it.optString("type") == "I" }
     }
 
     private fun available(kind: String, now: LocalDateTime): Boolean {
@@ -218,14 +247,24 @@ class PrescriptEngine(
             if (daily.optBoolean("iv_done")) return false
             return todayHoursFn() < daily.optDouble("n_iv", 8.0) - 1e-9
         }
-        if (kind == "V") return page() == "prescript" && !minimized()
+        if (kind in Prescript.IDLE_ENTRIES) return page() == "prescript" && !minimized()
         if (kind == "VI") return !(try { contractActiveFn() } catch (_: Exception) { false })   // 合约期间抽不到 VI
         return true
     }
 
-    private fun weights(pool: String, now: LocalDateTime): DoubleArray {
+    private fun poolNow(): String {
+        val mode = stateFn()
+        if (mode == "focus" || mode == "break") return mode
+        val inContract = try { contractActiveFn() } catch (_: Exception) { false }
+        return if (inContract) listOf("focus", "break").random(rng) else "idle"     // 合约期间空闲: 随机抽专注 / 休息池
+    }
+
+    private fun run(): List<String> = data.getJSONArray("run").strings()
+
+    internal fun weights(pool: String, now: LocalDateTime): DoubleArray {
         val w = (Prescript.POOLS[pool] ?: Prescript.POOLS.getValue("idle")).copyOf()
-        var usable = w.indices.filter { w[it] > 0 && available(Prescript.TYPES[it], now) }
+        val run = if (pool == "idle") run().toSet() else emptySet()     // 连续空闲抽取里抽到过的 (V 除外) 不再抽
+        var usable = w.indices.filter { w[it] > 0 && Prescript.TYPES[it] !in run && available(Prescript.TYPES[it], now) }
         if (usable.isEmpty()) usable = w.indices.filter { w[it] > 0 }
         if (usable.isEmpty()) usable = w.indices.toList()
         val lost = w.indices.filter { w[it] > 0 && it !in usable }.sumOf { w[it] }
@@ -234,17 +273,51 @@ class PrescriptEngine(
         return w
     }
 
-    private fun pick(pool: String, now: LocalDateTime): String {
+    /** 设备现在的时间落在这个词条的时间段里吗. */
+    fun inWindow(kind: String, now: LocalDateTime): Boolean {
+        val minute = now.hour * 60 + now.minute
+        return Prescript.IDLE_ENTRIES.getValue(kind).windows.any { minute >= it[0] * 60 + it[1] && minute < it[2] * 60 + it[3] }
+    }
+
+    /** 现在概率被抬高的空闲词条: 时间段对得上、而且这一轮还没抽到过的; 没有就是 V (空闲5min). */
+    @Synchronized
+    fun idleBoost(now: LocalDateTime = LocalDateTime.now()): String {
+        val run = run().toSet()
+        return Prescript.IDLE_KINDS.firstOrNull { it != "V" && it !in run && inWindow(it, now) } ?: "V"
+    }
+
+    /** 空闲池里 V 这一格的概率 (mass) 拆给各个空闲词条: 抬高的拿 80%, 其余还能抽的平分剩下的. */
+    private fun idleSplit(mass: Double, now: LocalDateTime): List<Pair<String, Double>> {
+        val run = run().toSet()
+        val cands = Prescript.IDLE_KINDS.filter { it == "V" || it !in run }
+        val boosted = idleBoost(now)
+        val others = cands.filter { it != boosted }
+        if (others.isEmpty()) return listOf(boosted to mass)
+        return listOf(boosted to mass * Prescript.IDLE_BOOST) +
+            others.map { it to mass * (1.0 - Prescript.IDLE_BOOST) / others.size }
+    }
+
+    /** 这个池子现在每条指令的概率; 空闲池里 V 那一格已经拆给各个空闲词条. */
+    @Synchronized
+    fun choices(pool: String, now: LocalDateTime = LocalDateTime.now()): List<Pair<String, Double>> {
         val w = weights(pool, now)
+        val out = ArrayList<Pair<String, Double>>()
+        for ((i, kind) in Prescript.TYPES.withIndex()) {
+            if (w[i] <= 0) continue
+            if (kind == "V" && pool == "idle") out.addAll(idleSplit(w[i], now)) else out.add(kind to w[i])
+        }
+        return out
+    }
+
+    private fun pick(pool: String, now: LocalDateTime): String {
+        val options = choices(pool, now)
         val roll = rng.nextDouble()
         var acc = 0.0
-        for (i in w.indices) {
-            if (w[i] <= 0) continue
-            acc += w[i]
-            if (roll < acc) return Prescript.TYPES[i]
+        for ((kind, weight) in options) {
+            acc += weight
+            if (roll < acc) return kind
         }
-        for (i in w.indices.reversed()) if (w[i] > 0) return Prescript.TYPES[i]
-        return "I"
+        return options.lastOrNull()?.first ?: "I"
     }
 
     // ---- 领取 ----
@@ -262,11 +335,12 @@ class PrescriptEngine(
         }
         var pool = pool0
         if (pool == null) {
-            pool = stateFn().let { if (it in Prescript.POOLS) it else "idle" }
-            // 上一次是空闲池里的 V: 这一次从专注池抽.
-            if (data.optString("last_pool") == "idle" && data.optString("last_type") == "V") pool = "focus"
+            // 上一次空闲池抽取触发了: 这一次改抽专注池 (不看当时的状态).
+            pool = if (data.optBoolean("force_focus")) "focus" else poolNow()
+            data.put("force_focus", false)
         }
-        val kind = if (choose != null && choose in Prescript.TYPES) choose else pick(pool, now)
+        if (pool == "idle" && data.optString("last_pool") != "idle") data.put("run", JSONArray())   // 重新进入空闲池: 这一轮重新算
+        val kind = if (choose != null && choose in Prescript.ALL_TYPES) choose else pick(pool, now)
         val daily = ensureDay(now)
         var n: Int? = null
         val body = when (kind) {
@@ -274,25 +348,42 @@ class PrescriptEngine(
             "II" -> { n = daily.optInt("n_ii", 1); "完成一次至少${n}级的合约." }
             "III" -> { n = Prescript.restMinutes(try { remainingRestFn() } catch (_: Exception) { 0.0 }); "休息${n}min." }
             "IV" -> { n = daily.optInt("n_iv", 5); "今天专注至少$n h" }
-            "V" -> "立即停下任何活动,接下来的5min什么也不做."
+            in Prescript.IDLE_ENTRIES -> Prescript.IDLE_ENTRIES.getValue(kind).body
             else -> "检查你的统计数据,并作简要反思."
         }
-        val expires = if (kind == "IV") now.toLocalDate().plusDays(1).atStartOfDay()
-        else now.plusSeconds(Prescript.EXPIRY_SECONDS[kind] ?: 3600L)
+        val idle = Prescript.IDLE_ENTRIES[kind]
+        // 空闲词条没有作废时限, 只有自动完成的时刻 due; 其他指令到 expires 作废
+        val expires: LocalDateTime? = when {
+            kind == "IV" -> now.toLocalDate().plusDays(1).atStartOfDay()
+            idle != null -> null
+            else -> now.plusSeconds(Prescript.EXPIRY_SECONDS[kind] ?: 3600L)
+        }
+        val due: LocalDateTime? = if (idle != null && idle.minutes > 0) now.plusMinutes(idle.minutes.toLong()) else null
         val cur = JSONObject()
             .put("id", now.format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMddHHmmss")) + "-%03d".format(rng.nextInt(1000)))
             .put("type", kind).put("body", body)
-            .put("accepted", now.iso()).put("expires", expires.iso())
+            .put("accepted", now.iso()).put("expires", expires?.iso() ?: JSONObject.NULL)
+            .put("due", due?.iso() ?: JSONObject.NULL)
             .put("pool", pool).put("n", n ?: JSONObject.NULL)
             // III 的 t (小时) = 休息时间 (小时) × 2; 其他是固定值
             .put("t", if (kind == "III") (n ?: 1) / 60.0 * 2 else Prescript.FIXED_T[kind] ?: 0.0)
             .put("focus_sec", 0.0).put("break_sec", 0.0).put("stats_since", JSONObject.NULL)
         data.put("current", cur)
-        data.put("last_draw", now.iso()).put("last_pool", pool).put("last_type", kind).put("v_reset", false)
+        data.put("last_pool", pool).put("last_type", kind)
+        if (pool == "idle") {
+            if (kind != "V") data.getJSONArray("run").put(kind)
+            // 每次空闲池抽取都有一定概率让下一次改抽专注池, 没触发概率 +25%, 触发后回到 25%
+            val chance = data.optDouble("focus_chance", Prescript.FOCUS_CHANCE_START)
+            if (rng.nextDouble() < chance) {
+                data.put("force_focus", true).put("focus_chance", Prescript.FOCUS_CHANCE_START)
+            } else {
+                data.put("focus_chance", minOf(1.0, chance + Prescript.FOCUS_CHANCE_STEP))
+            }
+        }
         lastTick = now
         dirty = true
         save()
-        if (kind == "V") try { pauseMediaFn?.invoke() } catch (_: Exception) {}
+        if (kind in Prescript.IDLE_ENTRIES) try { pauseMediaFn?.invoke() } catch (_: Exception) {}
         changed()
         return cur
     }
@@ -344,20 +435,17 @@ class PrescriptEngine(
 
     // ---- 判定 ----
 
-    /** V: 页面 / 界面刚一变化就判一次 (不用等下一秒的 tick). */
+    /** 空闲词条: 页面 / 界面刚一变化就判一次 (不用等下一秒的 tick). */
     @Synchronized
     fun checkVisible(now0: LocalDateTime = LocalDateTime.now()) {
         if (page() == "prescript" && !minimized()) return
         val now = now0.withNano(0)
         for (cur in actives()) {
-            if (cur.optString("type") == "V") {
-                data.put("v_reset", true)
-                finish("void", now, cur = cur)
-            }
+            if (cur.optString("type") in Prescript.IDLE_ENTRIES) finish("void", now, cur = cur)
         }
     }
 
-    /** 切页 / 退到后台时调用: V 立即作废, VI 的连续停留立即清零. */
+    /** 切页 / 退到后台时调用: 空闲词条立即作废, VI 的连续停留立即清零. */
     @Synchronized
     fun pageChanged(now: LocalDateTime = LocalDateTime.now()) {
         checkVisible(now)
@@ -414,11 +502,13 @@ class PrescriptEngine(
             return if (cutoff.isAfter(prev)) secondsBetween(prev, cutoff) else 0.0
         }
         when (kind) {
-            "V" -> {
-                if (page() != "prescript" || minimized()) {
-                    data.put("v_reset", true); finish("void", now, cur = cur); return
+            in Prescript.IDLE_ENTRIES -> {
+                if (page() != "prescript" || minimized()) { finish("void", now, cur = cur); return }   // 离开指令页 / 退到后台: 作废
+                // 自动完成的时刻 (旧存档里的 V 只有 expires); X 没有计时, 等输入框保存
+                val due = parseIso(cur.optString("due")) ?: expires
+                if (due != null && !now.isBefore(due)) {
+                    finish("completed", now, cur.optDouble("t", Prescript.FIXED_T[kind] ?: 0.1), cur = cur); return
                 }
-                if (expired) { data.put("v_reset", true); finish("completed", now, 0.1, cur = cur); return }
             }
             "I" -> {
                 if (stateFn() == "focus") { cur.put("focus_sec", cur.optDouble("focus_sec", 0.0) + gained()); dirty = true }
@@ -454,6 +544,86 @@ class PrescriptEngine(
                 if (expired) { finish("expired", now, cur = cur); return }
             }
         }
+    }
+
+    // ---- X: 记录输入框 ----
+
+    @Synchronized
+    fun activeOf(kind: String): JSONObject? = actives().firstOrNull { it.optString("type") == kind }
+
+    /** OIT 被手动关闭了 (X 的输入框第三段要写今天的这些时刻). */
+    @Synchronized
+    fun noteClose(now0: LocalDateTime = LocalDateTime.now()) {
+        val closes = data.getJSONArray("closes")
+        closes.put(now0.withNano(0).iso())
+        while (closes.length() > 50) closes.remove(0)
+        dirty = true
+        save()
+    }
+
+    private fun todayInstructionLines(now: LocalDateTime): List<String> {
+        val day = now.toLocalDate().key()
+        val rows = ArrayList<Triple<String, String, String>>()
+        for (rec in data.getJSONArray("history").objects()) {
+            if (rec.optString("accepted").startsWith(day))
+                rows.add(Triple(rec.optString("accepted"), rec.optString("body"), if (rec.optString("result") == "completed") "完成" else "废弃"))
+        }
+        for (cur in actives()) {
+            if (cur.optString("accepted").startsWith(day)) rows.add(Triple(cur.optString("accepted"), cur.optString("body"), "进行中"))
+        }
+        return rows.sortedBy { it.first }.map { (accepted, body, word) ->
+            val at = parseIso(accepted)
+            val head = if (at != null) "%02d:%02d  ".format(at.hour, at.minute) else ""
+            "$head${tr(body)} (${tr(word)})"
+        }
+    }
+
+    private fun todayCloseLines(now: LocalDateTime): List<String> {
+        val day = now.toLocalDate().key()
+        return data.getJSONArray("closes").strings().mapNotNull { v ->
+            parseIso(v)?.takeIf { it.toLocalDate().key() == day }?.let { "%02d:%02d".format(it.hour, it.minute) }
+        }
+    }
+
+    /**
+     * X 的输入框一开始的文字: 三段 -- 今天的整点记录 (没启用是空白) / 今天领到的指令和状态 /
+     * 今天 OIT 被手动关闭的时刻. 第一次生成时存下来, 保存时拿它判断用户改没改.
+     */
+    @Synchronized
+    fun logPrefill(now: LocalDateTime = LocalDateTime.now()): String {
+        val cur = activeOf("X")
+        if (cur != null && cur.has("log_base")) return cur.optString("log_base")
+        val hour = try { hourLogFn().trim() } catch (_: Exception) { "" }
+        val text = listOf(hour, todayInstructionLines(now).joinToString("\n"), todayCloseLines(now).joinToString("\n"))
+            .joinToString("\n\n")
+        if (cur != null) { cur.put("log_base", text); dirty = true }
+        return text
+    }
+
+    private fun normLog(text: String): String = text.replace("\r\n", "\n").trim()
+
+    /** 保存 X 的输入框: 一点没改视为作废, 改过视为完成 (文字存进 logs). 返回 "completed" / "void" / null. */
+    @Synchronized
+    fun submitLog(text: String, now0: LocalDateTime = LocalDateTime.now()): String? {
+        val cur = activeOf("X") ?: return null
+        val now = now0.withNano(0)
+        val base = if (cur.has("log_base")) cur.optString("log_base") else logPrefill(now)
+        if (normLog(text) == normLog(base)) {
+            finish("void", now, cur = cur)
+            return "void"
+        }
+        val logs = data.getJSONObject("logs")
+        logs.put(now.toLocalDate().key(), text)
+        logs.keys().asSequence().toList().sorted().dropLast(Prescript.LOG_KEEP_DAYS).forEach { logs.remove(it) }
+        finish("completed", now, cur.optDouble("t", Prescript.FIXED_T["X"] ?: 0.1), cur = cur)
+        return "completed"
+    }
+
+    /** 输入框没保存就关了: 等于没改, 作废. */
+    @Synchronized
+    fun abandonLog(now0: LocalDateTime = LocalDateTime.now()) {
+        val cur = activeOf("X") ?: return
+        finish("void", now0.withNano(0), cur = cur)
     }
 
     // ---- 结算休息时间 ----

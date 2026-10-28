@@ -303,6 +303,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onDestroy() {
+        // 用户自己退出了 OIT (不是转屏之类): 指令 X 的输入框第三段要写今天的这些时刻
+        if (isFinishing && !isChangingConfigurations) runCatching { app.core.prescript.noteClose() }
+        super.onDestroy()
+    }
+
     override fun onPause() {
         app.foreground = false
         app.core.uiForeground = false

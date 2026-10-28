@@ -19,7 +19,7 @@ import tkinter.font as tkfont
 import config
 from config import COLORS
 from i18n import tr
-from prescript import pad_code, type_code
+from prescript import IDLE_ENTRIES, pad_code, type_code
 
 IDLE_TEXT = "谨遵指令之意"
 SOUND_ALIAS = "oit_prescript"
@@ -60,6 +60,54 @@ class GlowText(tk.Canvas):
         self.create_text(cx, cy, text=text, font=self._font, fill=self._fg)
 
 
+class LogEditor(tk.Frame):
+    """X 词条的输入框: 整页盖在指令页上, 样子像一个普通的 txt (黑底白字, 蓝色光标); 保存 / 关闭由页面处理."""
+
+    def __init__(self, master, text, on_save, on_close):
+        super().__init__(master, bg="#000000")
+        self._on_save, self._on_close = on_save, on_close
+        box = tk.Frame(self, bg="#000000")
+        box.place(relx=0.5, rely=0.5, relwidth=0.7, relheight=0.78, anchor="center")
+        bar = tk.Frame(box, bg="#000000")
+        bar.pack(side="bottom", fill="x", pady=(config.scaled(8), 0))
+        body = tk.Frame(box, bg=EXIT_DIM, padx=1, pady=1)
+        body.pack(side="top", fill="both", expand=True)
+        self.text = tk.Text(
+            body, bg="#050505", fg=COLORS.get("text_strong", "#FFFFFF"),
+            insertbackground=COLORS.get("accent", "#A5F3FF"), selectbackground=GLOW,
+            relief="flat", bd=0, highlightthickness=0, wrap="word", undo=True,
+            font=config.font("body"), padx=config.scaled(12), pady=config.scaled(10))
+        self.text.pack(side="left", fill="both", expand=True)
+        self.text.insert("1.0", text)
+        self.btn_save = tk.Label(bar, text=tr("- 保存 -"), bg="#000000", fg="#FFFFFF",
+                                 font=config.font("btn"), cursor="hand2")
+        self.btn_save.pack(side="right")
+        self.btn_save.bind("<Button-1>", lambda e: self.save())
+        self.btn_save.bind("<Enter>", lambda e: self.btn_save.configure(fg=BTN_HOVER))
+        self.btn_save.bind("<Leave>", lambda e: self.btn_save.configure(fg="#FFFFFF"))
+        self.btn_close = tk.Label(self, text="×", bg="#000000", fg=EXIT_DIM, font=config.font("body"),
+                                  cursor="hand2", padx=8, pady=2)
+        self.btn_close.place(x=4, y=2)
+        self.btn_close.bind("<Button-1>", lambda e: self._on_close())
+        self.btn_close.bind("<Enter>", lambda e: self.btn_close.configure(fg=COLORS["text_dim"]))
+        self.btn_close.bind("<Leave>", lambda e: self.btn_close.configure(fg=EXIT_DIM))
+        self.text.bind("<Control-s>", lambda e: (self.save(), "break")[1])
+        self.text.bind("<Escape>", lambda e: (self._on_close(), "break")[1])
+
+    def content(self) -> str:
+        return self.text.get("1.0", "end-1c")
+
+    def save(self):
+        self._on_save(self.content())
+
+    def focus_text(self):
+        try:
+            self.text.focus_set()
+            self.text.mark_set("insert", "1.0")
+        except tk.TclError:
+            pass
+
+
 class PrescriptPage(tk.Frame):
     """黑底居中: 图标 / 蓝色代码 / 正文 / "- 接收指令 -"; 左上角一个不显眼的退出."""
 
@@ -87,6 +135,8 @@ class PrescriptPage(tk.Frame):
         self._btn_job = None
         self._btn_hover = False
         self._image = None
+        self._editor = None           # X 词条的输入框 (打开时盖在页面上)
+        self._editor_for = ""         # 已经为哪一条指令打开过输入框 (每条只自动打开一次)
         self._build()
         top = self.winfo_toplevel()
         self._esc_id = top.bind("<Escape>", self._on_escape, add="+")
@@ -175,6 +225,7 @@ class PrescriptPage(tk.Frame):
     def hide(self):
         self._active = False
         self._stop_tick()
+        self._drop_editor()
 
     def _exit(self):
         if self.on_exit is not None:
@@ -182,7 +233,9 @@ class PrescriptPage(tk.Frame):
 
     def _on_escape(self, event=None):
         try:
-            if self.winfo_ismapped():
+            if self._editor is not None:
+                self._close_editor()
+            elif self.winfo_ismapped():
                 self._exit()
         except tk.TclError:
             pass
@@ -201,7 +254,7 @@ class PrescriptPage(tk.Frame):
             codes = [pad_code(str(g.get("code") or "")) for g in self._fresh_grants()]
             codes = codes or [pad_code("NONE")]
         # V 结束 (完成 / 作废) 之后立刻回到最初等待领取的样子, 不播动画
-        instant = self._prev_type == "V" and not cur
+        instant = self._prev_type in IDLE_ENTRIES and not cur
         self._prev_type = str(cur.get("type") or "") if cur else ""
         if force or body != self._body:
             self._body = body
@@ -210,6 +263,47 @@ class PrescriptPage(tk.Frame):
             self._codes = codes
             self._set_codes(codes, instant)
         self._sync_button()
+        self._sync_editor(cur)
+
+    # ---- X: 记录输入框 ----
+
+    def _sync_editor(self, cur):
+        """X 词条领到之后 (正文打完了) 自动打开一次输入框; 这条指令没了输入框也跟着收起来."""
+        if cur and cur.get("type") == "X":
+            if self._editor is None and self._editor_for != cur.get("id") and not self._body_busy and self._active:
+                self._editor_for = str(cur.get("id") or "")
+                self._open_editor()
+        elif self._editor is not None:
+            self._drop_editor()
+
+    def _open_editor(self):
+        text = self.engine.log_prefill()
+        self._editor = LogEditor(self, text, self._save_editor, self._close_editor)
+        self._editor.place(relx=0, rely=0, relwidth=1, relheight=1)
+        self._editor.lift()
+        self._editor.focus_text()
+
+    def _drop_editor(self):
+        editor, self._editor = self._editor, None
+        if editor is not None:
+            try:
+                editor.destroy()
+            except tk.TclError:
+                pass
+
+    def _save_editor(self, text):
+        """保存: 一点没改 = 指令作废, 改过 = 完成."""
+        self.engine.submit_log(text)
+        self._drop_editor()
+        self.refresh()
+        self.focus_set()
+
+    def _close_editor(self):
+        """没保存就关掉: 等于没改, 指令作废."""
+        self.engine.abandon_log()
+        self._drop_editor()
+        self.refresh()
+        self.focus_set()
 
     @staticmethod
     def _body_text(cur) -> str:

@@ -206,6 +206,14 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
                 if (timer.state == TState.ON_BREAK) timer.countdown else timer.breakCarry.toDouble()
             },
             onChange = { changed() },
+            hourLogFn = {
+                // 今天的整点记录, 一行一小时; 没启用整点记录就是空白 (指令 X 的输入框第一段)
+                if (!dm.hourEnabled) "" else {
+                    val day = LocalDate.now().key()
+                    (0..23).mapNotNull { h -> dm.hourText(day, h).takeIf { it.isNotEmpty() }?.let { "%02d:00  %s".format(h, it) } }
+                        .joinToString("\n")
+                }
+            },
         )
         loadViolations()
     }

@@ -1205,6 +1205,13 @@ EN = {
     "立即停下任何活动,接下来的5min什么也不做.":
         "Stop everything now and do nothing for the next 5 min.",
     "检查你的统计数据,并作简要反思.": "Check your statistics and reflect briefly.",
+    "到开阔场地进行运动,持续20min.": "Exercise in an open space for 20 min.",
+    "进行一次淋浴.": "Take a shower.",
+    "凝视天空.": "Gaze at the sky.",
+    "记录,核对并反思这一天的活动.": "Record, check and reflect on the day's activities.",
+    "打扫并整理房间.": "Clean and tidy up the room.",
+    "- 保存 -": "- Save -",
+    "废弃": "Voided",
 }
 
 

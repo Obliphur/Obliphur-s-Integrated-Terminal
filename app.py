@@ -300,6 +300,7 @@ class BreakTimerApp:
             remaining_rest_fn=self._prescript_remaining_rest,
             contract_active_fn=lambda: self.contract.active,
             on_complete=self._prescript_completed,
+            hour_log_fn=self._prescript_hour_log,
         )
         self.prescript_job = None
         self._marks_shown = None        # 指令标记现在画在哪些按钮上 (None = 还没画过)
@@ -4329,6 +4330,11 @@ class BreakTimerApp:
 
 
     def on_close(self):
+        if not getattr(self, "_update_restart", False):
+            try:
+                self.prescripts.note_close()        # 指令 X 的输入框要写今天被手动关闭的时刻
+            except Exception:
+                pass
         # 提前启动藏起来的窗口要放出来, 不然关掉 OIT 以后它们一直藏着
         try:
             self.prestart.stop()
@@ -4447,6 +4453,18 @@ class BreakTimerApp:
         if self.state == ON_BREAK:
             return max(0, int(self.countdown_seconds))
         return max(0, int(self.break_carry))
+
+    def _prescript_hour_log(self) -> str:
+        """今天的整点记录, 一行一小时 ("09:00  内容"); 没有启用整点记录就是空白 (X 词条输入框的第一段)."""
+        if not self.dm.hour_enabled:
+            return ""
+        today = datetime.now().strftime("%Y-%m-%d")
+        lines = []
+        for hour in range(24):
+            text = self.dm.get_hour_text(today, hour)
+            if text:
+                lines.append(f"{hour:02d}:00  {text}")
+        return "\n".join(lines)
 
     def _prescript_changed(self):
         self._sync_prescript_marks()
