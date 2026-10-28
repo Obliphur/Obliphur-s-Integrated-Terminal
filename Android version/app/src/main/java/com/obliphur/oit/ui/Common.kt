@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -98,7 +99,7 @@ fun prescriptMark(kind: String): Boolean =
 fun PrescriptMark(modifier: Modifier = Modifier) {
     androidx.compose.foundation.Image(
         androidx.compose.ui.res.painterResource(com.obliphur.oit.R.drawable.prescript_mark),
-        contentDescription = null, modifier = modifier.size(32.dp))
+        contentDescription = null, modifier = modifier.size(24.dp))
 }
 
 @Composable
@@ -109,7 +110,7 @@ fun AccentButton(text: String, enabled: Boolean = true, modifier: Modifier = Mod
             colors = ButtonDefaults.buttonColors(containerColor = o.accent, contentColor = o.onAccent)) { Text(text) }
     }
     if (!mark) button(modifier)
-    else Box(modifier, contentAlignment = Alignment.Center) { button(Modifier); PrescriptMark() }
+    else Box(modifier, contentAlignment = Alignment.Center) { button(Modifier); PrescriptMark(Modifier.align(Alignment.CenterEnd).offset(x = 4.dp)) }
 }
 
 @Composable
@@ -127,7 +128,7 @@ fun PlainButton(text: String, enabled: Boolean = true, modifier: Modifier = Modi
             border = BorderStroke(1.dp, o.border)) { Text(text, color = if (enabled) o.text else o.dim) }
     }
     if (!mark) button(modifier)
-    else Box(modifier, contentAlignment = Alignment.Center) { button(Modifier); PrescriptMark() }
+    else Box(modifier, contentAlignment = Alignment.Center) { button(Modifier); PrescriptMark(Modifier.align(Alignment.CenterEnd).offset(x = 4.dp)) }
 }
 
 /** 一组互斥的选项 (分段按钮). */

@@ -4530,10 +4530,10 @@ class BreakTimerApp:
             pass
 
     def _make_mark(self, name, b, img):
-        """标记: 一个盖在按钮正中的小图. 点它等于点按钮, 鼠标移上去按钮照样高亮."""
+        """标记: 按钮右端的一个小图 (不压在文字上). 点它等于点按钮, 鼠标移上去按钮照样高亮."""
         lab = tk.Label(b, image=img, bd=0, highlightthickness=0, cursor="hand2",
                        bg=self._mark_bg(b, False))
-        lab.place(relx=0.5, rely=0.5, anchor="center")
+        lab.place(relx=1.0, x=-6, rely=0.5, anchor="e")
 
         def click(_e=None):
             try:

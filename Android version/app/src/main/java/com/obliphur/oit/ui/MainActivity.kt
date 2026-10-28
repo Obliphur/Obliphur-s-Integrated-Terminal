@@ -442,7 +442,7 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
                                 fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
                                 modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 14.dp))
                             if ((key == "contract" && prescriptMark("contract")) || (key == "stats" && prescriptMark("stats")))
-                                PrescriptMark(Modifier.align(Alignment.Center))
+                                PrescriptMark(Modifier.align(Alignment.CenterEnd).padding(end = 24.dp))
                         }
                     }
                 }
