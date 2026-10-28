@@ -47,7 +47,11 @@ CODE_WIDTH = 8                  # 蓝色代码的宽度 (和网页上的指令�
 CODE_LEFT = "_%"                # 左边补位, 从最外面一格开始依次用
 CODE_RIGHT = "%."               # 右边补位, 从最里面一格往外依次用 (最后一格是 .)
 
-DEV_KEEP = 3                    # 开发者模式下同时最多留几条指令
+KEEP = 3                        # 每个用户同时最多持有几条指令, 满了就不能再领
+DEV_KEEP = KEEP                 # 旧名字
+
+# 每种指令对应界面上哪个入口 (在那个按钮上标记): 专注 / 休息 开始按钮, 合约 / 统计 侧边栏入口
+MARK_OF = {"I": "focus", "IV": "focus", "III": "break", "II": "contract", "VI": "stats"}
 HISTORY_KEEP = 100
 GRANTED_KEEP = 40
 SAVE_EVERY = 10                 # 秒; 累计的专注 / 休息秒数最多丢这么多
@@ -166,12 +170,13 @@ class PrescriptEngine:
     dev_fn()          -> 开发者模式: 领取没有冷却, 同时最多留 3 条
     pause_media_fn()  -> 领取 V 时暂停后台正在播放的音频 / 视频
     contract_active_fn() -> 现在有没有进行中的合约 (合约期间抽不到 VI)
+    on_complete()     -> 有一条指令被完成了 (播完成音效)
     remaining_rest_fn() -> 用户剩余的休息时间 (秒): 休息中是这次休息的倒计时, 否则是积攒的休息时间
     """
 
     def __init__(self, data_dir, *, state_fn=None, today_hours_fn=None, contracts_fn=None,
                  page_fn=None, minimized_fn=None, grant_rest_fn=None, username_fn=None,
-                 blocked_fn=None, on_change=None, dev_fn=None, pause_media_fn=None, remaining_rest_fn=None, contract_active_fn=None, rng=None):
+                 blocked_fn=None, on_change=None, dev_fn=None, pause_media_fn=None, remaining_rest_fn=None, contract_active_fn=None, on_complete=None, rng=None):
         self.path = os.path.join(data_dir, "prescript.json")
         self.state_fn = state_fn or (lambda: "idle")
         self.today_hours_fn = today_hours_fn or (lambda: 0.0)
@@ -186,6 +191,7 @@ class PrescriptEngine:
         self.remaining_rest_fn = remaining_rest_fn or (lambda: 0.0)
         self.contract_active_fn = contract_active_fn or (lambda: False)
         self.on_change = on_change
+        self.on_complete = on_complete
         self.rng = rng or random.Random()
         self._username = ""
 
@@ -279,12 +285,16 @@ class PrescriptEngine:
         return cur if isinstance(cur, dict) else None
 
     def actives(self) -> list:
-        """正在进行的指令, 先领的在前. 平时只有一条; 开发者模式下最多 DEV_KEEP 条."""
+        """正在进行的指令, 先领的在前; 同时最多 KEEP 条."""
         out = [e for e in (self._data.get("extra") or []) if isinstance(e, dict)]
         cur = self.current
         if cur is not None:
             out.append(cur)
         return out
+
+    def marks(self) -> set:
+        """现在持有的指令对应哪些入口要标记: {"focus", "break", "contract", "stats"}."""
+        return {MARK_OF[c.get("type")] for c in self.actives() if c.get("type") in MARK_OF}
 
     def username(self) -> str:
         if self._username:
@@ -298,10 +308,12 @@ class PrescriptEngine:
         return name
 
     def can_draw(self, now: datetime = None) -> bool:
-        """这个整点时段还能不能领取 (V 完成 / 作废后可以立即再领)."""
+        """这个整点时段还能不能领取 (V 完成 / 作废后可以立即再领); 手里已经有 KEEP 条就领不了."""
         now = now or datetime.now()
+        if len(self.actives()) >= KEEP:
+            return False
         if self._dev():
-            return len(self.actives()) < DEV_KEEP       # 没有冷却, 但满了就领不了
+            return True                                 # 开发者模式: 没有冷却
         if self._data.get("v_reset"):
             return True
         last = _parse(self._data.get("last_draw"))
@@ -403,15 +415,10 @@ class PrescriptEngine:
         if not self.can_draw(now):
             return None
         self._ensure_day(now)
-        dev = self._dev()
-        if dev:
-            # 开发者模式: 上一条不作废, 留在后面继续判定.
-            if self.current is not None:
-                self._data.setdefault("extra", []).append(self.current)
-                self._data["current"] = None
-        else:
-            for old in list(self.actives()):
-                self._finish("superseded", now, save=False, notify=False, settle=False, cur=old)
+        # 上一条不作废, 留在后面继续判定 (同时最多 KEEP 条, can_draw 已经拦住了).
+        if self.current is not None:
+            self._data.setdefault("extra", []).append(self.current)
+            self._data["current"] = None
 
         if pool is None:
             pool = self._pool(now)
@@ -537,6 +544,11 @@ class PrescriptEngine:
             self.settle_rewards(now)
         if notify:
             self._changed()
+        if result == "completed" and self.on_complete is not None:
+            try:
+                self.on_complete()
+            except Exception:       # noqa: BLE001
+                pass
         return rec
 
     # ---- 每秒判定 ----
@@ -807,12 +819,15 @@ def _selftest():
         assert given and given[0]["seconds"] == 180
         assert granted[-1] == (180, "REST3")
 
-        # 新的一小时: 没完成就领新指令, 上一条存档, 不给休息时间
+        # 新的一小时: 上一条没完成也可以再领, 两条一起持有; 每个入口按持有的指令标记
         t1 = t0 + timedelta(hours=1, minutes=1)
         cur = eng.draw(t1, choose="III")
-        assert cur and cur["type"] == "III"
+        assert cur and cur["type"] == "III" and eng.marks() == {"break"}
         rec = eng.draw(t1 + timedelta(hours=1), choose="I")
-        assert rec and eng._data["history"][-1]["result"] == "superseded"
+        assert rec and [c["type"] for c in eng.actives()] == ["III", "I"]
+        assert eng.marks() == {"break", "focus"}
+        assert not any(h["result"] == "superseded" for h in eng._data["history"])
+        eng._data["extra"] = []
 
         # V: 离开指令页立即作废, 可以马上再领
         eng._data["current"] = None
@@ -910,7 +925,25 @@ def _selftest():
         eng.pause_media_fn = None
         eng._data["current"] = None
 
-        # 开发者模式: 没有冷却, 同时最多留 DEV_KEEP 条, 满了新的领不了; 每条各自判定.
+        # 完成时通知 (播完成音效); 每个入口的标记: I / IV 专注, III 休息, II 合约, VI 统计, V 不标记
+        done = []
+        eng.on_complete = lambda: done.append(1)
+        t_m = t2 + timedelta(hours=50)
+        for kind in ("II", "VI", "IV", "V"):
+            eng._data["current"] = None
+            eng._data["extra"] = []
+            eng.draw(t_m, choose=kind)
+            assert eng.marks() == ({"contract"} if kind == "II" else {"stats"} if kind == "VI"
+                                   else {"focus"} if kind == "IV" else set()), kind
+            t_m += timedelta(hours=1)
+        eng._data["current"] = None
+        eng._data["extra"] = []
+        eng.draw(t_m, choose="V")
+        eng.tick(t_m + timedelta(minutes=6))
+        assert done == [1] and eng.current is None
+        eng.on_complete = None
+
+        # 开发者模式: 没有冷却, 同时最多留 KEEP 条, 满了新的领不了; 每条各自判定.
         dev = {"on": True}
         eng.dev_fn = lambda: dev["on"]
         eng._data["current"] = None
@@ -919,8 +952,8 @@ def _selftest():
         state["mode"] = "idle"
         t3 = t2 + timedelta(hours=30)
         got = [eng.draw(t3, choose="III"), eng.draw(t3, choose="I"), eng.draw(t3, choose="VI")]
-        assert all(got) and len(eng.actives()) == DEV_KEEP and not eng.can_draw(t3)
-        assert eng.draw(t3, choose="I") is None and len(eng.actives()) == DEV_KEEP
+        assert all(got) and len(eng.actives()) == KEEP and not eng.can_draw(t3)
+        assert eng.draw(t3, choose="I") is None and len(eng.actives()) == KEEP
         eng._last_tick = t3
         state["mode"] = "break"
         eng.tick(t3 + timedelta(minutes=20, seconds=1))
@@ -928,8 +961,17 @@ def _selftest():
         assert left == ["I", "VI"] and eng._data["history"][-1]["type"] == "III", left
         assert eng.can_draw(t3 + timedelta(minutes=21))
         dev["on"] = False
-        eng.draw(t3 + timedelta(hours=2), choose="III")
-        assert len(eng.actives()) == 1
+        # 不是开发者模式: 还有冷却, 而且手里满了 KEEP 条就领不了, 没满也不会顶掉旧的
+        eng._data["current"] = None
+        eng._data["extra"] = []
+        eng._data["last_draw"] = None
+        t4 = t3 + timedelta(hours=2)
+        assert eng.draw(t4, choose="III") is not None and len(eng.actives()) == 1
+        assert not eng.can_draw(t4 + timedelta(minutes=5))
+        assert eng.draw(t4 + timedelta(hours=1), choose="I") is not None
+        assert eng.draw(t4 + timedelta(hours=2), choose="VI") is not None and len(eng.actives()) == KEEP
+        assert not eng.can_draw(t4 + timedelta(hours=3))
+        assert eng.draw(t4 + timedelta(hours=3), choose="II") is None and len(eng.actives()) == KEEP
         eng._data["current"] = None
         eng._data["extra"] = []
 

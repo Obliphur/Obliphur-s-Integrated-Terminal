@@ -34,6 +34,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.obliphur.oit.OitApp
 import com.obliphur.oit.core.tr
 
 @Composable
@@ -86,11 +87,29 @@ fun Flavor(text: String, modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * 指令标记 (都市之意主题, MECHANICS 22.6): 现在持有对应任务时, 在入口上盖一朵几乎看不见的蓝花.
+ * kind: focus / break / contract / stats; 图片本身已经是半透明的, 不拦截点击.
+ */
+fun prescriptMark(kind: String): Boolean =
+    com.obliphur.oit.core.I18n.noIcons && OitApp.instance.core.prescript.marks().contains(kind)
+
 @Composable
-fun AccentButton(text: String, enabled: Boolean = true, modifier: Modifier = Modifier, onClick: () -> Unit) {
+fun PrescriptMark(modifier: Modifier = Modifier) {
+    androidx.compose.foundation.Image(
+        androidx.compose.ui.res.painterResource(com.obliphur.oit.R.drawable.prescript_mark),
+        contentDescription = null, modifier = modifier.size(32.dp))
+}
+
+@Composable
+fun AccentButton(text: String, enabled: Boolean = true, modifier: Modifier = Modifier, mark: Boolean = false, onClick: () -> Unit) {
     val o = LocalOit.current
-    Button(onClick, enabled = enabled, modifier = modifier, shape = RoundedCornerShape(8.dp),
-        colors = ButtonDefaults.buttonColors(containerColor = o.accent, contentColor = o.onAccent)) { Text(text) }
+    val button: @Composable (Modifier) -> Unit = { m ->
+        Button(onClick, enabled = enabled, modifier = m, shape = RoundedCornerShape(8.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = o.accent, contentColor = o.onAccent)) { Text(text) }
+    }
+    if (!mark) button(modifier)
+    else Box(modifier, contentAlignment = Alignment.Center) { button(Modifier); PrescriptMark() }
 }
 
 @Composable
@@ -101,10 +120,14 @@ fun DangerButton(text: String, enabled: Boolean = true, modifier: Modifier = Mod
 }
 
 @Composable
-fun PlainButton(text: String, enabled: Boolean = true, modifier: Modifier = Modifier, onClick: () -> Unit) {
+fun PlainButton(text: String, enabled: Boolean = true, modifier: Modifier = Modifier, mark: Boolean = false, onClick: () -> Unit) {
     val o = LocalOit.current
-    OutlinedButton(onClick, enabled = enabled, modifier = modifier, shape = RoundedCornerShape(8.dp),
-        border = BorderStroke(1.dp, o.border)) { Text(text, color = if (enabled) o.text else o.dim) }
+    val button: @Composable (Modifier) -> Unit = { m ->
+        OutlinedButton(onClick, enabled = enabled, modifier = m, shape = RoundedCornerShape(8.dp),
+            border = BorderStroke(1.dp, o.border)) { Text(text, color = if (enabled) o.text else o.dim) }
+    }
+    if (!mark) button(modifier)
+    else Box(modifier, contentAlignment = Alignment.Center) { button(Modifier); PrescriptMark() }
 }
 
 /** 一组互斥的选项 (分段按钮). */

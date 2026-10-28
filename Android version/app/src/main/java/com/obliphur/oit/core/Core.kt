@@ -45,6 +45,8 @@ interface Host {
     fun openApps(): Set<String>? = null
     /** 暂停后台正在播放的音频 / 视频 (指令 V 被领取时, MECHANICS 22.2). */
     fun pauseMedia() {}
+    /** 完成一条指令的音效 (随机一个指令音效, res/raw/ticktock_type*.mp3). */
+    fun playPrescriptSound() {}
 }
 
 /** VPN 应该处于的状态 (见 MECHANICS 14.2). */
@@ -198,6 +200,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             blockedFn = { dm.resetting },
             devFn = { settings.devMode },
             pauseMediaFn = { host.pauseMedia() },
+            onComplete = { if (settings.str("THEME") == "urban_will") host.playPrescriptSound() },
             contractActiveFn = { contract.active },
             remainingRestFn = {
                 if (timer.state == TState.ON_BREAK) timer.countdown else timer.breakCarry.toDouble()

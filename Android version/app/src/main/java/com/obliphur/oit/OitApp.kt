@@ -260,6 +260,21 @@ class OitApp : Application(), Host {
         }
     }
 
+    private var lastPrescriptSound = 0L
+
+    /** 完成一条指令: 随机放一个指令音效 (和领取时的"滴答"是同一批); 同一时刻完成好几条只响一次. */
+    override fun playPrescriptSound() {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastPrescriptSound < 500) return
+        lastPrescriptSound = now
+        runCatching {
+            val res = listOf(R.raw.ticktock_type1, R.raw.ticktock_type2, R.raw.ticktock_type3).random()
+            val mp = android.media.MediaPlayer.create(this, res) ?: return
+            mp.setOnCompletionListener { it.release() }
+            mp.start()
+        }
+    }
+
     /** 违反合约的警报 (MECHANICS 18). */
     override fun playAlarm() {
         runCatching {

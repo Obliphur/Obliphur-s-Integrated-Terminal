@@ -3,6 +3,7 @@
 import sys
 import os
 import time
+import random
 import atexit
 import threading
 import tkinter as tk
@@ -298,8 +299,13 @@ class BreakTimerApp:
             pause_media_fn=media_pause.pause_all,
             remaining_rest_fn=self._prescript_remaining_rest,
             contract_active_fn=lambda: self.contract.active,
+            on_complete=self._prescript_completed,
         )
         self.prescript_job = None
+        self._marks_shown = None        # 指令标记现在画在哪些按钮上 (None = 还没画过)
+        self._mark_img = None
+        self._mark_labels = {}
+        self._last_complete_sound = 0.0
         self.updater = updater.Updater()
         self._update_retry = False     # 打开时检查失败了 (例如 Adapter 离线): 下一次联网时再查
         self._net_view = None
@@ -627,6 +633,8 @@ class BreakTimerApp:
 
     def _layout_steps(self, parent):
         bg, card = COLORS["bg"], COLORS["bg_card"]
+        self._marks_shown = None            # 按钮是新建的: 标记要重新画
+        self._mark_labels = {}
 
         self.topbar = tk.Frame(parent, bg=COLORS.get("topbar", COLORS["accent"]), height=4)
         self.topbar.pack(fill="x")
@@ -1191,6 +1199,7 @@ class BreakTimerApp:
             pass
         self._sync_prestart_button()
         self._sync_outing_button()
+        self._sync_prescript_marks()
 
     def _sync_outing_button(self):
         """外出按钮: 只有封闭式管理 / 工作 时出现; 外出中变成"结束外出"."""
@@ -4422,6 +4431,7 @@ class BreakTimerApp:
         try:
             if not self.dm.resetting:
                 self.prescripts.tick()
+            self._sync_prescript_marks()
         except Exception as e:
             self._log_window(f"ERROR    prescript tick {type(e).__name__}: {e}")
         if not self.shutting_down:
@@ -4438,6 +4448,7 @@ class BreakTimerApp:
         return max(0, int(self.break_carry))
 
     def _prescript_changed(self):
+        self._sync_prescript_marks()
         page = getattr(self, "pages", {}).get("prescript")
         if page is None:
             return
@@ -4445,6 +4456,131 @@ class BreakTimerApp:
             page.refresh()
         except Exception:
             pass
+
+    def _prescript_completed(self):
+        """完成了一条指令: 随机放一个指令音效 (和领取时的"滴答"是同一批)."""
+        if not self._prescript_enabled() or sys.platform != "win32":
+            return
+        now = time.monotonic()
+        if now - self._last_complete_sound < 0.5:        # 同一秒完成好几条只响一次
+            return
+        self._last_complete_sound = now
+        path = config.asset_path("themes", "urban_will", "audio",
+                                 f"ticktock_type{random.randint(1, 3)}.mp3")
+        threading.Thread(target=_play_audio_file, args=(path,), daemon=True).start()
+
+    def _prescript_mark_image(self):
+        """指令标记 (几乎看不见的蓝花, 文件里已经是半透明), 缩到和按钮差不多高; 文件不在就是 None."""
+        if self._mark_img is None:
+            path = config.asset_path("themes", "urban_will", "image", "prescript_mark.png")
+            try:
+                img = tk.PhotoImage(file=path)
+                target = config.scaled(32)
+                self._mark_img = img.subsample(max(1, round(img.width() / target)))
+            except Exception:
+                self._mark_img = False
+        return self._mark_img or None
+
+    def _prescript_mark_wanted(self) -> frozenset:
+        """现在要在哪些按钮上画标记: 专注 / 休息 的开始按钮, 侧边栏的合约 / 统计入口."""
+        if not self._prescript_enabled():
+            return frozenset()
+        marks = self.prescripts.marks()
+        want = set()
+        # 开始专注: 空闲或休息中才是"开始"按钮 (专注中是"结束专注", 外出中停用)
+        if "focus" in marks and self.state in (IDLE, ON_BREAK) and self.behavior.active() is None:
+            want.add("btn_action")
+        if "break" in marks and self.state != ON_BREAK:         # 休息中它是"暂停休息"
+            want.add("btn_break")
+        if "contract" in marks:
+            want.add("nav:contract")
+        if "stats" in marks:
+            want.add("nav:stats")
+        return frozenset(want)
+
+    def _mark_target(self, name):
+        if name.startswith("nav:"):
+            return self.nav_btns.get(name[4:])
+        return getattr(self, name, None)
+
+    def _mark_bg(self, b, hover: bool) -> str:
+        """按钮此刻的底色 (标记的底色要和它一样, 半透明的图才不会露出一块方形)."""
+        try:
+            if isinstance(b, ttk.Button):
+                st = ttk.Style()
+                style = str(b.cget("style") or "TButton")
+                if b.instate(["disabled"]):
+                    state = ["disabled"]
+                else:
+                    state = ["active"] if hover else []
+                return st.lookup(style, "background", state) or COLORS["bg"]
+            return str(b.cget("activebackground" if hover else "bg"))
+        except tk.TclError:
+            return COLORS["bg"]
+
+    def _mark_recolor(self, name):
+        lab = self._mark_labels.get(name)
+        b = self._mark_target(name)
+        if lab is None or b is None:
+            return
+        try:
+            under = b.winfo_containing(b.winfo_pointerx(), b.winfo_pointery())
+            lab.configure(bg=self._mark_bg(b, under in (b, lab)))
+        except (tk.TclError, KeyError):
+            pass
+
+    def _make_mark(self, name, b, img):
+        """标记: 一个盖在按钮正中的小图. 点它等于点按钮, 鼠标移上去按钮照样高亮."""
+        lab = tk.Label(b, image=img, bd=0, highlightthickness=0, cursor="hand2",
+                       bg=self._mark_bg(b, False))
+        lab.place(relx=0.5, rely=0.5, anchor="center")
+
+        def click(_e=None):
+            try:
+                b.invoke()
+            except tk.TclError:
+                pass
+
+        def enter(_e=None):
+            try:
+                b.event_generate("<Enter>")          # 指针进了标记, 按钮会收到 Leave: 补一个 Enter 让它保持高亮
+            except tk.TclError:
+                pass
+            self._mark_recolor(name)
+
+        lab.bind("<Button-1>", click)
+        lab.bind("<Enter>", enter)
+        lab.bind("<Leave>", lambda e: self.root.after_idle(lambda: self._mark_recolor(name)))
+        b.bind("<Enter>", lambda e: self.root.after_idle(lambda: self._mark_recolor(name)), add="+")
+        b.bind("<Leave>", lambda e: self.root.after_idle(lambda: self._mark_recolor(name)), add="+")
+        self._mark_labels[name] = lab
+
+    def _sync_prescript_marks(self):
+        if not hasattr(self, "nav_btns"):
+            return
+        try:
+            want = self._prescript_mark_wanted()
+        except Exception:
+            return
+        img = self._prescript_mark_image() if want else None
+        if want and img is None:
+            want = frozenset()
+        if want != self._marks_shown:
+            shown = self._marks_shown or frozenset()
+            self._marks_shown = want
+            for name in shown | want:
+                try:
+                    lab = self._mark_labels.pop(name, None)
+                    if lab is not None:
+                        lab.destroy()
+                    b = self._mark_target(name)
+                    if name in want and b is not None:
+                        self._make_mark(name, b, img)
+                except tk.TclError:
+                    pass
+        # 按钮的底色会变 (选中的页 / 可用与否): 每次都跟一下
+        for name in self._mark_labels:
+            self._mark_recolor(name)
 
     def _grant_prescript_rest(self, seconds: int, code: str = ""):
         """指令给的休息时间: 正在休息就加进这次休息, 否则存进积攒的休息时间."""

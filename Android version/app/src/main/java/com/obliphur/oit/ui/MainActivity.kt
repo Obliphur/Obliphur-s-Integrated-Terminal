@@ -11,6 +11,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -432,12 +433,17 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
                     Spacer(Modifier.height(8.dp))
                     for ((key, label) in pages) {
                         val on = key == page || (key == "settings" && page == "ach")
-                        Text(navLabel(key, tr(label)), color = if (cp != null) (if (on) cp.startText else cp.sideText)
-                            else if (on) o.accent else o.text, fontSize = 16.sp,
-                            fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
-                            modifier = Modifier.fillMaxWidth().background(if (cp != null && on) cp.sideOn else sideBg).clickable {
-                                go(key); scope.launch { drawer.close() }
-                            }.padding(horizontal = 24.dp, vertical = 14.dp))
+                        // 指令标记: 持有合约 / 统计任务时, 在对应入口上盖一朵几乎看不见的花
+                        Box(Modifier.fillMaxWidth().background(if (cp != null && on) cp.sideOn else sideBg).clickable {
+                            go(key); scope.launch { drawer.close() }
+                        }, contentAlignment = Alignment.CenterStart) {
+                            Text(navLabel(key, tr(label)), color = if (cp != null) (if (on) cp.startText else cp.sideText)
+                                else if (on) o.accent else o.text, fontSize = 16.sp,
+                                fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 14.dp))
+                            if ((key == "contract" && prescriptMark("contract")) || (key == "stats" && prescriptMark("stats")))
+                                PrescriptMark(Modifier.align(Alignment.Center))
+                        }
                     }
                 }
             }) {

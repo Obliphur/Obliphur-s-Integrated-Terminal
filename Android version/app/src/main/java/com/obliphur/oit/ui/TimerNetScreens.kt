@@ -111,15 +111,15 @@ fun TimerScreen() {
                 when (t.state) {
                     TState.RUNNING -> {
                         AccentButton(tr("■  结束专注")) { t.onAction() }
-                        PlainButton(tr("☕  开始休息"), enabled = false) {}
+                        PlainButton(tr("☕  开始休息"), enabled = false, mark = prescriptMark("break")) {}
                     }
                     TState.ON_BREAK -> {
-                        AccentButton(tr("▶  开始专注"), enabled = !locked) { t.onAction() }
+                        AccentButton(tr("▶  开始专注"), enabled = !locked, mark = prescriptMark("focus")) { t.onAction() }
                         PlainButton(tr("⏸  暂停休息"), enabled = !locked) { t.onBreakButton() }
                     }
                     TState.IDLE -> {
-                        AccentButton(tr("▶  开始专注")) { t.onAction() }
-                        PlainButton(tr("☕  开始休息"), enabled = t.breakCarry > 0) { t.onBreakButton() }
+                        AccentButton(tr("▶  开始专注"), mark = prescriptMark("focus")) { t.onAction() }
+                        PlainButton(tr("☕  开始休息"), enabled = t.breakCarry > 0, mark = prescriptMark("break")) { t.onBreakButton() }
                     }
                 }
                 if (core.behavior.enabled()) PlainButton(tr("🚪  外出")) { askOuting = true }

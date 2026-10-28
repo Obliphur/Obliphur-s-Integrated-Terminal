@@ -36,8 +36,12 @@ object Prescript {
     const val CODE_WIDTH = 8
     const val CODE_LEFT = "_%"
     const val CODE_RIGHT = "%."
-    /** 开发者模式下同时最多留几条指令. */
-    const val DEV_KEEP = 3
+    /** 每个用户同时最多持有几条指令, 满了就不能再领. */
+    const val KEEP = 3
+    const val DEV_KEEP = KEEP
+
+    /** 每种指令对应界面上哪个入口 (在那个按钮上标记): 专注 / 休息 开始按钮, 合约 / 统计 侧边栏入口. */
+    val MARK_OF = mapOf("I" to "focus", "IV" to "focus", "III" to "break", "II" to "contract", "VI" to "stats")
     const val HISTORY_KEEP = 100
     const val GRANTED_KEEP = 40
     const val SAVE_EVERY = 10.0
@@ -111,6 +115,8 @@ class PrescriptEngine(
     /** 现在有没有进行中的合约 (合约期间抽不到 VI). */
     private val contractActiveFn: () -> Boolean = { false },
     private val onChange: (() -> Unit)? = null,
+    /** 有一条指令被完成了 (播完成音效). */
+    private val onComplete: (() -> Unit)? = null,
     private val rng: Random = Random.Default,
 ) {
     private var data: JSONObject = load()
@@ -179,7 +185,7 @@ class PrescriptEngine(
 
     val current: JSONObject? @Synchronized get() = data.optJSONObject("current")
 
-    /** 正在进行的指令, 先领的在前. 平时只有一条; 开发者模式下最多 DEV_KEEP 条. */
+    /** 正在进行的指令, 先领的在前; 同时最多 KEEP 条. */
     @Synchronized
     fun actives(): List<JSONObject> {
         val out = data.getJSONArray("extra").objects().toMutableList()
@@ -187,13 +193,18 @@ class PrescriptEngine(
         return out
     }
 
+    /** 现在持有的指令对应哪些入口要标记: focus / break / contract / stats. */
+    @Synchronized
+    fun marks(): Set<String> = actives().mapNotNull { Prescript.MARK_OF[it.optString("type")] }.toSet()
+
     private fun dev(): Boolean = try { devFn() } catch (_: Exception) { false }
     private fun page(): String = try { pageFn() } catch (_: Exception) { "" }
     private fun minimized(): Boolean = try { minimizedFn() } catch (_: Exception) { true }
 
     @Synchronized
     fun canDraw(now: LocalDateTime = LocalDateTime.now()): Boolean {
-        if (dev()) return actives().size < Prescript.DEV_KEEP       // 没有冷却, 但满了就领不了
+        if (actives().size >= Prescript.KEEP) return false           // 手里满了就领不了
+        if (dev()) return true                                       // 开发者模式: 没有冷却
         if (data.optBoolean("v_reset")) return true
         val last = parseIso(data.optString("last_draw")) ?: return true
         if (last.isAfter(now)) return true
@@ -244,14 +255,10 @@ class PrescriptEngine(
         val now = now0.withNano(0)
         if (!canDraw(now)) return null
         ensureDay(now)
-        if (dev()) {
-            // 开发者模式: 上一条不作废, 留在后面继续判定.
-            current?.let {
-                data.getJSONArray("extra").put(it)
-                data.put("current", JSONObject.NULL)
-            }
-        } else {
-            for (old in actives()) finish("superseded", now, save = false, notify = false, settle = false, cur = old)
+        // 上一条不作废, 留在后面继续判定 (同时最多 KEEP 条, canDraw 已经拦住了).
+        current?.let {
+            data.getJSONArray("extra").put(it)
+            data.put("current", JSONObject.NULL)
         }
         var pool = pool0
         if (pool == null) {
@@ -332,6 +339,7 @@ class PrescriptEngine(
         if (save) save()
         if (done != null && settle && page() == "prescript") settleRewards(now)
         if (notify) changed()
+        if (done != null) try { onComplete?.invoke() } catch (_: Exception) {}
     }
 
     // ---- 判定 ----

@@ -75,9 +75,9 @@ class PrescriptTest {
         assertFalse(eng.canDraw(t0.plusMinutes(10)))          // 同一个整点时段只能领一条
         assertNull(eng.draw(t0.plusMinutes(10), choose = "I"))
         assertTrue(eng.canDraw(t0.withMinute(0).plusHours(1))) // 下一个整点又可以
-        // 领新的: 上一条作废
+        // 领新的: 上一条不作废, 两条一起持有
         assertNotNull(eng.draw(t0.withMinute(0).plusHours(1), choose = "III"))
-        assertEquals(1, eng.actives().size)
+        assertEquals(listOf("I", "III"), eng.actives().map { it.getString("type") })
         assertEquals("III", eng.current!!.getString("type"))
     }
 
@@ -128,12 +128,14 @@ class PrescriptTest {
         repeat(300) { i ->
             val c = eng.draw(t0.plusHours(i.toLong() * 2))!!
             if (c.getString("type") == "VI") seen = true
+            eng.rawData().put("current", org.json.JSONObject.NULL).put("extra", org.json.JSONArray())   // 手里最多 3 条: 清掉再抽
         }
         assertFalse("合约期间不会抽到 VI", seen)
         active = false
         repeat(1000) { i ->
             val c = eng.draw(t0.plusHours(1000L + i * 2))!!
             if (c.getString("type") == "VI") seen = true
+            eng.rawData().put("current", org.json.JSONObject.NULL).put("extra", org.json.JSONArray())
         }
         assertTrue("没有合约时抽得到 VI", seen)
     }
@@ -190,6 +192,39 @@ class PrescriptTest {
         repeat(20 * 60 + 1) { now = now.plusSeconds(1); eng.tick(now) }
         assertEquals(listOf("I", "VI"), eng.actives().map { it.getString("type") })
         assertTrue(eng.canDraw(now))
+    }
+
+    @Test
+    fun everyoneKeepsThreeAndMarks() {
+        val env = Env()                        // 不是开发者模式
+        env.mode = "idle"
+        env.page = "timer"
+        val eng = env.engine()
+        assertNotNull(eng.draw(t0, choose = "III"))
+        assertEquals(setOf("break"), eng.marks())
+        assertFalse(eng.canDraw(t0.plusMinutes(5)))            // 还有整点冷却
+        assertNotNull(eng.draw(t0.plusHours(1), choose = "II"))
+        assertNotNull(eng.draw(t0.plusHours(2), choose = "VI"))
+        assertEquals(Prescript.KEEP, eng.actives().size)       // 旧的没有被顶掉
+        assertEquals(setOf("break", "contract", "stats"), eng.marks())
+        assertFalse(eng.canDraw(t0.plusHours(3)))              // 满了: 过了整点也不能领
+        assertNull(eng.draw(t0.plusHours(3), choose = "I"))
+    }
+
+    @Test
+    fun completionNotifies() {
+        val env = Env()
+        env.page = "timer"
+        var done = 0
+        val eng = PrescriptEngine(
+            File(env.dir, "prescript.json"), stateFn = { env.mode }, pageFn = { env.page },
+            minimizedFn = { false }, onComplete = { done++ },
+        )
+        eng.draw(t0, choose = "I")
+        var now = t0
+        repeat(50 * 60 + 1) { now = now.plusSeconds(1); eng.tick(now) }
+        assertNull(eng.current)
+        assertEquals(1, done)
     }
 
     @Test
