@@ -20,6 +20,7 @@ from data_manager import month_prefixes
 
 class NetGuard:
     gift = 0.0                        # 今天合约奖励的额度 (见 __init__)
+    dev_used = 0.0                    # 今天开着开发者模式的秒数 (见 __init__)
 
     def __init__(self, data_dir: str):
         self.dead = False
@@ -35,6 +36,7 @@ class NetGuard:
 
         self.date = datetime.now().strftime('%Y-%m-%d')
         self.used = 0.0
+        self.dev_used = 0.0           # 今天开着开发者模式的秒数 (每天最多 config.DEV_DAILY_SECONDS)
         self.bonus = 0.0
         self.gift = 0.0               # 今天合约奖励的额度, 不用还
         self.tomorrow_used = 0.0
@@ -210,6 +212,11 @@ class NetGuard:
         return config.dev_mode_enabled()
 
     @property
+    def dev_left(self) -> float:
+        """今天开发者模式还能开多久 (秒)."""
+        return max(0.0, float(config.DEV_DAILY_SECONDS) - self.dev_used)
+
+    @property
     def net_mode(self) -> str:
         # proxy_all (代理-全屏蔽 (Proxy block-all)) 和 proxy 用同一个后端 (本地过滤代理), 只是不看名单
         return "proxy" if getattr(config, "NET_MODE", "adapter") in ("proxy", "proxy_all") else "adapter"
@@ -255,6 +262,7 @@ class NetGuard:
             self._saved_live = d["live"]          # __init__ 最后照着恢复
         if saved == self.date:
             self.used = num("used")
+            self.dev_used = num("dev_used")
             self.bonus = num("bonus")
             self.gift = num("gift")
             self.tomorrow_used = num("tomorrow_used")
@@ -278,6 +286,7 @@ class NetGuard:
                 json.dump({
                     "date": self.date,
                     "used": int(self.used),
+                    "dev_used": int(self.dev_used),
                     "bonus": int(self.bonus),
                     "gift": int(self.gift),
                     "tomorrow_used": int(self.tomorrow_used),
@@ -690,7 +699,14 @@ class NetGuard:
         self._reset_grant()
         self._last_enforce = time.monotonic()
         self.ensure_online()
-        self._log("DEV      network restrictions released")
+        self._log(f"DEV      network restrictions released ({int(self.dev_left // 60)} min left today)")
+
+    def dev_closed(self):
+        """开发者模式关了 (手动 / 用完 / 关程序): 把这一段记成的联网收尾."""
+        if self._session is not None:
+            self._session = None
+            self._save_usage()
+        self._save()
 
 
     def _rollover(self, today: str):
@@ -700,6 +716,7 @@ class NetGuard:
         self.bonus = 0.0
         self.gift = 0.0
         self.used = 0.0
+        self.dev_used = 0.0
         self._save()
 
 
@@ -709,10 +726,21 @@ class NetGuard:
             self._rollover(today)                 # 开发者模式下也照常跨日, 关掉开发者模式时额度已经是今天的
 
         if self.dev_mode:
-
             if self.pending:
                 self.pending = None
                 self._log("DEV      pending request dropped (developer mode)")
+            # 开着的时间照常消耗联网额度 (1 倍), 记成一次联网; 每天最多 DEV_DAILY_SECONDS, 用完就关
+            dt = min(max(dt, 0.0), self.tick_clamp, self.dev_left)
+            self.dev_used += dt
+            self.used += dt
+            if self._session is None:
+                self._open_session("开发者模式", False, 0)
+            self._count_online(dt)
+            if self.dev_left <= 1e-6:
+                self._save()
+                return "dev_over"
+            if time.monotonic() - self._last_save >= 5:
+                self._save()
             return None
 
         event = None
@@ -934,7 +962,17 @@ def _selftest():
         assert n.block() is None
         ok, msg = n.request(30, "x")
         assert not ok and "Already online" in msg, msg
-        assert n.tick(100.0) is None and n.used == 0.0, "开发者模式不计时"
+        # 开发者模式照常消耗联网额度, 每天最多 DEV_DAILY_SECONDS, 用完发出 dev_over
+        n.used, n.dev_used = 0.0, 0.0
+        assert n.tick(100.0) is None and abs(n.used - 100.0) < 1e-6 and abs(n.dev_used - 100.0) < 1e-6
+        assert n.usage and n.usage[-1]["reason"] == "开发者模式" and abs(n.usage[-1]["seconds"] - 100.0) < 1e-6
+        assert abs(n.remaining - (3600 - 100)) < 1e-6, "额度跟着减少"
+        assert n.tick(config.DEV_DAILY_SECONDS) == "dev_over" and n.dev_left == 0.0
+        assert abs(n.dev_used - config.DEV_DAILY_SECONDS) < 1e-6, "最多只记到每天的上限"
+        n.dev_closed()
+        assert n._session is None
+        n.used, n.dev_used, n.usage = 0.0, 0.0, []
+        assert abs(n.dev_left - config.DEV_DAILY_SECONDS) < 1e-6
         n.pending = {"minutes": 5, "at": time.time() - 1, "reason": "x", "loan": False}
         n.tick(0.0)
         assert n.pending is None, "开发者模式下挂起的申请应被丢弃"

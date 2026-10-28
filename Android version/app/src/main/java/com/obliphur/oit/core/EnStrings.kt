@@ -18,6 +18,7 @@ object EnStrings {
         "安装" to "Install",
         "网络已开启." to "Network is on.",
         "时间到,网络已断开." to "Time is up — network cut off.",
+        "今天的开发者模式时间已用完 (每天最多 1 小时)." to "Developer mode time for today is used up (1 hour per day).",
         "以下配置已生效:" to "These settings are now in effect:",
         "联网要先申请,等过冷静期才连上,每天有额度." to "Going online takes a request and a cooldown, within a daily quota.",
         "接下来{h}小时是配置期:所有修改立即生效." to "The next {h} hours are the setup period: every change applies immediately.",

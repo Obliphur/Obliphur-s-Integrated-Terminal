@@ -4353,6 +4353,7 @@ class BreakTimerApp:
         # 关闭程序时开发者模式自动关掉, 否则 shutdown 不断网 (fail-closed 失效); 子端也跟着关
         if config.dev_mode_enabled():
             config.DEV_MODE = False
+            self.net.dev_closed()
             if not self._is_child():
                 try:
                     self.sync.push_final()
@@ -4616,12 +4617,18 @@ class BreakTimerApp:
         if self._is_child():
             config.DEV_MODE = not enabled
             return
+        if enabled and self.net.dev_left <= 0:          # 每天最多开 1 小时, 今天用完了
+            config.DEV_MODE = False
+            toast.warn(tr("今天的开发者模式时间已用完 (每天最多 1 小时)."))
+            return
         self.on_dev_mode_changed(enabled)
         if self.sync.peers():
             self.sync.sync_now()                # 马上告诉子端
 
     def follow_dev_mode(self, on: bool):
         """同步来的母端状态."""
+        if on and self.net.dev_left <= 0:               # 本机今天的开发者模式时间也用完了: 不跟着开
+            return
         if on != config.dev_mode_enabled():
             config.DEV_MODE = on
             self.on_dev_mode_changed(on)
@@ -4739,6 +4746,7 @@ class BreakTimerApp:
         if enabled:
             self.net.release_restrictions()
         else:
+            self.net.dev_closed()
             try:
                 self.net.block(sync=True)
             except Exception:
@@ -5147,6 +5155,13 @@ class BreakTimerApp:
             toast.success(tr("网络已开启."))
         elif event == "ended":
             toast.warn(tr("时间到,网络已断开."))
+        elif event == "dev_over":
+            # 开发者模式今天的 1 小时用完了: 自动关掉, 恢复正常限制
+            config.DEV_MODE = False
+            self.on_dev_mode_changed(False)
+            toast.warn(tr("今天的开发者模式时间已用完 (每天最多 1 小时)."))
+            if not self._is_child() and self.sync.peers():
+                self.sync.sync_now()                    # 马上告诉子端
 
 
     def _build_reset_page(self, page):

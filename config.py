@@ -24,6 +24,7 @@ IDLE, RUNNING, READY_BREAK, ON_BREAK = range(4)
 DAILY_LIMIT = 2 * 3600       
 COOLDOWN = 5 * 60            
 ENFORCE_EVERY = 60           
+DEV_DAILY_SECONDS = 3600     # 开发者模式每天最多开多久 (秒); 开着的时间照常消耗联网额度
 TICK_CLAMP = 30              # 联网计时每一步最多计入的秒数(睡眠/卡顿后不会一次扣一大段)
 
 QUICK_MULTIPLIER = 2.0       # 快速访问: 免冷静期, 每联网 1 秒消耗 2 秒今日额度
@@ -166,7 +167,7 @@ OUTING_MAX_HOURS = 24 * 7
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.181"                         # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.182"                         # 和 GitHub 上发布的版本号比较 (见 updater.py)
 UPDATE_CHECK = 1                              # 打开程序时检查更新
 UPDATE_AUTO = 1                               # 发现新版本时自动下载安装
 OLD_APP_DIR = "mrsTimer"

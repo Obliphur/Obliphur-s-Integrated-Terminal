@@ -176,6 +176,7 @@ EN = {
     "待生效修改 {n} 项 · 最近一项 {h} 小时 {m} 分后生效": "{n} change(s) pending · the next one applies in {h} h {m} min",
     "网络已开启.": "Network is on.",
     "时间到,网络已断开.": "Time is up — network cut off.",
+    "今天的开发者模式时间已用完 (每天最多 1 小时).": "Developer mode time for today is used up (1 hour per day).",
     "hosts: {err}": "hosts: {err}",
     "⚙  设置": "⚙  Settings",
     "每日联网额度": "Daily network quota",
