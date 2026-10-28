@@ -76,6 +76,7 @@ fun PrescriptScreen(onExit: () -> Unit) {
         val n = if (latest.isNull("n")) 0 else latest.optInt("n")
         when (latest.optString("type")) {
             "II" -> tr("完成一次至少{n}级的合约.", "n" to n)
+            "III" -> if (latest.isNull("n")) tr(latest.optString("body")) else tr("休息{n}min.", "n" to n)
             "IV" -> tr("今天专注至少{n} h", "n" to n)
             else -> tr(latest.optString("body"))
         }

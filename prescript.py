@@ -34,7 +34,9 @@ EXPIRY_SECONDS = {
 
 FIXED_T = {"I": 1.0, "III": 1.0, "IV": 1.0, "V": 0.1, "VI": 1.0}
 FOCUS_TARGET = 50 * 60          # I: 50 分钟专注
-BREAK_TARGET = 20 * 60          # III: 20 分钟休息
+BREAK_TARGET = 20 * 60          # III (旧存档里没有分钟数的): 20 分钟休息
+REST_SHARE = 0.5                # III: 要休息的分钟数 = 用户剩余休息时间的 50%
+REST_MAX_MIN = 30               # III: 最多 30 分钟
 REFLECT_TARGET = 3 * 60         # VI: 统计页连续停留 3 分钟
 DAILY_T_TARGET = 10.0           # 今天完成的指令 t 合计到 10
 DAILY_BONUS_SECONDS = 20 * 60   # 额外 20 分钟休息
@@ -113,6 +115,15 @@ def pad_code(code: str) -> str:
             + (CODE_RIGHT * CODE_WIDTH)[CODE_WIDTH * 2 - right:])
 
 
+def rest_minutes(remaining_seconds) -> int:
+    """III 要休息几分钟: 剩余休息时间的 50%, 最多 30 分钟, 至少 1 分钟."""
+    try:
+        minutes = int(float(remaining_seconds) * REST_SHARE // 60)
+    except (TypeError, ValueError):
+        minutes = 0
+    return max(1, min(REST_MAX_MIN, minutes))
+
+
 def type_code(kind) -> str:
     """一条指令的蓝色代码正文 (还没补位): I → "FOCUS"."""
     return TYPE_WORDS.get(str(kind), "NONE")
@@ -154,11 +165,12 @@ class PrescriptEngine:
     on_change()       -> 状态变了, 让指令页刷新
     dev_fn()          -> 开发者模式: 领取没有冷却, 同时最多留 3 条
     pause_media_fn()  -> 领取 V 时暂停后台正在播放的音频 / 视频
+    remaining_rest_fn() -> 用户剩余的休息时间 (秒): 休息中是这次休息的倒计时, 否则是积攒的休息时间
     """
 
     def __init__(self, data_dir, *, state_fn=None, today_hours_fn=None, contracts_fn=None,
                  page_fn=None, minimized_fn=None, grant_rest_fn=None, username_fn=None,
-                 blocked_fn=None, on_change=None, dev_fn=None, pause_media_fn=None, rng=None):
+                 blocked_fn=None, on_change=None, dev_fn=None, pause_media_fn=None, remaining_rest_fn=None, rng=None):
         self.path = os.path.join(data_dir, "prescript.json")
         self.state_fn = state_fn or (lambda: "idle")
         self.today_hours_fn = today_hours_fn or (lambda: 0.0)
@@ -170,6 +182,7 @@ class PrescriptEngine:
         self.blocked_fn = blocked_fn or (lambda: False)
         self.dev_fn = dev_fn or (lambda: False)
         self.pause_media_fn = pause_media_fn
+        self.remaining_rest_fn = remaining_rest_fn or (lambda: 0.0)
         self.on_change = on_change
         self.rng = rng or random.Random()
         self._username = ""
@@ -407,7 +420,12 @@ class PrescriptEngine:
             n = int(daily.get("n_ii", 1))
             body = f"完成一次至少{n}级的合约."
         elif kind == "III":
-            body = "休息20min."
+            try:
+                remaining = float(self.remaining_rest_fn())
+            except Exception:       # noqa: BLE001
+                remaining = 0.0
+            n = rest_minutes(remaining)
+            body = f"休息{n}min."
         elif kind == "IV":
             n = int(daily.get("n_iv", 5))
             body = f"今天专注至少{n} h"
@@ -429,7 +447,8 @@ class PrescriptEngine:
             "expires": _iso(expires),
             "pool": pool,
             "n": n,
-            "t": float(FIXED_T.get(kind, 0.0)),
+            # III 的 t (小时) = 休息时间 (小时) × 2; 其他是固定值
+            "t": (n / 60.0 * 2) if kind == "III" else float(FIXED_T.get(kind, 0.0)),
             "focus_sec": 0.0,
             "break_sec": 0.0,
             "stats_since": None,
@@ -612,8 +631,9 @@ class PrescriptEngine:
             if self.state_fn() == "break":
                 cur["break_sec"] = float(cur.get("break_sec", 0.0) or 0.0) + gain
                 self._dirty = True
-            if float(cur.get("break_sec", 0.0) or 0.0) >= BREAK_TARGET:
-                self._finish("completed", now, 1.0, cur=cur)
+            target = float(cur.get("n") or 0) * 60 or BREAK_TARGET
+            if float(cur.get("break_sec", 0.0) or 0.0) >= target:
+                self._finish("completed", now, float(cur.get("t") or 1.0), cur=cur)
                 return
             if expires is not None and now >= expires:
                 self._finish("expired", now, cur=cur)
@@ -854,6 +874,16 @@ def _selftest():
         state["mode"] = "focus"
         eng.tick(t2 + timedelta(hours=2))
         assert eng.current is None and eng._data["history"][-1]["result"] == "expired"
+
+        # III: 休息分钟数 = 剩余休息时间的 50%, 最多 30 分钟; t = 休息时间 (小时) × 2
+        assert rest_minutes(3000) == 25 and rest_minutes(7200) == 30 and rest_minutes(0) == 1
+        eng._data["current"] = None
+        eng._data["last_draw"] = None
+        eng.remaining_rest_fn = lambda: 3000
+        c3 = eng.draw(t2 + timedelta(hours=40), choose="III")
+        assert c3["n"] == 25 and c3["body"] == "休息25min." and abs(c3["t"] - 25 / 30) < 1e-9
+        eng.remaining_rest_fn = lambda: 0.0
+        eng._data["current"] = None
 
         # V 被领取时暂停后台的音频 / 视频
         paused = []

@@ -84,6 +84,7 @@ object EnStrings {
         "接下来的1h专注50min." to "Focus for 50 min within the next hour.",
         "完成一次至少{n}级的合约." to "Complete a contract of at least level {n}.",
         "休息20min." to "Rest for 20 min.",
+        "休息{n}min." to "Rest for {n} min.",
         "今天专注至少{n} h" to "Focus for at least {n} h today",
         "立即停下任何活动,接下来的5min什么也不做." to "Stop everything now and do nothing for the next 5 min.",
         "检查你的统计数据,并作简要反思." to "Check your statistics and reflect briefly.",

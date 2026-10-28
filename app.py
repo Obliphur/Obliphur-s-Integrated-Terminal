@@ -296,6 +296,7 @@ class BreakTimerApp:
             on_change=self._prescript_changed,
             dev_fn=config.dev_mode_enabled,
             pause_media_fn=media_pause.pause_all,
+            remaining_rest_fn=self._prescript_remaining_rest,
         )
         self.prescript_job = None
         self.updater = updater.Updater()
@@ -4422,6 +4423,12 @@ class BreakTimerApp:
     def _exit_prescript(self):
         back = getattr(self, "_prescript_back", "timer")
         self.show_page(back if back in self.pages and back != "prescript" else "timer")
+
+    def _prescript_remaining_rest(self) -> float:
+        """用户剩余的休息时间 (秒): 正在休息是这次休息的倒计时, 否则是积攒的休息时间 (指令 III 按它的 50% 算)."""
+        if self.state == ON_BREAK:
+            return max(0, int(self.countdown_seconds))
+        return max(0, int(self.break_carry))
 
     def _prescript_changed(self):
         page = getattr(self, "pages", {}).get("prescript")

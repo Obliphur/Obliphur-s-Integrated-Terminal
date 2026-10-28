@@ -198,6 +198,9 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             blockedFn = { dm.resetting },
             devFn = { settings.devMode },
             pauseMediaFn = { host.pauseMedia() },
+            remainingRestFn = {
+                if (timer.state == TState.ON_BREAK) timer.countdown else timer.breakCarry.toDouble()
+            },
             onChange = { changed() },
         )
         loadViolations()

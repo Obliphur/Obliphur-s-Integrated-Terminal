@@ -1192,6 +1192,7 @@ EN = {
     "谨遵指令之意": "Abide by the will of the prescript",
     "接下来的1h专注50min.": "Focus for 50 min within the next hour.",
     "完成一次至少{n}级的合约.": "Complete a contract of at least level {n}.",
+    "休息{n}min.": "Rest for {n} min.",
     "休息20min.": "Rest for 20 min.",
     "今天专注至少{n} h": "Focus for at least {n} h today",
     "立即停下任何活动,接下来的5min什么也不做.":

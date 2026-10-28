@@ -25,7 +25,11 @@ object Prescript {
     val EXPIRY_SECONDS = mapOf("I" to 3600L, "II" to 8 * 3600L, "III" to 3600L, "V" to 300L, "VI" to 3600L)
     val FIXED_T = mapOf("I" to 1.0, "III" to 1.0, "IV" to 1.0, "V" to 0.1, "VI" to 1.0)
     const val FOCUS_TARGET = 50 * 60.0
+    /** III (旧存档里没有分钟数的): 20 分钟休息. */
     const val BREAK_TARGET = 20 * 60.0
+    /** III: 要休息的分钟数 = 用户剩余休息时间的 50%, 最多 30 分钟. */
+    const val REST_SHARE = 0.5
+    const val REST_MAX_MIN = 30
     const val REFLECT_TARGET = 3 * 60.0
     const val DAILY_T_TARGET = 10.0
     const val DAILY_BONUS_SECONDS = 20 * 60
@@ -53,6 +57,10 @@ object Prescript {
     }
 
     fun codeFor(t: Double): String = restCode(t * 3)
+
+    /** III 要休息几分钟: 剩余休息时间的 50%, 最多 30 分钟, 至少 1 分钟. */
+    fun restMinutes(remainingSeconds: Double): Int =
+        (remainingSeconds * REST_SHARE / 60).toInt().coerceIn(1, REST_MAX_MIN)
 
     /** 每条指令的蓝色代码用的词 (补位后正好 8 个字符以内). */
     val TYPE_WORDS = mapOf("I" to "FOCUS", "II" to "CONTRACT", "III" to "REST", "IV" to "DAILY", "V" to "STOP", "VI" to "REFLECT")
@@ -98,6 +106,8 @@ class PrescriptEngine(
     private val devFn: () -> Boolean = { false },
     /** 领取 V 时暂停后台正在播放的音频 / 视频. */
     private val pauseMediaFn: (() -> Unit)? = null,
+    /** 用户剩余的休息时间 (秒): 休息中是这次休息的倒计时, 否则是积攒的休息时间. */
+    private val remainingRestFn: () -> Double = { 0.0 },
     private val onChange: (() -> Unit)? = null,
     private val rng: Random = Random.Default,
 ) {
@@ -252,7 +262,7 @@ class PrescriptEngine(
         val body = when (kind) {
             "I" -> "接下来的1h专注50min."
             "II" -> { n = daily.optInt("n_ii", 1); "完成一次至少${n}级的合约." }
-            "III" -> "休息20min."
+            "III" -> { n = Prescript.restMinutes(try { remainingRestFn() } catch (_: Exception) { 0.0 }); "休息${n}min." }
             "IV" -> { n = daily.optInt("n_iv", 5); "今天专注至少$n h" }
             "V" -> "立即停下任何活动,接下来的5min什么也不做."
             else -> "检查你的统计数据,并作简要反思."
@@ -264,7 +274,8 @@ class PrescriptEngine(
             .put("type", kind).put("body", body)
             .put("accepted", now.iso()).put("expires", expires.iso())
             .put("pool", pool).put("n", n ?: JSONObject.NULL)
-            .put("t", Prescript.FIXED_T[kind] ?: 0.0)
+            // III 的 t (小时) = 休息时间 (小时) × 2; 其他是固定值
+            .put("t", if (kind == "III") (n ?: 1) / 60.0 * 2 else Prescript.FIXED_T[kind] ?: 0.0)
             .put("focus_sec", 0.0).put("break_sec", 0.0).put("stats_since", JSONObject.NULL)
         data.put("current", cur)
         data.put("last_draw", now.iso()).put("last_pool", pool).put("last_type", kind).put("v_reset", false)
@@ -405,7 +416,8 @@ class PrescriptEngine(
             }
             "III" -> {
                 if (stateFn() == "break") { cur.put("break_sec", cur.optDouble("break_sec", 0.0) + gained()); dirty = true }
-                if (cur.optDouble("break_sec", 0.0) >= Prescript.BREAK_TARGET) { finish("completed", now, 1.0, cur = cur); return }
+                val target = if (cur.isNull("n")) Prescript.BREAK_TARGET else cur.optInt("n", 0) * 60.0
+                if (cur.optDouble("break_sec", 0.0) >= target) { finish("completed", now, cur.optDouble("t", 1.0), cur = cur); return }
                 if (expired) { finish("expired", now, cur = cur); return }
             }
             "II" -> {

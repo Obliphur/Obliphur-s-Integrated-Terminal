@@ -102,6 +102,23 @@ class PrescriptTest {
     }
 
     @Test
+    fun restPrescriptScalesWithRemainingRest() {
+        assertEquals(25, Prescript.restMinutes(3000.0))
+        assertEquals(30, Prescript.restMinutes(7200.0))
+        assertEquals(1, Prescript.restMinutes(0.0))
+        val dir = Files.createTempDirectory("oit").toFile()
+        val eng = PrescriptEngine(File(dir, "prescript.json"), stateFn = { "break" }, remainingRestFn = { 3000.0 })
+        val cur = eng.draw(t0, choose = "III")!!
+        assertEquals(25, cur.getInt("n"))
+        assertEquals("休息25min.", cur.getString("body"))
+        assertEquals(25 / 30.0, cur.getDouble("t"), 1e-9)
+        var now = t0
+        repeat(25 * 60) { now = now.plusSeconds(1); eng.tick(now) }
+        assertNull(eng.current)
+        assertEquals(150, eng.rawData().getJSONArray("pending").getJSONObject(0).getInt("seconds"))
+    }
+
+    @Test
     fun drawingVPausesMedia() {
         val dir = Files.createTempDirectory("oit").toFile()
         var paused = 0

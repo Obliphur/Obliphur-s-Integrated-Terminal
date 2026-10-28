@@ -192,7 +192,7 @@ class PrescriptPage(tk.Frame):
     def refresh(self):
         # 永远只显示最新的一条指令 (开发者模式下同时有几条, 旧的在后台照常判定, 不显示).
         cur = self.engine.current
-        body = tr(cur.get("body", "")) if cur else tr(IDLE_TEXT)
+        body = self._body_text(cur) if cur else tr(IDLE_TEXT)
         # 有进行中的指令: 蓝色代码是这条指令的词; 没有就看这次打开之后结算出的奖励, 再没有就是 _%NONE%.
         if cur:
             codes = [pad_code(type_code(cur.get("type")))]
@@ -209,6 +209,16 @@ class PrescriptPage(tk.Frame):
             self._codes = codes
             self._set_codes(codes, instant)
         self._sync_button()
+
+    @staticmethod
+    def _body_text(cur) -> str:
+        """指令正文; 带数字的 (II / III / IV) 按模板翻译, 英文界面也能显示."""
+        n = cur.get("n")
+        templates = {"II": "完成一次至少{n}级的合约.", "III": "休息{n}min.", "IV": "今天专注至少{n} h"}
+        tpl = templates.get(cur.get("type"))
+        if tpl and n is not None:
+            return tr(tpl, n=int(n))
+        return tr(cur.get("body", ""))
 
     def _fresh_grants(self):
         """只显示这一次打开页面之后给出的代码, 而且不到 3 分钟的不写出来 (再次打开显示 _%NONE%.)."""
