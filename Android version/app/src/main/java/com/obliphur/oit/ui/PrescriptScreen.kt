@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -67,6 +68,10 @@ fun PrescriptScreen(onExit: () -> Unit) {
     // ---- 目标文字 ----
     // 永远只显示最新的一条指令 (开发者模式下同时有几条, 旧的在后台照常判定, 不显示)
     val latest = eng.current
+    // V 结束 (完成 / 作废) 之后立刻回到等待领取的样子, 不播动画
+    val prevType = remember { arrayOf("") }
+    val vEnded = prevType[0] == "V" && latest == null
+    SideEffect { prevType[0] = latest?.optString("type") ?: "" }
     val bodyTarget = if (latest == null) tr("谨遵指令之意") else {
         val n = if (latest.isNull("n")) 0 else latest.optInt("n")
         when (latest.optString("type")) {
@@ -88,6 +93,7 @@ fun PrescriptScreen(onExit: () -> Unit) {
     var scrambleAt by remember { mutableStateOf(0L) }
     LaunchedEffect(bodyTarget) {
         if (bodyShown == bodyTarget) return@LaunchedEffect
+        if (vEnded) { bodyShown = bodyTarget; return@LaunchedEffect }
         for (i in 1..bodyTarget.length) {                // 逐字打出来, 每字 50 ms
             bodyShown = bodyTarget.take(i)
             delay(50)
@@ -96,6 +102,7 @@ fun PrescriptScreen(onExit: () -> Unit) {
     }
     LaunchedEffect(codesTarget) {
         if (codesShown == codesTarget) return@LaunchedEffect
+        if (vEnded) { codesShown = codesTarget; return@LaunchedEffect }
         val longest = codesTarget.maxOf { it.length }
         val total = if (scrambleMs > 0 && System.nanoTime() - scrambleAt < 2_000_000_000L) scrambleMs.toDouble() else 100.0 * longest
         val start = System.nanoTime()

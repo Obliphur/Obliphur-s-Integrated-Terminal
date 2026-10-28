@@ -73,6 +73,7 @@ class PrescriptPage(tk.Frame):
         self._body = None             # 正文当前的目标文字
         self._codes = None            # 蓝色代码当前的目标文字 (list)
         self._body_gen = 0
+        self._prev_type = ""          # 上一次刷新时进行中指令的类型 (V 结束要立刻复位)
         self._scramble_ms = 0         # 这一次蓝色代码变动要多久 (0 = 默认); 领取时等于音效的长度
         self._sound_job = None
         self._sound_len = 0
@@ -198,12 +199,15 @@ class PrescriptPage(tk.Frame):
         else:
             codes = [pad_code(str(g.get("code") or "")) for g in self._fresh_grants()]
             codes = codes or [pad_code("NONE")]
+        # V 结束 (完成 / 作废) 之后立刻回到最初等待领取的样子, 不播动画
+        instant = self._prev_type == "V" and not cur
+        self._prev_type = str(cur.get("type") or "") if cur else ""
         if body != self._body:
             self._body = body
-            self._set_body(body)
+            self._set_body(body, instant)
         if codes != self._codes:
             self._codes = codes
-            self._set_codes(codes)
+            self._set_codes(codes, instant)
         self._sync_button()
 
     def _fresh_grants(self):
@@ -218,11 +222,11 @@ class PrescriptPage(tk.Frame):
                 out.append(g)
         return out
 
-    def _set_body(self, text):
+    def _set_body(self, text, instant=False):
         self._body_gen += 1
         gen = self._body_gen
         self._cancel("_body_job")
-        if not self._active or not text:
+        if not self._active or instant or not text:
             self._body_busy = False
             self.lbl_body.configure(text=text)
             return
@@ -250,12 +254,12 @@ class PrescriptPage(tk.Frame):
         while len(self._code_lines) > count:
             self._code_lines.pop().destroy()
 
-    def _set_codes(self, codes):
+    def _set_codes(self, codes, instant=False):
         self._code_gen += 1
         gen = self._code_gen
         self._cancel("_code_job")
         self._ensure_lines(len(codes))
-        if not self._active:
+        if not self._active or instant:
             self._code_busy = False
             for line, text in zip(self._code_lines, codes):
                 line.set_text(text)

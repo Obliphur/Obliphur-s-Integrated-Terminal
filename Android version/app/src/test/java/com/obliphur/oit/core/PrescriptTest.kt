@@ -102,6 +102,17 @@ class PrescriptTest {
     }
 
     @Test
+    fun drawingVPausesMedia() {
+        val dir = Files.createTempDirectory("oit").toFile()
+        var paused = 0
+        val eng = PrescriptEngine(File(dir, "prescript.json"), pauseMediaFn = { paused++ })
+        eng.draw(t0, choose = "I")
+        assertEquals(0, paused)
+        eng.draw(t0.withMinute(0).plusHours(1), choose = "V")
+        assertEquals(1, paused)
+    }
+
+    @Test
     fun voidLeavesPage() {
         val env = Env()
         val eng = env.engine()

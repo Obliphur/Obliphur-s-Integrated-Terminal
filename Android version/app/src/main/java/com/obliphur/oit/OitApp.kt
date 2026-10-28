@@ -241,6 +241,25 @@ class OitApp : Application(), Host {
 
     override fun openApps(): Set<String>? = AppUsage.openApps(this)
 
+    /**
+     * 指令 V: 暂停后台的音频 / 视频. 先发一个"暂停"媒体键 (只暂停, 不会把停着的变成播放), 再要一次永久的音频焦点
+     * (别的播放器收到永久失焦也会暂停, 并且不会自己恢复); 稍后把焦点还回去.
+     */
+    override fun pauseMedia() {
+        runCatching {
+            val am = getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
+            am.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_MEDIA_PAUSE))
+            am.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_MEDIA_PAUSE))
+            val req = android.media.AudioFocusRequest.Builder(android.media.AudioManager.AUDIOFOCUS_GAIN)
+                .setAudioAttributes(android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC).build())
+                .setOnAudioFocusChangeListener { }.build()
+            am.requestAudioFocus(req)
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ runCatching { am.abandonAudioFocusRequest(req) } }, 3000)
+        }
+    }
+
     /** 违反合约的警报 (MECHANICS 18). */
     override fun playAlarm() {
         runCatching {

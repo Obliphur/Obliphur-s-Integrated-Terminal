@@ -43,6 +43,8 @@ interface Host {
     fun playAlarm() {}
     /** 开着的应用 (后台的应用, 包名; 不含 OIT 自己 / 桌面 / 系统界面); 没有使用情况访问权限时 null. */
     fun openApps(): Set<String>? = null
+    /** 暂停后台正在播放的音频 / 视频 (指令 V 被领取时, MECHANICS 22.2). */
+    fun pauseMedia() {}
 }
 
 /** VPN 应该处于的状态 (见 MECHANICS 14.2). */
@@ -195,6 +197,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             },
             blockedFn = { dm.resetting },
             devFn = { settings.devMode },
+            pauseMediaFn = { host.pauseMedia() },
             onChange = { changed() },
         )
         loadViolations()

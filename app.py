@@ -25,6 +25,7 @@ import recorder
 import daily
 import behavior
 import prestart
+import media_pause
 import prescript
 from sync_local import PcLocal
 from config import (
@@ -294,6 +295,7 @@ class BreakTimerApp:
             blocked_fn=lambda: self.dm.resetting,
             on_change=self._prescript_changed,
             dev_fn=config.dev_mode_enabled,
+            pause_media_fn=media_pause.pause_all,
         )
         self.prescript_job = None
         self.updater = updater.Updater()

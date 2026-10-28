@@ -153,11 +153,12 @@ class PrescriptEngine:
     blocked_fn()      -> 正在重置数据时不要写文件
     on_change()       -> 状态变了, 让指令页刷新
     dev_fn()          -> 开发者模式: 领取没有冷却, 同时最多留 3 条
+    pause_media_fn()  -> 领取 V 时暂停后台正在播放的音频 / 视频
     """
 
     def __init__(self, data_dir, *, state_fn=None, today_hours_fn=None, contracts_fn=None,
                  page_fn=None, minimized_fn=None, grant_rest_fn=None, username_fn=None,
-                 blocked_fn=None, on_change=None, dev_fn=None, rng=None):
+                 blocked_fn=None, on_change=None, dev_fn=None, pause_media_fn=None, rng=None):
         self.path = os.path.join(data_dir, "prescript.json")
         self.state_fn = state_fn or (lambda: "idle")
         self.today_hours_fn = today_hours_fn or (lambda: 0.0)
@@ -168,6 +169,7 @@ class PrescriptEngine:
         self.username_fn = username_fn or (lambda: "")
         self.blocked_fn = blocked_fn or (lambda: False)
         self.dev_fn = dev_fn or (lambda: False)
+        self.pause_media_fn = pause_media_fn
         self.on_change = on_change
         self.rng = rng or random.Random()
         self._username = ""
@@ -440,6 +442,11 @@ class PrescriptEngine:
         self._last_tick = now
         self._dirty = True
         self.save()
+        if kind == "V" and self.pause_media_fn is not None:
+            try:
+                self.pause_media_fn()
+            except Exception:       # noqa: BLE001
+                pass
         self._changed()
         return cur
 
@@ -847,6 +854,17 @@ def _selftest():
         state["mode"] = "focus"
         eng.tick(t2 + timedelta(hours=2))
         assert eng.current is None and eng._data["history"][-1]["result"] == "expired"
+
+        # V 被领取时暂停后台的音频 / 视频
+        paused = []
+        eng.pause_media_fn = lambda: paused.append(1)
+        t_v = t2 + timedelta(hours=60)
+        eng.draw(t_v, choose="I")
+        assert not paused
+        eng.draw(t_v + timedelta(hours=2), choose="V")
+        assert paused == [1]
+        eng.pause_media_fn = None
+        eng._data["current"] = None
 
         # 开发者模式: 没有冷却, 同时最多留 DEV_KEEP 条, 满了新的领不了; 每条各自判定.
         dev = {"on": True}

@@ -96,6 +96,8 @@ class PrescriptEngine(
     private val grantRestFn: ((Int, String) -> Unit)? = null,
     private val blockedFn: () -> Boolean = { false },
     private val devFn: () -> Boolean = { false },
+    /** 领取 V 时暂停后台正在播放的音频 / 视频. */
+    private val pauseMediaFn: (() -> Unit)? = null,
     private val onChange: (() -> Unit)? = null,
     private val rng: Random = Random.Default,
 ) {
@@ -269,6 +271,7 @@ class PrescriptEngine(
         lastTick = now
         dirty = true
         save()
+        if (kind == "V") try { pauseMediaFn?.invoke() } catch (_: Exception) {}
         changed()
         return cur
     }
