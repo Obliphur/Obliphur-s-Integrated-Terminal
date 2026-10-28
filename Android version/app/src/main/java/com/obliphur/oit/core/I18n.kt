@@ -13,6 +13,10 @@ object I18n {
     @Volatile
     var noIcons: Boolean = false
 
+    /** 都市之意主题不显示风味文本 (作者写的那些带竖线的小字). */
+    @Volatile
+    var noFlavor: Boolean = false
+
     private val ICON = Regex("[\u21A9\u21AA\u21BB\u2300-\u23FF\u2600-\u27BF\u2B00-\u2BFF\uFE0F\u200D\u20E3\\x{1F000}-\\x{1FAFF}]")
 
     /** 去掉图标字符 (图标旁边的空格一起去掉); 只有一个图标的按钮 (✕ / ☰) 换成普通字符, 免得按钮没有字. */

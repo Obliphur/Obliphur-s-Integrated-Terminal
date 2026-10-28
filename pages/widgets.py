@@ -165,9 +165,24 @@ def wrap_label(widget, pad: int = 16):
     return widget
 
 
+class _NoFlavor(tk.Frame):
+    """都市之意不显示风味文本: 一个不占位的空外框, 调用方照常 pack / 取 .label (都是空操作)."""
+
+    def __init__(self, parent, text):
+        super().__init__(parent, width=0, height=0)
+        self.label = tk.Label(self, text=text)          # 不显示, 只让调用方改 .label 的文字时有对象
+
+    def pack(self, *args, **kw):
+        pass
+
+    pack_configure = grid = grid_configure = place = place_configure = pack
+
+
 def flavor(parent, text: str, bg: str = None, pad: int = 24):
     """作者写的风味文本 (来自 MECHANICS.md): 左边一道细竖线, 暗色小字, 和说明文字区分开.
-    返回外框; 文字标签是 .label."""
+    返回外框; 文字标签是 .label. 都市之意主题不显示风味文本."""
+    if getattr(config, "THEME", "") == "urban_will":
+        return _NoFlavor(parent, text)
     bg = bg or COLORS["bg"]
     fr = tk.Frame(parent, bg=bg)
     tk.Frame(fr, bg=COLORS["accent"], width=max(2, config.scaled(3))).pack(side="left", fill="y")

@@ -776,9 +776,6 @@ class SettingsPage(tk.Frame):
                     "重新检查").pack(side="right", padx=(0, 6))
         self.lbl_cam = tk.Label(fr, text="", bg=card, fg=COLORS["text"], font=small, anchor="w", justify="left")
         self.lbl_cam.pack(fill="x", padx=12, pady=(2, 2))
-        zh = "合约选了「目光」时, 合约期间用摄像头录像. 要在 Windows 设置 → 隐私和安全性 → 摄像头 里允许桌面应用使用摄像头."
-        self._track(wrap_label(tk.Label(fr, text=tr(zh), bg=card, fg=COLORS["text_dim"], font=small, anchor="w", justify="left")), zh).pack(
-            fill="x", padx=12, pady=(0, 10))
 
         fr, head = self._card(body, "📷  选择摄像头")
         self._track(ttk.Button(head, text=tr("刷新"), command=self._check_camera),
@@ -790,16 +787,7 @@ class SettingsPage(tk.Frame):
         self.lbl_cam_sel = tk.Label(fr, text="", bg=card, fg=COLORS["text_dim"], font=small,
                                     anchor="w", justify="left")
         self.lbl_cam_sel.pack(fill="x", padx=12, pady=(0, 2))
-        zh = ("合约选了「目光」时用哪台设备的摄像头录像. 可以选本机的某一台摄像头, 也可以选一台在线的手机"
-              "(用手机的摄像头录, 手机不在线时改用本机的). 没有列出来时点「刷新」; 每台设备各自设置.")
-        self._track(wrap_label(tk.Label(fr, text=tr(zh), bg=card, fg=COLORS["text_dim"], font=small, anchor="w", justify="left")), zh).pack(
-            fill="x", padx=12, pady=(0, 10))
 
-        fr, _head = self._card(body, "🖥  屏幕录制权限")
-        zh = ("Windows 不需要单独授权: 合约选了「刻痕」时, 合约期间直接录制整个屏幕 (所有显示器, 每秒 1 帧). "
-              "可以在合约页终止录屏, 但立即算一次违反.")
-        self._track(wrap_label(tk.Label(fr, text=tr(zh), bg=card, fg=COLORS["text_dim"], font=small, anchor="w", justify="left")), zh).pack(
-            fill="x", padx=12, pady=(2, 10))
 
     def _build_record_lists(self, body):
         card = COLORS["bg_card"]

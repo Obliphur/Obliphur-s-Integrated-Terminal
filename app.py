@@ -4026,8 +4026,7 @@ class BreakTimerApp:
 
         dlg = toast.notice(
             tr("⚔ 合约要求录像"),
-            tr("进行中的合约要求本机{what} ({term}).", what=what, term=tr(contract_mod.BY_ID[tid][3])) + "\n"
-            + tr("录像只保存在本机, 在 设置 → 录像 查看.") + "\n" + tr("拒绝算一次违反, 这个词条失效."),
+            tr("进行中的合约要求本机{what} ({term}).", what=what, term=tr(contract_mod.BY_ID[tid][3])),
             buttons=[(tr("开始录像"), yes, True), (tr("拒绝"), no, False)])
         try:
             dlg.bind("<Destroy>", lambda e: e.widget is dlg and self.root.after(100, closed), add="+")
@@ -4041,8 +4040,7 @@ class BreakTimerApp:
         if not terms:
             return
         if not toast.ask(
-                tr("终止整个录制过程?") + "\n"
-                + tr("正在录的每一路各算一次违反 (目标生命值 -1), 对应词条失效; 所有设备都会停止录像, 已经录下的照样保存."),
+                tr("终止整个录制过程?"),
                 title=tr("■ 终止录像"), danger=True):
             return
         cid = str(self.contract.live.get("id") or "")
@@ -4069,11 +4067,9 @@ class BreakTimerApp:
         kinds = [contract_mod.RECORD[t] for t in terms if t in contract_mod.RECORD]
         out = []
         if "camera" in kinds:
-            out.append(tr("📷 合约期间用摄像头录像 (中途关掉摄像头算违反)"))
+            out.append(tr("📷 合约期间用摄像头录像"))
         if "screen" in kinds:
-            out.append(tr("🖥 合约期间录制整个屏幕 (可以在合约页终止, 但算一次违反)"))
-        if out:
-            out.append(tr("录像只保存在本机, 在 设置 → 录像 查看."))
+            out.append(tr("🖥 合约期间录制整个屏幕"))
         return out
 
     def _check_contract_windows(self, ws):

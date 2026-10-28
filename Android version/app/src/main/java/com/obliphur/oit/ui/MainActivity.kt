@@ -325,7 +325,8 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
     val notices by app.notices.collectAsState()
     val core = app.core
     val theme = act.uiTheme
-    I18n.noIcons = theme == "urban_will"          // 都市之意不画图标
+    I18n.noIcons = theme == "urban_will"          // 都市之意不画图标, 也不显示风味文本
+    I18n.noFlavor = theme == "urban_will"
     val fs = core.settings.str("FONT_SCALE").toFloatOrNull() ?: 1f
     var page by rememberSaveable { mutableStateOf("timer") }
     // 指令是都市之意主题独占的页面, 放在所有页面的第一位 (MECHANICS 22)

@@ -78,6 +78,7 @@ fun Heading(text: String, modifier: Modifier = Modifier) =
 /** 作者写的风味文本: 左边带一道细竖线. */
 @Composable
 fun Flavor(text: String, modifier: Modifier = Modifier) {
+    if (com.obliphur.oit.core.I18n.noFlavor) return          // 都市之意不显示风味文本
     val o = LocalOit.current
     Row(modifier.fillMaxWidth().height(IntrinsicSize.Min).padding(vertical = 8.dp)) {
         Box(Modifier.width(2.dp).fillMaxHeight().background(o.border))

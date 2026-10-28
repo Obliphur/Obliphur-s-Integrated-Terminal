@@ -580,7 +580,7 @@ fun ContractScreen() {
             // 终止整个录制过程 (任意一端都能终止, MECHANICS 18.8): 正在录的每一路各算一次违反, 所有设备都停, 已录的照样保存
             if (c.records().isEmpty()) ask = ""
             else Confirm(tr("■ 终止录像"),
-                tr("终止整个录制过程? 正在录的每一路各算一次违反 (目标生命值 -1), 对应词条失效; 所有设备都会停止录像, 已经录下的照样保存."),
+                tr("终止整个录制过程?"),
                 true, { ask = "" }) { OitApp.instance.recordManager.terminate() }
         } else if (ask.startsWith("pickwarn:")) {
             // 目光 / 刻痕: 选上前提示会录像 + 加密 (MECHANICS 18.8). 选不选由用户决定.

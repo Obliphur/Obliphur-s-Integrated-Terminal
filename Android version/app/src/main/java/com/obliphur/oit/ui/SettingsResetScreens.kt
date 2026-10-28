@@ -460,10 +460,6 @@ private fun RecordingsCard(act: MainActivity) {
 
     OitCard {
         Text(tr("🎬  录像"), fontWeight = FontWeight.Bold, color = o.text)
-        Dim(tr("目光 (摄像头) 和刻痕 (屏幕) 录下的视频经过加密, 只能在这里 (OIT 内) 查看和播放, 不会被网盘 / 相册自动上传."),
-            size = 12, color = o.dim)
-        Dim(tr("这里只展示最终合并好的录像, 各设备间自动同步 (删除也会同步); 合并在合约主人 (一台电脑) 上进行."),
-            size = 12, color = o.dim)
     }
 
     // 只展示最终 (合并 / 同步好) 的录像, 不展示片段 (MECHANICS 18.8)
