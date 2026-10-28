@@ -272,6 +272,14 @@ SETTINGS_SCHEMA = [
         "desc": "即时生效.界面配色:经典蓝白,参考 Claude 的米白 / 炭灰,或全黑像素风的都市之意.",
     },
     {
+        "key": "CONTRACT_THEME", "label": "合约页主题",
+        "kind": "choice", "apply": APPLY_INSTANT,
+        "choices": [("ops", "起源"), ("deep", "渊默")],
+        "fmt": lambda v: {"deep": "Deepness"}.get(str(v), "Basepoint"),
+        "desc": "即时生效 (重建界面).合约页的样式: 起源 (深灰红) 或渊默 (深绿橙, 参考渊默行动).开始合约时记进这次合约: "
+                "起源 + 无懈可击, 或渊默 + 信息隔绝 凑齐着完成合约, 结算休息时间额外 +5 分钟.每台设备各自设置, 不同步.",
+    },
+    {
         "key": "REC_FOCUS_ONLY", "label": "只在专注期间录像",
         "kind": "choice", "apply": APPLY_INSTANT,
         "choices": [("1", "开启 (ON)"), ("0", "关闭 (OFF)")],
@@ -751,6 +759,8 @@ class SettingsManager:
                 return 1.0
         if key == "THEME":
             return str(value) if str(value) in config.THEMES else config.DEFAULT_THEME
+        if key == "CONTRACT_THEME":
+            return str(value) if str(value) in ("ops", "deep") else "ops"
         if key in ("LANGUAGE", "AUTO_TEXT", "OUTING_TEXT", "REST_TEXT"):
             return str(value)
         if key == "CHIME_WAV":

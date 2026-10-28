@@ -92,7 +92,7 @@ object Schema {
         num("FILL_WINDOW", "整点记录补填时限", "min", 60.0, 1.0, 1440.0, true, 3600.0, "log"),
         // ---- 合约 ----
         Spec("CONTRACT_THEME", "合约页主题", Kind.CHOICE, false, "contract", "ops",
-            choices = listOf("ops" to "起源", "ui" to "跟随界面主题")),
+            choices = listOf("ops" to "起源", "deep" to "渊默", "ui" to "跟随界面主题")),
         // ---- 录像 (目光 / 刻痕, MECHANICS 18.8): 要不要录声音 (默认都录). 手机上录屏录不到系统音 ----
         Spec("REC_FOCUS_ONLY", "只在专注期间录像", Kind.CHOICE, false, "record", "1", choices = ONOFF),   // 随设备同步
         Spec("REC_MIC", "录麦克风 (外部音)", Kind.CHOICE, false, "record", "1", choices = ONOFF),

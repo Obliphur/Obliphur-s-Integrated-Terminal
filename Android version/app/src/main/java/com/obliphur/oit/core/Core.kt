@@ -1112,7 +1112,8 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     fun startContract(terms: Collection<String>) {
         if (contract.active) return
         contractBlock().let { if (it.isNotEmpty()) { toast(it, "warn"); return } }
-        contract.start(terms, myId(), pre = timer.breakCarry.toDouble())
+        contract.start(terms, myId(), pre = timer.breakCarry.toDouble(),
+            theme = Contract.cleanTheme(settings.str("CONTRACT_THEME")))
         // 凑齐的词条组合: 积攒的休息时间 +N 分钟 (在 pre 之后加: 算合约中得到的, 合约结束后不留下)
         val gift = Contract.restGift(contract.terms)
         timer.addCarry(gift)

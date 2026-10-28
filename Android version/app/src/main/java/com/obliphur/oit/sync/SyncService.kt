@@ -161,7 +161,7 @@ class SyncService(
         const val PAIR_TIMEOUT_MS = 120_000L
         /** 设置里每台设备各自决定的项, 不同步. */
         val LOCAL_SETTINGS = setOf("NET_MODE", "FILTER_MODE", "FONT_SCALE", "CHIME_WAV",
-            "WINDOW_LIMIT_ENABLED", "WINDOW_LIMIT", "WINDOW_FOCUS_ENABLED", "UPDATE_CHECK", "UPDATE_AUTO")
+            "WINDOW_LIMIT_ENABLED", "WINDOW_LIMIT", "WINDOW_FOCUS_ENABLED", "UPDATE_CHECK", "UPDATE_AUTO", "CONTRACT_THEME")
 
         /** 值的规范文字: 数字一律按 numText, 对象按键排序 (用来判断改没改过). */
         fun canon(v: Any?): String = when (v) {

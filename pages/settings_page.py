@@ -555,7 +555,7 @@ class SettingsPage(tk.Frame):
 
 
     def _stage(self, key: str):
-        if key in ("LANGUAGE", "FONT_SCALE", "THEME"):
+        if key in ("LANGUAGE", "FONT_SCALE", "THEME", "CONTRACT_THEME"):
             # 这几项会重建整个界面, 由 rebuild_ui 自己显示加载页
             return self._stage_now(key)
         with frozen(self):
@@ -606,7 +606,7 @@ class SettingsPage(tk.Frame):
         if "FONT_SCALE" in keys and self.on_font_scale:
             self.on_font_scale()
             return True
-        if "THEME" in keys and self.on_theme:
+        if ("THEME" in keys or "CONTRACT_THEME" in keys) and self.on_theme:
             self.on_theme()
             return True
         return False

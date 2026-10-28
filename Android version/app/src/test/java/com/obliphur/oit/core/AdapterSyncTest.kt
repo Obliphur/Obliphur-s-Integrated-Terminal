@@ -12,7 +12,9 @@ import java.time.LocalDateTime
 /** 一台设备用 Adapter 断网期间各自记下的东西 (MECHANICS 15.5). 对应桌面版 contract.py / data_manager.py 的测试. */
 class AdapterSyncTest {
     private fun tmp(name: String = "contract.json"): File = File(Files.createTempDirectory("oit").toFile(), name)
-    private fun at(h: Int, m: Int = 0): LocalDateTime = LocalDateTime.of(2026, 10, 21, h, m)
+    // 昨天: 专注记录只留最近 7 天 (DataStore.focusFloor), 写死的日期过几天就被清掉了
+    private val day = java.time.LocalDate.now().minusDays(1)
+    private fun at(h: Int, m: Int = 0): LocalDateTime = day.atTime(h, m)
 
     /** 进行中的合约被同步来的另一个合约盖掉 → 冲突; 选了留下哪个, 另一个作废 (随同步). */
     @Test
@@ -59,7 +61,7 @@ class AdapterSyncTest {
         dm.addFocusSession("study", at(10), at(11))
         dm.addFocusSession("break", at(11), at(11, 20))
         dm.addFocusSession("idle", at(12), at(13), at(9))
-        dm.study["2026-10-21"] = 3.0
+        dm.study[day.toString()] = 3.0
         fun rec(k: String, a: LocalDateTime, b: LocalDateTime) =
             JSONObject().put("k", k).put("s", a.format(Fmt.TS)).put("e", b.format(Fmt.TS))
         val peer = listOf(rec("study", at(10, 30), at(11, 10)), rec("break", at(12, 30), at(12, 40)),
@@ -68,7 +70,7 @@ class AdapterSyncTest {
         assertEquals(900.0, r["study"]!!, 1e-6)                 // 被别人的休息盖住的专注 (10:00 ~ 10:15)
         assertEquals(0.0, r["break"]!!, 1e-6)                   // 自己的休息不删
         assertEquals(1800.0, r["idle"]!!, 1e-6)                 // 被别人的休息 / 专注盖住的空闲
-        assertEquals(3.0 - 0.25, dm.study["2026-10-21"]!!, 1e-9)
+        assertEquals(3.0 - 0.25, dm.study[day.toString()]!!, 1e-9)
         assertTrue("专注撞专注: 手机不删", dm.focus.any { it.kind == "study" && it.start == at(10, 15) && it.end == at(11) })
         assertTrue(dm.focus.any { it.kind == "idle" && it.end == at(12, 30) && it.focus.isNotEmpty() })
     }

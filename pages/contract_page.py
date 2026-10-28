@@ -44,8 +44,10 @@ HARD_LEVEL = 20                  # 总等级到这里就提示"难度极大"
 RESULTS = {"completed": "完成", "failed": "行动失败: 目标生命值归零", "idle": "行动失败: 空闲超过 15 分钟",
            "offline": "行动失败: 设备离线超过 15 分钟", "abandoned": "行动终止"}
 
-# 合约页固定使用自己的「起源」主题: 深色页面, 浅灰的词条板, 六边形格子, 黑色的已选中词条,
-# 红色的开始按钮; 侧边栏在合约页也换成这一套颜色. 它不跟随界面主题, 字体也用自己的默认字体.
+# 合约页用自己的主题, 不跟随界面主题 (字体也用自己的默认字体), 在 设置 → 合约页主题 里选 (MECHANICS 18.7):
+# 「起源」: 深色页面, 浅灰的词条板, 六边形格子, 黑色的已选中词条, 红色的开始按钮;
+# 「渊默」: 参考渊默行动的配色: 深绿灰的页面, 绿灰的词条板和格子, 深绿色的选中, 橙色的标签 / 开始按钮.
+# 侧边栏在合约页也换成这一套颜色.
 OPS = {
     "bg": "#1f2023", "text": "#f2f2f2", "dim": "#9a9ca1", "line": "#c8202f",
     "board": "#d6d7da", "band": "#2c2d31", "band_text": "#ececec", "band_dim": "#9a9ca1",
@@ -70,18 +72,50 @@ OPS = {
     # 词条组合的颜色 (打年糕 黄色 / 互联网娱乐的败退 紫色 / 无懈可击 深蓝色 / 信息隔绝 红色)
     "combo_yellow": C.COMBO_COLORS["yellow"], "combo_purple": C.COMBO_COLORS["purple"],
     "combo_blue": C.COMBO_COLORS["blue"], "combo_red": C.COMBO_COLORS["red"],
+    # 页眉的标签 / 右边的小字 (起源没有小字)
+    "tag_name": "合约详情", "brand": "",
 }
+
+DEEP = {
+    **OPS,
+    "bg": "#14241b", "text": "#e8f2ec", "dim": "#8fae9c", "line": "#e0782b",
+    "board": "#b5c9b9", "band": "#1c3326", "band_text": "#e3f0e6", "band_dim": "#88a893",
+    "tile": "#3b5a45", "tile_text": "#eef6f0", "tile_rim": "#6f9a7e", "tile_rim4": "#e0782b",
+    "tile_on": "#2a9356", "tile_on_text": "#ffffff", "tile_on_rim": "#a4f0c0",
+    "tile_off": "#a2b8a7", "tile_off_text": "#6f8c78", "tile_off_rim": "#8ea693",
+    "tile_rand": "#f0a04a", "tile_rand_text": "#0e1b13", "tile_rand_rim": "#ffc27a",
+    "tile_ban": "#6d56c9", "tile_ban_rim": "#bdaef5",
+    "hint": "#1c3326", "nav": "#e3f0e6", "nav_off": "#4f6b57",
+    "sel": "#0e1b13", "sel_text": "#e8f2ec", "sel_dim": "#6f9378",
+    "badge_hi": "#e0782b", "badge_lo": "#e8f2ec", "badge_lo_text": "#0e1b13",
+    "bar": "#182a1f", "start": "#c4631e", "start_hover": "#e07a2f",
+    "start_off": "#3a5042", "start_off_text": "#88a893",
+    "rules": "#0e1b13", "rules_rim": "#365a44",
+    "clear": "#33543d", "clear_hover": "#436e51", "clear_text": "#e3f0e6",
+    "tag": "#e0782b",
+    "live": "#0e1b13", "live_rim": "#e0782b", "danger": "#ff9a5c", "idle": "#f0a04a",
+    "side": "#0f1c14", "side_text": "#bdd4c3", "side_on": "#2a9356",
+    "side_hover": "#1c3326", "side_rim": "#1c3326",
+    "tag_name": "渊默行动", "brand": "OPERATION DEEPNESS",
+}
+PALETTES = {"ops": OPS, "deep": DEEP}
+
+
+def theme() -> str:
+    """现在用的合约页主题 (设置 → 基本设置 → 合约页主题): ops 起源 / deep 渊默."""
+    t = str(getattr(config, "CONTRACT_THEME", "") or "")
+    return t if t in PALETTES else C.DEFAULT_THEME
 
 
 def palette() -> dict:
-    """合约页固定使用自己的「起源」主题, 不跟随界面主题 (颜色和字体都是)."""
-    return OPS
+    """合约页的主题配色, 不跟随界面主题 (颜色和字体都是)."""
+    return PALETTES[theme()]
 
 
 class ContractPage(tk.Frame):
     """合约页 (MECHANICS 18): 词条板 (行 = 等级, 列 = 类型, 同一类型在同一列; 翻页), 下面是已选中的词条 (两栏),
     最下面一条: 清空 | 危机等级 | 时长 / 完成后的休息时间 | 开始行动. 合约进行中时只能看, 不能改.
-    颜色 / 字体都用合约页自己的「起源」样式, 不跟随界面主题."""
+    颜色 / 字体都用合约页自己的样式 (起源 / 渊默), 不跟随界面主题."""
 
     TILE_W, GAP, BAND_W = 68, 7, 148              # 格子是正六边形: 高 = 宽 × √3 / 2
 
@@ -89,6 +123,7 @@ class ContractPage(tk.Frame):
                  blocked=None, rec_text=None, on_stop_screen=None, on_close_rand=None, on_lift_ban=None,
                  on_pick=None):
         self.P = P = palette()
+        self.theme = theme()
         super().__init__(master, bg=P["bg"])
         self.c = contract
         self.net_used = net_used or (lambda: 0.0)    # 今天所有设备已用的联网额度 (秒)
@@ -107,10 +142,13 @@ class ContractPage(tk.Frame):
 
         hdr = tk.Frame(self, bg=P["bg"])
         hdr.pack(fill="x", padx=24, pady=(18, 6))
-        tk.Label(hdr, text=tr("合约详情"), bg=P["tag"], fg=P["tag_text"], font=config.contract_font("small", bold=True),
+        tk.Label(hdr, text=tr(P["tag_name"]), bg=P["tag"], fg=P["tag_text"], font=config.contract_font("small", bold=True),
                  padx=8, pady=2).pack(side="left", anchor="s", pady=(0, 6))
         tk.Label(hdr, text=tr("⚔  合约"), bg=P["bg"], fg=P["text"],
                  font=config.contract_font("h1", bold=True)).pack(side="left", padx=(12, 0))
+        if P["brand"]:
+            tk.Label(hdr, text=P["brand"], bg=P["bg"], fg=P["dim"], font=config.contract_font("small", bold=True)
+                     ).pack(side="left", anchor="s", padx=(12, 0), pady=(0, 8))
         # 右上角: 合约期间的特别规则 (两栏)
         rules = tk.Frame(hdr, bg=P["rules"], highlightbackground=P["rules_rim"], highlightthickness=1)
         rules.pack(side="right", anchor="se")
@@ -316,6 +354,15 @@ class ContractPage(tk.Frame):
             return c.combos()
         return [(x, C.combo_state(x, c.draft)) for x in C.COMBOS]
 
+    def _bonus_theme(self) -> str:
+        """完成合约时按哪个主题结算: 进行中的合约按开始时记下的, 没开始时按现在选的."""
+        return self.c.theme if self.c.active else self.theme
+
+    def _combo_desc(self, combo) -> str:
+        """组合的效果 (翻译好的); 主题绑定的组合多一行主题加成."""
+        note = C.theme_note(combo, self._bonus_theme())
+        return tr(combo["desc"]) + ("\n" + tr(note) if note else "")
+
     def _combo_color(self, combo, key="color") -> str:
         return self.P.get(f"combo_{combo[key]}", self.P["text"])
 
@@ -352,7 +399,7 @@ class ContractPage(tk.Frame):
                            fill=P["sel_text"] if on else P["sel_dim"], width=cw - s(20),
                            font=config.contract_font("tiny"), tags=("combo", tag))
             # 效果: 写成一行 (太窄时自己换行), 贴在卡片最下面, 免得和上面的"需要"叠在一起
-            desc = tr(combo["desc"]).replace("\n", "  ·  ")
+            desc = self._combo_desc(combo).replace("\n", "  ·  ")
             cv.create_text(cx + s(12), cy + ch - s(6), text=desc, anchor="sw",
                            fill=color if on else P["sel_dim"], width=cw - s(20),
                            font=config.contract_font("tiny"), tags=("combo", tag))
@@ -365,7 +412,7 @@ class ContractPage(tk.Frame):
     def _combo_hover(self, combo):
         name = tr(combo["name"])
         need = " · ".join(tr(C.req_name(r)) for r in combo["reqs"])
-        self.canvas.itemconfigure(self.hover_id, text=f"{name}   {tr('需要')}: {need}   ·   {tr(combo['desc'])}")
+        self.canvas.itemconfigure(self.hover_id, text=f"{name}   {tr('需要')}: {need}   ·   {self._combo_desc(combo)}")
         self.canvas.configure(cursor="")
 
     def _leave_all(self):
@@ -649,7 +696,7 @@ class ContractPage(tk.Frame):
         cfg(self.lbl_level, text=C.level_label(level, orig))       # 扣过等级: 最终等级[最初等级-扣的等级]
         self._draw_strip(level)
         info = [tr("时长 {t}", t=fmt_hm(C.duration_of(c.orig if active else sel))),
-                tr("完成后休息 +{n} 分钟", n=C.rest_minutes_total(level, terms))]
+                tr("完成后休息 +{n} 分钟", n=C.rest_minutes_total(level, terms, self._bonus_theme()))]
         # 合约中: 开始时已经给出的 (按开始时选的词条算, 之后成员失效 / 未知变量选中都不变, MECHANICS 18.3.1)
         gift = C.rest_gift(c.orig if active else sel)
         if gift:

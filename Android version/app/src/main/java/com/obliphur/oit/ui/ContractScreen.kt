@@ -90,6 +90,8 @@ class ContractColors(
     val side: Color?, val sideText: Color, val sideOn: Color,
     // 词条组合的颜色 (打年糕 黄色 / 互联网娱乐的败退 紫色 / 无懈可击 深蓝色 / 信息隔绝 红色)
     val comboYellow: Color, val comboPurple: Color, val comboBlue: Color, val comboRed: Color,
+    // 页眉的标签 / 右边的小字 (起源没有小字)
+    val tagName: String = "合约详情", val brand: String = "",
 )
 
 private fun c(hex: Long) = Color(0xFF000000 or hex)
@@ -113,10 +115,34 @@ val OPS_COLORS = ContractColors(
     comboYellow = c(0xffd23f), comboPurple = c(0xb06cf0), comboBlue = c(0x2456c7), comboRed = c(0xff2b3a),
 )
 
+/** "渊默": 参考渊默行动的配色: 深绿灰的页面, 绿灰的词条板和格子, 深绿色的选中, 橙色的标签 / 开始按钮 (同电脑版 DEEP). */
+val DEEP_COLORS = ContractColors(
+    bg = c(0x14241b), text = c(0xe8f2ec), dim = c(0x8fae9c), line = c(0xe0782b),
+    board = c(0xb5c9b9), band = c(0x1c3326), bandText = c(0xe3f0e6), bandDim = c(0x88a893),
+    tile = c(0x3b5a45), tileText = c(0xeef6f0), tileRim = c(0x6f9a7e),
+    tileOn = c(0x2a9356), tileOnText = c(0xffffff), tileOnRim = c(0xa4f0c0),
+    tileOff = c(0xa2b8a7), tileOffText = c(0x6f8c78), tileOffRim = c(0x8ea693),
+    tileRand = c(0xf0a04a), tileRandText = c(0x0e1b13),
+    tileBan = c(0x6d56c9), tileBanText = c(0xffffff), tileBanRim = c(0xbdaef5),
+    sel = c(0x0e1b13), selText = c(0xe8f2ec), selDim = c(0x6f9378),
+    badgeHi = c(0xe0782b), badgeHiText = c(0xffffff), badgeLo = c(0xe8f2ec), badgeLoText = c(0x0e1b13),
+    bar = c(0x182a1f), level = c(0xffffff), warn = c(0xffffff), start = c(0xc4631e), startText = c(0xffffff),
+    startOff = c(0x3a5042), startOffText = c(0x88a893), rules = c(0x0e1b13), rulesRim = c(0x365a44),
+    clear = c(0x33543d), clearText = c(0xe3f0e6), tag = c(0xe0782b), tagText = c(0xffffff),
+    live = c(0x0e1b13), liveRim = c(0xe0782b), danger = c(0xff9a5c), idle = c(0xf0a04a),
+    side = c(0x0f1c14), sideText = c(0xbdd4c3), sideOn = c(0x2a9356),
+    comboYellow = c(0xffd23f), comboPurple = c(0xb06cf0), comboBlue = c(0x2456c7), comboRed = c(0xff2b3a),
+    tagName = "渊默行动", brand = "OPERATION DEEPNESS",
+)
+
 @Composable
 fun contractColors(): ContractColors {
     val core = OitApp.instance.core
-    if (core.settings.str("CONTRACT_THEME") != "ui") return OPS_COLORS
+    when (core.settings.str("CONTRACT_THEME")) {
+        "deep" -> return DEEP_COLORS
+        "ui" -> {}
+        else -> return OPS_COLORS
+    }
     val o = LocalOit.current
     return ContractColors(
         bg = o.bg, text = o.text, dim = o.dim, line = o.border,
@@ -201,7 +227,7 @@ private fun FitToScreen(minWidth: androidx.compose.ui.unit.Dp, content: @Composa
 
 /** 第 3 页的一块组合: 名字 (组合的颜色) + 状态, 凑齐要哪些词条, 效果. 凑齐了才亮. */
 @Composable
-private fun ComboCard(p: ContractColors, combo: Combo, state: String, modifier: Modifier = Modifier) {
+private fun ComboCard(p: ContractColors, combo: Combo, state: String, theme: String, modifier: Modifier = Modifier) {
     val color = comboColor(p, combo)
     val on = state == "done"
     val status = when (state) {
@@ -220,7 +246,10 @@ private fun ComboCard(p: ContractColors, combo: Combo, state: String, modifier: 
         }
         Text(tr("需要") + "  " + combo.reqs.joinToString(" · ") { tr(Contract.reqName(it)) },
             color = if (on) p.selText else p.selDim, fontSize = 10.sp, lineHeight = 12.sp)
-        Text(tr(combo.desc), color = if (on) color else p.selDim, fontSize = 10.sp, lineHeight = 12.sp)
+        // 主题绑定的组合多一行主题加成
+        val note = Contract.themeNote(combo, theme)
+        Text(tr(combo.desc) + if (note.isNotEmpty()) "\n" + tr(note) else "", color = if (on) color else p.selDim,
+            fontSize = 10.sp, lineHeight = 12.sp)
     }
 }
 
@@ -262,15 +291,17 @@ fun ContractScreen() {
     var page by rememberSaveable { mutableStateOf(0) }
     val sel = if (active) c.terms else c.draft
     val rand = c.rand
+    // 完成合约时按哪个主题结算: 进行中的合约按开始时记下的, 没开始时按现在选的 (设置里的"跟随界面主题"没有主题)
+    val bonusTheme = if (active) c.theme else Contract.cleanTheme(core.settings.str("CONTRACT_THEME"))
     // 词条板最窄要放下一页 (列数最多的那页) 每列 64dp 的格子, 再窄就整页缩小
     val pageCols = Contract.PAGES.maxOf { it.count() }
     val minW = BOARD_BAND + (BOARD_TILE + BOARD_GAP) * pageCols + BOARD_GAP + 32.dp
     FitToScreen(minW) { Column(Modifier.fillMaxWidth().background(p.bg).padding(horizontal = 16.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(tr("合约详情"), color = p.tagText, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+            Text(tr(p.tagName), color = p.tagText, fontSize = 12.sp, fontWeight = FontWeight.Bold,
                 modifier = Modifier.background(p.tag).padding(horizontal = 8.dp, vertical = 2.dp))
-            Text("CONTRACT", color = p.dim, fontWeight = FontWeight.Bold, fontSize = 14.sp,
+            Text(if (p.brand.isEmpty()) "CONTRACT" else "CONTRACT · ${p.brand}", color = p.dim, fontWeight = FontWeight.Bold, fontSize = 14.sp,
                 modifier = Modifier.padding(start = 10.dp).weight(1f))
             if (active) Text(tr("合约进行中"), color = p.danger, fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(end = 12.dp))
@@ -343,7 +374,7 @@ fun ContractScreen() {
                     val combos = if (active) c.combos() else Contract.COMBOS.map { it to Contract.comboState(it, c.draft) }
                     Column(Modifier.weight(1f).padding(gap), verticalArrangement = Arrangement.spacedBy(gap)) {
                         for (row in combos.chunked(2)) Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
-                            for ((combo, state) in row) ComboCard(p, combo, state, Modifier.weight(1f))
+                            for ((combo, state) in row) ComboCard(p, combo, state, bonusTheme, Modifier.weight(1f))
                             if (row.size == 1) Spacer(Modifier.weight(1f))
                         }
                     }
@@ -500,7 +531,7 @@ fun ContractScreen() {
             }
             var info = ""
             info += tr("时长 {t}", "t" to fmtHm(Contract.durationOf(if (active) c.orig else sel))) + "\n" +
-                tr("完成后休息 +{n} 分钟", "n" to Contract.restMinutesTotal(level, if (active) c.mine else sel))
+                tr("完成后休息 +{n} 分钟", "n" to Contract.restMinutesTotal(level, if (active) c.mine else sel, bonusTheme))
             // 合约中: 开始时已经给出的 (按开始时选的词条算, 之后成员失效 / 未知变量选中都不变, MECHANICS 18.3.1)
             val gift = Contract.restGift(if (active) c.orig else sel)
             if (gift > 0) info += "\n" + tr("开始时休息 +{n} 分钟", "n" to gift / 60)
@@ -551,7 +582,7 @@ fun ContractScreen() {
             val lv = Contract.levelOf(c.draft)
             // 不显示时长和结束时刻
             Confirm(tr("▶  开始行动"), tr("危机等级 {lv}", "lv" to lv) + "\n" +
-                tr("完成后休息 +{n} 分钟", "n" to Contract.restMinutesTotal(lv, c.draft)), true, { ask = "" }) {
+                tr("完成后休息 +{n} 分钟", "n" to Contract.restMinutesTotal(lv, c.draft, bonusTheme)), true, { ask = "" }) {
                 core.startContract(c.draft)
             }
         }

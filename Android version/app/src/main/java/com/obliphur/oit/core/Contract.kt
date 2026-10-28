@@ -163,6 +163,27 @@ class Contract(private val file: File) {
                 "额外 1 危机等级\n完成合约时 休息 +10 分钟"),
         )
         val COMBOS_BY_ID = COMBOS.associateBy { it.id }
+
+        // 合约主题 (MECHANICS 18.7): 起源 / 渊默. 开始合约时用的主题记在合约里 (随同步), 完成合约时按它结算:
+        // 主题绑定的那个词条组合凑齐着, 结算休息时间额外 +5 分钟 (和组合自己的"完成时给的"一样先加上, 再乘持久战).
+        // "" = 没有主题 (开始时没记, 例如旧版本开始的合约 / 选了"跟随界面主题"): 没有这一项加成. 同 contract.py.
+        val THEMES = mapOf("ops" to "起源", "deep" to "渊默")
+        const val DEFAULT_THEME = "ops"
+        val THEME_COMBO = mapOf("ops" to "flawless", "deep" to "isolation")
+        const val THEME_END = 5 * 60
+
+        /** 设置里的合约页主题 (ops / deep / ui) → 记进合约的主题 (ui 和不认识的 = ""). */
+        fun cleanTheme(theme: String?): String = if (theme != null && theme in THEMES) theme else ""
+        /** 主题加成: 主题绑定的组合凑齐着时, 完成合约额外给的休息时间 (秒). */
+        fun themeEnd(terms: Collection<String>, theme: String = ""): Int {
+            val id = THEME_COMBO[cleanTheme(theme)] ?: return 0
+            return if (comboDone(COMBOS_BY_ID[id]!!, terms)) THEME_END else 0
+        }
+        /** 组合栏里这个组合的主题加成说明 (这个组合不是主题绑定的就是 ""). */
+        fun themeNote(combo: Combo, theme: String = ""): String {
+            val t = cleanTheme(theme)
+            return if (t.isNotEmpty() && THEME_COMBO[t] == combo.id) "${THEMES[t]}: 完成合约时 休息额外 +${THEME_END / 60} 分钟" else ""
+        }
         val COMBO_COLORS = mapOf("yellow" to "#ffd23f", "purple" to "#b06cf0", "blue" to "#2456c7", "red" to "#ff2b3a")
         /** 组合的要求在界面上怎么写: 成系列的一组只写一个名字. */
         val GROUP_NAMES = mapOf("long" to "持久战", "tired" to "疲惫", "info" to "信息阻断",
@@ -190,8 +211,9 @@ class Contract(private val file: File) {
         fun comboRest(terms: Collection<String>): Double = COMBOS.filter { comboDone(it, terms) }.fold(1.0) { f, c -> f * c.rest }
         /** 合约开始时凑齐的组合给的休息时间 (秒, 算合约中得到的). */
         fun comboGift(terms: Collection<String>): Int = COMBOS.filter { comboDone(it, terms) }.sumOf { it.gift }
-        /** 完成合约时凑齐的组合额外给的休息时间 (秒). */
-        fun comboEnd(terms: Collection<String>): Int = COMBOS.filter { comboDone(it, terms) }.sumOf { it.end }
+        /** 完成合约时凑齐的组合额外给的休息时间 (秒), 加上主题加成 (themeEnd). */
+        fun comboEnd(terms: Collection<String>, theme: String = ""): Int =
+            COMBOS.filter { comboDone(it, terms) }.sumOf { it.end } + themeEnd(terms, theme)
 
         /** 凑齐了的组合的成员词条 → 颜色 (界面上用这个颜色框住它们). 没凑齐的不算. */
         fun comboMarks(terms: Collection<String>): Map<String, String> {
@@ -362,9 +384,9 @@ class Contract(private val file: File) {
             val lv = level.coerceIn(0, REST_TOP)
             return REST_MIN + (2 * (REST_MAX - REST_MIN) * lv + REST_TOP) / (2 * REST_TOP)   // 四舍五入 (.5 进位)
         }
-        /** 完成合约时存进积攒的休息时间的秒数 (按等级查表 + 凑齐的组合的结束后收益). */
-        fun restReward(level: Int, terms: Collection<String> = emptyList()): Int =
-            Math.round((restMinutes(level) * 60 + comboEnd(terms)) * (terms.firstNotNullOfOrNull { LONG_REWARD[it] } ?: 1.0)).toInt()
+        /** 完成合约时存进积攒的休息时间的秒数 (按等级查表 + 凑齐的组合的结束后收益 + 主题加成, 再乘持久战的倍率). */
+        fun restReward(level: Int, terms: Collection<String> = emptyList(), theme: String = ""): Int =
+            Math.round((restMinutes(level) * 60 + comboEnd(terms, theme)) * (terms.firstNotNullOfOrNull { LONG_REWARD[it] } ?: 1.0)).toInt()
         /** 第 n 次 (n >= 1) "还在吗"提醒在开始专注后多少秒 (MECHANICS 6.6).
          *  普通专注: 每 every 秒一次; 合约专注: 每次间隔 40 ~ 60 分钟里随机的整分钟,
          *  按开始专注的时刻 (精确到秒) 和第几次用 FNV-1a 算, 同 contract.py 的 check_mark (电脑和手机一样). */
@@ -390,7 +412,8 @@ class Contract(private val file: File) {
             return 0.6 * t * t
         }
         /** 完成合约时休息时间一共多少分钟 (界面上写 "完成后休息 +N 分钟"). */
-        fun restMinutesTotal(level: Int, terms: Collection<String> = emptyList()): Int = restReward(level, terms) / 60
+        fun restMinutesTotal(level: Int, terms: Collection<String> = emptyList(), theme: String = ""): Int =
+            restReward(level, terms, theme) / 60
         /** 合约开始时存进积攒的休息时间的秒数 (凑齐的组合给的, 算合约中得到的). */
         fun restGift(terms: Collection<String>): Int = comboGift(terms)
 
@@ -568,8 +591,10 @@ class Contract(private val file: File) {
     val life get() = maxOf(0, violationLimit - violations)
     /** 合约中已经给出的休息时间 (秒, 已乘疲惫). */
     val rest get() = if (active) live.dbl("rest") else 0.0
-    /** 完成时给的休息时间 (秒): 按现在的等级查表, 加上凑齐的组合的结束后收益; 结算按降级后的等级. */
-    val reward get() = if (active) restReward(level, mine).toDouble() else 0.0
+    /** 开始合约时用的主题 (起源 ops / 渊默 deep; 没记的 = ""). */
+    val theme: String get() = if (active) cleanTheme(live.optString("theme", "")) else ""
+    /** 完成时给的休息时间 (秒): 按现在的等级查表, 加上凑齐的组合的结束后收益和主题加成; 结算按降级后的等级. */
+    val reward get() = if (active) restReward(level, mine, theme).toDouble() else 0.0
     val owner: String get() = live.optString("owner", "")
     val id: Long get() = live.optLong("id", 0)
 
@@ -578,9 +603,9 @@ class Contract(private val file: File) {
         save()
     }
 
-    /** pre: 开始时积攒的休息时间 (秒). 合约中暂停休息时这部分不打折; 支援短缺限制它能用几成. */
+    /** pre: 开始时积攒的休息时间 (秒). 合约中暂停休息时这部分不打折; 支援短缺限制它能用几成. theme: 合约主题 (THEMES). */
     fun start(terms: Collection<String>, owner: String, now: LocalDateTime = LocalDateTime.now(), pre: Double = 0.0,
-              cam: String = "") {
+              cam: String = "", theme: String = "") {
         val t = clean(terms, prereq = true)
         val n = now.withNano(0)
         val p = maxOf(0.0, pre)
@@ -594,6 +619,7 @@ class Contract(private val file: File) {
             .put("supply", if (share == null) JSONObject.NULL else r1(p * share)).put("hl", JSONArray())
             .put("rand", JSONArray()).put("rand_n", 0).put("fog_words", fogWordsJson(java.util.Random()))
         if ("gaze" in t && cam.isNotEmpty()) live.put("cam", cam)
+        if (cleanTheme(theme).isNotEmpty()) live.put("theme", cleanTheme(theme))
         watch.clear()
         save()
     }
@@ -610,6 +636,7 @@ class Contract(private val file: File) {
             .put("level", level).put("orig_level", origLevel).put("cut", JSONObject(cut.toString()))
             .put("result", result).put("violations", violations).put("reward", give).put("pre_left", preLeft)
             .put("rand", JSONArray(rand))
+        if (theme.isNotEmpty()) rec.put("theme", theme)
         live.optJSONArray("seals")?.let { if (it.length() > 0) rec.put("seals", JSONArray(it.toString())) }   // 封锁了的记录格 (合约结束后照样锁着)
         live.optJSONObject("slow")?.optString("start")?.takeIf { it.isNotEmpty() }?.let { rec.put("slow", it) }
         history.add(rec)

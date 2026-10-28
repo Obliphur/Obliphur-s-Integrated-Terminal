@@ -278,6 +278,33 @@ COMBOS = [
      "desc": "额外 1 危机等级\n完成合约时 休息 +10 分钟"},
 ]
 COMBOS_BY_ID = {c["id"]: c for c in COMBOS}
+
+# 合约主题 (MECHANICS 18.7): 起源 / 渊默. 开始合约时用的主题记在合约里 (随同步), 完成合约时按它结算:
+# 主题绑定的那个词条组合凑齐着, 结算休息时间额外 +5 分钟 (和组合自己的"完成时给的"一样先加上, 再乘持久战).
+# "" = 没有主题 (开始时没记, 例如旧版本开始的合约 / 手机上选了"跟随界面主题"): 没有这一项加成.
+THEMES = {"ops": "起源", "deep": "渊默"}
+DEFAULT_THEME = "ops"
+THEME_COMBO = {"ops": "flawless", "deep": "isolation"}
+THEME_END = 5 * 60
+
+
+def clean_theme(theme) -> str:
+    theme = str(theme or "")
+    return theme if theme in THEMES else ""
+
+
+def theme_end(terms, theme="") -> int:
+    """主题加成: 主题绑定的组合凑齐着时, 完成合约额外给的休息时间 (秒)."""
+    cid = THEME_COMBO.get(clean_theme(theme))
+    return THEME_END if cid and combo_done(COMBOS_BY_ID[cid], terms) else 0
+
+
+def theme_note(combo, theme="") -> str:
+    """组合栏里这个组合的主题加成说明 (这个组合不是主题绑定的就是 "")."""
+    theme = clean_theme(theme)
+    if theme and THEME_COMBO[theme] == combo["id"]:
+        return f"{THEMES[theme]}: 完成合约时 休息额外 +{THEME_END // 60} 分钟"
+    return ""
 COMBO_COLORS = {"yellow": "#ffd23f", "purple": "#b06cf0", "blue": "#2456c7", "red": "#ff2b3a"}
 # 组合的要求在界面上怎么写: 成系列的一组只写一个名字
 GROUP_NAMES = {"long": "持久战", "tired": "疲惫", "info": "信息阻断", "chan": "通道阻塞",
@@ -330,9 +357,9 @@ def combo_gift(terms) -> int:
     return int(sum(int(c["gift"]) for c in COMBOS if combo_done(c, terms)))
 
 
-def combo_end(terms) -> int:
-    """完成合约时凑齐的组合额外给的休息时间 (秒)."""
-    return int(sum(int(c["end"]) for c in COMBOS if combo_done(c, terms)))
+def combo_end(terms, theme="") -> int:
+    """完成合约时凑齐的组合额外给的休息时间 (秒), 加上主题加成 (theme_end)."""
+    return int(sum(int(c["end"]) for c in COMBOS if combo_done(c, terms))) + theme_end(terms, theme)
 
 
 def combo_marks(terms) -> dict:
@@ -378,10 +405,10 @@ def rest_minutes(level: int) -> int:
     return REST_MIN + (2 * span * lv + REST_TOP) // (2 * REST_TOP)    # 四舍五入 (.5 进位)
 
 
-def rest_reward(level: int, terms=None) -> int:
-    """完成合约时存进积攒的休息时间的秒数 (按等级查表 + 凑齐的组合的结束后收益, 再乘持久战的结算休息时长倍率)."""
+def rest_reward(level: int, terms=None, theme="") -> int:
+    """完成合约时存进积攒的休息时间的秒数 (按等级查表 + 凑齐的组合的结束后收益 + 主题加成, 再乘持久战的结算休息时长倍率)."""
     terms = terms or []
-    base = rest_minutes(level) * 60 + combo_end(terms)
+    base = rest_minutes(level) * 60 + combo_end(terms, theme)
     mult = next((LONG_REWARD[t] for t in terms if t in LONG_REWARD), 1.0)
     return int(round(base * mult))
 
@@ -424,9 +451,9 @@ def rest_share(k: float) -> float:
     return REST_SHARE_NEAR * x * x
 
 
-def rest_minutes_total(level: int, terms=None) -> int:
+def rest_minutes_total(level: int, terms=None, theme="") -> int:
     """完成合约时休息时间一共多少分钟 (界面上写 "完成后休息 +N 分钟")."""
-    return rest_reward(level, terms) // 60
+    return rest_reward(level, terms, theme) // 60
 
 
 def rest_gift(terms) -> int:
@@ -715,8 +742,13 @@ class Contract:
 
     @property
     def reward(self) -> float:
-        """完成时给的休息时间 (秒): 按现在的等级查表, 加上凑齐的组合的结束后收益; 结算按降级后的等级."""
-        return float(rest_reward(self.level, self.mine)) if self.active else 0.0
+        """完成时给的休息时间 (秒): 按现在的等级查表, 加上凑齐的组合的结束后收益和主题加成; 结算按降级后的等级."""
+        return float(rest_reward(self.level, self.mine, self.theme)) if self.active else 0.0
+
+    @property
+    def theme(self) -> str:
+        """开始合约时用的主题 (起源 ops / 渊默 deep; 没记的 = "")."""
+        return clean_theme(self.live.get("theme")) if self.active else ""
 
     @property
     def owner(self) -> str:
@@ -726,9 +758,10 @@ class Contract:
         self.draft = clean_terms(terms, prereq=True)
         self.save()
 
-    def start(self, terms, owner: str = "", now: datetime = None, pre: float = 0, cam: str = "") -> dict:
+    def start(self, terms, owner: str = "", now: datetime = None, pre: float = 0, cam: str = "",
+              theme: str = "") -> dict:
         """pre: 开始时积攒的休息时间 (秒). 合约中暂停休息时这部分不打折; 支援短缺限制它能用几成.
-        cam: 目光由哪台设备的摄像头录 (设备 id, MECHANICS 18.8)."""
+        cam: 目光由哪台设备的摄像头录 (设备 id, MECHANICS 18.8). theme: 合约主题 (THEMES, 完成时的主题加成)."""
         now = (now or datetime.now()).replace(microsecond=0)
         terms = clean_terms(terms, prereq=True)
         pre = max(0.0, float(pre))
@@ -742,6 +775,8 @@ class Contract:
                      "rand": [], "rand_n": 0, "fog_words": _fog_words(random.Random())}
         if "gaze" in terms and cam:
             self.live["cam"] = str(cam)
+        if clean_theme(theme):
+            self.live["theme"] = clean_theme(theme)
         self._watch = {}
         self.save()
         return self.live
@@ -758,6 +793,8 @@ class Contract:
                "level": self.level, "orig_level": self.orig_level, "cut": dict(self.cut),
                "result": result, "violations": self.violations, "reward": reward,
                "pre_left": self.pre_left, "rand": self.rand, "owner": self.live.get("owner", "")}
+        if self.theme:
+            rec["theme"] = self.theme
         if self.live.get("seals"):
             rec["seals"] = list(self.live["seals"])        # 封锁了的记录格 (合约结束后照样锁着)
         slow = self.live.get("slow")
@@ -1951,6 +1988,17 @@ def _selftest():
     assert nofun["color"] == "purple" and flawless["color"] == "blue" and isolation["color"] == "red" \
         and mochi["color"] == "yellow"
     assert req_name("deep") == "纵深推进" and req_name("last") == "最后防线" and req_name("silent") == "无言为真"
+    # 合约主题: 起源 + 无懈可击 / 渊默 + 信息隔绝 完成时休息额外 +5 分钟 (别的主题 / 没有主题 / 组合没凑齐都没有)
+    assert theme_end(flaw, "ops") == 5 * 60 and theme_end(flaw, "deep") == 0 and theme_end(flaw, "") == 0
+    assert theme_end(iso, "deep") == 5 * 60 and theme_end(iso, "ops") == 0 and theme_end(iso, "bogus") == 0
+    assert theme_end(["last", "unknown", "move", "confine", "gaze"], "ops") == 0, "无懈可击没凑齐"
+    assert combo_end(iso, "deep") == 15 * 60 and combo_end(flaw, "ops") == 5 * 60 and combo_end(iso) == 10 * 60
+    assert rest_reward(6, iso, "deep") == rest_minutes(6) * 60 + 15 * 60 and rest_reward(6, iso, "ops") == rest_reward(6, iso)
+    assert rest_reward(9, flaw, "ops") == rest_minutes(9) * 60 + 5 * 60 and rest_reward(9, flaw, "deep") == rest_minutes(9) * 60
+    assert rest_minutes_total(6, iso, "deep") == rest_minutes(6) + 15
+    assert rest_reward(6, iso + ["long1"], "deep") == round((rest_minutes(6) * 60 + 15 * 60) * 1.1), "持久战连主题加成一起乘"
+    assert theme_note(isolation, "deep") == "渊默: 完成合约时 休息额外 +5 分钟" and theme_note(flawless, "ops")
+    assert theme_note(isolation, "ops") == "" and theme_note(mochi, "deep") == "" and theme_note(flawless, "") == ""
     # 统计页: 最近 5 个顺利完成的合约 (失败的 / 提前结束的不要)
     hist = [{"end": f"2026-10-{i:02d}T10:00:00", "result": r, "level": i, "orig_level": i + 2}
             for i, r in enumerate(["completed", "failed", "completed", "abandoned",
@@ -2092,6 +2140,15 @@ def _selftest():
     assert c.reward == rest_minutes(9) * 60 + 10 * 60 and c.combo_marks().get("fog") == COMBO_COLORS["red"]
     assert c.violate("suppress") == (False, "") and c.combos()[3] == (isolation, "void")
     assert c.level == 7 and c.reward == rest_minutes(7) * 60
+    # 合约主题记在合约里 (同步 / 结算都按它): 渊默 + 信息隔绝 完成时 +5 分钟; 成员失效后这一项也没了
+    assert c.theme == "" and c.start(iso, owner="me", now=t0, theme="deep")["theme"] == "deep" and c.theme == "deep"
+    assert c.reward == rest_minutes(9) * 60 + 15 * 60
+    assert c.violate("suppress") == (False, "") and c.reward == rest_minutes(7) * 60
+    assert c.finish("completed", now=t0 + timedelta(hours=9))["theme"] == "deep" and c.theme == ""
+    c.start(iso, owner="me", now=t0, theme="ops")
+    assert c.reward == rest_minutes(9) * 60 + 10 * 60, "起源没有绑定信息隔绝"
+    c.start(iso, owner="me", now=t0, theme="bogus")
+    assert c.theme == "" and "theme" not in c.live
     # 打年糕组合: 额外 1 危机等级, 休息时间 ×1.2; 纵深推进降级不算失效
     c.start(["long1", "tired2", "fine", "deep2"], owner="me", now=t0)
     assert c.combos()[0] == (mochi, "done") and c.level == 2 + 1 + 2 + 2 + 1

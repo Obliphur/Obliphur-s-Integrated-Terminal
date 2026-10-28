@@ -3196,7 +3196,7 @@ class BreakTimerApp:
                                   ok_text=tr("开始行动"), danger=True):
             return
         msg = tr("危机等级 {lv}", lv=lv)                        # 不显示时长和结束时刻
-        msg += "\n" + tr("完成后休息 +{n} 分钟", n=contract_mod.rest_minutes_total(lv, terms))
+        msg += "\n" + tr("完成后休息 +{n} 分钟", n=contract_mod.rest_minutes_total(lv, terms, contract_mod.clean_theme(config.CONTRACT_THEME)))
         if not toast.ask(msg, title=tr("▶  开始行动"), ok_text=tr("开始行动"), danger=True):
             return
         rec = self._record_lines(terms)
@@ -3282,7 +3282,8 @@ class BreakTimerApp:
             self._stop_recorder("camera")
             return
         lv = contract_mod.level_of(terms)
-        c.start(terms, owner=self.sync.my_id, pre=self.break_carry, cam=getattr(self, "_pending_cam", ""))
+        c.start(terms, owner=self.sync.my_id, pre=self.break_carry, cam=getattr(self, "_pending_cam", ""),
+                theme=config.CONTRACT_THEME)
         # 目光: 摄像头在合约开始前就打开了 (要先确认能录), 那时的 recorder 还不知道合约 id;
         # 现在补上, 不然这一段 / 这一整场录像在结束后按合约 id 找不到 (MECHANICS 18.8).
         cid = str(c.live.get("id") or "")
