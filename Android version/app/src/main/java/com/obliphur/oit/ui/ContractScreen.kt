@@ -118,7 +118,7 @@ val OPS_COLORS = ContractColors(
 /** "渊默": 参考渊默行动的配色: 深绿灰的页面, 绿灰的词条板和格子, 深绿色的选中, 橙色的标签 / 开始按钮 (同电脑版 DEEP). */
 val DEEP_COLORS = ContractColors(
     bg = c(0x062718), text = c(0xe8f2ec), dim = c(0x8cc2a0), line = c(0xe0782b),
-    board = c(0x78a589), band = c(0x0b3d27), bandText = c(0xe3f0e6), bandDim = c(0x86bf9b),
+    board = c(0x78a589), band = c(0x053922), bandText = c(0xe3f0e6), bandDim = c(0x86bf9b),
     tile = c(0x14593a), tileText = c(0xeef6f0), tileRim = c(0x58a073),
     tileOn = c(0x1c9c4f), tileOnText = c(0xffffff), tileOnRim = c(0x8ff2b3),
     tileOff = c(0x6b967b), tileOffText = c(0x497a58), tileOffRim = c(0x5b8a69),
@@ -126,7 +126,7 @@ val DEEP_COLORS = ContractColors(
     tileBan = c(0x6d56c9), tileBanText = c(0xffffff), tileBanRim = c(0xbdaef5),
     sel = c(0x041c11), selText = c(0xe8f2ec), selDim = c(0x5fa07a),
     badgeHi = c(0xe0782b), badgeHiText = c(0xffffff), badgeLo = c(0xe8f2ec), badgeLoText = c(0x041c11),
-    bar = c(0x0b3d27), level = c(0xffffff), warn = c(0xffffff), start = c(0xc4631e), startText = c(0xffffff),
+    bar = c(0x053922), level = c(0xffffff), warn = c(0xffffff), start = c(0xc4631e), startText = c(0xffffff),
     startOff = c(0x2f5a3f), startOffText = c(0x86bf9b), rules = c(0x041c11), rulesRim = c(0x2b6a45),
     clear = c(0x2a5c3a), clearText = c(0xe3f0e6), tag = c(0xe0782b), tagText = c(0xffffff),
     live = c(0x041c11), liveRim = c(0xe0782b), danger = c(0xff9a5c), idle = c(0xf0a04a),
