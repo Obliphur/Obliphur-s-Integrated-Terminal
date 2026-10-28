@@ -41,7 +41,7 @@ object Prescript {
     const val DEV_KEEP = KEEP
 
     /** 每种指令对应界面上哪个入口 (在那个按钮上标记): 专注 / 休息 开始按钮, 合约 / 统计 侧边栏入口. */
-    val MARK_OF = mapOf("I" to "focus", "IV" to "focus", "III" to "break", "II" to "contract", "VI" to "stats")
+    val MARK_OF = mapOf("I" to "focus", "III" to "break", "II" to "contract", "VI" to "stats")
     const val HISTORY_KEEP = 100
     const val GRANTED_KEEP = 40
     const val SAVE_EVERY = 10.0

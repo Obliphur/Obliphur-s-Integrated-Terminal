@@ -50,8 +50,8 @@ CODE_RIGHT = "%."               # 右边补位, 从最里面一格往外依次�
 KEEP = 3                        # 每个用户同时最多持有几条指令, 满了就不能再领
 DEV_KEEP = KEEP                 # 旧名字
 
-# 每种指令对应界面上哪个入口 (在那个按钮上标记): 专注 / 休息 开始按钮, 合约 / 统计 侧边栏入口
-MARK_OF = {"I": "focus", "IV": "focus", "III": "break", "II": "contract", "VI": "stats"}
+# 每种指令对应界面上哪个入口 (在那个按钮上标记): 专注 / 休息 开始按钮, 合约 / 统计 侧边栏入口; IV / V 没有标记
+MARK_OF = {"I": "focus", "III": "break", "II": "contract", "VI": "stats"}
 HISTORY_KEEP = 100
 GRANTED_KEEP = 40
 SAVE_EVERY = 10                 # 秒; 累计的专注 / 休息秒数最多丢这么多
@@ -925,7 +925,7 @@ def _selftest():
         eng.pause_media_fn = None
         eng._data["current"] = None
 
-        # 完成时通知 (播完成音效); 每个入口的标记: I / IV 专注, III 休息, II 合约, VI 统计, V 不标记
+        # 完成时通知 (播完成音效); 每个入口的标记: I 专注, III 休息, II 合约, VI 统计, IV / V 不标记
         done = []
         eng.on_complete = lambda: done.append(1)
         t_m = t2 + timedelta(hours=50)
@@ -934,7 +934,7 @@ def _selftest():
             eng._data["extra"] = []
             eng.draw(t_m, choose=kind)
             assert eng.marks() == ({"contract"} if kind == "II" else {"stats"} if kind == "VI"
-                                   else {"focus"} if kind == "IV" else set()), kind
+                                   else set()), kind
             t_m += timedelta(hours=1)
         eng._data["current"] = None
         eng._data["extra"] = []
