@@ -1217,8 +1217,7 @@ EN = {
     "凝视天空": "Gaze at the sky",
     "记录并反思这一天": "Record and reflect on the day",
     "打扫并整理房间": "Clean and tidy the room",
-    "概率被抬高的时段, 如 05:30-07:30,13:00-14:30; 留空为无.":
-        "Time ranges with a higher draw chance, e.g. 05:30-07:30,13:00-14:30; blank for none.",
+    "提升时段": "Boost hours",
     "{label}: 请按 HH:MM-HH:MM 填写, 多段用逗号隔开.": "{label}: use HH:MM-HH:MM, separate several with commas.",
     "废弃": "Voided",
 }

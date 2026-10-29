@@ -196,7 +196,6 @@ private fun OptionRow(spec: Spec, edits: MutableMap<String, String>) {
     OitCard {
         Text(tr(spec.label), fontWeight = FontWeight.Bold, color = o.text)
         WaitTag(spec.key)
-        Dim(tr("当前: {v}", "v" to s.display(spec.key)), size = 13)
         PendingLine(spec.key)
         when (spec.kind) {
             Kind.CHOICE -> {

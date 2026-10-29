@@ -107,7 +107,7 @@ def _prescript_window(kind: str, label: str):
     return {
         "key": "PRESCRIPT_WIN_" + kind, "label": label,
         "kind": "text", "apply": APPLY_INSTANT, "fmt": lambda v: str(v) or "-",
-        "desc": "概率被抬高的时段, 如 05:30-07:30,13:00-14:30; 留空为无.",
+        "desc": "提升时段",
         "page": "daily", "theme": "urban_will", "windows": True,
     }
 

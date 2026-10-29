@@ -422,7 +422,7 @@ class SettingsPage(tk.Frame):
         badge.pack(side="left", padx=(10, 0))
         lbl_cur = tk.Label(head, text="", bg=card, fg=COLORS["text_dim"],
                            font=config.font("small"))
-        lbl_cur.pack(side="right")
+        # 选项行右上角的 "当前: …" 小字不再显示 (控件里本来就是当前值), 标签留着不画
 
         ctrl = tk.Frame(inner, bg=card)
         ctrl.pack(fill="x", padx=12, pady=(6, 4))
