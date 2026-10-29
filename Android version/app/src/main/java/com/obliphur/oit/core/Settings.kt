@@ -126,11 +126,11 @@ object Schema {
         time("SLEEP_SUN", "周日睡觉时间", "周日"),
         // ---- 日常: 指令空闲词条的概率提升时段 (MECHANICS 22.7) ----
         window("V", "空闲 5min"),
-        window("VII", "到开阔场地运动"),
+        window("VII", "运动"),
         window("VIII", "淋浴"),
-        window("IX", "凝视天空"),
-        window("X", "记录并反思这一天"),
-        window("XI", "打扫并整理房间"),
+        window("IX", "凝视"),
+        window("X", "反思"),
+        window("XI", "整理房间"),
     )
 
     val PAGES = listOf(
