@@ -417,9 +417,9 @@ class CoreTest {
         assertFalse(core.settings.devMode)
     }
 
-    /** 开发者模式每天最多开 1 小时, 开着的时间照常消耗联网额度. */
+    /** 开发者模式照常消耗联网额度, 但只消耗不限制: 没有每天的上限, 额度用完了也不会结束, 也不会阻止开启. */
     @Test
-    fun devModeIsLimitedAndCharged() {
+    fun devModeOnlyConsumes() {
         val core = Core(tmp(), NoHost) { 0.0 }
         core.endSetupPeriod()
         val code = DEV_TOGGLE_CODE * 60.0
@@ -428,39 +428,18 @@ class CoreTest {
         assertTrue(core.settings.devMode)
         repeat(10) { assertEquals(null, core.net.tick(10.0)) }
         assertEquals(usedBefore + 100.0, core.net.used, 1e-6)           // 照常扣额度
-        assertEquals(100.0, core.net.devUsed, 1e-6)
         assertTrue(core.net.usage.any { it.optString("reason") == "开发者模式" })
-        var over: String? = null
-        repeat(400) { if (over == null) over = core.net.tick(10.0) }
-        assertEquals("dev_over", over)                                   // 1 小时用完: 通知关掉
-        assertEquals(DEV_DAILY_SECONDS, core.net.devUsed, 1e-6)
-        assertEquals(0.0, core.net.devLeft, 0.0)
-        core.setDevMode(false)
-        assertFalse(core.settings.devMode)
-        core.stageSetting("DAILY_LIMIT", code)                          // 今天不能再开
-        assertFalse(core.settings.devMode)
-    }
-
-    /** 开发者模式消耗联网额度: 额度用完了开着的要关 (不到 1 小时), 今天也不能再开. */
-    @Test
-    fun devModeStopsWhenQuotaIsUsedUp() {
-        val core = Core(tmp(), NoHost) { 0.0 }
-        core.endSetupPeriod()
-        val code = DEV_TOGGLE_CODE * 60.0
-        core.net.used = core.net.todayTotal - 250.0
-        assertEquals(250.0, core.net.devLeft, 1e-6)                      // 还能开的时间受剩余额度限制
-        core.stageSetting("DAILY_LIMIT", code)
+        repeat(400) { assertEquals(null, core.net.tick(10.0)) }         // 超过 1 小时也照样开着
         assertTrue(core.settings.devMode)
-        repeat(10) { assertEquals(null, core.net.tick(10.0)) }
-        var over: String? = null
-        repeat(30) { if (over == null) over = core.net.tick(10.0) }
-        assertEquals("dev_over", over)                                   // 额度用完: 通知关掉
-        assertEquals(0.0, core.net.remaining, 1e-6)
-        assertEquals(250.0, core.net.devUsed, 1e-6)                      // 只记到额度用完为止
-        assertEquals("quota", core.net.devLimit())
-        core.setDevMode(false)
-        core.stageSetting("DAILY_LIMIT", code)                          // 额度没了今天不能再开
+        core.net.used = core.net.todayTotal                              // 额度用完了
+        repeat(5) { assertEquals(null, core.net.tick(10.0)) }
+        assertEquals(0.0, core.net.remaining, 0.0)
+        assertTrue(core.net.used > core.net.todayTotal)                  // 用光以后继续消耗
+        assertTrue(core.settings.devMode)                                // 不会结束
+        core.stageSetting("DAILY_LIMIT", code)
         assertFalse(core.settings.devMode)
+        core.stageSetting("DAILY_LIMIT", code)                          // 额度没了照样能开
+        assertTrue(core.settings.devMode)
     }
 
     /** 绑定了其他设备, 共享的专注中 OIT 被关掉: 重开时关掉的这段记为空闲, 专注终止, 总统计里空闲压过专注 (MECHANICS 8.2). */

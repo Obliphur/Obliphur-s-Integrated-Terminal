@@ -36,7 +36,6 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
     // ---- 开发者模式: 子端跟着母端 ----
     override fun devMode() = core.settings.devMode
     override fun setDevMode(on: Boolean) {
-        if (on && core.net.devLeft <= 0) return          // 本机今天的开发者模式时间也用完了: 不跟着开
         if (core.settings.devMode != on) core.setDevMode(on)
     }
 

@@ -15,9 +15,6 @@ data class NetRequest(val minutes: Int, val at: Long, val reason: String, val qu
  * 时间: 申请的冷静期按墙上时间 (System.currentTimeMillis) 算, 联网计时按 tick(dt) 传进来的
  * 经过秒数算, 每一步最多 TICK_CLAMP 秒.
  */
-/** 开发者模式每天最多开多久 (秒); 开着的时间照常消耗联网额度 (桌面版: config.DEV_DAILY_SECONDS). */
-const val DEV_DAILY_SECONDS = 3600.0
-
 class NetGuard(
     dir: File,
     private val settings: Settings,
@@ -56,17 +53,6 @@ class NetGuard(
     var date: String = LocalDate.now().key()
         private set
     var used = 0.0
-    /** 今天开着开发者模式的秒数. */
-    var devUsed = 0.0
-    /** 今天开发者模式还能开多久 (秒): 每天最多 DEV_DAILY_SECONDS, 而且开着的时间消耗联网额度 —— 额度用完了就不能再开, 开着的也要关. */
-    val devLeft get() = maxOf(0.0, minOf(DEV_DAILY_SECONDS - devUsed, remaining))
-
-    /** 开发者模式为什么不能开 / 要关: "time" 今天的 1 小时用完了, "quota" 今天的联网额度用完了, "" 还能用. */
-    fun devLimit(): String = when {
-        DEV_DAILY_SECONDS - devUsed <= 1e-6 -> "time"
-        remaining <= 1e-6 -> "quota"
-        else -> ""
-    }
     var bonus = 0.0
     /** 今天合约奖励的额度 (完成带"互联网娱乐的败退"的合约), 不用还. */
     var gift = 0.0
@@ -147,7 +133,7 @@ class NetGuard(
         val saved = d.optString("date", "")
         fun num(k: String) = maxOf(0.0, d.dbl(k))
         if (saved == date) {
-            used = num("used"); devUsed = num("dev_used"); bonus = num("bonus"); gift = num("gift")
+            used = num("used"); bonus = num("bonus"); gift = num("gift")
             tomorrowUsed = num("tomorrow_used"); debt = num("debt")
         } else if (saved.isNotEmpty() && saved < date) {
             // 程序关着跨过了零点: 借贷要还的部分照样变成今天的欠款 (隔了几天也一样)
@@ -161,7 +147,7 @@ class NetGuard(
 
     fun save() {
         if (dead) return
-        Store.write(stateFile, JSONObject().put("date", date).put("used", used.toLong()).put("dev_used", devUsed.toLong())
+        Store.write(stateFile, JSONObject().put("date", date).put("used", used.toLong())
             .put("bonus", bonus.toLong()).put("gift", gift.toLong()).put("tomorrow_used", tomorrowUsed.toLong())
             .put("debt", debt.toLong()).put("live", live()))
         saveUsage()
@@ -427,7 +413,7 @@ class NetGuard(
         pending = null
         resetGrant()
         sinceEnforce = 0.0
-        log(if (devMode) "DEV      network restrictions released (${(devLeft / 60).toInt()} min left today)" else "DEV      fail-closed restored")
+        log(if (devMode) "DEV      network restrictions released" else "DEV      fail-closed restored")
         if (!devMode) {                     // 关了: 把这一段记成的联网收尾
             session = null
             saveUsage()
@@ -443,7 +429,6 @@ class NetGuard(
         bonus = 0.0
         gift = 0.0
         used = 0.0
-        devUsed = 0.0
         save()
     }
 
@@ -457,17 +442,12 @@ class NetGuard(
                 pending = null
                 log("DEV      pending request dropped (developer mode)")
             }
-            // 开着的时间照常消耗联网额度 (1 倍), 记成一次联网; 每天最多 DEV_DAILY_SECONDS, 额度或这一小时用完就关
-            val dt = minOf(maxOf(0.0, dtIn), tickClamp, devLeft)
-            devUsed += dt
+            // 开着的时间照常消耗联网额度 (1 倍), 记成一次联网; 只消耗, 不限制: 额度用完了也不会关, 随时能开
+            val dt = minOf(maxOf(0.0, dtIn), tickClamp)
             used += dt
             if (session == null) openSession("开发者模式", false, 0)
             countOnline(dt)
             sinceSave += dt
-            if (devLeft <= 1e-6) {
-                save()
-                return "dev_over"
-            }
             if (sinceSave >= 5) save()
             return null
         }
