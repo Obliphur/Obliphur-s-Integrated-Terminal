@@ -258,7 +258,7 @@ class Watcher:
     """需要时才扫描: snapshot() 的结果超过 max_age 秒就叫扫描线程扫一遍, 等它扫完再返回 (单飞, 并发的调用共用一次扫描).
     没有人要的时候不扫, 也不碰任何窗口. 扫描卡住 (浏览器无响应) 时 snapshot() 最多等 wait 秒, 超过 stale 秒的结果不算数."""
 
-    def __init__(self, scan_fn=None, max_age: float = 0.6, stale: float = 4.0):
+    def __init__(self, scan_fn=None, max_age: float = 0.6, stale: float = 10.0):
         self._scan_fn = scan_fn
         self.max_age = max_age
         self.stale = stale

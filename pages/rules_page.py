@@ -23,6 +23,7 @@ _WHY_TEXT = {
     "blacklist-app": "应用黑名单",
     "blacklist-domain": "网站黑名单",
     "blacklist-up": "UP 主黑名单",
+    "not-whitelisted-up": "不在 UP 主白名单",
     "self": "回环",
     "not-whitelisted": "不在白名单",
     "blockall": "全屏蔽",

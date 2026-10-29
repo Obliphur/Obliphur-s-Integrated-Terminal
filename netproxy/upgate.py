@@ -5,7 +5,8 @@
 · UpResolver: 视频是谁投的 —— 查哔哩哔哩公开接口 (x/web-interface/view), 合作投稿的每位 UP 主都算; 结果缓存. 本机直接连, 不走系统代理 (否则会被自己的过滤代理拦下);
   也负责查 UP 主的昵称 (名单里显示用);
 · UpGate: RuleStore.up_probe. 问"这个浏览器里开着的哔哩哔哩页面是不是全属于 / 有没有属于某几位 UP 主".
-  页面从 browserurl.Watcher 来 (需要时才扫地址栏), 认不出来的页面 (没读到地址, 不是主页也不是视频, 查不到 UP 主) 一律是 None.
+  页面从 browserurl.Watcher 来 (需要时才扫地址栏). 每个页面是: 一组 UID (UP 主的主页 / 视频),
+  空集合 (读到了地址, 但不属于任何 UP 主: 首页, 搜索, 直播间 …), 或者 None (认不出来: 没读到地址, 查不到视频的投稿人).
 
 本模块不依赖 tkinter / config; 联网和读地址栏的部分都可以换成假的来测试.
 """
@@ -183,15 +184,15 @@ class UpResolver:
 class UpGate:
     """RuleStore.up_probe: 浏览器里开着的哔哩哔哩页面属于哪些 UP 主.
     allowed(site, exe, uids): 这个浏览器 (exe) 开着的哔哩哔哩页面至少有一个, 而且每一个都是 uids 里某位 UP 主的主页或视频;
-    denied(site, exe, uids):  其中有一个是 uids 里某位 UP 主的主页或视频.
-    地址栏没扫到 / 扫描结果太旧 / 查不到 UP 主 → 认不出来, allowed 当作假, denied 当作假 (回到整站名单)."""
+    denied(site, exe, uids):  其中有一个是 uids 里某位 UP 主的主页或视频, 或者有一个认不出来 (宁可错拦: UP 主黑名单拦的是整站里的一部分).
+    扫描结果太旧 → 一律当作认不出来 (allowed 假, denied 真)."""
 
     def __init__(self, watcher, resolver: UpResolver):
         self.watcher = watcher
         self.resolver = resolver
 
     def _page_uids(self, url):
-        """一个窗口里的页面属于哪些 UP 主 (集合); 认不出来 None."""
+        """一个窗口里的页面属于哪些 UP 主 (集合; 空集合 = 不属于任何 UP 主); 认不出来 None."""
         if not url:
             return None
         kind, ref = parse_page(url)
@@ -199,15 +200,16 @@ class UpGate:
             return frozenset((ref,))
         if kind == "video":
             return self.resolver.owners(ref)
-        return None
+        return frozenset()
 
     def _urls(self, site: str, exe: str):
+        """这个浏览器的窗口地址 [url 或 None, …]; 扫描结果太旧 / 不是这个站点 → None."""
         if site != SITE:
             return None
-        snap, fresh = self.watcher.snapshot()
+        snap, fresh = self.watcher.snapshot(wait=3.0)
         if not fresh:
             return None
-        return snap.get(str(exe or "").lower()) or None
+        return snap.get(str(exe or "").lower()) or []
 
     def allowed(self, site: str, exe: str, uids) -> bool:
         urls = self._urls(site, exe)
@@ -220,9 +222,12 @@ class UpGate:
         return True
 
     def denied(self, site: str, exe: str, uids) -> bool:
-        for url in self._urls(site, exe) or ():
+        urls = self._urls(site, exe)
+        if urls is None:
+            return True
+        for url in urls:
             got = self._page_uids(url)
-            if got and (got & uids):
+            if got is None or got & uids:
                 return True
         return False
 
@@ -310,16 +315,19 @@ def _selftest():
     assert not g.allowed(SITE, "msedge.exe", frozenset({"42"})), "视频是 7 的"
     w.snap = {"msedge.exe": [video, "https://www.bilibili.com/"]}
     assert not g.allowed(SITE, "msedge.exe", U) and g.denied(SITE, "msedge.exe", U)
+    w.snap = {"msedge.exe": ["https://www.bilibili.com/"]}
+    assert not g.allowed(SITE, "msedge.exe", U) and not g.denied(SITE, "msedge.exe", U), "首页不属于任何 UP 主"
     w.snap = {"msedge.exe": [video, None]}
     assert not g.allowed(SITE, "msedge.exe", U) and g.denied(SITE, "msedge.exe", U)
     w.snap = {"msedge.exe": [None]}
-    assert not g.allowed(SITE, "msedge.exe", U) and not g.denied(SITE, "msedge.exe", U)
+    assert not g.allowed(SITE, "msedge.exe", U) and g.denied(SITE, "msedge.exe", frozenset({"1"})), "认不出来: 不放行, 也不敢说没事"
     w.snap = {"msedge.exe": ["https://www.bilibili.com/video/BV1gone0000x"]}
-    assert not g.allowed(SITE, "msedge.exe", U) and not g.denied(SITE, "msedge.exe", U), "查不到 UP 主"
+    assert not g.allowed(SITE, "msedge.exe", U) and g.denied(SITE, "msedge.exe", U), "查不到 UP 主"
     w.snap = {"chrome.exe": [video]}
-    assert not g.allowed(SITE, "msedge.exe", U) and not g.denied(SITE, "msedge.exe", U) and g.denied(SITE, "chrome.exe", U)
+    assert not g.allowed(SITE, "msedge.exe", U) and not g.denied(SITE, "msedge.exe", U), "这个浏览器没开 B 站页面"
+    assert g.denied(SITE, "chrome.exe", U)
     w.snap, w.fresh = {"msedge.exe": [video]}, False
-    assert not g.allowed(SITE, "msedge.exe", U) and not g.denied(SITE, "msedge.exe", U), "扫描结果太旧"
+    assert not g.allowed(SITE, "msedge.exe", U) and g.denied(SITE, "msedge.exe", U), "扫描结果太旧"
     w.fresh = True
     assert not g.allowed("zhihu.com", "msedge.exe", U) and not g.allowed(SITE, "", U)
     return "netproxy.upgate selftest OK"
