@@ -205,6 +205,21 @@ class PrescriptTest {
     private fun at(h: Int, m: Int = 0) = t0.withHour(h).withMinute(m)
 
     @Test
+    fun dailyFocusCannotBeDrawnTwice() {
+        val env = Env()
+        env.page = "timer"
+        val eng = env.engine()
+        for (pool in listOf("focus", "break", "idle")) assertTrue(pool, eng.choices(pool, at(12)).toMap().containsKey("IV"))
+        assertNotNull(eng.draw(at(12), choose = "IV", pool0 = "focus"))
+        for (pool in listOf("focus", "break", "idle")) assertFalse(pool, eng.choices(pool, at(12)).toMap().containsKey("IV"))
+        assertEquals(1.0, eng.choices("focus", at(12)).sumOf { it.second }, 1e-9)
+        env.hours = 9.0
+        eng.tick(at(12).plusSeconds(1))                         // 完成后今天也不能再领
+        assertNull(eng.current)
+        assertFalse(eng.choices("focus", at(12)).toMap().containsKey("IV"))
+    }
+
+    @Test
     fun idleEntriesAreBoostedByTimeOfDay() {
         val eng = Env().engine()
         assertEquals("V", eng.idleBoost(at(5, 29)));  assertEquals("VII", eng.idleBoost(at(5, 30)))

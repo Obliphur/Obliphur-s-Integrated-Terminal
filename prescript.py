@@ -366,8 +366,8 @@ class PrescriptEngine:
         now = now or datetime.now()
         if kind == "IV":
             daily = self._daily(now)
-            if daily.get("iv_done"):
-                return False
+            if daily.get("iv_done") or self.active_of("IV") is not None:
+                return False                                # 今天完成过 / 手里已经有一条: 不能再领
             try:
                 return float(self.today_hours_fn()) < float(daily.get("n_iv", 8)) - 1e-9
             except (TypeError, ValueError):
@@ -1185,6 +1185,21 @@ def _selftest():
         assert eng.current is None and eng._data["history"][-1]["result"] == "void"
         state["page"] = "prescript"
         eng._data["force_focus"] = False
+
+        # IV (每日专注): 手里已经有一条就不能再领 (任何池子都不行), 完成后今天也不能再领
+        clear()
+        today["hours"] = 0.0
+        assert "IV" in dict(eng.choices("focus", at(12)))
+        assert eng.draw(at(12), choose="IV", pool="focus")
+        for pool in ("focus", "break", "idle"):
+            assert "IV" not in dict(eng.choices(pool, at(12))), pool
+        assert abs(sum(w for _, w in eng.choices("focus", at(12))) - 1.0) < 1e-9
+        eng._finish("completed", at(12), 1.0, cur=eng.active_of("IV"))
+        assert "IV" not in dict(eng.choices("focus", at(12)))
+        eng._data["daily"]["iv_done"] = False
+        assert "IV" in dict(eng.choices("focus", at(12)))
+        clear()
+        state["mode"] = "idle"
 
         # II: 下一次正常完成的合约, t = 总时长 (2h)
         clear()

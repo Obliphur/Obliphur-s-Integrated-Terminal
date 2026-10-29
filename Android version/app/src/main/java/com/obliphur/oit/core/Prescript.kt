@@ -244,7 +244,7 @@ class PrescriptEngine(
     private fun available(kind: String, now: LocalDateTime): Boolean {
         if (kind == "IV") {
             val daily = ensureDay(now)
-            if (daily.optBoolean("iv_done")) return false
+            if (daily.optBoolean("iv_done") || activeOf("IV") != null) return false      // 今天完成过 / 手里已经有一条: 不能再领
             return todayHoursFn() < daily.optDouble("n_iv", 8.0) - 1e-9
         }
         if (kind in Prescript.IDLE_ENTRIES) return page() == "prescript" && !minimized()
