@@ -294,10 +294,7 @@ private fun NumRow(spec: Spec, edits: MutableMap<String, String>, short: Boolean
             if (note.isNotEmpty()) Text(note, color = o.dim, fontSize = 12.sp, modifier = Modifier.padding(start = 8.dp))
         }
         WaitTag(spec.key)
-        if (s.pending.containsKey(spec.key)) {
-            Dim(tr("当前: {v}", "v" to s.display(spec.key)), size = 12)
-            PendingLine(spec.key)
-        }
+        if (s.pending.containsKey(spec.key)) PendingLine(spec.key)
     }
 }
 

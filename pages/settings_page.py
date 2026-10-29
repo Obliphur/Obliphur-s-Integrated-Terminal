@@ -1041,11 +1041,11 @@ class SettingsPage(tk.Frame):
             for key, row in self._num_rows.items():
                 spec = row["spec"]
                 self._sync_num(key)
-                cur = f"{tr('当前')}: {self.sm.display(key)}"
+                cur = ""                  # 不再显示 "当前: …"
                 if key in config.WEEKDAY_KEYS:
-                    # 星期倍率: 顺带显示这一天实际能联网多久, 并标出今天
+                    # 星期倍率: 显示这一天实际能联网多久, 并标出今天
                     quota = float(config.DAILY_LIMIT) * float(self.sm.value(key))
-                    cur += f"  →  {config.fmt_hm(quota)}"
+                    cur = f"→  {config.fmt_hm(quota)}"
                     is_today = config.WEEKDAY_KEYS.index(key) == today
                     cfg(row["name"], text=tr(spec["short"]) + (
                         f"  ({tr('今天')})" if is_today else ""),
