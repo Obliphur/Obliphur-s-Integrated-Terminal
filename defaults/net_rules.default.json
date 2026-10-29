@@ -4,6 +4,8 @@
   "white_domains": [],
   "white_apps": [],
   "black_domains": [],
-  "black_apps": []
+  "black_apps": [],
+  "white_ups": [],
+  "black_ups": []
  }
 }

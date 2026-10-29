@@ -1220,6 +1220,17 @@ EN = {
     "提升时段": "Boost hours",
     "{label}: 请按 HH:MM-HH:MM 填写, 多段用逗号隔开.": "{label}: use HH:MM-HH:MM, separate several with commas.",
     "废弃": "Voided",
+    # ---- 按 UP 主放行 / 拦截 (MECHANICS 4.8) ----
+    "✅  UP 主白名单": "✅  Uploader whitelist",
+    "⛔  UP 主黑名单": "⛔  Uploader blacklist",
+    "粘贴 UP 主的主页链接或 UID": "Paste the uploader's homepage link or UID",
+    "将于 {at} 删除": "Removed {at}",
+    "将于 {at} 加入": "Added {at}",
+    "UP 主…": "Uploaders…",
+    "先在列表里选中 bilibili.com.": "Select bilibili.com in the list first.",
+    "白名单·UP 主": "Whitelist·Uploaders",
+    "黑名单·UP 主": "Blacklist·Uploaders",
+    "UP 主黑名单": "uploader blacklist",
 }
 
 

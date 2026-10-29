@@ -12,15 +12,17 @@ from i18n import tr
 from netproxy import (
     WHITE_DOMAINS, WHITE_APPS, BLACK_DOMAINS, BLACK_APPS,
 )
-from netproxy.rules import MODE_BLACKLIST, MODE_WHITELIST, keys_for_mode
+from netproxy.rules import (MODE_BLACKLIST, MODE_WHITELIST, WHITE_UPS, BLACK_UPS, keys_for_mode,
+                            up_key_for, up_key_for_mode, up_site)
 from .widgets import (Modal, ScrollArea, wrap_label, smooth, cfg, flavor,
                       show_pack, hide_pack, hide_grid)
-from . import ai_dialogs
+from . import ai_dialogs, up_dialog
 
 _WHY_TEXT = {
     "offline": "离线",
     "blacklist-app": "应用黑名单",
     "blacklist-domain": "网站黑名单",
+    "blacklist-up": "UP 主黑名单",
     "self": "回环",
     "not-whitelisted": "不在白名单",
     "blockall": "全屏蔽",
@@ -55,6 +57,8 @@ class RulesPage(tk.Frame):
         self._pending_idx = []
         self._entries = {}
         self._shown = {}
+        self._rows = {}               # 名单 -> 列表里显示的文字 (网站条目后面带 UP 主的标记)
+        self._press = None            # 按下鼠标时的 (名单, 序号, 这一项是不是已经单独选中着)
         self._rules_version = -1
         self._ai_cfg = None
         self._build()
@@ -151,6 +155,9 @@ class RulesPage(tk.Frame):
         sb.pack(side="right", fill="y")
         lb.pack(side="left", fill="both", expand=True)
         self._lists[key] = lb
+        if key in (WHITE_DOMAINS, BLACK_DOMAINS):
+            lb.bind("<Button-1>", lambda e, k=key: self._press_item(k, e), add="+")
+            lb.bind("<ButtonRelease-1>", lambda e, k=key: self._release_item(k, e), add="+")
 
         er = tk.Frame(fr, bg=card)
         er.pack(fill="x", padx=10, pady=(0, 4))
@@ -168,6 +175,9 @@ class RulesPage(tk.Frame):
                    command=lambda k=key: self._remove(k)).pack(side="left")
         ttk.Button(br, text=tr("从本机选择…"),
                    command=lambda k=key: self._pick(k)).pack(side="left", padx=(6, 0))
+        if key in (WHITE_DOMAINS, BLACK_DOMAINS):
+            ttk.Button(br, text=tr("UP 主…"),
+                       command=lambda k=key: self._open_ups_selected(k)).pack(side="left", padx=(6, 0))
 
 
     def _toast_status(self, status: str, key: str = None, item: str = None):
@@ -212,6 +222,50 @@ class RulesPage(tk.Frame):
         else:
             self._toast_status(statuses[-1])
         self.refresh(force=True)
+
+    # ---- 网站条目下面的 UP 主名单 (MECHANICS 4.8) ----
+
+    def _press_item(self, key, event):
+        """再点一下已经选中的网站条目 (bilibili.com …) 就打开它的 UP 主名单; 这里只记下按下时的状态."""
+        lb = self._lists[key]
+        idx = lb.nearest(event.y)
+        box = lb.bbox(idx) if idx >= 0 else None
+        hit = bool(box) and box[1] <= event.y < box[1] + box[3]
+        self._press = (key, idx, hit and tuple(lb.curselection()) == (idx,)
+                       and not event.state & 0x5) if hit else None      # 0x5 = Shift / Ctrl
+
+    def _release_item(self, key, event):
+        press, self._press = self._press, None
+        if not press or press[0] != key or not press[2]:
+            return
+        lb = self._lists[key]
+        idx = lb.nearest(event.y)
+        box = lb.bbox(idx)
+        if idx != press[1] or not box or not (box[1] <= event.y < box[1] + box[3]):
+            return
+        items = self._shown.get(key, ())
+        if idx < len(items) and up_site(items[idx]):
+            self._open_ups(key, items[idx])
+
+    def _open_ups_selected(self, key):
+        picks = [self._shown[key][i] for i in self._lists[key].curselection()
+                 if i < len(self._shown.get(key, ()))]
+        picks = [p for p in picks if up_site(p)]
+        if not picks:
+            toast.info(tr("先在列表里选中 bilibili.com."))
+            return
+        self._open_ups(key, picks[0])
+
+    def _open_ups(self, key, item):
+        up_dialog.open_ups(self.winfo_toplevel(), self.rules, self.ctrl.up, key, item,
+                           self._toast_status, on_changed=lambda: self.refresh(force=True))
+
+    def _row_text(self, key, item) -> str:
+        site = up_site(item)
+        if not site:
+            return item
+        n = len(self.rules.up_items(up_key_for(key), site))
+        return f"{item}    ▸ UP" + (f" {n}" if n else "")
 
     def _cancel_pending(self):
         sel = self.lb_pending.curselection()
@@ -349,13 +403,20 @@ class RulesPage(tk.Frame):
             self._rules_version = r.version
             for key, lb in self._lists.items():
                 items = r.items(key)
-                if self._shown.get(key) != items:
+                rows = [self._row_text(key, it) for it in items]
+                if self._shown.get(key) != items or self._rows.get(key) != rows:
+                    sel = {self._shown[key][i] for i in lb.curselection()
+                           if i < len(self._shown.get(key, ()))}
                     self._shown[key] = items
+                    self._rows[key] = rows
                     lb.delete(0, "end")
-                    for it in items:
-                        lb.insert("end", it)
+                    for i, row in enumerate(rows):
+                        lb.insert("end", row)
+                        if items[i] in sel:
+                            lb.selection_set(i)
 
-        self._pending_idx = [i for i, p in enumerate(r.pending) if p["list"] in active]
+        shown_lists = active if blockall else active + (up_key_for_mode(mode),)
+        self._pending_idx = [i for i, p in enumerate(r.pending) if p["list"] in shown_lists]
         pend = [f"{'+' if r.pending[i]['op'] == 'add' else '-'} "
                 f"{self._list_label(r.pending[i]['list'])}: {r.pending[i]['item']}   →  "
                 f"{r.pending[i]['apply_at']:%m-%d %H:%M}" for i in self._pending_idx]
@@ -380,4 +441,5 @@ class RulesPage(tk.Frame):
         return {
             WHITE_DOMAINS: tr("白名单·网站"), WHITE_APPS: tr("白名单·应用"),
             BLACK_DOMAINS: tr("黑名单·网站"), BLACK_APPS: tr("黑名单·应用"),
+            WHITE_UPS: tr("白名单·UP 主"), BLACK_UPS: tr("黑名单·UP 主"),
         }.get(key, key)

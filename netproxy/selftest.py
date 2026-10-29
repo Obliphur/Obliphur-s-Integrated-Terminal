@@ -223,6 +223,65 @@ def run():
             cut = True
         assert cut and time.monotonic() - t0 < 4, "联网结束后, 黑名单网站的连接没有被掐断"
         s.close()
+
+        # 按 UP 主区分 (MECHANICS 4.8): 浏览器开着哪个 UP 主的页面, 由 up_probe 告诉规则库 (这里用假的)
+        from .rules import WHITE_UPS, BLACK_UPS
+
+        class Page:
+            uids = None
+
+            def allowed(self, site, exe, uids):
+                return bool(self.uids and self.uids & uids)
+
+            def denied(self, site, exe, uids):
+                return bool(self.uids and self.uids & uids)
+        page = Page()
+        rules.up_probe = page
+        p.targets["www.bilibili.com"] = web_port             # 网页请求
+        p.targets["space.bilibili.com"] = echo_port           # 隧道
+        rules.add(BLACK_DOMAINS, "bilibili.com")
+        rules.add(WHITE_UPS, "https://space.bilibili.com/42?spm_id_from=1")
+        state["online"], state["mode"] = False, "blacklist"
+        r = _http_get(port, "http://www.bilibili.com/")
+        assert r.startswith(b"HTTP/1.1 403") and b"blacklist-domain" in r, r
+        page.uids = {"7"}
+        assert _http_get(port, "http://www.bilibili.com/").startswith(b"HTTP/1.1 403"), "别的 UP 主的页面照旧拦"
+        page.uids = {"42"}
+        st, body = _connect(port, "space.bilibili.com:443")
+        assert b" 200" in st and body == b"PING", "白名单 UP 主的页面放行"
+        s = socket.create_connection(("127.0.0.1", port), timeout=5)
+        s.sendall(b"CONNECT space.bilibili.com:443 HTTP/1.1\r\nHost: space.bilibili.com:443\r\n\r\n")
+        head = b""
+        while b"\r\n\r\n" not in head:
+            head += s.recv(4096)
+        assert b" 200" in head.split(b"\r\n", 1)[0], head
+        s.sendall(b"hi")
+        assert s.recv(16) == b"HI"
+        page.uids = {"7"}                                   # 浏览器换到别的 UP 主的页面
+        t0 = time.monotonic()
+        s.settimeout(5)
+        cut = False
+        try:
+            while True:
+                if not s.recv(16):
+                    cut = True
+                    break
+        except OSError:
+            cut = True
+        assert cut and time.monotonic() - t0 < 4, "浏览器离开白名单 UP 主的页面后, 已打开的连接没有被掐断"
+        s.close()
+        # 白名单模式: 站点放行, 黑名单 UP 主的页面拦截
+        rules.add(WHITE_DOMAINS, "bilibili.com")
+        rules.add(BLACK_UPS, "7")
+        state["mode"] = "whitelist"
+        r = _http_get(port, "http://www.bilibili.com/")
+        assert r.startswith(b"HTTP/1.1 403") and b"blacklist-up" in r, r
+        assert "UP 主".encode("utf-8") in r, r
+        page.uids = {"42"}
+        assert _http_get(port, "http://www.bilibili.com/").startswith(b"HTTP/1.1 200")
+        page.uids = None
+        assert _http_get(port, "http://www.bilibili.com/").startswith(b"HTTP/1.1 200")
+        rules.up_probe = None
     finally:
         p.stop()
 

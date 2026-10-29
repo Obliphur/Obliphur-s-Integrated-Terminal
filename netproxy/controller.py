@@ -11,9 +11,11 @@ import threading
 import time
 from collections import deque
 
+from .browserurl import Watcher
 from .rules import RuleStore, MODE_BLACKLIST, DEFAULT_TEMPLATE
 from .server import FilterProxy, DEFAULT_PORT
 from .sysproxy import SystemProxy
+from .upgate import UpGate, UpResolver
 
 
 class ProxyController:
@@ -25,6 +27,9 @@ class ProxyController:
         self.sys = sysproxy or SystemProxy(os.path.join(data_dir, "sysproxy_backup.json"))
         if dev_getter:
             self.rules.dev_getter = dev_getter
+        # 按 UP 主区分 (MECHANICS 4.8): 浏览器此刻开着哪个页面, 由地址栏告诉规则库; 没有 UP 主名单时一次都不会去扫
+        self.up = UpResolver(names_path=os.path.join(data_dir, "up_names.json"))
+        self.rules.up_probe = UpGate(Watcher(), self.up)
         self.preferred_port = port
         self._mode_getter = mode_getter or (lambda: MODE_BLACKLIST)
         self.online = False

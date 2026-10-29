@@ -13,6 +13,11 @@
     任何加入和删除都要等 CHANGE_DELAY_HOURS 小时才生效.
     dev_getter() 为真时(开发者模式 / 配置期)一切改动立即生效.
 
+按 UP 主区分 (MECHANICS 4.8, 仅 bilibili.com):
+    域名条目 bilibili.com 在黑名单里 → 它下面的"UP 主白名单"里的 UP 主, 主页和视频照常打开;
+    域名条目 bilibili.com 在白名单里 → 它下面的"UP 主黑名单"里的 UP 主, 主页和视频拦截.
+    代理看不到 HTTPS 的路径, 是哪个 UP 主的页面由 up_probe (浏览器地址栏, netproxy/upgate.py) 告诉 decide().
+
 本模块不依赖 tkinter / config,可以单独测试.
 """
 
@@ -26,7 +31,11 @@ WHITE_DOMAINS = "white_domains"
 WHITE_APPS = "white_apps"
 BLACK_DOMAINS = "black_domains"
 BLACK_APPS = "black_apps"
-LIST_KEYS = (WHITE_DOMAINS, WHITE_APPS, BLACK_DOMAINS, BLACK_APPS)
+# UP 主名单 (条目 "bilibili.com/UID"): 白名单 = 黑名单里的该站点放行这些 UP 主, 黑名单 = 白名单里的该站点拦截这些 UP 主
+WHITE_UPS = "white_ups"
+BLACK_UPS = "black_ups"
+LIST_KEYS = (WHITE_DOMAINS, WHITE_APPS, BLACK_DOMAINS, BLACK_APPS, WHITE_UPS, BLACK_UPS)
+UP_SITES = ("bilibili.com",)             # 支持按 UP 主区分的站点
 
 MODE_BLACKLIST = "blacklist"
 MODE_WHITELIST = "whitelist"
@@ -42,6 +51,19 @@ _LOOPBACK = {"localhost", "::1", "0.0.0.0"}
 
 def keys_for_mode(mode: str) -> tuple:
     return (WHITE_DOMAINS, WHITE_APPS) if mode == MODE_WHITELIST else (BLACK_DOMAINS, BLACK_APPS)
+
+
+def up_key_for(domain_key: str) -> str:
+    """网站名单 → 挂在它下面的 UP 主名单: 黑名单的站点放行白名单里的 UP 主, 白名单的站点拦截黑名单里的 UP 主."""
+    return WHITE_UPS if domain_key == BLACK_DOMAINS else BLACK_UPS
+
+
+def up_key_for_mode(mode: str) -> str:
+    return BLACK_UPS if mode == MODE_WHITELIST else WHITE_UPS
+
+
+def is_up(key: str) -> bool:
+    return key in (WHITE_UPS, BLACK_UPS)
 
 
 def is_white(key: str) -> bool:
@@ -90,7 +112,39 @@ def norm_app(text) -> str:
     return t
 
 
+def up_site(rule: str) -> str:
+    """名单里的这个域名条目属于哪个支持按 UP 主区分的站点 (bilibili.com, space.bilibili.com … → bilibili.com); 没有返回 ''."""
+    rule = str(rule or "")
+    for site in UP_SITES:
+        if rule == site or rule.endswith('.' + site):
+            return site
+    return ""
+
+
+def bili_uid(text) -> str:
+    """UP 主主页链接 / UID → UID 数字串; 认不出来返回 ''.
+    `https://space.bilibili.com/2742391?spm_id_from=…`, `space.bilibili.com/2742391/video`, `2742391`, `UID:2742391` 都行."""
+    t = str(text or "").strip()
+    m = (re.fullmatch(r'(?:uid|mid)?\s*[:=：]?\s*(\d{1,20})', t, re.I)
+         or re.match(r'^(?:[a-z][a-z0-9+.\-]*://)?(?:space\.bilibili\.com/|(?:www\.|m\.)?bilibili\.com/space/)(\d{1,20})(?!\d)',
+                     t, re.I))
+    if not m:
+        return ""
+    uid = str(int(m.group(1)))
+    return "" if uid == "0" else uid
+
+
+def norm_up(text) -> str:
+    """UP 主主页链接 / UID → "bilibili.com/UID" (名单里存的样子); 认不出来返回 ''."""
+    t = str(text or "").strip()
+    m = re.fullmatch(r'bilibili\.com/(\d{1,20})', t, re.I)
+    uid = bili_uid(m.group(1) if m else t)
+    return f"bilibili.com/{uid}" if uid else ""
+
+
 def normalize(key: str, text) -> str:
+    if is_up(key):
+        return norm_up(text)
     return norm_app(text) if is_app(key) else norm_domain(text)
 
 
@@ -123,6 +177,9 @@ class RuleStore:
         self.created = None
         self.version = 0
         self._snap = {k: () for k in LIST_KEYS}
+        self._ups = {}                           # (名单, 站点) -> UID 集合
+        # 浏览器此刻开着哪些页面 (netproxy/upgate.py UpGate): allowed(site, exe, uids) / denied(site, exe, uids). None = 不支持, 一律按整站名单
+        self.up_probe = None
         self.load()
         self.promote_due()
 
@@ -200,11 +257,26 @@ class RuleStore:
 
     def _rebuild(self):
         self._snap = {k: tuple(v) for k, v in self.lists.items()}
+        ups = {}
+        for k in (WHITE_UPS, BLACK_UPS):
+            for item in self._snap[k]:
+                site, _, uid = item.partition('/')
+                ups.setdefault((k, site), set()).add(uid)
+        self._ups = {k: frozenset(v) for k, v in ups.items()}
         self.version += 1
 
 
     def items(self, key: str) -> list:
         return list(self._snap[key])
+
+    def up_uids(self, key: str, site: str) -> frozenset:
+        """这个站点的 UP 主名单 (key = WHITE_UPS / BLACK_UPS) 里的 UID."""
+        return self._ups.get((key, site), frozenset())
+
+    def up_items(self, key: str, site: str) -> list:
+        """站点的 UP 主名单, 按加入的先后: [UID, …]."""
+        prefix = site + '/'
+        return [i[len(prefix):] for i in self._snap[key] if i.startswith(prefix)]
 
     def _find_pending(self, op, key, item):
         for i, p in enumerate(self.pending):
@@ -330,14 +402,33 @@ class RuleStore:
         if mode == MODE_WHITELIST:
             for r in s[WHITE_DOMAINS]:
                 if domain_match(host, r):
+                    if self._up_hit(r, exe, BLACK_UPS):
+                        return False, "blacklist-up"        # 站点在白名单里, 但浏览器开着的是黑名单 UP 主的页面
                     return True, "whitelist-domain"
             return False, "offline"
         if exe and exe in s[BLACK_APPS]:
             return False, "blacklist-app"
         for r in s[BLACK_DOMAINS]:
             if domain_match(host, r):
+                if self._up_hit(r, exe, WHITE_UPS):
+                    return True, "whitelist-up"             # 站点在黑名单里, 但浏览器开着的全是白名单 UP 主的页面
                 return False, "blacklist-domain"
         return True, "default-allow"
+
+    def _up_hit(self, rule: str, exe: str, key: str) -> bool:
+        """域名条目 rule 命中后, 再看浏览器开着的页面 (按 UP 主区分, MECHANICS 4.8).
+        key = WHITE_UPS: 该浏览器里所有的该站点页面都是白名单 UP 主的; key = BLACK_UPS: 有一个页面是黑名单 UP 主的."""
+        site = up_site(rule)
+        probe = self.up_probe
+        if not site or not exe or probe is None:
+            return False
+        uids = self._ups.get((key, site))
+        if not uids:
+            return False
+        try:
+            return bool((probe.allowed if key == WHITE_UPS else probe.denied)(site, exe, uids))
+        except Exception:
+            return False
 
 
     def app_allowed(self, exe: str, rest: bool, mode: str = MODE_BLACKLIST):
@@ -506,6 +597,99 @@ def _selftest():
     assert rs5.promote_due() and not rs5.pending and rs5.items(BLACK_DOMAINS) == ["x.com"]
     assert rs5.remove(BLACK_DOMAINS, "x.com")[0] == "applied"
     assert rs5.add(BLACK_DOMAINS, "y.com")[0] == "applied"
+
+    # UP 主区分 (MECHANICS 4.8)
+    assert norm_up("https://space.bilibili.com/2742391?spm_id_from=333.788.upinfo.head.click") == "bilibili.com/2742391"
+    assert norm_up("space.bilibili.com/2742391/video") == "bilibili.com/2742391"
+    assert norm_up("m.bilibili.com/space/2742391") == "bilibili.com/2742391"
+    assert norm_up("2742391") == norm_up("UID: 2742391") == norm_up("mid=2742391") == "bilibili.com/2742391"
+    assert norm_up("bilibili.com/2742391") == "bilibili.com/2742391" and norm_up("007") == "bilibili.com/7"
+    for bad in ("", "0", "abc", "bilibili.com", "https://www.bilibili.com/video/BV1GJ411x7h7",
+                "https://space.bilibili.com/", "https://evil.com/space.bilibili.com/5", "-5"):
+        assert norm_up(bad) == "", bad
+    assert up_site("bilibili.com") == up_site("space.bilibili.com") == "bilibili.com"
+    assert up_site("notbilibili.com") == "" and up_site("zhihu.com") == ""
+    assert up_key_for(BLACK_DOMAINS) == WHITE_UPS and up_key_for(WHITE_DOMAINS) == BLACK_UPS
+
+    class Probe:
+        """假的浏览器: pages[exe] = 每个哔哩哔哩窗口里的 UP 主 UID 集合 (None = 认不出来)."""
+        def __init__(self):
+            self.pages = {}
+
+        def allowed(self, site, exe, uids):
+            ps = self.pages.get(exe) or []
+            return bool(ps) and all(p is not None and p & uids for p in ps)
+
+        def denied(self, site, exe, uids):
+            return any(p and p & uids for p in self.pages.get(exe) or [])
+
+    probe = Probe()
+    clock2 = [datetime(2026, 1, 1, 12, 0)]
+    ru = RuleStore(os.path.join(tempfile.mkdtemp(), "u.json"), now=lambda: clock2[0])
+    ru.up_probe = probe
+    ru.dev_getter = lambda: True
+    assert ru.add(BLACK_DOMAINS, "bilibili.com")[0] == "applied"
+    assert ru.add(WHITE_UPS, "https://space.bilibili.com/2742391?x=1") == ("applied", "bilibili.com/2742391")
+    assert ru.add(WHITE_UPS, "2742391")[0] == "exists" and ru.add(WHITE_UPS, "nope")[0] == "invalid"
+    assert ru.add(WHITE_UPS, "99")[0] == "applied" and ru.up_items(WHITE_UPS, "bilibili.com") == ["2742391", "99"]
+    assert ru.up_uids(WHITE_UPS, "bilibili.com") == {"2742391", "99"} and not ru.up_uids(BLACK_UPS, "bilibili.com")
+    B = MODE_BLACKLIST
+    # 黑名单里的站点: 没有页面 / 认不出来 / 别的 UP 主 → 照旧拦截; 白名单 UP 主的页面 → 放行
+    assert ru.decide("space.bilibili.com", "msedge.exe", False, B) == (False, "blacklist-domain")
+    probe.pages = {"msedge.exe": [None]}
+    assert ru.decide("www.bilibili.com", "msedge.exe", False, B) == (False, "blacklist-domain")
+    probe.pages = {"msedge.exe": [{"5"}]}
+    assert ru.decide("www.bilibili.com", "msedge.exe", False, B) == (False, "blacklist-domain")
+    probe.pages = {"msedge.exe": [{"2742391"}]}
+    assert ru.decide("www.bilibili.com", "msedge.exe", False, B) == (True, "whitelist-up")
+    assert ru.decide("api.bilibili.com", "msedge.exe", False, B) == (True, "whitelist-up"), "子域名一起放行"
+    assert ru.decide("www.bilibili.com", "chrome.exe", False, B) == (False, "blacklist-domain"), "别的浏览器没开这个页面"
+    assert ru.decide("www.bilibili.com", "", False, B) == (False, "blacklist-domain"), "查不到程序"
+    assert ru.decide("notbilibili.com", "msedge.exe", False, B) == (True, "default-allow")
+    probe.pages = {"msedge.exe": [{"2742391"}, {"99", "5"}]}
+    assert ru.decide("www.bilibili.com", "msedge.exe", False, B) == (True, "whitelist-up"), "合作投稿: 其中一位在白名单就行"
+    probe.pages = {"msedge.exe": [{"2742391"}, {"5"}]}
+    assert ru.decide("www.bilibili.com", "msedge.exe", False, B) == (False, "blacklist-domain"), "还开着别的 UP 主的页面"
+    probe.pages = {"msedge.exe": [{"2742391"}, None]}
+    assert ru.decide("www.bilibili.com", "msedge.exe", False, B) == (False, "blacklist-domain"), "有认不出来的窗口"
+    probe.pages = {"msedge.exe": [{"2742391"}]}
+    assert ru.decide("www.bilibili.com", "msedge.exe", True, B) == (True, "online")
+    ru.up_probe = None
+    assert ru.decide("www.bilibili.com", "msedge.exe", False, B) == (False, "blacklist-domain"), "没有探测器 = 整站拦截"
+    ru.up_probe = probe
+    # 合约的网络禁令比 UP 主白名单优先
+    ru.banned_domains = {"bilibili.com"}
+    assert ru.decide("www.bilibili.com", "msedge.exe", False, B) == (False, "ban")
+    ru.banned_domains = set()
+    # 白名单里的站点: 黑名单 UP 主的页面拦截, 其余照旧放行 (认不出来 = 放行)
+    W = MODE_WHITELIST
+    assert ru.add(WHITE_DOMAINS, "bilibili.com")[0] == "applied"
+    assert ru.add(BLACK_UPS, "space.bilibili.com/5")[0] == "applied"
+    probe.pages = {"msedge.exe": [{"2742391"}]}
+    assert ru.decide("www.bilibili.com", "msedge.exe", False, W) == (True, "whitelist-domain")
+    probe.pages = {"msedge.exe": [{"2742391"}, {"5"}]}
+    assert ru.decide("www.bilibili.com", "msedge.exe", False, W) == (False, "blacklist-up")
+    assert ru.decide("www.bilibili.com", "chrome.exe", False, W) == (True, "whitelist-domain")
+    probe.pages = {"msedge.exe": [None]}
+    assert ru.decide("www.bilibili.com", "msedge.exe", False, W) == (True, "whitelist-domain")
+    assert ru.decide("zhihu.com", "msedge.exe", False, W) == (False, "offline")
+    # 探测器出错 = 当作没命中
+    class Boom:
+        def allowed(self, *a): raise RuntimeError("x")
+        denied = allowed
+    ru.up_probe = Boom()
+    assert ru.decide("www.bilibili.com", "msedge.exe", False, W) == (True, "whitelist-domain")
+    assert ru.decide("www.bilibili.com", "msedge.exe", False, B) == (False, "blacklist-domain")
+    # UP 主名单的改动同样要等冷静期; 重新读取后还在
+    ru.dev_getter = lambda: False
+    assert ru.add(WHITE_UPS, "123")[0] == "staged" and ru.up_items(WHITE_UPS, "bilibili.com") == ["2742391", "99"]
+    ru2 = RuleStore(ru.path, now=lambda: clock2[0])
+    assert ru2.pending[0]["list"] == WHITE_UPS and ru2.pending[0]["item"] == "bilibili.com/123"
+    clock2[0] += timedelta(hours=49)
+    assert ru2.promote_due() and ru2.up_items(WHITE_UPS, "bilibili.com") == ["2742391", "99", "123"]
+    assert ru2.remove(WHITE_UPS, "99")[0] == "staged" and "99" in ru2.up_uids(WHITE_UPS, "bilibili.com")
+    # 旧的名单文件没有 UP 主名单: 读出来是空的
+    assert RuleStore(old, now=lambda: clock[0]).items(WHITE_UPS) == []
     return "netproxy.rules selftest OK"
 
 

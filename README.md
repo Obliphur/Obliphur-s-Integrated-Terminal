@@ -29,7 +29,7 @@
 | --- | --- |
 | **Timer** | 专注计时,结束后给出建议休息时长|
 | **Network** | 申请制联网:冷静期后自动联网,到点断网;另有快速访问与紧急借贷; "📁 文件通道" 在绑定的手机和电脑之间传文件 / 图片 |
-| **Rules** | Proxy 模式下的网站 / 应用黑白名单 (被禁用的程序窗口一到前台就关掉),可让 AI 给出建议 |
+| **Rules** | Proxy 模式下的网站 / 应用黑白名单 (被禁用的程序窗口一到前台就关掉),可让 AI 给出建议;bilibili.com 条目可再点开,按 UP 主放行 / 拦截 |
 | **Hour Log** | 每个整点提示记录上一小时做了什么 |
 | **Calendar** | 按日查看学习时长 |
 | **Statistics** | 活动, 联网理由, 各程序前台时间的分布, 最近顺利完成的合约与最近的违规记录 |
@@ -84,6 +84,8 @@ obliphur_terminal/
 │  ├─ controller.py      把代理, 名单, 系统代理拼在一起
 │  ├─ sysproxy.py        Windows 系统代理的安装 / 还原
 │  ├─ procinfo.py        连接 → 发起它的程序
+│  ├─ upgate.py          按 UP 主放行 / 拦截: 页面 → UP 主 (哔哩哔哩公开接口)
+│  ├─ browserurl.py      读浏览器地址栏 (UI Automation)
 │  └─ selftest.py        端到端自检
 ├─ window_guard.py       任务栏窗口数上限 (专注中提醒), 按前台窗口关程序, 前台程序识别, 窗口藏 / 显示
 ├─ prestart.py           提前启动 (仅 PC): 专注中先跑起程序, 藏窗口 + 静音, 结束专注放出来
@@ -103,6 +105,7 @@ obliphur_terminal/
 │  ├─ settings_page.py   设置 (按模块分页)
 │  ├─ sync_panel.py      设备同步 (设置 → 基本设置)
 │  ├─ rules_page.py      规则 (名单)
+│  ├─ up_dialog.py       网站条目下的 UP 主名单
 │  ├─ file_channel.py    文件通道: 发文件 / 图片给绑定的设备
 │  ├─ ai_dialogs.py      AI 建议的对话框
 │  ├─ stats_page.py      统计
