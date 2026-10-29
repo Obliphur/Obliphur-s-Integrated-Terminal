@@ -146,6 +146,8 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
             else -> {}
         }
         if (n.mode == "online") st.put("net_left", n.grantLeft.toInt())
+        // 本机停在指令页上: 空闲词条要所有设备都离开才作废 (MECHANICS 22.7)
+        if (core.prescript.onPage()) st.put("prescript", true)
         // 本机此刻在录的几路 (合约页同步显示, MECHANICS 18.8)
         val rec = com.obliphur.oit.core.RecCrypto.KINDS.filter { app.recordManager.isRecording(it) }
         if (rec.isNotEmpty()) st.put("rec", org.json.JSONArray(rec))
@@ -192,7 +194,8 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
         // 合约: 进行中的合约以后改的为准, 结束了的合约合并 (MECHANICS 18)
         // 行为模式的外出: 每一项单独比较, 计时 / 统计跟着它走 (MECHANICS 21)
         return mapOf("settings" to settings, "hours" to hours, "timer" to timer, "achievements" to core.ach.doc(),
-            "contract" to core.contract.doc(), "behavior" to core.behavior.doc())
+            "contract" to core.contract.doc(), "behavior" to core.behavior.doc(),
+            "prescript" to core.prescript.syncDoc())
     }
 
     override fun apply(doc: String, changes: Map<String, Any?>) {
@@ -257,6 +260,7 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
                 core.behavior.merge(changes)
                 core.behaviorTick()
             }
+            "prescript" -> core.prescript.syncApply(changes)
         }
         core.changed()
     }

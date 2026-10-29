@@ -74,6 +74,8 @@ DEV_KEEP = KEEP                 # 旧名字
 # 每种指令对应界面上哪个入口 (在那个按钮上标记): 专注 / 休息 开始按钮, 合约 / 统计 侧边栏入口; IV / V 没有标记
 MARK_OF = {"I": "focus", "III": "break", "II": "contract", "VI": "stats"}
 HISTORY_KEEP = 100
+SYNC_DAYS = 3                   # 同步给其他设备的指令记录: 最近这么多天的
+SYNC_VOLATILE = ("focus_sec", "break_sec", "stats_since", "log_base")   # 各设备自己累计的进度, 不同步
 GRANTED_KEEP = 40
 SAVE_EVERY = 10                 # 秒; 累计的专注 / 休息秒数最多丢这么多
 
@@ -191,6 +193,7 @@ class PrescriptEngine:
     dev_fn()          -> 开发者模式 (现在领取对谁都没有冷却, 这个只留着兼容)
     pause_media_fn()  -> 领取空闲词条 (IDLE_ENTRIES) 时暂停后台正在播放的音频 / 视频
     hour_log_fn()     -> 今天的整点记录 (没启用返回空串), 给 X 词条的输入框第一段
+    peers_on_page_fn() -> 绑定的其他设备里有没有哪台此刻正停在指令页 (空闲词条要所有设备都离开才作废)
     contract_active_fn() -> 现在有没有进行中的合约 (合约期间抽不到 VI)
     on_complete()     -> 有一条指令被完成了 (播完成音效)
     remaining_rest_fn() -> 用户剩余的休息时间 (秒): 休息中是这次休息的倒计时, 否则是积攒的休息时间
@@ -198,7 +201,7 @@ class PrescriptEngine:
 
     def __init__(self, data_dir, *, state_fn=None, today_hours_fn=None, contracts_fn=None,
                  page_fn=None, minimized_fn=None, grant_rest_fn=None, username_fn=None,
-                 blocked_fn=None, on_change=None, dev_fn=None, pause_media_fn=None, remaining_rest_fn=None, contract_active_fn=None, on_complete=None, hour_log_fn=None, rng=None):
+                 blocked_fn=None, on_change=None, dev_fn=None, pause_media_fn=None, remaining_rest_fn=None, contract_active_fn=None, on_complete=None, hour_log_fn=None, peers_on_page_fn=None, rng=None):
         self.path = os.path.join(data_dir, "prescript.json")
         self.state_fn = state_fn or (lambda: "idle")
         self.today_hours_fn = today_hours_fn or (lambda: 0.0)
@@ -213,6 +216,7 @@ class PrescriptEngine:
         self.remaining_rest_fn = remaining_rest_fn or (lambda: 0.0)
         self.contract_active_fn = contract_active_fn or (lambda: False)
         self.hour_log_fn = hour_log_fn or (lambda: "")
+        self.peers_on_page_fn = peers_on_page_fn or (lambda: False)
         self.on_change = on_change
         self.on_complete = on_complete
         self.rng = rng or random.Random()
@@ -241,6 +245,7 @@ class PrescriptEngine:
             "closes": [],               # OIT 被手动关闭的时刻
             "logs": {},                 # X 词条保存的记录 {日期: 文字}
             "pending": [],
+            "settled": {},              # 已经结算过的奖励 {id: 奖励} (同步给其他设备, 免得重复结算)
             "granted": [],
             "daily": {},
             "history": [],
@@ -249,7 +254,7 @@ class PrescriptEngine:
         for key in ("pending", "granted", "history", "run", "closes"):
             if not isinstance(base.get(key), list):
                 base[key] = []
-        for key in ("daily", "logs"):
+        for key in ("daily", "logs", "settled"):
             if not isinstance(base.get(key), dict):
                 base[key] = {}
         try:
@@ -600,28 +605,16 @@ class PrescriptEngine:
             del history[:-HISTORY_KEEP]
 
         if result == "completed":
-            daily = self._daily(now)
-            daily["completed_t"] = float(daily.get("completed_t", 0.0) or 0.0) + float(done)
-            if rec["type"] == "IV":
-                daily["iv_done"] = True
-            self._data.setdefault("pending", []).append({
+            self._add_reward({
+                "id": rec["id"],
                 "kind": "complete",
                 "code": code_for(done),
                 "t": done,
                 "seconds": int(round(float(done) * 180)),
                 "at": _iso(now),
             })
-            # 今天的 t 合计到 10: 20 分钟当场排进待结算 (换日后打开页面也不会丢).
-            if not daily.get("bonus") and \
-                    float(daily.get("completed_t", 0.0) or 0.0) >= DAILY_T_TARGET - 1e-9:
-                daily["bonus"] = True
-                self._data.setdefault("pending", []).append({
-                    "kind": "daily",
-                    "code": rest_code(20),
-                    "t": None,
-                    "seconds": DAILY_BONUS_SECONDS,
-                    "at": _iso(now),
-                })
+            self._recompute_daily(now)
+            self._check_daily_bonus(now)
         self._dirty = True
         if save:
             self.save()
@@ -640,7 +633,7 @@ class PrescriptEngine:
 
     def check_visible(self, now: datetime = None):
         """空闲词条: 页面 / 窗口刚一变化就判一次 (不用等下一秒的 tick)."""
-        if self._page() == "prescript" and not self._minimized():
+        if self.on_page() or self._peers_on_page():
             return
         for cur in list(self.actives()):
             if cur.get("type") in IDLE_ENTRIES:
@@ -703,12 +696,14 @@ class PrescriptEngine:
         expires = _parse(cur.get("expires"))
 
         if kind in IDLE_ENTRIES:
-            if self._page() != "prescript" or self._minimized():
-                self._finish("void", now, cur=cur)               # 离开指令页 / 最小化: 作废
+            here = self.on_page()
+            if not here and not self._peers_on_page():
+                self._finish("void", now, cur=cur)               # 所有设备都离开了指令页 / 最小化: 作废
                 return
-            # 自动完成的时刻 (旧存档里的 V 只有 expires); X 没有计时, 等输入框保存
+            # 自动完成的时刻 (旧存档里的 V 只有 expires); X 没有计时, 等输入框保存.
+            # 只有停在指令页的设备去完成 (别的设备还停在页面上时, 由它来完成)
             due = _parse(cur.get("due")) or _parse(cur.get("expires"))
-            if due is not None and now >= due:
+            if here and due is not None and now >= due:
                 self._finish("completed", now, float(cur.get("t") or FIXED_T.get(kind, 0.1)), cur=cur)
                 return
         elif kind == "I":
@@ -777,6 +772,158 @@ class PrescriptEngine:
             if expires is not None and now >= expires:
                 self._finish("expired", now, cur=cur)
                 return
+
+    def on_page(self) -> bool:
+        """本机此刻是不是停在指令页上 (没有最小化)."""
+        return self._page() == "prescript" and not self._minimized()
+
+    def _peers_on_page(self) -> bool:
+        try:
+            return bool(self.peers_on_page_fn())
+        except Exception:       # noqa: BLE001
+            return False
+
+    # ---- 奖励 / 当天合计 (跟着记录走, 多台设备算出来一样) ----
+
+    @staticmethod
+    def _reward_id(item: dict) -> str:
+        rid = str(item.get("id") or "")
+        return rid or f"legacy-{item.get('at')}-{item.get('code')}"
+
+    def _has_reward(self, rid: str) -> bool:
+        return rid in (self._data.get("settled") or {}) or \
+            any(isinstance(p, dict) and self._reward_id(p) == rid for p in self._data.get("pending") or [])
+
+    def _add_reward(self, item: dict) -> bool:
+        """排进待结算; 同一个 id (别的设备也完成了同一条) 已经有了就不重复."""
+        item["id"] = self._reward_id(item)
+        if self._has_reward(item["id"]):
+            return False
+        self._data.setdefault("pending", []).append(item)
+        return True
+
+    def _recompute_daily(self, now: datetime):
+        """今天完成的 t 合计 / IV 完成过 / 20 分钟奖励给过没有: 从记录里算, 多台设备同步之后也一样."""
+        daily = self._data.get("daily") or {}
+        day = str(daily.get("date") or now.strftime("%Y-%m-%d"))
+        total, iv = 0.0, False
+        for rec in self._data.get("history") or []:
+            if isinstance(rec, dict) and rec.get("result") == "completed" and str(rec.get("ended") or "").startswith(day):
+                total += float(rec.get("t") or 0.0)
+                iv = iv or rec.get("type") == "IV"
+        daily["completed_t"], daily["iv_done"] = total, iv
+        daily["bonus"] = self._has_reward(f"daily-{day}")
+
+    def _check_daily_bonus(self, now: datetime):
+        """今天的 t 合计到 10: 20 分钟当场排进待结算 (换日后打开页面也不会丢)."""
+        daily = self._daily(now)
+        day = str(daily.get("date"))
+        if not daily.get("bonus") and float(daily.get("completed_t", 0.0) or 0.0) >= DAILY_T_TARGET - 1e-9:
+            daily["bonus"] = True
+            self._add_reward({"id": f"daily-{day}", "kind": "daily", "code": rest_code(20), "t": None,
+                              "seconds": DAILY_BONUS_SECONDS, "at": _iso(now)})
+            self._dirty = True
+
+    # ---- 设备同步 (devsync 的 "prescript" 文档) ----
+    # 同步的是: 领到的指令 (进行中的和已经完成 / 作废的; 各设备自己累计的进度不同步), 奖励 (结算过没有), 今天的 n.
+    # 已经结束的记录永远盖过进行中的; 其他按修改时间.
+
+    @staticmethod
+    def _static(rec: dict) -> dict:
+        return {k: v for k, v in rec.items() if k not in SYNC_VOLATILE}
+
+    def sync_doc(self, now: datetime = None) -> dict:
+        now = (now or datetime.now()).replace(microsecond=0)
+        floor = _iso(now - timedelta(days=SYNC_DAYS))
+        out = {}
+        for rec in self._data.get("history") or []:
+            if isinstance(rec, dict) and rec.get("id") and str(rec.get("accepted") or "") >= floor:
+                out["i:" + str(rec["id"])] = dict(rec)
+        for cur in self.actives():
+            if cur.get("id"):
+                out["i:" + str(cur["id"])] = self._static(cur)
+        for item in self._data.get("pending") or []:
+            if isinstance(item, dict):
+                out["r:" + self._reward_id(item)] = dict(item, settled=False)
+        for rid, item in (self._data.get("settled") or {}).items():
+            if isinstance(item, dict):
+                out["r:" + str(rid)] = dict(item, settled=True)
+        daily = self._data.get("daily") or {}
+        if daily.get("date"):
+            out["n:" + str(daily["date"])] = {"n_ii": daily.get("n_ii"), "n_iv": daily.get("n_iv")}
+        return out
+
+    @staticmethod
+    def sync_done(value) -> bool:
+        """这一项是不是已经到头了 (指令结束 / 奖励结算过): 到头的盖过没到头的."""
+        return isinstance(value, dict) and (bool(value.get("result")) or value.get("settled") is True)
+
+    def _all_ids(self) -> set:
+        return {str(r.get("id")) for r in (self._data.get("history") or []) if isinstance(r, dict)}
+
+    def sync_apply(self, changes: dict, now: datetime = None):
+        """别的设备发来的改动并进来 (界面线程). 完成 / 作废不再给奖励 (奖励有自己的一项), 也不响."""
+        now = (now or datetime.now()).replace(microsecond=0)
+        floor = _iso(now - timedelta(days=SYNC_DAYS))
+        touched = False
+        for key, val in (changes or {}).items():
+            if not isinstance(val, dict):
+                continue
+            kind, _, ident = str(key).partition(":")
+            if kind == "i":
+                touched |= self._adopt_instruction(ident, val, floor)
+            elif kind == "r":
+                touched |= self._adopt_reward(ident, val)
+            elif kind == "n" and ident == (self._data.get("daily") or {}).get("date"):
+                daily = self._data["daily"]
+                for k in ("n_ii", "n_iv"):
+                    if isinstance(val.get(k), int) and daily.get(k) != val[k]:
+                        daily[k] = val[k]
+                        touched = True
+        if touched:
+            self._recompute_daily(now)
+            self._dirty = True
+            self.save()
+            self._changed()
+
+    def _adopt_instruction(self, ident: str, val: dict, floor: str) -> bool:
+        if not ident or str(val.get("accepted") or "") < floor:
+            return False
+        if ident in self._all_ids():
+            return False
+        local = next((c for c in self.actives() if str(c.get("id")) == ident), None)
+        if val.get("result"):
+            if local is not None:
+                extra = self._data.get("extra") or []
+                if local is self.current:
+                    self._data["current"] = extra.pop() if extra else None
+                else:
+                    extra[:] = [e for e in extra if e is not local]
+            history = self._data.setdefault("history", [])
+            history.append({k: val.get(k) for k in ("id", "type", "body", "accepted", "ended", "result", "t", "code")})
+            history.sort(key=lambda r: str(r.get("ended") or ""))
+            if len(history) > HISTORY_KEEP:
+                del history[:-HISTORY_KEEP]
+            return True
+        if local is not None:
+            return False
+        cur = dict(val, focus_sec=0.0, break_sec=0.0, stats_since=None)
+        acts = sorted(self.actives() + [cur], key=lambda c: (str(c.get("accepted") or ""), str(c.get("id"))))
+        self._data["current"] = acts[-1]
+        self._data["extra"] = acts[:-1]
+        return True
+
+    def _adopt_reward(self, ident: str, val: dict) -> bool:
+        item = {k: v for k, v in val.items() if k != "settled"}
+        item["id"] = ident
+        pending = self._data.setdefault("pending", [])
+        if val.get("settled") is True:
+            before = len(pending)
+            pending[:] = [p for p in pending if not (isinstance(p, dict) and self._reward_id(p) == ident)]
+            known = ident in self._data.setdefault("settled", {})
+            self._data["settled"].setdefault(ident, item)
+            return known is False or len(pending) != before
+        return self._add_reward(item)
 
     # ---- X: 记录输入框 ----
 
@@ -873,17 +1020,7 @@ class PrescriptEngine:
     def settle_rewards(self, now: datetime = None) -> list:
         """打开指令页时调用: 把满足条件的休息时间加进计时器, 返回这次给出的代码."""
         now = (now or datetime.now()).replace(microsecond=0)
-        daily = self._daily(now)
-        if not daily.get("bonus") and float(daily.get("completed_t", 0.0) or 0.0) >= DAILY_T_TARGET - 1e-9:
-            daily["bonus"] = True
-            self._data.setdefault("pending", []).append({
-                "kind": "daily",
-                "code": rest_code(20),
-                "t": None,
-                "seconds": DAILY_BONUS_SECONDS,
-                "at": _iso(now),
-            })
-            self._dirty = True
+        self._check_daily_bonus(now)
 
         pending = self._data.get("pending") or []
         if not pending:
@@ -906,7 +1043,11 @@ class PrescriptEngine:
             item["at"] = _iso(now)
             given.append(item)
             self._data.setdefault("granted", []).append(dict(item))
+            self._data.setdefault("settled", {})[self._reward_id(item)] = dict(item)    # 其他设备看到就不再结算
         self._data["pending"] = []
+        settled = self._data["settled"]
+        for old in sorted(settled, key=lambda k: str(settled[k].get("at") or ""))[:-GRANTED_KEEP]:
+            settled.pop(old, None)
         granted = self._data.get("granted") or []
         if len(granted) > GRANTED_KEEP:
             del granted[:-GRANTED_KEEP]
@@ -930,8 +1071,15 @@ class PrescriptEngine:
 
 
 def _selftest():
+    import json
     import shutil
     import tempfile
+
+    def devsync_wins(new, old):
+        """devsync 的合并规则: 结束的盖过进行中的 (这里只看这一条规则)."""
+        import devsync
+        svc = devsync.SyncService.__new__(devsync.SyncService)
+        return svc._wins("prescript", "i:x", 2, new, (1, old))
 
     root = tempfile.mkdtemp(prefix="oit_prescript_")
     state = {"mode": "focus", "page": "prescript", "min": False, "contract": False}
@@ -1316,6 +1464,92 @@ def _selftest():
         eng.tick(t_m + timedelta(minutes=6))
         assert done == [1] and eng.current is None
         eng.on_complete = None
+
+        # 设备同步: 领到的指令 / 奖励 / 结果在两台设备间一致; 结束的盖过进行中的; 空闲词条要所有设备都离开指令页才作废
+        import copy
+        root2 = tempfile.mkdtemp(prefix="oit_prescript_b_")
+        try:
+            peer = {"page": True}
+            sa = {"page": "prescript", "min": False}
+            sb = {"page": "timer", "min": False}
+            gb = []
+            A = PrescriptEngine(root, state_fn=lambda: state["mode"], page_fn=lambda: sa["page"],
+                                minimized_fn=lambda: sa["min"], peers_on_page_fn=lambda: sb["page"] == "prescript",
+                                contracts_fn=lambda: contracts, rng=random.Random(1))
+            B = PrescriptEngine(root2, state_fn=lambda: state["mode"], page_fn=lambda: sb["page"],
+                                minimized_fn=lambda: sb["min"], peers_on_page_fn=lambda: sa["page"] == "prescript",
+                                grant_rest_fn=lambda s, c: gb.append((s, c)), contracts_fn=lambda: contracts,
+                                rng=random.Random(2))
+            for e in (A, B):
+                e._data.update(current=None, extra=[], history=[], pending=[], settled={}, closes=[], logs={})
+            ts = datetime.now().replace(hour=15, minute=0, second=0, microsecond=0)
+            state["mode"] = "idle"
+
+            def push(src, dst):
+                dst.sync_apply(copy.deepcopy(json.loads(json.dumps(src.sync_doc(ts)))), ts)
+            # A 领一条 III, B 同步到; 进度不同步, B 自己累计
+            A.draw(ts, choose="III", pool="break")
+            push(A, B)
+            assert [c["type"] for c in B.actives()] == ["III"] and B.current["id"] == A.current["id"]
+            assert B.current["break_sec"] == 0.0 and "break_sec" not in A.sync_doc(ts)["i:" + A.current["id"]]
+            # 两边的数量上限 / 专注指令互相算
+            A.draw(ts, choose="I", pool="focus")
+            push(A, B)
+            assert len(B.actives()) == 2 and not B.can_draw(ts)
+            # B 完成 III: A 同步后也结束 (结果盖过进行中, 不重复给奖励)
+            iid = [c for c in B.actives() if c["type"] == "III"][0]
+            B._finish("completed", ts + timedelta(minutes=5), 0.2, cur=iid)
+            before = list(A._data["pending"])
+            push(B, A)
+            assert [c["type"] for c in A.actives()] == ["I"] and A._data["history"][-1]["result"] == "completed"
+            assert A._data["pending"] and len(A._data["pending"]) == 1 and A._data["pending"][0]["id"] == iid["id"]
+            # 进行中的旧版本不能把结束的盖回去
+            stale = {"i:" + iid["id"]: dict(iid)}
+            assert devsync_wins(stale["i:" + iid["id"]], A._data["history"][-1]) is False
+            A.sync_apply(stale, ts)
+            assert [c["type"] for c in A.actives()] == ["I"]
+            # 奖励: 在 A 的指令页上结算 -> B 同步后不再结算
+            A.page_fn = lambda: "prescript"
+            given = A.settle_rewards(ts + timedelta(minutes=6))
+            assert len(given) == 1 and iid["id"] in A._data["settled"]
+            push(A, B)
+            assert not B._data["pending"] and B.settle_rewards(ts + timedelta(minutes=7)) == [] and gb == []
+            A.page_fn = lambda: sa["page"]
+            # 两台设备都完成同一条: 奖励只有一份
+            A._finish("completed", ts + timedelta(minutes=9), 1.0, cur=A.active_of("I"))
+            B.sync_apply({"i:" + A._data["history"][-1]["id"]: dict(A._data["history"][-1])}, ts)
+            assert not B.actives() and len(B._data["history"]) == 2
+            # 空闲词条: A 离开页面时 B 还停在页面上就不作废; 都离开才作废
+            sb["page"] = "prescript"
+            sa["page"] = "prescript"
+            idle = A.draw(ts + timedelta(minutes=10), choose="VIII", pool="idle")
+            push(A, B)
+            assert B.current["type"] == "VIII"
+            A._last_tick = ts + timedelta(minutes=10)
+            sa["page"] = "timer"
+            A.tick(ts + timedelta(minutes=11))
+            assert A.current is not None and A.current["id"] == idle["id"], "B 还在指令页上"
+            A.tick(ts + timedelta(minutes=21))             # 到点了, 但 A 不在页面上: 不由 A 完成
+            assert A.current is not None
+            B._last_tick = ts + timedelta(minutes=10)
+            B.tick(ts + timedelta(minutes=21))              # B 在页面上: 由 B 完成
+            assert B.current is None and B._data["history"][-1]["result"] == "completed"
+            push(B, A)
+            assert A.current is None and A._data["history"][-1]["result"] == "completed"
+            sa["page"] = "prescript"
+            A.draw(ts + timedelta(minutes=30), choose="IX", pool="idle")
+            push(A, B)
+            sa["page"] = "timer"
+            sb["page"] = "timer"
+            A.tick(ts + timedelta(minutes=31))
+            assert A.current is None and A._data["history"][-1]["result"] == "void"
+            B.tick(ts + timedelta(minutes=31))
+            assert B.current is None
+            # 当天合计从记录里算 (两台设备一样)
+            A._recompute_daily(ts)
+            assert abs(A._data["daily"]["completed_t"] - (0.2 + 1.0 + 0.2)) < 1e-9
+        finally:
+            shutil.rmtree(root2, ignore_errors=True)
 
         # 存档再读出来: 历史 / 记录 / 关闭时刻还在
         eng.save()

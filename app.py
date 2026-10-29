@@ -301,6 +301,7 @@ class BreakTimerApp:
             contract_active_fn=lambda: self.contract.active,
             on_complete=self._prescript_completed,
             hour_log_fn=self._prescript_hour_log,
+            peers_on_page_fn=lambda: self.sync.peer_flag("prescript"),
         )
         self.prescript_job = None
         self._marks_shown = None        # 指令标记现在画在哪些按钮上 (None = 还没画过)

@@ -279,6 +279,82 @@ class PrescriptTest {
         assertEquals(setOf("IX", "V"), eng.idleBoosts(at(1)).toSet())
     }
 
+    private fun push(src: PrescriptEngine, dst: PrescriptEngine, now: LocalDateTime) {
+        val doc = src.syncDoc(now).mapValues { (_, v) -> JSONObject(v.toString()) }    // 过一遍 JSON, 和真的同步一样
+        dst.syncApply(doc, now)
+    }
+
+    @Test
+    fun instructionsSyncBetweenDevices() {
+        val ts = LocalDateTime.of(2026, 10, 28, 15, 0, 0)
+        var modeA = "idle"
+        var pageA = "prescript"
+        var pageB = "timer"
+        val rest = mutableListOf<Pair<Int, String>>()
+        val a = PrescriptEngine(File(Files.createTempDirectory("oit").toFile(), "prescript.json"), stateFn = { modeA },
+            pageFn = { pageA }, peersOnPageFn = { pageB == "prescript" }, rng = kotlin.random.Random(1))
+        val b = PrescriptEngine(File(Files.createTempDirectory("oit").toFile(), "prescript.json"), stateFn = { modeA },
+            pageFn = { pageB }, peersOnPageFn = { pageA == "prescript" },
+            grantRestFn = { s, c -> rest.add(s to c) }, rng = kotlin.random.Random(2))
+        // A 领一条 III, B 同步到; 进度不同步
+        val iii = a.draw(ts, choose = "III", pool0 = "break")!!
+        push(a, b, ts)
+        assertEquals(listOf("III"), b.actives().map { it.getString("type") })
+        assertEquals(iii.getString("id"), b.current!!.getString("id"))
+        assertFalse(a.syncDoc(ts).getValue("i:" + iii.getString("id")).toString().contains("break_sec"))
+        // 数量上限 / 专注指令两边互相算
+        a.draw(ts, choose = "I", pool0 = "focus")
+        push(a, b, ts)
+        assertEquals(2, b.actives().size)
+        assertFalse(b.canDraw(ts))
+        // B 完成 III: A 同步后也结束, 奖励只有一份
+        val bIii = b.actives().first { it.getString("type") == "III" }
+        modeA = "break"
+        var now = ts
+        repeat((iii.getInt("n") * 60) + 2) { now = now.plusSeconds(1); b.tick(now) }
+        assertEquals(listOf("I"), b.actives().map { it.getString("type") })
+        push(b, a, now)
+        assertEquals(listOf("I"), a.actives().map { it.getString("type") })
+        assertEquals(1, a.rawData().getJSONArray("pending").length())
+        assertEquals(bIii.getString("id"), a.rawData().getJSONArray("pending").getJSONObject(0).getString("id"))
+        // 进行中的旧版本盖不回结束的 (SyncService.wins 里的规则): 这里 syncApply 看到已有历史记录就忽略
+        a.syncApply(mapOf("i:" + bIii.getString("id") to JSONObject(bIii.toString())), now)
+        assertEquals(listOf("I"), a.actives().map { it.getString("type") })
+        // 奖励在 A 的指令页上结算 -> B 同步后不再结算
+        val given = a.settleRewards(now.plusSeconds(5))
+        assertEquals(1, given.size)
+        push(a, b, now.plusSeconds(6))
+        assertEquals(0, b.rawData().getJSONArray("pending").length())
+        assertTrue(b.settleRewards(now.plusSeconds(7)).isEmpty())
+        assertTrue(rest.isEmpty())
+        // 空闲词条: A 离开页面时 B 还停在页面上就不作废, 到点由 B 完成; 都离开才作废
+        modeA = "idle"
+        pageA = "prescript"; pageB = "prescript"
+        a.rawData().put("current", JSONObject.NULL).put("extra", org.json.JSONArray())
+        b.rawData().put("current", JSONObject.NULL).put("extra", org.json.JSONArray())
+        val t1 = now.plusMinutes(10)
+        val idle = a.draw(t1, choose = "VIII", pool0 = "idle")!!
+        push(a, b, t1)
+        assertEquals("VIII", b.current!!.getString("type"))
+        pageA = "timer"
+        a.tick(t1.plusMinutes(1))
+        assertNotNull(a.current)
+        a.tick(t1.plusMinutes(11))                     // 到点了但 A 不在页面上: 不由 A 完成
+        assertNotNull(a.current)
+        b.tick(t1.plusMinutes(11))
+        assertNull(b.current)
+        push(b, a, t1.plusMinutes(11))
+        assertNull(a.current)
+        assertEquals("completed", a.rawData().getJSONArray("history").let { it.getJSONObject(it.length() - 1) }.getString("result"))
+        pageA = "prescript"
+        a.draw(t1.plusMinutes(20), choose = "IX", pool0 = "idle")
+        push(a, b, t1.plusMinutes(20))
+        pageA = "timer"; pageB = "timer"
+        a.tick(t1.plusMinutes(21))
+        assertNull(a.current)
+        assertEquals("void", a.rawData().getJSONArray("history").let { it.getJSONObject(it.length() - 1) }.getString("result"))
+    }
+
     @Test
     fun windowTextParsing() {
         assertEquals(listOf(330 to 450, 780 to 870), Cfg.parseWindows("05:30-07:30,13:00-14:30"))

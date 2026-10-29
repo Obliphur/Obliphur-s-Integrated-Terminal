@@ -47,6 +47,9 @@ object Prescript {
     const val FOCUS_CHANCE_START = 0.25
     const val FOCUS_CHANCE_STEP = 0.25
     const val LOG_KEEP_DAYS = 30
+    /** 同步给其他设备的指令记录: 最近这么多天的; 各设备自己累计的进度 (SYNC_VOLATILE) 不同步. */
+    const val SYNC_DAYS = 3L
+    val SYNC_VOLATILE = setOf("focus_sec", "break_sec", "stats_since", "log_base")
 
     /** t = 分钟数 × 0.02 (5 分钟 0.1); X 没有计时, t 固定 0.1. */
     val FIXED_T: Map<String, Double> = mapOf("I" to 1.0, "III" to 1.0, "IV" to 1.0, "VI" to 1.0) +
@@ -149,6 +152,8 @@ class PrescriptEngine(
     private val hourLogFn: () -> String = { "" },
     /** 某个空闲词条现在的提升时段 (设置 → 日常; 起止分钟, 左闭右开). */
     private val windowsFn: (String) -> List<Pair<Int, Int>> = { Cfg.defaultWindows(it) },
+    /** 绑定的其他设备里有没有哪台此刻正停在指令页 (空闲词条要所有设备都离开才作废). */
+    private val peersOnPageFn: () -> Boolean = { false },
     private val rng: Random = Random.Default,
 ) {
     private var data: JSONObject = load()
@@ -167,7 +172,7 @@ class PrescriptEngine(
         for (k in listOf("pending", "granted", "history", "extra", "run", "closes")) {
             if (d.optJSONArray(k) == null) d.put(k, JSONArray())
         }
-        for (k in listOf("daily", "logs")) if (d.optJSONObject(k) == null) d.put(k, JSONObject())
+        for (k in listOf("daily", "logs", "settled")) if (d.optJSONObject(k) == null) d.put(k, JSONObject())
         if (d.optJSONObject("current") == null) d.put("current", JSONObject.NULL)
         for (k in listOf("last_pool", "last_type")) if (!d.has(k)) d.put(k, "")
         if (!d.has("force_focus")) d.put("force_focus", false)
@@ -419,19 +424,11 @@ class PrescriptEngine(
         while (history.length() > Prescript.HISTORY_KEEP) history.remove(0)
 
         if (done != null) {
-            val daily = ensureDay(now)
-            daily.put("completed_t", daily.optDouble("completed_t", 0.0) + done)
-            if (rec.getString("type") == "IV") daily.put("iv_done", true)
-            data.getJSONArray("pending").put(JSONObject()
+            addReward(JSONObject().put("id", rec.getString("id"))
                 .put("kind", "complete").put("code", Prescript.codeFor(done)).put("t", done)
                 .put("seconds", Math.round(done * 180).toInt()).put("at", now.iso()))
-            // 今天的 t 合计到 10: 20 分钟当场排进待结算 (换日后打开页面也不会丢).
-            if (!daily.optBoolean("bonus") && daily.optDouble("completed_t", 0.0) >= Prescript.DAILY_T_TARGET - 1e-9) {
-                daily.put("bonus", true)
-                data.getJSONArray("pending").put(JSONObject()
-                    .put("kind", "daily").put("code", Prescript.restCode(20.0)).put("t", JSONObject.NULL)
-                    .put("seconds", Prescript.DAILY_BONUS_SECONDS).put("at", now.iso()))
-            }
+            recomputeDaily(now)
+            checkDailyBonus(now)
         }
         dirty = true
         if (save) save()
@@ -445,7 +442,7 @@ class PrescriptEngine(
     /** 空闲词条: 页面 / 界面刚一变化就判一次 (不用等下一秒的 tick). */
     @Synchronized
     fun checkVisible(now0: LocalDateTime = LocalDateTime.now()) {
-        if (page() == "prescript" && !minimized()) return
+        if (onPage() || peersOnPage()) return
         val now = now0.withNano(0)
         for (cur in actives()) {
             if (cur.optString("type") in Prescript.IDLE_ENTRIES) finish("void", now, cur = cur)
@@ -510,10 +507,12 @@ class PrescriptEngine(
         }
         when (kind) {
             in Prescript.IDLE_ENTRIES -> {
-                if (page() != "prescript" || minimized()) { finish("void", now, cur = cur); return }   // 离开指令页 / 退到后台: 作废
-                // 自动完成的时刻 (旧存档里的 V 只有 expires); X 没有计时, 等输入框保存
+                val here = onPage()
+                if (!here && !peersOnPage()) { finish("void", now, cur = cur); return }   // 所有设备都离开了指令页 / 退到后台: 作废
+                // 自动完成的时刻 (旧存档里的 V 只有 expires); X 没有计时, 等输入框保存.
+                // 只有停在指令页的设备去完成 (别的设备还停在页面上时, 由它来完成)
                 val due = parseIso(cur.optString("due")) ?: expires
-                if (due != null && !now.isBefore(due)) {
+                if (here && due != null && !now.isBefore(due)) {
                     finish("completed", now, cur.optDouble("t", Prescript.FIXED_T[kind] ?: 0.1), cur = cur); return
                 }
             }
@@ -551,6 +550,156 @@ class PrescriptEngine(
                 if (expired) { finish("expired", now, cur = cur); return }
             }
         }
+    }
+
+    /** 本机此刻是不是停在指令页上 (没有最小化 / 退到后台). */
+    fun onPage(): Boolean = page() == "prescript" && !minimized()
+
+    private fun peersOnPage(): Boolean = try { peersOnPageFn() } catch (_: Exception) { false }
+
+    // ---- 奖励 / 当天合计 (跟着记录走, 多台设备算出来一样) ----
+
+    private fun rewardId(item: JSONObject): String =
+        item.optString("id").ifEmpty { "legacy-${item.optString("at")}-${item.optString("code")}" }
+
+    private fun hasReward(id: String): Boolean =
+        data.getJSONObject("settled").has(id) || data.getJSONArray("pending").objects().any { rewardId(it) == id }
+
+    /** 排进待结算; 同一个 id (别的设备也完成了同一条) 已经有了就不重复. */
+    private fun addReward(item: JSONObject): Boolean {
+        val id = rewardId(item)
+        item.put("id", id)
+        if (hasReward(id)) return false
+        data.getJSONArray("pending").put(item)
+        return true
+    }
+
+    /** 今天完成的 t 合计 / IV 完成过 / 20 分钟奖励给过没有: 从记录里算, 多台设备同步之后也一样. */
+    private fun recomputeDaily(now: LocalDateTime) {
+        val daily = data.getJSONObject("daily")
+        val day = daily.optString("date").ifEmpty { now.toLocalDate().key() }
+        var total = 0.0
+        var iv = false
+        for (rec in data.getJSONArray("history").objects()) {
+            if (rec.optString("result") == "completed" && rec.optString("ended").startsWith(day)) {
+                total += rec.optDouble("t", 0.0)
+                if (rec.optString("type") == "IV") iv = true
+            }
+        }
+        daily.put("completed_t", total).put("iv_done", iv).put("bonus", hasReward("daily-$day"))
+    }
+
+    /** 今天的 t 合计到 10: 20 分钟当场排进待结算 (换日后打开页面也不会丢). */
+    private fun checkDailyBonus(now: LocalDateTime) {
+        val daily = ensureDay(now)
+        val day = daily.optString("date")
+        if (!daily.optBoolean("bonus") && daily.optDouble("completed_t", 0.0) >= Prescript.DAILY_T_TARGET - 1e-9) {
+            daily.put("bonus", true)
+            addReward(JSONObject().put("id", "daily-$day").put("kind", "daily").put("code", Prescript.restCode(20.0))
+                .put("t", JSONObject.NULL).put("seconds", Prescript.DAILY_BONUS_SECONDS).put("at", now.iso()))
+            dirty = true
+        }
+    }
+
+    // ---- 设备同步 (SyncService 的 "prescript" 文档) ----
+    // 同步的是: 领到的指令 (进行中的和已经完成 / 作废的; 各设备自己累计的进度不同步), 奖励 (结算过没有), 今天的 n.
+    // 已经结束的记录永远盖过进行中的 (SyncService.wins); 其他按修改时间.
+
+    private fun staticView(rec: JSONObject): JSONObject {
+        val out = JSONObject(rec.toString())
+        for (k in Prescript.SYNC_VOLATILE) out.remove(k)
+        return out
+    }
+
+    @Synchronized
+    fun syncDoc(now0: LocalDateTime = LocalDateTime.now()): Map<String, Any?> {
+        val now = now0.withNano(0)
+        val floor = now.minusDays(Prescript.SYNC_DAYS).iso()
+        val out = LinkedHashMap<String, Any?>()
+        for (rec in data.getJSONArray("history").objects()) {
+            if (rec.optString("id").isNotEmpty() && rec.optString("accepted") >= floor)
+                out["i:" + rec.getString("id")] = JSONObject(rec.toString())
+        }
+        for (cur in actives()) if (cur.optString("id").isNotEmpty()) out["i:" + cur.getString("id")] = staticView(cur)
+        for (item in data.getJSONArray("pending").objects())
+            out["r:" + rewardId(item)] = JSONObject(item.toString()).put("settled", false)
+        val settled = data.getJSONObject("settled")
+        for (id in settled.keys()) settled.optJSONObject(id)?.let { out["r:$id"] = JSONObject(it.toString()).put("settled", true) }
+        val daily = data.getJSONObject("daily")
+        if (daily.has("date")) out["n:" + daily.getString("date")] = JSONObject()
+            .put("n_ii", daily.opt("n_ii") ?: JSONObject.NULL).put("n_iv", daily.opt("n_iv") ?: JSONObject.NULL)
+        return out
+    }
+
+    private fun historyIds(): Set<String> = data.getJSONArray("history").objects().map { it.optString("id") }.toSet()
+
+    /** 别的设备发来的改动并进来 (界面线程). 完成 / 作废不再给奖励 (奖励有自己的一项), 也不响. */
+    @Synchronized
+    fun syncApply(changes: Map<String, Any?>, now0: LocalDateTime = LocalDateTime.now()) {
+        val now = now0.withNano(0)
+        val floor = now.minusDays(Prescript.SYNC_DAYS).iso()
+        var touched = false
+        for ((key, v) in changes) {
+            val value = v as? JSONObject ?: continue
+            val kind = key.substringBefore(':')
+            val ident = key.substringAfter(':', "")
+            when (kind) {
+                "i" -> touched = adoptInstruction(ident, value, floor) || touched
+                "r" -> touched = adoptReward(ident, value) || touched
+                "n" -> if (ident == data.getJSONObject("daily").optString("date")) {
+                    val daily = data.getJSONObject("daily")
+                    for (k in listOf("n_ii", "n_iv")) if (value.has(k) && !value.isNull(k) && daily.optInt(k, -1) != value.optInt(k)) {
+                        daily.put(k, value.optInt(k)); touched = true
+                    }
+                }
+            }
+        }
+        if (touched) {
+            recomputeDaily(now)
+            dirty = true
+            save()
+            changed()
+        }
+    }
+
+    private fun adoptInstruction(ident: String, value: JSONObject, floor: String): Boolean {
+        if (ident.isEmpty() || value.optString("accepted") < floor) return false
+        if (ident in historyIds()) return false
+        val local = actives().firstOrNull { it.optString("id") == ident }
+        if (value.optString("result").isNotEmpty()) {
+            if (local != null) {
+                val extra = data.getJSONArray("extra")
+                if (local === current) {
+                    if (extra.length() > 0) data.put("current", extra.remove(extra.length() - 1))
+                    else data.put("current", JSONObject.NULL)
+                } else data.put("extra", JSONArray(extra.objects().filter { it !== local }))
+            }
+            val rec = JSONObject()
+            for (k in listOf("id", "type", "body", "accepted", "ended", "result", "t", "code")) rec.put(k, value.opt(k) ?: JSONObject.NULL)
+            val history = JSONArray((data.getJSONArray("history").objects() + rec).sortedBy { it.optString("ended") })
+            while (history.length() > Prescript.HISTORY_KEEP) history.remove(0)
+            data.put("history", history)
+            return true
+        }
+        if (local != null) return false
+        val cur = JSONObject(value.toString()).put("focus_sec", 0.0).put("break_sec", 0.0).put("stats_since", JSONObject.NULL)
+        val acts = (actives() + cur).sortedWith(compareBy({ it.optString("accepted") }, { it.optString("id") }))
+        data.put("current", acts.last())
+        data.put("extra", JSONArray(acts.dropLast(1)))
+        return true
+    }
+
+    private fun adoptReward(ident: String, value: JSONObject): Boolean {
+        val item = JSONObject(value.toString()).also { it.remove("settled"); it.put("id", ident) }
+        if (value.optBoolean("settled", false)) {
+            val pending = data.getJSONArray("pending")
+            val keep = pending.objects().filter { rewardId(it) != ident }
+            val known = data.getJSONObject("settled").has(ident)
+            if (keep.size != pending.length()) data.put("pending", JSONArray(keep))
+            if (!known) data.getJSONObject("settled").put(ident, item)
+            return !known || keep.size != pending.length()
+        }
+        return addReward(item)
     }
 
     // ---- X: 记录输入框 ----
@@ -639,14 +788,7 @@ class PrescriptEngine(
     @Synchronized
     fun settleRewards(now0: LocalDateTime = LocalDateTime.now()): List<JSONObject> {
         val now = now0.withNano(0)
-        val daily = ensureDay(now)
-        if (!daily.optBoolean("bonus") && daily.optDouble("completed_t", 0.0) >= Prescript.DAILY_T_TARGET - 1e-9) {
-            daily.put("bonus", true)
-            data.getJSONArray("pending").put(JSONObject()
-                .put("kind", "daily").put("code", Prescript.restCode(20.0)).put("t", JSONObject.NULL)
-                .put("seconds", Prescript.DAILY_BONUS_SECONDS).put("at", now.iso()))
-            dirty = true
-        }
+        checkDailyBonus(now)
         val pending = data.getJSONArray("pending").objects()
         if (pending.isEmpty()) {
             if (dirty) save()
@@ -658,8 +800,12 @@ class PrescriptEngine(
             if (seconds > 0) try { grantRestFn?.invoke(seconds, item.optString("code")) } catch (_: Exception) {}
             item.put("at", now.iso())
             granted.put(JSONObject(item.toString()))
+            data.getJSONObject("settled").put(rewardId(item), JSONObject(item.toString()))     // 其他设备看到就不再结算
         }
         data.put("pending", JSONArray())
+        val settled = data.getJSONObject("settled")
+        settled.keys().asSequence().toList().sortedBy { settled.getJSONObject(it).optString("at") }
+            .dropLast(Prescript.GRANTED_KEEP).forEach { settled.remove(it) }
         while (granted.length() > Prescript.GRANTED_KEEP) granted.remove(0)
         dirty = true
         save()

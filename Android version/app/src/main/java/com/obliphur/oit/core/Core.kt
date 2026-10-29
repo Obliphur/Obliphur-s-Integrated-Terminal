@@ -206,6 +206,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
                 if (timer.state == TState.ON_BREAK) timer.countdown else timer.breakCarry.toDouble()
             },
             onChange = { changed() },
+            peersOnPageFn = { com.obliphur.oit.OitApp.instance.sync?.peerFlag("prescript") ?: false },
             windowsFn = { kind ->
                 // 设置 → 日常 里填的提升时段; 写错了就用默认
                 Cfg.parseWindows(settings.str("PRESCRIPT_WIN_$kind")) ?: Cfg.defaultWindows(kind)

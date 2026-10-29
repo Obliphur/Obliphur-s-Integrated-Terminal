@@ -160,6 +160,8 @@ class PcLocal:
             st.update(timer="break", left=int(a.countdown_seconds))
         if n.mode == "online":
             st["net_left"] = int(n.grant_left)
+        if a.prescripts.on_page():
+            st["prescript"] = True            # 本机停在指令页上: 空闲词条要所有设备都离开才作废 (MECHANICS 22.7)
         rec = [k for k in ("camera", "screen") if a.recording(k)]   # 本机此刻在录的几路 (合约页同步显示, 18.8)
         if rec:
             st["rec"] = rec
@@ -205,7 +207,8 @@ class PcLocal:
         # 合约: 进行中的合约以后改的为准, 结束了的合约合并 (MECHANICS 18)
         # 行为模式的外出: 每一项单独比较, 计时 / 统计跟着它走 (MECHANICS 21)
         return {"settings": settings, "hours": hours, "timer": timer, "achievements": a.ach.doc(),
-                "contract": a.contract.doc(), "behavior": a.behavior.doc()}
+                "contract": a.contract.doc(), "behavior": a.behavior.doc(),
+                "prescript": a.prescripts.sync_doc()}
 
     def apply(self, doc: str, changes: dict):
         a = self.app
@@ -278,6 +281,8 @@ class PcLocal:
         elif doc == "behavior":
             a.behavior.merge(changes)
             a.after_behavior_synced()
+        elif doc == "prescript":
+            a.prescripts.sync_apply(changes)
 
     # ---- 绑定请求 ----
 

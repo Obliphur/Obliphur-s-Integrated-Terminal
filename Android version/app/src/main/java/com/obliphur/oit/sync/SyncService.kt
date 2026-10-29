@@ -1245,6 +1245,11 @@ class SyncService(
             if (rAuto && lHas && !lAuto) return false
             if (lAuto && rHas && !rAuto) return true
         }
+        if (doc == "prescript") {
+            // 指令: 已经结束的记录 / 结算过的奖励永远盖过进行中的, 其他按修改时间
+            fun done(x: Any?) = x is JSONObject && (x.optString("result").isNotEmpty() || x.optBoolean("settled", false))
+            if (done(v) != done(cur.second)) return done(v)
+        }
         return mt > cur.first
     }
 
@@ -1690,6 +1695,12 @@ class SyncService(
             else out.add(a to b)
         }
         return out
+    }
+
+    /** 其他设备里有没有哪台最近一次的状态里 flag 是真的 (例如 "prescript": 停在指令页上); 太久没消息的不算. */
+    fun peerFlag(flag: String, freshMs: Long = FRESH_MS): Boolean {
+        val now = System.currentTimeMillis()
+        return peerStatus().any { now - it.third.optLong("ts") <= freshMs && it.third.optBoolean(flag, false) }
     }
 
     fun peerStatus(): List<Triple<String, String, JSONObject>> = lock.withLock {

@@ -10,7 +10,7 @@
           (只用标准库; Android 版 sync/SyncCrypto.kt 是同一套算法)
 
 同步的内容分三类 (见 snapshot()):
-    docs     共享文档: 设置, 整点记录, 计时器 (此刻的专注 / 休息, 积攒的休息时间), 成就, 合约, 行为模式的外出.
+    docs     共享文档: 设置, 整点记录, 计时器 (此刻的专注 / 休息, 积攒的休息时间), 成就, 合约, 行为模式的外出, 指令 (领到的指令和奖励).
               每一项单独记修改时间, 新的覆盖旧的. 规则页的名单和过滤模式不同步
     ledgers  各设备自己的账: 今天的联网额度用量 / 借贷, 学习时长, 专注时间段, 联网理由, 窗口时间.
              互相转交, 每台设备显示的是所有设备的合计
@@ -311,6 +311,18 @@ class SyncService:
     @property
     def my_name(self) -> str:
         return self.state["device"]["name"]
+
+    def peer_flag(self, flag: str, fresh_ms: int = None) -> bool:
+        """其他设备里有没有哪台最近一次的状态里 flag 是真的 (例如 "prescript": 停在指令页上); 太久没消息的不算."""
+        fresh = FRESH_MS if fresh_ms is None else fresh_ms
+        now = _now_ms()
+        with self.lock:
+            for did, st in self.state["status"].items():
+                if did == self.my_id or did in self.state["gone"] or not isinstance(st, dict):
+                    continue
+                if st.get(flag) and now - int(st.get("ts", 0)) <= fresh:
+                    return True
+        return False
 
     def peers(self) -> dict:
         with self.lock:
@@ -841,6 +853,12 @@ class SyncService:
 
     def _wins(self, doc, key, mt, val, cur) -> bool:
         cur_mt, cur_val = cur
+        if doc == "prescript":
+            # 指令: 已经结束的记录 / 结算过的奖励永远盖过进行中的, 其他按修改时间
+            def done(v):
+                return isinstance(v, dict) and (bool(v.get("result")) or v.get("settled") is True)
+            if done(val) != done(cur_val):
+                return done(val)
         if doc == "hours":
             # 超时自动记录的内容永远让位给自己填写的内容 (行为模式按小时有不同的自动内容)
             auto = _call(self.local, "auto_text_for", None, key) or self.local.auto_text()
