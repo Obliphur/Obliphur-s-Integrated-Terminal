@@ -21,7 +21,7 @@ TYPES = ("I", "II", "III", "IV", "V", "VI")      # 池子里的六列; V 是空�
 POOLS = {
     "focus": (0.8, 0.03, 0.03, 0.10, 0.00, 0.04),
     "break": (0.0, 0.10, 0.70, 0.10, 0.05, 0.05),
-    "idle":  (0.1, 0.02, 0.02, 0.04, 0.80, 0.02),
+    "idle":  (0.05, 0.01, 0.01, 0.02, 0.90, 0.01),
 }
 
 # 领取后多久作废 (秒); IV 在这一天结束时作废, 由日期换日处理. 空闲词条 (IDLE_ENTRIES) 没有时限.
@@ -32,25 +32,20 @@ EXPIRY_SECONDS = {
     "VI": 60 * 60,
 }
 
-# 空闲池里 V 那 0.8 由这几个词条平分; 每个词条: 正文 / 自动完成要几分钟 (0 = 没有计时) /
-# 蓝色代码的词 / 设备时间的哪几段里它的概率被抬高 (起止时分, 左闭右开).
+# 空闲池里 V 那 0.9 由这几个词条分; 每个词条: 正文 / 自动完成要几分钟 (0 = 没有计时) / 蓝色代码的词.
+# 设备时间的哪几段里它的概率被抬高在设置 → 日常 里改 (config.PRESCRIPT_WIN_*, 默认值在 config.PRESCRIPT_WIN_DEFAULTS).
 # t = 分钟数 × 0.02 (5 分钟 0.1); X 没有计时, t 固定 0.1.
 IDLE_ENTRIES = {
-    "V": {"body": "立即停下任何活动,接下来的5min什么也不做.", "minutes": 5, "word": "STOP", "windows": ()},
-    "VII": {"body": "到开阔场地进行运动,持续20min.", "minutes": 20, "word": "EXERCISE",
-            "windows": ((5, 30, 7, 30),)},
-    "VIII": {"body": "进行一次淋浴.", "minutes": 10, "word": "SHOWER",
-             "windows": ((13, 0, 14, 30), (19, 0, 20, 0))},
-    "IX": {"body": "凝视天空.", "minutes": 5, "word": "GAZE",
-           "windows": ((9, 0, 10, 0), (21, 0, 22, 30))},
-    "X": {"body": "记录,核对并反思这一天的活动.", "minutes": 0, "word": "RECORD",
-          "windows": ((23, 0, 24, 0),)},
-    "XI": {"body": "打扫并整理房间.", "minutes": 15, "word": "CLEAN",
-           "windows": ((11, 0, 12, 0), (20, 0, 21, 0))},
+    "V": {"body": "立即停下任何活动,接下来的5min什么也不做.", "minutes": 5, "word": "STOP"},
+    "VII": {"body": "到开阔场地进行运动,持续20min.", "minutes": 20, "word": "EXERCISE"},
+    "VIII": {"body": "进行一次淋浴.", "minutes": 10, "word": "SHOWER"},
+    "IX": {"body": "凝视天空.", "minutes": 5, "word": "GAZE"},
+    "X": {"body": "记录,核对并反思这一天的活动.", "minutes": 0, "word": "RECORD"},
+    "XI": {"body": "打扫并整理房间.", "minutes": 15, "word": "CLEAN"},
 }
 IDLE_KINDS = tuple(IDLE_ENTRIES)
 ALL_TYPES = TYPES + tuple(k for k in IDLE_KINDS if k not in TYPES)
-IDLE_BOOST = 0.8                # 时间段对得上的词条拿走这一格概率的 80%, 其余词条平分剩下的
+IDLE_BOOST = 0.8                # 时间段对得上的词条 (几个就均分) 拿走这一格概率的 80%, 其余词条平分剩下的
 FOCUS_CHANCE_START = 0.25       # 每次空闲池抽取之后, 下一次改抽专注池的概率; 没触发 +25%, 触发后回到 25%
 FOCUS_CHANCE_STEP = 0.25
 LOG_KEEP_DAYS = 30
@@ -432,26 +427,24 @@ class PrescriptEngine:
     def in_window(kind: str, now: datetime) -> bool:
         """设备现在的时间落在这个词条的时间段里吗."""
         minute = now.hour * 60 + now.minute
-        return any(h1 * 60 + m1 <= minute < h2 * 60 + m2
-                   for h1, m1, h2, m2 in IDLE_ENTRIES[kind]["windows"])
+        return any(a <= minute < b for a, b in config.prescript_windows(kind))
 
-    def idle_boost(self, now: datetime) -> str:
-        """现在概率被抬高的空闲词条: 时间段对得上、而且这一轮还没抽到过的; 没有就是 V (空闲5min)."""
+    def idle_boosts(self, now: datetime) -> list:
+        """现在概率被抬高的空闲词条们: 时间段对得上、而且这一轮还没抽到过的 (V 可以重复, 不看这一轮);
+        时段有重叠就有好几个, 没有就是 V (空闲5min)."""
         run = set(self._run())
-        for kind in IDLE_KINDS:
-            if kind != "V" and kind not in run and self.in_window(kind, now):
-                return kind
-        return "V"
+        hit = [k for k in IDLE_KINDS if (k == "V" or k not in run) and self.in_window(k, now)]
+        return hit or ["V"]
 
     def _idle_split(self, mass: float, now: datetime) -> dict:
-        """空闲池里 V 这一格的概率 (mass) 拆给各个空闲词条: 抬高的拿 80%, 其余还能抽的平分剩下的."""
+        """空闲池里 V 这一格的概率 (mass) 拆给各个空闲词条: 抬高的 (重叠就几个均分) 拿 80%, 其余还能抽的平分剩下的."""
         run = set(self._run())
         cands = [k for k in IDLE_KINDS if k == "V" or k not in run]
-        boosted = self.idle_boost(now)
-        others = [k for k in cands if k != boosted]
+        boosted = self.idle_boosts(now)
+        others = [k for k in cands if k not in boosted]
         if not others:
-            return {boosted: mass}
-        out = {boosted: mass * IDLE_BOOST}
+            return {k: mass / len(boosted) for k in boosted}
+        out = {k: mass * IDLE_BOOST / len(boosted) for k in boosted}
         for kind in others:
             out[kind] = mass * (1.0 - IDLE_BOOST) / len(others)
         return out
@@ -1056,29 +1049,54 @@ def _selftest():
         def at(h, m=0):
             return t0.replace(hour=h, minute=m)
         eng._data["run"] = []
-        assert eng.idle_boost(at(5, 29)) == "V" and eng.idle_boost(at(5, 30)) == "VII"
-        assert eng.idle_boost(at(7, 29)) == "VII" and eng.idle_boost(at(7, 30)) == "V"
-        assert eng.idle_boost(at(13)) == "VIII" and eng.idle_boost(at(14, 29)) == "VIII" and eng.idle_boost(at(14, 30)) == "V"
-        assert eng.idle_boost(at(19, 30)) == "VIII" and eng.idle_boost(at(20, 30)) == "XI"
-        assert eng.idle_boost(at(9)) == "IX" and eng.idle_boost(at(22, 29)) == "IX" and eng.idle_boost(at(22, 30)) == "V"
-        assert eng.idle_boost(at(11, 59)) == "XI" and eng.idle_boost(at(23)) == "X" and eng.idle_boost(at(23, 59)) == "X"
-        assert eng.idle_boost(at(0, 30)) == "V" and eng.idle_boost(at(15)) == "V"
+        def boost(h, m=0):
+            return eng.idle_boosts(at(h, m))
+        assert boost(5, 29) == ["V"] and boost(5, 30) == ["VII"]
+        assert boost(7, 29) == ["VII"] and boost(7, 30) == ["V"]
+        assert boost(13) == ["VIII"] and boost(14, 29) == ["VIII"] and boost(14, 30) == ["V"]
+        assert boost(19, 30) == ["VIII"] and boost(20, 30) == ["XI"]
+        assert boost(9) == ["IX"] and boost(22, 29) == ["IX"] and boost(22, 30) == ["V"]
+        assert boost(11, 59) == ["XI"] and boost(23) == ["X"] and boost(23, 59) == ["X"]
+        assert boost(0, 30) == ["V"] and boost(15) == ["V"]
         for h, m in ((10, 0), (7, 0), (23, 30), (13, 30), (3, 0)):
             opts = dict(eng.choices("idle", at(h, m)))
             assert abs(sum(opts.values()) - 1.0) < 1e-9
-            assert abs(opts["I"] - 0.1) < 1e-9 and abs(opts["IV"] - 0.04) < 1e-9
+            assert abs(opts["I"] - 0.05) < 1e-9 and abs(opts["IV"] - 0.02) < 1e-9
             group = {k: opts[k] for k in IDLE_KINDS}
-            assert abs(sum(group.values()) - 0.8) < 1e-9
-            boosted = eng.idle_boost(at(h, m))
-            assert abs(group[boosted] - 0.64) < 1e-9, (h, m)
-            assert all(abs(v - 0.032) < 1e-9 for k, v in group.items() if k != boosted)
+            assert abs(sum(group.values()) - 0.9) < 1e-9
+            boosted = boost(h, m)[0]
+            assert abs(group[boosted] - 0.72) < 1e-9, (h, m)
+            assert all(abs(v - 0.036) < 1e-9 for k, v in group.items() if k != boosted)
+        # 设置里改时段 (设置 → 日常): 改完立即用新的; 写错了退回默认; 重叠的词条均分被抬高的那一份
+        keep_cfg = {k: getattr(config, "PRESCRIPT_WIN_" + k) for k in config.PRESCRIPT_WIN_KINDS}
+        try:
+            config.PRESCRIPT_WIN_XI = "05:00-08:00"
+            assert set(boost(7)) == {"VII", "XI"} and boost(8) == ["V"]
+            opts = dict(eng.choices("idle", at(7)))
+            assert abs(opts["VII"] - 0.36) < 1e-9 and abs(opts["XI"] - 0.36) < 1e-9
+            assert abs(opts["V"] - 0.045) < 1e-9 and abs(sum(opts.values()) - 1.0) < 1e-9
+            eng._data["run"] = ["XI"]                   # 抽到过的不再算重叠
+            assert boost(7) == ["VII"]
+            eng._data["run"] = []
+            config.PRESCRIPT_WIN_VII = "写错了"
+            assert set(boost(6)) == {"VII", "XI"} and config.prescript_windows("VII") == [(330, 450)]   # 写错了 = 默认
+            assert boost(5, 15) == ["XI"]
+            config.PRESCRIPT_WIN_V = "00:00-05:00"      # V 也可以设时段 (没有别的词条抬高时它不用兜底)
+            assert boost(3) == ["V"] and set(boost(6)) == {"VII", "XI"}
+            config.PRESCRIPT_WIN_X = ""
+            assert not config.prescript_windows("X") and boost(23, 30) == ["V"]
+            config.PRESCRIPT_WIN_IX = "22:00-02:00"      # 跨零点
+            assert boost(23, 30) == ["IX"] and set(boost(1)) == {"IX", "V"} and boost(2) == ["V"]
+        finally:
+            for k, v in keep_cfg.items():
+                setattr(config, "PRESCRIPT_WIN_" + k, v)
         # 连续抽取里抽到过的 (V 除外) 不能再抽, 对得上的词条已经抽到就换成 V
         eng._data["run"] = ["VII"]
         opts = dict(eng.choices("idle", at(7)))
-        assert "VII" not in opts and abs(opts["V"] - 0.64) < 1e-9 and abs(sum(opts.values()) - 1.0) < 1e-9
+        assert "VII" not in opts and abs(opts["V"] - 0.72) < 1e-9 and abs(sum(opts.values()) - 1.0) < 1e-9
         eng._data["run"] = ["II", "VIII", "IX", "X", "XI", "VII"]
         opts = dict(eng.choices("idle", at(7)))
-        assert opts["V"] > 0.79 and not any(k in opts for k in ("II", "VII", "VIII", "IX", "X", "XI"))
+        assert opts["V"] > 0.89 and not any(k in opts for k in ("II", "VII", "VIII", "IX", "X", "XI"))
         assert abs(sum(opts.values()) - 1.0) < 1e-9
         # 专注 / 休息池不拆 V, 也不看这一轮
         assert "VII" not in dict(eng.choices("break", at(7))) and dict(eng.choices("break", at(7)))["V"] == 0.05

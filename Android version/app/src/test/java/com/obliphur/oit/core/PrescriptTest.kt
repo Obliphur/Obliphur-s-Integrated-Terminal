@@ -222,25 +222,25 @@ class PrescriptTest {
     @Test
     fun idleEntriesAreBoostedByTimeOfDay() {
         val eng = Env().engine()
-        assertEquals("V", eng.idleBoost(at(5, 29)));  assertEquals("VII", eng.idleBoost(at(5, 30)))
-        assertEquals("VII", eng.idleBoost(at(7, 29))); assertEquals("V", eng.idleBoost(at(7, 30)))
-        assertEquals("VIII", eng.idleBoost(at(13)));  assertEquals("VIII", eng.idleBoost(at(14, 29)))
-        assertEquals("V", eng.idleBoost(at(14, 30)))
-        assertEquals("VIII", eng.idleBoost(at(19, 30))); assertEquals("XI", eng.idleBoost(at(20, 30)))
-        assertEquals("IX", eng.idleBoost(at(9)));    assertEquals("IX", eng.idleBoost(at(22, 29)))
-        assertEquals("V", eng.idleBoost(at(22, 30)))
-        assertEquals("XI", eng.idleBoost(at(11, 59))); assertEquals("X", eng.idleBoost(at(23)))
-        assertEquals("X", eng.idleBoost(at(23, 59))); assertEquals("V", eng.idleBoost(at(0, 30)))
+        assertEquals("V", eng.idleBoosts(at(5, 29)).single());  assertEquals("VII", eng.idleBoosts(at(5, 30)).single())
+        assertEquals("VII", eng.idleBoosts(at(7, 29)).single()); assertEquals("V", eng.idleBoosts(at(7, 30)).single())
+        assertEquals("VIII", eng.idleBoosts(at(13)).single());  assertEquals("VIII", eng.idleBoosts(at(14, 29)).single())
+        assertEquals("V", eng.idleBoosts(at(14, 30)).single())
+        assertEquals("VIII", eng.idleBoosts(at(19, 30)).single()); assertEquals("XI", eng.idleBoosts(at(20, 30)).single())
+        assertEquals("IX", eng.idleBoosts(at(9)).single());    assertEquals("IX", eng.idleBoosts(at(22, 29)).single())
+        assertEquals("V", eng.idleBoosts(at(22, 30)).single())
+        assertEquals("XI", eng.idleBoosts(at(11, 59)).single()); assertEquals("X", eng.idleBoosts(at(23)).single())
+        assertEquals("X", eng.idleBoosts(at(23, 59)).single()); assertEquals("V", eng.idleBoosts(at(0, 30)).single())
         for ((h, m) in listOf(10 to 0, 7 to 0, 23 to 30, 13 to 30, 3 to 0)) {
             val opts = eng.choices("idle", at(h, m)).toMap()
             assertEquals(1.0, opts.values.sum(), 1e-9)
-            assertEquals(0.1, opts.getValue("I"), 1e-9)
-            assertEquals(0.04, opts.getValue("IV"), 1e-9)
+            assertEquals(0.05, opts.getValue("I"), 1e-9)
+            assertEquals(0.02, opts.getValue("IV"), 1e-9)
             val group = Prescript.IDLE_KINDS.associateWith { opts.getValue(it) }
-            assertEquals(0.8, group.values.sum(), 1e-9)
-            val boosted = eng.idleBoost(at(h, m))
-            assertEquals(0.64, group.getValue(boosted), 1e-9)
-            for ((k, v) in group) if (k != boosted) assertEquals(0.032, v, 1e-9)
+            assertEquals(0.9, group.values.sum(), 1e-9)
+            val boosted = eng.idleBoosts(at(h, m)).single()
+            assertEquals(0.72, group.getValue(boosted), 1e-9)
+            for ((k, v) in group) if (k != boosted) assertEquals(0.036, v, 1e-9)
         }
         // 专注 / 休息池不拆 V
         assertEquals(0.05, eng.choices("break", at(7)).toMap().getValue("V"), 1e-9)
@@ -249,8 +249,48 @@ class PrescriptTest {
         eng.rawData().put("run", org.json.JSONArray(listOf("VII")))
         val opts = eng.choices("idle", at(7)).toMap()
         assertFalse(opts.containsKey("VII"))
-        assertEquals(0.64, opts.getValue("V"), 1e-9)
+        assertEquals(0.72, opts.getValue("V"), 1e-9)
         assertEquals(1.0, opts.values.sum(), 1e-9)
+    }
+
+    @Test
+    fun overlappingWindowsShareTheBoost() {
+        val dir = Files.createTempDirectory("oit").toFile()
+        val wins = HashMap<String, List<Pair<Int, Int>>>()
+        for (k in Prescript.IDLE_KINDS) wins[k] = Cfg.defaultWindows(k)
+        val eng = PrescriptEngine(File(dir, "prescript.json"), pageFn = { "prescript" }, windowsFn = { wins.getValue(it) })
+        wins["XI"] = Cfg.parseWindows("05:00-08:00")!!
+        assertEquals(setOf("VII", "XI"), eng.idleBoosts(at(7)).toSet())
+        assertEquals(listOf("V"), eng.idleBoosts(at(8)))
+        val opts = eng.choices("idle", at(7)).toMap()
+        assertEquals(0.36, opts.getValue("VII"), 1e-9)
+        assertEquals(0.36, opts.getValue("XI"), 1e-9)
+        assertEquals(0.045, opts.getValue("V"), 1e-9)
+        assertEquals(1.0, opts.values.sum(), 1e-9)
+        eng.rawData().put("run", org.json.JSONArray(listOf("XI")))            // 抽到过的不再算重叠
+        assertEquals(listOf("VII"), eng.idleBoosts(at(7)))
+        eng.rawData().put("run", org.json.JSONArray())
+        wins["V"] = Cfg.parseWindows("00:00-05:00")!!                           // V 也可以设时段
+        assertEquals(listOf("V"), eng.idleBoosts(at(3)))
+        wins["X"] = emptyList()
+        assertEquals(listOf("V"), eng.idleBoosts(at(23, 30)))
+        wins["IX"] = Cfg.parseWindows("22:00-02:00")!!                           // 跨零点
+        assertEquals(listOf("IX"), eng.idleBoosts(at(23, 30)))
+        assertEquals(setOf("IX", "V"), eng.idleBoosts(at(1)).toSet())
+    }
+
+    @Test
+    fun windowTextParsing() {
+        assertEquals(listOf(330 to 450, 780 to 870), Cfg.parseWindows("05:30-07:30,13:00-14:30"))
+        assertEquals(listOf(1380 to 1440), Cfg.parseWindows("23:00-24:00"))
+        assertEquals(listOf(1320 to 1440, 0 to 120), Cfg.parseWindows("22:00-02:00"))
+        assertEquals(listOf(300 to 420), Cfg.parseWindows("5-7"))
+        assertEquals(listOf(330 to 450), Cfg.parseWindows("0530-0730"))
+        assertEquals(emptyList<Pair<Int, Int>>(), Cfg.parseWindows(""))
+        assertNull(Cfg.parseWindows("坏的"))
+        assertNull(Cfg.parseWindows("08:00-08:00"))
+        assertNull(Cfg.parseWindows("25:00-26:00"))
+        assertNull(Cfg.parseWindows("08:00-24:30"))
     }
 
     @Test

@@ -102,6 +102,16 @@ def _time(key: str, label: str, short: str, page: str = "daily"):
     }
 
 
+def _prescript_window(kind: str, label: str):
+    """指令空闲词条的概率提升时段 (设置 → 日常, 只在都市之意主题下显示, 即时生效): 写成 "05:30-07:30,13:00-14:30"."""
+    return {
+        "key": "PRESCRIPT_WIN_" + kind, "label": label,
+        "kind": "text", "apply": APPLY_INSTANT, "fmt": lambda v: str(v) or "-",
+        "desc": "概率被抬高的时段, 如 05:30-07:30,13:00-14:30; 留空为无.",
+        "page": "daily", "theme": "urban_will", "windows": True,
+    }
+
+
 SETTINGS_SCHEMA = [
     _num("DAILY_LIMIT", "每日联网额度", "min", 60, 0, 1440, True,
          "每天最多能联网多久.", page="net"),
@@ -176,6 +186,12 @@ SETTINGS_SCHEMA = [
     _time("SLEEP_FRI", "周五睡觉时间", "周五"),
     _time("SLEEP_SAT", "周六睡觉时间", "周六"),
     _time("SLEEP_SUN", "周日睡觉时间", "周日"),
+    _prescript_window("V", "空闲 5min"),
+    _prescript_window("VII", "到开阔场地运动"),
+    _prescript_window("VIII", "淋浴"),
+    _prescript_window("IX", "凝视天空"),
+    _prescript_window("X", "记录并反思这一天"),
+    _prescript_window("XI", "打扫并整理房间"),
     {
         "key": "NET_MODE", "label": "断网方式",
         "kind": "choice", "apply": APPLY_DELAY,
@@ -371,7 +387,8 @@ assert {s["page"] for s in SETTINGS_SCHEMA} <= {k for k, _ in SETTINGS_PAGES}
 def page_specs(page: str):
     """(选项类, 数值类) 两组设置项, 各自按 SETTINGS_SCHEMA 里的顺序.
     hidden: 界面自己画的项 (例如摄像头选择), 不按普通行画, 也不参加"保存本页修改"."""
-    specs = [s for s in SETTINGS_SCHEMA if s["page"] == page and not s.get("hidden")]
+    specs = [s for s in SETTINGS_SCHEMA if s["page"] == page and not s.get("hidden")
+             and s.get("theme", config.THEME) == config.THEME]      # theme: 只在这个主题下显示
     return ([s for s in specs if s["kind"] != "num"],
             [s for s in specs if s["kind"] == "num"])
 
@@ -616,6 +633,11 @@ class SettingsManager:
     def validate(self, key: str, value):
         """数值项: 必须是数字且在允许范围内. 时间项: 必须是 0 ~ 1439 的分钟数. 其他项总是通过."""
         spec = SCHEMA_BY_KEY.get(key) or {}
+        if spec.get("windows"):
+            if config.parse_windows(value) is None:
+                return False, tr("{label}: 请按 HH:MM-HH:MM 填写, 多段用逗号隔开.",
+                                 label=tr(spec["label"]))
+            return True, ""
         if spec.get("kind") != "num":
             return True, ""
         label = tr(spec["label"])

@@ -19,29 +19,29 @@ object Prescript {
     val POOLS = mapOf(
         "focus" to doubleArrayOf(0.8, 0.03, 0.03, 0.10, 0.00, 0.04),
         "break" to doubleArrayOf(0.0, 0.10, 0.70, 0.10, 0.05, 0.05),
-        "idle" to doubleArrayOf(0.1, 0.02, 0.02, 0.04, 0.80, 0.02),
+        "idle" to doubleArrayOf(0.05, 0.01, 0.01, 0.02, 0.90, 0.01),
     )
 
     /** 领取后多久作废 (秒); IV 在这一天结束时作废. 空闲词条 (IDLE_ENTRIES) 没有时限. */
     val EXPIRY_SECONDS = mapOf("I" to 3600L, "II" to 8 * 3600L, "III" to 3600L, "VI" to 3600L)
 
     /**
-     * 空闲池里 V 那 0.8 由这几个词条平分. body 正文; minutes 自动完成要几分钟 (0 = 没有计时);
-     * word 蓝色代码的词; windows 设备时间的哪几段里它的概率被抬高 (起止时分, 左闭右开).
+     * 空闲池里 V 那 0.9 由这几个词条分. body 正文; minutes 自动完成要几分钟 (0 = 没有计时); word 蓝色代码的词.
+     * 设备时间的哪几段里它的概率被抬高在 设置 → 日常 里改 (PRESCRIPT_WIN_*, 默认值见 Cfg.PRESCRIPT_WIN_DEFAULTS).
      */
-    class IdleEntry(val body: String, val minutes: Int, val word: String, val windows: List<IntArray>)
+    class IdleEntry(val body: String, val minutes: Int, val word: String)
 
     val IDLE_ENTRIES = linkedMapOf(
-        "V" to IdleEntry("立即停下任何活动,接下来的5min什么也不做.", 5, "STOP", emptyList()),
-        "VII" to IdleEntry("到开阔场地进行运动,持续20min.", 20, "EXERCISE", listOf(intArrayOf(5, 30, 7, 30))),
-        "VIII" to IdleEntry("进行一次淋浴.", 10, "SHOWER", listOf(intArrayOf(13, 0, 14, 30), intArrayOf(19, 0, 20, 0))),
-        "IX" to IdleEntry("凝视天空.", 5, "GAZE", listOf(intArrayOf(9, 0, 10, 0), intArrayOf(21, 0, 22, 30))),
-        "X" to IdleEntry("记录,核对并反思这一天的活动.", 0, "RECORD", listOf(intArrayOf(23, 0, 24, 0))),
-        "XI" to IdleEntry("打扫并整理房间.", 15, "CLEAN", listOf(intArrayOf(11, 0, 12, 0), intArrayOf(20, 0, 21, 0))),
+        "V" to IdleEntry("立即停下任何活动,接下来的5min什么也不做.", 5, "STOP"),
+        "VII" to IdleEntry("到开阔场地进行运动,持续20min.", 20, "EXERCISE"),
+        "VIII" to IdleEntry("进行一次淋浴.", 10, "SHOWER"),
+        "IX" to IdleEntry("凝视天空.", 5, "GAZE"),
+        "X" to IdleEntry("记录,核对并反思这一天的活动.", 0, "RECORD"),
+        "XI" to IdleEntry("打扫并整理房间.", 15, "CLEAN"),
     )
     val IDLE_KINDS: List<String> = IDLE_ENTRIES.keys.toList()
     val ALL_TYPES: List<String> = TYPES + IDLE_KINDS.filter { it !in TYPES }
-    /** 时间段对得上的词条拿走这一格概率的 80%, 其余词条平分剩下的. */
+    /** 时间段对得上的词条 (几个就均分) 拿走这一格概率的 80%, 其余词条平分剩下的. */
     const val IDLE_BOOST = 0.8
     /** 每次空闲池抽取之后, 下一次改抽专注池的概率; 没触发 +25%, 触发后回到 25%. */
     const val FOCUS_CHANCE_START = 0.25
@@ -147,6 +147,8 @@ class PrescriptEngine(
     private val onComplete: (() -> Unit)? = null,
     /** 今天的整点记录 (没启用返回空串), X 词条的输入框第一段. */
     private val hourLogFn: () -> String = { "" },
+    /** 某个空闲词条现在的提升时段 (设置 → 日常; 起止分钟, 左闭右开). */
+    private val windowsFn: (String) -> List<Pair<Int, Int>> = { Cfg.defaultWindows(it) },
     private val rng: Random = Random.Default,
 ) {
     private var data: JSONObject = load()
@@ -276,24 +278,29 @@ class PrescriptEngine(
     /** 设备现在的时间落在这个词条的时间段里吗. */
     fun inWindow(kind: String, now: LocalDateTime): Boolean {
         val minute = now.hour * 60 + now.minute
-        return Prescript.IDLE_ENTRIES.getValue(kind).windows.any { minute >= it[0] * 60 + it[1] && minute < it[2] * 60 + it[3] }
+        val windows = try { windowsFn(kind) } catch (_: Exception) { Cfg.defaultWindows(kind) }
+        return windows.any { minute >= it.first && minute < it.second }
     }
 
-    /** 现在概率被抬高的空闲词条: 时间段对得上、而且这一轮还没抽到过的; 没有就是 V (空闲5min). */
+    /**
+     * 现在概率被抬高的空闲词条们: 时间段对得上、而且这一轮还没抽到过的 (V 可以重复, 不看这一轮);
+     * 时段有重叠就有好几个, 没有就是 V (空闲5min).
+     */
     @Synchronized
-    fun idleBoost(now: LocalDateTime = LocalDateTime.now()): String {
+    fun idleBoosts(now: LocalDateTime = LocalDateTime.now()): List<String> {
         val run = run().toSet()
-        return Prescript.IDLE_KINDS.firstOrNull { it != "V" && it !in run && inWindow(it, now) } ?: "V"
+        val hit = Prescript.IDLE_KINDS.filter { (it == "V" || it !in run) && inWindow(it, now) }
+        return hit.ifEmpty { listOf("V") }
     }
 
-    /** 空闲池里 V 这一格的概率 (mass) 拆给各个空闲词条: 抬高的拿 80%, 其余还能抽的平分剩下的. */
+    /** 空闲池里 V 这一格的概率 (mass) 拆给各个空闲词条: 抬高的 (重叠就几个均分) 拿 80%, 其余还能抽的平分剩下的. */
     private fun idleSplit(mass: Double, now: LocalDateTime): List<Pair<String, Double>> {
         val run = run().toSet()
         val cands = Prescript.IDLE_KINDS.filter { it == "V" || it !in run }
-        val boosted = idleBoost(now)
-        val others = cands.filter { it != boosted }
-        if (others.isEmpty()) return listOf(boosted to mass)
-        return listOf(boosted to mass * Prescript.IDLE_BOOST) +
+        val boosted = idleBoosts(now)
+        val others = cands.filter { it !in boosted }
+        if (others.isEmpty()) return boosted.map { it to mass / boosted.size }
+        return boosted.map { it to mass * Prescript.IDLE_BOOST / boosted.size } +
             others.map { it to mass * (1.0 - Prescript.IDLE_BOOST) / others.size }
     }
 

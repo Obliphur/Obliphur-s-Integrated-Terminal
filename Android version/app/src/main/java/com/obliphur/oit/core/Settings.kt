@@ -32,6 +32,10 @@ data class Spec(
     val delayHours: Long? = null,
     /** 配置期也不提前生效 (只有第一次打开时给的一次免等待能立即生效). */
     val noSetup: Boolean = false,
+    /** 只在这个界面主题下显示 (null = 都显示). */
+    val theme: String? = null,
+    /** 指令空闲词条的提升时段: 写成 "05:30-07:30,13:00-14:30", 可以留空. */
+    val windows: Boolean = false,
 )
 
 object Schema {
@@ -45,6 +49,11 @@ object Schema {
     private fun time(key: String, label: String, short: String) =
         Spec(key, label, Kind.TIME, true, "daily", Cfg.SLEEP_DEFAULT.toDouble(),
             min = 0.0, max = (24 * 60 - 1).toDouble(), integer = true, group = "sleep", short = short)
+
+    /** 指令空闲词条的概率提升时段 (设置 → 日常, 只在都市之意主题下显示, 即时生效). */
+    private fun window(kind: String, label: String) =
+        Spec("PRESCRIPT_WIN_$kind", label, Kind.TEXT, false, "daily",
+            Cfg.PRESCRIPT_WIN_DEFAULTS.getValue(kind), theme = "urban_will", windows = true)
 
     private val ONOFF = listOf("1" to "开启 (ON)", "0" to "关闭 (OFF)")
 
@@ -115,6 +124,13 @@ object Schema {
         time("SLEEP_FRI", "周五睡觉时间", "周五"),
         time("SLEEP_SAT", "周六睡觉时间", "周六"),
         time("SLEEP_SUN", "周日睡觉时间", "周日"),
+        // ---- 日常: 指令空闲词条的概率提升时段 (MECHANICS 22.7) ----
+        window("V", "空闲 5min"),
+        window("VII", "到开阔场地运动"),
+        window("VIII", "淋浴"),
+        window("IX", "凝视天空"),
+        window("X", "记录并反思这一天"),
+        window("XI", "打扫并整理房间"),
     )
 
     val PAGES = listOf(
@@ -126,8 +142,8 @@ object Schema {
     val BY_KEY = ALL.associateBy { it.key }
 
     /** (选项类, 数值类) 两组设置项, 各自按 ALL 里的顺序. 时间项算数值类. */
-    fun pageSpecs(page: String): Pair<List<Spec>, List<Spec>> {
-        val specs = ALL.filter { it.page == page }
+    fun pageSpecs(page: String, theme: String = ""): Pair<List<Spec>, List<Spec>> {
+        val specs = ALL.filter { it.page == page && (it.theme == null || it.theme == theme) }
         val nums = specs.filter { it.kind == Kind.NUM || it.kind == Kind.TIME }
         return specs.filter { it.kind != Kind.NUM && it.kind != Kind.TIME } to nums
     }
@@ -317,6 +333,11 @@ class Settings(
     /** 数值项: 必须是数字且在允许范围内. 时间项: 必须是 0 ~ 1439 的分钟数. 返回错误信息, 通过时返回 null. */
     fun validate(key: String, value: Any): String? {
         val spec = Schema.BY_KEY[key] ?: return null
+        if (spec.windows) {
+            if (Cfg.parseWindows(value.toString()) == null)
+                return tr("{label}: 请按 HH:MM-HH:MM 填写, 多段用逗号隔开.", "label" to tr(spec.label))
+            return null
+        }
         if (spec.kind != Kind.NUM && spec.kind != Kind.TIME) return null
         val label = tr(spec.label)
         if (spec.kind == Kind.TIME) {

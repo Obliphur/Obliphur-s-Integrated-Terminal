@@ -89,7 +89,7 @@ fun SettingsScreen(tab: String, setTab: (String) -> Unit, act: MainActivity) {
             SyncCard()
         }
 
-        val (opts, nums) = Schema.pageSpecs(tab)
+        val (opts, nums) = Schema.pageSpecs(tab, s.str("THEME"))
         for (spec in opts) OptionRow(spec, edits)
         PageExtras(tab, act)
         if (nums.isNotEmpty()) {
@@ -231,7 +231,7 @@ private fun OptionRow(spec: Spec, edits: MutableMap<String, String>) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(custom, { custom = it }, singleLine = true, modifier = Modifier.weight(1f))
                     TextButton({
-                        if (custom.isNotBlank()) {
+                        if (custom.isNotBlank() || spec.windows) {          // 提升时段可以清空
                             val (status, msg) = core.stageSetting(spec.key, custom.trim())
                             if (status != StageResult.INVALID) core.toast(msg)
                         }

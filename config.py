@@ -112,6 +112,53 @@ SLEEP_SAT = SLEEP_DEFAULT
 SLEEP_SUN = SLEEP_DEFAULT
 
 
+# 指令 (Prescript) 空闲词条的概率提升时段 (设置 → 日常, 都市之意主题, MECHANICS 22.7).
+# 写法: "05:30-07:30,13:00-14:30" (逗号 / 分号 / 空格隔开; 结束写 24:00 表示到午夜; 结束比开始早表示跨零点); 空白 = 没有时段.
+PRESCRIPT_WIN_KINDS = ("V", "VII", "VIII", "IX", "X", "XI")
+PRESCRIPT_WIN_DEFAULTS = {
+    "V": "",
+    "VII": "05:30-07:30",
+    "VIII": "13:00-14:30,19:00-20:00",
+    "IX": "09:00-10:00,21:00-22:30",
+    "X": "23:00-24:00",
+    "XI": "11:00-12:00,20:00-21:00",
+}
+PRESCRIPT_WIN_V = PRESCRIPT_WIN_DEFAULTS["V"]
+PRESCRIPT_WIN_VII = PRESCRIPT_WIN_DEFAULTS["VII"]
+PRESCRIPT_WIN_VIII = PRESCRIPT_WIN_DEFAULTS["VIII"]
+PRESCRIPT_WIN_IX = PRESCRIPT_WIN_DEFAULTS["IX"]
+PRESCRIPT_WIN_X = PRESCRIPT_WIN_DEFAULTS["X"]
+PRESCRIPT_WIN_XI = PRESCRIPT_WIN_DEFAULTS["XI"]
+
+_WIN_PART = re.compile(r"^(\d{1,2})(?::?(\d{2}))?\s*[-~–—到至]\s*(\d{1,2})(?::?(\d{2}))?$")
+
+
+def parse_windows(text):
+    """时段文字 → [(起, 止)] (从 0:00 起的分钟数, 左闭右开, 止最大 1440; 跨零点的拆成两段). 写错了返回 None; 空白返回 []."""
+    out = []
+    for part in re.split(r"[,;，；、\s]+", str(text or "").strip()):
+        if not part:
+            continue
+        m = _WIN_PART.match(part)
+        if not m:
+            return None
+        h1, m1, h2, m2 = int(m.group(1)), int(m.group(2) or 0), int(m.group(3)), int(m.group(4) or 0)
+        if m1 > 59 or m2 > 59 or h1 > 23 or h2 > 24 or (h2 == 24 and m2):
+            return None
+        a, b = h1 * 60 + m1, h2 * 60 + m2
+        if a == b:
+            return None
+        out.extend([(a, b)] if a < b else [(a, 1440), (0, b)] if b else [(a, 1440)])
+    return out
+
+
+def prescript_windows(kind: str) -> list:
+    """某个空闲词条现在的提升时段 (设置里没填对就用默认)."""
+    text = globals().get("PRESCRIPT_WIN_" + str(kind), PRESCRIPT_WIN_DEFAULTS.get(kind, ""))
+    parsed = parse_windows(text)
+    return parsed if parsed is not None else parse_windows(PRESCRIPT_WIN_DEFAULTS.get(kind, "")) or []
+
+
 def sleep_minutes(day) -> int:
     """某一天 (date / datetime) 的睡觉时间: 从 0:00 起的分钟数."""
     try:
@@ -167,7 +214,7 @@ OUTING_MAX_HOURS = 24 * 7
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.185"                         # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.186"                         # 和 GitHub 上发布的版本号比较 (见 updater.py)
 UPDATE_CHECK = 1                              # 打开程序时检查更新
 UPDATE_AUTO = 1                               # 发现新版本时自动下载安装
 OLD_APP_DIR = "mrsTimer"
@@ -403,6 +450,7 @@ DEFAULT_SETTINGS = {
     "SLEEP_FRI": SLEEP_FRI,
     "SLEEP_SAT": SLEEP_SAT,
     "SLEEP_SUN": SLEEP_SUN,
+    **{"PRESCRIPT_WIN_" + k: PRESCRIPT_WIN_DEFAULTS[k] for k in PRESCRIPT_WIN_KINDS},
     "BEHAVIOR_MODE": BEHAVIOR_MODE,
     "OUTING_TEXT": OUTING_TEXT,
     "REST_TEXT": REST_TEXT,

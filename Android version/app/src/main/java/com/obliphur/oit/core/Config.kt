@@ -75,6 +75,35 @@ object Cfg {
     fun sleepKey(day: LocalDate): String = SLEEP_KEYS[day.dayOfWeek.value - 1]
     fun sleepKey(d: DayOfWeek): String = SLEEP_KEYS[d.value - 1]
 
+    // 指令 (Prescript) 空闲词条的概率提升时段 (设置 → 日常, 都市之意主题, MECHANICS 22.7).
+    // 写法: "05:30-07:30,13:00-14:30" (逗号 / 分号 / 空格隔开; 结束写 24:00 表示到午夜; 结束比开始早表示跨零点); 空白 = 没有时段.
+    val PRESCRIPT_WIN_KINDS = listOf("V", "VII", "VIII", "IX", "X", "XI")
+    val PRESCRIPT_WIN_DEFAULTS = mapOf(
+        "V" to "", "VII" to "05:30-07:30", "VIII" to "13:00-14:30,19:00-20:00",
+        "IX" to "09:00-10:00,21:00-22:30", "X" to "23:00-24:00", "XI" to "11:00-12:00,20:00-21:00",
+    )
+    private val WIN_PART = Regex("^(\\d{1,2})(?::?(\\d{2}))?\\s*[-~–—到至]\\s*(\\d{1,2})(?::?(\\d{2}))?$")
+
+    /** 时段文字 → [(起, 止)] (从 0:00 起的分钟数, 左闭右开, 止最大 1440; 跨零点的拆成两段). 写错了返回 null; 空白返回空列表. */
+    fun parseWindows(text: String): List<Pair<Int, Int>>? {
+        val out = ArrayList<Pair<Int, Int>>()
+        for (part in text.trim().split(Regex("[,;，；、\\s]+"))) {
+            if (part.isEmpty()) continue
+            val m = WIN_PART.matchEntire(part) ?: return null
+            val h1 = m.groupValues[1].toInt(); val m1 = m.groupValues[2].ifEmpty { "0" }.toInt()
+            val h2 = m.groupValues[3].toInt(); val m2 = m.groupValues[4].ifEmpty { "0" }.toInt()
+            if (m1 > 59 || m2 > 59 || h1 > 23 || h2 > 24 || (h2 == 24 && m2 != 0)) return null
+            val a = h1 * 60 + m1
+            val b = h2 * 60 + m2
+            if (a == b) return null
+            if (a < b) out.add(a to b) else { out.add(a to 1440); if (b > 0) out.add(0 to b) }
+        }
+        return out
+    }
+
+    /** 某个空闲词条的默认提升时段. */
+    fun defaultWindows(kind: String): List<Pair<Int, Int>> = parseWindows(PRESCRIPT_WIN_DEFAULTS[kind] ?: "") ?: emptyList()
+
     // 行为模式 (设置 → 日常, MECHANICS 21): 第一次打开时可以选, 之后修改要等 24 × 7 小时.
     const val BEHAVIOR_CLOSED = "closed"
     const val BEHAVIOR_WORK = "work"
