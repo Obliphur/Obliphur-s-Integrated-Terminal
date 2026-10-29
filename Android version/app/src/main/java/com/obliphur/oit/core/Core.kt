@@ -432,9 +432,9 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         when (net.tick(dt)) {
             "started" -> toast(tr("网络已开启."), "success")
             "ended" -> toast(tr("时间到,网络已断开."), "warn")
-            "dev_over" -> {                  // 开发者模式今天的 1 小时用完了: 自动关掉, 恢复正常限制
+            "dev_over" -> {                  // 开发者模式今天的 1 小时或联网额度用完了: 自动关掉, 恢复正常限制
                 setDevMode(false)
-                toast(tr("今天的开发者模式时间已用完 (每天最多 1 小时)."), "warn")
+                toast(devOverText(), "warn")
                 if (!followsMother()) devChangedHook()
             }
         }
@@ -660,12 +660,16 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         changed()
     }
 
+    private fun devOverText() =
+        if (net.devLimit() == "quota") tr("今天的联网额度已用完,开发者模式不能开了.")
+        else tr("今天的开发者模式时间已用完 (每天最多 1 小时).")
+
     fun stageSetting(key: String, value: Any?): Pair<StageResult, String> {
         // 开 / 关开发者模式: 不是真的修改, 不排队, 不写文件, 不记流水, 不提示
         if (isDevToggle(key, value)) {
             if (!followsMother()) {                  // 子端跟着母端, 自己不能开关
-                if (!settings.devMode && net.devLeft <= 0) {          // 每天最多开 1 小时, 今天用完了
-                    toast(tr("今天的开发者模式时间已用完 (每天最多 1 小时)."), "warn")
+                if (!settings.devMode && net.devLeft <= 0) {          // 每天最多开 1 小时, 今天用完了 / 今天的联网额度用完了
+                    toast(devOverText(), "warn")
                     return StageResult.NOCHANGE to ""
                 }
                 setDevMode(!settings.devMode)

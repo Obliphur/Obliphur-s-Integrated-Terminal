@@ -177,6 +177,7 @@ EN = {
     "网络已开启.": "Network is on.",
     "时间到,网络已断开.": "Time is up — network cut off.",
     "今天的开发者模式时间已用完 (每天最多 1 小时).": "Developer mode time for today is used up (1 hour per day).",
+    "今天的联网额度已用完,开发者模式不能开了.": "Today's network quota is used up, so developer mode can't be turned on.",
     "hosts: {err}": "hosts: {err}",
     "⚙  设置": "⚙  Settings",
     "每日联网额度": "Daily network quota",

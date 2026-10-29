@@ -213,8 +213,15 @@ class NetGuard:
 
     @property
     def dev_left(self) -> float:
-        """今天开发者模式还能开多久 (秒)."""
-        return max(0.0, float(config.DEV_DAILY_SECONDS) - self.dev_used)
+        """今天开发者模式还能开多久 (秒): 每天最多 DEV_DAILY_SECONDS, 而且开着的时间消耗联网额度 ——
+        额度用完了就不能再开, 开着的也要关."""
+        return max(0.0, min(float(config.DEV_DAILY_SECONDS) - self.dev_used, self.remaining))
+
+    def dev_limit(self) -> str:
+        """开发者模式为什么不能开 / 要关: "time" 今天的 1 小时用完了, "quota" 今天的联网额度用完了, "" 还能用."""
+        if float(config.DEV_DAILY_SECONDS) - self.dev_used <= 1e-6:
+            return "time"
+        return "quota" if self.remaining <= 1e-6 else ""
 
     @property
     def net_mode(self) -> str:
@@ -729,7 +736,7 @@ class NetGuard:
             if self.pending:
                 self.pending = None
                 self._log("DEV      pending request dropped (developer mode)")
-            # 开着的时间照常消耗联网额度 (1 倍), 记成一次联网; 每天最多 DEV_DAILY_SECONDS, 用完就关
+            # 开着的时间照常消耗联网额度 (1 倍), 记成一次联网; 每天最多 DEV_DAILY_SECONDS, 额度或这一小时用完就关
             dt = min(max(dt, 0.0), self.tick_clamp, self.dev_left)
             self.dev_used += dt
             self.used += dt
@@ -969,10 +976,20 @@ def _selftest():
         assert abs(n.remaining - (3600 - 100)) < 1e-6, "额度跟着减少"
         assert n.tick(config.DEV_DAILY_SECONDS) == "dev_over" and n.dev_left == 0.0
         assert abs(n.dev_used - config.DEV_DAILY_SECONDS) < 1e-6, "最多只记到每天的上限"
+        assert n.dev_limit() == "time"
         n.dev_closed()
         assert n._session is None
         n.used, n.dev_used, n.usage = 0.0, 0.0, []
-        assert abs(n.dev_left - config.DEV_DAILY_SECONDS) < 1e-6
+        assert abs(n.dev_left - config.DEV_DAILY_SECONDS) < 1e-6 and n.dev_limit() == ""
+        # 联网额度用完了: 开着的开发者模式也要关 (不到 1 小时), 今天也不能再开
+        n.used, n.dev_used = n.today_total - 250.0, 0.0
+        assert abs(n.remaining - 250.0) < 1e-6 and abs(n.dev_left - 250.0) < 1e-6, "还能开的时间受剩余额度限制"
+        assert n.tick(100.0) is None and abs(n.remaining - 150.0) < 1e-6
+        assert n.tick(1000.0) == "dev_over" and n.remaining == 0.0, "额度用完: 通知关掉"
+        assert abs(n.dev_used - 250.0) < 1e-6 and n.dev_left == 0.0 and n.dev_limit() == "quota", "只记到额度用完为止"
+        n.dev_closed()
+        assert n.dev_left == 0.0, "额度没了今天不能再开"
+        n.used, n.dev_used, n.usage = 0.0, 0.0, []
         n.pending = {"minutes": 5, "at": time.time() - 1, "reason": "x", "loan": False}
         n.tick(0.0)
         assert n.pending is None, "开发者模式下挂起的申请应被丢弃"

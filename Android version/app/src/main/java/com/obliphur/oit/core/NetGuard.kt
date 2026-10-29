@@ -58,8 +58,15 @@ class NetGuard(
     var used = 0.0
     /** 今天开着开发者模式的秒数. */
     var devUsed = 0.0
-    /** 今天开发者模式还能开多久 (秒). */
-    val devLeft get() = maxOf(0.0, DEV_DAILY_SECONDS - devUsed)
+    /** 今天开发者模式还能开多久 (秒): 每天最多 DEV_DAILY_SECONDS, 而且开着的时间消耗联网额度 —— 额度用完了就不能再开, 开着的也要关. */
+    val devLeft get() = maxOf(0.0, minOf(DEV_DAILY_SECONDS - devUsed, remaining))
+
+    /** 开发者模式为什么不能开 / 要关: "time" 今天的 1 小时用完了, "quota" 今天的联网额度用完了, "" 还能用. */
+    fun devLimit(): String = when {
+        DEV_DAILY_SECONDS - devUsed <= 1e-6 -> "time"
+        remaining <= 1e-6 -> "quota"
+        else -> ""
+    }
     var bonus = 0.0
     /** 今天合约奖励的额度 (完成带"互联网娱乐的败退"的合约), 不用还. */
     var gift = 0.0
@@ -450,7 +457,7 @@ class NetGuard(
                 pending = null
                 log("DEV      pending request dropped (developer mode)")
             }
-            // 开着的时间照常消耗联网额度 (1 倍), 记成一次联网; 每天最多 DEV_DAILY_SECONDS, 用完就关
+            // 开着的时间照常消耗联网额度 (1 倍), 记成一次联网; 每天最多 DEV_DAILY_SECONDS, 额度或这一小时用完就关
             val dt = minOf(maxOf(0.0, dtIn), tickClamp, devLeft)
             devUsed += dt
             used += dt
