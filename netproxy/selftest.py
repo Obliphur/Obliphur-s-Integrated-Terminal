@@ -225,37 +225,31 @@ def run():
         s.close()
 
         # 按 UP 主区分 (MECHANICS 4.8): 浏览器开着哪个 UP 主的页面, 由 up_probe 告诉规则库 (这里用假的)
-        from .rules import WHITE_UPS, BLACK_UPS
+        from .rules import WHITE_UPS
 
         class Page:
             uids = frozenset()           # 开着的页面属于哪些 UP 主 (空 = 首页之类, None = 认不出来)
 
             def allowed(self, site, exe, uids):
                 return self.uids is not None and bool(self.uids & uids)
-
-            def denied(self, site, exe, uids):
-                return self.uids is None or bool(self.uids & uids)
         page = Page()
         rules.up_probe = page
         p.targets["www.bilibili.com"] = web_port             # 网页请求
         p.targets["space.bilibili.com"] = echo_port           # 隧道
-        # 黑名单里的站点 + UP 主黑名单: 只拦黑名单里的 UP 主
+        # 黑名单里的站点 + UP 主白名单: 整站拦, 只有白名单里的 UP 主例外
         rules.add(BLACK_DOMAINS, "bilibili.com")
         state["online"], state["mode"] = False, "blacklist"
         r = _http_get(port, "http://www.bilibili.com/")
-        assert r.startswith(b"HTTP/1.1 403") and b"blacklist-domain" in r, "没有 UP 主黑名单: 整站拦"
-        rules.add(BLACK_UPS, "https://space.bilibili.com/42?spm_id_from=1")
-        assert _http_get(port, "http://www.bilibili.com/").startswith(b"HTTP/1.1 200"), "首页放行"
+        assert r.startswith(b"HTTP/1.1 403") and b"blacklist-domain" in r, "没有 UP 主白名单: 整站拦"
+        rules.add(WHITE_UPS, "https://space.bilibili.com/42?spm_id_from=1")
+        assert _http_get(port, "http://www.bilibili.com/").startswith(b"HTTP/1.1 403"), "首页拦"
         page.uids = frozenset({"7"})
         st, body = _connect(port, "space.bilibili.com:443")
-        assert b" 200" in st and body == b"PING", "别的 UP 主放行"
+        assert b" 403" in st, "别的 UP 主拦"
         page.uids = None
         assert _http_get(port, "http://www.bilibili.com/").startswith(b"HTTP/1.1 403"), "认不出来的窗口: 拦"
         page.uids = frozenset({"42"})
-        r = _http_get(port, "http://www.bilibili.com/")
-        assert r.startswith(b"HTTP/1.1 403") and b"blacklist-up" in r, r
-        assert "UP 主".encode("utf-8") in r, r
-        page.uids = frozenset({"7"})
+        assert _http_get(port, "http://www.bilibili.com/").startswith(b"HTTP/1.1 200"), "白名单 UP 主放行"
         s = socket.create_connection(("127.0.0.1", port), timeout=5)
         s.sendall(b"CONNECT space.bilibili.com:443 HTTP/1.1\r\nHost: space.bilibili.com:443\r\n\r\n")
         head = b""
@@ -264,7 +258,7 @@ def run():
         assert b" 200" in head.split(b"\r\n", 1)[0], head
         s.sendall(b"hi")
         assert s.recv(16) == b"HI"
-        page.uids = frozenset({"42"})                        # 浏览器换到黑名单 UP 主的页面
+        page.uids = frozenset({"7"})                         # 浏览器换到别的 UP 主的页面
         t0 = time.monotonic()
         s.settimeout(5)
         cut = False
@@ -275,9 +269,10 @@ def run():
                     break
         except OSError:
             cut = True
-        assert cut and time.monotonic() - t0 < 4, "浏览器进入黑名单 UP 主的页面后, 已打开的连接没有被掐断"
+        assert cut and time.monotonic() - t0 < 4, "浏览器离开白名单 UP 主的页面后, 已打开的连接没有被掐断"
         s.close()
         # 白名单里的站点 + UP 主白名单: 只放行白名单里的 UP 主
+        rules.remove(WHITE_UPS, "42")
         rules.add(WHITE_DOMAINS, "bilibili.com")
         state["mode"] = "whitelist"
         assert _http_get(port, "http://www.bilibili.com/").startswith(b"HTTP/1.1 200"), "没有 UP 主白名单: 整站放行"

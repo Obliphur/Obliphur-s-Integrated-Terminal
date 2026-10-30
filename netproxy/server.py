@@ -27,7 +27,6 @@ _REASON_ZH = {
     "ban": "合约的网络禁令: 这个软件 / 网站禁止联网",
     "blacklist-app": "该应用在黑名单中",
     "blacklist-domain": "该网站在黑名单中",
-    "blacklist-up": "该 UP 主在黑名单中",
     "not-whitelisted-up": "该页面不属于 UP 主白名单里的 UP 主",
     "self": "禁止回环到代理自身",
 }

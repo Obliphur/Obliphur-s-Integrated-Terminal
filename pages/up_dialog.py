@@ -1,6 +1,5 @@
 """Rules 页 · 站点条目下面的 UP 主名单 (MECHANICS 4.8).
-黑名单里的 bilibili.com → "UP 主白名单" (这些 UP 主的主页和视频照常打开);
-白名单里的 bilibili.com → "UP 主黑名单" (这些 UP 主的主页和视频拦截).
+UP 主只有白名单, 黑名单 / 白名单模式下都是"只放行这些 UP 主的主页和视频".
 名单的改动和网站名单一样要等冷静期 (RuleStore 管); 昵称是后台去查的, 查到了自动刷新."""
 
 import threading
@@ -11,17 +10,17 @@ import config
 import toast
 from config import COLORS
 from i18n import tr
-from netproxy.rules import up_site, up_key_for, WHITE_UPS
+from netproxy.rules import up_site, WHITE_UPS
 from .widgets import Modal
 
 
-def open_ups(parent, rules, resolver, domain_key: str, rule: str, toast_status, on_changed=None):
-    """rule: 网站名单里被点开的条目 (例如 bilibili.com); domain_key: 它在哪张网站名单里."""
+def open_ups(parent, rules, resolver, rule: str, toast_status, on_changed=None):
+    """rule: 网站名单里被点开的条目 (例如 bilibili.com), 黑名单 / 白名单里的都一样."""
     site = up_site(rule)
     if not site:
         return
-    key = up_key_for(domain_key)
-    heading = tr("✅  UP 主白名单") if key == WHITE_UPS else tr("⛔  UP 主黑名单")
+    key = WHITE_UPS
+    heading = tr("✅  UP 主白名单")
     card = COLORS["bg_card"]
 
     dlg = Modal(parent, f"{rule} · {heading}", width=500, height=470)

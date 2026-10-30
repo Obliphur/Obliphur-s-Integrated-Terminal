@@ -12,8 +12,8 @@ from i18n import tr
 from netproxy import (
     WHITE_DOMAINS, WHITE_APPS, BLACK_DOMAINS, BLACK_APPS,
 )
-from netproxy.rules import (MODE_BLACKLIST, MODE_WHITELIST, WHITE_UPS, BLACK_UPS, keys_for_mode,
-                            up_key_for, up_key_for_mode, up_site)
+from netproxy.rules import (MODE_BLACKLIST, MODE_WHITELIST, WHITE_UPS, keys_for_mode,
+                            up_site)
 from .widgets import (Modal, ScrollArea, wrap_label, smooth, cfg, flavor,
                       show_pack, hide_pack, hide_grid)
 from . import ai_dialogs, up_dialog
@@ -22,7 +22,6 @@ _WHY_TEXT = {
     "offline": "离线",
     "blacklist-app": "应用黑名单",
     "blacklist-domain": "网站黑名单",
-    "blacklist-up": "UP 主黑名单",
     "not-whitelisted-up": "不在 UP 主白名单",
     "self": "回环",
     "not-whitelisted": "不在白名单",
@@ -258,14 +257,14 @@ class RulesPage(tk.Frame):
         self._open_ups(key, picks[0])
 
     def _open_ups(self, key, item):
-        up_dialog.open_ups(self.winfo_toplevel(), self.rules, self.ctrl.up, key, item,
+        up_dialog.open_ups(self.winfo_toplevel(), self.rules, self.ctrl.up, item,
                            self._toast_status, on_changed=lambda: self.refresh(force=True))
 
     def _row_text(self, key, item) -> str:
         site = up_site(item)
         if not site:
             return item
-        n = len(self.rules.up_items(up_key_for(key), site))
+        n = len(self.rules.up_items(WHITE_UPS, site))
         return f"{item}    ▸ UP" + (f" {n}" if n else "")
 
     def _cancel_pending(self):
@@ -416,7 +415,7 @@ class RulesPage(tk.Frame):
                         if items[i] in sel:
                             lb.selection_set(i)
 
-        shown_lists = active if blockall else active + (up_key_for_mode(mode),)
+        shown_lists = active if blockall else active + (WHITE_UPS,)
         self._pending_idx = [i for i, p in enumerate(r.pending) if p["list"] in shown_lists]
         pend = [f"{'+' if r.pending[i]['op'] == 'add' else '-'} "
                 f"{self._list_label(r.pending[i]['list'])}: {r.pending[i]['item']}   →  "
@@ -442,5 +441,5 @@ class RulesPage(tk.Frame):
         return {
             WHITE_DOMAINS: tr("白名单·网站"), WHITE_APPS: tr("白名单·应用"),
             BLACK_DOMAINS: tr("黑名单·网站"), BLACK_APPS: tr("黑名单·应用"),
-            WHITE_UPS: tr("白名单·UP 主"), BLACK_UPS: tr("黑名单·UP 主"),
+            WHITE_UPS: tr("白名单·UP 主"),
         }.get(key, key)
