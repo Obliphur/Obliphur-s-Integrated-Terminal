@@ -73,9 +73,14 @@ class LinkService : Service() {
         }
     }
 
+    /** OIT 主进程 (不是 :link) 在不在运行: 在就不再去启动它. */
+    private fun mainRunning(): Boolean = try {
+        getSystemService(android.app.ActivityManager::class.java).runningAppProcesses?.any { it.processName == packageName } == true
+    } catch (_: Exception) { false }
+
     @Synchronized private fun startLink() {
         if (link != null) return
-        val l = LinkCore(dir, launch = { launchOit() }, log = { log(it) })
+        val l = LinkCore(dir, launch = { launchOit() }, otherAlive = { mainRunning() }, log = { log(it) })
         if (!l.serve()) { l.stop(); return }                 // 端口被占 = 已经有一个在运行
         link = l
         log("link started")

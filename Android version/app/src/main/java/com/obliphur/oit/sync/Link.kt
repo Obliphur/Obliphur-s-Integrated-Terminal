@@ -48,6 +48,8 @@ class LinkCore(
     private val syncPorts: List<Int> = (17930..17939).toList(),
     private val peerLinkPort: (String) -> Int = { LINK_PORT },
     private val launch: () -> Boolean,
+    /** 同步端口之外, 还有别的办法看出 OIT 主体在运行 (手机上: 主进程在不在). */
+    private val otherAlive: () -> Boolean = { false },
     private val graceMs: Long = BOOT_GRACE_MS,
     private val log: (String) -> Unit = {},
 ) {
@@ -92,6 +94,7 @@ class LinkCore(
     private var myId = ""
 
     fun oitAlive(): Boolean {
+        if (otherAlive()) return true
         val id = LinkFiles.loadPeers(dir).first
         for (p in syncPorts) {
             try {

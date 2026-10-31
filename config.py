@@ -214,7 +214,7 @@ OUTING_MAX_HOURS = 24 * 7
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.212"                         # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.213"                         # 和 GitHub 上发布的版本号比较 (见 updater.py)
 UPDATE_CHECK = 1                              # 打开程序时检查更新
 FULLSCREEN_DEFAULT = 0                        # 打开程序时默认全屏 (设置 → 基本设置, 仅电脑, 不同步; F11 随时切换)
 UPDATE_AUTO = 1                               # 发现新版本时自动下载安装
@@ -362,14 +362,32 @@ def dev_mode_defined() -> bool:
     return "DEV_MODE" in vars(sys.modules["config"])
 
 
+_DEV_ALLOWED = None
+
+
+def dev_allowed() -> bool:
+    """这份程序能不能有开发者模式: 只有 git 仓库里的本地开发版本 (程序文件夹里有 .git); 公开发布版没有 (MECHANICS 3.5)."""
+    global _DEV_ALLOWED
+    if _DEV_ALLOWED is None:
+        _DEV_ALLOWED = os.path.isdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".git"))
+    return _DEV_ALLOWED
+
+
 def dev_mode_enabled() -> bool:
-    if "config" not in sys.modules:
+    if "config" not in sys.modules or not dev_allowed():
         return False
     return bool(getattr(sys.modules["config"], "DEV_MODE", False))
 
 
+def dev_auto() -> bool:
+    """开发版本打开程序时自动开启开发者模式 (DEV_AUTO, 在 config_local.py 里改)."""
+    return dev_allowed() and bool(getattr(sys.modules.get("config"), "DEV_AUTO", True))
+
+
 def toggle_dev_mode() -> bool:
-    """开 / 关开发者模式, 返回新的状态."""
+    """开 / 关开发者模式, 返回新的状态. 公开发布版没有开发者模式: 什么都不做."""
+    if not dev_allowed():
+        return False
     mod = sys.modules["config"]
     mod.DEV_MODE = not dev_mode_enabled()
     return mod.DEV_MODE
@@ -403,8 +421,10 @@ except ImportError:
     pass
 
 # 开发者模式: 只能在"每日联网额度"里填 325799 开 / 关 (settings_manager.DEV_TOGGLE_CODE), 只在内存里;
-# 每次启动都是关的, 不管 config_local 里写了什么. 界面上不显示.
+# 不管 config_local 里写了什么, 启动时都是关的 —— 除非是本地开发版本 (git 仓库里, dev_allowed) 且 DEV_AUTO 开着: 打开程序时自动开启.
+# 公开发布版没有开发者模式 (dev_allowed 为假时 dev_mode_enabled 永远是假, 填 325799 也没用). 界面上不显示.
 DEV_MODE = False
+DEV_AUTO = True        # 开发版本打开程序时自动开启开发者模式 (不然测试用的实例一启动就断网); 不想要就在 config_local.py 里写 DEV_AUTO = False
 
 
 DEFAULT_SETTINGS = {

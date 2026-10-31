@@ -177,6 +177,7 @@ class Settings(
         private set
     /** 开发者模式: 只能用 DEV_TOGGLE_CODE 开 / 关, 不写文件 (每次启动都是关的), 界面上不显示. */
     var devMode = false
+        set(v) { field = v && com.obliphur.oit.BuildConfig.DEV_BUILD }       // 公开发布版没有开发者模式
 
     val fresh: Boolean = !file.exists()
 

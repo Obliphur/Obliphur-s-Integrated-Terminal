@@ -56,6 +56,8 @@ OFFLINE_MS = 3 * SYNC_EVERY * 1000
 HARD_ERRORS = ("unpaired", "wipe-pending", "away", "peer-not-proxy", "not-proxy")
 UNBIND_WAIT_MS = 48 * 3600 * 1000       # 解除绑定要等这么久 (冷静期, 期间可以取消)
 RESTART_RETRY = 30                    # 秒: 设备离线时请它重新启动 OIT, 连不上就每隔这么久再试一次, 直到有回应或它回来 (MECHANICS 15.3)
+RESTART_FRESH_MS = 90_000             # 本机刚打开这么久之内不理重启请求 (对方看到的离线是打开之前的事)
+RESTART_HEALTHY_MS = 30_000           # 刚和发请求的设备同步成功过 (任何一个方向) 这么久之内不理重启请求: 本机明明在线
 RESTART_GAP_MS = 10 * 60_000          # 本机因为别的设备的请求重启过之后, 这么久之内不再理会重启请求 (免得两台设备互相拉着重启)
 EVICT_RETRY = 30                        # 秒: 解除绑定后还没送到的清空请求, 每隔这么久再送一次
 WIPES_KEEP = 50                         # 记住最近这么多个处理过的清空请求
@@ -787,7 +789,8 @@ class SyncService:
             if p is None:
                 continue
             if d["online"]:
-                was_on.add(pid)
+                if d["seen"] >= self._started_ms:
+                    was_on.add(pid)            # 本机这次打开之后真的收到过它的消息 (不是上次关机前留下的旧时间)
                 tries.pop(pid, None)
                 continue
             if d["outdated"] or d["err"] in ("unpaired", "wipe-pending", "away") or not (warm or pid in was_on):
@@ -821,6 +824,10 @@ class SyncService:
         now = _now_ms()
         if now - int(self.state.get("restart_at") or 0) < RESTART_GAP_MS:
             return 200, {"ignored": "recent"}
+        if now - self._started_ms < RESTART_FRESH_MS:
+            return 200, {"ignored": "fresh"}         # 本机刚打开: 对方看到的"离线"是打开之前的事
+        if not p.get("last_err") and now - int(p.get("last_ok") or 0) < RESTART_HEALTHY_MS:
+            return 200, {"ignored": "healthy"}       # 刚和它同步成功过 (它发来的同步也算): 本机不是离线的
         with self.lock:
             self.state["restart_at"] = now
         self._save()
@@ -2399,6 +2406,13 @@ def _selftest():
         sa.away = lambda: True
         assert send_restart_to(sb.my_id, pa) == 503 and la.restarted is None
         sa.away = lambda: False
+        sa._started_ms -= 3 * RESTART_FRESH_MS                  # 本机刚打开的不理 / 刚同步成功过的不理
+        sa.state["peers"][sb.my_id]["last_ok"] = _now_ms()
+        assert send_restart_to(sb.my_id, pa) == 200 and la.restarted is None, "刚同步成功过: 本机明明在线"
+        sa.state["peers"][sb.my_id]["last_ok"] = _now_ms() - 10 * RESTART_HEALTHY_MS
+        sa._started_ms += 3 * RESTART_FRESH_MS
+        assert send_restart_to(sb.my_id, pa) == 200 and la.restarted is None, "刚打开的不理"
+        sa._started_ms -= 3 * RESTART_FRESH_MS
         assert send_restart_to(sb.my_id, pa) == 200 and la.restarted == (sb.my_id, sb.state["device"]["name"]), la.restarted
         la.restarted = None
         assert send_restart_to(sb.my_id, pa) == 200 and la.restarted is None, "刚重启过: 不再理会"

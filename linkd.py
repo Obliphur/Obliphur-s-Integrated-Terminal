@@ -26,6 +26,7 @@ import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import devsync
+import instance
 
 LINK_PORT = 17940
 APP_NAME = "Obliphur's Integrated Terminal"      # 同 config.APP_NAME (自检里核对), 这里不能 import config (它要 tkinter)
@@ -118,7 +119,9 @@ class Link:
     # -- 本机的 OIT --
 
     def oit_alive(self) -> bool:
-        """本机的 OIT 主体在不在: 同步端口 (17930-17939) 上有它的 hello."""
+        """本机的 OIT 主体在不在: 有 OIT 的实例锁 (instance.py, 刚打开还没开始监听的也算), 或者同步端口 (17930-17939) 上有它的 hello."""
+        if instance.exists():
+            return True
         my_id, _ = load_peers(self.dd)
         for p in self.sync_ports:
             try:

@@ -197,6 +197,10 @@ class SyncTest {
             assertTrue(sa.syncWith(sb.myId)); assertTrue(sa.versionMismatch().isEmpty() && sb.versionMismatch().isEmpty())
             // 设备离线时请它重新启动 OIT (MECHANICS 15.3): 请求送到就重启, 刚重启过的不再理会, 密钥不对的拒绝
             val pa = sb.peers()[sa.myId]!!
+            assertEquals(200, sb.restartTo(pa, 4000)); assertNull("刚打开的不理", la.restarted)
+            sa.restartFreshMs = 0
+            assertEquals(200, sb.restartTo(pa, 4000)); assertNull("刚同步成功过: 本机明明在线", la.restarted)
+            sa.restartHealthyMs = 0
             assertEquals(200, sb.restartTo(pa, 4000)); assertEquals(sb.myId to "B", la.restarted)
             la.restarted = null
             assertEquals(200, sb.restartTo(pa, 4000)); assertNull(la.restarted)

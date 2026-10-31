@@ -63,6 +63,8 @@ class OitApp : Application(), Host {
         Notifier.channels(this)
         startSync()
         core.start()
+        // 本地构建 (开发环境) 自动开发者模式, 同桌面版的 config.DEV_AUTO; 公开发布版没有 (子端之后跟着母端)
+        if (com.obliphur.oit.BuildConfig.DEV_BUILD) core.setDevMode(true)
         wipedNotice()
         CoreService.start(this)
         com.obliphur.oit.service.LinkService.start(this)

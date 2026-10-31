@@ -13,6 +13,12 @@ def main():
         elevate()
         sys.exit(0)
 
+    # 单实例 (MECHANICS 3.5): 已经有 OIT 在运行就退出 (更新 / 重置后的重新打开最多等旧进程放手 15 秒); git 仓库里的开发版本不受限
+    import instance
+    import updater
+    if not instance.acquire(enforce=not updater.is_dev_checkout()):
+        sys.exit(0)
+
     root = tk.Tk()
     app = BreakTimerApp(root)
     root.mainloop()

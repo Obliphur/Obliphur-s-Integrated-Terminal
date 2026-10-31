@@ -279,6 +279,8 @@ class BreakTimerApp:
         self.contract = contract_mod.Contract(self.dm.data_dir)
         self.contract.blocked = lambda: self.dm.resetting
         self._apply_contract_overrides()
+        if config.dev_auto():
+            config.DEV_MODE = True      # 本地开发版本: 自动开发者模式, 启动时不断网 (MECHANICS 3.5); 子端之后跟着母端
         self.net = NetGuard(self.dm.data_dir)
         self.net.on_tamper = self._on_net_tamper
         self.net.quota_factor = self.behavior.quota_factor
@@ -382,6 +384,8 @@ class BreakTimerApp:
         threading.Thread(target=lambda: recorder.seal_leftovers(self.dm.data_dir), daemon=True).start()
         # 开机自启动: 默认开启 (第一次运行时建好), 用户关掉了就不再打开 (MECHANICS 3.4)
         threading.Thread(target=self._check_autostart, args=(True,), daemon=True).start()
+        if config.dev_mode_enabled():
+            self.root.after(800, self._auto_dev_ready)
         if getattr(config, "UPDATE_CHECK", 1):
             self.root.after(3000, lambda: self.check_update(auto=True))
 
@@ -4689,7 +4693,10 @@ class BreakTimerApp:
                 pass
         self.sync.stop()
         # 关闭程序时开发者模式自动关掉, 否则 shutdown 不断网 (fail-closed 失效); 子端也跟着关
-        if config.dev_mode_enabled():
+        # (本地开发版本的自动开发者模式例外: 关掉 / 重启测试用的实例不能把网断了, 下次打开时照样自动开)
+        if config.dev_mode_enabled() and config.dev_auto():
+            self.net.dev_closed()
+        elif config.dev_mode_enabled():
             config.DEV_MODE = False
             self.net.dev_closed()
             if not self._is_child():
@@ -4986,8 +4993,19 @@ class BreakTimerApp:
         if self.sync.peers():
             self.sync.sync_now()                # 马上告诉子端
 
+    def _auto_dev_ready(self):
+        """本地开发版本的自动开发者模式 (config.DEV_AUTO): 界面建好之后把网络放开, 并告诉子端. 子端以母端为准."""
+        if self._is_child() or not config.dev_mode_enabled():
+            return
+        self.on_dev_mode_changed(True)
+        self._log_notice("DEV      auto developer mode (local dev version)")
+        if self.sync.peers():
+            self.sync.sync_now()
+
     def follow_dev_mode(self, on: bool):
-        """同步来的母端状态."""
+        """同步来的母端状态. 公开发布版没有开发者模式, 母端开了也不跟."""
+        if on and not config.dev_allowed():
+            return
         if on != config.dev_mode_enabled():
             config.DEV_MODE = on
             self.on_dev_mode_changed(on)

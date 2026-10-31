@@ -130,6 +130,9 @@ class SyncService(
         /** 设备离线时请它重新启动 OIT, 连不上就每隔这么久再试一次; 本机因为这个重启过之后这么久之内不再理会重启请求. 同 devsync.RESTART_RETRY / RESTART_GAP_MS. */
         const val RESTART_RETRY_MS = 30_000L
         const val RESTART_GAP_MS = 10 * 60_000L
+        /** 本机刚打开这么久之内 / 刚和发请求的设备同步成功过这么久之内, 不理重启请求 (本机明明在线). 同 devsync.FRESH_MS / HEALTHY_MS (那边没有重名, 这里 FRESH_MS 已被占用). */
+        const val RESTART_FRESH_MS = 90_000L
+        const val RESTART_HEALTHY_MS = 30_000L
         /** 记住最近这么多个处理过的清空请求. */
         const val WIPES_KEEP = 50
 
@@ -1120,6 +1123,10 @@ class SyncService(
     private val restartTry = java.util.concurrent.ConcurrentHashMap<String, LongArray>()     // id → [上次发的时刻, 已有回应 (1)]
     private val restartOn = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
+    /** 测试里可以改的 RESTART_FRESH_MS / RESTART_HEALTHY_MS. */
+    @Volatile internal var restartFreshMs = RESTART_FRESH_MS
+    @Volatile internal var restartHealthyMs = RESTART_HEALTHY_MS
+
     internal fun restartTo(p: JSONObject, timeoutMs: Int): Int = try {
         val env = SyncCrypto.seal(SyncCrypto.unhex(p.getString("key")), myId, JSONObject().put("restart", true))
         http(p.getString("addr"), p.getInt("port"), "POST", "/oit/v1/restart", env, timeoutMs).first
@@ -1134,7 +1141,7 @@ class SyncService(
         val ps = peers()
         for (d in deviceStates()) {
             val p = ps[d.id] ?: continue
-            if (d.online) { restartOn.add(d.id); restartTry.remove(d.id); continue }
+            if (d.online) { if (d.seen >= startedMs) restartOn.add(d.id); restartTry.remove(d.id); continue }     // 本机这次打开之后收到过它的消息才算
             if (d.outdated || d.err in setOf("unpaired", "wipe-pending", "away") || !(warm || d.id in restartOn)) continue
             val t = restartTry.getOrPut(d.id) { longArrayOf(0L, 0L) }
             val now = System.currentTimeMillis()
@@ -1159,6 +1166,8 @@ class SyncService(
         if (!body.optBoolean("restart")) return 400 to JSONObject().put("error", "bad-request")
         val now = System.currentTimeMillis()
         if (now - lock.withLock { state.optLong("restart_at") } < RESTART_GAP_MS) return 200 to JSONObject().put("ignored", "recent")
+        if (now - startedMs < restartFreshMs) return 200 to JSONObject().put("ignored", "fresh")
+        if (p.optString("last_err").isEmpty() && now - p.optLong("last_ok") < restartHealthyMs) return 200 to JSONObject().put("ignored", "healthy")
         lock.withLock { state.put("restart_at", now) }
         save()
         runner.call { local.restartRequested(from, p.optString("name").ifEmpty { "?" }) }
