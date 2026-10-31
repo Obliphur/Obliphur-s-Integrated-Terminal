@@ -188,9 +188,11 @@ private fun localIp(): String = try {
 /** 绑定的每台设备此刻的状态, 一台一行; 2 分钟内没有消息的显示"离线". */
 fun peerLines(): List<String> {
     val s = OitApp.instance.sync ?: return emptyList()
+    val out = OitApp.instance.core.behavior.current() != null
     val lines = s.deviceStates().map { d ->
         val name = d.name
         val st = d.status
+        if (!d.online && out) return@map "🔗 $name: " + tr("外出中 🚪")      // 外出期间的设备不算离线 (MECHANICS 8.4)
         if (d.outdated) return@map "🔗 $name: " + tr("离线 (版本 {v} 较低, 请更新)", "v" to d.version)
         if (d.netOff) return@map "🔗 $name: " + tr("断网")      // 换成了 Adapter: 效果和在线一样, 只是不同步 (15.5)
         if (d.off) return@map "🔗 $name: " + tr("关机")          // 效果和在线一样, 只是不同步 (MECHANICS 15.4)

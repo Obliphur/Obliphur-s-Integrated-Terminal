@@ -10,6 +10,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -75,6 +76,8 @@ class SyncTest {
         override fun changed() {}
         @Volatile var dev = false
         @Volatile var got: Pair<ByteArray, String>? = null
+        @Volatile var restarted: Pair<String, String>? = null
+        override fun restartRequested(sender: String, name: String) { restarted = sender to name }
         var version = "1.0.0"
         override fun appVersion() = version
         override fun devMode() = dev
@@ -192,6 +195,12 @@ class SyncTest {
             assertTrue(sb.deviceStates().single().online); assertFalse(sb.deviceStates().single().outdated)
             la.version = "1.0.0"
             assertTrue(sa.syncWith(sb.myId)); assertTrue(sa.versionMismatch().isEmpty() && sb.versionMismatch().isEmpty())
+            // 设备离线时请它重新启动 OIT (MECHANICS 15.3): 请求送到就重启, 刚重启过的不再理会, 密钥不对的拒绝
+            val pa = sb.peers()[sa.myId]!!
+            assertEquals(200, sb.restartTo(pa, 4000)); assertEquals(sb.myId to "B", la.restarted)
+            la.restarted = null
+            assertEquals(200, sb.restartTo(pa, 4000)); assertNull(la.restarted)
+            assertEquals(403, sb.restartTo(JSONObject(pa.toString()).put("key", "11".repeat(32)), 4000)); assertNull(la.restarted)
             // 安装包直接发给 B, B 核对 SHA-256 后交给本机安装; 平台不对的不要
             val pkg = Files.createTempFile("oit", ".bin").toFile()
             val blob = ByteArray(300_000) { (it * 31 % 251).toByte() }

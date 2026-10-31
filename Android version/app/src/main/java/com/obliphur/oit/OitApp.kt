@@ -166,6 +166,7 @@ class OitApp : Application(), Host {
         core.checkUnbind = { s.checkUnbind() }
         core.dm.offlineSpans = { a, b -> core.mergeSpans(core.withoutAway(s.offlineSpans(a, b, own = false), a, b) + s.selfOffSpans(a, b)) }
         core.trackOffline = { s.trackOffline() }
+        core.checkRestart = { hold -> s.checkRestart(hold) }
         core.net.peerNet = { com.obliphur.oit.sync.SyncService.peerNet(s.peerLedgers(), core.net.date) }
         core.net.peerUsage = { s.peerLedgers().flatMap { l -> l.optJSONArray("usage")?.let { a -> (0 until a.length()).mapNotNull { a.optJSONObject(it) } } ?: emptyList() } }
         try {
@@ -492,6 +493,17 @@ class OitApp : Application(), Host {
         noticesChanged()
         resetting = false
         wipedNotice()
+    }
+
+    /** 别的设备发现本机离线了, 请本机重新启动 OIT (MECHANICS 15.3): 关掉设备同步 (监听 / 同步线程) 再重新打开, 界面也重新载入.
+     *  数据不动, 共享的专注不结束. */
+    fun restartOit(by: String) {
+        if (resetting) return
+        core.logSync("SYNC restart requested by $by")
+        sync?.stop()
+        startSync()
+        core.changed()
+        MainActivity.current?.let { act -> if (!act.isFinishing) act.restartUi() }
     }
 
     /** 别的设备重置 / 卸载时请本机清空了数据: 重开后提示一次. */

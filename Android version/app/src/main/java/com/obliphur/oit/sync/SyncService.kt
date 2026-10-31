@@ -51,6 +51,10 @@ interface SyncLocal {
     fun updateRequested(peerId: String): String = "unsupported"
     /** 别的设备 (名字 name) 重置 / 卸载了, 请本机也清空数据 (MECHANICS 9). */
     fun wipeRequested(wipeId: String, sender: String, name: String, leave: Boolean = false) {}
+    /** 别的设备发现本机离线了, 请本机重新启动 OIT (MECHANICS 15.3). */
+    fun restartRequested(sender: String, name: String) {}
+    /** 本机发现 name 离线了, 向它发了重新启动 OIT 的请求 (status: HTTP 状态). */
+    fun restartSent(name: String, status: Int) {}
     /** 文件通道 (MECHANICS 15.6): 设备 who 要发文件过来 (o: name / size / sha256 / token / nonce).
      *  "" = 要 (之后调用 fetchFile 去取), 否则是不要的原因. */
     fun fileOffered(peerId: String, who: String, o: JSONObject): String = "unsupported"
@@ -123,6 +127,9 @@ class SyncService(
         const val UNBIND_WAIT_MS = 48 * 3600 * 1000L
         /** 解除绑定后还没送到的清空请求, 每隔这么久 (毫秒) 再送一次. */
         const val EVICT_RETRY_MS = 30_000L
+        /** 设备离线时请它重新启动 OIT, 连不上就每隔这么久再试一次; 本机因为这个重启过之后这么久之内不再理会重启请求. 同 devsync.RESTART_RETRY / RESTART_GAP_MS. */
+        const val RESTART_RETRY_MS = 30_000L
+        const val RESTART_GAP_MS = 10 * 60_000L
         /** 记住最近这么多个处理过的清空请求. */
         const val WIPES_KEEP = 50
 
@@ -470,6 +477,7 @@ class SyncService(
                     method == "POST" && path == "/oit/v1/sync" -> onSync(body)
                     method == "POST" && path == "/oit/v1/unpair" -> onUnpair(body)
                     method == "POST" && path == "/oit/v1/wipe" -> onWipe(body)
+                    method == "POST" && path == "/oit/v1/restart" -> onRestart(body)
                     method == "POST" && path == "/oit/v1/offer" -> onOffer(body)
                     method == "POST" && path == "/oit/v1/want" -> onWant(body)
                     method == "POST" && path == "/oit/v1/send" -> onSend(body)
@@ -1101,6 +1109,56 @@ class SyncService(
         if (body.optBoolean("unpair")) runner.call { unpair(from, notify = false) }
         lock.withLock { state.getJSONObject("wipe_out").remove(from) }   // 它自己也清空了
         if (!sawWipe(wid)) runner.call { local.wipeRequested(wid, from, name, leave) }
+        return 200 to JSONObject()
+    }
+
+    // ---- 设备离线时请它重新启动 OIT (MECHANICS 15.3, 同 devsync) ----
+
+    private val restartTry = java.util.concurrent.ConcurrentHashMap<String, LongArray>()     // id → [上次发的时刻, 已有回应 (1)]
+    private val restartOn = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    internal fun restartTo(p: JSONObject, timeoutMs: Int): Int = try {
+        val env = SyncCrypto.seal(SyncCrypto.unhex(p.getString("key")), myId, JSONObject().put("restart", true))
+        http(p.getString("addr"), p.getInt("port"), "POST", "/oit/v1/restart", env, timeoutMs).first
+    } catch (e: Exception) { 0 }
+
+    /** 每秒: 绑定的设备离线了 (15.3 的判定; 关机 / 断网 / 版本较低 / 对方明确不接受的不算), 马上向它发"重新启动 OIT"的请求;
+     *  连不上 (0) 就每 RESTART_RETRY_MS 再试, 有回应 (不管是什么) 就不再发, 直到它回来后再次离线.
+     *  hold: 本机正在外出 (外出期间的设备不算离线). 刚打开 OIT 时还没同步过的设备要等一轮同步再说. */
+    fun checkRestart(hold: Boolean) {
+        if (hold || dead) return
+        val warm = System.currentTimeMillis() - startedMs >= OFFLINE_MS + SYNC_EVERY_MS
+        val ps = peers()
+        for (d in deviceStates()) {
+            val p = ps[d.id] ?: continue
+            if (d.online) { restartOn.add(d.id); restartTry.remove(d.id); continue }
+            if (d.outdated || d.err in setOf("unpaired", "wipe-pending", "away") || !(warm || d.id in restartOn)) continue
+            val t = restartTry.getOrPut(d.id) { longArrayOf(0L, 0L) }
+            val now = System.currentTimeMillis()
+            if (t[1] == 1L || now - t[0] < RESTART_RETRY_MS) continue
+            t[0] = now
+            pool.execute {
+                val st = restartTo(p, 4000)
+                if (st != 0) {
+                    t[1] = 1L
+                    runCatching { runner.call { local.restartSent(p.optString("name").ifEmpty { "?" }, st) } }
+                }
+            }
+        }
+    }
+
+    private fun onRestart(env: JSONObject): Pair<Int, JSONObject> {
+        val from = env.optString("from")
+        val p = peers()[from] ?: return 401 to JSONObject().put("error", "unpaired")
+        val body = try { SyncCrypto.unseal(SyncCrypto.unhex(p.getString("key")), env) } catch (e: SealError) {
+            return 403 to JSONObject().put("error", e.message)
+        }
+        if (!body.optBoolean("restart")) return 400 to JSONObject().put("error", "bad-request")
+        val now = System.currentTimeMillis()
+        if (now - lock.withLock { state.optLong("restart_at") } < RESTART_GAP_MS) return 200 to JSONObject().put("ignored", "recent")
+        lock.withLock { state.put("restart_at", now) }
+        save()
+        runner.call { local.restartRequested(from, p.optString("name").ifEmpty { "?" }) }
         return 200 to JSONObject()
     }
 

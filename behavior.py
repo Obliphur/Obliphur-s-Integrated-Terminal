@@ -229,12 +229,13 @@ class Behavior:
         o = self.current(now)
         return o if o is not None and self.is_free(o) else None
 
-    def away_spans(self, a: datetime, b: datetime) -> list:
-        """[a, b] 里处在自由学习的外出之内的时间段 (合并过的) [(开始, 结束)]."""
+    def away_spans(self, a: datetime, b: datetime, free_only: bool = True) -> list:
+        """[a, b] 里处在自由学习的外出之内的时间段 (合并过的) [(开始, 结束)].
+        free_only=False: 哪种模式的外出都算 (外出期间的设备不算离线, MECHANICS 8.4)."""
         now = datetime.now()
         spans = []
         for o in self.outings:
-            if not self.is_free(o):
+            if free_only and not self.is_free(o):
                 continue
             x, y = max(o["start"], a), min(self._effective_end(o, now), b)
             if y > x:
@@ -248,10 +249,10 @@ class Behavior:
                 out.append((x, y))
         return out
 
-    def last_away_end(self, now: datetime = None):
-        """最近一次自由学习的外出结束 (或此刻, 还在外出时) 的时刻; 没有时 None."""
+    def last_away_end(self, now: datetime = None, free_only: bool = True):
+        """最近一次自由学习的外出结束 (或此刻, 还在外出时) 的时刻; 没有时 None. free_only=False: 哪种模式的外出都算."""
         now = now or datetime.now()
-        ends = [self._effective_end(o, now) for o in self.outings if self.is_free(o)]
+        ends = [self._effective_end(o, now) for o in self.outings if not free_only or self.is_free(o)]
         return max(ends) if ends else None
 
     def returned(self, owner: str, synced, now: datetime = None):
@@ -787,6 +788,13 @@ def _selftest():
         ok, _m, om = bm.start(10, datetime(2026, 10, 19, 17, 0))
         n3 = datetime(2026, 10, 19, 23, 59)
         assert ok and bm.active(datetime(2026, 10, 19, 18, 0)) is om
+        # 外出期间的设备不算离线 (MECHANICS 8.4): 哪种模式的外出都算, 自由学习的外出另有 away 的用处
+        w1, w2 = datetime(2026, 10, 19, 6, 0), datetime(2026, 10, 19, 20, 0)
+        assert bm.away_spans(w1, w2) == [(datetime(2026, 10, 19, 7, 0), datetime(2026, 10, 19, 17, 0))]
+        assert bm.away_spans(w1, w2, free_only=False) == [(datetime(2026, 10, 19, 7, 0), datetime(2026, 10, 19, 20, 0))]
+        assert bm.last_away_end(datetime(2026, 10, 19, 18, 0)) == datetime(2026, 10, 19, 17, 0)
+        assert bm.last_away_end(datetime(2026, 10, 19, 18, 0), free_only=False) == datetime(2026, 10, 19, 18, 0)
+        assert bm.current(datetime(2026, 10, 19, 18, 0)) is om and bm.away(datetime(2026, 10, 19, 18, 0)) is None
         assert bm._recorded_hours_on(om, datetime(2026, 10, 19), n3) == 6, "17:00~23:59 向下取整 6 小时, 自由学习的 10 小时不占名额"
     finally:
         config.BEHAVIOR_MODE, = keep

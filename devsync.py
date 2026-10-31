@@ -55,6 +55,8 @@ OFFLINE_MS = 3 * SYNC_EVERY * 1000
 # 同步失败的原因里, 下面这几种说明对方明确不接受 / 不在线 (不是偶然的网络问题): 不等 OFFLINE_MS, 马上算离线
 HARD_ERRORS = ("unpaired", "wipe-pending", "away", "peer-not-proxy", "not-proxy")
 UNBIND_WAIT_MS = 48 * 3600 * 1000       # 解除绑定要等这么久 (冷静期, 期间可以取消)
+RESTART_RETRY = 30                    # 秒: 设备离线时请它重新启动 OIT, 连不上就每隔这么久再试一次, 直到有回应或它回来 (MECHANICS 15.3)
+RESTART_GAP_MS = 10 * 60_000          # 本机因为别的设备的请求重启过之后, 这么久之内不再理会重启请求 (免得两台设备互相拉着重启)
 EVICT_RETRY = 30                        # 秒: 解除绑定后还没送到的清空请求, 每隔这么久再送一次
 WIPES_KEEP = 50                         # 记住最近这么多个处理过的清空请求
 OFFLINE_FWD_MS = OFFLINE_MS + (SYNC_EVERY + 5) * 1000
@@ -756,6 +758,65 @@ class SyncService:
             self.state.get("wipe_out", {}).pop(sender, None)    # 它自己也清空了, 本机欠它的清空请求不用再送
         if not self.saw_wipe(wid):
             self.runner.call(lambda: self.local.wipe_requested(wid, sender, name, leave))
+        return 200, {}
+
+    # ---- 设备离线时请它重新启动 OIT (MECHANICS 15.3) ----
+
+    def check_restart(self, hold: bool = False):
+        """每秒: 绑定的设备离线了 (15.3 的判定; 关机 / 断网 / 版本较低 / 对方明确不接受的不算), 马上向它发"重新启动 OIT"的请求;
+        连不上 (0) 就每 RESTART_RETRY 秒再试, 有回应 (不管是什么) 就不再发, 直到它回来后再次离线.
+        hold: 本机正在外出 (外出期间的设备不算离线). 本机自己的原因 (在别的虚拟桌面 / Adapter 断网) 连不上不是对方的问题, 不发.
+        刚打开 OIT 时还没同步过的设备要等一轮同步再说 (免得把其实在线的设备重启了)."""
+        if hold or _call(self, "away", False) or self.adapter_since():
+            return
+        tries = self.__dict__.setdefault("_restart_try", {})
+        was_on = self.__dict__.setdefault("_restart_on", set())
+        warm = _now_ms() - self._started_ms >= OFFLINE_MS + SYNC_EVERY * 1000
+        peers = self.peers()
+        for d in self.device_states():
+            pid = d["id"]
+            p = peers.get(pid)
+            if p is None:
+                continue
+            if d["online"]:
+                was_on.add(pid)
+                tries.pop(pid, None)
+                continue
+            if d["outdated"] or d["err"] in ("unpaired", "wipe-pending", "away") or not (warm or pid in was_on):
+                continue
+            t = tries.setdefault(pid, {"at": 0.0, "done": False})
+            if t["done"] or time.time() - t["at"] < RESTART_RETRY:
+                continue
+            t["at"] = time.time()
+
+            def go(pid=pid, p=p, t=t):
+                st = send_restart_to(self.my_id, p, 4.0)
+                if st:
+                    t["done"] = True
+                    self.runner.call(lambda: _call(self.local, "restart_sent", None, str(p.get("name") or "?"), st))
+            threading.Thread(target=go, daemon=True).start()
+
+    def _on_restart(self, env: dict):
+        """别的设备发现本机离线了, 请本机重新启动 OIT. 本机在别的虚拟桌面 (away) 时不理; 刚因为这个重启过的也不理."""
+        sender = str(env.get("from") or "")
+        p = self.peers().get(sender)
+        if not p:
+            return 401, {"error": "unpaired"}
+        try:
+            body = unseal(bytes.fromhex(p["key"]), env)
+        except SealError as e:
+            return 403, {"error": str(e)}
+        if not body.get("restart"):
+            return 400, {"error": "bad-request"}
+        if _call(self, "away", False):
+            return 503, {"error": "away"}
+        now = _now_ms()
+        if now - int(self.state.get("restart_at") or 0) < RESTART_GAP_MS:
+            return 200, {"ignored": "recent"}
+        with self.lock:
+            self.state["restart_at"] = now
+        self._save()
+        self.runner.call(lambda: self.local.restart_requested(sender, str(p.get("name") or "?")))
         return 200, {}
 
     # ---- 解除绑定 (MECHANICS 15.1): 冷静期 48 小时, 期间可以取消; 到时间后解除, 并清空那台设备上的全部数据 ----
@@ -1868,6 +1929,16 @@ def send_wipe_to(my_id: str, peer: dict, wipe_id: str, unpair: bool, timeout: fl
         return 0
 
 
+def send_restart_to(my_id: str, peer: dict, timeout: float = 3.0) -> int:
+    """请一台绑定的设备重新启动 OIT. 返回 HTTP 状态 (连不上时 0; 404 = 对方是不认识这个请求的旧版本)."""
+    try:
+        env = seal(bytes.fromhex(peer["key"]), my_id, {"restart": True})
+        st, _ = SyncService._http(peer["addr"], peer["port"], "POST", "/oit/v1/restart", env, timeout=timeout)
+        return st
+    except Exception:
+        return 0
+
+
 def write_state(path: str, state: dict):
     """重置后把留下的同步状态写回去 (数据目录刚被删掉)."""
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
@@ -1974,6 +2045,8 @@ def _make_handler(svc: SyncService):
                 return self._send(*svc._on_unpair(body))
             if self.path == "/oit/v1/wipe":
                 return self._send(*svc._on_wipe(body))
+            if self.path == "/oit/v1/restart":
+                return self._send(*svc._on_restart(body))
             if self.path == "/oit/v1/offer":
                 return self._send(*svc._on_offer(body))
             if self.path == "/oit/v1/want":
@@ -2081,9 +2154,13 @@ class _FakeLocal:
         self.got = ("failed", err)
 
     wiped = None
+    restarted = None
 
     def wipe_requested(self, wipe_id, sender, name, leave=False):
         self.wiped = (wipe_id, sender, name) + (("leave",) if leave else ())
+
+    def restart_requested(self, sender, name):
+        self.restarted = (sender, name)
 
 
 def _selftest():
@@ -2308,6 +2385,66 @@ def _selftest():
         assert sb._sync_with(sa.my_id) is False, "对方同步失败, 把本机算作离线"
         sa.away = lambda: False
         assert sb._sync_with(sa.my_id) is True
+
+        # 设备离线时请它重新启动 OIT (MECHANICS 15.3): 请求本身 (本机在别的虚拟桌面不理, 刚重启过不再理)
+        pa = sb.peers()[sa.my_id]
+        sa.away = lambda: True
+        assert send_restart_to(sb.my_id, pa) == 503 and la.restarted is None
+        sa.away = lambda: False
+        assert send_restart_to(sb.my_id, pa) == 200 and la.restarted == (sb.my_id, sb.state["device"]["name"]), la.restarted
+        la.restarted = None
+        assert send_restart_to(sb.my_id, pa) == 200 and la.restarted is None, "刚重启过: 不再理会"
+        assert send_restart_to(sb.my_id, dict(pa, key="11" * 32)) == 403 and la.restarted is None
+        # 发出请求: 离线马上发, 连不上每 RESTART_RETRY 秒再试, 有回应就不再发, 回来之后再离线再发; 外出 / 刚打开还没同步过的不发
+        sent = []
+        real_send = globals()["send_restart_to"]
+        res = [0]
+        globals()["send_restart_to"] = lambda me, p, timeout=3.0: (sent.append(p["port"]), res[0])[1]
+
+        def settle():
+            for th in threading.enumerate():
+                if th is not threading.current_thread() and th.daemon and th.name.startswith("Thread-"):
+                    th.join(0.5)
+        try:
+            sb._started_ms -= 10 * OFFLINE_MS
+            sb.state["peers"][sa.my_id]["last_ok"] = 0
+            sb.state["status"].pop(sa.my_id, None)
+            assert not {d["id"]: d for d in sb.device_states()}[sa.my_id]["online"]
+            sb.check_restart(hold=True)
+            settle()
+            assert sent == [], "外出期间的设备不算离线"
+            sb.check_restart()
+            settle()
+            assert sent == [pa["port"]], "离线马上发"
+            sb.check_restart()
+            settle()
+            assert len(sent) == 1, "RESTART_RETRY 之内不重发"
+            sb.__dict__["_restart_try"][sa.my_id]["at"] -= RESTART_RETRY + 1
+            sb.check_restart()
+            settle()
+            assert len(sent) == 2, "连不上: 隔一会儿再试"
+            res[0] = 200
+            sb.__dict__["_restart_try"][sa.my_id]["at"] -= RESTART_RETRY + 1
+            sb.check_restart()
+            settle()
+            sb.__dict__["_restart_try"][sa.my_id]["at"] -= RESTART_RETRY + 1
+            sb.check_restart()
+            settle()
+            assert len(sent) == 3, "有回应就不再发"
+            sb.state["peers"][sa.my_id]["last_ok"] = _now_ms()
+            sb.check_restart()
+            assert sa.my_id not in sb.__dict__["_restart_try"], "回来了: 清掉"
+            sb.state["peers"][sa.my_id]["last_ok"] = 0
+            sb.state["status"].pop(sa.my_id, None)
+            sb.check_restart()
+            settle()
+            assert len(sent) == 4, "再次离线再发"
+            sb.state["peers"][sa.my_id]["last_ok"] = _now_ms()
+            sb.check_restart()
+        finally:
+            globals()["send_restart_to"] = real_send
+            sb.state["peers"][sa.my_id]["last_ok"] = _now_ms()
+        sb._restart_try = {}
         assert safe_name("..\\x\\a/b:c?.png") == "b_c_.png" and safe_name("C:\\x\\y.txt") == "y.txt"
         assert safe_name(" . ") == "file"
 

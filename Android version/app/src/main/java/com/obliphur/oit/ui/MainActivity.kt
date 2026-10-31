@@ -261,6 +261,8 @@ class MainActivity : ComponentActivity() {
     companion object {
         /** 这次启动已经问过电池优化了. */
         private var batteryAsked = false
+        /** 此刻开着的界面 (别的设备请本机重新启动 OIT 时重新载入它, MECHANICS 15.3). */
+        @Volatile var current: MainActivity? = null
     }
 
     override fun onRestart() {
@@ -271,6 +273,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        current = this
         com.obliphur.oit.service.CoreService.start(this)
         // 每次打开应用时检查更新 (MECHANICS 16)
         if (savedInstanceState == null) app.checkUpdateOnOpen()
@@ -322,6 +325,7 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         // 用户自己退出了 OIT (不是转屏之类): 指令 X 的输入框第三段要写今天的这些时刻
         if (isFinishing && !isChangingConfigurations) runCatching { app.core.prescript.noteClose() }
+        if (current === this) current = null
         super.onDestroy()
     }
 

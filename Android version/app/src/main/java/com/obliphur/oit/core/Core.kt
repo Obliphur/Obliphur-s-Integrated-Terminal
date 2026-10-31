@@ -124,6 +124,8 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     var selfOffSpans: (Long, Long) -> List<Pair<Long, Long>> = { _, _ -> emptyList() }
     /** 每 5 秒: 记下设备离线的时间段. */
     var trackOffline: () -> Unit = {}
+    /** 每秒: 绑定的设备离线了就请它重新启动 OIT (MECHANICS 15.3); 参数: 本机正在外出 (外出期间的设备不算离线). */
+    var checkRestart: (Boolean) -> Unit = {}
     /** 母端的开发者模式变了: 马上同步给子端. */
     var devChangedHook: () -> Unit = {}
     /** 绑定的设备里有没有哪台在这个时刻 (毫秒) 之后同步成功过. */
@@ -335,10 +337,10 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         }
     }
 
-    /** 离线的时间段里去掉自由学习的外出期间 (MECHANICS 21.6): 外出的设备本来就不在家里的网络上. */
+    /** 离线的时间段里去掉外出期间 (MECHANICS 8.4, 21.6): 外出的设备本来就不在家里的网络上. */
     fun withoutAway(spans: List<Pair<Long, Long>>, a: Long, b: Long): List<Pair<Long, Long>> {
         var cur = spans
-        for ((x, y) in behavior.awaySpans(a, b)) {
+        for ((x, y) in behavior.awaySpans(a, b, freeOnly = false)) {
             cur = cur.flatMap { (s, e) ->
                 if (e <= x || s >= y) listOf(s to e)
                 else listOfNotNull(if (s < x) s to x else null, if (e > y) y to e else null)
@@ -402,6 +404,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     }
 
     private fun logNotice(text: String) = Store.append(File(dir, "settings_changes.log"), text)
+    fun logSync(text: String) = logNotice(text)
 
     /** 录像 (MECHANICS 18.8) 的日志: 开始 / 保存 / 出错 / 跨设备传输, 记到单独的 record.log. */
     fun logRecord(text: String) = Store.append(File(dir, "record.log"), "RECORD $text")
@@ -508,6 +511,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         }
         checkAppLock()
         trackOffline()                       // 每秒: 同步失败的设备马上算离线 (MECHANICS 8.4)
+        runCatching { checkRestart(behavior.current() != null) }     // 离线的设备: 马上请它重新启动 OIT (15.3)
         if (m - lastAppSample >= Cfg.APP_FOCUS_EVERY) {
             lastAppSample = m
             sampleApp()
@@ -585,7 +589,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         offlineSeen = off.keys
         val fresh = if (was == null) emptySet() else off.keys - was
         if (fresh.isEmpty() || !isLatestActive()) return
-        if (behavior.away() != null) return                  // 自由学习的外出中: 其他设备离线是正常的
+        if (behavior.current() != null) return               // 外出中: 其他设备离线是正常的
         val names = fresh.sorted().joinToString(", ") { off[it] ?: "?" }
         logNotice("SYNC offline $names")
         host.playChime {}
@@ -1082,9 +1086,9 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         checkSupply()
         checkQuiet()
         // 绑定的设备离线超过 15 分钟: 合约失败 (看到它离线的设备都可以判定)
-        // (自由学习的外出期间不算, 外出结束后从结束的时刻起算: MECHANICS 21.6)
-        if (c.active && hasPeers() && behavior.away() == null) {
-            val floor = behavior.lastAwayEnd()
+        // (外出期间不算, 外出结束后从结束的时刻起算: MECHANICS 8.4, 21.6)
+        if (c.active && hasPeers() && behavior.current() == null) {
+            val floor = behavior.lastAwayEnd(freeOnly = false)
             val devices = offlineDevices().map { (n, ms) ->
                 n to ms.toLocalDateTime().let { if (floor != null && floor.isAfter(it)) floor else it }
             }

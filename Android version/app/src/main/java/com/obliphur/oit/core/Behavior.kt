@@ -164,10 +164,10 @@ class Behavior(
 
     private fun ms(t: LocalDateTime) = t.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
 
-    /** [a, b] (毫秒) 里处在自由学习的外出之内的时间段 (合并过的). */
-    fun awaySpans(a: Long, b: Long): List<Pair<Long, Long>> {
+    /** [a, b] (毫秒) 里处在自由学习的外出之内的时间段 (合并过的); freeOnly = false: 哪种模式的外出都算. */
+    fun awaySpans(a: Long, b: Long, freeOnly: Boolean = true): List<Pair<Long, Long>> {
         val at = now()
-        val spans = outings.filter { it.isFree }.mapNotNull { o ->
+        val spans = outings.filter { !freeOnly || it.isFree }.mapNotNull { o ->
             val x = maxOf(ms(o.start), a)
             val y = minOf(ms(o.effectiveEnd(at)), b)
             if (y > x) x to y else null
@@ -181,8 +181,8 @@ class Behavior(
     }
 
     /** 最近一次自由学习的外出结束 (或此刻, 还在外出时) 的时刻; 没有时 null. */
-    fun lastAwayEnd(at: LocalDateTime = now()): LocalDateTime? =
-        outings.filter { it.isFree }.maxOfOrNull { it.effectiveEnd(at) }
+    fun lastAwayEnd(at: LocalDateTime = now(), freeOnly: Boolean = true): LocalDateTime? =
+        outings.filter { !freeOnly || it.isFree }.maxOfOrNull { it.effectiveEnd(at) }
 
     /** owner 这台设备刚结束的自由学习的外出, 回来之后还没同步上 (最多 PRIO_KEEP_HOURS 小时): (开始, 结束) 毫秒.
      *  这段时间它的记录在同步里有优先权 (MECHANICS 21.6). synced(毫秒) → 结束之后同步成功过没有. */

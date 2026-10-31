@@ -286,7 +286,7 @@ class BreakTimerApp:
         self.sync_runner = devsync.MainRunner()
         self.sync = devsync.SyncService(self.dm.data_dir, PcLocal(self), self.sync_runner)
         self.dm.peer_ledgers = self.sync.peer_ledgers
-        self.dm.offline_spans = self._offline_spans         # 正在进行的那段: 有设备离线的部分画成空白 (自由学习的外出期间除外)
+        self.dm.offline_spans = self._offline_spans         # 正在进行的那段: 有设备离线的部分画成空白 (外出期间除外)
         self.dm.peer_ledgers_by_id = self.sync.peer_ledgers_by_id
         self.net.before_adapter = self._before_adapter        # 换成 Adapter 之前: 告诉其他设备本机断网了 (15.5)
         self.dm.my_id = lambda: self.sync.my_id
@@ -2358,11 +2358,11 @@ class BreakTimerApp:
         return self.contract.book_rest_after(sec, start) if start else sec
 
     def _offline_spans(self, a_ms: float, b_ms: float, own: bool = True) -> list:
-        """[a, b] 里有设备离线的时间段 (毫秒): 自由学习的外出期间 (MECHANICS 21.6) 其他设备离线不算 ——
+        """[a, b] 里有设备离线的时间段 (毫秒): 外出期间 (MECHANICS 8.4, 21.6) 设备离线不算 ——
         外出的设备本来就不在家里的网络上. own: 也包括本机关机的那几段 (它们照常算)."""
         spans = [list(s) for s in self.sync.offline_spans(a_ms, b_ms, own=False)]
         try:
-            away = self.behavior.away_spans(datetime.fromtimestamp(a_ms / 1000), datetime.fromtimestamp(b_ms / 1000))
+            away = self.behavior.away_spans(datetime.fromtimestamp(a_ms / 1000), datetime.fromtimestamp(b_ms / 1000), free_only=False)
         except Exception:
             away = []
         for x, y in away:
@@ -3043,6 +3043,13 @@ class BreakTimerApp:
         elif u.state == "error":
             toast.warn(tr("检查 / 更新失败: {e}", e=u.error))
 
+    def restart_by_peer(self, name: str):
+        """别的设备发现本机离线了, 请本机重新启动 OIT (MECHANICS 15.3): 和更新后重启一样, 共享的专注不结束."""
+        if self.shutting_down or self.dm.resetting:
+            return
+        self._log_notice(f"SYNC restart requested by {name}")
+        self._restart_for_update()
+
     def _restart_for_update(self):
         self.restart_requested = True       # main.py 在主循环结束后重新打开程序
         self._update_restart = True         # 更新后马上重开: 不算"关闭程序", 共享的专注不结束
@@ -3207,7 +3214,11 @@ class BreakTimerApp:
         """Timer 页: 绑定的每台设备此刻的状态; 有设备离线时提醒离线的那段专注不会被记录. 返回 (文字, 有离线吗)."""
         lines = []
         offline = []
+        out = getattr(self, "behavior", None) is not None and self.behavior.current() is not None
         for st in self.sync.device_states():
+            if not st["online"] and out:
+                lines.append(f"🔗 {st['name']}: {tr('外出中 🚪')}")   # 外出期间的设备不算离线 (8.4)
+                continue
             if st.get("off"):
                 lines.append(f"🔗 {st['name']}: {tr('关机')}")     # 效果和在线一样, 只是不同步 (15.4)
                 continue
@@ -3230,7 +3241,7 @@ class BreakTimerApp:
                     pass
             net = {"online": tr("联网中"), "pending": tr("冷静期中")}.get(st.get("net"), "")
             lines.append(f"🔗 {st.get('name', '?')}: {t}" + (f" · {net}" if net else ""))
-        away = self.behavior.away() if getattr(self, "behavior", None) is not None else None
+        away = self.behavior.current() if getattr(self, "behavior", None) is not None else None
         if away is not None:
             lines.append(tr("🚪 外出中: 其他设备离线不影响专注和合约."))
         elif offline:
@@ -3435,9 +3446,9 @@ class BreakTimerApp:
         if not c.active:
             return
         # 绑定的设备离线超过 15 分钟: 合约失败 (看到它离线的设备都可以判定)
-        # (自由学习的外出期间不算, 外出结束后从结束的时刻起算: MECHANICS 21.6)
-        if self.sync.peers() and self.behavior.away() is None:
-            floor_away = self.behavior.last_away_end()
+        # (外出期间不算, 外出结束后从结束的时刻起算: MECHANICS 8.4, 21.6)
+        if self.sync.peers() and self.behavior.current() is None:
+            floor_away = self.behavior.last_away_end(free_only=False)
             devices = [(d["name"], max(datetime.fromtimestamp((d["seen"] or 0) / 1000), floor_away or datetime.min))
                        for d in self.sync.device_states() if not d["online"]]
             hit = c.offline_due(devices, datetime.now(), datetime.fromtimestamp(self.sync._started_ms / 1000))
@@ -5483,6 +5494,11 @@ class BreakTimerApp:
         except Exception as e:
             self._log_window(f"ERROR    adapter overlap {type(e).__name__}: {e}")
         self.sync.track_offline()               # 每秒: 同步失败的设备马上算离线 (MECHANICS 8.4)
+        try:
+            # 设备离线了: 马上请它重新启动 OIT (15.3); 外出期间的设备不算离线
+            self.sync.check_restart(hold=self.behavior.current() is not None)
+        except Exception as e:
+            self._log_window(f"ERROR    restart request {type(e).__name__}: {e}")
         if time.monotonic() - self._outbox_at >= 30:   # 没发出去的录像片段: 每 30 秒再试一次 (18.8)
             self._outbox_at = time.monotonic()
             if os.path.exists(self._outbox_path()):
@@ -5553,8 +5569,8 @@ class BreakTimerApp:
         self._offline_seen = now_off
         if was is None or not (now_off - was) or not self.sync.is_latest_active():
             return                                   # 刚打开时已经离线的不响
-        if self.behavior.away() is not None:
-            return                                   # 自由学习的外出中: 其他设备离线是正常的
+        if self.behavior.current() is not None:
+            return                                   # 外出中: 其他设备离线是正常的
         names = ", ".join(str(peers[i].get("name") or "?") for i in sorted(now_off - was))
         # 记下为什么算离线 (最近一次同步失败的原因, 多久没有它的消息), 以后好查
         why = "; ".join(f"{peers[i].get('name') or '?'}: err={sts[i].get('err') or '-'} "

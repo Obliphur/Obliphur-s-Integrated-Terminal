@@ -118,7 +118,7 @@ fun TimerScreen() {
             }
             // 绑定的其他设备此刻的状态 (MECHANICS 15); 有设备离线时提醒离线的那段专注不会被记录 (8.4)
             for (line in peerLines()) Dim(line, Modifier.padding(top = 4.dp), size = 13)
-            if (away != null)
+            if (outing != null || away != null)
                 Dim(tr("🚪 外出中: 其他设备离线不影响专注和合约."), Modifier.padding(top = 4.dp), size = 13, color = o.warn)
             else if (OitApp.instance.sync?.deviceStates()?.any { !it.online } == true)
                 Dim(tr("⚠ 有设备离线: 离线的这段时间专注不会被记录."), Modifier.padding(top = 4.dp), size = 13, color = o.warn)

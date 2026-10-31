@@ -36,6 +36,13 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
         }, 300)
     }
 
+    /** 别的设备发现本机离线了, 请本机重新启动 OIT (MECHANICS 15.3): 回复对方之后再重启. */
+    override fun restartRequested(sender: String, name: String) {
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ app.restartOit(name) }, 300)
+    }
+
+    override fun restartSent(name: String, status: Int) = core.logSync("SYNC restart request to $name: HTTP $status")
+
     // ---- 开发者模式: 子端跟着母端 ----
     override fun devMode() = core.settings.devMode
     override fun setDevMode(on: Boolean) {

@@ -93,6 +93,14 @@ class PcLocal:
         leave: 它解除了和本机的绑定 (15.1): 只重置本机, 不转告其他设备."""
         self.app.root.after(300, lambda: self.app.do_reset(wipe_id=wipe_id, exclude=(sender,), by=name, leave=leave))
 
+    def restart_requested(self, sender: str, name: str):
+        """别的设备发现本机离线了, 请本机重新启动 OIT (MECHANICS 15.3): 回复对方之后再重启."""
+        self.app.root.after(300, lambda: self.app.restart_by_peer(name))
+
+    def restart_sent(self, name: str, status: int):
+        """本机发现 name 离线了, 向它发了重新启动 OIT 的请求 (status: HTTP 状态)."""
+        self.app._log_notice(f"SYNC restart request to {name}: HTTP {status}")
+
     def auto_text(self) -> str:
         return self.app.dm.auto_text
 
