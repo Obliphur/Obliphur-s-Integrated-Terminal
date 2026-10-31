@@ -477,7 +477,8 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
                         }
                     },
                 ) { pad ->
-                    Column(Modifier.padding(pad).fillMaxSize()) {
+                  Box(Modifier.padding(pad).fillMaxSize()) {
+                    Column(Modifier.fillMaxSize()) {
                         if (app.vpnNeedsPermission && !core.settings.devMode) {
                             Row(Modifier.fillMaxWidth().background(o.dangerBg).padding(horizontal = 16.dp, vertical = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically) {
@@ -535,6 +536,9 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
                             }
                         }
                     }
+                    // "我累了" 固定在 Timer 页的右下角
+                    if (page == "timer") BonusCorner(Modifier.align(Alignment.BottomEnd))
+                  }
                 }
             }
             // 指令页整页盖在界面上 (遮住顶栏), 左上角 × 或返回键退出

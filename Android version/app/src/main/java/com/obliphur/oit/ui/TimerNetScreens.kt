@@ -43,6 +43,19 @@ import java.time.ZoneId
 
 // ════════════════ Timer 页 (MECHANICS 6) ════════════════
 
+/** "我累了": 手机上固定在 Timer 页的右下角, 半透明 (合约中 / 外出中 / 本周已领完时隐藏). 由主界面叠在页面上. */
+@Composable
+fun BonusCorner(modifier: Modifier = Modifier) {
+    LocalTick.current
+    val o = LocalOit.current
+    val core = OitApp.instance.core
+    val t = core.timer
+    if (core.contract.active || core.outing != null || t.bonusLeftThisWeek() <= 0) return
+    TextButton({ t.onBonusClick() }, modifier.alpha(0.5f).padding(end = 8.dp, bottom = 8.dp)) {
+        Text(t.bonusLabel(), color = o.dim, fontSize = 13.sp)
+    }
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun TimerScreen() {
@@ -61,12 +74,6 @@ fun TimerScreen() {
     val outingKind = (outing ?: away)?.mode?.ifEmpty { null } ?: core.behavior.mode()
     val outingName = when (outingKind) { "closed" -> "上学"; "work" -> "工作"; else -> "外出" }
     PageColumn {
-        // "我累了": 页面右上角, 半透明 (合约中 / 外出中 / 本周已领完时隐藏)
-        if (!core.contract.active && outing == null && t.bonusLeftThisWeek() > 0) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                TextButton({ t.onBonusClick() }, Modifier.alpha(0.5f)) { Text(t.bonusLabel(), color = o.dim, fontSize = 13.sp) }
-            }
-        }
         OitCard {
             val (status, color) = when {
                 outing != null -> tr("外出中 🚪") to o.warn
