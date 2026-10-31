@@ -291,15 +291,12 @@ class MainActivity : ComponentActivity() {
         app.core.lastOp = System.currentTimeMillis()
     }
 
-    /** 状态栏只在合约页 / 指令页藏起来 (从顶部下滑时临时出现); 其他页都显示.
-     *  按当前页重新设一遍 —— 切页 / 回到前台 / 窗口拿到焦点时都调用, 免得某次"显示"在窗口没有焦点时被系统吞掉, 状态栏一直藏着. */
+    /** 所有页面都藏起状态栏 (从顶部下滑时临时出现), 和指令页 / 合约页原来的做法一样 (MECHANICS 14.8).
+     *  切页 / 回到前台 / 窗口拿到焦点时都再设一遍, 免得某次"隐藏"在窗口没有焦点时被系统吞掉. */
     fun syncStatusBar() {
         val bars = androidx.core.view.WindowCompat.getInsetsController(window, window.decorView)
-        val page = app.core.currentPage
-        if (page == "contract" || page == "prescript") {
-            bars.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            bars.hide(androidx.core.view.WindowInsetsCompat.Type.statusBars())
-        } else bars.show(androidx.core.view.WindowInsetsCompat.Type.statusBars())
+        bars.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        bars.hide(androidx.core.view.WindowInsetsCompat.Type.statusBars())
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -609,7 +606,8 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
                         androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(com.obliphur.oit.R.drawable.prescript_index),
                             contentDescription = null, modifier = Modifier.size(128.dp))
                         Box(Modifier.align(Alignment.Center).offset(y = 120.dp)) {
-                            AccentButton(tr("醒来")) { core.timer.wake() }
+                            // 和电脑版一样: 只有蓝色的字, 没有按钮底色
+                            TextButton({ core.timer.wake() }) { Text(tr("醒来"), color = o.accent, fontSize = 18.sp) }
                         }
                     } else AccentButton(tr("☀  起床")) { core.timer.wake() }
                 }
