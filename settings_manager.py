@@ -246,6 +246,7 @@ SETTINGS_SCHEMA = [
         "kind": "instant", "apply": APPLY_INSTANT,
         "choices": [
             ("Distracted", "Distracted(分心)"),
+            ("Sleeping", "Sleeping(睡觉)"),
             ("Idle", "Idle(发呆)"),
             ("Break", "Break(休息)"),
         ],
@@ -783,11 +784,7 @@ class SettingsManager:
             return str(value) if str(value) in config.THEMES else config.DEFAULT_THEME
         if key == "CONTRACT_THEME":
             return str(value) if str(value) in ("ops", "urban") else "ops"
-        if key == "AUTO_TEXT":
-            v = str(value)
-            # 睡眠期间的自动内容现在是固定的 (睡眠); 以前默认的 Sleeping 换成 分心 / Distracted
-            return "Distracted" if v.strip().casefold() in ("sleeping", "睡眠") else v
-        if key in ("LANGUAGE", "OUTING_TEXT", "REST_TEXT"):
+        if key in ("LANGUAGE", "AUTO_TEXT", "OUTING_TEXT", "REST_TEXT"):
             return str(value)
         if key == "CHIME_WAV":
             return "" if str(value).strip() in ("", "__builtin__") else str(value)

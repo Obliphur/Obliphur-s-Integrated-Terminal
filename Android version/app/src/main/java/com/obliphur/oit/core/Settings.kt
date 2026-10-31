@@ -96,7 +96,7 @@ object Schema {
         Spec("HOUR_LOG_ENABLED", "整点记录开关", Kind.CHOICE, true, "log", "1", choices = ONOFF),
         // 睡眠期间的小时固定记成 睡眠 / Sleeping; 这一项是非睡眠时间的 (默认 分心 / Distracted)
         Spec("AUTO_TEXT", "超时自动记录内容", Kind.INSTANT_TEXT, false, "log", "Distracted",
-            choices = listOf("Distracted" to "Distracted(分心)", "Idle" to "Idle(发呆)", "Break" to "Break(休息)")),
+            choices = listOf("Distracted" to "Distracted(分心)", "Sleeping" to "Sleeping(睡觉)", "Idle" to "Idle(发呆)", "Break" to "Break(休息)")),
         Spec("CHIME_WAV", "整点提示音", Kind.CHIME, false, "log", ""),
         num("FILL_WINDOW", "整点记录补填时限", "min", 60.0, 1.0, 1440.0, true, 3600.0, "log"),
         // ---- 合约 ----
@@ -302,11 +302,6 @@ class Settings(
     fun coerce(key: String, value: Any?): Any? {
         val spec = Schema.BY_KEY[key] ?: return value
         if (value == null || value == JSONObject.NULL) return null
-        if (key == "AUTO_TEXT") {
-            // 睡眠期间的自动内容现在是固定的 (睡眠); 以前默认的 Sleeping 换成 分心 / Distracted
-            val t = value.toString().trim()
-            return if (t.lowercase() in listOf("sleeping", "睡眠")) "Distracted" else t
-        }
         return when (spec.kind) {
             Kind.NUM, Kind.TIME -> {
                 val x = when (value) {

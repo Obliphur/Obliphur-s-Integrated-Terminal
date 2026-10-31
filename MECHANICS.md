@@ -106,7 +106,7 @@
 | 设置项 | 默认值 | 可选值 / 允许范围 | 生效方式 |
 | --- | --- | --- | --- |
 | 整点记录开关 `HOUR_LOG_ENABLED` | 开启 | 开启 / 关闭 | 48 小时 |
-| 超时自动记录内容 `AUTO_TEXT` | `Distracted` (分心) | Distracted / Idle / Break, 或自己填写 | 即时; 只管**非睡眠时间**, 睡眠期间的小时固定记成 睡眠 / Sleeping (8.2, 23) |
+| 超时自动记录内容 `AUTO_TEXT` | `Distracted` (分心) | Distracted / Sleeping / Idle / Break, 或自己填写 | 即时; 只管**非睡眠时间**, 睡眠期间的小时固定记成 睡眠 / Sleeping (8.2, 23). 以前设成 `Sleeping` 的不迁移, 照旧 |
 | 整点提示音 `CHIME_WAV` | 内置三音提示音 | 内置 / "选择音频…"选的本地 .wav 或 .mp3 (界面上只显示文件名) | 即时 |
 | 整点记录补填时限 `FILL_WINDOW` | 60 min | 1 ~ 1440 min | 48 小时; 一小时结束后多久仍未填写就自动记录 |
 
