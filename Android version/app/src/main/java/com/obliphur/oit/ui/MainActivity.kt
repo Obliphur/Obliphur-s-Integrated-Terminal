@@ -291,9 +291,26 @@ class MainActivity : ComponentActivity() {
         app.core.lastOp = System.currentTimeMillis()
     }
 
+    /** 状态栏只在合约页 / 指令页藏起来 (从顶部下滑时临时出现); 其他页都显示.
+     *  按当前页重新设一遍 —— 切页 / 回到前台 / 窗口拿到焦点时都调用, 免得某次"显示"在窗口没有焦点时被系统吞掉, 状态栏一直藏着. */
+    fun syncStatusBar() {
+        val bars = androidx.core.view.WindowCompat.getInsetsController(window, window.decorView)
+        val page = app.core.currentPage
+        if (page == "contract" || page == "prescript") {
+            bars.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            bars.hide(androidx.core.view.WindowInsetsCompat.Type.statusBars())
+        } else bars.show(androidx.core.view.WindowInsetsCompat.Type.statusBars())
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) syncStatusBar()
+    }
+
     override fun onResume() {
         super.onResume()
         app.foreground = true
+        syncStatusBar()
         app.core.uiForeground = true
         // 前台服务没在运行 (进程是在后台被拉起来的, 当时不允许启动): 趁界面在前台补上, 离开后 OIT 才不会被暂停
         com.obliphur.oit.service.CoreService.start(this)
@@ -384,11 +401,7 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
         runCatching { core.prescript.pageChanged() }          // 指令 V 要一直停在指令页, VI 要连续停在统计页
         act.requestedOrientation = if (page == "contract") android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         else android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        val bars = androidx.core.view.WindowCompat.getInsetsController(act.window, act.window.decorView)
-        if (page == "contract" || page == "prescript") {
-            bars.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            bars.hide(androidx.core.view.WindowInsetsCompat.Type.statusBars())
-        } else bars.show(androidx.core.view.WindowInsetsCompat.Type.statusBars())
+        act.syncStatusBar()
     }
     LaunchedEffect(Unit) { app.navRequests.collect { go(it) } }
     // 手机上退出应用 / 收入后台 (熄屏不算) 视为退出指令页, 回到计时器页 (MECHANICS 22.8)
