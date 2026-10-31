@@ -54,7 +54,8 @@ class LinkCore(
     companion object {
         const val LINK_PORT = 17940
         const val PROBE_EVERY_MS = 15_000L
-        const val FAIL_FOR_MS = 45_000L
+        /** 比"算离线"的 60 秒 (SyncService.OFFLINE_MS) 长: 先让别的设备看到它离线, 再去启动. */
+        const val FAIL_FOR_MS = 75_000L
         const val ASK_RETRY_MS = 30_000L
         const val START_COOLDOWN_MS = 120_000L
         const val BOOT_GRACE_MS = 180_000L

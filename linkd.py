@@ -30,7 +30,7 @@ import devsync
 LINK_PORT = 17940
 APP_NAME = "Obliphur's Integrated Terminal"      # 同 config.APP_NAME (自检里核对), 这里不能 import config (它要 tkinter)
 PROBE_EVERY = 15              # 秒: 多久看一次绑定的设备的 OIT 还在不在
-FAIL_FOR = 45                 # 秒: 连续这么久没答才去问它的联动程序 (偶尔一次超时不算)
+FAIL_FOR = 75                 # 秒: 连续这么久没答才去问它的联动程序: 比"算离线"的 60 秒 (devsync.OFFLINE_MS) 长, 先让别的设备看到它离线 (记空闲 / 提示), 再去启动
 ASK_RETRY = 30                # 秒: 问了没成 (它的 OIT 还没起来 / 刚启动过) 就隔这么久再问
 START_COOLDOWN = 120          # 秒: 启动过 OIT 之后这么久之内不再启动 (OIT 启动要一会儿)
 BOOT_GRACE = 180              # 秒: 联动程序自己刚启动的这段时间不启动 OIT (登录时 OIT 的开机自启动正在启动它)
