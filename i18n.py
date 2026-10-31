@@ -804,6 +804,8 @@ EN = {
     "{name} 重置了 OIT, 本机的数据也一起清空了.": "{name} reset OIT, so this device's data was cleared too.",
     "   防火墙规则删不掉: {name}": "   Could not delete the firewall rule: {name}",
     "   开机自启动的计划任务删不掉: {name}": "   Could not delete the start-at-logon task: {name}",
+    "   联动程序的计划任务删不掉: {name}": "   Could not delete the companion program's task: {name}",
+    "联动程序关不掉, 请在任务管理器里结束 pythonw.exe (linkd.py).": "Could not stop the companion program; end pythonw.exe (linkd.py) in Task Manager.",
     "   删不掉 (可能被占用): {p}": "   Could not delete (possibly in use): {p}",
     "   数据已全部删除.": "   All data erased.",
     "⑤ 删除程序文件夹…": "⑤ Removing the program folder…",

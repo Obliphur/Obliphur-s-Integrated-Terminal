@@ -55,6 +55,8 @@ class OitApp : Application(), Host {
 
     override fun onCreate() {
         super.onCreate()
+        // 联动程序的进程 (:link, MECHANICS 15.8) 里不放 Core / 设备同步, 只有 LinkService
+        if (runCatching { java.io.File("/proc/self/cmdline").readText().trim(Char(0)).endsWith(":link") }.getOrDefault(false)) return
         instance = this
         core = Core(oitDir, this) { SystemClock.elapsedRealtime() / 1000.0 }
         I18n.lang = core.settings.str("LANGUAGE")
@@ -63,6 +65,7 @@ class OitApp : Application(), Host {
         core.start()
         wipedNotice()
         CoreService.start(this)
+        com.obliphur.oit.service.LinkService.start(this)
         listenShutdown()
         // 上次没加密完的录像 (被强杀时留在缓存里的) 开机时补上加密 (MECHANICS 18.8)
         Thread { runCatching { RecCrypto.sealLeftovers(oitDir, cacheDir) } }.apply { isDaemon = true }.start()

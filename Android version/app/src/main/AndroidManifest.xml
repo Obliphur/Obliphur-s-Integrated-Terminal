@@ -69,6 +69,17 @@
                 android:value="Self-control focus timer and network quota enforcement" />
         </service>
 
+        <!-- 联动程序 (MECHANICS 15.8): 单独的进程, OIT 主体关掉后它还在, 替别的设备把本机的 OIT 重新启动 -->
+        <service
+            android:name=".service.LinkService"
+            android:process=":link"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Companion process that restarts the main app on request of paired devices" />
+        </service>
+
         <!-- 合约录像 (MECHANICS 18.8): 摄像头 / 录屏 / 麦克风各自的前台服务类型 -->
         <service
             android:name=".service.RecordService"

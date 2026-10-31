@@ -38,6 +38,7 @@ from netproxy.sysproxy import SystemProxy, parse_proxy_server
 from netproxy.server import DEFAULT_PORT
 import firewall
 import autostart
+import linkd
 import appban
 import browserfence
 
@@ -398,6 +399,9 @@ def run_uninstall(paths: Paths, remove_program: bool, log,
     if not enabled and not still:
         log(tr("   没有被禁用的物理网卡."), "ok")
 
+    # 联动程序 (linkd.py): 先关掉进程, 免得它在数据删掉之后又写日志 / 替别的设备把 OIT 启动起来
+    if not linkd.stop():
+        log(tr("联动程序关不掉, 请在任务管理器里结束 pythonw.exe (linkd.py)."), "warn")
     log(tr("④ 删除数据…"), "info")
     # 先请绑定的设备清空数据, 并解除和本机的绑定 (网络这时已经恢复)
     told = forget_peers(paths, forget)
@@ -419,6 +423,9 @@ def run_uninstall(paths: Paths, remove_program: bool, log,
     # 开机自启动的计划任务 (autostart.py)
     if not (autostart.remove(task_run) if task_run else autostart.remove()):
         log(tr("   开机自启动的计划任务删不掉: {name}", name=autostart.TASK_NAME), "warn")
+    # 联动程序 (linkd.py) 的计划任务 (进程在上面删数据之前已经关掉了)
+    if not (autostart.link_remove(task_run) if task_run else autostart.link_remove()):
+        log(tr("   联动程序的计划任务删不掉: {name}", name=autostart.LINK_TASK), "warn")
 
     if remove_program:
         log(tr("⑤ 删除程序文件夹…"), "info")

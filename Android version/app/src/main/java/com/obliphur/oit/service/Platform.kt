@@ -187,6 +187,12 @@ class CoreService : Service() {
                 // 计划变了才动 VPN (例如开发者模式下刚绑定了设备: 要开一个全部放行的 VPN, 见 Core.vpnPlan)
                 app.applyNet(false)
                 app.maybeRelay()
+                // 联动程序 (15.8): 绑定了其他设备就保持它在运行 (没有就关掉); 外出的计划结束时刻告诉它 (外出期间的设备不算离线)
+                runCatching {
+                    val dir = java.io.File(filesDir, "data")
+                    com.obliphur.oit.sync.LinkFiles.writeHold(dir, app.core.linkHoldMs())
+                    if (n % 30 == 0) { if (app.core.hasPeers()) LinkService.start(this@CoreService) else LinkService.stop(this@CoreService) }
+                }
             }
             handler.postDelayed(this, 1000)
         }
@@ -276,6 +282,7 @@ class BootReceiver : BroadcastReceiver() {
         // 开机自启动成功了 (MECHANICS 14.8): 记下这是第几次开机, 关机的前提 (15.4)
         if (intent.action == Intent.ACTION_BOOT_COMPLETED) OitApp.instance.noteBootStart()
         CoreService.start(ctx)
+        LinkService.start(ctx)
         OitApp.instance.applyNet(true)
     }
 }

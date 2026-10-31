@@ -16,6 +16,7 @@ import toast
 import window_guard
 import appban
 import autostart
+import linkd
 import devsync
 import firewall
 import updater
@@ -2889,6 +2890,14 @@ class BreakTimerApp:
             self.autostart_state = (autostart.ensure(self.dm.data_dir) if first else autostart.state())
         except Exception:
             self.autostart_state = "error"
+        try:
+            # 联动程序 (MECHANICS 15.8): 登录时启动的后台进程, OIT 关掉了它照样在, 替别的设备把本机的 OIT 重新启动;
+            # 它的计划任务跟着开机自启动走, 进程没在运行就打开 (没有绑定的设备时用不着)
+            if self.sync.peers():
+                autostart.link_ensure()
+                linkd.ensure_running(self.dm.data_dir)
+        except Exception as e:
+            self._log_window(f"ERROR    link {type(e).__name__}: {e}")
 
     @property
     def autostart_on(self) -> bool:
@@ -5496,7 +5505,10 @@ class BreakTimerApp:
         self.sync.track_offline()               # 每秒: 同步失败的设备马上算离线 (MECHANICS 8.4)
         try:
             # 设备离线了: 马上请它重新启动 OIT (15.3); 外出期间的设备不算离线
-            self.sync.check_restart(hold=self.behavior.current() is not None)
+            outing = self.behavior.current()
+            self.sync.check_restart(hold=outing is not None)
+            # 联动程序 (15.8) 在 OIT 关掉后替本机收启动请求: 外出的计划结束之前别启动 (外出期间的设备不算离线)
+            linkd.write_hold(self.dm.data_dir, int(outing["end"].timestamp() * 1000) if outing is not None else 0)
         except Exception as e:
             self._log_window(f"ERROR    restart request {type(e).__name__}: {e}")
         if time.monotonic() - self._outbox_at >= 30:   # 没发出去的录像片段: 每 30 秒再试一次 (18.8)

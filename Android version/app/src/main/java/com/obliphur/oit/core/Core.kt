@@ -406,6 +406,9 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     private fun logNotice(text: String) = Store.append(File(dir, "settings_changes.log"), text)
     fun logSync(text: String) = logNotice(text)
 
+    /** 联动程序 (MECHANICS 15.8): 外出的计划结束时刻 (毫秒); 没有在外出时 0. 外出期间别的设备不替本机启动 OIT. */
+    fun linkHoldMs(): Long = behavior.current()?.end?.atZone(java.time.ZoneId.systemDefault())?.toInstant()?.toEpochMilli() ?: 0L
+
     /** 录像 (MECHANICS 18.8) 的日志: 开始 / 保存 / 出错 / 跨设备传输, 记到单独的 record.log. */
     fun logRecord(text: String) = Store.append(File(dir, "record.log"), "RECORD $text")
 

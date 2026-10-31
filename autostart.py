@@ -20,6 +20,7 @@ import tempfile
 
 NO_WINDOW = 0x08000000
 TASK_NAME = "OIT autostart"
+LINK_TASK = "OIT link"          # 联动程序 (linkd.py, MECHANICS 15.8): 登录时启动, OIT 主体关掉了它照样在
 MARKER = "autostart_created"
 
 
@@ -43,11 +44,11 @@ def _xml_escape(s: str) -> str:
             .replace('"', "&quot;"))
 
 
-def task_xml(command: str, arguments: str, workdir: str, user: str) -> str:
+def task_xml(command: str, arguments: str, workdir: str, user: str, desc: str = "OIT: start at logon (MECHANICS 3.4)") -> str:
     """任务的定义: 这个用户登录时以最高权限启动; 用电池也照常运行, 不限时长, 已经在运行就不再开一个."""
     return f"""<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <RegistrationInfo><Description>OIT: start at logon (MECHANICS 3.4)</Description></RegistrationInfo>
+  <RegistrationInfo><Description>{_xml_escape(desc)}</Description></RegistrationInfo>
   <Triggers>
     <LogonTrigger><Enabled>true</Enabled><UserId>{_xml_escape(user)}</UserId></LogonTrigger>
   </Triggers>
@@ -79,11 +80,11 @@ def _user() -> str:
     return f"{dom}\\{name}" if dom else name
 
 
-def state(run=_run) -> str:
+def state(run=_run, name: str = TASK_NAME) -> str:
     """"on" 任务在而且开着 / "off" 任务在但被禁用了 / "missing" 没有这个任务 / "error" 查不了."""
     if sys.platform != "win32":
         return "missing"
-    rc, text = run(["schtasks", "/Query", "/TN", TASK_NAME, "/XML"])
+    rc, text = run(["schtasks", "/Query", "/TN", name, "/XML"])
     if rc != 0:
         return "missing" if rc == 1 else "error"
     # 任务的 <Settings> 里 <Enabled>false</Enabled> = 被禁用了 (XML 不随系统语言变)
@@ -132,6 +133,42 @@ def ensure(data_dir: str, run=_run) -> str:
     return st
 
 
+def link_state(run=_run) -> str:
+    """联动程序的任务: "on" / "off" / "missing" / "error" (同 state)."""
+    return state(run, LINK_TASK)
+
+
+def link_ensure(run=_run) -> str:
+    """OIT 开机自启动开着 (state() == "on") 时, 联动程序的任务也要在: 没有就建, 有就按当前位置重写. 返回之后的状态.
+    OIT 的开机自启动被用户关掉 / 删掉时不建 (已有的任务也不动, 被禁用了就算关掉)."""
+    if sys.platform != "win32" or state(run) != "on":
+        return link_state(run)
+    st = link_state(run)
+    if st in ("missing", "on"):
+        import linkd
+        exe, script, workdir = linkd.link_command()
+        xml = task_xml(exe, f'"{script}"', workdir, _user(), desc="OIT link: companion program (MECHANICS 15.8)")
+        fd, path = tempfile.mkstemp(suffix=".xml")
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(xml.encode("utf-16"))
+            run(["schtasks", "/Create", "/TN", LINK_TASK, "/XML", path, "/F"])
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+        st = link_state(run)
+    return st
+
+
+def link_remove(run=_run) -> bool:
+    """卸载时: 删掉联动程序的任务."""
+    if sys.platform != "win32" or state(run, LINK_TASK) == "missing":
+        return True
+    return run(["schtasks", "/Delete", "/TN", LINK_TASK, "/F"])[0] == 0
+
+
 def remove(run=_run) -> bool:
     """卸载时: 删掉任务. 返回删干净了没有 (本来就没有也算)."""
     if sys.platform != "win32" or state(run) == "missing":
@@ -146,18 +183,24 @@ def _selftest():
 
     def fake(args, timeout=30):
         calls.append(args)
+        name = args[args.index("/TN") + 1]
         if args[1] == "/Query":
-            if TASK_NAME not in tasks:
+            if name not in tasks:
                 return 1, "ERROR: not found"
-            return 0, tasks[TASK_NAME]
+            return 0, tasks[name]
         if args[1] == "/Create":
             with open(args[5], "rb") as f:
-                tasks[TASK_NAME] = f.read().decode("utf-16")
+                tasks[name] = f.read().decode("utf-16")
             return 0, "SUCCESS"
         if args[1] == "/Delete":
-            tasks.pop(TASK_NAME, None)
+            tasks.pop(name, None)
             return 0, "SUCCESS"
         return 1, ""
+
+    def _set_enabled(xml_text, on):
+        a, b = ("false", "true") if on else ("true", "false")
+        nl = chr(10) + "    <Hidden>"
+        return xml_text.replace("<Enabled>" + a + "</Enabled>" + nl, "<Enabled>" + b + "</Enabled>" + nl)
 
     xml = task_xml("C:\\py\\pythonw.exe", '"C:\\a&b\\main.py"', "C:\\a&b", "PC\\me")
     assert "<RunLevel>HighestAvailable</RunLevel>" in xml and "C:\\a&amp;b" in xml and "&quot;" in xml
@@ -179,6 +222,14 @@ def _selftest():
         # 重置 (数据目录清空) 后算第一次
         os.remove(os.path.join(d, MARKER))
         assert ensure(d, fake) == "on"
+        # 联动程序的任务 (15.8): OIT 的开机自启动开着才建; 关了就不建
+        assert link_state(fake) == "missing" and link_ensure(fake) == "on" and "linkd.py" in tasks[LINK_TASK]
+        n = len(calls)
+        assert link_ensure(fake) == "on" and any(c[1] == "/Create" for c in calls[n:]), "按当前位置重写"
+        assert link_remove(fake) and link_state(fake) == "missing" and link_remove(fake)
+        tasks[TASK_NAME] = _set_enabled(tasks[TASK_NAME], False)
+        assert link_ensure(fake) == "missing" and LINK_TASK not in tasks, "OIT 的开机自启动关了: 不建"
+        tasks[TASK_NAME] = _set_enabled(tasks[TASK_NAME], True)
         assert remove(fake) and state(fake) == "missing" and remove(fake)
     finally:
         shutil.rmtree(d, ignore_errors=True)

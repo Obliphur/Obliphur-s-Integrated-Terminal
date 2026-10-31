@@ -25,6 +25,7 @@ NO_WINDOW = 0x08000000
 RULES = (
     ("OIT device sync (TCP)", "TCP", "17930-17939"),
     ("OIT device sync (UDP)", "UDP", "17931"),
+    ("OIT link (TCP)", "TCP", "17940"),         # 联动程序 (linkd.py, MECHANICS 15.8)
 )
 
 
