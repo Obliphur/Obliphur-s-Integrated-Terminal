@@ -60,6 +60,14 @@ RESTART_GAP_MS = 10 * 60_000          # 本机因为别的设备的请求重启�
 EVICT_RETRY = 30                        # 秒: 解除绑定后还没送到的清空请求, 每隔这么久再送一次
 WIPES_KEEP = 50                         # 记住最近这么多个处理过的清空请求
 OFFLINE_FWD_MS = OFFLINE_MS + (SYNC_EVERY + 5) * 1000
+# 同步失败的原因是"对方拒绝连接" (它的主机开着, 只是 OIT 没在运行): 不是偶然的网络问题, 不必等满 OFFLINE_MS, 这么久没有消息就算离线 (MECHANICS 8.4)
+REFUSED_OFFLINE_MS = 25_000
+
+
+def refused(err: str) -> bool:
+    """同步失败的原因是不是"对方拒绝连接" (Windows 10061 / 系统语言的"积极拒绝" / Linux 的 refused)."""
+    e = str(err or "").lower()
+    return "10061" in e or "refused" in e or "积极拒绝" in str(err or "")
 # 关机 (MECHANICS 15.4): 一台设备最后发来的状态写着"收到关机指令" (off), 或者电量低于这么多 (%, 没在充电) 时突然离线,
 # 算作"关机": 效果和在线一样 (不算离线, 专注不记空闲, 合约不因它失败), 只是不同步. 重新同步上就恢复正常.
 # 前提是它开着开机自启动 (状态里 auto, MECHANICS 3.4 / 14.8): 没开 / 开不了的照旧算"离线".
@@ -1665,7 +1673,7 @@ class SyncService:
                 old = bool(mine and _vtuple(ver) and _vtuple(ver) < mine)
                 err = str((p or {}).get("last_err") or "")
                 if p is not None:
-                    online = err not in HARD_ERRORS and now - seen < OFFLINE_MS and not old
+                    online = err not in HARD_ERRORS and now - seen < (REFUSED_OFFLINE_MS if refused(err) else OFFLINE_MS) and not old
                 else:
                     online = now - seen < OFFLINE_FWD_MS
                 net_off = not online and not old and bool(st.get("adapter"))
@@ -2605,6 +2613,15 @@ def _selftest():
         sc.state["peers"]["pY"]["last_ok"] = t0 - OFFLINE_MS - 1000
         st = {d["id"]: d for d in sc.device_states()}["pY"]
         assert not st["online"] and st["err"] == "timed out", "一直没有消息: 算离线"
+        # 对方拒绝连接 (OIT 没在运行): 25 秒没有消息就算离线, 不必等满 60 秒; 超时的照旧要等
+        sc.state["peers"]["pY"]["last_ok"] = _now_ms() - 30_000
+        sc.state["peers"]["pY"]["last_err"] = "[WinError 10061] 由于目标计算机积极拒绝，无法连接。"
+        assert not {d["id"]: d for d in sc.device_states()}["pY"]["online"], "拒绝连接: 25 秒就算离线"
+        sc.state["peers"]["pY"]["last_ok"] = _now_ms() - 10_000
+        assert {d["id"]: d for d in sc.device_states()}["pY"]["online"], "拒绝连接但才 10 秒: 还在线"
+        sc.state["peers"]["pY"]["last_err"] = "timed out"
+        sc.state["peers"]["pY"]["last_ok"] = _now_ms() - 30_000
+        assert {d["id"]: d for d in sc.device_states()}["pY"]["online"], "超时的要等满 60 秒"
         sc.state["peers"]["pY"]["last_ok"] = t0
         sc.state["peers"]["pY"]["last_err"] = "away"
         assert not {d["id"]: d for d in sc.device_states()}["pY"]["online"], "对方明确不接受: 马上算离线"

@@ -161,6 +161,9 @@ class SyncService(
          *  离线的那段仍从最后一次有消息的时刻算起, 真的离线时专注记录不会少记; 只是转交过来的设备再多等一轮. 同 devsync.OFFLINE_MS. */
         const val OFFLINE_MS = 3 * SYNC_EVERY_MS
         const val OFFLINE_FWD_MS = OFFLINE_MS + SYNC_EVERY_MS + 5_000L
+        /** 同步失败的原因是"对方拒绝连接" (它的主机开着, 只是 OIT 没在运行): 不必等满 OFFLINE_MS, 这么久没有消息就算离线. 同 devsync.REFUSED_OFFLINE_MS. */
+        const val REFUSED_OFFLINE_MS = 25_000L
+        fun refused(err: String): Boolean = err.lowercase().let { "refused" in it || "econnrefused" in it }
         /** 同步失败的原因里, 这几种说明对方明确不接受 / 不在线 (不是偶然的网络问题): 不等 OFFLINE_MS, 马上算离线. */
         val HARD_ERRORS = setOf("unpaired", "wipe-pending", "away", "peer-not-proxy", "not-proxy")
         /** 关机 (MECHANICS 15.4): 一台设备最后发来的状态写着"收到关机指令" (off), 或者电量低于这么多 (%, 没在充电) 时突然离线,
@@ -1706,7 +1709,7 @@ class SyncService(
                 val ver = p.optString("version")
                 val old = mine != null && vparse(ver)?.let { vnewer(mine, it) } == true    // 版本比本机低: 算离线
                 val err = p.optString("last_err")
-                val online = err !in HARD_ERRORS && now - seen < OFFLINE_MS && !old
+                val online = err !in HARD_ERRORS && now - seen < (if (refused(err)) REFUSED_OFFLINE_MS else OFFLINE_MS) && !old
                 val netOff = !online && !old && st.optLong("adapter", 0L) > 0      // 换成了 Adapter 断网 (15.5)
                 val off = !online && !old && !netOff && wentOff(st)
                 DeviceState(id, name, online || off || netOff, st, seen, ver, old, off, netOff, err)
