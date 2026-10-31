@@ -134,6 +134,15 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
 
     // ---- 状态 ----
 
+    /** 本机刚从自由学习的外出回来, 还没同步上: (开始毫秒, 结束毫秒). 这段时间本机的记录在同步里有优先权 (MECHANICS 21.6). */
+    override fun awayWindow(): Pair<Long, Long>? {
+        val s = app.sync ?: return null
+        return runCatching {
+            if (s.peers().isEmpty()) null
+            else core.behavior.returned(s.myId, { ms -> s.peers().values.any { it.optLong("last_ok") >= ms } })
+        }.getOrNull()
+    }
+
     override fun status(): JSONObject {
         val t = core.timer
         val n = core.net
@@ -142,6 +151,7 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
         if (app.powerOff) st.put("off", true)
         st.put("auto", app.autostartOk())        // 开机自启动成功过 (这次开机): 关机的前提 (MECHANICS 14.8)
         app.battery()?.let { st.put("battery", it) }
+        awayWindow()?.let { st.put("away", JSONArray().put(it.first).put(it.second)) }     // 刚从自由学习的外出回来: 这次同步有优先权
         when (t.state) {
             TState.RUNNING -> st.put("timer", "running").put("since", t.startWall?.iso())
             TState.ON_BREAK -> st.put("timer", "break").put("left", t.countdown.toInt())

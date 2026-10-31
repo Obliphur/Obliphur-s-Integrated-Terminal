@@ -19,6 +19,9 @@ data class Outing(
     var owner: String = "",
     var mode: String = "",
 ) {
+    /** 自由学习的外出: 不记录, 不限制 (MECHANICS 21.6). */
+    val isFree get() = mode == Cfg.BEHAVIOR_FREE
+
     /** 实际结束 (或到此刻) 的时刻. */
     fun effectiveEnd(now: LocalDateTime): LocalDateTime {
         val s = stopped ?: return if (now < end) now else end
@@ -43,14 +46,20 @@ data class BehaviorSeg(val kind: String, val start: LocalDateTime, val end: Loca
 /**
  * 行为模式 (设置 → 日常) 与"外出" (MECHANICS 21). 对应桌面版 behavior.py.
  *
- * 封闭式管理 / 工作: 专注页多一个"外出"按钮; 外出期间每天最多记 10 小时,
+ * 三种模式专注页都有"外出"按钮 (封闭式管理叫"上学", 工作叫"工作", 自由学习叫"外出").
+ * 封闭式管理 / 工作: 外出期间每天最多记 10 小时,
  * 7:00 ~ 23:00 之内按 80% 专注 / 20% 休息填充统计, 夜里只算休息; 整点记录的自动填充
- * 内容是「外出」/「休息」; 当天联网额度 ×0.2, 正在外出时冷静期 ×0.3;
+ * 内容是「上学」/「工作」(外出的小时) 和「休息」(其他时间, 固定不能改); 当天联网额度 ×0.2, 正在外出时冷静期 ×0.3;
  * 外出结束后按记录的小时数 ×6 分钟发休息时间 (最多 3 小时).
+ * 自由学习: 外出只是标记 (不记录, 不限制): 专注 / 休息 / 合约照常, 其他设备离线不记空闲 / 不让合约失败,
+ * 整点记录填「外出」; 外出的设备回来之后第一次同步, 它的记录有优先权 (MECHANICS 21.6).
  *
  * 外出记录通过设备同步 (behavior 文档) 共用; 休息时间只由开始外出的设备发.
  * mode_since 只在本机记 (整点记录只改切换之后的小时).
  */
+/** 外出的设备回来之后, 最多这么久还算"刚回来" (同步优先权, MECHANICS 21.6). */
+const val PRIO_KEEP_HOURS = 48L
+
 class Behavior(
     private val file: File,
     private val settings: Settings,
@@ -114,7 +123,12 @@ class Behavior(
 
     fun mode(): String = settings.str("BEHAVIOR_MODE").let { if (it in Cfg.BEHAVIOR_MODES) it else Cfg.BEHAVIOR_FREE }
 
+    /** 这个模式有没有特殊记录 (封闭式管理 / 工作: 外出按规则记录, 联网额度, 休息奖励). 自由学习的外出只是标记. */
     fun enabled(): Boolean = mode() == Cfg.BEHAVIOR_CLOSED || mode() == Cfg.BEHAVIOR_WORK
+
+    /** 这次外出在整点记录里的自动填充内容: 上学 / 工作 / 外出 (固定, 跟随界面语言). */
+    fun outingText(o: Outing): String =
+        I18n.autoName(Cfg.OUTING_TEXTS[o.mode] ?: Cfg.OUTING_TEXTS.getValue(Cfg.BEHAVIOR_FREE))
 
     /** 设置里的行为模式变了: 记下本机从什么时候开始用这个模式. */
     fun syncMode(): Boolean {
@@ -130,7 +144,8 @@ class Behavior(
 
     fun sorted(): List<Outing> = outings.sortedBy { it.start }
 
-    fun active(now: LocalDateTime = this.now()): Outing? {
+    /** 正在进行的外出 (不管哪种模式的). */
+    fun current(now: LocalDateTime = this.now()): Outing? {
         var cur: Outing? = null
         for (o in outings) {
             if (o.stopped != null) continue
@@ -141,13 +156,57 @@ class Behavior(
         return cur
     }
 
-    /** 开始一次外出; "" = 好, 否则是原因. */
+    /** 正在进行的、要按规则记录的外出 (封闭式管理 / 工作): 期间不能专注 / 休息 / 开始合约. */
+    fun active(now: LocalDateTime = this.now()): Outing? = current(now)?.takeIf { !it.isFree }
+
+    /** 正在进行的自由学习的外出: 什么都不限制, 只是其他设备离线不算空闲 / 不让合约失败. */
+    fun away(now: LocalDateTime = this.now()): Outing? = current(now)?.takeIf { it.isFree }
+
+    private fun ms(t: LocalDateTime) = t.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+
+    /** [a, b] (毫秒) 里处在自由学习的外出之内的时间段 (合并过的). */
+    fun awaySpans(a: Long, b: Long): List<Pair<Long, Long>> {
+        val at = now()
+        val spans = outings.filter { it.isFree }.mapNotNull { o ->
+            val x = maxOf(ms(o.start), a)
+            val y = minOf(ms(o.effectiveEnd(at)), b)
+            if (y > x) x to y else null
+        }.sortedBy { it.first }
+        val out = ArrayList<Pair<Long, Long>>()
+        for ((x, y) in spans) {
+            if (out.isNotEmpty() && x <= out.last().second) out[out.size - 1] = out.last().first to maxOf(out.last().second, y)
+            else out.add(x to y)
+        }
+        return out
+    }
+
+    /** 最近一次自由学习的外出结束 (或此刻, 还在外出时) 的时刻; 没有时 null. */
+    fun lastAwayEnd(at: LocalDateTime = now()): LocalDateTime? =
+        outings.filter { it.isFree }.maxOfOrNull { it.effectiveEnd(at) }
+
+    /** owner 这台设备刚结束的自由学习的外出, 回来之后还没同步上 (最多 PRIO_KEEP_HOURS 小时): (开始, 结束) 毫秒.
+     *  这段时间它的记录在同步里有优先权 (MECHANICS 21.6). synced(毫秒) → 结束之后同步成功过没有. */
+    fun returned(owner: String, synced: (Long) -> Boolean, at: LocalDateTime = now()): Pair<Long, Long>? {
+        if (owner.isEmpty()) return null
+        for (o in sorted()) {
+            if (!o.isFree || o.owner != owner) continue
+            val s = o.stopped ?: continue
+            if (s.isAfter(at) || java.time.Duration.between(s, at).toHours() >= PRIO_KEEP_HOURS) continue
+            if (!s.isAfter(o.start)) continue          // 作废的外出
+            val sMs = ms(s)
+            val done = try { synced(sMs) } catch (e: Exception) { true }
+            if (done) continue
+            return ms(o.start) to sMs
+        }
+        return null
+    }
+
+    /** 开始一次外出 (哪种模式都可以); "" = 好, 否则是原因. */
     fun start(hours: Int, owner: String, at: LocalDateTime = now()): String {
-        if (!enabled()) return tr("当前行为模式没有外出.")
         if (hours < 1 || hours > Cfg.OUTING_MAX_HOURS) return tr("持续时间要在 1 ~ {n} 小时之间.", "n" to Cfg.OUTING_MAX_HOURS)
         val t = at.withNano(0)
         tick(t) { false }                 // 先把已经到时间的处理掉
-        if (active(t) != null) return tr("已经在外面了.")
+        if (current(t) != null) return tr("已经在外面了.")
         val o = Outing(
             t.format(Fmt.TS) + System.currentTimeMillis().toString().takeLast(3),
             t, hours, t.plusHours(hours.toLong()), owner = owner, mode = mode(),
@@ -161,7 +220,7 @@ class Behavior(
     /** 结束当前这次外出 (提前结束也算). */
     fun stop(canReward: (Outing) -> Boolean, at: LocalDateTime = now()): BehaviorEnd {
         val t = at.withNano(0)
-        val o = active(t) ?: outings.filter { it.stopped == null }.maxByOrNull { it.start }
+        val o = current(t) ?: outings.filter { it.stopped == null }.maxByOrNull { it.start }
         if (o != null && o.stopped == null) {
             o.stopped = if (t < o.end) t else o.end
             save()
@@ -226,11 +285,13 @@ class Behavior(
 
     /** 这段外出在某一天被记录的小时数: 向下取整, 扣掉同一天更早的外出已经记过的小时. */
     private fun recordedHoursOn(o: Outing, day: LocalDateTime, at: LocalDateTime): Double {
+        if (o.isFree) return 0.0                       // 自由学习的外出不记录
         val sec = daySeconds(o, day, at)
         if (sec <= 0) return 0.0
         var used = 0.0
         for (prev in sorted()) {
             if (prev.id == o.id) break
+            if (prev.isFree) continue
             val psec = daySeconds(prev, day, at)
             if (psec > 0) used += minOf(10.0, floor(psec / 3600.0 + 1e-9))
         }
@@ -255,6 +316,7 @@ class Behavior(
         val out = HashSet<String>()
         val at = now()
         for (o in outings) {
+            if (o.isFree) continue
             var day = o.start.toLocalDate().atStartOfDay()
             val last = o.effectiveEnd(at).toLocalDate().atStartOfDay()
             while (!day.isAfter(last)) {
@@ -327,7 +389,7 @@ class Behavior(
         if (!enabled()) return 1.0
         val at = now()
         val d0 = day.atStartOfDay()
-        return if (outings.any { overlap(it, d0, at) != null }) Cfg.OUTING_QUOTA_FACTOR else 1.0
+        return if (outings.any { !it.isFree && overlap(it, d0, at) != null }) Cfg.OUTING_QUOTA_FACTOR else 1.0
     }
 
     fun cooldownFactor(at: LocalDateTime = now()): Double =
@@ -335,19 +397,18 @@ class Behavior(
 
     // ---- 整点记录 ----
 
+    /** 这一小时的超时自动记录内容; "" = 用普通的超时自动记录内容. 和外出重叠的小时按这次外出的种类:
+     *  上学 / 工作 / 外出 (各自独立); 封闭式管理 / 工作里其他时间是「休息」. */
     fun hourAutoText(hourStart: LocalDateTime): String {
-        if (!enabled()) return ""
         val since = modeSince
         val hourEnd = hourStart.plusHours(1)
         if (since != null && !hourEnd.isAfter(since)) return ""
         val at = now()
         for (o in outings) {
             val end = o.effectiveEnd(at)
-            if (o.start < hourEnd && end > hourStart && end > o.start) {      // 作废的外出 (0 长度) 不算
-                return settings.str("OUTING_TEXT").ifBlank { Cfg.OUTING_TEXT }
-            }
+            if (o.start < hourEnd && end > hourStart && end > o.start) return outingText(o)      // 作废的外出 (0 长度) 不算
         }
-        return settings.str("REST_TEXT").ifBlank { Cfg.REST_TEXT }
+        return if (enabled()) I18n.autoName(Cfg.REST_TEXT) else ""
     }
 
     // ---- 设备同步 ----

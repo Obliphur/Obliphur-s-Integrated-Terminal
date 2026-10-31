@@ -110,7 +110,8 @@ object Cfg {
     const val BEHAVIOR_FREE = "free"
     val BEHAVIOR_MODES = listOf(BEHAVIOR_CLOSED, BEHAVIOR_WORK, BEHAVIOR_FREE)
     const val BEHAVIOR_DELAY_HOURS = 24 * 7L
-    const val OUTING_TEXT = "外出"
+    /** 整点记录在外出期间的自动填充 (固定, 不能改): 封闭式管理 → 上学, 工作 → 工作, 自由学习 → 外出; 其他时间 (封闭式管理 / 工作) → 休息. */
+    val OUTING_TEXTS = mapOf(BEHAVIOR_CLOSED to "上学", BEHAVIOR_WORK to "工作", BEHAVIOR_FREE to "外出")
     const val REST_TEXT = "休息"
     // 每天最多记 10 小时; 7:00 ~ 睡觉时间 (SLEEP_*) 之内的部分按 80% 专注 / 20% 休息填充.
     const val OUTING_WINDOW_START = 7 * 60

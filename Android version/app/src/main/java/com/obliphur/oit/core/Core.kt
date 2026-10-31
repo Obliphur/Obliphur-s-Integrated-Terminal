@@ -132,6 +132,10 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     var wentOff: () -> Boolean = { false }
     /** 其他设备从 Adapter 断网回来了: (设备 id, 开始毫秒, 结束毫秒) (MECHANICS 15.5). */
     var popAdapterBack: () -> List<Triple<String, Long, Long>> = { emptyList() }
+    /** 其他设备刚从自由学习的外出回来: (设备 id, 开始毫秒, 结束毫秒), 它的记录有优先权 (MECHANICS 21.6). */
+    var popAwayPrio: () -> List<Triple<String, Long, Long>> = { emptyList() }
+    /** 马上和绑定的设备同步一次 (没有绑定的设备时什么都不做). */
+    var syncNow: () -> Unit = {}
     /** 本机关机的那段 (MECHANICS 15.4): 记下来, 之后记下的专注里这段记为空闲, 不计入统计. */
     var addSelfOff: (Long, Long) -> Unit = { _, _ -> }
     private var powerAt = -1e9
@@ -311,6 +315,47 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         }
     }
 
+    /** 别的设备刚从自由学习的外出回来: 外出期间本机和它重叠的专注计时记录让位给它 (只改本机的, MECHANICS 21.6). */
+    private fun checkAwayPriority() {
+        val z = java.time.ZoneId.systemDefault()
+        var s = 0.0; var b = 0.0; var i = 0.0
+        for ((did, a, e) in popAwayPrio()) {
+            val led = dm.peersById()[did] ?: continue
+            val recs = led.optJSONArray("focus")?.objects() ?: emptyList()
+            val r = dm.resolveOverlap(recs, LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(a), z),
+                LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(e), z), tieMine = false, priority = true)
+            s += r["study"] ?: 0.0; b += r["break"] ?: 0.0; i += r["idle"] ?: 0.0
+        }
+        if (s + b + i > 0) {
+            toast(tr("刚从外出回来的设备的记录有优先权: 去掉了本机重叠的专注 {s}, 休息 {b}, 空闲 {i}.",
+                "s" to fmtHm(s), "b" to fmtHm(b), "i" to fmtHm(i)), "info", long = true)
+            changed()
+            syncNow()
+        }
+    }
+
+    /** 离线的时间段里去掉自由学习的外出期间 (MECHANICS 21.6): 外出的设备本来就不在家里的网络上. */
+    fun withoutAway(spans: List<Pair<Long, Long>>, a: Long, b: Long): List<Pair<Long, Long>> {
+        var cur = spans
+        for ((x, y) in behavior.awaySpans(a, b)) {
+            cur = cur.flatMap { (s, e) ->
+                if (e <= x || s >= y) listOf(s to e)
+                else listOfNotNull(if (s < x) s to x else null, if (e > y) y to e else null)
+            }
+        }
+        return cur
+    }
+
+    /** 合并重叠的时间段. */
+    fun mergeSpans(spans: List<Pair<Long, Long>>): List<Pair<Long, Long>> {
+        val out = ArrayList<Pair<Long, Long>>()
+        for ((a, b) in spans.sortedBy { it.first }) {
+            if (out.isNotEmpty() && a <= out.last().second) out[out.size - 1] = out.last().first to maxOf(out.last().second, b)
+            else out.add(a to b)
+        }
+        return out
+    }
+
     /** 时间重叠的两个合约 (MECHANICS 15.5): 问用户留哪个; 在别的设备上选过了就撤掉提示. */
     private fun checkContractConflicts() {
         val c = contract
@@ -437,7 +482,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         timer.tick()
         runCatching { prescript.tick() }
         beatPower()
-        runCatching { checkAdapterBack(); checkContractConflicts() }
+        runCatching { checkAdapterBack(); checkAwayPriority(); checkContractConflicts() }
         checkContract()
         behaviorTick()
 
@@ -539,6 +584,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         offlineSeen = off.keys
         val fresh = if (was == null) emptySet() else off.keys - was
         if (fresh.isEmpty() || !isLatestActive()) return
+        if (behavior.away() != null) return                  // 自由学习的外出中: 其他设备离线是正常的
         val names = fresh.sorted().joinToString(", ") { off[it] ?: "?" }
         logNotice("SYNC offline $names")
         host.playChime {}
@@ -722,8 +768,11 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
 
     // ---- 行为模式 / 外出 (MECHANICS 21) ----
 
-    /** 现在正在外出吗. */
+    /** 现在正在外出吗 (封闭式管理 / 工作, 要按规则记录的那种). */
     val outing: Outing? get() = behavior.active()
+
+    /** 现在在自由学习的外出吗 (什么都不限制, MECHANICS 21.6). */
+    val away: Outing? get() = behavior.away()
 
     /** 休息时间只由开始这次外出的设备发 (和计时器的记录只记一次一样). */
     private fun canRewardOuting(o: Outing): Boolean {
@@ -738,6 +787,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
                 "h" to numText(ev.hours), "t" to fmtMs(ev.reward.toDouble())), "success", long = true)
         } else if (ev.ended.isNotEmpty()) {
             toast(tr("外出结束."))
+            syncNow()                    // 外出的设备回来了: 马上同步 (它的记录有优先权, MECHANICS 21.6)
         }
     }
 
@@ -760,11 +810,14 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
 
     /** 开始外出. 返回 "" = 好, 否则是原因 (界面直接显示). */
     fun startOuting(hours: Int): String {
-        if (contract.active) return tr("合约中不能外出.")
-        if (timer.state != TState.IDLE) return tr("请先结束专注 / 休息再外出.")
+        // 自由学习的外出不受限制: 专注 / 休息 / 合约中也可以 (MECHANICS 21.6)
+        if (behavior.enabled()) {
+            if (contract.active) return tr("合约中不能外出.")
+            if (timer.state != TState.IDLE) return tr("请先结束专注 / 休息再外出.")
+        }
         val err = behavior.start(hours, myId())
         if (err.isEmpty()) {
-            val end = behavior.active()?.end
+            val end = behavior.current()?.end
             logNotice("OUTING start ${hours}h" + (end?.let { " until ${it.format(Fmt.YMDHM)}" } ?: ""))
             toast(tr("外出 {h} 小时, 到 {at} 结束.", "h" to hours,
                 "at" to (end?.format(Fmt.MDHM) ?: "")), "success")
@@ -774,7 +827,9 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     }
 
     fun stopOuting() {
+        val free = behavior.away() != null
         applyBehaviorEnd(behavior.stop(::canRewardOuting))
+        if (free) syncNow()
         changed()
     }
 
@@ -980,8 +1035,12 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         checkSupply()
         checkQuiet()
         // 绑定的设备离线超过 15 分钟: 合约失败 (看到它离线的设备都可以判定)
-        if (c.active && hasPeers()) {
-            val devices = offlineDevices().map { (n, ms) -> n to ms.toLocalDateTime() }
+        // (自由学习的外出期间不算, 外出结束后从结束的时刻起算: MECHANICS 21.6)
+        if (c.active && hasPeers() && behavior.away() == null) {
+            val floor = behavior.lastAwayEnd()
+            val devices = offlineDevices().map { (n, ms) ->
+                n to ms.toLocalDateTime().let { if (floor != null && floor.isAfter(it)) floor else it }
+            }
             c.offlineDue(devices, LocalDateTime.now(), syncStartedMs().toLocalDateTime())?.let { (name, at) ->
                 offlineName = name
                 endContract("offline", at); return

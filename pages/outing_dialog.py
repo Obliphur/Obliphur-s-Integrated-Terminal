@@ -1,6 +1,6 @@
-"""外出: 设置持续多少小时 (封闭式管理 / 工作, MECHANICS 21).
+"""外出: 设置持续多少小时 (封闭式管理 = 上学, 工作 = 工作, 自由学习 = 外出, MECHANICS 21).
 
-只有一个填写框: 持续几小时 (1 ~ OUTING_MAX_HOURS), 可以跨天. 点"开始外出"后
+只有一个填写框: 持续几小时 (1 ~ OUTING_MAX_HOURS), 可以跨天. 点"开始…"后
 由 app 开始记录; 关闭窗口 = 取消.
 """
 
@@ -13,12 +13,13 @@ from i18n import tr
 
 
 class OutingDialog(tk.Toplevel):
-    def __init__(self, master, on_done=None, max_hours: int = None):
+    def __init__(self, master, on_done=None, max_hours: int = None, name: str = "外出"):
         super().__init__(master, bg=COLORS["bg"], highlightbackground=COLORS["accent"],
                          highlightthickness=2)
         self.on_done = on_done
         self.max_hours = max(1, int(max_hours or config.OUTING_MAX_HOURS))
-        self.title(tr("🚪  外出"))
+        self.name = name if name in ("上学", "工作") else "外出"
+        self.title(tr(f"🚪  {self.name}"))
         self.resizable(False, False)
         self.attributes("-topmost", True)
         self.protocol("WM_DELETE_WINDOW", self.close)
@@ -38,7 +39,7 @@ class OutingDialog(tk.Toplevel):
         bg = COLORS["bg"]
         body = tk.Frame(self, bg=bg)
         body.pack(fill="both", expand=True, padx=22, pady=18)
-        tk.Label(body, text=tr("🚪  外出"), bg=bg, fg=COLORS["text"],
+        tk.Label(body, text=tr(f"🚪  {self.name}"), bg=bg, fg=COLORS["text"],
                  font=config.font("h2", bold=True), anchor="w").pack(fill="x")
         row = tk.Frame(body, bg=bg)
         row.pack(fill="x", pady=(14, 4))
@@ -55,7 +56,7 @@ class OutingDialog(tk.Toplevel):
         btns = tk.Frame(body, bg=bg)
         btns.pack(fill="x", pady=(12, 0))
         ttk.Button(btns, text=tr("取消"), command=self.close).pack(side="right")
-        ttk.Button(btns, text=tr("开始外出"), style="Accent.TButton",
+        ttk.Button(btns, text=tr(f"开始{self.name}"), style="Accent.TButton",
                    command=self._ok).pack(side="right", padx=(0, 8))
 
     def _ok(self):

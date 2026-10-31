@@ -114,8 +114,6 @@ object Schema {
         Spec("BEHAVIOR_MODE", "行为模式", Kind.CHOICE, true, "daily", Cfg.BEHAVIOR_FREE,
             choices = listOf("closed" to "封闭式管理", "work" to "工作", "free" to "自由学习"),
             delayHours = Cfg.BEHAVIOR_DELAY_HOURS, noSetup = true),
-        Spec("OUTING_TEXT", "外出自动记录内容", Kind.TEXT, true, "daily", Cfg.OUTING_TEXT),
-        Spec("REST_TEXT", "其他时间自动记录内容", Kind.TEXT, true, "daily", Cfg.REST_TEXT),
         // ---- 日常: 周一到周日的睡觉时间 (MECHANICS 19) ----
         time("SLEEP_MON", "周一睡觉时间", "周一"),
         time("SLEEP_TUE", "周二睡觉时间", "周二"),

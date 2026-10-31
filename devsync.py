@@ -851,7 +851,9 @@ class SyncService:
             out[doc] = {key: [t[key][1], kv.get(key)] for key in t}
         return out
 
-    def _wins(self, doc, key, mt, val, cur) -> bool:
+    def _wins(self, doc, key, mt, val, cur, win_r=None, win_l=None) -> bool:
+        """win_r: 发来的这台设备刚从自由学习的外出回来 (MECHANICS 21.6), win_l: 本机刚回来 —— [开始, 结束] 毫秒;
+        外出期间 (结束之前) 改过的计时器状态 / 整点记录, 回来的设备有优先权."""
         cur_mt, cur_val = cur
         if doc == "prescript":
             # 指令: 已经结束的记录 / 结算过的奖励永远盖过进行中的, 其他按修改时间
@@ -868,6 +870,10 @@ class SyncService:
                 return False
             if l_auto and val and not r_auto:
                 return True
+        if win_r and not win_l and _in_away(doc, key, win_r) and int(cur_mt) <= win_r[1]:
+            return True                              # 它刚回来: 外出期间本机改的让位给它
+        if win_l and not win_r and _in_away(doc, key, win_l) and int(mt) <= win_l[1]:
+            return False                             # 本机刚回来: 别的设备在外出期间改的让位给本机
         return int(mt) > int(cur_mt)
 
     def snapshot(self) -> dict:
@@ -938,6 +944,12 @@ class SyncService:
         stamped = self._stamp(local)
         track = self.state["track"]
         now = _now_ms()
+        # 自由学习的外出 (MECHANICS 21.6): 外出的设备回来以后第一次同步, 它的记录有优先权
+        win_r = _away_win(((snap.get("status") or {}).get(sender) or {}).get("away")) if sender and sender != my else None
+        win_l = _away_win(_call(self.local, "away_window", None))
+        if win_r:
+            with self.lock:
+                self.state.setdefault("away_prio", {})[sender] = list(win_r)
         for doc, entries in (snap.get("docs") or {}).items():
             if doc not in local or not isinstance(entries, dict):
                 continue
@@ -949,7 +961,7 @@ class SyncService:
                 except Exception:
                     continue
                 cur = mine.get(key)
-                if init or cur is None or self._wins(doc, key, mt, val, cur):
+                if init or cur is None or self._wins(doc, key, mt, val, cur, win_r, win_l):
                     if cur is None or cur[1] != val:
                         changes[key] = val
                     track.setdefault(doc, {})[key] = [_hash(val), mt]
@@ -1639,6 +1651,15 @@ class SyncService:
             self.state.pop("adapter_end", None)
         self._save()
 
+    def pop_away_prio(self) -> list:
+        """刚从自由学习的外出回来的设备: [(设备 id, 开始毫秒, 结束毫秒)], 取出后清空 (本机据此处理自己记录里的重叠, MECHANICS 21.6)."""
+        with self.lock:
+            out = [(did, int(v[0]), int(v[1])) for did, v in (self.state.get("away_prio") or {}).items()]
+            self.state["away_prio"] = {}
+        if out:
+            self._save()
+        return out
+
     def pop_adapter_back(self) -> list:
         """其他设备从 Adapter 断网回来了: [(设备 id, 开始毫秒, 结束毫秒)], 取出后清空 (本机据此处理自己记录里的重叠)."""
         with self.lock:
@@ -1735,6 +1756,30 @@ class SyncService:
         with self.lock:
             return [dict(v, id=k, name=(self.state["ledgers"].get(k) or {}).get("name", "?"))
                     for k, v in self.state["status"].items() if k != self.my_id]
+
+
+def _away_win(v):
+    """状态里的 away: [开始毫秒, 结束毫秒] → (开始, 结束); 不是这个格式时 None."""
+    try:
+        if isinstance(v, (list, tuple)) and len(v) == 2 and float(v[1]) > float(v[0]) > 0:
+            return int(v[0]), int(v[1])
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
+def _in_away(doc, key, win) -> bool:
+    """这一项算不算外出期间会改到的内容: 计时器此刻的状态, 和与外出重叠的那些小时的整点记录."""
+    if doc == "timer":
+        return key == "live"
+    if doc != "hours":
+        return False
+    try:
+        day, hour = str(key).split("/")[:2]
+        h0 = datetime.strptime(day, "%Y-%m-%d").replace(hour=int(hour)).timestamp() * 1000
+    except (ValueError, IndexError):
+        return False
+    return h0 < win[1] and h0 + 3600_000 > win[0]
 
 
 def went_off(st: dict) -> bool:
@@ -2477,6 +2522,25 @@ def _selftest():
         assert went_off({"off": True, "auto": True}) and went_off({"battery": 0, "auto": True})
         assert not went_off({"battery": None, "auto": True}) and not went_off({"off": True})
         assert not went_off({}) and not went_off(None)
+        # 自由学习的外出 (MECHANICS 21.6): 外出的设备回来以后, 外出期间 (结束之前) 改过的计时器状态 / 整点记录它有优先权
+        win = (t0 - 3_600_000, t0 - 600_000)
+        old_live, new_live = {"state": "idle"}, {"state": "running"}
+        assert not sc._wins("timer", "live", t0 - 2_000_000, new_live, (t0 - 700_000, old_live)), "没有外出: 谁新听谁的"
+        assert sc._wins("timer", "live", t0 - 2_000_000, new_live, (t0 - 700_000, old_live), win, None), "它刚回来: 外出期间本机改的让位"
+        assert not sc._wins("timer", "live", t0 - 2_000_000, new_live, (t0 - 100_000, old_live), win, None), \
+            "本机在它回来之后才改的不让"
+        assert not sc._wins("timer", "live", t0 - 700_000, old_live, (t0 - 2_000_000, new_live), None, win), "本机刚回来: 别的设备在外出期间改的让位"
+        assert sc._wins("timer", "live", t0 - 100_000, old_live, (t0 - 2_000_000, new_live), None, win), "回来之后别人才改的听别人的"
+        assert not sc._wins("timer", "break_carry", t0 - 2_000_000, 5, (t0 - 700_000, 9), win, None), "别的项照旧按时间"
+        day = datetime.fromtimestamp((t0 - 1_800_000) / 1000)
+        key_in = f"{day:%Y-%m-%d}/{day.hour}"
+        key_out = f"{day:%Y-%m-%d}/{(day.hour + 5) % 24}"
+        assert sc._wins("hours", key_in, t0 - 2_000_000, "study", (t0 - 700_000, "play"), win, None), "外出期间的那一小时"
+        assert not sc._wins("hours", key_out, t0 - 2_000_000, "study", (t0 - 700_000, "play"), win, None), "不在外出期间的小时"
+        assert _away_win([t0 - 3_600_000, t0]) == (t0 - 3_600_000, t0) and _away_win([5, 3]) is None and _away_win(None) is None
+        sc.merge({"status": {"pY": {"ts": t0 + 2, "timer": "idle", "away": [t0 - 3_600_000, t0 - 600_000]}}, "device": {"id": "pY"}})
+        assert sc.pop_away_prio() == [("pY", t0 - 3_600_000, t0 - 600_000)] and sc.pop_away_prio() == []
+        sc.state["status"]["pY"] = {"ts": t0, "timer": "idle"}
         # 转交过来的设备一天没有消息: 不再显示
         sc.state["status"]["dX"]["ts"] = t0 - STALE_FWD_MS - 1000
         assert "dX" not in {d["id"] for d in sc.device_states()} and "dX" in sc.state["gone"]

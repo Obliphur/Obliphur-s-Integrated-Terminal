@@ -48,9 +48,9 @@ class BehaviorTest {
         assertEquals(7200 * 0.2, rest, 1e-6)
         assertEquals(1.6, b.studyHours(LocalDate.of(2026, 10, 19), clock), 1e-9)
         assertEquals(2.0, b.recordedHours(o!!, clock), 1e-9)
-        // 整点记录: 外出的小时是"外出", 其他时间是"休息"; 模式切换之前的不改
-        assertEquals("外出", b.hourAutoText(at(2026, 10, 19, 10, 0)))
-        assertEquals("外出", b.hourAutoText(at(2026, 10, 19, 11, 0)))
+        // 整点记录: 外出的小时是"上学" (封闭式管理), 其他时间是"休息"; 模式切换之前的不改
+        assertEquals("上学", b.hourAutoText(at(2026, 10, 19, 10, 0)))
+        assertEquals("上学", b.hourAutoText(at(2026, 10, 19, 11, 0)))
         assertEquals("休息", b.hourAutoText(at(2026, 10, 19, 14, 0)))
         assertEquals("休息", b.hourAutoText(at(2026, 10, 19, 8, 0)))
         assertEquals("", b.hourAutoText(at(2026, 10, 18, 23, 0)))
@@ -178,6 +178,49 @@ class BehaviorTest {
         assertTrue(b2.days().isEmpty())
         assertEquals("休息", b2.hourAutoText(at(2026, 10, 19, 15, 0)))
         assertEquals(0, b2.tick(clock) { true }.reward)
+    }
+
+    @Test
+    fun workAndFreeOutings() {
+        // 工作的外出填「工作」; 自由学习的外出只是标记: 不记录, 不限制, 填「外出」, 没有「休息」(MECHANICS 21.6)
+        var clock = at(2026, 10, 19, 0, 0)
+        val w = Behavior(tmp(), settings(Cfg.BEHAVIOR_WORK)) { clock }
+        assertEquals("", w.start(2, "dev", at(2026, 10, 19, 10, 0)))
+        clock = at(2026, 10, 19, 11, 0)
+        assertEquals("工作", w.hourAutoText(at(2026, 10, 19, 10, 0)))
+        assertEquals("休息", w.hourAutoText(at(2026, 10, 19, 12, 0)))
+
+        clock = at(2026, 10, 19, 0, 0)
+        val b = Behavior(tmp(), settings(Cfg.BEHAVIOR_FREE)) { clock }
+        assertEquals("", b.start(5, "phone", at(2026, 10, 19, 10, 0)))
+        clock = at(2026, 10, 19, 12, 0)
+        val o = b.away(clock)!!
+        assertTrue(o.isFree)
+        assertNull(b.active(clock))
+        assertEquals(o, b.current(clock))
+        assertEquals(1.0, b.quotaFactor(LocalDate.of(2026, 10, 19)), 1e-9)
+        assertEquals(1.0, b.cooldownFactor(clock), 1e-9)
+        assertEquals(0.0, b.recordedHours(o, clock), 1e-9)
+        assertTrue(b.days().isEmpty())
+        assertEquals("外出", b.hourAutoText(at(2026, 10, 19, 11, 0)))
+        assertEquals("", b.hourAutoText(at(2026, 10, 19, 15, 0)))
+        assertEquals(tr("已经在外面了."), b.start(1, "phone", clock))
+        val z = java.time.ZoneId.systemDefault()
+        fun ms(t: LocalDateTime) = t.atZone(z).toInstant().toEpochMilli()
+        assertEquals(listOf(ms(at(2026, 10, 19, 10, 0)) to ms(at(2026, 10, 19, 11, 0))),
+            b.awaySpans(ms(at(2026, 10, 19, 9, 0)), ms(at(2026, 10, 19, 11, 0))))
+        // 回来以后没同步上之前, 它的设备有优先权; 同步上了 / 超过 48 小时就没有了
+        assertNull(b.returned("phone", { false }, clock))
+        val ev = b.stop({ true }, at(2026, 10, 19, 13, 0))
+        assertEquals(0, ev.reward)
+        clock = at(2026, 10, 19, 13, 5)
+        val r = b.returned("phone", { false }, clock)
+        assertNotNull(r)
+        assertTrue(r!!.first < r.second)
+        assertNull(b.returned("phone", { true }, clock))
+        assertNull(b.returned("other", { false }, clock))
+        assertNull(b.returned("phone", { false }, clock.plusHours(49)))
+        assertEquals(at(2026, 10, 19, 13, 0), b.lastAwayEnd(clock))
     }
 
     @Test

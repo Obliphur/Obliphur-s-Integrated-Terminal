@@ -161,23 +161,10 @@ SETTINGS_SCHEMA = [
             ("free", "自由学习"),
         ],
         "fmt": lambda v: {"closed": "封闭式管理", "work": "工作"}.get(str(v), "自由学习"),
-        "desc": "封闭式管理 / 工作: 专注页多一个「外出」按钮, 外出期间按 MECHANICS 21 记录. "
+        "desc": "专注页的「外出」按钮三种身份都有 (封闭式管理叫「上学」, 工作叫「工作」, 自由学习叫「外出」). "
+                "封闭式管理 / 工作: 外出期间按 MECHANICS 21 记录; 自由学习: 外出只是标记, 专注 / 休息 / 合约照常. "
                 "第一次选择立即生效, 之后修改要等 7 天 (168 小时).",
         "page": "daily", "delay_hours": config.BEHAVIOR_DELAY_HOURS, "no_setup": True,
-    },
-    {
-        "key": "OUTING_TEXT", "label": "外出自动记录内容",
-        "kind": "text", "apply": APPLY_DELAY,
-        "fmt": lambda v: str(v),
-        "desc": "行为模式下, 整点记录里外出那段时间的超时自动填充内容.",
-        "page": "daily",
-    },
-    {
-        "key": "REST_TEXT", "label": "其他时间自动记录内容",
-        "kind": "text", "apply": APPLY_DELAY,
-        "fmt": lambda v: str(v),
-        "desc": "行为模式下, 没有外出时整点记录的超时自动填充内容.",
-        "page": "daily",
     },
     # ---- 日常: 睡觉时间, 周一到周日各自可以改 (MECHANICS 19) ----
     _time("SLEEP_MON", "周一睡觉时间", "周一"),
@@ -784,7 +771,7 @@ class SettingsManager:
             return str(value) if str(value) in config.THEMES else config.DEFAULT_THEME
         if key == "CONTRACT_THEME":
             return str(value) if str(value) in ("ops", "urban") else "ops"
-        if key in ("LANGUAGE", "AUTO_TEXT", "OUTING_TEXT", "REST_TEXT"):
+        if key in ("LANGUAGE", "AUTO_TEXT"):
             return str(value)
         if key == "CHIME_WAV":
             return "" if str(value).strip() in ("", "__builtin__") else str(value)
@@ -946,12 +933,9 @@ def _selftest():
     st, _msg = m5.stage("BEHAVIOR_MODE", "work")
     assert st == "staged", "第二次修改要等 7 天"
     assert 167 * 3600 < m5.pending_left_seconds("BEHAVIOR_MODE") <= 168 * 3600
-    # 自动记录内容: 文本项, 48 小时
-    st, _msg = m5.stage("OUTING_TEXT", "上班")
-    assert st == "staged" and m5.value("OUTING_TEXT") == "外出"
-    m5.pending["OUTING_TEXT"]["apply_at"] = m5._now() - timedelta(seconds=1)
-    assert m5.promote_due() == ["OUTING_TEXT"] and config.OUTING_TEXT == "上班"
-    config.OUTING_TEXT, config.BEHAVIOR_MODE = "外出", config.BEHAVIOR_FREE
+    # 外出 / 休息的自动记录内容是固定的, 不在设置里 (只有 Distracted 可以改)
+    assert "OUTING_TEXT" not in SCHEMA_BY_KEY and "REST_TEXT" not in SCHEMA_BY_KEY and "AUTO_TEXT" in SCHEMA_BY_KEY
+    config.BEHAVIOR_MODE = config.BEHAVIOR_FREE
     return "settings_manager selftest OK"
 
 

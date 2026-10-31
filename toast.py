@@ -273,9 +273,10 @@ class Notice(tk.Toplevel):
     置顶但不抢占输入 (不 grab), 不妨碍继续操作主窗口.
     buttons: [(文字, 回调或 None, 是否强调)], 点任何一个按钮都会先关闭窗口再执行回调.
     options: [(键, 文字, 默认勾选)] 显示成一列勾选框; 点任何按钮时先把 {键: 是否勾选} 交给 on_options
-    (点 ✕ 关掉时不交)."""
+    (点 ✕ 关掉时不交).
+    hint: 正文下面多一行半透明的小字 (颜色往背景色靠, Tk 没有真正的透明字)."""
 
-    def __init__(self, master, title: str, message: str, buttons=None, options=None, on_options=None):
+    def __init__(self, master, title: str, message: str, buttons=None, options=None, on_options=None, hint=None):
         super().__init__(master, bg=config.COLORS["bg"],
                          highlightbackground=config.COLORS["accent"], highlightthickness=2)
         self._alive = True
@@ -296,6 +297,10 @@ class Notice(tk.Toplevel):
             wraplength=config.scaled(440)
         )
         self.lbl.pack(anchor="w", fill="x")
+        if hint:
+            tk.Label(body, text=hint, bg=config.COLORS["bg"], fg=_fade(config.COLORS["text"], config.COLORS["bg"], 0.5),
+                     font=font_of("small"), justify="left", anchor="w",
+                     wraplength=config.scaled(440)).pack(anchor="w", fill="x", pady=(config.scaled(8), 0))
         self._opts = {}
         self._on_options = on_options
         if options:
@@ -347,16 +352,26 @@ class Notice(tk.Toplevel):
             pass
 
 
-def notice(title: str, message: str, buttons=None, options=None, on_options=None):
-    """弹出一个只能手动关闭的提醒窗, 返回窗口对象 (没有主窗口时返回 None)."""
+def _fade(c1: str, c2: str, k: float) -> str:
+    """c1 和 c2 按 k : (1 - k) 混合; 不是 #RRGGBB 时原样返回 c1."""
+    try:
+        a = [int(c1[i:i + 2], 16) for i in (1, 3, 5)]
+        b = [int(c2[i:i + 2], 16) for i in (1, 3, 5)]
+        return "#%02x%02x%02x" % tuple(round(x * k + y * (1 - k)) for x, y in zip(a, b))
+    except (ValueError, TypeError, IndexError):
+        return c1
+
+
+def notice(title: str, message: str, buttons=None, options=None, on_options=None, hint=None):
+    """弹出一个只能手动关闭的提醒窗, 返回窗口对象 (没有主窗口时返回 None). hint: 正文下面半透明的一行小字."""
     root = _root()
-    _record(f"[notice] {title}: {message}", "notice")
+    _record(f"[notice] {title}: {message}" + (f"\n{hint}" if hint else ""), "notice")
     if root is None:
         return None
     try:
         if not root.winfo_exists():
             return None
-        return Notice(root, title, message, buttons, options, on_options)
+        return Notice(root, title, message, buttons, options, on_options, hint)
     except Exception:
         return None
 

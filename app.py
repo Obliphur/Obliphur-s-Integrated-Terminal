@@ -85,6 +85,20 @@ def tired_text(name: str) -> str:
     return tr(TIRED_TEXT, name=name or "")
 
 
+URBAN_NOTICE_FLAG = "urban_notice"     # 切到都市之意时弹窗已经带过几次"可以改日程"的小字 (daily.json)
+URBAN_NOTICE_HINTS = 2
+
+
+def _blend(c1: str, c2: str, k: float) -> str:
+    """c1 和 c2 按 k : (1 - k) 混合 (k 越小越接近 c2, 用来画"半透明"的字); 不是 #RRGGBB 时原样返回 c1."""
+    try:
+        a = [int(c1[i:i + 2], 16) for i in (1, 3, 5)]
+        b = [int(c2[i:i + 2], 16) for i in (1, 3, 5)]
+        return "#%02x%02x%02x" % tuple(round(x * k + y * (1 - k)) for x, y in zip(a, b))
+    except (ValueError, TypeError, IndexError):
+        return c1
+
+
 def _hours_text(h) -> str:
     """外出记录的小时数, 最多一位小数 (2.0 → "2")."""
     try:
@@ -272,7 +286,7 @@ class BreakTimerApp:
         self.sync_runner = devsync.MainRunner()
         self.sync = devsync.SyncService(self.dm.data_dir, PcLocal(self), self.sync_runner)
         self.dm.peer_ledgers = self.sync.peer_ledgers
-        self.dm.offline_spans = self.sync.offline_spans     # 正在进行的那段: 有设备离线的部分画成空白
+        self.dm.offline_spans = self._offline_spans         # 正在进行的那段: 有设备离线的部分画成空白 (自由学习的外出期间除外)
         self.dm.peer_ledgers_by_id = self.sync.peer_ledgers_by_id
         self.net.before_adapter = self._before_adapter        # 换成 Adapter 之前: 告诉其他设备本机断网了 (15.5)
         self.dm.my_id = lambda: self.sync.my_id
@@ -860,11 +874,16 @@ class BreakTimerApp:
     def _city_will_notice(self):
         if config.THEME != "urban_will" or self.shutting_down:
             return
+        # 切到都市之意的前两次, 弹窗多一行半透明的小字: 提示可以改日程 (次数记在 daily.json, 每台设备各自数)
+        shown = int(self.dm.daily_flag(URBAN_NOTICE_FLAG) or 0)
         toast.notice(
             tr("都市之意"),
             tr("也许我们时刻都在随波逐流,只不过是被赋予了选择漂流对象的那一缕所谓的自由..."),
             [(tr("确定"), None, True)],
+            hint=tr("(可以在设置-日常修改日程...)") if shown < URBAN_NOTICE_HINTS else None,
         )
+        if shown < URBAN_NOTICE_HINTS:
+            self.dm.set_daily_flag(URBAN_NOTICE_FLAG, str(shown + 1))
 
     def on_font_scale_changed(self):
         self.ui_scale = config.detect_ui_scale()
@@ -1071,8 +1090,11 @@ class BreakTimerApp:
 
         btn_row = tk.Frame(body, bg=bg)
         btn_row.pack(fill="x", padx=26, pady=(6, 22))
+        # 第一行只有 开始专注 / 开始休息; 其他按钮放在第二行; "我累了" 在页面右上角
         btns = tk.Frame(btn_row, bg=bg)
         btns.pack()
+        btns2 = tk.Frame(btn_row, bg=bg)
+        btns2.pack(pady=(10, 0))
         self.btn_action = ttk.Button(
             btns, text=tr("▶  开始专注"), style="Accent.TButton",
             command=self.on_action
@@ -1083,18 +1105,24 @@ class BreakTimerApp:
         )
         self.btn_break.pack(side="left", ipadx=10, padx=(10, 0))
         # 睡眠 (MECHANICS 23): 盖住整个窗口, 只剩一个"起床"
-        self.btn_sleep = ttk.Button(btns, text=tr("😴  睡眠"), command=self._sleep_click)
-        self.btn_sleep.pack(side="left", ipadx=10, padx=(10, 0))
+        self.btn_sleep = ttk.Button(btns2, text=tr("😴  睡眠"), command=self._sleep_click)
+        self.btn_sleep.pack(side="left", ipadx=10)
 
-        # 提前启动 (仅 PC, MECHANICS 20): 专注中把选中的程序先跑起来, 窗口藏起来 + 静音
-        self.btn_prestart = ttk.Button(btns, text=tr("⏩  提前启动"), command=self._prestart_click)
+        # 提前启动 (仅 PC, MECHANICS 20): 专注中把选中的程序先跑起来, 窗口藏起来 + 静音 (出现时排在外出前面)
+        self.btn_prestart = ttk.Button(btns2, text=tr("⏩  提前启动"), command=self._prestart_click)
 
-        # 行为模式 (MECHANICS 21): 封闭式管理 / 工作 时才出现
-        self.btn_outing = ttk.Button(btns, text=tr("🚪  外出"), command=self._outing_click)
+        # 外出 (MECHANICS 21): 三种行为模式都有; 封闭式管理叫"上学", 工作叫"工作", 自由学习叫"外出"
+        self.btn_outing = ttk.Button(btns2, text=tr("🚪  外出"), command=self._outing_click)
+        self.btn_outing.pack(side="left", ipadx=8, padx=(10, 0))
 
-        # 连点按钮: 1 分钟内连点 10 次, 换 20 分钟休息时间 (每周最多 2 小时)
-        self.lbl_bonus = ttk.Button(btns, text="", command=self._on_bonus_click)
-        self.lbl_bonus.pack(side="left", padx=(24, 0))
+        # 连点按钮: 1 分钟内连点 10 次, 换 20 分钟休息时间 (每周最多 2 小时); 放在页面右上角, 半透明
+        dim = _blend(COLORS["text_dim"], bg, 0.45)
+        self.lbl_bonus = tk.Button(body, text="", command=self._on_bonus_click, relief="flat", bd=0,
+                                   highlightthickness=0, bg=bg, fg=dim, activebackground=bg,
+                                   activeforeground=COLORS["text_dim"], font=config.font("small"),
+                                   cursor="hand2", padx=6, pady=2)
+        self.lbl_bonus.bind("<Enter>", lambda e, b=self.lbl_bonus: b.config(fg=COLORS["text_dim"]))
+        self.lbl_bonus.bind("<Leave>", lambda e, b=self.lbl_bonus, c=dim: b.config(fg=c))
         self._bonus_show(self._bonus_idle_text())
 
         # 作者的话 (MECHANICS.md 6.2): 一直显示在页面下方的空白处
@@ -1229,25 +1257,22 @@ class BreakTimerApp:
         except Exception:
             pass
 
+    def _outing_key(self, mode: str) -> str:
+        """外出按钮上的名字: 封闭式管理 = 上学, 工作 = 工作, 自由学习 (和别的) = 外出."""
+        return {config.BEHAVIOR_CLOSED: "上学", config.BEHAVIOR_WORK: "工作"}.get(mode, "外出")
+
     def _sync_outing_button(self):
-        """外出按钮: 只有封闭式管理 / 工作 时出现; 外出中变成"结束外出"."""
+        """外出按钮: 三种行为模式都有, 文字按模式 (上学 / 工作 / 外出); 外出中变成"结束…"."""
         btn = getattr(self, "btn_outing", None)
         if btn is None:
             return
         try:
-            if not self.behavior.enabled():
-                if btn.winfo_ismapped():
-                    btn.pack_forget()
-                return
-            active = self.behavior.active()
-            text = tr("🚪  结束外出") if active is not None else tr("🚪  外出")
+            cur = self.behavior.current()
+            mode = (cur.get("mode") if cur is not None else "") or self.behavior.mode()
+            name = self._outing_key(mode)
+            text = tr(f"🚪  结束{name}") if cur is not None else tr(f"🚪  {name}")
             if btn.cget("text") != text:
                 btn.config(text=text)
-            if not btn.winfo_ismapped():
-                try:
-                    btn.pack(side="left", ipadx=8, padx=(18, 0), before=self.lbl_bonus)
-                except Exception:
-                    btn.pack(side="left", ipadx=8, padx=(18, 0))
         except Exception:
             pass
 
@@ -1406,8 +1431,6 @@ class BreakTimerApp:
         return not owner or owner == mine
 
     def _outing_click(self):
-        if not self.behavior.enabled():
-            return
         active = self.behavior.active()
         if active is not None:
             h = self.behavior.recorded_hours(active)
@@ -1418,12 +1441,18 @@ class BreakTimerApp:
             ):
                 self._end_outing()
             return
-        if self.contract.active:
-            toast.warn(tr("合约中不能外出."))
+        if self.behavior.away() is not None:
+            # 自由学习的外出: 什么都没限制, 直接问一下结不结束 (MECHANICS 21.6)
+            if toast.ask(tr("结束外出?"), tr("现在结束外出吗?"), ok_text=tr("结束外出"), danger=True):
+                self._end_outing()
             return
-        if self.state != IDLE:
-            toast.warn(tr("请先结束专注 / 休息再外出."))
-            return
+        if self.behavior.enabled():
+            if self.contract.active:
+                toast.warn(tr("合约中不能外出."))
+                return
+            if self.state != IDLE:
+                toast.warn(tr("请先结束专注 / 休息再外出."))
+                return
         win = getattr(self, "_outing_win", None)
         try:
             if win is not None and win.winfo_exists():
@@ -1433,21 +1462,23 @@ class BreakTimerApp:
             pass
         self._outing_win = None
         self._outing_win = OutingDialog(self.root, self._start_outing,
-                                        max_hours=int(config.OUTING_MAX_HOURS))
+                                        max_hours=int(config.OUTING_MAX_HOURS),
+                                        name=self._outing_key(self.behavior.mode()))
 
     def _start_outing(self, hours: int):
-        # 填时长的窗口开着时, 可能已经开始了合约 / 专注 (MECHANICS 21.1)
-        if self.contract.active:
-            toast.warn(tr("合约中不能外出."))
-            return
-        if self.state != IDLE:
-            toast.warn(tr("请先结束专注 / 休息再外出."))
-            return
+        # 填时长的窗口开着时, 可能已经开始了合约 / 专注 (MECHANICS 21.1); 自由学习的外出不受限制 (21.6)
+        if self.behavior.enabled():
+            if self.contract.active:
+                toast.warn(tr("合约中不能外出."))
+                return
+            if self.state != IDLE:
+                toast.warn(tr("请先结束专注 / 休息再外出."))
+                return
         ok, msg, o = self.behavior.start(hours, owner=(self.sync.my_id or ""))
         if not ok:
             toast.warn(tr(msg))
             return
-        self._outing_was_active = True
+        self._outing_was_active = not self.behavior.is_free(o)
         self._log_notice(f"OUTING start {hours}h until {o['end']:%Y-%m-%d %H:%M}")
         toast.success(tr("外出 {h} 小时, 到 {at} 结束.").format(
             h=hours, at=f"{o['end']:%m-%d %H:%M}"))
@@ -1457,11 +1488,12 @@ class BreakTimerApp:
             self.sync.sync_now()
 
     def _end_outing(self):
+        was_active = self._outing_was_active
         res = self.behavior.stop(can_reward=self._can_reward_outing)
         self._outing_was_active = False
         self._apply_outing_result(res)
         self._sync_timer_buttons()
-        if self.state == IDLE:
+        if self.state == IDLE and was_active:
             self.reset_to_idle()
         if self.sync.peers():
             self.sync.sync_now()
@@ -1512,9 +1544,9 @@ class BreakTimerApp:
             was = True
         elif ev.get("ended"):
             toast.info(tr("外出结束."))
-            was = True
+            was = was or any(not self.behavior.is_free(o) for o in ev["ended"])      # 自由学习的外出结束不用重置 Timer 页
             if self.sync.peers():
-                self.sync.sync_now()
+                self.sync.sync_now()               # 外出的设备回来了: 马上同步 (它的记录有优先权, MECHANICS 21.6)
         active = self.behavior.active(now)
         if active is not None:
             self._outing_was_active = True
@@ -1539,9 +1571,9 @@ class BreakTimerApp:
                 btn.config(text=text)
             if show and not btn.winfo_ismapped():
                 try:
-                    btn.pack(side="left", ipadx=6, padx=(18, 0), before=self.lbl_bonus)
+                    btn.pack(side="left", ipadx=6, padx=(10, 0), before=self.btn_outing)
                 except Exception:
-                    btn.pack(side="left", ipadx=6, padx=(18, 0))
+                    btn.pack(side="left", ipadx=6, padx=(10, 0))
             elif not show and btn.winfo_ismapped():
                 btn.pack_forget()
         except Exception:
@@ -2307,6 +2339,37 @@ class BreakTimerApp:
             return self.contract.book_rest(sec, end)
         return self.contract.book_rest_after(sec, start) if start else sec
 
+    def _offline_spans(self, a_ms: float, b_ms: float, own: bool = True) -> list:
+        """[a, b] 里有设备离线的时间段 (毫秒): 自由学习的外出期间 (MECHANICS 21.6) 其他设备离线不算 ——
+        外出的设备本来就不在家里的网络上. own: 也包括本机关机的那几段 (它们照常算)."""
+        spans = [list(s) for s in self.sync.offline_spans(a_ms, b_ms, own=False)]
+        try:
+            away = self.behavior.away_spans(datetime.fromtimestamp(a_ms / 1000), datetime.fromtimestamp(b_ms / 1000))
+        except Exception:
+            away = []
+        for x, y in away:
+            xm, ym = x.timestamp() * 1000, y.timestamp() * 1000
+            cut = []
+            for a, b in spans:
+                if b <= xm or a >= ym:
+                    cut.append([a, b])
+                    continue
+                if a < xm:
+                    cut.append([a, xm])
+                if b > ym:
+                    cut.append([ym, b])
+            spans = cut
+        if own:
+            spans += [list(s) for s in self.sync.self_off_spans(a_ms, b_ms)]
+        spans.sort()
+        out = []
+        for a, b in spans:
+            if out and a <= out[-1][1]:
+                out[-1][1] = max(out[-1][1], b)
+            else:
+                out.append([a, b])
+        return [(a, b) for a, b in out]
+
     def _cut_offline(self, start: datetime, end: datetime) -> float:
         """[start, end] 这段专注里不计入学习时长的部分, 返回一共多少秒:
         - 有绑定的设备离线的时间段: 记为空闲 (统计里压过同一段专注);
@@ -2314,7 +2377,7 @@ class BreakTimerApp:
           这段只有关机的设备 (没有别的设备记下专注 / 休息) 时记为空闲."""
         a_ms, b_ms = start.timestamp() * 1000, end.timestamp() * 1000
         try:
-            spans = self.sync.offline_spans(a_ms, b_ms, own=False)
+            spans = self._offline_spans(a_ms, b_ms, own=False)
             mine = self.sync.self_off_spans(a_ms, b_ms)
         except Exception:
             return 0.0
@@ -2444,7 +2507,7 @@ class BreakTimerApp:
     def _offline_secs(self, start: datetime) -> float:
         """这段专注里绑定设备非关机离线累计了多少秒 (关机算在线, 不计)."""
         try:
-            spans = self.sync.offline_spans(start.timestamp() * 1000, time.time() * 1000, own=False)
+            spans = self._offline_spans(start.timestamp() * 1000, time.time() * 1000, own=False)
         except Exception:
             return 0.0
         return sum((b - a) for a, b in spans) / 1000.0
@@ -3047,6 +3110,24 @@ class BreakTimerApp:
             if self.sync.peers():
                 self.sync.sync_now()
 
+    def _check_away_priority(self):
+        """每秒: 刚从自由学习的外出回来的设备第一次同步上以后, 外出期间本机和它重叠的专注计时记录让位给它 (MECHANICS 21.6)."""
+        total = {"study": 0.0, "break": 0.0, "idle": 0.0}
+        for did, a, b in self.sync.pop_away_prio():
+            led = (self.sync.peer_ledgers_by_id() or {}).get(did) or {}
+            res = self.dm.resolve_overlap(led.get("focus") or [], datetime.fromtimestamp(a / 1000),
+                                          datetime.fromtimestamp(b / 1000), tie_mine=False, priority=True)
+            for k in total:
+                total[k] += res.get(k, 0.0)
+            self._log_notice(f"SYNC     away priority from {did}: {res}")
+        if any(v > 0 for v in total.values()):
+            toast.info(tr("刚从外出回来的设备的记录有优先权: 去掉了本机重叠的专注 {s}, 休息 {b}, 空闲 {i}.",
+                          s=fmt_hm(total["study"]), b=fmt_hm(total["break"]), i=fmt_hm(total["idle"])), timeout=10000)
+            self._refresh_if_visible("stats", "cal")
+            self.refresh_display()
+            if self.sync.peers():
+                self.sync.sync_now()
+
     def _contract_line(self, b: dict) -> str:
         """冲突对话框里一个合约的一行: 起止, 危机等级, 结果 / 进行中, 词条."""
         from pages.contract_page import RESULTS, term_short
@@ -3125,7 +3206,10 @@ class BreakTimerApp:
                     pass
             net = {"online": tr("联网中"), "pending": tr("冷静期中")}.get(st.get("net"), "")
             lines.append(f"🔗 {st.get('name', '?')}: {t}" + (f" · {net}" if net else ""))
-        if offline:
+        away = self.behavior.away() if getattr(self, "behavior", None) is not None else None
+        if away is not None:
+            lines.append(tr("🚪 外出中: 其他设备离线不影响专注和合约."))
+        elif offline:
             lines.append(tr("⚠ 有设备离线: 离线的这段时间专注不会被记录."))
         for name, v, newer in self.sync.version_mismatch():
             if newer:          # 本机版本低: 对方把本机算作离线
@@ -3327,9 +3411,11 @@ class BreakTimerApp:
         if not c.active:
             return
         # 绑定的设备离线超过 15 分钟: 合约失败 (看到它离线的设备都可以判定)
-        if self.sync.peers():
-            devices = [(d["name"], datetime.fromtimestamp((d["seen"] or 0) / 1000)) for d in self.sync.device_states()
-                       if not d["online"]]
+        # (自由学习的外出期间不算, 外出结束后从结束的时刻起算: MECHANICS 21.6)
+        if self.sync.peers() and self.behavior.away() is None:
+            floor_away = self.behavior.last_away_end()
+            devices = [(d["name"], max(datetime.fromtimestamp((d["seen"] or 0) / 1000), floor_away or datetime.min))
+                       for d in self.sync.device_states() if not d["online"]]
             hit = c.offline_due(devices, datetime.now(), datetime.fromtimestamp(self.sync._started_ms / 1000))
             if hit:
                 self._offline_name = hit[0]
@@ -4332,9 +4418,11 @@ class BreakTimerApp:
         if not hasattr(self, "lbl_bonus"):
             return
         if self.contract.active or self.behavior.active() is not None or self._bonus_left_this_week() <= 0:
-            hide_pack(self.lbl_bonus)
-        else:
-            show_pack(self.lbl_bonus, side="left", padx=(24, 0))
+            if self.lbl_bonus.winfo_manager() == "place":
+                self.lbl_bonus.place_forget()
+        elif self.lbl_bonus.winfo_manager() != "place":
+            self.lbl_bonus.place(relx=1.0, x=-28, y=22, anchor="ne")
+            self.lbl_bonus.lift()
 
     # ---- 配置期 ----
 
@@ -4592,8 +4680,7 @@ class BreakTimerApp:
             self._log_notice(f"NET_MODE -> {self.net.net_mode}")
         if status != "instant":
             return
-        if key in ("BEHAVIOR_MODE", "OUTING_TEXT", "REST_TEXT") and \
-                getattr(self, "behavior", None) is not None:
+        if key == "BEHAVIOR_MODE" and getattr(self, "behavior", None) is not None:
             self.behavior.sync_mode()
             self._behavior_tick()
             if "log" in self.pages:
@@ -5351,6 +5438,7 @@ class BreakTimerApp:
             threading.Thread(target=self._check_autostart, daemon=True).start()
         try:
             self._check_adapter_overlap()
+            self._check_away_priority()
             self._check_contract_conflicts()
         except Exception as e:
             self._log_window(f"ERROR    adapter overlap {type(e).__name__}: {e}")
@@ -5425,6 +5513,8 @@ class BreakTimerApp:
         self._offline_seen = now_off
         if was is None or not (now_off - was) or not self.sync.is_latest_active():
             return                                   # 刚打开时已经离线的不响
+        if self.behavior.away() is not None:
+            return                                   # 自由学习的外出中: 其他设备离线是正常的
         names = ", ".join(str(peers[i].get("name") or "?") for i in sorted(now_off - was))
         # 记下为什么算离线 (最近一次同步失败的原因, 多久没有它的消息), 以后好查
         why = "; ".join(f"{peers[i].get('name') or '?'}: err={sts[i].get('err') or '-'} "

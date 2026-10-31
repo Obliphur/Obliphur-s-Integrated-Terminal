@@ -101,15 +101,17 @@ class DailyTest {
         val (r, _) = s.stage("SLEEP_WED", s.fromUiNumber("SLEEP_WED", "22:30"))
         assertEquals(StageResult.STAGED, r)
         assertEquals(1350.0, s.pending["SLEEP_WED"]!!.value as Double, 1e-9)
-        // 日常页: 行为模式 / 两个自动记录文本是选项, 周一到周日 7 项睡觉时间是数值
+        // 日常页: 行为模式是选项 (外出 / 休息的自动记录内容是固定的, 不在设置里), 周一到周日 7 项睡觉时间是数值
         val (opts, nums) = Schema.pageSpecs("daily")
-        assertEquals(listOf("BEHAVIOR_MODE", "OUTING_TEXT", "REST_TEXT"), opts.map { it.key })
+        assertEquals(listOf("BEHAVIOR_MODE"), opts.map { it.key })
+        assertNull(Schema.BY_KEY["OUTING_TEXT"])
+        assertNull(Schema.BY_KEY["REST_TEXT"])
         assertEquals(Cfg.SLEEP_KEYS, nums.map { it.key })
         assertTrue(nums.all { it.kind == Kind.TIME })
         // 都市之意主题下多出六项指令时段 (文字, 即时生效, 可以留空); 其他主题看不到
         val (urbanOpts, _) = Schema.pageSpecs("daily", "urban_will")
         assertEquals(opts.map { it.key } + Cfg.PRESCRIPT_WIN_KINDS.map { "PRESCRIPT_WIN_$it" }, urbanOpts.map { it.key })
-        assertTrue(urbanOpts.drop(3).all { it.windows && !it.delayed })
+        assertTrue(urbanOpts.drop(1).all { it.windows && !it.delayed })
         assertNotNull(s.validate("PRESCRIPT_WIN_VII", "坏的"))
         assertNull(s.validate("PRESCRIPT_WIN_VII", ""))
         assertNull(s.validate("PRESCRIPT_WIN_VII", "04:00-06:00,15:00-16:00"))

@@ -467,10 +467,11 @@ class DataManager:
 
     # ---- 断网 (Adapter) 期间的重叠 (MECHANICS 15.5) ----
 
-    def resolve_overlap(self, peer_recs, start: datetime, end: datetime, tie_mine: bool) -> dict:
+    def resolve_overlap(self, peer_recs, start: datetime, end: datetime, tie_mine: bool, priority: bool = False) -> dict:
         """一台设备用 Adapter 断网 (不同步) 的这段 [start, end] 里, 本机和其他设备各自记的专注计时有重叠时:
         按 休息 > 专注 > 空闲 叠加 —— 本机的记录被别的设备优先级更高的记录盖住的部分删掉;
         一样的 (例如两边都记了专注) 只由断网的那台设备删 (tie_mine), 不重复计. 每台设备只改自己的记录.
+        priority: 对方刚从自由学习的外出回来 (MECHANICS 21.6), 它的记录优先 —— 不看 休息 > 专注 > 空闲, 本机和它重叠的部分都删掉.
         删掉的专注同时从学习时长里扣掉. 返回 {"study": 扣掉的秒数, "break": …, "idle": …}."""
         out = {"study": 0.0, "break": 0.0, "idle": 0.0}
         if not peer_recs or end <= start:
@@ -494,7 +495,7 @@ class DataManager:
                 kept.append(r)
                 continue
             cover = [(pa, pb) for pk, pa, pb in peers
-                     if _RANK[pk] > _RANK.get(k, 0) or (_RANK[pk] == _RANK.get(k, 0) and tie_mine)]
+                     if priority or _RANK[pk] > _RANK.get(k, 0) or (_RANK[pk] == _RANK.get(k, 0) and tie_mine)]
             pieces = _subtract(a, b, cover) if cover else [(a, b)]
             removed = (b - a).total_seconds() - sum((y - x).total_seconds() for x, y in pieces)
             if removed <= 0:

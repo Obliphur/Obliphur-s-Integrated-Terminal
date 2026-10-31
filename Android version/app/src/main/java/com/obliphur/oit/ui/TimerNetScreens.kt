@@ -20,6 +20,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -52,10 +53,20 @@ fun TimerScreen() {
     val scale = core.settings.num("BREAK_TIME_SCALE")
     val fog = core.contract.fog()
     val outing = core.outing
+    val away = core.away                       // 自由学习的外出: 什么都不限制 (MECHANICS 21.6)
     var askOuting by rememberSaveable { mutableStateOf(false) }
     var outingHours by rememberSaveable { mutableStateOf("2") }
     var askEnd by rememberSaveable { mutableStateOf(false) }
+    // 外出按钮上的名字: 封闭式管理 = 上学, 工作 = 工作, 自由学习 = 外出
+    val outingKind = (outing ?: away)?.mode?.ifEmpty { null } ?: core.behavior.mode()
+    val outingName = when (outingKind) { "closed" -> "上学"; "work" -> "工作"; else -> "外出" }
     PageColumn {
+        // "我累了": 页面右上角, 半透明 (合约中 / 外出中 / 本周已领完时隐藏)
+        if (!core.contract.active && outing == null && t.bonusLeftThisWeek() > 0) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton({ t.onBonusClick() }, Modifier.alpha(0.5f)) { Text(t.bonusLabel(), color = o.dim, fontSize = 13.sp) }
+            }
+        }
         OitCard {
             val (status, color) = when {
                 outing != null -> tr("外出中 🚪") to o.warn
@@ -100,12 +111,16 @@ fun TimerScreen() {
             }
             // 绑定的其他设备此刻的状态 (MECHANICS 15); 有设备离线时提醒离线的那段专注不会被记录 (8.4)
             for (line in peerLines()) Dim(line, Modifier.padding(top = 4.dp), size = 13)
-            if (OitApp.instance.sync?.deviceStates()?.any { !it.online } == true)
+            if (away != null)
+                Dim(tr("🚪 外出中: 其他设备离线不影响专注和合约."), Modifier.padding(top = 4.dp), size = 13, color = o.warn)
+            else if (OitApp.instance.sync?.deviceStates()?.any { !it.online } == true)
                 Dim(tr("⚠ 有设备离线: 离线的这段时间专注不会被记录."), Modifier.padding(top = 4.dp), size = 13, color = o.warn)
         }
+        // 第一行只有 开始专注 / 开始休息; 其他按钮放在第二行
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (outing != null) {
-                PlainButton(tr("🚪  结束外出")) { askEnd = true }
+                AccentButton(tr("🚪  外出中"), enabled = false) {}
+                PlainButton(tr("☕  开始休息"), enabled = false) {}
             } else {
                 val locked = t.breakLocked
                 when (t.state) {
@@ -122,22 +137,27 @@ fun TimerScreen() {
                         PlainButton(tr("☕  开始休息"), enabled = t.breakCarry > 0, mark = prescriptMark("break")) { t.onBreakButton() }
                     }
                 }
-                // 睡眠 (MECHANICS 23): 盖住整个界面, 只剩一个"起床"; 只有空闲 (不在专注 / 休息 / 合约) 时能按
-                PlainButton(tr("😴  睡眠"), enabled = t.state == TState.IDLE && !core.contract.active) {
-                    t.startSleep().let { err -> if (err.isNotEmpty()) core.toast(err, "warn") }
-                }
-                if (core.behavior.enabled()) PlainButton(tr("🚪  外出")) { askOuting = true }
-                // 连点按钮: 按钮上只写这几个字, 不写具体规则; 合约中 / 外出中隐藏
-                // 合约中 / 本周已经领完时隐藏 (下周一再出现)
-                if (!core.contract.active && t.bonusLeftThisWeek() > 0) PlainButton(t.bonusLabel()) { t.onBonusClick() }
             }
+        }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            // 睡眠 (MECHANICS 23): 盖住整个界面, 只剩一个"起床"; 只有空闲 (不在专注 / 休息 / 合约 / 外出) 时能按
+            if (outing == null) PlainButton(tr("😴  睡眠"), enabled = t.state == TState.IDLE && !core.contract.active) {
+                t.startSleep().let { err -> if (err.isNotEmpty()) core.toast(err, "warn") }
+            }
+            // 外出 (MECHANICS 21): 三种行为模式都有; 外出中变成"结束…"
+            val busy = outing != null || away != null
+            PlainButton(when (outingName) {
+                "上学" -> if (busy) tr("🚪  结束上学") else tr("🚪  上学")
+                "工作" -> if (busy) tr("🚪  结束工作") else tr("🚪  工作")
+                else -> if (busy) tr("🚪  结束外出") else tr("🚪  外出")
+            }) { if (busy) askEnd = true else askOuting = true }
         }
         Flavor(tr("在第二段区间内 学的时间越长得到的休息时间越长.请尽量长时间地专注."), Modifier.padding(top = 24.dp))
     }
     if (askOuting) {
         AlertDialog(
             onDismissRequest = { askOuting = false },
-            title = { Text(tr("🚪  外出")) },
+            title = { Text(when (outingName) { "上学" -> tr("🚪  上学"); "工作" -> tr("🚪  工作"); else -> tr("🚪  外出") }) },
             text = {
                 Column {
                     Text(tr("持续多少小时?"))
@@ -154,17 +174,18 @@ fun TimerScreen() {
                     val err = core.startOuting(h)
                     if (err.isNotEmpty()) { core.toast(err, "warn"); return@TextButton }
                     askOuting = false
-                }) { Text(tr("开始外出"), color = o.accent) }
+                }) { Text(when (outingName) { "上学" -> tr("开始上学"); "工作" -> tr("开始工作"); else -> tr("开始外出") }, color = o.accent) }
             },
             dismissButton = { TextButton({ askOuting = false }) { Text(tr("取消"), color = o.dim) } },
             containerColor = o.bg,
         )
     }
     if (askEnd) {
-        val cur = outing
+        val cur = outing ?: away
         if (cur == null) askEnd = false
         else Confirm(tr("结束外出?"),
-            tr("已经记录了 {h} 小时. 现在结束外出吗?", "h" to numText(core.behavior.recordedHours(cur))),
+            if (cur.isFree) tr("现在结束外出吗?")
+            else tr("已经记录了 {h} 小时. 现在结束外出吗?", "h" to numText(core.behavior.recordedHours(cur))),
             true, { askEnd = false }) {
             askEnd = false
             core.stopOuting()

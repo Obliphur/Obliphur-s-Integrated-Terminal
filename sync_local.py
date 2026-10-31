@@ -142,6 +142,16 @@ class PcLocal:
 
     # ---- 状态 ----
 
+    def away_window(self):
+        """本机刚从自由学习的外出回来, 还没同步上: (开始毫秒, 结束毫秒). 这段时间本机的记录在同步里有优先权 (MECHANICS 21.6)."""
+        a = self.app
+        try:
+            if not a.sync.peers():
+                return None
+            return a.behavior.returned(a.sync.my_id, a.sync.synced_since)
+        except Exception:
+            return None
+
     def status(self) -> dict:
         from config import RUNNING, ON_BREAK
         a, n = self.app, self.app.net
@@ -159,6 +169,9 @@ class PcLocal:
         bat = getattr(a, "battery", None)
         if bat is not None:
             st["battery"] = int(bat)
+        win = self.away_window()
+        if win:
+            st["away"] = [win[0], win[1]]                         # 刚从自由学习的外出回来: 这次同步有优先权 (MECHANICS 21.6)
         if a.state == RUNNING and a.start_wall:
             st.update(timer="running", since=a.start_wall.isoformat(timespec="seconds"))
         elif a.state == ON_BREAK:

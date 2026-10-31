@@ -434,6 +434,17 @@ EN = {
     "知道了": "Got it",
     # ---- 行为模式 / 外出 (MECHANICS 21) ----
     "🚪  外出": "🚪  Going out",
+    "🚪  上学": "🚪  School",
+    "🚪  工作": "🚪  Work",
+    "🚪  结束上学": "🚪  End school",
+    "🚪  结束工作": "🚪  End work",
+    "开始上学": "Start school",
+    "开始工作": "Start work",
+    "现在结束外出吗?": "End the outing now?",
+    "🚪 外出中: 其他设备离线不影响专注和合约.": "🚪 Out: other devices being offline doesn't affect focus or contracts.",
+    "刚从外出回来的设备的记录有优先权: 去掉了本机重叠的专注 {s}, 休息 {b}, 空闲 {i}.":
+        "Records from the device that just came back from an outing take priority: removed overlapping focus {s}, break {b}, idle {i} from this device.",
+    "(可以在设置-日常修改日程...)": "(You can edit your schedule in Settings → Daily...)",
     "🚪  外出中": "🚪  Out now",
     "🚪  结束外出": "🚪  End outing",
     "外出中 🚪": "Out 🚪",
@@ -482,8 +493,6 @@ EN = {
     "封闭式管理": "Closed management",
     "工作": "Work",
     "自由学习": "Free study",
-    "外出自动记录内容": "Auto-fill text while out",
-    "其他时间自动记录内容": "Auto-fill text otherwise",
     "周一睡觉时间": "Monday bedtime",
     "周二睡觉时间": "Tuesday bedtime",
     "周三睡觉时间": "Wednesday bedtime",
@@ -1337,7 +1346,8 @@ def init_from_config():
 
 
 # 整点记录的自动填写内容 (MECHANICS 8.2 / 23): 英文名和中文名是同一项, 按界面语言写, 切换语言时合并
-AUTO_NAMES = (("Sleeping", "睡眠"), ("Distracted", "分心"), ("Idle", "发呆"), ("Break", "休息"))
+AUTO_NAMES = (("Sleeping", "睡眠"), ("Distracted", "分心"), ("Idle", "发呆"), ("Break", "休息"),
+              ("School", "上学"), ("Work", "工作"), ("Out", "外出"))
 
 
 def auto_name(text) -> str:

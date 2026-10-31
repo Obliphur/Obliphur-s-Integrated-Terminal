@@ -300,8 +300,10 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
     /** 一台设备用 Adapter 断网 (不同步) 的这段 [start, end] 里, 本机和其他设备各自记的专注计时有重叠时:
      *  按 休息 > 专注 > 空闲 叠加 —— 本机的记录被别的设备优先级更高的记录盖住的部分删掉;
      *  一样的只由断网的那台设备删 (tieMine; 手机不会是断网的那台). 每台设备只改自己的记录, 删掉的专注同时从学习时长里扣掉.
+     *  priority: 对方刚从自由学习的外出回来 (MECHANICS 21.6), 它的记录优先 —— 不看 休息 > 专注 > 空闲, 本机和它重叠的部分都删掉.
      *  返回 {kind: 删掉的秒数}. 同 data_manager.resolve_overlap. */
-    fun resolveOverlap(peerRecs: List<JSONObject>, start: LocalDateTime, end: LocalDateTime, tieMine: Boolean): Map<String, Double> {
+    fun resolveOverlap(peerRecs: List<JSONObject>, start: LocalDateTime, end: LocalDateTime, tieMine: Boolean,
+                       priority: Boolean = false): Map<String, Double> {
         val out = mutableMapOf("study" to 0.0, "break" to 0.0, "idle" to 0.0)
         if (!end.isAfter(start)) return out
         val rank = mapOf("break" to 3, "study" to 2, "idle" to 1)
@@ -318,7 +320,7 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
         val cut = HashMap<String, Double>()
         for (r in focus) {
             val mine = rank[r.kind] ?: 0
-            val cover = peers.filter { val pk = rank[it.kind]!!; pk > mine || (pk == mine && tieMine) }
+            val cover = peers.filter { val pk = rank[it.kind]!!; priority || pk > mine || (pk == mine && tieMine) }
             val pieces = if (cover.isEmpty()) listOf(r) else subtract(r, cover)
             val removed = secondsBetween(r.start, r.end) - pieces.sumOf { secondsBetween(it.start, it.end) }
             if (removed <= 0) { kept.add(r); continue }

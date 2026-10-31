@@ -18,7 +18,8 @@ object I18n {
     var noFlavor: Boolean = false
 
     /** 整点记录的自动填写内容 (MECHANICS 8.2 / 23): 英文名和中文名是同一项, 按界面语言写, 切换语言时合并 (同 i18n.py). */
-    val AUTO_NAMES = listOf("Sleeping" to "睡眠", "Distracted" to "分心", "Idle" to "发呆", "Break" to "休息")
+    val AUTO_NAMES = listOf("Sleeping" to "睡眠", "Distracted" to "分心", "Idle" to "发呆", "Break" to "休息",
+        "School" to "上学", "Work" to "工作", "Out" to "外出")
 
     /** Sleeping / Distracted / Idle / Break 和它们的中文名: 照现在的界面语言写; 别的文字原样. */
     fun autoName(text: String?): String {

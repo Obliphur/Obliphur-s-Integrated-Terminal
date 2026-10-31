@@ -34,6 +34,8 @@ interface SyncLocal {
     fun apply(doc: String, changes: Map<String, Any?>)
     fun clearHistory()
     fun status(): JSONObject
+    /** 本机刚从自由学习的外出回来, 还没同步上: (开始毫秒, 结束毫秒). 这段时间本机的记录在同步里有优先权 (MECHANICS 21.6). */
+    fun awayWindow(): Pair<Long, Long>? = null
     fun pairRequest(req: PairRequest)
     fun changed()
     fun appVersion(): String = ""
@@ -1186,6 +1188,16 @@ class SyncService(
         out
     }
 
+    /** 其他设备刚从自由学习的外出回来: (设备 id, 开始毫秒, 结束毫秒), 取出后清空 (本机据此处理自己记录里的重叠, MECHANICS 21.6). */
+    fun popAwayPrio(): List<Triple<String, Long, Long>> = lock.withLock {
+        val o = state.optJSONObject("away_prio") ?: return emptyList()
+        val out = o.keys().asSequence().mapNotNull { k ->
+            o.optJSONArray(k)?.let { Triple(k, it.optLong(0), it.optLong(1)) }
+        }.toList()
+        if (out.isNotEmpty()) { state.put("away_prio", JSONObject()); save() }
+        out
+    }
+
     /** 收到关机指令 (MECHANICS 15.4): 和每台绑定的设备同步一轮 (子端平时不主动发), 让它们知道本机关机了.
      *  在后台线程里调用 (同步要用界面线程拼内容), 最多等 timeoutMs. */
     fun pushFinal(timeoutMs: Long = 3000) {
@@ -1236,7 +1248,29 @@ class SyncService(
         return out
     }
 
-    private fun wins(doc: String, key: String, mt: Long, v: Any?, cur: Pair<Long, Any?>): Boolean {
+    /** 这一项算不算外出期间会改到的内容: 计时器此刻的状态, 和与外出重叠的那些小时的整点记录. */
+    private fun inAway(doc: String, key: String, win: Pair<Long, Long>): Boolean {
+        if (doc == "timer") return key == "live"
+        if (doc != "hours") return false
+        return runCatching {
+            val p = key.split("/")
+            val h0 = java.time.LocalDate.parse(p[0]).atStartOfDay().plusHours(p[1].toLong())
+                .atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+            h0 < win.second && h0 + 3_600_000L > win.first
+        }.getOrDefault(false)
+    }
+
+    /** 状态里的 away: [开始毫秒, 结束毫秒]. */
+    private fun awayWin(v: Any?): Pair<Long, Long>? {
+        val a = v as? JSONArray ?: return null
+        val x = a.optLong(0); val y = a.optLong(1)
+        return if (y > x && x > 0) x to y else null
+    }
+
+    /** winR: 发来的这台设备刚从自由学习的外出回来 (MECHANICS 21.6), winL: 本机刚回来 —— 外出期间 (结束之前) 改过的
+     *  计时器状态 / 整点记录, 回来的设备有优先权. */
+    private fun wins(doc: String, key: String, mt: Long, v: Any?, cur: Pair<Long, Any?>,
+                     winR: Pair<Long, Long>? = null, winL: Pair<Long, Long>? = null): Boolean {
         if (doc == "hours") {
             // 超时自动记录的内容永远让位给自己填写的内容 (行为模式按小时有不同的自动内容)
             val auto = local.autoTextFor(key)
@@ -1252,6 +1286,8 @@ class SyncService(
             fun done(x: Any?) = x is JSONObject && (x.optString("result").isNotEmpty() || x.optBoolean("settled", false))
             if (done(v) != done(cur.second)) return done(v)
         }
+        if (winR != null && winL == null && inAway(doc, key, winR) && cur.first <= winR.second) return true    // 它刚回来
+        if (winL != null && winR == null && inAway(doc, key, winL) && mt <= winL.second) return false         // 本机刚回来
         return mt > cur.first
     }
 
@@ -1343,6 +1379,13 @@ class SyncService(
         val localDocs = local.docs()
         val stamped = lock.withLock { stamp(localDocs) }
         val now = System.currentTimeMillis()
+        // 自由学习的外出 (MECHANICS 21.6): 外出的设备回来以后第一次同步, 它的记录有优先权
+        val winR = if (sender.isNotEmpty() && sender != myId) awayWin(snap.optJSONObject("status")?.optJSONObject(sender)?.opt("away")) else null
+        val winL = local.awayWindow()
+        if (winR != null) lock.withLock {
+            if (state.optJSONObject("away_prio") == null) state.put("away_prio", JSONObject())
+            state.getJSONObject("away_prio").put(sender, JSONArray().put(winR.first).put(winR.second))
+        }
         val remote = snap.optJSONObject("docs") ?: JSONObject()
         for (doc in remote.keys()) {
             if (doc !in localDocs) continue
@@ -1356,7 +1399,7 @@ class SyncService(
                     val mt = e.optLong(0)
                     val v = unwire(e.opt(1))
                     val cur = mine[key]
-                    if (init || cur == null || wins(doc, key, mt, v, cur)) {
+                    if (init || cur == null || wins(doc, key, mt, v, cur, winR, winL)) {
                         if (cur == null || canon(cur.second) != canon(v)) changes[key] = v
                         t.put(key, JSONArray().put(hash(v)).put(mt))
                     }

@@ -147,6 +147,8 @@ class OitApp : Application(), Host {
         core.hasPeers = { s.peers().isNotEmpty() }
         core.syncedSince = { ms -> s.peers().values.any { it.optLong("last_ok") >= ms } }
         core.popAdapterBack = { s.popAdapterBack() }
+        core.popAwayPrio = { s.popAwayPrio() }
+        core.syncNow = { if (s.peers().isNotEmpty()) s.syncNow() }
         core.addSelfOff = { a, b -> s.addSelfOff(a, b) }
         core.wentOff = { autostartOk() && (powerOff || (battery()?.let { it < com.obliphur.oit.sync.SyncService.LOW_BATTERY } == true)) }
         core.followsMother = { s.motherId()?.let { it != s.myId } == true }
@@ -155,14 +157,14 @@ class OitApp : Application(), Host {
             m == null || System.currentTimeMillis() - (s.peers()[m]?.optLong("last_ok") ?: 0L) < com.obliphur.oit.sync.SyncService.FRESH_MS
         }
         core.devChangedHook = { if (s.peers().isNotEmpty()) s.syncNow() }
-        core.offlineSpans = { a, b -> s.offlineSpans(a, b, own = false) }
+        core.offlineSpans = { a, b -> core.withoutAway(s.offlineSpans(a, b, own = false), a, b) }   // 自由学习的外出期间不算离线
         core.selfOffSpans = { a, b -> s.selfOffSpans(a, b) }
         core.offlineDevices = { s.deviceStates().filter { !it.online }.map { it.name to it.seen } }
         core.versionMismatch = { s.versionMismatch() }
         core.offlinePeers = { val peers = s.peers(); s.deviceStates().filter { !it.online && it.id in peers }.associate { it.id to it.name } }
         core.syncStartedMs = { s.startedMs }
         core.checkUnbind = { s.checkUnbind() }
-        core.dm.offlineSpans = { a, b -> s.offlineSpans(a, b) }
+        core.dm.offlineSpans = { a, b -> core.mergeSpans(core.withoutAway(s.offlineSpans(a, b, own = false), a, b) + s.selfOffSpans(a, b)) }
         core.trackOffline = { s.trackOffline() }
         core.net.peerNet = { com.obliphur.oit.sync.SyncService.peerNet(s.peerLedgers(), core.net.date) }
         core.net.peerUsage = { s.peerLedgers().flatMap { l -> l.optJSONArray("usage")?.let { a -> (0 until a.length()).mapNotNull { a.optJSONObject(it) } } ?: emptyList() } }

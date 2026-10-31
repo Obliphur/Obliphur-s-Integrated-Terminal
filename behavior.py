@@ -1,15 +1,16 @@
 """行为模式 (设置 → 日常) 与"外出" (MECHANICS 21).
 
-三种模式:
+三种模式, Timer 页都有"外出"按钮 (封闭式管理里叫"上学", 工作里叫"工作", 自由学习里叫"外出"),
+可以设置持续多少小时 (可以跨天):
 
-- 自由学习: 什么都不做, 和以前一样.
-- 封闭式管理 / 工作: Timer 页多一个"外出"按钮, 可以设置持续多少小时 (可以跨天).
-  外出期间按下面的规则记录, 不写 study_log / focus_log, 统计和日历显示时叠加:
+- 自由学习: 外出只是一个标记 (不记录, 不限制): 外出期间照常开始专注 / 休息 / 合约, 其他设备离线也不记空闲、
+  不让合约失败; 外出的设备回来以后第一次同步, 它的记录有优先权 (MECHANICS 21.6).
+- 封闭式管理 / 工作: 外出期间按下面的规则记录, 不写 study_log / focus_log, 统计和日历显示时叠加:
     * 每天最多记 10 小时; 每一段 (每个自然日) 向下取整 (不足 1 小时的部分不计).
     * 7:00 ~ 睡觉时间 (MECHANICS 19, 按星期) 之内的部分按 80% 专注 / 20% 休息填充到专注计时和统计;
       其他时间 (夜里) 只算休息.
-    * 整点记录的超时自动填充: 外出的小时 → 「外出」, 其他时间 → 「休息」
-      (这两个文字可以在 设置 → 日常 改, 48 小时生效).
+    * 整点记录的超时自动填充: 外出的小时 → 「上学」(封闭式管理) / 「工作」(工作) / 「外出」(自由学习),
+      其他时间 → 「休息」 (固定, 不能改; 只有 Distracted 可以在设置里改).
     * 当天有外出时, 联网额度 ×0.2; 正在外出时, 联网冷静期 ×0.3.
     * 外出结束后: 被记录的小时数 × 6 分钟休息时间, 最多 3 小时, 存进积攒的休息时间.
 
@@ -27,10 +28,12 @@ import uuid
 from datetime import datetime, timedelta
 
 import config
+import i18n
 
 
 _TS = "%Y-%m-%d %H:%M:%S"
 _KEEP_DAYS = 62
+PRIO_KEEP_HOURS = 48          # 外出的设备回来之后, 最多这么久还算"刚回来" (同步优先权, MECHANICS 21.6)
 
 
 def _iso(dt):
@@ -156,8 +159,19 @@ class Behavior:
 
     @classmethod
     def enabled(cls) -> bool:
-        """这个模式有没有外出功能 / 特殊记录 (封闭式管理 / 工作)."""
+        """这个模式有没有特殊记录 (封闭式管理 / 工作: 外出按规则记录, 联网额度, 休息奖励). 自由学习的外出只是标记."""
         return cls.mode() in (config.BEHAVIOR_CLOSED, config.BEHAVIOR_WORK)
+
+    @staticmethod
+    def is_free(o) -> bool:
+        """自由学习的外出: 不记录, 不限制 (MECHANICS 21.6)."""
+        return isinstance(o, dict) and o.get("mode") == config.BEHAVIOR_FREE
+
+    @staticmethod
+    def outing_text(o) -> str:
+        """这次外出在整点记录里的自动填充内容: 上学 / 工作 / 外出 (固定, 跟随界面语言)."""
+        mode = o.get("mode") if isinstance(o, dict) else None
+        return i18n.auto_name(config.OUTING_TEXTS.get(mode) or config.OUTING_TEXTS[config.BEHAVIOR_FREE])
 
     def sync_mode(self, now: datetime = None):
         """设置里的行为模式变了 (或第一次打开): 记下本机从什么时候开始用这个模式."""
@@ -193,7 +207,8 @@ class Behavior:
             return min(stopped, o["end"])
         return min(now, o["end"])
 
-    def active(self, now: datetime = None) -> dict:
+    def current(self, now: datetime = None) -> dict:
+        """正在进行的外出 (不管哪种模式的)."""
         now = now or datetime.now()
         cur = None
         for o in self.outings:
@@ -204,14 +219,70 @@ class Behavior:
                     cur = o
         return cur
 
+    def active(self, now: datetime = None) -> dict:
+        """正在进行的、要按规则记录的外出 (封闭式管理 / 工作): 期间不能专注 / 休息 / 开始合约."""
+        o = self.current(now)
+        return None if o is None or self.is_free(o) else o
+
+    def away(self, now: datetime = None) -> dict:
+        """正在进行的自由学习的外出: 什么都不限制, 只是其他设备离线不算空闲 / 不让合约失败."""
+        o = self.current(now)
+        return o if o is not None and self.is_free(o) else None
+
+    def away_spans(self, a: datetime, b: datetime) -> list:
+        """[a, b] 里处在自由学习的外出之内的时间段 (合并过的) [(开始, 结束)]."""
+        now = datetime.now()
+        spans = []
+        for o in self.outings:
+            if not self.is_free(o):
+                continue
+            x, y = max(o["start"], a), min(self._effective_end(o, now), b)
+            if y > x:
+                spans.append((x, y))
+        spans.sort()
+        out = []
+        for x, y in spans:
+            if out and x <= out[-1][1]:
+                out[-1] = (out[-1][0], max(out[-1][1], y))
+            else:
+                out.append((x, y))
+        return out
+
+    def last_away_end(self, now: datetime = None):
+        """最近一次自由学习的外出结束 (或此刻, 还在外出时) 的时刻; 没有时 None."""
+        now = now or datetime.now()
+        ends = [self._effective_end(o, now) for o in self.outings if self.is_free(o)]
+        return max(ends) if ends else None
+
+    def returned(self, owner: str, synced, now: datetime = None):
+        """owner 这台设备刚结束的自由学习的外出, 回来之后还没同步上 (最多 PRIO_KEEP_HOURS 小时): (开始, 结束) 毫秒.
+        这段时间它的记录在同步里有优先权 (MECHANICS 21.6). synced(毫秒) → 结束之后同步成功过没有."""
+        now = now or datetime.now()
+        if not owner:
+            return None
+        for o in self.sorted():
+            if not self.is_free(o) or o.get("owner") != owner:
+                continue
+            s = self._stopped(o)
+            if s is None or s > now or (now - s) > timedelta(hours=PRIO_KEEP_HOURS):
+                continue
+            if s <= o["start"]:
+                continue                          # 作废的外出
+            s_ms = s.timestamp() * 1000
+            try:
+                if synced(s_ms):
+                    continue
+            except Exception:
+                continue
+            return int(o["start"].timestamp() * 1000), int(s_ms)
+        return None
+
     def sorted(self):
         return sorted(self.outings, key=lambda o: o["start"])
 
     def start(self, hours, now: datetime = None, owner: str = ""):
-        """开始一次外出. 返回 (ok, 提示, 记录)."""
+        """开始一次外出 (哪种模式都可以). 返回 (ok, 提示, 记录)."""
         now = (now or datetime.now()).replace(microsecond=0)
-        if not self.enabled():
-            return False, "当前行为模式没有外出.", None
         try:
             hours = int(hours)
         except (TypeError, ValueError):
@@ -219,7 +290,7 @@ class Behavior:
         if hours < 1 or hours > int(config.OUTING_MAX_HOURS):
             return False, f"持续时间要在 1 ~ {int(config.OUTING_MAX_HOURS)} 小时之间.", None
         self.tick(now, can_reward=False)      # 先把已经到时间的处理掉
-        if self.active(now) is not None:
+        if self.current(now) is not None:
             return False, "已经在外面了.", None
         o = {
             "id": now.strftime("%Y%m%d%H%M%S") + uuid.uuid4().hex[:4],
@@ -239,7 +310,7 @@ class Behavior:
     def stop(self, now: datetime = None, can_reward: bool = True) -> dict:
         """结束当前这次外出 (提前结束也算). 返回 tick 一样的结果."""
         now = (now or datetime.now()).replace(microsecond=0)
-        o = self.active(now)
+        o = self.current(now)
         if o is None:
             o = self._latest_unstopped(now)
         if o is not None and self._stopped(o) is None:
@@ -315,6 +386,8 @@ class Behavior:
     def _recorded_hours_on(self, o, day, now: datetime = None) -> float:
         """这段外出在某一天被记录的小时数: 向下取整, 扣掉同一天更早的外出已经记过的小时."""
         now = now or datetime.now()
+        if self.is_free(o):
+            return 0.0                                # 自由学习的外出不记录
         sec = self._day_seconds(o, day, now)
         if sec <= 0:
             return 0.0
@@ -322,6 +395,8 @@ class Behavior:
         for prev in self.sorted():
             if prev.get("id") == o.get("id"):
                 break
+            if self.is_free(prev):
+                continue
             psec = self._day_seconds(prev, day, now)
             if psec > 0:
                 used += min(10.0, float(math.floor(psec / 3600.0 + 1e-9)))
@@ -347,6 +422,8 @@ class Behavior:
         out = set()
         now = datetime.now()
         for o in self.outings:
+            if self.is_free(o):
+                continue
             day = _day0(o["start"])
             last = _day0(self._effective_end(o, now))
             while day <= last:
@@ -419,7 +496,7 @@ class Behavior:
             return 1.0
         now = datetime.now()
         for o in self.outings:
-            if self._overlap(o, day, now):
+            if not self.is_free(o) and self._overlap(o, day, now):
                 return float(config.OUTING_QUOTA_FACTOR)
         return 1.0
 
@@ -432,17 +509,16 @@ class Behavior:
     # ---- 整点记录 ----
 
     def hour_auto_text(self, hour_start: datetime) -> str:
-        """这一小时的超时自动记录内容; "" = 用普通的超时自动记录内容."""
-        if not self.enabled():
-            return ""
+        """这一小时的超时自动记录内容; "" = 用普通的超时自动记录内容.
+        和外出重叠的小时按这次外出的种类: 上学 / 工作 / 外出 (各自独立); 封闭式管理 / 工作里其他时间是「休息」."""
         hour_end = hour_start + timedelta(hours=1)
         if self._mode_since is not None and hour_end <= self._mode_since:
             return ""
         for o in self.outings:
             end = self._effective_end(o)
             if o["start"] < hour_end and end > hour_start and end > o["start"]:   # 作废的外出 (0 长度) 不算
-                return str(getattr(config, "OUTING_TEXT", config.OUTING_TEXT) or config.OUTING_TEXT)
-        return str(getattr(config, "REST_TEXT", config.REST_TEXT) or config.REST_TEXT)
+                return self.outing_text(o)
+        return i18n.auto_name(config.REST_TEXT) if self.enabled() else ""
 
     # ---- 设备同步 ----
 
@@ -516,10 +592,9 @@ class Behavior:
 def _selftest():
     import tempfile
 
-    keep = (config.BEHAVIOR_MODE, config.OUTING_TEXT, config.REST_TEXT)
+    keep = (config.BEHAVIOR_MODE,)
     try:
         config.BEHAVIOR_MODE = config.BEHAVIOR_CLOSED
-        config.OUTING_TEXT, config.REST_TEXT = "外出", "休息"
         at = datetime(2026, 10, 19, 0, 0)
         b = Behavior(tempfile.mkdtemp(), now=at)
         assert b.mode() == config.BEHAVIOR_CLOSED and b.enabled()
@@ -539,9 +614,9 @@ def _selftest():
         assert abs(rest - 7200 * 0.2) < 1e-6, (rest, segs)
         assert abs(b.study_hours(datetime(2026, 10, 19, 0, 0), now=now) - 1.6) < 1e-9
         assert b.recorded_hours(o, now) == 2, "进行中的按到此刻算"
-        # 整点记录: 外出的小时是"外出", 其他时间是"休息"; 模式切换之前的不改
-        assert b.hour_auto_text(datetime(2026, 10, 19, 10, 0)) == "外出"
-        assert b.hour_auto_text(datetime(2026, 10, 19, 13, 0)) == "外出"
+        # 整点记录: 外出的小时是"上学" (封闭式管理), 其他时间是"休息"; 模式切换之前的不改
+        assert b.hour_auto_text(datetime(2026, 10, 19, 10, 0)) == "上学"
+        assert b.hour_auto_text(datetime(2026, 10, 19, 13, 0)) == "上学"
         assert b.hour_auto_text(datetime(2026, 10, 19, 14, 0)) == "休息"
         assert b.hour_auto_text(datetime(2026, 10, 19, 8, 0)) == "休息"
         assert b.hour_auto_text(datetime(2026, 10, 18, 23, 0)) == ""
@@ -623,7 +698,7 @@ def _selftest():
         o = b9.yield_to_contract(datetime(2026, 10, 19, 15, 0), datetime(2026, 10, 19, 15, 21))
         assert o["stopped"] == o["start"] and b9.recorded_hours(o) == 0
         assert b9.quota_factor(datetime(2026, 10, 19)) == 1.0 and not b9.days()
-        assert b9.hour_auto_text(datetime(2026, 10, 19, 15, 0)) == config.REST_TEXT, "作废的外出不填「外出」"
+        assert b9.hour_auto_text(datetime(2026, 10, 19, 15, 0)) == config.REST_TEXT, "作废的外出不填「上学」"
         ev = b9.tick(datetime(2026, 10, 19, 15, 22))
         assert ev["reward"] == 0, ev
 
@@ -668,12 +743,53 @@ def _selftest():
         finally:
             config.SLEEP_MON, config.SLEEP_TUE = sleep_keep
 
-        # 模式切回自由学习: 没有外出, 不填整点记录
+        # 工作的外出填「工作」
+        config.BEHAVIOR_MODE = config.BEHAVIOR_WORK
+        bw = Behavior(tempfile.mkdtemp(), now=at)
+        bw.start(2, datetime(2026, 10, 19, 10, 0))
+        assert bw.hour_auto_text(datetime(2026, 10, 19, 10, 0)) == "工作"
+        assert bw.hour_auto_text(datetime(2026, 10, 19, 12, 0)) == "休息"
+
+        # 模式切回自由学习: 没有记录规则, 不填「休息」; 以前的上学 / 工作各自独立, 仍然叫原来的名字
         config.BEHAVIOR_MODE = config.BEHAVIOR_FREE
         assert not b5.enabled() and b5.quota_factor(datetime(2026, 10, 19)) == 1.0
-        assert b5.hour_auto_text(datetime(2026, 10, 19, 10, 0)) == ""
+        assert b.hour_auto_text(datetime(2026, 10, 19, 10, 0)) == "上学"
+        assert b.hour_auto_text(datetime(2026, 10, 19, 20, 0)) == ""
+
+        # 自由学习的外出 (MECHANICS 21.6): 标记而已, 不记录, 不限制, 不发休息时间, 整点记录填「外出」
+        bf = Behavior(tempfile.mkdtemp(), now=at)
+        ok, msg, of = bf.start(5, datetime(2026, 10, 19, 10, 0), owner="phone")
+        assert ok and of["mode"] == "free", msg
+        n1 = datetime(2026, 10, 19, 12, 0)
+        assert bf.active(n1) is None and bf.away(n1) is of and bf.current(n1) is of
+        assert bf.quota_factor(n1) == 1.0 and bf.cooldown_factor(n1) == 1.0
+        assert bf.recorded_hours(of, n1) == 0 and not bf.days() and bf.study_hours(n1, n1) == 0
+        assert bf.hour_auto_text(datetime(2026, 10, 19, 11, 0)) == "外出"
+        assert bf.hour_auto_text(datetime(2026, 10, 19, 15, 0)) == "", "自由学习没有「休息」"
+        assert bf.start(1, n1)[1] == "已经在外面了."
+        assert bf.away_spans(datetime(2026, 10, 19, 9, 0), datetime(2026, 10, 19, 11, 0)) == \
+            [(datetime(2026, 10, 19, 10, 0), datetime(2026, 10, 19, 11, 0))]
+        # 回来以后没同步上之前, 它的设备有优先权; 同步上了就没有了
+        assert bf.returned("phone", lambda ms: False, n1) is None, "还在外面不算回来"
+        ev = bf.stop(datetime(2026, 10, 19, 13, 0))
+        assert ev["reward"] == 0 and ev["hours"] == 0, ev
+        n2 = datetime(2026, 10, 19, 13, 5)
+        r = bf.returned("phone", lambda ms: False, n2)
+        assert r is not None and r[0] < r[1], r
+        assert bf.returned("phone", lambda ms: True, n2) is None and bf.returned("other", lambda ms: False, n2) is None
+        assert bf.returned("phone", lambda ms: False, n2 + timedelta(hours=49)) is None, "超过 48 小时不再算"
+        assert bf.last_away_end(n2) == datetime(2026, 10, 19, 13, 0)
+        # 自由学习的外出不占封闭式管理的每天 10 小时名额
+        config.BEHAVIOR_MODE = config.BEHAVIOR_CLOSED
+        bm = Behavior(tempfile.mkdtemp(), now=at)
+        bm.outings.append(bm._clean({"id": "x", "start": "2026-10-19 07:00:00", "end": "2026-10-19 17:00:00",
+                                     "hours": 10, "mode": "free"}))
+        ok, _m, om = bm.start(10, datetime(2026, 10, 19, 17, 0))
+        n3 = datetime(2026, 10, 19, 23, 59)
+        assert ok and bm.active(datetime(2026, 10, 19, 18, 0)) is om
+        assert bm._recorded_hours_on(om, datetime(2026, 10, 19), n3) == 6, "17:00~23:59 向下取整 6 小时, 自由学习的 10 小时不占名额"
     finally:
-        config.BEHAVIOR_MODE, config.OUTING_TEXT, config.REST_TEXT = keep
+        config.BEHAVIOR_MODE, = keep
     return "behavior selftest OK"
 
 

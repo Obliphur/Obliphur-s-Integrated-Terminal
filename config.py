@@ -193,8 +193,9 @@ BEHAVIOR_FREE = "free"
 BEHAVIOR_MODES = (BEHAVIOR_CLOSED, BEHAVIOR_WORK, BEHAVIOR_FREE)
 BEHAVIOR_MODE = BEHAVIOR_FREE
 BEHAVIOR_DELAY_HOURS = 24 * 7
-# 整点记录在外出期间的自动填充: 外出的小时 → 外出, 其他时间 → 休息 (都可以在设置 → 日常 改, 48 小时生效).
-OUTING_TEXT = "外出"
+# 整点记录在外出期间的自动填充 (固定, 不能改; 只有 AUTO_TEXT 的 Distracted 可以在设置里改):
+# 封闭式管理的外出 → 上学, 工作的外出 → 工作, 自由学习的外出 → 外出; 封闭式管理 / 工作里没有外出的时间 → 休息.
+OUTING_TEXTS = {BEHAVIOR_CLOSED: "上学", BEHAVIOR_WORK: "工作", BEHAVIOR_FREE: "外出"}
 REST_TEXT = "休息"
 # 记录规则 (MECHANICS 21): 每天最多记 10 小时; 7:00 ~ 睡觉时间 (上面的 SLEEP_*) 之内的部分按 80% 专注 / 20% 休息填充.
 OUTING_WINDOW_START = 7 * 60
@@ -213,7 +214,7 @@ OUTING_MAX_HOURS = 24 * 7
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.198"                         # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.199"                         # 和 GitHub 上发布的版本号比较 (见 updater.py)
 UPDATE_CHECK = 1                              # 打开程序时检查更新
 UPDATE_AUTO = 1                               # 发现新版本时自动下载安装
 OLD_APP_DIR = "mrsTimer"
@@ -451,8 +452,6 @@ DEFAULT_SETTINGS = {
     "SLEEP_SUN": SLEEP_SUN,
     **{"PRESCRIPT_WIN_" + k: PRESCRIPT_WIN_DEFAULTS[k] for k in PRESCRIPT_WIN_KINDS},
     "BEHAVIOR_MODE": BEHAVIOR_MODE,
-    "OUTING_TEXT": OUTING_TEXT,
-    "REST_TEXT": REST_TEXT,
 }
 
 
