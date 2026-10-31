@@ -766,6 +766,25 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         changed()
     }
 
+    // ---- 日志 (统计页, MECHANICS 8.7): 和反思指令一样的文字, 2 小时只能看一次 ----
+
+    private val journalFile get() = File(dir, "journal.json")
+
+    /** 这一次进统计页是不是已经在看日志了 (离开统计页 / 切到别的标签就清掉). */
+    @Volatile var journalOpen = false
+
+    /** 还要等多少秒才能再看日志; 0 = 现在可以看. */
+    fun journalWait(at: LocalDateTime = LocalDateTime.now()): Double {
+        val viewed = parseIso(Store.readObj(journalFile)?.optString("viewed") ?: "") ?: return 0.0
+        return maxOf(0.0, Cfg.JOURNAL_GAP - secondsBetween(viewed, at))
+    }
+
+    /** 记下这次看了日志. */
+    fun journalMarkViewed(at: LocalDateTime = LocalDateTime.now()) {
+        if (dm.resetting) return
+        Store.write(journalFile, JSONObject().put("viewed", at.withNano(0).iso()))
+    }
+
     // ---- 行为模式 / 外出 (MECHANICS 21) ----
 
     /** 现在正在外出吗 (封闭式管理 / 工作, 要按规则记录的那种). */

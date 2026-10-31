@@ -454,12 +454,37 @@ private fun ViolationRecords() {
     }
 }
 
+/** 日志 (MECHANICS 8.7): 和都市之意的反思指令 (X) 一样的文字, 2 小时只能看一次. */
+@Composable
+private fun JournalBlock() {
+    val o = LocalOit.current
+    val core = OitApp.instance.core
+    if (core.contract.fog()) {                         // 黑雾: 统计数据不可见
+        Text("???", color = o.text)
+        return
+    }
+    if (!core.journalOpen) {
+        val left = core.journalWait()
+        if (left > 0) {
+            Text(tr("已经看过了."), color = o.text)
+            Dim(tr("{t} 之后才能再看.", "t" to fmtHm(left)))
+            return
+        }
+        core.journalMarkViewed()
+        core.journalOpen = true
+    }
+    Text(tr(com.obliphur.oit.core.Prescript.IDLE_ENTRIES.getValue("X").body), color = o.text, fontSize = 16.sp)
+    Dim(tr("2 小时只能看一次."))
+}
+
 @Composable
 fun StatsScreen() {
     LocalTick.current
     val o = LocalOit.current
     val core = OitApp.instance.core
     val ctx = LocalContext.current
+    // 离开统计页: 日志要重新判断 2 小时
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { core.journalOpen = false } }
     val logOn = core.dm.hourEnabled
     var page by rememberSaveable { mutableStateOf(if (logOn) "log" else "net") }
     if (!logOn && page == "log") page = "net"
@@ -471,6 +496,7 @@ fun StatsScreen() {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)) {
         val tabs = buildList {
+            add("journal" to tr("📖  日志"))           // 日志放在所有功能的最左边
             if (logOn) add("log" to tr("📝  整点记录"))
             add("net" to tr("🌐  联网理由"))
             add("focus" to tr("⏱  专注计时"))
@@ -480,6 +506,11 @@ fun StatsScreen() {
         Segmented(tabs, page) {
             page = it
             if (it == "contracts") cmode = "done"      // 每次打开合约页都从"通过记录"开始
+            if (it != "journal") core.journalOpen = false     // 离开日志: 再回来要重新判断 2 小时
+        }
+        if (page == "journal") {
+            JournalBlock()
+            return@Column
         }
         if (page == "focus") {
             FocusBars()

@@ -444,6 +444,10 @@ EN = {
     "🚪 外出中: 其他设备离线不影响专注和合约.": "🚪 Out: other devices being offline doesn't affect focus or contracts.",
     "刚从外出回来的设备的记录有优先权: 去掉了本机重叠的专注 {s}, 休息 {b}, 空闲 {i}.":
         "Records from the device that just came back from an outing take priority: removed overlapping focus {s}, break {b}, idle {i} from this device.",
+    "📖  日志": "📖  Journal",
+    "已经看过了.": "Already read.",
+    "{t} 之后才能再看.": "Available again in {t}.",
+    "2 小时只能看一次.": "Can only be read once every 2 hours.",
     "(可以在设置-日常修改日程...)": "(You can edit your schedule in Settings → Daily...)",
     "🚪  外出中": "🚪  Out now",
     "🚪  结束外出": "🚪  End outing",

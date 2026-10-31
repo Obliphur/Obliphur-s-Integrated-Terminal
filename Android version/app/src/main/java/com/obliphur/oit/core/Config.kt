@@ -104,6 +104,9 @@ object Cfg {
     /** 某个空闲词条的默认提升时段. */
     fun defaultWindows(kind: String): List<Pair<Int, Int>> = parseWindows(PRESCRIPT_WIN_DEFAULTS[kind] ?: "") ?: emptyList()
 
+    /** 统计页的日志: 看过一次之后多少秒内不能再看 (MECHANICS 8.7). */
+    const val JOURNAL_GAP = 2 * 3600.0
+
     // 行为模式 (设置 → 日常, MECHANICS 21): 第一次打开时可以选, 之后修改要等 24 × 7 小时.
     const val BEHAVIOR_CLOSED = "closed"
     const val BEHAVIOR_WORK = "work"

@@ -12,6 +12,22 @@ from data_manager import month_prefixes, tally_items
 from i18n import tr, is_en
 from .widgets import ScrollArea, smooth, cfg, show_pack, hide_pack
 from .contract_page import term_line, term_short, marks   # 合约记录按合约页的逻辑显示词条
+from prescript import IDLE_ENTRIES
+
+
+# 日志 (MECHANICS 8.7): 文字和都市之意的反思指令 (X) 一样; 看过一次之后 2 小时内不能再看
+JOURNAL_TEXT = IDLE_ENTRIES["X"]["body"]
+JOURNAL_FLAG = "journal_view"        # daily.json: 上一次看日志的时刻
+JOURNAL_GAP = 2 * 3600
+
+
+def journal_wait(viewed: str, now: datetime) -> float:
+    """上一次看日志是 viewed ("YYYY-MM-DD HH:MM:SS", 空 = 没看过) 的话, 还要等多少秒才能再看; 0 = 现在可以看."""
+    try:
+        at = datetime.strptime(str(viewed), "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return 0.0
+    return max(0.0, JOURNAL_GAP - (now - at).total_seconds())
 
 
 # 图表颜色都跟随当前主题 (config.CHART_PALETTE / COLORS 会在切换主题时原地更新)
@@ -114,6 +130,7 @@ class StatsPage(tk.Frame):
         self.focus_live = focus_live
         self.page = "log"
         self.mode = {"log": "pct", "net": "pct", "window": "pct"}
+        self._journal_open = False   # 日志: 这一次进来是不是已经看过了 (2 小时只能看一次, MECHANICS 8.7)
         self.month = "this"          # "this" 本月 / "last" 上月
         self.device = "all"          # 窗口页看哪台设备: "all" 全部 / "self" 本机 / 设备 id
         self._device_keys = None
@@ -159,7 +176,7 @@ class StatsPage(tk.Frame):
         bar = tk.Frame(self, bg=bg)
         bar.pack(fill="x", padx=26, pady=(8, 8))
         self.tab_btns = {}
-        for key, text in (("log", tr("📝  整点记录")), ("net", tr("🌐  联网理由")),
+        for key, text in (("journal", tr("📖  日志")), ("log", tr("📝  整点记录")), ("net", tr("🌐  联网理由")),
                           ("focus", tr("⏱  专注计时")), ("window", tr("🪟  窗口")),
                           ("contracts", tr("⚔  合约"))):
             b = tk.Button(
@@ -223,8 +240,21 @@ class StatsPage(tk.Frame):
         self.focus_cv.bind("<Motion>", self._focus_hover)
         self.focus_cv.bind("<Leave>", lambda e: self.focus_cv.delete("tip"))
 
-        # 合约记录 (通过记录): 最近 5 条顺利完成的合约 (黑雾时是 5 条假数据)
+        # 日志: 和都市之意的反思指令 (X) 一样的文字, 2 小时只能看一次
         card = COLORS["bg_card"]
+        self.journal_body = tk.Frame(self, bg=card,
+                                     highlightbackground=COLORS["border"], highlightthickness=1)
+        self.journal_title = tk.Label(self.journal_body, text=tr("📖  日志"), bg=card, fg=COLORS["text"],
+                                      font=config.font("h2", bold=True), anchor="w")
+        self.journal_title.pack(fill="x", padx=16, pady=(14, 6))
+        self.journal_text = tk.Label(self.journal_body, text="", bg=card, fg=COLORS["text"],
+                                     font=config.font("body"), anchor="w", justify="left", wraplength=config.scaled(620))
+        self.journal_text.pack(fill="x", padx=16, pady=(4, 8))
+        self.journal_note = tk.Label(self.journal_body, text="", bg=card, fg=COLORS["text_dim"],
+                                     font=config.font("small"), anchor="w", justify="left", wraplength=config.scaled(620))
+        self.journal_note.pack(fill="x", padx=16, pady=(0, 14))
+
+        # 合约记录 (通过记录): 最近 5 条顺利完成的合约 (黑雾时是 5 条假数据)
         self.contracts_body = tk.Frame(self, bg=card,
                                        highlightbackground=COLORS["border"], highlightthickness=1)
         head = tk.Frame(self.contracts_body, bg=card)
@@ -275,6 +305,8 @@ class StatsPage(tk.Frame):
     def _set_page(self, key: str):
         if key == "contracts":
             self.contract_mode = "done"      # 每次打开合约页都从"通过记录"开始
+        if key != "journal":
+            self._journal_open = False       # 离开日志: 再回来要重新判断 2 小时 (MECHANICS 8.7)
         self.page = key
         self.refresh()
 
@@ -390,11 +422,14 @@ class StatsPage(tk.Frame):
         log_on = bool(self.dm.hour_enabled)
         if not log_on and self.page == "log":
             self.page = "net"
+        if self.page != "journal":
+            hide_pack(self.journal_body)
         # 标签按钮只在 "整点记录" 开关变化时才重新排列 (重复 pack 会触发整页重新布局)
         if self._tabs_log_on != log_on:
             self._tabs_log_on = log_on
             for b in self.tab_btns.values():
                 b.pack_forget()
+            self.tab_btns["journal"].pack(side="left", padx=(0, 4))      # 日志放在所有功能的最左边
             if log_on:
                 self.tab_btns["log"].pack(side="left", padx=(0, 4))
             self.tab_btns["net"].pack(side="left", padx=(0, 4))
@@ -404,6 +439,18 @@ class StatsPage(tk.Frame):
         self._style_buttons()
         self._sync_device_bar()
 
+        if self.page == "journal":
+            hide_pack(self.month_bar)
+            hide_pack(self.mode_bar)
+            hide_pack(self.focus_legend)
+            hide_pack(self.focus_body)
+            hide_pack(self.pie_body)
+            hide_pack(self.contract_mode_bar)
+            hide_pack(self.contracts_body)
+            hide_pack(self.violations_body)
+            show_pack(self.journal_body, fill="x", padx=26, pady=(10, 16))
+            self._draw_journal()
+            return
         if self.page == "contracts":
             hide_pack(self.month_bar)
             hide_pack(self.mode_bar)
@@ -441,6 +488,25 @@ class StatsPage(tk.Frame):
         this, last = month_prefixes()
         name, prefix = (tr("上月"), last) if self.month == "last" else (tr("本月"), this)
         self._draw_column(self.cols[0], f"{name} · {prefix}", self._data(prefix))
+
+    # ---- 日志 (MECHANICS 8.7): 和反思指令一样的文字, 2 小时只能看一次 ----
+
+    def _draw_journal(self):
+        if self.fog() is not None:                      # 黑雾: 统计数据不可见
+            cfg(self.journal_text, text="???")
+            cfg(self.journal_note, text="")
+            return
+        now = datetime.now()
+        if not self._journal_open:
+            left = journal_wait(self.dm.daily_flag(JOURNAL_FLAG), now)
+            if left > 0:
+                cfg(self.journal_text, text=tr("已经看过了."))
+                cfg(self.journal_note, text=tr("{t} 之后才能再看.").format(t=fmt_hm(left)))
+                return
+            self.dm.set_daily_flag(JOURNAL_FLAG, now.strftime("%Y-%m-%d %H:%M:%S"))
+            self._journal_open = True
+        cfg(self.journal_text, text=tr(JOURNAL_TEXT))
+        cfg(self.journal_note, text=tr("2 小时只能看一次."))
 
     # ---- 合约记录 (过去 5 条顺利完成的合约, MECHANICS 8.1) ----
 
@@ -852,4 +918,5 @@ class StatsPage(tk.Frame):
         cv.tag_raise(tid, rect)
 
     def show(self):
+        self._journal_open = False          # 每次进入统计页都重新判断日志 (MECHANICS 8.7)
         self.refresh()
