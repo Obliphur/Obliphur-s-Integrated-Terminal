@@ -3,7 +3,7 @@
 import tkinter as tk
 import calendar
 import random
-from datetime import datetime
+from datetime import datetime, timedelta
 from tkinter import ttk
 
 import config
@@ -26,6 +26,8 @@ class CalendarPage(tk.Frame):
         self.dm = data_manager
         # 合约的黑雾 (MECHANICS 18.3): 不为 None 时显示随机的学习时长, 月份和合计写成 ???
         self.fog = lambda: None
+        self.live = lambda: None   # 正在进行的一段 (kind, 开始时刻), 算今天的空闲时间时用 (由 app 接上)
+        self.show_idle = False     # 切换: 日历格子里写学习时长 / 空闲时间 (MECHANICS 8.2)
         self.display_year = datetime.now().year
         self.display_month = datetime.now().month
         self.offset = 0            # 0 = 本月, -1 = 上月(只保留这两个月)
@@ -46,6 +48,9 @@ class CalendarPage(tk.Frame):
         self.btn_next.pack(side="right", padx=(4, 0))
         self.btn_prev = ttk.Button(nav_frame, text=tr("‹ 上月"), command=lambda: self._go(-1))
         self.btn_prev.pack(side="right", padx=(10, 0))
+
+        self.btn_idle = ttk.Button(nav_frame, text=tr("查看空闲时间"), command=self._toggle_idle)
+        self.btn_idle.pack(side="right", padx=(10, 0))
 
         self.lbl_month_total = tk.Label(
             nav_frame, text=tr("合计: {h:.1f} h").format(h=0.0),
@@ -91,6 +96,30 @@ class CalendarPage(tk.Frame):
             cfg(lbl, text=tr(day))
 
     @smooth
+    def _toggle_idle(self):
+        self.show_idle = not self.show_idle
+        self.refresh()
+
+    def _idle_hours(self, prefix: str, today: datetime) -> dict:
+        """这个月里有专注计时记录的那几天 (最近 7 天) 的空闲小时数: 一天的时间 (今天算到此刻) 减去专注和休息.
+        更早的日子没有专注计时记录, 不写."""
+        floor = self.dm._focus_floor(today).date()
+        out = {}
+        for day in range(1, 32):
+            date_str = f"{prefix}-{day:02d}"
+            try:
+                d = datetime.strptime(date_str, "%Y-%m-%d")
+            except ValueError:
+                break
+            if d.date() < floor or d.date() > today.date():
+                continue
+            is_today = d.date() == today.date()
+            span = (today - d).total_seconds() if is_today else 86400.0
+            used = sum(s + r for s, r in self.dm.focus_hours(d, self.live() if is_today else None))
+            out[date_str] = max(0.0, span - used) / 3600.0
+        return out
+
+    @smooth
     def _go(self, offset: int):
         self.offset = offset
         self.refresh()
@@ -117,6 +146,7 @@ class CalendarPage(tk.Frame):
         )
         seed = self.fog()
         cfg(self.lbl_month_title, text="???" if seed is not None else title)
+        cfg(self.btn_idle, text=tr("查看学习时长") if self.show_idle else tr("查看空闲时间"))
         self._apply_day_headers()
 
         cal = calendar.monthcalendar(self.display_year, self.display_month)
@@ -134,6 +164,9 @@ class CalendarPage(tk.Frame):
             month_data = {f"{prefix}-{d:02d}": round(rnd.uniform(FOG_MIN, FOG_MAX), 1)
                           for d in range(1, 32) if f"{prefix}-{d:02d}" <= today_str}
             cfg(self.lbl_month_total, text=tr("合计: ???"))
+        elif self.show_idle:
+            month_data = self._idle_hours(prefix, now)
+            cfg(self.lbl_month_total, text=tr("空闲合计: {h:.1f} h").format(h=sum(month_data.values())))
         else:
             cfg(self.lbl_month_total, text=tr("合计: {h:.1f} h").format(h=month_total))
 

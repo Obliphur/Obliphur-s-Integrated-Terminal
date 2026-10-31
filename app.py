@@ -699,6 +699,7 @@ class BreakTimerApp:
         # 看不见的页面不参与布局和重画, 每秒的刷新也不会去画它们.
         self.pages["cal"] = CalendarPage(self.content, self.dm)
         self.pages["cal"].fog = self._fog_seed
+        self.pages["cal"].live = self._focus_live
         self._prepare_page(self.pages["cal"])
         yield
         self.pages["stats"] = StatsPage(self.content, self.dm, self.net,

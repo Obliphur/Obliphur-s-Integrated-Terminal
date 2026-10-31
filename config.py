@@ -213,7 +213,7 @@ OUTING_MAX_HOURS = 24 * 7
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.195"                         # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.196"                         # 和 GitHub 上发布的版本号比较 (见 updater.py)
 UPDATE_CHECK = 1                              # 打开程序时检查更新
 UPDATE_AUTO = 1                               # 发现新版本时自动下载安装
 OLD_APP_DIR = "mrsTimer"
@@ -632,13 +632,18 @@ def pixel_safe(text):
 
 
 
+REST_GAIN = 1.27                  # 建议休息时长整体乘它 (MECHANICS 6.2)
+
+
 def compute_F(t: float) -> float:
+    """建议休息时长 (分钟): 专注 t 分钟, 分段公式的结果再乘 REST_GAIN."""
     if t <= 15.0:
-        return t / 6.0
+        base = t / 6.0
     elif t < 150.0:
-        return (7.0 / 14850.0) * t * t + (407.0 / 1485.0) * t - (170.0 / 99.0)
+        base = (7.0 / 14850.0) * t * t + (407.0 / 1485.0) * t - (170.0 / 99.0)
     else:
-        return 50.0 + (5.0 / math.log(1.2)) * math.log(t / 150.0)
+        base = 50.0 + (5.0 / math.log(1.2)) * math.log(t / 150.0)
+    return base * REST_GAIN
 
 
 def _topmost_win(title: str, message: str) -> bool:

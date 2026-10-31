@@ -19,8 +19,8 @@ class CoreTest {
 
     @Test
     fun breakFormula() {
-        val table = mapOf(10.0 to 1.7, 15.0 to 2.5, 30.0 to 6.9, 45.0 to 11.6, 60.0 to 16.4, 90.0 to 26.8,
-            120.0 to 38.0, 150.0 to 50.0, 180.0 to 55.0, 240.0 to 62.9)
+        val table = mapOf(10.0 to 2.1, 15.0 to 3.2, 30.0 to 8.8, 45.0 to 14.7, 60.0 to 20.9, 90.0 to 34.0,
+            120.0 to 48.2, 150.0 to 63.5, 180.0 to 69.9, 240.0 to 79.9)
         for ((t, f) in table) assertEquals("F($t)", f, Math.round(computeF(t) * 10) / 10.0, 1e-9)
         assertEquals("01:05", fmtMs(64.2))
         assertEquals("2h 05m", fmtHm(7500.0))

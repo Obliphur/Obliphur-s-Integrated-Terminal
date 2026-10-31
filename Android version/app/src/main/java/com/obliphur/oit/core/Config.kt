@@ -125,8 +125,11 @@ object Cfg {
     const val OUTING_MAX_HOURS = 24 * 7
 }
 
+/** 建议休息时长整体乘它 (MECHANICS 6.2, 同 config.REST_GAIN). */
+const val REST_GAIN = 1.27
+
 /** 建议休息时长 F(t), t 与结果都以分钟计 (MECHANICS 6.2). */
-fun computeF(t: Double): Double = when {
+fun computeF(t: Double): Double = REST_GAIN * when {
     t <= 15.0 -> t / 6.0
     t < 150.0 -> (7.0 / 14850.0) * t * t + (407.0 / 1485.0) * t - (170.0 / 99.0)
     else -> 50.0 + (5.0 / ln(1.2)) * ln(t / 150.0)

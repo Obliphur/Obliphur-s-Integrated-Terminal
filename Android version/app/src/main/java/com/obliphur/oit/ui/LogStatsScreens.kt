@@ -281,6 +281,7 @@ fun CalendarScreen() {
     val o = LocalOit.current
     val core = OitApp.instance.core
     var last by rememberSaveable { mutableStateOf(false) }
+    var idle by rememberSaveable { mutableStateOf(false) }       // 切换: 格子里写学习时长 / 空闲时间 (MECHANICS 8.2)
     val today = LocalDate.now()
     val ym = YearMonth.from(today).let { if (last) it.minusMonths(1) else it }
     val prefix = "%d-%02d".format(ym.year, ym.monthValue)
@@ -289,6 +290,17 @@ fun CalendarScreen() {
     val data = if (fog) java.util.Random("${core.contract.id}/$prefix".hashCode().toLong()).let { r ->
         (1..ym.lengthOfMonth()).map { ym.atDay(it) }.filter { !it.isAfter(today) }
             .associate { it.key() to Math.round((16 + r.nextDouble() * 64) * 10) / 10.0 }      // 16 ~ 80 h
+    } else if (idle) {
+        // 空闲时间: 一天的时间 (今天算到此刻) 减去专注和休息; 只有最近 7 天有专注计时记录, 更早的日子不写
+        val now = LocalDateTime.now()
+        val live = core.timer.live()
+        (1..ym.lengthOfMonth()).map { ym.atDay(it) }
+            .filter { !it.isAfter(today) && !it.isBefore(today.minusDays(6)) }
+            .associate { d ->
+                val span = if (d == today) java.time.Duration.between(d.atStartOfDay(), now).seconds.toDouble() else 86400.0
+                val used = core.dm.focusHours(d, if (d == today) live else null).sumOf { it.first + it.second }
+                d.key() to maxOf(0.0, span - used) / 3600.0
+            }
     } else core.dm.monthStudy(prefix)
     PageColumn {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -296,7 +308,13 @@ fun CalendarScreen() {
                 modifier = Modifier.weight(1f))
             Segmented(listOf("last" to tr("‹ 上月"), "this" to tr("本月 ›")), if (last) "last" else "this") { last = it == "last" }
         }
-        Dim(if (fog) tr("合计: ???") else tr("合计 {h} h", "h" to f1(data.values.sum())))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Dim(if (fog) tr("合计: ???") else if (idle) tr("空闲合计 {h} h", "h" to f1(data.values.sum()))
+                else tr("合计 {h} h", "h" to f1(data.values.sum())), Modifier.weight(1f))
+            Text(if (idle) tr("查看学习时长") else tr("查看空闲时间"), color = o.text, fontSize = 13.sp, textAlign = TextAlign.Center,
+                modifier = Modifier.background(o.bg, RoundedCornerShape(6.dp)).border(1.dp, o.border, RoundedCornerShape(6.dp))
+                    .clickable { idle = !idle }.padding(horizontal = 12.dp, vertical = 7.dp))
+        }
         val names = if (OitApp.instance.core.settings.str("LANGUAGE") == "en")
             listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun") else listOf("一", "二", "三", "四", "五", "六", "日")
         Row { names.forEach { Text(it, color = o.dim, textAlign = TextAlign.Center, modifier = Modifier.weight(1f)) } }
@@ -311,7 +329,7 @@ fun CalendarScreen() {
                         if (idx in 0 until ym.lengthOfMonth()) {
                             val d = first.plusDays(idx.toLong())
                             val h = data[d.key()] ?: 0.0
-                            val tint = o.accent.copy(alpha = (h / 8.0).coerceIn(0.0, 1.0).toFloat() * 0.55f)
+                            val tint = o.accent.copy(alpha = (h / (if (idle) 24.0 else 8.0)).coerceIn(0.0, 1.0).toFloat() * 0.55f)
                             Column(Modifier.fillMaxSize().background(o.card, RoundedCornerShape(6.dp))
                                 .background(tint, RoundedCornerShape(6.dp))
                                 .border(1.dp, if (d == today) o.accent else o.border, RoundedCornerShape(6.dp))
