@@ -160,6 +160,20 @@ class ContractTest {
         assertNull(c.offlineDue(listOf("手机" to t0.minusHours(3)), t0.plusMinutes(14), t0))
         assertEquals("手机" to t0.plusMinutes(15), c.offlineDue(listOf("手机" to t0.minusHours(3)), t0.plusMinutes(16), t0))
         assertNull(c.offlineDue(listOf("手机" to t0), t0.plusMinutes(70), t0.plusHours(1)))
+        // 空闲累计 (不要求连续): 空闲 10 分钟后开始专注, 之后再空闲 5 分钟 = 15 分钟, 结束
+        assertNull(c.due(t0.plusMinutes(70), false))
+        assertNull(c.idleLeft(t0.plusMinutes(80)))
+        assertNull(c.due(t0.plusMinutes(90), true))
+        assertEquals(180.0, c.idleLeft(t0.plusMinutes(92))!!, 1e-6)
+        assertNull(c.due(t0.plusMinutes(94), true))
+        assertEquals("idle" to t0.plusMinutes(95), c.due(t0.plusMinutes(95), true))
+        // 离线累计: 两段离线 (8 + 10 分钟), 本机从 t0 + 10 分钟才打开时第一段不算
+        val sp = listOf(t0.plusMinutes(1) to t0.plusMinutes(9), t0.plusMinutes(20) to t0.plusMinutes(30))
+        val cc = Contract(tmp())
+        cc.start(listOf("long1"), owner = "me", now = t0)
+        assertNull(cc.offlineDue(listOf("手机" to t0.plusMinutes(20)), t0.plusMinutes(26), t0, sp))
+        assertEquals("手机" to t0.plusMinutes(27), cc.offlineDue(listOf("手机" to t0.plusMinutes(20)), t0.plusMinutes(27), t0, sp))
+        assertNull(cc.offlineDue(listOf("手机" to t0.plusMinutes(20)), t0.plusMinutes(40), t0.plusMinutes(10), sp))
         // 互联网娱乐的败退 (词条组合): 四类都禁止, 每一类各自只在打开的那一下算; 开始时休息 +20 分钟
         val e = Contract(tmp())
         val nofun = Contract.COMBOS_BY_ID["nofun"]!!

@@ -15,8 +15,8 @@ from config import load_json_file, save_json_file
 
 
 BASE_SECONDS = 4 * 3600          # 合约的初始时长
-IDLE_LIMIT = 15 * 60             # 合约中空闲 (不在专注也不在休息) 超过这么久就结束
-OFFLINE_LIMIT = IDLE_LIMIT       # 合约中有绑定的设备离线超过这么久就失败 (和空闲共用这 15 分钟)
+IDLE_LIMIT = 15 * 60             # 合约中空闲 (不在专注也不在休息) 累计超过这么久就结束 (累计, 不要求连续)
+OFFLINE_LIMIT = IDLE_LIMIT       # 合约中有绑定的设备离线累计超过这么久就失败 (和空闲共用这 15 分钟, 重叠的部分只算一次)
 VIOLATION_LIMIT = 4              # 初始目标生命值: 每违反一次减一, 减到 0 合约失败
 HISTORY_KEEP = 30
 FRESH_MS = 2 * 60 * 1000         # 合约的主人这么久没同步过: 本机来做自动结束
@@ -769,7 +769,7 @@ class Contract:
         self.live = {"state": "active", "id": _now_ms(), "start": _iso(now),
                      "end": _iso(now + timedelta(seconds=duration_of(terms))),
                      "terms": terms, "orig": list(terms), "cut": {}, "violations": 0, "rest": 0,
-                     "owner": owner, "idle_since": None, "net": None, "first_break": False,
+                     "owner": owner, "idle_since": None, "idle_spans": [], "net": None, "first_break": False,
                      "pre": round(pre, 1), "pre_left": round(pre, 1), "pre_used": 0,
                      "supply": None if share is None else round(pre * share, 1), "hl": [],
                      "rand": [], "rand_n": 0, "fog_words": _fog_words(random.Random())}
@@ -823,49 +823,88 @@ class Contract:
 
     # ---- 到期 / 空闲 ----
 
-    def due(self, now: datetime, timer_idle: bool):
+    def _idle_spans(self, now: datetime) -> list:
+        """合约里空闲过的时间段 [(开始, 结束)]: 已经结束的, 加上正在进行的 (idle_since 到此刻)."""
+        out = []
+        for ab in self.live.get("idle_spans") or []:
+            try:
+                a, b = _parse(ab[0]), _parse(ab[1])
+            except (TypeError, IndexError):
+                continue
+            if a is not None and b is not None and b > a:
+                out.append((a, b))
+        since = _parse(self.live.get("idle_since"))
+        if since is not None and now > since:
+            out.append((since, now))
+        return out
+
+    def _cum(self, now: datetime, offline=None):
+        """空闲和设备离线共用累计 IDLE_LIMIT 秒 (MECHANICS 18.1, 不要求连续, 两种重叠的部分只算一次):
+        累计到了就 (到的时刻, 到的时候是不是在设备离线), 还没到 None. offline: [(开始, 结束)] 设备离线的时间段
+        (已经去掉外出期间和本机关着的那段; 结束可以晚于此刻); 不给就只算空闲."""
+        lo = self.start_at
+        if not self.active or lo is None:
+            return None
+        iv = [(max(a, lo), min(b, now), False) for a, b in self._idle_spans(now)]
+        iv += [(max(a, lo), min(b, now), True) for a, b in (offline or [])]
+        iv = sorted(x for x in iv if x[1] > x[0])
+        total, edge = 0.0, None
+        for a, b, _off in iv:
+            s = a if edge is None else max(a, edge)
+            edge = b if edge is None else max(edge, b)
+            if b <= s:
+                continue
+            seg = (b - s).total_seconds()
+            if total + seg >= IDLE_LIMIT:
+                t = s + timedelta(seconds=IDLE_LIMIT - total)
+                return t, any(oa < t <= ob for oa, ob, o in iv if o)
+            total += seg
+        return None
+
+    def due(self, now: datetime, timer_idle: bool, offline=None):
         """该结束了吗: ('completed' / 'idle', 结束的时刻) 或 ('', None).
-        同时记下空闲从什么时候开始 (只由做自动结束的设备调用)."""
+        同时记下空闲从什么时候开始 / 什么时候结束 (只由做自动结束的设备调用). 空闲累计 (不要求连续) 超过 IDLE_LIMIT 就结束;
+        offline: 设备离线的时间段, 给了就和空闲合起来累计 (到的时候在设备离线的不在这里判, 见 offline_due)."""
         if not self.active:
             return "", None
         end = self.end_at
         since = _parse(self.live.get("idle_since"))
         if timer_idle:
             if since is None:
-                since = now
                 self.live["idle_since"] = _iso(now)
                 self.save()
         elif since is not None:
+            spans = list(self.live.get("idle_spans") or [])
+            if now > since:
+                spans.append([_iso(since), _iso(now)])
+            self.live["idle_spans"] = spans[-300:]
             self.live["idle_since"] = None
             self.save()
-            since = None
-        if since is not None and since + timedelta(seconds=IDLE_LIMIT) <= min(now, end):
-            return "idle", since + timedelta(seconds=IDLE_LIMIT)
+        hit = self._cum(now, offline)
+        if hit is not None and not hit[1] and hit[0] <= min(now, end):
+            return "idle", hit[0]
         if now >= end:
             return "completed", end
         return "", None
 
-    def offline_due(self, devices, now: datetime, floor: datetime):
-        """设备离线超过 OFFLINE_LIMIT: (设备名, 失败的时刻) 或 None. devices: [(名字, 离线开始的时刻)];
-        离线从合约开始, 以及 floor (本机这次打开程序的时刻: 本机关着时的事由其他设备判定) 之后才算.
-        空闲和设备离线共用这 15 分钟 (MECHANICS 18.1): 离线时合约也在空闲, 就从两者里先开始的那个算起."""
+    def offline_due(self, devices, now: datetime, floor: datetime, spans=None):
+        """设备离线累计超过 OFFLINE_LIMIT (和空闲共用): (设备名, 失败的时刻) 或 None. devices: [(名字, 离线开始的时刻)] 此刻离线的设备;
+        spans: 合约以来设备离线的时间段 [(开始, 结束)] (不给就只用 devices 里这一段, 到此刻为止).
+        离线从合约开始, 以及 floor (本机这次打开程序的时刻: 本机关着时的事由其他设备判定) 之后才算."""
         if not self.active or not self.start_at:
             return None
-        idle = _parse(self.live.get("idle_since"))
-        for name, since in devices:
-            since = max(since, self.start_at, floor)
-            if idle is not None:
-                since = min(since, max(idle, self.start_at))
-            if since + timedelta(seconds=OFFLINE_LIMIT) <= now:
-                return name, since + timedelta(seconds=OFFLINE_LIMIT)
-        return None
+        off = spans if spans is not None else [(since, now) for _n, since in devices]
+        hit = self._cum(now, [(max(a, floor), b) for a, b in off])
+        if hit is None or not hit[1]:
+            return None
+        return (devices[0][0] if devices else "?"), hit[0]
 
     def idle_left(self, now: datetime):
-        """空闲还能持续多久 (秒); 不在空闲时 None."""
-        since = _parse(self.live.get("idle_since")) if self.active else None
-        if since is None:
+        """空闲还能持续多久 (秒, 累计的: 之前空闲过的也扣掉); 不在空闲时 None."""
+        if not self.active or _parse(self.live.get("idle_since")) is None:
             return None
-        return max(0.0, IDLE_LIMIT - (now - since).total_seconds())
+        used = sum((b - a).total_seconds() for a, b in self._idle_spans(now))
+        return max(0.0, IDLE_LIMIT - used)
 
     # ---- 网络禁令: 乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒 (MECHANICS 18.3) ----
 
@@ -2357,20 +2396,31 @@ def _selftest():
     # 休息: 疲惫 ×0.6; 完成时按降级后的等级给固定的时间 (等级 4 → 27 分钟)
     assert abs(c.book_rest(1000, t0 + timedelta(hours=1)) - 600) < 1e-6
     assert c.level == 4 and c.reward == round(24 * 60 * 1.1), "持久战 long1: 结算休息时长 ×110%"
-    # 空闲 15 分钟结束
-    assert c.due(t0 + timedelta(hours=1), True) == ("", None)
-    assert c.idle_left(t0 + timedelta(hours=1, minutes=10)) == 5 * 60
-    # 空闲和设备离线共用 15 分钟: 空闲 10 分钟后有设备离线, 再过 5 分钟就失败 (从空闲开始算)
-    assert c.offline_due([("手机", t0 + timedelta(hours=1, minutes=10))], t0 + timedelta(hours=1, minutes=14), t0) is None
-    assert c.offline_due([("手机", t0 + timedelta(hours=1, minutes=10))], t0 + timedelta(hours=1, minutes=15), t0) ==         ("手机", t0 + timedelta(hours=1, minutes=15))
-    assert c.due(t0 + timedelta(hours=1, minutes=16), True) == ("idle", t0 + timedelta(hours=1, minutes=15))
-    assert c.due(t0 + timedelta(hours=1, minutes=16), False)[0] == "", "开始专注就不算空闲"
-    # 设备离线 15 分钟失败: 从合约开始 / 本机打开程序之后才算
-    t1 = t0 + timedelta(hours=1)
-    assert c.offline_due([("手机", t0 - timedelta(hours=3))], t0 + timedelta(minutes=14), t0) is None
-    assert c.offline_due([("手机", t0 - timedelta(hours=3))], t0 + timedelta(minutes=16), t0) == \
-        ("手机", t0 + timedelta(minutes=15))
-    assert c.offline_due([("手机", t0)], t1 + timedelta(minutes=10), t1) is None, "本机刚打开"
+    # 空闲累计 15 分钟结束 (不要求连续)
+    H = timedelta(hours=1)
+    M = lambda n: timedelta(minutes=n)
+    assert c.due(t0 + H, True) == ("", None)
+    assert c.idle_left(t0 + H + M(10)) == 5 * 60
+    # 空闲和设备离线共用 15 分钟: 空闲 10 分钟后有设备离线, 再过 5 分钟就失败 (重叠的部分只算一次)
+    assert c.offline_due([("手机", t0 + H + M(10))], t0 + H + M(14), t0) is None
+    assert c.offline_due([("手机", t0 + H + M(10))], t0 + H + M(15), t0) == ("手机", t0 + H + M(15))
+    # 空闲 10 分钟后开始专注: 不算空闲 (不连续); 之后再空闲, 两段加起来满 15 分钟才结束
+    assert c.due(t0 + H + M(10), False)[0] == "", "开始专注就不算空闲"
+    assert c.idle_left(t0 + H + M(30)) is None
+    assert c.due(t0 + H + M(30), True) == ("", None)
+    assert c.idle_left(t0 + H + M(32)) == 3 * 60, "之前空闲过的 10 分钟也要扣"
+    assert c.due(t0 + H + M(34), True) == ("", None)
+    assert c.due(t0 + H + M(35), True) == ("idle", t0 + H + M(35)), "10 + 5 分钟"
+    assert c.due(t0 + H + M(36), False)[0] == "idle", "累计到了就是到了"
+    # 设备离线累计 15 分钟失败 (不要求连续): 从合约开始 / 本机打开程序之后才算
+    c.live["idle_spans"], c.live["idle_since"] = [], None
+    assert c.offline_due([("手机", t0 - timedelta(hours=3))], t0 + M(14), t0) is None
+    assert c.offline_due([("手机", t0 - timedelta(hours=3))], t0 + M(16), t0) == ("手机", t0 + M(15))
+    assert c.offline_due([("手机", t0)], t0 + H + M(10), t0 + H) is None, "本机刚打开"
+    sp = [(t0 + M(1), t0 + M(9)), (t0 + M(20), t0 + M(30))]            # 两段离线: 8 + 10 分钟
+    assert c.offline_due([("手机", t0 + M(20))], t0 + M(26), t0, sp) is None, "8 + 6 = 14 分钟"
+    assert c.offline_due([("手机", t0 + M(20))], t0 + M(27), t0, sp) == ("手机", t0 + M(27)), "8 + 7 = 15 分钟"
+    assert c.offline_due([("手机", t0 + M(20))], t0 + M(40), t0 + M(10), sp) is None, "本机 t0+10 分钟才打开: 第一段不算, 只有 10 分钟"
     # 目标生命值: 默认 4; 退路封锁-I 只有 3, 违反 3 次结束; 整点记录超时未填写也算 (不降词条)
     c.start(["long1"], owner="me", now=t0)
     assert c.violation_limit == 4 and c.life == 4

@@ -41,8 +41,8 @@ class Contract(private val file: File) {
     companion object {
         const val BASE_SECONDS = 4 * 3600.0
         const val IDLE_LIMIT = 15 * 60.0
-        /** 合约中有绑定的设备离线超过这么久就失败. */
-        const val OFFLINE_LIMIT = IDLE_LIMIT      // 和空闲共用这 15 分钟
+        /** 合约中有绑定的设备离线累计超过这么久就失败 (不要求连续). */
+        const val OFFLINE_LIMIT = IDLE_LIMIT      // 和空闲共用这 15 分钟 (重叠的部分只算一次)
         /** 初始目标生命值: 每违反一次减一, 减到 0 合约失败. */
         const val VIOLATION_LIMIT = 4
         const val HISTORY_KEEP = 30
@@ -614,7 +614,7 @@ class Contract(private val file: File) {
             .put("start", n.iso()).put("end", n.plusSec(durationOf(t)).iso())
             .put("terms", JSONArray(t)).put("orig", JSONArray(t)).put("cut", JSONObject())
             .put("violations", 0).put("rest", 0).put("owner", owner)
-            .put("idle_since", JSONObject.NULL).put("net", JSONObject.NULL).put("first_break", false)
+            .put("idle_since", JSONObject.NULL).put("idle_spans", JSONArray()).put("net", JSONObject.NULL).put("first_break", false)
             .put("pre", r1(p)).put("pre_left", r1(p)).put("pre_used", 0)
             .put("supply", if (share == null) JSONObject.NULL else r1(p * share)).put("hl", JSONArray())
             .put("rand", JSONArray()).put("rand_n", 0).put("fog_words", fogWordsJson(java.util.Random()))
@@ -662,49 +662,89 @@ class Contract(private val file: File) {
 
     // ---- 到期 / 空闲 ----
 
-    /** 该结束了吗: ("completed" / "idle", 结束的时刻) 或 null. 同时记下空闲从什么时候开始 (只由做自动结束的设备调用). */
-    fun due(now: LocalDateTime, timerIdle: Boolean): Pair<String, LocalDateTime>? {
+    /** 合约里空闲过的时间段: 已经结束的, 加上正在进行的 (idle_since 到此刻). */
+    private fun idleSpans(now: LocalDateTime): List<Pair<LocalDateTime, LocalDateTime>> {
+        val out = ArrayList<Pair<LocalDateTime, LocalDateTime>>()
+        val arr = live.optJSONArray("idle_spans")
+        if (arr != null) for (i in 0 until arr.length()) {
+            val ab = arr.optJSONArray(i) ?: continue
+            val a = parseIso(ab.optString(0)); val b = parseIso(ab.optString(1))
+            if (a != null && b != null && b.isAfter(a)) out.add(a to b)
+        }
+        parseIso(live.strOrNull("idle_since"))?.let { if (now.isAfter(it)) out.add(it to now) }
+        return out
+    }
+
+    /** 空闲和设备离线共用累计 IDLE_LIMIT 秒 (MECHANICS 18.1, 不要求连续, 两种重叠的部分只算一次):
+     *  累计到了就 (到的时刻, 到的时候是不是在设备离线), 还没到 null. offline: 设备离线的时间段 (已经去掉外出期间和本机关着的那段); 不给就只算空闲. */
+    private fun cum(now: LocalDateTime, offline: List<Pair<LocalDateTime, LocalDateTime>>?): Pair<LocalDateTime, Boolean>? {
+        val lo = startAt ?: return null
+        if (!active) return null
+        val iv = ArrayList<Triple<LocalDateTime, LocalDateTime, Boolean>>()
+        for ((a, b) in idleSpans(now)) iv.add(Triple(maxOf(a, lo), minOf(b, now), false))
+        for ((a, b) in offline ?: emptyList()) iv.add(Triple(maxOf(a, lo), minOf(b, now), true))
+        val sorted = iv.filter { it.second.isAfter(it.first) }.sortedBy { it.first }
+        var total = 0.0
+        var edge: LocalDateTime? = null
+        for ((a, b, _) in sorted) {
+            val s = if (edge == null || a.isAfter(edge)) a else edge
+            edge = if (edge == null || b.isAfter(edge)) b else edge
+            if (!b.isAfter(s)) continue
+            val seg = secondsBetween(s, b)
+            if (total + seg >= IDLE_LIMIT) {
+                val t = s.plusSec(IDLE_LIMIT - total)
+                return t to sorted.any { it.third && it.first.isBefore(t) && !t.isAfter(it.second) }
+            }
+            total += seg
+        }
+        return null
+    }
+
+    /** 该结束了吗: ("completed" / "idle", 结束的时刻) 或 null. 同时记下空闲从什么时候开始 / 什么时候结束 (只由做自动结束的设备调用).
+     *  空闲累计 (不要求连续) 超过 IDLE_LIMIT 就结束; offline: 设备离线的时间段, 给了就和空闲合起来累计 (到的时候在设备离线的不在这里判, 见 offlineDue). */
+    fun due(now: LocalDateTime, timerIdle: Boolean, offline: List<Pair<LocalDateTime, LocalDateTime>>? = null): Pair<String, LocalDateTime>? {
         if (!active) return null
         val end = endAt ?: return null
-        var since = parseIso(live.strOrNull("idle_since"))
+        val since = parseIso(live.strOrNull("idle_since"))
         if (timerIdle) {
             if (since == null) {
-                since = now
                 live.put("idle_since", now.iso())
                 save()
             }
         } else if (since != null) {
+            val old = live.optJSONArray("idle_spans") ?: JSONArray()
+            if (now.isAfter(since)) old.put(JSONArray().put(since.iso()).put(now.iso()))
+            val keep = JSONArray()
+            for (k in maxOf(0, old.length() - 300) until old.length()) keep.put(old.get(k))
+            live.put("idle_spans", keep)
             live.put("idle_since", JSONObject.NULL)
             save()
-            since = null
         }
-        if (since != null) {
-            val fail = since.plusSec(IDLE_LIMIT)
-            if (!fail.isAfter(if (now.isBefore(end)) now else end)) return "idle" to fail
+        cum(now, offline)?.let { (t, off) ->
+            if (!off && !t.isAfter(if (now.isBefore(end)) now else end)) return "idle" to t
         }
         if (!now.isBefore(end)) return "completed" to end
         return null
     }
 
-    /** 设备离线超过 OFFLINE_LIMIT: (设备名, 失败的时刻) 或 null. devices: (名字, 离线开始的时刻);
+    /** 设备离线累计超过 OFFLINE_LIMIT (和空闲共用): (设备名, 失败的时刻) 或 null. devices: (名字, 离线开始的时刻) 此刻离线的设备;
+     *  spans: 合约以来设备离线的时间段 (不给就只用 devices 里这一段, 到此刻为止).
      *  离线从合约开始, 以及 floor (本机这次打开程序的时刻: 本机关着时的事由其他设备判定) 之后才算. */
-    fun offlineDue(devices: List<Pair<String, LocalDateTime>>, now: LocalDateTime, floor: LocalDateTime): Pair<String, LocalDateTime>? {
-        val a = startAt ?: return null
-        // 空闲和设备离线共用这 15 分钟 (MECHANICS 18.1): 离线时合约也在空闲, 就从两者里先开始的那个算起
-        val idle = parseIso(live.strOrNull("idle_since"))?.let { maxOf(it, a) }
-        for ((name, s) in devices) {
-            var since = listOf(s, a, floor).max()
-            if (idle != null && idle.isBefore(since)) since = idle
-            val fail = since.plusSec(OFFLINE_LIMIT)
-            if (!fail.isAfter(now)) return name to fail
-        }
-        return null
+    fun offlineDue(devices: List<Pair<String, LocalDateTime>>, now: LocalDateTime, floor: LocalDateTime,
+                   spans: List<Pair<LocalDateTime, LocalDateTime>>? = null): Pair<String, LocalDateTime>? {
+        startAt ?: return null
+        if (!active) return null
+        val off = (spans ?: devices.map { it.second to now }).map { (a, b) -> maxOf(a, floor) to b }
+        val (t, isOff) = cum(now, off) ?: return null
+        if (!isOff) return null
+        return (devices.firstOrNull()?.first ?: "?") to t
     }
 
-    /** 空闲还能持续多久 (秒); 不在空闲时 null. */
+    /** 空闲还能持续多久 (秒, 累计的: 之前空闲过的也扣掉); 不在空闲时 null. */
     fun idleLeft(now: LocalDateTime): Double? {
-        val since = if (active) parseIso(live.strOrNull("idle_since")) else null
-        return since?.let { maxOf(0.0, IDLE_LIMIT - secondsBetween(it, now)) }
+        if (!active || parseIso(live.strOrNull("idle_since")) == null) return null
+        val used = idleSpans(now).sumOf { secondsBetween(it.first, it.second) }
+        return maxOf(0.0, IDLE_LIMIT - used)
     }
 
     // ---- 网络禁令: 乐理之灾 / 无言为真 / 禁游令 / 低帧的诅咒 (MECHANICS 18.3) ----

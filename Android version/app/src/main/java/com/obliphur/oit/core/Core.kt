@@ -1058,6 +1058,8 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     private fun Long.toLocalDateTime(): LocalDateTime =
         LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(this), java.time.ZoneId.systemDefault())
 
+    private fun LocalDateTime.toMillis(): Long = atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+
     /** 自动的操作由状态的主人做; 主人不在线 (2 分钟没同步) 时本机来做. */
     private fun ownerAway(owner: String) = owner.isEmpty() || owner == myId() || !peerFresh(owner)
 
@@ -1088,20 +1090,22 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         contractHours()
         checkSupply()
         checkQuiet()
-        // 绑定的设备离线超过 15 分钟: 合约失败 (看到它离线的设备都可以判定)
-        // (外出期间不算, 外出结束后从结束的时刻起算: MECHANICS 8.4, 21.6)
-        if (c.active && hasPeers() && behavior.current() == null) {
-            val floor = behavior.lastAwayEnd(freeOnly = false)
-            val devices = offlineDevices().map { (n, ms) ->
-                n to ms.toLocalDateTime().let { if (floor != null && floor.isAfter(it)) floor else it }
-            }
-            c.offlineDue(devices, LocalDateTime.now(), syncStartedMs().toLocalDateTime())?.let { (name, at) ->
+        // 绑定的设备离线累计超过 15 分钟 (和空闲共用, 不要求连续): 合约失败 (看到它离线的设备都可以判定)
+        // (外出期间不算, 已经从离线的时间段里去掉了: MECHANICS 8.4, 21.6)
+        val nowT = LocalDateTime.now()
+        val spans = if (c.active && hasPeers() && c.startAt != null) {
+            val a = c.startAt!!
+            offlineSpans(a.toMillis(), nowT.toMillis()).map { (x, y) -> x.toLocalDateTime() to y.toLocalDateTime() }
+        } else null
+        if (c.active && spans != null) {
+            val devices = offlineDevices().map { (n, ms) -> n to ms.toLocalDateTime() }
+            c.offlineDue(devices, nowT, syncStartedMs().toLocalDateTime(), spans)?.let { (name, at) ->
                 offlineName = name
                 endContract("offline", at); return
             }
         }
         if (!c.active || !ownerAway(c.owner)) return
-        c.due(LocalDateTime.now(), timer.state == TState.IDLE)?.let { (why, at) ->
+        c.due(LocalDateTime.now(), timer.state == TState.IDLE, spans?.map { (x, y) -> maxOf(x, syncStartedMs().toLocalDateTime()) to y })?.let { (why, at) ->
             endContract(why, at); return
         }
         c.netCheck(net.usedAll, net.bonusAll, net.remaining, net.date)?.let { (id, kind) ->

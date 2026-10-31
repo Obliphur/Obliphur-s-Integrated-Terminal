@@ -3458,19 +3458,24 @@ class BreakTimerApp:
         self._check_supply()
         if not c.active:
             return
-        # 绑定的设备离线超过 15 分钟: 合约失败 (看到它离线的设备都可以判定)
-        # (外出期间不算, 外出结束后从结束的时刻起算: MECHANICS 8.4, 21.6)
-        if self.sync.peers() and self.behavior.current() is None:
-            floor_away = self.behavior.last_away_end(free_only=False)
-            devices = [(d["name"], max(datetime.fromtimestamp((d["seen"] or 0) / 1000), floor_away or datetime.min))
+        # 绑定的设备离线累计超过 15 分钟 (和空闲共用, 不要求连续): 合约失败 (看到它离线的设备都可以判定)
+        # (外出期间不算, 已经从离线的时间段里去掉了: MECHANICS 8.4, 21.6)
+        spans = None
+        if self.sync.peers() and c.start_at:
+            now_dt = datetime.now()
+            floor = datetime.fromtimestamp(self.sync._started_ms / 1000)
+            spans = [(datetime.fromtimestamp(x / 1000), datetime.fromtimestamp(y / 1000))
+                     for x, y in self._offline_spans(c.start_at.timestamp() * 1000, now_dt.timestamp() * 1000, own=False)]
+            devices = [(d["name"], datetime.fromtimestamp((d["seen"] or 0) / 1000))
                        for d in self.sync.device_states() if not d["online"]]
-            hit = c.offline_due(devices, datetime.now(), datetime.fromtimestamp(self.sync._started_ms / 1000))
+            hit = c.offline_due(devices, now_dt, floor, spans)
             if hit:
                 self._offline_name = hit[0]
                 self.end_contract("offline", hit[1])
                 return
+            spans = [(max(a, floor), b) for a, b in spans]
         if self._owner_away(c.owner):
-            why, at = c.due(datetime.now(), self.state in (IDLE, READY_BREAK))
+            why, at = c.due(datetime.now(), self.state in (IDLE, READY_BREAK), spans)
             if why:
                 self.end_contract(why, at)
                 return
