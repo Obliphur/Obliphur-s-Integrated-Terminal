@@ -12,9 +12,9 @@ android {
         applicationId = "com.obliphur.oit"
         minSdk = 29
         targetSdk = 35
-        versionCode = 201
+        versionCode = 202
         // 和 GitHub 上发布的版本号比较 (见 service/Updater.kt); 桌面版是 config.APP_VERSION
-        versionName = "1.0.203"
+        versionName = "1.0.204"
     }
 
     buildTypes {

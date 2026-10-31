@@ -436,6 +436,8 @@ class BreakTimerApp:
             y = top + max(0, (bottom - top - h - frame) // 2)
             self.root.geometry(f"{w}x{h}+{x}+{y}")
         self.root.minsize(config.scaled(config.MIN_WINDOW_W), config.scaled(config.MIN_WINDOW_H))
+        if initial and getattr(config, "FULLSCREEN_DEFAULT", 0):
+            self._set_fullscreen(True)                     # 设置 → 默认全屏
         for name in ("TkDefaultFont", "TkTextFont", "TkMenuFont", "TkHeadingFont"):
             try:
                 f = tkfont.nametofont(name)
@@ -2779,6 +2781,12 @@ class BreakTimerApp:
             self.check_pending_settings()
 
 
+    def _set_fullscreen(self, on: bool):
+        try:
+            self.root.attributes("-fullscreen", bool(on))
+        except tk.TclError:
+            pass
+
     def _toggle_fullscreen(self, _event=None):
         """F11: 全屏 / 退出全屏 (全屏时没有标题栏; 睡眠页、指令页等照常盖在上面)."""
         try:
@@ -4696,6 +4704,8 @@ class BreakTimerApp:
             self._log_notice(f"NET_MODE -> {self.net.net_mode}")
         if status != "instant":
             return
+        if key == "FULLSCREEN_DEFAULT":
+            self._set_fullscreen(bool(config.FULLSCREEN_DEFAULT))       # 改了这一项: 当场切换
         if key == "BEHAVIOR_MODE" and getattr(self, "behavior", None) is not None:
             self.behavior.sync_mode()
             self._behavior_tick()

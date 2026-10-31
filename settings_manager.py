@@ -324,6 +324,13 @@ SETTINGS_SCHEMA = [
         "page": "record", "hidden": True,
     },
     {
+        "key": "FULLSCREEN_DEFAULT", "label": "默认全屏",
+        "kind": "choice", "apply": APPLY_INSTANT,
+        "choices": [("1", "开启 (ON)"), ("0", "关闭 (OFF)")],
+        "fmt": lambda v: "ON" if v else "OFF",
+        "desc": "即时生效.打开程序时默认全屏 (没有标题栏), 改这一项时当场切换; 平时按 F11 也随时可以切换全屏.仅电脑, 每台设备各自设置, 不同步.",
+    },
+    {
         "key": "UPDATE_CHECK", "label": "打开时检查更新",
         "kind": "choice", "apply": APPLY_INSTANT,
         "choices": [("1", "开启 (ON)"), ("0", "关闭 (OFF)")],

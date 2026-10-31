@@ -85,7 +85,7 @@ G = 2
 LOCAL_SETTINGS = {"NET_MODE", "FILTER_MODE", "FONT_SCALE", "CHIME_WAV",
                   "WINDOW_LIMIT_ENABLED", "WINDOW_LIMIT", "WINDOW_FOCUS_ENABLED",
                   "UPDATE_CHECK", "UPDATE_AUTO", "REC_ASK", "REC_MIC", "REC_SYSTEM", "REC_CAMERA",
-                  "CONTRACT_THEME"}
+                  "CONTRACT_THEME", "FULLSCREEN_DEFAULT"}
 
 
 # ═══════════════════════ 密码学 ═══════════════════════

@@ -445,6 +445,9 @@ EN = {
     "刚从外出回来的设备的记录有优先权: 去掉了本机重叠的专注 {s}, 休息 {b}, 空闲 {i}.":
         "Records from the device that just came back from an outing take priority: removed overlapping focus {s}, break {b}, idle {i} from this device.",
     "📖  日志": "📖  Journal",
+    "默认全屏": "Fullscreen by default",
+    "即时生效.打开程序时默认全屏 (没有标题栏), 改这一项时当场切换; 平时按 F11 也随时可以切换全屏.仅电脑, 每台设备各自设置, 不同步.":
+        "Instant. Open OIT in fullscreen (no title bar) by default; changing this switches right away, and F11 toggles fullscreen any time. PC only, per device, not synced.",
     "已经看过了.": "Already read.",
     "{t} 之后才能再看.": "Available again in {t}.",
     "2 小时只能看一次.": "Can only be read once every 2 hours.",
