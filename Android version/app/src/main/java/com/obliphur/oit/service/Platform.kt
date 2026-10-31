@@ -191,6 +191,7 @@ class CoreService : Service() {
                 runCatching {
                     val dir = java.io.File(filesDir, "data")
                     com.obliphur.oit.sync.LinkFiles.writeHold(dir, app.core.linkHoldMs())
+                    Waker.keepalive(this@CoreService, app.core.hasPeers())
                     if (n % 30 == 0) { if (app.core.hasPeers()) LinkService.start(this@CoreService) else LinkService.stop(this@CoreService) }
                 }
             }
@@ -274,6 +275,10 @@ class AlarmReceiver : BroadcastReceiver() {
     override fun onReceive(ctx: Context, intent: Intent) {
         OitApp.instance.core.tick()
         CoreService.start(ctx)
+        if (OitApp.instance.core.hasPeers()) {          // 保活闹钟把被划掉的 OIT 叫起来了 (15.8)
+            LinkService.start(ctx)
+            Waker.keepalive(ctx, true)
+        }
     }
 }
 
@@ -289,6 +294,23 @@ class BootReceiver : BroadcastReceiver() {
 
 object Waker {
     private var target = 0L
+
+    /** 联动 (MECHANICS 15.8): 绑定了其他设备时, 每分钟一个"保活"闹钟 (want = false 取消). 手机把 OIT 从最近任务里划掉 (vivo 等会杀掉 OIT 的所有进程,
+     *  联动程序也一起没了) 之后闹钟还在, 它把 OIT 和联动程序叫起来; OIT 在运行时 CoreService 每 5 秒把它往后推, 平时不会响. */
+    fun keepalive(ctx: Context, want: Boolean) {
+        val am = ctx.getSystemService(AlarmManager::class.java)
+        val pi = PendingIntent.getBroadcast(ctx, 1, Intent(ctx, AlarmReceiver::class.java).setAction("oit.keepalive"),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        if (!want) { am.cancel(pi); return }
+        val at = SystemClock.elapsedRealtime() + 60_000L
+        val exact = Build.VERSION.SDK_INT < 31 || am.canScheduleExactAlarms()
+        try {
+            if (exact) am.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, at, pi)
+            else am.setAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, at, pi)
+        } catch (_: SecurityException) {
+            am.setAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, at, pi)
+        }
+    }
 
     fun schedule(ctx: Context, seconds: Double) {
         val at = SystemClock.elapsedRealtime() + (seconds * 1000).toLong()
