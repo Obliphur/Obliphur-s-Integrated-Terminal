@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict
 
 import config
+import i18n
 from config import (
     APP_NAME, OLD_APP_DIR, AUTO_TEXT, HOUR_LOG_ENABLED
 )
@@ -45,6 +46,7 @@ class DataManager:
         self.old_dir = os.path.join(low_dir, OLD_APP_DIR)
         # 行为模式按小时变化的自动填充内容 (MECHANICS 21); 要在 finalize_hours 之前接上
         self.hour_auto_text = hour_auto_text or (lambda hour: "")
+        self.sleep_live = lambda: None       # 正在睡眠时, 开始睡眠的时刻 (app 接上); 睡眠期间的小时自动记成"睡眠"
 
 
         # 旧版本在数据目录外记录卸载次数的文件; 现在不再记录, 重置时一并删除
@@ -109,15 +111,84 @@ class DataManager:
 
     @property
     def auto_text(self) -> str:
-        return str(getattr(config, "AUTO_TEXT", AUTO_TEXT))
+        """非睡眠时间的自动记录内容 (默认 分心 / Distracted, 跟随界面语言)."""
+        return i18n.auto_name(getattr(config, "AUTO_TEXT", AUTO_TEXT))
+
+    @property
+    def sleep_text(self) -> str:
+        return i18n.auto_name("Sleeping")
+
+    def sleep_seconds(self, start: datetime, end: datetime) -> float:
+        """[start, end] 里有多少秒在睡眠 (本机和其他设备记下的睡眠, 加上正在进行的这一段)."""
+        spans = []
+        recs = list(self.focus_sessions)
+        for led in self.peer_ledgers() or []:
+            recs += [r for r in (led.get("focus") or []) if isinstance(r, dict)]
+        for r in recs:
+            if r.get("k") != "sleep":
+                continue
+            try:
+                spans.append((datetime.strptime(r["s"], self._TS), datetime.strptime(r["e"], self._TS)))
+            except (KeyError, TypeError, ValueError):
+                continue
+        try:
+            live = self.sleep_live()
+        except Exception:
+            live = None
+        if live is not None:
+            spans.append((live, max(live, datetime.now())))
+        return sum(max(0.0, (min(b, end) - max(a, start)).total_seconds()) for a, b in _merge_spans(spans))
 
     def auto_text_for_hour(self, hour_start: datetime) -> str:
-        """这一小时的超时自动记录内容: 行为模式优先 (MECHANICS 21), 否则用全局的那一项."""
+        """这一小时的超时自动记录内容: 行为模式优先 (MECHANICS 21); 睡眠占了这一小时一半以上记成"睡眠";
+        否则用全局的那一项 (默认 分心)."""
         try:
             text = self.hour_auto_text(hour_start)
         except Exception:
             text = ""
-        return str(text) if str(text) else self.auto_text
+        if str(text):
+            return str(text)
+        try:
+            if self.sleep_seconds(hour_start, hour_start + timedelta(hours=1)) >= 1800:
+                return self.sleep_text
+        except Exception:
+            pass
+        return self.auto_text
+
+    def localize_auto_texts(self) -> bool:
+        """切换语言时: 整点记录里 睡眠 / Sleeping, 分心 / Distracted 这些默认的内容换成现在的语言, 同一项合并到一起."""
+        changed = False
+        for day in self.hour_days.values():
+            for h, text in list(day.items()):
+                new = i18n.auto_names_in(text)
+                if new != text:
+                    day[h] = new
+                    changed = True
+        for day in self.hour_halves.values():
+            for h, pair in list(day.items()):
+                if isinstance(pair, list):
+                    new = [i18n.auto_names_in(t) for t in pair]
+                    if new != pair:
+                        day[h] = new
+                        changed = True
+        if changed:
+            self.save_hour_log()
+        return changed
+
+    def relabel_sleep(self, start: datetime, end: datetime) -> bool:
+        """起床后: [start, end] 里已经自动记成非睡眠内容的小时 (睡眠记录晚到时) 改成"睡眠"."""
+        changed = False
+        h = start.replace(minute=0, second=0, microsecond=0)
+        while h < end:
+            ds, key = h.strftime("%Y-%m-%d"), str(h.hour)
+            cur = self.hour_days.get(ds, {}).get(key)
+            if cur and cur == self.auto_text and self.sleep_seconds(h, h + timedelta(hours=1)) >= 1800:
+                self.hour_days[ds][key] = self.sleep_text
+                changed = True
+            h += timedelta(hours=1)
+        if changed:
+            self.save_hour_log()
+        return changed
 
     def auto_text_for_key(self, key: str) -> str:
         """整点记录的键 ("日期/小时" 或 "日期/小时/1") → 这一小时的自动记录内容."""
@@ -130,7 +201,8 @@ class DataManager:
             return self.auto_text
 
     def is_auto_text(self, text, key: str) -> bool:
-        return str(text or "") in ("", self.auto_text_for_key(key))
+        auto = self.auto_text_for_key(key)
+        return str(text or "") in ("", auto) or i18n.auto_names_in(text) == i18n.auto_names_in(auto)
 
 
     def _migrate_old_data(self):
@@ -256,7 +328,7 @@ class DataManager:
                 en = datetime.strptime(r["e"], self._TS)
             except (KeyError, TypeError, ValueError):
                 continue
-            if r.get("k") in ("study", "break") and en > st:
+            if r.get("k") in ("study", "break", "sleep") and en > st:
                 out.append({"k": r["k"], "s": r["s"], "e": r["e"]})
             elif r.get("k") == "idle" and en > st:
                 out.append({"k": "idle", "s": r["s"], "e": r["e"], "f": str(r.get("f") or "")})
@@ -282,9 +354,9 @@ class DataManager:
             pass
 
     def add_focus_session(self, kind: str, start: datetime, end: datetime, focus: datetime = None):
-        """kind: 'study' 专注 / 'break' 休息 / 'idle' 空闲.
+        """kind: 'study' 专注 / 'break' 休息 / 'idle' 空闲 / 'sleep' 睡眠 (睡眠是单独的一种时间, MECHANICS 23).
         空闲: 共享专注中本机 OIT 被关掉的那一段; focus 是那段专注的开始时刻 (MECHANICS 8.2)."""
-        if kind not in ("study", "break", "idle") or start is None or end is None:
+        if kind not in ("study", "break", "idle", "sleep") or start is None or end is None:
             return
         if (end - start).total_seconds() < 1:
             return
@@ -325,8 +397,8 @@ class DataManager:
                 continue
             if k == "idle":
                 idle.setdefault(str(r.get("f") or ""), []).append((st, en))
-            else:
-                segs.append((k, st, en))
+            elif k in ("study", "break"):
+                segs.append((k, st, en))             # 睡眠不画进专注计时条形图 (留白)
         if live and live[1] is not None:
             now = datetime.now()
             segs.append((live[0], live[1], now))
@@ -361,6 +433,37 @@ class DataManager:
             study[h] = min(3600.0, study[h])
             rest[h] = min(3600.0 - study[h], rest[h])
         return list(zip(study, rest))
+
+    def day_kinds(self, day: datetime, live=None, now: datetime = None) -> dict:
+        """某一天四种时间各多少秒 (只有最近 7 天有专注计时记录): 专注 study / 休息 break / 睡眠 sleep / 空闲 idle.
+
+        空闲 = 这一天 (今天只算到此刻) 里不属于前三种的时间. live: 正在进行的一段 (kind, start), kind 可以是 sleep."""
+        now = now or datetime.now()
+        day0 = day.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_of_day = day0 + timedelta(days=1)
+        limit = min(end_of_day, now)
+        span = max(0.0, (limit - day0).total_seconds())
+        hours = self.focus_hours(day, live if live and live[0] in ("study", "break") else None)
+        study = sum(s for s, _r in hours)
+        rest = sum(r for _s, r in hours)
+        recs = list(self.focus_sessions)
+        for led in self.peer_ledgers() or []:
+            recs += [r for r in (led.get("focus") or []) if isinstance(r, dict)]
+        spans = []
+        for r in recs:
+            if r.get("k") != "sleep":
+                continue
+            try:
+                spans.append((datetime.strptime(r["s"], self._TS), datetime.strptime(r["e"], self._TS)))
+            except (KeyError, TypeError, ValueError):
+                continue
+        if live and live[0] == "sleep" and live[1] is not None:
+            spans.append((live[1], now))
+        sleep = 0.0
+        for a, b in _merge_spans(spans):
+            sleep += max(0.0, (min(b, limit) - max(a, day0)).total_seconds())
+        idle = max(0.0, span - study - rest - sleep)
+        return {"study": study, "break": rest, "sleep": sleep, "idle": idle}
 
     # ---- 断网 (Adapter) 期间的重叠 (MECHANICS 15.5) ----
 
@@ -789,6 +892,17 @@ def _sum_days(days: dict, prefix: str) -> Dict[str, float]:
 _RANK = {"break": 3, "study": 2, "idle": 1}
 
 
+def _merge_spans(spans) -> list:
+    """把可能重叠的 (开始, 结束) 合成互不重叠的几段."""
+    out = []
+    for a, b in sorted(spans):
+        if out and a <= out[-1][1]:
+            out[-1] = (out[-1][0], max(out[-1][1], b))
+        else:
+            out.append((a, b))
+    return out
+
+
 def _subtract(st: datetime, en: datetime, holes) -> list:
     """[st, en) 去掉 holes 里的各段之后剩下的 [(开始, 结束)]."""
     pieces = [(st, en)]
@@ -847,7 +961,7 @@ def tally_items(pairs) -> Dict[str, float]:
     totals: Dict[str, float] = {}
     names: Dict[str, str] = {}
     for text, secs in pairs:
-        items = split_items(text)
+        items = split_items(i18n.auto_names_in(text))      # 睡眠 / Sleeping 这类默认内容合并成一项
         if not items or secs <= 0:
             continue
         share = float(secs) / len(items)

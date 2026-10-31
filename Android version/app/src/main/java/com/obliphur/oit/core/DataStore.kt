@@ -56,7 +56,8 @@ fun combineWindow(sources: List<WindowSource>, prefix: String): Map<String, Doub
     return out
 }
 
-/** kind: study 专注 / break 休息 / idle 空闲 (共享专注中本机 OIT 被关掉的那一段; focus 是那段专注的开始时刻, MECHANICS 8.2). */
+/** kind: study 专注 / break 休息 / idle 空闲 (共享专注中本机 OIT 被关掉的那一段; focus 是那段专注的开始时刻, MECHANICS 8.2) /
+ *  sleep 睡眠 (单独的一种时间, MECHANICS 23). */
 data class FocusSeg(val kind: String, val start: LocalDateTime, val end: LocalDateTime, val focus: String = "") {
     fun json(): JSONObject = JSONObject().put("k", kind).put("s", start.format(Fmt.TS)).put("e", end.format(Fmt.TS))
         .also { if (kind == "idle") it.put("f", focus) }
@@ -102,6 +103,8 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
     var extraFocus: (LocalDate) -> List<BehaviorSeg> = { emptyList() }
     /** 某一小时的整点记录自动填充内容; "" = 用普通的 AUTO_TEXT. */
     var hourAutoText: (LocalDateTime) -> String = { "" }
+    /** 正在睡眠时, 开始睡眠的时刻 (睡眠期间的小时自动记成"睡眠"). */
+    var sleepLive: () -> LocalDateTime? = { null }
 
     init {
         dir.mkdirs()
@@ -195,7 +198,7 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
             val s = runCatching { LocalDateTime.parse(r.optString("s"), Fmt.TS) }.getOrNull() ?: continue
             val e = runCatching { LocalDateTime.parse(r.optString("e"), Fmt.TS) }.getOrNull() ?: continue
             val k = r.optString("k")
-            if ((k == "study" || k == "break" || k == "idle") && e.isAfter(s)) focus.add(FocusSeg(k, s, e, r.optString("f")))
+            if ((k == "study" || k == "break" || k == "idle" || k == "sleep") && e.isAfter(s)) focus.add(FocusSeg(k, s, e, r.optString("f")))
         }
         focus.removeAll { !it.end.isAfter(focusFloor()) }
     }
@@ -216,13 +219,44 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
     fun peerActive(start: LocalDateTime, end: LocalDateTime): Boolean =
         peerFocus().any { (it.kind == "study" || it.kind == "break") && it.start.isBefore(end) && start.isBefore(it.end) }
 
+    /** 某一天四种时间各多少秒 (只有最近 7 天有专注计时记录): study 专注 / break 休息 / sleep 睡眠 / idle 空闲.
+     *  空闲 = 这一天 (今天只算到此刻) 里不属于前三种的时间. live: 正在进行的一段 (kind, start), kind 可以是 sleep. 同 data_manager.day_kinds. */
+    fun dayKinds(day: LocalDate, live: Pair<String, LocalDateTime>?, now: LocalDateTime = LocalDateTime.now()): Map<String, Double> {
+        val d0 = day.atStartOfDay()
+        val limit = minOf(d0.plusDays(1), now)
+        val span = maxOf(0.0, secondsBetween(d0, limit))
+        val hours = focusHours(day, live?.takeIf { it.first == "study" || it.first == "break" })
+        val study = hours.sumOf { it.first }
+        val rest = hours.sumOf { it.second }
+        val spans = (focus + peerFocus()).filter { it.kind == "sleep" }.map { it.start to it.end }.toMutableList()
+        if (live != null && live.first == "sleep") spans.add(live.second to now)
+        val sleep = mergeSpans(spans).sumOf { (a, b) -> maxOf(0.0, secondsBetween(maxOf(a, d0), minOf(b, limit))) }
+        return mapOf("study" to study, "break" to rest, "sleep" to sleep, "idle" to maxOf(0.0, span - study - rest - sleep))
+    }
+
+    private fun mergeSpans(spans: List<Pair<LocalDateTime, LocalDateTime>>): List<Pair<LocalDateTime, LocalDateTime>> {
+        val out = mutableListOf<Pair<LocalDateTime, LocalDateTime>>()
+        for ((a, b) in spans.sortedBy { it.first }) {
+            val last = out.lastOrNull()
+            if (last != null && !a.isAfter(last.second)) out[out.size - 1] = last.first to maxOf(last.second, b) else out.add(a to b)
+        }
+        return out
+    }
+
+    /** [start, end] 里有多少秒在睡眠 (本机和其他设备记下的睡眠, 加上正在进行的这一段). */
+    fun sleepSeconds(start: LocalDateTime, end: LocalDateTime): Double {
+        val spans = (focus + peerFocus()).filter { it.kind == "sleep" }.map { it.start to it.end }.toMutableList()
+        sleepLive()?.let { spans.add(it to maxOf(it, LocalDateTime.now())) }
+        return mergeSpans(spans).sumOf { (a, b) -> maxOf(0.0, secondsBetween(maxOf(a, start), minOf(b, end))) }
+    }
+
     /** 某一天 24 个小时各自的 (专注秒数, 休息秒数). live: 正在进行的一段 (kind, start). */
     fun focusHours(day: LocalDate, live: Pair<String, LocalDateTime>?): List<Pair<Double, Double>> {
         val d0 = day.atStartOfDay()
         val st = DoubleArray(24)
         val rs = DoubleArray(24)
         val all = (focus + peerFocus()).toMutableList()
-        if (live != null) {
+        if (live != null && live.first != "sleep") {
             val now = LocalDateTime.now()
             all.add(FocusSeg(live.first, live.second, now))
             // 还没记下来的这段专注: 有设备离线的部分现在就画成空白 (休息照常)
@@ -239,7 +273,7 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
         }
         // 空闲的优先级最高: 同一段专注 (开始时刻相同) 里和空闲重叠的部分画成空白 (哪台设备记的都一样); 休息照常
         val idle = all.filter { it.kind == "idle" }.groupBy { it.focus }
-        val segs = all.filter { it.kind != "idle" }.flatMap { s ->
+        val segs = all.filter { it.kind == "study" || it.kind == "break" }.flatMap { s ->      // 睡眠不画进专注计时条形图 (留白)
             if (s.kind == "break") listOf(s) else subtract(s, idle[s.start.withNano(0).format(Fmt.TS)] ?: emptyList())
         }
         for (s in segs) {
@@ -481,18 +515,58 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
     val fillSeconds get() = fillWindow()
     /** 细化规范的半小时格: 补填时限只有 30 min (补填时限设得更短时照设置). */
     val halfFillSeconds get() = minOf(fillWindow(), 1800.0)
-    val autoValue get() = autoText()
+    /** 非睡眠时间的自动记录内容 (默认 分心 / Distracted, 跟随界面语言). */
+    val autoValue get() = I18n.autoName(autoText())
+    val sleepText get() = I18n.autoName("Sleeping")
 
-    /** 这一小时的超时自动记录内容: 行为模式优先, 否则用全局的那一项. */
-    fun autoTextFor(hourStart: LocalDateTime): String =
-        runCatching { hourAutoText(hourStart) }.getOrDefault("").ifBlank { autoText() }
+    /** 这一小时的超时自动记录内容: 行为模式优先; 睡眠占了这一小时一半以上记成"睡眠"; 否则用全局的那一项 (默认 分心). */
+    fun autoTextFor(hourStart: LocalDateTime): String {
+        val behavior = runCatching { hourAutoText(hourStart) }.getOrDefault("")
+        if (behavior.isNotBlank()) return behavior
+        if (runCatching { sleepSeconds(hourStart, hourStart.plusHours(1)) }.getOrDefault(0.0) >= 1800.0) return sleepText
+        return autoValue
+    }
+
+    /** 切换语言时: 整点记录里 睡眠 / Sleeping, 分心 / Distracted 这些默认的内容换成现在的语言, 同一项合并到一起. */
+    fun localizeAutoTexts(): Boolean {
+        var changed = false
+        for (day in hourDays.values) for (h in day.keys.toList()) {
+            val t = day[h] ?: continue
+            val n = I18n.autoNamesIn(t)
+            if (n != t) { day[h] = n; changed = true }
+        }
+        for (day in hourHalves.values) for (h in day.keys.toList()) {
+            val pair = day[h] ?: continue
+            val n = Array(pair.size) { I18n.autoNamesIn(pair[it]) }
+            if (!n.contentEquals(pair)) { day[h] = n; changed = true }
+        }
+        if (changed) saveHours()
+        return changed
+    }
+
+    /** 起床后: [start, end] 里已经自动记成非睡眠内容的小时 (睡眠记录晚到时) 改成"睡眠". */
+    fun relabelSleep(start: LocalDateTime, end: LocalDateTime): Boolean {
+        var changed = false
+        var h = start.floorHour()
+        while (h.isBefore(end)) {
+            val ds = h.toLocalDate().key()
+            val cur = hourDays[ds]?.get(h.hour.toString())
+            if (!cur.isNullOrEmpty() && cur == autoValue && sleepSeconds(h, h.plusHours(1)) >= 1800.0) {
+                hourDays[ds]!![h.hour.toString()] = sleepText
+                changed = true
+            }
+            h = h.plusHours(1)
+        }
+        if (changed) saveHours()
+        return changed
+    }
 
     /** 整点记录的键 ("日期/小时" 或 "日期/小时/1") → 自动记录内容. */
     fun autoTextForKey(key: String): String {
         val parts = key.split("/")
         return runCatching {
             LocalDate.parse(parts[0]).atStartOfDay().plusHours((parts[1].toInt()).toLong())
-        }.getOrNull()?.let { autoTextFor(it) } ?: autoText()
+        }.getOrNull()?.let { autoTextFor(it) } ?: autoValue
     }
 
     /** i = 0 前半小时, 1 后半小时. 还没分开填过的小时: 前半显示整小时的内容. */
@@ -532,7 +606,7 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
             val i = (p[2].toIntOrNull() ?: continue) - 1
             if (halfText(p[0], h, i).isEmpty()) {
                 val hour0 = runCatching { LocalDate.parse(p[0]).atStartOfDay().plusHours(h.toLong()) }.getOrNull()
-                setHalfText(p[0], h, i, hour0?.let { autoTextFor(it) } ?: autoText(), save = false)
+                setHalfText(p[0], h, i, hour0?.let { autoTextFor(it) } ?: autoValue, save = false)
                 changed = true
             }
         }

@@ -26,6 +26,8 @@ interface SyncLocal {
     fun autoText(): String
     /** 整点记录里这一格的自动填充内容 (行为模式会按小时变, MECHANICS 21). */
     fun autoTextFor(key: String): String = autoText()
+    /** 别的设备写的默认自动内容 (Sleeping / 睡眠) 换成本机的语言. */
+    fun autoNorm(text: String): String = text
     fun ledger(): JSONObject
     /** {文档: {项: 值}}, 值是 JSONObject / JSONArray / String / Number / null. */
     fun docs(): Map<String, Map<String, Any?>>
@@ -1238,8 +1240,8 @@ class SyncService(
         if (doc == "hours") {
             // 超时自动记录的内容永远让位给自己填写的内容 (行为模式按小时有不同的自动内容)
             val auto = local.autoTextFor(key)
-            val rAuto = v == auto
-            val lAuto = cur.second == auto
+            val rAuto = local.autoNorm(v?.toString() ?: "") == auto
+            val lAuto = local.autoNorm(cur.second?.toString() ?: "") == auto
             val lHas = cur.second != null && cur.second.toString().isNotEmpty()
             val rHas = v != null && v.toString().isNotEmpty()
             if (rAuto && lHas && !lAuto) return false

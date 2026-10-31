@@ -247,6 +247,46 @@ class CoreTest {
         assertEquals(0.5, dm.study["2026-03-02"]!!, 1e-9)
     }
 
+    /** 睡眠是单独的一种时间 (MECHANICS 23): 日历的四种时间, 睡眠期间的小时自动记成"睡眠", 默认内容跟随语言并合并. */
+    @Test
+    fun sleepKindAndAutoText() {
+        val dm = DataStore(tmp(), { 3600.0 }, { "Distracted" })
+        val day = LocalDate.of(2026, 10, 30)
+        fun at(h: Int, m: Int = 0) = day.atTime(h, m)
+        dm.addFocusSession("sleep", at(0), at(7, 30))
+        dm.addFocusSession("study", at(9), at(11))
+        dm.addFocusSession("break", at(11), at(11, 30))
+        val k = dm.dayKinds(day, null, at(12))
+        assertEquals(7.5 * 3600, k["sleep"]!!, 1.0)
+        assertEquals(2 * 3600.0, k["study"]!!, 1.0)
+        assertEquals(1800.0, k["break"]!!, 1.0)
+        assertEquals(2 * 3600.0, k["idle"]!!, 1.0)
+        // 睡眠不算进专注计时条形图
+        assertEquals(0.0, dm.focusHours(day, null)[3].let { it.first + it.second }, 1e-9)
+        val old = I18n.lang
+        try {
+            I18n.lang = "zh"
+            assertEquals("睡眠", dm.autoTextFor(at(3)))
+            assertEquals("分心", dm.autoTextFor(at(8)))
+            I18n.lang = "en"
+            assertEquals("Sleeping", dm.autoTextFor(at(3)))
+            assertEquals("Distracted", dm.autoTextFor(at(8)))
+            // 切换语言: 默认内容换成新语言, 同一项合并
+            dm.hourDays["2026-10-30"] = hashMapOf("1" to "睡眠", "2" to "Sleeping/学习", "3" to "分心", "4" to "读书")
+            I18n.lang = "en"
+            assertTrue(dm.localizeAutoTexts())
+            assertEquals(mapOf("1" to "Sleeping", "2" to "Sleeping/学习", "3" to "Distracted", "4" to "读书"), dm.hourDays["2026-10-30"])
+            val t = tallyItems(listOf("睡眠" to 3600.0, "Sleeping" to 3600.0, "分心/Sleeping" to 3600.0))
+            assertEquals(9000.0, t["Sleeping"]!!, 1e-9)
+            assertEquals(1800.0, t["Distracted"]!!, 1e-9)
+            I18n.lang = "zh"
+            assertTrue(dm.localizeAutoTexts())
+            assertEquals("睡眠", dm.hourDays["2026-10-30"]!!["1"])
+        } finally {
+            I18n.lang = old
+        }
+    }
+
     @Test
     fun dnsPackets() {
         // 一个 IPv4 UDP DNS 查询: example.com A

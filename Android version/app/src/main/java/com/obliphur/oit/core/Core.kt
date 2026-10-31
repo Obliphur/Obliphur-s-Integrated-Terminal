@@ -179,6 +179,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         net.quotaFactor = { day -> behavior.quotaFactor(day) }
         net.cooldownFactor = { at -> behavior.cooldownFactor(at) }
         timer = TimerEngine(this, dir, mono)
+        dm.sleepLive = { timer.sleepSince }          // 睡眠期间的小时自动记成"睡眠"
         // 没有存档时 (新安装 / 旧版本升级上来) 估计第一次启动的时刻
         ach = AchievementStore(File(dir, "achievements.json")) {
             AchievementStore.guessFirstLaunch(dir, settings.setupUntil, dm.study.keys + dm.hourDays.keys)
@@ -513,7 +514,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         }
         if (slotLocked(slot, len)) { changed(); return }            // 记录封锁另外封锁了这一格: 填不了, 不提示
         // 绑定了其他设备时, 只有最后有人操作的那台响 (其他设备只标出待填写)
-        if (!isLatestActive()) {
+        if (!isLatestActive() || timer.sleepSince != null) {     // 睡眠中也不响, 免得吵醒
             dm.promptSlot = slot
             dm.promptLen = len
             host.hourPrompt(slot, silent = true)
@@ -643,6 +644,10 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
 
     /** 设置项生效之后 (立即生效或冷静期到期). */
     fun afterSettingsApplied(keys: Collection<String>) {
+        if ("LANGUAGE" in keys) {
+            I18n.lang = settings.str("LANGUAGE")
+            dm.localizeAutoTexts()          // 默认的自动记录内容 (睡眠 / Sleeping 等) 换成新语言, 同一项合并
+        }
         if ("HOUR_LOG_ENABLED" in keys) syncHourLog()
         if ("BEHAVIOR_MODE" in keys) {
             behavior.syncMode()

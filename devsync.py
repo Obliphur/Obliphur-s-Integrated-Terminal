@@ -862,7 +862,8 @@ class SyncService:
         if doc == "hours":
             # 超时自动记录的内容永远让位给自己填写的内容 (行为模式按小时有不同的自动内容)
             auto = _call(self.local, "auto_text_for", None, key) or self.local.auto_text()
-            r_auto, l_auto = val == auto, cur_val == auto
+            norm = getattr(self.local, "auto_norm", None) or (lambda t: t)       # Sleeping / 睡眠 算同一项
+            r_auto, l_auto = norm(val) == auto, norm(cur_val) == auto
             if r_auto and cur_val and not l_auto:
                 return False
             if l_auto and val and not r_auto:

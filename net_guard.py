@@ -9,6 +9,7 @@ import threading
 import subprocess
 from datetime import datetime, timedelta
 
+import browserfence
 import config
 from config import fmt_hm
 from netproxy import ProxyController
@@ -20,6 +21,14 @@ from data_manager import month_prefixes
 
 class NetGuard:
     gift = 0.0                        # 今天合约奖励的额度 (见 __init__)
+    # 防绕过 (见 __init__); 自检里不经过 __init__ 造出来的对象没有这些, 不防绕过
+    fence = None
+    _fence_at = 0.0
+    _fence_busy = False
+    _fence_clean = False
+    _watch_at = 0.0
+    tamper = {"count": 0, "at": 0.0}
+    on_tamper = None
 
     def __init__(self, data_dir: str):
         self.dead = False
@@ -65,6 +74,14 @@ class NetGuard:
                                            else getattr(config, "FILTER_MODE", "blacklist")),
             dev_getter=config.changes_instant)
         self._nic_off_by_fallback = False
+        # 防绕过 (MECHANICS 3.2.2): 系统代理被改了马上改回去; 浏览器围栏 (防火墙出站规则, browserfence.py)
+        self.fence = browserfence.BrowserFence()
+        self._fence_at = 0.0
+        self._fence_busy = False
+        self._fence_clean = False             # 围栏规则已经删干净了 (不在 Proxy 方式时只删一次)
+        self._watch_at = 0.0
+        self.tamper = {"count": 0, "at": 0.0}
+        self.on_tamper = lambda kind: None    # app 接上: 提示用户
         self._applied_mode = self.net_mode
         self._load()
         self._load_usage()
@@ -435,6 +452,9 @@ class NetGuard:
         self._nic_off_by_fallback = False
         self._run(self._cmd(True))
         self._run(lambda: self.proxy.stop(restore=True))
+        if self.fence is not None:
+            self._run(self.fence.clear_all)         # 浏览器围栏也撤掉 (重置 / 卸载 / 开发者模式)
+            self._fence_clean = True
 
     def sync_mode(self):
         """设置里的 NET_MODE 变了(立即生效或冷静期到期)就切换后端;没变则什么都不做."""
@@ -710,10 +730,64 @@ class NetGuard:
         self._save()
 
 
+    # ---- 防绕过: Proxy 断网方式只管得住遵守系统代理的程序 (MECHANICS 3.2.2) ----
+
+    def _guard_wanted(self) -> bool:
+        return self.fence is not None and not self.dead and not self.dev_mode and self.net_mode == "proxy"
+
+    def _guard_tick(self, now: float):
+        if self._guard_wanted() and now - self._watch_at >= 1.0:
+            self._watch_at = now
+            self._watch_system_proxy()
+        self._fence_tick(now)
+
+    def _watch_system_proxy(self):
+        """每秒看一眼系统代理: 被关掉 / 改成别的代理 / 加了 PAC 就马上改回来 (不等"断网复查间隔")."""
+        try:
+            if not self.proxy.running or not self.q.empty():
+                return
+            if self.proxy.sys.is_installed("127.0.0.1", self.proxy.port):
+                return
+        except Exception:
+            return
+        self.tamper = {"count": self.tamper["count"] + 1, "at": time.time()}
+        self._log("TAMPER   system proxy was changed; restoring it")
+        self.q.put(lambda: self._proxy_apply(self.online))
+        try:
+            if self.on_tamper:
+                self.on_tamper("proxy")
+        except Exception:
+            pass
+
+    def _fence_tick(self, now: float):
+        """每 10 秒把浏览器围栏调整成正好是现在的浏览器 (后台线程; 不在 Proxy 方式 / 开发者模式时删掉)."""
+        if self.fence is None or self._fence_busy or now - self._fence_at < 10.0:
+            return
+        want = self._guard_wanted()
+        if not want and self._fence_clean:
+            return
+        self._fence_at = now
+        self._fence_busy = True
+        threading.Thread(target=self._fence_run, args=(want,), daemon=True).start()
+
+    def _fence_run(self, want: bool):
+        try:
+            if want:
+                self.fence.sync(browserfence.browser_paths())
+                self._fence_clean = False
+            else:
+                self.fence.clear_all()
+                self._fence_clean = True
+        except Exception as e:
+            self._log(f"FENCE    failed ({type(e).__name__}: {e})")
+        finally:
+            self._fence_busy = False
+
     def tick(self, dt: float):
         today = datetime.now().strftime('%Y-%m-%d')
         if today != self.date:
             self._rollover(today)                 # 开发者模式下也照常跨日, 关掉开发者模式时额度已经是今天的
+        self._guard_tick(time.monotonic())
 
         if self.dev_mode:
             if self.pending:

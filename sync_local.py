@@ -7,6 +7,7 @@ import tempfile
 from datetime import datetime
 
 import config
+import i18n
 import toast
 from i18n import tr
 from settings_manager import SCHEMA_BY_KEY
@@ -94,6 +95,10 @@ class PcLocal:
 
     def auto_text(self) -> str:
         return self.app.dm.auto_text
+
+    def auto_norm(self, text: str) -> str:
+        """别的设备 (界面语言可能不同) 写的 Sleeping / 睡眠 之类的默认内容, 换成本机的语言."""
+        return i18n.auto_names_in(text)
 
     def auto_text_for(self, key: str) -> str:
         """整点记录里这一格的自动填充内容 (行为模式会按小时变, MECHANICS 21)."""
@@ -254,7 +259,7 @@ class PcLocal:
                     continue
                 day = dm.hour_days.setdefault(ds, {})
                 if val:
-                    day[h] = str(val)
+                    day[h] = i18n.auto_names_in(str(val))
                 else:
                     day.pop(h, None)
             dm.save_hour_log()

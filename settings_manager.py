@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta
 
 import config
+import i18n
 from i18n import tr
 from config import DEFAULT_SETTINGS, load_json_file, save_json_file, settings_file
 
@@ -244,13 +245,12 @@ SETTINGS_SCHEMA = [
         "key": "AUTO_TEXT", "label": "超时自动记录内容",
         "kind": "instant", "apply": APPLY_INSTANT,
         "choices": [
-            ("Sleeping", "Sleeping(睡觉)"),
+            ("Distracted", "Distracted(分心)"),
             ("Idle", "Idle(发呆)"),
             ("Break", "Break(休息)"),
-            ("Distracted", "Distracted(分心)"),
         ],
-        "fmt": lambda v: str(v),
-        "desc": "整点后一小时内没填写,就自动记成这段文字.这一项可以立即修改.",
+        "fmt": lambda v: i18n.auto_name(v),
+        "desc": "整点后一小时内没填写,就自动记成这段文字 (睡眠期间的小时固定记成 睡眠 / Sleeping).默认的几项跟随界面语言.这一项可以立即修改.",
         "page": "log",
     },
     {
@@ -783,7 +783,11 @@ class SettingsManager:
             return str(value) if str(value) in config.THEMES else config.DEFAULT_THEME
         if key == "CONTRACT_THEME":
             return str(value) if str(value) in ("ops", "urban") else "ops"
-        if key in ("LANGUAGE", "AUTO_TEXT", "OUTING_TEXT", "REST_TEXT"):
+        if key == "AUTO_TEXT":
+            v = str(value)
+            # 睡眠期间的自动内容现在是固定的 (睡眠); 以前默认的 Sleeping 换成 分心 / Distracted
+            return "Distracted" if v.strip().casefold() in ("sleeping", "睡眠") else v
+        if key in ("LANGUAGE", "OUTING_TEXT", "REST_TEXT"):
             return str(value)
         if key == "CHIME_WAV":
             return "" if str(value).strip() in ("", "__builtin__") else str(value)

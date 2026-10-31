@@ -16,6 +16,10 @@ MONTHS_ZH = ("1 月", "2 月", "3 月", "4 月", "5 月", "6 月",
              "7 月", "8 月", "9 月", "10 月", "11 月", "12 月")
 # 合约的黑雾 (MECHANICS 18.3): 日历上随机的学习时长在这个范围里 (小时)
 FOG_MIN, FOG_MAX = 16, 80
+# 日历能看的四种时间 (睡眠是单独的一种时间, MECHANICS 23): 专注 / 休息 / 空闲 / 睡眠
+KINDS = ("study", "break", "idle", "sleep")
+KIND_TEXT = {"study": "专注", "break": "休息", "idle": "空闲", "sleep": "睡眠"}
+TOTAL_TEXT = {"break": "休息合计: {h:.1f} h", "idle": "空闲合计: {h:.1f} h", "sleep": "睡眠合计: {h:.1f} h"}
 MONTHS_EN = ("January", "February", "March", "April", "May", "June",
              "July", "August", "September", "October", "November", "December")
 
@@ -26,8 +30,8 @@ class CalendarPage(tk.Frame):
         self.dm = data_manager
         # 合约的黑雾 (MECHANICS 18.3): 不为 None 时显示随机的学习时长, 月份和合计写成 ???
         self.fog = lambda: None
-        self.live = lambda: None   # 正在进行的一段 (kind, 开始时刻), 算今天的空闲时间时用 (由 app 接上)
-        self.show_idle = False     # 切换: 日历格子里写学习时长 / 空闲时间 (MECHANICS 8.2)
+        self.live = lambda: None   # 正在进行的一段 (kind, 开始时刻), 算今天的休息 / 睡眠 / 空闲时间时用 (由 app 接上)
+        self.kind = "study"        # 切换: 日历格子里写哪一种时间 (MECHANICS 8.2)
         self.display_year = datetime.now().year
         self.display_month = datetime.now().month
         self.offset = 0            # 0 = 本月, -1 = 上月(只保留这两个月)
@@ -49,8 +53,13 @@ class CalendarPage(tk.Frame):
         self.btn_prev = ttk.Button(nav_frame, text=tr("‹ 上月"), command=lambda: self._go(-1))
         self.btn_prev.pack(side="right", padx=(10, 0))
 
-        self.btn_idle = ttk.Button(nav_frame, text=tr("查看空闲时间"), command=self._toggle_idle)
-        self.btn_idle.pack(side="right", padx=(10, 0))
+        # 四种时间的切换: 专注 / 休息 / 空闲 / 睡眠
+        self.kind_btns = {}
+        for kind in reversed(KINDS):
+            b = ttk.Button(nav_frame, text=tr(KIND_TEXT[kind]), command=lambda k=kind: self._set_kind(k))
+            b.pack(side="right", padx=(4, 0))
+            self.kind_btns[kind] = b
+        self.kind_btns[KINDS[0]].pack_configure(padx=(4, 10))
 
         self.lbl_month_total = tk.Label(
             nav_frame, text=tr("合计: {h:.1f} h").format(h=0.0),
@@ -96,12 +105,12 @@ class CalendarPage(tk.Frame):
             cfg(lbl, text=tr(day))
 
     @smooth
-    def _toggle_idle(self):
-        self.show_idle = not self.show_idle
+    def _set_kind(self, kind: str):
+        self.kind = kind
         self.refresh()
 
-    def _idle_hours(self, prefix: str, today: datetime) -> dict:
-        """这个月里有专注计时记录的那几天 (最近 7 天) 的空闲小时数: 一天的时间 (今天算到此刻) 减去专注和休息.
+    def _kind_hours(self, kind: str, prefix: str, today: datetime) -> dict:
+        """这个月里有专注计时记录的那几天 (最近 7 天) 的某种时间的小时数 (休息 / 空闲 / 睡眠, MECHANICS 8.2).
         更早的日子没有专注计时记录, 不写."""
         floor = self.dm._focus_floor(today).date()
         out = {}
@@ -114,9 +123,7 @@ class CalendarPage(tk.Frame):
             if d.date() < floor or d.date() > today.date():
                 continue
             is_today = d.date() == today.date()
-            span = (today - d).total_seconds() if is_today else 86400.0
-            used = sum(s + r for s, r in self.dm.focus_hours(d, self.live() if is_today else None))
-            out[date_str] = max(0.0, span - used) / 3600.0
+            out[date_str] = self.dm.day_kinds(d, self.live() if is_today else None, today)[kind] / 3600.0
         return out
 
     @smooth
@@ -146,7 +153,11 @@ class CalendarPage(tk.Frame):
         )
         seed = self.fog()
         cfg(self.lbl_month_title, text="???" if seed is not None else title)
-        cfg(self.btn_idle, text=tr("查看学习时长") if self.show_idle else tr("查看空闲时间"))
+        for kind, b in self.kind_btns.items():
+            cfg(b, text=tr(KIND_TEXT[kind]))
+            want = kind == self.kind
+            if b.instate(["disabled"]) != want:
+                b.state(["disabled" if want else "!disabled"])      # 现在看的这一种: 按钮按下 (灰)
         self._apply_day_headers()
 
         cal = calendar.monthcalendar(self.display_year, self.display_month)
@@ -164,9 +175,9 @@ class CalendarPage(tk.Frame):
             month_data = {f"{prefix}-{d:02d}": round(rnd.uniform(FOG_MIN, FOG_MAX), 1)
                           for d in range(1, 32) if f"{prefix}-{d:02d}" <= today_str}
             cfg(self.lbl_month_total, text=tr("合计: ???"))
-        elif self.show_idle:
-            month_data = self._idle_hours(prefix, now)
-            cfg(self.lbl_month_total, text=tr("空闲合计: {h:.1f} h").format(h=sum(month_data.values())))
+        elif self.kind != "study":
+            month_data = self._kind_hours(self.kind, prefix, now)
+            cfg(self.lbl_month_total, text=tr(TOTAL_TEXT[self.kind]).format(h=sum(month_data.values())))
         else:
             cfg(self.lbl_month_total, text=tr("合计: {h:.1f} h").format(h=month_total))
 

@@ -240,7 +240,7 @@ fun tallyItems(pairs: Iterable<Pair<String, Double>>): Map<String, Double> {
     val totals = LinkedHashMap<String, Double>()
     val names = HashMap<String, String>()
     for ((text, secs) in pairs) {
-        val items = splitItems(text)
+        val items = splitItems(I18n.autoNamesIn(text))      // 睡眠 / Sleeping 这类默认内容合并成一项
         if (items.isEmpty() || secs <= 0) continue
         val share = secs / items.size
         for (item in items) {

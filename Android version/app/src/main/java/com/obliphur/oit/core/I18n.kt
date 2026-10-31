@@ -17,6 +17,27 @@ object I18n {
     @Volatile
     var noFlavor: Boolean = false
 
+    /** 整点记录的自动填写内容 (MECHANICS 8.2 / 23): 英文名和中文名是同一项, 按界面语言写, 切换语言时合并 (同 i18n.py). */
+    val AUTO_NAMES = listOf("Sleeping" to "睡眠", "Distracted" to "分心", "Idle" to "发呆", "Break" to "休息")
+
+    /** Sleeping / Distracted / Idle / Break 和它们的中文名: 照现在的界面语言写; 别的文字原样. */
+    fun autoName(text: String?): String {
+        val t = text ?: ""
+        val k = t.trim().lowercase()
+        for ((en, zh) in AUTO_NAMES) if (k == en.lowercase() || k == zh) return if (isEn) en else zh
+        return t
+    }
+
+    /** 一小时的记录里 (多项活动用 / 连接) 每一项都按 autoName 换成现在的语言; 没有要换的原样返回. */
+    fun autoNamesIn(text: String?): String {
+        val t = text ?: ""
+        if (t.isEmpty()) return t
+        val sep = if ("／" in t && "/" !in t) "／" else "/"
+        val parts = t.replace("／", "/").split("/")
+        val out = parts.map { if (it.isNotBlank()) autoName(it) else it }
+        return if (out == parts) t else out.joinToString(sep)
+    }
+
     private val ICON = Regex("[\u21A9\u21AA\u21BB\u2300-\u23FF\u2600-\u27BF\u2B00-\u2BFF\uFE0F\u200D\u20E3\\x{1F000}-\\x{1FAFF}]")
 
     /** 去掉图标字符 (图标旁边的空格一起去掉); 只有一个图标的按钮 (✕ / ☰) 换成普通字符, 免得按钮没有字. */

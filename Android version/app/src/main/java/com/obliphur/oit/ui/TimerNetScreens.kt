@@ -122,6 +122,10 @@ fun TimerScreen() {
                         PlainButton(tr("☕  开始休息"), enabled = t.breakCarry > 0, mark = prescriptMark("break")) { t.onBreakButton() }
                     }
                 }
+                // 睡眠 (MECHANICS 23): 盖住整个界面, 只剩一个"起床"; 只有空闲 (不在专注 / 休息 / 合约) 时能按
+                PlainButton(tr("😴  睡眠"), enabled = t.state == TState.IDLE && !core.contract.active) {
+                    t.startSleep().let { err -> if (err.isNotEmpty()) core.toast(err, "warn") }
+                }
                 if (core.behavior.enabled()) PlainButton(tr("🚪  外出")) { askOuting = true }
                 // 连点按钮: 按钮上只写这几个字, 不写具体规则; 合约中 / 外出中隐藏
                 // 合约中 / 本周已经领完时隐藏 (下周一再出现)

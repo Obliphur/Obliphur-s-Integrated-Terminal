@@ -2,6 +2,7 @@ package com.obliphur.oit.sync
 
 import com.obliphur.oit.OitApp
 import com.obliphur.oit.core.Fmt
+import com.obliphur.oit.core.I18n
 import com.obliphur.oit.core.Kind
 import com.obliphur.oit.core.NoticeButton
 import com.obliphur.oit.core.Pending
@@ -22,6 +23,8 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
     override fun netMode() = "proxy"
     override fun autoText() = core.settings.str("AUTO_TEXT")
     override fun autoTextFor(key: String) = core.dm.autoTextForKey(key)
+    /** 别的设备 (界面语言可能不同) 写的 Sleeping / 睡眠 之类的默认内容, 换成本机的语言. */
+    override fun autoNorm(text: String) = I18n.autoNamesIn(text)
     override fun changed() = core.changed()
     override fun appVersion(): String = com.obliphur.oit.BuildConfig.VERSION_NAME
 
@@ -240,7 +243,7 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
                     val ds = key.substringBefore('/')
                     val h = key.substringAfter('/', "").toIntOrNull() ?: continue
                     val day = dm.hourDays.getOrPut(ds) { HashMap() }
-                    val text = v?.toString() ?: ""
+                    val text = I18n.autoNamesIn(v?.toString() ?: "")
                     if (text.isNotEmpty()) day[h.toString()] = text else day.remove(h.toString())
                 }
                 dm.saveHours()

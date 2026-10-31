@@ -213,13 +213,13 @@ OUTING_MAX_HOURS = 24 * 7
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.196"                         # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.197"                         # 和 GitHub 上发布的版本号比较 (见 updater.py)
 UPDATE_CHECK = 1                              # 打开程序时检查更新
 UPDATE_AUTO = 1                               # 发现新版本时自动下载安装
 OLD_APP_DIR = "mrsTimer"
 FILL_WINDOW = timedelta(hours=1)              
 FINE_FILL_WINDOW = timedelta(minutes=30)      # 细化规范的半小时格补填时限最多 30 min (MECHANICS 18.4)
-AUTO_TEXT = "Sleeping"
+AUTO_TEXT = "Distracted"                     # 非睡眠时间没填写的小时自动记成这个 (睡眠期间的小时记成 Sleeping / 睡眠)
 HOUR_LOG_ENABLED = True                       
 CHIME_WAV = ""
 LANGUAGE = "zh"

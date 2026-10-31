@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -561,6 +563,23 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
                     },
                     containerColor = o.bg,
                 )
+            }
+            // 睡眠 (MECHANICS 23): 盖住整个界面, 空白背景, 正中一个"起床"; 程序 (VPN 防修改, 同步, 自启动) 照常运行
+            if (core.timer.sleepSince != null) {
+                androidx.activity.compose.BackHandler { }
+                androidx.compose.foundation.layout.Box(
+                    Modifier.fillMaxSize().background(o.bg).clickable(enabled = true, onClick = {}),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (theme == "urban_will") {
+                        // 都市之意: 正中是指令页的那个图标, "醒来" 在它下面一点
+                        androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(com.obliphur.oit.R.drawable.prescript_index),
+                            contentDescription = null, modifier = Modifier.size(128.dp))
+                        Box(Modifier.align(Alignment.Center).offset(y = 120.dp)) {
+                            AccentButton(tr("醒来")) { core.timer.wake() }
+                        }
+                    } else AccentButton(tr("☀  起床")) { core.timer.wake() }
+                }
             }
             if (reloading) {
                 androidx.compose.foundation.layout.Box(

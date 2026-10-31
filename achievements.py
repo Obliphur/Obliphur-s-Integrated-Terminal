@@ -35,6 +35,7 @@ ACHIEVEMENTS = [
 ]
 BY_ID = {a[0]: a for a in ACHIEVEMENTS}
 SLEEP_WORD = "sleeping"
+SLEEP_WORDS = (SLEEP_WORD, "睡眠")
 SUMMIT_LEVEL = 38          # "登顶": 完成危机等级 (结束时) 不低于这个的合约
 HAMSTER_SECONDS = 3 * 3600  # "仓鼠": 积攒的休息时间达到 3 小时
 WEEK_CONTRACTS = 7         # "毋畏天灾": 同一周 (周一 0 点起) 完成的合约数
@@ -64,7 +65,7 @@ def sleep_hours(day: dict) -> float:
     for text in (day or {}).values():
         items = split_items(text)
         if items:
-            total += sum(1 for it in items if it.casefold() == SLEEP_WORD) / len(items)
+            total += sum(1 for it in items if it.casefold() in SLEEP_WORDS) / len(items)
     return total
 
 

@@ -64,9 +64,53 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
     /** 这次休息结束的时刻 (墙上时间, 同步用). */
     private var breakEndWall: LocalDateTime? = null
 
+    /** 睡眠 (MECHANICS 23): 独立的一种时间, 不同于专注 / 休息 / 空闲; 开始睡眠的时刻, null = 醒着. */
+    var sleepSince: LocalDateTime? = null
+        private set
+
     init {
         breakCarry = maxOf(0, readState().optInt("break_carry", 0))
         autoRest = readState().optInt("auto_rest", 0).coerceIn(0, breakCarry)
+        // 睡眠中: 关掉程序 / 进程被回收后再打开时接着睡
+        readState().optJSONObject("sleep")?.let { rec ->
+            parseIso(rec.optString("since"))?.let { sleepSince = it; owner = rec.optString("owner") }
+        }
+    }
+
+    // ---- 睡眠 (MECHANICS 23) ----
+
+    /** 开始睡眠: 只有空闲 (不在专注 / 休息 / 外出 / 合约) 时能睡. 返回 "" = 好, 否则是原因 (界面直接显示). */
+    fun startSleep(): String {
+        if (sleepSince != null) return ""
+        if (core.contract.active) return tr("合约中不能睡眠.")
+        if (core.behavior.active() != null) return tr("外出中不能睡眠.")
+        if (state != TState.IDLE) return tr("请先结束专注 / 休息再睡眠.")
+        mine()
+        idleSince = null
+        nudgeId?.let { core.dismissNotice(it) }
+        sleepSince = LocalDateTime.now().withNano(0)
+        saveState()
+        core.changed()
+        return ""
+    }
+
+    /** 起床: 这段睡眠记下来 (睡眠是单独的一种时间), 回到空闲. */
+    fun wake() {
+        val since = sleepSince ?: return
+        mine()
+        val now = LocalDateTime.now()
+        sleepSince = null
+        dm.addFocusSession("sleep", since, now)
+        dm.relabelSleep(since, now)              // 睡眠期间已经自动记成"分心"的小时改成"睡眠"
+        saveState()
+        armIdleNudge()
+        core.changed()
+    }
+
+    /** 睡眠中却进入了专注 / 休息 / 外出 / 合约 (例如别的设备同步过来的) 就起床. */
+    private fun checkSleep() {
+        if (sleepSince == null) return
+        if (state != TState.IDLE || core.contract.active || core.behavior.active() != null) wake()
     }
 
     private fun readState(): JSONObject = Store.readObj(file) ?: JSONObject()
@@ -366,8 +410,8 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
 
     private fun checkIdleNudge() {
         val since = idleSince ?: return
-        if (state != TState.IDLE) {
-            idleSince = null; return
+        if (state != TState.IDLE || sleepSince != null) {
+            idleSince = null; return              // 已经开始下一轮 (或睡眠中), 不再提醒
         }
         if (!core.isLatestActive()) return     // 只在最后有人操作的设备上提醒
         val now = LocalDateTime.now()
@@ -397,6 +441,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         d.put("break_carry", breakCarry)
         d.put("auto_rest", autoRest)
         // owner: 重开时原样恢复, 同步的计时器状态才不会因为"主人变了"被当成新的改动 (盖掉其他设备更新的状态)
+        d.put("sleep", sleepSince?.let { JSONObject().put("since", it.iso()).put("owner", owner) } ?: JSONObject.NULL)
         val f = if (state == TState.RUNNING && startWall != null) JSONObject()
             .put("start", startWall!!.iso()).put("alive", LocalDateTime.now().iso())
             .put("checks", focusChecks).put("ok", focusOk.toLong()).put("owner", owner)
@@ -833,6 +878,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
     fun check() {
         checkClosePending()
         checkFocus()
+        checkSleep()
         checkIdleNudge()
     }
 
@@ -849,6 +895,9 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
             maxOf(0.0, secondsBetween(LocalDateTime.now(), due))
         }
     }
+
+    /** 日历用: 正在进行的一段, 比 live() 多一种睡眠. */
+    fun calendarLive(): Pair<String, LocalDateTime>? = sleepSince?.let { "sleep" to it } ?: live()
 
     /** 正在进行的一段, 供统计页画到此刻. */
     fun live(): Pair<String, LocalDateTime>? = when {
@@ -873,7 +922,9 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         val sw = startWall
         val bs = breakStartWall
         val be = breakEndWall
+        val sl = sleepSince
         return when {
+            sl != null && state == TState.IDLE -> JSONObject().put("state", "sleep").put("owner", o).put("since", sl.iso())
             state == TState.RUNNING && sw != null -> JSONObject().put("state", "running").put("owner", o)
                 .put("start", sw.iso()).put("checks", focusChecks).put("ok", focusOk.toLong())
             state == TState.ON_BREAK && bs != null && be != null -> JSONObject().put("state", "break").put("owner", o)
@@ -890,7 +941,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         val st = l.optString("state")
         val newOwner = l.optString("owner")
         if (st == cur.optString("state") && l.optString("start") == cur.optString("start") &&
-            l.optString("break_end") == cur.optString("break_end")) {
+            l.optString("break_end") == cur.optString("break_end") && l.optString("since") == cur.optString("since")) {
             if (st == "running" && l.optInt("checks") > focusChecks) {
                 closeCheck()                    // 在别的设备上确认过"还在吗"了
                 focusChecks = l.optInt("checks")
@@ -903,7 +954,14 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         closeCheck()
         idleSince = null
         val now = LocalDateTime.now()
+        if (sleepSince != null && st != "sleep") sleepSince = null    // 别的设备起床了 / 开始了别的事: 那台设备记下这段睡眠
         when (st) {
+            "sleep" -> {
+                val since = parseIso(l.optString("since")) ?: return
+                breakStartWall = null
+                resetToIdle()
+                sleepSince = since
+            }
             "running" -> {
                 val start = parseIso(l.optString("start")) ?: return
                 breakStartWall = null

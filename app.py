@@ -219,6 +219,8 @@ class BreakTimerApp:
         self.app_rules_job = None     # Rules 页的应用名单: 每秒看一次前台窗口
         # 设备同步 (MECHANICS 15): 计时器此刻的状态是几台设备共用的
         self.timer_owner = ""         # 最后改动计时器状态的设备 (空 = 本机)
+        self.sleep_since = None       # 睡眠 (MECHANICS 23): 开始睡眠的时刻; None = 醒着
+        self._sleep_cover = None      # 睡眠时盖住整个窗口的页面
         self.break_end_wall = None    # 这次休息结束的时刻 (墙上时间, 同步用)
         self.last_op = time.time() * 1000   # 本机最后一次有人操作的时刻 (毫秒)
         self._app_rules_toast = {}    # exe -> 上次提示的时刻 (同一个程序 5 秒内只提示一次)
@@ -243,6 +245,7 @@ class BreakTimerApp:
         # 要在 DataManager 里补记整点记录之前接上, 否则启动时会先用普通的自动记录内容补一遍.
         self.behavior = behavior.Behavior(config.app_data_dir())
         self.dm = DataManager(hour_auto_text=self.behavior.hour_auto_text)
+        self.dm.sleep_live = lambda: self.sleep_since
         self.timer_file = os.path.join(self.dm.data_dir, "timer_state.json")
         self.break_carry = self._load_break_carry()
         # 非手动结束的专注 (没回应"还在吗", 程序退出, 共享的专注被终止) 存进积攒的休息时间、还没折算的部分 (6.8)
@@ -262,6 +265,7 @@ class BreakTimerApp:
         self.contract.blocked = lambda: self.dm.resetting
         self._apply_contract_overrides()
         self.net = NetGuard(self.dm.data_dir)
+        self.net.on_tamper = self._on_net_tamper
         self.net.quota_factor = self.behavior.quota_factor
         self.net.cooldown_factor = self.behavior.cooldown_factor
         # 设备同步 (MECHANICS 15): 其他设备的账并进额度和统计
@@ -367,6 +371,7 @@ class BreakTimerApp:
 
         self.root.bind("<Map>", self._on_window_map, add="+")
         self.root.bind("<Unmap>", self._on_window_unmap, add="+")
+        self.root.bind_all("<F11>", self._toggle_fullscreen, add="+")      # F11: 全屏 / 退出全屏
         self.root.bind_all("<ButtonPress>", self._touch, add="+")
         self.root.bind_all("<KeyPress>", self._touch, add="+")
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -377,6 +382,7 @@ class BreakTimerApp:
         self._note_power_back()
         self._recover_break()
         self._recover_focus()
+        self._recover_sleep()
         if not self.dm.username:
             # 第一次打开 (或者还没填过用户名的旧版本升级上来): 先填用户名, 再显示介绍窗口
             self.root.after(600, self._ask_username)
@@ -699,7 +705,7 @@ class BreakTimerApp:
         # 看不见的页面不参与布局和重画, 每秒的刷新也不会去画它们.
         self.pages["cal"] = CalendarPage(self.content, self.dm)
         self.pages["cal"].fog = self._fog_seed
-        self.pages["cal"].live = self._focus_live
+        self.pages["cal"].live = self._calendar_live
         self._prepare_page(self.pages["cal"])
         yield
         self.pages["stats"] = StatsPage(self.content, self.dm, self.net,
@@ -835,11 +841,14 @@ class BreakTimerApp:
         self._start_midnight_timer()
         self._schedule_hourly()
         self._restore_timer_view()
+        if self.sleep_since is not None:
+            self._show_sleep_cover()                  # 界面重建后按新的主题 / 语言重新盖上
         self._schedule_apply_check()
         self._net_tick()
 
     def on_language_changed(self):
         i18n.init_from_config()
+        self.dm.localize_auto_texts()          # 默认的自动记录内容 (睡眠 / Sleeping 等) 换成新语言, 同一项合并
         self.rebuild_ui()
 
     def on_theme_changed(self):
@@ -1073,6 +1082,9 @@ class BreakTimerApp:
             btns, text=tr("☕  开始休息"), command=self.on_break_button
         )
         self.btn_break.pack(side="left", ipadx=10, padx=(10, 0))
+        # 睡眠 (MECHANICS 23): 盖住整个窗口, 只剩一个"起床"
+        self.btn_sleep = ttk.Button(btns, text=tr("😴  睡眠"), command=self._sleep_click)
+        self.btn_sleep.pack(side="left", ipadx=10, padx=(10, 0))
 
         # 提前启动 (仅 PC, MECHANICS 20): 专注中把选中的程序先跑起来, 窗口藏起来 + 静音
         self.btn_prestart = ttk.Button(btns, text=tr("⏩  提前启动"), command=self._prestart_click)
@@ -1202,7 +1214,20 @@ class BreakTimerApp:
             pass
         self._sync_prestart_button()
         self._sync_outing_button()
+        self._sync_sleep_button()
         self._sync_prescript_marks()
+
+    def _sync_sleep_button(self):
+        """睡眠按钮: 只有空闲 (不在专注 / 休息 / 外出 / 合约) 时能按."""
+        btn = getattr(self, "btn_sleep", None)
+        if btn is None:
+            return
+        try:
+            ok = (self.state == IDLE and self.behavior.active() is None and not self.contract.active
+                  and self.sleep_since is None)
+            btn.config(state="!disabled" if ok else "disabled")
+        except Exception:
+            pass
 
     def _sync_outing_button(self):
         """外出按钮: 只有封闭式管理 / 工作 时出现; 外出中变成"结束外出"."""
@@ -1223,6 +1248,147 @@ class BreakTimerApp:
                     btn.pack(side="left", ipadx=8, padx=(18, 0), before=self.lbl_bonus)
                 except Exception:
                     btn.pack(side="left", ipadx=8, padx=(18, 0))
+        except Exception:
+            pass
+
+
+    # ---- 睡眠 (MECHANICS 23): 独立的一种时间, 不同于专注 / 休息 / 空闲 ----
+
+    def _sleep_click(self):
+        if self.sleep_since is not None:
+            return
+        if self.contract.active:
+            toast.warn(tr("合约中不能睡眠."))
+            return
+        if self.behavior.active() is not None:
+            toast.warn(tr("外出中不能睡眠."))
+            return
+        if self.state != IDLE:
+            toast.warn(tr("请先结束专注 / 休息再睡眠."))
+            return
+        self.start_sleep()
+
+    def start_sleep(self):
+        self._mine()
+        self.idle_since = None
+        self.sleep_since = datetime.now().replace(microsecond=0)
+        self._save_timer_state()
+        self._show_sleep_cover()
+        self._sync_timer_buttons()
+        self._log_notice(f"SLEEP start {self.sleep_since:%H:%M:%S}")
+        if self.sync.peers():
+            self.sync.sync_now()
+
+    def wake(self):
+        """起床: 这段睡眠记下来 (睡眠是单独的一种时间), 回到空闲."""
+        since = self.sleep_since
+        if since is None:
+            return
+        self._mine()
+        now = datetime.now()
+        self.sleep_since = None
+        self.dm.add_focus_session("sleep", since, now)
+        self.dm.relabel_sleep(since, now)       # 睡眠期间已经自动记成"分心"的小时改成"睡眠"
+        self._save_timer_state()
+        self._hide_sleep_cover()
+        self._arm_idle_nudge()
+        self._sync_timer_buttons()
+        self._refresh_if_visible("cal", "stats")
+        self._log_notice(f"SLEEP end {now:%H:%M:%S} ({int((now - since).total_seconds())}s)")
+        if self.sync.peers():
+            self.sync.sync_now()
+
+    def _check_sleep(self):
+        """每 5 秒: 睡眠中却进入了专注 / 休息 / 外出 / 合约 (例如别的设备同步过来的) 就起床; 页面被拆掉了就重新盖上."""
+        if self.sleep_since is None:
+            return
+        if self.state != IDLE or self.contract.active or self.behavior.active() is not None:
+            self.wake()
+            return
+        cover = self._sleep_cover
+        try:
+            alive = cover is not None and cover.winfo_exists()
+        except tk.TclError:
+            alive = False
+        if not alive:
+            self._show_sleep_cover()
+
+    def _recover_sleep(self):
+        """启动时: 上次关掉程序时还在睡眠 → 接着睡 (程序关着的这段也算睡眠)."""
+        rec = self._bonus_state().get("sleep")
+        if not isinstance(rec, dict):
+            return
+        try:
+            self.sleep_since = datetime.fromisoformat(rec["since"])
+        except (KeyError, TypeError, ValueError):
+            return
+        self.timer_owner = str(rec.get("owner") or "")
+        self._show_sleep_cover()
+        self._sync_timer_buttons()
+
+    def _show_sleep_cover(self):
+        """盖住整个窗口 (侧边栏也盖住): 空白背景, 正中一个"起床". 程序照常运行, 只是用户碰不到别的功能."""
+        self._hide_sleep_cover()
+        bg = COLORS["bg"]
+        cover = tk.Frame(self.root, bg=bg)
+        cover.place(x=0, y=0, relwidth=1, relheight=1)
+        icon = self._sleep_icon() if getattr(config, "THEME", "") == "urban_will" else None
+        if icon is not None:
+            # 都市之意: 正中是指令页的那个图标, "醒来" 在它下面一点
+            self._sleep_img = icon
+            tk.Label(cover, image=icon, bg=bg, bd=0).place(relx=0.5, rely=0.5, anchor="center")
+            btn = ttk.Button(cover, text=tr("醒来"), style="Accent.TButton", command=self.wake)
+            btn.place(relx=0.5, rely=0.5, y=icon.height() // 2 + config.scaled(36), anchor="n")
+        else:
+            btn = ttk.Button(cover, text=tr("☀  起床"), style="Accent.TButton", command=self.wake)
+            btn.place(relx=0.5, rely=0.5, anchor="center")
+        cover.lift()
+        self._sleep_cover, self._sleep_btn = cover, btn
+        try:
+            btn.focus_set()
+        except tk.TclError:
+            pass
+        if not getattr(self, "_sleep_focus_bound", False):
+            self._sleep_focus_bound = True
+            self.root.bind_all("<FocusIn>", self._sleep_focus_guard, add="+")
+
+    @staticmethod
+    def _sleep_icon():
+        """指令页中间的那个图标 (都市之意主题的睡眠页也用它); 找不到返回 None."""
+        path = config.asset_path("themes", "urban_will", "image", "Index.png")
+        if not os.path.isfile(path):
+            return None
+        try:
+            img = tk.PhotoImage(file=path)
+            target = config.scaled(128)
+            if img.width() > target:
+                img = img.subsample(max(1, round(img.width() / target)))
+            elif img.width() < target:
+                img = img.zoom(max(1, round(target / img.width())))
+            return img
+        except Exception:
+            return None
+
+    def _hide_sleep_cover(self):
+        cover = self._sleep_cover
+        self._sleep_cover = None
+        if cover is not None:
+            try:
+                cover.destroy()
+            except tk.TclError:
+                pass
+
+    def _sleep_focus_guard(self, event):
+        """睡眠中: 键盘焦点跑到被盖住的控件上 (Tab) 就拉回"起床"按钮, 免得用空格 / 回车按到下面的按钮."""
+        cover = self._sleep_cover
+        if cover is None:
+            return
+        try:
+            w = event.widget
+            if isinstance(w, str) or str(w.winfo_toplevel()) != str(self.root):
+                return
+            if not str(w).startswith(str(cover)):
+                self._sleep_btn.focus_set()
         except Exception:
             pass
 
@@ -1734,6 +1900,8 @@ class BreakTimerApp:
             return
         if self.behavior.active() is not None:
             return                          # 外出中不提醒"该开始下一轮了"
+        if self.sleep_since is not None:
+            return                          # 睡眠中也不提醒
         if self.state != IDLE:
             self.idle_since = None          # 已经开始下一轮 (或别的状态), 不再提醒
             return
@@ -1768,6 +1936,12 @@ class BreakTimerApp:
         if self.state == ON_BREAK and self.break_start_wall is not None:
             return ("break", self.break_start_wall)
         return None
+
+    def _calendar_live(self):
+        """日历用: 正在进行的一段, 比 _focus_live 多一种睡眠 (kind, 开始时刻)."""
+        if self.sleep_since is not None:
+            return ("sleep", self.sleep_since)
+        return self._focus_live()
 
     def _idle_sub_text(self) -> str:
         if self.break_carry > 0:
@@ -1822,6 +1996,9 @@ class BreakTimerApp:
         d["break_carry"] = self.break_carry
         d["auto_rest"] = int(getattr(self, "auto_rest", 0))
         d["focus"] = self._focus_record()
+        # 睡眠中: 关掉程序再打开时接着睡 (MECHANICS 23)
+        d["sleep"] = ({"since": self.sleep_since.isoformat(timespec="seconds"), "owner": self.timer_owner}
+                      if self.sleep_since is not None else None)
         # 进行中的休息: 关掉程序再打开时接着休息 (6.3)
         d["break"] = self.timer_live() if self.state == ON_BREAK and self.break_end_wall is not None else None
         self._focus_saved = time.monotonic()
@@ -2461,8 +2638,8 @@ class BreakTimerApp:
         if self._slot_locked(slot, length):
             self.update_log_badge()                         # 记录封锁另外封锁了这一格: 填不了, 不提示
             return
-        # 绑定了其他设备时, 只有最后有人操作的那台响 (其他设备只标出待填写)
-        chime = self._play_chime() if self.sync.is_latest_active() else None
+        # 绑定了其他设备时, 只有最后有人操作的那台响 (其他设备只标出待填写); 睡眠中不响, 免得吵醒
+        chime = self._play_chime() if self.sync.is_latest_active() and self.sleep_since is None else None
         self._wait_chime(chime, slot, length=length)
 
     def _play_chime(self, choice=None):
@@ -2523,6 +2700,14 @@ class BreakTimerApp:
             self.check_pending_settings()
 
 
+    def _toggle_fullscreen(self, _event=None):
+        """F11: 全屏 / 退出全屏 (全屏时没有标题栏; 睡眠页、指令页等照常盖在上面)."""
+        try:
+            self.root.attributes("-fullscreen", not bool(self.root.attributes("-fullscreen")))
+        except tk.TclError:
+            pass
+        return "break"
+
     def _on_window_unmap(self, event):
         """OIT 最小化 / 藏起来: V 要求不能最小化, 等窗口状态更新后马上判一次."""
         if event.widget is not self.root:
@@ -2544,6 +2729,7 @@ class BreakTimerApp:
         self._check_dev_follow()
         self._maybe_relay()
         self._check_idle_nudge()
+        self._check_sleep()
         self._check_setup_period()
         self._check_unbind()
         self._check_offline_chime()
@@ -2651,6 +2837,9 @@ class BreakTimerApp:
 
     def timer_live(self) -> dict:
         owner = self.timer_owner or self.sync.my_id
+        if self.sleep_since is not None and self.state == IDLE:
+            return {"state": "sleep", "owner": owner,
+                    "since": self.sleep_since.isoformat(timespec="seconds")}
         if self.state == RUNNING and self.start_wall is not None:
             return {"state": "running", "owner": owner,
                     "start": self.start_wall.replace(microsecond=0).isoformat(timespec="seconds"),
@@ -2672,7 +2861,7 @@ class BreakTimerApp:
         cur = self.timer_live()
         st, owner = live.get("state"), str(live.get("owner") or "")
         if st == cur["state"] and live.get("start") == cur.get("start") \
-                and live.get("break_end") == cur.get("break_end"):
+                and live.get("break_end") == cur.get("break_end") and live.get("since") == cur.get("since"):
             if st == "running" and int(live.get("checks", 0)) > self._focus_checks:
                 self._close_check_win()         # 在别的设备上确认过"还在吗"了
                 self._focus_checks = int(live.get("checks", 0))
@@ -2684,8 +2873,17 @@ class BreakTimerApp:
         self.cancel_update()
         self.idle_since = None
         now = datetime.now()
+        if self.sleep_since is not None and st != "sleep":
+            self.sleep_since = None                 # 别的设备起床了 / 开始了别的事: 那台设备记下这段睡眠
+            self._hide_sleep_cover()
         try:
-            if st == "running":
+            if st == "sleep":
+                since = datetime.fromisoformat(live["since"])
+                self.break_start_wall = None
+                self.reset_to_idle()
+                self.sleep_since = since
+                self._show_sleep_cover()
+            elif st == "running":
                 start = datetime.fromisoformat(live["start"])
                 self.break_start_wall = None
                 self._enter_focus(start, time.monotonic() - (now - start).total_seconds(),
@@ -5118,6 +5316,14 @@ class BreakTimerApp:
             return int(self.var_min.get())
         except (TypeError, ValueError):
             return 0
+
+    def _on_net_tamper(self, kind: str):
+        """系统代理被人改了 (关掉 / 换成别的代理), NetGuard 已经改回去了: 提示一次 (30 秒内不重复)."""
+        now = time.monotonic()
+        if now - getattr(self, "_tamper_toast_at", -999.0) < 30:
+            return
+        self._tamper_toast_at = now
+        toast.warn(tr("系统代理被改动了, 已经改回去."))
 
     def _net_tick(self):
         if self.shutting_down:

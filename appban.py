@@ -64,13 +64,14 @@ def process_paths(names) -> set:
 class AppBan:
     """记着已经加了规则的程序路径; sync() 把规则调整成正好是 paths (在后台线程里调用)."""
 
-    def __init__(self, run=_run):
+    def __init__(self, run=_run, rule: str = RULE):
         self.run = run
+        self.rule = rule
         self.paths = set()
 
     def clear_all(self):
         """删掉所有这种规则 (程序启动时 / 合约结束时)."""
-        self.run(_netsh("delete", "rule", f"name={RULE}"))
+        self.run(_netsh("delete", "rule", f"name={self.rule}"))
         self.paths = set()
 
     def sync(self, paths) -> set:
@@ -79,12 +80,12 @@ class AppBan:
             self.clear_all()
             return set()
         for p in sorted(paths - self.paths):
-            rc, _ = self.run(_netsh("add", "rule", f"name={RULE}", "dir=out", "action=block",
+            rc, _ = self.run(_netsh("add", "rule", f"name={self.rule}", "dir=out", "action=block",
                                     f"program={p}", "enable=yes", "profile=any"))
             if rc == 0:
                 self.paths.add(p)
         for p in sorted(self.paths - paths):
-            self.run(_netsh("delete", "rule", f"name={RULE}", f"program={p}"))
+            self.run(_netsh("delete", "rule", f"name={self.rule}", f"program={p}"))
             self.paths.discard(p)
         return set(self.paths)
 

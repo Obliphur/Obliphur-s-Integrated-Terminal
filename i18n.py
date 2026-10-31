@@ -147,9 +147,18 @@ EN = {
     "■  结束本次会话": "■  End session",
     "📝  整点记录": "📝  Hour Log",
     "本月 ›": "This month ›",
-    "查看空闲时间": "Show free time",
-    "查看学习时长": "Show study time",
-    "空闲合计: {h:.1f} h": "Free total: {h:.1f} h",
+    "😴  睡眠": "😴  Sleep",
+    "系统代理被改动了, 已经改回去.": "The system proxy was changed and has been restored.",
+    "☀  起床": "☀  Wake up",
+    "醒来": "Wake up",
+    "合约中不能睡眠.": "Can't sleep during a contract.",
+    "外出中不能睡眠.": "Can't sleep while out.",
+    "请先结束专注 / 休息再睡眠.": "End the focus / break before sleeping.",
+    "空闲": "Idle",
+    "睡眠": "Sleep",
+    "休息合计: {h:.1f} h": "Break total: {h:.1f} h",
+    "空闲合计: {h:.1f} h": "Idle total: {h:.1f} h",
+    "睡眠合计: {h:.1f} h": "Sleep total: {h:.1f} h",
     "‹ 上月": "‹ Last month",
     "📊  统计": "📊  Statistics",
     "🌐  联网理由": "🌐  Network reasons",
@@ -230,7 +239,7 @@ EN = {
     "今天最多能联网多久.改动要 48 小时后才生效,期间仍按旧额度计算.": "How long you may be online today. Changes apply after 48 h; the old quota keeps running meanwhile.",
     "提出申请后等多久才真的联网.想立刻联网请用 Network 页的快速访问(额度 2 倍消耗).": "How long to wait after requesting before you actually go online. To go online at once, use quick access on the Network page (quota used at 2x).",
     "程序启动时整点记录的初始状态;启动后仍可在 Hour Log 页直接切换.": "Initial state of the hour log when the app starts; you can still toggle it on the Hour Log page.",
-    "整点后一小时内没填写,就自动记成这段文字.这一项可以立即修改.": "If a slot is left blank for an hour, this text is recorded. This item can be changed immediately.",
+    "整点后一小时内没填写,就自动记成这段文字 (睡眠期间的小时固定记成 睡眠 / Sleeping).默认的几项跟随界面语言.这一项可以立即修改.": "If a slot is left blank for an hour, this text is recorded (hours spent asleep are always recorded as Sleeping). The default names follow the interface language. This item can be changed immediately.",
     "离线状态下每隔多久强制复查并重新断网(越小越难被绕开,代价是更频繁调用系统命令).": "How often, while offline, the app force-checks and cuts the network again (smaller is harder to bypass, at the cost of running system commands more often).",
     "即时生效.界面语言(中文 / English).": "Instant. Interface language (中文 / English).",
     "即时生效.整体缩放界面字号,适配不同分辨率.": "Instant. Scales all UI text for different resolutions.",
@@ -1325,3 +1334,30 @@ def tr(zh: str, **kwargs) -> str:
 
 def init_from_config():
     set_language(getattr(config, "LANGUAGE", DEFAULT_LANGUAGE))
+
+
+# 整点记录的自动填写内容 (MECHANICS 8.2 / 23): 英文名和中文名是同一项, 按界面语言写, 切换语言时合并
+AUTO_NAMES = (("Sleeping", "睡眠"), ("Distracted", "分心"), ("Idle", "发呆"), ("Break", "休息"))
+
+
+def auto_name(text) -> str:
+    """Sleeping / Distracted / Idle / Break 和它们的中文名: 照现在的界面语言写; 别的文字原样."""
+    t = str(text or "")
+    key = t.strip().casefold()
+    for en, zh in AUTO_NAMES:
+        if key in (en.casefold(), zh):
+            return en if is_en() else zh
+    return t
+
+
+def auto_names_in(text) -> str:
+    """一小时的记录里 (多项活动用 / 连接) 每一项都按 auto_name 换成现在的语言; 没有要换的原样返回."""
+    t = str(text or "")
+    if not t:
+        return t
+    sep = "／" if "／" in t and "/" not in t else "/"
+    parts = t.replace("／", "/").split("/")
+    out = [auto_name(p) if p.strip() else p for p in parts]
+    if out == parts:
+        return t
+    return sep.join(out)

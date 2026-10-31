@@ -61,7 +61,7 @@ class AchievementStore(private val file: File, guessFirst: () -> LocalDateTime) 
         /** 一天的整点记录里 Sleeping 一共占了几小时 (一小时多项活动时均分, 不分大小写). */
         fun sleepHours(day: Map<String, String>): Double = day.values.sumOf { t ->
             val items = splitItems(t)
-            if (items.isEmpty()) 0.0 else items.count { it.lowercase() == "sleeping" }.toDouble() / items.size
+            if (items.isEmpty()) 0.0 else items.count { it.lowercase() == "sleeping" || it == "睡眠" }.toDouble() / items.size
         }
 
         /** 按日期算, 在 00:00 达成: 第一次启动那天之后的第 days 个 00:00. */
