@@ -212,6 +212,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             },
             onChange = { changed() },
             peersOnPageFn = { com.obliphur.oit.OitApp.instance.sync?.peerFlag("prescript") ?: false },
+            pageEventFn = { on -> prescriptPageEvent(on) },
             windowsFn = { kind ->
                 // 设置 → 日常 里填的提升时段; 写错了就用默认
                 Cfg.parseWindows(settings.str("PRESCRIPT_WIN_$kind")) ?: Cfg.defaultWindows(kind)
@@ -766,23 +767,50 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         changed()
     }
 
-    // ---- 日志 (统计页, MECHANICS 8.7): 和反思指令一样的文字, 2 小时只能看一次 ----
+    // ---- 指令页的进入 / 退出随同步 (MECHANICS 22.8) ----
 
-    private val journalFile get() = File(dir, "journal.json")
+    /** 本机上一次记下的"在不在指令页". */
+    @Volatile private var prescriptNoted = false
+
+    /** 界面进入 / 退出了指令页: 记成事件并马上同步一次, 其他设备跟着进入 / 退出; 跟着别的设备做的 (prescriptPageEvent 先记好了) 不再发回去. */
+    fun notePrescriptPage(on: Boolean) {
+        if (on == prescriptNoted) return
+        prescriptNoted = on
+        runCatching { prescript.notePage(on, myId()) }
+        syncNow()
+    }
+
+    /** 别的设备进入 / 退出了指令页 (同步来的事件): 本机跟着进入 / 退出 (只在都市之意主题下, 退出回到计时器页). */
+    private fun prescriptPageEvent(on: Boolean) {
+        if (settings.str("THEME") != "urban_will") return
+        val app = com.obliphur.oit.OitApp.instance
+        if (on) {
+            if (currentPage != "prescript" && uiForeground && timer.sleepSince == null) {
+                prescriptNoted = true
+                app.navRequests.tryEmit("prescript")
+            }
+        } else if (currentPage == "prescript") {
+            prescriptNoted = false
+            app.navRequests.tryEmit("timer")
+        }
+    }
+
+    // ---- 日志 (统计页, MECHANICS 8.7): 和反思指令一样的文字, 2 小时只能看一次 ----
 
     /** 这一次进统计页是不是已经在看日志了 (离开统计页 / 切到别的标签就清掉). */
     @Volatile var journalOpen = false
 
     /** 还要等多少秒才能再看日志; 0 = 现在可以看. */
     fun journalWait(at: LocalDateTime = LocalDateTime.now()): Double {
-        val viewed = parseIso(Store.readObj(journalFile)?.optString("viewed") ?: "") ?: return 0.0
+        val viewed = parseIso(prescript.journalView()) ?: return 0.0
         return maxOf(0.0, Cfg.JOURNAL_GAP - secondsBetween(viewed, at))
     }
 
     /** 记下这次看了日志. */
     fun journalMarkViewed(at: LocalDateTime = LocalDateTime.now()) {
         if (dm.resetting) return
-        Store.write(journalFile, JSONObject().put("viewed", at.withNano(0).iso()))
+        prescript.noteJournal(at)
+        syncNow()                                  // 冷却随同步: 其他设备也要等 2 小时
     }
 
     // ---- 行为模式 / 外出 (MECHANICS 21) ----

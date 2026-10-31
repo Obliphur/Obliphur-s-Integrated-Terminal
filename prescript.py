@@ -49,6 +49,7 @@ IDLE_BOOST = 0.8                # 时间段对得上的词条 (几个就均分) 
 FOCUS_CHANCE_START = 0.25       # 每次空闲池抽取之后, 下一次改抽专注池的概率; 没触发 +25%, 触发后回到 25%
 FOCUS_CHANCE_STEP = 0.25
 LOG_KEEP_DAYS = 30
+PAGE_EVENT_FRESH = 180          # 其他设备进入 / 退出指令页的事件, 多少秒之内收到才跟着做 (太旧的是以前留下的, 不理)
 
 FIXED_T = {"I": 1.0, "III": 1.0, "IV": 1.0, "VI": 1.0}
 FIXED_T.update({k: (0.1 if not e["minutes"] else round(e["minutes"] * 0.02, 3))
@@ -201,7 +202,7 @@ class PrescriptEngine:
 
     def __init__(self, data_dir, *, state_fn=None, today_hours_fn=None, contracts_fn=None,
                  page_fn=None, minimized_fn=None, grant_rest_fn=None, username_fn=None,
-                 blocked_fn=None, on_change=None, dev_fn=None, pause_media_fn=None, remaining_rest_fn=None, contract_active_fn=None, on_complete=None, hour_log_fn=None, peers_on_page_fn=None, rng=None):
+                 blocked_fn=None, on_change=None, dev_fn=None, pause_media_fn=None, remaining_rest_fn=None, contract_active_fn=None, on_complete=None, hour_log_fn=None, peers_on_page_fn=None, page_event_fn=None, rng=None):
         self.path = os.path.join(data_dir, "prescript.json")
         self.state_fn = state_fn or (lambda: "idle")
         self.today_hours_fn = today_hours_fn or (lambda: 0.0)
@@ -217,6 +218,9 @@ class PrescriptEngine:
         self.contract_active_fn = contract_active_fn or (lambda: False)
         self.hour_log_fn = hour_log_fn or (lambda: "")
         self.peers_on_page_fn = peers_on_page_fn or (lambda: False)
+        # 其他设备进入 / 退出了指令页 (事件): page_event_fn(on) 让本机跟着进入 / 退出 (MECHANICS 22.8)
+        self.page_event_fn = page_event_fn
+        self._page_rec = None           # 最近一次进入 / 退出指令页的事件 {"on", "at", "by"}, 随同步; 不存档
         self.on_change = on_change
         self.on_complete = on_complete
         self.rng = rng or random.Random()
@@ -832,6 +836,34 @@ class PrescriptEngine:
     def _static(rec: dict) -> dict:
         return {k: v for k, v in rec.items() if k not in SYNC_VOLATILE}
 
+    def journal_view(self) -> str:
+        """统计页的日志上一次被看的时刻 ("YYYY-MM-DDTHH:MM:SS", 没看过 = ""); 随同步, 几台设备共用 2 小时的冷却 (MECHANICS 8.7)."""
+        return str(self._data.get("journal_view") or "")
+
+    def note_journal(self, now: datetime = None):
+        now = (now or datetime.now()).replace(microsecond=0)
+        self._data["journal_view"] = _iso(now)
+        self._dirty = True
+        self.save()
+
+    def note_page(self, on: bool, device_id: str, now: datetime = None):
+        """本机进入 / 退出了指令页: 记成一个事件, 随同步发给其他设备, 它们跟着进入 / 退出 (调用的人负责马上同步一次)."""
+        now = (now or datetime.now()).replace(microsecond=0)
+        self._page_rec = {"on": bool(on), "at": _iso(now), "by": str(device_id or "")}
+
+    def _adopt_page(self, val: dict, now: datetime) -> None:
+        """别的设备发来的进入 / 退出指令页的事件: 记下 (本机之后不会又发回去), 够新的话让本机跟着做."""
+        if self._page_rec == {"on": bool(val.get("on")), "at": str(val.get("at") or ""), "by": str(val.get("by") or "")}:
+            return
+        self._page_rec = {"on": bool(val.get("on")), "at": str(val.get("at") or ""), "by": str(val.get("by") or "")}
+        at = _parse(val.get("at"))
+        if at is None or abs((now - at).total_seconds()) > PAGE_EVENT_FRESH or self.page_event_fn is None:
+            return
+        try:
+            self.page_event_fn(bool(val.get("on")))
+        except Exception:       # noqa: BLE001
+            pass
+
     def sync_doc(self, now: datetime = None) -> dict:
         now = (now or datetime.now()).replace(microsecond=0)
         floor = _iso(now - timedelta(days=SYNC_DAYS))
@@ -851,6 +883,10 @@ class PrescriptEngine:
         daily = self._data.get("daily") or {}
         if daily.get("date"):
             out["n:" + str(daily["date"])] = {"n_ii": daily.get("n_ii"), "n_iv": daily.get("n_iv")}
+        if self._page_rec:
+            out["p:page"] = dict(self._page_rec)
+        if self.journal_view():
+            out["j:view"] = {"at": self.journal_view()}
         return out
 
     @staticmethod
@@ -874,6 +910,13 @@ class PrescriptEngine:
                 touched |= self._adopt_instruction(ident, val, floor)
             elif kind == "r":
                 touched |= self._adopt_reward(ident, val)
+            elif kind == "p" and ident == "page":
+                self._adopt_page(val, now)
+            elif kind == "j" and ident == "view":
+                at = str(val.get("at") or "")
+                if at > self.journal_view():                 # 几台设备谁看得最晚, 冷却就从谁算
+                    self._data["journal_view"] = at
+                    touched = True
             elif kind == "n" and ident == (self._data.get("daily") or {}).get("date"):
                 daily = self._data["daily"]
                 for k in ("n_ii", "n_iv"):
@@ -1508,6 +1551,31 @@ def _selftest():
             assert devsync_wins(stale["i:" + iid["id"]], A._data["history"][-1]) is False
             A.sync_apply(stale, ts)
             assert [c["type"] for c in A.actives()] == ["I"]
+            # 进入 / 退出指令页是事件: 一台设备进 / 出, 另一台跟着 (够新才跟, 旧的不理; 跟着做的不再发回去)
+            seen = []
+            B.page_event_fn = seen.append
+            A.note_page(True, "devA", ts)
+            push(A, B)
+            assert seen == [True] and B._page_rec["by"] == "devA"
+            push(A, B)
+            assert seen == [True], "同一个事件只跟一次"
+            A.note_page(False, "devA", ts + timedelta(seconds=30))
+            push(A, B)
+            assert seen == [True, False]
+            old = {"p:page": {"on": True, "at": (ts - timedelta(minutes=10)).isoformat(timespec="seconds"), "by": "devX"}}
+            B.sync_apply(old, ts)
+            assert seen == [True, False], "太旧的事件不理"
+            B.page_event_fn = None
+            # 日志的 2 小时冷却随同步: A 看了, B 同步后也要等; 谁看得最晚算谁的
+            assert A.journal_view() == "" and B.journal_view() == ""
+            A.note_journal(ts)
+            push(A, B)
+            assert B.journal_view() == A.journal_view() != ""
+            B._data["journal_view"] = (ts + timedelta(hours=1)).isoformat(timespec="seconds")
+            push(A, B)
+            assert B.journal_view() > A.journal_view(), "旧的不能盖掉新的"
+            push(B, A)
+            assert A.journal_view() == B.journal_view()
             # 奖励: 在 A 的指令页上结算 -> B 同步后不再结算
             A.page_fn = lambda: "prescript"
             given = A.settle_rewards(ts + timedelta(minutes=6))

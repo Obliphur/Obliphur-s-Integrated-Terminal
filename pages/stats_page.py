@@ -22,9 +22,9 @@ JOURNAL_GAP = 2 * 3600
 
 
 def journal_wait(viewed: str, now: datetime) -> float:
-    """上一次看日志是 viewed ("YYYY-MM-DD HH:MM:SS", 空 = 没看过) 的话, 还要等多少秒才能再看; 0 = 现在可以看."""
+    """上一次看日志是 viewed ("YYYY-MM-DDTHH:MM:SS", 空 = 没看过) 的话, 还要等多少秒才能再看; 0 = 现在可以看."""
     try:
-        at = datetime.strptime(str(viewed), "%Y-%m-%d %H:%M:%S")
+        at = datetime.fromisoformat(str(viewed))
     except ValueError:
         return 0.0
     return max(0.0, JOURNAL_GAP - (now - at).total_seconds())
@@ -131,6 +131,9 @@ class StatsPage(tk.Frame):
         self.page = "log"
         self.mode = {"log": "pct", "net": "pct", "window": "pct"}
         self._journal_open = False   # 日志: 这一次进来是不是已经看过了 (2 小时只能看一次, MECHANICS 8.7)
+        # 上一次看日志的时刻 / 记下这次看了 (app 接上指令引擎, 随设备同步; 没接上时记在本机的 daily.json)
+        self.journal_get = lambda: self.dm.daily_flag(JOURNAL_FLAG)
+        self.journal_set = lambda now: self.dm.set_daily_flag(JOURNAL_FLAG, now.strftime("%Y-%m-%dT%H:%M:%S"))
         self.month = "this"          # "this" 本月 / "last" 上月
         self.device = "all"          # 窗口页看哪台设备: "all" 全部 / "self" 本机 / 设备 id
         self._device_keys = None
@@ -498,13 +501,15 @@ class StatsPage(tk.Frame):
             return
         now = datetime.now()
         if not self._journal_open:
-            left = journal_wait(self.dm.daily_flag(JOURNAL_FLAG), now)
+            left = journal_wait(self.journal_get(), now)
             if left > 0:
                 cfg(self.journal_text, text=tr("已经看过了."))
                 cfg(self.journal_note, text=tr("{t} 之后才能再看.").format(t=fmt_hm(left)))
                 return
-            self.dm.set_daily_flag(JOURNAL_FLAG, now.strftime("%Y-%m-%d %H:%M:%S"))
+            self.journal_set(now)
             self._journal_open = True
+            if getattr(self, "journal_synced", None):
+                self.journal_synced()
         cfg(self.journal_text, text=tr(JOURNAL_TEXT))
         cfg(self.journal_note, text=tr("2 小时只能看一次."))
 

@@ -551,4 +551,34 @@ class PrescriptTest {
         val again = env.engine()
         assertEquals("III", again.current!!.getString("type"))
     }
+
+    @Test
+    fun pageEventAndJournalSync() {
+        // 进入 / 退出指令页是事件: 够新才跟着做, 同一个事件只跟一次; 日志的 2 小时冷却取看得最晚的 (MECHANICS 22.8 / 8.7)
+        val seen = mutableListOf<Boolean>()
+        val a = PrescriptEngine(File(Files.createTempDirectory("oit").toFile(), "prescript.json"))
+        val b = PrescriptEngine(File(Files.createTempDirectory("oit").toFile(), "prescript.json"), pageEventFn = { seen.add(it) })
+        fun push(from: PrescriptEngine, to: PrescriptEngine, now: LocalDateTime) =
+            to.syncApply(from.syncDoc(now).mapValues { org.json.JSONObject(it.value.toString()) }, now)
+        a.notePage(true, "devA", t0)
+        push(a, b, t0)
+        assertEquals(listOf(true), seen)
+        push(a, b, t0)
+        assertEquals(listOf(true), seen)
+        a.notePage(false, "devA", t0.plusSeconds(30))
+        push(a, b, t0.plusSeconds(30))
+        assertEquals(listOf(true, false), seen)
+        b.syncApply(mapOf("p:page" to org.json.JSONObject().put("on", true).put("at", t0.minusMinutes(10).iso()).put("by", "x")), t0)
+        assertEquals(listOf(true, false), seen)
+
+        assertEquals("", a.journalView())
+        a.noteJournal(t0)
+        push(a, b, t0)
+        assertEquals(a.journalView(), b.journalView())
+        b.noteJournal(t0.plusHours(1))
+        push(a, b, t0)
+        assertTrue(b.journalView() > a.journalView())
+        push(b, a, t0)
+        assertEquals(b.journalView(), a.journalView())
+    }
 }

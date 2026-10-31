@@ -380,6 +380,7 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
     // 合约页也藏起状态栏 (从顶部下滑时临时出现), 让整页在一屏里显示得大一些
     LaunchedEffect(page) {
         core.currentPage = page
+        core.notePrescriptPage(page == "prescript")           // 进入 / 退出指令页: 马上同步, 其他设备跟着 (MECHANICS 22.8)
         runCatching { core.prescript.pageChanged() }          // 指令 V 要一直停在指令页, VI 要连续停在统计页
         act.requestedOrientation = if (page == "contract") android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         else android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
@@ -390,6 +391,21 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
         } else bars.show(androidx.core.view.WindowInsetsCompat.Type.statusBars())
     }
     LaunchedEffect(Unit) { app.navRequests.collect { go(it) } }
+    // 手机上退出应用 / 收入后台 (熄屏不算) 视为退出指令页, 回到计时器页 (MECHANICS 22.8)
+    androidx.compose.runtime.DisposableEffect(act) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, e ->
+            if (e == androidx.lifecycle.Lifecycle.Event.ON_STOP && core.currentPage == "prescript") {
+                val interactive = act.getSystemService(android.os.PowerManager::class.java)?.isInteractive != false
+                if (interactive) {
+                    core.notePrescriptPage(false)
+                    core.currentPage = "timer"
+                    page = "timer"
+                }
+            }
+        }
+        act.lifecycle.addObserver(obs)
+        onDispose { act.lifecycle.removeObserver(obs) }
+    }
     // 合约录像 (MECHANICS 18.8): 界面在前台时, 若合约要录像却缺权限 / 录屏授权, 隔一会儿看一次, 需要就弹窗
     LaunchedEffect(Unit) {
         while (true) {

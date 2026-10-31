@@ -320,6 +320,7 @@ class BreakTimerApp:
             on_complete=self._prescript_completed,
             hour_log_fn=self._prescript_hour_log,
             peers_on_page_fn=lambda: self.sync.peer_flag("prescript"),
+            page_event_fn=self._prescript_page_event,
         )
         self.prescript_job = None
         self._marks_shown = None        # 指令标记现在画在哪些按钮上 (None = 还没画过)
@@ -725,6 +726,10 @@ class BreakTimerApp:
         self.pages["stats"] = StatsPage(self.content, self.dm, self.net,
                                         focus_live=self._focus_live)
         self.pages["stats"].fog = self._fog_seed
+        # 日志的 2 小时冷却随设备同步: 几台设备共用 (MECHANICS 8.7)
+        self.pages["stats"].journal_get = self.prescripts.journal_view
+        self.pages["stats"].journal_set = self.prescripts.note_journal
+        self.pages["stats"].journal_synced = lambda: self.sync.sync_now() if self.sync.peers() else None
         self.pages["stats"].contract_log = lambda: self.contract.history
         self.pages["stats"].violation_log = lambda: self.dm.recent_violations()
         self._prepare_page(self.pages["stats"])
@@ -924,7 +929,7 @@ class BreakTimerApp:
 
     def show_page(self, key: str):
         # 合约 · 黑雾 (软规则): 要切到计时器以外的页面记一次, 一个钟点里满 50 次算一次违反 (MECHANICS 18.3)
-        if key != "timer" and key != getattr(self, "current_page", None):
+        if key != "timer" and key != getattr(self, "current_page", None) and not getattr(self, "_page_from_sync", False):
             tid = self.contract.fog_switch(datetime.now(), self.sync.my_id)
             if tid:
                 self.contract_violation(tr("黑雾中频繁切换页面"), tid)
@@ -939,6 +944,17 @@ class BreakTimerApp:
         if key == "prescript" and getattr(self, "current_page", "") != "prescript":
             self._prescript_back = getattr(self, "current_page", "timer")
         self.current_page = key
+        # 进入 / 退出指令页: 记成事件并马上同步一次, 其他设备跟着进入 / 退出 (MECHANICS 22.8); 跟着别的设备做的不再发回去
+        on_now = key == "prescript"
+        if on_now != getattr(self, "_prescript_noted", False):
+            self._prescript_noted = on_now
+            if not getattr(self, "_page_from_sync", False):
+                try:
+                    self.prescripts.note_page(on_now, self.sync.my_id)
+                    if self.sync.peers():
+                        self.sync.sync_now()
+                except Exception:
+                    pass
         # V 要求一直在指令页, VI 要连续停留: 切页的这一刻就判一次, 不用等下一秒的 tick.
         try:
             self.prescripts.page_changed()
@@ -4730,6 +4746,20 @@ class BreakTimerApp:
             self._log_window(f"ERROR    prescript tick {type(e).__name__}: {e}")
         if not self.shutting_down:
             self.prescript_job = self.root.after(1000, self._prescript_tick)
+
+    def _prescript_page_event(self, on: bool):
+        """别的设备进入 / 退出了指令页 (同步来的事件): 本机跟着进入 / 退出 (只在都市之意主题下, MECHANICS 22.8)."""
+        if self.shutting_down or not self._prescript_enabled() or "prescript" not in self.pages:
+            return
+        cur = getattr(self, "current_page", "")
+        self._page_from_sync = True
+        try:
+            if on and cur != "prescript" and self.sleep_since is None:
+                self.show_page("prescript")
+            elif not on and cur == "prescript":
+                self._exit_prescript()
+        finally:
+            self._page_from_sync = False
 
     def _exit_prescript(self):
         back = getattr(self, "_prescript_back", "timer")

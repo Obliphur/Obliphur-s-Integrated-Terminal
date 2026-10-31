@@ -47,6 +47,9 @@ object Prescript {
     const val FOCUS_CHANCE_START = 0.25
     const val FOCUS_CHANCE_STEP = 0.25
     const val LOG_KEEP_DAYS = 30
+    /** 其他设备的进入 / 退出指令页事件, 多少秒之内收到才跟着做 (太旧的是以前留下的, 不理). */
+    const val PAGE_EVENT_FRESH = 180L
+
     /** 同步给其他设备的指令记录: 最近这么多天的; 各设备自己累计的进度 (SYNC_VOLATILE) 不同步. */
     const val SYNC_DAYS = 3L
     val SYNC_VOLATILE = setOf("focus_sec", "break_sec", "stats_since", "log_base")
@@ -154,8 +157,12 @@ class PrescriptEngine(
     private val windowsFn: (String) -> List<Pair<Int, Int>> = { Cfg.defaultWindows(it) },
     /** 绑定的其他设备里有没有哪台此刻正停在指令页 (空闲词条要所有设备都离开才作废). */
     private val peersOnPageFn: () -> Boolean = { false },
+    /** 其他设备进入 / 退出了指令页 (事件): 本机跟着进入 / 退出 (MECHANICS 22.8). */
+    private val pageEventFn: ((Boolean) -> Unit)? = null,
     private val rng: Random = Random.Default,
 ) {
+    /** 最近一次进入 / 退出指令页的事件 {on, at, by}, 随同步; 不存档. */
+    private var pageRec: JSONObject? = null
     private var data: JSONObject = load()
     private var lastTick: LocalDateTime = LocalDateTime.now().withNano(0)
     private var lastSave: LocalDateTime = lastTick
@@ -611,6 +618,36 @@ class PrescriptEngine(
         return out
     }
 
+    /** 统计页的日志上一次被看的时刻 (ISO, 没看过 = ""); 随同步, 几台设备共用 2 小时的冷却 (MECHANICS 8.7). */
+    @Synchronized
+    fun journalView(): String = data.optString("journal_view", "")
+
+    @Synchronized
+    fun noteJournal(now0: LocalDateTime = LocalDateTime.now()) {
+        data.put("journal_view", now0.withNano(0).iso())
+        dirty = true
+        save()
+    }
+
+    /** 本机进入 / 退出了指令页: 记成一个事件, 随同步发给其他设备, 它们跟着进入 / 退出 (调用的人负责马上同步一次). */
+    @Synchronized
+    fun notePage(on: Boolean, deviceId: String, now0: LocalDateTime = LocalDateTime.now()) {
+        pageRec = JSONObject().put("on", on).put("at", now0.withNano(0).iso()).put("by", deviceId)
+    }
+
+    /** 别的设备发来的进入 / 退出指令页的事件: 记下 (本机之后不会又发回去), 够新的话让本机跟着做. */
+    private fun adoptPage(value: JSONObject, now: LocalDateTime) {
+        val on = value.optBoolean("on")
+        val at = value.optString("at")
+        val by = value.optString("by")
+        val cur = pageRec
+        if (cur != null && cur.optBoolean("on") == on && cur.optString("at") == at && cur.optString("by") == by) return
+        pageRec = JSONObject().put("on", on).put("at", at).put("by", by)
+        val t = parseIso(at) ?: return
+        if (Math.abs(secondsBetween(t, now)) > Prescript.PAGE_EVENT_FRESH) return
+        try { pageEventFn?.invoke(on) } catch (_: Exception) {}
+    }
+
     @Synchronized
     fun syncDoc(now0: LocalDateTime = LocalDateTime.now()): Map<String, Any?> {
         val now = now0.withNano(0)
@@ -628,6 +665,8 @@ class PrescriptEngine(
         val daily = data.getJSONObject("daily")
         if (daily.has("date")) out["n:" + daily.getString("date")] = JSONObject()
             .put("n_ii", daily.opt("n_ii") ?: JSONObject.NULL).put("n_iv", daily.opt("n_iv") ?: JSONObject.NULL)
+        pageRec?.let { out["p:page"] = JSONObject(it.toString()) }
+        if (journalView().isNotEmpty()) out["j:view"] = JSONObject().put("at", journalView())
         return out
     }
 
@@ -646,6 +685,10 @@ class PrescriptEngine(
             when (kind) {
                 "i" -> touched = adoptInstruction(ident, value, floor) || touched
                 "r" -> touched = adoptReward(ident, value) || touched
+                "p" -> if (ident == "page") adoptPage(value, now)
+                "j" -> if (ident == "view" && value.optString("at") > journalView()) {     // 几台设备谁看得最晚, 冷却就从谁算
+                    data.put("journal_view", value.optString("at")); touched = true
+                }
                 "n" -> if (ident == data.getJSONObject("daily").optString("date")) {
                     val daily = data.getJSONObject("daily")
                     for (k in listOf("n_ii", "n_iv")) if (value.has(k) && !value.isNull(k) && daily.optInt(k, -1) != value.optInt(k)) {
