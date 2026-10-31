@@ -208,14 +208,16 @@ fun HourLogScreen(go: (String) -> Unit) {
                     fog && !(!now.isBefore(a) && now.isBefore(b)) && !wait &&
                         !core.contract.restCell(a, b, t, dm.autoValue, dm::autoTextForKey)
                 }
+                // 睡眠 / 上学 / 工作 / 外出 / 休息 的自动内容不能改 (只有 Distracted 自动填的格子可以改)
+                val fixedAuto = cells.map { (_, _, t) -> dm.isFixedAuto(t, "$ds/${start.hour}") }
                 val editable = cells.mapIndexed { i, (a, b, t) ->
-                    !hidden[i] && enabled && !b.isAfter(now) &&
+                    !hidden[i] && enabled && !b.isAfter(now) && !fixedAuto[i] &&
                         !core.contract.hourLocked(a, b, t, now, dm.fillSeconds.toLong(), dm.autoValue,
                             dm::autoTextForKey)
                 }
                 // 🔒: 结束了还不能改的; 记录封锁另外封锁的还没结束的格子也标上
                 val locked = cells.indices.any { i -> val (a, b, t) = cells[i]
-                    !hidden[i] && enabled && (!editable[i] && !b.isAfter(now) ||
+                    !hidden[i] && enabled && (!editable[i] && !b.isAfter(now) || fixedAuto[i] ||
                         core.contract.hourLocked(a, b, t, now, dm.fillSeconds.toLong(), dm.autoValue, dm::autoTextForKey)) }
                 val shown = cells.mapIndexed { i, (a, _, t) -> if (hidden[i]) fogNoise(fogWords, a) else t }
                 val sealed = cells.map { (a, b, _) -> core.contract.hourSealed(a, b, now) }

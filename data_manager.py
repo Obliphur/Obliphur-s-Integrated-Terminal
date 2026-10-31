@@ -200,6 +200,16 @@ class DataManager:
         except (ValueError, IndexError, TypeError):
             return self.auto_text
 
+    def is_fixed_auto(self, text, key: str) -> bool:
+        """这一格的内容是不是固定的自动填充 (睡眠 / 上学 / 工作 / 外出 / 休息): 是就不能改.
+        只有「超时自动记录内容」(默认 Distracted) 自动填的格子可以改."""
+        if not str(text or ""):
+            return False
+        auto = self.auto_text_for_key(key)
+        if i18n.auto_names_in(auto) == i18n.auto_names_in(self.auto_text):
+            return False
+        return i18n.auto_names_in(text) == i18n.auto_names_in(auto)
+
     def is_auto_text(self, text, key: str) -> bool:
         auto = self.auto_text_for_key(key)
         return str(text or "") in ("", auto) or i18n.auto_names_in(text) == i18n.auto_names_in(auto)

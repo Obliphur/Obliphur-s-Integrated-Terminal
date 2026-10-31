@@ -2368,7 +2368,7 @@ class BreakTimerApp:
                 out[-1][1] = max(out[-1][1], b)
             else:
                 out.append([a, b])
-        return [(a, b) for a, b in out]
+        return [(a, b) for a, b in out if b - a > 1]          # (浮点换算会留下不到 1 毫秒的碎片)
 
     def _cut_offline(self, start: datetime, end: datetime) -> float:
         """[start, end] 这段专注里不计入学习时长的部分, 返回一共多少秒:

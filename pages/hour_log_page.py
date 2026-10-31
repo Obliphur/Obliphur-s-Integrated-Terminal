@@ -352,6 +352,7 @@ class HourLogPage(tk.Frame):
                     v.set(shown_text)
                 done = b <= now
                 lock = self.locked(a, b, text, now)     # 记录封锁另外封锁的格子: 还没结束的也锁着
+                lock = lock or self.dm.is_fixed_auto(text, f"{self.view_date}/{h}")   # 睡眠 / 上学 / 工作 / 外出 / 休息 的自动内容不能改
                 locked = locked or lock
                 cfg(e, state="normal" if (enabled and done and not lock) else "disabled")
                 cfg(e, highlightbackground=COLORS["accent"] if wait else COLORS["border"])

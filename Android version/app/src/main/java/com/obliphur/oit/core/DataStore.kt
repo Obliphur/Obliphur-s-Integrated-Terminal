@@ -563,6 +563,15 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
         return changed
     }
 
+    /** 这一格的内容是不是固定的自动填充 (睡眠 / 上学 / 工作 / 外出 / 休息): 是就不能改.
+     *  只有「超时自动记录内容」(默认 Distracted) 自动填的格子可以改. */
+    fun isFixedAuto(text: String, key: String): Boolean {
+        if (text.isEmpty()) return false
+        val auto = autoTextForKey(key)
+        if (I18n.autoNamesIn(auto) == I18n.autoNamesIn(autoValue)) return false
+        return I18n.autoNamesIn(text) == I18n.autoNamesIn(auto)
+    }
+
     /** 整点记录的键 ("日期/小时" 或 "日期/小时/1") → 自动记录内容. */
     fun autoTextForKey(key: String): String {
         val parts = key.split("/")
