@@ -41,6 +41,7 @@ import autostart
 import linkd
 import appban
 import browserfence
+import registration
 
 
 CONFIRM_WORD = "UNINSTALL"
@@ -357,7 +358,7 @@ def forget_peers(paths: Paths, send=None) -> int:
 
 def run_uninstall(paths: Paths, remove_program: bool, log,
                   ps=powershell, backend=None, kill_run=None, spawn=None, fw_run=None, forget=None,
-                  task_run=None) -> bool:
+                  task_run=None, reg_root=None, reg_path=None) -> bool:
     """按顺序执行; log(文本, 级别) 级别为 info / ok / warn. 返回网络是否已完全恢复."""
     ok = True
 
@@ -430,6 +431,21 @@ def run_uninstall(paths: Paths, remove_program: bool, log,
     # 联动程序 (linkd.py) 的计划任务 (进程在上面删数据之前已经关掉了)
     if not (autostart.link_remove(task_run) if task_run else autostart.link_remove()):
         log(tr("   联动程序的计划任务删不掉: {name}", name=autostart.LINK_TASK), "warn")
+
+    # setup.exe 装的 (程序文件夹里有 install.json, registration.py): 把系统里的"软件"注册和它建的快捷方式也清掉
+    marker = registration.read_marker(paths.program_dir)
+    if marker:
+        for lnk in marker.get("shortcuts") or []:
+            try:
+                if os.path.basename(lnk).lower().endswith(".lnk") and os.path.exists(lnk):
+                    os.remove(lnk)
+            except OSError:
+                log(tr("   快捷方式删不掉: {p}", p=lnk), "warn")
+        kw = {} if reg_root is None else {"root": reg_root, "path": reg_path}
+        if not registration.unregister(**kw):
+            log(tr("   系统里的软件注册信息删不掉 (设置 → 应用): {name}", name=registration.KEY), "warn")
+        else:
+            log(tr("   已从\"已安装的应用\"中移除."), "ok")
 
     if remove_program:
         log(tr("⑤ 删除程序文件夹…"), "info")
@@ -505,7 +521,7 @@ class UninstallWindow:
         root.minsize(config.scaled(560), config.scaled(560))
         self._styles()
 
-        self.var_prog = tk.BooleanVar(value=False)
+        self.var_prog = tk.BooleanVar(value=bool(registration.read_marker(self.paths.program_dir)))     # setup.exe 装的: 默认连程序文件夹一起删
         self.var_confirm = tk.StringVar()
         self.var_confirm.trace_add("write", lambda *_: self._sync_button())
         self._build()
@@ -845,6 +861,29 @@ def _selftest():
                        backend=MemoryBackend({"ProxyEnable": 0}), kill_run=lambda a: 0, fw_run=fw_fake, task_run=lambda a, timeout=30: (1, ""))
     assert ok and not os.path.exists(p.data_dir) and os.path.isdir(prog)
     p = fresh()
+
+    # ── setup.exe 装的 (install.json): 快捷方式和系统里的"软件"注册一起清掉
+    if sys.platform == "win32":
+        import winreg
+        reg_path = r"Software\OIT-uninstall-selftest"
+        lnk = os.path.join(tmp, "OIT.lnk")
+        open(lnk, "w").close()
+        registration.write_marker(prog, {"version": "1", "python": sys.executable, "shortcuts": [lnk]})
+        assert registration.register(prog, "1", sys.executable, 1, winreg.HKEY_CURRENT_USER, reg_path)
+        try:
+            ok = run_uninstall(p, False, lambda t, lv: None, ps=fake_ps, backend=MemoryBackend({"ProxyEnable": 0}),
+                               kill_run=lambda a: 0, fw_run=fw_fake, task_run=lambda a, timeout=30: (1, ""),
+                               reg_root=winreg.HKEY_CURRENT_USER, reg_path=reg_path)
+            assert ok and not os.path.exists(lnk)
+            assert registration.registered_version(winreg.HKEY_CURRENT_USER, reg_path) == ""
+        finally:
+            os.remove(registration.marker_path(prog))
+            registration.unregister(winreg.HKEY_CURRENT_USER, reg_path)
+            try:
+                winreg.DeleteKeyEx(winreg.HKEY_CURRENT_USER, reg_path, 0, 0)
+            except OSError:
+                pass
+        p = fresh()
 
     # ── 网卡启用失败 / 进程结束失败 → 报告未完成
     def stuck_ps(cmd, timeout=60):

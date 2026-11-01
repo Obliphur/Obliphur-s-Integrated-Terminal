@@ -43,10 +43,18 @@
 
 ---
 
+## 安装
+
+在 GitHub 的 [Releases](https://github.com/Obliphur/Obliphur-s-Integrated-Terminal/releases) 里下载最新的 **`setup.exe`** 运行:
+它会检查并安装依赖库 (电脑上没有 Python 3.10+ 时从 python.org 下载官方版本), 把 OIT 装到 `C:\Program Files\OIT` (可改),
+并注册成系统里的软件 (设置 → 应用 → 已安装的应用), 可选桌面 / 开始菜单快捷方式. 静默安装: `setup.exe /S`. 细节见 `MECHANICS.md` 16.4.
+手机版下载同一个发布里的 `OIT.apk`.
+
 ## 运行
 
-- Windows 10 / 11,Python 3.10+,仅用标准库
+- Windows 10 / 11,Python 3.10+,仅用标准库 (可选 pywin32)
 - 启动时会申请管理员权限(断网需要)
+- 不用 setup.exe 时, 下载源码后直接运行:
 
 ```bash
 python main.py

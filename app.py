@@ -17,6 +17,7 @@ import window_guard
 import appban
 import autostart
 import linkd
+import registration
 import devsync
 import firewall
 import updater
@@ -2891,6 +2892,12 @@ class BreakTimerApp:
     # ---- 设备同步 (MECHANICS 15) ----
 
     def _check_autostart(self, first: bool = False):
+        if first:
+            try:
+                # setup.exe 装的 (MECHANICS 16.4): 程序自己更新过的话, 把"已安装的应用"里的版本号也改成现在的
+                registration.refresh(updater.program_dir(), config.APP_VERSION)
+            except Exception as e:
+                self._log_window(f"ERROR    registration {type(e).__name__}: {e}")
         try:
             self.autostart_state = (autostart.ensure(self.dm.data_dir) if first else autostart.state())
         except Exception:

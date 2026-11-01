@@ -1182,7 +1182,23 @@ Adapter 方式离线时整台电脑的网卡都禁用了 (3.1), 没法同步. �
   手机上走 Wi-Fi / 移动数据本身, 不经过 OIT 的 VPN.
   手机上下载时显示进度 (已下载 / 总大小, 速度, 重连次数), 可以"取消下载". 下载 20 秒后还很慢 (不到 200 KB/s) 时, 同时请绑定的设备发来 (见上面"让其他设备发来"), 谁先到用谁. 连接断开或卡住 (30 秒内收不到 64 KB) 时自动重连, 接着已下载的部分继续 (Range);
   连着 4 次没有进展才算失败, 失败后可以"重新下载".
-- 发布新版本时: 先改两端的版本号 (`config.py` 的 `APP_VERSION`, `Android version/app/build.gradle.kts` 的 `versionName` 和 `versionCode`), 发布的名称写版本号, 附上 APK (和可选的电脑版 zip).
+- 发布新版本时 (`release.py` 做, 附件是手机的 `OIT.apk` 和电脑的 `setup.exe`, 见 16.4): 先改两端的版本号 (`config.py` 的 `APP_VERSION`, `Android version/app/build.gradle.kts` 的 `versionName` 和 `versionCode`), 发布的名称写版本号, 附上 APK (和可选的电脑版 zip).
+
+### 16.4 安装程序 setup.exe (电脑版)
+
+发布 (Release) 里除了手机的 `OIT.apk`, 电脑版以一个 **`setup.exe`** 提供 (`setup.py` + 程序文件打成 `payload.zip`, 用 PyInstaller 打包成一个 exe, `release.py` 编译并上传). 它做的事:
+- **依赖库**: OIT 本体是 Python 程序, 需要 Python 3.10+ (带 tkinter 等标准库). setup 先找电脑上有没有 (注册表 PEP 514 / `py -0p` / PATH, 挑版本最高且能 `import tkinter, sqlite3, ssl, ctypes, winreg` 的);
+  没有就从 python.org 下载官方安装包 (固定版本 `PYTHON_VERSION`), **核对数字签名有效且签名人是 Python Software Foundation 才运行**, 静默安装 (所有用户, 不改 PATH, 不装 py 启动器, 不抢 `.py` 的关联).
+  可选库 pywin32 用 `pip install` 装 (OIT 没有它也能用, 装不上只提示; 界面里可以取消勾选). 找到的 / 装好的 Python 记在 `install.json`.
+- **安装**: 程序文件 (git 里跟踪的, 不含安卓版) 复制到安装位置 (默认 `C:\Program Files\OIT`, 可改) 并预编译 `.pyc`. 同一个位置再装一遍 = 升级, 数据 (在 `AppData\LocalLow`) 不动.
+  OIT 正在运行时不装 (关闭 OIT 会断网 / 恢复网络, 实例互斥体见 3.5), 提示先退出; 升级也可以用 OIT 自带的更新 (上面). 目标文件夹是 git 仓库 (开发版本) 时拒绝.
+- **注册成软件** (`registration.py`): 在 `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\ObliphurIntegratedTerminal` 写名称, 版本, 发布者, 安装位置, 图标, 大小,
+  卸载命令 (= 装时记下的 pythonw 运行 `uninstall.py`), 于是 设置 → 应用 → 已安装的应用 里有 OIT. 可选桌面 / 开始菜单快捷方式 (当前用户的, 名字 `OIT.lnk`, 和第一次打开时介绍窗口里的是同一个).
+  装完可以直接打开 OIT (setup 已是管理员, 不再弹 UAC).
+- **之后**: OIT 每次启动时 (`registration.refresh`) 把"已安装的应用"里的版本号改成现在的 (程序自己更新过版本会变), 注册信息被清理工具删了就补上. 用 setup 装的程序文件夹里有 `install.json`, 其他方式 (解压 / git) 没有, 这些都不会发生.
+- **卸载**: 从"已安装的应用"点卸载就是运行 `uninstall.py` (9.1); 对 setup 装的, "同时删除程序文件夹"默认勾上, 并且会删掉 setup 建的快捷方式和上面那条注册信息. 装的 Python 不动 (别的程序可能在用).
+- **命令行**: `setup.exe /S` 静默安装 (日志在 `%TEMP%\oit-setup.log`), `/D=路径` 指定位置, `/nodesktop` `/nostart` `/nopython` `/nopip` `/run`.
+- 注意: 自己打包的 exe 有时会被杀毒软件误报; 也可以不用 setup.exe, 照旧解压源码 / 压缩包后 `python main.py` 运行.
 
 ---
 
