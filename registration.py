@@ -14,6 +14,8 @@ setup.exe (setup.py) 装好 OIT 之后在注册表里写一项卸载信息, 设�
 
 import json
 import os
+import re
+import subprocess
 import sys
 import time
 
@@ -41,6 +43,22 @@ def read_marker(program_dir: str) -> dict:
 def write_marker(program_dir: str, data: dict):
     with open(marker_path(program_dir), "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def launchable_python(path: str) -> str:
+    r"""Microsoft Store 版 Python 的真实路径 (C:\Program Files\WindowsApps\<包>\python.exe) 不允许别的程序直接运行 (WinError 5);
+    能运行的是每个用户的别名 %LOCALAPPDATA%\Microsoft\WindowsApps\<包名>_<发布者>\python.exe. 是前者且别名在就换成别名, 其他路径原样."""
+    parts = (path or "").split("\\")
+    i = next((k for k, x in enumerate(parts) if x.lower() == "windowsapps"), -1)
+    if i < 1 or parts[i - 1].lower() != "program files" or i + 1 >= len(parts) or "__" not in parts[i + 1]:
+        return path
+    pkg, pub = parts[i + 1].split("_", 1)[0], parts[i + 1].rsplit("__", 1)[-1]
+    base = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "WindowsApps", f"{pkg}_{pub}")
+    for name in (os.path.basename(path), "python.exe"):
+        alias = os.path.join(base, name)
+        if os.path.exists(alias):
+            return alias
+    return path
 
 
 def pythonw_of(python: str) -> str:
@@ -117,23 +135,50 @@ def unregister(root=None, path: str = UNINSTALL_PATH) -> bool:
         return False
 
 
+def registered_value(name: str, root=None, path: str = UNINSTALL_PATH) -> str:
+    if sys.platform != "win32":
+        return ""
+    import winreg
+    root = winreg.HKEY_LOCAL_MACHINE if root is None else root
+    try:
+        with winreg.OpenKey(root, path + "\\" + KEY, 0, winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as k:
+            return str(winreg.QueryValueEx(k, name)[0])
+    except OSError:
+        return ""
+
+
+def fix_shortcuts(program_dir: str, python: str, links) -> None:
+    """快捷方式改成指向能运行的 pythonw.exe."""
+    import shortcut
+    for lnk in links or []:
+        if os.path.exists(lnk):
+            script = shortcut.build_script(lnk, pythonw_of(python), f'"{os.path.join(program_dir, "main.py")}"', program_dir,
+                                           "Obliphur's Integrated Terminal")
+            try:
+                subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True, timeout=60, creationflags=0x08000000)
+            except Exception:
+                pass
+
+
 def refresh(program_dir: str, version: str, root=None, path: str = UNINSTALL_PATH) -> bool:
-    """程序启动时: 是 setup.exe 装的, 注册表里的版本号和现在的不一样 (程序自己更新过) 就改过来;
+    """程序启动时: 是 setup.exe 装的, 注册表里的版本号 / 卸载命令和现在的不一样 (程序自己更新过, 或者记的 Python 路径不能直接运行) 就改过来;
     注册信息丢了 (被清理工具删了) 就补上. 返回有没有改动."""
     m = read_marker(program_dir)
     if not m or sys.platform != "win32":
         return False
-    cur = registered_version(root, path)
-    if cur == version and os.path.exists(m.get("python") or ""):
+    python = launchable_python(m.get("python") or sys.executable)
+    if registered_version(root, path) == version and registered_value("UninstallString", root, path) == uninstall_command(program_dir, python)             and os.path.exists(python):
         return False
-    python = m.get("python") or sys.executable
     ok = register(program_dir, version, python, int(m.get("size_kb") or 0), root, path)
-    if ok and m.get("version") != version:
-        m["version"] = version
-        try:
-            write_marker(program_dir, m)
-        except OSError:
-            pass
+    if ok:
+        if python != m.get("python"):
+            fix_shortcuts(program_dir, python, m.get("shortcuts"))
+        if m.get("version") != version or python != m.get("python"):
+            m["version"], m["python"] = version, python
+            try:
+                write_marker(program_dir, m)
+            except OSError:
+                pass
     return ok
 
 
@@ -163,6 +208,20 @@ def _selftest():
         assert refresh(d, "1.2.4", winreg.HKEY_CURRENT_USER, test_path)
         assert registered_version(winreg.HKEY_CURRENT_USER, test_path) == "1.2.4" and read_marker(d)["version"] == "1.2.4"
         assert not refresh(d, "1.2.4", winreg.HKEY_CURRENT_USER, test_path), "没变: 不用写"
+        # Microsoft Store 版 Python: 真实路径 → 别名 (别名存在时)
+        pkg = r"C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.3824.0_x64__qbz5n2kfra8p0\python3.13.exe"
+        assert launchable_python(r"C:\Python313\python.exe") == r"C:\Python313\python.exe"
+        old_la = os.environ.get("LOCALAPPDATA")
+        al = os.path.join(d, "Microsoft", "WindowsApps", "PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0")
+        os.makedirs(al)
+        open(os.path.join(al, "python.exe"), "w").close()
+        os.environ["LOCALAPPDATA"] = d
+        try:
+            assert launchable_python(pkg) == os.path.join(al, "python.exe")
+            os.remove(os.path.join(al, "python.exe"))
+            assert launchable_python(pkg) == pkg, "别名不在: 原样"
+        finally:
+            os.environ["LOCALAPPDATA"] = old_la or ""
         assert unregister(winreg.HKEY_CURRENT_USER, test_path) and registered_version(winreg.HKEY_CURRENT_USER, test_path) == ""
         assert unregister(winreg.HKEY_CURRENT_USER, test_path)
     finally:

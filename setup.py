@@ -82,6 +82,7 @@ TEXT = {
     "step_reg": ("注册到系统 (设置 → 应用) …", "Registering with Windows (Settings → Apps) …"),
     "reg_fail": ("注册失败: 需要管理员权限.", "Registration failed: administrator rights are required."),
     "step_lnk": ("建快捷方式 …", "Creating shortcuts …"),
+    "run_fail": ("没能自动打开 OIT ({e}); 用开始菜单 / 桌面上的 OIT 打开.", "Could not launch OIT automatically ({e}); use the Start menu / desktop shortcut."),
     "done": ("安装完成.", "Installation complete."),
     "failed": ("安装失败: {e}", "Installation failed: {e}"),
 }
@@ -246,7 +247,7 @@ def find_python(candidates=None, run=subprocess.run):
         if not os.path.exists(os.path.join(os.path.dirname(exe), "pythonw.exe")) and not os.path.exists(os.path.join(os.path.dirname(c), "pythonw.exe")):
             continue
         if best is None or info[:2] > best[1]:
-            best = (c if os.path.isfile(c) else exe, info[:2])
+            best = (registration.launchable_python(c if os.path.isfile(c) else exe), info[:2])
     return best
 
 
@@ -389,7 +390,10 @@ def install(opts: dict, log=print, progress=lambda n: None, zip_path: str = None
             if not registration.register(dest, version, python, size):
                 raise SetupError(t("reg_fail"))
         if opts.get("run"):
-            launch_oit(python, dest)
+            try:
+                launch_oit(python, dest)
+            except OSError as e:               # 打不开不算安装失败: 已经装好了
+                log(t("run_fail", e=e))
         log(t("done"))
         return marker
     finally:
