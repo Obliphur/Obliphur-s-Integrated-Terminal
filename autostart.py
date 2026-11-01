@@ -44,13 +44,17 @@ def _xml_escape(s: str) -> str:
             .replace('"', "&quot;"))
 
 
-def task_xml(command: str, arguments: str, workdir: str, user: str, desc: str = "OIT: start at logon (MECHANICS 3.4)") -> str:
-    """任务的定义: 这个用户登录时以最高权限启动; 用电池也照常运行, 不限时长, 已经在运行就不再开一个."""
+def task_xml(command: str, arguments: str, workdir: str, user: str, desc: str = "OIT: start at logon (MECHANICS 3.4)",
+             repeat: str = "") -> str:
+    """任务的定义: 这个用户登录时以最高权限启动; 用电池也照常运行, 不限时长, 已经在运行就不再开一个.
+    repeat (如 "PT1M"): 登录之后还按这个间隔反复触发 (进程被结束了也会回来; 在运行就不会再开, IgnoreNew)."""
+    again = ("\n    <TimeTrigger><Repetition><Interval>" + repeat + "</Interval><StopAtDurationEnd>false</StopAtDurationEnd></Repetition>"
+             "<StartBoundary>2020-01-01T00:00:00</StartBoundary><Enabled>true</Enabled></TimeTrigger>") if repeat else ""
     return f"""<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo><Description>{_xml_escape(desc)}</Description></RegistrationInfo>
   <Triggers>
-    <LogonTrigger><Enabled>true</Enabled><UserId>{_xml_escape(user)}</UserId></LogonTrigger>
+    <LogonTrigger><Enabled>true</Enabled><UserId>{_xml_escape(user)}</UserId></LogonTrigger>{again}
   </Triggers>
   <Principals>
     <Principal id="Author"><UserId>{_xml_escape(user)}</UserId><LogonType>InteractiveToken</LogonType><RunLevel>HighestAvailable</RunLevel></Principal>
@@ -147,7 +151,7 @@ def link_ensure(run=_run) -> str:
     if st in ("missing", "on"):
         import linkd
         exe, script, workdir = linkd.link_command()
-        xml = task_xml(exe, f'"{script}"', workdir, _user(), desc="OIT link: companion program (MECHANICS 15.8)")
+        xml = task_xml(exe, f'"{script}"', workdir, _user(), desc="OIT link: companion program (MECHANICS 15.8)", repeat="PT1M")
         fd, path = tempfile.mkstemp(suffix=".xml")
         try:
             with os.fdopen(fd, "wb") as f:
@@ -204,7 +208,9 @@ def _selftest():
 
     xml = task_xml("C:\\py\\pythonw.exe", '"C:\\a&b\\main.py"', "C:\\a&b", "PC\\me")
     assert "<RunLevel>HighestAvailable</RunLevel>" in xml and "C:\\a&amp;b" in xml and "&quot;" in xml
-    assert "<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>" in xml
+    assert "<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>" in xml and "TimeTrigger" not in xml
+    rx = task_xml(r"C:\py\oitlink.exe", r'"C:\a\linkd.py"', r"C:\d", r"PC\me", repeat="PT1M")
+    assert "<Interval>PT1M</Interval>" in rx and rx.index("LogonTrigger") < rx.index("TimeTrigger") < rx.index("</Triggers>")
     if sys.platform != "win32":
         return "autostart selftest OK (non-Windows)"
     d = tempfile.mkdtemp()
@@ -223,7 +229,7 @@ def _selftest():
         os.remove(os.path.join(d, MARKER))
         assert ensure(d, fake) == "on"
         # 联动程序的任务 (15.8): OIT 的开机自启动开着才建; 关了就不建
-        assert link_state(fake) == "missing" and link_ensure(fake) == "on" and "linkd.py" in tasks[LINK_TASK]
+        assert link_state(fake) == "missing" and link_ensure(fake) == "on" and "linkd.py" in tasks[LINK_TASK] and "<Interval>PT1M</Interval>" in tasks[LINK_TASK]
         n = len(calls)
         assert link_ensure(fake) == "on" and any(c[1] == "/Create" for c in calls[n:]), "按当前位置重写"
         assert link_remove(fake) and link_state(fake) == "missing" and link_remove(fake)

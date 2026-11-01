@@ -208,6 +208,7 @@ class BreakTimerApp:
         # 开机自启动 (MECHANICS 3.4): 任务计划程序里的任务开着 ("on") 才算; 关机前提 (15.4)
         self.autostart_state = "unknown"
         self._autostart_at = 0.0
+        self._link_at = 0.0
         # 合约的网络禁令 (MECHANICS 18.3): 防火墙出站规则 (过滤代理之外的程序), 每 5 秒按正在运行的程序调整
         self.appban = appban.AppBan()
         self._appban_at = 0.0
@@ -2903,6 +2904,13 @@ class BreakTimerApp:
         except Exception as e:
             self._log_window(f"ERROR    link {type(e).__name__}: {e}")
 
+    def _check_link(self):
+        try:
+            if self.sync.peers():
+                linkd.ensure_running(self.dm.data_dir)
+        except Exception as e:
+            self._log_window(f"ERROR    link {type(e).__name__}: {e}")
+
     @property
     def autostart_on(self) -> bool:
         return self.autostart_state == "on"
@@ -5516,6 +5524,9 @@ class BreakTimerApp:
         if time.monotonic() - self._battery_at >= 20:   # 本机电量: 发给其他设备 (MECHANICS 15.4)
             self._battery_at = time.monotonic()
             self.battery = devsync.battery_percent()
+        if time.monotonic() - self._link_at >= 15:
+            self._link_at = time.monotonic()             # 联动程序 (15.8) 在不在: 15 秒看一次 (它也看着本机的 OIT, 互相拉起来)
+            threading.Thread(target=self._check_link, daemon=True).start()
         if time.monotonic() - self._autostart_at >= 300 and self.autostart_state != "unknown":
             self._autostart_at = time.monotonic()        # 开机自启动有没有被用户关掉: 5 分钟看一次
             threading.Thread(target=self._check_autostart, daemon=True).start()

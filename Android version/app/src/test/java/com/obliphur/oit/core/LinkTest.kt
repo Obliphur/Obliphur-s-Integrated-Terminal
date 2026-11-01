@@ -51,4 +51,30 @@ class LinkTest {
             a.stop(); b.stop()
         }
     }
+
+    @Test
+    fun selfCheck() {
+        val key = SyncCrypto.hex(ByteArray(32) { 3 })
+        val d = make("A", "B", key)
+        val launched = mutableListOf<Int>()
+        // 本机的 OIT 不在 (同步端口 1 没人听): 不满 selfFailMs 先等, 之后启动一次, 再冷却
+        val a = LinkCore(d, port = 18953, syncPorts = listOf(1), launch = { launched.add(1); true }, graceMs = 0, selfFailMs = 150, selfGraceMs = 0)
+        assertEquals("", a.selfCheck()); assertTrue(a.absentSince > 0)
+        Thread.sleep(200)
+        LinkFiles.writeHold(d, System.currentTimeMillis() + 3_600_000)
+        assertEquals("hold", a.selfCheck()); assertTrue(launched.isEmpty())
+        LinkFiles.writeHold(d, 0)
+        assertEquals("started", a.selfCheck()); assertEquals(listOf(1), launched)
+        assertEquals("cooldown", a.selfCheck()); assertEquals(listOf(1), launched)
+        // 联动程序刚启动的这段时间不启动
+        val young = LinkCore(d, port = 18954, syncPorts = listOf(1), launch = { launched.add(2); true }, graceMs = 0, selfFailMs = 0, selfGraceMs = 3_600_000)
+        young.selfCheck(); assertEquals("", young.selfCheck()); assertEquals(listOf(1), launched)
+        // 没有绑定的设备: 不管 (划掉就是关掉)
+        val e = java.nio.file.Files.createTempDirectory("link").toFile()
+        val none = LinkCore(e, port = 18955, syncPorts = listOf(1), launch = { launched.add(3); true }, graceMs = 0, selfFailMs = 0, selfGraceMs = 0)
+        assertEquals("", none.selfCheck()); assertEquals(0L, none.absentSince); assertEquals(listOf(1), launched)
+        // OIT 回来了: 清掉记录
+        val up = LinkCore(d, port = 18956, syncPorts = listOf(1), otherAlive = { true }, launch = { false })
+        assertEquals("", up.selfCheck()); assertEquals(0L, up.absentSince)
+    }
 }

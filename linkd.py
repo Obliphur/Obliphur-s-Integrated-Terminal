@@ -11,7 +11,16 @@ OIT 主体被关掉 / 崩溃 / 被冻结时, 别的设备的"请对方重新启�
     联动程序也不答 = 那台设备真的关机 / 断网了, 什么都不做.
 
 只读 OIT 的 sync_state.json (绑定的地址和密钥) 和 link_state.json, 不依赖 tkinter.
-OIT 主体运行时每 5 分钟确认联动程序在不在, 不在就重新打开 (没有任务计划时也一样). 卸载时关掉 (uninstall.py).
+
+自己设备上的 OIT 也由它看着: 绑定了其他设备时, 本机的 OIT 连续 35 秒不在运行 (没有互斥体, 同步端口也不答) 就替它重新启动 (外出期间除外).
+
+更顽强 (MECHANICS 15.8):
+  · 进程名不是 pythonw.exe 而是 oitlink.exe (解释器的副本): 结束 pythonw.exe 时它不会跟着没;
+  · OIT 主体每 15 秒确认联动程序在不在, 不在就重新打开; 两边互相看着, 只结束其中一个会马上被拉起来;
+  · 计划任务 `OIT link` 除了登录时, 还每分钟触发一次 (已经在运行时任务计划程序不会再开一个): 两个都被结束了一分钟内也会回来;
+  · 每 5 分钟自己检查计划任务还在不在, 被删了 / 改坏了就重建 (OIT 的开机自启动被用户关掉时不建);
+  · 服务线程死了 / 出了异常就在进程里重来, 不退出.
+卸载时关掉 (uninstall.py).
 
     python linkd.py              运行 (已经有一个在运行就退出)
     python linkd.py --selftest   自检
@@ -32,7 +41,11 @@ LINK_PORT = 17940
 APP_NAME = "Obliphur's Integrated Terminal"      # 同 config.APP_NAME (自检里核对), 这里不能 import config (它要 tkinter)
 PROBE_EVERY = 10              # 秒: 多久看一次绑定的设备的 OIT 还在不在
 FAIL_FOR = 35                 # 秒: 连续这么久没答才去问它的联动程序: 比"拒绝连接算离线"的 25 秒 (devsync.REFUSED_OFFLINE_MS) 长, 先让别的设备看到它离线 (记空闲 / 提示), 再去启动
-ASK_RETRY = 30                # 秒: 问了没成 (它的 OIT 还没起来 / 刚启动过) 就隔这么久再问
+SELF_FAIL = FAIL_FOR          # 秒: 本机的 OIT 连续这么久不在才替它启动 (同上: 先让别的设备看到本机离线, 再启动)
+SELF_GRACE = 40               # 秒: 联动程序自己刚启动的这段时间不替本机启动 OIT (登录时 OIT 的开机自启动正在启动它)
+HEAL_EVERY = 300              # 秒: 多久检查一次自己的计划任务
+LINK_EXE = "oitlink.exe"      # 联动程序的进程名 (pythonw.exe 的副本)
+ASK_RETRY = 30               # 秒: 问了没成 (它的 OIT 还没起来 / 刚启动过) 就隔这么久再问
 START_COOLDOWN = 120          # 秒: 启动过 OIT 之后这么久之内不再启动 (OIT 启动要一会儿)
 BOOT_GRACE = 180              # 秒: 联动程序自己刚启动的这段时间不启动 OIT (登录时 OIT 的开机自启动正在启动它)
 NO_WINDOW = 0x08000000
@@ -97,6 +110,8 @@ class Link:
         self.born = time.time()
         self.grace = grace
         self.last_start = 0.0
+        self.absent_since = None      # 本机的 OIT 从什么时候开始不在 (秒)
+        self.server_thread = None
         self.fail_since = {}          # 设备 id → 它的 OIT 从什么时候开始没答 (秒)
         self.asked = {}               # 设备 id → [上次问的时刻, 它已经启动了 OIT (True)]
         self.server = None
@@ -132,14 +147,15 @@ class Link:
                 return True
         return False
 
-    def start_oit(self) -> str:
-        """请求来了: 启动本机的 OIT. 返回结果 alive / hold / grace / cooldown / started / failed."""
+    def start_oit(self, grace: float = None) -> str:
+        """请求来了 / 自检发现 OIT 不在: 启动本机的 OIT. 返回结果 alive / hold / grace / cooldown / started / failed."""
+        grace = self.grace if grace is None else grace
         with self.lock:
             if self.oit_alive():
                 return "alive"
             if hold_until(self.dd) > now_ms():
                 return "hold"
-            if time.time() - self.born < self.grace:
+            if time.time() - self.born < grace:
                 return "grace"
             if time.time() - self.last_start < START_COOLDOWN:
                 return "cooldown"
@@ -151,6 +167,31 @@ class Link:
                 self.log(f"launch error {type(e).__name__}: {e}")
             self.log("start OIT: " + ("ok" if ok else "failed"))
             return "started" if ok else "failed"
+
+    def self_check(self):
+        """自己设备上的 OIT 在不在: 绑定了其他设备时, 连续 SELF_FAIL 秒不在就启动它 (外出期间 / 刚启动过 不启动). 返回 start_oit 的结果, 没动作时 ""."""
+        if not load_peers(self.dd)[1] or self.oit_alive():
+            self.absent_since = None
+            return ""
+        now = time.time()
+        if self.absent_since is None:
+            self.absent_since = now
+        if now - self.absent_since < SELF_FAIL or now - self.born < SELF_GRACE:
+            return ""
+        res = self.start_oit(grace=0)
+        if res in ("started", "failed"):
+            self.log(f"self check: OIT not running for {int(now - self.absent_since)}s -> {res}")
+        return res
+
+    def heal(self):
+        """计划任务 `OIT link` 被删了 / 改坏了就重建 (autostart.link_ensure: OIT 的开机自启动被用户关掉时不建)."""
+        if sys.platform != "win32" or not load_peers(self.dd)[1]:
+            return
+        import autostart
+        before = autostart.link_state()
+        after = autostart.link_ensure()
+        if before != after:
+            self.log(f"link task: {before} -> {after}")
 
     def on_start_request(self, env: dict):
         sender = str(env.get("from") or "")
@@ -260,37 +301,57 @@ class Link:
             daemon_threads = True
 
         self.server = S(("0.0.0.0", self.port), H)
-        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.server_thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.server_thread.start()
 
-    def run(self):
+    def close_server(self):
+        try:
+            self.server.shutdown()
+            self.server.server_close()
+        except Exception:
+            pass
+
+    def run(self) -> str:
+        """运行到被要求退出. 返回 busy (已经有一个在运行) / quit (被要求关掉) / changed (程序文件更新了, 已用新代码重新打开) / dead (服务线程死了, 调用方重来)."""
         self.my_id = ""
         try:
             self.serve()
         except OSError:
-            return                              # 已经有一个在运行
+            return "busy"
         self.log("link started")
         mtimes = _mtimes()
-        last_watch = time.time()
+        last_watch = last_heal = time.time()
+        result = "quit"
         while not self.stop_flag.is_set():
+            try:
+                self.self_check()
+            except Exception as e:
+                self.log(f"self check error {type(e).__name__}: {e}")
             try:
                 self.probe_once()
             except Exception as e:
                 self.log(f"probe error {type(e).__name__}: {e}")
             if self.stop_flag.wait(PROBE_EVERY):
                 break
+            if not self.server_thread.is_alive():
+                self.log("server thread died, restarting")
+                result = "dead"
+                break
+            if time.time() - last_heal >= HEAL_EVERY:
+                last_heal = time.time()
+                try:
+                    self.heal()
+                except Exception as e:
+                    self.log(f"heal error {type(e).__name__}: {e}")
             if time.time() - last_watch >= 60:
                 last_watch = time.time()
                 if _mtimes() != mtimes:         # 程序文件更新了: 用新的代码重新打开自己
                     self.log("program files changed, restarting")
-                    self.server.shutdown()
-                    self.server.server_close()
+                    self.close_server()
                     spawn_self(self.dd)
-                    break
-        try:
-            self.server.shutdown()
-            self.server.server_close()
-        except Exception:
-            pass
+                    return "changed"
+        self.close_server()
+        return result
 
 
 def _mtimes():
@@ -317,10 +378,7 @@ def launch_oit() -> bool:
     except Exception:
         pass
     here = os.path.dirname(os.path.abspath(__file__))
-    exe = sys.executable
-    pyw = os.path.join(os.path.dirname(exe), "pythonw.exe")
-    if os.path.exists(pyw):
-        exe = pyw
+    exe = _pyw()
     try:
         subprocess.Popen([exe, os.path.join(here, "main.py")], cwd=here, close_fds=True, creationflags=NO_WINDOW)
         return True
@@ -328,14 +386,70 @@ def launch_oit() -> bool:
         return False
 
 
+def _pyw() -> str:
+    exe = sys.executable
+    pyw = os.path.join(os.path.dirname(exe), "pythonw.exe")
+    return pyw if os.path.exists(pyw) else exe
+
+
+_exe_failed = False
+
+
+def link_exe() -> str:
+    """联动程序的可执行文件: pythonw.exe 的副本 oitlink.exe (放在解释器旁边, 能找到它的库). 这样任务管理器里进程叫 oitlink.exe,
+    结束 pythonw.exe (OIT 主体) 时它不会跟着没. 复制不了 / 副本跑不起来时 (例如 Microsoft Store 版的 Python: 库只许包自己的进程加载) 用 pythonw.exe 本身."""
+    global _exe_failed
+    pyw = _pyw()
+    if sys.platform != "win32" or os.path.basename(pyw).lower() == LINK_EXE:
+        return pyw
+    dst = os.path.join(os.path.dirname(pyw), LINK_EXE)
+    tmp = os.path.join(os.path.dirname(pyw), "oitlink-new.exe")
+    try:
+        a = os.stat(pyw)
+        try:
+            b = os.stat(dst)
+            if b.st_size == a.st_size and int(b.st_mtime) == int(a.st_mtime):
+                return dst
+        except OSError:
+            pass
+        import shutil
+        if _exe_failed:
+            raise OSError("copy failed before")
+        shutil.copy2(pyw, tmp)
+        r = subprocess.run([tmp, "-c", "import sys, socket, ctypes, http.server, json"], capture_output=True, timeout=30, creationflags=NO_WINDOW)
+        if r.returncode != 0:
+            _exe_failed = True                  # 这个进程里不再试
+            raise OSError("copy does not run")
+        os.replace(tmp, dst)                    # 副本正在运行 (替换不了) 时抛 PermissionError
+        return dst
+    except Exception:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        return dst if os.path.exists(dst) else pyw
+
+
+def remove_exe() -> bool:
+    """卸载: 删掉 oitlink.exe (进程已经关掉了). 返回删干净了没有."""
+    if sys.platform != "win32":
+        return True
+    d = os.path.dirname(_pyw())
+    ok = True
+    for n in (LINK_EXE, "oitlink-new.exe"):
+        try:
+            os.remove(os.path.join(d, n))
+        except FileNotFoundError:
+            pass
+        except OSError:
+            ok = False
+    return ok
+
+
 def link_command():
     """(要运行的程序, 脚本, 工作目录): 联动程序. 工作目录是数据目录 (不占着程序文件夹, 卸载时删得掉)."""
     here = os.path.dirname(os.path.abspath(__file__))
-    exe = sys.executable
-    pyw = os.path.join(os.path.dirname(exe), "pythonw.exe")
-    if os.path.exists(pyw):
-        exe = pyw
-    return exe, os.path.join(here, "linkd.py"), data_dir()
+    return link_exe(), os.path.join(here, "linkd.py"), data_dir()
 
 
 def running(port: int = LINK_PORT) -> bool:
@@ -387,6 +501,8 @@ def _selftest():
     import config
     assert APP_NAME == config.APP_NAME and data_dir().endswith(config.APP_NAME)
     key = os.urandom(32).hex()
+    real_exists = instance.exists
+    instance.exists = lambda *a: False          # 本机真有 OIT 在运行时 (互斥体在) 也不影响自检
 
     def make(my, other, other_port):
         d = tempfile.mkdtemp()
@@ -438,7 +554,46 @@ def _selftest():
         assert launched == ["B", "B"] and la.asked["B"][1] is False
         # 对方的 OIT 答了: 清掉记录
         assert not la.peer_oit_alive(load_peers(da)[1]["B"])
+        # 自己设备上的 OIT 不在 (自检): 不满 SELF_FAIL / 联动程序刚启动 / 外出期间 都不启动, 否则启动一次, 之后冷却
+        mine = []
+        lc = Link(da, port=18943, sync_ports=[1], launch=lambda: mine.append(1) or True, grace=0)
+        alive = [False]
+        lc.oit_alive = lambda: alive[0]
+        assert lc.self_check() == "" and lc.absent_since is not None, "刚发现不在: 先等"
+        lc.absent_since -= SELF_FAIL + 1
+        lc.born -= SELF_GRACE + 1
+        write_hold(da, now_ms() + 3600_000)
+        assert lc.self_check() == "hold" and mine == []
+        write_hold(da, 0)
+        young = Link(da, port=18944, sync_ports=[1], launch=lambda: mine.append(2) or True, grace=0)
+        young.oit_alive = lambda: False
+        young.absent_since = time.time() - SELF_FAIL - 1
+        assert young.self_check() == "" and mine == [], "联动程序刚启动: 不启动"
+        assert lc.self_check() == "started" and mine == [1]
+        assert lc.self_check() == "cooldown" and mine == [1]
+        alive[0] = True
+        assert lc.self_check() == "" and lc.absent_since is None, "OIT 回来了: 清掉记录"
+        alive[0] = False
+        lc.absent_since = None
+        assert lc.self_check() == "" and lc.absent_since is not None
+        # 没有绑定的设备: 不管 (划掉就是关掉)
+        dn = tempfile.mkdtemp()
+        try:
+            ln = Link(dn, port=18945, sync_ports=[1], launch=lambda: mine.append(3) or True, grace=0)
+            ln.oit_alive = lambda: False
+            ln.absent_since = time.time() - 999
+            assert ln.self_check() == "" and mine == [1]
+        finally:
+            shutil.rmtree(dn, ignore_errors=True)
+        # 联动程序的可执行文件: 能跑的 pythonw.exe 副本 oitlink.exe (复制不了就是 pythonw.exe 本身)
+        exe = link_exe()
+        assert os.path.exists(exe) and exe == link_command()[0]
+        if sys.platform == "win32" and os.path.basename(exe).lower() == LINK_EXE:
+            out = subprocess.run([exe.replace("pythonw", "python") if os.path.exists(exe.replace("oitlink", "python")) else exe,
+                                  "-c", "print(1)"], capture_output=True, text=True).returncode
+            assert out == 0
     finally:
+        instance.exists = real_exists
         la.server.shutdown(); la.server.server_close()
         for d in (da, db):
             shutil.rmtree(d, ignore_errors=True)
@@ -450,4 +605,13 @@ if __name__ == "__main__":
     if "--selftest" in sys.argv:
         print(_selftest())
     else:
-        Link(data_dir()).run()
+        while True:                                  # 出了异常 / 服务线程死了: 在进程里重来, 不退出
+            try:
+                if Link(data_dir()).run() != "dead":
+                    break
+            except Exception as e:
+                try:
+                    Link(data_dir()).log(f"crashed {type(e).__name__}: {e}")
+                except Exception:
+                    pass
+            time.sleep(5)

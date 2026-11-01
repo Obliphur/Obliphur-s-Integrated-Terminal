@@ -87,8 +87,15 @@ class LinkService : Service() {
         Thread({
             while (!dead) {
                 try {
+                    l.selfCheck()
+                } catch (e: Exception) {
+                    log("self check error ${e.javaClass.simpleName}: ${e.message}")
+                }
+                try {
                     l.probeOnce()
                     holdLocks(l.hasPeers())
+                    // 保活闹钟 (Waker.keepalive) 这里也往后推: 整个应用 (包括本进程) 被系统杀掉后, 闹钟照样把 OIT 和联动程序叫起来
+                    Waker.keepalive(this, l.hasPeers())
                 } catch (e: Exception) {
                     log("probe error ${e.javaClass.simpleName}: ${e.message}")
                 }

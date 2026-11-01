@@ -14,6 +14,7 @@ import java.util.concurrent.Executors
  *    OIT 已经在运行 / 本机正在外出 (link_state.json 的 hold_until) / 刚启动过 就不理, 否则启动 OIT;
  *  - 每 15 秒看一眼绑定的设备的 OIT 还在不在 (同步端口答不答 hello). 连续 45 秒没答就去问它的联动程序:
  *    答了 = 那台设备还开着, 只是 OIT 没在运行 (不是那台设备离线) → 请它启动 OIT; 也不答 = 那台设备真的关机 / 断网了, 什么都不做.
+ * 自己设备上的 OIT 也由它看着 (selfCheck): 绑定了其他设备时, 本机的 OIT 连续 35 秒不在运行就替它重新启动 (外出期间除外).
  * 只读 OIT 的 sync_state.json (绑定的地址和密钥) 和 link_state.json, 不碰 OitApp / Core (这个进程里没有它们).
  */
 object LinkFiles {
@@ -51,6 +52,8 @@ class LinkCore(
     /** 同步端口之外, 还有别的办法看出 OIT 主体在运行 (手机上: 主进程在不在). */
     private val otherAlive: () -> Boolean = { false },
     private val graceMs: Long = BOOT_GRACE_MS,
+    private val selfFailMs: Long = SELF_FAIL_MS,
+    private val selfGraceMs: Long = SELF_GRACE_MS,
     private val log: (String) -> Unit = {},
 ) {
     companion object {
@@ -61,6 +64,9 @@ class LinkCore(
         const val ASK_RETRY_MS = 30_000L
         const val START_COOLDOWN_MS = 120_000L
         const val BOOT_GRACE_MS = 180_000L
+        /** 本机的 OIT 连续这么久不在才替它启动 (同 FAIL_FOR_MS: 先让别的设备看到本机离线); 联动程序自己刚启动的这段时间不启动. */
+        const val SELF_FAIL_MS = FAIL_FOR_MS
+        const val SELF_GRACE_MS = 40_000L
 
         /** 一次简单的 HTTP 请求 (对方回复后关连接). 返回 (状态, 内容); 连不上抛异常. */
         fun call(addr: String, port: Int, method: String, path: String, body: JSONObject?, timeoutMs: Int = 4000): Pair<Int, JSONObject> {
@@ -86,6 +92,7 @@ class LinkCore(
 
     private val born = System.currentTimeMillis()
     @Volatile private var lastStart = 0L
+    @Volatile var absentSince = 0L                       // 本机的 OIT 从什么时候开始不在 (0 = 在)
     private val failSince = HashMap<String, Long>()
     private val asked = HashMap<String, LongArray>()        // 设备 id → [上次问的时刻, 它已经启动了 OIT (1)]
     private var server: ServerSocket? = null
@@ -107,15 +114,26 @@ class LinkCore(
     }
 
     /** 请求来了: 启动本机的 OIT. 返回 alive / hold / grace / cooldown / started / failed. */
-    @Synchronized fun startOit(): String {
+    @Synchronized fun startOit(grace: Long = graceMs): String {
         if (oitAlive()) return "alive"
         if (LinkFiles.holdUntil(dir) > System.currentTimeMillis()) return "hold"
-        if (System.currentTimeMillis() - born < graceMs) return "grace"
+        if (System.currentTimeMillis() - born < grace) return "grace"
         if (System.currentTimeMillis() - lastStart < START_COOLDOWN_MS) return "cooldown"
         lastStart = System.currentTimeMillis()
         val ok = try { launch() } catch (e: Exception) { log("launch error ${e.javaClass.simpleName}: ${e.message}"); false }
         log("start OIT: " + if (ok) "ok" else "failed")
         return if (ok) "started" else "failed"
+    }
+
+    /** 自己设备上的 OIT 在不在: 绑定了其他设备时, 连续 SELF_FAIL_MS 不在就启动它 (外出期间 / 刚启动过 不启动). 返回 startOit 的结果, 没动作时 "". */
+    fun selfCheck(): String {
+        if (!hasPeers() || oitAlive()) { absentSince = 0L; return "" }
+        val now = System.currentTimeMillis()
+        if (absentSince == 0L) absentSince = now
+        if (now - absentSince < selfFailMs || now - born < selfGraceMs) return ""
+        val res = startOit(0L)
+        if (res == "started" || res == "failed") log("self check: OIT not running for ${(now - absentSince) / 1000}s -> $res")
+        return res
     }
 
     fun onStartRequest(env: JSONObject): Pair<Int, JSONObject> {

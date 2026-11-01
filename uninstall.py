@@ -400,8 +400,12 @@ def run_uninstall(paths: Paths, remove_program: bool, log,
         log(tr("   没有被禁用的物理网卡."), "ok")
 
     # 联动程序 (linkd.py): 先关掉进程, 免得它在数据删掉之后又写日志 / 替别的设备把 OIT 启动起来
+    # (它的计划任务每分钟会把它再打开, 所以任务先删, 进程关掉后再删一遍)
+    (autostart.link_remove(task_run) if task_run else autostart.link_remove())
     if not linkd.stop():
-        log(tr("联动程序关不掉, 请在任务管理器里结束 pythonw.exe (linkd.py)."), "warn")
+        log(tr("联动程序关不掉, 请在任务管理器里结束 oitlink.exe (linkd.py)."), "warn")
+    (autostart.link_remove(task_run) if task_run else autostart.link_remove())
+    linkd.remove_exe()
     log(tr("④ 删除数据…"), "info")
     # 先请绑定的设备清空数据, 并解除和本机的绑定 (网络这时已经恢复)
     told = forget_peers(paths, forget)
