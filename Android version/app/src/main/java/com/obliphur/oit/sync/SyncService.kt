@@ -124,7 +124,7 @@ class SyncService(
     companion object {
         /** 解除全部绑定要等这么久 (期间可以取消). */
         /** 解除绑定要等这么久 (冷静期, 期间可以取消). */
-        const val UNBIND_WAIT_MS = 48 * 3600 * 1000L
+        const val UNBIND_WAIT_MS = 120 * 3600 * 1000L
         /** 解除绑定后还没送到的清空请求, 每隔这么久 (毫秒) 再送一次. */
         const val EVICT_RETRY_MS = 30_000L
         /** 设备离线时请它重新启动 OIT, 连不上就每隔这么久再试一次; 本机因为这个重启过之后这么久之内不再理会重启请求. 同 devsync.RESTART_RETRY / RESTART_GAP_MS. */
@@ -1004,6 +1004,12 @@ class SyncService(
         }
     }
 
+    /** 告诉一台设备: 本机解除了和它的绑定 (它只删掉这条绑定, 数据不动). 返回 HTTP 状态, 连不上 0. */
+    private fun unpairTo(p: JSONObject, timeoutMs: Int): Int = try {
+        val env = SyncCrypto.seal(SyncCrypto.unhex(p.getString("key")), myId, JSONObject().put("unpair", true))
+        http(p.getString("addr"), p.getInt("port"), "POST", "/oit/v1/unpair", env, timeoutMs).first
+    } catch (e: Exception) { 0 }
+
     private fun onUnpair(env: JSONObject): Pair<Int, JSONObject> {
         val from = env.optString("from")
         val p = peers()[from] ?: return 200 to JSONObject()
@@ -1065,7 +1071,7 @@ class SyncService(
     /** 重置后留下的同步状态: 本机的 id, 绑定 (密钥, 地址), 已删除的设备, 没送到的清空请求, 解除绑定的计划.
      *  账, 状态, 修改时间全部清掉. wipedBy: 是哪台设备请本机清空的 (重开后提示).
      *  leave: 是别的设备解除了和本机的绑定 (15.1): 只重置本机, 和其他设备的绑定照样留着 (只用来重开后提示). */
-    fun keptState(wipedBy: String = "", leave: Boolean = false): JSONObject = lock.withLock {
+    fun keptState(wipedBy: String = "", leave: Boolean = false, unbound: String = ""): JSONObject = lock.withLock {
         val peers = JSONObject()
         val src = state.getJSONObject("peers")
         for (k in src.keys()) peers.put(k, JSONObject(src.getJSONObject(k).toString()).put("last_err", "").put("init", false))
@@ -1080,7 +1086,15 @@ class SyncService(
             d.put("wiped_by", wipedBy)
             if (leave) d.put("wiped_leave", true)
         }
+        if (unbound.isNotEmpty()) d.put("unbound_from", unbound)      // 本机解除了和它们的绑定, 清空了本机的数据 (重开后提示)
         d
+    }
+
+    /** 重开后: 本机解除了和哪些设备的绑定 (名字, 逗号分隔; 只提示一次). */
+    fun popUnboundFrom(): String {
+        val who = lock.withLock { (state.remove("unbound_from") as? String) ?: "" }
+        if (who.isNotEmpty()) save()
+        return who
     }
 
     /** 重开后: (是哪台设备请本机清空了数据, 是不是它解除了和本机的绑定) (只提示一次). */
@@ -1174,7 +1188,7 @@ class SyncService(
         return 200 to JSONObject()
     }
 
-    // ---- 解除绑定 (MECHANICS 15.1): 冷静期 48 小时, 期间可以取消; 到时间后解除, 并清空那台设备上的全部数据 (同 devsync) ----
+    // ---- 解除绑定 (MECHANICS 15.1): 冷静期 120 小时, 期间可以取消; 到时间后解除, 并清空本机的全部数据, 不影响对方的数据 (同 devsync) ----
 
     /** 计划解除和这台设备的绑定的时刻 (毫秒), 没有计划时 null. */
     fun unbindAt(peerId: String): Long? = lock.withLock { state.getJSONObject("unbinds").optLong(peerId).takeIf { it > 0 } }
@@ -1200,8 +1214,8 @@ class SyncService(
     /** 本机上次给每台设备送解除绑定后的清空请求的时刻 (只记在内存里). */
     private val evictTry = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
-    /** 每 5 秒: 冷静期到了的解除绑定 —— 解除, 并请那台设备重置 (只清空它自己的数据).
-     *  对方离线时清空请求留在 evict_out, 每 EVICT_RETRY_MS 再送, 直到送到 (或 GONE_KEEP_MS 之后放弃).
+    /** 每 5 秒: 冷静期到了的解除绑定 —— 解除, 并通知那台设备 (它只是少了一条绑定, 数据不动); 调用方要重置本机 (清空本机的数据).
+     *  对方离线时通知留在 evict_out, 每 EVICT_RETRY_MS 再送, 直到送到 (或 GONE_KEEP_MS 之后放弃).
      *  返回这次解除了的设备的名字. */
     fun checkUnbind(): List<String> {
         val now = System.currentTimeMillis()
@@ -1214,7 +1228,7 @@ class SyncService(
                 state.getJSONObject("unbinds").remove(id)
                 if (p != null) state.getJSONObject("evict_out").put(id, JSONObject().put("key", p.optString("key"))
                     .put("addr", p.optString("addr")).put("port", p.optInt("port")).put("name", p.optString("name", "?"))
-                    .put("wipe", newWipeId()).put("since", now))
+                    .put("since", now))
             }
             if (p != null) {
                 unpair(id, notify = false)
@@ -1226,7 +1240,7 @@ class SyncService(
         return done
     }
 
-    /** 把解除绑定后还没送到的清空请求送过去 (后台线程). */
+    /** 把解除绑定后还没送到的通知 (只解除绑定, 不清空对方的数据) 送过去 (后台线程). */
     private fun deliverEvicts(now: Long) {
         val out = lock.withLock { JSONObject(state.getJSONObject("evict_out").toString()) }
         for (id in out.keys()) {
@@ -1239,7 +1253,7 @@ class SyncService(
             if (now - (evictTry[id] ?: 0L) < EVICT_RETRY_MS) continue
             evictTry[id] = now
             pool.execute {
-                val st = wipeTo(e, e.optString("wipe"), true, 4000, leave = true)
+                val st = unpairTo(e, 4000)
                 if (st == 200 || st == 401) {        // 送到了 / 它已经不认识本机 (重置过, 或者自己解除了)
                     lock.withLock { state.getJSONObject("evict_out").remove(id) }
                     save()

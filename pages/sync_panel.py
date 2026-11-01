@@ -136,7 +136,7 @@ class SyncPanel(tk.Frame):
         self.sync.cancel_pairing()
 
     def _sync_unpair(self):
-        """解除绑定 (MECHANICS 15.1): 冷静期 48 小时, 期间再按一次取消; 到时间后解除, 并清空那台设备上的全部数据."""
+        """解除绑定 (MECHANICS 15.1): 冷静期 120 小时, 期间再按一次取消; 到时间后解除, 并清空本机上的全部数据 (对方的数据不受影响)."""
         sel = self.lb_peers.curselection()
         if not sel or sel[0] >= len(self._peer_ids):
             toast.warn(tr("先在上面选一台设备."))
@@ -152,7 +152,7 @@ class SyncPanel(tk.Frame):
         if p.get("last_err") == "unpaired":
             msg = tr("解除和 {name} 的绑定?", name=name)          # 对方已经解除了 / 重置过: 直接解除
         else:
-            msg = tr("48 小时后解除和 {name} 的绑定, 并清空 {name} 上的全部数据. 期间可以取消.", name=name)
+            msg = tr("120 小时后解除和 {name} 的绑定, 并清空本机上的全部数据 ({name} 的数据不受影响). 期间可以取消.", name=name)
         if toast.ask(msg, title=tr("解除绑定"), danger=True):
             self.sync.request_unbind(pid)
 

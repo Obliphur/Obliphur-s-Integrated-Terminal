@@ -110,6 +110,8 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     var versionMismatch: () -> List<Triple<String, String, Boolean>> = { emptyList() }
     /** 冷静期到了的解除绑定就解除, 并请那台设备清空全部数据 (返回这次解除了的设备的名字, MECHANICS 15.1). */
     var checkUnbind: () -> List<String> = { emptyList() }
+    /** 解除绑定的冷静期到了: 清空本机的数据 (OitApp.resetAll). */
+    var resetAfterUnbind: (String) -> Unit = {}
     /** 此刻离线的绑定的设备: id → 名字. */
     var offlinePeers: () -> Map<String, String> = { emptyMap() }
     /** 上一次看到的离线设备 (null = 还没看过: 刚打开时已经离线的不响). */
@@ -503,10 +505,9 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             checkPendingSettings()
             timer.check()
             checkSetupPeriod()
-            for (name in runCatching { checkUnbind() }.getOrDefault(emptyList())) {
-                logNotice("SYNC unbind done $name")
-                toast(tr("已解除和 {name} 的绑定, {name} 上的数据会被清空 (离线时等它上线).", "name" to name))
-            }
+            val unbound = runCatching { checkUnbind() }.getOrDefault(emptyList())
+            for (name in unbound) logNotice("SYNC unbind done $name")
+            if (unbound.isNotEmpty()) resetAfterUnbind(unbound.joinToString(", "))     // 只重置本机: 不转告其他设备, 也不清空对方
             checkOfflineChime()
             checkAchievements()
             // 子端: 母端 2 分钟没同步过了 (关掉了 / 断开了), 开发者模式就关掉

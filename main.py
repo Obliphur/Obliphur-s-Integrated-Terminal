@@ -19,6 +19,16 @@ def main():
     if not instance.acquire(enforce=not updater.is_dev_checkout()):
         sys.exit(0)
 
+    # 数据的连续性 (MECHANICS 9.3): 数据被搬走 / 倒回去了 (备份还原, 复制到别的电脑 ……) 就清掉, 弹出 "<用户名>,覆水难收."
+    import config
+    import continuity
+    who = continuity.guard(config.app_data_dir(), enabled=not updater.is_dev_checkout())[1]
+    if who is not None:
+        from tkinter import messagebox
+        r = tk.Tk()
+        r.withdraw()
+        messagebox.showwarning("OIT", continuity.message(who), parent=r)
+        r.destroy()
     if sys.platform == "win32":
         try:      # 任务栏上单独成组, 用 OIT 自己的图标 (不然和别的 Python 程序混在一起, 显示 Python 的图标)
             import ctypes

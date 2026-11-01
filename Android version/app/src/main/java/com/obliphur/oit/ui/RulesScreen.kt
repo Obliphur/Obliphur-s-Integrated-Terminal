@@ -283,6 +283,7 @@ fun SyncCard() {
         }
         Text(tr("已绑定的设备"), color = o.text, fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.padding(top = 10.dp))
         if (peers.isEmpty()) Dim(tr("没有"))
+        if (peers.isNotEmpty()) UninstallGuardRow()
         val now = System.currentTimeMillis()
         val live = s.peerStatus().associate { it.first to it.third }
         for ((pid, p) in peers) {
@@ -301,7 +302,7 @@ fun SyncCard() {
             }
             val st = live[pid]?.takeIf { now - it.optLong("ts") < 60_000 }
             val busy = when (st?.optString("timer")) { "running" -> tr("专注中…"); "break" -> tr("休息中 ☕"); else -> "" }
-            // 解除绑定 (MECHANICS 15.1): 冷静期 48 小时, 期间可以取消
+            // 解除绑定 (MECHANICS 15.1): 冷静期 120 小时, 期间可以取消
             val unbindAt = s.unbindAt(pid)
             val planText = unbindAt?.let {
                 tr("将在 {t} 解除绑定", "t" to java.time.LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(it),
@@ -330,9 +331,9 @@ fun SyncCard() {
     askUnpair?.let { pid ->
         val peer = s.peers()[pid]
         val name = peer?.optString("name") ?: "?"
-        // 对方已经解除了 / 重置过 (unpaired): 直接解除; 否则 48 小时后解除, 并清空对方的全部数据
+        // 对方已经解除了 / 重置过 (unpaired): 直接解除; 否则 120 小时后解除, 并清空本机的全部数据 (对方的数据不受影响)
         val msg = if (peer?.optString("last_err") == "unpaired") tr("解除和 {name} 的绑定?", "name" to name)
-            else tr("48 小时后解除和 {name} 的绑定, 并清空 {name} 上的全部数据. 期间可以取消.", "name" to name)
+            else tr("120 小时后解除和 {name} 的绑定, 并清空本机上的全部数据 ({name} 的数据不受影响). 期间可以取消.", "name" to name)
         Confirm(tr("解除绑定"), msg, true, { askUnpair = null }) { s.requestUnbind(pid) }
     }
 }
@@ -550,3 +551,28 @@ fun AiSuggestDialog(mode: String, onDismiss: () -> Unit) {
         },
         dismissButton = { if (step != "busy") TextButton(onDismiss) { Text(tr("关闭"), color = o.dim) } })
 }
+
+/** 卸载保护 (MECHANICS 9.2): 激活设备管理员后, 卸载 OIT 前必须先取消激活, 取消时 OIT 请绑定的设备清空数据. */
+@Composable
+private fun UninstallGuardRow() {
+    val ctx = LocalContext.current
+    val o = LocalOit.current
+    var active by remember { mutableStateOf(com.obliphur.oit.service.OitAdmin.active(ctx)) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        while (true) {
+            active = com.obliphur.oit.service.OitAdmin.active(ctx)
+            kotlinx.coroutines.delay(2000)
+        }
+    }
+    Column(Modifier.padding(vertical = 6.dp)) {
+        Text(tr("卸载保护"), color = o.text, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+        if (active) Dim(tr("已启用: 卸载 OIT 前要先取消激活, 取消时其他绑定的设备会被请求清空数据."), size = 12)
+        else {
+            Dim(tr("没有启用: 直接卸载 OIT 时来不及通知其他设备. 启用后, 卸载前必须取消激活, 取消时 OIT 会请其他设备清空数据."), size = 12, color = o.warn)
+            PlainButton(tr("启用卸载保护")) {
+                runCatching { ctx.startActivity(com.obliphur.oit.service.OitAdmin.requestIntent(ctx)) }
+            }
+        }
+    }
+}
+

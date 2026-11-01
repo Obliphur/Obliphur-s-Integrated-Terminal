@@ -42,6 +42,7 @@ import linkd
 import appban
 import browserfence
 import registration
+import continuity
 
 
 CONFIRM_WORD = "UNINSTALL"
@@ -412,6 +413,10 @@ def run_uninstall(paths: Paths, remove_program: bool, log,
     told = forget_peers(paths, forget)
     if told:
         log(tr("   已请 {n} 台绑定的设备清空数据并解除绑定.", n=told), "ok")
+    try:
+        continuity.Continuity(paths.data_dir).reset()          # 数据的连续性的锚点 (注册表 / ProgramData / LocalAppData) 也清掉
+    except Exception:
+        pass
     left = delete_data(paths)
     for p in left:
         log(tr("   删不掉 (可能被占用): {p}", p=p), "warn")

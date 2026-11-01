@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 卸载保护 (MECHANICS 9.2): 不需要任何设备管理策略. 只用到"取消激活"这个动作: 用户卸载 OIT 前必须先取消激活, 此时 OIT 来得及通知其他设备 -->
+<device-admin xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-policies />
+</device-admin>

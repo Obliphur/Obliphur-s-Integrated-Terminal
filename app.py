@@ -18,6 +18,7 @@ import appban
 import autostart
 import linkd
 import registration
+import continuity
 import devsync
 import firewall
 import updater
@@ -214,6 +215,8 @@ class BreakTimerApp:
         self.autostart_state = "unknown"
         self._autostart_at = 0.0
         self._link_at = 0.0
+        self._cont_at = 0.0
+        self._cont_broken = False
         # 合约的网络禁令 (MECHANICS 18.3): 防火墙出站规则 (过滤代理之外的程序), 每 5 秒按正在运行的程序调整
         self.appban = appban.AppBan()
         self._appban_at = 0.0
@@ -414,6 +417,10 @@ class BreakTimerApp:
             self.root.after(600, self._ask_username)
         elif self._first_run:
             self.root.after(600, self._show_welcome)
+        unb = self.sync.pop_unbound_from()
+        if unb:
+            # 本机解除了和别的设备的绑定: 本机的数据清空了, 对方的数据不受影响 (MECHANICS 15.1)
+            self.root.after(900, lambda: toast.notice(tr("🔄  数据已清空"), tr("已解除和 {name} 的绑定, 本机的数据已经清空. {name} 的数据不受影响.", name=unb)))
         who, leave = self.sync.pop_wiped_by()
         if who:
             # 别的设备重置 / 卸载时请本机清空了数据 (MECHANICS 9); 别的设备解除了和本机的绑定 (15.1)
@@ -3075,6 +3082,17 @@ class BreakTimerApp:
         elif u.state == "error":
             toast.warn(tr("检查 / 更新失败: {e}", e=u.error))
 
+    def on_peer_saw_me(self, st: dict):
+        """别的设备记着的本机上次的状态比本机的数据新得多 = 本机的数据被倒回去了 (备份还原, 镜像还原 ……): 在锚点里标记,
+        马上重启, 下一次启动时清掉数据 (MECHANICS 9.3)."""
+        c = continuity.current
+        if c is None or self._cont_broken or self.shutting_down or self.dm.resetting or not c.peer_saw(st):
+            return
+        self._cont_broken = True
+        self._log_notice(f"CONTINUITY peers saw seq {st.get('cseq')} > ours {c.seq}")
+        c.mark_pending()
+        self._restart_for_update()
+
     def restart_by_peer(self, name: str):
         """别的设备发现本机离线了, 请本机重新启动 OIT (MECHANICS 15.3): 和更新后重启一样, 共享的专注不结束."""
         if self.shutting_down or self.dm.resetting:
@@ -5535,6 +5553,10 @@ class BreakTimerApp:
         if time.monotonic() - self._battery_at >= 20:   # 本机电量: 发给其他设备 (MECHANICS 15.4)
             self._battery_at = time.monotonic()
             self.battery = devsync.battery_percent()
+        if time.monotonic() - self._cont_at >= continuity.TICK:
+            self._cont_at = time.monotonic()             # 数据的连续性: 序号推进一次 (MECHANICS 9.3)
+            if continuity.current is not None:
+                threading.Thread(target=continuity.current.tick, daemon=True).start()
         if time.monotonic() - self._link_at >= 15:
             self._link_at = time.monotonic()             # 联动程序 (15.8) 在不在: 15 秒看一次 (它也看着本机的 OIT, 互相拉起来)
             threading.Thread(target=self._check_link, daemon=True).start()
@@ -5638,11 +5660,13 @@ class BreakTimerApp:
         toast.warn(tr("{name} 离线了.", name=names), clear=True)   # 离线消息黑雾也不遮 (18.3)
 
     def _check_unbind(self):
-        """每 5 秒: 冷静期到了的解除绑定就解除, 并请那台设备清空全部数据 (MECHANICS 15.1)."""
+        """每 5 秒: 冷静期 (120 小时) 到了的解除绑定就解除, 通知那台设备 (它的数据不动), 并清空本机的数据 (MECHANICS 15.1)."""
         try:
-            for name in self.sync.check_unbind():
+            names = self.sync.check_unbind()
+            for name in names:
                 self._log_notice(f"SYNC unbind done {name}")
-                toast.info(tr("已解除和 {name} 的绑定, {name} 上的数据会被清空 (离线时等它上线).", name=name))
+            if names:
+                self.do_reset(leave=True, unbound=", ".join(names))          # 只重置操作这一台: 不转告其他设备, 也不清空对方
         except Exception as e:
             self._log_window(f"ERROR    unbind {type(e).__name__}: {e}")
 
@@ -5664,7 +5688,7 @@ class BreakTimerApp:
             return
         self.do_reset()
 
-    def do_reset(self, wipe_id: str = None, exclude=(), by: str = "", leave: bool = False):
+    def do_reset(self, wipe_id: str = None, exclude=(), by: str = "", leave: bool = False, unbound: str = ""):
         """重置: 先请绑定的设备也清空 OIT 的数据 (绑定保留), 解除网络限制 (还原系统代理, 启用网卡),
         删除全部数据 (只留下设备同步的绑定), 再重新打开程序. 新进程找不到设置文件, 就像第一次安装:
         弹出介绍窗口, 开始配置期, 网络按默认设置接管.
@@ -5679,13 +5703,15 @@ class BreakTimerApp:
         try:
             if not leave:
                 self.sync.send_wipe(wipe_id or self.sync.new_wipe_id(), exclude=exclude)   # MECHANICS 9
-            kept = self.sync.kept_state(by, leave)
+            kept = self.sync.kept_state(by, leave, unbound)
         except Exception:
             pass
         self.sync.stop()
         self._stop_all_recorders(wait=8.0)
         self.net.release()
         self.dm.erase_all_data()
+        if continuity.current is not None:
+            continuity.current.reset()      # 重置: 数据以外的锚点也清掉, 下一次启动算新数据 (MECHANICS 9.3)
         if kept:
             try:
                 devsync.write_state(self.sync.file, kept)

@@ -88,6 +88,10 @@ class PcLocal:
         """录像 (MECHANICS 18.8): 别的设备终止了录制, 本机也停 (违反随合约同步)."""
         self.app.rec_stop(cid)
 
+    def peer_saw_me(self, st: dict):
+        """别的设备转来它们记着的本机上次的状态 (数据的连续性, MECHANICS 9.3)."""
+        self.app.on_peer_saw_me(st)
+
     def wipe_requested(self, wipe_id: str, sender: str, name: str, leave: bool = False):
         """别的设备重置 / 卸载了, 请本机也清空数据 (MECHANICS 9): 回复对方之后再做 (重置会关闭程序).
         leave: 它解除了和本机的绑定 (15.1): 只重置本机, 不转告其他设备."""
@@ -168,6 +172,12 @@ class PcLocal:
         if getattr(a, "power_off", False):
             st["off"] = True
         st["auto"] = bool(getattr(a, "autostart_on", False))      # 开机自启动开着 (MECHANICS 3.4): 关机的前提
+        try:
+            import continuity
+            if continuity.current is not None:
+                st.update(continuity.current.status())            # 序号和世代: 其他设备记着, 本机被倒回去时靠它们发现 (MECHANICS 9.3)
+        except Exception:
+            pass
         try:
             since = a.sync.adapter_since()                        # 换成了 Adapter: "断网" (MECHANICS 15.5)
         except Exception:
