@@ -65,3 +65,13 @@ _review/*.png
 
 # 封闭测试 (closedtest.py): 开发环境的沙盒数据, 不提交
 closed_test/
+
+# 测试相关 (只在本机用, 不提交): 封闭测试的启动脚本, 评审用的补丁 / 截图, 临时的测试脚本和它们的输出
+closed_test.bat
+_review/
+_test_*.py
+_*_test.py
+test_*.py
+.tmp_*/
+.tmp_*.py
+*.selftest.tmp
