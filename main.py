@@ -17,6 +17,15 @@ def main():
     import instance
     import updater
     if not instance.acquire(enforce=not updater.is_dev_checkout()):
+        try:      # 不要悄悄退出 (看起来像"打不开"): 说明是因为已经有一个 OIT 在运行 (可能是开发版本 / 另一份安装)
+            from tkinter import messagebox
+            r = tk.Tk()
+            r.withdraw()
+            messagebox.showinfo("OIT", "已经有一个 OIT 在运行 (可能是在后台 / 另一份安装 / 开发版本), 这一个不再打开.\n"
+                                       "An OIT is already running (maybe in the background, another install, or a dev checkout); this one will not start.", parent=r)
+            r.destroy()
+        except Exception:
+            pass
         sys.exit(0)
 
     # 数据的连续性 (MECHANICS 9.3): 数据被搬走 / 倒回去了 (备份还原, 复制到别的电脑 ……) 就清掉, 弹出 "<用户名>,覆水难收."
@@ -25,6 +34,10 @@ def main():
     import securefile
     secure = not updater.is_dev_checkout()           # 开发版本 (git 仓库) 不加密不核对, 方便调试
     if secure:
+        securefile.configure(config.app_data_dir())
+    elif os.path.exists(os.path.join(config.app_data_dir(), securefile.KEYFILE)):
+        # 开发版本和装好的版本用的是同一个数据文件夹: 装好的版本已经把 .json 加密了, 开发版本也要用同一个密钥读写
+        # (不然读出一堆乱码当成空数据, 存回去就把数据覆盖了, 对方又会把写进来的明文当成篡改) (MECHANICS 9.4)
         securefile.configure(config.app_data_dir())
     cont, who = continuity.guard(config.app_data_dir(), enabled=secure)
     if secure:

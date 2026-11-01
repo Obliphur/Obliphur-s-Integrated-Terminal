@@ -230,15 +230,24 @@ def evaluate(data, seal_text, anchors, established: bool, kid_now: str = ""):
         sig.append("key-lost")                     # 加密密钥 (securefile.py) 没了
     elif kid and kid != kid_now:
         sig.append("key-changed")                  # 密钥被换了 (删掉密钥再把数据换成明文的)
-    if any(a == "bad" for a in anchors):
-        sig.append("anchor-tampered")
-    for a in good:
+    # 三个锚点投票: 和数据一致的 (同一世代, 序号没有比数据大得多, 没有 pending) 占多数时, 不一致的那个是过时的 / 写不进去的
+    # (例如另一份程序用别的权限写的, 或者被别的版本留下的), 不当作证据 (check() 通过时会把它对齐)
+    def verdict_of(a):
+        if a == "bad":
+            return ["anchor-tampered"]
+        out = []
         if a[0] != ep:
-            sig.append("other-epoch")
+            out.append("other-epoch")
         elif a[1] > seq + TOL:
-            sig.append("rollback")
+            out.append("rollback")
         if a[2]:
-            sig.append("pending")
+            out.append("pending")
+        return out
+    votes = [verdict_of(a) for a in anchors if a is not None]
+    agree = sum(1 for v in votes if not v)
+    if agree <= len(votes) - agree:               # 一致的不占多数: 不一致的都算证据
+        for v in votes:
+            sig.extend(v)
     sig = list(dict.fromkeys(sig))
     return ("break" if any(s in STRONG for s in sig) else "ok"), sig
 
@@ -452,8 +461,14 @@ def _selftest():
     assert evaluate(d, "e1|10", [("e2", 1, False)], True) == ("break", ["other-epoch"])
     assert evaluate(d, None, [None, None], True) == ("break", ["foreign-seal"])
     assert evaluate(d, "e1|99", [A], True) == ("break", ["tampered-seal"])
-    assert evaluate(d, "e1|10", [A, "bad"], True) == ("break", ["anchor-tampered"])
+    assert evaluate(d, "e1|10", [A, "bad"], True) == ("break", ["anchor-tampered"]), "一对一: 算证据"
     assert evaluate(d, "e1|10", [("e1", 10, True)], True) == ("break", ["pending"])
+    # 三个锚点投票: 两个和数据一致, 一个过时 / 被改 / pending → 不当证据
+    assert evaluate(d, "e1|10", [A, A, ("e2", 2, True)], True) == ("ok", []), "多数一致: 过时的那个不算"
+    assert evaluate(d, "e1|10", [A, "bad", A], True) == ("ok", [])
+    assert evaluate(d, "e1|10", [A, ("e1", 10, True), A], True) == ("ok", [])
+    assert evaluate(d, "e1|10", [A, ("e2", 2, False), None], True) == ("break", ["other-epoch"]), "一对一"
+    assert evaluate(d, "e1|10", [("e2", 2, False), ("e2", 2, False), A], True) == ("break", ["other-epoch"]), "多数不一致"
 
     tmp = tempfile.mkdtemp()
     reg = r"Software\OIT-continuity-selftest"
