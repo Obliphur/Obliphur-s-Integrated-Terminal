@@ -59,6 +59,7 @@ def configure(data_dir: str, on_tamper=None):
     global _dir, _key, _strict, _idx, _on_tamper
     with _lock:
         _dir, _on_tamper, _idx = os.path.abspath(data_dir), on_tamper, None
+        del tampered[:]                                  # 重新开始管理: 以前的记录作废
         _key = _read_key()
         _strict = _key is not None
 
@@ -125,6 +126,7 @@ def reset():
     global _key, _strict, _idx
     with _lock:
         _key, _strict, _idx = None, False, None
+        del tampered[:]
 
 
 def _name_of(path: str):

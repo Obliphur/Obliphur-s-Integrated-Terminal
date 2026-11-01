@@ -423,6 +423,11 @@ class Continuity:
             shutil.rmtree(recorder.play_dir(), ignore_errors=True)
         except Exception:
             pass
+        try:
+            import securefile
+            securefile.reset()           # oit.key / secure.idx 马上也没了: 内存里的密钥和索引作废, 不然下面读不到 profile.json 会被当成"被人删了"
+        except Exception:
+            pass
         if os.path.isdir(self.dir):
             for name in os.listdir(self.dir):
                 if name in KEEP:
@@ -449,13 +454,42 @@ def guard(data_dir: str, enabled: bool = True, anchors=None, log=lambda s: None)
     if verdict != "break":
         c.hold_lock()
         return c, None
+    if sig == ["pending"] and _recent_wipe():
+        # 刚清过数据, 马上又只有 pending (多半是清数据之后程序自己又标记了, 或者锚点还没对齐): 不再清, 数据以现在的为准, 重新开始一个世代
+        log_event(f"LOOP BREAKER: only 'pending' right after a wipe, keeping the data in {data_dir}")
+        c.load()
+        c.begin()
+        c.hold_lock()
+        return c, None
     who = c.username()
     log("continuity BREAK " + ",".join(sig))
     log_event(f"BREAK signals={','.join(sig)} dir={data_dir} user={who!r} -> wiping")
+    _stamp_wipe()
     c.wipe()
     c.begin()
     c.hold_lock()
     return c, who
+
+
+WIPE_STAMP = "wipe.stamp"
+LOOP_WINDOW = 600            # 秒: 刚清过数据之后又只剩 pending 一个信号 = 清数据后马上又标记了 (循环), 这次不再清
+
+
+def _recent_wipe(seconds: float = LOOP_WINDOW) -> bool:
+    try:
+        return time.time() - os.path.getmtime(os.path.join(os.path.dirname(log_path()), WIPE_STAMP)) < seconds
+    except OSError:
+        return False
+
+
+def _stamp_wipe():
+    try:
+        p = os.path.join(os.path.dirname(log_path()), WIPE_STAMP)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w") as f:
+            f.write(str(int(time.time())))
+    except OSError:
+        pass
 
 
 def message(username: str) -> str:
@@ -465,6 +499,29 @@ def message(username: str) -> str:
 # ---- 自检 ----
 
 def _selftest():
+    """自检: 日志 / 锚点 / 清数据的标记都放在临时文件夹里 (LOCALAPPDATA 换成临时的), 不碰真实的."""
+    import tempfile
+    real = os.environ.get("LOCALAPPDATA")
+    tmp_local = tempfile.mkdtemp()
+    os.environ["LOCALAPPDATA"] = tmp_local
+    try:
+        return _selftest_body()
+    finally:
+        if real is None:
+            os.environ.pop("LOCALAPPDATA", None)
+        else:
+            os.environ["LOCALAPPDATA"] = real
+        shutil.rmtree(tmp_local, ignore_errors=True)
+
+
+def _rm_stamp():
+    try:
+        os.remove(os.path.join(os.path.dirname(log_path()), WIPE_STAMP))
+    except OSError:
+        pass
+
+
+def _selftest_body():
     import tempfile
     if sys.platform != "win32":
         assert evaluate(None, None, [], False)[0] == "fresh"
@@ -552,6 +609,7 @@ def _selftest():
         assert not c4.peer_saw({"cep": c4.ep, "cseq": c4.seq + PEER_TOL})
         assert c4.peer_saw({"cep": c4.ep, "cseq": c4.seq + PEER_TOL + 1})
         assert not c4.peer_saw({"cep": "other", "cseq": 10 ** 9}) and not c4.peer_saw(None) and not c4.peer_saw({})
+        _rm_stamp()                          # 前面清过数据: 循环保护 (刚清过又只有 pending 不再清) 先解除, 这里测的是正常的 pending
         c4.mark_pending("selftest")
         assert guard(dd, anchors=an)[1] == "同步", "pending: 下一次启动清掉"
         # 重置: 锚点清掉, 之后只有重置留下的绑定: 算新数据
@@ -591,6 +649,39 @@ def _selftest():
         except Exception:
             pass
         shutil.rmtree(tmp, ignore_errors=True)
+    # 回归: 清数据之后, 在同一个进程里接着读 profile.json 不能被当成"被人删了" (那会让下一次启动又清, 循环)
+    import securefile
+    t3 = tempfile.mkdtemp()
+    os.environ["LOCALAPPDATA"] = t3
+    saved = (securefile._dir, securefile._key, securefile._strict, securefile._idx, securefile._on_tamper)
+    try:
+        dd = os.path.join(t3, "data")
+        an3 = [FileAnchor(os.path.join(t3, "a1")), FileAnchor(os.path.join(t3, "a2")), FileAnchor(os.path.join(t3, "a3"))]
+        securefile.configure(dd)
+        os.makedirs(dd, exist_ok=True)
+        securefile.ensure_key()
+        with securefile.open(os.path.join(dd, "profile.json"), "w", encoding="utf-8") as f:
+            json.dump({"username": "回归"}, f)
+        c9, who = guard(dd, anchors=an3)
+        assert who is None
+        for _ in range(3):
+            c9.tick()
+        c9.mark_pending("selftest")
+        c10, who = guard(dd, anchors=an3)
+        assert who == "回归" and not securefile.tampered, (who, securefile.tampered)
+        c10.username()                       # wipe 之后接着读: 不能记篡改
+        assert not securefile.tampered, securefile.tampered
+        # 循环保护: 刚清过, 又只有 pending → 不再清
+        with open(os.path.join(dd, "profile.json"), "w", encoding="utf-8") as f:
+            json.dump({"username": "新"}, f)
+        c10.mark_pending("again")
+        c11, who = guard(dd, anchors=an3)
+        assert who is None and os.path.exists(os.path.join(dd, "profile.json")), "刚清过又只有 pending: 保留"
+        assert guard(dd, anchors=an3)[1] is None
+    finally:
+        securefile._dir, securefile._key, securefile._strict, securefile._idx, securefile._on_tamper = saved
+        del securefile.tampered[:]
+        shutil.rmtree(t3, ignore_errors=True)
     # 日志: 记在数据文件夹以外
     old_env = os.environ.get("LOCALAPPDATA")
     t2 = tempfile.mkdtemp()

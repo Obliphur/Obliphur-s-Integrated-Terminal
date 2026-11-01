@@ -44,6 +44,7 @@ def main():
         # 数据和设置的加密 (MECHANICS 9.4): 清过数据 / 第一次运行时重新读密钥; 没有密钥就生成, 现有的明文 .json 转成加密的
         securefile.configure(config.app_data_dir(), on_tamper=lambda name, why: print(f"TAMPER {name}: {why}", file=sys.stderr))
         securefile.ensure_key()
+        del securefile.tampered[:]                   # 启动阶段 (清数据 / 迁移) 留下的不算
         cont.tick()                                  # 连续性记录里带上密钥的指纹
     if who is not None:
         from tkinter import messagebox
