@@ -123,12 +123,19 @@ def install(desktop: bool, start_menu: bool, taskbar: bool, description: str = "
     return out
 
 
-def build_script(lnk: str, target: str, args: str, workdir: str, description: str) -> str:
+def icon_file() -> str:
+    """OIT 的图标 (oit.ico, make_icon.py 生成) 在不在程序文件夹里: 在就返回路径, 不在 ""."""
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "oit.ico")
+    return p if os.path.exists(p) else ""
+
+
+def build_script(lnk: str, target: str, args: str, workdir: str, description: str, icon: str = "") -> str:
     return ("$s = (New-Object -ComObject WScript.Shell).CreateShortcut(" + _ps_quote(lnk) + "); "
             "$s.TargetPath = " + _ps_quote(target) + "; "
             "$s.Arguments = " + _ps_quote(args) + "; "
             "$s.WorkingDirectory = " + _ps_quote(workdir) + "; "
             "$s.Description = " + _ps_quote(description) + "; "
+            + (("$s.IconLocation = " + _ps_quote(icon) + "; ") if icon else "") +
             "$s.Save()")
 
 
@@ -142,7 +149,7 @@ def create(description: str = "Obliphur's Integrated Terminal", folder: str = No
     target, args, workdir = launch_target()
     try:
         r = subprocess.run(["powershell", "-NoProfile", "-Command",
-                            build_script(lnk, target, args, workdir, description)],
+                            build_script(lnk, target, args, workdir, description, icon_file())],
                            capture_output=True, text=True, timeout=30, creationflags=0x08000000)
     except Exception as e:      # noqa: BLE001
         return False, str(e) or type(e).__name__
@@ -156,6 +163,8 @@ def _selftest():
                      r"D:\Obliphur's", "Obliphur's Integrated Terminal")
     assert "'D:\\Obliphur''s'" in s and "Obliphur''s Integrated Terminal" in s
     assert s.count("$s.") == 5 and s.endswith("$s.Save()")
+    si = build_script(r"C:.lnk", "t", "", "w", "d", r"C:\Obliphur's\oit.ico")
+    assert si.count("$s.") == 6 and r"$s.IconLocation = 'C:\Obliphur''s\oit.ico'; $s.Save()" in si
     target, args, workdir = launch_target()
     assert args.endswith('main.py"') and os.path.isdir(workdir)
     v = verb_script(r"C:\Users\a\Start Menu\OIT.lnk", PIN_TASKBAR)

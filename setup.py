@@ -47,7 +47,7 @@ NO_WINDOW = 0x08000000
 LOG_FILE = os.path.join(tempfile.gettempdir(), "oit-setup.log")
 # 不进安装包的东西 (和 updater.SKIP_DIRS 一致, 再加上只在开发时用的)
 SKIP_TOP = {"Android version", ".git", ".github", "__pycache__", ".vscode", ".idea", "_review", "build", "dist"}
-SKIP_FILES = {".gitignore", ".gitattributes", "setup.py"}
+SKIP_FILES = {".gitignore", ".gitattributes", "setup.py", "make_icon.py"}
 PYTHON_CHECK = ("import sys, tkinter, sqlite3, ssl, ctypes, winreg, json, socket, http.server; "
                 "print(sys.version_info[0], sys.version_info[1], sys.executable)")
 
@@ -329,8 +329,9 @@ def oit_running() -> bool:
 def make_shortcut(lnk: str, python: str, program_dir: str) -> bool:
     import shortcut
     os.makedirs(os.path.dirname(lnk), exist_ok=True)
+    ico = os.path.join(program_dir, "oit.ico")
     script = shortcut.build_script(lnk, registration.pythonw_of(python), f'"{os.path.join(program_dir, "main.py")}"',
-                                   program_dir, APP_NAME)
+                                   program_dir, APP_NAME, ico if os.path.exists(ico) else "")
     subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True, timeout=60, creationflags=NO_WINDOW)
     return os.path.exists(lnk)
 
@@ -458,6 +459,10 @@ def run_gui(opts: dict):
         pass
     root = tk.Tk()
     root.title(t("title"))
+    try:
+        root.iconbitmap(default=os.path.join(getattr(sys, "_MEIPASS", HERE), "oit.ico"))
+    except Exception:
+        pass
     root.geometry("640x470")
     root.resizable(False, False)
     q = queue.Queue()

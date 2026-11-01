@@ -1,10 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 启动图标前景: 一个计时圆环 + 指针 -->
+<!-- 启动图标前景 (make_icon.py 生成, 别手改): 缺口的计时圆环 + 终端提示符 ">_" + 琥珀色圆点 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp" android:height="108dp"
     android:viewportWidth="108" android:viewportHeight="108">
-    <path android:fillColor="#00000000" android:strokeColor="#FFFFFF" android:strokeWidth="6"
-        android:pathData="M54,30a24,24 0 1,1 -0.01,0z" />
-    <path android:fillColor="#00000000" android:strokeColor="#FFFFFF" android:strokeWidth="6"
-        android:strokeLineCap="round" android:pathData="M54,40 L54,54 L64,60" />
+    <path android:fillColor="#00000000" android:strokeColor="#FFFFFF" android:strokeWidth="6.48" android:strokeLineCap="round" android:pathData="M81.65,49.12 A28.08,28.08 0 1,1 63.6,27.61" />
+    <path android:fillColor="#00000000" android:strokeColor="#FFFFFF" android:strokeWidth="6.12" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M42.48,45.36 L53.28,54 L42.48,62.64 M57.6,63.36 L69.84,63.36" />
+    <path android:fillColor="#FBBF24" android:strokeColor="#00000000" android:pathData="M58.56,27.61 a5.04,5.04 0 1,0 10.08,0 a5.04,5.04 0 1,0 -10.08,0z" />
 </vector>

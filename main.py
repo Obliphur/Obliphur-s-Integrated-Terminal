@@ -19,6 +19,12 @@ def main():
     if not instance.acquire(enforce=not updater.is_dev_checkout()):
         sys.exit(0)
 
+    if sys.platform == "win32":
+        try:      # 任务栏上单独成组, 用 OIT 自己的图标 (不然和别的 Python 程序混在一起, 显示 Python 的图标)
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Obliphur.OIT")
+        except Exception:
+            pass
     root = tk.Tk()
     app = BreakTimerApp(root)
     root.mainloop()

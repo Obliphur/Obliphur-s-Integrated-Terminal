@@ -158,6 +158,10 @@ class BreakTimerApp:
             pass
 
         root.title(APP_NAME)
+        try:
+            root.iconbitmap(default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "oit.ico"))   # 图标 (make_icon.py)
+        except Exception:
+            pass
         root.resizable(True, True)              # 可以最大化 / 拖边缘改大小 (最小尺寸见 _apply_geometry)
         self.style = ttk.Style(root)
 

@@ -1197,6 +1197,9 @@ Adapter 方式离线时整台电脑的网卡都禁用了 (3.1), 没法同步. �
   装完可以直接打开 OIT (setup 已是管理员, 不再弹 UAC).
 - **之后**: OIT 每次启动时 (`registration.refresh`) 把"已安装的应用"里的版本号改成现在的 (程序自己更新过版本会变), 注册信息被清理工具删了就补上. 用 setup 装的程序文件夹里有 `install.json`, 其他方式 (解压 / git) 没有, 这些都不会发生.
 - **卸载**: 从"已安装的应用"点卸载就是运行 `uninstall.py` (9.1); 对 setup 装的, "同时删除程序文件夹"默认勾上, 并且会删掉 setup 建的快捷方式和上面那条注册信息. 装的 Python 不动 (别的程序可能在用).
+- **图标**: `oit.ico` / `oit.png` 由 `make_icon.py` 画出来 (纯几何: 蓝色圆角方块 + 缺口的计时圆环 + 终端提示符 `>_` + 琥珀色圆点, 没有位图素材), 同一份几何也生成手机的启动图标
+  (`ic_fg.xml` 前景 + `ic_bg.xml` 渐变背景, 自适应图标) 和通知栏的单色小图标 (`ic_stat.xml`). 用在: OIT 的窗口 / 任务栏 (进程用单独的 AppUserModelID, 不和别的 Python 程序混在一起),
+  桌面 / 开始菜单快捷方式, "已安装的应用" 里的图标, setup.exe 自己. 改图标就改 `make_icon.py` 里的常数, 再运行 `python make_icon.py`.
 - **命令行**: `setup.exe /S` 静默安装 (日志在 `%TEMP%\oit-setup.log`), `/D=路径` 指定位置, `/nodesktop` `/nostart` `/nopython` `/nopip` `/run`.
 - 注意: 自己打包的 exe 有时会被杀毒软件误报; 也可以不用 setup.exe, 照旧解压源码 / 压缩包后 `python main.py` 运行.
 

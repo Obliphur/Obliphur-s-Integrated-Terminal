@@ -75,12 +75,13 @@ def values(program_dir: str, version: str, python: str, size_kb: int = 0) -> dic
     """卸载信息里的各项 (名字 → (类型, 值))."""
     import winreg
     sz, dw = winreg.REG_SZ, winreg.REG_DWORD
+    icon = os.path.join(program_dir, "oit.ico")
     v = {
         "DisplayName": (sz, "Obliphur's Integrated Terminal"),
         "DisplayVersion": (sz, version),
         "Publisher": (sz, PUBLISHER),
         "InstallLocation": (sz, program_dir),
-        "DisplayIcon": (sz, pythonw_of(python)),
+        "DisplayIcon": (sz, icon if os.path.exists(icon) else pythonw_of(python)),
         "UninstallString": (sz, uninstall_command(program_dir, python)),
         "URLInfoAbout": (sz, HOMEPAGE),
         "InstallDate": (sz, time.strftime("%Y%m%d")),
@@ -153,7 +154,7 @@ def fix_shortcuts(program_dir: str, python: str, links) -> None:
     for lnk in links or []:
         if os.path.exists(lnk):
             script = shortcut.build_script(lnk, pythonw_of(python), f'"{os.path.join(program_dir, "main.py")}"', program_dir,
-                                           "Obliphur's Integrated Terminal")
+                                           "Obliphur's Integrated Terminal", shortcut.icon_file())
             try:
                 subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True, timeout=60, creationflags=0x08000000)
             except Exception:

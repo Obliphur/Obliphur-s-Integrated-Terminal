@@ -1,3 +1,5 @@
+<img src="oit.png" width="96" align="right" alt="OIT">
+
 # Obliphur's Integrated Terminal (OIT)
 
 > (并非集成终端...)

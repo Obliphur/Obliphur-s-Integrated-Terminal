@@ -1,9 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- 通知栏小图标 (make_icon.py 生成, 单色): 缺口的圆环 + ">_" -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp" android:height="24dp"
     android:viewportWidth="24" android:viewportHeight="24">
-    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="2"
-        android:pathData="M12,3a9,9 0 1,1 -0.01,0z" />
-    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="2"
-        android:strokeLineCap="round" android:pathData="M12,7 L12,12 L15.5,14" />
+    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.48" android:strokeLineCap="round" android:pathData="M21.6,10.31 A9.75,9.75 0 1,1 15.33,2.84" />
+    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.34" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M8,9 L11.75,12 L8,15 M13.25,15.25 L17.5,15.25" />
 </vector>
