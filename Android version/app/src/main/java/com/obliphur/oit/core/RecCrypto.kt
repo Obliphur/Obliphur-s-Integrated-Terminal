@@ -141,6 +141,35 @@ object RecCrypto {
         return n
     }
 
+    /** 录像超过这么多天自动清除 (MECHANICS 18.8). 没写完的 (.recording.oitv, 合并时不用) 只留 PARTIAL_AGE_DAYS 天. */
+    const val MAX_AGE_DAYS = 3L
+    const val PARTIAL_AGE_DAYS = 1L
+
+    /** 清理录像: 数据目录 recordings/ 下所有的 (片段, 收到的 incoming, 合并好的 merged) 和缓存里没加密的 mp4,
+     *  按文件最后修改的时间算 (正在写的一直在改, 不会被删); busy: 正在写的路径, 跳过; 空了的 incoming 文件夹也删掉.
+     *  不同步给别的设备 (各台自己按时间清). 返回删了几个文件. */
+    fun purgeOld(dataDir: File, cacheDir: File, busy: Set<String> = emptySet(), now: Long = System.currentTimeMillis()): Int {
+        var n = 0
+        val day = 86_400_000L
+        val roots = listOf(File(dataDir, "recordings")) + KINDS.map { workDir(cacheDir, it) }
+        for (root in roots) {
+            root.walkBottomUp().forEach { f ->
+                if (f.isFile && f.path !in busy) {
+                    val low = f.name.lowercase()
+                    val days = when {
+                        low.endsWith(PART + EXT) -> PARTIAL_AGE_DAYS
+                        low.endsWith(EXT) || low.endsWith(".mp4") || low.endsWith(".tmp") || low.endsWith(PART) -> MAX_AGE_DAYS
+                        else -> -1L
+                    }
+                    if (days > 0 && f.lastModified() < now - days * day && f.delete()) n++
+                } else if (f.isDirectory && f.parentFile?.name == "incoming" || (f.isDirectory && f.parentFile?.parentFile?.name == "incoming")) {
+                    f.delete()                                           // 空了才删得掉
+                }
+            }
+        }
+        return n
+    }
+
     /** 播放: .oitv 解密到缓存 (cacheDir/oit_play), 返回解出来的 mp4 (用系统播放器打开). 先清掉上次的. */
     fun decryptToCache(cacheDir: File, path: File): File {
         val d = File(cacheDir, "oit_play").apply { mkdirs() }

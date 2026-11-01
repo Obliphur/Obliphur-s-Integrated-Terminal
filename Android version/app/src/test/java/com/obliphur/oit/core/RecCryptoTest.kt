@@ -91,4 +91,30 @@ class RecCryptoTest {
         assertEquals(listOf("20261022-120000__x.oitv", "20261022-100000__x.oitv"), names)
         assertEquals(2, RecCrypto.filesOf(data, "screen", "x").size)
     }
+
+    /** 录像超过 3 天自动清除; 没写完的 (.recording.oitv) 只留 1 天; 不是录像的文件不动; 空了的 incoming 文件夹删掉. */
+    @Test
+    fun purgeOld() {
+        val data = Files.createTempDirectory("rec-data").toFile()
+        val cache = Files.createTempDirectory("rec-cache").toFile()
+        val now = System.currentTimeMillis()
+        fun make(f: File, ageHours: Long): File {
+            f.parentFile.mkdirs(); f.writeText("x"); f.setLastModified(now - ageHours * 3_600_000L); return f
+        }
+        val cam = RecCrypto.folder(data, "camera")
+        val old = make(File(cam, "20260101-000000__c1.oitv"), 80)
+        val fresh = make(File(cam, "20260101-000001__c2.oitv"), 10)
+        val partOld = make(File(cam, "20260101-000002__c2.recording.oitv"), 30)
+        val partNew = make(File(cam, "20260101-000003__c2.recording.oitv"), 5)
+        val inc = make(File(RecCrypto.incomingDir(data, "c1", "camera"), "20260101-000004__c1.oitv"), 90)
+        val merged = make(File(RecCrypto.mergedDir(data, "screen"), "20260101-000005__c3.oitv"), 100)
+        val cachedMp4 = make(File(RecCrypto.workDir(cache, "screen"), "x.mp4"), 100)
+        val notes = make(File(data, "recordings/notes.txt"), 500)
+        val busy = make(File(cam, "20260101-000009__cb.oitv"), 500)
+        val n = RecCrypto.purgeOld(data, cache, busy = setOf(busy.path), now = now)
+        assertEquals(5, n)
+        for (f in listOf(old, partOld, inc, merged, cachedMp4)) assertTrue(f.path, !f.exists())
+        for (f in listOf(fresh, partNew, notes, busy)) assertTrue(f.path, f.exists())
+        assertTrue("空了的 incoming 文件夹要删", !File(data, "recordings/incoming/c1").exists())
+    }
 }

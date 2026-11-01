@@ -466,6 +466,7 @@ private fun RecordingsCard(act: MainActivity) {
             val total = files.sumOf { it.size }
             Text(label + "   " + tr("{n} 个 · {size}", "n" to files.size, "size" to fmtSize(total)),
                 fontWeight = FontWeight.Bold, color = o.text)
+            Dim(tr("录像超过 3 天会自动清除."), size = 12)
             if (files.isEmpty())
                 Dim(if (recording) tr("● 录制中, 结束后合并并同步.") else tr("还没有录像."),
                     size = 13, color = if (recording) o.danger else o.dim)

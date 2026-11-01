@@ -803,6 +803,8 @@ class SettingsPage(tk.Frame):
                         "打开文件夹").pack(side="right")
             lbl = tk.Label(head, text="", bg=card, fg=COLORS["text_dim"], font=config.font("small"))
             lbl.pack(side="right", padx=(0, 10))
+            tk.Label(fr, text=tr("录像超过 3 天会自动清除."), bg=card, fg=COLORS["text_dim"], font=config.font("small"),
+                     anchor="w").pack(fill="x", padx=12)
             rows = tk.Frame(fr, bg=card)
             rows.pack(fill="x", padx=12, pady=(2, 10))
             self._rec_lists[kind] = (lbl, rows)

@@ -765,6 +765,7 @@ object EnStrings {
         "已启用: 卸载 OIT 前要先取消激活, 取消时其他绑定的设备会被请求清空数据." to "Enabled: OIT must be deactivated before uninstalling, and deactivating asks the paired devices to clear their data.",
         "没有启用: 直接卸载 OIT 时来不及通知其他设备. 启用后, 卸载前必须取消激活, 取消时 OIT 会请其他设备清空数据." to "Not enabled: uninstalling OIT directly cannot notify the other devices. Once enabled, OIT must be deactivated before uninstalling, and deactivating asks the other devices to clear their data.",
         "启用卸载保护" to "Enable uninstall protection",
+        "录像超过 3 天会自动清除." to "Recordings older than 3 days are deleted automatically.",
         "120 小时后解除和 {name} 的绑定, 并清空本机上的全部数据 ({name} 的数据不受影响). 期间可以取消." to "Unpair from {name} in 120 hours and clear all data on this device (the data on {name} is not affected). You can cancel until then.",
         "将在 {t} 解除绑定" to "unpairs at {t}",
         "基础休息倍率由80%改为60%" to "Base break multiplier changed from 80% to 60%",

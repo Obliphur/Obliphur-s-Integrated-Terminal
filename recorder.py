@@ -17,10 +17,12 @@
 import array
 import ctypes
 import hashlib
+import json
 import os
 import re
 import secrets
 import shutil
+import sys
 import tempfile
 import threading
 import time
@@ -218,6 +220,135 @@ def seal_leftovers(data_dir: str, busy=()) -> int:
                     n += 1
                 except OSError:
                     pass
+    return n
+
+
+MAX_AGE_DAYS = 3                  # 录像超过这么多天自动清除 (MECHANICS 18.8)
+PARTIAL_AGE_DAYS = 1              # 没写完的 (.recording.oitv, 合并时不用) 留这么久
+SETTLE_HOURS = 24                 # 合并好之后, 用掉的片段再留这么久 (有片段迟到时重合并要用), 之后清掉
+CONSUMED = ".consumed"            # merged/<kind>/<合约 id>.consumed: 合并用掉的片段的文件名 (JSON 列表)
+PURGE_EXT = (EXT, ".mp4", ".tmp", PART)
+
+
+def _consumed_path(data_dir: str, cid: str, kind: str) -> str:
+    return os.path.join(merged_dir(data_dir, kind), _safe_cid(cid) + CONSUMED)
+
+
+def read_consumed(data_dir: str, cid: str, kind: str) -> set:
+    try:
+        with open(_consumed_path(data_dir, cid, kind), "r", encoding="utf-8") as f:
+            return {str(x) for x in json.load(f)}
+    except (OSError, ValueError, TypeError):
+        return set()
+
+
+def write_consumed(data_dir: str, cid: str, kind: str, names):
+    try:
+        with open(_consumed_path(data_dir, cid, kind), "w", encoding="utf-8") as f:
+            json.dump(sorted(names), f)
+    except OSError:
+        pass
+
+
+def settle_fragments(data_dir: str, hours: float = SETTLE_HOURS, now: float = None) -> int:
+    """合并好的录像: 用掉的片段 (本机录的 + 收到的 incoming) 在合并 `hours` 小时之后清掉 (之前留着: 有片段迟到时要重合并).
+    以后再有迟到的片段重合并时, 已经合进去的部分取自最终录像 (merge 里). 返回删了几个文件."""
+    now = time.time() if now is None else now
+    n = 0
+    for kind in KINDS:
+        md = merged_dir(data_dir, kind)
+        try:
+            names = os.listdir(md)
+        except OSError:
+            continue
+        for name in names:                       # 旧版本合并的 (没有 .consumed 记录): 现有的同合约片段算用掉的, 从最终录像的时间起算
+            if name.lower().endswith(EXT) and cid_of(name) and not os.path.exists(_consumed_path(data_dir, cid_of(name), kind)):
+                cid = cid_of(name)
+                frag = [x["name"] for x in files_of(data_dir, kind, cid) if not x.get("partial")]
+                try:
+                    frag += [x for x in os.listdir(incoming_dir(data_dir, cid, kind)) if x.lower().endswith(EXT)]
+                except OSError:
+                    pass
+                if frag:
+                    write_consumed(data_dir, cid, kind, frag)
+                    try:
+                        mt = os.path.getmtime(os.path.join(md, name))
+                        os.utime(_consumed_path(data_dir, cid, kind), (mt, mt))
+                    except OSError:
+                        pass
+        for name in os.listdir(md):
+            if not name.endswith(CONSUMED):
+                continue
+            mp = os.path.join(md, name)
+            try:
+                if now - os.path.getmtime(mp) < hours * 3600:
+                    continue
+            except OSError:
+                continue
+            cid = name[:-len(CONSUMED)]
+            for fn in read_consumed(data_dir, cid, kind):
+                for d in (folder(data_dir, kind), incoming_dir(data_dir, cid, kind)):
+                    p = os.path.join(d, fn)
+                    if os.path.isfile(p):
+                        _remove(p)
+                        n += 1
+    return n
+
+
+def purge_old(data_dir: str, max_age_days: float = MAX_AGE_DAYS, busy=(), now: float = None) -> int:
+    """录像的清理 (MECHANICS 18.8), 返回删了几个文件:
+      1. 合并好 SETTLE_HOURS 之后用掉的片段 (settle_fragments);
+      2. 超过 max_age_days 天的录像: 数据目录 recordings/ 下所有的 (camera / screen 片段, 收到的 incoming, 合并好的 merged) 和临时文件夹里没加密的 mp4,
+         按文件最后修改的时间算 (正在写的文件一直在改, 不会被删); busy: 正在写的路径, 跳过;
+      3. 没写完的 (.recording.oitv) 超过 PARTIAL_AGE_DAYS 天: 合并时本来就不用它们;
+      4. 合并好的录像已经没了的 .consumed 记录, 和清空了的 incoming 文件夹.
+    不同步给别的设备 (各台自己按时间清)."""
+    now = time.time() if now is None else now
+    n = settle_fragments(data_dir, now=now)
+    busy = {os.path.abspath(p) for p in busy}
+    roots = [os.path.join(data_dir, "recordings")] + [work_dir(data_dir, k) for k in KINDS]
+    for root in roots:
+        for dirpath, _dirs, filenames in os.walk(root):
+            for name in filenames:
+                p = os.path.join(dirpath, name)
+                low = name.lower()
+                if os.path.abspath(p) in busy:
+                    continue
+                age_days = max_age_days
+                if low.endswith(PART + EXT):
+                    age_days = min(age_days, PARTIAL_AGE_DAYS)
+                elif not low.endswith(PURGE_EXT):
+                    continue
+                try:
+                    if os.path.getmtime(p) < now - age_days * 86400:
+                        os.remove(p)
+                        n += 1
+                except OSError:
+                    pass
+    for kind in KINDS:                                   # 最终录像没了的 .consumed
+        md = merged_dir(data_dir, kind)
+        try:
+            names = os.listdir(md)
+        except OSError:
+            continue
+        have = {cid_of(x) for x in names if x.lower().endswith(EXT)}
+        for name in names:
+            if name.endswith(CONSUMED) and name[:-len(CONSUMED)] not in have:
+                _remove(os.path.join(md, name))
+    inc = os.path.join(data_dir, "recordings", "incoming")      # 空了的 incoming/<cid>/<kind>
+    try:
+        for cid in os.listdir(inc):
+            for kind in KINDS:
+                try:
+                    os.rmdir(os.path.join(inc, cid, kind))
+                except OSError:
+                    pass
+            try:
+                os.rmdir(os.path.join(inc, cid))
+            except OSError:
+                pass
+    except OSError:
+        pass
     return n
 
 
@@ -1705,6 +1836,13 @@ def merge(data_dir: str, cid: str, kind: str = "screen", extra=()) -> str:
     segs = [s for s in segs if not s.get("partial")]
     if not segs:
         return ""
+    used = {s["name"] for s in segs}
+    consumed = read_consumed(data_dir, cid, kind)
+    if consumed - used:
+        # 以前合进去的片段已经清掉了 (SETTLE_HOURS 之后): 重合并时它们取自现有的最终录像, 不然迟到的片段会把整段录像盖成残缺的
+        for n in os.listdir(merged_dir(data_dir, kind)):
+            if cid_of(n) == _safe_cid(cid) and n.lower().endswith(EXT):
+                segs.append({"path": os.path.join(merged_dir(data_dir, kind), n), "name": n, "start": None, "local": False})
 
     def when(s):
         return s["start"] or datetime.strptime(os.path.basename(s["name"])[:15], "%Y%m%d-%H%M%S")
@@ -1754,6 +1892,7 @@ def merge(data_dir: str, cid: str, kind: str = "screen", extra=()) -> str:
         stem = when(segs[0]).strftime("%Y%m%d-%H%M%S")
         dst = os.path.join(d, f"{stem}__{_safe_cid(cid)}{EXT}")
         encrypt_file(raw, dst)
+        write_consumed(data_dir, cid, kind, consumed | used)
         return dst
     finally:
         shutil.rmtree(work, ignore_errors=True)
@@ -1862,5 +2001,59 @@ def _selftest(data_dir=None, seconds=3, audio=(True, True)):
             f"cameras: {camera_count()}{merged}{', audio: ' + note if note else ''})"), d
 
 
+def _selftest_cleanup():
+    """录像的清理 (不录像, 只用临时文件夹): 3 天自动清除, 没写完的 1 天, 合并后用掉的片段 24 小时后清掉, 空文件夹删掉."""
+    import tempfile
+    d = tempfile.mkdtemp()
+    now = time.time()
+    try:
+        def make(path, age_h):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "wb") as f:
+                f.write(b"x")
+            os.utime(path, (now - age_h * 3600, now - age_h * 3600))
+            return path
+        cam, scr = folder(d, "camera"), folder(d, "screen")
+        old = make(os.path.join(cam, "20260101-000000__c1" + EXT), 80)          # 超过 3 天
+        new = make(os.path.join(cam, "20260101-000001__c2" + EXT), 10)
+        part_old = make(os.path.join(scr, "20260101-000002__c2" + PART + EXT), 30)    # 没写完, 超过 1 天
+        part_new = make(os.path.join(scr, "20260101-000003__c2" + PART + EXT), 5)
+        inc_old = make(os.path.join(incoming_dir(d, "c1", "camera"), "20260101-000004__c1" + EXT), 90)
+        keep_txt = make(os.path.join(d, "recordings", "notes.txt"), 500)         # 不是录像: 不动
+        merged_old = make(os.path.join(merged_dir(d, "screen"), "20260101-000005__c3" + EXT), 100)
+        orphan = make(_consumed_path(d, "gone", "screen"), 1)                    # 最终录像已经没了的记录
+        n = purge_old(d, now=now, busy=[new])
+        assert not os.path.exists(old) and not os.path.exists(part_old) and not os.path.exists(inc_old) and not os.path.exists(merged_old)
+        assert os.path.exists(new) and os.path.exists(part_new) and os.path.exists(keep_txt) and not os.path.exists(orphan)
+        assert n == 4, n
+        assert not os.path.isdir(os.path.join(d, "recordings", "incoming", "c1")), "空了的 incoming 文件夹要删"
+        # 合并后用掉的片段: 24 小时之后清掉 (本机的 + 收到的), 之前留着
+        seg_local = make(os.path.join(cam, "20260102-000000__c9" + EXT), 30)
+        seg_in = make(os.path.join(incoming_dir(d, "c9", "camera"), "20260102-000100__c9" + EXT), 30)
+        seg_other = make(os.path.join(cam, "20260102-000200__c8" + EXT), 30)
+        final = make(os.path.join(merged_dir(d, "camera"), "20260102-000000__c9" + EXT), 30)
+        write_consumed(d, "c9", "camera", [os.path.basename(seg_local), os.path.basename(seg_in)])
+        os.utime(_consumed_path(d, "c9", "camera"), (now - 3600, now - 3600))      # 1 小时前合并的
+        assert settle_fragments(d, now=now) == 0 and os.path.exists(seg_local)
+        os.utime(_consumed_path(d, "c9", "camera"), (now - 25 * 3600, now - 25 * 3600))
+        assert settle_fragments(d, now=now) == 2
+        assert not os.path.exists(seg_local) and not os.path.exists(seg_in) and os.path.exists(seg_other) and os.path.exists(final)
+        assert read_consumed(d, "c9", "camera") == {os.path.basename(seg_local), os.path.basename(seg_in)}
+        # 旧版本合并好的 (没有记录): 补上记录, 从最终录像的时间起算
+        old_frag = make(os.path.join(scr, "20260103-000000__c7" + EXT), 30)
+        old_final = make(os.path.join(merged_dir(d, "screen"), "20260103-000000__c7" + EXT), 30)
+        assert settle_fragments(d, now=now) == 1 and not os.path.exists(old_frag) and os.path.exists(old_final)
+        # 正在写的 (busy) 不删, 就算很旧
+        busy = make(os.path.join(cam, "20260101-000009__cb" + EXT), 500)
+        purge_old(d, now=now, busy=[busy])
+        assert os.path.exists(busy)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    return "recorder cleanup selftest OK"
+
+
 if __name__ == "__main__":
-    print(_selftest()[0])
+    if "--cleanup-test" in sys.argv:
+        print(_selftest_cleanup())
+    else:
+        print(_selftest()[0])

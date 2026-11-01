@@ -70,7 +70,7 @@ class OitApp : Application(), Host {
         com.obliphur.oit.service.LinkService.start(this)
         listenShutdown()
         // 上次没加密完的录像 (被强杀时留在缓存里的) 开机时补上加密 (MECHANICS 18.8)
-        Thread { runCatching { RecCrypto.sealLeftovers(oitDir, cacheDir) } }.apply { isDaemon = true }.start()
+        Thread { runCatching { RecCrypto.sealLeftovers(oitDir, cacheDir); RecCrypto.purgeOld(oitDir, cacheDir) } }.apply { isDaemon = true }.start()
     }
 
     /** 合约录像的调度 (MECHANICS 18.8): CoreService 每秒 tick 一次. */

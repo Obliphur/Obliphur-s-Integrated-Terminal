@@ -30,6 +30,7 @@ class RecordManager(private val app: OitApp) {
     private var activeOwner = ""
     private var camSince = 0L                            // 这一段摄像头录像从什么时候开始 (每 30 分钟换一段)
     private var flushAt = 0L
+    private var purgeAt = 0L
     @Volatile private var flushing = false
     private val outboxFile get() = File(dataDir, "rec_outbox.json")
 
@@ -67,6 +68,12 @@ class RecordManager(private val app: OitApp) {
         if (recording("camera") && camSince > 0 && now - camSince >= SEGMENT_MS) {
             stop("camera")
             camSince = 0L
+        }
+        // 录像超过 3 天自动清除 (MECHANICS 18.8): 每小时一次
+        if (now >= purgeAt) {
+            purgeAt = now + 3_600_000L
+            Thread { runCatching { RecCrypto.purgeOld(dataDir, cacheDir).let { if (it > 0) core.logRecord("purged $it file(s) older than ${RecCrypto.MAX_AGE_DAYS} days") } } }
+                .apply { isDaemon = true }.start()
         }
         // 没发出去的片段 (主人当时不在线 / 还没封装完 / 传输失败): 每 30 秒再试一次
         if (now >= flushAt && !flushing && outboxFile.exists()) {
@@ -215,16 +222,22 @@ class RecordManager(private val app: OitApp) {
         val online = sync.deviceStates().any { it.id == owner && it.online }
         if (!online || !p.optString("platform").lowercase().startsWith("win")) return false   // 主人必须是在线的电脑
         var all = true
+        val sentFiles = mutableListOf<File>()
         for (kind in RecCrypto.KINDS) {
             val segs = RecCrypto.filesOf(dataDir, kind, cid).filter { !it.partial }
             var ok = 0
             for (s in segs) {
                 val r = runCatching { sync.sendFile(owner, s.file, cid, kind) }
                     .onFailure { core.logRecord("send $cid/$kind failed: ${it.message}") }.getOrNull()
-                if (r == "sent") ok++ else if (r != null) core.logRecord("send $cid/$kind ${s.name}: $r")
+                if (r == "sent") { ok++; sentFiles.add(s.file) } else if (r != null) core.logRecord("send $cid/$kind ${s.name}: $r")
             }
             if (ok < segs.size) all = false
             if (segs.isNotEmpty()) core.logRecord("sent $ok/${segs.size} $kind segments for $cid to $owner")
+        }
+        if (all && sentFiles.isNotEmpty()) {
+            // 全部发给主人了: 本机的片段不用再留着 (主人合并后会把最终录像同步回来), 否则它们永远占着地方 (MECHANICS 18.8)
+            sentFiles.forEach { it.delete() }
+            core.logRecord("removed ${sentFiles.size} sent segment(s) of $cid")
         }
         return all
     }

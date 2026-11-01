@@ -218,6 +218,7 @@ class BreakTimerApp:
         self._autostart_at = 0.0
         self._link_at = 0.0
         self._cont_at = 0.0
+        self._purge_at = time.monotonic()
         self._cont_broken = False
         # 合约的网络禁令 (MECHANICS 18.3): 防火墙出站规则 (过滤代理之外的程序), 每 5 秒按正在运行的程序调整
         self.appban = appban.AppBan()
@@ -396,7 +397,7 @@ class BreakTimerApp:
         if not sandbox:
             threading.Thread(target=self._appban_sync, args=(set(),), daemon=True).start()
         # 录像 (目光 / 刻痕): 上次没来得及加密的 (崩溃时留在临时文件夹里的, 旧版本留在数据目录里的 mp4) 先加密起来
-        threading.Thread(target=lambda: recorder.seal_leftovers(self.dm.data_dir), daemon=True).start()
+        threading.Thread(target=lambda: (recorder.seal_leftovers(self.dm.data_dir), self._purge_recordings()), daemon=True).start()
         # 开机自启动: 默认开启 (第一次运行时建好), 用户关掉了就不再打开 (MECHANICS 3.4)
         if sandbox:
             self.root.after(1500, lambda: toast.notice(tr("🧪  封闭测试"), tr("数据全部放在 {p}, 不会影响主设备的数据. 设备同步已关闭.", p=closedtest.low_dir())))
@@ -3901,6 +3902,17 @@ class BreakTimerApp:
             self._flush_outbox()
         threading.Thread(target=go, daemon=True, name=f"rec-send-{cid}").start()
 
+    def _purge_recordings(self):
+        """录像超过 3 天自动清除 (MECHANICS 18.8): 打开时清一次, 之后每小时一次."""
+        try:
+            busy = [str(getattr(r, "path", "")) for r in self._recorders.values()]
+            n = recorder.purge_old(self.dm.data_dir, busy=busy)
+            if n:
+                self._log_notice(f"RECORD purged {n} file(s) older than {recorder.MAX_AGE_DAYS} days")
+                self._on_main(lambda: self._refresh_if_visible("settings"))
+        except Exception as e:
+            self._log_window(f"ERROR    purge recordings {type(e).__name__}: {e}")
+
     def _outbox_path(self) -> str:
         return os.path.join(self.dm.data_dir, "rec_outbox.json")
 
@@ -3954,6 +3966,7 @@ class BreakTimerApp:
         if not online or not str(p.get("platform", "")).lower().startswith("win"):
             return False
         done = True
+        sent_paths = []
         for kind in recorder.KINDS:
             segs = [s for s in recorder.files_of(self.dm.data_dir, kind, cid) if not s.get("partial")]
             ok = 0
@@ -3962,6 +3975,7 @@ class BreakTimerApp:
                     r = self.sync.send_file(owner, s["path"], cid=cid, kind=kind)
                     if r == "sent":
                         ok += 1
+                        sent_paths.append(s["path"])
                     else:
                         self._log_notice(f"RECORD send {cid}/{kind} {s['name']}: {r}")
                 except Exception as e:      # noqa: BLE001
@@ -3970,6 +3984,11 @@ class BreakTimerApp:
                 done = False
             if segs:
                 self._log_notice(f"RECORD sent {ok}/{len(segs)} {kind} segments for {cid} to {owner}")
+        if done and sent_paths:
+            # 全部发给主人了: 本机的片段不用再留着 (主人合并后会把最终录像同步回来), 否则它们永远占着地方 (MECHANICS 18.8)
+            for p in sent_paths:
+                recorder._remove(p)
+            self._log_notice(f"RECORD removed {len(sent_paths)} sent segment(s) of {cid}")
         return done
 
     def recording_offered(self, peer_id: str, who: str, o: dict) -> str:
@@ -5572,6 +5591,9 @@ class BreakTimerApp:
             self._log_notice("SECURE tampered " + ", ".join(f"{n}:{w}" for n, w in securefile.tampered[:8]))
             continuity.current.mark_pending()
             self._restart_for_update()
+        if time.monotonic() - self._purge_at >= 3600:
+            self._purge_at = time.monotonic()
+            threading.Thread(target=self._purge_recordings, daemon=True).start()
         if time.monotonic() - self._cont_at >= continuity.TICK:
             self._cont_at = time.monotonic()             # 数据的连续性: 序号推进一次 (MECHANICS 9.3)
             if continuity.current is not None:
