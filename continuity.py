@@ -207,6 +207,25 @@ def _decode_anchor(raw):
         return "bad"
 
 
+# ---- 日志 (数据文件夹以外, 清数据也删不掉: 事后查"为什么清了") ----
+
+def log_path() -> str:
+    return os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "Obliphur", "OIT", "guard.log")
+
+
+def log_event(text: str):
+    """记一条: 清数据的原因, 其他设备发现倒回去, 数据文件被篡改 …… (最多 200 KB, 超过换个文件)."""
+    try:
+        p = log_path()
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        if os.path.exists(p) and os.path.getsize(p) > 200_000:
+            os.replace(p, p + ".old")
+        with open(p, "a", encoding="utf-8") as f:
+            f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + f"[{os.getpid()}] " + text + "\n")
+    except OSError:
+        pass
+
+
 # ---- 判断 (纯函数, 好测) ----
 
 def evaluate(data, seal_text, anchors, established: bool, kid_now: str = ""):
@@ -323,8 +342,9 @@ class Continuity:
         """同步的状态里带给其他设备的 (它们会记着, 本机被倒回去时靠它们发现)."""
         return {"cseq": self.seq, "cep": self.ep} if self.ep else {}
 
-    def mark_pending(self):
-        """其他设备发现本机被倒回去了: 在锚点里记下, 下一次启动时 check() 判为非法."""
+    def mark_pending(self, why: str = ""):
+        """其他设备发现本机被倒回去了 / 数据文件被篡改了: 在锚点里记下, 下一次启动时 check() 判为非法."""
+        log_event(f"PENDING set ({why}) epoch {self.ep} seq {self.seq} dir {self.dir}")
         self._write_anchors(pending=True)
 
     def peer_saw(self, st) -> bool:
@@ -431,6 +451,7 @@ def guard(data_dir: str, enabled: bool = True, anchors=None, log=lambda s: None)
         return c, None
     who = c.username()
     log("continuity BREAK " + ",".join(sig))
+    log_event(f"BREAK signals={','.join(sig)} dir={data_dir} user={who!r} -> wiping")
     c.wipe()
     c.begin()
     c.hold_lock()
@@ -531,7 +552,7 @@ def _selftest():
         assert not c4.peer_saw({"cep": c4.ep, "cseq": c4.seq + PEER_TOL})
         assert c4.peer_saw({"cep": c4.ep, "cseq": c4.seq + PEER_TOL + 1})
         assert not c4.peer_saw({"cep": "other", "cseq": 10 ** 9}) and not c4.peer_saw(None) and not c4.peer_saw({})
-        c4.mark_pending()
+        c4.mark_pending("selftest")
         assert guard(dd, anchors=an)[1] == "同步", "pending: 下一次启动清掉"
         # 重置: 锚点清掉, 之后只有重置留下的绑定: 算新数据
         c5 = guard(dd, anchors=an)[0]
@@ -570,6 +591,16 @@ def _selftest():
         except Exception:
             pass
         shutil.rmtree(tmp, ignore_errors=True)
+    # 日志: 记在数据文件夹以外
+    old_env = os.environ.get("LOCALAPPDATA")
+    t2 = tempfile.mkdtemp()
+    os.environ["LOCALAPPDATA"] = t2
+    try:
+        log_event("hello")
+        assert "hello" in open(log_path(), encoding="utf-8").read() and not log_path().startswith(tmp)
+    finally:
+        os.environ["LOCALAPPDATA"] = old_env or ""
+        shutil.rmtree(t2, ignore_errors=True)
     return "continuity selftest OK"
 
 

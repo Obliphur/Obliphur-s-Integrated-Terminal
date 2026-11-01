@@ -3104,7 +3104,7 @@ class BreakTimerApp:
             return
         self._cont_broken = True
         self._log_notice(f"CONTINUITY peers saw seq {st.get('cseq')} > ours {c.seq}")
-        c.mark_pending()
+        c.mark_pending(f"peers saw seq {st.get('cseq')} > ours {c.seq}")
         self._restart_for_update()
 
     def restart_by_peer(self, name: str):
@@ -5589,7 +5589,7 @@ class BreakTimerApp:
             # 数据文件被改过 / 删了 / 倒回去了 (securefile.py, MECHANICS 9.4): 在锚点里标记, 马上重启, 下一次启动时清掉数据
             self._cont_broken = True
             self._log_notice("SECURE tampered " + ", ".join(f"{n}:{w}" for n, w in securefile.tampered[:8]))
-            continuity.current.mark_pending()
+            continuity.current.mark_pending("tampered: " + ", ".join(f"{n}:{w}" for n, w in securefile.tampered[:8]))
             self._restart_for_update()
         if time.monotonic() - self._purge_at >= 3600:
             self._purge_at = time.monotonic()
