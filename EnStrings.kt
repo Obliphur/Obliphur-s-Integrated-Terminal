@@ -486,7 +486,7 @@ object EnStrings {
         "毋畏天灾" to "Fear No Calamity",
         "你在一周内总共完成了7次危机合约" to "You completed 7 Crisis Contracts in one week.",
         "月度杰出主管" to "Supervisor of the Month",
-        "你在一个月内每天的平均专注时长超过8h,congratulation!" to "You averaged over 8h of focus a day for a whole month, congratulation!",
+        "你在一个月内每天的平均专注时长超过8h,congratulations!" to "You averaged over 8h of focus a day for a whole month, congratulations!",
         "👤  你的名字" to "👤  Your name",
         "初次见面.怎么称呼你?" to "Nice to meet you. What should I call you?",
         "☕  来自 Obliphur" to "☕  From Obliphur",

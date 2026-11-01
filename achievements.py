@@ -32,7 +32,7 @@ ACHIEVEMENTS = [
     ("hamster", "仓鼠", "你奇迹般地攒够了三个小时的休息.", True, ""),
     ("duel1", "第一次对决", "你完成了第一次危机合约", False, ""),
     ("calamity7", "毋畏天灾", "你在一周内总共完成了7次危机合约", False, ""),
-    ("month240", "月度杰出主管", "你在一个月内每天的平均专注时长超过8h,congratulation!", True, ""),
+    ("month240", "月度杰出主管", "你在一个月内每天的平均专注时长超过8h,congratulations!", True, ""),
 ]
 BY_ID = {a[0]: a for a in ACHIEVEMENTS}
 SLEEP_WORD = "sleeping"

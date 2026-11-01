@@ -49,7 +49,7 @@ class AchievementStore(private val file: File, guessFirst: () -> LocalDateTime) 
             Achievement("hamster", "仓鼠", "你奇迹般地攒够了三个小时的休息.", hidden = true),
             Achievement("duel1", "第一次对决", "你完成了第一次危机合约"),
             Achievement("calamity7", "毋畏天灾", "你在一周内总共完成了7次危机合约"),
-            Achievement("month240", "月度杰出主管", "你在一个月内每天的平均专注时长超过8h,congratulation!", hidden = true),
+            Achievement("month240", "月度杰出主管", "你在一个月内每天的平均专注时长超过8h,congratulations!", hidden = true),
         )
         val BY_ID = ALL.associateBy { it.id }
         val LOG_FILES = listOf("settings_changes.log", "net_requests.log", "window_guard.log")

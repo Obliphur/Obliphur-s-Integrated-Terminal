@@ -876,7 +876,7 @@ EN = {
     "毋畏天灾": "Fear No Calamity",
     "你在一周内总共完成了7次危机合约": "You completed 7 Crisis Contracts in one week.",
     "月度杰出主管": "Supervisor of the Month",
-    "你在一个月内每天的平均专注时长超过8h,congratulation!": "You averaged over 8h of focus a day for a whole month, congratulation!",
+    "你在一个月内每天的平均专注时长超过8h,congratulations!": "You averaged over 8h of focus a day for a whole month, congratulations!",
     "👤  你的名字": "👤  Your name",
     "初次见面.怎么称呼你?": "Nice to meet you. What should I call you?",
     "☕  来自 Obliphur": "☕  From Obliphur",
