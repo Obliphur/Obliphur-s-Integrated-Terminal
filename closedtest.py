@@ -88,6 +88,12 @@ def _selftest():
         assert out[0] == "True" and out[1].strip().startswith(os.path.join(HERE, DIRNAME)), out
     else:
         assert out[0] == "False", out
+    # 沙盒里的连续性核对用沙盒自己的锚点 / 日志 (不碰主设备的)
+    code = ("import sys; sys.argv.append('--closed-test'); sys.path.insert(0, %r); import continuity; "
+            "print([getattr(a, 'path', '') for a in continuity.default_anchors()], continuity.log_path())" % HERE)
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=HERE).stdout
+    if dev_checkout():
+        assert "OIT-closedtest" in out and out.replace("\\\\", "\\").count(os.path.join(HERE, DIRNAME)) >= 3 and "ProgramData" not in out, out
     return "closedtest selftest OK"
 
 

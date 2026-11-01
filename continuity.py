@@ -178,7 +178,18 @@ class RegAnchor:
             pass
 
 
+def sandbox_dir() -> str:
+    r"""封闭测试 (closedtest.py) 里锚点 / 日志放的地方: closed_test\_anchors (数据文件夹以外, 但在沙盒里): 沙盒的核对和主设备的互不影响."""
+    import closedtest
+    return os.path.join(closedtest.low_dir(), "_anchors")
+
+
 def default_anchors():
+    import closedtest
+    if closedtest.active():
+        base = sandbox_dir()
+        return [RegAnchor(REG_PATH + "-closedtest"), FileAnchor(os.path.join(base, "a1.anchor")),
+                FileAnchor(os.path.join(base, "a2.anchor"))]
     user = os.environ.get("USERNAME", "user")
     return [RegAnchor(),
             FileAnchor(os.path.join(os.environ.get("PROGRAMDATA", r"C:\ProgramData"), "Obliphur", "OIT", f"{user}.anchor")),
@@ -210,6 +221,9 @@ def _decode_anchor(raw):
 # ---- 日志 (数据文件夹以外, 清数据也删不掉: 事后查"为什么清了") ----
 
 def log_path() -> str:
+    import closedtest
+    if closedtest.active():
+        return os.path.join(sandbox_dir(), "guard.log")
     return os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "Obliphur", "OIT", "guard.log")
 
 

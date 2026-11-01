@@ -32,7 +32,9 @@ def main():
     import config
     import continuity
     import securefile
-    secure = not updater.is_dev_checkout()           # 开发版本 (git 仓库) 不加密不核对, 方便调试
+    import closedtest
+    # 开发版本 (git 仓库) 不加密不核对, 方便调试; 封闭测试 (沙盒, 锚点 / 日志也在沙盒里) 照常加密和核对, 可以在里面试"数据被搬走 / 倒回去会被清掉" (MECHANICS 3.6)
+    secure = not updater.is_dev_checkout() or closedtest.active()
     if secure:
         securefile.configure(config.app_data_dir())
     elif os.path.exists(os.path.join(config.app_data_dir(), securefile.KEYFILE)):
