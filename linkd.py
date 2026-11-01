@@ -36,6 +36,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import devsync
 import instance
+import securefile
 
 LINK_PORT = 17940
 APP_NAME = "Obliphur's Integrated Terminal"      # 同 config.APP_NAME (自检里核对), 这里不能 import config (它要 tkinter)
@@ -54,6 +55,9 @@ TASK_NAME_RUN = "OIT autostart"
 
 
 def data_dir() -> str:
+    import closedtest
+    if closedtest.active():
+        return os.path.join(closedtest.low_dir(), APP_NAME)
     return os.path.join(os.environ.get("USERPROFILE", os.path.expanduser("~")), "AppData", "LocalLow", APP_NAME)
 
 
@@ -66,7 +70,7 @@ def now_ms() -> int:
 def load_peers(dd: str):
     """(本机 id, {设备 id: {addr, port, key, name}}). 读不到时 ("", {})."""
     try:
-        with open(os.path.join(dd, "sync_state.json"), "r", encoding="utf-8") as f:
+        with securefile.open(os.path.join(dd, "sync_state.json"), "r", encoding="utf-8") as f:
             st = json.load(f)
         return str((st.get("device") or {}).get("id") or ""), dict(st.get("peers") or {})
     except (OSError, ValueError):
@@ -76,7 +80,7 @@ def load_peers(dd: str):
 def hold_until(dd: str) -> int:
     """OIT 主体写下的"这个时刻之前别替我启动" (毫秒): 外出的计划结束时刻 (外出期间的设备不算离线, MECHANICS 8.4). 没有时 0."""
     try:
-        with open(os.path.join(dd, "link_state.json"), "r", encoding="utf-8") as f:
+        with securefile.open(os.path.join(dd, "link_state.json"), "r", encoding="utf-8") as f:
             return int(json.load(f).get("hold_until") or 0)
     except (OSError, ValueError, TypeError):
         return 0
@@ -90,7 +94,7 @@ def write_hold(dd: str, until_ms: int):
     try:
         os.makedirs(dd, exist_ok=True)
         tmp = path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
+        with securefile.open(tmp, "w", encoding="utf-8") as f:
             json.dump({"hold_until": int(until_ms), "ts": now_ms()}, f)
         os.replace(tmp, path)
     except OSError:
@@ -314,6 +318,7 @@ class Link:
     def run(self) -> str:
         """运行到被要求退出. 返回 busy (已经有一个在运行) / quit (被要求关掉) / changed (程序文件更新了, 已用新代码重新打开) / dead (服务线程死了, 调用方重来)."""
         self.my_id = ""
+        securefile.configure(self.dd)            # OIT 的数据是加密的 (MECHANICS 9.4): 读 sync_state.json / link_state.json 要用同一个密钥
         try:
             self.serve()
         except OSError:

@@ -22,7 +22,16 @@ def main():
     # 数据的连续性 (MECHANICS 9.3): 数据被搬走 / 倒回去了 (备份还原, 复制到别的电脑 ……) 就清掉, 弹出 "<用户名>,覆水难收."
     import config
     import continuity
-    who = continuity.guard(config.app_data_dir(), enabled=not updater.is_dev_checkout())[1]
+    import securefile
+    secure = not updater.is_dev_checkout()           # 开发版本 (git 仓库) 不加密不核对, 方便调试
+    if secure:
+        securefile.configure(config.app_data_dir())
+    cont, who = continuity.guard(config.app_data_dir(), enabled=secure)
+    if secure:
+        # 数据和设置的加密 (MECHANICS 9.4): 清过数据 / 第一次运行时重新读密钥; 没有密钥就生成, 现有的明文 .json 转成加密的
+        securefile.configure(config.app_data_dir(), on_tamper=lambda name, why: print(f"TAMPER {name}: {why}", file=sys.stderr))
+        securefile.ensure_key()
+        cont.tick()                                  # 连续性记录里带上密钥的指纹
     if who is not None:
         from tkinter import messagebox
         r = tk.Tk()

@@ -28,6 +28,7 @@ import uuid
 from datetime import datetime, timedelta
 
 import config
+import securefile
 import i18n
 
 
@@ -585,7 +586,7 @@ class Behavior:
     def erase(self):
         self.outings = []
         try:
-            os.remove(self.path)
+            securefile.remove(self.path)
         except OSError:
             pass
 

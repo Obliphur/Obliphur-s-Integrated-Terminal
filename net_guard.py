@@ -14,6 +14,7 @@ import config
 from config import fmt_hm
 from netproxy import ProxyController
 from data_manager import month_prefixes
+import securefile
 
 
 # 倍率类数值在 config.py (可在 Settings → 具体设置 中修改), 这里每次用时现读.
@@ -254,7 +255,7 @@ class NetGuard:
 
     def _load(self):
         try:
-            with open(self.state_file, 'r', encoding='utf-8') as f:
+            with securefile.open(self.state_file, 'r', encoding='utf-8') as f:
                 d = json.load(f)
         except Exception:
             return
@@ -291,7 +292,7 @@ class NetGuard:
         if self.dead:
             return
         try:
-            with open(self.state_file, 'w', encoding='utf-8') as f:
+            with securefile.open(self.state_file, 'w', encoding='utf-8') as f:
                 json.dump({
                     "date": self.date,
                     "used": int(self.used),
@@ -308,7 +309,7 @@ class NetGuard:
 
     def _load_usage(self):
         try:
-            with open(self.usage_file, 'r', encoding='utf-8') as f:
+            with securefile.open(self.usage_file, 'r', encoding='utf-8') as f:
                 d = json.load(f)
             recs = d.get("sessions", []) if isinstance(d, dict) else []
             self.usage = [r for r in recs if isinstance(r, dict) and "date" in r]
@@ -326,7 +327,7 @@ class NetGuard:
             self._session = None
         try:
             tmp = self.usage_file + ".tmp"
-            with open(tmp, 'w', encoding='utf-8') as f:
+            with securefile.open(tmp, 'w', encoding='utf-8') as f:
                 json.dump({"sessions": self.usage}, f, ensure_ascii=False, indent=1)
             os.replace(tmp, self.usage_file)
             self._usage_dirty = False

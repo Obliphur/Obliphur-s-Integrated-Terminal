@@ -17,6 +17,12 @@ import re
 import threading
 import time
 import urllib.request
+try:
+    import securefile
+except ImportError:                      # 直接运行本文件做自检时: 上一层才有
+    import os as _os, sys as _sys
+    _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+    import securefile
 
 from .rules import bili_uid, domain_match
 
@@ -159,7 +165,7 @@ class UpResolver:
         if not self._names_path:
             return
         try:
-            with open(self._names_path, 'r', encoding='utf-8') as f:
+            with securefile.open(self._names_path, 'r', encoding='utf-8') as f:
                 raw = json.load(f)
             self._names = {str(k): str(v) for k, v in raw.items() if bili_uid(k) and v} \
                 if isinstance(raw, dict) else {}
@@ -174,7 +180,7 @@ class UpResolver:
         tmp = self._names_path + ".tmp"
         try:
             os.makedirs(os.path.dirname(self._names_path) or ".", exist_ok=True)
-            with open(tmp, 'w', encoding='utf-8') as f:
+            with securefile.open(tmp, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=1)
             os.replace(tmp, self._names_path)
         except OSError:

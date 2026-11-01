@@ -29,6 +29,7 @@ import urllib.parse
 import urllib.request
 
 from netproxy.rules import norm_app, norm_domain
+import securefile
 
 MODE_BLACKLIST = "blacklist"
 MODE_WHITELIST = "whitelist"
@@ -192,7 +193,7 @@ class AIConfig:
     def load(self):
         from_template = False
         try:
-            with open(self.path, "r", encoding="utf-8") as f:
+            with securefile.open(self.path, "r", encoding="utf-8") as f:
                 data = json.load(f)
         except FileNotFoundError:                 # 本机还没有配置 → 默认模板(Key 永远不取)
             data, from_template = self._template_data(), True
@@ -224,7 +225,7 @@ class AIConfig:
         if not self.template:
             return None
         try:
-            with open(self.template, "r", encoding="utf-8") as f:
+            with securefile.open(self.template, "r", encoding="utf-8") as f:
                 return json.load(f)
         except (OSError, ValueError):
             return None
@@ -246,7 +247,7 @@ class AIConfig:
                     except OSError:
                         pass                          # 加密失败: 退回明文, 至少不丢 Key
                 profiles[k] = out
-            with open(tmp, "w", encoding="utf-8") as f:
+            with securefile.open(tmp, "w", encoding="utf-8") as f:
                 json.dump({"provider": self.provider, "profiles": profiles},
                           f, ensure_ascii=False, indent=1)
             try:
@@ -577,7 +578,7 @@ def _selftest():
     # 默认模板:本机没有配置文件时采用,且 API Key 永远不从模板读取
     td = tempfile.mkdtemp()
     tpl = os.path.join(td, "t.json")
-    with open(tpl, "w", encoding="utf-8") as f:
+    with securefile.open(tpl, "w", encoding="utf-8") as f:
         json.dump({"provider": "deepseek", "profiles": {"deepseek": {
             "base_url": "https://x.example/v1", "model": "m1", "protocol": "openai",
             "api_key": "LEAK"}}}, f)
@@ -745,7 +746,7 @@ def _selftest():
     can_encrypt = lambda: True
     try:
         path = os.path.join(tempfile.mkdtemp(), "ai.json")
-        with open(path, "w", encoding="utf-8") as f:
+        with securefile.open(path, "w", encoding="utf-8") as f:
             json.dump({"provider": "deepseek", "profiles": {"deepseek": {
                 "base_url": "https://api.deepseek.com", "model": "m", "protocol": "openai",
                 "api_key": "sk-plain-777"}}}, f)

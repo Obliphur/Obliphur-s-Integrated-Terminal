@@ -62,3 +62,6 @@ themes/urban_will/screenshots/
 screenshots/
 _review/*.png
 .tmp_ps_shots/
+
+# 封闭测试 (closedtest.py): 开发环境的沙盒数据, 不提交
+closed_test/

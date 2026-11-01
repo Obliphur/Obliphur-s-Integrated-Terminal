@@ -214,7 +214,7 @@ OUTING_MAX_HOURS = 24 * 7
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.219"                         # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.220"                         # 和 GitHub 上发布的版本号比较 (见 updater.py)
 UPDATE_CHECK = 1                              # 打开程序时检查更新
 FULLSCREEN_DEFAULT = 0                        # 打开程序时默认全屏 (设置 → 基本设置, 仅电脑, 不同步; F11 随时切换)
 UPDATE_AUTO = 1                               # 发现新版本时自动下载安装
@@ -381,7 +381,8 @@ def dev_mode_enabled() -> bool:
 
 def dev_auto() -> bool:
     """开发版本打开程序时自动开启开发者模式 (DEV_AUTO, 在 config_local.py 里改)."""
-    return dev_allowed() and bool(getattr(sys.modules.get("config"), "DEV_AUTO", True))
+    import closedtest
+    return dev_allowed() and (closedtest.active() or bool(getattr(sys.modules.get("config"), "DEV_AUTO", True)))
 
 
 def toggle_dev_mode() -> bool:
@@ -416,7 +417,9 @@ CONTRACT_OVERRIDES = {}
 
 
 try:
-    from config_local import *  # noqa: F401,F403
+    # 本地配置 config_local.py (任意覆盖上面的数值) 只在开发版本里生效; 公开发布版忽略它 (MECHANICS 9.4: 设置不能被绕开修改)
+    if dev_allowed():
+        from config_local import *  # noqa: F401,F403
 except ImportError:
     pass
 
@@ -747,6 +750,9 @@ def relaunch():
 
 
 def app_data_dir() -> str:
+    import closedtest
+    if closedtest.active():            # 封闭测试 (MECHANICS 3.6): 数据放在项目根目录里, 不碰主设备的数据
+        return os.path.join(closedtest.low_dir(), APP_NAME)
     root = os.path.join(
         os.environ.get('USERPROFILE', os.path.expanduser('~')),
         'AppData', 'LocalLow'
@@ -761,7 +767,8 @@ def settings_file() -> str:
 def load_json_file(path: str, default):
     try:
         import json
-        with open(path, 'r', encoding='utf-8') as f:
+        import securefile
+        with securefile.open(path, 'r', encoding='utf-8') as f:      # 数据文件夹里的 .json 是加密的 (MECHANICS 9.4)
             return json.load(f)
     except Exception:
         return default
@@ -769,12 +776,13 @@ def load_json_file(path: str, default):
 
 def save_json_file(path: str, payload) -> bool:
     import json
+    import securefile
     tmp = path + ".tmp"
     try:
         d = os.path.dirname(path)
         if d:
             os.makedirs(d, exist_ok=True)
-        with open(tmp, 'w', encoding='utf-8') as f:
+        with securefile.open(tmp, 'w', encoding='utf-8') as f:
             json.dump(payload, f, ensure_ascii=False, indent=1)
         os.replace(tmp, path)
         return True

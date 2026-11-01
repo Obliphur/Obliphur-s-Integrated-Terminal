@@ -40,7 +40,7 @@ KEEP = ("sysproxy_backup.json", ".lock")       # 清数据时留下: 系统代�
 ESTABLISHED = ("profile.json", "app_settings.json", "study_log.json", "hour_log.json", "sync_state.json", "net_state.json")
 REG_PATH = r"Software\Obliphur\OIT"
 current = None               # 这次运行的 Continuity (guard 设置; 开发版本里是 None 的话什么都不做)
-STRONG = ("foreign-seal", "tampered-seal", "other-epoch", "rollback", "stripped", "anchor-tampered", "pending")
+STRONG = ("foreign-seal", "tampered-seal", "other-epoch", "rollback", "stripped", "anchor-tampered", "pending", "key-lost", "key-changed")
 
 
 # ---- DPAPI (绑定这台电脑 + 这个用户) ----
@@ -209,7 +209,7 @@ def _decode_anchor(raw):
 
 # ---- 判断 (纯函数, 好测) ----
 
-def evaluate(data, seal_text, anchors, established: bool):
+def evaluate(data, seal_text, anchors, established: bool, kid_now: str = ""):
     """data: continuity.json 的内容 (None = 没有 / 读不出); seal_text: 解开 seal 得到的 (解不开 None); anchors: [_decode_anchor 的结果].
     返回 (判定, [信号]). 判定: "fresh" 新数据 (没有用过的数据) / "adopt" 以现在的数据为起点 / "ok" / "break"."""
     if not established:
@@ -221,10 +221,15 @@ def evaluate(data, seal_text, anchors, established: bool):
             return "break", ["stripped"]
         return "adopt", []
     ep, seq = str(data.get("ep") or ""), int(data.get("seq") or 0)
+    kid = str(data.get("kid") or "")
     if seal_text is None:
         sig.append("foreign-seal")
-    elif seal_text != f"{ep}|{seq}":
+    elif seal_text != f"{ep}|{seq}" + (f"|{kid}" if kid else ""):
         sig.append("tampered-seal")
+    if kid and not kid_now:
+        sig.append("key-lost")                     # 加密密钥 (securefile.py) 没了
+    elif kid and kid != kid_now:
+        sig.append("key-changed")                  # 密钥被换了 (删掉密钥再把数据换成明文的)
     if any(a == "bad" for a in anchors):
         sig.append("anchor-tampered")
     for a in good:
@@ -263,9 +268,18 @@ class Continuity:
     def established(self) -> bool:
         return os.path.exists(self.path) or any(os.path.exists(os.path.join(self.dir, n)) for n in ESTABLISHED)
 
+    def _kid(self) -> str:
+        try:
+            import securefile
+            return securefile.key_id()
+        except Exception:
+            return ""
+
     def _write_data(self, pending_ignored: bool = True):
-        seal = protect(f"{self.ep}|{self.seq}")
-        d = {"v": 1, "ep": self.ep, "seq": self.seq, "ts": int(time.time() * 1000), "seal": _b64(seal) if seal else ""}
+        kid = self._kid()
+        seal = protect(f"{self.ep}|{self.seq}" + (f"|{kid}" if kid else ""))
+        d = {"v": 1, "ep": self.ep, "seq": self.seq, "ts": int(time.time() * 1000), "seal": _b64(seal) if seal else "",
+             "kid": kid, "user": self.username()}
         try:
             _atomic_write(self.path, json.dumps(d))
         except OSError:
@@ -340,7 +354,7 @@ class Continuity:
         if data:
             seal_text = unprotect(_unb64(data.get("seal")))
         anchors = [_decode_anchor(a.read()) for a in self.anchors]
-        verdict, sig = evaluate(data, seal_text, anchors, self.established())
+        verdict, sig = evaluate(data, seal_text, anchors, self.established(), self._kid())
         if verdict in ("fresh", "adopt"):
             self.begin()
         elif verdict == "ok":
@@ -355,12 +369,21 @@ class Continuity:
         return verdict, sig
 
     def username(self) -> str:
-        """非法数据里的用户名 (弹框用)."""
+        """数据里的用户名 (弹框用). 数据被搬到别的电脑上时 profile.json 解不开, 所以每次推进时也记在 continuity.json 里."""
         try:
-            with open(os.path.join(self.dir, "profile.json"), "r", encoding="utf-8") as f:
-                return str(json.load(f).get("username") or "").strip()
+            import securefile
+            opener = securefile.open
+        except Exception:
+            opener = open
+        try:
+            with opener(os.path.join(self.dir, "profile.json"), "r", encoding="utf-8") as f:
+                name = str(json.load(f).get("username") or "").strip()
+            if name:
+                return name
         except (OSError, ValueError, AttributeError):
-            return ""
+            pass
+        d = self.read()
+        return str(d.get("user") or "").strip() if d else ""
 
     def wipe(self):
         """清掉数据文件夹里的一切 (只留 KEEP), 再以空数据为新的起点. 先试着停掉录像之类写在别处的东西."""

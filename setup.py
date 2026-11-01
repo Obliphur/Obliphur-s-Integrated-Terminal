@@ -47,7 +47,7 @@ NO_WINDOW = 0x08000000
 LOG_FILE = os.path.join(tempfile.gettempdir(), "oit-setup.log")
 # 不进安装包的东西 (和 updater.SKIP_DIRS 一致, 再加上只在开发时用的)
 SKIP_TOP = {"Android version", ".git", ".github", "__pycache__", ".vscode", ".idea", "_review", "build", "dist"}
-SKIP_FILES = {".gitignore", ".gitattributes", "setup.py", "make_icon.py"}
+SKIP_FILES = {".gitignore", ".gitattributes", "setup.py", "make_icon.py", "closed_test.bat"}
 PYTHON_CHECK = ("import sys, tkinter, sqlite3, ssl, ctypes, winreg, json, socket, http.server; "
                 "print(sys.version_info[0], sys.version_info[1], sys.executable)")
 

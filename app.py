@@ -19,6 +19,8 @@ import autostart
 import linkd
 import registration
 import continuity
+import securefile
+import closedtest
 import devsync
 import firewall
 import updater
@@ -158,7 +160,7 @@ class BreakTimerApp:
         if not (root.winfo_exists() and root.winfo_width() > 1):
             pass
 
-        root.title(APP_NAME)
+        root.title(APP_NAME + closedtest.tag())
         try:
             root.iconbitmap(default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "oit.ico"))   # 图标 (make_icon.py)
         except Exception:
@@ -380,19 +382,26 @@ class BreakTimerApp:
         self.prestart_job = self.root.after(1000, self._prestart_tick)
         self.window_focus_job = self.root.after(self._window_focus_ms(), self._window_focus_tick)
         self.app_rules_job = self.root.after(1000, self._schedule_app_rules)
+        sandbox = closedtest.active()       # 封闭测试 (MECHANICS 3.6): 设备同步 / 防火墙 / 开机自启动都不动, 不影响主设备
         try:
-            self.sync.start()
+            if not sandbox:
+                self.sync.start()
         except Exception as e:
             self._log_window(f"ERROR    sync start {type(e).__name__}: {e}")
         self._pump_sync()
         # 防火墙放行同步端口, 否则别的设备找不到本机 / 连不进来 (MECHANICS 15.3). netsh 较慢, 放到后台
-        threading.Thread(target=self._check_firewall, daemon=True).start()
+        if not sandbox:
+            threading.Thread(target=self._check_firewall, daemon=True).start()
         # 合约的网络禁令: 上次留下的防火墙规则 (例如崩溃时没来得及删) 先删掉, 之后按合约重新加
-        threading.Thread(target=self._appban_sync, args=(set(),), daemon=True).start()
+        if not sandbox:
+            threading.Thread(target=self._appban_sync, args=(set(),), daemon=True).start()
         # 录像 (目光 / 刻痕): 上次没来得及加密的 (崩溃时留在临时文件夹里的, 旧版本留在数据目录里的 mp4) 先加密起来
         threading.Thread(target=lambda: recorder.seal_leftovers(self.dm.data_dir), daemon=True).start()
         # 开机自启动: 默认开启 (第一次运行时建好), 用户关掉了就不再打开 (MECHANICS 3.4)
-        threading.Thread(target=self._check_autostart, args=(True,), daemon=True).start()
+        if sandbox:
+            self.root.after(1500, lambda: toast.notice(tr("🧪  封闭测试"), tr("数据全部放在 {p}, 不会影响主设备的数据. 设备同步已关闭.", p=closedtest.low_dir())))
+        else:
+            threading.Thread(target=self._check_autostart, args=(True,), daemon=True).start()
         if config.dev_mode_enabled():
             self.root.after(800, self._auto_dev_ready)
         if getattr(config, "UPDATE_CHECK", 1):
@@ -474,7 +483,7 @@ class BreakTimerApp:
         self._theme_ttk()
         self._apply_titlebar()
         # 都市之意: 主窗口标题是"指令终端" (其他主题用程序名)
-        self.root.title(tr("指令终端") if getattr(config, "THEME", "") == "urban_will" else APP_NAME)
+        self.root.title((tr("指令终端") if getattr(config, "THEME", "") == "urban_will" else APP_NAME) + closedtest.tag())
 
     def _apply_tk_options(self):
         """没有单独指定颜色的 tk 控件 (列表框, 多行文本, 下拉框弹出列表) 的默认色."""
@@ -2903,6 +2912,8 @@ class BreakTimerApp:
     # ---- 设备同步 (MECHANICS 15) ----
 
     def _check_autostart(self, first: bool = False):
+        if closedtest.active():
+            return
         if first:
             try:
                 # setup.exe 装的 (MECHANICS 16.4): 程序自己更新过的话, 把"已安装的应用"里的版本号也改成现在的
@@ -2923,6 +2934,8 @@ class BreakTimerApp:
             self._log_window(f"ERROR    link {type(e).__name__}: {e}")
 
     def _check_link(self):
+        if closedtest.active():
+            return
         try:
             if self.sync.peers():
                 linkd.ensure_running(self.dm.data_dir)
@@ -3900,7 +3913,7 @@ class BreakTimerApp:
             config.save_json_file(self._outbox_path(), {"items": box})
         else:
             try:
-                os.remove(self._outbox_path())
+                securefile.remove(self._outbox_path())
             except OSError:
                 pass
 
@@ -5553,6 +5566,12 @@ class BreakTimerApp:
         if time.monotonic() - self._battery_at >= 20:   # 本机电量: 发给其他设备 (MECHANICS 15.4)
             self._battery_at = time.monotonic()
             self.battery = devsync.battery_percent()
+        if securefile.tampered and not self._cont_broken and continuity.current is not None and not self.shutting_down and not self.dm.resetting:
+            # 数据文件被改过 / 删了 / 倒回去了 (securefile.py, MECHANICS 9.4): 在锚点里标记, 马上重启, 下一次启动时清掉数据
+            self._cont_broken = True
+            self._log_notice("SECURE tampered " + ", ".join(f"{n}:{w}" for n, w in securefile.tampered[:8]))
+            continuity.current.mark_pending()
+            self._restart_for_update()
         if time.monotonic() - self._cont_at >= continuity.TICK:
             self._cont_at = time.monotonic()             # 数据的连续性: 序号推进一次 (MECHANICS 9.3)
             if continuity.current is not None:
@@ -5710,6 +5729,7 @@ class BreakTimerApp:
         self._stop_all_recorders(wait=8.0)
         self.net.release()
         self.dm.erase_all_data()
+        securefile.reset()                  # 数据文件夹没了: 内存里的密钥作废, 之后写的绑定是明文, 下次启动再加密 (MECHANICS 9.4)
         if continuity.current is not None:
             continuity.current.reset()      # 重置: 数据以外的锚点也清掉, 下一次启动算新数据 (MECHANICS 9.3)
         if kept:

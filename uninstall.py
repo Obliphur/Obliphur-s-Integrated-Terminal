@@ -43,6 +43,7 @@ import appban
 import browserfence
 import registration
 import continuity
+import securefile
 
 
 CONFIRM_WORD = "UNINSTALL"
@@ -346,7 +347,7 @@ def _wipe_and_unpair(my_id: str, peer: dict) -> bool:
 def forget_peers(paths: Paths, send=None) -> int:
     """读 sync_state.json, 请每台绑定的设备清空数据并解除和本机的绑定. 返回成功通知了几台."""
     try:
-        with open(os.path.join(paths.data_dir, "sync_state.json"), "r", encoding="utf-8") as f:
+        with securefile.open(os.path.join(paths.data_dir, "sync_state.json"), "r", encoding="utf-8") as f:
             st = json.load(f)
         my_id = st["device"]["id"]
         peers = [p for p in (st.get("peers") or {}).values() if isinstance(p, dict) and p.get("key")]
@@ -755,6 +756,7 @@ def main():
         config.elevate()          # 启用网卡, 结束以管理员身份运行的 OIT 都需要管理员权限
         sys.exit(0)
     import tkinter as tk
+    securefile.configure(config.app_data_dir())      # 设置和绑定是加密的 (MECHANICS 9.4)
     _dpi_aware()
     _load_ui_settings()
     root = tk.Tk()

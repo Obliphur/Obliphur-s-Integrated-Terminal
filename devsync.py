@@ -41,6 +41,7 @@ import threading
 import time
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import securefile
 
 PROTO = 1
 HTTP_PORT = 17930          # 被占用时依次尝试到 17939
@@ -288,7 +289,7 @@ class SyncService:
 
     def _load(self) -> dict:
         try:
-            with open(self.file, "r", encoding="utf-8") as f:
+            with securefile.open(self.file, "r", encoding="utf-8") as f:
                 d = json.load(f)
             if isinstance(d, dict):
                 for k in ("peers", "track", "ledgers", "status", "gone", "wipe_out", "unbinds", "evict_out"):
@@ -310,7 +311,7 @@ class SyncService:
             tmp = self.file + ".tmp"
             try:
                 os.makedirs(os.path.dirname(self.file) or ".", exist_ok=True)
-                with open(tmp, "w", encoding="utf-8") as f:
+                with securefile.open(tmp, "w", encoding="utf-8") as f:
                     json.dump(self.state, f, ensure_ascii=False)
                 os.replace(tmp, self.file)
             except OSError:
@@ -1980,7 +1981,7 @@ def send_restart_to(my_id: str, peer: dict, timeout: float = 3.0) -> int:
 def write_state(path: str, state: dict):
     """重置后把留下的同步状态写回去 (数据目录刚被删掉)."""
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
+    with securefile.open(path, "w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False)
 
 

@@ -26,6 +26,12 @@ import os
 import re
 import threading
 from datetime import datetime, timedelta
+try:
+    import securefile
+except ImportError:                      # 直接运行本文件做自检时: 上一层才有
+    import os as _os, sys as _sys
+    _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+    import securefile
 
 WHITE_DOMAINS = "white_domains"
 WHITE_APPS = "white_apps"
@@ -188,7 +194,7 @@ class RuleStore:
     def load(self):
         raw = {}
         try:
-            with open(self.path, 'r', encoding='utf-8') as f:
+            with securefile.open(self.path, 'r', encoding='utf-8') as f:
                 raw = json.load(f)
         except FileNotFoundError:
             raw = self._template_raw()           # 本机还没有名单文件 → 用默认模板
@@ -226,7 +232,7 @@ class RuleStore:
         if not self.template:
             return {}
         try:
-            with open(self.template, 'r', encoding='utf-8') as f:
+            with securefile.open(self.template, 'r', encoding='utf-8') as f:
                 raw = json.load(f)
         except Exception:
             return {}
@@ -249,7 +255,7 @@ class RuleStore:
             d = os.path.dirname(self.path)
             if d:
                 os.makedirs(d, exist_ok=True)
-            with open(tmp, 'w', encoding='utf-8') as f:
+            with securefile.open(tmp, 'w', encoding='utf-8') as f:
                 json.dump(payload, f, ensure_ascii=False, indent=1)
             os.replace(tmp, self.path)
             return True
@@ -583,7 +589,7 @@ def _selftest():
 
     # 旧格式文件里的 history 直接忽略, 不影响读取
     old = os.path.join(tempfile.mkdtemp(), "old.json")
-    with open(old, "w", encoding="utf-8") as f:
+    with securefile.open(old, "w", encoding="utf-8") as f:
         json.dump({"lists": {BLACK_DOMAINS: ["a.com"]}, "pending": [],
                    "history": {BLACK_DOMAINS: ["a.com", "b.com"]}}, f)
     rs4 = RuleStore(old, now=lambda: clock[0])

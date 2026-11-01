@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 
 import config
 from data_manager import split_items
+import securefile
 
 
 # (id, 名字, 达成后显示的文字, 是否隐藏, 作者留下的文字)
@@ -142,7 +143,7 @@ def guess_first_launch(data_dir: str, setup_until, day_keys, now: datetime = Non
         out.append(setup_until - timedelta(hours=float(getattr(config, "SETUP_HOURS", 72))))
     for name in LOG_FILES:
         try:
-            with open(os.path.join(data_dir, name), "r", encoding="utf-8") as f:
+            with securefile.open(os.path.join(data_dir, name), "r", encoding="utf-8") as f:
                 line = f.readline()
             out.append(datetime.strptime(line[:19], "%Y-%m-%d %H:%M:%S"))
         except (OSError, ValueError):
@@ -170,7 +171,7 @@ class AchievementStore:
 
     def _load(self):
         try:
-            with open(self.path, "r", encoding="utf-8") as f:
+            with securefile.open(self.path, "r", encoding="utf-8") as f:
                 d = json.load(f)
         except (OSError, ValueError):
             return
@@ -186,7 +187,7 @@ class AchievementStore:
             return
         try:
             tmp = self.path + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
+            with securefile.open(tmp, "w", encoding="utf-8") as f:
                 json.dump({"first_launch": self.first.isoformat(timespec="seconds"),
                            "unlocked": self.unlocked, "unseen": self.unseen},
                           f, ensure_ascii=False, indent=1)
@@ -250,7 +251,7 @@ class AchievementStore:
 def _selftest():
     import tempfile
     d = tempfile.mkdtemp()
-    with open(os.path.join(d, "settings_changes.log"), "w", encoding="utf-8") as f:
+    with securefile.open(os.path.join(d, "settings_changes.log"), "w", encoding="utf-8") as f:
         f.write("2026-01-02 03:04:05  SETUP period ended by user\n")
     now = datetime(2026, 1, 20, 12, 0, 0)
     first = guess_first_launch(d, None, ["2026-01-05"], now)

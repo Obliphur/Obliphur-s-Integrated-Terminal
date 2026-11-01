@@ -8,6 +8,8 @@ from typing import Optional, Dict
 
 import config
 import i18n
+import closedtest
+import securefile
 from config import (
     APP_NAME, OLD_APP_DIR, AUTO_TEXT, HOUR_LOG_ENABLED
 )
@@ -40,6 +42,8 @@ class DataManager:
             os.environ.get('USERPROFILE', os.path.expanduser('~')),
             'AppData', 'LocalLow'
         )
+        if closedtest.active():            # 封闭测试 (MECHANICS 3.6): 全部放在项目根目录里
+            low_dir = closedtest.low_dir()
         self.low_dir = low_dir
         self.data_dir = os.path.join(low_dir, APP_NAME)
         os.makedirs(self.data_dir, exist_ok=True)
@@ -231,7 +235,7 @@ class DataManager:
     def load_study_data(self):
         if os.path.exists(self.study_file):
             try:
-                with open(self.study_file, 'r', encoding='utf-8') as f:
+                with securefile.open(self.study_file, 'r', encoding='utf-8') as f:
                     self.study_data = json.load(f)
             except (json.JSONDecodeError, IOError):
                 self.study_data = {}
@@ -243,7 +247,7 @@ class DataManager:
         if self.resetting:
             return
         try:
-            with open(self.study_file, 'w', encoding='utf-8') as f:
+            with securefile.open(self.study_file, 'w', encoding='utf-8') as f:
                 json.dump(self.study_data, f, indent=2)
         except IOError:
             pass
@@ -326,7 +330,7 @@ class DataManager:
 
     def load_focus_log(self):
         try:
-            with open(self.focus_file, 'r', encoding='utf-8') as f:
+            with securefile.open(self.focus_file, 'r', encoding='utf-8') as f:
                 d = json.load(f)
             recs = d.get("sessions", []) if isinstance(d, dict) else []
         except Exception:
@@ -357,7 +361,7 @@ class DataManager:
         self._prune_focus()
         try:
             tmp = self.focus_file + ".tmp"
-            with open(tmp, 'w', encoding='utf-8') as f:
+            with securefile.open(tmp, 'w', encoding='utf-8') as f:
                 json.dump({"sessions": self.focus_sessions}, f, indent=1)
             os.replace(tmp, self.focus_file)
         except (IOError, OSError):
@@ -536,7 +540,7 @@ class DataManager:
 
     def load_window_usage(self):
         try:
-            with open(self.window_file, 'r', encoding='utf-8') as f:
+            with securefile.open(self.window_file, 'r', encoding='utf-8') as f:
                 d = json.load(f)
             days = d.get("days", {}) if isinstance(d, dict) else {}
         except Exception:
@@ -632,7 +636,7 @@ class DataManager:
         self._prune_windows()
         try:
             tmp = self.window_file + ".tmp"
-            with open(tmp, 'w', encoding='utf-8') as f:
+            with securefile.open(tmp, 'w', encoding='utf-8') as f:
                 json.dump({"days": {k: {n: round(v, 1) for n, v in day.items()}
                                     for k, day in self.window_days.items()},
                        "runs": self.window_runs},
@@ -644,7 +648,7 @@ class DataManager:
 
     def load_hour_log(self):
         try:
-            with open(self.hour_file, 'r', encoding='utf-8') as f:
+            with securefile.open(self.hour_file, 'r', encoding='utf-8') as f:
                 d = json.load(f)
             self.hour_days = d.get("days", {})
             halves = d.get("halves")
@@ -673,7 +677,7 @@ class DataManager:
             return
         self._prune_hours()
         try:
-            with open(self.hour_file, 'w', encoding='utf-8') as f:
+            with securefile.open(self.hour_file, 'w', encoding='utf-8') as f:
                 json.dump({
 
                     "enabled": bool(self.hour_enabled),
