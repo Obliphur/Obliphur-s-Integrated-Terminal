@@ -114,7 +114,7 @@ fun CommScreen(go: (String) -> Unit) {
             }
         }
     }
-    if (attach) AttachDialog(comm.attach, { attach = false }) { sel -> comm.setAttach(sel); attach = false }
+    if (attach) AttachDialog(comm.attachForm(), { attach = false }) { sel -> comm.setAttach(sel); attach = false }
     if (askClear) Confirm(tr("清空"), tr("清空聊天记录?"), true, { askClear = false }) { comm.clear() }
 }
 
@@ -134,7 +134,8 @@ private fun AttachDialog(current: CommSel, onDismiss: () -> Unit, onOk: (CommSel
         }
     }
     fun toggle(list: MutableList<String>, key: String, on: Boolean) { if (on) list.add(key) else list.remove(key) }
-    AlertDialog(onDismissRequest = onDismiss, containerColor = o.bg,
+    // 关掉窗口 (点外面 / 返回键) 也保存, 和"确定"一样
+    AlertDialog(onDismissRequest = { onOk(CommSel(stats.toList(), cal.toList(), contract)) }, containerColor = o.bg,
         title = { Text(tr("发送数据")) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
@@ -146,8 +147,7 @@ private fun AttachDialog(current: CommSel, onDismiss: () -> Unit, onOk: (CommSel
                 box(tr("合约词条"), contract) { contract = it }
             }
         },
-        confirmButton = { TextButton({ onOk(CommSel(stats.toList(), cal.toList(), contract)) }) { Text(tr("确定"), color = o.accent) } },
-        dismissButton = { TextButton(onDismiss) { Text(tr("取消"), color = o.dim) } })
+        confirmButton = { TextButton({ onOk(CommSel(stats.toList(), cal.toList(), contract)) }) { Text(tr("确定"), color = o.accent) } })
 }
 
 @Composable

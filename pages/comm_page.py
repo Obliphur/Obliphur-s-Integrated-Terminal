@@ -301,7 +301,8 @@ class CommPage(tk.Frame):
     # ---- 📎 发送数据: 统计的几页, 日历 (选类别), 合约的词条 ----
 
     def _attach(self):
-        dlg = Modal(self.winfo_toplevel(), tr("发送数据"), width=config.scaled(320), height=config.scaled(450))
+        width = config.scaled(320)
+        dlg = Modal(self.winfo_toplevel(), tr("发送数据"), width=width, height=config.scaled(700))
         bg = COLORS["bg"]
         vars_ = {}
 
@@ -309,7 +310,7 @@ class CommPage(tk.Frame):
             tk.Label(dlg.body, text=tr(title), bg=bg, fg=COLORS["text"], font=config.font("body", bold=True),
                      anchor="w").pack(fill="x", pady=(8, 2))
             for key, text in items:
-                cur = self.comm.attach
+                cur = self.comm.attach_form()
                 v = tk.BooleanVar(value=bool(cur.get("contract")) if prefix == "contract" else key in cur.get(prefix, []))
                 vars_[(prefix, key)] = v
                 tk.Checkbutton(dlg.body, text=tr(text), variable=v, bg=bg, fg=COLORS["text"], selectcolor=COLORS["bg_card"],
@@ -329,5 +330,8 @@ class CommPage(tk.Frame):
             self.refresh(force=True)
 
         ttk.Button(dlg.buttons, text=tr("确定"), style="Accent.TButton", command=go).pack(side="right")
-        ttk.Button(dlg.buttons, text=tr("取消"), command=dlg.cancel).pack(side="right", padx=(0, 8))
+        dlg.protocol("WM_DELETE_WINDOW", go)             # 关掉窗口 (X / Esc) 也保存
+        dlg.bind("<Escape>", lambda _e: go())
+        dlg.update_idletasks()
+        dlg._center(self.winfo_toplevel(), width, dlg.winfo_reqheight())      # 高度按内容, 按钮不会被截掉
         dlg.wait()

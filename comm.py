@@ -212,6 +212,7 @@ class Comm:
         self.fog = lambda: False       # 合约黑雾中: 不发数据
         self.blocked = lambda: ""      # 现在不能用沟通的原因 ("" = 可以): 合约的"无言为真"
         self.attach = {"stats": [], "cal": [], "contract": False}     # 📎 确定过的附加数据: 随下一条消息发出
+        self.attach_touched = False    # 用户确定过一次之后, 📎 窗口不再默认勾 整点记录 / 专注计时
         self.on_change = None          # 界面线程里调用
         self._lock = threading.Lock()
         self._wlock = threading.Lock()
@@ -423,7 +424,15 @@ class Comm:
         """📎 窗口点"确定": 记下勾选的数据, 随下一条消息一起发 (发出去之后清掉)."""
         self.attach = {"stats": list(sel.get("stats", [])), "cal": list(sel.get("cal", [])),
                        "contract": bool(sel.get("contract"))}
+        self.attach_touched = True
         self._changed()
+
+    def attach_form(self) -> dict:
+        """📎 窗口打开时的勾选: 确定过的; 还没确定过 = 默认勾 整点记录 和 专注计时."""
+        if self.attach_touched or self.attach_label():
+            return self.attach
+        import comm_data
+        return {"stats": list(comm_data.DEFAULT_STATS), "cal": [], "contract": False}
 
     def attach_label(self) -> str:
         import comm_data
@@ -780,7 +789,10 @@ def _selftest():
     c.fog = lambda: False
     c.data_fn = lambda sel: "【日历·专注】\n  11-01: 3.0 h"
     c.set_attach({"cal": ["study"]})
-    assert c.attach_label() == "📎 日历·专注"
+    assert c.attach_form()["stats"] == [] and c.attach_label() == "📎 日历·专注"
+    os.makedirs(os.path.join(td, "d3"))
+    c2f = Comm(os.path.join(td, "d3"), folder, now=lambda: clock[0], chat_fn=fake)
+    assert c2f.attach_form()["stats"] == ["log", "focus"] and c2f.attach_label() == ""
     script.append("嗯嗯")
     assert c.send("") == ""
     wait(c)

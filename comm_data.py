@@ -8,7 +8,8 @@ from datetime import datetime, timedelta
 
 import contract as C
 
-STATS_KEYS = (("log", "整点记录"), ("net", "联网理由"), ("focus", "专注计时"), ("window", "窗口"), ("contracts", "合约记录"))
+STATS_KEYS = (("log", "整点记录"), ("focus", "专注计时"), ("net", "联网理由"), ("window", "窗口"), ("contracts", "合约记录"))
+DEFAULT_STATS = ("log", "focus")        # 📎 窗口第一次打开时默认勾上的
 CAL_KEYS = (("study", "专注"), ("break", "休息"), ("idle", "空闲"), ("sleep", "睡眠"))
 WEEKDAY = "一二三四五六日"
 TOP = 12

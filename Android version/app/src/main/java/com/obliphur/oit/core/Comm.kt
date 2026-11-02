@@ -113,9 +113,15 @@ class Comm(
     var blocked: () -> String = { "" }
     /** 📎 窗口点"确定"记下的附加数据: 随下一条消息一起发 (发出去之后清掉). */
     @Volatile var attach = CommSel(); private set
+    /** 用户确定过一次之后, 📎 窗口不再默认勾 整点记录 / 专注计时. */
+    @Volatile var attachTouched = false; private set
 
     @Synchronized
-    fun setAttach(sel: CommSel) { attach = sel; changed() }
+    fun setAttach(sel: CommSel) { attach = sel; attachTouched = true; changed() }
+
+    /** 📎 窗口打开时的勾选: 确定过的; 还没确定过 = 默认勾 整点记录 和 专注计时. */
+    fun attachForm(): CommSel =
+        if (attachTouched || CommData.label(attach).isNotEmpty()) attach else CommSel(stats = CommData.DEFAULT_STATS)
     var hourLines: () -> List<String> = { emptyList() }
     var snapshot: () -> CommSnap? = { null }
     private class Result(val kind: String, val trig: Int, val reply: String, val err: String, val epoch: Int)

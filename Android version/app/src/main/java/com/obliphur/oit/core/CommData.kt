@@ -7,7 +7,9 @@ import java.time.LocalDateTime
 data class CommSel(val stats: List<String> = emptyList(), val cal: List<String> = emptyList(), val contract: Boolean = false)
 
 object CommData {
-    val STATS_KEYS = listOf("log" to "整点记录", "net" to "联网理由", "focus" to "专注计时", "window" to "应用", "contracts" to "合约记录")
+    val STATS_KEYS = listOf("log" to "整点记录", "focus" to "专注计时", "net" to "联网理由", "window" to "应用", "contracts" to "合约记录")
+    /** 📎 窗口第一次打开时默认勾上的. */
+    val DEFAULT_STATS = listOf("log", "focus")
     val CAL_KEYS = listOf("study" to "专注", "break" to "休息", "idle" to "空闲", "sleep" to "睡眠")
     private const val WEEKDAY = "一二三四五六日"
     private const val TOP = 12
