@@ -435,6 +435,7 @@ EN = {
     "⏱  上次的专注已记录": "⏱  Last focus session recorded",
     "▶  开始专注": "▶  Start focusing",
     "知道了": "Got it",
+    "{name} 连续 24 小时拒绝连接, 判定为已卸载: 已解除和它的绑定, 它的数据已从本机清除.": "{name} refused connections for 24 hours and is judged uninstalled: it has been unbound and its data removed from this device.",
     "⚠  系统时间": "⚠  System clock",
     "{name},这没有意义.你可以在10min内修改回来,否则你的数据会被清除.": "{name}, this is pointless. You can change it back within 10 min, or your data will be wiped.",
     "系统时间已改回来.": "The system clock has been restored.",

@@ -5785,13 +5785,18 @@ class BreakTimerApp:
             names = self.sync.check_unbind()
             for name in names:
                 self._log_notice(f"SYNC unbind done {name}")
-            # 绑定的设备的 OIT 和联动程序连续 24 小时都拒绝连接 = 它被卸载了 (手机上的设备管理员拦不住卸载): 同样解除绑定, 清空本机 (MECHANICS 9.2)
+            if names:
+                self.do_reset(leave=True, unbound=", ".join(names))          # 只重置操作这一台: 不转告其他设备, 也不清空对方
+            if names:
+                return
+            # 绑定的设备的 OIT 和联动程序连续 24 小时都拒绝连接 = 它被卸载了 (手机上的设备管理员拦不住卸载): 只解除和它的绑定,
+            # 并清掉本机保留的它的数据 (账, 状态); 本机自己的数据不动 (MECHANICS 9.2)
             gone = self.sync.check_gone(hold=self.behavior.current() is not None)        # 外出期间不算 (可以关掉 OIT)
             for name in gone:
                 self._log_notice(f"SYNC peer gone (refusing connections for 24 h, uninstalled?) {name}")
-            names = names + gone
-            if names:
-                self.do_reset(leave=True, unbound=", ".join(names))          # 只重置操作这一台: 不转告其他设备, 也不清空对方
+                toast.warn(tr("{name} 连续 24 小时拒绝连接, 判定为已卸载: 已解除和它的绑定, 它的数据已从本机清除.", name=name))
+            if gone:
+                self.on_sync_changed()
         except Exception as e:
             self._log_window(f"ERROR    unbind {type(e).__name__}: {e}")
 
