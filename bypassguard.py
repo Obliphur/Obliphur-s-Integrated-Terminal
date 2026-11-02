@@ -95,8 +95,10 @@ def _table(family: int, row_type):
     else:
         return []
     count = ctypes.c_ulong.from_buffer(buf).value
-    rows = (row_type * count).from_address(ctypes.addressof(buf) + ctypes.sizeof(ctypes.c_ulong))
-    return list(rows)
+    rows = (row_type * count).from_buffer(buf, ctypes.sizeof(ctypes.c_ulong))
+    # 每一行复制一份: 行本来是指着 buf 里面的 (from_address 还不会让 buf 活着), buf 一出这个函数就释放了, 之后读行 = 读已经释放的内存,
+    # 内存被收回时程序直接崩溃 (_ctypes.pyd 访问冲突 0xc0000005, 每隔几分钟一次)
+    return [row_type.from_buffer_copy(r) for r in rows]
 
 
 def tcp_conns() -> list:
@@ -367,6 +369,15 @@ def _selftest():
     if sys.platform == "win32":
         assert isinstance(tcp_conns(), list)               # 真的连接表读得出来
         assert pid_path(os.getpid()).lower().endswith(".exe")
+    if sys.platform == "win32":
+        # 连接表的行不能指着已经释放的缓冲区 (以前每隔几分钟崩溃一次): 反复取表, 搅动堆之后再读每一行
+        import gc
+        for _ in range(300):
+            rows = _table(AF_INET, _Row4)
+            junk = [bytearray(400_000) for _ in range(6)]
+            del junk
+            gc.collect()
+            assert all(isinstance(r.pid, int) and r.local_port >= 0 for r in rows)
     return "bypassguard selftest OK"
 
 
