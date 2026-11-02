@@ -80,9 +80,7 @@ class CommPage(tk.Frame):
         self._ver = c.version
         persona = comm_mod.persona_title(c.persona_name())
         cfg(self.lbl_who, text=persona)
-        if c.busy:
-            cfg(self.lbl_status, text=tr("对方正在输入…"), fg=COLORS["text_dim"])
-        elif c.error:
+        if c.error:
             cfg(self.lbl_status, text=tr(c.error), fg=COLORS["danger"])
         else:
             cfg(self.lbl_status, text="")

@@ -75,12 +75,7 @@ fun CommScreen(go: (String) -> Unit) {
         LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list, verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(msgs, key = { it.id }) { Bubble(it) }
         }
-        val status = when {
-            comm.busy -> tr("对方正在输入…")
-            comm.error.isNotEmpty() -> tr(comm.error)
-            else -> ""
-        }
-        if (status.isNotEmpty()) Text(status, color = if (comm.busy) o.dim else o.danger, fontSize = 12.sp,
+        if (comm.error.isNotEmpty()) Text(tr(comm.error), color = o.danger, fontSize = 12.sp,
             modifier = Modifier.padding(top = 4.dp))
         Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.Bottom,
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
