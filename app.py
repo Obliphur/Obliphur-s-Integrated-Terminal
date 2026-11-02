@@ -299,6 +299,7 @@ class BreakTimerApp:
             config.DEV_MODE = True      # 本地开发版本: 自动开发者模式, 启动时不断网 (MECHANICS 3.5); 子端之后跟着母端
         self.net = NetGuard(self.dm.data_dir)
         self.net.on_tamper = self._on_net_tamper
+        self.net.on_bypass = self._on_net_bypass
         self.net.quota_factor = self.behavior.quota_factor
         self.net.cooldown_factor = self.behavior.cooldown_factor
         # 设备同步 (MECHANICS 15): 其他设备的账并进额度和统计
@@ -5565,6 +5566,10 @@ class BreakTimerApp:
             return int(self.var_min.get())
         except (TypeError, ValueError):
             return 0
+
+    def _on_net_bypass(self, path: str, killed: int):
+        """有程序不走系统代理、直接连外面, NetGuard 已经封锁它了 (防火墙规则 + 掐断连接, MECHANICS 3.2.3): 提示一次."""
+        toast.warn(tr("{name} 不走系统代理, 直接连外面, 已封锁.", name=os.path.basename(path)))
 
     def _on_net_tamper(self, kind: str):
         """系统代理被人改了 (关掉 / 换成别的代理), NetGuard 已经改回去了: 提示一次 (30 秒内不重复)."""

@@ -41,6 +41,7 @@ import autostart
 import linkd
 import appban
 import browserfence
+import bypassguard
 import registration
 import continuity
 import securefile
@@ -431,6 +432,8 @@ def run_uninstall(paths: Paths, remove_program: bool, log,
     (appban.AppBan(fw_run) if fw_run else appban.AppBan()).clear_all()
     # 浏览器围栏 (browserfence.py, Proxy 断网方式下给浏览器加的防火墙出站规则)
     (browserfence.BrowserFence(fw_run) if fw_run else browserfence.BrowserFence()).clear_all()
+    # 不走系统代理的程序的封锁规则 (bypassguard.py)
+    (bypassguard.BypassGuard(fw_run) if fw_run else bypassguard.BypassGuard()).clear_all()
     # 开机自启动的计划任务 (autostart.py)
     if not (autostart.remove(task_run) if task_run else autostart.remove()):
         log(tr("   开机自启动的计划任务删不掉: {name}", name=autostart.TASK_NAME), "warn")

@@ -10,6 +10,7 @@ import subprocess
 from datetime import datetime, timedelta
 
 import browserfence
+import bypassguard
 import config
 from config import fmt_hm
 from netproxy import ProxyController
@@ -27,6 +28,11 @@ class NetGuard:
     _fence_at = 0.0
     _fence_busy = False
     _fence_clean = False
+    bypass = None
+    _bp_at = 0.0
+    _bp_busy = False
+    _bp_clean = False
+    _bp_init = False
     _watch_at = 0.0
     tamper = {"count": 0, "at": 0.0}
     on_tamper = None
@@ -80,6 +86,13 @@ class NetGuard:
         self._fence_at = 0.0
         self._fence_busy = False
         self._fence_clean = False             # 围栏规则已经删干净了 (不在 Proxy 方式时只删一次)
+        # 不走系统代理的程序 (MECHANICS 3.2.3): 发现它直连外面就封锁 (防火墙规则 + 掐断已有的连接, bypassguard.py)
+        self.bypass = bypassguard.BypassGuard()
+        self._bp_at = 0.0
+        self._bp_busy = False
+        self._bp_clean = False
+        self._bp_init = False                 # 程序打开后第一次扫描前先删掉上次留下的规则
+        self.on_bypass = lambda path, killed: None      # app 接上: 提示用户 (每个程序一次)
         self._watch_at = 0.0
         self.tamper = {"count": 0, "at": 0.0}
         self.on_tamper = lambda kind: None    # app 接上: 提示用户
@@ -456,6 +469,9 @@ class NetGuard:
         if self.fence is not None:
             self._run(self.fence.clear_all)         # 浏览器围栏也撤掉 (重置 / 卸载 / 开发者模式)
             self._fence_clean = True
+        if self.bypass is not None:
+            self._run(self.bypass.clear_all)        # 不走系统代理的程序的封锁规则也撤掉
+            self._bp_clean = True
 
     def sync_mode(self):
         """设置里的 NET_MODE 变了(立即生效或冷静期到期)就切换后端;没变则什么都不做."""
@@ -741,6 +757,7 @@ class NetGuard:
             self._watch_at = now
             self._watch_system_proxy()
         self._fence_tick(now)
+        self._bypass_tick(now)
 
     def _watch_system_proxy(self):
         """每秒看一眼系统代理: 被关掉 / 改成别的代理 / 加了 PAC 就马上改回来 (不等"断网复查间隔")."""
@@ -783,6 +800,39 @@ class NetGuard:
             self._log(f"FENCE    failed ({type(e).__name__}: {e})")
         finally:
             self._fence_busy = False
+
+    def _bypass_tick(self, now: float):
+        """每 5 秒看一次连接表 (后台线程): 有不走系统代理的程序直连外面就封锁它; 不在 Proxy 方式 / 开发者模式时删掉规则 (只删一次)."""
+        if self.bypass is None or self._bp_busy or now - self._bp_at < bypassguard.SCAN_EVERY:
+            return
+        want = self._guard_wanted() and bool(getattr(config, "BYPASS_GUARD", True))
+        if not want and self._bp_clean:
+            return
+        self._bp_at = now
+        self._bp_busy = True
+        threading.Thread(target=self._bypass_run, args=(want,), daemon=True).start()
+
+    def _bypass_run(self, want: bool):
+        try:
+            if want:
+                if not self._bp_init:
+                    self._bp_init = True
+                    self.bypass.clear_all()
+                self._bp_clean = False
+                for path, killed, new in self.bypass.scan():
+                    if new:
+                        self._log(f"BYPASS   blocked {path} (direct connection, not via the system proxy; {killed} connection(s) cut)")
+                        try:
+                            self.on_bypass(path, killed)
+                        except Exception:
+                            pass
+            else:
+                self.bypass.clear_all()
+                self._bp_clean = True
+        except Exception as e:
+            self._log(f"BYPASS   failed ({type(e).__name__}: {e})")
+        finally:
+            self._bp_busy = False
 
     def tick(self, dt: float):
         today = datetime.now().strftime('%Y-%m-%d')

@@ -214,7 +214,7 @@ OUTING_MAX_HOURS = 24 * 7
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.230"                         # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.231"                         # 和 GitHub 上发布的版本号比较 (见 updater.py)
 UPDATE_CHECK = 1                              # 打开程序时检查更新
 FULLSCREEN_DEFAULT = 0                        # 打开程序时默认全屏 (设置 → 基本设置, 仅电脑, 不同步; F11 随时切换)
 UPDATE_AUTO = 1                               # 发现新版本时自动下载安装
@@ -426,6 +426,8 @@ except ImportError:
 # 开发者模式: 只能在"每日联网额度"里填 325799 开 / 关 (settings_manager.DEV_TOGGLE_CODE), 只在内存里;
 # 不管 config_local 里写了什么, 启动时都是关的 —— 除非是本地开发版本 (git 仓库里, dev_allowed) 且 DEV_AUTO 开着: 打开程序时自动开启.
 # 公开发布版没有开发者模式 (dev_allowed 为假时 dev_mode_enabled 永远是假, 填 325799 也没用). 界面上不显示.
+BYPASS_GUARD = True    # 发现不走系统代理、直连外面的程序就封锁它 (bypassguard.py, MECHANICS 3.2.3); 只在 Proxy / 代理-全屏蔽 方式下
+BYPASS_ALLOW = ()      # 不封锁的程序 (exe 名, 如 ("steam.exe",)); 只在开发版本的 config_local.py 里改得动 (公开发布版忽略 config_local)
 DEV_MODE = False
 DEV_AUTO = True        # 开发版本打开程序时自动开启开发者模式 (不然测试用的实例一启动就断网); 不想要就在 config_local.py 里写 DEV_AUTO = False
 
