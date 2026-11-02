@@ -4,6 +4,10 @@ package com.obliphur.oit.core
 object EnStrings {
     val MAP: Map<String, String> = hashMapOf(
         "{a} ~ {b} 做了什么?" to "What did you do from {a} to {b}?",
+        "⚠  系统时间" to "⚠  System clock",
+        "{name},这没有意义.你可以在10min内修改回来,否则你的数据会被清除." to "{name}, this is pointless. You can change it back within 10 min, or your data will be wiped.",
+        "系统时间已改回来." to "The system clock has been restored.",
+        "覆水难收." to "What is spilled cannot be gathered again.",
         "当前版本 {v}" to "Current version {v}",
         "⬆  发现新版本" to "⬆  New version available",
         "发现新版本 {v}" to "New version {v} available",

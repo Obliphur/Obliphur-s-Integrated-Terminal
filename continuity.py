@@ -18,6 +18,9 @@ OIT 的数据放在 AppData\\LocalLow\\<程序名> 里, 本来只有 OIT 自己�
   数据文件夹是个符号链接 / 联接点 (被搬到别的盘) 只记一条日志, 不算非法 (C 盘满了把数据放到别的盘是正常用法).
   另外程序运行期间一直用独占方式打开数据文件夹里的 `.lock`: 资源管理器 / 备份软件复制文件夹时, 这个文件复制不了.
 
+  断电 / 崩溃不能引起清数据 (MECHANICS 9.5): 所有写盘都是"写临时文件 → fsync → 改名 (Windows 用 WRITE_THROUGH)", 重要的文件还留一份上一次的 .bak;
+  运行期间数据文件夹里有 run.flag, 正常退出时删掉, 启动时它还在 = 上一次没有正常结束 (断电 / 被结束 / 崩溃), 这一次对"半截的文件"宽容 (用 .bak, 或从锚点恢复连续性记录).
+
     python continuity.py       自检 (只用临时文件夹和 HKCU 下的临时项)
 """
 
@@ -35,7 +38,9 @@ LOCK = ".lock"
 TICK = 30                    # 秒: 序号多久推进一次
 TOL = 4                      # 数据里的序号比锚点小不超过这么多不算倒回去 (崩溃 / 断电时最多少写一两次)
 PEER_TOL = 20                # 其他设备记着的序号比本机的大这么多 (10 分钟) 才算倒回去
-KEEP = ("sysproxy_backup.json", ".lock")       # 清数据时留下: 系统代理的备份 (网络断着时还要靠它还原), 被占着的 .lock
+FLAG = "run.flag"             # 运行期间存在, 正常退出时删掉; 启动时还在 = 上一次没有正常结束 (断电 / 崩溃 / 被结束)
+unclean = False              # 这次启动时 run.flag 还在 (begin_session 设置)
+KEEP = ("sysproxy_backup.json", ".lock", FLAG)       # 清数据时留下: 系统代理的备份 (网络断着时还要靠它还原), 被占着的 .lock
 # 数据文件夹里有这些之一就说明"这里有用过的数据" (新装的程序文件夹里没有)
 ESTABLISHED = ("profile.json", "app_settings.json", "study_log.json", "hour_log.json", "sync_state.json", "net_state.json")
 REG_PATH = r"Software\Obliphur\OIT"
@@ -101,12 +106,76 @@ def _unb64(s) -> bytes:
         return b""
 
 
-def _atomic_write(path: str, data: str):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+def _replace(src: str, dst: str):
+    """改名覆盖. Windows 用 MOVEFILE_WRITE_THROUGH: 改名真正写到盘上才返回 (断电时不会只留下改了一半的目录项)."""
+    if sys.platform == "win32":
+        try:
+            if ctypes.windll.kernel32.MoveFileExW(ctypes.c_wchar_p(src), ctypes.c_wchar_p(dst), 0x1 | 0x8):
+                return
+        except Exception:
+            pass
+    os.replace(src, dst)
+
+
+def durable_write(path: str, data: bytes, bak=None):
+    """断电也不会留下半截文件的写法: 先写 path.tmp 并 fsync, 再改名盖过 path. bak: 一个函数 (旧内容 → 是不是完好的),
+    旧文件完好的话先留一份 path.bak (万一以后 path 还是坏了, 读的人可以退回上一次的)."""
+    d = os.path.dirname(path)
+    if d:
+        os.makedirs(d, exist_ok=True)
     tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
+    with open(tmp, "wb") as f:
         f.write(data)
-    os.replace(tmp, path)
+        f.flush()
+        try:
+            os.fsync(f.fileno())
+        except OSError:
+            pass
+    if bak is not None:
+        try:
+            with open(path, "rb") as f:
+                old = f.read()
+            if old and bak(old):
+                shutil.copyfile(path, path + ".bak")
+        except OSError:
+            pass
+    _replace(tmp, path)
+
+
+def _atomic_write(path: str, data: str, bak=None):
+    durable_write(path, data.encode("utf-8"), bak)
+
+
+def _json_ok(raw: bytes) -> bool:
+    try:
+        d = json.loads(raw.decode("utf-8"))
+        return isinstance(d, dict) and bool(d.get("ep"))
+    except (ValueError, UnicodeDecodeError):
+        return False
+
+
+def begin_session(data_dir: str) -> bool:
+    """启动时调用 (main.py, 核对之前): 看 run.flag 还在不在 (= 上一次没有正常结束), 再放一个新的. 返回上一次是不是没有正常结束."""
+    global unclean
+    p = os.path.join(data_dir, FLAG)
+    unclean = os.path.exists(p)
+    try:
+        os.makedirs(data_dir, exist_ok=True)
+        with open(p, "w", encoding="ascii") as f:
+            f.write(str(int(time.time())))
+    except OSError:
+        pass
+    if unclean:
+        log_event(f"UNCLEAN previous session in {data_dir} (power loss / crash / killed): half-written files are tolerated this time")
+    return unclean
+
+
+def end_session(data_dir: str):
+    """正常退出时调用: 删掉 run.flag."""
+    try:
+        os.remove(os.path.join(data_dir, FLAG))
+    except OSError:
+        pass
 
 
 # ---- 锚点 ----
@@ -299,13 +368,22 @@ class Continuity:
 
     # -- 读写 --
 
-    def read(self):
+    @staticmethod
+    def _load(path: str):
         try:
-            with open(self.path, "r", encoding="utf-8") as f:
+            with open(path, "r", encoding="utf-8") as f:
                 d = json.load(f)
             return d if isinstance(d, dict) and d.get("ep") else None
         except (OSError, ValueError):
             return None
+
+    def read(self):
+        """连续性记录; 主文件在但读不出 (断电留下的半截文件) 就退回上一次的 .bak (序号只差一次, 在 TOL 之内).
+        主文件不在 = 被删了, 不退回 .bak (那是 stripped; 断电后的情况见 check 里从锚点重建)."""
+        d = self._load(self.path)
+        if d is None and os.path.exists(self.path):
+            d = self._load(self.path + ".bak")
+        return d
 
     def established(self) -> bool:
         return os.path.exists(self.path) or any(os.path.exists(os.path.join(self.dir, n)) for n in ESTABLISHED)
@@ -323,7 +401,7 @@ class Continuity:
         d = {"v": 1, "ep": self.ep, "seq": self.seq, "ts": int(time.time() * 1000), "seal": _b64(seal) if seal else "",
              "kid": kid, "user": self.username()}
         try:
-            _atomic_write(self.path, json.dumps(d))
+            _atomic_write(self.path, json.dumps(d), bak=_json_ok)
         except OSError:
             pass
 
@@ -393,10 +471,12 @@ class Continuity:
     def check(self):
         """→ (判定, 信号). 判定为 fresh / adopt 时已经建好了新的起点; ok 时已经对齐了锚点; break 时什么都没动 (调用方清数据)."""
         data = self.read()
+        anchors = [_decode_anchor(a.read()) for a in self.anchors]
+        if data is None and unclean and self.established():
+            data = self._recover_from_anchors(anchors)
         seal_text = None
         if data:
             seal_text = unprotect(_unb64(data.get("seal")))
-        anchors = [_decode_anchor(a.read()) for a in self.anchors]
         verdict, sig = evaluate(data, seal_text, anchors, self.established(), self._kid())
         if verdict in ("fresh", "adopt"):
             self.begin()
@@ -410,6 +490,18 @@ class Continuity:
         except (OSError, AttributeError):
             pass
         return verdict, sig
+
+    def _recover_from_anchors(self, anchors):
+        """上一次没有正常结束, 连续性记录和它的 .bak 都读不出 (断电时刚好在写): 锚点都完好、世代一致、没有 pending 的话,
+        以锚点里最大的序号重建这份记录 (不当作"记录被删")."""
+        good = [a for a in anchors if isinstance(a, tuple)]
+        bad = sum(1 for a in anchors if a == "bad")
+        if not good or any(a[2] for a in good) or len({a[0] for a in good}) != 1 or bad >= len(good):
+            return None
+        self.ep, self.seq = good[0][0], max(a[1] for a in good)
+        self._write_data()
+        log_event(f"RECOVER continuity record rebuilt from anchors after an unclean exit: epoch {self.ep} seq {self.seq}")
+        return self.read()
 
     def username(self) -> str:
         """数据里的用户名 (弹框用). 数据被搬到别的电脑上时 profile.json 解不开, 所以每次推进时也记在 continuity.json 里."""
@@ -639,6 +731,42 @@ def _selftest_body():
             f.write("{}")
         c6.wipe()
         assert sorted(os.listdir(dd)) == [LOCK, "sysproxy_backup.json"], os.listdir(dd)
+        # 断电 / 崩溃 (MECHANICS 9.5): 连续性记录写到一半不能引起清数据
+        global unclean
+        with open(os.path.join(dd, "profile.json"), "w", encoding="utf-8") as f:
+            json.dump({"username": "断电"}, f, ensure_ascii=False)
+        c8 = guard(dd, anchors=an)[0]
+        for _ in range(3):
+            c8.tick()
+        fp = os.path.join(dd, FILE)
+        assert os.path.exists(fp + ".bak"), "写的时候留了上一次的备份"
+        for torn in (b"", b"\0" * 80, b'{"v": 1, "ep": "ab'):
+            with open(fp, "wb") as f:
+                f.write(torn)
+            c8, who = guard(dd, anchors=an)
+            assert who is None and os.path.exists(os.path.join(dd, "profile.json")), ("半截的记录: 退回 .bak, 不清数据", torn)
+        # 记录和它的 .bak 都坏了 / 没了: 上一次没有正常结束 → 从锚点重建; 正常结束过的 → 还是 stripped
+        for p_ in (fp, fp + ".bak"):
+            with open(p_, "wb") as f:
+                f.write(b"")
+        unclean = True
+        try:
+            c8, who = guard(dd, anchors=an)
+            assert who is None and Continuity(dd, an).read(), "unclean: 从锚点重建"
+        finally:
+            unclean = False
+        for p_ in (fp, fp + ".bak"):
+            if os.path.exists(p_):
+                os.remove(p_)
+        assert guard(dd, anchors=an)[1] == "断电", "没有断电的痕迹: 记录被删 = stripped"
+        # 运行标记: 正常退出删掉, 没删 = 上一次没有正常结束
+        ds = os.path.join(tmp, "sess")
+        assert begin_session(ds) is False and unclean is False
+        assert begin_session(ds) is True and unclean is True, "上一次的 run.flag 还在"
+        end_session(ds)
+        assert not os.path.exists(os.path.join(ds, FLAG)) and begin_session(ds) is False
+        end_session(ds)
+        unclean = False
         # 独占锁: 别的打开方式读不了
         c7 = Continuity(dd, an)
         c7.hold_lock()

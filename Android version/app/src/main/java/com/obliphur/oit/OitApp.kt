@@ -170,6 +170,14 @@ class OitApp : Application(), Host {
         core.syncStartedMs = { s.startedMs }
         core.checkUnbind = { s.checkUnbind() }
         core.resetAfterUnbind = { who -> android.os.Handler(android.os.Looper.getMainLooper()).post { resetAll(leave = true, unbound = who) } }
+        core.clockWipe = { who ->
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                resetAll(leave = true)          // 只清本机的数据, 不动别的设备
+                core.notice(tr("🔄  数据已清空"), if (who.isEmpty()) tr("覆水难收.") else "$who," + tr("覆水难收."),
+                    listOf(com.obliphur.oit.core.NoticeButton(tr("知道了"), "ok", true)))
+            }
+        }
+        core.enableClockGuard { SystemClock.elapsedRealtime() / 1000.0 }
         core.dm.offlineSpans = { a, b -> core.mergeSpans(core.withoutAway(s.offlineSpans(a, b, own = false), a, b) + s.selfOffSpans(a, b)) }
         core.trackOffline = { s.trackOffline() }
         core.checkRestart = { hold -> s.checkRestart(hold) }

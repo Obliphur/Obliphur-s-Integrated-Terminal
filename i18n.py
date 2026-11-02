@@ -432,6 +432,9 @@ EN = {
     "⏱  上次的专注已记录": "⏱  Last focus session recorded",
     "▶  开始专注": "▶  Start focusing",
     "知道了": "Got it",
+    "⚠  系统时间": "⚠  System clock",
+    "{name},这没有意义.你可以在10min内修改回来,否则你的数据会被清除.": "{name}, this is pointless. You can change it back within 10 min, or your data will be wiped.",
+    "系统时间已改回来.": "The system clock has been restored.",
     # ---- 行为模式 / 外出 (MECHANICS 21) ----
     "🚪  外出": "🚪  Going out",
     "🚪  上学": "🚪  School",

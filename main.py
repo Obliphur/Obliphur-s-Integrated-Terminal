@@ -36,6 +36,8 @@ def main():
     # 开发版本 (git 仓库) 不加密不核对, 方便调试; 封闭测试 (沙盒, 锚点 / 日志也在沙盒里) 照常加密和核对, 可以在里面试"数据被搬走 / 倒回去会被清掉" (MECHANICS 3.6)
     secure = not updater.is_dev_checkout() or closedtest.active()
     if secure:
+        # 运行标记 (MECHANICS 9.5): 上一次没有正常结束 (断电 / 崩溃 / 被结束) 的话, 这一次对"写了一半的文件"宽容, 不当作篡改
+        continuity.begin_session(config.app_data_dir())
         securefile.configure(config.app_data_dir())
     elif os.path.exists(os.path.join(config.app_data_dir(), securefile.KEYFILE)):
         # 开发版本和装好的版本用的是同一个数据文件夹: 装好的版本已经把 .json 加密了, 开发版本也要用同一个密钥读写
@@ -63,6 +65,8 @@ def main():
     root = tk.Tk()
     app = BreakTimerApp(root)
     root.mainloop()
+    if secure:
+        continuity.end_session(config.app_data_dir())      # 正常退出: 删掉运行标记
     if getattr(app, "restart_requested", False):   # 重置 / 更新后: 以全新状态重新打开
         if relaunch():
             # 新的程序已经打开: 旧进程马上退出. 不等还在跑的后台线程 (过滤代理, 同步 ……),

@@ -16,7 +16,11 @@ object Store {
     fun write(f: File, o: JSONObject): Boolean = try {
         f.parentFile?.mkdirs()
         val tmp = File(f.path + ".tmp")
-        tmp.writeText(o.toString(1), Charsets.UTF_8)
+        java.io.FileOutputStream(tmp).use { out ->        // 写完 fsync 再改名: 断电不会留下半个文件
+            out.write(o.toString(1).toByteArray(Charsets.UTF_8))
+            out.flush()
+            runCatching { out.fd.sync() }
+        }
         if (!tmp.renameTo(f)) {
             f.delete()
             tmp.renameTo(f)

@@ -18,6 +18,7 @@ import appban
 import autostart
 import linkd
 import registration
+import clockguard
 import continuity
 import securefile
 import closedtest
@@ -220,6 +221,7 @@ class BreakTimerApp:
         self._cont_at = 0.0
         self._purge_at = time.monotonic()
         self._cont_broken = False
+        self.clock = None            # 系统时间被改的检测 (clockguard.py, MECHANICS 9.6); 开发版本里是 None
         # 合约的网络禁令 (MECHANICS 18.3): 防火墙出站规则 (过滤代理之外的程序), 每 5 秒按正在运行的程序调整
         self.appban = appban.AppBan()
         self._appban_at = 0.0
@@ -396,6 +398,14 @@ class BreakTimerApp:
         # 合约的网络禁令: 上次留下的防火墙规则 (例如崩溃时没来得及删) 先删掉, 之后按合约重新加
         if not sandbox:
             threading.Thread(target=self._appban_sync, args=(set(),), daemon=True).start()
+        # 系统时间被改的检测: 数据核对之后才有 (开发版本不核对, 也不检测)
+        if continuity.current is not None:
+            try:
+                self.clock = clockguard.ClockGuard(self.dm.data_dir, log=lambda t: self._log_notice("CLOCK " + t))
+                self.clock.start()
+            except Exception as e:
+                self.clock = None
+                self._log_window(f"ERROR    clockguard {type(e).__name__}: {e}")
         # 录像 (目光 / 刻痕): 上次没来得及加密的 (崩溃时留在临时文件夹里的, 旧版本留在数据目录里的 mp4) 先加密起来
         threading.Thread(target=lambda: (recorder.seal_leftovers(self.dm.data_dir), self._purge_recordings()), daemon=True).start()
         # 开机自启动: 默认开启 (第一次运行时建好), 被禁用 / 删掉了就重建 (MECHANICS 3.4)
@@ -5564,6 +5574,30 @@ class BreakTimerApp:
         self._tamper_toast_at = now
         toast.warn(tr("系统代理被改动了, 已经改回去."))
 
+    def _check_clock(self):
+        """系统时间被改 (MECHANICS 9.6): 第一次发现弹窗警告, 10 分钟内改回来就解除; 没改回来 / 又改了一次就清数据"""
+        if self.clock is None or self._cont_broken or self.shutting_down or self.dm.resetting:
+            return
+        try:
+            ev = self.clock.tick()
+        except Exception as e:
+            self._log_window(f"ERROR    clockguard {type(e).__name__}: {e}")
+            return
+        if ev == "warn":
+            self._log_notice("CLOCK modified: warned")
+            who = continuity.current.username() if continuity.current is not None else ""
+            toast.notice(tr("⚠  系统时间"), tr("{name},这没有意义.你可以在10min内修改回来,否则你的数据会被清除.", name=who),
+                         [(tr("知道了"), None, True)])
+        elif ev == "restored":
+            self._log_notice("CLOCK restored")
+            toast.success(tr("系统时间已改回来."))
+        elif ev == "wipe" and continuity.current is not None:
+            # 和数据被改过 / 倒回去一样: 在锚点里标记, 马上重启, 下一次启动时清掉数据并弹出 "<用户名>,覆水难收."
+            self._cont_broken = True
+            self._log_notice("CLOCK modified: wiping")
+            continuity.current.mark_pending("system clock modified")
+            self._restart_for_update()
+
     def _net_tick(self):
         if self.shutting_down:
             return
@@ -5591,6 +5625,7 @@ class BreakTimerApp:
             self._log_notice("SECURE tampered " + ", ".join(f"{n}:{w}" for n, w in securefile.tampered[:8]))
             continuity.current.mark_pending("tampered: " + ", ".join(f"{n}:{w}" for n, w in securefile.tampered[:8]))
             self._restart_for_update()
+        self._check_clock()
         if time.monotonic() - self._purge_at >= 3600:
             self._purge_at = time.monotonic()
             threading.Thread(target=self._purge_recordings, daemon=True).start()

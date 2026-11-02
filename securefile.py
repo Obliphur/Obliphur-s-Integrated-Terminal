@@ -14,6 +14,9 @@
   · 例外 (明文): sysproxy_backup.json (断网时还原系统代理要靠它, 密钥丢了也不能连累网络), continuity.json (自己有 DPAPI 封印).
   · 从旧版本升级: 第一次生成密钥时 (ensure_key) 把现有的明文 .json 全部转成加密的; 之后再出现明文的 .json 就是篡改.
   · git 仓库里的开发版本不加密 (main.py 不调用 configure), 方便开发和调试.
+  断电 / 崩溃 (MECHANICS 9.5): 写盘是 "写临时文件 → fsync → 改名 (WRITE_THROUGH)", 先文件后索引, 完好的旧文件留一份 .bak.
+  真的读到了半截的文件 (空的 / 全是 0 / 信封被截断), 或者上一次没有正常结束 (continuity.unclean) 时读到坏的文件: 先退回 .bak,
+  没有就当作文件是空的 —— 都**不记篡改, 不会引起清数据**. 信封完整却校验不过 (在一次正常结束之后) 仍然是篡改.
   局限: 密钥在这台电脑的这个用户手里, 有本事的人可以自己调 DPAPI 解开再重写 —— 防的是用记事本改 json, 拿旧备份覆盖, 删文件.
   程序本身是 Python 源码, 能改代码的人什么都改得了, 这里不防.
 
@@ -65,12 +68,25 @@ def configure(data_dir: str, on_tamper=None):
 
 
 def _read_key():
+    base = os.path.join(_dir, KEYFILE)
+    raw = b""
     try:
-        with builtins.open(os.path.join(_dir, KEYFILE), "r", encoding="ascii") as f:
-            text = continuity.unprotect(continuity._unb64(f.read().strip()))
-        return bytes.fromhex(text) if text else None
+        with builtins.open(base, "rb") as f:
+            raw = f.read()
+        text = continuity.unprotect(continuity._unb64(raw.decode("ascii", "replace").strip()))
+        if text:
+            return bytes.fromhex(text)
     except (OSError, ValueError):
-        return None
+        pass
+    if continuity.unclean or not raw.strip(b"\x00 \r\n"):      # 密钥文件是半截的 / 空的 (断电), 或上一次没有正常结束: 用上一份
+        try:
+            with builtins.open(base + ".bak", "rb") as f:
+                text = continuity.unprotect(continuity._unb64(f.read().decode("ascii", "replace").strip()))
+            if text:
+                return bytes.fromhex(text)
+        except (OSError, ValueError):
+            pass
+    return None
 
 
 def key_id() -> str:
@@ -95,10 +111,8 @@ def ensure_key() -> bool:
             return False
         os.makedirs(_dir, exist_ok=True)
         path = os.path.join(_dir, KEYFILE)
-        tmp = path + ".tmp"
-        with builtins.open(tmp, "w", encoding="ascii") as f:
-            f.write(continuity._b64(blob))
-        os.replace(tmp, path)
+        continuity.durable_write(path + ".bak", continuity._b64(blob).encode("ascii"))     # 密钥不会再变: 备份和正本一样
+        continuity.durable_write(path, continuity._b64(blob).encode("ascii"))
         _key, _strict = key, False                  # 迁移期间明文照样读
         try:
             for name in sorted(os.listdir(_dir)):
@@ -185,6 +199,32 @@ def _tamper(name: str, why: str):
 
 # ---- 计数索引 ----
 
+def _valid(name: str):
+    def ok(raw: bytes) -> bool:
+        try:
+            unseal(name, raw)
+            return True
+        except ValueError:
+            return False
+    return ok
+
+
+def _torn(raw: bytes) -> bool:
+    """断电留下的半截文件的样子: 空的 / 全是 0 / 信封被截断 或 末尾补着 0."""
+    if not raw or not raw.strip(b"\0"):
+        return True
+    return raw.startswith(MAGIC) and (len(raw) < len(MAGIC) + 16 + 8 + 32 or raw.endswith(b"\0\0\0\0"))
+
+
+def _idx_plain(path: str):
+    try:
+        with builtins.open(path, "rb") as f:
+            _, plain = unseal(IDXFILE, f.read())
+        return {str(k): int(v) for k, v in json.loads(plain.decode("utf-8")).items()}
+    except (OSError, ValueError, TypeError):
+        return None
+
+
 def _load_idx() -> dict:
     global _idx
     if _idx is not None:
@@ -192,20 +232,49 @@ def _load_idx() -> dict:
     _idx = {}
     path = os.path.join(_dir, IDXFILE)
     if os.path.exists(path):
-        try:
-            with builtins.open(path, "rb") as f:
-                _, plain = unseal(IDXFILE, f.read())
-            _idx = {str(k): int(v) for k, v in json.loads(plain.decode("utf-8")).items()}
-        except (OSError, ValueError):
-            _tamper(IDXFILE, "bad-index")
+        got = _idx_plain(path)
+        if got is None:
+            try:
+                with builtins.open(path, "rb") as f:
+                    raw = f.read()
+            except OSError:
+                raw = b""
+            if continuity.unclean or _torn(raw):
+                got = _idx_plain(path + ".bak")           # 上一次的索引 (只比现在落后一次写入: 文件的计数不会比它小)
+                if got is None:
+                    got = _rebuild_idx()                  # 没有可用的备份: 按现有文件里的计数重建 (这一次对倒回去不设防, 之后照常)
+                continuity.log_event("RECOVER secure.idx unreadable after an unclean exit / torn write: recovered")
+                if _key is not None:
+                    try:
+                        _atomic(path, seal(IDXFILE, 0, json.dumps(got).encode("utf-8")))      # 正本也补好
+                    except OSError:
+                        pass
+            else:
+                _tamper(IDXFILE, "bad-index")
+        if got is not None:
+            _idx = got
     return _idx
 
 
-def _atomic(path: str, data: bytes):
-    tmp = path + ".tmp"
-    with builtins.open(tmp, "wb") as f:
-        f.write(data)
-    os.replace(tmp, path)
+def _rebuild_idx() -> dict:
+    out = {}
+    try:
+        for name in os.listdir(_dir):
+            if _managed_name(name):
+                try:
+                    with builtins.open(os.path.join(_dir, name), "rb") as f:
+                        raw = f.read()
+                    ctr, _ = unseal(name, raw)
+                    out[name] = ctr
+                except (OSError, ValueError):
+                    pass
+    except OSError:
+        pass
+    return out
+
+
+def _atomic(path: str, data: bytes, name: str = ""):
+    continuity.durable_write(path, data, bak=_valid(name) if name and _key is not None else None)
 
 
 def _commit(path: str, name: str, plain: bytes):
@@ -216,22 +285,64 @@ def _commit(path: str, name: str, plain: bytes):
         given = os.path.abspath(path)
         final = given[:-4] if given.endswith(".tmp") else given
         data = seal(name, ctr, plain)
-        _atomic(final, data)
+        _atomic(final, data, name)                      # 先文件 (fsync) 后索引: 断电时文件的计数只会比索引大, 不会小
         idx[name] = ctr
-        _atomic(os.path.join(_dir, IDXFILE), seal(IDXFILE, 0, json.dumps(idx).encode("utf-8")))
+        _atomic(os.path.join(_dir, IDXFILE), seal(IDXFILE, 0, json.dumps(idx).encode("utf-8")), IDXFILE)
         if given != final:
             with builtins.open(given, "wb") as f:       # 调用方 (写临时文件再改名的老写法) 接着会把它改名成 final: 内容一样
                 f.write(data)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except OSError:
+                    pass
+
+
+def _from_bak(path: str, name: str, slack: int = 1):
+    """上一次的完好文件 (.bak) 的明文; 计数比索引小的 (被换成旧的了) 不要. 用上了就把它放回正本."""
+    try:
+        with builtins.open(path + ".bak", "rb") as f:
+            raw = f.read()
+        ctr, plain = unseal(name, raw)
+    except (OSError, ValueError):
+        return None
+    if ctr < _load_idx().get(name, 0) - slack:        # .bak 总是比索引落后一次写入; 再旧的是被人换上去的
+        return None
+    try:
+        continuity.durable_write(path, raw)
+    except OSError:
+        pass
+    return plain
+
+
+def _recover(path: str, name: str, raw: bytes, why: str):
+    """文件读不出来 (raw: 读到的内容, 文件不存在 / 内容没问题只是计数不对时是 None): 是断电 / 崩溃留下的 (半截的, 或上一次没有正常结束) 就退回 .bak,
+    没有 .bak 的半截文件当作空的. 返回明文; 不是断电的痕迹返回 None (调用方记篡改)."""
+    torn = raw is not None and _torn(raw)
+    if not (continuity.unclean or torn):
+        return None
+    plain = _from_bak(path, name)
+    if plain is not None:
+        continuity.log_event(f"RECOVER {name} ({why}): restored from .bak")
+        return plain
+    if torn:
+        continuity.log_event(f"RECOVER {name} ({why}): half-written file, treated as empty")
+        return b""
+    return None
 
 
 def _read(path: str, name: str) -> bytes:
-    """受管理的文件的明文. 篡改时 _tamper 并返回空字节 (调用方当作损坏的文件); 文件不存在时 FileNotFoundError (索引里有的先记篡改)."""
+    """受管理的文件的明文. 篡改时 _tamper 并返回空字节 (调用方当作损坏的文件); 文件不存在时 FileNotFoundError (索引里有的先记篡改).
+    断电 / 崩溃留下的半截文件不算篡改 (见 _recover)."""
     with _lock:
         try:
             with builtins.open(path, "rb") as f:
                 raw = f.read()
         except FileNotFoundError:
             if _key is not None and _strict and name in _load_idx():
+                rec = _recover(path, name, None, "missing")
+                if rec is not None:
+                    return rec
                 _tamper(name, "deleted")
                 return b""
             raise
@@ -242,15 +353,26 @@ def _read(path: str, name: str) -> bytes:
             return raw                                   # 还没有密钥 (旧版本 / 联动程序先于 OIT 启动): 明文照读
         if not raw.startswith(MAGIC):
             if _strict:
+                rec = _recover(path, name, raw, "not-envelope")
+                if rec is not None:
+                    return rec
                 _tamper(name, "plain")
                 return b""
             return raw
         try:
             ctr, plain = unseal(name, raw)
         except ValueError:
+            rec = _recover(path, name, raw, "bad-mac")
+            if rec is not None:
+                return rec
             _tamper(name, "bad-mac")
             return b""
         if _strict and ctr < _load_idx().get(name, 0):
+            if continuity.unclean and ctr >= _load_idx().get(name, 0) - 1:
+                return plain                             # 断电时刚好少了最后一次写入
+            rec = _recover(path, name, None, "rollback")
+            if rec is not None:
+                return rec
             _tamper(name, "rollback")
             return b""
         return plain
@@ -304,7 +426,11 @@ def remove(path):
             idx = _load_idx()
             if name in idx:
                 del idx[name]
-                _atomic(os.path.join(_dir, IDXFILE), seal(IDXFILE, 0, json.dumps(idx).encode("utf-8")))
+                _atomic(os.path.join(_dir, IDXFILE), seal(IDXFILE, 0, json.dumps(idx).encode("utf-8")), IDXFILE)
+    try:
+        os.remove(path + ".bak")
+    except OSError:
+        pass
     os.remove(path)
 
 
@@ -425,6 +551,75 @@ def _selftest():
             pass
         with open(os.path.join(d, "t.json"), "r") as f:
             assert json.load(f) == {"t": 1}
+        # 断电 / 崩溃 (MECHANICS 9.5): 半截的文件不算篡改, 不引起清数据
+        real_log, continuity.log_event = continuity.log_event, lambda text: None
+        try:
+            configure(d, lambda n_, w: events.append((n_, w)))
+            n = len(events)
+            pj = os.path.join(d, "pw.json")
+            for i in range(3):
+                with open(pj, "w", encoding="utf-8") as f:
+                    f.write(json.dumps({"i": i}))
+            assert os.path.exists(pj + ".bak"), "写的时候留了上一次的备份"
+            good = builtins.open(pj, "rb").read()
+            for torn in (b"", b"\0" * len(good), good[:40], good[:-5] + b"\0" * 5):      # 空的 / 全是 0 / 截断 / 末尾补 0
+                builtins.open(pj, "wb").write(torn)
+                with open(pj, "r", encoding="utf-8") as f:
+                    assert json.load(f) == {"i": 1}, "半截的文件: 退回上一次 (.bak)"
+                assert len(events) == n and not tampered, (events[n:], torn[:8])
+                assert builtins.open(pj, "rb").read() == builtins.open(pj + ".bak", "rb").read(), "退回之后正本也补好了"
+            os.remove(pj + ".bak")
+            builtins.open(pj, "wb").write(b"")
+            with open(pj, "r", encoding="utf-8") as f:
+                assert f.read() == "" and len(events) == n, "半截的文件又没有备份: 当作空的, 不记篡改"
+            # 信封完整却校验不过 (正常结束之后): 照样是篡改
+            with open(pj, "w", encoding="utf-8") as f:
+                f.write('{"i": 9}')
+            bad = bytearray(builtins.open(pj, "rb").read())
+            bad[40] ^= 1
+            builtins.open(pj, "wb").write(bytes(bad))
+            with open(pj, "r", encoding="utf-8") as f:
+                assert f.read() == "" and events[-1] == ("pw.json", "bad-mac")
+            # 上一次没有正常结束: 坏的文件先退回 .bak, 少了最后一次写入也不算倒回去
+            with open(pj, "w", encoding="utf-8") as f:
+                f.write('{"i": 10}')
+            with open(pj, "w", encoding="utf-8") as f:
+                f.write('{"i": 11}')
+            n = len(events)
+            continuity.unclean = True
+            try:
+                builtins.open(pj, "wb").write(bytes(bad))
+                with open(pj, "r", encoding="utf-8") as f:
+                    assert json.load(f) == {"i": 10} and len(events) == n, "unclean: 坏的文件退回 .bak"
+                # 现在文件是 {"i": 10}, 索引记着 {"i": 11} 的计数: 比文件多一次 (断电时最后一次写入没来得及落盘)
+                with open(pj, "r", encoding="utf-8") as f:
+                    assert json.load(f) == {"i": 10} and len(events) == n, "unclean: 少一次写入不算倒回去"
+            finally:
+                continuity.unclean = False
+            # 索引是半截的: 退回 .idx.bak / 重建, 不是篡改; 完整却坏的才是 bad-index
+            n = len(events)
+            ip = os.path.join(d, IDXFILE)
+            assert os.path.exists(ip + ".bak")
+            builtins.open(ip, "wb").write(b"")
+            _idx = None
+            assert _load_idx().get("settings.json") and len(events) == n, "索引半截: 恢复"
+            iraw = bytearray(builtins.open(ip, "rb").read())
+            iraw[40] ^= 1
+            builtins.open(ip, "wb").write(bytes(iraw))
+            _idx = None
+            _load_idx()
+            assert events[-1] == (IDXFILE, "bad-index"), "索引完整却坏了 (正常结束之后): 篡改"
+            with open(os.path.join(d, "settings.json"), "w") as f:      # 把索引写好
+                f.write('{"new": 1}')
+            # 密钥文件是半截的: 用 .bak
+            kf0 = builtins.open(os.path.join(d, KEYFILE), "rb").read()
+            kid0 = key_id()
+            builtins.open(os.path.join(d, KEYFILE), "wb").write(b"")
+            configure(d, lambda n_, w: events.append((n_, w)))
+            assert key_id() == kid0, "密钥文件半截: 用 .bak"
+            builtins.open(os.path.join(d, KEYFILE), "wb").write(kf0)
+        finally:
+            continuity.log_event = real_log
         # 不在数据文件夹里 / 不是 .json: 原样
         sub = os.path.join(d, "sub")
         os.makedirs(sub)

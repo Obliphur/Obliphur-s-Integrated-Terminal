@@ -112,6 +112,10 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     var checkUnbind: () -> List<String> = { emptyList() }
     /** 解除绑定的冷静期到了: 清空本机的数据 (OitApp.resetAll). */
     var resetAfterUnbind: (String) -> Unit = {}
+    /** 系统时间被改的检测 (ClockGuard, MECHANICS 9.6): OitApp 打开 (enableClockGuard) 之后才有; 单元测试里是 null. */
+    var clock: ClockGuard? = null
+    /** 警告之后 10 分钟没改回来 / 又改了一次: 清空本机的数据 (参数是用户名, 重置后弹出 "<用户名>,覆水难收."). */
+    var clockWipe: (String) -> Unit = {}
     /** 此刻离线的绑定的设备: id → 名字. */
     var offlinePeers: () -> Map<String, String> = { emptyMap() }
     /** 上一次看到的离线设备 (null = 还没看过: 刚打开时已经离线的不响). */
@@ -482,6 +486,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         val dt = m - lastTick
         lastTick = m
         val now = LocalDateTime.now()
+        checkClock()
         if (now.toLocalDate().key() != dm.todayDate) onMidnight()
 
         when (net.tick(dt)) {
@@ -526,6 +531,22 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         }
         changed()
         host.scheduleWake(nextWake())
+    }
+
+    /** 开始检测系统时间被改 (up: 开机以来的秒数, 睡眠也算; OitApp 传 SystemClock.elapsedRealtime). */
+    fun enableClockGuard(up: () -> Double?) {
+        clock = ClockGuard.forFile(File(dir, "clock_guard.json"), up) { logNotice("CLOCK $it") }.also { it.start() }
+    }
+
+    /** 系统时间被改: 第一次发现弹窗警告, 10 分钟内改回来就解除; 没改回来 / 又改了一次就清数据. */
+    private fun checkClock() {
+        val g = clock ?: return
+        when (runCatching { g.tick() }.getOrNull()) {
+            "warn" -> notice(tr("⚠  系统时间"), tr("{name},这没有意义.你可以在10min内修改回来,否则你的数据会被清除.", "name" to username),
+                listOf(NoticeButton(tr("知道了"), "ok", true)))
+            "restored" -> toast(tr("系统时间已改回来."), "success")
+            "wipe" -> { clock = null; logNotice("CLOCK wipe"); clockWipe(username) }
+        }
     }
 
     /** 下一次一定要醒来处理的时刻 (秒). */
