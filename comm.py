@@ -280,6 +280,8 @@ def import_persona(folder: str, src: str) -> str:
 _WAIT_RE = re.compile(r"\[\s*waiting\s+for\s+reply\s*\]\s*[:：]?\s*\[\s*(\d+(?:\.\d+)?)\s*\]", re.I)
 _BRACKET_RE = re.compile(r"[\[［][^\[\]［］\n]*[\]］]")
 WAIT_MAX_MIN = 1440
+# 去掉 [] 之后留下的空壳: 对方常把标记写在行内代码 / 引号 / 括号里 (`[waiting for reply]:[1]`), 剩下 `` “” 「」 () 之类的就不显示了
+_EMPTY_WRAP_RE = re.compile(r"`[ \t]*`|“[ \t]*”|「[ \t]*」|『[ \t]*』|\([ \t]*\)|（[ \t]*）|\"[ \t]*\"|'[ \t]*'")
 
 
 def clean_reply(reply: str) -> tuple:
@@ -291,6 +293,9 @@ def clean_reply(reply: str) -> tuple:
         n = float(m.group(1))
         minutes = n if 0 < n <= WAIT_MAX_MIN else None
     text = _BRACKET_RE.sub("", _WAIT_RE.sub("", reply))
+    prev = None
+    while prev != text:                                   # 一层一层剥 (括号里的空代码 ...)
+        prev, text = text, _EMPTY_WRAP_RE.sub("", text)
     text = re.sub(r"[ \t]+\n", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
     return text, minutes
@@ -357,10 +362,8 @@ def urlsplit_host(url) -> str:
 
 
 def info_tags(reply: str) -> list:
-    """对方这次回复是在要资料吗: 同时有 [refuse to reply] 和 [模块名] (不分大小写和空格) → 要的模块列表 (comm_data.MODULE_TAGS)."""
+    """对方这次回复是在要资料吗: 有 [模块名] (不分大小写和空格; 有没有 [refuse to reply] 都算) → 要的模块列表 (comm_data.MODULE_TAGS)."""
     t = re.sub(r"\s+", " ", str(reply or "")).lower()
-    if REFUSE not in t:
-        return []
     import comm_data
     return [tag for tag in comm_data.MODULE_TAGS if f"[{tag}]" in t]
 
@@ -1124,8 +1127,11 @@ class Comm:
             self._changed()
             return
         text, wait_min = clean_reply(reply) if not err else ("", None)
+        queried = not err and bool(info_tags(reply))           # 对方在查询模块资料 (有没有 [refuse to reply] 都算): 这条一定不显示
+        if queried:
+            text = ""
         refused = not err and is_refusal(reply)
-        empty = not err and not refused and not text           # 去掉 [] 之后什么也没剩: 当没回复
+        empty = not err and not refused and not text           # 去掉 [] 之后什么也没剩 / 是查询: 当没回复 (不重试)
         # 第二次调用 (规则 VIII) 等回复的时候用户又说话了: 这条不要了 (用户的新消息重新回复)
         drop = kind == "followup" and not err and not refused and (self._again or self.unanswered())
         if drop:
@@ -1290,7 +1296,7 @@ class Comm:
         if int(st["clear_ts"]) != clear0 or err:
             return
         text, wait_min = clean_reply(reply)
-        if is_refusal(reply) or not text:
+        if is_refusal(reply) or not text or info_tags(reply):
             self.log(f"REPLY bg-{kind}: 对方不想发 / 什么也没剩, 不显示")
             return
         sysm = self._mk("sys", extra[0], extra[1])
@@ -1763,7 +1769,7 @@ def _selftest():
     assert other.cfg["user_profile"] == "我是大二的学生, 在准备考研."
     mc.flush(); mc2.flush(); lc.flush(); other.flush()
     # ---- 对方要资料: [refuse to reply][contract] → 给词条库再调用一次 ----
-    assert info_tags(" [Refuse to reply] [CONTRACT] ") == ["contract"] and info_tags("[contract]") == []
+    assert info_tags(" [Refuse to reply] [CONTRACT] ") == ["contract"] and info_tags("[contract]") == ["contract"], "没有 [refuse to reply] 也算查询"
     assert info_tags("[refuse to reply][mechanics.md]") == [] and info_tags("好的") == []
     assert info_tags("[refuse to reply][calendar][stats]") == ["calendar", "stats"] and info_tags("[refuse to reply][x]") == []
     import comm_data
@@ -1792,6 +1798,19 @@ def _selftest():
     ci.send("再问一次")
     wait(ci)
     assert ci.unanswered() and ci.visible()[-1]["text"] == "再问一次"
+    # 没有 [refuse to reply] 只有 [模块名]: 也是查询, 强制不显示 (要得到资料就照样给, 要不到也不显示)
+    ci.info_fn = lambda tag: {"calendar": "日历: 今天专注 2h"}.get(tag, "")
+    n_calls = len(calls)
+    script.extend(["[calendar]", "今天专注了 2 小时."])
+    ci.send("我今天专注了多久")
+    wait(ci)
+    assert len(calls) == n_calls + 2 and "日历: 今天专注 2h" in calls[-1][1][-1]["content"]
+    assert ci.visible()[-1]["text"] == "今天专注了 2 小时." and not any("[calendar]" in m["text"] for m in ci.messages)
+    ci.info_fn = lambda tag: ""
+    script.append("好的,我来看看[calendar]")
+    ci.send("再看一次")
+    wait(ci)
+    assert ci.visible()[-1]["text"] == "再看一次" and not any("好的" in m["text"] for m in ci.messages), "要不到资料: 带 [模块名] 的回复也不显示"
     ci.flush()
     # ---- 设备同步: 记录合并, 只有 leader 调用 AI / 重试, 清空一起清 ----
     dA, dB = os.path.join(td, "sa"), os.path.join(td, "sb")
@@ -2039,6 +2058,8 @@ def _selftest():
     assert clean_reply("好的[微笑] 嗯\n\n\n\n[动作]好") == ("好的 嗯\n\n好", None)
     assert clean_reply("[Waiting For Reply]：[ 0.5 ]") == ("", 0.5) and clean_reply("x [waiting for reply]:[0]") == ("x", None)
     assert clean_reply("a［全角］b") == ("ab", None)
+    assert clean_reply("要在结尾带上 `[waiting for reply]:[1]`,才会触发") == ("要在结尾带上 ,才会触发", 1.0), "去掉 [] 后留下的空 `` 也不显示"
+    assert clean_reply("好(`[x]`)“[y]”「[z]」") == ("好", None)
     cu.snapshot = lambda: {"state": "idle"}
     script.append("今天过得怎么样?[waiting for reply]:[10]")
     cu.send("嗨")

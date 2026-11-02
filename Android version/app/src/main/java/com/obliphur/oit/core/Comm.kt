@@ -152,10 +152,9 @@ object CommText {
         "%04d-%02d-%02d 周%s %02d:%02d".format(now.year, now.monthValue, now.dayOfMonth,
             WEEKDAY[now.dayOfWeek.value - 1], now.hour, now.minute)
 
-    /** 对方这次回复是在要资料吗: 同时有 [refuse to reply] 和 [contract] (不分大小写和空格) → 要的资料列表. */
+    /** 对方这次回复是在要资料吗: 有 [模块名] (不分大小写和空格; 有没有 [refuse to reply] 都算) → 要的资料列表. */
     fun infoTags(reply: String): List<String> {
         val t = reply.replace(Regex("\\s+"), " ").lowercase()
-        if (REFUSE !in t) return emptyList()
         return CommData.MODULE_TAGS.filter { "[$it]" in t }
     }
 
@@ -163,14 +162,16 @@ object CommText {
 
     // 规则 IX: 对方期待用户回复时, 在话的结尾写 [waiting for reply]:[N] (N 分钟); 所有 [] 里的内容都不显示在聊天里 (记录里给模型看的那份 api 保留原文)
     private val WAIT_RE = Regex("\\[\\s*waiting\\s+for\\s+reply\\s*\\]\\s*[:：]?\\s*\\[\\s*(\\d+(?:\\.\\d+)?)\\s*\\]", RegexOption.IGNORE_CASE)
+    private val EMPTY_WRAP_RE = Regex("`[ \\t]*`|“[ \\t]*”|「[ \\t]*」|『[ \\t]*』|\\([ \\t]*\\)|（[ \\t]*）|\"[ \\t]*\"|'[ \\t]*'")
     private val BRACKET_RE = Regex("[\\[［][^\\[\\]［］\\n]*[\\]］]")
     const val WAIT_MAX_MIN = 1440.0
 
     /** 对方的回复 → (聊天里显示的文字, 等用户回复的分钟数, 没有 = 0.0). 去掉 [waiting for reply]:[N] 和所有别的 [...]; N 不是 0 < N <= 1440 就当没写. */
     fun cleanReply(reply: String): Pair<String, Double> {
         val n = WAIT_RE.find(reply)?.groupValues?.get(1)?.toDouble() ?: 0.0
-        val text = BRACKET_RE.replace(WAIT_RE.replace(reply, ""), "")
-            .replace(Regex("[ \\t]+\\n"), "\n").replace(Regex("\\n{3,}"), "\n\n").trim()
+        var raw = BRACKET_RE.replace(WAIT_RE.replace(reply, ""), "")
+        while (true) { val n2 = EMPTY_WRAP_RE.replace(raw, ""); if (n2 == raw) break; raw = n2 }       // 一层一层剥 (括号里的空代码 ...)
+        val text = raw.replace(Regex("[ \\t]+\\n"), "\n").replace(Regex("\\n{3,}"), "\n\n").trim()
         return text to (if (n > 0 && n <= WAIT_MAX_MIN) n else 0.0)
     }
 
@@ -976,7 +977,9 @@ class Comm(
         busySince = 0L
         if (hardBlock()) { again = false; changed(); return }       // 等回复的时候"无言为真"生效了: 这条回复不要了
         if (r.epoch != epoch) { again = false; changed(); return }       // 发出之后清空过聊天记录: 这条回复不要了
-        val (text, waitMin) = if (r.err.isEmpty()) CommText.cleanReply(r.reply) else "" to 0.0
+        val queried = r.err.isEmpty() && CommText.infoTags(r.reply).isNotEmpty()      // 对方在查询模块资料 (有没有 [refuse to reply] 都算): 这条一定不显示
+        val (text0, waitMin) = if (r.err.isEmpty()) CommText.cleanReply(r.reply) else "" to 0.0
+        val text = if (queried) "" else text0
         val refused = r.err.isEmpty() && CommText.isRefusal(r.reply)
         val empty = r.err.isEmpty() && !refused && text.isEmpty()            // 去掉 [] 之后什么也没剩: 当没回复
         // 第二次调用 (规则 VIII) 等回复的时候用户又说话了: 这条不要了 (用户的新消息重新回复)
@@ -1210,7 +1213,7 @@ class Comm(
         val st = stateOf(r.pid)
         if (st.clearTs != r.clear0 || r.err.isNotEmpty()) return
         val (text, waitMin) = CommText.cleanReply(r.reply)
-        if (CommText.isRefusal(r.reply) || text.isEmpty()) { log("REPLY bg-${r.kind}: 对方不想发 / 什么也没剩, 不显示"); return }
+        if (CommText.isRefusal(r.reply) || text.isEmpty() || CommText.infoTags(r.reply).isNotEmpty()) { log("REPLY bg-${r.kind}: 对方不想发 / 什么也没剩, 不显示"); return }
         val sysm = mk("sys", r.extra.body, r.extra.api)
         val m = mk("ai", text, if (text != r.reply.trim()) r.reply.trim() else "")
         if (waitMin > 0 && r.kind != "chase") m.wait = waitMin

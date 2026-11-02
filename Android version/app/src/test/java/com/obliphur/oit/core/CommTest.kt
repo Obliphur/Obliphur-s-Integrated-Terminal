@@ -239,7 +239,8 @@ class CommTest {
     @Test
     fun infoRequests() {
         assertEquals(listOf("contract"), CommText.infoTags(" [Refuse to reply] [CONTRACT] "))
-        assertTrue(CommText.infoTags("[contract]").isEmpty() && CommText.infoTags("好的").isEmpty())
+        assertEquals(listOf("contract"), CommText.infoTags("[contract]"))          // 没有 [refuse to reply] 也算查询
+        assertTrue(CommText.infoTags("好的").isEmpty())
         assertTrue(CommText.infoTags("[refuse to reply][mechanics.md]").isEmpty())
         assertEquals(listOf("calendar", "stats"), CommText.infoTags("[refuse to reply][calendar][stats]"))
         assertTrue(CommText.infoTags("[refuse to reply][x]").isEmpty())
@@ -493,6 +494,8 @@ class CommTest {
         assertEquals("" to 0.5, CommText.cleanReply("[Waiting For Reply]：[ 0.5 ]"))
         assertEquals("x" to 0.0, CommText.cleanReply("x [waiting for reply]:[0]"))
         assertEquals("ab" to 0.0, CommText.cleanReply("a［全角］b"))
+        assertEquals("要在结尾带上 ,才会触发" to 1.0, CommText.cleanReply("要在结尾带上 `[waiting for reply]:[1]`,才会触发"))
+        assertEquals("好" to 0.0, CommText.cleanReply("好(`[x]`)“[y]”「[z]」"))
         script.add("今天过得怎么样?[waiting for reply]:[10]")
         c.send("嗨"); wait(c)
         val lastAi = c.messages.last { it.role == "ai" }
