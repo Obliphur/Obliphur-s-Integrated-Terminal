@@ -110,6 +110,8 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     var versionMismatch: () -> List<Triple<String, String, Boolean>> = { emptyList() }
     /** 冷静期到了的解除绑定就解除, 并请那台设备清空全部数据 (返回这次解除了的设备的名字, MECHANICS 15.1). */
     var checkUnbind: () -> List<String> = { emptyList() }
+    /** 绑定的设备被卸载了 (连续 24 小时拒绝连接, MECHANICS 9.2): 解除绑定, 返回名字; 参数: 外出中 (不算). */
+    var checkGone: (Boolean) -> List<String> = { emptyList() }
     /** 解除绑定的冷静期到了: 清空本机的数据 (OitApp.resetAll). */
     var resetAfterUnbind: (String) -> Unit = {}
     /** 系统时间被改的检测 (ClockGuard, MECHANICS 9.6): OitApp 打开 (enableClockGuard) 之后才有; 单元测试里是 null. */
@@ -518,7 +520,8 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             checkPendingSettings()
             timer.check()
             checkSetupPeriod()
-            val unbound = runCatching { checkUnbind() }.getOrDefault(emptyList())
+            val unbound = runCatching { checkUnbind() }.getOrDefault(emptyList()) +
+                runCatching { checkGone(behavior.current() != null) }.getOrDefault(emptyList())
             for (name in unbound) logNotice("SYNC unbind done $name")
             if (unbound.isNotEmpty()) resetAfterUnbind(unbound.joinToString(", "))     // 只重置本机: 不转告其他设备, 也不清空对方
             checkOfflineChime()

@@ -895,14 +895,31 @@ class SyncService:
         except OSError as e:
             return "refused" if refused(str(e)) else "unknown"
 
-    def check_gone(self, link_state=None) -> list:
+    def _reset_refused(self, pid: str = None):
+        with self.lock:
+            for k, q in self.state["peers"].items():
+                if pid is None or k == pid:
+                    q.pop("refused_since", None)
+                    q.pop("refused_last", None)
+
+    def check_gone(self, link_state=None, hold: bool = False) -> list:
         """每 5 秒: 绑定的设备连续 GONE_REFUSED_MS 都\"拒绝连接\" (同步端口和联动程序的端口都是), 就当它被卸载了:
         解除和它的绑定, 返回它们的名字; 调用方要重置本机 (清空本机的数据, 和 check_unbind 一样, 只清本机).
-        联动程序的端口有人听 = 对方的联动程序还在, 不算; 探测不了 (超时) 的这一轮不算也不重置."""
+        联动程序的端口有人听 = 对方的联动程序还在, 不算; 探测不了 (超时) 的这一轮不算也不重置.
+        外出 (hold: 本机看到的外出, 外出期间可以关掉 OIT, 联动程序也不启动它, 8.4 / 21) / 本机在别的虚拟桌面或 Adapter 断网 (连不上是本机的原因) /
+        对方关机 (off: 收到关机指令 / 没电) 或断网 (net_off: 换成了 Adapter, 15.5) 的时候不算, 并且把\"拒绝连接\"的记录清掉, 回来之后重新算 24 小时."""
         link_state = link_state or self._link_port_state
+        if hold or _call(self, "away", False) or self.adapter_since():
+            self._reset_refused()
+            return []
         now = _now_ms()
         done = []
+        states = {d["id"]: d for d in self.device_states()}
         for pid, p in list(self.peers().items()):
+            d = states.get(pid)
+            if d and (d["off"] or d["net_off"]):
+                self._reset_refused(pid)
+                continue
             since, last = int(p.get("refused_since") or 0), int(p.get("refused_last") or 0)
             if not since or now - last > GONE_GAP_MS or last - since < GONE_REFUSED_MS:
                 continue
@@ -2708,6 +2725,21 @@ def _selftest():
         assert sc.check_gone(lambda a: "unknown") == [] and "pG" in sc.peers(), "探测不了 (超时): 这一轮不算"
         sc._gone_try = {}
         assert sc.check_gone(lambda a: "refused") == ["G"] and "pG" not in sc.peers(), "都拒绝连接满 24 小时: 解除绑定"
+        # 外出 / 关机 / 断网期间不算, 记录清掉重新算
+        sc.state["peers"]["pG"] = {"name": "G", "platform": "android", "addr": "127.0.0.1", "port": 1, "key": "00", "last_ok": 0,
+                                   "last_err": err_refused, "refused_since": t - GONE_REFUSED_MS - 60_000, "refused_last": t}
+        sc._gone_try = {}
+        assert sc.check_gone(lambda a: "refused", hold=True) == [] and "pG" in sc.peers() and "refused_since" not in sc.state["peers"]["pG"], "本机看到外出: 不算, 重新算"
+        sc.state["peers"]["pG"].update(refused_since=t - GONE_REFUSED_MS - 60_000, refused_last=t)
+        sc.state["status"]["pG"] = {"ts": t - 10 * 60_000, "off": True, "auto": True}            # 最后的状态是收到关机指令
+        sc._gone_try = {}
+        assert sc.check_gone(lambda a: "refused") == [] and "pG" in sc.peers() and "refused_since" not in sc.state["peers"]["pG"], "对方关机: 不算, 重新算"
+        sc.state["status"]["pG"] = {"ts": t - 10 * 60_000, "adapter": True}                        # 对方换成了 Adapter 断网
+        sc.state["peers"]["pG"].update(refused_since=t - GONE_REFUSED_MS - 60_000, refused_last=t)
+        sc._gone_try = {}
+        assert sc.check_gone(lambda a: "refused") == [] and "pG" in sc.peers(), "对方断网: 不算"
+        sc.state["status"].pop("pG")
+        sc.state["peers"].pop("pG")
         # 不满 24 小时 / 中间有别的错误 / 成功过: 不算
         sc.state["peers"]["pG"] = {"name": "G", "platform": "android", "addr": "127.0.0.1", "port": 1, "key": "00", "last_ok": 0, "last_err": ""}
         q = sc.state["peers"]["pG"]

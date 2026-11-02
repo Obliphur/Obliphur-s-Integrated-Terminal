@@ -168,7 +168,8 @@ class OitApp : Application(), Host {
         core.versionMismatch = { s.versionMismatch() }
         core.offlinePeers = { val peers = s.peers(); s.deviceStates().filter { !it.online && it.id in peers }.associate { it.id to it.name } }
         core.syncStartedMs = { s.startedMs }
-        core.checkUnbind = { s.checkUnbind() + s.checkGone() }          // 解除绑定的冷静期到了 + 对方被卸载了 (连续 24 小时拒绝连接): 清空本机
+        core.checkUnbind = { s.checkUnbind() }
+        core.checkGone = { hold -> s.checkGone(hold) }          // 对方被卸载了 (连续 24 小时拒绝连接, 外出 / 关机不算): 解除绑定, 清空本机
         core.resetAfterUnbind = { who -> android.os.Handler(android.os.Looper.getMainLooper()).post { resetAll(leave = true, unbound = who) } }
         core.clockWipe = { who ->
             android.os.Handler(android.os.Looper.getMainLooper()).post {

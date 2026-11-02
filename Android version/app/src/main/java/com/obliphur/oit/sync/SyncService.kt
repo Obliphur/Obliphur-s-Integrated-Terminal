@@ -1267,10 +1267,19 @@ class SyncService(
     internal fun resetGoneTryForTest() = goneTry.clear()
 
     /** 每 5 秒: 绑定的设备连续 GONE_REFUSED_MS 都"拒绝连接" (同步端口和联动程序的端口都是) = 它被卸载了: 解除和它的绑定, 返回名字 (调用方清空本机, 和 checkUnbind 一样). */
-    fun checkGone(linkState: (String) -> String = { linkPortState(it) }): List<String> {
+    fun checkGone(hold: Boolean = false, linkState: (String) -> String = { linkPortState(it) }): List<String> {
+        // 外出 (hold: 外出期间可以关掉 OIT, 联动程序也不启动它) / 对方关机 (收到关机指令 / 没电) 或断网 (换成了 Adapter) 的时候不算, 记录清掉, 回来后重新算 24 小时
+        fun reset(id: String? = null) = lock.withLock {
+            val ps = state.getJSONObject("peers")
+            for (k in ps.keys()) if (id == null || k == id) ps.optJSONObject(k)?.also { it.remove("refused_since"); it.remove("refused_last") }
+        }
+        if (hold || dead) { reset(); return emptyList() }
         val now = System.currentTimeMillis()
         val done = mutableListOf<String>()
+        val states = deviceStates().associateBy { it.id }
         for ((id, p) in peers()) {
+            val dv = states[id]
+            if (dv != null && (dv.off || dv.netOff)) { reset(id); continue }
             val since = p.optLong("refused_since"); val last = p.optLong("refused_last")
             if (since == 0L || now - last > GONE_GAP_MS || last - since < GONE_REFUSED_MS) continue
             if (now - (goneTry[id] ?: 0L) < 60_000) continue

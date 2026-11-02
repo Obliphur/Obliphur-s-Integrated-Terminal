@@ -66,6 +66,13 @@ class SyncTest {
         assertFalse(s.peers()["pG"]!!.has("refused_since"))
         peers.getJSONObject("pG").put("refused_since", now - SyncService.GONE_REFUSED_MS - 60_000).put("refused_last", now)
         s.resetGoneTryForTest()
+        // 外出中 (hold) 不算, 记录清掉
+        peers.getJSONObject("pG").put("refused_since", now - SyncService.GONE_REFUSED_MS - 60_000).put("refused_last", now)
+        s.resetGoneTryForTest()
+        assertEquals(emptyList<String>(), s.checkGone(hold = true) { "refused" })
+        assertFalse(s.peers()["pG"]!!.has("refused_since"))
+        peers.getJSONObject("pG").put("refused_since", now - SyncService.GONE_REFUSED_MS - 60_000).put("refused_last", now)
+        s.resetGoneTryForTest()
         assertEquals(listOf("G"), s.checkGone { "refused" })
         assertFalse(s.peers().containsKey("pG"))
     }
