@@ -1126,17 +1126,11 @@ class BreakTimerApp:
                                cal_live=self._calendar_live())
 
     def _comm_info(self, tag: str) -> str:
-        """对方要的资料 ([refuse to reply][contract] / [mechanics.md]): 词条库 (标出用户选的 / 激活的) / 详细机制 (MECHANICS.md)."""
+        """对方要的资料 ([refuse to reply][contract]): 词条库 (标出用户选的 / 激活的)."""
         if tag == "contract":
             if self.contract.fog():
                 return "(黑雾中, 暂时无法提供)"
             return comm_data.library(self.contract)
-        if tag == "mechanics.md":
-            try:
-                with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "MECHANICS.md"), encoding="utf-8") as f:
-                    return f.read(comm_mod.MECHANICS_MAX)
-            except OSError:
-                return "(没有找到 MECHANICS.md)"
         return ""
 
     def _comm_leader(self) -> bool:

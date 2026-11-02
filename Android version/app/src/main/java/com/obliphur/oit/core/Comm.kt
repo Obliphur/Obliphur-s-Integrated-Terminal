@@ -72,7 +72,6 @@ object CommText {
             "IV.根据你的专注时间段 你可能需要主动结束话题.你可以稍微延迟你的进入专注的时间点,不超过5min.\n" +
             "V.你需要了解OIT的独占功能'合约':一个可以自选减益的 初始时长4h,生命值4的 让OIT变得更严苛的模块.\n" +
             "如果你需要相关信息 同时输入[refuse to reply][contract] 可以获得词条库以回复用户.\n" +
-            "如果你需要更细致的机制 则可以输入[refuse to reply][mechanics.md]获得OIT的详细机制.\n" +
             "\n以下是用户设定的人设:\n"
 
     fun readme(): String =
@@ -100,11 +99,11 @@ object CommText {
         return "目前状态: ${STATE[s.state] ?: s.state}; 剩余休息时间: $left; 今日总专注时长: ${hm(s.focusTotalMin)}; 目前这轮专注时长: $cur"
     }
 
-    /** 对方这次回复是在要资料吗: 同时有 [refuse to reply] 和 [contract] / [mechanics.md] (不分大小写和空格) → 要的资料列表. */
+    /** 对方这次回复是在要资料吗: 同时有 [refuse to reply] 和 [contract] (不分大小写和空格) → 要的资料列表. */
     fun infoTags(reply: String): List<String> {
         val t = reply.replace(Regex("\\s+"), " ").lowercase()
         if (REFUSE !in t) return emptyList()
-        return listOf("contract", "mechanics.md").filter { "[$it]" in t }
+        return listOf("contract").filter { "[$it]" in t }
     }
 
     fun isRefusal(text: String) = REFUSE in text.replace(Regex("\\s+"), " ").lowercase()
@@ -124,8 +123,7 @@ class Comm(
         const val RETRY_MAX = 12
         const val HISTORY_SENT = 60
         const val HISTORY_CHARS = 120000                // 带的聊天记录总共最多多少字 (超了从最老的开始不带)
-        const val MAX_INFO_ROUNDS = 2                   // 一次回复里, 对方最多可以要几次资料 ([contract] / [mechanics.md])
-        const val MECHANICS_MAX = 150000                // 给对方的 MECHANICS.md 最多多少字
+        const val MAX_INFO_ROUNDS = 2                   // 一次回复里, 对方最多可以要几次资料 ([contract])
         const val CHAT_TIMEOUT_MS = 240_000             // 一次请求最多等多久 (回复长 / 资料多时要久一点)
         const val KEEP = 400
         const val SYNC_N = 60
@@ -165,7 +163,7 @@ class Comm(
     var fog: () -> Boolean = { false }
     /** 现在不能用沟通的原因 ("" = 可以): 合约的"无言为真". Core 接上. */
     var blocked: () -> String = { "" }
-    /** 对方要的资料: "contract" → 词条库, "mechanics.md" → 详细机制. Core 接上. */
+    /** 对方要的资料: "contract" → 词条库. Core 接上. */
     var infoFn: (String) -> String = { "" }
     /** 本机的设备 id; 本机是不是最后有人操作的设备 (只有它调用 AI / 主动发 / 重试); 聊天记录有改动时马上同步一次. Core 接上. */
     var device: () -> String = { "" }
@@ -596,7 +594,7 @@ class Comm(
             val res = try {
                 var convo: List<Pair<String, String>> = msgs
                 var reply = chatFn(profile, system, convo)
-                // 对方回 [refuse to reply][contract] / [mechanics.md] = 要资料: 把资料给它, 再调用一次让它回复用户 (资料不写进记录)
+                // 对方回 [refuse to reply][contract] = 要词条库: 把资料给它, 再调用一次让它回复用户 (资料不写进记录)
                 for (round in 0 until MAX_INFO_ROUNDS) {
                     val blocks = CommText.infoTags(reply).mapNotNull { t ->
                         runCatching { infoFn(t) }.getOrDefault("").takeIf { it.isNotEmpty() }?.let { "【$t】\n$it" }

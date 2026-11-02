@@ -171,20 +171,19 @@ class CommTest {
     fun infoRequests() {
         assertEquals(listOf("contract"), CommText.infoTags(" [Refuse to reply] [CONTRACT] "))
         assertTrue(CommText.infoTags("[contract]").isEmpty() && CommText.infoTags("好的").isEmpty())
-        assertEquals(listOf("contract", "mechanics.md"), CommText.infoTags("[refuse to reply][mechanics.md][contract]"))
+        assertTrue(CommText.infoTags("[refuse to reply][mechanics.md]").isEmpty())
         val p = CommText.prefixPrompt()
-        assertTrue("V.你需要了解OIT的独占功能'合约'" in p && "[refuse to reply][contract]" in p && "[refuse to reply][mechanics.md]" in p)
+        assertTrue("V.你需要了解OIT的独占功能'合约'" in p && "[refuse to reply][contract]" in p && "mechanics" !in p)
         val td = Files.createTempDirectory("oit").toFile()
         val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
         c.set(persona = "Claudia.txt")
-        c.infoFn = { tag -> mapOf("contract" to "词条库: 持久战", "mechanics.md" to "详细机制: 第 18 节")[tag] ?: "" }
+        c.infoFn = { tag -> mapOf("contract" to "词条库: 持久战")[tag] ?: "" }
         val n = calls.size
-        script.addAll(listOf("[refuse to reply][contract]", "[refuse to reply][mechanics.md]", "合约里有持久战, 详细见第 18 节."))
+        script.addAll(listOf("[refuse to reply][contract]", "合约里有持久战."))
         assertEquals("", c.send("合约是什么")); wait(c)
-        assertEquals(n + 3, calls.size)                       // 要了两次资料, 共调用三次
-        assertTrue("词条库: 持久战" in calls[calls.size - 2].second.last().second)
-        assertTrue("详细机制: 第 18 节" in calls.last().second.last().second)
-        assertEquals(listOf("合约是什么", "合约里有持久战, 详细见第 18 节."), c.visible().map { it.text })
+        assertEquals(n + 2, calls.size)                       // 要了一次资料, 共调用两次
+        assertTrue("词条库: 持久战" in calls.last().second.last().second)
+        assertEquals(listOf("合约是什么", "合约里有持久战."), c.visible().map { it.text })
         assertTrue(c.messages.none { "词条库" in it.api })        // 资料不写进聊天记录
         // 要不到资料: 当作不方便
         c.infoFn = { "" }

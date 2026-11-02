@@ -36,8 +36,7 @@ RETRY_GAP = 10 * 60                   # 对方不方便回复时, 多久再把�
 RETRY_MAX = 12
 HISTORY_SENT = 60                     # 每次请求最多带多少条聊天记录
 HISTORY_CHARS = 120000                # 带的聊天记录总共最多多少字 (超了从最老的开始不带)
-MAX_INFO_ROUNDS = 2                   # 一次回复里, 对方最多可以要几次资料 ([contract] / [mechanics.md])
-MECHANICS_MAX = 150000                # 给对方的 MECHANICS.md 最多多少字
+MAX_INFO_ROUNDS = 2                   # 一次回复里, 对方最多可以要几次资料 ([contract])
 CHAT_TIMEOUT = 240.0                  # 一次请求最多等多久 (回复长 / 资料多时要久一点)
 KEEP = 400                            # 本地最多存多少条
 SYNC_N = 60                           # 随设备同步最近多少条
@@ -71,7 +70,6 @@ def prefix_prompt() -> str:
         "IV.根据你的专注时间段 你可能需要主动结束话题.你可以稍微延迟你的进入专注的时间点,不超过5min.\n"
         "V.你需要了解OIT的独占功能'合约':一个可以自选减益的 初始时长4h,生命值4的 让OIT变得更严苛的模块.\n"
         "如果你需要相关信息 同时输入[refuse to reply][contract] 可以获得词条库以回复用户.\n"
-        "如果你需要更细致的机制 则可以输入[refuse to reply][mechanics.md]获得OIT的详细机制.\n"
         "\n以下是用户设定的人设:\n")
 
 
@@ -220,11 +218,11 @@ def timer_line(snap: dict) -> str:
 
 
 def info_tags(reply: str) -> list:
-    """对方这次回复是在要资料吗: 同时有 [refuse to reply] 和 [contract] / [mechanics.md] (不分大小写和空格) → 要的资料列表."""
+    """对方这次回复是在要资料吗: 同时有 [refuse to reply] 和 [contract] (不分大小写和空格) → 要的资料列表."""
     t = re.sub(r"\s+", " ", str(reply or "")).lower()
     if REFUSE not in t:
         return []
-    return [tag for tag in ("contract", "mechanics.md") if f"[{tag}]" in t]
+    return [tag for tag in ("contract",) if f"[{tag}]" in t]
 
 
 def api_messages(msgs: list) -> list:
@@ -281,7 +279,7 @@ class Comm:
         self.data_fn = lambda sel: ""  # 统计 / 日历 / 合约词条的数据 (comm_data.build); app 接上
         self.fog = lambda: False       # 合约黑雾中: 不发数据
         self.blocked = lambda: ""      # 现在不能用沟通的原因 ("" = 可以): 合约的"无言为真"
-        self.info_fn = lambda tag: ""  # 对方要的资料: "contract" → 词条库, "mechanics.md" → 详细机制; app 接上
+        self.info_fn = lambda tag: ""  # 对方要的资料: "contract" → 词条库; app 接上
         self.device = lambda: ""       # 本机的设备 id (sync.my_id); app 接上
         self.leader = lambda: True     # 本机是不是最后有人操作的设备: 只有它调用 AI / 主动发 / 重试 (sync.is_latest_active); app 接上
         self.on_sync = None            # 聊天记录有改动, 马上同步一次; app 接上
@@ -696,7 +694,7 @@ class Comm:
             try:
                 convo = list(msgs)
                 reply = ask(convo)
-                # 对方回 [refuse to reply][contract] / [mechanics.md] = 要资料: 把资料给它, 再调用一次让它回复用户 (资料不写进记录)
+                # 对方回 [refuse to reply][contract] = 要词条库: 把资料给它, 再调用一次让它回复用户 (资料不写进记录)
                 for _ in range(MAX_INFO_ROUNDS):
                     tags = info_tags(reply)
                     blocks = []
@@ -1051,25 +1049,25 @@ def _selftest():
     cf.flush()
     cf2 = Comm(fresh_dir, fresh_personas, now=lambda: clock[0], chat_fn=fake)
     assert list_personas(fresh_personas) == [] and cf2.persona_name() == "", "删掉之后不再写回, 也不再自动选"
-    # ---- 对方要资料: [refuse to reply][contract] / [mechanics.md] → 给资料再调用一次 ----
+    # ---- 对方要资料: [refuse to reply][contract] → 给词条库再调用一次 ----
     assert info_tags(" [Refuse to reply] [CONTRACT] ") == ["contract"] and info_tags("[contract]") == []
-    assert info_tags("[refuse to reply][mechanics.md][contract]") == ["contract", "mechanics.md"] and info_tags("好的") == []
+    assert info_tags("[refuse to reply][mechanics.md]") == [] and info_tags("好的") == []
     p2 = prefix_prompt()
-    assert "V.你需要了解OIT的独占功能'合约'" in p2 and "[refuse to reply][contract]" in p2 and "[refuse to reply][mechanics.md]" in p2
+    assert "V.你需要了解OIT的独占功能'合约'" in p2 and "[refuse to reply][contract]" in p2 and "mechanics" not in p2
     os.makedirs(os.path.join(td, "ci"))
     ci = Comm(os.path.join(td, "ci"), folder, now=lambda: clock[0], chat_fn=fake)
     ci.ai.set_profile("deepseek", api_key="k")
     ci.ai.provider = "deepseek"
     ci.set_cfg(persona="小夏.txt")
-    ci.info_fn = lambda tag: {"contract": "词条库: 持久战", "mechanics.md": "详细机制: 第 18 节"}.get(tag, "")
+    ci.info_fn = lambda tag: {"contract": "词条库: 持久战"}.get(tag, "")
     n_calls = len(calls)
-    script.extend(["[refuse to reply][contract]", "[refuse to reply][mechanics.md]", "合约里有持久战, 详细见第 18 节."])
+    script.extend(["[refuse to reply][contract]", "合约里有持久战."])
     ci.send("合约是什么")
     wait(ci)
-    assert len(calls) == n_calls + 3, "要了两次资料, 共调用三次"
-    assert "词条库: 持久战" in calls[-2][1][-1]["content"] and "详细机制: 第 18 节" in calls[-1][1][-1]["content"]
-    assert calls[-1][1][-2]["content"] == "[refuse to reply][mechanics.md]" and calls[-1][1][-3]["role"] == "user"
-    assert [m["text"] for m in ci.visible()] == ["合约是什么", "合约里有持久战, 详细见第 18 节."]
+    assert len(calls) == n_calls + 2, "要了一次资料, 共调用两次"
+    assert "词条库: 持久战" in calls[-1][1][-1]["content"]
+    assert calls[-1][1][-2]["content"] == "[refuse to reply][contract]" and calls[-1][1][-3]["role"] == "user"
+    assert [m["text"] for m in ci.visible()] == ["合约是什么", "合约里有持久战."]
     assert not any("词条库" in (m.get("api") or "") for m in ci.messages), "资料不写进聊天记录"
     # 要不到资料 / 要了还是拒绝: 当作不方便
     ci.info_fn = lambda tag: ""

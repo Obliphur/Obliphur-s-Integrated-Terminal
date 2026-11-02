@@ -312,9 +312,6 @@ class OitApp : Application(), Host {
         }
     }
 
-    override fun mechanics(): String =
-        runCatching { assets.open("MECHANICS.md").bufferedReader(Charsets.UTF_8).use { it.readText() } }.getOrDefault("")
-
     override fun personasDir(): File = getExternalFilesDir("personas") ?: File(filesDir, "personas")
 
     override fun openPage(page: String) {
