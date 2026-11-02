@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -38,6 +39,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -100,7 +103,7 @@ private fun Bubble(m: ChatMsg) {
     val when_ = parseIso(m.at)?.let { "%02d:%02d".format(it.hour, it.minute) } ?: ""
     Row(Modifier.fillMaxWidth(), horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start,
         verticalAlignment = Alignment.Top) {
-        if (comm.showAvatar && !mine) Avatar(comm.avatarAi.ifEmpty { comm.personaTitle(comm.personaName()).take(1).ifEmpty { "?" } }, false)
+        if (comm.showAvatar && !mine) Avatar("ai", comm.personaTitle(comm.personaName()).take(1).ifEmpty { "?" }, 34)
         Column(Modifier.widthIn(max = 280.dp).padding(horizontal = 6.dp), horizontalAlignment = if (mine) Alignment.End else Alignment.Start) {
             Text(m.text, color = if (mine) o.onAccent else o.text, fontSize = 15.sp,
                 modifier = Modifier
@@ -109,16 +112,27 @@ private fun Bubble(m: ChatMsg) {
                     .padding(horizontal = 12.dp, vertical = 8.dp))
             Text(when_, color = o.dim, fontSize = 11.sp)
         }
-        if (comm.showAvatar && mine) Avatar(comm.avatarMe.ifEmpty { OitApp.instance.core.username.take(1).ifEmpty { "我" } }, true)
+        if (comm.showAvatar && mine) Avatar("me", OitApp.instance.core.username.take(1).ifEmpty { "我" }, 34)
     }
 }
 
+/** 头像: 选过图片就显示图片 (圆形), 否则是名字的第一个字. */
 @Composable
-private fun Avatar(text: String, mine: Boolean) {
+private fun Avatar(who: String, fallback: String, size: Int) {
     val o = LocalOit.current
-    Box(Modifier.size(34.dp).background(if (mine) o.accent else o.card, CircleShape).border(1.dp, o.border, CircleShape),
+    val comm = OitApp.instance.core.comm
+    val mine = who == "me"
+    val file = comm.avatarPath(who)
+    val image = remember(file?.path, file?.lastModified()) {
+        file?.let { runCatching { android.graphics.BitmapFactory.decodeFile(it.path)?.asImageBitmap() }.getOrNull() }
+    }
+    if (image != null) {
+        androidx.compose.foundation.Image(image, null, Modifier.size(size.dp).clip(CircleShape))
+        return
+    }
+    Box(Modifier.size(size.dp).background(if (mine) o.accent else o.card, CircleShape).border(1.dp, o.border, CircleShape),
         contentAlignment = Alignment.Center) {
-        Text(text, color = if (mine) o.onAccent else o.text, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+        Text(fallback, color = if (mine) o.onAccent else o.text, fontWeight = FontWeight.Bold, fontSize = 14.sp)
     }
 }
 
@@ -133,6 +147,9 @@ fun CommSettings() {
     val comm = core.comm
     var apiDialog by remember { mutableStateOf(false) }
     var readme by remember { mutableStateOf(false) }
+    var avatarWho by remember { mutableStateOf("me") }
+    var cropUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri -> if (uri != null) cropUri = uri }
 
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
@@ -178,15 +195,26 @@ fun CommSettings() {
     OitCard {
         Text(tr("🖼  头像"), fontWeight = FontWeight.Bold, color = o.text)
         SwitchRow(tr("显示头像"), comm.showAvatar) { comm.set(showAvatar = it) }
-        if (comm.showAvatar) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 6.dp)) {
-                var me by remember { mutableStateOf(comm.avatarMe) }
-                var ai by remember { mutableStateOf(comm.avatarAi) }
-                OutlinedTextField(me, { me = it.take(4); comm.set(avatarMe = me) }, label = { Text(tr("我")) },
-                    singleLine = true, modifier = Modifier.weight(1f))
-                OutlinedTextField(ai, { ai = it.take(4); comm.set(avatarAi = ai) }, label = { Text(tr("对方")) },
-                    singleLine = true, modifier = Modifier.weight(1f))
+        if (comm.showAvatar) for ((who, label) in listOf("me" to tr("我"), "ai" to tr("对方"))) {
+            Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(label, color = o.text, modifier = Modifier.width(48.dp))
+                Avatar(who, "—", 40)
+                Box(Modifier.weight(1f))
+                PlainButton(tr("选择")) {
+                    if (who == "ai" && comm.personaName().isEmpty()) core.toast(tr("还没有选人设"), "warn")
+                    else { avatarWho = who; pickImage.launch("image/*") }
+                }
+                if (comm.avatarPath(who) != null) {
+                    Box(Modifier.size(6.dp))
+                    PlainButton(tr("移除")) { comm.removeAvatar(who) }
+                }
             }
+        }
+    }
+    cropUri?.let { u ->
+        AvatarCropDialog(u) { bmp ->
+            cropUri = null
+            if (bmp != null && !comm.saveAvatar(avatarWho, bmp)) core.toast(tr("保存头像失败."), "warn")
         }
     }
 

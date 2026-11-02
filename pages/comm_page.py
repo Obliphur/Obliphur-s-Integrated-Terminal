@@ -5,6 +5,7 @@ import tkinter as tk
 from datetime import datetime
 from tkinter import ttk
 
+import avatar as avatar_mod
 import comm as comm_mod
 import config
 import toast
@@ -23,6 +24,7 @@ class CommPage(tk.Frame):
         self._ver = -1
         self._width = 0
         self._resize_job = None
+        self._photos = []
         self._build()
 
     def _build(self):
@@ -88,6 +90,15 @@ class CommPage(tk.Frame):
 
     def _avatar(self, parent, text: str, mine: bool):
         size = config.scaled(34)
+        img = self.comm.avatar_path("me" if mine else "ai")
+        if img:
+            try:
+                photo = tk.PhotoImage(file=avatar_mod.sized(img, size))
+                self._photos.append(photo)
+                lb = tk.Label(parent, image=photo, bg=COLORS["bg"], bd=0)
+                return lb
+            except (OSError, tk.TclError):
+                pass
         cv = tk.Canvas(parent, width=size, height=size, bg=COLORS["bg"], highlightthickness=0)
         cv.create_oval(1, 1, size - 1, size - 1, outline=COLORS["border"],
                        fill=COLORS.get("accent_fill", COLORS["accent"]) if mine else COLORS["bg_card"])
@@ -101,12 +112,13 @@ class CommPage(tk.Frame):
         inner = self.area.inner
         for w in inner.winfo_children():
             w.destroy()
+        self._photos = []
         width = max(300, self.area.canvas.winfo_width())
         self._width = width
         wrap = int(width * 0.6)
         avatars = bool(c.cfg.get("show_avatar"))
-        me_char = (c.cfg.get("avatar_me") or (self.username() or "我")[:1]) if avatars else ""
-        ai_char = (c.cfg.get("avatar_ai") or comm_mod.persona_title(c.persona_name())[:1] or "?") if avatars else ""
+        me_char = (self.username() or "我")[:1] if avatars else ""
+        ai_char = (comm_mod.persona_title(c.persona_name())[:1] or "?") if avatars else ""
         bg = COLORS["bg"]
         for m in c.visible():
             mine = m["role"] == "me"

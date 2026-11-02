@@ -823,17 +823,21 @@ class SettingsPage(tk.Frame):
                                    command=lambda: self._comm_flag("show_avatar")), "显示头像").pack(
             fill="x", padx=12, pady=(0, 2))
         self.avatar_box = tk.Frame(fr, bg=card)
-        self.avatar_vars = {}
-        for key, text in (("avatar_me", "我"), ("avatar_ai", "对方")):
+        self.avatar_prev = {}
+        self._avatar_photos = []
+        for who, text in (("me", "我"), ("ai", "对方")):
             row = tk.Frame(self.avatar_box, bg=card)
-            row.pack(fill="x", padx=12, pady=2)
+            row.pack(fill="x", padx=12, pady=3)
             self._track(tk.Label(row, text=tr(text), bg=card, fg=COLORS["text"], font=config.font("body"),
                                  width=6, anchor="w"), text).pack(side="left")
-            sv = tk.StringVar(value=str(c.cfg.get(key) or ""))
-            self.avatar_vars[key] = sv
-            ent = ttk.Entry(row, textvariable=sv, width=8)
-            ent.pack(side="left")
-            sv.trace_add("write", lambda *_a, k=key: self._comm_avatar(k))
+            prev = tk.Label(row, text="", bg=card, fg=COLORS["text_dim"], font=config.font("body"),
+                            width=5, anchor="center")
+            prev.pack(side="left", padx=(0, 8))
+            self.avatar_prev[who] = prev
+            self._track(ttk.Button(row, text=tr("选择"), command=lambda w=who: self._comm_pick_avatar(w)),
+                        "选择").pack(side="left")
+            self._track(ttk.Button(row, text=tr("移除"), command=lambda w=who: self._comm_remove_avatar(w)),
+                        "移除").pack(side="left", padx=(6, 0))
         self.avatar_foot = tk.Frame(fr, bg=card, height=8)
         self.avatar_foot.pack()
         self._comm_avatar_visible()
@@ -873,8 +877,35 @@ class SettingsPage(tk.Frame):
         if key == "show_avatar":
             self._comm_avatar_visible()
 
-    def _comm_avatar(self, key):
-        self.comm.set_cfg(**{key: self.avatar_vars[key].get().strip()[:4]})
+    def _comm_pick_avatar(self, who):
+        from .avatar_dialog import pick_avatar
+        if who == "ai" and not self.comm.persona_name():
+            toast.warn(tr("还没有选人设"))
+            return
+        if pick_avatar(self.winfo_toplevel(), self.comm.avatar_dest(who)):
+            self.comm.avatars_changed()
+            self._refresh_avatars()
+
+    def _comm_remove_avatar(self, who):
+        self.comm.remove_avatar(who)
+        self._refresh_avatars()
+
+    def _refresh_avatars(self):
+        import avatar
+        self._avatar_photos = []
+        for who, lb in self.avatar_prev.items():
+            path = self.comm.avatar_path(who)
+            photo = None
+            if path:
+                try:
+                    photo = tk.PhotoImage(file=avatar.sized(path, config.scaled(40)))
+                except (OSError, tk.TclError):
+                    photo = None
+            if photo is not None:
+                self._avatar_photos.append(photo)
+                lb.config(image=photo, text="", width=0)
+            else:
+                lb.config(image="", text="—", width=5)
 
     def _comm_avatar_visible(self):
         if self.comm.cfg.get("show_avatar"):
@@ -893,6 +924,7 @@ class SettingsPage(tk.Frame):
         text = f"{tr(_provider_label(c.ai.provider))} · {prof.get('model') or '—'}"
         text += "  ✗" if self._comm_api_missing() else "  ✓"
         cfg(self.lbl_comm_api, text=text)
+        self._refresh_avatars()
 
     def _comm_api_missing(self) -> bool:
         import ai_assist

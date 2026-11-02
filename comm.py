@@ -20,6 +20,7 @@ import random
 import re
 import shutil
 import threading
+import zlib
 from datetime import datetime, timedelta
 
 import ai_assist
@@ -267,6 +268,30 @@ class Comm:
         if not self.persona_name():
             return "还没有选人设"
         return ""
+
+    # ---- 头像: 圆形 PNG, 在 avatar.py / pages/avatar_dialog.py 里选图并截取 ----
+    def avatar_dest(self, who: str) -> str:
+        """who: "me" / "ai". 对方的头像跟着人设走 (换人设就换头像)."""
+        if who == "me":
+            name = "me.png"
+        else:
+            stem = persona_title(self.persona_name() or "")
+            name = f"ai_{zlib.crc32(stem.encode('utf-8')):08x}.png"
+        return os.path.join(self.dir, "avatars", name)
+
+    def avatar_path(self, who: str) -> str:
+        p = self.avatar_dest(who)
+        return p if os.path.isfile(p) else ""
+
+    def remove_avatar(self, who: str):
+        try:
+            os.remove(self.avatar_dest(who))
+        except OSError:
+            pass
+        self._changed()
+
+    def avatars_changed(self):
+        self._changed()
 
     def visible(self) -> list:
         return [m for m in self.messages if m["role"] in ("me", "ai")]
@@ -608,6 +633,13 @@ def _selftest():
     c3 = Comm(data, folder, now=lambda: clock[0], chat_fn=fake)
     assert c3.cfg["persona"] == "小夏.txt" and len(c3.visible()) == len(c.visible())
     c3.clear()
+    assert c.avatar_path("me") == "" and c.avatar_dest("me").endswith("me.png")
+    ai_dest = c.avatar_dest("ai")
+    os.makedirs(os.path.dirname(ai_dest), exist_ok=True)
+    open(ai_dest, "wb").write(b"x")
+    assert c.avatar_path("ai") == ai_dest
+    c.remove_avatar("ai")
+    assert c.avatar_path("ai") == ""
     assert c3.visible() == [] and Comm(data, folder, now=lambda: clock[0], chat_fn=fake).visible() == []
 
     # /clear: 之前的记录不再显示, 也不再发给模型; 信息重新附带; 清空前发出的请求回复到了也丢掉

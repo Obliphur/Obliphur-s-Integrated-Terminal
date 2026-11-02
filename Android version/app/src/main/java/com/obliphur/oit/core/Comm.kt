@@ -237,6 +237,33 @@ class Comm(
         return ""
     }
 
+    // ---- 头像: 圆形 PNG (ui/AvatarCrop.kt 里选图并截取); 对方的头像跟着人设走 ----
+
+    fun avatarFile(who: String): File {
+        val name = if (who == "me") "me.png" else {
+            val crc = java.util.zip.CRC32().apply { update(personaTitle(personaName()).toByteArray(Charsets.UTF_8)) }
+            "ai_%08x.png".format(crc.value)
+        }
+        return File(File(dir, "avatars"), name)
+    }
+
+    /** 头像文件 (没有就是 null). */
+    fun avatarPath(who: String): File? = avatarFile(who).takeIf { it.isFile }
+
+    @Synchronized
+    fun saveAvatar(who: String, bitmap: android.graphics.Bitmap): Boolean {
+        val f = avatarFile(who)
+        val ok = runCatching {
+            f.parentFile?.mkdirs()
+            f.outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+        }.getOrDefault(false)
+        changed()
+        return ok
+    }
+
+    @Synchronized
+    fun removeAvatar(who: String) { avatarFile(who).delete(); changed() }
+
     fun visible() = messages.filter { it.role == "me" || it.role == "ai" }
 
     private fun unanswered() = visible().lastOrNull()?.role == "me"
