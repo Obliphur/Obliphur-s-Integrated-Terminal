@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""沟通页里"📎 数据"能发出去的内容: 统计的几页, 日历 (选类别), 合约的词条. 手机版: core/Core.kt 的 commData.
+"""沟通页里"📎 数据"能发出去的内容: 今天的整点记录 / 专注计时, 日历 (选类别), 合约的词条, 统计 (月数据) 的几页. 手机版: core/CommData.kt.
 
     python comm_data.py     自检 (用假数据)
 """
@@ -9,7 +9,9 @@ from datetime import datetime, timedelta
 import contract as C
 
 STATS_KEYS = (("log", "整点记录"), ("focus", "专注计时"), ("net", "联网理由"), ("window", "窗口"), ("contracts", "合约记录"))
-DEFAULT_STATS = ("log", "focus")        # 📎 窗口第一次打开时默认勾上的
+STATS_NAME = "统计(月数据)"
+TODAY_KEYS = (("log", "整点记录(今天)"), ("timer", "专注计时(今天)"))      # 今天的整点记录 / 计时器 (对方查询的 [log] / [timer] 也是这两块)
+DEFAULT_TODAY = ("log", "timer")        # 📎 窗口第一次打开时默认勾上的
 CAL_KEYS = (("study", "专注"), ("break", "休息"), ("idle", "空闲"), ("sleep", "睡眠"))
 WEEKDAY = "一二三四五六日"
 TOP = 30
@@ -18,17 +20,19 @@ MAX_CHARS = 60000          # 一次最多发多少字 (词条库约 4000 字, �
 
 def label(sel: dict) -> str:
     """聊天里显示的那一行."""
-    parts = []
-    names = dict(STATS_KEYS)
-    st = [names[k] for k in sel.get("stats", []) if k in names]
-    if st:
-        parts.append("统计·" + "、".join(st))
+    parts = []                                  # 顺序和 📎 窗口里一样: 今天 → 日历 → 合约词条 → 统计(月数据)
+    today = dict(TODAY_KEYS)
+    parts += [today[k] for k in today if k in sel.get("today", [])]
     cal = dict(CAL_KEYS)
     cl = [cal[k] for k in sel.get("cal", []) if k in cal]
     if cl:
         parts.append("日历·" + "、".join(cl))
     if sel.get("contract"):
         parts.append("合约词条")
+    names = dict(STATS_KEYS)
+    st = [names[k] for k in sel.get("stats", []) if k in names]
+    if st:
+        parts.append(STATS_NAME + "·" + "、".join(st))
     return "📎 " + " / ".join(parts) if parts else ""
 
 
@@ -164,22 +168,29 @@ def prescript_text(urban: bool, history: list) -> str:
 
 
 def build(sel: dict, dm, net, contract, now: datetime = None, focus_live=None, cal_live=None,
-          month_prefix: str = None, window_names: dict = None) -> str:
+          month_prefix: str = None, window_names: dict = None, today_log=None, today_timer=None) -> str:
+    """today_log / today_timer: 今天的整点记录 / 计时器的文字 (app 给: 和对方查询的 [log] / [timer] 一样).
+    块的顺序和 📎 窗口里一样: 今天 → 日历 → 合约词条 → 统计(月数据)."""
     now = now or datetime.now()
     prefix = month_prefix or now.strftime("%Y-%m")
-    blocks = []
+    blocks, cb, kb, sb = [], [], [], []          # 今天, 日历, 合约词条, 统计(月数据)
+    today = sel.get("today", [])
+    if "log" in today and today_log:
+        blocks.append(today_log())
+    if "timer" in today and today_timer:
+        blocks.append(today_timer())
     stats = list(sel.get("stats", []))
     if "log" in stats:
-        blocks.append(f"【统计·整点记录 {prefix}】\n" + _top(dm.hour_activity_seconds(prefix)))
+        sb.append(f"【统计·整点记录 {prefix}】\n" + _top(dm.hour_activity_seconds(prefix)))
     if "net" in stats:
         from data_manager import tally_items
-        blocks.append(f"【统计·联网理由 {prefix}】\n" + _top(tally_items(net.usage_by_reason(prefix)), unit="m"))
+        sb.append(f"【统计·联网理由 {prefix}】\n" + _top(tally_items(net.usage_by_reason(prefix)), unit="m"))
     if "window" in stats:
         names = {"": "空白", "?": "未知程序", **(window_names or {})}
         out = {}
         for k, v in dm.window_seconds(prefix, "all").items():
             out[names.get(k, k)] = out.get(names.get(k, k), 0.0) + v
-        blocks.append(f"【统计·窗口 {prefix}】\n" + _top(out))
+        sb.append(f"【统计·窗口 {prefix}】\n" + _top(out))
     if "focus" in stats:
         today = now.replace(hour=0, minute=0, second=0, microsecond=0)
         lines = []
@@ -189,10 +200,10 @@ def build(sel: dict, dm, net, contract, now: datetime = None, focus_live=None, c
             st = sum(h[0] for h in hours) / 60
             br = sum(h[1] for h in hours) / 60
             lines.append(f"  {day:%m-%d} 周{WEEKDAY[day.weekday()]}: 专注 {st:.0f} 分钟, 休息 {br:.0f} 分钟")
-        blocks.append("【统计·专注计时 最近 7 天】\n" + "\n".join(lines))
+        sb.append("【统计·专注计时 最近 7 天】\n" + "\n".join(lines))
     if "contracts" in stats:
         recs = C.recent_completed(contract.history, 5)
-        blocks.append("【统计·合约记录 最近完成的】\n" + ("\n".join(_record(r) for r in recs) if recs else "  还没有顺利完成的合约"))
+        sb.append("【统计·合约记录 最近完成的】\n" + ("\n".join(_record(r) for r in recs) if recs else "  还没有顺利完成的合约"))
     for kind in sel.get("cal", []):
         name = dict(CAL_KEYS).get(kind)
         if not name:
@@ -214,11 +225,11 @@ def build(sel: dict, dm, net, contract, now: datetime = None, focus_live=None, c
             if days[d] > 0:
                 lines.append(f"  {d}: {days[d]:.1f} h")
         tail = "" if kind == "study" else " (只有最近 7 天有记录)"
-        blocks.append(f"【日历·{name} {prefix}{tail}】\n" + ("\n".join(lines) if lines else "  没有记录")
+        cb.append(f"【日历·{name} {prefix}{tail}】\n" + ("\n".join(lines) if lines else "  没有记录")
                       + f"\n  合计: {sum(days.values()):.1f} h")
     if sel.get("contract"):
-        blocks.append(library(contract))
-    text = "\n\n".join(blocks)
+        kb.append(library(contract))
+    text = "\n\n".join(blocks + cb + kb + sb)
     return text[:MAX_CHARS]
 
 
@@ -277,7 +288,15 @@ def _selftest():
     assert "持久战-I(环境, 等级1)【已激活】" in lib and "无言为真(环境, 等级2):" in lib and "【已激活】" not in lib.split("无言为真")[1].split("\n")[0]
     assert "打年糕(已选 1/4): 需要" in lib and "未知变量(特殊, 等级3)" in lib and "持久战(任意一档)✓" in lib
     assert len(lib) < 9000, len(lib)
-    assert label(sel) == "📎 统计·整点记录、联网理由、专注计时、窗口、合约记录 / 日历·专注、睡眠 / 合约词条"
+    assert label(sel) == "📎 日历·专注、睡眠 / 合约词条 / 统计(月数据)·整点记录、联网理由、专注计时、窗口、合约记录"
+    assert label({"today": ["timer", "log"]}) == "📎 整点记录(今天) / 专注计时(今天)"
+    # 今天的整点记录 / 专注计时, 顺序: 今天 → 日历 → 合约词条 → 统计(月数据)
+    tt = build({"today": ["timer", "log"], "cal": ["study"], "stats": ["net"], "contract": True}, DM(), Net(), Con(), now=now,
+               today_log=lambda: "【整点记录·今天】\n  09:00 写代码", today_timer=lambda: "【计时器】\n  目前状态: 专注中")
+    order = [tt.index(k) for k in ("【整点记录·今天】", "【计时器】", "【日历·专注", "【合约词条库】", "【统计·联网理由")]
+    assert order == sorted(order), order
+    assert build({"today": ["log", "timer"]}, DM(), Net(), Con(), now=now) == ""
+    assert DEFAULT_TODAY == ("log", "timer") and dict(TODAY_KEYS)["log"] == "整点记录(今天)"
     assert label({"stats": [], "cal": [], "contract": False}) == ""
     return "comm_data selftest OK"
 

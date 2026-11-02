@@ -374,8 +374,8 @@ class Comm:
         self.leader = lambda: True     # 本机是不是最后有人操作的设备: 只有它调用 AI / 主动发 / 重试 (sync.is_latest_active); app 接上
         self.on_sync = None            # 聊天记录有改动, 马上同步一次; app 接上
         self.on_proactive = None       # 收到对方主动发来的消息, 并且前 5 分钟没和对方聊过: 放柔和的提示音; app 接上 (后台线程里调用也行)
-        self.attach = {"stats": [], "cal": [], "contract": False}     # 📎 确定过的附加数据: 随下一条消息发出
-        self.attach_touched = False    # 用户确定过一次之后, 📎 窗口不再默认勾 整点记录 / 专注计时
+        self.attach = {"today": [], "cal": [], "contract": False, "stats": []}     # 📎 确定过的附加数据: 随下一条消息发出
+        self.attach_touched = False    # 用户确定过一次之后, 📎 窗口不再默认勾 整点记录(今天) / 专注计时(今天)
         self.on_change = None          # 界面线程里调用
         self._lock = threading.Lock()
         self._wlock = threading.Lock()
@@ -899,17 +899,17 @@ class Comm:
 
     def set_attach(self, sel: dict):
         """📎 窗口点"确定": 记下勾选的数据, 随下一条消息一起发 (发出去之后清掉)."""
-        self.attach = {"stats": list(sel.get("stats", [])), "cal": list(sel.get("cal", [])),
-                       "contract": bool(sel.get("contract"))}
+        self.attach = {"today": list(sel.get("today", [])), "cal": list(sel.get("cal", [])),
+                       "contract": bool(sel.get("contract")), "stats": list(sel.get("stats", []))}
         self.attach_touched = True
         self._changed()
 
     def attach_form(self) -> dict:
-        """📎 窗口打开时的勾选: 确定过的; 还没确定过 = 默认勾 整点记录 和 专注计时."""
+        """📎 窗口打开时的勾选: 确定过的; 还没确定过 = 默认勾 整点记录(今天) 和 专注计时(今天)."""
         if self.attach_touched or self.attach_label():
             return self.attach
         import comm_data
-        return {"stats": list(comm_data.DEFAULT_STATS), "cal": [], "contract": False}
+        return {"today": list(comm_data.DEFAULT_TODAY), "cal": [], "contract": False, "stats": []}
 
     def attach_label(self) -> str:
         import comm_data
@@ -1366,7 +1366,7 @@ def _selftest():
     assert c.send_data({"stats": ["net"], "cal": [], "contract": False}, "帮我看看") == ""
     wait(c)
     vis = c.visible()
-    assert vis[0]["text"] == "📎 统计·联网理由\n帮我看看" and vis[1]["role"] == "ai"
+    assert vis[0]["text"] == "📎 统计(月数据)·联网理由\n帮我看看" and vis[1]["role"] == "ai"
     api = calls[-1][1][-1]["content"]
     assert "(用户发来的数据)" in api and "学习资料: 15 分钟" in api and api.endswith("帮我看看")
     assert c.send_data({"stats": [], "cal": [], "contract": False}) == "empty"
@@ -1382,7 +1382,9 @@ def _selftest():
     assert c.attach_form()["stats"] == [] and c.attach_label() == "📎 日历·专注"
     os.makedirs(os.path.join(td, "d3"))
     c2f = Comm(os.path.join(td, "d3"), folder, now=lambda: clock[0], chat_fn=fake)
-    assert c2f.attach_form()["stats"] == ["log", "focus"] and c2f.attach_label() == ""
+    assert c2f.attach_form()["today"] == ["log", "timer"] and c2f.attach_form()["stats"] == [] and c2f.attach_label() == ""
+    c2f.set_attach({"today": ["log"], "stats": ["net"]})
+    assert c2f.attach_label() == "📎 整点记录(今天) / 统计(月数据)·联网理由" and c2f.attach_form()["today"] == ["log"]
     script.append("嗯嗯")
     assert c.send("") == ""
     wait(c)

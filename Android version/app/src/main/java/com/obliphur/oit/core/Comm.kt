@@ -270,7 +270,7 @@ class Comm(
 
     /** 📎 窗口打开时的勾选: 确定过的; 还没确定过 = 默认勾 整点记录 和 专注计时. */
     fun attachForm(): CommSel =
-        if (attachTouched || CommData.label(attach).isNotEmpty()) attach else CommSel(stats = CommData.DEFAULT_STATS)
+        if (attachTouched || CommData.label(attach).isNotEmpty()) attach else CommSel(today = CommData.DEFAULT_TODAY)
     var snapshot: () -> CommSnap? = { null }
     /** 系统触发的请求 (主动发 / 重试): 这条系统消息先不进记录, 对方真的回复了才和回复一起记下. */
     private class Extra(val body: String, val api: String)

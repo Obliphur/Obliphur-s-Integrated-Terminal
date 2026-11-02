@@ -469,6 +469,10 @@ EN = {
     "外出中不能使用沟通": "Chat is unavailable while out",
     "🧑  我的身份背景": "🧑  My background",
     "💬  主动发消息": "💬  Proactive messages",
+    "🕒  今天": "🕒  Today",
+    "📊  统计(月数据)": "📊  Statistics (monthly)",
+    "整点记录(今天)": "Hour Log (today)",
+    "专注计时(今天)": "Focus timer (today)",
     "人设空闲段前发送的概率 (%)": "Chance before a persona idle period (%)",
     "人设休息段前发送的概率 (%)": "Chance before a persona rest period (%)",
     "人设日程里 (形如 12:30-13:00:空闲 / 8:40-9:18:休息 的行) 每段空闲 / 休息开始前 1~3 分钟, 对方有这个概率主动发一条消息; "

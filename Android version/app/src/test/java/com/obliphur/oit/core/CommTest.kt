@@ -145,7 +145,7 @@ class CommTest {
         c.dataFn = { "【统计·联网理由】\n  学习资料: 15 分钟" }
         script.add("看到了")
         assertEquals("", c.sendData(CommSel(stats = listOf("net")), "帮我看看")); wait(c)
-        assertEquals("📎 统计·联网理由\n帮我看看", c.visible()[0].text)
+        assertEquals("📎 统计(月数据)·联网理由\n帮我看看", c.visible()[0].text)
         assertEquals("ai", c.visible()[1].role)
         val api = calls.last().second.last().second
         assertTrue("(用户发来的数据)" in api && "学习资料: 15 分钟" in api && api.endsWith("帮我看看"))
@@ -172,8 +172,16 @@ class CommTest {
         c.tick()
         assertTrue(c.messages.size == n && !c.busy)
         c.blocked = { "" }
-        assertEquals("📎 统计·整点记录、应用 / 日历·睡眠 / 合约词条",
+        assertEquals("📎 日历·睡眠 / 合约词条 / 统计(月数据)·整点记录、应用",
             CommData.label(CommSel(listOf("log", "window"), listOf("sleep"), true)))
+        // 今天的整点记录 / 专注计时: 排在最前面, 第一次打开默认勾上; 统计(月数据)默认不勾
+        assertEquals("📎 整点记录(今天) / 专注计时(今天)", CommData.label(CommSel(today = listOf("timer", "log"))))
+        val fresh = comm(File(td, "fresh").also { it.mkdirs() }, File(td, "freshp"))
+        assertEquals(CommSel(today = listOf("log", "timer")), fresh.attachForm())
+        assertTrue(fresh.attachForm().stats.isEmpty())
+        fresh.setAttach(CommSel(stats = listOf("net"), today = listOf("log")))
+        assertEquals("📎 整点记录(今天) / 统计(月数据)·联网理由", CommData.label(fresh.attach))
+        assertEquals(listOf("log"), fresh.attachForm().today)
     }
 
     @Test

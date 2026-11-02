@@ -143,10 +143,11 @@ fun CommScreen(go: (String) -> Unit) {
     if (askClear) Confirm(tr("清空"), tr("清空聊天记录?"), true, { askClear = false }) { comm.clear() }
 }
 
-/** 📎 勾选要发送的数据: 统计的几页, 日历 (选类别), 合约词条. */
+/** 📎 勾选要发送的数据: 今天的整点记录 / 专注计时, 日历 (选类别), 合约词条, 统计 (月数据) 的几页. */
 @Composable
 private fun AttachDialog(current: CommSel, onDismiss: () -> Unit, onOk: (CommSel) -> Unit) {
     val o = LocalOit.current
+    val today = remember { mutableStateListOf<String>().apply { addAll(current.today) } }
     val stats = remember { mutableStateListOf<String>().apply { addAll(current.stats) } }
     val cal = remember { mutableStateListOf<String>().apply { addAll(current.cal) } }
     var contract by remember { mutableStateOf(current.contract) }
@@ -160,19 +161,22 @@ private fun AttachDialog(current: CommSel, onDismiss: () -> Unit, onOk: (CommSel
     }
     fun toggle(list: MutableList<String>, key: String, on: Boolean) { if (on) list.add(key) else list.remove(key) }
     // 关掉窗口 (点外面 / 返回键) 也保存, 和"确定"一样
-    AlertDialog(onDismissRequest = { onOk(CommSel(stats.toList(), cal.toList(), contract)) }, containerColor = o.bg,
+    AlertDialog(onDismissRequest = { onOk(CommSel(stats.toList(), cal.toList(), contract, today.toList())) }, containerColor = o.bg,
         title = { Text(tr("发送数据")) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
-                Text(tr("📊  统计"), fontWeight = FontWeight.Bold, color = o.text, modifier = Modifier.padding(top = 4.dp))
-                for ((k, label) in CommData.STATS_KEYS) box(tr(label), k in stats) { toggle(stats, k, it) }
+                Text(tr("🕒  今天"), fontWeight = FontWeight.Bold, color = o.text, modifier = Modifier.padding(top = 4.dp))
+                for ((k, label) in CommData.TODAY_KEYS) box(tr(label), k in today) { toggle(today, k, it) }
                 Text(tr("📅  日历"), fontWeight = FontWeight.Bold, color = o.text, modifier = Modifier.padding(top = 10.dp))
                 for ((k, label) in CommData.CAL_KEYS) box(tr(label), k in cal) { toggle(cal, k, it) }
                 Text(tr("⚔  合约"), fontWeight = FontWeight.Bold, color = o.text, modifier = Modifier.padding(top = 10.dp))
                 box(tr("合约词条"), contract) { contract = it }
+                // 统计 (月数据) 和它的子项放在最下面
+                Text(tr("📊  " + CommData.STATS_NAME), fontWeight = FontWeight.Bold, color = o.text, modifier = Modifier.padding(top = 10.dp))
+                for ((k, label) in CommData.STATS_KEYS) box(tr(label), k in stats) { toggle(stats, k, it) }
             }
         },
-        confirmButton = { TextButton({ onOk(CommSel(stats.toList(), cal.toList(), contract)) }) { Text(tr("确定"), color = o.accent) } })
+        confirmButton = { TextButton({ onOk(CommSel(stats.toList(), cal.toList(), contract, today.toList())) }) { Text(tr("确定"), color = o.accent) } })
 }
 
 @Composable

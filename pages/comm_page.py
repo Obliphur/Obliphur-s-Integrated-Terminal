@@ -398,7 +398,7 @@ class CommPage(tk.Frame):
             self.comm.clear()
             self.refresh(force=True)
 
-    # ---- 📎 发送数据: 统计的几页, 日历 (选类别), 合约的词条 ----
+    # ---- 📎 发送数据: 今天的整点记录 / 专注计时, 日历 (选类别), 合约的词条, 统计 (月数据) 的几页 ----
 
     def _attach(self):
         width = config.scaled(320)
@@ -417,14 +417,16 @@ class CommPage(tk.Frame):
                                activebackground=bg, activeforeground=COLORS["text"], font=config.font("body"),
                                anchor="w").pack(fill="x", padx=8)
 
-        group("📊  统计", comm_data.STATS_KEYS, "stats")
+        group("🕒  今天", comm_data.TODAY_KEYS, "today")
         group("📅  日历", comm_data.CAL_KEYS, "cal")
         group("⚔  合约", (("terms", "合约词条"),), "contract")
+        group("📊  " + comm_data.STATS_NAME, comm_data.STATS_KEYS, "stats")          # 统计和它的子项放在最下面
 
         def go():
-            sel = {"stats": [k for (p, k), v in vars_.items() if p == "stats" and v.get()],
+            sel = {"today": [k for (p, k), v in vars_.items() if p == "today" and v.get()],
                    "cal": [k for (p, k), v in vars_.items() if p == "cal" and v.get()],
-                   "contract": vars_[("contract", "terms")].get()}
+                   "contract": vars_[("contract", "terms")].get(),
+                   "stats": [k for (p, k), v in vars_.items() if p == "stats" and v.get()]}
             self.comm.set_attach(sel)          # 不立刻发: 记下来, 随下一条消息一起发
             dlg.finish(True)
             self.refresh(force=True)

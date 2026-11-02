@@ -3,13 +3,17 @@ package com.obliphur.oit.core
 import java.time.LocalDate
 import java.time.LocalDateTime
 
-/** 沟通页 📎 勾选的内容: 统计的几页, 日历 (选类别), 合约的词条. 对应桌面版 comm_data.py. */
-data class CommSel(val stats: List<String> = emptyList(), val cal: List<String> = emptyList(), val contract: Boolean = false)
+/** 沟通页 📎 勾选的内容: 统计(月数据)的几页, 日历 (选类别), 合约的词条, 今天的整点记录 / 专注计时 (today: log / timer). 对应桌面版 comm_data.py. */
+data class CommSel(val stats: List<String> = emptyList(), val cal: List<String> = emptyList(), val contract: Boolean = false,
+                   val today: List<String> = emptyList())
 
 object CommData {
     val STATS_KEYS = listOf("log" to "整点记录", "focus" to "专注计时", "net" to "联网理由", "window" to "应用", "contracts" to "合约记录")
+    const val STATS_NAME = "统计(月数据)"
+    /** 今天的整点记录 / 计时器 (对方查询的 [log] / [timer] 也是这两块). */
+    val TODAY_KEYS = listOf("log" to "整点记录(今天)", "timer" to "专注计时(今天)")
     /** 📎 窗口第一次打开时默认勾上的. */
-    val DEFAULT_STATS = listOf("log", "focus")
+    val DEFAULT_TODAY = listOf("log", "timer")
     val CAL_KEYS = listOf("study" to "专注", "break" to "休息", "idle" to "空闲", "sleep" to "睡眠")
     private const val WEEKDAY = "一二三四五六日"
     private const val TOP = 30
@@ -75,12 +79,13 @@ object CommData {
 
     /** 聊天里显示的那一行. */
     fun label(sel: CommSel): String {
-        val parts = ArrayList<String>()
-        val st = sel.stats.mapNotNull { k -> STATS_KEYS.firstOrNull { it.first == k }?.second }
-        if (st.isNotEmpty()) parts.add("统计·" + st.joinToString("、"))
+        val parts = ArrayList<String>()                 // 顺序和 📎 窗口里一样: 今天 → 日历 → 合约词条 → 统计(月数据)
+        for ((k, name) in TODAY_KEYS) if (k in sel.today) parts.add(name)
         val cl = sel.cal.mapNotNull { k -> CAL_KEYS.firstOrNull { it.first == k }?.second }
         if (cl.isNotEmpty()) parts.add("日历·" + cl.joinToString("、"))
         if (sel.contract) parts.add("合约词条")
+        val st = sel.stats.mapNotNull { k -> STATS_KEYS.firstOrNull { it.first == k }?.second }
+        if (st.isNotEmpty()) parts.add("$STATS_NAME·" + st.joinToString("、"))
         return if (parts.isEmpty()) "" else "📎 " + parts.joinToString(" / ")
     }
 
@@ -136,20 +141,25 @@ object CommData {
         return lines.joinToString("\n")
     }
 
-    /** 数据都从 Core 里取; 黑雾中不给 (调用方先判断). */
+    /** 数据都从 Core 里取; 黑雾中不给 (调用方先判断). 块的顺序和 📎 窗口里一样: 今天 → 日历 → 合约词条 → 统计(月数据). */
     fun build(sel: CommSel, core: Core, windowName: (String) -> String): String {
         val now = LocalDateTime.now()
         val prefix = "%04d-%02d".format(now.year, now.monthValue)
-        val blocks = ArrayList<String>()
-        if ("log" in sel.stats) blocks.add("【统计·整点记录 $prefix】\n" + top(core.dm.hourActivitySeconds(prefix)))
-        if ("net" in sel.stats) blocks.add("【统计·联网理由 $prefix】\n" + top(tallyItems(core.net.usageByReason(prefix)), minutes = true))
+        val blocks = ArrayList<String>()                // 今天
+        val cb = ArrayList<String>()                    // 日历
+        val kb = ArrayList<String>()                    // 合约词条
+        val sb = ArrayList<String>()                    // 统计(月数据)
+        if ("log" in sel.today) blocks.add(core.commLogText())
+        if ("timer" in sel.today) blocks.add(core.commTimerText())
+        if ("log" in sel.stats) sb.add("【统计·整点记录 $prefix】\n" + top(core.dm.hourActivitySeconds(prefix)))
+        if ("net" in sel.stats) sb.add("【统计·联网理由 $prefix】\n" + top(tallyItems(core.net.usageByReason(prefix)), minutes = true))
         if ("window" in sel.stats) {
             val out = HashMap<String, Double>()
             for ((k, v) in core.dm.windowSeconds(prefix, "all")) {
                 val n = when (k) { "" -> "空白"; "?" -> "未知程序"; else -> windowName(k) }
                 out[n] = (out[n] ?: 0.0) + v
             }
-            blocks.add("【统计·应用 $prefix】\n" + top(out))
+            sb.add("【统计·应用 $prefix】\n" + top(out))
         }
         if ("focus" in sel.stats) {
             val today = LocalDate.now()
@@ -160,11 +170,11 @@ object CommData {
                 "  %02d-%02d 周%s: 专注 %.0f 分钟, 休息 %.0f 分钟".format(day.monthValue, day.dayOfMonth, WEEKDAY[day.dayOfWeek.value - 1],
                     hours.sumOf { it.first } / 60, hours.sumOf { it.second } / 60)
             }
-            blocks.add("【统计·专注计时 最近 7 天】\n" + lines.joinToString("\n"))
+            sb.add("【统计·专注计时 最近 7 天】\n" + lines.joinToString("\n"))
         }
         if ("contracts" in sel.stats) {
             val recs = Contract.recentCompleted(core.contract.history, 5)
-            blocks.add("【统计·合约记录 最近完成的】\n" + if (recs.isEmpty()) "  还没有顺利完成的合约" else recs.joinToString("\n") { record(it) })
+            sb.add("【统计·合约记录 最近完成的】\n" + if (recs.isEmpty()) "  还没有顺利完成的合约" else recs.joinToString("\n") { record(it) })
         }
         for (kind in sel.cal) {
             val name = CAL_KEYS.firstOrNull { it.first == kind }?.second ?: continue
@@ -176,10 +186,10 @@ object CommData {
             }
             val lines = days.keys.sorted().filter { (days[it] ?: 0.0) > 0 }.map { "  $it: %.1f h".format(days[it]) }
             val tail = if (kind == "study") "" else " (只有最近 7 天有记录)"
-            blocks.add("【日历·$name $prefix$tail】\n" + (if (lines.isEmpty()) "  没有记录" else lines.joinToString("\n")) +
+            cb.add("【日历·$name $prefix$tail】\n" + (if (lines.isEmpty()) "  没有记录" else lines.joinToString("\n")) +
                 "\n  合计: %.1f h".format(days.values.sum()))
         }
-        if (sel.contract) blocks.add(library(core.contract))
-        return blocks.joinToString("\n\n").take(MAX_CHARS)
+        if (sel.contract) kb.add(library(core.contract))
+        return (blocks + cb + kb + sb).joinToString("\n\n").take(MAX_CHARS)
     }
 }

@@ -302,6 +302,15 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     }
 
     /** 对方查询的模块 ([refuse to reply][模块名]): 数据内容和格式和 📎 附件差不多 (24.2.1). 黑雾中除了"重置"都不给. */
+    /** 今天的整点记录, 一行一小时 (📎 整点记录(今天); 对方查询 [log] 得到的也是这个). */
+    fun commLogText(): String {
+        val day = LocalDate.now().key()
+        return CommData.hourText((0..23).mapNotNull { h -> dm.hourText(day, h).takeIf { it.isNotEmpty() }?.let { "%02d:00 %s".format(h, it) } }, dm.hourEnabled)
+    }
+
+    /** 计时器: 目前状态, 剩余休息时间, 今日总专注时长, 目前这轮专注时长 (📎 专注计时(今天); 对方查询 [timer] 得到的也是这个). */
+    fun commTimerText(): String = CommData.timerText(commSnapshot())
+
     private fun commInfo(tag: String): String {
         if (tag == "reset") return CommData.RESET_TEXT
         if (contract.fog()) return CommData.FOG_TEXT
@@ -312,11 +321,8 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             "contract" -> CommData.library(contract)
             "calendar" -> build(CommSel(cal = CommData.CAL_KEYS.map { it.first }))
             "stats" -> build(CommSel(stats = CommData.STATS_KEYS.map { it.first }))
-            "timer" -> CommData.timerText(commSnapshot())
-            "log" -> {
-                val day = LocalDate.now().key()
-                CommData.hourText((0..23).mapNotNull { h -> dm.hourText(day, h).takeIf { it.isNotEmpty() }?.let { "%02d:00 %s".format(h, it) } }, dm.hourEnabled)
-            }
+            "timer" -> commTimerText()
+            "log" -> commLogText()
             "net" -> CommData.netText(net.mode, net.quotaUsed, net.todayTotal, tr(settings.display("NET_MODE", netMode())),
                 build(CommSel(stats = listOf("net"))))
             "rules" -> CommData.rulesText(tr(settings.display("FILTER_MODE")), listOf(

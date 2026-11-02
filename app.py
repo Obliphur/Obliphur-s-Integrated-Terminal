@@ -1137,7 +1137,8 @@ class BreakTimerApp:
         if self.contract.fog():
             return ""
         return comm_data.build(sel, self.dm, self.net, self.contract, focus_live=self._focus_live(),
-                               cal_live=self._calendar_live())
+                               cal_live=self._calendar_live(),
+                               today_log=lambda: self._comm_info("log"), today_timer=lambda: self._comm_info("timer"))
 
     def _comm_info(self, tag: str) -> str:
         """对方查询的模块 ([refuse to reply][模块名]): 数据内容和格式和 📎 附件差不多 (24.2.1). 黑雾中除了"重置"都不给."""
