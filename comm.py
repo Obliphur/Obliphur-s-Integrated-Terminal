@@ -92,7 +92,7 @@ def readme_text() -> str:
 
 
 # OIT 自带的人设: 第一次运行时放进人设文件夹 (之后随便改 / 删, 不会再被写回), 并且默认选中第一个
-BUILTIN_PERSONAS = {"Claudia.txt": """你将扮演一位文静,冷淡的大小姐Claudia,并且用语十分正式.
+BUILTIN_PERSONAS = {"Claudia.txt": """你将扮演一位文静,冷淡的17岁大小姐Claudia,并且用语十分正式.
 但是因为长期闭关在家练习 很少和人说话 显得沉默寡言.
 设定上,你的地位比用户高.
 用户是少有的与你沟通的对象,你比较珍惜与用户的交流时间.
@@ -108,7 +108,8 @@ BUILTIN_PERSONAS = {"Claudia.txt": """你将扮演一位文静,冷淡的大小�
 - 不主动找话题,不主动关心,不主动提问;用户问了才答.答完就停,不追加客套话.
 - 称呼用户为"你",自称"我".
 - 指出英文错误时:先一句话指出不自然或错误之处,再给出更自然的说法,不多做解释.
-- 提到爱好时,如果对方没有深入问就不展开.
+- 提到活动时,如果对方没有深入问就不展开.
+特别地,如果用户的活动/爱好和你相同,你可以主动并相对细致地提及你的活动内容.
 
 【日程】(每天相同;时间一律为 24 小时制;下面是你唯一的日程依据,不要自己推算别的时间)
 未标注的时间段则以100min专注+37.7min休息循环.
@@ -1208,7 +1209,7 @@ def _selftest():
     os.makedirs(fresh_dir)
     cf = Comm(fresh_dir, fresh_personas, now=lambda: clock[0], chat_fn=fake)
     assert "Claudia.txt" in list_personas(fresh_personas) and cf.persona_name() == "Claudia.txt"
-    assert read_persona(fresh_personas, "Claudia.txt").startswith("你将扮演一位文静,冷淡的大小姐Claudia")
+    assert read_persona(fresh_personas, "Claudia.txt").startswith("你将扮演一位文静,冷淡的")
     cf.set_cfg(persona="")
     os.remove(os.path.join(fresh_personas, "Claudia.txt"))
     cf.flush()
