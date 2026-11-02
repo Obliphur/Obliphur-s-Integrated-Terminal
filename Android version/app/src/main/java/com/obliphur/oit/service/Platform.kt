@@ -508,7 +508,7 @@ object AppUsage {
      * 精确: 有 DUMP 权限时, 就是多任务界面里的任务 (每个任务算它的根应用, 别的应用借用的界面算在根应用里),
      * 含 OIT 自己, 不含桌面. 每次数的时候在后台重新读一遍, 用的是上一次读到的 (最多晚一个检查间隔).
      * 刚启动、第一次还没读完时返回 null (这一次不数): 不然会先用"统计"的办法, 过一会换成精确的数, 数目会跳.
-     * 统计 (没有 DUMP 权限, 或读不出来; 不需要电脑): 最近 Cfg.APP_RECENT_MIN 分钟内用过 (界面显示过 / 暂停过, 或者现在就在前台)、
+     * 统计 (没有 DUMP 权限, 或读不出来; 不需要电脑): 最近 Cfg.APP_RECENT_MIN 分钟内在前台待过至少 Cfg.APP_RECENT_FG_SEC 秒 (或者现在就在前台)、
      * 界面还没被销毁、没有被强制停止 (FLAG_STOPPED) 的应用. 普通应用没有办法知道某个应用还在不在多任务里 (有的手机, 例如 vivo,
      * 还不记"销毁"事件), 所以不数"开着的", 数"刚用过的": 这个数是准的, 不会因为划掉的应用赖着不走而多算.
      * 只算桌面上有图标、能点开进入界面的应用: 别的应用借用的界面 (权限弹窗, 安装器, 分享 / 选择器,
@@ -540,26 +540,32 @@ object AppUsage {
                     events.add(UseEvent(e.packageName.orEmpty(), e.className.orEmpty(), e.eventType, e.timeStamp))
             }
         }
-        return openFromEvents(events, now, Cfg.APP_RECENT_MIN * 60_000L, homes(ctx), launchables(ctx)) { isStopped(ctx, it) }
+        return openFromEvents(events, now, Cfg.APP_RECENT_MIN * 60_000L, Cfg.APP_RECENT_FG_SEC * 1000L, homes(ctx), launchables(ctx)) { isStopped(ctx, it) }
     }
 
     /**
      * 统计 (没有精确权限时): events 按时间先后. 一个应用算数, 要同时满足:
-     * 有界面还没被销毁 (每个界面 包名/类名 的最后一个事件不是销毁); 最近 recentMs 内用过 (显示 / 暂停的事件) 或者现在还在前台 (最后一个事件是显示);
-     * 不是桌面 / 系统界面, 桌面上有图标, 没有被强制停止.
+     * 有界面还没被销毁 (每个界面 包名/类名 的最后一个事件不是销毁); 最近 recentMs 内在前台待过至少 minFgMs (显示到暂停之间的时间, 几个界面加起来)
+     * 或者现在还在前台 (最后一个事件是显示); 不是桌面 / 系统界面, 桌面上有图标, 没有被强制停止.
      */
-    fun openFromEvents(events: List<UseEvent>, now: Long, recentMs: Long, skip: Set<String>, launchable: Set<String>,
+    fun openFromEvents(events: List<UseEvent>, now: Long, recentMs: Long, minFgMs: Long, skip: Set<String>, launchable: Set<String>,
                        stopped: (String) -> Boolean): Set<String> {
+        val from = now - recentMs
         val last = HashMap<String, Int>()            // 包名/界面 -> 最后一个事件
-        val used = HashMap<String, Long>()           // 包名 -> 最近一次用的时刻 (显示 / 暂停)
+        val shownAt = HashMap<String, Long>()        // 包名/界面 -> 显示的时刻 (还没暂停)
+        val fg = HashMap<String, Long>()             // 包名 -> 最近 recentMs 内在前台的总时长
         for (e in events) {
-            last[e.pkg + "/" + e.cls] = e.type
-            if (e.type == UsageEvents.Event.ACTIVITY_RESUMED || e.type == UsageEvents.Event.ACTIVITY_PAUSED)
-                used[e.pkg] = maxOf(used[e.pkg] ?: 0L, e.time)
+            val key = e.pkg + "/" + e.cls
+            last[key] = e.type
+            if (e.type == UsageEvents.Event.ACTIVITY_RESUMED) shownAt[key] = e.time
+            else if (e.type == UsageEvents.Event.ACTIVITY_PAUSED) shownAt.remove(key)?.let { s ->
+                val a = maxOf(s, from)
+                if (e.time > a) fg[e.pkg] = (fg[e.pkg] ?: 0L) + (e.time - a)
+            }
         }
         val alive = last.filter { it.value != ACTIVITY_DESTROYED }.keys.map { it.substringBefore('/') }.toSet()
         val foreground = last.filter { it.value == UsageEvents.Event.ACTIVITY_RESUMED }.keys.map { it.substringBefore('/') }.toSet()
-        return alive.filter { it !in skip && it in launchable && (it in foreground || (used[it] ?: 0L) >= now - recentMs) }
+        return alive.filter { it !in skip && it in launchable && (it in foreground || (fg[it] ?: 0L).let { f -> f > 0 && f >= minFgMs }) }
             .filterNot(stopped).toSet()
     }
 
