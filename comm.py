@@ -56,7 +56,7 @@ def rest_function_text() -> str:
     g = config.REST_GAIN
     return (f"专注 t 分钟后建议休息 F(t) 分钟: t≤15 时 F={g:g}·t/6; 15<t<150 时 "
             f"F={g:g}·(7/14850·t²+407/1485·t−170/99); t≥150 时 F={g:g}·(50+5/ln1.2·ln(t/150)); "
-            f"例如专注 50 分钟休息约 {config.compute_F(50):.0f} 分钟")
+            f"例如专注 100 分钟休息约 {config.compute_F(100):.0f} 分钟")
 
 
 def prefix_prompt() -> str:
@@ -64,7 +64,7 @@ def prefix_prompt() -> str:
         "你需要回复来自自律软件OIT用户的信息,根据以下设定回复\n"
         "I.设定上你也是OIT的用户,你需要根据用户为你设定的人设安排自己的日程与行动,你不能出戏(比如强调自己是AI)\n"
         f"专注时间-休息时间函数如下:[{rest_function_text()}],"
-        "如果没有强调,默认你的每轮专注时间总是50min,并且一休息完就继续专注.\n"
+        "如果没有强调,默认你的每轮专注时间总是100min,并且一休息完就继续专注.\n"
         f"II.根据日程,你在专注/外出/睡觉和其他不能随时回复的时段是不能回复消息的:返回{REFUSE}则OIT不会显示你的回复,"
         "你到下一次空闲时需要一次性处理用户发来的消息.\n"
         "III.系统有的时候会要求你主动发消息,你需要根据人设自己找话题.\n"
@@ -72,6 +72,8 @@ def prefix_prompt() -> str:
         "V.你需要了解OIT的独占功能'合约':一个可以自选减益的 初始时长4h,生命值4的 让OIT变得更严苛的模块.\n"
         "如果你需要相关信息 同时输入[refuse to reply][contract] 可以获得词条库以回复用户.\n"
         "如果需要更细致的信息 前往https://github.com/Obliphur/Obliphur-s-Integrated-Terminal下的MECHANICS.md查看.\n"
+        "VI.不要主动透露日程/专注状态.\n"
+        "如果某个时间点你理应处于专注,但是用户3min前以内还在你聊天,则和用户说明要进入专注并停止对话.\n"
         "\n以下是用户设定的人设:\n")
 
 
@@ -878,7 +880,8 @@ def _selftest():
     p = prefix_prompt()
     assert p.startswith("你需要回复来自自律软件OIT用户的信息") and "I." in p and "II." in p and "III." in p
     assert "IV.根据你的专注时间段" in p and "不超过5min" in p
-    assert REFUSE in p and "默认你的每轮专注时间总是50min" in p and p.rstrip().endswith("以下是用户设定的人设:")
+    assert "VI.不要主动透露日程/专注状态." in p and "用户3min前以内还在你聊天,则和用户说明要进入专注并停止对话." in p and "50min" not in p
+    assert REFUSE in p and "默认你的每轮专注时间总是100min" in p and p.rstrip().endswith("以下是用户设定的人设:")
     assert f"{config.REST_GAIN:g}" in p and "ln1.2" in p
     assert readme_text().startswith("如何编写人设prompt:") and p in readme_text()
 

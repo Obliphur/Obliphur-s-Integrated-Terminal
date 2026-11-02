@@ -45,9 +45,10 @@ class CommTest {
     fun prefixAndPersonas() {
         val p = CommText.prefixPrompt()
         assertTrue(p.startsWith("你需要回复来自自律软件OIT用户的信息"))
-        for (k in listOf("I.", "II.", "III.", "IV.根据你的专注时间段", "不超过5min", CommText.REFUSE, "默认你的每轮专注时间总是50min", "ln1.2"))
+        for (k in listOf("I.", "II.", "III.", "IV.根据你的专注时间段", "不超过5min", CommText.REFUSE, "默认你的每轮专注时间总是100min", "ln1.2"))
             assertTrue(k, k in p)
         assertTrue(p.trimEnd().endsWith("以下是用户设定的人设:"))
+        assertTrue("VI.不要主动透露日程/专注状态." in p && "用户3min前以内还在你聊天,则和用户说明要进入专注并停止对话." in p && "50min" !in p)
         assertTrue(CommText.readme().startsWith("如何编写人设prompt:") && p in CommText.readme())
 
         val td = Files.createTempDirectory("oit").toFile()
