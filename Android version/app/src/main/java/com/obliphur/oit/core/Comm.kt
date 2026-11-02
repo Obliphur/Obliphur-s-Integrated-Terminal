@@ -164,7 +164,7 @@ object CommText {
     private val WAIT_RE = Regex("\\[\\s*waiting\\s+for\\s+reply\\s*\\](?:\\s*(?:[:：]\\s*)?\\[\\s*(\\d+(?:\\.\\d+)?)\\s*\\]|\\s*[:：]\\s*\\[?\\s*(\\d+(?:\\.\\d+)?)\\s*\\]?|\\s*[:：])?" +
         "(?:[ \\t]*(?:minutes?|mins?|分钟))?", RegexOption.IGNORE_CASE)
     private val EMPTY_WRAP_RE = Regex("`[ \\t]*`|“[ \\t]*”|「[ \\t]*」|『[ \\t]*』|\\([ \\t]*\\)|（[ \\t]*）|\"[ \\t]*\"|'[ \\t]*'")
-    private val BRACKET_RE = Regex("[\\[［][^\\[\\]［］\\n]*[\\]］]")
+    private val BRACKET_RE = Regex("[\\[［][^\\[\\]［］\\n]*[\\]］](?:[ \\t]*[:：][ \\t]*\\d+(?:\\.\\d+)?)?")      // 空的 [] 也算; 紧跟的 ":1" 这样的数字一起去掉
     const val WAIT_MAX_MIN = 1440.0
 
     /** 对方的回复 → (聊天里显示的文字, 等用户回复的分钟数, 没有 = 0.0). 去掉 [waiting for reply]:[N] 和所有别的 [...]; N 不是 0 < N <= 1440 就当没写. */

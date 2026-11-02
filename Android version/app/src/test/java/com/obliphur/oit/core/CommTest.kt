@@ -497,6 +497,9 @@ class CommTest {
         for (tail in listOf("[waiting for reply]:1", "[waiting for reply]：[1", "[waiting for reply]:[1]", "[waiting for reply][1]", "[waiting for reply]: 1 min",
             "[waiting for reply]:1分钟", "[Waiting for reply] : [ 1 ]"))
             assertEquals(tail, "你在吗?" to 1.0, CommText.cleanReply("你在吗?\n\n" + tail))             // N 不带 [] / 括号没写全 / 带单位: 照样认, 不留 : 和数字
+        assertEquals("好" to 0.0, CommText.cleanReply("好[]:1"))
+        assertEquals("好 呢" to 0.0, CommText.cleanReply("好[]：2.5 呢"))
+        assertEquals("好" to 0.0, CommText.cleanReply("[动作] : 3 好"))
         assertEquals("好" to 0.0, CommText.cleanReply("好[waiting for reply]:"))
         assertEquals("1 3 个" to 0.0, CommText.cleanReply("1[waiting for reply] 3 个"))
         assertEquals("要在结尾带上 ,才会触发" to 1.0, CommText.cleanReply("要在结尾带上 `[waiting for reply]:[1]`,才会触发"))

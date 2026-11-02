@@ -279,7 +279,7 @@ def import_persona(folder: str, src: str) -> str:
 # 规则 IX: 对方期待用户回复时, 在话的结尾写 [waiting for reply]:[N] (N 分钟); 所有 [] 里的内容都不显示在聊天里 (记录里的"给模型看的"那份 api 保留原文)
 _WAIT_RE = re.compile(r"\[\s*waiting\s+for\s+reply\s*\](?:\s*(?:[:：]\s*)?\[\s*(\d+(?:\.\d+)?)\s*\]|\s*[:：]\s*\[?\s*(\d+(?:\.\d+)?)\s*\]?|\s*[:：])?"
                       r"(?:[ \t]*(?:minutes?|mins?|分钟))?", re.I)
-_BRACKET_RE = re.compile(r"[\[［][^\[\]［］\n]*[\]］]")
+_BRACKET_RE = re.compile(r"[\[［][^\[\]［］\n]*[\]］](?:[ \t]*[:：][ \t]*\d+(?:\.\d+)?)?")       # 空的 [] 也算; 紧跟的 ":1" 这样的数字一起去掉
 WAIT_MAX_MIN = 1440
 # 去掉 [] 之后留下的空壳: 对方常把标记写在行内代码 / 引号 / 括号里 (`[waiting for reply]:[1]`), 剩下 `` “” 「」 () 之类的就不显示了
 _EMPTY_WRAP_RE = re.compile(r"`[ \t]*`|“[ \t]*”|「[ \t]*」|『[ \t]*』|\([ \t]*\)|（[ \t]*）|\"[ \t]*\"|'[ \t]*'")
@@ -2062,6 +2062,7 @@ def _selftest():
     for tail in ("[waiting for reply]:1", "[waiting for reply]：[1", "[waiting for reply]:[1]", "[waiting for reply][1]", "[waiting for reply]: 1 min",
                  "[waiting for reply]:1分钟", "[Waiting for reply] : [ 1 ]"):
         assert clean_reply("你在吗?\n\n" + tail) == ("你在吗?", 1.0), tail           # N 不带 [] / 括号没写全 / 带单位: 照样认, 不留 : 和数字
+    assert clean_reply("好[]:1") == ("好", None) and clean_reply("好[]：2.5 呢") == ("好 呢", None) and clean_reply("[动作] : 3 好") == ("好", None)
     assert clean_reply("好[waiting for reply]") == ("好", None) and clean_reply("好[waiting for reply]:") == ("好", None)
     assert clean_reply("1[waiting for reply] 3 个") == ("1 3 个", None), "没有冒号, 后面的数字不算 N"
     assert clean_reply("要在结尾带上 `[waiting for reply]:[1]`,才会触发") == ("要在结尾带上 ,才会触发", 1.0), "去掉 [] 后留下的空 `` 也不显示"
