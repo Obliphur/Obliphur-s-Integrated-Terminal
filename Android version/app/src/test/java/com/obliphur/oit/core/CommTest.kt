@@ -280,9 +280,14 @@ class CommTest {
         assertEquals("专注中不能使用沟通", c.send("专注时发"))
         assertEquals("专注中不能使用沟通", c.sendData(CommSel(stats = listOf("net"))))
         wait(c)
-        assertEquals("在专注前收到", c.visible().last().text)                // 进入专注前发出的请求, 回复到了照样收下
+        assertEquals("休息时发的", c.visible().last().text)                   // 进入专注前发出的请求, 回复到了收下, 但藏起来
+        assertTrue(c.messages.any { it.text == "在专注前收到" && it.hold })
+        val unread0 = c.unread
         val n = calls.size
         c.blocked = { "" }
+        c.tick()                                                              // 回到休息 / 空闲: 藏着的显示, 未读 +1
+        assertTrue(c.visible().any { it.text == "在专注前收到" })
+        assertEquals(unread0 + 1, c.unread)
         script.add("空下来了")
         c.send("再说一句"); wait(c)
         assertEquals(n + 1, calls.size)

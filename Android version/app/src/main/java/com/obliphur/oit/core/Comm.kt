@@ -12,7 +12,10 @@ import java.time.LocalDateTime
 import java.util.concurrent.ConcurrentLinkedQueue
 
 /** 沟通 (MECHANICS 24) 的一条聊天记录. role: me / ai / sys (sys 是系统触发的请求, 不显示). */
-class ChatMsg(val id: Int, val role: String, val text: String, val at: String, val api: String = "", val uid: String = "", val ts: Long = 0L)
+class ChatMsg(val id: Int, val role: String, val text: String, val at: String, val api: String = "", val uid: String = "", val ts: Long = 0L) {
+    /** 不能用沟通的时候 (专注 / 睡眠 / 外出 / 无言为真) 收到的对方的消息先藏起来, 回到休息 / 空闲再显示 (MECHANICS 24.4). */
+    var hold = false
+}
 
 /** 发给对方的计时器状态. state: focus / break / idle / sleep / out. */
 class CommSnap(
@@ -345,7 +348,8 @@ class Comm(
             val at = m.optString("at")
             val ts = m.optLong("ts", 0L).takeIf { it != 0L }
                 ?: parseIso(at)?.atZone(java.time.ZoneId.systemDefault())?.toInstant()?.toEpochMilli() ?: 0L     // 旧版本的记录没有 uid / ts
-            st.messages.add(ChatMsg(id, role, m.optString("text"), at, m.optString("api"), m.optString("uid").ifEmpty { "L$id" }, ts))
+            st.messages.add(ChatMsg(id, role, m.optString("text"), at, m.optString("api"), m.optString("uid").ifEmpty { "L$id" }, ts)
+                .also { it.hold = m.optBoolean("hold") })
         }
         st.messages.sortWith(compareBy({ it.ts }, { it.uid }))
         st.clearTs = o?.optLong("clear_ts", 0L) ?: 0L
@@ -358,7 +362,7 @@ class Comm(
     private fun statePayload(st: ChatState): JSONObject {
         val arr = JSONArray()
         for (m in st.messages.takeLast(KEEP)) arr.put(JSONObject().put("id", m.id).put("role", m.role).put("text", m.text).put("at", m.at)
-            .put("uid", m.uid).put("ts", m.ts).apply { if (m.api.isNotEmpty()) put("api", m.api) })
+            .put("uid", m.uid).put("ts", m.ts).apply { if (m.api.isNotEmpty()) put("api", m.api); if (m.hold) put("hold", true) })
         return JSONObject().put("messages", arr).put("clear_ts", st.clearTs).put("retry_at", st.retryAt)
             .put("retry_n", st.retryN).put("pro_key", st.proKey)
     }
@@ -559,13 +563,14 @@ class Comm(
                     val tc = touch(p)
                     if (uid in tc.known || ts <= tc.st.clearTs || role !in listOf("me", "ai", "sys")) continue
                     val msg = ChatMsg(nextId++, role, v.optString("text"), v.optString("at"), v.optString("api"), uid, ts)
+                    if (role == "ai" && blocked().isNotEmpty()) msg.hold = true       // 不能用沟通的时候同步来的也先藏起来
                     tc.st.messages.add(msg)
                     if (p == pid) fresh.add(msg)
                     tc.known.add(uid)
                     tc.dirty = true
                     if (role == "ai") {
                         tc.st.retryAt = 0; tc.st.retryN = 0
-                        if (!(viewing && p == pid)) unread++
+                        if (!(viewing && p == pid) && !msg.hold) unread++
                     }
                 }
                 kind == "pro" && v is String -> {                       // 已经处理过的主动消息时间点: 两边合起来
@@ -737,9 +742,22 @@ class Comm(
     @Synchronized
     fun removeAvatar(who: String) { avatarFile(who).delete(); changed() }
 
-    fun visible() = messages.filter { it.role == "me" || it.role == "ai" }
+    /** 聊天里显示的消息 (藏起来的不算, 见 ChatMsg.hold). */
+    fun visible() = messages.filter { (it.role == "me" || it.role == "ai") && !it.hold }
 
-    private fun unanswered() = visible().lastOrNull()?.role == "me"
+    private fun unanswered() = messages.lastOrNull { it.role == "me" || it.role == "ai" }?.role == "me"      // 藏着的回复也算回复过了
+
+    /** 回到休息 / 空闲: 藏着的消息现在显示 (未读 +N, 前 5 分钟没聊过的话响一声). */
+    private fun releaseHeld() {
+        if (blocked().isNotEmpty()) return
+        val held = messages.filter { it.hold }
+        if (held.isEmpty()) return
+        val first = messages.indexOf(held[0])
+        held.forEach { it.hold = false }
+        if (!viewing) unread += held.size
+        if (!talkedRecently(messages.subList(0, first), held[0].ts)) ping()
+        saveChat(); changed(); push()
+    }
 
     @Synchronized
     fun setViewing(on: Boolean) {
@@ -777,6 +795,7 @@ class Comm(
         val ts = maxOf(nowMs(), lastTs + 1)             // 同一台设备上严格递增
         lastTs = ts
         val m = ChatMsg(nextId++, role, text, now().iso(), api, "$ts-${device().ifEmpty { "local" }.take(4)}", ts)
+        if (role == "ai" && blocked().isNotEmpty()) m.hold = true       // 专注 / 睡眠 / 外出中收到的: 先藏起来, 回到休息 / 空闲再显示
         messages.add(m)
         return m
     }
@@ -898,9 +917,9 @@ class Comm(
             saveCfg()
             val quiet = r.kind == "proactive" && !talkedRecently(messages, nowMs())      // 前 5 分钟没聊过: 提示音
             r.extra?.let { add("sys", it.body, it.api) }
-            add("ai", r.reply.trim())
-            if (!viewing) unread++
-            if (quiet) ping()
+            val held = add("ai", r.reply.trim()).hold
+            if (!viewing && !held) unread++
+            if (quiet && !held) ping()
         }
         saveChat(); changed(); push()
         if (again) {
@@ -916,6 +935,7 @@ class Comm(
     @Synchronized
     fun tick() {
         while (true) finish(results.poll() ?: break)
+        releaseHeld()
         if (busy || problem().isNotEmpty() || !leader()) return
         val t = now()
         val snap = snapshot()

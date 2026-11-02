@@ -708,13 +708,15 @@ class Comm:
                      "at": str(val.get("at") or ""), "ts": ts}
                 if val.get("api"):
                     m["api"] = str(val["api"])
+                if m["role"] == "ai" and self.blocked():       # 不能用沟通的时候同步来的也先藏起来
+                    m["hold"] = True
                 st["messages"].append(m)
                 fresh.append((pid, m))
                 known.add(uid)
                 touched[pid][1] = True
                 if m["role"] == "ai":
                     st["retry"] = {}
-                    if not (self.viewing and pid == self.pid):
+                    if not (self.viewing and pid == self.pid) and not m.get("hold"):
                         self.unread += 1
             elif key == "profile":
                 new = str(val or "")[:MAX_PROFILE] if val is not None else ""
@@ -843,11 +845,28 @@ class Comm:
         self._changed()
 
     def visible(self) -> list:
-        return [m for m in self.messages if m["role"] in ("me", "ai")]
+        """聊天里显示的消息. 不能用沟通的时候 (专注 / 睡眠 / 外出 / 无言为真) 收到的对方的消息先藏起来 (hold), 回到休息 / 空闲再显示 (24.4)."""
+        return [m for m in self.messages if m["role"] in ("me", "ai") and not m.get("hold")]
 
     def unanswered(self) -> bool:
-        vis = self.visible()
+        vis = [m for m in self.messages if m["role"] in ("me", "ai")]          # 藏起来的回复也算回复过了
         return bool(vis) and vis[-1]["role"] == "me"
+
+    def _release_held(self):
+        """回到休息 / 空闲: 藏着的消息现在显示 (未读 +N, 前 5 分钟没聊过的话响一声)."""
+        if not any(m.get("hold") for m in self.messages) or self.blocked():
+            return
+        held = [m for m in self.messages if m.get("hold")]
+        first = self.messages.index(held[0])
+        for m in held:
+            del m["hold"]
+        if not self.viewing:
+            self.unread += len(held)
+        if not self._talked_recently(self.messages[:first], int(held[0]["ts"])):
+            self._ping()
+        self.save_chat()
+        self._changed()
+        self._push()
 
     def set_viewing(self, on: bool):
         self.viewing = bool(on)
@@ -868,6 +887,8 @@ class Comm:
              "at": now.isoformat(timespec="seconds"), "ts": ts}
         if api:
             m["api"] = api
+        if role == "ai" and self.blocked():                # 专注 / 睡眠 / 外出中收到的: 先藏起来, 回到休息 / 空闲再显示
+            m["hold"] = True
         self.messages.append(m)
         return m
 
@@ -1040,10 +1061,10 @@ class Comm:
             ping = kind == "proactive" and not self._talked_recently(self.messages, self._ms())      # 前 5 分钟没聊过: 提示音
             if extra:
                 self._add("sys", extra[0], extra[1])
-            self._add("ai", reply.strip())
-            if not self.viewing:
+            held = self._add("ai", reply.strip()).get("hold")
+            if not self.viewing and not held:
                 self.unread += 1
-            if ping:
+            if ping and not held:
                 self._ping()
         self.save_chat()
         self._changed()
@@ -1062,6 +1083,7 @@ class Comm:
             done, self._results = self._results, []
         for res in done:
             self._finish(*res)
+        self._release_held()
         if self.busy or self.problem() or not self.leader():
             return
         now = self.now()
@@ -1413,7 +1435,10 @@ def _selftest():
     c.blocked = lambda: "专注中不能使用沟通"
     assert c.send("专注时发") == "专注中不能使用沟通" and c.send_data({"stats": ["net"]}) == "专注中不能使用沟通"
     wait(c)
-    assert c.visible()[-1]["text"] == "在专注前收到", "进入专注前发出的请求, 回复到了照样收下"
+    assert c.visible()[-1]["text"] != "在专注前收到" and any(m["text"] == "在专注前收到" and m.get("hold") for m in c.messages), \
+        "进入专注前发出的请求, 回复到了收下, 但藏起来 (回到休息 / 空闲再显示)"
+    assert not c.unanswered(), "藏着的回复也算回复过了, 不会重新问"
+    unread0 = c.unread
     n_calls = len(calls)
     c.cfg["retry"] = {"at": c._ms() - RETRY_GAP * 1000 - 5, "n": 1}
     c._add("me", "专注前最后一句")
@@ -1422,6 +1447,8 @@ def _selftest():
     c.blocked = lambda: ""
     script.append("空下来了")
     c.tick()
+    assert any(m["text"] == "在专注前收到" for m in c.visible()) and c.unread == unread0 + 1, "回到休息 / 空闲: 藏着的消息显示, 未读 +1"
+    assert not any(m.get("hold") for m in c.messages)
     assert c.busy, "回到休息 / 空闲: 马上把没回的消息交给对方"
     wait(c)
     assert c.visible()[-1]["text"] == "空下来了"
