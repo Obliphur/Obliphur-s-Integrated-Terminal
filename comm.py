@@ -93,6 +93,7 @@ def prefix_prompt(split: bool = True) -> str:
         "可查询的模块: [contract]合约词条库 [calendar]日历 [stats]统计 [timer]计时器 [log]整点记录 [net]联网 [rules]规则 [settings]设置 [reset]重置 [prescript]指令.\n"
         + (f"VIII.你可以把你的话分开说.当用户说完话时,系统会试图调用两次API,最好不要让你的表达太集中.如果你只想说一次,第二次{REFUSE}.\n"
            if split else "")
+        + "IX.如果期待对方回复,则在对话结尾加一个[waiting for reply]:[N],N自己填写,如果N min内没有收到对方回复你可以追加询问.\n"
         + "\n以下是用户设定的人设:\n")
 
 
@@ -273,6 +274,26 @@ def import_persona(folder: str, src: str) -> str:
 
 
 # ══════════════ 请求内容 ══════════════
+# 规则 IX: 对方期待用户回复时, 在话的结尾写 [waiting for reply]:[N] (N 分钟); 所有 [] 里的内容都不显示在聊天里 (记录里的"给模型看的"那份 api 保留原文)
+_WAIT_RE = re.compile(r"\[\s*waiting\s+for\s+reply\s*\]\s*[:：]?\s*\[\s*(\d+(?:\.\d+)?)\s*\]", re.I)
+_BRACKET_RE = re.compile(r"[\[［][^\[\]［］\n]*[\]］]")
+WAIT_MAX_MIN = 1440
+
+
+def clean_reply(reply: str) -> tuple:
+    """对方的回复 → (聊天里显示的文字, 等用户回复的分钟数 or None). 去掉 [waiting for reply]:[N] 和所有别的 [...]; N 不是 0 < N <= 1440 就当没写."""
+    reply = str(reply or "")
+    m = _WAIT_RE.search(reply)
+    minutes = None
+    if m:
+        n = float(m.group(1))
+        minutes = n if 0 < n <= WAIT_MAX_MIN else None
+    text = _BRACKET_RE.sub("", _WAIT_RE.sub("", reply))
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    return text, minutes
+
+
 def is_refusal(text: str) -> bool:
     return REFUSE in re.sub(r"\s+", " ", str(text or "")).lower()
 
@@ -676,6 +697,8 @@ class Comm:
                 e = {"role": m["role"], "text": m["text"], "at": m["at"], "ts": int(m["ts"])}
                 if m.get("api"):
                     e["api"] = m["api"]
+                if m.get("wait"):
+                    e["wait"] = m["wait"]
                 doc[f"m:{pid}:{m['uid']}"] = e
             if st["pro_key"]:
                 doc[f"pro:{pid}"] = st["pro_key"]
@@ -727,6 +750,8 @@ class Comm:
                      "at": str(val.get("at") or ""), "ts": ts}
                 if val.get("api"):
                     m["api"] = str(val["api"])
+                if isinstance(val.get("wait"), (int, float)) and 0 < val["wait"] <= WAIT_MAX_MIN:
+                    m["wait"] = float(val["wait"])
                 if m["role"] == "ai" and self.blocked():       # 不能用沟通的时候同步来的也先藏起来
                     m["hold"] = True
                 st["messages"].append(m)
@@ -876,6 +901,7 @@ class Comm:
         first = self.messages.index(held[0])
         for m in held:
             del m["hold"]
+            m["shown"] = self._ms()                        # 等用户回复的时间从这时候算起 (规则 IX)
         if not self.viewing:
             self.unread += len(held)
         if not self._talked_recently(self.messages[:first], int(held[0]["ts"])):
@@ -1059,14 +1085,16 @@ class Comm:
             self._again = False
             self._changed()
             return
+        text, wait_min = clean_reply(reply) if not err else ("", None)
         refused = not err and is_refusal(reply)
+        empty = not err and not refused and not text           # 去掉 [] 之后什么也没剩: 当没回复
         # 第二次调用 (规则 VIII) 等回复的时候用户又说话了: 这条不要了 (用户的新消息重新回复)
         drop = kind == "followup" and not err and not refused and (self._again or self.unanswered())
         if drop:
             self.log("REPLY followup dropped: 等回复的时候用户又发了消息")
         if refused:
             self.log(f"REPLY refused ({kind}): 对方回了 [refuse to reply], 不显示" + (", 稍后重试" if self.unanswered() else ""))
-        if err or refused or drop:
+        if err or refused or drop or empty:
             self.error = err
             if refused and self.unanswered():
                 rt = self.cfg.get("retry") or {}
@@ -1077,10 +1105,13 @@ class Comm:
             self.error = ""
             self.cfg["retry"] = {}
             self.save_cfg()
-            ping = kind == "proactive" and not self._talked_recently(self.messages, self._ms())      # 前 5 分钟没聊过: 提示音
+            ping = kind == "chase" or (kind == "proactive" and not self._talked_recently(self.messages, self._ms()))      # 前 5 分钟没聊过 (追问总是): 提示音
             if extra:
                 self._add("sys", extra[0], extra[1])
-            held = self._add("ai", reply.strip()).get("hold")
+            m = self._add("ai", text, reply.strip() if text != reply.strip() else "")
+            if wait_min and kind != "chase":                    # 追问的回复里再写 [waiting for reply] 不算: 一条消息最多追问一次
+                m["wait"] = wait_min
+            held = m.get("hold")
             if not self.viewing and not held:
                 self.unread += 1
             if ping and not held:
@@ -1116,7 +1147,23 @@ class Comm:
                 self._trigger("retry", f"现在是 {stamp(now)}. 用户之前发来的消息你还没有回复, 请现在一次性处理并回复; "
                                        f"如果仍然不方便, 返回{REFUSE}.")
                 return
+        if self._check_wait():
+            return
         self._check_proactive(now, snap)
+
+    def _check_wait(self) -> bool:
+        """规则 IX: 对方最后一条消息末尾写了 [waiting for reply]:[N], N 分钟 (从用户看到它算起) 过去了用户还没回复: 让对方可以追问一次."""
+        last = next((m for m in reversed(self.messages) if m["role"] in ("me", "ai")), None)
+        if not last or last["role"] != "ai" or not last.get("wait") or last.get("chased") or last.get("hold"):
+            return False
+        if self._ms() < int(last.get("shown") or last["ts"]) + float(last["wait"]) * 60000:
+            return False
+        last["chased"] = True                                # 一条消息最多追问一次 (追问被拒绝也算)
+        self.save_chat()
+        n = f"{float(last['wait']):g}"
+        self._trigger("chase", f"[系统] 你上一条消息末尾标了 [waiting for reply]:[{n}], 现在已经过了 {n} 分钟, 用户还没有回复. "
+                               f"请根据人设决定要不要追加询问一次 (话题和语气自己定, 不要重复上一条); 如果不想问或者此刻不方便, 返回{REFUSE}.")
+        return True
 
     # ---- 主动发消息 (MECHANICS 24.4) ----
     def _pro_done(self) -> list:
@@ -1826,6 +1873,47 @@ def _selftest():
     follow.clear()
     cu.apply_doc({"split": True})
     assert cu.split_on() and cu.sync_doc()["split"] is True
+    # IX: [waiting for reply]:[N] — 所有 [] 都不显示; N 分钟内用户没回复, 对方可以追问一次
+    assert "IX.如果期待对方回复,则在对话结尾加一个[waiting for reply]:[N],N自己填写,如果N min内没有收到对方回复你可以追加询问." in prefix_prompt()
+    assert prefix_prompt().index("VIII.") < prefix_prompt().index("IX.") < prefix_prompt().index("以下是用户设定的人设:")
+    assert clean_reply("在吗?[waiting for reply]:[10]") == ("在吗?", 10.0)
+    assert clean_reply("好的[微笑] 嗯\n\n\n\n[动作]好") == ("好的 嗯\n\n好", None)
+    assert clean_reply("[Waiting For Reply]：[ 0.5 ]") == ("", 0.5) and clean_reply("x [waiting for reply]:[0]") == ("x", None)
+    assert clean_reply("a［全角］b") == ("ab", None)
+    cu.snapshot = lambda: {"state": "idle"}
+    script.append("今天过得怎么样?[waiting for reply]:[10]")
+    cu.send("嗨")
+    wait(cu)
+    last_ai = [m for m in cu.messages if m["role"] == "ai"][-1]
+    assert last_ai["text"] == "今天过得怎么样?" and last_ai["wait"] == 10 and "[waiting for reply]" in last_ai["api"]
+    assert cu.visible()[-1]["text"] == "今天过得怎么样?" and "waiting" not in cu.visible()[-1]["text"]
+    assert cu.sync_doc()[f"m:{cu.pid}:{last_ai['uid']}"]["wait"] == 10
+    n_c = len(calls)
+    clock[0] += timedelta(minutes=9)
+    cu.tick()
+    assert not cu.busy and len(calls) == n_c, "没到 N 分钟不追问"
+    script.append("还在忙吗?[waiting for reply]:[5]")
+    clock[0] += timedelta(minutes=2)
+    cu.tick()
+    assert cu.busy, "N 分钟用户没回复: 追问"
+    wait(cu)
+    body = calls[-1][1][-1]["content"]
+    assert "[waiting for reply]:[10]" in body and "追加询问" in body
+    assert cu.visible()[-1]["text"] == "还在忙吗?" and "wait" not in [m for m in cu.messages if m["role"] == "ai"][-1], "追问的回复不再等待"
+    n_c = len(calls)
+    clock[0] += timedelta(minutes=30)
+    cu.tick()
+    assert not cu.busy and len(calls) == n_c, "一条消息最多追问一次"
+    script.append("再见[waiting for reply]:[3]")
+    cu.send("在的")
+    wait(cu)
+    script.append("好")
+    cu.send("刚才忙")
+    wait(cu)
+    clock[0] += timedelta(minutes=10)
+    n_c = len(calls)
+    cu.tick()
+    assert not cu.busy and len(calls) == n_c, "用户回复了, 对方最后一条没有等待: 不追问"
     cu.set_cfg(persona="小夏.txt")
     cu.flush()
 

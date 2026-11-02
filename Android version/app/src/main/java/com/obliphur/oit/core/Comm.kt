@@ -15,6 +15,10 @@ import java.util.concurrent.ConcurrentLinkedQueue
 class ChatMsg(val id: Int, val role: String, val text: String, val at: String, val api: String = "", val uid: String = "", val ts: Long = 0L) {
     /** 不能用沟通的时候 (专注 / 睡眠 / 外出 / 无言为真) 收到的对方的消息先藏起来, 回到休息 / 空闲再显示 (MECHANICS 24.4). */
     var hold = false
+    /** 规则 IX: 对方在这条消息末尾写了 [waiting for reply]:[N], 等用户回复的分钟数 (0 = 没有); chased: 已经追问过了; shown: 藏着的消息显示出来的时刻. */
+    var wait = 0.0
+    var chased = false
+    var shown = 0L
 }
 
 /** 发给对方的计时器状态. state: focus / break / idle / sleep / out. */
@@ -119,6 +123,7 @@ object CommText {
             "如果用户问的是你自己的使用情况,请参照这个格式,根据人设编造你自己的数据来回复.可以一次查询多个.\n" +
             "可查询的模块: [contract]合约词条库 [calendar]日历 [stats]统计 [timer]计时器 [log]整点记录 [net]联网 [rules]规则 [settings]设置 [reset]重置 [prescript]指令.\n" +
             (if (split) "VIII.你可以把你的话分开说.当用户说完话时,系统会试图调用两次API,最好不要让你的表达太集中.如果你只想说一次,第二次${REFUSE}.\n" else "") +
+            "IX.如果期待对方回复,则在对话结尾加一个[waiting for reply]:[N],N自己填写,如果N min内没有收到对方回复你可以追加询问.\n" +
             "\n以下是用户设定的人设:\n"
 
     fun readme(): String =
@@ -155,6 +160,19 @@ object CommText {
     }
 
     fun isRefusal(text: String) = REFUSE in text.replace(Regex("\\s+"), " ").lowercase()
+
+    // 规则 IX: 对方期待用户回复时, 在话的结尾写 [waiting for reply]:[N] (N 分钟); 所有 [] 里的内容都不显示在聊天里 (记录里给模型看的那份 api 保留原文)
+    private val WAIT_RE = Regex("\\[\\s*waiting\\s+for\\s+reply\\s*\\]\\s*[:：]?\\s*\\[\\s*(\\d+(?:\\.\\d+)?)\\s*\\]", RegexOption.IGNORE_CASE)
+    private val BRACKET_RE = Regex("[\\[［][^\\[\\]［］\\n]*[\\]］]")
+    const val WAIT_MAX_MIN = 1440.0
+
+    /** 对方的回复 → (聊天里显示的文字, 等用户回复的分钟数, 没有 = 0.0). 去掉 [waiting for reply]:[N] 和所有别的 [...]; N 不是 0 < N <= 1440 就当没写. */
+    fun cleanReply(reply: String): Pair<String, Double> {
+        val n = WAIT_RE.find(reply)?.groupValues?.get(1)?.toDouble() ?: 0.0
+        val text = BRACKET_RE.replace(WAIT_RE.replace(reply, ""), "")
+            .replace(Regex("[ \\t]+\\n"), "\n").replace(Regex("\\n{3,}"), "\n\n").trim()
+        return text to (if (n > 0 && n <= WAIT_MAX_MIN) n else 0.0)
+    }
 
     // 人设日程里的一行: "12:30-13:00:空闲" (可以缩进 / 带 - 或 * 开头); 时间可以是全角冒号, 连接符 - – — ~ 至 到
     private val SEG_RE = Regex("^[ \\t]*(?:[-*•][ \\t]*)?(\\d{1,2})[:：](\\d{2})[ \\t]*[-–—~～至到][ \\t]*(\\d{1,2})[:：](\\d{2})" +
@@ -376,7 +394,7 @@ class Comm(
             val ts = m.optLong("ts", 0L).takeIf { it != 0L }
                 ?: parseIso(at)?.atZone(java.time.ZoneId.systemDefault())?.toInstant()?.toEpochMilli() ?: 0L     // 旧版本的记录没有 uid / ts
             st.messages.add(ChatMsg(id, role, m.optString("text"), at, m.optString("api"), m.optString("uid").ifEmpty { "L$id" }, ts)
-                .also { it.hold = m.optBoolean("hold") })
+                .also { it.hold = m.optBoolean("hold"); it.wait = m.optDouble("wait", 0.0); it.chased = m.optBoolean("chased"); it.shown = m.optLong("shown") })
         }
         st.messages.sortWith(compareBy({ it.ts }, { it.uid }))
         st.clearTs = o?.optLong("clear_ts", 0L) ?: 0L
@@ -389,7 +407,10 @@ class Comm(
     private fun statePayload(st: ChatState): JSONObject {
         val arr = JSONArray()
         for (m in st.messages.takeLast(KEEP)) arr.put(JSONObject().put("id", m.id).put("role", m.role).put("text", m.text).put("at", m.at)
-            .put("uid", m.uid).put("ts", m.ts).apply { if (m.api.isNotEmpty()) put("api", m.api); if (m.hold) put("hold", true) })
+            .put("uid", m.uid).put("ts", m.ts).apply {
+                if (m.api.isNotEmpty()) put("api", m.api); if (m.hold) put("hold", true)
+                if (m.wait > 0) put("wait", m.wait); if (m.chased) put("chased", true); if (m.shown != 0L) put("shown", m.shown)
+            })
         return JSONObject().put("messages", arr).put("clear_ts", st.clearTs).put("retry_at", st.retryAt)
             .put("retry_n", st.retryN).put("pro_key", st.proKey)
     }
@@ -537,7 +558,7 @@ class Comm(
             val st = stateOf(p)
             for (m in st.messages.takeLast(SYNC_N)) {
                 doc["m:$p:${m.uid}"] = JSONObject().put("role", m.role).put("text", m.text).put("at", m.at).put("ts", m.ts)
-                    .apply { if (m.api.isNotEmpty()) put("api", m.api) }
+                    .apply { if (m.api.isNotEmpty()) put("api", m.api); if (m.wait > 0) put("wait", m.wait) }
             }
             if (st.proKey.isNotEmpty()) doc["pro:$p"] = st.proKey
             if (st.retryAt != 0L || st.retryN != 0) doc["retry:$p"] = JSONObject().put("at", st.retryAt).put("n", st.retryN)
@@ -584,6 +605,7 @@ class Comm(
                     val tc = touch(p)
                     if (uid in tc.known || ts <= tc.st.clearTs || role !in listOf("me", "ai", "sys")) continue
                     val msg = ChatMsg(nextId++, role, v.optString("text"), v.optString("at"), v.optString("api"), uid, ts)
+                    v.optDouble("wait", 0.0).let { if (it > 0 && it <= CommText.WAIT_MAX_MIN) msg.wait = it }
                     if (role == "ai" && blocked().isNotEmpty()) msg.hold = true       // 不能用沟通的时候同步来的也先藏起来
                     tc.st.messages.add(msg)
                     if (p == pid) fresh.add(msg)
@@ -776,7 +798,7 @@ class Comm(
         val held = messages.filter { it.hold }
         if (held.isEmpty()) return
         val first = messages.indexOf(held[0])
-        held.forEach { it.hold = false }
+        held.forEach { it.hold = false; it.shown = nowMs() }         // 等用户回复的时间从这时候算起 (规则 IX)
         if (!viewing) unread += held.size
         if (!talkedRecently(messages.subList(0, first), held[0].ts)) ping()
         saveChat(); changed(); push()
@@ -920,12 +942,14 @@ class Comm(
         busySince = 0L
         if (hardBlock()) { again = false; changed(); return }       // 等回复的时候"无言为真"生效了: 这条回复不要了
         if (r.epoch != epoch) { again = false; changed(); return }       // 发出之后清空过聊天记录: 这条回复不要了
+        val (text, waitMin) = if (r.err.isEmpty()) CommText.cleanReply(r.reply) else "" to 0.0
         val refused = r.err.isEmpty() && CommText.isRefusal(r.reply)
+        val empty = r.err.isEmpty() && !refused && text.isEmpty()            // 去掉 [] 之后什么也没剩: 当没回复
         // 第二次调用 (规则 VIII) 等回复的时候用户又说话了: 这条不要了 (用户的新消息重新回复)
         val drop = r.kind == "followup" && r.err.isEmpty() && !refused && (again || unanswered())
         if (drop) log("REPLY followup dropped: 等回复的时候用户又发了消息")
         if (refused) log("REPLY refused (${r.kind}): 对方回了 [refuse to reply], 不显示" + if (unanswered()) ", 稍后重试" else "")
-        if (r.err.isNotEmpty() || refused || drop) {
+        if (r.err.isNotEmpty() || refused || drop || empty) {
             error = r.err
             if (refused && unanswered()) {
                 retryN++
@@ -935,9 +959,11 @@ class Comm(
         } else {
             error = ""; retryAt = 0; retryN = 0
             saveCfg()
-            val quiet = r.kind == "proactive" && !talkedRecently(messages, nowMs())      // 前 5 分钟没聊过: 提示音
+            val quiet = r.kind == "chase" || (r.kind == "proactive" && !talkedRecently(messages, nowMs()))      // 前 5 分钟没聊过 (追问总是): 提示音
             r.extra?.let { add("sys", it.body, it.api) }
-            val held = add("ai", r.reply.trim()).hold
+            val m = add("ai", text, if (text != r.reply.trim()) r.reply.trim() else "")
+            if (waitMin > 0 && r.kind != "chase") m.wait = waitMin          // 追问的回复里再写 [waiting for reply] 不算: 一条消息最多追问一次
+            val held = m.hold
             if (!viewing && !held) unread++
             if (quiet && !held) ping()
         }
@@ -968,7 +994,21 @@ class Comm(
                 return
             }
         }
+        if (checkWait()) return
         checkProactive(t, snap)
+    }
+
+    /** 规则 IX: 对方最后一条消息末尾写了 [waiting for reply]:[N], N 分钟 (从用户看到它算起) 过去了用户还没回复: 让对方可以追问一次. */
+    private fun checkWait(): Boolean {
+        val last = messages.lastOrNull { it.role == "me" || it.role == "ai" } ?: return false
+        if (last.role != "ai" || last.wait <= 0 || last.chased || last.hold) return false
+        if (nowMs() < (if (last.shown != 0L) last.shown else last.ts) + (last.wait * 60000).toLong()) return false
+        last.chased = true                                           // 一条消息最多追问一次 (追问被拒绝也算)
+        saveChat()
+        val n = "%.4g".format(last.wait).let { if ("." in it) it.trimEnd('0').trimEnd('.') else it }
+        trigger("chase", "[系统] 你上一条消息末尾标了 [waiting for reply]:[$n], 现在已经过了 $n 分钟, 用户还没有回复. " +
+            "请根据人设决定要不要追加询问一次 (话题和语气自己定, 不要重复上一条); 如果不想问或者此刻不方便, 返回${CommText.REFUSE}.")
+        return true
     }
 
     // ---- 主动发消息 (MECHANICS 24.4) ----

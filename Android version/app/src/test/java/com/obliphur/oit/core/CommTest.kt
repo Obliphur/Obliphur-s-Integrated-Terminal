@@ -481,8 +481,39 @@ class CommTest {
         assertEquals("单条", c.visible().last().text)
         assertEquals(nf, followCalls.size)
         assertEquals(false, c.syncDoc()["split"])
+        follow.clear()
         c.set(splitSend = true)
         assertEquals(true, c.syncDoc()["split"])
+        // IX: [waiting for reply]:[N] — 所有 [] 都不显示; N 分钟内用户没回复, 对方可以追问一次
+        val pr = CommText.prefixPrompt()
+        assertTrue("IX.如果期待对方回复,则在对话结尾加一个[waiting for reply]:[N],N自己填写,如果N min内没有收到对方回复你可以追加询问." in pr)
+        assertTrue(pr.indexOf("VIII.") < pr.indexOf("IX.") && pr.indexOf("IX.") < pr.indexOf("以下是用户设定的人设:"))
+        assertEquals("在吗?" to 10.0, CommText.cleanReply("在吗?[waiting for reply]:[10]"))
+        assertEquals("好的 嗯\n\n好" to 0.0, CommText.cleanReply("好的[微笑] 嗯\n\n\n\n[动作]好"))
+        assertEquals("" to 0.5, CommText.cleanReply("[Waiting For Reply]：[ 0.5 ]"))
+        assertEquals("x" to 0.0, CommText.cleanReply("x [waiting for reply]:[0]"))
+        assertEquals("ab" to 0.0, CommText.cleanReply("a［全角］b"))
+        script.add("今天过得怎么样?[waiting for reply]:[10]")
+        c.send("嗨"); wait(c)
+        val lastAi = c.messages.last { it.role == "ai" }
+        assertEquals("今天过得怎么样?", lastAi.text)
+        assertEquals(10.0, lastAi.wait, 0.0)
+        assertTrue("[waiting for reply]" in lastAi.api)
+        assertEquals(10.0, (c.syncDoc()["m:${c.pid}:${lastAi.uid}"] as org.json.JSONObject).getDouble("wait"), 0.0)
+        val nc = calls.size
+        clock = clock.plusMinutes(9)
+        c.tick(); assertFalse(c.busy); assertEquals(nc, calls.size)          // 没到 N 分钟不追问
+        script.add("还在忙吗?[waiting for reply]:[5]")
+        clock = clock.plusMinutes(2)
+        c.tick(); assertTrue(c.busy)                                           // N 分钟用户没回复: 追问
+        wait(c)
+        val body = calls.last().second.last().second
+        assertTrue("[waiting for reply]:[10]" in body && "追加询问" in body)
+        assertEquals("还在忙吗?", c.visible().last().text)
+        assertEquals(0.0, c.messages.last { it.role == "ai" }.wait, 0.0)       // 追问的回复不再等待
+        val nc2 = calls.size
+        clock = clock.plusMinutes(30)
+        c.tick(); assertFalse(c.busy); assertEquals(nc2, calls.size)          // 一条消息最多追问一次
     }
 
     /** 提示缓存: 发给模型的历史的起点一格一格挪 (中间每次请求开头一模一样), 各家的用量字段都认得. */
