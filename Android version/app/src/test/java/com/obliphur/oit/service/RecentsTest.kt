@@ -34,4 +34,26 @@ ACTIVITY MANAGER RECENT TASKS (dumpsys activity recents)
     @Test fun noSection() {
         assertNull(AppUsage.parseRecents("Permission Denial: can't dump"))
     }
+
+    /** 估计 (没有 DUMP 权限时): vivo 不记"销毁"事件, 划掉的应用 = 被强制停止, 不能再算. */
+    @Test fun estimateSkipsStopped() {
+        val resumed = 1; val paused = 2; val stopped = 23; val destroyed = 24
+        val last = mapOf(
+            "tv.danmaku.bili/tv.danmaku.bili.MainActivity" to stopped,          // 划掉了 (FLAG_STOPPED)
+            "com.tencent.mm/com.tencent.mm.ui.LauncherUI" to paused,           // 划掉了
+            "com.android.settings/com.android.settings.Settings" to resumed,   // 开着
+            "com.android.settings/com.android.settings.SubSettings" to stopped,
+            "com.obliphur.oit/com.obliphur.oit.ui.MainActivity" to stopped,    // 开着
+            "com.example.done/com.example.done.A" to destroyed,                // 销毁了
+            "com.example.helper/com.example.helper.B" to stopped,              // 桌面上没有图标的附属程序
+            "com.bbk.launcher2/com.bbk.launcher2.Launcher" to resumed,         // 桌面
+        )
+        val launchable = setOf("tv.danmaku.bili", "com.tencent.mm", "com.android.settings", "com.obliphur.oit", "com.example.done", "com.bbk.launcher2")
+        val gone = setOf("tv.danmaku.bili", "com.tencent.mm")
+        assertEquals(setOf("com.android.settings", "com.obliphur.oit"),
+            AppUsage.openFromEvents(last, setOf("com.bbk.launcher2"), launchable) { it in gone })
+        // 没有被强制停止的 (别的手机): 全都算
+        assertEquals(setOf("tv.danmaku.bili", "com.tencent.mm", "com.android.settings", "com.obliphur.oit"),
+            AppUsage.openFromEvents(last, setOf("com.bbk.launcher2"), launchable) { false })
+    }
 }

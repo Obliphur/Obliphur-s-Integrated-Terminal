@@ -13,6 +13,7 @@ import android.app.usage.UsageStatsManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.pm.ServiceInfo
 import android.media.AudioAttributes
 import android.media.AudioFormat
@@ -507,7 +508,9 @@ object AppUsage {
      * (最后一个事件是 显示 / 暂停 / 停止, 不是销毁) 的应用. 从最近任务里划掉的应用界面会被销毁, 不算.
      * 只算桌面上有图标、能点开进入界面的应用: 别的应用借用的界面 (权限弹窗, 安装器, 分享 / 选择器,
      * 输入法, 登录页等没有图标的附属程序) 不算. 含 OIT 自己, 不含桌面和系统界面. 没有使用情况访问权限时 null.
-     * 有的手机 (例如 vivo) 根本不记"销毁"事件, 划掉的应用也照样算到 6 小时后: 所以尽量用精确的办法.
+     * 有的手机 (例如 vivo) 根本不记"销毁"事件, 划掉的应用也照样算到 6 小时后: 这样的手机上划掉应用 = 强制停止,
+     * 所以被强制停止的应用 (FLAG_STOPPED) 不算. 还是会多算: 划掉后进程还活着的应用 (有常驻服务, 例如 QQ / 应用商店),
+     * 以及自己结束了的附属界面 (文件选择器等); 要精确只能用上面的办法.
      */
     /** 上一次数出来的应用 (设置 → 应用 里列出来). */
     @Volatile var lastOpen: Set<String>? = null
@@ -535,10 +538,19 @@ object AppUsage {
                     last[e.packageName + "/" + e.className] = e.eventType
             }
         }
-        val skip = homes(ctx)
-        val apps = launchables(ctx)
-        return last.filter { it.value != ACTIVITY_DESTROYED }.keys
-            .map { it.substringBefore('/') }.filter { it !in skip && it in apps }.toSet()
+        return openFromEvents(last, homes(ctx), launchables(ctx)) { isStopped(ctx, it) }
+    }
+
+    /** 估计: 每个界面 (包名/类名) 的最后一个事件 → 还开着的应用. 销毁了的, 桌面 / 系统界面, 桌面上没有图标的, 被强制停止的都不算. */
+    fun openFromEvents(last: Map<String, Int>, skip: Set<String>, launchable: Set<String>, stopped: (String) -> Boolean): Set<String> =
+        last.filter { it.value != ACTIVITY_DESTROYED }.keys
+            .map { it.substringBefore('/') }.filter { it !in skip && it in launchable }.filterNot(stopped).toSet()
+
+    /** 应用被强制停止了 (FLAG_STOPPED), 或者已经卸载. 有的手机 (例如 vivo) 从多任务里划掉应用就是强制停止, 又不记"销毁"事件: 只能靠这个看出来. */
+    private fun isStopped(ctx: Context, pkg: String): Boolean = try {
+        ctx.packageManager.getApplicationInfo(pkg, 0).flags and ApplicationInfo.FLAG_STOPPED != 0
+    } catch (e: Exception) {
+        true
     }
 
     /** 包名; "" 是空白 (桌面 / 系统界面 / 锁屏); null 是不计入 (屏幕关闭, 没有权限). */
