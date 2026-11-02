@@ -485,11 +485,11 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
                                 PrescriptMark(Modifier.align(Alignment.CenterEnd).padding(end = 24.dp))
                         }
                     }
-                    // 重置固定在最下面, 其余的放不下时可以滚动
+                    // 沟通和重置固定在最下面 (和设置之间空开), 其余的放不下时可以滚动
                     Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-                        for ((key, label) in pages) if (key != "reset") navItem(key, label)
+                        for ((key, label) in pages) if (key != "reset" && key != "comm") navItem(key, label)
                     }
-                    for ((key, label) in pages) if (key == "reset") navItem(key, label)
+                    for ((key, label) in pages) if (key == "comm" || key == "reset") navItem(key, label)
                 }
             }) {
                 Scaffold(

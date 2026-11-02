@@ -750,7 +750,7 @@ class BreakTimerApp:
             "reset": tr("🔄  重置")
         })
         for key, label in self.nav_labels.items():
-            if key == "reset":
+            if key == "comm":                    # 沟通和重置一起放在最下面 (和设置之间空开)
 
                 tk.Frame(side, bg=card).pack(fill="both", expand=True)
             b = tk.Button(
