@@ -909,7 +909,7 @@ class SettingsPage(tk.Frame):
 
     def _comm_pick_avatar(self, who):
         from .avatar_dialog import pick_avatar
-        if who == "ai" and not self.comm.persona_name():
+        if not self.comm.persona_name():                              # 我的头像和对方的头像都跟着人设走
             toast.warn(tr("还没有选人设"))
             return
         if pick_avatar(self.winfo_toplevel(), self.comm.avatar_dest(who)):

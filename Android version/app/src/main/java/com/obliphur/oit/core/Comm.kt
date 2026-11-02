@@ -367,6 +367,7 @@ class Comm(
             seeded = true
             saveCfg()
         }
+        migrateAvatars()
         val last = messages.lastOrNull()
         if (last != null && last.role == "me" && ageSeconds(last) < 6 * 3600 && retryAt == 0L)
             retryAt = nowMs() - RETRY_GAP * 1000L + 60_000        // 上次关程序时还没收到回复: 1 分钟后让 (最后操作的) 设备再试一次
@@ -796,12 +797,25 @@ class Comm(
 
     // ---- 头像: 圆形 PNG (ui/AvatarCrop.kt 里选图并截取); 对方的头像跟着人设走 ----
 
-    fun avatarFile(who: String): File {
-        val name = if (who == "me") "me.png" else {
-            val crc = java.util.zip.CRC32().apply { update(personaTitle(personaName()).toByteArray(Charsets.UTF_8)) }
-            "ai_%08x.png".format(crc.value)
+    private fun avatarName(who: String, persona: String): String {
+        val crc = java.util.zip.CRC32().apply { update(personaTitle(persona).toByteArray(Charsets.UTF_8)) }
+        return "${who}_%08x.png".format(crc.value)
+    }
+
+    /** 我的头像和对方的头像都跟着人设走 (每个聊天对象各自设置, 换人设就换头像). */
+    fun avatarFile(who: String): File = File(File(dir, "avatars"), avatarName(who, personaName()))
+
+    /** 以前"我"的头像只有一个 (me.png): 复制给现有的每个人设各一份, 然后删掉它 (只做一次, 之后各自设置). */
+    private fun migrateAvatars() {
+        val old = File(File(dir, "avatars"), "me.png")
+        if (!old.isFile) return
+        runCatching {
+            for (name in (listPersonas() + personaName()).distinct()) {                  // 现在选着的 (可能是没选人设) 也算
+                val dst = File(File(dir, "avatars"), avatarName("me", name))
+                if (!dst.exists()) old.copyTo(dst)
+            }
+            old.delete()
         }
-        return File(File(dir, "avatars"), name)
     }
 
     /** 头像文件 (没有就是 null). */

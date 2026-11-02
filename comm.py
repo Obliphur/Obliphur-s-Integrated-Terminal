@@ -455,6 +455,7 @@ class Comm:
                 self.set_persona(DEFAULT_PERSONA)
             self.cfg["seeded"] = True
             self.save_cfg()
+        self._migrate_avatars()
         last = self.messages[-1] if self.messages else None
         rt = self.cfg.get("retry") or {}
         if last and last["role"] == "me" and self._age(last) < 6 * 3600 and not rt.get("at"):
@@ -899,14 +900,27 @@ class Comm:
         return ""
 
     # ---- 头像: 圆形 PNG, 在 avatar.py / pages/avatar_dialog.py 里选图并截取 ----
+    @staticmethod
+    def _avatar_name(who: str, persona: str) -> str:
+        return f"{who}_{zlib.crc32(persona_title(persona or '').encode('utf-8')):08x}.png"
+
     def avatar_dest(self, who: str) -> str:
-        """who: "me" / "ai". 对方的头像跟着人设走 (换人设就换头像)."""
-        if who == "me":
-            name = "me.png"
-        else:
-            stem = persona_title(self.persona_name() or "")
-            name = f"ai_{zlib.crc32(stem.encode('utf-8')):08x}.png"
-        return os.path.join(self.dir, "avatars", name)
+        """who: "me" / "ai". 我的头像和对方的头像都跟着人设走 (每个聊天对象各自设置, 换人设就换头像)."""
+        return os.path.join(self.dir, "avatars", self._avatar_name(who, self.persona_name()))
+
+    def _migrate_avatars(self):
+        """以前"我"的头像只有一个 (me.png): 复制给现有的每个人设各一份, 然后删掉它 (只做一次, 之后各自设置)."""
+        old = os.path.join(self.dir, "avatars", "me.png")
+        if not os.path.isfile(old):
+            return
+        try:
+            for name in dict.fromkeys(list_personas(self.personas) + [self.persona_name()]):       # 现在选着的 (可能是没选人设) 也算
+                dst = os.path.join(self.dir, "avatars", self._avatar_name("me", name))
+                if not os.path.exists(dst):
+                    shutil.copyfile(old, dst)
+            os.remove(old)
+        except OSError:
+            pass
 
     def avatar_path(self, who: str) -> str:
         p = self.avatar_dest(who)
@@ -1605,7 +1619,31 @@ def _selftest():
     c3 = Comm(data, folder, now=lambda: clock[0], chat_fn=fake)
     assert c3.cfg["persona"] == "小夏.txt" and len(c3.visible()) == len(c.visible())
     c3.clear()
-    assert c.avatar_path("me") == "" and c.avatar_dest("me").endswith("me.png")
+    assert c.avatar_path("me") == "" and os.path.basename(c.avatar_dest("me")).startswith("me_")
+    # 我的头像也跟着人设走: 两个人设各设各的; 以前只有一个 me.png, 复制给每个人设各一份 (用单独的数据文件夹, 不碰上面的聊天)
+    pa, pb = list_personas(folder)[:2]
+    dav = os.path.join(td, "av")
+    os.makedirs(dav)
+    cav = Comm(dav, folder, now=lambda: clock[0], chat_fn=fake)
+    cav.set_cfg(persona=pa)
+    me_a = cav.avatar_dest("me")
+    assert os.path.basename(me_a).startswith("me_") and cav.avatar_path("me") == ""
+    os.makedirs(os.path.dirname(me_a), exist_ok=True)
+    open(me_a, "wb").write(b"mine-A")
+    cav.set_cfg(persona=pb)
+    assert cav.avatar_path("me") == "" and cav.avatar_dest("me") != me_a, "换了对象: 这个对象还没设头像"
+    cav.set_cfg(persona=pa)
+    assert cav.avatar_path("me") == me_a
+    cav.remove_avatar("me")
+    assert cav.avatar_path("me") == ""
+    cav.flush()
+    legacy = os.path.join(os.path.dirname(me_a), "me.png")
+    open(legacy, "wb").write(b"legacy")
+    cm = Comm(dav, folder, now=lambda: clock[0], chat_fn=fake)           # 重新打开: 迁移旧的 me.png
+    assert not os.path.exists(legacy) and open(cm.avatar_dest("me"), "rb").read() == b"legacy"
+    cm.set_cfg(persona=pb)
+    assert open(cm.avatar_dest("me"), "rb").read() == b"legacy" and cm.avatar_dest("me") != me_a
+    cm.flush()
     ai_dest = c.avatar_dest("ai")
     os.makedirs(os.path.dirname(ai_dest), exist_ok=True)
     open(ai_dest, "wb").write(b"x")

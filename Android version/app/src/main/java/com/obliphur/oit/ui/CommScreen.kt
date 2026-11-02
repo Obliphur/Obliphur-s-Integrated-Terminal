@@ -301,7 +301,7 @@ fun CommSettings() {
                 Avatar(who, "—", 40)
                 Box(Modifier.weight(1f))
                 PlainButton(tr("选择")) {
-                    if (who == "ai" && comm.personaName().isEmpty()) core.toast(tr("还没有选人设"), "warn")
+                    if (comm.personaName().isEmpty()) core.toast(tr("还没有选人设"), "warn")
                     else { avatarWho = who; pickImage.launch("image/*") }
                 }
                 if (comm.avatarPath(who) != null) {
