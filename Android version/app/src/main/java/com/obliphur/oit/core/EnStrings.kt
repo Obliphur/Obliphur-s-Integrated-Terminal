@@ -266,6 +266,7 @@ object EnStrings {
         "取消" to "Cancel",
         "当前: {state}" to "Current: {state}",
         "开启" to "ON",
+        "今天空闲时间里能用沟通的 45 分钟已经用完了 (休息时不限)" to "Today's 45 minutes of chat time while idle are used up (resting is unlimited).",
         "关闭_状态" to "OFF",
         "{date}(今天)" to "{date}  (today)",
         "   ·  记录已关闭" to "   ·  logging disabled",

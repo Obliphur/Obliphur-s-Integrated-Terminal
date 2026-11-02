@@ -358,6 +358,7 @@ class BreakTimerApp:
         self.comm.fog = lambda: bool(self.contract.fog())
         # 沟通只能在休息 / 空闲时用 (专注 / 睡眠 / 外出中不能用); 合约的"无言为真" (社交软件和与 AI 聊天的软件禁止联网) 生效期间也不能用
         self.comm.blocked = self._comm_blocked
+        self.comm.state_fn = self._comm_state
         self.comm.hard_block = lambda: self.contract.has("silent")
         self.comm.on_proactive = self._comm_ping
         self._rules_win = None
@@ -1114,6 +1115,8 @@ class BreakTimerApp:
         st = self._comm_state()
         if st in ("focus", "sleep", "out"):
             return tr({"focus": "专注中不能使用沟通", "sleep": "睡眠中不能使用沟通", "out": "外出中不能使用沟通"}[st])
+        if st == "idle" and self.comm.idle_over():
+            return tr("今天空闲时间里能用沟通的 45 分钟已经用完了 (休息时不限)")
         return ""
 
     def _comm_snapshot(self) -> dict:

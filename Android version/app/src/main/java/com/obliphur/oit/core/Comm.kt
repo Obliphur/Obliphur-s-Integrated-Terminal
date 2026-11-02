@@ -240,6 +240,10 @@ class Comm(
         const val HISTORY_STEP = 10
         /** 非正在聊天的对象主动发消息: 两次请求之间至少隔这么多秒 (一个一个来, 不会同时好几个人找你). */
         const val BG_STAGGER = 120
+        /** 每天在"空闲"状态下最多能打开沟通界面这么久 (秒; 休息时不限); 超过后空闲时不能用沟通, 休息了才能用. */
+        const val IDLE_DAILY_SECONDS = 45 * 60
+        /** 一次 tick 最多记这么多秒 (手机休眠 / 卡住时不会一下子记很多). */
+        const val IDLE_TICK_MAX = 5.0
         const val PROACTIVE_MIN_REST = 20 * 60          // I. 用户休息超过这么久才会主动发消息
         const val PROACTIVE_MAX_DELAY = 180             // I / II / III: 休息开始后 / 日程段开始前 1~3 分钟 (秒)
         const val PROACTIVE_LATE = 120                  // 到点之后过了这么久 (程序刚打开 / 刚空下来) 就算了
@@ -286,6 +290,11 @@ class Comm(
     private var segCache: List<Pair<String, Int>> = emptyList()
     /** 分条发 (规则 VIII) 开着吗: 用户说完话, 对方的第一条收到之后再调用一次 API, 让对方可以把话分开说. 默认开; 随设备同步. */
     var splitSend = true; private set
+    /** 计时器现在的状态 (idle / break / focus / sleep / out); Core 接上, 用来记空闲时间里开着沟通界面多久. */
+    var stateFn: () -> String = { "" }
+    private var idleLast: LocalDateTime? = null
+    private var idleDay = ""
+    private var idleSec = 0.0
     /** 允许非正在聊天的人 (聊过天的其他对象) 发起对话吗 (默认开, 随设备同步); 被"禁止主动发起"的对象的编号在 muted 里 (随设备同步). */
     var bgPro = true; private set
     private val muted = LinkedHashSet<String>()
@@ -480,6 +489,7 @@ class Comm(
             avatarAi = d.optString("avatar_ai", "")
             userProfile = d.optString("user_profile", "")
             splitSend = d.optBoolean("split_send", true)
+            d.optJSONObject("idle_use")?.let { idleDay = it.optString("d"); idleSec = it.optDouble("s", 0.0) }
             bgPro = d.optBoolean("bg_pro", true)
             d.optJSONArray("mute_pro")?.let { a -> for (i in 0 until a.length()) a.optString(i).takeIf { it.isNotEmpty() }?.let { muted.add(it) } }
             seeded = d.optBoolean("seeded", false)
@@ -519,6 +529,7 @@ class Comm(
             .put("show_avatar", showAvatar).put("avatar_me", avatarMe).put("avatar_ai", avatarAi)
             .put("user_profile", userProfile).put("seeded", seeded).put("legacy_done", legacyDone).put("split_send", splitSend)
             .put("bg_pro", bgPro).put("mute_pro", JSONArray(muted.toList()))
+            .put("idle_use", JSONObject().put("d", idleDay).put("s", idleSec))
         writer.execute { Store.write(cfgFile, o) }
     }
 
@@ -579,6 +590,7 @@ class Comm(
         if (userProfile.isNotEmpty()) doc["profile"] = userProfile
         doc["split"] = splitSend                                    // 分条发的开关: 调用 AI 的是主端, 两台设备要一致
         doc["bgpro"] = bgPro
+        if (idleDay.isNotEmpty()) doc["idle"] = JSONObject().put("d", idleDay).put("s", idleSec)      // 两台设备共用一份额度 (各自累计的取大的)
         for (p in chatPids()) doc["mute:$p"] = p in muted
         for (p in chatPids()) {
             val st = stateOf(p)
@@ -607,6 +619,11 @@ class Comm(
             val rest = key.substringAfter(':', "")
             when {
                 key == "split" && v is Boolean -> if (v != splitSend) { splitSend = v; saveCfg(); changed() }
+                key == "idle" && v is JSONObject -> {
+                    val d = v.optString("d")
+                    val s = v.optDouble("s", 0.0)
+                    if (d == now().toLocalDate().toString() && (idleDay != d || s > idleSec)) { idleDay = d; idleSec = s; saveCfg(); changed() }
+                }
                 key == "bgpro" && v is Boolean -> if (v != bgPro) { bgPro = v; saveCfg(); changed() }
                 kind == "mute" && v is Boolean -> if (v != (rest in muted)) { if (v) muted.add(rest) else muted.remove(rest); saveCfg(); changed() }
                 key == "profile" -> {
@@ -859,8 +876,33 @@ class Comm(
         saveChat(); changed(); push()
     }
 
+    // ---- 每天空闲时间里能用沟通的额度 (IDLE_DAILY_SECONDS): 空闲状态下开着沟通界面的时间累计, 用完了空闲时不能用, 休息时不限 ----
+    private fun idleUsed(): Double = if (idleDay == now().toLocalDate().toString()) idleSec else 0.0
+
+    /** 今天空闲时间里还能用沟通多少秒. */
+    fun idleLeft(): Double = maxOf(0.0, IDLE_DAILY_SECONDS - idleUsed())
+
+    fun idleOver(): Boolean = idleLeft() <= 0
+
+    private fun countIdle() {
+        val t = now()
+        val last = idleLast
+        idleLast = t
+        if (last == null || !viewing || stateFn() != "idle") return
+        val dt = minOf(secondsBetween(last, t).toDouble(), IDLE_TICK_MAX)
+        if (dt <= 0) return
+        val before = idleUsed()
+        idleDay = t.toLocalDate().toString()
+        idleSec = before + dt
+        val crossed30 = before.toInt() / 30 != (before + dt).toInt() / 30        // 每 30 秒存一次, 每分钟同步一次
+        if (crossed30) saveCfg()
+        if (crossed30 && before.toInt() / 60 != (before + dt).toInt() / 60) push()
+        if (before < IDLE_DAILY_SECONDS && IDLE_DAILY_SECONDS <= before + dt) { saveCfg(); push(); changed() }      // 刚用完: 界面立刻显示不能用
+    }
+
     @Synchronized
     fun setViewing(on: Boolean) {
+        if (viewing && !on) saveCfg()
         viewing = on
         if (on && unread != 0) { unread = 0; changed() }
     }
@@ -1039,6 +1081,7 @@ class Comm(
     /** 大约每秒调用一次 (Core.tick). */
     @Synchronized
     fun tick() {
+        countIdle()
         while (true) finish(results.poll() ?: break)
         while (true) bgFinish(bgResults.poll() ?: break)
         releaseHeld()

@@ -33,6 +33,8 @@ REFUSE = "[refuse to reply]"
 PROACTIVE_MIN_REST = 20 * 60          # I. 用户休息超过这么久才会主动发消息
 PROACTIVE_DELAY = (60, 180)           # I. 休息开始后多久主动发 (秒)
 PROACTIVE_LEAD = (60, 180)            # II / III. 人设日程里的空闲 / 休息开始前多久主动发 (秒)
+IDLE_DAILY_SECONDS = 45 * 60          # 每天在"空闲"状态下最多能打开沟通界面这么久 (休息时不限); 超过后空闲时不能用沟通, 休息了才能用
+IDLE_TICK_MAX = 5                     # 一次 tick 最多记这么多秒 (电脑睡眠 / 卡住时不会一下子记很多)
 BG_STAGGER = 120                      # 非正在聊天的对象主动发消息: 两次请求之间至少隔这么多秒 (一个一个来, 不会同时好几个人找你)
 PROACTIVE_P = {"idle": 80, "rest": 60, "long": 70}   # I / II / III 发不发的概率 (%) 的默认值: 人设里没写 "长时间休息发起谈话概率:n%" / "空闲发起谈话概率:n%" / "休息发起谈话概率:n%" 时用
 PROACTIVE_LATE = 120                  # 到点之后过了这么久 (程序刚打开 / 刚空下来) 就算了
@@ -63,7 +65,7 @@ WEEKDAY = "一二三四五六日"
 
 DEFAULTS = {"persona": "", "show_avatar": False,
             "avatar_me": "", "avatar_ai": "", "pro_key": "", "retry": {}, "clear_ts": 0, "seeded": False, "legacy_done": False, "user_profile": "", "split_send": True,
-            "bg_pro": True, "mute_pro": []}
+            "bg_pro": True, "mute_pro": [], "idle_use": {}}
 
 
 # ══════════════ 前置 prompt 与 README ══════════════
@@ -421,6 +423,9 @@ class Comm:
         self.version = 0              # 聊天记录 / 状态变了就加一, 页面据此重画
         self.unread = 0
         self.viewing = False
+        self.state_fn = lambda: ""    # 计时器现在的状态 ("idle" / "break" / "focus" / "sleep" / "out"); app 接上, 用来记空闲时间里开着沟通界面多久
+        self._idle_last = None
+        self._idle_push = 0
         self.busy = False
         self.busy_since = 0.0
         self.error = ""
@@ -709,6 +714,9 @@ class Comm:
             doc["profile"] = self.cfg["user_profile"]
         doc["split"] = self.split_on()                  # 分条发的开关: 调用 AI 的是主端, 两台设备要一致
         doc["bgpro"] = self.bg_on()
+        rec = self.cfg.get("idle_use") or {}
+        if rec.get("d"):
+            doc["idle"] = {"d": rec["d"], "s": float(rec.get("s") or 0)}      # 两台设备共用一份额度 (各自累计的取大的)
         for pid in self.chat_pids():
             doc[f"mute:{pid}"] = self.is_muted(pid)
         for pid in self.chat_pids():
@@ -782,6 +790,16 @@ class Comm:
                     st["retry"] = {}
                     if not (self.viewing and pid == self.pid) and not m.get("hold"):
                         self.unread += 1
+            elif key == "idle" and isinstance(val, dict):
+                try:
+                    d, s = str(val["d"]), float(val["s"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                mine = self.cfg.get("idle_use") or {}
+                if d == f"{self.now():%Y-%m-%d}" and (mine.get("d") != d or s > float(mine.get("s") or 0)):
+                    self.cfg["idle_use"] = {"d": d, "s": s}
+                    self.save_cfg()
+                    self._changed()
             elif key == "bgpro" and isinstance(val, bool):
                 if val != self.bg_on():
                     self.cfg["bg_pro"] = val
@@ -967,7 +985,40 @@ class Comm:
         self._changed()
         self._push()
 
+    # ---- 每天空闲时间里能用沟通的额度 (IDLE_DAILY_SECONDS): 空闲状态下开着沟通界面的时间累计, 用完了空闲时不能用, 休息时不限 ----
+    def _idle_used(self) -> float:
+        rec = self.cfg.get("idle_use") or {}
+        return float(rec.get("s") or 0) if rec.get("d") == f"{self.now():%Y-%m-%d}" else 0.0
+
+    def idle_left(self) -> float:
+        """今天空闲时间里还能用沟通多少秒."""
+        return max(0.0, IDLE_DAILY_SECONDS - self._idle_used())
+
+    def idle_over(self) -> bool:
+        return self.idle_left() <= 0
+
+    def _count_idle(self):
+        now = self.now()
+        last, self._idle_last = self._idle_last, now
+        if last is None or not self.viewing or self.state_fn() != "idle":
+            return
+        dt = min((now - last).total_seconds(), IDLE_TICK_MAX)
+        if dt <= 0:
+            return
+        before = self._idle_used()
+        self.cfg["idle_use"] = {"d": f"{now:%Y-%m-%d}", "s": before + dt}
+        if int(before) // 30 != int(before + dt) // 30:          # 每 30 秒存一次, 每分钟同步一次
+            self.save_cfg()
+            if int(before) // 60 != int(before + dt) // 60:
+                self._push()
+        if before < IDLE_DAILY_SECONDS <= before + dt:           # 刚用完: 马上存 / 同步, 界面立刻显示不能用
+            self.save_cfg()
+            self._push()
+            self._changed()
+
     def set_viewing(self, on: bool):
+        if self.viewing and not on:
+            self.save_cfg()
         self.viewing = bool(on)
         if on and self.unread:
             self.unread = 0
@@ -1194,6 +1245,7 @@ class Comm:
 
     # ---- 每秒一次 ----
     def tick(self):
+        self._count_idle()
         with self._lock:
             done, self._results = self._results, []
         for res in done:
@@ -2175,6 +2227,48 @@ def _selftest():
     assert sorted(c5._segments()) == [("idle", 750), ("idle", 840), ("rest", 1240)]
     for x in (c5, c6):
         x.flush()
+
+    # ---- 每天空闲时间里能用沟通 45 分钟 (只算空闲状态下开着界面的时间) ----
+    dI = os.path.join(td, "idleb")
+    os.makedirs(dI)
+    cI = Comm(dI, folder, now=lambda: clock[0], chat_fn=fake)
+    state = ["idle"]
+    cI.state_fn = lambda: state[0]
+    clock_before = clock[0]
+    clock[0] = datetime(2027, 6, 1, 20, 0)
+
+    def idle_run(n, step=1):
+        for _ in range(n):
+            clock[0] += timedelta(seconds=step)
+            cI.tick()
+    cI.tick()
+    idle_run(100)                                          # 没开着界面: 不记
+    assert cI.idle_left() == IDLE_DAILY_SECONDS
+    cI.set_viewing(True)
+    idle_run(60)
+    assert 55 <= IDLE_DAILY_SECONDS - cI.idle_left() <= 61 and not cI.idle_over()
+    state[0] = "break"
+    idle_run(600)                                          # 休息: 不限, 不记
+    assert 55 <= IDLE_DAILY_SECONDS - cI.idle_left() <= 61
+    state[0] = "idle"
+    idle_run(2300)
+    assert not cI.idle_over()
+    idle_run(400)
+    assert cI.idle_over() and cI.idle_left() == 0, "空闲时间里 45 分钟用完了"
+    clock[0] += timedelta(seconds=600)                     # 卡住 / 睡眠了很久: 一次 tick 最多记 IDLE_TICK_MAX 秒
+    cI.tick()
+    cI.flush()
+    assert Comm(dI, folder, now=lambda: clock[0], chat_fn=fake).idle_over(), "重开程序: 额度还在 (存盘了)"
+    clock[0] = datetime(2027, 6, 2, 8, 0)
+    assert not cI.idle_over() and cI.idle_left() == IDLE_DAILY_SECONDS, "第二天重新算"
+    cI.apply_doc({"idle": {"d": "2027-06-02", "s": 1000.0}})        # 另一台设备也用了: 取大的
+    assert round(IDLE_DAILY_SECONDS - cI.idle_left()) == 1000
+    cI.apply_doc({"idle": {"d": "2027-06-02", "s": 500.0}})
+    assert round(IDLE_DAILY_SECONDS - cI.idle_left()) == 1000 and cI.sync_doc()["idle"] == {"d": "2027-06-02", "s": 1000.0}
+    cI.apply_doc({"idle": {"d": "2027-06-01", "s": 99999.0}})       # 昨天的: 不算
+    assert round(IDLE_DAILY_SECONDS - cI.idle_left()) == 1000
+    cI.flush()
+    clock[0] = clock_before
 
     # ---- 非正在聊天的对象也会主动发消息 (开关 bg_pro, 默认开) / 每个对象可以禁止 (set_muted) ----
     bgp = os.path.join(td, "bgp")

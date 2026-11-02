@@ -272,6 +272,39 @@ class CommTest {
         assertEquals("再问一次", c.visible().last().text)
     }
 
+    /** 每天空闲时间里能用沟通 45 分钟 (只算空闲状态下开着界面的时间); 休息不限 (沟通 24.1). */
+    @Test
+    fun idleDailyBudget() {
+        val td = Files.createTempDirectory("oit").toFile()
+        val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
+        var state = "idle"
+        c.stateFn = { state }
+        clock = LocalDateTime.of(2027, 6, 1, 20, 0)
+        fun run(n: Int) { repeat(n) { clock = clock.plusSeconds(1); c.tick() } }
+        c.tick()
+        run(100)                                                   // 没开着界面: 不记
+        assertEquals(Comm.IDLE_DAILY_SECONDS.toDouble(), c.idleLeft(), 0.0)
+        c.setViewing(true)
+        run(60)
+        assertEquals(60.0, Comm.IDLE_DAILY_SECONDS - c.idleLeft(), 2.0)
+        state = "break"; run(600)                                  // 休息: 不限, 不记
+        assertEquals(60.0, Comm.IDLE_DAILY_SECONDS - c.idleLeft(), 2.0)
+        state = "idle"; run(2300)
+        assertFalse(c.idleOver())
+        run(400)
+        assertTrue("空闲时间里 45 分钟用完了", c.idleOver())
+        clock = clock.plusSeconds(600); c.tick()                   // 卡住很久: 一次 tick 最多记几秒
+        assertTrue(c.idleOver())
+        clock = LocalDateTime.of(2027, 6, 2, 8, 0)
+        assertFalse("第二天重新算", c.idleOver())
+        c.applyDoc(mapOf("idle" to org.json.JSONObject().put("d", "2027-06-02").put("s", 1000.0)))     // 另一台设备也用了: 取大的
+        assertEquals(1000.0, Comm.IDLE_DAILY_SECONDS - c.idleLeft(), 1.0)
+        c.applyDoc(mapOf("idle" to org.json.JSONObject().put("d", "2027-06-02").put("s", 500.0)))
+        assertEquals(1000.0, Comm.IDLE_DAILY_SECONDS - c.idleLeft(), 1.0)
+        c.applyDoc(mapOf("idle" to org.json.JSONObject().put("d", "2027-06-01").put("s", 99999.0)))    // 昨天的: 不算
+        assertEquals(1000.0, Comm.IDLE_DAILY_SECONDS - c.idleLeft(), 1.0)
+    }
+
     /** 对方查询得到的是参考模板: 每个模块都有, 带占位符, 没有用户的真实数据 (沟通 24.2.1). */
     @Test
     fun queryTemplates() {

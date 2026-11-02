@@ -255,6 +255,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         comm.onSync = { syncNow() }
         // 沟通只能在休息 / 空闲时用 (专注 / 睡眠 / 外出中不能用); 合约的"无言为真" (社交软件和与 AI 聊天的软件禁止联网) 生效期间也不能用
         comm.blocked = { commBlocked() }
+        comm.stateFn = { commState() }
         comm.hardBlock = { contract.has("silent") }
         comm.onProactive = { host.playCommSound() }
         comm.dataFn = { sel ->
@@ -281,6 +282,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             "focus" -> tr("专注中不能使用沟通")
             "sleep" -> tr("睡眠中不能使用沟通")
             "out" -> tr("外出中不能使用沟通")
+            "idle" -> if (comm.idleOver()) tr("今天空闲时间里能用沟通的 45 分钟已经用完了 (休息时不限)") else ""
             else -> ""
         }
     }
