@@ -144,8 +144,16 @@ class CommTest {
         assertEquals("没有可发送的数据", c.sendData(CommSel(stats = listOf("net"))))
         c.fog = { true }
         assertEquals("黑雾中无法发送", c.sendData(CommSel(stats = listOf("net"))))
-        // 无言为真: 不能发, 不会主动发, 也不会重试
+        // 📎 确定过的附加数据: 随下一条消息发出, 只写附加数据不写字也能发
         c.fog = { false }
+        c.dataFn = { "【日历·专注】\n  11-01: 3.0 h" }
+        c.setAttach(CommSel(cal = listOf("study")))
+        script.add("嗯嗯")
+        assertEquals("", c.send("")); wait(c)
+        assertEquals("", CommData.label(c.attach))
+        assertEquals("📎 日历·专注", c.visible()[c.visible().size - 2].text)
+        assertEquals("empty", c.send(""))
+        // 无言为真: 不能发, 不会主动发, 也不会重试
         c.dataFn = { "x" }
         c.blocked = { "无言为真生效中, 无法使用沟通" }
         val n = c.messages.size

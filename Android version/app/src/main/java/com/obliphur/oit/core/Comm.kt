@@ -111,6 +111,11 @@ class Comm(
     var fog: () -> Boolean = { false }
     /** 现在不能用沟通的原因 ("" = 可以): 合约的"无言为真". Core 接上. */
     var blocked: () -> String = { "" }
+    /** 📎 窗口点"确定"记下的附加数据: 随下一条消息一起发 (发出去之后清掉). */
+    @Volatile var attach = CommSel(); private set
+
+    @Synchronized
+    fun setAttach(sel: CommSel) { attach = sel; changed() }
     var hourLines: () -> List<String> = { emptyList() }
     var snapshot: () -> CommSnap? = { null }
     private class Result(val kind: String, val trig: Int, val reply: String, val err: String, val epoch: Int)
@@ -349,8 +354,13 @@ class Comm(
     @Synchronized
     fun send(text0: String): String {
         val text = text0.trim()
-        if (text.isEmpty()) return "empty"
+        if (text.isEmpty() && CommData.label(attach).isEmpty()) return "empty"
         if (text.lowercase() == "/clear") { clear(); return "" }
+        if (CommData.label(attach).isNotEmpty()) {            // 有确定过的附加数据: 和这条消息一起发
+            val r = sendData(attach, text)
+            if (r.isEmpty()) setAttach(CommSel())
+            return r
+        }
         val why = problem(true)
         if (why.isNotEmpty()) return why
         add("me", text, compose(now(), text))

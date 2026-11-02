@@ -211,6 +211,7 @@ class Comm:
         self.data_fn = lambda sel: ""  # 统计 / 日历 / 合约词条的数据 (comm_data.build); app 接上
         self.fog = lambda: False       # 合约黑雾中: 不发数据
         self.blocked = lambda: ""      # 现在不能用沟通的原因 ("" = 可以): 合约的"无言为真"
+        self.attach = {"stats": [], "cal": [], "contract": False}     # 📎 确定过的附加数据: 随下一条消息发出
         self.on_change = None          # 界面线程里调用
         self._lock = threading.Lock()
         self._wlock = threading.Lock()
@@ -393,11 +394,16 @@ class Comm:
     def send(self, text: str) -> str:
         """用户发一条. 返回 "" = 已发出, 否则是不能发的原因."""
         text = str(text or "").strip()
-        if not text:
+        if not text and not self.attach_label():
             return "empty"
         if text.lower() == "/clear":
             self.clear()
             return ""
+        if self.attach_label():                         # 有确定过的附加数据: 和这条消息一起发
+            why = self.send_data(self.attach, text)
+            if not why:
+                self.set_attach({})
+            return why
         why = self.problem()
         if why:
             return why
@@ -412,6 +418,16 @@ class Comm:
         self._changed()
         self._request("user")
         return ""
+
+    def set_attach(self, sel: dict):
+        """📎 窗口点"确定": 记下勾选的数据, 随下一条消息一起发 (发出去之后清掉)."""
+        self.attach = {"stats": list(sel.get("stats", [])), "cal": list(sel.get("cal", [])),
+                       "contract": bool(sel.get("contract"))}
+        self._changed()
+
+    def attach_label(self) -> str:
+        import comm_data
+        return comm_data.label(self.attach)
 
     def send_data(self, sel: dict, text: str = "") -> str:
         """发送统计 / 日历 / 合约词条的数据 (comm_data.py). 聊天里只显示一行说明, 数据附在发给模型的内容里.
@@ -759,6 +775,17 @@ def _selftest():
     assert c.send_data({"stats": ["net"]}) == "没有可发送的数据"
     c.fog = lambda: True
     assert c.send_data({"stats": ["net"]}) == "黑雾中无法发送"
+    # 📎 确定过的附加数据: 随下一条消息发出, 只写附加数据不写字也能发
+    c.blocked = lambda: ""
+    c.fog = lambda: False
+    c.data_fn = lambda sel: "【日历·专注】\n  11-01: 3.0 h"
+    c.set_attach({"cal": ["study"]})
+    assert c.attach_label() == "📎 日历·专注"
+    script.append("嗯嗯")
+    assert c.send("") == ""
+    wait(c)
+    assert c.attach_label() == "" and c.visible()[-2]["text"] == "📎 日历·专注"
+    assert c.send("") == "empty"
     # 无言为真: 不能发, 不会主动发, 也不会重试
     c.blocked = lambda: "无言为真生效中, 无法使用沟通"
     n = len(c.messages)

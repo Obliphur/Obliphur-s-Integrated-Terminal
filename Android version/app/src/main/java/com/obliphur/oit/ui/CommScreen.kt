@@ -93,8 +93,17 @@ fun CommScreen(go: (String) -> Unit) {
         val blocked = comm.blocked()
         if (blocked.isNotEmpty() || comm.error.isNotEmpty()) Text(blocked.ifEmpty { tr(comm.error) }, color = o.danger, fontSize = 12.sp,
             modifier = Modifier.padding(top = 4.dp))
-        TextButton({ attach = true }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
-            Text("📎", fontSize = 18.sp)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton({ attach = true }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
+                Text("📎", fontSize = 18.sp)
+            }
+            val attached = CommData.label(comm.attach)
+            if (attached.isNotEmpty()) {
+                Text(attached, color = o.accent, fontSize = 12.sp, modifier = Modifier.weight(1f, false).clickable { attach = true })
+                TextButton({ comm.setAttach(CommSel()) }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
+                    Text("✕", color = o.dim, fontSize = 14.sp)
+                }
+            }
         }
         Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.Bottom,
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -105,24 +114,17 @@ fun CommScreen(go: (String) -> Unit) {
             }
         }
     }
-    if (attach) AttachDialog({ attach = false }) { sel ->
-        val why = comm.sendData(sel, input)
-        when {
-            why == "empty" -> {}
-            why.isEmpty() -> { input = ""; attach = false }
-            else -> { attach = false; report(why) }
-        }
-    }
+    if (attach) AttachDialog(comm.attach, { attach = false }) { sel -> comm.setAttach(sel); attach = false }
     if (askClear) Confirm(tr("清空"), tr("清空聊天记录?"), true, { askClear = false }) { comm.clear() }
 }
 
 /** 📎 勾选要发送的数据: 统计的几页, 日历 (选类别), 合约词条. */
 @Composable
-private fun AttachDialog(onDismiss: () -> Unit, onSend: (CommSel) -> Unit) {
+private fun AttachDialog(current: CommSel, onDismiss: () -> Unit, onOk: (CommSel) -> Unit) {
     val o = LocalOit.current
-    val stats = remember { mutableStateListOf<String>() }
-    val cal = remember { mutableStateListOf<String>() }
-    var contract by remember { mutableStateOf(false) }
+    val stats = remember { mutableStateListOf<String>().apply { addAll(current.stats) } }
+    val cal = remember { mutableStateListOf<String>().apply { addAll(current.cal) } }
+    var contract by remember { mutableStateOf(current.contract) }
     @Composable
     fun box(label: String, on: Boolean, set: (Boolean) -> Unit) {
         Row(Modifier.fillMaxWidth().clickable { set(!on) }, verticalAlignment = Alignment.CenterVertically) {
@@ -144,7 +146,7 @@ private fun AttachDialog(onDismiss: () -> Unit, onSend: (CommSel) -> Unit) {
                 box(tr("合约词条"), contract) { contract = it }
             }
         },
-        confirmButton = { TextButton({ onSend(CommSel(stats.toList(), cal.toList(), contract)) }) { Text(tr("发送"), color = o.accent) } },
+        confirmButton = { TextButton({ onOk(CommSel(stats.toList(), cal.toList(), contract)) }) { Text(tr("确定"), color = o.accent) } },
         dismissButton = { TextButton(onDismiss) { Text(tr("取消"), color = o.dim) } })
 }
 

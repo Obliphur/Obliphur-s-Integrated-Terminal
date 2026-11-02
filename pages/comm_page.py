@@ -65,6 +65,11 @@ class CommPage(tk.Frame):
         tools = tk.Frame(self, bg=bg)
         tools.pack(fill="x", padx=28, pady=(2, 0))
         ttk.Button(tools, text="📎", width=3, command=self._attach).pack(side="left")
+        self.lbl_attach = tk.Label(tools, text="", bg=bg, fg=COLORS["accent"], font=config.font("small"), cursor="hand2")
+        self.lbl_attach.pack(side="left", padx=(8, 0))
+        self.lbl_attach.bind("<Button-1>", lambda _e: self._attach())
+        self.btn_attach_x = tk.Label(tools, text="✕", bg=bg, fg=COLORS["text_dim"], font=config.font("small"), cursor="hand2")
+        self.btn_attach_x.bind("<Button-1>", lambda _e: self.comm.set_attach({}))
 
         row = tk.Frame(self, bg=bg)
         row.pack(fill="x", padx=28, pady=(4, 14))
@@ -102,6 +107,13 @@ class CommPage(tk.Frame):
         self._ver = c.version
         self._blocked = blocked
         cfg(self.lbl_who, text=comm_mod.persona_title(c.persona_name()))
+        label = c.attach_label()
+        cfg(self.lbl_attach, text=label)
+        if label:
+            if self.btn_attach_x.winfo_manager() != "pack":
+                self.btn_attach_x.pack(side="left", padx=(6, 0))
+        elif self.btn_attach_x.winfo_manager() == "pack":
+            self.btn_attach_x.pack_forget()
         cfg(self.lbl_status, text=blocked or (tr(c.error) if c.error else ""), fg=COLORS["danger"])
         self.entry.config(state="disabled" if blocked else "normal")
         self._sync_rows()
@@ -270,9 +282,9 @@ class CommPage(tk.Frame):
 
     def _send(self):
         text = self.entry.get("1.0", "end").strip()
-        if not text:
+        why = self.comm.send(text)             # "/clear" 在 send 里处理: 清空记录; 确定过的 📎 附加数据一起发
+        if why == "empty":
             return
-        why = self.comm.send(text)             # "/clear" 在 send 里处理: 清空记录
         if why:
             self._report(why)
             return
@@ -297,7 +309,8 @@ class CommPage(tk.Frame):
             tk.Label(dlg.body, text=tr(title), bg=bg, fg=COLORS["text"], font=config.font("body", bold=True),
                      anchor="w").pack(fill="x", pady=(8, 2))
             for key, text in items:
-                v = tk.BooleanVar(value=False)
+                cur = self.comm.attach
+                v = tk.BooleanVar(value=bool(cur.get("contract")) if prefix == "contract" else key in cur.get(prefix, []))
                 vars_[(prefix, key)] = v
                 tk.Checkbutton(dlg.body, text=tr(text), variable=v, bg=bg, fg=COLORS["text"], selectcolor=COLORS["bg_card"],
                                activebackground=bg, activeforeground=COLORS["text"], font=config.font("body"),
@@ -311,17 +324,10 @@ class CommPage(tk.Frame):
             sel = {"stats": [k for (p, k), v in vars_.items() if p == "stats" and v.get()],
                    "cal": [k for (p, k), v in vars_.items() if p == "cal" and v.get()],
                    "contract": vars_[("contract", "terms")].get()}
-            why = self.comm.send_data(sel, self.entry.get("1.0", "end").strip())
-            if why == "empty":
-                return
-            if why:
-                dlg.cancel()
-                self._report(why)
-                return
-            self.entry.delete("1.0", "end")
+            self.comm.set_attach(sel)          # 不立刻发: 记下来, 随下一条消息一起发
             dlg.finish(True)
             self.refresh(force=True)
 
-        ttk.Button(dlg.buttons, text=tr("发送"), style="Accent.TButton", command=go).pack(side="right")
+        ttk.Button(dlg.buttons, text=tr("确定"), style="Accent.TButton", command=go).pack(side="right")
         ttk.Button(dlg.buttons, text=tr("取消"), command=dlg.cancel).pack(side="right", padx=(0, 8))
         dlg.wait()
