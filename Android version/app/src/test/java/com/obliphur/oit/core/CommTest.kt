@@ -223,6 +223,12 @@ class CommTest {
         assertEquals("", a.send("你好")); wait(a)
         pull(a, b)
         assertEquals(listOf("你好", "A 的回复"), b.visible().map { it.text })
+        // 请求日志 / 选模型 (聊天和 AI 名单建议用同一份模型设置)
+        val logText = File(td, "a/comm.log").readText()
+        assertTrue("REQ user start" in logText && "REQ user ok" in logText)
+        a.setModel("m-x")
+        assertEquals("m-x", a.modelProfile().model)
+        assertTrue("m-x" in com.obliphur.oit.ai.Ai.modelsFor(a.modelProfile()))
         assertEquals(1, b.unread)
         pull(a, b)
         assertEquals(2, b.visible().size)               // 同一条不会并两次

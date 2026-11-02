@@ -70,7 +70,14 @@ fun CommScreen(go: (String) -> Unit) {
     var attach by remember { mutableStateOf(false) }
     // 不跟着每秒一次的 LocalTick 重画 (整页每秒重画一遍会有卡顿感): 只在聊天记录 / 状态变了才刷新
     var ver by remember { mutableIntStateOf(comm.version) }
-    LaunchedEffect(Unit) { while (true) { if (comm.version != ver) ver = comm.version; kotlinx.coroutines.delay(250) } }
+    var waitHint by remember { mutableStateOf("") }
+    LaunchedEffect(Unit) {
+        while (true) {
+            if (comm.version != ver) ver = comm.version
+            comm.waitingText().let { if (it != waitHint) waitHint = it }
+            kotlinx.coroutines.delay(250)
+        }
+    }
     val msgs = remember(ver) { comm.visible() }
     val list = rememberLazyListState()
     // 倒排: 第 0 项是最新的一条, 在最下面. 新消息来了 (收到的 / 同步来的) 滑到最新; 正在往上翻很早的记录时不打断 (自己发的除外)
@@ -85,6 +92,8 @@ fun CommScreen(go: (String) -> Unit) {
     Column(Modifier.fillMaxSize().imePadding().padding(horizontal = 12.dp)) {
         Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(comm.personaTitle(comm.personaName()), color = o.dim, fontSize = 14.sp, modifier = Modifier.weight(1f))
+            // 模型: 和 AI 名单建议用同一份模型设置, 选了两边都生效
+            ModelPicker({ comm.modelProfile() }) { comm.setModel(it) }
             TextButton({ if (comm.messages.isNotEmpty()) askClear = true }) { Text(tr("清空"), color = o.dim) }
         }
         // 倒排 + 上下各留一点空白: 第一条 / 最后一条也能再滑过去一些, 新消息总是贴着底部
@@ -96,6 +105,7 @@ fun CommScreen(go: (String) -> Unit) {
         val blocked = comm.blocked()
         if (blocked.isNotEmpty() || comm.error.isNotEmpty()) Text(blocked.ifEmpty { tr(comm.error) }, color = o.danger, fontSize = 12.sp,
             modifier = Modifier.padding(top = 4.dp))
+        else if (waitHint.isNotEmpty()) Text(tr(waitHint), color = o.dim, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             TextButton({ attach = true }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
                 Text("📎", fontSize = 18.sp)

@@ -51,6 +51,14 @@ class CommPage(tk.Frame):
         ttk.Button(hdr, text=tr("清空"), command=self._clear).pack(side="right")
         self.lbl_who = tk.Label(hdr, text="", bg=bg, fg=COLORS["text_dim"], font=config.font("body"))
         self.lbl_who.pack(side="right", padx=(0, 12))
+        # 模型: 和 AI 名单建议用同一份模型设置, 选了两边都生效
+        self.var_model = tk.StringVar()
+        self.cb_model = ttk.Combobox(hdr, textvariable=self.var_model, width=22)
+        self.cb_model.pack(side="right", padx=(0, 8))
+        self.cb_model.bind("<<ComboboxSelected>>", lambda _e: self._pick_model())
+        self.cb_model.bind("<Return>", lambda _e: self._pick_model())
+        self.btn_models = ttk.Button(hdr, text="↻", width=3, command=self._fetch_models)
+        self.btn_models.pack(side="right", padx=(0, 2))
 
         self.area = ScrollArea(self, height=300, bg=bg)
         self.area.pack(fill="both", expand=True, padx=26, pady=(4, 4))
@@ -99,9 +107,57 @@ class CommPage(tk.Frame):
             self.after_cancel(self._resize_job)
         self._resize_job = self.after(200, self.refresh)
 
+    def _pick_model(self):
+        self.comm.set_model(self.var_model.get())
+
+    def _fetch_models(self):
+        """向服务商取模型列表 (后台线程), 填进下拉框."""
+        import ai_assist
+        prof = self.comm.ai.profile()
+        self.btn_models.config(state="disabled")
+
+        def work():
+            try:
+                res = ("ok", ai_assist.list_models(prof))
+            except ai_assist.AIError as e:
+                res = ("err", e.message)
+            except Exception as e:      # noqa: BLE001
+                res = ("err", type(e).__name__)
+            try:
+                self.after(0, lambda: done(res))
+            except Exception:
+                pass
+
+        def done(res):
+            if not self.winfo_exists():
+                return
+            self.btn_models.config(state="normal")
+            if res[0] == "ok":
+                self.cb_model.config(values=res[1])
+                toast.success(tr("取到 {n} 个模型.").format(n=len(res[1])))
+            else:
+                toast.warn(tr(res[1]))
+        import threading
+        threading.Thread(target=work, daemon=True).start()
+
+    def _sync_status(self):
+        """状态行: 不能用的原因 > 出错 > 等了很久还没回应 (每秒看一次, 不用重画消息)."""
+        c = self.comm
+        blocked = c.blocked()
+        wait = c.waiting_text()
+        text = blocked or (tr(c.error) if c.error else "") or (tr(wait) if wait else "")
+        cfg(self.lbl_status, text=text, fg=COLORS["danger"] if (blocked or c.error) else COLORS["text_dim"])
+
     def refresh(self, force: bool = False):
         c = self.comm
         self._resize_job = None
+        self._sync_status()
+        if str(self.cb_model.focus_get() if self.winfo_exists() else "") != str(self.cb_model):
+            options = c.model_options()
+            if list(self.cb_model.cget("values")) != options:
+                self.cb_model.config(values=options)
+            if self.var_model.get() != c.current_model():
+                self.var_model.set(c.current_model())
         blocked = c.blocked()
         if not force and blocked == self._blocked and c.version == self._ver and self._sig == self._signature():
             return
@@ -115,7 +171,6 @@ class CommPage(tk.Frame):
                 self.btn_attach_x.pack(side="left", padx=(6, 0))
         elif self.btn_attach_x.winfo_manager() == "pack":
             self.btn_attach_x.pack_forget()
-        cfg(self.lbl_status, text=blocked or (tr(c.error) if c.error else ""), fg=COLORS["danger"])
         self.entry.config(state="disabled" if blocked else "normal")
         self._sync_rows()
 

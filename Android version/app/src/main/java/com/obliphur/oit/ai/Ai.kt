@@ -174,6 +174,60 @@ object Ai {
         return out
     }
 
+    // ---- 模型列表 ----
+
+    /** 取到过的模型 id (只在内存里): "服务商|Base URL" → 列表. */
+    val MODEL_CACHE = java.util.concurrent.ConcurrentHashMap<String, List<String>>()
+
+    private fun modelsUrl(p: Profile): String {
+        val base = p.baseUrl.trim().trimEnd('/')
+        return if (p.protocol == "anthropic") base + (if (base.endsWith("/v1")) "/models" else "/v1/models") else "$base/models"
+    }
+
+    /** 向服务商取可用的模型 id (GET /models, 两种协议都有). 失败抛 AiError; 取到的记进 MODEL_CACHE. */
+    fun listModels(p: Profile): List<String> {
+        checkProfile(p.copy(model = p.model.ifBlank { "-" }))
+        val key = p.apiKey.trim()
+        val conn = URL(modelsUrl(p)).openConnection() as HttpURLConnection
+        conn.instanceFollowRedirects = false
+        conn.connectTimeout = 20_000
+        conn.readTimeout = 20_000
+        conn.setRequestProperty("User-Agent", "OIT/1.0")
+        if (p.protocol == "anthropic") {
+            conn.setRequestProperty("x-api-key", key)
+            conn.setRequestProperty("anthropic-version", ANTHROPIC_VERSION)
+        } else if (key.isNotEmpty()) conn.setRequestProperty("Authorization", "Bearer $key")
+        val code: Int
+        val text: String
+        try {
+            code = conn.responseCode
+            text = (if (code in 200..299) conn.inputStream else conn.errorStream)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
+        } catch (e: Exception) {
+            throw AiError("network", redact("连接失败:${e.message ?: e.javaClass.simpleName}", key))
+        } finally {
+            conn.disconnect()
+        }
+        if (code in 300..399) throw AiError("http", "服务商要求跳转到别的地址($code),为保护 API Key 已拒绝.请检查 Base URL 是否填对.")
+        if (code == 401 || code == 403) throw AiError("auth", "API Key 无效或没有权限:" + redact(errorText(text), key))
+        if (code !in 200..299) throw AiError("http", "服务商返回 $code:" + redact(errorText(text), key))
+        val ids = try {
+            val arr = JSONObject(text).getJSONArray("data")
+            (0 until arr.length()).mapNotNull { arr.optJSONObject(it)?.optString("id")?.takeIf { s -> s.isNotEmpty() } }
+        } catch (e: Exception) {
+            throw AiError("format", "服务商返回了无法识别的内容")
+        }.distinct().sorted()
+        if (ids.isEmpty()) throw AiError("format", "服务商没有给出模型列表")
+        MODEL_CACHE["${p.provider}|${p.baseUrl.trim()}"] = ids
+        return ids
+    }
+
+    /** 下拉框里的模型: 取到过的 > 预设的; 当前用着的一定在里面. */
+    fun modelsFor(p: Profile): List<String> {
+        val ids = (MODEL_CACHE["${p.provider}|${p.baseUrl.trim()}"] ?: PROVIDERS[p.provider]?.models ?: emptyList()).toMutableList()
+        if (p.model.isNotBlank() && p.model !in ids) ids.add(0, p.model)
+        return ids
+    }
+
     // ---- 提示词 ----
 
     private val COMMON =

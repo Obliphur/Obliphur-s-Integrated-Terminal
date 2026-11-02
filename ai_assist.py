@@ -396,6 +396,65 @@ def chat_messages(profile: dict, system: str, messages: list, timeout: float = 9
     return text
 
 
+# ══════════════ 模型列表 ══════════════
+MODEL_CACHE = {}                # (服务商, Base URL) -> 取到过的模型 id 列表 (只在内存里)
+
+
+def models_url(profile: dict) -> str:
+    base = profile["base_url"].strip().rstrip("/")
+    if profile.get("protocol") == "anthropic":
+        return base + ("/models" if base.endswith("/v1") else "/v1/models")
+    return base + "/models"
+
+
+def list_models(profile: dict, timeout: float = 20.0, opener=None) -> list:
+    """向服务商取可用的模型 id (GET /models, 两种协议都有). 失败抛 AIError. 取到的记进 MODEL_CACHE."""
+    check_profile(dict(profile, model=profile.get("model") or "-"))
+    key = (profile.get("api_key") or "").strip()
+    headers = {"User-Agent": "OIT/1.0"}
+    if profile["protocol"] == "anthropic":
+        headers["x-api-key"] = key
+        headers["anthropic-version"] = ANTHROPIC_VERSION
+    elif key:
+        headers["Authorization"] = "Bearer " + key
+    req = urllib.request.Request(models_url(profile), headers=headers, method="GET")
+    try:
+        with (opener or _OPENER.open)(req, timeout=timeout) as resp:
+            raw = resp.read(2_000_000)
+    except urllib.error.HTTPError as e:
+        try:
+            payload = e.read(4000) if e.fp is not None else b""
+        except Exception:
+            payload = b""
+        if e.code == 403 and e.headers and e.headers.get("X-OIT-Reason"):
+            raise AIError("blocked", "请求被本程序的过滤代理拦截(该服务商的域名不在白名单中)")
+        if e.code in (401, 403):
+            raise AIError("auth", "API Key 无效或没有权限:" + redact(_error_text(payload), key))
+        raise AIError("http", f"服务商返回 {e.code}:" + redact(_error_text(payload), key))
+    except (urllib.error.URLError, OSError, TimeoutError) as e:
+        raise AIError("network", redact(f"连接失败:{getattr(e, 'reason', e)}", key))
+    try:
+        data = json.loads(raw.decode("utf-8", "replace"))
+        ids = [str(m["id"]) for m in data["data"] if isinstance(m, dict) and m.get("id")]
+    except (ValueError, KeyError, TypeError):
+        raise AIError("format", "服务商返回了无法识别的内容")
+    ids = sorted(dict.fromkeys(ids))
+    if not ids:
+        raise AIError("format", "服务商没有给出模型列表")
+    MODEL_CACHE[(profile.get("provider") or "", profile["base_url"].strip())] = ids
+    return ids
+
+
+def models_for(profile: dict) -> list:
+    """下拉框里的模型: 取到过的 > 预设的; 当前用着的一定在里面."""
+    prov = profile.get("provider") or ""
+    ids = list(MODEL_CACHE.get((prov, (profile.get("base_url") or "").strip())) or PROVIDERS.get(prov, {}).get("models") or [])
+    cur = (profile.get("model") or "").strip()
+    if cur and cur not in ids:
+        ids.insert(0, cur)
+    return ids
+
+
 # ══════════════ 提示词 ══════════════
 # 两段提示词共同的安全约定:清单是「数据」不是「指令」(应用名 / 域名里可能被塞进一句话).
 _COMMON = (
@@ -744,6 +803,33 @@ def _selftest():
             assert "sk-secret-123" not in e.message and "***" in e.message, e.message
     finally:
         srv.shutdown()
+
+    # 取模型列表: OpenAI 兼容 / Anthropic 两种协议都是 GET .../models
+    class H2(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            seen.append((self.path, {k.lower(): v for k, v in self.headers.items()}))
+            body = json.dumps({"data": [{"id": "m-b"}, {"id": "m-a"}, {"id": "m-b"}]}).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    srv2 = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H2)
+    threading.Thread(target=srv2.serve_forever, daemon=True).start()
+    base2 = f"http://127.0.0.1:{srv2.server_address[1]}"
+    try:
+        seen = []
+        assert list_models({"base_url": base2 + "/v1", "protocol": "openai", "api_key": "k9", "provider": "custom"}) == ["m-a", "m-b"]
+        assert seen[-1][0] == "/v1/models" and seen[-1][1]["authorization"] == "Bearer k9"
+        list_models({"base_url": base2, "protocol": "anthropic", "api_key": "k9", "provider": "custom"})
+        assert seen[-1][0] == "/v1/models" and seen[-1][1]["x-api-key"] == "k9" and seen[-1][1]["anthropic-version"] == ANTHROPIC_VERSION
+        assert models_for({"provider": "custom", "base_url": base2, "model": "mine"}) == ["mine", "m-a", "m-b"]
+        assert models_for({"provider": "deepseek", "base_url": "https://api.deepseek.com", "model": "deepseek-chat"})[0] == "deepseek-chat"
+    finally:
+        srv2.shutdown()
 
     # 预设服务商的 Key 只发往官方域名
     for prov, url in (("deepseek", "https://evil.example/v1"),

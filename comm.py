@@ -38,6 +38,7 @@ HISTORY_SENT = 60                     # 每次请求最多带多少条聊天记�
 HISTORY_CHARS = 120000                # 带的聊天记录总共最多多少字 (超了从最老的开始不带)
 MAX_INFO_ROUNDS = 2                   # 一次回复里, 对方最多可以要几次资料 ([contract])
 CHAT_TIMEOUT = 240.0                  # 一次请求最多等多久 (回复长 / 资料多时要久一点)
+WAIT_HINT = 15                        # 请求发出去多少秒还没回应, 聊天页就提示一句
 KEEP = 400                            # 本地最多存多少条
 SYNC_N = 60                           # 随设备同步最近多少条
 MAX_PERSONA = 60000
@@ -217,6 +218,14 @@ def timer_line(snap: dict) -> str:
             f"今日总专注时长: {_hm(snap.get('focus_total_min', 0))}; 目前这轮专注时长: {cur}")
 
 
+def urlsplit_host(url) -> str:
+    from urllib.parse import urlsplit
+    try:
+        return urlsplit(str(url or "")).hostname or "?"
+    except ValueError:
+        return "?"
+
+
 def info_tags(reply: str) -> list:
     """对方这次回复是在要资料吗: 同时有 [refuse to reply] 和 [contract] (不分大小写和空格) → 要的资料列表."""
     t = re.sub(r"\s+", " ", str(reply or "")).lower()
@@ -273,6 +282,7 @@ class Comm:
         self.unread = 0
         self.viewing = False
         self.busy = False
+        self.busy_since = 0.0
         self.error = ""
         self.hour_lines = lambda: []   # 今天填过的整点记录 ["09:00 写代码", …]; app 接上
         self.snapshot = lambda: {}     # 计时器状态; app 接上
@@ -351,6 +361,42 @@ class Comm:
                 return
             self._writing = True
         threading.Thread(target=self._write_loop, daemon=True).start()
+
+    def log(self, text: str):
+        """请求日志 comm.log (数据文件夹, 明文): 什么时候发的, 多大, 花了多久, 出了什么错. 不记聊天内容和 Key; 超过 200 KB 只留后一半."""
+        try:
+            path = os.path.join(self.dir, "comm.log")
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(f"{datetime.now():%Y-%m-%d %H:%M:%S}  {text}\n")
+            if os.path.getsize(path) > 200_000:
+                with open(path, "r", encoding="utf-8", errors="replace") as f:
+                    data = f.read()
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(data[len(data) // 2:])
+        except OSError:
+            pass
+
+    def waiting_text(self) -> str:
+        """请求发出去很久还没有回应时的提示 (刚发出去的几秒不提示)."""
+        if not self.busy or not self.busy_since:
+            return ""
+        sec = int(time.monotonic() - self.busy_since)
+        return f"API 还没有回应 (已等待 {sec} 秒)" if sec >= WAIT_HINT else ""
+
+    # ---- 模型 (聊天和 AI 名单建议用的是同一份模型设置) ----
+    def model_options(self) -> list:
+        return ai_assist.models_for(self.ai.profile())
+
+    def current_model(self) -> str:
+        return self.ai.profile().get("model") or ""
+
+    def set_model(self, model: str):
+        model = str(model or "").strip()
+        if not model or model == self.current_model():
+            return
+        self.ai.set_profile(self.ai.provider, model=model)
+        self.ai.save()
+        self._changed()
 
     def _write_loop(self):
         while True:
@@ -684,6 +730,10 @@ class Comm:
                 msgs.append({"role": "user", "content": extra[1]})
         epoch = self._epoch
         self.busy = True
+        self.busy_since = time.monotonic()
+        started = time.monotonic()
+        self.log(f"REQ {kind} start model={profile.get('model')} host={urlsplit_host(profile.get('base_url'))} "
+                 f"msgs={len(msgs)} chars={sum(len(m['content']) for m in msgs) + len(system)}")
         self._changed()
 
         def ask(m):
@@ -712,16 +762,20 @@ class Comm:
                                     + "\n\n请根据以上资料回复用户上面的消息; 如果此刻仍然不方便回复, 返回" + REFUSE + "."}]
                     reply = ask(convo)
                 res = (kind, extra, reply, "", epoch)
+                self.log(f"REQ {kind} ok {time.monotonic() - started:.1f}s reply_chars={len(reply)}")
             except ai_assist.AIError as e:
                 res = (kind, extra, "", e.message, epoch)
+                self.log(f"REQ {kind} FAIL {time.monotonic() - started:.1f}s {e.kind}: {e.message}")
             except Exception as e:      # noqa: BLE001
                 res = (kind, extra, "", f"{type(e).__name__}", epoch)
+                self.log(f"REQ {kind} FAIL {time.monotonic() - started:.1f}s {type(e).__name__}: {e}")
             with self._lock:
                 self._results.append(res)
         threading.Thread(target=work, daemon=True).start()
 
     def _finish(self, kind: str, extra, reply: str, err: str, epoch: int = 0):
         self.busy = False
+        self.busy_since = 0.0
         if self.blocked():                              # 等回复的时候"无言为真"生效了: 这条回复不要了
             self._again = False
             self._changed()
@@ -731,6 +785,8 @@ class Comm:
             self._changed()
             return
         refused = not err and is_refusal(reply)
+        if refused:
+            self.log(f"REPLY refused ({kind}): 对方回了 [refuse to reply], 不显示" + (", 稍后重试" if self.unanswered() else ""))
         if err or refused:
             if extra:                                   # 主动 / 重试没有成: 附带过的信息当作没发过
                 self.cfg["last_sent"] = dict(extra[2])
@@ -1049,6 +1105,17 @@ def _selftest():
     cf.flush()
     cf2 = Comm(fresh_dir, fresh_personas, now=lambda: clock[0], chat_fn=fake)
     assert list_personas(fresh_personas) == [] and cf2.persona_name() == "", "删掉之后不再写回, 也不再自动选"
+    # 请求日志 / 选模型 / 等待提示
+    logp = os.path.join(data, "comm.log")
+    assert os.path.exists(logp) and "REQ user start" in open(logp, encoding="utf-8").read()
+    assert "REQ user ok" in open(logp, encoding="utf-8").read() and "k1" not in open(logp, encoding="utf-8").read()
+    c.set_model("m-x")
+    assert c.current_model() == "m-x" and "m-x" in c.model_options()
+    assert ai_assist.AIConfig(c.ai.path).profile()["model"] == "m-x", "选的模型存进了模型设置"
+    c.busy, c.busy_since = True, time.monotonic() - 20
+    assert c.waiting_text().startswith("API 还没有回应") and c.waiting_text().endswith("秒)")
+    c.busy, c.busy_since = False, 0.0
+    assert c.waiting_text() == ""
     # ---- 对方要资料: [refuse to reply][contract] → 给词条库再调用一次 ----
     assert info_tags(" [Refuse to reply] [CONTRACT] ") == ["contract"] and info_tags("[contract]") == []
     assert info_tags("[refuse to reply][mechanics.md]") == [] and info_tags("好的") == []

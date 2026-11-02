@@ -450,6 +450,7 @@ fun AiSettingsDialog(onDismiss: () -> Unit) {
                 if (custom) Segmented(listOf("openai" to "OpenAI", "anthropic" to "Anthropic"), p.protocol) { p = p.copy(protocol = it) }
                 OutlinedTextField(p.model, { p = p.copy(model = it) }, label = { Text(tr("模型")) }, singleLine = true,
                     modifier = Modifier.fillMaxWidth())
+                ModelPicker({ p.copy(provider = provider) }) { p = p.copy(model = it) }
                 val models = Ai.PROVIDERS[provider]!!.models
                 if (models.isNotEmpty()) Segmented(models.map { it to it }, p.model) { p = p.copy(model = it) }
                 OutlinedTextField(p.apiKey, { p = p.copy(apiKey = it.trim()) }, label = { Text("API Key") }, singleLine = true,
@@ -489,6 +490,9 @@ fun AiSuggestDialog(mode: String, onDismiss: () -> Unit) {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 when (step) {
                     "consent" -> {
+                        ModelPicker({ aiConfig().profile() }) { m ->
+                            val c = aiConfig(); c.profiles[c.provider] = c.profile().copy(model = m); c.save()
+                        }
                         Text(tr("将采集: 已安装的应用 (名称与包名), 所选天数内各应用的使用时长, 以及本次运行通过 OIT 查询过的域名和次数. 采集结果只在内存里, 发送前可以预览和修改."), color = o.text)
                         Text(tr("回看天数"), color = o.dim)
                         Segmented(listOf("30" to "30", "90" to "90", "365" to "365"), days) { days = it }

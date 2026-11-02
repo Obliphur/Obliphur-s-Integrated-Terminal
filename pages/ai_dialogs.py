@@ -61,8 +61,12 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
     ttk.Entry(b, textvariable=var_url).pack(fill="x", pady=(2, 8))
 
     _label(b, tr("型号")).pack(fill="x")
-    cb_model = ttk.Combobox(b)
-    cb_model.pack(fill="x", pady=(2, 8))
+    mrow = tk.Frame(b, bg=COLORS["bg"])
+    mrow.pack(fill="x", pady=(2, 8))
+    cb_model = ttk.Combobox(mrow)
+    cb_model.pack(side="left", fill="x", expand=True)
+    btn_fetch = ttk.Button(mrow, text=tr("获取模型列表"))
+    btn_fetch.pack(side="left", padx=(6, 0))
 
     _label(b, tr("接口协议")).pack(fill="x")
     cb_proto = ttk.Combobox(b, state="readonly", values=list(ai_assist.PROTOCOLS))
@@ -92,7 +96,7 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
     def load(k):
         prof = cfg.profile(k)
         var_url.set(prof["base_url"])
-        cb_model.config(values=ai_assist.PROVIDERS[k]["models"])
+        cb_model.config(values=ai_assist.models_for(dict(prof, provider=k)))
         cb_model.set(prof["model"])
         cb_proto.set(prof["protocol"])
         cb_proto.config(state="readonly" if k == "custom" else "disabled")
@@ -103,6 +107,36 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
                           ).format(name=_provider_label(k)) + "\n" +
                  tr("API Key 加密保存在本机,只发往所选服务商."))
         state["cur"] = k
+
+    def fetch():
+        """向服务商取模型列表 (后台线程), 填进型号下拉框."""
+        store_current()
+        prof = cfg.profile(state["cur"])
+        btn_fetch.config(state="disabled")
+
+        def work():
+            try:
+                res = ("ok", ai_assist.list_models(prof))
+            except ai_assist.AIError as e:
+                res = ("err", e.message)
+            except Exception as e:      # noqa: BLE001
+                res = ("err", type(e).__name__)
+            try:
+                dlg.after(0, lambda: done(res))
+            except Exception:
+                pass
+
+        def done(res):
+            if not dlg.winfo_exists():
+                return
+            btn_fetch.config(state="normal")
+            if res[0] == "ok":
+                cb_model.config(values=res[1])
+                toast.success(tr("取到 {n} 个模型.").format(n=len(res[1])))
+            else:
+                toast.warn(tr(res[1]))
+        threading.Thread(target=work, daemon=True).start()
+    btn_fetch.config(command=fetch)
 
     def on_provider(_e=None):
         store_current()
@@ -188,6 +222,39 @@ def open_suggest(parent, cfg: "ai_assist.AIConfig", rules, mode: str, on_done=No
     var_hist = tk.BooleanVar(value=True)
     var_days = tk.StringVar(value=str(_DAYS[1]))
     var_goal = tk.StringVar()
+    var_model = tk.StringVar()
+
+    def pick_model():
+        """选了另一个模型: 记进模型设置 (聊天也用同一份), 这次请求就用它."""
+        m = var_model.get().strip()
+        if not m or m == prof["model"]:
+            return
+        prof["model"] = m
+        cfg.set_profile(cfg.provider, model=m)
+        cfg.save()
+
+    def fetch_models(cb):
+        def work():
+            try:
+                res = ("ok", ai_assist.list_models(prof))
+            except ai_assist.AIError as e:
+                res = ("err", e.message)
+            except Exception as e:      # noqa: BLE001
+                res = ("err", type(e).__name__)
+            try:
+                dlg.after(0, lambda: finish(res))
+            except Exception:
+                pass
+
+        def finish(res):
+            if not dlg.winfo_exists():
+                return
+            if res[0] == "ok":
+                cb.config(values=res[1])
+                toast.success(tr("取到 {n} 个模型.").format(n=len(res[1])))
+            else:
+                toast.warn(tr(res[1]))
+        threading.Thread(target=work, daemon=True).start()
 
     def step_consent(fr):
         _label(fr, tr("先说清楚会发生什么"), ).pack(fill="x")
@@ -202,7 +269,17 @@ def open_suggest(parent, cfg: "ai_assist.AIConfig", rules, mode: str, on_done=No
             dim=True, small=True)
         info.pack(fill="x", pady=(4, 10))
         wrap_label(info, 20)
-        _label(fr, tr("发送给: {t}").format(t=target)).pack(fill="x", pady=(0, 10))
+        _label(fr, tr("发送给: {t}").format(t=target)).pack(fill="x", pady=(0, 4))
+        mr = tk.Frame(fr, bg=COLORS["bg"])
+        mr.pack(fill="x", pady=(0, 10))
+        _label(mr, tr("模型")).pack(side="left", padx=(0, 6))
+        var_model.set(prof["model"])
+        cbm = ttk.Combobox(mr, textvariable=var_model, values=ai_assist.models_for(prof), width=34)
+        cbm.pack(side="left")
+        cbm.bind("<<ComboboxSelected>>", lambda _e: pick_model())
+        cbm.bind("<Return>", lambda _e: pick_model())
+        cbm.bind("<FocusOut>", lambda _e: pick_model())
+        ttk.Button(mr, text=tr("获取"), width=6, command=lambda: fetch_models(cbm)).pack(side="left", padx=(6, 0))
         ttk.Checkbutton(fr, text=tr("已安装的应用(名称 + exe 名)"), variable=var_apps).pack(
             anchor="w")
         hr = tk.Frame(fr, bg=COLORS["bg"])

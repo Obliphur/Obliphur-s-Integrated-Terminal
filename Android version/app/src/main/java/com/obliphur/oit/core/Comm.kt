@@ -125,6 +125,7 @@ class Comm(
         const val HISTORY_CHARS = 120000                // 带的聊天记录总共最多多少字 (超了从最老的开始不带)
         const val MAX_INFO_ROUNDS = 2                   // 一次回复里, 对方最多可以要几次资料 ([contract])
         const val CHAT_TIMEOUT_MS = 240_000             // 一次请求最多等多久 (回复长 / 资料多时要久一点)
+        const val WAIT_HINT = 15                        // 请求发出去多少秒还没回应, 聊天页就提示一句
         const val KEEP = 400
         const val SYNC_N = 60
         const val MAX_PERSONA = 60000
@@ -156,6 +157,7 @@ class Comm(
     @Volatile var version = 0; private set
     @Volatile var unread = 0; private set
     @Volatile var busy = false; private set
+    @Volatile private var busySince = 0L
     @Volatile var error = ""; private set
     @Volatile var viewing = false; private set
     /** 📎 勾选的内容 (统计 / 日历 / 合约词条); Core 接上. 空 = 没有可发的. */
@@ -266,6 +268,37 @@ class Comm(
     }
 
     private fun changed() { version++ }
+
+    /** 请求日志 comm.log (数据目录, 明文): 什么时候发的, 多大, 花了多久, 出了什么错. 不记聊天内容和 Key. */
+    private fun log(text: String) {
+        val f = File(dir, "comm.log")
+        Store.append(f, text)
+        runCatching {
+            if (f.length() > 200_000) f.writeText(f.readText(Charsets.UTF_8).let { it.substring(it.length / 2) }, Charsets.UTF_8)
+        }
+    }
+
+    /** 请求发出去很久还没有回应时的提示 (刚发出去的几秒不提示). */
+    fun waitingText(): String {
+        if (!busy || busySince == 0L) return ""
+        val sec = ((System.currentTimeMillis() - busySince) / 1000).toInt()
+        return if (sec >= WAIT_HINT) "API 还没有回应 (已等待 $sec 秒)" else ""
+    }
+
+    // ---- 模型 (聊天和 AI 名单建议用的是同一份模型设置) ----
+    fun modelProfile(): Profile = aiConfig().profile()
+
+    @Synchronized
+    fun setModel(model: String) {
+        val m = model.trim()
+        val cfg = aiConfig()
+        val p = cfg.profile()
+        if (m.isEmpty() || m == p.model) return
+        cfg.profiles[cfg.provider] = p.copy(model = m)
+        cfg.save()
+        problemAt = 0L
+        changed()
+    }
 
     /** 聊天记录有改动: 马上同步一次 (有绑定的设备时). */
     private fun push() { runCatching { onSync?.invoke() } }
@@ -589,6 +622,10 @@ class Comm(
         }
         val ep = epoch
         busy = true
+        busySince = System.currentTimeMillis()
+        val started = busySince
+        log("REQ $kind start model=${profile.model} host=${runCatching { java.net.URL(profile.baseUrl).host }.getOrDefault("?")} " +
+            "msgs=${msgs.size} chars=${msgs.sumOf { it.second.length } + system.length}")
         changed()
         Thread {
             val res = try {
@@ -604,10 +641,13 @@ class Comm(
                         "\n\n请根据以上资料回复用户上面的消息; 如果此刻仍然不方便回复, 返回${CommText.REFUSE}."))
                     reply = chatFn(profile, system, convo)
                 }
+                log("REQ $kind ok ${(System.currentTimeMillis() - started) / 1000.0}s reply_chars=${reply.length}")
                 Result(kind, extra, reply, "", ep)
             } catch (e: AiError) {
+                log("REQ $kind FAIL ${(System.currentTimeMillis() - started) / 1000.0}s ${e.kind}: ${e.message}")
                 Result(kind, extra, "", e.message ?: "", ep)
             } catch (e: Exception) {
+                log("REQ $kind FAIL ${(System.currentTimeMillis() - started) / 1000.0}s ${e.javaClass.simpleName}: ${e.message}")
                 Result(kind, extra, "", e.javaClass.simpleName, ep)
             }
             results.add(res)
@@ -616,9 +656,11 @@ class Comm(
 
     private fun finish(r: Result) {
         busy = false
+        busySince = 0L
         if (blocked().isNotEmpty()) { again = false; changed(); return }       // 等回复的时候"无言为真"生效了: 这条回复不要了
         if (r.epoch != epoch) { again = false; changed(); return }       // 发出之后清空过聊天记录: 这条回复不要了
         val refused = r.err.isEmpty() && CommText.isRefusal(r.reply)
+        if (refused) log("REPLY refused (${r.kind}): 对方回了 [refuse to reply], 不显示" + if (unanswered()) ", 稍后重试" else "")
         if (r.err.isNotEmpty() || refused) {
             if (r.extra != null) {                       // 主动 / 重试没有成: 附带过的信息当作没发过
                 lastSent.clear(); lastSent.putAll(r.extra.before); saveCfg()
