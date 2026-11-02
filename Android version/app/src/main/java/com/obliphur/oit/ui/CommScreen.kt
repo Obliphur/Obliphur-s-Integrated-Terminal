@@ -279,6 +279,11 @@ fun CommSettings() {
     }
 
     OitCard {
+        Text(tr("✂  分条发送"), fontWeight = FontWeight.Bold, color = o.text)
+        SwitchRow(tr("开启"), comm.splitSend) { comm.set(splitSend = it) }
+    }
+
+    OitCard {
         Text(tr("🖼  头像"), fontWeight = FontWeight.Bold, color = o.text)
         SwitchRow(tr("显示头像"), comm.showAvatar) { comm.set(showAvatar = it) }
         if (comm.showAvatar) for ((who, label) in listOf("me" to tr("我"), "ai" to tr("对方"))) {

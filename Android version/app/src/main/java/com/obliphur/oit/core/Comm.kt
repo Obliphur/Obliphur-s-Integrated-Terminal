@@ -102,7 +102,7 @@ object CommText {
             "例如专注 100 分钟休息约 ${"%.0f".format(computeF(100.0))} 分钟"
     }
 
-    fun prefixPrompt(): String =
+    fun prefixPrompt(split: Boolean = true): String =
         "你需要回复来自自律软件OIT用户的信息,根据以下设定回复\n" +
             "I.设定上你也是OIT的用户,你需要根据用户为你设定的人设安排自己的日程与行动,你不能出戏(比如强调自己是AI)\n" +
             "专注时间-休息时间函数如下:[${restFunctionText()}],如果没有强调,默认你的每轮专注时间总是100min,并且一休息完就继续专注.\n" +
@@ -118,7 +118,7 @@ object CommText {
             "VII.如果用户问起OIT的使用数据(日历/统计/计时器等),你可以同时输入[refuse to reply][模块名]查询,得到该模块的数据内容和格式;" +
             "如果用户问的是你自己的使用情况,请参照这个格式,根据人设编造你自己的数据来回复.可以一次查询多个.\n" +
             "可查询的模块: [contract]合约词条库 [calendar]日历 [stats]统计 [timer]计时器 [log]整点记录 [net]联网 [rules]规则 [settings]设置 [reset]重置 [prescript]指令.\n" +
-            "VIII.你可以把你的话分开说.当用户说完话时,系统会试图调用两次API,最好不要让你的表达太集中.如果你只想说一次,第二次${REFUSE}.\n" +
+            (if (split) "VIII.你可以把你的话分开说.当用户说完话时,系统会试图调用两次API,最好不要让你的表达太集中.如果你只想说一次,第二次${REFUSE}.\n" else "") +
             "\n以下是用户设定的人设:\n"
 
     fun readme(): String =
@@ -205,9 +205,14 @@ class Comm(
     var personas: File,
     private val now: () -> LocalDateTime = LocalDateTime::now,
     private val chatFn: (Profile, String, List<Pair<String, String>>) -> String =
-        { p, s, m -> Ai.chatMessages(p, s, m, Comm.CHAT_TOKENS, Comm.CHAT_TEMPERATURE, Comm.CHAT_TIMEOUT_MS) },
+        { p, s, m -> Ai.chatMessages(p, s, m, Comm.CHAT_TOKENS, Comm.CHAT_TEMPERATURE, Comm.CHAT_TIMEOUT_MS, cache = true,
+            onUsage = { i, c -> Comm.usageSink(i, c) }) },
 ) {
     companion object {
+        /** 每次请求的用量记录 (输入 token, 命中缓存的 token): 写进 comm.log. 由 Comm 的实例接上. */
+        @Volatile var usageSink: (Long, Long) -> Unit = { _, _ -> }
+        /** 带的聊天记录的起点一次往后挪这么多条 (不是每条都挪): 请求的开头 (前面的历史) 才能在这么多条消息里保持不变, 服务商的提示缓存才命中. */
+        const val HISTORY_STEP = 10
         const val PROACTIVE_MIN_REST = 20 * 60          // I. 用户休息超过这么久才会主动发消息
         const val PROACTIVE_MAX_DELAY = 180             // I / II / III: 休息开始后 / 日程段开始前 1~3 分钟 (秒)
         const val PROACTIVE_LATE = 120                  // 到点之后过了这么久 (程序刚打开 / 刚空下来) 就算了
@@ -250,6 +255,9 @@ class Comm(
     private var proKey = ""
     private var segSig: String? = null                      // 人设文件的 (名字, 修改时间, 大小): 变了才重新读日程
     private var segCache: List<Pair<String, Int>> = emptyList()
+    /** 分条发 (规则 VIII) 开着吗: 用户说完话, 对方的第一条收到之后再调用一次 API, 让对方可以把话分开说. 默认开; 随设备同步. */
+    var splitSend = true; private set
+    init { usageSink = { i, c -> log("USAGE input=$i cached=$c") } }
     private var proCache: Map<String, Double> = emptyMap()       // 同一个人设文件里写的主动发起谈话的概率 (CommText.personaProbs)
     private var seeded = false
     private var legacyDone = false
@@ -429,6 +437,7 @@ class Comm(
             avatarMe = d.optString("avatar_me", "")
             avatarAi = d.optString("avatar_ai", "")
             userProfile = d.optString("user_profile", "")
+            splitSend = d.optBoolean("split_send", true)
             seeded = d.optBoolean("seeded", false)
             legacyDone = d.optBoolean("legacy_done", false)
             // 旧版本这几项存在设置里 (所有对象共用): 迁移时归给现在选着的对象
@@ -464,12 +473,12 @@ class Comm(
     private fun saveCfg() {
         val o = JSONObject().put("persona", persona)
             .put("show_avatar", showAvatar).put("avatar_me", avatarMe).put("avatar_ai", avatarAi)
-            .put("user_profile", userProfile).put("seeded", seeded).put("legacy_done", legacyDone)
+            .put("user_profile", userProfile).put("seeded", seeded).put("legacy_done", legacyDone).put("split_send", splitSend)
         writer.execute { Store.write(cfgFile, o) }
     }
 
     private fun saveChat() {
-        while (messages.size > KEEP) messages.removeAt(0)
+        if (messages.size > KEEP) repeat(-Math.floorDiv(-(messages.size - KEEP), HISTORY_STEP) * HISTORY_STEP) { messages.removeAt(0) }   // 一次砍 HISTORY_STEP 的整数倍: 发给模型的历史的起点不会跟着滑
         writeState(pid, activeState())
     }
 
@@ -523,6 +532,7 @@ class Comm(
     fun syncDoc(): Map<String, Any?> {
         val doc = LinkedHashMap<String, Any?>()
         if (userProfile.isNotEmpty()) doc["profile"] = userProfile
+        doc["split"] = splitSend                                    // 分条发的开关: 调用 AI 的是主端, 两台设备要一致
         for (p in chatPids()) {
             val st = stateOf(p)
             for (m in st.messages.takeLast(SYNC_N)) {
@@ -549,6 +559,7 @@ class Comm(
             val kind = key.substringBefore(':')
             val rest = key.substringAfter(':', "")
             when {
+                key == "split" && v is Boolean -> if (v != splitSend) { splitSend = v; saveCfg(); changed() }
                 key == "profile" -> {
                     val n = (v as? String ?: "").take(MAX_PROFILE)
                     if (n != userProfile) { userProfile = n; saveCfg(); changed() }
@@ -640,14 +651,16 @@ class Comm(
 
     @Synchronized
     fun set(persona: String? = null, showAvatar: Boolean? = null,
-            avatarMe: String? = null, avatarAi: String? = null, userProfile: String? = null) {
+            avatarMe: String? = null, avatarAi: String? = null, userProfile: String? = null, splitSend: Boolean? = null) {
         persona?.let { switchTo(it); saveChat() }
         userProfile?.let { this.userProfile = it.trim().take(MAX_PROFILE) }
         showAvatar?.let { this.showAvatar = it }
+        splitSend?.let { this.splitSend = it }
         avatarMe?.let { this.avatarMe = it.trim().take(4) }
         avatarAi?.let { this.avatarAi = it.trim().take(4) }
         saveCfg()
         changed()
+        if (splitSend != null) push()
     }
 
     private fun ageSeconds(m: ChatMsg): Double {
@@ -781,13 +794,10 @@ class Comm(
         val out = ArrayList<Pair<String, String>>()
         // 总字数太多时从最老的开始不带 (至少带最新的一条)
         var total = 0
-        val kept = ArrayList<ChatMsg>()
-        for (m in messages.takeLast(HISTORY_SENT).asReversed()) {
-            total += m.api.ifEmpty { m.text }.length
-            if (total > HISTORY_CHARS && kept.isNotEmpty()) break
-            kept.add(m)
-        }
-        for (m in kept.asReversed()) {
+        // 起点按 HISTORY_STEP 一格一格挪: 中间的每一次请求, 开头都和上一次一模一样 (提示缓存才命中)
+        var kept: List<ChatMsg> = if (messages.size > HISTORY_SENT) messages.drop(-Math.floorDiv(-(messages.size - HISTORY_SENT), HISTORY_STEP) * HISTORY_STEP) else messages.toList()
+        while (kept.size > 1 && kept.sumOf { it.api.ifEmpty { it.text }.length } > HISTORY_CHARS) kept = kept.drop(minOf(HISTORY_STEP, kept.size - 1))
+        for (m in kept) {
             val role = if (m.role == "ai") "assistant" else "user"
             val text = m.api.ifEmpty { m.text }
             if (text.isEmpty()) continue
@@ -862,7 +872,7 @@ class Comm(
     private fun request(kind: String, extra: Extra? = null) {
         if (busy) { again = true; return }
         val profile = aiConfig().profile()
-        var system = CommText.prefixPrompt() + readPersona(personaName())
+        var system = CommText.prefixPrompt(splitSend) + readPersona(personaName())
         if (userProfile.isNotBlank())                       // 用户在 设置 → 沟通 里自己填的身份背景
             system += "\n\n以下是用户的身份背景(用户自己填写):\n" + userProfile.trim()
         val msgs = ArrayList(apiMessages())
@@ -935,7 +945,7 @@ class Comm(
         if (again) {
             again = false
             if (unanswered() && r.err.isEmpty()) request("user")
-        } else if (r.kind in FOLLOW_KINDS && r.err.isEmpty() && !refused && problem().isEmpty() && leader()) {
+        } else if (splitSend && r.kind in FOLLOW_KINDS && r.err.isEmpty() && !refused && problem().isEmpty() && leader()) {
             // 规则 VIII: 对方的第一条已经收到了, 再调用一次, 让它可以接着说 (只想说一次就 [refuse to reply], 什么也不留下)
             trigger("followup", FOLLOW_BODY)
         }

@@ -371,18 +371,44 @@ def chat(profile: dict, system: str, user: str, timeout: float = 90.0, opener=No
                          timeout=timeout, opener=opener)
 
 
+def usage_of(data: dict) -> tuple:
+    """响应里的用量 → (输入 token 总数, 其中命中缓存的). 各家字段不同: Anthropic cache_read_input_tokens (输入 = input + 读缓存 + 写缓存),
+    DeepSeek prompt_cache_hit_tokens, OpenAI prompt_tokens_details.cached_tokens; 没有就是 0."""
+    u = data.get("usage") if isinstance(data, dict) else None
+    if not isinstance(u, dict):
+        return 0, 0
+
+    def num(v):
+        return int(v) if isinstance(v, (int, float)) else 0
+    if "input_tokens" in u:
+        read = num(u.get("cache_read_input_tokens"))
+        return num(u.get("input_tokens")) + read + num(u.get("cache_creation_input_tokens")), read
+    det = u.get("prompt_tokens_details")
+    cached = num(u.get("prompt_cache_hit_tokens")) or num(det.get("cached_tokens") if isinstance(det, dict) else 0)
+    return num(u.get("prompt_tokens")), cached
+
+
 def chat_messages(profile: dict, system: str, messages: list, timeout: float = 90.0, opener=None,
-                  max_tokens: int = MAX_TOKENS, temperature: float = 0.2) -> str:
+                  max_tokens: int = MAX_TOKENS, temperature: float = 0.2, cache: bool = False, on_usage=None) -> str:
     """带历史的一次请求: messages = [{"role": "user" | "assistant", "content": 文字}], 以 user 开头, 以 user 结尾.
-    API 本身没有记忆, 想让模型记得前面说过的话, 就得每次把历史一起发过去 (沟通页, comm.py)."""
+    API 本身没有记忆, 想让模型记得前面说过的话, 就得每次把历史一起发过去 (沟通页, comm.py).
+    cache: 提示缓存 (沟通里"分条发"会连着调用两次, 第二次的前面全是第一次发过的内容). Anthropic 协议要明确标出缓存位置 (系统提示和最后一条消息),
+    OpenAI 协议的服务商 (DeepSeek, OpenAI …) 自动按相同的开头缓存, 不用标, 只要每次请求的开头一模一样.
+    on_usage(输入 token 数, 命中缓存的 token 数): 响应里有用量时调用."""
     check_profile(profile)
     key = (profile.get("api_key") or "").strip()
     headers = {"Content-Type": "application/json", "User-Agent": "OIT/1.0"}
     if profile["protocol"] == "anthropic":
         headers["x-api-key"] = key
         headers["anthropic-version"] = ANTHROPIC_VERSION
-        body = {"model": profile["model"], "max_tokens": max_tokens, "system": system,
-                "messages": list(messages)}
+        sys_field, msgs = system, list(messages)
+        if cache:
+            mark = {"type": "ephemeral"}
+            sys_field = [{"type": "text", "text": system, "cache_control": mark}]
+            if msgs:
+                msgs[-1] = {"role": msgs[-1]["role"],
+                            "content": [{"type": "text", "text": str(msgs[-1]["content"]), "cache_control": mark}]}
+        body = {"model": profile["model"], "max_tokens": max_tokens, "system": sys_field, "messages": msgs}
     else:
         if key:
             headers["Authorization"] = "Bearer " + key
@@ -419,6 +445,11 @@ def chat_messages(profile: dict, system: str, messages: list, timeout: float = 9
             text = data["choices"][0]["message"]["content"] or ""
     except (ValueError, KeyError, IndexError, TypeError, AttributeError):
         raise AIError("format", "服务商返回了无法识别的内容")
+    if on_usage:
+        try:
+            on_usage(*usage_of(data))
+        except Exception:       # noqa: BLE001 —— 用量只是记录, 出错不影响回复
+            pass
     if not text.strip():
         raise AIError("format", "模型没有返回内容")
     return text
@@ -810,6 +841,13 @@ def _selftest():
         assert path == "/v1/messages" and hdr["x-api-key"] == "k1" \
             and hdr["anthropic-version"] == ANTHROPIC_VERSION
         assert body["system"] == PROMPT_WHITELIST and body["messages"][0]["role"] == "user"
+        # 提示缓存: Anthropic 协议把系统提示和最后一条消息标成缓存位置; OpenAI 协议不改请求
+        chat_messages(dict(p, protocol="anthropic", base_url=base), "SYS", [{"role": "user", "content": "hi"}], cache=True)
+        body = seen[-1][2]
+        assert body["system"] == [{"type": "text", "text": "SYS", "cache_control": {"type": "ephemeral"}}]
+        assert body["messages"] == [{"role": "user", "content": [{"type": "text", "text": "hi", "cache_control": {"type": "ephemeral"}}]}]
+        chat_messages(p, "SYS", [{"role": "user", "content": "hi"}], cache=True)
+        assert seen[-1][2]["messages"] == [{"role": "system", "content": "SYS"}, {"role": "user", "content": "hi"}]
         try:
             chat(dict(p, base_url=base + "/deny"), "s", "u")
             raise AssertionError

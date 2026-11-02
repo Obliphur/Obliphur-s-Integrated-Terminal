@@ -46,6 +46,8 @@ RETRY_GAP = 10 * 60                   # 对方不方便回复时, 多久再把�
 RETRY_MAX = 12
 HISTORY_SENT = 60                     # 每次请求最多带多少条聊天记录
 HISTORY_CHARS = 120000                # 带的聊天记录总共最多多少字 (超了从最老的开始不带)
+HISTORY_STEP = 10                     # 带的聊天记录的起点一次往后挪这么多条 (不是每条都挪): 请求的开头 (前面的历史) 才能在这么多条消息里保持不变,
+                                      # 服务商的提示缓存才命中 (分条发连着调用两次, 第二次的前面全是第一次发过的内容)
 MAX_INFO_ROUNDS = 2                   # 一次回复里, 对方最多可以要几次资料 ([contract])
 CHAT_TIMEOUT = 240.0                  # 一次请求最多等多久 (回复长 / 资料多时要久一点)
 WAIT_HINT = 15                        # 请求发出去多少秒还没回应, 聊天页就提示一句
@@ -59,7 +61,7 @@ CHAT_TEMPERATURE = 0.8
 WEEKDAY = "一二三四五六日"
 
 DEFAULTS = {"persona": "", "show_avatar": False,
-            "avatar_me": "", "avatar_ai": "", "pro_key": "", "retry": {}, "clear_ts": 0, "seeded": False, "legacy_done": False, "user_profile": ""}
+            "avatar_me": "", "avatar_ai": "", "pro_key": "", "retry": {}, "clear_ts": 0, "seeded": False, "legacy_done": False, "user_profile": "", "split_send": True}
 
 
 # ══════════════ 前置 prompt 与 README ══════════════
@@ -70,7 +72,8 @@ def rest_function_text() -> str:
             f"例如专注 100 分钟休息约 {config.compute_F(100):.0f} 分钟")
 
 
-def prefix_prompt() -> str:
+def prefix_prompt(split: bool = True) -> str:
+    """split: 分条发开着 (默认). 关着时没有第 VIII 条 (对方不会被调用第二次)."""
     return (
         "你需要回复来自自律软件OIT用户的信息,根据以下设定回复\n"
         "I.设定上你也是OIT的用户,你需要根据用户为你设定的人设安排自己的日程与行动,你不能出戏(比如强调自己是AI)\n"
@@ -88,8 +91,9 @@ def prefix_prompt() -> str:
         "VII.如果用户问起OIT的使用数据(日历/统计/计时器等),你可以同时输入[refuse to reply][模块名]查询,得到该模块的数据内容和格式;"
         "如果用户问的是你自己的使用情况,请参照这个格式,根据人设编造你自己的数据来回复.可以一次查询多个.\n"
         "可查询的模块: [contract]合约词条库 [calendar]日历 [stats]统计 [timer]计时器 [log]整点记录 [net]联网 [rules]规则 [settings]设置 [reset]重置 [prescript]指令.\n"
-        f"VIII.你可以把你的话分开说.当用户说完话时,系统会试图调用两次API,最好不要让你的表达太集中.如果你只想说一次,第二次{REFUSE}.\n"
-        "\n以下是用户设定的人设:\n")
+        + (f"VIII.你可以把你的话分开说.当用户说完话时,系统会试图调用两次API,最好不要让你的表达太集中.如果你只想说一次,第二次{REFUSE}.\n"
+           if split else "")
+        + "\n以下是用户设定的人设:\n")
 
 
 def readme_text() -> str:
@@ -340,15 +344,12 @@ def info_tags(reply: str) -> list:
 
 def api_messages(msgs: list) -> list:
     """本地聊天记录 → API 的 messages: 连续同角色的合并, 以 user 开头; 总字数太多时从最老的开始不带."""
-    msgs = list(msgs[-HISTORY_SENT:])
-    total = 0
-    keep = []
-    for m in reversed(msgs):
-        total += len(str(m.get("api") or m.get("text") or ""))
-        if total > HISTORY_CHARS and keep:
-            break
-        keep.append(m)
-    msgs = list(reversed(keep))
+    msgs = list(msgs)
+    if len(msgs) > HISTORY_SENT:                      # 起点按 HISTORY_STEP 一格一格挪: 中间的每一次请求, 开头都和上一次一模一样
+        drop = -(-(len(msgs) - HISTORY_SENT) // HISTORY_STEP) * HISTORY_STEP
+        msgs = msgs[drop:]
+    while len(msgs) > 1 and sum(len(str(m.get("api") or m.get("text") or "")) for m in msgs) > HISTORY_CHARS:
+        msgs = msgs[min(HISTORY_STEP, len(msgs) - 1):]
     out = []
     for m in msgs:
         role = "assistant" if m.get("role") == "ai" else "user"
@@ -625,7 +626,9 @@ class Comm:
         self._write_async(self.cfg_path, json.loads(json.dumps(out)))
 
     def save_chat(self):
-        self.messages = self.messages[-KEEP:]
+        if len(self.messages) > KEEP:                  # 一次砍 HISTORY_STEP 的整数倍: 发给模型的历史的起点 (api_messages) 不会跟着滑
+            cut = -(-(len(self.messages) - KEEP) // HISTORY_STEP) * HISTORY_STEP
+            self.messages = self.messages[cut:]
         self._write_async(self._chat_path(self.pid), self._state_payload(self._active_state()))
 
     def set_cfg(self, **kw):
@@ -635,6 +638,8 @@ class Comm:
         self.cfg.update(kw)
         self.save_cfg()
         self._changed()
+        if "split_send" in kw:
+            self._push()
 
     def _changed(self):
         self.version += 1
@@ -664,6 +669,7 @@ class Comm:
         doc = {}
         if self.cfg.get("user_profile"):
             doc["profile"] = self.cfg["user_profile"]
+        doc["split"] = self.split_on()                  # 分条发的开关: 调用 AI 的是主端, 两台设备要一致
         for pid in self.chat_pids():
             st = self._state_of(pid)
             for m in st["messages"][-SYNC_N:]:
@@ -731,6 +737,11 @@ class Comm:
                     st["retry"] = {}
                     if not (self.viewing and pid == self.pid) and not m.get("hold"):
                         self.unread += 1
+            elif key == "split" and isinstance(val, bool):
+                if val != self.split_on():
+                    self.cfg["split_send"] = val
+                    self.save_cfg()
+                    self._changed()
             elif key == "profile":
                 new = str(val or "")[:MAX_PROFILE] if val is not None else ""
                 if new != self.cfg.get("user_profile"):
@@ -776,6 +787,10 @@ class Comm:
                 if not self._talked_recently(self.messages[:i - 1], int(prev["ts"])):
                     self._ping()
                 return
+
+    def split_on(self) -> bool:
+        """分条发 (规则 VIII) 开着吗: 用户说完话, 对方的第一条收到之后再调用一次 API, 让对方可以把话分开说. 默认开."""
+        return self.cfg.get("split_send") is not False
 
     def pro_percent(self, kind: str) -> float:
         """主动发消息的概率 (%): kind = "idle" 人设的空闲段前 / "rest" 人设的休息段前. 写在人设里 (persona_probs), 没写用默认."""
@@ -973,7 +988,7 @@ class Comm:
             self._again = True
             return
         profile = self.ai.profile()
-        system = prefix_prompt() + read_persona(self.personas, self.persona_name())
+        system = prefix_prompt(self.split_on()) + read_persona(self.personas, self.persona_name())
         who = str(self.cfg.get("user_profile") or "").strip()[:MAX_PROFILE]
         if who:                                           # 用户在 设置 → 沟通 里自己填的身份背景
             system += "\n\n以下是用户的身份背景(用户自己填写):\n" + who
@@ -991,9 +1006,12 @@ class Comm:
                  f"msgs={len(msgs)} chars={sum(len(m['content']) for m in msgs) + len(system)}")
         self._changed()
 
+        def used(tokens, cached):
+            self.log(f"USAGE {kind} input={tokens} cached={cached}")
+
         def ask(m):
             return self.chat_fn(profile, system, m, max_tokens=CHAT_TOKENS, temperature=CHAT_TEMPERATURE,
-                                timeout=CHAT_TIMEOUT)
+                                timeout=CHAT_TIMEOUT, cache=True, on_usage=used)
 
         def work():
             try:
@@ -1074,7 +1092,7 @@ class Comm:
             self._again = False
             if self.unanswered() and not err:
                 self._request("user")
-        elif kind in FOLLOW_KINDS and not err and not refused and not self.problem() and self.leader():
+        elif kind in FOLLOW_KINDS and self.split_on() and not err and not refused and not self.problem() and self.leader():
             # 规则 VIII: 对方的第一条已经收到了, 再调用一次, 让它可以接着说 (只想说一次就 [refuse to reply], 什么也不留下)
             self._trigger("followup", FOLLOW_BODY)
 
@@ -1743,6 +1761,18 @@ def _selftest():
     assert "休息时间将在 22:58 开始" in calls[-1][1][-1]["content"]
     assert fire_before(c6, datetime(2027, 4, 1, 23, 0)) is None, "刚发过, 23:00 的空闲段不再发"
     assert any(k.startswith("S2027-04-01T23:00") for k in c6._pro_done())
+    # ---- 缓存: 请求的开头要稳定 (api_messages 的起点一格一格挪), 带用量记录 ----
+    big = [{"role": "me" if i % 2 == 0 else "ai", "text": f"m{i}"} for i in range(200)]
+    firsts = {api_messages(big[:n])[0]["content"] for n in range(61, 140)}
+    assert all(len(api_messages(big[:n])) <= HISTORY_SENT for n in range(1, 200))
+    assert len(firsts) <= (140 - 61) // HISTORY_STEP + 2, "开头 (最老的一条) 每 %d 条才变一次" % HISTORY_STEP
+    a_old, a_new = api_messages(big[:95]), api_messages(big[:96])
+    assert a_old[0]["content"] == a_new[0]["content"], "新增一条消息不改变请求的开头"
+    assert ai_assist.usage_of({"usage": {"input_tokens": 10, "cache_read_input_tokens": 90, "cache_creation_input_tokens": 5}}) == (105, 90)
+    assert ai_assist.usage_of({"usage": {"prompt_tokens": 200, "prompt_cache_hit_tokens": 150}}) == (200, 150)
+    assert ai_assist.usage_of({"usage": {"prompt_tokens": 200, "prompt_tokens_details": {"cached_tokens": 128}}}) == (200, 128)
+    assert ai_assist.usage_of({}) == (0, 0) and ai_assist.usage_of({"usage": "x"}) == (0, 0)
+
     # ---- VIII: 用户说完话, 对方的第一条收到之后再调用一次, 可以分开说 ----
     pv = prefix_prompt()
     assert "VIII.你可以把你的话分开说.当用户说完话时,系统会试图调用两次API,最好不要让你的表达太集中.如果你只想说一次,第二次[refuse to reply]." in pv
@@ -1783,6 +1813,19 @@ def _selftest():
     cu.send("等等")
     wait(cu)
     assert [m["text"] for m in cu.visible()] == ["你好", "甲", "等等", "回应等等"], [m["text"] for m in cu.visible()]
+    # 分条发的开关: 关着时不调用第二次, 前置 prompt 里也没有第 VIII 条; 开关随设备同步
+    cu.set_cfg(split_send=False)
+    assert "VIII." not in prefix_prompt(False) and "VIII." in prefix_prompt(True) and not cu.split_on()
+    n_f = len(follow_calls)
+    script.append("单条")
+    follow.append("不该出现")
+    cu.send("关了吗")
+    wait(cu)
+    assert cu.visible()[-1]["text"] == "单条" and len(follow_calls) == n_f and "VIII." not in calls[-1][0]
+    assert cu.sync_doc()["split"] is False
+    follow.clear()
+    cu.apply_doc({"split": True})
+    assert cu.split_on() and cu.sync_doc()["split"] is True
     cu.set_cfg(persona="小夏.txt")
     cu.flush()
 

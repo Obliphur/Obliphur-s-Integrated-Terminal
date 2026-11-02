@@ -87,6 +87,7 @@ EN = {
     "正在加载…": "Loading…",
     "正在重新加载界面…": "Reloading the interface…",
     "开启": "ON",
+    "✂  分条发送": "✂  Split replies",
     "关闭_状态": "OFF",
     "⏱  Timer": "⏱  Timer",
     "⏱  计时器": "⏱  Timer",

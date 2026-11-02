@@ -673,6 +673,7 @@ object EnStrings {
         "计时器状态" to "Timer status",
         "🖼  头像" to "🖼  Avatar",
         "显示头像" to "Show avatars",
+        "✂  分条发送" to "✂  Split replies",
         "我" to "Me",
         "对方" to "Them",
         "还没有选人设" to "No persona selected",

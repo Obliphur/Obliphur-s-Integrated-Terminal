@@ -119,9 +119,24 @@ object Ai {
 
     fun chat(p: Profile, system: String, user: String): String = chatMessages(p, system, listOf("user" to user))
 
-    /** 带历史的一次请求: messages = (user | assistant, 文字), 以 user 开头, 以 user 结尾. API 没有记忆, 历史要每次一起发 (沟通, Comm.kt). */
+    /** 响应里的用量 → (输入 token 总数, 其中命中缓存的). Anthropic cache_read_input_tokens (输入 = input + 读缓存 + 写缓存),
+     *  DeepSeek prompt_cache_hit_tokens, OpenAI prompt_tokens_details.cached_tokens; 没有就是 0 (同 ai_assist.usage_of). */
+    fun usageOf(d: JSONObject): Pair<Long, Long> {
+        val u = d.optJSONObject("usage") ?: return 0L to 0L
+        if (u.has("input_tokens")) {
+            val read = u.optLong("cache_read_input_tokens")
+            return u.optLong("input_tokens") + read + u.optLong("cache_creation_input_tokens") to read
+        }
+        val cached = u.optLong("prompt_cache_hit_tokens").takeIf { it != 0L } ?: (u.optJSONObject("prompt_tokens_details")?.optLong("cached_tokens") ?: 0L)
+        return u.optLong("prompt_tokens") to cached
+    }
+
+    /** 带历史的一次请求: messages = (user | assistant, 文字), 以 user 开头, 以 user 结尾. API 没有记忆, 历史要每次一起发 (沟通, Comm.kt).
+     *  cache: 提示缓存 (分条发连着调用两次, 第二次的前面全是第一次发过的内容): Anthropic 协议标出缓存位置 (系统提示和最后一条消息),
+     *  OpenAI 协议的服务商自动按相同的开头缓存, 只要每次请求的开头一模一样. onUsage(输入 token, 命中缓存的 token). */
     fun chatMessages(p: Profile, system: String, messages: List<Pair<String, String>>,
-                     maxTokens: Int = MAX_TOKENS, temperature: Double = 0.2, timeoutMs: Int = 90_000): String {
+                     maxTokens: Int = MAX_TOKENS, temperature: Double = 0.2, timeoutMs: Int = 90_000,
+                     cache: Boolean = false, onUsage: ((Long, Long) -> Unit)? = null): String {
         checkProfile(p)
         val key = p.apiKey.trim()
         val conn = URL(endpoint(p)).openConnection() as HttpURLConnection
@@ -137,13 +152,21 @@ object Ai {
         if (p.protocol == "anthropic") {
             conn.setRequestProperty("x-api-key", key)
             conn.setRequestProperty("anthropic-version", ANTHROPIC_VERSION)
-            body.put("system", system)
+            if (cache) body.put("system", JSONArray().put(JSONObject().put("type", "text").put("text", system)
+                .put("cache_control", JSONObject().put("type", "ephemeral"))))
+            else body.put("system", system)
         } else {
             if (key.isNotEmpty()) conn.setRequestProperty("Authorization", "Bearer $key")
             body.put("temperature", temperature)
             arr.put(JSONObject().put("role", "system").put("content", system))
         }
-        for ((role, text) in messages) arr.put(JSONObject().put("role", role).put("content", text))
+        for ((i, m) in messages.withIndex()) {
+            val (role, content) = m
+            if (cache && p.protocol == "anthropic" && i == messages.size - 1)
+                arr.put(JSONObject().put("role", role).put("content", JSONArray().put(JSONObject().put("type", "text").put("text", content)
+                    .put("cache_control", JSONObject().put("type", "ephemeral")))))
+            else arr.put(JSONObject().put("role", role).put("content", content))
+        }
         body.put("messages", arr)
         val code: Int
         val text: String
@@ -170,6 +193,7 @@ object Ai {
         } catch (e: Exception) {
             throw AiError("format", "服务商返回了无法识别的内容")
         }
+        if (onUsage != null) runCatching { val (i, c) = usageOf(JSONObject(text)); onUsage(i, c) }       // 用量只是记录, 出错不影响回复
         if (out.isBlank()) throw AiError("format", "模型没有返回内容")
         return out
     }

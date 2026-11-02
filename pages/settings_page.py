@@ -812,9 +812,18 @@ class SettingsPage(tk.Frame):
         self.txt_profile.bind("<KeyRelease>", lambda _e: self._comm_profile_later())
         self.txt_profile.bind("<FocusOut>", lambda _e: self._comm_profile_save())
 
+        fr, _head = self._card(body, "✂  分条发送")
+        v = tk.BooleanVar(value=c.split_on())
+        self.comm_vars = {"split_send": v}
+        self._track(tk.Checkbutton(fr, text=tr("开启"), variable=v, bg=card, fg=COLORS["text"],
+                                   selectcolor=card, activebackground=card, activeforeground=COLORS["text"],
+                                   font=config.font("body"), anchor="w",
+                                   command=lambda: self._comm_flag("split_send")), "开启").pack(
+            fill="x", padx=12, pady=(0, 8))
+
         fr, _head = self._card(body, "🖼  头像")
         v = tk.BooleanVar(value=bool(c.cfg.get("show_avatar")))
-        self.comm_vars = {"show_avatar": v}
+        self.comm_vars["show_avatar"] = v
         self._track(tk.Checkbutton(fr, text=tr("显示头像"), variable=v, bg=card, fg=COLORS["text"],
                                    selectcolor=card, activebackground=card, activeforeground=COLORS["text"],
                                    font=config.font("body"), anchor="w",
@@ -938,6 +947,8 @@ class SettingsPage(tk.Frame):
                 and self.txt_profile.get("1.0", "end").strip() != str(c.cfg.get("user_profile") or ""):
             self.txt_profile.delete("1.0", "end")                       # 别的设备同步来了新的身份背景
             self.txt_profile.insert("1.0", str(c.cfg.get("user_profile") or ""))
+        if self.comm_vars["split_send"].get() != c.split_on():
+            self.comm_vars["split_send"].set(c.split_on())              # 别的设备同步来了新的开关
         prof = c.ai.profile()
         text = f"{tr(_provider_label(c.ai.provider))} · {prof.get('model') or '—'}"
         text += "  ✗" if self._comm_api_missing() else "  ✓"

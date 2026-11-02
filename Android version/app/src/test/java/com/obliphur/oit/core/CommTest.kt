@@ -1,8 +1,10 @@
 package com.obliphur.oit.core
 
+import com.obliphur.oit.ai.Ai
 import com.obliphur.oit.ai.AiConfig
 import com.obliphur.oit.ai.AiError
 import com.obliphur.oit.ai.Profile
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -469,6 +471,38 @@ class CommTest {
         }
         c.send("等等"); wait(c)
         assertEquals(listOf("你好", "甲", "等等", "回应等等"), c.visible().map { it.text })
+        // 分条发的开关: 关着时不调用第二次, 前置 prompt 里也没有第 VIII 条; 开关随设备同步
+        c.set(splitSend = false)
+        assertFalse("VIII." in CommText.prefixPrompt(false))
+        assertTrue("VIII." in CommText.prefixPrompt(true))
+        val nf = followCalls.size
+        script.add("单条"); follow.add("不该出现")
+        c.send("关了吗"); wait(c)
+        assertEquals("单条", c.visible().last().text)
+        assertEquals(nf, followCalls.size)
+        assertEquals(false, c.syncDoc()["split"])
+        c.set(splitSend = true)
+        assertEquals(true, c.syncDoc()["split"])
+    }
+
+    /** 提示缓存: 发给模型的历史的起点一格一格挪 (中间每次请求开头一模一样), 各家的用量字段都认得. */
+    @Test
+    fun cacheFriendlyHistory() {
+        val td = Files.createTempDirectory("oit").toFile()
+        val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
+        c.set(persona = "Claudia.txt")
+        val firsts = HashSet<String>()
+        for (i in 0 until 140) {
+            script.add("a$i")
+            c.send("m$i"); wait(c)
+            if (i > 40 && i % 2 == 0) firsts.add(c.apiMessages().first().second)
+        }
+        assertTrue(c.apiMessages().size <= Comm.HISTORY_SENT)
+        assertTrue("开头变得太勤: ${firsts.size}", firsts.size <= (140 * 2 - 80) / Comm.HISTORY_STEP + 2)
+        assertEquals(105L to 90L, Ai.usageOf(JSONObject("""{"usage":{"input_tokens":10,"cache_read_input_tokens":90,"cache_creation_input_tokens":5}}""")))
+        assertEquals(200L to 150L, Ai.usageOf(JSONObject("""{"usage":{"prompt_tokens":200,"prompt_cache_hit_tokens":150}}""")))
+        assertEquals(200L to 128L, Ai.usageOf(JSONObject("""{"usage":{"prompt_tokens":200,"prompt_tokens_details":{"cached_tokens":128}}}""")))
+        assertEquals(0L to 0L, Ai.usageOf(JSONObject("{}")))
     }
 
     @Test
