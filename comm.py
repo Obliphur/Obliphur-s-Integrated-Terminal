@@ -10,7 +10,7 @@
   · 不再有"默认发送的信息": 整点记录 / 计时器状态 / 日历 / 合约词条只有用户手动选了 📎 附件才会发.
   · 模型返回 [refuse to reply] = 此刻不方便回复: 不显示, 用户的消息留着, 过一阵再把它们一次性交给模型.
   · 模型会主动发消息 (MECHANICS 24.4): I. 用户这次休息超过 20 分钟, 休息开始后 1~3 分钟; II. 人设日程里每段"空闲"开始前 1~3 分钟
-    (默认 80% 的概率); III. 人设日程里每段"休息"开始前 1~3 分钟 (默认 60%). 收到时如果前 5 分钟没和对方聊过, 有柔和的提示音.
+    (概率写在人设里: "空闲发起谈话概率:n%", 没写默认 80%); III. 人设日程里每段"休息"开始前 1~3 分钟 ("休息发起谈话概率:n%", 默认 60%). 收到时如果前 5 分钟没和对方聊过, 有柔和的提示音.
   · 聊天记录在 comm_chat.json (数据文件夹, 加密, 重置会清掉), 设置在 comm_config.json.
 
     python comm.py     自检 (不联网, 只用临时文件夹)
@@ -33,7 +33,7 @@ REFUSE = "[refuse to reply]"
 PROACTIVE_MIN_REST = 20 * 60          # I. 用户休息超过这么久才会主动发消息
 PROACTIVE_DELAY = (60, 180)           # I. 休息开始后多久主动发 (秒)
 PROACTIVE_LEAD = (60, 180)            # II / III. 人设日程里的空闲 / 休息开始前多久主动发 (秒)
-PROACTIVE_P = {"idle": 80, "rest": 60}   # II / III 发不发的概率 (%) 的默认值; 设置 → 沟通 里可以改
+PROACTIVE_P = {"idle": 80, "rest": 60}   # II / III 发不发的概率 (%) 的默认值: 人设里没写 "空闲发起谈话概率:n%" / "休息发起谈话概率:n%" 时用
 PROACTIVE_LATE = 120                  # 到点之后过了这么久 (程序刚打开 / 刚空下来) 就算了
 PROACTIVE_GAP = 10 * 60               # 两条主动消息至少隔这么久 (相邻的日程段不连发)
 PROACTIVE_KEEP = 12                   # 记下最近多少个已经处理过的主动消息时间点
@@ -59,8 +59,7 @@ CHAT_TEMPERATURE = 0.8
 WEEKDAY = "一二三四五六日"
 
 DEFAULTS = {"persona": "", "show_avatar": False,
-            "avatar_me": "", "avatar_ai": "", "pro_key": "", "retry": {}, "clear_ts": 0, "seeded": False, "legacy_done": False, "user_profile": "",
-            "pro_idle": PROACTIVE_P["idle"], "pro_rest": PROACTIVE_P["rest"]}
+            "avatar_me": "", "avatar_ai": "", "pro_key": "", "retry": {}, "clear_ts": 0, "seeded": False, "legacy_done": False, "user_profile": ""}
 
 
 # ══════════════ 前置 prompt 与 README ══════════════
@@ -109,8 +108,10 @@ def readme_text() -> str:
         "  名字里有\"空闲\"的算空闲段,有\"休息\"的算休息段(别的名字,如专注/睡眠/午饭,OIT 不看);只看每段的开始时刻,跨零点的段也行.\n"
         "  OIT 不会自己推算\"100min专注+37.7min休息\"这样的循环,请把每一段都写成具体的时间"
         "(可以用 [循环 7:00-12:00] 这样的标题行分组,标题行不影响).\n"
-        "  对方会在每段空闲开始前1~3分钟(默认80%概率)、每段休息开始前1~3分钟(默认60%概率)主动给你发一条消息"
-        "(概率在 设置 → 沟通 里改);你自己休息超过20分钟时,休息开始后1~3分钟也会发一条.\n"
+        "  对方会在每段空闲开始前1~3分钟、每段休息开始前1~3分钟按一定概率主动给你发一条消息;概率写在人设里,各占一行,例如\n"
+        "    空闲发起谈话概率:50%\n"
+        "    休息发起谈话概率:0.4\n"
+        "  (n% 或者小数都行,没写的默认空闲80%、休息60%);你自己休息超过20分钟时,休息开始后1~3分钟也会发一条.\n"
         "  每次打开OIT、开始新对话(清空聊天记录 / 换人设)时,OIT 都会重新读取人设,并按里面的时间调整这些时刻;人设文件改了之后也会自动重新读取.\n\n"
         "文件格式: 一个 .txt 或 .md 文件就是一个人设, 文件名就是人设的名字, 整个文件的内容就是人设prompt.\n"
         "放进这个文件夹后, 在 设置 → 沟通 里选择它 (也可以用\"导入\"按钮复制进来).\n")
@@ -165,6 +166,10 @@ BUILTIN_PERSONAS = {"Claudia.txt": """你将扮演一位文静,冷淡的17岁大
   22:58-23:00:休息(被截断)
 23:00-23:30:空闲
 23:30-6:30:睡眠
+
+【主动发起谈话】(OIT 读这两行决定你每段空闲 / 休息开始前主动找用户说话的概率)
+空闲发起谈话概率:50%
+休息发起谈话概率:40%
 
 【按日程回复】(每次收到消息都先做这一步)
 1. 看消息开头方括号里的时间,在上面的日程里找到那个时间属于哪一段.
@@ -300,6 +305,22 @@ def schedule_segments(text: str) -> list:
     return out
 
 
+_PRO_RE = re.compile(r"(空闲|休息)发起谈话概率[ \t]*[:：][ \t]*(\d+(?:\.\d+)?)[ \t]*([%％])?")
+
+
+def persona_probs(text: str) -> dict:
+    """人设里写的主动发起谈话的概率: "空闲发起谈话概率:50%" / "休息发起谈话概率:0.4" → {"idle": 50.0, "rest": 40.0} (%, 没写的不在里面).
+    带 % 的按百分数; 不带 % 的小数 (0~1) 按小数, 大于 1 的当百分数; 超出 0~100 的截到范围内; 同一种写了几行只认第一行."""
+    out = {}
+    for m in _PRO_RE.finditer(str(text or "")):
+        kind = "idle" if m.group(1) == "空闲" else "rest"
+        if kind in out:
+            continue
+        v = float(m.group(2))
+        out[kind] = min(100.0, max(0.0, v if (m.group(3) or v > 1) else v * 100))
+    return out
+
+
 def urlsplit_host(url) -> str:
     from urllib.parse import urlsplit
     try:
@@ -393,6 +414,7 @@ class Comm:
         self._last_ts = 0
         self._seg_sig = None          # 人设文件的 (名字, 修改时间, 大小): 变了才重新读日程
         self._seg_cache = []
+        self._pro_cache = {}          # 同一个人设文件里写的主动发起谈话的概率 (persona_probs)
         self.load()
         ensure_personas(self.personas)
         if not self.cfg.get("seeded"):                      # 第一次运行: 放进自带的人设, 还没选过人设就默认选 Claudia
@@ -610,17 +632,9 @@ class Comm:
         if "persona" in kw:
             self.set_persona(kw.pop("persona"))
             self.save_chat()
-        for k in ("pro_idle", "pro_rest"):                 # 主动发消息的概率 (%): 0~100
-            if k in kw:
-                try:
-                    kw[k] = min(100, max(0, int(round(float(kw[k])))))
-                except (TypeError, ValueError):
-                    kw[k] = PROACTIVE_P[k[4:]]
         self.cfg.update(kw)
         self.save_cfg()
         self._changed()
-        if any(k in kw for k in ("pro_idle", "pro_rest")):
-            self._push()
 
     def _changed(self):
         self.version += 1
@@ -650,7 +664,6 @@ class Comm:
         doc = {}
         if self.cfg.get("user_profile"):
             doc["profile"] = self.cfg["user_profile"]
-        doc["pp"] = {"idle": self.pro_percent("idle"), "rest": self.pro_percent("rest")}      # 主动发消息的概率: 两台设备用同一份
         for pid in self.chat_pids():
             st = self._state_of(pid)
             for m in st["messages"][-SYNC_N:]:
@@ -724,15 +737,6 @@ class Comm:
                     self.cfg["user_profile"] = new
                     self.save_cfg()
                     self._changed()
-            elif key == "pp" and isinstance(val, dict):
-                try:
-                    new = {k: min(100, max(0, int(val[k]))) for k in ("idle", "rest")}
-                except (KeyError, TypeError, ValueError):
-                    continue
-                if new != {k: self.pro_percent(k) for k in new}:
-                    self.cfg["pro_idle"], self.cfg["pro_rest"] = new["idle"], new["rest"]
-                    self.save_cfg()
-                    self._changed()
             elif kind == "pro" and isinstance(val, str):             # 已经处理过的主动消息时间点: 两边合起来
                 st = st_of(rest)[0]
                 have = [k for k in st["pro_key"].split("|") if k]
@@ -773,13 +777,10 @@ class Comm:
                     self._ping()
                 return
 
-    def pro_percent(self, kind: str) -> int:
-        """主动发消息的概率 (%): kind = "idle" 人设的空闲段前 / "rest" 人设的休息段前."""
-        try:
-            v = int(round(float(self.cfg.get("pro_" + kind))))
-        except (TypeError, ValueError):
-            v = PROACTIVE_P[kind]
-        return min(100, max(0, v))
+    def pro_percent(self, kind: str) -> float:
+        """主动发消息的概率 (%): kind = "idle" 人设的空闲段前 / "rest" 人设的休息段前. 写在人设里 (persona_probs), 没写用默认."""
+        self._segments()
+        return self._pro_cache.get(kind, float(PROACTIVE_P[kind]))
 
     @staticmethod
     def _talked_recently(msgs: list, before_ms: int) -> bool:
@@ -1119,15 +1120,19 @@ class Comm:
         """现在这个人设日程里的空闲 / 休息段 (人设文件没变就用上次读的)."""
         name = self.persona_name()
         if not name:
+            self._pro_cache = {}
             return []
         try:
             st = os.stat(os.path.join(self.personas, name))
         except OSError:
+            self._pro_cache = {}
             return []
         sig = (name, st.st_mtime_ns, st.st_size)
         if sig != self._seg_sig:
             self._seg_sig = sig
-            self._seg_cache = schedule_segments(read_persona(self.personas, name))
+            text = read_persona(self.personas, name)
+            self._seg_cache = schedule_segments(text)
+            self._pro_cache = persona_probs(text)
         return self._seg_cache
 
     def reload_schedule(self, why: str = ""):
@@ -1643,10 +1648,6 @@ def _selftest():
     B.leader = lambda: True
     B.tick()
     assert not B.busy and [m["text"] for m in B.visible()] == ["休息啦"]
-    # 主动发消息的概率随设备同步
-    A.set_cfg(pro_idle=55, pro_rest=33)
-    pull(A, B)
-    assert (B.pro_percent("idle"), B.pro_percent("rest")) == (55, 33)
     A.flush()
     B.flush()
 
@@ -1662,8 +1663,19 @@ def _selftest():
     c5.ai.set_profile("deepseek", api_key="k")
     c5.ai.provider = "deepseek"
     c5.set_cfg(persona="日程.txt")
-    assert (c5.pro_percent("idle"), c5.pro_percent("rest")) == (80, 60), "默认概率"
-    c5.set_cfg(pro_idle=150, pro_rest="x")
+    assert (c5.pro_percent("idle"), c5.pro_percent("rest")) == (80, 60), "人设里没写: 默认概率"
+    assert persona_probs(BUILTIN_PERSONAS["Claudia.txt"]) == {"idle": 50.0, "rest": 40.0}, "Claudia: 50% / 40%"
+    assert persona_probs("空闲发起谈话概率:12.5%\n休息发起谈话概率 ： 0.4\n休息发起谈话概率:90%") == {"idle": 12.5, "rest": 40.0}
+    assert persona_probs("空闲发起谈话概率:1\n休息发起谈话概率:30") == {"idle": 100.0, "rest": 30.0}, "不带 % 的: 小数 (<=1) 或百分数"
+    assert persona_probs("空闲发起谈话概率:150%\n休息发起谈话概率:x") == {"idle": 100.0} and persona_probs("") == {}
+    p5 = os.path.join(folder, "日程.txt")
+
+    def set_probs(c, idle=None, rest=None):                # 改人设文件里的概率行 (别的内容不动)
+        keep = [ln for ln in open(p5, encoding="utf-8").read().split("\n") if "发起谈话概率" not in ln]
+        extra = ([f"空闲发起谈话概率:{idle}"] if idle is not None else []) + ([f"休息发起谈话概率:{rest}"] if rest is not None else [])
+        open(p5, "w", encoding="utf-8").write("\n".join(keep + extra) + "\n")
+        c.reload_schedule()
+    set_probs(c5, "150%", "x")
     assert (c5.pro_percent("idle"), c5.pro_percent("rest")) == (100, 60)
     c5.snapshot = lambda: {"state": "idle"}
     pings5 = []
@@ -1694,18 +1706,18 @@ def _selftest():
     wait(c5)
     assert c5.visible()[-1]["text"] == "有空吗" and pings5 == [1], "刚聊过, 不响"
     # 概率 0: 不发, 但这个时间点算处理过了
-    c5.set_cfg(pro_idle=0)
+    set_probs(c5, "0%", "60%")
     assert fire_before(c5, datetime(2026, 12, 3, 12, 30)) is None and any(k.startswith("S2026-12-03T12:30") for k in c5._pro_done())
     # 默认 60% 的休息段: 300 天里大约 60% 发
     fired = []
     c5._trigger = lambda kind, text: fired.append(text)
-    c5.set_cfg(pro_rest=60)
+    set_probs(c5, "0%", "0.6")
     for d in range(300):
         clock[0] = datetime(2027, 1, 1, 20, 39, 0) + timedelta(days=d)
         c5.tick()
     assert 150 <= len(fired) <= 210 and "休息时间将在 20:40 开始" in fired[0], len(fired)
     # 错过太久 (程序刚打开) 不补发
-    c5.set_cfg(pro_idle=100)
+    set_probs(c5, "100%", "0.6")
     fired.clear()
     for d in range(1, 60):
         b = datetime(2027, 3, 1, 12, 30) + timedelta(days=d)
@@ -1721,7 +1733,9 @@ def _selftest():
     c6 = Comm(os.path.join(td, "adj"), folder, now=lambda: clock[0], chat_fn=fake)
     c6.ai.set_profile("deepseek", api_key="k")
     c6.ai.provider = "deepseek"
-    c6.set_cfg(persona="Claudia.txt", pro_idle=100, pro_rest=100)
+    open(os.path.join(folder, "全发.txt"), "w", encoding="utf-8").write(
+        BUILTIN_PERSONAS["Claudia.txt"].replace("空闲发起谈话概率:50%", "空闲发起谈话概率:100%").replace("休息发起谈话概率:40%", "休息发起谈话概率:100%"))
+    c6.set_cfg(persona="全发.txt")
     c6.snapshot = lambda: {"state": "idle"}
     script.append("晚点见")
     assert fire_before(c6, datetime(2027, 4, 1, 22, 58)) is not None

@@ -385,10 +385,6 @@ class CommTest {
         b.leader = { true }
         b.tick(); assertFalse(b.busy)
         assertEquals(listOf("休息啦"), b.visible().map { it.text })
-        // 主动发消息的概率随设备同步
-        a.set(proIdle = 55, proRest = 33)
-        pull(a, b)
-        assertEquals(55 to 33, b.proPercent("idle") to b.proPercent("rest"))
     }
 
     @Test
@@ -489,9 +485,18 @@ class CommTest {
         val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
         c.importPersona("日程.txt", "你是小满.\n12:30-13:00:空闲\n20:40-21:18:休息\n".byteInputStream())
         c.set(persona = "日程.txt")
-        assertEquals(80 to 60, c.proPercent("idle") to c.proPercent("rest"))              // 默认概率
-        c.set(proIdle = 150)
-        assertEquals(100, c.proPercent("idle"))
+        assertEquals(80.0 to 60.0, c.proPercent("idle") to c.proPercent("rest"))          // 人设里没写: 默认概率
+        assertEquals(mapOf("idle" to 50.0, "rest" to 40.0), CommText.personaProbs(BuiltinPersonas.ALL.getValue("Claudia.txt")))   // Claudia: 50% / 40%
+        assertEquals(mapOf("idle" to 12.5, "rest" to 40.0), CommText.personaProbs("空闲发起谈话概率:12.5%\n休息发起谈话概率 ： 0.4\n休息发起谈话概率:90%"))
+        assertEquals(mapOf("idle" to 100.0, "rest" to 30.0), CommText.personaProbs("空闲发起谈话概率:1\n休息发起谈话概率:30"))
+        assertEquals(mapOf("idle" to 100.0), CommText.personaProbs("空闲发起谈话概率:150%\n休息发起谈话概率:x"))
+        val p5 = File(td, "p/日程.txt")
+        fun setProbs(idle: String, rest: String) {                // 改人设文件里的概率行 (别的内容不动)
+            p5.writeText(p5.readLines().filter { "发起谈话概率" !in it }.joinToString("\n") + "\n空闲发起谈话概率:$idle\n休息发起谈话概率:$rest\n")
+            c.reloadSchedule()
+        }
+        setProbs("150%", "x")
+        assertEquals(100.0 to 60.0, c.proPercent("idle") to c.proPercent("rest"))
         c.snapshot = { CommSnap("idle") }
         val pings = mutableListOf<Int>()
         c.onProactive = { pings.add(1) }
@@ -513,10 +518,10 @@ class CommTest {
         assertEquals("有空吗", c.visible().last().text)
         assertEquals("刚聊过, 不响", 1, pings.size)
         // 概率 0: 不发, 但这个时间点算处理过了
-        c.set(proIdle = 0)
+        setProbs("0%", "60%")
         assertNull(fireBefore(c, LocalDateTime.of(2026, 12, 3, 12, 30)))
         // 休息段默认 60%: 300 天里大约 60% 发
-        c.set(proRest = 60)
+        setProbs("0%", "0.6")
         repeat(300) { script.add("嗯") }
         val before = calls.size
         for (d in 0 until 300) {
@@ -528,7 +533,7 @@ class CommTest {
         assertTrue("命中 $hits", hits in 150..210)
         assertTrue("休息时间将在 20:40 开始" in calls.last().second.last().second)
         // 错过太久 (程序刚打开) 不补发
-        c.set(proIdle = 100)
+        setProbs("100%", "0.6")
         var b = LocalDateTime.of(2027, 3, 2, 12, 30)
         while (60 + java.util.Random("S${b.toLocalDate()}T12:30i".hashCode().toLong()).nextInt(121) <= 150) b = b.plusDays(1)
         clock = b.minusSeconds(10)
@@ -538,7 +543,9 @@ class CommTest {
         // 相邻的日程段 (22:58 休息, 23:00 空闲) 不连着发
         val c2 = comm(File(td, "d2").also { it.mkdirs() }, File(td, "p2"))
         assertEquals("Claudia.txt", c2.personaName())
-        c2.set(proIdle = 100, proRest = 100)
+        File(td, "p2/全发.txt").writeText(BuiltinPersonas.ALL.getValue("Claudia.txt")
+            .replace("空闲发起谈话概率:50%", "空闲发起谈话概率:100%").replace("休息发起谈话概率:40%", "休息发起谈话概率:100%"))
+        c2.set(persona = "全发.txt")
         c2.snapshot = { CommSnap("idle") }
         script.add("晚点见")
         assertNotNull(fireBefore(c2, LocalDateTime.of(2027, 4, 1, 22, 58)))

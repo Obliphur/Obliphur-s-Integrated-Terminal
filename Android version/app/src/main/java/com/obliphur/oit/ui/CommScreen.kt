@@ -279,21 +279,6 @@ fun CommSettings() {
     }
 
     OitCard {
-        Text(tr("💬  主动发消息"), fontWeight = FontWeight.Bold, color = o.text)
-        // 随时保存 (即时生效, 没有等待期), 随设备同步
-        for ((kind, label) in listOf("idle" to tr("人设空闲段前发送的概率 (%)"), "rest" to tr("人设休息段前发送的概率 (%)"))) {
-            Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(label, color = o.text, fontSize = 13.sp, modifier = Modifier.weight(1f))
-                var txt by remember(comm.proPercent(kind)) { mutableStateOf(comm.proPercent(kind).toString()) }
-                OutlinedTextField(txt, { v ->
-                    txt = v.filter(Char::isDigit).take(3)
-                    txt.toIntOrNull()?.let { n -> if (kind == "idle") comm.set(proIdle = n) else comm.set(proRest = n) }
-                }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.width(90.dp))
-            }
-        }
-    }
-
-    OitCard {
         Text(tr("🖼  头像"), fontWeight = FontWeight.Bold, color = o.text)
         SwitchRow(tr("显示头像"), comm.showAvatar) { comm.set(showAvatar = it) }
         if (comm.showAvatar) for ((who, label) in listOf("me" to tr("我"), "ai" to tr("对方"))) {

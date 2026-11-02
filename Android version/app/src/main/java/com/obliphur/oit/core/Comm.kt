@@ -76,6 +76,10 @@ object BuiltinPersonas {
 23:00-23:30:空闲
 23:30-6:30:睡眠
 
+【主动发起谈话】(OIT 读这两行决定你每段空闲 / 休息开始前主动找用户说话的概率)
+空闲发起谈话概率:50%
+休息发起谈话概率:40%
+
 【按日程回复】(每次收到消息都先做这一步)
 1. 看消息开头方括号里的时间,在上面的日程里找到那个时间属于哪一段.
 2. 属于"专注"或"睡眠":只回复 [refuse to reply],不要写任何别的字.
@@ -131,8 +135,10 @@ object CommText {
             "  名字里有\"空闲\"的算空闲段,有\"休息\"的算休息段(别的名字,如专注/睡眠/午饭,OIT 不看);只看每段的开始时刻,跨零点的段也行.\n" +
             "  OIT 不会自己推算\"100min专注+37.7min休息\"这样的循环,请把每一段都写成具体的时间" +
             "(可以用 [循环 7:00-12:00] 这样的标题行分组,标题行不影响).\n" +
-            "  对方会在每段空闲开始前1~3分钟(默认80%概率)、每段休息开始前1~3分钟(默认60%概率)主动给你发一条消息" +
-            "(概率在 设置 → 沟通 里改);你自己休息超过20分钟时,休息开始后1~3分钟也会发一条.\n" +
+            "  对方会在每段空闲开始前1~3分钟、每段休息开始前1~3分钟按一定概率主动给你发一条消息;概率写在人设里,各占一行,例如\n" +
+            "    空闲发起谈话概率:50%\n" +
+            "    休息发起谈话概率:0.4\n" +
+            "  (n% 或者小数都行,没写的默认空闲80%、休息60%);你自己休息超过20分钟时,休息开始后1~3分钟也会发一条.\n" +
             "  每次打开OIT、开始新对话(清空聊天记录 / 换人设)时,OIT 都会重新读取人设,并按里面的时间调整这些时刻;人设文件改了之后也会自动重新读取.\n\n" +
             "文件格式: 一个 .txt 或 .md 文件就是一个人设, 文件名就是人设的名字, 整个文件的内容就是人设prompt.\n" +
             "放进这个文件夹后, 在 设置 → 沟通 里选择它 (也可以用\"导入\"按钮复制进来).\n"
@@ -153,6 +159,21 @@ object CommText {
     // 人设日程里的一行: "12:30-13:00:空闲" (可以缩进 / 带 - 或 * 开头); 时间可以是全角冒号, 连接符 - – — ~ 至 到
     private val SEG_RE = Regex("^[ \\t]*(?:[-*•][ \\t]*)?(\\d{1,2})[:：](\\d{2})[ \\t]*[-–—~～至到][ \\t]*(\\d{1,2})[:：](\\d{2})" +
         "[ \\t]*[:：][ \\t]*(\\S[^\\n]*)$", RegexOption.MULTILINE)
+
+    private val PRO_RE = Regex("(空闲|休息)发起谈话概率[ \\t]*[:：][ \\t]*(\\d+(?:\\.\\d+)?)[ \\t]*([%％])?")
+
+    /** 人设里写的主动发起谈话的概率: "空闲发起谈话概率:50%" / "休息发起谈话概率:0.4" → {idle: 50.0, rest: 40.0} (%, 没写的不在里面).
+     *  带 % 的按百分数; 不带 % 的小数 (0~1) 按小数, 大于 1 的当百分数; 超出 0~100 的截到范围内; 同一种写了几行只认第一行. */
+    fun personaProbs(text: String): Map<String, Double> {
+        val out = LinkedHashMap<String, Double>()
+        for (m in PRO_RE.findAll(text)) {
+            val kind = if (m.groupValues[1] == "空闲") "idle" else "rest"
+            if (kind in out) continue
+            val v = m.groupValues[2].toDouble()
+            out[kind] = (if (m.groupValues[3].isNotEmpty() || v > 1) v else v * 100).coerceIn(0.0, 100.0)
+        }
+        return out
+    }
 
     /** 日程段的名字 → "idle" (空闲) / "rest" (休息) / "" (别的: 专注, 睡眠, 吃饭 ...). */
     fun segKind(label: String): String {
@@ -229,15 +250,13 @@ class Comm(
     private var proKey = ""
     private var segSig: String? = null                      // 人设文件的 (名字, 修改时间, 大小): 变了才重新读日程
     private var segCache: List<Pair<String, Int>> = emptyList()
+    private var proCache: Map<String, Double> = emptyMap()       // 同一个人设文件里写的主动发起谈话的概率 (CommText.personaProbs)
     private var seeded = false
     private var legacyDone = false
     /** 现在聊的对象的编号 (人设文件名的 crc; 没有对象 = ""). */
     @Volatile var pid = ""; private set
     /** 用户在 设置 → 沟通 里自己填的身份背景: 附在人设后面一起发给对方. */
     var userProfile = ""; private set
-    /** 主动发消息的概率 (%): 人设日程里每段空闲 / 休息开始前 1~3 分钟 (随设备同步). */
-    var proIdle = DEFAULT_P_IDLE; private set
-    var proRest = DEFAULT_P_REST; private set
     /** 收到对方主动发来的消息, 并且前 5 分钟没和对方聊过: 放柔和的提示音. Core 接上. */
     var onProactive: () -> Unit = {}
     private val others = HashMap<String, ChatState>()
@@ -410,8 +429,6 @@ class Comm(
             avatarMe = d.optString("avatar_me", "")
             avatarAi = d.optString("avatar_ai", "")
             userProfile = d.optString("user_profile", "")
-            proIdle = d.optInt("pro_idle", DEFAULT_P_IDLE).coerceIn(0, 100)
-            proRest = d.optInt("pro_rest", DEFAULT_P_REST).coerceIn(0, 100)
             seeded = d.optBoolean("seeded", false)
             legacyDone = d.optBoolean("legacy_done", false)
             // 旧版本这几项存在设置里 (所有对象共用): 迁移时归给现在选着的对象
@@ -448,7 +465,6 @@ class Comm(
         val o = JSONObject().put("persona", persona)
             .put("show_avatar", showAvatar).put("avatar_me", avatarMe).put("avatar_ai", avatarAi)
             .put("user_profile", userProfile).put("seeded", seeded).put("legacy_done", legacyDone)
-            .put("pro_idle", proIdle).put("pro_rest", proRest)
         writer.execute { Store.write(cfgFile, o) }
     }
 
@@ -507,7 +523,6 @@ class Comm(
     fun syncDoc(): Map<String, Any?> {
         val doc = LinkedHashMap<String, Any?>()
         if (userProfile.isNotEmpty()) doc["profile"] = userProfile
-        doc["pp"] = JSONObject().put("idle", proIdle).put("rest", proRest)        // 主动发消息的概率: 两台设备用同一份
         for (p in chatPids()) {
             val st = stateOf(p)
             for (m in st.messages.takeLast(SYNC_N)) {
@@ -537,11 +552,6 @@ class Comm(
                 key == "profile" -> {
                     val n = (v as? String ?: "").take(MAX_PROFILE)
                     if (n != userProfile) { userProfile = n; saveCfg(); changed() }
-                }
-                key == "pp" -> (v as? JSONObject)?.let { o ->
-                    val a = o.optInt("idle", proIdle).coerceIn(0, 100)
-                    val b = o.optInt("rest", proRest).coerceIn(0, 100)
-                    if (a != proIdle || b != proRest) { proIdle = a; proRest = b; saveCfg(); changed() }
                 }
                 kind == "clear" -> {
                     val t = (v as? Number)?.toLong() ?: continue
@@ -622,22 +632,22 @@ class Comm(
         if (blocked().isEmpty()) runCatching { onProactive() }
     }
 
-    fun proPercent(kind: String): Int = if (kind == "idle") proIdle else proRest
+    /** 主动发消息的概率 (%): kind = "idle" 人设的空闲段前 / "rest" 人设的休息段前. 写在人设里, 没写用默认. */
+    fun proPercent(kind: String): Double {
+        segments()
+        return proCache[kind] ?: (if (kind == "idle") DEFAULT_P_IDLE else DEFAULT_P_REST).toDouble()
+    }
 
     @Synchronized
     fun set(persona: String? = null, showAvatar: Boolean? = null,
-            avatarMe: String? = null, avatarAi: String? = null, userProfile: String? = null,
-            proIdle: Int? = null, proRest: Int? = null) {
+            avatarMe: String? = null, avatarAi: String? = null, userProfile: String? = null) {
         persona?.let { switchTo(it); saveChat() }
         userProfile?.let { this.userProfile = it.trim().take(MAX_PROFILE) }
-        proIdle?.let { this.proIdle = it.coerceIn(0, 100) }
-        proRest?.let { this.proRest = it.coerceIn(0, 100) }
         showAvatar?.let { this.showAvatar = it }
         avatarMe?.let { this.avatarMe = it.trim().take(4) }
         avatarAi?.let { this.avatarAi = it.trim().take(4) }
         saveCfg()
         changed()
-        if (proIdle != null || proRest != null) push()
     }
 
     private fun ageSeconds(m: ChatMsg): Double {
@@ -971,11 +981,15 @@ class Comm(
     /** 现在这个人设日程里的空闲 / 休息段 (人设文件没变就用上次读的). */
     private fun segments(): List<Pair<String, Int>> {
         val name = personaName()
-        if (name.isEmpty()) return emptyList()
         val f = File(personas, name)
-        if (!f.isFile) return emptyList()
+        if (name.isEmpty() || !f.isFile) { proCache = emptyMap(); return emptyList() }
         val sig = "$name|${f.lastModified()}|${f.length()}"
-        if (sig != segSig) { segSig = sig; segCache = CommText.scheduleSegments(readPersona(name)) }
+        if (sig != segSig) {
+            segSig = sig
+            val text = readPersona(name)
+            segCache = CommText.scheduleSegments(text)
+            proCache = CommText.personaProbs(text)
+        }
         return segCache
     }
 
