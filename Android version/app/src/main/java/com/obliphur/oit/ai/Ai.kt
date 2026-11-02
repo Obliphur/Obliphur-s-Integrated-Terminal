@@ -121,13 +121,13 @@ object Ai {
 
     /** 带历史的一次请求: messages = (user | assistant, 文字), 以 user 开头, 以 user 结尾. API 没有记忆, 历史要每次一起发 (沟通, Comm.kt). */
     fun chatMessages(p: Profile, system: String, messages: List<Pair<String, String>>,
-                     maxTokens: Int = MAX_TOKENS, temperature: Double = 0.2): String {
+                     maxTokens: Int = MAX_TOKENS, temperature: Double = 0.2, timeoutMs: Int = 90_000): String {
         checkProfile(p)
         val key = p.apiKey.trim()
         val conn = URL(endpoint(p)).openConnection() as HttpURLConnection
         conn.instanceFollowRedirects = false          // 服务商要求跳转时一律拒绝, 不把 Key 带到别的地址
-        conn.connectTimeout = 90_000
-        conn.readTimeout = 90_000
+        conn.connectTimeout = 30_000
+        conn.readTimeout = timeoutMs
         conn.requestMethod = "POST"
         conn.doOutput = true
         conn.setRequestProperty("Content-Type", "application/json")

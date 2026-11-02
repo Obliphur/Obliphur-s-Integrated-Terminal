@@ -38,6 +38,8 @@ interface Host {
     fun openPage(page: String)
     /** 沟通的人设文件夹 (用户自己往里放 .txt / .md); null = 放在数据目录里. */
     fun personasDir(): File? = null
+    /** 随安装包带的 MECHANICS.md (给沟通的对方查 OIT 的详细机制); 没有就是空. */
+    fun mechanics(): String = ""
     fun scheduleWake(seconds: Double)
     /** 新达成了成就 (界面上的提示由界面读 Core.ach.unseen 画出; 在后台时可以另外发通知). */
     fun achievementsUnlocked(ids: List<String>) {}
@@ -255,6 +257,13 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         comm.snapshot = { commSnapshot() }
         comm.hourLines = { commHourLines() }
         comm.fog = { contract.fog() }
+        comm.infoFn = { tag ->
+            when (tag) {
+                "contract" -> if (contract.fog()) "(黑雾中, 暂时无法提供)" else CommData.library(contract)
+                "mechanics.md" -> host.mechanics().take(Comm.MECHANICS_MAX).ifEmpty { "(没有找到 MECHANICS.md)" }
+                else -> ""
+            }
+        }
         comm.device = { myId() }
         comm.leader = { commLeader() }
         comm.onSync = { syncNow() }

@@ -12,8 +12,8 @@ object CommData {
     val DEFAULT_STATS = listOf("log", "focus")
     val CAL_KEYS = listOf("study" to "专注", "break" to "休息", "idle" to "空闲", "sleep" to "睡眠")
     private const val WEEKDAY = "一二三四五六日"
-    private const val TOP = 12
-    const val MAX_CHARS = 14000          // 整个词条库约 4000 字, 和别的数据一起也放得下
+    private const val TOP = 30
+    const val MAX_CHARS = 60000          // 一次最多发多少字 (词条库约 4000 字, 统计每类最多 30 项)
 
     /** 聊天里显示的那一行. */
     fun label(sel: CommSel): String {

@@ -12,11 +12,11 @@ android {
         applicationId = "com.obliphur.oit"
         minSdk = 29
         targetSdk = 35
-        versionCode = 249
+        versionCode = 250
         // 开发者模式只在本地构建里有; 公开发布版 (release.py 用 -PpublicRelease=true 编译) 没有 (MECHANICS 3.5)
         buildConfigField("boolean", "DEV_BUILD", (project.findProperty("publicRelease") != "true").toString())
         // 和 GitHub 上发布的版本号比较 (见 service/Updater.kt); 桌面版是 config.APP_VERSION
-        versionName = "1.0.251"
+        versionName = "1.0.252"
     }
 
     buildTypes {
@@ -56,3 +56,12 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
 }
+
+// MECHANICS.md (仓库根目录) 打进安装包的 assets: 沟通里对方回 [refuse to reply][mechanics.md] 时给它看
+val mechanicsAssets = layout.buildDirectory.dir("generated/mechanics")
+val copyMechanics = tasks.register<Copy>("copyMechanics") {
+    from(rootProject.projectDir.parentFile.resolve("MECHANICS.md"))
+    into(mechanicsAssets)
+}
+android.sourceSets.getByName("main").assets.srcDir(mechanicsAssets)
+tasks.named("preBuild") { dependsOn(copyMechanics) }

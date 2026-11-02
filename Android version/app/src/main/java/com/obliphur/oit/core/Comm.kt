@@ -70,6 +70,9 @@ object CommText {
             "则OIT不会显示你的回复,你到下一次空闲时需要一次性处理用户发来的消息.\n" +
             "III.系统有的时候会要求你主动发消息,你需要根据人设自己找话题.\n" +
             "IV.根据你的专注时间段 你可能需要主动结束话题.你可以稍微延迟你的进入专注的时间点,不超过5min.\n" +
+            "V.你需要了解OIT的独占功能'合约':一个可以自选减益的 初始时长4h,生命值4的 让OIT变得更严苛的模块.\n" +
+            "如果你需要相关信息 同时输入[refuse to reply][contract] 可以获得词条库以回复用户.\n" +
+            "如果你需要更细致的机制 则可以输入[refuse to reply][mechanics.md]获得OIT的详细机制.\n" +
             "\n以下是用户设定的人设:\n"
 
     fun readme(): String =
@@ -97,6 +100,13 @@ object CommText {
         return "目前状态: ${STATE[s.state] ?: s.state}; 剩余休息时间: $left; 今日总专注时长: ${hm(s.focusTotalMin)}; 目前这轮专注时长: $cur"
     }
 
+    /** 对方这次回复是在要资料吗: 同时有 [refuse to reply] 和 [contract] / [mechanics.md] (不分大小写和空格) → 要的资料列表. */
+    fun infoTags(reply: String): List<String> {
+        val t = reply.replace(Regex("\\s+"), " ").lowercase()
+        if (REFUSE !in t) return emptyList()
+        return listOf("contract", "mechanics.md").filter { "[$it]" in t }
+    }
+
     fun isRefusal(text: String) = REFUSE in text.replace(Regex("\\s+"), " ").lowercase()
 }
 
@@ -105,7 +115,7 @@ class Comm(
     var personas: File,
     private val now: () -> LocalDateTime = LocalDateTime::now,
     private val chatFn: (Profile, String, List<Pair<String, String>>) -> String =
-        { p, s, m -> Ai.chatMessages(p, s, m, Comm.CHAT_TOKENS, Comm.CHAT_TEMPERATURE) },
+        { p, s, m -> Ai.chatMessages(p, s, m, Comm.CHAT_TOKENS, Comm.CHAT_TEMPERATURE, Comm.CHAT_TIMEOUT_MS) },
 ) {
     companion object {
         const val RESEND_GAP = 30 * 60
@@ -113,10 +123,14 @@ class Comm(
         const val RETRY_GAP = 10 * 60
         const val RETRY_MAX = 12
         const val HISTORY_SENT = 60
+        const val HISTORY_CHARS = 120000                // 带的聊天记录总共最多多少字 (超了从最老的开始不带)
+        const val MAX_INFO_ROUNDS = 2                   // 一次回复里, 对方最多可以要几次资料 ([contract] / [mechanics.md])
+        const val MECHANICS_MAX = 150000                // 给对方的 MECHANICS.md 最多多少字
+        const val CHAT_TIMEOUT_MS = 240_000             // 一次请求最多等多久 (回复长 / 资料多时要久一点)
         const val KEEP = 400
         const val SYNC_N = 60
-        const val MAX_PERSONA = 20000
-        const val CHAT_TOKENS = 1000
+        const val MAX_PERSONA = 60000
+        const val CHAT_TOKENS = 4096
         const val CHAT_TEMPERATURE = 0.8
         val PERSONA_EXT = listOf(".txt", ".md")
     }
@@ -151,6 +165,8 @@ class Comm(
     var fog: () -> Boolean = { false }
     /** 现在不能用沟通的原因 ("" = 可以): 合约的"无言为真". Core 接上. */
     var blocked: () -> String = { "" }
+    /** 对方要的资料: "contract" → 词条库, "mechanics.md" → 详细机制. Core 接上. */
+    var infoFn: (String) -> String = { "" }
     /** 本机的设备 id; 本机是不是最后有人操作的设备 (只有它调用 AI / 主动发 / 重试); 聊天记录有改动时马上同步一次. Core 接上. */
     var device: () -> String = { "" }
     var leader: () -> Boolean = { true }
@@ -465,7 +481,15 @@ class Comm(
 
     fun apiMessages(): List<Pair<String, String>> {
         val out = ArrayList<Pair<String, String>>()
-        for (m in messages.takeLast(HISTORY_SENT)) {
+        // 总字数太多时从最老的开始不带 (至少带最新的一条)
+        var total = 0
+        val kept = ArrayList<ChatMsg>()
+        for (m in messages.takeLast(HISTORY_SENT).asReversed()) {
+            total += m.api.ifEmpty { m.text }.length
+            if (total > HISTORY_CHARS && kept.isNotEmpty()) break
+            kept.add(m)
+        }
+        for (m in kept.asReversed()) {
             val role = if (m.role == "ai") "assistant" else "user"
             val text = m.api.ifEmpty { m.text }
             if (text.isEmpty()) continue
@@ -570,7 +594,19 @@ class Comm(
         changed()
         Thread {
             val res = try {
-                Result(kind, extra, chatFn(profile, system, msgs), "", ep)
+                var convo: List<Pair<String, String>> = msgs
+                var reply = chatFn(profile, system, convo)
+                // 对方回 [refuse to reply][contract] / [mechanics.md] = 要资料: 把资料给它, 再调用一次让它回复用户 (资料不写进记录)
+                for (round in 0 until MAX_INFO_ROUNDS) {
+                    val blocks = CommText.infoTags(reply).mapNotNull { t ->
+                        runCatching { infoFn(t) }.getOrDefault("").takeIf { it.isNotEmpty() }?.let { "【$t】\n$it" }
+                    }
+                    if (blocks.isEmpty()) break
+                    convo = convo + ("assistant" to reply) + ("user" to ("(OIT 系统提供的资料, 用户看不到)\n\n" + blocks.joinToString("\n\n") +
+                        "\n\n请根据以上资料回复用户上面的消息; 如果此刻仍然不方便回复, 返回${CommText.REFUSE}."))
+                    reply = chatFn(profile, system, convo)
+                }
+                Result(kind, extra, reply, "", ep)
             } catch (e: AiError) {
                 Result(kind, extra, "", e.message ?: "", ep)
             } catch (e: Exception) {

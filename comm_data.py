@@ -12,8 +12,8 @@ STATS_KEYS = (("log", "整点记录"), ("focus", "专注计时"), ("net", "联�
 DEFAULT_STATS = ("log", "focus")        # 📎 窗口第一次打开时默认勾上的
 CAL_KEYS = (("study", "专注"), ("break", "休息"), ("idle", "空闲"), ("sleep", "睡眠"))
 WEEKDAY = "一二三四五六日"
-TOP = 12
-MAX_CHARS = 14000          # 整个词条库约 4000 字, 和别的数据一起也放得下
+TOP = 30
+MAX_CHARS = 60000          # 一次最多发多少字 (词条库约 4000 字, 统计每类最多 30 项)
 
 
 def label(sel: dict) -> str:
