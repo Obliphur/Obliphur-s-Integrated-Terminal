@@ -197,6 +197,8 @@ class Comm(
     var fog: () -> Boolean = { false }
     /** 现在不能用沟通的原因 ("" = 可以): 合约的"无言为真". Core 接上. */
     var blocked: () -> String = { "" }
+    /** 连等回复的这条也不要了的那种 (无言为真); 只是不在休息 / 空闲时, 已经发出去的请求回复到了照样收下. Core 接上. */
+    var hardBlock: () -> Boolean = { false }
     /** 对方要的资料: "contract" → 词条库. Core 接上. */
     var infoFn: (String) -> String = { "" }
     /** 本机的设备 id; 本机是不是最后有人操作的设备 (只有它调用 AI / 主动发 / 重试); 聊天记录有改动时马上同步一次. Core 接上. */
@@ -766,7 +768,7 @@ class Comm(
     private fun finish(r: Result) {
         busy = false
         busySince = 0L
-        if (blocked().isNotEmpty()) { again = false; changed(); return }       // 等回复的时候"无言为真"生效了: 这条回复不要了
+        if (hardBlock()) { again = false; changed(); return }       // 等回复的时候"无言为真"生效了: 这条回复不要了
         if (r.epoch != epoch) { again = false; changed(); return }       // 发出之后清空过聊天记录: 这条回复不要了
         val refused = r.err.isEmpty() && CommText.isRefusal(r.reply)
         if (refused) log("REPLY refused (${r.kind}): 对方回了 [refuse to reply], 不显示" + if (unanswered()) ", 稍后重试" else "")

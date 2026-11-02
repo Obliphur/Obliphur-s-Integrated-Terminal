@@ -318,7 +318,8 @@ class Comm:
         self.snapshot = lambda: {}     # 计时器状态; app 接上
         self.data_fn = lambda sel: ""  # 统计 / 日历 / 合约词条的数据 (comm_data.build); app 接上
         self.fog = lambda: False       # 合约黑雾中: 不发数据
-        self.blocked = lambda: ""      # 现在不能用沟通的原因 ("" = 可以): 合约的"无言为真"
+        self.blocked = lambda: ""      # 现在不能用沟通的原因 ("" = 可以): 合约的"无言为真", 或者不在休息 / 空闲 (专注 / 睡眠 / 外出中)
+        self.hard_block = lambda: False   # 连等回复的这条也不要了的那种 (无言为真); 只是不在休息 / 空闲时, 已经发出去的请求回复到了照样收下
         self.info_fn = lambda tag: ""  # 对方要的资料: "contract" → 词条库; app 接上
         self.device = lambda: ""       # 本机的设备 id (sync.my_id); app 接上
         self.leader = lambda: True     # 本机是不是最后有人操作的设备: 只有它调用 AI / 主动发 / 重试 (sync.is_latest_active); app 接上
@@ -889,7 +890,7 @@ class Comm:
     def _finish(self, kind: str, extra, reply: str, err: str, epoch: int = 0):
         self.busy = False
         self.busy_since = 0.0
-        if self.blocked():                              # 等回复的时候"无言为真"生效了: 这条回复不要了
+        if self.hard_block():                           # 等回复的时候"无言为真"生效了: 这条回复不要了
             self._again = False
             self._changed()
             return
@@ -1176,6 +1177,24 @@ def _selftest():
     wait(c)
     assert c.attach_label() == "" and c.visible()[-2]["text"] == "📎 日历·专注"
     assert c.send("") == "empty"
+    # 只有休息 / 空闲时能用: 专注 / 睡眠 / 外出中不能发, 不会主动发, 不会重试; 已经发出去的请求回复到了照样收下, 空下来再重试
+    script.append("在专注前收到")
+    c.send("休息时发的")
+    c.blocked = lambda: "专注中不能使用沟通"
+    assert c.send("专注时发") == "专注中不能使用沟通" and c.send_data({"stats": ["net"]}) == "专注中不能使用沟通"
+    wait(c)
+    assert c.visible()[-1]["text"] == "在专注前收到", "进入专注前发出的请求, 回复到了照样收下"
+    n_calls = len(calls)
+    c.cfg["retry"] = {"at": c._ms() - RETRY_GAP * 1000 - 5, "n": 1}
+    c._add("me", "专注前最后一句")
+    c.tick()
+    assert not c.busy and len(calls) == n_calls, "专注中不会重试"
+    c.blocked = lambda: ""
+    script.append("空下来了")
+    c.tick()
+    assert c.busy, "回到休息 / 空闲: 马上把没回的消息交给对方"
+    wait(c)
+    assert c.visible()[-1]["text"] == "空下来了"
     # 无言为真: 不能发, 不会主动发, 也不会重试
     c.blocked = lambda: "无言为真生效中, 无法使用沟通"
     n = len(c.messages)

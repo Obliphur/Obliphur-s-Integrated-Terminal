@@ -240,6 +240,28 @@ class CommTest {
     }
 
     @Test
+    fun onlyRestOrIdle() {
+        val td = Files.createTempDirectory("oit").toFile()
+        val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
+        c.set(persona = "Claudia.txt")
+        script.add("在专注前收到")
+        assertEquals("", c.send("休息时发的"))
+        c.blocked = { "专注中不能使用沟通" }
+        assertEquals("专注中不能使用沟通", c.send("专注时发"))
+        assertEquals("专注中不能使用沟通", c.sendData(CommSel(stats = listOf("net"))))
+        wait(c)
+        assertEquals("在专注前收到", c.visible().last().text)                // 进入专注前发出的请求, 回复到了照样收下
+        val n = calls.size
+        c.blocked = { "" }
+        script.add("空下来了")
+        c.send("再说一句"); wait(c)
+        assertEquals(n + 1, calls.size)
+        c.blocked = { "专注中不能使用沟通" }
+        c.tick()
+        assertFalse(c.busy)                                                    // 专注中不会主动发 / 重试
+    }
+
+    @Test
     fun builtinPersona() {
         val td = Files.createTempDirectory("oit").toFile()
         val dir = File(td, "d").also { it.mkdirs() }

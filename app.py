@@ -356,8 +356,9 @@ class BreakTimerApp:
         self.comm.leader = self._comm_leader
         self.comm.on_sync = lambda: self.sync.sync_now() if self.sync.peers() else None
         self.comm.fog = lambda: bool(self.contract.fog())
-        # 合约的"无言为真" (社交软件和与 AI 聊天的软件禁止联网): 沟通也算, 生效期间不能用
-        self.comm.blocked = lambda: tr("无言为真生效中, 无法使用沟通") if self.contract.has("silent") else ""
+        # 沟通只能在休息 / 空闲时用 (专注 / 睡眠 / 外出中不能用); 合约的"无言为真" (社交软件和与 AI 聊天的软件禁止联网) 生效期间也不能用
+        self.comm.blocked = self._comm_blocked
+        self.comm.hard_block = lambda: self.contract.has("silent")
         self._rules_win = None
         self._marks_shown = None        # 指令标记现在画在哪些按钮上 (None = 还没画过)
         self._mark_img = None
@@ -1092,21 +1093,33 @@ class BreakTimerApp:
 
     # ---- 沟通 (MECHANICS 24) ----
 
+    def _comm_state(self) -> str:
+        """计时器现在的状态: sleep / out / focus / break / idle (沟通只在 break / idle 时能用)."""
+        if self.sleep_since is not None:
+            return "sleep"
+        if self.behavior.active() is not None:
+            return "out"
+        if self.state == RUNNING:
+            return "focus"
+        if self.state == ON_BREAK:
+            return "break"
+        return "idle"
+
+    def _comm_blocked(self) -> str:
+        """现在不能用沟通的原因 ("" = 可以)."""
+        if self.contract.has("silent"):
+            return tr("无言为真生效中, 无法使用沟通")
+        st = self._comm_state()
+        if st in ("focus", "sleep", "out"):
+            return tr({"focus": "专注中不能使用沟通", "sleep": "睡眠中不能使用沟通", "out": "外出中不能使用沟通"}[st])
+        return ""
+
     def _comm_snapshot(self) -> dict:
         """发给对方的计时器状态; 黑雾中不给 (免得对方把看不到的数字说出来)."""
         if self.contract.fog():
             return {}
         now = datetime.now()
-        if self.sleep_since is not None:
-            st = "sleep"
-        elif self.behavior.active() is not None:
-            st = "out"
-        elif self.state == RUNNING:
-            st = "focus"
-        elif self.state == ON_BREAK:
-            st = "break"
-        else:
-            st = "idle"
+        st = self._comm_state()
         snap = {"state": st, "focus_total_min": self._today_hours_live() * 60.0, "focus_cur_min": 0.0,
                 "rest_left_min": 0.0, "break_start": None, "break_total_s": 0}
         if self.state == RUNNING and self.start_wall is not None:

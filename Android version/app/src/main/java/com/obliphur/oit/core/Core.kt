@@ -259,8 +259,9 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         comm.device = { myId() }
         comm.leader = { commLeader() }
         comm.onSync = { syncNow() }
-        // 合约的"无言为真" (社交软件和与 AI 聊天的软件禁止联网): 沟通也算, 生效期间不能用
-        comm.blocked = { if (contract.has("silent")) tr("无言为真生效中, 无法使用沟通") else "" }
+        // 沟通只能在休息 / 空闲时用 (专注 / 睡眠 / 外出中不能用); 合约的"无言为真" (社交软件和与 AI 聊天的软件禁止联网) 生效期间也不能用
+        comm.blocked = { commBlocked() }
+        comm.hardBlock = { contract.has("silent") }
         comm.dataFn = { sel ->
             if (contract.fog()) "" else CommData.build(sel, this) { pkg ->
                 runCatching { com.obliphur.oit.service.appLabel(com.obliphur.oit.OitApp.instance, pkg) }.getOrDefault(pkg)
@@ -268,16 +269,30 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         }
     }
 
+    /** 计时器现在的状态: sleep / out / focus / break / idle (沟通只在 break / idle 时能用). */
+    private fun commState(): String = when {
+        timer.sleepSince != null -> "sleep"
+        behavior.active() != null -> "out"
+        timer.state == TState.RUNNING -> "focus"
+        timer.state == TState.ON_BREAK -> "break"
+        else -> "idle"
+    }
+
+    /** 现在不能用沟通的原因 ("" = 可以). */
+    private fun commBlocked(): String {
+        if (contract.has("silent")) return tr("无言为真生效中, 无法使用沟通")
+        return when (commState()) {
+            "focus" -> tr("专注中不能使用沟通")
+            "sleep" -> tr("睡眠中不能使用沟通")
+            "out" -> tr("外出中不能使用沟通")
+            else -> ""
+        }
+    }
+
     /** 发给对方的计时器状态; 黑雾中不给 (免得对方把看不到的数字说出来). */
     private fun commSnapshot(): CommSnap? {
         if (contract.fog()) return null
-        val st = when {
-            timer.sleepSince != null -> "sleep"
-            behavior.active() != null -> "out"
-            timer.state == TState.RUNNING -> "focus"
-            timer.state == TState.ON_BREAK -> "break"
-            else -> "idle"
-        }
+        val st = commState()
         val total = todayHoursLive() * 60.0
         if (timer.state == TState.RUNNING)
             return CommSnap(st, focusTotalMin = total, focusCurMin = contract.focusMinutes(timer.startWall, timer.elapsed))
