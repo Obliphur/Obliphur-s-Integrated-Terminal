@@ -1094,15 +1094,16 @@ class BreakTimerApp:
     # ---- 沟通 (MECHANICS 24) ----
 
     def _comm_state(self) -> str:
-        """计时器现在的状态: sleep / out / focus / break / idle (沟通只在 break / idle 时能用)."""
+        """计时器现在的状态: sleep / focus / break / out / idle. 沟通只在 break / idle 时能用:
+        外出期间只要计时器在休息就是 break (能用), 外出而没在休息才是 out (不能用)."""
         if self.sleep_since is not None:
             return "sleep"
-        if self.behavior.active() is not None:
-            return "out"
         if self.state == RUNNING:
             return "focus"
         if self.state == ON_BREAK:
             return "break"
+        if self.behavior.active() is not None:
+            return "out"
         return "idle"
 
     def _comm_blocked(self) -> str:

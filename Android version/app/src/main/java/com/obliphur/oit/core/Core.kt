@@ -269,12 +269,13 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         }
     }
 
-    /** 计时器现在的状态: sleep / out / focus / break / idle (沟通只在 break / idle 时能用). */
+    /** 计时器现在的状态: sleep / focus / break / out / idle. 沟通只在 break / idle 时能用:
+     *  外出期间只要计时器在休息就是 break (能用), 外出而没在休息才是 out (不能用). */
     private fun commState(): String = when {
         timer.sleepSince != null -> "sleep"
-        behavior.active() != null -> "out"
         timer.state == TState.RUNNING -> "focus"
         timer.state == TState.ON_BREAK -> "break"
+        behavior.active() != null -> "out"
         else -> "idle"
     }
 
