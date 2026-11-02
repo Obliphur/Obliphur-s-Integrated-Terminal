@@ -254,7 +254,6 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         loadViolations()
         comm = Comm(dir, host.personasDir() ?: File(dir, "personas"))
         comm.snapshot = { commSnapshot() }
-        comm.hourLines = { commHourLines() }
         comm.fog = { contract.fog() }
         comm.infoFn = { tag ->
             when (tag) {
@@ -304,12 +303,6 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         if (mid == myId().take(4)) return true
         if (deviceOnline(mid)) return false
         return isLatestActive()
-    }
-
-    private fun commHourLines(): List<String> {
-        if (contract.fog() || !dm.hourEnabled) return emptyList()
-        val day = LocalDate.now().key()
-        return (0..23).mapNotNull { h -> dm.hourText(day, h).takeIf { it.isNotEmpty() }?.let { "%02d:00 %s".format(h, it) } }
     }
 
     /** 今天的专注小时数, 包括正在进行、还没记进统计的这一段. */

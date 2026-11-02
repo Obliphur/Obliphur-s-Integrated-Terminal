@@ -348,7 +348,6 @@ class BreakTimerApp:
         # 沟通 (MECHANICS 24): 人设文件夹和数据文件夹并排, 不加密
         self.comm = comm_mod.Comm(self.dm.data_dir, os.path.join(self.dm.low_dir, "OIT_personas"))
         self.comm.snapshot = self._comm_snapshot
-        self.comm.hour_lines = self._comm_hour_lines
         self.comm.on_change = self.update_comm_badge
         self.comm.data_fn = self._comm_data
         self.comm.info_fn = self._comm_info
@@ -1146,17 +1145,6 @@ class BreakTimerApp:
             if str(s["id"]).startswith(mid) and s.get("online"):
                 return False
         return self.sync.is_latest_active()
-
-    def _comm_hour_lines(self) -> list:
-        if self.contract.fog() or not self.dm.hour_enabled:
-            return []
-        today = datetime.now().strftime("%Y-%m-%d")
-        out = []
-        for hour in range(24):
-            text = self.dm.get_hour_text(today, hour)
-            if text:
-                out.append(f"{hour:02d}:00 {text}")
-        return out
 
     def _comm_tick(self):
         if self.dm.resetting:

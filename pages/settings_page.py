@@ -777,7 +777,7 @@ class SettingsPage(tk.Frame):
         self._track(ttk.Button(head, text=tr("打开"), command=lambda: self.on_open_rules and self.on_open_rules()),
                     "打开").pack(side="right")
 
-    # ---- 沟通页: API, 人设, 默认发送的信息, 头像 (即时保存, 没有等待期) ----
+    # ---- 沟通页: API, 人设, 头像 (即时保存, 没有等待期) ----
 
     def _build_comm_page(self, body):
         c = self.comm
@@ -802,21 +802,9 @@ class SettingsPage(tk.Frame):
         self.cb_persona.pack(fill="x", padx=12, pady=(2, 10))
         self.cb_persona.bind("<<ComboboxSelected>>", lambda _e: self._comm_pick_persona())
 
-        fr, _head = self._card(body, "📨  默认发送的信息")
-        self.comm_vars = {}
-        for key, text in (("send_hour", "整点记录"), ("send_timer", "计时器状态")):
-            v = tk.BooleanVar(value=bool(c.cfg.get(key)))
-            self.comm_vars[key] = v
-            self._track(tk.Checkbutton(fr, text=tr(text), variable=v, bg=card, fg=COLORS["text"],
-                                       selectcolor=card, activebackground=card, activeforeground=COLORS["text"],
-                                       font=config.font("body"), anchor="w",
-                                       command=lambda k=key: self._comm_flag(k)), text).pack(
-                fill="x", padx=12, pady=(0, 2))
-        tk.Frame(fr, bg=card, height=8).pack()
-
         fr, _head = self._card(body, "🖼  头像")
         v = tk.BooleanVar(value=bool(c.cfg.get("show_avatar")))
-        self.comm_vars["show_avatar"] = v
+        self.comm_vars = {"show_avatar": v}
         self._track(tk.Checkbutton(fr, text=tr("显示头像"), variable=v, bg=card, fg=COLORS["text"],
                                    selectcolor=card, activebackground=card, activeforeground=COLORS["text"],
                                    font=config.font("body"), anchor="w",

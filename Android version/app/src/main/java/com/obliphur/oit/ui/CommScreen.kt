@@ -255,12 +255,6 @@ fun CommSettings() {
     }
 
     OitCard {
-        Text(tr("📨  默认发送的信息"), fontWeight = FontWeight.Bold, color = o.text)
-        SwitchRow(tr("整点记录"), comm.sendHour) { comm.set(sendHour = it) }
-        SwitchRow(tr("计时器状态"), comm.sendTimer) { comm.set(sendTimer = it) }
-    }
-
-    OitCard {
         Text(tr("🖼  头像"), fontWeight = FontWeight.Bold, color = o.text)
         SwitchRow(tr("显示头像"), comm.showAvatar) { comm.set(showAvatar = it) }
         if (comm.showAvatar) for ((who, label) in listOf("me" to tr("我"), "ai" to tr("对方"))) {

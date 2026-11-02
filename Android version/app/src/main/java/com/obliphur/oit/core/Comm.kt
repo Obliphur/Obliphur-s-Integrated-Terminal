@@ -89,19 +89,6 @@ object CommText {
         "%04d-%02d-%02d 周%s %02d:%02d".format(now.year, now.monthValue, now.dayOfMonth,
             WEEKDAY[now.dayOfWeek.value - 1], now.hour, now.minute)
 
-    private fun hm(minutes: Double): String {
-        val m = Math.round(maxOf(0.0, minutes)).toInt()
-        return if (m >= 60) "${m / 60} 小时 ${m % 60} 分钟" else "$m 分钟"
-    }
-
-    private val STATE = mapOf("focus" to "专注中", "break" to "休息中", "idle" to "空闲", "sleep" to "睡觉中", "out" to "外出中")
-
-    fun timerLine(s: CommSnap): String {
-        val left = if (s.state == "break") hm(s.restLeftMin) else "无"
-        val cur = if (s.state == "focus") hm(s.focusCurMin) else "0 分钟(未在专注)"
-        return "目前状态: ${STATE[s.state] ?: s.state}; 剩余休息时间: $left; 今日总专注时长: ${hm(s.focusTotalMin)}; 目前这轮专注时长: $cur"
-    }
-
     /** 对方这次回复是在要资料吗: 同时有 [refuse to reply] 和 [contract] (不分大小写和空格) → 要的资料列表. */
     fun infoTags(reply: String): List<String> {
         val t = reply.replace(Regex("\\s+"), " ").lowercase()
@@ -120,7 +107,6 @@ class Comm(
         { p, s, m -> Ai.chatMessages(p, s, m, Comm.CHAT_TOKENS, Comm.CHAT_TEMPERATURE, Comm.CHAT_TIMEOUT_MS) },
 ) {
     companion object {
-        const val RESEND_GAP = 30 * 60
         const val PROACTIVE_MIN_REST = 20 * 60
         const val RETRY_GAP = 10 * 60
         const val RETRY_MAX = 12
@@ -140,12 +126,9 @@ class Comm(
     private val cfgFile = File(dir, "comm_config.json")
     private val chatFile = File(dir, "comm_chat.json")
     var persona = ""; private set
-    var sendHour = true; private set
-    var sendTimer = true; private set
     var showAvatar = false; private set
     var avatarMe = ""; private set
     var avatarAi = ""; private set
-    private val lastSent = HashMap<String, String>()
     private var proKey = ""
     private var seeded = false
     // 写盘 (fsync) 放在后台线程 (要声明在 init 之前: 第一次运行就要写配置)
@@ -185,10 +168,9 @@ class Comm(
     /** 📎 窗口打开时的勾选: 确定过的; 还没确定过 = 默认勾 整点记录 和 专注计时. */
     fun attachForm(): CommSel =
         if (attachTouched || CommData.label(attach).isNotEmpty()) attach else CommSel(stats = CommData.DEFAULT_STATS)
-    var hourLines: () -> List<String> = { emptyList() }
     var snapshot: () -> CommSnap? = { null }
     /** 系统触发的请求 (主动发 / 重试): 这条系统消息先不进记录, 对方真的回复了才和回复一起记下. */
-    private class Extra(val body: String, val api: String, val before: Map<String, String>)
+    private class Extra(val body: String, val api: String)
     private class Result(val kind: String, val extra: Extra?, val reply: String, val err: String, val epoch: Int)
     private val results = ConcurrentLinkedQueue<Result>()
     private var again = false
@@ -219,8 +201,6 @@ class Comm(
     private fun load() {
         Store.readObj(cfgFile)?.let { d ->
             persona = d.optString("persona", "")
-            sendHour = d.optBoolean("send_hour", true)
-            sendTimer = d.optBoolean("send_timer", true)
             showAvatar = d.optBoolean("show_avatar", false)
             avatarMe = d.optString("avatar_me", "")
             avatarAi = d.optString("avatar_ai", "")
@@ -229,7 +209,6 @@ class Comm(
             retryN = d.optInt("retry_n", 0)
             clearTs = d.optLong("clear_ts", 0L)
             seeded = d.optBoolean("seeded", false)
-            d.optJSONObject("last_sent")?.let { o -> o.keys().forEach { k -> lastSent[k] = o.optString(k) } }
         }
         val arr = Store.readObj(chatFile)?.optJSONArray("messages")
         val loaded = ArrayList<ChatMsg>()
@@ -254,10 +233,9 @@ class Comm(
     fun flush() { writer.submit {}.get() }
 
     private fun saveCfg() {
-        val o = JSONObject().put("persona", persona).put("send_hour", sendHour).put("send_timer", sendTimer)
+        val o = JSONObject().put("persona", persona)
             .put("show_avatar", showAvatar).put("avatar_me", avatarMe).put("avatar_ai", avatarAi).put("pro_key", proKey)
             .put("retry_at", retryAt).put("retry_n", retryN).put("clear_ts", clearTs).put("seeded", seeded)
-            .put("last_sent", JSONObject(lastSent as Map<*, *>))
         writer.execute { Store.write(cfgFile, o) }
     }
 
@@ -323,7 +301,6 @@ class Comm(
             doc["m:" + m.uid] = JSONObject().put("role", m.role).put("text", m.text).put("at", m.at).put("ts", m.ts)
                 .apply { if (m.api.isNotEmpty()) put("api", m.api) }
         }
-        for ((k, v) in lastSent) doc["sent:$k"] = v
         if (proKey.isNotEmpty()) doc["pro_key"] = proKey
         if (retryAt != 0L || retryN != 0) doc["retry"] = JSONObject().put("at", retryAt).put("n", retryN)
         if (clearTs != 0L) doc["clear"] = clearTs
@@ -346,7 +323,7 @@ class Comm(
                         messages.removeAll { it.ts <= t }
                         known.clear(); known.addAll(messages.map { it.uid })
                         unread = 0; error = ""; epoch++
-                        lastSent.clear(); retryAt = 0; retryN = 0           // 附带过的信息也跟着清空的记录一起没了
+                        retryAt = 0; retryN = 0
                         dirtyChat = true; dirtyCfg = true
                     }
                 }
@@ -362,10 +339,6 @@ class Comm(
                         retryAt = 0; retryN = 0; dirtyCfg = true
                         if (!viewing) unread++
                     }
-                }
-                key.startsWith("sent:") -> {
-                    if (v == null || v == JSONObject.NULL) lastSent.remove(key.substring(5)) else if (v is String) lastSent[key.substring(5)] = v
-                    dirtyCfg = true
                 }
                 key == "pro_key" && v is String -> { proKey = v; dirtyCfg = true }
                 key == "retry" -> {
@@ -387,11 +360,9 @@ class Comm(
     }
 
     @Synchronized
-    fun set(persona: String? = null, sendHour: Boolean? = null, sendTimer: Boolean? = null, showAvatar: Boolean? = null,
+    fun set(persona: String? = null, showAvatar: Boolean? = null,
             avatarMe: String? = null, avatarAi: String? = null) {
         persona?.let { this.persona = it }
-        sendHour?.let { this.sendHour = it }
-        sendTimer?.let { this.sendTimer = it }
         showAvatar?.let { this.showAvatar = it }
         avatarMe?.let { this.avatarMe = it.trim().take(4) }
         avatarAi?.let { this.avatarAi = it.trim().take(4) }
@@ -534,26 +505,8 @@ class Comm(
         return out
     }
 
-    private fun info(snap: CommSnap?, t: LocalDateTime): String {
-        val parts = ArrayList<String>()
-        fun due(key: String): Boolean {
-            val at = parseIso(lastSent[key]) ?: return true
-            return secondsBetween(at, t) >= RESEND_GAP
-        }
-        if (sendHour && due("hour")) {
-            val lines = hourLines()
-            if (lines.isNotEmpty()) { parts.add("整点记录: " + lines.joinToString("; ")); lastSent["hour"] = t.iso() }
-        }
-        if (sendTimer && due("timer") && snap != null) {
-            parts.add("计时器: " + CommText.timerLine(snap)); lastSent["timer"] = t.iso()
-        }
-        return parts.joinToString("\n")
-    }
-
-    private fun compose(t: LocalDateTime, body: String): String {
-        val info = info(snapshot(), t)
-        return "[${CommText.stamp(t)}]\n" + (if (info.isNotEmpty()) "(OIT 附带信息)\n$info\n" else "") + body
-    }
+    /** 发给模型的内容: 每条用户消息前只有时间; 整点记录 / 计时器等数据只有用户手动选了 📎 附件才发. */
+    private fun compose(t: LocalDateTime, body: String): String = "[${CommText.stamp(t)}]\n" + body
 
     private fun add(role: String, text: String, api: String = ""): ChatMsg {
         val ts = maxOf(nowMs(), lastTs + 1)             // 同一台设备上严格递增
@@ -609,9 +562,7 @@ class Comm(
 
     /** 系统要求对方主动发 / 重试: 这条系统消息先不进记录, 对方真的回复了才和回复一起记下 (被拒绝 / 出错就当没发过). */
     private fun trigger(kind: String, body: String) {
-        val before = HashMap(lastSent)
-        val api = compose(now(), body)
-        request(kind, Extra(body, api, before))
+        request(kind, Extra(body, compose(now(), body)))
     }
 
     private fun request(kind: String, extra: Extra? = null) {
@@ -665,9 +616,6 @@ class Comm(
         val refused = r.err.isEmpty() && CommText.isRefusal(r.reply)
         if (refused) log("REPLY refused (${r.kind}): 对方回了 [refuse to reply], 不显示" + if (unanswered()) ", 稍后重试" else "")
         if (r.err.isNotEmpty() || refused) {
-            if (r.extra != null) {                       // 主动 / 重试没有成: 附带过的信息当作没发过
-                lastSent.clear(); lastSent.putAll(r.extra.before); saveCfg()
-            }
             error = r.err
             if (refused && unanswered()) {
                 retryN++
@@ -723,13 +671,12 @@ class Comm(
     }
 
     /** 清空聊天记录 (界面上的按钮, 或者在聊天框里发 /clear): 以后不再显示, 也不再发给模型; 别的设备也一起清空.
-     *  之前附带过的信息也一起没了, 所以"30 分钟内不重复"的记录清零. */
+     */
     @Synchronized
     fun clear() {
         clearTs = maxOf(nowMs(), lastTs)
         messages.clear(); unread = 0; retryAt = 0; retryN = 0; error = ""
         epoch++
-        lastSent.clear()
         saveCfg(); saveChat(); changed(); push()
     }
 }

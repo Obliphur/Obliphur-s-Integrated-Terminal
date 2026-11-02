@@ -7,7 +7,7 @@
   · 人设 prompt 只能从外部来: 放进人设文件夹 (OIT_personas, 和数据文件夹并排, 不加密), 界面里只能选;
     选哪个不算作弊修改, 没有等待期. 文件夹里的 README.md 写着怎么写人设.
   · 发给模型的 system = 前置 prompt (日程 / 休息函数 / 回复规则) + 人设.
-  · 默认附带的信息: 整点记录, 计时器状态. 同一类信息 30 分钟内发过一遍就不重复发.
+  · 不再有"默认发送的信息": 整点记录 / 计时器状态 / 日历 / 合约词条只有用户手动选了 📎 附件才会发.
   · 模型返回 [refuse to reply] = 此刻不方便回复: 不显示, 用户的消息留着, 过一阵再把它们一次性交给模型.
   · 休息开始时, 如果这次休息超过 20 分钟, 会在 3~5 分钟后让模型主动发一条消息.
   · 聊天记录在 comm_chat.json (数据文件夹, 加密, 重置会清掉), 设置在 comm_config.json.
@@ -29,7 +29,6 @@ import ai_assist
 import config
 
 REFUSE = "[refuse to reply]"
-RESEND_GAP = 30 * 60                  # 同一类信息多久之内不重复发
 PROACTIVE_MIN_REST = 20 * 60          # 休息超过这么久才会主动发消息
 PROACTIVE_DELAY = (3 * 60, 5 * 60)    # 休息开始后多久主动发
 RETRY_GAP = 10 * 60                   # 对方不方便回复时, 多久再把消息交给模型
@@ -47,8 +46,8 @@ CHAT_TOKENS = 4096
 CHAT_TEMPERATURE = 0.8
 WEEKDAY = "一二三四五六日"
 
-DEFAULTS = {"persona": "", "send_hour": True, "send_timer": True, "show_avatar": False,
-            "avatar_me": "", "avatar_ai": "", "last_sent": {}, "pro_key": "", "retry": {}, "clear_ts": 0, "seeded": False}
+DEFAULTS = {"persona": "", "show_avatar": False,
+            "avatar_me": "", "avatar_ai": "", "pro_key": "", "retry": {}, "clear_ts": 0, "seeded": False}
 
 
 # ══════════════ 前置 prompt 与 README ══════════════
@@ -205,22 +204,6 @@ def stamp(now: datetime) -> str:
     return f"{now:%Y-%m-%d} 周{WEEKDAY[now.weekday()]} {now:%H:%M}"
 
 
-def _hm(minutes: float) -> str:
-    m = int(round(max(0.0, minutes)))
-    return f"{m // 60} 小时 {m % 60} 分钟" if m >= 60 else f"{m} 分钟"
-
-
-STATE_TEXT = {"focus": "专注中", "break": "休息中", "idle": "空闲", "sleep": "睡觉中", "out": "外出中"}
-
-
-def timer_line(snap: dict) -> str:
-    st = snap.get("state") or "idle"
-    left = f"{_hm(snap.get('rest_left_min', 0))}" if st == "break" else "无"
-    cur = _hm(snap.get("focus_cur_min", 0)) if st == "focus" else "0 分钟(未在专注)"
-    return (f"目前状态: {STATE_TEXT.get(st, st)}; 剩余休息时间: {left}; "
-            f"今日总专注时长: {_hm(snap.get('focus_total_min', 0))}; 目前这轮专注时长: {cur}")
-
-
 def urlsplit_host(url) -> str:
     from urllib.parse import urlsplit
     try:
@@ -287,7 +270,6 @@ class Comm:
         self.busy = False
         self.busy_since = 0.0
         self.error = ""
-        self.hour_lines = lambda: []   # 今天填过的整点记录 ["09:00 写代码", …]; app 接上
         self.snapshot = lambda: {}     # 计时器状态; app 接上
         self.data_fn = lambda sel: ""  # 统计 / 日历 / 合约词条的数据 (comm_data.build); app 接上
         self.fog = lambda: False       # 合约黑雾中: 不发数据
@@ -465,8 +447,6 @@ class Comm:
             if m.get("api"):
                 e["api"] = m["api"]
             doc["m:" + m["uid"]] = e
-        for k, v in (self.cfg.get("last_sent") or {}).items():
-            doc["sent:" + k] = v
         if self.cfg.get("pro_key"):
             doc["pro_key"] = self.cfg["pro_key"]
         if self.cfg.get("retry"):
@@ -493,7 +473,6 @@ class Comm:
                     self.unread = 0
                     self.error = ""
                     self._epoch += 1
-                    self.cfg["last_sent"] = {}                   # 附带过的信息也跟着清空的记录一起没了
                     self.cfg["retry"] = {}
                     dirty_chat = dirty_cfg = True
             elif key.startswith("m:") and isinstance(val, dict):
@@ -516,14 +495,6 @@ class Comm:
                     dirty_cfg = True
                     if not self.viewing:
                         self.unread += 1
-            elif key.startswith("sent:"):
-                last = dict(self.cfg.get("last_sent") or {})
-                if val is None:
-                    last.pop(key[5:], None)
-                elif isinstance(val, str):
-                    last[key[5:]] = val
-                self.cfg["last_sent"] = last
-                dirty_cfg = True
             elif key == "pro_key" and isinstance(val, str):
                 self.cfg["pro_key"] = val
                 dirty_cfg = True
@@ -602,32 +573,9 @@ class Comm:
             self.unread = 0
             self._changed()
 
-    # ---- 信息块 ----
-    def _info(self, snap: dict, now: datetime) -> str:
-        """还没到重复间隔的信息不发; 返回要附带的文字 ("" = 没有)."""
-        sent = self.cfg.get("last_sent") or {}
-        parts = []
-
-        def due(key):
-            try:
-                return (now - datetime.fromisoformat(sent[key])).total_seconds() >= RESEND_GAP
-            except (KeyError, ValueError, TypeError):
-                return True
-
-        if self.cfg.get("send_hour") and due("hour"):
-            lines = list(self.hour_lines() or [])
-            if lines:
-                parts.append("整点记录: " + "; ".join(lines))
-                sent["hour"] = now.isoformat(timespec="seconds")
-        if self.cfg.get("send_timer") and due("timer") and snap:
-            parts.append("计时器: " + timer_line(snap))
-            sent["timer"] = now.isoformat(timespec="seconds")
-        self.cfg["last_sent"] = sent
-        return "\n".join(parts)
-
-    def _compose(self, now: datetime, body: str, snap: dict) -> str:
-        info = self._info(snap, now)
-        return f"[{stamp(now)}]\n" + (f"(OIT 附带信息)\n{info}\n" if info else "") + body
+    # ---- 发给模型的内容: 每条用户消息前只有时间; 整点记录 / 计时器等数据只有用户手动选了 📎 附件才发 ----
+    def _compose(self, now: datetime, body: str) -> str:
+        return f"[{stamp(now)}]\n" + body
 
     # ---- 发消息 ----
     def _add(self, role: str, text: str, api: str = "") -> dict:
@@ -667,8 +615,7 @@ class Comm:
         if why:
             return why
         now = self.now()
-        snap = self.snapshot() or {}
-        self._add("me", text, self._compose(now, text, snap))
+        self._add("me", text, self._compose(now, text))
         self._sent()
         self._request("user")
         return ""
@@ -707,17 +654,15 @@ class Comm:
         now = self.now()
         text = str(text or "").strip()
         shown = label + (("\n" + text) if text else "")
-        self._add("me", shown, self._compose(now, f"(用户发来的数据)\n{data}" + (f"\n\n{text}" if text else ""), self.snapshot() or {}))
+        self._add("me", shown, self._compose(now, f"(用户发来的数据)\n{data}" + (f"\n\n{text}" if text else "")))
         self._sent()
         self._request("user")
         return ""
 
     def _trigger(self, kind: str, body: str):
         """系统要求对方主动发 / 重试: 这条系统消息先不进记录, 对方真的回复了才和回复一起记下 (被拒绝 / 出错就当没发过)."""
-        now = self.now()
-        before = dict(self.cfg.get("last_sent") or {})
-        api = self._compose(now, body, self.snapshot() or {})
-        self._request(kind, (body, api, before))
+        api = self._compose(self.now(), body)
+        self._request(kind, (body, api))
 
     def _request(self, kind: str, extra=None):
         if self.busy:
@@ -791,9 +736,6 @@ class Comm:
         if refused:
             self.log(f"REPLY refused ({kind}): 对方回了 [refuse to reply], 不显示" + (", 稍后重试" if self.unanswered() else ""))
         if err or refused:
-            if extra:                                   # 主动 / 重试没有成: 附带过的信息当作没发过
-                self.cfg["last_sent"] = dict(extra[2])
-                self.save_cfg()
             self.error = err
             if refused and self.unanswered():
                 rt = self.cfg.get("retry") or {}
@@ -852,14 +794,12 @@ class Comm:
                     self._push()
 
     def clear(self):
-        """清空聊天记录 (界面上的按钮, 或者在聊天框里发 /clear): 以后不再显示, 也不再发给模型; 别的设备也一起清空.
-        之前附带过的信息也一起没了, 所以"30 分钟内不重复"的记录清零."""
+        """清空聊天记录 (界面上的按钮, 或者在聊天框里发 /clear): 以后不再显示, 也不再发给模型; 别的设备也一起清空."""
         self.cfg["clear_ts"] = max(self._ms(), self._last_ts)
         self.messages = []
         self.unread = 0
         self._epoch += 1
         self.error = ""
-        self.cfg["last_sent"] = {}
         self.cfg["retry"] = {}
         self.save_cfg()
         self.save_chat()
@@ -926,7 +866,6 @@ def _selftest():
     c = Comm(data, folder, now=lambda: clock[0], chat_fn=fake)
     c.ai.set_profile("deepseek", api_key="k")
     c.ai.provider = "deepseek"
-    c.hour_lines = lambda: ["08:00 起床", "09:00 写代码"]
     snap = {"state": "break", "rest_left_min": 12.4, "focus_total_min": 200, "focus_cur_min": 0,
             "break_start": clock[0], "break_total_s": 1800}
     c.snapshot = lambda: snap
@@ -940,32 +879,16 @@ def _selftest():
     system, msgs = calls[-1]
     assert system.startswith(prefix_prompt()) and system.endswith("每天 8 点到 12 点上课.")
     assert msgs[0]["role"] == "user" and "2026-11-02 周一 09:00" in msgs[0]["content"]
-    assert "整点记录: 08:00 起床; 09:00 写代码" in msgs[0]["content"] and "剩余休息时间: 12 分钟" in msgs[0]["content"]
-    assert "今日总专注时长: 3 小时 20 分钟" in msgs[0]["content"] and msgs[0]["content"].endswith("早")
+    assert "OIT 附带信息" not in msgs[0]["content"] and "整点记录" not in msgs[0]["content"] and "计时器" not in msgs[0]["content"]
+    assert msgs[0]["content"].endswith("早"), "默认只有时间, 没有任何附带的数据"
     assert [m["role"] for m in c.visible()] == ["me", "ai"] and c.unread == 1
-    # 30 分钟内同类信息不重复
-    clock[0] += timedelta(minutes=29)
+    clock[0] += timedelta(minutes=31)
     script.append("嗯")
     c.send("在吗")
     wait(c)
-    assert "OIT 附带信息" not in calls[-1][1][-1]["content"] and "整点记录" not in calls[-1][1][-1]["content"]
-    # 满 30 分钟又发
-    clock[0] += timedelta(minutes=2)
-    script.append("嗯")
-    c.send("还在")
-    wait(c)
-    assert "整点记录" in calls[-1][1][-1]["content"] and "计时器" in calls[-1][1][-1]["content"]
-    # 关掉某一类就不发
-    c.set_cfg(send_hour=False, last_sent={})
-    clock[0] += timedelta(hours=1)
-    script.append("嗯")
-    c.send("再来")
-    wait(c)
-    last = calls[-1][1][-1]["content"]
-    assert "整点记录" not in last and "计时器" in last
+    assert "OIT 附带信息" not in calls[-1][1][-1]["content"] and "计时器" not in calls[-1][1][-1]["content"]
 
     # 不方便: 不显示, 消息留着, 过 10 分钟一次性交给模型
-    c.set_cfg(send_hour=True, send_timer=True, last_sent={})
     n_vis = len(c.visible())
     script.append(REFUSE)
     c.send("上课吗")
@@ -1040,10 +963,8 @@ def _selftest():
     c3.flush()
     assert c3.visible() == [] and Comm(data, folder, now=lambda: clock[0], chat_fn=fake).visible() == []
 
-    # /clear: 之前的记录不再显示, 也不再发给模型; 信息重新附带; 清空前发出的请求回复到了也丢掉
+    # /clear: 之前的记录不再显示, 也不再发给模型; 清空前发出的请求回复到了也丢掉
     c.snapshot = lambda: snap
-    c.hour_lines = lambda: ["09:00 写代码"]
-    c.set_cfg(send_hour=True, send_timer=True)
     c.clear()
     script.append("晚安")
     c.send("我先睡了")
@@ -1054,7 +975,7 @@ def _selftest():
     c.send("你好")
     wait(c)
     msgs = calls[-1][1]
-    assert len(msgs) == 1 and "我先睡了" not in msgs[0]["content"] and "整点记录" in msgs[0]["content"]
+    assert len(msgs) == 1 and "我先睡了" not in msgs[0]["content"]
     script.append("迟到的回复")
     c.send("在吗")
     c.clear()
@@ -1157,7 +1078,7 @@ def _selftest():
     for X, dev in ((A, "aaaa"), (B, "bbbb")):
         X.ai.set_profile("deepseek", api_key="k")
         X.ai.provider = "deepseek"
-        X.set_cfg(persona="小夏.txt", send_hour=False, send_timer=False)
+        X.set_cfg(persona="小夏.txt")
         X.device = lambda d=dev: d
 
     def pull(src, dst):                         # 模拟 devsync: 把对方的文档整份并进来
@@ -1199,27 +1120,13 @@ def _selftest():
     pull(B, A)
     assert not A.unanswered() and A.visible()[-1]["text"] == "来了, 刚下课" and not A.cfg["retry"]
     assert any(m["role"] == "sys" for m in B.messages) and any(m["role"] == "sys" for m in A.messages)
-    # "30 分钟内不重复" 的记录同步: A 发过的信息, B 不再重复发
-    A.set_cfg(send_timer=True)
-    B.set_cfg(send_timer=True)
-    A.snapshot = B.snapshot = lambda: {"state": "idle", "focus_total_min": 10}
-    script.append("好")
-    A.send("看一下")
-    wait(A)
-    pull(A, B)
-    clock[0] += timedelta(minutes=5)
-    script.append("好")
-    B.send("再看")
-    wait(B)
-    assert "计时器" in calls[-2][1][-1]["content"] or True
-    assert "计时器" not in calls[-1][1][-1]["content"], "A 刚发过, B 不重复"
     # 清空一起清, 清空之前的记录同步回来也不会复活
     pull(B, A)
     B.clear()
     pull(B, A)
     assert A.visible() == [] and B.visible() == []
     pull(A, B)
-    assert B.visible() == [] and A.cfg["last_sent"] == {}
+    assert B.visible() == []
     # 主动消息: 同一次休息只有一台发一次 (标记同步)
     start = clock[0]
     A.snapshot = B.snapshot = lambda: {"state": "break", "break_start": start, "break_total_s": 30 * 60,

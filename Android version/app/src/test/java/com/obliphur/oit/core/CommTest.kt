@@ -70,7 +70,6 @@ class CommTest {
         val c = comm(dir, File(td, "personas"))
         c.importPersona("小夏.txt", "你是小夏.每天 8 点到 12 点上课.".byteInputStream())
         c.set(persona = "小夏.txt")
-        c.hourLines = { listOf("08:00 起床", "09:00 写代码") }
         val snap = CommSnap("break", restLeftMin = 12.4, focusTotalMin = 200.0, breakStart = clock, breakTotalS = 1800.0)
         c.snapshot = { snap }
 
@@ -80,18 +79,14 @@ class CommTest {
         val (system, msgs) = calls.last()
         assertTrue(system.startsWith(CommText.prefixPrompt()) && system.endsWith("上课."))
         val first = msgs[0].second
-        assertTrue("2026-11-02 周一 09:00" in first && "整点记录: 08:00 起床; 09:00 写代码" in first)
-        assertTrue("剩余休息时间: 12 分钟" in first && "今日总专注时长: 3 小时 20 分钟" in first && first.endsWith("早"))
+        assertTrue("2026-11-02 周一 09:00" in first)
+        assertTrue("OIT 附带信息" !in first && "整点记录" !in first && "计时器" !in first && first.endsWith("早"))   // 默认只有时间, 没有任何附带的数据
         assertEquals(listOf("me", "ai"), c.visible().map { it.role })
         assertEquals(1, c.unread)
 
-        // 30 分钟内同类信息不重复, 满 30 分钟又发
-        clock = clock.plusMinutes(29)
+        clock = clock.plusMinutes(31)
         script.add("嗯"); c.send("在吗"); wait(c)
-        assertFalse("整点记录" in calls.last().second.last().second || "OIT 附带信息" in calls.last().second.last().second)
-        clock = clock.plusMinutes(2)
-        script.add("嗯"); c.send("还在"); wait(c)
-        assertTrue("整点记录" in calls.last().second.last().second && "计时器" in calls.last().second.last().second)
+        assertFalse("计时器" in calls.last().second.last().second || "OIT 附带信息" in calls.last().second.last().second)
 
         // 不方便: 不显示, 消息留着, 10 分钟后一次性交给模型
         script.add(CommText.REFUSE)
@@ -117,8 +112,7 @@ class CommTest {
         assertEquals("小夏.txt", c2.persona)
         assertEquals(c.visible().size, c2.visible().size)
 
-        // /clear: 之前的记录不再显示, 也不再发给模型; 信息重新附带; 清空前发出的请求回复到了也丢掉
-        c.hourLines = { listOf("09:00 写代码") }
+        // /clear: 之前的记录不再显示, 也不再发给模型; 清空前发出的请求回复到了也丢掉
         c.clear()
         script.add("晚安"); c.send("我先睡了"); wait(c)
         assertEquals(2, c.visible().size)
@@ -126,7 +120,7 @@ class CommTest {
         assertTrue(c.visible().isEmpty() && c.messages.isEmpty())
         script.add("新的开始"); c.send("你好"); wait(c)
         val sent = calls.last().second
-        assertTrue(sent.size == 1 && "我先睡了" !in sent[0].second && "整点记录" in sent[0].second)
+        assertTrue(sent.size == 1 && "我先睡了" !in sent[0].second)
         script.add("迟到的回复"); c.send("在吗"); c.clear(); wait(c)
         assertTrue(c.visible().isEmpty() && !c.busy)
         c.flush()
@@ -217,7 +211,7 @@ class CommTest {
         a.device = { "aaaa" }; b.device = { "bbbb" }
         for (c in listOf(a, b)) {
             c.importPersona("小夏.txt", "你是小夏".byteInputStream())
-            c.set(persona = "小夏.txt", sendHour = false, sendTimer = false)
+            c.set(persona = "小夏.txt")
         }
         fun pull(src: Comm, dst: Comm) = dst.applyDoc(src.syncDoc())
 
