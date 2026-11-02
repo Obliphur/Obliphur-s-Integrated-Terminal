@@ -214,7 +214,7 @@ OUTING_MAX_HOURS = 24 * 7
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.225"                         # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.226"                         # 和 GitHub 上发布的版本号比较 (见 updater.py)
 UPDATE_CHECK = 1                              # 打开程序时检查更新
 FULLSCREEN_DEFAULT = 0                        # 打开程序时默认全屏 (设置 → 基本设置, 仅电脑, 不同步; F11 随时切换)
 UPDATE_AUTO = 1                               # 发现新版本时自动下载安装
@@ -656,7 +656,7 @@ def pixel_safe(text):
 
 
 
-REST_GAIN = 1.27                  # 建议休息时长整体乘它 (MECHANICS 6.2)
+REST_GAIN = 1.24                  # 建议休息时长整体乘它 (MECHANICS 6.2)
 
 
 def compute_F(t: float) -> float:

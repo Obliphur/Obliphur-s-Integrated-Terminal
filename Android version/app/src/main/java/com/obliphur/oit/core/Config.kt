@@ -130,7 +130,7 @@ object Cfg {
 }
 
 /** 建议休息时长整体乘它 (MECHANICS 6.2, 同 config.REST_GAIN). */
-const val REST_GAIN = 1.27
+const val REST_GAIN = 1.24
 
 /** 建议休息时长 F(t), t 与结果都以分钟计 (MECHANICS 6.2). */
 fun computeF(t: Double): Double = REST_GAIN * when {

@@ -66,6 +66,9 @@ object Prescript {
     const val REFLECT_TARGET = 3 * 60.0
     const val DAILY_T_TARGET = 10.0
     const val DAILY_BONUS_SECONDS = 20 * 60
+    /** 每天凌晨 4:00 起, 自动得到 DAWN_SECONDS 的休息时间 (一天一次, 不用打开指令页; 同 prescript.DAWN_*). */
+    const val DAWN_HOUR = 4
+    const val DAWN_SECONDS = 20 * 60
     const val CODE_WIDTH = 8
     const val CODE_LEFT = "_%"
     const val CODE_RIGHT = "%."
@@ -495,6 +498,7 @@ class PrescriptEngine(
         val now = now0.withNano(0)
         if (blockedFn()) return
         ensureDay(now)
+        checkDawn(now)
         val prev = lastTick
         val delta = maxOf(0.0, secondsBetween(prev, now))
         lastTick = now
@@ -606,6 +610,28 @@ class PrescriptEngine(
                 .put("t", JSONObject.NULL).put("seconds", Prescript.DAILY_BONUS_SECONDS).put("at", now.iso()))
             dirty = true
         }
+    }
+
+    /** 测试用: false = 不自动给 4:00 的那份 (别的测试在 4:00 之后跑, 只关心指令自己的奖励). */
+    internal var dawnOn = true
+
+    /** 每天 4:00 之后的第一次判定: 当场给 20 分钟休息时间 (id 带日期, 同一天只给一次, 别的设备结算过就不再给); 不排进待结算. */
+    private fun checkDawn(now: LocalDateTime) {
+        if (!dawnOn || now.hour < Prescript.DAWN_HOUR) return
+        val id = "dawn-${now.toLocalDate().key()}"
+        if (hasReward(id)) return
+        val item = JSONObject().put("id", id).put("kind", "dawn").put("code", Prescript.restCode(Prescript.DAWN_SECONDS / 60.0))
+            .put("t", JSONObject.NULL).put("seconds", Prescript.DAWN_SECONDS).put("at", now.iso())
+        try { grantRestFn?.invoke(Prescript.DAWN_SECONDS, item.optString("code")) } catch (_: Exception) {}
+        val granted = data.getJSONArray("granted")
+        granted.put(JSONObject(item.toString()))
+        val settled = data.getJSONObject("settled")
+        settled.put(id, JSONObject(item.toString()))                                 // 其他设备看到就不再给
+        settled.keys().asSequence().toList().sortedBy { settled.getJSONObject(it).optString("at") }
+            .dropLast(Prescript.GRANTED_KEEP).forEach { settled.remove(it) }
+        while (granted.length() > Prescript.GRANTED_KEEP) granted.remove(0)
+        dirty = true
+        save()
     }
 
     // ---- 设备同步 (SyncService 的 "prescript" 文档) ----

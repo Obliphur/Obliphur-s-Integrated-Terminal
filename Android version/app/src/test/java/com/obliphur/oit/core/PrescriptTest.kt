@@ -19,6 +19,7 @@ class PrescriptTest {
         var page = "prescript"
         var minimized = false
         var dev = false
+        var dawn = false
         var hours = 0.0
         val contracts = mutableListOf<JSONObject>()
         val rest = mutableListOf<Pair<Int, String>>()
@@ -28,10 +29,34 @@ class PrescriptTest {
             stateFn = { mode }, todayHoursFn = { hours }, contractsFn = { contracts },
             pageFn = { page }, minimizedFn = { minimized },
             grantRestFn = { s, c -> rest.add(s to c) }, devFn = { dev },
-        )
+        ).also { it.dawnOn = dawn }
     }
 
     private val t0 = LocalDateTime.of(2026, 10, 28, 10, 5, 0)
+
+    @Test
+    fun dawnGrant() {
+        val env = Env().also { it.dawn = true }
+        val e = env.engine()
+        e.tick(LocalDateTime.of(2026, 11, 3, 3, 59, 50))
+        assertTrue("4:00 前不给", env.rest.isEmpty())
+        e.tick(LocalDateTime.of(2026, 11, 3, 4, 0, 0))
+        assertEquals(listOf(1200 to "REST20"), env.rest)
+        e.tick(LocalDateTime.of(2026, 11, 3, 4, 0, 1))
+        e.tick(LocalDateTime.of(2026, 11, 3, 15, 0, 0))
+        assertEquals("同一天只给一次", 1, env.rest.size)
+        e.tick(LocalDateTime.of(2026, 11, 4, 3, 0, 0))
+        assertEquals(1, env.rest.size)
+        e.tick(LocalDateTime.of(2026, 11, 4, 9, 30, 0))          // 4:00 没开着: 之后第一次判定补上
+        assertEquals(2, env.rest.size)
+        assertTrue(e.rawData().getJSONObject("settled").has("dawn-2026-11-04"))
+        // 别的设备已经结算过的不再给
+        val env2 = Env().also { it.dawn = true }
+        val e2 = env2.engine()
+        e2.rawData().getJSONObject("settled").put("dawn-2026-11-05", JSONObject().put("id", "dawn-2026-11-05").put("at", "2026-11-05T04:00:00"))
+        e2.tick(LocalDateTime.of(2026, 11, 5, 4, 0, 5))
+        assertTrue(env2.rest.isEmpty())
+    }
 
     @Test
     fun codes() {
@@ -296,6 +321,7 @@ class PrescriptTest {
         val b = PrescriptEngine(File(Files.createTempDirectory("oit").toFile(), "prescript.json"), stateFn = { modeA },
             pageFn = { pageB }, peersOnPageFn = { pageA == "prescript" },
             grantRestFn = { s, c -> rest.add(s to c) }, rng = kotlin.random.Random(2))
+        a.dawnOn = false; b.dawnOn = false
         // A 领一条 III, B 同步到; 进度不同步
         val iii = a.draw(ts, choose = "III", pool0 = "break")!!
         push(a, b, ts)

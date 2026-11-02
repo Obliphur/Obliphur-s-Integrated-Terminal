@@ -61,6 +61,8 @@ REST_MAX_MIN = 30               # III: 最多 30 分钟
 REFLECT_TARGET = 3 * 60         # VI: 统计页连续停留 3 分钟
 DAILY_T_TARGET = 10.0           # 今天完成的指令 t 合计到 10
 DAILY_BONUS_SECONDS = 20 * 60   # 额外 20 分钟休息
+DAWN_HOUR = 4                   # 每天凌晨 4:00 起, 自动得到 DAWN_SECONDS 的休息时间 (一天一次, 不用打开指令页)
+DAWN_SECONDS = 20 * 60
 
 # 每条指令的蓝色代码用的词 (补位后正好 8 个字符以内)
 TYPE_WORDS = {"I": "FOCUS", "II": "CONTRACT", "III": "REST", "IV": "DAILY", "VI": "REFLECT"}
@@ -687,6 +689,7 @@ class PrescriptEngine:
         if self.blocked_fn():
             return
         self._ensure_day(now)
+        self._check_dawn(now)
         prev = self._last_tick
         delta = max(0.0, (now - prev).total_seconds())
         self._last_tick = now
@@ -827,6 +830,31 @@ class PrescriptEngine:
             self._add_reward({"id": f"daily-{day}", "kind": "daily", "code": rest_code(20), "t": None,
                               "seconds": DAILY_BONUS_SECONDS, "at": _iso(now)})
             self._dirty = True
+
+    def _check_dawn(self, now: datetime):
+        """每天 4:00 之后的第一次判定: 当场给 20 分钟休息时间 (id 带日期, 同一天只给一次, 别的设备结算过就不再给).
+        跟完成指令的奖励不同, 不排进待结算, 不用等打开指令页."""
+        if now.hour < DAWN_HOUR:
+            return
+        item = {"id": f"dawn-{now.strftime('%Y-%m-%d')}", "kind": "dawn", "code": rest_code(DAWN_SECONDS // 60),
+                "t": None, "seconds": DAWN_SECONDS, "at": _iso(now)}
+        if self._has_reward(item["id"]):
+            return
+        if self.grant_rest_fn is not None:
+            try:
+                self.grant_rest_fn(DAWN_SECONDS, item["code"])
+            except Exception:       # noqa: BLE001
+                pass
+        self._data.setdefault("granted", []).append(dict(item))
+        self._data.setdefault("settled", {})[item["id"]] = dict(item)    # 其他设备看到就不再给
+        settled = self._data["settled"]
+        for old in sorted(settled, key=lambda k: str(settled[k].get("at") or ""))[:-GRANTED_KEEP]:
+            settled.pop(old, None)
+        granted = self._data["granted"]
+        if len(granted) > GRANTED_KEEP:
+            del granted[:-GRANTED_KEEP]
+        self._dirty = True
+        self.save()
 
     # ---- 设备同步 (devsync 的 "prescript" 文档) ----
     # 同步的是: 领到的指令 (进行中的和已经完成 / 作废的; 各设备自己累计的进度不同步), 奖励 (结算过没有), 今天的 n.
@@ -1618,6 +1646,40 @@ def _selftest():
             assert abs(A._data["daily"]["completed_t"] - (0.2 + 1.0 + 0.2)) < 1e-9
         finally:
             shutil.rmtree(root2, ignore_errors=True)
+
+        # 每天 4:00 起自动给 20 分钟休息: 4:00 前不给, 4:00 之后第一次判定给, 同一天只给一次, 别的设备给过的不再给, 第二天再给
+        root3 = tempfile.mkdtemp(prefix="oit_prescript_dawn_")
+        try:
+            gd, gd2 = [], []
+            D = PrescriptEngine(root3, state_fn=lambda: "idle", today_hours_fn=lambda: 0.0,
+                                grant_rest_fn=lambda s, c: gd.append((s, c)))
+            d0 = datetime(2026, 11, 3, 3, 59, 50)
+            D.tick(d0)
+            assert gd == [], "4:00 前不给"
+            D.tick(datetime(2026, 11, 3, 4, 0, 0))
+            assert gd == [(1200, "REST20")], gd
+            D.tick(datetime(2026, 11, 3, 4, 0, 1))
+            D.tick(datetime(2026, 11, 3, 15, 0, 0))
+            assert len(gd) == 1, "同一天只给一次"
+            assert "dawn-2026-11-03" in D._data["settled"] and not D._data["pending"]
+            D.tick(datetime(2026, 11, 4, 3, 0, 0))                # 4 号凌晨 3 点: 还是 3 号那份, 4 号的没到点
+            assert len(gd) == 1
+            D.tick(datetime(2026, 11, 4, 9, 30, 0))               # 机器 4:00 没开: 之后第一次判定补上
+            assert len(gd) == 2 and "dawn-2026-11-04" in D._data["settled"]
+            # 另一台设备已经结算过今天的 (同步过来): 这台不再给
+            root4 = tempfile.mkdtemp(prefix="oit_prescript_dawn2_")
+            try:
+                E = PrescriptEngine(root4, state_fn=lambda: "idle", today_hours_fn=lambda: 0.0,
+                                    grant_rest_fn=lambda s, c: gd2.append((s, c)))
+                E._data.setdefault("settled", {})["dawn-2026-11-05"] = {"id": "dawn-2026-11-05", "seconds": 1200, "at": "2026-11-05T04:00:00"}
+                E.tick(datetime(2026, 11, 5, 4, 0, 5))
+                assert gd2 == [], "别的设备给过就不再给"
+                E.tick(datetime(2026, 11, 6, 4, 0, 5))
+                assert gd2 == [(1200, "REST20")]
+            finally:
+                shutil.rmtree(root4, ignore_errors=True)
+        finally:
+            shutil.rmtree(root3, ignore_errors=True)
 
         # 存档再读出来: 历史 / 记录 / 关闭时刻还在
         eng.save()
