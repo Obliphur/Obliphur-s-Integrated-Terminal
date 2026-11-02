@@ -73,7 +73,10 @@ fun CommScreen(go: (String) -> Unit) {
     LaunchedEffect(Unit) { while (true) { if (comm.version != ver) ver = comm.version; kotlinx.coroutines.delay(250) } }
     val msgs = remember(ver) { comm.visible() }
     val list = rememberLazyListState()
-    LaunchedEffect(ver) { if (msgs.isNotEmpty()) list.scrollToItem(0) }          // 倒排: 第 0 项是最新的一条, 在最下面
+    // 倒排: 第 0 项是最新的一条, 在最下面. 新消息来了 (收到的 / 同步来的) 滑到最新; 正在往上翻很早的记录时不打断 (自己发的除外)
+    LaunchedEffect(msgs.firstOrNull()?.id, msgs.size) {
+        if (msgs.isNotEmpty() && (list.firstVisibleItemIndex <= 4 || msgs.last().role == "me")) list.scrollToItem(0)
+    }
     fun report(why: String) {
         core.toast(tr(why), "warn")
         if (comm.blocked().isEmpty() && (why == "还没有选人设" || "API" in why || "Base URL" in why || "模型" in why)) go("settings:comm")

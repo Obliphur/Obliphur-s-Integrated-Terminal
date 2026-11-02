@@ -37,6 +37,7 @@ class CommPage(tk.Frame):
         self._rows = []              # 对应的行控件
         self._cap = RENDER_MAX + 40  # 最多同时画多少行
         self._top_pad = self._bottom_pad = None
+        self._first_draw = True
         self._sig = None             # 画法变了 (宽度 / 头像) 才需要重画
         self._photos = {}            # (路径, 大小, 修改时间) → PhotoImage
         self._build()
@@ -179,25 +180,30 @@ class CommPage(tk.Frame):
             for w in inner.winfo_children():
                 w.destroy()
             self._rendered, self._rows, self._top_pad, self._sig = [], [], None, sig
+            self._first_draw = True
             self._cap = RENDER_MAX + 40
             new = msgs[-RENDER_MAX:]                        # 先画最近的; 往上翻到顶再加载更早的
         elif ids[ids.index(self._rendered[0]):ids.index(self._rendered[-1]) + 1] != self._rendered:
             for w in inner.winfo_children():                # 别的设备的消息插在已经画出的中间: 重画
                 w.destroy()
             self._rendered, self._rows, self._top_pad = [], [], None
+            self._first_draw = True
             new = msgs[-RENDER_MAX:]
         else:
             new = msgs[ids.index(self._rendered[-1]) + 1:]
         self._ensure_pads()
         if not new:
             return
+        follow = self._first_draw or self._near_end() or any(m["role"] == "me" for m in new)
         for m in new:
             self._rows.append(self._add_row(m))
             self._rendered.append(m["id"])
         while len(self._rendered) > self._cap:              # 一直聊下去: 顶上最老的行去掉
             self._rows.pop(0).destroy()
             self._rendered.pop(0)
-        self._to_end()
+        self._first_draw = False
+        if follow:
+            self._to_end()
 
     def _check_top(self):
         """滑到最上面 (第一条已经在视野里) 了: 再往前加载一批更早的消息, 视野不跳."""
@@ -262,13 +268,29 @@ class CommPage(tk.Frame):
         for ch in w.winfo_children():
             self._bind_wheel(ch)
 
+    def _near_end(self) -> bool:
+        """视野离最新一条不远 (3 屏之内): 新消息来了才自动滑下去; 正在往上翻很早的记录就不打断."""
+        canvas = self.area.canvas
+        box = canvas.bbox("all")
+        if not box or not self._rendered:
+            return True
+        total = max(1, box[3] - box[1])
+        bottom = canvas.yview()[1] * total
+        return bottom >= total - self._pad_height() - 3 * max(1, canvas.winfo_height())
+
     def _to_end(self):
-        """最后一条贴着视野底部 (下面还有空白可以继续往下滑)."""
+        """最后一条贴着视野底部 (下面还有空白可以继续往下滑). 新行的高度要等排完版才知道, 所以先排版再算, 稍后再对一次."""
         def go():
             canvas, inner = self.area.canvas, self.area.inner
-            total = max(1, inner.winfo_height())
+            inner.update_idletasks()
+            box = canvas.bbox("all")
+            if not box:
+                return
+            canvas.configure(scrollregion=box)
+            total = max(1, box[3] - box[1])
             canvas.yview_moveto(max(0.0, (total - self._pad_height() - canvas.winfo_height()) / total))
         self.after_idle(go)
+        self.after(80, go)
 
     # ---- 操作 ----
 
