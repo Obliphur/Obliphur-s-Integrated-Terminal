@@ -648,6 +648,13 @@ class PrescriptEngine(
     @Synchronized
     fun journalView(): String = data.optString("journal_view", "")
 
+    /** X 词条保存过的记录 (日期, 文字), 新的在前; 统计页的日志里显示. */
+    fun logsNewest(): List<Pair<String, String>> {
+        val logs = data.optJSONObject("logs") ?: return emptyList()
+        return logs.keys().asSequence().toList().sortedDescending()
+            .map { it to logs.optString(it) }.filter { it.second.isNotBlank() }
+    }
+
     @Synchronized
     fun noteJournal(now0: LocalDateTime = LocalDateTime.now()) {
         data.put("journal_view", now0.withNano(0).iso())

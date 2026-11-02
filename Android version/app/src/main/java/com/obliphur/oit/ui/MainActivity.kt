@@ -340,8 +340,9 @@ class MainActivity : ComponentActivity() {
 }
 
 val PAGES = listOf(
-    "timer" to "⏱  计时器", "net" to "🌐  联网", "rules" to "🛡  规则", "log" to "📝  整点记录",
-    "cal" to "📅  日历", "stats" to "📊  统计", "contract" to "⚔  合约", "settings" to "⚙  设置", "reset" to "🔄  重置",
+    "timer" to "⏱  计时器", "net" to "🌐  联网", "log" to "📝  整点记录",
+    "cal" to "📅  日历", "stats" to "📊  统计", "contract" to "⚔  合约", "settings" to "⚙  设置",
+    "comm" to "💬  沟通", "reset" to "🔄  重置",
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -461,6 +462,7 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
             fun navLabel(key: String, base: String): String = when (key) {
                 "log" -> if (!core.dm.hourEnabled) "$base  (off)" else base + if (core.dm.awaitingSlot() != null) " ●" else ""
                 "settings" -> base + (if (core.settings.pending.isNotEmpty()) "  ⏳${core.settings.pending.size}" else "")
+                "comm" -> base + (if (core.comm.unread > 0) " ●" else "")
                 else -> base
             }.let { I18n.ic(it) }
             ModalNavigationDrawer(drawerState = drawer, drawerContent = {
@@ -469,7 +471,7 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
                         modifier = Modifier.padding(20.dp))
                     HorizontalDivider(color = cp?.line ?: o.border)
                     Spacer(Modifier.height(8.dp))
-                    for ((key, label) in pages) {
+                    val navItem: @Composable (String, String) -> Unit = { key, label ->
                         val on = key == page || (key == "settings" && page == "ach")
                         // 指令标记: 持有合约 / 统计任务时, 在对应入口上盖一朵几乎看不见的花
                         Box(Modifier.fillMaxWidth().background(if (cp != null && on) cp.sideOn else sideBg).clickable {
@@ -483,6 +485,11 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
                                 PrescriptMark(Modifier.align(Alignment.CenterEnd).padding(end = 24.dp))
                         }
                     }
+                    // 重置固定在最下面, 其余的放不下时可以滚动
+                    Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                        for ((key, label) in pages) if (key != "reset") navItem(key, label)
+                    }
+                    for ((key, label) in pages) if (key == "reset") navItem(key, label)
                 }
             }) {
                 Scaffold(
@@ -541,12 +548,12 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
                             }
                         }
                         val scroll = rememberScrollState()
-                        val scrollable = page != "log" && page != "stats" && page != "contract"
+                        val scrollable = page != "log" && page != "stats" && page != "contract" && page != "comm"
                         Column(if (scrollable) Modifier.verticalScroll(scroll) else Modifier.fillMaxSize()) {
                             when (page) {
                                 "timer" -> TimerScreen()
                                 "net" -> NetScreen()
-                                "rules" -> RulesScreen { go(it) }
+                                "comm" -> CommScreen { go(it) }
                                 "log" -> HourLogScreen { go(it) }
                                 "cal" -> CalendarScreen()
                                 "stats" -> StatsScreen()

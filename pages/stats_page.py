@@ -132,6 +132,7 @@ class StatsPage(tk.Frame):
         self.mode = {"log": "pct", "net": "pct", "window": "pct"}
         self._journal_open = False   # 日志: 这一次进来是不是已经看过了 (2 小时只能看一次, MECHANICS 8.7)
         # 上一次看日志的时刻 / 记下这次看了 (app 接上指令引擎, 随设备同步; 没接上时记在本机的 daily.json)
+        self.journal_logs = lambda: []     # 反思指令 (X) 保存过的记录 [(日期, 文字)], 新的在前
         self.journal_get = lambda: self.dm.daily_flag(JOURNAL_FLAG)
         self.journal_set = lambda now: self.dm.set_daily_flag(JOURNAL_FLAG, now.strftime("%Y-%m-%dT%H:%M:%S"))
         self.month = "this"          # "this" 本月 / "last" 上月
@@ -255,7 +256,10 @@ class StatsPage(tk.Frame):
         self.journal_text.pack(fill="x", padx=16, pady=(4, 8))
         self.journal_note = tk.Label(self.journal_body, text="", bg=card, fg=COLORS["text_dim"],
                                      font=config.font("small"), anchor="w", justify="left", wraplength=config.scaled(620))
-        self.journal_note.pack(fill="x", padx=16, pady=(0, 14))
+        self.journal_note.pack(fill="x", padx=16, pady=(0, 6))
+        self.journal_area = ScrollArea(self.journal_body, height=config.scaled(360), bg=card)
+        self.journal_rows = self.journal_area.inner
+        self._journal_sig = None
 
         # 合约记录 (通过记录): 最近 5 条顺利完成的合约 (黑雾时是 5 条假数据)
         self.contracts_body = tk.Frame(self, bg=card,
@@ -451,7 +455,7 @@ class StatsPage(tk.Frame):
             hide_pack(self.contract_mode_bar)
             hide_pack(self.contracts_body)
             hide_pack(self.violations_body)
-            show_pack(self.journal_body, fill="x", padx=26, pady=(10, 16))
+            show_pack(self.journal_body, fill="both", expand=True, padx=26, pady=(10, 16))
             self._draw_journal()
             return
         if self.page == "contracts":
@@ -498,6 +502,7 @@ class StatsPage(tk.Frame):
         if self.fog() is not None:                      # 黑雾: 统计数据不可见
             cfg(self.journal_text, text="???")
             cfg(self.journal_note, text="")
+            hide_pack(self.journal_area)
             return
         now = datetime.now()
         if not self._journal_open:
@@ -505,6 +510,7 @@ class StatsPage(tk.Frame):
             if left > 0:
                 cfg(self.journal_text, text=tr("已经看过了."))
                 cfg(self.journal_note, text=tr("{t} 之后才能再看.").format(t=fmt_hm(left)))
+                hide_pack(self.journal_area)
                 return
             self.journal_set(now)
             self._journal_open = True
@@ -512,6 +518,23 @@ class StatsPage(tk.Frame):
                 self.journal_synced()
         cfg(self.journal_text, text=tr(JOURNAL_TEXT))
         cfg(self.journal_note, text=tr("2 小时只能看一次."))
+        show_pack(self.journal_area, fill="both", expand=True, padx=16, pady=(0, 14))
+        logs = [(d, t) for d, t in self.journal_logs()]
+        if logs == self._journal_sig:
+            return
+        self._journal_sig = logs
+        card = COLORS["bg_card"]
+        for w in self.journal_rows.winfo_children():
+            w.destroy()
+        if not logs:
+            tk.Label(self.journal_rows, text=tr("还没有日志."), bg=card, fg=COLORS["text_dim"],
+                     font=config.font("body"), anchor="w").pack(fill="x", pady=4)
+        for day, text in logs:
+            tk.Label(self.journal_rows, text=day, bg=card, fg=COLORS["accent"],
+                     font=config.font("small", bold=True), anchor="w").pack(fill="x", pady=(8, 0))
+            tk.Label(self.journal_rows, text=text, bg=card, fg=COLORS["text"], font=config.font("body"),
+                     anchor="w", justify="left", wraplength=config.scaled(600)).pack(fill="x")
+        self.journal_area.bind_children()
 
     # ---- 合约记录 (过去 5 条顺利完成的合约, MECHANICS 8.1) ----
 

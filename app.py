@@ -35,6 +35,7 @@ import behavior
 import prestart
 import media_pause
 import prescript
+import comm as comm_mod
 from sync_local import PcLocal
 from config import (
     COLORS, APP_NAME, IDLE, RUNNING, READY_BREAK, ON_BREAK,
@@ -46,7 +47,7 @@ from net_guard import NetGuard
 from data_manager import DataManager, USERNAME_MAX
 from settings_manager import SettingsManager
 from pages import (CalendarPage, HourLogPage, SettingsPage, RulesPage, StatsPage,
-                   ContractPage, AchievementsPage, AchievementPopups, PrescriptPage)
+                   ContractPage, AchievementsPage, AchievementPopups, PrescriptPage, CommPage)
 from pages.prestart_dialog import PrestartDialog
 from pages.outing_dialog import OutingDialog
 from pages.file_channel import FileChannel, fmt_size
@@ -343,6 +344,12 @@ class BreakTimerApp:
             page_event_fn=self._prescript_page_event,
         )
         self.prescript_job = None
+        # 沟通 (MECHANICS 24): 人设文件夹和数据文件夹并排, 不加密
+        self.comm = comm_mod.Comm(self.dm.data_dir, os.path.join(self.dm.low_dir, "OIT_personas"))
+        self.comm.snapshot = self._comm_snapshot
+        self.comm.hour_lines = self._comm_hour_lines
+        self.comm.on_change = self.update_comm_badge
+        self._rules_win = None
         self._marks_shown = None        # 指令标记现在画在哪些按钮上 (None = 还没画过)
         self._mark_img = None
         self._mark_labels = {}
@@ -725,12 +732,12 @@ class BreakTimerApp:
         self.nav_labels.update({
             "timer": tr("⏱  计时器"),
             "net": tr("🌐  联网"),
-            "rules": tr("🛡  规则"),
             "log": tr("📝  整点记录"),
             "cal": tr("📅  日历"),
             "stats": tr("📊  统计"),
             "contract": tr("⚔  合约"),
             "settings": tr("⚙  设置"),
+            "comm": tr("💬  沟通"),
             "reset": tr("🔄  重置")
         })
         for key, label in self.nav_labels.items():
@@ -772,6 +779,7 @@ class BreakTimerApp:
         # 日志的 2 小时冷却随设备同步: 几台设备共用 (MECHANICS 8.7)
         self.pages["stats"].journal_get = self.prescripts.journal_view
         self.pages["stats"].journal_set = self.prescripts.note_journal
+        self.pages["stats"].journal_logs = self.prescripts.logs_newest
         self.pages["stats"].journal_synced = lambda: self.sync.sync_now() if self.sync.peers() else None
         self.pages["stats"].contract_log = lambda: self.contract.history
         self.pages["stats"].violation_log = lambda: self.dm.recent_violations()
@@ -819,7 +827,8 @@ class BreakTimerApp:
             on_update_relay=lambda: self.relay_updates(manual=True),
             sync=self.sync, achievements=self.ach,
             on_open_achievements=self._open_achievements,
-            data_dir=self.dm.data_dir, recording=self.recording, on_delete_record=self.delete_recording
+            data_dir=self.dm.data_dir, recording=self.recording, on_delete_record=self.delete_recording,
+            comm=self.comm, on_open_rules=self.open_rules_popup
         )
         self._prepare_page(self.pages["settings"])
         yield
@@ -828,12 +837,10 @@ class BreakTimerApp:
                                              on_back=lambda: self.show_page("settings"))
         self._prepare_page(self.pages["ach"])
         yield
-        self.pages["rules"] = RulesPage(
-            self.content, self.net.proxy, settings=self.settings, sync=self.sync,
-            on_changed=self.on_settings_changed,
-            on_open_settings=lambda: self.show_page("settings")
-        )
-        self._prepare_page(self.pages["rules"])
+        self.pages["comm"] = CommPage(
+            self.content, self.comm, username=lambda: self.dm.username,
+            on_open_settings=self._open_comm_settings)
+        self._prepare_page(self.pages["comm"])
         yield
         self.pages["net"] = tk.Frame(self.content, bg=bg)
         self._build_net_page(self.pages["net"])
@@ -888,6 +895,7 @@ class BreakTimerApp:
         if cover is not None:
             cover.recolor()
             cover.step()
+        self._close_rules_popup()
         self.pages = {}
         self.nav_btns = {}
         self._apply_geometry()
@@ -1052,8 +1060,8 @@ class BreakTimerApp:
             self.pages["contract"].show()
         elif key == "net":
             self.refresh_net(force=True)
-        elif key == "rules":
-            self.pages["rules"].refresh(force=True)
+        elif key == "comm":
+            self.pages["comm"].show()
         elif key == "log":
             self.pages["log"].show()
         elif key == "settings":
@@ -1062,8 +1070,114 @@ class BreakTimerApp:
             self.pages["ach"].show()
         elif key == "reset":
             self.refresh_reset()
+        if key != "comm":
+            self.comm.set_viewing(False)
         self.update_log_badge()
         self.update_settings_badge()
+        self.update_comm_badge()
+
+
+    # ---- 沟通 (MECHANICS 24) ----
+
+    def _comm_snapshot(self) -> dict:
+        """发给对方的计时器状态; 黑雾中不给 (免得对方把看不到的数字说出来)."""
+        if self.contract.fog():
+            return {}
+        now = datetime.now()
+        if self.sleep_since is not None:
+            st = "sleep"
+        elif self.behavior.active() is not None:
+            st = "out"
+        elif self.state == RUNNING:
+            st = "focus"
+        elif self.state == ON_BREAK:
+            st = "break"
+        else:
+            st = "idle"
+        snap = {"state": st, "focus_total_min": self._today_hours_live() * 60.0, "focus_cur_min": 0.0,
+                "rest_left_min": 0.0, "break_start": None, "break_total_s": 0}
+        if self.state == RUNNING and self.start_wall is not None:
+            snap["focus_cur_min"] = self.contract.focus_minutes(self.start_wall, time.monotonic() - self.start_mono)
+        if self.state == ON_BREAK and self.break_end_wall is not None and self.break_start_wall is not None:
+            snap["rest_left_min"] = max(0.0, (self.break_end_wall - now).total_seconds()) / 60.0
+            snap["break_start"] = self.break_start_wall
+            snap["break_total_s"] = (self.break_end_wall - self.break_start_wall).total_seconds()
+        return snap
+
+    def _comm_hour_lines(self) -> list:
+        if self.contract.fog() or not self.dm.hour_enabled:
+            return []
+        today = datetime.now().strftime("%Y-%m-%d")
+        out = []
+        for hour in range(24):
+            text = self.dm.get_hour_text(today, hour)
+            if text:
+                out.append(f"{hour:02d}:00 {text}")
+        return out
+
+    def _comm_tick(self):
+        if self.dm.resetting:
+            return
+        try:
+            self.comm.tick()
+            if self.current_page == "comm" and "comm" in self.pages:
+                self.pages["comm"].refresh()
+        except Exception as e:
+            self._log_window(f"ERROR    comm {type(e).__name__}: {e}")
+
+    def update_comm_badge(self):
+        b = getattr(self, "nav_btns", {}).get("comm")
+        if b:
+            cfg(b, text=self.nav_labels["comm"] + (" ●" if self.comm.unread else ""))
+
+    def _open_comm_settings(self):
+        self.show_page("settings")
+        if "settings" in self.pages:
+            self.pages["settings"].show_tab("comm")
+
+    # ---- 规则: 设置 → 联网 里的弹窗 ----
+
+    def open_rules_popup(self):
+        win = self._rules_win
+        try:
+            if win is not None and win.winfo_exists():
+                win.deiconify()
+                win.lift()
+                win.focus_force()
+                return
+        except tk.TclError:
+            pass
+        top = tk.Toplevel(self.root, bg=COLORS["bg"])
+        top.title(tr("🛡  规则"))
+        w, h = config.scaled(1000), config.scaled(780)
+        try:
+            sw, sh = top.winfo_screenwidth(), top.winfo_screenheight()
+            w, h = min(w, sw - 80), min(h, sh - 120)
+            x = self.root.winfo_rootx() + max(0, (self.root.winfo_width() - w) // 2)
+            y = self.root.winfo_rooty() + max(0, (self.root.winfo_height() - h) // 4)
+            x, y = max(0, min(x, sw - w)), max(0, min(y, sh - h - 60))
+            top.geometry(f"{w}x{h}+{x}+{y}")
+        except tk.TclError:
+            top.geometry(f"{w}x{h}")
+        top.transient(self.root)
+        self._rules_win = top
+        page = RulesPage(top, self.net.proxy, settings=self.settings, sync=self.sync,
+                         on_changed=self.on_settings_changed,
+                         on_open_settings=self._close_rules_popup)
+        page.pack(fill="both", expand=True)
+        self.pages["rules"] = page
+        top.protocol("WM_DELETE_WINDOW", self._close_rules_popup)
+        top.bind("<Escape>", lambda _e: self._close_rules_popup())
+        page.refresh(force=True)
+
+    def _close_rules_popup(self):
+        self.pages.pop("rules", None)
+        win, self._rules_win = self._rules_win, None
+        if win is not None:
+            try:
+                win.destroy()
+            except tk.TclError:
+                pass
 
 
     # ---- 合约页上的侧边栏: 换成合约页主题的颜色 (MECHANICS 18) ----
@@ -2723,7 +2837,10 @@ class BreakTimerApp:
 
     def _refresh_if_visible(self, *keys):
         for key in keys:
-            if self.current_page == key and key in self.pages:
+            if key == "rules":                     # 规则是弹窗, 开着就刷新
+                if key in self.pages:
+                    self.pages[key].refresh()
+            elif self.current_page == key and key in self.pages:
                 self.pages[key].refresh()
 
     def _schedule_hourly(self):
@@ -5648,8 +5765,9 @@ class BreakTimerApp:
         event = self.net.tick(dt)
         self.refresh_net()
         self._sync_break_lock()
-        if self.current_page == "rules" and "rules" in self.pages:
+        if "rules" in self.pages:
             self.pages["rules"].refresh()
+        self._comm_tick()
         if self.current_page == "settings" and "settings" in self.pages:
             self.pages["settings"].refresh_sync()
         if event == "started" and self._update_retry and getattr(config, "UPDATE_CHECK", 1):

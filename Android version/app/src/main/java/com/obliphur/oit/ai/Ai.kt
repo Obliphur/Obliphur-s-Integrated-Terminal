@@ -88,7 +88,7 @@ object Ai {
 
     // ---- 请求 ----
 
-    private fun checkProfile(p: Profile) {
+    fun checkProfile(p: Profile) {
         val url = p.baseUrl.trim()
         if (url.isEmpty()) throw AiError("config", "Base URL 为空")
         val u = try { URL(url) } catch (e: Exception) { throw AiError("config", "Base URL 必须是 https:// 开头(本机模型可用 http://localhost)") }
@@ -117,7 +117,11 @@ object Ai {
         body.take(300)
     }
 
-    fun chat(p: Profile, system: String, user: String): String {
+    fun chat(p: Profile, system: String, user: String): String = chatMessages(p, system, listOf("user" to user))
+
+    /** 带历史的一次请求: messages = (user | assistant, 文字), 以 user 开头, 以 user 结尾. API 没有记忆, 历史要每次一起发 (沟通, Comm.kt). */
+    fun chatMessages(p: Profile, system: String, messages: List<Pair<String, String>>,
+                     maxTokens: Int = MAX_TOKENS, temperature: Double = 0.2): String {
         checkProfile(p)
         val key = p.apiKey.trim()
         val conn = URL(endpoint(p)).openConnection() as HttpURLConnection
@@ -128,17 +132,19 @@ object Ai {
         conn.doOutput = true
         conn.setRequestProperty("Content-Type", "application/json")
         conn.setRequestProperty("User-Agent", "OIT/1.0")
-        val body = JSONObject().put("model", p.model).put("max_tokens", MAX_TOKENS)
+        val body = JSONObject().put("model", p.model).put("max_tokens", maxTokens)
+        val arr = JSONArray()
         if (p.protocol == "anthropic") {
             conn.setRequestProperty("x-api-key", key)
             conn.setRequestProperty("anthropic-version", ANTHROPIC_VERSION)
-            body.put("system", system).put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", user)))
+            body.put("system", system)
         } else {
             if (key.isNotEmpty()) conn.setRequestProperty("Authorization", "Bearer $key")
-            body.put("temperature", 0.2).put("messages", JSONArray()
-                .put(JSONObject().put("role", "system").put("content", system))
-                .put(JSONObject().put("role", "user").put("content", user)))
+            body.put("temperature", temperature)
+            arr.put(JSONObject().put("role", "system").put("content", system))
         }
+        for ((role, text) in messages) arr.put(JSONObject().put("role", role).put("content", text))
+        body.put("messages", arr)
         val code: Int
         val text: String
         try {

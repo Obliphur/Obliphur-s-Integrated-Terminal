@@ -1,0 +1,164 @@
+package com.obliphur.oit.core
+
+import com.obliphur.oit.ai.AiConfig
+import com.obliphur.oit.ai.AiError
+import com.obliphur.oit.ai.Profile
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import java.io.File
+import java.nio.file.Files
+import java.time.LocalDateTime
+
+/** 沟通 (MECHANICS 24). 对应桌面版 comm.py 的 _selftest. */
+class CommTest {
+    private var clock = LocalDateTime.of(2026, 11, 2, 9, 0, 0)
+    private val calls = mutableListOf<Pair<String, List<Pair<String, String>>>>()
+    private val script = ArrayDeque<String>()
+
+    private fun comm(dir: File, personas: File): Comm {
+        // 本机地址不要求 Key: 单元测试里没有 Android Keystore
+        AiConfig(File(dir, "ai_config.json")).also {
+            it.provider = "custom"
+            it.profiles["custom"] = Profile("custom", "http://localhost:1/v1", "openai", "m", "")
+            it.save()
+        }
+        return Comm(dir, personas, { clock }) { _, system, msgs ->
+            calls.add(system to msgs.toList())
+            val r = script.removeFirst()
+            if (r.startsWith("ERR:")) throw AiError("network", r.substring(4))
+            r
+        }
+    }
+
+    private fun wait(c: Comm) {
+        for (i in 0 until 300) {
+            Thread.sleep(10)
+            c.tick()
+            if (!c.busy) return
+        }
+        throw AssertionError("超时")
+    }
+
+    @Test
+    fun prefixAndPersonas() {
+        val p = CommText.prefixPrompt()
+        assertTrue(p.startsWith("你需要回复来自自律软件OIT用户的信息"))
+        for (k in listOf("I.", "II.", "III.", "IV.根据你的专注时间段", "不超过5min", CommText.REFUSE, "默认你的每轮专注时间总是50min", "ln1.2"))
+            assertTrue(k, k in p)
+        assertTrue(p.trimEnd().endsWith("以下是用户设定的人设:"))
+        assertTrue(CommText.readme().startsWith("如何编写人设prompt:") && p in CommText.readme())
+
+        val td = Files.createTempDirectory("oit").toFile()
+        val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "personas"))
+        assertTrue(File(td, "personas/README.md").exists() && c.listPersonas().isEmpty())
+        assertEquals("小夏.txt", c.importPersona("小夏.txt", "你是小夏, 大学生.".byteInputStream()))
+        assertEquals("小夏 (2).txt", c.importPersona("小夏.txt", "x".byteInputStream()))
+        assertEquals("", c.importPersona("x.json", "x".byteInputStream()))
+        assertEquals(listOf("小夏 (2).txt", "小夏.txt"), c.listPersonas())
+        assertTrue("大学生" in c.readPersona("小夏.txt") && c.readPersona("../x").isEmpty())
+        assertEquals("还没有选人设", c.send("hi"))
+    }
+
+    @Test
+    fun flow() {
+        val td = Files.createTempDirectory("oit").toFile()
+        val dir = File(td, "d").also { it.mkdirs() }
+        val c = comm(dir, File(td, "personas"))
+        c.importPersona("小夏.txt", "你是小夏.每天 8 点到 12 点上课.".byteInputStream())
+        c.set(persona = "小夏.txt")
+        c.hourLines = { listOf("08:00 起床", "09:00 写代码") }
+        val snap = CommSnap("break", restLeftMin = 12.4, focusTotalMin = 200.0, breakStart = clock, breakTotalS = 1800.0)
+        c.snapshot = { snap }
+
+        script.add("早!")
+        assertEquals("", c.send("早"))
+        wait(c)
+        val (system, msgs) = calls.last()
+        assertTrue(system.startsWith(CommText.prefixPrompt()) && system.endsWith("上课."))
+        val first = msgs[0].second
+        assertTrue("2026-11-02 周一 09:00" in first && "整点记录: 08:00 起床; 09:00 写代码" in first)
+        assertTrue("剩余休息时间: 12 分钟" in first && "今日总专注时长: 3 小时 20 分钟" in first && first.endsWith("早"))
+        assertEquals(listOf("me", "ai"), c.visible().map { it.role })
+        assertEquals(1, c.unread)
+
+        // 30 分钟内同类信息不重复, 满 30 分钟又发
+        clock = clock.plusMinutes(29)
+        script.add("嗯"); c.send("在吗"); wait(c)
+        assertFalse("整点记录" in calls.last().second.last().second || "OIT 附带信息" in calls.last().second.last().second)
+        clock = clock.plusMinutes(2)
+        script.add("嗯"); c.send("还在"); wait(c)
+        assertTrue("整点记录" in calls.last().second.last().second && "计时器" in calls.last().second.last().second)
+
+        // 不方便: 不显示, 消息留着, 10 分钟后一次性交给模型
+        script.add(CommText.REFUSE)
+        c.send("上课吗"); wait(c)
+        assertTrue(c.visible().last().role == "me" && c.messages.none { CommText.REFUSE in it.text })
+        script.add("我下课了! 刚才说什么?")
+        c.tick(); assertFalse(c.busy)
+        clock = clock.plusMinutes(11)
+        c.tick(); assertTrue(c.busy)
+        wait(c)
+        assertEquals("ai", c.visible().last().role)
+        assertTrue("还没有回复" in calls.last().second.last().second)
+
+        // 出错: 消息保留
+        script.add("ERR:连接失败")
+        c.send("喂"); wait(c)
+        assertEquals("连接失败", c.error)
+        assertEquals("me", c.visible().last().role)
+
+        // 重开: 记录和设置都在
+        val c2 = Comm(dir, File(td, "personas"), { clock }) { _, _, _ -> "" }
+        assertEquals("小夏.txt", c2.persona)
+        assertEquals(c.visible().size, c2.visible().size)
+
+        // /clear: 之前的记录不再显示, 也不再发给模型; 信息重新附带; 清空前发出的请求回复到了也丢掉
+        c.hourLines = { listOf("09:00 写代码") }
+        c.clear()
+        script.add("晚安"); c.send("我先睡了"); wait(c)
+        assertEquals(2, c.visible().size)
+        assertEquals("", c.send(" /CLEAR "))
+        assertTrue(c.visible().isEmpty() && c.messages.isEmpty())
+        script.add("新的开始"); c.send("你好"); wait(c)
+        val sent = calls.last().second
+        assertTrue(sent.size == 1 && "我先睡了" !in sent[0].second && "整点记录" in sent[0].second)
+        script.add("迟到的回复"); c.send("在吗"); c.clear(); wait(c)
+        assertTrue(c.visible().isEmpty() && !c.busy)
+        assertTrue(Comm(dir, File(td, "personas"), { clock }) { _, _, _ -> "" }.visible().isEmpty())
+    }
+
+    @Test
+    fun proactive() {
+        val td = Files.createTempDirectory("oit").toFile()
+        val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "personas"))
+        c.importPersona("小夏.txt", "你是小夏".byteInputStream())
+        c.set(persona = "小夏.txt")
+        val start = clock
+        var snap = CommSnap("break", restLeftMin = 25.0, focusTotalMin = 60.0, breakStart = start, breakTotalS = 25 * 60.0)
+        c.snapshot = { snap }
+        c.tick(); assertFalse(c.busy)
+        clock = start.plusMinutes(2).plusSeconds(59)
+        c.tick(); assertFalse(c.busy)
+        script.add("休息啦, 在干嘛?")
+        clock = start.plusMinutes(5).plusSeconds(1)
+        c.tick(); assertTrue(c.busy)
+        wait(c)
+        assertEquals(listOf("ai"), c.visible().map { it.role })
+        assertTrue("主动给用户发一条消息" in calls.last().second.last().second)
+        c.tick(); assertFalse("同一次休息只主动发一次", c.busy)
+        // 休息不到 20 分钟不发
+        val s2 = clock.plusMinutes(1)
+        snap = CommSnap("break", breakStart = s2, breakTotalS = 15 * 60.0)
+        clock = s2.plusMinutes(6)
+        c.tick(); assertFalse(c.busy)
+        // 主动消息被拒绝: 什么也不留下
+        snap = CommSnap("break", breakStart = clock, breakTotalS = 30 * 60.0)
+        script.add(CommText.REFUSE)
+        clock = clock.plusMinutes(5)
+        c.tick(); wait(c)
+        assertEquals(1, c.visible().size)
+        assertEquals(1, c.messages.count { it.role == "sys" })
+    }
+}

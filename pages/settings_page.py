@@ -22,8 +22,10 @@ class SettingsPage(tk.Frame):
                  on_theme=None, on_end_setup=None, updater=None, on_update_check=None,
                  on_update_install=None, on_update_relay=None, sync=None, achievements=None,
                  on_open_achievements=None, data_dir=None, recording=None, on_delete_record=None,
-                 on_contract_theme=None):
+                 on_contract_theme=None, comm=None, on_open_rules=None):
         super().__init__(master, bg=COLORS["bg"])
+        self.comm = comm
+        self.on_open_rules = on_open_rules
         self.sm = settings
         self.ach_store = achievements
         self.on_open_achievements = on_open_achievements
@@ -137,6 +139,10 @@ class SettingsPage(tk.Frame):
         for key, _text in SETTINGS_PAGES[1:]:
             if key == "record":
                 self._build_record_page(self.areas[key].inner)
+            if key == "net":
+                self._build_rules_card(self.areas[key].inner)
+            if key == "comm":
+                self._build_comm_page(self.areas[key].inner)
             self._build_page_items(key)
             if key == "record":
                 self._build_record_lists(self.areas[key].inner)
@@ -144,6 +150,7 @@ class SettingsPage(tk.Frame):
         # ---- 各页共用的底栏 ----
         foot = tk.Frame(self, bg=bg)
         foot.pack(fill="x", padx=28, pady=(4, 10))
+        self.foot = foot
         self.lbl_global = tk.Label(
             foot, text="", bg=bg, fg=COLORS["text_dim"],
             font=config.font("small"), anchor="w", justify="left"
@@ -177,6 +184,11 @@ class SettingsPage(tk.Frame):
             self._rec_sig = {}
             self._check_camera()
             self.refresh_records()
+        if key == "comm":
+            self._refresh_comm()
+            hide_pack(self.foot)                 # 沟通页的设置即时保存, 没有"保存本页修改"
+        else:
+            show_pack(self.foot, fill="x", padx=28, pady=(4, 10))
         for k, b in self._tab_btns.items():
             if k == key:
                 cfg(b, bg=COLORS.get("accent_fill", COLORS["accent"]),
@@ -758,6 +770,138 @@ class SettingsPage(tk.Frame):
             cfg(self.lbl_ach_count,
                 text=tr("已达成 {n}", n=len(self.ach_store.unlocked)))
 
+    # ---- 联网页: 规则 (弹窗) ----
+
+    def _build_rules_card(self, body):
+        fr, head = self._card(body, "🛡  规则")
+        self._track(ttk.Button(head, text=tr("打开"), command=lambda: self.on_open_rules and self.on_open_rules()),
+                    "打开").pack(side="right")
+
+    # ---- 沟通页: API, 人设, 默认发送的信息, 头像 (即时保存, 没有等待期) ----
+
+    def _build_comm_page(self, body):
+        c = self.comm
+        if c is None:
+            return
+        card = COLORS["bg_card"]
+        small = config.font("small")
+
+        fr, head = self._card(body, "🔑  API")
+        self._track(ttk.Button(head, text=tr("设置"), command=self._comm_api),
+                    "设置").pack(side="right")
+        self.lbl_comm_api = tk.Label(fr, text="", bg=card, fg=COLORS["text"], font=small, anchor="w")
+        self.lbl_comm_api.pack(fill="x", padx=12, pady=(2, 10))
+
+        fr, head = self._card(body, "🎭  人设")
+        self._track(ttk.Button(head, text=tr("打开文件夹"), command=self._comm_open_folder),
+                    "打开文件夹").pack(side="right")
+        self._track(ttk.Button(head, text=tr("导入"), command=self._comm_import),
+                    "导入").pack(side="right", padx=(0, 6))
+        self.comm_persona = tk.StringVar()
+        self.cb_persona = ttk.Combobox(fr, textvariable=self.comm_persona, state="readonly", width=40)
+        self.cb_persona.pack(fill="x", padx=12, pady=(2, 10))
+        self.cb_persona.bind("<<ComboboxSelected>>", lambda _e: self._comm_pick_persona())
+
+        fr, _head = self._card(body, "📨  默认发送的信息")
+        self.comm_vars = {}
+        for key, text in (("send_hour", "整点记录"), ("send_timer", "计时器状态")):
+            v = tk.BooleanVar(value=bool(c.cfg.get(key)))
+            self.comm_vars[key] = v
+            self._track(tk.Checkbutton(fr, text=tr(text), variable=v, bg=card, fg=COLORS["text"],
+                                       selectcolor=card, activebackground=card, activeforeground=COLORS["text"],
+                                       font=config.font("body"), anchor="w",
+                                       command=lambda k=key: self._comm_flag(k)), text).pack(
+                fill="x", padx=12, pady=(0, 2))
+        tk.Frame(fr, bg=card, height=8).pack()
+
+        fr, _head = self._card(body, "🖼  头像")
+        v = tk.BooleanVar(value=bool(c.cfg.get("show_avatar")))
+        self.comm_vars["show_avatar"] = v
+        self._track(tk.Checkbutton(fr, text=tr("显示头像"), variable=v, bg=card, fg=COLORS["text"],
+                                   selectcolor=card, activebackground=card, activeforeground=COLORS["text"],
+                                   font=config.font("body"), anchor="w",
+                                   command=lambda: self._comm_flag("show_avatar")), "显示头像").pack(
+            fill="x", padx=12, pady=(0, 2))
+        self.avatar_box = tk.Frame(fr, bg=card)
+        self.avatar_vars = {}
+        for key, text in (("avatar_me", "我"), ("avatar_ai", "对方")):
+            row = tk.Frame(self.avatar_box, bg=card)
+            row.pack(fill="x", padx=12, pady=2)
+            self._track(tk.Label(row, text=tr(text), bg=card, fg=COLORS["text"], font=config.font("body"),
+                                 width=6, anchor="w"), text).pack(side="left")
+            sv = tk.StringVar(value=str(c.cfg.get(key) or ""))
+            self.avatar_vars[key] = sv
+            ent = ttk.Entry(row, textvariable=sv, width=8)
+            ent.pack(side="left")
+            sv.trace_add("write", lambda *_a, k=key: self._comm_avatar(k))
+        self.avatar_foot = tk.Frame(fr, bg=card, height=8)
+        self.avatar_foot.pack()
+        self._comm_avatar_visible()
+        self.areas["comm"].bind_children()
+
+    def _comm_api(self):
+        from . import ai_dialogs
+        ai_dialogs.open_model_settings(self.winfo_toplevel(), self.comm.ai)
+        self._refresh_comm()
+
+    def _comm_open_folder(self):
+        folder = self.comm.personas
+        os.makedirs(folder, exist_ok=True)
+        self._open_uri(folder)
+
+    def _comm_import(self):
+        import comm as comm_mod
+        path = filedialog.askopenfilename(
+            title=tr("导入人设"), parent=self.winfo_toplevel(),
+            filetypes=[(tr("人设文件"), "*.txt *.md"), (tr("所有文件"), "*.*")])
+        if not path:
+            return
+        name = comm_mod.import_persona(self.comm.personas, path)
+        if not name:
+            toast.warn(tr("只能导入 .txt / .md 文件."))
+            return
+        self.comm.set_cfg(persona=name)
+        self._refresh_comm()
+
+    def _comm_pick_persona(self):
+        name = self.comm_persona.get().strip()
+        if name:
+            self.comm.set_cfg(persona=name)
+
+    def _comm_flag(self, key):
+        self.comm.set_cfg(**{key: bool(self.comm_vars[key].get())})
+        if key == "show_avatar":
+            self._comm_avatar_visible()
+
+    def _comm_avatar(self, key):
+        self.comm.set_cfg(**{key: self.avatar_vars[key].get().strip()[:4]})
+
+    def _comm_avatar_visible(self):
+        if self.comm.cfg.get("show_avatar"):
+            show_pack(self.avatar_box, fill="x", before=self.avatar_foot)
+        else:
+            hide_pack(self.avatar_box)
+
+    def _refresh_comm(self):
+        c = self.comm
+        if c is None or not hasattr(self, "cb_persona"):
+            return
+        import comm as comm_mod
+        self.cb_persona.config(values=comm_mod.list_personas(c.personas))
+        set_var(self.comm_persona, c.persona_name())
+        prof = c.ai.profile()
+        text = f"{tr(_provider_label(c.ai.provider))} · {prof.get('model') or '—'}"
+        text += "  ✗" if self._comm_api_missing() else "  ✓"
+        cfg(self.lbl_comm_api, text=text)
+
+    def _comm_api_missing(self) -> bool:
+        import ai_assist
+        try:
+            ai_assist.check_profile(self.comm.ai.profile())
+        except ai_assist.AIError:
+            return True
+        return False
+
     # ---- 录像 (合约的目光 / 刻痕): 权限, 录像文件 ----
 
     def _card(self, body, title_zh):
@@ -1083,6 +1227,11 @@ class SettingsPage(tk.Frame):
             cfg(self.lbl_global, text=tr("当前没有待生效的修改."), fg=COLORS["text_dim"])
             if not self.btn_cancel_all.instate(["disabled"]):
                 self.btn_cancel_all.state(["disabled"])
+
+
+def _provider_label(provider: str) -> str:
+    import ai_assist
+    return ai_assist.PROVIDERS.get(provider, ai_assist.PROVIDERS["custom"])["label"]
 
 
 def _fmt_size(n: int) -> str:

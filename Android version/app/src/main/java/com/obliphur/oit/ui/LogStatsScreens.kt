@@ -475,6 +475,12 @@ private fun JournalBlock() {
     }
     Text(tr(com.obliphur.oit.core.Prescript.IDLE_ENTRIES.getValue("X").body), color = o.text, fontSize = 16.sp)
     Dim(tr("2 小时只能看一次."))
+    val logs = core.prescript.logsNewest()
+    if (logs.isEmpty()) Dim(tr("还没有日志."))
+    for ((day, text) in logs) OitCard {
+        Text(day, color = o.accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        Text(text, color = o.text, fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
+    }
 }
 
 @Composable

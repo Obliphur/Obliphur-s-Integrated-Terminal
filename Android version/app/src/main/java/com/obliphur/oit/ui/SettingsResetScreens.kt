@@ -12,6 +12,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -90,8 +93,10 @@ fun SettingsScreen(tab: String, setTab: (String) -> Unit, act: MainActivity) {
         }
 
         val (opts, nums) = Schema.pageSpecs(tab, s.str("THEME"))
-        for (spec in opts) OptionRow(spec, edits)
+        if (tab == "net") RulesCard()
+        for (spec in opts.filter { it.key != "FILTER_MODE" }) OptionRow(spec, edits)    // 过滤名单模式在规则弹窗里切换
         PageExtras(tab, act)
+        if (tab == "comm") CommSettings()
         if (nums.isNotEmpty()) {
             Heading(tr("数值"))
             for (spec in nums.filter { it.group == null }) NumRow(spec, edits)
@@ -158,6 +163,35 @@ private fun savePage(tab: String, edits: MutableMap<String, String>) {
         else -> core.toast(tr("已保存: {i} 项立即生效, {s} 项 48 小时后生效.", "i" to instant, "s" to staged), "success")
     }
     core.changed()
+}
+
+/** 联网页里的"规则": 打开一个全屏弹窗 (原来的规则页). */
+@Composable
+private fun RulesCard() {
+    val o = LocalOit.current
+    var open by remember { mutableStateOf(false) }
+    OitCard(Modifier.clickable { open = true }) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(tr("🛡  规则"), fontWeight = FontWeight.Bold, color = o.text, modifier = Modifier.weight(1f))
+            PlainButton(tr("打开")) { open = true }
+        }
+    }
+    if (open) androidx.compose.ui.window.Dialog(
+        onDismissRequest = { open = false },
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        androidx.compose.material3.Surface(Modifier.fillMaxSize(), color = o.bg) {
+            Column(Modifier.fillMaxSize()) {
+                Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(tr("🛡  规则"), fontWeight = FontWeight.Bold, color = o.text, fontSize = 18.sp, modifier = Modifier.weight(1f))
+                    TextButton({ open = false }) { Text("✕", color = o.dim, fontSize = 18.sp) }
+                }
+                Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                    RulesScreen { open = false; OitApp.instance.navRequests.tryEmit(it) }
+                }
+            }
+        }
+    }
 }
 
 @Composable

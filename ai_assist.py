@@ -281,6 +281,18 @@ class AIConfig:
             prof["protocol"] = "openai"
 
 
+_CONFIGS = {}
+
+
+def shared_config(path: str, template: str = None) -> "AIConfig":
+    """同一个文件只有一份 AIConfig: 规则页和沟通页都改模型设置, 不能各拿一份旧的互相覆盖."""
+    key = os.path.abspath(path)
+    cfg = _CONFIGS.get(key)
+    if cfg is None:
+        cfg = _CONFIGS[key] = AIConfig(path, template=template)
+    return cfg
+
+
 def check_profile(profile: dict):
     """配置不完整 / 不安全就抛 AIError(config).API Key 绝不通过明文 http 发出去(本机地址除外)."""
     url = (profile.get("base_url") or "").strip()
@@ -327,20 +339,27 @@ def _error_text(body: bytes) -> str:
 
 def chat(profile: dict, system: str, user: str, timeout: float = 90.0, opener=None) -> str:
     """向模型发一次请求,返回文本.失败抛 AIError."""
+    return chat_messages(profile, system, [{"role": "user", "content": user}],
+                         timeout=timeout, opener=opener)
+
+
+def chat_messages(profile: dict, system: str, messages: list, timeout: float = 90.0, opener=None,
+                  max_tokens: int = MAX_TOKENS, temperature: float = 0.2) -> str:
+    """带历史的一次请求: messages = [{"role": "user" | "assistant", "content": 文字}], 以 user 开头, 以 user 结尾.
+    API 本身没有记忆, 想让模型记得前面说过的话, 就得每次把历史一起发过去 (沟通页, comm.py)."""
     check_profile(profile)
     key = (profile.get("api_key") or "").strip()
     headers = {"Content-Type": "application/json", "User-Agent": "OIT/1.0"}
     if profile["protocol"] == "anthropic":
         headers["x-api-key"] = key
         headers["anthropic-version"] = ANTHROPIC_VERSION
-        body = {"model": profile["model"], "max_tokens": MAX_TOKENS, "system": system,
-                "messages": [{"role": "user", "content": user}]}
+        body = {"model": profile["model"], "max_tokens": max_tokens, "system": system,
+                "messages": list(messages)}
     else:
         if key:
             headers["Authorization"] = "Bearer " + key
-        body = {"model": profile["model"], "max_tokens": MAX_TOKENS, "temperature": 0.2,
-                "messages": [{"role": "system", "content": system},
-                             {"role": "user", "content": user}]}
+        body = {"model": profile["model"], "max_tokens": max_tokens, "temperature": temperature,
+                "messages": [{"role": "system", "content": system}] + list(messages)}
     req = urllib.request.Request(endpoint(profile),
                                  data=json.dumps(body).encode("utf-8"),
                                  headers=headers, method="POST")

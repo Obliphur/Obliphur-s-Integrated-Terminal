@@ -202,7 +202,7 @@ SETTINGS_SCHEMA = [
         ],
         "fmt": lambda v: "Whitelist" if v == "whitelist" else "Blacklist",
         "desc": "仅 Proxy / 代理-全屏蔽 (Proxy block-all) 断网方式下有效 (全屏蔽时只看应用名单).黑名单模式:默认放行,只拦名单内.白名单模式:默认拦截,离线只放行名单内,联网会话中全放行.",
-        "page": "rules",
+        "page": "net", "hidden": True,        # 在 设置 → 联网 → 规则 的弹窗里切换
     },
     {
         "key": "WINDOW_LIMIT_ENABLED", "label": "任务栏窗口数上限",
@@ -368,11 +368,11 @@ SETTINGS_PAGES = [
     ("basic", "基本设置"),
     ("timer", "计时器"),
     ("net", "联网"),
-    ("rules", "规则"),
     ("log", "整点记录"),
     ("record", "录像"),
     ("window", "窗口"),
     ("daily", "日常"),
+    ("comm", "沟通"),
 ]
 
 SCHEMA_BY_KEY = {s["key"]: s for s in SETTINGS_SCHEMA}

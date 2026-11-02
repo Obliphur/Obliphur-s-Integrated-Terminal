@@ -295,7 +295,7 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
         msg += "\n" + tr("母端: {who}", "who" to mother)
         if (req.mother == req.id) msg += "\n\n" + tr("本机的设置, 名单和记录将被对方的数据替换.")
         core.notice(tr("🔗  绑定请求"), msg, listOf(
-            NoticeButton(tr("接受"), "accept", true), NoticeButton(tr("拒绝"), "reject", false)), page = "rules") { action ->
+            NoticeButton(tr("接受"), "accept", true), NoticeButton(tr("拒绝"), "reject", false)), page = "settings:net") { action ->
             if (action == "accept") sync.answerPairing(req.token, true)
             else if (action == "reject") sync.answerPairing(req.token, false)
         }

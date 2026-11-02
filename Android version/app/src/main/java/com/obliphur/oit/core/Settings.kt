@@ -90,7 +90,7 @@ object Schema {
         num("QUOTA_MULT_SAT", "周六联网倍率", "×", 1.0, 0.0, 10.0, false, 1.0, "net", "weekday", "周六"),
         num("QUOTA_MULT_SUN", "周日联网倍率", "×", 1.0, 0.0, 10.0, false, 1.0, "net", "weekday", "周日"),
         // ---- 规则 ----
-        Spec("FILTER_MODE", "过滤名单模式", Kind.CHOICE, true, "rules", "blacklist",
+        Spec("FILTER_MODE", "过滤名单模式", Kind.CHOICE, true, "net", "blacklist",
             choices = listOf("blacklist" to "黑名单模式", "whitelist" to "白名单模式")),
         // ---- 整点记录 ----
         Spec("HOUR_LOG_ENABLED", "整点记录开关", Kind.CHOICE, true, "log", "1", choices = ONOFF),
@@ -133,8 +133,8 @@ object Schema {
 
     val PAGES = listOf(
         "basic" to "基本设置", "timer" to "计时器", "net" to "联网",
-        "rules" to "规则", "log" to "整点记录", "contract" to "合约", "window" to "应用",
-        "record" to "录像", "daily" to "日常",
+        "log" to "整点记录", "contract" to "合约", "window" to "应用",
+        "record" to "录像", "daily" to "日常", "comm" to "沟通",
     )
 
     val BY_KEY = ALL.associateBy { it.key }

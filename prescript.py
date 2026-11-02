@@ -868,6 +868,13 @@ class PrescriptEngine:
         """统计页的日志上一次被看的时刻 ("YYYY-MM-DDTHH:MM:SS", 没看过 = ""); 随同步, 几台设备共用 2 小时的冷却 (MECHANICS 8.7)."""
         return str(self._data.get("journal_view") or "")
 
+    def logs_newest(self) -> list:
+        """X 词条保存过的记录 [(日期, 文字)], 新的在前; 统计页的日志里显示."""
+        logs = self._data.get("logs")
+        if not isinstance(logs, dict):
+            return []
+        return [(day, str(logs[day])) for day in sorted(logs, reverse=True) if str(logs[day]).strip()]
+
     def note_journal(self, now: datetime = None):
         now = (now or datetime.now()).replace(microsecond=0)
         self._data["journal_view"] = _iso(now)

@@ -36,6 +36,8 @@ interface Host {
     /** 永远不锁的应用 (设置, 电话, 权限确认 …); whitelist: 白名单模式下系统自带的应用也不锁. */
     fun lockExempt(pkg: String, whitelist: Boolean): Boolean
     fun openPage(page: String)
+    /** 沟通的人设文件夹 (用户自己往里放 .txt / .md); null = 放在数据目录里. */
+    fun personasDir(): File? = null
     fun scheduleWake(seconds: Double)
     /** 新达成了成就 (界面上的提示由界面读 Core.ach.unseen 画出; 在后台时可以另外发通知). */
     fun achievementsUnlocked(ids: List<String>) {}
@@ -81,6 +83,8 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     val contract: Contract
     /** 指令 (Prescript, 都市之意主题独占, MECHANICS 22). */
     val prescript: PrescriptEngine
+    /** 沟通 (MECHANICS 24). */
+    val comm: Comm
     /** 界面当前页 (指令的 V / VI 要看) 和界面是不是在前台 (退到后台相当于电脑版的最小化). */
     @Volatile var currentPage = "timer"
     @Volatile var uiForeground = true
@@ -245,6 +249,37 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             },
         )
         loadViolations()
+        comm = Comm(dir, host.personasDir() ?: File(dir, "personas"))
+        comm.snapshot = { commSnapshot() }
+        comm.hourLines = { commHourLines() }
+    }
+
+    /** 发给对方的计时器状态; 黑雾中不给 (免得对方把看不到的数字说出来). */
+    private fun commSnapshot(): CommSnap? {
+        if (contract.fog()) return null
+        val st = when {
+            timer.sleepSince != null -> "sleep"
+            behavior.active() != null -> "out"
+            timer.state == TState.RUNNING -> "focus"
+            timer.state == TState.ON_BREAK -> "break"
+            else -> "idle"
+        }
+        val total = todayHoursLive() * 60.0
+        if (timer.state == TState.RUNNING)
+            return CommSnap(st, focusTotalMin = total, focusCurMin = contract.focusMinutes(timer.startWall, timer.elapsed))
+        val bs = timer.breakStartWall
+        if (timer.state == TState.ON_BREAK && bs != null) {
+            val left = timer.countdown
+            return CommSnap(st, restLeftMin = left / 60.0, focusTotalMin = total, breakStart = bs,
+                breakTotalS = secondsBetween(bs, LocalDateTime.now()) + left)
+        }
+        return CommSnap(st, focusTotalMin = total)
+    }
+
+    private fun commHourLines(): List<String> {
+        if (contract.fog() || !dm.hourEnabled) return emptyList()
+        val day = LocalDate.now().key()
+        return (0..23).mapNotNull { h -> dm.hourText(day, h).takeIf { it.isNotEmpty() }?.let { "%02d:00 %s".format(h, it) } }
     }
 
     /** 今天的专注小时数, 包括正在进行、还没记进统计的这一段. */
@@ -505,6 +540,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         }
         timer.tick()
         runCatching { prescript.tick() }
+        runCatching { comm.tick() }
         beatPower()
         runCatching { checkAdapterBack(); checkAwayPriority(); checkContractConflicts() }
         checkContract()
