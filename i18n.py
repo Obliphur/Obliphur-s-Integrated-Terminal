@@ -87,7 +87,7 @@ EN = {
     "正在加载…": "Loading…",
     "正在重新加载界面…": "Reloading the interface…",
     "开启": "ON",
-    "今天空闲时间里能用沟通的 45 分钟已经用完了 (休息时不限)": "Today's 45 minutes of chat time while idle are used up (resting is unlimited).",
+    "今天空闲时间里能用沟通的 30 分钟已经用完了 (休息时不限)": "Today's 30 minutes of chat time while idle are used up (resting is unlimited).",
     "💬  主动发起": "💬  Initiating chats",
     "允许非正在聊天的人发起对话": "Let people I'm not currently chatting with start conversations",
     "✂  分条发送": "✂  Split replies",

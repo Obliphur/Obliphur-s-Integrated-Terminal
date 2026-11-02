@@ -1116,7 +1116,7 @@ class BreakTimerApp:
         if st in ("focus", "sleep", "out"):
             return tr({"focus": "专注中不能使用沟通", "sleep": "睡眠中不能使用沟通", "out": "外出中不能使用沟通"}[st])
         if st == "idle" and self.comm.idle_over():
-            return tr("今天空闲时间里能用沟通的 45 分钟已经用完了 (休息时不限)")
+            return tr("今天空闲时间里能用沟通的 30 分钟已经用完了 (休息时不限)")
         return ""
 
     def _comm_snapshot(self) -> dict:

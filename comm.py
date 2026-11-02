@@ -33,7 +33,7 @@ REFUSE = "[refuse to reply]"
 PROACTIVE_MIN_REST = 20 * 60          # I. 用户休息超过这么久才会主动发消息
 PROACTIVE_DELAY = (60, 180)           # I. 休息开始后多久主动发 (秒)
 PROACTIVE_LEAD = (60, 180)            # II / III. 人设日程里的空闲 / 休息开始前多久主动发 (秒)
-IDLE_DAILY_SECONDS = 45 * 60          # 每天在"空闲"状态下最多能打开沟通界面这么久 (休息时不限); 超过后空闲时不能用沟通, 休息了才能用
+IDLE_DAILY_SECONDS = 30 * 60          # 每天在"空闲"状态下最多能打开沟通界面这么久 (休息时不限); 超过后空闲时不能用沟通, 休息了才能用
 IDLE_TICK_MAX = 5                     # 一次 tick 最多记这么多秒 (电脑睡眠 / 卡住时不会一下子记很多)
 BG_STAGGER = 120                      # 非正在聊天的对象主动发消息: 两次请求之间至少隔这么多秒 (一个一个来, 不会同时好几个人找你)
 PROACTIVE_P = {"idle": 80, "rest": 60, "long": 70}   # I / II / III 发不发的概率 (%) 的默认值: 人设里没写 "长时间休息发起谈话概率:n%" / "空闲发起谈话概率:n%" / "休息发起谈话概率:n%" 时用
@@ -2228,7 +2228,7 @@ def _selftest():
     for x in (c5, c6):
         x.flush()
 
-    # ---- 每天空闲时间里能用沟通 45 分钟 (只算空闲状态下开着界面的时间) ----
+    # ---- 每天空闲时间里能用沟通 30 分钟 (只算空闲状态下开着界面的时间) ----
     dI = os.path.join(td, "idleb")
     os.makedirs(dI)
     cI = Comm(dI, folder, now=lambda: clock[0], chat_fn=fake)
@@ -2251,10 +2251,10 @@ def _selftest():
     idle_run(600)                                          # 休息: 不限, 不记
     assert 55 <= IDLE_DAILY_SECONDS - cI.idle_left() <= 61
     state[0] = "idle"
-    idle_run(2300)
+    idle_run(1500)
     assert not cI.idle_over()
     idle_run(400)
-    assert cI.idle_over() and cI.idle_left() == 0, "空闲时间里 45 分钟用完了"
+    assert cI.idle_over() and cI.idle_left() == 0, "空闲时间里 30 分钟用完了"
     clock[0] += timedelta(seconds=600)                     # 卡住 / 睡眠了很久: 一次 tick 最多记 IDLE_TICK_MAX 秒
     cI.tick()
     cI.flush()

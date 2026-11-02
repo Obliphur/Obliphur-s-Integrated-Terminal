@@ -289,10 +289,10 @@ class CommTest {
         assertEquals(60.0, Comm.IDLE_DAILY_SECONDS - c.idleLeft(), 2.0)
         state = "break"; run(600)                                  // 休息: 不限, 不记
         assertEquals(60.0, Comm.IDLE_DAILY_SECONDS - c.idleLeft(), 2.0)
-        state = "idle"; run(2300)
+        state = "idle"; run(1500)
         assertFalse(c.idleOver())
         run(400)
-        assertTrue("空闲时间里 45 分钟用完了", c.idleOver())
+        assertTrue("空闲时间里 30 分钟用完了", c.idleOver())
         clock = clock.plusSeconds(600); c.tick()                   // 卡住很久: 一次 tick 最多记几秒
         assertTrue(c.idleOver())
         clock = LocalDateTime.of(2027, 6, 2, 8, 0)

@@ -241,7 +241,7 @@ class Comm(
         /** 非正在聊天的对象主动发消息: 两次请求之间至少隔这么多秒 (一个一个来, 不会同时好几个人找你). */
         const val BG_STAGGER = 120
         /** 每天在"空闲"状态下最多能打开沟通界面这么久 (秒; 休息时不限); 超过后空闲时不能用沟通, 休息了才能用. */
-        const val IDLE_DAILY_SECONDS = 45 * 60
+        const val IDLE_DAILY_SECONDS = 30 * 60
         /** 一次 tick 最多记这么多秒 (手机休眠 / 卡住时不会一下子记很多). */
         const val IDLE_TICK_MAX = 5.0
         const val PROACTIVE_MIN_REST = 20 * 60          // I. 用户休息超过这么久才会主动发消息

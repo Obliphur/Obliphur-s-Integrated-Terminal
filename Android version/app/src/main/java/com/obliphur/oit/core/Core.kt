@@ -282,7 +282,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             "focus" -> tr("专注中不能使用沟通")
             "sleep" -> tr("睡眠中不能使用沟通")
             "out" -> tr("外出中不能使用沟通")
-            "idle" -> if (comm.idleOver()) tr("今天空闲时间里能用沟通的 45 分钟已经用完了 (休息时不限)") else ""
+            "idle" -> if (comm.idleOver()) tr("今天空闲时间里能用沟通的 30 分钟已经用完了 (休息时不限)") else ""
             else -> ""
         }
     }
