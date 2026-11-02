@@ -15,7 +15,7 @@ import config
 import toast
 from config import COLORS
 from i18n import tr
-from .widgets import Modal, ScrollArea, cfg
+from .widgets import Modal, ScrollArea, cfg, focus_name
 
 # 这些原因是"还没配置好", 提示之后直接带去 设置 → 沟通
 NEEDS_SETUP = ("还没有选人设",)
@@ -164,7 +164,7 @@ class CommPage(tk.Frame):
         c = self.comm
         self._resize_job = None
         self._sync_status()
-        if str(self.cb_model.focus_get() if self.winfo_exists() else "") != str(self.cb_model):
+        if focus_name(self.cb_model) not in (str(self.cb_model), "popdown"):          # 正在选模型 (下拉框开着) 时不动它
             options = c.model_options()
             if list(self.cb_model.cget("values")) != options:
                 self.cb_model.config(values=options)

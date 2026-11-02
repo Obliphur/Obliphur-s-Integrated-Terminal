@@ -111,6 +111,7 @@ object CommText {
             "VII.如果用户问起OIT的使用数据(日历/统计/计时器等),你可以同时输入[refuse to reply][模块名]查询,得到该模块的数据内容和格式;" +
             "如果用户问的是你自己的使用情况,请参照这个格式,根据人设编造你自己的数据来回复.可以一次查询多个.\n" +
             "可查询的模块: [contract]合约词条库 [calendar]日历 [stats]统计 [timer]计时器 [log]整点记录 [net]联网 [rules]规则 [settings]设置 [reset]重置 [prescript]指令.\n" +
+            "VIII.你可以把你的话分开说.当用户说完话时,系统会试图调用两次API,最好不要让你的表达太集中.如果你只想说一次,第二次${REFUSE}.\n" +
             "\n以下是用户设定的人设:\n"
 
     fun readme(): String =
@@ -189,6 +190,11 @@ class Comm(
         const val PROACTIVE_GAP = 10 * 60               // 两条主动消息至少隔这么久 (相邻的日程段不连发)
         const val PROACTIVE_KEEP = 12                   // 记下最近多少个已经处理过的主动消息时间点
         const val PING_QUIET = 5 * 60                   // 收到主动消息之前这么久没和对方聊过, 才响提示音
+        /** 规则 VIII: 回复了这些请求 (用户说的话) 之后, 再调用一次 API, 让对方可以把话分开说. */
+        val FOLLOW_KINDS = setOf("user", "retry")
+        const val FOLLOW_TAG = "[系统·续]"
+        val FOLLOW_BODY = "$FOLLOW_TAG 你刚才已经回复了用户. 如果还有想接着说的话, 请现在再发一条 (不要重复上一条); " +
+            "如果你只想说一次, 返回${CommText.REFUSE}."
         const val DEFAULT_P_IDLE = 80                   // II / III 发不发的概率 (%) 的默认值; 设置 → 沟通 里可以改
         const val DEFAULT_P_REST = 60
         const val RETRY_GAP = 10 * 60
@@ -876,8 +882,11 @@ class Comm(
         if (hardBlock()) { again = false; changed(); return }       // 等回复的时候"无言为真"生效了: 这条回复不要了
         if (r.epoch != epoch) { again = false; changed(); return }       // 发出之后清空过聊天记录: 这条回复不要了
         val refused = r.err.isEmpty() && CommText.isRefusal(r.reply)
+        // 第二次调用 (规则 VIII) 等回复的时候用户又说话了: 这条不要了 (用户的新消息重新回复)
+        val drop = r.kind == "followup" && r.err.isEmpty() && !refused && (again || unanswered())
+        if (drop) log("REPLY followup dropped: 等回复的时候用户又发了消息")
         if (refused) log("REPLY refused (${r.kind}): 对方回了 [refuse to reply], 不显示" + if (unanswered()) ", 稍后重试" else "")
-        if (r.err.isNotEmpty() || refused) {
+        if (r.err.isNotEmpty() || refused || drop) {
             error = r.err
             if (refused && unanswered()) {
                 retryN++
@@ -897,6 +906,9 @@ class Comm(
         if (again) {
             again = false
             if (unanswered() && r.err.isEmpty()) request("user")
+        } else if (r.kind in FOLLOW_KINDS && r.err.isEmpty() && !refused && problem().isEmpty() && leader()) {
+            // 规则 VIII: 对方的第一条已经收到了, 再调用一次, 让它可以接着说 (只想说一次就 [refuse to reply], 什么也不留下)
+            trigger("followup", FOLLOW_BODY)
         }
     }
 

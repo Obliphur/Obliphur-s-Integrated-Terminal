@@ -156,6 +156,18 @@ class Modal(tk.Toplevel):
         return self.result
 
 
+def focus_name(widget) -> str:
+    """现在有键盘焦点的控件的名字 (没有 = ""). 下拉框打开时焦点在它的列表窗口里, tkinter 认不出来, focus_get() 会抛 KeyError: 'popdown'
+    (界面每秒刷新一次, 抛出来页面就刷不动了): 这时返回 "popdown"."""
+    try:
+        w = widget.focus_get()
+    except KeyError as e:
+        return str(e.args[0]) if e.args else "popdown"
+    except tk.TclError:
+        return ""
+    return str(w) if w is not None else ""
+
+
 def wrap_label(widget, pad: int = 16):
     def on_configure(event):
         width = max(120, event.width - pad)

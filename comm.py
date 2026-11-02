@@ -38,6 +38,10 @@ PROACTIVE_LATE = 120                  # 到点之后过了这么久 (程序刚�
 PROACTIVE_GAP = 10 * 60               # 两条主动消息至少隔这么久 (相邻的日程段不连发)
 PROACTIVE_KEEP = 12                   # 记下最近多少个已经处理过的主动消息时间点
 PING_QUIET = 5 * 60                   # 收到主动消息之前这么久没和对方聊过, 才响提示音
+FOLLOW_KINDS = ("user", "retry")      # 规则 VIII: 回复了这些请求 (用户说的话) 之后, 再调用一次 API, 让对方可以把话分开说
+FOLLOW_TAG = "[系统·续]"
+FOLLOW_BODY = (FOLLOW_TAG + " 你刚才已经回复了用户. 如果还有想接着说的话, 请现在再发一条 (不要重复上一条); "
+               "如果你只想说一次, 返回" + REFUSE + ".")
 RETRY_GAP = 10 * 60                   # 对方不方便回复时, 多久再把消息交给模型
 RETRY_MAX = 12
 HISTORY_SENT = 60                     # 每次请求最多带多少条聊天记录
@@ -85,6 +89,7 @@ def prefix_prompt() -> str:
         "VII.如果用户问起OIT的使用数据(日历/统计/计时器等),你可以同时输入[refuse to reply][模块名]查询,得到该模块的数据内容和格式;"
         "如果用户问的是你自己的使用情况,请参照这个格式,根据人设编造你自己的数据来回复.可以一次查询多个.\n"
         "可查询的模块: [contract]合约词条库 [calendar]日历 [stats]统计 [timer]计时器 [log]整点记录 [net]联网 [rules]规则 [settings]设置 [reset]重置 [prescript]指令.\n"
+        f"VIII.你可以把你的话分开说.当用户说完话时,系统会试图调用两次API,最好不要让你的表达太集中.如果你只想说一次,第二次{REFUSE}.\n"
         "\n以下是用户设定的人设:\n")
 
 
@@ -994,7 +999,8 @@ class Comm:
                 self.log(f"REQ {kind} ok {time.monotonic() - started:.1f}s reply_chars={len(reply)}")
             except ai_assist.AIError as e:
                 res = (kind, extra, "", e.message, epoch)
-                self.log(f"REQ {kind} FAIL {time.monotonic() - started:.1f}s {e.kind}: {e.message}")
+                self.log(f"REQ {kind} FAIL {time.monotonic() - started:.1f}s {e.kind}: {e.message}"
+                         + (f" (系统代理 {ai_assist.proxy_hint()})" if e.kind == "network" else ""))
             except Exception as e:      # noqa: BLE001
                 res = (kind, extra, "", f"{type(e).__name__}", epoch)
                 self.log(f"REQ {kind} FAIL {time.monotonic() - started:.1f}s {type(e).__name__}: {e}")
@@ -1014,9 +1020,13 @@ class Comm:
             self._changed()
             return
         refused = not err and is_refusal(reply)
+        # 第二次调用 (规则 VIII) 等回复的时候用户又说话了: 这条不要了 (用户的新消息重新回复)
+        drop = kind == "followup" and not err and not refused and (self._again or self.unanswered())
+        if drop:
+            self.log("REPLY followup dropped: 等回复的时候用户又发了消息")
         if refused:
             self.log(f"REPLY refused ({kind}): 对方回了 [refuse to reply], 不显示" + (", 稍后重试" if self.unanswered() else ""))
-        if err or refused:
+        if err or refused or drop:
             self.error = err
             if refused and self.unanswered():
                 rt = self.cfg.get("retry") or {}
@@ -1042,6 +1052,9 @@ class Comm:
             self._again = False
             if self.unanswered() and not err:
                 self._request("user")
+        elif kind in FOLLOW_KINDS and not err and not refused and not self.problem() and self.leader():
+            # 规则 VIII: 对方的第一条已经收到了, 再调用一次, 让它可以接着说 (只想说一次就 [refuse to reply], 什么也不留下)
+            self._trigger("followup", FOLLOW_BODY)
 
     # ---- 每秒一次 ----
     def tick(self):
@@ -1208,8 +1221,12 @@ def _selftest():
     clock = [datetime(2026, 11, 2, 9, 0, 0)]
     calls = []
     script = []
+    follow, follow_calls = [], []          # 第二次调用 (规则 VIII) 单独记: 不占 script / calls, 没有安排的回 [refuse to reply]
 
     def fake(profile, system, messages, **kw):
+        if FOLLOW_TAG in messages[-1]["content"]:
+            follow_calls.append((system, [dict(m) for m in messages]))
+            return follow.pop(0) if follow else REFUSE
         calls.append((system, [dict(m) for m in messages]))
         r = script.pop(0)
         if isinstance(r, Exception):
@@ -1685,6 +1702,49 @@ def _selftest():
     assert "休息时间将在 22:58 开始" in calls[-1][1][-1]["content"]
     assert fire_before(c6, datetime(2027, 4, 1, 23, 0)) is None, "刚发过, 23:00 的空闲段不再发"
     assert any(k.startswith("S2027-04-01T23:00") for k in c6._pro_done())
+    # ---- VIII: 用户说完话, 对方的第一条收到之后再调用一次, 可以分开说 ----
+    pv = prefix_prompt()
+    assert "VIII.你可以把你的话分开说.当用户说完话时,系统会试图调用两次API,最好不要让你的表达太集中.如果你只想说一次,第二次[refuse to reply]." in pv
+    assert pv.index("VII.如果用户问起") < pv.index("VIII.") < pv.index("以下是用户设定的人设:")
+    os.makedirs(os.path.join(td, "fu"))
+    cu = Comm(os.path.join(td, "fu"), folder, now=lambda: clock[0], chat_fn=fake)
+    cu.ai.set_profile("deepseek", api_key="k")
+    cu.ai.provider = "deepseek"
+    cu.set_cfg(persona="小夏.txt")
+    cu.snapshot = lambda: {"state": "idle"}
+    n0 = len(follow_calls)
+    script.append("第一句")
+    follow.append("第二句")
+    cu.send("在吗")
+    wait(cu)
+    assert [m["text"] for m in cu.visible()] == ["在吗", "第一句", "第二句"]
+    assert len(follow_calls) == n0 + 1 and FOLLOW_TAG in follow_calls[-1][1][-1]["content"]
+    assert follow_calls[-1][1][-2]["content"] == "第一句", "第二次请求里带着第一条"
+    n_f = len(follow_calls)
+    script.append("只有一句")                                  # 只想说一次: 第二次 [refuse to reply], 什么也不留下
+    cu.send("好的")
+    wait(cu)
+    assert cu.visible()[-1]["text"] == "只有一句" and len(follow_calls) == n_f + 1
+    assert sum(m["role"] == "sys" for m in cu.messages) == 1
+    script.append(REFUSE)                                      # 第一次就被拒绝 (对方不方便): 不调用第二次
+    cu.send("在不在")
+    wait(cu)
+    assert len(follow_calls) == n_f + 1 and cu.unanswered()
+    cu.clear()                                                 # 第二次调用还在等的时候用户又说话了: 第二次的回复不要了, 按新消息重新回复
+    script.extend(["甲", "回应等等"])
+    follow.append("乙(不该出现)")
+    cu.send("你好")
+    for _ in range(300):
+        time.sleep(0.01)
+        cu.tick()
+        if cu.busy and any(m["role"] == "ai" for m in cu.messages):
+            break
+    cu.send("等等")
+    wait(cu)
+    assert [m["text"] for m in cu.visible()] == ["你好", "甲", "等等", "回应等等"], [m["text"] for m in cu.visible()]
+    cu.set_cfg(persona="小夏.txt")
+    cu.flush()
+
     # README 里的标准写法: 例子能被认出来; 打开 OIT / 换人设 / 新对话都会重新读人设日程
     assert "日程的标准写法" in readme_text() and schedule_segments(readme_text()) == [("rest", 520), ("idle", 750)]
     log5 = lambda: open(os.path.join(td, "sched", "comm.log"), encoding="utf-8").read()

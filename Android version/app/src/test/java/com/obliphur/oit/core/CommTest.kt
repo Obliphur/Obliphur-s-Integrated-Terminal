@@ -18,6 +18,9 @@ class CommTest {
     private var clock = LocalDateTime.of(2026, 11, 2, 9, 0, 0)
     private val calls = mutableListOf<Pair<String, List<Pair<String, String>>>>()
     private val script = ArrayDeque<String>()
+    /** 第二次调用 (规则 VIII) 单独记: 不占 script / calls, 没有安排的回 [refuse to reply]. */
+    private val follow = ArrayDeque<String>()
+    private val followCalls = mutableListOf<Pair<String, List<Pair<String, String>>>>()
 
     private fun comm(dir: File, personas: File): Comm {
         // 本机地址不要求 Key: 单元测试里没有 Android Keystore
@@ -27,10 +30,15 @@ class CommTest {
             it.save()
         }
         return Comm(dir, personas, { clock }) { _, system, msgs ->
-            calls.add(system to msgs.toList())
-            val r = script.removeFirst()
-            if (r.startsWith("ERR:")) throw AiError("network", r.substring(4))
-            r
+            if (Comm.FOLLOW_TAG in msgs.last().second) {
+                followCalls.add(system to msgs.toList())
+                follow.removeFirstOrNull() ?: CommText.REFUSE
+            } else {
+                calls.add(system to msgs.toList())
+                val r = script.removeFirst()
+                if (r.startsWith("ERR:")) throw AiError("network", r.substring(4))
+                r
+            }
         }
     }
 
@@ -419,6 +427,47 @@ class CommTest {
         assertEquals(1, c.visible().size)
         assertEquals(1, c.messages.count { it.role == "sys" })
         assertEquals(listOf(1), pings)
+    }
+
+    /** 规则 VIII: 用户说完话, 对方的第一条收到之后再调用一次 API, 可以把话分开说. */
+    @Test
+    fun splitReply() {
+        val p = CommText.prefixPrompt()
+        assertTrue("VIII.你可以把你的话分开说.当用户说完话时,系统会试图调用两次API,最好不要让你的表达太集中.如果你只想说一次,第二次[refuse to reply]." in p)
+        assertTrue(p.indexOf("VII.如果用户问起") < p.indexOf("VIII.") && p.indexOf("VIII.") < p.indexOf("以下是用户设定的人设:"))
+        val td = Files.createTempDirectory("oit").toFile()
+        val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
+        c.importPersona("小夏.txt", "你是小夏".byteInputStream())
+        c.set(persona = "小夏.txt")
+        c.snapshot = { CommSnap("idle") }
+        script.add("第一句"); follow.add("第二句")
+        assertEquals("", c.send("在吗")); wait(c)
+        assertEquals(listOf("在吗", "第一句", "第二句"), c.visible().map { it.text })
+        assertEquals(1, followCalls.size)
+        assertTrue(Comm.FOLLOW_TAG in followCalls.last().second.last().second)
+        assertEquals("第一句", followCalls.last().second[followCalls.last().second.size - 2].second)   // 第二次请求里带着第一条
+        val n = followCalls.size
+        // 只想说一次: 第二次 [refuse to reply], 什么也不留下
+        script.add("只有一句")
+        c.send("好的"); wait(c)
+        assertEquals("只有一句", c.visible().last().text)
+        assertEquals(n + 1, followCalls.size)
+        assertEquals(1, c.messages.count { it.role == "sys" })
+        // 第一次就被拒绝 (对方不方便): 不调用第二次
+        script.add(CommText.REFUSE)
+        c.send("在不在"); wait(c)
+        assertEquals(n + 1, followCalls.size)
+        assertEquals("me", c.visible().last().role)
+        // 第二次调用还在等的时候用户又说话了: 第二次的回复不要了, 按新消息重新回复
+        c.clear()
+        script.add("甲"); script.add("回应等等"); follow.add("乙(不该出现)")
+        c.send("你好")
+        for (i in 0 until 300) {
+            Thread.sleep(10); c.tick()
+            if (c.busy && c.messages.any { it.role == "ai" }) break
+        }
+        c.send("等等"); wait(c)
+        assertEquals(listOf("你好", "甲", "等等", "回应等等"), c.visible().map { it.text })
     }
 
     @Test

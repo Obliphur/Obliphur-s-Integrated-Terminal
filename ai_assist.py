@@ -164,6 +164,34 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 _OPENER = urllib.request.build_opener(_NoRedirect)
+_DIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)       # 不走系统代理
+
+
+def _open_url(req, timeout, opener=None):
+    """发请求. 系统代理指向的端口拒绝连接 (代理软件没开 / 刚切换代理 / OIT 的过滤代理没在监听: WinError 10061) 时,
+    再直连试一次; 直连也不行就报最初的错误."""
+    if opener is not None:
+        return opener(req, timeout=timeout)
+    try:
+        return _OPENER.open(req, timeout=timeout)
+    except urllib.error.URLError as e:
+        if not isinstance(getattr(e, "reason", None), ConnectionRefusedError) or not urllib.request.getproxies():
+            raise
+        try:
+            return _DIRECT.open(req, timeout=timeout)
+        except Exception:       # noqa: BLE001
+            raise e
+
+
+def proxy_hint() -> str:
+    """现在请求会用的系统代理 (host:port, 不含账号); 没有 = "direct". 连接失败时记进日志, 方便排查."""
+    try:
+        from urllib.parse import urlsplit
+        proxies = urllib.request.getproxies()
+        p = proxies.get("https") or proxies.get("http") or ""
+        return urlsplit(p if "//" in p else "//" + p).netloc.rpartition("@")[2] or "direct" if p else "direct"
+    except Exception:       # noqa: BLE001
+        return "?"
 
 
 # ══════════════ 配置 ══════════════
@@ -364,7 +392,7 @@ def chat_messages(profile: dict, system: str, messages: list, timeout: float = 9
                                  data=json.dumps(body).encode("utf-8"),
                                  headers=headers, method="POST")
     try:
-        with (opener or _OPENER.open)(req, timeout=timeout) as resp:
+        with _open_url(req, timeout, opener) as resp:
             raw = resp.read(2_000_000)
     except urllib.error.HTTPError as e:
         try:
@@ -419,7 +447,7 @@ def list_models(profile: dict, timeout: float = 20.0, opener=None) -> list:
         headers["Authorization"] = "Bearer " + key
     req = urllib.request.Request(models_url(profile), headers=headers, method="GET")
     try:
-        with (opener or _OPENER.open)(req, timeout=timeout) as resp:
+        with _open_url(req, timeout, opener) as resp:
             raw = resp.read(2_000_000)
     except urllib.error.HTTPError as e:
         try:
@@ -863,6 +891,46 @@ def _selftest():
         assert decrypt_key("dpapi:!!notbase64") == ""
     finally:
         _dpapi, can_encrypt = real_dpapi, real_can
+
+    # 系统代理指向的端口拒绝连接 (WinError 10061): 再直连试一次; 直连也不行报最初的错误; 没有系统代理时不重试
+    global _OPENER, _DIRECT
+    import io
+    real = (_OPENER, _DIRECT, urllib.request.getproxies)
+
+    class _Refuse:
+        def open(self, req, timeout=None):
+            raise urllib.error.URLError(ConnectionRefusedError(10061, "refused"))
+
+    class _Ok:
+        n = 0
+
+        def open(self, req, timeout=None):
+            self.n += 1
+            return io.BytesIO(json.dumps({"data": [{"id": "m-z"}]}).encode())
+    prof = {"base_url": "https://x.example/v1", "protocol": "openai", "api_key": "k9", "provider": "custom"}
+    try:
+        urllib.request.getproxies = lambda: {"https": "http://user:pw@127.0.0.1:7897"}
+        assert proxy_hint() == "127.0.0.1:7897", proxy_hint()
+        ok = _Ok()
+        _OPENER, _DIRECT = _Refuse(), ok
+        assert list_models(prof) == ["m-z"] and ok.n == 1
+        _DIRECT = _Refuse()
+        try:
+            list_models(prof)
+            raise AssertionError
+        except AIError as e:
+            assert e.kind == "network" and "连接失败" in e.message
+        urllib.request.getproxies = lambda: {}
+        assert proxy_hint() == "direct"
+        ok = _Ok()
+        _OPENER, _DIRECT = _Refuse(), ok
+        try:
+            list_models(prof)
+            raise AssertionError
+        except AIError as e:
+            assert e.kind == "network" and ok.n == 0, "没有系统代理: 本来就是直连, 不重试"
+    finally:
+        _OPENER, _DIRECT, urllib.request.getproxies = real
     return "ai_assist selftest OK"
 
 

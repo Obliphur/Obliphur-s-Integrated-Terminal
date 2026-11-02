@@ -12,7 +12,7 @@ import toast
 from config import COLORS
 from i18n import tr
 from settings_manager import APPLY_INSTANT, SCHEMA_BY_KEY, SETTINGS_PAGES, page_specs, chime_name
-from .widgets import (ScrollArea, Switch, wrap_label, frozen, smooth, cfg, set_var, flavor,
+from .widgets import (ScrollArea, Switch, wrap_label, frozen, smooth, cfg, set_var, flavor, focus_name,
                       show_pack, hide_pack, show_grid, hide_grid)
 
 
@@ -967,16 +967,12 @@ class SettingsPage(tk.Frame):
         self.cb_persona.config(values=[lab for _n, lab in self._persona_labels])
         cur = c.persona_name()
         set_var(self.comm_persona, next((lab for n, lab in self._persona_labels if n == cur), ""))
-        if str(self.txt_profile.focus_get() if self.winfo_exists() else "") != str(self.txt_profile) \
+        if focus_name(self.txt_profile) != str(self.txt_profile) \
                 and self.txt_profile.get("1.0", "end").strip() != str(c.cfg.get("user_profile") or ""):
             self.txt_profile.delete("1.0", "end")                       # 别的设备同步来了新的身份背景
             self.txt_profile.insert("1.0", str(c.cfg.get("user_profile") or ""))
         for key, var in getattr(self, "pro_vars", {}).items():
-            try:
-                editing = self.focus_get() is self.pro_spins[key]
-            except (KeyError, tk.TclError):
-                editing = False
-            if not editing:
+            if focus_name(self) != str(self.pro_spins[key]):
                 set_var(var, str(c.pro_percent(key)))                   # 别的设备同步来了新的概率
         prof = c.ai.profile()
         text = f"{tr(_provider_label(c.ai.provider))} · {prof.get('model') or '—'}"
