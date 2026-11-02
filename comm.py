@@ -71,6 +71,7 @@ def prefix_prompt() -> str:
         "IV.根据你的专注时间段 你可能需要主动结束话题.你可以稍微延迟你的进入专注的时间点,不超过5min.\n"
         "V.你需要了解OIT的独占功能'合约':一个可以自选减益的 初始时长4h,生命值4的 让OIT变得更严苛的模块.\n"
         "如果你需要相关信息 同时输入[refuse to reply][contract] 可以获得词条库以回复用户.\n"
+        "如果需要更细致的信息 前往https://github.com/Obliphur/Obliphur-s-Integrated-Terminal下的MECHANICS.md查看.\n"
         "\n以下是用户设定的人设:\n")
 
 
@@ -1120,7 +1121,8 @@ def _selftest():
     assert info_tags(" [Refuse to reply] [CONTRACT] ") == ["contract"] and info_tags("[contract]") == []
     assert info_tags("[refuse to reply][mechanics.md]") == [] and info_tags("好的") == []
     p2 = prefix_prompt()
-    assert "V.你需要了解OIT的独占功能'合约'" in p2 and "[refuse to reply][contract]" in p2 and "mechanics" not in p2
+    assert "V.你需要了解OIT的独占功能'合约'" in p2 and "[refuse to reply][contract]" in p2 and "[refuse to reply][mechanics.md]" not in p2
+    assert "如果需要更细致的信息 前往https://github.com/Obliphur/Obliphur-s-Integrated-Terminal下的MECHANICS.md查看." in p2
     os.makedirs(os.path.join(td, "ci"))
     ci = Comm(os.path.join(td, "ci"), folder, now=lambda: clock[0], chat_fn=fake)
     ci.ai.set_profile("deepseek", api_key="k")
