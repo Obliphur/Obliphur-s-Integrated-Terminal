@@ -162,6 +162,7 @@ class Updater(private val ctx: Context) {
                 latest = v
                 error = ""
                 state = when {
+                    BuildConfig.DEV_BUILD -> "dev"            // 开发版 (本地构建): 不会更新成发布版, 只记下最新的发布版本号
                     !newer(v, current) -> "latest"
                     pickApk(rel) == null -> "noapk"
                     else -> "available"
@@ -281,6 +282,7 @@ class Updater(private val ctx: Context) {
 
     /** 其他设备直接发来的安装包 (已核对过 SHA-256): 和自己下载好的一样, 等用户点安装. */
     fun acceptFile(f: File, v: List<Int>?) {
+        if (BuildConfig.DEV_BUILD) return        // 开发版不装发布版的安装包
         cancelled = true            // 自己还在从 GitHub 下载: 不用了
         apk = f
         if (v != null) latest = v
@@ -293,6 +295,7 @@ class Updater(private val ctx: Context) {
         latest?.let { newer(it, current) } == true && pickApk(rel) != null } == true
 
     fun download(done: () -> Unit) {
+        if (BuildConfig.DEV_BUILD) return
         val rel = release ?: return
         if (!canDownload) return
         val src = pickApk(rel) ?: return
@@ -326,6 +329,7 @@ class Updater(private val ctx: Context) {
 
     /** 打开系统的安装界面. 还没允许 OIT 安装应用时先打开那个设置页. */
     fun install() {
+        if (BuildConfig.DEV_BUILD) return
         val f = apk ?: return
         if (!ctx.packageManager.canRequestPackageInstalls()) {
             ctx.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${ctx.packageName}"))

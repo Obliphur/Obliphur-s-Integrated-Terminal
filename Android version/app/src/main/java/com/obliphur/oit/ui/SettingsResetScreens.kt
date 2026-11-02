@@ -323,6 +323,7 @@ private fun PageExtras(tab: String, act: MainActivity) {
         val state = when (u.state) {
             "checking" -> tr("正在检查…")
             "latest" -> tr("已是最新版本")
+            "dev" -> tr("开发版: 不会更新成发布版 (最新发布 {v})", "v" to u.latestText)
             "available" -> tr("发现新版本 {v}", "v" to u.latestText)
             "noapk" -> tr("发现新版本 {v}", "v" to u.latestText) + " · " + tr("这个发布里没有安卓安装包")
             "downloading" -> tr("正在下载更新…") + " " + updateProgress(u)

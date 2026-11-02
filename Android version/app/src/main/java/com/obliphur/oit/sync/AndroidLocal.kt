@@ -52,6 +52,7 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
     // ---- 其他设备直接发来的安装包 (MECHANICS 16) ----
     override fun updateWanted(platform: String, version: String): String {
         if (platform != "android") return "platform"
+        if (com.obliphur.oit.BuildConfig.DEV_BUILD) return "dev"        // 开发版不装发布版的安装包
         val v = com.obliphur.oit.service.Updater.parseVersion(version) ?: return "not-newer"
         return if (com.obliphur.oit.service.Updater.newer(v, app.updater.current)) "" else "not-newer"
     }

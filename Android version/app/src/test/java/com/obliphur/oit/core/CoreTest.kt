@@ -172,6 +172,15 @@ class CoreTest {
         assertFalse("com.qq" in rs.items(RuleKeys.BLACK_APPS))
         assertEquals(RuleResult.CANCELLED, rs.remove(RuleKeys.BLACK_APPS, "com.qq").first)
         assertTrue(rs.pending.isEmpty())
+        // 过滤名单模式的切换在排队: 新模式的名单提前设置, 立即保存; 其他名单照常等
+        rs.presetKeys = { setOf(RuleKeys.WHITE_DOMAINS, RuleKeys.WHITE_APPS) }
+        assertEquals(RuleResult.APPLIED, rs.add(RuleKeys.WHITE_DOMAINS, "preset.example.com").first)
+        assertTrue("preset.example.com" in rs.items(RuleKeys.WHITE_DOMAINS))
+        assertEquals(RuleResult.STAGED, rs.add(RuleKeys.BLACK_DOMAINS, "later.example.com").first)
+        assertEquals(RuleResult.APPLIED, rs.remove(RuleKeys.WHITE_DOMAINS, "preset.example.com").first)
+        assertEquals(RuleResult.CANCELLED, rs.remove(RuleKeys.BLACK_DOMAINS, "later.example.com").first)
+        rs.presetKeys = { emptySet() }
+        assertTrue(rs.pending.isEmpty())
         // 排队写进文件, 重新读取后照样按时生效
         assertEquals(RuleResult.STAGED, rs.add(RuleKeys.WHITE_DOMAINS, "wikipedia.org").first)
         val rs2 = RuleStore(path, now = { clock })

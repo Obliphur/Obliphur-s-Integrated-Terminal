@@ -172,6 +172,9 @@ class RuleStore:
         self.delay = timedelta(hours=delay_hours)
         self._now = now or datetime.now
         self.dev_getter = lambda: False          # 开发者模式 / 配置期:改动不用等
+        # 过滤名单模式的切换排队中时 (MECHANICS 4.4): 新模式的名单现在还不起作用, 可以提前设置 —— 这些名单的改动立即保存, 不用再等 48 小时
+        # (它们要等模式切换生效才起作用, 切换本身已经在等了). app.py 接上: 返回这些名单的 key.
+        self.preset_keys = lambda: frozenset()
         # 提前启动的程序 (MECHANICS 20): 不看网站 / 应用名单, 直接放行 (代理-全屏蔽照样拦).
         # 由 app.py 在提前启动期间每秒钟更新成这些程序的 exe 名.
         self.exempt = set()
@@ -327,7 +330,7 @@ class RuleStore:
                 return "exists", item
             if self._find_pending("add", key, item) >= 0:
                 return "staged", item
-            if not self.dev_getter():
+            if not self.dev_getter() and key not in self.preset_keys():
                 self._stage("add", key, item)
                 return "staged", item
             self.lists[key].append(item)
@@ -352,7 +355,7 @@ class RuleStore:
                 return "missing", item
             if self._find_pending("remove", key, item) >= 0:
                 return "staged", item
-            if not self.dev_getter():
+            if not self.dev_getter() and key not in self.preset_keys():
                 self._stage("remove", key, item)
                 return "staged", item
             self.lists[key].remove(item)
@@ -484,6 +487,16 @@ def _selftest():
     assert rs.add(WHITE_DOMAINS, "???")[0] == "invalid"
     assert not rs.pending
     instant[0] = False
+    # 过滤名单模式的切换在排队: 新模式的名单提前设置, 改动立即保存 (其他名单照常等 48 小时)
+    rs.preset_keys = lambda: frozenset({WHITE_DOMAINS})
+    assert rs.add(WHITE_DOMAINS, "preset.example.com")[0] == "applied" and "preset.example.com" in rs.items(WHITE_DOMAINS)
+    assert rs.add(BLACK_DOMAINS, "later.example.com")[0] == "staged" and rs.pending
+    assert rs.remove(WHITE_DOMAINS, "preset.example.com")[0] == "applied" and "preset.example.com" not in rs.items(WHITE_DOMAINS)
+    rs.cancel_pending(0)
+    rs.preset_keys = lambda: frozenset()
+    assert rs.add(WHITE_DOMAINS, "preset.example.com")[0] == "staged", "没有排队的切换: 照常等"
+    rs.cancel_pending(0)
+    assert not rs.pending
 
     def d(host, exe, online):                       # 黑名单模式
         return rs.decide(host, exe, online, MODE_BLACKLIST)

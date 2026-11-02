@@ -179,7 +179,15 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             settings.grantFreeChange("BEHAVIOR_MODE")
         }
         setupWasActive = settings.inSetup()
-        rules = RuleStore(File(dir, "net_rules.json")).also { it.instant = { settings.changesInstant() } }
+        rules = RuleStore(File(dir, "net_rules.json")).also {
+            it.instant = { settings.changesInstant() }
+            it.presetKeys = {
+                val staged = settings.pending["FILTER_MODE"]?.value as? String
+                val cur = RuleKeys.forMode(settings.str("FILTER_MODE"))
+                if (staged == null || staged == settings.str("FILTER_MODE")) emptySet()
+                else RuleKeys.forMode(staged).toList().toSet() - cur.toList().toSet()
+            }
+        }
         dm = DataStore(dir, { settings.num("FILL_WINDOW") }, { settings.str("AUTO_TEXT") })
         dm.extraStudy = { day -> behavior.studyHours(LocalDate.parse(day)) }
         dm.extraDays = { behavior.days() }

@@ -349,6 +349,7 @@ class OitApp : Application(), Host {
             else core.notice(tr("⬆  发现新版本"), cur + "\n" + tr("发现新版本 {v}", "v" to u.latestText), listOf(
                 com.obliphur.oit.core.NoticeButton(tr("立即更新"), "update", true),
                 com.obliphur.oit.core.NoticeButton(tr("稍后"), "ok", false))) { if (it == "update") downloadUpdate() }
+            "dev" -> if (!auto) toast(Toast(tr("这是开发版, 不会更新成发布版") + " (${com.obliphur.oit.BuildConfig.VERSION_NAME}, " + tr("最新发布 {v}", "v" to u.latestText) + ")", "info", true))
             "noapk" -> if (!auto) toast(Toast(tr("发现新版本 {v}", "v" to u.latestText) + "\n" + tr("这个发布里没有安卓安装包"), "warn", true))
             "latest" -> if (!auto) toast(Toast(tr("已是最新版本") + " (${com.obliphur.oit.BuildConfig.VERSION_NAME})", "info", false))
             "error" -> if (auto) updateRetry = true else toast(Toast(tr("检查 / 更新失败: {e}", "e" to u.error), "warn", true))
@@ -444,6 +445,7 @@ class OitApp : Application(), Host {
     /** 请绑定的设备给这台手机下载新版本并从局域网发过来 (这台手机连 GitHub 下不动时; 对方例如电脑开着代理).
      *  下载失败时自动请一次 (manual = false 时只在有设备答应时提示). */
     fun askPeersForUpdate(manual: Boolean) {
+        if (com.obliphur.oit.BuildConfig.DEV_BUILD) { if (manual) toast(Toast(tr("这是开发版, 不会更新成发布版"), "info", false)); return }
         val s = sync ?: return
         val peers = s.peers().filter { it.value.optString("platform") in setOf("windows", "android") }
         if (peers.isEmpty()) {

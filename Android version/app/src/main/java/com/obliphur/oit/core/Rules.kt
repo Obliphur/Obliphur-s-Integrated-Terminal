@@ -113,6 +113,8 @@ class RuleStore(
     private val now: () -> LocalDateTime = LocalDateTime::now,
 ) {
     var instant: () -> Boolean = { false }
+    /** 过滤名单模式的切换在排队时 (MECHANICS 4.4): 新模式里 (当前模式没有的) 那些名单还不起作用, 可以提前设置 —— 它们的改动立即保存, 不用再等 48 小时. */
+    var presetKeys: () -> Set<String> = { emptySet() }
     private val lists = RuleKeys.ALL.associateWith { mutableListOf<String>() }
     val pending = mutableListOf<RulePending>()
     @Volatile
@@ -184,7 +186,7 @@ class RuleStore(
             return RuleResult.EXISTS to item
         }
         if (pending.any { it.op == "add" && it.list == key && it.item == item }) return RuleResult.STAGED to item
-        if (!instant()) {
+        if (!instant() && key !in presetKeys()) {
             pending.add(RulePending("add", key, item, now().plus(delay)))
             save()
             return RuleResult.STAGED to item
@@ -206,7 +208,7 @@ class RuleStore(
             return RuleResult.MISSING to item
         }
         if (pending.any { it.op == "remove" && it.list == key && it.item == item }) return RuleResult.STAGED to item
-        if (!instant()) {
+        if (!instant() && key !in presetKeys()) {
             pending.add(RulePending("remove", key, item, now().plus(delay)))
             save()
             return RuleResult.STAGED to item

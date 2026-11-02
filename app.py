@@ -299,6 +299,7 @@ class BreakTimerApp:
             config.DEV_MODE = True      # 本地开发版本: 自动开发者模式, 启动时不断网 (MECHANICS 3.5); 子端之后跟着母端
         self.net = NetGuard(self.dm.data_dir)
         self.net.on_tamper = self._on_net_tamper
+        self.net.proxy.rules.preset_keys = self._preset_rule_keys
         self.net.quota_factor = self.behavior.quota_factor
         self.net.cooldown_factor = self.behavior.cooldown_factor
         # 设备同步 (MECHANICS 15): 其他设备的账并进额度和统计
@@ -5565,6 +5566,21 @@ class BreakTimerApp:
             return int(self.var_min.get())
         except (TypeError, ValueError):
             return 0
+
+    def _preset_rule_keys(self):
+        """过滤名单模式的切换在排队时: 新模式里(当前模式没有的)那些名单的 key —— 可以提前设置, 改动立即保存 (MECHANICS 4.4)."""
+        try:
+            from netproxy.rules import keys_for_mode, WHITE_UPS, MODE_WHITELIST
+            st = self.settings.staged("FILTER_MODE")
+            if not st:
+                return frozenset()
+            new = st["value"]
+            keys = set(keys_for_mode(new)) - set(keys_for_mode(getattr(config, "FILTER_MODE", "blacklist")))
+            if new == MODE_WHITELIST and keys:
+                keys.add(WHITE_UPS)
+            return frozenset(keys)
+        except Exception:
+            return frozenset()
 
     def _on_net_tamper(self, kind: str):
         """系统代理被人改了 (关掉 / 换成别的代理), NetGuard 已经改回去了: 提示一次 (30 秒内不重复)."""

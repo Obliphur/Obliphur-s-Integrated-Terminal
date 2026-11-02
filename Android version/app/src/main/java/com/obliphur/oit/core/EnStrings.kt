@@ -5,6 +5,10 @@ object EnStrings {
     val MAP: Map<String, String> = hashMapOf(
         "{a} ~ {b} 做了什么?" to "What did you do from {a} to {b}?",
         "⚠  系统时间" to "⚠  System clock",
+        "打不开系统的激活界面." to "Could not open the system activation screen.",
+        "这是开发版, 不会更新成发布版" to "This is a dev build; it will not update to the release",
+        "最新发布 {v}" to "latest release {v}",
+        "开发版: 不会更新成发布版 (最新发布 {v})" to "Dev build: will not update to the release (latest release {v})",
         "{name},这没有意义.你可以在10min内修改回来,否则你的数据会被清除." to "{name}, this is pointless. You can change it back within 10 min, or your data will be wiped.",
         "系统时间已改回来." to "The system clock has been restored.",
         "覆水难收." to "What is spilled cannot be gathered again.",

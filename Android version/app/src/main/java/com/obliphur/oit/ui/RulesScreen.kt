@@ -570,7 +570,7 @@ private fun UninstallGuardRow() {
         else {
             Dim(tr("没有启用: 直接卸载 OIT 时来不及通知其他设备. 启用后, 卸载前必须取消激活, 取消时 OIT 会请其他设备清空数据."), size = 12, color = o.warn)
             PlainButton(tr("启用卸载保护")) {
-                runCatching { ctx.startActivity(com.obliphur.oit.service.OitAdmin.requestIntent(ctx)) }
+                if (!com.obliphur.oit.service.OitAdmin.request(ctx)) OitApp.instance.core.toast(tr("打不开系统的激活界面."), "warn")
             }
         }
     }

@@ -61,6 +61,7 @@ class RulesPage(tk.Frame):
         self._press = None            # 按下鼠标时的 (名单, 序号, 这一项是不是已经单独选中着)
         self._rules_version = -1
         self._ai_cfg = None
+        self._edit_new = False        # 切换排队中: 正在看 / 提前设置新模式的名单 (MECHANICS 4.4)
         self._build()
 
 
@@ -99,6 +100,7 @@ class RulesPage(tk.Frame):
             b = ttk.Button(mrow, text=tr(label), command=lambda m=mode: self._set_mode(m))
             b.pack(side="left", padx=(0, 8))
             self.btn_modes[mode] = b
+        self.btn_new = ttk.Button(mrow, text="", command=self._toggle_new)
         ttk.Button(mrow, text=tr("⚙ 模型"), command=self._ai_settings).pack(side="right")
         ttk.Button(mrow, text=tr("🤖 AI 建议"), command=self._ai_suggest).pack(
             side="right", padx=(0, 8))
@@ -278,6 +280,19 @@ class RulesPage(tk.Frame):
         return MODE_WHITELIST if getattr(config, "FILTER_MODE", MODE_BLACKLIST) == MODE_WHITELIST \
             else MODE_BLACKLIST
 
+    def _staged_mode(self):
+        st = self.settings.staged("FILTER_MODE") if self.settings else None
+        return st["value"] if st and st["value"] != self._mode() else None
+
+    def _view_mode(self) -> str:
+        """页面上显示 / 编辑的是哪个模式的名单: 平时是当前模式; 切换排队中并且点了\"提前设置\"时是待生效的新模式."""
+        new = self._staged_mode()
+        return new if (new and self._edit_new) else self._mode()
+
+    def _toggle_new(self):
+        self._edit_new = not self._edit_new
+        self.refresh(force=True)
+
     @smooth
     def _set_mode(self, mode: str):
         if self.settings is None:
@@ -301,7 +316,7 @@ class RulesPage(tk.Frame):
         ai_dialogs.open_model_settings(self.winfo_toplevel(), self._ai())
 
     def _ai_suggest(self):
-        ai_dialogs.open_suggest(self.winfo_toplevel(), self._ai(), self.rules, self._mode(),
+        ai_dialogs.open_suggest(self.winfo_toplevel(), self._ai(), self.rules, self._view_mode(),
                                 on_done=lambda: self.refresh(force=True))
 
     def _pick(self, key):
@@ -361,9 +376,13 @@ class RulesPage(tk.Frame):
         net_mode = getattr(config, "NET_MODE", "adapter")
         proxy_on = net_mode in ("proxy", "proxy_all")
         mode = self._mode()
+        new_mode = self._staged_mode()
+        if not new_mode:
+            self._edit_new = False
+        view = new_mode if (new_mode and self._edit_new) else mode
         blockall = net_mode == "proxy_all"
         # 全屏蔽: 网站名单不起作用, 只剩当前模式的应用名单 (MECHANICS 3.2.1)
-        active = keys_for_mode(mode)[1:] if blockall else keys_for_mode(mode)
+        active = keys_for_mode(view)[1:] if blockall else keys_for_mode(view)
 
         for key, fr in self._frames.items():
             if key not in active:
@@ -377,10 +396,18 @@ class RulesPage(tk.Frame):
         staged = self.settings.staged("FILTER_MODE") if self.settings else None
         if staged:
             target = tr("白名单模式") if staged["value"] == MODE_WHITELIST else tr("黑名单模式")
-            cfg(self.lbl_pending_mode,
-                text=tr("待生效: 切换到{mode}   ·   {when}").format(
-                    mode=target, when=self.settings.apply_at_text("FILTER_MODE")))
+            text = tr("待生效: 切换到{mode}   ·   {when}").format(
+                mode=target, when=self.settings.apply_at_text("FILTER_MODE"))
+            if new_mode:
+                show_pack(self.btn_new, side="left")
+                cfg(self.btn_new, text=tr("↩ 回到当前名单") if self._edit_new else tr("✏ 提前设置{mode}的名单").format(mode=target))
+                if self._edit_new:
+                    text += "\n" + tr("正在设置{mode}的名单: 改动立即保存, 切换生效之前不起作用.").format(mode=target)
+            else:
+                hide_pack(self.btn_new)
+            cfg(self.lbl_pending_mode, text=text)
         else:
+            hide_pack(self.btn_new)
             cfg(self.lbl_pending_mode, text="")
 
         if proxy_on:
