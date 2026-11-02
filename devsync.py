@@ -65,6 +65,11 @@ WIPES_KEEP = 50                         # 记住最近这么多个处理过的�
 OFFLINE_FWD_MS = OFFLINE_MS + (SYNC_EVERY + 5) * 1000
 # 同步失败的原因是"对方拒绝连接" (它的主机开着, 只是 OIT 没在运行): 不是偶然的网络问题, 不必等满 OFFLINE_MS, 这么久没有消息就算离线 (MECHANICS 8.4)
 REFUSED_OFFLINE_MS = 25_000
+# 对方被卸载了 (MECHANICS 9.2): 手机上的设备管理员拦不住卸载 (部分手机 / 系统的卸载界面直接删), 所以由其他设备发现 ——
+# 对方的主机一直在线 (同步端口和联动程序的端口都"拒绝连接", 不是超时) 连续这么久 = 对方的 OIT 和联动程序都没了 (卸载 / 强行停止), 本机清空数据并解除绑定 (和 15.1 一样只清本机)
+GONE_REFUSED_MS = 24 * 3600_000
+GONE_GAP_MS = 30 * 60_000             # 两次"拒绝连接"之间隔了这么久 (本机睡了 / 关了 / 中间连上过) 就重新算
+GONE_LINK_PORT = 17940                # 联动程序的端口 (linkd.LINK_PORT)
 
 
 def refused(err: str) -> bool:
@@ -715,7 +720,8 @@ class SyncService:
         账, 状态, 修改时间全部清掉 (所有设备的数据都清空了). wiped_by: 是哪台设备请本机清空的 (重开后提示).
         leave: 是别的设备解除了和本机的绑定 (15.1): 只重置本机, 和其他设备的绑定照样留着 (只用来重开后提示)."""
         with self.lock:
-            peers = {k: dict(v, last_err="", init=False) for k, v in self.state["peers"].items()}
+            peers = {k: {x: y for x, y in dict(v, last_err="", init=False).items() if x not in ("refused_since", "refused_last")}
+                     for k, v in self.state["peers"].items()}
             d = {"device": dict(self.state["device"]), "peers": peers, "track": {}, "ledgers": {}, "status": {},
                  "gone": dict(self.state["gone"]), "wipes_seen": list(self.state.get("wipes_seen") or []),
                  "wipe_out": dict(self.state.get("wipe_out") or {}),
@@ -865,6 +871,58 @@ class SyncService:
             self.state.setdefault("unbinds", {})[peer_id] = _now_ms() + UNBIND_WAIT_MS
         self._save()
         return False
+
+    @staticmethod
+    def _note_refused(q: dict, err: str, now: int = None):
+        """同步失败时 (持有 self.lock): 记下"对方拒绝连接"的这一段 (开始, 最后一次); 别的错误 / 隔太久就重新算."""
+        now = _now_ms() if now is None else now
+        if not refused(err):
+            q.pop("refused_since", None)
+            q.pop("refused_last", None)
+            return
+        if not q.get("refused_since") or now - int(q.get("refused_last") or 0) > GONE_GAP_MS:
+            q["refused_since"] = now
+        q["refused_last"] = now
+
+    @staticmethod
+    def _link_port_state(addr: str, port: int = GONE_LINK_PORT, timeout: float = 3.0) -> str:
+        """对方联动程序的端口: \"open\" 有人听 / \"refused\" 主机在线但没人听 / \"unknown\" 超时 / 连不上别的原因."""
+        try:
+            with socket.create_connection((addr, int(port)), timeout):
+                return "open"
+        except ConnectionRefusedError:
+            return "refused"
+        except OSError as e:
+            return "refused" if refused(str(e)) else "unknown"
+
+    def check_gone(self, link_state=None) -> list:
+        """每 5 秒: 绑定的设备连续 GONE_REFUSED_MS 都\"拒绝连接\" (同步端口和联动程序的端口都是), 就当它被卸载了:
+        解除和它的绑定, 返回它们的名字; 调用方要重置本机 (清空本机的数据, 和 check_unbind 一样, 只清本机).
+        联动程序的端口有人听 = 对方的联动程序还在, 不算; 探测不了 (超时) 的这一轮不算也不重置."""
+        link_state = link_state or self._link_port_state
+        now = _now_ms()
+        done = []
+        for pid, p in list(self.peers().items()):
+            since, last = int(p.get("refused_since") or 0), int(p.get("refused_last") or 0)
+            if not since or now - last > GONE_GAP_MS or last - since < GONE_REFUSED_MS:
+                continue
+            if time.time() - self.__dict__.setdefault("_gone_try", {}).get(pid, 0) < 60:
+                continue
+            self._gone_try[pid] = time.time()
+            st = link_state(p.get("addr"))
+            if st == "open":
+                with self.lock:
+                    q = self.state["peers"].get(pid)
+                    if q:
+                        q.pop("refused_since", None)
+                        q.pop("refused_last", None)
+                continue
+            if st != "refused":
+                continue
+            self.unpair(pid, notify=False)
+            done.append(str(p.get("name") or "?"))
+            self._save()
+        return done
 
     def cancel_unbind(self, peer_id: str):
         with self.lock:
@@ -1124,6 +1182,8 @@ class SyncService:
                 q = self.state["peers"].get(peer_id)
                 if q:
                     q["last_ok"], q["last_err"] = _now_ms(), ""
+                    q.pop("refused_since", None)
+                    q.pop("refused_last", None)
                     if init:
                         q["init"] = False
                     dev = (body.get("snap") or {}).get("device") or {}
@@ -1139,6 +1199,7 @@ class SyncService:
                     q = self.state["peers"].get(peer_id)
                     if q:
                         q["last_err"] = str(e) or type(e).__name__
+                        self._note_refused(q, q["last_err"])
             return False
 
     def _on_sync(self, env: dict):
@@ -1175,6 +1236,8 @@ class SyncService:
             q = self.state["peers"].get(str(env.get("from")))
             if q:
                 q["last_ok"], q["last_err"] = _now_ms(), ""
+                q.pop("refused_since", None)
+                q.pop("refused_last", None)
                 if (snap.get("device") or {}).get("version"):
                     q["version"] = str(snap["device"]["version"])
         return 200, seal(k, self.my_id, {"snap": mine})
@@ -2624,6 +2687,41 @@ def _selftest():
         assert sb.my_id not in sc.state["ledgers"], "重置前的旧账不能再传回来"
         sc.merge({"ledgers": {sb.my_id: {"rev": _now_ms() + 10, "name": "B"}}})
         assert sb.my_id in sc.state["ledgers"], "重置之后的新账照常收"
+
+        # 对方被卸载了 (MECHANICS 9.2): 同步端口一直拒绝连接满 24 小时, 联动程序的端口也没人听 → 解除绑定, 返回名字 (调用方清空本机)
+        err_refused = "[WinError 10061] 由于目标计算机积极拒绝，无法连接。"
+        sc.state["peers"]["pG"] = {"name": "G", "platform": "android", "addr": "127.0.0.1", "port": 1, "key": "00",
+                                   "last_ok": 0, "last_err": ""}
+        q = sc.state["peers"]["pG"]
+        t = _now_ms()
+        SyncService._note_refused(q, err_refused, t - GONE_REFUSED_MS - 60_000)
+        for k in range(0, GONE_REFUSED_MS // 60_000 + 2, 10):                      # 每 10 分钟拒绝一次, 连续 24 小时多一点
+            SyncService._note_refused(q, err_refused, t - GONE_REFUSED_MS - 60_000 + k * 60_000)
+        assert q["refused_last"] - q["refused_since"] >= GONE_REFUSED_MS
+        sc._gone_try = {}
+        assert sc.check_gone(lambda a: "open") == [] and "refused_since" not in q, "联动程序还在: 不算, 重新算"
+        SyncService._note_refused(q, err_refused, t - GONE_REFUSED_MS - 60_000)
+        SyncService._note_refused(q, err_refused, t)
+        assert q["refused_since"] == t and q["refused_last"] == t, "隔了 24 小时才又拒绝一次 (中间没有记录): 重新算"
+        q["refused_since"], q["refused_last"] = t - GONE_REFUSED_MS - 60_000, t
+        sc._gone_try = {}
+        assert sc.check_gone(lambda a: "unknown") == [] and "pG" in sc.peers(), "探测不了 (超时): 这一轮不算"
+        sc._gone_try = {}
+        assert sc.check_gone(lambda a: "refused") == ["G"] and "pG" not in sc.peers(), "都拒绝连接满 24 小时: 解除绑定"
+        # 不满 24 小时 / 中间有别的错误 / 成功过: 不算
+        sc.state["peers"]["pG"] = {"name": "G", "platform": "android", "addr": "127.0.0.1", "port": 1, "key": "00", "last_ok": 0, "last_err": ""}
+        q = sc.state["peers"]["pG"]
+        q["refused_since"], q["refused_last"] = t - 3600_000, t
+        sc._gone_try = {}
+        assert sc.check_gone(lambda a: "refused") == [], "才 1 小时"
+        SyncService._note_refused(q, "timed out", t)
+        assert "refused_since" not in q, "超时不是拒绝: 重新算"
+        sc.state["peers"].pop("pG")
+        # 重置后留下的绑定里没有这些记录
+        sc.state["peers"]["pH"] = {"name": "H", "platform": "android", "addr": "127.0.0.1", "port": 1, "key": "00", "last_ok": 0,
+                                   "last_err": err_refused, "refused_since": t - 5, "refused_last": t}
+        assert "refused_since" not in sc.kept_state()["peers"]["pH"]
+        sc.state["peers"].pop("pH")
 
         # 离线的时间段: 从最后一次有消息算起, 到重新有消息为止
         t0 = _now_ms()

@@ -14,18 +14,33 @@ import com.obliphur.oit.core.tr
  * 这时 OIT 还在, 来得及请每台绑定的设备清空数据并解除绑定 (和 Reset 页的"卸载 OIT"一样), 本机的数据也一起清空.
  */
 class OitAdmin : DeviceAdminReceiver() {
-    override fun onDisableRequested(context: Context, intent: Intent): CharSequence =
-        tr("取消激活后就可以卸载 OIT. 现在取消: 本机和所有绑定设备上的 OIT 数据都会被清空, 绑定也会解除.")
+    override fun onEnabled(context: Context, intent: Intent) {
+        note(context, "onEnabled")
+    }
+
+    override fun onDisableRequested(context: Context, intent: Intent): CharSequence {
+        note(context, "onDisableRequested")
+        return tr("取消激活后就可以卸载 OIT. 现在取消: 本机和所有绑定设备上的 OIT 数据都会被清空, 绑定也会解除.")
+    }
 
     override fun onDisabled(context: Context, intent: Intent) {
+        note(context, "onDisabled: peers=" + runCatching { OitApp.instance.sync?.peers()?.size }.getOrNull())
         runCatching {
             val app = OitApp.instance
             if (app.sync?.peers().isNullOrEmpty()) return
             app.resetAll(uninstall = true)          // 在主线程上 (和 Reset 页一样): 最多等 3.5 秒, 让请求送出去
-        }.onFailure { android.util.Log.w("OitAdmin", "onDisabled failed", it) }
+        }.onFailure { note(context, "onDisabled failed: $it") }
+        note(context, "onDisabled done")
     }
 
     companion object {
+        /** 卸载保护的流水 (filesDir/admin.log): 取消激活时有没有收到通知, 做到哪一步 —— 排查"保护没生效"用 (手机的 logcat 看不到). */
+        fun note(ctx: Context, text: String) {
+            runCatching {
+                java.io.File(ctx.filesDir, "admin.log").appendText("${java.time.LocalDateTime.now()} [${android.os.Process.myPid()}] $text\n")
+            }
+        }
+
         fun component(ctx: Context) = ComponentName(ctx, OitAdmin::class.java)
 
         fun active(ctx: Context): Boolean =

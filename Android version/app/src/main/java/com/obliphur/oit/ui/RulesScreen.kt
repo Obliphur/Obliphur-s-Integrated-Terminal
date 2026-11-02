@@ -566,7 +566,7 @@ private fun UninstallGuardRow() {
     }
     Column(Modifier.padding(vertical = 6.dp)) {
         Text(tr("卸载保护"), color = o.text, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-        if (active) Dim(tr("已启用: 卸载 OIT 前要先取消激活, 取消时其他绑定的设备会被请求清空数据."), size = 12)
+        if (active) Dim(tr("已启用: 取消激活时其他绑定的设备会被请求清空数据. 部分手机的系统卸载时不要求先取消激活; 另外绑定的设备连续 24 小时连不上本机的 OIT 和联动程序, 也会当作已卸载并清空自己的数据."), size = 12)
         else {
             Dim(tr("没有启用: 直接卸载 OIT 时来不及通知其他设备. 启用后, 卸载前必须取消激活, 取消时 OIT 会请其他设备清空数据."), size = 12, color = o.warn)
             PlainButton(tr("启用卸载保护")) {

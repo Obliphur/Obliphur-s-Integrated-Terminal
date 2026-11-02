@@ -166,6 +166,27 @@ class SyncService(
         const val OFFLINE_FWD_MS = OFFLINE_MS + SYNC_EVERY_MS + 5_000L
         /** 同步失败的原因是"对方拒绝连接" (它的主机开着, 只是 OIT 没在运行): 不必等满 OFFLINE_MS, 这么久没有消息就算离线. 同 devsync.REFUSED_OFFLINE_MS. */
         const val REFUSED_OFFLINE_MS = 25_000L
+        /** 对方被卸载了 (MECHANICS 9.2, 同 devsync.GONE_*): 同步端口和联动程序的端口都连续这么久"拒绝连接" (主机在线, 没人听) = 它的 OIT 和联动程序都没了, 本机清空数据并解除绑定. */
+        const val GONE_REFUSED_MS = 24L * 3600_000
+        const val GONE_GAP_MS = 30L * 60_000
+        const val GONE_LINK_PORT = 17940
+
+        /** 同步失败时 (持有 lock): 记下"对方拒绝连接"的这一段 (开始, 最后一次); 别的错误 / 隔太久就重新算. */
+        fun noteRefused(q: JSONObject, err: String, now: Long = System.currentTimeMillis()) {
+            if (!refused(err)) { q.remove("refused_since"); q.remove("refused_last"); return }
+            if (q.optLong("refused_since") == 0L || now - q.optLong("refused_last") > GONE_GAP_MS) q.put("refused_since", now)
+            q.put("refused_last", now)
+        }
+
+        /** 对方联动程序的端口: "open" 有人听 / "refused" 主机在线但没人听 / "unknown" 超时等别的原因. */
+        fun linkPortState(addr: String, port: Int = GONE_LINK_PORT, timeoutMs: Int = 3000): String = try {
+            java.net.Socket().use { it.connect(java.net.InetSocketAddress(addr, port), timeoutMs) }
+            "open"
+        } catch (e: java.net.ConnectException) {
+            if (refused(e.message ?: "")) "refused" else "unknown"
+        } catch (e: Exception) {
+            "unknown"
+        }
         fun refused(err: String): Boolean = err.lowercase().let { "refused" in it || "econnrefused" in it }
         /** 同步失败的原因里, 这几种说明对方明确不接受 / 不在线 (不是偶然的网络问题): 不等 OFFLINE_MS, 马上算离线. */
         val HARD_ERRORS = setOf("unpaired", "wipe-pending", "away", "peer-not-proxy", "not-proxy")
@@ -1074,7 +1095,8 @@ class SyncService(
     fun keptState(wipedBy: String = "", leave: Boolean = false, unbound: String = ""): JSONObject = lock.withLock {
         val peers = JSONObject()
         val src = state.getJSONObject("peers")
-        for (k in src.keys()) peers.put(k, JSONObject(src.getJSONObject(k).toString()).put("last_err", "").put("init", false))
+        for (k in src.keys()) peers.put(k, JSONObject(src.getJSONObject(k).toString()).put("last_err", "").put("init", false)
+            .also { it.remove("refused_since"); it.remove("refused_last") })
         val d = JSONObject().put("device", JSONObject(state.getJSONObject("device").toString())).put("peers", peers)
             .put("track", JSONObject()).put("ledgers", JSONObject()).put("status", JSONObject())
             .put("gone", JSONObject(state.getJSONObject("gone").toString()))
@@ -1237,6 +1259,29 @@ class SyncService(
             save()
         }
         deliverEvicts(now)
+        return done
+    }
+
+    private val goneTry = HashMap<String, Long>()
+    internal fun stateForTest(): JSONObject = state
+    internal fun resetGoneTryForTest() = goneTry.clear()
+
+    /** 每 5 秒: 绑定的设备连续 GONE_REFUSED_MS 都"拒绝连接" (同步端口和联动程序的端口都是) = 它被卸载了: 解除和它的绑定, 返回名字 (调用方清空本机, 和 checkUnbind 一样). */
+    fun checkGone(linkState: (String) -> String = { linkPortState(it) }): List<String> {
+        val now = System.currentTimeMillis()
+        val done = mutableListOf<String>()
+        for ((id, p) in peers()) {
+            val since = p.optLong("refused_since"); val last = p.optLong("refused_last")
+            if (since == 0L || now - last > GONE_GAP_MS || last - since < GONE_REFUSED_MS) continue
+            if (now - (goneTry[id] ?: 0L) < 60_000) continue
+            goneTry[id] = now
+            val st = linkState(p.optString("addr"))
+            if (st == "open") { lock.withLock { state.getJSONObject("peers").optJSONObject(id)?.also { it.remove("refused_since"); it.remove("refused_last") } }; continue }
+            if (st != "refused") continue
+            unpair(id, notify = false)
+            done.add(p.optString("name").ifEmpty { "?" })
+            save()
+        }
         return done
     }
 
@@ -1543,6 +1588,7 @@ class SyncService(
             lock.withLock {
                 state.getJSONObject("peers").optJSONObject(peerId)?.let { q ->
                     q.put("last_ok", System.currentTimeMillis()).put("last_err", "")
+                    q.remove("refused_since"); q.remove("refused_last")
                     if (init) q.put("init", false)
                     body.optJSONObject("snap")?.optJSONObject("device")?.optString("name")?.takeIf { it.isNotEmpty() }
                         ?.let { q.put("name", it) }
@@ -1555,7 +1601,11 @@ class SyncService(
             true
         } catch (e: Exception) {
             if (!quiet) lock.withLock {
-                state.getJSONObject("peers").optJSONObject(peerId)?.put("last_err", e.message ?: e.javaClass.simpleName)
+                state.getJSONObject("peers").optJSONObject(peerId)?.let { q ->
+                    val err = e.message ?: e.javaClass.simpleName
+                    q.put("last_err", err)
+                    noteRefused(q, err)
+                }
             }
             false
         }
@@ -1588,6 +1638,7 @@ class SyncService(
         }
         lock.withLock {
             state.getJSONObject("peers").optJSONObject(from)?.put("last_ok", System.currentTimeMillis())?.put("last_err", "")
+                ?.also { q -> q.remove("refused_since"); q.remove("refused_last") }
                 ?.let { q -> snap.optJSONObject("device")?.optString("version")?.takeIf { it.isNotEmpty() }?.let { q.put("version", it) } }
         }
         return 200 to SyncCrypto.seal(k, myId, JSONObject().put("snap", mine))

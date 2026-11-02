@@ -168,7 +168,7 @@ class OitApp : Application(), Host {
         core.versionMismatch = { s.versionMismatch() }
         core.offlinePeers = { val peers = s.peers(); s.deviceStates().filter { !it.online && it.id in peers }.associate { it.id to it.name } }
         core.syncStartedMs = { s.startedMs }
-        core.checkUnbind = { s.checkUnbind() }
+        core.checkUnbind = { s.checkUnbind() + s.checkGone() }          // 解除绑定的冷静期到了 + 对方被卸载了 (连续 24 小时拒绝连接): 清空本机
         core.resetAfterUnbind = { who -> android.os.Handler(android.os.Looper.getMainLooper()).post { resetAll(leave = true, unbound = who) } }
         core.clockWipe = { who ->
             android.os.Handler(android.os.Looper.getMainLooper()).post {
@@ -486,6 +486,7 @@ class OitApp : Application(), Host {
     fun resetAll(wipeId: String? = null, exclude: String? = null, by: String = "", uninstall: Boolean = false, leave: Boolean = false, unbound: String = "") {
         if (resetting) return
         resetting = true
+        com.obliphur.oit.service.OitAdmin.note(this, "resetAll start uninstall=$uninstall leave=$leave")
         var kept: org.json.JSONObject? = null
         // 不能在界面线程上联网: 放到后台线程, 最多等 3.5 秒
         sync?.let { s ->
@@ -497,6 +498,7 @@ class OitApp : Application(), Host {
                 }
             }.apply { start(); join(3500) }
         }
+        com.obliphur.oit.service.OitAdmin.note(this, "resetAll: wipe requests done (peers asked), erasing local data")
         sync?.stop()
         core.eraseEverything()
         kept?.let { com.obliphur.oit.sync.SyncService.writeState(oitDir, it) }

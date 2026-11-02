@@ -35,6 +35,41 @@ class SyncTest {
         assertFalse(w(null))
     }
 
+    /** 对方被卸载了 (MECHANICS 9.2, 同 devsync.check_gone): 同步端口连续 24 小时拒绝连接, 联动程序的端口也没人听 → 解除绑定. */
+    @Test
+    fun peerGoneAfterRefusingFor24h() {
+        val refused = "failed to connect: ECONNREFUSED (Connection refused)"
+        val q = JSONObject()
+        val t = 1_800_000_000_000L
+        SyncService.noteRefused(q, refused, t)
+        SyncService.noteRefused(q, refused, t + 10 * 60_000)
+        assertEquals(t, q.getLong("refused_since"))
+        SyncService.noteRefused(q, refused, t + 10 * 60_000 + SyncService.GONE_GAP_MS + 1)       // 隔太久: 重新算
+        assertEquals(t + 10 * 60_000 + SyncService.GONE_GAP_MS + 1, q.getLong("refused_since"))
+        SyncService.noteRefused(q, "timed out", t + 10 * 60_000 + SyncService.GONE_GAP_MS + 2)    // 别的错误: 重新算
+        assertFalse(q.has("refused_since"))
+
+        val main = Executors.newSingleThreadExecutor()
+        var mainThread: Thread? = null
+        main.submit { mainThread = Thread.currentThread() }.get()
+        val runner = MainRunner({ main.execute(it) }, { Thread.currentThread() === mainThread })
+        val s = SyncService(Files.createTempDirectory("g").toFile(), Fake("A"), runner, defaultName = "A", httpPort0 = 18090, udpPort = 18091)
+        val now = System.currentTimeMillis()
+        val peers = s.stateForTest().getJSONObject("peers")
+        peers.put("pG", JSONObject().put("name", "G").put("platform", "windows").put("addr", "127.0.0.1").put("port", 1).put("key", "00")
+            .put("last_ok", 0).put("last_err", "").put("refused_since", now - SyncService.GONE_REFUSED_MS - 60_000).put("refused_last", now))
+        assertEquals(emptyList<String>(), s.checkGone { "unknown" })                  // 探测不了: 这一轮不算
+        assertTrue(s.peers().containsKey("pG"))
+        peers.getJSONObject("pG").put("refused_last", now)
+        s.resetGoneTryForTest()
+        assertEquals(emptyList<String>(), s.checkGone { "open" })                     // 联动程序还在: 不算, 重新算
+        assertFalse(s.peers()["pG"]!!.has("refused_since"))
+        peers.getJSONObject("pG").put("refused_since", now - SyncService.GONE_REFUSED_MS - 60_000).put("refused_last", now)
+        s.resetGoneTryForTest()
+        assertEquals(listOf("G"), s.checkGone { "refused" })
+        assertFalse(s.peers().containsKey("pG"))
+    }
+
     @Test
     fun cryptoMatchesDesktop() {
         // 和 devsync.py 自检里的固定输入 / 输出一样: 两端算法逐字节一致

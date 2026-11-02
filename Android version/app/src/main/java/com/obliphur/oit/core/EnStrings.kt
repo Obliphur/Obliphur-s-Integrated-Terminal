@@ -5,6 +5,7 @@ object EnStrings {
     val MAP: Map<String, String> = hashMapOf(
         "{a} ~ {b} 做了什么?" to "What did you do from {a} to {b}?",
         "⚠  系统时间" to "⚠  System clock",
+        "已启用: 取消激活时其他绑定的设备会被请求清空数据. 部分手机的系统卸载时不要求先取消激活; 另外绑定的设备连续 24 小时连不上本机的 OIT 和联动程序, 也会当作已卸载并清空自己的数据." to "Enabled: when it is deactivated, the other bound devices are asked to clear their data. On some phones the system does not require deactivation before uninstalling; so bound devices that cannot reach this OIT or its link program for 24 hours treat it as uninstalled and clear their own data.",
         "打不开系统的激活界面." to "Could not open the system activation screen.",
         "这是开发版, 不会更新成发布版" to "This is a dev build; it will not update to the release",
         "最新发布 {v}" to "latest release {v}",

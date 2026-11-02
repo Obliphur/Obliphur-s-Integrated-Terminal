@@ -5785,6 +5785,11 @@ class BreakTimerApp:
             names = self.sync.check_unbind()
             for name in names:
                 self._log_notice(f"SYNC unbind done {name}")
+            # 绑定的设备的 OIT 和联动程序连续 24 小时都拒绝连接 = 它被卸载了 (手机上的设备管理员拦不住卸载): 同样解除绑定, 清空本机 (MECHANICS 9.2)
+            gone = self.sync.check_gone()
+            for name in gone:
+                self._log_notice(f"SYNC peer gone (refusing connections for 24 h, uninstalled?) {name}")
+            names = names + gone
             if names:
                 self.do_reset(leave=True, unbound=", ".join(names))          # 只重置操作这一台: 不转告其他设备, 也不清空对方
         except Exception as e:
