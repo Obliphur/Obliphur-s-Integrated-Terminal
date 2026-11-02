@@ -185,6 +185,25 @@ private fun localIp(): String = try {
     ""
 }
 
+/** 一台绑定的设备的同步状态 (列表里每台一行): 直接写状态, 不写成一句话 (同桌面版 sync_panel.sync_state_text). */
+fun syncStateText(err: String?, lastOk: Long): String {
+    val e = err ?: ""
+    val low = e.lowercase()
+    val state = when {
+        e.isEmpty() -> if (lastOk > 0) tr("正常") else tr("未同步")
+        e == "not-proxy" -> tr("本机非 Proxy")
+        e == "peer-not-proxy" -> tr("对方非 Proxy")
+        e == "unpaired" -> tr("已被解除绑定")
+        e == "wipe-pending" -> tr("等待清空")
+        e == "away" -> tr("对方在别的桌面")
+        "refused" in low -> tr("拒绝连接")
+        "timed out" in low || "timeout" in low -> tr("超时")
+        else -> tr("出错: {e}", "e" to e.take(40))
+    }
+    return tr("同步状态: {s}", "s" to state) + if (lastOk > 0) "  ·  " + tr("上次成功 {t}", "t" to java.time.Instant.ofEpochMilli(lastOk)
+        .atZone(java.time.ZoneId.systemDefault()).toLocalTime().withNano(0).toString()) else ""
+}
+
 /** 绑定的每台设备此刻的状态, 一台一行; 2 分钟内没有消息的显示"离线". */
 fun peerLines(): List<String> {
     val s = OitApp.instance.sync ?: return emptyList()
@@ -294,12 +313,7 @@ fun SyncCard() {
             }
             val err = p.optString("last_err")
             val okAt = p.optLong("last_ok")
-            val whenText = when {
-                err.isNotEmpty() -> tr("同步失败: {e}", "e" to syncErrorText(err))
-                okAt > 0 -> tr("上次同步 {t}", "t" to java.time.Instant.ofEpochMilli(okAt).atZone(java.time.ZoneId.systemDefault())
-                    .toLocalTime().withNano(0).toString())
-                else -> tr("还没同步过")
-            }
+            val whenText = syncStateText(err, okAt)
             val st = live[pid]?.takeIf { now - it.optLong("ts") < 60_000 }
             val busy = when (st?.optString("timer")) { "running" -> tr("专注中…"); "break" -> tr("休息中 ☕"); else -> "" }
             // 解除绑定 (MECHANICS 15.1): 冷静期 120 小时, 期间可以取消

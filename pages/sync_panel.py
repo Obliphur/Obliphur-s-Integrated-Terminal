@@ -30,6 +30,28 @@ def sync_error_text(err) -> str:
 
 
 
+def sync_state_text(err, last_ok=0) -> str:
+    """一台绑定的设备的同步状态 (列表里每台一行): 直接写状态, 不写成一句话. 出错的原因见 devsync.HARD_ERRORS / refused."""
+    e = str(err or "")
+    low = e.lower()
+    known = {"not-proxy": "本机非 Proxy", "peer-not-proxy": "对方非 Proxy", "unpaired": "已被解除绑定",
+             "wipe-pending": "等待清空", "away": "对方在别的桌面"}
+    if not e:
+        state = tr("正常") if last_ok else tr("未同步")
+    elif e in known:
+        state = tr(known[e])
+    elif "refused" in low or "10061" in low or "积极拒绝" in e:
+        state = tr("拒绝连接")
+    elif "timed out" in low or "timeout" in low:
+        state = tr("超时")
+    else:
+        state = tr("出错: {e}", e=e[:40])
+    out = tr("同步状态: {s}", s=state)
+    if last_ok:
+        out += "  ·  " + tr("上次成功 {t}", t=datetime.fromtimestamp(last_ok / 1000).strftime("%H:%M:%S"))
+    return out
+
+
 class SyncPanel(tk.Frame):
 
     def __init__(self, master, sync, bg=None):
@@ -210,12 +232,7 @@ class SyncPanel(tk.Frame):
         for pid, p in peers.items():
             role = tr("母端") if p.get("mother") == pid else (
                 tr("本机是母端") if p.get("mother") == s.my_id else "")
-            if p.get("last_err"):
-                when = tr("同步失败: {e}", e=sync_error_text(p["last_err"]))
-            elif p.get("last_ok"):
-                when = tr("上次同步 {t}", t=datetime.fromtimestamp(p["last_ok"] / 1000).strftime("%H:%M:%S"))
-            else:
-                when = tr("还没同步过")
+            when = sync_state_text(p.get("last_err"), p.get("last_ok") or 0)
             at = s.unbind_at(pid)
             if at:
                 when = tr("将在 {t} 解除绑定", t=datetime.fromtimestamp(at / 1000).strftime("%m-%d %H:%M"))
