@@ -336,7 +336,7 @@ class CommTest {
         val b = comm(File(td, "b").also { it.mkdirs() }, File(td, "pb"))
         a.device = { "aaaa" }; b.device = { "bbbb" }
         for (c in listOf(a, b)) {
-            c.importPersona("小夏.txt", "你是小夏".byteInputStream())
+            c.importPersona("小夏.txt", "你是小夏\n长时间休息发起谈话概率:100%\n".byteInputStream())
             c.set(persona = "小夏.txt")
         }
         fun pull(src: Comm, dst: Comm) = dst.applyDoc(src.syncDoc())
@@ -409,8 +409,8 @@ class CommTest {
     fun proactive() {
         val td = Files.createTempDirectory("oit").toFile()
         val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "personas"))
-        c.importPersona("小夏.txt", "你是小夏".byteInputStream())
-        c.set(persona = "小夏.txt")
+        c.importPersona("长休.txt", "你是小夏\n长时间休息发起谈话概率:100%\n".byteInputStream())
+        c.set(persona = "长休.txt")
         val pings = mutableListOf<Int>()
         c.onProactive = { pings.add(1) }
         val start = clock
@@ -446,6 +446,18 @@ class CommTest {
         assertEquals(1, c.visible().size)
         assertEquals(1, c.messages.count { it.role == "sys" })
         assertEquals(listOf(1), pings)
+        // 长时间休息发起谈话概率: 人设里写的; 0% 不发 (这个时间点算处理过了); 没写默认 70%
+        assertEquals(mapOf("long" to 70.0, "rest" to 30.0, "idle" to 20.0), CommText.personaProbs("长时间休息发起谈话概率:0.7\n休息发起谈话概率:30\n空闲发起谈话概率:20%"))
+        assertEquals(100.0, c.proPercent("long"), 0.0)
+        val pf = File(td, "personas/长休.txt")
+        pf.writeText("你是小夏\n长时间休息发起谈话概率:0%\n"); c.reloadSchedule()
+        clock = clock.plusMinutes(15)
+        val s5 = clock
+        snap = CommSnap("break", breakStart = s5, breakTotalS = 30 * 60.0)
+        assertEquals(0.0, c.proPercent("long"), 0.0)
+        assertNull(fireAfter(c, s5))
+        pf.writeText("你是小夏\n"); c.reloadSchedule()
+        assertEquals(70.0, c.proPercent("long"), 0.0)
     }
 
     /** 规则 VIII: 用户说完话, 对方的第一条收到之后再调用一次 API, 可以把话分开说. */
@@ -621,7 +633,7 @@ class CommTest {
         c.importPersona("日程.txt", "你是小满.\n12:30-13:00:空闲\n20:40-21:18:休息\n".byteInputStream())
         c.set(persona = "日程.txt")
         assertEquals(80.0 to 60.0, c.proPercent("idle") to c.proPercent("rest"))          // 人设里没写: 默认概率
-        assertEquals(mapOf("idle" to 50.0, "rest" to 40.0), CommText.personaProbs(BuiltinPersonas.ALL.getValue("Claudia.txt")))   // Claudia: 50% / 40%
+        assertEquals(mapOf("idle" to 50.0, "rest" to 40.0, "long" to 40.0), CommText.personaProbs(BuiltinPersonas.ALL.getValue("Claudia.txt")))   // Claudia: 50% / 40% / 40%
         assertEquals(mapOf("idle" to 12.5, "rest" to 40.0), CommText.personaProbs("空闲发起谈话概率:12.5%\n休息发起谈话概率 ： 0.4\n休息发起谈话概率:90%"))
         assertEquals(mapOf("idle" to 100.0, "rest" to 30.0), CommText.personaProbs("空闲发起谈话概率:1\n休息发起谈话概率:30"))
         assertEquals(mapOf("idle" to 100.0), CommText.personaProbs("空闲发起谈话概率:150%\n休息发起谈话概率:x"))

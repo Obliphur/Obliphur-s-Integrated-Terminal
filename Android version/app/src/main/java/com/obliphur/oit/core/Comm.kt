@@ -84,6 +84,7 @@ object BuiltinPersonas {
 【主动发起谈话】(OIT 读这两行决定你每段空闲 / 休息开始前主动找用户说话的概率)
 空闲发起谈话概率:50%
 休息发起谈话概率:40%
+长时间休息发起谈话概率:40%
 
 【按日程回复】(每次收到消息都先做这一步)
 1. 看消息开头方括号里的时间,在上面的日程里找到那个时间属于哪一段.
@@ -144,7 +145,8 @@ object CommText {
             "  对方会在每段空闲开始前1~3分钟、每段休息开始前1~3分钟按一定概率主动给你发一条消息;概率写在人设里,各占一行,例如\n" +
             "    空闲发起谈话概率:50%\n" +
             "    休息发起谈话概率:0.4\n" +
-            "  (n% 或者小数都行,没写的默认空闲80%、休息60%);你自己休息超过20分钟时,休息开始后1~3分钟也会发一条.\n" +
+            "    长时间休息发起谈话概率:70%\n" +
+            "  (n% 或者小数都行,没写的默认空闲80%、休息60%);你自己休息超过20分钟时(\"长时间休息\"),休息开始后1~3分钟按\"长时间休息发起谈话概率\"(默认70%)也会发一条.\n" +
             "  每次打开OIT、开始新对话(清空聊天记录 / 换人设)时,OIT 都会重新读取人设,并按里面的时间调整这些时刻;人设文件改了之后也会自动重新读取.\n\n" +
             "文件格式: 一个 .txt 或 .md 文件就是一个人设, 文件名就是人设的名字, 整个文件的内容就是人设prompt.\n" +
             "放进这个文件夹后, 在 设置 → 沟通 里选择它 (也可以用\"导入\"按钮复制进来).\n"
@@ -181,14 +183,14 @@ object CommText {
     private val SEG_RE = Regex("^[ \\t]*(?:[-*•][ \\t]*)?(\\d{1,2})[:：](\\d{2})[ \\t]*[-–—~～至到][ \\t]*(\\d{1,2})[:：](\\d{2})" +
         "[ \\t]*[:：][ \\t]*(\\S[^\\n]*)$", RegexOption.MULTILINE)
 
-    private val PRO_RE = Regex("(空闲|休息)发起谈话概率[ \\t]*[:：][ \\t]*(\\d+(?:\\.\\d+)?)[ \\t]*([%％])?")
+    private val PRO_RE = Regex("(长时间休息|空闲|休息)发起谈话概率[ \\t]*[:：][ \\t]*(\\d+(?:\\.\\d+)?)[ \\t]*([%％])?")
 
     /** 人设里写的主动发起谈话的概率: "空闲发起谈话概率:50%" / "休息发起谈话概率:0.4" → {idle: 50.0, rest: 40.0} (%, 没写的不在里面).
      *  带 % 的按百分数; 不带 % 的小数 (0~1) 按小数, 大于 1 的当百分数; 超出 0~100 的截到范围内; 同一种写了几行只认第一行. */
     fun personaProbs(text: String): Map<String, Double> {
         val out = LinkedHashMap<String, Double>()
         for (m in PRO_RE.findAll(text)) {
-            val kind = if (m.groupValues[1] == "空闲") "idle" else "rest"
+            val kind = when (m.groupValues[1]) { "长时间休息" -> "long"; "空闲" -> "idle"; else -> "rest" }
             if (kind in out) continue
             val v = m.groupValues[2].toDouble()
             out[kind] = (if (m.groupValues[3].isNotEmpty() || v > 1) v else v * 100).coerceIn(0.0, 100.0)
@@ -249,6 +251,8 @@ class Comm(
             "如果你只想说一次, 返回${CommText.REFUSE}."
         const val DEFAULT_P_IDLE = 80                   // II / III 发不发的概率 (%) 的默认值; 设置 → 沟通 里可以改
         const val DEFAULT_P_REST = 60
+        const val DEFAULT_P_LONG = 70                   // I (长时间休息) 的默认概率
+        fun defaultP(kind: String): Double = when (kind) { "idle" -> DEFAULT_P_IDLE; "long" -> DEFAULT_P_LONG; else -> DEFAULT_P_REST }.toDouble()
         const val RETRY_GAP = 10 * 60
         const val RETRY_MAX = 12
         const val HISTORY_SENT = 60
@@ -690,7 +694,7 @@ class Comm(
     /** 主动发消息的概率 (%): kind = "idle" 人设的空闲段前 / "rest" 人设的休息段前. 写在人设里, 没写用默认. */
     fun proPercent(kind: String): Double {
         segments()
-        return proCache[kind] ?: (if (kind == "idle") DEFAULT_P_IDLE else DEFAULT_P_REST).toDouble()
+        return proCache[kind] ?: defaultP(kind)
     }
 
     @Synchronized
@@ -1130,7 +1134,7 @@ class Comm(
             if (key !in done) {
                 val due = bs.plusSeconds(60L + java.util.Random(key.hashCode().toLong()).nextInt(121))
                 if (!t.isBefore(due)) {
-                    proFire(key, due, t, 1.0, "[系统] 用户刚开始休息, 这次计划休息约 ${Math.round(snap.breakTotalS / 60)} 分钟. " +
+                    proFire(key, due, t, (if (ctx != null) ctx.probs["long"] ?: defaultP("long") else proPercent("long")) / 100.0, "[系统] 用户刚开始休息, 这次计划休息约 ${Math.round(snap.breakTotalS / 60)} 分钟. " +
                         "请根据人设主动给用户发一条消息, 话题自己找; 如果此刻不方便, 返回${CommText.REFUSE}.", ctx)
                     return
                 }
@@ -1143,7 +1147,7 @@ class Comm(
             if (t.isBefore(due)) continue
             val mins = maxOf(1L, Math.round(secondsBetween(t, ev.begin) / 60.0))
             val hm = "%02d:%02d".format(ev.begin.hour, ev.begin.minute)
-            val pct = if (ctx != null) ctx.probs[ev.kind] ?: (if (ev.kind == "idle") DEFAULT_P_IDLE else DEFAULT_P_REST).toDouble() else proPercent(ev.kind)
+            val pct = if (ctx != null) ctx.probs[ev.kind] ?: defaultP(ev.kind) else proPercent(ev.kind)
             proFire(ev.key, due, t, pct / 100.0,
                 "[系统] 按你的日程, 你的${if (ev.kind == "idle") "空闲" else "休息"}时间将在 $hm 开始 (约 $mins 分钟后). " +
                 "这条是系统提前触发的: 即使你此刻还处于专注/不能回复的时段, 也允许你现在主动给用户发一条消息, 话题自己找 (不要透露日程); " +
