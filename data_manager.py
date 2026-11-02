@@ -153,6 +153,10 @@ class DataManager:
         if str(text):
             return str(text)
         try:
+            # 正在睡眠: 睡眠占着的每一小时 (哪怕才睡了几分钟) 马上记成"睡眠"并锁定; 起床后睡不满半小时的那几格退回去 (unfill_short_sleep)
+            live = self.sleep_live()
+            if live is not None and live < hour_start + timedelta(hours=1) and hour_start <= datetime.now():
+                return self.sleep_text
             if self.sleep_seconds(hour_start, hour_start + timedelta(hours=1)) >= 1800:
                 return self.sleep_text
         except Exception:
@@ -188,6 +192,46 @@ class DataManager:
             cur = self.hour_days.get(ds, {}).get(key)
             if cur and cur == self.auto_text and self.sleep_seconds(h, h + timedelta(hours=1)) >= 1800:
                 self.hour_days[ds][key] = self.sleep_text
+                changed = True
+            h += timedelta(hours=1)
+        if changed:
+            self.save_hour_log()
+        return changed
+
+    def fill_sleep_now(self, now: datetime = None) -> bool:
+        """正在睡眠 (睡眠开始之后每一小时, 直到现在这一小时): 还空着的整点记录格马上填上"睡眠" (填上之后就是固定的自动内容, 不能改).
+        整点记录没开着不填. 返回有没有填."""
+        if not self.hour_enabled:
+            return False
+        try:
+            live = self.sleep_live()
+        except Exception:
+            live = None
+        if live is None:
+            return False
+        now = now or datetime.now()
+        changed = False
+        h = live.replace(minute=0, second=0, microsecond=0)
+        while h <= now:
+            ds, key = h.strftime("%Y-%m-%d"), str(h.hour)
+            if not self.get_hour_text(ds, h.hour) and not self.get_half_text(ds, h.hour, 1):
+                self.hour_days.setdefault(ds, {})[key] = self.sleep_text
+                changed = True
+            h += timedelta(hours=1)
+        if changed:
+            self.save_hour_log()
+        return changed
+
+    def unfill_short_sleep(self, start: datetime, end: datetime) -> bool:
+        """起床后: 这段睡眠 [start, end] 里, 睡眠不满半小时的那几小时 (睡着时马上记成"睡眠"的) 退回空白, 照常补记."""
+        changed = False
+        h = start.replace(minute=0, second=0, microsecond=0)
+        while h < end:
+            ds, key = h.strftime("%Y-%m-%d"), str(h.hour)
+            cur = self.hour_days.get(ds, {}).get(key)
+            if cur and i18n.auto_names_in(cur) == i18n.auto_names_in(self.sleep_text) \
+                    and self.sleep_seconds(h, h + timedelta(hours=1)) < 1800 and h + timedelta(hours=1) <= end + timedelta(hours=1):
+                self.hour_days[ds].pop(key, None)
                 changed = True
             h += timedelta(hours=1)
         if changed:

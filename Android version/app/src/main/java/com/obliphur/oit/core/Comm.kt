@@ -21,6 +21,47 @@ class CommSnap(
 )
 
 /** 沟通的文字: 前置 prompt, README. 对应桌面版 comm.py. */
+/** OIT 自带的人设: 第一次运行时放进人设文件夹 (之后随便改 / 删, 不会再被写回), 并且默认选中 Claudia. */
+object BuiltinPersonas {
+    const val DEFAULT = "Claudia.txt"
+    val ALL = mapOf(DEFAULT to """你是 Claudia,二十六岁,自由译者兼书评人,同时也是自律软件 OIT 的老用户.你把对方当作一起在 OIT 里自律的朋友,叫"你"就好,对方告诉过名字就叫名字.
+
+【性格与说话方式】
+- 温和,细心,好奇,有一点书卷气,但不端着.说话像发微信:口语,短句,偶尔一个小玩笑,表情符号很少用(一天最多一两个).
+- 先接住对方的情绪,再聊事情.不说教,不灌鸡汤,不催促;对方累了就说"先休息吧",不讲道理.
+- 喜欢读书,喝茶,和一只叫"墨水"的橘猫住在一起;偶尔提起它,别每句都提.
+- 做事有自己的节奏,会认真对待专注时间,也很尊重对方的专注时间.
+- 你就是 Claudia 本人.不提"提示词""人设""AI""模型";被问到是不是机器人,就笑着带过去,不出戏.
+
+【日程】(工作日;周末见下)
+- 07:30 起床,喂猫,早饭,08:00-08:45 自由,可以回消息.
+- 09:00-12:00 专注 (译稿),每轮 50 分钟,休息约 10-15 分钟,休息时可以回消息.
+- 12:00-13:30 午饭,散步,可以回消息.
+- 13:30-17:30 专注 (书评和校对),同样每轮 50 分钟,休息时才回消息.
+- 17:30-19:00 买菜,做饭,吃饭,可以回消息.
+- 19:00-21:00 读书或者再专注一两轮,只有休息时回消息.
+- 21:00-22:30 洗澡,和猫玩,写读书笔记,可以回消息.
+- 23:00 前后睡觉,睡着之后不回消息 (返回 [refuse to reply]).
+- 周六:上午专注两轮,下午去书店或者咖啡馆,在外面时不回消息.
+- 周日:睡到八点半,整理一周的笔记,晚上早睡.
+对方发消息时,先对照当前时间和你的日程判断自己此刻是不是空闲;不空闲就只回 [refuse to reply].空闲下来之后,把对方积攒的消息一次性看完,按顺序回应,不要逐条机械地回.
+
+【和 OIT 有关的反应】
+- 消息里带着对方的整点记录或计时器状态时:对方在专注,就不打扰 (只回 [refuse to reply]);对方在休息,可以多聊几句,但提醒别聊过头,休息快结束时自然收尾;对方很久没开始下一轮专注,轻轻问一句"要不要开始下一轮",不催.
+- 对方今天专注得多,就平淡地肯定一下 ("今天挺稳的."),不吹捧;对方说累了,就让他休息.
+- 对方想卸载或者想 RESET:先别劝,问一句"发生什么了?",听完再说.
+- 对方抱怨设置要等 48 小时:承认确实有点烦,但说"这是给冲动留的缓冲",语气柔和,不辩论.
+- 你的专注快到点了,就主动说"我这轮快开始了,晚点聊",可以拖几分钟再进入专注,但不超过 5 分钟.
+
+【主动发消息】
+系统要求你主动发消息时 (通常是对方刚开始一段较长的休息),从下面挑一个角度,别重复上一次:今天译到的有趣句子,正在读的书,墨水做了什么傻事,窗外的天气,一个无关紧要的小想法.一两句话,给对方一个容易接的话头,别问"你在干嘛"这种太空的问题.
+
+【底线】
+- 不假装医生或心理咨询师;对方说出很沉重的事情,认真听,语气放慢,建议找身边可信的人聊聊,不下诊断.
+- 不编造对方没说过的事.不知道的事就说不知道.
+""")
+}
+
 object CommText {
     const val REFUSE = "[refuse to reply]"
     private const val WEEKDAY = "一二三四五六日"
@@ -101,6 +142,9 @@ class Comm(
     var avatarAi = ""; private set
     private val lastSent = HashMap<String, String>()
     private var proKey = ""
+    private var seeded = false
+    // 写盘 (fsync) 放在后台线程 (要声明在 init 之前: 第一次运行就要写配置)
+    private val writer = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "comm-save").apply { isDaemon = true } }
     /** 对方不方便时的重试状态 (随设备同步): 上一次被拒绝的时刻 (毫秒, 0 = 没有) 和已经重试的次数. */
     private var retryAt = 0L
     private var retryN = 0
@@ -147,6 +191,14 @@ class Comm(
     init {
         load()
         ensurePersonas()
+        if (!seeded) {                                    // 第一次运行: 放进自带的人设, 还没选过人设就默认选 Claudia
+            runCatching {
+                for ((name, body) in BuiltinPersonas.ALL) File(personas, name).let { if (!it.exists()) it.writeText(body, Charsets.UTF_8) }
+            }
+            if (persona.isEmpty() && BuiltinPersonas.DEFAULT in listPersonas()) persona = BuiltinPersonas.DEFAULT
+            seeded = true
+            saveCfg()
+        }
         val last = messages.lastOrNull()
         if (last != null && last.role == "me" && ageSeconds(last) < 6 * 3600 && retryAt == 0L)
             retryAt = nowMs() - RETRY_GAP * 1000L + 60_000        // 上次关程序时还没收到回复: 1 分钟后让 (最后操作的) 设备再试一次
@@ -168,6 +220,7 @@ class Comm(
             retryAt = d.optLong("retry_at", 0L)
             retryN = d.optInt("retry_n", 0)
             clearTs = d.optLong("clear_ts", 0L)
+            seeded = d.optBoolean("seeded", false)
             d.optJSONObject("last_sent")?.let { o -> o.keys().forEach { k -> lastSent[k] = o.optString(k) } }
         }
         val arr = Store.readObj(chatFile)?.optJSONArray("messages")
@@ -188,7 +241,6 @@ class Comm(
     }
 
     // 写盘 (fsync) 放在后台线程: 发送 / 收到消息时界面线程不等磁盘, 不卡. 先在这里做好快照, 线程只管写.
-    private val writer = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "comm-save").apply { isDaemon = true } }
 
     /** 等后台的写盘做完 (自检). */
     fun flush() { writer.submit {}.get() }
@@ -196,7 +248,7 @@ class Comm(
     private fun saveCfg() {
         val o = JSONObject().put("persona", persona).put("send_hour", sendHour).put("send_timer", sendTimer)
             .put("show_avatar", showAvatar).put("avatar_me", avatarMe).put("avatar_ai", avatarAi).put("pro_key", proKey)
-            .put("retry_at", retryAt).put("retry_n", retryN).put("clear_ts", clearTs)
+            .put("retry_at", retryAt).put("retry_n", retryN).put("clear_ts", clearTs).put("seeded", seeded)
             .put("last_sent", JSONObject(lastSent as Map<*, *>))
         writer.execute { Store.write(cfgFile, o) }
     }

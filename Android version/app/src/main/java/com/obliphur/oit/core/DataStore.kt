@@ -525,8 +525,47 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
     fun autoTextFor(hourStart: LocalDateTime): String {
         val behavior = runCatching { hourAutoText(hourStart) }.getOrDefault("")
         if (behavior.isNotBlank()) return behavior
+        // 正在睡眠: 睡眠占着的每一小时 (哪怕才睡了几分钟) 马上记成"睡眠"并锁定; 起床后睡不满半小时的那几格退回去 (unfillShortSleep)
+        val live = runCatching { sleepLive() }.getOrNull()
+        if (live != null && live.isBefore(hourStart.plusHours(1)) && !hourStart.isAfter(LocalDateTime.now())) return sleepText
         if (runCatching { sleepSeconds(hourStart, hourStart.plusHours(1)) }.getOrDefault(0.0) >= 1800.0) return sleepText
         return autoValue
+    }
+
+    /** 正在睡眠 (睡眠开始之后每一小时, 直到现在这一小时): 还空着的整点记录格马上填上"睡眠" (填上之后就是固定的自动内容, 不能改).
+     *  整点记录没开着不填. 返回有没有填. */
+    fun fillSleepNow(now: LocalDateTime = LocalDateTime.now()): Boolean {
+        if (!hourEnabled) return false
+        val live = runCatching { sleepLive() }.getOrNull() ?: return false
+        var changed = false
+        var h = live.floorHour()
+        while (!h.isAfter(now)) {
+            val ds = h.toLocalDate().key()
+            if (hourText(ds, h.hour).isEmpty() && hourHalves[ds]?.get(h.hour.toString())?.getOrNull(1).isNullOrEmpty()) {
+                hourDays.getOrPut(ds) { HashMap() }[h.hour.toString()] = sleepText
+                changed = true
+            }
+            h = h.plusHours(1)
+        }
+        if (changed) saveHours()
+        return changed
+    }
+
+    /** 起床后: 这段睡眠 [start, end] 里, 睡眠不满半小时的那几小时 (睡着时马上记成"睡眠"的) 退回空白, 照常补记. */
+    fun unfillShortSleep(start: LocalDateTime, end: LocalDateTime): Boolean {
+        var changed = false
+        var h = start.floorHour()
+        while (h.isBefore(end)) {
+            val ds = h.toLocalDate().key()
+            val cur = hourDays[ds]?.get(h.hour.toString())
+            if (!cur.isNullOrEmpty() && I18n.autoNamesIn(cur) == I18n.autoNamesIn(sleepText) && sleepSeconds(h, h.plusHours(1)) < 1800.0) {
+                hourDays[ds]!!.remove(h.hour.toString())
+                changed = true
+            }
+            h = h.plusHours(1)
+        }
+        if (changed) saveHours()
+        return changed
     }
 
     /** 切换语言时: 整点记录里 睡眠 / Sleeping, 分心 / Distracted 这些默认的内容换成现在的语言, 同一项合并到一起. */

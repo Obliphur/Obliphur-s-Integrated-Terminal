@@ -52,12 +52,13 @@ class CommTest {
 
         val td = Files.createTempDirectory("oit").toFile()
         val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "personas"))
-        assertTrue(File(td, "personas/README.md").exists() && c.listPersonas().isEmpty())
+        assertTrue(File(td, "personas/README.md").exists() && c.listPersonas() == listOf("Claudia.txt"))
         assertEquals("小夏.txt", c.importPersona("小夏.txt", "你是小夏, 大学生.".byteInputStream()))
         assertEquals("小夏 (2).txt", c.importPersona("小夏.txt", "x".byteInputStream()))
         assertEquals("", c.importPersona("x.json", "x".byteInputStream()))
-        assertEquals(listOf("小夏 (2).txt", "小夏.txt"), c.listPersonas())
+        assertEquals(listOf("Claudia.txt", "小夏 (2).txt", "小夏.txt"), c.listPersonas())
         assertTrue("大学生" in c.readPersona("小夏.txt") && c.readPersona("../x").isEmpty())
+        c.set(persona = "")
         assertEquals("还没有选人设", c.send("hi"))
     }
 
@@ -164,6 +165,21 @@ class CommTest {
         c.blocked = { "" }
         assertEquals("📎 统计·整点记录、应用 / 日历·睡眠 / 合约词条",
             CommData.label(CommSel(listOf("log", "window"), listOf("sleep"), true)))
+    }
+
+    @Test
+    fun builtinPersona() {
+        val td = Files.createTempDirectory("oit").toFile()
+        val dir = File(td, "d").also { it.mkdirs() }
+        val c = comm(dir, File(td, "pp"))
+        assertEquals(listOf("Claudia.txt"), c.listPersonas())
+        assertEquals("Claudia.txt", c.personaName())            // 第一次运行默认选中
+        assertTrue("Claudia" in c.readPersona("Claudia.txt") && CommText.REFUSE in c.readPersona("Claudia.txt"))
+        c.set(persona = "")
+        File(td, "pp/Claudia.txt").delete()
+        c.flush()
+        val c2 = Comm(dir, File(td, "pp"), { clock }) { _, _, _ -> "" }
+        assertTrue(c2.listPersonas().isEmpty() && c2.personaName().isEmpty())     // 删掉之后不再写回, 也不再自动选
     }
 
     @Test

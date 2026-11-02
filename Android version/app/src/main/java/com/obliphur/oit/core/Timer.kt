@@ -89,6 +89,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         idleSince = null
         nudgeId?.let { core.dismissNotice(it) }
         sleepSince = LocalDateTime.now().withNano(0)
+        dm.fillSleepNow()                        // 睡着了: 这一小时的整点记录马上填上"睡眠"并锁定
         saveState()
         core.changed()
         return ""
@@ -102,6 +103,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         sleepSince = null
         dm.addFocusSession("sleep", since, now)
         dm.relabelSleep(since, now)              // 睡眠期间已经自动记成"分心"的小时改成"睡眠"
+        dm.unfillShortSleep(since, now)          // 睡着时马上记成"睡眠"、结果睡不满半小时的小时退回去
         saveState()
         armIdleNudge()
         core.changed()
@@ -110,7 +112,8 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
     /** 睡眠中却进入了专注 / 休息 / 外出 / 合约 (例如别的设备同步过来的) 就起床. */
     private fun checkSleep() {
         if (sleepSince == null) return
-        if (state != TState.IDLE || core.contract.active || core.behavior.active() != null) wake()
+        if (state != TState.IDLE || core.contract.active || core.behavior.active() != null) { wake(); return }
+        if (dm.fillSleepNow()) core.changed()          // 睡眠中每个新的一小时, 整点记录马上填上"睡眠"
     }
 
     private fun readState(): JSONObject = Store.readObj(file) ?: JSONObject()

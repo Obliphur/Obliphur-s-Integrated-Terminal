@@ -1505,6 +1505,7 @@ class BreakTimerApp:
         self.idle_since = None
         self.sleep_since = datetime.now().replace(microsecond=0)
         self._save_timer_state()
+        self._fill_sleep_hours()                    # 睡着了: 这一小时的整点记录马上填上"睡眠"并锁定
         self._show_sleep_cover()
         self._sync_timer_buttons()
         self._log_notice(f"SLEEP start {self.sleep_since:%H:%M:%S}")
@@ -1521,6 +1522,8 @@ class BreakTimerApp:
         self.sleep_since = None
         self.dm.add_focus_session("sleep", since, now)
         self.dm.relabel_sleep(since, now)       # 睡眠期间已经自动记成"分心"的小时改成"睡眠"
+        self.dm.unfill_short_sleep(since, now)  # 睡着时马上记成"睡眠"、结果睡不满半小时的小时退回去
+        self._refresh_if_visible("log")
         self._save_timer_state()
         self._hide_sleep_cover()
         self._arm_idle_nudge()
@@ -1530,10 +1533,20 @@ class BreakTimerApp:
         if self.sync.peers():
             self.sync.sync_now()
 
+    def _fill_sleep_hours(self):
+        try:
+            if self.dm.fill_sleep_now():
+                self._refresh_if_visible("log")
+                self.update_log_badge()
+        except Exception as e:
+            self._log_window(f"ERROR    sleep fill {type(e).__name__}: {e}")
+
     def _check_sleep(self):
-        """每 5 秒: 睡眠中却进入了专注 / 休息 / 外出 / 合约 (例如别的设备同步过来的) 就起床; 页面被拆掉了就重新盖上."""
+        """每 5 秒: 睡眠中却进入了专注 / 休息 / 外出 / 合约 (例如别的设备同步过来的) 就起床; 页面被拆掉了就重新盖上.
+        睡眠中每个新的一小时, 整点记录马上填上"睡眠"."""
         if self.sleep_since is None:
             return
+        self._fill_sleep_hours()
         if self.state != IDLE or self.contract.active or self.behavior.active() is not None:
             self.wake()
             return

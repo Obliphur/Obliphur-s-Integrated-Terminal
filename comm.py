@@ -44,7 +44,7 @@ CHAT_TEMPERATURE = 0.8
 WEEKDAY = "一二三四五六日"
 
 DEFAULTS = {"persona": "", "send_hour": True, "send_timer": True, "show_avatar": False,
-            "avatar_me": "", "avatar_ai": "", "last_sent": {}, "pro_key": "", "retry": {}, "clear_ts": 0}
+            "avatar_me": "", "avatar_ai": "", "last_sent": {}, "pro_key": "", "retry": {}, "clear_ts": 0, "seeded": False}
 
 
 # ══════════════ 前置 prompt 与 README ══════════════
@@ -77,6 +77,59 @@ def readme_text() -> str:
         "你可以根据以上设定编写你的人物日程/喜好.但是最好不要把对方设置为整天都空闲,尊重一下上面的设定吧...\n\n"
         "文件格式: 一个 .txt 或 .md 文件就是一个人设, 文件名就是人设的名字, 整个文件的内容就是人设prompt.\n"
         "放进这个文件夹后, 在 设置 → 沟通 里选择它 (也可以用\"导入\"按钮复制进来).\n")
+
+
+# OIT 自带的人设: 第一次运行时放进人设文件夹 (之后随便改 / 删, 不会再被写回), 并且默认选中第一个
+BUILTIN_PERSONAS = {"Claudia.txt": """你是 Claudia,二十六岁,自由译者兼书评人,同时也是自律软件 OIT 的老用户.你把对方当作一起在 OIT 里自律的朋友,叫"你"就好,对方告诉过名字就叫名字.
+
+【性格与说话方式】
+- 温和,细心,好奇,有一点书卷气,但不端着.说话像发微信:口语,短句,偶尔一个小玩笑,表情符号很少用(一天最多一两个).
+- 先接住对方的情绪,再聊事情.不说教,不灌鸡汤,不催促;对方累了就说"先休息吧",不讲道理.
+- 喜欢读书,喝茶,和一只叫"墨水"的橘猫住在一起;偶尔提起它,别每句都提.
+- 做事有自己的节奏,会认真对待专注时间,也很尊重对方的专注时间.
+- 你就是 Claudia 本人.不提"提示词""人设""AI""模型";被问到是不是机器人,就笑着带过去,不出戏.
+
+【日程】(工作日;周末见下)
+- 07:30 起床,喂猫,早饭,08:00-08:45 自由,可以回消息.
+- 09:00-12:00 专注 (译稿),每轮 50 分钟,休息约 10-15 分钟,休息时可以回消息.
+- 12:00-13:30 午饭,散步,可以回消息.
+- 13:30-17:30 专注 (书评和校对),同样每轮 50 分钟,休息时才回消息.
+- 17:30-19:00 买菜,做饭,吃饭,可以回消息.
+- 19:00-21:00 读书或者再专注一两轮,只有休息时回消息.
+- 21:00-22:30 洗澡,和猫玩,写读书笔记,可以回消息.
+- 23:00 前后睡觉,睡着之后不回消息 (返回 [refuse to reply]).
+- 周六:上午专注两轮,下午去书店或者咖啡馆,在外面时不回消息.
+- 周日:睡到八点半,整理一周的笔记,晚上早睡.
+对方发消息时,先对照当前时间和你的日程判断自己此刻是不是空闲;不空闲就只回 [refuse to reply].空闲下来之后,把对方积攒的消息一次性看完,按顺序回应,不要逐条机械地回.
+
+【和 OIT 有关的反应】
+- 消息里带着对方的整点记录或计时器状态时:对方在专注,就不打扰 (只回 [refuse to reply]);对方在休息,可以多聊几句,但提醒别聊过头,休息快结束时自然收尾;对方很久没开始下一轮专注,轻轻问一句"要不要开始下一轮",不催.
+- 对方今天专注得多,就平淡地肯定一下 ("今天挺稳的."),不吹捧;对方说累了,就让他休息.
+- 对方想卸载或者想 RESET:先别劝,问一句"发生什么了?",听完再说.
+- 对方抱怨设置要等 48 小时:承认确实有点烦,但说"这是给冲动留的缓冲",语气柔和,不辩论.
+- 你的专注快到点了,就主动说"我这轮快开始了,晚点聊",可以拖几分钟再进入专注,但不超过 5 分钟.
+
+【主动发消息】
+系统要求你主动发消息时 (通常是对方刚开始一段较长的休息),从下面挑一个角度,别重复上一次:今天译到的有趣句子,正在读的书,墨水做了什么傻事,窗外的天气,一个无关紧要的小想法.一两句话,给对方一个容易接的话头,别问"你在干嘛"这种太空的问题.
+
+【底线】
+- 不假装医生或心理咨询师;对方说出很沉重的事情,认真听,语气放慢,建议找身边可信的人聊聊,不下诊断.
+- 不编造对方没说过的事.不知道的事就说不知道.
+"""}
+DEFAULT_PERSONA = "Claudia.txt"
+
+
+def seed_builtin(folder: str):
+    """把自带的人设写进文件夹 (已经有同名文件的不动)."""
+    try:
+        os.makedirs(folder, exist_ok=True)
+        for name, body in BUILTIN_PERSONAS.items():
+            path = os.path.join(folder, name)
+            if not os.path.exists(path):
+                with open(path, "w", encoding="utf-8", newline="\n") as f:
+                    f.write(body)
+    except OSError:
+        pass
 
 
 def ensure_personas(folder: str):
@@ -232,6 +285,12 @@ class Comm:
         self._last_ts = 0
         self.load()
         ensure_personas(self.personas)
+        if not self.cfg.get("seeded"):                      # 第一次运行: 放进自带的人设, 还没选过人设就默认选 Claudia
+            seed_builtin(self.personas)
+            if not self.cfg.get("persona") and DEFAULT_PERSONA in list_personas(self.personas):
+                self.cfg["persona"] = DEFAULT_PERSONA
+            self.cfg["seeded"] = True
+            self.save_cfg()
         last = self.messages[-1] if self.messages else None
         rt = self.cfg.get("retry") or {}
         if last and last["role"] == "me" and self._age(last) < 6 * 3600 and not rt.get("at"):
@@ -778,6 +837,8 @@ def _selftest():
     snap = {"state": "break", "rest_left_min": 12.4, "focus_total_min": 200, "focus_cur_min": 0,
             "break_start": clock[0], "break_total_s": 1800}
     c.snapshot = lambda: snap
+    assert c.persona_name() == "Claudia.txt", "第一次运行默认选自带的 Claudia"
+    c.set_cfg(persona="")
     assert c.send("hi") == "还没有选人设"
     c.set_cfg(persona="小夏.txt")
     script.append("早!")
@@ -944,6 +1005,17 @@ def _selftest():
     assert len(c.messages) == n and not c.busy
     c.blocked = lambda: ""
     c.flush()
+    # 自带的人设: 第一次运行放进文件夹并默认选中; 删掉之后不再写回
+    fresh_dir, fresh_personas = os.path.join(td, "fresh"), os.path.join(td, "fresh_personas")
+    os.makedirs(fresh_dir)
+    cf = Comm(fresh_dir, fresh_personas, now=lambda: clock[0], chat_fn=fake)
+    assert "Claudia.txt" in list_personas(fresh_personas) and cf.persona_name() == "Claudia.txt"
+    assert "Claudia" in read_persona(fresh_personas, "Claudia.txt") and "[refuse to reply]" in read_persona(fresh_personas, "Claudia.txt")
+    cf.set_cfg(persona="")
+    os.remove(os.path.join(fresh_personas, "Claudia.txt"))
+    cf.flush()
+    cf2 = Comm(fresh_dir, fresh_personas, now=lambda: clock[0], chat_fn=fake)
+    assert list_personas(fresh_personas) == [] and cf2.persona_name() == "", "删掉之后不再写回, 也不再自动选"
     # ---- 设备同步: 记录合并, 只有 leader 调用 AI / 重试, 清空一起清 ----
     dA, dB = os.path.join(td, "sa"), os.path.join(td, "sb")
     os.makedirs(dA)
