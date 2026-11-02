@@ -10,13 +10,21 @@ import androidx.core.content.FileProvider
 import com.obliphur.oit.BuildConfig
 import org.json.JSONObject
 import java.io.File
+import java.io.RandomAccessFile
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * 从 GitHub 检查 / 下载更新 (MECHANICS 16), 和桌面版 updater.py 同一个仓库, 同一套版本号规则.
  * 安装包取发布里的 .apk 附件; 安装由系统的安装界面完成 (需要用户确认).
  * 走手机本身的网络 (Wi-Fi / 移动数据), 不经过 OIT 自己的 VPN, 所以任何断网方式下都能检查.
+ * 下载服务器对每条连接限速 (国内不开 VPN 时每条 40 KB/s 上下, 20 MB 要 8 分钟), 条数越多总速度越高:
+ * 知道大小的附件 (服务器支持 Range) 切成 256 KB 一段, 同时开 PARALLEL_CONNS 条连接分头下 (实测 20 MB 约 20 秒);
+ * 不支持 Range / 分段失败时退回一条连接 (断了接着下). 同 updater.py.
  */
 class Updater(private val ctx: Context) {
     companion object {
@@ -55,6 +63,114 @@ class Updater(private val ctx: Context) {
 
         const val ACCEPT_JSON = "application/vnd.github+json"
         const val ACCEPT_FILE = "application/octet-stream"
+
+        /** 多连接下载 (见 fetchRanges): 实测不开 VPN 时 16 条 ≈ 0.6 MB/s, 32 条 ≈ 1 MB/s, 单条 ≈ 0.04 MB/s.
+         *  一段小一点, 慢的连接不会拖到最后. 小于 MIN_PARALLEL 的文件不分段; 一段连着失败 SEGMENT_TRIES 次就放弃分段下载. */
+        const val PARALLEL_CONNS = 32
+        const val SEGMENT = 256L * 1024
+        const val MIN_PARALLEL = 1024L * 1024
+        const val SEGMENT_TRIES = 3
+
+        /** 把 size 字节切成 [起, 止] (闭区间) 的若干段. */
+        fun planSegments(size: Long, seg: Long = SEGMENT): List<LongRange> =
+            generateSequence(0L) { it + seg }.takeWhile { it < size }.map { it..(minOf(it + seg, size) - 1) }.toList()
+
+        /** "bytes 0-0/15669254" → 15669254; 看不懂返回 null. */
+        fun rangeTotal(contentRange: String?): Long? =
+            Regex("bytes (\\d+)-(\\d+)/(\\d+)").matchEntire(contentRange?.trim() ?: "")?.groupValues?.get(3)?.toLongOrNull()
+
+        /** 分段下载: 把 url 的 size 字节切成 seg 大小的段写进 part, workers 条连接各取各的 (Range, 要回 206 而且起点对得上).
+         *  一段失败 (断了 / 超时 / 内容不对) 换新连接重试 SEGMENT_TRIES 次; stallMs 内总共没进展 STALL_BYTES 就算卡住.
+         *  全部下完才返回, 失败 / 取消时抛出 (part 里是半成品, 由调用的人删). progress(已下载, 最近的速度 字节每秒). */
+        fun fetchRanges(url: String, size: Long, part: File, workers: Int, seg: Long, stallMs: Long, headers: Map<String, String>,
+                        connect: (URL) -> HttpURLConnection, cancelled: () -> Boolean, progress: (Long, Long) -> Unit) {
+            RandomAccessFile(part, "rw").use { it.setLength(size) }
+            val segs = planSegments(size, seg)
+            val next = AtomicInteger(0)
+            val got = AtomicLong(0)
+            val failure = AtomicReference<Throwable?>(null)
+            val active = ConcurrentHashMap.newKeySet<HttpURLConnection>()
+            val threads = (0 until minOf(workers, segs.size)).map {
+                Thread {
+                    try {
+                        RandomAccessFile(part, "rw").use { f ->
+                            while (failure.get() == null) {
+                                val i = next.getAndIncrement()
+                                if (i >= segs.size) break
+                                fetchSegment(url, segs[i], f, headers, connect, active, failure, got)
+                            }
+                        }
+                    } catch (e: Throwable) {
+                        failure.compareAndSet(null, e)
+                    }
+                }.apply { isDaemon = true; start() }
+            }
+            var winAt = System.currentTimeMillis()
+            var winBytes = 0L
+            var speed = 0L
+            var stallAt = winAt
+            var stallBytes = 0L
+            while (threads.any { it.isAlive }) {
+                Thread.sleep(250)
+                val now = System.currentTimeMillis()
+                val n = got.get()
+                if (cancelled()) failure.compareAndSet(null, Cancelled())
+                if (failure.get() != null) {               // 出错了: 掐断还在等数据的连接, 不用等它们超时
+                    active.forEach { runCatching { it.disconnect() } }
+                    continue
+                }
+                if (now - winAt >= 2000) { speed = (n - winBytes) * 1000 / (now - winAt); winAt = now; winBytes = n }
+                if (now - stallAt >= stallMs) {
+                    if (n - stallBytes < STALL_BYTES) failure.compareAndSet(null, IllegalStateException("download stalled"))
+                    stallAt = now; stallBytes = n
+                }
+                progress(n, speed)
+            }
+            threads.forEach { it.join() }
+            failure.get()?.let { throw it }
+            progress(got.get(), speed)
+        }
+
+        /** 取一段 [seg.first, seg.last] 写到 f 的对应位置; 失败换新连接重试. */
+        private fun fetchSegment(url: String, seg: LongRange, f: RandomAccessFile, headers: Map<String, String>,
+                                 connect: (URL) -> HttpURLConnection, active: MutableSet<HttpURLConnection>,
+                                 failure: AtomicReference<Throwable?>, got: AtomicLong) {
+            var attempt = 0
+            while (true) {
+                var counted = 0L
+                var c: HttpURLConnection? = null
+                try {
+                    val conn = connect(URL(url)).also { c = it; active.add(it) }
+                    conn.instanceFollowRedirects = false
+                    conn.connectTimeout = 20_000
+                    conn.readTimeout = 20_000
+                    for ((k, v) in headers) conn.setRequestProperty(k, v)
+                    conn.setRequestProperty("Range", "bytes=${seg.first}-${seg.last}")
+                    if (conn.responseCode != 206) throw IllegalStateException("HTTP ${conn.responseCode}")
+                    if (conn.getHeaderField("Content-Range")?.startsWith("bytes ${seg.first}-") != true) throw IllegalStateException("wrong range")
+                    var pos = seg.first
+                    conn.inputStream.use { inp ->
+                        val buf = ByteArray(65536)
+                        while (pos <= seg.last) {
+                            val n = inp.read(buf, 0, minOf(buf.size.toLong(), seg.last + 1 - pos).toInt())
+                            if (n < 0) throw IllegalStateException("short read")
+                            f.seek(pos)
+                            f.write(buf, 0, n)
+                            pos += n
+                            counted += n
+                            got.addAndGet(n.toLong())
+                        }
+                    }
+                    return
+                } catch (e: Exception) {
+                    got.addAndGet(-counted)
+                    if (failure.get() != null || ++attempt >= SEGMENT_TRIES) throw e
+                    Thread.sleep(1000)
+                } finally {
+                    c?.let { active.remove(it); it.disconnect() }
+                }
+            }
+        }
 
         /** 下载来源: 地址, Accept, 大小 (-1 = 不知道), SHA-256 (null = 不知道). */
         data class Source(val url: String, val accept: String, val size: Long, val sha256: String?)
@@ -125,7 +241,11 @@ class Updater(private val ctx: Context) {
     }
 
     /** 只连 GitHub 的 https 地址; 跳转也只能跳到 GitHub. range: 从第几个字节接着下载 (0 = 从头). */
-    private fun open(start: String, timeoutMs: Int, accept: String = ACCEPT_JSON, range: Long = 0): HttpURLConnection {
+    private fun open(start: String, timeoutMs: Int, accept: String = ACCEPT_JSON, range: Long = 0): HttpURLConnection =
+        openFinal(start, timeoutMs, accept, if (range > 0) "bytes=$range-" else null).first
+
+    /** 同 open, 另外返回跳转之后的最终地址; rangeSpec: Range 头的值 (如 "bytes=0-0"), null = 不带. */
+    private fun openFinal(start: String, timeoutMs: Int, accept: String, rangeSpec: String?): Pair<HttpURLConnection, String> {
         var url = start
         repeat(6) {
             val u = URL(url)
@@ -136,15 +256,15 @@ class Updater(private val ctx: Context) {
             c.readTimeout = timeoutMs
             c.setRequestProperty("User-Agent", "OIT/${BuildConfig.VERSION_NAME}")
             c.setRequestProperty("Accept", accept)
-            if (range > 0) c.setRequestProperty("Range", "bytes=$range-")
+            if (rangeSpec != null) c.setRequestProperty("Range", rangeSpec)
             val code = c.responseCode
             if (code in 300..399) {
                 url = URL(u, c.getHeaderField("Location") ?: throw IllegalStateException("HTTP $code")).toString()
                 c.disconnect()
                 return@repeat
             }
-            if (code != 200 && !(code == 206 && range > 0)) { c.disconnect(); throw IllegalStateException("HTTP $code") }
-            return c
+            if (code != 200 && !(code == 206 && rangeSpec != null)) { c.disconnect(); throw IllegalStateException("HTTP $code") }
+            return c to url
         }
         throw IllegalStateException("too many redirects")
     }
@@ -196,22 +316,7 @@ class Updater(private val ctx: Context) {
         part.delete()
         if (track) { got = 0; total = src.size; speed = 0; retry = 0 }
         try {
-            var fails = 0
-            while (true) {
-                val before = part.length()
-                try {
-                    fetchPart(src, part, track)
-                    break
-                } catch (e: Cancelled) {
-                    throw e
-                } catch (e: Exception) {
-                    if (part.length() - before < 256 * 1024) fails++ else fails = 0
-                    if (fails >= MAX_TRIES) throw e
-                    if (track) retry++
-                    Thread.sleep(2000)
-                    if (track && cancelled) throw Cancelled()
-                }
-            }
+            if (!(src.size >= MIN_PARALLEL && tryParallel(src, part, track))) streamTo(src, part, track)
             val total = part.length()
             if (src.size >= 0 && total != src.size) throw IllegalStateException("size mismatch ($total != ${src.size})")
             val md = java.security.MessageDigest.getInstance("SHA-256")
@@ -226,6 +331,55 @@ class Updater(private val ctx: Context) {
         } catch (e: Exception) {
             part.delete()
             throw e
+        }
+    }
+
+    /** 知道大小的附件先分段下载 (多条连接). false = 不行 (服务器不支持 Range / 中途失败): part 已清掉, 该走一条连接. */
+    private fun tryParallel(src: Source, part: File, track: Boolean): Boolean {
+        try {
+            if (fetchParallel(src, part, track)) return true
+        } catch (e: Cancelled) {
+            throw e
+        } catch (e: Exception) {
+            // 退回一条连接
+        }
+        part.delete()
+        if (track) { got = 0; speed = 0 }
+        return false
+    }
+
+    /** 先要第 0 个字节: 走完 api.github.com 的跳转, 拿到下载服务器上带签名的地址, 确认支持 Range 而且总大小对得上; 再分段下载. */
+    private fun fetchParallel(src: Source, part: File, track: Boolean): Boolean {
+        if (src.size > MAX_DOWNLOAD) throw IllegalStateException("download too large")
+        val (c0, final) = openFinal(src.url, 20_000, src.accept, "bytes=0-0")
+        try {
+            if (c0.responseCode != 206 || rangeTotal(c0.getHeaderField("Content-Range")) != src.size) return false
+        } finally {
+            c0.disconnect()
+        }
+        fetchRanges(final, src.size, part, PARALLEL_CONNS, SEGMENT, STALL_MS,
+            mapOf("User-Agent" to "OIT/${BuildConfig.VERSION_NAME}", "Accept" to src.accept),
+            { connect(it) }, { track && cancelled }) { n, s -> if (track) { got = n; speed = s } }
+        return true
+    }
+
+    /** 一条连接下完整文件: 断了 / 卡住时重连, 接着 part 已有的部分继续 (Range); 连着 MAX_TRIES 次没什么进展才放弃. */
+    private fun streamTo(src: Source, part: File, track: Boolean) {
+        var fails = 0
+        while (true) {
+            val before = part.length()
+            try {
+                fetchPart(src, part, track)
+                break
+            } catch (e: Cancelled) {
+                throw e
+            } catch (e: Exception) {
+                if (part.length() - before < 256 * 1024) fails++ else fails = 0
+                if (fails >= MAX_TRIES) throw e
+                if (track) retry++
+                Thread.sleep(2000)
+                if (track && cancelled) throw Cancelled()
+            }
         }
     }
 

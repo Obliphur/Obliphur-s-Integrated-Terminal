@@ -12,6 +12,9 @@
 下载安装包走 GitHub API 的附件地址 (api.github.com/…/releases/assets/<id>, Accept: application/octet-stream),
 它直接跳到 release-assets.githubusercontent.com —— 不经过 github.com: 有的网络里 github.com 连不上, api.github.com 和下载服务器却能直连.
 下载完核对大小和 GitHub 给的 SHA-256 (附件的 digest). 源码包走 api.github.com → codeload.github.com.
+下载服务器对每条连接限速 (国内不开 VPN 时每条连接 40 KB/s 上下, 15 MB 要 7 分钟), 但条数越多总速度越高:
+附件 (知道大小, 服务器支持 Range) 切成 256 KB 一段, 同时开 PARALLEL_CONNS 条连接分头下 (实测 15 MB 约 15 秒);
+服务器不支持 Range / 分段失败时退回一条连接下完整文件. 源码包是边打包边发的 (没有大小, 不能分段), 还是一条连接.
 直连不通时再经过用户原来的代理 (Clash 之类, 见 sysproxy_backup.json).
 Adapter 方式离线时网卡是禁用的, 检查会失败, 下一次联网时再查.
 
@@ -19,13 +22,16 @@ Adapter 方式离线时网卡是禁用的, 检查会失败, 下一次联网时�
 """
 
 import hashlib
+import http.client
 import json
 import os
+import queue
 import re
 import filecmp
 import shutil
 import tempfile
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -39,6 +45,10 @@ RELEASES_PAGE = f"https://github.com/{REPO}/releases"
 ALLOWED_HOSTS = {"api.github.com", "github.com", "codeload.github.com",
                  "objects.githubusercontent.com", "release-assets.githubusercontent.com"}
 MAX_DOWNLOAD = 80 * 1024 * 1024
+PARALLEL_CONNS = 32                    # 同时下载的连接数 (实测: 16 条 ≈ 0.6 MB/s, 32 条 ≈ 1 MB/s, 单条 ≈ 0.04 MB/s)
+SEGMENT = 256 * 1024                   # 每一段的大小: 小一点, 慢的连接不会拖到最后
+MIN_PARALLEL = 1024 * 1024             # 小于这个大小的文件不分段
+SEGMENT_TRIES = 3                      # 一段连着失败这么多次就放弃分段下载
 # 覆盖安装时跳过的东西: 安卓版, 版本库, 缓存
 SKIP_DIRS = {"Android version", ".git", ".github", "__pycache__", ".vscode", ".idea"}
 
@@ -114,11 +124,11 @@ def _routes():
     return routes
 
 
-def _open(url: str, timeout: float, accept: str = ACCEPT_JSON):
+def _open(url: str, timeout: float, accept: str = ACCEPT_JSON, extra: dict = None):
     u = urllib.parse.urlsplit(url)
     if u.scheme != "https" or (u.hostname or "").lower() not in ALLOWED_HOSTS:
         raise ValueError("only GitHub https addresses are allowed")
-    req_headers = {"User-Agent": f"OIT/{config.APP_VERSION}", "Accept": accept}
+    req_headers = {"User-Agent": f"OIT/{config.APP_VERSION}", "Accept": accept, **(extra or {})}
     last = None
     for via, up in _routes():
         # 永远不走 OIT 自己的过滤代理; 直连不通再经过用户原来的代理
@@ -180,29 +190,160 @@ def package_source(rel: dict, platform: str):
     return None
 
 
+def plan_segments(size: int, seg: int = SEGMENT):
+    """把 size 字节切成 [(起, 止)] (闭区间) 的若干段."""
+    return [(a, min(a + seg, size) - 1) for a in range(0, size, seg)]
+
+
+def _range_total(content_range):
+    """'bytes 0-0/15669254' → 15669254; 看不懂返回 None."""
+    m = re.fullmatch(r"bytes (\d+)-(\d+)/(\d+)", str(content_range or "").strip())
+    return int(m.group(3)) if m else None
+
+
+def _tunnel_conn(host: str, up):
+    """到 host:443 的连接; up = 用户原来的代理 (host, port) 或 None (直连)."""
+    if up:
+        c = http.client.HTTPSConnection(up[0], up[1], timeout=30)
+        c.set_tunnel(host, 443)
+        return c
+    return http.client.HTTPSConnection(host, timeout=30)
+
+
+def _fetch_ranges(new_conn, target: str, size: int, tmp: str, headers: dict = None,
+                  workers: int = PARALLEL_CONNS, seg: int = SEGMENT):
+    """把 target (路径 + 查询) 的 size 字节分段下载到 tmp: workers 条连接, 每条连接一段一段地取
+    (Range, 要求回 206 而且起点对得上). 一段失败就换新连接重试 SEGMENT_TRIES 次, 还不行就抛出."""
+    with open(tmp, "wb") as f:
+        f.truncate(size)
+    todo = queue.Queue()
+    for s in plan_segments(size, seg):
+        todo.put(s)
+    errors = []
+    stop = threading.Event()
+
+    def worker():
+        conn = None
+        try:
+            with open(tmp, "r+b") as f:
+                while not stop.is_set():
+                    try:
+                        a, b = todo.get_nowait()
+                    except queue.Empty:
+                        return
+                    for attempt in range(SEGMENT_TRIES):
+                        try:
+                            if conn is None:
+                                conn = new_conn()
+                            conn.request("GET", target, headers={**(headers or {}), "Range": f"bytes={a}-{b}"})
+                            r = conn.getresponse()
+                            if r.status != 206:
+                                raise OSError(f"HTTP {r.status}")
+                            if not str(r.getheader("Content-Range") or "").startswith(f"bytes {a}-"):
+                                raise OSError("wrong range")
+                            pos = a
+                            while pos <= b:
+                                chunk = r.read(min(65536, b + 1 - pos))
+                                if not chunk:
+                                    raise OSError("short read")
+                                f.seek(pos)
+                                f.write(chunk)
+                                pos += len(chunk)
+                            break
+                        except (OSError, http.client.HTTPException):
+                            if conn is not None:
+                                conn.close()
+                            conn = None
+                            if attempt == SEGMENT_TRIES - 1 or stop.is_set():
+                                raise
+                            time.sleep(1)
+        except BaseException as e:      # noqa: BLE001 —— 交给主线程
+            errors.append(e)
+            stop.set()
+        finally:
+            if conn is not None:
+                conn.close()
+
+    threads = [threading.Thread(target=worker, daemon=True) for _ in range(max(1, min(workers, todo.qsize())))]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    if errors:
+        raise errors[0]
+
+
+def _download_parallel(src: dict, tmp: str, size: int) -> bool:
+    """知道大小的附件分段下载到 tmp. 返回 False = 服务器不支持分段 (该走单条连接); 分段中途失败会抛出."""
+    if size > MAX_DOWNLOAD:
+        raise ValueError("download too large")
+    # 先要第 0 个字节: 顺便走完 api.github.com 的跳转, 拿到下载服务器上带签名的地址, 并确认支持 Range 和总大小对得上
+    with _open(src["url"], 60, src.get("accept") or ACCEPT_JSON, {"Range": "bytes=0-0"}) as r:
+        final = r.geturl()
+        if r.status != 206 or _range_total(r.headers.get("Content-Range")) != size:
+            return False
+    u = urllib.parse.urlsplit(final)
+    host = (u.hostname or "").lower()
+    if u.scheme != "https" or host not in ALLOWED_HOSTS:
+        raise ValueError("only GitHub https addresses are allowed")
+    up = upstream_proxy() if _route["via"] == "proxy" else None        # 和刚才走通的是同一条路线
+    target = u.path + ("?" + u.query if u.query else "")
+    _fetch_ranges(lambda: _tunnel_conn(host, up), target,
+                  size, tmp, {"User-Agent": f"OIT/{config.APP_VERSION}", "Accept": src.get("accept") or ACCEPT_JSON})
+    return True
+
+
+def _download_stream(src: dict, tmp: str):
+    """一条连接下完整文件到 tmp."""
+    total = 0
+    with _open(src["url"], 60, src.get("accept") or ACCEPT_JSON) as r, open(tmp, "wb") as f:
+        while True:
+            chunk = r.read(65536)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_DOWNLOAD:
+                raise ValueError("download too large")
+            f.write(chunk)
+
+
+def _verify(path: str, src: dict):
+    """核对大小和 SHA-256 (来源给了才核对)."""
+    h = hashlib.sha256()
+    total = 0
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(1 << 20)
+            if not chunk:
+                break
+            total += len(chunk)
+            h.update(chunk)
+    if src.get("size") is not None and total != int(src["size"]):
+        raise ValueError(f"size mismatch ({total} != {src['size']})")
+    if src.get("sha256") and h.hexdigest() != src["sha256"]:
+        raise ValueError("SHA-256 mismatch")
+
+
 def download(src, dest: str):
     """下载到 dest (先写临时文件, 核对过大小和 SHA-256 再改名; 失败时删掉临时文件).
-    src: 下载来源 (pick_download / pick_apk 给的), 或者一个地址."""
+    src: 下载来源 (pick_download / pick_apk 给的), 或者一个地址.
+    知道大小的附件优先分段下载 (多条连接, 见开头的说明), 不行就一条连接."""
     if isinstance(src, str):
         src = {"url": src, "accept": ACCEPT_JSON, "size": None, "sha256": None}
     tmp = dest + ".part"
     try:
-        h = hashlib.sha256()
-        total = 0
-        with _open(src["url"], 60, src.get("accept") or ACCEPT_JSON) as r, open(tmp, "wb") as f:
-            while True:
-                chunk = r.read(65536)
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > MAX_DOWNLOAD:
-                    raise ValueError("download too large")
-                h.update(chunk)
-                f.write(chunk)
-        if src.get("size") is not None and total != int(src["size"]):
-            raise ValueError(f"size mismatch ({total} != {src['size']})")
-        if src.get("sha256") and h.hexdigest() != src["sha256"]:
-            raise ValueError("SHA-256 mismatch")
+        size = int(src["size"]) if src.get("size") else 0
+        done = False
+        if size >= MIN_PARALLEL:
+            try:
+                done = _download_parallel(src, tmp, size)
+            except ValueError:
+                raise                        # 太大 / 不是 GitHub 的地址: 单条连接也一样
+            except Exception:                # noqa: BLE001 —— 分段下载失败: 退回一条连接
+                done = False
+        if not done:
+            _download_stream(src, tmp)
+        _verify(tmp, src)
         os.replace(tmp, dest)
     except BaseException:
         try:
@@ -456,6 +597,119 @@ def _selftest():
     finally:
         globals()["_backup_file"] = saved_bf
         _sp.RegistryBackend = saved_rb
+
+    # 分段下载 (本地假服务器: 支持 Range, 前几个请求中途断开)
+    import http.server
+    import random
+    import socketserver
+    blob = random.Random(7).randbytes(3 * SEGMENT + 12345)
+
+    class _H(http.server.BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+        drops = 3                       # 前几次请求发一半就断开
+        ranged = True
+        conns = set()
+
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            _H.conns.add(self.client_address)
+            rng = re.fullmatch(r"bytes=(\d+)-(\d+)", self.headers.get("Range") or "")
+            if not rng or not _H.ranged:
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(blob)))
+                self.end_headers()
+                self.wfile.write(blob)
+                return
+            a, b = int(rng.group(1)), int(rng.group(2))
+            self.send_response(206)
+            self.send_header("Content-Range", f"bytes {a}-{b}/{len(blob)}")
+            self.send_header("Content-Length", str(b - a + 1))
+            self.end_headers()
+            if _H.drops > 0:
+                _H.drops -= 1
+                self.wfile.write(blob[a:a + (b - a) // 2])
+                self.close_connection = True
+                return
+            self.wfile.write(blob[a:b + 1])
+
+    class _S(socketserver.ThreadingMixIn, http.server.HTTPServer):
+        daemon_threads = True
+
+        def handle_error(self, request, client_address):      # 假服务器故意断开连接: 不打印错误
+            pass
+    srv = _S(("127.0.0.1", 0), _H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    port = srv.server_address[1]
+    try:
+        d = _tf.mkdtemp()
+        out = os.path.join(d, "big.bin")
+        _fetch_ranges(lambda: http.client.HTTPConnection("127.0.0.1", port, timeout=5), "/x", len(blob), out,
+                      workers=4, seg=SEGMENT)
+        assert open(out, "rb").read() == blob, "分段下载的内容不对"
+        assert len(_H.conns) >= 2, "只用了一条连接"
+        assert plan_segments(10, 4) == [(0, 3), (4, 7), (8, 9)] and plan_segments(8, 4) == [(0, 3), (4, 7)]
+        assert _range_total("bytes 0-0/15669254") == 15669254 and _range_total("bytes */5") is None
+        assert _range_total(None) is None
+        _H.ranged = False               # 不支持 Range (回 200): 分段下载要报错, 不能把整个文件当成一段写进去
+        try:
+            _fetch_ranges(lambda: http.client.HTTPConnection("127.0.0.1", port, timeout=5), "/x", len(blob),
+                          os.path.join(d, "no.bin"), workers=2, seg=SEGMENT)
+            raise AssertionError("server without Range accepted")
+        except OSError:
+            pass
+        _H.ranged, _H.drops = True, 10 ** 6       # 每次都断: 重试几次后放弃
+        try:
+            _fetch_ranges(lambda: http.client.HTTPConnection("127.0.0.1", port, timeout=5), "/x", len(blob),
+                          os.path.join(d, "bad.bin"), workers=2, seg=SEGMENT)
+            raise AssertionError("endless drops accepted")
+        except (OSError, http.client.HTTPException):
+            pass
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+    # download(): 分段失败就退回一条连接, 核对 SHA-256, 不留下半截文件
+    saved = (globals()["_download_parallel"], globals()["_download_stream"])
+    try:
+        want = hashlib.sha256(b"hello world" * 200000).hexdigest()
+        size = 11 * 200000
+        calls = []
+
+        def stream(src, tmp):
+            calls.append("stream")
+            with open(tmp, "wb") as f:
+                f.write(b"hello world" * 200000)
+
+        def par_fail(src, tmp, size):
+            calls.append("par")
+            raise OSError("boom")
+        globals()["_download_stream"], globals()["_download_parallel"] = stream, par_fail
+        d = _tf.mkdtemp()
+        ok = {"url": "https://api.github.com/x", "accept": ACCEPT_FILE, "size": size, "sha256": want}
+        download(ok, os.path.join(d, "a.bin"))
+        assert calls == ["par", "stream"] and os.listdir(d) == ["a.bin"], (calls, os.listdir(d))
+        calls.clear()
+        globals()["_download_parallel"] = lambda src, tmp, size: calls.append("par") or False
+        download(ok, os.path.join(d, "b.bin"))                 # 不支持 Range: 退回
+        assert calls == ["par", "stream"]
+        calls.clear()
+        download({**ok, "size": None, "sha256": None}, os.path.join(d, "c.bin"))   # 不知道大小: 直接一条连接
+        assert calls == ["stream"]
+        try:
+            download({**ok, "sha256": "0" * 64}, os.path.join(d, "d.bin"))
+            raise AssertionError("wrong SHA-256 accepted")
+        except ValueError:
+            pass
+        try:
+            download({**ok, "size": size + 1}, os.path.join(d, "e.bin"))
+            raise AssertionError("wrong size accepted")
+        except ValueError:
+            pass
+        assert sorted(os.listdir(d)) == ["a.bin", "b.bin", "c.bin"], os.listdir(d)       # 失败的不留 .part
+    finally:
+        globals()["_download_parallel"], globals()["_download_stream"] = saved
 
     # 下载失败: 不留下半截文件
     d = _tf.mkdtemp()

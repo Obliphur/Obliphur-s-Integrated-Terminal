@@ -632,11 +632,6 @@ object EnStrings {
         "专注计时(今天)" to "Focus timer (today)",
         "人设空闲段前发送的概率 (%)" to "Chance before a persona idle period (%)",
         "人设休息段前发送的概率 (%)" to "Chance before a persona rest period (%)",
-        "人设日程里 (形如 12:30-13:00:空闲 / 8:40-9:18:休息 的行) 每段空闲 / 休息开始前 1~3 分钟, 对方有这个概率主动发一条消息; " +
-            "你每次休息超过 20 分钟时, 休息开始后 1~3 分钟也会发一条. 前 5 分钟没聊过的话, 收到时会有提示音." to
-            "In the persona's schedule (lines like 12:30-13:00:空闲 / 8:40-9:18:休息), 1-3 minutes before each idle / rest period starts, " +
-            "the other side sends you a message with this chance; whenever your own rest lasts over 20 minutes, one more comes 1-3 minutes after it starts. " +
-            "If you haven't chatted in the previous 5 minutes, a soft sound plays when it arrives.",
         "取到 {n} 个模型." to "Got {n} models.",
         "获取模型列表" to "Fetch models",
         "获取" to "Fetch",

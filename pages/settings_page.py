@@ -816,7 +816,7 @@ class SettingsPage(tk.Frame):
         self.pro_vars, self.pro_spins = {}, {}
         for key, text in (("idle", "人设空闲段前发送的概率 (%)"), ("rest", "人设休息段前发送的概率 (%)")):
             row = tk.Frame(fr, bg=card)
-            row.pack(fill="x", padx=12, pady=3)
+            row.pack(fill="x", padx=12, pady=(3, 3 if key == "idle" else 10))
             self._track(tk.Label(row, text=tr(text), bg=card, fg=COLORS["text"], font=config.font("body"), anchor="w"),
                         text).pack(side="left")
             var = tk.StringVar(value=str(c.pro_percent(key)))
@@ -826,12 +826,6 @@ class SettingsPage(tk.Frame):
             sp.bind("<Return>", lambda _e, k=key: self._comm_pro_save(k))
             sp.bind("<FocusOut>", lambda _e, k=key: self._comm_pro_save(k))
             self.pro_vars[key], self.pro_spins[key] = var, sp
-        hint_zh = ("人设日程里 (形如 12:30-13:00:空闲 / 8:40-9:18:休息 的行) 每段空闲 / 休息开始前 1~3 分钟, 对方有这个概率主动发一条消息; "
-                   "你每次休息超过 20 分钟时, 休息开始后 1~3 分钟也会发一条. 前 5 分钟没聊过的话, 收到时会有提示音.")
-        hint = self._track(tk.Label(fr, text=tr(hint_zh), bg=card, fg=COLORS["text_dim"], font=small, anchor="w",
-                                    justify="left"), hint_zh)
-        hint.pack(fill="x", padx=12, pady=(2, 10))
-        wrap_label(hint, 24)
 
         fr, _head = self._card(body, "🖼  头像")
         v = tk.BooleanVar(value=bool(c.cfg.get("show_avatar")))

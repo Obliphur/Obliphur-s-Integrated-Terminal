@@ -13,6 +13,10 @@
     任何加入和删除都要等 CHANGE_DELAY_HOURS 小时才生效.
     dev_getter() 为真时(开发者模式 / 配置期)一切改动立即生效.
 
+网站白名单里的"组" (MECHANICS 4.9): 加入一个网站时, OIT 会去连它 (netproxy/sitescan.py), 它引发的其他网站和它一起加入白名单,
+    记成这个网站名下的一组 (groups: 主网站 → [引发的网站]). 引发的网站本身就是白名单里普通的条目 (判定、冷静期、删除都和别的条目一样),
+    组只管显示 (Rules 页里归在主网站下面, 点开才看到) 和连带操作: 删除 / 取消主网站时, 只属于它的引发的网站一起删除 / 取消.
+
 按 UP 主区分 (MECHANICS 4.8, 仅 bilibili.com): UP 主名单只有白名单, 两种模式下都是"只放行这些 UP 主" ——
     白名单里的 bilibili.com + UP 主白名单 → 只放行这些 UP 主的主页和视频, 其余的 B 站页面拦截 (名单是空的就整站放行);
     黑名单里的 bilibili.com + UP 主白名单 → 整站拦, 只有这些 UP 主的主页和视频例外放行 (名单是空的就整站拦).
@@ -188,6 +192,7 @@ class RuleStore:
         self.version = 0
         self._snap = {k: () for k in LIST_KEYS}
         self._ups = {}                           # (名单, 站点) -> UID 集合
+        self.groups = {}                         # 主网站 -> [它引发的网站]: 只有网站白名单 (WHITE_DOMAINS) 有组
         # 浏览器此刻开着哪些页面 (netproxy/upgate.py UpGate): allowed(site, exe, uids). None = 不支持, 一律按整站名单
         self.up_probe = None
         self.load()
@@ -228,6 +233,14 @@ class RuleStore:
             self.created = datetime.fromisoformat(raw["created"])
         except Exception:
             self.created = None
+        self.groups = {}
+        if isinstance(raw.get("groups"), dict):
+            for parent, kids in raw["groups"].items():
+                p = norm_domain(parent)
+                ks = [k for k in (norm_domain(x) for x in kids if isinstance(x, str)) if k and k != p] \
+                    if isinstance(kids, list) else []
+                if p and ks:
+                    self.groups[p] = list(dict.fromkeys(ks))
         self._rebuild()
 
     def _template_raw(self) -> dict:
@@ -247,6 +260,7 @@ class RuleStore:
             "created": (self.created.isoformat(timespec="seconds")
                         if self.created else None),
             "lists": self.lists,
+            "groups": self.groups,
             "pending": [
                 {"op": p["op"], "list": p["list"], "item": p["item"],
                  "apply_at": p["apply_at"].isoformat(timespec="seconds")}
@@ -272,7 +286,39 @@ class RuleStore:
             site, _, uid = item.partition('/')
             ups.setdefault((WHITE_UPS, site), set()).add(uid)
         self._ups = {k: frozenset(v) for k, v in ups.items()}
+        self._prune_groups()
         self.version += 1
+
+    def _live(self, item: str) -> bool:
+        """网站白名单里有这个条目, 或者它的加入在排队中."""
+        return item in self.lists[WHITE_DOMAINS] or self._find_pending("add", WHITE_DOMAINS, item) >= 0
+
+    def _prune_groups(self):
+        """组里已经不在名单里 (也不在排队加入) 的网站去掉; 主网站没了 / 组空了, 组也去掉."""
+        out = {}
+        for parent, kids in self.groups.items():
+            if not self._live(parent):
+                continue
+            ks = [k for k in kids if self._live(k)]
+            if ks:
+                out[parent] = ks
+        self.groups = out
+
+    def children(self, parent: str, active_only: bool = True) -> list:
+        """主网站引发的网站 (组): 默认只给已经生效的 (在名单里的); active_only=False 连排队中的也给."""
+        kids = self.groups.get(parent, [])
+        return [k for k in kids if (k in self.lists[WHITE_DOMAINS] if active_only else self._live(k))]
+
+    def tree(self) -> list:
+        """网站白名单按组排好: [(条目, [它名下已生效的引发的网站]), …]. 在别的主网站名下的条目不单独列出."""
+        active = self.items(WHITE_DOMAINS)
+        nested = {k for p, ks in self.groups.items() if p in active for k in ks}
+        return [(item, self.children(item)) for item in active if item not in nested]
+
+    def exclusive_children(self, parent: str) -> list:
+        """只属于这个主网站的引发的网站 (别的还在的主网站名下没有它)."""
+        return [k for k in self.groups.get(parent, [])
+                if not any(k in ks for p, ks in self.groups.items() if p != parent and self._live(p))]
 
 
     def items(self, key: str) -> list:
@@ -306,17 +352,18 @@ class RuleStore:
                 return p
         return None
 
-    def _stage(self, op, key, item):
+    def _stage(self, op, key, item, at=None):
         self.pending.append({"op": op, "list": key, "item": item,
-                             "apply_at": self._now() + self.delay})
+                             "apply_at": at or self._now() + self.delay})
         self._save()
 
 
-    def add(self, key: str, raw):
+    def add(self, key: str, raw, at=None):
         """返回 (status, item).
         status: applied 立即生效(仅开发者模式 / 配置期) / staged 进入等待 /
                 cancelled 取消了排队中的删除 /
-                exists 已在名单里 / invalid 格式不对"""
+                exists 已在名单里 / invalid 格式不对
+        at: 排队时的生效时间 (默认现在起 CHANGE_DELAY_HOURS 小时后); 组里的网站和主网站一起生效用."""
         item = normalize(key, raw)
         if not item:
             return "invalid", ""
@@ -326,22 +373,50 @@ class RuleStore:
             if item in self.lists[key]:
                 if self._drop_pending("remove", key, item):
                     self._save()
+                    self._rebuild()
                     return "cancelled", item
+                if key == WHITE_DOMAINS and self._ungroup(item):    # 自己加的: 不再是别人名下的, 单独一条
+                    self._save()
+                    self._rebuild()
                 return "exists", item
             if self._find_pending("add", key, item) >= 0:
                 return "staged", item
             if not self.dev_getter() and key not in self.preset_keys():
-                self._stage("add", key, item)
+                self._stage("add", key, item, at)
                 return "staged", item
             self.lists[key].append(item)
             self._save()
             self._rebuild()
             return "applied", item
 
-    def remove(self, key: str, raw):
+    def _ungroup(self, item: str) -> bool:
+        changed = False
+        for parent in list(self.groups):
+            if item in self.groups[parent]:
+                self.groups[parent] = [k for k in self.groups[parent] if k != item]
+                changed = True
+        return changed
+
+    def remove(self, key: str, raw, at=None):
         """返回 (status, item).
         status: applied 立即生效(仅开发者模式 / 配置期) / staged 进入等待 /
-                cancelled 取消了排队中的加入 / missing 名单里没有 / invalid"""
+                cancelled 取消了排队中的加入 / missing 名单里没有 / invalid
+        网站白名单里删主网站 (或取消它排队中的加入) 时, 只属于它的组里的网站一起处理 (一样的状态, 一样的生效时间)."""
+        with self._lock:
+            kids = self.exclusive_children(normalize(key, raw)) if key == WHITE_DOMAINS else []
+            status, item = self._remove_one(key, raw, at)
+            if status in ("applied", "staged", "cancelled") and key == WHITE_DOMAINS:
+                p = self.pending_for(key, item)
+                when = p["apply_at"] if status == "staged" and p and p["op"] == "remove" else None
+                for k in kids:
+                    self._remove_one(key, k, when)
+                if status != "staged":
+                    self.groups.pop(item, None)
+                self._save()
+                self._rebuild()
+            return status, item
+
+    def _remove_one(self, key: str, raw, at=None):
         item = normalize(key, raw)
         if not item:
             return "invalid", ""
@@ -351,23 +426,62 @@ class RuleStore:
             if item not in self.lists[key]:
                 if self._drop_pending("add", key, item):
                     self._save()
+                    self._rebuild()
                     return "cancelled", item
                 return "missing", item
             if self._find_pending("remove", key, item) >= 0:
                 return "staged", item
             if not self.dev_getter() and key not in self.preset_keys():
-                self._stage("remove", key, item)
+                self._stage("remove", key, item, at)
                 return "staged", item
             self.lists[key].remove(item)
             self._save()
             self._rebuild()
             return "applied", item
 
+    def add_group(self, parent: str, hosts) -> dict:
+        """网站白名单里的 parent (已在名单里, 或加入在排队中) 引发的这些网站一起加入名单, 记在它名下 (MECHANICS 4.9).
+        已经被名单里的条目放行的 (含子域名, 连带的域名) 不重复加. 排队中的和主网站同一个生效时间.
+        返回 {"added": [新加入 / 排队的网站], "kept": [本来就在名单里的, 现在归到它名下]}."""
+        parent = norm_domain(parent)
+        out = {"added": [], "kept": []}
+        with self._lock:
+            if not parent or not self._live(parent):
+                return out
+            pend = self.pending_for(WHITE_DOMAINS, parent)
+            at = pend["apply_at"] if pend and pend["op"] == "add" else None
+            kids = list(self.groups.get(parent, []))
+            for raw in hosts:
+                h = norm_domain(raw)
+                if not h or h == parent or h in kids or family_match(h, parent):
+                    continue
+                cov = [r for r in self.lists[WHITE_DOMAINS] if family_match(h, r)]
+                if cov:                       # 已经放行了: 如果放行它的是别的网站名下的, 也算在这个网站名下 (删掉那个网站时不能连带删掉)
+                    for r in cov:
+                        if r != parent and r not in kids and any(r in ks for ks in self.groups.values()):
+                            kids.append(r)
+                            out["kept"].append(r)
+                    continue
+                st, item = self.add(WHITE_DOMAINS, h, at)
+                if st in ("applied", "staged"):
+                    kids.append(h)
+                    out["added"].append(h)
+            if kids:
+                self.groups[parent] = kids
+                self._save()
+                self._rebuild()
+        return out
+
     def cancel_pending(self, index: int) -> bool:
+        """取消排队中的改动. 取消网站白名单主网站的加入 / 删除时, 只属于它的组里的网站排队中的同样改动一起取消."""
         with self._lock:
             if 0 <= index < len(self.pending):
-                del self.pending[index]
+                p = self.pending.pop(index)
+                if p["list"] == WHITE_DOMAINS:
+                    for k in self.exclusive_children(p["item"]):
+                        self._drop_pending(p["op"], WHITE_DOMAINS, k)
                 self._save()
+                self._rebuild()
                 return True
             return False
 
@@ -727,6 +841,66 @@ def _selftest():
     assert ru2.remove(WHITE_UPS, "5")[0] == "staged" and "5" in ru2.up_uids(WHITE_UPS, "bilibili.com")
     # 旧的名单文件没有 UP 主名单: 读出来是空的
     assert RuleStore(old, now=lambda: clock[0]).items(WHITE_UPS) == []
+
+    # 网站白名单的组 (MECHANICS 4.9): 主网站引发的网站和它一起加入, 同一个生效时间, 归在它名下
+    ck = [datetime(2026, 3, 1, 8, 0)]
+    gp = os.path.join(tempfile.mkdtemp(), "g.json")
+    g = RuleStore(gp, now=lambda: ck[0])
+    g.dev_getter = lambda: False
+    assert g.add(WHITE_DOMAINS, "zhihu.com")[0] == "staged"
+    ck[0] += timedelta(seconds=20)                                   # 探测花了一会儿
+    got = g.add_group("zhihu.com", ["zhimg.com", "www.zhihu.com", "hm.baidu.com", "pic.zhimg.com", "zhimg.com", "bad host"])
+    assert got["added"] == ["zhimg.com", "hm.baidu.com", "pic.zhimg.com"], got       # 子域名 (www.zhihu.com) 不加, 重复 / 不合法的不加
+    at = g.pending_for(WHITE_DOMAINS, "zhihu.com")["apply_at"]
+    assert all(g.pending_for(WHITE_DOMAINS, k)["apply_at"] == at for k in ("zhimg.com", "hm.baidu.com", "pic.zhimg.com")), "和主网站一起生效"
+    assert g.children("zhihu.com") == [] and len(g.children("zhihu.com", active_only=False)) == 3
+    assert g.add_group("never.com", ["x.com"]) == {"added": [], "kept": []}, "主网站不在名单里 (也没排队): 不加"
+    g2 = RuleStore(gp, now=lambda: ck[0])                            # 重新读取: 组还在
+    assert g2.groups["zhihu.com"] == ["zhimg.com", "hm.baidu.com", "pic.zhimg.com"]
+    ck[0] = at + timedelta(seconds=1)
+    assert len(g2.promote_due()) == 4
+    assert g2.tree() == [("zhihu.com", ["zhimg.com", "hm.baidu.com", "pic.zhimg.com"])], g2.tree()
+    assert g2.decide("pic.zhimg.com", "chrome.exe", False, MODE_WHITELIST) == (True, "whitelist-domain")
+    assert g2.decide("other.net", "chrome.exe", False, MODE_WHITELIST) == (False, "offline")
+    # 第二个主网站引发了同一个网站: 已经放行的不重复加; 单独删一个引发的网站不影响别的
+    assert g2.add(WHITE_DOMAINS, "zhida.com")[0] == "staged"
+    ck[0] += timedelta(seconds=5)
+    got = g2.add_group("zhida.com", ["hm.baidu.com", "static.zhida.net"])
+    assert got == {"added": ["static.zhida.net"], "kept": ["hm.baidu.com"]}, got
+    # 删除主网站: 只属于它的引发的网站一起排队删除, 同一个生效时间; 取消排队也一起取消
+    assert g2.remove(WHITE_DOMAINS, "zhihu.com")[0] == "staged"
+    rm_at = {k: g2.pending_for(WHITE_DOMAINS, k) for k in ("zhihu.com", "zhimg.com", "pic.zhimg.com")}
+    assert all(p and p["op"] == "remove" and p["apply_at"] == rm_at["zhihu.com"]["apply_at"] for p in rm_at.values())
+    assert not g2.pending_for(WHITE_DOMAINS, "hm.baidu.com"), "zhida.com 名下也有它: 不连带删"
+    pend_idx = next(i for i, p in enumerate(g2.pending) if p["item"] == "zhihu.com" and p["op"] == "remove")
+    assert g2.cancel_pending(pend_idx)
+    assert not any(p["op"] == "remove" for p in g2.pending), g2.pending
+    assert g2.tree()[0][0] == "zhihu.com" and g2.children("zhihu.com") == ["zhimg.com", "hm.baidu.com", "pic.zhimg.com"]
+    assert g2.remove(WHITE_DOMAINS, "zhihu.com")[0] == "staged"
+    ck[0] += timedelta(hours=49)
+    g2.promote_due()
+    assert "zhihu.com" not in g2.items(WHITE_DOMAINS) and "zhimg.com" not in g2.items(WHITE_DOMAINS)
+    assert "hm.baidu.com" in g2.items(WHITE_DOMAINS), "zhida.com 名下的也有它: 不能连带删掉"
+    assert "zhihu.com" not in g2.groups and g2.children("zhida.com") == ["hm.baidu.com", "static.zhida.net"], g2.groups
+    # 加入还在排队时删除主网站 = 取消, 引发的网站排队中的加入也一起取消
+    g3 = RuleStore(os.path.join(tempfile.mkdtemp(), "g3.json"), now=lambda: ck[0])
+    g3.dev_getter = lambda: False
+    g3.add(WHITE_DOMAINS, "a.com")
+    g3.add_group("a.com", ["cdn.a-static.com", "api.a-api.com"])
+    assert len(g3.pending) == 3
+    assert g3.remove(WHITE_DOMAINS, "a.com")[0] == "cancelled" and not g3.pending and not g3.groups
+    # 配置期 (立即生效): 主网站和引发的网站立即生效; 自己再加一次引发的网站 = 不再属于主网站
+    g3.dev_getter = lambda: True
+    g3.add(WHITE_DOMAINS, "b.com")
+    assert g3.add_group("b.com", ["cdn.b-static.com", "img.b-img.com"])["added"] == ["cdn.b-static.com", "img.b-img.com"]
+    assert g3.tree() == [("b.com", ["cdn.b-static.com", "img.b-img.com"])]
+    assert g3.add(WHITE_DOMAINS, "img.b-img.com")[0] == "exists"
+    assert g3.tree() == [("b.com", ["cdn.b-static.com"]), ("img.b-img.com", [])], g3.tree()
+    assert g3.remove(WHITE_DOMAINS, "b.com")[0] == "applied"
+    assert g3.items(WHITE_DOMAINS) == ["img.b-img.com"] and not g3.groups
+    # bilibili.com 连带放行的域名不再作为组里的网站重复加
+    g3.add(WHITE_DOMAINS, "bilibili.com")
+    assert g3.add_group("bilibili.com", ["i0.hdslb.com", "api.bilibili.com", "cm.other.com"])["added"] == ["cm.other.com"]
     return "netproxy.rules selftest OK"
 
 

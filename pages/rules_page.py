@@ -1,6 +1,7 @@
 
 
 import os
+import threading
 import tkinter as tk
 from datetime import datetime
 from tkinter import ttk
@@ -12,6 +13,7 @@ from i18n import tr
 from netproxy import (
     WHITE_DOMAINS, WHITE_APPS, BLACK_DOMAINS, BLACK_APPS,
 )
+from netproxy import sitescan
 from netproxy.rules import (MODE_BLACKLIST, MODE_WHITELIST, WHITE_UPS, keys_for_mode,
                             up_site)
 from .widgets import (Modal, ScrollArea, wrap_label, smooth, cfg, flavor,
@@ -58,7 +60,12 @@ class RulesPage(tk.Frame):
         self._entries = {}
         self._shown = {}
         self._rows = {}               # 名单 -> 列表里显示的文字 (网站条目后面带 UP 主的标记)
-        self._press = None            # 按下鼠标时的 (名单, 序号, 这一项是不是已经单独选中着)
+        self._group_rows = {}         # 网站白名单 -> {行号: 主网站}: 名下有引发的网站的主网站, 点一下展开 / 收起 (MECHANICS 4.9)
+        self._open_groups = set()     # 展开着的主网站
+        self._scan_queue = []         # 加入白名单后等着探测的网站 (一个一个来)
+        self._scan_lock = threading.Lock()
+        self._scanning = False
+        self._press = None            # 按下鼠标时的 (名单, 序号, 这一项是不是已经单独选中着, 是不是不带 Shift / Ctrl 的单击)
         self._rules_version = -1
         self._ai_cfg = None
         self._edit_new = False        # 切换排队中: 正在看 / 提前设置新模式的名单 (MECHANICS 4.4)
@@ -208,6 +215,8 @@ class RulesPage(tk.Frame):
             self._entries[key].set("")
         self._toast_status(status, key, item)
         self.refresh(force=True)
+        if key == WHITE_DOMAINS and status in ("applied", "staged"):
+            self._scan_later([item])
 
     def _remove(self, key):
         lb = self._lists[key]
@@ -228,26 +237,35 @@ class RulesPage(tk.Frame):
     # ---- 网站条目下面的 UP 主名单 (MECHANICS 4.8) ----
 
     def _press_item(self, key, event):
-        """再点一下已经选中的网站条目 (bilibili.com …) 就打开它的 UP 主名单; 这里只记下按下时的状态."""
+        """点一下名下有引发的网站的主网站就展开 / 收起它的组 (4.9); 再点一下已经选中的网站条目 (bilibili.com …) 就打开它的 UP 主名单.
+        这里只记下按下时的状态."""
         lb = self._lists[key]
         idx = lb.nearest(event.y)
         box = lb.bbox(idx) if idx >= 0 else None
         hit = bool(box) and box[1] <= event.y < box[1] + box[3]
-        self._press = (key, idx, hit and tuple(lb.curselection()) == (idx,)
-                       and not event.state & 0x5) if hit else None      # 0x5 = Shift / Ctrl
+        plain = not event.state & 0x5                                   # 0x5 = Shift / Ctrl
+        self._press = (key, idx, hit and tuple(lb.curselection()) == (idx,) and plain, hit and plain) if hit else None
 
     def _release_item(self, key, event):
         press, self._press = self._press, None
-        if not press or press[0] != key or not press[2]:
+        if not press or press[0] != key or not (press[2] or press[3]):
             return
         lb = self._lists[key]
         idx = lb.nearest(event.y)
         box = lb.bbox(idx)
         if idx != press[1] or not box or not (box[1] <= event.y < box[1] + box[3]):
             return
+        root = self._group_rows.get(key, {}).get(idx)
+        if root and press[3]:
+            self._toggle_group(root)
+            return
         items = self._shown.get(key, ())
-        if idx < len(items) and up_site(items[idx]):
+        if press[2] and idx < len(items) and up_site(items[idx]):
             self._open_ups(key, items[idx])
+
+    def _toggle_group(self, root):
+        self._open_groups ^= {root}
+        self.refresh(force=True)
 
     def _open_ups_selected(self, key):
         picks = [self._shown[key][i] for i in self._lists[key].curselection()
@@ -268,6 +286,80 @@ class RulesPage(tk.Frame):
             return item
         n = len(self.rules.up_items(WHITE_UPS, site))
         return f"{item}    ▸ UP" + (f" {n}" if n else "")
+
+    def _rows_for(self, key):
+        """名单里显示的行: (每一行对应的条目, 每一行的文字, {行号: 主网站}).
+        网站白名单按组显示: 名下有引发的网站的主网站带 ▶ / ▼, 展开 (▼) 时它们缩进列在下面; 别的名单一条一行."""
+        r = self.rules
+        if key != WHITE_DOMAINS:
+            items = r.items(key)
+            return items, [self._row_text(key, it) for it in items], {}
+        items, rows, roots = [], [], {}
+        for root, kids in r.tree():
+            opened = bool(kids) and root in self._open_groups
+            if kids:
+                roots[len(items)] = root
+            items.append(root)
+            rows.append((("▼ " if opened else "▶ ") if kids else "") + self._row_text(key, root)
+                        + (f"    +{len(kids)}" if kids else ""))
+            if opened:
+                for k in kids:
+                    items.append(k)
+                    rows.append("      · " + self._row_text(key, k))
+        return items, rows, roots
+
+    # ---- 加入白名单时探测它引发的其他网站 (MECHANICS 4.9) ----
+
+    def _ui(self, fn):
+        """在界面线程里执行 (探测在后台线程里). 规则窗口已经关了就交给主窗口, 提示照样显示."""
+        for host in (self, toast._root()):
+            try:
+                host.after(0, fn)
+                return
+            except Exception:                       # noqa: BLE001 —— 窗口已销毁 / 没有主窗口
+                continue
+
+    def _scan_later(self, sites):
+        """让电脑去连这些刚加入白名单的网站, 把它们引发的其他网站一起加进名单 (一个一个来, 每个十几秒, 后台进行)."""
+        with self._scan_lock:
+            for s in sites:
+                if s and s not in self._scan_queue:
+                    self._scan_queue.append(s)
+            if self._scanning or not self._scan_queue:
+                return
+            self._scanning = True
+        threading.Thread(target=self._scan_worker, daemon=True, name="oit-site-scan").start()
+
+    def _scan_worker(self):
+        while True:
+            with self._scan_lock:
+                if not self._scan_queue:
+                    self._scanning = False
+                    return
+                site = self._scan_queue.pop(0)
+            self._ui(lambda s=site: toast.info(tr("正在连接 {site}, 找它引发的其他网站 (约十几秒)…").format(site=s)))
+            try:
+                import updater
+                res = sitescan.scan_site(site, upstream=updater.upstream_proxy())
+                added = self.rules.add_group(site, sitescan.related(site, res.hosts))["added"] if res.reached else []
+            except Exception as e:                  # noqa: BLE001 —— 探测失败不影响名单本身
+                res, added = sitescan.Result(error=str(e) or type(e).__name__), []
+            self._ui(lambda s=site, r=res, a=added: self._scan_done(s, r, a))
+
+    def _scan_done(self, site, res, added):
+        try:
+            self.refresh(force=True)
+        except tk.TclError:                         # 规则窗口已经关了
+            pass
+        if added:
+            p = self.rules.pending_for(WHITE_DOMAINS, site)
+            when = " " + tr("将于 {at} 生效.").format(at=f"{p['apply_at']:%Y-%m-%d %H:%M}") if p and p["op"] == "add" else ""
+            toast.success(tr("{site} 引发了 {n} 个其他网站, 已一起加入白名单 (归在 {site} 下, 点它展开查看).").format(
+                site=site, n=len(added)) + when)
+        elif res.reached:
+            toast.info(tr("{site} 没有引发别的网站, 只加入了它本身.").format(site=site))
+        else:
+            toast.warn(tr("没能连上 {site}, 只加入了它本身.").format(site=site))
 
     def _cancel_pending(self):
         sel = self.lb_pending.curselection()
@@ -362,10 +454,13 @@ class RulesPage(tk.Frame):
         picked = dlg.wait()
         if not picked:
             return
-        statuses = [self.rules.add(key, options[i][0])[0] for i in picked]
+        results = [self.rules.add(key, options[i][0]) for i in picked]
+        statuses = [st for st, _item in results]
         self._toast_status("staged" if "staged" in statuses else
                            ("applied" if "applied" in statuses else statuses[0]))
         self.refresh(force=True)
+        if key == WHITE_DOMAINS:
+            self._scan_later([item for st, item in results if st in ("applied", "staged")])
 
 
     def refresh(self, force: bool = False):
@@ -429,8 +524,8 @@ class RulesPage(tk.Frame):
         if force or self._rules_version != r.version:
             self._rules_version = r.version
             for key, lb in self._lists.items():
-                items = r.items(key)
-                rows = [self._row_text(key, it) for it in items]
+                items, rows, roots = self._rows_for(key)
+                self._group_rows[key] = roots
                 if self._shown.get(key) != items or self._rows.get(key) != rows:
                     sel = {self._shown[key][i] for i in lb.curselection()
                            if i < len(self._shown.get(key, ()))}
@@ -443,10 +538,21 @@ class RulesPage(tk.Frame):
                             lb.selection_set(i)
 
         shown_lists = active if blockall else active + (WHITE_UPS,)
-        self._pending_idx = [i for i, p in enumerate(r.pending) if p["list"] in shown_lists]
+        # 主网站和它引发的网站是一起排队的: 引发的网站折进主网站那一行 ("+N"), 取消那一行时一起取消 (rules.cancel_pending)
+        folded, counts = set(), {}
+        for pj, q in enumerate(r.pending):
+            if q["list"] == WHITE_DOMAINS:
+                for k in r.exclusive_children(q["item"]):
+                    i = next((i for i, p in enumerate(r.pending) if p["list"] == WHITE_DOMAINS and p["item"] == k
+                              and p["op"] == q["op"]), -1)
+                    if i >= 0 and i != pj:
+                        folded.add(i)
+                        counts[pj] = counts.get(pj, 0) + 1
+        self._pending_idx = [i for i, p in enumerate(r.pending) if p["list"] in shown_lists and i not in folded]
         pend = [f"{'+' if r.pending[i]['op'] == 'add' else '-'} "
-                f"{self._list_label(r.pending[i]['list'])}: {r.pending[i]['item']}   →  "
-                f"{r.pending[i]['apply_at']:%m-%d %H:%M}" for i in self._pending_idx]
+                f"{self._list_label(r.pending[i]['list'])}: {r.pending[i]['item']}"
+                + (f"  (+{counts[i]})" if i in counts else "")
+                + f"   →  {r.pending[i]['apply_at']:%m-%d %H:%M}" for i in self._pending_idx]
         if self._shown.get("_pending") != pend:
             self._shown["_pending"] = pend
             self.lb_pending.delete(0, "end")

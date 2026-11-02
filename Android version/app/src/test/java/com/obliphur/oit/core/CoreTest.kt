@@ -622,6 +622,77 @@ class CoreTest {
         assertNull(U.pickApk(JSONObject()))
     }
 
+    /** 分段下载 (MECHANICS 16): 多条连接各取一段, 前几个请求中途断开也能下完; 服务器不回 206 就报错 (由调用方退回一条连接). */
+    @Test
+    fun updateRangedDownload() {
+        val U = com.obliphur.oit.service.Updater
+        assertEquals(listOf(0L..3L, 4L..7L, 8L..9L), U.planSegments(10, 4))
+        assertEquals(listOf(0L..3L, 4L..7L), U.planSegments(8, 4))
+        assertEquals(15669254L, U.rangeTotal("bytes 0-0/15669254"))
+        assertNull(U.rangeTotal("bytes */5"))
+        assertNull(U.rangeTotal(null))
+
+        val blob = ByteArray(3 * U.SEGMENT.toInt() + 12345) { (it * 31 + it / 7).toByte() }
+        val drops = java.util.concurrent.atomic.AtomicInteger(3)           // 前 3 个请求发一半就断开
+        val clients = java.util.concurrent.ConcurrentHashMap.newKeySet<Int>()
+        // 最小的 HTTP 服务器 (Android 的单元测试没有 com.sun.net.httpserver): /range 支持 Range, /plain 不支持
+        val srv = java.net.ServerSocket(0, 50, java.net.InetAddress.getByName("127.0.0.1"))
+        Thread {
+            while (!srv.isClosed) {
+                val sock = try { srv.accept() } catch (e: java.io.IOException) { break }
+                Thread {
+                    try {
+                        sock.use {
+                            clients.add(it.port)
+                            val rd = it.getInputStream().bufferedReader(Charsets.ISO_8859_1)
+                            val path = rd.readLine().split(" ")[1]
+                            var range = ""
+                            while (true) {
+                                val l = rd.readLine()
+                                if (l.isNullOrEmpty()) break
+                                if (l.startsWith("Range:", ignoreCase = true)) range = l.substring(6).trim()
+                            }
+                            val out = it.getOutputStream()
+                            val m = Regex("bytes=(\\d+)-(\\d+)").matchEntire(range)
+                            if (path == "/plain" || m == null) {
+                                out.write("HTTP/1.1 200 OK\r\nContent-Length: ${blob.size}\r\nConnection: close\r\n\r\n".toByteArray())
+                                out.write(blob)
+                            } else {
+                                val a = m.groupValues[1].toInt()
+                                val b = m.groupValues[2].toInt()
+                                out.write(("HTTP/1.1 206 Partial Content\r\nContent-Range: bytes $a-$b/${blob.size}\r\n" +
+                                    "Content-Length: ${b - a + 1}\r\nConnection: close\r\n\r\n").toByteArray())
+                                if (drops.getAndDecrement() > 0) out.write(blob, a, (b - a) / 2) else out.write(blob, a, b - a + 1)
+                            }
+                            out.flush()
+                        }
+                    } catch (e: java.io.IOException) {
+                        // 客户端先断了
+                    }
+                }.apply { isDaemon = true; start() }
+            }
+        }.apply { isDaemon = true; start() }
+        try {
+            val port = srv.localPort
+            val conn = { u: java.net.URL -> u.openConnection() as java.net.HttpURLConnection }
+            var last = 0L
+            val part = File(tmp(), "big.part")
+            U.fetchRanges("http://127.0.0.1:$port/range", blob.size.toLong(), part, 4, U.SEGMENT, 5000, mapOf("Accept" to "x"), conn, { false }) { n, _ -> last = n }
+            assertTrue("内容不对", blob.contentEquals(part.readBytes()))
+            assertEquals(blob.size.toLong(), last)
+            assertTrue("只用了一条连接", clients.size >= 2)
+            val bad = File(tmp(), "plain.part")
+            try {
+                U.fetchRanges("http://127.0.0.1:$port/plain", blob.size.toLong(), bad, 2, U.SEGMENT, 5000, emptyMap(), conn, { false }) { _, _ -> }
+                throw AssertionError("server without Range accepted")
+            } catch (e: IllegalStateException) {
+                assertTrue(e.message!!.startsWith("HTTP 200"))
+            }
+        } finally {
+            srv.close()
+        }
+    }
+
     /** 应用名单: 前台应用不能用就锁定, 离开后撤掉 (MECHANICS 14.6). */
     @Test
     fun appLock() {

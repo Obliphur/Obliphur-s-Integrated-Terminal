@@ -291,9 +291,6 @@ fun CommSettings() {
                 }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.width(90.dp))
             }
         }
-        Text(tr("人设日程里 (形如 12:30-13:00:空闲 / 8:40-9:18:休息 的行) 每段空闲 / 休息开始前 1~3 分钟, 对方有这个概率主动发一条消息; " +
-            "你每次休息超过 20 分钟时, 休息开始后 1~3 分钟也会发一条. 前 5 分钟没聊过的话, 收到时会有提示音."),
-            color = o.dim, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp))
     }
 
     OitCard {
