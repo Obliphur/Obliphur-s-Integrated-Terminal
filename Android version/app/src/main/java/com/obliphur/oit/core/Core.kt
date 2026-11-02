@@ -44,8 +44,6 @@ interface Host {
     fun achievementsUnlocked(ids: List<String>) {}
     /** 违反合约的警报 (res/raw/target_alarm.ogg). */
     fun playAlarm() {}
-    /** 开着的应用 (后台的应用, 包名; 不含 OIT 自己 / 桌面 / 系统界面); 没有使用情况访问权限时 null. */
-    fun openApps(): Set<String>? = null
     /** 暂停后台正在播放的音频 / 视频 (指令 V 被领取时, MECHANICS 22.2). */
     fun pauseMedia() {}
     /** 完成一条指令的音效 (随机一个指令音效, res/raw/ticktock_type*.mp3). */
@@ -166,12 +164,6 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     private var lastTick = mono()
     private var lastCheck = -1e9
     private var lastAppSample = mono()
-    private var lastOpenApps = -1e9
-    /** 专注中后台应用数是不是已经超过上限; 上一次响警报的时刻 (超着时每 OPEN_APPS_REPEAT 秒再响一次). */
-    private var appsOver = false
-    /** 每个后台应用第一次被看到的时刻 (mono): 开着超过 2 分钟才计入后台应用数. */
-    private val appSeen = HashMap<String, Double>()
-    private var appsAlarmAt = -1e9
     private var appSamples = 0
     private var nextHour = nextHalf(LocalDateTime.now())
 
@@ -649,10 +641,6 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             lastAppSample = m
             sampleApp()
         }
-        if (m - lastOpenApps >= Cfg.OPEN_APPS_EVERY) {
-            lastOpenApps = m
-            checkOpenApps()
-        }
         changed()
         host.scheduleWake(nextWake())
     }
@@ -772,43 +760,6 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             if (id.isNotEmpty()) contractViolation(tr("全频道阻塞干扰中频繁打开被禁止的程序"), id)
         }
         host.lockApp(app, why)
-    }
-
-    /** 后台应用数 (电脑上的任务栏窗口数, MECHANICS 14.6): 只检测, 不关应用. 超过上限时响警报 (超着时每 2 分钟再响一次);
-     *  合约的"通道阻塞"按它算违反 (MECHANICS 18). */
-    private fun checkOpenApps() {
-        if (dm.resetting) return
-        val focusing = timer.state == TState.RUNNING
-        val limitOn = settings.bool("WINDOW_LIMIT_ENABLED")
-        val chan = contract.windowWatch().second      // 已经失效的按失效前的上限 (再次超过只响警报)
-        // 不在专注时也记着各应用开了多久, 开始专注时早就开着的应用马上算; 用不到这两项时不数
-        val apps = if (limitOn || chan > 0) host.openApps() else null.also { appSeen.clear() }
-        if (apps != null) {
-            appSeen.keys.retainAll(apps)
-            for (a in apps) appSeen.getOrPut(a) { mono() }
-        }
-        if (!focusing) {
-            appsOver = false
-            contract.windowReset()          // 离开专注: 通道阻塞下次专注重新算
-            return
-        }
-        apps ?: return
-        val n = apps.count { mono() - (appSeen[it] ?: mono()) >= Cfg.APP_MIN_AGE }
-        if (chan > 0) {
-            val id = contract.windowCheck(n)
-            if (id.isNotEmpty()) contractViolation(tr("后台应用超过 {n} 个", "n" to chan), id)
-        }
-        val lim = settings.num("WINDOW_LIMIT").toInt()
-        if (!limitOn || n <= lim) {
-            appsOver = false; return
-        }
-        if (!appsOver || mono() - appsAlarmAt >= Cfg.OPEN_APPS_REPEAT) {
-            appsAlarmAt = mono()
-            host.playAlarm()
-            toast(tr("后台开着 {n} 个应用, 超过上限 {x} 个.", "n" to n, "x" to lim), "warn")
-            Store.append(File(dir, "window_guard.log"), "APPS     $n > $lim")
-        }
-        appsOver = true
     }
 
     private fun sampleApp() {

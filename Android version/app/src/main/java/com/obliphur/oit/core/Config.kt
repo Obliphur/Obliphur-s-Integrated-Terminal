@@ -51,15 +51,6 @@ object Cfg {
 
     // 应用使用时间统计: 每隔这么多秒看一次前台应用
     const val APP_FOCUS_EVERY = 10.0
-    /** 专注时每隔多久数一次后台的应用 (超过上限就提醒并响一次违约音效, 之后每 OPEN_APPS_REPEAT 秒再响). */
-    const val OPEN_APPS_EVERY = 10.0
-    const val OPEN_APPS_REPEAT = 120.0
-    /** 后台应用开着超过这么多秒才计入后台应用数 (上限, 通道阻塞; MECHANICS 12 / 14.6). */
-    const val APP_MIN_AGE = 120.0
-    /** 没有精确权限 (adb 授予的 DUMP) 时, 后台应用数只数最近这么多分钟内用过、没有被关掉的应用 (MECHANICS 14.6). */
-    const val APP_RECENT_MIN = 10
-    /** ... 而且这段时间里在前台至少这么多秒 (几秒钟的文件选择器 / 权限弹窗之类的附属界面不算); 现在就在前台的不受这个限制. */
-    const val APP_RECENT_FG_SEC = 20
 
     const val WEEKDAY_KEYS_CSV = "QUOTA_MULT_MON,QUOTA_MULT_TUE,QUOTA_MULT_WED,QUOTA_MULT_THU,QUOTA_MULT_FRI,QUOTA_MULT_SAT,QUOTA_MULT_SUN"
     val WEEKDAY_KEYS = WEEKDAY_KEYS_CSV.split(",")

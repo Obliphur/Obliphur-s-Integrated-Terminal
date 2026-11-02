@@ -327,14 +327,12 @@ class CoreTest {
         val locks = mutableListOf<String>()
         var unlocks = 0
         var alarms = 0
-        var openApps: Set<String>? = null
         val toasts = mutableListOf<Toast>()
         override fun lockApp(pkg: String, why: String) { locks.add("$pkg:$why") }
         override fun unlockApp() { unlocks++ }
         override fun lockExempt(pkg: String, whitelist: Boolean) = pkg == "com.android.settings"
         override fun toast(t: Toast) { toasts.add(t) }
         override fun playAlarm() { alarms++ }
-        override fun openApps(): Set<String>? = openApps
         override fun noticesChanged() {}
         override fun changed() {}
         override fun applyNet(force: Boolean) {}
@@ -713,37 +711,6 @@ class CoreTest {
         assertEquals(mapOf("chrome" to 3600.0, "tv.danmaku.bili" to 1200.0), combineWindow(listOf(mother, phone), "2026-10"))
         assertEquals(mapOf("x" to 5.0), combineWindow(listOf(mother, phone), "2026-09"))
         assertEquals(1800.0, combineWindow(listOf(phone, mother), "2026-10")["tv.danmaku.bili"]!!, 0.0)
-    }
-
-    /** 后台应用数超过上限: 提醒 + 违约音效, 冷却 2 分钟; 还没解决就再响一次 (MECHANICS 12 / 14.6). */
-    @Test
-    fun windowLimitAlarmCooldown() {
-        NoHost.alarms = 0
-        NoHost.toasts.clear()
-        NoHost.openApps = (1..9).map { "app$it" }.toSet()
-        var clock = 1000.0
-        val core = Core(tmp(), NoHost) { clock }
-        core.endSetupPeriod()
-        core.timer.onAction()                        // 开始专注
-        assertEquals(TState.RUNNING, core.timer.state)
-        clock += 60.0
-        core.tick()
-        assertEquals(0, NoHost.alarms)               // 应用刚看到: 开着不到 2 分钟不算
-        clock += 120.0
-        core.tick()
-        assertEquals(1, NoHost.alarms)               // 开着超过 2 分钟, 超过上限: 响一次
-        assertTrue(NoHost.toasts.any { it.text.contains("超过上限") })
-        clock += 60.0
-        core.tick()
-        assertEquals(1, NoHost.alarms)               // 冷却中: 不重复
-        NoHost.openApps = (1..5).map { "app$it" }.toSet() + setOf("new1", "new2")
-        clock += 120.0
-        core.tick()
-        assertEquals(1, NoHost.alarms)               // 剩下 5 个老的 + 2 个刚开的: 不算超过
-        clock += 125.0
-        core.tick()
-        assertEquals(2, NoHost.alarms)               // 新开的也满 2 分钟了: 再响
-        NoHost.openApps = null
     }
 
     /** 违规记录: 只留最近 15 条, 新的在前; 换一个 Core 也能读回来 (MECHANICS 8.1). */

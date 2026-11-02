@@ -445,29 +445,6 @@ private fun PageExtras(tab: String, act: MainActivity) {
         }
         "record" -> RecordingsCard(act)
     }
-    // 后台应用数怎么数的, 现在算了哪些 (MECHANICS 14.6)
-    if (tab == "window") OitCard {
-        LocalTick.current
-        val exact = AppUsage.usingRecents(ctx)
-        Text(tr("后台应用数"), fontWeight = FontWeight.Bold, color = o.text)
-        Dim(if (exact) tr("精确: 按多任务界面里的应用数") else tr("统计: 最近 {n} 分钟内用过、没有被关掉的应用", "n" to Cfg.APP_RECENT_MIN),
-            size = 13, color = o.success)
-        if (AppUsage.precise(ctx) && !exact && AppUsage.recentsError.isNotEmpty())
-            Dim(tr("读不出最近任务: {e}", "e" to AppUsage.recentsError), size = 12, color = o.warn)
-        // 现在算了哪些应用: 只在开发者模式里显示 (调试用), 正式界面不显示
-        if (OitApp.instance.core.settings.devMode) AppUsage.lastOpen?.let { apps ->
-            val pm = ctx.packageManager
-            val names = apps.map { p -> runCatching { pm.getApplicationLabel(pm.getApplicationInfo(p, 0)).toString() }.getOrDefault(p) }
-            Dim(tr("现在算了 {n} 个", "n" to apps.size) + if (names.isEmpty()) "" else ": " + names.sorted().joinToString(", "), size = 13)
-        }
-        if (!AppUsage.precise(ctx)) {
-            Dim(tr("想改成按多任务界面精确计数 (可选, 不做也能用): 在电脑上用 adb 给 OIT 授予一次权限 (手机打开 USB 调试 / 无线调试后执行下面两条, 再重新打开 OIT; 卸载重装 OIT 前一直有效):"),
-                size = 12)
-            for (perm in listOf("DUMP", "PACKAGE_USAGE_STATS"))
-                Text("adb shell pm grant ${ctx.packageName} android.permission.$perm", color = o.text, fontSize = 12.sp,
-                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
-        }
-    }
 }
 
 // ════════════════ 录像 (目光 / 刻痕, MECHANICS 18.8) ════════════════

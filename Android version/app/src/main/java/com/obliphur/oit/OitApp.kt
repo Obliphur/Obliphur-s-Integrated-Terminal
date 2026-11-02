@@ -258,8 +258,6 @@ class OitApp : Application(), Host {
 
     override fun lockExempt(pkg: String, whitelist: Boolean) = com.obliphur.oit.service.AppLock.exempt(this, pkg, whitelist)
 
-    override fun openApps(): Set<String>? = AppUsage.openApps(this)
-
     /**
      * 指令 V: 暂停后台的音频 / 视频. 先发一个"暂停"媒体键 (只暂停, 不会把停着的变成播放), 再要一次永久的音频焦点
      * (别的播放器收到永久失焦也会暂停, 并且不会自己恢复); 稍后把焦点还回去.

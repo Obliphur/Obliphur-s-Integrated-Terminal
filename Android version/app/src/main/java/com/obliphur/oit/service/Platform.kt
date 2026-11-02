@@ -13,7 +13,6 @@ import android.app.usage.UsageStatsManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.pm.ApplicationInfo
 import android.content.pm.ServiceInfo
 import android.media.AudioAttributes
 import android.media.AudioFormat
@@ -418,12 +417,7 @@ object Chime {
 
 // ════════════════ 前台应用 (应用使用时间统计) ════════════════
 
-/** 使用事件里的一条界面事件 (后台应用数的统计用): type 是 UsageEvents.Event 的 ACTIVITY_*, time 是毫秒时间. */
-class UseEvent(val pkg: String, val cls: String, val type: Int, val time: Long)
-
 object AppUsage {
-    /** UsageEvents.Event.ACTIVITY_DESTROYED: 公开的 SDK 里没有这个常量 (隐藏 API), 值是固定的 24. */
-    private const val ACTIVITY_DESTROYED = 24
     private var lastQuery = 0L
     private var lastPkg: String? = null
     private var home: Set<String>? = null
@@ -440,140 +434,6 @@ object AppUsage {
             setOf("com.android.systemui", "android")
         home = s
         s
-    }
-
-    /** 桌面上有图标 (能点开进入界面) 的应用; 每 10 分钟重新查一次 (装了 / 卸了应用). */
-    private var launchable: Set<String> = emptySet()
-    private var launchableAt = 0L
-
-    private fun launchables(ctx: Context): Set<String> {
-        val now = System.currentTimeMillis()
-        if (launchable.isEmpty() || now - launchableAt > 600_000) {
-            val i = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-            launchable = ctx.packageManager.queryIntentActivities(i, 0).map { it.activityInfo.packageName }.toSet()
-            launchableAt = now
-        }
-        return launchable
-    }
-
-    /** 有"转储"权限 (DUMP, 普通应用拿不到, 只能用电脑 adb 授予一次) 时直接读系统的最近任务列表.
-     *  系统还要求 PACKAGE_USAGE_STATS 权限本身是授予状态 (也用 adb 授予), 否则 dumpsys 回 "Permission Denial" (显示在设置里). */
-    fun precise(ctx: Context) =
-        ctx.checkSelfPermission("android.permission.DUMP") == android.content.pm.PackageManager.PERMISSION_GRANTED
-
-    @Volatile private var recents: Set<String>? = null
-    @Volatile private var recentsAt = 0L
-    @Volatile private var recentsBusy = false
-    /** 读不出最近任务时的原因 (设置 → 应用 里显示). */
-    @Volatile var recentsError = ""
-        private set
-
-    /** "dumpsys activity recents" 里 "Visible recent tasks" 一段 (多任务界面显示的那些任务) 的应用: 每个任务取根界面的包名. */
-    fun parseRecents(text: String): Set<String>? {
-        val start = text.indexOf("Visible recent tasks")
-        if (start < 0) return null
-        val out = LinkedHashSet<String>()
-        for (block in text.substring(start).split("RecentTaskInfo #").drop(1)) {
-            val pkg = listOf("""baseActivity=\{([^/}\s]+)/""", """realActivity=\{([^/}\s]+)/""", """cmp=([^/}\s]+)/""")
-                .firstNotNullOfOrNull { Regex(it).find(block)?.groupValues?.get(1) } ?: continue
-            out.add(pkg)
-        }
-        return out
-    }
-
-    /** 后台线程里读一遍最近任务 (dumpsys 要几百毫秒, 不能放在界面线程上); 失败时 recents 为 null. */
-    private fun refreshRecents() {
-        if (recentsBusy) return
-        recentsBusy = true
-        Thread {
-            recents = try {
-                val p = ProcessBuilder("dumpsys", "activity", "recents").redirectErrorStream(true).start()
-                val text = p.inputStream.bufferedReader().use { it.readText() }
-                p.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)
-                parseRecents(text).also { recentsError = if (it == null) text.trim().take(200).ifEmpty { "empty output" } else "" }
-            } catch (e: Exception) {
-                recentsError = e.toString().take(200)
-                null
-            }
-            recentsAt = System.currentTimeMillis()
-            recentsBusy = false
-        }.start()
-    }
-
-    /** 读最近任务列表时用的数据是不是可用的 (界面上显示"精确" / "统计"). */
-    fun usingRecents(ctx: Context) = precise(ctx) && recents != null
-
-    /**
-     * 开着的应用 (后台的应用数, MECHANICS 14.6).
-     * 精确: 有 DUMP 权限时, 就是多任务界面里的任务 (每个任务算它的根应用, 别的应用借用的界面算在根应用里),
-     * 含 OIT 自己, 不含桌面. 每次数的时候在后台重新读一遍, 用的是上一次读到的 (最多晚一个检查间隔).
-     * 刚启动、第一次还没读完时返回 null (这一次不数): 不然会先用"统计"的办法, 过一会换成精确的数, 数目会跳.
-     * 统计 (没有 DUMP 权限, 或读不出来; 不需要电脑): 最近 Cfg.APP_RECENT_MIN 分钟内在前台待过至少 Cfg.APP_RECENT_FG_SEC 秒 (或者现在就在前台)、
-     * 界面还没被销毁、没有被强制停止 (FLAG_STOPPED) 的应用. 普通应用没有办法知道某个应用还在不在多任务里 (有的手机, 例如 vivo,
-     * 还不记"销毁"事件), 所以不数"开着的", 数"刚用过的": 这个数是准的, 不会因为划掉的应用赖着不走而多算.
-     * 只算桌面上有图标、能点开进入界面的应用: 别的应用借用的界面 (权限弹窗, 安装器, 分享 / 选择器,
-     * 输入法, 登录页等没有图标的附属程序) 不算. 含 OIT 自己, 不含桌面和系统界面. 没有使用情况访问权限时 null.
-     */
-    /** 上一次数出来的应用 (设置 → 应用 里列出来). */
-    @Volatile var lastOpen: Set<String>? = null
-        private set
-
-    fun openApps(ctx: Context): Set<String>? = countOpen(ctx).also { lastOpen = it }
-
-    private fun countOpen(ctx: Context): Set<String>? {
-        if (precise(ctx)) {
-            if (System.currentTimeMillis() - recentsAt > 3_000) refreshRecents()
-            recents?.let { r -> return r.filter { it !in homes(ctx) }.toSet() }
-            if (recentsAt == 0L || recentsError.isEmpty()) return null      // 第一次还没读完
-        }
-        if (!permitted(ctx)) return null
-        val usm = ctx.getSystemService(UsageStatsManager::class.java)
-        val now = System.currentTimeMillis()
-        val ev = usm.queryEvents(now - 6 * 3600_000L, now)       // 界面有没有被销毁要看更早的事件, 所以查 6 小时, 再按最近 N 分钟筛
-        val e = UsageEvents.Event()
-        val events = ArrayList<UseEvent>()
-        while (ev.hasNextEvent()) {
-            ev.getNextEvent(e)
-            when (e.eventType) {
-                UsageEvents.Event.ACTIVITY_RESUMED, UsageEvents.Event.ACTIVITY_PAUSED,
-                UsageEvents.Event.ACTIVITY_STOPPED, ACTIVITY_DESTROYED ->
-                    events.add(UseEvent(e.packageName.orEmpty(), e.className.orEmpty(), e.eventType, e.timeStamp))
-            }
-        }
-        return openFromEvents(events, now, Cfg.APP_RECENT_MIN * 60_000L, Cfg.APP_RECENT_FG_SEC * 1000L, homes(ctx), launchables(ctx)) { isStopped(ctx, it) }
-    }
-
-    /**
-     * 统计 (没有精确权限时): events 按时间先后. 一个应用算数, 要同时满足:
-     * 有界面还没被销毁 (每个界面 包名/类名 的最后一个事件不是销毁); 最近 recentMs 内在前台待过至少 minFgMs (显示到暂停之间的时间, 几个界面加起来)
-     * 或者现在还在前台 (最后一个事件是显示); 不是桌面 / 系统界面, 桌面上有图标, 没有被强制停止.
-     */
-    fun openFromEvents(events: List<UseEvent>, now: Long, recentMs: Long, minFgMs: Long, skip: Set<String>, launchable: Set<String>,
-                       stopped: (String) -> Boolean): Set<String> {
-        val from = now - recentMs
-        val last = HashMap<String, Int>()            // 包名/界面 -> 最后一个事件
-        val shownAt = HashMap<String, Long>()        // 包名/界面 -> 显示的时刻 (还没暂停)
-        val fg = HashMap<String, Long>()             // 包名 -> 最近 recentMs 内在前台的总时长
-        for (e in events) {
-            val key = e.pkg + "/" + e.cls
-            last[key] = e.type
-            if (e.type == UsageEvents.Event.ACTIVITY_RESUMED) shownAt[key] = e.time
-            else if (e.type == UsageEvents.Event.ACTIVITY_PAUSED) shownAt.remove(key)?.let { s ->
-                val a = maxOf(s, from)
-                if (e.time > a) fg[e.pkg] = (fg[e.pkg] ?: 0L) + (e.time - a)
-            }
-        }
-        val alive = last.filter { it.value != ACTIVITY_DESTROYED }.keys.map { it.substringBefore('/') }.toSet()
-        val foreground = last.filter { it.value == UsageEvents.Event.ACTIVITY_RESUMED }.keys.map { it.substringBefore('/') }.toSet()
-        return alive.filter { it !in skip && it in launchable && (it in foreground || (fg[it] ?: 0L).let { f -> f > 0 && f >= minFgMs }) }
-            .filterNot(stopped).toSet()
-    }
-
-    /** 应用被强制停止了 (FLAG_STOPPED), 或者已经卸载. 有的手机 (例如 vivo) 从多任务里划掉应用就是强制停止, 又不记"销毁"事件: 只能靠这个看出来. */
-    private fun isStopped(ctx: Context, pkg: String): Boolean = try {
-        ctx.packageManager.getApplicationInfo(pkg, 0).flags and ApplicationInfo.FLAG_STOPPED != 0
-    } catch (e: Exception) {
-        true
     }
 
     /** 包名; "" 是空白 (桌面 / 系统界面 / 锁屏); null 是不计入 (屏幕关闭, 没有权限). */
