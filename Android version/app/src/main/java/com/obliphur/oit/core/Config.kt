@@ -56,6 +56,8 @@ object Cfg {
     const val OPEN_APPS_REPEAT = 120.0
     /** 后台应用开着超过这么多秒才计入后台应用数 (上限, 通道阻塞; MECHANICS 12 / 14.6). */
     const val APP_MIN_AGE = 120.0
+    /** 没有精确权限 (adb 授予的 DUMP) 时, 后台应用数只数最近这么多分钟内用过、没有被关掉的应用 (MECHANICS 14.6). */
+    const val APP_RECENT_MIN = 30
 
     const val WEEKDAY_KEYS_CSV = "QUOTA_MULT_MON,QUOTA_MULT_TUE,QUOTA_MULT_WED,QUOTA_MULT_THU,QUOTA_MULT_FRI,QUOTA_MULT_SAT,QUOTA_MULT_SUN"
     val WEEKDAY_KEYS = WEEKDAY_KEYS_CSV.split(",")

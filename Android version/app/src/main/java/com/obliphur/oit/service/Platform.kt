@@ -29,6 +29,7 @@ import android.os.Process
 import android.os.SystemClock
 import com.obliphur.oit.OitApp
 import com.obliphur.oit.R
+import com.obliphur.oit.core.Cfg
 import com.obliphur.oit.core.Notice
 import com.obliphur.oit.core.TState
 import com.obliphur.oit.core.f2
@@ -417,6 +418,9 @@ object Chime {
 
 // ════════════════ 前台应用 (应用使用时间统计) ════════════════
 
+/** 使用事件里的一条界面事件 (后台应用数的统计用): type 是 UsageEvents.Event 的 ACTIVITY_*, time 是毫秒时间. */
+class UseEvent(val pkg: String, val cls: String, val type: Int, val time: Long)
+
 object AppUsage {
     /** UsageEvents.Event.ACTIVITY_DESTROYED: 公开的 SDK 里没有这个常量 (隐藏 API), 值是固定的 24. */
     private const val ACTIVITY_DESTROYED = 24
@@ -496,21 +500,19 @@ object AppUsage {
         }.start()
     }
 
-    /** 读最近任务列表时用的数据是不是可用的 (界面上显示"精确" / "估计"). */
+    /** 读最近任务列表时用的数据是不是可用的 (界面上显示"精确" / "统计"). */
     fun usingRecents(ctx: Context) = precise(ctx) && recents != null
 
     /**
      * 开着的应用 (后台的应用数, MECHANICS 14.6).
      * 精确: 有 DUMP 权限时, 就是多任务界面里的任务 (每个任务算它的根应用, 别的应用借用的界面算在根应用里),
      * 含 OIT 自己, 不含桌面. 每次数的时候在后台重新读一遍, 用的是上一次读到的 (最多晚一个检查间隔).
-     * 刚启动、第一次还没读完时返回 null (这一次不数): 不然会先用"估计"的办法多算一大堆, 过一会才恢复正常.
-     * 估计 (没有 DUMP 权限, 或读不出来): 最近 6 小时的使用事件里, 还有没被销毁的界面
-     * (最后一个事件是 显示 / 暂停 / 停止, 不是销毁) 的应用. 从最近任务里划掉的应用界面会被销毁, 不算.
+     * 刚启动、第一次还没读完时返回 null (这一次不数): 不然会先用"统计"的办法, 过一会换成精确的数, 数目会跳.
+     * 统计 (没有 DUMP 权限, 或读不出来; 不需要电脑): 最近 Cfg.APP_RECENT_MIN 分钟内用过 (界面显示过 / 暂停过, 或者现在就在前台)、
+     * 界面还没被销毁、没有被强制停止 (FLAG_STOPPED) 的应用. 普通应用没有办法知道某个应用还在不在多任务里 (有的手机, 例如 vivo,
+     * 还不记"销毁"事件), 所以不数"开着的", 数"刚用过的": 这个数是准的, 不会因为划掉的应用赖着不走而多算.
      * 只算桌面上有图标、能点开进入界面的应用: 别的应用借用的界面 (权限弹窗, 安装器, 分享 / 选择器,
      * 输入法, 登录页等没有图标的附属程序) 不算. 含 OIT 自己, 不含桌面和系统界面. 没有使用情况访问权限时 null.
-     * 有的手机 (例如 vivo) 根本不记"销毁"事件, 划掉的应用也照样算到 6 小时后: 这样的手机上划掉应用 = 强制停止,
-     * 所以被强制停止的应用 (FLAG_STOPPED) 不算. 还是会多算: 划掉后进程还活着的应用 (有常驻服务, 例如 QQ / 应用商店),
-     * 以及自己结束了的附属界面 (文件选择器等); 要精确只能用上面的办法.
      */
     /** 上一次数出来的应用 (设置 → 应用 里列出来). */
     @Volatile var lastOpen: Set<String>? = null
@@ -527,24 +529,39 @@ object AppUsage {
         if (!permitted(ctx)) return null
         val usm = ctx.getSystemService(UsageStatsManager::class.java)
         val now = System.currentTimeMillis()
-        val ev = usm.queryEvents(now - 6 * 3600_000L, now)
+        val ev = usm.queryEvents(now - 6 * 3600_000L, now)       // 界面有没有被销毁要看更早的事件, 所以查 6 小时, 再按最近 N 分钟筛
         val e = UsageEvents.Event()
-        val last = HashMap<String, Int>()            // 包名/界面 -> 最后一个事件
+        val events = ArrayList<UseEvent>()
         while (ev.hasNextEvent()) {
             ev.getNextEvent(e)
             when (e.eventType) {
                 UsageEvents.Event.ACTIVITY_RESUMED, UsageEvents.Event.ACTIVITY_PAUSED,
                 UsageEvents.Event.ACTIVITY_STOPPED, ACTIVITY_DESTROYED ->
-                    last[e.packageName + "/" + e.className] = e.eventType
+                    events.add(UseEvent(e.packageName.orEmpty(), e.className.orEmpty(), e.eventType, e.timeStamp))
             }
         }
-        return openFromEvents(last, homes(ctx), launchables(ctx)) { isStopped(ctx, it) }
+        return openFromEvents(events, now, Cfg.APP_RECENT_MIN * 60_000L, homes(ctx), launchables(ctx)) { isStopped(ctx, it) }
     }
 
-    /** 估计: 每个界面 (包名/类名) 的最后一个事件 → 还开着的应用. 销毁了的, 桌面 / 系统界面, 桌面上没有图标的, 被强制停止的都不算. */
-    fun openFromEvents(last: Map<String, Int>, skip: Set<String>, launchable: Set<String>, stopped: (String) -> Boolean): Set<String> =
-        last.filter { it.value != ACTIVITY_DESTROYED }.keys
-            .map { it.substringBefore('/') }.filter { it !in skip && it in launchable }.filterNot(stopped).toSet()
+    /**
+     * 统计 (没有精确权限时): events 按时间先后. 一个应用算数, 要同时满足:
+     * 有界面还没被销毁 (每个界面 包名/类名 的最后一个事件不是销毁); 最近 recentMs 内用过 (显示 / 暂停的事件) 或者现在还在前台 (最后一个事件是显示);
+     * 不是桌面 / 系统界面, 桌面上有图标, 没有被强制停止.
+     */
+    fun openFromEvents(events: List<UseEvent>, now: Long, recentMs: Long, skip: Set<String>, launchable: Set<String>,
+                       stopped: (String) -> Boolean): Set<String> {
+        val last = HashMap<String, Int>()            // 包名/界面 -> 最后一个事件
+        val used = HashMap<String, Long>()           // 包名 -> 最近一次用的时刻 (显示 / 暂停)
+        for (e in events) {
+            last[e.pkg + "/" + e.cls] = e.type
+            if (e.type == UsageEvents.Event.ACTIVITY_RESUMED || e.type == UsageEvents.Event.ACTIVITY_PAUSED)
+                used[e.pkg] = maxOf(used[e.pkg] ?: 0L, e.time)
+        }
+        val alive = last.filter { it.value != ACTIVITY_DESTROYED }.keys.map { it.substringBefore('/') }.toSet()
+        val foreground = last.filter { it.value == UsageEvents.Event.ACTIVITY_RESUMED }.keys.map { it.substringBefore('/') }.toSet()
+        return alive.filter { it !in skip && it in launchable && (it in foreground || (used[it] ?: 0L) >= now - recentMs) }
+            .filterNot(stopped).toSet()
+    }
 
     /** 应用被强制停止了 (FLAG_STOPPED), 或者已经卸载. 有的手机 (例如 vivo) 从多任务里划掉应用就是强制停止, 又不记"销毁"事件: 只能靠这个看出来. */
     private fun isStopped(ctx: Context, pkg: String): Boolean = try {

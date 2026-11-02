@@ -450,8 +450,8 @@ private fun PageExtras(tab: String, act: MainActivity) {
         LocalTick.current
         val exact = AppUsage.usingRecents(ctx)
         Text(tr("后台应用数"), fontWeight = FontWeight.Bold, color = o.text)
-        Dim(if (exact) tr("精确: 按多任务界面里的应用数") else tr("估计: 最近 6 小时用过、没有被关掉的应用 (从多任务里划掉的可能还算着)"),
-            size = 13, color = if (exact) o.success else o.warn)
+        Dim(if (exact) tr("精确: 按多任务界面里的应用数") else tr("统计: 最近 {n} 分钟内用过、没有被关掉的应用", "n" to Cfg.APP_RECENT_MIN),
+            size = 13, color = o.success)
         if (AppUsage.precise(ctx) && !exact && AppUsage.recentsError.isNotEmpty())
             Dim(tr("读不出最近任务: {e}", "e" to AppUsage.recentsError), size = 12, color = o.warn)
         // 现在算了哪些应用: 只在开发者模式里显示 (调试用), 正式界面不显示
@@ -461,7 +461,7 @@ private fun PageExtras(tab: String, act: MainActivity) {
             Dim(tr("现在算了 {n} 个", "n" to apps.size) + if (names.isEmpty()) "" else ": " + names.sorted().joinToString(", "), size = 13)
         }
         if (!AppUsage.precise(ctx)) {
-            Dim(tr("要精确计数, 需要在电脑上用 adb 给 OIT 授予一次权限 (手机打开 USB 调试 / 无线调试后执行下面两条, 再重新打开 OIT; 卸载重装 OIT 前一直有效):"),
+            Dim(tr("想改成按多任务界面精确计数 (可选, 不做也能用): 在电脑上用 adb 给 OIT 授予一次权限 (手机打开 USB 调试 / 无线调试后执行下面两条, 再重新打开 OIT; 卸载重装 OIT 前一直有效):"),
                 size = 12)
             for (perm in listOf("DUMP", "PACKAGE_USAGE_STATS"))
                 Text("adb shell pm grant ${ctx.packageName} android.permission.$perm", color = o.text, fontSize = 12.sp,
