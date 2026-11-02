@@ -199,6 +199,12 @@ class Comm(
 
     fun personaTitle(name: String) = name.substringBeforeLast('.')
 
+    /** (文件名, 显示的名字): 不带后缀; 只有两个文件除后缀外同名时才保留后缀. */
+    fun personaLabels(): List<Pair<String, String>> {
+        val names = listPersonas()
+        return names.map { n -> n to (if (names.count { personaTitle(it) == personaTitle(n) } > 1) n else personaTitle(n)) }
+    }
+
     fun readPersona(name: String): String {
         if (name.isEmpty() || name != File(name).name) return ""
         return runCatching { File(personas, name).readText(Charsets.UTF_8).removePrefix("\uFEFF").take(MAX_PERSONA).trim() }.getOrDefault("")

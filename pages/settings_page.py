@@ -868,7 +868,8 @@ class SettingsPage(tk.Frame):
         self._refresh_comm()
 
     def _comm_pick_persona(self):
-        name = self.comm_persona.get().strip()
+        label = self.comm_persona.get().strip()
+        name = next((n for n, lab in getattr(self, "_persona_labels", []) if lab == label), "")
         if name:
             self.comm.set_cfg(persona=name)
 
@@ -918,8 +919,10 @@ class SettingsPage(tk.Frame):
         if c is None or not hasattr(self, "cb_persona"):
             return
         import comm as comm_mod
-        self.cb_persona.config(values=comm_mod.list_personas(c.personas))
-        set_var(self.comm_persona, c.persona_name())
+        self._persona_labels = comm_mod.persona_labels(comm_mod.list_personas(c.personas))
+        self.cb_persona.config(values=[lab for _n, lab in self._persona_labels])
+        cur = c.persona_name()
+        set_var(self.comm_persona, next((lab for n, lab in self._persona_labels if n == cur), ""))
         prof = c.ai.profile()
         text = f"{tr(_provider_label(c.ai.provider))} · {prof.get('model') or '—'}"
         text += "  ✗" if self._comm_api_missing() else "  ✓"

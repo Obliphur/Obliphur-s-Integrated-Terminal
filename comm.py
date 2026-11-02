@@ -108,6 +108,12 @@ def persona_title(name: str) -> str:
     return os.path.splitext(name or "")[0]
 
 
+def persona_labels(names: list) -> list:
+    """[(文件名, 显示的名字)]: 不带后缀; 只有两个文件除后缀外同名时才保留后缀."""
+    titles = [persona_title(n) for n in names]
+    return [(n, n if titles.count(t) > 1 else t) for n, t in zip(names, titles)]
+
+
 def read_persona(folder: str, name: str) -> str:
     if not name or name != os.path.basename(name):
         return ""
@@ -501,6 +507,8 @@ def _selftest():
     assert import_persona(folder, src) == "小夏.txt" and import_persona(folder, src) == "小夏 (2).txt"
     assert import_persona(folder, os.path.join(td, "x.json")) == ""
     assert list_personas(folder) == ["小夏 (2).txt", "小夏.txt"] and persona_title("小夏.txt") == "小夏"
+    assert persona_labels(["小夏 (2).txt", "小夏.txt"]) == [("小夏 (2).txt", "小夏 (2)"), ("小夏.txt", "小夏")]
+    assert persona_labels(["a.md", "a.txt", "b.txt"]) == [("a.md", "a.md"), ("a.txt", "a.txt"), ("b.txt", "b")]
     assert "大学生" in read_persona(folder, "小夏.txt") and read_persona(folder, "../x") == ""
 
     # 合并 / 拒绝

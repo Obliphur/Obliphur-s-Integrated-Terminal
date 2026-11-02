@@ -180,9 +180,9 @@ fun CommSettings() {
             Box(Modifier.size(6.dp))
             PlainButton(tr("导入")) { pick.launch(arrayOf("*/*")) }
         }
-        val names = comm.listPersonas()
+        val names = comm.personaLabels()
         if (names.isNotEmpty()) Box(Modifier.padding(top = 8.dp)) {
-            Segmented(names.map { it to it }, comm.personaName()) { comm.set(persona = it) }
+            Segmented(names, comm.personaName()) { comm.set(persona = it) }
         }
     }
 
