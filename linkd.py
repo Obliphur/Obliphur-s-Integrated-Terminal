@@ -18,7 +18,7 @@ OIT 主体被关掉 / 崩溃 / 被冻结时, 别的设备的"请对方重新启�
   · 进程名不是 pythonw.exe 而是 oitlink.exe (解释器的副本): 结束 pythonw.exe 时它不会跟着没;
   · OIT 主体每 15 秒确认联动程序在不在, 不在就重新打开; 两边互相看着, 只结束其中一个会马上被拉起来;
   · 计划任务 `OIT link` 除了登录时, 还每分钟触发一次 (已经在运行时任务计划程序不会再开一个): 两个都被结束了一分钟内也会回来;
-  · 每 5 分钟自己检查计划任务还在不在, 被删了 / 改坏了就重建 (OIT 的开机自启动被用户关掉时不建);
+  · 每 5 分钟自己检查计划任务还在不在、开没开, 被删了 / 被禁用了 / 改坏了就重建 (OIT 的开机自启动的任务也一样重建);
   · 服务线程死了 / 出了异常就在进程里重来, 不退出.
 卸载时关掉 (uninstall.py).
 
@@ -188,7 +188,7 @@ class Link:
         return res
 
     def heal(self):
-        """计划任务 `OIT link` 被删了 / 改坏了就重建 (autostart.link_ensure: OIT 的开机自启动被用户关掉时不建)."""
+        """计划任务 `OIT link` 被删了 / 被禁用了 / 改坏了就重建 (autostart.link_ensure; OIT 的开机自启动的任务被禁用 / 删掉了也一起重建)."""
         if sys.platform != "win32" or not load_peers(self.dd)[1]:
             return
         import autostart

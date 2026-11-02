@@ -398,7 +398,7 @@ class BreakTimerApp:
             threading.Thread(target=self._appban_sync, args=(set(),), daemon=True).start()
         # 录像 (目光 / 刻痕): 上次没来得及加密的 (崩溃时留在临时文件夹里的, 旧版本留在数据目录里的 mp4) 先加密起来
         threading.Thread(target=lambda: (recorder.seal_leftovers(self.dm.data_dir), self._purge_recordings()), daemon=True).start()
-        # 开机自启动: 默认开启 (第一次运行时建好), 用户关掉了就不再打开 (MECHANICS 3.4)
+        # 开机自启动: 默认开启 (第一次运行时建好), 被禁用 / 删掉了就重建 (MECHANICS 3.4)
         if sandbox:
             self.root.after(1500, lambda: toast.notice(tr("🧪  封闭测试"), tr("数据全部放在 {p}, 不会影响主设备的数据. 设备同步已关闭.", p=closedtest.low_dir())))
         else:
@@ -2922,12 +2922,12 @@ class BreakTimerApp:
             except Exception as e:
                 self._log_window(f"ERROR    registration {type(e).__name__}: {e}")
         try:
-            self.autostart_state = (autostart.ensure(self.dm.data_dir) if first else autostart.state())
+            self.autostart_state = autostart.ensure(self.dm.data_dir)     # 任务被禁用 / 删掉了就重建 (启动时和之后每 5 分钟)
         except Exception:
             self.autostart_state = "error"
         try:
             # 联动程序 (MECHANICS 15.8): 登录时启动的后台进程, OIT 关掉了它照样在, 替别的设备把本机的 OIT 重新启动;
-            # 它的计划任务跟着开机自启动走, 进程没在运行就打开 (没有绑定的设备时用不着)
+            # 它的计划任务被禁用 / 删掉了也重建, 进程没在运行就打开 (没有绑定的设备时用不着)
             if self.sync.peers():
                 autostart.link_ensure()
                 linkd.ensure_running(self.dm.data_dir)
@@ -5602,7 +5602,7 @@ class BreakTimerApp:
             self._link_at = time.monotonic()             # 联动程序 (15.8) 在不在: 15 秒看一次 (它也看着本机的 OIT, 互相拉起来)
             threading.Thread(target=self._check_link, daemon=True).start()
         if time.monotonic() - self._autostart_at >= 300 and self.autostart_state != "unknown":
-            self._autostart_at = time.monotonic()        # 开机自启动有没有被用户关掉: 5 分钟看一次
+            self._autostart_at = time.monotonic()        # 开机自启动的任务有没有被禁用 / 删掉 (有就重建): 5 分钟看一次
             threading.Thread(target=self._check_autostart, daemon=True).start()
         try:
             self._check_adapter_overlap()

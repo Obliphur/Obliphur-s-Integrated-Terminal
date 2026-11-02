@@ -4,9 +4,9 @@
 OIT 要以管理员身份运行, 放进"启动"文件夹 / 注册表 Run 键的话每次登录都会弹 UAC.
 所以用 Windows 任务计划程序建一个任务, 登录时以最高权限启动:
     OIT autostart      当前用户登录时运行 pythonw.exe main.py (打包成 exe 时直接运行 exe)
-默认开启: 程序第一次运行时建好 (数据目录里记下 autostart_created, 之后就不再自己建).
-用户在任务计划程序里禁用 / 删掉了这个任务就算关掉了开机自启动, OIT 不会再把它打开 (重置后算第一次, 会再建).
-任务还开着时, 每次启动都按当前的程序位置重新写一遍 (程序文件夹搬过家也能启动). 卸载时删掉 (uninstall.py).
+默认开启: 程序第一次运行时建好 (数据目录里记下 autostart_created).
+任务被禁用 / 被删掉了就重建 (启动时, 之后每 5 分钟看一次; 联动程序也一样, 见 link_ensure): 用户不能靠在任务计划程序里禁用 / 删掉它来关掉开机自启动.
+任务在时, 每次也都按当前的程序位置重新写一遍 (程序文件夹搬过家也能启动). 卸载时删掉 (uninstall.py).
 
 开机自启动开着, 是其他设备把本机算作"关机"而不是"离线"的前提 (MECHANICS 15.4).
 
@@ -116,25 +116,46 @@ def create(run=_run) -> bool:
             pass
 
 
+def _register(name: str, xml: str, run=_run) -> bool:
+    """用 xml 建 / 覆盖任务 name (/F: 被禁用的任务也被覆盖, 新的定义是开着的)."""
+    fd, path = tempfile.mkstemp(suffix=".xml")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(xml.encode("utf-16"))
+        return run(["schtasks", "/Create", "/TN", name, "/XML", path, "/F"])[0] == 0
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+def create(run=_run) -> bool:
+    """建好 / 重写任务 (指向当前的程序位置, 开着). 需要管理员权限."""
+    if sys.platform != "win32":
+        return False
+    from shortcut import launch_target
+    exe, args, workdir = launch_target()
+    return _register(TASK_NAME, task_xml(exe, args, workdir, _user()), run)
+
+
 def ensure(data_dir: str, run=_run) -> str:
-    """程序启动时 (后台线程): 第一次运行时建好任务 (默认开启); 之后任务开着就按当前位置重写一遍,
-    被用户禁用 / 删掉了就不动. 返回之后的状态 (见 state)."""
+    """程序启动时 (后台线程) 和之后每 5 分钟: 任务没有 / 被禁用了就重建, 开着的也按当前位置重写一遍. 返回之后的状态 (见 state).
+    查不了任务 (error) 时什么都不动."""
     if sys.platform != "win32":
         return "missing"
-    marker = os.path.join(data_dir, MARKER)
-    st = state(run)
-    if not os.path.exists(marker):
-        if create(run):
+    if state(run) == "error":
+        return "error"
+    if create(run):
+        marker = os.path.join(data_dir, MARKER)
+        if not os.path.exists(marker):
             try:
                 os.makedirs(data_dir, exist_ok=True)
                 with open(marker, "w", encoding="utf-8") as f:
                     f.write("1")
             except OSError:
                 pass
-        return state(run)
-    if st == "on":
-        create(run)
-    return st
+    return state(run)
 
 
 def link_state(run=_run) -> str:
@@ -143,27 +164,20 @@ def link_state(run=_run) -> str:
 
 
 def link_ensure(run=_run) -> str:
-    """OIT 开机自启动开着 (state() == "on") 时, 联动程序的任务也要在: 没有就建, 有就按当前位置重写. 返回之后的状态.
-    OIT 的开机自启动被用户关掉 / 删掉时不建 (已有的任务也不动, 被禁用了就算关掉)."""
-    if sys.platform != "win32" or state(run) != "on":
+    """联动程序的任务也要在而且开着: 没有 / 被禁用了就重建, 有就按当前位置重写. OIT 的开机自启动被禁用 / 删掉时,
+    联动程序 (和 OIT 一样) 把它也重建. 返回联动程序任务之后的状态."""
+    if sys.platform != "win32":
         return link_state(run)
-    st = link_state(run)
-    if st in ("missing", "on"):
+    if state(run) in ("off", "missing"):
+        try:
+            create(run)
+        except Exception:
+            pass
+    if link_state(run) != "error":
         import linkd
         exe, script, workdir = linkd.link_command()
-        xml = task_xml(exe, f'"{script}"', workdir, _user(), desc="OIT link: companion program (MECHANICS 15.8)", repeat="PT1M")
-        fd, path = tempfile.mkstemp(suffix=".xml")
-        try:
-            with os.fdopen(fd, "wb") as f:
-                f.write(xml.encode("utf-16"))
-            run(["schtasks", "/Create", "/TN", LINK_TASK, "/XML", path, "/F"])
-        finally:
-            try:
-                os.remove(path)
-            except OSError:
-                pass
-        st = link_state(run)
-    return st
+        _register(LINK_TASK, task_xml(exe, f'"{script}"', workdir, _user(), desc="OIT link: companion program (MECHANICS 15.8)", repeat="PT1M"), run)
+    return link_state(run)
 
 
 def link_remove(run=_run) -> bool:
@@ -217,25 +231,29 @@ def _selftest():
     try:
         assert state(fake) == "missing"
         assert ensure(d, fake) == "on" and os.path.exists(os.path.join(d, MARKER)), "第一次运行: 默认开启"
-        # 用户在任务计划程序里禁用了: 不再打开
-        tasks[TASK_NAME] = tasks[TASK_NAME].replace("<Enabled>true</Enabled>\n    <Hidden>",
-                                                    "<Enabled>false</Enabled>\n    <Hidden>")
-        n = len(calls)
-        assert ensure(d, fake) == "off" and not any(c[1] == "/Create" for c in calls[n:])
-        # 用户删掉了: 也不再建
+        # 用户在任务计划程序里禁用了: 重建 (重新开着)
+        tasks[TASK_NAME] = _set_enabled(tasks[TASK_NAME], False)
+        assert state(fake) == "off"
+        assert ensure(d, fake) == "on" and state(fake) == "on", "被禁用: 重建"
+        # 用户删掉了: 也重建
         tasks.clear()
-        assert ensure(d, fake) == "missing" and TASK_NAME not in tasks
-        # 重置 (数据目录清空) 后算第一次
-        os.remove(os.path.join(d, MARKER))
-        assert ensure(d, fake) == "on"
-        # 联动程序的任务 (15.8): OIT 的开机自启动开着才建; 关了就不建
+        assert ensure(d, fake) == "on" and TASK_NAME in tasks, "被删掉: 重建"
+        # 查不了任务 (error): 不动
+        n = len(calls)
+        assert ensure(d, lambda a, timeout=30: (5, "denied")) == "error"
+        # 联动程序的任务 (15.8)
         assert link_state(fake) == "missing" and link_ensure(fake) == "on" and "linkd.py" in tasks[LINK_TASK] and "<Interval>PT1M</Interval>" in tasks[LINK_TASK]
         n = len(calls)
         assert link_ensure(fake) == "on" and any(c[1] == "/Create" for c in calls[n:]), "按当前位置重写"
+        tasks[LINK_TASK] = _set_enabled(tasks[LINK_TASK], False)
+        assert link_state(fake) == "off" and link_ensure(fake) == "on", "联动程序的任务被禁用: 重建"
         assert link_remove(fake) and link_state(fake) == "missing" and link_remove(fake)
+        assert link_ensure(fake) == "on" and LINK_TASK in tasks, "联动程序的任务被删掉: 重建"
+        # OIT 的开机自启动被禁用 / 删掉时, 联动程序把它也重建
         tasks[TASK_NAME] = _set_enabled(tasks[TASK_NAME], False)
-        assert link_ensure(fake) == "missing" and LINK_TASK not in tasks, "OIT 的开机自启动关了: 不建"
-        tasks[TASK_NAME] = _set_enabled(tasks[TASK_NAME], True)
+        assert link_ensure(fake) == "on" and state(fake) == "on", "联动程序也重建 OIT 的开机自启动 (禁用)"
+        tasks.pop(TASK_NAME)
+        assert link_ensure(fake) == "on" and state(fake) == "on", "联动程序也重建 OIT 的开机自启动 (删掉)"
         assert remove(fake) and state(fake) == "missing" and remove(fake)
     finally:
         shutil.rmtree(d, ignore_errors=True)
