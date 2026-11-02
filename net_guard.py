@@ -92,7 +92,6 @@ class NetGuard:
         self._bp_busy = False
         self._bp_clean = False
         self._bp_init = False                 # 程序打开后第一次扫描前先删掉上次留下的规则
-        self.on_bypass = lambda path, killed: None      # app 接上: 提示用户 (每个程序一次)
         self._watch_at = 0.0
         self.tamper = {"count": 0, "at": 0.0}
         self.on_tamper = lambda kind: None    # app 接上: 提示用户
@@ -820,12 +819,8 @@ class NetGuard:
                     self.bypass.clear_all()
                 self._bp_clean = False
                 for path, killed, new in self.bypass.scan():
-                    if new:
+                    if new:           # 不弹提示, 只在流水里记一条 (每个程序一次)
                         self._log(f"BYPASS   blocked a direct connection of {path} (not via the system proxy; {killed} connection(s) cut)")
-                        try:
-                            self.on_bypass(path, killed)
-                        except Exception:
-                            pass
             else:
                 self.bypass.clear_all()
                 self._bp_clean = True
