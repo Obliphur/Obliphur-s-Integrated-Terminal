@@ -627,6 +627,7 @@ object EnStrings {
         "自由学习" to "Free study",
         "🚪  外出" to "🚪  Going out",
         "📖  日志" to "📖  Journal",
+        "🧑  我的身份背景" to "🧑  My background",
         "取到 {n} 个模型." to "Got {n} models.",
         "获取模型列表" to "Fetch models",
         "获取" to "Fetch",

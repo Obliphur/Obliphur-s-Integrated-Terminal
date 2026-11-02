@@ -464,6 +464,7 @@ EN = {
     "刚从外出回来的设备的记录有优先权: 去掉了本机重叠的专注 {s}, 休息 {b}, 空闲 {i}.":
         "Records from the device that just came back from an outing take priority: removed overlapping focus {s}, break {b}, idle {i} from this device.",
     "📖  日志": "📖  Journal",
+    "🧑  我的身份背景": "🧑  My background",
     "取到 {n} 个模型.": "Got {n} models.",
     "获取模型列表": "Fetch models",
     "获取": "Fetch",
