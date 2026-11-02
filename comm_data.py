@@ -70,7 +70,7 @@ def library(contract) -> str:
     """整个词条库和组合, 标出哪些被用户选择 / 激活了: 合约进行中 = 激活的, 没开始 = 选好的(还没生效)."""
     active = bool(contract.active)
     selected = list(contract.terms) if active else list(contract.draft)
-    tag = "已激活" if active else "已选择(合约还没开始)"
+    tag = "已激活" if active else "已选择"
     lost = set(contract.lost) if active else set()
     head = (f"合约进行中, 危机等级 {getattr(contract, 'level_text', '')}" if active else
             ("合约没有开始, 选好的词条还没生效" if selected else "现在没有进行中的合约, 也没有选好的词条"))
@@ -190,7 +190,7 @@ def _selftest():
     sel = {"stats": ["log", "net", "focus", "window", "contracts"], "cal": ["study", "sleep"], "contract": True}
     text = build(sel, DM(), Net(), Con(), now=now)
     for k in ("整点记录 2026-11", "写代码: 2.0 h", "学习资料: 15 分钟", "专注 30 分钟, 休息 10 分钟", "空白: 0.2 h", "code.exe",
-              "还没有顺利完成的合约", "日历·专注", "2026-11-01: 3.5 h", "合计: 4.5 h", "日历·睡眠", "只有最近 7 天", "合约没有开始", "持久战-I(环境, 等级1)【已选择(合约还没开始)】", "无言为真(环境, 等级2)", "打年糕", "信息隔绝"):
+              "还没有顺利完成的合约", "日历·专注", "2026-11-01: 3.5 h", "合计: 4.5 h", "日历·睡眠", "只有最近 7 天", "合约没有开始", "持久战-I(环境, 等级1)【已选择】", "无言为真(环境, 等级2)", "打年糕", "信息隔绝"):
         assert k in text, k
     assert "2026-10-30" not in text
     lib = library(Act())

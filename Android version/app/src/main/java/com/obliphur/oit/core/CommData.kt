@@ -56,7 +56,7 @@ object CommData {
     fun library(c: Contract): String {
         val active = c.active
         val selected = if (active) c.terms else c.draft
-        val tag = if (active) "已激活" else "已选择(合约还没开始)"
+        val tag = if (active) "已激活" else "已选择"
         val lost = if (active) c.lost.toSet() else emptySet()
         val head = if (active) "合约进行中, 危机等级 ${Contract.levelLabel(c.level, c.origLevel)}"
         else if (selected.isNotEmpty()) "合约没有开始, 选好的词条还没生效" else "现在没有进行中的合约, 也没有选好的词条"
