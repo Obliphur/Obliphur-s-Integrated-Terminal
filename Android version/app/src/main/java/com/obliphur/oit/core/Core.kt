@@ -50,6 +50,8 @@ interface Host {
     fun pauseMedia() {}
     /** 完成一条指令的音效 (随机一个指令音效, res/raw/ticktock_type*.mp3). */
     fun playPrescriptSound() {}
+    /** 沟通收到对方主动发来的消息 (前 5 分钟没聊过) 的提示音: 柔和的两声钟. */
+    fun playCommSound() {}
 }
 
 /** VPN 应该处于的状态 (见 MECHANICS 14.2). */
@@ -262,6 +264,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         // 沟通只能在休息 / 空闲时用 (专注 / 睡眠 / 外出中不能用); 合约的"无言为真" (社交软件和与 AI 聊天的软件禁止联网) 生效期间也不能用
         comm.blocked = { commBlocked() }
         comm.hardBlock = { contract.has("silent") }
+        comm.onProactive = { host.playCommSound() }
         comm.dataFn = { sel ->
             if (contract.fog()) "" else CommData.build(sel, this) { pkg ->
                 runCatching { com.obliphur.oit.service.appLabel(com.obliphur.oit.OitApp.instance, pkg) }.getOrDefault(pkg)

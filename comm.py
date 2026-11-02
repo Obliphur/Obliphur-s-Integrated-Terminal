@@ -9,7 +9,8 @@
   · 发给模型的 system = 前置 prompt (日程 / 休息函数 / 回复规则) + 人设.
   · 不再有"默认发送的信息": 整点记录 / 计时器状态 / 日历 / 合约词条只有用户手动选了 📎 附件才会发.
   · 模型返回 [refuse to reply] = 此刻不方便回复: 不显示, 用户的消息留着, 过一阵再把它们一次性交给模型.
-  · 休息开始时, 如果这次休息超过 20 分钟, 会在 3~5 分钟后让模型主动发一条消息.
+  · 模型会主动发消息 (MECHANICS 24.4): I. 用户这次休息超过 20 分钟, 休息开始后 1~3 分钟; II. 人设日程里每段"空闲"开始前 1~3 分钟
+    (默认 80% 的概率); III. 人设日程里每段"休息"开始前 1~3 分钟 (默认 60%). 收到时如果前 5 分钟没和对方聊过, 有柔和的提示音.
   · 聊天记录在 comm_chat.json (数据文件夹, 加密, 重置会清掉), 设置在 comm_config.json.
 
     python comm.py     自检 (不联网, 只用临时文件夹)
@@ -29,8 +30,14 @@ import ai_assist
 import config
 
 REFUSE = "[refuse to reply]"
-PROACTIVE_MIN_REST = 20 * 60          # 休息超过这么久才会主动发消息
-PROACTIVE_DELAY = (3 * 60, 5 * 60)    # 休息开始后多久主动发
+PROACTIVE_MIN_REST = 20 * 60          # I. 用户休息超过这么久才会主动发消息
+PROACTIVE_DELAY = (60, 180)           # I. 休息开始后多久主动发 (秒)
+PROACTIVE_LEAD = (60, 180)            # II / III. 人设日程里的空闲 / 休息开始前多久主动发 (秒)
+PROACTIVE_P = {"idle": 80, "rest": 60}   # II / III 发不发的概率 (%) 的默认值; 设置 → 沟通 里可以改
+PROACTIVE_LATE = 120                  # 到点之后过了这么久 (程序刚打开 / 刚空下来) 就算了
+PROACTIVE_GAP = 10 * 60               # 两条主动消息至少隔这么久 (相邻的日程段不连发)
+PROACTIVE_KEEP = 12                   # 记下最近多少个已经处理过的主动消息时间点
+PING_QUIET = 5 * 60                   # 收到主动消息之前这么久没和对方聊过, 才响提示音
 RETRY_GAP = 10 * 60                   # 对方不方便回复时, 多久再把消息交给模型
 RETRY_MAX = 12
 HISTORY_SENT = 60                     # 每次请求最多带多少条聊天记录
@@ -48,7 +55,8 @@ CHAT_TEMPERATURE = 0.8
 WEEKDAY = "一二三四五六日"
 
 DEFAULTS = {"persona": "", "show_avatar": False,
-            "avatar_me": "", "avatar_ai": "", "pro_key": "", "retry": {}, "clear_ts": 0, "seeded": False, "legacy_done": False, "user_profile": ""}
+            "avatar_me": "", "avatar_ai": "", "pro_key": "", "retry": {}, "clear_ts": 0, "seeded": False, "legacy_done": False, "user_profile": "",
+            "pro_idle": PROACTIVE_P["idle"], "pro_rest": PROACTIVE_P["rest"]}
 
 
 # ══════════════ 前置 prompt 与 README ══════════════
@@ -87,6 +95,8 @@ def readme_text() -> str:
         "在你的人设prompt被发送之前,会被附加上一段额外的前置prompt和休息时间函数相关的内容:\n"
         f"'{prefix_prompt()}'\n"
         "你可以根据以上设定编写你的人物日程/喜好.但是最好不要把对方设置为整天都空闲,尊重一下上面的设定吧...\n\n"
+        "主动发消息: 日程里形如 12:30-13:00:空闲 / 8:40-9:18:休息 的行(24小时制,每天重复),对方会在每段空闲/休息开始前1~3分钟"
+        "按概率(默认80%/60%,在 设置 → 沟通 里改)主动给你发一条消息;你自己休息超过20分钟时,休息开始后1~3分钟也会发一条.\n\n"
         "文件格式: 一个 .txt 或 .md 文件就是一个人设, 文件名就是人设的名字, 整个文件的内容就是人设prompt.\n"
         "放进这个文件夹后, 在 设置 → 沟通 里选择它 (也可以用\"导入\"按钮复制进来).\n")
 
@@ -247,6 +257,34 @@ def stamp(now: datetime) -> str:
     return f"{now:%Y-%m-%d} 周{WEEKDAY[now.weekday()]} {now:%H:%M}"
 
 
+# 人设日程里的一行: "12:30-13:00:空闲" (可以缩进 / 带 - 或 * 开头); 时间可以是全角冒号, 连接符 - – — ~ 至 到
+_SEG_RE = re.compile(r"^[ \t]*(?:[-*•][ \t]*)?(\d{1,2})[:：](\d{2})[ \t]*[-–—~～至到][ \t]*(\d{1,2})[:：](\d{2})"
+                     r"[ \t]*[:：][ \t]*(\S[^\n]*)$", re.M)
+
+
+def seg_kind(label: str) -> str:
+    """日程段的名字 → "idle" (空闲) / "rest" (休息) / "" (别的: 专注, 睡眠, 吃饭 ...)."""
+    s = re.sub(r"[不无没非][休空]", "", str(label or "").lower())          # "不休息" 之类不算
+    if "空闲" in s or "idle" in s or "free" in s:
+        return "idle"
+    if "休息" in s or "rest" in s or "break" in s:
+        return "rest"
+    return ""
+
+
+def schedule_segments(text: str) -> list:
+    """人设里每天重复的日程: 所有"空闲" / "休息"段 → [(kind, 开始时刻 (一天中的第几分钟))], 没有重复. 只认 "H:MM-H:MM:名字" 这样的行."""
+    out, seen = [], set()
+    for m in _SEG_RE.finditer(str(text or "")):
+        h, mi = int(m.group(1)), int(m.group(2))
+        kind = seg_kind(m.group(5))
+        if not kind or h > 23 or mi > 59 or (kind, h * 60 + mi) in seen:
+            continue
+        seen.add((kind, h * 60 + mi))
+        out.append((kind, h * 60 + mi))
+    return out
+
+
 def urlsplit_host(url) -> str:
     from urllib.parse import urlsplit
     try:
@@ -325,6 +363,7 @@ class Comm:
         self.device = lambda: ""       # 本机的设备 id (sync.my_id); app 接上
         self.leader = lambda: True     # 本机是不是最后有人操作的设备: 只有它调用 AI / 主动发 / 重试 (sync.is_latest_active); app 接上
         self.on_sync = None            # 聊天记录有改动, 马上同步一次; app 接上
+        self.on_proactive = None       # 收到对方主动发来的消息, 并且前 5 分钟没和对方聊过: 放柔和的提示音; app 接上 (后台线程里调用也行)
         self.attach = {"stats": [], "cal": [], "contract": False}     # 📎 确定过的附加数据: 随下一条消息发出
         self.attach_touched = False    # 用户确定过一次之后, 📎 窗口不再默认勾 整点记录 / 专注计时
         self.on_change = None          # 界面线程里调用
@@ -337,6 +376,8 @@ class Comm:
         self._epoch = 0               # clear() 加一: 清空之前发出的请求, 回复到了也丢掉
         self._next_id = 1
         self._last_ts = 0
+        self._seg_sig = None          # 人设文件的 (名字, 修改时间, 大小): 变了才重新读日程
+        self._seg_cache = []
         self.load()
         ensure_personas(self.personas)
         if not self.cfg.get("seeded"):                      # 第一次运行: 放进自带的人设, 还没选过人设就默认选 Claudia
@@ -552,9 +593,17 @@ class Comm:
         if "persona" in kw:
             self.set_persona(kw.pop("persona"))
             self.save_chat()
+        for k in ("pro_idle", "pro_rest"):                 # 主动发消息的概率 (%): 0~100
+            if k in kw:
+                try:
+                    kw[k] = min(100, max(0, int(round(float(kw[k])))))
+                except (TypeError, ValueError):
+                    kw[k] = PROACTIVE_P[k[4:]]
         self.cfg.update(kw)
         self.save_cfg()
         self._changed()
+        if any(k in kw for k in ("pro_idle", "pro_rest")):
+            self._push()
 
     def _changed(self):
         self.version += 1
@@ -584,6 +633,7 @@ class Comm:
         doc = {}
         if self.cfg.get("user_profile"):
             doc["profile"] = self.cfg["user_profile"]
+        doc["pp"] = {"idle": self.pro_percent("idle"), "rest": self.pro_percent("rest")}      # 主动发消息的概率: 两台设备用同一份
         for pid in self.chat_pids():
             st = self._state_of(pid)
             for m in st["messages"][-SYNC_N:]:
@@ -603,6 +653,7 @@ class Comm:
         """别的设备发来的改动 (界面线程)."""
         touched = {}                                            # pid -> [状态, 消息有没有变]
         cleared_active = False
+        fresh = []                                              # 这次新并进来的消息: (对象编号, 消息)
 
         def st_of(pid):
             if pid not in touched:
@@ -641,6 +692,7 @@ class Comm:
                 if val.get("api"):
                     m["api"] = str(val["api"])
                 st["messages"].append(m)
+                fresh.append((pid, m))
                 known.add(uid)
                 touched[pid][1] = True
                 if m["role"] == "ai":
@@ -653,9 +705,22 @@ class Comm:
                     self.cfg["user_profile"] = new
                     self.save_cfg()
                     self._changed()
-            elif kind == "pro" and isinstance(val, str):
-                st_of(rest)[0]["pro_key"] = val
-                touched[rest][1] = True
+            elif key == "pp" and isinstance(val, dict):
+                try:
+                    new = {k: min(100, max(0, int(val[k]))) for k in ("idle", "rest")}
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if new != {k: self.pro_percent(k) for k in new}:
+                    self.cfg["pro_idle"], self.cfg["pro_rest"] = new["idle"], new["rest"]
+                    self.save_cfg()
+                    self._changed()
+            elif kind == "pro" and isinstance(val, str):             # 已经处理过的主动消息时间点: 两边合起来
+                st = st_of(rest)[0]
+                have = [k for k in st["pro_key"].split("|") if k]
+                add = [k for k in val.split("|") if k and k not in have]
+                if add:
+                    st["pro_key"] = "|".join((have + add)[-PROACTIVE_KEEP:])
+                    touched[rest][1] = True
             elif kind == "retry":
                 st_of(rest)[0]["retry"] = dict(val) if isinstance(val, dict) else {}
                 touched[rest][1] = True
@@ -672,6 +737,42 @@ class Comm:
             self._epoch += 1
         if touched:
             self._changed()
+        self._synced_ping([m for pid, m in fresh if pid == self.pid])
+
+    def _synced_ping(self, fresh: list):
+        """别的设备收到的主动消息同步过来了 (系统触发的那条 + 对方的回复, 刚刚才写的): 这台也提示一声 (前 5 分钟没聊过的话)."""
+        new = {m["uid"] for m in fresh}
+        now = self._ms()
+        for m in fresh:
+            if m["role"] != "ai" or now - int(m["ts"]) > 90 * 1000:
+                continue
+            i = next((j for j, x in enumerate(self.messages) if x["uid"] == m["uid"]), 0)
+            prev = self.messages[i - 1] if i > 0 else None
+            if prev and prev["role"] == "sys" and str(prev["text"]).startswith("[系统]") and prev["uid"] in new:
+                if not self._talked_recently(self.messages[:i - 1], int(prev["ts"])):
+                    self._ping()
+                return
+
+    def pro_percent(self, kind: str) -> int:
+        """主动发消息的概率 (%): kind = "idle" 人设的空闲段前 / "rest" 人设的休息段前."""
+        try:
+            v = int(round(float(self.cfg.get("pro_" + kind))))
+        except (TypeError, ValueError):
+            v = PROACTIVE_P[kind]
+        return min(100, max(0, v))
+
+    @staticmethod
+    def _talked_recently(msgs: list, before_ms: int) -> bool:
+        """before_ms 之前 5 分钟内, 用户和对方有没有说过话 (系统消息不算)."""
+        return any(m["role"] in ("me", "ai") and 0 <= before_ms - int(m["ts"]) <= PING_QUIET * 1000 for m in msgs)
+
+    def _ping(self):
+        """收到主动消息的提示音 (不能用沟通的时候, 例如已经开始专注了, 不响)."""
+        if self.on_proactive and not self.blocked():
+            try:
+                self.on_proactive()
+            except Exception:       # noqa: BLE001
+                pass
 
     def last_author(self) -> str:
         """最晚的一条消息是哪台设备写的 (设备 id 的前 4 位; 旧记录 / 没有记录 = ""): 这台设备是聊天的主端 —— 调用 AI, 主动发, 重试都由它做,
@@ -913,11 +1014,14 @@ class Comm:
             self.error = ""
             self.cfg["retry"] = {}
             self.save_cfg()
+            ping = kind == "proactive" and not self._talked_recently(self.messages, self._ms())      # 前 5 分钟没聊过: 提示音
             if extra:
                 self._add("sys", extra[0], extra[1])
             self._add("ai", reply.strip())
             if not self.viewing:
                 self.unread += 1
+            if ping:
+                self._ping()
         self.save_chat()
         self._changed()
         self._push()
@@ -945,20 +1049,90 @@ class Comm:
                 self._trigger("retry", f"现在是 {stamp(now)}. 用户之前发来的消息你还没有回复, 请现在一次性处理并回复; "
                                        f"如果仍然不方便, 返回{REFUSE}.")
                 return
-        # 休息开始 3~5 分钟后主动发一条
-        if snap.get("state") == "break" and snap.get("break_start") and snap.get("break_total_s", 0) > PROACTIVE_MIN_REST:
-            start = snap["break_start"]
+        self._check_proactive(now, snap)
+
+    # ---- 主动发消息 (MECHANICS 24.4) ----
+    def _pro_done(self) -> list:
+        """已经处理过的主动消息时间点 (发没发都算): 休息开始的时刻 (I) / "S开始时刻i|r" (日程里的空闲 / 休息段, II / III)."""
+        return [k for k in str(self.cfg.get("pro_key") or "").split("|") if k]
+
+    def _pro_mark(self, key: str):
+        keys = [k for k in self._pro_done() if k != key] + [key]
+        self.cfg["pro_key"] = "|".join(keys[-PROACTIVE_KEEP:])
+
+    def _pro_recent(self, now) -> bool:
+        """最近 PROACTIVE_GAP 内已经主动发过一条了吗 (相邻的日程段 / 刚好又在休息开始后, 不连着发)."""
+        for m in reversed(self.messages):
+            if m["role"] == "sys" and str(m.get("text") or "").startswith("[系统]"):
+                return self._age(m) < PROACTIVE_GAP
+        return False
+
+    def _segments(self) -> list:
+        """现在这个人设日程里的空闲 / 休息段 (人设文件没变就用上次读的)."""
+        name = self.persona_name()
+        if not name:
+            return []
+        try:
+            st = os.stat(os.path.join(self.personas, name))
+        except OSError:
+            return []
+        sig = (name, st.st_mtime_ns, st.st_size)
+        if sig != self._seg_sig:
+            self._seg_sig = sig
+            self._seg_cache = schedule_segments(read_persona(self.personas, name))
+        return self._seg_cache
+
+    def _schedule_events(self, now) -> list:
+        """日程里 3 分钟之内就要开始的空闲 / 休息段: [(时间点, "idle" | "rest", 开始的时刻)]."""
+        out = []
+        for kind, mins in self._segments():
+            for d in (0, 1):                                  # 今天 / 明天 (23:59 看 0:00 开始的那段)
+                start = datetime.combine(now.date() + timedelta(days=d), datetime.min.time()) + timedelta(minutes=mins)
+                if now < start <= now + timedelta(seconds=PROACTIVE_LEAD[1]):
+                    out.append((f"S{start:%Y-%m-%dT%H:%M}{kind[0]}", kind, start))
+        return out
+
+    def _check_proactive(self, now, snap: dict):
+        done = self._pro_done()
+        # I. 用户这次休息超过 20 分钟: 休息开始后 1~3 分钟发一条
+        start = snap.get("break_start")
+        if snap.get("state") == "break" and start and snap.get("break_total_s", 0) > PROACTIVE_MIN_REST:
             key = start.isoformat(timespec="seconds")
-            if key != self.cfg.get("pro_key"):
+            if key not in done:
                 due = start + timedelta(seconds=random.Random(key).randint(*PROACTIVE_DELAY))
                 if now >= due:
-                    self.cfg["pro_key"] = key
-                    if (now - due).total_seconds() <= 120:          # 错过太久 (程序刚打开) 就算了
-                        mins = snap["break_total_s"] / 60
-                        self._trigger("proactive", f"[系统] 用户刚开始休息, 这次计划休息约 {mins:.0f} 分钟. "
-                                                   f"请根据人设主动给用户发一条消息, 话题自己找; 如果此刻不方便, 返回{REFUSE}.")
-                    self.save_cfg()
-                    self._push()
+                    mins = snap["break_total_s"] / 60
+                    self._pro_fire(key, due, now, 1.0, f"[系统] 用户刚开始休息, 这次计划休息约 {mins:.0f} 分钟. "
+                                                       f"请根据人设主动给用户发一条消息, 话题自己找; 如果此刻不方便, 返回{REFUSE}.")
+                    return
+        # II / III. 人设日程里每段空闲 / 休息开始前 1~3 分钟, 有概率发一条
+        for key, kind, begin in self._schedule_events(now):
+            if key in done:
+                continue
+            due = begin - timedelta(seconds=random.Random(key).randint(*PROACTIVE_LEAD))
+            if now < due:
+                continue
+            mins = max(1, round((begin - now).total_seconds() / 60))
+            self._pro_fire(key, due, now, self.pro_percent(kind) / 100.0,
+                           f"[系统] 按你的日程, 你的{'空闲' if kind == 'idle' else '休息'}时间将在 {begin:%H:%M} 开始 (约 {mins} 分钟后). "
+                           f"这条是系统提前触发的: 即使你此刻还处于专注/不能回复的时段, 也允许你现在主动给用户发一条消息, 话题自己找 (不要透露日程); "
+                           f"如果实在不方便, 返回{REFUSE}.")
+            return
+
+    def _pro_fire(self, key: str, due, now, p: float, body: str):
+        """这个时间点处理一次: 记下来 (不管发没发), 没错过太久 / 摇中了概率 / 最近没发过, 才真的让对方发."""
+        self._pro_mark(key)
+        late = (now - due).total_seconds() > PROACTIVE_LATE          # 错过太久 (程序刚打开) 就算了
+        hit = p >= 1.0 or random.Random(key + "#p").random() < p
+        recent = self._pro_recent(now)
+        if not late and hit and not recent:
+            self.log(f"PRO {key} p={p:.2f} → 让对方发")
+            self._trigger("proactive", body)
+        else:
+            self.log(f"PRO {key} p={p:.2f} → 不发 ({'错过了' if late else '概率没中' if not hit else '刚发过'})")
+        self.save_chat()
+        self.save_cfg()
+        self._push()
 
     def clear(self):
         """清空聊天记录 (界面上的按钮, 或者在聊天框里发 /clear): 以后不再显示, 也不再发给模型; 别的设备也一起清空."""
@@ -1077,28 +1251,39 @@ def _selftest():
     wait(c)
     assert c.error == "连接失败" and c.unanswered()
 
-    # 主动发消息: 休息 > 20 分钟, 开始后 3~5 分钟
+    # 主动发消息 I: 休息 > 20 分钟, 开始后 1~3 分钟
     os.makedirs(os.path.join(td, "d2"))
     c2 = Comm(os.path.join(td, "d2"), folder, now=lambda: clock[0], chat_fn=fake)
     c2.ai.set_profile("deepseek", api_key="k")
     c2.ai.provider = "deepseek"
     c2.set_cfg(persona="小夏.txt")
+    pings2 = []
+    c2.on_proactive = lambda: pings2.append(1)
     start = clock[0]
     snap2 = {"state": "break", "break_start": start, "break_total_s": 25 * 60, "rest_left_min": 25,
              "focus_total_min": 60, "focus_cur_min": 0}
     c2.snapshot = lambda: snap2
     c2.tick()
     assert not c2.busy
-    clock[0] = start + timedelta(minutes=2, seconds=59)
+    clock[0] = start + timedelta(seconds=59)
     c2.tick()
-    assert not c2.busy
+    assert not c2.busy, "休息开始后 1 分钟之内不发"
     script.append("休息啦, 在干嘛?")
-    clock[0] = start + timedelta(minutes=5, seconds=1)
-    c2.tick()
-    assert c2.busy
+
+    def fire_after(c, begin, lo=60, hi=200):             # 从 begin + lo 秒起, 每 2 秒看一次, 返回开始请求的那一秒 (没有 = None)
+        for s in range(lo, hi, 2):
+            clock[0] = begin + timedelta(seconds=s)
+            c.tick()
+            if c.busy:
+                return s
+        return None
+
+    s_fire = fire_after(c2, start)
+    assert s_fire is not None and 60 <= s_fire <= 182, s_fire
     wait(c2)
     assert c2.visible()[-1]["role"] == "ai" and "主动给用户发一条消息" in calls[-1][1][-1]["content"]
     assert not c2.visible()[:-1] and c2.unread == 1
+    assert pings2 == [1], "前 5 分钟没聊过: 响一声"
     c2.tick()
     assert not c2.busy, "同一次休息只主动发一次"
     # 休息不到 20 分钟不发
@@ -1107,13 +1292,18 @@ def _selftest():
     clock[0] = start2 + timedelta(minutes=6)
     c2.tick()
     assert not c2.busy
+    # 刚主动发过一条 (10 分钟内): 又一次长休息开始, 也不连着发
+    start3 = clock[0]
+    snap2.update(break_start=start3, break_total_s=30 * 60)
+    assert fire_after(c2, start3, 60, 178) is None, "10 分钟内不连发"
     # 主动消息被拒绝: 什么也不留下
-    snap2.update(break_start=clock[0], break_total_s=30 * 60)
+    clock[0] += timedelta(minutes=15)
+    start4 = clock[0]
+    snap2.update(break_start=start4, break_total_s=30 * 60)
     script.append(REFUSE)
-    clock[0] += timedelta(minutes=5)
-    c2.tick()
+    assert fire_after(c2, start4) is not None
     wait(c2)
-    assert len(c2.visible()) == 1 and sum(m["role"] == "sys" for m in c2.messages) == 1
+    assert len(c2.visible()) == 1 and sum(m["role"] == "sys" for m in c2.messages) == 1 and pings2 == [1]
 
     # 重开程序: 记录和设置都在
     c.flush()
@@ -1371,17 +1561,110 @@ def _selftest():
     A.snapshot = B.snapshot = lambda: {"state": "break", "break_start": start, "break_total_s": 30 * 60,
                                        "rest_left_min": 25, "focus_total_min": 5}
     A.leader, B.leader = (lambda: True), (lambda: False)
-    clock[0] = start + timedelta(minutes=5)
+    pA, pB = [], []
+    A.on_proactive = lambda: pA.append(1)
+    B.on_proactive = lambda: pB.append(1)
+    clock[0] = start + timedelta(minutes=3)
     script.append("休息啦")
     A.tick()
     assert A.busy
     wait(A)
+    assert pA == [1]
     pull(A, B)
+    assert pB == [1], "同步过来的主动消息: 这台也响一声"
+    pull(A, B)
+    assert pB == [1] and B.cfg["pro_key"] == A.cfg["pro_key"]
     B.leader = lambda: True
     B.tick()
     assert not B.busy and [m["text"] for m in B.visible()] == ["休息啦"]
+    # 主动发消息的概率随设备同步
+    A.set_cfg(pro_idle=55, pro_rest=33)
+    pull(A, B)
+    assert (B.pro_percent("idle"), B.pro_percent("rest")) == (55, 33)
     A.flush()
     B.flush()
+
+    # ---- II / III: 人设日程里每段空闲 / 休息开始前 1~3 分钟, 按概率发 ----
+    assert schedule_segments(BUILTIN_PERSONAS["Claudia.txt"]) == [
+        ("rest", 520), ("rest", 658), ("idle", 750), ("rest", 880), ("rest", 1018),
+        ("idle", 1110), ("rest", 1240), ("rest", 1378), ("idle", 1380)]
+    assert schedule_segments("- 9:05 ~ 9:35 : Idle time\n  09：10-10:00：休息\n24:00-25:00:空闲\n12:00-13:00:不休息\n"
+                             "12:00-13:00:午饭\n每天 8 点到 12 点上课.\n9:05-9:35:idle again\n") == [("idle", 545), ("rest", 550)]
+    open(os.path.join(folder, "日程.txt"), "w", encoding="utf-8").write("你是小满.\n12:30-13:00:空闲\n20:40-21:18:休息\n")
+    os.makedirs(os.path.join(td, "sched"))
+    c5 = Comm(os.path.join(td, "sched"), folder, now=lambda: clock[0], chat_fn=fake)
+    c5.ai.set_profile("deepseek", api_key="k")
+    c5.ai.provider = "deepseek"
+    c5.set_cfg(persona="日程.txt")
+    assert (c5.pro_percent("idle"), c5.pro_percent("rest")) == (80, 60), "默认概率"
+    c5.set_cfg(pro_idle=150, pro_rest="x")
+    assert (c5.pro_percent("idle"), c5.pro_percent("rest")) == (100, 60)
+    c5.snapshot = lambda: {"state": "idle"}
+    pings5 = []
+    c5.on_proactive = lambda: pings5.append(1)
+
+    def fire_before(c, begin):                             # 日程段开始前 200 秒起, 每 2 秒看一次, 返回开始请求时离开始还有几秒 (负数)
+        for s in range(-200, 0, 2):
+            clock[0] = begin + timedelta(seconds=s)
+            c.tick()
+            if c.busy:
+                return s
+        return None
+
+    script.append("来了")
+    s1 = fire_before(c5, datetime(2026, 12, 1, 12, 30))
+    assert s1 is not None and -182 <= s1 <= -60, s1
+    wait(c5)
+    body = calls[-1][1][-1]["content"]
+    assert c5.visible()[-1]["text"] == "来了" and "空闲时间将在 12:30 开始" in body and "主动给用户发一条消息" in body
+    assert pings5 == [1]
+    # 前 5 分钟聊过 → 不响
+    clock[0] = datetime(2026, 12, 2, 12, 25)
+    script.append("嗯")
+    assert c5.send("在吗") == ""
+    wait(c5)
+    script.append("有空吗")
+    assert fire_before(c5, datetime(2026, 12, 2, 12, 30)) is not None
+    wait(c5)
+    assert c5.visible()[-1]["text"] == "有空吗" and pings5 == [1], "刚聊过, 不响"
+    # 概率 0: 不发, 但这个时间点算处理过了
+    c5.set_cfg(pro_idle=0)
+    assert fire_before(c5, datetime(2026, 12, 3, 12, 30)) is None and any(k.startswith("S2026-12-03T12:30") for k in c5._pro_done())
+    # 默认 60% 的休息段: 300 天里大约 60% 发
+    fired = []
+    c5._trigger = lambda kind, text: fired.append(text)
+    c5.set_cfg(pro_rest=60)
+    for d in range(300):
+        clock[0] = datetime(2027, 1, 1, 20, 39, 0) + timedelta(days=d)
+        c5.tick()
+    assert 150 <= len(fired) <= 210 and "休息时间将在 20:40 开始" in fired[0], len(fired)
+    # 错过太久 (程序刚打开) 不补发
+    c5.set_cfg(pro_idle=100)
+    fired.clear()
+    for d in range(1, 60):
+        b = datetime(2027, 3, 1, 12, 30) + timedelta(days=d)
+        if random.Random(f"S{b:%Y-%m-%dT%H:%M}i").randint(*PROACTIVE_LEAD) > 150:
+            break
+    clock[0] = b - timedelta(seconds=10)
+    c5.tick()
+    assert not fired and any(k.startswith(f"S{b:%Y-%m-%dT%H:%M}") for k in c5._pro_done())
+    c5.tick()
+    assert not fired
+    # 相邻的日程段 (22:58 休息, 23:00 空闲) 不连着发
+    os.makedirs(os.path.join(td, "adj"))
+    c6 = Comm(os.path.join(td, "adj"), folder, now=lambda: clock[0], chat_fn=fake)
+    c6.ai.set_profile("deepseek", api_key="k")
+    c6.ai.provider = "deepseek"
+    c6.set_cfg(persona="Claudia.txt", pro_idle=100, pro_rest=100)
+    c6.snapshot = lambda: {"state": "idle"}
+    script.append("晚点见")
+    assert fire_before(c6, datetime(2027, 4, 1, 22, 58)) is not None
+    wait(c6)
+    assert "休息时间将在 22:58 开始" in calls[-1][1][-1]["content"]
+    assert fire_before(c6, datetime(2027, 4, 1, 23, 0)) is None, "刚发过, 23:00 的空闲段不再发"
+    assert any(k.startswith("S2027-04-01T23:00") for k in c6._pro_done())
+    for x in (c5, c6):
+        x.flush()
     return "comm selftest OK"
 
 

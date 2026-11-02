@@ -118,6 +118,8 @@ object CommText {
             "在你的人设prompt被发送之前,会被附加上一段额外的前置prompt和休息时间函数相关的内容:\n" +
             "'${prefixPrompt()}'\n" +
             "你可以根据以上设定编写你的人物日程/喜好.但是最好不要把对方设置为整天都空闲,尊重一下上面的设定吧...\n\n" +
+            "主动发消息: 日程里形如 12:30-13:00:空闲 / 8:40-9:18:休息 的行(24小时制,每天重复),对方会在每段空闲/休息开始前1~3分钟" +
+            "按概率(默认80%/60%,在 设置 → 沟通 里改)主动给你发一条消息;你自己休息超过20分钟时,休息开始后1~3分钟也会发一条.\n\n" +
             "文件格式: 一个 .txt 或 .md 文件就是一个人设, 文件名就是人设的名字, 整个文件的内容就是人设prompt.\n" +
             "放进这个文件夹后, 在 设置 → 沟通 里选择它 (也可以用\"导入\"按钮复制进来).\n"
 
@@ -133,6 +135,34 @@ object CommText {
     }
 
     fun isRefusal(text: String) = REFUSE in text.replace(Regex("\\s+"), " ").lowercase()
+
+    // 人设日程里的一行: "12:30-13:00:空闲" (可以缩进 / 带 - 或 * 开头); 时间可以是全角冒号, 连接符 - – — ~ 至 到
+    private val SEG_RE = Regex("^[ \\t]*(?:[-*•][ \\t]*)?(\\d{1,2})[:：](\\d{2})[ \\t]*[-–—~～至到][ \\t]*(\\d{1,2})[:：](\\d{2})" +
+        "[ \\t]*[:：][ \\t]*(\\S[^\\n]*)$", RegexOption.MULTILINE)
+
+    /** 日程段的名字 → "idle" (空闲) / "rest" (休息) / "" (别的: 专注, 睡眠, 吃饭 ...). */
+    fun segKind(label: String): String {
+        val s = label.lowercase().replace(Regex("[不无没非][休空]"), "")          // "不休息" 之类不算
+        return when {
+            "空闲" in s || "idle" in s || "free" in s -> "idle"
+            "休息" in s || "rest" in s || "break" in s -> "rest"
+            else -> ""
+        }
+    }
+
+    /** 人设里每天重复的日程: 所有"空闲" / "休息"段 → (kind, 开始时刻 (一天中的第几分钟)), 没有重复. 只认 "H:MM-H:MM:名字" 这样的行. */
+    fun scheduleSegments(text: String): List<Pair<String, Int>> {
+        val out = ArrayList<Pair<String, Int>>()
+        for (m in SEG_RE.findAll(text)) {
+            val h = m.groupValues[1].toInt()
+            val mi = m.groupValues[2].toInt()
+            val kind = segKind(m.groupValues[5])
+            if (kind.isEmpty() || h > 23 || mi > 59) continue
+            val e = kind to (h * 60 + mi)
+            if (e !in out) out.add(e)
+        }
+        return out
+    }
 }
 
 class Comm(
@@ -143,7 +173,14 @@ class Comm(
         { p, s, m -> Ai.chatMessages(p, s, m, Comm.CHAT_TOKENS, Comm.CHAT_TEMPERATURE, Comm.CHAT_TIMEOUT_MS) },
 ) {
     companion object {
-        const val PROACTIVE_MIN_REST = 20 * 60
+        const val PROACTIVE_MIN_REST = 20 * 60          // I. 用户休息超过这么久才会主动发消息
+        const val PROACTIVE_MAX_DELAY = 180             // I / II / III: 休息开始后 / 日程段开始前 1~3 分钟 (秒)
+        const val PROACTIVE_LATE = 120                  // 到点之后过了这么久 (程序刚打开 / 刚空下来) 就算了
+        const val PROACTIVE_GAP = 10 * 60               // 两条主动消息至少隔这么久 (相邻的日程段不连发)
+        const val PROACTIVE_KEEP = 12                   // 记下最近多少个已经处理过的主动消息时间点
+        const val PING_QUIET = 5 * 60                   // 收到主动消息之前这么久没和对方聊过, 才响提示音
+        const val DEFAULT_P_IDLE = 80                   // II / III 发不发的概率 (%) 的默认值; 设置 → 沟通 里可以改
+        const val DEFAULT_P_REST = 60
         const val RETRY_GAP = 10 * 60
         const val RETRY_MAX = 12
         const val HISTORY_SENT = 60
@@ -177,6 +214,11 @@ class Comm(
     @Volatile var pid = ""; private set
     /** 用户在 设置 → 沟通 里自己填的身份背景: 附在人设后面一起发给对方. */
     var userProfile = ""; private set
+    /** 主动发消息的概率 (%): 人设日程里每段空闲 / 休息开始前 1~3 分钟 (随设备同步). */
+    var proIdle = DEFAULT_P_IDLE; private set
+    var proRest = DEFAULT_P_REST; private set
+    /** 收到对方主动发来的消息, 并且前 5 分钟没和对方聊过: 放柔和的提示音. Core 接上. */
+    var onProactive: () -> Unit = {}
     private val others = HashMap<String, ChatState>()
     // 写盘 (fsync) 放在后台线程 (要声明在 init 之前: 第一次运行就要写配置)
     private val writer = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "comm-save").apply { isDaemon = true } }
@@ -345,6 +387,8 @@ class Comm(
             avatarMe = d.optString("avatar_me", "")
             avatarAi = d.optString("avatar_ai", "")
             userProfile = d.optString("user_profile", "")
+            proIdle = d.optInt("pro_idle", DEFAULT_P_IDLE).coerceIn(0, 100)
+            proRest = d.optInt("pro_rest", DEFAULT_P_REST).coerceIn(0, 100)
             seeded = d.optBoolean("seeded", false)
             legacyDone = d.optBoolean("legacy_done", false)
             // 旧版本这几项存在设置里 (所有对象共用): 迁移时归给现在选着的对象
@@ -380,6 +424,7 @@ class Comm(
         val o = JSONObject().put("persona", persona)
             .put("show_avatar", showAvatar).put("avatar_me", avatarMe).put("avatar_ai", avatarAi)
             .put("user_profile", userProfile).put("seeded", seeded).put("legacy_done", legacyDone)
+            .put("pro_idle", proIdle).put("pro_rest", proRest)
         writer.execute { Store.write(cfgFile, o) }
     }
 
@@ -438,6 +483,7 @@ class Comm(
     fun syncDoc(): Map<String, Any?> {
         val doc = LinkedHashMap<String, Any?>()
         if (userProfile.isNotEmpty()) doc["profile"] = userProfile
+        doc["pp"] = JSONObject().put("idle", proIdle).put("rest", proRest)        // 主动发消息的概率: 两台设备用同一份
         for (p in chatPids()) {
             val st = stateOf(p)
             for (m in st.messages.takeLast(SYNC_N)) {
@@ -457,6 +503,7 @@ class Comm(
         class Touch(val st: ChatState, var dirty: Boolean, var known: HashSet<String>)
         val touched = LinkedHashMap<String, Touch>()
         var clearedActive = false
+        val fresh = ArrayList<ChatMsg>()                                        // 这次新并进来的 (现在聊的对象的) 消息
         fun touch(p: String): Touch = touched.getOrPut(p) { stateOf(p).let { Touch(it, false, it.messages.map { m -> m.uid }.toHashSet()) } }
         for (key in changes.keys.sortedBy { !it.startsWith("clear:") }) {       // 清空先处理: 之前的记录不会再并进来
             val v = changes[key]
@@ -466,6 +513,11 @@ class Comm(
                 key == "profile" -> {
                     val n = (v as? String ?: "").take(MAX_PROFILE)
                     if (n != userProfile) { userProfile = n; saveCfg(); changed() }
+                }
+                key == "pp" -> (v as? JSONObject)?.let { o ->
+                    val a = o.optInt("idle", proIdle).coerceIn(0, 100)
+                    val b = o.optInt("rest", proRest).coerceIn(0, 100)
+                    if (a != proIdle || b != proRest) { proIdle = a; proRest = b; saveCfg(); changed() }
                 }
                 kind == "clear" -> {
                     val t = (v as? Number)?.toLong() ?: continue
@@ -486,7 +538,9 @@ class Comm(
                     val role = v.optString("role")
                     val tc = touch(p)
                     if (uid in tc.known || ts <= tc.st.clearTs || role !in listOf("me", "ai", "sys")) continue
-                    tc.st.messages.add(ChatMsg(nextId++, role, v.optString("text"), v.optString("at"), v.optString("api"), uid, ts))
+                    val msg = ChatMsg(nextId++, role, v.optString("text"), v.optString("at"), v.optString("api"), uid, ts)
+                    tc.st.messages.add(msg)
+                    if (p == pid) fresh.add(msg)
                     tc.known.add(uid)
                     tc.dirty = true
                     if (role == "ai") {
@@ -494,7 +548,12 @@ class Comm(
                         if (!(viewing && p == pid)) unread++
                     }
                 }
-                kind == "pro" && v is String -> { touch(rest).st.proKey = v; touch(rest).dirty = true }
+                kind == "pro" && v is String -> {                       // 已经处理过的主动消息时间点: 两边合起来
+                    val tc = touch(rest)
+                    val have = tc.st.proKey.split('|').filter { it.isNotEmpty() }
+                    val add = v.split('|').filter { it.isNotEmpty() && it !in have }
+                    if (add.isNotEmpty()) { tc.st.proKey = (have + add).takeLast(PROACTIVE_KEEP).joinToString("|"); tc.dirty = true }
+                }
                 kind == "retry" -> {
                     val o = v as? JSONObject
                     val tc = touch(rest)
@@ -511,18 +570,49 @@ class Comm(
         }
         if (clearedActive) { unread = 0; error = ""; epoch++ }
         if (touched.isNotEmpty()) changed()
+        syncedPing(fresh)
     }
+
+    /** 别的设备收到的主动消息同步过来了 (系统触发的那条 + 对方的回复, 刚刚才写的): 这台也提示一声 (前 5 分钟没聊过的话). */
+    private fun syncedPing(fresh: List<ChatMsg>) {
+        val uids = fresh.map { it.uid }.toHashSet()
+        val t = nowMs()
+        for (m in fresh) {
+            if (m.role != "ai" || t - m.ts > 90_000) continue
+            val i = messages.indexOfFirst { it.uid == m.uid }
+            val prev = if (i > 0) messages[i - 1] else null
+            if (prev != null && prev.role == "sys" && prev.text.startsWith("[系统]") && prev.uid in uids) {
+                if (!talkedRecently(messages.subList(0, i - 1), prev.ts)) ping()
+                return
+            }
+        }
+    }
+
+    /** beforeMs 之前 5 分钟内, 用户和对方有没有说过话 (系统消息不算). */
+    private fun talkedRecently(msgs: List<ChatMsg>, beforeMs: Long): Boolean =
+        msgs.any { it.role != "sys" && beforeMs - it.ts in 0..PING_QUIET * 1000L }
+
+    /** 收到主动消息的提示音 (不能用沟通的时候, 例如已经开始专注了, 不响). */
+    private fun ping() {
+        if (blocked().isEmpty()) runCatching { onProactive() }
+    }
+
+    fun proPercent(kind: String): Int = if (kind == "idle") proIdle else proRest
 
     @Synchronized
     fun set(persona: String? = null, showAvatar: Boolean? = null,
-            avatarMe: String? = null, avatarAi: String? = null, userProfile: String? = null) {
+            avatarMe: String? = null, avatarAi: String? = null, userProfile: String? = null,
+            proIdle: Int? = null, proRest: Int? = null) {
         persona?.let { switchTo(it); saveChat() }
         userProfile?.let { this.userProfile = it.trim().take(MAX_PROFILE) }
+        proIdle?.let { this.proIdle = it.coerceIn(0, 100) }
+        proRest?.let { this.proRest = it.coerceIn(0, 100) }
         showAvatar?.let { this.showAvatar = it }
         avatarMe?.let { this.avatarMe = it.trim().take(4) }
         avatarAi?.let { this.avatarAi = it.trim().take(4) }
         saveCfg()
         changed()
+        if (proIdle != null || proRest != null) push()
     }
 
     private fun ageSeconds(m: ChatMsg): Double {
@@ -783,9 +873,11 @@ class Comm(
         } else {
             error = ""; retryAt = 0; retryN = 0
             saveCfg()
+            val quiet = r.kind == "proactive" && !talkedRecently(messages, nowMs())      // 前 5 分钟没聊过: 提示音
             r.extra?.let { add("sys", it.body, it.api) }
             add("ai", r.reply.trim())
             if (!viewing) unread++
+            if (quiet) ping()
         }
         saveChat(); changed(); push()
         if (again) {
@@ -810,22 +902,94 @@ class Comm(
                 return
             }
         }
-        // 休息开始 3~5 分钟后主动发一条
+        checkProactive(t, snap)
+    }
+
+    // ---- 主动发消息 (MECHANICS 24.4) ----
+
+    private class SegEvent(val key: String, val kind: String, val begin: LocalDateTime)
+
+    /** 已经处理过的主动消息时间点 (发没发都算): 休息开始的时刻 (I) / "S开始时刻i|r" (日程里的空闲 / 休息段, II / III). */
+    private fun proDone(): List<String> = proKey.split('|').filter { it.isNotEmpty() }
+
+    private fun proMark(key: String) {
+        proKey = (proDone().filter { it != key } + key).takeLast(PROACTIVE_KEEP).joinToString("|")
+    }
+
+    /** 最近 PROACTIVE_GAP 内已经主动发过一条了吗 (相邻的日程段 / 刚好又在休息开始后, 不连着发). */
+    private fun proRecent(): Boolean {
+        val m = messages.lastOrNull { it.role == "sys" && it.text.startsWith("[系统]") } ?: return false
+        return ageSeconds(m) < PROACTIVE_GAP
+    }
+
+    private var segSig: String? = null
+    private var segCache: List<Pair<String, Int>> = emptyList()
+
+    /** 现在这个人设日程里的空闲 / 休息段 (人设文件没变就用上次读的). */
+    private fun segments(): List<Pair<String, Int>> {
+        val name = personaName()
+        if (name.isEmpty()) return emptyList()
+        val f = File(personas, name)
+        if (!f.isFile) return emptyList()
+        val sig = "$name|${f.lastModified()}|${f.length()}"
+        if (sig != segSig) { segSig = sig; segCache = CommText.scheduleSegments(readPersona(name)) }
+        return segCache
+    }
+
+    /** 日程里 3 分钟之内就要开始的空闲 / 休息段. */
+    private fun scheduleEvents(t: LocalDateTime): List<SegEvent> {
+        val out = ArrayList<SegEvent>()
+        for ((kind, mins) in segments()) for (d in 0L..1L) {                 // 今天 / 明天 (23:59 看 0:00 开始的那段)
+            val begin = t.toLocalDate().plusDays(d).atStartOfDay().plusMinutes(mins.toLong())
+            if (t.isBefore(begin) && !begin.isAfter(t.plusSeconds(PROACTIVE_MAX_DELAY.toLong())))
+                out.add(SegEvent("S${begin.toLocalDate()}T%02d:%02d%s".format(begin.hour, begin.minute, kind[0]), kind, begin))
+        }
+        return out
+    }
+
+    private fun checkProactive(t: LocalDateTime, snap: CommSnap?) {
+        val done = proDone()
+        // I. 用户这次休息超过 20 分钟: 休息开始后 1~3 分钟发一条
         val bs = snap?.breakStart
         if (snap != null && snap.state == "break" && bs != null && snap.breakTotalS > PROACTIVE_MIN_REST) {
             val key = bs.iso()
-            if (key != proKey) {
-                val due = bs.plusSeconds(180L + java.util.Random(key.hashCode().toLong()).nextInt(121))
+            if (key !in done) {
+                val due = bs.plusSeconds(60L + java.util.Random(key.hashCode().toLong()).nextInt(121))
                 if (!t.isBefore(due)) {
-                    proKey = key
-                    if (secondsBetween(due, t) <= 120) {
-                        trigger("proactive", "[系统] 用户刚开始休息, 这次计划休息约 ${Math.round(snap.breakTotalS / 60)} 分钟. " +
-                            "请根据人设主动给用户发一条消息, 话题自己找; 如果此刻不方便, 返回${CommText.REFUSE}.")
-                    }
-                    saveCfg(); push()
+                    proFire(key, due, t, 1.0, "[系统] 用户刚开始休息, 这次计划休息约 ${Math.round(snap.breakTotalS / 60)} 分钟. " +
+                        "请根据人设主动给用户发一条消息, 话题自己找; 如果此刻不方便, 返回${CommText.REFUSE}.")
+                    return
                 }
             }
         }
+        // II / III. 人设日程里每段空闲 / 休息开始前 1~3 分钟, 有概率发一条
+        for (ev in scheduleEvents(t)) {
+            if (ev.key in done) continue
+            val due = ev.begin.minusSeconds(60L + java.util.Random(ev.key.hashCode().toLong()).nextInt(121))
+            if (t.isBefore(due)) continue
+            val mins = maxOf(1L, Math.round(secondsBetween(t, ev.begin) / 60.0))
+            val hm = "%02d:%02d".format(ev.begin.hour, ev.begin.minute)
+            proFire(ev.key, due, t, proPercent(ev.kind) / 100.0,
+                "[系统] 按你的日程, 你的${if (ev.kind == "idle") "空闲" else "休息"}时间将在 $hm 开始 (约 $mins 分钟后). " +
+                "这条是系统提前触发的: 即使你此刻还处于专注/不能回复的时段, 也允许你现在主动给用户发一条消息, 话题自己找 (不要透露日程); " +
+                "如果实在不方便, 返回${CommText.REFUSE}.")
+            return
+        }
+    }
+
+    /** 这个时间点处理一次: 记下来 (不管发没发), 没错过太久 / 摇中了概率 / 最近没发过, 才真的让对方发. */
+    private fun proFire(key: String, due: LocalDateTime, t: LocalDateTime, p: Double, body: String) {
+        proMark(key)
+        val late = secondsBetween(due, t) > PROACTIVE_LATE                  // 错过太久 (程序刚打开) 就算了
+        val hit = p >= 1.0 || java.util.Random((key + "#p").hashCode().toLong()).nextDouble() < p
+        val recent = proRecent()
+        if (!late && hit && !recent) {
+            log("PRO $key p=${"%.2f".format(p)} → 让对方发")
+            trigger("proactive", body)
+        } else {
+            log("PRO $key p=${"%.2f".format(p)} → 不发 (${if (late) "错过了" else if (!hit) "概率没中" else "刚发过"})")
+        }
+        saveChat(); saveCfg(); push()
     }
 
     /** 清空聊天记录 (界面上的按钮, 或者在聊天框里发 /clear): 以后不再显示, 也不再发给模型; 别的设备也一起清空.

@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -30,6 +31,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -270,6 +272,24 @@ fun CommSettings() {
         var profile by remember { mutableStateOf(comm.userProfile) }
         OutlinedTextField(profile, { profile = it.take(Comm.MAX_PROFILE); comm.set(userProfile = profile) },
             modifier = Modifier.fillMaxWidth().padding(top = 6.dp), minLines = 3, maxLines = 8)
+    }
+
+    OitCard {
+        Text(tr("💬  主动发消息"), fontWeight = FontWeight.Bold, color = o.text)
+        // 随时保存 (即时生效, 没有等待期), 随设备同步
+        for ((kind, label) in listOf("idle" to tr("人设空闲段前发送的概率 (%)"), "rest" to tr("人设休息段前发送的概率 (%)"))) {
+            Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(label, color = o.text, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                var txt by remember(comm.proPercent(kind)) { mutableStateOf(comm.proPercent(kind).toString()) }
+                OutlinedTextField(txt, { v ->
+                    txt = v.filter(Char::isDigit).take(3)
+                    txt.toIntOrNull()?.let { n -> if (kind == "idle") comm.set(proIdle = n) else comm.set(proRest = n) }
+                }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.width(90.dp))
+            }
+        }
+        Text(tr("人设日程里 (形如 12:30-13:00:空闲 / 8:40-9:18:休息 的行) 每段空闲 / 休息开始前 1~3 分钟, 对方有这个概率主动发一条消息; " +
+            "你每次休息超过 20 分钟时, 休息开始后 1~3 分钟也会发一条. 前 5 分钟没聊过的话, 收到时会有提示音."),
+            color = o.dim, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp))
     }
 
     OitCard {

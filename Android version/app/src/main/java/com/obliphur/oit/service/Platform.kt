@@ -36,6 +36,8 @@ import com.obliphur.oit.core.fmtMs
 import com.obliphur.oit.core.tr
 import com.obliphur.oit.ui.MainActivity
 import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.exp
 import kotlin.math.sin
 
 // ════════════════ 通知 ════════════════
@@ -349,9 +351,34 @@ object Chime {
         return out.toShortArray()
     }
 
-    private fun builtin(fin: () -> Unit) {
+    private fun builtin(fin: () -> Unit) = playPcm(pcm(), fin)
+
+    /** 沟通收到主动消息的提示音: 两个轻轻的钟声 (慢起音, 渐弱, 带一点泛音; 音量比整点提示音小得多). 和桌面版 config.ensure_soft_chime 是同一个音. */
+    private fun softPcm(): ShortArray {
+        val rate = 44100
+        val total = (rate * 1.6).toInt()
+        val buf = DoubleArray(total)
+        for ((t0, freq, dur) in listOf(Triple(0.0, 659.25, 0.9), Triple(0.30, 880.0, 1.25))) {
+            val start = (rate * t0).toInt()
+            for (i in 0 until (rate * dur).toInt()) {
+                val t = i.toDouble() / rate
+                val env = minOf(1.0, t / 0.03) * exp(-t * 4.2)
+                val v = sin(2 * PI * freq * t) + 0.18 * sin(4 * PI * freq * t) * exp(-t * 3.0)
+                if (start + i < total) buf[start + i] += v * env
+            }
+        }
+        val peak = buf.maxOf { abs(it) }.takeIf { it > 0.0 } ?: 1.0
+        val gain = 6500.0 / peak
+        val fade = (rate * 0.04).toInt()
+        return ShortArray(total) { i -> (buf[i] * gain * minOf(1.0, (total - 1 - i).toDouble() / fade)).toInt().toShort() }
+    }
+
+    private val softData by lazy { softPcm() }
+
+    fun playSoft() = playPcm(softData) {}
+
+    private fun playPcm(data: ShortArray, fin: () -> Unit) {
         try {
-            val data = pcm()
             val track = AudioTrack.Builder()
                 .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION_EVENT)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())

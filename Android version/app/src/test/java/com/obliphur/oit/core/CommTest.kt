@@ -5,6 +5,8 @@ import com.obliphur.oit.ai.AiError
 import com.obliphur.oit.ai.Profile
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -30,6 +32,18 @@ class CommTest {
             if (r.startsWith("ERR:")) throw AiError("network", r.substring(4))
             r
         }
+    }
+
+    /** 从 begin + lo 秒起, 每 2 秒看一次, 返回开始请求的那一秒 (没有 = null). */
+    private fun fireAfter(c: Comm, begin: LocalDateTime, lo: Int = 60, hi: Int = 200): Int? {
+        for (s in lo until hi step 2) { clock = begin.plusSeconds(s.toLong()); c.tick(); if (c.busy) return s }
+        return null
+    }
+
+    /** 日程段开始前 200 秒起, 每 2 秒看一次, 返回开始请求时离开始还有几秒 (负数). */
+    private fun fireBefore(c: Comm, begin: LocalDateTime): Int? {
+        for (s in -200 until 0 step 2) { clock = begin.plusSeconds(s.toLong()); c.tick(); if (c.busy) return s }
+        return null
     }
 
     private fun wait(c: Comm) {
@@ -331,6 +345,29 @@ class CommTest {
         assertTrue(a.visible().isEmpty())
         pull(a, b)
         assertTrue(b.visible().isEmpty())
+
+        // 主动消息: 同一次休息只有一台发一次 (标记同步), 同步过来的这台也提示一声
+        val start = clock
+        val bsnap = CommSnap("break", restLeftMin = 25.0, focusTotalMin = 5.0, breakStart = start, breakTotalS = 30 * 60.0)
+        a.snapshot = { bsnap }; b.snapshot = { bsnap }
+        a.leader = { true }; b.leader = { false }
+        val pa = mutableListOf<Int>(); val pb = mutableListOf<Int>()
+        a.onProactive = { pa.add(1) }; b.onProactive = { pb.add(1) }
+        script.add("休息啦")
+        clock = start.plusMinutes(3)
+        a.tick(); assertTrue(a.busy); wait(a)
+        assertEquals(listOf(1), pa)
+        pull(a, b)
+        assertEquals(listOf(1), pb)                      // 同步过来的主动消息: 这台也响一声
+        pull(a, b)
+        assertEquals(listOf(1), pb)
+        b.leader = { true }
+        b.tick(); assertFalse(b.busy)
+        assertEquals(listOf("休息啦"), b.visible().map { it.text })
+        // 主动发消息的概率随设备同步
+        a.set(proIdle = 55, proRest = 33)
+        pull(a, b)
+        assertEquals(55 to 33, b.proPercent("idle") to b.proPercent("rest"))
     }
 
     @Test
@@ -339,30 +376,112 @@ class CommTest {
         val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "personas"))
         c.importPersona("小夏.txt", "你是小夏".byteInputStream())
         c.set(persona = "小夏.txt")
+        val pings = mutableListOf<Int>()
+        c.onProactive = { pings.add(1) }
         val start = clock
         var snap = CommSnap("break", restLeftMin = 25.0, focusTotalMin = 60.0, breakStart = start, breakTotalS = 25 * 60.0)
         c.snapshot = { snap }
         c.tick(); assertFalse(c.busy)
-        clock = start.plusMinutes(2).plusSeconds(59)
-        c.tick(); assertFalse(c.busy)
+        clock = start.plusSeconds(59)
+        c.tick(); assertFalse("休息开始后 1 分钟之内不发", c.busy)
         script.add("休息啦, 在干嘛?")
-        clock = start.plusMinutes(5).plusSeconds(1)
-        c.tick(); assertTrue(c.busy)
+        val sFire = fireAfter(c, start)
+        assertTrue("开始后 1~3 分钟之内: $sFire", sFire != null && sFire in 60..182)
         wait(c)
         assertEquals(listOf("ai"), c.visible().map { it.role })
         assertTrue("主动给用户发一条消息" in calls.last().second.last().second)
+        assertEquals("前 5 分钟没聊过: 响一声", listOf(1), pings)
         c.tick(); assertFalse("同一次休息只主动发一次", c.busy)
         // 休息不到 20 分钟不发
         val s2 = clock.plusMinutes(1)
         snap = CommSnap("break", breakStart = s2, breakTotalS = 15 * 60.0)
         clock = s2.plusMinutes(6)
         c.tick(); assertFalse(c.busy)
+        // 刚主动发过一条 (10 分钟内): 又一次长休息开始, 也不连着发
+        val s3 = clock
+        snap = CommSnap("break", breakStart = s3, breakTotalS = 30 * 60.0)
+        assertNull("10 分钟内不连发", fireAfter(c, s3, 60, 178))
         // 主动消息被拒绝: 什么也不留下
-        snap = CommSnap("break", breakStart = clock, breakTotalS = 30 * 60.0)
+        clock = clock.plusMinutes(15)
+        val s4 = clock
+        snap = CommSnap("break", breakStart = s4, breakTotalS = 30 * 60.0)
         script.add(CommText.REFUSE)
-        clock = clock.plusMinutes(5)
-        c.tick(); wait(c)
+        assertNotNull(fireAfter(c, s4))
+        wait(c)
         assertEquals(1, c.visible().size)
         assertEquals(1, c.messages.count { it.role == "sys" })
+        assertEquals(listOf(1), pings)
+    }
+
+    @Test
+    fun scheduleProactive() {
+        // 人设日程里的空闲 / 休息段
+        assertEquals(listOf("rest" to 520, "rest" to 658, "idle" to 750, "rest" to 880, "rest" to 1018,
+            "idle" to 1110, "rest" to 1240, "rest" to 1378, "idle" to 1380),
+            CommText.scheduleSegments(BuiltinPersonas.ALL.getValue("Claudia.txt")))
+        assertEquals(listOf("idle" to 545, "rest" to 550), CommText.scheduleSegments(
+            "- 9:05 ~ 9:35 : Idle time\n  09：10-10:00：休息\n24:00-25:00:空闲\n12:00-13:00:不休息\n" +
+                "12:00-13:00:午饭\n每天 8 点到 12 点上课.\n9:05-9:35:idle again\n"))
+
+        val td = Files.createTempDirectory("oit").toFile()
+        val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
+        c.importPersona("日程.txt", "你是小满.\n12:30-13:00:空闲\n20:40-21:18:休息\n".byteInputStream())
+        c.set(persona = "日程.txt")
+        assertEquals(80 to 60, c.proPercent("idle") to c.proPercent("rest"))              // 默认概率
+        c.set(proIdle = 150)
+        assertEquals(100, c.proPercent("idle"))
+        c.snapshot = { CommSnap("idle") }
+        val pings = mutableListOf<Int>()
+        c.onProactive = { pings.add(1) }
+        script.add("来了")
+        val s1 = fireBefore(c, LocalDateTime.of(2026, 12, 1, 12, 30))
+        assertTrue("开始前 1~3 分钟: $s1", s1 != null && s1 in -182..-60)
+        wait(c)
+        val body = calls.last().second.last().second
+        assertEquals("来了", c.visible().last().text)
+        assertTrue("空闲时间将在 12:30 开始" in body && "主动给用户发一条消息" in body)
+        assertEquals(1, pings.size)
+        // 前 5 分钟聊过 → 不响
+        clock = LocalDateTime.of(2026, 12, 2, 12, 25)
+        script.add("嗯")
+        assertEquals("", c.send("在吗")); wait(c)
+        script.add("有空吗")
+        assertNotNull(fireBefore(c, LocalDateTime.of(2026, 12, 2, 12, 30)))
+        wait(c)
+        assertEquals("有空吗", c.visible().last().text)
+        assertEquals("刚聊过, 不响", 1, pings.size)
+        // 概率 0: 不发, 但这个时间点算处理过了
+        c.set(proIdle = 0)
+        assertNull(fireBefore(c, LocalDateTime.of(2026, 12, 3, 12, 30)))
+        // 休息段默认 60%: 300 天里大约 60% 发
+        c.set(proRest = 60)
+        repeat(300) { script.add("嗯") }
+        val before = calls.size
+        for (d in 0 until 300) {
+            clock = LocalDateTime.of(2027, 1, 1, 20, 39, 0).plusDays(d.toLong())
+            c.tick()
+            if (c.busy) wait(c)
+        }
+        val hits = calls.size - before
+        assertTrue("命中 $hits", hits in 150..210)
+        assertTrue("休息时间将在 20:40 开始" in calls.last().second.last().second)
+        // 错过太久 (程序刚打开) 不补发
+        c.set(proIdle = 100)
+        var b = LocalDateTime.of(2027, 3, 2, 12, 30)
+        while (60 + java.util.Random("S${b.toLocalDate()}T12:30i".hashCode().toLong()).nextInt(121) <= 150) b = b.plusDays(1)
+        clock = b.minusSeconds(10)
+        val n0 = calls.size
+        c.tick(); assertFalse(c.busy); c.tick(); assertFalse(c.busy)
+        assertEquals(n0, calls.size)
+        // 相邻的日程段 (22:58 休息, 23:00 空闲) 不连着发
+        val c2 = comm(File(td, "d2").also { it.mkdirs() }, File(td, "p2"))
+        assertEquals("Claudia.txt", c2.personaName())
+        c2.set(proIdle = 100, proRest = 100)
+        c2.snapshot = { CommSnap("idle") }
+        script.add("晚点见")
+        assertNotNull(fireBefore(c2, LocalDateTime.of(2027, 4, 1, 22, 58)))
+        wait(c2)
+        assertTrue("休息时间将在 22:58 开始" in calls.last().second.last().second)
+        assertNull("刚发过, 23:00 的空闲段不再发", fireBefore(c2, LocalDateTime.of(2027, 4, 1, 23, 0)))
     }
 }

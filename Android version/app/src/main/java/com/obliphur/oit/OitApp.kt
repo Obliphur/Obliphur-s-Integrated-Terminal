@@ -294,6 +294,11 @@ class OitApp : Application(), Host {
         }
     }
 
+    /** 沟通收到对方主动发来的消息的提示音 (MECHANICS 24.4): 柔和的两声钟, 走通知音量. */
+    override fun playCommSound() {
+        runCatching { com.obliphur.oit.service.Chime.playSoft() }
+    }
+
     /** 违反合约的警报 (MECHANICS 18). */
     override fun playAlarm() {
         runCatching {

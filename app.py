@@ -359,6 +359,7 @@ class BreakTimerApp:
         # 沟通只能在休息 / 空闲时用 (专注 / 睡眠 / 外出中不能用); 合约的"无言为真" (社交软件和与 AI 聊天的软件禁止联网) 生效期间也不能用
         self.comm.blocked = self._comm_blocked
         self.comm.hard_block = lambda: self.contract.has("silent")
+        self.comm.on_proactive = self._comm_ping
         self._rules_win = None
         self._marks_shown = None        # 指令标记现在画在哪些按钮上 (None = 还没画过)
         self._mark_img = None
@@ -1204,6 +1205,14 @@ class BreakTimerApp:
                 self.pages["comm"].refresh()
         except Exception as e:
             self._log_window(f"ERROR    comm {type(e).__name__}: {e}")
+
+    def _comm_ping(self):
+        """收到对方主动发来的消息 (前 5 分钟没聊过): 柔和的提示音 (后台线程里放)."""
+        if sys.platform != "win32" or self.shutting_down:
+            return
+        path = config.ensure_soft_chime(os.path.join(self.dm.data_dir, "comm_ping.wav"))
+        if path:
+            threading.Thread(target=_play_audio_file, args=(path,), daemon=True).start()
 
     def update_comm_badge(self):
         b = getattr(self, "nav_btns", {}).get("comm")

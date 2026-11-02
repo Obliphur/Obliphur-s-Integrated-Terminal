@@ -214,7 +214,7 @@ OUTING_MAX_HOURS = 24 * 7
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.263"                         # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.264"                         # 和 GitHub 上发布的版本号比较 (见 updater.py)
 UPDATE_CHECK = 1                              # 打开程序时检查更新
 FULLSCREEN_DEFAULT = 0                        # 打开程序时默认全屏 (设置 → 基本设置, 仅电脑, 不同步; F11 随时切换)
 UPDATE_AUTO = 1                               # 发现新版本时自动下载安装
@@ -815,6 +815,45 @@ def ensure_builtin_chime(path: str) -> str:
                 amp = int(11000 * max(0.0, fade))
                 frames += struct.pack('<h', int(amp * math.sin(2 * math.pi * freq * i / rate)))
             frames += b'\x00\x00' * int(rate * 0.04)
+        d = os.path.dirname(path)
+        if d:
+            os.makedirs(d, exist_ok=True)
+        with wave.open(path, 'wb') as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(rate)
+            w.writeframes(bytes(frames))
+        return path
+    except Exception:
+        return ""
+
+
+def ensure_soft_chime(path: str) -> str:
+    """沟通收到主动消息的提示音: 两个轻轻的钟声 (慢起音, 渐弱, 带一点泛音; 音量比整点提示音小得多).
+    Android 版是 service/Platform.kt 的 Chime.softPcm(), 两边的音要一样."""
+    if os.path.exists(path) and os.path.getsize(path) > 44:
+        return path
+    try:
+        import struct
+        import wave
+        rate = 44100
+        total = int(rate * 1.6)
+        buf = [0.0] * total
+        for t0, freq, dur in ((0.0, 659.25, 0.9), (0.30, 880.0, 1.25)):
+            start = int(rate * t0)
+            for i in range(int(rate * dur)):
+                t = i / rate
+                env = min(1.0, t / 0.03) * math.exp(-t * 4.2)
+                v = math.sin(2 * math.pi * freq * t) + 0.18 * math.sin(4 * math.pi * freq * t) * math.exp(-t * 3.0)
+                if start + i < total:
+                    buf[start + i] += v * env
+        peak = max(abs(x) for x in buf) or 1.0
+        gain = 6500.0 / peak
+        fade = int(rate * 0.04)
+        frames = bytearray()
+        for i, x in enumerate(buf):
+            f = min(1.0, (total - 1 - i) / fade)
+            frames += struct.pack('<h', int(x * gain * f))
         d = os.path.dirname(path)
         if d:
             os.makedirs(d, exist_ok=True)
