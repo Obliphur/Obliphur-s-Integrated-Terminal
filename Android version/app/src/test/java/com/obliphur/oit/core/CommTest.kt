@@ -174,7 +174,7 @@ class CommTest {
         val c = comm(dir, File(td, "pp"))
         assertEquals(listOf("Claudia.txt"), c.listPersonas())
         assertEquals("Claudia.txt", c.personaName())            // 第一次运行默认选中
-        assertTrue("Claudia" in c.readPersona("Claudia.txt") && CommText.REFUSE in c.readPersona("Claudia.txt"))
+        assertTrue(c.readPersona("Claudia.txt").startsWith("你将扮演一位文静,冷淡的大小姐Claudia"))
         c.set(persona = "")
         File(td, "pp/Claudia.txt").delete()
         c.flush()
