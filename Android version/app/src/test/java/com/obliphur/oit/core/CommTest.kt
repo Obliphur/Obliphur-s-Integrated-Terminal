@@ -272,6 +272,21 @@ class CommTest {
         assertEquals("再问一次", c.visible().last().text)
     }
 
+    /** 对方查询得到的是参考模板: 每个模块都有, 带占位符, 没有用户的真实数据 (沟通 24.2.1). */
+    @Test
+    fun queryTemplates() {
+        for (tag in CommData.MODULE_TAGS) {
+            val t = CommData.template(tag, listOf("基本设置" to "语言"))
+            assertTrue(tag, t.isNotEmpty())
+            if (tag != "reset") assertTrue(tag, CommData.NOTE in t && "<" in t)
+        }
+        val s = CommData.template("settings", listOf("基本设置" to "语言"))
+        assertTrue("<值>" in s && "基本设置:" in s)
+        val lib = CommData.template("contract")
+        assertTrue("【已选择】" !in lib && "【已激活】" !in lib && "【已失效】" !in lib && "持久战" in lib && "【词条组合】" in lib)
+        assertEquals("", CommData.template("nope"))
+    }
+
     @Test
     fun onlyRestOrIdle() {
         val td = Files.createTempDirectory("oit").toFile()

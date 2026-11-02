@@ -311,35 +311,15 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     /** 计时器: 目前状态, 剩余休息时间, 今日总专注时长, 目前这轮专注时长 (📎 专注计时(今天); 对方查询 [timer] 得到的也是这个). */
     fun commTimerText(): String = CommData.timerText(commSnapshot())
 
+    /** 对方查询的模块 ([模块名]): 只给一个参考模板 (格式和占位符, 24.2.1), 具体内容由对方按人设自己填写; 没有用户的真实数据, 黑雾中也能给. */
     private fun commInfo(tag: String): String {
-        if (tag == "reset") return CommData.RESET_TEXT
-        if (contract.fog()) return CommData.FOG_TEXT
-        fun build(sel: CommSel) = CommData.build(sel, this) { pkg ->
-            runCatching { com.obliphur.oit.service.appLabel(com.obliphur.oit.OitApp.instance, pkg) }.getOrDefault(pkg)
+        val rows = ArrayList<Pair<String, String>>()
+        if (tag == "settings") for ((page, title) in Schema.PAGES) {
+            if (page == "comm") continue
+            val (opts, nums) = Schema.pageSpecs(page, settings.str("THEME"))
+            for (spec in opts + nums) rows.add(tr(title) to tr(spec.label))
         }
-        return when (tag) {
-            "contract" -> CommData.library(contract)
-            "calendar" -> build(CommSel(cal = CommData.CAL_KEYS.map { it.first }))
-            "stats" -> build(CommSel(stats = CommData.STATS_KEYS.map { it.first }))
-            "timer" -> commTimerText()
-            "log" -> commLogText()
-            "net" -> CommData.netText(net.mode, net.quotaUsed, net.todayTotal, tr(settings.display("NET_MODE", netMode())),
-                build(CommSel(stats = listOf("net"))))
-            "rules" -> CommData.rulesText(tr(settings.display("FILTER_MODE")), listOf(
-                "白名单 · 网站" to rules.items(RuleKeys.WHITE_DOMAINS), "白名单 · 应用" to rules.items(RuleKeys.WHITE_APPS),
-                "黑名单 · 网站" to rules.items(RuleKeys.BLACK_DOMAINS), "黑名单 · 应用" to rules.items(RuleKeys.BLACK_APPS)))
-            "settings" -> {
-                val rows = ArrayList<Triple<String, String, String>>()
-                for ((page, title) in Schema.PAGES) {
-                    if (page == "comm") continue
-                    val (opts, nums) = Schema.pageSpecs(page, settings.str("THEME"))
-                    for (spec in opts + nums) rows.add(Triple(tr(title), tr(spec.label), tr(settings.display(spec.key))))
-                }
-                CommData.settingsText(rows)
-            }
-            "prescript" -> CommData.prescriptText(settings.str("THEME") == "urban_will", prescript.historyBrief(10))
-            else -> ""
-        }
+        return CommData.template(tag, rows)
     }
 
     /** 本机是不是聊天的主端: 最晚的一条消息是本机写的 (MECHANICS 24.6). 主端不在线 / 还没有消息时, 看谁最后有人操作. */

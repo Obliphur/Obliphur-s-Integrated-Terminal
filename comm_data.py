@@ -70,15 +70,19 @@ def _req_name(req: str) -> str:
     return req
 
 
-def library(contract) -> str:
-    """整个词条库和组合, 标出哪些被用户选择 / 激活了: 合约进行中 = 激活的, 没开始 = 选好的(还没生效)."""
-    active = bool(contract.active)
-    selected = list(contract.terms) if active else list(contract.draft)
+def library(contract=None) -> str:
+    """整个词条库和组合. contract=None: 参考模板 (对方查询 [contract] 得到的: 只有词条和组合本身, 不标用户选了哪些, 具体选了什么由对方自己编);
+    给了 contract: 标出哪些被用户选择 / 激活了 (合约进行中 = 激活的, 没开始 = 选好的(还没生效)), 📎 附件用."""
+    active = bool(contract and contract.active)
+    selected = [] if contract is None else (list(contract.terms) if active else list(contract.draft))
     tag = "已激活" if active else "已选择"
     lost = set(contract.lost) if active else set()
-    head = (f"合约进行中, 危机等级 {getattr(contract, 'level_text', '')}" if active else
-            ("合约没有开始, 选好的词条还没生效" if selected else "现在没有进行中的合约, 也没有选好的词条"))
-    lines = [f"【合约词条库】{head}。词条后面的【{tag}】= 用户选的; 【已失效】= 被违反到失效。"]
+    if contract is None:
+        lines = [f"【合约词条库】{NOTE}\n(下面是全部词条和组合; 用户具体选了哪些、合约进行得怎么样, 请根据人设自己编)"]
+    else:
+        head = (f"合约进行中, 危机等级 {getattr(contract, 'level_text', '')}" if active else
+                ("合约没有开始, 选好的词条还没生效" if selected else "现在没有进行中的合约, 也没有选好的词条"))
+        lines = [f"【合约词条库】{head}。词条后面的【{tag}】= 用户选的; 【已失效】= 被违反到失效。"]
     for t in C.TERMS:
         mark = f"【{tag}】" if t[0] in selected else ("【已失效】" if t[0] in lost else "")
         kind, _sep, name = t[3].partition(":")
@@ -98,6 +102,78 @@ def library(contract) -> str:
 # ---- 对方可以查询的模块 (沟通 24.2.1): 回复 [refuse to reply][模块名] 得到该模块的数据内容和格式 ----
 MODULE_TAGS = ("contract", "calendar", "stats", "timer", "log", "net", "rules", "settings", "reset", "prescript")
 FOG_TEXT = "(黑雾中, 暂时无法提供)"
+NOTE = "(格式模板: <尖括号> 里是占位符, 不是用户的数据; 请参照这个格式, 根据人设自己填写具体内容)"
+TEMPLATES = {
+    "timer": "【计时器】" + NOTE + r"""
+  目前状态: <专注中 / 休息中 / 空闲 / 睡觉中 / 外出中>
+  剩余休息时间: <X 小时 Y 分钟 / 无>
+  今日总专注时长: <X 小时 Y 分钟>
+  目前这轮专注时长: <X 分钟 / 0 分钟(未在专注)>""",
+    "log": "【整点记录·今天】" + NOTE + r"""
+  <HH>:00 <这个小时做了什么>
+  <HH>:00 <这个小时做了什么>
+  (一行一个小时, 没有记录的小时不写)""",
+    "calendar": "【日历·<专注 / 休息 / 空闲 / 睡眠> <YYYY-MM>】" + NOTE + r"""
+  <YYYY-MM-DD>: <X.X> h
+  <YYYY-MM-DD>: <X.X> h
+  (只列有记录的日子; 休息 / 空闲 / 睡眠只有最近 7 天)
+  合计: <X.X> h""",
+    "stats": "【统计·整点记录 <YYYY-MM>】" + NOTE + r"""
+  <活动名称>: <X.X> h
+  <活动名称>: <X.X> h
+  合计: <X.X> h
+
+【统计·联网理由 <YYYY-MM>】
+  <理由>: <X> 分钟
+  合计: <X.X> h
+
+【统计·窗口 <YYYY-MM>】
+  <程序名>: <X.X> h
+  合计: <X.X> h
+
+【统计·专注计时 最近 7 天】
+  <MM-DD> 周<一~日>: 专注 <X> 分钟, 休息 <X> 分钟
+
+【统计·合约记录 最近完成的】
+  危机等级 <N>: <词条名>; <词条名>""",
+    "net": "【联网】" + NOTE + r"""
+  状态: <联网中 / 申请中 (冷静期) / 离线>
+  今日额度: 已用 <X 小时 Y 分钟> / 共 <X 小时 Y 分钟>
+  断网方式: <断网方式的名字>
+
+【统计·联网理由 <YYYY-MM>】
+  <理由>: <X> 分钟
+  合计: <X.X> h""",
+    "rules": "【规则】" + NOTE + r"""
+  过滤名单模式: <黑名单模式 / 白名单模式>
+  白名单 · 网站 (<数量>): <域名>、<域名> …
+  白名单 · 应用 (<数量>): <程序名>、<程序名> …
+  黑名单 · 网站 (<数量>): <域名>、<域名> …
+  黑名单 · 应用 (<数量>): <程序名>、<程序名> …
+  (空的名单写"空"; 每张最多列 40 条)""",
+    "prescript": "【指令】" + NOTE + r"""
+  <结束的时间> 指令 <类型>: <指令内容> → <结果>
+  (都市之意主题独占的模块; 最近结束的几条, 没有就写"还没有结束过的指令")""",
+}
+
+
+def template(tag: str, settings_rows: list = None) -> str:
+    """对方查询 [模块名] 得到的参考模板 (沟通 24.2.1): 只有格式和占位符, 没有用户的真实数据 (所以黑雾中也能给), 具体内容由对方按人设自己填写.
+    settings_rows: [(页, 名称)] (设置页的结构, 值写成 <值>)."""
+    if tag == "reset":
+        return RESET_TEXT
+    if tag == "contract":
+        return library(None)
+    if tag == "settings":
+        out = ["【设置】" + NOTE]
+        page = None
+        for pg, name in settings_rows or []:
+            if pg != page:
+                out.append(f" {pg}:")
+                page = pg
+            out.append(f"  {name}: <值>")
+        return "\n".join(out)
+    return TEMPLATES.get(tag, "")
 STATE_TEXT = {"focus": "专注中", "break": "休息中", "idle": "空闲", "sleep": "睡觉中", "out": "外出中"}
 RESET_TEXT = (
     "【重置】(OIT 的 重置 页)\n"
@@ -233,7 +309,22 @@ def build(sel: dict, dm, net, contract, now: datetime = None, focus_live=None, c
     return text[:MAX_CHARS]
 
 
+def _selftest_templates():
+    """对方查询得到的是参考模板: 每个模块都有, 带占位符, 没有用户的真实数据."""
+    for tag in MODULE_TAGS:
+        t = template(tag, [("基本设置", "语言")])
+        assert t, tag
+        if tag != "reset":
+            assert NOTE in t and "<" in t, tag
+    assert "<值>" in template("settings", [("基本设置", "语言")]) and "基本设置:" in template("settings", [("基本设置", "语言")])
+    lib = template("contract")
+    assert "【已选择】" not in lib and "【已激活】" not in lib and "【已失效】" not in lib and "持久战" in lib and "【词条组合】" in lib
+    assert template("nope") == ""
+    return True
+
+
 def _selftest():
+    assert _selftest_templates()
     class DM:
         study_data = {"2026-11-01": 3.5, "2026-11-02": 1.0, "2026-10-30": 9.0}
 

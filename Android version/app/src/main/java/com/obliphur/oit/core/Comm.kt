@@ -119,8 +119,8 @@ object CommText {
             "如果需要更细致的信息 前往https://github.com/Obliphur/Obliphur-s-Integrated-Terminal下的MECHANICS.md查看.\n" +
             "VI.不要主动透露日程/专注状态.\n" +
             "如果某个时间点你理应处于专注,但是用户3min前以内还在你聊天,则和用户说明要进入专注并停止对话.\n" +
-            "VII.如果用户问起OIT的使用数据(日历/统计/计时器等),你可以同时输入[refuse to reply][模块名]查询,得到该模块的数据内容和格式;" +
-            "如果用户问的是你自己的使用情况,请参照这个格式,根据人设编造你自己的数据来回复.可以一次查询多个.\n" +
+            "VII.如果用户问起OIT的使用数据(日历/统计/计时器等),你可以输入[模块名]查询(同时输入[refuse to reply]也行),得到该模块的参考模板(只有格式和占位符,没有用户的真实数据);" +
+            "具体内容请你根据人设自己填写,不要说成是用户的真实数据.可以一次查询多个.\n" +
             "可查询的模块: [contract]合约词条库 [calendar]日历 [stats]统计 [timer]计时器 [log]整点记录 [net]联网 [rules]规则 [settings]设置 [reset]重置 [prescript]指令.\n" +
             (if (split) "VIII.你可以把你的话分开说.当用户说完话时,系统会试图调用两次API,最好不要让你的表达太集中.如果你只想说一次,第二次${REFUSE}.\n" else "") +
             "IX.如果期待对方回复,则在对话结尾加一个[waiting for reply]:[N],N自己填写,如果N min内没有收到对方回复你可以追加询问.\n" +
@@ -955,9 +955,9 @@ class Comm(
                         runCatching { infoFn(t) }.getOrDefault("").takeIf { it.isNotEmpty() }?.let { "【$t】\n$it" }
                     }
                     if (blocks.isEmpty()) break
-                    convo = convo + ("assistant" to reply) + ("user" to ("(OIT 系统提供的资料, 用户看不到)\n\n" + blocks.joinToString("\n\n") +
-                        "\n\n以上是**用户自己的** OIT 数据和格式. 如果用户问的是你自己的使用情况, 请参照这个格式和写法, 根据人设编造你自己的数据来回答," +
-                        " 不要把用户的数据说成是你的; 然后回复用户上面的消息. 如果此刻仍然不方便回复, 返回${CommText.REFUSE}."))
+                    convo = convo + ("assistant" to reply) + ("user" to ("(OIT 系统提供的参考模板, 用户看不到)\n\n" + blocks.joinToString("\n\n") +
+                        "\n\n以上只是**参考模板** (格式; <尖括号> 里是占位符), 不是用户的真实数据. 请参照这个格式和写法, 根据人设自己填写具体内容," +
+                        " 回复用户上面的消息, 不要把它说成是用户的数据. 如果此刻仍然不方便回复, 返回${CommText.REFUSE}."))
                     reply = chatFn(profile, system, convo)
                 }
                 log("REQ $kind ok ${(System.currentTimeMillis() - started) / 1000.0}s reply_chars=${reply.length}")

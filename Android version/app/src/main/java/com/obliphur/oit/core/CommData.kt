@@ -28,6 +28,43 @@ object CommData {
         "  删除整个数据目录: 学习记录, 整点记录, 统计, 联网额度与日志, 名单, 设置, AI 配置, 聊天记录全部删除; 进行中的专注不记录; 不留任何记录.\n" +
         "  程序随即自动重新打开, 像第一次安装: 设置都是默认值, 名单为空, 重新开始 72 小时配置期."
 
+    const val NOTE = "(格式模板: <尖括号> 里是占位符, 不是用户的数据; 请参照这个格式, 根据人设自己填写具体内容)"
+    private val TEMPLATES = mapOf(
+        "timer" to "【计时器】$NOTE\n  目前状态: <专注中 / 休息中 / 空闲 / 睡觉中 / 外出中>\n  剩余休息时间: <X 小时 Y 分钟 / 无>\n" +
+            "  今日总专注时长: <X 小时 Y 分钟>\n  目前这轮专注时长: <X 分钟 / 0 分钟(未在专注)>",
+        "log" to "【整点记录·今天】$NOTE\n  <HH>:00 <这个小时做了什么>\n  <HH>:00 <这个小时做了什么>\n  (一行一个小时, 没有记录的小时不写)",
+        "calendar" to "【日历·<专注 / 休息 / 空闲 / 睡眠> <YYYY-MM>】$NOTE\n  <YYYY-MM-DD>: <X.X> h\n  <YYYY-MM-DD>: <X.X> h\n" +
+            "  (只列有记录的日子; 休息 / 空闲 / 睡眠只有最近 7 天)\n  合计: <X.X> h",
+        "stats" to "【统计·整点记录 <YYYY-MM>】$NOTE\n  <活动名称>: <X.X> h\n  <活动名称>: <X.X> h\n  合计: <X.X> h\n\n" +
+            "【统计·联网理由 <YYYY-MM>】\n  <理由>: <X> 分钟\n  合计: <X.X> h\n\n" +
+            "【统计·窗口 <YYYY-MM>】\n  <程序名>: <X.X> h\n  合计: <X.X> h\n\n" +
+            "【统计·专注计时 最近 7 天】\n  <MM-DD> 周<一~日>: 专注 <X> 分钟, 休息 <X> 分钟\n\n" +
+            "【统计·合约记录 最近完成的】\n  危机等级 <N>: <词条名>; <词条名>",
+        "net" to "【联网】$NOTE\n  状态: <联网中 / 申请中 (冷静期) / 离线>\n  今日额度: 已用 <X 小时 Y 分钟> / 共 <X 小时 Y 分钟>\n  断网方式: <断网方式的名字>\n\n" +
+            "【统计·联网理由 <YYYY-MM>】\n  <理由>: <X> 分钟\n  合计: <X.X> h",
+        "rules" to "【规则】$NOTE\n  过滤名单模式: <黑名单模式 / 白名单模式>\n  白名单 · 网站 (<数量>): <域名>、<域名> …\n" +
+            "  白名单 · 应用 (<数量>): <程序名>、<程序名> …\n  黑名单 · 网站 (<数量>): <域名>、<域名> …\n  黑名单 · 应用 (<数量>): <程序名>、<程序名> …\n" +
+            "  (空的名单写\"空\"; 每张最多列 40 条)",
+        "prescript" to "【指令】$NOTE\n  <结束的时间> 指令 <类型>: <指令内容> → <结果>\n  (都市之意主题独占的模块; 最近结束的几条, 没有就写\"还没有结束过的指令\")",
+    )
+
+    /** 对方查询 [模块名] 得到的参考模板 (沟通 24.2.1): 只有格式和占位符, 没有用户的真实数据 (所以黑雾中也能给), 具体内容由对方按人设自己填写.
+     *  settingsRows: (页, 名称) (设置页的结构, 值写成 <值>). 同 comm_data.template. */
+    fun template(tag: String, settingsRows: List<Pair<String, String>> = emptyList()): String = when (tag) {
+        "reset" -> RESET_TEXT
+        "contract" -> library(null)
+        "settings" -> {
+            val out = arrayListOf("【设置】$NOTE")
+            var page: String? = null
+            for ((pg, name) in settingsRows) {
+                if (pg != page) { out.add(" $pg:"); page = pg }
+                out.add("  $name: <值>")
+            }
+            out.joinToString("\n")
+        }
+        else -> TEMPLATES[tag] ?: ""
+    }
+
     private fun hm(minutes: Double): String {
         val m = Math.round(maxOf(0.0, minutes)).toInt()
         return if (m >= 60) "${m / 60} 小时 ${m % 60} 分钟" else "$m 分钟"
@@ -116,15 +153,18 @@ object CommData {
     }
 
     /** 整个词条库和组合, 标出哪些被用户选择 / 激活了: 合约进行中 = 激活的, 没开始 = 选好的(还没生效). */
-    fun library(c: Contract): String {
-        val active = c.active
-        val selected = if (active) c.terms else c.draft
+    fun library(c: Contract?): String {
+        val active = c?.active == true
+        val selected = if (c == null) emptyList() else if (active) c.terms else c.draft
         val tag = if (active) "已激活" else "已选择"
-        val lost = if (active) c.lost.toSet() else emptySet()
-        val head = if (active) "合约进行中, 危机等级 ${Contract.levelLabel(c.level, c.origLevel)}"
-        else if (selected.isNotEmpty()) "合约没有开始, 选好的词条还没生效" else "现在没有进行中的合约, 也没有选好的词条"
+        val lost = if (c != null && active) c.lost.toSet() else emptySet()
         val lines = ArrayList<String>()
-        lines.add("【合约词条库】$head。词条后面的【$tag】= 用户选的; 【已失效】= 被违反到失效。")
+        if (c == null) lines.add("【合约词条库】$NOTE\n(下面是全部词条和组合; 用户具体选了哪些、合约进行得怎么样, 请根据人设自己编)")
+        else {
+            val head = if (active) "合约进行中, 危机等级 ${Contract.levelLabel(c.level, c.origLevel)}"
+            else if (selected.isNotEmpty()) "合约没有开始, 选好的词条还没生效" else "现在没有进行中的合约, 也没有选好的词条"
+            lines.add("【合约词条库】$head。词条后面的【$tag】= 用户选的; 【已失效】= 被违反到失效。")
+        }
         for (t in Contract.TERMS) {
             val mark = if (t.id in selected) "【$tag】" else if (t.id in lost) "【已失效】" else ""
             val kind = if (':' in t.name) t.name.substringBefore(':') else "特殊"
