@@ -163,7 +163,15 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
                                      "redirect blocked to protect the API key", headers, fp)
 
 
-_OPENER = urllib.request.build_opener(_NoRedirect)
+class _Fresh:
+    """每次请求都新建 opener: build_opener 里的 ProxyHandler 在创建的那一刻读系统代理, 做成模块级常量的话 OIT 启动时是什么代理就一直用什么 ——
+    之后系统代理变了 (OIT 的过滤代理换了端口 / 开发版放开限制把系统代理还原 / 换了代理软件) 就一直连旧端口, 报 WinError 10061 (积极拒绝)."""
+
+    def open(self, req, timeout=None):
+        return urllib.request.build_opener(_NoRedirect).open(req, timeout=timeout)
+
+
+_OPENER = _Fresh()
 _DIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)       # 不走系统代理
 
 
@@ -930,6 +938,18 @@ def _selftest():
     finally:
         _dpapi, can_encrypt = real_dpapi, real_can
 
+    # 每次请求重新读系统代理 (不是 import 时的那一份)
+    real_bo, built = urllib.request.build_opener, []
+    urllib.request.build_opener = lambda *a, **k: built.append(1) or real_bo(*a, **k)
+    try:
+        for _ in range(2):
+            try:
+                globals()["_OPENER"].open(urllib.request.Request("http://127.0.0.1:9/"), timeout=1)
+            except Exception:       # noqa: BLE001
+                pass
+    finally:
+        urllib.request.build_opener = real_bo
+    assert len(built) == 2, "每次请求都新建 opener"
     # 系统代理指向的端口拒绝连接 (WinError 10061): 再直连试一次; 直连也不行报最初的错误; 没有系统代理时不重试
     global _OPENER, _DIRECT
     import io
