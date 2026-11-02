@@ -69,10 +69,10 @@ class LinkTest {
         // 联动程序刚启动的这段时间不启动
         val young = LinkCore(d, port = 18954, syncPorts = listOf(1), launch = { launched.add(2); true }, graceMs = 0, selfFailMs = 0, selfGraceMs = 3_600_000)
         young.selfCheck(); assertEquals("", young.selfCheck()); assertEquals(listOf(1), launched)
-        // 没有绑定的设备: 不管 (划掉就是关掉)
+        // 没有绑定的设备: 一样看着 (不绑定设备时联动程序也会启动)
         val e = java.nio.file.Files.createTempDirectory("link").toFile()
         val none = LinkCore(e, port = 18955, syncPorts = listOf(1), launch = { launched.add(3); true }, graceMs = 0, selfFailMs = 0, selfGraceMs = 0)
-        assertEquals("", none.selfCheck()); assertEquals(0L, none.absentSince); assertEquals(listOf(1), launched)
+        assertEquals("started", none.selfCheck()); assertEquals(listOf(1, 3), launched)
         // OIT 回来了: 清掉记录
         val up = LinkCore(d, port = 18956, syncPorts = listOf(1), otherAlive = { true }, launch = { false })
         assertEquals("", up.selfCheck()); assertEquals(0L, up.absentSince)

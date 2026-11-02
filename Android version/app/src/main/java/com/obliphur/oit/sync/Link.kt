@@ -14,7 +14,7 @@ import java.util.concurrent.Executors
  *    OIT 已经在运行 / 本机正在外出 (link_state.json 的 hold_until) / 刚启动过 就不理, 否则启动 OIT;
  *  - 每 15 秒看一眼绑定的设备的 OIT 还在不在 (同步端口答不答 hello). 连续 45 秒没答就去问它的联动程序:
  *    答了 = 那台设备还开着, 只是 OIT 没在运行 (不是那台设备离线) → 请它启动 OIT; 也不答 = 那台设备真的关机 / 断网了, 什么都不做.
- * 自己设备上的 OIT 也由它看着 (selfCheck): 绑定了其他设备时, 本机的 OIT 连续 35 秒不在运行就替它重新启动 (外出期间除外).
+ * 自己设备上的 OIT 也由它看着 (selfCheck): 本机的 OIT 连续 35 秒不在运行就替它重新启动 (外出期间除外); 有没有绑定其他设备都一样.
  * 只读 OIT 的 sync_state.json (绑定的地址和密钥) 和 link_state.json, 不碰 OitApp / Core (这个进程里没有它们).
  */
 object LinkFiles {
@@ -125,9 +125,9 @@ class LinkCore(
         return if (ok) "started" else "failed"
     }
 
-    /** 自己设备上的 OIT 在不在: 绑定了其他设备时, 连续 SELF_FAIL_MS 不在就启动它 (外出期间 / 刚启动过 不启动). 返回 startOit 的结果, 没动作时 "". */
+    /** 自己设备上的 OIT 在不在: 连续 SELF_FAIL_MS 不在就启动它 (外出期间 / 刚启动过 不启动; 不绑定设备也一样). 返回 startOit 的结果, 没动作时 "". */
     fun selfCheck(): String {
-        if (!hasPeers() || oitAlive()) { absentSince = 0L; return "" }
+        if (oitAlive()) { absentSince = 0L; return "" }
         val now = System.currentTimeMillis()
         if (absentSince == 0L) absentSince = now
         if (now - absentSince < selfFailMs || now - born < selfGraceMs) return ""
@@ -181,7 +181,7 @@ class LinkCore(
         }
     }
 
-    /** 有绑定的设备吗 (没有时联动程序用不着, 不必保持唤醒). */
+    /** 有绑定的设备吗 (没有时别的设备不会来连, 不必为它保持 CPU / Wi-Fi 唤醒; 联动程序自己照常运行). */
     fun hasPeers() = LinkFiles.loadPeers(dir).second.isNotEmpty()
 
     fun serve(): Boolean {

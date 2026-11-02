@@ -12,7 +12,7 @@ OIT 主体被关掉 / 崩溃 / 被冻结时, 别的设备的"请对方重新启�
 
 只读 OIT 的 sync_state.json (绑定的地址和密钥) 和 link_state.json, 不依赖 tkinter.
 
-自己设备上的 OIT 也由它看着: 绑定了其他设备时, 本机的 OIT 连续 35 秒不在运行 (没有互斥体, 同步端口也不答) 就替它重新启动 (外出期间除外).
+自己设备上的 OIT 也由它看着: 本机的 OIT 连续 35 秒不在运行 (没有互斥体, 同步端口也不答) 就替它重新启动 (外出期间除外); 有没有绑定其他设备都一样.
 
 更顽强 (MECHANICS 15.8):
   · 进程名不是 pythonw.exe 而是 oitlink.exe (解释器的副本): 结束 pythonw.exe 时它不会跟着没;
@@ -173,8 +173,8 @@ class Link:
             return "started" if ok else "failed"
 
     def self_check(self):
-        """自己设备上的 OIT 在不在: 绑定了其他设备时, 连续 SELF_FAIL 秒不在就启动它 (外出期间 / 刚启动过 不启动). 返回 start_oit 的结果, 没动作时 ""."""
-        if not load_peers(self.dd)[1] or self.oit_alive():
+        """自己设备上的 OIT 在不在: 连续 SELF_FAIL 秒不在就启动它 (外出期间 / 刚启动过 不启动; 不绑定设备也一样). 返回 start_oit 的结果, 没动作时 ""."""
+        if self.oit_alive():
             self.absent_since = None
             return ""
         now = time.time()
@@ -189,7 +189,7 @@ class Link:
 
     def heal(self):
         """计划任务 `OIT link` 被删了 / 被禁用了 / 改坏了就重建 (autostart.link_ensure; OIT 的开机自启动的任务被禁用 / 删掉了也一起重建)."""
-        if sys.platform != "win32" or not load_peers(self.dd)[1]:
+        if sys.platform != "win32":
             return
         import autostart
         before = autostart.link_state()
@@ -581,13 +581,14 @@ def _selftest():
         alive[0] = False
         lc.absent_since = None
         assert lc.self_check() == "" and lc.absent_since is not None
-        # 没有绑定的设备: 不管 (划掉就是关掉)
+        # 没有绑定的设备: 一样看着 (不绑定设备时联动程序也会启动)
         dn = tempfile.mkdtemp()
         try:
             ln = Link(dn, port=18945, sync_ports=[1], launch=lambda: mine.append(3) or True, grace=0)
             ln.oit_alive = lambda: False
             ln.absent_since = time.time() - 999
-            assert ln.self_check() == "" and mine == [1]
+            ln.born = time.time() - 999
+            assert ln.self_check() == "started" and mine == [1, 3], "没有绑定的设备: 也替本机启动 OIT"
         finally:
             shutil.rmtree(dn, ignore_errors=True)
         # 联动程序的可执行文件: 能跑的 pythonw.exe 副本 oitlink.exe (复制不了就是 pythonw.exe 本身)

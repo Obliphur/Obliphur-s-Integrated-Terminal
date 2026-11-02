@@ -2939,10 +2939,9 @@ class BreakTimerApp:
             self.autostart_state = "error"
         try:
             # 联动程序 (MECHANICS 15.8): 登录时启动的后台进程, OIT 关掉了它照样在, 替别的设备把本机的 OIT 重新启动;
-            # 它的计划任务被禁用 / 删掉了也重建, 进程没在运行就打开 (没有绑定的设备时用不着)
-            if self.sync.peers():
-                autostart.link_ensure()
-                linkd.ensure_running(self.dm.data_dir)
+            # 它的计划任务被禁用 / 删掉了也重建, 进程没在运行就打开 (不绑定设备时也一样)
+            autostart.link_ensure()
+            linkd.ensure_running(self.dm.data_dir)
         except Exception as e:
             self._log_window(f"ERROR    link {type(e).__name__}: {e}")
 
@@ -2950,8 +2949,7 @@ class BreakTimerApp:
         if closedtest.active():
             return
         try:
-            if self.sync.peers():
-                linkd.ensure_running(self.dm.data_dir)
+            linkd.ensure_running(self.dm.data_dir)
         except Exception as e:
             self._log_window(f"ERROR    link {type(e).__name__}: {e}")
 

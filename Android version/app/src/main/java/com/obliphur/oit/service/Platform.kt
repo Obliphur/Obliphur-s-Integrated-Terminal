@@ -187,12 +187,12 @@ class CoreService : Service() {
                 // 计划变了才动 VPN (例如开发者模式下刚绑定了设备: 要开一个全部放行的 VPN, 见 Core.vpnPlan)
                 app.applyNet(false)
                 app.maybeRelay()
-                // 联动程序 (15.8): 绑定了其他设备就保持它在运行 (没有就关掉); 外出的计划结束时刻告诉它 (外出期间的设备不算离线)
+                // 联动程序 (15.8): 保持它在运行 (不绑定设备也一样); 外出的计划结束时刻告诉它 (外出期间的设备不算离线)
                 runCatching {
                     val dir = java.io.File(filesDir, "data")
                     com.obliphur.oit.sync.LinkFiles.writeHold(dir, app.core.linkHoldMs())
-                    Waker.keepalive(this@CoreService, app.core.hasPeers())
-                    if (n % 30 == 0) { if (app.core.hasPeers()) LinkService.start(this@CoreService) else LinkService.stop(this@CoreService) }
+                    Waker.keepalive(this@CoreService, true)
+                    if (n % 30 == 0) LinkService.start(this@CoreService)
                 }
             }
             handler.postDelayed(this, 1000)
@@ -295,7 +295,7 @@ class BootReceiver : BroadcastReceiver() {
 object Waker {
     private var target = 0L
 
-    /** 联动 (MECHANICS 15.8): 绑定了其他设备时, 每 45 秒一个"保活"闹钟 (比"拒绝连接算离线"的 25 秒长: 被划掉的这段先算离线, 再被叫起来) (want = false 取消). 手机把 OIT 从最近任务里划掉 (vivo 等会杀掉 OIT 的所有进程,
+    /** 联动 (MECHANICS 15.8): 每 45 秒一个"保活"闹钟 (比"拒绝连接算离线"的 25 秒长: 被划掉的这段先算离线, 再被叫起来) (want = false 取消). 手机把 OIT 从最近任务里划掉 (vivo 等会杀掉 OIT 的所有进程,
      *  联动程序也一起没了) 之后闹钟还在, 它把 OIT 和联动程序叫起来; OIT 在运行时 CoreService 每 5 秒把它往后推, 平时不会响. */
     fun keepalive(ctx: Context, want: Boolean) {
         val am = ctx.getSystemService(AlarmManager::class.java)

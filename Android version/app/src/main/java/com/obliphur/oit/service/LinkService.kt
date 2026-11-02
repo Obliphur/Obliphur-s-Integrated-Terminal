@@ -17,7 +17,7 @@ import java.io.File
 /**
  * 联动程序 (MECHANICS 15.8): 单独的进程 (:link), OIT 主体被关掉 / 被系统结束 / 崩溃后它还在, 替别的设备把本机的 OIT 重新启动.
  * 这个进程里没有 OitApp / Core (OitApp.onCreate 看到是 :link 进程就什么都不做); 只用 sync/Link.kt 的 LinkCore.
- * 绑定了其他设备时由 CoreService 保持它在运行 (没有就关掉), 开机 / 更新后由 BootReceiver 打开.
+ * 由 CoreService 保持它在运行 (不绑定设备也一样), 开机 / 更新后由 BootReceiver 打开.
  */
 class LinkService : Service() {
     private var link: LinkCore? = null
@@ -95,7 +95,7 @@ class LinkService : Service() {
                     l.probeOnce()
                     holdLocks(l.hasPeers())
                     // 保活闹钟 (Waker.keepalive) 这里也往后推: 整个应用 (包括本进程) 被系统杀掉后, 闹钟照样把 OIT 和联动程序叫起来
-                    Waker.keepalive(this, l.hasPeers())
+                    Waker.keepalive(this, true)
                 } catch (e: Exception) {
                     log("probe error ${e.javaClass.simpleName}: ${e.message}")
                 }
