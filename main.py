@@ -43,13 +43,30 @@ def main():
         # 开发版本和装好的版本用的是同一个数据文件夹: 装好的版本已经把 .json 加密了, 开发版本也要用同一个密钥读写
         # (不然读出一堆乱码当成空数据, 存回去就把数据覆盖了, 对方又会把写进来的明文当成篡改) (MECHANICS 9.4)
         securefile.configure(config.app_data_dir())
-    cont, who = continuity.guard(config.app_data_dir(), enabled=secure)
+    # 源码被"非更新"的形式改动 (srcguard.py, MECHANICS 9.7): 多一个非法信号, 清一次数据; git 仓库里的开发版本不检查
+    import srcguard
+    src_status, src_changes = "ok", []
+    if secure and not updater.is_dev_checkout():
+        try:
+            src_status, src_changes = srcguard.verify(updater.program_dir(), config.app_data_dir())
+        except Exception as e:
+            print(f"srcguard: {type(e).__name__}: {e}", file=sys.stderr)
+        if src_status == "modified":
+            continuity.log_event("SOURCE modified: " + ", ".join(src_changes[:12]))
+    cont, who = continuity.guard(config.app_data_dir(), enabled=secure,
+                                 extra=["source-modified"] if src_status == "modified" else None)
     if secure:
         # 数据和设置的加密 (MECHANICS 9.4): 清过数据 / 第一次运行时重新读密钥; 没有密钥就生成, 现有的明文 .json 转成加密的
         securefile.configure(config.app_data_dir(), on_tamper=lambda name, why: print(f"TAMPER {name}: {why}", file=sys.stderr))
         securefile.ensure_key()
         del securefile.tampered[:]                   # 启动阶段 (清数据 / 迁移) 留下的不算
         cont.tick()                                  # 连续性记录里带上密钥的指纹
+        if not updater.is_dev_checkout():
+            try:
+                srcguard.configure(updater.program_dir(), config.app_data_dir())
+                srcguard.settle(src_status)          # 第一次 / 接受的安装 / 清过数据之后: 以现在的程序文件为基准
+            except Exception as e:
+                print(f"srcguard: {type(e).__name__}: {e}", file=sys.stderr)
     if who is not None:
         from tkinter import messagebox
         r = tk.Tk()

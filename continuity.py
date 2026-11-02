@@ -549,7 +549,7 @@ class Continuity:
         self.reset()
 
 
-def guard(data_dir: str, enabled: bool = True, anchors=None, log=lambda s: None):
+def guard(data_dir: str, enabled: bool = True, anchors=None, log=lambda s: None, extra=None):
     """main.py 最先调用: 核对数据. 返回 None (没问题) 或 非法数据里的用户名 (数据已经清掉, 要弹 "<用户名>,覆水难收."). 返回 (cont, 用户名或 None)."""
     global current
     c = Continuity(data_dir, anchors, log)
@@ -557,6 +557,8 @@ def guard(data_dir: str, enabled: bool = True, anchors=None, log=lambda s: None)
         return c, None
     current = c
     verdict, sig = c.check()
+    if extra and verdict != "fresh":              # 别的办法发现的非法信号 (srcguard: 源码被非更新地改动): 有用过的数据就清
+        verdict, sig = "break", list(sig) + list(extra)
     if verdict != "break":
         c.hold_lock()
         return c, None

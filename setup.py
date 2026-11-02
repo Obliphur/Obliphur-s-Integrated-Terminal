@@ -160,6 +160,23 @@ def extract(zip_path: str, dest: str, log=lambda s: None) -> int:
     return n
 
 
+def issue_source_token(dest: str):
+    """装好 / 修复之后: 用 DPAPI 封一个"现在这些程序文件是安装程序装的"的令牌, OIT 下次启动时据此知道程序文件的变化是安装, 不是被人改的 (srcguard.py)."""
+    sys.path.insert(0, dest)
+    try:
+        import importlib
+        importlib.import_module("srcguard").issue_token(dest)
+    except Exception:
+        pass
+    finally:
+        try:
+            sys.path.remove(dest)
+        except ValueError:
+            pass
+        for m in ("srcguard", "continuity"):
+            sys.modules.pop(m, None)
+
+
 def dir_size_kb(path: str) -> int:
     total = 0
     for r, _d, fs in os.walk(path):
@@ -367,6 +384,7 @@ def install(opts: dict, log=print, progress=lambda n: None, zip_path: str = None
         log(t("step_copy", d=dest))
         n = extract(zip_path, dest, log)
         log(f"{n} files")
+        issue_source_token(dest)
         if opts.get("compile", True):
             log(t("step_compile"))
             try:

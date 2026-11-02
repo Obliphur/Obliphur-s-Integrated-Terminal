@@ -220,6 +220,16 @@ def _same_file(a: str, b: str) -> bool:
 
 
 def install_zip(zip_path: str, target: str) -> int:
+    """更新 (srcguard.py: 合法的改动): 覆盖前后通知源码守卫, 覆盖完 (不管成功没有) 记下新的文件清单. 见 _install_zip."""
+    import srcguard
+    srcguard.begin_update()
+    try:
+        return _install_zip(zip_path, target)
+    finally:
+        srcguard.end_update(target)
+
+
+def _install_zip(zip_path: str, target: str) -> int:
     """把压缩包里的程序文件覆盖到 target. 返回覆盖的文件数. 找不到程序文件时抛 ValueError.
 
     内容没变的文件不动 (运行中被占用的文件, 例如私有加载的字体, 覆盖会失败: WinError 32);

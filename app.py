@@ -20,6 +20,7 @@ import linkd
 import registration
 import clockguard
 import continuity
+import srcguard
 import securefile
 import closedtest
 import devsync
@@ -221,6 +222,7 @@ class BreakTimerApp:
         self._cont_at = 0.0
         self._purge_at = time.monotonic()
         self._cont_broken = False
+        self._src_at = time.monotonic()   # 源码被非更新地改动的检查 (srcguard.py, MECHANICS 9.7): 每 5 分钟
         self.clock = None            # 系统时间被改的检测 (clockguard.py, MECHANICS 9.6); 开发版本里是 None
         # 合约的网络禁令 (MECHANICS 18.3): 防火墙出站规则 (过滤代理之外的程序), 每 5 秒按正在运行的程序调整
         self.appban = appban.AppBan()
@@ -5574,6 +5576,31 @@ class BreakTimerApp:
         self._tamper_toast_at = now
         toast.warn(tr("系统代理被改动了, 已经改回去."))
 
+    def _check_source(self):
+        """后台线程: 程序文件和清单对不上 (不是更新) → 回到界面线程处理."""
+        if self.shutting_down or self._cont_broken or not srcguard.enabled():
+            return
+        try:
+            bad = srcguard.running_check()
+        except Exception as e:
+            self._log_window(f"ERROR    srcguard {type(e).__name__}: {e}")
+            return
+        if bad:
+            try:
+                self.root.after(0, lambda: self._source_modified(bad))
+            except Exception:
+                pass
+
+    def _source_modified(self, bad):
+        """源码被非更新地改动: 和数据被改过一样, 在锚点里标记 pending, 马上重启, 下一次启动清数据 (启动时 srcguard.verify 也会发现)."""
+        if self._cont_broken or self.shutting_down or self.dm.resetting or continuity.current is None:
+            return
+        self._cont_broken = True
+        why = "source modified: " + ", ".join(bad[:8])
+        self._log_notice("SOURCE " + why)
+        continuity.current.mark_pending(why)
+        self._restart_for_update()
+
     def _check_clock(self):
         """系统时间被改 (MECHANICS 9.6): 第一次发现弹窗警告, 10 分钟内改回来就解除; 没改回来 / 又改了一次就清数据"""
         if self.clock is None or self._cont_broken or self.shutting_down or self.dm.resetting:
@@ -5626,6 +5653,9 @@ class BreakTimerApp:
             continuity.current.mark_pending("tampered: " + ", ".join(f"{n}:{w}" for n, w in securefile.tampered[:8]))
             self._restart_for_update()
         self._check_clock()
+        if time.monotonic() - self._src_at >= 300:
+            self._src_at = time.monotonic()
+            threading.Thread(target=self._check_source, daemon=True).start()
         if time.monotonic() - self._purge_at >= 3600:
             self._purge_at = time.monotonic()
             threading.Thread(target=self._purge_recordings, daemon=True).start()

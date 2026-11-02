@@ -94,6 +94,12 @@ def key_id() -> str:
     return hashlib.sha256(b"kid" + _key).hexdigest()[:12] if _key else ""
 
 
+def known(name: str) -> bool:
+    """索引里记着这个文件 (写过它): 它不在了就是被删的."""
+    with _lock:
+        return _dir is not None and _key is not None and name in _load_idx()
+
+
 def has_key_file() -> bool:
     return _dir is not None and os.path.exists(os.path.join(_dir, KEYFILE))
 
