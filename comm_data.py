@@ -91,6 +91,78 @@ def library(contract) -> str:
     return "\n".join(lines)
 
 
+# ---- 对方可以查询的模块 (沟通 24.2.1): 回复 [refuse to reply][模块名] 得到该模块的数据内容和格式 ----
+MODULE_TAGS = ("contract", "calendar", "stats", "timer", "log", "net", "rules", "settings", "reset", "prescript")
+FOG_TEXT = "(黑雾中, 暂时无法提供)"
+STATE_TEXT = {"focus": "专注中", "break": "休息中", "idle": "空闲", "sleep": "睡觉中", "out": "外出中"}
+RESET_TEXT = (
+    "【重置】(OIT 的 重置 页)\n"
+    "  需要输入 RESET 再确认一次. 重置会: 解除网络限制 (重新启用网卡, 关闭过滤代理, 还原系统代理); 请每台绑定的设备也清空数据 (绑定不解除);\n"
+    "  删除整个数据目录: 学习记录, 整点记录, 统计, 联网额度与日志, 名单, 设置, AI 配置, 聊天记录全部删除; 进行中的专注不记录; 不留任何记录.\n"
+    "  程序随即自动重新打开, 像第一次安装: 设置都是默认值, 名单为空, 重新开始 72 小时配置期.")
+
+
+def _hm(minutes: float) -> str:
+    m = int(round(max(0.0, minutes)))
+    return f"{m // 60} 小时 {m % 60} 分钟" if m >= 60 else f"{m} 分钟"
+
+
+def timer_text(snap: dict) -> str:
+    """【计时器】: 目前状态, 剩余休息时间, 今日总专注时长, 目前这轮专注时长."""
+    if not snap:
+        return "【计时器】\n  " + FOG_TEXT
+    st = snap.get("state") or "idle"
+    left = _hm(snap.get("rest_left_min", 0)) if st == "break" else "无"
+    cur = _hm(snap.get("focus_cur_min", 0)) if st == "focus" else "0 分钟(未在专注)"
+    return ("【计时器】\n  目前状态: " + STATE_TEXT.get(st, st) + "\n  剩余休息时间: " + left +
+            "\n  今日总专注时长: " + _hm(snap.get("focus_total_min", 0)) + "\n  目前这轮专注时长: " + cur)
+
+
+def hour_text(lines: list, enabled: bool = True) -> str:
+    """【整点记录·今天】: 一行一小时."""
+    if not enabled:
+        return "【整点记录】\n  整点记录没有开启"
+    return "【整点记录·今天】\n" + ("\n".join("  " + l for l in lines) if lines else "  今天还没有记录")
+
+
+def net_text(mode: str, used_s: float, total_s: float, net_mode: str, month_reasons: str = "") -> str:
+    """【联网】: 现在的状态, 今日额度, 断网方式; month_reasons: 本月联网理由 (build 出来的那一块)."""
+    names = {"online": "联网中", "pending": "申请中 (冷静期)", "offline": "离线", "dev": "离线"}
+    out = ("【联网】\n  状态: " + names.get(mode, mode) + "\n  今日额度: 已用 " + _hm(used_s / 60) + " / 共 " + _hm(total_s / 60) +
+           "\n  断网方式: " + net_mode)
+    return out + ("\n\n" + month_reasons if month_reasons else "")
+
+
+def rules_text(mode_name: str, lists: list) -> str:
+    """【规则】: 过滤名单模式 + 四张名单 [(标题, [条目])] (每张最多 40 条)."""
+    out = ["【规则】", "  过滤名单模式: " + mode_name]
+    for title, items in lists:
+        out.append(f"  {title} ({len(items)}): " + ("、".join(items[:40]) + (" …" if len(items) > 40 else "") if items else "空"))
+    return "\n".join(out)
+
+
+def settings_text(rows: list) -> str:
+    """【设置】: [(页, 名称, 值)] 一页一组."""
+    out = ["【设置】(当前生效的值)"]
+    page = None
+    for pg, name, value in rows:
+        if pg != page:
+            out.append(f" {pg}:")
+            page = pg
+        out.append(f"  {name}: {value}")
+    return "\n".join(out)
+
+
+def prescript_text(urban: bool, history: list) -> str:
+    """【指令】: 都市之意主题独占的模块; 最近结束的几条."""
+    if not urban:
+        return "【指令】\n  指令是都市之意主题独占的模块, 现在没有启用"
+    out = ["【指令】(最近结束的)"]
+    for ended, kind, result, body in history:
+        out.append(f"  {ended} 指令 {kind}: {body} → {result}")
+    return "\n".join(out) if history else "【指令】\n  还没有结束过的指令"
+
+
 def build(sel: dict, dm, net, contract, now: datetime = None, focus_live=None, cal_live=None,
           month_prefix: str = None, window_names: dict = None) -> str:
     now = now or datetime.now()
@@ -179,6 +251,14 @@ def _selftest():
         history = []
         terms = []
         lost = []
+
+    assert "目前状态: 休息中" in timer_text({"state": "break", "rest_left_min": 12, "focus_total_min": 90}) and FOG_TEXT in timer_text({})
+    assert "09:00 写代码" in hour_text(["09:00 写代码"]) and "没有开启" in hour_text([], False)
+    assert "已用 30 分钟 / 共 2 小时 0 分钟" in net_text("offline", 1800, 7200, "Proxy") and "联网中" in net_text("online", 0, 60, "x")
+    assert "白名单 · 网站 (2): a.com、b.com" in rules_text("黑名单模式", [("白名单 · 网站", ["a.com", "b.com"]), ("黑名单 · 应用", [])])
+    assert "黑名单 · 应用 (0): 空" in rules_text("黑名单模式", [("黑名单 · 应用", [])])
+    assert " 计时器:\n  休息时间倍率: ×1" in settings_text([("计时器", "休息时间倍率", "×1")])
+    assert "没有启用" in prescript_text(False, []) and "→ completed" in prescript_text(True, [("2026-11-02T10:00:00", "V", "completed", "停下")])
 
     class Act(Con):
         active = True

@@ -1125,11 +1125,46 @@ class BreakTimerApp:
                                cal_live=self._calendar_live())
 
     def _comm_info(self, tag: str) -> str:
-        """对方要的资料 ([refuse to reply][contract]): 词条库 (标出用户选的 / 激活的)."""
+        """对方查询的模块 ([refuse to reply][模块名]): 数据内容和格式和 📎 附件差不多 (24.2.1). 黑雾中除了"重置"都不给."""
+        if tag == "reset":
+            return comm_data.RESET_TEXT
+        if self.contract.fog():
+            return comm_data.FOG_TEXT
+        now = datetime.now()
         if tag == "contract":
-            if self.contract.fog():
-                return "(黑雾中, 暂时无法提供)"
             return comm_data.library(self.contract)
+        if tag == "calendar":
+            return self._comm_data({"cal": [k for k, _n in comm_data.CAL_KEYS]})
+        if tag == "stats":
+            return self._comm_data({"stats": [k for k, _n in comm_data.STATS_KEYS]})
+        if tag == "timer":
+            return comm_data.timer_text(self._comm_snapshot())
+        if tag == "log":
+            today = now.strftime("%Y-%m-%d")
+            lines = [f"{h:02d}:00 {self.dm.get_hour_text(today, h)}" for h in range(24) if self.dm.get_hour_text(today, h)]
+            return comm_data.hour_text(lines, self.dm.hour_enabled)
+        if tag == "net":
+            n = self.net
+            reasons = self._comm_data({"stats": ["net"]})
+            return comm_data.net_text(n.mode, n.quota_used, n.today_total, tr(self.settings.display("NET_MODE")), reasons)
+        if tag == "rules":
+            from netproxy import WHITE_DOMAINS, WHITE_APPS, BLACK_DOMAINS, BLACK_APPS
+            rules = self.net.proxy.rules
+            lists = [(title, rules.items(key)) for key, title in (
+                (WHITE_DOMAINS, "白名单 · 网站"), (WHITE_APPS, "白名单 · 应用"), (BLACK_DOMAINS, "黑名单 · 网站"), (BLACK_APPS, "黑名单 · 应用"))]
+            return comm_data.rules_text(tr(self.settings.display("FILTER_MODE")), lists)
+        if tag == "settings":
+            from settings_manager import SETTINGS_PAGES, page_specs
+            rows = []
+            for page, title in SETTINGS_PAGES:
+                if page == "comm":
+                    continue
+                choices, nums = page_specs(page)
+                for spec in choices + nums:
+                    rows.append((tr(title), tr(spec.get("short") or spec["label"]), tr(self.settings.display(spec["key"]))))
+            return comm_data.settings_text(rows)
+        if tag == "prescript":
+            return comm_data.prescript_text(self._prescript_enabled(), self.prescripts.history_brief(10))
         return ""
 
     def _comm_leader(self) -> bool:

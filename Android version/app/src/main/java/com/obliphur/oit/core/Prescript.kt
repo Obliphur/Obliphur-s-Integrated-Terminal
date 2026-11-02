@@ -648,6 +648,11 @@ class PrescriptEngine(
     @Synchronized
     fun journalView(): String = data.optString("journal_view", "")
 
+    /** 最近结束的几条指令 (结束时刻, 类型, 结果, 内容); 沟通里对方查询"指令"时用. */
+    fun historyBrief(n: Int = 10): List<List<String>> =
+        data.getJSONArray("history").objects().toList().takeLast(n)
+            .map { listOf(it.optString("ended"), it.optString("type"), it.optString("result"), it.optString("body")) }
+
     /** X 词条保存过的记录 (日期, 文字), 新的在前; 统计页的日志里显示. */
     fun logsNewest(): List<Pair<String, String>> {
         val logs = data.optJSONObject("logs") ?: return emptyList()

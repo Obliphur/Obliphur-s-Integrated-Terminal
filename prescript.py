@@ -875,6 +875,11 @@ class PrescriptEngine:
             return []
         return [(day, str(logs[day])) for day in sorted(logs, reverse=True) if str(logs[day]).strip()]
 
+    def history_brief(self, n: int = 10) -> list:
+        """最近结束的几条指令 [(结束时刻, 类型, 结果, 内容)]; 沟通里对方查询"指令"时用."""
+        return [(str(r.get("ended") or ""), str(r.get("type") or ""), str(r.get("result") or ""), str(r.get("body") or ""))
+                for r in (self._data.get("history") or [])[-n:]]
+
     def note_journal(self, now: datetime = None):
         now = (now or datetime.now()).replace(microsecond=0)
         self._data["journal_view"] = _iso(now)

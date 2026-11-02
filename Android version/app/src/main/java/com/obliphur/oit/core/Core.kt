@@ -255,12 +255,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         comm = Comm(dir, host.personasDir() ?: File(dir, "personas"))
         comm.snapshot = { commSnapshot() }
         comm.fog = { contract.fog() }
-        comm.infoFn = { tag ->
-            when (tag) {
-                "contract" -> if (contract.fog()) "(黑雾中, 暂时无法提供)" else CommData.library(contract)
-                else -> ""
-            }
-        }
+        comm.infoFn = { tag -> commInfo(tag) }
         comm.device = { myId() }
         comm.leader = { commLeader() }
         comm.onSync = { syncNow() }
@@ -293,6 +288,41 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
                 breakTotalS = secondsBetween(bs, LocalDateTime.now()) + left)
         }
         return CommSnap(st, focusTotalMin = total)
+    }
+
+    /** 对方查询的模块 ([refuse to reply][模块名]): 数据内容和格式和 📎 附件差不多 (24.2.1). 黑雾中除了"重置"都不给. */
+    private fun commInfo(tag: String): String {
+        if (tag == "reset") return CommData.RESET_TEXT
+        if (contract.fog()) return CommData.FOG_TEXT
+        fun build(sel: CommSel) = CommData.build(sel, this) { pkg ->
+            runCatching { com.obliphur.oit.service.appLabel(com.obliphur.oit.OitApp.instance, pkg) }.getOrDefault(pkg)
+        }
+        return when (tag) {
+            "contract" -> CommData.library(contract)
+            "calendar" -> build(CommSel(cal = CommData.CAL_KEYS.map { it.first }))
+            "stats" -> build(CommSel(stats = CommData.STATS_KEYS.map { it.first }))
+            "timer" -> CommData.timerText(commSnapshot())
+            "log" -> {
+                val day = LocalDate.now().key()
+                CommData.hourText((0..23).mapNotNull { h -> dm.hourText(day, h).takeIf { it.isNotEmpty() }?.let { "%02d:00 %s".format(h, it) } }, dm.hourEnabled)
+            }
+            "net" -> CommData.netText(net.mode, net.quotaUsed, net.todayTotal, tr(settings.display("NET_MODE", netMode())),
+                build(CommSel(stats = listOf("net"))))
+            "rules" -> CommData.rulesText(tr(settings.display("FILTER_MODE")), listOf(
+                "白名单 · 网站" to rules.items(RuleKeys.WHITE_DOMAINS), "白名单 · 应用" to rules.items(RuleKeys.WHITE_APPS),
+                "黑名单 · 网站" to rules.items(RuleKeys.BLACK_DOMAINS), "黑名单 · 应用" to rules.items(RuleKeys.BLACK_APPS)))
+            "settings" -> {
+                val rows = ArrayList<Triple<String, String, String>>()
+                for ((page, title) in Schema.PAGES) {
+                    if (page == "comm") continue
+                    val (opts, nums) = Schema.pageSpecs(page, settings.str("THEME"))
+                    for (spec in opts + nums) rows.add(Triple(tr(title), tr(spec.label), tr(settings.display(spec.key))))
+                }
+                CommData.settingsText(rows)
+            }
+            "prescript" -> CommData.prescriptText(settings.str("THEME") == "urban_will", prescript.historyBrief(10))
+            else -> ""
+        }
     }
 
     /** 本机是不是聊天的主端: 最晚的一条消息是本机写的 (MECHANICS 24.6). 主端不在线 / 还没有消息时, 看谁最后有人操作. */

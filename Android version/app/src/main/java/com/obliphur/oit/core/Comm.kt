@@ -107,6 +107,9 @@ object CommText {
             "如果需要更细致的信息 前往https://github.com/Obliphur/Obliphur-s-Integrated-Terminal下的MECHANICS.md查看.\n" +
             "VI.不要主动透露日程/专注状态.\n" +
             "如果某个时间点你理应处于专注,但是用户3min前以内还在你聊天,则和用户说明要进入专注并停止对话.\n" +
+            "VII.如果用户问起OIT的使用数据(日历/统计/计时器等),你可以同时输入[refuse to reply][模块名]查询,得到该模块的数据内容和格式;" +
+            "如果用户问的是你自己的使用情况,请参照这个格式,根据人设编造你自己的数据来回复.可以一次查询多个.\n" +
+            "可查询的模块: [contract]合约词条库 [calendar]日历 [stats]统计 [timer]计时器 [log]整点记录 [net]联网 [rules]规则 [settings]设置 [reset]重置 [prescript]指令.\n" +
             "\n以下是用户设定的人设:\n"
 
     fun readme(): String =
@@ -125,7 +128,7 @@ object CommText {
     fun infoTags(reply: String): List<String> {
         val t = reply.replace(Regex("\\s+"), " ").lowercase()
         if (REFUSE !in t) return emptyList()
-        return listOf("contract").filter { "[$it]" in t }
+        return CommData.MODULE_TAGS.filter { "[$it]" in t }
     }
 
     fun isRefusal(text: String) = REFUSE in text.replace(Regex("\\s+"), " ").lowercase()
@@ -743,7 +746,8 @@ class Comm(
                     }
                     if (blocks.isEmpty()) break
                     convo = convo + ("assistant" to reply) + ("user" to ("(OIT 系统提供的资料, 用户看不到)\n\n" + blocks.joinToString("\n\n") +
-                        "\n\n请根据以上资料回复用户上面的消息; 如果此刻仍然不方便回复, 返回${CommText.REFUSE}."))
+                        "\n\n以上是**用户自己的** OIT 数据和格式. 如果用户问的是你自己的使用情况, 请参照这个格式和写法, 根据人设编造你自己的数据来回答," +
+                        " 不要把用户的数据说成是你的; 然后回复用户上面的消息. 如果此刻仍然不方便回复, 返回${CommText.REFUSE}."))
                     reply = chatFn(profile, system, convo)
                 }
                 log("REQ $kind ok ${(System.currentTimeMillis() - started) / 1000.0}s reply_chars=${reply.length}")

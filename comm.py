@@ -74,6 +74,9 @@ def prefix_prompt() -> str:
         "如果需要更细致的信息 前往https://github.com/Obliphur/Obliphur-s-Integrated-Terminal下的MECHANICS.md查看.\n"
         "VI.不要主动透露日程/专注状态.\n"
         "如果某个时间点你理应处于专注,但是用户3min前以内还在你聊天,则和用户说明要进入专注并停止对话.\n"
+        "VII.如果用户问起OIT的使用数据(日历/统计/计时器等),你可以同时输入[refuse to reply][模块名]查询,得到该模块的数据内容和格式;"
+        "如果用户问的是你自己的使用情况,请参照这个格式,根据人设编造你自己的数据来回复.可以一次查询多个.\n"
+        "可查询的模块: [contract]合约词条库 [calendar]日历 [stats]统计 [timer]计时器 [log]整点记录 [net]联网 [rules]规则 [settings]设置 [reset]重置 [prescript]指令.\n"
         "\n以下是用户设定的人设:\n")
 
 
@@ -252,11 +255,12 @@ def urlsplit_host(url) -> str:
 
 
 def info_tags(reply: str) -> list:
-    """对方这次回复是在要资料吗: 同时有 [refuse to reply] 和 [contract] (不分大小写和空格) → 要的资料列表."""
+    """对方这次回复是在要资料吗: 同时有 [refuse to reply] 和 [模块名] (不分大小写和空格) → 要的模块列表 (comm_data.MODULE_TAGS)."""
     t = re.sub(r"\s+", " ", str(reply or "")).lower()
     if REFUSE not in t:
         return []
-    return [tag for tag in ("contract",) if f"[{tag}]" in t]
+    import comm_data
+    return [tag for tag in comm_data.MODULE_TAGS if f"[{tag}]" in t]
 
 
 def api_messages(msgs: list) -> list:
@@ -867,7 +871,8 @@ class Comm:
                         break
                     convo = convo + [{"role": "assistant", "content": reply},
                                    {"role": "user", "content": "(OIT 系统提供的资料, 用户看不到)\n\n" + "\n\n".join(blocks)
-                                    + "\n\n请根据以上资料回复用户上面的消息; 如果此刻仍然不方便回复, 返回" + REFUSE + "."}]
+                                    + "\n\n以上是**用户自己的** OIT 数据和格式. 如果用户问的是你自己的使用情况, 请参照这个格式和写法, 根据人设编造你自己的数据来回答,"
+                                      " 不要把用户的数据说成是你的; 然后回复用户上面的消息. 如果此刻仍然不方便回复, 返回" + REFUSE + "."}]
                     reply = ask(convo)
                 res = (kind, extra, reply, "", epoch)
                 self.log(f"REQ {kind} ok {time.monotonic() - started:.1f}s reply_chars={len(reply)}")
@@ -1255,6 +1260,9 @@ def _selftest():
     # ---- 对方要资料: [refuse to reply][contract] → 给词条库再调用一次 ----
     assert info_tags(" [Refuse to reply] [CONTRACT] ") == ["contract"] and info_tags("[contract]") == []
     assert info_tags("[refuse to reply][mechanics.md]") == [] and info_tags("好的") == []
+    assert info_tags("[refuse to reply][calendar][stats]") == ["calendar", "stats"] and info_tags("[refuse to reply][x]") == []
+    import comm_data
+    assert all(f"[{t}]" in prefix_prompt() for t in comm_data.MODULE_TAGS) and "VII.如果用户问起OIT的使用数据" in prefix_prompt()
     p2 = prefix_prompt()
     assert "V.你需要了解OIT的独占功能'合约'" in p2 and "[refuse to reply][contract]" in p2 and "[refuse to reply][mechanics.md]" not in p2
     assert "如果需要更细致的信息 前往https://github.com/Obliphur/Obliphur-s-Integrated-Terminal下的MECHANICS.md查看." in p2

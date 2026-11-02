@@ -15,6 +15,64 @@ object CommData {
     private const val TOP = 30
     const val MAX_CHARS = 60000          // 一次最多发多少字 (词条库约 4000 字, 统计每类最多 30 项)
 
+    /** 对方可以查询的模块 (沟通 24.2.1): 回复 [refuse to reply][模块名] 得到该模块的数据内容和格式. */
+    val MODULE_TAGS = listOf("contract", "calendar", "stats", "timer", "log", "net", "rules", "settings", "reset", "prescript")
+    const val FOG_TEXT = "(黑雾中, 暂时无法提供)"
+    private val STATE_TEXT = mapOf("focus" to "专注中", "break" to "休息中", "idle" to "空闲", "sleep" to "睡觉中", "out" to "外出中")
+    val RESET_TEXT = "【重置】(OIT 的 重置 页)\n" +
+        "  需要输入 RESET 再确认一次. 重置会: 解除网络限制 (重新启用网卡, 关闭过滤代理, 还原系统代理); 请每台绑定的设备也清空数据 (绑定不解除);\n" +
+        "  删除整个数据目录: 学习记录, 整点记录, 统计, 联网额度与日志, 名单, 设置, AI 配置, 聊天记录全部删除; 进行中的专注不记录; 不留任何记录.\n" +
+        "  程序随即自动重新打开, 像第一次安装: 设置都是默认值, 名单为空, 重新开始 72 小时配置期."
+
+    private fun hm(minutes: Double): String {
+        val m = Math.round(maxOf(0.0, minutes)).toInt()
+        return if (m >= 60) "${m / 60} 小时 ${m % 60} 分钟" else "$m 分钟"
+    }
+
+    /** 【计时器】: 目前状态, 剩余休息时间, 今日总专注时长, 目前这轮专注时长. */
+    fun timerText(s: CommSnap?): String {
+        if (s == null) return "【计时器】\n  $FOG_TEXT"
+        val left = if (s.state == "break") hm(s.restLeftMin) else "无"
+        val cur = if (s.state == "focus") hm(s.focusCurMin) else "0 分钟(未在专注)"
+        return "【计时器】\n  目前状态: ${STATE_TEXT[s.state] ?: s.state}\n  剩余休息时间: $left\n  今日总专注时长: ${hm(s.focusTotalMin)}\n  目前这轮专注时长: $cur"
+    }
+
+    /** 【整点记录·今天】: 一行一小时. */
+    fun hourText(lines: List<String>, enabled: Boolean = true): String =
+        if (!enabled) "【整点记录】\n  整点记录没有开启"
+        else "【整点记录·今天】\n" + if (lines.isEmpty()) "  今天还没有记录" else lines.joinToString("\n") { "  $it" }
+
+    /** 【联网】: 现在的状态, 今日额度, 断网方式; monthReasons: 本月联网理由 (build 出来的那一块). */
+    fun netText(mode: String, usedS: Double, totalS: Double, netMode: String, monthReasons: String = ""): String {
+        val names = mapOf("online" to "联网中", "pending" to "申请中 (冷静期)", "offline" to "离线", "dev" to "离线")
+        val out = "【联网】\n  状态: ${names[mode] ?: mode}\n  今日额度: 已用 ${hm(usedS / 60)} / 共 ${hm(totalS / 60)}\n  断网方式: $netMode"
+        return out + if (monthReasons.isNotEmpty()) "\n\n$monthReasons" else ""
+    }
+
+    /** 【规则】: 过滤名单模式 + 四张名单 (标题, 条目) (每张最多 40 条). */
+    fun rulesText(modeName: String, lists: List<Pair<String, List<String>>>): String =
+        (listOf("【规则】", "  过滤名单模式: $modeName") + lists.map { (title, items) ->
+            "  $title (${items.size}): " + if (items.isEmpty()) "空" else items.take(40).joinToString("、") + if (items.size > 40) " …" else ""
+        }).joinToString("\n")
+
+    /** 【设置】: (页, 名称, 值) 一页一组. */
+    fun settingsText(rows: List<Triple<String, String, String>>): String {
+        val out = arrayListOf("【设置】(当前生效的值)")
+        var page: String? = null
+        for ((pg, name, value) in rows) {
+            if (pg != page) { out.add(" $pg:"); page = pg }
+            out.add("  $name: $value")
+        }
+        return out.joinToString("\n")
+    }
+
+    /** 【指令】: 都市之意主题独占的模块; 最近结束的几条. */
+    fun prescriptText(urban: Boolean, history: List<List<String>>): String {
+        if (!urban) return "【指令】\n  指令是都市之意主题独占的模块, 现在没有启用"
+        if (history.isEmpty()) return "【指令】\n  还没有结束过的指令"
+        return "【指令】(最近结束的)\n" + history.joinToString("\n") { "  ${it[0]} 指令 ${it[1]}: ${it[3]} → ${it[2]}" }
+    }
+
     /** 聊天里显示的那一行. */
     fun label(sel: CommSel): String {
         val parts = ArrayList<String>()
