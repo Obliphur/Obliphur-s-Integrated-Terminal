@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.sp
 import com.obliphur.oit.OitApp
 import com.obliphur.oit.ai.Ai
 import com.obliphur.oit.core.ChatMsg
+import com.obliphur.oit.core.Comm
 import com.obliphur.oit.core.CommData
 import com.obliphur.oit.core.CommSel
 import com.obliphur.oit.core.CommText
@@ -91,7 +92,16 @@ fun CommScreen(go: (String) -> Unit) {
 
     Column(Modifier.fillMaxSize().imePadding().padding(horizontal = 12.dp)) {
         Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(comm.personaTitle(comm.personaName()), color = o.dim, fontSize = 14.sp, modifier = Modifier.weight(1f))
+            // 聊天对象: 换了就换成那个对象自己的聊天记录 (各聊各的)
+            var whoOpen by remember { mutableStateOf(false) }
+            Box(Modifier.weight(1f)) {
+                TextButton({ whoOpen = true }) { Text("▾  " + comm.personaTitle(comm.personaName()).ifEmpty { "—" }, color = o.dim, fontSize = 14.sp) }
+                androidx.compose.material3.DropdownMenu(whoOpen, { whoOpen = false }) {
+                    for ((name, label) in comm.personaLabels()) androidx.compose.material3.DropdownMenuItem(
+                        text = { Text(label, color = if (name == comm.personaName()) o.accent else o.text) },
+                        onClick = { whoOpen = false; comm.set(persona = name) })
+                }
+            }
             // 模型: 和 AI 名单建议用同一份模型设置, 选了两边都生效
             ModelPicker({ comm.modelProfile() }) { comm.setModel(it) }
             TextButton({ if (comm.messages.isNotEmpty()) askClear = true }) { Text(tr("清空"), color = o.dim) }
@@ -252,6 +262,14 @@ fun CommSettings() {
         if (names.isNotEmpty()) Box(Modifier.padding(top = 8.dp)) {
             Segmented(names, comm.personaName()) { comm.set(persona = it) }
         }
+    }
+
+    OitCard {
+        Text(tr("🧑  我的身份背景"), fontWeight = FontWeight.Bold, color = o.text)
+        // 随时保存 (即时生效, 没有等待期), 发给对方时附在人设后面
+        var profile by remember { mutableStateOf(comm.userProfile) }
+        OutlinedTextField(profile, { profile = it.take(Comm.MAX_PROFILE); comm.set(userProfile = profile) },
+            modifier = Modifier.fillMaxWidth().padding(top = 6.dp), minLines = 3, maxLines = 8)
     }
 
     OitCard {

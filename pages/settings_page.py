@@ -802,6 +802,16 @@ class SettingsPage(tk.Frame):
         self.cb_persona.pack(fill="x", padx=12, pady=(2, 10))
         self.cb_persona.bind("<<ComboboxSelected>>", lambda _e: self._comm_pick_persona())
 
+        fr, _head = self._card(body, "🧑  我的身份背景")
+        self.txt_profile = tk.Text(fr, height=6, wrap="word", font=config.font("body"), bg=card, fg=COLORS["text"],
+                                   insertbackground=COLORS["text"], relief="flat", highlightthickness=1,
+                                   highlightbackground=COLORS["border"], highlightcolor=COLORS["accent"])
+        self.txt_profile.pack(fill="x", padx=12, pady=(2, 10))
+        self.txt_profile.insert("1.0", str(c.cfg.get("user_profile") or ""))
+        self._profile_job = None
+        self.txt_profile.bind("<KeyRelease>", lambda _e: self._comm_profile_later())
+        self.txt_profile.bind("<FocusOut>", lambda _e: self._comm_profile_save())
+
         fr, _head = self._card(body, "🖼  头像")
         v = tk.BooleanVar(value=bool(c.cfg.get("show_avatar")))
         self.comm_vars = {"show_avatar": v}
@@ -854,6 +864,19 @@ class SettingsPage(tk.Frame):
             return
         self.comm.set_cfg(persona=name)
         self._refresh_comm()
+
+    def _comm_profile_later(self):
+        if self._profile_job:
+            self.after_cancel(self._profile_job)
+        self._profile_job = self.after(600, self._comm_profile_save)
+
+    def _comm_profile_save(self):
+        """身份背景: 随时保存 (即时生效, 没有等待期), 发给对方时附在人设后面."""
+        self._profile_job = None
+        import comm as comm_mod
+        text = self.txt_profile.get("1.0", "end").strip()[:comm_mod.MAX_PROFILE]
+        if text != str(self.comm.cfg.get("user_profile") or ""):
+            self.comm.set_cfg(user_profile=text)
 
     def _comm_pick_persona(self):
         label = self.comm_persona.get().strip()
@@ -911,6 +934,10 @@ class SettingsPage(tk.Frame):
         self.cb_persona.config(values=[lab for _n, lab in self._persona_labels])
         cur = c.persona_name()
         set_var(self.comm_persona, next((lab for n, lab in self._persona_labels if n == cur), ""))
+        if str(self.txt_profile.focus_get() if self.winfo_exists() else "") != str(self.txt_profile) \
+                and self.txt_profile.get("1.0", "end").strip() != str(c.cfg.get("user_profile") or ""):
+            self.txt_profile.delete("1.0", "end")                       # 别的设备同步来了新的身份背景
+            self.txt_profile.insert("1.0", str(c.cfg.get("user_profile") or ""))
         prof = c.ai.profile()
         text = f"{tr(_provider_label(c.ai.provider))} · {prof.get('model') or '—'}"
         text += "  ✗" if self._comm_api_missing() else "  ✓"

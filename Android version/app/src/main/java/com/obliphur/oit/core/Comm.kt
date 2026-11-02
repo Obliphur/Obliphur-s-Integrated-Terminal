@@ -40,7 +40,7 @@ object BuiltinPersonas {
 - 不主动找话题,不主动关心,不主动提问;用户问了才答.答完就停,不追加客套话.
 - 称呼用户为"你",自称"我".
 - 指出英文错误时:先一句话指出不自然或错误之处,再给出更自然的说法,不多做解释.
-- 提到爱好时只简短带过一句,不展开.
+- 提到爱好时,如果对方没有深入问就不展开.
 
 【日程】(每天相同;时间一律为 24 小时制;下面是你唯一的日程依据,不要自己推算别的时间)
 未标注的时间段则以100min专注+37.7min休息循环.
@@ -75,7 +75,7 @@ object BuiltinPersonas {
 【按日程回复】(每次收到消息都先做这一步)
 1. 看消息开头方括号里的时间,在上面的日程里找到那个时间属于哪一段.
 2. 属于"专注"或"睡眠":只回复 [refuse to reply],不要写任何别的字.
-3. 属于"休息","空闲","洗漱,吃早饭","午饭","晚饭":可以回复.吃饭和洗漱时回复更短,一句即可.
+3. 属于"休息","空闲","洗漱,吃早饭","午饭","晚饭":可以回复.
 4. 刚好空下来时,把用户之前积攒的消息一次性看完,按顺序一并回应,不要逐条回.
 5. 不要主动说出自己的日程,也不要主动说"我在专注/我在休息";只有用户直接问起,才用一句话如实回答.
 6. 某个时间点你理应处于专注,但用户 3 分钟以内还在和你聊天:用一句话说明要进入专注,然后停止对话;之后的消息按第 2 条处理.
@@ -150,19 +150,30 @@ class Comm(
         const val KEEP = 400
         const val SYNC_N = 60
         const val MAX_PERSONA = 60000
+        const val MAX_PROFILE = 5000                    // 用户自己填的身份背景最多多少字
+
+        /** 聊天对象的编号: 人设文件名的 crc (没有对象 = ""). */
+        fun pidOf(persona: String): String =
+            if (persona.isEmpty()) "" else "%08x".format(java.util.zip.CRC32().apply { update(persona.toByteArray(Charsets.UTF_8)) }.value)
         const val CHAT_TOKENS = 4096
         const val CHAT_TEMPERATURE = 0.8
         val PERSONA_EXT = listOf(".txt", ".md")
     }
 
     private val cfgFile = File(dir, "comm_config.json")
-    private val chatFile = File(dir, "comm_chat.json")
+    private val legacyChatFile = File(dir, "comm_chat.json")           // 以前所有对象共用的一份
     var persona = ""; private set
     var showAvatar = false; private set
     var avatarMe = ""; private set
     var avatarAi = ""; private set
     private var proKey = ""
     private var seeded = false
+    private var legacyDone = false
+    /** 现在聊的对象的编号 (人设文件名的 crc; 没有对象 = ""). */
+    @Volatile var pid = ""; private set
+    /** 用户在 设置 → 沟通 里自己填的身份背景: 附在人设后面一起发给对方. */
+    var userProfile = ""; private set
+    private val others = HashMap<String, ChatState>()
     // 写盘 (fsync) 放在后台线程 (要声明在 init 之前: 第一次运行就要写配置)
     private val writer = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "comm-save").apply { isDaemon = true } }
     /** 对方不方便时的重试状态 (随设备同步): 上一次被拒绝的时刻 (毫秒, 0 = 没有) 和已经重试的次数. */
@@ -203,6 +214,14 @@ class Comm(
     var snapshot: () -> CommSnap? = { null }
     /** 系统触发的请求 (主动发 / 重试): 这条系统消息先不进记录, 对方真的回复了才和回复一起记下. */
     private class Extra(val body: String, val api: String)
+    /** 一个聊天对象的聊天记录和状态. */
+    private class ChatState {
+        val messages = ArrayList<ChatMsg>()
+        var clearTs = 0L
+        var retryAt = 0L
+        var retryN = 0
+        var proKey = ""
+    }
     private class Result(val kind: String, val extra: Extra?, val reply: String, val err: String, val epoch: Int)
     private val results = ConcurrentLinkedQueue<Result>()
     private var again = false
@@ -217,7 +236,7 @@ class Comm(
             runCatching {
                 for ((name, body) in BuiltinPersonas.ALL) File(personas, name).let { if (!it.exists()) it.writeText(body, Charsets.UTF_8) }
             }
-            if (persona.isEmpty() && BuiltinPersonas.DEFAULT in listPersonas()) persona = BuiltinPersonas.DEFAULT
+            if (persona.isEmpty() && BuiltinPersonas.DEFAULT in listPersonas()) switchTo(BuiltinPersonas.DEFAULT)
             seeded = true
             saveCfg()
         }
@@ -229,6 +248,89 @@ class Comm(
     private fun nowMs() = now().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
 
     // ---- 存取 ----
+    // 每个聊天对象 (人设) 的聊天记录分开存: comm_chat_<人设文件名的 crc>.json = 消息 + 清空的时刻 + 重试状态 + 主动消息的标记.
+    // 现在聊的那一个放在 messages / clearTs / retryAt / retryN / proKey 里 (工作用), 其余的在 others 里 (按需读盘).
+
+    private fun chatFile(p: String) = File(dir, "comm_chat_${p.ifEmpty { "none" }}.json")
+
+    private fun readChat(p: String): ChatState {
+        var o = Store.readObj(chatFile(p))
+        if (o == null && p.isNotEmpty() && !legacyDone && legacyChatFile.exists()) {
+            // 以前所有对象共用一份 comm_chat.json: 归给现在选着的这个人设 (一次)
+            o = (Store.readObj(legacyChatFile) ?: JSONObject()).put("clear_ts", clearTs).put("retry_at", retryAt)
+                .put("retry_n", retryN).put("pro_key", proKey)
+            legacyDone = true
+            writeState(p, parseState(o))
+            legacyChatFile.delete()
+            saveCfg()
+        }
+        return parseState(o)
+    }
+
+    private fun parseState(o: JSONObject?): ChatState {
+        val st = ChatState()
+        val arr = o?.optJSONArray("messages")
+        if (arr != null) for (i in 0 until arr.length()) {
+            val m = arr.optJSONObject(i) ?: continue
+            val role = m.optString("role")
+            if (role !in listOf("me", "ai", "sys")) continue
+            val id = m.optInt("id")
+            val at = m.optString("at")
+            val ts = m.optLong("ts", 0L).takeIf { it != 0L }
+                ?: parseIso(at)?.atZone(java.time.ZoneId.systemDefault())?.toInstant()?.toEpochMilli() ?: 0L     // 旧版本的记录没有 uid / ts
+            st.messages.add(ChatMsg(id, role, m.optString("text"), at, m.optString("api"), m.optString("uid").ifEmpty { "L$id" }, ts))
+        }
+        st.messages.sortWith(compareBy({ it.ts }, { it.uid }))
+        st.clearTs = o?.optLong("clear_ts", 0L) ?: 0L
+        st.retryAt = o?.optLong("retry_at", 0L) ?: 0L
+        st.retryN = o?.optInt("retry_n", 0) ?: 0
+        st.proKey = o?.optString("pro_key", "") ?: ""
+        return st
+    }
+
+    private fun statePayload(st: ChatState): JSONObject {
+        val arr = JSONArray()
+        for (m in st.messages.takeLast(KEEP)) arr.put(JSONObject().put("id", m.id).put("role", m.role).put("text", m.text).put("at", m.at)
+            .put("uid", m.uid).put("ts", m.ts).apply { if (m.api.isNotEmpty()) put("api", m.api) })
+        return JSONObject().put("messages", arr).put("clear_ts", st.clearTs).put("retry_at", st.retryAt)
+            .put("retry_n", st.retryN).put("pro_key", st.proKey)
+    }
+
+    private fun writeState(p: String, st: ChatState) {
+        val o = statePayload(st)
+        writer.execute { Store.write(chatFile(p), o) }
+    }
+
+    /** 把某个对象的聊天记录换成现在聊的. */
+    private fun loadState(st: ChatState) {
+        messages.clear(); messages.addAll(st.messages)
+        clearTs = st.clearTs; retryAt = st.retryAt; retryN = st.retryN; proKey = st.proKey
+        nextId = (messages.maxOfOrNull { it.id } ?: 0) + 1
+        lastTs = messages.maxOfOrNull { it.ts } ?: 0L
+    }
+
+    private fun activeState() = ChatState().also {
+        it.messages.addAll(messages); it.clearTs = clearTs; it.retryAt = retryAt; it.retryN = retryN; it.proKey = proKey
+    }
+
+    /** 某个对象的聊天状态: 现在聊的是一份拷贝 (改了要 storeState), 其他的在缓存里 (没读过就读盘). */
+    private fun stateOf(p: String): ChatState =
+        if (p == pid) activeState() else others.getOrPut(p) { readChat(p) }
+
+    private fun storeState(p: String, st: ChatState) {
+        if (p == pid) {
+            loadState(st)
+            saveChat(); saveCfg()
+        } else writeState(p, st)
+    }
+
+    /** 有聊天记录的对象 (现在聊的 + 磁盘上有的). */
+    private fun chatPids(): List<String> {
+        val ids = LinkedHashSet<String>()
+        if (pid.isNotEmpty()) ids.add(pid)
+        dir.listFiles()?.forEach { f -> Regex("comm_chat_([0-9a-f]{8})\\.json").matchEntire(f.name)?.let { ids.add(it.groupValues[1]) } }
+        return ids.sorted()
+    }
 
     private fun load() {
         Store.readObj(cfgFile)?.let { d ->
@@ -236,27 +338,31 @@ class Comm(
             showAvatar = d.optBoolean("show_avatar", false)
             avatarMe = d.optString("avatar_me", "")
             avatarAi = d.optString("avatar_ai", "")
+            userProfile = d.optString("user_profile", "")
+            seeded = d.optBoolean("seeded", false)
+            legacyDone = d.optBoolean("legacy_done", false)
+            // 旧版本这几项存在设置里 (所有对象共用): 迁移时归给现在选着的对象
             proKey = d.optString("pro_key", "")
             retryAt = d.optLong("retry_at", 0L)
             retryN = d.optInt("retry_n", 0)
             clearTs = d.optLong("clear_ts", 0L)
-            seeded = d.optBoolean("seeded", false)
         }
-        val arr = Store.readObj(chatFile)?.optJSONArray("messages")
-        val loaded = ArrayList<ChatMsg>()
-        if (arr != null) for (i in 0 until arr.length()) {
-            val o = arr.optJSONObject(i) ?: continue
-            val role = o.optString("role")
-            if (role !in listOf("me", "ai", "sys")) continue
-            val id = o.optInt("id")
-            val at = o.optString("at")
-            val ts = o.optLong("ts", 0L).takeIf { it != 0L }
-                ?: parseIso(at)?.atZone(java.time.ZoneId.systemDefault())?.toInstant()?.toEpochMilli() ?: 0L     // 旧版本的记录没有 uid / ts
-            loaded.add(ChatMsg(id, role, o.optString("text"), at, o.optString("api"), o.optString("uid").ifEmpty { "L$id" }, ts))
-        }
-        messages.addAll(loaded.sortedWith(compareBy({ it.ts }, { it.uid })))
-        nextId = (messages.maxOfOrNull { it.id } ?: 0) + 1
-        lastTs = messages.maxOfOrNull { it.ts } ?: 0L
+        pid = pidOf(persona)
+        loadState(readChat(pid))
+    }
+
+    /** 换聊天对象: 现在这个的记录先存好, 换成那个对象自己的记录 (各聊各的). 换的时候还在等的回复不要了 (记录里还是没回的那条). */
+    private fun switchTo(name: String) {
+        val np = pidOf(name)
+        if (np == pid) { persona = name; return }
+        others[pid] = activeState()
+        saveChat()
+        persona = name
+        pid = np
+        loadState(others.remove(np) ?: readChat(np))
+        epoch++
+        error = ""
+        unread = 0
     }
 
     // 写盘 (fsync) 放在后台线程: 发送 / 收到消息时界面线程不等磁盘, 不卡. 先在这里做好快照, 线程只管写.
@@ -266,18 +372,14 @@ class Comm(
 
     private fun saveCfg() {
         val o = JSONObject().put("persona", persona)
-            .put("show_avatar", showAvatar).put("avatar_me", avatarMe).put("avatar_ai", avatarAi).put("pro_key", proKey)
-            .put("retry_at", retryAt).put("retry_n", retryN).put("clear_ts", clearTs).put("seeded", seeded)
+            .put("show_avatar", showAvatar).put("avatar_me", avatarMe).put("avatar_ai", avatarAi)
+            .put("user_profile", userProfile).put("seeded", seeded).put("legacy_done", legacyDone)
         writer.execute { Store.write(cfgFile, o) }
     }
 
     private fun saveChat() {
         while (messages.size > KEEP) messages.removeAt(0)
-        val arr = JSONArray()
-        for (m in messages) arr.put(JSONObject().put("id", m.id).put("role", m.role).put("text", m.text).put("at", m.at)
-            .put("uid", m.uid).put("ts", m.ts).apply { if (m.api.isNotEmpty()) put("api", m.api) })
-        val o = JSONObject().put("messages", arr)
-        writer.execute { Store.write(chatFile, o) }
+        writeState(pid, activeState())
     }
 
     private fun changed() { version++ }
@@ -325,76 +427,91 @@ class Comm(
         return if ('-' in last.uid) last.uid.substringAfterLast('-') else ""
     }
 
-    /** 随设备同步的内容 (只带最近 SYNC_N 条消息, 再早的是各设备自己留着的; 掉出窗口不算删除). */
+    /** 随设备同步的内容: 每个对象各自最近 SYNC_N 条消息 (键里带对象的编号 pid), 再早的是各设备自己留着的; 掉出窗口不算删除. */
     @Synchronized
     fun syncDoc(): Map<String, Any?> {
         val doc = LinkedHashMap<String, Any?>()
-        for (m in messages.takeLast(SYNC_N)) {
-            doc["m:" + m.uid] = JSONObject().put("role", m.role).put("text", m.text).put("at", m.at).put("ts", m.ts)
-                .apply { if (m.api.isNotEmpty()) put("api", m.api) }
+        if (userProfile.isNotEmpty()) doc["profile"] = userProfile
+        for (p in chatPids()) {
+            val st = stateOf(p)
+            for (m in st.messages.takeLast(SYNC_N)) {
+                doc["m:$p:${m.uid}"] = JSONObject().put("role", m.role).put("text", m.text).put("at", m.at).put("ts", m.ts)
+                    .apply { if (m.api.isNotEmpty()) put("api", m.api) }
+            }
+            if (st.proKey.isNotEmpty()) doc["pro:$p"] = st.proKey
+            if (st.retryAt != 0L || st.retryN != 0) doc["retry:$p"] = JSONObject().put("at", st.retryAt).put("n", st.retryN)
+            if (st.clearTs != 0L) doc["clear:$p"] = st.clearTs
         }
-        if (proKey.isNotEmpty()) doc["pro_key"] = proKey
-        if (retryAt != 0L || retryN != 0) doc["retry"] = JSONObject().put("at", retryAt).put("n", retryN)
-        if (clearTs != 0L) doc["clear"] = clearTs
         return doc
     }
 
     /** 别的设备发来的改动. */
     @Synchronized
     fun applyDoc(changes: Map<String, Any?>) {
-        var dirtyChat = false
-        var dirtyCfg = false
-        val known = messages.map { it.uid }.toHashSet()
-        for (key in changes.keys.sortedBy { it != "clear" }) {          // 清空先处理: 之前的记录不会再并进来
+        class Touch(val st: ChatState, var dirty: Boolean, var known: HashSet<String>)
+        val touched = LinkedHashMap<String, Touch>()
+        var clearedActive = false
+        fun touch(p: String): Touch = touched.getOrPut(p) { stateOf(p).let { Touch(it, false, it.messages.map { m -> m.uid }.toHashSet()) } }
+        for (key in changes.keys.sortedBy { !it.startsWith("clear:") }) {       // 清空先处理: 之前的记录不会再并进来
             val v = changes[key]
+            val kind = key.substringBefore(':')
+            val rest = key.substringAfter(':', "")
             when {
-                key == "clear" -> {
+                key == "profile" -> {
+                    val n = (v as? String ?: "").take(MAX_PROFILE)
+                    if (n != userProfile) { userProfile = n; saveCfg(); changed() }
+                }
+                kind == "clear" -> {
                     val t = (v as? Number)?.toLong() ?: continue
-                    if (t > clearTs) {
-                        clearTs = t
-                        messages.removeAll { it.ts <= t }
-                        known.clear(); known.addAll(messages.map { it.uid })
-                        unread = 0; error = ""; epoch++
-                        retryAt = 0; retryN = 0
-                        dirtyChat = true; dirtyCfg = true
+                    val tc = touch(rest)
+                    if (t > tc.st.clearTs) {
+                        tc.st.clearTs = t
+                        tc.st.messages.removeAll { it.ts <= t }
+                        tc.st.retryAt = 0; tc.st.retryN = 0
+                        tc.known = tc.st.messages.map { it.uid }.toHashSet()
+                        tc.dirty = true
+                        if (rest == pid) clearedActive = true
                     }
                 }
-                key.startsWith("m:") && v is JSONObject -> {
-                    val uid = key.substring(2)
+                kind == "m" && v is JSONObject -> {
+                    val p = rest.substringBefore(':')
+                    val uid = rest.substringAfter(':')
                     val ts = v.optLong("ts", 0L)
                     val role = v.optString("role")
-                    if (uid in known || ts <= clearTs || role !in listOf("me", "ai", "sys")) continue
-                    messages.add(ChatMsg(nextId++, role, v.optString("text"), v.optString("at"), v.optString("api"), uid, ts))
-                    known.add(uid)
-                    dirtyChat = true
+                    val tc = touch(p)
+                    if (uid in tc.known || ts <= tc.st.clearTs || role !in listOf("me", "ai", "sys")) continue
+                    tc.st.messages.add(ChatMsg(nextId++, role, v.optString("text"), v.optString("at"), v.optString("api"), uid, ts))
+                    tc.known.add(uid)
+                    tc.dirty = true
                     if (role == "ai") {
-                        retryAt = 0; retryN = 0; dirtyCfg = true
-                        if (!viewing) unread++
+                        tc.st.retryAt = 0; tc.st.retryN = 0
+                        if (!(viewing && p == pid)) unread++
                     }
                 }
-                key == "pro_key" && v is String -> { proKey = v; dirtyCfg = true }
-                key == "retry" -> {
+                kind == "pro" && v is String -> { touch(rest).st.proKey = v; touch(rest).dirty = true }
+                kind == "retry" -> {
                     val o = v as? JSONObject
-                    retryAt = o?.optLong("at", 0L) ?: 0L
-                    retryN = o?.optInt("n", 0) ?: 0
-                    dirtyCfg = true
+                    val tc = touch(rest)
+                    tc.st.retryAt = o?.optLong("at", 0L) ?: 0L
+                    tc.st.retryN = o?.optInt("n", 0) ?: 0
+                    tc.dirty = true
                 }
             }
         }
-        if (dirtyChat) {
-            val sorted = messages.sortedWith(compareBy({ it.ts }, { it.uid }))
-            messages.clear(); messages.addAll(sorted)
-            lastTs = maxOf(lastTs, messages.maxOfOrNull { it.ts } ?: 0L)
-            saveChat()
+        for ((p, tc) in touched) {
+            if (!tc.dirty) continue
+            tc.st.messages.sortWith(compareBy({ it.ts }, { it.uid }))
+            storeState(p, tc.st)
         }
-        if (dirtyCfg) saveCfg()
-        if (dirtyChat || dirtyCfg) changed()
+        if (clearedActive) { unread = 0; error = ""; epoch++ }
+        if (touched.isNotEmpty()) changed()
     }
 
     @Synchronized
     fun set(persona: String? = null, showAvatar: Boolean? = null,
-            avatarMe: String? = null, avatarAi: String? = null) {
-        persona?.let { this.persona = it }
+            avatarMe: String? = null, avatarAi: String? = null, userProfile: String? = null) {
+        persona?.let { switchTo(it); saveChat() }
+        userProfile?.let { this.userProfile = it.trim().take(MAX_PROFILE) }
         showAvatar?.let { this.showAvatar = it }
         avatarMe?.let { this.avatarMe = it.trim().take(4) }
         avatarAi?.let { this.avatarAi = it.trim().take(4) }
@@ -600,7 +717,9 @@ class Comm(
     private fun request(kind: String, extra: Extra? = null) {
         if (busy) { again = true; return }
         val profile = aiConfig().profile()
-        val system = CommText.prefixPrompt() + readPersona(personaName())
+        var system = CommText.prefixPrompt() + readPersona(personaName())
+        if (userProfile.isNotBlank())                       // 用户在 设置 → 沟通 里自己填的身份背景
+            system += "\n\n以下是用户的身份背景(用户自己填写):\n" + userProfile.trim()
         val msgs = ArrayList(apiMessages())
         if (extra != null) {
             if (msgs.isNotEmpty() && msgs.last().first == "user") msgs[msgs.size - 1] = "user" to (msgs.last().second + "\n\n" + extra.api)

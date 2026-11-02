@@ -49,8 +49,12 @@ class CommPage(tk.Frame):
         tk.Label(hdr, text=tr("💬  沟通"), bg=bg, fg=COLORS["text"],
                  font=config.font("h1", bold=True)).pack(side="left")
         ttk.Button(hdr, text=tr("清空"), command=self._clear).pack(side="right")
-        self.lbl_who = tk.Label(hdr, text="", bg=bg, fg=COLORS["text_dim"], font=config.font("body"))
-        self.lbl_who.pack(side="right", padx=(0, 12))
+        # 聊天对象: 换了就换成那个对象自己的聊天记录 (各聊各的)
+        self.var_who = tk.StringVar()
+        self._who_labels = []
+        self.cb_who = ttk.Combobox(hdr, textvariable=self.var_who, state="readonly", width=16)
+        self.cb_who.pack(side="right", padx=(0, 12))
+        self.cb_who.bind("<<ComboboxSelected>>", lambda _e: self._pick_who())
         # 模型: 和 AI 名单建议用同一份模型设置, 选了两边都生效
         self.var_model = tk.StringVar()
         self.cb_model = ttk.Combobox(hdr, textvariable=self.var_model, width=22)
@@ -106,6 +110,14 @@ class CommPage(tk.Frame):
         if self._resize_job:
             self.after_cancel(self._resize_job)
         self._resize_job = self.after(200, self.refresh)
+
+    def _pick_who(self):
+        label = self.var_who.get()
+        name = next((n for n, lab in self._who_labels if lab == label), "")
+        if name and name != self.comm.persona_name():
+            self.comm.set_cfg(persona=name)
+            self.refresh(force=True)
+            self.entry.focus_set()
 
     def _pick_model(self):
         self.comm.set_model(self.var_model.get())
@@ -163,7 +175,13 @@ class CommPage(tk.Frame):
             return
         self._ver = c.version
         self._blocked = blocked
-        cfg(self.lbl_who, text=comm_mod.persona_title(c.persona_name()))
+        self._who_labels = comm_mod.persona_labels(comm_mod.list_personas(c.personas))
+        labels = [lab for _n, lab in self._who_labels]
+        if list(self.cb_who.cget("values")) != labels:
+            self.cb_who.config(values=labels)
+        cur = next((lab for n, lab in self._who_labels if n == c.persona_name()), "")
+        if self.var_who.get() != cur:
+            self.var_who.set(cur)
         label = c.attach_label()
         cfg(self.lbl_attach, text=label)
         if label:
@@ -182,7 +200,7 @@ class CommPage(tk.Frame):
         on = bool(c.cfg.get("show_avatar"))
         marks = tuple((w, c.avatar_path(w), os.path.getmtime(c.avatar_path(w)) if c.avatar_path(w) else 0)
                       for w in ("me", "ai")) if on else ()
-        return (self._wrap(), on, marks, c.persona_name() if on else "", self.username() if on else "")
+        return (self._wrap(), on, marks, c.pid, self.username() if on else "")
 
     def _photo(self, path: str, size: int):
         try:

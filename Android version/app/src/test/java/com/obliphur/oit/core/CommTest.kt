@@ -163,6 +163,48 @@ class CommTest {
     }
 
     @Test
+    fun separateChatsPerPersona() {
+        val td = Files.createTempDirectory("oit").toFile()
+        val dir = File(td, "d").also { it.mkdirs() }
+        val c = comm(dir, File(td, "pp"))
+        c.importPersona("夜.txt", "你是夜".byteInputStream())
+        c.importPersona("小夏.txt", "你是小夏".byteInputStream())
+        c.set(persona = "小夏.txt")
+        script.add("小夏: 在"); c.send("你好小夏"); wait(c)
+        c.set(persona = "夜.txt")
+        assertTrue(c.visible().isEmpty() && c.pid == Comm.pidOf("夜.txt"))          // 换了对象: 这个对象还没有聊过
+        script.add("夜: 嗯"); c.send("你好夜"); wait(c)
+        assertEquals(listOf("你好夜", "夜: 嗯"), c.visible().map { it.text })
+        assertTrue(calls.last().second.none { "你好小夏" in it.second })             // 发给夜的不带小夏那边的记录
+        assertTrue(calls.last().first.endsWith("你是夜"))
+        c.set(persona = "小夏.txt")
+        assertEquals(listOf("你好小夏", "小夏: 在"), c.visible().map { it.text })     // 换回来: 各聊各的
+        c.clear()
+        c.set(persona = "夜.txt")
+        assertEquals(2, c.visible().size)                                            // 清空只清现在这个对象
+        c.flush()
+        val c2 = Comm(dir, File(td, "pp"), { clock }) { _, _, _ -> "" }
+        assertTrue(c2.personaName() == "夜.txt" && c2.visible().size == 2)
+        c2.set(persona = "小夏.txt")
+        assertTrue(c2.visible().isEmpty())
+        // 旧版本: 所有对象共用一份 comm_chat.json → 归给现在选着的对象
+        val leg = File(td, "legacy").also { it.mkdirs() }
+        File(leg, "comm_chat.json").writeText("""{"messages":[{"id":1,"role":"me","text":"以前的话","at":"2026-11-02T08:00:00"}]}""")
+        File(leg, "comm_config.json").writeText("""{"persona":"小夏.txt","seeded":true}""")
+        val lc = Comm(leg, File(td, "pp"), { clock }) { _, _, _ -> "" }
+        assertEquals(listOf("以前的话"), lc.visible().map { it.text })
+        lc.set(persona = "夜.txt")
+        assertTrue(lc.visible().isEmpty())
+        // 身份背景: 用户自己填, 随 system 一起发, 同步
+        c.set(persona = "小夏.txt", userProfile = "我是大二的学生, 在准备考研.")
+        script.add("好"); c.send("嗨"); wait(c)
+        assertTrue(calls.last().first.endsWith("以下是用户的身份背景(用户自己填写):\n我是大二的学生, 在准备考研."))
+        val other = comm(File(td, "o").also { it.mkdirs() }, File(td, "po"))
+        other.applyDoc(c.syncDoc())
+        assertEquals("我是大二的学生, 在准备考研.", other.userProfile)
+    }
+
+    @Test
     fun infoRequests() {
         assertEquals(listOf("contract"), CommText.infoTags(" [Refuse to reply] [CONTRACT] "))
         assertTrue(CommText.infoTags("[contract]").isEmpty() && CommText.infoTags("好的").isEmpty())

@@ -41,13 +41,14 @@ WAIT_HINT = 15                        # 请求发出去多少秒还没回应, �
 KEEP = 400                            # 本地最多存多少条
 SYNC_N = 60                           # 随设备同步最近多少条
 MAX_PERSONA = 60000
+MAX_PROFILE = 5000                    # 用户自己填的身份背景最多多少字
 PERSONA_EXT = (".txt", ".md")
 CHAT_TOKENS = 4096
 CHAT_TEMPERATURE = 0.8
 WEEKDAY = "一二三四五六日"
 
 DEFAULTS = {"persona": "", "show_avatar": False,
-            "avatar_me": "", "avatar_ai": "", "pro_key": "", "retry": {}, "clear_ts": 0, "seeded": False}
+            "avatar_me": "", "avatar_ai": "", "pro_key": "", "retry": {}, "clear_ts": 0, "seeded": False, "legacy_done": False, "user_profile": ""}
 
 
 # ══════════════ 前置 prompt 与 README ══════════════
@@ -104,7 +105,7 @@ BUILTIN_PERSONAS = {"Claudia.txt": """你将扮演一位文静,冷淡的大小�
 - 不主动找话题,不主动关心,不主动提问;用户问了才答.答完就停,不追加客套话.
 - 称呼用户为"你",自称"我".
 - 指出英文错误时:先一句话指出不自然或错误之处,再给出更自然的说法,不多做解释.
-- 提到爱好时只简短带过一句,不展开.
+- 提到爱好时,如果对方没有深入问就不展开.
 
 【日程】(每天相同;时间一律为 24 小时制;下面是你唯一的日程依据,不要自己推算别的时间)
 未标注的时间段则以100min专注+37.7min休息循环.
@@ -139,13 +140,19 @@ BUILTIN_PERSONAS = {"Claudia.txt": """你将扮演一位文静,冷淡的大小�
 【按日程回复】(每次收到消息都先做这一步)
 1. 看消息开头方括号里的时间,在上面的日程里找到那个时间属于哪一段.
 2. 属于"专注"或"睡眠":只回复 [refuse to reply],不要写任何别的字.
-3. 属于"休息","空闲","洗漱,吃早饭","午饭","晚饭":可以回复.吃饭和洗漱时回复更短,一句即可.
+3. 属于"休息","空闲","洗漱,吃早饭","午饭","晚饭":可以回复.
 4. 刚好空下来时,把用户之前积攒的消息一次性看完,按顺序一并回应,不要逐条回.
 5. 不要主动说出自己的日程,也不要主动说"我在专注/我在休息";只有用户直接问起,才用一句话如实回答.
 6. 某个时间点你理应处于专注,但用户 3 分钟以内还在和你聊天:用一句话说明要进入专注,然后停止对话;之后的消息按第 2 条处理.
 7. 日程里没有的情况(例如用户问明天的安排),只说"没有特别的安排",不要编造.
 """}
 DEFAULT_PERSONA = "Claudia.txt"
+CHAT_KEYS = ("clear_ts", "retry", "pro_key")          # 跟着聊天对象走的几项 (存在各自的聊天文件里)
+
+
+def pid_of(persona: str) -> str:
+    """聊天对象的编号: 人设文件名的 crc (没有对象 = "")."""
+    return f"{zlib.crc32(persona.encode('utf-8')):08x}" if persona else ""
 
 
 def seed_builtin(folder: str):
@@ -291,10 +298,12 @@ class Comm:
         self.now = now
         self.chat_fn = chat_fn or ai_assist.chat_messages
         self.cfg_path = os.path.join(data_dir, "comm_config.json")
-        self.chat_path = os.path.join(data_dir, "comm_chat.json")
+        self.legacy_chat_path = os.path.join(data_dir, "comm_chat.json")      # 以前所有对象共用的一份
         self.ai = ai_assist.shared_config(os.path.join(data_dir, "ai_config.json"),
                                           template=ai_assist.DEFAULT_TEMPLATE)
         self.cfg = dict(DEFAULTS)
+        self.pid = ""                 # 现在聊的对象的编号
+        self._others = {}             # 其他对象的聊天状态 (读过的)
         self.messages = []
         self.version = 0              # 聊天记录 / 状态变了就加一, 页面据此重画
         self.unread = 0
@@ -327,7 +336,7 @@ class Comm:
         if not self.cfg.get("seeded"):                      # 第一次运行: 放进自带的人设, 还没选过人设就默认选 Claudia
             seed_builtin(self.personas)
             if not self.cfg.get("persona") and DEFAULT_PERSONA in list_personas(self.personas):
-                self.cfg["persona"] = DEFAULT_PERSONA
+                self.set_persona(DEFAULT_PERSONA)
             self.cfg["seeded"] = True
             self.save_cfg()
         last = self.messages[-1] if self.messages else None
@@ -337,8 +346,96 @@ class Comm:
             self.cfg["retry"] = {"at": self._ms() - RETRY_GAP * 1000 + 60000, "n": int(rt.get("n") or 0)}
 
     # ---- 存取 ----
+    # 每个聊天对象 (人设) 的聊天记录分开存: comm_chat_<人设文件名的 crc>.json = 消息 + 清空的时刻 + 重试状态 + 主动消息的标记.
+    # 现在聊的那一个放在 self.messages / self.cfg["clear_ts" / "retry" / "pro_key"] 里 (工作用), 其余的在 self._others 里 (按需读盘).
     def _ms(self) -> int:
         return int(self.now().timestamp() * 1000)
+
+    def _chat_path(self, pid: str) -> str:
+        return os.path.join(self.dir, f"comm_chat_{pid or 'none'}.json")
+
+    @staticmethod
+    def _norm_state(d) -> dict:
+        d = d if isinstance(d, dict) else {}
+        msgs = d.get("messages") if isinstance(d.get("messages"), list) else []
+        msgs = [m for m in msgs if isinstance(m, dict) and m.get("role") in ("me", "ai", "sys")]
+        for m in msgs:                                       # 旧版本的记录没有 uid / ts
+            if not m.get("uid"):
+                m["uid"] = f"L{m.get('id') or 0}"
+            if not m.get("ts"):
+                try:
+                    m["ts"] = int(datetime.fromisoformat(m["at"]).timestamp() * 1000)
+                except (KeyError, ValueError, TypeError):
+                    m["ts"] = 0
+        msgs.sort(key=lambda m: (m["ts"], m["uid"]))
+        return {"messages": msgs, "clear_ts": int(d.get("clear_ts") or 0),
+                "retry": dict(d["retry"]) if isinstance(d.get("retry"), dict) else {},
+                "pro_key": str(d.get("pro_key") or "")}
+
+    def _read_chat(self, pid: str) -> dict:
+        d = config.load_json_file(self._chat_path(pid), None)
+        if d is None and pid and not self.cfg.get("legacy_done") and os.path.exists(self.legacy_chat_path):
+            # 以前所有对象共用一份 comm_chat.json: 归给现在选着的这个人设 (一次)
+            legacy = config.load_json_file(self.legacy_chat_path, {})
+            d = dict(legacy if isinstance(legacy, dict) else {}, clear_ts=self.cfg.get("clear_ts") or 0,
+                     retry=self.cfg.get("retry") or {}, pro_key=self.cfg.get("pro_key") or "")
+            self.cfg["legacy_done"] = True
+            self._write_async(self._chat_path(pid), d)
+            try:
+                import securefile
+                securefile.remove(self.legacy_chat_path)
+            except Exception:       # noqa: BLE001
+                pass
+        return self._norm_state(d)
+
+    def _load_state(self, st: dict):
+        """把某个对象的聊天记录换成现在聊的."""
+        self.messages = st["messages"]
+        self.cfg["clear_ts"], self.cfg["retry"], self.cfg["pro_key"] = st["clear_ts"], st["retry"], st["pro_key"]
+        self._next_id = max([int(m.get("id") or 0) for m in self.messages] + [0]) + 1
+        for m in self.messages:
+            if not m.get("id"):
+                m["id"] = self._take_id()
+        self._last_ts = max([int(m["ts"]) for m in self.messages] + [0])
+
+    def _active_state(self) -> dict:
+        return {"messages": self.messages, "clear_ts": int(self.cfg.get("clear_ts") or 0),
+                "retry": dict(self.cfg.get("retry") or {}), "pro_key": str(self.cfg.get("pro_key") or "")}
+
+    @staticmethod
+    def _state_payload(st: dict) -> dict:
+        return {"messages": [dict(m) for m in st["messages"][-KEEP:]], "clear_ts": int(st["clear_ts"]),
+                "retry": dict(st["retry"]), "pro_key": st["pro_key"]}
+
+    def _state_of(self, pid: str) -> dict:
+        """某个对象的聊天状态: 现在聊的是活的 (改了要 _store), 其他的在缓存里 (没读过就读盘)."""
+        if pid == self.pid:
+            return self._active_state()
+        st = self._others.get(pid)
+        if st is None:
+            st = self._others[pid] = self._read_chat(pid)
+        return st
+
+    def _store(self, pid: str, st: dict):
+        if pid == self.pid:
+            self.messages = st["messages"]
+            self.cfg["clear_ts"], self.cfg["retry"], self.cfg["pro_key"] = st["clear_ts"], st["retry"], st["pro_key"]
+            self.save_chat()
+            self.save_cfg()
+        else:
+            self._write_async(self._chat_path(pid), self._state_payload(st))
+
+    def chat_pids(self) -> list:
+        """有聊天记录的对象 (现在聊的 + 磁盘上有的)."""
+        pids = {self.pid} if self.pid else set()
+        try:
+            for n in os.listdir(self.dir):
+                m = re.fullmatch(r"comm_chat_([0-9a-f]{8})\.json", n)
+                if m:
+                    pids.add(m.group(1))
+        except OSError:
+            pass
+        return sorted(pids)
 
     def load(self):
         d = config.load_json_file(self.cfg_path, {})
@@ -347,33 +444,35 @@ class Comm:
                 v = d.get(k)
                 if isinstance(v, type(default)):
                     self.cfg[k] = v
-        d = config.load_json_file(self.chat_path, {})
-        msgs = d.get("messages") if isinstance(d, dict) else None
-        if isinstance(msgs, list):
-            self.messages = [m for m in msgs if isinstance(m, dict) and m.get("role") in ("me", "ai", "sys")]
-        for m in self.messages:                             # 旧版本的记录没有 uid / ts
-            if not m.get("uid"):
-                m["uid"] = f"L{m.get('id') or 0}"
-            if not m.get("ts"):
-                try:
-                    m["ts"] = int(datetime.fromisoformat(m["at"]).timestamp() * 1000)
-                except (KeyError, ValueError, TypeError):
-                    m["ts"] = 0
-        self.messages.sort(key=lambda m: (m["ts"], m["uid"]))
-        self._next_id = max([int(m.get("id") or 0) for m in self.messages] + [0]) + 1
-        for m in self.messages:
-            if not m.get("id"):
-                m["id"] = self._take_id()
-        self._last_ts = max([int(m["ts"]) for m in self.messages] + [0])
+        self.pid = pid_of(self.cfg.get("persona") or "")
+        self._load_state(self._read_chat(self.pid))
+
+    def set_persona(self, name: str):
+        """换聊天对象: 现在这个的记录先存好, 换成那个对象自己的记录 (各聊各的). 换的时候还在等的回复不要了 (记录里还是没回的那条)."""
+        name = str(name or "")
+        new = pid_of(name)
+        if new == self.pid:
+            self.cfg["persona"] = name
+            return
+        self._others[self.pid] = self._active_state()           # 现在的记下来 (内存里的 messages 是同一个列表)
+        self.save_chat()
+        self.cfg["persona"] = name
+        self.pid = new
+        st = self._others.pop(new, None) or self._read_chat(new)
+        self._load_state(st)
+        self._epoch += 1
+        self.error = ""
+        self.unread = 0
+        self.attach_touched = self.attach_touched
 
     def _take_id(self) -> int:
         self._next_id += 1
         return self._next_id - 1
 
-    # 写盘 (加密 + fsync) 放在后台线程: 发送 / 收到消息时界面线程不等磁盘, 不卡. 连续几次保存合并成一次.
-    def _write_async(self, kind: str, payload):
+    # 写盘 (加密 + fsync) 放在后台线程: 发送 / 收到消息时界面线程不等磁盘, 不卡. 连续几次保存合并成一次 (同一个文件只留最新的).
+    def _write_async(self, path: str, payload):
         with self._wlock:
-            self._pending[kind] = payload
+            self._pending[path] = payload
             if self._writing:
                 return
             self._writing = True
@@ -422,10 +521,8 @@ class Comm:
                 if not pending:
                     self._writing = False
                     return
-            if "cfg" in pending:
-                config.save_json_file(self.cfg_path, pending["cfg"])
-            if "chat" in pending:
-                config.save_json_file(self.chat_path, pending["chat"])
+            for path, payload in pending.items():
+                config.save_json_file(path, payload)
 
     def flush(self, timeout: float = 5.0):
         """等后台的写盘做完 (关程序前, 以及自检)."""
@@ -437,13 +534,18 @@ class Comm:
             time.sleep(0.01)
 
     def save_cfg(self):
-        self._write_async("cfg", json.loads(json.dumps(self.cfg)))
+        """设置存 comm_config.json; 现在聊的这个对象的清空时刻 / 重试 / 主动消息标记跟着它的聊天记录走, 不存在这里."""
+        out = {k: v for k, v in self.cfg.items() if k not in CHAT_KEYS}
+        self._write_async(self.cfg_path, json.loads(json.dumps(out)))
 
     def save_chat(self):
         self.messages = self.messages[-KEEP:]
-        self._write_async("chat", {"messages": [dict(m) for m in self.messages]})
+        self._write_async(self._chat_path(self.pid), self._state_payload(self._active_state()))
 
     def set_cfg(self, **kw):
+        if "persona" in kw:
+            self.set_persona(kw.pop("persona"))
+            self.save_chat()
         self.cfg.update(kw)
         self.save_cfg()
         self._changed()
@@ -472,74 +574,97 @@ class Comm:
 
     # ---- 设备同步 ----
     def sync_doc(self) -> dict:
-        """随设备同步的内容 (只带最近 SYNC_N 条消息, 再早的是各设备自己留着的; 掉出窗口不算删除)."""
+        """随设备同步的内容: 每个对象各自最近 SYNC_N 条消息 (键里带对象的编号 pid), 再早的是各设备自己留着的; 掉出窗口不算删除."""
         doc = {}
-        for m in self.messages[-SYNC_N:]:
-            e = {"role": m["role"], "text": m["text"], "at": m["at"], "ts": int(m["ts"])}
-            if m.get("api"):
-                e["api"] = m["api"]
-            doc["m:" + m["uid"]] = e
-        if self.cfg.get("pro_key"):
-            doc["pro_key"] = self.cfg["pro_key"]
-        if self.cfg.get("retry"):
-            doc["retry"] = dict(self.cfg["retry"])
-        if self.cfg.get("clear_ts"):
-            doc["clear"] = int(self.cfg["clear_ts"])
+        if self.cfg.get("user_profile"):
+            doc["profile"] = self.cfg["user_profile"]
+        for pid in self.chat_pids():
+            st = self._state_of(pid)
+            for m in st["messages"][-SYNC_N:]:
+                e = {"role": m["role"], "text": m["text"], "at": m["at"], "ts": int(m["ts"])}
+                if m.get("api"):
+                    e["api"] = m["api"]
+                doc[f"m:{pid}:{m['uid']}"] = e
+            if st["pro_key"]:
+                doc[f"pro:{pid}"] = st["pro_key"]
+            if st["retry"]:
+                doc[f"retry:{pid}"] = dict(st["retry"])
+            if st["clear_ts"]:
+                doc[f"clear:{pid}"] = int(st["clear_ts"])
         return doc
 
     def apply_doc(self, changes: dict):
         """别的设备发来的改动 (界面线程)."""
-        dirty_chat = dirty_cfg = False
-        known = {m["uid"] for m in self.messages}
-        for key in sorted(changes, key=lambda k: k != "clear"):          # 清空先处理: 之前的记录不会再并进来
+        touched = {}                                            # pid -> [状态, 消息有没有变]
+        cleared_active = False
+
+        def st_of(pid):
+            if pid not in touched:
+                touched[pid] = [self._state_of(pid), False, {m["uid"] for m in self._state_of(pid)["messages"]}]
+            return touched[pid]
+
+        for key in sorted(changes, key=lambda k: not k.startswith("clear:")):      # 清空先处理: 之前的记录不会再并进来
             val = changes[key]
-            if key == "clear":
+            kind, _, rest = key.partition(":")
+            if kind == "clear":
+                pid = rest
                 try:
                     t = int(val)
                 except (TypeError, ValueError):
                     continue
-                if t > int(self.cfg.get("clear_ts") or 0):
-                    self.cfg["clear_ts"] = t
-                    self.messages = [m for m in self.messages if int(m["ts"]) > t]
-                    known = {m["uid"] for m in self.messages}
-                    self.unread = 0
-                    self.error = ""
-                    self._epoch += 1
-                    self.cfg["retry"] = {}
-                    dirty_chat = dirty_cfg = True
-            elif key.startswith("m:") and isinstance(val, dict):
-                uid = key[2:]
+                st, _d, _k = st_of(pid)
+                if t > st["clear_ts"]:
+                    st["clear_ts"] = t
+                    st["messages"][:] = [m for m in st["messages"] if int(m["ts"]) > t]
+                    st["retry"] = {}
+                    touched[pid][1] = True
+                    touched[pid][2] = {m["uid"] for m in st["messages"]}
+                    if pid == self.pid:
+                        cleared_active = True
+            elif kind == "m" and isinstance(val, dict):
+                pid, _, uid = rest.partition(":")
                 try:
                     ts = int(val.get("ts") or 0)
                 except (TypeError, ValueError):
                     continue
-                if uid in known or ts <= int(self.cfg.get("clear_ts") or 0) or val.get("role") not in ("me", "ai", "sys"):
+                st, _d, known = st_of(pid)
+                if uid in known or ts <= st["clear_ts"] or val.get("role") not in ("me", "ai", "sys"):
                     continue
                 m = {"id": self._take_id(), "uid": uid, "role": val["role"], "text": str(val.get("text") or ""),
                      "at": str(val.get("at") or ""), "ts": ts}
                 if val.get("api"):
                     m["api"] = str(val["api"])
-                self.messages.append(m)
+                st["messages"].append(m)
                 known.add(uid)
-                dirty_chat = True
+                touched[pid][1] = True
                 if m["role"] == "ai":
-                    self.cfg["retry"] = {}
-                    dirty_cfg = True
-                    if not self.viewing:
+                    st["retry"] = {}
+                    if not (self.viewing and pid == self.pid):
                         self.unread += 1
-            elif key == "pro_key" and isinstance(val, str):
-                self.cfg["pro_key"] = val
-                dirty_cfg = True
-            elif key == "retry":
-                self.cfg["retry"] = dict(val) if isinstance(val, dict) else {}
-                dirty_cfg = True
-        if dirty_chat:
-            self.messages.sort(key=lambda m: (m["ts"], m["uid"]))
-            self._last_ts = max(self._last_ts, max([int(m["ts"]) for m in self.messages] + [0]))
-            self.save_chat()
-        if dirty_cfg:
-            self.save_cfg()
-        if dirty_chat or dirty_cfg:
+            elif key == "profile":
+                new = str(val or "")[:MAX_PROFILE] if val is not None else ""
+                if new != self.cfg.get("user_profile"):
+                    self.cfg["user_profile"] = new
+                    self.save_cfg()
+                    self._changed()
+            elif kind == "pro" and isinstance(val, str):
+                st_of(rest)[0]["pro_key"] = val
+                touched[rest][1] = True
+            elif kind == "retry":
+                st_of(rest)[0]["retry"] = dict(val) if isinstance(val, dict) else {}
+                touched[rest][1] = True
+        for pid, (st, dirty, _known) in touched.items():
+            if not dirty:
+                continue
+            st["messages"].sort(key=lambda m: (m["ts"], m["uid"]))
+            if pid == self.pid:
+                self._last_ts = max(self._last_ts, max([int(m["ts"]) for m in st["messages"]] + [0]))
+            self._store(pid, st)
+        if cleared_active:
+            self.unread = 0
+            self.error = ""
+            self._epoch += 1
+        if touched:
             self._changed()
 
     def last_author(self) -> str:
@@ -702,6 +827,9 @@ class Comm:
             return
         profile = self.ai.profile()
         system = prefix_prompt() + read_persona(self.personas, self.persona_name())
+        who = str(self.cfg.get("user_profile") or "").strip()[:MAX_PROFILE]
+        if who:                                           # 用户在 设置 → 沟通 里自己填的身份背景
+            system += "\n\n以下是用户的身份背景(用户自己填写):\n" + who
         msgs = api_messages(self.messages)
         if extra:
             if msgs and msgs[-1]["role"] == "user":
@@ -1073,6 +1201,57 @@ def _selftest():
     assert c.waiting_text().startswith("API 还没有回应") and c.waiting_text().endswith("秒)")
     c.busy, c.busy_since = False, 0.0
     assert c.waiting_text() == ""
+    # ---- 聊天对象: 每个对象各自的聊天记录, 切换, 旧记录迁移 ----
+    dm_dir = os.path.join(td, "multi")
+    os.makedirs(dm_dir)
+    open(os.path.join(folder, "夜.txt"), "w", encoding="utf-8").write("你是夜")
+    mc = Comm(dm_dir, folder, now=lambda: clock[0], chat_fn=fake)
+    mc.ai.set_profile("deepseek", api_key="k")
+    mc.ai.provider = "deepseek"
+    mc.set_cfg(persona="小夏.txt")
+    script.append("小夏: 在")
+    mc.send("你好小夏")
+    wait(mc)
+    mc.set_cfg(persona="夜.txt")
+    assert mc.visible() == [] and mc.pid == pid_of("夜.txt"), "换了对象: 这个对象还没有聊过"
+    script.append("夜: 嗯")
+    mc.send("你好夜")
+    wait(mc)
+    assert [m["text"] for m in mc.visible()] == ["你好夜", "夜: 嗯"]
+    assert all("你好小夏" not in (m.get("api") or "") for m in calls[-1][1]), "发给夜的不带小夏那边的记录"
+    assert calls[-1][0].endswith("你是夜")
+    mc.set_cfg(persona="小夏.txt")
+    assert [m["text"] for m in mc.visible()] == ["你好小夏", "小夏: 在"], "换回来: 各聊各的"
+    mc.clear()
+    mc.set_cfg(persona="夜.txt")
+    assert len(mc.visible()) == 2, "清空只清现在这个对象"
+    mc.flush()
+    mc2 = Comm(dm_dir, folder, now=lambda: clock[0], chat_fn=fake)
+    assert mc2.persona_name() == "夜.txt" and len(mc2.visible()) == 2
+    mc2.set_cfg(persona="小夏.txt")
+    assert mc2.visible() == []
+    files = sorted(f for f in os.listdir(dm_dir) if f.startswith("comm_chat_") and f.endswith(".json"))
+    assert f"comm_chat_{pid_of('小夏.txt')}.json" in files and f"comm_chat_{pid_of('夜.txt')}.json" in files, files
+    # 旧版本: 所有对象共用一份 comm_chat.json → 归给现在选着的对象
+    leg = os.path.join(td, "legacy")
+    os.makedirs(leg)
+    config.save_json_file(os.path.join(leg, "comm_chat.json"), {"messages": [
+        {"id": 1, "role": "me", "text": "以前的话", "at": "2026-11-02T08:00:00"}]})
+    config.save_json_file(os.path.join(leg, "comm_config.json"), {"persona": "小夏.txt", "seeded": True})
+    lc = Comm(leg, folder, now=lambda: clock[0], chat_fn=fake)
+    assert [m["text"] for m in lc.visible()] == ["以前的话"] and lc.cfg["legacy_done"]
+    lc.set_cfg(persona="夜.txt")
+    assert lc.visible() == []
+    # 身份背景: 用户自己填, 随 system 一起发, 同步
+    mc.set_cfg(persona="小夏.txt", user_profile="我是大二的学生, 在准备考研.")
+    script.append("好")
+    mc.send("嗨")
+    wait(mc)
+    assert calls[-1][0].endswith("以下是用户的身份背景(用户自己填写):\n我是大二的学生, 在准备考研.")
+    other = Comm(os.path.join(td, "prof"), folder, now=lambda: clock[0], chat_fn=fake) if os.makedirs(os.path.join(td, "prof")) is None else None
+    other.apply_doc(mc.sync_doc())
+    assert other.cfg["user_profile"] == "我是大二的学生, 在准备考研."
+    mc.flush(); mc2.flush(); lc.flush(); other.flush()
     # ---- 对方要资料: [refuse to reply][contract] → 给词条库再调用一次 ----
     assert info_tags(" [Refuse to reply] [CONTRACT] ") == ["contract"] and info_tags("[contract]") == []
     assert info_tags("[refuse to reply][mechanics.md]") == [] and info_tags("好的") == []
