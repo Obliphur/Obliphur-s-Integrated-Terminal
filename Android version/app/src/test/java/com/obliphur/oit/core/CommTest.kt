@@ -633,7 +633,7 @@ class CommTest {
         c.importPersona("日程.txt", "你是小满.\n12:30-13:00:空闲\n20:40-21:18:休息\n".byteInputStream())
         c.set(persona = "日程.txt")
         assertEquals(80.0 to 60.0, c.proPercent("idle") to c.proPercent("rest"))          // 人设里没写: 默认概率
-        assertEquals(mapOf("idle" to 50.0, "rest" to 40.0, "long" to 40.0), CommText.personaProbs(BuiltinPersonas.ALL.getValue("Claudia.txt")))   // Claudia: 50% / 40% / 40%
+        assertEquals(mapOf("idle" to 20.0, "rest" to 20.0, "long" to 20.0), CommText.personaProbs(BuiltinPersonas.ALL.getValue("Claudia.txt")))   // Claudia: 20% / 20% / 20%
         assertEquals(mapOf("idle" to 12.5, "rest" to 40.0), CommText.personaProbs("空闲发起谈话概率:12.5%\n休息发起谈话概率 ： 0.4\n休息发起谈话概率:90%"))
         assertEquals(mapOf("idle" to 100.0, "rest" to 30.0), CommText.personaProbs("空闲发起谈话概率:1\n休息发起谈话概率:30"))
         assertEquals(mapOf("idle" to 100.0), CommText.personaProbs("空闲发起谈话概率:150%\n休息发起谈话概率:x"))
@@ -691,7 +691,7 @@ class CommTest {
         val c2 = comm(File(td, "d2").also { it.mkdirs() }, File(td, "p2"))
         assertEquals("Claudia.txt", c2.personaName())
         File(td, "p2/全发.txt").writeText(BuiltinPersonas.ALL.getValue("Claudia.txt")
-            .replace("空闲发起谈话概率:50%", "空闲发起谈话概率:100%").replace("休息发起谈话概率:40%", "休息发起谈话概率:100%"))
+            .replace("空闲发起谈话概率:20%", "空闲发起谈话概率:100%").replace("休息发起谈话概率:20%", "休息发起谈话概率:100%"))
         c2.set(persona = "全发.txt")
         c2.snapshot = { CommSnap("idle") }
         script.add("晚点见")

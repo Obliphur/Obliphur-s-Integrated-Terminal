@@ -177,9 +177,9 @@ BUILTIN_PERSONAS = {"Claudia.txt": """你将扮演一位文静,冷淡的17岁大
 23:30-6:30:睡眠
 
 【主动发起谈话】(OIT 读这两行决定你每段空闲 / 休息开始前主动找用户说话的概率)
-空闲发起谈话概率:50%
-休息发起谈话概率:40%
-长时间休息发起谈话概率:40%
+空闲发起谈话概率:20%
+休息发起谈话概率:20%
+长时间休息发起谈话概率:20%
 
 【按日程回复】(每次收到消息都先做这一步)
 1. 看消息开头方括号里的时间,在上面的日程里找到那个时间属于哪一段.
@@ -1623,7 +1623,7 @@ def _selftest():
     # 长时间休息发起谈话概率: 人设里写的; 0% 不发 (这个时间点算处理过了); 没写默认 70%
     assert persona_probs("长时间休息发起谈话概率:0.7\n休息发起谈话概率:30\n空闲发起谈话概率:20%") == {"long": 70.0, "rest": 30.0, "idle": 20.0}
     assert c2.pro_percent("long") == 100.0 and Comm.pro_percent.__name__ and PROACTIVE_P["long"] == 70
-    assert persona_probs(BUILTIN_PERSONAS["Claudia.txt"]) == {"idle": 50.0, "rest": 40.0, "long": 40.0}
+    assert persona_probs(BUILTIN_PERSONAS["Claudia.txt"]) == {"idle": 20.0, "rest": 20.0, "long": 20.0}
     open(longp, "w", encoding="utf-8").write("你是小满.\n长时间休息发起谈话概率:0%\n")
     c2.reload_schedule()
     clock[0] += timedelta(minutes=15)
@@ -1967,7 +1967,7 @@ def _selftest():
     c5.ai.provider = "deepseek"
     c5.set_cfg(persona="日程.txt")
     assert (c5.pro_percent("idle"), c5.pro_percent("rest")) == (80, 60), "人设里没写: 默认概率"
-    assert persona_probs(BUILTIN_PERSONAS["Claudia.txt"]) == {"idle": 50.0, "rest": 40.0, "long": 40.0}, "Claudia: 50% / 40% / 40%"
+    assert persona_probs(BUILTIN_PERSONAS["Claudia.txt"]) == {"idle": 20.0, "rest": 20.0, "long": 20.0}, "Claudia: 20% / 20% / 20%"
     assert persona_probs("空闲发起谈话概率:12.5%\n休息发起谈话概率 ： 0.4\n休息发起谈话概率:90%") == {"idle": 12.5, "rest": 40.0}
     assert persona_probs("空闲发起谈话概率:1\n休息发起谈话概率:30") == {"idle": 100.0, "rest": 30.0}, "不带 % 的: 小数 (<=1) 或百分数"
     assert persona_probs("空闲发起谈话概率:150%\n休息发起谈话概率:x") == {"idle": 100.0} and persona_probs("") == {}
@@ -2037,7 +2037,7 @@ def _selftest():
     c6.ai.set_profile("deepseek", api_key="k")
     c6.ai.provider = "deepseek"
     open(os.path.join(folder, "全发.txt"), "w", encoding="utf-8").write(
-        BUILTIN_PERSONAS["Claudia.txt"].replace("空闲发起谈话概率:50%", "空闲发起谈话概率:100%").replace("休息发起谈话概率:40%", "休息发起谈话概率:100%"))
+        BUILTIN_PERSONAS["Claudia.txt"].replace("空闲发起谈话概率:20%", "空闲发起谈话概率:100%").replace("休息发起谈话概率:20%", "休息发起谈话概率:100%"))
     c6.set_cfg(persona="全发.txt")
     c6.snapshot = lambda: {"state": "idle"}
     script.append("晚点见")
