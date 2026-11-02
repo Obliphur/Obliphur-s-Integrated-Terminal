@@ -95,8 +95,18 @@ def readme_text() -> str:
         "在你的人设prompt被发送之前,会被附加上一段额外的前置prompt和休息时间函数相关的内容:\n"
         f"'{prefix_prompt()}'\n"
         "你可以根据以上设定编写你的人物日程/喜好.但是最好不要把对方设置为整天都空闲,尊重一下上面的设定吧...\n\n"
-        "主动发消息: 日程里形如 12:30-13:00:空闲 / 8:40-9:18:休息 的行(24小时制,每天重复),对方会在每段空闲/休息开始前1~3分钟"
-        "按概率(默认80%/60%,在 设置 → 沟通 里改)主动给你发一条消息;你自己休息超过20分钟时,休息开始后1~3分钟也会发一条.\n\n"
+        "日程的标准写法(OIT 靠它安排对方主动发消息的时间):\n"
+        "  每个时间段单独写一行,格式 开始-结束:名字,24小时制,每天重复,例如\n"
+        "    7:00-8:40:专注\n"
+        "    8:40-9:18:休息\n"
+        "    12:30-13:00:空闲\n"
+        "    23:30-6:30:睡眠\n"
+        "  名字里有\"空闲\"的算空闲段,有\"休息\"的算休息段(别的名字,如专注/睡眠/午饭,OIT 不看);只看每段的开始时刻,跨零点的段也行.\n"
+        "  OIT 不会自己推算\"100min专注+37.7min休息\"这样的循环,请把每一段都写成具体的时间"
+        "(可以用 [循环 7:00-12:00] 这样的标题行分组,标题行不影响).\n"
+        "  对方会在每段空闲开始前1~3分钟(默认80%概率)、每段休息开始前1~3分钟(默认60%概率)主动给你发一条消息"
+        "(概率在 设置 → 沟通 里改);你自己休息超过20分钟时,休息开始后1~3分钟也会发一条.\n"
+        "  每次打开OIT、开始新对话(清空聊天记录 / 换人设)时,OIT 都会重新读取人设,并按里面的时间调整这些时刻;人设文件改了之后也会自动重新读取.\n\n"
         "文件格式: 一个 .txt 或 .md 文件就是一个人设, 文件名就是人设的名字, 整个文件的内容就是人设prompt.\n"
         "放进这个文件夹后, 在 设置 → 沟通 里选择它 (也可以用\"导入\"按钮复制进来).\n")
 
@@ -391,6 +401,7 @@ class Comm:
         if last and last["role"] == "me" and self._age(last) < 6 * 3600 and not rt.get("at"):
             # 上次关程序时还没收到回复: 1 分钟后让 (最后操作的) 设备再试一次
             self.cfg["retry"] = {"at": self._ms() - RETRY_GAP * 1000 + 60000, "n": int(rt.get("n") or 0)}
+        self.reload_schedule("启动")
 
     # ---- 存取 ----
     # 每个聊天对象 (人设) 的聊天记录分开存: comm_chat_<人设文件名的 crc>.json = 消息 + 清空的时刻 + 重试状态 + 主动消息的标记.
@@ -511,6 +522,7 @@ class Comm:
         self.error = ""
         self.unread = 0
         self.attach_touched = self.attach_touched
+        self.reload_schedule("换人设")
 
     def _take_id(self) -> int:
         self._next_id += 1
@@ -735,6 +747,7 @@ class Comm:
             self.unread = 0
             self.error = ""
             self._epoch += 1
+            self.reload_schedule("新对话")
         if touched:
             self._changed()
         self._synced_ping([m for pid, m in fresh if pid == self.pid])
@@ -1082,6 +1095,12 @@ class Comm:
             self._seg_cache = schedule_segments(read_persona(self.personas, name))
         return self._seg_cache
 
+    def reload_schedule(self, why: str = ""):
+        """重新读人设里的日程, 主动发消息的时刻按它调整: 打开 OIT / 开始新对话 (清空) / 换人设时调用; 人设文件改了也会在 _segments 里自己重读."""
+        self._seg_sig = None
+        segs = self._segments()
+        self.log(f"SCHEDULE {why}: 空闲 {sum(k == 'idle' for k, _m in segs)} 段, 休息 {sum(k == 'rest' for k, _m in segs)} 段")
+
     def _schedule_events(self, now) -> list:
         """日程里 3 分钟之内就要开始的空闲 / 休息段: [(时间点, "idle" | "rest", 开始的时刻)]."""
         out = []
@@ -1144,6 +1163,7 @@ class Comm:
         self.cfg["retry"] = {}
         self.save_cfg()
         self.save_chat()
+        self.reload_schedule("新对话")
         self._changed()
         self._push()
 
@@ -1663,6 +1683,14 @@ def _selftest():
     assert "休息时间将在 22:58 开始" in calls[-1][1][-1]["content"]
     assert fire_before(c6, datetime(2027, 4, 1, 23, 0)) is None, "刚发过, 23:00 的空闲段不再发"
     assert any(k.startswith("S2027-04-01T23:00") for k in c6._pro_done())
+    # README 里的标准写法: 例子能被认出来; 打开 OIT / 换人设 / 新对话都会重新读人设日程
+    assert "日程的标准写法" in readme_text() and schedule_segments(readme_text()) == [("rest", 520), ("idle", 750)]
+    log5 = lambda: open(os.path.join(td, "sched", "comm.log"), encoding="utf-8").read()
+    assert "SCHEDULE 启动" in log5() and "SCHEDULE 换人设: 空闲 1 段, 休息 1 段" in log5()
+    open(os.path.join(folder, "日程.txt"), "a", encoding="utf-8").write("14:00-14:30:空闲\n")
+    c5.clear()
+    assert "SCHEDULE 新对话: 空闲 2 段, 休息 1 段" in log5(), "新对话: 人设改过的日程马上生效"
+    assert sorted(c5._segments()) == [("idle", 750), ("idle", 840), ("rest", 1240)]
     for x in (c5, c6):
         x.flush()
     return "comm selftest OK"

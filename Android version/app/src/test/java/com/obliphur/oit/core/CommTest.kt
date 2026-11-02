@@ -483,5 +483,14 @@ class CommTest {
         wait(c2)
         assertTrue("休息时间将在 22:58 开始" in calls.last().second.last().second)
         assertNull("刚发过, 23:00 的空闲段不再发", fireBefore(c2, LocalDateTime.of(2027, 4, 1, 23, 0)))
+
+        // README 里的标准写法: 例子能被认出来; 打开 OIT / 换人设 / 新对话都会重新读人设日程
+        assertTrue("日程的标准写法" in CommText.readme())
+        assertEquals(listOf("rest" to 520, "idle" to 750), CommText.scheduleSegments(CommText.readme()))
+        val log = { File(td, "d/comm.log").readText() }
+        assertTrue("SCHEDULE 启动" in log() && "SCHEDULE 换人设: 空闲 1 段, 休息 1 段" in log())
+        File(td, "p/日程.txt").appendText("14:00-14:30:空闲\n")
+        c.clear()
+        assertTrue("新对话: 人设改过的日程马上生效", "SCHEDULE 新对话: 空闲 2 段, 休息 1 段" in log())
     }
 }

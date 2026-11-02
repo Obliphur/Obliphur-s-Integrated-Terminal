@@ -118,8 +118,18 @@ object CommText {
             "在你的人设prompt被发送之前,会被附加上一段额外的前置prompt和休息时间函数相关的内容:\n" +
             "'${prefixPrompt()}'\n" +
             "你可以根据以上设定编写你的人物日程/喜好.但是最好不要把对方设置为整天都空闲,尊重一下上面的设定吧...\n\n" +
-            "主动发消息: 日程里形如 12:30-13:00:空闲 / 8:40-9:18:休息 的行(24小时制,每天重复),对方会在每段空闲/休息开始前1~3分钟" +
-            "按概率(默认80%/60%,在 设置 → 沟通 里改)主动给你发一条消息;你自己休息超过20分钟时,休息开始后1~3分钟也会发一条.\n\n" +
+            "日程的标准写法(OIT 靠它安排对方主动发消息的时间):\n" +
+            "  每个时间段单独写一行,格式 开始-结束:名字,24小时制,每天重复,例如\n" +
+            "    7:00-8:40:专注\n" +
+            "    8:40-9:18:休息\n" +
+            "    12:30-13:00:空闲\n" +
+            "    23:30-6:30:睡眠\n" +
+            "  名字里有\"空闲\"的算空闲段,有\"休息\"的算休息段(别的名字,如专注/睡眠/午饭,OIT 不看);只看每段的开始时刻,跨零点的段也行.\n" +
+            "  OIT 不会自己推算\"100min专注+37.7min休息\"这样的循环,请把每一段都写成具体的时间" +
+            "(可以用 [循环 7:00-12:00] 这样的标题行分组,标题行不影响).\n" +
+            "  对方会在每段空闲开始前1~3分钟(默认80%概率)、每段休息开始前1~3分钟(默认60%概率)主动给你发一条消息" +
+            "(概率在 设置 → 沟通 里改);你自己休息超过20分钟时,休息开始后1~3分钟也会发一条.\n" +
+            "  每次打开OIT、开始新对话(清空聊天记录 / 换人设)时,OIT 都会重新读取人设,并按里面的时间调整这些时刻;人设文件改了之后也会自动重新读取.\n\n" +
             "文件格式: 一个 .txt 或 .md 文件就是一个人设, 文件名就是人设的名字, 整个文件的内容就是人设prompt.\n" +
             "放进这个文件夹后, 在 设置 → 沟通 里选择它 (也可以用\"导入\"按钮复制进来).\n"
 
@@ -208,6 +218,8 @@ class Comm(
     var avatarMe = ""; private set
     var avatarAi = ""; private set
     private var proKey = ""
+    private var segSig: String? = null                      // 人设文件的 (名字, 修改时间, 大小): 变了才重新读日程
+    private var segCache: List<Pair<String, Int>> = emptyList()
     private var seeded = false
     private var legacyDone = false
     /** 现在聊的对象的编号 (人设文件名的 crc; 没有对象 = ""). */
@@ -291,6 +303,7 @@ class Comm(
         val last = messages.lastOrNull()
         if (last != null && last.role == "me" && ageSeconds(last) < 6 * 3600 && retryAt == 0L)
             retryAt = nowMs() - RETRY_GAP * 1000L + 60_000        // 上次关程序时还没收到回复: 1 分钟后让 (最后操作的) 设备再试一次
+        reloadSchedule("启动")
     }
 
     private fun nowMs() = now().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
@@ -413,6 +426,7 @@ class Comm(
         epoch++
         error = ""
         unread = 0
+        reloadSchedule("换人设")
     }
 
     // 写盘 (fsync) 放在后台线程: 发送 / 收到消息时界面线程不等磁盘, 不卡. 先在这里做好快照, 线程只管写.
@@ -568,7 +582,7 @@ class Comm(
             tc.st.messages.sortWith(compareBy({ it.ts }, { it.uid }))
             storeState(p, tc.st)
         }
-        if (clearedActive) { unread = 0; error = ""; epoch++ }
+        if (clearedActive) { unread = 0; error = ""; epoch++; reloadSchedule("新对话") }
         if (touched.isNotEmpty()) changed()
         syncedPing(fresh)
     }
@@ -922,9 +936,6 @@ class Comm(
         return ageSeconds(m) < PROACTIVE_GAP
     }
 
-    private var segSig: String? = null
-    private var segCache: List<Pair<String, Int>> = emptyList()
-
     /** 现在这个人设日程里的空闲 / 休息段 (人设文件没变就用上次读的). */
     private fun segments(): List<Pair<String, Int>> {
         val name = personaName()
@@ -934,6 +945,13 @@ class Comm(
         val sig = "$name|${f.lastModified()}|${f.length()}"
         if (sig != segSig) { segSig = sig; segCache = CommText.scheduleSegments(readPersona(name)) }
         return segCache
+    }
+
+    /** 重新读人设里的日程, 主动发消息的时刻按它调整: 打开 OIT / 开始新对话 (清空) / 换人设时调用; 人设文件改了也会在 segments() 里自己重读. */
+    fun reloadSchedule(why: String = "") {
+        segSig = null
+        val segs = segments()
+        log("SCHEDULE $why: 空闲 ${segs.count { it.first == "idle" }} 段, 休息 ${segs.count { it.first == "rest" }} 段")
     }
 
     /** 日程里 3 分钟之内就要开始的空闲 / 休息段. */
@@ -999,6 +1017,6 @@ class Comm(
         clearTs = maxOf(nowMs(), lastTs)
         messages.clear(); unread = 0; retryAt = 0; retryN = 0; error = ""
         epoch++
-        saveCfg(); saveChat(); changed(); push()
+        saveCfg(); saveChat(); reloadSchedule("新对话"); changed(); push()
     }
 }
