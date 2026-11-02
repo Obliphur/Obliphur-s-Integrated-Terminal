@@ -464,6 +464,7 @@ EN = {
     "刚从外出回来的设备的记录有优先权: 去掉了本机重叠的专注 {s}, 休息 {b}, 空闲 {i}.":
         "Records from the device that just came back from an outing take priority: removed overlapping focus {s}, break {b}, idle {i} from this device.",
     "📖  日志": "📖  Journal",
+    "无言为真生效中, 无法使用沟通": "Chat is unavailable while 'Silence is Truth' is active",
     "发送数据": "Send data",
     "📊  统计": "📊  Statistics",
     "📅  日历": "📅  Calendar",

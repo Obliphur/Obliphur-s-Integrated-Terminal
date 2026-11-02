@@ -109,6 +109,8 @@ class Comm(
     /** 📎 勾选的内容 (统计 / 日历 / 合约词条); Core 接上. 空 = 没有可发的. */
     var dataFn: (CommSel) -> String = { "" }
     var fog: () -> Boolean = { false }
+    /** 现在不能用沟通的原因 ("" = 可以): 合约的"无言为真". Core 接上. */
+    var blocked: () -> String = { "" }
     var hourLines: () -> List<String> = { emptyList() }
     var snapshot: () -> CommSnap? = { null }
     private class Result(val kind: String, val trig: Int, val reply: String, val err: String, val epoch: Int)
@@ -245,6 +247,7 @@ class Comm(
 
     /** 现在不能聊天的原因 ("" = 可以). */
     fun problem(fresh: Boolean = false): String {
+        blocked().let { if (it.isNotEmpty()) return it }
         val t = System.currentTimeMillis()
         if (fresh || t - problemAt > 5000) {
             problemAt = t
@@ -403,6 +406,7 @@ class Comm(
 
     private fun finish(r: Result) {
         busy = false
+        if (blocked().isNotEmpty()) { again = false; changed(); return }       // 等回复的时候"无言为真"生效了: 这条回复不要了
         if (r.epoch != epoch) { again = false; changed(); return }       // 发出之后清空过聊天记录: 这条回复不要了
         val t = now()
         if (r.err.isNotEmpty()) {

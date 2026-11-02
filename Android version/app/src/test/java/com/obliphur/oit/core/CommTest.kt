@@ -144,6 +144,16 @@ class CommTest {
         assertEquals("没有可发送的数据", c.sendData(CommSel(stats = listOf("net"))))
         c.fog = { true }
         assertEquals("黑雾中无法发送", c.sendData(CommSel(stats = listOf("net"))))
+        // 无言为真: 不能发, 不会主动发, 也不会重试
+        c.fog = { false }
+        c.dataFn = { "x" }
+        c.blocked = { "无言为真生效中, 无法使用沟通" }
+        val n = c.messages.size
+        assertEquals("无言为真生效中, 无法使用沟通", c.send("hi"))
+        assertEquals("无言为真生效中, 无法使用沟通", c.sendData(CommSel(stats = listOf("net"))))
+        c.tick()
+        assertTrue(c.messages.size == n && !c.busy)
+        c.blocked = { "" }
         assertEquals("📎 统计·整点记录、应用 / 日历·睡眠 / 合约词条",
             CommData.label(CommSel(listOf("log", "window"), listOf("sleep"), true)))
     }

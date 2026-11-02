@@ -627,6 +627,7 @@ object EnStrings {
         "自由学习" to "Free study",
         "🚪  外出" to "🚪  Going out",
         "📖  日志" to "📖  Journal",
+        "无言为真生效中, 无法使用沟通" to "Chat is unavailable while 'Silence is Truth' is active",
         "发送数据" to "Send data",
         "📊  统计" to "📊  Statistics",
         "📅  日历" to "📅  Calendar",

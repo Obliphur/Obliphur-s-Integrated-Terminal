@@ -31,6 +31,7 @@ class CommPage(tk.Frame):
         self.username = username or (lambda: "")
         self.on_open_settings = on_open_settings
         self._ver = -1
+        self._blocked = ""
         self._resize_job = None
         self._rendered = []          # 已经画出来的消息 id (从旧到新)
         self._rows = []              # 对应的行控件
@@ -95,11 +96,14 @@ class CommPage(tk.Frame):
     def refresh(self, force: bool = False):
         c = self.comm
         self._resize_job = None
-        if not force and c.version == self._ver and self._sig == self._signature():
+        blocked = c.blocked()
+        if not force and blocked == self._blocked and c.version == self._ver and self._sig == self._signature():
             return
         self._ver = c.version
+        self._blocked = blocked
         cfg(self.lbl_who, text=comm_mod.persona_title(c.persona_name()))
-        cfg(self.lbl_status, text=tr(c.error) if c.error else "", fg=COLORS["danger"])
+        cfg(self.lbl_status, text=blocked or (tr(c.error) if c.error else ""), fg=COLORS["danger"])
+        self.entry.config(state="disabled" if blocked else "normal")
         self._sync_rows()
 
     def _wrap(self) -> int:
@@ -260,7 +264,7 @@ class CommPage(tk.Frame):
     def _report(self, why: str):
         """不能发的原因: 提示; 是没配置好的(没填 API / 没选人设), 直接带去 设置 → 沟通."""
         toast.warn(tr(why))
-        fixable = why in NEEDS_SETUP or any(k in why for k in ("API", "Base URL", "模型"))
+        fixable = why in NEEDS_SETUP or (not self.comm.blocked() and any(k in why for k in ("API", "Base URL", "模型")))
         if fixable and self.on_open_settings:
             self.on_open_settings()
 

@@ -210,6 +210,7 @@ class Comm:
         self.snapshot = lambda: {}     # 计时器状态; app 接上
         self.data_fn = lambda sel: ""  # 统计 / 日历 / 合约词条的数据 (comm_data.build); app 接上
         self.fog = lambda: False       # 合约黑雾中: 不发数据
+        self.blocked = lambda: ""      # 现在不能用沟通的原因 ("" = 可以): 合约的"无言为真"
         self.on_change = None          # 界面线程里调用
         self._lock = threading.Lock()
         self._wlock = threading.Lock()
@@ -304,6 +305,9 @@ class Comm:
 
     def problem(self) -> str:
         """现在不能聊天的原因 ("" = 可以)."""
+        why = self.blocked()
+        if why:
+            return why
         try:
             ai_assist.check_profile(self.ai.profile())
         except ai_assist.AIError as e:
@@ -468,6 +472,10 @@ class Comm:
 
     def _finish(self, kind: str, trig: int, reply: str, err: str, epoch: int = 0):
         self.busy = False
+        if self.blocked():                              # 等回复的时候"无言为真"生效了: 这条回复不要了
+            self._again = False
+            self._changed()
+            return
         if epoch != self._epoch:                        # 发出之后清空过聊天记录: 这条回复不要了
             self._again = False
             self._changed()
@@ -751,6 +759,13 @@ def _selftest():
     assert c.send_data({"stats": ["net"]}) == "没有可发送的数据"
     c.fog = lambda: True
     assert c.send_data({"stats": ["net"]}) == "黑雾中无法发送"
+    # 无言为真: 不能发, 不会主动发, 也不会重试
+    c.blocked = lambda: "无言为真生效中, 无法使用沟通"
+    n = len(c.messages)
+    assert c.send("hi") == "无言为真生效中, 无法使用沟通" and c.send_data({"stats": ["net"]}) == "无言为真生效中, 无法使用沟通"
+    c.tick()
+    assert len(c.messages) == n and not c.busy
+    c.blocked = lambda: ""
     c.flush()
     return "comm selftest OK"
 

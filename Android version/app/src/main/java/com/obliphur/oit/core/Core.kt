@@ -253,6 +253,8 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         comm.snapshot = { commSnapshot() }
         comm.hourLines = { commHourLines() }
         comm.fog = { contract.fog() }
+        // 合约的"无言为真" (社交软件和与 AI 聊天的软件禁止联网): 沟通也算, 生效期间不能用
+        comm.blocked = { if (contract.has("silent")) tr("无言为真生效中, 无法使用沟通") else "" }
         comm.dataFn = { sel ->
             if (contract.fog()) "" else CommData.build(sel, this) { pkg ->
                 runCatching { com.obliphur.oit.service.appLabel(com.obliphur.oit.OitApp.instance, pkg) }.getOrDefault(pkg)

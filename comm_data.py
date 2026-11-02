@@ -12,7 +12,7 @@ STATS_KEYS = (("log", "整点记录"), ("net", "联网理由"), ("focus", "专�
 CAL_KEYS = (("study", "专注"), ("break", "休息"), ("idle", "空闲"), ("sleep", "睡眠"))
 WEEKDAY = "一二三四五六日"
 TOP = 12
-MAX_CHARS = 6000
+MAX_CHARS = 14000          # 整个词条库约 4000 字, 和别的数据一起也放得下
 
 
 def label(sel: dict) -> str:
@@ -53,6 +53,41 @@ def _record(rec: dict) -> str:
     head = f"危机等级 {C.level_label(int(rec.get('level') or 0), int(rec.get('orig_level') or rec.get('level') or 0))}"
     body = "; ".join(C.BY_ID[tid][3].split(":", 1)[-1] + ("(已失效)" if void else "") for _lv, tid, void, _o in rows)
     return f"  {head}: {body}"
+
+
+def _req_name(req: str) -> str:
+    """组合的一条要求: 词条 id 或词条系列 (写成系列里第一档的名字, 去掉罗马数字)."""
+    if req in C.BY_ID:
+        return C.BY_ID[req][3].split(":", 1)[-1]
+    for t in C.TERMS:
+        if t[1] == req:
+            return t[3].split(":", 1)[-1].rsplit("-", 1)[0] + "(任意一档)"
+    return req
+
+
+def library(contract) -> str:
+    """整个词条库和组合, 标出哪些被用户选择 / 激活了: 合约进行中 = 激活的, 没开始 = 选好的(还没生效)."""
+    active = bool(contract.active)
+    selected = list(contract.terms) if active else list(contract.draft)
+    tag = "已激活" if active else "已选择(合约还没开始)"
+    lost = set(contract.lost) if active else set()
+    head = (f"合约进行中, 危机等级 {getattr(contract, 'level_text', '')}" if active else
+            ("合约没有开始, 选好的词条还没生效" if selected else "现在没有进行中的合约, 也没有选好的词条"))
+    lines = [f"【合约词条库】{head}。词条后面的【{tag}】= 用户选的; 【已失效】= 被违反到失效。"]
+    for t in C.TERMS:
+        mark = f"【{tag}】" if t[0] in selected else ("【已失效】" if t[0] in lost else "")
+        kind, _sep, name = t[3].partition(":")
+        if not _sep:
+            kind, name = "特殊", kind
+        lines.append(f"- {name}({kind}, 等级{t[2]}){mark}: {t[4]}".replace("\n", " "))
+    lines.append("\n【词条组合】(组合的要求都选着才生效)")
+    for c in C.COMBOS:
+        got = [r for r in c["reqs"] if C.combo_done({"reqs": (r,)}, selected)]
+        done = C.combo_done(c, selected)
+        mark = f"【{tag}·已凑齐】" if done else (f"(已选 {len(got)}/{len(c['reqs'])})" if got else "")
+        lines.append(f"- {c['name']}{mark}: 需要 " + " + ".join(_req_name(r) + ("✓" if r in got else "") for r in c["reqs"])
+                     + f"; 效果: {c['desc']}".replace("\n", ", "))
+    return "\n".join(lines)
 
 
 def build(sel: dict, dm, net, contract, now: datetime = None, focus_live=None, cal_live=None,
@@ -109,13 +144,7 @@ def build(sel: dict, dm, net, contract, now: datetime = None, focus_live=None, c
         blocks.append(f"【日历·{name} {prefix}{tail}】\n" + ("\n".join(lines) if lines else "  没有记录")
                       + f"\n  合计: {sum(days.values()):.1f} h")
     if sel.get("contract"):
-        if contract.active:
-            body = "\n".join("  " + term_text(t) for t in contract.terms) or "  (没有词条)"
-            blocks.append(f"【合约词条·进行中 危机等级 {getattr(contract, 'level_text', '')}】\n" + body)
-        elif contract.draft:
-            blocks.append("【合约词条·准备中(还没开始)】\n" + "\n".join("  " + term_text(t) for t in contract.draft))
-        else:
-            blocks.append("【合约词条】\n  现在没有进行中的合约, 也没有选好的词条")
+        blocks.append(library(contract))
     text = "\n\n".join(blocks)
     return text[:MAX_CHARS]
 
@@ -148,6 +177,7 @@ def _selftest():
         draft = ["long1"]
         history = []
         terms = []
+        lost = []
 
     class Act(Con):
         active = True
@@ -155,13 +185,17 @@ def _selftest():
         level_text = "1"
 
     now = datetime(2026, 11, 2, 12, 0)
-    assert "进行中 危机等级 1" in build({"contract": True}, DM(), Net(), Act(), now=now)
+    assert "合约进行中, 危机等级 1" in build({"contract": True}, DM(), Net(), Act(), now=now)
     sel = {"stats": ["log", "net", "focus", "window", "contracts"], "cal": ["study", "sleep"], "contract": True}
     text = build(sel, DM(), Net(), Con(), now=now)
     for k in ("整点记录 2026-11", "写代码: 2.0 h", "学习资料: 15 分钟", "专注 30 分钟, 休息 10 分钟", "空白: 0.2 h", "code.exe",
-              "还没有顺利完成的合约", "日历·专注", "2026-11-01: 3.5 h", "合计: 4.5 h", "日历·睡眠", "只有最近 7 天", "准备中", "持久战-I"):
+              "还没有顺利完成的合约", "日历·专注", "2026-11-01: 3.5 h", "合计: 4.5 h", "日历·睡眠", "只有最近 7 天", "合约没有开始", "持久战-I(环境, 等级1)【已选择(合约还没开始)】", "无言为真(环境, 等级2)", "打年糕", "信息隔绝"):
         assert k in text, k
     assert "2026-10-30" not in text
+    lib = library(Act())
+    assert "持久战-I(环境, 等级1)【已激活】" in lib and "无言为真(环境, 等级2):" in lib and "【已激活】" not in lib.split("无言为真")[1].split("\n")[0]
+    assert "打年糕(已选 1/4): 需要" in lib and "未知变量(特殊, 等级3)" in lib and "持久战(任意一档)✓" in lib
+    assert len(lib) < 9000, len(lib)
     assert label(sel) == "📎 统计·整点记录、联网理由、专注计时、窗口、合约记录 / 日历·专注、睡眠 / 合约词条"
     assert label({"stats": [], "cal": [], "contract": False}) == ""
     return "comm_data selftest OK"

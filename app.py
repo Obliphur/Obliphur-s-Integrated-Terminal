@@ -352,6 +352,8 @@ class BreakTimerApp:
         self.comm.on_change = self.update_comm_badge
         self.comm.data_fn = self._comm_data
         self.comm.fog = lambda: bool(self.contract.fog())
+        # 合约的"无言为真" (社交软件和与 AI 聊天的软件禁止联网): 沟通也算, 生效期间不能用
+        self.comm.blocked = lambda: tr("无言为真生效中, 无法使用沟通") if self.contract.has("silent") else ""
         self._rules_win = None
         self._marks_shown = None        # 指令标记现在画在哪些按钮上 (None = 还没画过)
         self._mark_img = None

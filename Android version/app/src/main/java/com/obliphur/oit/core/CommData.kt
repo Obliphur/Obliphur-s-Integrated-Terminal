@@ -11,7 +11,7 @@ object CommData {
     val CAL_KEYS = listOf("study" to "专注", "break" to "休息", "idle" to "空闲", "sleep" to "睡眠")
     private const val WEEKDAY = "一二三四五六日"
     private const val TOP = 12
-    const val MAX_CHARS = 6000
+    const val MAX_CHARS = 14000          // 整个词条库约 4000 字, 和别的数据一起也放得下
 
     /** 聊天里显示的那一行. */
     fun label(sel: CommSel): String {
@@ -42,6 +42,38 @@ object CommData {
         val head = "危机等级 " + Contract.levelLabel(level, rec.optInt("orig_level", level))
         val body = rows.joinToString("; ") { r -> (Contract.BY_ID[r.id]?.name?.substringAfter(':') ?: r.id) + if (r.void) "(已失效)" else "" }
         return "  $head: $body"
+    }
+
+    private fun reqName(req: String): String {
+        Contract.BY_ID[req]?.let { return it.name.substringAfter(':') }
+        Contract.TERMS.firstOrNull { it.group == req }?.let { return it.name.substringAfter(':').substringBeforeLast('-') + "(任意一档)" }
+        return req
+    }
+
+    /** 整个词条库和组合, 标出哪些被用户选择 / 激活了: 合约进行中 = 激活的, 没开始 = 选好的(还没生效). */
+    fun library(c: Contract): String {
+        val active = c.active
+        val selected = if (active) c.terms else c.draft
+        val tag = if (active) "已激活" else "已选择(合约还没开始)"
+        val lost = if (active) c.lost.toSet() else emptySet()
+        val head = if (active) "合约进行中, 危机等级 ${Contract.levelLabel(c.level, c.origLevel)}"
+        else if (selected.isNotEmpty()) "合约没有开始, 选好的词条还没生效" else "现在没有进行中的合约, 也没有选好的词条"
+        val lines = ArrayList<String>()
+        lines.add("【合约词条库】$head。词条后面的【$tag】= 用户选的; 【已失效】= 被违反到失效。")
+        for (t in Contract.TERMS) {
+            val mark = if (t.id in selected) "【$tag】" else if (t.id in lost) "【已失效】" else ""
+            val kind = if (':' in t.name) t.name.substringBefore(':') else "特殊"
+            lines.add("- ${t.name.substringAfter(':')}($kind, 等级${t.level})$mark: ${t.desc}".replace("\n", " "))
+        }
+        lines.add("\n【词条组合】(组合的要求都选着才生效)")
+        for (cb in Contract.COMBOS) {
+            val got = cb.reqs.filter { r -> selected.any { id -> if (r in Contract.GROUPS) Contract.BY_ID[id]?.group == r else id == r } }
+            val done = Contract.comboDone(cb, selected)
+            val mark = if (done) "【$tag·已凑齐】" else if (got.isNotEmpty()) "(已选 ${got.size}/${cb.reqs.size})" else ""
+            lines.add("- ${cb.name}$mark: 需要 " + cb.reqs.joinToString(" + ") { reqName(it) + if (it in got) "✓" else "" } +
+                "; 效果: ${cb.desc}".replace("\n", ", "))
+        }
+        return lines.joinToString("\n")
     }
 
     /** 数据都从 Core 里取; 黑雾中不给 (调用方先判断). */
@@ -87,15 +119,7 @@ object CommData {
             blocks.add("【日历·$name $prefix$tail】\n" + (if (lines.isEmpty()) "  没有记录" else lines.joinToString("\n")) +
                 "\n  合计: %.1f h".format(days.values.sum()))
         }
-        if (sel.contract) {
-            val c = core.contract
-            blocks.add(when {
-                c.active -> "【合约词条·进行中 危机等级 ${Contract.levelLabel(c.level, c.origLevel)}】\n" +
-                    (c.terms.joinToString("\n") { "  " + termText(it) }.ifEmpty { "  (没有词条)" })
-                c.draft.isNotEmpty() -> "【合约词条·准备中(还没开始)】\n" + c.draft.joinToString("\n") { "  " + termText(it) }
-                else -> "【合约词条】\n  现在没有进行中的合约, 也没有选好的词条"
-            })
-        }
+        if (sel.contract) blocks.add(library(core.contract))
         return blocks.joinToString("\n\n").take(MAX_CHARS)
     }
 }

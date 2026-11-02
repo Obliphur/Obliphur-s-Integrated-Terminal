@@ -76,7 +76,7 @@ fun CommScreen(go: (String) -> Unit) {
     LaunchedEffect(ver) { if (msgs.isNotEmpty()) list.scrollToItem(0) }          // 倒排: 第 0 项是最新的一条, 在最下面
     fun report(why: String) {
         core.toast(tr(why), "warn")
-        if (why == "还没有选人设" || "API" in why || "Base URL" in why || "模型" in why) go("settings:comm")
+        if (comm.blocked().isEmpty() && (why == "还没有选人设" || "API" in why || "Base URL" in why || "模型" in why)) go("settings:comm")
     }
 
     Column(Modifier.fillMaxSize().imePadding().padding(horizontal = 12.dp)) {
@@ -90,15 +90,16 @@ fun CommScreen(go: (String) -> Unit) {
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(msgs.asReversed(), key = { it.id }) { Bubble(it) }
         }
-        if (comm.error.isNotEmpty()) Text(tr(comm.error), color = o.danger, fontSize = 12.sp,
+        val blocked = comm.blocked()
+        if (blocked.isNotEmpty() || comm.error.isNotEmpty()) Text(blocked.ifEmpty { tr(comm.error) }, color = o.danger, fontSize = 12.sp,
             modifier = Modifier.padding(top = 4.dp))
         TextButton({ attach = true }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
             Text("📎", fontSize = 18.sp)
         }
         Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.Bottom,
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(input, { input = it }, modifier = Modifier.weight(1f), maxLines = 4)
-            AccentButton(tr("发送")) {
+            OutlinedTextField(input, { input = it }, modifier = Modifier.weight(1f), maxLines = 4, enabled = blocked.isEmpty())
+            AccentButton(tr("发送"), enabled = blocked.isEmpty()) {
                 val why = comm.send(input)
                 if (why.isEmpty()) input = "" else if (why != "empty") report(why)
             }
