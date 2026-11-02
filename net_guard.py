@@ -802,7 +802,7 @@ class NetGuard:
             self._fence_busy = False
 
     def _bypass_tick(self, now: float):
-        """每 5 秒看一次连接表 (后台线程): 有不走系统代理的程序直连外面就封锁它; 不在 Proxy 方式 / 开发者模式时删掉规则 (只删一次)."""
+        """每 2 秒看一次连接表 (后台线程): 有不走系统代理的程序直连外面就封锁这条连接; 不在 Proxy 方式 / 开发者模式时删掉规则 (只删一次)."""
         if self.bypass is None or self._bp_busy or now - self._bp_at < bypassguard.SCAN_EVERY:
             return
         want = self._guard_wanted() and bool(getattr(config, "BYPASS_GUARD", True))
@@ -821,7 +821,7 @@ class NetGuard:
                 self._bp_clean = False
                 for path, killed, new in self.bypass.scan():
                     if new:
-                        self._log(f"BYPASS   blocked {path} (direct connection, not via the system proxy; {killed} connection(s) cut)")
+                        self._log(f"BYPASS   blocked a direct connection of {path} (not via the system proxy; {killed} connection(s) cut)")
                         try:
                             self.on_bypass(path, killed)
                         except Exception:

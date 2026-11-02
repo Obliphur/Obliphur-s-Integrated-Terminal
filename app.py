@@ -5568,8 +5568,8 @@ class BreakTimerApp:
             return 0
 
     def _on_net_bypass(self, path: str, killed: int):
-        """有程序不走系统代理、直接连外面, NetGuard 已经封锁它了 (防火墙规则 + 掐断连接, MECHANICS 3.2.3): 提示一次."""
-        toast.warn(tr("{name} 不走系统代理, 直接连外面, 已封锁.", name=os.path.basename(path)))
+        """有程序不走系统代理、直接连外面, NetGuard 已经封锁这条连接了 (掐断 + 到这个地址的防火墙规则, MECHANICS 3.2.3): 每个程序提示一次."""
+        toast.warn(tr("{name} 不走系统代理, 直接连外面, 这条连接已封锁.", name=os.path.basename(path)))
 
     def _on_net_tamper(self, kind: str):
         """系统代理被人改了 (关掉 / 换成别的代理), NetGuard 已经改回去了: 提示一次 (30 秒内不重复)."""
