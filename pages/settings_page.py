@@ -821,6 +821,15 @@ class SettingsPage(tk.Frame):
                                    command=lambda: self._comm_flag("split_send")), "开启").pack(
             fill="x", padx=12, pady=(0, 8))
 
+        fr, _head = self._card(body, "💬  主动发起")
+        v = tk.BooleanVar(value=c.bg_on())
+        self.comm_vars["bg_pro"] = v
+        self._track(tk.Checkbutton(fr, text=tr("允许非正在聊天的人发起对话"), variable=v, bg=card, fg=COLORS["text"],
+                                   selectcolor=card, activebackground=card, activeforeground=COLORS["text"],
+                                   font=config.font("body"), anchor="w",
+                                   command=lambda: self._comm_flag("bg_pro")), "允许非正在聊天的人发起对话").pack(
+            fill="x", padx=12, pady=(0, 8))
+
         fr, _head = self._card(body, "🖼  头像")
         v = tk.BooleanVar(value=bool(c.cfg.get("show_avatar")))
         self.comm_vars["show_avatar"] = v
@@ -947,6 +956,8 @@ class SettingsPage(tk.Frame):
                 and self.txt_profile.get("1.0", "end").strip() != str(c.cfg.get("user_profile") or ""):
             self.txt_profile.delete("1.0", "end")                       # 别的设备同步来了新的身份背景
             self.txt_profile.insert("1.0", str(c.cfg.get("user_profile") or ""))
+        if self.comm_vars["bg_pro"].get() != c.bg_on():
+            self.comm_vars["bg_pro"].set(c.bg_on())
         if self.comm_vars["split_send"].get() != c.split_on():
             self.comm_vars["split_send"].set(c.split_on())              # 别的设备同步来了新的开关
         prof = c.ai.profile()

@@ -674,6 +674,8 @@ object EnStrings {
         "🖼  头像" to "🖼  Avatar",
         "显示头像" to "Show avatars",
         "✂  分条发送" to "✂  Split replies",
+        "💬  主动发起" to "💬  Initiating chats",
+        "允许非正在聊天的人发起对话" to "Let people I'm not currently chatting with start conversations",
         "我" to "Me",
         "对方" to "Them",
         "还没有选人设" to "No persona selected",

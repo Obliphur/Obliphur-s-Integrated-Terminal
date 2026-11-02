@@ -33,6 +33,7 @@ REFUSE = "[refuse to reply]"
 PROACTIVE_MIN_REST = 20 * 60          # I. 用户休息超过这么久才会主动发消息
 PROACTIVE_DELAY = (60, 180)           # I. 休息开始后多久主动发 (秒)
 PROACTIVE_LEAD = (60, 180)            # II / III. 人设日程里的空闲 / 休息开始前多久主动发 (秒)
+BG_STAGGER = 120                      # 非正在聊天的对象主动发消息: 两次请求之间至少隔这么多秒 (一个一个来, 不会同时好几个人找你)
 PROACTIVE_P = {"idle": 80, "rest": 60}   # II / III 发不发的概率 (%) 的默认值: 人设里没写 "空闲发起谈话概率:n%" / "休息发起谈话概率:n%" 时用
 PROACTIVE_LATE = 120                  # 到点之后过了这么久 (程序刚打开 / 刚空下来) 就算了
 PROACTIVE_GAP = 10 * 60               # 两条主动消息至少隔这么久 (相邻的日程段不连发)
@@ -61,7 +62,8 @@ CHAT_TEMPERATURE = 0.8
 WEEKDAY = "一二三四五六日"
 
 DEFAULTS = {"persona": "", "show_avatar": False,
-            "avatar_me": "", "avatar_ai": "", "pro_key": "", "retry": {}, "clear_ts": 0, "seeded": False, "legacy_done": False, "user_profile": "", "split_send": True}
+            "avatar_me": "", "avatar_ai": "", "pro_key": "", "retry": {}, "clear_ts": 0, "seeded": False, "legacy_done": False, "user_profile": "", "split_send": True,
+            "bg_pro": True, "mute_pro": []}
 
 
 # ══════════════ 前置 prompt 与 README ══════════════
@@ -437,6 +439,10 @@ class Comm:
         self._seg_sig = None          # 人设文件的 (名字, 修改时间, 大小): 变了才重新读日程
         self._seg_cache = []
         self._pro_cache = {}          # 同一个人设文件里写的主动发起谈话的概率 (persona_probs)
+        self._bg_seg = {}             # 非正在聊天的对象: 人设文件名 -> (文件特征, 日程段, 概率)
+        self._bg_busy = None          # 正在为哪个非正在聊天的对象请求 (对象编号), 同时最多一个
+        self._bg_last = 0             # 上一次为它们发请求的时刻 (毫秒)
+        self._bg_results = []
         self.load()
         ensure_personas(self.personas)
         if not self.cfg.get("seeded"):                      # 第一次运行: 放进自带的人设, 还没选过人设就默认选 Claudia
@@ -659,7 +665,7 @@ class Comm:
         self.cfg.update(kw)
         self.save_cfg()
         self._changed()
-        if "split_send" in kw:
+        if "split_send" in kw or "bg_pro" in kw or "mute_pro" in kw:
             self._push()
 
     def _changed(self):
@@ -691,6 +697,9 @@ class Comm:
         if self.cfg.get("user_profile"):
             doc["profile"] = self.cfg["user_profile"]
         doc["split"] = self.split_on()                  # 分条发的开关: 调用 AI 的是主端, 两台设备要一致
+        doc["bgpro"] = self.bg_on()
+        for pid in self.chat_pids():
+            doc[f"mute:{pid}"] = self.is_muted(pid)
         for pid in self.chat_pids():
             st = self._state_of(pid)
             for m in st["messages"][-SYNC_N:]:
@@ -762,6 +771,17 @@ class Comm:
                     st["retry"] = {}
                     if not (self.viewing and pid == self.pid) and not m.get("hold"):
                         self.unread += 1
+            elif key == "bgpro" and isinstance(val, bool):
+                if val != self.bg_on():
+                    self.cfg["bg_pro"] = val
+                    self.save_cfg()
+                    self._changed()
+            elif kind == "mute" and isinstance(val, bool):
+                if val != self.is_muted(rest):
+                    cur = [p for p in (self.cfg.get("mute_pro") or []) if p != rest]
+                    self.cfg["mute_pro"] = cur + [rest] if val else cur
+                    self.save_cfg()
+                    self._changed()
             elif key == "split" and isinstance(val, bool):
                 if val != self.split_on():
                     self.cfg["split_send"] = val
@@ -812,6 +832,19 @@ class Comm:
                 if not self._talked_recently(self.messages[:i - 1], int(prev["ts"])):
                     self._ping()
                 return
+
+    def bg_on(self) -> bool:
+        """允许非正在聊天的人 (聊过天的其他对象) 发起对话吗. 默认开; 随设备同步."""
+        return self.cfg.get("bg_pro") is not False
+
+    def is_muted(self, pid: str = None) -> bool:
+        """这个对象 (默认是现在聊的) 被"禁止主动发起"了吗: 不主动发消息, 也不追问 (规则 IX)."""
+        return (pid if pid is not None else self.pid) in (self.cfg.get("mute_pro") or [])
+
+    def set_muted(self, muted: bool, pid: str = None):
+        pid = pid if pid is not None else self.pid
+        cur = [p for p in (self.cfg.get("mute_pro") or []) if p != pid]
+        self.set_cfg(mute_pro=cur + [pid] if muted and pid else cur)
 
     def split_on(self) -> bool:
         """分条发 (规则 VIII) 开着吗: 用户说完话, 对方的第一条收到之后再调用一次 API, 让对方可以把话分开说. 默认开."""
@@ -922,6 +955,12 @@ class Comm:
 
     # ---- 发消息 ----
     def _add(self, role: str, text: str, api: str = "") -> dict:
+        m = self._mk(role, text, api)
+        self.messages.append(m)
+        return m
+
+    def _mk(self, role: str, text: str, api: str = "") -> dict:
+        """造一条消息 (还没放进任何聊天记录)."""
         now = self.now()
         ts = max(self._ms(), self._last_ts + 1)          # 同一台设备上严格递增
         self._last_ts = ts
@@ -931,7 +970,6 @@ class Comm:
             m["api"] = api
         if role == "ai" and self.blocked():                # 专注 / 睡眠 / 外出中收到的: 先藏起来, 回到休息 / 空闲再显示
             m["hold"] = True
-        self.messages.append(m)
         return m
 
     def _sent(self):
@@ -1133,6 +1171,10 @@ class Comm:
             done, self._results = self._results, []
         for res in done:
             self._finish(*res)
+        with self._lock:
+            bg, self._bg_results = self._bg_results, []
+        for res in bg:
+            self._bg_finish(*res)
         self._release_held()
         if self.busy or self.problem() or not self.leader():
             return
@@ -1150,33 +1192,140 @@ class Comm:
         if self._check_wait():
             return
         self._check_proactive(now, snap)
+        self._bg_check(now, snap)
 
-    def _check_wait(self) -> bool:
+    def _check_wait(self, ctx=None) -> bool:
         """规则 IX: 对方最后一条消息末尾写了 [waiting for reply]:[N], N 分钟 (从用户看到它算起) 过去了用户还没回复: 让对方可以追问一次."""
-        last = next((m for m in reversed(self.messages) if m["role"] in ("me", "ai")), None)
+        if ctx is None and self.is_muted():
+            return False
+        last = next((m for m in reversed(ctx["st"]["messages"] if ctx else self.messages) if m["role"] in ("me", "ai")), None)
         if not last or last["role"] != "ai" or not last.get("wait") or last.get("chased") or last.get("hold"):
             return False
         if self._ms() < int(last.get("shown") or last["ts"]) + float(last["wait"]) * 60000:
             return False
         last["chased"] = True                                # 一条消息最多追问一次 (追问被拒绝也算)
-        self.save_chat()
         n = f"{float(last['wait']):g}"
-        self._trigger("chase", f"[系统] 你上一条消息末尾标了 [waiting for reply]:[{n}], 现在已经过了 {n} 分钟, 用户还没有回复. "
-                               f"请根据人设决定要不要追加询问一次 (话题和语气自己定, 不要重复上一条); 如果不想问或者此刻不方便, 返回{REFUSE}.")
+        body = (f"[系统] 你上一条消息末尾标了 [waiting for reply]:[{n}], 现在已经过了 {n} 分钟, 用户还没有回复. "
+                f"请根据人设决定要不要追加询问一次 (话题和语气自己定, 不要重复上一条); 如果不想问或者此刻不方便, 返回{REFUSE}.")
+        if ctx:
+            self._store(ctx["pid"], ctx["st"])
+            self._bg_request(ctx, "chase", body)
+        else:
+            self.save_chat()
+            self._trigger("chase", body)
         return True
 
+    # ---- 非正在聊天的对象主动发消息 (MECHANICS 24.4): 聊过天的其他对象照样按它们各自的人设日程主动发 / 追问, 一次一个 ----
+    def _info_of(self, name: str) -> tuple:
+        """人设文件里的 (日程段, 主动发起谈话的概率), 文件没变就用上次读的."""
+        try:
+            st = os.stat(os.path.join(self.personas, name))
+        except OSError:
+            return [], {}
+        sig = (st.st_mtime_ns, st.st_size)
+        hit = self._bg_seg.get(name)
+        if not hit or hit[0] != sig:
+            text = read_persona(self.personas, name)
+            hit = self._bg_seg[name] = (sig, schedule_segments(text), persona_probs(text))
+        return hit[1], hit[2]
+
+    def _bg_check(self, now, snap: dict):
+        if not self.bg_on() or self._bg_busy or self._ms() - self._bg_last < BG_STAGGER * 1000:
+            return
+        names = {pid_of(n): n for n in list_personas(self.personas)}
+        for pid in self.chat_pids():
+            if pid == self.pid or pid not in names or self.is_muted(pid):
+                continue
+            st = self._state_of(pid)
+            if not any(m["role"] in ("me", "ai") for m in st["messages"]):
+                continue                                          # 没聊过的 (只是切换时留下的空记录) 不会来找你
+            segs, probs = self._info_of(names[pid])
+            ctx = {"pid": pid, "name": names[pid], "st": st, "segs": segs, "probs": probs}
+            if self._check_wait(ctx):
+                return
+            self._check_proactive(now, snap, ctx)
+            if self._bg_busy:
+                return
+
+    def _bg_request(self, ctx, kind: str, body: str):
+        """为非正在聊天的对象发一次请求 (主动发 / 追问); 回复由 tick 收进它的聊天记录, 没有第二次调用, 也没有要资料的轮次."""
+        pid, st = ctx["pid"], ctx["st"]
+        profile = self.ai.profile()
+        system = prefix_prompt(self.split_on()) + read_persona(self.personas, ctx["name"])
+        who = str(self.cfg.get("user_profile") or "").strip()[:MAX_PROFILE]
+        if who:
+            system += "\n\n以下是用户的身份背景(用户自己填写):\n" + who
+        api = self._compose(self.now(), body)
+        msgs = api_messages(st["messages"])
+        if msgs and msgs[-1]["role"] == "user":
+            msgs[-1]["content"] += "\n\n" + api
+        else:
+            msgs.append({"role": "user", "content": api})
+        clear0 = int(st["clear_ts"])
+        self._bg_busy = pid
+        self._bg_last = self._ms()
+        started = time.monotonic()
+        self.log(f"REQ bg-{kind} start [{ctx['name']}] model={profile.get('model')} msgs={len(msgs)}")
+
+        def work():
+            reply, err = "", ""
+            try:
+                reply = self.chat_fn(profile, system, msgs, max_tokens=CHAT_TOKENS, temperature=CHAT_TEMPERATURE,
+                                     timeout=CHAT_TIMEOUT, cache=True,
+                                     on_usage=lambda t, c: self.log(f"USAGE bg-{kind} input={t} cached={c}"))
+            except ai_assist.AIError as e:
+                err = e.message
+            except Exception as e:      # noqa: BLE001
+                err = type(e).__name__
+            self.log(f"REQ bg-{kind} {'FAIL ' + err if err else 'ok'} {time.monotonic() - started:.1f}s")
+            with self._lock:
+                self._bg_results.append((pid, kind, (body, api), reply, err, clear0))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _bg_finish(self, pid, kind, extra, reply, err, clear0):
+        self._bg_busy = None
+        if self.hard_block():
+            return
+        st = self._state_of(pid)
+        if int(st["clear_ts"]) != clear0 or err:
+            return
+        text, wait_min = clean_reply(reply)
+        if is_refusal(reply) or not text:
+            self.log(f"REPLY bg-{kind}: 对方不想发 / 什么也没剩, 不显示")
+            return
+        sysm = self._mk("sys", extra[0], extra[1])
+        m = self._mk("ai", text, reply.strip() if text != reply.strip() else "")
+        if wait_min and kind != "chase":
+            m["wait"] = wait_min
+        st["messages"].extend([sysm, m])
+        talked = self._talked_recently(st["messages"][:-2], int(sysm["ts"]))
+        if not m.get("hold"):
+            if not (self.viewing and pid == self.pid):
+                self.unread += 1
+            if kind == "chase" or not talked:
+                self._ping()
+        self._store(pid, st)
+        self._changed()
+        self._push()
+
     # ---- 主动发消息 (MECHANICS 24.4) ----
-    def _pro_done(self) -> list:
+    # 下面这些带 ctx 的: ctx = None 是现在聊的对象; 否则是非正在聊天的对象 {"pid", "name", "st" (它的聊天状态), "segs", "probs"} (_bg_check)
+    def _pro_done(self, ctx=None) -> list:
         """已经处理过的主动消息时间点 (发没发都算): 休息开始的时刻 (I) / "S开始时刻i|r" (日程里的空闲 / 休息段, II / III)."""
-        return [k for k in str(self.cfg.get("pro_key") or "").split("|") if k]
+        src = ctx["st"]["pro_key"] if ctx else self.cfg.get("pro_key")
+        return [k for k in str(src or "").split("|") if k]
 
-    def _pro_mark(self, key: str):
-        keys = [k for k in self._pro_done() if k != key] + [key]
-        self.cfg["pro_key"] = "|".join(keys[-PROACTIVE_KEEP:])
+    def _pro_mark(self, key: str, ctx=None):
+        keys = [k for k in self._pro_done(ctx) if k != key] + [key]
+        val = "|".join(keys[-PROACTIVE_KEEP:])
+        if ctx:
+            ctx["st"]["pro_key"] = val
+        else:
+            self.cfg["pro_key"] = val
 
-    def _pro_recent(self, now) -> bool:
+    def _pro_recent(self, now, ctx=None) -> bool:
         """最近 PROACTIVE_GAP 内已经主动发过一条了吗 (相邻的日程段 / 刚好又在休息开始后, 不连着发)."""
-        for m in reversed(self.messages):
+        for m in reversed(ctx["st"]["messages"] if ctx else self.messages):
             if m["role"] == "sys" and str(m.get("text") or "").startswith("[系统]"):
                 return self._age(m) < PROACTIVE_GAP
         return False
@@ -1206,18 +1355,20 @@ class Comm:
         segs = self._segments()
         self.log(f"SCHEDULE {why}: 空闲 {sum(k == 'idle' for k, _m in segs)} 段, 休息 {sum(k == 'rest' for k, _m in segs)} 段")
 
-    def _schedule_events(self, now) -> list:
-        """日程里 3 分钟之内就要开始的空闲 / 休息段: [(时间点, "idle" | "rest", 开始的时刻)]."""
+    def _schedule_events(self, now, segs=None) -> list:
+        """日程里 3 分钟之内就要开始的空闲 / 休息段: [(时间点, "idle" | "rest", 开始的时刻)]. segs: 别的对象的日程段 (默认是现在聊的)."""
         out = []
-        for kind, mins in self._segments():
+        for kind, mins in (self._segments() if segs is None else segs):
             for d in (0, 1):                                  # 今天 / 明天 (23:59 看 0:00 开始的那段)
                 start = datetime.combine(now.date() + timedelta(days=d), datetime.min.time()) + timedelta(minutes=mins)
                 if now < start <= now + timedelta(seconds=PROACTIVE_LEAD[1]):
                     out.append((f"S{start:%Y-%m-%dT%H:%M}{kind[0]}", kind, start))
         return out
 
-    def _check_proactive(self, now, snap: dict):
-        done = self._pro_done()
+    def _check_proactive(self, now, snap: dict, ctx=None):
+        if ctx is None and self.is_muted():
+            return
+        done = self._pro_done(ctx)
         # I. 用户这次休息超过 20 分钟: 休息开始后 1~3 分钟发一条
         start = snap.get("break_start")
         if snap.get("state") == "break" and start and snap.get("break_total_s", 0) > PROACTIVE_MIN_REST:
@@ -1227,35 +1378,43 @@ class Comm:
                 if now >= due:
                     mins = snap["break_total_s"] / 60
                     self._pro_fire(key, due, now, 1.0, f"[系统] 用户刚开始休息, 这次计划休息约 {mins:.0f} 分钟. "
-                                                       f"请根据人设主动给用户发一条消息, 话题自己找; 如果此刻不方便, 返回{REFUSE}.")
+                                                       f"请根据人设主动给用户发一条消息, 话题自己找; 如果此刻不方便, 返回{REFUSE}.", ctx)
                     return
         # II / III. 人设日程里每段空闲 / 休息开始前 1~3 分钟, 有概率发一条
-        for key, kind, begin in self._schedule_events(now):
+        for key, kind, begin in self._schedule_events(now, ctx["segs"] if ctx else None):
             if key in done:
                 continue
             due = begin - timedelta(seconds=random.Random(key).randint(*PROACTIVE_LEAD))
             if now < due:
                 continue
             mins = max(1, round((begin - now).total_seconds() / 60))
-            self._pro_fire(key, due, now, self.pro_percent(kind) / 100.0,
+            pct = ctx["probs"].get(kind, float(PROACTIVE_P[kind])) if ctx else self.pro_percent(kind)
+            self._pro_fire(key, due, now, pct / 100.0,
                            f"[系统] 按你的日程, 你的{'空闲' if kind == 'idle' else '休息'}时间将在 {begin:%H:%M} 开始 (约 {mins} 分钟后). "
                            f"这条是系统提前触发的: 即使你此刻还处于专注/不能回复的时段, 也允许你现在主动给用户发一条消息, 话题自己找 (不要透露日程); "
-                           f"如果实在不方便, 返回{REFUSE}.")
+                           f"如果实在不方便, 返回{REFUSE}.", ctx)
             return
 
-    def _pro_fire(self, key: str, due, now, p: float, body: str):
+    def _pro_fire(self, key: str, due, now, p: float, body: str, ctx=None):
         """这个时间点处理一次: 记下来 (不管发没发), 没错过太久 / 摇中了概率 / 最近没发过, 才真的让对方发."""
-        self._pro_mark(key)
+        self._pro_mark(key, ctx)
         late = (now - due).total_seconds() > PROACTIVE_LATE          # 错过太久 (程序刚打开) 就算了
         hit = p >= 1.0 or random.Random(key + "#p").random() < p
-        recent = self._pro_recent(now)
+        recent = self._pro_recent(now, ctx)
+        who = f" [{ctx['name']}]" if ctx else ""
         if not late and hit and not recent:
-            self.log(f"PRO {key} p={p:.2f} → 让对方发")
-            self._trigger("proactive", body)
+            self.log(f"PRO{who} {key} p={p:.2f} → 让对方发")
+            if ctx:
+                self._bg_request(ctx, "proactive", body)
+            else:
+                self._trigger("proactive", body)
         else:
-            self.log(f"PRO {key} p={p:.2f} → 不发 ({'错过了' if late else '概率没中' if not hit else '刚发过'})")
-        self.save_chat()
-        self.save_cfg()
+            self.log(f"PRO{who} {key} p={p:.2f} → 不发 ({'错过了' if late else '概率没中' if not hit else '刚发过'})")
+        if ctx:
+            self._store(ctx["pid"], ctx["st"])
+        else:
+            self.save_chat()
+            self.save_cfg()
         self._push()
 
     def clear(self):
@@ -1927,6 +2086,62 @@ def _selftest():
     assert sorted(c5._segments()) == [("idle", 750), ("idle", 840), ("rest", 1240)]
     for x in (c5, c6):
         x.flush()
+
+    # ---- 非正在聊天的对象也会主动发消息 (开关 bg_pro, 默认开) / 每个对象可以禁止 (set_muted) ----
+    bgp = os.path.join(td, "bgp")
+    os.makedirs(bgp)
+    open(os.path.join(bgp, "甲.txt"), "w", encoding="utf-8").write("你是甲.\n12:30-13:00:空闲\n空闲发起谈话概率:100%\n")
+    open(os.path.join(bgp, "乙.txt"), "w", encoding="utf-8").write("你是乙.\n")
+    os.makedirs(os.path.join(td, "bgd"))
+    cb = Comm(os.path.join(td, "bgd"), bgp, now=lambda: clock[0], chat_fn=fake)
+    cb.ai.set_profile("deepseek", api_key="k")
+    cb.ai.provider = "deepseek"
+    cb.snapshot = lambda: {"state": "idle"}
+    assert cb.bg_on() and not cb.is_muted()
+    for who in ("甲.txt", "乙.txt"):                           # 两个人都聊过
+        cb.set_cfg(persona=who)
+        script.append("你好")
+        cb.send("hi")
+        wait(cb)
+    pid_jia = pid_of("甲.txt")
+    assert cb.persona_name() == "乙.txt" and pid_jia in cb.chat_pids()
+
+    def bg_fire(c, begin):                                     # 日程段开始前 200 秒起, 每 2 秒看一次; 返回开始请求时离开始还有几秒
+        for s in range(-200, 0, 2):
+            clock[0] = begin + timedelta(seconds=s)
+            c.tick()
+            if c._bg_busy:
+                return s
+        return None
+
+    def bg_wait(c):
+        for _ in range(300):
+            time.sleep(0.01)
+            c.tick()
+            if not c._bg_busy:
+                return
+        raise AssertionError("超时")
+    pings_b = []
+    cb.on_proactive = lambda: pings_b.append(1)
+    cb.set_cfg(bg_pro=False)                                  # 开关关着: 不发
+    assert bg_fire(cb, datetime(2027, 5, 1, 12, 30)) is None
+    cb.set_cfg(bg_pro=True)
+    cb.set_muted(True, pid_jia)                               # 禁止了这个人: 不发
+    assert cb.is_muted(pid_jia) and not cb.is_muted() and bg_fire(cb, datetime(2027, 5, 2, 12, 30)) is None
+    assert cb.sync_doc()[f"mute:{pid_jia}"] is True
+    cb.set_muted(False, pid_jia)
+    script.append("甲来找你")
+    s = bg_fire(cb, datetime(2027, 5, 3, 12, 30))
+    assert s is not None and -182 <= s <= -60, s
+    unread0 = cb.unread
+    bg_wait(cb)
+    st_jia = cb._state_of(pid_jia)
+    assert [m["text"] for m in st_jia["messages"] if m["role"] == "ai"][-1] == "甲来找你"
+    assert cb.unread == unread0 + 1 and pings_b == [1]
+    assert all(m["text"] != "甲来找你" for m in cb.messages), "现在聊的是乙: 乙的记录里没有"
+    cb.set_cfg(persona="甲.txt")                              # 切到甲: 能看到
+    assert cb.visible()[-1]["text"] == "甲来找你"
+    cb.flush()
     return "comm selftest OK"
 
 

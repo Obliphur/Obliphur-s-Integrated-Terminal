@@ -536,6 +536,50 @@ class CommTest {
         assertEquals(0L to 0L, Ai.usageOf(JSONObject("{}")))
     }
 
+    /** 非正在聊天的对象也会主动发消息 (开关 bgPro, 默认开); 每个对象可以禁止 (setMuted). */
+    @Test
+    fun backgroundPersonas() {
+        val td = Files.createTempDirectory("oit").toFile()
+        val pdir = File(td, "p").also { it.mkdirs() }
+        val c = comm(File(td, "d").also { it.mkdirs() }, pdir)
+        c.importPersona("甲.txt", "你是甲.\n12:30-13:00:空闲\n空闲发起谈话概率:100%\n".byteInputStream())
+        c.importPersona("乙.txt", "你是乙.\n".byteInputStream())
+        c.snapshot = { CommSnap("idle") }
+        assertTrue(c.bgPro)
+        for (who in listOf("甲.txt", "乙.txt")) {                    // 两个人都聊过
+            c.set(persona = who)
+            script.add("你好")
+            c.send("hi"); wait(c)
+        }
+        assertEquals("乙.txt", c.personaName())
+        fun bgFire(begin: LocalDateTime): Int? {
+            for (s in -200 until 0 step 2) { clock = begin.plusSeconds(s.toLong()); c.tick(); if (!c.bgIdle()) return s }
+            return null
+        }
+        fun bgWait() { for (i in 0 until 300) { Thread.sleep(10); c.tick(); if (c.bgIdle()) return }; throw AssertionError("超时") }
+        var pings = 0
+        c.onProactive = { pings++ }
+        c.set(bgPro = false)                                          // 开关关着: 不发
+        assertNull(bgFire(LocalDateTime.of(2027, 5, 1, 12, 30)))
+        c.set(bgPro = true)
+        val pidJia = Comm.pidOf("甲.txt")
+        c.setMuted(true, pidJia)                                      // 禁止了这个人: 不发
+        assertTrue(c.isMuted(pidJia)); assertFalse(c.isMuted())
+        assertNull(bgFire(LocalDateTime.of(2027, 5, 2, 12, 30)))
+        assertEquals(true, c.syncDoc()["mute:$pidJia"])
+        c.setMuted(false, pidJia)
+        script.add("甲来找你")
+        val s = bgFire(LocalDateTime.of(2027, 5, 3, 12, 30))
+        assertTrue("开始前 1~3 分钟: $s", s != null && s in -182..-60)
+        val unread0 = c.unread
+        bgWait()
+        assertEquals(unread0 + 1, c.unread)
+        assertEquals(1, pings)
+        assertTrue("现在聊的是乙: 乙的记录里没有", c.visible().none { it.text == "甲来找你" })
+        c.set(persona = "甲.txt")                                     // 切到甲: 能看到
+        assertEquals("甲来找你", c.visible().last().text)
+    }
+
     @Test
     fun scheduleProactive() {
         // 人设日程里的空闲 / 休息段

@@ -78,6 +78,8 @@ class CommPage(tk.Frame):
         tools = tk.Frame(self, bg=bg)
         tools.pack(fill="x", padx=28, pady=(2, 0))
         ttk.Button(tools, text="📎", width=3, command=self._attach).pack(side="left")
+        self.btn_mute = ttk.Button(tools, text="🔔", width=3, command=self._toggle_mute)        # 🔔 可以主动发起 / 🔕 禁止这个人主动发起
+        self.btn_mute.pack(side="left", padx=(4, 0))
         self.lbl_attach = tk.Label(tools, text="", bg=bg, fg=COLORS["accent"], font=config.font("small"), cursor="hand2")
         self.lbl_attach.pack(side="left", padx=(8, 0))
         self.lbl_attach.bind("<Button-1>", lambda _e: self._attach())
@@ -182,6 +184,7 @@ class CommPage(tk.Frame):
         cur = next((lab for n, lab in self._who_labels if n == c.persona_name()), "")
         if self.var_who.get() != cur:
             self.var_who.set(cur)
+        cfg(self.btn_mute, text="🔕" if c.is_muted() else "🔔")
         label = c.attach_label()
         cfg(self.lbl_attach, text=label)
         if label:
@@ -399,6 +402,12 @@ class CommPage(tk.Frame):
             self.refresh(force=True)
 
     # ---- 📎 发送数据: 今天的整点记录 / 专注计时, 日历 (选类别), 合约的词条, 统计 (月数据) 的几页 ----
+
+    def _toggle_mute(self):
+        """禁止 / 允许这个人主动发起对话 (主动发消息和追问都不发); 没选人的时候不动."""
+        if self.comm.pid:
+            self.comm.set_muted(not self.comm.is_muted())
+            self.refresh(force=True)
 
     def _attach(self):
         width = config.scaled(320)

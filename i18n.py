@@ -87,6 +87,8 @@ EN = {
     "正在加载…": "Loading…",
     "正在重新加载界面…": "Reloading the interface…",
     "开启": "ON",
+    "💬  主动发起": "💬  Initiating chats",
+    "允许非正在聊天的人发起对话": "Let people I'm not currently chatting with start conversations",
     "✂  分条发送": "✂  Split replies",
     "关闭_状态": "OFF",
     "⏱  Timer": "⏱  Timer",

@@ -122,6 +122,10 @@ fun CommScreen(go: (String) -> Unit) {
             TextButton({ attach = true }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
                 Text("📎", fontSize = 18.sp)
             }
+            // 🔔 可以主动发起 / 🔕 禁止这个人主动发起 (主动发消息和追问都不发)
+            TextButton({ comm.setMuted(!comm.isMuted()) }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
+                Text(if (comm.isMuted()) "🔕" else "🔔", fontSize = 18.sp)
+            }
             val attached = CommData.label(comm.attach)
             if (attached.isNotEmpty()) {
                 Text(attached, color = o.accent, fontSize = 12.sp, modifier = Modifier.weight(1f, false).clickable { attach = true })
@@ -281,6 +285,11 @@ fun CommSettings() {
     OitCard {
         Text(tr("✂  分条发送"), fontWeight = FontWeight.Bold, color = o.text)
         SwitchRow(tr("开启"), comm.splitSend) { comm.set(splitSend = it) }
+    }
+
+    OitCard {
+        Text(tr("💬  主动发起"), fontWeight = FontWeight.Bold, color = o.text)
+        SwitchRow(tr("允许非正在聊天的人发起对话"), comm.bgPro) { comm.set(bgPro = it) }
     }
 
     OitCard {

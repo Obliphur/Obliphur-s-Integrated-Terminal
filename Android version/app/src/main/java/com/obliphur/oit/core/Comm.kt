@@ -231,6 +231,8 @@ class Comm(
         @Volatile var usageSink: (Long, Long) -> Unit = { _, _ -> }
         /** 带的聊天记录的起点一次往后挪这么多条 (不是每条都挪): 请求的开头 (前面的历史) 才能在这么多条消息里保持不变, 服务商的提示缓存才命中. */
         const val HISTORY_STEP = 10
+        /** 非正在聊天的对象主动发消息: 两次请求之间至少隔这么多秒 (一个一个来, 不会同时好几个人找你). */
+        const val BG_STAGGER = 120
         const val PROACTIVE_MIN_REST = 20 * 60          // I. 用户休息超过这么久才会主动发消息
         const val PROACTIVE_MAX_DELAY = 180             // I / II / III: 休息开始后 / 日程段开始前 1~3 分钟 (秒)
         const val PROACTIVE_LATE = 120                  // 到点之后过了这么久 (程序刚打开 / 刚空下来) 就算了
@@ -275,6 +277,15 @@ class Comm(
     private var segCache: List<Pair<String, Int>> = emptyList()
     /** 分条发 (规则 VIII) 开着吗: 用户说完话, 对方的第一条收到之后再调用一次 API, 让对方可以把话分开说. 默认开; 随设备同步. */
     var splitSend = true; private set
+    /** 允许非正在聊天的人 (聊过天的其他对象) 发起对话吗 (默认开, 随设备同步); 被"禁止主动发起"的对象的编号在 muted 里 (随设备同步). */
+    var bgPro = true; private set
+    private val muted = LinkedHashSet<String>()
+    private class BgCtx(val pid: String, val name: String, val st: ChatState, val segs: List<Pair<String, Int>>, val probs: Map<String, Double>)
+    private class BgResult(val pid: String, val kind: String, val extra: Extra, val reply: String, val err: String, val clear0: Long)
+    private val bgResults = ConcurrentLinkedQueue<BgResult>()
+    @Volatile private var bgBusy: String? = null
+    private var bgLast = 0L
+    private val bgSeg = HashMap<String, Triple<String, List<Pair<String, Int>>, Map<String, Double>>>()
     init { usageSink = { i, c -> log("USAGE input=$i cached=$c") } }
     private var proCache: Map<String, Double> = emptyMap()       // 同一个人设文件里写的主动发起谈话的概率 (CommText.personaProbs)
     private var seeded = false
@@ -459,6 +470,8 @@ class Comm(
             avatarAi = d.optString("avatar_ai", "")
             userProfile = d.optString("user_profile", "")
             splitSend = d.optBoolean("split_send", true)
+            bgPro = d.optBoolean("bg_pro", true)
+            d.optJSONArray("mute_pro")?.let { a -> for (i in 0 until a.length()) a.optString(i).takeIf { it.isNotEmpty() }?.let { muted.add(it) } }
             seeded = d.optBoolean("seeded", false)
             legacyDone = d.optBoolean("legacy_done", false)
             // 旧版本这几项存在设置里 (所有对象共用): 迁移时归给现在选着的对象
@@ -495,6 +508,7 @@ class Comm(
         val o = JSONObject().put("persona", persona)
             .put("show_avatar", showAvatar).put("avatar_me", avatarMe).put("avatar_ai", avatarAi)
             .put("user_profile", userProfile).put("seeded", seeded).put("legacy_done", legacyDone).put("split_send", splitSend)
+            .put("bg_pro", bgPro).put("mute_pro", JSONArray(muted.toList()))
         writer.execute { Store.write(cfgFile, o) }
     }
 
@@ -554,6 +568,8 @@ class Comm(
         val doc = LinkedHashMap<String, Any?>()
         if (userProfile.isNotEmpty()) doc["profile"] = userProfile
         doc["split"] = splitSend                                    // 分条发的开关: 调用 AI 的是主端, 两台设备要一致
+        doc["bgpro"] = bgPro
+        for (p in chatPids()) doc["mute:$p"] = p in muted
         for (p in chatPids()) {
             val st = stateOf(p)
             for (m in st.messages.takeLast(SYNC_N)) {
@@ -581,6 +597,8 @@ class Comm(
             val rest = key.substringAfter(':', "")
             when {
                 key == "split" && v is Boolean -> if (v != splitSend) { splitSend = v; saveCfg(); changed() }
+                key == "bgpro" && v is Boolean -> if (v != bgPro) { bgPro = v; saveCfg(); changed() }
+                kind == "mute" && v is Boolean -> if (v != (rest in muted)) { if (v) muted.add(rest) else muted.remove(rest); saveCfg(); changed() }
                 key == "profile" -> {
                     val n = (v as? String ?: "").take(MAX_PROFILE)
                     if (n != userProfile) { userProfile = n; saveCfg(); changed() }
@@ -673,17 +691,31 @@ class Comm(
 
     @Synchronized
     fun set(persona: String? = null, showAvatar: Boolean? = null,
-            avatarMe: String? = null, avatarAi: String? = null, userProfile: String? = null, splitSend: Boolean? = null) {
+            avatarMe: String? = null, avatarAi: String? = null, userProfile: String? = null, splitSend: Boolean? = null, bgPro: Boolean? = null) {
         persona?.let { switchTo(it); saveChat() }
         userProfile?.let { this.userProfile = it.trim().take(MAX_PROFILE) }
         showAvatar?.let { this.showAvatar = it }
         splitSend?.let { this.splitSend = it }
+        bgPro?.let { this.bgPro = it }
         avatarMe?.let { this.avatarMe = it.trim().take(4) }
         avatarAi?.let { this.avatarAi = it.trim().take(4) }
         saveCfg()
         changed()
-        if (splitSend != null) push()
+        if (splitSend != null || bgPro != null) push()
     }
+
+    /** 这个对象 (默认是现在聊的) 被"禁止主动发起"了吗: 不主动发消息, 也不追问 (规则 IX). */
+    fun isMuted(p: String = pid): Boolean = p in muted
+
+    @Synchronized
+    fun setMuted(m: Boolean, p: String = pid) {
+        if (p.isEmpty()) return
+        if (m) muted.add(p) else muted.remove(p)
+        saveCfg(); changed(); push()
+    }
+
+    /** 测试用: 没有非正在聊天的对象的请求在等回复. */
+    fun bgIdle() = bgBusy == null
 
     private fun ageSeconds(m: ChatMsg): Double {
         val at = parseIso(m.at) ?: return 1e9
@@ -812,12 +844,12 @@ class Comm(
 
     // ---- 请求内容 ----
 
-    fun apiMessages(): List<Pair<String, String>> {
+    fun apiMessages(src: List<ChatMsg> = messages): List<Pair<String, String>> {
         val out = ArrayList<Pair<String, String>>()
         // 总字数太多时从最老的开始不带 (至少带最新的一条)
         var total = 0
         // 起点按 HISTORY_STEP 一格一格挪: 中间的每一次请求, 开头都和上一次一模一样 (提示缓存才命中)
-        var kept: List<ChatMsg> = if (messages.size > HISTORY_SENT) messages.drop(-Math.floorDiv(-(messages.size - HISTORY_SENT), HISTORY_STEP) * HISTORY_STEP) else messages.toList()
+        var kept: List<ChatMsg> = if (src.size > HISTORY_SENT) src.drop(-Math.floorDiv(-(src.size - HISTORY_SENT), HISTORY_STEP) * HISTORY_STEP) else src.toList()
         while (kept.size > 1 && kept.sumOf { it.api.ifEmpty { it.text }.length } > HISTORY_CHARS) kept = kept.drop(minOf(HISTORY_STEP, kept.size - 1))
         for (m in kept) {
             val role = if (m.role == "ai") "assistant" else "user"
@@ -833,12 +865,14 @@ class Comm(
     /** 发给模型的内容: 每条用户消息前只有时间; 整点记录 / 计时器等数据只有用户手动选了 📎 附件才发. */
     private fun compose(t: LocalDateTime, body: String): String = "[${CommText.stamp(t)}]\n" + body
 
-    private fun add(role: String, text: String, api: String = ""): ChatMsg {
+    private fun add(role: String, text: String, api: String = ""): ChatMsg = mk(role, text, api).also { messages.add(it) }
+
+    /** 造一条消息 (还没放进任何聊天记录). */
+    private fun mk(role: String, text: String, api: String = ""): ChatMsg {
         val ts = maxOf(nowMs(), lastTs + 1)             // 同一台设备上严格递增
         lastTs = ts
         val m = ChatMsg(nextId++, role, text, now().iso(), api, "$ts-${device().ifEmpty { "local" }.take(4)}", ts)
         if (role == "ai" && blocked().isNotEmpty()) m.hold = true       // 专注 / 睡眠 / 外出中收到的: 先藏起来, 回到休息 / 空闲再显示
-        messages.add(m)
         return m
     }
 
@@ -981,6 +1015,7 @@ class Comm(
     @Synchronized
     fun tick() {
         while (true) finish(results.poll() ?: break)
+        while (true) bgFinish(bgResults.poll() ?: break)
         releaseHeld()
         if (busy || problem().isNotEmpty() || !leader()) return
         val t = now()
@@ -996,18 +1031,21 @@ class Comm(
         }
         if (checkWait()) return
         checkProactive(t, snap)
+        bgCheck(t, snap)
     }
 
     /** 规则 IX: 对方最后一条消息末尾写了 [waiting for reply]:[N], N 分钟 (从用户看到它算起) 过去了用户还没回复: 让对方可以追问一次. */
-    private fun checkWait(): Boolean {
-        val last = messages.lastOrNull { it.role == "me" || it.role == "ai" } ?: return false
+    private fun checkWait(ctx: BgCtx? = null): Boolean {
+        if (ctx == null && isMuted()) return false
+        val last = (ctx?.st?.messages ?: messages).lastOrNull { it.role == "me" || it.role == "ai" } ?: return false
         if (last.role != "ai" || last.wait <= 0 || last.chased || last.hold) return false
         if (nowMs() < (if (last.shown != 0L) last.shown else last.ts) + (last.wait * 60000).toLong()) return false
         last.chased = true                                           // 一条消息最多追问一次 (追问被拒绝也算)
-        saveChat()
         val n = "%.4g".format(last.wait).let { if ("." in it) it.trimEnd('0').trimEnd('.') else it }
-        trigger("chase", "[系统] 你上一条消息末尾标了 [waiting for reply]:[$n], 现在已经过了 $n 分钟, 用户还没有回复. " +
-            "请根据人设决定要不要追加询问一次 (话题和语气自己定, 不要重复上一条); 如果不想问或者此刻不方便, 返回${CommText.REFUSE}.")
+        val body = "[系统] 你上一条消息末尾标了 [waiting for reply]:[$n], 现在已经过了 $n 分钟, 用户还没有回复. " +
+            "请根据人设决定要不要追加询问一次 (话题和语气自己定, 不要重复上一条); 如果不想问或者此刻不方便, 返回${CommText.REFUSE}."
+        if (ctx != null) { storeState(ctx.pid, ctx.st); bgRequest(ctx, "chase", body) }
+        else { saveChat(); trigger("chase", body) }
         return true
     }
 
@@ -1016,15 +1054,17 @@ class Comm(
     private class SegEvent(val key: String, val kind: String, val begin: LocalDateTime)
 
     /** 已经处理过的主动消息时间点 (发没发都算): 休息开始的时刻 (I) / "S开始时刻i|r" (日程里的空闲 / 休息段, II / III). */
-    private fun proDone(): List<String> = proKey.split('|').filter { it.isNotEmpty() }
+    // 下面这些带 ctx 的: ctx = null 是现在聊的对象; 否则是非正在聊天的对象 (bgCheck)
+    private fun proDone(ctx: BgCtx? = null): List<String> = (ctx?.st?.proKey ?: proKey).split('|').filter { it.isNotEmpty() }
 
-    private fun proMark(key: String) {
-        proKey = (proDone().filter { it != key } + key).takeLast(PROACTIVE_KEEP).joinToString("|")
+    private fun proMark(key: String, ctx: BgCtx? = null) {
+        val v = (proDone(ctx).filter { it != key } + key).takeLast(PROACTIVE_KEEP).joinToString("|")
+        if (ctx != null) ctx.st.proKey = v else proKey = v
     }
 
     /** 最近 PROACTIVE_GAP 内已经主动发过一条了吗 (相邻的日程段 / 刚好又在休息开始后, 不连着发). */
-    private fun proRecent(): Boolean {
-        val m = messages.lastOrNull { it.role == "sys" && it.text.startsWith("[系统]") } ?: return false
+    private fun proRecent(ctx: BgCtx? = null): Boolean {
+        val m = (ctx?.st?.messages ?: messages).lastOrNull { it.role == "sys" && it.text.startsWith("[系统]") } ?: return false
         return ageSeconds(m) < PROACTIVE_GAP
     }
 
@@ -1051,9 +1091,9 @@ class Comm(
     }
 
     /** 日程里 3 分钟之内就要开始的空闲 / 休息段. */
-    private fun scheduleEvents(t: LocalDateTime): List<SegEvent> {
+    private fun scheduleEvents(t: LocalDateTime, segs: List<Pair<String, Int>>? = null): List<SegEvent> {
         val out = ArrayList<SegEvent>()
-        for ((kind, mins) in segments()) for (d in 0L..1L) {                 // 今天 / 明天 (23:59 看 0:00 开始的那段)
+        for ((kind, mins) in segs ?: segments()) for (d in 0L..1L) {                 // 今天 / 明天 (23:59 看 0:00 开始的那段)
             val begin = t.toLocalDate().plusDays(d).atStartOfDay().plusMinutes(mins.toLong())
             if (t.isBefore(begin) && !begin.isAfter(t.plusSeconds(PROACTIVE_MAX_DELAY.toLong())))
                 out.add(SegEvent("S${begin.toLocalDate()}T%02d:%02d%s".format(begin.hour, begin.minute, kind[0]), kind, begin))
@@ -1061,8 +1101,9 @@ class Comm(
         return out
     }
 
-    private fun checkProactive(t: LocalDateTime, snap: CommSnap?) {
-        val done = proDone()
+    private fun checkProactive(t: LocalDateTime, snap: CommSnap?, ctx: BgCtx? = null) {
+        if (ctx == null && isMuted()) return
+        val done = proDone(ctx)
         // I. 用户这次休息超过 20 分钟: 休息开始后 1~3 分钟发一条
         val bs = snap?.breakStart
         if (snap != null && snap.state == "break" && bs != null && snap.breakTotalS > PROACTIVE_MIN_REST) {
@@ -1071,39 +1112,115 @@ class Comm(
                 val due = bs.plusSeconds(60L + java.util.Random(key.hashCode().toLong()).nextInt(121))
                 if (!t.isBefore(due)) {
                     proFire(key, due, t, 1.0, "[系统] 用户刚开始休息, 这次计划休息约 ${Math.round(snap.breakTotalS / 60)} 分钟. " +
-                        "请根据人设主动给用户发一条消息, 话题自己找; 如果此刻不方便, 返回${CommText.REFUSE}.")
+                        "请根据人设主动给用户发一条消息, 话题自己找; 如果此刻不方便, 返回${CommText.REFUSE}.", ctx)
                     return
                 }
             }
         }
         // II / III. 人设日程里每段空闲 / 休息开始前 1~3 分钟, 有概率发一条
-        for (ev in scheduleEvents(t)) {
+        for (ev in scheduleEvents(t, ctx?.segs)) {
             if (ev.key in done) continue
             val due = ev.begin.minusSeconds(60L + java.util.Random(ev.key.hashCode().toLong()).nextInt(121))
             if (t.isBefore(due)) continue
             val mins = maxOf(1L, Math.round(secondsBetween(t, ev.begin) / 60.0))
             val hm = "%02d:%02d".format(ev.begin.hour, ev.begin.minute)
-            proFire(ev.key, due, t, proPercent(ev.kind) / 100.0,
+            val pct = if (ctx != null) ctx.probs[ev.kind] ?: (if (ev.kind == "idle") DEFAULT_P_IDLE else DEFAULT_P_REST).toDouble() else proPercent(ev.kind)
+            proFire(ev.key, due, t, pct / 100.0,
                 "[系统] 按你的日程, 你的${if (ev.kind == "idle") "空闲" else "休息"}时间将在 $hm 开始 (约 $mins 分钟后). " +
                 "这条是系统提前触发的: 即使你此刻还处于专注/不能回复的时段, 也允许你现在主动给用户发一条消息, 话题自己找 (不要透露日程); " +
-                "如果实在不方便, 返回${CommText.REFUSE}.")
+                "如果实在不方便, 返回${CommText.REFUSE}.", ctx)
             return
         }
     }
 
     /** 这个时间点处理一次: 记下来 (不管发没发), 没错过太久 / 摇中了概率 / 最近没发过, 才真的让对方发. */
-    private fun proFire(key: String, due: LocalDateTime, t: LocalDateTime, p: Double, body: String) {
-        proMark(key)
+    private fun proFire(key: String, due: LocalDateTime, t: LocalDateTime, p: Double, body: String, ctx: BgCtx? = null) {
+        proMark(key, ctx)
         val late = secondsBetween(due, t) > PROACTIVE_LATE                  // 错过太久 (程序刚打开) 就算了
         val hit = p >= 1.0 || java.util.Random((key + "#p").hashCode().toLong()).nextDouble() < p
-        val recent = proRecent()
+        val recent = proRecent(ctx)
+        val who = if (ctx != null) " [${ctx.name}]" else ""
         if (!late && hit && !recent) {
-            log("PRO $key p=${"%.2f".format(p)} → 让对方发")
-            trigger("proactive", body)
+            log("PRO$who $key p=${"%.2f".format(p)} → 让对方发")
+            if (ctx != null) bgRequest(ctx, "proactive", body) else trigger("proactive", body)
         } else {
-            log("PRO $key p=${"%.2f".format(p)} → 不发 (${if (late) "错过了" else if (!hit) "概率没中" else "刚发过"})")
+            log("PRO$who $key p=${"%.2f".format(p)} → 不发 (${if (late) "错过了" else if (!hit) "概率没中" else "刚发过"})")
         }
-        saveChat(); saveCfg(); push()
+        if (ctx != null) storeState(ctx.pid, ctx.st) else { saveChat(); saveCfg() }
+        push()
+    }
+
+    // ---- 非正在聊天的对象主动发消息 (MECHANICS 24.4): 聊过天的其他对象照样按它们各自的人设日程主动发 / 追问, 一次一个 ----
+
+    /** 人设文件里的 (日程段, 主动发起谈话的概率), 文件没变就用上次读的. */
+    private fun infoOf(name: String): Pair<List<Pair<String, Int>>, Map<String, Double>> {
+        val f = File(personas, name)
+        if (!f.isFile) return emptyList<Pair<String, Int>>() to emptyMap()
+        val sig = "${f.lastModified()}|${f.length()}"
+        val hit = bgSeg[name]?.takeIf { it.first == sig } ?: run {
+            val text = readPersona(name)
+            Triple(sig, CommText.scheduleSegments(text), CommText.personaProbs(text)).also { bgSeg[name] = it }
+        }
+        return hit.second to hit.third
+    }
+
+    private fun bgCheck(t: LocalDateTime, snap: CommSnap?) {
+        if (!bgPro || bgBusy != null || nowMs() - bgLast < BG_STAGGER * 1000L) return
+        val names = listPersonas().associateBy { pidOf(it) }
+        for (p in chatPids()) {
+            if (p == pid || p !in names || p in muted) continue
+            val st = stateOf(p)
+            if (st.messages.none { it.role == "me" || it.role == "ai" }) continue          // 没聊过的 (只是切换时留下的空记录) 不会来找你
+            val (segs, probs) = infoOf(names.getValue(p))
+            val ctx = BgCtx(p, names.getValue(p), st, segs, probs)
+            if (checkWait(ctx)) return
+            checkProactive(t, snap, ctx)
+            if (bgBusy != null) return
+        }
+    }
+
+    /** 为非正在聊天的对象发一次请求 (主动发 / 追问); 回复由 tick 收进它的聊天记录, 没有第二次调用, 也没有要资料的轮次. */
+    private fun bgRequest(ctx: BgCtx, kind: String, body: String) {
+        val profile = aiConfig().profile()
+        var system = CommText.prefixPrompt(splitSend) + readPersona(ctx.name)
+        if (userProfile.isNotBlank()) system += "\n\n以下是用户的身份背景(用户自己填写):\n" + userProfile.trim()
+        val api = compose(now(), body)
+        val msgs = ArrayList(apiMessages(ctx.st.messages))
+        if (msgs.isNotEmpty() && msgs.last().first == "user") msgs[msgs.size - 1] = "user" to (msgs.last().second + "\n\n" + api)
+        else msgs.add("user" to api)
+        val clear0 = ctx.st.clearTs
+        bgBusy = ctx.pid
+        bgLast = nowMs()
+        val started = System.currentTimeMillis()
+        log("REQ bg-$kind start [${ctx.name}] model=${profile.model} msgs=${msgs.size}")
+        Thread {
+            var reply = ""
+            var err = ""
+            try { reply = chatFn(profile, system, msgs) }
+            catch (e: AiError) { err = e.message ?: "" }
+            catch (e: Exception) { err = e.javaClass.simpleName }
+            log("REQ bg-$kind ${if (err.isNotEmpty()) "FAIL $err" else "ok"} ${(System.currentTimeMillis() - started) / 1000.0}s")
+            bgResults.add(BgResult(ctx.pid, kind, Extra(body, api), reply, err, clear0))
+        }.apply { isDaemon = true }.start()
+    }
+
+    private fun bgFinish(r: BgResult) {
+        bgBusy = null
+        if (hardBlock()) return
+        val st = stateOf(r.pid)
+        if (st.clearTs != r.clear0 || r.err.isNotEmpty()) return
+        val (text, waitMin) = CommText.cleanReply(r.reply)
+        if (CommText.isRefusal(r.reply) || text.isEmpty()) { log("REPLY bg-${r.kind}: 对方不想发 / 什么也没剩, 不显示"); return }
+        val sysm = mk("sys", r.extra.body, r.extra.api)
+        val m = mk("ai", text, if (text != r.reply.trim()) r.reply.trim() else "")
+        if (waitMin > 0 && r.kind != "chase") m.wait = waitMin
+        st.messages.add(sysm); st.messages.add(m)
+        val talked = talkedRecently(st.messages.dropLast(2), sysm.ts)
+        if (!m.hold) {
+            if (!(viewing && r.pid == pid)) unread++
+            if (r.kind == "chase" || !talked) ping()
+        }
+        storeState(r.pid, st); changed(); push()
     }
 
     /** 清空聊天记录 (界面上的按钮, 或者在聊天框里发 /clear): 以后不再显示, 也不再发给模型; 别的设备也一起清空.
