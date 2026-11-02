@@ -5,6 +5,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,6 +34,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -48,6 +51,8 @@ import androidx.compose.ui.unit.sp
 import com.obliphur.oit.OitApp
 import com.obliphur.oit.ai.Ai
 import com.obliphur.oit.core.ChatMsg
+import com.obliphur.oit.core.CommData
+import com.obliphur.oit.core.CommSel
 import com.obliphur.oit.core.CommText
 import com.obliphur.oit.core.parseIso
 import com.obliphur.oit.core.tr
@@ -56,38 +61,90 @@ import com.obliphur.oit.core.tr
 
 @Composable
 fun CommScreen(go: (String) -> Unit) {
-    LocalTick.current
     val o = LocalOit.current
     val core = OitApp.instance.core
     val comm = core.comm
     DisposableEffect(Unit) { comm.setViewing(true); onDispose { comm.setViewing(false) } }
     var input by rememberSaveable { mutableStateOf("") }
     var askClear by remember { mutableStateOf(false) }
-    val msgs = comm.visible()
+    var attach by remember { mutableStateOf(false) }
+    // 不跟着每秒一次的 LocalTick 重画 (整页每秒重画一遍会有卡顿感): 只在聊天记录 / 状态变了才刷新
+    var ver by remember { mutableIntStateOf(comm.version) }
+    LaunchedEffect(Unit) { while (true) { if (comm.version != ver) ver = comm.version; kotlinx.coroutines.delay(250) } }
+    val msgs = remember(ver) { comm.visible() }
     val list = rememberLazyListState()
-    LaunchedEffect(comm.version) { if (msgs.isNotEmpty()) list.scrollToItem(msgs.size - 1) }
+    LaunchedEffect(ver) { if (msgs.isNotEmpty()) list.scrollToItem(0) }          // 倒排: 第 0 项是最新的一条, 在最下面
+    fun report(why: String) {
+        core.toast(tr(why), "warn")
+        if (why == "还没有选人设" || "API" in why || "Base URL" in why || "模型" in why) go("settings:comm")
+    }
 
     Column(Modifier.fillMaxSize().imePadding().padding(horizontal = 12.dp)) {
         Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(comm.personaTitle(comm.personaName()), color = o.dim, fontSize = 14.sp, modifier = Modifier.weight(1f))
             TextButton({ if (comm.messages.isNotEmpty()) askClear = true }) { Text(tr("清空"), color = o.dim) }
         }
-        LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(msgs, key = { it.id }) { Bubble(it) }
+        // 倒排 + 上下各留一点空白: 第一条 / 最后一条也能再滑过去一些, 新消息总是贴着底部
+        LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list, reverseLayout = true,
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 64.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(msgs.asReversed(), key = { it.id }) { Bubble(it) }
         }
         if (comm.error.isNotEmpty()) Text(tr(comm.error), color = o.danger, fontSize = 12.sp,
             modifier = Modifier.padding(top = 4.dp))
-        Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.Bottom,
+        TextButton({ attach = true }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
+            Text("📎", fontSize = 18.sp)
+        }
+        Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.Bottom,
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(input, { input = it }, modifier = Modifier.weight(1f), maxLines = 4)
             AccentButton(tr("发送")) {
                 val why = comm.send(input)
-                if (why.isEmpty()) input = ""
-                else if (why != "empty") { core.toast(tr(why), "warn"); go("settings:comm") }
+                if (why.isEmpty()) input = "" else if (why != "empty") report(why)
             }
         }
     }
+    if (attach) AttachDialog({ attach = false }) { sel ->
+        val why = comm.sendData(sel, input)
+        when {
+            why == "empty" -> {}
+            why.isEmpty() -> { input = ""; attach = false }
+            else -> { attach = false; report(why) }
+        }
+    }
     if (askClear) Confirm(tr("清空"), tr("清空聊天记录?"), true, { askClear = false }) { comm.clear() }
+}
+
+/** 📎 勾选要发送的数据: 统计的几页, 日历 (选类别), 合约词条. */
+@Composable
+private fun AttachDialog(onDismiss: () -> Unit, onSend: (CommSel) -> Unit) {
+    val o = LocalOit.current
+    val stats = remember { mutableStateListOf<String>() }
+    val cal = remember { mutableStateListOf<String>() }
+    var contract by remember { mutableStateOf(false) }
+    @Composable
+    fun box(label: String, on: Boolean, set: (Boolean) -> Unit) {
+        Row(Modifier.fillMaxWidth().clickable { set(!on) }, verticalAlignment = Alignment.CenterVertically) {
+            androidx.compose.material3.Checkbox(on, { set(it) },
+                colors = androidx.compose.material3.CheckboxDefaults.colors(checkedColor = o.accent, checkmarkColor = o.onAccent))
+            Text(label, color = o.text)
+        }
+    }
+    fun toggle(list: MutableList<String>, key: String, on: Boolean) { if (on) list.add(key) else list.remove(key) }
+    AlertDialog(onDismissRequest = onDismiss, containerColor = o.bg,
+        title = { Text(tr("发送数据")) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Text(tr("📊  统计"), fontWeight = FontWeight.Bold, color = o.text, modifier = Modifier.padding(top = 4.dp))
+                for ((k, label) in CommData.STATS_KEYS) box(tr(label), k in stats) { toggle(stats, k, it) }
+                Text(tr("📅  日历"), fontWeight = FontWeight.Bold, color = o.text, modifier = Modifier.padding(top = 10.dp))
+                for ((k, label) in CommData.CAL_KEYS) box(tr(label), k in cal) { toggle(cal, k, it) }
+                Text(tr("⚔  合约"), fontWeight = FontWeight.Bold, color = o.text, modifier = Modifier.padding(top = 10.dp))
+                box(tr("合约词条"), contract) { contract = it }
+            }
+        },
+        confirmButton = { TextButton({ onSend(CommSel(stats.toList(), cal.toList(), contract)) }) { Text(tr("发送"), color = o.accent) } },
+        dismissButton = { TextButton(onDismiss) { Text(tr("取消"), color = o.dim) } })
 }
 
 @Composable

@@ -110,6 +110,7 @@ class CommTest {
         assertEquals("me", c.visible().last().role)
 
         // 重开: 记录和设置都在
+        c.flush()
         val c2 = Comm(dir, File(td, "personas"), { clock }) { _, _, _ -> "" }
         assertEquals("小夏.txt", c2.persona)
         assertEquals(c.visible().size, c2.visible().size)
@@ -126,7 +127,25 @@ class CommTest {
         assertTrue(sent.size == 1 && "我先睡了" !in sent[0].second && "整点记录" in sent[0].second)
         script.add("迟到的回复"); c.send("在吗"); c.clear(); wait(c)
         assertTrue(c.visible().isEmpty() && !c.busy)
+        c.flush()
         assertTrue(Comm(dir, File(td, "personas"), { clock }) { _, _, _ -> "" }.visible().isEmpty())
+
+        // 发数据: 聊天里一行说明, 数据附在发给模型的内容里
+        c.clear()
+        c.dataFn = { "【统计·联网理由】\n  学习资料: 15 分钟" }
+        script.add("看到了")
+        assertEquals("", c.sendData(CommSel(stats = listOf("net")), "帮我看看")); wait(c)
+        assertEquals("📎 统计·联网理由\n帮我看看", c.visible()[0].text)
+        assertEquals("ai", c.visible()[1].role)
+        val api = calls.last().second.last().second
+        assertTrue("(用户发来的数据)" in api && "学习资料: 15 分钟" in api && api.endsWith("帮我看看"))
+        assertEquals("empty", c.sendData(CommSel()))
+        c.dataFn = { "" }
+        assertEquals("没有可发送的数据", c.sendData(CommSel(stats = listOf("net"))))
+        c.fog = { true }
+        assertEquals("黑雾中无法发送", c.sendData(CommSel(stats = listOf("net"))))
+        assertEquals("📎 统计·整点记录、应用 / 日历·睡眠 / 合约词条",
+            CommData.label(CommSel(listOf("log", "window"), listOf("sleep"), true)))
     }
 
     @Test

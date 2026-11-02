@@ -106,6 +106,9 @@ class Comm(
     @Volatile var busy = false; private set
     @Volatile var error = ""; private set
     @Volatile var viewing = false; private set
+    /** 📎 勾选的内容 (统计 / 日历 / 合约词条); Core 接上. 空 = 没有可发的. */
+    var dataFn: (CommSel) -> String = { "" }
+    var fog: () -> Boolean = { false }
     var hourLines: () -> List<String> = { emptyList() }
     var snapshot: () -> CommSnap? = { null }
     private class Result(val kind: String, val trig: Int, val reply: String, val err: String, val epoch: Int)
@@ -147,10 +150,17 @@ class Comm(
         nextId = (messages.maxOfOrNull { it.id } ?: 0) + 1
     }
 
+    // 写盘 (fsync) 放在后台线程: 发送 / 收到消息时界面线程不等磁盘, 不卡. 先在这里做好快照, 线程只管写.
+    private val writer = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "comm-save").apply { isDaemon = true } }
+
+    /** 等后台的写盘做完 (自检). */
+    fun flush() { writer.submit {}.get() }
+
     private fun saveCfg() {
-        Store.write(cfgFile, JSONObject().put("persona", persona).put("send_hour", sendHour).put("send_timer", sendTimer)
+        val o = JSONObject().put("persona", persona).put("send_hour", sendHour).put("send_timer", sendTimer)
             .put("show_avatar", showAvatar).put("avatar_me", avatarMe).put("avatar_ai", avatarAi).put("pro_key", proKey)
-            .put("last_sent", JSONObject(lastSent as Map<*, *>)))
+            .put("last_sent", JSONObject(lastSent as Map<*, *>))
+        writer.execute { Store.write(cfgFile, o) }
     }
 
     private fun saveChat() {
@@ -158,7 +168,8 @@ class Comm(
         val arr = JSONArray()
         for (m in messages) arr.put(JSONObject().put("id", m.id).put("role", m.role).put("text", m.text).put("at", m.at)
             .apply { if (m.api.isNotEmpty()) put("api", m.api) })
-        Store.write(chatFile, JSONObject().put("messages", arr))
+        val o = JSONObject().put("messages", arr)
+        writer.execute { Store.write(chatFile, o) }
     }
 
     private fun changed() { version++ }
@@ -233,15 +244,22 @@ class Comm(
     fun aiConfig() = AiConfig(File(dir, "ai_config.json"))
 
     /** 现在不能聊天的原因 ("" = 可以). */
-    fun problem(): String {
-        try {
-            Ai.checkProfile(aiConfig().profile())
-        } catch (e: AiError) {
-            return e.message ?: ""
+    fun problem(fresh: Boolean = false): String {
+        val t = System.currentTimeMillis()
+        if (fresh || t - problemAt > 5000) {
+            problemAt = t
+            problemCache = try {
+                Ai.checkProfile(aiConfig().profile()); ""
+            } catch (e: AiError) {
+                e.message ?: "API"
+            }
         }
+        if (problemCache.isNotEmpty()) return problemCache
         if (personaName().isEmpty()) return "还没有选人设"
         return ""
     }
+    private var problemAt = 0L
+    private var problemCache = ""
 
     // ---- 头像: 圆形 PNG (ui/AvatarCrop.kt 里选图并截取); 对方的头像跟着人设走 ----
 
@@ -330,9 +348,27 @@ class Comm(
         val text = text0.trim()
         if (text.isEmpty()) return "empty"
         if (text.lowercase() == "/clear") { clear(); return "" }
-        val why = problem()
+        val why = problem(true)
         if (why.isNotEmpty()) return why
         add("me", text, compose(now(), text))
+        error = ""; retries = 0; retryAt = null
+        saveCfg(); saveChat(); changed()
+        request("user")
+        return ""
+    }
+
+    /** 发送统计 / 日历 / 合约词条的数据: 聊天里只显示一行说明, 数据附在发给模型的内容里. text: 输入框里已经写的字, 一起发. */
+    @Synchronized
+    fun sendData(sel: CommSel, text0: String = ""): String {
+        val label = CommData.label(sel)
+        if (label.isEmpty()) return "empty"
+        val why = problem(true)
+        if (why.isNotEmpty()) return why
+        val data = dataFn(sel)
+        if (data.isEmpty()) return if (fog()) "黑雾中无法发送" else "没有可发送的数据"
+        val text = text0.trim()
+        add("me", label + if (text.isEmpty()) "" else "\n$text",
+            compose(now(), "(用户发来的数据)\n$data" + if (text.isEmpty()) "" else "\n\n$text"))
         error = ""; retries = 0; retryAt = null
         saveCfg(); saveChat(); changed()
         request("user")

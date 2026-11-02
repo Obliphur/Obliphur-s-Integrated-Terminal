@@ -15,8 +15,10 @@
     python comm.py     自检 (不联网, 只用临时文件夹)
 """
 
+import json
 import os
 import random
+import time
 import re
 import shutil
 import threading
@@ -206,8 +208,13 @@ class Comm:
         self.error = ""
         self.hour_lines = lambda: []   # 今天填过的整点记录 ["09:00 写代码", …]; app 接上
         self.snapshot = lambda: {}     # 计时器状态; app 接上
+        self.data_fn = lambda sel: ""  # 统计 / 日历 / 合约词条的数据 (comm_data.build); app 接上
+        self.fog = lambda: False       # 合约黑雾中: 不发数据
         self.on_change = None          # 界面线程里调用
         self._lock = threading.Lock()
+        self._wlock = threading.Lock()
+        self._pending = {}
+        self._writing = False
         self._results = []
         self._again = False
         self._retry_at = None
@@ -234,12 +241,42 @@ class Comm:
             self.messages = [m for m in msgs if isinstance(m, dict) and m.get("role") in ("me", "ai", "sys")]
         self._next_id = max([int(m.get("id") or 0) for m in self.messages] + [0]) + 1
 
+    # 写盘 (加密 + fsync) 放在后台线程: 发送 / 收到消息时界面线程不等磁盘, 不卡. 连续几次保存合并成一次.
+    def _write_async(self, kind: str, payload):
+        with self._wlock:
+            self._pending[kind] = payload
+            if self._writing:
+                return
+            self._writing = True
+        threading.Thread(target=self._write_loop, daemon=True).start()
+
+    def _write_loop(self):
+        while True:
+            with self._wlock:
+                pending, self._pending = self._pending, {}
+                if not pending:
+                    self._writing = False
+                    return
+            if "cfg" in pending:
+                config.save_json_file(self.cfg_path, pending["cfg"])
+            if "chat" in pending:
+                config.save_json_file(self.chat_path, pending["chat"])
+
+    def flush(self, timeout: float = 5.0):
+        """等后台的写盘做完 (关程序前, 以及自检)."""
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            with self._wlock:
+                if not self._writing and not self._pending:
+                    return
+            time.sleep(0.01)
+
     def save_cfg(self):
-        config.save_json_file(self.cfg_path, self.cfg)
+        self._write_async("cfg", json.loads(json.dumps(self.cfg)))
 
     def save_chat(self):
         self.messages = self.messages[-KEEP:]
-        config.save_json_file(self.chat_path, {"messages": self.messages})
+        self._write_async("chat", {"messages": [dict(m) for m in self.messages]})
 
     def set_cfg(self, **kw):
         self.cfg.update(kw)
@@ -363,6 +400,32 @@ class Comm:
         now = self.now()
         snap = self.snapshot() or {}
         self._add("me", text, self._compose(now, text, snap))
+        self.error = ""
+        self._retries = 0
+        self._retry_at = None
+        self.save_cfg()
+        self.save_chat()
+        self._changed()
+        self._request("user")
+        return ""
+
+    def send_data(self, sel: dict, text: str = "") -> str:
+        """发送统计 / 日历 / 合约词条的数据 (comm_data.py). 聊天里只显示一行说明, 数据附在发给模型的内容里.
+        text: 输入框里已经写的字, 一起发. 返回 "" = 已发出, 否则是不能发的原因."""
+        import comm_data
+        label = comm_data.label(sel)
+        if not label:
+            return "empty"
+        why = self.problem()
+        if why:
+            return why
+        data = self.data_fn(sel)
+        if not data:
+            return "黑雾中无法发送" if self.fog() else "没有可发送的数据"
+        now = self.now()
+        text = str(text or "").strip()
+        shown = label + (("\n" + text) if text else "")
+        self._add("me", shown, self._compose(now, f"(用户发来的数据)\n{data}" + (f"\n\n{text}" if text else ""), self.snapshot() or {}))
         self.error = ""
         self._retries = 0
         self._retry_at = None
@@ -638,6 +701,7 @@ def _selftest():
     assert len(c2.visible()) == 1 and sum(m["role"] == "sys" for m in c2.messages) == 1
 
     # 重开程序: 记录和设置都在
+    c.flush()
     c3 = Comm(data, folder, now=lambda: clock[0], chat_fn=fake)
     assert c3.cfg["persona"] == "小夏.txt" and len(c3.visible()) == len(c.visible())
     c3.clear()
@@ -648,6 +712,7 @@ def _selftest():
     assert c.avatar_path("ai") == ai_dest
     c.remove_avatar("ai")
     assert c.avatar_path("ai") == ""
+    c3.flush()
     assert c3.visible() == [] and Comm(data, folder, now=lambda: clock[0], chat_fn=fake).visible() == []
 
     # /clear: 之前的记录不再显示, 也不再发给模型; 信息重新附带; 清空前发出的请求回复到了也丢掉
@@ -670,6 +735,23 @@ def _selftest():
     c.clear()
     wait(c)
     assert c.visible() == [] and not c.busy
+
+    # 发数据: 聊天里一行说明, 数据附在发给模型的内容里
+    c.clear()
+    c.data_fn = lambda sel: "【统计·联网理由】\n  学习资料: 15 分钟"
+    script.append("看到了")
+    assert c.send_data({"stats": ["net"], "cal": [], "contract": False}, "帮我看看") == ""
+    wait(c)
+    vis = c.visible()
+    assert vis[0]["text"] == "📎 统计·联网理由\n帮我看看" and vis[1]["role"] == "ai"
+    api = calls[-1][1][-1]["content"]
+    assert "(用户发来的数据)" in api and "学习资料: 15 分钟" in api and api.endswith("帮我看看")
+    assert c.send_data({"stats": [], "cal": [], "contract": False}) == "empty"
+    c.data_fn = lambda sel: ""
+    assert c.send_data({"stats": ["net"]}) == "没有可发送的数据"
+    c.fog = lambda: True
+    assert c.send_data({"stats": ["net"]}) == "黑雾中无法发送"
+    c.flush()
     return "comm selftest OK"
 
 

@@ -252,6 +252,12 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         comm = Comm(dir, host.personasDir() ?: File(dir, "personas"))
         comm.snapshot = { commSnapshot() }
         comm.hourLines = { commHourLines() }
+        comm.fog = { contract.fog() }
+        comm.dataFn = { sel ->
+            if (contract.fog()) "" else CommData.build(sel, this) { pkg ->
+                runCatching { com.obliphur.oit.service.appLabel(com.obliphur.oit.OitApp.instance, pkg) }.getOrDefault(pkg)
+            }
+        }
     }
 
     /** 发给对方的计时器状态; 黑雾中不给 (免得对方把看不到的数字说出来). */

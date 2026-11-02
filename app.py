@@ -36,6 +36,7 @@ import prestart
 import media_pause
 import prescript
 import comm as comm_mod
+import comm_data
 from sync_local import PcLocal
 from config import (
     COLORS, APP_NAME, IDLE, RUNNING, READY_BREAK, ON_BREAK,
@@ -349,6 +350,8 @@ class BreakTimerApp:
         self.comm.snapshot = self._comm_snapshot
         self.comm.hour_lines = self._comm_hour_lines
         self.comm.on_change = self.update_comm_badge
+        self.comm.data_fn = self._comm_data
+        self.comm.fog = lambda: bool(self.contract.fog())
         self._rules_win = None
         self._marks_shown = None        # 指令标记现在画在哪些按钮上 (None = 还没画过)
         self._mark_img = None
@@ -951,6 +954,10 @@ class BreakTimerApp:
     def _cancel_jobs(self):
         self.shutting_down = True
         try:
+            self.comm.flush(2.0)              # 聊天记录是后台写盘的, 关程序前等它写完
+        except Exception:
+            pass
+        try:
             self.focus_glow.close()
         except Exception:
             pass
@@ -1103,6 +1110,13 @@ class BreakTimerApp:
             snap["break_start"] = self.break_start_wall
             snap["break_total_s"] = (self.break_end_wall - self.break_start_wall).total_seconds()
         return snap
+
+    def _comm_data(self, sel: dict) -> str:
+        """📎 发送的数据: 统计的几页, 日历, 合约词条 (黑雾中什么也不给)."""
+        if self.contract.fog():
+            return ""
+        return comm_data.build(sel, self.dm, self.net, self.contract, focus_live=self._focus_live(),
+                               cal_live=self._calendar_live())
 
     def _comm_hour_lines(self) -> list:
         if self.contract.fog() or not self.dm.hour_enabled:
