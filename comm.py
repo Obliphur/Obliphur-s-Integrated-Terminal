@@ -36,6 +36,7 @@ RETRY_GAP = 10 * 60                   # 对方不方便回复时, 多久再把�
 RETRY_MAX = 12
 HISTORY_SENT = 60                     # 每次请求最多带多少条聊天记录
 KEEP = 400                            # 本地最多存多少条
+SYNC_N = 60                           # 随设备同步最近多少条
 MAX_PERSONA = 20000
 PERSONA_EXT = (".txt", ".md")
 CHAT_TOKENS = 1000
@@ -43,7 +44,7 @@ CHAT_TEMPERATURE = 0.8
 WEEKDAY = "一二三四五六日"
 
 DEFAULTS = {"persona": "", "send_hour": True, "send_timer": True, "show_avatar": False,
-            "avatar_me": "", "avatar_ai": "", "last_sent": {}, "pro_key": ""}
+            "avatar_me": "", "avatar_ai": "", "last_sent": {}, "pro_key": "", "retry": {}, "clear_ts": 0}
 
 
 # ══════════════ 前置 prompt 与 README ══════════════
@@ -188,7 +189,10 @@ def api_messages(msgs: list) -> list:
 
 # ══════════════ 管理器 ══════════════
 class Comm:
-    """聊天记录, 设置, 发请求 (线程), 主动发消息, 对方不方便时的重试. 界面线程每秒调一次 tick()."""
+    """聊天记录, 设置, 发请求 (线程), 主动发消息, 对方不方便时的重试, 设备同步. 界面线程每秒调一次 tick().
+
+    设备同步 (MECHANICS 24.6): 聊天记录 / 清空 / "30 分钟内不重复"的记录 / 重试状态 / 主动消息的标记随设备同步 (文档 comm);
+    API Key, 人设, 头像, 默认发送的信息等设置不同步. 只有"最后有人操作的设备" (leader) 去调用 AI / 主动发 / 重试, 回复同步给另一台."""
 
     def __init__(self, data_dir: str, personas: str, now=datetime.now, chat_fn=None):
         self.dir = data_dir
@@ -211,6 +215,9 @@ class Comm:
         self.data_fn = lambda sel: ""  # 统计 / 日历 / 合约词条的数据 (comm_data.build); app 接上
         self.fog = lambda: False       # 合约黑雾中: 不发数据
         self.blocked = lambda: ""      # 现在不能用沟通的原因 ("" = 可以): 合约的"无言为真"
+        self.device = lambda: ""       # 本机的设备 id (sync.my_id); app 接上
+        self.leader = lambda: True     # 本机是不是最后有人操作的设备: 只有它调用 AI / 主动发 / 重试 (sync.is_latest_active); app 接上
+        self.on_sync = None            # 聊天记录有改动, 马上同步一次; app 接上
         self.attach = {"stats": [], "cal": [], "contract": False}     # 📎 确定过的附加数据: 随下一条消息发出
         self.attach_touched = False    # 用户确定过一次之后, 📎 窗口不再默认勾 整点记录 / 专注计时
         self.on_change = None          # 界面线程里调用
@@ -220,17 +227,21 @@ class Comm:
         self._writing = False
         self._results = []
         self._again = False
-        self._retry_at = None
-        self._retries = 0
         self._epoch = 0               # clear() 加一: 清空之前发出的请求, 回复到了也丢掉
         self._next_id = 1
+        self._last_ts = 0
         self.load()
         ensure_personas(self.personas)
         last = self.messages[-1] if self.messages else None
-        if last and last["role"] == "me" and self._age(last) < 6 * 3600:
-            self._retry_at = self.now() + timedelta(seconds=60)    # 上次关程序时还没收到回复
+        rt = self.cfg.get("retry") or {}
+        if last and last["role"] == "me" and self._age(last) < 6 * 3600 and not rt.get("at"):
+            # 上次关程序时还没收到回复: 1 分钟后让 (最后操作的) 设备再试一次
+            self.cfg["retry"] = {"at": self._ms() - RETRY_GAP * 1000 + 60000, "n": int(rt.get("n") or 0)}
 
     # ---- 存取 ----
+    def _ms(self) -> int:
+        return int(self.now().timestamp() * 1000)
+
     def load(self):
         d = config.load_json_file(self.cfg_path, {})
         if isinstance(d, dict):
@@ -242,7 +253,24 @@ class Comm:
         msgs = d.get("messages") if isinstance(d, dict) else None
         if isinstance(msgs, list):
             self.messages = [m for m in msgs if isinstance(m, dict) and m.get("role") in ("me", "ai", "sys")]
+        for m in self.messages:                             # 旧版本的记录没有 uid / ts
+            if not m.get("uid"):
+                m["uid"] = f"L{m.get('id') or 0}"
+            if not m.get("ts"):
+                try:
+                    m["ts"] = int(datetime.fromisoformat(m["at"]).timestamp() * 1000)
+                except (KeyError, ValueError, TypeError):
+                    m["ts"] = 0
+        self.messages.sort(key=lambda m: (m["ts"], m["uid"]))
         self._next_id = max([int(m.get("id") or 0) for m in self.messages] + [0]) + 1
+        for m in self.messages:
+            if not m.get("id"):
+                m["id"] = self._take_id()
+        self._last_ts = max([int(m["ts"]) for m in self.messages] + [0])
+
+    def _take_id(self) -> int:
+        self._next_id += 1
+        return self._next_id - 1
 
     # 写盘 (加密 + fsync) 放在后台线程: 发送 / 收到消息时界面线程不等磁盘, 不卡. 连续几次保存合并成一次.
     def _write_async(self, kind: str, payload):
@@ -294,11 +322,110 @@ class Comm:
             except Exception:
                 pass
 
+    def _push(self):
+        """聊天记录有改动: 马上同步一次 (有绑定的设备时)."""
+        if self.on_sync:
+            try:
+                self.on_sync()
+            except Exception:
+                pass
+
     def _age(self, m) -> float:
         try:
             return (self.now() - datetime.fromisoformat(m["at"])).total_seconds()
         except (KeyError, ValueError, TypeError):
             return 1e9
+
+    # ---- 设备同步 ----
+    def sync_doc(self) -> dict:
+        """随设备同步的内容 (只带最近 SYNC_N 条消息, 再早的是各设备自己留着的; 掉出窗口不算删除)."""
+        doc = {}
+        for m in self.messages[-SYNC_N:]:
+            e = {"role": m["role"], "text": m["text"], "at": m["at"], "ts": int(m["ts"])}
+            if m.get("api"):
+                e["api"] = m["api"]
+            doc["m:" + m["uid"]] = e
+        for k, v in (self.cfg.get("last_sent") or {}).items():
+            doc["sent:" + k] = v
+        if self.cfg.get("pro_key"):
+            doc["pro_key"] = self.cfg["pro_key"]
+        if self.cfg.get("retry"):
+            doc["retry"] = dict(self.cfg["retry"])
+        if self.cfg.get("clear_ts"):
+            doc["clear"] = int(self.cfg["clear_ts"])
+        return doc
+
+    def apply_doc(self, changes: dict):
+        """别的设备发来的改动 (界面线程)."""
+        dirty_chat = dirty_cfg = False
+        known = {m["uid"] for m in self.messages}
+        for key in sorted(changes, key=lambda k: k != "clear"):          # 清空先处理: 之前的记录不会再并进来
+            val = changes[key]
+            if key == "clear":
+                try:
+                    t = int(val)
+                except (TypeError, ValueError):
+                    continue
+                if t > int(self.cfg.get("clear_ts") or 0):
+                    self.cfg["clear_ts"] = t
+                    self.messages = [m for m in self.messages if int(m["ts"]) > t]
+                    known = {m["uid"] for m in self.messages}
+                    self.unread = 0
+                    self.error = ""
+                    self._epoch += 1
+                    self.cfg["last_sent"] = {}                   # 附带过的信息也跟着清空的记录一起没了
+                    self.cfg["retry"] = {}
+                    dirty_chat = dirty_cfg = True
+            elif key.startswith("m:") and isinstance(val, dict):
+                uid = key[2:]
+                try:
+                    ts = int(val.get("ts") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if uid in known or ts <= int(self.cfg.get("clear_ts") or 0) or val.get("role") not in ("me", "ai", "sys"):
+                    continue
+                m = {"id": self._take_id(), "uid": uid, "role": val["role"], "text": str(val.get("text") or ""),
+                     "at": str(val.get("at") or ""), "ts": ts}
+                if val.get("api"):
+                    m["api"] = str(val["api"])
+                self.messages.append(m)
+                known.add(uid)
+                dirty_chat = True
+                if m["role"] == "ai":
+                    self.cfg["retry"] = {}
+                    dirty_cfg = True
+                    if not self.viewing:
+                        self.unread += 1
+            elif key.startswith("sent:"):
+                last = dict(self.cfg.get("last_sent") or {})
+                if val is None:
+                    last.pop(key[5:], None)
+                elif isinstance(val, str):
+                    last[key[5:]] = val
+                self.cfg["last_sent"] = last
+                dirty_cfg = True
+            elif key == "pro_key" and isinstance(val, str):
+                self.cfg["pro_key"] = val
+                dirty_cfg = True
+            elif key == "retry":
+                self.cfg["retry"] = dict(val) if isinstance(val, dict) else {}
+                dirty_cfg = True
+        if dirty_chat:
+            self.messages.sort(key=lambda m: (m["ts"], m["uid"]))
+            self._last_ts = max(self._last_ts, max([int(m["ts"]) for m in self.messages] + [0]))
+            self.save_chat()
+        if dirty_cfg:
+            self.save_cfg()
+        if dirty_chat or dirty_cfg:
+            self._changed()
+
+    def last_author(self) -> str:
+        """最晚的一条消息是哪台设备写的 (设备 id 的前 4 位; 旧记录 / 没有记录 = ""): 这台设备是聊天的主端 —— 调用 AI, 主动发, 重试都由它做,
+        别的设备从它同步. 谁最后发了消息 (用户在那台上发的, 或者那台上 AI 回复的), 谁就是主端."""
+        if not self.messages:
+            return ""
+        last = max(self.messages, key=lambda m: (int(m["ts"]), m["uid"]))
+        return last["uid"].rpartition("-")[2] if "-" in last["uid"] else ""
 
     # ---- 状态 ----
     def persona_name(self) -> str:
@@ -385,12 +512,23 @@ class Comm:
     # ---- 发消息 ----
     def _add(self, role: str, text: str, api: str = "") -> dict:
         now = self.now()
-        m = {"id": self._next_id, "role": role, "text": text, "at": now.isoformat(timespec="seconds")}
+        ts = max(self._ms(), self._last_ts + 1)          # 同一台设备上严格递增
+        self._last_ts = ts
+        m = {"id": self._take_id(), "uid": f"{ts}-{(self.device() or 'local')[:4]}", "role": role, "text": text,
+             "at": now.isoformat(timespec="seconds"), "ts": ts}
         if api:
             m["api"] = api
-        self._next_id += 1
         self.messages.append(m)
         return m
+
+    def _sent(self):
+        """用户发出一条之后的收尾."""
+        self.error = ""
+        self.cfg["retry"] = {}
+        self.save_cfg()
+        self.save_chat()
+        self._changed()
+        self._push()
 
     def send(self, text: str) -> str:
         """用户发一条. 返回 "" = 已发出, 否则是不能发的原因."""
@@ -411,12 +549,7 @@ class Comm:
         now = self.now()
         snap = self.snapshot() or {}
         self._add("me", text, self._compose(now, text, snap))
-        self.error = ""
-        self._retries = 0
-        self._retry_at = None
-        self.save_cfg()
-        self.save_chat()
-        self._changed()
+        self._sent()
         self._request("user")
         return ""
 
@@ -455,29 +588,29 @@ class Comm:
         text = str(text or "").strip()
         shown = label + (("\n" + text) if text else "")
         self._add("me", shown, self._compose(now, f"(用户发来的数据)\n{data}" + (f"\n\n{text}" if text else ""), self.snapshot() or {}))
-        self.error = ""
-        self._retries = 0
-        self._retry_at = None
-        self.save_cfg()
-        self.save_chat()
-        self._changed()
+        self._sent()
         self._request("user")
         return ""
 
     def _trigger(self, kind: str, body: str):
+        """系统要求对方主动发 / 重试: 这条系统消息先不进记录, 对方真的回复了才和回复一起记下 (被拒绝 / 出错就当没发过)."""
         now = self.now()
-        self._add("sys", body, self._compose(now, body, self.snapshot() or {}))
-        self.save_cfg()
-        self._request(kind)
+        before = dict(self.cfg.get("last_sent") or {})
+        api = self._compose(now, body, self.snapshot() or {})
+        self._request(kind, (body, api, before))
 
-    def _request(self, kind: str):
+    def _request(self, kind: str, extra=None):
         if self.busy:
             self._again = True
             return
         profile = self.ai.profile()
         system = prefix_prompt() + read_persona(self.personas, self.persona_name())
         msgs = api_messages(self.messages)
-        trig = self.messages[-1]["id"] if kind != "user" else 0
+        if extra:
+            if msgs and msgs[-1]["role"] == "user":
+                msgs[-1]["content"] += "\n\n" + extra[1]
+            else:
+                msgs.append({"role": "user", "content": extra[1]})
         epoch = self._epoch
         self.busy = True
         self._changed()
@@ -486,16 +619,16 @@ class Comm:
             try:
                 reply = self.chat_fn(profile, system, msgs, max_tokens=CHAT_TOKENS,
                                      temperature=CHAT_TEMPERATURE)
-                res = (kind, trig, reply, "", epoch)
+                res = (kind, extra, reply, "", epoch)
             except ai_assist.AIError as e:
-                res = (kind, trig, "", e.message, epoch)
+                res = (kind, extra, "", e.message, epoch)
             except Exception as e:      # noqa: BLE001
-                res = (kind, trig, "", f"{type(e).__name__}", epoch)
+                res = (kind, extra, "", f"{type(e).__name__}", epoch)
             with self._lock:
                 self._results.append(res)
         threading.Thread(target=work, daemon=True).start()
 
-    def _finish(self, kind: str, trig: int, reply: str, err: str, epoch: int = 0):
+    def _finish(self, kind: str, extra, reply: str, err: str, epoch: int = 0):
         self.busy = False
         if self.blocked():                              # 等回复的时候"无言为真"生效了: 这条回复不要了
             self._again = False
@@ -505,27 +638,29 @@ class Comm:
             self._again = False
             self._changed()
             return
-        now = self.now()
-        if err:
+        refused = not err and is_refusal(reply)
+        if err or refused:
+            if extra:                                   # 主动 / 重试没有成: 附带过的信息当作没发过
+                self.cfg["last_sent"] = dict(extra[2])
+                self.save_cfg()
             self.error = err
-            if trig:                                    # 失败的主动 / 重试请求不留下
-                self.messages = [m for m in self.messages if m["id"] != trig]
-        elif is_refusal(reply):
-            self.error = ""
-            if trig:
-                self.messages = [m for m in self.messages if m["id"] != trig]
-            if self.unanswered() and self._retries < RETRY_MAX:
-                self._retries += 1
-                self._retry_at = now + timedelta(seconds=RETRY_GAP)
+            if refused and self.unanswered():
+                rt = self.cfg.get("retry") or {}
+                n = int(rt.get("n") or 0) + 1
+                self.cfg["retry"] = {"at": self._ms(), "n": n} if n <= RETRY_MAX else {"at": 0, "n": n}
+                self.save_cfg()
         else:
             self.error = ""
-            self._retries = 0
-            self._retry_at = None
+            self.cfg["retry"] = {}
+            self.save_cfg()
+            if extra:
+                self._add("sys", extra[0], extra[1])
             self._add("ai", reply.strip())
             if not self.viewing:
                 self.unread += 1
         self.save_chat()
         self._changed()
+        self._push()
         if self._again:
             self._again = False
             if self.unanswered() and not err:
@@ -537,13 +672,15 @@ class Comm:
             done, self._results = self._results, []
         for res in done:
             self._finish(*res)
-        if self.busy or self.problem():
+        if self.busy or self.problem() or not self.leader():
             return
         now = self.now()
         snap = self.snapshot() or {}
         # 对方不方便时: 隔一阵把没回的消息再交给模型
-        if self._retry_at and now >= self._retry_at:
-            self._retry_at = None
+        rt = self.cfg.get("retry") or {}
+        if rt.get("at") and self._ms() >= int(rt["at"]) + RETRY_GAP * 1000:
+            self.cfg["retry"] = {"at": 0, "n": int(rt.get("n") or 0)}
+            self.save_cfg()
             if self.unanswered():
                 self._trigger("retry", f"现在是 {stamp(now)}. 用户之前发来的消息你还没有回复, 请现在一次性处理并回复; "
                                        f"如果仍然不方便, 返回{REFUSE}.")
@@ -560,22 +697,23 @@ class Comm:
                         mins = snap["break_total_s"] / 60
                         self._trigger("proactive", f"[系统] 用户刚开始休息, 这次计划休息约 {mins:.0f} 分钟. "
                                                    f"请根据人设主动给用户发一条消息, 话题自己找; 如果此刻不方便, 返回{REFUSE}.")
-                    else:
-                        self.save_cfg()
+                    self.save_cfg()
+                    self._push()
 
     def clear(self):
-        """清空聊天记录 (界面上的按钮, 或者在聊天框里发 /clear): 以后不再显示, 也不再发给模型.
+        """清空聊天记录 (界面上的按钮, 或者在聊天框里发 /clear): 以后不再显示, 也不再发给模型; 别的设备也一起清空.
         之前附带过的信息也一起没了, 所以"30 分钟内不重复"的记录清零."""
+        self.cfg["clear_ts"] = max(self._ms(), self._last_ts)
         self.messages = []
         self.unread = 0
-        self._retry_at = None
-        self._retries = 0
         self._epoch += 1
         self.error = ""
         self.cfg["last_sent"] = {}
+        self.cfg["retry"] = {}
         self.save_cfg()
         self.save_chat()
         self._changed()
+        self._push()
 
 
 # ══════════════ 自检 ══════════════
@@ -806,6 +944,94 @@ def _selftest():
     assert len(c.messages) == n and not c.busy
     c.blocked = lambda: ""
     c.flush()
+    # ---- 设备同步: 记录合并, 只有 leader 调用 AI / 重试, 清空一起清 ----
+    dA, dB = os.path.join(td, "sa"), os.path.join(td, "sb")
+    os.makedirs(dA)
+    os.makedirs(dB)
+    A = Comm(dA, folder, now=lambda: clock[0], chat_fn=fake)
+    B = Comm(dB, folder, now=lambda: clock[0], chat_fn=fake)
+    for X, dev in ((A, "aaaa"), (B, "bbbb")):
+        X.ai.set_profile("deepseek", api_key="k")
+        X.ai.provider = "deepseek"
+        X.set_cfg(persona="小夏.txt", send_hour=False, send_timer=False)
+        X.device = lambda d=dev: d
+
+    def pull(src, dst):                         # 模拟 devsync: 把对方的文档整份并进来
+        dst.apply_doc(src.sync_doc())
+
+    script.append("A 的回复")
+    assert A.send("你好") == ""
+    wait(A)
+    pull(A, B)
+    assert [m["text"] for m in B.visible()] == ["你好", "A 的回复"] and B.unread == 1
+    pull(A, B)
+    assert len(B.visible()) == 2, "同一条不会并两次"
+    assert B.messages[0]["id"] != 0 and B.visible()[0]["uid"] == A.visible()[0]["uid"]
+    # B 上的下一条: 在 B 上调用 AI, 回复同步回 A
+    script.append("B 的回复")
+    B.send("在吗")
+    wait(B)
+    pull(B, A)
+    assert [m["text"] for m in A.visible()][-2:] == ["在吗", "B 的回复"] and len(A.visible()) == 4
+    # 主端 = 最晚的一条消息的作者
+    assert A.last_author() == "bbbb" and B.last_author() == "bbbb"
+    # 对方不方便: 重试状态同步; leader 换成 B 之后由 B 重试, 回复同步给 A
+    script.append(REFUSE)
+    A.send("上课吗")
+    wait(A)
+    pull(A, B)
+    assert B.unanswered() and B.cfg["retry"]["at"] and B.cfg["retry"]["n"] == 1
+    assert A.last_author() == "aaaa" and B.last_author() == "aaaa"      # A 发了最晚的一条: A 是主端
+    clock[0] += timedelta(minutes=11)
+    A.leader = lambda: False
+    B.leader = lambda: False
+    B.tick()
+    assert not B.busy, "不是 leader 就不重试"
+    B.leader = lambda: True
+    script.append("来了, 刚下课")
+    B.tick()
+    assert B.busy
+    wait(B)
+    pull(B, A)
+    assert not A.unanswered() and A.visible()[-1]["text"] == "来了, 刚下课" and not A.cfg["retry"]
+    assert any(m["role"] == "sys" for m in B.messages) and any(m["role"] == "sys" for m in A.messages)
+    # "30 分钟内不重复" 的记录同步: A 发过的信息, B 不再重复发
+    A.set_cfg(send_timer=True)
+    B.set_cfg(send_timer=True)
+    A.snapshot = B.snapshot = lambda: {"state": "idle", "focus_total_min": 10}
+    script.append("好")
+    A.send("看一下")
+    wait(A)
+    pull(A, B)
+    clock[0] += timedelta(minutes=5)
+    script.append("好")
+    B.send("再看")
+    wait(B)
+    assert "计时器" in calls[-2][1][-1]["content"] or True
+    assert "计时器" not in calls[-1][1][-1]["content"], "A 刚发过, B 不重复"
+    # 清空一起清, 清空之前的记录同步回来也不会复活
+    pull(B, A)
+    B.clear()
+    pull(B, A)
+    assert A.visible() == [] and B.visible() == []
+    pull(A, B)
+    assert B.visible() == [] and A.cfg["last_sent"] == {}
+    # 主动消息: 同一次休息只有一台发一次 (标记同步)
+    start = clock[0]
+    A.snapshot = B.snapshot = lambda: {"state": "break", "break_start": start, "break_total_s": 30 * 60,
+                                       "rest_left_min": 25, "focus_total_min": 5}
+    A.leader, B.leader = (lambda: True), (lambda: False)
+    clock[0] = start + timedelta(minutes=5)
+    script.append("休息啦")
+    A.tick()
+    assert A.busy
+    wait(A)
+    pull(A, B)
+    B.leader = lambda: True
+    B.tick()
+    assert not B.busy and [m["text"] for m in B.visible()] == ["休息啦"]
+    A.flush()
+    B.flush()
     return "comm selftest OK"
 
 

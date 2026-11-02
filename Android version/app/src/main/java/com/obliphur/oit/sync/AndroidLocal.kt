@@ -215,7 +215,7 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
         // 行为模式的外出: 每一项单独比较, 计时 / 统计跟着它走 (MECHANICS 21)
         return mapOf("settings" to settings, "hours" to hours, "timer" to timer, "achievements" to core.ach.doc(),
             "contract" to core.contract.doc(), "behavior" to core.behavior.doc(),
-            "prescript" to core.prescript.syncDoc())
+            "prescript" to core.prescript.syncDoc(), "comm" to core.comm.syncDoc())
     }
 
     override fun apply(doc: String, changes: Map<String, Any?>) {
@@ -281,6 +281,7 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
                 core.behaviorTick()
             }
             "prescript" -> core.prescript.syncApply(changes)
+            "comm" -> core.comm.applyDoc(changes)
         }
         core.changed()
     }

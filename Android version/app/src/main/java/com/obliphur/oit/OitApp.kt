@@ -154,6 +154,7 @@ class OitApp : Application(), Host {
         core.popAdapterBack = { s.popAdapterBack() }
         core.popAwayPrio = { s.popAwayPrio() }
         core.syncNow = { if (s.peers().isNotEmpty()) s.syncNow() }
+        core.deviceOnline = { pre -> s.deviceStates().any { it.id.startsWith(pre) && it.online } }
         core.addSelfOff = { a, b -> s.addSelfOff(a, b) }
         core.wentOff = { autostartOk() && (powerOff || (battery()?.let { it < com.obliphur.oit.sync.SyncService.LOW_BATTERY } == true)) }
         core.followsMother = { s.motherId()?.let { it != s.myId } == true }

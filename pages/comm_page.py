@@ -181,6 +181,11 @@ class CommPage(tk.Frame):
             self._rendered, self._rows, self._top_pad, self._sig = [], [], None, sig
             self._cap = RENDER_MAX + 40
             new = msgs[-RENDER_MAX:]                        # 先画最近的; 往上翻到顶再加载更早的
+        elif ids[ids.index(self._rendered[0]):ids.index(self._rendered[-1]) + 1] != self._rendered:
+            for w in inner.winfo_children():                # 别的设备的消息插在已经画出的中间: 重画
+                w.destroy()
+            self._rendered, self._rows, self._top_pad = [], [], None
+            new = msgs[-RENDER_MAX:]
         else:
             new = msgs[ids.index(self._rendered[-1]) + 1:]
         self._ensure_pads()

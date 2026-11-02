@@ -244,7 +244,7 @@ class PcLocal:
         # 行为模式的外出: 每一项单独比较, 计时 / 统计跟着它走 (MECHANICS 21)
         return {"settings": settings, "hours": hours, "timer": timer, "achievements": a.ach.doc(),
                 "contract": a.contract.doc(), "behavior": a.behavior.doc(),
-                "prescript": a.prescripts.sync_doc()}
+                "prescript": a.prescripts.sync_doc(), "comm": a.comm.sync_doc()}
 
     def apply(self, doc: str, changes: dict):
         a = self.app
@@ -319,6 +319,8 @@ class PcLocal:
             a.after_behavior_synced()
         elif doc == "prescript":
             a.prescripts.sync_apply(changes)
+        elif doc == "comm":
+            a.comm.apply_doc(changes)
 
     # ---- 绑定请求 ----
 

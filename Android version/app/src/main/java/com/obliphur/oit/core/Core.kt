@@ -150,6 +150,8 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     var popAwayPrio: () -> List<Triple<String, Long, Long>> = { emptyList() }
     /** 马上和绑定的设备同步一次 (没有绑定的设备时什么都不做). */
     var syncNow: () -> Unit = {}
+    /** 设备 id 以这 4 位开头的绑定设备此刻在线吗 (沟通的主端判断). */
+    var deviceOnline: (String) -> Boolean = { false }
     /** 本机关机的那段 (MECHANICS 15.4): 记下来, 之后记下的专注里这段记为空闲, 不计入统计. */
     var addSelfOff: (Long, Long) -> Unit = { _, _ -> }
     private var powerAt = -1e9
@@ -253,6 +255,9 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         comm.snapshot = { commSnapshot() }
         comm.hourLines = { commHourLines() }
         comm.fog = { contract.fog() }
+        comm.device = { myId() }
+        comm.leader = { commLeader() }
+        comm.onSync = { syncNow() }
         // 合约的"无言为真" (社交软件和与 AI 聊天的软件禁止联网): 沟通也算, 生效期间不能用
         comm.blocked = { if (contract.has("silent")) tr("无言为真生效中, 无法使用沟通") else "" }
         comm.dataFn = { sel ->
@@ -282,6 +287,16 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
                 breakTotalS = secondsBetween(bs, LocalDateTime.now()) + left)
         }
         return CommSnap(st, focusTotalMin = total)
+    }
+
+    /** 本机是不是聊天的主端: 最晚的一条消息是本机写的 (MECHANICS 24.6). 主端不在线 / 还没有消息时, 看谁最后有人操作. */
+    private fun commLeader(): Boolean {
+        if (!hasPeers()) return true
+        val mid = comm.lastAuthor()
+        if (mid.isEmpty()) return isLatestActive()
+        if (mid == myId().take(4)) return true
+        if (deviceOnline(mid)) return false
+        return isLatestActive()
     }
 
     private fun commHourLines(): List<String> {

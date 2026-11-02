@@ -167,6 +167,57 @@ class CommTest {
     }
 
     @Test
+    fun deviceSync() {
+        val td = Files.createTempDirectory("oit").toFile()
+        val a = comm(File(td, "a").also { it.mkdirs() }, File(td, "pa"))
+        val b = comm(File(td, "b").also { it.mkdirs() }, File(td, "pb"))
+        a.device = { "aaaa" }; b.device = { "bbbb" }
+        for (c in listOf(a, b)) {
+            c.importPersona("小夏.txt", "你是小夏".byteInputStream())
+            c.set(persona = "小夏.txt", sendHour = false, sendTimer = false)
+        }
+        fun pull(src: Comm, dst: Comm) = dst.applyDoc(src.syncDoc())
+
+        script.add("A 的回复")
+        assertEquals("", a.send("你好")); wait(a)
+        pull(a, b)
+        assertEquals(listOf("你好", "A 的回复"), b.visible().map { it.text })
+        assertEquals(1, b.unread)
+        pull(a, b)
+        assertEquals(2, b.visible().size)               // 同一条不会并两次
+        assertEquals("aaaa", b.lastAuthor())
+
+        // 在 B 上发: B 调用 AI, 成为主端, 回复同步回 A
+        script.add("B 的回复")
+        b.send("在吗"); wait(b)
+        pull(b, a)
+        assertEquals(listOf("在吗", "B 的回复"), a.visible().map { it.text }.takeLast(2))
+        assertEquals("bbbb", a.lastAuthor())
+
+        // 对方不方便: 重试状态同步; 最晚消息的作者 (主端) 才重试
+        script.add(CommText.REFUSE)
+        a.send("上课吗"); wait(a)
+        pull(a, b)
+        assertTrue(b.visible().last().role == "me")
+        clock = clock.plusMinutes(11)
+        a.leader = { false }; b.leader = { false }
+        b.tick(); assertFalse(b.busy)                   // 不是主端就不重试
+        b.leader = { true }
+        script.add("来了, 刚下课")
+        b.tick(); assertTrue(b.busy)
+        wait(b)
+        pull(b, a)
+        assertEquals("来了, 刚下课", a.visible().last().text)
+
+        // 清空一起清, 清空之前的记录同步回来也不会复活
+        b.clear()
+        pull(b, a)
+        assertTrue(a.visible().isEmpty())
+        pull(a, b)
+        assertTrue(b.visible().isEmpty())
+    }
+
+    @Test
     fun proactive() {
         val td = Files.createTempDirectory("oit").toFile()
         val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "personas"))

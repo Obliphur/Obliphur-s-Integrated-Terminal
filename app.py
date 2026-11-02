@@ -351,6 +351,10 @@ class BreakTimerApp:
         self.comm.hour_lines = self._comm_hour_lines
         self.comm.on_change = self.update_comm_badge
         self.comm.data_fn = self._comm_data
+        # 设备同步 (MECHANICS 24.6): 聊天记录随同步; 只有最后有人操作的设备调用 AI
+        self.comm.device = lambda: self.sync.my_id
+        self.comm.leader = self._comm_leader
+        self.comm.on_sync = lambda: self.sync.sync_now() if self.sync.peers() else None
         self.comm.fog = lambda: bool(self.contract.fog())
         # 合约的"无言为真" (社交软件和与 AI 聊天的软件禁止联网): 沟通也算, 生效期间不能用
         self.comm.blocked = lambda: tr("无言为真生效中, 无法使用沟通") if self.contract.has("silent") else ""
@@ -1119,6 +1123,20 @@ class BreakTimerApp:
             return ""
         return comm_data.build(sel, self.dm, self.net, self.contract, focus_live=self._focus_live(),
                                cal_live=self._calendar_live())
+
+    def _comm_leader(self) -> bool:
+        """本机是不是聊天的主端: 最晚的一条消息是本机写的 (MECHANICS 24.6). 主端不在线 / 还没有消息时, 看谁最后有人操作."""
+        if not self.sync.peers():
+            return True
+        mid = self.comm.last_author()
+        if not mid:
+            return self.sync.is_latest_active()
+        if mid == (self.sync.my_id or "")[:4]:
+            return True
+        for s in self.sync.device_states():
+            if str(s["id"]).startswith(mid) and s.get("online"):
+                return False
+        return self.sync.is_latest_active()
 
     def _comm_hour_lines(self) -> list:
         if self.contract.fog() or not self.dm.hour_enabled:

@@ -12,7 +12,7 @@ import java.time.LocalDateTime
 import java.util.concurrent.ConcurrentLinkedQueue
 
 /** 沟通 (MECHANICS 24) 的一条聊天记录. role: me / ai / sys (sys 是系统触发的请求, 不显示). */
-class ChatMsg(val id: Int, val role: String, val text: String, val at: String, val api: String = "")
+class ChatMsg(val id: Int, val role: String, val text: String, val at: String, val api: String = "", val uid: String = "", val ts: Long = 0L)
 
 /** 发给对方的计时器状态. state: focus / break / idle / sleep / out. */
 class CommSnap(
@@ -84,6 +84,7 @@ class Comm(
         const val RETRY_MAX = 12
         const val HISTORY_SENT = 60
         const val KEEP = 400
+        const val SYNC_N = 60
         const val MAX_PERSONA = 20000
         const val CHAT_TOKENS = 1000
         const val CHAT_TEMPERATURE = 0.8
@@ -100,6 +101,12 @@ class Comm(
     var avatarAi = ""; private set
     private val lastSent = HashMap<String, String>()
     private var proKey = ""
+    /** 对方不方便时的重试状态 (随设备同步): 上一次被拒绝的时刻 (毫秒, 0 = 没有) 和已经重试的次数. */
+    private var retryAt = 0L
+    private var retryN = 0
+    /** 最后一次清空的时刻 (毫秒); 这之前的记录不再显示, 也不会从别的设备并进来. */
+    private var clearTs = 0L
+    private var lastTs = 0L
     val messages = ArrayList<ChatMsg>()
     @Volatile var version = 0; private set
     @Volatile var unread = 0; private set
@@ -111,6 +118,10 @@ class Comm(
     var fog: () -> Boolean = { false }
     /** 现在不能用沟通的原因 ("" = 可以): 合约的"无言为真". Core 接上. */
     var blocked: () -> String = { "" }
+    /** 本机的设备 id; 本机是不是最后有人操作的设备 (只有它调用 AI / 主动发 / 重试); 聊天记录有改动时马上同步一次. Core 接上. */
+    var device: () -> String = { "" }
+    var leader: () -> Boolean = { true }
+    var onSync: (() -> Unit)? = null
     /** 📎 窗口点"确定"记下的附加数据: 随下一条消息一起发 (发出去之后清掉). */
     @Volatile var attach = CommSel(); private set
     /** 用户确定过一次之后, 📎 窗口不再默认勾 整点记录 / 专注计时. */
@@ -124,11 +135,11 @@ class Comm(
         if (attachTouched || CommData.label(attach).isNotEmpty()) attach else CommSel(stats = CommData.DEFAULT_STATS)
     var hourLines: () -> List<String> = { emptyList() }
     var snapshot: () -> CommSnap? = { null }
-    private class Result(val kind: String, val trig: Int, val reply: String, val err: String, val epoch: Int)
+    /** 系统触发的请求 (主动发 / 重试): 这条系统消息先不进记录, 对方真的回复了才和回复一起记下. */
+    private class Extra(val body: String, val api: String, val before: Map<String, String>)
+    private class Result(val kind: String, val extra: Extra?, val reply: String, val err: String, val epoch: Int)
     private val results = ConcurrentLinkedQueue<Result>()
     private var again = false
-    private var retryAt: LocalDateTime? = null
-    private var retries = 0
     private var nextId = 1
     /** clear() 加一: 清空之前发出的请求, 回复到了也丢掉. */
     private var epoch = 0
@@ -137,8 +148,11 @@ class Comm(
         load()
         ensurePersonas()
         val last = messages.lastOrNull()
-        if (last != null && last.role == "me" && ageSeconds(last) < 6 * 3600) retryAt = now().plusSeconds(60)
+        if (last != null && last.role == "me" && ageSeconds(last) < 6 * 3600 && retryAt == 0L)
+            retryAt = nowMs() - RETRY_GAP * 1000L + 60_000        // 上次关程序时还没收到回复: 1 分钟后让 (最后操作的) 设备再试一次
     }
+
+    private fun nowMs() = now().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
 
     // ---- 存取 ----
 
@@ -151,16 +165,26 @@ class Comm(
             avatarMe = d.optString("avatar_me", "")
             avatarAi = d.optString("avatar_ai", "")
             proKey = d.optString("pro_key", "")
+            retryAt = d.optLong("retry_at", 0L)
+            retryN = d.optInt("retry_n", 0)
+            clearTs = d.optLong("clear_ts", 0L)
             d.optJSONObject("last_sent")?.let { o -> o.keys().forEach { k -> lastSent[k] = o.optString(k) } }
         }
         val arr = Store.readObj(chatFile)?.optJSONArray("messages")
+        val loaded = ArrayList<ChatMsg>()
         if (arr != null) for (i in 0 until arr.length()) {
             val o = arr.optJSONObject(i) ?: continue
             val role = o.optString("role")
-            if (role in listOf("me", "ai", "sys"))
-                messages.add(ChatMsg(o.optInt("id"), role, o.optString("text"), o.optString("at"), o.optString("api")))
+            if (role !in listOf("me", "ai", "sys")) continue
+            val id = o.optInt("id")
+            val at = o.optString("at")
+            val ts = o.optLong("ts", 0L).takeIf { it != 0L }
+                ?: parseIso(at)?.atZone(java.time.ZoneId.systemDefault())?.toInstant()?.toEpochMilli() ?: 0L     // 旧版本的记录没有 uid / ts
+            loaded.add(ChatMsg(id, role, o.optString("text"), at, o.optString("api"), o.optString("uid").ifEmpty { "L$id" }, ts))
         }
+        messages.addAll(loaded.sortedWith(compareBy({ it.ts }, { it.uid })))
         nextId = (messages.maxOfOrNull { it.id } ?: 0) + 1
+        lastTs = messages.maxOfOrNull { it.ts } ?: 0L
     }
 
     // 写盘 (fsync) 放在后台线程: 发送 / 收到消息时界面线程不等磁盘, 不卡. 先在这里做好快照, 线程只管写.
@@ -172,6 +196,7 @@ class Comm(
     private fun saveCfg() {
         val o = JSONObject().put("persona", persona).put("send_hour", sendHour).put("send_timer", sendTimer)
             .put("show_avatar", showAvatar).put("avatar_me", avatarMe).put("avatar_ai", avatarAi).put("pro_key", proKey)
+            .put("retry_at", retryAt).put("retry_n", retryN).put("clear_ts", clearTs)
             .put("last_sent", JSONObject(lastSent as Map<*, *>))
         writer.execute { Store.write(cfgFile, o) }
     }
@@ -180,12 +205,95 @@ class Comm(
         while (messages.size > KEEP) messages.removeAt(0)
         val arr = JSONArray()
         for (m in messages) arr.put(JSONObject().put("id", m.id).put("role", m.role).put("text", m.text).put("at", m.at)
-            .apply { if (m.api.isNotEmpty()) put("api", m.api) })
+            .put("uid", m.uid).put("ts", m.ts).apply { if (m.api.isNotEmpty()) put("api", m.api) })
         val o = JSONObject().put("messages", arr)
         writer.execute { Store.write(chatFile, o) }
     }
 
     private fun changed() { version++ }
+
+    /** 聊天记录有改动: 马上同步一次 (有绑定的设备时). */
+    private fun push() { runCatching { onSync?.invoke() } }
+
+    // ---- 设备同步 (MECHANICS 24.6) ----
+
+    /** 最晚的一条消息是哪台设备写的 (设备 id 的前 4 位; 旧记录 / 没有记录 = ""): 这台设备是聊天的主端 —— 调用 AI, 主动发, 重试都由它做. */
+    @Synchronized
+    fun lastAuthor(): String {
+        val last = messages.maxWithOrNull(compareBy({ it.ts }, { it.uid })) ?: return ""
+        return if ('-' in last.uid) last.uid.substringAfterLast('-') else ""
+    }
+
+    /** 随设备同步的内容 (只带最近 SYNC_N 条消息, 再早的是各设备自己留着的; 掉出窗口不算删除). */
+    @Synchronized
+    fun syncDoc(): Map<String, Any?> {
+        val doc = LinkedHashMap<String, Any?>()
+        for (m in messages.takeLast(SYNC_N)) {
+            doc["m:" + m.uid] = JSONObject().put("role", m.role).put("text", m.text).put("at", m.at).put("ts", m.ts)
+                .apply { if (m.api.isNotEmpty()) put("api", m.api) }
+        }
+        for ((k, v) in lastSent) doc["sent:$k"] = v
+        if (proKey.isNotEmpty()) doc["pro_key"] = proKey
+        if (retryAt != 0L || retryN != 0) doc["retry"] = JSONObject().put("at", retryAt).put("n", retryN)
+        if (clearTs != 0L) doc["clear"] = clearTs
+        return doc
+    }
+
+    /** 别的设备发来的改动. */
+    @Synchronized
+    fun applyDoc(changes: Map<String, Any?>) {
+        var dirtyChat = false
+        var dirtyCfg = false
+        val known = messages.map { it.uid }.toHashSet()
+        for (key in changes.keys.sortedBy { it != "clear" }) {          // 清空先处理: 之前的记录不会再并进来
+            val v = changes[key]
+            when {
+                key == "clear" -> {
+                    val t = (v as? Number)?.toLong() ?: continue
+                    if (t > clearTs) {
+                        clearTs = t
+                        messages.removeAll { it.ts <= t }
+                        known.clear(); known.addAll(messages.map { it.uid })
+                        unread = 0; error = ""; epoch++
+                        lastSent.clear(); retryAt = 0; retryN = 0           // 附带过的信息也跟着清空的记录一起没了
+                        dirtyChat = true; dirtyCfg = true
+                    }
+                }
+                key.startsWith("m:") && v is JSONObject -> {
+                    val uid = key.substring(2)
+                    val ts = v.optLong("ts", 0L)
+                    val role = v.optString("role")
+                    if (uid in known || ts <= clearTs || role !in listOf("me", "ai", "sys")) continue
+                    messages.add(ChatMsg(nextId++, role, v.optString("text"), v.optString("at"), v.optString("api"), uid, ts))
+                    known.add(uid)
+                    dirtyChat = true
+                    if (role == "ai") {
+                        retryAt = 0; retryN = 0; dirtyCfg = true
+                        if (!viewing) unread++
+                    }
+                }
+                key.startsWith("sent:") -> {
+                    if (v == null || v == JSONObject.NULL) lastSent.remove(key.substring(5)) else if (v is String) lastSent[key.substring(5)] = v
+                    dirtyCfg = true
+                }
+                key == "pro_key" && v is String -> { proKey = v; dirtyCfg = true }
+                key == "retry" -> {
+                    val o = v as? JSONObject
+                    retryAt = o?.optLong("at", 0L) ?: 0L
+                    retryN = o?.optInt("n", 0) ?: 0
+                    dirtyCfg = true
+                }
+            }
+        }
+        if (dirtyChat) {
+            val sorted = messages.sortedWith(compareBy({ it.ts }, { it.uid }))
+            messages.clear(); messages.addAll(sorted)
+            lastTs = maxOf(lastTs, messages.maxOfOrNull { it.ts } ?: 0L)
+            saveChat()
+        }
+        if (dirtyCfg) saveCfg()
+        if (dirtyChat || dirtyCfg) changed()
+    }
 
     @Synchronized
     fun set(persona: String? = null, sendHour: Boolean? = null, sendTimer: Boolean? = null, showAvatar: Boolean? = null,
@@ -349,9 +457,17 @@ class Comm(
     }
 
     private fun add(role: String, text: String, api: String = ""): ChatMsg {
-        val m = ChatMsg(nextId++, role, text, now().iso(), api)
+        val ts = maxOf(nowMs(), lastTs + 1)             // 同一台设备上严格递增
+        lastTs = ts
+        val m = ChatMsg(nextId++, role, text, now().iso(), api, "$ts-${device().ifEmpty { "local" }.take(4)}", ts)
         messages.add(m)
         return m
+    }
+
+    /** 用户发出一条之后的收尾. */
+    private fun sentOut() {
+        error = ""; retryAt = 0; retryN = 0
+        saveCfg(); saveChat(); changed(); push()
     }
 
     // ---- 发消息 ----
@@ -370,8 +486,7 @@ class Comm(
         val why = problem(true)
         if (why.isNotEmpty()) return why
         add("me", text, compose(now(), text))
-        error = ""; retries = 0; retryAt = null
-        saveCfg(); saveChat(); changed()
+        sentOut()
         request("user")
         return ""
     }
@@ -388,33 +503,37 @@ class Comm(
         val text = text0.trim()
         add("me", label + if (text.isEmpty()) "" else "\n$text",
             compose(now(), "(用户发来的数据)\n$data" + if (text.isEmpty()) "" else "\n\n$text"))
-        error = ""; retries = 0; retryAt = null
-        saveCfg(); saveChat(); changed()
+        sentOut()
         request("user")
         return ""
     }
 
+    /** 系统要求对方主动发 / 重试: 这条系统消息先不进记录, 对方真的回复了才和回复一起记下 (被拒绝 / 出错就当没发过). */
     private fun trigger(kind: String, body: String) {
-        val m = add("sys", body, compose(now(), body))
-        saveCfg()
-        request(kind, m.id)
+        val before = HashMap(lastSent)
+        val api = compose(now(), body)
+        request(kind, Extra(body, api, before))
     }
 
-    private fun request(kind: String, trig: Int = 0) {
+    private fun request(kind: String, extra: Extra? = null) {
         if (busy) { again = true; return }
         val profile = aiConfig().profile()
         val system = CommText.prefixPrompt() + readPersona(personaName())
-        val msgs = apiMessages()
+        val msgs = ArrayList(apiMessages())
+        if (extra != null) {
+            if (msgs.isNotEmpty() && msgs.last().first == "user") msgs[msgs.size - 1] = "user" to (msgs.last().second + "\n\n" + extra.api)
+            else msgs.add("user" to extra.api)
+        }
         val ep = epoch
         busy = true
         changed()
         Thread {
             val res = try {
-                Result(kind, trig, chatFn(profile, system, msgs), "", ep)
+                Result(kind, extra, chatFn(profile, system, msgs), "", ep)
             } catch (e: AiError) {
-                Result(kind, trig, "", e.message ?: "", ep)
+                Result(kind, extra, "", e.message ?: "", ep)
             } catch (e: Exception) {
-                Result(kind, trig, "", e.javaClass.simpleName, ep)
+                Result(kind, extra, "", e.javaClass.simpleName, ep)
             }
             results.add(res)
         }.apply { isDaemon = true }.start()
@@ -424,20 +543,25 @@ class Comm(
         busy = false
         if (blocked().isNotEmpty()) { again = false; changed(); return }       // 等回复的时候"无言为真"生效了: 这条回复不要了
         if (r.epoch != epoch) { again = false; changed(); return }       // 发出之后清空过聊天记录: 这条回复不要了
-        val t = now()
-        if (r.err.isNotEmpty()) {
+        val refused = r.err.isEmpty() && CommText.isRefusal(r.reply)
+        if (r.err.isNotEmpty() || refused) {
+            if (r.extra != null) {                       // 主动 / 重试没有成: 附带过的信息当作没发过
+                lastSent.clear(); lastSent.putAll(r.extra.before); saveCfg()
+            }
             error = r.err
-            if (r.trig != 0) messages.removeAll { it.id == r.trig }
-        } else if (CommText.isRefusal(r.reply)) {
-            error = ""
-            if (r.trig != 0) messages.removeAll { it.id == r.trig }
-            if (unanswered() && retries < RETRY_MAX) { retries++; retryAt = t.plusSeconds(RETRY_GAP.toLong()) }
+            if (refused && unanswered()) {
+                retryN++
+                retryAt = if (retryN <= RETRY_MAX) nowMs() else 0L
+                saveCfg()
+            }
         } else {
-            error = ""; retries = 0; retryAt = null
+            error = ""; retryAt = 0; retryN = 0
+            saveCfg()
+            r.extra?.let { add("sys", it.body, it.api) }
             add("ai", r.reply.trim())
             if (!viewing) unread++
         }
-        saveChat(); changed()
+        saveChat(); changed(); push()
         if (again) {
             again = false
             if (unanswered() && r.err.isEmpty()) request("user")
@@ -448,12 +572,13 @@ class Comm(
     @Synchronized
     fun tick() {
         while (true) finish(results.poll() ?: break)
-        if (busy || problem().isNotEmpty()) return
+        if (busy || problem().isNotEmpty() || !leader()) return
         val t = now()
         val snap = snapshot()
-        val ra = retryAt
-        if (ra != null && !t.isBefore(ra)) {
-            retryAt = null
+        // 对方不方便时: 隔一阵把没回的消息再交给模型
+        if (retryAt != 0L && nowMs() >= retryAt + RETRY_GAP * 1000L) {
+            retryAt = 0
+            saveCfg()
             if (unanswered()) {
                 trigger("retry", "现在是 ${CommText.stamp(t)}. 用户之前发来的消息你还没有回复, 请现在一次性处理并回复; 如果仍然不方便, 返回${CommText.REFUSE}.")
                 return
@@ -470,19 +595,21 @@ class Comm(
                     if (secondsBetween(due, t) <= 120) {
                         trigger("proactive", "[系统] 用户刚开始休息, 这次计划休息约 ${Math.round(snap.breakTotalS / 60)} 分钟. " +
                             "请根据人设主动给用户发一条消息, 话题自己找; 如果此刻不方便, 返回${CommText.REFUSE}.")
-                    } else saveCfg()
+                    }
+                    saveCfg(); push()
                 }
             }
         }
     }
 
-    /** 清空聊天记录 (界面上的按钮, 或者在聊天框里发 /clear): 以后不再显示, 也不再发给模型.
+    /** 清空聊天记录 (界面上的按钮, 或者在聊天框里发 /clear): 以后不再显示, 也不再发给模型; 别的设备也一起清空.
      *  之前附带过的信息也一起没了, 所以"30 分钟内不重复"的记录清零. */
     @Synchronized
     fun clear() {
-        messages.clear(); unread = 0; retryAt = null; retries = 0; error = ""
+        clearTs = maxOf(nowMs(), lastTs)
+        messages.clear(); unread = 0; retryAt = 0; retryN = 0; error = ""
         epoch++
         lastSent.clear()
-        saveCfg(); saveChat(); changed()
+        saveCfg(); saveChat(); changed(); push()
     }
 }
