@@ -277,7 +277,8 @@ def import_persona(folder: str, src: str) -> str:
 
 # ══════════════ 请求内容 ══════════════
 # 规则 IX: 对方期待用户回复时, 在话的结尾写 [waiting for reply]:[N] (N 分钟); 所有 [] 里的内容都不显示在聊天里 (记录里的"给模型看的"那份 api 保留原文)
-_WAIT_RE = re.compile(r"\[\s*waiting\s+for\s+reply\s*\]\s*[:：]?\s*\[\s*(\d+(?:\.\d+)?)\s*\]", re.I)
+_WAIT_RE = re.compile(r"\[\s*waiting\s+for\s+reply\s*\](?:\s*(?:[:：]\s*)?\[\s*(\d+(?:\.\d+)?)\s*\]|\s*[:：]\s*\[?\s*(\d+(?:\.\d+)?)\s*\]?|\s*[:：])?"
+                      r"(?:[ \t]*(?:minutes?|mins?|分钟))?", re.I)
 _BRACKET_RE = re.compile(r"[\[［][^\[\]［］\n]*[\]］]")
 WAIT_MAX_MIN = 1440
 # 去掉 [] 之后留下的空壳: 对方常把标记写在行内代码 / 引号 / 括号里 (`[waiting for reply]:[1]`), 剩下 `` “” 「」 () 之类的就不显示了
@@ -289,8 +290,8 @@ def clean_reply(reply: str) -> tuple:
     reply = str(reply or "")
     m = _WAIT_RE.search(reply)
     minutes = None
-    if m:
-        n = float(m.group(1))
+    if m and (m.group(1) or m.group(2)):
+        n = float(m.group(1) or m.group(2))
         minutes = n if 0 < n <= WAIT_MAX_MIN else None
     text = _BRACKET_RE.sub("", _WAIT_RE.sub("", reply))
     prev = None
@@ -2058,6 +2059,11 @@ def _selftest():
     assert clean_reply("好的[微笑] 嗯\n\n\n\n[动作]好") == ("好的 嗯\n\n好", None)
     assert clean_reply("[Waiting For Reply]：[ 0.5 ]") == ("", 0.5) and clean_reply("x [waiting for reply]:[0]") == ("x", None)
     assert clean_reply("a［全角］b") == ("ab", None)
+    for tail in ("[waiting for reply]:1", "[waiting for reply]：[1", "[waiting for reply]:[1]", "[waiting for reply][1]", "[waiting for reply]: 1 min",
+                 "[waiting for reply]:1分钟", "[Waiting for reply] : [ 1 ]"):
+        assert clean_reply("你在吗?\n\n" + tail) == ("你在吗?", 1.0), tail           # N 不带 [] / 括号没写全 / 带单位: 照样认, 不留 : 和数字
+    assert clean_reply("好[waiting for reply]") == ("好", None) and clean_reply("好[waiting for reply]:") == ("好", None)
+    assert clean_reply("1[waiting for reply] 3 个") == ("1 3 个", None), "没有冒号, 后面的数字不算 N"
     assert clean_reply("要在结尾带上 `[waiting for reply]:[1]`,才会触发") == ("要在结尾带上 ,才会触发", 1.0), "去掉 [] 后留下的空 `` 也不显示"
     assert clean_reply("好(`[x]`)“[y]”「[z]」") == ("好", None)
     cu.snapshot = lambda: {"state": "idle"}

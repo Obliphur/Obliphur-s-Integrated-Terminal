@@ -161,14 +161,15 @@ object CommText {
     fun isRefusal(text: String) = REFUSE in text.replace(Regex("\\s+"), " ").lowercase()
 
     // 规则 IX: 对方期待用户回复时, 在话的结尾写 [waiting for reply]:[N] (N 分钟); 所有 [] 里的内容都不显示在聊天里 (记录里给模型看的那份 api 保留原文)
-    private val WAIT_RE = Regex("\\[\\s*waiting\\s+for\\s+reply\\s*\\]\\s*[:：]?\\s*\\[\\s*(\\d+(?:\\.\\d+)?)\\s*\\]", RegexOption.IGNORE_CASE)
+    private val WAIT_RE = Regex("\\[\\s*waiting\\s+for\\s+reply\\s*\\](?:\\s*(?:[:：]\\s*)?\\[\\s*(\\d+(?:\\.\\d+)?)\\s*\\]|\\s*[:：]\\s*\\[?\\s*(\\d+(?:\\.\\d+)?)\\s*\\]?|\\s*[:：])?" +
+        "(?:[ \\t]*(?:minutes?|mins?|分钟))?", RegexOption.IGNORE_CASE)
     private val EMPTY_WRAP_RE = Regex("`[ \\t]*`|“[ \\t]*”|「[ \\t]*」|『[ \\t]*』|\\([ \\t]*\\)|（[ \\t]*）|\"[ \\t]*\"|'[ \\t]*'")
     private val BRACKET_RE = Regex("[\\[［][^\\[\\]［］\\n]*[\\]］]")
     const val WAIT_MAX_MIN = 1440.0
 
     /** 对方的回复 → (聊天里显示的文字, 等用户回复的分钟数, 没有 = 0.0). 去掉 [waiting for reply]:[N] 和所有别的 [...]; N 不是 0 < N <= 1440 就当没写. */
     fun cleanReply(reply: String): Pair<String, Double> {
-        val n = WAIT_RE.find(reply)?.groupValues?.get(1)?.toDouble() ?: 0.0
+        val n = WAIT_RE.find(reply)?.groupValues?.let { it[1].ifEmpty { it[2] }.toDoubleOrNull() } ?: 0.0
         var raw = BRACKET_RE.replace(WAIT_RE.replace(reply, ""), "")
         while (true) { val n2 = EMPTY_WRAP_RE.replace(raw, ""); if (n2 == raw) break; raw = n2 }       // 一层一层剥 (括号里的空代码 ...)
         val text = raw.replace(Regex("[ \\t]+\\n"), "\n").replace(Regex("\\n{3,}"), "\n\n").trim()
