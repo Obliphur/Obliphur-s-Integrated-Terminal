@@ -1115,6 +1115,8 @@ class BreakTimerApp:
         if self.contract.has("silent"):
             return tr("无言为真生效中, 无法使用沟通")
         st = self._comm_state()
+        if st == "focus" and self.comm.is_builtin_assistant_unmodified():
+            return ""                              # 特例: 没改过提示词的内置 Assistant, 专注时也能用
         if st in ("focus", "sleep", "out"):
             return tr({"focus": "专注中不能使用沟通", "sleep": "睡眠中不能使用沟通", "out": "外出中不能使用沟通"}[st])
         if st == "idle" and self.comm.idle_over():
@@ -1127,6 +1129,8 @@ class BreakTimerApp:
         if self.contract.has("silent"):
             return tr("无言为真生效中, 无法使用沟通")
         st = self._comm_state()
+        if st == "focus" and self.comm.is_builtin_assistant_unmodified():
+            return ""                              # 特例: 没改过提示词的内置 Assistant, 专注时也能用
         if st in ("focus", "out"):
             return tr({"focus": "专注中不能使用沟通", "out": "外出中不能使用沟通"}[st])
         if st == "idle" and self.comm.idle_over():
@@ -1917,11 +1921,23 @@ class BreakTimerApp:
         self.prestart_job = self.root.after(1000, self._prestart_tick)
 
     def _sync_prestart_exempt(self):
-        """提前启动的程序联网不受网站 / 应用名单和代理-全屏蔽限制 (MECHANICS 20)."""
+        """提前启动的程序联网不受网站 / 应用名单和代理-全屏蔽限制 (MECHANICS 20); AI 接口的域名也例外放行."""
         try:
-            self.net.proxy.rules.exempt = self.prestart.exe_names()
+            rules = self.net.proxy.rules
+            rules.exempt = self.prestart.exe_names()
+            rules.api_hosts = self._api_hosts()
         except Exception:
             pass
+
+    def _api_hosts(self) -> set:
+        """当前 AI 服务商 Base URL 的主机 (聊天 / 名单建议要用): 过滤代理不拦它."""
+        try:
+            from urllib.parse import urlsplit
+            base = str(self.comm.ai.profile().get("base_url") or "").strip()
+            host = (urlsplit(base).hostname or "").lower()
+            return {host} if host else set()
+        except Exception:
+            return set()
 
     # ---- 连点 10 次换休息时间 ----
 

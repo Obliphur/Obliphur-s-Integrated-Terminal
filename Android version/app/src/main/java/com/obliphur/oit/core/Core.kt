@@ -279,7 +279,9 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     /** 现在不能用沟通的原因 ("" = 可以). */
     private fun commBlocked(): String {
         if (contract.has("silent")) return tr("无言为真生效中, 无法使用沟通")
-        return when (commState()) {
+        val st = commState()
+        if (st == "focus" && comm.isBuiltinAssistantUnmodified()) return ""   // 特例: 没改过提示词的内置 Assistant
+        return when (st) {
             "focus" -> tr("专注中不能使用沟通")
             "sleep" -> tr("睡眠中不能使用沟通")
             "out" -> tr("外出中不能使用沟通")
@@ -288,11 +290,25 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         }
     }
 
+    /** 当前 AI 服务商 Base URL 的主机 (聊天 / 名单建议要用): VPN 的 DNS 过滤不拦它. 5 秒缓存, 免得每个 DNS 包都读配置. */
+    fun apiHosts(): Set<String> {
+        val now = System.currentTimeMillis()
+        if (now - apiHostsAt < 5000) return apiHostsCache
+        val host = runCatching { java.net.URI(comm.modelProfile().baseUrl).host }.getOrNull()?.lowercase().orEmpty()
+        apiHostsAt = now
+        apiHostsCache = if (host.isEmpty()) emptySet() else setOf(host)
+        return apiHostsCache
+    }
+    @Volatile private var apiHostsCache: Set<String> = emptySet()
+    private var apiHostsAt = 0L
+
     /** 对方现在不能主动发消息的原因 ("" = 可以). 用户睡眠时对方仍可以发 (消息先藏起来, 醒来再通知);
      *  专注 / 外出 / 无言为真 / 空闲额度用完时不会尝试发消息. */
     private fun commAiBlocked(): String {
         if (contract.has("silent")) return tr("无言为真生效中, 无法使用沟通")
-        return when (commState()) {
+        val st = commState()
+        if (st == "focus" && comm.isBuiltinAssistantUnmodified()) return ""   // 特例: 没改过提示词的内置 Assistant
+        return when (st) {
             "focus" -> tr("专注中不能使用沟通")
             "out" -> tr("外出中不能使用沟通")
             "idle" -> if (comm.idleOver()) tr("今天空闲时间里能用沟通的 30 分钟已经用完了 (休息时不限)") else ""

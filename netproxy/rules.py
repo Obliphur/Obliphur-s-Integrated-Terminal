@@ -182,6 +182,9 @@ class RuleStore:
         # 提前启动的程序 (MECHANICS 20): 不看网站 / 应用名单, 直接放行 (代理-全屏蔽照样拦).
         # 由 app.py 在提前启动期间每秒钟更新成这些程序的 exe 名.
         self.exempt = set()
+        # AI 接口的域名 (当前服务商 Base URL 的主机): 名单 / 代理-全屏蔽都放行 (合约网络禁令仍然优先).
+        # 由 app.py 每秒按 ai_config.json 更新.
+        self.api_hosts = set()
         # 合约的网络禁令 (MECHANICS 18.3): 这些程序禁止联网 (联网会话 / 提前启动都不放行). app.py 每秒更新.
         self.banned = set()
         self.banned_domains = set()              # 同上: 这些网站 (含子域名) 也封锁
@@ -505,7 +508,7 @@ class RuleStore:
 
 
     def decide(self, host: str, exe: str, online: bool, mode: str = MODE_BLACKLIST):
-        """(放行?, 原因).原因: local / blockall / online / blacklist-app / blacklist-domain /
+        """(放行?, 原因).原因: local / blockall / online / api / blacklist-app / blacklist-domain /
         default-allow / whitelist-domain / offline"""
         host = (host or "").lower().strip('.')
         exe = (exe or "").lower()
@@ -516,6 +519,8 @@ class RuleStore:
             return False, "ban"              # 合约的网络禁令: 什么时候都不放行 (MECHANICS 18.3)
         if self.banned_domains and any(domain_match(host, d) for d in self.banned_domains):
             return False, "ban"              # 网络禁令的网站: 联网会话 / 白名单 / 提前启动都放行不了
+        if self.api_hosts and any(domain_match(host, h) for h in self.api_hosts):
+            return True, "api"              # AI 接口: 名单 / 代理-全屏蔽都放行 (聊天 / 名单建议要用)
         if online:
             return True, "online"           # 联网会话中全部放行 (MECHANICS 4.1)
         if exe and exe in self.exempt:
@@ -645,6 +650,12 @@ def _selftest():
     assert rs.decide("zhihu.com", "steam.exe", False, MODE_BLOCKALL) == (False, "blockall")
     assert rs.decide("zhihu.com", "chrome.exe", True, MODE_BLOCKALL) == (True, "online")
     assert rs.decide("localhost", "", False, MODE_BLOCKALL) == (True, "local")
+    # AI 接口的域名: 名单 / 全屏蔽都放行; 合约的网络禁令仍然优先
+    rs.api_hosts = {"api.deepseek.com"}
+    assert rs.decide("api.deepseek.com", "chrome.exe", False, MODE_BLOCKALL) == (True, "api")
+    assert rs.decide("sub.api.deepseek.com", "code.exe", False, MODE_WHITELIST) == (True, "api")
+    assert rs.decide("other.com", "chrome.exe", False, MODE_BLOCKALL) == (False, "blockall")
+    rs.api_hosts = set()
     assert keys_for_mode("whatever") == (BLACK_DOMAINS, BLACK_APPS)
 
     assert rs.app_allowed("Steam.exe", False, MODE_BLACKLIST) == (False, "blacklist-app")

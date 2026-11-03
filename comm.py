@@ -268,6 +268,7 @@ BUILTIN_PERSONAS = {"Claudia.txt": """你将扮演一位文静,冷淡的17岁大
 """}
 DEFAULT_PERSONA = "Claudia.txt"
 ASSISTANT_PERSONA = "Assistant.txt"
+ASSISTANT_TITLE = "assistant"                        # 特例: 这个名字 (且提示词没改过) 专注时也能用
 CHAT_KEYS = ("clear_ts", "retry", "pro_key")          # 跟着聊天对象走的几项 (存在各自的聊天文件里)
 
 
@@ -1069,6 +1070,14 @@ class Comm:
     def persona_name(self) -> str:
         n = self.cfg.get("persona") or ""
         return n if n in list_personas(self.personas) else ""
+
+    def is_builtin_assistant_unmodified(self) -> bool:
+        """名字是 Assistant (不分大小写), 并且文件和自带 Assistant 的提示词一字不差.
+        只有这种情况, 用户在专注期间也能用沟通 (24.2.3 的特例)."""
+        name = self.persona_name()
+        if not name or persona_title(name).strip().casefold() != ASSISTANT_TITLE:
+            return False
+        return read_persona(self.personas, name) == BUILTIN_PERSONAS[ASSISTANT_PERSONA].strip()
 
     # ---- 人设文件本身: 随设备同步 (每 2 分钟检查一次变化; README 不同步, 各设备按界面语言生成) ----
     def persona_doc(self) -> dict:
@@ -2686,6 +2695,27 @@ def _selftest():
     cb.set_cfg(persona="甲.txt")                              # 切到甲: 能看到
     assert cb.visible()[-1]["text"] == "甲来找你"
     cb.flush()
+    # 特例: 名字是 Assistant 且提示词没改过 → 专注时也能用
+    adir, apersonas = os.path.join(td, "assist"), os.path.join(td, "assist_personas")
+    os.makedirs(adir)
+    os.makedirs(apersonas)
+    with open(os.path.join(apersonas, "Assistant.txt"), "w", encoding="utf-8", newline="\n") as f:
+        f.write(BUILTIN_PERSONAS[ASSISTANT_PERSONA])
+    ca = Comm(adir, apersonas, now=lambda: clock[0], chat_fn=fake)
+    ca.set_cfg(persona="Assistant.txt")
+    assert ca.is_builtin_assistant_unmodified(), "内置 Assistant: 专注时也能用"
+    os.rename(os.path.join(apersonas, "Assistant.txt"), os.path.join(apersonas, "Assistant.md"))
+    ca.set_cfg(persona="Assistant.md")
+    assert ca.is_builtin_assistant_unmodified(), "换成 Assistant.md、内容没改: 也算"
+    os.rename(os.path.join(apersonas, "Assistant.md"), os.path.join(apersonas, "Assisstant.md"))
+    ca.set_cfg(persona="Assisstant.md")
+    assert not ca.is_builtin_assistant_unmodified(), "拼错的名字 Assisstant 不算"
+    os.rename(os.path.join(apersonas, "Assisstant.md"), os.path.join(apersonas, "Assistant.md"))
+    ca.set_cfg(persona="Assistant.md")
+    with open(os.path.join(apersonas, "Assistant.md"), "a", encoding="utf-8") as f:
+        f.write("\n改过的内容")
+    assert not ca.is_builtin_assistant_unmodified(), "提示词改过: 不能再在专注时用"
+    ca.flush()
     # 人设文件本身随设备同步: 新增 / 覆盖 / 删除 (README 不同步)
     psf = os.path.join(td, "personas_sync")
     os.makedirs(psf)

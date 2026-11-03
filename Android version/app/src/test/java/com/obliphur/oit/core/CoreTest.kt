@@ -1,5 +1,7 @@
 package com.obliphur.oit.core
 
+import com.obliphur.oit.ai.AiConfig
+import com.obliphur.oit.ai.Profile
 import com.obliphur.oit.service.Dns
 import com.obliphur.oit.service.Packets
 import org.junit.Assert.assertEquals
@@ -26,6 +28,17 @@ class CoreTest {
         assertEquals("2h 05m", fmtHm(7500.0))
         assertEquals("0.4", numText(0.4))
         assertEquals("2", numText(2.0))
+    }
+
+    @Test
+    fun apiHostsForDnsFilter() {
+        val d = tmp()
+        val core = Core(d, NoHost) { 0.0 }
+        val cfg = AiConfig(File(d, "ai_config.json"))
+        cfg.provider = "custom"
+        cfg.profiles["custom"] = Profile("custom", "https://relay.example/v1", "openai", "m", "k")
+        cfg.save()
+        assertEquals(setOf("relay.example"), core.apiHosts())
     }
 
     @Test

@@ -180,8 +180,10 @@ class OitVpnService : VpnService() {
             }
             if (plan.filter) {
                 val core = OitApp.instance.core
-                // 全屏蔽: 除本机地址以外一律拦截; 否则按网站名单
-                val ok = if (plan.blockAll) host == "localhost" || host.endsWith(".localhost")
+                // AI 接口的域名例外放行 (聊天 / 名单建议要用); 合约的网络禁令在上面已经先拦了
+                val apiOk = core.apiHosts().any { com.obliphur.oit.core.domainMatch(host, it) }
+                // 全屏蔽: 除本机地址和 AI 接口以外一律拦截; 否则按网站名单
+                val ok = apiOk || if (plan.blockAll) host == "localhost" || host.endsWith(".localhost")
                 else core.rules.snap.decide(host, core.net.online, core.settings.str("FILTER_MODE")).first
                 if (!ok) {
                     // 发起查询的应用只用来写拦截记录

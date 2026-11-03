@@ -435,6 +435,24 @@ class CommTest {
         assertTrue("README.md" !in c.personaDoc())
     }
 
+    /** 特例: 名字是 Assistant 且提示词没改过 → 专注时也能用. */
+    @Test
+    fun assistantFocusExemption() {
+        val td = Files.createTempDirectory("oit").toFile()
+        val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
+        c.set(persona = "Assistant.txt")
+        assertTrue(c.isBuiltinAssistantUnmodified())
+        File(td, "p/Assistant.md").writeText(BuiltinPersonas.ALL.getValue(BuiltinPersonas.ASSISTANT))
+        c.set(persona = "Assistant.md")
+        assertTrue(c.isBuiltinAssistantUnmodified())
+        File(td, "p/Assisstant.md").writeText(BuiltinPersonas.ALL.getValue(BuiltinPersonas.ASSISTANT))
+        c.set(persona = "Assisstant.md")
+        assertFalse(c.isBuiltinAssistantUnmodified())          // 拼错的名字不算
+        c.set(persona = "Assistant.md")
+        File(td, "p/Assistant.md").appendText("\n改过的内容")
+        assertFalse(c.isBuiltinAssistantUnmodified())
+    }
+
     @Test
     fun builtinPersona() {
         val td = Files.createTempDirectory("oit").toFile()

@@ -940,6 +940,15 @@ class Comm(
 
     fun personaName(): String = persona.takeIf { it in listPersonas() } ?: ""
 
+    /** 名字是 Assistant (不分大小写), 并且文件和自带 Assistant 的提示词一字不差.
+     *  只有这种情况, 用户在专注期间也能用沟通 (24.2.3 的特例). */
+    fun isBuiltinAssistantUnmodified(): Boolean {
+        val name = personaName()
+        if (name.isEmpty()) return false
+        if (personaTitle(name).trim().lowercase() != "assistant") return false
+        return readPersona(name) == BuiltinPersonas.ALL.getValue(BuiltinPersonas.ASSISTANT).trim()
+    }
+
     // ---- 人设文件本身: 随设备同步 (每 2 分钟检查一次变化; README 不同步, 各设备按界面语言生成) ----
     /** 人设文件夹里的 .txt / .md (文件名 → 全文), 给设备同步用. */
     fun personaDoc(): Map<String, String> {
