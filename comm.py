@@ -87,7 +87,7 @@ DEFAULTS = {"persona": "", "show_avatar": False,
             "claudia_migrated": False, "claudia_modified": False, "claudia_notified": "",
             "legacy_done": False, "user_profile": "", "split_send": True,
             "bg_pro": True, "mute_pro": [], "idle_use": {},
-            "mem_auto": "", "mem_manual": "", "mem_upto": 0, "mem_ts": 0}      # 记忆卡 (跟着聊天对象走)
+            "mem_auto": "", "mem_upto": 0, "mem_ts": 0}      # 记忆卡 (跟着聊天对象走; 全部由模型自动整理)
 
 
 # ══════════════ 前置 prompt 与 README ══════════════
@@ -366,7 +366,7 @@ CLAUDIA_LEGACIES = (BUILTIN_PERSONAS[DEFAULT_PERSONA].replace(CLAUDIA_NOTE_LINE_
 ASSISTANT_SLEEP_LINE = "睡眠发起谈话概率:0%\n"
 ASSISTANT_TITLE = "assistant"                        # 特例: 这个名字 (且提示词没改过) 专注时也能用
 CLAUDIA_TITLE = "claudia"                            # 睡眠段开始后 5 分钟那一条要求"以'晚安'开头": 只有这个人设说 (24.4)
-CHAT_KEYS = ("clear_ts", "retry", "pro_key", "mem_auto", "mem_manual", "mem_upto", "mem_ts")   # 跟着聊天对象走的几项 (存在各自的聊天文件里)
+CHAT_KEYS = ("clear_ts", "retry", "pro_key", "mem_auto", "mem_upto", "mem_ts")   # 跟着聊天对象走的几项 (存在各自的聊天文件里)
 
 
 def pid_of(persona: str) -> str:
@@ -378,7 +378,6 @@ def mem_fields(d) -> dict:
     """聊天状态里的记忆卡 (旧文件没有这几项 → 空)."""
     d = d if isinstance(d, dict) else {}
     return {"mem_auto": str(d.get("mem_auto") or "")[:MEM_MAX],
-            "mem_manual": str(d.get("mem_manual") or "")[:MEM_MAX],
             "mem_upto": int(d.get("mem_upto") or 0),
             "mem_ts": int(d.get("mem_ts") or 0)}
 
@@ -1052,8 +1051,8 @@ class Comm:
                 doc[f"retry:{pid}"] = dict(st["retry"])
             if st["clear_ts"]:
                 doc[f"clear:{pid}"] = int(st["clear_ts"])
-            if st.get("mem_manual") or st.get("mem_auto"):
-                doc[f"mem:{pid}"] = {"m": str(st.get("mem_manual") or ""), "a": str(st.get("mem_auto") or ""),
+            if st.get("mem_auto"):
+                doc[f"mem:{pid}"] = {"a": str(st.get("mem_auto") or ""),
                                      "u": int(st.get("mem_upto") or 0), "t": int(st.get("mem_ts") or 0)}
         return doc
 
@@ -1166,7 +1165,6 @@ class Comm:
                     continue
                 if t <= int(st.get("mem_ts") or 0):
                     continue
-                st["mem_manual"] = str(val.get("m") or "")[:MEM_MAX]     # 手写的那份清空聊天也不清, 照收
                 if int(st.get("clear_ts") or 0) > t:                    # 自动摘要比清空还早: 不要 (旧对话的摘要)
                     st["mem_auto"] = ""
                     st["mem_upto"] = 0
@@ -1797,32 +1795,17 @@ class Comm:
         api = self._compose(self.now(), body)
         self._request(kind, (body, api))
 
-    # ---- 记忆卡 (MECHANICS 24.2.4): 每 MEM_EVERY 条新消息让模型整理一次; 手写的那份由用户自己维护 ----
+    # ---- 记忆卡 (MECHANICS 24.2.4): 每 MEM_EVERY 条新消息让模型整理一次; 全部由模型自动维护, UI 上不展示 ----
     def memory_block_of(self, st: dict) -> str:
-        """长期记忆: 自动整理的和用户手写的分开写, 手写的在后并标明"以此为准"."""
+        """长期记忆: 模型整理的摘要 (可能不精确), 附在 system 里."""
         st = st or {}
         auto = str(st.get("mem_auto") or "").strip()[:MEM_MAX]
-        manual = str(st.get("mem_manual") or "").strip()[:MEM_MAX]
-        out = ""
-        if auto:
-            out += "\n\n以下是关于用户的长期记忆(你之前整理的摘要, 可能不精确):\n" + auto
-        if manual:
-            out += "\n\n以下是用户自己写的重要信息(以此为准):\n" + manual
-        return out
+        if not auto:
+            return ""
+        return "\n\n以下是关于用户的长期记忆(你之前整理的摘要, 可能不精确):\n" + auto
 
     def memory_block(self) -> str:
         return self.memory_block_of(self.cfg)
-
-    def set_mem(self, text: str):
-        """设置 → 沟通 里手写的"重要信息": 即时生效, 跟着这个聊天对象走."""
-        text = str(text or "").strip()[:MEM_MAX]
-        if text == str(self.cfg.get("mem_manual") or ""):
-            return
-        self.cfg["mem_manual"] = text
-        self.cfg["mem_ts"] = self._ms()
-        self.save_chat()
-        self._changed()
-        self._push()
 
     def _mem_delta(self) -> list:
         """上次整理之后的新消息 (对方拒绝 / 系统消息不算)."""
@@ -2742,14 +2725,15 @@ def _selftest():
     other.apply_doc(mc.sync_doc())
     assert other.cfg["user_profile"] == "我是大二的学生, 在准备考研."
     # 记忆卡也随设备同步: 后改的为准
-    mc.set_mem("下周三考试")
+    mc.cfg["mem_auto"] = "- 下周三考试"
+    mc.cfg["mem_ts"] = max(mc._ms(), int(mc.cfg.get("clear_ts") or 0)) + 1
     other.apply_doc(mc.sync_doc())
-    assert other._state_of(pid_of("小夏.txt"))["mem_manual"] == "下周三考试"
-    mc.apply_doc({"mem:" + pid_of("小夏.txt"): {"m": "改成周五", "a": "- 喜欢钢琴", "u": 5,
+    assert other._state_of(pid_of("小夏.txt"))["mem_auto"] == "- 下周三考试"
+    mc.apply_doc({"mem:" + pid_of("小夏.txt"): {"a": "- 喜欢钢琴", "u": 5,
                                                 "t": int(mc.cfg["mem_ts"]) + 1}})
-    assert mc.cfg["mem_manual"] == "改成周五" and mc.cfg["mem_auto"] == "- 喜欢钢琴"
-    mc.apply_doc({"mem:" + pid_of("小夏.txt"): {"m": "旧的", "a": "", "u": 1, "t": 1}})     # 更旧的不要
-    assert mc.cfg["mem_manual"] == "改成周五"
+    assert mc.cfg["mem_auto"] == "- 喜欢钢琴"
+    mc.apply_doc({"mem:" + pid_of("小夏.txt"): {"a": "- 旧的", "u": 1, "t": 1}})     # 更旧的不要
+    assert mc.cfg["mem_auto"] == "- 喜欢钢琴"
     mc.flush(); mc2.flush(); lc.flush(); other.flush()
     # ---- 对方要资料: [refuse to reply][contract] → 给词条库再调用一次 ----
     assert info_tags(" [Refuse to reply] [CONTRACT] ") == ["contract"] and info_tags("[contract]") == ["contract"], "没有 [refuse to reply] 也算查询"
@@ -3494,7 +3478,6 @@ def _selftest():
     cm.ai.set_profile("deepseek", api_key="k")
     cm.set_cfg(persona="小夏.txt")
     cm.snapshot = lambda: {}
-    cm.set_mem("下周三考试")
     for i in range(40):
         cm._add("me" if i % 2 == 0 else "ai", f"m{i}")
     clock[0] += timedelta(minutes=1)
@@ -3508,11 +3491,10 @@ def _selftest():
     assert len(mem_calls) == 1 and "现有记忆卡" in mem_calls[0][0]["content"]
     assert cm.cfg["mem_auto"] == "- 用户在准备考试\n- 喜欢钢琴", cm.cfg["mem_auto"]
     assert cm.cfg["mem_upto"] == int(cm.messages[-1]["ts"])
-    assert "下周三考试" in cm.memory_block() and "喜欢钢琴" in cm.memory_block()
+    assert "喜欢钢琴" in cm.memory_block()
     script.append("好")
     cm.send("在吗"); wait(cm)
     sys_text = calls[-1][0]
-    assert "以下是用户自己写的重要信息(以此为准):\n下周三考试" in sys_text
     assert "以下是关于用户的长期记忆" in sys_text and "喜欢钢琴" in sys_text
     for i in range(40):
         cm._add("me", f"n{i}")
@@ -3525,8 +3507,8 @@ def _selftest():
         if not cm._mem_busy:
             break
     assert cm.cfg["mem_auto"] == "- 用户在准备考试\n- 喜欢钢琴", "失败: 保留旧的"
-    cm.clear()                                             # 清空聊天: 自动的跟着清, 手写的保留
-    assert cm.cfg["mem_auto"] == "" and cm.cfg["mem_manual"] == "下周三考试"
+    cm.clear()                                             # 清空聊天: 记忆卡跟着一起清
+    assert cm.cfg["mem_auto"] == "" and cm.cfg["mem_upto"] == 0
     cm.flush()
     return "comm selftest OK"
 
