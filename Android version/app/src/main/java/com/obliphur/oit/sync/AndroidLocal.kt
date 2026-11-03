@@ -18,6 +18,18 @@ import java.time.LocalDateTime
 /** 设备同步: 本机数据 <-> 同步的文档 / 账 / 状态 (同桌面版 sync_local.py). 都在界面线程里调用. */
 class AndroidLocal(private val app: OitApp) : SyncLocal {
     private val core get() = app.core
+    private var personaCache: Map<String, String>? = null
+    private var personaAt = 0L
+
+    /** 人设文件 (每 2 分钟读一次; 中间一直用缓存, 免得每次 20 秒同步都读一遍). */
+    private fun personas(): Map<String, String> {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (personaCache == null || now - personaAt >= 120_000L) {
+            personaCache = runCatching { core.comm.personaDoc() }.getOrDefault(emptyMap())
+            personaAt = now
+        }
+        return personaCache ?: emptyMap()
+    }
 
     /** 手机上两种断网方式都是代理 (全屏蔽 / 规则过滤), 局域网都保留, 所以都可以同步. */
     override fun netMode() = "proxy"
@@ -215,7 +227,7 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
         // 行为模式的外出: 每一项单独比较, 计时 / 统计跟着它走 (MECHANICS 21)
         return mapOf("settings" to settings, "hours" to hours, "timer" to timer, "achievements" to core.ach.doc(),
             "contract" to core.contract.doc(), "behavior" to core.behavior.doc(),
-            "prescript" to core.prescript.syncDoc(), "comm" to core.comm.syncDoc())
+            "prescript" to core.prescript.syncDoc(), "comm" to core.comm.syncDoc(), "personas" to personas())
     }
 
     override fun apply(doc: String, changes: Map<String, Any?>) {
@@ -282,6 +294,11 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
             }
             "prescript" -> core.prescript.syncApply(changes)
             "comm" -> core.comm.applyDoc(changes)
+            "personas" -> {
+                core.comm.applyPersonaDoc(changes)
+                personaCache = null          // 刚并进来的内容: 下次读盘 (不会把旧内容又发回去)
+                personaAt = 0L
+            }
         }
         core.changed()
     }

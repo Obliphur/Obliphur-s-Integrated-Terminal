@@ -57,29 +57,16 @@ object BuiltinPersonas {
 特别地,如果用户的活动/爱好和你相同,你可以主动并相对细致地提及你的活动内容.
 
 【日程】
+[循环 开始-结束][Nmin]: 从开始时刻起, 按 N 分钟专注 + F(N) 分钟休息交替, 到结束时刻截断.
 
 6:30-7:00:洗漱,吃早饭
-[循环 7:00-12:00]
-  7:00-8:40:专注
-  8:40-9:18:休息
-  9:18-10:58:专注
-  10:58-11:35:休息
-  11:35-12:00:专注
+[循环 7:00-12:00][100min]
 12:00-12:30:午饭
 12:30-13:00:空闲
-[循环 13:00-18:00]
-  13:00-14:40:专注
-  14:40-15:18:休息
-  15:18-16:58:专注
-  16:58-17:35:休息
-  17:35-18:00:专注
+[循环 13:00-18:00][100min]
 18:00-18:30:晚饭
 18:30-19:00:空闲
-[循环 19:00-23:00]
-  19:00-20:40:专注
-  20:40-21:18:休息
-  21:18-22:58:专注
-  22:58-23:00:休息
+[循环 19:00-23:00][100min]
 23:00-23:30:空闲
 23:30-6:30:睡眠
 
@@ -149,8 +136,11 @@ object CommText {
             "  比如 8:00-9:00:专注(学习)\n" +
             "  格式和名词与标准用语相同才能识别与匹配.\n" +
             "  修饰只用来限定具体活动, 不会显示在对方的状态里.\n" +
-            "  OIT 不会自己推算\"100min专注+37.7min休息\"这样的循环,请把每一段都写成具体的时间" +
-            "(可以用 [循环 7:00-12:00] 这样的标题行分组,标题行不影响).\n" +
+            "  可以每一段都写成具体的时间; 也可以在标题行里用循环段让 OIT 自动生成: " +
+            "[循环 7:00-12:00][100min] (N = 每次专注的分钟数, 不写 [Nmin] 默认 100min; " +
+            "按 N 分钟专注 + F(N) 分钟休息交替生成到这段结束).\n" +
+            "  这段里已经显式写出的段优先 (显式写了的循环段不会自动生成), [循环 7:00-12:00] 这样的标题行本身也可以只用来分组. " +
+            "每次打开 OIT / 开始新对话 / 切换人设时都会重新生成.\n" +
             "  对方会在每段空闲开始前1~3分钟、每段休息开始前1~3分钟按一定概率主动给你发一条消息;" +
             "专注 / 睡眠段不会触发主动消息,只用来显示对方现在的状态;概率写在人设里,各占一行,例如\n" +
             "    空闲发起谈话概率:50%\n" +
@@ -183,8 +173,13 @@ object CommText {
             "  For example: 8:00-9:00:专注(学习), or 8:00-9:00:Focus(study)\n" +
             "  The format and the standard wording must match to be recognized and matched.\n" +
             "  The modifier only names the activity; it is never shown in the status line.\n" +
-            "  OIT does not simulate a \"100 min focus + 37.7 min rest\" cycle by itself; write every segment out explicitly " +
-            "(grouping header lines such as [循环 7:00-12:00] are allowed and ignored).\n" +
+            "  You can write every segment explicitly, or let OIT generate them from a cycle header: " +
+            "[Loop 7:00-12:00][100min] (N = focus minutes per round; if [Nmin] is omitted it defaults to 100min; " +
+            "OIT alternates N min focus + F(N) min rest until the end of the range).\n" +
+            "  Explicit segments inside that range take priority (a cycle header that already has explicit lines is not " +
+            "generated), and a header such as [Loop 7:00-12:00] can also be used only for grouping. " +
+            "[Cycle ...] / [Repeat ...] work too. They are regenerated whenever OIT starts, a new conversation begins, " +
+            "or the persona is switched.\n" +
             "  The character may proactively message you 1-3 minutes before each idle / rest segment, with a probability " +
             "written in the persona, one per line, for example\n" +
             "    空闲发起谈话概率:50%\n" +
@@ -231,6 +226,10 @@ object CommText {
     // 人设日程里的一行: "12:30-13:00:空闲" (可以缩进 / 带 - 或 * 开头); 时间可以是全角冒号, 连接符 - – — ~ 至 到
     private val SEG_RE = Regex("^[ \\t]*(?:[-*•][ \\t]*)?(\\d{1,2})[:：](\\d{2})[ \\t]*[-–—~～至到][ \\t]*(\\d{1,2})[:：](\\d{2})" +
         "[ \\t]*[:：][ \\t]*(\\S[^\\n]*)$", RegexOption.MULTILINE)
+    // 循环段: "[循环 7:00-12:00][100min]" / "[Loop 7:00-12:00][100min]" ([Nmin] 可省, 默认 100min); 英文不分大小写
+    private val CYCLE_RE = Regex("^[ \\t]*(?:[-*•][ \\t]*)?[\\[［][ \\t]*(?:循环|loop|cycle|repeat)[ \\t]*" +
+        "(\\d{1,2})[:：](\\d{2})[ \\t]*[-–—~～至到][ \\t]*(\\d{1,2})[:：](\\d{2})[ \\t]*[\\]］]" +
+        "[ \\t]*(?:[\\[［][ \\t]*(\\d+)[ \\t]*(?:min|mins|分钟)?[ \\t]*[\\]］])?", setOf(RegexOption.MULTILINE, RegexOption.IGNORE_CASE))
 
     private val PRO_RE = Regex("(长时间休息|空闲|休息)发起谈话概率[ \\t]*[:：][ \\t]*(\\d+(?:\\.\\d+)?)[ \\t]*([%％])?")
 
@@ -273,11 +272,14 @@ object CommText {
         Regex("[(（]([^()（）]*)[)）]").find(label)?.groupValues?.get(1)?.trim() ?: ""
 
     /** 人设里每天重复的日程: 所有带时间的段, 没有重复. 只认 "H:MM-H:MM:名字" 这样的行.
-     *  kind 是空闲 / 休息 / 专注 / 睡眠之一, 别的名字是 ""; start / end 是一天中的第几分钟. */
+     *  kind 是空闲 / 休息 / 专注 / 睡眠之一, 别的名字是 ""; start / end 是一天中的第几分钟.
+     *
+     *  另外支持循环段 "[循环 HH:MM-HH:MM][Nmin]" ([Nmin] 可省, 默认 100min; 英文 Loop / Cycle / Repeat 都认):
+     *  按 N 分钟专注 + F(N) 分钟休息交替生成, 生成到这段结束为止. 这段里已经有显式写出的段时, 以显式为准, 不生成. */
     fun scheduleEntries(text: String): List<SegEntry> {
         val out = ArrayList<SegEntry>()
         val seen = HashSet<Pair<String, Int>>()
-        for (m in SEG_RE.findAll(text)) {
+        for (m in SEG_RE.findAll(text)) {                         // 显式写出的段优先
             val h = m.groupValues[1].toInt()
             val mi = m.groupValues[2].toInt()
             val eh = m.groupValues[3].toInt()
@@ -291,6 +293,33 @@ object CommText {
             if (!seen.add(kind to start)) continue
             out.add(SegEntry(kind, start, end, label, segDetail(label)))
         }
+        val explicitStarts = out.map { it.start }
+        for (m in CYCLE_RE.findAll(text)) {                        // 循环段: 显式没写这部分时自动生成
+            val h = m.groupValues[1].toInt()
+            val mi = m.groupValues[2].toInt()
+            val eh = m.groupValues[3].toInt()
+            val em = m.groupValues[4].toInt()
+            if (h > 23 || mi > 59 || eh > 24 || em > 59 || (eh == 24 && em != 0)) continue
+            val start = h * 60 + mi
+            val rawEnd = eh * 60 + em
+            if (rawEnd == start) continue
+            val end = if (rawEnd > start) rawEnd else rawEnd + 24 * 60
+            if (explicitStarts.any { it in start until end || it + 24 * 60 in start until end })
+                continue                                            // 这段里已经有显式表示: 显示表示优先
+            val n = m.groupValues[5].toIntOrNull()?.takeIf { it > 0 } ?: 100
+            val rest = maxOf(1, Math.round(computeF(n.toDouble())).toInt())
+            var t = start
+            while (t < end) {
+                val fEnd = minOf(t + n, end)
+                if (fEnd > t && seen.add("focus" to t)) out.add(SegEntry("focus", t, fEnd, "专注", ""))
+                t = fEnd
+                if (t >= end) break
+                val rEnd = minOf(t + rest, end)
+                if (rEnd > t && seen.add("rest" to t)) out.add(SegEntry("rest", t, rEnd, "休息", ""))
+                t = rEnd
+            }
+        }
+        out.sortBy { it.start }                                     // 按时间排: 显式段和自动生成的循环段混在一起
         return out
     }
 
@@ -874,6 +903,46 @@ class Comm(
     }
 
     fun personaName(): String = persona.takeIf { it in listPersonas() } ?: ""
+
+    // ---- 人设文件本身: 随设备同步 (每 2 分钟检查一次变化; README 不同步, 各设备按界面语言生成) ----
+    /** 人设文件夹里的 .txt / .md (文件名 → 全文), 给设备同步用. */
+    fun personaDoc(): Map<String, String> {
+        val out = LinkedHashMap<String, String>()
+        for (name in listPersonas()) {
+            runCatching { File(personas, name).readText(Charsets.UTF_8).removePrefix("\uFEFF").take(MAX_PERSONA) }
+                .onSuccess { out[name] = it }
+        }
+        return out
+    }
+
+    /** 别的设备同步来的人设文件: 新增 / 覆盖 / 删除 (null). 现在选着的人设受影响时重新读日程. */
+    fun applyPersonaDoc(changes: Map<String, Any?>) {
+        var dirty = false
+        for ((name, value) in changes) {
+            if (name.isEmpty() || name != File(name).name) continue
+            val ext = if (name.contains('.')) "." + name.substringAfterLast('.').lowercase() else ""
+            if (ext !in PERSONA_EXT || name.lowercase() == "readme.md") continue
+            val f = File(personas, name)
+            runCatching {
+                if (value == null) {
+                    if (f.exists()) { f.delete(); dirty = true }
+                } else {
+                    val new = value.toString().take(MAX_PERSONA)
+                    val old = if (f.isFile) f.readText(Charsets.UTF_8).removePrefix("\uFEFF") else null
+                    if (old != new) {
+                        f.parentFile?.mkdirs()
+                        f.writeText(new, Charsets.UTF_8)
+                        dirty = true
+                    }
+                }
+            }
+        }
+        if (dirty) {
+            segSig = null
+            reloadSchedule("同步人设")
+            changed()
+        }
+    }
 
     // ---- 状态 ----
 

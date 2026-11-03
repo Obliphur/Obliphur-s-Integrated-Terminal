@@ -16,7 +16,7 @@ II.所有功能实时适配.
 
 从 1.0.216 起发布里有两个附件: `OIT.apk` 和电脑版安装程序 `setup.exe` (release.py 用 `setup.py --payload` 把 git 里跟踪的程序文件打成 payload.zip, 再用 PyInstaller 打成一个 exe, 产物在 `build/setup/`; 需要 `pip install pyinstaller`; MECHANICS 16.4). 新增的程序文件要先 `git add`, 否则不会进安装包. setup.exe 不要在自己的电脑上试运行: 它会装到 Program Files 并写注册表; 改 `setup.py` / `registration.py` 后跑 `python setup.py --selftest`, `python registration.py`.
 不要写进 mechanics.md.
-开发完自动递增版本 并编译apk.
+开发完自动递增版本.
 
 暂存的需求
 

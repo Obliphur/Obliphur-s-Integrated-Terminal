@@ -133,8 +133,11 @@ def _readme_zh() -> str:
         "  比如 8:00-9:00:专注(学习)\n"
         "  格式和名词与标准用语相同才能识别与匹配.\n"
         "  修饰只用来限定具体活动, 不会显示在对方的状态里.\n"
-        "  OIT 不会自己推算\"100min专注+37.7min休息\"这样的循环,请把每一段都写成具体的时间"
-        "(可以用 [循环 7:00-12:00] 这样的标题行分组,标题行不影响).\n"
+        "  可以每一段都写成具体的时间; 也可以在标题行里用循环段让 OIT 自动生成: "
+        "[循环 7:00-12:00][100min] (N = 每次专注的分钟数, 不写 [Nmin] 默认 100min; "
+        "按 N 分钟专注 + F(N) 分钟休息交替生成到这段结束).\n"
+        "  这段里已经显式写出的段优先 (显式写了的循环段不会自动生成), [循环 7:00-12:00] 这样的标题行本身也可以只用来分组. "
+        "每次打开 OIT / 开始新对话 / 切换人设时都会重新生成.\n"
         "  对方会在每段空闲开始前1~3分钟、每段休息开始前1~3分钟按一定概率主动给你发一条消息;"
         "专注 / 睡眠段不会触发主动消息,只用来显示对方现在的状态;概率写在人设里,各占一行,例如\n"
         "    空闲发起谈话概率:50%\n"
@@ -169,8 +172,13 @@ def _readme_en() -> str:
         "  For example: 8:00-9:00:专注(学习), or 8:00-9:00:Focus(study)\n"
         "  The format and the standard wording must match to be recognized and matched.\n"
         "  The modifier only names the activity; it is never shown in the status line.\n"
-        "  OIT does not simulate a \"100 min focus + 37.7 min rest\" cycle by itself; write every segment out explicitly "
-        "(grouping header lines such as [循环 7:00-12:00] are allowed and ignored).\n"
+        "  You can write every segment explicitly, or let OIT generate them from a cycle header: "
+        "[Loop 7:00-12:00][100min] (N = focus minutes per round; if [Nmin] is omitted it defaults to 100min; "
+        "OIT alternates N min focus + F(N) min rest until the end of the range).\n"
+        "  Explicit segments inside that range take priority (a cycle header that already has explicit lines is not "
+        "generated), and a header such as [Loop 7:00-12:00] can also be used only for grouping. "
+        "[Cycle ...] / [Repeat ...] work too. They are regenerated whenever OIT starts, a new conversation begins, "
+        "or the persona is switched.\n"
         "  The character may proactively message you 1-3 minutes before each idle / rest segment, with a probability "
         "written in the persona, one per line, for example\n"
         "    空闲发起谈话概率:50%\n"
@@ -211,29 +219,16 @@ BUILTIN_PERSONAS = {"Claudia.txt": """你将扮演一位文静,冷淡的17岁大
 特别地,如果用户的活动/爱好和你相同,你可以主动并相对细致地提及你的活动内容.
 
 【日程】
+[循环 开始-结束][Nmin]: 从开始时刻起, 按 N 分钟专注 + F(N) 分钟休息交替, 到结束时刻截断.
 
 6:30-7:00:洗漱,吃早饭
-[循环 7:00-12:00]
-  7:00-8:40:专注
-  8:40-9:18:休息
-  9:18-10:58:专注
-  10:58-11:35:休息
-  11:35-12:00:专注
+[循环 7:00-12:00][100min]
 12:00-12:30:午饭
 12:30-13:00:空闲
-[循环 13:00-18:00]
-  13:00-14:40:专注
-  14:40-15:18:休息
-  15:18-16:58:专注
-  16:58-17:35:休息
-  17:35-18:00:专注
+[循环 13:00-18:00][100min]
 18:00-18:30:晚饭
 18:30-19:00:空闲
-[循环 19:00-23:00]
-  19:00-20:40:专注
-  20:40-21:18:休息
-  21:18-22:58:专注
-  22:58-23:00:休息
+[循环 19:00-23:00][100min]
 23:00-23:30:空闲
 23:30-6:30:睡眠
 
@@ -374,6 +369,10 @@ def stamp(now: datetime) -> str:
 # 人设日程里的一行: "12:30-13:00:空闲" (可以缩进 / 带 - 或 * 开头); 时间可以是全角冒号, 连接符 - – — ~ 至 到
 _SEG_RE = re.compile(r"^[ \t]*(?:[-*•][ \t]*)?(\d{1,2})[:：](\d{2})[ \t]*[-–—~～至到][ \t]*(\d{1,2})[:：](\d{2})"
                      r"[ \t]*[:：][ \t]*(\S[^\n]*)$", re.M)
+# 循环段: "[循环 7:00-12:00][100min]" / "[Loop 7:00-12:00][100min]" ([Nmin] 可省, 默认 100min); 英文不分大小写
+_CYCLE_RE = re.compile(r"^[ \t]*(?:[-*•][ \t]*)?[\[［][ \t]*(?:循环|loop|cycle|repeat)[ \t]*"
+                       r"(\d{1,2})[:：](\d{2})[ \t]*[-–—~～至到][ \t]*(\d{1,2})[:：](\d{2})[ \t]*[\]］]"
+                       r"[ \t]*(?:[\[［][ \t]*(\d+)[ \t]*(?:min|mins|分钟)?[ \t]*[\]］])?", re.I | re.M)
 
 
 def _seg_kind_in(s: str) -> str:
@@ -409,11 +408,16 @@ def seg_detail(label: str) -> str:
 
 def schedule_entries(text: str) -> list:
     """人设里每天重复的日程: 所有带时间的段 → [条目], 没有重复. 只认 "H:MM-H:MM:名字" 这样的行.
+
     条目是 {"kind", "start", "end", "label", "detail"}: kind 是空闲 / 休息 / 专注 / 睡眠之一, 别的名字是 "";
     时刻都是一天中的第几分钟, 跨零点的段 end > 1440.
+
+    另外支持循环段 "[循环 HH:MM-HH:MM][Nmin]" ([Nmin] 可省, 默认 100min; 英文 Loop / Cycle / Repeat 都认):
+    按 N 分钟专注 + F(N) 分钟休息交替生成, 生成到这段结束为止. 这段里已经有显式写出的段时, 以显式为准, 不生成.
     """
+    src = str(text or "")
     out, seen = [], set()
-    for m in _SEG_RE.finditer(str(text or "")):
+    for m in _SEG_RE.finditer(src):                            # 显式写出的段优先
         h, mi, eh, em = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
         label = m.group(5).strip()
         kind = seg_kind(label)
@@ -426,6 +430,35 @@ def schedule_entries(text: str) -> list:
             continue
         seen.add((kind, start))
         out.append({"kind": kind, "start": start, "end": end, "label": label, "detail": seg_detail(label)})
+    explicit_starts = [e["start"] for e in out]
+    for m in _CYCLE_RE.finditer(src):                          # 循环段: 显式没写这部分时自动生成
+        h, mi, eh, em = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
+        if h > 23 or mi > 59 or eh > 24 or em > 59 or (eh == 24 and em):
+            continue
+        start, raw_end = h * 60 + mi, eh * 60 + em
+        if raw_end == start:
+            continue
+        end = raw_end if raw_end > start else raw_end + 24 * 60
+        if any(start <= s < end or start <= s + 24 * 60 < end for s in explicit_starts):
+            continue                                           # 这段里已经有显式表示: 显示表示优先
+        n = int(m.group(5) or 100)
+        n = n if n > 0 else 100
+        rest = max(1, int(round(config.compute_F(n))))
+        t = start
+        while t < end:
+            f_end = min(t + n, end)
+            if (f_end > t) and ("focus", t) not in seen:
+                seen.add(("focus", t))
+                out.append({"kind": "focus", "start": t, "end": f_end, "label": "专注", "detail": ""})
+            t = f_end
+            if t >= end:
+                break
+            r_end = min(t + rest, end)
+            if (r_end > t) and ("rest", t) not in seen:
+                seen.add(("rest", t))
+                out.append({"kind": "rest", "start": t, "end": r_end, "label": "休息", "detail": ""})
+            t = r_end
+    out.sort(key=lambda e: e["start"])                         # 按时间排: 显式段和自动生成的循环段混在一起
     return out
 
 
@@ -1000,6 +1033,54 @@ class Comm:
     def persona_name(self) -> str:
         n = self.cfg.get("persona") or ""
         return n if n in list_personas(self.personas) else ""
+
+    # ---- 人设文件本身: 随设备同步 (每 2 分钟检查一次变化; README 不同步, 各设备按界面语言生成) ----
+    def persona_doc(self) -> dict:
+        """人设文件夹里的 .txt / .md (文件名 → 全文), 给设备同步用."""
+        out = {}
+        for name in list_personas(self.personas):
+            try:
+                with open(os.path.join(self.personas, name), "r", encoding="utf-8-sig") as f:
+                    out[name] = f.read(MAX_PERSONA)
+            except (OSError, UnicodeDecodeError):
+                pass
+        return out
+
+    def apply_persona_doc(self, changes: dict):
+        """别的设备同步来的人设文件: 新增 / 覆盖 / 删除 (None). 现在选着的人设受影响时重新读日程."""
+        try:
+            os.makedirs(self.personas, exist_ok=True)
+        except OSError:
+            return
+        dirty = False
+        for name, text in dict(changes or {}).items():
+            if not isinstance(name, str) or not name or name != os.path.basename(name):
+                continue
+            if os.path.splitext(name)[1].lower() not in PERSONA_EXT or name.lower() == "readme.md":
+                continue
+            path = os.path.join(self.personas, name)
+            try:
+                if text is None:
+                    if os.path.exists(path):
+                        os.remove(path)
+                        dirty = True
+                    continue
+                new = str(text)[:MAX_PERSONA]
+                try:
+                    with open(path, "r", encoding="utf-8-sig") as f:
+                        old = f.read(MAX_PERSONA)
+                except (OSError, UnicodeDecodeError):
+                    old = None
+                if old != new:
+                    with open(path, "w", encoding="utf-8", newline="\n") as f:
+                        f.write(new)
+                    dirty = True
+            except OSError:
+                pass
+        if dirty:
+            self._seg_sig = None
+            self.reload_schedule("同步人设")
+            self._changed()
 
     def problem(self) -> str:
         """现在不能聊天的原因 ("" = 可以)."""
@@ -2154,8 +2235,8 @@ def _selftest():
 
     # ---- II / III: 人设日程里每段空闲 / 休息开始前 1~3 分钟, 按概率发 ----
     assert schedule_segments(BUILTIN_PERSONAS["Claudia.txt"]) == [
-        ("focus", 420), ("rest", 520), ("focus", 558), ("rest", 658), ("focus", 695), ("idle", 750),
-        ("focus", 780), ("rest", 880), ("focus", 918), ("rest", 1018), ("focus", 1055), ("idle", 1110),
+        ("focus", 420), ("rest", 520), ("focus", 558), ("rest", 658), ("focus", 696), ("idle", 750),
+        ("focus", 780), ("rest", 880), ("focus", 918), ("rest", 1018), ("focus", 1056), ("idle", 1110),
         ("focus", 1140), ("rest", 1240), ("focus", 1278), ("rest", 1378), ("idle", 1380), ("sleep", 1410)]
     assert schedule_segments("- 9:05 ~ 9:35 : Idle time\n  09：10-10:00：休息\n24:00-25:00:空闲\n12:00-13:00:不休息\n"
                              "12:00-13:00:午饭\n每天 8 点到 12 点上课.\n9:05-9:35:idle again\n") == [("idle", 545), ("rest", 550)]
@@ -2169,6 +2250,15 @@ def _selftest():
     assert schedule_segments("8:00-9:00:Focus\n9:00-10:00:focus(study)\n10:00-11:00:FOCUS\n"
                              "23:30-6:30:SLEEP\n23:30-6:30:Sleep") == [("focus", 480), ("focus", 540), ("focus", 600),
                                                                          ("sleep", 1410)]
+    # 循环段: [循环 9:00-12:00][Nmin] 自动生成 专注 N + 休息 F(N); 不写 N 默认 100min
+    cycle = lambda s: [(e["kind"], e["start"], e["end"]) for e in schedule_entries(s)]
+    assert cycle("[循环 9:00-12:00]\n") == [("focus", 540, 640), ("rest", 640, 678), ("focus", 678, 720)]
+    assert cycle("[循环 9:00-12:00][100min]\n") == cycle("[Loop 9:00-12:00][100min]\n") == cycle("[CYCLE 9:00-12:00]\n")
+    assert cycle("[循环 9:00-12:00][50min]\n") == [("focus", 540, 590), ("rest", 590, 606), ("focus", 606, 656),
+                                                  ("rest", 656, 672), ("focus", 672, 720)]
+    assert cycle("[循环 9:00-12:00]\n9:00-10:00:专注\n") == [("focus", 540, 600)], "显式写出的段优先, 不自动生成"
+    assert cycle("[循环 23:00-1:00]\n")[0] == ("focus", 1380, 1480), "跨零点的循环段"
+    assert schedule_segments("[循环 9:00-12:00]\n") == [("focus", 540), ("rest", 640), ("focus", 678)]
     # 沟通界面显示的对方状态: 按人设日程, 跨零点也认; 只显示四种状态, 别的都算空闲; 不显示结束时间
     cst = Comm(os.path.join(td, "status"), folder, now=lambda: clock[0], chat_fn=fake)
     cst.set_cfg(persona="Claudia.txt")
@@ -2542,6 +2632,19 @@ def _selftest():
     cb.set_cfg(persona="甲.txt")                              # 切到甲: 能看到
     assert cb.visible()[-1]["text"] == "甲来找你"
     cb.flush()
+    # 人设文件本身随设备同步: 新增 / 覆盖 / 删除 (README 不同步)
+    psf = os.path.join(td, "personas_sync")
+    os.makedirs(psf)
+    open(os.path.join(psf, "甲.txt"), "w", encoding="utf-8").write("你是甲")
+    os.makedirs(os.path.join(td, "psync"))
+    ps = Comm(os.path.join(td, "psync"), psf, now=lambda: clock[0], chat_fn=fake)
+    ps.set_cfg(persona="甲.txt")
+    doc = ps.persona_doc()
+    assert doc["甲.txt"] == "你是甲" and "README.md" not in doc
+    ps.apply_persona_doc({"乙.txt": "你是乙", "甲.txt": None})
+    assert "乙.txt" in list_personas(psf) and "甲.txt" not in list_personas(psf)
+    assert read_persona(psf, "乙.txt") == "你是乙" and ps.persona_name() == ""
+    ps.flush()
     return "comm selftest OK"
 
 

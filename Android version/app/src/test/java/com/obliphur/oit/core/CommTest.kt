@@ -421,6 +421,20 @@ class CommTest {
         assertEquals("空闲", c.otherStatusText())                      // 没有日程也算空闲
     }
 
+    /** 人设文件本身随设备同步: 新增 / 覆盖 / 删除 (README 不同步). */
+    @Test
+    fun personaFilesSync() {
+        val td = Files.createTempDirectory("oit").toFile()
+        val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
+        c.importPersona("甲.txt", "你是甲".byteInputStream())
+        c.set(persona = "甲.txt")
+        assertEquals("你是甲", c.personaDoc()["甲.txt"])
+        c.applyPersonaDoc(mapOf<String, Any?>("乙.txt" to "你是乙", "甲.txt" to null))
+        assertTrue("乙.txt" in c.listPersonas() && "甲.txt" !in c.listPersonas())
+        assertEquals("你是乙", c.readPersona("乙.txt"))
+        assertTrue("README.md" !in c.personaDoc())
+    }
+
     @Test
     fun builtinPersona() {
         val td = Files.createTempDirectory("oit").toFile()
@@ -728,8 +742,8 @@ class CommTest {
     @Test
     fun scheduleProactive() {
         // 人设日程里的空闲 / 休息 / 专注 / 睡眠段
-        assertEquals(listOf("focus" to 420, "rest" to 520, "focus" to 558, "rest" to 658, "focus" to 695, "idle" to 750,
-            "focus" to 780, "rest" to 880, "focus" to 918, "rest" to 1018, "focus" to 1055, "idle" to 1110,
+        assertEquals(listOf("focus" to 420, "rest" to 520, "focus" to 558, "rest" to 658, "focus" to 696, "idle" to 750,
+            "focus" to 780, "rest" to 880, "focus" to 918, "rest" to 1018, "focus" to 1056, "idle" to 1110,
             "focus" to 1140, "rest" to 1240, "focus" to 1278, "rest" to 1378, "idle" to 1380, "sleep" to 1410),
             CommText.scheduleSegments(BuiltinPersonas.ALL.getValue("Claudia.txt")))
         assertEquals(listOf("idle" to 545, "rest" to 550), CommText.scheduleSegments(
@@ -748,6 +762,17 @@ class CommTest {
         assertEquals("学习", CommText.scheduleEntries("8:00-9:00:专注(学习)").first().detail)
         assertEquals(listOf("focus" to 480, "focus" to 540, "focus" to 600, "sleep" to 1410), CommText.scheduleSegments(
             "8:00-9:00:Focus\n9:00-10:00:focus(study)\n10:00-11:00:FOCUS\n23:30-6:30:SLEEP\n23:30-6:30:Sleep"))
+        // 循环段: [循环 9:00-12:00][Nmin] 自动生成 专注 N + 休息 F(N); 不写 N 默认 100min
+        fun cyc(s: String) = CommText.scheduleEntries(s).map { Triple(it.kind, it.start, it.end) }
+        assertEquals(listOf(Triple("focus", 540, 640), Triple("rest", 640, 678), Triple("focus", 678, 720)),
+            cyc("[循环 9:00-12:00]\n"))
+        assertEquals(cyc("[循环 9:00-12:00][100min]\n"), cyc("[Loop 9:00-12:00][100min]\n"))
+        assertEquals(cyc("[循环 9:00-12:00][100min]\n"), cyc("[CYCLE 9:00-12:00]\n"))
+        assertEquals(listOf(Triple("focus", 540, 590), Triple("rest", 590, 606), Triple("focus", 606, 656),
+            Triple("rest", 656, 672), Triple("focus", 672, 720)), cyc("[循环 9:00-12:00][50min]\n"))
+        assertEquals(listOf(Triple("focus", 540, 600)), cyc("[循环 9:00-12:00]\n9:00-10:00:专注\n"))   // 显式优先
+        assertEquals(Triple("focus", 1380, 1480), cyc("[循环 23:00-1:00]\n").first())                 // 跨零点
+        assertEquals(listOf("focus" to 540, "rest" to 640, "focus" to 678), CommText.scheduleSegments("[循环 9:00-12:00]\n"))
 
         val td = Files.createTempDirectory("oit").toFile()
         val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))

@@ -4,6 +4,7 @@
 """
 
 import tempfile
+import time
 from datetime import datetime
 
 import config
@@ -13,6 +14,8 @@ from i18n import tr
 from settings_manager import SCHEMA_BY_KEY
 import devsync
 import os
+
+PERSONA_SYNC_EVERY = 120       # 秒: 人设文件每 2 分钟检查一次变化并随设备同步
 
 
 def _norm_setting(key: str, value):
@@ -32,6 +35,20 @@ class PcLocal:
 
     def __init__(self, app):
         self.app = app
+        self._personas_doc = None
+        self._personas_at = 0.0
+
+    def _personas(self) -> dict:
+        """人设文件 (每 2 分钟读一次; 中间一直用缓存, 免得每次 20 秒同步都读一遍)."""
+        now = time.monotonic()
+        if self._personas_doc is None or now - self._personas_at >= PERSONA_SYNC_EVERY:
+            try:
+                doc = self.app.comm.persona_doc()
+            except Exception:       # noqa: BLE001
+                return {}
+            self._personas_doc = doc
+            self._personas_at = now
+        return dict(self._personas_doc)
 
     # ---- 基本 ----
 
@@ -244,7 +261,8 @@ class PcLocal:
         # 行为模式的外出: 每一项单独比较, 计时 / 统计跟着它走 (MECHANICS 21)
         return {"settings": settings, "hours": hours, "timer": timer, "achievements": a.ach.doc(),
                 "contract": a.contract.doc(), "behavior": a.behavior.doc(),
-                "prescript": a.prescripts.sync_doc(), "comm": a.comm.sync_doc()}
+                "prescript": a.prescripts.sync_doc(), "comm": a.comm.sync_doc(),
+                "personas": self._personas()}
 
     def apply(self, doc: str, changes: dict):
         a = self.app
@@ -321,6 +339,12 @@ class PcLocal:
             a.prescripts.sync_apply(changes)
         elif doc == "comm":
             a.comm.apply_doc(changes)
+        elif doc == "personas":
+            try:
+                a.comm.apply_persona_doc(changes)
+            finally:
+                self._personas_doc = None          # 刚并进来的内容: 下次读盘 (不会把旧内容又发回去)
+                self._personas_at = 0.0
 
     # ---- 绑定请求 ----
 
