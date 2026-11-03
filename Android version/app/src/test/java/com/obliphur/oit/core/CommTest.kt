@@ -17,6 +17,8 @@ import java.time.LocalDateTime
 
 /** 沟通 (MECHANICS 24). 对应桌面版 comm.py 的 _selftest. */
 class CommTest {
+    init { Comm.charDelay = 0.0 }          // 其余用例里对方的回复马上显示 (打字延时见 typingDelay)
+
     private var clock = LocalDateTime.of(2026, 11, 2, 9, 0, 0)
     private val calls = mutableListOf<Pair<String, List<Pair<String, String>>>>()
     private val script = ArrayDeque<String>()
@@ -1334,5 +1336,37 @@ class CommTest {
         assertFalse(ca.jointBusy())
         assertEquals("", ca.jointStatusText())
         for (x in listOf(cj, cj2, cj3, cn, ca, cb)) x.flush()
+    }
+
+    /** 打字延时: 文本里每个字符让对方的消息晚 0.2 s 显示, 一条一条按顺序出来, 显示之前不同步给别的设备 (对应 comm.py 自检的最后一段). */
+    @Test
+    fun typingDelay() {
+        val td = Files.createTempDirectory("oit").toFile()
+        File(td, "p").mkdirs()
+        File(td, "p/小夏.txt").writeText("你是小夏.")
+        val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
+        c.set(persona = "小夏.txt", splitSend = false)
+        c.snapshot = { CommSnap("idle") }
+        Comm.charDelay = 0.2
+        try {
+            script.clear(); follow.clear()
+            script.add("你好呀今天过得怎么样")                         // 10 个字 = 2 s
+            assertEquals("", c.send("早"))
+            wait(c)
+            assertEquals(listOf("me"), c.visible().map { it.role })
+            assertEquals(0, c.unread)
+            assertTrue(c.syncDoc().none { (k, v) -> k.startsWith("m:") && (v as JSONObject).getString("role") == "ai" })
+            clock = clock.plusNanos(1_900_000_000)
+            c.tick()
+            assertEquals(listOf("me"), c.visible().map { it.role })
+            clock = clock.plusNanos(200_000_000)
+            c.tick()
+            assertEquals(listOf("me", "ai"), c.visible().map { it.role })
+            assertEquals(1, c.unread)
+            assertTrue(c.syncDoc().any { (k, v) -> k.startsWith("m:") && (v as JSONObject).getString("role") == "ai" })
+            c.flush()
+        } finally {
+            Comm.charDelay = 0.0
+        }
     }
 }

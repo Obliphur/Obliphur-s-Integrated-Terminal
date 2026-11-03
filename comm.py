@@ -58,6 +58,7 @@ FOLLOW_BODY = (FOLLOW_TAG + " 你刚才已经回复了用户. 如果还有想接
                "如果你只想说一次, 返回" + REFUSE + ".")
 FOLLOW_DELAY = 3.0                    # 规则 VIII 的第二次调用先等这么久 (秒): 服务商的提示缓存是异步落盘的 (DeepSeek 说"几秒"),
                                       # 紧跟着调用常常赶不上, 白付一次全量历史; 隔几秒再发, 第二次的前缀才能命中
+CHAR_DELAY = 0.2                      # 对方发来的消息: 文本里每个字符让它晚这么多秒才显示 (像在打字; 排在前一条后面, 一条一条出来)
 RETRY_GAP = 10 * 60                   # 对方不方便回复时, 多久再把消息交给模型
 RETRY_MAX = 12
 HISTORY_SENT = 400                    # 每次请求最多带多少条聊天记录 (等于本地最多存的 400 条): 原话全带上, 量由下面的字数兜底
@@ -1106,6 +1107,8 @@ class Comm:
         for pid in self.chat_pids():
             st = self._state_of(pid)
             for m in st["messages"][-SYNC_N:]:
+                if m.get("due"):
+                    continue                              # 还在"打字"的: 显示出来之后才同步给别的设备
                 e = {"role": m["role"], "text": m["text"], "at": m["at"], "ts": int(m["ts"])}
                 if m.get("api"):
                     e["api"] = m["api"]
@@ -1971,14 +1974,24 @@ class Comm:
         return bool(vis) and vis[-1]["role"] == "me"
 
     def _release_held(self):
-        """回到休息 / 空闲: 藏着的消息现在显示 (未读 +N, 前 5 分钟没聊过的话响一声)."""
+        """回到休息 / 空闲: 藏着的消息现在显示 (未读 +N, 前 5 分钟没聊过的话响一声). 带 due 的 (CHAR_DELAY 的打字延时) 到点才显示, 按顺序一条一条出来."""
         if not any(m.get("hold") for m in self.messages) or self.blocked():
             return
-        held = [m for m in self.messages if m.get("hold")]
+        now = self._ms()
+        held = []
+        for m in self.messages:
+            if not m.get("hold"):
+                continue
+            if int(m.get("due") or 0) > now:
+                break
+            held.append(m)
+        if not held:
+            return
         first = self.messages.index(held[0])
         for m in held:
             del m["hold"]
-            m["shown"] = self._ms()                        # 等用户回复的时间从这时候算起 (规则 IX)
+            m.pop("due", None)
+            m["shown"] = now                               # 等用户回复的时间从这时候算起 (规则 IX)
         if not self.viewing:
             self.unread += len(held)
         if not self._talked_recently(self.messages[:first], int(held[0]["ts"])):
@@ -2032,11 +2045,11 @@ class Comm:
 
     # ---- 发消息 ----
     def _add(self, role: str, text: str, api: str = "") -> dict:
-        m = self._mk(role, text, api)
+        m = self._mk(role, text, api, True)
         self.messages.append(m)
         return m
 
-    def _mk(self, role: str, text: str, api: str = "") -> dict:
+    def _mk(self, role: str, text: str, api: str = "", delay: bool = False) -> dict:
         """造一条消息 (还没放进任何聊天记录)."""
         now = self.now()
         ts = max(self._ms(), self._last_ts + 1)          # 同一台设备上严格递增
@@ -2046,6 +2059,10 @@ class Comm:
         if api:
             m["api"] = api
         if role == "ai" and self.blocked():                # 专注 / 睡眠 / 外出中收到的: 先藏起来, 回到休息 / 空闲再显示
+            m["hold"] = True
+        if delay and role == "ai" and text and CHAR_DELAY > 0:      # 打字延时: 每个字符 CHAR_DELAY 秒, 接在前一条还没显示的后面
+            base = max([self._ms()] + [int(x.get("due") or 0) for x in self.messages if x.get("hold")])
+            m["due"] = base + int(len(text) * CHAR_DELAY * 1000)
             m["hold"] = True
         return m
 
@@ -2725,7 +2742,8 @@ def _selftest():
     import tempfile
     import time
 
-    global FOLLOW_DELAY
+    global FOLLOW_DELAY, CHAR_DELAY
+    CHAR_DELAY = 0.0              # 自检里回复马上显示 (测打字延时的用例自己设回非 0)
     FOLLOW_DELAY = 0.0            # 自检不等这 3 秒 (测延时的用例自己设回非 0)
 
     td = tempfile.mkdtemp()
@@ -4136,6 +4154,42 @@ def _selftest():
     assert ca2._joint() == {} and not ca2.joint_busy() and ca2.cfg["joint"].get("ts")
     for x in (cj, cj2, cj3, cn, ca2, cb2):
         x.flush()
+
+    # ---- 打字延时: 文本里每个字符让对方的消息晚 0.2 s 显示, 一条一条按顺序出来, 显示之前不同步给别的设备 ----
+    CHAR_DELAY = 0.2
+    os.makedirs(os.path.join(td, "dd"))
+    cd = Comm(os.path.join(td, "dd"), folder, now=lambda: clock[0], chat_fn=fake)
+    cd.ai.set_profile("deepseek", api_key="k")
+    cd.ai.provider = "deepseek"
+    cd.snapshot = lambda: snap
+    cd.set_cfg(persona="小夏.txt", split_send=False)
+    script.clear()
+    follow.clear()
+    script.append("你好呀今天过得怎么样")                      # 10 个字 = 2 s
+    assert cd.send("早") == ""
+    wait(cd)
+    assert [m["role"] for m in cd.visible()] == ["me"] and cd.unread == 0, "还在打字: 先不显示"
+    held = [m for m in cd.messages if m.get("hold")]
+    assert len(held) == 1 and held[0]["due"] - cd._ms() == 2000
+    assert not any(k.startswith("m:") and v["role"] == "ai" for k, v in cd.sync_doc().items()), "显示之前不同步"
+    clock[0] += timedelta(seconds=1.9)
+    cd.tick()
+    assert [m["role"] for m in cd.visible()] == ["me"], "没到 2 s"
+    clock[0] += timedelta(seconds=0.2)
+    cd.tick()
+    assert [m["role"] for m in cd.visible()] == ["me", "ai"] and cd.unread == 1 and "due" not in cd.visible()[-1]
+    assert any(k.startswith("m:") and v["role"] == "ai" for k, v in cd.sync_doc().items()), "显示之后同步"
+    m1 = cd._add("ai", "一二三")
+    m2 = cd._add("ai", "四五")
+    assert m2["due"] == m1["due"] + 400 and m1["due"] - cd._ms() == 600, "后一条接在前一条后面"
+    clock[0] += timedelta(seconds=0.7)
+    cd.tick()
+    assert cd.visible()[-1]["text"] == "一二三" and m2.get("hold"), "一条一条出来"
+    clock[0] += timedelta(seconds=0.5)
+    cd.tick()
+    assert cd.visible()[-1]["text"] == "四五"
+    CHAR_DELAY = 0.0
+    cd.flush()
 
     return "comm selftest OK"
 

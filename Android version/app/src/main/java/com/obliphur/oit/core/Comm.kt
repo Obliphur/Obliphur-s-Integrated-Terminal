@@ -15,6 +15,8 @@ import java.util.concurrent.ConcurrentLinkedQueue
 class ChatMsg(val id: Int, val role: String, val text: String, val at: String, val api: String = "", val uid: String = "", val ts: Long = 0L) {
     /** 不能用沟通的时候 (专注 / 睡眠 / 外出 / 无言为真) 收到的对方的消息先藏起来, 回到休息 / 空闲再显示 (MECHANICS 24.4). */
     var hold = false
+    /** 打字延时 (Comm.charDelay): 对方的消息每个字符晚这么多秒才显示; 到这个时刻 (毫秒) 前一直 hold. 0 = 没有. */
+    var due = 0L
     /** 规则 IX: 对方在这条消息末尾写了 [waiting for reply]:[N], 等用户回复的分钟数 (0 = 没有); chased: 已经追问过了; shown: 藏着的消息显示出来的时刻. */
     var wait = 0.0
     var chased = false
@@ -550,6 +552,8 @@ class Comm(
     companion object {
         /** 每次请求的用量记录 (输入 token, 命中缓存的 token): 写进 comm.log. 由 Comm 的实例接上. */
         @Volatile var usageSink: (Long, Long) -> Unit = { _, _ -> }
+        /** 对方发来的消息: 文本里每个字符让它晚这么多秒才显示 (像在打字; 排在前一条后面, 一条一条出来). 单元测试里设成 0. */
+        @Volatile var charDelay = 0.2
         /** 带的聊天记录的起点一次往后挪这么多条 (不是每条都挪): 请求的开头 (前面的历史) 才能在这么多条消息里保持不变, 服务商的提示缓存才命中. */
         const val HISTORY_STEP = 10
         /** 非正在聊天的对象主动发消息: 两次请求之间至少隔这么多秒 (一个一个来, 不会同时好几个人找你). */
@@ -806,7 +810,7 @@ class Comm(
             val ts = m.optLong("ts", 0L).takeIf { it != 0L }
                 ?: parseIso(at)?.atZone(java.time.ZoneId.systemDefault())?.toInstant()?.toEpochMilli() ?: 0L     // 旧版本的记录没有 uid / ts
             st.messages.add(ChatMsg(id, role, m.optString("text"), at, m.optString("api"), m.optString("uid").ifEmpty { "L$id" }, ts)
-                .also { it.hold = m.optBoolean("hold"); it.wait = m.optDouble("wait", 0.0); it.chased = m.optBoolean("chased"); it.shown = m.optLong("shown") })
+                .also { it.hold = m.optBoolean("hold"); it.due = m.optLong("due"); it.wait = m.optDouble("wait", 0.0); it.chased = m.optBoolean("chased"); it.shown = m.optLong("shown") })
         }
         st.messages.sortWith(compareBy({ it.ts }, { it.uid }))
         st.clearTs = o?.optLong("clear_ts", 0L) ?: 0L
@@ -823,7 +827,7 @@ class Comm(
         val arr = JSONArray()
         for (m in st.messages.takeLast(KEEP)) arr.put(JSONObject().put("id", m.id).put("role", m.role).put("text", m.text).put("at", m.at)
             .put("uid", m.uid).put("ts", m.ts).apply {
-                if (m.api.isNotEmpty()) put("api", m.api); if (m.hold) put("hold", true)
+                if (m.api.isNotEmpty()) put("api", m.api); if (m.hold) put("hold", true); if (m.due != 0L) put("due", m.due)
                 if (m.wait > 0) put("wait", m.wait); if (m.chased) put("chased", true); if (m.shown != 0L) put("shown", m.shown)
             })
         return JSONObject().put("messages", arr).put("clear_ts", st.clearTs).put("retry_at", st.retryAt)
@@ -994,6 +998,7 @@ class Comm(
         for (p in chatPids()) {
             val st = stateOf(p)
             for (m in st.messages.takeLast(SYNC_N)) {
+                if (m.due != 0L) continue                           // 还在"打字"的: 显示出来之后才同步给别的设备
                 doc["m:$p:${m.uid}"] = JSONObject().put("role", m.role).put("text", m.text).put("at", m.at).put("ts", m.ts)
                     .apply { if (m.api.isNotEmpty()) put("api", m.api); if (m.wait > 0) put("wait", m.wait) }
             }
@@ -1817,10 +1822,11 @@ class Comm(
     /** 回到休息 / 空闲: 藏着的消息现在显示 (未读 +N, 前 5 分钟没聊过的话响一声). */
     private fun releaseHeld() {
         if (blocked().isNotEmpty()) return
-        val held = messages.filter { it.hold }
+        val now = nowMs()
+        val held = messages.filter { it.hold }.takeWhile { it.due <= now }          // 打字延时没到点的和它后面的继续藏着 (按顺序一条一条出来)
         if (held.isEmpty()) return
         val first = messages.indexOf(held[0])
-        held.forEach { it.hold = false; it.shown = nowMs() }         // 等用户回复的时间从这时候算起 (规则 IX)
+        held.forEach { it.hold = false; it.due = 0L; it.shown = now }         // 等用户回复的时间从这时候算起 (规则 IX)
         if (!viewing) unread += held.size
         if (!talkedRecently(messages.subList(0, first), held[0].ts)) ping()
         saveChat(); changed(); push()
@@ -1887,14 +1893,19 @@ class Comm(
     /** 发给模型的内容: 每条用户消息前只有时间; 整点记录 / 计时器等数据只有用户手动选了 📎 附件才发. */
     private fun compose(t: LocalDateTime, body: String): String = "[${CommText.stamp(t)}]\n" + body
 
-    private fun add(role: String, text: String, api: String = ""): ChatMsg = mk(role, text, api).also { messages.add(it) }
+    private fun add(role: String, text: String, api: String = ""): ChatMsg = mk(role, text, api, true).also { messages.add(it) }
 
     /** 造一条消息 (还没放进任何聊天记录). */
-    private fun mk(role: String, text: String, api: String = ""): ChatMsg {
+    private fun mk(role: String, text: String, api: String = "", delay: Boolean = false): ChatMsg {
         val ts = maxOf(nowMs(), lastTs + 1)             // 同一台设备上严格递增
         lastTs = ts
         val m = ChatMsg(nextId++, role, text, now().iso(), api, "$ts-${device().ifEmpty { "local" }.take(4)}", ts)
         if (role == "ai" && blocked().isNotEmpty()) m.hold = true       // 专注 / 睡眠 / 外出中收到的: 先藏起来, 回到休息 / 空闲再显示
+        if (delay && role == "ai" && text.isNotEmpty() && charDelay > 0) {  // 打字延时: 每个字符 charDelay 秒, 接在前一条还没显示的后面
+            val base = maxOf(nowMs(), messages.filter { it.hold }.maxOfOrNull { it.due } ?: 0L)
+            m.due = base + (text.length * charDelay * 1000).toLong()
+            m.hold = true
+        }
         return m
     }
 
