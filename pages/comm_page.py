@@ -25,11 +25,12 @@ LOAD_MORE = 40           # 每次往上翻到顶, 多加载多少条
 
 class CommPage(tk.Frame):
 
-    def __init__(self, master, comm, username=None, on_open_settings=None):
+    def __init__(self, master, comm, username=None, on_open_settings=None, on_joint=None):
         super().__init__(master, bg=COLORS["bg"])
         self.comm = comm
         self.username = username or (lambda: "")
         self.on_open_settings = on_open_settings
+        self.on_joint = on_joint            # 🤝 联合行动: 界面移到合约页选词条 (app._joint_pick_start)
         self._ver = -1
         self._blocked = ""
         self._resize_job = None
@@ -84,14 +85,21 @@ class CommPage(tk.Frame):
 
         tools = tk.Frame(self, bg=bg)
         tools.pack(fill="x", padx=28, pady=(2, 0))
-        ttk.Button(tools, text="📎", width=3, command=self._attach).pack(side="left")
+        ttk.Button(tools, text="❓", width=3, command=self._help).pack(side="left")                # 帮助: 每个按钮是干什么的
+        ttk.Button(tools, text="📎", width=3, command=self._attach).pack(side="left", padx=(4, 0))
         self.btn_mute = ttk.Button(tools, text="🔔", width=3, command=self._toggle_mute)        # 🔔 可以主动发起 / 🔕 禁止这个人主动发起
         self.btn_mute.pack(side="left", padx=(4, 0))
+        ttk.Button(tools, text="🤝", width=3, command=self._joint).pack(side="left", padx=(4, 0))   # 联合行动
         self.lbl_attach = tk.Label(tools, text="", bg=bg, fg=COLORS["accent"], font=config.font("small"), cursor="hand2")
         self.lbl_attach.pack(side="left", padx=(8, 0))
         self.lbl_attach.bind("<Button-1>", lambda _e: self._attach())
         self.btn_attach_x = tk.Label(tools, text="✕", bg=bg, fg=COLORS["text_dim"], font=config.font("small"), cursor="hand2")
         self.btn_attach_x.bind("<Button-1>", lambda _e: self.comm.set_attach({}))
+        # 联合行动: 选好的 (还没发, 带 ✕ 可以取消) 或发出去之后的进展; 结束时间自动算好写在这里 (聊天框上方)
+        self.lbl_joint = tk.Label(tools, text="", bg=bg, fg=COLORS["accent"], font=config.font("small"))
+        self.lbl_joint.pack(side="left", padx=(8, 0))
+        self.btn_joint_x = tk.Label(tools, text="✕", bg=bg, fg=COLORS["text_dim"], font=config.font("small"), cursor="hand2")
+        self.btn_joint_x.bind("<Button-1>", lambda _e: self.comm.clear_joint_draft())
 
         row = tk.Frame(self, bg=bg)
         row.pack(fill="x", padx=28, pady=(4, 14))
@@ -195,6 +203,13 @@ class CommPage(tk.Frame):
         if self.var_who.get() != cur:
             self.var_who.set(cur)
         cfg(self.btn_mute, text="🔕" if c.is_muted() else "🔔")
+        draft = c.joint_label()
+        cfg(self.lbl_joint, text=draft or c.joint_status_text(), fg=COLORS["accent"] if draft else COLORS["text_dim"])
+        if draft:
+            if self.btn_joint_x.winfo_manager() != "pack":
+                self.btn_joint_x.pack(side="left", padx=(6, 0))
+        elif self.btn_joint_x.winfo_manager() == "pack":
+            self.btn_joint_x.pack_forget()
         label = c.attach_label()
         cfg(self.lbl_attach, text=label)
         if label:
@@ -419,6 +434,97 @@ class CommPage(tk.Frame):
             self.comm.set_muted(not self.comm.is_muted())
             self.refresh(force=True)
 
+    def _help(self):
+        """帮助: 沟通页上每个小按钮是干什么的, 还有"无言为真"会禁止沟通的提醒."""
+        width = config.scaled(460)
+        dlg = Modal(self.winfo_toplevel(), tr("帮助"), width=width, height=config.scaled(520))
+        bg = COLORS["bg"]
+        rows = (("❓", "帮助", "打开这个说明."),
+                ("📎", "发送数据", "选好要发给对方的数据 (今天的整点记录 / 专注计时, 日历, 统计), 点「确定」后随下一条消息一起发出. "
+                                "「专注计时(今天)」会先按时间顺序列出今天的每一段休息 / 专注 / 睡眠, 最后才是总时间."),
+                ("🔔 / 🔕", "主动发起", "点一下切换: 🔔 = 允许这个对象主动给你发消息 / 追问, 🔕 = 禁止."),
+                ("🤝", "联合行动", "邀请对方一起完成一次合约: 界面会移到合约页, 选好词条后点「确定选择」(原来「开始行动」的位置), "
+                                "再输入开始时间; 词条和合约的基础规则会打包发给对方, 结束时间自动算好写在聊天框上方. "
+                                "对方回 [Yes] 就按约开始合约; 合约期间你们的专注 / 休息同步, 合约后得到的休息也同步."))
+        for icon, name, text in rows:
+            f = tk.Frame(dlg.body, bg=bg)
+            f.pack(fill="x", pady=(0, 8))
+            tk.Label(f, text=icon, bg=bg, fg=COLORS["text"], font=config.font("body", bold=True), width=7, anchor="nw").pack(side="left", anchor="n")
+            tk.Label(f, text=tr(name) + ": " + tr(text), bg=bg, fg=COLORS["text"], font=config.font("body"), justify="left",
+                     anchor="w", wraplength=width - config.scaled(120)).pack(side="left", fill="x", expand=True)
+        tk.Label(dlg.body, text="⚠  " + tr("特别提醒: 合约词条「无言为真」生效时会禁止「沟通」的使用 (不能发消息, 对方的消息也收不到), 合约结束后才能恢复."),
+                 bg=bg, fg=COLORS["danger"], font=config.font("body", bold=True), justify="left", anchor="w",
+                 wraplength=width - config.scaled(60)).pack(fill="x", pady=(6, 0))
+        ttk.Button(dlg.buttons, text=tr("知道了"), style="Accent.TButton", command=lambda: dlg.finish(True)).pack(side="right")
+        dlg.update_idletasks()
+        dlg._center(self.winfo_toplevel(), width, dlg.winfo_reqheight())
+        dlg.wait()
+
+    def _joint(self):
+        """🤝 联合行动: 界面移到合约页, 选好词条再回来输入开始时间."""
+        if self.on_joint:
+            self.on_joint()
+
+    def ask_joint_time(self, terms: list):
+        """合约页点了"确定选择"之后: 输入开始时间 (时:分, 已经过了的算明天), 下面实时算出结束时间; 确定后打包成联合行动, 随下一条消息发出."""
+        import re
+        from datetime import timedelta
+        import contract as C
+        width = config.scaled(360)
+        dlg = Modal(self.winfo_toplevel(), tr("联合行动"), width=width, height=config.scaled(260))
+        bg = COLORS["bg"]
+        dur = C.duration_of(C.clean_terms(terms, prereq=True))
+        now = datetime.now()
+        tk.Label(dlg.body, text=tr("合约开始时间 (时:分)"), bg=bg, fg=COLORS["text"], font=config.font("body", bold=True),
+                 anchor="w").pack(fill="x")
+        var = tk.StringVar(value=(now + timedelta(minutes=30)).strftime("%H:%M"))
+        ent = tk.Entry(dlg.body, textvariable=var, font=config.font("body"), bg=COLORS["bg_card"], fg=COLORS["text"],
+                       insertbackground=COLORS["text"], relief="flat", highlightthickness=1,
+                       highlightbackground=COLORS["border"], highlightcolor=COLORS["accent"])
+        ent.pack(fill="x", pady=(4, 8))
+        lbl = tk.Label(dlg.body, text="", bg=bg, fg=COLORS["text_dim"], font=config.font("small"), anchor="w", justify="left",
+                       wraplength=width - config.scaled(60))
+        lbl.pack(fill="x")
+
+        def parse():
+            m = re.fullmatch(r"\s*(\d{1,2})\s*[:：]?\s*(\d{2})\s*", var.get())
+            if not m or int(m.group(1)) > 23 or int(m.group(2)) > 59:
+                return None
+            t = datetime.now()
+            start = t.replace(hour=int(m.group(1)), minute=int(m.group(2)), second=0, microsecond=0)
+            return start if start > t else start + timedelta(days=1)
+
+        def show(*_a):
+            start = parse()
+            if start is None:
+                cfg(lbl, text=tr("请输入 时:分, 例如 14:30"), fg=COLORS["danger"])
+                return
+            end = start + timedelta(seconds=dur)
+            day = "" if start.date() == datetime.now().date() else tr("(明天)") + " "
+            cfg(lbl, text=tr("预计 {a} - {b} (合约时长 {d})", a=day + start.strftime("%H:%M"), b=end.strftime("%H:%M"),
+                             d=config.fmt_hm(dur)), fg=COLORS["text_dim"])
+        var.trace_add("write", show)
+        show()
+
+        def go():
+            start = parse()
+            if start is None:
+                return
+            why = self.comm.set_joint_draft(terms, start)
+            if why:
+                toast.warn(tr(why))
+                return
+            dlg.finish(True)
+            self.refresh(force=True)
+            self.entry.focus_set()
+
+        ttk.Button(dlg.buttons, text=tr("确定"), style="Accent.TButton", command=go).pack(side="right")
+        ttk.Button(dlg.buttons, text=tr("取消"), command=dlg.cancel).pack(side="right", padx=(0, 8))
+        ent.bind("<Return>", lambda _e: go())
+        ent.focus_set()
+        ent.select_range(0, "end")
+        dlg.wait()
+
     def _attach(self):
         width = config.scaled(320)
         dlg = Modal(self.winfo_toplevel(), tr("发送数据"), width=width, height=config.scaled(700))
@@ -430,7 +536,7 @@ class CommPage(tk.Frame):
                      anchor="w").pack(fill="x", pady=(8, 2))
             for key, text in items:
                 cur = self.comm.attach_form()
-                v = tk.BooleanVar(value=bool(cur.get("contract")) if prefix == "contract" else key in cur.get(prefix, []))
+                v = tk.BooleanVar(value=key in cur.get(prefix, []))
                 vars_[(prefix, key)] = v
                 tk.Checkbutton(dlg.body, text=tr(text), variable=v, bg=bg, fg=COLORS["text"], selectcolor=COLORS["bg_card"],
                                activebackground=bg, activeforeground=COLORS["text"], font=config.font("body"),
@@ -438,13 +544,11 @@ class CommPage(tk.Frame):
 
         group("🕒  今天", comm_data.TODAY_KEYS, "today")
         group("📅  日历", comm_data.CAL_KEYS, "cal")
-        group("⚔  合约", (("terms", "合约词条"),), "contract")
         group("📊  " + comm_data.STATS_NAME, comm_data.STATS_KEYS, "stats")          # 统计和它的子项放在最下面
 
         def go():
             sel = {"today": [k for (p, k), v in vars_.items() if p == "today" and v.get()],
                    "cal": [k for (p, k), v in vars_.items() if p == "cal" and v.get()],
-                   "contract": vars_[("contract", "terms")].get(),
                    "stats": [k for (p, k), v in vars_.items() if p == "stats" and v.get()]}
             self.comm.set_attach(sel)          # 不立刻发: 记下来, 随下一条消息一起发
             dlg.finish(True)

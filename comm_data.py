@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-"""沟通页里"📎 数据"能发出去的内容: 今天的整点记录 / 专注计时, 日历 (选类别), 合约的词条, 统计 (月数据) 的几页. 手机版: core/CommData.kt.
+"""沟通页里"📎 数据"能发出去的内容: 今天的整点记录 / 专注计时, 日历 (选类别), 统计 (月数据) 的几页; 还有联合行动的邀请 (合约词条 + 开始 / 结束时间).
+手机版: core/CommData.kt.
 
     python comm_data.py     自检 (用假数据)
 """
@@ -20,15 +21,13 @@ MAX_CHARS = 60000          # 一次最多发多少字 (词条库约 4000 字, �
 
 def label(sel: dict) -> str:
     """聊天里显示的那一行."""
-    parts = []                                  # 顺序和 📎 窗口里一样: 今天 → 日历 → 合约词条 → 统计(月数据)
+    parts = []                                  # 顺序和 📎 窗口里一样: 今天 → 日历 → 统计(月数据)
     today = dict(TODAY_KEYS)
     parts += [today[k] for k in today if k in sel.get("today", [])]
     cal = dict(CAL_KEYS)
     cl = [cal[k] for k in sel.get("cal", []) if k in cal]
     if cl:
         parts.append("日历·" + "、".join(cl))
-    if sel.get("contract"):
-        parts.append("合约词条")
     names = dict(STATS_KEYS)
     st = [names[k] for k in sel.get("stats", []) if k in names]
     if st:
@@ -105,6 +104,11 @@ FOG_TEXT = "(黑雾中, 暂时无法提供)"
 NOTE = "(格式模板: <尖括号> 里是占位符, 不是用户的数据; 请参照这个格式, 根据人设自己填写具体内容)"
 TEMPLATES = {
     "timer": "【计时器】" + NOTE + r"""
+  今天的每一段 (按时间顺序):
+  <HH:MM>-<HH:MM> <专注 / 休息 / 睡眠> (<X 小时 Y 分钟>)
+  <HH:MM>-<HH:MM> <专注 / 休息 / 睡眠> (<X 小时 Y 分钟>)
+  (最后一行可能是还在进行的一段: <HH:MM>-现在 <专注 / 休息 / 睡眠> (<X 分钟>); 没有记录就写"今天还没有记录")
+  总计:
   目前状态: <专注中 / 休息中 / 空闲 / 睡觉中 / 外出中>
   剩余休息时间: <X 小时 Y 分钟 / 无>
   今日总专注时长: <X 小时 Y 分钟>
@@ -187,15 +191,74 @@ def _hm(minutes: float) -> str:
     return f"{m // 60} 小时 {m % 60} 分钟" if m >= 60 else f"{m} 分钟"
 
 
-def timer_text(snap: dict) -> str:
-    """【计时器】: 目前状态, 剩余休息时间, 今日总专注时长, 目前这轮专注时长."""
+KIND_TEXT = {"study": "专注", "break": "休息", "sleep": "睡眠"}
+
+
+def interval_lines(intervals, now: datetime = None) -> list:
+    """今天每一段专注 / 休息 / 睡眠的持续区间, 按开始时间排好: [(kind, 开始, 结束)] → ["HH:MM-HH:MM 专注 (X 小时 Y 分钟)"].
+    结束不早于现在的 (还在进行的一段) 写成 "HH:MM-现在"."""
+    now = now or datetime.now()
+    out = []
+    for kind, a, b in sorted(intervals or [], key=lambda x: (x[1], x[2])):
+        name = KIND_TEXT.get(kind)
+        if not name or b <= a:
+            continue
+        live = b >= now
+        end_text = "现在" if live else f"{b:%H:%M}"
+        out.append(f"{a:%H:%M}-{end_text} {name} ({_hm(((now if live else b) - a).total_seconds() / 60)})")
+    return out
+
+
+def timer_text(snap: dict, intervals=None, now: datetime = None) -> str:
+    """【计时器】: 先按时间顺序列出今天的每一段休息 / 专注 / 睡眠的持续区间 (intervals), 最后才是总的数据:
+    目前状态, 剩余休息时间, 今日总专注时长, 目前这轮专注时长. intervals = None (调用方不提供) 时只有总的数据."""
     if not snap:
         return "【计时器】\n  " + FOG_TEXT
     st = snap.get("state") or "idle"
     left = _hm(snap.get("rest_left_min", 0)) if st == "break" else "无"
     cur = _hm(snap.get("focus_cur_min", 0)) if st == "focus" else "0 分钟(未在专注)"
-    return ("【计时器】\n  目前状态: " + STATE_TEXT.get(st, st) + "\n  剩余休息时间: " + left +
+    head = "【计时器】\n"
+    if intervals is not None:
+        lines = interval_lines(intervals, now)
+        head += ("  今天的每一段 (按时间顺序):\n" + ("\n".join("  " + x for x in lines) if lines else "  今天还没有记录")
+                 + "\n  总计:\n")
+    return (head + "  目前状态: " + STATE_TEXT.get(st, st) + "\n  剩余休息时间: " + left +
             "\n  今日总专注时长: " + _hm(snap.get("focus_total_min", 0)) + "\n  目前这轮专注时长: " + cur)
+
+
+# ---- 联合行动 (MECHANICS 24.9): 邀请对方一起完成一次合约 ----
+CONTRACT_RULES = (
+    "【合约的基础规则】合约是 OIT 的独占功能: 用户自选一些'词条'(减益), 让 OIT 变得更严苛, 然后开始行动.\n"
+    "- 初始时长 4 小时 (个别词条会延长); 目标生命值初始 4, 每违反一次词条规定减 1, 归零合约失败;\n"
+    "- 选的词条等级加起来是危机等级, 等级越高完成后得到的休息时间越多 (完成给 20~60 分钟);\n"
+    "- 合约中空闲 (不专注也不休息) / 设备离线累计超过 15 分钟也会失败; 失败或提前终止只按进行的比例给休息时间;\n"
+    "- 合约期间用户只能专注 / 休息, 合约中得到的休息时间在合约结束后作废, 只留完成奖励.")
+
+
+def joint_label(terms, start: datetime, end: datetime, today=None) -> str:
+    """聊天里 / 聊天框上方显示的一行: 联合行动的开始和结束时间 (不在今天 (today, 默认真实的今天) 的带上日期)."""
+    day = "" if start.date() == (today or datetime.now().date()) else f"{start:%m-%d} "
+    return f"🤝 联合行动 {day}{start:%H:%M} - {end:%H:%M}" + (f" · {len(terms)} 个词条" if terms else "")
+
+
+def joint_text(terms, start: datetime, end: datetime) -> str:
+    """发给对方的联合行动邀请 (用的是原来'附件'的形式): 前面是合约的基础规则, 然后是选的词条 / 开始 / 结束时间; 对方要回 [Yes] 或 [No]."""
+    level = C.level_of(terms)
+    span = _hm((end - start).total_seconds() / 60)
+    lines = ["(用户发来的联合行动邀请: 想和你一起完成一次合约)", CONTRACT_RULES, "",
+             f"【联合行动】开始时间 {start:%Y-%m-%d %H:%M}, 预计结束时间 {end:%Y-%m-%d %H:%M} (按选的词条算出的合约时长 {span}).",
+             f"危机等级 {level}, 完成后休息约 {C.rest_minutes_total(level, terms)} 分钟; 目标生命值 {C.life_of(terms)}.",
+             "【选择的词条】" + ("" if terms else "(没有选词条)")]
+    for tid in terms:
+        t = C.BY_ID.get(tid)
+        if not t:
+            continue
+        kind, sep, name = t[3].partition(":")
+        if not sep:
+            kind, name = "特殊", kind
+        lines.append(f"- {name}({kind}, 等级{t[2]}): {t[4]}".replace("\n", " "))
+    lines += ["", "请按规则 X 回复: 接受就发送 [Yes], 不接受发送 [No] (后面可以再加一句话)."]
+    return "\n".join(lines)
 
 
 def hour_text(lines: list, enabled: bool = True) -> str:
@@ -246,10 +309,10 @@ def prescript_text(urban: bool, history: list) -> str:
 def build(sel: dict, dm, net, contract, now: datetime = None, focus_live=None, cal_live=None,
           month_prefix: str = None, window_names: dict = None, today_log=None, today_timer=None) -> str:
     """today_log / today_timer: 今天的整点记录 / 计时器的文字 (app 给: 和对方查询的 [log] / [timer] 一样).
-    块的顺序和 📎 窗口里一样: 今天 → 日历 → 合约词条 → 统计(月数据)."""
+    块的顺序和 📎 窗口里一样: 今天 → 日历 → 统计(月数据)."""
     now = now or datetime.now()
     prefix = month_prefix or now.strftime("%Y-%m")
-    blocks, cb, kb, sb = [], [], [], []          # 今天, 日历, 合约词条, 统计(月数据)
+    blocks, cb, sb = [], [], []                  # 今天, 日历, 统计(月数据)
     today = sel.get("today", [])
     if "log" in today and today_log:
         blocks.append(today_log())
@@ -303,9 +366,7 @@ def build(sel: dict, dm, net, contract, now: datetime = None, focus_live=None, c
         tail = "" if kind == "study" else " (只有最近 7 天有记录)"
         cb.append(f"【日历·{name} {prefix}{tail}】\n" + ("\n".join(lines) if lines else "  没有记录")
                       + f"\n  合计: {sum(days.values()):.1f} h")
-    if sel.get("contract"):
-        kb.append(library(contract))
-    text = "\n\n".join(blocks + cb + kb + sb)
+    text = "\n\n".join(blocks + cb + sb)
     return text[:MAX_CHARS]
 
 
@@ -368,9 +429,11 @@ def _selftest():
         level_text = "1"
 
     now = datetime(2026, 11, 2, 12, 0)
-    assert "合约进行中, 危机等级 1" in build({"contract": True}, DM(), Net(), Act(), now=now)
-    sel = {"stats": ["log", "net", "focus", "window", "contracts"], "cal": ["study", "sleep"], "contract": True}
+    assert "合约进行中, 危机等级 1" in library(Act())
+    assert build({"contract": True}, DM(), Net(), Act(), now=now) == "", "📎 附件里没有合约词条了"
+    sel = {"stats": ["log", "net", "focus", "window", "contracts"], "cal": ["study", "sleep"]}
     text = build(sel, DM(), Net(), Con(), now=now)
+    text += "\n\n" + library(Con())
     for k in ("整点记录 2026-11", "写代码: 2.0 h", "学习资料: 15 分钟", "专注 30 分钟, 休息 10 分钟", "空白: 0.2 h", "code.exe",
               "还没有顺利完成的合约", "日历·专注", "2026-11-01: 3.5 h", "合计: 4.5 h", "日历·睡眠", "只有最近 7 天", "合约没有开始", "持久战-I(环境, 等级1)【已选择】", "无言为真(环境, 等级2)", "打年糕", "信息隔绝"):
         assert k in text, k
@@ -379,16 +442,38 @@ def _selftest():
     assert "持久战-I(环境, 等级1)【已激活】" in lib and "无言为真(环境, 等级2):" in lib and "【已激活】" not in lib.split("无言为真")[1].split("\n")[0]
     assert "打年糕(已选 1/4): 需要" in lib and "未知变量(特殊, 等级3)" in lib and "持久战(任意一档)✓" in lib
     assert len(lib) < 9000, len(lib)
-    assert label(sel) == "📎 日历·专注、睡眠 / 合约词条 / 统计(月数据)·整点记录、联网理由、专注计时、窗口、合约记录"
+    assert label(sel) == "📎 日历·专注、睡眠 / 统计(月数据)·整点记录、联网理由、专注计时、窗口、合约记录"
+    assert label({"contract": True}) == "", "合约词条已经不是附件选项"
     assert label({"today": ["timer", "log"]}) == "📎 整点记录(今天) / 专注计时(今天)"
-    # 今天的整点记录 / 专注计时, 顺序: 今天 → 日历 → 合约词条 → 统计(月数据)
-    tt = build({"today": ["timer", "log"], "cal": ["study"], "stats": ["net"], "contract": True}, DM(), Net(), Con(), now=now,
+    # 今天的整点记录 / 专注计时, 顺序: 今天 → 日历 → 统计(月数据)
+    tt = build({"today": ["timer", "log"], "cal": ["study"], "stats": ["net"]}, DM(), Net(), Con(), now=now,
                today_log=lambda: "【整点记录·今天】\n  09:00 写代码", today_timer=lambda: "【计时器】\n  目前状态: 专注中")
-    order = [tt.index(k) for k in ("【整点记录·今天】", "【计时器】", "【日历·专注", "【合约词条库】", "【统计·联网理由")]
+    order = [tt.index(k) for k in ("【整点记录·今天】", "【计时器】", "【日历·专注", "【统计·联网理由")]
     assert order == sorted(order), order
     assert build({"today": ["log", "timer"]}, DM(), Net(), Con(), now=now) == ""
     assert DEFAULT_TODAY == ("log", "timer") and dict(TODAY_KEYS)["log"] == "整点记录(今天)"
-    assert label({"stats": [], "cal": [], "contract": False}) == ""
+    assert label({"stats": [], "cal": []}) == ""
+    # 专注计时(今天): 先按时间顺序列出每一段休息 / 专注 / 睡眠的持续区间, 最后才是总时间
+    d0 = datetime(2026, 11, 4)
+    ivs = [("break", d0.replace(hour=8, minute=40), d0.replace(hour=9, minute=18)),
+           ("sleep", d0, d0.replace(hour=6, minute=30)),
+           ("study", d0.replace(hour=7), d0.replace(hour=8, minute=40)),
+           ("study", d0.replace(hour=9, minute=18), d0.replace(hour=10, minute=0))]
+    nowt = d0.replace(hour=10, minute=0)
+    tt = timer_text({"state": "focus", "focus_total_min": 142, "focus_cur_min": 42}, ivs, nowt)
+    pos = [tt.index(k) for k in ("00:00-06:30 睡眠 (6 小时 30 分钟)", "07:00-08:40 专注 (1 小时 40 分钟)", "08:40-09:18 休息 (38 分钟)",
+                                 "09:18-现在 专注 (42 分钟)", "总计:", "目前状态: 专注中", "今日总专注时长: 2 小时 22 分钟")]
+    assert pos == sorted(pos), tt
+    assert "今天还没有记录" in timer_text({"state": "idle"}, [], nowt) and "今天的每一段" not in timer_text({"state": "idle"})
+    assert FOG_TEXT in timer_text({}, ivs, nowt) and "09:18" not in timer_text({}, ivs, nowt)
+    # 联合行动的邀请: 前面是合约的基础规则, 然后是开始 / 结束时间和词条
+    a, b = d0.replace(hour=14), d0.replace(hour=18)
+    jt = joint_text(["long1"], a, b)
+    for k in ("【合约的基础规则】", "初始时长 4 小时", "目标生命值", "开始时间 2026-11-04 14:00", "预计结束时间 2026-11-04 18:00",
+              "持久战-I(环境, 等级1)", "[Yes]", "[No]", "危机等级 1"):
+        assert k in jt, k
+    assert jt.index("【合约的基础规则】") < jt.index("【联合行动】") < jt.index("【选择的词条】")
+    assert joint_label(["long1"], a, b).endswith("14:00 - 18:00 · 1 个词条") and "(没有选词条)" in joint_text([], a, b)
     return "comm_data selftest OK"
 
 

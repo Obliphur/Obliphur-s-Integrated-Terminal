@@ -3,8 +3,9 @@ package com.obliphur.oit.core
 import java.time.LocalDate
 import java.time.LocalDateTime
 
-/** 沟通页 📎 勾选的内容: 统计(月数据)的几页, 日历 (选类别), 合约的词条, 今天的整点记录 / 专注计时 (today: log / timer). 对应桌面版 comm_data.py. */
-data class CommSel(val stats: List<String> = emptyList(), val cal: List<String> = emptyList(), val contract: Boolean = false,
+/** 沟通页 📎 勾选的内容: 统计(月数据)的几页, 日历 (选类别), 今天的整点记录 / 专注计时 (today: log / timer). 对应桌面版 comm_data.py.
+ *  (1.0.308 起没有"合约词条"了; 合约词条只在联合行动的邀请里发.) */
+data class CommSel(val stats: List<String> = emptyList(), val cal: List<String> = emptyList(),
                    val today: List<String> = emptyList())
 
 object CommData {
@@ -30,7 +31,10 @@ object CommData {
 
     const val NOTE = "(格式模板: <尖括号> 里是占位符, 不是用户的数据; 请参照这个格式, 根据人设自己填写具体内容)"
     private val TEMPLATES = mapOf(
-        "timer" to "【计时器】$NOTE\n  目前状态: <专注中 / 休息中 / 空闲 / 睡觉中 / 外出中>\n  剩余休息时间: <X 小时 Y 分钟 / 无>\n" +
+        "timer" to "【计时器】$NOTE\n  今天的每一段 (按时间顺序):\n  <HH:MM>-<HH:MM> <专注 / 休息 / 睡眠> (<X 小时 Y 分钟>)\n" +
+            "  <HH:MM>-<HH:MM> <专注 / 休息 / 睡眠> (<X 小时 Y 分钟>)\n" +
+            "  (最后一行可能是还在进行的一段: <HH:MM>-现在 <专注 / 休息 / 睡眠> (<X 分钟>); 没有记录就写\"今天还没有记录\")\n  总计:\n" +
+            "  目前状态: <专注中 / 休息中 / 空闲 / 睡觉中 / 外出中>\n  剩余休息时间: <X 小时 Y 分钟 / 无>\n" +
             "  今日总专注时长: <X 小时 Y 分钟>\n  目前这轮专注时长: <X 分钟 / 0 分钟(未在专注)>",
         "log" to "【整点记录·今天】$NOTE\n  <HH>:00 <这个小时做了什么>\n  <HH>:00 <这个小时做了什么>\n  (一行一个小时, 没有记录的小时不写)",
         "calendar" to "【日历·<专注 / 休息 / 空闲 / 睡眠> <YYYY-MM>】$NOTE\n  <YYYY-MM-DD>: <X.X> h\n  <YYYY-MM-DD>: <X.X> h\n" +
@@ -70,12 +74,67 @@ object CommData {
         return if (m >= 60) "${m / 60} 小时 ${m % 60} 分钟" else "$m 分钟"
     }
 
-    /** 【计时器】: 目前状态, 剩余休息时间, 今日总专注时长, 目前这轮专注时长. */
-    fun timerText(s: CommSnap?): String {
+    private val KIND_TEXT = mapOf("study" to "专注", "break" to "休息", "sleep" to "睡眠")
+
+    /** 今天每一段专注 / 休息 / 睡眠的持续区间, 按开始时间排好 → "HH:MM-HH:MM 专注 (X 小时 Y 分钟)". 结束不早于现在的 (还在进行的一段) 写成 "HH:MM-现在". */
+    fun intervalLines(intervals: List<Triple<String, LocalDateTime, LocalDateTime>>, now: LocalDateTime = LocalDateTime.now()): List<String> {
+        val out = ArrayList<String>()
+        for ((kind, a, b) in intervals.sortedWith(compareBy({ it.second }, { it.third }))) {
+            val name = KIND_TEXT[kind] ?: continue
+            if (!b.isAfter(a)) continue
+            val live = !b.isBefore(now)
+            val end = if (live) now else b
+            out.add("%02d:%02d-%s %s (%s)".format(a.hour, a.minute, if (live) "现在" else "%02d:%02d".format(b.hour, b.minute), name,
+                hm(secondsBetween(a, end) / 60)))
+        }
+        return out
+    }
+
+    /** 【计时器】: 先按时间顺序列出今天的每一段休息 / 专注 / 睡眠的持续区间 (intervals), 最后才是总的数据:
+     *  目前状态, 剩余休息时间, 今日总专注时长, 目前这轮专注时长. intervals = null (调用方不提供) 时只有总的数据. */
+    fun timerText(s: CommSnap?, intervals: List<Triple<String, LocalDateTime, LocalDateTime>>? = null,
+                  now: LocalDateTime = LocalDateTime.now()): String {
         if (s == null) return "【计时器】\n  $FOG_TEXT"
         val left = if (s.state == "break") hm(s.restLeftMin) else "无"
         val cur = if (s.state == "focus") hm(s.focusCurMin) else "0 分钟(未在专注)"
-        return "【计时器】\n  目前状态: ${STATE_TEXT[s.state] ?: s.state}\n  剩余休息时间: $left\n  今日总专注时长: ${hm(s.focusTotalMin)}\n  目前这轮专注时长: $cur"
+        var head = "【计时器】\n"
+        if (intervals != null) {
+            val lines = intervalLines(intervals, now)
+            head += "  今天的每一段 (按时间顺序):\n" + (if (lines.isEmpty()) "  今天还没有记录" else lines.joinToString("\n") { "  $it" }) + "\n  总计:\n"
+        }
+        return head + "  目前状态: ${STATE_TEXT[s.state] ?: s.state}\n  剩余休息时间: $left\n  今日总专注时长: ${hm(s.focusTotalMin)}\n  目前这轮专注时长: $cur"
+    }
+
+    // ---- 联合行动 (MECHANICS 24.9): 邀请对方一起完成一次合约 ----
+    val CONTRACT_RULES = "【合约的基础规则】合约是 OIT 的独占功能: 用户自选一些'词条'(减益), 让 OIT 变得更严苛, 然后开始行动.\n" +
+        "- 初始时长 4 小时 (个别词条会延长); 目标生命值初始 4, 每违反一次词条规定减 1, 归零合约失败;\n" +
+        "- 选的词条等级加起来是危机等级, 等级越高完成后得到的休息时间越多 (完成给 20~60 分钟);\n" +
+        "- 合约中空闲 (不专注也不休息) / 设备离线累计超过 15 分钟也会失败; 失败或提前终止只按进行的比例给休息时间;\n" +
+        "- 合约期间用户只能专注 / 休息, 合约中得到的休息时间在合约结束后作废, 只留完成奖励."
+
+    /** 聊天里 / 聊天框上方显示的一行: 联合行动的开始和结束时间 (不在今天 (today) 的带上日期). */
+    fun jointLabel(terms: List<String>, start: LocalDateTime, end: LocalDateTime, today: LocalDate = LocalDate.now()): String {
+        val day = if (start.toLocalDate() == today) "" else "%02d-%02d ".format(start.monthValue, start.dayOfMonth)
+        return "🤝 联合行动 $day%02d:%02d - %02d:%02d".format(start.hour, start.minute, end.hour, end.minute) +
+            if (terms.isNotEmpty()) " · ${terms.size} 个词条" else ""
+    }
+
+    /** 发给对方的联合行动邀请 (用的是原来'附件'的形式): 前面是合约的基础规则, 然后是选的词条 / 开始 / 结束时间; 对方要回 [Yes] 或 [No]. */
+    fun jointText(terms: List<String>, start: LocalDateTime, end: LocalDateTime): String {
+        val level = Contract.levelOf(terms)
+        fun f(t: LocalDateTime) = "%04d-%02d-%02d %02d:%02d".format(t.year, t.monthValue, t.dayOfMonth, t.hour, t.minute)
+        val lines = arrayListOf("(用户发来的联合行动邀请: 想和你一起完成一次合约)", CONTRACT_RULES, "",
+            "【联合行动】开始时间 ${f(start)}, 预计结束时间 ${f(end)} (按选的词条算出的合约时长 ${hm(secondsBetween(start, end) / 60)}).",
+            "危机等级 $level, 完成后休息约 ${Contract.restMinutesTotal(level, terms)} 分钟; 目标生命值 ${Contract.lifeOf(terms)}.",
+            "【选择的词条】" + if (terms.isEmpty()) "(没有选词条)" else "")
+        for (id in terms) {
+            val t = Contract.BY_ID[id] ?: continue
+            val kind = if (':' in t.name) t.name.substringBefore(':') else "特殊"
+            lines.add("- ${t.name.substringAfter(':')}($kind, 等级${t.level}): ${t.desc}".replace("\n", " "))
+        }
+        lines.add("")
+        lines.add("请按规则 X 回复: 接受就发送 [Yes], 不接受发送 [No] (后面可以再加一句话).")
+        return lines.joinToString("\n")
     }
 
     /** 【整点记录·今天】: 一行一小时. */
@@ -116,11 +175,10 @@ object CommData {
 
     /** 聊天里显示的那一行. */
     fun label(sel: CommSel): String {
-        val parts = ArrayList<String>()                 // 顺序和 📎 窗口里一样: 今天 → 日历 → 合约词条 → 统计(月数据)
+        val parts = ArrayList<String>()                 // 顺序和 📎 窗口里一样: 今天 → 日历 → 统计(月数据)
         for ((k, name) in TODAY_KEYS) if (k in sel.today) parts.add(name)
         val cl = sel.cal.mapNotNull { k -> CAL_KEYS.firstOrNull { it.first == k }?.second }
         if (cl.isNotEmpty()) parts.add("日历·" + cl.joinToString("、"))
-        if (sel.contract) parts.add("合约词条")
         val st = sel.stats.mapNotNull { k -> STATS_KEYS.firstOrNull { it.first == k }?.second }
         if (st.isNotEmpty()) parts.add("$STATS_NAME·" + st.joinToString("、"))
         return if (parts.isEmpty()) "" else "📎 " + parts.joinToString(" / ")
@@ -181,13 +239,12 @@ object CommData {
         return lines.joinToString("\n")
     }
 
-    /** 数据都从 Core 里取; 黑雾中不给 (调用方先判断). 块的顺序和 📎 窗口里一样: 今天 → 日历 → 合约词条 → 统计(月数据). */
+    /** 数据都从 Core 里取; 黑雾中不给 (调用方先判断). 块的顺序和 📎 窗口里一样: 今天 → 日历 → 统计(月数据). */
     fun build(sel: CommSel, core: Core, windowName: (String) -> String): String {
         val now = LocalDateTime.now()
         val prefix = "%04d-%02d".format(now.year, now.monthValue)
         val blocks = ArrayList<String>()                // 今天
         val cb = ArrayList<String>()                    // 日历
-        val kb = ArrayList<String>()                    // 合约词条
         val sb = ArrayList<String>()                    // 统计(月数据)
         if ("log" in sel.today) blocks.add(core.commLogText())
         if ("timer" in sel.today) blocks.add(core.commTimerText())
@@ -229,7 +286,6 @@ object CommData {
             cb.add("【日历·$name $prefix$tail】\n" + (if (lines.isEmpty()) "  没有记录" else lines.joinToString("\n")) +
                 "\n  合计: %.1f h".format(days.values.sum()))
         }
-        if (sel.contract) kb.add(library(core.contract))
-        return (blocks + cb + kb + sb).joinToString("\n\n").take(MAX_CHARS)
+        return (blocks + cb + sb).joinToString("\n\n").take(MAX_CHARS)
     }
 }

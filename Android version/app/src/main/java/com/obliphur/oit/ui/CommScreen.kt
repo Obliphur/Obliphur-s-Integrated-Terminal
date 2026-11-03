@@ -72,6 +72,9 @@ fun CommScreen(go: (String) -> Unit) {
     var input by rememberSaveable { mutableStateOf("") }
     var askClear by remember { mutableStateOf(false) }
     var attach by remember { mutableStateOf(false) }
+    var help by remember { mutableStateOf(false) }
+    var jointAsk by remember { mutableStateOf(core.jointAsk) }                  // 合约页选好词条回来了: 输入开始时间
+    var jointLine by remember { mutableStateOf(comm.jointLabel() to comm.jointStatusText()) }
     // 不跟着每秒一次的 LocalTick 重画 (整页每秒重画一遍会有卡顿感): 只在聊天记录 / 状态变了才刷新
     var ver by remember { mutableIntStateOf(comm.version) }
     var waitHint by remember { mutableStateOf("") }
@@ -84,6 +87,8 @@ fun CommScreen(go: (String) -> Unit) {
             val (text, kind) = comm.otherStatusDisplay()
             if (text != otherStatus) otherStatus = text
             if (kind != otherStatusKind) otherStatusKind = kind
+            if (core.jointAsk != jointAsk) jointAsk = core.jointAsk
+            (comm.jointLabel() to comm.jointStatusText()).let { if (it != jointLine) jointLine = it }
             kotlinx.coroutines.delay(250)
         }
     }
@@ -130,21 +135,28 @@ fun CommScreen(go: (String) -> Unit) {
         if (blocked.isNotEmpty() || comm.error.isNotEmpty()) Text(blocked.ifEmpty { tr(comm.error) }, color = o.danger, fontSize = 12.sp,
             modifier = Modifier.padding(top = 4.dp))
         else if (waitHint.isNotEmpty()) Text(tr(waitHint), color = o.dim, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+        val tight = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp)
         Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton({ attach = true }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
-                Text("📎", fontSize = 18.sp)
-            }
+            // ❓ 帮助 (最左边): 解释每个按钮的作用
+            TextButton({ help = true }, contentPadding = tight) { Text("❓", fontSize = 18.sp) }
+            TextButton({ attach = true }, contentPadding = tight) { Text("📎", fontSize = 18.sp) }
             // 🔔 可以主动发起 / 🔕 禁止这个人主动发起 (主动发消息和追问都不发)
-            TextButton({ comm.setMuted(!comm.isMuted()) }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
+            TextButton({ comm.setMuted(!comm.isMuted()) }, contentPadding = tight) {
                 Text(if (comm.isMuted()) "🔕" else "🔔", fontSize = 18.sp)
             }
-            val attached = CommData.label(comm.attach)
-            if (attached.isNotEmpty()) {
-                Text(attached, color = o.accent, fontSize = 12.sp, modifier = Modifier.weight(1f, false).clickable { attach = true })
-                TextButton({ comm.setAttach(CommSel()) }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
-                    Text("✕", color = o.dim, fontSize = 14.sp)
-                }
-            }
+            // 🤝 联合行动: 界面移到合约页选词条, 回来输入开始时间
+            TextButton({ core.jointPickStart() }, contentPadding = tight) { Text("🤝", fontSize = 18.sp) }
+        }
+        // 选好、还没发出去的联合行动 (开始 - 结束时间, 结束时间自动算好) 或发出去之后的进展; 📎 勾选的数据
+        if (jointLine.first.isNotEmpty()) Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(jointLine.first, color = o.accent, fontSize = 12.sp, modifier = Modifier.weight(1f, false).padding(start = 8.dp))
+            TextButton({ comm.clearJointDraft() }, contentPadding = tight) { Text("✕", color = o.dim, fontSize = 14.sp) }
+        } else if (jointLine.second.isNotEmpty())
+            Text(jointLine.second, color = o.dim, fontSize = 12.sp, modifier = Modifier.padding(start = 8.dp))
+        val attached = CommData.label(comm.attach)
+        if (attached.isNotEmpty()) Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(attached, color = o.accent, fontSize = 12.sp, modifier = Modifier.weight(1f, false).padding(start = 8.dp).clickable { attach = true })
+            TextButton({ comm.setAttach(CommSel()) }, contentPadding = tight) { Text("✕", color = o.dim, fontSize = 14.sp) }
         }
         Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.Bottom,
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -156,17 +168,21 @@ fun CommScreen(go: (String) -> Unit) {
         }
     }
     if (attach) AttachDialog(comm.attachForm(), { attach = false }) { sel -> comm.setAttach(sel); attach = false }
+    if (help) HelpDialog { help = false }
+    jointAsk?.let { terms -> JointTimeDialog(terms, { core.jointAsk = null; jointAsk = null }) { start ->
+        val why = comm.setJointDraft(terms, start)
+        if (why.isEmpty()) { core.jointAsk = null; jointAsk = null } else core.toast(tr(why), "warn")
+    } }
     if (askClear) Confirm(tr("清空"), tr("清空聊天记录?"), true, { askClear = false }) { comm.clear() }
 }
 
-/** 📎 勾选要发送的数据: 今天的整点记录 / 专注计时, 日历 (选类别), 合约词条, 统计 (月数据) 的几页. */
+/** 📎 勾选要发送的数据: 今天的整点记录 / 专注计时, 日历 (选类别), 统计 (月数据) 的几页. (合约词条只在联合行动的邀请里发.) */
 @Composable
 private fun AttachDialog(current: CommSel, onDismiss: () -> Unit, onOk: (CommSel) -> Unit) {
     val o = LocalOit.current
     val today = remember { mutableStateListOf<String>().apply { addAll(current.today) } }
     val stats = remember { mutableStateListOf<String>().apply { addAll(current.stats) } }
     val cal = remember { mutableStateListOf<String>().apply { addAll(current.cal) } }
-    var contract by remember { mutableStateOf(current.contract) }
     @Composable
     fun box(label: String, on: Boolean, set: (Boolean) -> Unit) {
         Row(Modifier.fillMaxWidth().clickable { set(!on) }, verticalAlignment = Alignment.CenterVertically) {
@@ -177,7 +193,7 @@ private fun AttachDialog(current: CommSel, onDismiss: () -> Unit, onOk: (CommSel
     }
     fun toggle(list: MutableList<String>, key: String, on: Boolean) { if (on) list.add(key) else list.remove(key) }
     // 关掉窗口 (点外面 / 返回键) 也保存, 和"确定"一样
-    AlertDialog(onDismissRequest = { onOk(CommSel(stats.toList(), cal.toList(), contract, today.toList())) }, containerColor = o.bg,
+    AlertDialog(onDismissRequest = { onOk(CommSel(stats.toList(), cal.toList(), today.toList())) }, containerColor = o.bg,
         title = { Text(tr("发送数据")) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
@@ -185,14 +201,75 @@ private fun AttachDialog(current: CommSel, onDismiss: () -> Unit, onOk: (CommSel
                 for ((k, label) in CommData.TODAY_KEYS) box(tr(label), k in today) { toggle(today, k, it) }
                 Text(tr("📅  日历"), fontWeight = FontWeight.Bold, color = o.text, modifier = Modifier.padding(top = 10.dp))
                 for ((k, label) in CommData.CAL_KEYS) box(tr(label), k in cal) { toggle(cal, k, it) }
-                Text(tr("⚔  合约"), fontWeight = FontWeight.Bold, color = o.text, modifier = Modifier.padding(top = 10.dp))
-                box(tr("合约词条"), contract) { contract = it }
                 // 统计 (月数据) 和它的子项放在最下面
                 Text(tr("📊  " + CommData.STATS_NAME), fontWeight = FontWeight.Bold, color = o.text, modifier = Modifier.padding(top = 10.dp))
                 for ((k, label) in CommData.STATS_KEYS) box(tr(label), k in stats) { toggle(stats, k, it) }
             }
         },
-        confirmButton = { TextButton({ onOk(CommSel(stats.toList(), cal.toList(), contract, today.toList())) }) { Text(tr("确定"), color = o.accent) } })
+        confirmButton = { TextButton({ onOk(CommSel(stats.toList(), cal.toList(), today.toList())) }) { Text(tr("确定"), color = o.accent) } })
+}
+
+/** ❓ 帮助: 沟通页上每个小按钮是干什么的, 还有"无言为真"会禁止沟通的提醒. */
+@Composable
+private fun HelpDialog(onDismiss: () -> Unit) {
+    val o = LocalOit.current
+    val rows = listOf(
+        "❓" to tr("帮助") + ": " + tr("打开这个说明."),
+        "📎" to tr("发送数据") + ": " + tr("选好要发给对方的数据 (今天的整点记录 / 专注计时, 日历, 统计), 点「确定」后随下一条消息一起发出. " +
+            "「专注计时(今天)」会先按时间顺序列出今天的每一段休息 / 专注 / 睡眠, 最后才是总时间."),
+        "🔔 / 🔕" to tr("主动发起") + ": " + tr("点一下切换: 🔔 = 允许这个对象主动给你发消息 / 追问, 🔕 = 禁止."),
+        "🤝" to tr("联合行动") + ": " + tr("邀请对方一起完成一次合约: 界面会移到合约页, 选好词条后点「确定选择」(原来「开始行动」的位置), " +
+            "再输入开始时间; 词条和合约的基础规则会打包发给对方, 结束时间自动算好写在聊天框上方. " +
+            "对方回 [Yes] 就按约开始合约; 合约期间你们的专注 / 休息同步, 合约后得到的休息也同步."),
+    )
+    AlertDialog(onDismissRequest = onDismiss, containerColor = o.bg, title = { Text(tr("帮助")) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                for ((icon, text) in rows) Row(Modifier.padding(bottom = 8.dp)) {
+                    Text(icon, color = o.text, fontWeight = FontWeight.Bold, fontSize = 15.sp, modifier = Modifier.width(56.dp))
+                    Text(text, color = o.text, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                }
+                Text("⚠  " + tr("特别提醒: 合约词条「无言为真」生效时会禁止「沟通」的使用 (不能发消息, 对方的消息也收不到), 合约结束后才能恢复."),
+                    color = o.danger, fontWeight = FontWeight.Bold, fontSize = 13.sp, modifier = Modifier.padding(top = 6.dp))
+            }
+        },
+        confirmButton = { TextButton(onDismiss) { Text(tr("知道了"), color = o.accent) } })
+}
+
+/** 合约页点了"确定选择"之后: 输入开始时间 (时:分, 已经过了的算明天), 下面实时算出结束时间; 确定后打包成联合行动, 随下一条消息发出. */
+@Composable
+private fun JointTimeDialog(terms: List<String>, onCancel: () -> Unit, onOk: (java.time.LocalDateTime) -> Unit) {
+    val o = LocalOit.current
+    val dur = com.obliphur.oit.core.Contract.durationOf(com.obliphur.oit.core.Contract.clean(terms, prereq = true)).toLong()
+    var text by remember { mutableStateOf(java.time.LocalDateTime.now().plusMinutes(30).let { "%02d:%02d".format(it.hour, it.minute) }) }
+    fun parse(): java.time.LocalDateTime? {
+        val m = Regex("\\s*(\\d{1,2})\\s*[:：]?\\s*(\\d{2})\\s*").matchEntire(text) ?: return null
+        val h = m.groupValues[1].toInt()
+        val mi = m.groupValues[2].toInt()
+        if (h > 23 || mi > 59) return null
+        val n = java.time.LocalDateTime.now()
+        val start = n.withHour(h).withMinute(mi).withSecond(0).withNano(0)
+        return if (start.isAfter(n)) start else start.plusDays(1)
+    }
+    val start = parse()
+    AlertDialog(onDismissRequest = onCancel, containerColor = o.bg, title = { Text(tr("联合行动")) },
+        text = {
+            Column {
+                Text(tr("合约开始时间 (时:分)"), color = o.text, fontWeight = FontWeight.Bold)
+                OutlinedTextField(text, { text = it.take(8) }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                if (start == null) Text(tr("请输入 时:分, 例如 14:30"), color = o.danger, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
+                else {
+                    val end = start.plusSeconds(dur)
+                    val day = if (start.toLocalDate() == java.time.LocalDate.now()) "" else tr("(明天)") + " "
+                    Text(tr("预计 {a} - {b} (合约时长 {d})", "a" to day + "%02d:%02d".format(start.hour, start.minute),
+                        "b" to "%02d:%02d".format(end.hour, end.minute), "d" to com.obliphur.oit.core.fmtHm(dur.toDouble())),
+                        color = o.dim, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
+                }
+            }
+        },
+        dismissButton = { TextButton(onCancel) { Text(tr("取消"), color = o.dim) } },
+        confirmButton = { TextButton({ start?.let(onOk) }) { Text(tr("确定"), color = o.accent) } })
 }
 
 @Composable

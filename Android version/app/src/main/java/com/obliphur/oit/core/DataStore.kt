@@ -234,6 +234,39 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
         return mapOf("study" to study, "break" to rest, "sleep" to sleep, "idle" to maxOf(0.0, span - study - rest - sleep))
     }
 
+    /** 某一天每一段专注 / 休息 / 睡眠的持续区间 (kind, 开始, 结束), 按开始时间排好 (kind: study / break / sleep; 空闲不列).
+     *  和 focusHours 一样: 专注里空闲 (设备离线) 的部分去掉, 行为模式的外出填充也算; 跨零点的段截到这一天里.
+     *  live: 正在进行的一段 (kind, start), 计到此刻为止 (沟通的 📎 专注计时(今天) 用). 同 data_manager.day_intervals. */
+    fun dayIntervals(day: LocalDate, live: Pair<String, LocalDateTime>?, now: LocalDateTime = LocalDateTime.now()):
+        List<Triple<String, LocalDateTime, LocalDateTime>> {
+        val d0 = day.atStartOfDay()
+        val d1 = d0.plusDays(1)
+        val all = (focus + peerFocus()).toMutableList()
+        if (live != null) {
+            all.add(FocusSeg(live.first, live.second, now))
+            val z = java.time.ZoneId.systemDefault()
+            if (live.first == "study") runCatching {
+                for ((a, b) in offlineSpans(live.second.atZone(z).toInstant().toEpochMilli(), now.atZone(z).toInstant().toEpochMilli()))
+                    all.add(FocusSeg("idle", LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(a), z),
+                        LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(b), z), live.second.withNano(0).format(Fmt.TS)))
+            }
+        }
+        runCatching { extraFocus(day) }.getOrDefault(emptyList()).filter { it.kind == "study" || it.kind == "break" }
+            .forEach { all.add(FocusSeg(it.kind, it.start, it.end)) }
+        val idle = all.filter { it.kind == "idle" }.groupBy { it.focus }
+        val out = LinkedHashSet<Triple<String, LocalDateTime, LocalDateTime>>()
+        for (s in all) {
+            if (s.kind != "study" && s.kind != "break" && s.kind != "sleep") continue
+            val pieces = if (s.kind == "study") subtract(s, idle[s.start.withNano(0).format(Fmt.TS)] ?: emptyList()) else listOf(s)
+            for (p in pieces) {
+                val a = maxOf(p.start, d0)
+                val b = minOf(p.end, d1)
+                if (secondsBetween(a, b) >= 1) out.add(Triple(p.kind, a, b))
+            }
+        }
+        return out.sortedWith(compareBy({ it.second }, { it.third }, { it.first }))
+    }
+
     private fun mergeSpans(spans: List<Pair<LocalDateTime, LocalDateTime>>): List<Pair<LocalDateTime, LocalDateTime>> {
         val out = mutableListOf<Pair<LocalDateTime, LocalDateTime>>()
         for ((a, b) in spans.sortedBy { it.first }) {

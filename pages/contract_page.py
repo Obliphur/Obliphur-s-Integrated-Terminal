@@ -122,7 +122,7 @@ class ContractPage(tk.Frame):
 
     def __init__(self, master, contract, on_start=None, on_abandon=None, net_used=None, on_change=None,
                  blocked=None, rec_text=None, on_stop_screen=None, on_close_rand=None, on_lift_ban=None,
-                 on_pick=None):
+                 on_pick=None, on_joint_pick=None):
         self.P = P = palette()
         self.theme = theme()
         super().__init__(master, bg=P["bg"])
@@ -137,6 +137,8 @@ class ContractPage(tk.Frame):
         self.on_close_rand = on_close_rand            # 未知变量选中的词条: 点击关闭 (算一次违反)
         self.on_lift_ban = on_lift_ban                # 禁止联网的词条 (紫色): 点击解除网络禁令, 扣目标生命值
         self.on_pick = on_pick or (lambda tid: True)  # 选中某个词条前的警告 (录像): 返回要不要选
+        self.on_joint_pick = on_joint_pick            # 联合行动 (沟通页 🤝): 选好词条, 点"确定选择"之后调用 (词条列表)
+        self._joint_pick = False                      # 联合行动选词条中: 开始行动的按钮换成"确定选择", 不开始合约
         self._hover = ""
         self._list_key = None
         self._tile_state = {}
@@ -627,8 +629,18 @@ class ContractPage(tk.Frame):
             self.on_change()
 
     def _start(self):
+        if self._joint_pick:
+            if not self.c.active and self.on_joint_pick:
+                self.on_joint_pick(list(self.c.draft))
+            return
         if not self.c.active and self.on_start and not self.blocked():
             self.on_start(list(self.c.draft))
+
+    def set_joint_pick(self, on: bool):
+        """联合行动选词条: 开始行动的位置变成"确定选择" (点了回到沟通页, 不开始合约)."""
+        self._joint_pick = bool(on)
+        self._start_off = None
+        self.refresh()
 
     def _rules_text(self):
         """右上角: 合约期间的特别规则 (左栏, 右栏)."""
@@ -709,13 +721,14 @@ class ContractPage(tk.Frame):
         other = self.btn_start if active else self.btn_end
         hide_pack(other)
         show_pack(btn, side="top", anchor="e")
-        why = "" if active else self.blocked()
+        why = "" if active else (tr("联合行动: 选好词条后点下面的「确定选择」(去别的页面 = 取消)") if self._joint_pick else self.blocked())
+        cfg(self.btn_start, text=tr("确定选择") if self._joint_pick else tr("开始行动"))
         if why:
             cfg(self.lbl_block, text=why)
             show_pack(self.lbl_block, side="top", anchor="e", pady=(0, 2), before=btn)
         else:
             hide_pack(self.lbl_block)
-        off = bool(why)
+        off = bool(why) and not self._joint_pick
         if getattr(self, "_start_off", None) != off:
             self._start_off = off
             bg, fg = (P["start_off"], P["start_off_text"]) if off else (P["start"], P["start_text"])

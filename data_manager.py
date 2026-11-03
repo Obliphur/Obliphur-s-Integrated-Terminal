@@ -492,6 +492,49 @@ class DataManager:
             rest[h] = min(3600.0 - study[h], rest[h])
         return list(zip(study, rest))
 
+    def day_intervals(self, day: datetime, live=None, now: datetime = None) -> list:
+        """某一天每一段专注 / 休息 / 睡眠的持续区间 [(kind, 开始, 结束)], 按开始时间排好 (kind: study / break / sleep; 空闲不列).
+
+        和 focus_hours 一样: 专注里空闲 (设备离线) 的部分去掉, 行为模式的外出填充也算; 跨零点的段截到这一天里.
+        live: 正在进行的一段 (kind, start), kind 可以是 sleep, 计到此刻为止 (沟通的 📎 专注计时(今天) 用)."""
+        now = now or datetime.now()
+        day0 = day.replace(hour=0, minute=0, second=0, microsecond=0)
+        day1 = day0 + timedelta(days=1)
+        recs = list(self.focus_sessions)
+        for led in self.peer_ledgers() or []:
+            recs += [r for r in (led.get("focus") or []) if isinstance(r, dict)]
+        idle, segs = {}, []
+        for r in recs:
+            try:
+                k, st, en = r["k"], datetime.strptime(r["s"], self._TS), datetime.strptime(r["e"], self._TS)
+            except (KeyError, TypeError, ValueError):
+                continue
+            if k == "idle":
+                idle.setdefault(str(r.get("f") or ""), []).append((st, en))
+            elif k in ("study", "break", "sleep"):
+                segs.append((k, st, en))
+        if live and live[1] is not None:
+            segs.append((live[0], live[1], now))
+            if live[0] == "study":
+                try:
+                    for a, b in self.offline_spans(live[1].timestamp() * 1000, now.timestamp() * 1000):
+                        idle.setdefault(live[1].strftime(self._TS), []).append(
+                            (datetime.fromtimestamp(a / 1000), datetime.fromtimestamp(b / 1000)))
+                except Exception:
+                    pass
+        try:
+            segs += [x for x in self.extra_focus(day) if x[0] in ("study", "break")]
+        except Exception:
+            pass
+        out = set()
+        for kind, st, en in segs:
+            pieces = _subtract(st, en, idle.get(st.strftime(self._TS), [])) if kind == "study" else [(st, en)]
+            for a, b in pieces:
+                a, b = max(a, day0), min(b, day1)
+                if (b - a).total_seconds() >= 1:
+                    out.add((kind, a, b))
+        return sorted(out, key=lambda x: (x[1], x[2], x[0]))
+
     def day_kinds(self, day: datetime, live=None, now: datetime = None) -> dict:
         """某一天四种时间各多少秒 (只有最近 7 天有专注计时记录): 专注 study / 休息 break / 睡眠 sleep / 空闲 idle.
 

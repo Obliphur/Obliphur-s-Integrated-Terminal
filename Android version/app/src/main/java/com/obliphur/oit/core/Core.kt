@@ -259,6 +259,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         comm.stateFn = { commState() }
         comm.hardBlock = { contract.has("silent") }
         comm.onProactive = { host.playCommSound() }
+        comm.onJointDue = { j -> jointDue(j) }
         comm.dataFn = { sel ->
             if (contract.fog()) "" else CommData.build(sel, this) { pkg ->
                 runCatching { com.obliphur.oit.service.appLabel(com.obliphur.oit.OitApp.instance, pkg) }.getOrDefault(pkg)
@@ -316,17 +317,15 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         }
     }
 
-    /** 对方现在不能主动发消息的原因 ("" = 可以). 用户睡眠时对方仍可以发 (消息先藏起来, 醒来再通知);
-     *  专注 / 外出 / 无言为真 / 空闲额度用完时不会尝试发消息. */
+    /** 对方现在不能主动发消息的原因 ("" = 可以). 用户专注 / 睡眠时对方仍可以发 (消息先藏起来, 回到休息 / 空闲再通知);
+     *  外出 / 无言为真 / 空闲额度用完时不会尝试发消息. */
     private fun commAiBlocked(): String {
         if (contract.has("silent")) return tr("无言为真生效中, 无法使用沟通")
         val st = commState()
-        if (st == "focus" && comm.isBuiltinAssistantUnmodified()) return ""   // 特例: 没改过提示词的内置 Assistant
         return when (st) {
-            "focus" -> tr("专注中不能使用沟通")
             "out" -> tr("外出中不能使用沟通")
             "idle" -> if (comm.idleOver()) tr("今天空闲时间里能用沟通的 30 分钟已经用完了 (休息时不限)") else ""
-            else -> ""                                              // sleep: 仍可发, 只是不通知
+            else -> ""                                              // focus / sleep: 仍可发, 只是不通知
         }
     }
 
@@ -354,7 +353,46 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     }
 
     /** 计时器: 目前状态, 剩余休息时间, 今日总专注时长, 目前这轮专注时长 (📎 专注计时(今天); 对方查询 [timer] 得到的也是这个). */
-    fun commTimerText(): String = CommData.timerText(commSnapshot())
+    // ---- 联合行动 (MECHANICS 24.9): 沟通页 🤝 → 合约页选词条 → 点"确定选择" → 回到沟通页输入开始时间 → 随下一条消息发给对方 ----
+    /** 正在合约页选词条: 开始行动的按钮换成"确定选择" (去别的页面 = 取消). */
+    @Volatile var jointPick = false
+    /** 选好了词条, 等沟通页让用户输入开始时间. */
+    @Volatile var jointAsk: List<String>? = null
+
+    /** 沟通页的 🤝: 界面移到合约页, 让用户选词条. */
+    fun jointPickStart() {
+        var why = comm.jointBlock().ifEmpty { comm.problem(true) }
+        if (why.isEmpty() && contract.active) why = "合约进行中, 不能发起联合行动"
+        if (why.isEmpty() && contract.fog()) why = "黑雾中无法发送"
+        if (why.isNotEmpty()) { toast(tr(why), "warn"); return }
+        jointPick = true
+        changed()
+        host.openPage("contract")
+        toast(tr("联合行动: 选好词条后, 点右下角的「确定选择」."))
+    }
+
+    fun jointPickCancel() { if (jointPick) { jointPick = false; changed() } }
+
+    /** 合约页点了"确定选择": 回到沟通页, 让用户输入开始时间. */
+    fun jointPickDone(terms: Collection<String>) {
+        jointPick = false
+        jointAsk = terms.toList()
+        changed()
+        host.openPage("comm")
+    }
+
+    /** 联合行动约定的开始时间到了 (对方已经接受): 把约定的词条放进合约页, 提示用户开始行动. */
+    private fun jointDue(j: Joint) {
+        if (!contract.active) { contract.setDraft(j.terms); changed() }
+        notice(tr("🤝  联合行动"), tr("约定的开始时间到了: 在合约页点「开始行动」(词条已经选好), 对方会和你同步专注 / 休息."),
+            listOf(NoticeButton(tr("知道了"), "ok", true)), page = "contract")
+    }
+
+    fun commTimerText(): String {
+        val now = LocalDateTime.now()
+        val intervals = runCatching { dm.dayIntervals(now.toLocalDate(), timer.calendarLive(), now) }.getOrDefault(emptyList())
+        return CommData.timerText(commSnapshot(), intervals, now)
+    }
 
     /** 对方查询的模块 ([模块名]): 只给一个参考模板 (格式和占位符, 24.2.1), 具体内容由对方按人设自己填写; 没有用户的真实数据, 黑雾中也能给. */
     private fun commInfo(tag: String): String {
@@ -1211,6 +1249,10 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
                 host.achievementsUnlocked(heldAchievements.toList())
                 heldAchievements.clear()
             }
+            runCatching {                        // 联合行动: 别的设备开始 / 结束的合约 (本机开始 / 结束的在 startContract / endContract 里处理)
+                if (seen != null) comm.jointStarted(c.terms.toList(), seen.toString(), c.endAt)
+                else if (was != null) c.last?.let { comm.jointEnded(it.optLong("id").toString(), it.optString("result"), it.optDouble("reward", 0.0)) }
+            }
             if (was != null && seen == null) c.last?.let {
                 toast(tr("合约已结束: {r}", "r" to tr(contractResult(it.optString("result")))))
             }
@@ -1386,6 +1428,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         val gift = Contract.restGift(contract.terms)
         timer.addCarry(gift)
         contractSeen = contract.id
+        runCatching { comm.jointStarted(contract.terms.toList(), contract.id.toString(), contract.endAt) }      // 联合行动: 按约开始了
         host.applyNet(false)
         syncHourLog()
         logNotice("CONTRACT start level ${contract.level} terms ${contract.terms.joinToString(",").ifEmpty { "-" }} until ${contract.endAt?.format(Fmt.YMDHM)}" +
@@ -1419,6 +1462,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             heldAchievements.clear()
         }
         logNotice("CONTRACT $result level ${rec.optInt("level")} violations ${rec.optInt("violations")} reward ${reward}s")
+        runCatching { comm.jointEnded(rec.optLong("id").toString(), result, reward.toDouble()) }               // 联合行动: 对方同步得到同样的休息
         val lv = rec.optInt("level")
         when (result) {
             "completed" -> {

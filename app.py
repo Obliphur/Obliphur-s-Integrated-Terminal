@@ -362,6 +362,8 @@ class BreakTimerApp:
         self.comm.state_fn = self._comm_state
         self.comm.hard_block = lambda: self.contract.has("silent")
         self.comm.on_proactive = self._comm_ping
+        self.comm.on_joint_due = self._joint_due
+        self._joint_pick = False         # 联合行动: 正在合约页选词条 (点"确定选择"回到沟通页)
         self._rules_win = None
         self._marks_shown = None        # 指令标记现在画在哪些按钮上 (None = 还没画过)
         self._mark_img = None
@@ -823,7 +825,7 @@ class BreakTimerApp:
                                               on_stop_screen=self.terminate_recording,
                                               on_close_rand=self.close_random_term,
                                               on_lift_ban=self.lift_net_ban,
-                                              on_pick=self._warn_pick_term)
+                                              on_pick=self._warn_pick_term, on_joint_pick=self._joint_pick_done)
         self._prepare_page(self.pages["contract"])
         self.pages["settings"] = SettingsPage(
             self.content, self.settings,
@@ -852,7 +854,7 @@ class BreakTimerApp:
         yield
         self.pages["comm"] = CommPage(
             self.content, self.comm, username=lambda: self.dm.username,
-            on_open_settings=self._open_comm_settings)
+            on_open_settings=self._open_comm_settings, on_joint=self._joint_pick_start)
         self._prepare_page(self.pages["comm"])
         yield
         self.pages["net"] = tk.Frame(self.content, bg=bg)
@@ -1010,6 +1012,8 @@ class BreakTimerApp:
             self._show_page(key)
 
     def _show_page(self, key: str):
+        if getattr(self, "_joint_pick", False) and key != "contract":
+            self._joint_pick_cancel()                 # 联合行动选词条时点了别的页面: 取消
         if key == "prescript" and getattr(self, "current_page", "") != "prescript":
             self._prescript_back = getattr(self, "current_page", "timer")
         self.current_page = key
@@ -1124,15 +1128,13 @@ class BreakTimerApp:
         return ""
 
     def _comm_ai_blocked(self) -> str:
-        """对方现在不能主动发消息的原因 ("" = 可以). 用户睡眠时对方仍可以发 (消息先藏起来, 醒来再通知);
-        专注 / 外出 / 无言为真 / 空闲额度用完时不会尝试发消息."""
+        """对方现在不能主动发消息的原因 ("" = 可以). 用户专注 / 睡眠时对方仍可以发 (消息先藏起来, 回到休息 / 空闲再通知);
+        外出 / 无言为真 / 空闲额度用完时不会尝试发消息."""
         if self.contract.has("silent"):
             return tr("无言为真生效中, 无法使用沟通")
         st = self._comm_state()
-        if st == "focus" and self.comm.is_builtin_assistant_unmodified():
-            return ""                              # 特例: 没改过提示词的内置 Assistant, 专注时也能用
-        if st in ("focus", "out"):
-            return tr({"focus": "专注中不能使用沟通", "out": "外出中不能使用沟通"}[st])
+        if st == "out":
+            return tr("外出中不能使用沟通")
         if st == "idle" and self.comm.idle_over():
             return tr("今天空闲时间里能用沟通的 30 分钟已经用完了 (休息时不限)")
         return ""
@@ -1154,7 +1156,7 @@ class BreakTimerApp:
         return snap
 
     def _comm_data(self, sel: dict) -> str:
-        """📎 发送的数据: 统计的几页, 日历, 合约词条 (黑雾中什么也不给)."""
+        """📎 发送的数据: 今天的整点记录 / 专注计时, 日历, 统计的几页 (黑雾中什么也不给)."""
         if self.contract.fog():
             return ""
         return comm_data.build(sel, self.dm, self.net, self.contract, focus_live=self._focus_live(),
@@ -1179,7 +1181,12 @@ class BreakTimerApp:
         if self.contract.fog():
             return comm_data.FOG_TEXT
         if tag == "timer":
-            return comm_data.timer_text(self._comm_snapshot())
+            now = datetime.now()
+            try:
+                intervals = self.dm.day_intervals(now, self._calendar_live(), now)
+            except Exception:       # noqa: BLE001
+                intervals = []
+            return comm_data.timer_text(self._comm_snapshot(), intervals, now)
         if tag == "log":
             today = datetime.now().strftime("%Y-%m-%d")
             lines = [f"{h:02d}:00 {self.dm.get_hour_text(today, h)}" for h in range(24) if self.dm.get_hour_text(today, h)]
@@ -1238,6 +1245,45 @@ class BreakTimerApp:
         b = getattr(self, "nav_btns", {}).get("comm")
         if b:
             cfg(b, text=self.nav_labels["comm"] + (" ●" if self.comm.unread else ""))
+
+    # ---- 联合行动 (MECHANICS 24.9): 沟通页 🤝 → 合约页选词条 → 点"确定选择" → 回到沟通页输入开始时间 → 随下一条消息发给对方 ----
+    def _joint_pick_start(self):
+        """沟通页的 🤝: 界面移到合约页, 让用户选词条 (开始行动的按钮换成"确定选择")."""
+        why = self.comm.joint_block() or self.comm.problem()
+        if not why and self.contract.active:
+            why = "合约进行中, 不能发起联合行动"
+        if not why and self.contract.fog():
+            why = "黑雾中无法发送"
+        if why:
+            toast.warn(tr(why))
+            return
+        self._joint_pick = True
+        self.pages["contract"].set_joint_pick(True)
+        self.show_page("contract")
+        toast.info(tr("联合行动: 选好词条后, 点右下角的「确定选择」."))
+
+    def _joint_pick_cancel(self):
+        self._joint_pick = False
+        if "contract" in self.pages:
+            self.pages["contract"].set_joint_pick(False)
+
+    def _joint_pick_done(self, terms):
+        """合约页点了"确定选择": 回到沟通页, 让用户输入开始时间."""
+        self._joint_pick_cancel()
+        self.show_page("comm")
+        self.pages["comm"].ask_joint_time(list(terms))
+
+    def _joint_due(self, joint: dict):
+        """联合行动约定的开始时间到了 (对方已经接受): 把约定的词条放进合约页, 提示用户开始行动."""
+        try:
+            if not self.contract.active:
+                self.contract.set_draft(joint.get("terms") or [])
+                self._paint_sidebar()
+                if "contract" in self.pages:
+                    self.pages["contract"].refresh()
+            toast.notice(tr("🤝  联合行动"), tr("约定的开始时间到了: 在合约页点「开始行动」(词条已经选好), 对方会和你同步专注 / 休息."))
+        except Exception as e:      # noqa: BLE001
+            self._log_window(f"ERROR    joint_due {type(e).__name__}: {e}")
 
     def _open_comm_settings(self):
         self.show_page("settings")
@@ -3753,6 +3799,13 @@ class BreakTimerApp:
             was = self._contract_seen
             self._contract_seen = seen
             self._contract_changed()
+            try:                                     # 联合行动: 别的设备开始 / 结束的合约 (本机开始 / 结束的在 _begin_contract / end_contract 里处理)
+                if seen is not None:
+                    self.comm.joint_started(list(c.terms), c.live.get("id"), c.end_at)
+                elif was is not None and c.last:
+                    self.comm.joint_ended(c.last.get("id"), c.last.get("result"), c.last.get("reward") or 0)
+            except Exception as e:      # noqa: BLE001
+                self._log_window(f"ERROR    joint sync {type(e).__name__}: {e}")
             if was is not None and seen is None and c.last:
                 toast.info(tr("合约已结束: {r}", r=tr(contract_page_results().get(c.last.get("result"), ""))))
             elif seen is not None and was is not None:
@@ -3966,6 +4019,10 @@ class BreakTimerApp:
         self._log_notice(f"CONTRACT start level {lv} terms {','.join(terms) or '-'} until {c.end_at:%Y-%m-%d %H:%M}"
                          + (f" gift {gift}s" if gift else ""))
         self._contract_seen = (c.live.get("id"), "active")
+        try:
+            self.comm.joint_started(list(c.terms), c.live.get("id"), c.end_at)      # 联合行动: 按约开始了
+        except Exception as e:      # noqa: BLE001
+            self._log_window(f"ERROR    joint_started {type(e).__name__}: {e}")
         self._contract_changed()
         self._sync_recorders()
         toast.success(tr("合约开始.") + ("\n" + tr("积攒的休息时间 +{t}.", t=fmt_ms(gift)) if gift else ""))
@@ -4054,6 +4111,10 @@ class BreakTimerApp:
             self._sync_timer_buttons()
         self._log_notice(f"CONTRACT {result} level {rec.get('level')} violations {rec.get('violations')} "
                          f"reward {reward}s")
+        try:
+            self.comm.joint_ended(rec.get("id"), result, reward)                  # 联合行动: 对方同步得到同样的休息
+        except Exception as e:      # noqa: BLE001
+            self._log_window(f"ERROR    joint_ended {type(e).__name__}: {e}")
         self.check_achievements()
         self._contract_changed()
         lv = rec.get("level", 0)

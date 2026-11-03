@@ -542,17 +542,22 @@ fun ContractScreen() {
             if (level >= Contract.HARD_LEVEL)
                 Text(tr("⚠  当前合约难度极大 请谨慎行动"), color = p.warn, fontSize = 12.sp, fontWeight = FontWeight.Bold,
                     modifier = Modifier.widthIn(max = 170.dp).padding(end = 12.dp))
-            val why = if (active) "" else core.contractBlock()
+            // 联合行动 (沟通页 🤝) 选词条中: 开始行动的位置换成"确定选择", 不开始合约
+            val pick = !active && core.jointPick
+            val why = if (active || pick) "" else core.contractBlock()
+            val hint = if (pick) tr("联合行动: 选好词条后点下面的「确定选择」(去别的页面 = 取消)") else why
             // 合约中只要还有在录的词条 (任意设备) 就多一个"终止录像"按钮 (任意一端都能终止整个录制, MECHANICS 18.8):
             // 和"提前结束"同时出现时, 终止录像在左, 提前结束在右; 否则 (只有一个按钮) 还按原来的靠右
             val recording = active && c.records().isNotEmpty()
             val endBtn: @Composable () -> Unit = {
-                Text(if (active) tr("■  提前结束") else tr("开始行动"), color = if (why.isEmpty()) p.startText else p.startOffText,
+                Text(if (active) tr("■  提前结束") else if (pick) tr("确定选择") else tr("开始行动"), color = if (why.isEmpty()) p.startText else p.startOffText,
                     fontSize = 18.sp, fontWeight = FontWeight.Bold,
                     modifier = Modifier.background(if (why.isEmpty()) p.start else p.startOff, RoundedCornerShape(2.dp))
                         .clickable(enabled = why.isEmpty()) {
                             if (active) {
                                 ask = "end"
+                            } else if (pick) {
+                                core.jointPickDone(c.draft)
                             } else {
                                 // 睡觉时间 (MECHANICS 19): 合约结束时间晚于这次要睡的时间时, 当天第一次先确认一次
                                 val end = LocalDateTime.now().plusSeconds(Contract.durationOf(c.draft).toLong())
@@ -571,7 +576,7 @@ fun ContractScreen() {
                 }
             } else {
                 Column(horizontalAlignment = Alignment.End) {
-                    if (why.isNotEmpty()) Text(why, color = p.dim, fontSize = 10.sp, modifier = Modifier.padding(bottom = 2.dp))
+                    if (hint.isNotEmpty()) Text(hint, color = p.dim, fontSize = 10.sp, modifier = Modifier.padding(bottom = 2.dp))
                     endBtn()
                 }
             }

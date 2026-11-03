@@ -378,6 +378,7 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
             core.toast(tr("黑雾笼罩: 合约期间无法打开设置."), "warn"); return
         }
         if (parts[0] == "prescript" && page != "prescript") prescriptBack = page
+        if (core.jointPick && parts[0] != "contract") core.jointPickCancel()          // 联合行动选词条时去了别的页面: 取消
         page = parts[0]
         if (parts.size > 1) settingsTab = parts[1]
     }
