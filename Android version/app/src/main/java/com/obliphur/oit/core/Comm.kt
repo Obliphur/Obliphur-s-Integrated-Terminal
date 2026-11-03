@@ -56,7 +56,7 @@ object BuiltinPersonas {
 - 指出英文错误时:先一句话指出不自然或错误之处,再给出更自然的说法,不多做解释.
 - 提到活动时,如果对方没有深入问就不展开.
 - 交流时间:从用户发起的第一句话起(看消息开头方括号里的时间),一次交流一般不超过 15 分钟;快到 15 分钟时,你会提前自然地结束话题
-- 如果用户发起了过度暧昧的话题,你不能回应的太过冷淡,而是需要适当引导用户将这种关系需求导向更健康的方向.
+- 你可以适当回复暧昧的话题,可以作简短回复与轻度肯定.但如果用户发起了依赖性的请求/试图改变关系性质,你不能回应的太过冷淡,而是需要适当引导用户将这种关系需求导向更健康的方向.
 特别地,如果用户的活动/爱好和你相同,你可以主动并相对细致地提及你的活动内容.
 
 【日程】
@@ -440,6 +440,10 @@ class Comm(
     private var proCache: Map<String, Double> = emptyMap()       // 同一个人设文件里写的主动发起谈话的概率 (CommText.personaProbs)
     private var seeded = false
     private var assistantSeeded = false
+    private var claudiaMigrated = false
+    private var claudiaModified = false
+    private var claudiaNotified = ""
+    private var claudiaSig: String? = null
     private var legacyDone = false
     /** 现在聊的对象的编号 (人设文件名的 crc; 没有对象 = ""). */
     @Volatile var pid = ""; private set
@@ -527,6 +531,7 @@ class Comm(
             saveCfg()
         }
         upgradeAssistantPrompt()
+        migrateClaudia()
         migrateAvatars()
         val last = messages.lastOrNull()
         if (last != null && last.role == "me" && ageSeconds(last) < 6 * 3600 && retryAt == 0L)
@@ -638,6 +643,9 @@ class Comm(
             d.optJSONArray("mute_pro")?.let { a -> for (i in 0 until a.length()) a.optString(i).takeIf { it.isNotEmpty() }?.let { muted.add(it) } }
             seeded = d.optBoolean("seeded", false)
             assistantSeeded = d.optBoolean("assistant_seeded", false)
+            claudiaMigrated = d.optBoolean("claudia_migrated", false)
+            claudiaModified = d.optBoolean("claudia_modified", false)
+            claudiaNotified = d.optString("claudia_notified", "")
             legacyDone = d.optBoolean("legacy_done", false)
             // 旧版本这几项存在设置里 (所有对象共用): 迁移时归给现在选着的对象
             proKey = d.optString("pro_key", "")
@@ -673,6 +681,8 @@ class Comm(
         val o = JSONObject().put("persona", persona)
             .put("show_avatar", showAvatar).put("avatar_me", avatarMe).put("avatar_ai", avatarAi)
             .put("user_profile", userProfile).put("seeded", seeded).put("assistant_seeded", assistantSeeded)
+            .put("claudia_migrated", claudiaMigrated).put("claudia_modified", claudiaModified)
+            .put("claudia_notified", claudiaNotified)
             .put("legacy_done", legacyDone).put("split_send", splitSend)
             .put("bg_pro", bgPro).put("mute_pro", JSONArray(muted.toList()))
             .put("idle_use", JSONObject().put("d", idleDay).put("s", idleSec))
@@ -954,6 +964,64 @@ class Comm(
         val legacy = currentBuiltin.replace(BuiltinPersonas.ASSISTANT_DETAIL_LINE, "")
         if (current.trim() != legacy.trim()) return
         runCatching { f.writeText(currentBuiltin, Charsets.UTF_8) }
+    }
+
+    // ---- Claudia: 第一次升级时覆盖没改过的文件; 之后手动改过就提醒 ----
+    private fun claudiaFile() = File(personas, BuiltinPersonas.DEFAULT)
+
+    private fun writeClaudiaBuiltin() {
+        runCatching {
+            personas.mkdirs()
+            claudiaFile().writeText(BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT), Charsets.UTF_8)
+        }
+    }
+
+    /** 第一次带上这个检查的版本: 没有手动修改记录的 Claudia 文件换成当前内置版本.
+     *  有记录的 (以后的版本) 不动, 交给 checkClaudiaIntegrity 提醒. */
+    private fun migrateClaudia() {
+        if (claudiaMigrated) return
+        val f = claudiaFile()
+        if (f.isFile && !claudiaModified) writeClaudiaBuiltin()
+        claudiaMigrated = true
+        claudiaSig = null
+        saveCfg()
+    }
+
+    /** Claudia 文件被手动改过吗. true = 现在该弹窗提醒 (同一份内容只提醒一次). */
+    fun checkClaudiaIntegrity(): Boolean {
+        val f = claudiaFile()
+        if (!f.isFile) { claudiaSig = null; return false }
+        val sig = "${f.lastModified()}|${f.length()}"
+        if (sig == claudiaSig) return false
+        claudiaSig = sig
+        val text = runCatching { f.readText(Charsets.UTF_8).removePrefix("\uFEFF").take(MAX_PERSONA) }.getOrNull() ?: return false
+        val builtin = BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT)
+        if (text.trim() == builtin.trim()) {                       // 已经还原 / 本来就是内置版本
+            if (claudiaModified || claudiaNotified.isNotEmpty()) {
+                claudiaModified = false
+                claudiaNotified = ""
+                saveCfg()
+            }
+            return false
+        }
+        val h = "%08x".format(java.util.zip.CRC32().apply { update(text.toByteArray(Charsets.UTF_8)) }.value)
+        if (claudiaNotified == h) return false                     // 这份内容已经提醒过
+        claudiaModified = true
+        claudiaNotified = h
+        saveCfg()
+        return true
+    }
+
+    /** 把 Claudia 文件恢复成内置版本 (弹窗的"还原人设文件"). */
+    fun restoreClaudia() {
+        writeClaudiaBuiltin()
+        claudiaModified = false
+        claudiaNotified = ""
+        claudiaSig = null
+        segSig = null
+        reloadSchedule("还原 Claudia")
+        saveCfg()
+        changed()
     }
 
     /** 名字是 Assistant (不分大小写), 并且文件和自带 Assistant 的提示词一字不差.

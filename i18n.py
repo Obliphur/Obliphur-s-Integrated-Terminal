@@ -480,6 +480,11 @@ EN = {
     "专注中": "Focusing",
     "睡眠中": "Sleeping",
     "休息中": "Resting",
+    # ---- 沟通: Claudia 人设文件被手动修改 ----
+    "人设文件被修改": "Persona file modified",
+    "主管{name},我希望你尊重她的人格.": "Director {name}, I hope you respect her personality.",
+    "还原人设文件": "Restore persona file",
+    "继续": "Continue",
     "🧑  我的身份背景": "🧑  My background",
     "🕒  今天": "🕒  Today",
     "📊  统计(月数据)": "📊  Statistics (monthly)",

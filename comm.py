@@ -71,6 +71,7 @@ WEEKDAY = "一二三四五六日"
 
 DEFAULTS = {"persona": "", "show_avatar": False,
             "avatar_me": "", "avatar_ai": "", "pro_key": "", "retry": {}, "clear_ts": 0, "seeded": False, "assistant_seeded": False,
+            "claudia_migrated": False, "claudia_modified": False, "claudia_notified": "",
             "legacy_done": False, "user_profile": "", "split_send": True,
             "bg_pro": True, "mute_pro": [], "idle_use": {}}
 
@@ -216,7 +217,7 @@ BUILTIN_PERSONAS = {"Claudia.txt": """你将扮演一位文静,冷淡的17岁大
 - 指出英文错误时:先一句话指出不自然或错误之处,再给出更自然的说法,不多做解释.
 - 提到活动时,如果对方没有深入问就不展开.
 - 交流时间:从用户发起的第一句话起(看消息开头方括号里的时间),一次交流一般不超过 15 分钟;快到 15 分钟时,你会提前自然地结束话题
-- 如果用户发起了过度暧昧的话题,你不能回应的太过冷淡,而是需要适当引导用户将这种关系需求导向更健康的方向.
+- 你可以适当回复暧昧的话题,可以作简短回复与轻度肯定.但如果用户发起了依赖性的请求/试图改变关系性质,你不能回应的太过冷淡,而是需要适当引导用户将这种关系需求导向更健康的方向.
 特别地,如果用户的活动/爱好和你相同,你可以主动并相对细致地提及你的活动内容.
 
 【日程】
@@ -605,6 +606,7 @@ class Comm:
         self._next_id = 1
         self._last_ts = 0
         self._seg_sig = None          # 人设文件的 (名字, 修改时间, 大小): 变了才重新读日程
+        self._claudia_sig = None      # Claudia 文件的 (修改时间, 大小): 变了才重新检查有没有被手动改过
         self._seg_cache = []          # [(kind, 开始时刻)]: 主动发消息用
         self._entry_cache = []        # 完整日程条目 (开始 / 结束 / 名字 / 修饰): 显示对方的状态用
         self._pro_cache = {}          # 同一个人设文件里写的主动发起谈话的概率 (persona_probs)
@@ -625,6 +627,7 @@ class Comm:
             self.cfg["assistant_seeded"] = True
             self.save_cfg()
         self._upgrade_assistant_prompt()
+        self._migrate_claudia()
         self._migrate_avatars()
         last = self.messages[-1] if self.messages else None
         rt = self.cfg.get("retry") or {}
@@ -1095,6 +1098,72 @@ class Comm:
                 f.write(current_builtin)
         except OSError:
             pass
+
+    # ---- Claudia: 第一次升级时覆盖没改过的文件; 之后手动改过就提醒 ----
+    def _claudia_path(self) -> str:
+        return os.path.join(self.personas, DEFAULT_PERSONA)
+
+    def _write_claudia_builtin(self):
+        try:
+            os.makedirs(self.personas, exist_ok=True)
+            with open(self._claudia_path(), "w", encoding="utf-8", newline="\n") as f:
+                f.write(BUILTIN_PERSONAS[DEFAULT_PERSONA])
+        except OSError:
+            pass
+
+    def _migrate_claudia(self):
+        """第一次带上这个检查的版本: 没有手动修改记录的 Claudia 文件换成当前内置版本.
+        有记录的 (以后的版本) 不动, 交给 check_claudia_integrity 提醒."""
+        if self.cfg.get("claudia_migrated"):
+            return
+        if os.path.isfile(self._claudia_path()) and not self.cfg.get("claudia_modified"):
+            self._write_claudia_builtin()
+        self.cfg["claudia_migrated"] = True
+        self._claudia_sig = None
+        self.save_cfg()
+
+    def check_claudia_integrity(self) -> bool:
+        """Claudia 文件被手动改过吗. True = 现在该弹窗提醒 (同一份内容只提醒一次)."""
+        path = self._claudia_path()
+        try:
+            st = os.stat(path)
+        except OSError:
+            self._claudia_sig = None
+            return False
+        sig = (st.st_mtime_ns, st.st_size)
+        if sig == self._claudia_sig:
+            return False
+        self._claudia_sig = sig
+        try:
+            with open(path, "r", encoding="utf-8-sig") as f:
+                text = f.read(MAX_PERSONA)
+        except (OSError, UnicodeDecodeError):
+            return False
+        builtin = BUILTIN_PERSONAS[DEFAULT_PERSONA]
+        if text.strip() == builtin.strip():                    # 已经还原 / 本来就是内置版本
+            if self.cfg.get("claudia_modified") or self.cfg.get("claudia_notified"):
+                self.cfg["claudia_modified"] = False
+                self.cfg["claudia_notified"] = ""
+                self.save_cfg()
+            return False
+        h = f"{zlib.crc32(text.encode('utf-8')):08x}"
+        if self.cfg.get("claudia_notified") == h:              # 这份内容已经提醒过 (用户点了继续 / 关了窗)
+            return False
+        self.cfg["claudia_modified"] = True
+        self.cfg["claudia_notified"] = h
+        self.save_cfg()
+        return True
+
+    def restore_claudia(self):
+        """把 Claudia 文件恢复成内置版本 (弹窗的"还原人设文件")."""
+        self._write_claudia_builtin()
+        self.cfg["claudia_modified"] = False
+        self.cfg["claudia_notified"] = ""
+        self._claudia_sig = None
+        self._seg_sig = None
+        self.reload_schedule("还原 Claudia")
+        self.save_cfg()
+        self._changed()
 
     def is_builtin_assistant_unmodified(self) -> bool:
         """名字是 Assistant (不分大小写), 并且文件和自带 Assistant 的提示词一字不差.
@@ -2760,6 +2829,22 @@ def _selftest():
     ma = Comm(mdir, mpersonas, now=lambda: clock[0], chat_fn=fake)
     assert "我的改动" in read_persona(mpersonas, "Assistant.txt"), "用户改过的 Assistant 不动"
     ma.flush()
+    # Claudia: 没有手动修改记录时升级覆盖; 之后手动修改会检测到, 可以还原
+    cdir, cpersonas = os.path.join(td, "claudia_notice"), os.path.join(td, "claudia_notice_personas")
+    os.makedirs(cdir)
+    os.makedirs(cpersonas)
+    open(os.path.join(cpersonas, "Claudia.txt"), "w", encoding="utf-8", newline="\n").write("旧的自定义")
+    config.save_json_file(os.path.join(cdir, "comm_config.json"), {"seeded": True, "persona": "Claudia.txt"})
+    cc = Comm(cdir, cpersonas, now=lambda: clock[0], chat_fn=fake)
+    assert read_persona(cpersonas, "Claudia.txt") == BUILTIN_PERSONAS[DEFAULT_PERSONA].strip(), "没有修改记录: 升级覆盖"
+    with open(os.path.join(cpersonas, "Claudia.txt"), "a", encoding="utf-8") as f:
+        f.write("\n手动修改")
+    assert cc.check_claudia_integrity() and cc.cfg["claudia_modified"], "手动修改: 该弹窗"
+    assert not cc.check_claudia_integrity(), "同一份内容只提醒一次"
+    cc.restore_claudia()
+    assert read_persona(cpersonas, "Claudia.txt") == BUILTIN_PERSONAS[DEFAULT_PERSONA].strip()
+    assert not cc.cfg["claudia_modified"] and not cc.cfg["claudia_notified"]
+    cc.flush()
     # 人设文件本身随设备同步: 新增 / 覆盖 / 删除 (README 不同步)
     psf = os.path.join(td, "personas_sync")
     os.makedirs(psf)

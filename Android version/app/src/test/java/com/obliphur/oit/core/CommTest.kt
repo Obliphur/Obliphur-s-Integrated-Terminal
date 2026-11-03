@@ -469,6 +469,23 @@ class CommTest {
         assertTrue("我的改动" in ma.readPersona("Assistant.txt"))
     }
 
+    /** Claudia: 没有手动修改记录时升级覆盖; 之后手动修改会检测到, 可以还原. */
+    @Test
+    fun claudiaIntegrity() {
+        val td = Files.createTempDirectory("oit").toFile()
+        val cd = File(td, "cd").also { it.mkdirs() }
+        val cp = File(td, "cp").also { it.mkdirs() }
+        File(cp, "Claudia.txt").writeText("旧的自定义")
+        File(cd, "comm_config.json").writeText("""{"seeded":true,"persona":"Claudia.txt"}""")
+        val c = Comm(cd, cp, { clock }) { _, _, _ -> "" }
+        assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).trim(), c.readPersona("Claudia.txt"))
+        File(cp, "Claudia.txt").appendText("\n手动修改")
+        assertTrue(c.checkClaudiaIntegrity())
+        assertFalse(c.checkClaudiaIntegrity())
+        c.restoreClaudia()
+        assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).trim(), c.readPersona("Claudia.txt"))
+    }
+
     @Test
     fun builtinPersona() {
         val td = Files.createTempDirectory("oit").toFile()

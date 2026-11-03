@@ -1205,10 +1205,21 @@ class BreakTimerApp:
             return
         try:
             self.comm.tick()
+            if self.comm.check_claudia_integrity():
+                self._show_claudia_notice()
             if self.current_page == "comm" and "comm" in self.pages:
                 self.pages["comm"].refresh()
         except Exception as e:
             self._log_window(f"ERROR    comm {type(e).__name__}: {e}")
+
+    def _show_claudia_notice(self):
+        """Claudia 人设文件被手动改过: 提醒, 可以恢复内置版本或继续 (什么都不做)."""
+        try:
+            toast.notice(tr("人设文件被修改"), tr("主管{name},我希望你尊重她的人格.", name=self.dm.username or ""), [
+                (tr("还原人设文件"), self.comm.restore_claudia, True),
+                (tr("继续"), None, False)])
+        except Exception:
+            pass
 
     def _comm_ping(self):
         """收到对方主动发来的消息 (前 5 分钟没聊过): 柔和的提示音 (后台线程里放)."""

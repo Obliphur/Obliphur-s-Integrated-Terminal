@@ -302,6 +302,13 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     @Volatile private var apiHostsCache: Set<String> = emptySet()
     private var apiHostsAt = 0L
 
+    /** Claudia 人设文件被手动改过: 提醒, 可以恢复内置版本或继续 (什么都不做). */
+    private fun showClaudiaModified() {
+        notice(tr("人设文件被修改"), tr("主管{name},我希望你尊重她的人格.", "name" to username),
+            listOf(NoticeButton(tr("还原人设文件"), "restore", true), NoticeButton(tr("继续"), "ok", false)),
+            tag = "claudia") { action -> if (action == "restore") comm.restoreClaudia() }
+    }
+
     /** 对方现在不能主动发消息的原因 ("" = 可以). 用户睡眠时对方仍可以发 (消息先藏起来, 醒来再通知);
      *  专注 / 外出 / 无言为真 / 空闲额度用完时不会尝试发消息. */
     private fun commAiBlocked(): String {
@@ -622,6 +629,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         timer.tick()
         runCatching { prescript.tick() }
         runCatching { comm.tick() }
+        if (runCatching { comm.checkClaudiaIntegrity() }.getOrDefault(false)) showClaudiaModified()
         beatPower()
         runCatching { checkAdapterBack(); checkAwayPriority(); checkContractConflicts() }
         checkContract()
