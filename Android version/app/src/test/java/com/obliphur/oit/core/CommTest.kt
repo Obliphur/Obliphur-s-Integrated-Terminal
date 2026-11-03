@@ -34,7 +34,7 @@ class CommTest {
             it.profiles["custom"] = Profile("custom", "http://localhost:1/v1", "openai", "m", "")
             it.save()
         }
-        return Comm(dir, personas, { clock }) { _, system, msgs ->
+        val c = Comm(dir, personas, { clock }) { _, system, msgs ->
             if (system == CommText.MEM_PROMPT) {
                 memCalls.add(msgs.last().second)
                 memScript.removeFirstOrNull() ?: ""
@@ -48,6 +48,8 @@ class CommTest {
                 r
             }
         }
+        c.followDelayMs = 0                                   // 测试里不等第二次调用的 3 秒
+        return c
     }
 
     /** 从 begin + lo 秒起, 每 2 秒看一次, 返回开始请求的那一秒 (没有 = null). */
@@ -1027,6 +1029,25 @@ class CommTest {
         assertTrue(one.startsWith("HEAD") && one.endsWith("TAIL") && "中间省略" in one)
         assertTrue(one.length < Comm.MAX_MSG_CHARS + 100)
         assertEquals("短", Comm.clipMessage("短"))
+    }
+
+    /** 第二次调用有延时 (让提示缓存落盘): 到点才发. */
+    @Test
+    fun followUpDelay() {
+        val td = Files.createTempDirectory("oit").toFile()
+        val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
+        c.set(persona = "Claudia.txt")
+        c.followDelayMs = 2000
+        val n = followCalls.size
+        script.add("第一句"); follow.add("第二句")
+        c.send("在吗"); wait(c)
+        assertEquals("延时没到: 不发第二次", n, followCalls.size)
+        clock = clock.plusSeconds(3)
+        for (i in 0 until 200) {
+            Thread.sleep(10); c.tick()
+            if (followCalls.size > n) break
+        }
+        assertEquals(n + 1, followCalls.size)
     }
 
     /** 记忆卡: 每 40 条整理一次; 手写 / 自动分开; 清空聊天只清自动的. */

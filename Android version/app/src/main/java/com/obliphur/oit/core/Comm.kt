@@ -487,6 +487,8 @@ class Comm(
         /** 规则 VIII: 回复了这些请求 (用户说的话) 之后, 再调用一次 API, 让对方可以把话分开说. */
         val FOLLOW_KINDS = setOf("user", "retry")
         const val FOLLOW_TAG = "[系统·续]"
+        /** 规则 VIII 的第二次调用先等这么久 (毫秒): 服务商的提示缓存是异步落盘的, 紧跟着发常常赶不上, 白付一次全量历史. */
+        const val FOLLOW_DELAY_MS = 3000L
         val FOLLOW_BODY = "$FOLLOW_TAG 你刚才已经回复了用户. 如果还有想接着说的话, 请现在再发一条 (不要重复上一条); " +
             "如果你只想说一次, 返回${CommText.REFUSE}."
         const val DEFAULT_P_IDLE = 80                   // II / III 发不发的概率 (%) 的默认值; 设置 → 沟通 里可以改
@@ -642,6 +644,9 @@ class Comm(
     @Volatile private var memBusy = false
     private var memNext = 0L
     private var again = false
+    internal var followDelayMs = FOLLOW_DELAY_MS      // 第二次调用等多久; 测试里设成 0
+    private var followAt = 0L                          // 安排在什么时候 (毫秒, 0 = 没有)
+    private var followEpoch = 0                        // 安排的时候的 epoch: 期间清空过就不发
     private var nextId = 1
     /** clear() 加一: 清空之前发出的请求, 回复到了也丢掉. */
     private var epoch = 0
@@ -1645,6 +1650,7 @@ class Comm(
 
     private fun request(kind: String, extra: Extra? = null) {
         if (busy) { again = true; return }
+        followAt = 0L                                           // 有新请求了: 排着的第二次调用取消
         val profile = aiConfig().profile()
         var system = CommText.prefixPrompt(splitSend) + readPersona(personaName())
         system += memoryBlock()
@@ -1727,8 +1733,11 @@ class Comm(
             again = false
             if (unanswered() && r.err.isEmpty()) request("user")
         } else if (splitSend && r.kind in FOLLOW_KINDS && r.err.isEmpty() && !refused && aiProblem().isEmpty() && leader()) {
-            // 规则 VIII: 对方的第一条已经收到了, 再调用一次, 让它可以接着说 (只想说一次就 [refuse to reply], 什么也不留下)
-            trigger("followup", FOLLOW_BODY)
+            // 规则 VIII: 隔一会儿再调用第二次, 让对方可以把话分开说. 延时是为了让提示缓存落盘:
+            // DeepSeek 的磁盘缓存是异步写的, 紧跟着发会赶不上; Anthropic 的 cache_control 随第一次请求写好, 不用等.
+            val delay = if (aiConfig().profile().protocol == "anthropic") 0L else followDelayMs
+            followAt = nowMs() + delay
+            followEpoch = epoch
         }
     }
 
@@ -1752,10 +1761,22 @@ class Comm(
                 return
             }
         }
+        if (checkFollow()) return
         if (checkWait()) return
         checkProactive(t, snap)
         bgCheck(t, snap)
         memKick()
+    }
+
+    /** 规则 VIII 的第二次调用到点了 (延时见 FOLLOW_DELAY_MS). */
+    private fun checkFollow(): Boolean {
+        if (followAt == 0L || nowMs() < followAt) return false
+        followAt = 0L
+        if (followEpoch != epoch || again || busy) return false
+        if (!splitSend || aiProblem().isNotEmpty() || !leader() || hardBlock()) return false
+        if (unanswered()) return false                     // 等的时候用户又说了: 由那条新消息自己触发回复
+        trigger("followup", FOLLOW_BODY)
+        return true
     }
 
     /** 规则 IX: 对方最后一条消息末尾写了 [waiting for reply]:[N], N 分钟 (从用户看到它算起) 过去了用户还没回复: 让对方可以追问一次. */
@@ -1979,6 +2000,7 @@ class Comm(
     fun clear() {
         clearTs = maxOf(nowMs(), lastTs)
         messages.clear(); unread = 0; retryAt = 0; retryN = 0; error = ""
+        followAt = 0L                                       // 清空前排着的第二次调用不要了
         memAuto = ""; memUpto = 0L; memTs = nowMs()        // 自动整理的那份跟着聊天一起清掉; 手写的重要信息保留
         epoch++
         saveCfg(); saveChat(); reloadSchedule("新对话"); changed(); push()

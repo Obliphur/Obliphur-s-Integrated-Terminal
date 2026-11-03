@@ -51,6 +51,8 @@ FOLLOW_KINDS = ("user", "retry")      # 规则 VIII: 回复了这些请求 (用�
 FOLLOW_TAG = "[系统·续]"
 FOLLOW_BODY = (FOLLOW_TAG + " 你刚才已经回复了用户. 如果还有想接着说的话, 请现在再发一条 (不要重复上一条); "
                "如果你只想说一次, 返回" + REFUSE + ".")
+FOLLOW_DELAY = 3.0                    # 规则 VIII 的第二次调用先等这么久 (秒): 服务商的提示缓存是异步落盘的 (DeepSeek 说"几秒"),
+                                      # 紧跟着调用常常赶不上, 白付一次全量历史; 隔几秒再发, 第二次的前缀才能命中
 RETRY_GAP = 10 * 60                   # 对方不方便回复时, 多久再把消息交给模型
 RETRY_MAX = 12
 HISTORY_SENT = 400                    # 每次请求最多带多少条聊天记录 (等于本地最多存的 400 条): 原话全带上, 量由下面的字数兜底
@@ -741,6 +743,9 @@ class Comm:
         self._results = []
         self._again = False
         self._epoch = 0               # clear() 加一: 清空之前发出的请求, 回复到了也丢掉
+        self.follow_delay = FOLLOW_DELAY   # 第二次调用等多久 (秒); 自检里设成 0
+        self._follow_at = 0           # 第二次调用安排在什么时候 (毫秒, 0 = 没有)
+        self._follow_epoch = 0        # 安排的时候的 _epoch: 期间清空过就不发
         self._next_id = 1
         self._last_ts = 0
         self._seg_sig = None          # 人设文件的 (名字, 修改时间, 大小): 变了才重新读日程
@@ -1882,6 +1887,7 @@ class Comm:
         if self.busy:
             self._again = True
             return
+        self._follow_at = 0                                # 有新请求了: 排着的第二次调用取消 (用户又说了 / 主动发 / 重试)
         profile = self.ai.profile()
         system = prefix_prompt(self.split_on()) + read_persona(self.personas, self.persona_name())
         system += self.memory_block()
@@ -1997,8 +2003,25 @@ class Comm:
             if self.unanswered() and not err:
                 self._request("user")
         elif kind in FOLLOW_KINDS and self.split_on() and not err and not refused and not self._ai_problem() and self.leader():
-            # 规则 VIII: 对方的第一条已经收到了, 再调用一次, 让它可以接着说 (只想说一次就 [refuse to reply], 什么也不留下)
-            self._trigger("followup", FOLLOW_BODY)
+            # 规则 VIII: 隔一会儿再调用第二次, 让对方可以把话分开说 (只想说一次就 [refuse to reply], 什么也不留下).
+            # 延时是为了让提示缓存落盘: DeepSeek 的磁盘缓存是异步写的, 紧跟着发会赶不上; Anthropic 的 cache_control 随第一次请求写好, 不用等.
+            delay = 0.0 if self.ai.profile().get("protocol") == "anthropic" else self.follow_delay
+            self._follow_at = self._ms() + int(delay * 1000)
+            self._follow_epoch = self._epoch
+
+    def _check_follow(self) -> bool:
+        """规则 VIII 的第二次调用到点了 (延时见 FOLLOW_DELAY)."""
+        if not self._follow_at or self._ms() < self._follow_at:
+            return False
+        self._follow_at = 0
+        if self._follow_epoch != self._epoch or self._again or self.busy:
+            return False
+        if not self.split_on() or self._ai_problem() or not self.leader() or self.hard_block():
+            return False
+        if self.unanswered():                             # 等的时候用户又说了: 由那条新消息自己触发回复
+            return False
+        self._trigger("followup", FOLLOW_BODY)
+        return True
 
     # ---- 每秒一次 ----
     def tick(self):
@@ -2029,6 +2052,8 @@ class Comm:
                 self._trigger("retry", f"现在是 {stamp(now)}. 用户之前发来的消息你还没有回复, 请现在一次性处理并回复; "
                                        f"如果仍然不方便, 返回{REFUSE}.")
                 return
+        if self._check_follow():
+            return
         if self._check_wait():
             return
         self._check_proactive(now, snap)
@@ -2293,6 +2318,7 @@ class Comm:
         self.messages = []
         self.unread = 0
         self._epoch += 1
+        self._follow_at = 0                # 清空前排着的第二次调用不要了
         self.error = ""
         self.cfg["retry"] = {}
         self.cfg["mem_auto"] = ""          # 自动整理的那份跟着聊天一起清掉; 手写的重要信息保留
@@ -2309,6 +2335,9 @@ class Comm:
 def _selftest():
     import tempfile
     import time
+
+    global FOLLOW_DELAY
+    FOLLOW_DELAY = 0.0            # 自检不等这 3 秒 (测延时的用例自己设回非 0)
 
     td = tempfile.mkdtemp()
     data, folder = os.path.join(td, "data"), os.path.join(td, "personas")
@@ -3066,6 +3095,27 @@ def _selftest():
     cu.send("等等")
     wait(cu)
     assert [m["text"] for m in cu.visible()] == ["你好", "甲", "等等", "回应等等"], [m["text"] for m in cu.visible()]
+    # 第二次调用有延时 (让提示缓存落盘): 到点才发
+    os.makedirs(os.path.join(td, "fdel"))
+    cd = Comm(os.path.join(td, "fdel"), folder, now=lambda: clock[0], chat_fn=fake)
+    cd.ai.set_profile("deepseek", api_key="k")
+    cd.set_cfg(persona="小夏.txt")
+    cd.snapshot = lambda: {"state": "idle"}
+    cd.follow_delay = 2.0
+    n_d = len(follow_calls)
+    script.append("第一句")
+    follow.append("第二句")
+    cd.send("在吗")
+    wait(cd)
+    assert len(follow_calls) == n_d, "延时没到: 不发第二次"
+    clock[0] += timedelta(seconds=3)
+    for _ in range(200):
+        time.sleep(0.01)
+        cd.tick()
+        if len(follow_calls) > n_d:
+            break
+    assert len(follow_calls) == n_d + 1, "到点后才发第二次"
+    cd.flush()
     # 分条发的开关: 关着时不调用第二次, 前置 prompt 里也没有第 VIII 条; 开关随设备同步
     cu.set_cfg(split_send=False)
     assert "VIII." not in prefix_prompt(False) and "VIII." in prefix_prompt(True) and not cu.split_on()
