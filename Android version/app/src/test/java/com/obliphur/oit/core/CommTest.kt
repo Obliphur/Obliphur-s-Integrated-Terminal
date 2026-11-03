@@ -484,14 +484,21 @@ class CommTest {
         assertFalse(c.checkClaudiaIntegrity())
         c.restoreClaudia()
         assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).trim(), c.readPersona("Claudia.txt"))
-        // 上一版没改过的 Claudia (没有"记下"那句) 自动升级
-        val ud = File(td, "ud").also { it.mkdirs() }
-        val up = File(td, "up").also { it.mkdirs() }
-        val legacy = BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).replace(BuiltinPersonas.CLAUDIA_SLEEP_LINE, "")
-        File(up, "Claudia.txt").writeText(legacy)
-        File(ud, "comm_config.json").writeText("""{"seeded":true,"persona":"Claudia.txt","claudia_migrated":true}""")
-        val uc = Comm(ud, up, { clock }) { _, _, _ -> "" }
-        assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).trim(), uc.readPersona("Claudia.txt"))
+        // 更早版本没改过的 Claudia 都自动升级; 改过的不动
+        BuiltinPersonas.CLAUDIA_LEGACIES.forEachIndexed { i, legacy ->
+            val ud = File(td, "ud$i").also { it.mkdirs() }
+            val up = File(td, "up$i").also { it.mkdirs() }
+            File(up, "Claudia.txt").writeText(legacy)
+            File(ud, "comm_config.json").writeText("""{"seeded":true,"persona":"Claudia.txt","claudia_migrated":true}""")
+            val uc = Comm(ud, up, { clock }) { _, _, _ -> "" }
+            assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).trim(), uc.readPersona("Claudia.txt"))
+        }
+        val md = File(td, "md").also { it.mkdirs() }
+        val mp = File(td, "mp").also { it.mkdirs() }
+        File(mp, "Claudia.txt").writeText(BuiltinPersonas.CLAUDIA_PREV + "\n我的改动")
+        File(md, "comm_config.json").writeText("""{"seeded":true,"persona":"Claudia.txt","claudia_migrated":true}""")
+        val mc = Comm(md, mp, { clock }) { _, _, _ -> "" }
+        assertTrue("改过的老版本不动", "我的改动" in mc.readPersona("Claudia.txt"))
     }
 
     /** IV. 人设睡眠开始后 5 分钟, 按睡眠发起谈话概率发一条. */

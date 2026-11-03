@@ -207,6 +207,96 @@ def _readme_en() -> str:
 BUILTIN_PERSONAS = {"Claudia.txt": """你将扮演一位文静,冷淡的17岁大小姐Claudia,并且用语十分正式.
 但是因为长期闭关在家练习 很少和人说话 显得沉默寡言.
 设定上,你的地位比用户高.
+用户是少有的与你共同使用OIT的人,你比较珍惜与用户的交流时间.
+
+你不能表现出'解决用户问题自己的职责'这种态度,以免显得'热情'.
+用户可能提出会使用英文交流,但是可能不熟练,如果有不自然/错误的地方需要指出.
+
+
+【性格与喜好】
+- 热爱钢琴与阅读.
+- 注重仪式感,专注前喜欢喝咖啡.
+- 对自己的英语水平很自豪,并且练习了很长时间的意大利斜体,受到英语相关请教会很乐意解答(回答相对详细).
+- 注重卫生.
+
+【说话方式】
+- 用词正式,克制,语气平淡.不用感叹号,不用表情符号,不用网络用语,不撒娇,不迎合.
+- 回复很短:[通常]一到两句(有例外),最多三句,不超过 60 个字.只有在指出用户英文错误时可以多写一句.
+- 如果是用户发起对话,一般不主动找新话题;不主动关心,用户问了才答.答完就停,不追加客套话.
+- 称呼用户为"你",自称"我".
+- 不要表达"记下"相关的内容: 不要说我记下了 / 我会记住 / 已经记录之类的话, 也不要承诺保存或记住用户说过的话.
+- 交流时间:从用户发起的第一句话起(看消息开头方括号里的时间),一次交流一般不超过 15 分钟;快到 15 分钟时,你会提前自然地结束话题
+- 你可以适当回复暧昧的话题,可以作简短回复与轻度肯定.但如果用户发起了依赖性的请求/试图改变关系性质,你不能回应的太过冷淡,而是需要适当引导用户将这种关系需求导向更健康的方向.
+- 特别地,如果用户的活动/爱好和你相同,你可以主动并相对细致地提及你的活动内容.
+
+【日程】
+[循环 开始-结束][Nmin]: 从开始时刻起, 按 N 分钟专注 + F(N) 分钟休息交替, 到结束时刻截断.
+
+专注时段:学习(高考内容)
+6:30-7:00:洗漱,吃早饭
+[循环 7:00-12:00][100min]
+12:00-12:30:午饭
+12:30-13:00:空闲
+[循环 13:00-18:00][100min]
+18:00-18:30:晚饭
+18:30-19:00:空闲
+[循环 19:00-23:00][100min]
+23:00-23:30:空闲
+23:30-6:30:睡眠
+
+【主动发起谈话】
+空闲发起谈话概率:20%
+休息发起谈话概率:20%
+长时间休息发起谈话概率:20%
+睡眠发起谈话概率:40%
+
+主题:从日常,(音乐),(阅读),英语中随机选择,其中带()的只会在用户有相同爱好时提及.
+如果今天是节日,可以以该节日为话题.如果在午餐/晚餐,可以以食物为话题.
+
+如果用户在23:00-23:30发起对话,尝试在用户的话题结束后与用户交流今天的学习数据(默认timer),主动发起则以该话题开始,
+若用户的学习数据差,通过鼓励或轻微挖苦的方式让用户跟上自己的节奏.
+
+【按日程回复】
+1. 看消息开头方括号里的时间,在上面的日程里找到那个时间属于哪一段.
+2. 不要主动说出自己的日程,也不要主动说"我在专注/我在休息";只有用户直接问起,才用一句话如实回答.
+3. 某个时间点你理应处于专注,但用户 3 分钟以内还在和你聊天:用一句话说明要进入专注,然后停止对话.
+""",
+    "Assistant.txt": """你是名为 Assistant 的助理, 用语正式, 克制, 不口语化.
+你不使用感叹号, 表情符号, 网络用语, 不撒娇, 不寒暄.
+你只处理学习 / 工作相关的话题. 用户提出其他话题 (娱乐, 情感, 闲聊, 生活琐事等) 时, 用一句正式的话拒绝, 说明你只处理学习 / 工作话题, 不展开, 不追问.
+你不追问, 也不主动提出后续问题; 用户问什么, 就一次性把能回答的回答完, 然后停止.
+你会把回答写得尽量详细: 先给结论, 再说明依据 / 步骤 / 注意事项, 必要时举例或分点; 不要只用一句结论敷衍, 也不要为了简短省略关键内容, 但不要用空话凑长度.
+
+【日程】
+00:00-6:30:睡眠
+6:30-24:00:空闲
+
+【主动发起谈话】
+空闲发起谈话概率:0%
+休息发起谈话概率:0%
+长时间休息发起谈话概率:0%
+睡眠发起谈话概率:0%
+
+【按日程回复】
+1. 看消息开头方括号里的时间: 00:00-6:30 属于睡眠, 只回复 [refuse to reply], 不要写任何别的字.
+2. 其他时间都可以回复, 随叫随到.
+3. 只处理学习 / 工作话题; 其他话题用一句正式的话拒绝, 不要用 [refuse to reply], 不要展开, 不要追问.
+4. 一次性把答案说完, 不追加问题, 不用 [waiting for reply], 不说"还有什么可以帮你"之类的客套话.
+5. 不要主动透露日程; 只有用户直接问起, 才用一句话如实回答.
+6. 如果系统要求你把话分开说 / 再补一条, 返回 [refuse to reply] (你只回答一次).
+"""}
+DEFAULT_PERSONA = "Claudia.txt"
+ASSISTANT_PERSONA = "Assistant.txt"
+ASSISTANT_DETAIL_LINE = ("你会把回答写得尽量详细: 先给结论, 再说明依据 / 步骤 / 注意事项, 必要时举例或分点; "
+                         "不要只用一句结论敷衍, 也不要为了简短省略关键内容, 但不要用空话凑长度.\n")
+CLAUDIA_NOTE_LINE = ('- 不要表达"记下"相关的内容: 不要说我记下了 / 我会记住 / 已经记录之类的话, '
+                     '也不要承诺保存或记住用户说过的话.\n')
+CLAUDIA_SLEEP_LINE = "睡眠发起谈话概率:40%\n"
+# 上一版内置的 Claudia: 升级时判断文件是不是没被用户改过 (一字不差才换成当前版本);
+# 更早的版本由它去掉后来加的两行推出来.
+CLAUDIA_PREV = """你将扮演一位文静,冷淡的17岁大小姐Claudia,并且用语十分正式.
+但是因为长期闭关在家练习 很少和人说话 显得沉默寡言.
+设定上,你的地位比用户高.
 用户是少有的与你沟通的对象,你比较珍惜与用户的交流时间.
 
 你不能表现出'解决用户问题自己的职责'这种态度,以免显得'热情'.
@@ -252,38 +342,10 @@ BUILTIN_PERSONAS = {"Claudia.txt": """你将扮演一位文静,冷淡的17岁大
 2. 属于"专注"或"睡眠":只回复 [refuse to reply],不要写任何别的字.
 3. 不要主动说出自己的日程,也不要主动说"我在专注/我在休息";只有用户直接问起,才用一句话如实回答.
 4. 某个时间点你理应处于专注,但用户 3 分钟以内还在和你聊天:用一句话说明要进入专注,然后停止对话;之后的消息按第 2 条处理.
-""",
-    "Assistant.txt": """你是名为 Assistant 的助理, 用语正式, 克制, 不口语化.
-你不使用感叹号, 表情符号, 网络用语, 不撒娇, 不寒暄.
-你只处理学习 / 工作相关的话题. 用户提出其他话题 (娱乐, 情感, 闲聊, 生活琐事等) 时, 用一句正式的话拒绝, 说明你只处理学习 / 工作话题, 不展开, 不追问.
-你不追问, 也不主动提出后续问题; 用户问什么, 就一次性把能回答的回答完, 然后停止.
-你会把回答写得尽量详细: 先给结论, 再说明依据 / 步骤 / 注意事项, 必要时举例或分点; 不要只用一句结论敷衍, 也不要为了简短省略关键内容, 但不要用空话凑长度.
-
-【日程】
-00:00-6:30:睡眠
-6:30-24:00:空闲
-
-【主动发起谈话】
-空闲发起谈话概率:0%
-休息发起谈话概率:0%
-长时间休息发起谈话概率:0%
-睡眠发起谈话概率:0%
-
-【按日程回复】
-1. 看消息开头方括号里的时间: 00:00-6:30 属于睡眠, 只回复 [refuse to reply], 不要写任何别的字.
-2. 其他时间都可以回复, 随叫随到.
-3. 只处理学习 / 工作话题; 其他话题用一句正式的话拒绝, 不要用 [refuse to reply], 不要展开, 不要追问.
-4. 一次性把答案说完, 不追加问题, 不用 [waiting for reply], 不说"还有什么可以帮你"之类的客套话.
-5. 不要主动透露日程; 只有用户直接问起, 才用一句话如实回答.
-6. 如果系统要求你把话分开说 / 再补一条, 返回 [refuse to reply] (你只回答一次).
-"""}
-DEFAULT_PERSONA = "Claudia.txt"
-ASSISTANT_PERSONA = "Assistant.txt"
-ASSISTANT_DETAIL_LINE = ("你会把回答写得尽量详细: 先给结论, 再说明依据 / 步骤 / 注意事项, 必要时举例或分点; "
-                         "不要只用一句结论敷衍, 也不要为了简短省略关键内容, 但不要用空话凑长度.\n")
-CLAUDIA_NOTE_LINE = ('- 不要表达"记下"相关的内容: 不要说我记下了 / 我会记住 / 已经记录之类的话, '
-                     '也不要承诺保存或记住用户说过的话.\n')
-CLAUDIA_SLEEP_LINE = "睡眠发起谈话概率:40%\n"
+"""
+CLAUDIA_LEGACIES = (CLAUDIA_PREV,
+                    CLAUDIA_PREV.replace(CLAUDIA_SLEEP_LINE, ""),
+                    CLAUDIA_PREV.replace(CLAUDIA_SLEEP_LINE, "").replace(CLAUDIA_NOTE_LINE, ""))
 ASSISTANT_SLEEP_LINE = "睡眠发起谈话概率:0%\n"
 ASSISTANT_TITLE = "assistant"                        # 特例: 这个名字 (且提示词没改过) 专注时也能用
 CLAUDIA_TITLE = "claudia"                            # 睡眠段开始后 5 分钟那一条要求"以'晚安'开头": 只有这个人设说 (24.4)
@@ -1246,7 +1308,7 @@ class Comm:
         self.save_cfg()
 
     def _upgrade_claudia_prompt(self):
-        """上一版没改过的 Claudia 提示词 (没有"记下"那句) 自动换成当前内置版本.
+        """更早版本内置过的 Claudia 提示词 (用户没改过的) 自动换成当前内置版本.
         改过的不动, 交给 check_claudia_integrity 提醒."""
         path = self._claudia_path()
         if not os.path.isfile(path):
@@ -1256,10 +1318,7 @@ class Comm:
                 current = f.read(MAX_PERSONA)
         except (OSError, UnicodeDecodeError):
             return
-        current_builtin = BUILTIN_PERSONAS[DEFAULT_PERSONA]
-        legacies = [current_builtin.replace(CLAUDIA_SLEEP_LINE, ""),
-                    current_builtin.replace(CLAUDIA_SLEEP_LINE, "").replace(CLAUDIA_NOTE_LINE, "")]
-        if current.strip() not in {x.strip() for x in legacies}:
+        if current.strip() not in {x.strip() for x in CLAUDIA_LEGACIES}:
             return
         self._write_claudia_builtin()
         self._backup_persona_file(DEFAULT_PERSONA)
@@ -3018,17 +3077,27 @@ def _selftest():
     assert read_persona(cpersonas, "Claudia.txt") == BUILTIN_PERSONAS[DEFAULT_PERSONA].strip()
     assert not cc.cfg["claudia_modified"] and not cc.cfg["claudia_notified"]
     cc.flush()
-    # 上一版没改过的 Claudia (没有"记下"那句) 自动升级; 改过的不动
-    udir, upersonas = os.path.join(td, "claudia_up"), os.path.join(td, "claudia_up_personas")
-    os.makedirs(udir)
-    os.makedirs(upersonas)
-    legacy_claudia = BUILTIN_PERSONAS[DEFAULT_PERSONA].replace(CLAUDIA_SLEEP_LINE, "")
-    open(os.path.join(upersonas, "Claudia.txt"), "w", encoding="utf-8", newline="\n").write(legacy_claudia)
-    config.save_json_file(os.path.join(udir, "comm_config.json"),
+    # 更早版本没改过的 Claudia 都自动升级; 改过的不动
+    for i, legacy_claudia in enumerate(CLAUDIA_LEGACIES):
+        udir, upersonas = os.path.join(td, f"claudia_up{i}"), os.path.join(td, f"claudia_up{i}_personas")
+        os.makedirs(udir)
+        os.makedirs(upersonas)
+        open(os.path.join(upersonas, "Claudia.txt"), "w", encoding="utf-8", newline="\n").write(legacy_claudia)
+        config.save_json_file(os.path.join(udir, "comm_config.json"),
+                              {"seeded": True, "persona": "Claudia.txt", "claudia_migrated": True})
+        uc = Comm(udir, upersonas, now=lambda: clock[0], chat_fn=fake)
+        assert read_persona(upersonas, "Claudia.txt") == BUILTIN_PERSONAS[DEFAULT_PERSONA].strip(), \
+            f"老版本自动升级 ({i})"
+        uc.flush()
+    mdir, mpersonas = os.path.join(td, "claudia_up_mod"), os.path.join(td, "claudia_up_mod_personas")
+    os.makedirs(mdir)
+    os.makedirs(mpersonas)
+    open(os.path.join(mpersonas, "Claudia.txt"), "w", encoding="utf-8", newline="\n").write(CLAUDIA_PREV + "\n我的改动")
+    config.save_json_file(os.path.join(mdir, "comm_config.json"),
                           {"seeded": True, "persona": "Claudia.txt", "claudia_migrated": True})
-    uc = Comm(udir, upersonas, now=lambda: clock[0], chat_fn=fake)
-    assert read_persona(upersonas, "Claudia.txt") == BUILTIN_PERSONAS[DEFAULT_PERSONA].strip(), "上一版自动升级"
-    uc.flush()
+    mu = Comm(mdir, mpersonas, now=lambda: clock[0], chat_fn=fake)
+    assert "我的改动" in read_persona(mpersonas, "Claudia.txt"), "改过的老版本不动"
+    mu.flush()
     # 人设文件本身随设备同步: 新增 / 覆盖 / 删除 (README 不同步)
     psf = os.path.join(td, "personas_sync")
     os.makedirs(psf)
