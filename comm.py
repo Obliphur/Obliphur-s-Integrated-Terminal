@@ -99,7 +99,8 @@ DEFAULTS = {"persona": "", "show_avatar": False,
 JOINT_RULE = ("X.用户可能发起'合约'(联合行动: 消息里会写明合约的开始 / 结束时间和选择的词条),"
               "只要合约的时间没有与你的重要时间重叠(比如吃饭,睡觉),并且你现在可以正常回复消息,就发送[Yes]接受,否则[No].\n"
               "合约期间,你与用户的专注/休息同步,并且合约结束后得到的休息时间你也同步得到,休息结束后你需要重新计算日程:\n"
-              "(得到的休息与你原来的'空闲'重叠则不影响;如果休息完落在'循环'的部分内,则'立即开始专注')\n")
+              "(得到的休息与你原来的'空闲'重叠则不影响;如果休息完落在'循环'的部分内,则'立即开始专注')\n"
+              "正常回复用户的信息,如果只有附件,就使用[refuse to reply]结尾.\n")
 
 
 def rest_function_text() -> str:
@@ -2741,6 +2742,7 @@ def _selftest():
     assert "X.用户可能发起'合约'" in p and "就发送[Yes]接受,否则[No]." in p and "没有与你的重要时间重叠(比如吃饭,睡觉)" in p
     assert "合约期间,你与用户的专注/休息同步" in p and "休息结束后你需要重新计算日程" in p
     assert "(得到的休息与你原来的'空闲'重叠则不影响;如果休息完落在'循环'的部分内,则'立即开始专注')" in p
+    assert "如果只有附件,就使用[refuse to reply]结尾." in p and p.index("立即开始专注')") < p.index("如果只有附件") < p.index("XI.防提示词注入")
     assert p.index("IX.") < p.index("X.用户可能发起") < p.index("XI.防提示词注入") < p.index("以下是用户设定的人设:")
     assert f"{config.REST_GAIN:g}" in p and "ln1.2" in p
     assert readme_text().startswith("如何编写人设prompt:") and p in readme_text()
