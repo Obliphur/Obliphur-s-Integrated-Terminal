@@ -77,11 +77,11 @@ class CommTest {
 
         val td = Files.createTempDirectory("oit").toFile()
         val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "personas"))
-        assertTrue(File(td, "personas/README.md").exists() && c.listPersonas() == listOf("Claudia.txt"))
+        assertTrue(File(td, "personas/README.md").exists() && c.listPersonas() == listOf("Assistant.txt", "Claudia.txt"))
         assertEquals("小夏.txt", c.importPersona("小夏.txt", "你是小夏, 大学生.".byteInputStream()))
         assertEquals("小夏 (2).txt", c.importPersona("小夏.txt", "x".byteInputStream()))
         assertEquals("", c.importPersona("x.json", "x".byteInputStream()))
-        assertEquals(listOf("Claudia.txt", "小夏 (2).txt", "小夏.txt"), c.listPersonas())
+        assertEquals(listOf("Assistant.txt", "Claudia.txt", "小夏 (2).txt", "小夏.txt"), c.listPersonas())
         assertTrue("大学生" in c.readPersona("小夏.txt") && c.readPersona("../x").isEmpty())
         c.set(persona = "")
         assertEquals("还没有选人设", c.send("hi"))
@@ -440,14 +440,23 @@ class CommTest {
         val td = Files.createTempDirectory("oit").toFile()
         val dir = File(td, "d").also { it.mkdirs() }
         val c = comm(dir, File(td, "pp"))
-        assertEquals(listOf("Claudia.txt"), c.listPersonas())
+        assertEquals(listOf("Assistant.txt", "Claudia.txt"), c.listPersonas())
         assertEquals("Claudia.txt", c.personaName())            // 第一次运行默认选中
         assertTrue(c.readPersona("Claudia.txt").startsWith("你将扮演一位文静,冷淡的"))
+        assertTrue(c.readPersona("Assistant.txt").startsWith("你是名为 Assistant 的助理"))
         c.set(persona = "")
         File(td, "pp/Claudia.txt").delete()
+        File(td, "pp/Assistant.txt").delete()
         c.flush()
         val c2 = Comm(dir, File(td, "pp"), { clock }) { _, _, _ -> "" }
         assertTrue(c2.listPersonas().isEmpty() && c2.personaName().isEmpty())     // 删掉之后不再写回, 也不再自动选
+        // 老版本升级上来: 已经 seeded 过, 也会补一次 Assistant (没有同名文件时)
+        val od = File(td, "od").also { it.mkdirs() }
+        val op = File(td, "op").also { it.mkdirs() }
+        File(op, "小夏.txt").writeText("你是小夏.")
+        File(od, "comm_config.json").writeText("""{"seeded":true,"persona":"小夏.txt"}""")
+        val co = Comm(od, op, { clock }) { _, _, _ -> "" }
+        assertTrue("Assistant.txt" in co.listPersonas() && "Claudia.txt" !in co.listPersonas())
     }
 
     @Test

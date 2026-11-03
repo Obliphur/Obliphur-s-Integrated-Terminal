@@ -70,7 +70,8 @@ CHAT_TEMPERATURE = 0.8
 WEEKDAY = "一二三四五六日"
 
 DEFAULTS = {"persona": "", "show_avatar": False,
-            "avatar_me": "", "avatar_ai": "", "pro_key": "", "retry": {}, "clear_ts": 0, "seeded": False, "legacy_done": False, "user_profile": "", "split_send": True,
+            "avatar_me": "", "avatar_ai": "", "pro_key": "", "retry": {}, "clear_ts": 0, "seeded": False, "assistant_seeded": False,
+            "legacy_done": False, "user_profile": "", "split_send": True,
             "bg_pro": True, "mute_pro": [], "idle_use": {}}
 
 
@@ -242,8 +243,31 @@ BUILTIN_PERSONAS = {"Claudia.txt": """你将扮演一位文静,冷淡的17岁大
 2. 属于"专注"或"睡眠":只回复 [refuse to reply],不要写任何别的字.
 3. 不要主动说出自己的日程,也不要主动说"我在专注/我在休息";只有用户直接问起,才用一句话如实回答.
 4. 某个时间点你理应处于专注,但用户 3 分钟以内还在和你聊天:用一句话说明要进入专注,然后停止对话;之后的消息按第 2 条处理.
+""",
+    "Assistant.txt": """你是名为 Assistant 的助理, 用语正式, 克制, 不口语化.
+你不使用感叹号, 表情符号, 网络用语, 不撒娇, 不寒暄.
+你只处理学习 / 工作相关的话题. 用户提出其他话题 (娱乐, 情感, 闲聊, 生活琐事等) 时, 用一句正式的话拒绝, 说明你只处理学习 / 工作话题, 不展开, 不追问.
+你不追问, 也不主动提出后续问题; 用户问什么, 就一次性把能回答的回答完, 然后停止.
+
+【日程】
+00:00-6:30:睡眠
+6:30-24:00:空闲
+
+【主动发起谈话】
+空闲发起谈话概率:0%
+休息发起谈话概率:0%
+长时间休息发起谈话概率:0%
+
+【按日程回复】
+1. 看消息开头方括号里的时间: 00:00-6:30 属于睡眠, 只回复 [refuse to reply], 不要写任何别的字.
+2. 其他时间都可以回复, 随叫随到.
+3. 只处理学习 / 工作话题; 其他话题用一句正式的话拒绝, 不要用 [refuse to reply], 不要展开, 不要追问.
+4. 一次性把答案说完, 不追加问题, 不用 [waiting for reply], 不说"还有什么可以帮你"之类的客套话.
+5. 不要主动透露日程; 只有用户直接问起, 才用一句话如实回答.
+6. 如果系统要求你把话分开说 / 再补一条, 返回 [refuse to reply] (你只回答一次).
 """}
 DEFAULT_PERSONA = "Claudia.txt"
+ASSISTANT_PERSONA = "Assistant.txt"
 CHAT_KEYS = ("clear_ts", "retry", "pro_key")          # 跟着聊天对象走的几项 (存在各自的聊天文件里)
 
 
@@ -252,11 +276,13 @@ def pid_of(persona: str) -> str:
     return f"{zlib.crc32(persona.encode('utf-8')):08x}" if persona else ""
 
 
-def seed_builtin(folder: str):
-    """把自带的人设写进文件夹 (已经有同名文件的不动)."""
+def seed_builtin(folder: str, only: str = None):
+    """把自带的人设写进文件夹 (已经有同名文件的不动). only: 只写这一个."""
     try:
         os.makedirs(folder, exist_ok=True)
         for name, body in BUILTIN_PERSONAS.items():
+            if only and name != only:
+                continue
             path = os.path.join(folder, name)
             if not os.path.exists(path):
                 with open(path, "w", encoding="utf-8", newline="\n") as f:
@@ -589,6 +615,10 @@ class Comm:
             if not self.cfg.get("persona") and DEFAULT_PERSONA in list_personas(self.personas):
                 self.set_persona(DEFAULT_PERSONA)
             self.cfg["seeded"] = True
+            self.save_cfg()
+        if not self.cfg.get("assistant_seeded"):            # 老版本升级上来: 补一次 Assistant (已有同名文件的不动)
+            seed_builtin(self.personas, ASSISTANT_PERSONA)
+            self.cfg["assistant_seeded"] = True
             self.save_cfg()
         self._migrate_avatars()
         last = self.messages[-1] if self.messages else None
@@ -2045,12 +2075,24 @@ def _selftest():
     os.makedirs(fresh_dir)
     cf = Comm(fresh_dir, fresh_personas, now=lambda: clock[0], chat_fn=fake)
     assert "Claudia.txt" in list_personas(fresh_personas) and cf.persona_name() == "Claudia.txt"
+    assert "Assistant.txt" in list_personas(fresh_personas), "自带的人设也有 Assistant"
     assert read_persona(fresh_personas, "Claudia.txt").startswith("你将扮演一位文静,冷淡的")
+    assert read_persona(fresh_personas, "Assistant.txt").startswith("你是名为 Assistant 的助理")
     cf.set_cfg(persona="")
-    os.remove(os.path.join(fresh_personas, "Claudia.txt"))
+    for name in ("Claudia.txt", "Assistant.txt"):
+        os.remove(os.path.join(fresh_personas, name))
     cf.flush()
     cf2 = Comm(fresh_dir, fresh_personas, now=lambda: clock[0], chat_fn=fake)
     assert list_personas(fresh_personas) == [] and cf2.persona_name() == "", "删掉之后不再写回, 也不再自动选"
+    # 老版本升级上来: 已经 seeded 过, 也会补一次 Assistant (没有同名文件时)
+    old_dir, old_personas = os.path.join(td, "old"), os.path.join(td, "old_personas")
+    os.makedirs(old_dir)
+    os.makedirs(old_personas)
+    open(os.path.join(old_personas, "小夏.txt"), "w", encoding="utf-8").write("你是小夏.")
+    config.save_json_file(os.path.join(old_dir, "comm_config.json"), {"seeded": True, "persona": "小夏.txt"})
+    co = Comm(old_dir, old_personas, now=lambda: clock[0], chat_fn=fake)
+    assert "Assistant.txt" in list_personas(old_personas) and "Claudia.txt" not in list_personas(old_personas)
+    co.flush()
     # 请求日志 / 选模型 / 等待提示
     logp = os.path.join(data, "comm.log")
     assert os.path.exists(logp) and "REQ user start" in open(logp, encoding="utf-8").read()

@@ -34,6 +34,7 @@ class SegEntry(val kind: String, val start: Int, val end: Int, val label: String
 /** OIT 自带的人设: 第一次运行时放进人设文件夹 (之后随便改 / 删, 不会再被写回), 并且默认选中 Claudia. */
 object BuiltinPersonas {
     const val DEFAULT = "Claudia.txt"
+    const val ASSISTANT = "Assistant.txt"
     val ALL = mapOf(DEFAULT to """你将扮演一位文静,冷淡的17岁大小姐Claudia,并且用语十分正式.
 但是因为长期闭关在家练习 很少和人说话 显得沉默寡言.
 设定上,你的地位比用户高.
@@ -80,6 +81,28 @@ object BuiltinPersonas {
 2. 属于"专注"或"睡眠":只回复 [refuse to reply],不要写任何别的字.
 3. 不要主动说出自己的日程,也不要主动说"我在专注/我在休息";只有用户直接问起,才用一句话如实回答.
 4. 某个时间点你理应处于专注,但用户 3 分钟以内还在和你聊天:用一句话说明要进入专注,然后停止对话;之后的消息按第 2 条处理.
+""",
+        ASSISTANT to """你是名为 Assistant 的助理, 用语正式, 克制, 不口语化.
+你不使用感叹号, 表情符号, 网络用语, 不撒娇, 不寒暄.
+你只处理学习 / 工作相关的话题. 用户提出其他话题 (娱乐, 情感, 闲聊, 生活琐事等) 时, 用一句正式的话拒绝, 说明你只处理学习 / 工作话题, 不展开, 不追问.
+你不追问, 也不主动提出后续问题; 用户问什么, 就一次性把能回答的回答完, 然后停止.
+
+【日程】
+00:00-6:30:睡眠
+6:30-24:00:空闲
+
+【主动发起谈话】
+空闲发起谈话概率:0%
+休息发起谈话概率:0%
+长时间休息发起谈话概率:0%
+
+【按日程回复】
+1. 看消息开头方括号里的时间: 00:00-6:30 属于睡眠, 只回复 [refuse to reply], 不要写任何别的字.
+2. 其他时间都可以回复, 随叫随到.
+3. 只处理学习 / 工作话题; 其他话题用一句正式的话拒绝, 不要用 [refuse to reply], 不要展开, 不要追问.
+4. 一次性把答案说完, 不追加问题, 不用 [waiting for reply], 不说"还有什么可以帮你"之类的客套话.
+5. 不要主动透露日程; 只有用户直接问起, 才用一句话如实回答.
+6. 如果系统要求你把话分开说 / 再补一条, 返回 [refuse to reply] (你只回答一次).
 """)
 }
 
@@ -413,6 +436,7 @@ class Comm(
     init { usageSink = { i, c -> log("USAGE input=$i cached=$c") } }
     private var proCache: Map<String, Double> = emptyMap()       // 同一个人设文件里写的主动发起谈话的概率 (CommText.personaProbs)
     private var seeded = false
+    private var assistantSeeded = false
     private var legacyDone = false
     /** 现在聊的对象的编号 (人设文件名的 crc; 没有对象 = ""). */
     @Volatile var pid = ""; private set
@@ -489,6 +513,14 @@ class Comm(
             }
             if (persona.isEmpty() && BuiltinPersonas.DEFAULT in listPersonas()) switchTo(BuiltinPersonas.DEFAULT)
             seeded = true
+            saveCfg()
+        }
+        if (!assistantSeeded) {                           // 老版本升级上来: 补一次 Assistant (已有同名文件的不动)
+            runCatching {
+                val f = File(personas, BuiltinPersonas.ASSISTANT)
+                if (!f.exists()) f.writeText(BuiltinPersonas.ALL.getValue(BuiltinPersonas.ASSISTANT), Charsets.UTF_8)
+            }
+            assistantSeeded = true
             saveCfg()
         }
         migrateAvatars()
@@ -601,6 +633,7 @@ class Comm(
             bgPro = d.optBoolean("bg_pro", true)
             d.optJSONArray("mute_pro")?.let { a -> for (i in 0 until a.length()) a.optString(i).takeIf { it.isNotEmpty() }?.let { muted.add(it) } }
             seeded = d.optBoolean("seeded", false)
+            assistantSeeded = d.optBoolean("assistant_seeded", false)
             legacyDone = d.optBoolean("legacy_done", false)
             // 旧版本这几项存在设置里 (所有对象共用): 迁移时归给现在选着的对象
             proKey = d.optString("pro_key", "")
@@ -635,7 +668,8 @@ class Comm(
     private fun saveCfg() {
         val o = JSONObject().put("persona", persona)
             .put("show_avatar", showAvatar).put("avatar_me", avatarMe).put("avatar_ai", avatarAi)
-            .put("user_profile", userProfile).put("seeded", seeded).put("legacy_done", legacyDone).put("split_send", splitSend)
+            .put("user_profile", userProfile).put("seeded", seeded).put("assistant_seeded", assistantSeeded)
+            .put("legacy_done", legacyDone).put("split_send", splitSend)
             .put("bg_pro", bgPro).put("mute_pro", JSONArray(muted.toList()))
             .put("idle_use", JSONObject().put("d", idleDay).put("s", idleSec))
         writer.execute { Store.write(cfgFile, o) }
