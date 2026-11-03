@@ -512,7 +512,26 @@ class CommTest {
         wait(c)
         assertEquals("睡前说一句", c.visible().last().text)
         val body = calls.last().second.last().second
-        assertTrue("进入睡眠约 5 分钟" in body && "即使你此刻处于睡眠时段" in body && "以'晚安'开头" in body)
+        assertTrue("进入睡眠约 5 分钟" in body && "即使你此刻处于睡眠时段" in body)
+        assertFalse("别的人设: 不要它'以晚安开头'", "以'晚安'开头" in body)
+    }
+
+    /** IV. 只有人设叫 Claudia 的, 睡眠段那一条才要求"以'晚安'开头". */
+    @Test
+    fun sleepProactiveClaudia() {
+        val td = Files.createTempDirectory("oit").toFile()
+        val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
+        File(td, "p/Claudia.txt").writeText("你是Claudia.\n23:30-6:30:睡眠\n睡眠发起谈话概率:100%\n")
+        c.set(persona = "Claudia.txt")
+        assertTrue("名字是 Claudia", c.isClaudia())
+        c.snapshot = { CommSnap("idle") }
+        clock = LocalDateTime.of(2028, 5, 2, 23, 35, 0)
+        script.add("晚安")
+        c.tick()
+        assertTrue("Claudia 的睡眠段: 照样发", c.busy)
+        wait(c)
+        val body = calls.last().second.last().second
+        assertTrue("Claudia: 要求以'晚安'开头", "以'晚安'开头" in body)
     }
 
     /** 手动改人设: 还原文件保留聊天; 确定清空对应聊天. */

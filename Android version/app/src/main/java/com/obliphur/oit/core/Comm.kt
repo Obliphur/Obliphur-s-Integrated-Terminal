@@ -1150,6 +1150,13 @@ class Comm(
         return readPersona(name) == BuiltinPersonas.ALL.getValue(BuiltinPersonas.ASSISTANT).trim()
     }
 
+    /** 名字是 Claudia (不分大小写 / 后缀; 内容改过也算, 别的名字改写过来的不算).
+     *  睡眠段开始后 5 分钟那一条"以'晚安'开头"只对这个人设说 (24.4 IV); name 为空时用现在聊的. */
+    fun isClaudia(name: String? = null): Boolean {
+        val n = name ?: personaName()
+        return n.isNotEmpty() && personaTitle(n).trim().lowercase() == "claudia"
+    }
+
     // ---- 人设文件本身: 随设备同步 (每 2 分钟检查一次变化; README 不同步, 各设备按界面语言生成) ----
     /** 人设文件夹里的 .txt / .md (文件名 → 全文), 给设备同步用. */
     fun personaDoc(): Map<String, String> {
@@ -1644,10 +1651,11 @@ class Comm(
             val due = begin.plusSeconds(PROACTIVE_SLEEP_DELAY.toLong())
             if (t.isBefore(due)) continue
             val pct = if (ctx != null) ctx.probs["sleep"] ?: defaultP("sleep") else proPercent("sleep")
+            val greet = if (isClaudia(ctx?.name)) "这条消息以'晚安'开头; " else ""
             proFire(key, due, t, pct / 100.0,
                 "[系统] 按你的日程, 你进入睡眠约 ${PROACTIVE_SLEEP_DELAY / 60} 分钟了. " +
                 "这条是系统触发的: 即使你此刻处于睡眠时段, 也允许你主动给用户发一条消息, 话题自己找 (不要透露日程); " +
-                "发完继续睡, 用户回复时按日程拒绝; 这条消息以'晚安'开头; 如果实在不方便, 返回${CommText.REFUSE}.", ctx)
+                "发完继续睡, 用户回复时按日程拒绝; ${greet}如果实在不方便, 返回${CommText.REFUSE}.", ctx)
             return
         }
         // II / III. 人设日程里每段空闲 / 休息开始前 1~3 分钟, 有概率发一条

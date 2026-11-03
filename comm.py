@@ -286,6 +286,7 @@ CLAUDIA_NOTE_LINE = ('- 不要表达"记下"相关的内容: 不要说我记下�
 CLAUDIA_SLEEP_LINE = "睡眠发起谈话概率:40%\n"
 ASSISTANT_SLEEP_LINE = "睡眠发起谈话概率:0%\n"
 ASSISTANT_TITLE = "assistant"                        # 特例: 这个名字 (且提示词没改过) 专注时也能用
+CLAUDIA_TITLE = "claudia"                            # 睡眠段开始后 5 分钟那一条要求"以'晚安'开头": 只有这个人设说 (24.4)
 CHAT_KEYS = ("clear_ts", "retry", "pro_key")          # 跟着聊天对象走的几项 (存在各自的聊天文件里)
 
 
@@ -1319,6 +1320,12 @@ class Comm:
             return False
         return read_persona(self.personas, name) == BUILTIN_PERSONAS[ASSISTANT_PERSONA].strip()
 
+    def is_claudia(self, name: str = None) -> bool:
+        """名字是 Claudia (不分大小写 / 后缀; 内容改过也算, 别的名字改写过来的不算).
+        睡眠段开始后 5 分钟那一条"以'晚安'开头"只对这个人设说 (24.4 IV); name 为空时用现在聊的."""
+        name = self.persona_name() if name is None else name
+        return bool(name) and persona_title(name).strip().casefold() == CLAUDIA_TITLE
+
     # ---- 人设文件本身: 随设备同步 (每 2 分钟检查一次变化; README 不同步, 各设备按界面语言生成) ----
     def persona_doc(self) -> dict:
         """人设文件夹里的 .txt / .md (文件名 → 全文), 给设备同步用."""
@@ -1982,10 +1989,11 @@ class Comm:
             if now < due:
                 continue
             pct = ctx["probs"].get("sleep", float(PROACTIVE_P["sleep"])) if ctx else self.pro_percent("sleep")
+            greet = "这条消息以'晚安'开头; " if self.is_claudia(ctx["name"] if ctx else None) else ""
             self._pro_fire(key, due, now, pct / 100.0,
                            f"[系统] 按你的日程, 你进入睡眠约 {PROACTIVE_SLEEP_DELAY // 60} 分钟了. "
                            f"这条是系统触发的: 即使你此刻处于睡眠时段, 也允许你主动给用户发一条消息, 话题自己找 (不要透露日程); "
-                           f"发完继续睡, 用户回复时按日程拒绝; 这条消息以'晚安'开头; 如果实在不方便, 返回{REFUSE}.", ctx)
+                           f"发完继续睡, 用户回复时按日程拒绝; {greet}如果实在不方便, 返回{REFUSE}.", ctx)
             return
         # II / III. 人设日程里每段空闲 / 休息开始前 1~3 分钟, 有概率发一条
         for key, kind, begin in self._schedule_events(now, ctx["segs"] if ctx else None):
@@ -3054,8 +3062,27 @@ def _selftest():
     wait(sm)
     assert sm.visible()[-1]["text"] == "睡前说一句"
     body = calls[-1][1][-1]["content"]
-    assert "进入睡眠约 5 分钟" in body and "即使你此刻处于睡眠时段" in body and "以'晚安'开头" in body
+    assert "进入睡眠约 5 分钟" in body and "即使你此刻处于睡眠时段" in body
+    assert "以'晚安'开头" not in body, "别的人设: 不要它'以晚安开头'"
     sm.flush()
+    # 人设叫 Claudia 的才要求"以'晚安'开头"
+    os.makedirs(os.path.join(td, "sleep_claudia"))
+    cwpersonas = os.path.join(td, "sleep_claudia_personas")
+    cw = Comm(os.path.join(td, "sleep_claudia"), cwpersonas, now=lambda: clock[0], chat_fn=fake)
+    cw.ai.set_profile("deepseek", api_key="k")
+    cw.ai.provider = "deepseek"
+    open(os.path.join(cwpersonas, "Claudia.txt"), "w", encoding="utf-8", newline="\n").write(
+        "你是Claudia.\n23:30-6:30:睡眠\n睡眠发起谈话概率:100%\n")
+    cw.set_cfg(persona="Claudia.txt")
+    assert cw.is_claudia(), "名字是 Claudia"
+    cw.snapshot = lambda: {"state": "idle"}
+    clock[0] = datetime(2028, 5, 2, 23, 35, 0)
+    script.append("晚安")
+    cw.tick()
+    assert cw.busy, "Claudia 的睡眠段: 照样发"
+    wait(cw)
+    assert "以'晚安'开头" in calls[-1][1][-1]["content"], "Claudia: 要求以'晚安'开头"
+    cw.flush()
     clock[0] = clock_before_sleep_msg
     # 手动改人设: 还原文件保留聊天; 确定清空对应聊天
     os.makedirs(os.path.join(td, "change"))
