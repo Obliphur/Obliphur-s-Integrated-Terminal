@@ -405,8 +405,11 @@ def is_deepseek(profile: dict) -> bool:
     return host == "deepseek.com" or host.endswith(".deepseek.com")
 
 
+THINK_REJECT = set()            # 回了 400 的 endpoint (只在内存里): 它不认 thinking 字段, 之后不再带
+
+
 def _build_body(profile: dict, system: str, messages: list, max_tokens: int, temperature: float,
-                cache: bool) -> dict:
+                cache: bool, think_off: bool = True) -> dict:
     """请求体. DeepSeek 的思考模式默认是开的: 聊天只要一两句话, 思考 token 按输出价计费, 而且思考模式下
     temperature 会被忽略 (人设的语气就不稳了), 所以对它的官方地址显式关掉."""
     if profile["protocol"] == "anthropic":
@@ -420,16 +423,33 @@ def _build_body(profile: dict, system: str, messages: list, max_tokens: int, tem
         body = {"model": profile["model"], "max_tokens": max_tokens, "system": sys_field, "messages": msgs}
         if is_deepseek(profile):
             body["reasoning"] = {"effort": "none"}          # Anthropic 格式: none = 关思考
+        elif think_off:
+            body["thinking"] = {"type": "disabled"}         # 中转 / 官方 Anthropic: 默认关思考 (不认就 400, chat_messages 会去掉重试)
         return body
     body = {"model": profile["model"], "max_tokens": max_tokens, "temperature": temperature,
             "messages": [{"role": "system", "content": system}] + list(messages)}
-    if is_deepseek(profile):
+    if is_deepseek(profile) or think_off:
         body["thinking"] = {"type": "disabled"}
     return body
 
 
 def chat_messages(profile: dict, system: str, messages: list, timeout: float = 90.0, opener=None,
                   max_tokens: int = MAX_TOKENS, temperature: float = 0.2, cache: bool = False, on_usage=None) -> str:
+    """默认关思考: 请求里带 thinking: {"type": "disabled"}; 服务商 (中转) 不认这个字段回 400 时, 去掉它重试一次,
+    并记住这个地址 (THINK_REJECT), 以后不再带. DeepSeek 官方地址一直带 (它认)."""
+    tkey = endpoint(profile) if profile.get("base_url") else ""
+    if tkey and tkey not in THINK_REJECT:
+        try:
+            return _chat_once(profile, system, messages, timeout, opener, max_tokens, temperature, cache, on_usage, True)
+        except AIError as e:
+            if not (e.kind == "http" and e.message.startswith("服务商返回 400") and not is_deepseek(profile)):
+                raise
+            THINK_REJECT.add(tkey)
+    return _chat_once(profile, system, messages, timeout, opener, max_tokens, temperature, cache, on_usage, False)
+
+
+def _chat_once(profile: dict, system: str, messages: list, timeout: float, opener, max_tokens: int,
+               temperature: float, cache: bool, on_usage, think_off: bool) -> str:
     """带历史的一次请求: messages = [{"role": "user" | "assistant", "content": 文字}], 以 user 开头, 以 user 结尾.
     API 本身没有记忆, 想让模型记得前面说过的话, 就得每次把历史一起发过去 (沟通页, comm.py).
     cache: 提示缓存 (沟通里"分条发"会连着调用两次, 第二次的前面全是第一次发过的内容). Anthropic 协议要明确标出缓存位置 (系统提示和最后一条消息),
@@ -443,7 +463,7 @@ def chat_messages(profile: dict, system: str, messages: list, timeout: float = 9
         headers["anthropic-version"] = ANTHROPIC_VERSION
     elif key:
         headers["Authorization"] = "Bearer " + key
-    body = _build_body(profile, system, messages, max_tokens, temperature, cache)
+    body = _build_body(profile, system, messages, max_tokens, temperature, cache, think_off)
     req = urllib.request.Request(endpoint(profile),
                                  data=json.dumps(body).encode("utf-8"),
                                  headers=headers, method="POST")
@@ -882,7 +902,9 @@ def _selftest():
         ds = dict(p, base_url="https://api.deepseek.com", model="deepseek-flash")
         b = _build_body(ds, "SYS", [{"role": "user", "content": "hi"}], 4096, 0.8, True)
         assert b["thinking"] == {"type": "disabled"} and b["temperature"] == 0.8
-        assert "thinking" not in _build_body(p, "SYS", [{"role": "user", "content": "hi"}], 4096, 0.8, True)
+        # 别家 / 中转: 默认也关 (thinking disabled); 不认回 400 就去掉重试, 并记住
+        assert _build_body(p, "SYS", [{"role": "user", "content": "hi"}], 4096, 0.8, True)["thinking"] == {"type": "disabled"}
+        assert "thinking" not in _build_body(p, "SYS", [{"role": "user", "content": "hi"}], 4096, 0.8, True, False)
         b = _build_body(dict(ds, protocol="anthropic", base_url="https://api.deepseek.com/anthropic"),
                         "SYS", [{"role": "user", "content": "hi"}], 4096, 0.8, True)
         assert b["reasoning"] == {"effort": "none"} and "thinking" not in b

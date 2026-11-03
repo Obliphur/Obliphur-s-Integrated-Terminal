@@ -143,6 +143,25 @@ object Ai {
     fun chatMessages(p: Profile, system: String, messages: List<Pair<String, String>>,
                      maxTokens: Int = MAX_TOKENS, temperature: Double = 0.2, timeoutMs: Int = 90_000,
                      cache: Boolean = false, onUsage: ((Long, Long) -> Unit)? = null): String {
+        // 默认关思考 (thinking disabled); 服务商 (中转) 不认这个字段回 400 时去掉重试一次, 并记住这个地址 (同 ai_assist.chat_messages)
+        val tkey = if (p.baseUrl.isNotBlank()) endpoint(p) else ""
+        if (tkey.isNotEmpty() && tkey !in THINK_REJECT) {
+            try {
+                return chatOnce(p, system, messages, maxTokens, temperature, timeoutMs, cache, onUsage, true)
+            } catch (e: AiError) {
+                if (!(e.kind == "http" && (e.message ?: "").startsWith("服务商返回 400") && !isDeepSeek(p))) throw e
+                THINK_REJECT.add(tkey)
+            }
+        }
+        return chatOnce(p, system, messages, maxTokens, temperature, timeoutMs, cache, onUsage, false)
+    }
+
+    /** 回了 400 的 endpoint (只在内存里): 它不认 thinking 字段, 之后不再带. */
+    val THINK_REJECT: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
+    private fun chatOnce(p: Profile, system: String, messages: List<Pair<String, String>>,
+                         maxTokens: Int, temperature: Double, timeoutMs: Int,
+                         cache: Boolean, onUsage: ((Long, Long) -> Unit)?, thinkOff: Boolean): String {
         checkProfile(p)
         val key = p.apiKey.trim()
         val conn = URL(endpoint(p)).openConnection() as HttpURLConnection
@@ -158,7 +177,7 @@ object Ai {
         if (isDeepSeek(p)) {
             if (p.protocol == "anthropic") body.put("reasoning", JSONObject().put("effort", "none"))
             else body.put("thinking", JSONObject().put("type", "disabled"))
-        }
+        } else if (thinkOff) body.put("thinking", JSONObject().put("type", "disabled"))
         val arr = JSONArray()
         if (p.protocol == "anthropic") {
             conn.setRequestProperty("x-api-key", key)
