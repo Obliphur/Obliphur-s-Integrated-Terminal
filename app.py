@@ -360,7 +360,7 @@ class BreakTimerApp:
         self.comm.blocked = self._comm_blocked
         self.comm.ai_blocked = self._comm_ai_blocked
         self.comm.state_fn = self._comm_state
-        self.comm.hard_block = lambda: self.contract.has("silent")
+        self.comm.hard_block = lambda: self.contract.has("silent") and not config.dev_mode_enabled()
         self.comm.on_proactive = self._comm_ping
         self.comm.on_joint_due = self._joint_due
         self._joint_pick = False         # 联合行动: 正在合约页选词条 (点"确定选择"回到沟通页)
@@ -1115,7 +1115,9 @@ class BreakTimerApp:
         return "idle"
 
     def _comm_blocked(self) -> str:
-        """现在不能用沟通的原因 ("" = 可以)."""
+        """现在不能用沟通的原因 ("" = 可以). 开发者模式下沟通总是开放."""
+        if config.dev_mode_enabled():
+            return ""
         if self.contract.has("silent"):
             return tr("无言为真生效中, 无法使用沟通")
         st = self._comm_state()
@@ -1129,7 +1131,9 @@ class BreakTimerApp:
 
     def _comm_ai_blocked(self) -> str:
         """对方现在不能主动发消息的原因 ("" = 可以). 用户专注 / 睡眠时对方仍可以发 (消息先藏起来, 回到休息 / 空闲再通知);
-        外出 / 无言为真 / 空闲额度用完时不会尝试发消息."""
+        外出 / 无言为真 / 空闲额度用完时不会尝试发消息. 开发者模式下总是开放."""
+        if config.dev_mode_enabled():
+            return ""
         if self.contract.has("silent"):
             return tr("无言为真生效中, 无法使用沟通")
         st = self._comm_state()

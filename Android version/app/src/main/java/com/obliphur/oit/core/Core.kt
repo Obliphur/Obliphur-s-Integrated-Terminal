@@ -257,7 +257,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         comm.blocked = { commBlocked() }
         comm.aiBlocked = { commAiBlocked() }
         comm.stateFn = { commState() }
-        comm.hardBlock = { contract.has("silent") }
+        comm.hardBlock = { contract.has("silent") && !settings.devMode }
         comm.onProactive = { host.playCommSound() }
         comm.onJointDue = { j -> jointDue(j) }
         comm.dataFn = { sel ->
@@ -279,6 +279,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
 
     /** 现在不能用沟通的原因 ("" = 可以). */
     private fun commBlocked(): String {
+        if (settings.devMode) return ""                  // 开发者模式: 沟通总是开放
         if (contract.has("silent")) return tr("无言为真生效中, 无法使用沟通")
         val st = commState()
         if (st == "focus" && comm.isBuiltinAssistantUnmodified()) return ""   // 特例: 没改过提示词的内置 Assistant
@@ -320,6 +321,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     /** 对方现在不能主动发消息的原因 ("" = 可以). 用户专注 / 睡眠时对方仍可以发 (消息先藏起来, 回到休息 / 空闲再通知);
      *  外出 / 无言为真 / 空闲额度用完时不会尝试发消息. */
     private fun commAiBlocked(): String {
+        if (settings.devMode) return ""                  // 开发者模式: 沟通总是开放
         if (contract.has("silent")) return tr("无言为真生效中, 无法使用沟通")
         val st = commState()
         return when (st) {
