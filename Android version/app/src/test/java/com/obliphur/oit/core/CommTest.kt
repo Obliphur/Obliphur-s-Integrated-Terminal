@@ -347,6 +347,80 @@ class CommTest {
         assertFalse(c.busy)                                                    // 专注中不会主动发 / 重试
     }
 
+    /** 用户睡眠: 对方仍按日程主动发, 但消息先藏起来、不通知; 醒来才显示 (+ 提示音). 用户专注: 完全不尝试. */
+    @Test
+    fun sleepAllowsOutgoingButHolds() {
+        val td = Files.createTempDirectory("oit").toFile()
+        val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
+        c.importPersona("夜猫.txt", "你是夜猫.\n12:30-13:00:空闲\n空闲发起谈话概率:100%\n".byteInputStream())
+        c.set(persona = "夜猫.txt")
+        c.stateFn = { "sleep" }
+        c.blocked = { "睡眠中不能使用沟通" }
+        c.aiBlocked = { "" }
+        c.snapshot = { CommSnap("sleep") }
+        val pings = mutableListOf<Int>()
+        c.onProactive = { pings.add(1) }
+        script.add("睡着了也要说")
+        val begin = LocalDateTime.of(2028, 2, 1, 12, 30)
+        assertNotNull("睡眠时对方仍会发", fireBefore(c, begin))
+        wait(c)
+        assertTrue(c.visible().isEmpty() && c.messages.any { it.hold })          // 睡眠时收到: 先藏起来
+        assertEquals(0, c.unread); assertEquals(0, pings.size)                  // 睡眠时不通知
+        c.stateFn = { "idle" }; c.blocked = { "" }
+        c.tick()
+        assertEquals(listOf("睡着了也要说"), c.visible().map { it.text })         // 醒来才显示
+        assertEquals(1, c.unread); assertEquals(listOf(1), pings)
+        c.stateFn = { "focus" }
+        c.blocked = { "专注中不能使用沟通" }
+        c.aiBlocked = { "专注中不能使用沟通" }
+        val n = calls.size
+        assertNull("专注时不会尝试发消息", fireBefore(c, LocalDateTime.of(2028, 2, 2, 12, 30)))
+        assertEquals(n, calls.size)
+    }
+
+    /** 聊天页顶上的对方状态: 按人设日程, 跨零点也认; 人设 README 跟随界面语言. */
+    @Test
+    fun otherStatusAndReadmeLanguage() {
+        val td = Files.createTempDirectory("oit").toFile()
+        val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
+        c.set(persona = "Claudia.txt")
+        clock = LocalDateTime.of(2026, 11, 2, 8, 0)
+        assertEquals("专注中", c.otherStatusText())
+        clock = LocalDateTime.of(2026, 11, 2, 9, 0)
+        assertEquals("休息中", c.otherStatusText())
+        clock = LocalDateTime.of(2026, 11, 2, 12, 40)
+        assertEquals("空闲", c.otherStatusText())
+        clock = LocalDateTime.of(2026, 11, 2, 12, 15)
+        assertEquals("空闲", c.otherStatusText())                      // 午饭等非四类: 算空闲
+        assertEquals("idle", c.otherStatusDisplay().second)
+        clock = LocalDateTime.of(2026, 11, 2, 6, 45)
+        assertEquals("空闲", c.otherStatusText())                      // 不在四类段里: 也算空闲
+        clock = LocalDateTime.of(2026, 11, 2, 23, 59)
+        assertEquals("睡眠中", c.otherStatusText())                     // 不显示结束时间
+        assertEquals("sleep", c.otherStatusDisplay().second)
+        val old = I18n.lang
+        try {
+            I18n.lang = "en"
+            assertTrue(CommText.readme().startsWith("How to write a persona prompt:"))
+            assertTrue("8:00-9:00:Focus" in CommText.readme())
+            assertTrue("The format and the standard wording must match to be recognized and matched." in CommText.readme())
+        } finally {
+            I18n.lang = old
+        }
+        assertTrue("格式和名词与标准用语相同才能识别与匹配." in CommText.readme())
+        assertTrue("8:00-9:00:专注(学习)" in CommText.readme())
+        c.importPersona("带修饰.txt", "8:00-9:00:专注(学习)\n9:00-10:00:午饭(便当)\n".byteInputStream())
+        c.set(persona = "带修饰.txt")
+        clock = LocalDateTime.of(2026, 11, 3, 8, 30)
+        assertEquals("专注中", c.otherStatusText())                    // 状态里不显示修饰
+        clock = LocalDateTime.of(2026, 11, 3, 9, 30)
+        assertEquals("空闲", c.otherStatusText())                      // 午饭算空闲
+        c.importPersona("无日程.txt", "你是小满.\n".byteInputStream())
+        c.set(persona = "无日程.txt")
+        clock = LocalDateTime.of(2026, 11, 3, 15, 0)
+        assertEquals("空闲", c.otherStatusText())                      // 没有日程也算空闲
+    }
+
     @Test
     fun builtinPersona() {
         val td = Files.createTempDirectory("oit").toFile()
@@ -653,13 +727,27 @@ class CommTest {
 
     @Test
     fun scheduleProactive() {
-        // 人设日程里的空闲 / 休息段
-        assertEquals(listOf("rest" to 520, "rest" to 658, "idle" to 750, "rest" to 880, "rest" to 1018,
-            "idle" to 1110, "rest" to 1240, "rest" to 1378, "idle" to 1380),
+        // 人设日程里的空闲 / 休息 / 专注 / 睡眠段
+        assertEquals(listOf("focus" to 420, "rest" to 520, "focus" to 558, "rest" to 658, "focus" to 695, "idle" to 750,
+            "focus" to 780, "rest" to 880, "focus" to 918, "rest" to 1018, "focus" to 1055, "idle" to 1110,
+            "focus" to 1140, "rest" to 1240, "focus" to 1278, "rest" to 1378, "idle" to 1380, "sleep" to 1410),
             CommText.scheduleSegments(BuiltinPersonas.ALL.getValue("Claudia.txt")))
         assertEquals(listOf("idle" to 545, "rest" to 550), CommText.scheduleSegments(
             "- 9:05 ~ 9:35 : Idle time\n  09：10-10:00：休息\n24:00-25:00:空闲\n12:00-13:00:不休息\n" +
                 "12:00-13:00:午饭\n每天 8 点到 12 点上课.\n9:05-9:35:idle again\n"))
+        // 专注 / 睡眠的识别, 英文写法 (不分大小写), 以及标准用语后面的修饰
+        assertEquals("focus", CommText.segKind("专注(学习)"))
+        assertEquals("focus", CommText.segKind("FOCUS"))
+        assertEquals("focus", CommText.segKind("Focus(study)"))
+        assertEquals("focus", CommText.segKind("专注(休息)"))            // 先看标准用语, 不看修饰里的字
+        assertEquals("rest", CommText.segKind("休息(专注)"))
+        assertEquals("sleep", CommText.segKind("sleeping"))
+        assertEquals("", CommText.segKind("午饭"))
+        assertEquals("", CommText.segKind("不专注"))
+        assertEquals(6 * 60 + 30 + 24 * 60, CommText.scheduleEntries("23:30-6:30:睡眠").first().end)
+        assertEquals("学习", CommText.scheduleEntries("8:00-9:00:专注(学习)").first().detail)
+        assertEquals(listOf("focus" to 480, "focus" to 540, "focus" to 600, "sleep" to 1410), CommText.scheduleSegments(
+            "8:00-9:00:Focus\n9:00-10:00:focus(study)\n10:00-11:00:FOCUS\n23:30-6:30:SLEEP\n23:30-6:30:Sleep"))
 
         val td = Files.createTempDirectory("oit").toFile()
         val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
@@ -735,11 +823,11 @@ class CommTest {
 
         // README 里的标准写法: 例子能被认出来; 打开 OIT / 换人设 / 新对话都会重新读人设日程
         assertTrue("日程的标准写法" in CommText.readme())
-        assertEquals(listOf("rest" to 520, "idle" to 750), CommText.scheduleSegments(CommText.readme()))
+        assertEquals(listOf("focus" to 420, "rest" to 520, "idle" to 750, "sleep" to 1410), CommText.scheduleSegments(CommText.readme()))
         val log = { File(td, "d/comm.log").readText() }
-        assertTrue("SCHEDULE 启动" in log() && "SCHEDULE 换人设: 空闲 1 段, 休息 1 段" in log())
+        assertTrue("SCHEDULE 启动" in log() && "SCHEDULE 换人设: 空闲 1 段, 休息 1 段, 专注 0 段, 睡眠 0 段" in log())
         File(td, "p/日程.txt").appendText("14:00-14:30:空闲\n")
         c.clear()
-        assertTrue("新对话: 人设改过的日程马上生效", "SCHEDULE 新对话: 空闲 2 段, 休息 1 段" in log())
+        assertTrue("新对话: 人设改过的日程马上生效", "SCHEDULE 新对话: 空闲 2 段, 休息 1 段, 专注 0 段, 睡眠 0 段" in log())
     }
 }

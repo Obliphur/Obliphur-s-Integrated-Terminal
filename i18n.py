@@ -476,6 +476,10 @@ EN = {
     "专注中不能使用沟通": "Chat is unavailable while focusing",
     "睡眠中不能使用沟通": "Chat is unavailable while sleeping",
     "外出中不能使用沟通": "Chat is unavailable while out",
+    # ---- 沟通: 对方的状态 (按人设日程) ----
+    "专注中": "Focusing",
+    "睡眠中": "Sleeping",
+    "休息中": "Resting",
     "🧑  我的身份背景": "🧑  My background",
     "🕒  今天": "🕒  Today",
     "📊  统计(月数据)": "📊  Statistics (monthly)",

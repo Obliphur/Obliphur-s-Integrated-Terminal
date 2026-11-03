@@ -625,6 +625,10 @@ object EnStrings {
         "专注中不能使用沟通" to "Chat is unavailable while focusing",
         "睡眠中不能使用沟通" to "Chat is unavailable while sleeping",
         "外出中不能使用沟通" to "Chat is unavailable while out",
+        // ---- 沟通: 对方的状态 (按人设日程) ----
+        "专注中" to "Focusing",
+        "睡眠中" to "Sleeping",
+        "休息中" to "Resting",
         "🧑  我的身份背景" to "🧑  My background",
         "🕒  今天" to "🕒  Today",
         "📊  统计(月数据)" to "📊  Statistics (monthly)",

@@ -60,6 +60,7 @@ class OitApp : Application(), Host {
         instance = this
         core = Core(oitDir, this) { SystemClock.elapsedRealtime() / 1000.0 }
         I18n.lang = core.settings.str("LANGUAGE")
+        core.comm.ensurePersonas()          // 人设文件夹里的 README 跟随界面语言 (Core 建好之后才能读设置)
         Notifier.channels(this)
         startSync()
         core.start()
@@ -513,6 +514,7 @@ class OitApp : Application(), Host {
         Notifier.syncNotices(this, emptyList())
         core = Core(oitDir, this) { SystemClock.elapsedRealtime() / 1000.0 }
         I18n.lang = core.settings.str("LANGUAGE")
+        core.comm.ensurePersonas()          // 重置之后重新建的人设文件夹 README 也跟着界面语言
         startSync()
         core.start()
         noticesChanged()

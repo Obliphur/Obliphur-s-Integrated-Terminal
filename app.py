@@ -356,8 +356,9 @@ class BreakTimerApp:
         self.comm.leader = self._comm_leader
         self.comm.on_sync = lambda: self.sync.sync_now() if self.sync.peers() else None
         self.comm.fog = lambda: bool(self.contract.fog())
-        # 沟通只能在休息 / 空闲时用 (专注 / 睡眠 / 外出中不能用); 合约的"无言为真" (社交软件和与 AI 聊天的软件禁止联网) 生效期间也不能用
+        # 用户只能在休息 / 空闲时用沟通 (专注 / 睡眠 / 外出中不能用); 对方在用户睡眠时仍可主动发, 只是先藏起来
         self.comm.blocked = self._comm_blocked
+        self.comm.ai_blocked = self._comm_ai_blocked
         self.comm.state_fn = self._comm_state
         self.comm.hard_block = lambda: self.contract.has("silent")
         self.comm.on_proactive = self._comm_ping
@@ -931,6 +932,7 @@ class BreakTimerApp:
     def on_language_changed(self):
         i18n.init_from_config()
         self.dm.localize_auto_texts()          # 默认的自动记录内容 (睡眠 / Sleeping 等) 换成新语言, 同一项合并
+        comm_mod.ensure_personas(self.comm.personas)   # 人设文件夹里的 README 也换成新语言
         self.rebuild_ui()
 
     def on_theme_changed(self):
@@ -1115,6 +1117,18 @@ class BreakTimerApp:
         st = self._comm_state()
         if st in ("focus", "sleep", "out"):
             return tr({"focus": "专注中不能使用沟通", "sleep": "睡眠中不能使用沟通", "out": "外出中不能使用沟通"}[st])
+        if st == "idle" and self.comm.idle_over():
+            return tr("今天空闲时间里能用沟通的 30 分钟已经用完了 (休息时不限)")
+        return ""
+
+    def _comm_ai_blocked(self) -> str:
+        """对方现在不能主动发消息的原因 ("" = 可以). 用户睡眠时对方仍可以发 (消息先藏起来, 醒来再通知);
+        专注 / 外出 / 无言为真 / 空闲额度用完时不会尝试发消息."""
+        if self.contract.has("silent"):
+            return tr("无言为真生效中, 无法使用沟通")
+        st = self._comm_state()
+        if st in ("focus", "out"):
+            return tr({"focus": "专注中不能使用沟通", "out": "外出中不能使用沟通"}[st])
         if st == "idle" and self.comm.idle_over():
             return tr("今天空闲时间里能用沟通的 30 分钟已经用完了 (休息时不限)")
         return ""

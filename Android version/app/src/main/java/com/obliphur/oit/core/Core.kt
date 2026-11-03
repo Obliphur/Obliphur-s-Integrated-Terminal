@@ -255,6 +255,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         comm.onSync = { syncNow() }
         // 沟通只能在休息 / 空闲时用 (专注 / 睡眠 / 外出中不能用); 合约的"无言为真" (社交软件和与 AI 聊天的软件禁止联网) 生效期间也不能用
         comm.blocked = { commBlocked() }
+        comm.aiBlocked = { commAiBlocked() }
         comm.stateFn = { commState() }
         comm.hardBlock = { contract.has("silent") }
         comm.onProactive = { host.playCommSound() }
@@ -284,6 +285,18 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             "out" -> tr("外出中不能使用沟通")
             "idle" -> if (comm.idleOver()) tr("今天空闲时间里能用沟通的 30 分钟已经用完了 (休息时不限)") else ""
             else -> ""
+        }
+    }
+
+    /** 对方现在不能主动发消息的原因 ("" = 可以). 用户睡眠时对方仍可以发 (消息先藏起来, 醒来再通知);
+     *  专注 / 外出 / 无言为真 / 空闲额度用完时不会尝试发消息. */
+    private fun commAiBlocked(): String {
+        if (contract.has("silent")) return tr("无言为真生效中, 无法使用沟通")
+        return when (commState()) {
+            "focus" -> tr("专注中不能使用沟通")
+            "out" -> tr("外出中不能使用沟通")
+            "idle" -> if (comm.idleOver()) tr("今天空闲时间里能用沟通的 30 分钟已经用完了 (休息时不限)") else ""
+            else -> ""                                              // sleep: 仍可发, 只是不通知
         }
     }
 
@@ -786,6 +799,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         if ("LANGUAGE" in keys) {
             I18n.lang = settings.str("LANGUAGE")
             dm.localizeAutoTexts()          // 默认的自动记录内容 (睡眠 / Sleeping 等) 换成新语言, 同一项合并
+            comm.ensurePersonas()           // 人设文件夹里的 README 也换成新语言
         }
         if ("HOUR_LOG_ENABLED" in keys) syncHourLog()
         if ("BEHAVIOR_MODE" in keys) {

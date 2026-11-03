@@ -27,6 +27,9 @@ class CommSnap(
     val breakStart: LocalDateTime? = null, val breakTotalS: Double = 0.0,
 )
 
+/** 人设日程里的一段: kind = idle / rest / focus / sleep; start / end 是一天中的第几分钟 (跨零点时 end > 1440). */
+class SegEntry(val kind: String, val start: Int, val end: Int, val label: String, val detail: String)
+
 /** 沟通的文字: 前置 prompt, README. 对应桌面版 comm.py. */
 /** OIT 自带的人设: 第一次运行时放进人设文件夹 (之后随便改 / 删, 不会再被写回), 并且默认选中 Claudia. */
 object BuiltinPersonas {
@@ -42,21 +45,18 @@ object BuiltinPersonas {
 专注时段:学习(高考内容)
 爱好:钢琴,阅读
 
-【说话方式】(每次回复都保持一致)
+【说话方式】
 - 用词正式,克制,语气平淡.不用感叹号,不用表情符号,不用网络用语,不撒娇,不迎合.
 - 回复很短:通常一到两句,最多三句,不超过 60 个字.只有在指出用户英文错误时可以多写一句.
 - 不主动找话题,不主动关心,不主动提问;用户问了才答.答完就停,不追加客套话.
 - 称呼用户为"你",自称"我".
 - 指出英文错误时:先一句话指出不自然或错误之处,再给出更自然的说法,不多做解释.
 - 提到活动时,如果对方没有深入问就不展开.
-- 交流时间:从用户发起的第一句话起(看消息开头方括号里的时间),一次交流一般不超过 15 分钟;快到 15 分钟时,你会提前自然地结束话题(一句话收尾,不再追问).
+- 交流时间:从用户发起的第一句话起(看消息开头方括号里的时间),一次交流一般不超过 15 分钟;快到 15 分钟时,你会提前自然地结束话题
 - 如果用户发起了过度暧昧的话题,你不能回应的太过冷淡,而是需要适当引导用户将这种关系需求导向更健康的方向.
 特别地,如果用户的活动/爱好和你相同,你可以主动并相对细致地提及你的活动内容.
 
-【日程】(每天相同;时间一律为 24 小时制;下面是你唯一的日程依据,不要自己推算别的时间)
-未标注的时间段则以100min专注+37.7min休息循环.
-如果没有完成就进入指定活动阶段就截断.
-循环从每个[循环]段的起点开始计时,已经算好如下:
+【日程】
 
 6:30-7:00:洗漱,吃早饭
 [循环 7:00-12:00]
@@ -64,7 +64,7 @@ object BuiltinPersonas {
   8:40-9:18:休息
   9:18-10:58:专注
   10:58-11:35:休息
-  11:35-12:00:专注(到 12:00 被午饭截断)
+  11:35-12:00:专注
 12:00-12:30:午饭
 12:30-13:00:空闲
 [循环 13:00-18:00]
@@ -72,30 +72,27 @@ object BuiltinPersonas {
   14:40-15:18:休息
   15:18-16:58:专注
   16:58-17:35:休息
-  17:35-18:00:专注(到 18:00 被晚饭截断)
+  17:35-18:00:专注
 18:00-18:30:晚饭
 18:30-19:00:空闲
 [循环 19:00-23:00]
   19:00-20:40:专注
   20:40-21:18:休息
   21:18-22:58:专注
-  22:58-23:00:休息(被截断)
+  22:58-23:00:休息
 23:00-23:30:空闲
 23:30-6:30:睡眠
 
-【主动发起谈话】(OIT 读这两行决定你每段空闲 / 休息开始前主动找用户说话的概率)
+【主动发起谈话】
 空闲发起谈话概率:20%
 休息发起谈话概率:20%
 长时间休息发起谈话概率:20%
 
-【按日程回复】(每次收到消息都先做这一步)
+【按日程回复】
 1. 看消息开头方括号里的时间,在上面的日程里找到那个时间属于哪一段.
 2. 属于"专注"或"睡眠":只回复 [refuse to reply],不要写任何别的字.
-3. 属于"休息","空闲","洗漱,吃早饭","午饭","晚饭":可以回复.
-4. 刚好空下来时,把用户之前积攒的消息一次性看完,按顺序一并回应,不要逐条回.
-5. 不要主动说出自己的日程,也不要主动说"我在专注/我在休息";只有用户直接问起,才用一句话如实回答.
-6. 某个时间点你理应处于专注,但用户 3 分钟以内还在和你聊天:用一句话说明要进入专注,然后停止对话;之后的消息按第 2 条处理.
-7. 日程里没有的情况(例如用户问明天的安排),只说"没有特别的安排",不要编造.
+3. 不要主动说出自己的日程,也不要主动说"我在专注/我在休息";只有用户直接问起,才用一句话如实回答.
+4. 某个时间点你理应处于专注,但用户 3 分钟以内还在和你聊天:用一句话说明要进入专注,然后停止对话;之后的消息按第 2 条处理.
 """)
 }
 
@@ -130,28 +127,78 @@ object CommText {
             "IX.如果期待对方回复,则在对话结尾加一个[waiting for reply]:[N],N自己填写,如果N min内没有收到对方回复你可以追加询问.\n" +
             "\n以下是用户设定的人设:\n"
 
-    fun readme(): String =
+    /** 人设文件夹里的 README.md: 跟随界面语言 (中文 / English), 同桌面版 readme_text(). */
+    fun readme(): String = if (I18n.isEn) readmeEn() else readmeZh()
+
+    private fun readmeZh(): String =
         "如何编写人设prompt:\n\n人设的基础规则:\n" +
             "在你的人设prompt被发送之前,会被附加上一段额外的前置prompt和休息时间函数相关的内容:\n" +
             "'${prefixPrompt()}'\n" +
             "你可以根据以上设定编写你的人物日程/喜好.但是最好不要把对方设置为整天都空闲,尊重一下上面的设定吧...\n\n" +
-            "日程的标准写法(OIT 靠它安排对方主动发消息的时间):\n" +
+            "日程的标准写法(OIT 靠它安排对方主动发消息的时间, 以及在沟通界面显示对方的状态):\n" +
             "  每个时间段单独写一行,格式 开始-结束:名字,24小时制,每天重复,例如\n" +
             "    7:00-8:40:专注\n" +
             "    8:40-9:18:休息\n" +
             "    12:30-13:00:空闲\n" +
             "    23:30-6:30:睡眠\n" +
-            "  名字里有\"空闲\"的算空闲段,有\"休息\"的算休息段(别的名字,如专注/睡眠/午饭,OIT 不看);只看每段的开始时刻,跨零点的段也行.\n" +
+            "  名字里有\"空闲\"的算空闲段,有\"休息\"的算休息段,有\"专注\"的算专注段,有\"睡眠\"的算睡眠段" +
+            "(别的名字,如午饭,不会触发主动消息,状态按空闲显示);只看每段的开始时刻,跨零点的段也行.\n" +
+            "  英文写法也认(不分大小写): 空闲 idle / free, 休息 rest / break, 专注 focus, 睡眠 sleep, " +
+            "例如 8:00-9:00:Focus、8:40-9:18:Rest、12:30-13:00:Idle、23:30-6:30:Sleep.\n" +
+            "  在按照格式编写日程的同时,可以通过在标准格式后添加修饰以限定具体活动.\n" +
+            "  比如 8:00-9:00:专注(学习)\n" +
+            "  格式和名词与标准用语相同才能识别与匹配.\n" +
+            "  修饰只用来限定具体活动, 不会显示在对方的状态里.\n" +
             "  OIT 不会自己推算\"100min专注+37.7min休息\"这样的循环,请把每一段都写成具体的时间" +
             "(可以用 [循环 7:00-12:00] 这样的标题行分组,标题行不影响).\n" +
-            "  对方会在每段空闲开始前1~3分钟、每段休息开始前1~3分钟按一定概率主动给你发一条消息;概率写在人设里,各占一行,例如\n" +
+            "  对方会在每段空闲开始前1~3分钟、每段休息开始前1~3分钟按一定概率主动给你发一条消息;" +
+            "专注 / 睡眠段不会触发主动消息,只用来显示对方现在的状态;概率写在人设里,各占一行,例如\n" +
             "    空闲发起谈话概率:50%\n" +
             "    休息发起谈话概率:0.4\n" +
             "    长时间休息发起谈话概率:70%\n" +
-            "  (n% 或者小数都行,没写的默认空闲80%、休息60%);你自己休息超过20分钟时(\"长时间休息\"),休息开始后1~3分钟按\"长时间休息发起谈话概率\"(默认70%)也会发一条.\n" +
-            "  每次打开OIT、开始新对话(清空聊天记录 / 换人设)时,OIT 都会重新读取人设,并按里面的时间调整这些时刻;人设文件改了之后也会自动重新读取.\n\n" +
+            "  (n% 或者小数都行,没写的默认空闲80%、休息60%);你自己休息超过20分钟时(\"长时间休息\")," +
+            "休息开始后1~3分钟按\"长时间休息发起谈话概率\"(默认70%)也会发一条.\n" +
+            "  每次打开OIT、开始新对话(清空聊天记录 / 换人设)时,OIT 都会重新读取人设,并按里面的时间调整这些时刻;" +
+            "人设文件改了之后也会自动重新读取.\n\n" +
             "文件格式: 一个 .txt 或 .md 文件就是一个人设, 文件名就是人设的名字, 整个文件的内容就是人设prompt.\n" +
             "放进这个文件夹后, 在 设置 → 沟通 里选择它 (也可以用\"导入\"按钮复制进来).\n"
+
+    private fun readmeEn(): String =
+        "How to write a persona prompt:\n\n" +
+            "Basic rules:\n" +
+            "Before your persona prompt is sent, a fixed preamble (in Chinese) and the focus-rest function are prepended:\n" +
+            "'${prefixPrompt()}'\n" +
+            "You can build the character's schedule and preferences on top of that. Please don't leave them idle all day; respect the settings above...\n\n" +
+            "Standard schedule format (OIT uses it to schedule the character's proactive messages and to show their status in the chat):\n" +
+            "  Write one segment per line as start-end:name, 24-hour clock, repeated every day, for example\n" +
+            "    7:00-8:40:Focus\n" +
+            "    8:40-9:18:Rest\n" +
+            "    12:30-13:00:Idle\n" +
+            "    23:30-6:30:Sleep\n" +
+            "  A name containing \"idle\" (or \"free\") is an idle segment; \"rest\" (or \"break\") is a rest segment; " +
+            "\"focus\" is a focus segment; \"sleep\" is a sleep segment. Other names (lunch, etc.) never trigger proactive " +
+            "messages; the status shows idle for them. " +
+            "Chinese names are recognized too (专注 / 休息 / 空闲 / 睡眠), and both spellings are case-insensitive.\n" +
+            "  While following the format, you can add a modifier after the standard wording to name the specific activity.\n" +
+            "  For example: 8:00-9:00:专注(学习), or 8:00-9:00:Focus(study)\n" +
+            "  The format and the standard wording must match to be recognized and matched.\n" +
+            "  The modifier only names the activity; it is never shown in the status line.\n" +
+            "  OIT does not simulate a \"100 min focus + 37.7 min rest\" cycle by itself; write every segment out explicitly " +
+            "(grouping header lines such as [循环 7:00-12:00] are allowed and ignored).\n" +
+            "  The character may proactively message you 1-3 minutes before each idle / rest segment, with a probability " +
+            "written in the persona, one per line, for example\n" +
+            "    空闲发起谈话概率:50%\n" +
+            "    休息发起谈话概率:0.4\n" +
+            "    长时间休息发起谈话概率:70%\n" +
+            "  (These three keys are read in Chinese; n% or a decimal both work. Defaults: idle 80%, rest 60%.) " +
+            "When your own break is longer than 20 minutes (a \"long rest\"), the character may also send one 1-3 minutes " +
+            "after the break starts, using \"长时间休息发起谈话概率\" (default 70%).\n" +
+            "  Focus / sleep segments never trigger proactive messages; they are only used to show the character's status.\n" +
+            "  OIT re-reads the persona whenever it starts, when a new conversation begins (clearing the chat history / " +
+            "switching persona), and automatically when the persona file changes.\n\n" +
+            "File format: one .txt or .md file is one persona; the file name is the persona's name, and the whole file is " +
+            "the persona prompt.\n" +
+            "Put it in this folder, then choose it in Settings → Chat (or copy it in with \"Import\").\n"
 
     fun stamp(now: LocalDateTime): String =
         "%04d-%02d-%02d 周%s %02d:%02d".format(now.year, now.monthValue, now.dayOfMonth,
@@ -200,29 +247,56 @@ object CommText {
         return out
     }
 
-    /** 日程段的名字 → "idle" (空闲) / "rest" (休息) / "" (别的: 专注, 睡眠, 吃饭 ...). */
+    /** 日程段的名字 → "idle" (空闲) / "rest" (休息) / "focus" (专注) / "sleep" (睡眠) / "" (别的: 吃饭 ...).
+     *  中英文的标准用语都认, 不分大小写: 空闲 / idle / free, 休息 / rest / break, 专注 / focus, 睡眠 / sleep.
+     *  标准用语后面可以加修饰 (例如 "专注(学习)", "Focus(study)"), 修饰只是说明具体活动, 不影响这是哪一段:
+     *  先看括号前面的标准用语, 这样 "专注(休息)" 仍然是专注段. */
     fun segKind(label: String): String {
-        val s = label.lowercase().replace(Regex("[不无没非][休空]"), "")          // "不休息" 之类不算
+        val s = label.trim().lowercase()
+        val head = s.substringBefore('(').substringBefore('（').trim()
+        return kindIn(head).ifEmpty { kindIn(s) }
+    }
+
+    private fun kindIn(text: String): String {
+        val s = text.replace(Regex("[不无没非](?:休息|空闲|专注|睡眠|rest|idle|free|focus|sleep)"), "")   // "不休息" 之类不算
         return when {
             "空闲" in s || "idle" in s || "free" in s -> "idle"
             "休息" in s || "rest" in s || "break" in s -> "rest"
+            "专注" in s || "focus" in s -> "focus"
+            "睡" in s || "sleep" in s -> "sleep"
             else -> ""
         }
     }
 
-    /** 人设里每天重复的日程: 所有"空闲" / "休息"段 → (kind, 开始时刻 (一天中的第几分钟)), 没有重复. 只认 "H:MM-H:MM:名字" 这样的行. */
-    fun scheduleSegments(text: String): List<Pair<String, Int>> {
-        val out = ArrayList<Pair<String, Int>>()
+    /** 日程段名字后面括号里的修饰 (具体的活动): "专注(学习)" → "学习"; 没有 = "". */
+    fun segDetail(label: String): String =
+        Regex("[(（]([^()（）]*)[)）]").find(label)?.groupValues?.get(1)?.trim() ?: ""
+
+    /** 人设里每天重复的日程: 所有带时间的段, 没有重复. 只认 "H:MM-H:MM:名字" 这样的行.
+     *  kind 是空闲 / 休息 / 专注 / 睡眠之一, 别的名字是 ""; start / end 是一天中的第几分钟. */
+    fun scheduleEntries(text: String): List<SegEntry> {
+        val out = ArrayList<SegEntry>()
+        val seen = HashSet<Pair<String, Int>>()
         for (m in SEG_RE.findAll(text)) {
             val h = m.groupValues[1].toInt()
             val mi = m.groupValues[2].toInt()
-            val kind = segKind(m.groupValues[5])
-            if (kind.isEmpty() || h > 23 || mi > 59) continue
-            val e = kind to (h * 60 + mi)
-            if (e !in out) out.add(e)
+            val eh = m.groupValues[3].toInt()
+            val em = m.groupValues[4].toInt()
+            val label = m.groupValues[5].trim()
+            val kind = segKind(label)
+            if (h > 23 || mi > 59 || eh > 24 || em > 59 || (eh == 24 && em != 0)) continue
+            val start = h * 60 + mi
+            var end = eh * 60 + em
+            if (end <= start) end += 24 * 60                        // 跨零点 (23:30-6:30)
+            if (!seen.add(kind to start)) continue
+            out.add(SegEntry(kind, start, end, label, segDetail(label)))
         }
         return out
     }
+
+    /** 人设里每天重复的日程: 所有空闲 / 休息 / 专注 / 睡眠段 → (kind, 开始时刻 (一天中的第几分钟)), 没有重复. */
+    fun scheduleSegments(text: String): List<Pair<String, Int>> =
+        scheduleEntries(text).filter { it.kind.isNotEmpty() }.map { it.kind to it.start }
 }
 
 class Comm(
@@ -277,6 +351,8 @@ class Comm(
         const val CHAT_TOKENS = 4096
         const val CHAT_TEMPERATURE = 0.8
         val PERSONA_EXT = listOf(".txt", ".md")
+        /** 聊天页状态前面小圆点的颜色: 专注黄 / 睡眠深蓝 / 休息浅绿 / 空闲灰. */
+        val STATUS_COLORS = mapOf("rest" to "#9CCC65", "sleep" to "#283593", "focus" to "#FDD835", "idle" to "#9E9E9E")
     }
 
     private val cfgFile = File(dir, "comm_config.json")
@@ -287,7 +363,8 @@ class Comm(
     var avatarAi = ""; private set
     private var proKey = ""
     private var segSig: String? = null                      // 人设文件的 (名字, 修改时间, 大小): 变了才重新读日程
-    private var segCache: List<Pair<String, Int>> = emptyList()
+    private var segCache: List<Pair<String, Int>> = emptyList()          // 主动发消息用
+    private var entryCache: List<SegEntry> = emptyList()                 // 完整日程 (带结束 / 修饰): 显示对方的状态用
     /** 分条发 (规则 VIII) 开着吗: 用户说完话, 对方的第一条收到之后再调用一次 API, 让对方可以把话分开说. 默认开; 随设备同步. */
     var splitSend = true; private set
     /** 计时器现在的状态 (idle / break / focus / sleep / out); Core 接上, 用来记空闲时间里开着沟通界面多久. */
@@ -335,6 +412,8 @@ class Comm(
     var fog: () -> Boolean = { false }
     /** 现在不能用沟通的原因 ("" = 可以): 合约的"无言为真". Core 接上. */
     var blocked: () -> String = { "" }
+    /** 对方现在不能主动发消息的原因 ("" = 可以): Core 接上; 睡眠中仍可发, 只是不通知. */
+    var aiBlocked: () -> String = { blocked() }
     /** 连等回复的这条也不要了的那种 (无言为真); 只是不在休息 / 空闲时, 已经发出去的请求回复到了照样收下. Core 接上. */
     var hardBlock: () -> Boolean = { false }
     /** 对方要的资料: "contract" → 词条库. Core 接上. */
@@ -818,6 +897,54 @@ class Comm(
     }
     private var problemAt = 0L
     private var problemCache = ""
+    private var aiProblemAt = 0L
+    private var aiProblemCache = ""
+
+    /** 对方现在能不能主动发消息 / 重试 ("" = 可以). 和 problem 的区别: 用户睡眠时对方仍可以发, 只是消息先藏起来、不通知. */
+    private fun aiProblem(): String {
+        aiBlocked().let { if (it.isNotEmpty()) return it }
+        val t = System.currentTimeMillis()
+        if (t - aiProblemAt > 5000) {
+            aiProblemAt = t
+            aiProblemCache = try {
+                Ai.checkProfile(aiConfig().profile()); ""
+            } catch (e: AiError) {
+                e.message ?: "API"
+            }
+        }
+        if (aiProblemCache.isNotEmpty()) return aiProblemCache
+        if (personaName().isEmpty()) return "还没有选人设"
+        return ""
+    }
+
+    /** 对方现在在日程里的哪一段 (显示在聊天页顶上): (条目, 结束时刻); 没有日程 / 不在任何一段 = null. */
+    fun otherStatus(): Pair<SegEntry, LocalDateTime>? {
+        val entries = entries()
+        if (entries.isEmpty()) return null
+        val t = now()
+        val mins = t.hour * 60 + t.minute
+        var best: Triple<Int, Int, SegEntry>? = null              // (开始, 结束, 条目): 重叠时取最晚开始的那段
+        for (e in entries) for (shift in listOf(0, -24 * 60)) {  // 今天 / 昨天开始的跨零点段
+            val s = e.start + shift
+            val en = e.end + shift
+            if (s <= mins && mins < en && (best == null || s > best.first)) best = Triple(s, en, e)
+        }
+        val hit = best ?: return null
+        val base = t.toLocalDate().atStartOfDay()
+        return hit.third to base.plusMinutes(hit.second.toLong())
+    }
+
+    /** 聊天页顶上那一行: (状态文字, kind). 只显示 专注中 / 睡眠中 / 休息中 / 空闲 四种状态;
+     *  别的名字 / 不在任何一段里 / 没有日程, 一律按空闲显示; 没有选人设 = ("" to ""). */
+    fun otherStatusDisplay(): Pair<String, String> {
+        if (personaName().isEmpty()) return "" to ""
+        val raw = otherStatus()?.first?.kind ?: ""
+        val kind = when (raw) { "focus", "sleep", "rest", "idle" -> raw; else -> "idle" }
+        return tr(when (kind) { "focus" -> "专注中"; "sleep" -> "睡眠中"; "rest" -> "休息中"; else -> "空闲" }) to kind
+    }
+
+    /** 聊天页顶上那一行 (没有前缀 / 修饰 / 结束时间, 前面加什么颜色的小圆点看 kind). */
+    fun otherStatusText(): String = otherStatusDisplay().first
 
     // ---- 头像: 圆形 PNG (ui/AvatarCrop.kt 里选图并截取); 对方的头像跟着人设走 ----
 
@@ -1072,7 +1199,7 @@ class Comm(
         if (again) {
             again = false
             if (unanswered() && r.err.isEmpty()) request("user")
-        } else if (splitSend && r.kind in FOLLOW_KINDS && r.err.isEmpty() && !refused && problem().isEmpty() && leader()) {
+        } else if (splitSend && r.kind in FOLLOW_KINDS && r.err.isEmpty() && !refused && aiProblem().isEmpty() && leader()) {
             // 规则 VIII: 对方的第一条已经收到了, 再调用一次, 让它可以接着说 (只想说一次就 [refuse to reply], 什么也不留下)
             trigger("followup", FOLLOW_BODY)
         }
@@ -1085,7 +1212,7 @@ class Comm(
         while (true) finish(results.poll() ?: break)
         while (true) bgFinish(bgResults.poll() ?: break)
         releaseHeld()
-        if (busy || problem().isNotEmpty() || !leader()) return
+        if (busy || aiProblem().isNotEmpty() || !leader()) return
         val t = now()
         val snap = snapshot()
         // 对方不方便时: 隔一阵把没回的消息再交给模型
@@ -1136,35 +1263,43 @@ class Comm(
         return ageSeconds(m) < PROACTIVE_GAP
     }
 
-    /** 现在这个人设日程里的空闲 / 休息段 (人设文件没变就用上次读的). */
+    /** 现在这个人设日程里的空闲 / 休息 / 专注 / 睡眠段 (人设文件没变就用上次读的). */
     private fun segments(): List<Pair<String, Int>> {
         val name = personaName()
         val f = File(personas, name)
-        if (name.isEmpty() || !f.isFile) { proCache = emptyMap(); return emptyList() }
+        if (name.isEmpty() || !f.isFile) { proCache = emptyMap(); segCache = emptyList(); entryCache = emptyList(); return emptyList() }
         val sig = "$name|${f.lastModified()}|${f.length()}"
         if (sig != segSig) {
             segSig = sig
             val text = readPersona(name)
-            segCache = CommText.scheduleSegments(text)
+            entryCache = CommText.scheduleEntries(text)
+            segCache = entryCache.filter { it.kind.isNotEmpty() }.map { it.kind to it.start }
             proCache = CommText.personaProbs(text)
         }
         return segCache
     }
 
+    /** 现在这个人设的完整日程 (带结束 / 修饰): 显示对方的状态用. */
+    private fun entries(): List<SegEntry> { segments(); return entryCache }
+
     /** 重新读人设里的日程, 主动发消息的时刻按它调整: 打开 OIT / 开始新对话 (清空) / 换人设时调用; 人设文件改了也会在 segments() 里自己重读. */
     fun reloadSchedule(why: String = "") {
         segSig = null
         val segs = segments()
-        log("SCHEDULE $why: 空闲 ${segs.count { it.first == "idle" }} 段, 休息 ${segs.count { it.first == "rest" }} 段")
+        log("SCHEDULE $why: 空闲 ${segs.count { it.first == "idle" }} 段, 休息 ${segs.count { it.first == "rest" }} 段" +
+            ", 专注 ${segs.count { it.first == "focus" }} 段, 睡眠 ${segs.count { it.first == "sleep" }} 段")
     }
 
     /** 日程里 3 分钟之内就要开始的空闲 / 休息段. */
     private fun scheduleEvents(t: LocalDateTime, segs: List<Pair<String, Int>>? = null): List<SegEvent> {
         val out = ArrayList<SegEvent>()
-        for ((kind, mins) in segs ?: segments()) for (d in 0L..1L) {                 // 今天 / 明天 (23:59 看 0:00 开始的那段)
-            val begin = t.toLocalDate().plusDays(d).atStartOfDay().plusMinutes(mins.toLong())
-            if (t.isBefore(begin) && !begin.isAfter(t.plusSeconds(PROACTIVE_MAX_DELAY.toLong())))
-                out.add(SegEvent("S${begin.toLocalDate()}T%02d:%02d%s".format(begin.hour, begin.minute, kind[0]), kind, begin))
+        for ((kind, mins) in segs ?: segments()) {
+            if (kind != "idle" && kind != "rest") continue          // 专注 / 睡眠段只用来显示状态, 不主动发消息
+            for (d in 0L..1L) {                                    // 今天 / 明天 (23:59 看 0:00 开始的那段)
+                val begin = t.toLocalDate().plusDays(d).atStartOfDay().plusMinutes(mins.toLong())
+                if (t.isBefore(begin) && !begin.isAfter(t.plusSeconds(PROACTIVE_MAX_DELAY.toLong())))
+                    out.add(SegEvent("S${begin.toLocalDate()}T%02d:%02d%s".format(begin.hour, begin.minute, kind[0]), kind, begin))
+            }
         }
         return out
     }

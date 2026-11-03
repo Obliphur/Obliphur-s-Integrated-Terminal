@@ -11,6 +11,8 @@
   · 模型返回 [refuse to reply] = 此刻不方便回复: 不显示, 用户的消息留着, 过一阵再把它们一次性交给模型.
   · 模型会主动发消息 (MECHANICS 24.4): I. 用户这次休息超过 20 分钟, 休息开始后 1~3 分钟; II. 人设日程里每段"空闲"开始前 1~3 分钟
     (概率写在人设里: "空闲发起谈话概率:n%", 没写默认 80%); III. 人设日程里每段"休息"开始前 1~3 分钟 ("休息发起谈话概率:n%", 默认 60%). 收到时如果前 5 分钟没和对方聊过, 有柔和的提示音.
+  · 用户睡眠时对方仍会按日程发 / 重试 / 追问, 但消息先藏起来、不通知 (醒来才显示 + 提示音); 用户专注 / 外出时对方不会尝试发.
+  · 聊天页顶上显示对方现在的状态 (按人设日程里的专注 / 休息 / 空闲 / 睡眠段, 例如 "专注中"; 前面有一个颜色跟着状态变的小圆点).
   · 聊天记录在 comm_chat.json (数据文件夹, 加密, 重置会清掉), 设置在 comm_config.json.
 
     python comm.py     自检 (不联网, 只用临时文件夹)
@@ -28,6 +30,8 @@ from datetime import datetime, timedelta
 
 import ai_assist
 import config
+import i18n
+from i18n import tr
 
 REFUSE = "[refuse to reply]"
 PROACTIVE_MIN_REST = 20 * 60          # I. 用户休息超过这么久才会主动发消息
@@ -59,6 +63,8 @@ SYNC_N = 60                           # 随设备同步最近多少条
 MAX_PERSONA = 60000
 MAX_PROFILE = 5000                    # 用户自己填的身份背景最多多少字
 PERSONA_EXT = (".txt", ".md")
+STATUS_TEXT = {"focus": "专注中", "sleep": "睡眠中", "rest": "休息中", "idle": "空闲"}
+STATUS_COLORS = {"rest": "#9CCC65", "sleep": "#283593", "focus": "#FDD835", "idle": "#9E9E9E"}   # 聊天页状态前面的小圆点
 CHAT_TOKENS = 4096
 CHAT_TEMPERATURE = 0.8
 WEEKDAY = "一二三四五六日"
@@ -102,29 +108,83 @@ def prefix_prompt(split: bool = True) -> str:
 
 
 def readme_text() -> str:
+    """人设文件夹里的 README.md: 跟随界面语言 (中文 / English)."""
+    return _readme_en() if i18n.is_en() else _readme_zh()
+
+
+def _readme_zh() -> str:
     return (
         "如何编写人设prompt:\n\n"
         "人设的基础规则:\n"
         "在你的人设prompt被发送之前,会被附加上一段额外的前置prompt和休息时间函数相关的内容:\n"
         f"'{prefix_prompt()}'\n"
         "你可以根据以上设定编写你的人物日程/喜好.但是最好不要把对方设置为整天都空闲,尊重一下上面的设定吧...\n\n"
-        "日程的标准写法(OIT 靠它安排对方主动发消息的时间):\n"
+        "日程的标准写法(OIT 靠它安排对方主动发消息的时间, 以及在沟通界面显示对方的状态):\n"
         "  每个时间段单独写一行,格式 开始-结束:名字,24小时制,每天重复,例如\n"
         "    7:00-8:40:专注\n"
         "    8:40-9:18:休息\n"
         "    12:30-13:00:空闲\n"
         "    23:30-6:30:睡眠\n"
-        "  名字里有\"空闲\"的算空闲段,有\"休息\"的算休息段(别的名字,如专注/睡眠/午饭,OIT 不看);只看每段的开始时刻,跨零点的段也行.\n"
+        "  名字里有\"空闲\"的算空闲段,有\"休息\"的算休息段,有\"专注\"的算专注段,有\"睡眠\"的算睡眠段"
+        "(别的名字,如午饭,不会触发主动消息,状态按空闲显示);只看每段的开始时刻,跨零点的段也行.\n"
+        "  英文写法也认(不分大小写): 空闲 idle / free, 休息 rest / break, 专注 focus, 睡眠 sleep, "
+        "例如 8:00-9:00:Focus、8:40-9:18:Rest、12:30-13:00:Idle、23:30-6:30:Sleep.\n"
+        "  在按照格式编写日程的同时,可以通过在标准格式后添加修饰以限定具体活动.\n"
+        "  比如 8:00-9:00:专注(学习)\n"
+        "  格式和名词与标准用语相同才能识别与匹配.\n"
+        "  修饰只用来限定具体活动, 不会显示在对方的状态里.\n"
         "  OIT 不会自己推算\"100min专注+37.7min休息\"这样的循环,请把每一段都写成具体的时间"
         "(可以用 [循环 7:00-12:00] 这样的标题行分组,标题行不影响).\n"
-        "  对方会在每段空闲开始前1~3分钟、每段休息开始前1~3分钟按一定概率主动给你发一条消息;概率写在人设里,各占一行,例如\n"
+        "  对方会在每段空闲开始前1~3分钟、每段休息开始前1~3分钟按一定概率主动给你发一条消息;"
+        "专注 / 睡眠段不会触发主动消息,只用来显示对方现在的状态;概率写在人设里,各占一行,例如\n"
         "    空闲发起谈话概率:50%\n"
         "    休息发起谈话概率:0.4\n"
         "    长时间休息发起谈话概率:70%\n"
-        "  (n% 或者小数都行,没写的默认空闲80%、休息60%);你自己休息超过20分钟时(\"长时间休息\"),休息开始后1~3分钟按\"长时间休息发起谈话概率\"(默认70%)也会发一条.\n"
-        "  每次打开OIT、开始新对话(清空聊天记录 / 换人设)时,OIT 都会重新读取人设,并按里面的时间调整这些时刻;人设文件改了之后也会自动重新读取.\n\n"
+        "  (n% 或者小数都行,没写的默认空闲80%、休息60%);你自己休息超过20分钟时(\"长时间休息\"),"
+        "休息开始后1~3分钟按\"长时间休息发起谈话概率\"(默认70%)也会发一条.\n"
+        "  每次打开OIT、开始新对话(清空聊天记录 / 换人设)时,OIT 都会重新读取人设,并按里面的时间调整这些时刻;"
+        "人设文件改了之后也会自动重新读取.\n\n"
         "文件格式: 一个 .txt 或 .md 文件就是一个人设, 文件名就是人设的名字, 整个文件的内容就是人设prompt.\n"
         "放进这个文件夹后, 在 设置 → 沟通 里选择它 (也可以用\"导入\"按钮复制进来).\n")
+
+
+def _readme_en() -> str:
+    return (
+        "How to write a persona prompt:\n\n"
+        "Basic rules:\n"
+        "Before your persona prompt is sent, a fixed preamble (in Chinese) and the focus-rest function are prepended:\n"
+        f"'{prefix_prompt()}'\n"
+        "You can build the character's schedule and preferences on top of that. Please don't leave them idle all day; respect the settings above...\n\n"
+        "Standard schedule format (OIT uses it to schedule the character's proactive messages and to show their status in the chat):\n"
+        "  Write one segment per line as start-end:name, 24-hour clock, repeated every day, for example\n"
+        "    7:00-8:40:Focus\n"
+        "    8:40-9:18:Rest\n"
+        "    12:30-13:00:Idle\n"
+        "    23:30-6:30:Sleep\n"
+        "  A name containing \"idle\" (or \"free\") is an idle segment; \"rest\" (or \"break\") is a rest segment; "
+        "\"focus\" is a focus segment; \"sleep\" is a sleep segment. Other names (lunch, etc.) never trigger proactive "
+        "messages; the status shows idle for them. "
+        "Chinese names are recognized too (专注 / 休息 / 空闲 / 睡眠), and both spellings are case-insensitive.\n"
+        "  While following the format, you can add a modifier after the standard wording to name the specific activity.\n"
+        "  For example: 8:00-9:00:专注(学习), or 8:00-9:00:Focus(study)\n"
+        "  The format and the standard wording must match to be recognized and matched.\n"
+        "  The modifier only names the activity; it is never shown in the status line.\n"
+        "  OIT does not simulate a \"100 min focus + 37.7 min rest\" cycle by itself; write every segment out explicitly "
+        "(grouping header lines such as [循环 7:00-12:00] are allowed and ignored).\n"
+        "  The character may proactively message you 1-3 minutes before each idle / rest segment, with a probability "
+        "written in the persona, one per line, for example\n"
+        "    空闲发起谈话概率:50%\n"
+        "    休息发起谈话概率:0.4\n"
+        "    长时间休息发起谈话概率:70%\n"
+        "  (These three keys are read in Chinese; n% or a decimal both work. Defaults: idle 80%, rest 60%.) "
+        "When your own break is longer than 20 minutes (a \"long rest\"), the character may also send one 1-3 minutes "
+        "after the break starts, using \"长时间休息发起谈话概率\" (default 70%).\n"
+        "  Focus / sleep segments never trigger proactive messages; they are only used to show the character's status.\n"
+        "  OIT re-reads the persona whenever it starts, when a new conversation begins (clearing the chat history / "
+        "switching persona), and automatically when the persona file changes.\n\n"
+        "File format: one .txt or .md file is one persona; the file name is the persona's name, and the whole file is "
+        "the persona prompt.\n"
+        "Put it in this folder, then choose it in Settings → Chat (or copy it in with \"Import\").\n")
 
 
 # OIT 自带的人设: 第一次运行时放进人设文件夹 (之后随便改 / 删, 不会再被写回), 并且默认选中第一个
@@ -139,21 +199,18 @@ BUILTIN_PERSONAS = {"Claudia.txt": """你将扮演一位文静,冷淡的17岁大
 专注时段:学习(高考内容)
 爱好:钢琴,阅读
 
-【说话方式】(每次回复都保持一致)
+【说话方式】
 - 用词正式,克制,语气平淡.不用感叹号,不用表情符号,不用网络用语,不撒娇,不迎合.
 - 回复很短:通常一到两句,最多三句,不超过 60 个字.只有在指出用户英文错误时可以多写一句.
 - 不主动找话题,不主动关心,不主动提问;用户问了才答.答完就停,不追加客套话.
 - 称呼用户为"你",自称"我".
 - 指出英文错误时:先一句话指出不自然或错误之处,再给出更自然的说法,不多做解释.
 - 提到活动时,如果对方没有深入问就不展开.
-- 交流时间:从用户发起的第一句话起(看消息开头方括号里的时间),一次交流一般不超过 15 分钟;快到 15 分钟时,你会提前自然地结束话题(一句话收尾,不再追问).
+- 交流时间:从用户发起的第一句话起(看消息开头方括号里的时间),一次交流一般不超过 15 分钟;快到 15 分钟时,你会提前自然地结束话题
 - 如果用户发起了过度暧昧的话题,你不能回应的太过冷淡,而是需要适当引导用户将这种关系需求导向更健康的方向.
 特别地,如果用户的活动/爱好和你相同,你可以主动并相对细致地提及你的活动内容.
 
-【日程】(每天相同;时间一律为 24 小时制;下面是你唯一的日程依据,不要自己推算别的时间)
-未标注的时间段则以100min专注+37.7min休息循环.
-如果没有完成就进入指定活动阶段就截断.
-循环从每个[循环]段的起点开始计时,已经算好如下:
+【日程】
 
 6:30-7:00:洗漱,吃早饭
 [循环 7:00-12:00]
@@ -161,7 +218,7 @@ BUILTIN_PERSONAS = {"Claudia.txt": """你将扮演一位文静,冷淡的17岁大
   8:40-9:18:休息
   9:18-10:58:专注
   10:58-11:35:休息
-  11:35-12:00:专注(到 12:00 被午饭截断)
+  11:35-12:00:专注
 12:00-12:30:午饭
 12:30-13:00:空闲
 [循环 13:00-18:00]
@@ -169,30 +226,27 @@ BUILTIN_PERSONAS = {"Claudia.txt": """你将扮演一位文静,冷淡的17岁大
   14:40-15:18:休息
   15:18-16:58:专注
   16:58-17:35:休息
-  17:35-18:00:专注(到 18:00 被晚饭截断)
+  17:35-18:00:专注
 18:00-18:30:晚饭
 18:30-19:00:空闲
 [循环 19:00-23:00]
   19:00-20:40:专注
   20:40-21:18:休息
   21:18-22:58:专注
-  22:58-23:00:休息(被截断)
+  22:58-23:00:休息
 23:00-23:30:空闲
 23:30-6:30:睡眠
 
-【主动发起谈话】(OIT 读这两行决定你每段空闲 / 休息开始前主动找用户说话的概率)
+【主动发起谈话】
 空闲发起谈话概率:20%
 休息发起谈话概率:20%
 长时间休息发起谈话概率:20%
 
-【按日程回复】(每次收到消息都先做这一步)
+【按日程回复】
 1. 看消息开头方括号里的时间,在上面的日程里找到那个时间属于哪一段.
 2. 属于"专注"或"睡眠":只回复 [refuse to reply],不要写任何别的字.
-3. 属于"休息","空闲","洗漱,吃早饭","午饭","晚饭":可以回复.
-4. 刚好空下来时,把用户之前积攒的消息一次性看完,按顺序一并回应,不要逐条回.
-5. 不要主动说出自己的日程,也不要主动说"我在专注/我在休息";只有用户直接问起,才用一句话如实回答.
-6. 某个时间点你理应处于专注,但用户 3 分钟以内还在和你聊天:用一句话说明要进入专注,然后停止对话;之后的消息按第 2 条处理.
-7. 日程里没有的情况(例如用户问明天的安排),只说"没有特别的安排",不要编造.
+3. 不要主动说出自己的日程,也不要主动说"我在专注/我在休息";只有用户直接问起,才用一句话如实回答.
+4. 某个时间点你理应处于专注,但用户 3 分钟以内还在和你聊天:用一句话说明要进入专注,然后停止对话;之后的消息按第 2 条处理.
 """}
 DEFAULT_PERSONA = "Claudia.txt"
 CHAT_KEYS = ("clear_ts", "retry", "pro_key")          # 跟着聊天对象走的几项 (存在各自的聊天文件里)
@@ -322,27 +376,62 @@ _SEG_RE = re.compile(r"^[ \t]*(?:[-*•][ \t]*)?(\d{1,2})[:：](\d{2})[ \t]*[-�
                      r"[ \t]*[:：][ \t]*(\S[^\n]*)$", re.M)
 
 
-def seg_kind(label: str) -> str:
-    """日程段的名字 → "idle" (空闲) / "rest" (休息) / "" (别的: 专注, 睡眠, 吃饭 ...)."""
-    s = re.sub(r"[不无没非][休空]", "", str(label or "").lower())          # "不休息" 之类不算
+def _seg_kind_in(s: str) -> str:
+    s = re.sub(r"[不无没非](?:休息|空闲|专注|睡眠|rest|idle|free|focus|sleep)", "", str(s or "").lower())   # "不休息" 之类不算
     if "空闲" in s or "idle" in s or "free" in s:
         return "idle"
     if "休息" in s or "rest" in s or "break" in s:
         return "rest"
+    if "专注" in s or "focus" in s:
+        return "focus"
+    if "睡" in s or "sleep" in s:
+        return "sleep"
     return ""
 
 
-def schedule_segments(text: str) -> list:
-    """人设里每天重复的日程: 所有"空闲" / "休息"段 → [(kind, 开始时刻 (一天中的第几分钟))], 没有重复. 只认 "H:MM-H:MM:名字" 这样的行."""
+def seg_kind(label: str) -> str:
+    """日程段的名字 → "idle" (空闲) / "rest" (休息) / "focus" (专注) / "sleep" (睡眠) / "" (别的: 吃饭 ...).
+
+    中英文的**标准用语**都认, 不分大小写: 空闲 / idle / free, 休息 / rest / break, 专注 / focus, 睡眠 / sleep.
+    标准用语后面可以加修饰 (例如 "专注(学习)", "Focus(study)"), 修饰只是说明具体活动, 不影响这是哪一段:
+    先看括号前面的标准用语, 这样 "专注(休息)" 仍然是专注段.
+    """
+    s = str(label or "").strip().lower()
+    head = re.split(r"[(（]", s, maxsplit=1)[0].strip()
+    return _seg_kind_in(head) or _seg_kind_in(s)
+
+
+def seg_detail(label: str) -> str:
+    """日程段名字后面括号里的修饰 (具体的活动): "专注(学习)" → "学习"; 没有 = ""."""
+    m = re.search(r"[(（]([^()（）]*)[)）]", str(label or ""))
+    return m.group(1).strip() if m else ""
+
+
+def schedule_entries(text: str) -> list:
+    """人设里每天重复的日程: 所有带时间的段 → [条目], 没有重复. 只认 "H:MM-H:MM:名字" 这样的行.
+    条目是 {"kind", "start", "end", "label", "detail"}: kind 是空闲 / 休息 / 专注 / 睡眠之一, 别的名字是 "";
+    时刻都是一天中的第几分钟, 跨零点的段 end > 1440.
+    """
     out, seen = [], set()
     for m in _SEG_RE.finditer(str(text or "")):
-        h, mi = int(m.group(1)), int(m.group(2))
-        kind = seg_kind(m.group(5))
-        if not kind or h > 23 or mi > 59 or (kind, h * 60 + mi) in seen:
+        h, mi, eh, em = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
+        label = m.group(5).strip()
+        kind = seg_kind(label)
+        if h > 23 or mi > 59 or eh > 24 or em > 59 or (eh == 24 and em):
             continue
-        seen.add((kind, h * 60 + mi))
-        out.append((kind, h * 60 + mi))
+        start, end = h * 60 + mi, eh * 60 + em
+        if end <= start:                                       # 跨零点 (23:30-6:30)
+            end += 24 * 60
+        if (kind, start) in seen:
+            continue
+        seen.add((kind, start))
+        out.append({"kind": kind, "start": start, "end": end, "label": label, "detail": seg_detail(label)})
     return out
+
+
+def schedule_segments(text: str) -> list:
+    """人设里每天重复的日程: 所有空闲 / 休息 / 专注 / 睡眠段 → [(kind, 开始时刻 (一天中的第几分钟))], 没有重复."""
+    return [(e["kind"], e["start"]) for e in schedule_entries(text) if e["kind"]]
 
 
 _PRO_KINDS = {"长时间休息": "long", "空闲": "idle", "休息": "rest"}
@@ -433,6 +522,7 @@ class Comm:
         self.data_fn = lambda sel: ""  # 统计 / 日历 / 合约词条的数据 (comm_data.build); app 接上
         self.fog = lambda: False       # 合约黑雾中: 不发数据
         self.blocked = lambda: ""      # 现在不能用沟通的原因 ("" = 可以): 合约的"无言为真", 或者不在休息 / 空闲 (专注 / 睡眠 / 外出中)
+        self.ai_blocked = lambda: self.blocked()   # 对方现在不能主动发消息的原因 ("" = 可以): app 接上; 睡眠中仍可发, 只是不通知
         self.hard_block = lambda: False   # 连等回复的这条也不要了的那种 (无言为真); 只是不在休息 / 空闲时, 已经发出去的请求回复到了照样收下
         self.info_fn = lambda tag: ""  # 对方要的资料: "contract" → 词条库; app 接上
         self.device = lambda: ""       # 本机的设备 id (sync.my_id); app 接上
@@ -452,7 +542,8 @@ class Comm:
         self._next_id = 1
         self._last_ts = 0
         self._seg_sig = None          # 人设文件的 (名字, 修改时间, 大小): 变了才重新读日程
-        self._seg_cache = []
+        self._seg_cache = []          # [(kind, 开始时刻)]: 主动发消息用
+        self._entry_cache = []        # 完整日程条目 (开始 / 结束 / 名字 / 修饰): 显示对方的状态用
         self._pro_cache = {}          # 同一个人设文件里写的主动发起谈话的概率 (persona_probs)
         self._bg_seg = {}             # 非正在聊天的对象: 人设文件名 -> (文件特征, 日程段, 概率)
         self._bg_busy = None          # 正在为哪个非正在聊天的对象请求 (对象编号), 同时最多一个
@@ -915,6 +1006,10 @@ class Comm:
         why = self.blocked()
         if why:
             return why
+        return self._profile_problem()
+
+    def _profile_problem(self) -> str:
+        """API / 人设没配置好的原因 ("" = 可以)."""
         try:
             ai_assist.check_profile(self.ai.profile())
         except ai_assist.AIError as e:
@@ -922,6 +1017,46 @@ class Comm:
         if not self.persona_name():
             return "还没有选人设"
         return ""
+
+    def _ai_problem(self) -> str:
+        """对方现在能不能主动发消息 / 重试 ("" = 可以). 和 problem 的区别: 用户睡眠时对方仍可以发, 只是消息先藏起来、不通知."""
+        why = self.ai_blocked()
+        if why:
+            return why
+        return self._profile_problem()
+
+    # ---- 对方现在在做什么 (按人设日程; 显示在聊天页顶上) ----
+    def other_status(self, now=None) -> dict:
+        """对方现在在日程里的哪一段: {"kind", "label", "detail", "begin", "end"}; 没有日程 / 不在任何一段 = {}."""
+        entries = self._entries()
+        if not entries:
+            return {}
+        now = now or self.now()
+        t = now.hour * 60 + now.minute
+        best = None                                           # (开始时刻, 结束时刻, 条目): 重叠时取最晚开始的那段
+        for e in entries:
+            for shift in (0, -24 * 60):                       # 今天 / 昨天开始的跨零点段
+                start, end = e["start"] + shift, e["end"] + shift
+                if start <= t < end and (best is None or start > best[0]):
+                    best = (start, end, e)
+        if best is None:
+            return {}
+        base = datetime.combine(now.date(), datetime.min.time())
+        return {"kind": best[2]["kind"], "label": best[2]["label"], "detail": best[2]["detail"],
+                "begin": base + timedelta(minutes=best[0]), "end": base + timedelta(minutes=best[1])}
+
+    def other_status_display(self, now=None) -> tuple:
+        """聊天页顶上那一行: (状态文字, kind). 只显示 专注中 / 睡眠中 / 休息中 / 空闲 四种状态;
+        别的名字 / 不在任何一段里 / 没有日程, 一律按空闲显示; 没有选人设 = ("", "")."""
+        if not self.persona_name():
+            return "", ""
+        s = self.other_status(now)
+        kind = s["kind"] if s and s["kind"] in STATUS_TEXT else "idle"
+        return tr(STATUS_TEXT[kind]), kind
+
+    def other_status_text(self, now=None) -> str:
+        """聊天页顶上那一行 (没有前缀 / 修饰 / 结束时间, 前面加什么颜色的小圆点看 kind)."""
+        return self.other_status_display(now)[0]
 
     # ---- 头像: 圆形 PNG, 在 avatar.py / pages/avatar_dialog.py 里选图并截取 ----
     @staticmethod
@@ -1239,7 +1374,7 @@ class Comm:
             self._again = False
             if self.unanswered() and not err:
                 self._request("user")
-        elif kind in FOLLOW_KINDS and self.split_on() and not err and not refused and not self.problem() and self.leader():
+        elif kind in FOLLOW_KINDS and self.split_on() and not err and not refused and not self._ai_problem() and self.leader():
             # 规则 VIII: 对方的第一条已经收到了, 再调用一次, 让它可以接着说 (只想说一次就 [refuse to reply], 什么也不留下)
             self._trigger("followup", FOLLOW_BODY)
 
@@ -1255,7 +1390,7 @@ class Comm:
         for res in bg:
             self._bg_finish(*res)
         self._release_held()
-        if self.busy or self.problem() or not self.leader():
+        if self.busy or self._ai_problem() or not self.leader():
             return
         now = self.now()
         snap = self.snapshot() or {}
@@ -1410,34 +1545,43 @@ class Comm:
         return False
 
     def _segments(self) -> list:
-        """现在这个人设日程里的空闲 / 休息段 (人设文件没变就用上次读的)."""
+        """现在这个人设日程里的空闲 / 休息 / 专注 / 睡眠段 (人设文件没变就用上次读的)."""
         name = self.persona_name()
         if not name:
-            self._pro_cache = {}
+            self._pro_cache, self._seg_cache, self._entry_cache = {}, [], []
             return []
         try:
             st = os.stat(os.path.join(self.personas, name))
         except OSError:
-            self._pro_cache = {}
+            self._pro_cache, self._seg_cache, self._entry_cache = {}, [], []
             return []
         sig = (name, st.st_mtime_ns, st.st_size)
         if sig != self._seg_sig:
             self._seg_sig = sig
             text = read_persona(self.personas, name)
-            self._seg_cache = schedule_segments(text)
+            self._entry_cache = schedule_entries(text)
+            self._seg_cache = [(e["kind"], e["start"]) for e in self._entry_cache if e["kind"]]
             self._pro_cache = persona_probs(text)
         return self._seg_cache
+
+    def _entries(self) -> list:
+        """现在这个人设的完整日程 (带结束时刻 / 修饰): 显示对方的状态用."""
+        self._segments()
+        return self._entry_cache
 
     def reload_schedule(self, why: str = ""):
         """重新读人设里的日程, 主动发消息的时刻按它调整: 打开 OIT / 开始新对话 (清空) / 换人设时调用; 人设文件改了也会在 _segments 里自己重读."""
         self._seg_sig = None
         segs = self._segments()
-        self.log(f"SCHEDULE {why}: 空闲 {sum(k == 'idle' for k, _m in segs)} 段, 休息 {sum(k == 'rest' for k, _m in segs)} 段")
+        self.log(f"SCHEDULE {why}: 空闲 {sum(k == 'idle' for k, _m in segs)} 段, 休息 {sum(k == 'rest' for k, _m in segs)} 段"
+                 f", 专注 {sum(k == 'focus' for k, _m in segs)} 段, 睡眠 {sum(k == 'sleep' for k, _m in segs)} 段")
 
     def _schedule_events(self, now, segs=None) -> list:
         """日程里 3 分钟之内就要开始的空闲 / 休息段: [(时间点, "idle" | "rest", 开始的时刻)]. segs: 别的对象的日程段 (默认是现在聊的)."""
         out = []
         for kind, mins in (self._segments() if segs is None else segs):
+            if kind not in ("idle", "rest"):                  # 专注 / 睡眠段只用来显示状态, 不主动发消息
+                continue
             for d in (0, 1):                                  # 今天 / 明天 (23:59 看 0:00 开始的那段)
                 start = datetime.combine(now.date() + timedelta(days=d), datetime.min.time()) + timedelta(minutes=mins)
                 if now < start <= now + timedelta(seconds=PROACTIVE_LEAD[1]):
@@ -2010,10 +2154,42 @@ def _selftest():
 
     # ---- II / III: 人设日程里每段空闲 / 休息开始前 1~3 分钟, 按概率发 ----
     assert schedule_segments(BUILTIN_PERSONAS["Claudia.txt"]) == [
-        ("rest", 520), ("rest", 658), ("idle", 750), ("rest", 880), ("rest", 1018),
-        ("idle", 1110), ("rest", 1240), ("rest", 1378), ("idle", 1380)]
+        ("focus", 420), ("rest", 520), ("focus", 558), ("rest", 658), ("focus", 695), ("idle", 750),
+        ("focus", 780), ("rest", 880), ("focus", 918), ("rest", 1018), ("focus", 1055), ("idle", 1110),
+        ("focus", 1140), ("rest", 1240), ("focus", 1278), ("rest", 1378), ("idle", 1380), ("sleep", 1410)]
     assert schedule_segments("- 9:05 ~ 9:35 : Idle time\n  09：10-10:00：休息\n24:00-25:00:空闲\n12:00-13:00:不休息\n"
                              "12:00-13:00:午饭\n每天 8 点到 12 点上课.\n9:05-9:35:idle again\n") == [("idle", 545), ("rest", 550)]
+    # 专注 / 睡眠的识别, 英文写法 (不分大小写), 以及标准用语后面的修饰
+    assert seg_kind("专注(学习)") == "focus" and seg_kind("FOCUS") == "focus" and seg_kind("Focus(study)") == "focus"
+    assert seg_kind("专注(休息)") == "focus" and seg_kind("休息(专注)") == "rest", "先看标准用语, 不看修饰里的字"
+    assert seg_kind("睡眠") == "sleep" and seg_kind("SLEEP") == "sleep" and seg_kind("sleeping") == "sleep"
+    assert seg_kind("午饭") == "" and seg_kind("不专注") == "" and seg_kind("不休息") == ""
+    assert schedule_entries("23:30-6:30:睡眠")[0]["end"] == 6 * 60 + 30 + 24 * 60
+    assert schedule_entries("8:00-9:00:专注(学习)")[0]["detail"] == "学习"
+    assert schedule_segments("8:00-9:00:Focus\n9:00-10:00:focus(study)\n10:00-11:00:FOCUS\n"
+                             "23:30-6:30:SLEEP\n23:30-6:30:Sleep") == [("focus", 480), ("focus", 540), ("focus", 600),
+                                                                         ("sleep", 1410)]
+    # 沟通界面显示的对方状态: 按人设日程, 跨零点也认; 只显示四种状态, 别的都算空闲; 不显示结束时间
+    cst = Comm(os.path.join(td, "status"), folder, now=lambda: clock[0], chat_fn=fake)
+    cst.set_cfg(persona="Claudia.txt")
+    assert cst.other_status_text(datetime(2026, 11, 2, 8, 0)) == "专注中"
+    assert cst.other_status_text(datetime(2026, 11, 2, 9, 0)) == "休息中"
+    assert cst.other_status_text(datetime(2026, 11, 2, 12, 40)) == "空闲"
+    assert cst.other_status_text(datetime(2026, 11, 2, 12, 15)) == "空闲", "午饭等非四类: 算空闲"
+    assert cst.other_status_text(datetime(2026, 11, 2, 6, 45)) == "空闲", "不在四类段里: 也算空闲"
+    assert cst.other_status_text(datetime(2026, 11, 2, 23, 59)) == "睡眠中"
+    assert cst.other_status_display(datetime(2026, 11, 2, 12, 15))[1] == "idle"
+    assert cst.other_status_display(datetime(2026, 11, 2, 23, 59))[1] == "sleep"
+    assert "09:18" not in cst.other_status_text(datetime(2026, 11, 2, 9, 0)) and "12:30" not in cst.other_status_text(datetime(2026, 11, 2, 12, 15)), "状态里不显示结束时间"
+    assert cst.other_status(datetime(2026, 11, 2, 23, 59))["end"].day == 3, "跨零点: 到第二天 6:30"
+    open(os.path.join(folder, "带修饰.txt"), "w", encoding="utf-8").write("8:00-9:00:专注(学习)\n9:00-10:00:午饭(便当)\n")
+    cst.set_cfg(persona="带修饰.txt")
+    assert cst.other_status_text(datetime(2026, 11, 3, 8, 30)) == "专注中", "状态里不显示修饰"
+    assert cst.other_status_text(datetime(2026, 11, 3, 9, 30)) == "空闲", "午饭算空闲"
+    open(os.path.join(folder, "无日程.txt"), "w", encoding="utf-8").write("你是小满.\n")
+    cst.set_cfg(persona="无日程.txt")
+    assert cst.other_status_text(datetime(2026, 11, 3, 15, 0)) == "空闲", "没有日程: 也算空闲"
+    cst.flush()
     open(os.path.join(folder, "日程.txt"), "w", encoding="utf-8").write("你是小满.\n12:30-13:00:空闲\n20:40-21:18:休息\n")
     os.makedirs(os.path.join(td, "sched"))
     c5 = Comm(os.path.join(td, "sched"), folder, now=lambda: clock[0], chat_fn=fake)
@@ -2100,6 +2276,38 @@ def _selftest():
     assert "休息时间将在 22:58 开始" in calls[-1][1][-1]["content"]
     assert fire_before(c6, datetime(2027, 4, 1, 23, 0)) is None, "刚发过, 23:00 的空闲段不再发"
     assert any(k.startswith("S2027-04-01T23:00") for k in c6._pro_done())
+    # 用户睡眠: 对方仍按日程主动发, 但消息先藏起来、不通知; 醒来才显示 (+ 前 5 分钟没聊过的话响一声)
+    # 用户专注: 对方完全不尝试发消息
+    open(os.path.join(folder, "夜猫.txt"), "w", encoding="utf-8").write(
+        "你是夜猫.\n12:30-13:00:空闲\n空闲发起谈话概率:100%\n")
+    os.makedirs(os.path.join(td, "sleep"))
+    clock_before_sleep = clock[0]
+    cs = Comm(os.path.join(td, "sleep"), folder, now=lambda: clock[0], chat_fn=fake)
+    cs.ai.set_profile("deepseek", api_key="k")
+    cs.ai.provider = "deepseek"
+    cs.set_cfg(persona="夜猫.txt")
+    cs.state_fn = lambda: "sleep"
+    cs.blocked = lambda: "睡眠中不能使用沟通"
+    cs.ai_blocked = lambda: ""
+    cs.snapshot = lambda: {"state": "sleep"}
+    pings_s = []
+    cs.on_proactive = lambda: pings_s.append(1)
+    script.append("睡着了也要说")
+    assert fire_before(cs, datetime(2028, 2, 1, 12, 30)) is not None, "睡眠时对方仍会发"
+    wait(cs)
+    assert cs.visible() == [] and any(m.get("hold") for m in cs.messages), "睡眠时收到: 先藏起来"
+    assert cs.unread == 0 and pings_s == [], "睡眠时不通知"
+    cs.state_fn = lambda: "idle"
+    cs.blocked = lambda: ""
+    cs.tick()
+    assert [m["text"] for m in cs.visible()] == ["睡着了也要说"] and cs.unread == 1 and pings_s == [1], "醒来才显示 + 通知"
+    cs.state_fn = lambda: "focus"
+    cs.blocked = lambda: "专注中不能使用沟通"
+    cs.ai_blocked = lambda: "专注中不能使用沟通"
+    n_calls = len(calls)
+    assert fire_before(cs, datetime(2028, 2, 2, 12, 30)) is None and len(calls) == n_calls, "专注时不会尝试发消息"
+    cs.flush()
+    clock[0] = clock_before_sleep
     # ---- 缓存: 请求的开头要稳定 (api_messages 的起点一格一格挪), 带用量记录 ----
     big = [{"role": "me" if i % 2 == 0 else "ai", "text": f"m{i}"} for i in range(200)]
     firsts = {api_messages(big[:n])[0]["content"] for n in range(61, 140)}
@@ -2218,12 +2426,21 @@ def _selftest():
     cu.flush()
 
     # README 里的标准写法: 例子能被认出来; 打开 OIT / 换人设 / 新对话都会重新读人设日程
-    assert "日程的标准写法" in readme_text() and schedule_segments(readme_text()) == [("rest", 520), ("idle", 750)]
+    # 人设 README 跟随界面语言; 中文版里有"标准格式后添加修饰"的说明
+    assert "格式和名词与标准用语相同才能识别与匹配." in readme_text() and "8:00-9:00:专注(学习)" in readme_text()
+    i18n.set_language("en")
+    try:
+        en = readme_text()
+        assert en.startswith("How to write a persona prompt:") and "8:00-9:00:Focus" in en
+        assert "The format and the standard wording must match to be recognized and matched." in en
+    finally:
+        i18n.set_language("zh")
+    assert "日程的标准写法" in readme_text() and schedule_segments(readme_text()) == [("focus", 420), ("rest", 520), ("idle", 750), ("sleep", 1410)]
     log5 = lambda: open(os.path.join(td, "sched", "comm.log"), encoding="utf-8").read()
-    assert "SCHEDULE 启动" in log5() and "SCHEDULE 换人设: 空闲 1 段, 休息 1 段" in log5()
+    assert "SCHEDULE 启动" in log5() and "SCHEDULE 换人设: 空闲 1 段, 休息 1 段, 专注 0 段, 睡眠 0 段" in log5()
     open(os.path.join(folder, "日程.txt"), "a", encoding="utf-8").write("14:00-14:30:空闲\n")
     c5.clear()
-    assert "SCHEDULE 新对话: 空闲 2 段, 休息 1 段" in log5(), "新对话: 人设改过的日程马上生效"
+    assert "SCHEDULE 新对话: 空闲 2 段, 休息 1 段, 专注 0 段, 睡眠 0 段" in log5(), "新对话: 人设改过的日程马上生效"
     assert sorted(c5._segments()) == [("idle", 750), ("idle", 840), ("rest", 1240)]
     for x in (c5, c6):
         x.flush()

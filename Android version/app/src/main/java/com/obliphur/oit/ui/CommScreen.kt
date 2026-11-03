@@ -45,6 +45,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -74,10 +75,15 @@ fun CommScreen(go: (String) -> Unit) {
     // 不跟着每秒一次的 LocalTick 重画 (整页每秒重画一遍会有卡顿感): 只在聊天记录 / 状态变了才刷新
     var ver by remember { mutableIntStateOf(comm.version) }
     var waitHint by remember { mutableStateOf("") }
+    var otherStatus by remember { mutableStateOf(comm.otherStatusDisplay().first) }
+    var otherStatusKind by remember { mutableStateOf(comm.otherStatusDisplay().second) }
     LaunchedEffect(Unit) {
         while (true) {
             if (comm.version != ver) ver = comm.version
             comm.waitingText().let { if (it != waitHint) waitHint = it }
+            val (text, kind) = comm.otherStatusDisplay()
+            if (text != otherStatus) otherStatus = text
+            if (kind != otherStatusKind) otherStatusKind = kind
             kotlinx.coroutines.delay(250)
         }
     }
@@ -107,6 +113,12 @@ fun CommScreen(go: (String) -> Unit) {
             // 模型: 和 AI 名单建议用同一份模型设置, 选了两边都生效
             ModelPicker({ comm.modelProfile() }) { comm.setModel(it) }
             TextButton({ if (comm.messages.isNotEmpty()) askClear = true }) { Text(tr("清空"), color = o.dim) }
+        }
+        // 对方现在在做什么 (按人设日程; 没有选人设时不显示): 小圆点的颜色跟着状态变
+        if (otherStatus.isNotEmpty()) Row(Modifier.padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(8.dp).clip(CircleShape).background(
+                Color(android.graphics.Color.parseColor(Comm.STATUS_COLORS[otherStatusKind] ?: "#9E9E9E"))))
+            Text(otherStatus, color = o.dim, fontSize = 12.sp, modifier = Modifier.padding(start = 6.dp))
         }
         // 倒排 + 上下各留一点空白: 第一条 / 最后一条也能再滑过去一些, 新消息总是贴着底部
         LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list, reverseLayout = true,

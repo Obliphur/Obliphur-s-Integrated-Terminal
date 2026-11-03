@@ -55,6 +55,13 @@ class CommPage(tk.Frame):
         self.cb_who = ttk.Combobox(hdr, textvariable=self.var_who, state="readonly", width=16)
         self.cb_who.pack(side="right", padx=(0, 12))
         self.cb_who.bind("<<ComboboxSelected>>", lambda _e: self._pick_who())
+        # 对方现在在做什么 (按人设日程; 每秒刷新, 没有选人设时不显示): 小圆点的颜色跟着状态变
+        self.other_row = tk.Frame(self, bg=bg)
+        self.other_row.pack(fill="x", padx=30, pady=(0, 2))
+        self.lbl_other_dot = tk.Label(self.other_row, text="", bg=bg, fg=COLORS["text_dim"], font=config.font("small"))
+        self.lbl_other_dot.pack(side="left")
+        self.lbl_other = tk.Label(self.other_row, text="", bg=bg, fg=COLORS["text_dim"], font=config.font("small"), anchor="w")
+        self.lbl_other.pack(side="left", padx=(4, 0))
         # 模型: 和 AI 名单建议用同一份模型设置, 选了两边都生效
         self.var_model = tk.StringVar()
         self.cb_model = ttk.Combobox(hdr, textvariable=self.var_model, width=22)
@@ -161,6 +168,9 @@ class CommPage(tk.Frame):
         wait = c.waiting_text()
         text = blocked or (tr(c.error) if c.error else "") or (tr(wait) if wait else "")
         cfg(self.lbl_status, text=text, fg=COLORS["danger"] if (blocked or c.error) else COLORS["text_dim"])
+        other, kind = c.other_status_display()
+        cfg(self.lbl_other_dot, text="●" if other else "", fg=comm_mod.STATUS_COLORS.get(kind, COLORS["text_dim"]))
+        cfg(self.lbl_other, text=other)
 
     def refresh(self, force: bool = False):
         c = self.comm
