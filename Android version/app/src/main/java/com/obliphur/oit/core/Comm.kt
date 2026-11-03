@@ -698,8 +698,9 @@ class Comm(
         if (userProfile.isNotEmpty()) doc["profile"] = userProfile
         doc["split"] = splitSend                                    // 分条发的开关: 调用 AI 的是主端, 两台设备要一致
         doc["bgpro"] = bgPro
+        doc["avatar"] = showAvatar                                  // 显示头像: 设置页的开关也同步
         if (idleDay.isNotEmpty()) doc["idle"] = JSONObject().put("d", idleDay).put("s", idleSec)      // 两台设备共用一份额度 (各自累计的取大的)
-        for (p in chatPids()) doc["mute:$p"] = p in muted
+        for (p in (chatPids() + muted).toSet()) doc["mute:$p"] = p in muted
         for (p in chatPids()) {
             val st = stateOf(p)
             for (m in st.messages.takeLast(SYNC_N)) {
@@ -733,6 +734,7 @@ class Comm(
                     if (d == now().toLocalDate().toString() && (idleDay != d || s > idleSec)) { idleDay = d; idleSec = s; saveCfg(); changed() }
                 }
                 key == "bgpro" && v is Boolean -> if (v != bgPro) { bgPro = v; saveCfg(); changed() }
+                key == "avatar" && v is Boolean -> if (v != showAvatar) { showAvatar = v; saveCfg(); changed() }
                 kind == "mute" && v is Boolean -> if (v != (rest in muted)) { if (v) muted.add(rest) else muted.remove(rest); saveCfg(); changed() }
                 key == "profile" -> {
                     val n = (v as? String ?: "").take(MAX_PROFILE)
@@ -836,7 +838,7 @@ class Comm(
         avatarAi?.let { this.avatarAi = it.trim().take(4) }
         saveCfg()
         changed()
-        if (splitSend != null || bgPro != null) push()
+        if (splitSend != null || bgPro != null || showAvatar != null) push()
     }
 
     /** 这个对象 (默认是现在聊的) 被"禁止主动发起"了吗: 不主动发消息, 也不追问 (规则 IX). */

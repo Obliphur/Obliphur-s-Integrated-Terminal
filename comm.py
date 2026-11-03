@@ -805,7 +805,7 @@ class Comm:
         self.cfg.update(kw)
         self.save_cfg()
         self._changed()
-        if "split_send" in kw or "bg_pro" in kw or "mute_pro" in kw:
+        if "split_send" in kw or "bg_pro" in kw or "mute_pro" in kw or "show_avatar" in kw:
             self._push()
 
     def _changed(self):
@@ -838,10 +838,11 @@ class Comm:
             doc["profile"] = self.cfg["user_profile"]
         doc["split"] = self.split_on()                  # 分条发的开关: 调用 AI 的是主端, 两台设备要一致
         doc["bgpro"] = self.bg_on()
+        doc["avatar"] = bool(self.cfg.get("show_avatar"))      # 显示头像: 设置页的开关也同步
         rec = self.cfg.get("idle_use") or {}
         if rec.get("d"):
             doc["idle"] = {"d": rec["d"], "s": float(rec.get("s") or 0)}      # 两台设备共用一份额度 (各自累计的取大的)
-        for pid in self.chat_pids():
+        for pid in set(self.chat_pids()) | set(self.cfg.get("mute_pro") or []):
             doc[f"mute:{pid}"] = self.is_muted(pid)
         for pid in self.chat_pids():
             st = self._state_of(pid)
@@ -938,6 +939,11 @@ class Comm:
             elif key == "split" and isinstance(val, bool):
                 if val != self.split_on():
                     self.cfg["split_send"] = val
+                    self.save_cfg()
+                    self._changed()
+            elif key == "avatar" and isinstance(val, bool):
+                if val != bool(self.cfg.get("show_avatar")):
+                    self.cfg["show_avatar"] = val
                     self.save_cfg()
                     self._changed()
             elif key == "profile":
@@ -2173,6 +2179,12 @@ def _selftest():
     assert [m["text"] for m in B.visible()] == ["你好", "A 的回复"] and B.unread == 1
     pull(A, B)
     assert len(B.visible()) == 2, "同一条不会并两次"
+    A.set_cfg(show_avatar=True)                           # 设置页的开关也同步
+    pull(A, B)
+    assert B.cfg["show_avatar"] is True
+    A.set_cfg(show_avatar=False)
+    pull(A, B)
+    assert B.cfg["show_avatar"] is False
     assert B.messages[0]["id"] != 0 and B.visible()[0]["uid"] == A.visible()[0]["uid"]
     # B 上的下一条: 在 B 上调用 AI, 回复同步回 A
     script.append("B 的回复")

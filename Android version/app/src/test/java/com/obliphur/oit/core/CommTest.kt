@@ -476,6 +476,12 @@ class CommTest {
         pull(a, b)
         assertEquals(2, b.visible().size)               // 同一条不会并两次
         assertEquals("aaaa", b.lastAuthor())
+        a.set(showAvatar = true)                         // 设置页的开关也同步
+        pull(a, b)
+        assertTrue(b.showAvatar)
+        a.set(showAvatar = false)
+        pull(a, b)
+        assertFalse(b.showAvatar)
 
         // 在 B 上发: B 调用 AI, 成为主端, 回复同步回 A
         script.add("B 的回复")
