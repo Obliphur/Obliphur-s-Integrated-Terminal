@@ -1485,6 +1485,7 @@ class Comm(
             runCatching {
                 if (value == null) {
                     if (f.exists()) { f.delete(); dirty = true }
+                    File(personaBackupDir(), name).delete()           // 备份也删掉 (以后同名新文件算第一次见到)
                 } else {
                     val new = value.toString().take(MAX_PERSONA)
                     val old = if (f.isFile) f.readText(Charsets.UTF_8).removePrefix("\uFEFF") else null
@@ -1493,6 +1494,7 @@ class Comm(
                         f.writeText(new, Charsets.UTF_8)
                         dirty = true
                     }
+                    if (old != new || !File(personaBackupDir(), name).isFile) backupText(name, new)      // 同步来的不是"手动改的": 备份跟着换, 不弹"人设被修改"
                 }
             }
         }

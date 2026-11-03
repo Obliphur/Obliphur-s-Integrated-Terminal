@@ -1600,6 +1600,10 @@ class Comm:
                     if os.path.exists(path):
                         os.remove(path)
                         dirty = True
+                    try:
+                        os.remove(self._persona_backup_path(name))      # 备份也删掉 (以后同名新文件算第一次见到)
+                    except OSError:
+                        pass
                     continue
                 new = str(text)[:MAX_PERSONA]
                 try:
@@ -1611,6 +1615,8 @@ class Comm:
                     with open(path, "w", encoding="utf-8", newline="\n") as f:
                         f.write(new)
                     dirty = True
+                if old != new or not os.path.isfile(self._persona_backup_path(name)):
+                    self._write_backup_text(name, new)          # 同步来的不是"手动改的": 备份跟着换, 不弹"人设被修改"
             except OSError:
                 pass
         if dirty:
@@ -3823,6 +3829,11 @@ def _selftest():
     ps.set_cfg(persona="甲.txt")
     doc = ps.persona_doc()
     assert doc["甲.txt"] == "你是甲" and "README.md" not in doc
+    assert ps.check_persona_changes() is None                   # 第一次见到: 记下备份
+    ps.apply_persona_doc({"甲.txt": "你是甲改", "丙.txt": "你是丙"})
+    assert ps.check_persona_changes() is None, "别的设备同步来的人设更新 / 新增, 不弹'人设被修改'"
+    ps.apply_persona_doc({"甲.txt": "你是甲", "丙.txt": None})
+    assert ps.check_persona_changes() is None, "同步来的还原 / 删除也一样"
     ps.apply_persona_doc({"乙.txt": "你是乙", "甲.txt": None})
     assert "乙.txt" in list_personas(psf) and "甲.txt" not in list_personas(psf)
     assert read_persona(psf, "乙.txt") == "你是乙" and ps.persona_name() == ""

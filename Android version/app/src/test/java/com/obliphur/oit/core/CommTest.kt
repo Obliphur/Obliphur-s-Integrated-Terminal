@@ -479,6 +479,11 @@ class CommTest {
         c.importPersona("甲.txt", "你是甲".byteInputStream())
         c.set(persona = "甲.txt")
         assertEquals("你是甲", c.personaDoc()["甲.txt"])
+        assertNull(c.checkPersonaChanges())                          // 第一次见到: 记下备份
+        c.applyPersonaDoc(mapOf<String, Any?>("甲.txt" to "你是甲改", "丙.txt" to "你是丙"))
+        assertNull("别的设备同步来的人设更新 / 新增, 不弹'人设被修改'", c.checkPersonaChanges())
+        c.applyPersonaDoc(mapOf<String, Any?>("甲.txt" to "你是甲", "丙.txt" to null))
+        assertNull("同步来的还原 / 删除也一样", c.checkPersonaChanges())
         c.applyPersonaDoc(mapOf<String, Any?>("乙.txt" to "你是乙", "甲.txt" to null))
         assertTrue("乙.txt" in c.listPersonas() && "甲.txt" !in c.listPersonas())
         assertEquals("你是乙", c.readPersona("乙.txt"))
