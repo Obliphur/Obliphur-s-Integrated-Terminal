@@ -288,10 +288,27 @@ fun CommSettings() {
 
     OitCard {
         Text(tr("🧑  我的身份背景"), fontWeight = FontWeight.Bold, color = o.text)
-        // 随时保存 (即时生效, 没有等待期), 发给对方时附在人设后面
+        // 只在这段对话的第一轮发一次, 之后不再重复 (模型之后靠聊天记录)
         var profile by remember { mutableStateOf(comm.userProfile) }
         OutlinedTextField(profile, { profile = it.take(Comm.MAX_PROFILE); comm.set(userProfile = profile) },
             modifier = Modifier.fillMaxWidth().padding(top = 6.dp), minLines = 3, maxLines = 8)
+        Text(tr("只在这段对话的第一轮发送, 改动在下一段对话生效."), color = o.dim, fontSize = 12.sp,
+            modifier = Modifier.padding(top = 4.dp))
+    }
+
+    OitCard {
+        Text(tr("🧠  重要信息"), fontWeight = FontWeight.Bold, color = o.text)
+        Text(tr("写在这里的内容每次都会发给对方 (最多 2000 字)."), color = o.dim, fontSize = 12.sp,
+            modifier = Modifier.padding(top = 2.dp))
+        var mem by remember { mutableStateOf(comm.memManual) }
+        OutlinedTextField(mem, { mem = it.take(Comm.MEM_MAX); comm.setMem(mem) },
+            modifier = Modifier.fillMaxWidth().padding(top = 6.dp), minLines = 3, maxLines = 8)
+        val auto = comm.memAuto
+        Text(
+            if (auto.isEmpty()) tr("（还没有自动摘要）")
+            else tr("自动摘要: ") + auto.take(160) + if (auto.length > 160) "…" else "",
+            color = o.dim, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp)
+        )
     }
 
     OitCard {

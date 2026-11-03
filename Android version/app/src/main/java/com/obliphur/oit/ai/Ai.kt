@@ -119,6 +119,12 @@ object Ai {
 
     fun chat(p: Profile, system: String, user: String): String = chatMessages(p, system, listOf("user" to user))
 
+    /** 是不是 DeepSeek 的官方地址: 只有它认下面关思考的两个字段 (中转 / 别家可能直接 400). */
+    fun isDeepSeek(p: Profile): Boolean = runCatching {
+        val host = java.net.URL(p.baseUrl).host.lowercase()
+        host == "deepseek.com" || host.endsWith(".deepseek.com")
+    }.getOrDefault(false)
+
     /** 响应里的用量 → (输入 token 总数, 其中命中缓存的). Anthropic cache_read_input_tokens (输入 = input + 读缓存 + 写缓存),
      *  DeepSeek prompt_cache_hit_tokens, OpenAI prompt_tokens_details.cached_tokens; 没有就是 0 (同 ai_assist.usage_of). */
     fun usageOf(d: JSONObject): Pair<Long, Long> {
@@ -148,6 +154,11 @@ object Ai {
         conn.setRequestProperty("Content-Type", "application/json")
         conn.setRequestProperty("User-Agent", "OIT/1.0")
         val body = JSONObject().put("model", p.model).put("max_tokens", maxTokens)
+        // DeepSeek 的思考模式默认开: 思考 token 按输出价计费, 而且会忽略 temperature (人设语气不稳), 所以显式关掉
+        if (isDeepSeek(p)) {
+            if (p.protocol == "anthropic") body.put("reasoning", JSONObject().put("effort", "none"))
+            else body.put("thinking", JSONObject().put("type", "disabled"))
+        }
         val arr = JSONArray()
         if (p.protocol == "anthropic") {
             conn.setRequestProperty("x-api-key", key)

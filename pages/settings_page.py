@@ -806,11 +806,28 @@ class SettingsPage(tk.Frame):
         self.txt_profile = tk.Text(fr, height=6, wrap="word", font=config.font("body"), bg=card, fg=COLORS["text"],
                                    insertbackground=COLORS["text"], relief="flat", highlightthickness=1,
                                    highlightbackground=COLORS["border"], highlightcolor=COLORS["accent"])
-        self.txt_profile.pack(fill="x", padx=12, pady=(2, 10))
+        self.txt_profile.pack(fill="x", padx=12, pady=(2, 4))
         self.txt_profile.insert("1.0", str(c.cfg.get("user_profile") or ""))
         self._profile_job = None
         self.txt_profile.bind("<KeyRelease>", lambda _e: self._comm_profile_later())
         self.txt_profile.bind("<FocusOut>", lambda _e: self._comm_profile_save())
+        tk.Label(fr, text=tr("只在这段对话的第一轮发送, 改动在下一段对话生效."), bg=card, fg=COLORS["text_dim"],
+                 font=small, anchor="w").pack(fill="x", padx=12, pady=(0, 8))
+
+        fr, _head = self._card(body, "🧠  重要信息")
+        tk.Label(fr, text=tr("写在这里的内容每次都会发给对方 (最多 2000 字)."), bg=card, fg=COLORS["text_dim"],
+                 font=small, anchor="w").pack(fill="x", padx=12, pady=(0, 4))
+        self.txt_mem = tk.Text(fr, height=5, wrap="word", font=config.font("body"), bg=card, fg=COLORS["text"],
+                               insertbackground=COLORS["text"], relief="flat", highlightthickness=1,
+                               highlightbackground=COLORS["border"], highlightcolor=COLORS["accent"])
+        self.txt_mem.pack(fill="x", padx=12, pady=(2, 4))
+        self.txt_mem.insert("1.0", str(c.cfg.get("mem_manual") or ""))
+        self._mem_job = None
+        self.txt_mem.bind("<KeyRelease>", lambda _e: self._comm_mem_later())
+        self.txt_mem.bind("<FocusOut>", lambda _e: self._comm_mem_save())
+        self.lbl_mem_auto = tk.Label(fr, text="", bg=card, fg=COLORS["text_dim"], font=small, anchor="w",
+                                     justify="left", wraplength=520)
+        self.lbl_mem_auto.pack(fill="x", padx=12, pady=(0, 8))
 
         fr, _head = self._card(body, "✂  分条发送")
         v = tk.BooleanVar(value=c.split_on())
@@ -896,11 +913,25 @@ class SettingsPage(tk.Frame):
         if text != str(self.comm.cfg.get("user_profile") or ""):
             self.comm.set_cfg(user_profile=text)
 
+    def _comm_mem_later(self):
+        if self._mem_job:
+            self.after_cancel(self._mem_job)
+        self._mem_job = self.after(600, self._comm_mem_save)
+
+    def _comm_mem_save(self):
+        """重要信息: 随时保存 (即时生效); 每 MEM_EVERY 条消息由模型整理的那份是另一栏 (自动摘要)."""
+        self._mem_job = None
+        import comm as comm_mod
+        text = self.txt_mem.get("1.0", "end").strip()[:comm_mod.MEM_MAX]
+        self.comm.set_mem(text)
+
     def _comm_pick_persona(self):
         label = self.comm_persona.get().strip()
         name = next((n for n, lab in getattr(self, "_persona_labels", []) if lab == label), "")
         if name:
+            self._comm_mem_save()                                   # 还没保存的重要信息先存给原来那个对象
             self.comm.set_cfg(persona=name)
+            self._refresh_comm()
 
     def _comm_flag(self, key):
         self.comm.set_cfg(**{key: bool(self.comm_vars[key].get())})
@@ -956,6 +987,14 @@ class SettingsPage(tk.Frame):
                 and self.txt_profile.get("1.0", "end").strip() != str(c.cfg.get("user_profile") or ""):
             self.txt_profile.delete("1.0", "end")                       # 别的设备同步来了新的身份背景
             self.txt_profile.insert("1.0", str(c.cfg.get("user_profile") or ""))
+        if hasattr(self, "txt_mem"):
+            if focus_name(self.txt_mem) != str(self.txt_mem) \
+                    and self.txt_mem.get("1.0", "end").strip() != str(c.cfg.get("mem_manual") or ""):
+                self.txt_mem.delete("1.0", "end")                       # 别的设备同步来了新的重要信息
+                self.txt_mem.insert("1.0", str(c.cfg.get("mem_manual") or ""))
+            auto = str(c.cfg.get("mem_auto") or "").strip()
+            cfg(self.lbl_mem_auto, text=(tr("自动摘要: ") + auto[:160] + ("…" if len(auto) > 160 else ""))
+                if auto else tr("（还没有自动摘要）"))
         if self.comm_vars["bg_pro"].get() != c.bg_on():
             self.comm_vars["bg_pro"].set(c.bg_on())
         if self.comm_vars["split_send"].get() != c.split_on():

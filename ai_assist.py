@@ -396,6 +396,38 @@ def usage_of(data: dict) -> tuple:
     return num(u.get("prompt_tokens")), cached
 
 
+def is_deepseek(profile: dict) -> bool:
+    """是不是 DeepSeek 的官方地址. 只有它认下面关思考的两个字段 (中转 / 别家可能直接 400)."""
+    try:
+        host = (urllib.parse.urlsplit(str(profile.get("base_url") or "")).hostname or "").lower()
+    except ValueError:
+        return False
+    return host == "deepseek.com" or host.endswith(".deepseek.com")
+
+
+def _build_body(profile: dict, system: str, messages: list, max_tokens: int, temperature: float,
+                cache: bool) -> dict:
+    """请求体. DeepSeek 的思考模式默认是开的: 聊天只要一两句话, 思考 token 按输出价计费, 而且思考模式下
+    temperature 会被忽略 (人设的语气就不稳了), 所以对它的官方地址显式关掉."""
+    if profile["protocol"] == "anthropic":
+        sys_field, msgs = system, list(messages)
+        if cache:
+            mark = {"type": "ephemeral"}
+            sys_field = [{"type": "text", "text": system, "cache_control": mark}]
+            if msgs:
+                msgs[-1] = {"role": msgs[-1]["role"],
+                            "content": [{"type": "text", "text": str(msgs[-1]["content"]), "cache_control": mark}]}
+        body = {"model": profile["model"], "max_tokens": max_tokens, "system": sys_field, "messages": msgs}
+        if is_deepseek(profile):
+            body["reasoning"] = {"effort": "none"}          # Anthropic 格式: none = 关思考
+        return body
+    body = {"model": profile["model"], "max_tokens": max_tokens, "temperature": temperature,
+            "messages": [{"role": "system", "content": system}] + list(messages)}
+    if is_deepseek(profile):
+        body["thinking"] = {"type": "disabled"}
+    return body
+
+
 def chat_messages(profile: dict, system: str, messages: list, timeout: float = 90.0, opener=None,
                   max_tokens: int = MAX_TOKENS, temperature: float = 0.2, cache: bool = False, on_usage=None) -> str:
     """带历史的一次请求: messages = [{"role": "user" | "assistant", "content": 文字}], 以 user 开头, 以 user 结尾.
@@ -409,19 +441,9 @@ def chat_messages(profile: dict, system: str, messages: list, timeout: float = 9
     if profile["protocol"] == "anthropic":
         headers["x-api-key"] = key
         headers["anthropic-version"] = ANTHROPIC_VERSION
-        sys_field, msgs = system, list(messages)
-        if cache:
-            mark = {"type": "ephemeral"}
-            sys_field = [{"type": "text", "text": system, "cache_control": mark}]
-            if msgs:
-                msgs[-1] = {"role": msgs[-1]["role"],
-                            "content": [{"type": "text", "text": str(msgs[-1]["content"]), "cache_control": mark}]}
-        body = {"model": profile["model"], "max_tokens": max_tokens, "system": sys_field, "messages": msgs}
-    else:
-        if key:
-            headers["Authorization"] = "Bearer " + key
-        body = {"model": profile["model"], "max_tokens": max_tokens, "temperature": temperature,
-                "messages": [{"role": "system", "content": system}] + list(messages)}
+    elif key:
+        headers["Authorization"] = "Bearer " + key
+    body = _build_body(profile, system, messages, max_tokens, temperature, cache)
     req = urllib.request.Request(endpoint(profile),
                                  data=json.dumps(body).encode("utf-8"),
                                  headers=headers, method="POST")
@@ -856,6 +878,14 @@ def _selftest():
         assert body["messages"] == [{"role": "user", "content": [{"type": "text", "text": "hi", "cache_control": {"type": "ephemeral"}}]}]
         chat_messages(p, "SYS", [{"role": "user", "content": "hi"}], cache=True)
         assert seen[-1][2]["messages"] == [{"role": "system", "content": "SYS"}, {"role": "user", "content": "hi"}]
+        # DeepSeek 官方地址: 显式关掉思考 (它默认开, 思考 token 按输出计费, 而且会忽略 temperature); 别家不加
+        ds = dict(p, base_url="https://api.deepseek.com", model="deepseek-flash")
+        b = _build_body(ds, "SYS", [{"role": "user", "content": "hi"}], 4096, 0.8, True)
+        assert b["thinking"] == {"type": "disabled"} and b["temperature"] == 0.8
+        assert "thinking" not in _build_body(p, "SYS", [{"role": "user", "content": "hi"}], 4096, 0.8, True)
+        b = _build_body(dict(ds, protocol="anthropic", base_url="https://api.deepseek.com/anthropic"),
+                        "SYS", [{"role": "user", "content": "hi"}], 4096, 0.8, True)
+        assert b["reasoning"] == {"effort": "none"} and "thinking" not in b
         try:
             chat(dict(p, base_url=base + "/deny"), "s", "u")
             raise AssertionError
