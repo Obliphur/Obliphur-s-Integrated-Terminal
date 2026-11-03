@@ -454,7 +454,7 @@ class CommTest {
         assertFalse(c.isBuiltinAssistantUnmodified())
         // 老版本没改过的 Assistant: 自动换成当前内置版本 (加上"详细回答"); 改过的不动
         val legacy = BuiltinPersonas.ALL.getValue(BuiltinPersonas.ASSISTANT)
-            .replace(BuiltinPersonas.ASSISTANT_DETAIL_LINE, "")
+            .replace(BuiltinPersonas.ASSISTANT_SLEEP_LINE, "")
         val ld = File(td, "ld").also { it.mkdirs() }
         val lp = File(td, "lp").also { it.mkdirs() }
         File(lp, "Assistant.txt").writeText(legacy)
@@ -484,6 +484,35 @@ class CommTest {
         assertFalse(c.checkClaudiaIntegrity())
         c.restoreClaudia()
         assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).trim(), c.readPersona("Claudia.txt"))
+        // 上一版没改过的 Claudia (没有"记下"那句) 自动升级
+        val ud = File(td, "ud").also { it.mkdirs() }
+        val up = File(td, "up").also { it.mkdirs() }
+        val legacy = BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).replace(BuiltinPersonas.CLAUDIA_SLEEP_LINE, "")
+        File(up, "Claudia.txt").writeText(legacy)
+        File(ud, "comm_config.json").writeText("""{"seeded":true,"persona":"Claudia.txt","claudia_migrated":true}""")
+        val uc = Comm(ud, up, { clock }) { _, _, _ -> "" }
+        assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).trim(), uc.readPersona("Claudia.txt"))
+    }
+
+    /** IV. 人设睡眠开始后 5 分钟, 按睡眠发起谈话概率发一条. */
+    @Test
+    fun sleepProactive() {
+        val td = Files.createTempDirectory("oit").toFile()
+        val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
+        c.importPersona("睡语.txt", "你是睡语.\n23:30-6:30:睡眠\n睡眠发起谈话概率:100%\n".byteInputStream())
+        c.set(persona = "睡语.txt")
+        c.snapshot = { CommSnap("idle") }
+        clock = LocalDateTime.of(2028, 5, 1, 23, 34, 59)
+        c.tick()
+        assertFalse("睡眠开始后不到 5 分钟: 不发", c.busy)
+        clock = LocalDateTime.of(2028, 5, 1, 23, 35, 0)
+        script.add("睡前说一句")
+        c.tick()
+        assertTrue("睡眠开始后 5 分钟: 按概率发", c.busy)
+        wait(c)
+        assertEquals("睡前说一句", c.visible().last().text)
+        val body = calls.last().second.last().second
+        assertTrue("进入睡眠约 5 分钟" in body && "即使你此刻处于睡眠时段" in body)
     }
 
     @Test
@@ -845,7 +874,10 @@ class CommTest {
         c.importPersona("日程.txt", "你是小满.\n12:30-13:00:空闲\n20:40-21:18:休息\n".byteInputStream())
         c.set(persona = "日程.txt")
         assertEquals(80.0 to 60.0, c.proPercent("idle") to c.proPercent("rest"))          // 人设里没写: 默认概率
-        assertEquals(mapOf("idle" to 20.0, "rest" to 20.0, "long" to 20.0), CommText.personaProbs(BuiltinPersonas.ALL.getValue("Claudia.txt")))   // Claudia: 20% / 20% / 20%
+        assertEquals(mapOf("idle" to 20.0, "rest" to 20.0, "long" to 20.0, "sleep" to 40.0), CommText.personaProbs(BuiltinPersonas.ALL.getValue("Claudia.txt")))   // Claudia: 20% / 20% / 20% / 40%
+        assertEquals(0.0, CommText.personaProbs(BuiltinPersonas.ALL.getValue("Assistant.txt"))["sleep"] ?: -1.0, 0.0)
+        assertEquals(mapOf("sleep" to 40.0), CommText.personaProbs("睡眠发起谈话概率:40%"))
+        assertEquals(60.0, Comm.defaultP("sleep"), 0.0)
         assertEquals(mapOf("idle" to 12.5, "rest" to 40.0), CommText.personaProbs("空闲发起谈话概率:12.5%\n休息发起谈话概率 ： 0.4\n休息发起谈话概率:90%"))
         assertEquals(mapOf("idle" to 100.0, "rest" to 30.0), CommText.personaProbs("空闲发起谈话概率:1\n休息发起谈话概率:30"))
         assertEquals(mapOf("idle" to 100.0), CommText.personaProbs("空闲发起谈话概率:150%\n休息发起谈话概率:x"))

@@ -10,7 +10,8 @@
   · 不再有"默认发送的信息": 整点记录 / 计时器状态 / 日历 / 合约词条只有用户手动选了 📎 附件才会发.
   · 模型返回 [refuse to reply] = 此刻不方便回复: 不显示, 用户的消息留着, 过一阵再把它们一次性交给模型.
   · 模型会主动发消息 (MECHANICS 24.4): I. 用户这次休息超过 20 分钟, 休息开始后 1~3 分钟; II. 人设日程里每段"空闲"开始前 1~3 分钟
-    (概率写在人设里: "空闲发起谈话概率:n%", 没写默认 80%); III. 人设日程里每段"休息"开始前 1~3 分钟 ("休息发起谈话概率:n%", 默认 60%). 收到时如果前 5 分钟没和对方聊过, 有柔和的提示音.
+    (概率写在人设里: "空闲发起谈话概率:n%", 没写默认 80%); III. 人设日程里每段"休息"开始前 1~3 分钟 ("休息发起谈话概率:n%", 默认 60%);
+    IV. 人设日程里每段"睡眠"开始后 5 分钟 ("睡眠发起谈话概率:n%", 默认 60%; 睡眠期间只发这一条, 用户回复按日程拒绝). 收到时如果前 5 分钟没和对方聊过, 有柔和的提示音.
   · 用户睡眠时对方仍会按日程发 / 重试 / 追问, 但消息先藏起来、不通知 (醒来才显示 + 提示音); 用户专注 / 外出时对方不会尝试发.
   · 聊天页顶上显示对方现在的状态 (按人设日程里的专注 / 休息 / 空闲 / 睡眠段, 例如 "专注中"; 前面有一个颜色跟着状态变的小圆点).
   · 聊天记录在 comm_chat.json (数据文件夹, 加密, 重置会清掉), 设置在 comm_config.json.
@@ -37,10 +38,11 @@ REFUSE = "[refuse to reply]"
 PROACTIVE_MIN_REST = 20 * 60          # I. 用户休息超过这么久才会主动发消息
 PROACTIVE_DELAY = (60, 180)           # I. 休息开始后多久主动发 (秒)
 PROACTIVE_LEAD = (60, 180)            # II / III. 人设日程里的空闲 / 休息开始前多久主动发 (秒)
+PROACTIVE_SLEEP_DELAY = 5 * 60        # IV. 人设睡眠开始后多久主动发 (秒)
 IDLE_DAILY_SECONDS = 30 * 60          # 每天在"空闲"状态下最多能打开沟通界面这么久 (休息时不限); 超过后空闲时不能用沟通, 休息了才能用
 IDLE_TICK_MAX = 5                     # 一次 tick 最多记这么多秒 (电脑睡眠 / 卡住时不会一下子记很多)
 BG_STAGGER = 120                      # 非正在聊天的对象主动发消息: 两次请求之间至少隔这么多秒 (一个一个来, 不会同时好几个人找你)
-PROACTIVE_P = {"idle": 80, "rest": 60, "long": 70}   # I / II / III 发不发的概率 (%) 的默认值: 人设里没写 "长时间休息发起谈话概率:n%" / "空闲发起谈话概率:n%" / "休息发起谈话概率:n%" 时用
+PROACTIVE_P = {"idle": 80, "rest": 60, "long": 70, "sleep": 60}   # I~IV 发不发的概率 (%) 的默认值: 人设里没写对应 "xxx发起谈话概率:n%" 时用
 PROACTIVE_LATE = 120                  # 到点之后过了这么久 (程序刚打开 / 刚空下来) 就算了
 PROACTIVE_GAP = 10 * 60               # 两条主动消息至少隔这么久 (相邻的日程段不连发)
 PROACTIVE_KEEP = 12                   # 记下最近多少个已经处理过的主动消息时间点
@@ -140,12 +142,14 @@ def _readme_zh() -> str:
         "按 N 分钟专注 + F(N) 分钟休息交替生成到这段结束).\n"
         "  这段里已经显式写出的段优先 (显式写了的循环段不会自动生成), [循环 7:00-12:00] 这样的标题行本身也可以只用来分组. "
         "每次打开 OIT / 开始新对话 / 切换人设时都会重新生成.\n"
-        "  对方会在每段空闲开始前1~3分钟、每段休息开始前1~3分钟按一定概率主动给你发一条消息;"
-        "专注 / 睡眠段不会触发主动消息,只用来显示对方现在的状态;概率写在人设里,各占一行,例如\n"
+        "  对方会在每段空闲开始前1~3分钟、每段休息开始前1~3分钟, 以及每段睡眠开始后5分钟, 按一定概率主动给你发一条消息;"
+        "专注段不会触发主动消息, 只用来显示对方现在的状态; 睡眠段只在那一次发, 发完继续睡, 你回复时对方会按日程拒绝继续聊;"
+        "概率写在人设里,各占一行,例如\n"
         "    空闲发起谈话概率:50%\n"
         "    休息发起谈话概率:0.4\n"
         "    长时间休息发起谈话概率:70%\n"
-        "  (n% 或者小数都行,没写的默认空闲80%、休息60%);你自己休息超过20分钟时(\"长时间休息\"),"
+        "    睡眠发起谈话概率:60%\n"
+        "  (n% 或者小数都行,没写的默认空闲80%、休息60%、睡眠60%);你自己休息超过20分钟时(\"长时间休息\"),"
         "休息开始后1~3分钟按\"长时间休息发起谈话概率\"(默认70%)也会发一条.\n"
         "  每次打开OIT、开始新对话(清空聊天记录 / 换人设)时,OIT 都会重新读取人设,并按里面的时间调整这些时刻;"
         "人设文件改了之后也会自动重新读取.\n\n"
@@ -181,15 +185,17 @@ def _readme_en() -> str:
         "generated), and a header such as [Loop 7:00-12:00] can also be used only for grouping. "
         "[Cycle ...] / [Repeat ...] work too. They are regenerated whenever OIT starts, a new conversation begins, "
         "or the persona is switched.\n"
-        "  The character may proactively message you 1-3 minutes before each idle / rest segment, with a probability "
-        "written in the persona, one per line, for example\n"
+        "  The character may proactively message you 1-3 minutes before each idle / rest segment, and 5 minutes after "
+        "each sleep segment begins, with a probability written in the persona, one per line, for example\n"
         "    空闲发起谈话概率:50%\n"
         "    休息发起谈话概率:0.4\n"
         "    长时间休息发起谈话概率:70%\n"
-        "  (These three keys are read in Chinese; n% or a decimal both work. Defaults: idle 80%, rest 60%.) "
+        "    睡眠发起谈话概率:60%\n"
+        "  (These keys are read in Chinese; n% or a decimal both work. Defaults: idle 80%, rest 60%, sleep 60%.) "
         "When your own break is longer than 20 minutes (a \"long rest\"), the character may also send one 1-3 minutes "
         "after the break starts, using \"长时间休息发起谈话概率\" (default 70%).\n"
-        "  Focus / sleep segments never trigger proactive messages; they are only used to show the character's status.\n"
+        "  Focus segments never trigger proactive messages. A sleep segment sends at most one message 5 minutes after "
+        "it starts; after that the character goes back to sleep and will refuse to continue if you reply (per the schedule).\n"
         "  OIT re-reads the persona whenever it starts, when a new conversation begins (clearing the chat history / "
         "switching persona), and automatically when the persona file changes.\n\n"
         "File format: one .txt or .md file is one persona; the file name is the persona's name, and the whole file is "
@@ -214,6 +220,7 @@ BUILTIN_PERSONAS = {"Claudia.txt": """你将扮演一位文静,冷淡的17岁大
 - 回复很短:通常一到两句,最多三句,不超过 60 个字.只有在指出用户英文错误时可以多写一句.
 - 不主动找话题,不主动关心,不主动提问;用户问了才答.答完就停,不追加客套话.
 - 称呼用户为"你",自称"我".
+- 不要表达"记下"相关的内容: 不要说我记下了 / 我会记住 / 已经记录之类的话, 也不要承诺保存或记住用户说过的话.
 - 指出英文错误时:先一句话指出不自然或错误之处,再给出更自然的说法,不多做解释.
 - 提到活动时,如果对方没有深入问就不展开.
 - 交流时间:从用户发起的第一句话起(看消息开头方括号里的时间),一次交流一般不超过 15 分钟;快到 15 分钟时,你会提前自然地结束话题
@@ -238,6 +245,7 @@ BUILTIN_PERSONAS = {"Claudia.txt": """你将扮演一位文静,冷淡的17岁大
 空闲发起谈话概率:20%
 休息发起谈话概率:20%
 长时间休息发起谈话概率:20%
+睡眠发起谈话概率:40%
 
 【按日程回复】
 1. 看消息开头方括号里的时间,在上面的日程里找到那个时间属于哪一段.
@@ -259,6 +267,7 @@ BUILTIN_PERSONAS = {"Claudia.txt": """你将扮演一位文静,冷淡的17岁大
 空闲发起谈话概率:0%
 休息发起谈话概率:0%
 长时间休息发起谈话概率:0%
+睡眠发起谈话概率:0%
 
 【按日程回复】
 1. 看消息开头方括号里的时间: 00:00-6:30 属于睡眠, 只回复 [refuse to reply], 不要写任何别的字.
@@ -272,6 +281,10 @@ DEFAULT_PERSONA = "Claudia.txt"
 ASSISTANT_PERSONA = "Assistant.txt"
 ASSISTANT_DETAIL_LINE = ("你会把回答写得尽量详细: 先给结论, 再说明依据 / 步骤 / 注意事项, 必要时举例或分点; "
                          "不要只用一句结论敷衍, 也不要为了简短省略关键内容, 但不要用空话凑长度.\n")
+CLAUDIA_NOTE_LINE = ('- 不要表达"记下"相关的内容: 不要说我记下了 / 我会记住 / 已经记录之类的话, '
+                     '也不要承诺保存或记住用户说过的话.\n')
+CLAUDIA_SLEEP_LINE = "睡眠发起谈话概率:40%\n"
+ASSISTANT_SLEEP_LINE = "睡眠发起谈话概率:0%\n"
 ASSISTANT_TITLE = "assistant"                        # 特例: 这个名字 (且提示词没改过) 专注时也能用
 CHAT_KEYS = ("clear_ts", "retry", "pro_key")          # 跟着聊天对象走的几项 (存在各自的聊天文件里)
 
@@ -498,8 +511,8 @@ def schedule_segments(text: str) -> list:
     return [(e["kind"], e["start"]) for e in schedule_entries(text) if e["kind"]]
 
 
-_PRO_KINDS = {"长时间休息": "long", "空闲": "idle", "休息": "rest"}
-_PRO_RE = re.compile(r"(长时间休息|空闲|休息)发起谈话概率[ \t]*[:：][ \t]*(\d+(?:\.\d+)?)[ \t]*([%％])?")
+_PRO_KINDS = {"长时间休息": "long", "空闲": "idle", "休息": "rest", "睡眠": "sleep"}
+_PRO_RE = re.compile(r"(长时间休息|空闲|休息|睡眠)发起谈话概率[ \t]*[:：][ \t]*(\d+(?:\.\d+)?)[ \t]*([%％])?")
 
 
 def persona_probs(text: str) -> dict:
@@ -628,6 +641,7 @@ class Comm:
             self.save_cfg()
         self._upgrade_assistant_prompt()
         self._migrate_claudia()
+        self._upgrade_claudia_prompt()
         self._migrate_avatars()
         last = self.messages[-1] if self.messages else None
         rt = self.cfg.get("retry") or {}
@@ -1048,7 +1062,7 @@ class Comm:
         return self.cfg.get("split_send") is not False
 
     def pro_percent(self, kind: str) -> float:
-        """主动发消息的概率 (%): kind = "idle" 人设的空闲段前 / "rest" 人设的休息段前. 写在人设里 (persona_probs), 没写用默认."""
+        """主动发消息的概率 (%): kind = "idle" 人设的空闲段前 / "rest" 人设的休息段前 / "sleep" 人设的睡眠段开始后. 写在人设里 (persona_probs), 没写用默认."""
         self._segments()
         return self._pro_cache.get(kind, float(PROACTIVE_P[kind]))
 
@@ -1090,8 +1104,9 @@ class Comm:
         except (OSError, UnicodeDecodeError):
             return
         current_builtin = BUILTIN_PERSONAS[ASSISTANT_PERSONA]
-        legacy = current_builtin.replace(ASSISTANT_DETAIL_LINE, "")
-        if current.strip() != legacy.strip():
+        legacies = [current_builtin.replace(ASSISTANT_SLEEP_LINE, ""),
+                    current_builtin.replace(ASSISTANT_SLEEP_LINE, "").replace(ASSISTANT_DETAIL_LINE, "")]
+        if current.strip() not in {x.strip() for x in legacies}:
             return
         try:
             with open(path, "w", encoding="utf-8", newline="\n") as f:
@@ -1119,6 +1134,28 @@ class Comm:
         if os.path.isfile(self._claudia_path()) and not self.cfg.get("claudia_modified"):
             self._write_claudia_builtin()
         self.cfg["claudia_migrated"] = True
+        self._claudia_sig = None
+        self.save_cfg()
+
+    def _upgrade_claudia_prompt(self):
+        """上一版没改过的 Claudia 提示词 (没有"记下"那句) 自动换成当前内置版本.
+        改过的不动, 交给 check_claudia_integrity 提醒."""
+        path = self._claudia_path()
+        if not os.path.isfile(path):
+            return
+        try:
+            with open(path, "r", encoding="utf-8-sig") as f:
+                current = f.read(MAX_PERSONA)
+        except (OSError, UnicodeDecodeError):
+            return
+        current_builtin = BUILTIN_PERSONAS[DEFAULT_PERSONA]
+        legacies = [current_builtin.replace(CLAUDIA_SLEEP_LINE, ""),
+                    current_builtin.replace(CLAUDIA_SLEEP_LINE, "").replace(CLAUDIA_NOTE_LINE, "")]
+        if current.strip() not in {x.strip() for x in legacies}:
+            return
+        self._write_claudia_builtin()
+        self.cfg["claudia_modified"] = False
+        self.cfg["claudia_notified"] = ""
         self._claudia_sig = None
         self.save_cfg()
 
@@ -1824,6 +1861,23 @@ class Comm:
                     self._pro_fire(key, due, now, pl, f"[系统] 用户刚开始休息, 这次计划休息约 {mins:.0f} 分钟. "
                                                        f"请根据人设主动给用户发一条消息, 话题自己找; 如果此刻不方便, 返回{REFUSE}.", ctx)
                     return
+        # IV. 人设日程里的"睡眠"段: 睡眠开始后 5 分钟, 有概率发一条 (睡眠期间只发这一条, 用户回复按日程拒绝)
+        for kind, mins in (ctx["segs"] if ctx else self._segments()):
+            if kind != "sleep":
+                continue
+            begin = datetime.combine(now.date(), datetime.min.time()) + timedelta(minutes=mins)
+            key = f"Z{begin:%Y-%m-%dT%H:%M}"
+            if key in done:
+                continue
+            due = begin + timedelta(seconds=PROACTIVE_SLEEP_DELAY)
+            if now < due:
+                continue
+            pct = ctx["probs"].get("sleep", float(PROACTIVE_P["sleep"])) if ctx else self.pro_percent("sleep")
+            self._pro_fire(key, due, now, pct / 100.0,
+                           f"[系统] 按你的日程, 你进入睡眠约 {PROACTIVE_SLEEP_DELAY // 60} 分钟了. "
+                           f"这条是系统触发的: 即使你此刻处于睡眠时段, 也允许你主动给用户发一条消息, 话题自己找 (不要透露日程); "
+                           f"发完继续睡, 用户回复时按日程拒绝; 如果实在不方便, 返回{REFUSE}.", ctx)
+            return
         # II / III. 人设日程里每段空闲 / 休息开始前 1~3 分钟, 有概率发一条
         for key, kind, begin in self._schedule_events(now, ctx["segs"] if ctx else None):
             if key in done:
@@ -2041,7 +2095,7 @@ def _selftest():
     # 长时间休息发起谈话概率: 人设里写的; 0% 不发 (这个时间点算处理过了); 没写默认 70%
     assert persona_probs("长时间休息发起谈话概率:0.7\n休息发起谈话概率:30\n空闲发起谈话概率:20%") == {"long": 70.0, "rest": 30.0, "idle": 20.0}
     assert c2.pro_percent("long") == 100.0 and Comm.pro_percent.__name__ and PROACTIVE_P["long"] == 70
-    assert persona_probs(BUILTIN_PERSONAS["Claudia.txt"]) == {"idle": 20.0, "rest": 20.0, "long": 20.0}
+    assert persona_probs(BUILTIN_PERSONAS["Claudia.txt"]) == {"idle": 20.0, "rest": 20.0, "long": 20.0, "sleep": 40.0}
     open(longp, "w", encoding="utf-8").write("你是小满.\n长时间休息发起谈话概率:0%\n")
     c2.reload_schedule()
     clock[0] += timedelta(minutes=15)
@@ -2444,8 +2498,10 @@ def _selftest():
     c5.ai.provider = "deepseek"
     c5.set_cfg(persona="日程.txt")
     assert (c5.pro_percent("idle"), c5.pro_percent("rest")) == (80, 60), "人设里没写: 默认概率"
-    assert persona_probs(BUILTIN_PERSONAS["Claudia.txt"]) == {"idle": 20.0, "rest": 20.0, "long": 20.0}, "Claudia: 20% / 20% / 20%"
+    assert persona_probs(BUILTIN_PERSONAS["Claudia.txt"]) == {"idle": 20.0, "rest": 20.0, "long": 20.0, "sleep": 40.0}, "Claudia: 20% / 20% / 20%"
     assert persona_probs("空闲发起谈话概率:12.5%\n休息发起谈话概率 ： 0.4\n休息发起谈话概率:90%") == {"idle": 12.5, "rest": 40.0}
+    assert persona_probs("睡眠发起谈话概率:40%") == {"sleep": 40.0} and PROACTIVE_P["sleep"] == 60
+    assert c5.pro_percent("sleep") == 60, "没写: 默认睡眠 60%"
     assert persona_probs("空闲发起谈话概率:1\n休息发起谈话概率:30") == {"idle": 100.0, "rest": 30.0}, "不带 % 的: 小数 (<=1) 或百分数"
     assert persona_probs("空闲发起谈话概率:150%\n休息发起谈话概率:x") == {"idle": 100.0} and persona_probs("") == {}
     p5 = os.path.join(folder, "日程.txt")
@@ -2815,7 +2871,7 @@ def _selftest():
     ldir, lpersonas = os.path.join(td, "legacy_a"), os.path.join(td, "legacy_a_personas")
     os.makedirs(ldir)
     os.makedirs(lpersonas)
-    legacy = BUILTIN_PERSONAS[ASSISTANT_PERSONA].replace(ASSISTANT_DETAIL_LINE, "")
+    legacy = BUILTIN_PERSONAS[ASSISTANT_PERSONA].replace(ASSISTANT_SLEEP_LINE, "")
     open(os.path.join(lpersonas, "Assistant.txt"), "w", encoding="utf-8", newline="\n").write(legacy)
     config.save_json_file(os.path.join(ldir, "comm_config.json"), {"seeded": True, "persona": "Assistant.txt"})
     la = Comm(ldir, lpersonas, now=lambda: clock[0], chat_fn=fake)
@@ -2845,6 +2901,17 @@ def _selftest():
     assert read_persona(cpersonas, "Claudia.txt") == BUILTIN_PERSONAS[DEFAULT_PERSONA].strip()
     assert not cc.cfg["claudia_modified"] and not cc.cfg["claudia_notified"]
     cc.flush()
+    # 上一版没改过的 Claudia (没有"记下"那句) 自动升级; 改过的不动
+    udir, upersonas = os.path.join(td, "claudia_up"), os.path.join(td, "claudia_up_personas")
+    os.makedirs(udir)
+    os.makedirs(upersonas)
+    legacy_claudia = BUILTIN_PERSONAS[DEFAULT_PERSONA].replace(CLAUDIA_SLEEP_LINE, "")
+    open(os.path.join(upersonas, "Claudia.txt"), "w", encoding="utf-8", newline="\n").write(legacy_claudia)
+    config.save_json_file(os.path.join(udir, "comm_config.json"),
+                          {"seeded": True, "persona": "Claudia.txt", "claudia_migrated": True})
+    uc = Comm(udir, upersonas, now=lambda: clock[0], chat_fn=fake)
+    assert read_persona(upersonas, "Claudia.txt") == BUILTIN_PERSONAS[DEFAULT_PERSONA].strip(), "上一版自动升级"
+    uc.flush()
     # 人设文件本身随设备同步: 新增 / 覆盖 / 删除 (README 不同步)
     psf = os.path.join(td, "personas_sync")
     os.makedirs(psf)
@@ -2858,6 +2925,29 @@ def _selftest():
     assert "乙.txt" in list_personas(psf) and "甲.txt" not in list_personas(psf)
     assert read_persona(psf, "乙.txt") == "你是乙" and ps.persona_name() == ""
     ps.flush()
+    # IV. 人设睡眠开始后 5 分钟, 按睡眠发起谈话概率发一条
+    clock_before_sleep_msg = clock[0]
+    os.makedirs(os.path.join(td, "sleep_msg"))
+    open(os.path.join(folder, "睡语.txt"), "w", encoding="utf-8").write(
+        "你是睡语.\n23:30-6:30:睡眠\n睡眠发起谈话概率:100%\n")
+    sm = Comm(os.path.join(td, "sleep_msg"), folder, now=lambda: clock[0], chat_fn=fake)
+    sm.ai.set_profile("deepseek", api_key="k")
+    sm.ai.provider = "deepseek"
+    sm.set_cfg(persona="睡语.txt")
+    sm.snapshot = lambda: {"state": "idle"}
+    clock[0] = datetime(2028, 5, 1, 23, 34, 59)
+    sm.tick()
+    assert not sm.busy, "睡眠开始后不到 5 分钟: 不发"
+    clock[0] = datetime(2028, 5, 1, 23, 35, 0)
+    script.append("睡前说一句")
+    sm.tick()
+    assert sm.busy, "睡眠开始后 5 分钟: 按概率发"
+    wait(sm)
+    assert sm.visible()[-1]["text"] == "睡前说一句"
+    body = calls[-1][1][-1]["content"]
+    assert "进入睡眠约 5 分钟" in body and "即使你此刻处于睡眠时段" in body
+    sm.flush()
+    clock[0] = clock_before_sleep_msg
     return "comm selftest OK"
 
 

@@ -37,6 +37,10 @@ object BuiltinPersonas {
     const val ASSISTANT = "Assistant.txt"
     const val ASSISTANT_DETAIL_LINE = ("你会把回答写得尽量详细: 先给结论, 再说明依据 / 步骤 / 注意事项, 必要时举例或分点; " +
         "不要只用一句结论敷衍, 也不要为了简短省略关键内容, 但不要用空话凑长度.\n")
+    const val CLAUDIA_NOTE_LINE = ("- 不要表达\"记下\"相关的内容: 不要说我记下了 / 我会记住 / 已经记录之类的话, " +
+        "也不要承诺保存或记住用户说过的话.\n")
+    const val CLAUDIA_SLEEP_LINE = "睡眠发起谈话概率:40%\n"
+    const val ASSISTANT_SLEEP_LINE = "睡眠发起谈话概率:0%\n"
     val ALL = mapOf(DEFAULT to """你将扮演一位文静,冷淡的17岁大小姐Claudia,并且用语十分正式.
 但是因为长期闭关在家练习 很少和人说话 显得沉默寡言.
 设定上,你的地位比用户高.
@@ -53,6 +57,7 @@ object BuiltinPersonas {
 - 回复很短:通常一到两句,最多三句,不超过 60 个字.只有在指出用户英文错误时可以多写一句.
 - 不主动找话题,不主动关心,不主动提问;用户问了才答.答完就停,不追加客套话.
 - 称呼用户为"你",自称"我".
+- 不要表达"记下"相关的内容: 不要说我记下了 / 我会记住 / 已经记录之类的话, 也不要承诺保存或记住用户说过的话.
 - 指出英文错误时:先一句话指出不自然或错误之处,再给出更自然的说法,不多做解释.
 - 提到活动时,如果对方没有深入问就不展开.
 - 交流时间:从用户发起的第一句话起(看消息开头方括号里的时间),一次交流一般不超过 15 分钟;快到 15 分钟时,你会提前自然地结束话题
@@ -77,6 +82,7 @@ object BuiltinPersonas {
 空闲发起谈话概率:20%
 休息发起谈话概率:20%
 长时间休息发起谈话概率:20%
+睡眠发起谈话概率:40%
 
 【按日程回复】
 1. 看消息开头方括号里的时间,在上面的日程里找到那个时间属于哪一段.
@@ -98,6 +104,7 @@ object BuiltinPersonas {
 空闲发起谈话概率:0%
 休息发起谈话概率:0%
 长时间休息发起谈话概率:0%
+睡眠发起谈话概率:0%
 
 【按日程回复】
 1. 看消息开头方括号里的时间: 00:00-6:30 属于睡眠, 只回复 [refuse to reply], 不要写任何别的字.
@@ -167,12 +174,14 @@ object CommText {
             "按 N 分钟专注 + F(N) 分钟休息交替生成到这段结束).\n" +
             "  这段里已经显式写出的段优先 (显式写了的循环段不会自动生成), [循环 7:00-12:00] 这样的标题行本身也可以只用来分组. " +
             "每次打开 OIT / 开始新对话 / 切换人设时都会重新生成.\n" +
-            "  对方会在每段空闲开始前1~3分钟、每段休息开始前1~3分钟按一定概率主动给你发一条消息;" +
-            "专注 / 睡眠段不会触发主动消息,只用来显示对方现在的状态;概率写在人设里,各占一行,例如\n" +
+            "  对方会在每段空闲开始前1~3分钟、每段休息开始前1~3分钟, 以及每段睡眠开始后5分钟, 按一定概率主动给你发一条消息;" +
+            "专注段不会触发主动消息, 只用来显示对方现在的状态; 睡眠段只在那一次发, 发完继续睡, 你回复时对方会按日程拒绝继续聊;" +
+            "概率写在人设里,各占一行,例如\n" +
             "    空闲发起谈话概率:50%\n" +
             "    休息发起谈话概率:0.4\n" +
             "    长时间休息发起谈话概率:70%\n" +
-            "  (n% 或者小数都行,没写的默认空闲80%、休息60%);你自己休息超过20分钟时(\"长时间休息\")," +
+            "    睡眠发起谈话概率:60%\n" +
+            "  (n% 或者小数都行,没写的默认空闲80%、休息60%、睡眠60%);你自己休息超过20分钟时(\"长时间休息\")," +
             "休息开始后1~3分钟按\"长时间休息发起谈话概率\"(默认70%)也会发一条.\n" +
             "  每次打开OIT、开始新对话(清空聊天记录 / 换人设)时,OIT 都会重新读取人设,并按里面的时间调整这些时刻;" +
             "人设文件改了之后也会自动重新读取.\n\n" +
@@ -206,15 +215,17 @@ object CommText {
             "generated), and a header such as [Loop 7:00-12:00] can also be used only for grouping. " +
             "[Cycle ...] / [Repeat ...] work too. They are regenerated whenever OIT starts, a new conversation begins, " +
             "or the persona is switched.\n" +
-            "  The character may proactively message you 1-3 minutes before each idle / rest segment, with a probability " +
-            "written in the persona, one per line, for example\n" +
+            "  The character may proactively message you 1-3 minutes before each idle / rest segment, and 5 minutes after " +
+            "each sleep segment begins, with a probability written in the persona, one per line, for example\n" +
             "    空闲发起谈话概率:50%\n" +
             "    休息发起谈话概率:0.4\n" +
             "    长时间休息发起谈话概率:70%\n" +
-            "  (These three keys are read in Chinese; n% or a decimal both work. Defaults: idle 80%, rest 60%.) " +
+            "    睡眠发起谈话概率:60%\n" +
+            "  (These keys are read in Chinese; n% or a decimal both work. Defaults: idle 80%, rest 60%, sleep 60%.) " +
             "When your own break is longer than 20 minutes (a \"long rest\"), the character may also send one 1-3 minutes " +
             "after the break starts, using \"长时间休息发起谈话概率\" (default 70%).\n" +
-            "  Focus / sleep segments never trigger proactive messages; they are only used to show the character's status.\n" +
+            "  Focus segments never trigger proactive messages. A sleep segment sends at most one message 5 minutes after " +
+            "it starts; after that the character goes back to sleep and will refuse to continue if you reply (per the schedule).\n" +
             "  OIT re-reads the persona whenever it starts, when a new conversation begins (clearing the chat history / " +
             "switching persona), and automatically when the persona file changes.\n\n" +
             "File format: one .txt or .md file is one persona; the file name is the persona's name, and the whole file is " +
@@ -257,14 +268,14 @@ object CommText {
         "(\\d{1,2})[:：](\\d{2})[ \\t]*[-–—~～至到][ \\t]*(\\d{1,2})[:：](\\d{2})[ \\t]*[\\]］]" +
         "[ \\t]*(?:[\\[［][ \\t]*(\\d+)[ \\t]*(?:min|mins|分钟)?[ \\t]*[\\]］])?", setOf(RegexOption.MULTILINE, RegexOption.IGNORE_CASE))
 
-    private val PRO_RE = Regex("(长时间休息|空闲|休息)发起谈话概率[ \\t]*[:：][ \\t]*(\\d+(?:\\.\\d+)?)[ \\t]*([%％])?")
+    private val PRO_RE = Regex("(长时间休息|空闲|休息|睡眠)发起谈话概率[ \\t]*[:：][ \\t]*(\\d+(?:\\.\\d+)?)[ \\t]*([%％])?")
 
-    /** 人设里写的主动发起谈话的概率: "空闲发起谈话概率:50%" / "休息发起谈话概率:0.4" → {idle: 50.0, rest: 40.0} (%, 没写的不在里面).
+    /** 人设里写的主动发起谈话的概率: "空闲发起谈话概率:50%" / "休息发起谈话概率:0.4" / "睡眠发起谈话概率:60%" → {idle: 50.0, rest: 40.0, sleep: 60.0} (%, 没写的不在里面).
      *  带 % 的按百分数; 不带 % 的小数 (0~1) 按小数, 大于 1 的当百分数; 超出 0~100 的截到范围内; 同一种写了几行只认第一行. */
     fun personaProbs(text: String): Map<String, Double> {
         val out = LinkedHashMap<String, Double>()
         for (m in PRO_RE.findAll(text)) {
-            val kind = when (m.groupValues[1]) { "长时间休息" -> "long"; "空闲" -> "idle"; else -> "rest" }
+            val kind = when (m.groupValues[1]) { "长时间休息" -> "long"; "空闲" -> "idle"; "休息" -> "rest"; else -> "sleep" }
             if (kind in out) continue
             val v = m.groupValues[2].toDouble()
             out[kind] = (if (m.groupValues[3].isNotEmpty() || v > 1) v else v * 100).coerceIn(0.0, 100.0)
@@ -375,6 +386,7 @@ class Comm(
         const val IDLE_TICK_MAX = 5.0
         const val PROACTIVE_MIN_REST = 20 * 60          // I. 用户休息超过这么久才会主动发消息
         const val PROACTIVE_MAX_DELAY = 180             // I / II / III: 休息开始后 / 日程段开始前 1~3 分钟 (秒)
+        const val PROACTIVE_SLEEP_DELAY = 5 * 60        // IV: 人设睡眠开始后多久主动发 (秒)
         const val PROACTIVE_LATE = 120                  // 到点之后过了这么久 (程序刚打开 / 刚空下来) 就算了
         const val PROACTIVE_GAP = 10 * 60               // 两条主动消息至少隔这么久 (相邻的日程段不连发)
         const val PROACTIVE_KEEP = 12                   // 记下最近多少个已经处理过的主动消息时间点
@@ -387,7 +399,10 @@ class Comm(
         const val DEFAULT_P_IDLE = 80                   // II / III 发不发的概率 (%) 的默认值; 设置 → 沟通 里可以改
         const val DEFAULT_P_REST = 60
         const val DEFAULT_P_LONG = 70                   // I (长时间休息) 的默认概率
-        fun defaultP(kind: String): Double = when (kind) { "idle" -> DEFAULT_P_IDLE; "long" -> DEFAULT_P_LONG; else -> DEFAULT_P_REST }.toDouble()
+        const val DEFAULT_P_SLEEP = 60                  // IV (睡眠开始后 5 分钟) 的默认概率
+        fun defaultP(kind: String): Double = when (kind) {
+            "idle" -> DEFAULT_P_IDLE; "long" -> DEFAULT_P_LONG; "sleep" -> DEFAULT_P_SLEEP; else -> DEFAULT_P_REST
+        }.toDouble()
         const val RETRY_GAP = 10 * 60
         const val RETRY_MAX = 12
         const val HISTORY_SENT = 60
@@ -532,6 +547,7 @@ class Comm(
         }
         upgradeAssistantPrompt()
         migrateClaudia()
+        upgradeClaudiaPrompt()
         migrateAvatars()
         val last = messages.lastOrNull()
         if (last != null && last.role == "me" && ageSeconds(last) < 6 * 3600 && retryAt == 0L)
@@ -961,8 +977,10 @@ class Comm(
         if (!f.isFile) return
         val current = runCatching { f.readText(Charsets.UTF_8).removePrefix("\uFEFF") }.getOrNull() ?: return
         val currentBuiltin = BuiltinPersonas.ALL.getValue(BuiltinPersonas.ASSISTANT)
-        val legacy = currentBuiltin.replace(BuiltinPersonas.ASSISTANT_DETAIL_LINE, "")
-        if (current.trim() != legacy.trim()) return
+        val legacies = listOf(currentBuiltin.replace(BuiltinPersonas.ASSISTANT_SLEEP_LINE, ""),
+            currentBuiltin.replace(BuiltinPersonas.ASSISTANT_SLEEP_LINE, "")
+                .replace(BuiltinPersonas.ASSISTANT_DETAIL_LINE, ""))
+        if (current.trim() !in legacies.map { it.trim() }) return
         runCatching { f.writeText(currentBuiltin, Charsets.UTF_8) }
     }
 
@@ -983,6 +1001,24 @@ class Comm(
         val f = claudiaFile()
         if (f.isFile && !claudiaModified) writeClaudiaBuiltin()
         claudiaMigrated = true
+        claudiaSig = null
+        saveCfg()
+    }
+
+    /** 上一版没改过的 Claudia 提示词 (没有"记下"那句) 自动换成当前内置版本.
+     *  改过的不动, 交给 checkClaudiaIntegrity 提醒. */
+    private fun upgradeClaudiaPrompt() {
+        val f = claudiaFile()
+        if (!f.isFile) return
+        val current = runCatching { f.readText(Charsets.UTF_8).removePrefix("\uFEFF").take(MAX_PERSONA) }.getOrNull() ?: return
+        val currentBuiltin = BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT)
+        val legacies = listOf(currentBuiltin.replace(BuiltinPersonas.CLAUDIA_SLEEP_LINE, ""),
+            currentBuiltin.replace(BuiltinPersonas.CLAUDIA_SLEEP_LINE, "")
+                .replace(BuiltinPersonas.CLAUDIA_NOTE_LINE, ""))
+        if (current.trim() !in legacies.map { it.trim() }) return
+        writeClaudiaBuiltin()
+        claudiaModified = false
+        claudiaNotified = ""
         claudiaSig = null
         saveCfg()
     }
@@ -1517,6 +1553,21 @@ class Comm(
                     return
                 }
             }
+        }
+        // IV. 人设日程里的"睡眠"段: 睡眠开始后 5 分钟, 有概率发一条 (睡眠期间只发这一条, 用户回复按日程拒绝)
+        for ((kind, mins) in (ctx?.segs ?: segments())) {
+            if (kind != "sleep") continue
+            val begin = t.toLocalDate().atStartOfDay().plusMinutes(mins.toLong())
+            val key = "Z${begin.toLocalDate()}T%02d:%02d".format(begin.hour, begin.minute)
+            if (key in done) continue
+            val due = begin.plusSeconds(PROACTIVE_SLEEP_DELAY.toLong())
+            if (t.isBefore(due)) continue
+            val pct = if (ctx != null) ctx.probs["sleep"] ?: defaultP("sleep") else proPercent("sleep")
+            proFire(key, due, t, pct / 100.0,
+                "[系统] 按你的日程, 你进入睡眠约 ${PROACTIVE_SLEEP_DELAY / 60} 分钟了. " +
+                "这条是系统触发的: 即使你此刻处于睡眠时段, 也允许你主动给用户发一条消息, 话题自己找 (不要透露日程); " +
+                "发完继续睡, 用户回复时按日程拒绝; 如果实在不方便, 返回${CommText.REFUSE}.", ctx)
+            return
         }
         // II / III. 人设日程里每段空闲 / 休息开始前 1~3 分钟, 有概率发一条
         for (ev in scheduleEvents(t, ctx?.segs)) {
