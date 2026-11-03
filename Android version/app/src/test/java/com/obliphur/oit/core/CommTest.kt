@@ -512,7 +512,7 @@ class CommTest {
         wait(c)
         assertEquals("睡前说一句", c.visible().last().text)
         val body = calls.last().second.last().second
-        assertTrue("进入睡眠约 5 分钟" in body && "即使你此刻处于睡眠时段" in body)
+        assertTrue("进入睡眠约 5 分钟" in body && "即使你此刻处于睡眠时段" in body && "以'晚安'开头" in body)
     }
 
     /** 手动改人设: 还原文件保留聊天; 确定清空对应聊天. */

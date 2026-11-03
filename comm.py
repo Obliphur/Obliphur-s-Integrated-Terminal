@@ -1985,7 +1985,7 @@ class Comm:
             self._pro_fire(key, due, now, pct / 100.0,
                            f"[系统] 按你的日程, 你进入睡眠约 {PROACTIVE_SLEEP_DELAY // 60} 分钟了. "
                            f"这条是系统触发的: 即使你此刻处于睡眠时段, 也允许你主动给用户发一条消息, 话题自己找 (不要透露日程); "
-                           f"发完继续睡, 用户回复时按日程拒绝; 开头不要固定成'晚安', 自然地换一种说法; 如果实在不方便, 返回{REFUSE}.", ctx)
+                           f"发完继续睡, 用户回复时按日程拒绝; 这条消息以'晚安'开头; 如果实在不方便, 返回{REFUSE}.", ctx)
             return
         # II / III. 人设日程里每段空闲 / 休息开始前 1~3 分钟, 有概率发一条
         for key, kind, begin in self._schedule_events(now, ctx["segs"] if ctx else None):
@@ -3054,7 +3054,7 @@ def _selftest():
     wait(sm)
     assert sm.visible()[-1]["text"] == "睡前说一句"
     body = calls[-1][1][-1]["content"]
-    assert "进入睡眠约 5 分钟" in body and "即使你此刻处于睡眠时段" in body
+    assert "进入睡眠约 5 分钟" in body and "即使你此刻处于睡眠时段" in body and "以'晚安'开头" in body
     sm.flush()
     clock[0] = clock_before_sleep_msg
     # 手动改人设: 还原文件保留聊天; 确定清空对应聊天
