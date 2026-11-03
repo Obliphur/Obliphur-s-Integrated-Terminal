@@ -30,6 +30,9 @@ class CommSnap(
 /** 人设日程里的一段: kind = idle / rest / focus / sleep; start / end 是一天中的第几分钟 (跨零点时 end > 1440). */
 class SegEntry(val kind: String, val start: Int, val end: Int, val label: String, val detail: String)
 
+/** 人设文件被手动改过: name / 上次看到的内容 / 现在的内容. */
+class PersonaChange(val name: String, val old: String, val new: String)
+
 /** 沟通的文字: 前置 prompt, README. 对应桌面版 comm.py. */
 /** OIT 自带的人设: 第一次运行时放进人设文件夹 (之后随便改 / 删, 不会再被写回), 并且默认选中 Claudia. */
 object BuiltinPersonas {
@@ -459,6 +462,8 @@ class Comm(
     private var claudiaModified = false
     private var claudiaNotified = ""
     private var claudiaSig: String? = null
+    private val personaSig = HashMap<String, String>()      // 人设文件名 → 修改时间+大小
+    private var personaPending: String? = null               // 正在等用户决定的人设修改
     private var legacyDone = false
     /** 现在聊的对象的编号 (人设文件名的 crc; 没有对象 = ""). */
     @Volatile var pid = ""; private set
@@ -972,6 +977,80 @@ class Comm(
 
     /** 老版本的 Assistant 提示词 (没有"详细回答"那段) 且用户没改过: 换成当前内置版本.
      *  用户改过的不动. 这样升级后专注特例和详细回答都能用. */
+    // ---- 人设文件被手动修改: 先备份, 用户确认后清掉对应聊天 ----
+    private fun personaBackupDir() = File(dir, "persona_backup")
+
+    private fun readPersonaRaw(name: String): String? {
+        if (name.isEmpty() || name != File(name).name) return null
+        return runCatching { File(personas, name).readText(Charsets.UTF_8).removePrefix("\uFEFF").take(MAX_PERSONA) }.getOrNull()
+    }
+
+    private fun writePersonaRaw(name: String, text: String): Boolean =
+        runCatching {
+            personas.mkdirs()
+            File(personas, name).writeText(text, Charsets.UTF_8)
+        }.isSuccess
+
+    private fun backupPersonaFile(name: String) {
+        val text = readPersonaRaw(name) ?: return
+        runCatching {
+            val d = personaBackupDir().apply { mkdirs() }
+            File(d, name).writeText(text, Charsets.UTF_8)
+        }
+    }
+
+    /** 检查人设文件有没有被手动改过. 同一份内容只问一次. */
+    fun checkPersonaChanges(): PersonaChange? {
+        if (personaPending != null) return null
+        runCatching { personaBackupDir().mkdirs() }
+        for (name in listPersonas()) {
+            val f = File(personas, name)
+            if (!f.isFile) continue
+            val sig = "${f.lastModified()}|${f.length()}"
+            if (personaSig[name] == sig) continue
+            personaSig[name] = sig
+            val cur = readPersonaRaw(name) ?: continue
+            val b = File(personaBackupDir(), name)
+            if (!b.isFile) { backupPersonaFile(name); continue }
+            val old = runCatching { b.readText(Charsets.UTF_8).removePrefix("\uFEFF") }.getOrNull()
+            if (old == null) { backupPersonaFile(name); continue }
+            if (cur != old) {
+                personaPending = name
+                return PersonaChange(name, old, cur)
+            }
+        }
+        return null
+    }
+
+    /** accept=true: 确定, 清空这个人设的聊天; false: 还原文件, 聊天保留. */
+    fun resolvePersonaChange(name: String, accept: Boolean) {
+        val old = runCatching { File(personaBackupDir(), name).readText(Charsets.UTF_8).removePrefix("\uFEFF") }.getOrNull()
+        if (accept) {
+            if (readPersonaRaw(name) != null) backupPersonaFile(name)
+            clearPersonaChat(name)
+        } else if (old != null) {
+            writePersonaRaw(name, old)
+            segSig = null
+            if (personaName() == name) reloadSchedule("还原人设")
+        }
+        personaPending = null
+        personaSig.remove(name)
+        changed()
+    }
+
+    private fun clearPersonaChat(name: String) {
+        val p = pidOf(name)
+        if (p.isEmpty()) return
+        if (p == pid) {
+            clear()
+        } else {
+            val st = stateOf(p)
+            st.messages.clear(); st.clearTs = nowMs(); st.retryAt = 0; st.retryN = 0; st.proKey = ""
+            storeState(p, st)
+            push()
+        }
+    }
+
     private fun upgradeAssistantPrompt() {
         val f = File(personas, BuiltinPersonas.ASSISTANT)
         if (!f.isFile) return
@@ -982,6 +1061,7 @@ class Comm(
                 .replace(BuiltinPersonas.ASSISTANT_DETAIL_LINE, ""))
         if (current.trim() !in legacies.map { it.trim() }) return
         runCatching { f.writeText(currentBuiltin, Charsets.UTF_8) }
+        backupPersonaFile(BuiltinPersonas.ASSISTANT)
     }
 
     // ---- Claudia: 第一次升级时覆盖没改过的文件; 之后手动改过就提醒 ----
@@ -991,6 +1071,7 @@ class Comm(
         runCatching {
             personas.mkdirs()
             claudiaFile().writeText(BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT), Charsets.UTF_8)
+            backupPersonaFile(BuiltinPersonas.DEFAULT)
         }
     }
 
@@ -1566,7 +1647,7 @@ class Comm(
             proFire(key, due, t, pct / 100.0,
                 "[系统] 按你的日程, 你进入睡眠约 ${PROACTIVE_SLEEP_DELAY / 60} 分钟了. " +
                 "这条是系统触发的: 即使你此刻处于睡眠时段, 也允许你主动给用户发一条消息, 话题自己找 (不要透露日程); " +
-                "发完继续睡, 用户回复时按日程拒绝; 如果实在不方便, 返回${CommText.REFUSE}.", ctx)
+                "发完继续睡, 用户回复时按日程拒绝; 开头不要固定成'晚安', 自然地换一种说法; 如果实在不方便, 返回${CommText.REFUSE}.", ctx)
             return
         }
         // II / III. 人设日程里每段空闲 / 休息开始前 1~3 分钟, 有概率发一条

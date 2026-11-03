@@ -1205,19 +1205,24 @@ class BreakTimerApp:
             return
         try:
             self.comm.tick()
-            if self.comm.check_claudia_integrity():
-                self._show_claudia_notice()
+            change = self.comm.check_persona_changes()
+            if change:
+                self._show_persona_change(change)
             if self.current_page == "comm" and "comm" in self.pages:
                 self.pages["comm"].refresh()
         except Exception as e:
             self._log_window(f"ERROR    comm {type(e).__name__}: {e}")
 
-    def _show_claudia_notice(self):
-        """Claudia 人设文件被手动改过: 提醒, 可以恢复内置版本或继续 (什么都不做)."""
+    def _show_persona_change(self, change: dict):
+        """人设文件被手动改过: 确认是否清空对应的聊天数据, 或者还原文件."""
         try:
-            toast.notice(tr("人设文件被修改"), tr("主管{name},我希望你尊重她的人格.", name=self.dm.username or ""), [
-                (tr("还原人设文件"), self.comm.restore_claudia, True),
-                (tr("继续"), None, False)])
+            name = change["name"]
+            msg = tr("{name},修改人设会清除聊天数据,你确定吗?", name=self.dm.username or "")
+            if comm_mod.persona_title(name).casefold() == "claudia":
+                msg = tr("主管{name},我希望你尊重她的人格.", name=self.dm.username or "") + "\n" + msg
+            toast.notice(tr("人设文件被修改"), msg, [
+                (tr("还原文件"), lambda: self.comm.resolve_persona_change(name, False), True),
+                (tr("确定"), lambda: self.comm.resolve_persona_change(name, True), False)])
         except Exception:
             pass
 

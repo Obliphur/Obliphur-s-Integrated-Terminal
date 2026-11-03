@@ -620,6 +620,9 @@ class Comm:
         self._last_ts = 0
         self._seg_sig = None          # 人设文件的 (名字, 修改时间, 大小): 变了才重新读日程
         self._claudia_sig = None      # Claudia 文件的 (修改时间, 大小): 变了才重新检查有没有被手动改过
+        self._persona_sig = {}        # 人设文件名 → (修改时间, 大小): 变了才检查有没有被手动改过
+        self._persona_pending = None  # 正在等用户决定的人设修改 (文件名, 内容 crc)
+        self._persona_backup_dir = os.path.join(self.dir, "persona_backup")
         self._seg_cache = []          # [(kind, 开始时刻)]: 主动发消息用
         self._entry_cache = []        # 完整日程条目 (开始 / 结束 / 名字 / 修饰): 显示对方的状态用
         self._pro_cache = {}          # 同一个人设文件里写的主动发起谈话的概率 (persona_probs)
@@ -1092,6 +1095,108 @@ class Comm:
         n = self.cfg.get("persona") or ""
         return n if n in list_personas(self.personas) else ""
 
+    # ---- 人设文件被手动修改: 先备份, 用户确认后清掉对应聊天 ----
+    def _persona_backup_path(self, name: str) -> str:
+        return os.path.join(self._persona_backup_dir, name)
+
+    def _read_persona_raw(self, name: str):
+        if not name or name != os.path.basename(name):
+            return None
+        try:
+            with open(os.path.join(self.personas, name), "r", encoding="utf-8-sig") as f:
+                return f.read(MAX_PERSONA)
+        except (OSError, UnicodeDecodeError):
+            return None
+
+    def _write_persona_raw(self, name: str, text: str):
+        try:
+            with open(os.path.join(self.personas, name), "w", encoding="utf-8", newline="\n") as f:
+                f.write(text)
+            return True
+        except OSError:
+            return False
+
+    def _backup_persona_file(self, name: str):
+        """把当前内容记成"上次看到的样子" (升级内置提示词后也调用, 免得被当成手动修改)."""
+        text = self._read_persona_raw(name)
+        if text is None:
+            return
+        try:
+            os.makedirs(self._persona_backup_dir, exist_ok=True)
+            with open(self._persona_backup_path(name), "w", encoding="utf-8", newline="\n") as f:
+                f.write(text)
+        except OSError:
+            pass
+
+    def check_persona_changes(self):
+        """检查人设文件有没有被手动改过. 返回 {"name", "old", "new"} 或 None; 同一份内容只问一次."""
+        if self._persona_pending is not None:
+            return None
+        try:
+            os.makedirs(self._persona_backup_dir, exist_ok=True)
+        except OSError:
+            return None
+        for name in list_personas(self.personas):
+            path = os.path.join(self.personas, name)
+            try:
+                st = os.stat(path)
+            except OSError:
+                continue
+            sig = (st.st_mtime_ns, st.st_size)
+            if self._persona_sig.get(name) == sig:
+                continue
+            self._persona_sig[name] = sig
+            cur = self._read_persona_raw(name)
+            if cur is None:
+                continue
+            bpath = self._persona_backup_path(name)
+            if not os.path.isfile(bpath):
+                self._backup_persona_file(name)                 # 第一次见到这个文件: 以现在为准
+                continue
+            try:
+                with open(bpath, "r", encoding="utf-8-sig") as f:
+                    old = f.read(MAX_PERSONA)
+            except (OSError, UnicodeDecodeError):
+                self._backup_persona_file(name)
+                continue
+            if cur != old:
+                self._persona_pending = (name, f"{zlib.crc32(cur.encode('utf-8')):08x}")
+                return {"name": name, "old": old, "new": cur}
+        return None
+
+    def resolve_persona_change(self, name: str, accept: bool):
+        """accept=True: 确定, 清空这个人设的聊天; False: 还原文件, 聊天保留."""
+        old = None
+        try:
+            with open(self._persona_backup_path(name), "r", encoding="utf-8-sig") as f:
+                old = f.read(MAX_PERSONA)
+        except (OSError, UnicodeDecodeError):
+            pass
+        if accept:
+            cur = self._read_persona_raw(name)
+            if cur is not None:
+                self._backup_persona_file(name)
+            self._clear_persona_chat(name)
+        elif old is not None:
+            self._write_persona_raw(name, old)
+            self._seg_sig = None
+            if self.persona_name() == name:
+                self.reload_schedule("还原人设")
+        self._persona_pending = None
+        self._persona_sig.pop(name, None)
+        self._changed()
+
+    def _clear_persona_chat(self, name: str):
+        pid = pid_of(name)
+        if not pid:
+            return
+        if pid == self.pid:
+            self.clear()
+        else:
+            self._store(pid, {"messages": [], "clear_ts": self._ms(), "retry": {}, "pro_key": ""})
+            self._others.pop(pid, None)
+            self._push()
+
     def _upgrade_assistant_prompt(self):
         """老版本的 Assistant 提示词 (没有"详细回答"那段) 且用户没改过: 换成当前内置版本.
         用户改过的不动. 这样升级后专注特例和详细回答都能用."""
@@ -1111,6 +1216,7 @@ class Comm:
         try:
             with open(path, "w", encoding="utf-8", newline="\n") as f:
                 f.write(current_builtin)
+            self._backup_persona_file(ASSISTANT_PERSONA)
         except OSError:
             pass
 
@@ -1133,6 +1239,7 @@ class Comm:
             return
         if os.path.isfile(self._claudia_path()) and not self.cfg.get("claudia_modified"):
             self._write_claudia_builtin()
+            self._backup_persona_file(DEFAULT_PERSONA)
         self.cfg["claudia_migrated"] = True
         self._claudia_sig = None
         self.save_cfg()
@@ -1154,6 +1261,7 @@ class Comm:
         if current.strip() not in {x.strip() for x in legacies}:
             return
         self._write_claudia_builtin()
+        self._backup_persona_file(DEFAULT_PERSONA)
         self.cfg["claudia_modified"] = False
         self.cfg["claudia_notified"] = ""
         self._claudia_sig = None
@@ -1194,6 +1302,7 @@ class Comm:
     def restore_claudia(self):
         """把 Claudia 文件恢复成内置版本 (弹窗的"还原人设文件")."""
         self._write_claudia_builtin()
+        self._backup_persona_file(DEFAULT_PERSONA)
         self.cfg["claudia_modified"] = False
         self.cfg["claudia_notified"] = ""
         self._claudia_sig = None
@@ -1876,7 +1985,7 @@ class Comm:
             self._pro_fire(key, due, now, pct / 100.0,
                            f"[系统] 按你的日程, 你进入睡眠约 {PROACTIVE_SLEEP_DELAY // 60} 分钟了. "
                            f"这条是系统触发的: 即使你此刻处于睡眠时段, 也允许你主动给用户发一条消息, 话题自己找 (不要透露日程); "
-                           f"发完继续睡, 用户回复时按日程拒绝; 如果实在不方便, 返回{REFUSE}.", ctx)
+                           f"发完继续睡, 用户回复时按日程拒绝; 开头不要固定成'晚安', 自然地换一种说法; 如果实在不方便, 返回{REFUSE}.", ctx)
             return
         # II / III. 人设日程里每段空闲 / 休息开始前 1~3 分钟, 有概率发一条
         for key, kind, begin in self._schedule_events(now, ctx["segs"] if ctx else None):
@@ -2948,6 +3057,30 @@ def _selftest():
     assert "进入睡眠约 5 分钟" in body and "即使你此刻处于睡眠时段" in body
     sm.flush()
     clock[0] = clock_before_sleep_msg
+    # 手动改人设: 还原文件保留聊天; 确定清空对应聊天
+    os.makedirs(os.path.join(td, "change"))
+    pfile = os.path.join(folder, "改我.txt")
+    open(pfile, "w", encoding="utf-8", newline="\n").write("你是改我.\n")
+    ch = Comm(os.path.join(td, "change"), folder, now=lambda: clock[0], chat_fn=fake)
+    ch.ai.set_profile("deepseek", api_key="k")
+    ch.ai.provider = "deepseek"
+    ch.set_cfg(persona="改我.txt")
+    assert ch.check_persona_changes() is None, "第一次见到: 先记下备份"
+    script.append("收到")
+    ch.send("你好"); wait(ch)
+    assert len(ch.visible()) == 2
+    with open(pfile, "a", encoding="utf-8") as f:
+        f.write("改过的内容")
+    change = ch.check_persona_changes()
+    assert change and change["name"] == "改我.txt"
+    ch.resolve_persona_change("改我.txt", False)          # 还原文件: 聊天保留
+    assert "改过的内容" not in read_persona(folder, "改我.txt") and len(ch.visible()) == 2
+    with open(pfile, "a", encoding="utf-8") as f:
+        f.write("再改一次")
+    assert ch.check_persona_changes()
+    ch.resolve_persona_change("改我.txt", True)            # 确定: 清空聊天
+    assert ch.visible() == [], "改人设后确认: 对应聊天清空"
+    ch.flush()
     return "comm selftest OK"
 
 

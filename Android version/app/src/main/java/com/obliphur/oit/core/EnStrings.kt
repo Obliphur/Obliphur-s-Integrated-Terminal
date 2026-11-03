@@ -631,6 +631,8 @@ object EnStrings {
         "休息中" to "Resting",
         "人设文件被修改" to "Persona file modified",
         "主管{name},我希望你尊重她的人格." to "Director {name}, I hope you respect her personality.",
+        "{name},修改人设会清除聊天数据,你确定吗?" to "{name}, editing a persona will clear its chat data. Are you sure?",
+        "还原文件" to "Restore file",
         "还原人设文件" to "Restore persona file",
         "继续" to "Continue",
         "🧑  我的身份背景" to "🧑  My background",

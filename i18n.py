@@ -483,6 +483,8 @@ EN = {
     # ---- 沟通: Claudia 人设文件被手动修改 ----
     "人设文件被修改": "Persona file modified",
     "主管{name},我希望你尊重她的人格.": "Director {name}, I hope you respect her personality.",
+    "{name},修改人设会清除聊天数据,你确定吗?": "{name}, editing a persona will clear its chat data. Are you sure?",
+    "还原文件": "Restore file",
     "还原人设文件": "Restore persona file",
     "继续": "Continue",
     "🧑  我的身份背景": "🧑  My background",

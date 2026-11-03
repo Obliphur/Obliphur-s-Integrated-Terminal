@@ -515,6 +515,29 @@ class CommTest {
         assertTrue("进入睡眠约 5 分钟" in body && "即使你此刻处于睡眠时段" in body)
     }
 
+    /** 手动改人设: 还原文件保留聊天; 确定清空对应聊天. */
+    @Test
+    fun personaChangeClearsChat() {
+        val td = Files.createTempDirectory("oit").toFile()
+        val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
+        c.importPersona("改我.txt", "你是改我.\n".byteInputStream())
+        c.set(persona = "改我.txt")
+        assertNull(c.checkPersonaChanges())                     // 第一次见到: 先记下备份
+        script.add("收到")
+        c.send("你好"); wait(c)
+        assertEquals(2, c.visible().size)
+        File(td, "p/改我.txt").appendText("改过的内容")
+        val ch = c.checkPersonaChanges()
+        assertNotNull(ch)
+        assertEquals("改我.txt", ch!!.name)
+        c.resolvePersonaChange("改我.txt", false)               // 还原文件: 聊天保留
+        assertTrue("改过的内容" !in c.readPersona("改我.txt") && c.visible().size == 2)
+        File(td, "p/改我.txt").appendText("再改一次")
+        assertNotNull(c.checkPersonaChanges())
+        c.resolvePersonaChange("改我.txt", true)                // 确定: 清空聊天
+        assertTrue(c.visible().isEmpty())
+    }
+
     @Test
     fun builtinPersona() {
         val td = Files.createTempDirectory("oit").toFile()

@@ -302,11 +302,18 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     @Volatile private var apiHostsCache: Set<String> = emptySet()
     private var apiHostsAt = 0L
 
-    /** Claudia 人设文件被手动改过: 提醒, 可以恢复内置版本或继续 (什么都不做). */
-    private fun showClaudiaModified() {
-        notice(tr("人设文件被修改"), tr("主管{name},我希望你尊重她的人格.", "name" to username),
-            listOf(NoticeButton(tr("还原人设文件"), "restore", true), NoticeButton(tr("继续"), "ok", false)),
-            tag = "claudia") { action -> if (action == "restore") comm.restoreClaudia() }
+    /** 人设文件被手动改过: 确认是否清空对应的聊天数据, 或者还原文件. */
+    private fun showPersonaChange(change: PersonaChange) {
+        var msg = tr("{name},修改人设会清除聊天数据,你确定吗?", "name" to username)
+        if (comm.personaTitle(change.name).equals("claudia", ignoreCase = true)) {
+            msg = tr("主管{name},我希望你尊重她的人格.", "name" to username) + "\n" + msg
+        }
+        notice(tr("人设文件被修改"), msg,
+            listOf(NoticeButton(tr("还原文件"), "restore", true), NoticeButton(tr("确定"), "ok", false)),
+            tag = "persona") { action ->
+            if (action == "restore") comm.resolvePersonaChange(change.name, false)
+            else comm.resolvePersonaChange(change.name, true)
+        }
     }
 
     /** 对方现在不能主动发消息的原因 ("" = 可以). 用户睡眠时对方仍可以发 (消息先藏起来, 醒来再通知);
@@ -629,7 +636,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         timer.tick()
         runCatching { prescript.tick() }
         runCatching { comm.tick() }
-        if (runCatching { comm.checkClaudiaIntegrity() }.getOrDefault(false)) showClaudiaModified()
+        runCatching { comm.checkPersonaChanges() }.getOrNull()?.let { showPersonaChange(it) }
         beatPower()
         runCatching { checkAdapterBack(); checkAwayPriority(); checkContractConflicts() }
         checkContract()
