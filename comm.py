@@ -69,7 +69,7 @@ MAX_PERSONA = 60000
 MAX_PROFILE = 5000                    # 用户自己填的身份背景最多多少字
 MEM_EVERY = 40                        # 每这么多条新消息, 让模型整理一次"记忆卡"
 MEM_GAP = 6 * 3600                    # 两次整理至少隔这么久 (秒): 一口气发几十条时不会连着调
-MEM_MAX = 2000                        # 记忆卡 (手写 + 自动) 各自最多多少字
+MEM_MAX = 2000                        # 记忆卡最多多少字
 MEM_PROMPT = ("你是 OIT 沟通模块的记忆整理器. 给你「现有记忆卡」和「最近一段对话」, 输出更新后的记忆卡.\n"
               "只保留以后还有用的事实: 用户的身份, 偏好, 计划, 约定, 禁区, 没聊完的话题.\n"
               "删掉寒暄, 重复, 一次性的内容. 每条一行, 以 \"- \" 开头, 不超过 40 字, 最多 15 条.\n"
@@ -2317,7 +2317,7 @@ class Comm:
         self._follow_at = 0                # 清空前排着的第二次调用不要了
         self.error = ""
         self.cfg["retry"] = {}
-        self.cfg["mem_auto"] = ""          # 自动整理的那份跟着聊天一起清掉; 手写的重要信息保留
+        self.cfg["mem_auto"] = ""          # 记忆卡跟着聊天一起清掉
         self.cfg["mem_upto"] = 0
         self.cfg["mem_ts"] = self._ms()
         self.save_cfg()
@@ -3469,7 +3469,7 @@ def _selftest():
     assert CLAUDIA_NOTE_LINE not in BUILTIN_PERSONAS[DEFAULT_PERSONA]
     assert CLAUDIA_LEGACIES[0] != BUILTIN_PERSONAS[DEFAULT_PERSONA] and CLAUDIA_NOTE_LINE in CLAUDIA_LEGACIES[0]
 
-    # ---- 记忆卡: 每 40 条整理一次; 手写 / 自动分开; 清空聊天只清自动的 ----
+    # ---- 记忆卡: 每 40 条整理一次; 全部由模型自动维护 (UI 上不展示) ----
     assert sanitize_mem("```\n- 甲\n- 乙\n```") == "- 甲\n- 乙"
     assert sanitize_mem(REFUSE) == "" and sanitize_mem("") == ""
     assert len(sanitize_mem("\n".join("- 第%d条" % i for i in range(50)))) <= MEM_MAX

@@ -1066,7 +1066,7 @@ class CommTest {
         assertEquals("Claudia.txt", chg!!.name)
     }
 
-    /** 记忆卡: 每 40 条整理一次; 手写 / 自动分开; 清空聊天只清自动的. */
+    /** 记忆卡: 每 40 条整理一次; 全部自动; 清空聊天时一起清掉. */
     @Test
     fun memoryCard() {
         val td = Files.createTempDirectory("oit").toFile()
@@ -1075,7 +1075,6 @@ class CommTest {
         val base = 1_000_000L
         for (i in 0 until 40)
             c.messages.add(ChatMsg(i, if (i % 2 == 0) "me" else "ai", "m$i", "", "", "u$i", base + i))
-        c.setMem("下周三考试")
         memScript.add("- 用户在准备考试\n- 喜欢钢琴")
         c.tick()
         for (i in 0 until 300) {
@@ -1085,10 +1084,8 @@ class CommTest {
         assertEquals("- 用户在准备考试\n- 喜欢钢琴", c.memAuto)
         script.add("好"); c.send("在吗"); wait(c)
         val sys = calls.last().first
-        assertTrue("以下是用户自己写的重要信息(以此为准):\n下周三考试" in sys)
         assertTrue("以下是关于用户的长期记忆" in sys && "喜欢钢琴" in sys)
-        c.clear()                                                  // 自动的跟着清, 手写的保留
+        c.clear()                                                  // 清空聊天: 记忆卡一起清掉
         assertEquals("", c.memAuto)
-        assertEquals("下周三考试", c.memManual)
     }
 }

@@ -583,9 +583,8 @@ class Comm(
     private var retryN = 0
     /** 最后一次清空的时刻 (毫秒); 这之前的记录不再显示, 也不会从别的设备并进来. */
     private var clearTs = 0L
-    /** 记忆卡 (跟着聊天对象走): 自动整理的那份, 用户手写的那份, 整理到哪一条 (ts), 改动时刻. */
+    /** 记忆卡 (跟着聊天对象走; 全部由模型自动整理, UI 上不展示): 内容, 整理到哪一条 (ts), 改动时刻. */
     @Volatile var memAuto = ""; private set
-    @Volatile var memManual = ""; private set
     private var memUpto = 0L
     private var memTs = 0L
     private var lastTs = 0L
@@ -633,7 +632,6 @@ class Comm(
         var retryN = 0
         var proKey = ""
         var memAuto = ""
-        var memManual = ""
         var memUpto = 0L
         var memTs = 0L
     }
@@ -722,7 +720,6 @@ class Comm(
         st.retryN = o?.optInt("retry_n", 0) ?: 0
         st.proKey = o?.optString("pro_key", "") ?: ""
         st.memAuto = (o?.optString("mem_auto", "") ?: "").take(MEM_MAX)
-        st.memManual = (o?.optString("mem_manual", "") ?: "").take(MEM_MAX)
         st.memUpto = o?.optLong("mem_upto", 0L) ?: 0L
         st.memTs = o?.optLong("mem_ts", 0L) ?: 0L
         return st
@@ -737,7 +734,7 @@ class Comm(
             })
         return JSONObject().put("messages", arr).put("clear_ts", st.clearTs).put("retry_at", st.retryAt)
             .put("retry_n", st.retryN).put("pro_key", st.proKey)
-            .put("mem_auto", st.memAuto).put("mem_manual", st.memManual).put("mem_upto", st.memUpto).put("mem_ts", st.memTs)
+            .put("mem_auto", st.memAuto).put("mem_upto", st.memUpto).put("mem_ts", st.memTs)
     }
 
     private fun writeState(p: String, st: ChatState) {
@@ -749,14 +746,14 @@ class Comm(
     private fun loadState(st: ChatState) {
         messages.clear(); messages.addAll(st.messages)
         clearTs = st.clearTs; retryAt = st.retryAt; retryN = st.retryN; proKey = st.proKey
-        memAuto = st.memAuto; memManual = st.memManual; memUpto = st.memUpto; memTs = st.memTs
+        memAuto = st.memAuto; memUpto = st.memUpto; memTs = st.memTs
         nextId = (messages.maxOfOrNull { it.id } ?: 0) + 1
         lastTs = messages.maxOfOrNull { it.ts } ?: 0L
     }
 
     private fun activeState() = ChatState().also {
         it.messages.addAll(messages); it.clearTs = clearTs; it.retryAt = retryAt; it.retryN = retryN; it.proKey = proKey
-        it.memAuto = memAuto; it.memManual = memManual; it.memUpto = memUpto; it.memTs = memTs
+        it.memAuto = memAuto; it.memUpto = memUpto; it.memTs = memTs
     }
 
     /** 某个对象的聊天状态: 现在聊的是一份拷贝 (改了要 storeState), 其他的在缓存里 (没读过就读盘). */
@@ -906,8 +903,8 @@ class Comm(
             if (st.proKey.isNotEmpty()) doc["pro:$p"] = st.proKey
             if (st.retryAt != 0L || st.retryN != 0) doc["retry:$p"] = JSONObject().put("at", st.retryAt).put("n", st.retryN)
             if (st.clearTs != 0L) doc["clear:$p"] = st.clearTs
-            if (st.memManual.isNotEmpty() || st.memAuto.isNotEmpty())
-                doc["mem:$p"] = JSONObject().put("m", st.memManual).put("a", st.memAuto).put("u", st.memUpto).put("t", st.memTs)
+            if (st.memAuto.isNotEmpty())
+                doc["mem:$p"] = JSONObject().put("a", st.memAuto).put("u", st.memUpto).put("t", st.memTs)
         }
         return doc
     }
@@ -986,7 +983,6 @@ class Comm(
                     val tc = touch(rest)
                     val t = v.optLong("t", 0L)
                     if (t > tc.st.memTs) {
-                        tc.st.memManual = v.optString("m", "").take(MEM_MAX)     // 手写的那份清空聊天也不清
                         if (tc.st.clearTs > t) { tc.st.memAuto = ""; tc.st.memUpto = 0L }
                         else { tc.st.memAuto = v.optString("a", "").take(MEM_MAX); tc.st.memUpto = v.optLong("u", 0L) }
                         tc.st.memTs = t
@@ -1060,25 +1056,13 @@ class Comm(
         saveCfg(); changed(); push()
     }
 
-    // ---- 记忆卡 (MECHANICS 24.2.4): 每 MEM_EVERY 条新消息让模型整理一次; 手写的那份由用户自己维护 ----
+    // ---- 记忆卡 (MECHANICS 24.2.4): 每 MEM_EVERY 条新消息让模型整理一次; 全部由模型自动维护, UI 上不展示 ----
 
-    /** 长期记忆: 自动整理的和用户手写的分开写, 手写的在后并标明"以此为准". */
+    /** 长期记忆: 模型整理的摘要 (可能不精确), 附在 system 里. */
     private fun memoryBlock(st: ChatState = activeState()): String {
         val auto = st.memAuto.trim().take(MEM_MAX)
-        val manual = st.memManual.trim().take(MEM_MAX)
-        val sb = StringBuilder()
-        if (auto.isNotEmpty()) sb.append("\n\n以下是关于用户的长期记忆(你之前整理的摘要, 可能不精确):\n").append(auto)
-        if (manual.isNotEmpty()) sb.append("\n\n以下是用户自己写的重要信息(以此为准):\n").append(manual)
-        return sb.toString()
-    }
-
-    /** 设置 → 沟通 里手写的"重要信息": 即时生效, 跟着这个聊天对象走. */
-    @Synchronized
-    fun setMem(text: String) {
-        val t = text.trim().take(MEM_MAX)
-        if (t == memManual) return
-        memManual = t; memTs = nowMs()
-        saveChat(); changed(); push()
+        if (auto.isEmpty()) return ""
+        return "\n\n以下是关于用户的长期记忆(你之前整理的摘要, 可能不精确):\n$auto"
     }
 
     private fun memDelta(): List<ChatMsg> =
@@ -2015,7 +1999,7 @@ class Comm(
         clearTs = maxOf(nowMs(), lastTs)
         messages.clear(); unread = 0; retryAt = 0; retryN = 0; error = ""
         followAt = 0L                                       // 清空前排着的第二次调用不要了
-        memAuto = ""; memUpto = 0L; memTs = nowMs()        // 自动整理的那份跟着聊天一起清掉; 手写的重要信息保留
+        memAuto = ""; memUpto = 0L; memTs = nowMs()        // 记忆卡跟着聊天一起清掉
         epoch++
         saveCfg(); saveChat(); reloadSchedule("新对话"); changed(); push()
     }

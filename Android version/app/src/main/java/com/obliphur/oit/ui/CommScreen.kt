@@ -297,15 +297,6 @@ fun CommSettings() {
     }
 
     OitCard {
-        Text(tr("🧠  重要信息"), fontWeight = FontWeight.Bold, color = o.text)
-        Text(tr("写在这里的内容每次都会发给对方 (最多 2000 字)."), color = o.dim, fontSize = 12.sp,
-            modifier = Modifier.padding(top = 2.dp))
-        var mem by remember { mutableStateOf(comm.memManual) }
-        OutlinedTextField(mem, { mem = it.take(Comm.MEM_MAX); comm.setMem(mem) },
-            modifier = Modifier.fillMaxWidth().padding(top = 6.dp), minLines = 3, maxLines = 8)
-    }
-
-    OitCard {
         Text(tr("✂  分条发送"), fontWeight = FontWeight.Bold, color = o.text)
         Text(tr("经过优化,不怎么会增加token消耗"), color = o.dim, fontSize = 12.sp,
             modifier = Modifier.padding(top = 2.dp))
