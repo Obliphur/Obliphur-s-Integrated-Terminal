@@ -1390,21 +1390,34 @@ class Comm:
         except OSError:
             pass
 
+    def _write_backup_text(self, name: str, text: str):
+        try:
+            os.makedirs(self._persona_backup_dir, exist_ok=True)
+            with open(self._persona_backup_path(name), "w", encoding="utf-8", newline="\n") as f:
+                f.write(text)
+        except OSError:
+            pass
+
     def _migrate_claudia(self):
-        """第一次带上这个检查的版本: 没有手动修改记录的 Claudia 文件换成当前内置版本.
-        有记录的 (以后的版本) 不动, 交给 check_claudia_integrity 提醒."""
+        """第一次带上这个检查的版本: 没改过的 Claudia 换成当前内置版本; 认不出来的 (用户改过) 留着,
+        备份写成当前内置版本, 之后 check_persona_changes 会弹"修改人设会清除聊天数据"."""
         if self.cfg.get("claudia_migrated"):
             return
         if os.path.isfile(self._claudia_path()) and not self.cfg.get("claudia_modified"):
-            self._write_claudia_builtin()
-            self._backup_persona_file(DEFAULT_PERSONA)
+            current = (self._read_persona_raw(DEFAULT_PERSONA) or "").strip()
+            known = {BUILTIN_PERSONAS[DEFAULT_PERSONA].strip()} | {x.strip() for x in CLAUDIA_LEGACIES}
+            if current and current not in known:                 # 用户改过的: 不能静默覆盖
+                self._write_backup_text(DEFAULT_PERSONA, BUILTIN_PERSONAS[DEFAULT_PERSONA])
+            else:
+                self._write_claudia_builtin()
+                self._backup_persona_file(DEFAULT_PERSONA)
         self.cfg["claudia_migrated"] = True
         self._claudia_sig = None
         self.save_cfg()
 
     def _upgrade_claudia_prompt(self):
         """更早版本内置过的 Claudia 提示词 (用户没改过的) 自动换成当前内置版本.
-        改过的不动, 交给 check_claudia_integrity 提醒."""
+        改过的不动, 交给 check_persona_changes 提醒."""
         path = self._claudia_path()
         if not os.path.isfile(path):
             return
@@ -3338,17 +3351,17 @@ def _selftest():
     ma = Comm(mdir, mpersonas, now=lambda: clock[0], chat_fn=fake)
     assert "我的改动" in read_persona(mpersonas, "Assistant.txt"), "用户改过的 Assistant 不动"
     ma.flush()
-    # Claudia: 没有手动修改记录时升级覆盖; 之后手动修改会检测到, 可以还原
+    # Claudia: 更新上来时, 认不出来的内容 (= 改过的) 不覆盖, 交给"修改人设"的提醒; 认得的旧内置才静默升级
     cdir, cpersonas = os.path.join(td, "claudia_notice"), os.path.join(td, "claudia_notice_personas")
     os.makedirs(cdir)
     os.makedirs(cpersonas)
     open(os.path.join(cpersonas, "Claudia.txt"), "w", encoding="utf-8", newline="\n").write("旧的自定义")
     config.save_json_file(os.path.join(cdir, "comm_config.json"), {"seeded": True, "persona": "Claudia.txt"})
     cc = Comm(cdir, cpersonas, now=lambda: clock[0], chat_fn=fake)
-    assert read_persona(cpersonas, "Claudia.txt") == BUILTIN_PERSONAS[DEFAULT_PERSONA].strip(), "没有修改记录: 升级覆盖"
-    with open(os.path.join(cpersonas, "Claudia.txt"), "a", encoding="utf-8") as f:
-        f.write("\n手动修改")
-    assert cc.check_claudia_integrity() and cc.cfg["claudia_modified"], "手动修改: 该弹窗"
+    assert read_persona(cpersonas, "Claudia.txt").strip() == "旧的自定义", "认不出来的内容不能被更新覆盖"
+    cchg = cc.check_persona_changes()
+    assert cchg and cchg["name"] == "Claudia.txt", "改过的: 要提醒"
+    assert cc.check_claudia_integrity() and cc.cfg["claudia_modified"], "非内置内容: 该弹窗"
     assert not cc.check_claudia_integrity(), "同一份内容只提醒一次"
     cc.restore_claudia()
     assert read_persona(cpersonas, "Claudia.txt") == BUILTIN_PERSONAS[DEFAULT_PERSONA].strip()
@@ -3375,6 +3388,18 @@ def _selftest():
     mu = Comm(mdir, mpersonas, now=lambda: clock[0], chat_fn=fake)
     assert "我的改动" in read_persona(mpersonas, "Claudia.txt"), "改过的老版本不动"
     mu.flush()
+    # 从老版本更新上来 (第一次迁移): 改过的 Claudia 不能被静默覆盖, 并且要能弹"修改人设"提醒
+    edir, epersonas = os.path.join(td, "claudia_up_edited"), os.path.join(td, "claudia_up_edited_personas")
+    os.makedirs(edir)
+    os.makedirs(epersonas)
+    edited = CLAUDIA_LEGACIES[0].replace("注重卫生.", "注重卫生.\n- 我的改动: 喜欢猫.")
+    open(os.path.join(epersonas, "Claudia.txt"), "w", encoding="utf-8", newline="\n").write(edited)
+    config.save_json_file(os.path.join(edir, "comm_config.json"), {"seeded": True, "persona": "Claudia.txt"})
+    ec = Comm(edir, epersonas, now=lambda: clock[0], chat_fn=fake)
+    assert "我的改动" in read_persona(epersonas, "Claudia.txt"), "更新上来: 改过的人设不能被覆盖"
+    echg = ec.check_persona_changes()
+    assert echg and echg["name"] == "Claudia.txt", "更新上来: 改过的人设要提醒"
+    ec.flush()
     # 人设文件本身随设备同步: 新增 / 覆盖 / 删除 (README 不同步)
     psf = os.path.join(td, "personas_sync")
     os.makedirs(psf)

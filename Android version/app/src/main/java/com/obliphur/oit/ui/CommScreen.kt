@@ -303,16 +303,12 @@ fun CommSettings() {
         var mem by remember { mutableStateOf(comm.memManual) }
         OutlinedTextField(mem, { mem = it.take(Comm.MEM_MAX); comm.setMem(mem) },
             modifier = Modifier.fillMaxWidth().padding(top = 6.dp), minLines = 3, maxLines = 8)
-        val auto = comm.memAuto
-        Text(
-            if (auto.isEmpty()) tr("（还没有自动摘要）")
-            else tr("自动摘要: ") + auto.take(160) + if (auto.length > 160) "…" else "",
-            color = o.dim, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp)
-        )
     }
 
     OitCard {
         Text(tr("✂  分条发送"), fontWeight = FontWeight.Bold, color = o.text)
+        Text(tr("经过优化,不怎么会增加token消耗"), color = o.dim, fontSize = 12.sp,
+            modifier = Modifier.padding(top = 2.dp))
         SwitchRow(tr("开启"), comm.splitSend) { comm.set(splitSend = it) }
     }
 

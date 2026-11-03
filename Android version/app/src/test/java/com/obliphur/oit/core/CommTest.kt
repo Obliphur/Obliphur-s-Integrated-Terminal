@@ -482,7 +482,7 @@ class CommTest {
         assertTrue("我的改动" in ma.readPersona("Assistant.txt"))
     }
 
-    /** Claudia: 没有手动修改记录时升级覆盖; 之后手动修改会检测到, 可以还原. */
+    /** Claudia: 更新上来时认不出来的内容 (= 改过) 不覆盖, 走"修改人设"提醒; 认得的旧内置才静默升级. */
     @Test
     fun claudiaIntegrity() {
         val td = Files.createTempDirectory("oit").toFile()
@@ -491,8 +491,8 @@ class CommTest {
         File(cp, "Claudia.txt").writeText("旧的自定义")
         File(cd, "comm_config.json").writeText("""{"seeded":true,"persona":"Claudia.txt"}""")
         val c = Comm(cd, cp, { clock }) { _, _, _ -> "" }
-        assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).trim(), c.readPersona("Claudia.txt"))
-        File(cp, "Claudia.txt").appendText("\n手动修改")
+        assertEquals("认不出来的内容不能被更新覆盖", "旧的自定义", c.readPersona("Claudia.txt"))
+        assertNotNull("改过的: 要提醒", c.checkPersonaChanges())
         assertTrue(c.checkClaudiaIntegrity())
         assertFalse(c.checkClaudiaIntegrity())
         c.restoreClaudia()
@@ -1048,6 +1048,22 @@ class CommTest {
             if (followCalls.size > n) break
         }
         assertEquals(n + 1, followCalls.size)
+    }
+
+    /** 从老版本更新上来 (第一次迁移): 改过的 Claudia 不能被覆盖, 并且要能弹"修改人设"提醒. */
+    @Test
+    fun editedClaudiaSurvivesUpdate() {
+        val td = Files.createTempDirectory("oit").toFile()
+        val dir = File(td, "d").also { it.mkdirs() }
+        val personas = File(td, "p").also { it.mkdirs() }
+        val edited = BuiltinPersonas.CLAUDIA_LEGACIES[0].replace("注重卫生.", "注重卫生.\n- 我的改动: 喜欢猫.")
+        File(personas, "Claudia.txt").writeText(edited)
+        File(dir, "comm_config.json").writeText("""{"seeded":true,"persona":"Claudia.txt"}""")
+        val c = comm(dir, personas)
+        assertTrue("更新上来: 改过的人设不能被覆盖", "我的改动" in c.readPersona("Claudia.txt"))
+        val chg = c.checkPersonaChanges()
+        assertNotNull(chg)
+        assertEquals("Claudia.txt", chg!!.name)
     }
 
     /** 记忆卡: 每 40 条整理一次; 手写 / 自动分开; 清空聊天只清自动的. */

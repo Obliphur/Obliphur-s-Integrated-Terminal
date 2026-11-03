@@ -825,11 +825,10 @@ class SettingsPage(tk.Frame):
         self._mem_job = None
         self.txt_mem.bind("<KeyRelease>", lambda _e: self._comm_mem_later())
         self.txt_mem.bind("<FocusOut>", lambda _e: self._comm_mem_save())
-        self.lbl_mem_auto = tk.Label(fr, text="", bg=card, fg=COLORS["text_dim"], font=small, anchor="w",
-                                     justify="left", wraplength=520)
-        self.lbl_mem_auto.pack(fill="x", padx=12, pady=(0, 8))
 
         fr, _head = self._card(body, "✂  分条发送")
+        tk.Label(fr, text=tr("经过优化,不怎么会增加token消耗"), bg=card, fg=COLORS["text_dim"],
+                 font=small, anchor="w").pack(fill="x", padx=12, pady=(0, 2))
         v = tk.BooleanVar(value=c.split_on())
         self.comm_vars = {"split_send": v}
         self._track(tk.Checkbutton(fr, text=tr("开启"), variable=v, bg=card, fg=COLORS["text"],
@@ -919,7 +918,7 @@ class SettingsPage(tk.Frame):
         self._mem_job = self.after(600, self._comm_mem_save)
 
     def _comm_mem_save(self):
-        """重要信息: 随时保存 (即时生效); 每 MEM_EVERY 条消息由模型整理的那份是另一栏 (自动摘要)."""
+        """重要信息: 随时保存 (即时生效); 每 MEM_EVERY 条消息由模型整理的那份在后台, 不显示."""
         self._mem_job = None
         import comm as comm_mod
         text = self.txt_mem.get("1.0", "end").strip()[:comm_mod.MEM_MAX]
@@ -992,9 +991,6 @@ class SettingsPage(tk.Frame):
                     and self.txt_mem.get("1.0", "end").strip() != str(c.cfg.get("mem_manual") or ""):
                 self.txt_mem.delete("1.0", "end")                       # 别的设备同步来了新的重要信息
                 self.txt_mem.insert("1.0", str(c.cfg.get("mem_manual") or ""))
-            auto = str(c.cfg.get("mem_auto") or "").strip()
-            cfg(self.lbl_mem_auto, text=(tr("自动摘要: ") + auto[:160] + ("…" if len(auto) > 160 else ""))
-                if auto else tr("（还没有自动摘要）"))
         if self.comm_vars["bg_pro"].get() != c.bg_on():
             self.comm_vars["bg_pro"].set(c.bg_on())
         if self.comm_vars["split_send"].get() != c.split_on():

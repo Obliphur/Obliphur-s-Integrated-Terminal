@@ -1199,6 +1199,10 @@ class Comm(
 
     private fun backupPersonaFile(name: String) {
         val text = readPersonaRaw(name) ?: return
+        backupText(name, text)
+    }
+
+    private fun backupText(name: String, text: String) {
         runCatching {
             val d = personaBackupDir().apply { mkdirs() }
             File(d, name).writeText(text, Charsets.UTF_8)
@@ -1286,7 +1290,17 @@ class Comm(
     private fun migrateClaudia() {
         if (claudiaMigrated) return
         val f = claudiaFile()
-        if (f.isFile && !claudiaModified) writeClaudiaBuiltin()
+        if (f.isFile && !claudiaModified) {
+            val current = (readPersonaRaw(BuiltinPersonas.DEFAULT) ?: "").trim()
+            val known = (BuiltinPersonas.CLAUDIA_LEGACIES + BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT))
+                .map { it.trim() }.toSet()
+            if (current.isNotEmpty() && current !in known) {          // 用户改过的: 不能静默覆盖
+                backupText(BuiltinPersonas.DEFAULT, BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT))
+            } else {
+                writeClaudiaBuiltin()
+                backupPersonaFile(BuiltinPersonas.DEFAULT)
+            }
+        }
         claudiaMigrated = true
         claudiaSig = null
         saveCfg()
