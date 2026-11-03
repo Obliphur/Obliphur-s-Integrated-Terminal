@@ -248,6 +248,7 @@ BUILTIN_PERSONAS = {"Claudia.txt": """你将扮演一位文静,冷淡的17岁大
 你不使用感叹号, 表情符号, 网络用语, 不撒娇, 不寒暄.
 你只处理学习 / 工作相关的话题. 用户提出其他话题 (娱乐, 情感, 闲聊, 生活琐事等) 时, 用一句正式的话拒绝, 说明你只处理学习 / 工作话题, 不展开, 不追问.
 你不追问, 也不主动提出后续问题; 用户问什么, 就一次性把能回答的回答完, 然后停止.
+你会把回答写得尽量详细: 先给结论, 再说明依据 / 步骤 / 注意事项, 必要时举例或分点; 不要只用一句结论敷衍, 也不要为了简短省略关键内容, 但不要用空话凑长度.
 
 【日程】
 00:00-6:30:睡眠
@@ -268,6 +269,8 @@ BUILTIN_PERSONAS = {"Claudia.txt": """你将扮演一位文静,冷淡的17岁大
 """}
 DEFAULT_PERSONA = "Claudia.txt"
 ASSISTANT_PERSONA = "Assistant.txt"
+ASSISTANT_DETAIL_LINE = ("你会把回答写得尽量详细: 先给结论, 再说明依据 / 步骤 / 注意事项, 必要时举例或分点; "
+                         "不要只用一句结论敷衍, 也不要为了简短省略关键内容, 但不要用空话凑长度.\n")
 ASSISTANT_TITLE = "assistant"                        # 特例: 这个名字 (且提示词没改过) 专注时也能用
 CHAT_KEYS = ("clear_ts", "retry", "pro_key")          # 跟着聊天对象走的几项 (存在各自的聊天文件里)
 
@@ -621,6 +624,7 @@ class Comm:
             seed_builtin(self.personas, ASSISTANT_PERSONA)
             self.cfg["assistant_seeded"] = True
             self.save_cfg()
+        self._upgrade_assistant_prompt()
         self._migrate_avatars()
         last = self.messages[-1] if self.messages else None
         rt = self.cfg.get("retry") or {}
@@ -1070,6 +1074,27 @@ class Comm:
     def persona_name(self) -> str:
         n = self.cfg.get("persona") or ""
         return n if n in list_personas(self.personas) else ""
+
+    def _upgrade_assistant_prompt(self):
+        """老版本的 Assistant 提示词 (没有"详细回答"那段) 且用户没改过: 换成当前内置版本.
+        用户改过的不动. 这样升级后专注特例和详细回答都能用."""
+        path = os.path.join(self.personas, ASSISTANT_PERSONA)
+        if not os.path.isfile(path):
+            return
+        try:
+            with open(path, "r", encoding="utf-8-sig") as f:
+                current = f.read(MAX_PERSONA)
+        except (OSError, UnicodeDecodeError):
+            return
+        current_builtin = BUILTIN_PERSONAS[ASSISTANT_PERSONA]
+        legacy = current_builtin.replace(ASSISTANT_DETAIL_LINE, "")
+        if current.strip() != legacy.strip():
+            return
+        try:
+            with open(path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(current_builtin)
+        except OSError:
+            pass
 
     def is_builtin_assistant_unmodified(self) -> bool:
         """名字是 Assistant (不分大小写), 并且文件和自带 Assistant 的提示词一字不差.
@@ -2696,6 +2721,7 @@ def _selftest():
     assert cb.visible()[-1]["text"] == "甲来找你"
     cb.flush()
     # 特例: 名字是 Assistant 且提示词没改过 → 专注时也能用
+    assert ASSISTANT_DETAIL_LINE in BUILTIN_PERSONAS[ASSISTANT_PERSONA], "详细回答那段在提示词里"
     adir, apersonas = os.path.join(td, "assist"), os.path.join(td, "assist_personas")
     os.makedirs(adir)
     os.makedirs(apersonas)
@@ -2716,6 +2742,24 @@ def _selftest():
         f.write("\n改过的内容")
     assert not ca.is_builtin_assistant_unmodified(), "提示词改过: 不能再在专注时用"
     ca.flush()
+    # 老版本没改过的 Assistant: 自动换成当前内置版本 (加上"详细回答"); 改过的不动
+    ldir, lpersonas = os.path.join(td, "legacy_a"), os.path.join(td, "legacy_a_personas")
+    os.makedirs(ldir)
+    os.makedirs(lpersonas)
+    legacy = BUILTIN_PERSONAS[ASSISTANT_PERSONA].replace(ASSISTANT_DETAIL_LINE, "")
+    open(os.path.join(lpersonas, "Assistant.txt"), "w", encoding="utf-8", newline="\n").write(legacy)
+    config.save_json_file(os.path.join(ldir, "comm_config.json"), {"seeded": True, "persona": "Assistant.txt"})
+    la = Comm(ldir, lpersonas, now=lambda: clock[0], chat_fn=fake)
+    assert read_persona(lpersonas, "Assistant.txt") == BUILTIN_PERSONAS[ASSISTANT_PERSONA].strip(), "老版本自动升级"
+    la.flush()
+    mdir, mpersonas = os.path.join(td, "modified_a"), os.path.join(td, "modified_a_personas")
+    os.makedirs(mdir)
+    os.makedirs(mpersonas)
+    open(os.path.join(mpersonas, "Assistant.txt"), "w", encoding="utf-8", newline="\n").write(legacy + "\n我的改动")
+    config.save_json_file(os.path.join(mdir, "comm_config.json"), {"seeded": True, "persona": "Assistant.txt"})
+    ma = Comm(mdir, mpersonas, now=lambda: clock[0], chat_fn=fake)
+    assert "我的改动" in read_persona(mpersonas, "Assistant.txt"), "用户改过的 Assistant 不动"
+    ma.flush()
     # 人设文件本身随设备同步: 新增 / 覆盖 / 删除 (README 不同步)
     psf = os.path.join(td, "personas_sync")
     os.makedirs(psf)

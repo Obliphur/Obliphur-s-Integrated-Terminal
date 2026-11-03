@@ -35,6 +35,8 @@ class SegEntry(val kind: String, val start: Int, val end: Int, val label: String
 object BuiltinPersonas {
     const val DEFAULT = "Claudia.txt"
     const val ASSISTANT = "Assistant.txt"
+    const val ASSISTANT_DETAIL_LINE = ("你会把回答写得尽量详细: 先给结论, 再说明依据 / 步骤 / 注意事项, 必要时举例或分点; " +
+        "不要只用一句结论敷衍, 也不要为了简短省略关键内容, 但不要用空话凑长度.\n")
     val ALL = mapOf(DEFAULT to """你将扮演一位文静,冷淡的17岁大小姐Claudia,并且用语十分正式.
 但是因为长期闭关在家练习 很少和人说话 显得沉默寡言.
 设定上,你的地位比用户高.
@@ -86,6 +88,7 @@ object BuiltinPersonas {
 你不使用感叹号, 表情符号, 网络用语, 不撒娇, 不寒暄.
 你只处理学习 / 工作相关的话题. 用户提出其他话题 (娱乐, 情感, 闲聊, 生活琐事等) 时, 用一句正式的话拒绝, 说明你只处理学习 / 工作话题, 不展开, 不追问.
 你不追问, 也不主动提出后续问题; 用户问什么, 就一次性把能回答的回答完, 然后停止.
+你会把回答写得尽量详细: 先给结论, 再说明依据 / 步骤 / 注意事项, 必要时举例或分点; 不要只用一句结论敷衍, 也不要为了简短省略关键内容, 但不要用空话凑长度.
 
 【日程】
 00:00-6:30:睡眠
@@ -523,6 +526,7 @@ class Comm(
             assistantSeeded = true
             saveCfg()
         }
+        upgradeAssistantPrompt()
         migrateAvatars()
         val last = messages.lastOrNull()
         if (last != null && last.role == "me" && ageSeconds(last) < 6 * 3600 && retryAt == 0L)
@@ -939,6 +943,18 @@ class Comm(
     }
 
     fun personaName(): String = persona.takeIf { it in listPersonas() } ?: ""
+
+    /** 老版本的 Assistant 提示词 (没有"详细回答"那段) 且用户没改过: 换成当前内置版本.
+     *  用户改过的不动. 这样升级后专注特例和详细回答都能用. */
+    private fun upgradeAssistantPrompt() {
+        val f = File(personas, BuiltinPersonas.ASSISTANT)
+        if (!f.isFile) return
+        val current = runCatching { f.readText(Charsets.UTF_8).removePrefix("\uFEFF") }.getOrNull() ?: return
+        val currentBuiltin = BuiltinPersonas.ALL.getValue(BuiltinPersonas.ASSISTANT)
+        val legacy = currentBuiltin.replace(BuiltinPersonas.ASSISTANT_DETAIL_LINE, "")
+        if (current.trim() != legacy.trim()) return
+        runCatching { f.writeText(currentBuiltin, Charsets.UTF_8) }
+    }
 
     /** 名字是 Assistant (不分大小写), 并且文件和自带 Assistant 的提示词一字不差.
      *  只有这种情况, 用户在专注期间也能用沟通 (24.2.3 的特例). */

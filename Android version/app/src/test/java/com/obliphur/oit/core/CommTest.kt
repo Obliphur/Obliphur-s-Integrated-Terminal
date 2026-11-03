@@ -440,6 +440,7 @@ class CommTest {
     fun assistantFocusExemption() {
         val td = Files.createTempDirectory("oit").toFile()
         val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
+        assertTrue(BuiltinPersonas.ASSISTANT_DETAIL_LINE in BuiltinPersonas.ALL.getValue(BuiltinPersonas.ASSISTANT))
         c.set(persona = "Assistant.txt")
         assertTrue(c.isBuiltinAssistantUnmodified())
         File(td, "p/Assistant.md").writeText(BuiltinPersonas.ALL.getValue(BuiltinPersonas.ASSISTANT))
@@ -451,6 +452,21 @@ class CommTest {
         c.set(persona = "Assistant.md")
         File(td, "p/Assistant.md").appendText("\n改过的内容")
         assertFalse(c.isBuiltinAssistantUnmodified())
+        // 老版本没改过的 Assistant: 自动换成当前内置版本 (加上"详细回答"); 改过的不动
+        val legacy = BuiltinPersonas.ALL.getValue(BuiltinPersonas.ASSISTANT)
+            .replace(BuiltinPersonas.ASSISTANT_DETAIL_LINE, "")
+        val ld = File(td, "ld").also { it.mkdirs() }
+        val lp = File(td, "lp").also { it.mkdirs() }
+        File(lp, "Assistant.txt").writeText(legacy)
+        File(ld, "comm_config.json").writeText("""{"seeded":true,"persona":"Assistant.txt"}""")
+        val la = Comm(ld, lp, { clock }) { _, _, _ -> "" }
+        assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.ASSISTANT).trim(), la.readPersona("Assistant.txt"))
+        val md = File(td, "md").also { it.mkdirs() }
+        val mp = File(td, "mp").also { it.mkdirs() }
+        File(mp, "Assistant.txt").writeText(legacy + "\n我的改动")
+        File(md, "comm_config.json").writeText("""{"seeded":true,"persona":"Assistant.txt"}""")
+        val ma = Comm(md, mp, { clock }) { _, _, _ -> "" }
+        assertTrue("我的改动" in ma.readPersona("Assistant.txt"))
     }
 
     @Test
