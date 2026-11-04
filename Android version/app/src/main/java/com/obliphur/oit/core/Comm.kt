@@ -1005,6 +1005,10 @@ class Comm(
         const val NET_TRIES = 2                         // 搜索那次请求最多再试几次
         /** 这几种请求里写 [apply for network] 有效 (搜索那次请求本身里写的不算). */
         val NET_KINDS = setOf("user", "retry", "followup", "proactive", "chase")
+        /** 对方按日程在这两种状态时, 用户发来的消息先由 OIT 存着 (带发送时间), 对方第一次空闲 / 休息时一次性发给它 (MECHANICS 24.3.8). */
+        val HELD_KINDS = setOf("focus", "sleep")
+        /** 存着的记号: 借用 retryN (和桌面版 retry 里的 hold: true 对应; 同步时转成 hold). */
+        const val HOLD_N = -1
         const val JOINT_TAG = "[系统·联合行动]"           // 联合行动进展的系统消息 (不是 "[系统]" 开头: 不算主动消息, 不触发提示音)
         const val JOINT_EARLY = 10 * 60                 // 联合行动: 合约可以比约定的开始时间早开始这么久 (秒)
         const val JOINT_LATE = 5 * 60                   // 联合行动: 约定的开始时间过了这么久还没开始合约就算用户放弃 (秒)
@@ -1467,7 +1471,8 @@ class Comm(
                     .apply { if (m.api.isNotEmpty()) put("api", m.api); if (m.wait > 0) put("wait", m.wait) }
             }
             if (st.proKey.isNotEmpty()) doc["pro:$p"] = st.proKey
-            if (st.retryAt != 0L || st.retryN != 0) doc["retry:$p"] = JSONObject().put("at", st.retryAt).put("n", st.retryN)
+            if (st.retryAt != 0L || st.retryN != 0) doc["retry:$p"] = JSONObject().put("at", st.retryAt).put("n", if (st.retryN == HOLD_N) 0 else st.retryN)
+                .apply { if (st.retryN == HOLD_N) put("hold", true) }
             if (st.clearTs != 0L) doc["clear:$p"] = st.clearTs
             if (st.cutUntil > nowMs()) doc["cut:$p"] = st.cutUntil
             if (st.memAuto.isNotEmpty())
@@ -1552,7 +1557,7 @@ class Comm(
                     val o = v as? JSONObject
                     val tc = touch(rest)
                     tc.st.retryAt = o?.optLong("at", 0L) ?: 0L
-                    tc.st.retryN = o?.optInt("n", 0) ?: 0
+                    tc.st.retryN = if (o?.optBoolean("hold", false) == true) HOLD_N else o?.optInt("n", 0) ?: 0
                     tc.dirty = true
                 }
                 kind == "cut" && v is Number -> {                        // 对方切断了谈话: 取更晚的
@@ -2502,7 +2507,7 @@ class Comm(
         if (why.isNotEmpty()) return why
         add("me", text, compose(now(), text))
         sentOut()
-        request("user")
+        askUser()
         return ""
     }
 
@@ -2538,8 +2543,26 @@ class Comm(
         if (jd != null)                                          // 邀请发出去了: 等对方回 [Yes] / [No]
             jointSet(Joint(nowMs().toString(), pid, "wait", jd.terms, jd.start.iso(), jd.end.iso(), 0L))
         sentOut()
-        request("user")
+        askUser()
         return ""
+    }
+
+    /** 对方此刻按日程在专注 / 睡眠 (HELD_KINDS) 吗: 是 = 返回 kind, 否 (空闲 / 休息 / 没有日程 / 没选人设) = "". */
+    private fun awayKind(): String {
+        if (personaName().isEmpty()) return ""
+        val k = otherStatus()?.first?.kind ?: return ""
+        return if (k in HELD_KINDS) k else ""
+    }
+
+    /** 用户发了消息之后: 对方在专注 / 睡眠就不调用接口, 消息 (连同发送时间, 已经在每条的开头) 先存着 (retryN = HOLD_N),
+     *  对方第一次空闲 / 休息时 tick() 一次性发给它; 否则马上请求. */
+    private fun askUser() {
+        val kind = awayKind()
+        if (kind.isEmpty()) { request("user"); return }
+        retryAt = nowMs(); retryN = HOLD_N
+        saveCfg()
+        log("HOLD 对方在${if (kind == "sleep") "睡眠中" else "专注中"}: 用户的消息先存着, 等对方空闲 / 休息时一次性发")
+        changed(); push()
     }
 
     // ---- 对方主动发起联合行动 (前置 prompt 第 XII 条, MECHANICS 24.9.3; 同桌面版 comm.py _operation_rounds): 只在主动发起 (规则 I - IV 触发的 proactive) 的回复里有效 ----
@@ -2895,12 +2918,16 @@ class Comm(
             error = r.err
             if (refused && (unanswered() || isCatchup)) {
                 if (isCatchup) catchup = true                 // 回复已经显示过, unanswered() 为假: 重试要靠这个记号
-                retryN++
-                retryAt = if (retryN <= RETRY_MAX) nowMs() else 0L
+                if (retryN != HOLD_N) {                        // 用户的新消息存着 (对方在专注 / 睡眠): 保持存着, 不改成 10 分钟后重试
+                    retryN++
+                    retryAt = if (retryN <= RETRY_MAX) nowMs() else 0L
+                }
                 saveCfg()
             }
         } else {
-            error = ""; retryAt = 0; retryN = 0; catchup = false
+            error = ""; catchup = false
+            if (retryN == HOLD_N && newerMe(reqTs)) retryAt = nowMs()          // 等回复的时候用户又发了消息, 而这时对方在专注 / 睡眠: 存着的还在
+            else { retryAt = 0; retryN = 0 }
             saveCfg()
             val quiet = r.kind == "chase" || r.kind == "net" || (r.kind == "proactive" && !talkedRecently(messages, nowMs()))      // 前 5 分钟没聊过 (追问总是): 提示音
             r.extra?.let { add("sys", it.body, it.api) }
@@ -2947,7 +2974,18 @@ class Comm(
         val t = now()
         val snap = snapshot()
         // 对方不方便时: 隔一阵把没回的消息再交给模型
-        if (retryAt != 0L && nowMs() >= retryAt + RETRY_GAP * 1000L) {
+        if (retryN == HOLD_N) {                                  // 用户在对方专注 / 睡眠时发的消息存着: 对方第一次空闲 / 休息了, 一次性发给它
+            if (awayKind().isEmpty()) {
+                retryAt = 0; retryN = 0
+                saveCfg()
+                if (messages.any { it.role == "me" }) {
+                    log("HOLD 对方空闲 / 休息了: 把存着的消息一次性发给它")
+                    trigger("retry", "现在是 ${CommText.stamp(t)}. 你刚从专注 / 睡眠里出来. 用户在你忙的时候发来了上面的消息 (每条前面写着发送时间), " +
+                        "请现在一次性处理并回复; 如果仍然不方便, 返回${CommText.REFUSE}.")
+                    return
+                }
+            }
+        } else if (retryAt != 0L && nowMs() >= retryAt + RETRY_GAP * 1000L) {
             retryAt = 0
             saveCfg()
             if (unanswered() || catchup) {

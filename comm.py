@@ -52,6 +52,7 @@ PROACTIVE_KEEP = 12                   # 记下最近多少个已经处理过的�
 CUT_TAG = "[系统·切断]"                # 对方切断谈话的系统消息 (不是 "[系统]" 开头: 不算主动消息)
 CUT_DEFAULT_MIN = 10                  # [cut off] 后面没写分钟数时切断多久
 CUT_MAX_MIN = 24 * 60                 # 一次最多切断多久
+HELD_KINDS = ("focus", "sleep")       # 对方按日程在这两种状态时, 用户发来的消息先由 OIT 存着 (带发送时间), 对方第一次空闲 / 休息时一次性发给它 (MECHANICS 24.3.8)
 NET_TAG = "[系统·网络]"                # 限时网络 (规则 XIV): 等了 NET_DELAY 之后 OIT 再调用一次接口 (不是 "[系统]" 开头: 不算主动消息)
 NET_DELAY = 2 * 60                    # 对方 [apply for network] 之后等这么久 (秒), OIT 才再次调用接口让它搜索并回复
 NET_DEFAULT_MIN = 5                   # [apply for network] 后面没写分钟数时开通多久
@@ -2686,7 +2687,7 @@ class Comm:
         now = self.now()
         self._add("me", text, self._compose(now, text))
         self._sent()
-        self._request("user")
+        self._ask_user()
         return ""
 
     def set_attach(self, sel: dict):
@@ -2746,8 +2747,34 @@ class Comm:
             self._joint_set({"id": f"{self._ms()}", "pid": self.pid, "state": "wait", "terms": list(joint["terms"]),
                              "start": joint["start"], "end": joint["end"]}, replace=True)
         self._sent()
-        self._request("user")
+        self._ask_user()
         return ""
+
+    def _away_kind(self) -> str:
+        """对方此刻按日程在专注 / 睡眠 (HELD_KINDS) 吗: 是 = 返回 kind, 否 (空闲 / 休息 / 没有日程 / 没选人设) = ""."""
+        if not self.persona_name():
+            return ""
+        k = (self.other_status() or {}).get("kind")
+        return k if k in HELD_KINDS else ""
+
+    def _ask_user(self):
+        """用户发了消息之后: 对方在专注 / 睡眠就不调用接口, 消息 (连同发送时间, 已经在每条的开头) 先存着, 记下 hold,
+        对方第一次空闲 / 休息时 tick() 一次性发给它; 否则马上请求."""
+        kind = self._away_kind()
+        if not kind:
+            self._request("user")
+            return
+        since = self._ms()                                           # 存着的起点: 对方最后一条回复之后, 用户的第一条消息 (发消息时 _sent 已经清过 retry, 所以不能看旧的 hold)
+        for m in reversed(self.messages):
+            if m["role"] == "ai":
+                break
+            if m["role"] == "me":
+                since = int(m["ts"])
+        self.cfg["retry"] = {"hold": True, "at": self._ms(), "n": 0, "since": since}
+        self.save_cfg()
+        self.log(f"HOLD 对方在{STATUS_TEXT[kind]}: 用户的消息先存着, 等对方空闲 / 休息时一次性发")
+        self._changed()
+        self._push()
 
     # ---- 对方主动发起联合行动 (前置 prompt 第 XII 条, MECHANICS 24.9.3): 只在主动发起 (规则 I - IV 触发的 proactive) 的回复里有效 ----
     # 对方回 [operation] → 给它词条库 (带编号) 和可用的开始时间 → 它回选的编号 [1,2,3] → OIT 定下开始时间 (最近的 重要活动 / 睡眠 / 休息 / 空闲 的结尾里第一个放得下的) →
@@ -3247,13 +3274,18 @@ class Comm:
                 if catchup:
                     self._catchup = True                  # 回复已经显示过, unanswered() 为假: 重试要靠这个记号
                 rt = self.cfg.get("retry") or {}
-                n = int(rt.get("n") or 0) + 1
-                self.cfg["retry"] = {"at": self._ms(), "n": n} if n <= RETRY_MAX else {"at": 0, "n": n}
-                self.save_cfg()
+                if not rt.get("hold"):                      # 用户的新消息存着 (对方在专注 / 睡眠): 保持存着, 不改成 10 分钟后重试
+                    n = int(rt.get("n") or 0) + 1
+                    self.cfg["retry"] = {"at": self._ms(), "n": n} if n <= RETRY_MAX else {"at": 0, "n": n}
+                    self.save_cfg()
         else:
             self.error = ""
             self._catchup = False
-            self.cfg["retry"] = {}
+            rt0 = self.cfg.get("retry") or {}
+            if rt0.get("hold") and self._newer_me(self._req_ts):         # 等回复的时候用户又发了消息, 而这时对方在专注 / 睡眠: 存着的还在
+                self.cfg["retry"] = dict(rt0, at=self._ms())
+            else:
+                self.cfg["retry"] = {}
             self.save_cfg()
             ping = kind in ("chase", "net") or (kind == "proactive" and not self._talked_recently(self.messages, self._ms()))      # 前 5 分钟没聊过 (追问总是): 提示音
             if extra:
@@ -3327,7 +3359,16 @@ class Comm:
         snap = self.snapshot() or {}
         # 对方不方便时: 隔一阵把没回的消息再交给模型
         rt = self.cfg.get("retry") or {}
-        if rt.get("at") and self._ms() >= int(rt["at"]) + RETRY_GAP * 1000:
+        if rt.get("hold"):                                          # 用户在对方专注 / 睡眠时发的消息存着: 对方第一次空闲 / 休息了, 一次性发给它
+            if not self._away_kind():
+                self.cfg["retry"] = {}
+                self.save_cfg()
+                if any(m["role"] == "me" and int(m["ts"]) >= int(rt.get("since") or 0) for m in self.messages):
+                    self.log("HOLD 对方空闲 / 休息了: 把存着的消息一次性发给它")
+                    self._trigger("retry", f"现在是 {stamp(now)}. 你刚从专注 / 睡眠里出来. 用户在你忙的时候发来了上面的消息 (每条前面写着发送时间), "
+                                           f"请现在一次性处理并回复; 如果仍然不方便, 返回{REFUSE}.")
+                    return
+        elif rt.get("at") and self._ms() >= int(rt["at"]) + RETRY_GAP * 1000:
             self.cfg["retry"] = {"at": 0, "n": int(rt.get("n") or 0)}
             self.save_cfg()
             if self.unanswered() or self._catchup:
@@ -5499,6 +5540,79 @@ def _selftest():
     cn.tick()
     assert not cn.busy and cn.net_phase() == ""
     for x in (cn, other_n):
+        x.flush()
+
+    # ---- 对方专注 / 睡眠时用户发的消息: OIT 先存着 (带发送时间), 对方第一次空闲 / 休息时一次性发给它 ----
+    HTXT = "你是存着.\n12:30-13:00:空闲\n[循环 14:00-18:00][100min]\n23:30-6:30:睡眠\n"
+    clock[0] = day.replace(hour=14, minute=10)
+    ch = joint_comm("存着", HTXT)
+    assert ch._away_kind() == "focus"
+    script.clear()
+    follow.clear()
+    n0 = len(calls)
+    assert ch.send("在吗") == "" and not ch.busy and len(calls) == n0, "对方在专注: 不调用接口"
+    t1 = int(ch.messages[-1]["ts"])
+    clock[0] += timedelta(minutes=5)
+    assert ch.send("还在忙吗") == "" and not ch.busy and len(calls) == n0
+    rt = ch.cfg["retry"]
+    assert rt["hold"] and rt["since"] == t1 and f"retry:{ch.pid}" in ch.sync_doc(), "存着的记号 (起点是第一条), 随设备同步"
+    for _ in range(3):                                           # 还在专注里: 一直存着, 也不会按 10 分钟重试
+        clock[0] += timedelta(minutes=20)
+        ch.tick()
+        assert not ch.busy and len(calls) == n0
+    clock[0] = day.replace(hour=15, minute=41)                    # 100 分钟专注结束: 休息
+    assert ch._away_kind() == ""
+    script.append("来了, 你们说的我都看到了.")
+    ch.tick()
+    assert ch.busy
+    wait(ch)
+    assert len(calls) == n0 + 1 and not ch.cfg["retry"]
+    sent = calls[-1][1]
+    assert sent[0]["role"] == "user" and "在吗" in sent[0]["content"] and "还在忙吗" in sent[0]["content"], "两条合在一次里发"
+    assert "14:10" in sent[0]["content"] and "14:15" in sent[0]["content"], "每条带自己的发送时间"
+    assert "你刚从专注 / 睡眠里出来" in sent[-1]["content"] and ch.visible()[-1]["text"] == "来了, 你们说的我都看到了."
+    # 睡眠: 过夜的消息, 到 6:30 之后一次性发
+    clock[0] = day.replace(hour=23, minute=40)
+    assert ch._away_kind() == "sleep"
+    n0 = len(calls)
+    assert ch.send("晚安") == "" and len(calls) == n0 and not ch.busy
+    clock[0] = day.replace(hour=23, minute=50)
+    assert ch.send("明天早点叫我") == "" and not ch.busy
+    clock[0] = (day + timedelta(days=1)).replace(hour=6, minute=20)
+    ch.tick()
+    assert not ch.busy and len(calls) == n0, "还没醒"
+    clock[0] = (day + timedelta(days=1)).replace(hour=6, minute=31)
+    script.append("早, 我醒了.")
+    ch.tick()
+    assert ch.busy
+    wait(ch)
+    assert "晚安" in calls[-1][1][-1]["content"] and "明天早点叫我" in calls[-1][1][-1]["content"] and "你刚从专注 / 睡眠里出来" in calls[-1][1][-1]["content"] and ch.visible()[-1]["text"] == "早, 我醒了."
+    # 等回复的时候对方进了专注, 用户又发了一条: 前一条的回复照常显示, 后一条存着
+    clock[0] = day.replace(hour=13, minute=59, second=50) + timedelta(days=1)
+    n0 = len(calls)
+    script.append("嗯, 在.")
+    assert ch.send("a") == "" and ch.busy
+    clock[0] = day.replace(hour=14, minute=0, second=10) + timedelta(days=1)
+    assert ch._away_kind() == "focus"
+    assert ch.send("b") == ""
+    wait(ch)
+    assert len(calls) == n0 + 1 and ch.visible()[-1]["text"] == "嗯, 在." and ch.cfg["retry"].get("hold"), "回复显示后, 存着的还在"
+    clock[0] = day.replace(hour=15, minute=41) + timedelta(days=1)
+    script.append("看到 b 了.")
+    ch.tick()
+    wait(ch)
+    assert len(calls) == n0 + 2 and ch.visible()[-1]["text"] == "看到 b 了." and not ch.cfg["retry"]
+    # 清空聊天: 存着的不要了; 没有日程的人设不会存
+    clock[0] = day.replace(hour=14, minute=30)
+    assert ch.send("清空前") == "" and ch.cfg["retry"].get("hold")
+    ch.clear()
+    assert not ch.cfg["retry"]
+    cp = joint_comm("不存", "你是不存.\n")
+    assert cp._away_kind() == ""
+    script.append("好.")
+    assert cp.send("在吗") == "" and cp.busy
+    wait(cp)
+    for x in (ch, cp):
         x.flush()
 
     # ---- 打字延时: 文本里每个字符让对方的消息晚 0.2 s 显示, 一条一条按顺序出来, 显示之前不同步给别的设备 ----

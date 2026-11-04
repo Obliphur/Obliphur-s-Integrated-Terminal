@@ -1899,5 +1899,84 @@ class CommTest {
             srv.close()
         }
     }
+
+    /** 对方专注 / 睡眠时用户发的消息: OIT 先存着 (带发送时间), 对方第一次空闲 / 休息时一次性发给它 (对应 comm.py 自检). */
+    @Test
+    fun heldWhileAway() {
+        val td = Files.createTempDirectory("oit").toFile()
+        File(td, "p").mkdirs()
+        File(td, "p/存着.txt").writeText("你是存着.\n12:30-13:00:空闲\n[循环 14:00-18:00][100min]\n23:30-6:30:睡眠\n")
+        File(td, "p/不存.txt").writeText("你是不存.\n")
+        val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
+        c.set(persona = "存着.txt", splitSend = false)
+        c.snapshot = { CommSnap("idle") }
+        clock = LocalDateTime.of(2026, 12, 10, 14, 10)
+        script.clear(); follow.clear()
+        var n0 = calls.size
+        assertEquals("", c.send("在吗"))
+        assertTrue("对方在专注: 不调用接口", !c.busy && calls.size == n0)
+        clock = clock.plusMinutes(5)
+        assertEquals("", c.send("还在忙吗"))
+        assertTrue(!c.busy && calls.size == n0)
+        assertTrue(c.syncDoc().keys.any { it.startsWith("retry:") } && (c.syncDoc().entries.first { it.key.startsWith("retry:") }.value as JSONObject).optBoolean("hold"))
+        repeat(3) { clock = clock.plusMinutes(20); c.tick(); assertTrue("还在专注里: 一直存着, 也不会按 10 分钟重试", !c.busy && calls.size == n0) }
+        clock = LocalDateTime.of(2026, 12, 10, 15, 41)                 // 100 分钟专注结束: 休息
+        script.add("来了, 你们说的我都看到了.")
+        c.tick()
+        assertTrue(c.busy)
+        wait(c)
+        assertEquals(n0 + 1, calls.size)
+        val sent = calls.last().second
+        assertTrue("在吗" in sent[0].second && "还在忙吗" in sent[0].second)                  // 两条合在一次里发
+        assertTrue("14:10" in sent[0].second && "14:15" in sent[0].second)                  // 每条带自己的发送时间
+        assertTrue("你刚从专注 / 睡眠里出来" in sent.last().second && c.visible().last().text == "来了, 你们说的我都看到了.")
+        assertTrue(c.syncDoc().keys.none { it.startsWith("retry:") })
+        // 睡眠: 过夜的消息, 到 6:30 之后一次性发
+        clock = LocalDateTime.of(2026, 12, 10, 23, 40)
+        n0 = calls.size
+        assertEquals("", c.send("晚安"))
+        assertTrue(calls.size == n0 && !c.busy)
+        clock = LocalDateTime.of(2026, 12, 10, 23, 50)
+        assertEquals("", c.send("明天早点叫我"))
+        clock = LocalDateTime.of(2026, 12, 11, 6, 20)
+        c.tick()
+        assertTrue("还没醒", !c.busy && calls.size == n0)
+        clock = LocalDateTime.of(2026, 12, 11, 6, 31)
+        script.add("早, 我醒了.")
+        c.tick()
+        assertTrue(c.busy)
+        wait(c)
+        assertTrue("晚安" in calls.last().second.last().second && "明天早点叫我" in calls.last().second.last().second)
+        assertEquals("早, 我醒了.", c.visible().last().text)
+        // 等回复的时候对方进了专注, 用户又发了一条: 前一条的回复照常显示, 后一条存着
+        clock = LocalDateTime.of(2026, 12, 11, 13, 59, 50)
+        n0 = calls.size
+        script.add("嗯, 在.")
+        assertEquals("", c.send("a"))
+        assertTrue(c.busy)
+        clock = LocalDateTime.of(2026, 12, 11, 14, 0, 10)
+        assertEquals("", c.send("b"))
+        wait(c)
+        assertTrue(calls.size == n0 + 1 && c.visible().last().text == "嗯, 在.")
+        assertTrue("回复显示后, 存着的还在", c.syncDoc().keys.any { it.startsWith("retry:") })
+        clock = LocalDateTime.of(2026, 12, 11, 15, 41)
+        script.add("看到 b 了.")
+        c.tick()
+        wait(c)
+        assertTrue(calls.size == n0 + 2 && c.visible().last().text == "看到 b 了.")
+        // 清空聊天: 存着的不要了; 没有日程的人设不会存
+        clock = LocalDateTime.of(2026, 12, 11, 16, 0)
+        clock = LocalDateTime.of(2026, 12, 12, 14, 30)
+        assertEquals("", c.send("清空前"))
+        assertTrue(c.syncDoc().keys.any { it.startsWith("retry:") })
+        c.clear()
+        assertTrue(c.syncDoc().keys.none { it.startsWith("retry:") })
+        c.set(persona = "不存.txt")
+        script.add("好.")
+        assertEquals("", c.send("在吗"))
+        assertTrue(c.busy)
+        wait(c)
+        c.flush()
+    }
 }
 
