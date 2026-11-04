@@ -577,11 +577,11 @@ WEB_PAUSE_ROUNDS = 3                                # Anthropic 服务端工具�
 WEB_UNSUPPORTED = ("服务商返回 400", "服务商返回 404", "服务商返回 405", "服务商返回 422")      # 接口不认搜索: 不联网再答一次
 WEB_FAIL_NOTE = ("\n\n(OIT 系统: 这一次联网搜索没能用上 -- 服务商的接口不支持. 请凭你已有的知识回复用户, "
                  "并按人设自然地说一句没能查到.)")
-SEARCH_URL = "https://cn.bing.com/search"           # 自己搜索用的页面 (测试里换成本机地址)
+SEARCH_URL = "https://www.bing.com/search"          # 自己搜索用的页面 (测试里换成本机地址). 不能用 cn.bing.com/search: 它会 302 到首页, 搜不到任何结果 (1.0.349 的 bug)
 SEARCH_HOSTS = ("cn.bing.com", "www.bing.com")      # 自己搜索会访问的域名: 过滤代理对它们放行 (只在网络开通期间, app._api_hosts)
 SEARCH_RESULTS = 5
 SEARCH_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
-             "Chrome/124.0 Safari/537.36")
+             "Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0")
 WEB_FUNCTION = {"type": "function", "function": {
     "name": "web_search",
     "description": "联网搜索: 查最新的资料 / 新闻 / 事实. 参数是搜索关键词, 返回前几条结果的标题, 链接和摘要.",
@@ -647,7 +647,7 @@ def web_search(query: str, timeout: float = 15.0, opener=None) -> str:
     q = re.sub(r"\s+", " ", str(query or "")).strip()[:200]
     if not q:
         raise AIError("format", "搜索关键词为空")
-    url = SEARCH_URL + "?" + urllib.parse.urlencode({"q": q, "setlang": "zh-cn"})
+    url = SEARCH_URL + "?" + urllib.parse.urlencode({"q": q, "setlang": "zh-hans"})
     req = urllib.request.Request(url, headers={"User-Agent": SEARCH_UA, "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.6"})
     try:
         with _open_search(req, timeout, opener) as resp:

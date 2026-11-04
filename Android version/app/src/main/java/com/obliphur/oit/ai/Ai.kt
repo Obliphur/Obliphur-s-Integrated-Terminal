@@ -281,11 +281,11 @@ object Ai {
     val WEB_UNSUPPORTED = listOf("服务商返回 400", "服务商返回 404", "服务商返回 405", "服务商返回 422")      // 接口不认搜索: 不联网再答一次
     const val WEB_FAIL_NOTE = "\n\n(OIT 系统: 这一次联网搜索没能用上 -- 服务商的接口不支持. 请凭你已有的知识回复用户, 并按人设自然地说一句没能查到.)"
     /** 自己搜索用的页面 (测试里换成本机地址). */
-    @Volatile var SEARCH_URL = "https://cn.bing.com/search"
+    @Volatile var SEARCH_URL = "https://www.bing.com/search"
     /** 自己搜索会访问的域名: VPN 过滤对它们放行 (只在网络开通期间, Core.apiHosts). */
     val SEARCH_HOSTS = setOf("cn.bing.com", "www.bing.com")
     const val SEARCH_RESULTS = 5
-    private const val SEARCH_UA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
+    private const val SEARCH_UA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36 EdgA/124.0.0.0"
 
     private fun webTool(): JSONObject = JSONObject().put("type", "function").put("function", JSONObject()
         .put("name", "web_search")
@@ -345,7 +345,7 @@ object Ai {
     fun webSearch(query: String): String {
         val q = query.replace(Regex("\\s+"), " ").trim().take(200)
         if (q.isEmpty()) throw AiError("format", "搜索关键词为空")
-        val url = SEARCH_URL + "?" + "q=" + java.net.URLEncoder.encode(q, "UTF-8") + "&setlang=zh-cn"
+        val url = SEARCH_URL + "?" + "q=" + java.net.URLEncoder.encode(q, "UTF-8") + "&setlang=zh-hans"
         val conn = URL(url).openConnection() as HttpURLConnection
         conn.connectTimeout = 15_000
         conn.readTimeout = 15_000

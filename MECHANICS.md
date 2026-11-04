@@ -2396,7 +2396,7 @@ t 的单位是小时; 完成时给的休息时间 = **t × 3 分钟**.
 - 三家的联网方式 (`ai_assist.web_mode` / `Ai.webMode`):
   - **Claude** (anthropic 协议): 请求里带服务端工具 `web_search_20250305` (最多搜 3 次), 搜索由 Anthropic 完成; 回复内容里夹着 `server_tool_use` / `web_search_tool_result`, OIT 只取最后一次搜索结果之后的文字; 服务端回 `pause_turn` (搜得太久) 时原样带回去接着跑 (最多 3 次).
   - **ChatGPT** (`api.openai.com`): 改走 Responses API (`POST /v1/responses`), 带 `web_search` 工具, 系统提示放 `instructions`, 回复取 `output` 里 `message` 的 `output_text`.
-  - **DeepSeek 和别的 OpenAI 兼容接口** (中转 / 本地模型; 官方没有搜索接口): 函数调用. 请求带 `tools: [web_search(query)]`, 模型要搜时由 **OIT 自己搜** (`GET cn.bing.com/search?q=…`, 不要 Key, 取前 5 条的标题 / 链接 / 摘要), 把结果作为 `tool` 消息交回去; 最多搜 3 轮, 之后 `tool_choice: none` 要它直接答.
+  - **DeepSeek 和别的 OpenAI 兼容接口** (中转 / 本地模型; 官方没有搜索接口): 函数调用. 请求带 `tools: [web_search(query)]`, 模型要搜时由 **OIT 自己搜** (`GET www.bing.com/search?q=…&setlang=zh-hans` (不能用 cn.bing.com/search: 它会 302 到首页, 1.0.349 因此什么都搜不到), 不要 Key, 取前 5 条的标题 / 链接 / 摘要), 把结果作为 `tool` 消息交回去; 最多搜 3 轮, 之后 `tool_choice: none` 要它直接答.
   - 服务商的接口不认搜索 (400 / 404 / 405 / 422): 不联网再答一次, 系统提示里说明"这次没能联网, 凭已有知识回复". 网络 / 鉴权 / 5xx 等其他错误照常报错 (搜索那次请求会按上面的规则重试).
 - 过滤: 由 OIT 自己搜索的方式 (DeepSeek 等) 在网络开着期间, 搜索页的域名 (`cn.bing.com`, `www.bing.com`) 和 AI 接口的域名一样不被过滤代理 / VPN 拦 (PC `app._api_hosts`, 手机 `Core.apiHosts`); 搜索请求不带任何 Key.
 - 日志: comm.log 里有 `NET 申请 / 开通 / 带联网搜索 / 搜索请求失败` 行.
