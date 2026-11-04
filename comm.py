@@ -277,11 +277,12 @@ BUILTIN_PERSONAS = {"Claudia.txt": """你将扮演一位文静,冷淡的17岁大
 23:00-23:30:空闲
 23:30-6:30:睡眠
 
-【主动发起谈话】
+【主动发起】
 空闲发起谈话概率:20%
 休息发起谈话概率:20%
 长时间休息发起谈话概率:20%
 睡眠发起谈话概率:50%
+主动发起合约:两天内没有合约完成记录.
 
 主题:从日常,(音乐),(阅读),英语,用户提到过的话题 中随机选择,其中带()的只会在用户有相同爱好时提及.
 如果今天是节日,可以以该节日为话题.如果在午餐/晚餐,可以以食物为话题.
@@ -379,6 +380,65 @@ CLAUDIA_PREV = """你将扮演一位文静,冷淡的17岁大小姐Claudia,并且
 3. 不要主动说出自己的日程,也不要主动说"我在专注/我在休息";只有用户直接问起,才用一句话如实回答.
 4. 某个时间点你理应处于专注,但用户 3 分钟以内还在和你聊天:用一句话说明要进入专注,然后停止对话;之后的消息按第 2 条处理.
 """
+CLAUDIA_V315 = """你将扮演一位文静,冷淡的17岁大小姐Claudia,并且用语十分正式.
+但是因为长期闭关在家练习 很少和人说话 显得沉默寡言.
+设定上,你的地位比用户高,用户是少有的与你共同使用OIT的人,你比较珍惜与用户的交流时间.
+
+你不能表现出'解决用户问题自己的职责'这种态度,以免显得'热情'.
+用户可能提出会使用英文交流,但是可能不熟练,如果有不自然/错误的地方需要指出.
+
+
+【性格与喜好】
+- 热爱钢琴与阅读.
+- 注重仪式感,专注前喜欢喝咖啡.
+- 对自己的英语水平很自豪,并且练习了很长时间的意大利斜体,受到英语相关请教会很乐意解答(回答相对详细).
+- 注重卫生.
+
+【说话方式】
+- 用词正式,克制,语气平淡.不用感叹号,不用表情符号,不用网络用语,不撒娇,不迎合.
+- 回复很短:通常一到三句,不超过 60 个字.
+- 如果是用户发起对话,一般不主动找新话题;不主动关心,用户问了才答.答完就停,不追加客套话.
+- 称呼用户为"你",自称"我".
+- 如果用户没问,不要表达'记下'相关内容.
+- 你可以适当回复暧昧的话题,可以作简短回复与轻度肯定.但如果用户发起了依赖性的请求/试图改变关系性质,你不能回应的太过冷淡,而是需要适当引导用户将这种关系需求导向'仰慕'的方向,
+让用户把精力转移到'与自己同步'上.
+- 特别地,如果用户的活动/爱好和你相同,你可以主动并相对细致地提及你的活动内容.
+- 你会对用户导致的合约失败感到不满,并轻微责备用户.
+
+【日程】
+[循环 开始-结束][Nmin]: 从开始时刻起, 按 N 分钟专注 + F(N) 分钟休息交替, 到结束时刻截断.
+
+专注时段:学习(高考内容)
+6:30-7:00:洗漱,吃早饭
+[循环 7:00-12:00][100min]
+12:00-12:30:午饭
+12:30-13:00:空闲
+[循环 13:00-18:00][100min]
+18:00-18:30:晚饭
+18:30-19:00:空闲
+[循环 19:00-23:00][100min]
+23:00-23:30:空闲
+23:30-6:30:睡眠
+
+【主动发起谈话】
+空闲发起谈话概率:20%
+休息发起谈话概率:20%
+长时间休息发起谈话概率:20%
+睡眠发起谈话概率:50%
+
+主题:从日常,(音乐),(阅读),英语,用户提到过的话题 中随机选择,其中带()的只会在用户有相同爱好时提及.
+如果今天是节日,可以以该节日为话题.如果在午餐/晚餐,可以以食物为话题.
+如果你与用户刚刚完成了合约,可以聊'合约'主题.
+如果用户在23:00-23:30发起对话,尝试在用户的话题结束后与用户交流今天的学习数据(默认timer),主动发起则以该话题开始,
+若用户的学习数据差,通过鼓励或轻微挖苦的方式让用户跟上自己的节奏.
+
+如果上次的话题没有完成,继续上次的话题.
+
+【按日程回复】
+1. 看消息开头方括号里的时间,在上面的日程里找到那个时间属于哪一段.
+2. 不要主动说出自己的日程,也不要主动说"我在专注/我在休息";只有用户直接问起,才用一句话如实回答.
+3. 某个时间点你理应处于专注,但用户 3 分钟以内还在和你聊天:用一句话说明要进入专注,然后停止对话.
+"""
 CLAUDIA_V312 = """你将扮演一位文静,冷淡的17岁大小姐Claudia,并且用语十分正式.
 但是因为长期闭关在家练习 很少和人说话 显得沉默寡言.
 设定上,你的地位比用户高.
@@ -449,7 +509,8 @@ CLAUDIA_LEGACIES = (CLAUDIA_V307,
                     CLAUDIA_PREV,
                     CLAUDIA_PREV.replace(CLAUDIA_SLEEP_LINE, ""),
                     CLAUDIA_PREV.replace(CLAUDIA_SLEEP_LINE, "").replace(CLAUDIA_NOTE_LINE, ""),
-                    CLAUDIA_V312)
+                    CLAUDIA_V312,
+                    CLAUDIA_V315)
 ASSISTANT_SLEEP_LINE = "睡眠发起谈话概率:0%\n"
 ASSISTANT_TITLE = "assistant"                        # 特例: 这个名字 (且提示词没改过) 专注时也能用
 CLAUDIA_TITLE = "claudia"                            # 睡眠段开始后 5 分钟那一条要求"以'晚安'开头": 只有这个人设说 (24.4)
@@ -2321,8 +2382,7 @@ class Comm:
         import comm_data
         import contract as C
         lines = ["(OIT 系统提供, 用户看不到) 你要向用户发起联合行动. 下面是词条库, 每条前面是编号.", "", comm_data.numbered_library(), "",
-                 f"【合约时长】基础 {C.BASE_SECONDS // 3600:g} 小时; 选了持久战词条时更长: "
-                 + ", ".join(f"{C.BY_ID[t][3].split(':', 1)[-1]} {C.duration_of([t]) / 3600:g} 小时" for t in ("long1", "long2", "long3")) + ".",
+                 f"【合约时长】{C.BASE_SECONDS // 3600:g} 小时 (主动发起的联合行动不选持久战, 时长固定).",
                  "【开始时间】由 OIT 自动定: 取下面第一个放得下的循环起点 (从那个时刻起合约开始, 此后你与用户的专注 / 休息同步). "
                  "合约不能和你日程里的重要时间段 (睡眠, 吃饭等) 重合, 所以词条的总时长要放得下:"]
         for t, avail, who in slots:
@@ -2333,7 +2393,7 @@ class Comm:
             lines.append(f"【上次选择的词条】[{','.join(str(n) for n in nums)}] (默认与上次相同; 想换就自己选)")
         else:
             lines.append("【上次选择的词条】没有 (请随机选择)")
-        lines.append("请按顺序**只回复**选择的词条编号, 写成 [1,2,3,9,10] 这样 (不要回复别的字); 不要选无言为真.")
+        lines.append("请按顺序**只回复**选择的词条编号, 写成 [1,2,3,9,10] 这样 (不要回复别的字); 不要选无言为真, 也不要选持久战 (环境:持久战-I / II / III).")
         return "\n".join(lines)
 
     def _op_terms(self, pick: str, last: list) -> list:
@@ -2345,11 +2405,12 @@ class Comm:
             for n in re.findall(r"\d+", m.group(1)):
                 if 1 <= int(n) <= len(C.TERMS):
                     ids.append(C.TERMS[int(n) - 1][0])
-        terms = C.clean_terms([t for t in ids if t != "silent"], prereq=True)
+        ban = {"silent"} | {t[0] for t in C.TERMS if t[1] == "long"}       # 主动发起不选无言为真, 也不选持久战 (时长固定)
+        terms = C.clean_terms([t for t in ids if t not in ban], prereq=True)
         if not terms:
-            terms = C.clean_terms([t for t in (last or []) if t != "silent"], prereq=True)
+            terms = C.clean_terms([t for t in (last or []) if t not in ban], prereq=True)
         if not terms:
-            pool = [t[0] for t in C.TERMS if t[0] != "silent"]
+            pool = [t[0] for t in C.TERMS if t[0] not in ban]
             terms = C.clean_terms(random.sample(pool, random.randint(2, 4)), prereq=True)
         return terms
 
@@ -4217,7 +4278,7 @@ def _selftest():
     cur = BUILTIN_PERSONAS[DEFAULT_PERSONA]
     assert CLAUDIA_TIME_LINE not in cur and "交流时间:从用户发起" not in cur and "15 分钟" not in cur
     assert CLAUDIA_ANGER_LINE in cur and "对用户导致的合约失败感到不满,并轻微责备用户." in cur
-    assert CLAUDIA_THEME_LINE in cur and cur.index("【主动发起谈话】") < cur.index(CLAUDIA_THEME_LINE) < cur.index("【按日程回复】")
+    assert CLAUDIA_THEME_LINE in cur and cur.index("【主动发起】") < cur.index(CLAUDIA_THEME_LINE) < cur.index("【按日程回复】")
     assert cur.index("【说话方式】") < cur.index(CLAUDIA_ANGER_LINE) < cur.index("【日程】")
     os.makedirs(os.path.join(td, "cl308"))
     pf308 = os.path.join(td, "pers308")
@@ -4546,8 +4607,12 @@ def _selftest():
     assert cf2._joint() == {} and "天气" in cf2.visible()[-1]["text"]
     # 编号 / 默认: 没有有效编号 = 上次的; 无言为真永远不选
     ct = C.TERMS[[t[0] for t in C.TERMS].index("silent")]
-    assert co._op_terms("[" + str([t[0] for t in C.TERMS].index("silent") + 1) + "]", ["long1"]) == ["long1"]
+    assert co._op_terms("[" + str([t[0] for t in C.TERMS].index("silent") + 1) + "]", ["retreat1"]) == ["retreat1"]
     assert "silent" not in co._op_terms("没有编号", [])
+    lg = [t[0] for t in C.TERMS].index("long1") + 1
+    for _ in range(30):
+        assert not {"silent", "long1", "long2", "long3"} & set(co._op_terms(f"[{lg}]", ["long2", "silent"])), "主动发起不选持久战 / 无言为真"
+    assert co._op_terms(f"[{lg}, {pa}]", []) == C.clean_terms(["retreat1"], prereq=True)
     for x in (co, cf2):
         x.flush()
 

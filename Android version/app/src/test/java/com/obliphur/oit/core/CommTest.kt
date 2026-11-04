@@ -1144,7 +1144,7 @@ class CommTest {
         assertTrue(BuiltinPersonas.CLAUDIA_NOTE_LINE in BuiltinPersonas.CLAUDIA_LEGACIES[1] && BuiltinPersonas.CLAUDIA_TIME_LINE in BuiltinPersonas.CLAUDIA_LEGACIES[0])
         assertTrue(BuiltinPersonas.CLAUDIA_TIME_LINE !in cur && "交流时间:从用户发起" !in cur && "15 分钟" !in cur)
         assertTrue("对用户导致的合约失败感到不满,并轻微责备用户." in cur && BuiltinPersonas.CLAUDIA_THEME_LINE in cur)
-        assertTrue(cur.indexOf("【主动发起谈话】") < cur.indexOf(BuiltinPersonas.CLAUDIA_THEME_LINE) && cur.indexOf(BuiltinPersonas.CLAUDIA_THEME_LINE) < cur.indexOf("【按日程回复】"))
+        assertTrue(cur.indexOf("【主动发起】") < cur.indexOf(BuiltinPersonas.CLAUDIA_THEME_LINE) && cur.indexOf(BuiltinPersonas.CLAUDIA_THEME_LINE) < cur.indexOf("【按日程回复】"))
         assertTrue(cur.indexOf("【说话方式】") < cur.indexOf(BuiltinPersonas.CLAUDIA_ANGER_LINE) && cur.indexOf(BuiltinPersonas.CLAUDIA_ANGER_LINE) < cur.indexOf("【日程】"))
         val td = Files.createTempDirectory("oit").toFile()
         val pf = File(td, "p").also { it.mkdirs() }
@@ -1452,8 +1452,11 @@ class CommTest {
         assertTrue("天气" in cf.visible().last().text)
         // 编号 / 默认
         val si = tids.indexOf("silent") + 1
-        assertEquals(listOf("long1"), co.opTerms("[$si]", listOf("long1")))
+        assertEquals(listOf("retreat1"), co.opTerms("[$si]", listOf("retreat1")))
         assertTrue("silent" !in co.opTerms("没有编号", emptyList()))
+        val lg = tids.indexOf("long1") + 1
+        repeat(30) { assertTrue(setOf("silent", "long1", "long2", "long3").intersect(co.opTerms("[$lg]", listOf("long2", "silent")).toSet()).isEmpty()) }
+        assertEquals(Contract.clean(listOf("retreat1"), prereq = true), co.opTerms("[$lg, $pa]", emptyList()))          // 主动发起不选持久战 / 无言为真
         for (x in listOf(co, cu, cf)) x.flush()
     }
 

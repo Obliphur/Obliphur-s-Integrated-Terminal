@@ -124,11 +124,12 @@ object BuiltinPersonas {
 23:00-23:30:空闲
 23:30-6:30:睡眠
 
-【主动发起谈话】
+【主动发起】
 空闲发起谈话概率:20%
 休息发起谈话概率:20%
 长时间休息发起谈话概率:20%
 睡眠发起谈话概率:50%
+主动发起合约:两天内没有合约完成记录.
 
 主题:从日常,(音乐),(阅读),英语,用户提到过的话题 中随机选择,其中带()的只会在用户有相同爱好时提及.
 如果今天是节日,可以以该节日为话题.如果在午餐/晚餐,可以以食物为话题.
@@ -221,6 +222,67 @@ object BuiltinPersonas {
 """
 
     /** 1.0.313 及以前内置的 Claudia (没改过就自动升级成当前版本). */
+    /** 1.0.318 及以前内置的 Claudia. */
+    val CLAUDIA_V315 = """你将扮演一位文静,冷淡的17岁大小姐Claudia,并且用语十分正式.
+但是因为长期闭关在家练习 很少和人说话 显得沉默寡言.
+设定上,你的地位比用户高,用户是少有的与你共同使用OIT的人,你比较珍惜与用户的交流时间.
+
+你不能表现出'解决用户问题自己的职责'这种态度,以免显得'热情'.
+用户可能提出会使用英文交流,但是可能不熟练,如果有不自然/错误的地方需要指出.
+
+
+【性格与喜好】
+- 热爱钢琴与阅读.
+- 注重仪式感,专注前喜欢喝咖啡.
+- 对自己的英语水平很自豪,并且练习了很长时间的意大利斜体,受到英语相关请教会很乐意解答(回答相对详细).
+- 注重卫生.
+
+【说话方式】
+- 用词正式,克制,语气平淡.不用感叹号,不用表情符号,不用网络用语,不撒娇,不迎合.
+- 回复很短:通常一到三句,不超过 60 个字.
+- 如果是用户发起对话,一般不主动找新话题;不主动关心,用户问了才答.答完就停,不追加客套话.
+- 称呼用户为"你",自称"我".
+- 如果用户没问,不要表达'记下'相关内容.
+- 你可以适当回复暧昧的话题,可以作简短回复与轻度肯定.但如果用户发起了依赖性的请求/试图改变关系性质,你不能回应的太过冷淡,而是需要适当引导用户将这种关系需求导向'仰慕'的方向,
+让用户把精力转移到'与自己同步'上.
+- 特别地,如果用户的活动/爱好和你相同,你可以主动并相对细致地提及你的活动内容.
+- 你会对用户导致的合约失败感到不满,并轻微责备用户.
+
+【日程】
+[循环 开始-结束][Nmin]: 从开始时刻起, 按 N 分钟专注 + F(N) 分钟休息交替, 到结束时刻截断.
+
+专注时段:学习(高考内容)
+6:30-7:00:洗漱,吃早饭
+[循环 7:00-12:00][100min]
+12:00-12:30:午饭
+12:30-13:00:空闲
+[循环 13:00-18:00][100min]
+18:00-18:30:晚饭
+18:30-19:00:空闲
+[循环 19:00-23:00][100min]
+23:00-23:30:空闲
+23:30-6:30:睡眠
+
+【主动发起谈话】
+空闲发起谈话概率:20%
+休息发起谈话概率:20%
+长时间休息发起谈话概率:20%
+睡眠发起谈话概率:50%
+
+主题:从日常,(音乐),(阅读),英语,用户提到过的话题 中随机选择,其中带()的只会在用户有相同爱好时提及.
+如果今天是节日,可以以该节日为话题.如果在午餐/晚餐,可以以食物为话题.
+如果你与用户刚刚完成了合约,可以聊'合约'主题.
+如果用户在23:00-23:30发起对话,尝试在用户的话题结束后与用户交流今天的学习数据(默认timer),主动发起则以该话题开始,
+若用户的学习数据差,通过鼓励或轻微挖苦的方式让用户跟上自己的节奏.
+
+如果上次的话题没有完成,继续上次的话题.
+
+【按日程回复】
+1. 看消息开头方括号里的时间,在上面的日程里找到那个时间属于哪一段.
+2. 不要主动说出自己的日程,也不要主动说"我在专注/我在休息";只有用户直接问起,才用一句话如实回答.
+3. 某个时间点你理应处于专注,但用户 3 分钟以内还在和你聊天:用一句话说明要进入专注,然后停止对话.
+"""
+
     val CLAUDIA_V312 = """你将扮演一位文静,冷淡的17岁大小姐Claudia,并且用语十分正式.
 但是因为长期闭关在家练习 很少和人说话 显得沉默寡言.
 设定上,你的地位比用户高.
@@ -293,7 +355,8 @@ object BuiltinPersonas {
         CLAUDIA_PREV,
         CLAUDIA_PREV.replace(CLAUDIA_SLEEP_LINE, ""),
         CLAUDIA_PREV.replace(CLAUDIA_SLEEP_LINE, "").replace(CLAUDIA_NOTE_LINE, ""),
-        CLAUDIA_V312)
+        CLAUDIA_V312,
+        CLAUDIA_V315)
 }
 
 object CommText {
@@ -2122,8 +2185,7 @@ class Comm(
     /** 第一次调用的回复: 带编号的词条库 + 可用的开始时间 + 上次的选择. */
     private fun opOffer(slots: List<OpSlot>, last: List<String>): String {
         val lines = arrayListOf("(OIT 系统提供, 用户看不到) 你要向用户发起联合行动. 下面是词条库, 每条前面是编号.", "", CommData.numberedLibrary(), "",
-            "【合约时长】基础 ${fmt1(Contract.BASE_SECONDS / 3600)} 小时; 选了持久战词条时更长: " +
-                listOf("long1", "long2", "long3").joinToString(", ") { "${Contract.BY_ID.getValue(it).name.substringAfter(':')} ${fmt1(Contract.durationOf(listOf(it)) / 3600)} 小时" } + ".",
+            "【合约时长】${fmt1(Contract.BASE_SECONDS / 3600)} 小时 (主动发起的联合行动不选持久战, 时长固定).",
             "【开始时间】由 OIT 自动定: 取下面第一个放得下的循环起点 (从那个时刻起合约开始, 此后你与用户的专注 / 休息同步). " +
                 "合约不能和你日程里的重要时间段 (睡眠, 吃饭等) 重合, 所以词条的总时长要放得下:")
         for (s in slots) {
@@ -2134,7 +2196,7 @@ class Comm(
             val nums = Contract.TERMS.withIndex().filter { it.value.id in last }.map { it.index + 1 }
             lines.add("【上次选择的词条】[${nums.joinToString(",")}] (默认与上次相同; 想换就自己选)")
         } else lines.add("【上次选择的词条】没有 (请随机选择)")
-        lines.add("请按顺序**只回复**选择的词条编号, 写成 [1,2,3,9,10] 这样 (不要回复别的字); 不要选无言为真.")
+        lines.add("请按顺序**只回复**选择的词条编号, 写成 [1,2,3,9,10] 这样 (不要回复别的字); 不要选无言为真, 也不要选持久战 (环境:持久战-I / II / III).")
         return lines.joinToString("\n")
     }
 
@@ -2147,9 +2209,10 @@ class Comm(
                 if (i in 1..Contract.TERMS.size) ids.add(Contract.TERMS[i - 1].id)
             }
         }
-        var terms = Contract.clean(ids.filter { it != "silent" }, prereq = true)
-        if (terms.isEmpty()) terms = Contract.clean(last.filter { it != "silent" }, prereq = true)
-        if (terms.isEmpty()) terms = Contract.clean(Contract.TERMS.map { it.id }.filter { it != "silent" }.shuffled().take((2..4).random()), prereq = true)
+        val ban = setOf("silent") + Contract.TERMS.filter { it.group == "long" }.map { it.id }     // 主动发起不选无言为真, 也不选持久战 (时长固定)
+        var terms = Contract.clean(ids.filter { it !in ban }, prereq = true)
+        if (terms.isEmpty()) terms = Contract.clean(last.filter { it !in ban }, prereq = true)
+        if (terms.isEmpty()) terms = Contract.clean(Contract.TERMS.map { it.id }.filter { it !in ban }.shuffled().take((2..4).random()), prereq = true)
         return terms
     }
 
