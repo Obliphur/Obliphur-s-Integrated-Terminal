@@ -1652,7 +1652,8 @@ class Comm(
                         f.writeText(new, Charsets.UTF_8)
                         dirty = true
                     }
-                    if (old != new || !File(personaBackupDir(), name).isFile) backupText(name, new)      // 同步来的不是"手动改的": 备份跟着换, 不弹"人设被修改"
+                    val bk = File(personaBackupDir(), name).takeIf { it.isFile }?.let { b -> runCatching { b.readText(Charsets.UTF_8).removePrefix("\uFEFF") }.getOrNull() }
+                    if (old != new || bk != new) backupText(name, new)      // 同步来的不是"手动改的": 备份跟着换 (文件已经一样、只有备份是旧的 —— 老版本留下的 —— 也换), 不弹"人设被修改"
                 }
             }
         }

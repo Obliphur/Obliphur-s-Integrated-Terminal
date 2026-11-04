@@ -480,6 +480,9 @@ class CommTest {
         c.set(persona = "甲.txt")
         assertEquals("你是甲", c.personaDoc()["甲.txt"])
         assertNull(c.checkPersonaChanges())                          // 第一次见到: 记下备份
+        File(td, "d/persona_backup/甲.txt").writeText("很旧的备份")        // 老版本留下的旧备份: 文件和同步来的内容一样, 同步一次就修好
+        c.applyPersonaDoc(mapOf<String, Any?>("甲.txt" to "你是甲"))
+        assertEquals("你是甲", File(td, "d/persona_backup/甲.txt").readText())
         c.applyPersonaDoc(mapOf<String, Any?>("甲.txt" to "你是甲改", "丙.txt" to "你是丙"))
         assertNull("别的设备同步来的人设更新 / 新增, 不弹'人设被修改'", c.checkPersonaChanges())
         c.applyPersonaDoc(mapOf<String, Any?>("甲.txt" to "你是甲", "丙.txt" to null))

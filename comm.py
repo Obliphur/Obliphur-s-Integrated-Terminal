@@ -1770,8 +1770,13 @@ class Comm:
                     with open(path, "w", encoding="utf-8", newline="\n") as f:
                         f.write(new)
                     dirty = True
-                if old != new or not os.path.isfile(self._persona_backup_path(name)):
-                    self._write_backup_text(name, new)          # 同步来的不是"手动改的": 备份跟着换, 不弹"人设被修改"
+                try:
+                    with open(self._persona_backup_path(name), "r", encoding="utf-8-sig") as f:
+                        bk = f.read(MAX_PERSONA)
+                except (OSError, UnicodeDecodeError):
+                    bk = None
+                if old != new or bk != new:                     # 同步来的不是"手动改的": 备份跟着换 (文件已经一样、只有备份是旧的 —— 老版本留下的 —— 也换), 不弹"人设被修改"
+                    self._write_backup_text(name, new)
             except OSError:
                 pass
         if dirty:
@@ -4194,6 +4199,12 @@ def _selftest():
     doc = ps.persona_doc()
     assert doc["甲.txt"] == "你是甲" and "README.md" not in doc
     assert ps.check_persona_changes() is None                   # 第一次见到: 记下备份
+    # 老版本留下的旧备份 (文件和同步来的内容一样, 备份是旧的): 同步一次就修好, 重启也不弹
+    ps._write_backup_text("甲.txt", "很旧的备份")
+    ps._persona_sig.clear()
+    ps.apply_persona_doc({"甲.txt": "你是甲"})
+    ps._persona_sig.clear()
+    assert ps.check_persona_changes() is None, "文件 = 同步来的内容, 只有备份是旧的: 备份跟着换"
     ps.apply_persona_doc({"甲.txt": "你是甲改", "丙.txt": "你是丙"})
     assert ps.check_persona_changes() is None, "别的设备同步来的人设更新 / 新增, 不弹'人设被修改'"
     ps.apply_persona_doc({"甲.txt": "你是甲", "丙.txt": None})
