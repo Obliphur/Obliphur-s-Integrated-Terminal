@@ -365,6 +365,7 @@ class BreakTimerApp:
         self.comm.on_proactive = self._comm_ping
         self.comm.on_joint_due = self._joint_due
         self._joint_pick = False         # 联合行动: 正在合约页选词条 (点"确定选择"回到沟通页)
+        self._joint_break_prev = None    # 联合行动: 上一秒用户是不是在休息 (None = 还没看过): 开始 / 结束休息时通知对方
         self._inv_id = ""                # 对方 (AI) 发起的联合行动: 已经跳到合约页的那一个邀请的编号
         self._inv_prev = []              # 邀请把合约页的词条换成对方选的之前, 用户自己选的词条 (拒绝 / 错过后换回去)
         self._rules_win = None
@@ -1219,6 +1220,7 @@ class BreakTimerApp:
         if self.dm.resetting:
             return
         try:
+            self._joint_break_watch()
             self.comm.tick()
             self._joint_invite_watch()
             change = self.comm.check_persona_changes()
@@ -1228,6 +1230,29 @@ class BreakTimerApp:
                 self.pages["comm"].refresh()
         except Exception as e:
             self._log_window(f"ERROR    comm {type(e).__name__}: {e}")
+
+    def _joint_break_watch(self):
+        """联合行动: 用户开始休息时告诉对方这次休息的时间 (和之前损失的生命值一起, 对方可以回应); 休息结束 (走完 / 提前结束)
+        时对方在合约结束后同步的休息也跟着结束. 每秒看一次状态, 不用在每个开始 / 结束休息的地方都接线."""
+        on = self.state == ON_BREAK
+        prev, self._joint_break_prev = self._joint_break_prev, on
+        if prev is None or prev == on:
+            return
+        if on:
+            if self.break_start_wall is not None and self.break_end_wall is not None:
+                total = (self.break_end_wall - self.break_start_wall).total_seconds()
+            else:
+                total = self.countdown_seconds
+            self.comm.joint_break_started(total)
+        else:
+            self.comm.joint_break_ended()
+
+    def _joint_hp_lost(self, text: str):
+        """联合行动: 记下这次损失的生命值 (时间 + 内容), 下一次开始休息 / 合约结束时告诉对方."""
+        try:
+            self.comm.joint_hp_lost(text)
+        except Exception as e:      # noqa: BLE001
+            self._log_window(f"ERROR    joint_hp {type(e).__name__}: {e}")
 
     def _show_persona_change(self, change: dict):
         """人设文件被手动改过: 确认是否清空对应的聊天数据, 或者还原文件."""
@@ -4159,6 +4184,7 @@ class BreakTimerApp:
             self._stop_break_for_contract()      # 结束合约前先停止休息
         if result != "completed":
             self._stop_focus_for_contract()      # 失败 / 手动终止: 正在进行的专注也立即结束 (不给休息时间)
+        self._joint_break_prev = self.state == ON_BREAK      # 合约结束而停掉的休息不算"用户结束了休息": 对方照常休息到合约给的时间
         pending = c.reward
         rec = c.finish(result, at, by=self.sync.my_id)
         self._contract_seen = None
@@ -4541,6 +4567,7 @@ class BreakTimerApp:
                + "\n" + after + "  ·  " + tr("危机等级 {lv}", lv=c.level))
         toast.error(msg)
         self.dm.add_violation(msg)               # 违规记录页 (MECHANICS 8.1): 内容照搬这段提示
+        self._joint_hp_lost(msg)                 # 联合行动: 对方在下一次开始休息 / 合约结束时知道
         if over:
             self.end_contract("failed")
         else:
@@ -4645,6 +4672,7 @@ class BreakTimerApp:
                    life=c.life, m=c.violation_limit) + "\n" + tr("危机等级 {lv}", lv=c.level))
         toast.warn(text)
         self.dm.add_violation(text)              # 违规记录页 (MECHANICS 8.1): 目标生命值的变化都记下来
+        self._joint_hp_lost(text)                # 联合行动: 对方在下一次开始休息 / 合约结束时知道
         self._apply_net_bans()
         if over:
             self.end_contract("failed")

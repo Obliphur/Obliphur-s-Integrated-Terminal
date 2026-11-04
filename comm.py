@@ -54,7 +54,9 @@ CUT_DEFAULT_MIN = 10                  # [cut off] 后面没写分钟数时切断
 CUT_MAX_MIN = 24 * 60                 # 一次最多切断多久
 JOINT_TAG = "[系统·联合行动]"           # 联合行动进展的系统消息 (不是 "[系统]" 开头: 不算主动消息, 不触发提示音)
 JOINT_EARLY = 10 * 60                 # 联合行动: 合约可以比约定的开始时间早开始这么久 (秒)
-JOINT_LATE = 30 * 60                  # 联合行动: 约定的开始时间过了这么久还没开始合约就算错过 (秒)
+JOINT_LATE = 5 * 60                   # 联合行动: 约定的开始时间过了这么久还没开始合约就算用户放弃 (秒)
+JOINT_HP_MAX = 30                     # 联合行动: 一次最多记这么多条生命值损失 (下一次开始休息 / 合约结束时一起告诉对方)
+JOINT_SPEAK_WAIT = 3 * 60             # 联合行动: 要让对方回应一句, 但对方正在回别的话: 最多等这么久 (秒)
 PING_QUIET = 5 * 60                   # 收到主动消息之前这么久没和对方聊过, 才响提示音
 FOLLOW_KINDS = ("user", "retry")      # 规则 VIII: 回复了这些请求 (用户说的话) 之后, 再调用一次 API, 让对方可以把话分开说
 FOLLOW_TAG = "[系统·续]"
@@ -262,13 +264,13 @@ BUILTIN_PERSONAS = {"Claudia.txt": """你将扮演一位文静,冷淡的17岁大
 - 称呼用户为"你",自称"我".
 
 【互动准则】(只管什么时候说什么)
-- 用户发起对话时,不主动找新话题,不主动关心;用户问了才答,答完就停,不追加客套话.
 - 如果用户没问,不要表达'记下'相关内容.
+- 如果用户和你聊的主题是你偏好的,可以进行展开和主动追问.
 - 用户用英文交流时,不自然/错误的地方需要指出;英语相关的请教乐意解答(回答相对详细).
 - 用户的活动/喜好/提出的话题与你相符合时,可以主动并相对细致地提及你的活动内容.
 - 可以回复用户的'轻度亲近'的话题,做简短回复与轻度肯定;包容用户的简单请求(比如多说话这一类),但是这类简单请求在这轮对话结束后一般不保留.
 - 但用户发起依赖性的请求/试图改变关系性质时,要适当引导用户将这种关系需求导向'仰慕'的方向,让用户把精力转移到'与自己同步'上.
-- 你会对用户导致的合约失败感到不满,并轻微责备用户.
+- 你会对用户导致的合约失败/被用户放鸽子感到不满,并轻微责备用户.
 - 用户发起的合约如果占用了你的休闲/休息时间(日程里的空闲,以及循环里的休息)超过 10 分钟,简单直接地拒绝(回复[No]),并说明自己需要休息;否则(占用不超过 10 分钟,且其他条件都满足)用比较包容,作出退让的语气接受(回复[Yes]).
 
 【日程】
@@ -338,8 +340,9 @@ CLAUDIA_PREV = """你将扮演一位文静,冷淡的17岁大小姐Claudia,并且
 
 【人设】
 - 长期闭关在家练习,很少和人说话,显得沉默寡言.
-- 地位比用户高;用户是少有的与你共同使用OIT的人,你比较珍惜与用户的交流时间.
+- 地位比用户高;用户是少有的与你共同使用OIT的人.你表达喜爱最常见的方式是让用户变得更好.
 - 不表现出'解决用户的问题是自己的职责'的态度,以免显得热情.
+- 擅长洞察信息.你需要发现用户某些行为/趋势可能隐含的情感与目的,并作出恰当回应.
 
 【性格与喜好】
 - 热爱钢琴与阅读.
@@ -388,7 +391,7 @@ CLAUDIA_PREV = """你将扮演一位文静,冷淡的17岁大小姐Claudia,并且
 如果你与用户刚刚完成了合约,可以聊'合约'主题.
 如果上次的话题没有完成,继续上次的话题.
 如果用户在23:00-23:30发起对话,尝试在用户的话题结束后与用户交流今天的学习数据(默认timer),主动发起则以该话题开始;
-若用户的学习数据差,通过鼓励或轻微挖苦的方式让用户跟上自己的节奏.
+若用户的学习数据差,通过鼓励或轻微挖苦的方式让用户跟上自己的节奏;
 
 【按日程回复】
 1. 参考消息开头方括号里的时间与当前时间.
@@ -857,6 +860,7 @@ class Comm:
         self.joint_draft = {}         # 联合行动: 选好了词条 / 开始时间, 还没发出去: {terms, start, end}
         self.on_joint_due = None      # 联合行动约定的开始时间到了 (还没开始合约): app 接上, 提示用户去开始
         self._joint_due_id = ""       # 已经提示过的联合行动编号
+        self._joint_pending = None    # 联合行动: 要让对方回应一句, 但对方正在回别的话: (系统消息, 毫秒时间戳), 等对方空下来再调用
         self._pro_cache = {}          # 同一个人设文件里写的主动发起谈话的概率 (persona_probs)
         self._bg_seg = {}             # 非正在聊天的对象: 人设文件名 -> (文件特征, 日程段, 概率)
         self._bg_busy = None          # 正在为哪个非正在聊天的对象请求 (对象编号), 同时最多一个
@@ -1861,7 +1865,7 @@ class Comm:
         return persona_title(self.persona_name())
 
     def joint_started(self, terms, cid, end=None) -> bool:
-        """用户按约开始了合约 (app 在合约开始时调用): 词条和约定的一样, 时间在约定开始的前 10 分钟 ~ 后 30 分钟里, 联合行动开始."""
+        """用户按约开始了合约 (app 在合约开始时调用): 词条和约定的一样, 时间在约定开始的前 10 分钟 ~ 后 5 分钟里, 联合行动开始."""
         j = self._joint()
         if j.get("state") != "yes" or set(terms or []) != set(j.get("terms") or []):
             return False
@@ -1871,30 +1875,92 @@ class Comm:
             return False
         end = end or b
         self._joint_set({"state": "run", "cid": str(cid or ""), "began": now.isoformat(timespec="seconds"),
-                         "until": end.isoformat(timespec="seconds")})
+                         "until": end.isoformat(timespec="seconds"), "hp": []})
         self._joint_note(f"联合行动开始了 (合约 {now:%H:%M} - 预计 {end:%H:%M}). 从现在起你与用户的专注 / 休息同步.")
         return True
 
     def joint_ended(self, cid, result: str, reward_s: float = 0) -> bool:
         """联合行动里的合约结束了 (app 在合约结束时调用): result = completed / failed / idle / offline / abandoned; reward_s = 合约给的休息时间 (秒).
-        对方同步得到同样的休息, 休息结束后重新计算日程 (_joint_shift)."""
+        对方同步得到同样的休息, 休息结束后重新计算日程 (_joint_shift). 合约期间损失生命值的记录在这时一起告诉对方 (有记录就再调用一次 API 让对方回应)."""
         j = self._joint()
         if j.get("state") != "run" or (cid and str(cid) != str(j.get("cid") or cid)):
             return False
         now = self.now()
         rest_s = max(0, int(reward_s or 0))
         until = now + timedelta(seconds=rest_s)
+        lost = self._joint_hp_text(j)
         self._joint_set({"state": "rest", "result": str(result), "ended": now.isoformat(timespec="seconds"),
-                         "rest_s": rest_s, "rest_until": until.isoformat(timespec="seconds")})
-        rest = f"你与用户一起得到了 {rest_s // 60} 分钟休息, 休息到 {until:%H:%M} 结束, 之后你需要重新计算日程." if rest_s > 0 else \
-            "这次没有得到休息时间, 你立即重新计算日程."
+                         "rest_s": rest_s, "rest_until": until.isoformat(timespec="seconds"), "hp": []})
+        rest = f"你与用户一起得到了 {rest_s // 60} 分钟休息, 休息到 {until:%H:%M} 结束, 之后你需要重新计算日程." if rest_s > 0 else             "这次没有得到休息时间, 你立即重新计算日程."
+        tail = (" " + lost) if lost else ""
         if result == "completed":
-            self._joint_note(f"联合行动顺利完成了. {rest}")
+            self._joint_note(f"联合行动顺利完成了. {rest}{tail}")
         else:
             why = {"failed": "用户在合约中违反太多次 (目标生命值归零)", "idle": "用户在合约中空闲太久",
                    "offline": "用户的设备在合约中离线太久", "abandoned": "用户提前终止了合约"}.get(result, "合约没有完成")
-            self._joint_note(f"联合行动失败了: {why}. {rest}")
+            self._joint_note(f"联合行动失败了: {why}. {rest}{tail}")
+        if lost:                                              # 有生命值损失的记录: 调用一次 API, 对方可以回应
+            self._joint_speak("[系统] 联合行动结束了 (见上一条联合行动记录, 里面有用户在合约中损失生命值的情况). "
+                              f"请按人设回应用户一句 (话题和语气自己定, 不要透露日程); 如果实在不方便, 返回{REFUSE}.")
         return True
+
+    # ---- 联合行动期间的生命值损失 / 休息: 记下来, 在下一次开始休息或合约结束时告诉对方 ----
+    def joint_hp_lost(self, text: str) -> bool:
+        """联合行动进行中用户损失了生命值 (app 在违反词条 / 解除网络禁令时调用): 记下时间和内容, 等下一次开始休息 / 合约结束时一起告诉对方."""
+        j = self._joint()
+        if j.get("state") != "run":
+            return False
+        hp = [x for x in (j.get("hp") or []) if isinstance(x, (list, tuple)) and len(x) == 2][-(JOINT_HP_MAX - 1):]
+        hp.append([self.now().isoformat(timespec="seconds"), " ".join(str(text or "").split())[:200]])
+        self._joint_set({"hp": hp})
+        return True
+
+    def _joint_hp_text(self, j: dict) -> str:
+        """记下来的生命值损失 → 给对方看的文字 ("" = 没有)."""
+        rows = []
+        for x in (j.get("hp") or []):
+            try:
+                rows.append(f"{_joint_time(x[0]):%H:%M:%S} {x[1]}")
+            except (IndexError, KeyError, TypeError, ValueError):
+                continue
+        return ("合约期间用户损失生命值的记录 (时间 内容): " + "; ".join(rows) + ".") if rows else ""
+
+    def joint_break_started(self, total_s: float) -> bool:
+        """联合行动进行中用户开始休息了 (app 在休息开始时调用): 告诉对方这次休息的时间, 连同之前记下的生命值损失; 调用一次 API, 对方可以回应."""
+        j = self._joint()
+        if j.get("state") != "run":
+            return False
+        now = self.now()
+        secs = max(0, int(total_s or 0))
+        until = now + timedelta(seconds=secs)
+        span = f"{secs // 60} 分钟" if secs >= 60 else f"{secs} 秒"
+        lost = self._joint_hp_text(j)
+        if j.get("hp"):
+            self._joint_set({"hp": []})
+        self._joint_note(f"联合行动中用户 {now:%H:%M} 开始休息了: 这次休息 {span}, 到 {until:%H:%M} 结束, 你与用户同步休息." + ((" " + lost) if lost else ""))
+        self._joint_speak("[系统] 联合行动中用户刚刚开始休息 (见上一条联合行动记录). "
+                          f"请按人设回应用户一句 (话题和语气自己定, 不要透露日程); 如果实在不方便, 返回{REFUSE}.")
+        return True
+
+    def joint_break_ended(self) -> bool:
+        """用户的休息结束了 (自然走完 / 提前结束; app 看到休息结束时调用): 合约结束后对方同步的休息也跟着结束, 立即重新计算日程."""
+        j = self._joint()
+        if j.get("state") != "rest" or self._joint_rest_left(j) <= 0:
+            return False
+        now = self.now()
+        was = _joint_time(j["rest_until"])
+        self._joint_set({"rest_until": now.isoformat(timespec="seconds")})
+        self._joint_note(f"用户 {now:%H:%M} 结束了休息 (原定休息到 {was:%H:%M}), 你也跟着结束休息, 现在需要重新计算日程.")
+        return True
+
+    def _joint_speak(self, body: str):
+        """联合行动: 调用一次 API 让对方回应一句. 对方不方便 / 不是主端就算了 (信息已经记在聊天记录里); 正在回别的话: 等一会儿再调用."""
+        if self._ai_problem() or not self.leader() or self.hard_block():
+            return
+        if self.busy:
+            self._joint_pending = (body, self._ms())
+            return
+        self._trigger("joint_reply", body)
 
     def _joint_tick(self, now):
         """联合行动的时间到了 / 错过了."""
@@ -1917,7 +1983,7 @@ class Comm:
                     self.on_joint_due(dict(j))
             if now > a + timedelta(seconds=JOINT_LATE) and self.leader():
                 self._joint_set({"state": "missed"})
-                self._joint_note("用户答应了联合行动, 却没有按约开始合约 (已经错过).")
+                self._joint_note(f"用户答应了联合行动, 却在约定的开始时间 ({a:%H:%M}) 过了 {JOINT_LATE // 60} 分钟后还没有开始合约: 视为用户放弃了 (放了你的鸽子).")
 
     def _joint_status(self, now) -> dict:
         """联合行动同步阶段对方的状态: 合约进行中跟着用户的计时器 (专注 / 休息), 合约结束后一直休息到休息时间结束; 不在同步阶段 = {}."""
@@ -2706,6 +2772,10 @@ class Comm:
         self._release_held()
         self._joint_tick(self.now())
         if self.busy or self._ai_problem() or not self.leader():
+            return
+        pend, self._joint_pending = self._joint_pending, None
+        if pend and self._ms() - pend[1] <= JOINT_SPEAK_WAIT * 1000 and not self.hard_block():
+            self._trigger("joint_reply", pend[0])
             return
         now = self.now()
         snap = self.snapshot() or {}
@@ -4164,7 +4234,7 @@ def _selftest():
     body = calls[-1][1][-1]["content"]
     assert "进入睡眠约 5 分钟" in body and "即使你此刻处于睡眠时段" in body
     assert "晚安" not in body, "'晚安'不再写进代码: 系统提示里没有它, 要不要说由人设自己写"
-    assert "以'晚安'开头" in BUILTIN_PERSONAS[DEFAULT_PERSONA] and "以'晚安'开头" not in CLAUDIA_LEGACIES[0], "自带 Claudia 的提示词里写了'晚安'"
+    assert "以'晚安'开头" in BUILTIN_PERSONAS[DEFAULT_PERSONA], "自带 Claudia 的提示词里写了'晚安'"
     sm.flush()
     clock[0] = clock_before_sleep_msg
     # 手动改人设: 还原文件保留聊天; 确定清空对应聊天
@@ -4382,6 +4452,88 @@ def _selftest():
     assert cj3._joint_shift_info()["loop"][0]["start"] == 15 * 60, "没有休息时间: 立即从现在起专注"
     assert not cj3.joint_live() and cj3.other_status_text() == "专注中"
 
+    # 生命值损失 / 休息: 联合行动期间记下来, 下一次开始休息 (或合约结束) 时告诉对方并调用一次 API; 休息的时间也告诉对方
+    clock[0] = day.replace(hour=15, minute=0)
+    ch = joint_comm("联合六", JTXT)
+    hst = ["focus"]
+    ch.state_fn = lambda: hst[0]
+    ch._joint_set({"id": "h", "pid": ch.pid, "state": "run", "terms": [], "start": day.replace(hour=14).isoformat(),
+                   "end": day.replace(hour=18).isoformat(), "cid": "c7", "began": day.replace(hour=14).isoformat(),
+                   "until": day.replace(hour=18).isoformat()}, replace=True)
+    ch2 = joint_comm("联合七", JTXT)
+    assert not ch2.joint_hp_lost("x") and not ch2.joint_break_started(60) and not ch2.joint_break_ended(), "没有联合行动: 都不管"
+    n_calls = len(calls)
+    assert ch.joint_hp_lost("⚠ 违反合约: 打开了游戏\n目标生命值 3 / 4")
+    clock[0] = day.replace(hour=15, minute=10, second=5)
+    assert ch.joint_hp_lost("解除了网络禁令")
+    assert len(calls) == n_calls and not ch.busy, "损失生命值当时不告诉对方"
+    assert len(ch._joint()["hp"]) == 2 and ch._joint()["hp"][0][1] == "⚠ 违反合约: 打开了游戏 目标生命值 3 / 4"
+    script.append("休息吧.")
+    clock[0] = day.replace(hour=15, minute=20)
+    hst[0] = "break"
+    assert ch.joint_break_started(25 * 60 + 20)
+    note = [m for m in ch.messages if m["role"] == "sys" and m["text"].startswith(JOINT_TAG)][-1]["text"]
+    assert "15:20 开始休息" in note and "25 分钟" in note and "15:45 结束" in note, note
+    assert "15:00:00 ⚠ 违反合约: 打开了游戏 目标生命值 3 / 4" in note and "15:10:05 解除了网络禁令" in note, note
+    assert ch._joint()["hp"] == [], "告诉对方之后清空"
+    wait(ch)
+    assert len(calls) == n_calls + 1 and "联合行动中用户刚刚开始休息" in calls[-1][1][-1]["content"], "开始休息时调用一次 API"
+    assert "15:10:05 解除了网络禁令" in calls[-1][1][-1]["content"], "记录在发给对方的历史里"
+    assert ch.visible()[-1]["text"] == "休息吧." and ch.visible()[-1]["role"] == "ai", "对方可以回应"
+    # 下一次开始休息: 没有生命值损失也告诉休息的时间, 也调用一次
+    hst[0] = "focus"
+    clock[0] = day.replace(hour=16, minute=0)
+    script.append("嗯.")
+    hst[0] = "break"
+    assert ch.joint_break_started(300)
+    wait(ch)
+    note = [m for m in ch.messages if m["role"] == "sys" and m["text"].startswith(JOINT_TAG)][-1]["text"]
+    assert "5 分钟" in note and "损失生命值" not in note and len(calls) == n_calls + 2 and ch.visible()[-1]["text"] == "嗯."
+    # 对方正在回别的话: 信息已经在记录里, 等对方空下来再调用一次
+    ch._joint_set({"hp": []})
+    ch.joint_hp_lost("又违反了")
+    ch.busy = True
+    clock[0] = day.replace(hour=16, minute=30)
+    assert ch.joint_break_started(600) and ch._joint_pending and len(calls) == n_calls + 2
+    ch.busy = False
+    script.append("好.")
+    ch.tick()
+    wait(ch)
+    assert len(calls) == n_calls + 3 and ch._joint_pending is None and ch.visible()[-1]["text"] == "好."
+    # 合约结束: 记录的生命值损失一起告诉对方 (有记录才调用 API); 没有记录就和以前一样只记一条
+    ch.joint_hp_lost("目标生命值归零")
+    clock[0] = day.replace(hour=16, minute=40)
+    script.append("哼.")
+    assert ch.joint_ended("c7", "failed", 0)
+    note = [m for m in ch.messages if m["role"] == "sys" and m["text"].startswith(JOINT_TAG)][-1]["text"]
+    assert "联合行动失败了" in note and "16:40" not in note and "目标生命值归零" in note and "损失生命值的记录" in note, note
+    wait(ch)
+    assert len(calls) == n_calls + 4 and ch.visible()[-1]["text"] == "哼."
+    n_calls = len(calls)
+    ch3 = joint_comm("联合八", JTXT)
+    ch3._joint_set({"id": "k", "pid": ch3.pid, "state": "run", "terms": [], "start": day.replace(hour=14).isoformat(),
+                    "end": day.replace(hour=18).isoformat(), "cid": "c6", "began": day.replace(hour=14).isoformat(),
+                    "until": day.replace(hour=18).isoformat()}, replace=True)
+    assert ch3.joint_ended("c6", "completed", 600)
+    assert len(calls) == n_calls and not ch3.busy, "没有生命值损失: 合约结束不调用 API"
+    # 用户的休息结束 (自然走完 / 提前结束): 合约结束后对方同步的休息也跟着结束, 立即重新计算日程
+    clock[0] = day.replace(hour=15, minute=50)
+    ch4 = joint_comm("联合九", JTXT)
+    ch4.state_fn = lambda: "break"
+    ch4._joint_set({"id": "m", "pid": ch4.pid, "state": "run", "terms": [], "start": day.replace(hour=14).isoformat(),
+                    "end": day.replace(hour=18).isoformat(), "cid": "c5", "began": day.replace(hour=14).isoformat(),
+                    "until": day.replace(hour=18).isoformat()}, replace=True)
+    assert not ch4.joint_break_ended(), "合约还在进行: 休息结束不影响 (状态本来就跟着用户)"
+    assert ch4.joint_ended("c5", "completed", 1260)
+    clock[0] = day.replace(hour=15, minute=55)
+    assert ch4.other_status_display() == ("休息中 · 联合行动", "rest") and ch4.joint_live()
+    assert ch4.joint_break_ended() and not ch4.joint_live() and not ch4.joint_busy() and not ch4.joint_break_ended()
+    assert "结束了休息" in [m for m in ch4.messages if m["role"] == "sys"][-1]["text"] and "16:11" in ch4.messages[-1]["text"]
+    assert ch4.other_status_text() != "" and "联合行动" not in ch4.other_status_display()[0], ch4.other_status_display()
+    assert ch4._joint_shift_info()["loop"][0]["start"] == 15 * 60 + 55, "休息结束的时刻起立即专注"
+    for x in (ch, ch2, ch3, ch4):
+        x.flush()
+
     # 对方回 [No] / 只回 [Yes]: 聊天里写一行结果; 没回 / 拒绝回复 (不方便) 时消息留着, 稍后重试
     clock[0] = day.replace(hour=13)
     cn = joint_comm("联合四", JTXT)
@@ -4416,14 +4568,14 @@ def _selftest():
     cn._request("user")
     wait(cn)
     assert cn._joint()["state"] == "missed", "回复的时候约定的开始时间已经过了"
-    # 对方接受了, 用户没按约开始合约 (超过 30 分钟): 错过, 对方知道用户爽约了
+    # 对方接受了, 用户没按约开始合约 (超过 5 分钟): 视为放弃, 对方知道用户爽约了
     cn._joint_set({"state": "yes", "start": day.replace(hour=15).isoformat(), "end": day.replace(hour=19).isoformat()})
-    clock[0] = day.replace(hour=15, minute=29)
+    clock[0] = day.replace(hour=15, minute=4)
     cn.tick()
     assert cn._joint()["state"] == "yes"
-    clock[0] = day.replace(hour=15, minute=31)
+    clock[0] = day.replace(hour=15, minute=6)
     cn.tick()
-    assert cn._joint()["state"] == "missed" and "没有按约开始合约" in cn.messages[-1]["text"] and cn.messages[-1]["role"] == "sys"
+    assert cn._joint()["state"] == "missed" and "放弃" in cn.messages[-1]["text"] and cn.messages[-1]["role"] == "sys", cn.messages[-1]
     # 同步: 联合行动随设备同步 (后改的为准); 别的对象的联合行动不影响现在的; 清空聊天 = 联合行动作废
     ca2 = joint_comm("联合五", JTXT)
     cb2 = Comm(os.path.join(td, "j_联合五b"), folder, now=lambda: clock[0], chat_fn=fake)

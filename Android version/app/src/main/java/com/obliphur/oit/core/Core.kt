@@ -91,6 +91,18 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     @Volatile var uiForeground = true
     /** 上次看到的合约 (id): 同步来的开始 / 结束也要让断网方式等跟着变. */
     private var contractSeen: Long? = null
+    /** 联合行动: 上一秒用户是不是在休息 (null = 还没看过): 开始 / 结束休息时通知对方. */
+    private var jointBreakPrev: Boolean? = null
+
+    /** 联合行动: 用户开始休息时告诉对方这次休息的时间 (和之前损失的生命值一起, 对方可以回应); 休息结束 (走完 / 提前结束) 时
+     *  对方在合约结束后同步的休息也跟着结束. 每秒看一次状态, 不用在每个开始 / 结束休息的地方都接线. */
+    private fun jointBreakWatch() {
+        val on = timer.state == TState.ON_BREAK
+        val prev = jointBreakPrev
+        jointBreakPrev = on
+        if (prev == null || prev == on) return
+        if (on) comm.jointBreakStarted(timer.breakTotalS) else comm.jointBreakEnded()
+    }
     /** 支援短缺: 这次休息已经提醒过的 (还差 3 / 1 分钟). */
     val supplyWarned = mutableSetOf<String>()
     private var setupWasActive: Boolean
@@ -723,6 +735,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         }
         timer.tick()
         runCatching { prescript.tick() }
+        runCatching { jointBreakWatch() }
         runCatching { comm.tick() }
         runCatching { jointInviteWatch() }
         runCatching { comm.checkPersonaChanges() }.getOrNull()?.let { showPersonaChange(it) }
@@ -1402,6 +1415,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             "life" to c.life, "m" to c.violationLimit) + "\n" + tr("危机等级 {lv}", "lv" to c.level)
         toast(text, "warn", long = true)
         addViolation(text)               // 违规记录页 (MECHANICS 8.1): 目标生命值的变化都记下来
+        runCatching { comm.jointHpLost(text) }     // 联合行动: 对方在下一次开始休息 / 合约结束时知道
         host.applyNet(false)             // 这一类应用的网络放开
         if (over) endContract("failed")
         syncHourLog()
@@ -1499,6 +1513,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             timer.breakCid != 0L && timer.breakCid == c.id
         if (restOver) timer.contractRestOver = true else timer.stopBreakForContract()
         if (result != "completed") timer.stopFocusForContract()   // 失败 / 手动终止: 正在进行的专注也立即结束 (不给休息时间)
+        jointBreakPrev = timer.state == TState.ON_BREAK           // 合约结束而停掉的休息不算"用户结束了休息": 对方照常休息到合约给的时间
         val pending = c.reward
         val rec = c.finish(result, at, myId()) ?: return
         contractSeen = null
@@ -1570,6 +1585,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             "\n" + after + "  ·  " + tr("危机等级 {lv}", "lv" to c.level)
         toast(msg, "error", long = true)   // 违规记录: 黑雾中也照常显示 (error 不遮)
         addViolation(msg)               // 违规记录页 (MECHANICS 8.1): 内容照搬这段提示
+        runCatching { comm.jointHpLost(msg) }      // 联合行动: 对方在下一次开始休息 / 合约结束时知道
         if (over) endContract("failed")
         else if (id in Contract.BANS && new.isEmpty()) host.applyNet(false)   // 禁止联网的词条失效: 这一类应用的网络放开
         changed()

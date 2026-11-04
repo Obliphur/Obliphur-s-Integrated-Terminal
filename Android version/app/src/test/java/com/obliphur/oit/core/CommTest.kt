@@ -580,7 +580,7 @@ class CommTest {
         assertTrue("进入睡眠约 5 分钟" in body && "即使你此刻处于睡眠时段" in body)
         assertFalse("'晚安'不再写进代码: 系统提示里没有它, 要不要说由人设自己写", "晚安" in body)
         val builtin = BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT)
-        assertTrue("自带 Claudia 的提示词里写了'晚安'", "以'晚安'开头" in builtin && "以'晚安'开头" !in BuiltinPersonas.CLAUDIA_LEGACIES[0])
+        assertTrue("自带 Claudia 的提示词里写了'晚安'", "以'晚安'开头" in builtin)
     }
 
     /** 手动改人设: 还原文件保留聊天; 确定清空对应聊天. */
@@ -1280,6 +1280,80 @@ class CommTest {
         assertFalse(cj3.jointLive())
         assertEquals("没有休息时间: 立即从现在起专注", "专注中", cj3.otherStatusText())
 
+        // 生命值损失 / 休息: 联合行动期间记下来, 下一次开始休息 (或合约结束) 时告诉对方并调用一次 API; 休息的时间也告诉对方
+        fun running(name: String, cid: String): Comm {
+            clock = day.withHour(13)
+            val c = mk(name)
+            c.stateFn = { "focus" }
+            script.add("[Yes]")
+            c.setJointDraft(listOf("long1"), day.withHour(14))
+            assertEquals("", c.send("")); wait(c)
+            clock = day.withHour(14)
+            assertTrue(c.jointStarted(listOf("long1"), cid, day.withHour(18)))
+            return c
+        }
+        fun notes(c: Comm) = c.messages.filter { it.role == "sys" && it.text.startsWith(Comm.JOINT_TAG) }.map { it.text }
+        val ch = running("联合六", "c7")
+        val chIdle = mk("联合七")
+        assertFalse(chIdle.jointHpLost("x") || chIdle.jointBreakStarted(60.0) || chIdle.jointBreakEnded())      // 没有联合行动: 都不管
+        var n0 = calls.size
+        clock = day.withHour(15)
+        assertTrue(ch.jointHpLost("⚠ 违反合约: 打开了游戏\n目标生命值 3 / 4"))
+        clock = day.withHour(15).withMinute(10).withSecond(5)
+        assertTrue(ch.jointHpLost("解除了网络禁令"))
+        assertTrue("损失生命值当时不告诉对方", !ch.busy && calls.size == n0)
+        val hp = Joint.parse(ch.syncDoc()["joint"] as JSONObject)!!.hp
+        assertEquals(2, hp.size)
+        assertEquals("⚠ 违反合约: 打开了游戏 目标生命值 3 / 4", hp[0].second)
+        script.add("休息吧.")
+        clock = day.withHour(15).withMinute(20).withSecond(0)
+        assertTrue(ch.jointBreakStarted(25 * 60.0 + 20))
+        var jnote = notes(ch).last()
+        assertTrue(jnote, "15:20 开始休息" in jnote && "25 分钟" in jnote && "15:45 结束" in jnote)
+        assertTrue(jnote, "15:00:00 ⚠ 违反合约: 打开了游戏 目标生命值 3 / 4" in jnote && "15:10:05 解除了网络禁令" in jnote)
+        assertTrue("告诉对方之后清空", Joint.parse(ch.syncDoc()["joint"] as JSONObject)!!.hp.isEmpty())
+        wait(ch)
+        assertEquals("开始休息时调用一次 API", n0 + 1, calls.size)
+        assertTrue("联合行动中用户刚刚开始休息" in calls.last().second.last().second)
+        assertTrue("15:10:05 解除了网络禁令" in calls.last().second.last().second)
+        assertEquals("休息吧.", ch.visible().last().text)
+        // 下一次开始休息: 没有生命值损失也告诉休息的时间, 也调用一次
+        clock = day.withHour(16)
+        script.add("嗯.")
+        assertTrue(ch.jointBreakStarted(300.0)); wait(ch)
+        jnote = notes(ch).last()
+        assertTrue(jnote, "5 分钟" in jnote && "损失生命值" !in jnote)
+        assertEquals(n0 + 2, calls.size)
+        assertEquals("嗯.", ch.visible().last().text)
+        // 合约结束: 记录的生命值损失一起告诉对方 (有记录才调用 API); 没有记录就和以前一样只记一条
+        ch.jointHpLost("目标生命值归零")
+        clock = day.withHour(16).withMinute(40)
+        script.add("哼.")
+        assertTrue(ch.jointEnded("c7", "failed", 0.0))
+        jnote = notes(ch).last()
+        assertTrue(jnote, "联合行动失败了" in jnote && "目标生命值归零" in jnote && "损失生命值的记录" in jnote)
+        wait(ch)
+        assertEquals(n0 + 3, calls.size)
+        assertEquals("哼.", ch.visible().last().text)
+        n0 = calls.size
+        val ch3 = running("联合八", "c6")
+        n0 = calls.size
+        assertTrue(ch3.jointEnded("c6", "completed", 600.0))
+        assertTrue("没有生命值损失: 合约结束不调用 API", !ch3.busy && calls.size == n0)
+        // 用户的休息结束 (自然走完 / 提前结束): 合约结束后对方同步的休息也跟着结束, 立即重新计算日程
+        val ch4 = running("联合九", "c5")
+        ch4.stateFn = { "break" }
+        assertFalse("合约还在进行: 休息结束不影响 (状态本来就跟着用户)", ch4.jointBreakEnded())
+        clock = day.withHour(15).withMinute(50)
+        assertTrue(ch4.jointEnded("c5", "completed", 1260.0))
+        clock = day.withHour(15).withMinute(55)
+        assertEquals("休息中 · 联合行动" to "rest", ch4.otherStatusDisplay())
+        assertTrue(ch4.jointLive())
+        assertTrue(ch4.jointBreakEnded())
+        assertTrue(!ch4.jointLive() && !ch4.jointBusy() && !ch4.jointBreakEnded())
+        assertTrue(notes(ch4).last().let { "结束了休息" in it && "16:11" in it })
+        assertFalse("联合行动" in ch4.otherStatusDisplay().first)
+
         // 对方回 [No] / 只回 [Yes]: 聊天里写一行结果; 拒绝回复 (不方便) 时邀请留着, 稍后重试
         clock = day.withHour(13)
         val cn = mk("联合四")
@@ -1296,12 +1370,12 @@ class CommTest {
         clock = clock.plusMinutes(11); cn.tick(); wait(cn)
         assertEquals("yes", Joint.parse(cn.syncDoc()["joint"] as JSONObject)!!.state)
         assertEquals("✓ 接受了联合行动", cn.visible().last().text)
-        // 对方接受了, 用户没按约开始合约 (超过 30 分钟): 错过, 对方知道用户爽约了
-        clock = day.withHour(15).withMinute(29); cn.tick()
+        // 对方接受了, 用户没按约开始合约 (超过 5 分钟): 视为放弃, 对方知道用户爽约了
+        clock = day.withHour(15).withMinute(4); cn.tick()
         assertEquals("yes", Joint.parse(cn.syncDoc()["joint"] as JSONObject)!!.state)
-        clock = day.withHour(15).withMinute(31); cn.tick()
+        clock = day.withHour(15).withMinute(6); cn.tick()
         assertEquals("missed", Joint.parse(cn.syncDoc()["joint"] as JSONObject)!!.state)
-        assertTrue("没有按约开始合约" in cn.messages.last().text && cn.messages.last().role == "sys")
+        assertTrue("放弃" in cn.messages.last().text && cn.messages.last().role == "sys")
         assertTrue(cn.jointStatusText().endsWith("已错过") && !cn.jointBusy())
         // 同步: 联合行动随设备同步 (后改的为准); 别的对象的联合行动不影响现在的; 清空聊天 = 联合行动作废
         clock = day.withHour(13)

@@ -122,6 +122,8 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
     /** 这段专注的时间按多少增长: 阻滞 0.9, 否则 1. */
     val focusRate get() = if (state == TState.RUNNING) core.contract.focusRate(startWall) else 1.0
     val countdown get() = if (state == TState.ON_BREAK) maxOf(0.0, breakEndMono - mono()) else 0.0
+    /** 这次休息总共多少秒 (开始 → 结束的墙上时间; 没有记录就用倒计时). */
+    val breakTotalS: Double get() = breakEndWall?.let { e -> breakStartWall?.let { s -> java.time.Duration.between(s, e).seconds.toDouble() } } ?: countdown
 
     /** 不能暂停休息的原因 ("" = 可以): 网络正在使用 (领到休息时间后的第一次休息除外). */
     val pauseBlock: String get() = when {
