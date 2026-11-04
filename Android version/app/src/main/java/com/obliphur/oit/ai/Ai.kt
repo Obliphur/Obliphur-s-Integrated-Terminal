@@ -244,8 +244,22 @@ object Ai {
             throw AiError("format", "服务商返回了无法识别的内容")
         }
         if (onUsage != null) runCatching { val (i, c) = usageOf(JSONObject(text)); onUsage(i, c) }       // 用量只是记录, 出错不影响回复
-        if (out.isBlank()) throw AiError("format", "模型没有返回内容")
-        return out
+        val clean = stripThink(out)
+        if (clean.isBlank()) throw AiError("format", "模型没有返回内容")
+        return clean
+    }
+
+    private val THINK_BLOCK_RE = Regex("<(think|thinking|thought)\\b[^>]*>.*?</\\1\\s*>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
+    private val THINK_CLOSE_RE = Regex("</(think|thinking|thought)\\s*>", RegexOption.IGNORE_CASE)
+    private val THINK_OPEN_RE = Regex("<(think|thinking|thought)\\b[^>]*>", RegexOption.IGNORE_CASE)
+
+    /** 去掉混进正文的思考内容 (同 ai_assist.strip_think): 成对的整段删; 只有结尾标签就删到它为止; 只有开头标签就从它开始全删. */
+    fun stripThink(text: String): String {
+        if ('<' !in text) return text
+        var t = THINK_BLOCK_RE.replace(text, "")
+        THINK_CLOSE_RE.find(t)?.let { t = t.substring(it.range.last + 1) }
+        THINK_OPEN_RE.find(t)?.let { t = t.substring(0, it.range.first) }
+        return if (t != text) t.trim() else text
     }
 
     // ---- 模型列表 ----

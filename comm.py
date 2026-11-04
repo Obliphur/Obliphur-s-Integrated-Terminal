@@ -86,6 +86,7 @@ MAX_PERSONA = 60000
 MAX_PROFILE = 5000                    # 用户自己填的身份背景最多多少字
 MEM_EVERY = 40                        # 每这么多条新消息, 让模型整理一次"记忆卡"
 MEM_GAP = 3 * 3600                    # 两次整理至少隔这么久 (秒): 一口气发几十条时不会连着调
+MEM_TOKENS = 3000                     # 整理记忆卡一次请求的 max_tokens: 开了思考, 要比思考预算 (ai_assist.THINK_BUDGET) 大, 还得留出记忆卡本身的长度
 MEM_MAX = 2000                        # 记忆卡最多多少字
 MEM_PROMPT = ("你是 OIT 沟通模块的记忆整理器. 给你「现有记忆卡」和「最近一段对话」, 输出更新后的记忆卡.\n"
               "只保留以后还有用的事实: 用户的身份, 偏好, 计划, 约定, 禁区, 没聊完的话题.\n"
@@ -2896,7 +2897,7 @@ class Comm:
             reply, err = "", ""
             try:
                 reply = self.chat_fn(profile, MEM_PROMPT, [{"role": "user", "content": body}],
-                                     max_tokens=600, temperature=0.2, timeout=CHAT_TIMEOUT, cache=False,
+                                     max_tokens=MEM_TOKENS, temperature=0.2, timeout=CHAT_TIMEOUT, cache=False, think=True,
                                      on_usage=lambda t, c: self.log(f"USAGE mem input={t} cached={c}"))
             except ai_assist.AIError as e:
                 err = e.message
@@ -3520,10 +3521,12 @@ def _selftest():
     follow, follow_calls = [], []          # 第二次调用 (规则 VIII) 单独记: 不占 script / calls, 没有安排的回 [refuse to reply]
     mem_script, mem_calls = [], []         # 整理记忆卡: 没有安排就回空 (当失败)
     think_log = []                         # 每次调用有没有带 think=True
+    mem_kws = []                           # 整理记忆卡的请求参数
 
     def fake(profile, system, messages, **kw):
         if system == MEM_PROMPT:
             mem_calls.append([dict(m) for m in messages])
+            mem_kws.append(dict(kw))
             return mem_script.pop(0) if mem_script else ""
         if FOLLOW_TAG in messages[-1]["content"]:
             follow_calls.append((system, [dict(m) for m in messages]))
@@ -4681,6 +4684,7 @@ def _selftest():
         if not cm._mem_busy:
             break
     assert len(mem_calls) == 1 and "现有记忆卡" in mem_calls[0][0]["content"]
+    assert mem_kws[0].get("think") is True and mem_kws[0]["max_tokens"] == MEM_TOKENS > ai_assist.THINK_BUDGET, "整理记忆卡开思考"
     assert cm.cfg["mem_auto"] == "- 用户在准备考试\n- 喜欢钢琴", cm.cfg["mem_auto"]
     assert cm.cfg["mem_upto"] == int(cm.messages[-1]["ts"])
     assert "喜欢钢琴" in cm.memory_block()

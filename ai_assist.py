@@ -467,6 +467,27 @@ def chat_messages(profile: dict, system: str, messages: list, timeout: float = 9
     return _chat_once(profile, system, messages, timeout, opener, max_tokens, temperature, cache, on_usage, False)
 
 
+_THINK_TAGS = r"(?:think|thinking|thought)"
+_THINK_BLOCK_RE = re.compile(r"<(" + _THINK_TAGS + r")\b[^>]*>.*?</\1\s*>", re.S | re.I)
+_THINK_CLOSE_RE = re.compile(r"</" + _THINK_TAGS + r"\s*>", re.I)
+_THINK_OPEN_RE = re.compile(r"<" + _THINK_TAGS + r"\b[^>]*>", re.I)
+
+
+def strip_think(text: str) -> str:
+    """去掉混进正文的思考内容: 有的中转 / 本地模型把思考写在正文里 (<think>…</think>), 不能让它出现在聊天 / 记忆卡里.
+    成对的整段删掉; 只有结尾标签 (开头标签被服务商吃掉了) 就删掉它和它前面的所有字; 只有开头标签 (思考到一半被截断) 就从它开始全删."""
+    if "<" not in text:
+        return text
+    t = _THINK_BLOCK_RE.sub("", text)
+    m = _THINK_CLOSE_RE.search(t)
+    if m:
+        t = t[m.end():]
+    m = _THINK_OPEN_RE.search(t)
+    if m:
+        t = t[:m.start()]
+    return t.strip() if t != text else text
+
+
 def _chat_once(profile: dict, system: str, messages: list, timeout: float, opener, max_tokens: int,
                temperature: float, cache: bool, on_usage, think_off: bool, think_on: bool = False) -> str:
     """带历史的一次请求: messages = [{"role": "user" | "assistant", "content": 文字}], 以 user 开头, 以 user 结尾.
@@ -519,6 +540,7 @@ def _chat_once(profile: dict, system: str, messages: list, timeout: float, opene
             on_usage(*usage_of(data))
         except Exception:       # noqa: BLE001 —— 用量只是记录, 出错不影响回复
             pass
+    text = strip_think(text)
     if not text.strip():
         raise AIError("format", "模型没有返回内容")
     return text
@@ -940,6 +962,13 @@ def _selftest():
         assert seen[-1][2]["thinking"]["type"] == "enabled", "think=True 真的发出了开思考"
         chat_messages(p, "SYS", m1, max_tokens=4096)
         assert seen[-1][2]["thinking"] == {"type": "disabled"}, "默认仍然关"
+        # 思考内容混进正文: 去掉 (成对 / 只有结尾标签 / 只有开头标签), 没有标签的原样不动
+        assert strip_think("你好") == "你好" and strip_think("a < b 且 c > d") == "a < b 且 c > d"
+        assert strip_think("<think>想一想\n再想想</think>\n\n你好") == "你好"
+        assert strip_think("<THINKING>x</THINKING>好") == "好" and strip_think("<think>a</think>[1]<think>b</think>好") == "[1]好"
+        assert strip_think("思考过程\n</think>\n- 喜欢钢琴") == "- 喜欢钢琴"
+        assert strip_think("- 喜欢钢琴<think>没写完") == "- 喜欢钢琴"
+        assert strip_think("<think>只有思考") == ""
         try:
             chat(dict(p, base_url=base + "/deny"), "s", "u")
             raise AssertionError

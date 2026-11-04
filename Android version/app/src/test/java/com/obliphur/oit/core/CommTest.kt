@@ -1128,6 +1128,17 @@ class CommTest {
 
     /** 记忆卡: 每 40 条整理一次; 全部自动; 清空聊天时一起清掉. */
     @Test
+    fun stripThink() {
+        assertEquals("你好", Ai.stripThink("你好"))
+        assertEquals("a < b 且 c > d", Ai.stripThink("a < b 且 c > d"))
+        assertEquals("你好", Ai.stripThink("<think>想一想\n再想想</think>\n\n你好"))
+        assertEquals("好", Ai.stripThink("<THINKING>x</THINKING>好"))
+        assertEquals("- 喜欢钢琴", Ai.stripThink("思考过程\n</think>\n- 喜欢钢琴"))
+        assertEquals("- 喜欢钢琴", Ai.stripThink("- 喜欢钢琴<think>没写完"))
+        assertEquals("", Ai.stripThink("<think>只有思考"))
+    }
+
+    @Test
     fun memoryCard() {
         val td = Files.createTempDirectory("oit").toFile()
         val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))

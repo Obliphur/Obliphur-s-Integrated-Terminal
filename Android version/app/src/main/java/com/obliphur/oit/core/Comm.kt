@@ -1584,6 +1584,7 @@ class Comm(
         log("MEM start n=${batch.size}")
         Thread {
             var reply = ""; var err = ""
+            Comm.thinkLocal.set(true)                       // 整理记忆卡开思考 (CHAT_TOKENS 比思考预算大)
             try { reply = chatFn(profile, CommText.MEM_PROMPT, listOf("user" to body)) }
             catch (e: AiError) { err = e.message ?: "" }
             catch (e: Exception) { err = e.javaClass.simpleName }
