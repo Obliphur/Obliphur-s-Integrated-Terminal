@@ -1133,7 +1133,7 @@ class CommTest {
         val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
         c.set(persona = "Claudia.txt")
         val base = 1_000_000L
-        for (i in 0 until 100)
+        for (i in 0 until 40)
             c.messages.add(ChatMsg(i, if (i % 2 == 0) "me" else "ai", "m$i", "", "", "u$i", base + i))
         memScript.add("- 用户在准备考试\n- 喜欢钢琴")
         c.tick()

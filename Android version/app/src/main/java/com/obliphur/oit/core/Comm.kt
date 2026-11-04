@@ -933,8 +933,8 @@ class Comm(
         const val HISTORY_SENT = 400                    // 每次请求最多带多少条 (= 本地存的 400 条)
         const val HISTORY_CHARS = 120000                // 带的聊天记录总共最多多少字 (超了从最老的开始不带)
         const val MAX_MSG_CHARS = 8000                  // 单条消息超过这么多字: 只截掉中间 (发给模型的那份, 本地记录不动)
-        const val MEM_EVERY = 100                       // 每这么多条新消息, 让模型整理一次"记忆卡"
-        const val MEM_GAP = 6 * 3600                    // 两次整理至少隔这么久 (秒)
+        const val MEM_EVERY = 40                        // 每这么多条新消息, 让模型整理一次"记忆卡"
+        const val MEM_GAP = 3 * 3600                    // 两次整理至少隔这么久 (秒)
         const val MEM_MAX = 2000                        // 记忆卡 (手写 + 自动) 各自最多多少字
         const val OP_MIN_LEAD = 5 * 60                  // 对方发起联合行动: 开始时间要离现在至少这么久 (秒), 不然用户来不及准备
         const val OP_OFFER_MAX = 12                     // 给对方看的开始时间最多列几个 (最近的; 定开始时间时仍然从全部里找)

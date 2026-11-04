@@ -84,8 +84,8 @@ KEEP = 400                            # 本地最多存多少条
 SYNC_N = 60                           # 随设备同步最近多少条
 MAX_PERSONA = 60000
 MAX_PROFILE = 5000                    # 用户自己填的身份背景最多多少字
-MEM_EVERY = 100                       # 每这么多条新消息, 让模型整理一次"记忆卡"
-MEM_GAP = 6 * 3600                    # 两次整理至少隔这么久 (秒): 一口气发几十条时不会连着调
+MEM_EVERY = 40                        # 每这么多条新消息, 让模型整理一次"记忆卡"
+MEM_GAP = 3 * 3600                    # 两次整理至少隔这么久 (秒): 一口气发几十条时不会连着调
 MEM_MAX = 2000                        # 记忆卡最多多少字
 MEM_PROMPT = ("你是 OIT 沟通模块的记忆整理器. 给你「现有记忆卡」和「最近一段对话」, 输出更新后的记忆卡.\n"
               "只保留以后还有用的事实: 用户的身份, 偏好, 计划, 约定, 禁区, 没聊完的话题.\n"
@@ -4670,7 +4670,7 @@ def _selftest():
     cm.ai.set_profile("deepseek", api_key="k")
     cm.set_cfg(persona="小夏.txt")
     cm.snapshot = lambda: {}
-    for i in range(100):
+    for i in range(40):
         cm._add("me" if i % 2 == 0 else "ai", f"m{i}")
     clock[0] += timedelta(minutes=1)
     mem_script.append("- 用户在准备考试\n- 喜欢钢琴")
@@ -4688,7 +4688,7 @@ def _selftest():
     cm.send("在吗"); wait(cm)
     sys_text = calls[-1][0]
     assert "以下是关于用户的长期记忆" in sys_text and "喜欢钢琴" in sys_text
-    for i in range(100):
+    for i in range(40):
         cm._add("me", f"n{i}")
     clock[0] += timedelta(hours=7)
     mem_script.append("")                                  # 模型什么也没给: 当失败, 旧记忆不动
