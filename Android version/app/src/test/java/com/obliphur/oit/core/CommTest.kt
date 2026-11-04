@@ -1343,7 +1343,11 @@ class CommTest {
         // 用户的休息结束 (自然走完 / 提前结束): 合约结束后对方同步的休息也跟着结束, 立即重新计算日程
         val ch4 = running("联合九", "c5")
         ch4.stateFn = { "break" }
-        assertFalse("合约还在进行: 休息结束不影响 (状态本来就跟着用户)", ch4.jointBreakEnded())
+        ch4.stateFn = { "idle" }
+        assertTrue("合约进行中: 记一条, 状态本来就实时跟着用户", ch4.jointBreakEnded())
+        assertTrue("结束了休息, 现在用户空闲" in notes(ch4).last())
+        assertEquals("空闲 · 联合行动" to "idle", ch4.otherStatusDisplay())
+        ch4.stateFn = { "break" }
         clock = day.withHour(15).withMinute(50)
         assertTrue(ch4.jointEnded("c5", "completed", 1260.0))
         clock = day.withHour(15).withMinute(55)

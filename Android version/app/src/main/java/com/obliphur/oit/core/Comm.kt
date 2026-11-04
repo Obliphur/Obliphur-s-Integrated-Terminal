@@ -1798,11 +1798,19 @@ class Comm(
         return true
     }
 
-    /** 用户的休息结束了 (走完 / 提前结束; Core 看到休息结束时调用): 合约结束后对方同步的休息也跟着结束, 立即重新计算日程. */
+    /** 用户的休息结束了 (走完 / 提前结束; Core 看到休息结束时调用).
+     *  合约进行中: 对方的状态本来就实时跟着用户, 这里再记一条系统消息, 对方的聊天记录里才不会还停在"你在休息"上;
+     *  合约结束后的同步休息中: 对方的休息也跟着结束, 立即重新计算日程. */
     @Synchronized
     fun jointBreakEnded(): Boolean {
-        val j = curJoint()?.takeIf { it.state == "rest" && jointRestLeft(it) > 0 } ?: return false
+        val j0 = curJoint() ?: return false
         val n = now()
+        if (j0.state == "run") {
+            val mine = when (stateFn()) { "focus" -> "专注"; "break" -> "休息"; "sleep" -> "睡眠"; else -> "空闲" }
+            jointNote("联合行动中用户 %02d:%02d 结束了休息, 现在用户%s, 你的状态也跟着变成%s (不再休息).".format(n.hour, n.minute, mine, mine))
+            return true
+        }
+        val j = j0.takeIf { it.state == "rest" && jointRestLeft(it) > 0 } ?: return false
         val was = parseIso(j.restUntil)
         jointSet(j.copy(restUntil = n.iso()))
         jointNote("用户 %02d:%02d 结束了休息 (原定休息到 %s), 你也跟着结束休息, 现在需要重新计算日程.".format(n.hour, n.minute,

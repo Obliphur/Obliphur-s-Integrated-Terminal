@@ -1943,11 +1943,17 @@ class Comm:
         return True
 
     def joint_break_ended(self) -> bool:
-        """用户的休息结束了 (自然走完 / 提前结束; app 看到休息结束时调用): 合约结束后对方同步的休息也跟着结束, 立即重新计算日程."""
+        """用户的休息结束了 (自然走完 / 提前结束; app 看到休息结束时调用).
+        合约进行中: 对方的状态本来就实时跟着用户, 这里再记一条系统消息, 对方的聊天记录里才不会还停在"你在休息"上;
+        合约结束后的同步休息中: 对方的休息也跟着结束, 立即重新计算日程."""
         j = self._joint()
+        now = self.now()
+        if j.get("state") == "run":
+            mine = {"focus": "专注", "break": "休息", "sleep": "睡眠"}.get(self.state_fn(), "空闲")
+            self._joint_note(f"联合行动中用户 {now:%H:%M} 结束了休息, 现在用户{mine}, 你的状态也跟着变成{mine} (不再休息).")
+            return True
         if j.get("state") != "rest" or self._joint_rest_left(j) <= 0:
             return False
-        now = self.now()
         was = _joint_time(j["rest_until"])
         self._joint_set({"rest_until": now.isoformat(timespec="seconds")})
         self._joint_note(f"用户 {now:%H:%M} 结束了休息 (原定休息到 {was:%H:%M}), 你也跟着结束休息, 现在需要重新计算日程.")
@@ -4523,7 +4529,10 @@ def _selftest():
     ch4._joint_set({"id": "m", "pid": ch4.pid, "state": "run", "terms": [], "start": day.replace(hour=14).isoformat(),
                     "end": day.replace(hour=18).isoformat(), "cid": "c5", "began": day.replace(hour=14).isoformat(),
                     "until": day.replace(hour=18).isoformat()}, replace=True)
-    assert not ch4.joint_break_ended(), "合约还在进行: 休息结束不影响 (状态本来就跟着用户)"
+    ch4.state_fn = lambda: "idle"
+    assert ch4.joint_break_ended() and "结束了休息, 现在用户空闲" in [m for m in ch4.messages if m["role"] == "sys"][-1]["text"], "合约进行中: 记一条, 状态本来就实时跟着用户"
+    assert ch4._joint()["state"] == "run" and ch4.other_status_display()[1] == "idle"
+    ch4.state_fn = lambda: "break"
     assert ch4.joint_ended("c5", "completed", 1260)
     clock[0] = day.replace(hour=15, minute=55)
     assert ch4.other_status_display() == ("休息中 · 联合行动", "rest") and ch4.joint_live()
