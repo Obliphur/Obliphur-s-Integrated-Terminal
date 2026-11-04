@@ -785,6 +785,10 @@ class Comm(
         const val FOLLOW_DELAY_MS = 3000L
         val FOLLOW_BODY = "$FOLLOW_TAG 你刚才已经回复了用户. 如果还有想接着说的话, 请现在再发一条 (不要重复上一条); " +
             "如果你只想说一次, 返回${CommText.REFUSE}."
+        /** 回复显示之后才发现用户在等回复的时候又发了消息: 补问一次 (MECHANICS 24.3). */
+        const val CATCHUP_TAG = "[系统·补]"
+        val CATCHUP_BODY = "$CATCHUP_TAG 你上一条回复发出的时候, 用户又发来了新消息 (上面用户那一轮里靠后的几条); 你的上一条回复没有针对它们. " +
+            "请现在回复这些新消息 (不要重复上一条回复的内容); 如果仍然不方便, 返回${CommText.REFUSE}."
         const val DEFAULT_P_IDLE = 80                   // II / III 发不发的概率 (%) 的默认值; 设置 → 沟通 里可以改
         const val DEFAULT_P_REST = 60
         const val DEFAULT_P_LONG = 70                   // I (长时间休息) 的默认概率
@@ -954,6 +958,8 @@ class Comm(
     @Volatile private var memBusy = false
     private var memNext = 0L
     private var again = false
+    private var reqTs = 0L                             // 最近一次请求发出时, 最后一条用户消息的时间 (ts): 回复到了之后看用户有没有又发了新的
+    private var catchup = false                        // 补问被拒绝了 (回复已经显示, 后发的消息还没人回): 重试时即使最后一条是对方的也要问
     internal var followDelayMs = FOLLOW_DELAY_MS      // 第二次调用等多久; 测试里设成 0
     private var followAt = 0L                          // 安排在什么时候 (毫秒, 0 = 没有)
     private var followEpoch = 0                        // 安排的时候的 epoch: 期间清空过就不发
@@ -2051,6 +2057,9 @@ class Comm(
 
     private fun unanswered() = messages.lastOrNull { it.role == "me" || it.role == "ai" }?.role == "me"      // 藏着的回复也算回复过了
 
+    /** 最近一次请求发出之后, 用户又发了消息 (那次请求里没带上). */
+    private fun newerMe(ts: Long) = messages.any { it.role == "me" && it.ts > ts }
+
     /** 回到休息 / 空闲: 藏着的消息现在显示 (未读 +N, 前 5 分钟没聊过的话响一声). */
     private fun releaseHeld() {
         if (blocked().isNotEmpty()) return
@@ -2143,7 +2152,7 @@ class Comm(
 
     /** 用户发出一条之后的收尾. */
     private fun sentOut() {
-        error = ""; retryAt = 0; retryN = 0
+        error = ""; catchup = false; retryAt = 0; retryN = 0
         saveCfg(); saveChat(); changed(); push()
     }
 
@@ -2395,6 +2404,7 @@ class Comm(
     private fun request(kind: String, extra: Extra? = null) {
         if (busy) { again = true; return }
         followAt = 0L                                           // 有新请求了: 排着的第二次调用取消
+        reqTs = messages.filter { it.role == "me" }.maxOfOrNull { it.ts } ?: 0L
         val profile = aiConfig().profile()
         var system = CommText.prefixPrompt(splitSend) + readPersona(personaName())
         system += memoryBlock()
@@ -2462,6 +2472,7 @@ class Comm(
         val (text0, waitMin) = if (r.err.isEmpty()) CommText.cleanReply(r.reply) else "" to 0.0
         var text = if (queried) "" else text0
         val refused = r.err.isEmpty() && CommText.isRefusal(r.reply)
+        val isCatchup = r.extra?.body?.contains(CATCHUP_TAG) == true          // 这是补问 (见 CATCHUP_BODY)
         var jointAns = ""                                                     // 对联合行动邀请的回复 [Yes] / [No]
         if (r.err.isEmpty() && !refused && !queried && r.kind in FOLLOW_KINDS && curJoint()?.state == "wait") {
             jointAns = CommText.jointAnswer(r.reply)
@@ -2472,16 +2483,17 @@ class Comm(
         // 第二次调用 (规则 VIII) 等回复的时候用户又说话了: 这条不要了 (用户的新消息重新回复)
         val drop = r.kind == "followup" && r.err.isEmpty() && !refused && (again || unanswered())
         if (drop) log("REPLY followup dropped: 等回复的时候用户又发了消息")
-        if (refused) log("REPLY refused (${r.kind}): 对方回了 [refuse to reply], 不显示" + if (unanswered()) ", 稍后重试" else "")
+        if (refused) log("REPLY refused (${r.kind}): 对方回了 [refuse to reply], 不显示" + if (unanswered() || isCatchup) ", 稍后重试" else "")
         if (r.err.isNotEmpty() || refused || drop || empty) {
             error = r.err
-            if (refused && unanswered()) {
+            if (refused && (unanswered() || isCatchup)) {
+                if (isCatchup) catchup = true                 // 回复已经显示过, unanswered() 为假: 重试要靠这个记号
                 retryN++
                 retryAt = if (retryN <= RETRY_MAX) nowMs() else 0L
                 saveCfg()
             }
         } else {
-            error = ""; retryAt = 0; retryN = 0
+            error = ""; retryAt = 0; retryN = 0; catchup = false
             saveCfg()
             val quiet = r.kind == "chase" || (r.kind == "proactive" && !talkedRecently(messages, nowMs()))      // 前 5 分钟没聊过 (追问总是): 提示音
             r.extra?.let { add("sys", it.body, it.api) }
@@ -2495,7 +2507,13 @@ class Comm(
         saveChat(); changed(); push()
         if (again) {
             again = false
-            if (unanswered() && r.err.isEmpty()) request("user")
+            if (r.err.isEmpty()) {
+                if (unanswered()) request("user")          // 回复被拒绝 / 为空 / 丢弃: 没有回复可以接着, 把没回的消息合在一起重新问
+                else if (newerMe(reqTs)) {                 // 回复显示了, 但用户在等的时候又发了消息 (请求里没带上): 补问一次, 不然这几条没人回
+                    log("CATCHUP (${r.kind}): 等回复的时候用户又发了消息, 补问一次")
+                    trigger("user", CATCHUP_BODY)
+                }
+            }
         } else if (splitSend && r.kind in FOLLOW_KINDS && r.err.isEmpty() && !refused && aiProblem().isEmpty() && leader()) {
             // 规则 VIII: 隔一会儿再调用第二次, 让对方可以把话分开说. 延时是为了让提示缓存落盘:
             // DeepSeek 的磁盘缓存是异步写的, 紧跟着发会赶不上; Anthropic 的 cache_control 随第一次请求写好, 不用等.
@@ -2521,7 +2539,8 @@ class Comm(
         if (retryAt != 0L && nowMs() >= retryAt + RETRY_GAP * 1000L) {
             retryAt = 0
             saveCfg()
-            if (unanswered()) {
+            if (unanswered() || catchup) {
+                catchup = false
                 trigger("retry", "现在是 ${CommText.stamp(t)}. 用户之前发来的消息你还没有回复, 请现在一次性处理并回复; 如果仍然不方便, 返回${CommText.REFUSE}.")
                 return
             }
@@ -2795,7 +2814,7 @@ class Comm(
     @Synchronized
     fun clear() {
         clearTs = maxOf(nowMs(), lastTs)
-        messages.clear(); unread = 0; retryAt = 0; retryN = 0; error = ""
+        messages.clear(); unread = 0; retryAt = 0; retryN = 0; error = ""; catchup = false
         followAt = 0L                                       // 清空前排着的第二次调用不要了
         memAuto = ""; memUpto = 0L; memTs = nowMs()        // 记忆卡跟着聊天一起清掉
         if (joint != null || jointTs != 0L) { joint = null; jointTs = maxOf(nowMs(), jointTs + 1) }      // 新对话: 联合行动也作废 (别的设备一起)

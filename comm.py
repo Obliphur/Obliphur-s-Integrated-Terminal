@@ -59,6 +59,9 @@ FOLLOW_KINDS = ("user", "retry")      # 规则 VIII: 回复了这些请求 (用�
 FOLLOW_TAG = "[系统·续]"
 FOLLOW_BODY = (FOLLOW_TAG + " 你刚才已经回复了用户. 如果还有想接着说的话, 请现在再发一条 (不要重复上一条); "
                "如果你只想说一次, 返回" + REFUSE + ".")
+CATCHUP_TAG = "[系统·补]"             # 回复显示之后才发现用户在等回复的时候又发了消息: 补问一次 (MECHANICS 24.3)
+CATCHUP_BODY = (CATCHUP_TAG + " 你上一条回复发出的时候, 用户又发来了新消息 (上面用户那一轮里靠后的几条); 你的上一条回复没有针对它们. "
+                "请现在回复这些新消息 (不要重复上一条回复的内容); 如果仍然不方便, 返回" + REFUSE + ".")
 FOLLOW_DELAY = 3.0                    # 规则 VIII 的第二次调用先等这么久 (秒): 服务商的提示缓存是异步落盘的 (DeepSeek 说"几秒"),
                                       # 紧跟着调用常常赶不上, 白付一次全量历史; 隔几秒再发, 第二次的前缀才能命中
 CHAR_DELAY = 0.2                      # 对方发来的消息: 文本里每个字符让它晚这么多秒才显示 (像在打字; 排在前一条后面, 一条一条出来)
@@ -1011,6 +1014,8 @@ class Comm:
         self._writing = False
         self._results = []
         self._again = False
+        self._req_ts = 0              # 最近一次请求发出时, 最后一条用户消息的时间 (ts): 回复到了之后看用户有没有又发了新的
+        self._catchup = False         # 补问被拒绝了 (回复已经显示, 后发的消息还没人回): 重试时即使最后一条是对方的也要问
         self._epoch = 0               # clear() 加一: 清空之前发出的请求, 回复到了也丢掉
         self.follow_delay = FOLLOW_DELAY   # 第二次调用等多久 (秒); 自检里设成 0
         self._follow_at = 0           # 第二次调用安排在什么时候 (毫秒, 0 = 没有)
@@ -2215,6 +2220,10 @@ class Comm:
         vis = [m for m in self.messages if m["role"] in ("me", "ai")]          # 藏起来的回复也算回复过了
         return bool(vis) and vis[-1]["role"] == "me"
 
+    def _newer_me(self, ts: int) -> bool:
+        """最近一次请求发出之后, 用户又发了消息 (那次请求里没带上)."""
+        return any(m.get("role") == "me" and int(m.get("ts") or 0) > int(ts) for m in self.messages)
+
     def _release_held(self):
         """回到休息 / 空闲: 藏着的消息现在显示 (未读 +N, 前 5 分钟没聊过的话响一声). 带 due 的 (CHAR_DELAY 的打字延时) 到点才显示, 按顺序一条一条出来."""
         if not any(m.get("hold") for m in self.messages) or self.blocked():
@@ -2311,6 +2320,7 @@ class Comm:
     def _sent(self):
         """用户发出一条之后的收尾."""
         self.error = ""
+        self._catchup = False
         self.cfg["retry"] = {}
         self.save_cfg()
         self.save_chat()
@@ -2684,6 +2694,7 @@ class Comm:
             self._again = True
             return
         self._follow_at = 0                                # 有新请求了: 排着的第二次调用取消 (用户又说了 / 主动发 / 重试)
+        self._req_ts = max([int(m.get("ts") or 0) for m in self.messages if m.get("role") == "me"] or [0])
         profile = self.ai.profile()
         system = prefix_prompt(self.split_on()) + read_persona(self.personas, self.persona_name())
         system += self.memory_block()
@@ -2774,6 +2785,7 @@ class Comm:
         if queried:
             text = ""
         refused = not err and is_refusal(reply)
+        catchup = bool(extra) and CATCHUP_TAG in str(extra[0])          # 这是补问 (见 CATCHUP_BODY)
         joint_ans = ""                                          # 对联合行动邀请的回复 [Yes] / [No]
         if not err and not refused and not queried and kind in ("user", "retry") and self._joint().get("state") == "wait":
             joint_ans = joint_answer(reply)
@@ -2785,16 +2797,19 @@ class Comm:
         if drop:
             self.log("REPLY followup dropped: 等回复的时候用户又发了消息")
         if refused:
-            self.log(f"REPLY refused ({kind}): 对方回了 [refuse to reply], 不显示" + (", 稍后重试" if self.unanswered() else ""))
+            self.log(f"REPLY refused ({kind}): 对方回了 [refuse to reply], 不显示" + (", 稍后重试" if self.unanswered() or catchup else ""))
         if err or refused or drop or empty:
             self.error = err
-            if refused and self.unanswered():
+            if refused and (self.unanswered() or catchup):
+                if catchup:
+                    self._catchup = True                  # 回复已经显示过, unanswered() 为假: 重试要靠这个记号
                 rt = self.cfg.get("retry") or {}
                 n = int(rt.get("n") or 0) + 1
                 self.cfg["retry"] = {"at": self._ms(), "n": n} if n <= RETRY_MAX else {"at": 0, "n": n}
                 self.save_cfg()
         else:
             self.error = ""
+            self._catchup = False
             self.cfg["retry"] = {}
             self.save_cfg()
             ping = kind == "chase" or (kind == "proactive" and not self._talked_recently(self.messages, self._ms()))      # 前 5 分钟没聊过 (追问总是): 提示音
@@ -2815,8 +2830,12 @@ class Comm:
         self._push()
         if self._again:
             self._again = False
-            if self.unanswered() and not err:
-                self._request("user")
+            if not err:
+                if self.unanswered():                       # 回复被拒绝 / 为空 / 丢弃: 没有回复可以接着, 把没回的消息合在一起重新问
+                    self._request("user")
+                elif self._newer_me(self._req_ts):          # 回复显示了, 但用户在等的时候又发了消息 (请求里没带上): 补问一次, 不然这几条没人回
+                    self.log(f"CATCHUP ({kind}): 等回复的时候用户又发了消息, 补问一次")
+                    self._trigger("user", CATCHUP_BODY)
         elif kind in FOLLOW_KINDS and self.split_on() and not err and not refused and not self._ai_problem() and self.leader():
             # 规则 VIII: 隔一会儿再调用第二次, 让对方可以把话分开说 (只想说一次就 [refuse to reply], 什么也不留下).
             # 延时是为了让提示缓存落盘: DeepSeek 的磁盘缓存是异步写的, 紧跟着发会赶不上; Anthropic 的 cache_control 随第一次请求写好, 不用等.
@@ -2864,7 +2883,8 @@ class Comm:
         if rt.get("at") and self._ms() >= int(rt["at"]) + RETRY_GAP * 1000:
             self.cfg["retry"] = {"at": 0, "n": int(rt.get("n") or 0)}
             self.save_cfg()
-            if self.unanswered():
+            if self.unanswered() or self._catchup:
+                self._catchup = False
                 self._trigger("retry", f"现在是 {stamp(now)}. 用户之前发来的消息你还没有回复, 请现在一次性处理并回复; "
                                        f"如果仍然不方便, 返回{REFUSE}.")
                 return
@@ -3169,6 +3189,7 @@ class Comm:
         self._epoch += 1
         self._follow_at = 0                # 清空前排着的第二次调用不要了
         self.error = ""
+        self._catchup = False
         self.cfg["retry"] = {}
         self.cfg["mem_auto"] = ""          # 记忆卡跟着聊天一起清掉
         self.cfg["mem_upto"] = 0
@@ -4712,6 +4733,63 @@ def _selftest():
     assert co._op_terms(f"[{lg}, {pa}]", []) == C.clean_terms(["retreat1"], prereq=True)
     for x in (co, cf2):
         x.flush()
+
+    # ---- 连续快发: 等回复的时候用户又发了消息 (以前回复显示之后 unanswered() 为假, 不再请求, 后发的几条永远没人回) ----
+    clock[0] = day.replace(hour=13)
+    cq = joint_comm("连发", "你是连发.\n")
+    script.clear()
+    follow.clear()
+    script.extend(["回复一", "回复二"])
+    n0 = len(calls)
+    assert cq.send("消息1") == "" and cq.send("消息2") == "" and cq.send("消息3") == "" and cq._again
+    wait(cq)
+    assert len(calls) == n0 + 2, "第 1 次请求只带第 1 条; 回复显示之后补问一次"
+    assert "消息1" in calls[n0][1][-1]["content"] and "消息2" not in calls[n0][1][-1]["content"]
+    sent2 = calls[n0 + 1][1]
+    assert [m["role"] for m in sent2] == ["user", "assistant", "user"] and CATCHUP_TAG in sent2[-1]["content"], sent2
+    assert all(f"消息{i}" in sent2[0]["content"] for i in (1, 2, 3)) and sent2[1]["content"] == "回复一"
+    assert [m["text"] for m in cq.visible()] == ["消息1", "消息2", "消息3", "回复一", "回复二"] and not cq.unanswered()
+    assert any(m["role"] == "sys" and CATCHUP_TAG in m["text"] for m in cq.messages)
+    # 单独一条: 不补问
+    script.clear()
+    script.append("回复三")
+    n0 = len(calls)
+    assert cq.send("消息4") == ""
+    wait(cq)
+    assert len(calls) == n0 + 1 and cq.visible()[-1]["text"] == "回复三"
+    # 对方主动发消息的请求在途时用户发了一条: 主动消息照常显示, 用户那条补问
+    script.clear()
+    script.extend(["在吗, 想聊聊", "收到, 你说的我看到了"])
+    n0 = len(calls)
+    cq._trigger("proactive", "[系统] 请主动发一条消息.")
+    assert cq.send("我先说一件事") == "" and cq._again
+    wait(cq)
+    assert len(calls) == n0 + 2 and [m["text"] for m in cq.visible()][-3:] == ["我先说一件事", "在吗, 想聊聊", "收到, 你说的我看到了"], \
+        [m["text"] for m in cq.visible()]
+    # 第 1 次回复被拒绝: 合在一起重新问 (不是补问)
+    script.clear()
+    script.extend([REFUSE, "合在一起回复"])
+    n0 = len(calls)
+    cq.send("消息X")
+    cq.send("消息Y")
+    wait(cq)
+    assert len(calls) == n0 + 2 and cq.visible()[-1]["text"] == "合在一起回复" and CATCHUP_TAG not in calls[-1][1][-1]["content"]
+    assert "消息X" in calls[-1][1][-1]["content"] and "消息Y" in calls[-1][1][-1]["content"]
+    # 补问被拒绝: 记下来, 过一阵再问 (这时最后一条是对方的回复, unanswered() 为假)
+    script.clear()
+    script.extend(["回复A", REFUSE, "补上了"])
+    n0 = len(calls)
+    cq.send("消息A")
+    cq.send("消息B")
+    wait(cq)
+    assert len(calls) == n0 + 2 and cq.visible()[-1]["text"] == "回复A" and not cq.unanswered()
+    assert cq.cfg["retry"].get("at") and cq._catchup, "补问被拒绝: 记下来, 过一阵再问"
+    cq.cfg["retry"] = {"at": cq._ms() - RETRY_GAP * 1000 - 5, "n": 1}
+    cq.tick()
+    assert cq.busy, "重试"
+    wait(cq)
+    assert len(calls) == n0 + 3 and "还没有回复" in calls[-1][1][-1]["content"] and cq.visible()[-1]["text"] == "补上了" and not cq._catchup
+    cq.flush()
 
     # ---- 对方切断谈话 (前置 prompt XIII): [cut off][N] ----
     assert cut_minutes("[cut off][5]") == 5 and cut_minutes("[Cut Off]:10 再见") == 10 and cut_minutes("[ cut  off ]") == CUT_DEFAULT_MIN

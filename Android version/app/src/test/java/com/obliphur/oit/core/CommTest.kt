@@ -1475,6 +1475,70 @@ class CommTest {
         for (x in listOf(co, cu, cf)) x.flush()
     }
 
+    /** 连续快发: 等回复的时候用户又发了消息 (对应 comm.py 自检). 以前回复显示之后 unanswered() 为假, 不再请求, 后发的几条永远没人回. */
+    @Test
+    fun rapidMessages() {
+        val td = Files.createTempDirectory("oit").toFile()
+        File(td, "p").mkdirs()
+        File(td, "p/连发.txt").writeText("你是连发.\n")
+        val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
+        c.set(persona = "连发.txt", splitSend = false)
+        c.snapshot = { CommSnap("idle") }
+        clock = LocalDateTime.of(2026, 12, 10, 13, 0)
+        script.clear(); follow.clear()
+        script.addAll(listOf("回复一", "回复二"))
+        var n0 = calls.size
+        assertEquals("", c.send("消息1")); assertEquals("", c.send("消息2")); assertEquals("", c.send("消息3"))
+        wait(c)
+        assertEquals(n0 + 2, calls.size)                               // 第 1 次请求只带第 1 条; 回复显示之后补问一次
+        assertTrue("消息1" in calls[n0].second.last().second && "消息2" !in calls[n0].second.last().second)
+        val sent2 = calls[n0 + 1].second
+        assertEquals(listOf("user", "assistant", "user"), sent2.map { it.first })
+        assertTrue(Comm.CATCHUP_TAG in sent2.last().second)
+        assertTrue((1..3).all { "消息$it" in sent2[0].second } && sent2[1].second == "回复一")
+        assertEquals(listOf("消息1", "消息2", "消息3", "回复一", "回复二"), c.visible().map { it.text })
+        assertTrue(c.messages.any { it.role == "sys" && Comm.CATCHUP_TAG in it.text })
+        // 单独一条: 不补问
+        script.clear(); script.add("回复三")
+        n0 = calls.size
+        assertEquals("", c.send("消息4"))
+        wait(c)
+        assertEquals(n0 + 1, calls.size)
+        assertEquals("回复三", c.visible().last().text)
+        // 对方主动发消息的请求在途时用户发了一条: 主动消息照常显示, 用户那条补问
+        script.clear(); script.addAll(listOf("在吗, 想聊聊", "收到, 你说的我看到了"))
+        n0 = calls.size
+        c.proactiveForTest("[系统] 请主动发一条消息.")
+        assertEquals("", c.send("我先说一件事"))
+        wait(c)
+        assertEquals(n0 + 2, calls.size)
+        assertEquals(listOf("我先说一件事", "在吗, 想聊聊", "收到, 你说的我看到了"), c.visible().map { it.text }.takeLast(3))
+        // 第 1 次回复被拒绝: 合在一起重新问 (不是补问)
+        script.clear(); script.addAll(listOf(CommText.REFUSE, "合在一起回复"))
+        n0 = calls.size
+        c.send("消息X"); c.send("消息Y")
+        wait(c)
+        assertEquals(n0 + 2, calls.size)
+        assertEquals("合在一起回复", c.visible().last().text)
+        val last = calls.last().second.last().second
+        assertTrue(Comm.CATCHUP_TAG !in last && "消息X" in last && "消息Y" in last)
+        // 补问被拒绝: 记下来, 过一阵再问 (这时最后一条是对方的回复, unanswered() 为假)
+        script.clear(); script.addAll(listOf("回复A", CommText.REFUSE, "补上了"))
+        n0 = calls.size
+        c.send("消息A"); c.send("消息B")
+        wait(c)
+        assertEquals(n0 + 2, calls.size)
+        assertEquals("回复A", c.visible().last().text)
+        clock = clock.plusSeconds(Comm.RETRY_GAP + 5L)
+        c.tick()
+        assertTrue(c.busy)                                              // 重试
+        wait(c)
+        assertEquals(n0 + 3, calls.size)
+        assertTrue("还没有回复" in calls.last().second.last().second)
+        assertEquals("补上了", c.visible().last().text)
+        c.flush()
+    }
+
     /** 对方切断谈话 (前置 prompt XIII): [cut off][N] (对应 comm.py 自检). */
     @Test
     fun cutOff() {
