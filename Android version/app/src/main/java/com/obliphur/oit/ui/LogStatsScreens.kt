@@ -361,7 +361,7 @@ private const val VIOLATION_ROWS = 15
 /** 统计页的一条合约记录: a = 初始等级, b = 失效等级; rows 和合约页一样的词条行. */
 /** combos: 完成时凑齐的组合的成员 → 组合 id (Contract.recordMarks). */
 private data class ContractRow(val a: Int, val b: Int, val rows: List<com.obliphur.oit.core.RecRow>,
-                               val combos: Map<String, String> = emptyMap())
+                               val combos: Map<String, String> = emptyMap(), val joint: String = "")
 
 /** 和合约页一样: 最终等级[最初等级-扣的等级] (没扣过只写最终等级). */
 private fun levelText(orig: Int, level: Int): String = Contract.levelLabel(level, orig)
@@ -392,7 +392,7 @@ private fun ContractRecords() {
         else Contract.recentCompleted(c.history, CONTRACT_ROWS).map {
             val level = it.optInt("level")
             ContractRow(if (it.has("orig_level")) it.optInt("orig_level") else level, level, Contract.recordRows(it),
-                Contract.recordMarks(it))
+                Contract.recordMarks(it), it.optString("joint"))
         }
     }
     OitCard {
@@ -404,6 +404,7 @@ private fun ContractRecords() {
                 Text(tr("等级"), color = o.dim, fontSize = 12.sp, modifier = Modifier.padding(end = 10.dp))
                 Text(levelText(r.a, r.b), color = o.accent, fontWeight = FontWeight.Bold, fontSize = 18.sp,
                     modifier = Modifier.weight(1f))
+                if (r.joint.isNotEmpty()) Text("🤝 " + r.joint, color = o.accent, fontSize = 12.sp, modifier = Modifier.padding(end = 10.dp))      // 联合行动: 和谁一起
                 Text(tr("点击查看词条"), color = o.dim, fontSize = 12.sp)
             }
         }

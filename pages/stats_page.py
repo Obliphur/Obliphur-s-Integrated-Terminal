@@ -543,14 +543,14 @@ class StatsPage(tk.Frame):
         词条行和合约页一样 (record_rows); 完成时凑齐的组合的成员置顶 (record_marks)."""
         seed = self.fog()
         if seed is not None:
-            return _fog_contracts(seed)
+            return [x + ("",) for x in _fog_contracts(seed)]
         recs = C.recent_completed(self.contract_log(), CONTRACT_ROWS)
         return [((int(r.get("orig_level") or r.get("level") or 0), int(r.get("level") or 0)),
-                 C.record_rows(r), C.record_marks(r)) for r in recs]
+                 C.record_rows(r), C.record_marks(r), str(r.get("joint") or "")) for r in recs]
 
     def _draw_contracts(self):
         data = self._contract_rows_data()
-        sig = tuple((a, b, tuple(terms), tuple(sorted(cm.items()))) for (a, b), terms, cm in data)
+        sig = tuple((a, b, tuple(terms), tuple(sorted(cm.items())), who) for (a, b), terms, cm, who in data)
         if sig == self._contract_sig:
             return
         self._contract_sig = sig
@@ -561,10 +561,10 @@ class StatsPage(tk.Frame):
                      bg=COLORS["bg_card"], fg=COLORS["text_dim"],
                      font=config.font("body"), anchor="w").pack(anchor="w", padx=8, pady=8)
             return
-        for (a, b), terms, cm in data:
-            self._contract_row(a, b, terms, cm).pack(fill="x", padx=6, pady=(0, 6))
+        for (a, b), terms, cm, who in data:
+            self._contract_row(a, b, terms, cm, who).pack(fill="x", padx=6, pady=(0, 6))
 
-    def _contract_row(self, a: int, b: int, terms: list, cm: dict) -> tk.Frame:
+    def _contract_row(self, a: int, b: int, terms: list, cm: dict, who: str = "") -> tk.Frame:
         card = COLORS["bg_card"]
         row = tk.Frame(self.contract_rows, bg=card, cursor="hand2",
                        highlightbackground=COLORS["border"], highlightthickness=1)
@@ -574,6 +574,9 @@ class StatsPage(tk.Frame):
                  font=config.font("h2", bold=True)).pack(side="left")
         tk.Label(row, text=tr("点击查看词条"), bg=card, fg=COLORS["text_dim"],
                  font=config.font("small")).pack(side="right", padx=14)
+        if who:                                           # 联合行动: 和谁一起
+            tk.Label(row, text="🤝 " + who, bg=card, fg=COLORS["accent"],
+                     font=config.font("small")).pack(side="left", padx=(18, 0))
         for w in [row] + list(row.winfo_children()):
             w.bind("<Button-1>", lambda e, aa=a, bb=b, tt=terms, mm=cm: self._show_contract(aa, bb, tt, mm))
         return row

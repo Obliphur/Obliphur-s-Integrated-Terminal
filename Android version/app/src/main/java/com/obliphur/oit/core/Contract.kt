@@ -625,6 +625,12 @@ class Contract(private val file: File) {
     }
 
     /** 结束合约: result = completed / failed / idle / abandoned. 返回这一条记录 (含给出的休息时间). */
+    /** 进行中的合约是联合行动: 记下对象的名字 (结束时进合约记录). */
+    fun tagJoint(name: String) {
+        val n = name.trim().take(40)
+        if (active && n.isNotEmpty() && live.optString("joint") != n) { live.put("joint", n); save() }
+    }
+
     fun finish(result: String, at: LocalDateTime? = null, by: String = ""): JSONObject? {
         if (!active) return null
         val now = (at ?: LocalDateTime.now()).withNano(0)
@@ -637,6 +643,7 @@ class Contract(private val file: File) {
             .put("result", result).put("violations", violations).put("reward", give).put("pre_left", preLeft)
             .put("rand", JSONArray(rand))
         if (theme.isNotEmpty()) rec.put("theme", theme)
+        live.optString("joint").takeIf { it.isNotEmpty() }?.let { rec.put("joint", it) }       // 联合行动的对象 (统计 → 合约界面显示名字)
         live.optJSONArray("seals")?.let { if (it.length() > 0) rec.put("seals", JSONArray(it.toString())) }   // 封锁了的记录格 (合约结束后照样锁着)
         live.optJSONObject("slow")?.optString("start")?.takeIf { it.isNotEmpty() }?.let { rec.put("slow", it) }
         history.add(rec)

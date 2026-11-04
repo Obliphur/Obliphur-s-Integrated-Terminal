@@ -1252,7 +1252,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
                 heldAchievements.clear()
             }
             runCatching {                        // 联合行动: 别的设备开始 / 结束的合约 (本机开始 / 结束的在 startContract / endContract 里处理)
-                if (seen != null) comm.jointStarted(c.terms.toList(), seen.toString(), c.endAt)
+                if (seen != null) { if (comm.jointStarted(c.terms.toList(), seen.toString(), c.endAt)) c.tagJoint(comm.jointPartner()) }
                 else if (was != null) c.last?.let { comm.jointEnded(it.optLong("id").toString(), it.optString("result"), it.optDouble("reward", 0.0)) }
             }
             if (was != null && seen == null) c.last?.let {
@@ -1430,7 +1430,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         val gift = Contract.restGift(contract.terms)
         timer.addCarry(gift)
         contractSeen = contract.id
-        runCatching { comm.jointStarted(contract.terms.toList(), contract.id.toString(), contract.endAt) }      // 联合行动: 按约开始了
+        runCatching { if (comm.jointStarted(contract.terms.toList(), contract.id.toString(), contract.endAt)) contract.tagJoint(comm.jointPartner()) }      // 联合行动: 按约开始了
         host.applyNet(false)
         syncHourLog()
         logNotice("CONTRACT start level ${contract.level} terms ${contract.terms.joinToString(",").ifEmpty { "-" }} until ${contract.endAt?.format(Fmt.YMDHM)}" +

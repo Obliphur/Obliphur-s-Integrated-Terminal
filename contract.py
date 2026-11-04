@@ -781,6 +781,13 @@ class Contract:
         self.save()
         return self.live
 
+    def tag_joint(self, name: str):
+        """进行中的合约是联合行动: 记下对象的名字 (结束时进合约记录)."""
+        name = str(name or "").strip()[:40]
+        if self.active and name and self.live.get("joint") != name:
+            self.live["joint"] = name
+            self.save()
+
     def finish(self, result: str, now: datetime = None, by: str = "") -> dict:
         """结束合约: result = completed / failed / idle / offline / abandoned. 返回这一条记录 (含给出的休息时间)."""
         if not self.active:
@@ -795,6 +802,8 @@ class Contract:
                "pre_left": self.pre_left, "rand": self.rand, "owner": self.live.get("owner", "")}
         if self.theme:
             rec["theme"] = self.theme
+        if self.live.get("joint"):
+            rec["joint"] = str(self.live["joint"])         # 联合行动的对象 (统计 → 合约界面显示名字)
         if self.live.get("seals"):
             rec["seals"] = list(self.live["seals"])        # 封锁了的记录格 (合约结束后照样锁着)
         slow = self.live.get("slow")

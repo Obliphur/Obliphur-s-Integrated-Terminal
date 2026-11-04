@@ -12,11 +12,11 @@ android {
         applicationId = "com.obliphur.oit"
         minSdk = 29
         targetSdk = 35
-        versionCode = 313
+        versionCode = 314
         // 开发者模式只在本地构建里有; 公开发布版 (release.py 用 -PpublicRelease=true 编译) 没有 (MECHANICS 3.5)
         buildConfigField("boolean", "DEV_BUILD", (project.findProperty("publicRelease") != "true").toString())
         // 和 GitHub 上发布的版本号比较 (见 service/Updater.kt); 桌面版是 config.APP_VERSION
-        versionName = "1.0.315"
+        versionName = "1.0.316"
     }
 
     buildTypes {

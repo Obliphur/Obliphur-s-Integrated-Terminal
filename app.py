@@ -3805,7 +3805,8 @@ class BreakTimerApp:
             self._contract_changed()
             try:                                     # 联合行动: 别的设备开始 / 结束的合约 (本机开始 / 结束的在 _begin_contract / end_contract 里处理)
                 if seen is not None:
-                    self.comm.joint_started(list(c.terms), c.live.get("id"), c.end_at)
+                    if self.comm.joint_started(list(c.terms), c.live.get("id"), c.end_at):
+                        c.tag_joint(self.comm.joint_partner())
                 elif was is not None and c.last:
                     self.comm.joint_ended(c.last.get("id"), c.last.get("result"), c.last.get("reward") or 0)
             except Exception as e:      # noqa: BLE001
@@ -4024,7 +4025,8 @@ class BreakTimerApp:
                          + (f" gift {gift}s" if gift else ""))
         self._contract_seen = (c.live.get("id"), "active")
         try:
-            self.comm.joint_started(list(c.terms), c.live.get("id"), c.end_at)      # 联合行动: 按约开始了
+            if self.comm.joint_started(list(c.terms), c.live.get("id"), c.end_at):      # 联合行动: 按约开始了
+                c.tag_joint(self.comm.joint_partner())
         except Exception as e:      # noqa: BLE001
             self._log_window(f"ERROR    joint_started {type(e).__name__}: {e}")
         self._contract_changed()
