@@ -233,6 +233,8 @@ object BuiltinPersonas {
 
 object CommText {
     const val REFUSE = "[refuse to reply]"
+    /** 主动发起的对话回了 [refuse to reply] 以后, 再要求一次时说的话. */
+    const val PRO_NO_REFUSE = "(OIT 系统提供, 用户看不到) 这是你主动发起的对话, 不能返回$REFUSE. 请按人设主动给用户发一条消息, 话题自己找 (不要透露日程)."
     private const val WEEKDAY = "一二三四五六日"
 
     fun restFunctionText(): String {
@@ -2267,6 +2269,10 @@ class Comm(
                         " 回复用户上面的消息, 不要把它说成是用户的数据. 如果此刻仍然不方便回复, 返回${CommText.REFUSE}."))
                     reply = chatFn(profile, system, convo)
                 }
+                if (kind == "proactive" && CommText.isRefusal(reply) && CommText.infoTags(reply).isEmpty()) {     // 主动发起的对话不能 [refuse to reply]: 再要求一次
+                    log("PRO 主动发起的对话回了 [refuse to reply]: 不允许, 再要求一次")
+                    reply = chatFn(profile, system, convo + ("assistant" to reply) + ("user" to CommText.PRO_NO_REFUSE))
+                }
                 log("REQ $kind ok ${(System.currentTimeMillis() - started) / 1000.0}s reply_chars=${reply.length}")
                 Result(kind, extra, reply, "", ep, op)
             } catch (e: AiError) {
@@ -2497,7 +2503,7 @@ class Comm(
                 if (!t.isBefore(due)) {
                     val pct = if (ctx != null) ctx.probs["long"] ?: defaultP("long") else proPercent("long")
                     proFire(key, due, t, pct / 100.0, "[系统] 按你的日程, 你现在有空 (这段还剩约 ${Math.round(cur.second / 60.0)} 分钟). " +
-                        "请根据人设主动给用户发一条消息, 话题自己找; 如果此刻不方便, 返回${CommText.REFUSE}.", ctx)
+                        "请根据人设主动给用户发一条消息, 话题自己找; 这条必须发出, 不要返回${CommText.REFUSE}.", ctx)
                     return
                 }
             }
@@ -2515,7 +2521,7 @@ class Comm(
             proFire(key, due, t, pct / 100.0,
                 "[系统] 按你的日程, 你进入睡眠约 ${PROACTIVE_SLEEP_DELAY / 60} 分钟了. " +
                 "这条是系统触发的: 即使你此刻处于睡眠时段, 也允许你主动给用户发一条消息, 话题自己找 (不要透露日程); " +
-                "发完继续睡, 用户回复时按日程拒绝; ${greet}如果实在不方便, 返回${CommText.REFUSE}.", ctx)
+                "发完继续睡, 用户回复时按日程拒绝; ${greet}这条必须发出, 不要返回${CommText.REFUSE}.", ctx)
             return
         }
         // II / III. 人设日程里每段空闲 / 休息开始前 1~3 分钟, 有概率发一条
@@ -2529,7 +2535,7 @@ class Comm(
             proFire(ev.key, due, t, pct / 100.0,
                 "[系统] 按你的日程, 你的${if (ev.kind == "idle") "空闲" else "休息"}时间将在 $hm 开始 (约 $mins 分钟后). " +
                 "这条是系统提前触发的: 即使你此刻还处于专注/不能回复的时段, 也允许你现在主动给用户发一条消息, 话题自己找 (不要透露日程); " +
-                "如果实在不方便, 返回${CommText.REFUSE}.", ctx)
+                "这条必须发出, 不要返回${CommText.REFUSE}.", ctx)
             return
         }
     }
@@ -2601,7 +2607,13 @@ class Comm(
         Thread {
             var reply = ""
             var err = ""
-            try { reply = chatFn(profile, system, msgs) }
+            try {
+                reply = chatFn(profile, system, msgs)
+                if (kind == "proactive" && CommText.isRefusal(reply) && CommText.infoTags(reply).isEmpty()) {     // 主动发起的对话不能 [refuse to reply]: 再要求一次
+                    log("PRO bg [${ctx.name}] 回了 [refuse to reply]: 不允许, 再要求一次")
+                    reply = chatFn(profile, system, msgs + ("assistant" to reply) + ("user" to CommText.PRO_NO_REFUSE))
+                }
+            }
             catch (e: AiError) { err = e.message ?: "" }
             catch (e: Exception) { err = e.javaClass.simpleName }
             log("REQ bg-$kind ${if (err.isNotEmpty()) "FAIL $err" else "ok"} ${(System.currentTimeMillis() - started) / 1000.0}s")

@@ -1471,6 +1471,13 @@ class CommTest {
         assertTrue(calls.size == n4 + 3 && "联合行动没有发出" in calls.last().second.last().second)
         assertEquals("", cf.jointState())
         assertTrue("天气" in cf.visible().last().text)
+        // 主动发起的对话不能 [refuse to reply]: 回了就再要求一次, 第二次的回复照常显示
+        script.clear(); script.addAll(listOf(CommText.REFUSE, "刚想到一件事."))
+        val n9 = calls.size
+        cf.proactiveForTest("[系统] 请主动发一条消息.")
+        wait(cf)
+        assertTrue(calls.size == n9 + 2 && CommText.PRO_NO_REFUSE in calls.last().second.last().second)
+        assertTrue("刚想到" in cf.visible().last().text)
         // 编号 / 默认
         val si = tids.indexOf("silent") + 1
         assertEquals(listOf("retreat1"), co.opTerms("[$si]", listOf("retreat1")))

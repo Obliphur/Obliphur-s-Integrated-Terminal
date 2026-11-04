@@ -37,6 +37,7 @@ import i18n
 from i18n import tr
 
 REFUSE = "[refuse to reply]"
+PRO_NO_REFUSE = ("(OIT 系统提供, 用户看不到) 这是你主动发起的对话, 不能返回" + REFUSE + ". 请按人设主动给用户发一条消息, 话题自己找 (不要透露日程).")
 PROACTIVE_FREE_LEFT = 10 * 60         # I. 对方这段空闲 / 休息至少还要剩这么久 (秒), 才会主动发消息
 PROACTIVE_DELAY = (60, 180)           # I. 对方进入空闲 / 休息段后多久主动发 (秒)
 PROACTIVE_LEAD = (60, 180)            # II / III. 人设日程里的空闲 / 休息开始前多久主动发 (秒)
@@ -2581,6 +2582,10 @@ class Comm:
                                     + "\n\n以上只是**参考模板** (格式; <尖括号> 里是占位符), 不是用户的真实数据. 请参照这个格式和写法, 根据人设自己填写具体内容,"
                                       " 回复用户上面的消息, 不要把它说成是用户的数据. 如果此刻仍然不方便回复, 返回" + REFUSE + "."}]
                     reply = ask(convo)
+                if kind == "proactive" and is_refusal(reply) and not info_tags(reply):       # 主动发起的对话不能 [refuse to reply]: 再要求一次
+                    self.log("PRO 主动发起的对话回了 [refuse to reply]: 不允许, 再要求一次")
+                    convo = convo + [{"role": "assistant", "content": reply}, {"role": "user", "content": PRO_NO_REFUSE}]
+                    reply = ask(convo)
                 res = (kind, extra, reply, "", epoch, op)
                 self.log(f"REQ {kind} ok {time.monotonic() - started:.1f}s reply_chars={len(reply)}")
             except ai_assist.AIError as e:
@@ -2809,6 +2814,11 @@ class Comm:
                 reply = self.chat_fn(profile, system, msgs, max_tokens=CHAT_TOKENS, temperature=CHAT_TEMPERATURE,
                                      timeout=CHAT_TIMEOUT, cache=True,
                                      on_usage=lambda t, c: self.log(f"USAGE bg-{kind} input={t} cached={c}"))
+                if kind == "proactive" and is_refusal(reply) and not info_tags(reply):          # 主动发起的对话不能 [refuse to reply]: 再要求一次
+                    self.log(f"PRO bg [{ctx['name']}] 回了 [refuse to reply]: 不允许, 再要求一次")
+                    reply = self.chat_fn(profile, system, msgs + [{"role": "assistant", "content": reply}, {"role": "user", "content": PRO_NO_REFUSE}],
+                                         max_tokens=CHAT_TOKENS, temperature=CHAT_TEMPERATURE, timeout=CHAT_TIMEOUT, cache=True,
+                                         on_usage=lambda t, c: self.log(f"USAGE bg-{kind} input={t} cached={c}"))
             except ai_assist.AIError as e:
                 err = e.message
             except Exception as e:      # noqa: BLE001
@@ -2954,7 +2964,7 @@ class Comm:
                 if now >= due:
                     pl = (ctx["probs"].get("long", float(PROACTIVE_P["long"])) if ctx else self.pro_percent("long")) / 100.0
                     self._pro_fire(key, due, now, pl, f"[系统] 按你的日程, 你现在有空 (这段还剩约 {left / 60:.0f} 分钟). "
-                                                       f"请根据人设主动给用户发一条消息, 话题自己找; 如果此刻不方便, 返回{REFUSE}.", ctx)
+                                                       f"请根据人设主动给用户发一条消息, 话题自己找; 这条必须发出, 不要返回{REFUSE}.", ctx)
                     return
         # IV. 人设日程里的"睡眠"段: 睡眠开始后 5 分钟, 有概率发一条 (睡眠期间只发这一条, 用户回复按日程拒绝)
         for kind, mins in (ctx["segs"] if ctx else self._segments()):
@@ -2972,7 +2982,7 @@ class Comm:
             self._pro_fire(key, due, now, pct / 100.0,
                            f"[系统] 按你的日程, 你进入睡眠约 {PROACTIVE_SLEEP_DELAY // 60} 分钟了. "
                            f"这条是系统触发的: 即使你此刻处于睡眠时段, 也允许你主动给用户发一条消息, 话题自己找 (不要透露日程); "
-                           f"发完继续睡, 用户回复时按日程拒绝; {greet}如果实在不方便, 返回{REFUSE}.", ctx)
+                           f"发完继续睡, 用户回复时按日程拒绝; {greet}这条必须发出, 不要返回{REFUSE}.", ctx)
             return
         # II / III. 人设日程里每段空闲 / 休息开始前 1~3 分钟, 有概率发一条
         for key, kind, begin in self._schedule_events(now, ctx["segs"] if ctx else None):
@@ -2986,7 +2996,7 @@ class Comm:
             self._pro_fire(key, due, now, pct / 100.0,
                            f"[系统] 按你的日程, 你的{'空闲' if kind == 'idle' else '休息'}时间将在 {begin:%H:%M} 开始 (约 {mins} 分钟后). "
                            f"这条是系统提前触发的: 即使你此刻还处于专注/不能回复的时段, 也允许你现在主动给用户发一条消息, 话题自己找 (不要透露日程); "
-                           f"如果实在不方便, 返回{REFUSE}.", ctx)
+                           f"这条必须发出, 不要返回{REFUSE}.", ctx)
             return
 
     def _pro_fire(self, key: str, due, now, p: float, body: str, ctx=None):
@@ -4566,6 +4576,14 @@ def _selftest():
     clock[0] = day.replace(hour=13)
     assert c2._op_plan(["short1"], c2._op_slots(clock[0]))["start"] == (day + timedelta(days=1)).replace(hour=6, minute=30).isoformat(timespec="seconds"), "跨天"
     clock[0] = day.replace(hour=13)
+    # 主动发起的对话不能 [refuse to reply]: 回了就再要求一次, 第二次的回复照常显示
+    script.clear()
+    script.extend([REFUSE, "刚想到一件事."])
+    n0 = len(calls)
+    c2._trigger("proactive", "[系统] 请主动发一条消息.")
+    wait(c2)
+    assert len(calls) == n0 + 2 and PRO_NO_REFUSE in calls[-1][1][-1]["content"], "第一次被拒绝: 再要求一次"
+    assert "刚想到" in c2.visible()[-1]["text"] and REFUSE not in "".join(m["text"] for m in c2.visible())
     # 编号 / 默认: 没有有效编号 = 上次的; 无言为真永远不选
     ct = C.TERMS[[t[0] for t in C.TERMS].index("silent")]
     assert co._op_terms("[" + str([t[0] for t in C.TERMS].index("silent") + 1) + "]", ["retreat1"]) == ["retreat1"]
