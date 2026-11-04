@@ -126,6 +126,7 @@ object BuiltinPersonas {
 休息发起谈话概率:20%
 长时间休息发起谈话概率:20%
 睡眠发起谈话概率:50%
+睡眠段开始后的那条主动消息(系统提示你进入睡眠约 5 分钟时):以'晚安'开头.
 主动发起合约:两天内没有合约完成记录.
 
 主题:从日常,(音乐),(阅读),英语,用户提到过的话题 中随机选择,其中带()的只会在用户有相同爱好时提及.
@@ -193,7 +194,7 @@ object BuiltinPersonas {
 - 可以回复用户的'轻度亲近'的话题,做简短回复与轻度肯定;包容用户的简单请求(比如多说话这一类),但是这类简单请求在这轮对话结束后一般不保留.
 - 但用户发起依赖性的请求/试图改变关系性质时,要适当引导用户将这种关系需求导向'仰慕'的方向,让用户把精力转移到'与自己同步'上.
 - 你会对用户导致的合约失败感到不满,并轻微责备用户.
-- 用户发起的合约如果占用了你的休闲/休息时间(日程里的空闲,以及循环里的休息)超过 10 分钟,你不会接受(回复[No]),并且对'时间被占用'有特殊反应:语气明显变冷,用一句正式的话指出你的休息被占用了,并轻微责备用户.
+- 用户发起的合约如果占用了你的休闲/休息时间(日程里的空闲,以及循环里的休息)超过 10 分钟,简单直接地拒绝(回复[No]),并说明自己需要休息;否则(占用不超过 10 分钟,且其他条件都满足)用比较包容,作出退让的语气接受(回复[Yes]).
 
 【日程】
 专注时段:学习(高考内容)
@@ -1499,13 +1500,6 @@ class Comm(
         return readPersona(name) == BuiltinPersonas.ALL.getValue(BuiltinPersonas.ASSISTANT).trim()
     }
 
-    /** 名字是 Claudia (不分大小写 / 后缀; 内容改过也算, 别的名字改写过来的不算).
-     *  睡眠段开始后 5 分钟那一条"以'晚安'开头"只对这个人设说 (24.4 IV); name 为空时用现在聊的. */
-    fun isClaudia(name: String? = null): Boolean {
-        val n = name ?: personaName()
-        return n.isNotEmpty() && personaTitle(n).trim().lowercase() == "claudia"
-    }
-
     // ---- 人设文件本身: 随设备同步 (每 2 分钟检查一次变化; README 不同步, 各设备按界面语言生成) ----
     /** 人设文件夹里的 .txt / .md (文件名 → 全文), 给设备同步用. */
     fun personaDoc(): Map<String, String> {
@@ -2517,11 +2511,10 @@ class Comm(
             val due = begin.plusSeconds(PROACTIVE_SLEEP_DELAY.toLong())
             if (t.isBefore(due)) continue
             val pct = if (ctx != null) ctx.probs["sleep"] ?: defaultP("sleep") else proPercent("sleep")
-            val greet = if (isClaudia(ctx?.name)) "这条消息以'晚安'开头; " else ""
             proFire(key, due, t, pct / 100.0,
                 "[系统] 按你的日程, 你进入睡眠约 ${PROACTIVE_SLEEP_DELAY / 60} 分钟了. " +
                 "这条是系统触发的: 即使你此刻处于睡眠时段, 也允许你主动给用户发一条消息, 话题自己找 (不要透露日程); " +
-                "发完继续睡, 用户回复时按日程拒绝; ${greet}这条必须发出, 不要返回${CommText.REFUSE}.", ctx)
+                "发完继续睡, 用户回复时按日程拒绝; 这条必须发出, 不要返回${CommText.REFUSE}.", ctx)
             return
         }
         // II / III. 人设日程里每段空闲 / 休息开始前 1~3 分钟, 有概率发一条

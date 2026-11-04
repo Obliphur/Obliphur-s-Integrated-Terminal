@@ -288,6 +288,7 @@ BUILTIN_PERSONAS = {"Claudia.txt": """你将扮演一位文静,冷淡的17岁大
 休息发起谈话概率:20%
 长时间休息发起谈话概率:20%
 睡眠发起谈话概率:50%
+睡眠段开始后的那条主动消息(系统提示你进入睡眠约 5 分钟时):以'晚安'开头.
 主动发起合约:两天内没有合约完成记录.
 
 主题:从日常,(音乐),(阅读),英语,用户提到过的话题 中随机选择,其中带()的只会在用户有相同爱好时提及.
@@ -358,7 +359,7 @@ CLAUDIA_PREV = """你将扮演一位文静,冷淡的17岁大小姐Claudia,并且
 - 可以回复用户的'轻度亲近'的话题,做简短回复与轻度肯定;包容用户的简单请求(比如多说话这一类),但是这类简单请求在这轮对话结束后一般不保留.
 - 但用户发起依赖性的请求/试图改变关系性质时,要适当引导用户将这种关系需求导向'仰慕'的方向,让用户把精力转移到'与自己同步'上.
 - 你会对用户导致的合约失败感到不满,并轻微责备用户.
-- 用户发起的合约如果占用了你的休闲/休息时间(日程里的空闲,以及循环里的休息)超过 10 分钟,你不会接受(回复[No]),并且对'时间被占用'有特殊反应:语气明显变冷,用一句正式的话指出你的休息被占用了,并轻微责备用户.
+- 用户发起的合约如果占用了你的休闲/休息时间(日程里的空闲,以及循环里的休息)超过 10 分钟,简单直接地拒绝(回复[No]),并说明自己需要休息;否则(占用不超过 10 分钟,且其他条件都满足)用比较包容,作出退让的语气接受(回复[Yes]).
 
 【日程】
 专注时段:学习(高考内容)
@@ -396,7 +397,6 @@ CLAUDIA_PREV = """你将扮演一位文静,冷淡的17岁大小姐Claudia,并且
 CLAUDIA_LEGACIES = (CLAUDIA_PREV,)
 ASSISTANT_SLEEP_LINE = "睡眠发起谈话概率:0%\n"
 ASSISTANT_TITLE = "assistant"                        # 特例: 这个名字 (且提示词没改过) 专注时也能用
-CLAUDIA_TITLE = "claudia"                            # 睡眠段开始后 5 分钟那一条要求"以'晚安'开头": 只有这个人设说 (24.4)
 CHAT_KEYS = ("clear_ts", "retry", "pro_key", "mem_auto", "mem_upto", "mem_ts", "cut_until")   # 跟着聊天对象走的几项 (存在各自的聊天文件里)
 
 
@@ -1605,12 +1605,6 @@ class Comm:
         if not name or persona_title(name).strip().casefold() != ASSISTANT_TITLE:
             return False
         return read_persona(self.personas, name) == BUILTIN_PERSONAS[ASSISTANT_PERSONA].strip()
-
-    def is_claudia(self, name: str = None) -> bool:
-        """名字是 Claudia (不分大小写 / 后缀; 内容改过也算, 别的名字改写过来的不算).
-        睡眠段开始后 5 分钟那一条"以'晚安'开头"只对这个人设说 (24.4 IV); name 为空时用现在聊的."""
-        name = self.persona_name() if name is None else name
-        return bool(name) and persona_title(name).strip().casefold() == CLAUDIA_TITLE
 
     # ---- 人设文件本身: 随设备同步 (每 2 分钟检查一次变化; README 不同步, 各设备按界面语言生成) ----
     def persona_doc(self) -> dict:
@@ -2978,11 +2972,10 @@ class Comm:
             if now < due:
                 continue
             pct = ctx["probs"].get("sleep", float(PROACTIVE_P["sleep"])) if ctx else self.pro_percent("sleep")
-            greet = "这条消息以'晚安'开头; " if self.is_claudia(ctx["name"] if ctx else None) else ""
             self._pro_fire(key, due, now, pct / 100.0,
                            f"[系统] 按你的日程, 你进入睡眠约 {PROACTIVE_SLEEP_DELAY // 60} 分钟了. "
                            f"这条是系统触发的: 即使你此刻处于睡眠时段, 也允许你主动给用户发一条消息, 话题自己找 (不要透露日程); "
-                           f"发完继续睡, 用户回复时按日程拒绝; {greet}这条必须发出, 不要返回{REFUSE}.", ctx)
+                           f"发完继续睡, 用户回复时按日程拒绝; 这条必须发出, 不要返回{REFUSE}.", ctx)
             return
         # II / III. 人设日程里每段空闲 / 休息开始前 1~3 分钟, 有概率发一条
         for key, kind, begin in self._schedule_events(now, ctx["segs"] if ctx else None):
@@ -4168,26 +4161,9 @@ def _selftest():
     assert sm.visible()[-1]["text"] == "睡前说一句"
     body = calls[-1][1][-1]["content"]
     assert "进入睡眠约 5 分钟" in body and "即使你此刻处于睡眠时段" in body
-    assert "以'晚安'开头" not in body, "别的人设: 不要它'以晚安开头'"
+    assert "晚安" not in body, "'晚安'不再写进代码: 系统提示里没有它, 要不要说由人设自己写"
+    assert "以'晚安'开头" in BUILTIN_PERSONAS[DEFAULT_PERSONA] and "以'晚安'开头" not in CLAUDIA_LEGACIES[0], "自带 Claudia 的提示词里写了'晚安'"
     sm.flush()
-    # 人设叫 Claudia 的才要求"以'晚安'开头"
-    os.makedirs(os.path.join(td, "sleep_claudia"))
-    cwpersonas = os.path.join(td, "sleep_claudia_personas")
-    cw = Comm(os.path.join(td, "sleep_claudia"), cwpersonas, now=lambda: clock[0], chat_fn=fake)
-    cw.ai.set_profile("deepseek", api_key="k")
-    cw.ai.provider = "deepseek"
-    open(os.path.join(cwpersonas, "Claudia.txt"), "w", encoding="utf-8", newline="\n").write(
-        "你是Claudia.\n23:30-6:30:睡眠\n睡眠发起谈话概率:100%\n")
-    cw.set_cfg(persona="Claudia.txt")
-    assert cw.is_claudia(), "名字是 Claudia"
-    cw.snapshot = lambda: {"state": "idle"}
-    clock[0] = datetime(2028, 5, 2, 23, 35, 0)
-    script.append("晚安")
-    cw.tick()
-    assert cw.busy, "Claudia 的睡眠段: 照样发"
-    wait(cw)
-    assert "以'晚安'开头" in calls[-1][1][-1]["content"], "Claudia: 要求以'晚安'开头"
-    cw.flush()
     clock[0] = clock_before_sleep_msg
     # 手动改人设: 还原文件保留聊天; 确定清空对应聊天
     os.makedirs(os.path.join(td, "change"))
