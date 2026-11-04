@@ -23,9 +23,10 @@ class ContractTest {
         assertEquals(2, Contract.lifeOf(listOf("retreat2"))); assertEquals(1, Contract.lifeOf(listOf("last")))
         assertTrue(Contract.conflicts("retreat1", "last"))
         assertEquals(20, Contract.restMinutes(0)); assertEquals(21, Contract.restMinutes(1))
-        assertEquals(24, Contract.restMinutes(4)); assertEquals(40, Contract.restMinutes(19))
-        assertEquals(59, Contract.restMinutes(37)); assertEquals(60, Contract.restMinutes(38))
-        assertEquals(60, Contract.restMinutes(50)); assertEquals(60 * 60, Contract.restReward(45))
+        assertEquals(23, Contract.restMinutes(4)); assertEquals(36, Contract.restMinutes(19))
+        assertEquals(33, Contract.restMinutes(15)); assertEquals(44, Contract.restMinutes(29)); assertEquals(45, Contract.restMinutes(30))
+        assertEquals(45, Contract.restMinutes(50)); assertEquals(45 * 60, Contract.restReward(45))
+        assertEquals(25, (0 until 30).sumOf { Contract.restMinutes(it + 1) - Contract.restMinutes(it) })   // 20 → 45 均匀填满
         // 持久战: 结算的休息时长 ×110 / 120 / 130% (只影响完成奖励, 不影响合约中每段专注换来的休息)
         assertEquals(Math.round(Contract.restMinutes(10) * 60 * 1.1).toInt(), Contract.restReward(10, listOf("long1")))
         assertEquals(Math.round(Contract.restMinutes(10) * 60 * 1.3).toInt(), Contract.restReward(10, listOf("long3")))
@@ -126,7 +127,8 @@ class ContractTest {
             "short2", "seal", "fine", "silent", "game", "video", "gaze", "scar"))
         assertEquals(32, Contract.levelOf(best))
         assertEquals(20 * 60, Contract.restGift(best))             // 互联网娱乐的败退凑齐了
-        assertEquals(4 * 3600 * 1.6, Contract.durationOf(listOf("long3")), 1e-6)
+        assertEquals(3 * 3600.0, Contract.durationOf(emptyList()), 1e-6)
+        assertEquals(3 * 3600 * 1.6, Contract.durationOf(listOf("long3")), 1e-6)
     }
 
     @Test
@@ -135,7 +137,7 @@ class ContractTest {
         val t0 = LocalDateTime.of(2026, 10, 18, 9, 30)
         c.start(listOf("tired2", "info2", "chan1", "long1", "music"), "me", t0)
         assertEquals(7, c.level)
-        assertEquals(t0.plusSeconds((4 * 3600 * 1.2).toLong()), c.endAt)
+        assertEquals(t0.plusSeconds((3 * 3600 * 1.2).toLong()), c.endAt)
         // 信息阻断-II: 开始时剩 100 分钟, 只能用 65 分钟; 用超了 → 降成 -I, 多给 15 分钟
         assertNull(c.netCheck(600.0, 0.0, 6000.0, "2026-10-18"))
         assertEquals(3900.0, c.netLeft(600.0)!!, 1e-6)
@@ -237,8 +239,8 @@ class ContractTest {
         val full = c.reward
         assertEquals(0, c.rewardAt(t0)); assertEquals(Math.round(full).toInt(), c.rewardAt(t0.plusHours(5)))
         val rec = c.finish("failed", t0.plusHours(2))!!
-        // 没有完成: 按进行的比例 f(k) 给 (持久战-I: 4.8 小时里进行了 2 小时)
-        assertEquals(Math.round(full * 0.6 * Math.pow((7200.0 / 17280.0 - 0.3) / 0.7, 2.0)).toInt(), rec.optInt("reward"))
+        // 没有完成: 按进行的比例 f(k) 给 (持久战-I: 3.6 小时里进行了 2 小时)
+        assertEquals(Math.round(full * 0.6 * Math.pow((7200.0 / 12960.0 - 0.3) / 0.7, 2.0)).toInt(), rec.optInt("reward"))
         assertEquals(0.0, Contract.restShare(0.3), 1e-12); assertEquals(1.0, Contract.restShare(1.0), 1e-12)
         assertEquals(0.15, Contract.restShare(0.65), 1e-9); assertTrue(Contract.restShare(0.9999) in 0.599..0.6); assertEquals(4, rec.optInt("level")); assertEquals(6, rec.optInt("orig_level"))
         // "还在吗": 普通专注每小时; 合约专注每次随机 40 ~ 60 分钟, 和电脑上算的一样 (contract.py 自检用同一组数)
@@ -256,13 +258,13 @@ class ContractTest {
         c.start(listOf("last", "tired1"), "me", t0)
         assertEquals(1, c.violationLimit)
         assertEquals(420.0, c.bookRest(600.0), 1e-6)
-        assertEquals(24 * 60.0, c.reward, 1e-6)
-        assertEquals("completed" to t0.plusHours(4), c.due(t0.plusHours(4), false))
-        val rec = c.finish("completed", t0.plusHours(4).plusMinutes(3))!!
-        assertEquals(24 * 60, rec.optInt("reward"))
+        assertEquals(Contract.restMinutes(4) * 60.0, c.reward, 1e-6)
+        assertEquals("completed" to t0.plusHours(3), c.due(t0.plusHours(3), false))
+        val rec = c.finish("completed", t0.plusHours(3).plusMinutes(3))!!
+        assertEquals(Contract.restMinutes(4) * 60, rec.optInt("reward"))
         assertEquals(0.0, c.reward, 1e-6)
-        assertEquals(420.0, c.bookRestAfter(600.0, t0.plusHours(3)), 1e-6)
-        assertEquals(600.0, c.bookRestAfter(600.0, t0.plusHours(5)), 1e-6)
+        assertEquals(420.0, c.bookRestAfter(600.0, t0.plusHours(2)), 1e-6)
+        assertEquals(600.0, c.bookRestAfter(600.0, t0.plusHours(4)), 1e-6)
         assertTrue(c.takeFirstBreak()); assertFalse(c.takeFirstBreak())
         assertEquals(0.85, Contract.firstBreakRate(0.7), 1e-9)
         val d = Contract(tmp())
@@ -473,8 +475,8 @@ class ContractTest {
         // 效果按 15/15/15/15/10/30
         assertEquals(listOf("rest_cut", "rest_cut", "lock", "rest_add", "double", "slow", "none", "none"),
             listOf(0.0, 0.149, 0.15, 0.3, 0.45, 0.6, 0.7, 0.999).map { Contract.effect(seq(it)) })
-        // 有能选的词条: 75% 词条, 25% 效果
-        c.start(listOf("unknown"), "me", t0)
+        // 有能选的词条: 75% 词条, 25% 效果 (持久战-I: 3.6 小时, 够判定 4 个小时; 基础时长 3 小时只有 3 次)
+        c.start(listOf("unknown", "long1"), "me", t0)
         assertEquals(listOf("rest_cut" to ""), c.roll(t0, seq(0.75, 0.0))); assertTrue(c.waiting.isEmpty())
         assertEquals(1, c.roll(t0.plusHours(1), seq(0.7499)).size); assertEquals(1, c.waiting.size)
         // 再判定两次: 这次不生效, 改为判定两次 (这里: 一次词条, 一次 +10 分钟)
@@ -485,12 +487,14 @@ class ContractTest {
         assertTrue(c.randomCandidates().isEmpty()); assertEquals(listOf("none" to ""), c.roll(t0.plusHours(3), seq(0.7)))
         // 阻滞: 只减慢合约内那部分专注 (合约结束后恢复正常速度); 合约结束后才开始的专注不生效
         c.live.put("rand_n", 3)
-        assertEquals(listOf("slow" to ""), c.roll(t0.plusHours(3).plusMinutes(30), seq(0.6))); assertTrue(c.slowPending)
-        assertFalse(c.slowBind(t0.plusHours(4).plusMinutes(10))); assertTrue(c.slowPending)    // 合约结束后才开始的专注
-        val s1 = t0.plusHours(3).plusMinutes(30)
+        assertEquals(t0.plusHours(3).plusMinutes(36), c.endAt)
+        assertEquals(listOf("slow" to ""), c.roll(t0.plusHours(3).plusMinutes(10), seq(0.6))); assertTrue(c.slowPending)
+        val late = c.endAt!!.plusMinutes(10)
+        assertFalse(c.slowBind(late)); assertTrue(c.slowPending)    // 合约结束后才开始的专注
+        val s1 = c.endAt!!.minusMinutes(30)
         assertTrue(c.slowBind(s1)); assertFalse(c.slowPending); assertFalse(c.slowBind(s1))
         assertEquals(0.9, c.focusRate(s1, s1), 1e-9)
-        assertEquals(1.0, c.focusRate(s1, t0.plusHours(4).plusMinutes(10)), 1e-9)             // 合约结束后不再减慢
+        assertEquals(1.0, c.focusRate(s1, late), 1e-9)             // 合约结束后不再减慢
         assertEquals((30 * 60 * 0.9 + 30 * 60) / 60.0, c.focusMinutes(s1, 3600.0), 1e-6)
         // 封锁 (MECHANICS 18.4): 只挑今天整点记录页上已经结束、已经填写了的整小时格; 没填的不挑
         val now = LocalDateTime.of(2026, 10, 18, 12, 10)
@@ -607,8 +611,8 @@ class ContractTest {
         val id = c.id
         assertEquals(id, c.focusTag(t0.plusHours(1))); assertEquals(0L, c.focusTag(t0.minusMinutes(1)))
         assertFalse(c.completed(id))
-        c.finish("completed", t0.plusHours(4).plusMinutes(48))
-        assertEquals(id, c.focusTag(t0.plusHours(4))); assertTrue(c.completed(id))
-        assertEquals(0L, c.focusTag(t0.plusHours(5)))
+        c.finish("completed", t0.plusHours(3).plusMinutes(36))
+        assertEquals(id, c.focusTag(t0.plusHours(3))); assertTrue(c.completed(id))
+        assertEquals(0L, c.focusTag(t0.plusHours(4)))
     }
 }

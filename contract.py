@@ -14,7 +14,7 @@ import config
 from config import load_json_file, save_json_file
 
 
-BASE_SECONDS = 4 * 3600          # 合约的初始时长
+BASE_SECONDS = 3 * 3600          # 合约的初始时长
 IDLE_LIMIT = 15 * 60             # 合约中空闲 (不在专注也不在休息) 累计超过这么久就结束 (累计, 不要求连续)
 OFFLINE_LIMIT = IDLE_LIMIT       # 合约中有绑定的设备离线累计超过这么久就失败 (和空闲共用这 15 分钟, 重叠的部分只算一次)
 VIOLATION_LIMIT = 4              # 初始目标生命值: 每违反一次减一, 减到 0 合约失败
@@ -140,8 +140,8 @@ ECHO_COOLDOWN = 120
 # 退路封锁只在目标生命值减少后不为 0 时才选
 
 # 总等级 → 完成合约时给的休息时间 (分钟, 固定; 按结束时的等级)
-# 0 级 20 分钟, 38 级起封顶 90 分钟; 中间每一级按直线填充, 四舍五入到整分钟
-REST_MIN, REST_MAX, REST_TOP = 20, 60, 38
+# 0 级 20 分钟, 30 级起封顶 45 分钟; 中间每一级按直线均匀填充, 四舍五入到整分钟
+REST_MIN, REST_MAX, REST_TOP = 20, 45, 30
 
 # 乐理之灾: 常见的音乐播放软件 (exe 名, 小写) 和音频文件扩展名 (窗口标题里出现就算在放).
 # 视频播放器 (PotPlayer, VLC, MPC, KMPlayer, Windows 媒体播放器 …) 不在名单里: 只有用它们打开音频文件 (看标题) 才算.
@@ -1966,8 +1966,9 @@ def _selftest():
     assert conflicts("retreat1", "last") and conflicts("retreat2", "last"), "退路封锁和最后防线是同一组"
     assert not {"vlc.exe", "potplayermini64.exe", "mpc-hc64.exe", "wmplayer.exe"} & MUSIC_EXES, "视频播放器不算"
     assert level_label(9, 12) == "9[12-3]" and level_label(12, 12) == "12" and level_label(13, 12) == "13"
-    assert rest_minutes(0) == 20 and rest_minutes(1) == 21 and rest_minutes(4) == 24 and rest_minutes(19) == 40
-    assert rest_minutes(37) == 59 and rest_minutes(38) == 60 and rest_minutes(50) == 60 and rest_reward(45) == 60 * 60
+    assert rest_minutes(0) == 20 and rest_minutes(1) == 21 and rest_minutes(4) == 23 and rest_minutes(19) == 36
+    assert rest_minutes(15) == 33 and rest_minutes(29) == 44 and rest_minutes(30) == 45 and rest_minutes(50) == 45 and rest_reward(45) == 45 * 60
+    assert sum(rest_minutes(i + 1) - rest_minutes(i) for i in range(30)) == 25, "20 → 45: 每一级约 +0.83 分钟, 均匀填满"
     # 持久战: 结算的休息时长 ×110 / 120 / 130% (只影响完成合约的奖励, 不影响合约中每段专注换来的休息)
     assert rest_reward(10, ["long1"]) == round(rest_minutes(10) * 60 * 1.1)
     assert rest_reward(10, ["long3"]) == round(rest_minutes(10) * 60 * 1.3) and rest_reward(10, ["tired2"]) == rest_minutes(10) * 60
@@ -1981,7 +1982,7 @@ def _selftest():
     assert not conflicts("erode1", "info2") and not conflicts("suppress", "fog")
     assert not conflicts("jam", "music") and not conflicts("seal", "fine")
     assert clean_terms(["long2", "long1", "x", "suppress", "jam"]) == ["long2", "suppress", "jam"]
-    assert duration_of([]) == 4 * 3600 and duration_of(["long3"]) == int(4 * 3600 * 1.6)
+    assert duration_of([]) == 3 * 3600 and duration_of(["long3"]) == int(round(3 * 3600 * 1.6))
     # 词条板: 每个词条正好一格, 一列里每个等级最多一个; 同一组 (系列) 在同一列; 两页各 18 个词条
     assert sorted(t for col in BOARD for t in col) == sorted(BY_ID) and len(set(LAYOUT.values())) == len(TERMS)
     assert all([BY_ID[t][2] for t in col] == sorted({BY_ID[t][2] for t in col}) for col in BOARD)
@@ -2094,7 +2095,7 @@ def _selftest():
     c = Contract(tempfile.mkdtemp())
     t0 = datetime(2026, 10, 18, 9, 30)
     c.start(["tired2", "info2", "chan1", "long1", "music"], owner="me", now=t0)
-    assert c.active and c.level == 2 + 2 + 1 + 1 + 1 and c.end_at == t0 + timedelta(seconds=int(4 * 3600 * 1.2))
+    assert c.active and c.level == 2 + 2 + 1 + 1 + 1 and c.end_at == t0 + timedelta(seconds=int(round(3 * 3600 * 1.2)))
     assert c.overrides() == {} and not c.fog() and not c.hour_forced()
     # 信息阻断-II: 开始时剩 100 分钟, 只能用 65 分钟; 用超了 → 降成 -I, 多给 15 分钟
     assert c.net_check(600, 0, 6000, "2026-10-18") == ("", "")
@@ -2312,7 +2313,7 @@ def _selftest():
     # 有能选的词条: 75% 词条, 25% 效果; 效果按 15/15/15/15/10/30
     assert [Contract._effect(_Rng([x])) for x in (0.0, 0.149, 0.15, 0.3, 0.45, 0.6, 0.7, 0.999)] == \
         ["rest_cut", "rest_cut", "lock", "rest_add", "double", "slow", "none", "none"]
-    c.start(["unknown"], owner="me", now=t0)
+    c.start(["unknown", "long1"], owner="me", now=t0)       # 持久战-I: 3.6 小时, 够判定 4 个小时 (基础时长 3 小时只有 3 次)
     assert c.roll(t0, _Rng([0.75, 0.0])) == [("rest_cut", "")] and c.waiting == {}, "0.75 及以上: 效果"
     assert c.roll(t0 + timedelta(hours=1), _Rng([0.7499])) and len(c.waiting) == 1
     # 再判定两次: 这次不生效, 改为判定两次 (这里: 一次词条, 一次 +10 分钟)
@@ -2322,11 +2323,12 @@ def _selftest():
     c.live["rand_used"] = [t[0] for t in TERMS]
     assert c.random_candidates() == [] and c.roll(t0 + timedelta(hours=3), _Rng([0.7])) == [("none", "")]
     # 阻滞: 只减慢合约内那部分专注 (合约结束后恢复正常速度); 合约结束后才开始的专注不生效
-    c.live["rand_n"] = 3                       # 合约只有 4 小时: 再判定一次第 4 个小时
-    assert c.roll(t0 + timedelta(hours=3, minutes=30), _Rng([0.6])) == [("slow", "")] and c.slow_pending
-    late = t0 + timedelta(hours=4, minutes=10)
+    c.live["rand_n"] = 3                       # 合约有 3.6 小时: 再判定一次第 4 个小时
+    assert c.end_at == t0 + timedelta(hours=3, minutes=36)
+    assert c.roll(t0 + timedelta(hours=3, minutes=10), _Rng([0.6])) == [("slow", "")] and c.slow_pending
+    late = c.end_at + timedelta(minutes=10)
     assert not c.slow_bind(late) and c.slow_pending, "合约结束后才开始的专注不落上阻滞"
-    s1 = t0 + timedelta(hours=3, minutes=30)
+    s1 = c.end_at - timedelta(minutes=30)
     assert c.slow_bind(s1) and not c.slow_pending and not c.slow_bind(s1)
     assert c.focus_rate(s1, s1) == 0.9 and c.focus_rate(s1, late) == 1.0, "合约结束后不再减慢"
     # 这段专注: 合约内 30 分钟按 90% 算, 合约结束后的 30 分钟按正常速度
@@ -2402,9 +2404,9 @@ def _selftest():
     assert c.cam == "" and c.records("pc") == ["camera"]
     c.start(["tired2", "chan1", "long1"], owner="me", now=t0)
     assert c.quick_check() == ""
-    # 休息: 疲惫 ×0.6; 完成时按降级后的等级给固定的时间 (等级 4 → 27 分钟)
+    # 休息: 疲惫 ×0.6; 完成时按降级后的等级给固定的时间 (等级 4 → 23 分钟)
     assert abs(c.book_rest(1000, t0 + timedelta(hours=1)) - 600) < 1e-6
-    assert c.level == 4 and c.reward == round(24 * 60 * 1.1), "持久战 long1: 结算休息时长 ×110%"
+    assert c.level == 4 and c.reward == round(rest_minutes(4) * 60 * 1.1), "持久战 long1: 结算休息时长 ×110%"
     # 空闲累计 15 分钟结束 (不要求连续)
     H = timedelta(hours=1)
     M = lambda n: timedelta(minutes=n)
@@ -2441,7 +2443,7 @@ def _selftest():
     full = c.reward
     assert c.reward_at(t0) == 0 and c.reward_at(t0 + timedelta(hours=5)) == round(full), "k = 0: 0%, k = 1: 100%"
     rec = c.finish("failed", t0 + timedelta(hours=2))
-    assert rec["reward"] == round(full * 0.6 * ((7200 / 17280 - 0.3) / 0.7) ** 2), "没有完成: 按进行的比例 f(k) 给"
+    assert rec["reward"] == round(full * 0.6 * ((7200 / duration_of(["long1"]) - 0.3) / 0.7) ** 2), "没有完成: 按进行的比例 f(k) 给"
     assert rest_share(0.0) == 0.0 and rest_share(0.3) == 0.0 and rest_share(1.0) == 1.0
     assert abs(rest_share(0.65) - 0.15) < 1e-9 and 0.599 < rest_share(0.9999) < 0.6, "k → 1⁻ 趋近 0.6"
     assert rest_share(0.5) - rest_share(0.4) < rest_share(0.9) - rest_share(0.8), "f'' > 0"
@@ -2496,21 +2498,21 @@ def _selftest():
     assert c.level == 10 and c.orig_level == 10 and c.violation_limit == 1
     assert c.violate("chan1") == (True, "") and c.level == 9   # 目标生命值只有 1
 
-    # 完成: 按等级给固定的休息时间 (等级 4 → 27 分钟), 第一次休息的结转比例
+    # 完成: 按等级给固定的休息时间 (等级 4 → 23 分钟), 第一次休息的结转比例
     c.start(["last", "tired1"], owner="me", now=t0)
-    assert c.violation_limit == 1 and abs(c.book_rest(600, t0) - 420) < 1e-6 and c.reward == 24 * 60
-    assert c.due(t0 + timedelta(hours=4), False) == ("completed", t0 + timedelta(hours=4))
-    rec = c.finish("completed", t0 + timedelta(hours=4, minutes=3))
-    assert rec["reward"] == 24 * 60 and rec["end"] == (t0 + timedelta(hours=4)).isoformat()
-    assert abs(c.book_rest_after(600, t0 + timedelta(hours=3)) - 420) < 1e-6 and c.reward == 0, "完成后才结束的专注只乘疲惫"
-    assert c.book_rest_after(600, t0 + timedelta(hours=5)) == 600
+    assert c.violation_limit == 1 and abs(c.book_rest(600, t0) - 420) < 1e-6 and c.reward == rest_minutes(4) * 60
+    assert c.due(t0 + timedelta(hours=3), False) == ("completed", t0 + timedelta(hours=3))
+    rec = c.finish("completed", t0 + timedelta(hours=3, minutes=3))
+    assert rec["reward"] == rest_minutes(4) * 60 and rec["end"] == (t0 + timedelta(hours=3)).isoformat()
+    assert abs(c.book_rest_after(600, t0 + timedelta(hours=2)) - 420) < 1e-6 and c.reward == 0, "完成后才结束的专注只乘疲惫"
+    assert c.book_rest_after(600, t0 + timedelta(hours=4)) == 600
     assert c.take_first_break() and not c.take_first_break()
     assert abs(Contract.first_break_rate(0.7) - 0.85) < 1e-9
 
     # 最近结束的那个, 不是最近开始的那个
     c.start(["long1"], now=t0 - timedelta(days=1))
     c.finish("abandoned", t0 - timedelta(days=1) + timedelta(hours=1))
-    assert c.last["result"] == "completed" and abs(c.book_rest_after(600, t0 + timedelta(hours=3)) - 420) < 1e-6
+    assert c.last["result"] == "completed" and abs(c.book_rest_after(600, t0 + timedelta(hours=2)) - 420) < 1e-6
 
     # 合约开始前积攒的休息时间 (20 分钟) + 支援短缺-II: 一点都不能用
     c.start(["short2"], owner="me", now=t0, pre=1200)
@@ -2603,9 +2605,9 @@ def _selftest():
     gid = str(g.live["id"])
     assert g.focus_tag(g0 + timedelta(hours=1)) == gid and g.focus_tag(g0 - timedelta(minutes=1)) == ""
     assert not g.completed(gid)
-    g.finish("completed", g0 + timedelta(hours=4, minutes=48))
-    assert g.focus_tag(g0 + timedelta(hours=4)) == gid and g.completed(gid), "合约结束后照样认得出来"
-    assert g.focus_tag(g0 + timedelta(hours=5)) == "" and not g.completed("")
+    g.finish("completed", g0 + timedelta(hours=3, minutes=36))
+    assert g.focus_tag(g0 + timedelta(hours=3)) == gid and g.completed(gid), "合约结束后照样认得出来"
+    assert g.focus_tag(g0 + timedelta(hours=4)) == "" and not g.completed("")
 
     # 细化规范生效过的小时一直分两格: 未知变量的细化规范到时移除后, 后半小时照样算
     f = Contract(tempfile.mkdtemp())

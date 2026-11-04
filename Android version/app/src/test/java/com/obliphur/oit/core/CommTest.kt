@@ -282,7 +282,7 @@ class CommTest {
         val a = d0.withHour(14)
         val b = d0.withHour(18)
         val jt = CommData.jointText(listOf("long1"), a, b)
-        for (k in listOf("【合约的基础规则】", "初始时长 4 小时", "目标生命值", "开始时间 2026-11-04 14:00", "预计结束时间 2026-11-04 18:00",
+        for (k in listOf("【合约的基础规则】", "初始时长 3 小时", "目标生命值", "开始时间 2026-11-04 14:00", "预计结束时间 2026-11-04 18:00",
             "持久战-I(环境, 等级1)", "[Yes]", "[No]", "危机等级 1")) assertTrue(k, k in jt)
         assertTrue(jt.indexOf("【合约的基础规则】") < jt.indexOf("【联合行动】") && jt.indexOf("【联合行动】") < jt.indexOf("【选择的词条】"))
         assertTrue(CommData.jointLabel(listOf("long1"), a, b, a.toLocalDate()).endsWith("14:00 - 18:00 · 1 个词条") && "(没有选词条)" in CommData.jointText(emptyList(), a, b))

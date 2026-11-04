@@ -131,7 +131,7 @@ def prefix_prompt(split: bool = True) -> str:
         "你到下一次空闲时需要一次性处理用户发来的消息.\n"
         "III.系统有的时候会要求你主动发消息,你需要根据人设自己找话题.\n"
         "IV.根据你的专注时间段 你可能需要主动结束话题.你可以稍微延迟你的进入专注的时间点,不超过5min.\n"
-        "V.你需要了解OIT的独占功能'合约':一个可以自选减益的 初始时长4h,生命值4的 让OIT变得更严苛的模块.\n"
+        "V.你需要了解OIT的独占功能'合约':一个可以自选减益的 初始时长3h,生命值4的 让OIT变得更严苛的模块.\n"
         "如果你需要相关信息 同时输入[refuse to reply][contract] 可以获得词条库以回复用户.\n"
         "如果需要更细致的信息 前往https://github.com/Obliphur/Obliphur-s-Integrated-Terminal下的MECHANICS.md查看.\n"
         "VI.不要主动透露日程/专注状态.\n"
@@ -4532,7 +4532,7 @@ def _selftest():
     co._trigger("chase", "[系统] 再追问一次.")
     wait(co)
     assert co.visible()[-1]["text"] == "好的, 我知道了." and "operation" not in str(co.messages[-1].get("api") or "")
-    # 选的词条放不进任何开始时间 (重要活动每 3 小时一个, 哪个结尾后面都不够 4 小时): 不发, 并告诉对方
+    # 选的词条放不进任何开始时间 (重要活动每 3 小时一个 (中间只空 2.5 小时), 哪个结尾后面都不够合约的 3 小时): 不发, 并告诉对方
     clock[0] = day.replace(hour=13)
     cf2 = joint_comm("发起二", "你是发起.\n17:00-17:30:午饭\n20:00-20:30:晚饭\n23:00-23:30:夜宵\n2:00-2:30:甲\n5:00-5:30:乙\n8:00-8:30:丙\n11:00-11:30:丁\n14:00-14:30:戊\n")
     script.clear()

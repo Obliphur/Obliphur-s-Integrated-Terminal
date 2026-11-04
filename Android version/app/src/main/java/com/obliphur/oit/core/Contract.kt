@@ -39,7 +39,7 @@ class Combo(val id: String, val name: String, val color: String, val reqs: List<
  */
 class Contract(private val file: File) {
     companion object {
-        const val BASE_SECONDS = 4 * 3600.0
+        const val BASE_SECONDS = 3 * 3600.0
         const val IDLE_LIMIT = 15 * 60.0
         /** 合约中有绑定的设备离线累计超过这么久就失败 (不要求连续). */
         const val OFFLINE_LIMIT = IDLE_LIMIT      // 和空闲共用这 15 分钟 (重叠的部分只算一次)
@@ -276,10 +276,10 @@ class Contract(private val file: File) {
         const val ECHO_COOLDOWN = 120L
 
         /** 总等级 → 完成合约时给的休息时间 (分钟, 固定; 按结束时的等级). */
-        // 0 级 20 分钟, 38 级起封顶 90 分钟; 中间每一级按直线填充, 四舍五入到整分钟
+        // 0 级 20 分钟, 30 级起封顶 45 分钟; 中间每一级按直线均匀填充, 四舍五入到整分钟
         private const val REST_MIN = 20
-        private const val REST_MAX = 60
-        private const val REST_TOP = 38
+        private const val REST_MAX = 45
+        private const val REST_TOP = 30
 
         /** 乐理之灾: 常见的音乐播放应用 (包名). 视频播放器 (VLC, MX Player …) 不算. */
         val MUSIC_APPS = setOf(
