@@ -365,6 +365,8 @@ class BreakTimerApp:
         self.comm.on_proactive = self._comm_ping
         self.comm.on_joint_due = self._joint_due
         self._joint_pick = False         # 联合行动: 正在合约页选词条 (点"确定选择"回到沟通页)
+        self._inv_id = ""                # 对方 (AI) 发起的联合行动: 已经跳到合约页的那一个邀请的编号
+        self._inv_prev = []              # 邀请把合约页的词条换成对方选的之前, 用户自己选的词条 (拒绝 / 错过后换回去)
         self._rules_win = None
         self._marks_shown = None        # 指令标记现在画在哪些按钮上 (None = 还没画过)
         self._mark_img = None
@@ -826,7 +828,8 @@ class BreakTimerApp:
                                               on_stop_screen=self.terminate_recording,
                                               on_close_rand=self.close_random_term,
                                               on_lift_ban=self.lift_net_ban,
-                                              on_pick=self._warn_pick_term, on_joint_pick=self._joint_pick_done)
+                                              on_pick=self._warn_pick_term, on_joint_pick=self._joint_pick_done,
+                                              invite_fn=self._joint_invite_info, on_invite=self._joint_invite_respond)
         self._prepare_page(self.pages["contract"])
         self.pages["settings"] = SettingsPage(
             self.content, self.settings,
@@ -1217,6 +1220,7 @@ class BreakTimerApp:
             return
         try:
             self.comm.tick()
+            self._joint_invite_watch()
             change = self.comm.check_persona_changes()
             if change:
                 self._show_persona_change(change)
@@ -1277,6 +1281,55 @@ class BreakTimerApp:
         self._joint_pick_cancel()
         self.show_page("comm")
         self.pages["comm"].ask_joint_time(list(terms))
+
+    # ---- 对方 (AI) 发起的联合行动 (MECHANICS 24.9.3): 邀请到了 → 界面跳到合约页, 词条换成对方选的, 右下角是 拒绝 / 接受 ----
+    def _joint_invite_info(self) -> dict:
+        """合约页用: 有没有等用户回复的邀请 ({} = 没有), 以及右下角上方的说明."""
+        j = self.comm.joint_invite()
+        if not j:
+            return {}
+        try:
+            a, b = datetime.fromisoformat(j["start"]), datetime.fromisoformat(j["end"])
+            span = f"{a:%H:%M} - {b:%H:%M}" if a.date() == datetime.now().date() else f"{a:%m-%d %H:%M} - {b:%H:%M}"
+        except (KeyError, TypeError, ValueError):
+            span = ""
+        return {"id": str(j.get("id") or ""),
+                "hint": tr("🤝  {name} 邀请你一起行动 {span}", name=self.comm.joint_partner(), span=span).strip()}
+
+    def _joint_invite_watch(self):
+        """每秒看一次: 对方发起了联合行动 → 跳到合约页, 词条换成对方选的 (用户原来选的先记着). 拒绝 / 错过 / 聊天被清空以后换回原来的,
+        接受了就留着 (到约定的开始时间在这里点开始行动). 邀请到的时候在合约中 / 指令页 / 沟通不能用 (专注 / 睡眠 / 外出): 先不跳, 能跳了再跳."""
+        inv = self.comm.joint_invite()
+        iid = str(inv.get("id") or "") if inv else ""
+        if iid and iid != self._inv_id:
+            if self.shutting_down or self.contract.active or getattr(self, "current_page", "") == "prescript" or self._comm_blocked():
+                return
+            terms = list(inv.get("terms") or [])
+            if not self._inv_id:
+                self._inv_prev = [] if list(self.contract.draft) == terms else list(self.contract.draft)
+            self._inv_id = iid
+            self._joint_pick_cancel()                      # 正在为自己发起的联合行动选词条: 取消
+            self.contract.set_draft(terms)
+            self._paint_sidebar()
+            self.show_page("contract")
+            toast.notice(tr("🤝  联合行动"), tr("{name} 邀请你一起行动: 词条已换成对方所选的, 在右下角选择「拒绝」或「接受」.",
+                                                name=self.comm.joint_partner()))
+        elif not iid and self._inv_id:
+            self._inv_id = ""
+            prev, self._inv_prev = self._inv_prev, []
+            if self.comm.joint_state() != "yes" and not self.contract.active:      # 拒绝 / 错过 / 作废: 换回原来选的词条
+                self.contract.set_draft(prev)
+            self._paint_sidebar()
+            self._refresh_if_visible("contract")
+
+    def _joint_invite_respond(self, accept: bool):
+        """合约页右下角点了 拒绝 / 接受."""
+        why = self.comm.joint_respond(accept)
+        if why:
+            toast.warn(tr(why))
+        else:
+            toast.info(tr("已接受联合行动: 到约定的开始时间, 在这里点「开始行动」.") if accept else tr("已拒绝联合行动."))
+        self._joint_invite_watch()
 
     def _joint_due(self, joint: dict):
         """联合行动约定的开始时间到了 (对方已经接受): 把约定的词条放进合约页, 提示用户开始行动."""

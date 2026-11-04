@@ -280,6 +280,8 @@ fun ContractScreen() {
     val core = OitApp.instance.core
     val c = core.contract
     val active = c.active
+    // 对方 (AI) 发起的联合行动: 词条是对方选的 (只能看), 右下角换成"拒绝"和"接受"; null = 没有
+    val invite = if (active) null else core.jointInviteHint()
     val now = LocalDateTime.now()
     var tapped by rememberSaveable { mutableStateOf("") }
     var tappedCombo by rememberSaveable { mutableStateOf("") }     // 组合页点过的组合: 效果写在词条板下面一行
@@ -301,6 +303,8 @@ fun ContractScreen() {
             Text(if (p.brand.isEmpty()) "CONTRACT" else "CONTRACT · ${p.brand}", color = p.dim, fontWeight = FontWeight.Bold, fontSize = 14.sp,
                 modifier = Modifier.padding(start = 10.dp).weight(1f))
             if (active) Text(tr("合约进行中"), color = p.danger, fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(end = 12.dp))
+            else if (invite != null) Text(tr("🤝  联合行动邀请"), color = p.danger, fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(end = 12.dp))
             // 右上角: 合约期间的特别规则 (两栏)
             val n = if (active) c.violationLimit else Contract.lifeOf(c.draft)
@@ -398,6 +402,7 @@ fun ContractScreen() {
                                     .border(if (cm != null) 3.dp else 2.dp, rim, HEX)
                                     .clickable {
                                         tapped = t.id
+                                        if (invite != null) return@clickable          // 对方选的词条: 只能看说明, 不能改
                                         if (active) {
                                             if (picked) ask = "close:" + t.id
                                             else if (ban) ask = "lift:" + t.id
@@ -524,7 +529,7 @@ fun ContractScreen() {
         val orig = if (active) c.origLevel else level
         Row(Modifier.fillMaxWidth().background(p.bar).padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically) {
-            if (!active) Text(tr("🗑  清空"), color = p.clearText, fontWeight = FontWeight.Bold,
+            if (!active && invite == null) Text(tr("🗑  清空"), color = p.clearText, fontWeight = FontWeight.Bold,
                 modifier = Modifier.background(p.clear, RoundedCornerShape(2.dp))
                     .clickable { c.setDraft(emptyList()); core.changed() }.padding(horizontal = 14.dp, vertical = 8.dp))
             Column(Modifier.padding(start = 16.dp)) {
@@ -543,8 +548,8 @@ fun ContractScreen() {
                 Text(tr("⚠  当前合约难度极大 请谨慎行动"), color = p.warn, fontSize = 12.sp, fontWeight = FontWeight.Bold,
                     modifier = Modifier.widthIn(max = 170.dp).padding(end = 12.dp))
             // 联合行动 (沟通页 🤝) 选词条中: 开始行动的位置换成"确定选择", 不开始合约
-            val pick = !active && core.jointPick
-            val why = if (active || pick) "" else core.contractBlock()
+            val pick = !active && invite == null && core.jointPick
+            val why = if (active || pick || invite != null) "" else core.contractBlock()
             val hint = if (pick) tr("联合行动: 选好词条后点下面的「确定选择」(去别的页面 = 取消)") else why
             // 合约中只要还有在录的词条 (任意设备) 就多一个"终止录像"按钮 (任意一端都能终止整个录制, MECHANICS 18.8):
             // 和"提前结束"同时出现时, 终止录像在左, 提前结束在右; 否则 (只有一个按钮) 还按原来的靠右
@@ -567,7 +572,20 @@ fun ContractScreen() {
                         }
                         .padding(horizontal = 26.dp, vertical = 12.dp))
             }
-            if (recording) {
+            if (invite != null) {
+                // 对方发起的联合行动: 右下角是"拒绝"和"接受" (词条已经是对方选的)
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(invite, color = p.text, fontSize = 10.sp, modifier = Modifier.padding(bottom = 2.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(tr("拒绝"), color = p.clearText, fontSize = 18.sp, fontWeight = FontWeight.Bold,
+                            modifier = Modifier.background(p.clear, RoundedCornerShape(2.dp))
+                                .clickable { core.jointInviteRespond(false) }.padding(horizontal = 20.dp, vertical = 12.dp))
+                        Text(tr("接受"), color = p.startText, fontSize = 18.sp, fontWeight = FontWeight.Bold,
+                            modifier = Modifier.background(p.start, RoundedCornerShape(2.dp))
+                                .clickable { core.jointInviteRespond(true) }.padding(horizontal = 20.dp, vertical = 12.dp))
+                    }
+                }
+            } else if (recording) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(tr("■  终止录像"), color = p.clearText, fontSize = 15.sp, fontWeight = FontWeight.Bold,
                         modifier = Modifier.background(p.clear, RoundedCornerShape(2.dp))

@@ -1447,5 +1447,11 @@ object EnStrings {
         "约定的开始时间到了: 在合约页点「开始行动」(词条已经选好), 对方会和你同步专注 / 休息." to "The agreed start time has come: click \"Start operation\" on the Contract page (the terms are already selected); they will sync their focus / rest with yours.",
         "联合行动: 选好词条后点下面的「确定选择」(去别的页面 = 取消)" to "Joint action: pick the terms, then click \"Confirm selection\" below (going to another page cancels)",
         "确定选择" to "Confirm selection",
+        "🤝  联合行动邀请" to "🤝  Joint-action invitation",
+        "🤝  对方邀请你一起行动" to "🤝  Invited you to act together",
+        "🤝  {name} 邀请你一起行动 {span}" to "🤝  {name} invites you to act together {span}",
+        "{name} 邀请你一起行动: 词条已换成对方所选的, 在右下角选择「拒绝」或「接受」." to "{name} invites you to act together: the terms are now the ones they picked. Choose \"Reject\" or \"Accept\" at the bottom right.",
+        "已接受联合行动: 到约定的开始时间, 在这里点「开始行动」." to "Joint action accepted: at the agreed start time, click \"Start operation\" here.",
+        "已拒绝联合行动." to "Joint action declined.",
     )
 }

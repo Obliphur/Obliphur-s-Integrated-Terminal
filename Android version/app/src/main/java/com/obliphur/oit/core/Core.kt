@@ -384,6 +384,53 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         host.openPage("comm")
     }
 
+    // ---- 对方 (AI) 发起的联合行动 (MECHANICS 24.9.3): 邀请到了 → 界面跳到合约页, 词条换成对方选的, 右下角是 拒绝 / 接受 ----
+    /** 已经跳到合约页的那个邀请的编号. */
+    private var invId = ""
+    /** 邀请把合约页的词条换成对方选的之前, 用户自己选的词条 (拒绝 / 错过后换回去). */
+    private var invPrev: List<String> = emptyList()
+
+    /** 合约页用: 等用户回复的邀请的说明 (右下角上方); null = 没有邀请. */
+    fun jointInviteHint(): String? {
+        val j = comm.jointInvite() ?: return null
+        val a = parseIso(j.start)
+        val b = parseIso(j.end)
+        val span = if (a == null || b == null) "" else
+            (if (a.toLocalDate() == LocalDate.now()) a.format(Fmt.HM) else a.format(Fmt.MDHM)) + " - " + b.format(Fmt.HM)
+        return tr("🤝  {name} 邀请你一起行动 {span}", "name" to comm.jointPartner(), "span" to span).trim()
+    }
+
+    /** 每秒看一次: 对方发起了联合行动 → 跳到合约页, 词条换成对方选的 (用户原来选的先记着). 拒绝 / 错过 / 聊天被清空以后换回原来的,
+     *  接受了就留着 (到约定的开始时间在这里点开始行动). 邀请到的时候应用不在前台 / 合约中 / 指令页 / 沟通不能用: 先不跳, 能跳了再跳. */
+    private fun jointInviteWatch() {
+        val inv = comm.jointInvite()
+        if (inv != null && inv.id != invId) {
+            if (!uiForeground || contract.active || currentPage == "prescript" || commBlocked().isNotEmpty()) return
+            if (invId.isEmpty()) invPrev = if (contract.draft == inv.terms) emptyList() else contract.draft
+            invId = inv.id
+            jointPick = false                          // 正在为自己发起的联合行动选词条: 取消
+            contract.setDraft(inv.terms)
+            host.openPage("contract")
+            toast(tr("{name} 邀请你一起行动: 词条已换成对方所选的, 在右下角选择「拒绝」或「接受」.", "name" to comm.jointPartner()), "info", true)
+            changed()
+        } else if (inv == null && invId.isNotEmpty()) {
+            invId = ""
+            val prev = invPrev
+            invPrev = emptyList()
+            if (comm.jointState() != "yes" && !contract.active) contract.setDraft(prev)      // 拒绝 / 错过 / 作废: 换回原来选的词条
+            changed()
+        }
+    }
+
+    /** 合约页右下角点了 拒绝 / 接受. */
+    fun jointInviteRespond(accept: Boolean) {
+        val why = comm.jointRespond(accept)
+        if (why.isNotEmpty()) toast(tr(why), "warn")
+        else toast(if (accept) tr("已接受联合行动: 到约定的开始时间, 在这里点「开始行动」.") else tr("已拒绝联合行动."))
+        runCatching { jointInviteWatch() }
+        changed()
+    }
+
     /** 联合行动约定的开始时间到了 (对方已经接受): 把约定的词条放进合约页, 提示用户开始行动. */
     private fun jointDue(j: Joint) {
         if (!contract.active) { contract.setDraft(j.terms); changed() }
@@ -677,6 +724,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         timer.tick()
         runCatching { prescript.tick() }
         runCatching { comm.tick() }
+        runCatching { jointInviteWatch() }
         runCatching { comm.checkPersonaChanges() }.getOrNull()?.let { showPersonaChange(it) }
         beatPower()
         runCatching { checkAdapterBack(); checkAwayPriority(); checkContractConflicts() }

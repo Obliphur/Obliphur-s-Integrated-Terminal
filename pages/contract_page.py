@@ -122,7 +122,7 @@ class ContractPage(tk.Frame):
 
     def __init__(self, master, contract, on_start=None, on_abandon=None, net_used=None, on_change=None,
                  blocked=None, rec_text=None, on_stop_screen=None, on_close_rand=None, on_lift_ban=None,
-                 on_pick=None, on_joint_pick=None):
+                 on_pick=None, on_joint_pick=None, invite_fn=None, on_invite=None):
         self.P = P = palette()
         self.theme = theme()
         super().__init__(master, bg=P["bg"])
@@ -139,6 +139,9 @@ class ContractPage(tk.Frame):
         self.on_pick = on_pick or (lambda tid: True)  # 选中某个词条前的警告 (录像): 返回要不要选
         self.on_joint_pick = on_joint_pick            # 联合行动 (沟通页 🤝): 选好词条, 点"确定选择"之后调用 (词条列表)
         self._joint_pick = False                      # 联合行动选词条中: 开始行动的按钮换成"确定选择", 不开始合约
+        self.invite_fn = invite_fn or (lambda: {})    # 对方 (AI) 发起的联合行动邀请 ({} = 没有): 词条是对方选的, 右下角换成"拒绝"和"接受"
+        self.on_invite = on_invite                    # 点了"拒绝" (False) / "接受" (True)
+        self._inv = {}                                # refresh() 时读到的邀请
         self._hover = ""
         self._list_key = None
         self._tile_state = {}
@@ -423,7 +426,14 @@ class ContractPage(tk.Frame):
     def _selected(self):
         return self.c.terms if self.c.active else self.c.draft
 
+    def _inv_on(self) -> bool:
+        """现在是不是在回复对方发起的联合行动: 词条是对方选的, 只能看, 不能改."""
+        return bool(self._inv) and not self.c.active
+
     def _click(self, tid: str):
+        if self._inv_on():
+            self._enter(tid)
+            return
         if self.c.active:
             if tid in self.c.rand and self.on_close_rand:
                 self.on_close_rand(tid)
@@ -448,7 +458,7 @@ class ContractPage(tk.Frame):
         self._hover = tid
         rand = self.c.active and tid in self.c.rand
         ban = self.c.can_lift(tid)
-        self.canvas.configure(cursor="hand2" if rand or ban or not self.c.active else "arrow")
+        self.canvas.configure(cursor="hand2" if rand or ban or not (self.c.active or self._inv_on()) else "arrow")
         text = f"{marks(C.BY_ID[tid][2])}  {term_name(tid)} : {term_desc(tid)}"
         if rand:
             text += "   " + tr("[未知变量选中 · 点击关闭, 算一次违反]")
@@ -604,6 +614,14 @@ class ContractPage(tk.Frame):
                                       self._start, big=True)
         self.btn_end = self._button(self.start_box, tr("■  提前结束"), P["start"], P["start_hover"],
                                     P["start_text"], lambda: self.on_abandon and self.on_abandon(), big=True)
+        # 对方 (AI) 发起的联合行动: 开始行动的位置换成"拒绝"和"接受" (词条已经换成对方选的)
+        self.inv_box = tk.Frame(self.start_box, bg=P["bar"])
+        self.btn_reject = self._button(self.inv_box, tr("拒绝"), P["clear"], P["clear_hover"], P["clear_text"],
+                                       lambda: self._respond(False), big=True)
+        self.btn_reject.pack(side="left", padx=(0, 10))
+        self.btn_accept = self._button(self.inv_box, tr("接受"), P["start"], P["start_hover"], P["start_text"],
+                                       lambda: self._respond(True), big=True)
+        self.btn_accept.pack(side="left")
         self.start_box.pack(side="right")
         self.lbl_warn = tk.Label(inner, text=tr("⚠  当前合约难度极大 请谨慎行动"), bg=P["bar"], fg=P["warn"],
                                  font=config.contract_font("small", bold=True), justify="left",
@@ -623,7 +641,7 @@ class ContractPage(tk.Frame):
                               fill=P["level"] if i < n else P["clear"], outline="")
 
     def _clear(self):
-        if not self.c.active:
+        if not self.c.active and not self._inv_on():
             self.c.set_draft([])
             self.refresh()
             self.on_change()
@@ -635,6 +653,11 @@ class ContractPage(tk.Frame):
             return
         if not self.c.active and self.on_start and not self.blocked():
             self.on_start(list(self.c.draft))
+
+    def _respond(self, accept: bool):
+        """对方发起的联合行动: 点了"拒绝" / "接受" (app 记下回复、恢复 / 保留词条)."""
+        if self._inv_on() and self.on_invite:
+            self.on_invite(accept)
 
     def set_joint_pick(self, on: bool):
         """联合行动选词条: 开始行动的位置变成"确定选择" (点了回到沟通页, 不开始合约)."""
@@ -694,6 +717,7 @@ class ContractPage(tk.Frame):
     def refresh(self):
         P, c, now = self.P, self.c, datetime.now()
         active = c.active
+        self._inv = {} if active else (self.invite_fn() or {})
         sel = self._selected()
         self._paint_tiles()
         self._fill_list(sel)
@@ -717,18 +741,25 @@ class ContractPage(tk.Frame):
                 self._draw_combos()
         for lbl, text in zip(self.lbl_rules, self._rules_text()):
             cfg(lbl, text=text)
-        btn = self.btn_end if active else self.btn_start
-        other = self.btn_start if active else self.btn_end
-        hide_pack(other)
+        inv = self._inv_on()
+        btn = self.btn_end if active else (self.inv_box if inv else self.btn_start)
+        for other in (self.btn_start, self.btn_end, self.inv_box):
+            if other is not btn:
+                hide_pack(other)
         show_pack(btn, side="top", anchor="e")
-        why = "" if active else (tr("联合行动: 选好词条后点下面的「确定选择」(去别的页面 = 取消)") if self._joint_pick else self.blocked())
+        if active:
+            why = ""
+        elif inv:
+            why = self._inv.get("hint") or tr("🤝  对方邀请你一起行动")       # 对方发起的联合行动: 在这里选 拒绝 / 接受
+        else:
+            why = tr("联合行动: 选好词条后点下面的「确定选择」(去别的页面 = 取消)") if self._joint_pick else self.blocked()
         cfg(self.btn_start, text=tr("确定选择") if self._joint_pick else tr("开始行动"))
         if why:
-            cfg(self.lbl_block, text=why)
+            cfg(self.lbl_block, text=why, fg=P["text"] if inv else P["dim"])
             show_pack(self.lbl_block, side="top", anchor="e", pady=(0, 2), before=btn)
         else:
             hide_pack(self.lbl_block)
-        off = bool(why) and not self._joint_pick
+        off = bool(why) and not self._joint_pick and not inv
         if getattr(self, "_start_off", None) != off:
             self._start_off = off
             bg, fg = (P["start_off"], P["start_off_text"]) if off else (P["start"], P["start_text"])
@@ -740,7 +771,7 @@ class ContractPage(tk.Frame):
             show_pack(self.lbl_warn, side="right", padx=(0, 16))
         else:
             hide_pack(self.lbl_warn)
-        if active:
+        if active or inv:                                   # 对方选的词条不能清空
             hide_pack(self.btn_clear)
         else:
             show_pack(self.btn_clear, side="left", before=self.lbl_level.master)
@@ -776,7 +807,7 @@ class ContractPage(tk.Frame):
             if self.live_card.winfo_manager() != "pack":
                 self.live_card.pack(fill="x", pady=(0, 8), before=self.area.inner.pack_slaves()[0])
         else:
-            cfg(self.lbl_state, text="")
+            cfg(self.lbl_state, text=tr("🤝  联合行动邀请") if inv else "")
             hide_pack(self.live_card)
 
         last = c.last

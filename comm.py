@@ -2556,9 +2556,13 @@ class Comm:
                          f"等用户在界面上点 接受 / 拒绝; 接受了, 到时按约开始合约, 联合行动就开始.")
 
     def joint_invite(self) -> dict:
-        """对方发起的、等用户点 接受 / 拒绝 的联合行动 ({} = 没有); 聊天页显示两个按钮."""
+        """对方发起的、等用户点 接受 / 拒绝 的联合行动 ({} = 没有); 聊天页顶上和合约页右下角都显示 拒绝 / 接受."""
         j = self._joint()
         return dict(j) if j.get("state") == "invite" else {}
+
+    def joint_state(self) -> str:
+        """现在的联合行动的状态 (wait / invite / yes / no / missed / run / rest), 没有 = ""."""
+        return str(self._joint().get("state") or "")
 
     def joint_respond(self, accept: bool) -> str:
         """用户点了 接受 / 拒绝. 返回 "" = 记下了, 否则是原因. 接受 → 和用户自己发起、对方答应了的一样 (到点在合约页按约开始); 拒绝 → 对方知道被拒绝了."""
@@ -4660,6 +4664,7 @@ def _selftest():
     want = C.clean_terms(["retreat1", "deep1", "short1"], prereq=True)
     assert oj["state"] == "invite" and oj["by"] == "ai" and oj["terms"] == want, oj
     assert co.joint_invite()["terms"] == want and co.joint_busy() and "邀请你" in co.joint_status_text()
+    assert co.joint_state() == "invite" and co.joint_invite()["id"] == oj["id"], "app 的 _joint_invite_watch 靠它们认出新邀请 / 邀请结束"
     assert oj["start"] == day.replace(hour=14).isoformat(timespec="seconds"), "开始时间 = 下一个循环的起点"
     assert oj["end"] == (day.replace(hour=14) + timedelta(seconds=C.duration_of(want))).isoformat(timespec="seconds")
     assert co.cfg["joint_last"] == want
@@ -4670,7 +4675,7 @@ def _selftest():
     script.clear()
     script.append("好,到时见.")
     n0 = len(calls)
-    assert co.joint_respond(True) == "" and co._joint()["state"] == "yes" and not co.joint_invite()
+    assert co.joint_respond(True) == "" and co._joint()["state"] == "yes" and not co.joint_invite() and co.joint_state() == "yes"
     wait(co)
     assert len(calls) == n0 + 1 and "「接受」" in calls[-1][1][-1]["content"] and "到时见" in co.visible()[-1]["text"], "接受也会再调用一次 API"
     assert any("用户接受了你发起的联合行动" in m["text"] for m in co.messages if m["role"] == "sys")
