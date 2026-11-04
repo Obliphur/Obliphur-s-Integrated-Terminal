@@ -142,11 +142,22 @@ object Ai {
      *  OpenAI 协议的服务商自动按相同的开头缓存, 只要每次请求的开头一模一样. onUsage(输入 token, 命中缓存的 token). */
     fun chatMessages(p: Profile, system: String, messages: List<Pair<String, String>>,
                      maxTokens: Int = MAX_TOKENS, temperature: Double = 0.2, timeoutMs: Int = 90_000,
-                     cache: Boolean = false, onUsage: ((Long, Long) -> Unit)? = null, think: Boolean = false): String {
+                     cache: Boolean = false, onUsage: ((Long, Long) -> Unit)? = null, think: Boolean = false, web: Boolean = false): String {
+        // web = true: 这一次开着网络 (沟通 规则 XIV 的限时网络, 方式见 webMode); 服务商的接口不认搜索 (400 / 404 / 405 / 422) 时,
+        // 不联网再答一次, 并在系统提示里说明没能联网 (同 ai_assist.chat_messages)
+        var sys = system
+        if (web && p.baseUrl.isNotBlank()) {
+            try {
+                return webChat(p, sys, messages, maxTokens, temperature, timeoutMs, cache, onUsage)
+            } catch (e: AiError) {
+                if (!(e.kind == "http" && WEB_UNSUPPORTED.any { (e.message ?: "").startsWith(it) })) throw e
+                sys = system + WEB_FAIL_NOTE
+            }
+        }
         // think = true: 这一次开思考 (沟通里规则判断出需要时, Comm.thinkReason); 开思考的字段回 400 时改回不开思考重试, 并记住这个地址 (同 ai_assist.chat_messages)
         if (think && maxTokens > THINK_BUDGET && p.baseUrl.isNotBlank() && endpoint(p) !in THINK_ON_REJECT) {
             try {
-                return chatOnce(p, system, messages, maxTokens, temperature, timeoutMs, cache, onUsage, false, true)
+                return chatOnce(p, sys, messages, maxTokens, temperature, timeoutMs, cache, onUsage, false, true)
             } catch (e: AiError) {
                 if (!(e.kind == "http" && (e.message ?: "").startsWith("服务商返回 400"))) throw e
                 THINK_ON_REJECT.add(endpoint(p))
@@ -156,13 +167,13 @@ object Ai {
         val tkey = if (p.baseUrl.isNotBlank()) endpoint(p) else ""
         if (tkey.isNotEmpty() && tkey !in THINK_REJECT) {
             try {
-                return chatOnce(p, system, messages, maxTokens, temperature, timeoutMs, cache, onUsage, true)
+                return chatOnce(p, sys, messages, maxTokens, temperature, timeoutMs, cache, onUsage, true)
             } catch (e: AiError) {
                 if (!(e.kind == "http" && (e.message ?: "").startsWith("服务商返回 400") && !isDeepSeek(p))) throw e
                 THINK_REJECT.add(tkey)
             }
         }
-        return chatOnce(p, system, messages, maxTokens, temperature, timeoutMs, cache, onUsage, false)
+        return chatOnce(p, sys, messages, maxTokens, temperature, timeoutMs, cache, onUsage, false)
     }
 
     /** 回了 400 的 endpoint (只在内存里): 它不认 thinking 字段, 之后不再带. */
@@ -174,19 +185,8 @@ object Ai {
     /** 开思考时的思考 token 上限 (Anthropic 的最小值). */
     const val THINK_BUDGET = 1024
 
-    private fun chatOnce(p: Profile, system: String, messages: List<Pair<String, String>>,
-                         maxTokens: Int, temperature: Double, timeoutMs: Int,
-                         cache: Boolean, onUsage: ((Long, Long) -> Unit)?, thinkOff: Boolean, thinkOn: Boolean = false): String {
-        checkProfile(p)
-        val key = p.apiKey.trim()
-        val conn = URL(endpoint(p)).openConnection() as HttpURLConnection
-        conn.instanceFollowRedirects = false          // 服务商要求跳转时一律拒绝, 不把 Key 带到别的地址
-        conn.connectTimeout = 30_000
-        conn.readTimeout = timeoutMs
-        conn.requestMethod = "POST"
-        conn.doOutput = true
-        conn.setRequestProperty("Content-Type", "application/json")
-        conn.setRequestProperty("User-Agent", "OIT/1.0")
+    private fun buildBody(p: Profile, system: String, messages: List<Pair<String, String>>, maxTokens: Int, temperature: Double,
+                          cache: Boolean, thinkOff: Boolean, thinkOn: Boolean): JSONObject {
         val body = JSONObject().put("model", p.model).put("max_tokens", maxTokens)
         // DeepSeek 的思考模式默认开: 思考 token 按输出价计费, 而且会忽略 temperature (人设语气不稳), 所以显式关掉
         if (thinkOn) {                                  // 开思考: Anthropic 协议要 budget_tokens 且不能带 temperature; OpenAI 协议的 temperature 也不带
@@ -200,13 +200,10 @@ object Ai {
         } else if (thinkOff) body.put("thinking", JSONObject().put("type", "disabled"))
         val arr = JSONArray()
         if (p.protocol == "anthropic") {
-            conn.setRequestProperty("x-api-key", key)
-            conn.setRequestProperty("anthropic-version", ANTHROPIC_VERSION)
             if (cache) body.put("system", JSONArray().put(JSONObject().put("type", "text").put("text", system)
                 .put("cache_control", JSONObject().put("type", "ephemeral"))))
             else body.put("system", system)
         } else {
-            if (key.isNotEmpty()) conn.setRequestProperty("Authorization", "Bearer $key")
             if (!thinkOn) body.put("temperature", temperature)
             arr.put(JSONObject().put("role", "system").put("content", system))
         }
@@ -218,6 +215,25 @@ object Ai {
             else arr.put(JSONObject().put("role", role).put("content", content))
         }
         body.put("messages", arr)
+        return body
+    }
+
+    /** 把请求体 POST 给服务商 (url 默认是聊天接口), 返回解析好的 JSON. 失败抛 AiError (同 ai_assist._send). */
+    private fun send(p: Profile, body: JSONObject, timeoutMs: Int, url: String? = null): JSONObject {
+        checkProfile(p)
+        val key = p.apiKey.trim()
+        val conn = URL(url ?: endpoint(p)).openConnection() as HttpURLConnection
+        conn.instanceFollowRedirects = false          // 服务商要求跳转时一律拒绝, 不把 Key 带到别的地址
+        conn.connectTimeout = 30_000
+        conn.readTimeout = timeoutMs
+        conn.requestMethod = "POST"
+        conn.doOutput = true
+        conn.setRequestProperty("Content-Type", "application/json")
+        conn.setRequestProperty("User-Agent", "OIT/1.0")
+        if (p.protocol == "anthropic") {
+            conn.setRequestProperty("x-api-key", key)
+            conn.setRequestProperty("anthropic-version", ANTHROPIC_VERSION)
+        } else if (key.isNotEmpty()) conn.setRequestProperty("Authorization", "Bearer $key")
         val code: Int
         val text: String
         try {
@@ -233,8 +249,14 @@ object Ai {
         if (code in 300..399) throw AiError("http", "服务商要求跳转到别的地址($code),为保护 API Key 已拒绝.请检查 Base URL 是否填对.")
         if (code == 401 || code == 403) throw AiError("auth", "API Key 无效或没有权限:" + redact(errorText(text), key))
         if (code !in 200..299) throw AiError("http", "服务商返回 $code:" + redact(errorText(text), key))
+        return try { JSONObject(text) } catch (e: Exception) { throw AiError("format", "服务商返回了无法识别的内容") }
+    }
+
+    private fun chatOnce(p: Profile, system: String, messages: List<Pair<String, String>>,
+                         maxTokens: Int, temperature: Double, timeoutMs: Int,
+                         cache: Boolean, onUsage: ((Long, Long) -> Unit)?, thinkOff: Boolean, thinkOn: Boolean = false): String {
+        val d = send(p, buildBody(p, system, messages, maxTokens, temperature, cache, thinkOff, thinkOn), timeoutMs)
         val out = try {
-            val d = JSONObject(text)
             if (p.protocol == "anthropic") {
                 val arr = d.optJSONArray("content") ?: JSONArray()
                 (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
@@ -243,8 +265,194 @@ object Ai {
         } catch (e: Exception) {
             throw AiError("format", "服务商返回了无法识别的内容")
         }
-        if (onUsage != null) runCatching { val (i, c) = usageOf(JSONObject(text)); onUsage(i, c) }       // 用量只是记录, 出错不影响回复
+        if (onUsage != null) runCatching { val (i, c) = usageOf(d); onUsage(i, c) }       // 用量只是记录, 出错不影响回复
         val clean = stripThink(out)
+        if (clean.isBlank()) throw AiError("format", "模型没有返回内容")
+        return clean
+    }
+
+    // ---- 限时网络 (沟通 规则 XIV, Comm.kt; 同 ai_assist.py) ----
+    // 三家的联网方式不一样:
+    //   Claude (anthropic 协议): 服务端工具 web_search_20250305, 搜索由 Anthropic 完成;
+    //   ChatGPT (api.openai.com): Responses API (POST /responses) 的 web_search 工具;
+    //   DeepSeek 和别的 OpenAI 兼容接口 (中转 / 本地模型): 官方没有搜索接口, 用函数调用 (tools: web_search), 由 OIT 自己搜 (Bing 搜索页, 不要 Key).
+    const val WEB_ROUNDS = 3                            // 函数调用方式下, 最多搜几轮 (再多就要它直接答)
+    const val WEB_PAUSE_ROUNDS = 3                      // Anthropic 服务端工具回 pause_turn (搜得太久) 时最多接着请求几次
+    val WEB_UNSUPPORTED = listOf("服务商返回 400", "服务商返回 404", "服务商返回 405", "服务商返回 422")      // 接口不认搜索: 不联网再答一次
+    const val WEB_FAIL_NOTE = "\n\n(OIT 系统: 这一次联网搜索没能用上 -- 服务商的接口不支持. 请凭你已有的知识回复用户, 并按人设自然地说一句没能查到.)"
+    /** 自己搜索用的页面 (测试里换成本机地址). */
+    @Volatile var SEARCH_URL = "https://cn.bing.com/search"
+    /** 自己搜索会访问的域名: VPN 过滤对它们放行 (只在网络开通期间, Core.apiHosts). */
+    val SEARCH_HOSTS = setOf("cn.bing.com", "www.bing.com")
+    const val SEARCH_RESULTS = 5
+    private const val SEARCH_UA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
+
+    private fun webTool(): JSONObject = JSONObject().put("type", "function").put("function", JSONObject()
+        .put("name", "web_search")
+        .put("description", "联网搜索: 查最新的资料 / 新闻 / 事实. 参数是搜索关键词, 返回前几条结果的标题, 链接和摘要.")
+        .put("parameters", JSONObject().put("type", "object")
+            .put("properties", JSONObject().put("query", JSONObject().put("type", "string").put("description", "搜索关键词")))
+            .put("required", JSONArray().put("query"))))
+
+    /** 这个服务商用哪种方式联网: "responses" (ChatGPT 官方) / "anthropic" (Claude 的服务端工具) / "function" (DeepSeek 等: OIT 自己搜). */
+    fun webMode(p: Profile): String {
+        val host = runCatching { URL(p.baseUrl).host.lowercase() }.getOrDefault("")
+        return when {
+            host == "api.openai.com" -> "responses"
+            p.protocol == "anthropic" -> "anthropic"
+            else -> "function"
+        }
+    }
+
+    /** 联网时是不是由 OIT 自己去搜 (这时要访问 SEARCH_HOSTS). */
+    fun webLocal(p: Profile): Boolean = webMode(p) == "function"
+
+    private fun unescapeHtml(s: String): String {
+        var t = Regex("&#[xX]([0-9a-fA-F]+);").replace(s) { m -> m.groupValues[1].toIntOrNull(16)?.let { String(Character.toChars(it)) } ?: m.value }
+        t = Regex("&#(\\d+);").replace(t) { m -> m.groupValues[1].toIntOrNull()?.let { String(Character.toChars(it)) } ?: m.value }
+        return t.replace("&nbsp;", " ").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&apos;", "'").replace("&amp;", "&")
+    }
+
+    private fun cleanHtml(s: String): String = unescapeHtml(s.replace(Regex("<[^>]+>"), "")).replace(Regex("\\s+"), " ").trim()
+
+    /** Bing 的结果链接有时是 .../ck/a?...&u=a1<base64>: 还原成真正的地址. */
+    private fun bingUrl(href: String): String {
+        runCatching {
+            if (URL(href).path.startsWith("/ck/a")) {
+                val v = Regex("[?&]u=([^&]+)").find(href)?.groupValues?.get(1) ?: ""
+                if (v.startsWith("a1")) return String(java.util.Base64.getUrlDecoder().decode(v.substring(2)), Charsets.UTF_8)
+            }
+        }
+        return href
+    }
+
+    /** Bing 搜索页 → (标题, 链接, 摘要) (最多 SEARCH_RESULTS 条). */
+    fun parseSearch(page: String): List<Triple<String, String, String>> {
+        val out = ArrayList<Triple<String, String, String>>()
+        val item = Regex("<li[^>]*class=\"[^\"]*\\bb_algo\\b[^\"]*\"[^>]*>(.*?)</li>", RegexOption.DOT_MATCHES_ALL)
+        val a = Regex("<h2[^>]*>\\s*<a\\b[^>]*?href=\"([^\"]+)\"[^>]*>(.*?)</a>", RegexOption.DOT_MATCHES_ALL)
+        val para = Regex("<p\\b[^>]*>(.*?)</p>", RegexOption.DOT_MATCHES_ALL)
+        for (m in item.findAll(page)) {
+            val am = a.find(m.groupValues[1]) ?: continue
+            val pm = para.find(m.groupValues[1])
+            out.add(Triple(cleanHtml(am.groupValues[2]).take(120), bingUrl(unescapeHtml(am.groupValues[1])).take(300), cleanHtml(pm?.groupValues?.get(1) ?: "").take(240)))
+            if (out.size >= SEARCH_RESULTS) break
+        }
+        return out
+    }
+
+    /** OIT 自己搜索 (DeepSeek 等没有联网接口的模型用): 返回给模型看的结果文字. 失败抛 AiError. */
+    fun webSearch(query: String): String {
+        val q = query.replace(Regex("\\s+"), " ").trim().take(200)
+        if (q.isEmpty()) throw AiError("format", "搜索关键词为空")
+        val url = SEARCH_URL + "?" + "q=" + java.net.URLEncoder.encode(q, "UTF-8") + "&setlang=zh-cn"
+        val conn = URL(url).openConnection() as HttpURLConnection
+        conn.connectTimeout = 15_000
+        conn.readTimeout = 15_000
+        conn.setRequestProperty("User-Agent", SEARCH_UA)
+        conn.setRequestProperty("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.6")
+        val code: Int
+        val page: String
+        try {
+            code = conn.responseCode
+            page = (if (code in 200..299) conn.inputStream else conn.errorStream)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
+        } catch (e: Exception) {
+            throw AiError("network", "搜索连接失败:${e.message ?: e.javaClass.simpleName}")
+        } finally {
+            conn.disconnect()
+        }
+        if (code !in 200..299) throw AiError("http", "搜索服务返回 $code")
+        val res = parseSearch(page)
+        if (res.isEmpty()) return "(没有搜到结果)"
+        return res.withIndex().joinToString("\n") { (i, r) -> "${i + 1}. ${r.first}\n   ${r.second}\n   ${r.third}" }
+    }
+
+    /** Responses API 的回复 → 文字: output 里所有 message 的 output_text 拼起来 (web_search_call 之类的条目跳过). */
+    fun responsesText(d: JSONObject): String {
+        val sb = StringBuilder()
+        val out = d.optJSONArray("output") ?: return ""
+        for (i in 0 until out.length()) {
+            val item = out.optJSONObject(i) ?: continue
+            if (item.optString("type") != "message") continue
+            val c = item.optJSONArray("content") ?: continue
+            for (j in 0 until c.length()) {
+                val part = c.optJSONObject(j) ?: continue
+                if (part.optString("type") == "output_text") sb.append(part.optString("text"))
+            }
+        }
+        return sb.toString()
+    }
+
+    /** 服务端搜索的回复: 内容里夹着 server_tool_use / web_search_tool_result, 搜索前的"我来查一下"不要, 只取最后一次搜索结果之后的文字. */
+    fun anthropicFinalText(content: JSONArray): String {
+        val blocks = (0 until content.length()).mapNotNull { content.optJSONObject(it) }
+        val last = blocks.indexOfLast { it.optString("type") == "web_search_tool_result" }
+        return blocks.drop(last + 1).filter { it.optString("type") == "text" }.joinToString("") { it.optString("text") }
+    }
+
+    /** 开着网络的一次请求 (三种方式见上). 失败抛 AiError. */
+    private fun webChat(p: Profile, system: String, messages: List<Pair<String, String>>, maxTokens: Int, temperature: Double,
+                        timeoutMs: Int, cache: Boolean, onUsage: ((Long, Long) -> Unit)?): String {
+        checkProfile(p)
+        fun used(d: JSONObject) { if (onUsage != null) runCatching { val (i, c) = usageOf(d); onUsage(i, c) } }
+        var text = ""
+        when (webMode(p)) {
+            "responses" -> {
+                val input = JSONArray()
+                for ((role, content) in messages) input.put(JSONObject().put("role", role).put("content", content))
+                val body = JSONObject().put("model", p.model).put("instructions", system).put("max_output_tokens", maxTokens)
+                    .put("input", input).put("tools", JSONArray().put(JSONObject().put("type", "web_search")))
+                val d = send(p, body, timeoutMs, p.baseUrl.trim().trimEnd('/') + "/responses")
+                used(d)
+                text = responsesText(d)
+            }
+            "anthropic" -> {
+                val body = buildBody(p, system, messages, maxTokens, temperature, cache, false, false)
+                body.put("tools", JSONArray().put(JSONObject().put("type", "web_search_20250305").put("name", "web_search").put("max_uses", 3)))
+                for (round in 0..WEB_PAUSE_ROUNDS) {
+                    val d = send(p, body, timeoutMs)
+                    used(d)
+                    val content = d.optJSONArray("content") ?: JSONArray()
+                    text = anthropicFinalText(content)
+                    if (d.optString("stop_reason") == "pause_turn") {       // 服务端搜得太久被暂停: 把到现在为止的内容原样带回去接着跑
+                        body.getJSONArray("messages").put(JSONObject().put("role", "assistant").put("content", content))
+                        continue
+                    }
+                    break
+                }
+            }
+            else -> {
+                val body = buildBody(p, system, messages, maxTokens, temperature, cache, false, false)
+                body.put("tools", JSONArray().put(webTool()))
+                for (round in 0..WEB_ROUNDS) {
+                    if (round >= WEB_ROUNDS) body.put("tool_choice", "none")          // 搜够了: 这一次必须直接答
+                    val d = send(p, body, timeoutMs)
+                    used(d)
+                    val msg = try { d.getJSONArray("choices").getJSONObject(0).getJSONObject("message") }
+                    catch (e: Exception) { throw AiError("format", "服务商返回了无法识别的内容") }
+                    val calls = msg.optJSONArray("tool_calls")
+                    if (calls == null || calls.length() == 0 || round >= WEB_ROUNDS) {
+                        text = if (msg.isNull("content")) "" else msg.optString("content")
+                        break
+                    }
+                    body.getJSONArray("messages").put(JSONObject().put("role", "assistant")
+                        .put("content", if (msg.isNull("content")) "" else msg.optString("content")).put("tool_calls", calls))
+                    for (i in 0 until calls.length()) {
+                        val c = calls.optJSONObject(i) ?: continue
+                        val result = try {
+                            val args = JSONObject(c.optJSONObject("function")?.optString("arguments")?.ifBlank { "{}" } ?: "{}")
+                            webSearch(args.optString("query"))
+                        } catch (e: AiError) {
+                            "(搜索失败: ${e.message})"
+                        } catch (e: Exception) {
+                            "(搜索失败: 参数不对)"
+                        }
+                        body.getJSONArray("messages").put(JSONObject().put("role", "tool").put("tool_call_id", c.optString("id")).put("content", result))
+                    }
+                }
+            }
+        }
+        val clean = stripThink(text)
         if (clean.isBlank()) throw AiError("format", "模型没有返回内容")
         return clean
     }

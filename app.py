@@ -2078,10 +2078,14 @@ class BreakTimerApp:
     def _api_hosts(self) -> set:
         """当前 AI 服务商 Base URL 的主机 (聊天 / 名单建议要用): 过滤代理不拦它."""
         try:
+            import ai_assist
             from urllib.parse import urlsplit
             base = str(self.comm.ai.profile().get("base_url") or "").strip()
             host = (urlsplit(base).hostname or "").lower()
-            return {host} if host else set()
+            hosts = {host} if host else set()
+            if self.comm.net_active() and ai_assist.web_local(self.comm.ai.profile()):
+                hosts |= set(ai_assist.SEARCH_HOSTS)        # 限时网络开着, 并且由 OIT 自己搜索 (DeepSeek 等): 搜索页的域名也放行
+            return hosts
         except Exception:
             return set()
 

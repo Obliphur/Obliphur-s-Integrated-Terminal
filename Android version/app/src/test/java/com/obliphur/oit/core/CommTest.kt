@@ -28,6 +28,8 @@ class CommTest {
     /** 整理记忆卡: 没有安排就回空 (当失败). */
     private val memScript = ArrayDeque<String>()
     private val memCalls = mutableListOf<String>()
+    /** 每次调用有没有带联网搜索 (限时网络, Comm.webLocal). */
+    private val webLog = mutableListOf<Boolean>()
 
     private fun comm(dir: File, personas: File): Comm {
         // 本机地址不要求 Key: 单元测试里没有 Android Keystore
@@ -45,6 +47,7 @@ class CommTest {
                 follow.removeFirstOrNull() ?: CommText.REFUSE
             } else {
                 calls.add(system to msgs.toList())
+                webLog.add(Comm.webLocal.get() == true)
                 val r = script.removeFirst()
                 if (r.startsWith("ERR:")) throw AiError("network", r.substring(4))
                 r
@@ -1692,4 +1695,209 @@ class CommTest {
         assertTrue("你说" in c.visible().last().text)
         c.flush()
     }
+
+    /** 限时网络 (前置 prompt XIV): [apply for network][N] → 等 2 分钟 → 再调用一次 (带联网搜索) → 开通 N 分钟 → 冷却 (对应 comm.py 自检). */
+    @Test
+    fun networkWindow() {
+        assertEquals(5.0, CommText.netMinutes("[apply for network][5] 我在等冷却期.")!!, 0.0)
+        assertEquals(10.0, CommText.netMinutes("[Apply  For Network]:10")!!, 0.0)
+        assertEquals(Comm.NET_DEFAULT_MIN.toDouble(), CommText.netMinutes("[apply for network]")!!, 0.0)
+        assertEquals(Comm.NET_MAX_MIN.toDouble(), CommText.netMinutes("[apply for network][999]")!!, 0.0)
+        assertEquals(1.0, CommText.netMinutes("[apply for network][0]")!!, 0.0)
+        assertNull(CommText.netMinutes("好的"))
+        val pp = CommText.prefixPrompt(true)
+        assertTrue("XIV.你可以在开头输入[apply for network][N]" in pp && pp.indexOf("XIII.") < pp.indexOf("XIV.") && pp.indexOf("XIV.") < pp.indexOf("以下是用户设定的人设:"))
+        assertEquals("我在等冷却期.", CommText.cleanReply("[apply for network][3] 我在等冷却期.").first)
+        val td = Files.createTempDirectory("oit").toFile()
+        File(td, "p").mkdirs()
+        File(td, "p/网络.txt").writeText("你是网络.\n")
+        File(td, "p/网络二.txt").writeText("你是网络二.\n")
+        val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
+        c.set(persona = "网络.txt", splitSend = false)
+        c.snapshot = { CommSnap("idle") }
+        clock = LocalDateTime.of(2026, 12, 10, 13, 0)
+        script.clear(); follow.clear(); webLog.clear()
+        script.add("[apply for network][3] 我在等冷却期, 先聊聊别的.")
+        assertEquals("", c.send("今天有什么新闻?"))
+        wait(c)
+        assertEquals("我在等冷却期, 先聊聊别的.", c.visible().last().text)
+        assertTrue(c.netPhase() == "wait" && !c.netActive())
+        assertEquals(listOf(false), webLog)
+        assertEquals("wait", (c.syncDoc()["net"] as JSONObject).optString("st"))
+        clock = clock.plusSeconds(Comm.NET_DELAY - 1L)
+        c.tick()
+        assertFalse("没到 2 分钟", c.busy)
+        script.add("搜到了: 今天没什么大事.")
+        clock = clock.plusSeconds(2)
+        c.tick()
+        assertTrue(c.busy && c.netActive())
+        wait(c)
+        assertEquals(listOf(false, true), webLog)                      // 到点那次请求带联网搜索
+        val body = calls.last().second.last().second
+        assertTrue(Comm.NET_TAG in body && "网络已开通 3 分钟" in body && "13:05" in body)
+        assertTrue(c.visible().last().text == "搜到了: 今天没什么大事." && c.netPhase() == "on")
+        // 开着的期间: 用户再说话照样带联网搜索; 这时申请无效 (不会改开通时长)
+        clock = clock.plusSeconds(30)
+        script.add("[apply for network][20] 我再查一下.")
+        assertEquals("", c.send("再查查天气"))
+        wait(c)
+        assertTrue(webLog.last() && c.netPhase() == "on")
+        assertEquals(3.0, (c.syncDoc()["net"] as JSONObject).optDouble("n"), 0.0)
+        // 到期之后进入冷却: 不带联网, 申请无效
+        clock = clock.plusMinutes(3)
+        assertTrue(!c.netActive() && c.netPhase() == "cool")
+        script.add("[apply for network][5] 想再查.")
+        assertEquals("", c.send("还有吗"))
+        wait(c)
+        assertTrue(!webLog.last() && c.netPhase() == "cool")
+        // 冷却过了才能再申请; 只写了标记也算申请
+        clock = clock.plusSeconds(Comm.NET_COOLDOWN + 60L)
+        assertEquals("", c.netPhase())
+        script.add("[apply for network][4]")
+        assertEquals("", c.send("现在呢"))
+        wait(c)
+        assertEquals(4.0, (c.syncDoc()["net"] as JSONObject).optDouble("n"), 0.0)
+        assertEquals("wait", c.netPhase())
+        // 搜索那次请求失败: 60 秒后再试, 最多 NET_TRIES 次, 还不行就放弃 (冷却)
+        clock = clock.plusSeconds(Comm.NET_DELAY + 1L)
+        script.add("ERR:连接失败")
+        c.tick(); wait(c)
+        assertTrue(c.netPhase() == "wait" && (c.syncDoc()["net"] as JSONObject).optInt("tries") == 1)
+        repeat(Comm.NET_TRIES) {
+            clock = clock.plusSeconds(Comm.NET_RETRY + 1L)
+            script.add("ERR:连接失败")
+            c.tick(); wait(c)
+        }
+        assertTrue(c.netPhase() == "cool" && !c.netActive())
+        // 搜索那次请求回了 [refuse to reply]: 再要求一次
+        clock = clock.plusSeconds(Comm.NET_COOLDOWN + 60L)
+        script.add("[apply for network][2] 等一下.")
+        assertEquals("", c.send("查个东西"))
+        wait(c)
+        clock = clock.plusSeconds(Comm.NET_DELAY + 1L)
+        val n0 = calls.size
+        script.addAll(listOf(CommText.REFUSE, "查到了."))
+        c.tick(); wait(c)
+        assertTrue(calls.size == n0 + 2 && CommText.NET_NO_REFUSE in calls.last().second.last().second && c.visible().last().text == "查到了.")
+        // 设备同步: 后改的为准; 清空聊天 = 作废 (别的设备一起)
+        val od = File(td, "d2").also { it.mkdirs() }
+        val other = comm(od, File(td, "p"))
+        other.set(persona = "网络二.txt", splitSend = false)
+        other.applyDoc(mapOf("net" to c.syncDoc()["net"]))
+        assertTrue(other.netActive())
+        other.applyDoc(mapOf("net" to JSONObject().put("ts", 1L).put("st", "wait")))
+        assertTrue("旧的不覆盖新的", other.netActive())
+        c.clear()
+        assertEquals("", c.netPhase())
+        val cleared = c.syncDoc()["net"] as JSONObject
+        assertTrue(cleared.has("ts") && !cleared.has("st"))
+        other.applyDoc(mapOf("net" to cleared))
+        assertEquals("", other.netPhase())
+        // 换了聊天对象: 等着的申请作废
+        clock = clock.plusSeconds(Comm.NET_COOLDOWN + 60L)
+        script.add("[apply for network][2] 等一下.")
+        assertEquals("", c.send("再查一个"))
+        wait(c)
+        assertEquals("wait", c.netPhase())
+        c.set(persona = "网络二.txt")
+        clock = clock.plusSeconds(Comm.NET_DELAY + 1L)
+        c.tick()
+        assertTrue(!c.busy && c.netPhase() == "")
+        c.flush(); other.flush()
+    }
+
+    /** 限时网络: 三家的联网方式 (对应 ai_assist.py 自检). */
+    @Test
+    fun webSearchAdapters() {
+        val bing = "<html><ol><li class=\"b_algo\"><h2><a href=\"https://example.com/a?x=1&amp;y=2\">标题 <strong>甲</strong></a></h2>" +
+            "<div><p class=\"b_lineclamp2\">摘要&nbsp;甲 &amp; 乙</p></div></li>" +
+            "<li class=\"b_algo\"><h2><a href=\"https://www.bing.com/ck/a?!&amp;&amp;u=a1aHR0cHM6Ly9leGFtcGxlLm9yZy9i&amp;ntb=1\">标题乙</a></h2>" +
+            "<p>摘要乙</p></li></ol></html>"
+        val r = Ai.parseSearch(bing)
+        assertEquals(Triple("标题 甲", "https://example.com/a?x=1&y=2", "摘要 甲 & 乙"), r[0])
+        assertEquals("https://example.org/b", r[1].second)
+        assertEquals("摘要乙", r[1].third)
+        assertTrue(Ai.parseSearch("<html>没有结果</html>").isEmpty())
+        assertEquals("responses", Ai.webMode(Profile("chatgpt", "https://api.openai.com/v1", "openai", "gpt-4o-mini", "k")))
+        assertEquals("anthropic", Ai.webMode(Profile("claude", "https://api.anthropic.com", "anthropic", "m", "k")))
+        assertEquals("function", Ai.webMode(Profile("deepseek", "https://api.deepseek.com", "openai", "deepseek-chat", "k")))
+        assertEquals("答案 R", Ai.responsesText(JSONObject("""{"output":[{"type":"web_search_call","id":"w"},{"type":"message","content":[{"type":"output_text","text":"答案 R"}]}]}""")))
+        assertEquals("查到了: 答案 A", Ai.anthropicFinalText(org.json.JSONArray("""[{"type":"text","text":"我先查一下. "},{"type":"server_tool_use","id":"s1"},{"type":"web_search_tool_result","tool_use_id":"s1","content":[]},{"type":"text","text":"查到了: "},{"type":"text","text":"答案 A"}]""")))
+        // 本机假服务器: OpenAI 兼容 (函数调用 + OIT 自己搜) / Anthropic 服务端搜索 / 不认搜索的 400
+        val seen = java.util.Collections.synchronizedList(mutableListOf<Pair<String, String>>())
+        val srv = java.net.ServerSocket(0, 50, java.net.InetAddress.getByName("127.0.0.1"))
+        fun reply(out: java.io.OutputStream, code: Int, text: String) {
+            val b = text.toByteArray(Charsets.UTF_8)
+            out.write("HTTP/1.1 $code X\r\nContent-Length: ${b.size}\r\nConnection: close\r\n\r\n".toByteArray())
+            out.write(b)
+            out.flush()
+        }
+        val acceptor = Thread {
+            while (!srv.isClosed) {
+                val sock = try { srv.accept() } catch (e: Exception) { break }
+                sock.use {
+                    val inp = java.io.BufferedInputStream(it.getInputStream())
+                    fun line(): String { val sb = StringBuilder(); while (true) { val ch = inp.read(); if (ch < 0 || ch == 10) break; if (ch != 13) sb.append(ch.toChar()) }; return sb.toString() }
+                    val first = line().split(" ")
+                    var len = 0
+                    while (true) { val h = line(); if (h.isEmpty()) break; if (h.lowercase().startsWith("content-length:")) len = h.substring(15).trim().toInt() }
+                    val req = String(inp.readNBytes(len), Charsets.UTF_8)
+                    val method = first[0]
+                    val path = first[1]
+                    seen.add(path to req)
+                    val out = it.getOutputStream()
+                    when {
+                        method == "GET" -> reply(out, 200, bing)
+                        path.startsWith("/nosearch") -> reply(out, 400, """{"error":{"message":"unknown tool"}}""")
+                        path.endsWith("/messages") -> reply(out, 200, """{"content":[{"type":"text","text":"我先查一下. "},{"type":"server_tool_use","id":"s1","name":"web_search","input":{}},{"type":"web_search_tool_result","tool_use_id":"s1","content":[]},{"type":"text","text":"查到了: "},{"type":"text","text":"答案 A"}],"stop_reason":"end_turn","usage":{"input_tokens":7}}""")
+                        else -> {
+                            val o = JSONObject(req)
+                            val toolDone = (0 until o.getJSONArray("messages").length()).any { i -> o.getJSONArray("messages").getJSONObject(i).optString("role") == "tool" }
+                            if (o.has("tools") && !toolDone)
+                                reply(out, 200, """{"choices":[{"message":{"content":null,"tool_calls":[{"id":"c1","type":"function","function":{"name":"web_search","arguments":"{\"query\":\"今天 新闻\"}"}}]}}]}""")
+                            else reply(out, 200, """{"choices":[{"message":{"content":"答案 F"}}]}""")
+                        }
+                    }
+                }
+            }
+        }.apply { isDaemon = true }
+        acceptor.start()
+        val base = "http://127.0.0.1:${srv.localPort}"
+        val saved = Ai.SEARCH_URL
+        try {
+            Ai.SEARCH_URL = "$base/search"
+            val m1 = listOf("user" to "今天有什么新闻")
+            val pf = Profile("custom", "$base/v1", "openai", "m", "k")
+            assertEquals("答案 F", Ai.chatMessages(pf, "SYS", m1, web = true))
+            val posts = seen.filter { !it.first.startsWith("/search") }
+            val first = JSONObject(posts[0].second)
+            assertTrue(first.has("tools") && !first.has("tool_choice"))
+            val gets = seen.filter { it.first.startsWith("/search") }
+            assertTrue(gets.size == 1 && "q=%E4%BB%8A%E5%A4%A9+%E6%96%B0%E9%97%BB" in gets[0].first)
+            val second = JSONObject(posts[1].second).getJSONArray("messages")
+            assertEquals("tool", second.getJSONObject(second.length() - 1).getString("role"))
+            assertEquals("c1", second.getJSONObject(second.length() - 1).getString("tool_call_id"))
+            assertTrue("https://example.com/a?x=1&y=2" in second.getJSONObject(second.length() - 1).getString("content"))
+            assertEquals("assistant", second.getJSONObject(second.length() - 2).getString("role"))
+            seen.clear()
+            val pa = Profile("custom", base, "anthropic", "m", "k")
+            assertEquals("查到了: 答案 A", Ai.chatMessages(pa, "SYS", m1, web = true, cache = true))
+            val ab = JSONObject(seen.last().second)
+            assertTrue(seen.last().first == "/v1/messages" && ab.getJSONArray("tools").getJSONObject(0).getString("type") == "web_search_20250305" && !ab.has("thinking"))
+            // 接口不认搜索 (400): 不联网再答一次, 系统提示里说明
+            seen.clear()
+            try { Ai.chatMessages(pf.copy(baseUrl = "$base/nosearch"), "SYS", m1, web = true) } catch (e: AiError) { }
+            val plain = seen.map { JSONObject(it.second) }
+            assertTrue(plain[0].has("tools") && !plain[1].has("tools"))
+            assertTrue(plain[1].getJSONArray("messages").getJSONObject(0).getString("content").endsWith(Ai.WEB_FAIL_NOTE))
+            // web = false: 请求里没有 tools
+            seen.clear()
+            assertEquals("答案 F", Ai.chatMessages(pf, "SYS", m1))
+            assertFalse(JSONObject(seen.last().second).has("tools"))
+        } finally {
+            Ai.SEARCH_URL = saved
+            srv.close()
+        }
+    }
 }
+

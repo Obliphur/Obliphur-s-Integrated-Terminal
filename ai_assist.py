@@ -445,10 +445,18 @@ def _build_body(profile: dict, system: str, messages: list, max_tokens: int, tem
 
 def chat_messages(profile: dict, system: str, messages: list, timeout: float = 90.0, opener=None,
                   max_tokens: int = MAX_TOKENS, temperature: float = 0.2, cache: bool = False, on_usage=None,
-                  think: bool = False) -> str:
+                  think: bool = False, web: bool = False) -> str:
     """默认关思考: 请求里带 thinking: {"type": "disabled"}; 服务商 (中转) 不认这个字段回 400 时, 去掉它重试一次,
     并记住这个地址 (THINK_REJECT), 以后不再带. DeepSeek 官方地址一直带 (它认).
-    think=True: 这一次开思考 (沟通里规则判断出需要时, comm.think_reason); 开思考的字段回 400 时改回不开思考重试, 并记住这个地址 (THINK_ON_REJECT)."""
+    think=True: 这一次开思考 (沟通里规则判断出需要时, comm.think_reason); 开思考的字段回 400 时改回不开思考重试, 并记住这个地址 (THINK_ON_REJECT).
+    web=True: 这一次开着网络 (沟通 规则 XIV 的限时网络, 方式见 web_mode); 服务商的接口不认搜索 (400 / 404 / 405 / 422) 时, 不联网再答一次, 并在系统提示里说明没能联网."""
+    if web and profile.get("base_url"):
+        try:
+            return _web_chat(profile, system, messages, timeout, opener, max_tokens, temperature, cache, on_usage)
+        except AIError as e:
+            if not (e.kind == "http" and e.message.startswith(WEB_UNSUPPORTED)):
+                raise
+            system = system + WEB_FAIL_NOTE
     if think and max_tokens > THINK_BUDGET and profile.get("base_url") and endpoint(profile) not in THINK_ON_REJECT:
         try:
             return _chat_once(profile, system, messages, timeout, opener, max_tokens, temperature, cache, on_usage, False, True)
@@ -495,6 +503,29 @@ def _chat_once(profile: dict, system: str, messages: list, timeout: float, opene
     cache: 提示缓存 (沟通里"分条发"会连着调用两次, 第二次的前面全是第一次发过的内容). Anthropic 协议要明确标出缓存位置 (系统提示和最后一条消息),
     OpenAI 协议的服务商 (DeepSeek, OpenAI …) 自动按相同的开头缓存, 不用标, 只要每次请求的开头一模一样.
     on_usage(输入 token 数, 命中缓存的 token 数): 响应里有用量时调用."""
+    body = _build_body(profile, system, messages, max_tokens, temperature, cache, think_off, think_on)
+    data = _send(profile, body, timeout, opener)
+    try:
+        if profile["protocol"] == "anthropic":
+            text = "".join(b.get("text", "") for b in data.get("content", [])
+                           if isinstance(b, dict) and b.get("type") == "text")
+        else:
+            text = data["choices"][0]["message"]["content"] or ""
+    except (KeyError, IndexError, TypeError, AttributeError):
+        raise AIError("format", "服务商返回了无法识别的内容")
+    if on_usage:
+        try:
+            on_usage(*usage_of(data))
+        except Exception:       # noqa: BLE001 —— 用量只是记录, 出错不影响回复
+            pass
+    text = strip_think(text)
+    if not text.strip():
+        raise AIError("format", "模型没有返回内容")
+    return text
+
+
+def _send(profile: dict, body: dict, timeout: float, opener, url: str = None) -> dict:
+    """把请求体 POST 给服务商 (url 默认是聊天接口), 返回解析好的 JSON. 失败抛 AIError."""
     check_profile(profile)
     key = (profile.get("api_key") or "").strip()
     headers = {"Content-Type": "application/json", "User-Agent": "OIT/1.0"}
@@ -503,8 +534,7 @@ def _chat_once(profile: dict, system: str, messages: list, timeout: float, opene
         headers["anthropic-version"] = ANTHROPIC_VERSION
     elif key:
         headers["Authorization"] = "Bearer " + key
-    body = _build_body(profile, system, messages, max_tokens, temperature, cache, think_off, think_on)
-    req = urllib.request.Request(endpoint(profile),
+    req = urllib.request.Request(url or endpoint(profile),
                                  data=json.dumps(body).encode("utf-8"),
                                  headers=headers, method="POST")
     try:
@@ -528,18 +558,209 @@ def _chat_once(profile: dict, system: str, messages: list, timeout: float, opene
 
     try:
         data = json.loads(raw.decode("utf-8", "replace"))
-        if profile["protocol"] == "anthropic":
-            text = "".join(b.get("text", "") for b in data.get("content", [])
-                           if isinstance(b, dict) and b.get("type") == "text")
-        else:
-            text = data["choices"][0]["message"]["content"] or ""
-    except (ValueError, KeyError, IndexError, TypeError, AttributeError):
+    except ValueError:
         raise AIError("format", "服务商返回了无法识别的内容")
-    if on_usage:
-        try:
-            on_usage(*usage_of(data))
-        except Exception:       # noqa: BLE001 —— 用量只是记录, 出错不影响回复
-            pass
+    if not isinstance(data, dict):
+        raise AIError("format", "服务商返回了无法识别的内容")
+    return data
+
+
+# ══════════════ 限时网络 (沟通 规则 XIV, comm.py) ══════════════
+# 三家的联网方式不一样:
+#   Claude (anthropic 协议): 服务端工具 web_search_20250305, 搜索由 Anthropic 完成, 回复里直接带结果;
+#   ChatGPT (api.openai.com): Responses API (POST /responses) 的 web_search 工具, 同样由 OpenAI 完成;
+#   DeepSeek 和别的 OpenAI 兼容接口 (中转 / 本地模型): 官方没有搜索接口, 用函数调用 (tools: web_search),
+#   模型要搜时由 OIT 自己去搜 (Bing 搜索页, 不要 Key), 把结果交回去让它接着答.
+WEB_TOOL_ANTHROPIC = {"type": "web_search_20250305", "name": "web_search", "max_uses": 3}
+WEB_ROUNDS = 3                                      # 函数调用方式下, 最多搜几轮 (再多就要它直接答)
+WEB_PAUSE_ROUNDS = 3                                # Anthropic 服务端工具回 pause_turn (搜得太久) 时最多接着请求几次
+WEB_UNSUPPORTED = ("服务商返回 400", "服务商返回 404", "服务商返回 405", "服务商返回 422")      # 接口不认搜索: 不联网再答一次
+WEB_FAIL_NOTE = ("\n\n(OIT 系统: 这一次联网搜索没能用上 -- 服务商的接口不支持. 请凭你已有的知识回复用户, "
+                 "并按人设自然地说一句没能查到.)")
+SEARCH_URL = "https://cn.bing.com/search"           # 自己搜索用的页面 (测试里换成本机地址)
+SEARCH_HOSTS = ("cn.bing.com", "www.bing.com")      # 自己搜索会访问的域名: 过滤代理对它们放行 (只在网络开通期间, app._api_hosts)
+SEARCH_RESULTS = 5
+SEARCH_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+             "Chrome/124.0 Safari/537.36")
+WEB_FUNCTION = {"type": "function", "function": {
+    "name": "web_search",
+    "description": "联网搜索: 查最新的资料 / 新闻 / 事实. 参数是搜索关键词, 返回前几条结果的标题, 链接和摘要.",
+    "parameters": {"type": "object", "properties": {"query": {"type": "string", "description": "搜索关键词"}},
+                   "required": ["query"]}}}
+
+
+def web_mode(profile: dict) -> str:
+    """这个服务商用哪种方式联网: "responses" (ChatGPT 官方) / "anthropic" (Claude 的服务端工具) / "function" (DeepSeek 等: OIT 自己搜)."""
+    try:
+        host = (urllib.parse.urlsplit(str(profile.get("base_url") or "")).hostname or "").lower()
+    except ValueError:
+        host = ""
+    if host == "api.openai.com":
+        return "responses"
+    if profile.get("protocol") == "anthropic":
+        return "anthropic"
+    return "function"
+
+
+def web_local(profile: dict) -> bool:
+    """联网时是不是由 OIT 自己去搜 (这时要访问 SEARCH_HOSTS)."""
+    return web_mode(profile) == "function"
+
+
+def _clean_html(s: str) -> str:
+    import html
+    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", "", s or ""))).strip()
+
+
+def _bing_url(href: str) -> str:
+    """Bing 的结果链接有时是 .../ck/a?...&u=a1<base64>: 还原成真正的地址."""
+    try:
+        u = urllib.parse.urlsplit(href)
+        if u.path.startswith("/ck/a"):
+            v = (urllib.parse.parse_qs(u.query).get("u") or [""])[0]
+            if v.startswith("a1"):
+                raw = v[2:]
+                return base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)).decode("utf-8", "replace")
+    except Exception:       # noqa: BLE001
+        pass
+    return href
+
+
+def parse_search(page: str) -> list:
+    """Bing 搜索页 → [(标题, 链接, 摘要)] (最多 SEARCH_RESULTS 条)."""
+    out = []
+    for item in re.findall(r'<li[^>]*class="[^"]*\bb_algo\b[^"]*"[^>]*>(.*?)</li>', page or "", re.S):
+        a = re.search(r'<h2[^>]*>\s*<a\b[^>]*?href="([^"]+)"[^>]*>(.*?)</a>', item, re.S)
+        if not a:
+            continue
+        p = re.search(r'<p\b[^>]*>(.*?)</p>', item, re.S)
+        import html
+        out.append((_clean_html(a.group(2))[:120], _bing_url(html.unescape(a.group(1)))[:300],
+                    _clean_html(p.group(1) if p else "")[:240]))
+        if len(out) >= SEARCH_RESULTS:
+            break
+    return out
+
+
+def web_search(query: str, timeout: float = 15.0, opener=None) -> str:
+    """OIT 自己搜索 (DeepSeek 等没有联网接口的模型用): 返回给模型看的结果文字. 失败抛 AIError."""
+    q = re.sub(r"\s+", " ", str(query or "")).strip()[:200]
+    if not q:
+        raise AIError("format", "搜索关键词为空")
+    url = SEARCH_URL + "?" + urllib.parse.urlencode({"q": q, "setlang": "zh-cn"})
+    req = urllib.request.Request(url, headers={"User-Agent": SEARCH_UA, "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.6"})
+    try:
+        with _open_search(req, timeout, opener) as resp:
+            page = resp.read(1_500_000).decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        if e.code == 403 and e.headers and e.headers.get("X-OIT-Reason"):
+            raise AIError("blocked", "搜索请求被本程序的过滤代理拦截")
+        raise AIError("http", f"搜索服务返回 {e.code}")
+    except (urllib.error.URLError, OSError, TimeoutError) as e:
+        raise AIError("network", f"搜索连接失败:{getattr(e, 'reason', e)}")
+    res = parse_search(page)
+    if not res:
+        return "(没有搜到结果)"
+    return "\n".join(f"{i}. {t}\n   {u}\n   {s}" for i, (t, u, s) in enumerate(res, 1))
+
+
+def _open_search(req, timeout, opener=None):
+    """搜索页可以跟随跳转 (不带任何 Key); 其余同 _open_url."""
+    if opener is not None:
+        return opener(req, timeout=timeout)
+    try:
+        return urllib.request.build_opener().open(req, timeout=timeout)
+    except urllib.error.URLError as e:
+        if not isinstance(getattr(e, "reason", None), ConnectionRefusedError) or not urllib.request.getproxies():
+            raise
+        return urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req, timeout=timeout)
+
+
+def responses_url(profile: dict) -> str:
+    base = profile["base_url"].strip().rstrip("/")
+    return base + "/responses"
+
+
+def _responses_text(data: dict) -> str:
+    """Responses API 的回复 → 文字: output 里所有 message 的 output_text 拼起来 (web_search_call 之类的条目跳过)."""
+    out = []
+    for item in data.get("output") or []:
+        if isinstance(item, dict) and item.get("type") == "message":
+            for c in item.get("content") or []:
+                if isinstance(c, dict) and c.get("type") == "output_text":
+                    out.append(str(c.get("text") or ""))
+    return "".join(out)
+
+
+def _anthropic_final_text(content: list) -> str:
+    """服务端搜索的回复: 内容里夹着 server_tool_use / web_search_tool_result, 搜索前的"我来查一下"不要, 只取最后一次搜索结果之后的文字."""
+    blocks = [b for b in content if isinstance(b, dict)]
+    last = max([i for i, b in enumerate(blocks) if b.get("type") == "web_search_tool_result"] + [-1])
+    return "".join(str(b.get("text") or "") for b in blocks[last + 1:] if b.get("type") == "text")
+
+
+def _web_chat(profile: dict, system: str, messages: list, timeout: float, opener, max_tokens: int,
+              temperature: float, cache: bool, on_usage) -> str:
+    """开着网络的一次请求 (三种方式见上). 失败抛 AIError."""
+    check_profile(profile)
+    mode = web_mode(profile)
+
+    def used(data):
+        if on_usage:
+            try:
+                on_usage(*usage_of(data))
+            except Exception:       # noqa: BLE001
+                pass
+
+    if mode == "responses":
+        body = {"model": profile["model"], "instructions": system, "max_output_tokens": max_tokens,
+                "input": [{"role": m["role"], "content": m["content"]} for m in messages],
+                "tools": [{"type": "web_search"}]}
+        data = _send(profile, body, timeout, opener, url=responses_url(profile))
+        used(data)
+        text = _responses_text(data)
+    elif mode == "anthropic":
+        msgs = list(messages)
+        text = ""
+        for _ in range(WEB_PAUSE_ROUNDS + 1):
+            body = _build_body(profile, system, msgs, max_tokens, temperature, cache, False, False)
+            body["tools"] = [dict(WEB_TOOL_ANTHROPIC)]
+            data = _send(profile, body, timeout, opener)
+            used(data)
+            content = data.get("content") if isinstance(data.get("content"), list) else []
+            text = _anthropic_final_text(content)
+            if data.get("stop_reason") == "pause_turn":       # 服务端搜得太久被暂停: 把到现在为止的内容原样带回去接着跑
+                msgs = msgs + [{"role": "assistant", "content": content}]
+                continue
+            break
+    else:
+        msgs = list(messages)
+        text = ""
+        for rnd in range(WEB_ROUNDS + 1):
+            body = _build_body(profile, system, msgs, max_tokens, temperature, cache, False, False)
+            body["tools"] = [WEB_FUNCTION]
+            if rnd >= WEB_ROUNDS:
+                body["tool_choice"] = "none"                   # 搜够了: 这一次必须直接答
+            data = _send(profile, body, timeout, opener)
+            used(data)
+            try:
+                msg = data["choices"][0]["message"]
+            except (KeyError, IndexError, TypeError):
+                raise AIError("format", "服务商返回了无法识别的内容")
+            calls = [c for c in (msg.get("tool_calls") or []) if isinstance(c, dict)] if isinstance(msg, dict) else []
+            if not calls or rnd >= WEB_ROUNDS:
+                text = (msg.get("content") or "") if isinstance(msg, dict) else ""
+                break
+            msgs = msgs + [{"role": "assistant", "content": msg.get("content") or "", "tool_calls": calls}]
+            for c in calls:
+                try:
+                    args = json.loads((c.get("function") or {}).get("arguments") or "{}")
+                    result = web_search(str(args.get("query") or ""), opener=opener)
+                except AIError as e:
+                    result = f"(搜索失败: {e.message})"
+                except (ValueError, AttributeError):
+                    result = "(搜索失败: 参数不对)"
+                msgs.append({"role": "tool", "tool_call_id": str(c.get("id") or ""), "content": result})
     text = strip_think(text)
     if not text.strip():
         raise AIError("format", "模型没有返回内容")
@@ -1017,6 +1238,126 @@ def _selftest():
         assert models_for({"provider": "deepseek", "base_url": "https://api.deepseek.com", "model": "deepseek-chat"})[0] == "deepseek-chat"
     finally:
         srv2.shutdown()
+
+    # ---- 限时网络 (web=True): 三种方式 ----
+    global SEARCH_URL
+    BING = ('<html><ol><li class="b_algo"><h2><a href="https://example.com/a?x=1&amp;y=2">标题 <strong>甲</strong></a></h2>'
+            '<div><p class="b_lineclamp2">摘要&nbsp;甲 &amp; 乙</p></div></li>'
+            '<li class="b_algo"><h2><a href="https://www.bing.com/ck/a?!&amp;&amp;u=a1aHR0cHM6Ly9leGFtcGxlLm9yZy9i&amp;ntb=1">标题乙</a></h2>'
+            '<p>摘要乙</p></li></ol></html>')
+    r = parse_search(BING)
+    assert r[0] == ("标题 甲", "https://example.com/a?x=1&y=2", "摘要 甲 & 乙"), r
+    assert r[1][1] == "https://example.org/b" and r[1][2] == "摘要乙", r
+    assert parse_search("<html>没有结果</html>") == []
+    assert web_mode({"base_url": "https://api.openai.com/v1", "protocol": "openai"}) == "responses"
+    assert web_mode({"base_url": "https://api.anthropic.com", "protocol": "anthropic"}) == "anthropic"
+    assert web_mode({"base_url": "https://api.deepseek.com", "protocol": "openai"}) == "function"
+    assert web_local({"base_url": "https://api.deepseek.com", "protocol": "openai"}) and not web_local({"base_url": "https://api.openai.com/v1", "protocol": "openai"})
+    web_seen = []
+
+    class H3(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def _out(self, code, obj, raw=None):
+            data = raw if raw is not None else json.dumps(obj).encode()
+            self.send_response(code)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def do_GET(self):
+            web_seen.append(("GET", self.path, None))
+            self._out(200, None, BING.encode())
+
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+            web_seen.append(("POST", self.path, body))
+            if self.path.startswith("/nosearch"):
+                return self._out(400, {"error": {"message": "unknown tool"}})
+            if self.path.endswith("/messages"):                       # Anthropic: 服务端搜索, 内容里夹着 server_tool_use / web_search_tool_result
+                n = sum(1 for m in body["messages"] if m["role"] == "assistant")
+                if "tools" in body and n == 0 and body.get("pause"):
+                    pass
+                content = [{"type": "text", "text": "我先查一下. "},
+                           {"type": "server_tool_use", "id": "s1", "name": "web_search", "input": {"query": "x"}},
+                           {"type": "web_search_tool_result", "tool_use_id": "s1", "content": []},
+                           {"type": "text", "text": "查到了: "}, {"type": "text", "text": "答案 A"}]
+                return self._out(200, {"content": content, "stop_reason": "end_turn", "usage": {"input_tokens": 7}})
+            if self.path.endswith("/responses"):
+                return self._out(200, {"output": [{"type": "web_search_call", "id": "w"},
+                                                  {"type": "message", "content": [{"type": "output_text", "text": "答案 R"}]}],
+                                       "usage": {"input_tokens": 3}})
+            tool_done = any(m.get("role") == "tool" for m in body["messages"])         # chat/completions: 第一轮要搜, 拿到结果再答
+            if "tools" in body and not tool_done:
+                return self._out(200, {"choices": [{"message": {"content": None, "tool_calls": [
+                    {"id": "c1", "type": "function", "function": {"name": "web_search", "arguments": json.dumps({"query": "今天 新闻"})}}]}}]})
+            return self._out(200, {"choices": [{"message": {"content": "答案 F"}}]})
+
+    srv3 = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H3)
+    threading.Thread(target=srv3.serve_forever, daemon=True).start()
+    base3 = f"http://127.0.0.1:{srv3.server_address[1]}"
+    saved_url = SEARCH_URL
+    try:
+        SEARCH_URL = base3 + "/search"
+        usage = []
+        m1 = [{"role": "user", "content": "今天有什么新闻"}]
+        # DeepSeek / 别的 OpenAI 兼容: 函数调用, OIT 自己搜, 结果交回去再答
+        pf = {"base_url": base3 + "/v1", "model": "m", "protocol": "openai", "api_key": "k", "provider": "custom"}
+        assert chat_messages(pf, "SYS", m1, web=True, on_usage=lambda *a: usage.append(a)) == "答案 F"
+        posts = [w for w in web_seen if w[0] == "POST"]
+        assert posts[0][2]["tools"] == [WEB_FUNCTION] and "tool_choice" not in posts[0][2]
+        gets = [w for w in web_seen if w[0] == "GET"]
+        assert len(gets) == 1 and "q=%E4%BB%8A%E5%A4%A9+%E6%96%B0%E9%97%BB" in gets[0][1], gets
+        second = posts[1][2]["messages"]
+        assert second[-2]["role"] == "assistant" and second[-2]["tool_calls"][0]["id"] == "c1"
+        assert second[-1]["role"] == "tool" and second[-1]["tool_call_id"] == "c1" and "https://example.com/a?x=1&y=2" in second[-1]["content"]
+        # Claude: 服务端 web_search 工具, 只取最后一次搜索结果之后的文字
+        web_seen.clear()
+        pa = {"base_url": base3, "model": "m", "protocol": "anthropic", "api_key": "k", "provider": "custom"}
+        assert chat_messages(pa, "SYS", m1, web=True, cache=True) == "查到了: 答案 A"
+        b = web_seen[-1][2]
+        assert web_seen[-1][1] == "/v1/messages" and b["tools"] == [WEB_TOOL_ANTHROPIC] and "thinking" not in b
+        # ChatGPT 官方地址: Responses API (地址只能是 api.openai.com, 这里用假的 opener 接住)
+
+        class _Resp:
+            def __init__(self, obj):
+                self.raw = json.dumps(obj).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self, n=-1):
+                return self.raw
+        calls = []
+
+        def fake_open(req, timeout=None):
+            calls.append((req.full_url, json.loads(req.data)))
+            return _Resp({"output": [{"type": "message", "content": [{"type": "output_text", "text": "答案 R"}]}]})
+        po = {"base_url": "https://api.openai.com/v1", "model": "gpt-4o-mini", "protocol": "openai", "api_key": "k", "provider": "chatgpt"}
+        assert chat_messages(po, "SYS", m1, web=True, opener=fake_open) == "答案 R"
+        assert calls[0][0] == "https://api.openai.com/v1/responses"
+        assert calls[0][1]["tools"] == [{"type": "web_search"}] and calls[0][1]["instructions"] == "SYS"
+        assert calls[0][1]["input"] == m1 and "messages" not in calls[0][1]
+        # 接口不认搜索 (400): 不联网再答一次, 系统提示里说明
+        web_seen.clear()
+        pn = dict(pf, base_url=base3 + "/nosearch")
+        try:
+            chat_messages(pn, "SYS", m1, web=True)
+        except AIError:
+            pass                                                   # 这个假服务器连普通聊天也回 400: 只看有没有用不带搜索的请求再试
+        plain = [w[2] for w in web_seen if w[0] == "POST"]
+        assert "tools" in plain[0] and "tools" not in plain[1] and plain[1]["messages"][0]["content"].endswith(WEB_FAIL_NOTE)
+        # web=False: 请求里没有 tools
+        web_seen.clear()
+        assert chat_messages(pf, "SYS", m1) == "答案 F"
+        assert "tools" not in web_seen[-1][2]
+    finally:
+        SEARCH_URL = saved_url
+        srv3.shutdown()
 
     # 预设服务商的 Key 只发往官方域名
     for prov, url in (("deepseek", "https://evil.example/v1"),
