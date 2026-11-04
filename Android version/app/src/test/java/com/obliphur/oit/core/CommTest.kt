@@ -950,8 +950,8 @@ class CommTest {
         // 人设日程里的空闲 / 休息 / 专注 / 睡眠段
         assertEquals(listOf("idle" to 390, "focus" to 420, "rest" to 520, "focus" to 558, "rest" to 658, "focus" to 696,
             "idle" to 720, "idle" to 750, "focus" to 780, "rest" to 880, "focus" to 918, "rest" to 1018,
-            "focus" to 1056, "idle" to 1080, "idle" to 1110, "focus" to 1140, "rest" to 1240, "focus" to 1278,
-            "rest" to 1378, "idle" to 1380, "sleep" to 1410),
+            "focus" to 1056, "idle" to 1080, "idle" to 1110, "focus" to 1140, "rest" to 1190, "focus" to 1206,
+            "rest" to 1256, "focus" to 1272, "rest" to 1322, "focus" to 1338, "idle" to 1380, "sleep" to 1410),
             CommText.scheduleSegments(BuiltinPersonas.ALL.getValue("Claudia.txt")))
         assertEquals(listOf("idle" to 545, "idle" to 720), CommText.scheduleSegments(     // 逐段写的休息 (09:10-10:00:休息) 不再被认出来
             "- 9:05 ~ 9:35 : Idle time\n  09：10-10:00：休息\n24:00-25:00:空闲\n12:00-13:00:不休息\n" +
@@ -1055,7 +1055,8 @@ class CommTest {
         val c2 = comm(File(td, "d2").also { it.mkdirs() }, File(td, "p2"))
         assertEquals("Claudia.txt", c2.personaName())
         File(td, "p2/全发.txt").writeText(BuiltinPersonas.ALL.getValue("Claudia.txt")
-            .replace("空闲发起谈话概率:20%", "空闲发起谈话概率:100%").replace("休息发起谈话概率:20%", "休息发起谈话概率:100%"))
+            .replace("空闲发起谈话概率:20%", "空闲发起谈话概率:100%").replace("休息发起谈话概率:20%", "休息发起谈话概率:100%")
+            .replace("[循环 19:00-23:00][50min]", "[循环 19:00-23:00][100min]"))
         c2.set(persona = "全发.txt")
         c2.snapshot = { CommSnap("idle") }
         script.add("晚点见")
