@@ -1389,7 +1389,7 @@ class CommTest {
         val day = LocalDateTime.of(2026, 12, 10, 0, 0)
         clock = day.withHour(13)
         script.clear(); follow.clear()
-        val co = mk("发起", "你是发起.\n12:30-13:00:空闲\n18:30-19:00:午饭\n[循环 14:00-18:00][100min]\n23:30-6:30:睡眠\n")
+        val co = mk("发起", "你是发起.\n12:30-14:00:空闲\n18:30-19:00:午饭\n[循环 14:00-18:00][100min]\n23:30-6:30:睡眠\n")
         val tids = Contract.TERMS.map { it.id }
         val (pa, pb, pc) = listOf("retreat1", "deep1", "short1").map { tids.indexOf(it) + 1 }
         script.addAll(listOf("[operation]", "我选 [$pa, $pb,$pb, $pc, 99]", "今天下午一起吧,14点开始.[waiting for reply]:[10]"))
@@ -1462,8 +1462,8 @@ class CommTest {
         wait(co)
         assertEquals("好的, 我知道了.", co.visible().last().text)
         assertTrue("operation" !in co.messages.last().api)
-        // 选的词条放不进任何开始时间: 不发
-        val cf = mk("发起二", "你是发起.\n17:00-17:30:午饭\n[循环 14:00-18:00][100min]\n")
+        // 选的词条放不进任何开始时间 (重要活动每 3 小时一个): 不发
+        val cf = mk("发起二", "你是发起.\n17:00-17:30:午饭\n20:00-20:30:晚饭\n23:00-23:30:夜宵\n2:00-2:30:甲\n5:00-5:30:乙\n8:00-8:30:丙\n11:00-11:30:丁\n14:00-14:30:戊\n")
         script.clear(); script.addAll(listOf("[operation]", "[1]", "聊聊天气吧."))
         val n4 = calls.size
         cf.proactiveForTest("[系统] 请主动发一条消息.")

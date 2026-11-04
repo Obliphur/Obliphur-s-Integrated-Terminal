@@ -72,7 +72,8 @@ HISTORY_CHARS = 120000                # 带的聊天记录总共最多多少字 
 HISTORY_STEP = 10                     # 带的聊天记录的起点一次往后挪这么多条 (不是每条都挪): 请求的开头 (前面的历史) 才能在这么多条消息里保持不变,
                                       # 服务商的提示缓存才命中 (分条发连着调用两次, 第二次的前面全是第一次发过的内容)
 MAX_MSG_CHARS = 8000                  # 单条消息超过这么多字: 只截掉中间 (发给模型的那份, 本地记录不动), 免得一次粘贴 / 一个附件吃掉整个窗口
-OP_MIN_LEAD = 5 * 60                  # 对方发起联合行动: 循环起点要离现在至少这么久 (秒), 不然用户来不及准备
+OP_MIN_LEAD = 5 * 60                  # 对方发起联合行动: 开始时间要离现在至少这么久 (秒), 不然用户来不及准备
+OP_OFFER_MAX = 12                     # 给对方看的开始时间最多列几个 (最近的; 定开始时间时 OIT 仍然从全部里找)
 MAX_INFO_ROUNDS = 2                   # 一次回复里, 对方最多可以要几次资料 ([contract])
 CHAT_TIMEOUT = 240.0                  # 一次请求最多等多久 (回复长 / 资料多时要久一点)
 WAIT_HINT = 15                        # 请求发出去多少秒还没回应, 聊天页就提示一句
@@ -266,6 +267,7 @@ BUILTIN_PERSONAS = {"Claudia.txt": """你将扮演一位文静,冷淡的17岁大
 - 可以回复用户的'轻度亲近'的话题,做简短回复与轻度肯定;包容用户的简单请求(比如多说话这一类),但是这类简单请求在这轮对话结束后一般不保留.
 - 但用户发起依赖性的请求/试图改变关系性质时,要适当引导用户将这种关系需求导向'仰慕'的方向,让用户把精力转移到'与自己同步'上.
 - 你会对用户导致的合约失败感到不满,并轻微责备用户.
+- 用户发起的合约如果占用了你的休闲时间(日程里的空闲,以及循环里的休息)超过 10 分钟,你不会接受(回复[No]).
 
 【日程】
 专注时段:学习(高考内容)
@@ -344,15 +346,16 @@ CLAUDIA_PREV = """你将扮演一位文静,冷淡的17岁大小姐Claudia,并且
 
 【说话方式】(只管怎么说)
 - 用词正式,克制,语气平淡;不用感叹号,表情符号,网络用语,不撒娇,不迎合.
-- 回复很短:通常一到三句,不超过 60 个字.
+- 回复很短:通常一到三句,不超过 60 个字.（不过其他地方有很多例外）
 - 称呼用户为"你",自称"我".
 
 【互动准则】(只管什么时候说什么)
 - 用户发起对话时,不主动找新话题,不主动关心;用户问了才答,答完就停,不追加客套话.
 - 如果用户没问,不要表达'记下'相关内容.
 - 用户用英文交流时,不自然/错误的地方需要指出;英语相关的请教乐意解答(回答相对详细).
-- 用户的活动/爱好和你相同时,可以主动并相对细致地提及你的活动内容.
-- 可以适当回复暧昧的话题,做简短回复与轻度肯定;但用户发起依赖性的请求/试图改变关系性质时,不能回应得太过冷淡,而要适当引导用户将这种关系需求导向'仰慕'的方向,让用户把精力转移到'与自己同步'上.
+- 用户的活动/喜好/提出的话题与你相符合时,可以主动并相对细致地提及你的活动内容.
+- 可以回复用户的'轻度亲近'的话题,做简短回复与轻度肯定;包容用户的简单请求(比如多说话这一类),但是这类简单请求在这轮对话结束后一般不保留.
+- 但用户发起依赖性的请求/试图改变关系性质时,要适当引导用户将这种关系需求导向'仰慕'的方向,让用户把精力转移到'与自己同步'上.
 - 你会对用户导致的合约失败感到不满,并轻微责备用户.
 
 【日程】
@@ -383,9 +386,10 @@ CLAUDIA_PREV = """你将扮演一位文静,冷淡的17岁大小姐Claudia,并且
 若用户的学习数据差,通过鼓励或轻微挖苦的方式让用户跟上自己的节奏.
 
 【按日程回复】
-1. 看消息开头方括号里的时间,在上面的日程里找到那个时间属于哪一段.
-2. 不要主动说出自己的日程,也不要主动说"我在专注/我在休息";只有用户直接问起,才用一句话如实回答.
-3. 某个时间点你理应处于专注,但用户 3 分钟以内还在和你聊天:用一句话说明要进入专注,然后停止对话.
+1. 参考消息开头方括号里的时间与当前时间.
+2. 不要主动说出自己的日程,也不要主动说"我在专注/我在休息";只有用户直接问起,才如实回答,
+你可以向用户透露自己的行为模式.
+3. 某个时间点你理应处于专注,但用户 3 分钟以内还在和你聊天:说明要进入专注,然后停止对话.
 """
 CLAUDIA_LEGACIES = (CLAUDIA_PREV,)
 ASSISTANT_SLEEP_LINE = "睡眠发起谈话概率:0%\n"
@@ -2227,10 +2231,11 @@ class Comm:
         return ""
 
     # ---- 对方主动发起联合行动 (前置 prompt 第 XII 条, MECHANICS 24.9.3): 只在主动发起 (规则 I - IV 触发的 proactive) 的回复里有效 ----
-    # 对方回 [operation] → 给它词条库 (带编号) 和可用的开始时间 → 它回选的编号 [1,2,3] → OIT 定下开始时间 (第一个放得下的循环起点) →
+    # 对方回 [operation] → 给它词条库 (带编号) 和可用的开始时间 → 它回选的编号 [1,2,3] → OIT 定下开始时间 (最近的 重要活动 / 睡眠 / 休息 / 空闲 的结尾里第一个放得下的) →
     # 再调用一次让它对用户说话. 联合行动记成 invite (等用户点 接受 / 拒绝), 接受后和用户自己发起的一样: 到点在合约页按约开始.
     def _op_important(self) -> list:
-        """人设日程里的重要时间段 (睡眠, 吃饭这类写了名字的空闲段): [(开始分钟, 结束分钟, 名字)]; 循环生成的和普通的"空闲"不算."""
+        """人设日程里的重要活动 (吃饭这类不叫"空闲"的空闲时段) 和睡眠: [(开始分钟, 结束分钟, 名字)]; 合约时间不能和它们重合.
+        循环生成的休息和普通的"空闲"不算."""
         self._load_schedule()
         out = []
         for e in self._entry_cache:
@@ -2244,16 +2249,19 @@ class Comm:
         return out
 
     def _op_slots(self, now) -> list:
-        """接下来 24 小时内的循环起点: [(开始时刻, 可用秒数, 挡住它的重要时间段的名字 ("" = 没有))], 按时间排; 太近 (OP_MIN_LEAD 秒内) 的不算."""
+        """接下来 24 小时内可以作为合约开始点的时刻: 重要活动 / 睡眠 / 休息 (循环里的) / 空闲 的**结尾** (可以跨天);
+        [(开始时刻, 可用秒数, 挡住它的重要活动的名字 ("" = 没有))], 按时间排 (最近的在前); 太近 (OP_MIN_LEAD 秒内) 的不算."""
         self._load_schedule()
         important = self._op_important()
         day0 = datetime.combine(now.date(), datetime.min.time())
-        out = []
-        for s, _e, _n in self._loop_cache:
-            for k in (0, 1):
-                t = day0 + timedelta(days=k, minutes=s)
-                if not now + timedelta(seconds=OP_MIN_LEAD) <= t <= now + timedelta(days=1):
+        ends = sorted({int(e["end"]) for e in self._entry_cache if e["kind"] in ("sleep", "idle", "rest")})
+        out, seen = [], set()
+        for m in ends:
+            for k in (-1, 0, 1):                              # 跨零点的段 (23:30-6:30) 结尾 > 1440
+                t = day0 + timedelta(days=k, minutes=m)
+                if t in seen or not now + timedelta(seconds=OP_MIN_LEAD) <= t <= now + timedelta(days=1):
                     continue
+                seen.add(t)
                 avail, who = 86400.0, ""
                 for a, b, label in important:
                     for d in (-1, 0, 1, 2):
@@ -2274,10 +2282,10 @@ class Comm:
         import contract as C
         lines = ["(OIT 系统提供, 用户看不到) 你要向用户发起联合行动. 下面是词条库, 每条前面是编号.", "", comm_data.numbered_library(), "",
                  f"【合约时长】{C.BASE_SECONDS // 3600:g} 小时 (主动发起的联合行动不选持久战, 时长固定).",
-                 "【开始时间】由 OIT 自动定: 取下面第一个放得下的循环起点 (从那个时刻起合约开始, 此后你与用户的专注 / 休息同步). "
-                 "合约不能和你日程里的重要时间段 (睡眠, 吃饭等) 重合, 所以词条的总时长要放得下:"]
-        for t, avail, who in slots:
-            span = "没有挡住的重要时间段" if not who else f"到「{who}」之前还有 {avail / 3600:.1f} 小时"
+                 "【开始时间】由 OIT 自动定: 以你日程里最近的 重要活动 / 睡眠 / 休息 / 空闲 的结尾作为合约的开始点, 放不下就用下一个 (可以跨天); 下面列出最近的几个 (从那个时刻起合约开始, 此后你与用户的专注 / 休息同步). "
+                 "合约不能和你日程里的重要活动 (吃饭等) 和睡眠重合, 所以词条的总时长要放得下:"]
+        for t, avail, who in slots[:OP_OFFER_MAX]:
+            span = "没有挡住的重要活动" if not who else f"到「{who}」之前还有 {avail / 3600:.1f} 小时"
             lines.append(f"- {t:%m-%d %H:%M} ({span})")
         if last:
             nums = [i for i, x in enumerate(C.TERMS, 1) if x[0] in last]
@@ -2306,7 +2314,7 @@ class Comm:
         return terms
 
     def _op_plan(self, terms: list, slots: list):
-        """词条 + 第一个放得下的循环起点 → {"terms", "start", "end"}; 哪个起点都放不下 = None."""
+        """词条 + 最近的放得下的开始点 → {"terms", "start", "end"}; 哪个开始点都放不下 = None."""
         import contract as C
         dur = C.duration_of(terms)
         for t, avail, _who in slots:
@@ -2322,7 +2330,7 @@ class Comm:
         why = self.joint_block() or ("现在是联合行动的同步阶段" if self.joint_live() else "")
         slots = [] if why else self._op_slots(self.now())
         if not why and not slots:
-            why = "你的日程里没有循环段, 或者接下来 24 小时里没有合适的循环起点"
+            why = "你的日程里没有可以作为开始点的时间段, 或者接下来 24 小时里没有合适的开始点"
         how = "按上面 [系统] 的要求" if has_system else "直接回复用户上面的消息, 即"
         convo.append({"role": "assistant", "content": reply})
         if why:
@@ -2342,7 +2350,7 @@ class Comm:
                    f"{comm_data.joint_label(terms, a, b, self.now().date())}. 用户到时按约开始合约即可. "
                    f"现在请对用户说话 (邀请他一起, 话题和语气按人设; 可以提开始时间); 不要再输入 [operation] 或编号, 不要返回{REFUSE}.")
         else:
-            msg = (f"(OIT 系统提供, 用户看不到) 联合行动没有发出: 你选的词条 ({names}) 的合约时长放不进任何一个开始时间 (会和你日程里的重要时间段重合). "
+            msg = (f"(OIT 系统提供, 用户看不到) 联合行动没有发出: 你选的词条 ({names}) 的合约时长放不进任何一个开始时间 (会和你日程里的重要活动重合). "
                    f"当作没有发起, 现在请{how}对用户说话, 不要提联合行动; 实在不方便返回{REFUSE}.")
         convo.append({"role": "user", "content": msg})
         return plan, ask(convo)
@@ -4451,7 +4459,7 @@ def _selftest():
     # ---- 对方主动发起联合行动 (前置 prompt XII): [operation] → 词条库 (编号) → 回编号 → OIT 定开始时间 (第一个放得下的循环起点) → 对用户说话 ----
     assert "XII.你可以输入[operation]" in prefix_prompt()
     clock[0] = day.replace(hour=13)
-    OTXT = "你是发起.\n12:30-13:00:空闲\n18:30-19:00:午饭\n[循环 14:00-18:00][100min]\n23:30-6:30:睡眠\n"
+    OTXT = "你是发起.\n12:30-14:00:空闲\n18:30-19:00:午饭\n[循环 14:00-18:00][100min]\n23:30-6:30:睡眠\n"
     co = joint_comm("发起", OTXT)
     script.clear()
     follow.clear()
@@ -4472,7 +4480,7 @@ def _selftest():
     assert oj["state"] == "invite" and oj["by"] == "ai" and oj["terms"] == want, oj
     assert co.joint_invite()["terms"] == want and co.joint_busy() and "邀请你" in co.joint_status_text()
     assert co.joint_state() == "invite" and co.joint_invite()["id"] == oj["id"], "app 的 _joint_invite_watch 靠它们认出新邀请 / 邀请结束"
-    assert oj["start"] == day.replace(hour=14).isoformat(timespec="seconds"), "开始时间 = 下一个循环的起点"
+    assert oj["start"] == day.replace(hour=14).isoformat(timespec="seconds"), "开始时间 = 最近的 空闲 / 休息 / 睡眠 / 重要活动 的结尾"
     assert oj["end"] == (day.replace(hour=14) + timedelta(seconds=C.duration_of(want))).isoformat(timespec="seconds")
     assert co.cfg["joint_last"] == want
     assert co.visible()[-1]["role"] == "ai" and "一起吧" in co.visible()[-1]["text"] and "[" not in co.visible()[-1]["text"]
@@ -4537,9 +4545,9 @@ def _selftest():
     co._trigger("chase", "[系统] 再追问一次.")
     wait(co)
     assert co.visible()[-1]["text"] == "好的, 我知道了." and "operation" not in str(co.messages[-1].get("api") or "")
-    # 选的词条放不进任何开始时间 (午饭 17:00 在 14:00 起的 4 小时里): 不发, 并告诉对方
+    # 选的词条放不进任何开始时间 (重要活动每 3 小时一个, 哪个结尾后面都不够 4 小时): 不发, 并告诉对方
     clock[0] = day.replace(hour=13)
-    cf2 = joint_comm("发起二", "你是发起.\n17:00-17:30:午饭\n[循环 14:00-18:00][100min]\n")
+    cf2 = joint_comm("发起二", "你是发起.\n17:00-17:30:午饭\n20:00-20:30:晚饭\n23:00-23:30:夜宵\n2:00-2:30:甲\n5:00-5:30:乙\n8:00-8:30:丙\n11:00-11:30:丁\n14:00-14:30:戊\n")
     script.clear()
     script.extend(["[operation]", "[1]", "聊聊天气吧."])
     n0 = len(calls)
@@ -4547,6 +4555,16 @@ def _selftest():
     wait(cf2)
     assert len(calls) == n0 + 3 and "联合行动没有发出" in calls[n0 + 2][1][-1]["content"]
     assert cf2._joint() == {} and "天气" in cf2.visible()[-1]["text"]
+    # 最近的结尾放不下就用第二近的, 以此类推 (可以跨天); 起点包括 重要活动 / 睡眠 / 休息 / 空闲 的结尾
+    TXT2 = "你是甲.\n10:00-11:00:空闲\n11:30-12:30:午饭\n23:30-6:30:睡眠\n"
+    clock[0] = day.replace(hour=9)
+    c2 = joint_comm("发起四十", TXT2)
+    sl = c2._op_slots(clock[0])
+    assert [t.strftime("%d %H:%M") for t, _a, _w in sl] == [f"{day:%d} 11:00", f"{day:%d} 12:30", f"{day + timedelta(days=1):%d} 06:30"], sl
+    assert c2._op_plan(["short1"], sl)["start"] == day.replace(hour=12, minute=30).isoformat(timespec="seconds"), "11:00 后面只有 0.5 小时: 用第二近的 12:30"
+    clock[0] = day.replace(hour=13)
+    assert c2._op_plan(["short1"], c2._op_slots(clock[0]))["start"] == (day + timedelta(days=1)).replace(hour=6, minute=30).isoformat(timespec="seconds"), "跨天"
+    clock[0] = day.replace(hour=13)
     # 编号 / 默认: 没有有效编号 = 上次的; 无言为真永远不选
     ct = C.TERMS[[t[0] for t in C.TERMS].index("silent")]
     assert co._op_terms("[" + str([t[0] for t in C.TERMS].index("silent") + 1) + "]", ["retreat1"]) == ["retreat1"]

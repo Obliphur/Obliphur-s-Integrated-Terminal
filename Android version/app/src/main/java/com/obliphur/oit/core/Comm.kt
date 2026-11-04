@@ -106,6 +106,7 @@ object BuiltinPersonas {
 - 可以回复用户的'轻度亲近'的话题,做简短回复与轻度肯定;包容用户的简单请求(比如多说话这一类),但是这类简单请求在这轮对话结束后一般不保留.
 - 但用户发起依赖性的请求/试图改变关系性质时,要适当引导用户将这种关系需求导向'仰慕'的方向,让用户把精力转移到'与自己同步'上.
 - 你会对用户导致的合约失败感到不满,并轻微责备用户.
+- 用户发起的合约如果占用了你的休闲时间(日程里的空闲,以及循环里的休息)超过 10 分钟,你不会接受(回复[No]).
 
 【日程】
 专注时段:学习(高考内容)
@@ -181,15 +182,16 @@ object BuiltinPersonas {
 
 【说话方式】(只管怎么说)
 - 用词正式,克制,语气平淡;不用感叹号,表情符号,网络用语,不撒娇,不迎合.
-- 回复很短:通常一到三句,不超过 60 个字.
+- 回复很短:通常一到三句,不超过 60 个字.（不过其他地方有很多例外）
 - 称呼用户为"你",自称"我".
 
 【互动准则】(只管什么时候说什么)
 - 用户发起对话时,不主动找新话题,不主动关心;用户问了才答,答完就停,不追加客套话.
 - 如果用户没问,不要表达'记下'相关内容.
 - 用户用英文交流时,不自然/错误的地方需要指出;英语相关的请教乐意解答(回答相对详细).
-- 用户的活动/爱好和你相同时,可以主动并相对细致地提及你的活动内容.
-- 可以适当回复暧昧的话题,做简短回复与轻度肯定;但用户发起依赖性的请求/试图改变关系性质时,不能回应得太过冷淡,而要适当引导用户将这种关系需求导向'仰慕'的方向,让用户把精力转移到'与自己同步'上.
+- 用户的活动/喜好/提出的话题与你相符合时,可以主动并相对细致地提及你的活动内容.
+- 可以回复用户的'轻度亲近'的话题,做简短回复与轻度肯定;包容用户的简单请求(比如多说话这一类),但是这类简单请求在这轮对话结束后一般不保留.
+- 但用户发起依赖性的请求/试图改变关系性质时,要适当引导用户将这种关系需求导向'仰慕'的方向,让用户把精力转移到'与自己同步'上.
 - 你会对用户导致的合约失败感到不满,并轻微责备用户.
 
 【日程】
@@ -220,9 +222,10 @@ object BuiltinPersonas {
 若用户的学习数据差,通过鼓励或轻微挖苦的方式让用户跟上自己的节奏.
 
 【按日程回复】
-1. 看消息开头方括号里的时间,在上面的日程里找到那个时间属于哪一段.
-2. 不要主动说出自己的日程,也不要主动说"我在专注/我在休息";只有用户直接问起,才用一句话如实回答.
-3. 某个时间点你理应处于专注,但用户 3 分钟以内还在和你聊天:用一句话说明要进入专注,然后停止对话.
+1. 参考消息开头方括号里的时间与当前时间.
+2. 不要主动说出自己的日程,也不要主动说"我在专注/我在休息";只有用户直接问起,才如实回答,
+你可以向用户透露自己的行为模式.
+3. 某个时间点你理应处于专注,但用户 3 分钟以内还在和你聊天:说明要进入专注,然后停止对话.
 """
     val CLAUDIA_LEGACIES = listOf(CLAUDIA_PREV)
 }
@@ -613,7 +616,8 @@ class Comm(
         const val MEM_EVERY = 40                        // 每这么多条新消息, 让模型整理一次"记忆卡"
         const val MEM_GAP = 6 * 3600                    // 两次整理至少隔这么久 (秒)
         const val MEM_MAX = 2000                        // 记忆卡 (手写 + 自动) 各自最多多少字
-        const val OP_MIN_LEAD = 5 * 60                  // 对方发起联合行动: 循环起点要离现在至少这么久 (秒), 不然用户来不及准备
+        const val OP_MIN_LEAD = 5 * 60                  // 对方发起联合行动: 开始时间要离现在至少这么久 (秒), 不然用户来不及准备
+        const val OP_OFFER_MAX = 12                     // 给对方看的开始时间最多列几个 (最近的; 定开始时间时仍然从全部里找)
         const val MAX_INFO_ROUNDS = 2                   // 一次回复里, 对方最多可以要几次资料 ([contract])
         const val CHAT_TIMEOUT_MS = 240_000             // 一次请求最多等多久 (回复长 / 资料多时要久一点)
         const val WAIT_HINT = 15                        // 请求发出去多少秒还没回应, 聊天页就提示一句
@@ -2025,12 +2029,12 @@ class Comm(
     }
 
     // ---- 对方主动发起联合行动 (前置 prompt 第 XII 条, MECHANICS 24.9.3; 同桌面版 comm.py _operation_rounds): 只在主动发起 (规则 I - IV 触发的 proactive) 的回复里有效 ----
-    // 对方回 [operation] → 给它词条库 (带编号) 和可用的开始时间 → 它回选的编号 [1,2,3] → OIT 定开始时间 (第一个放得下的循环起点) →
+    // 对方回 [operation] → 给它词条库 (带编号) 和可用的开始时间 → 它回选的编号 [1,2,3] → OIT 定开始时间 (最近的 重要活动 / 睡眠 / 休息 / 空闲 的结尾里第一个放得下的) →
     // 再调用一次让它对用户说话. 联合行动记成 invite (等用户点 接受 / 拒绝), 接受后和用户自己发起的一样: 到点在合约页按约开始.
     class JointPlan(val terms: List<String>, val start: LocalDateTime, val end: LocalDateTime)
     private class OpSlot(val start: LocalDateTime, val availS: Double, val who: String)
 
-    /** 人设日程里的重要时间段 (睡眠, 吃饭这类写了名字的空闲段): (开始分钟, 结束分钟, 名字); 循环生成的和普通的"空闲"不算. */
+    /** 人设日程里的重要活动 (吃饭这类不叫"空闲"的空闲时段) 和睡眠: (开始分钟, 结束分钟, 名字); 合约时间不能和它们重合; 循环生成的休息和普通的"空闲"不算. */
     private fun opImportant(): List<Triple<Int, Int, String>> {
         loadSchedule()
         return entryCache.filter { e ->
@@ -2039,15 +2043,18 @@ class Comm(
         }.map { Triple(it.start, it.end, it.label) }
     }
 
-    /** 接下来 24 小时内的循环起点 (太近 OP_MIN_LEAD 秒内的不算): 开始时刻, 可用秒数, 挡住它的重要时间段的名字 ("" = 没有). */
+    /** 接下来 24 小时内可以作为合约开始点的时刻: 重要活动 / 睡眠 / 休息 (循环里的) / 空闲 的结尾 (可以跨天), 太近 (OP_MIN_LEAD 秒内) 的不算:
+     *  开始时刻, 可用秒数, 挡住它的重要活动的名字 ("" = 没有); 按时间排 (最近的在前). */
     private fun opSlots(t0: LocalDateTime): List<OpSlot> {
         loadSchedule()
         val important = opImportant()
         val day0 = t0.toLocalDate().atStartOfDay()
+        val ends = entryCache.filter { it.kind == "sleep" || it.kind == "idle" || it.kind == "rest" }.map { it.end }.toSortedSet()
+        val seen = HashSet<LocalDateTime>()
         val out = ArrayList<OpSlot>()
-        for (lp in loopCache) for (k in 0..1) {
-            val t = day0.plusDays(k.toLong()).plusMinutes(lp.start.toLong())
-            if (t.isBefore(t0.plusSeconds(OP_MIN_LEAD.toLong())) || t.isAfter(t0.plusDays(1))) continue
+        for (m in ends) for (k in -1..1) {                    // 跨零点的段 (23:30-6:30) 结尾 > 1440
+            val t = day0.plusDays(k.toLong()).plusMinutes(m.toLong())
+            if (t.isBefore(t0.plusSeconds(OP_MIN_LEAD.toLong())) || t.isAfter(t0.plusDays(1)) || !seen.add(t)) continue
             var avail = 86400.0
             var who = ""
             for ((a, b, label) in important) for (d in -1..2) {
@@ -2068,10 +2075,10 @@ class Comm(
     private fun opOffer(slots: List<OpSlot>, last: List<String>): String {
         val lines = arrayListOf("(OIT 系统提供, 用户看不到) 你要向用户发起联合行动. 下面是词条库, 每条前面是编号.", "", CommData.numberedLibrary(), "",
             "【合约时长】${fmt1(Contract.BASE_SECONDS / 3600)} 小时 (主动发起的联合行动不选持久战, 时长固定).",
-            "【开始时间】由 OIT 自动定: 取下面第一个放得下的循环起点 (从那个时刻起合约开始, 此后你与用户的专注 / 休息同步). " +
-                "合约不能和你日程里的重要时间段 (睡眠, 吃饭等) 重合, 所以词条的总时长要放得下:")
-        for (s in slots) {
-            val span = if (s.who.isEmpty()) "没有挡住的重要时间段" else "到「${s.who}」之前还有 ${fmt1(s.availS / 3600)} 小时"
+            "【开始时间】由 OIT 自动定: 以你日程里最近的 重要活动 / 睡眠 / 休息 / 空闲 的结尾作为合约的开始点, 放不下就用下一个 (可以跨天); 下面列出最近的几个 (从那个时刻起合约开始, 此后你与用户的专注 / 休息同步). " +
+                "合约不能和你日程里的重要活动 (吃饭等) 和睡眠重合, 所以词条的总时长要放得下:")
+        for (s in slots.take(OP_OFFER_MAX)) {
+            val span = if (s.who.isEmpty()) "没有挡住的重要活动" else "到「${s.who}」之前还有 ${fmt1(s.availS / 3600)} 小时"
             lines.add("- %02d-%02d %02d:%02d ($span)".format(s.start.monthValue, s.start.dayOfMonth, s.start.hour, s.start.minute))
         }
         if (last.isNotEmpty()) {
@@ -2098,7 +2105,7 @@ class Comm(
         return terms
     }
 
-    /** 词条 + 第一个放得下的循环起点; 哪个起点都放不下 = null. */
+    /** 词条 + 最近的放得下的开始点; 哪个开始点都放不下 = null. */
     private fun opPlan(terms: List<String>, slots: List<OpSlot>): JointPlan? {
         val dur = Contract.durationOf(terms)
         val s = slots.firstOrNull { it.availS >= dur } ?: return null
@@ -2111,7 +2118,7 @@ class Comm(
         var why = jointBlock()
         if (why.isEmpty() && jointLive()) why = "现在是联合行动的同步阶段"
         val slots = if (why.isEmpty()) opSlots(now()) else emptyList()
-        if (why.isEmpty() && slots.isEmpty()) why = "你的日程里没有循环段, 或者接下来 24 小时里没有合适的循环起点"
+        if (why.isEmpty() && slots.isEmpty()) why = "你的日程里没有可以作为开始点的时间段, 或者接下来 24 小时里没有合适的开始点"
         val how = if (hasSystem) "按上面 [系统] 的要求" else "直接回复用户上面的消息, 即"
         convo.add("assistant" to reply)
         if (why.isNotEmpty()) {
@@ -2130,7 +2137,7 @@ class Comm(
             "(OIT 系统提供, 用户看不到) 联合行动已发出: 词条 $names; ${CommData.jointLabel(terms, plan.start, plan.end, now().toLocalDate())}. 用户到时按约开始合约即可. " +
                 "现在请对用户说话 (邀请他一起, 话题和语气按人设; 可以提开始时间); 不要再输入 [operation] 或编号, 不要返回${CommText.REFUSE}."
         else
-            "(OIT 系统提供, 用户看不到) 联合行动没有发出: 你选的词条 ($names) 的合约时长放不进任何一个开始时间 (会和你日程里的重要时间段重合). " +
+            "(OIT 系统提供, 用户看不到) 联合行动没有发出: 你选的词条 ($names) 的合约时长放不进任何一个开始时间 (会和你日程里的重要活动重合). " +
                 "当作没有发起, 现在请${how}对用户说话, 不要提联合行动; 实在不方便返回${CommText.REFUSE}.")
         return plan to chatFn(profile, system, convo)
     }
