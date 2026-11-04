@@ -75,6 +75,7 @@ fun CommScreen(go: (String) -> Unit) {
     var help by remember { mutableStateOf(false) }
     var jointAsk by remember { mutableStateOf(core.jointAsk) }                  // 合约页选好词条回来了: 输入开始时间
     var jointLine by remember { mutableStateOf(comm.jointLabel() to comm.jointStatusText()) }
+    var invite by remember { mutableStateOf(comm.jointInvite() != null) }          // 对方发起的联合行动: 等用户点 接受 / 拒绝
     // 不跟着每秒一次的 LocalTick 重画 (整页每秒重画一遍会有卡顿感): 只在聊天记录 / 状态变了才刷新
     var ver by remember { mutableIntStateOf(comm.version) }
     var waitHint by remember { mutableStateOf("") }
@@ -89,6 +90,7 @@ fun CommScreen(go: (String) -> Unit) {
             if (kind != otherStatusKind) otherStatusKind = kind
             if (core.jointAsk != jointAsk) jointAsk = core.jointAsk
             (comm.jointLabel() to comm.jointStatusText()).let { if (it != jointLine) jointLine = it }
+            (comm.jointInvite() != null).let { if (it != invite) invite = it }
             kotlinx.coroutines.delay(250)
         }
     }
@@ -153,6 +155,11 @@ fun CommScreen(go: (String) -> Unit) {
             TextButton({ comm.clearJointDraft() }, contentPadding = tight) { Text("✕", color = o.dim, fontSize = 14.sp) }
         } else if (jointLine.second.isNotEmpty())
             Text(jointLine.second, color = o.dim, fontSize = 12.sp, modifier = Modifier.padding(start = 8.dp))
+        if (invite) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(start = 8.dp)) {
+            AccentButton(tr("接受")) { comm.jointRespond(true).let { if (it.isNotEmpty()) core.toast(tr(it), "warn") } }
+            TextButton({ comm.jointRespond(false).let { if (it.isNotEmpty()) core.toast(tr(it), "warn") } }) { Text(tr("拒绝"), color = o.dim) }
+        }
         val attached = CommData.label(comm.attach)
         if (attached.isNotEmpty()) Row(verticalAlignment = Alignment.CenterVertically) {
             Text(attached, color = o.accent, fontSize = 12.sp, modifier = Modifier.weight(1f, false).padding(start = 8.dp).clickable { attach = true })

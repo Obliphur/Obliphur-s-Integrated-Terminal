@@ -100,6 +100,10 @@ class CommPage(tk.Frame):
         self.lbl_joint.pack(side="left", padx=(8, 0))
         self.btn_joint_x = tk.Label(tools, text="✕", bg=bg, fg=COLORS["text_dim"], font=config.font("small"), cursor="hand2")
         self.btn_joint_x.bind("<Button-1>", lambda _e: self.comm.clear_joint_draft())
+        # 对方发起的联合行动: 等用户点 接受 / 拒绝 (只有 invite 的时候显示)
+        self.joint_btns = tk.Frame(tools, bg=bg)
+        ttk.Button(self.joint_btns, text=tr("接受"), width=6, command=lambda: self._joint_respond(True)).pack(side="left")
+        ttk.Button(self.joint_btns, text=tr("拒绝"), width=6, command=lambda: self._joint_respond(False)).pack(side="left", padx=(4, 0))
 
         row = tk.Frame(self, bg=bg)
         row.pack(fill="x", padx=28, pady=(4, 14))
@@ -210,6 +214,11 @@ class CommPage(tk.Frame):
                 self.btn_joint_x.pack(side="left", padx=(6, 0))
         elif self.btn_joint_x.winfo_manager() == "pack":
             self.btn_joint_x.pack_forget()
+        if c.joint_invite():
+            if self.joint_btns.winfo_manager() != "pack":
+                self.joint_btns.pack(side="left", padx=(8, 0))
+        elif self.joint_btns.winfo_manager() == "pack":
+            self.joint_btns.pack_forget()
         label = c.attach_label()
         cfg(self.lbl_attach, text=label)
         if label:
@@ -459,6 +468,11 @@ class CommPage(tk.Frame):
         dlg.update_idletasks()
         dlg._center(self.winfo_toplevel(), width, dlg.winfo_reqheight())
         dlg.wait()
+
+    def _joint_respond(self, accept: bool):
+        why = self.comm.joint_respond(accept)
+        if why:
+            toast.warn(tr(why))
 
     def _joint(self):
         """🤝 联合行动: 界面移到合约页, 选好词条再回来输入开始时间."""

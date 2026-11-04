@@ -69,6 +69,20 @@ def _req_name(req: str) -> str:
     return req
 
 
+def numbered_library() -> str:
+    """对方发起联合行动时看到的词条库: 每个词条前面有编号 (= 词条在 contract.TERMS 里的位置 + 1), 对方回编号选词条."""
+    lines = ["【合约词条库】"]
+    for i, t in enumerate(C.TERMS, 1):
+        kind, sep, name = t[3].partition(":")
+        if not sep:
+            kind, name = "特殊", kind
+        lines.append(f"{i}. {name}({kind}, 等级{t[2]}): {t[4]}".replace("\n", " "))
+    lines.append("\n【词条组合】(组合的要求都选着才生效)")
+    for c in C.COMBOS:
+        lines.append(f"- {c['name']}: 需要 " + " + ".join(_req_name(r) for r in c["reqs"]) + f"; 效果: {c['desc']}".replace("\n", ", "))
+    return "\n".join(lines)
+
+
 def library(contract=None) -> str:
     """整个词条库和组合. contract=None: 参考模板 (对方查询 [contract] 得到的: 只有词条和组合本身, 不标用户选了哪些, 具体选了什么由对方自己编);
     给了 contract: 标出哪些被用户选择 / 激活了 (合约进行中 = 激活的, 没开始 = 选好的(还没生效)), 📎 附件用."""

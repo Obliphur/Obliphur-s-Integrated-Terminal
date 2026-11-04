@@ -210,6 +210,19 @@ object CommData {
         return req
     }
 
+    /** 对方发起联合行动时看到的词条库: 每个词条前面有编号 (= 词条在 Contract.TERMS 里的位置 + 1), 对方回编号选词条. */
+    fun numberedLibrary(): String {
+        val lines = arrayListOf("【合约词条库】")
+        for ((i, t) in Contract.TERMS.withIndex()) {
+            val kind = if (':' in t.name) t.name.substringBefore(':') else "特殊"
+            lines.add("${i + 1}. ${t.name.substringAfter(':')}($kind, 等级${t.level}): ${t.desc}".replace("\n", " "))
+        }
+        lines.add("\n【词条组合】(组合的要求都选着才生效)")
+        for (cb in Contract.COMBOS)
+            lines.add("- ${cb.name}: 需要 " + cb.reqs.joinToString(" + ") { reqName(it) } + "; 效果: ${cb.desc}".replace("\n", ", "))
+        return lines.joinToString("\n")
+    }
+
     /** 整个词条库和组合, 标出哪些被用户选择 / 激活了: 合约进行中 = 激活的, 没开始 = 选好的(还没生效). */
     fun library(c: Contract?): String {
         val active = c?.active == true

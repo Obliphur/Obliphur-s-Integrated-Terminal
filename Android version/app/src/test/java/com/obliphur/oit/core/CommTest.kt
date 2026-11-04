@@ -1374,4 +1374,86 @@ class CommTest {
             Comm.charDelay = 0.0
         }
     }
+
+    /** 对方主动发起联合行动 (前置 prompt XII): [operation] → 词条库 (编号) → 回编号 → OIT 定开始时间 → 对用户说话; 用户点 接受 / 拒绝 (对应 comm.py 自检). */
+    @Test
+    fun jointOperation() {
+        val td = Files.createTempDirectory("oit").toFile()
+        File(td, "p").mkdirs()
+        var seq = 0
+        fun mk(name: String, text: String): Comm {
+            File(td, "p/" + name + ".txt").writeText(text)
+            val c = comm(File(td, "d" + (seq++)).also { it.mkdirs() }, File(td, "p"))
+            c.set(persona = name + ".txt", splitSend = false)
+            c.snapshot = { CommSnap("idle") }
+            return c
+        }
+        val day = LocalDateTime.of(2026, 12, 10, 0, 0)
+        clock = day.withHour(13)
+        script.clear(); follow.clear()
+        val co = mk("发起", "你是发起.\n12:30-13:00:空闲\n18:30-19:00:午饭\n[循环 14:00-18:00][100min]\n23:30-6:30:睡眠\n")
+        val tids = Contract.TERMS.map { it.id }
+        val (pa, pb, pc) = listOf("retreat1", "deep1", "short1").map { tids.indexOf(it) + 1 }
+        script.addAll(listOf("[operation]", "我选 [$pa, $pb,$pb, $pc, 99]", "今天下午一起吧,14点开始.[waiting for reply]:[10]"))
+        val n0 = calls.size
+        co.proactiveForTest("[系统] 按你的日程, 你现在有空. 请主动发一条消息.")
+        wait(co)
+        assertEquals(n0 + 3, calls.size)
+        val offer = calls[n0 + 1].second.last().second
+        assertTrue("1. " in offer && "[1,2,3,9,10]" in offer && "没有 (请随机选择)" in offer && "14:00" in offer && "不要选无言为真" in offer)
+        assertTrue(offer, "到「午饭」之前还有 4.5 小时" in offer)
+        assertTrue("联合行动已发出" in calls[n0 + 2].second.last().second)
+        val want = Contract.clean(listOf("retreat1", "deep1", "short1"), prereq = true)
+        val inv = co.jointInvite()
+        assertNotNull(inv)
+        assertEquals("invite", co.jointState())
+        assertEquals(want, inv!!.terms)
+        assertEquals("2026-12-10T14:00:00", inv.start)
+        assertTrue(co.jointBusy() && "邀请你" in co.jointStatusText())
+        assertEquals(want, co.jointLast)
+        assertTrue("一起吧" in co.visible().last().text && "[" !in co.visible().last().text)
+        // 接受 / 拒绝: 变成对方已接受 / 拒绝, 并且各再调用一次 API
+        clock = day.withHour(13).withMinute(30)
+        script.clear(); script.add("好,到时见.")
+        val n1 = calls.size
+        assertEquals("", co.jointRespond(true))
+        wait(co)
+        assertEquals("yes", co.jointState())
+        assertTrue(calls.size == n1 + 1 && "「接受」" in calls.last().second.last().second && "到时见" in co.visible().last().text)
+        assertEquals("没有等你回复的联合行动邀请", co.jointRespond(true))
+        co.proactiveForTestSet("invite")
+        script.add("好吧, 下次再说.")
+        val n2 = calls.size
+        assertEquals("", co.jointRespond(false))
+        wait(co)
+        assertEquals("no", co.jointState())
+        assertTrue(calls.size == n2 + 1 && "「拒绝」" in calls.last().second.last().second)
+        co.proactiveForTestSet("invite")
+        clock = day.withHour(14).withMinute(1)
+        assertEquals("约定的开始时间已经过了", co.jointRespond(true))
+        assertEquals("missed", co.jointState())
+        // 用户说的话触发的回复里写 [operation] 没用
+        clock = day.withHour(13)
+        val cu = mk("发起三", "你是发起.\n[循环 14:00-18:00][100min]\n")
+        script.clear(); script.add("[operation] 好")
+        val n3 = calls.size
+        assertEquals("", cu.send("你好"))
+        wait(cu)
+        assertEquals(n3 + 1, calls.size)
+        assertEquals("", cu.jointState())
+        // 选的词条放不进任何开始时间: 不发
+        val cf = mk("发起二", "你是发起.\n17:00-17:30:午饭\n[循环 14:00-18:00][100min]\n")
+        script.clear(); script.addAll(listOf("[operation]", "[1]", "聊聊天气吧."))
+        val n4 = calls.size
+        cf.proactiveForTest("[系统] 请主动发一条消息.")
+        wait(cf)
+        assertTrue(calls.size == n4 + 3 && "联合行动没有发出" in calls.last().second.last().second)
+        assertEquals("", cf.jointState())
+        assertTrue("天气" in cf.visible().last().text)
+        // 编号 / 默认
+        val si = tids.indexOf("silent") + 1
+        assertEquals(listOf("long1"), co.opTerms("[$si]", listOf("long1")))
+        assertTrue("silent" !in co.opTerms("没有编号", emptyList()))
+        for (x in listOf(co, cu, cf)) x.flush()
+    }
 }
