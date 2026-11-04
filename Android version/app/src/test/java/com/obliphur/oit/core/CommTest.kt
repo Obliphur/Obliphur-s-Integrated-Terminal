@@ -494,6 +494,31 @@ class CommTest {
     }
 
     /** 特例: 名字是 Assistant 且提示词没改过 → 专注时也能用. */
+    /** 思考 (第一层规则, 同 comm.py): 关键词 / 时刻 / 英文 / 很长 / 系统触发才开; 设置里可以关掉, 随设备同步. */
+    @Test
+    fun thinkRules() {
+        assertEquals("", CommText.thinkTextReason("今天天气不错"))
+        assertEquals("", CommText.thinkTextReason(""))
+        assertTrue(CommText.thinkTextReason("你现在在干嘛呀").startsWith("关键词"))
+        assertTrue(CommText.thinkTextReason("我们订个合约吧").startsWith("关键词"))
+        assertTrue(CommText.thinkTextReason("我喜欢你").startsWith("关键词"))
+        assertTrue(CommText.thinkTextReason("我们是什么关系").startsWith("关键词"))
+        assertEquals("英文", CommText.thinkTextReason("Hello there, how are you today?"))
+        assertEquals("提到时刻", CommText.thinkTextReason("明天8:30见"))
+        assertEquals("很长", CommText.thinkTextReason("好".repeat(CommText.THINK_LONG)))
+        assertEquals("", CommText.thinkTextReason("好".repeat(CommText.THINK_LONG - 1)))
+        val td = Files.createTempDirectory("oit").toFile()
+        val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
+        assertTrue(c.thinkAuto)
+        assertEquals(true, c.syncDoc()["think"])
+        assertTrue(c.thinkReason("proactive").isNotEmpty() && c.thinkReason("joint_reply").isNotEmpty())
+        assertEquals("", c.thinkReason("followup"))
+        c.set(thinkAuto = false)
+        assertFalse(c.thinkAuto)
+        assertEquals(false, c.syncDoc()["think"])
+        assertEquals("", c.thinkReason("proactive"))
+    }
+
     @Test
     fun assistantFocusExemption() {
         val td = Files.createTempDirectory("oit").toFile()

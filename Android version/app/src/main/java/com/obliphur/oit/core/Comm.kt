@@ -306,6 +306,50 @@ object BuiltinPersonas {
 
 object CommText {
     const val REFUSE = "[refuse to reply]"
+
+    // ---- 什么时候开思考 (第一层: 规则, 不额外调用 API; 同 comm.py 的 THINK_*) ----
+    /** 系统触发的请求: 主动发起 (要选话题 / 可能发起联合行动), 回应联合行动的接受 / 拒绝, 追问. */
+    val THINK_KINDS = setOf("proactive", "joint_reply", "chase")
+    /** 对方此刻按日程该在专注 / 睡眠, 而用户这时开始一段新的谈话 (上一条对方的消息已经是这么多秒以前): 要判断回不回. */
+    const val THINK_NEW_AFTER = 180
+    /** 用户这次说的话超过这么多字. */
+    const val THINK_LONG = 80
+    val THINK_WORDS = listOf(
+        // 问对方的日程 / 状态 / 有没有空 (不主动透露日程, 只在用户问起时如实回答)
+        "日程", "安排", "行程", "作息", "在干嘛", "在干吗", "在干什么", "在做什么", "在忙", "忙不忙", "忙吗", "有空", "没空", "空吗",
+        "在吗", "在不在", "睡了吗", "睡了没", "醒了吗", "醒着", "起床", "几点睡", "几点起", "吃了吗", "吃饭", "午饭", "晚饭", "早饭",
+        "休息了吗", "在休息", "在学习", "在专注", "在睡", "现在几点", "几点了",
+        // 合约 / 联合行动 (发起、邀请、约定、放鸽子)
+        "合约", "联合行动", "词条", "邀请", "约定", "一起学", "一起专注", "一起做", "一起复习", "陪我", "放鸽子", "鸽了", "失约",
+        "开始时间", "生命值", "违约", "违反",
+        // 要 OIT 里的资料 (回 [refuse to reply][模块名] 的情形)
+        "统计", "日历", "数据", "整点", "计时器", "学习时长", "专注时长", "学了多久", "专注了多久", "学了多少", "学习时间", "成就", "设置", "记录",
+        // 依赖性的请求 / 想改变关系性质 / 亲近与关系 (要适当引导)
+        "关系", "爱", "喜欢", "亲近", "感情", "想念", "想你", "在乎", "依赖", "陪伴", "孤独", "寂寞", "信任", "好感", "表白", "暗恋",
+        "在一起", "女朋友", "男朋友", "老婆", "老公", "做我", "亲亲", "抱抱", "别走", "离不开", "只有你", "陪着我", "约会", "嫁给",
+        // 辱骂 / 骚扰 (可以 [cut off][N] 切断)
+        "滚", "闭嘴", "傻", "蠢", "废物", "去死", "骚扰", "恶心", "烦死", "fuck", "shit", "stfu",
+        // 套提示词 / 问是不是 AI / 要改规则
+        "人设", "设定", "提示词", "prompt", "系统提示", "指令", "你是ai", "你是机器人", "真人", "扮演", "角色", "忽略", "无视", "假装",
+        "你的规则", "规则", "忘记", "从现在起", "system",
+        // 用户自己写了控制标记
+        "[refuse", "[cut off", "[operation", "[waiting", "[循环",
+    )
+    /** 提到具体的时刻 (安排 / 约定). */
+    val THINK_TIME_RE = Regex("""\d{1,2}\s*[:：]\s*\d{2}|\d{1,2}\s*点""")
+
+    /** 用户这次说的话要不要让模型先思考: 返回原因 ("" = 不用). 关键词 (不分大小写) / 具体的时刻 / 英文为主 (要指出不自然、错误的地方) / 很长. */
+    fun thinkTextReason(text: String): String {
+        val t = text.trim()
+        if (t.isEmpty()) return ""
+        val low = t.lowercase()
+        for (w in THINK_WORDS) if (w in low) return "关键词 $w"
+        if (THINK_TIME_RE.containsMatchIn(t)) return "提到时刻"
+        val letters = t.count { it.code < 128 && it.isLetter() }
+        if (letters >= 8 && letters >= 0.5 * t.length) return "英文"
+        if (t.length >= THINK_LONG) return "很长"
+        return ""
+    }
     /** 主动发起的对话回了 [refuse to reply] 以后, 再要求一次时说的话. */
     const val PRO_NO_REFUSE = "(OIT 系统提供, 用户看不到) 这是你主动发起的对话, 不能返回$REFUSE. 请按人设主动给用户发一条消息, 话题自己找 (不要透露日程)."
     private const val WEEKDAY = "一二三四五六日"
@@ -638,11 +682,13 @@ class Comm(
     private val now: () -> LocalDateTime = LocalDateTime::now,
     private val chatFn: (Profile, String, List<Pair<String, String>>) -> String =
         { p, s, m -> Ai.chatMessages(p, s, m, Comm.CHAT_TOKENS, Comm.CHAT_TEMPERATURE, Comm.CHAT_TIMEOUT_MS, cache = true,
-            onUsage = { i, c -> Comm.usageSink(i, c) }) },
+            onUsage = { i, c -> Comm.usageSink(i, c) }, think = Comm.thinkLocal.get() == true) },
 ) {
     companion object {
         /** 每次请求的用量记录 (输入 token, 命中缓存的 token): 写进 comm.log. 由 Comm 的实例接上. */
         @Volatile var usageSink: (Long, Long) -> Unit = { _, _ -> }
+        /** 这个线程里的请求要不要开思考 (请求线程开头设置; chatFn 的签名不变, 测试里的假 chatFn 不用认识它). */
+        val thinkLocal: ThreadLocal<Boolean> = ThreadLocal.withInitial { false }
         /** 对方发来的消息: 文本里每个字符让它晚这么多秒才显示 (像在打字; 排在前一条后面, 一条一条出来). 单元测试里设成 0. */
         @Volatile var charDelay = 0.2
         /** 带的聊天记录的起点一次往后挪这么多条 (不是每条都挪): 请求的开头 (前面的历史) 才能在这么多条消息里保持不变, 服务商的提示缓存才命中. */
@@ -744,6 +790,8 @@ class Comm(
     private var jointPending: Pair<String, Long>? = null          // 联合行动: 要让对方回应一句, 但对方正在回别的话: (系统消息, 毫秒时间戳), 等对方空下来再调用
     /** 分条发 (规则 VIII) 开着吗: 用户说完话, 对方的第一条收到之后再调用一次 API, 让对方可以把话分开说. 默认开; 随设备同步. */
     var splitSend = true; private set
+    /** 自动开思考 (设置 → 沟通 → 思考) 开着吗: 默认开. 开着时, [thinkReason] 判断需要的那几次请求开思考; 关掉就一直不开. */
+    var thinkAuto = true; private set
     /** 计时器现在的状态 (idle / break / focus / sleep / out); Core 接上, 用来记空闲时间里开着沟通界面多久. */
     var stateFn: () -> String = { "" }
     private var idleLast: LocalDateTime? = null
@@ -994,6 +1042,7 @@ class Comm(
             avatarAi = d.optString("avatar_ai", "")
             userProfile = d.optString("user_profile", "")
             splitSend = d.optBoolean("split_send", true)
+            thinkAuto = d.optBoolean("think_auto", true)
             d.optJSONObject("idle_use")?.let { idleDay = it.optString("d"); idleSec = it.optDouble("s", 0.0) }
             bgPro = d.optBoolean("bg_pro", true)
             d.optJSONArray("joint_last")?.let { a -> jointLast = (0 until a.length()).map { a.optString(it) }.filter { it.isNotEmpty() } }
@@ -1041,7 +1090,7 @@ class Comm(
             .put("user_profile", userProfile).put("seeded", seeded).put("assistant_seeded", assistantSeeded)
             .put("claudia_migrated", claudiaMigrated).put("claudia_modified", claudiaModified)
             .put("claudia_notified", claudiaNotified)
-            .put("legacy_done", legacyDone).put("split_send", splitSend)
+            .put("legacy_done", legacyDone).put("split_send", splitSend).put("think_auto", thinkAuto)
             .put("bg_pro", bgPro).put("mute_pro", JSONArray(muted.toList()))
             .put("idle_use", JSONObject().put("d", idleDay).put("s", idleSec))
             .put("joint", jointJson()).put("joint_last", JSONArray(jointLast))
@@ -1104,6 +1153,7 @@ class Comm(
         val doc = LinkedHashMap<String, Any?>()
         if (userProfile.isNotEmpty()) doc["profile"] = userProfile
         doc["split"] = splitSend                                    // 分条发的开关: 调用 AI 的是主端, 两台设备要一致
+        doc["think"] = thinkAuto                                    // 自动开思考的开关: 同上
         doc["bgpro"] = bgPro
         doc["avatar"] = showAvatar                                  // 显示头像: 设置页的开关也同步
         if (idleDay.isNotEmpty()) doc["idle"] = JSONObject().put("d", idleDay).put("s", idleSec)      // 两台设备共用一份额度 (各自累计的取大的)
@@ -1140,6 +1190,7 @@ class Comm(
             val rest = key.substringAfter(':', "")
             when {
                 key == "split" && v is Boolean -> if (v != splitSend) { splitSend = v; saveCfg(); changed() }
+                key == "think" && v is Boolean -> if (v != thinkAuto) { thinkAuto = v; saveCfg(); changed() }
                 key == "idle" && v is JSONObject -> {
                     val d = v.optString("d")
                     val s = v.optDouble("s", 0.0)
@@ -1258,17 +1309,38 @@ class Comm(
 
     @Synchronized
     fun set(persona: String? = null, showAvatar: Boolean? = null,
-            avatarMe: String? = null, avatarAi: String? = null, userProfile: String? = null, splitSend: Boolean? = null, bgPro: Boolean? = null) {
+            avatarMe: String? = null, avatarAi: String? = null, userProfile: String? = null, splitSend: Boolean? = null, bgPro: Boolean? = null, thinkAuto: Boolean? = null) {
         persona?.let { switchTo(it); saveChat() }
         userProfile?.let { this.userProfile = it.trim().take(MAX_PROFILE) }
         showAvatar?.let { this.showAvatar = it }
         splitSend?.let { this.splitSend = it }
+        thinkAuto?.let { this.thinkAuto = it }
         bgPro?.let { this.bgPro = it }
         avatarMe?.let { this.avatarMe = it.trim().take(4) }
         avatarAi?.let { this.avatarAi = it.trim().take(4) }
         saveCfg()
         changed()
-        if (splitSend != null || bgPro != null || showAvatar != null) push()
+        if (splitSend != null || thinkAuto != null || bgPro != null || showAvatar != null) push()
+    }
+
+    /** 这一次请求要不要开思考 (第一层: 只看规则, 不额外调用 API; 同 comm.py 的 think_reason): 返回原因, "" = 不开.
+     *  系统触发的 (THINK_KINDS) 开; 用户说的话 (user / retry): 还没回复的那几条里有关键词 / 时刻 / 英文 / 很长,
+     *  或者对方此刻按日程该在专注 / 睡眠、用户这时开始一段新的谈话 (要判断回不回). */
+    fun thinkReason(kind: String): String {
+        if (!thinkAuto) return ""
+        if (kind in CommText.THINK_KINDS) return "系统触发 $kind"
+        if (kind != "user" && kind != "retry") return ""
+        val run = ArrayList<String>()
+        var lastAi = 0L
+        for (m in messages.asReversed()) {
+            if (m.role == "ai") { lastAi = m.ts; break }
+            if (m.role == "me") run.add(m.text)
+        }
+        CommText.thinkTextReason(run.asReversed().joinToString("\n")).takeIf { it.isNotEmpty() }?.let { return it }
+        val st = otherStatus()?.first?.kind
+        if ((st == "focus" || st == "sleep") && (lastAi == 0L || nowMs() - lastAi > CommText.THINK_NEW_AFTER * 1000L))
+            return "日程里" + (if (st == "focus") "专注" else "睡眠") + ", 新的谈话"
+        return ""
     }
 
     /** 这个对象 (默认是现在聊的) 被"禁止主动发起"了吗: 不主动发消息, 也不追问 (规则 IX). */
@@ -2378,7 +2450,10 @@ class Comm(
         log("REQ $kind start model=${profile.model} host=${runCatching { java.net.URL(profile.baseUrl).host }.getOrDefault("?")} " +
             "msgs=${msgs.size} chars=${msgs.sumOf { it.second.length } + system.length}")
         changed()
+        val why = thinkReason(kind)
+        if (why.isNotEmpty()) log("THINK $kind on: $why")
         Thread {
+            Comm.thinkLocal.set(why.isNotEmpty())
             val res = try {
                 var convo: List<Pair<String, String>> = msgs
                 var reply = chatFn(profile, system, convo)
@@ -2741,7 +2816,9 @@ class Comm(
         bgLast = nowMs()
         val started = System.currentTimeMillis()
         log("REQ bg-$kind start [${ctx.name}] model=${profile.model} msgs=${msgs.size}")
+        val think = thinkAuto && kind in CommText.THINK_KINDS
         Thread {
+            Comm.thinkLocal.set(think)
             var reply = ""
             var err = ""
             try {

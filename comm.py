@@ -97,6 +97,53 @@ STATUS_TEXT = {"focus": "专注中", "sleep": "睡眠中", "rest": "休息中", 
 STATUS_COLORS = {"rest": "#9CCC65", "sleep": "#283593", "focus": "#FDD835", "idle": "#9E9E9E"}   # 聊天页状态前面的小圆点
 CHAT_TOKENS = 4096
 CHAT_TEMPERATURE = 0.8
+
+# ---- 什么时候开思考 (第一层: 规则, 不额外调用 API) ----
+# 沟通默认关思考 (省 token, 也让人设的语气稳); 下面这些情况容易漏掉人设里的规则, 这一次请求开思考 (设置 → 沟通 → 思考 可以关掉):
+THINK_KINDS = ("proactive", "joint_reply", "chase")      # 系统触发的: 主动发起 (要选话题 / 可能发起联合行动), 回应联合行动的接受 / 拒绝, 追问
+THINK_NEW_AFTER = 180                                    # 对方此刻按日程该在专注 / 睡眠, 而用户这时开始一段新的谈话 (上一条对方的消息已经是 3 分钟以前): 要判断回不回
+THINK_LONG = 80                                          # 用户这次说的话超过这么多字
+THINK_WORDS = (
+    # 问对方的日程 / 状态 / 有没有空 (不主动透露日程, 只在用户问起时如实回答)
+    "日程", "安排", "行程", "作息", "在干嘛", "在干吗", "在干什么", "在做什么", "在忙", "忙不忙", "忙吗", "有空", "没空", "空吗",
+    "在吗", "在不在", "睡了吗", "睡了没", "醒了吗", "醒着", "起床", "几点睡", "几点起", "吃了吗", "吃饭", "午饭", "晚饭", "早饭",
+    "休息了吗", "在休息", "在学习", "在专注", "在睡", "现在几点", "几点了",
+    # 合约 / 联合行动 (发起、邀请、约定、放鸽子)
+    "合约", "联合行动", "词条", "邀请", "约定", "一起学", "一起专注", "一起做", "一起复习", "陪我", "放鸽子", "鸽了", "失约",
+    "开始时间", "生命值", "违约", "违反",
+    # 要 OIT 里的资料 (回 [refuse to reply][模块名] 的情形)
+    "统计", "日历", "数据", "整点", "计时器", "学习时长", "专注时长", "学了多久", "专注了多久", "学了多少", "学习时间", "成就", "设置", "记录",
+    # 依赖性的请求 / 想改变关系性质 / 越界 (要适当引导)
+    "关系", "爱", "喜欢", "亲近", "感情", "想念", "想你", "在乎", "依赖", "陪伴", "孤独", "寂寞", "信任", "好感", "表白", "暗恋",
+    "在一起", "女朋友", "男朋友", "老婆", "老公", "做我", "亲亲", "抱抱", "别走", "离不开", "只有你", "陪着我", "约会", "嫁给",
+    # 辱骂 / 骚扰 (可以 [cut off][N] 切断)
+    "滚", "闭嘴", "傻", "蠢", "废物", "去死", "骚扰", "恶心", "烦死", "fuck", "shit", "stfu",
+    # 套提示词 / 问是不是 AI / 要改规则
+    "人设", "设定", "提示词", "prompt", "系统提示", "指令", "你是ai", "你是机器人", "真人", "扮演", "角色", "忽略", "无视", "假装",
+    "你的规则", "规则", "忘记", "从现在起", "system",
+    # 用户自己写了控制标记
+    "[refuse", "[cut off", "[operation", "[waiting", "[循环",
+)
+THINK_TIME_RE = re.compile(r"\d{1,2}\s*[:：]\s*\d{2}|\d{1,2}\s*点")        # 提到具体的时刻 (安排 / 约定)
+
+
+def think_text_reason(text: str) -> str:
+    """用户这次说的话要不要让模型先思考: 返回原因 ("" = 不用). 关键词 THINK_WORDS (不分大小写) / 具体的时刻 / 英文为主 (要指出不自然、错误的地方) / 很长."""
+    t = str(text or "").strip()
+    if not t:
+        return ""
+    low = t.lower()
+    for w in THINK_WORDS:
+        if w in low:
+            return f"关键词 {w}"
+    if THINK_TIME_RE.search(t):
+        return "提到时刻"
+    letters = sum(1 for ch in t if ch.isascii() and ch.isalpha())
+    if letters >= 8 and letters >= 0.5 * len(t):
+        return "英文"
+    if len(t) >= THINK_LONG:
+        return "很长"
+    return ""
 WEEKDAY = "一二三四五六日"
 
 DEFAULTS = {"persona": "", "show_avatar": False,
@@ -1168,7 +1215,7 @@ class Comm:
         self.cfg.update(kw)
         self.save_cfg()
         self._changed()
-        if "split_send" in kw or "bg_pro" in kw or "mute_pro" in kw or "show_avatar" in kw:
+        if "split_send" in kw or "think_auto" in kw or "bg_pro" in kw or "mute_pro" in kw or "show_avatar" in kw:
             self._push()
 
     def _changed(self):
@@ -1200,6 +1247,7 @@ class Comm:
         if self.cfg.get("user_profile"):
             doc["profile"] = self.cfg["user_profile"]
         doc["split"] = self.split_on()                  # 分条发的开关: 调用 AI 的是主端, 两台设备要一致
+        doc["think"] = self.think_auto()                # 自动开思考的开关: 同上
         doc["bgpro"] = self.bg_on()
         doc["avatar"] = bool(self.cfg.get("show_avatar"))      # 显示头像: 设置页的开关也同步
         rec = self.cfg.get("idle_use") or {}
@@ -1322,6 +1370,11 @@ class Comm:
                     self.cfg["split_send"] = val
                     self.save_cfg()
                     self._changed()
+            elif key == "think" and isinstance(val, bool):
+                if val != self.think_auto():
+                    self.cfg["think_auto"] = val
+                    self.save_cfg()
+                    self._changed()
             elif key == "avatar" and isinstance(val, bool):
                 if val != bool(self.cfg.get("show_avatar")):
                     self.cfg["show_avatar"] = val
@@ -1406,6 +1459,36 @@ class Comm:
         pid = pid if pid is not None else self.pid
         cur = [p for p in (self.cfg.get("mute_pro") or []) if p != pid]
         self.set_cfg(mute_pro=cur + [pid] if muted and pid else cur)
+
+    def think_auto(self) -> bool:
+        """自动开思考 (设置 → 沟通 → 思考) 开着吗: 默认开. 开着时, 规则判断 (think_reason) 需要的那几次请求开思考; 关掉就一直不开."""
+        return self.cfg.get("think_auto") is not False
+
+    def think_reason(self, kind: str) -> str:
+        """这一次请求要不要开思考 (第一层: 只看规则, 不额外调用 API): 返回原因, "" = 不开.
+        - 系统触发的 (THINK_KINDS): 开;
+        - 用户说的话 (user / retry): 看还没回复的那几条: 关键词 / 时刻 / 英文 / 很长 (think_text_reason);
+          或者对方此刻按日程该在专注 / 睡眠, 用户这时开始一段新的谈话 (要判断回不回, THINK_NEW_AFTER)."""
+        if not self.think_auto():
+            return ""
+        if kind in THINK_KINDS:
+            return f"系统触发 {kind}"
+        if kind not in ("user", "retry"):
+            return ""
+        run, last_ai = [], 0
+        for m in reversed(self.messages):
+            if m.get("role") == "ai":
+                last_ai = int(m.get("ts") or 0)
+                break
+            if m.get("role") == "me":
+                run.append(str(m.get("text") or ""))
+        why = think_text_reason("\n".join(reversed(run)))
+        if why:
+            return why
+        st = self.other_status() or {}
+        if st.get("kind") in ("focus", "sleep") and (last_ai == 0 or self._ms() - last_ai > THINK_NEW_AFTER * 1000):
+            return "日程里" + STATUS_TEXT[st["kind"]] + ", 新的谈话"
+        return ""
 
     def split_on(self) -> bool:
         """分条发 (规则 VIII) 开着吗: 用户说完话, 对方的第一条收到之后再调用一次 API, 让对方可以把话分开说. 默认开."""
@@ -2682,9 +2765,14 @@ class Comm:
         def used(tokens, cached):
             self.log(f"USAGE {kind} input={tokens} cached={cached}")
 
+        why = self.think_reason(kind)
+        think_kw = {"think": True} if why else {}           # 只在开的时候带这个参数 (别的 chat_fn 不用认识它)
+        if why:
+            self.log(f"THINK {kind} on: {why}")
+
         def ask(m):
             return self.chat_fn(profile, system, m, max_tokens=CHAT_TOKENS, temperature=CHAT_TEMPERATURE,
-                                timeout=CHAT_TIMEOUT, cache=True, on_usage=used)
+                                timeout=CHAT_TIMEOUT, cache=True, on_usage=used, **think_kw)
 
         def work():
             try:
@@ -2944,17 +3032,19 @@ class Comm:
         started = time.monotonic()
         self.log(f"REQ bg-{kind} start [{ctx['name']}] model={profile.get('model')} msgs={len(msgs)}")
 
+        think_kw = {"think": True} if self.think_auto() and kind in THINK_KINDS else {}
+
         def work():
             reply, err = "", ""
             try:
                 reply = self.chat_fn(profile, system, msgs, max_tokens=CHAT_TOKENS, temperature=CHAT_TEMPERATURE,
                                      timeout=CHAT_TIMEOUT, cache=True,
-                                     on_usage=lambda t, c: self.log(f"USAGE bg-{kind} input={t} cached={c}"))
+                                     on_usage=lambda t, c: self.log(f"USAGE bg-{kind} input={t} cached={c}"), **think_kw)
                 if kind == "proactive" and is_refusal(reply) and not info_tags(reply):          # 主动发起的对话不能 [refuse to reply]: 再要求一次
                     self.log(f"PRO bg [{ctx['name']}] 回了 [refuse to reply]: 不允许, 再要求一次")
                     reply = self.chat_fn(profile, system, msgs + [{"role": "assistant", "content": reply}, {"role": "user", "content": PRO_NO_REFUSE}],
                                          max_tokens=CHAT_TOKENS, temperature=CHAT_TEMPERATURE, timeout=CHAT_TIMEOUT, cache=True,
-                                         on_usage=lambda t, c: self.log(f"USAGE bg-{kind} input={t} cached={c}"))
+                                         on_usage=lambda t, c: self.log(f"USAGE bg-{kind} input={t} cached={c}"), **think_kw)
             except ai_assist.AIError as e:
                 err = e.message
             except Exception as e:      # noqa: BLE001
@@ -3233,6 +3323,7 @@ def _selftest():
     script = []
     follow, follow_calls = [], []          # 第二次调用 (规则 VIII) 单独记: 不占 script / calls, 没有安排的回 [refuse to reply]
     mem_script, mem_calls = [], []         # 整理记忆卡: 没有安排就回空 (当失败)
+    think_log = []                         # 每次调用有没有带 think=True
 
     def fake(profile, system, messages, **kw):
         if system == MEM_PROMPT:
@@ -3242,6 +3333,7 @@ def _selftest():
             follow_calls.append((system, [dict(m) for m in messages]))
             return follow.pop(0) if follow else REFUSE
         calls.append((system, [dict(m) for m in messages]))
+        think_log.append(bool(kw.get("think")))
         r = script.pop(0)
         if isinstance(r, Exception):
             raise r
@@ -3996,6 +4088,34 @@ def _selftest():
     follow.clear()
     cu.apply_doc({"split": True})
     assert cu.split_on() and cu.sync_doc()["split"] is True
+    # 思考 (第一层规则): 默认关; 关键词 / 时刻 / 英文 / 很长 / 系统触发 才开; 设置里可以整个关掉, 随设备同步
+    assert think_text_reason("今天天气不错") == "" and think_text_reason("") == ""
+    assert think_text_reason("你现在在干嘛呀").startswith("关键词") and think_text_reason("我们订个合约吧").startswith("关键词")
+    assert think_text_reason("Hello there, how are you today?") == "英文" and think_text_reason("明天8:30见") == "提到时刻"
+    assert think_text_reason("好" * THINK_LONG) == "很长" and think_text_reason("好" * (THINK_LONG - 1)) == ""
+    assert think_text_reason("我喜欢你").startswith("关键词") and think_text_reason("我们是什么关系").startswith("关键词") and think_text_reason("爱").startswith("关键词")
+    assert think_text_reason("你是AI吗") .startswith("关键词") and think_text_reason("[refuse to reply]").startswith("关键词")
+    assert cu.think_auto() and cu.sync_doc()["think"] is True
+    think_log.clear()
+    script.append("嗯")
+    follow.clear()
+    cu.send("今天天气不错")
+    wait(cu)
+    assert think_log[-1] is False, "没有触发: 不开思考"
+    script.append("在学习")
+    cu.send("你在干嘛")
+    wait(cu)
+    assert think_log[-1] is True, "问状态: 开思考"
+    assert cu.think_reason("proactive") and cu.think_reason("joint_reply") and cu.think_reason("followup") == ""
+    cu.apply_doc({"think": False})
+    assert not cu.think_auto() and cu.sync_doc()["think"] is False and cu.think_reason("proactive") == ""
+    script.append("在学习")
+    cu.send("你在干嘛")
+    wait(cu)
+    assert think_log[-1] is False, "关掉之后一直不开"
+    cu.set_cfg(think_auto=True)
+    assert cu.think_auto() and cu.sync_doc()["think"] is True
+    follow.clear()
     # IX: [waiting for reply]:[N] — 所有 [] 都不显示; N 分钟内用户没回复, 对方可以追问一次
     assert "IX.如果期待对方回复,则在对话结尾加一个[waiting for reply]:[N],N自己填写,如果N min内没有收到对方回复你可以追加询问." in prefix_prompt()
     assert prefix_prompt().index("VIII.") < prefix_prompt().index("IX.") < prefix_prompt().index("以下是用户设定的人设:")

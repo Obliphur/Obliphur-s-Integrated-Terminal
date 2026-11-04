@@ -142,7 +142,16 @@ object Ai {
      *  OpenAI 协议的服务商自动按相同的开头缓存, 只要每次请求的开头一模一样. onUsage(输入 token, 命中缓存的 token). */
     fun chatMessages(p: Profile, system: String, messages: List<Pair<String, String>>,
                      maxTokens: Int = MAX_TOKENS, temperature: Double = 0.2, timeoutMs: Int = 90_000,
-                     cache: Boolean = false, onUsage: ((Long, Long) -> Unit)? = null): String {
+                     cache: Boolean = false, onUsage: ((Long, Long) -> Unit)? = null, think: Boolean = false): String {
+        // think = true: 这一次开思考 (沟通里规则判断出需要时, Comm.thinkReason); 开思考的字段回 400 时改回不开思考重试, 并记住这个地址 (同 ai_assist.chat_messages)
+        if (think && maxTokens > THINK_BUDGET && p.baseUrl.isNotBlank() && endpoint(p) !in THINK_ON_REJECT) {
+            try {
+                return chatOnce(p, system, messages, maxTokens, temperature, timeoutMs, cache, onUsage, false, true)
+            } catch (e: AiError) {
+                if (!(e.kind == "http" && (e.message ?: "").startsWith("服务商返回 400"))) throw e
+                THINK_ON_REJECT.add(endpoint(p))
+            }
+        }
         // 默认关思考 (thinking disabled); 服务商 (中转) 不认这个字段回 400 时去掉重试一次, 并记住这个地址 (同 ai_assist.chat_messages)
         val tkey = if (p.baseUrl.isNotBlank()) endpoint(p) else ""
         if (tkey.isNotEmpty() && tkey !in THINK_REJECT) {
@@ -159,9 +168,15 @@ object Ai {
     /** 回了 400 的 endpoint (只在内存里): 它不认 thinking 字段, 之后不再带. */
     val THINK_REJECT: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
 
+    /** 开思考时回了 400 的 endpoint (只在内存里): 它不认开思考的字段, 之后这个地址不再开. */
+    val THINK_ON_REJECT: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
+    /** 开思考时的思考 token 上限 (Anthropic 的最小值). */
+    const val THINK_BUDGET = 1024
+
     private fun chatOnce(p: Profile, system: String, messages: List<Pair<String, String>>,
                          maxTokens: Int, temperature: Double, timeoutMs: Int,
-                         cache: Boolean, onUsage: ((Long, Long) -> Unit)?, thinkOff: Boolean): String {
+                         cache: Boolean, onUsage: ((Long, Long) -> Unit)?, thinkOff: Boolean, thinkOn: Boolean = false): String {
         checkProfile(p)
         val key = p.apiKey.trim()
         val conn = URL(endpoint(p)).openConnection() as HttpURLConnection
@@ -174,7 +189,12 @@ object Ai {
         conn.setRequestProperty("User-Agent", "OIT/1.0")
         val body = JSONObject().put("model", p.model).put("max_tokens", maxTokens)
         // DeepSeek 的思考模式默认开: 思考 token 按输出价计费, 而且会忽略 temperature (人设语气不稳), 所以显式关掉
-        if (isDeepSeek(p)) {
+        if (thinkOn) {                                  // 开思考: Anthropic 协议要 budget_tokens 且不能带 temperature; OpenAI 协议的 temperature 也不带
+            if (isDeepSeek(p)) {
+                if (p.protocol == "anthropic") body.put("reasoning", JSONObject().put("effort", "medium"))
+                else body.put("thinking", JSONObject().put("type", "enabled"))
+            } else body.put("thinking", JSONObject().put("type", "enabled").put("budget_tokens", THINK_BUDGET))
+        } else if (isDeepSeek(p)) {
             if (p.protocol == "anthropic") body.put("reasoning", JSONObject().put("effort", "none"))
             else body.put("thinking", JSONObject().put("type", "disabled"))
         } else if (thinkOff) body.put("thinking", JSONObject().put("type", "disabled"))
@@ -187,7 +207,7 @@ object Ai {
             else body.put("system", system)
         } else {
             if (key.isNotEmpty()) conn.setRequestProperty("Authorization", "Bearer $key")
-            body.put("temperature", temperature)
+            if (!thinkOn) body.put("temperature", temperature)
             arr.put(JSONObject().put("role", "system").put("content", system))
         }
         for ((i, m) in messages.withIndex()) {

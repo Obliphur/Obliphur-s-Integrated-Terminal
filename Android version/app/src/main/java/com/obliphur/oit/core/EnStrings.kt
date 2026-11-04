@@ -687,6 +687,10 @@ object EnStrings {
         "🖼  头像" to "🖼  Avatar",
         "显示头像" to "Show avatars",
         "✂  分条发送" to "✂  Split replies",
+        "🧠  思考" to "🧠  Thinking",
+        "遇到问日程 / 合约 / 越界 / 英文这类容易漏掉规则的情况(以及主动发起)时,让模型先思考再回复,更稳地遵守人设规则.会增加这几次请求的 token 消耗." to
+            "In cases where rules are easy to miss (asking about the schedule / contracts, crossing boundaries, English, and proactive messages) the model thinks before replying, following the persona's rules more reliably. Uses more tokens on those requests.",
+        "需要时自动开启" to "Turn on automatically when needed",
         "💬  主动发起" to "💬  Initiating chats",
         "允许非正在聊天的人发起对话" to "Let people I'm not currently chatting with start conversations",
         "我" to "Me",

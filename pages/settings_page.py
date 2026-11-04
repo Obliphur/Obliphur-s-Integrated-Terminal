@@ -825,6 +825,17 @@ class SettingsPage(tk.Frame):
                                    command=lambda: self._comm_flag("split_send")), "开启").pack(
             fill="x", padx=12, pady=(0, 8))
 
+        fr, _head = self._card(body, "🧠  思考")
+        tk.Label(fr, text=tr("遇到问日程 / 合约 / 越界 / 英文这类容易漏掉规则的情况(以及主动发起)时,让模型先思考再回复,更稳地遵守人设规则.会增加这几次请求的 token 消耗."),
+                 bg=card, fg=COLORS["text_dim"], font=small, anchor="w", justify="left", wraplength=560).pack(fill="x", padx=12, pady=(0, 2))
+        v = tk.BooleanVar(value=c.think_auto())
+        self.comm_vars["think_auto"] = v
+        self._track(tk.Checkbutton(fr, text=tr("需要时自动开启"), variable=v, bg=card, fg=COLORS["text"],
+                                   selectcolor=card, activebackground=card, activeforeground=COLORS["text"],
+                                   font=config.font("body"), anchor="w",
+                                   command=lambda: self._comm_flag("think_auto")), "需要时自动开启").pack(
+            fill="x", padx=12, pady=(0, 8))
+
         fr, _head = self._card(body, "💬  主动发起")
         v = tk.BooleanVar(value=c.bg_on())
         self.comm_vars["bg_pro"] = v
@@ -965,6 +976,8 @@ class SettingsPage(tk.Frame):
             self.comm_vars["bg_pro"].set(c.bg_on())
         if self.comm_vars["split_send"].get() != c.split_on():
             self.comm_vars["split_send"].set(c.split_on())              # 别的设备同步来了新的开关
+        if self.comm_vars["think_auto"].get() != c.think_auto():
+            self.comm_vars["think_auto"].set(c.think_auto())
         prof = c.ai.profile()
         text = f"{tr(_provider_label(c.ai.provider))} · {prof.get('model') or '—'}"
         text += "  ✗" if self._comm_api_missing() else "  ✓"

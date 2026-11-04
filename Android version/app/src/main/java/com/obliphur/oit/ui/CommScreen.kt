@@ -388,6 +388,13 @@ fun CommSettings() {
     }
 
     OitCard {
+        Text(tr("🧠  思考"), fontWeight = FontWeight.Bold, color = o.text)
+        Text(tr("遇到问日程 / 合约 / 越界 / 英文这类容易漏掉规则的情况(以及主动发起)时,让模型先思考再回复,更稳地遵守人设规则.会增加这几次请求的 token 消耗."),
+            color = o.dim, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
+        SwitchRow(tr("需要时自动开启"), comm.thinkAuto) { comm.set(thinkAuto = it) }
+    }
+
+    OitCard {
         Text(tr("💬  主动发起"), fontWeight = FontWeight.Bold, color = o.text)
         SwitchRow(tr("允许非正在聊天的人发起对话"), comm.bgPro) { comm.set(bgPro = it) }
     }
