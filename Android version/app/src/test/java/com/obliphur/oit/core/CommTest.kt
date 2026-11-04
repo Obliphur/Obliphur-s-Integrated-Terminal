@@ -982,7 +982,7 @@ class CommTest {
         c.importPersona("日程.txt", "你是小满.\n12:30-13:00:空闲\n[循环 19:00-21:18][100min]\n".byteInputStream())   // 19:00-20:40 专注, 20:40-21:18 休息
         c.set(persona = "日程.txt")
         assertEquals(80.0 to 60.0, c.proPercent("idle") to c.proPercent("rest"))          // 人设里没写: 默认概率
-        assertEquals(mapOf("idle" to 20.0, "rest" to 20.0, "long" to 20.0, "sleep" to 40.0), CommText.personaProbs(BuiltinPersonas.ALL.getValue("Claudia.txt")))   // Claudia: 20% / 20% / 20% / 40%
+        assertEquals(mapOf("idle" to 20.0, "rest" to 20.0, "long" to 20.0, "sleep" to 50.0), CommText.personaProbs(BuiltinPersonas.ALL.getValue("Claudia.txt")))   // Claudia: 20% / 20% / 20% / 50%
         assertEquals(0.0, CommText.personaProbs(BuiltinPersonas.ALL.getValue("Assistant.txt"))["sleep"] ?: -1.0, 0.0)
         assertEquals(mapOf("sleep" to 40.0), CommText.personaProbs("睡眠发起谈话概率:40%"))
         assertEquals(60.0, Comm.defaultP("sleep"), 0.0)
