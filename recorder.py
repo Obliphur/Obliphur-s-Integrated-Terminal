@@ -1,10 +1,11 @@
 """
-合约的录像 (MECHANICS.md 18.8 目光 / 刻痕): 摄像头和整个屏幕各录成 mp4 (H.264 + AAC), 只用标准库.
+合约的录像 (MECHANICS.md 18.8 目光 / 刻痕): 摄像头和整个屏幕各存成 mp4 (H.264, 没有声音), 只用标准库.
 
+不录连续的视频 (视频有时长限制, 占地方): 每 STILL_EVERY 秒拍一张照片 (目光) / 截一张图 (刻痕),
+照片按顺序每张 STILL_STEP 秒接成视频 (片段里和合并后都是), 放的时候就是 0.5 秒一张.
 编码用 Windows 自带的 Media Foundation (mfplat / mfreadwrite, 经 ctypes 调用 COM 接口):
-- 屏幕: GDI 截取整个虚拟屏幕 (所有显示器, 带鼠标指针), 缩到最宽 SCREEN_WIDTH, 每秒 SCREEN_FPS 帧;
-- 摄像头: 第一个视频采集设备, 挑最接近 640×480 的格式, 每秒最多 CAMERA_FPS 帧;
-- 声音 (设置 → 录像, 默认都录): 麦克风 (外部音) 和系统音 (WASAPI loopback), 混成一路 48 kHz 立体声.
+- 屏幕: GDI 截取整个虚拟屏幕 (所有显示器, 带鼠标指针), 缩到最宽 SCREEN_WIDTH;
+- 摄像头: 第一个视频采集设备, 挑最接近 640×480 的格式 (摄像头一直开着, 只留每 STILL_EVERY 秒的那一张).
 录像在后台线程里写. 每 SEGMENT 秒换一个文件 (程序被强行关掉时最多丢这一段).
 
 加密 (防止被网盘 / 云相册自动上传后看到): 正在写的 mp4 放在系统的临时文件夹里 (work_dir, 不在数据目录),
@@ -14,7 +15,6 @@
 存放: 数据目录/recordings/camera 和 数据目录/recordings/screen, 分开存放.
 """
 
-import array
 import ctypes
 import hashlib
 import json
@@ -35,18 +35,15 @@ PART = ".recording"
 EXT = ".oitv"                     # 加密后的录像
 MAGIC = b"OITV\x01"
 REC_KEY = hashlib.sha256(b"obliphur-terminal/recording/v1").digest()   # 所有 OIT 共用 (简易加密: 只防自动上传)
-AUDIO_RATE = 48000
-AUDIO_CH = 2
-AUDIO_BYTES = 16_000              # AAC 128 kbps
-AUDIO_LAG = 0.25                  # 声音比画面晚这么多秒写 (等采集的数据到齐)
-SEGMENT = 30 * 60                 # 每个文件最长 30 分钟
+SEGMENT = 30 * 60                 # 每个文件最长 30 分钟 (30 分钟 = 60 张)
 FOCUS_EVERY = 20                  # 刻痕: 每这么多秒判定一次焦点设备 (MECHANICS 18.8)
-SCREEN_FPS = 1
+STILL_EVERY = 30                  # 每这么多秒拍一张照片 / 截一张图
+STILL_STEP = 5_000_000            # 照片接成视频后每张放这么久 (100ns): 0.5 秒
+SCREEN_FPS = 2                    # 视频的帧率标记 (= 1 / STILL_STEP)
 SCREEN_WIDTH = 960               # 画面缩到最宽这么多 (压一下画质 / 体积; 合并画布也按它封顶)
-SCREEN_BITRATE = 200_000
-CAMERA_FPS = 1
-CAMERA_BITRATE = 64_000           # 目光每秒只有 1 帧: 码率压低, 文件小 (传给别的设备合并 / 同步时不会太大)
-CAMERA_AUDIO_BYTES = 12_000       # 目光的声音 AAC 96 kbps (Media Foundation 的 AAC 编码器支持的最低一档)
+SCREEN_BITRATE = 800_000          # 每张 0.5 秒 → 约 50 KB 一张
+CAMERA_FPS = 2
+CAMERA_BITRATE = 400_000          # 约 25 KB 一张 (传给别的设备合并 / 同步时不会太大)
 CAMERA_SIZE = (480, 360)
 CAMERA_STALL = 12                 # 摄像头这么多秒没有新画面: 视为被关掉了
 
@@ -416,13 +413,6 @@ MF_MT_PIXEL_ASPECT_RATIO = _guid("c6376a1e-8d0a-4027-be45-6d9a0ad39bb6")
 MF_MT_DEFAULT_STRIDE = _guid("644b4e48-1e02-4516-b0eb-c01ca9d49ac6")
 MF_MT_VIDEO_ROTATION = _guid("c380465d-2271-428c-9b83-ecea3b4a85c1")   # mp4 的旋转标记 (手机按陀螺仪写的), 顺时针度数
 MFMediaType_Audio = _guid("73647561-0000-0010-8000-00AA00389B71")
-MFAudioFormat_AAC = _guid("00001610-0000-0010-8000-00AA00389B71")
-MFAudioFormat_PCM = _guid("00000001-0000-0010-8000-00AA00389B71")
-MF_MT_AUDIO_NUM_CHANNELS = _guid("37e48bf5-645e-4c5b-89de-ada9e29b696a")
-MF_MT_AUDIO_SAMPLES_PER_SECOND = _guid("5faeeae7-0290-4c31-9e8a-c534f68d9dba")
-MF_MT_AUDIO_BLOCK_ALIGNMENT = _guid("322de230-9eeb-43bd-ab7a-ff412251541d")
-MF_MT_AUDIO_AVG_BYTES_PER_SECOND = _guid("1aab75c8-cfef-451c-ab95-ac034b8e1731")
-MF_MT_AUDIO_BITS_PER_SAMPLE = _guid("f2deb57f-40fa-4764-aa33-ed4f2d1ff669")
 MF_MT_ALL_SAMPLES_INDEPENDENT = _guid("c9173739-5e56-461c-b713-46fb995cb95f")
 MF_SINK_WRITER_DISABLE_THROTTLING = _guid("08b845d8-2b74-4afe-9d53-be16d2d5ae4f")
 MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING = _guid("fb394f3d-ccf1-42ee-bbb3-f9b845d5681d")
@@ -565,15 +555,12 @@ def _attributes(lib, n=2):
 
 
 class _Writer:
-    """H.264 / mp4 的 Sink Writer: 输入是 RGB32 (input_type) 或者按 width/height 建的上下正向 RGB32.
-    audio: 另外加一路 AAC (输入 16 位 PCM, AUDIO_RATE, AUDIO_CH)."""
+    """H.264 / mp4 的 Sink Writer (只有画面): 输入是 RGB32 (input_type) 或者按 width/height 建的上下正向 RGB32."""
 
-    def __init__(self, lib, path, width, height, fps, bitrate, input_type=None, audio=False, audio_bytes=AUDIO_BYTES):
+    def __init__(self, lib, path, width, height, fps, bitrate, input_type=None):
         self.lib = lib
-        self.audio_bytes = audio_bytes
         self.writer = c_void_p()
         self.stream = c_ulong()
-        self.astream = None
         attrs = _attributes(lib)
         try:
             _set_u32(attrs, MF_SINK_WRITER_DISABLE_THROTTLING, 1)
@@ -609,50 +596,9 @@ class _Writer:
                  what="SetInputMediaType")
         finally:
             _release(inp)
-        if audio:
-            try:
-                self._add_audio()
-            except MFError:
-                self.astream = None             # 加不上声音: 只录画面
         _com(self.writer, 5, what="BeginWriting")
 
-    def _add_audio(self):
-        lib = self.lib
-        out = _media_type(lib)
-        stream = c_ulong()
-        try:
-            _set_guid(out, MF_MT_MAJOR_TYPE, MFMediaType_Audio)
-            _set_guid(out, MF_MT_SUBTYPE, MFAudioFormat_AAC)
-            _set_u32(out, MF_MT_AUDIO_BITS_PER_SAMPLE, 16)
-            _set_u32(out, MF_MT_AUDIO_SAMPLES_PER_SECOND, AUDIO_RATE)
-            _set_u32(out, MF_MT_AUDIO_NUM_CHANNELS, AUDIO_CH)
-            _set_u32(out, MF_MT_AUDIO_AVG_BYTES_PER_SECOND, self.audio_bytes)
-            _com(self.writer, 3, out, byref(stream), argtypes=(c_void_p, POINTER(c_ulong)), what="AddStream(audio)")
-        finally:
-            _release(out)
-        inp = _media_type(lib)
-        try:
-            _set_guid(inp, MF_MT_MAJOR_TYPE, MFMediaType_Audio)
-            _set_guid(inp, MF_MT_SUBTYPE, MFAudioFormat_PCM)
-            _set_u32(inp, MF_MT_AUDIO_BITS_PER_SAMPLE, 16)
-            _set_u32(inp, MF_MT_AUDIO_SAMPLES_PER_SECOND, AUDIO_RATE)
-            _set_u32(inp, MF_MT_AUDIO_NUM_CHANNELS, AUDIO_CH)
-            _set_u32(inp, MF_MT_AUDIO_BLOCK_ALIGNMENT, 2 * AUDIO_CH)
-            _set_u32(inp, MF_MT_AUDIO_AVG_BYTES_PER_SECOND, AUDIO_RATE * 2 * AUDIO_CH)
-            _set_u32(inp, MF_MT_ALL_SAMPLES_INDEPENDENT, 1)
-            _com(self.writer, 4, stream, inp, None, argtypes=(c_ulong, c_void_p, c_void_p),
-                 what="SetInputMediaType(audio)")
-        finally:
-            _release(inp)
-        self.astream = stream
-
-    def write_audio(self, pcm: bytes, t100ns, dur100ns):
-        if self.astream is None or not pcm:
-            return
-        buf = ctypes.create_string_buffer(pcm, len(pcm))
-        self.write_bytes(buf, len(pcm), t100ns, dur100ns, stream=self.astream)
-
-    def write_bytes(self, data_ptr, size, t100ns, dur100ns, stream=None):
+    def write_bytes(self, data_ptr, size, t100ns, dur100ns):
         buf = c_void_p()
         _check(self.lib.plat.MFCreateMemoryBuffer(c_ulong(size), byref(buf)), "MFCreateMemoryBuffer")
         sample = c_void_p()
@@ -664,15 +610,15 @@ class _Writer:
             _com(buf, 6, c_ulong(size), argtypes=(c_ulong,), what="SetCurrentLength")
             _check(self.lib.plat.MFCreateSample(byref(sample)), "MFCreateSample")
             _com(sample, 42, buf, argtypes=(c_void_p,), what="AddBuffer")
-            self.write_sample(sample, t100ns, dur100ns, stream)
+            self.write_sample(sample, t100ns, dur100ns)
         finally:
             _release(sample)
             _release(buf)
 
-    def write_sample(self, sample, t100ns, dur100ns, stream=None):
+    def write_sample(self, sample, t100ns, dur100ns):
         _com(sample, 36, ctypes.c_longlong(t100ns), argtypes=(ctypes.c_longlong,), what="SetSampleTime")
         _com(sample, 38, ctypes.c_longlong(dur100ns), argtypes=(ctypes.c_longlong,), what="SetSampleDuration")
-        _com(self.writer, 6, self.stream if stream is None else stream, sample, argtypes=(c_ulong, c_void_p),
+        _com(self.writer, 6, self.stream, sample, argtypes=(c_ulong, c_void_p),
              what="WriteSample")
 
     def close(self):
@@ -683,196 +629,6 @@ class _Writer:
                 pass
             _release(self.writer)
             self.writer = c_void_p()
-
-
-# ---------------------------------------------------------------- 声音 (WASAPI)
-
-CLSID_MMDeviceEnumerator = _guid("BCDE0395-E52F-467C-8E3D-C4579291692E")
-IID_IMMDeviceEnumerator = _guid("A95664D2-9614-4F35-A746-DE8DB63617E6")
-IID_IAudioClient = _guid("1CB9AD4C-DBFA-4c32-B178-C2F568A703B2")
-IID_IAudioCaptureClient = _guid("C8ADBD64-E71E-48a0-A4DE-185C395CD317")
-AUDCLNT_STREAMFLAGS_LOOPBACK = 0x00020000
-AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM = 0x80000000
-AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY = 0x08000000
-AUDCLNT_BUFFERFLAGS_SILENT = 0x2
-
-
-class WAVEFORMATEX(ctypes.Structure):
-    _pack_ = 1
-    _fields_ = [("wFormatTag", wintypes.WORD), ("nChannels", wintypes.WORD), ("nSamplesPerSec", wintypes.DWORD),
-                ("nAvgBytesPerSec", wintypes.DWORD), ("nBlockAlign", wintypes.WORD),
-                ("wBitsPerSample", wintypes.WORD), ("cbSize", wintypes.WORD)]
-
-
-class PROPERTYKEY(ctypes.Structure):
-    _fields_ = [("fmtid", GUID), ("pid", wintypes.DWORD)]
-
-
-class PROPVARIANT(ctypes.Structure):
-    _fields_ = [("vt", ctypes.c_ushort), ("r1", ctypes.c_ushort), ("r2", ctypes.c_ushort), ("r3", ctypes.c_ushort),
-                ("p", c_void_p), ("p2", c_void_p)]
-
-
-PKEY_Device_EnumeratorName = PROPERTYKEY(_guid("a45c254e-df1c-4efd-8020-67d146a850e0"), 24)
-
-
-def _enumerator(dev) -> str:
-    """音频设备是从哪条总线来的 ("BTHHFENUM" / "BTHENUM" = 蓝牙, "HDAUDIO", "USB" …); 读不出时 ""."""
-    st, v = c_void_p(), PROPVARIANT()
-    try:
-        _com(dev, 4, 0, byref(st), argtypes=(wintypes.DWORD, POINTER(c_void_p)), what="OpenPropertyStore")
-        _com(st, 5, byref(PKEY_Device_EnumeratorName), byref(v),
-             argtypes=(POINTER(PROPERTYKEY), POINTER(PROPVARIANT)), what="GetValue")
-        return ctypes.wstring_at(v.p) if v.vt == 31 and v.p else ""
-    except MFError:
-        return ""
-    finally:
-        _release(st)
-
-
-def _is_bluetooth(dev) -> bool:
-    return _enumerator(dev).upper().startswith("BTH")
-
-
-def _mic_device(en):
-    """录目光 / 刻痕用的麦克风: 默认的录音设备, 但**不用蓝牙耳机的麦克风** —— 一打开它, Windows 就把耳机从立体声 (A2DP)
-    切到免提 (HFP), 正在放的声音全都听不到了. 默认的是蓝牙时换一个不是蓝牙的; 没有就不录麦克风 (抛 MFError)."""
-    dev = c_void_p()
-    try:
-        _com(en, 4, 1, 0, byref(dev), argtypes=(c_int, c_int, POINTER(c_void_p)), what="GetDefaultAudioEndpoint")
-        if not _is_bluetooth(dev):
-            return dev
-    except MFError:
-        pass
-    _release(dev)
-    col, n = c_void_p(), c_uint()
-    try:
-        _com(en, 3, 1, 1, byref(col), argtypes=(c_int, wintypes.DWORD, POINTER(c_void_p)), what="EnumAudioEndpoints")
-        _com(col, 3, byref(n), argtypes=(POINTER(c_uint),), what="GetCount")
-        for i in range(n.value):
-            d = c_void_p()
-            _com(col, 4, i, byref(d), argtypes=(c_uint, POINTER(c_void_p)), what="Item")
-            if not _is_bluetooth(d):
-                return d
-            _release(d)
-    finally:
-        _release(col)
-    raise MFError("only a bluetooth headset mic (would cut its sound): mic not recorded")
-
-
-class _Capture:
-    """一路声音: 默认的麦克风 (loopback=False) 或系统播放的声音 (loopback=True), 转成 16 位 PCM 立体声 48 kHz.
-    采到的数据攒在 buf 里."""
-
-    def __init__(self, lib, loopback: bool):
-        self.loopback = loopback
-        self.client = self.capture = None
-        self.buf = bytearray()
-        en, dev, client, cap = c_void_p(), c_void_p(), c_void_p(), c_void_p()
-        try:
-            _check(lib.ole.CoCreateInstance(byref(CLSID_MMDeviceEnumerator), None, 0x17,
-                                            byref(IID_IMMDeviceEnumerator), byref(en)), "CoCreateInstance")
-            if loopback:
-                _com(en, 4, 0, 0, byref(dev), argtypes=(c_int, c_int, POINTER(c_void_p)),
-                     what="GetDefaultAudioEndpoint")
-            else:
-                dev = _mic_device(en)
-            _com(dev, 3, byref(IID_IAudioClient), 0x17, None, byref(client),
-                 argtypes=(POINTER(GUID), wintypes.DWORD, c_void_p, POINTER(c_void_p)), what="Activate")
-            fmt = WAVEFORMATEX(1, AUDIO_CH, AUDIO_RATE, AUDIO_RATE * 2 * AUDIO_CH, 2 * AUDIO_CH, 16, 0)
-            flags = AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY
-            if loopback:
-                flags |= AUDCLNT_STREAMFLAGS_LOOPBACK
-            _com(client, 3, 0, flags, ctypes.c_longlong(30_000_000), ctypes.c_longlong(0), byref(fmt), None,
-                 argtypes=(c_int, wintypes.DWORD, ctypes.c_longlong, ctypes.c_longlong, c_void_p, c_void_p),
-                 what="IAudioClient.Initialize")
-            _com(client, 14, byref(IID_IAudioCaptureClient), byref(cap),
-                 argtypes=(POINTER(GUID), POINTER(c_void_p)), what="GetService")
-            _com(client, 10, what="IAudioClient.Start")
-            self.client, self.capture = client, cap
-            client = cap = None
-        finally:
-            _release(cap)
-            _release(client)
-            _release(dev)
-            _release(en)
-        self._get = ctypes.WINFUNCTYPE(HRESULT, c_void_p, POINTER(POINTER(ctypes.c_ubyte)), POINTER(c_uint),
-                                       POINTER(wintypes.DWORD), c_void_p, c_void_p)(
-            ctypes.cast(self.capture, POINTER(POINTER(c_void_p)))[0][3])
-
-    def pump(self):
-        """把已经采到的都取出来放进 buf. 设备没了 (拔掉 / 换了默认设备) 时抛 MFError."""
-        while True:
-            n = c_uint()
-            _com(self.capture, 5, byref(n), argtypes=(POINTER(c_uint),), what="GetNextPacketSize")
-            if not n.value:
-                return
-            data, frames, flags = POINTER(ctypes.c_ubyte)(), c_uint(), wintypes.DWORD()
-            _check(self._get(self.capture, byref(data), byref(frames), byref(flags), None, None), "GetBuffer")
-            size = frames.value * 2 * AUDIO_CH
-            if flags.value & AUDCLNT_BUFFERFLAGS_SILENT or not data:
-                self.buf += bytes(size)
-            else:
-                self.buf += ctypes.string_at(data, size)
-            _com(self.capture, 4, frames.value, argtypes=(c_uint,), what="ReleaseBuffer")
-
-    def close(self):
-        if self.client:
-            try:
-                _com(self.client, 11, what="IAudioClient.Stop")
-            except MFError:
-                pass
-        _release(self.capture)
-        _release(self.client)
-        self.capture = self.client = None
-
-
-class _Audio:
-    """录像的声音: 麦克风 + 系统音 (各自可以关), 按时间取出混好的 16 位 PCM. 打不开的那一路不录 (note 里写原因)."""
-
-    def __init__(self, lib, mic: bool, system: bool):
-        self.srcs = []
-        self.note = ""
-        for on, loop in ((mic, False), (system, True)):
-            if not on:
-                continue
-            try:
-                self.srcs.append(_Capture(lib, loop))
-            except Exception as e:
-                self.note += f"{'system' if loop else 'mic'}: {e}; "
-
-    def take(self, frames: int) -> bytes:
-        """取 frames 帧 (不够的补静音), 多路相加 (超出范围的截断). 攒得太多 (比 AUDIO_LAG 多 1 秒) 时丢掉最旧的."""
-        size = frames * 2 * AUDIO_CH
-        parts = []
-        for s in list(self.srcs):
-            try:
-                s.pump()
-            except Exception as e:
-                self.note += f"{'system' if s.loopback else 'mic'} lost: {e}; "
-                s.close()
-                self.srcs.remove(s)
-                continue
-            keep = int((AUDIO_LAG + 1.0) * AUDIO_RATE) * 2 * AUDIO_CH
-            if len(s.buf) > size + keep:
-                del s.buf[:len(s.buf) - size - keep]
-            chunk = bytes(s.buf[:size])
-            del s.buf[:size]
-            if chunk.strip(b"\x00"):
-                parts.append(chunk + bytes(size - len(chunk)))
-        if not parts:
-            return bytes(size)
-        if len(parts) == 1:
-            return parts[0]
-        a, b = array.array("h", parts[0]), array.array("h", parts[1])
-        mixed = array.array("h", [x if x > -32768 else -32768 for x in
-                                  (y if y < 32767 else 32767 for y in (p + q for p, q in zip(a, b)))])
-        return mixed.tobytes()
-
-    def close(self):
-        for s in self.srcs:
-            s.close()
-        self.srcs = []
 
 
 # ---------------------------------------------------------------- 屏幕 (GDI)
@@ -1105,7 +861,7 @@ class Recorder(threading.Thread):
     """一路录像 (kind = camera / screen). state: starting → running → stopped;
     出错时 failed (没能开始) / lost (录着录着摄像头没了). error 是说明."""
 
-    def __init__(self, data_dir: str, kind: str, on_file=None, audio=None, tag="", camera=""):
+    def __init__(self, data_dir: str, kind: str, on_file=None, tag="", camera=""):
         super().__init__(daemon=True, name=f"rec-{kind}")
         self.data_dir = data_dir
         self.kind = kind
@@ -1113,10 +869,6 @@ class Recorder(threading.Thread):
         self.tag = self._clean_tag(tag)         # 合约 id: 文件名里带上, 结束后按它合并 (18.8)
         self.camera = str(camera or "")         # 本机的哪一台摄像头 (camera_devices 的 id; "" = 第一台)
         self.on_file = on_file                 # 写完一个文件 (加密好) 时调用 (路径)
-        self.audio = audio or (lambda: (False, False))   # () → (录麦克风, 录系统音); 每段开始时 / 改了时重新打开
-        self._aud = None
-        self._aud_opts = None
-        self._afr = 0                          # 这一段已经写了多少帧声音
         self.writing = ""                      # 正在写的文件 (临时文件夹里)
         self.state = "starting"
         self.error = ""
@@ -1214,52 +966,6 @@ class Recorder(threading.Thread):
         if t is not None and t.is_alive():
             t.join(wait)
 
-    # ---- 声音 ----
-
-    def _audio_open(self, lib):
-        """按设置打开 (或重新打开) 声音; 返回这一段要不要加声音轨."""
-        try:
-            opts = tuple(bool(x) for x in self.audio())
-        except Exception:
-            opts = (False, False)
-        if opts != self._aud_opts:
-            if self._aud is not None:
-                self._aud.close()
-            self._aud = _Audio(lib, *opts) if any(opts) else None
-            self._aud_opts = opts
-            if self._aud is not None and self._aud.note:
-                self.error = self.error or self._aud.note
-        self._afr = 0
-        return any(opts)
-
-    def _audio_feed(self, w, seg0) -> bool:
-        """把到现在为止 (晚 AUDIO_LAG 秒) 的声音写进这一段. 设置改了要加声音轨时返回 True (换一个文件)."""
-        try:
-            opts = tuple(bool(x) for x in self.audio())
-        except Exception:
-            opts = self._aud_opts
-        if opts != self._aud_opts:
-            if any(opts) and w.astream is None:
-                return True
-            self._audio_open(_MF.get())
-            self._afr = int((time.monotonic() - seg0 - AUDIO_LAG) * AUDIO_RATE)
-            return False
-        if w.astream is None:
-            return False
-        due = int((time.monotonic() - seg0 - AUDIO_LAG) * AUDIO_RATE) - self._afr
-        if due < AUDIO_RATE // 20:
-            return False
-        pcm = self._aud.take(due) if self._aud is not None else bytes(due * 2 * AUDIO_CH)
-        w.write_audio(pcm, self._afr * 10_000_000 // AUDIO_RATE, due * 10_000_000 // AUDIO_RATE)
-        self._afr += due
-        return False
-
-    def _audio_close(self):
-        if self._aud is not None:
-            self._aud.close()
-            self._aud = None
-        self._aud_opts = None
-
     def run(self):
         try:
             lib, own = _startup()
@@ -1277,7 +983,6 @@ class Recorder(threading.Thread):
         finally:
             if self.state in ("starting", "running"):
                 self.state = "stopped"
-            self._audio_close()
             _shutdown(lib, own)
 
     # ---- 屏幕 ----
@@ -1285,29 +990,24 @@ class Recorder(threading.Thread):
     def _run_screen(self, lib):
         scr = _Screen()
         try:
-            period = 1.0 / SCREEN_FPS
-            dur = int(10_000_000 / SCREEN_FPS)
             while not self._stop.is_set():
                 part, final = self._new_path()
-                audio = self._audio_open(lib)
-                w = _Writer(lib, part, scr.w, scr.h, SCREEN_FPS, SCREEN_BITRATE, audio=audio)
+                w = _Writer(lib, part, scr.w, scr.h, SCREEN_FPS, SCREEN_BITRATE)
                 seg0 = time.monotonic()
                 k = 0
-                split = False
                 try:
-                    while not self._stop.is_set() and not split and time.monotonic() - seg0 < SEGMENT:
-                        bits = scr.grab()
-                        w.write_bytes(bits, scr.size, k * dur, dur)
+                    while not self._stop.is_set() and time.monotonic() - seg0 < SEGMENT:
+                        bits = scr.grab()                           # 截一张图, 在视频里放 STILL_STEP (0.5 秒)
+                        w.write_bytes(bits, scr.size, k * STILL_STEP, STILL_STEP)
                         k += 1
                         self.frames += 1
                         if self.state == "starting":
                             self.state, self.started_at = "running", time.time()
-                        while not self._stop.is_set() and not split:
-                            left = seg0 + k * period - time.monotonic()
+                        while not self._stop.is_set():
+                            left = seg0 + k * STILL_EVERY - time.monotonic()
                             if left <= 0:
                                 break
-                            split = self._audio_feed(w, seg0)
-                            self._stop.wait(min(left, 0.2))
+                            self._stop.wait(min(left, 0.5))
                 finally:
                     w.close()
                     self._done(part, final) if k else _remove(part)
@@ -1371,24 +1071,18 @@ class Recorder(threading.Thread):
             _release(source)
 
     def _camera_loop(self, lib, reader, cur, width, height):
-        period = 1.0 / CAMERA_FPS
-        dur = int(10_000_000 / CAMERA_FPS)
         read = ctypes.WINFUNCTYPE(HRESULT, c_void_p, c_ulong, c_ulong, POINTER(c_ulong), POINTER(c_ulong),
                                   POINTER(ctypes.c_longlong), POINTER(c_void_p))(
             ctypes.cast(reader, POINTER(POINTER(c_void_p)))[0][9])
         self._last_frame = time.monotonic()
         while not self._stop.is_set():
             part, final = self._new_path()
-            audio = self._audio_open(lib)
-            w = _Writer(lib, part, width, height, CAMERA_FPS, CAMERA_BITRATE, input_type=cur, audio=audio,
-                        audio_bytes=CAMERA_AUDIO_BYTES)
+            w = _Writer(lib, part, width, height, CAMERA_FPS, CAMERA_BITRATE, input_type=cur)
             seg0 = time.monotonic()
             last = -1e9
             k = 0
             try:
                 while not self._stop.is_set() and time.monotonic() - seg0 < SEGMENT:
-                    if self._audio_feed(w, seg0):
-                        break
                     idx, flags, ts = c_ulong(), c_ulong(), ctypes.c_longlong()
                     sample = c_void_p()
                     hr = read(reader, MF_SOURCE_READER_FIRST_VIDEO_STREAM, 0, byref(idx), byref(flags),
@@ -1407,10 +1101,10 @@ class Recorder(threading.Thread):
                                 raise MFError(self.error)
                             continue
                         self._last_frame = now
-                        if now - last < period * 0.9:
+                        if now - last < STILL_EVERY:          # 摄像头一直开着 (要看着它有没有被关掉), 只留每 30 秒的那一张
                             continue
                         last = now
-                        w.write_sample(sample, int((now - seg0) * 10_000_000), dur)
+                        w.write_sample(sample, k * STILL_STEP, STILL_STEP)
                         k += 1
                         self.frames += 1
                         if self.state == "starting":
@@ -1451,7 +1145,6 @@ def files_of(data_dir: str, kind: str, cid: str) -> list:
 
 # ---------------------------------------------------------------- 合并 (刻痕: 把各设备 / 各段录屏接成一个)
 
-MF_SOURCE_READER_FIRST_AUDIO_STREAM = 0xFFFFFFFD
 
 
 def _reader_type(lib, reader, stream, major, subtype, setup=None):
@@ -1601,54 +1294,15 @@ def _canvas(info, weights=None):
     return max(2, w // 2 * 2), max(2, h // 2 * 2)
 
 
-def _pcm_setup(t):
-    """合并时把声音解成和录像一样的 PCM (16 位, AUDIO_RATE, AUDIO_CH); Source Reader 自己转采样率 / 声道."""
-    _set_u32(t, MF_MT_AUDIO_BITS_PER_SAMPLE, 16)
-    _set_u32(t, MF_MT_AUDIO_SAMPLES_PER_SECOND, AUDIO_RATE)
-    _set_u32(t, MF_MT_AUDIO_NUM_CHANNELS, AUDIO_CH)
-    _set_u32(t, MF_MT_AUDIO_BLOCK_ALIGNMENT, 2 * AUDIO_CH)
-    _set_u32(t, MF_MT_AUDIO_AVG_BYTES_PER_SECOND, AUDIO_RATE * 2 * AUDIO_CH)
-
-
-def _pcm_type(lib, reader, stream):
-    """这一段的声音解成 PCM: 返回 (媒体类型, 是不是单声道); 解不成 AUDIO_RATE 的 16 位单 / 双声道时 (None, False)."""
-    for setup in (_pcm_setup, lambda t: _set_u32(t, MF_MT_AUDIO_BITS_PER_SAMPLE, 16)):
-        try:
-            cur = _reader_type(lib, reader, stream, MFMediaType_Audio, MFAudioFormat_PCM, setup)
-        except MFError:
-            continue
-        try:
-            rate, ch = _get_u32(cur, MF_MT_AUDIO_SAMPLES_PER_SECOND), _get_u32(cur, MF_MT_AUDIO_NUM_CHANNELS)
-            bits = _get_u32(cur, MF_MT_AUDIO_BITS_PER_SAMPLE)
-        except MFError:
-            rate = ch = bits = 0
-        if rate == AUDIO_RATE and bits == 16 and ch in (1, AUDIO_CH):
-            return cur, ch == 1
-        _release(cur)
-    return None, False
-
-
-def _stereo(pcm: bytes) -> bytes:
-    """16 位单声道 → 双声道 (左右一样)."""
-    a = array.array("h")
-    a.frombytes(pcm[:len(pcm) // 2 * 2])
-    out = array.array("h", bytes(len(a) * 4))
-    out[0::2] = a
-    out[1::2] = a
-    return out.tobytes()
-
-
-def _reencode_concat(out_path, inputs, fps=SCREEN_FPS, size=None, bitrate=SCREEN_BITRATE, fit_turn=True,
-                     audio=False, audio_bytes=AUDIO_BYTES):
+def _reencode_concat(out_path, inputs, fps=SCREEN_FPS, size=None, bitrate=SCREEN_BITRATE, fit_turn=True):
     """把几个 mp4 (已解密) 按顺序解码 → 重新编码接成一个 (画面统一到 size 给的画布, 没给时用第一段的大小;
-    每一段等比缩放居中留黑, 不同朝向也兼容). 每一段的时间戳接在上一段后面. 返回输出的 (宽, 高).
-    audio: 声音也接上 (目光; 各段的声音解成 PCM 重新编码成 AAC), 否则只接画面."""
+    每一段等比缩放居中留黑, 不同朝向也兼容). 只接画面 (旧版本录的声音丢掉).
+    照片的时间戳不管原来是什么 (手机的片段里是真实的间隔 30 秒), 按顺序每张放 STILL_STEP (0.5 秒). 返回输出的 (宽, 高)."""
     lib, own = _startup()
     writer = None
-    wrote_audio = False
     dw, dh = (size or (0, 0))
     try:
-        base = 0                                    # 累计时间 (100ns): 这一段的时间戳要加上它
+        n_frames = 0                                # 已经写了几张
         for path in inputs:
             reader = c_void_p()
             attrs = _attributes(lib, 1)
@@ -1657,9 +1311,9 @@ def _reencode_concat(out_path, inputs, fps=SCREEN_FPS, size=None, bitrate=SCREEN
                 _check(lib.rw.MFCreateSourceReaderFromURL(ctypes.c_wchar_p(path), attrs, byref(reader)), "open")
             finally:
                 _release(attrs)
-            vcur = acur = None
+            vcur = None
             try:
-                vidx, aidx = _find_streams(reader)
+                vidx, _aidx = _find_streams(reader)
                 if vidx < 0:
                     continue
                 vcur = _reader_type(lib, reader, MF_SOURCE_READER_FIRST_VIDEO_STREAM, MFMediaType_Video,
@@ -1674,20 +1328,16 @@ def _reencode_concat(out_path, inputs, fps=SCREEN_FPS, size=None, bitrate=SCREEN
                     stride = sw * 4
                 turn = _video_rotation(reader)              # 手机按陀螺仪写的旋转标记: 先把画面转正
                 ew, eh = (sh, sw) if turn in (90, 270) else (sw, sh)
-                mono = False
-                if audio and aidx >= 0:
-                    acur, mono = _pcm_type(lib, reader, aidx)      # 解不成 PCM 的这一段没有声音
                 if writer is None:
                     if not (dw and dh):                     # 没给画布: 用第一段 (转正后) 的大小 (同以前)
                         dw, dh = min(ew, SCREEN_WIDTH) // 2 * 2, eh // 2 * 2
-                    writer = _Writer(lib, out_path, dw, dh, fps, bitrate, audio=audio, audio_bytes=audio_bytes)
+                    writer = _Writer(lib, out_path, dw, dh, fps, bitrate)
                 # 竖屏画布里冒出横屏画面 (全是竖屏设备, 中途有横屏) → 把这一段的每帧转正 (MECHANICS 18.8)
                 # (目光不这样做: 每段已经按手机的朝向转正了, 横着拿手机录的就是横的, 放进竖画布时上下留黑; fit_turn=False)
                 rotate = fit_turn and dw < dh and ew > eh
                 rd = ctypes.WINFUNCTYPE(HRESULT, c_void_p, c_ulong, c_ulong, POINTER(c_ulong), POINTER(c_ulong),
                                         POINTER(ctypes.c_longlong), POINTER(c_void_p))(
                     ctypes.cast(reader, POINTER(POINTER(c_void_p)))[0][9])
-                seg_end = base
                 while True:
                     idx, flags, ts = c_ulong(), c_ulong(), ctypes.c_longlong()
                     sample = c_void_p()
@@ -1700,26 +1350,8 @@ def _reencode_concat(out_path, inputs, fps=SCREEN_FPS, size=None, bitrate=SCREEN
                             break
                         if not sample:
                             continue
-                        dur = ctypes.c_longlong()
-                        try:
-                            _com(sample, 37, byref(dur), argtypes=(POINTER(ctypes.c_longlong),), what="GetSampleDuration")
-                        except MFError:
-                            dur.value = 0
-                        if acur is not None and idx.value == aidx:
-                            ptr, size, buf = _sample_bytes(sample)
-                            try:
-                                pcm = ctypes.string_at(ptr, size)
-                            finally:
-                                _com(buf, 4, what="Unlock")
-                                _release(buf)
-                            if writer.astream is not None and pcm:
-                                writer.write_audio(_stereo(pcm) if mono else pcm, base + ts.value, dur.value)
-                                wrote_audio = True
-                                seg_end = max(seg_end, base + ts.value + dur.value)
-                            continue
                         if idx.value != vidx:
                             continue
-                        stream = writer.stream
                         ptr, size, buf = _sample_bytes(sample)
                         try:
                             src = ctypes.string_at(ptr, size)
@@ -1730,25 +1362,19 @@ def _reencode_concat(out_path, inputs, fps=SCREEN_FPS, size=None, bitrate=SCREEN
                                 src, fw, fh, fstride = _rotate90(src, fw, fh, fstride)
                             frame = _fit(src, fw, fh, fstride, dw, dh)
                             data = ctypes.create_string_buffer(frame, len(frame))
-                            writer.write_bytes(data, len(frame), base + ts.value, dur.value, stream=stream)
+                            writer.write_bytes(data, len(frame), n_frames * STILL_STEP, STILL_STEP)
+                            n_frames += 1
                         finally:
                             _com(buf, 4, what="Unlock")
                             _release(buf)
-                        seg_end = max(seg_end, base + ts.value + dur.value)
                     finally:
                         _release(sample)
-                base = seg_end
             finally:
                 _release(vcur)
-                _release(acur)
                 _release(reader)
         return dw, dh
     finally:
         if writer is not None:
-            if writer.astream is not None and not wrote_audio:
-                # 加了声音这一路却一段声音都没有: 写一小段静音, 不然 Finalize 失败, 整个文件坏掉
-                n = AUDIO_RATE // 50
-                writer.write_audio(bytes(n * 2 * AUDIO_CH), 0, n * 10_000_000 // AUDIO_RATE)
             writer.close()
         _shutdown(lib, own)
 
@@ -1878,12 +1504,10 @@ def merge(data_dir: str, cid: str, kind: str = "screen", extra=()) -> str:
         plain = ok
         if not plain:
             return ""
-        # 目光 (摄像头) 的合并结果按目光的码率压 (要同步给所有设备, 不能太大)
-        # 目光的声音也接上 (手机录的是单声道 48 kHz AAC, 解成 PCM 再编码); 刻痕只接画面
+        # 目光 (摄像头) 的合并结果按目光的码率压 (要同步给所有设备, 不能太大); 照片按顺序每张 0.5 秒
         cam = kind == "camera"
         _reencode_concat(raw, [p for p, _ in plain], size=_canvas(info, weights),
-                         bitrate=CAMERA_BITRATE if cam else SCREEN_BITRATE, fit_turn=not cam,
-                         audio=cam, audio_bytes=CAMERA_AUDIO_BYTES)
+                         bitrate=CAMERA_BITRATE if cam else SCREEN_BITRATE, fit_turn=not cam)
         d = merged_dir(data_dir, kind)
         os.makedirs(d, exist_ok=True)
         for n in os.listdir(d):                   # 这个合约这一路的旧结果先删 (本次重新合并盖掉)
@@ -1940,8 +1564,8 @@ def _streams(path: str) -> int:
         _shutdown(lib, own)
 
 
-def _selftest(data_dir=None, seconds=3, audio=(True, True)):
-    """录几秒屏幕 (带声音), 看加密的文件写出来了没有, 解密后能不能读出画面和声音两路 (要有桌面)."""
+def _selftest(data_dir=None, seconds=3):
+    """录几秒屏幕 (30 秒一张: 开始时截一张), 看加密的文件写出来了没有, 解密后能读出画面 (要有桌面)."""
     d = data_dir or tempfile.mkdtemp()
     # 加密: 任意位置开始解密都对得上
     data = os.urandom(5000)
@@ -1951,7 +1575,7 @@ def _selftest(data_dir=None, seconds=3, audio=(True, True)):
     # 已知答案 (NIST SP 800-38A F.5.5 的密钥换成 REC_KEY 时没有现成的答案, 这里只核对 CTR 的计数器拼法)
     ks = rec_xor(nonce, 0, bytes(32))
     assert ks[16:] == _Aes.ecb(nonce + (1).to_bytes(8, "big"))
-    r = Recorder(d, "screen", audio=lambda: audio)
+    r = Recorder(d, "screen")
     r.start()
     t0 = time.time()
     while r.state == "starting" and time.time() - t0 < 10:
@@ -1959,6 +1583,7 @@ def _selftest(data_dir=None, seconds=3, audio=(True, True)):
     assert r.state == "running", (r.state, r.error)
     time.sleep(seconds)
     note = r.error
+    assert r.frames == 1, r.frames          # 3 秒里只截了开始时的一张
     r.stop()
     r.wait_sealed()
     assert r.state == "stopped", (r.state, r.error)
@@ -1974,10 +1599,10 @@ def _selftest(data_dir=None, seconds=3, audio=(True, True)):
     with open(out, "rb") as f:
         assert f.read(12)[4:8] == b"ftyp", "解密后是 mp4"
     n = _streams(out)
-    assert n == (2 if any(audio) else 1), (n, note)
+    assert n == 1, (n, note)
     # 合并 (刻痕): 给这一段打上合约 id 再录一段, 接成一个 (总览只有画面)
     merged = ""
-    r2 = Recorder(d, "screen", audio=lambda: audio, tag="x1")
+    r2 = Recorder(d, "screen", tag="x1")
     r2.start()
     t0 = time.time()
     while r2.state == "starting" and time.time() - t0 < 10:
@@ -1998,7 +1623,7 @@ def _selftest(data_dir=None, seconds=3, audio=(True, True)):
     part = os.path.join(work_dir(d, "screen"), "20260101-000000.recording.mp4")
     assert os.path.basename(late._final_path(part)) == "20260101-000000__late1.mp4", late._final_path(part)
     return (f"recorder selftest OK ({r.frames} frames, {files[0]['size']} bytes, streams {n}, "
-            f"cameras: {camera_count()}{merged}{', audio: ' + note if note else ''})"), d
+            f"cameras: {camera_count()}{merged}{', note: ' + note if note else ''})"), d
 
 
 def _selftest_cleanup():

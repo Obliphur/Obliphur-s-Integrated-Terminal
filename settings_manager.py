@@ -300,22 +300,6 @@ SETTINGS_SCHEMA = [
         "page": "record",
     },
     {
-        "key": "REC_MIC", "label": "录麦克风 (外部音)",
-        "kind": "choice", "apply": APPLY_INSTANT,
-        "choices": [("1", "开启 (ON)"), ("0", "关闭 (OFF)")],
-        "fmt": lambda v: "ON" if v else "OFF",
-        "desc": "即时生效.录像 (目光 / 刻痕) 时是否录下麦克风的声音.每台设备各自设置, 不同步.",
-        "page": "record",
-    },
-    {
-        "key": "REC_SYSTEM", "label": "录系统音",
-        "kind": "choice", "apply": APPLY_INSTANT,
-        "choices": [("1", "开启 (ON)"), ("0", "关闭 (OFF)")],
-        "fmt": lambda v: "ON" if v else "OFF",
-        "desc": "即时生效.录像 (目光 / 刻痕) 时是否录下电脑正在播放的声音.每台设备各自设置, 不同步.",
-        "page": "record",
-    },
-    {
         # 界面在 设置 → 录像 的"选择摄像头"卡片里自己画 (本机摄像头要后台枚举, 在线的手机随同步变化),
         # 这里只负责保存 / 同步那一个值. 每台设备各自设置.
         "key": "REC_CAMERA", "label": "摄像头", "kind": "combo", "apply": APPLY_INSTANT,

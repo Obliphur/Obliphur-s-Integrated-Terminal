@@ -214,7 +214,7 @@ OUTING_MAX_HOURS = 24 * 7
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.338"                         # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.339"                         # 和 GitHub 上发布的版本号比较 (见 updater.py)
 UPDATE_CHECK = 1                              # 打开程序时检查更新
 FULLSCREEN_DEFAULT = 0                        # 打开程序时默认全屏 (设置 → 基本设置, 仅电脑, 不同步; F11 随时切换)
 UPDATE_AUTO = 1                               # 发现新版本时自动下载安装
@@ -453,8 +453,6 @@ DEFAULT_SETTINGS = {
     "CONTRACT_THEME": "ops",
     "REC_FOCUS_ONLY": 1,
     "REC_ASK": 1,
-    "REC_MIC": 1,
-    "REC_SYSTEM": 1,
     "REC_CAMERA": "",
     "TICK_CLAMP": TICK_CLAMP,
     "FILL_WINDOW": int(FILL_WINDOW.total_seconds()),
@@ -504,8 +502,6 @@ _PIXEL_SAFE_CACHE = {}
 CONTRACT_THEME = "ops"           # 合约页主题: ops 起源 / urban 都市之意 (设置 → 基本设置, 不同步; 开始合约时记进合约)
 REC_FOCUS_ONLY = 1               # 目光 / 刻痕只在专注期间录像 (设置 → 录像, 随设备同步)
 REC_ASK = 1                      # 录像前询问 (合约的目光 / 刻痕, 设置 → 录像)
-REC_MIC = 1                      # 录像时录麦克风 (外部音); 默认开 (设置 → 录像, 不同步)
-REC_SYSTEM = 1                   # 录像时录系统音; 默认开 (设置 → 录像, 不同步)
 REC_CAMERA = ""                  # 目光用哪台摄像头: "" 自动 / "pc|<id>" 本机 / "phone|<设备 id>" 手机 (不同步)
 
 COLORS = dict(THEMES[DEFAULT_THEME]["colors"])

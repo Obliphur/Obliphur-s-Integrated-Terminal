@@ -104,8 +104,6 @@ object Schema {
             choices = listOf("ops" to "起源", "urban" to "都市之意", "ui" to "跟随界面主题")),
         // ---- 录像 (目光 / 刻痕, MECHANICS 18.8): 要不要录声音 (默认都录). 手机上录屏录不到系统音 ----
         Spec("REC_FOCUS_ONLY", "只在专注期间录像", Kind.CHOICE, false, "record", "1", choices = ONOFF),   // 随设备同步
-        Spec("REC_MIC", "录麦克风 (外部音)", Kind.CHOICE, false, "record", "1", choices = ONOFF),
-        Spec("REC_SYSTEM", "录系统音", Kind.CHOICE, false, "record", "1", choices = ONOFF),
         // ---- 应用 (Android: 应用使用时间统计; 没有后台应用数检测, MECHANICS 14.6) ----
         Spec("WINDOW_FOCUS_ENABLED", "应用使用时间统计", Kind.CHOICE, true, "window", "1", choices = ONOFF),
         // ---- 日常: 行为模式 / 外出 (MECHANICS 21) ----

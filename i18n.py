@@ -36,10 +36,10 @@ EN = {
         "Stop recording now (Gaze / Engraving); each stream counts as one violation (target HP -1) and that term is voided; what's already recorded is kept.",
     # ---- 录像词条警告 (目光 / 刻痕, MECHANICS 18.8) ----
     "主管!": "Director!",
-    "该词条会使用摄像头记录你的行为(和声音,可在设置关闭),但记录的视频会被加密,只能在OIT终端查看,防止自动上传类似的功能泄露隐私.":
-        "This term uses the camera to record what you do (with sound, which you can turn off in settings), but the video is encrypted and can only be viewed in the OIT terminal, so features like auto-upload can't leak your privacy.",
-    "该词条会使用录屏记录你的行为(和系统声音,可在设置关闭),但记录的视频会被加密,只能在OIT终端查看,防止自动上传类似的功能泄露隐私.":
-        "This term uses screen recording to record what you do (with system sound, which you can turn off in settings), but the video is encrypted and can only be viewed in the OIT terminal, so features like auto-upload can't leak your privacy.",
+    "该词条会使用摄像头记录你的行为(每30秒拍一张照片,合约结束后合成视频),但照片和视频会被加密,只能在OIT终端查看,防止自动上传类似的功能泄露隐私.":
+        "This term uses the camera to record what you do (one photo every 30 seconds, made into a video when the contract ends), but the photos and video are encrypted and can only be viewed in the OIT terminal, so features like auto-upload can't leak your privacy.",
+    "该词条会使用截图记录你的行为(每30秒截一张图,合约结束后合成视频),但截图和视频会被加密,只能在OIT终端查看,防止自动上传类似的功能泄露隐私.":
+        "This term uses screenshots to record what you do (one every 30 seconds, made into a video when the contract ends), but the screenshots and video are encrypted and can only be viewed in the OIT terminal, so features like auto-upload can't leak your privacy.",
     # ---- 手机端录像界面补充 (MECHANICS 18.8) ----
     "合约录像中: {what}": "Recording for the contract: {what}",
     "录像经过加密, 只能在 OIT 里查看 (设置 → 录像).": "Recordings are encrypted and can only be viewed inside OIT (Settings → Recording).",
@@ -1188,16 +1188,12 @@ EN = {
     "录像前询问": "Ask before recording",
     "只在专注期间录像": "Record only while focusing",
     "即时生效.开启时: 目光 / 刻痕只在专注期间录像 (休息 / 空闲时停下, 不算违反), 各段最后自动拼接成一个视频; 关闭时整个合约期间都录.": "Takes effect at once. When on: Gaze / Engraving record only while you focus (they pause during breaks / idle, not a violation), and the pieces are joined into one video at the end; when off, they record for the whole contract.",
-    "录麦克风 (外部音)": "Record microphone (external sound)",
-    "录系统音": "Record system sound",
-    "即时生效.录像 (目光 / 刻痕) 时是否录下麦克风的声音.每台设备各自设置, 不同步.": "Takes effect at once. Whether recordings (Gaze / Engraving) include the microphone. Each device sets its own; not synced.",
-    "即时生效.录像 (目光 / 刻痕) 时是否录下电脑正在播放的声音.每台设备各自设置, 不同步.": "Takes effect at once. Whether recordings (Gaze / Engraving) include the computer's playing sound. Each device sets its own; not synced.",
     "🎬  合并的录屏": "🎬  Merged screen recordings",
     "打不开这个录像: {e}": "Couldn't open this recording: {e}",
     "⚠ 目光: 摄像头录像": "⚠ Gaze: camera recording",
     "⚠ 刻痕: 屏幕录像": "⚠ Engraving: screen recording",
-    "「目光」会在合约期间用电脑或手机的摄像头录下你的样子 (可带声音), 结束后保存.": "\"Gaze\" records you with a computer or phone camera during the contract (sound optional) and saves it afterwards.",
-    "「刻痕」会在合约期间录下焦点设备的屏幕 (可带声音): 哪台设备在操作就录哪台, 每 20 秒切换一次.": "\"Engraving\" records the focus device's screen during the contract (sound optional): whichever device you're using gets recorded, switching every 20 seconds.",
+    "「目光」会在合约期间用电脑或手机的摄像头每 30 秒拍一张你的照片, 结束后合成视频保存.": "\"Gaze\" takes a photo of you every 30 seconds with a computer or phone camera during the contract and saves them as a video afterwards.",
+    "「刻痕」会在合约期间每 30 秒截一张焦点设备的屏幕: 哪台设备在操作就截哪台, 每 20 秒判定一次.": "\"Engraving\" takes a screenshot of the focus device every 30 seconds during the contract: whichever device you're using is captured, re-decided every 20 seconds.",
     "合约结束后, 各设备录下的片段会传到一台电脑上合并成一个视频 (传输前会再确认).": "After the contract ends, each device's clips are sent to one computer and merged into a single video (you'll confirm before any transfer).",
     "录像经过加密, 只能在 OIT 里查看和播放 (设置 → 录像), 不会被网盘 / 相册自动上传.": "Recordings are encrypted and can only be viewed and played inside OIT (Settings → Recording); cloud drives / galleries can't auto-upload them.",
     "录像经过加密, 只能在 OIT 里查看和播放. 选不选由你决定.": "Recordings are encrypted and can only be viewed and played inside OIT. The choice is yours.",
@@ -1217,7 +1213,7 @@ EN = {
     "📷  摄像头录像": "📷  Camera recordings",
     "🖥  屏幕录像": "🖥  Screen recordings",
     "合约选了「目光」时, 合约期间用摄像头录像. 要在 Windows 设置 → 隐私和安全性 → 摄像头 里允许桌面应用使用摄像头.": "With \"The Gaze\" the camera records during the contract. Allow desktop apps to use the camera in Windows Settings → Privacy & security → Camera.",
-    "Windows 不需要单独授权: 合约选了「刻痕」时, 合约期间直接录制整个屏幕 (所有显示器, 每秒 1 帧). 可以在合约页终止录屏, 但立即算一次违反.": "Windows needs no separate permission: with \"Engraving\" the whole screen (all monitors, 1 frame per second) is recorded during the contract. You can stop it on the contract page, but that counts as a violation at once.",
+    "Windows 不需要单独授权: 合约选了「刻痕」时, 合约期间直接截取整个屏幕 (所有显示器, 每 30 秒一张). 可以在合约页终止录屏, 但立即算一次违反.": "Windows needs no separate permission: with \"Engraving\" the whole screen (all monitors, one screenshot every 30 seconds) is captured during the contract. You can stop it on the contract page, but that counts as a violation at once.",
     "重新检查": "Check again",
     "刷新": "Refresh",
     "📷  选择摄像头": "📷  Choose camera",

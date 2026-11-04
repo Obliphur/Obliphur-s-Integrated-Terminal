@@ -643,9 +643,9 @@ fun ContractScreen() {
             // 目光 / 刻痕: 选上前提示会录像 + 加密 (MECHANICS 18.8). 选不选由用户决定.
             val id = ask.removePrefix("pickwarn:")
             val msg = if (id == "gaze")
-                tr("该词条会使用摄像头记录你的行为(和声音,可在设置关闭),但记录的视频会被加密,只能在OIT终端查看,防止自动上传类似的功能泄露隐私.")
+                tr("该词条会使用摄像头记录你的行为(每30秒拍一张照片,合约结束后合成视频),但照片和视频会被加密,只能在OIT终端查看,防止自动上传类似的功能泄露隐私.")
             else
-                tr("该词条会使用录屏记录你的行为(和系统声音,可在设置关闭),但记录的视频会被加密,只能在OIT终端查看,防止自动上传类似的功能泄露隐私.")
+                tr("该词条会使用截图记录你的行为(每30秒截一张图,合约结束后合成视频),但截图和视频会被加密,只能在OIT终端查看,防止自动上传类似的功能泄露隐私.")
             Confirm(tr("主管!"), msg, true, { ask = "" }) {
                 val cur = c.draft.toMutableList()
                 if (id !in cur && Contract.blockedBy(id, cur) == null) { cur.add(id); c.setDraft(cur); core.changed() }

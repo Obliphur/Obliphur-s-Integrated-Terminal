@@ -99,7 +99,6 @@ class MainActivity : ComponentActivity() {
         if (rm.needPerms) {
             val need = buildList {
                 if (rm.needCamera) add(Manifest.permission.CAMERA)
-                if (rm.needAudio) add(Manifest.permission.RECORD_AUDIO)
             }.filter { checkSelfPermission(it) != android.content.pm.PackageManager.PERMISSION_GRANTED }
             if (need.isNotEmpty()) { asking = true; recPermLauncher.launch(need.toTypedArray()); return }
         }

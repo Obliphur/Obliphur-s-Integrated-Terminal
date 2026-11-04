@@ -1243,7 +1243,8 @@ class BreakTimerApp:
                 total = (self.break_end_wall - self.break_start_wall).total_seconds()
             else:
                 total = self.countdown_seconds
-            self.comm.joint_break_started(total)
+            # 合约开始前积攒的休息时间 (放在这次休息的最后用) 不算: 告诉对方的只有合约里得到的休息时间
+            self.comm.joint_break_started(max(0.0, float(total) - float(self._break_pre or 0)))
         else:
             self.comm.joint_break_ended()
 
@@ -4684,7 +4685,7 @@ class BreakTimerApp:
     # ---- 合约 · 录像 (目光 / 刻痕, MECHANICS 18.3) ----
 
     def _start_recorder(self, kind: str):
-        r = recorder.Recorder(self.dm.data_dir, kind, audio=self._rec_audio, tag=str(self.contract.live.get("id") or ""),
+        r = recorder.Recorder(self.dm.data_dir, kind, tag=str(self.contract.live.get("id") or ""),
                               camera=self._local_camera_id() if kind == "camera" else "",
                               on_file=lambda path, k=kind: self._log_notice(f"RECORD {k} saved {os.path.basename(path)}"))
         self._recorders[kind] = r
@@ -4692,20 +4693,16 @@ class BreakTimerApp:
         self._log_notice(f"RECORD {kind} start")
         return r
 
-    def _rec_audio(self):
-        """录像要不要录声音 (设置 → 录像, 默认都录): (麦克风, 系统音)."""
-        return bool(self.settings.value("REC_MIC")), bool(self.settings.value("REC_SYSTEM"))
-
     def _warn_pick_term(self, tid: str) -> bool:
         """选中录像词条 (目光 / 刻痕) 前警告一次: 会录下什么, 加密只能在 OIT 里看, 刻痕会在各设备间传输合并.
         选不选是用户自己的决定 (MECHANICS 18.8). 返回要不要选上."""
         if tid == "gaze":
             return toast.ask(
-                tr("该词条会使用摄像头记录你的行为(和声音,可在设置关闭),但记录的视频会被加密,只能在OIT终端查看,防止自动上传类似的功能泄露隐私."),
+                tr("该词条会使用摄像头记录你的行为(每30秒拍一张照片,合约结束后合成视频),但照片和视频会被加密,只能在OIT终端查看,防止自动上传类似的功能泄露隐私."),
                 title=tr("主管!"), ok_text=tr("确定"), cancel_text=tr("取消"), danger=True)
         if tid == "scar":
             return toast.ask(
-                tr("该词条会使用录屏记录你的行为(和系统声音,可在设置关闭),但记录的视频会被加密,只能在OIT终端查看,防止自动上传类似的功能泄露隐私."),
+                tr("该词条会使用截图记录你的行为(每30秒截一张图,合约结束后合成视频),但截图和视频会被加密,只能在OIT终端查看,防止自动上传类似的功能泄露隐私."),
                 title=tr("主管!"), ok_text=tr("确定"), cancel_text=tr("取消"), danger=True)
         return True
 

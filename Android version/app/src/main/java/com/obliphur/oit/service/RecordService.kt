@@ -10,6 +10,11 @@ import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CameraMetadata
+import android.graphics.Bitmap
+import android.graphics.PixelFormat
+import android.graphics.Rect
+import android.media.Image
+import android.media.ImageReader
 import android.media.MediaRecorder
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
@@ -29,7 +34,9 @@ import java.time.format.DateTimeFormatter
  * 合约录像的前台服务 (MECHANICS 18.8): 真正用摄像头 (目光) 和录屏 (刻痕, MediaProjection) 录像的那一层.
  * 由 [RecordManager] 用 Intent 指挥 (开始 / 停止某一路); 录屏需要先进入 mediaProjection 类型的前台服务,
  * 再用 MainActivity 拿到的授权造投屏. 每段写完 (stop / Finalize) 后用 [RecCrypto] 加密成 .oitv 存进数据目录,
- * 原始 mp4 写在缓存里 (不进数据目录, 防止被网盘自动上传). 声音: 麦克风按设置录 (手机上录屏录不到系统音).
+ * 原始 mp4 写在缓存里 (不进数据目录, 防止被网盘自动上传).
+ * 不录连续的视频 (视频有时长限制, 占地方): 每 [STILL_EVERY_MS] 毫秒 (30 秒) 拍一张照片 (目光) / 截一张图 (刻痕) 送进 mp4,
+ * 没有声音; 电脑合并时把照片按顺序接成每张 0.5 秒的视频.
  */
 class RecordService : Service() {
     private val thread = HandlerThread("oit-rec").apply { start() }
@@ -142,7 +149,7 @@ class RecordService : Service() {
         super.onDestroy()
     }
 
-    /** 前台服务类型随正在录的几路变 (Android 14 起必须声明 camera / microphone / mediaProjection). */
+    /** 前台服务类型随正在录的几路变 (Android 14 起必须声明 camera / mediaProjection). */
     private fun enterForeground(cam: Boolean, screen: Boolean) {
         val note = Notifier.recording(this, cam, screen)
         try {
@@ -150,7 +157,6 @@ class RecordService : Service() {
                 var type = 0
                 if (cam) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
                 if (screen) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-                if ((cam || screen) && micOn()) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
                 if (type == 0) type = ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA   // 兜底 (manifest 已声明)
                 startForeground(Notifier.ID_RECORD, note, type)
             } else startForeground(Notifier.ID_RECORD, note)
@@ -161,10 +167,6 @@ class RecordService : Service() {
     }
 
     // ---------------------------------------------------------------- 摄像头 (目光)
-
-    /** 录麦克风: 设置开着, 而且真的有 RECORD_AUDIO 权限 (没权限就只录画面, 不让整段录像失败). */
-    private fun micOn() = OitApp.instance.core.settings.bool("REC_MIC") &&
-        checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED
 
     private fun newPart(kind: String): Pair<File, File> {
         val cache = RecCrypto.workDir(cacheDir, kind).apply { mkdirs() }
@@ -257,9 +259,9 @@ class RecordService : Service() {
             // 用摄像头 / MediaRecorder 真正支持的尺寸 (480×360 这类不是标准采集尺寸, 很多手机不支持, prepare 会失败);
             // 在支持的尺寸里挑最接近 640×480 的 (压一下但保证能录)
             val (cw, ch) = camSize(mgr, id)
-            rec = buildRecorder(part, cw, ch, CAMERA_FPS, CAMERA_BITRATE, CAMERA_AUDIO_BITRATE, hint(mgr, id, devDeg))
-            // 每秒 CAMERA_FPS 帧: 摄像头连续出画面到一个小的 ImageReader (只为了让自动曝光 / 对焦一直跑着, 画面直接丢掉),
-            // 每 1 / CAMERA_FPS 秒单独拍一帧送进 MediaRecorder (setVideoFrameRate 只是提示, 连续送多少帧就录多少帧)
+            rec = buildRecorder(part, cw, ch, STILL_BITRATE, hint(mgr, id, devDeg))
+            // 每 30 秒一张照片: 摄像头连续出画面到一个小的 ImageReader (只为了让自动曝光 / 对焦一直跑着, 画面直接丢掉),
+            // 每 STILL_EVERY_MS 毫秒单独拍一帧送进 MediaRecorder (连续送多少帧就录多少帧; 视频帧率只是提示)
             val (mw, mh) = meterSize(mgr, id)
             meter = android.media.ImageReader.newInstance(mw, mh, android.graphics.ImageFormat.YUV_420_888, 2).apply {
                 setOnImageAvailableListener({ r -> runCatching { r.acquireLatestImage()?.close() } }, h)
@@ -283,10 +285,10 @@ class RecordService : Service() {
                                 override fun run() {
                                     if (closed) return
                                     runCatching { s.capture(shot, null, h) }
-                                    h.postDelayed(this, 1000L / CAMERA_FPS)
+                                    h.postDelayed(this, STILL_EVERY_MS)
                                 }
                             }
-                            h.post(tick)
+                            h.postDelayed(tick, FIRST_SHOT_MS)       // 等一下再拍第一张 (自动曝光要几帧才稳)
                         }
                         override fun onConfigureFailed(s: CameraCaptureSession) = fail("camera", Exception("session"))
                     }, h)
@@ -328,6 +330,12 @@ class RecordService : Service() {
         private val part: File; private val fin: File
         private var rec: MediaRecorder? = null
         private var vd: android.hardware.display.VirtualDisplay? = null
+        private var reader: ImageReader? = null
+        private var recSurface: android.view.Surface? = null
+        /** 屏幕最近的一帧 (屏幕没变化时不会有新的, 截图用的就是它). */
+        private var latest: Image? = null
+        private var w = 0
+        private var hgt = 0
         @Volatile private var closed = false
         private val cb = object : MediaProjection.Callback() {
             override fun onStop() { if (!closed) { fail("screen", Exception("projection stopped")) } }
@@ -338,24 +346,60 @@ class RecordService : Service() {
             val dm = DisplayMetrics()
             @Suppress("DEPRECATION")
             (getSystemService(WINDOW_SERVICE) as WindowManager).defaultDisplay.getRealMetrics(dm)
-            var w = dm.widthPixels; var hgt = dm.heightPixels
+            w = dm.widthPixels; hgt = dm.heightPixels
             val cap = 960
             if (maxOf(w, hgt) > cap) { val s = cap.toDouble() / maxOf(w, hgt); w = even((w * s).toInt()); hgt = even((hgt * s).toInt()) }
             else { w = even(w); hgt = even(hgt) }
-            rec = buildRecorder(part, w, hgt, 5, 450_000)
+            rec = buildRecorder(part, w, hgt, STILL_BITRATE)
+            recSurface = rec!!.surface
+            // 投屏的画面先到 ImageReader (只留最近的一帧), 每 30 秒把它截下来画进 MediaRecorder 的 surface (= 一张截图)
+            reader = ImageReader.newInstance(w, hgt, PixelFormat.RGBA_8888, 3).apply {
+                setOnImageAvailableListener({ r ->
+                    val img = runCatching { r.acquireLatestImage() }.getOrNull() ?: return@setOnImageAvailableListener
+                    if (closed) { img.close(); return@setOnImageAvailableListener }
+                    latest?.close()
+                    latest = img
+                }, h)
+            }
             proj.registerCallback(cb, h)
             runCatching {
                 vd = proj.createVirtualDisplay("oit-rec", w, hgt, dm.densityDpi,
-                    android.hardware.display.DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, rec!!.surface, null, h)
+                    android.hardware.display.DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, reader!!.surface, null, h)
                 rec!!.start()
+                h.postDelayed(shot, FIRST_SHOT_MS)
             }.onFailure { fail("screen", it as Exception); stop() }
+        }
+
+        /** 截一张图 (最近的一帧) 送进录像; 每 [STILL_EVERY_MS] 毫秒一次. */
+        private val shot = object : Runnable {
+            override fun run() {
+                if (closed) return
+                h.postDelayed(this, STILL_EVERY_MS)
+                val img = latest ?: return                       // 还没有画面: 下一次再截
+                runCatching {
+                    val plane = img.planes[0]
+                    val px = plane.pixelStride
+                    val bmp = Bitmap.createBitmap(plane.rowStride / px, img.height, Bitmap.Config.ARGB_8888)
+                    plane.buffer.rewind()
+                    bmp.copyPixelsFromBuffer(plane.buffer)
+                    val surface = recSurface ?: return@runCatching
+                    val canvas = runCatching { surface.lockHardwareCanvas() }.getOrNull() ?: surface.lockCanvas(null)
+                    try { canvas.drawBitmap(bmp, Rect(0, 0, w, hgt), Rect(0, 0, w, hgt), null) }
+                    finally { surface.unlockCanvasAndPost(canvas) }
+                    bmp.recycle()
+                }.onFailure { OitApp.instance.core.logRecord("screen shot failed: ${it.message}") }
+            }
         }
 
         fun stop() {
             closed = true
+            h.removeCallbacks(shot)
+            runCatching { latest?.close() }
+            latest = null
+            runCatching { vd?.release() }
+            runCatching { reader?.close() }
             runCatching { rec?.stop() }
             runCatching { rec?.release() }
-            runCatching { vd?.release() }
             runCatching { proj.unregisterCallback(cb) }
             runCatching { proj.stop() }
             seal("screen", part, fin)
@@ -364,7 +408,7 @@ class RecordService : Service() {
 
     private fun even(x: Int) = if (x % 2 == 0) x else x - 1
 
-    /** 一路录像的 MediaRecorder: H.264 + (开着麦克风时) AAC, 写到 part. video source 由调用处用 surface 接. */
+    /** 一路录像的 MediaRecorder: H.264 (没有声音), 写到 part. video source 由调用处用 surface 接. */
     /** 目光的 mp4 播放时要顺时针转多少度才是正的 (摄像头装在机身里的角度 + 手机此刻的朝向; 前置摄像头是镜像的, 反着算).
      *  同 Camera2 文档里 JPEG_ORIENTATION 的算法. 电脑合并时按这个标记把画面转正. */
     private fun hint(mgr: CameraManager, id: String, dev: Int): Int {
@@ -374,18 +418,14 @@ class RecordService : Service() {
         return Math.floorMod(sensor + (if (front) -dev else dev), 360)
     }
 
-    private fun buildRecorder(part: File, w: Int, hgt: Int, fps: Int, bitrate: Int, audioBitrate: Int = 128_000,
-                              orientation: Int = 0): MediaRecorder {
-        val mic = micOn()
+    private fun buildRecorder(part: File, w: Int, hgt: Int, bitrate: Int, orientation: Int = 0): MediaRecorder {
         @Suppress("DEPRECATION")
         val r = if (Build.VERSION.SDK_INT >= 31) MediaRecorder(this) else MediaRecorder()
-        if (mic) r.setAudioSource(MediaRecorder.AudioSource.MIC)
         r.setVideoSource(MediaRecorder.VideoSource.SURFACE)
         r.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
         r.setVideoEncoder(MediaRecorder.VideoEncoder.H264)
-        if (mic) { r.setAudioEncoder(MediaRecorder.AudioEncoder.AAC); r.setAudioEncodingBitRate(audioBitrate); r.setAudioSamplingRate(48_000) }
         r.setVideoSize(w, hgt)
-        r.setVideoFrameRate(fps)
+        r.setVideoFrameRate(1)
         r.setVideoEncodingBitRate(bitrate)
         if (orientation != 0) r.setOrientationHint(orientation)
         r.setOutputFile(part.absolutePath)
@@ -399,13 +439,14 @@ class RecordService : Service() {
     }
 
     companion object {
-        /** 目光 (摄像头) 每秒录几帧. */
-        const val CAMERA_FPS = 1
+        /** 每隔多久拍一张照片 / 截一张图 (毫秒): 30 秒. */
+        const val STILL_EVERY_MS = 30_000L
+        /** 开始录之后第一张照片等多久再拍. */
+        const val FIRST_SHOT_MS = 1_500L
         /** 最后知道的手机朝向 (跨服务实例保留). */
         @Volatile private var lastDeg = 0
-        /** 目光每秒只有 1 帧: 码率压低, 文件小 (要传给电脑合并 / 同步, 不能太大). */
-        const val CAMERA_BITRATE = 64_000
-        const val CAMERA_AUDIO_BITRATE = 64_000
+        /** 两张照片隔 30 秒: 码率只是个上限, 每一张都能分到足够的码率; 文件大小由每张的画质决定. */
+        const val STILL_BITRATE = 200_000
         const val ACT_CAMERA = "oit.rec.camera"
         const val ACT_SCREEN = "oit.rec.screen"
         const val ACT_STOP_CAMERA = "oit.rec.stop_camera"

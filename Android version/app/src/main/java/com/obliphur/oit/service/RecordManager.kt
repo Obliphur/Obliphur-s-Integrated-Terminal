@@ -34,14 +34,12 @@ class RecordManager(private val app: OitApp) {
     @Volatile private var flushing = false
     private val outboxFile get() = File(dataDir, "rec_outbox.json")
 
-    /** 界面该做的事 (MainActivity 每次可见时看一眼): 要录屏授权 / 要摄像头 + 麦克风权限. */
+    /** 界面该做的事 (MainActivity 每次可见时看一眼): 要录屏授权 / 要摄像头权限. */
     @Volatile var needProjection = false
         private set
     @Volatile var needPerms = false
         private set
     @Volatile var needCamera = false
-        private set
-    @Volatile var needAudio = false
         private set
 
     fun tick() {
@@ -60,8 +58,7 @@ class RecordManager(private val app: OitApp) {
 
         needProjection = "screen" in want && app.recProjection == null && !recording("screen")
         needCamera = "camera" in want
-        needAudio = want.isNotEmpty() && core.settings.bool("REC_MIC")
-        needPerms = needCamera || needAudio
+        needPerms = needCamera
 
         val now = SystemClock.elapsedRealtime()
         // 摄像头每 30 分钟换一段 (同电脑): 一段不会太大 (文件通道一次最多 1 GB), 出事时也只丢最后一段

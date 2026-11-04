@@ -101,7 +101,8 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         val prev = jointBreakPrev
         jointBreakPrev = on
         if (prev == null || prev == on) return
-        if (on) comm.jointBreakStarted(timer.breakTotalS) else comm.jointBreakEnded()
+        // 合约开始前积攒的休息时间 (放在这次休息的最后用) 不算: 告诉对方的只有合约里得到的休息时间
+        if (on) comm.jointBreakStarted(maxOf(0.0, timer.breakTotalS - timer.breakPre)) else comm.jointBreakEnded()
     }
     /** 支援短缺: 这次休息已经提醒过的 (还差 3 / 1 分钟). */
     val supplyWarned = mutableSetOf<String>()
