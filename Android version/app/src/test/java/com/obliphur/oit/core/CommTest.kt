@@ -1456,4 +1456,46 @@ class CommTest {
         assertTrue("silent" !in co.opTerms("没有编号", emptyList()))
         for (x in listOf(co, cu, cf)) x.flush()
     }
+
+    /** 对方切断谈话 (前置 prompt XIII): [cut off][N] (对应 comm.py 自检). */
+    @Test
+    fun cutOff() {
+        assertEquals(5.0, CommText.cutMinutes("[cut off][5]")!!, 0.0)
+        assertEquals(10.0, CommText.cutMinutes("[Cut Off]:10 再见")!!, 0.0)
+        assertEquals(Comm.CUT_DEFAULT_MIN.toDouble(), CommText.cutMinutes("[ cut  off ]")!!, 0.0)
+        assertEquals(Comm.CUT_MAX_MIN.toDouble(), CommText.cutMinutes("[cut off][99999]")!!, 0.0)
+        assertEquals(1.0, CommText.cutMinutes("[cut off][0]")!!, 0.0)
+        assertNull(CommText.cutMinutes("好的"))
+        assertTrue("XIII.如果你被骚扰,返回[cut off][N]" in CommText.prefixPrompt(true))
+        val td = Files.createTempDirectory("oit").toFile()
+        File(td, "p").mkdirs()
+        File(td, "p/切断.txt").writeText("你是切断.")
+        val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
+        c.set(persona = "切断.txt", splitSend = false)
+        c.snapshot = { CommSnap("idle") }
+        clock = LocalDateTime.of(2026, 12, 10, 13, 0)
+        script.clear(); follow.clear()
+        script.add("[cut off][30] 再这样我不理你了.")
+        assertEquals("", c.send("骚扰骚扰"))
+        wait(c)
+        assertTrue(c.cutLeft() in 1790.0..1800.0)
+        assertTrue("不理你" in c.visible().last().text && "[" !in c.visible().last().text)
+        assertTrue("切断" in c.send("在吗") && "还有 30 分钟" in c.problem())
+        assertEquals(2, c.visible().size)
+        assertTrue(c.messages.any { it.role == "sys" && "你在 13:00 切断了与用户的谈话 30 分钟" in it.text })
+        assertTrue(c.syncDoc().keys.any { it.startsWith("cut:") })
+        c.clear()
+        assertTrue(c.cutLeft() > 0 && c.send("清空了再来").isNotEmpty())          // 清空聊天不能解除切断
+        c.cutExempt = { true }
+        assertEquals("", c.problem())                                              // 开发者模式不受限制
+        c.cutExempt = { false }
+        clock = clock.plusMinutes(31)
+        c.tick()
+        assertEquals(0.0, c.cutLeft(), 0.0)
+        script.clear(); script.add("好吧, 你说.")
+        assertEquals("", c.send("对不起"))
+        wait(c)
+        assertTrue("你说" in c.visible().last().text)
+        c.flush()
+    }
 }

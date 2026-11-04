@@ -434,6 +434,16 @@ object CommText {
     }
 
     /** 对方这次回复是在要资料吗: 有 [模块名] (不分大小写和空格; 有没有 [refuse to reply] 都算) → 要的资料列表. */
+    private val CUT_RE = Regex("""[\[［]\s*cut\s*off\s*[\]］]""", RegexOption.IGNORE_CASE)
+    private val CUT_N_RE = Regex("""^\s*(?:[:：]\s*)?[\[［]?\s*(\d+(?:\.\d+)?)""")
+
+    /** 对方回复里的 [cut off][N] → 切断多少分钟 (没写 N = CUT_DEFAULT_MIN, 最多 CUT_MAX_MIN, 最少 1); 没有 [cut off] = null. */
+    fun cutMinutes(reply: String): Double? {
+        val m = CUT_RE.find(reply) ?: return null
+        val n = CUT_N_RE.find(reply.substring(m.range.last + 1))?.groupValues?.get(1)?.toDoubleOrNull() ?: Comm.CUT_DEFAULT_MIN.toDouble()
+        return n.coerceIn(1.0, Comm.CUT_MAX_MIN.toDouble())
+    }
+
     /** 对方回 [operation] = 想发起联合行动 (前置 prompt XII). */
     val OP_RE = Regex("""\[\s*operation\s*\]""", RegexOption.IGNORE_CASE)
 
@@ -635,6 +645,9 @@ class Comm(
         const val PROACTIVE_LATE = 120                  // 到点之后过了这么久 (程序刚打开 / 刚空下来) 就算了
         const val PROACTIVE_GAP = 10 * 60               // 两条主动消息至少隔这么久 (相邻的日程段不连发)
         const val PROACTIVE_KEEP = 12                   // 记下最近多少个已经处理过的主动消息时间点
+        const val CUT_TAG = "[系统·切断]"                // 对方切断谈话的系统消息 (不是 "[系统]" 开头: 不算主动消息)
+        const val CUT_DEFAULT_MIN = 10                  // [cut off] 后面没写分钟数时切断多久
+        const val CUT_MAX_MIN = 24 * 60                 // 一次最多切断多久
         const val JOINT_TAG = "[系统·联合行动]"           // 联合行动进展的系统消息 (不是 "[系统]" 开头: 不算主动消息, 不触发提示音)
         const val JOINT_EARLY = 10 * 60                 // 联合行动: 合约可以比约定的开始时间早开始这么久 (秒)
         const val JOINT_LATE = 30 * 60                  // 联合行动: 约定的开始时间过了这么久还没开始合约就算错过 (秒)
@@ -755,6 +768,10 @@ class Comm(
     @Volatile var memAuto = ""; private set
     private var memUpto = 0L
     private var memTs = 0L
+    /** 对方切断谈话到什么时候 (毫秒时间戳; 0 = 没有; 跟着聊天对象走). */
+    private var cutUntil = 0L
+    /** 开发者模式下不受 [cut off] 限制 (Core 接上). */
+    var cutExempt: () -> Boolean = { false }
     private var lastTs = 0L
     val messages = ArrayList<ChatMsg>()
     @Volatile var version = 0; private set
@@ -802,6 +819,7 @@ class Comm(
         var memAuto = ""
         var memUpto = 0L
         var memTs = 0L
+        var cutUntil = 0L
     }
     private class Result(val kind: String, val extra: Extra?, val reply: String, val err: String, val epoch: Int, val op: JointPlan? = null)
     private class MemResult(val reply: String, val err: String, val upto: Long, val owner: String)
@@ -890,6 +908,7 @@ class Comm(
         st.memAuto = (o?.optString("mem_auto", "") ?: "").take(MEM_MAX)
         st.memUpto = o?.optLong("mem_upto", 0L) ?: 0L
         st.memTs = o?.optLong("mem_ts", 0L) ?: 0L
+        st.cutUntil = o?.optLong("cut_until", 0L) ?: 0L
         return st
     }
 
@@ -902,7 +921,7 @@ class Comm(
             })
         return JSONObject().put("messages", arr).put("clear_ts", st.clearTs).put("retry_at", st.retryAt)
             .put("retry_n", st.retryN).put("pro_key", st.proKey)
-            .put("mem_auto", st.memAuto).put("mem_upto", st.memUpto).put("mem_ts", st.memTs)
+            .put("mem_auto", st.memAuto).put("mem_upto", st.memUpto).put("mem_ts", st.memTs).put("cut_until", st.cutUntil)
     }
 
     private fun writeState(p: String, st: ChatState) {
@@ -914,14 +933,14 @@ class Comm(
     private fun loadState(st: ChatState) {
         messages.clear(); messages.addAll(st.messages)
         clearTs = st.clearTs; retryAt = st.retryAt; retryN = st.retryN; proKey = st.proKey
-        memAuto = st.memAuto; memUpto = st.memUpto; memTs = st.memTs
+        memAuto = st.memAuto; memUpto = st.memUpto; memTs = st.memTs; cutUntil = st.cutUntil
         nextId = (messages.maxOfOrNull { it.id } ?: 0) + 1
         lastTs = messages.maxOfOrNull { it.ts } ?: 0L
     }
 
     private fun activeState() = ChatState().also {
         it.messages.addAll(messages); it.clearTs = clearTs; it.retryAt = retryAt; it.retryN = retryN; it.proKey = proKey
-        it.memAuto = memAuto; it.memUpto = memUpto; it.memTs = memTs
+        it.memAuto = memAuto; it.memUpto = memUpto; it.memTs = memTs; it.cutUntil = cutUntil
     }
 
     /** 某个对象的聊天状态: 现在聊的是一份拷贝 (改了要 storeState), 其他的在缓存里 (没读过就读盘). */
@@ -1076,6 +1095,7 @@ class Comm(
             if (st.proKey.isNotEmpty()) doc["pro:$p"] = st.proKey
             if (st.retryAt != 0L || st.retryN != 0) doc["retry:$p"] = JSONObject().put("at", st.retryAt).put("n", st.retryN)
             if (st.clearTs != 0L) doc["clear:$p"] = st.clearTs
+            if (st.cutUntil > nowMs()) doc["cut:$p"] = st.cutUntil
             if (st.memAuto.isNotEmpty())
                 doc["mem:$p"] = JSONObject().put("a", st.memAuto).put("u", st.memUpto).put("t", st.memTs)
         }
@@ -1155,6 +1175,10 @@ class Comm(
                     tc.st.retryAt = o?.optLong("at", 0L) ?: 0L
                     tc.st.retryN = o?.optInt("n", 0) ?: 0
                     tc.dirty = true
+                }
+                kind == "cut" && v is Number -> {                        // 对方切断了谈话: 取更晚的
+                    val tc = touch(rest)
+                    if (v.toLong() > tc.st.cutUntil) { tc.st.cutUntil = v.toLong(); tc.dirty = true }
                 }
                 kind == "mem" && v is JSONObject -> {                  // 记忆卡: 后改的为准
                     val tc = touch(rest)
@@ -1583,6 +1607,7 @@ class Comm(
     /** 现在不能聊天的原因 ("" = 可以). */
     fun problem(fresh: Boolean = false): String {
         blocked().let { if (it.isNotEmpty()) return it }
+        cutBlock().let { if (it.isNotEmpty()) return it }
         val t = System.currentTimeMillis()
         if (fresh || t - problemAt > 5000) {
             problemAt = t
@@ -1604,6 +1629,7 @@ class Comm(
     /** 对方现在能不能主动发消息 / 重试 ("" = 可以). 和 problem 的区别: 用户睡眠时对方仍可以发, 只是消息先藏起来、不通知. */
     private fun aiProblem(): String {
         aiBlocked().let { if (it.isNotEmpty()) return it }
+        cutBlock().let { if (it.isNotEmpty()) return it }
         val t = System.currentTimeMillis()
         if (t - aiProblemAt > 5000) {
             aiProblemAt = t
@@ -2197,6 +2223,31 @@ class Comm(
         return ""
     }
 
+    // ---- 对方切断谈话 (前置 prompt 第 XIII 条): 回复里写 [cut off][N] = 被骚扰, 接下来 N 分钟不再理用户 ----
+    /** 对方还要切断多少秒 (0 = 没有切断). */
+    fun cutLeft(): Double = maxOf(0.0, (cutUntil - nowMs()) / 1000.0)
+
+    /** 对方切断了谈话的原因 ("" = 没有): 用户不能发消息, 对方也不会主动发 / 重试 / 追问. 开发者模式下不拦. */
+    fun cutBlock(): String {
+        val left = cutLeft()
+        if (left <= 0 || cutExempt()) return ""
+        val u = java.time.Instant.ofEpochMilli(cutUntil).atZone(java.time.ZoneId.systemDefault())
+        return "对方切断了与你的谈话, 还有 ${maxOf(1L, Math.round(left / 60))} 分钟 (到 %02d:%02d)".format(u.hour, u.minute)
+    }
+
+    /** 主线程: 对方回了 [cut off][N]: 记下切断到什么时候 (再次切断取更晚的), 并记一条给对方看的系统消息. 清空聊天不会解除切断. */
+    private fun cutApply(minutes: Double) {
+        cutUntil = maxOf(cutUntil, nowMs() + (minutes * 60000).toLong())
+        followAt = 0L
+        again = false
+        val e = java.time.Instant.ofEpochMilli(cutUntil).atZone(java.time.ZoneId.systemDefault())
+        val n = now()
+        val m = if (minutes == Math.floor(minutes)) minutes.toLong().toString() else minutes.toString()
+        val body = "$CUT_TAG 你在 %02d:%02d 切断了与用户的谈话 $m 分钟, 到 %02d:%02d 才会恢复; 这段时间用户发不了消息, 你也不会被调用.".format(n.hour, n.minute, e.hour, e.minute)
+        add("sys", body, compose(n, body))
+        saveChat(); changed(); push()
+    }
+
     /** 系统要求对方主动发 / 重试: 这条系统消息先不进记录, 对方真的回复了才和回复一起记下 (被拒绝 / 出错就当没发过). */
     private fun trigger(kind: String, body: String) {
         request(kind, Extra(body, compose(now(), body)))
@@ -2262,6 +2313,7 @@ class Comm(
         busySince = 0L
         if (hardBlock()) { again = false; changed(); return }       // 等回复的时候"无言为真"生效了: 这条回复不要了
         if (r.epoch != epoch) { again = false; changed(); return }       // 发出之后清空过聊天记录: 这条回复不要了
+        if (r.err.isEmpty()) CommText.cutMinutes(r.reply)?.let { cutApply(it) }     // 被骚扰: [cut off][N] 切断谈话 N 分钟 (这条话照常显示, 有的话)
         if (r.op != null && r.err.isEmpty()) opApply(r.op)           // 对方发起的联合行动: 不管这条话有没有显示, 都记下来
         val queried = r.err.isEmpty() && CommText.infoTags(r.reply).isNotEmpty()      // 对方在查询模块资料 (有没有 [refuse to reply] 都算): 这条一定不显示
         val (text0, waitMin) = if (r.err.isEmpty()) CommText.cleanReply(r.reply) else "" to 0.0
@@ -2538,6 +2590,7 @@ class Comm(
         for (p in chatPids()) {
             if (p == pid || p !in names || p in muted) continue
             val st = stateOf(p)
+            if (st.cutUntil > nowMs()) continue                                            // 切断了谈话的: 不会来找你
             if (st.messages.none { it.role == "me" || it.role == "ai" }) continue          // 没聊过的 (只是切换时留下的空记录) 不会来找你
             val (entries, probs) = infoOf(names.getValue(p))
             val ctx = BgCtx(p, names.getValue(p), st, entries,

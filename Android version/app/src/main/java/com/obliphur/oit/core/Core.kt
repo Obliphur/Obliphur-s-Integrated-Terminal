@@ -255,6 +255,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         comm.onSync = { syncNow() }
         // 沟通只能在休息 / 空闲时用 (专注 / 睡眠 / 外出中不能用); 合约的"无言为真" (社交软件和与 AI 聊天的软件禁止联网) 生效期间也不能用
         comm.blocked = { commBlocked() }
+        comm.cutExempt = { settings.devMode }                 // 开发者模式: 不受对方 [cut off] 限制
         comm.aiBlocked = { commAiBlocked() }
         comm.stateFn = { commState() }
         comm.hardBlock = { contract.has("silent") && !settings.devMode }

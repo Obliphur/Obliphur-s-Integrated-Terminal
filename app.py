@@ -358,6 +358,7 @@ class BreakTimerApp:
         self.comm.fog = lambda: bool(self.contract.fog())
         # 用户只能在休息 / 空闲时用沟通 (专注 / 睡眠 / 外出中不能用); 对方在用户睡眠时仍可主动发, 只是先藏起来
         self.comm.blocked = self._comm_blocked
+        self.comm.cut_exempt = config.dev_mode_enabled        # 开发者模式: 不受对方 [cut off] 限制
         self.comm.ai_blocked = self._comm_ai_blocked
         self.comm.state_fn = self._comm_state
         self.comm.hard_block = lambda: self.contract.has("silent") and not config.dev_mode_enabled()

@@ -48,6 +48,9 @@ PROACTIVE_P = {"idle": 80, "rest": 60, "long": 70, "sleep": 60}   # I~IV 发不�
 PROACTIVE_LATE = 120                  # 到点之后过了这么久 (程序刚打开 / 刚空下来) 就算了
 PROACTIVE_GAP = 10 * 60               # 两条主动消息至少隔这么久 (相邻的日程段不连发)
 PROACTIVE_KEEP = 12                   # 记下最近多少个已经处理过的主动消息时间点
+CUT_TAG = "[系统·切断]"                # 对方切断谈话的系统消息 (不是 "[系统]" 开头: 不算主动消息)
+CUT_DEFAULT_MIN = 10                  # [cut off] 后面没写分钟数时切断多久
+CUT_MAX_MIN = 24 * 60                 # 一次最多切断多久
 JOINT_TAG = "[系统·联合行动]"           # 联合行动进展的系统消息 (不是 "[系统]" 开头: 不算主动消息, 不触发提示音)
 JOINT_EARLY = 10 * 60                 # 联合行动: 合约可以比约定的开始时间早开始这么久 (秒)
 JOINT_LATE = 30 * 60                  # 联合行动: 约定的开始时间过了这么久还没开始合约就算错过 (秒)
@@ -450,7 +453,7 @@ CLAUDIA_LEGACIES = (CLAUDIA_V307,
 ASSISTANT_SLEEP_LINE = "睡眠发起谈话概率:0%\n"
 ASSISTANT_TITLE = "assistant"                        # 特例: 这个名字 (且提示词没改过) 专注时也能用
 CLAUDIA_TITLE = "claudia"                            # 睡眠段开始后 5 分钟那一条要求"以'晚安'开头": 只有这个人设说 (24.4)
-CHAT_KEYS = ("clear_ts", "retry", "pro_key", "mem_auto", "mem_upto", "mem_ts")   # 跟着聊天对象走的几项 (存在各自的聊天文件里)
+CHAT_KEYS = ("clear_ts", "retry", "pro_key", "mem_auto", "mem_upto", "mem_ts", "cut_until")   # 跟着聊天对象走的几项 (存在各自的聊天文件里)
 
 
 def pid_of(persona: str) -> str:
@@ -463,7 +466,8 @@ def mem_fields(d) -> dict:
     d = d if isinstance(d, dict) else {}
     return {"mem_auto": str(d.get("mem_auto") or "")[:MEM_MAX],
             "mem_upto": int(d.get("mem_upto") or 0),
-            "mem_ts": int(d.get("mem_ts") or 0)}
+            "mem_ts": int(d.get("mem_ts") or 0),
+            "cut_until": int(d.get("cut_until") or 0)}      # 对方切断谈话到什么时候 (毫秒时间戳; 0 = 没有)
 
 
 def seed_builtin(folder: str, only: str = None):
@@ -556,6 +560,24 @@ _BRACKET_RE = re.compile(r"[\[［][^\[\]［］\n]*[\]］](?:[ \t]*[:：][ \t]*\d
 WAIT_MAX_MIN = 1440
 # 去掉 [] 之后留下的空壳: 对方常把标记写在行内代码 / 引号 / 括号里 (`[waiting for reply]:[1]`), 剩下 `` “” 「」 () 之类的就不显示了
 _EMPTY_WRAP_RE = re.compile(r"`[ \t]*`|“[ \t]*”|「[ \t]*」|『[ \t]*』|\([ \t]*\)|（[ \t]*）|\"[ \t]*\"|'[ \t]*'")
+
+
+_CUT_RE = re.compile(r"[\[［]\s*cut\s*off\s*[\]］]", re.I)
+_CUT_N_RE = re.compile(r"\s*(?:[:：]\s*)?[\[［]?\s*(\d+(?:\.\d+)?)")
+
+
+def cut_minutes(reply: str):
+    """对方回复里的 [cut off][N] → 切断多少分钟 (没写 N = CUT_DEFAULT_MIN, 最多 CUT_MAX_MIN, 最少 1); 没有 [cut off] = None."""
+    s = str(reply or "")
+    m = _CUT_RE.search(s)
+    if not m:
+        return None
+    n = _CUT_N_RE.match(s, m.end())
+    try:
+        minutes = float(n.group(1)) if n else float(CUT_DEFAULT_MIN)
+    except ValueError:
+        minutes = float(CUT_DEFAULT_MIN)
+    return min(float(CUT_MAX_MIN), max(1.0, minutes))
 
 
 def clean_reply(reply: str) -> tuple:
@@ -850,6 +872,7 @@ class Comm:
         self.snapshot = lambda: {}     # 计时器状态; app 接上
         self.data_fn = lambda sel: ""  # 今天 / 日历 / 统计的数据 (comm_data.build); app 接上
         self.fog = lambda: False       # 合约黑雾中: 不发数据
+        self.cut_exempt = lambda: False    # 开发者模式下不受 [cut off] 限制 (app 接上)
         self.blocked = lambda: ""      # 现在不能用沟通的原因 ("" = 可以): 合约的"无言为真", 或者不在休息 / 空闲 (专注 / 睡眠 / 外出中)
         self.ai_blocked = lambda: self.blocked()   # 对方现在不能主动发消息的原因 ("" = 可以): app 接上; 睡眠中仍可发, 只是不通知
         self.hard_block = lambda: False   # 连等回复的这条也不要了的那种 (无言为真); 只是不在休息 / 空闲时, 已经发出去的请求回复到了照样收下
@@ -1185,6 +1208,8 @@ class Comm:
                 doc[f"retry:{pid}"] = dict(st["retry"])
             if st["clear_ts"]:
                 doc[f"clear:{pid}"] = int(st["clear_ts"])
+            if int(st.get("cut_until") or 0) > self._ms():
+                doc[f"cut:{pid}"] = int(st["cut_until"])
             if st.get("mem_auto"):
                 doc[f"mem:{pid}"] = {"a": str(st.get("mem_auto") or ""),
                                      "u": int(st.get("mem_upto") or 0), "t": int(st.get("mem_ts") or 0)}
@@ -1296,6 +1321,11 @@ class Comm:
                 add = [k for k in val.split("|") if k and k not in have]
                 if add:
                     st["pro_key"] = "|".join((have + add)[-PROACTIVE_KEEP:])
+                    touched[rest][1] = True
+            elif kind == "cut" and isinstance(val, (int, float)) and not isinstance(val, bool):
+                st = st_of(rest)[0]                                  # 对方切断了谈话: 取更晚的
+                if int(val) > int(st.get("cut_until") or 0):
+                    st["cut_until"] = int(val)
                     touched[rest][1] = True
             elif kind == "retry":
                 st_of(rest)[0]["retry"] = dict(val) if isinstance(val, dict) else {}
@@ -1693,6 +1723,9 @@ class Comm:
         why = self.blocked()
         if why:
             return why
+        why = self.cut_block()
+        if why:
+            return why
         return self._profile_problem()
 
     def _profile_problem(self) -> str:
@@ -1708,6 +1741,9 @@ class Comm:
     def _ai_problem(self) -> str:
         """对方现在能不能主动发消息 / 重试 ("" = 可以). 和 problem 的区别: 用户睡眠时对方仍可以发, 只是消息先藏起来、不通知."""
         why = self.ai_blocked()
+        if why:
+            return why
+        why = self.cut_block()
         if why:
             return why
         return self._profile_problem()
@@ -2392,6 +2428,32 @@ class Comm:
                                          "请按人设回应用户一句 (话题和语气自己定, 不要透露日程); " + f"如果实在不方便, 返回{REFUSE}.")
         return ""
 
+    # ---- 对方切断谈话 (前置 prompt 第 XIII 条): 回复里写 [cut off][N] = 被骚扰, 接下来 N 分钟不再理用户 ----
+    def cut_left(self) -> float:
+        """对方还要切断多少秒 (0 = 没有切断)."""
+        return max(0.0, (int(self.cfg.get("cut_until") or 0) - self._ms()) / 1000.0)
+
+    def cut_block(self) -> str:
+        """对方切断了谈话的原因 ("" = 没有): 用户不能发消息, 对方也不会主动发 / 重试 / 追问. 开发者模式下不拦."""
+        left = self.cut_left()
+        if left <= 0 or self.cut_exempt():
+            return ""
+        until = datetime.fromtimestamp(int(self.cfg.get("cut_until") or 0) / 1000)
+        return f"对方切断了与你的谈话, 还有 {max(1, round(left / 60))} 分钟 (到 {until:%H:%M})"
+
+    def _cut_apply(self, minutes: float):
+        """主线程: 对方回了 [cut off][N]: 记下切断到什么时候 (再次切断取更晚的), 并记一条给对方看的系统消息. 清空聊天不会解除切断."""
+        until = self._ms() + int(float(minutes) * 60000)
+        self.cfg["cut_until"] = max(int(self.cfg.get("cut_until") or 0), until)
+        self._follow_at = 0
+        self._again = False
+        end = datetime.fromtimestamp(int(self.cfg["cut_until"]) / 1000)
+        body = f"{CUT_TAG} 你在 {self.now():%H:%M} 切断了与用户的谈话 {minutes:g} 分钟, 到 {end:%H:%M} 才会恢复; 这段时间用户发不了消息, 你也不会被调用."
+        self._add("sys", body, self._compose(self.now(), body))
+        self.save_chat()
+        self._changed()
+        self._push()
+
     def _trigger(self, kind: str, body: str):
         """系统要求对方主动发 / 重试: 这条系统消息先不进记录, 对方真的回复了才和回复一起记下 (被拒绝 / 出错就当没发过)."""
         api = self._compose(self.now(), body)
@@ -2565,6 +2627,9 @@ class Comm:
             return
         if op and not err:
             self._op_apply(op)                          # 对方发起的联合行动: 不管这条话有没有显示, 都记下来
+        cut = cut_minutes(reply) if not err else None
+        if cut is not None:
+            self._cut_apply(cut)                        # 被骚扰: [cut off][N] 切断谈话 N 分钟 (这条话照常显示, 有的话)
         text, wait_min = clean_reply(reply) if not err else ("", None)
         queried = not err and bool(info_tags(reply))           # 对方在查询模块资料 (有没有 [refuse to reply] 都算): 这条一定不显示
         if queried:
@@ -2715,6 +2780,8 @@ class Comm:
             if pid == self.pid or pid not in names or self.is_muted(pid):
                 continue
             st = self._state_of(pid)
+            if int(st.get("cut_until") or 0) > self._ms():
+                continue                                          # 切断了谈话的: 不会来找你
             if not any(m["role"] in ("me", "ai") for m in st["messages"]):
                 continue                                          # 没聊过的 (只是切换时留下的空记录) 不会来找你
             entries, probs = self._info_of(names[pid])
@@ -4482,6 +4549,40 @@ def _selftest():
     assert co._op_terms("[" + str([t[0] for t in C.TERMS].index("silent") + 1) + "]", ["long1"]) == ["long1"]
     assert "silent" not in co._op_terms("没有编号", [])
     for x in (co, cf2):
+        x.flush()
+
+    # ---- 对方切断谈话 (前置 prompt XIII): [cut off][N] ----
+    assert cut_minutes("[cut off][5]") == 5 and cut_minutes("[Cut Off]:10 再见") == 10 and cut_minutes("[ cut  off ]") == CUT_DEFAULT_MIN
+    assert cut_minutes("[cut off][99999]") == CUT_MAX_MIN and cut_minutes("[cut off][0]") == 1 and cut_minutes("好的") is None
+    assert "XIII.如果你被骚扰,返回[cut off][N]" in prefix_prompt()
+    clock[0] = day.replace(hour=13)
+    cc2 = joint_comm("切断", "你是切断.\n")
+    script.clear()
+    follow.clear()
+    script.append("[cut off][30] 再这样我不理你了.")
+    assert cc2.send("骚扰骚扰") == ""
+    wait(cc2)
+    assert 1790 <= cc2.cut_left() <= 1800 and "不理你" in cc2.visible()[-1]["text"] and "[" not in cc2.visible()[-1]["text"]
+    assert "切断" in cc2.send("在吗") and "还有 30 分钟" in cc2.problem() and len(cc2.visible()) == 2
+    assert any(m["role"] == "sys" and "你在 13:00 切断了与用户的谈话 30 分钟" in m["text"] for m in cc2.messages)
+    assert f"cut:{cc2.pid}" in cc2.sync_doc() and cc2._ai_problem() and cc2.problem() == cc2.cut_block()
+    cc2.clear()
+    assert cc2.cut_left() > 0 and cc2.send("清空了再来") != "", "清空聊天不能解除切断"
+    cc2.cut_exempt = lambda: True
+    assert cc2.problem() == "", "开发者模式不受限制"
+    cc2.cut_exempt = lambda: False
+    other = joint_comm("切断二", "你是切断二.\n")
+    other.apply_doc({f"cut:{cc2.pid}": int(cc2.cfg["cut_until"]) + 5000, f"cut:{other.pid}": clock[0].timestamp() * 1000 + 600000})
+    assert other.cut_left() > 0, "别的设备同步来的切断"
+    clock[0] += timedelta(minutes=31)
+    cc2.tick()
+    assert cc2.cut_left() == 0 and cc2.cut_block() == ""
+    script.clear()
+    script.append("好吧, 你说.")
+    assert cc2.send("对不起") == ""
+    wait(cc2)
+    assert "你说" in cc2.visible()[-1]["text"]
+    for x in (cc2, other):
         x.flush()
 
     # ---- 打字延时: 文本里每个字符让对方的消息晚 0.2 s 显示, 一条一条按顺序出来, 显示之前不同步给别的设备 ----
