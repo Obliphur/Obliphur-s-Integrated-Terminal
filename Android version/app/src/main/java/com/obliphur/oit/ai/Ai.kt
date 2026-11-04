@@ -177,7 +177,10 @@ object Ai {
         if (isDeepSeek(p)) {
             if (p.protocol == "anthropic") body.put("reasoning", JSONObject().put("effort", "none"))
             else body.put("thinking", JSONObject().put("type", "disabled"))
-        } else if (thinkOff) body.put("thinking", JSONObject().put("type", "disabled"))
+        } else if (thinkOff) {
+            body.put("thinking", JSONObject().put("type", "disabled"))
+            if (p.protocol != "anthropic") body.put("reasoning_effort", "none")   // OpenAI 系 (gpt-5/6 ...) 不认 thinking, 靠这个关推理; 不认回 400 -> 一起去掉重试
+        }
         val arr = JSONArray()
         if (p.protocol == "anthropic") {
             conn.setRequestProperty("x-api-key", key)

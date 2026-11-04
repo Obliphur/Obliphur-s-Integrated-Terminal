@@ -430,6 +430,8 @@ def _build_body(profile: dict, system: str, messages: list, max_tokens: int, tem
             "messages": [{"role": "system", "content": system}] + list(messages)}
     if is_deepseek(profile) or think_off:
         body["thinking"] = {"type": "disabled"}
+    if think_off and not is_deepseek(profile):
+        body["reasoning_effort"] = "none"                   # OpenAI 系 (gpt-5/6 ...) 不认 thinking, 靠这个关推理 (默认推理要多花十几秒); 不认回 400 -> 和 thinking 一起去掉重试
     return body
 
 
@@ -905,6 +907,9 @@ def _selftest():
         # 别家 / 中转: 默认也关 (thinking disabled); 不认回 400 就去掉重试, 并记住
         assert _build_body(p, "SYS", [{"role": "user", "content": "hi"}], 4096, 0.8, True)["thinking"] == {"type": "disabled"}
         assert "thinking" not in _build_body(p, "SYS", [{"role": "user", "content": "hi"}], 4096, 0.8, True, False)
+        assert _build_body(p, "SYS", [{"role": "user", "content": "hi"}], 4096, 0.8, True)["reasoning_effort"] == "none"
+        assert "reasoning_effort" not in _build_body(p, "SYS", [{"role": "user", "content": "hi"}], 4096, 0.8, True, False)
+        assert "reasoning_effort" not in _build_body(ds, "SYS", [{"role": "user", "content": "hi"}], 4096, 0.8, True)
         b = _build_body(dict(ds, protocol="anthropic", base_url="https://api.deepseek.com/anthropic"),
                         "SYS", [{"role": "user", "content": "hi"}], 4096, 0.8, True)
         assert b["reasoning"] == {"effort": "none"} and "thinking" not in b
