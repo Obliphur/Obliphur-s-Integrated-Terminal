@@ -1435,15 +1435,27 @@ class CommTest {
         clock = day.withHour(14).withMinute(1)
         assertEquals("约定的开始时间已经过了", co.jointRespond(true))
         assertEquals("missed", co.jointState())
-        // 用户说的话触发的回复里写 [operation] 没用
+        // 用户说的话触发的回复里写 [operation] 没用: 告诉对方, 它重新回复 (以前去掉 [] 后什么也不剩, 这条被丢掉, 对方还以为发出去了)
+        assertTrue("只有系统要求你主动发消息的时候" in CommText.prefixPrompt(true) && "回复用户的话时输入无效" in CommText.prefixPrompt(true))
         clock = day.withHour(13)
         val cu = mk("发起三", "你是发起.\n[循环 14:00-18:00][100min]\n")
-        script.clear(); script.add("[operation] 好")
+        script.clear(); script.addAll(listOf("[operation][1,2,3,9,10]", "[operation][1,2] 现在不方便发起, 先聊聊."))
         val n3 = calls.size
-        assertEquals("", cu.send("你好"))
+        assertEquals("", cu.send("你试着发起一次合约"))
         wait(cu)
-        assertEquals(n3 + 1, calls.size)
+        assertEquals(n3 + 2, calls.size)
+        val why = calls.last().second.last().second
+        assertTrue(why, "现在不能发起联合行动" in why && "请直接回复用户上面的消息" in why)
+        assertEquals("[operation][1,2,3,9,10]", calls.last().second[calls.last().second.size - 2].second)
         assertEquals("", cu.jointState())
+        assertEquals("现在不方便发起, 先聊聊.", cu.visible().last().text)
+        assertTrue("operation" !in cu.messages.last().api)
+        // 对方照样又写了 [operation] + 编号, 还带了话: 去掉, 话照常显示
+        script.clear(); script.addAll(listOf("我这就发起 [operation] [1,2]", "好的, 我知道了. [operation][3]"))
+        assertEquals("", cu.send("再试一次"))
+        wait(cu)
+        assertEquals("好的, 我知道了.", cu.visible().last().text)
+        assertTrue("operation" !in cu.messages.last().api)
         // 选的词条放不进任何开始时间: 不发
         val cf = mk("发起二", "你是发起.\n17:00-17:30:午饭\n[循环 14:00-18:00][100min]\n")
         script.clear(); script.addAll(listOf("[operation]", "[1]", "聊聊天气吧."))
