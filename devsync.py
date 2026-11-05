@@ -56,7 +56,7 @@ OFFLINE_MS = 3 * SYNC_EVERY * 1000
 # 同步失败的原因里, 下面这几种说明对方明确不接受 / 不在线 (不是偶然的网络问题): 不等 OFFLINE_MS, 马上算离线
 HARD_ERRORS = ("unpaired", "wipe-pending", "away", "peer-not-proxy", "not-proxy")
 UNBIND_WAIT_MS = 120 * 3600 * 1000      # 解除绑定要等这么久 (冷静期 120 小时, 期间可以取消)
-UNBIND_FREE = True                      # 1.0.376 临时 (用户要求, 之后改回 False): 解除绑定马上生效 (已有的冷静期计划也算到期), 并且不清空本机
+UNBIND_FREE = False                     # 1.0.376 临时开过 (True: 解除绑定马上生效并且不清空本机), 1.0.377 改回 False
 RESTART_RETRY = 30                    # 秒: 设备离线时请它重新启动 OIT, 连不上就每隔这么久再试一次, 直到有回应或它回来 (MECHANICS 15.3)
 RESTART_FRESH_MS = 90_000             # 本机刚打开这么久之内不理重启请求 (对方看到的离线是打开之前的事)
 RESTART_HEALTHY_MS = 30_000           # 刚和发请求的设备同步成功过 (任何一个方向) 这么久之内不理重启请求: 本机明明在线
