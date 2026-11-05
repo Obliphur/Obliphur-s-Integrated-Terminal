@@ -40,7 +40,7 @@ class AiDataView(tk.Frame):
         if not view:
             tk.Label(inner, text=tr("这一页没有 {name} 的数据.", name=name), bg=bg, fg=COLORS["text_dim"], font=config.font("body")).pack(padx=28, pady=28, anchor="w")
             return
-        tk.Label(inner, text="🤖  " + tr("{name} 的数据", name=name) + " · " + tr(view.get("title", "")), bg=bg, fg=COLORS["text"],
+        tk.Label(inner, text=tr("{name} 的数据", name=name) + " · " + tr(view.get("title", "")), bg=bg, fg=COLORS["text"],
                  font=config.font("h1", bold=True), anchor="w").pack(fill="x", padx=28, pady=(22, 8))
         for b in view.get("blocks", []):
             t = b.get("t")

@@ -109,7 +109,7 @@ fun ShareAiScreen(page: String) {
         val v = view
         val who = comm.personaTitle(comm.personaName()).ifEmpty { "AI" }          // 对方的数据写人设名
         if (v == null) { Text(tr("这一页没有 {name} 的数据.", "name" to who), color = o.dim); return@Column }
-        Text("🤖  " + tr("{name} 的数据", "name" to who) + " · " + tr(v.title), color = o.text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        Text(tr("{name} 的数据", "name" to who) + " · " + tr(v.title), color = o.text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
         for (b in v.blocks) ShareBlockView(b, kind) { kind = it }
     }
 }
