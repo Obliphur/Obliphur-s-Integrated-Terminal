@@ -1129,6 +1129,23 @@ class CommTest {
         assertEquals("Claudia.txt", chg!!.name)
     }
 
+    /** 开思考的 thinking 字段: Claude 4.6 及以后 adaptive (Haiku 5.5 等不认 budget_tokens), 老的 / 别家 enabled + budget_tokens (同 ai_assist.adaptive_thinking). */
+    @Test
+    fun adaptiveThinkingField() {
+        for (m in listOf("claude-haiku-5-5", "claude-sonnet-5-5", "claude-sonnet-5", "claude-opus-5-5", "claude-opus-4-7", "claude-opus-4-6",
+                "claude-fable-5-1", "anthropic/claude-haiku-5-5", "Claude-Sonnet-4.6")) {
+            assertTrue(m, Ai.adaptiveThinking(m))
+            assertEquals("{\"type\":\"adaptive\"}", Ai.thinkOnField(m).toString())
+        }
+        for (m in listOf("claude-haiku-4-5", "claude-haiku-4-5-20251001", "claude-sonnet-4-5", "claude-sonnet-4-20250514",
+                "claude-opus-4-1-20250805", "claude-3-5-sonnet-20241022", "gpt-5", "deepseek-flash", "m", "")) {
+            assertFalse(m, Ai.adaptiveThinking(m))
+            val f = Ai.thinkOnField(m)
+            assertEquals("enabled", f.getString("type"))
+            assertEquals(Ai.THINK_BUDGET, f.getInt("budget_tokens"))
+        }
+    }
+
     /** 记忆卡: 每 40 条整理一次; 全部自动; 清空聊天时一起清掉. */
     @Test
     fun stripThink() {

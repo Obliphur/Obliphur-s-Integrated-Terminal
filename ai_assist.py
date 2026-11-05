@@ -405,6 +405,26 @@ def is_deepseek(profile: dict) -> bool:
     return host == "deepseek.com" or host.endswith(".deepseek.com")
 
 
+_ADAPTIVE_RE = re.compile(r"claude[-_ ]?(opus|sonnet|haiku)[-_ ]?(\d+)(?:[-_.](\d{1,2})(?!\d))?", re.I)
+_ADAPTIVE_NAME_RE = re.compile(r"claude[-_ ]?(fable|mythos)", re.I)
+
+
+def adaptive_thinking(profile: dict) -> bool:
+    """这个模型开思考要用 {"type": "adaptive"}: Claude 4.6 及以后的 opus / sonnet / haiku (含 5.x) 和 fable / mythos.
+    它们不认 {"type": "enabled", "budget_tokens": N} (Haiku 5.5 / Sonnet 5.x / Opus 5.x / 4.7 / 4.8 / Fable 直接 400),
+    4.6 上 budget_tokens 已弃用. 更老的 Claude (haiku 4.5, sonnet 4.5, claude-3 …) 和别家的模型仍然用 budget_tokens."""
+    model = str(profile.get("model") or "")
+    if _ADAPTIVE_NAME_RE.search(model):
+        return True
+    m = _ADAPTIVE_RE.search(model)
+    return bool(m) and (int(m.group(2)), int(m.group(3) or 0)) >= (4, 6)
+
+
+def think_on_field(profile: dict) -> dict:
+    """开思考的 thinking 字段 (非 DeepSeek): 新模型 adaptive, 其他 enabled + budget_tokens."""
+    return {"type": "adaptive"} if adaptive_thinking(profile) else {"type": "enabled", "budget_tokens": THINK_BUDGET}
+
+
 THINK_REJECT = set()            # 回了 400 的 endpoint (只在内存里): 它不认 thinking 字段, 之后不再带
 THINK_ON_REJECT = set()         # 开思考时回了 400 的 endpoint (只在内存里): 它不认开思考的字段, 之后这个地址不再开
 THINK_BUDGET = 1024             # 开思考时的思考 token 上限 (Anthropic 的最小值)
@@ -427,7 +447,7 @@ def _build_body(profile: dict, system: str, messages: list, max_tokens: int, tem
             if is_deepseek(profile):
                 body["reasoning"] = {"effort": "medium"}
             else:
-                body["thinking"] = {"type": "enabled", "budget_tokens": THINK_BUDGET}   # 要求 max_tokens 大于它, 不能带 temperature
+                body["thinking"] = think_on_field(profile)   # enabled 要求 max_tokens 大于 budget_tokens; 都不能带 temperature
         elif is_deepseek(profile):
             body["reasoning"] = {"effort": "none"}          # Anthropic 格式: none = 关思考
         elif think_off:
@@ -437,7 +457,7 @@ def _build_body(profile: dict, system: str, messages: list, max_tokens: int, tem
             "messages": [{"role": "system", "content": system}] + list(messages)}
     if think_on:                                            # 思考模式下 temperature 不起作用 (有的中转还会因此报错): 不带
         del body["temperature"]
-        body["thinking"] = {"type": "enabled"} if is_deepseek(profile) else {"type": "enabled", "budget_tokens": THINK_BUDGET}
+        body["thinking"] = {"type": "enabled"} if is_deepseek(profile) else think_on_field(profile)
     elif is_deepseek(profile) or think_off:
         body["thinking"] = {"type": "disabled"}
     return body
@@ -1179,6 +1199,19 @@ def _selftest():
         assert _build_body(ds, "SYS", m1, 4096, 0.8, True, False, True)["thinking"] == {"type": "enabled"}
         b = _build_body(dict(ds, protocol="anthropic", base_url="https://api.deepseek.com/anthropic"), "SYS", m1, 4096, 0.8, True, False, True)
         assert b["reasoning"] == {"effort": "medium"} and "thinking" not in b
+        # 新的 Claude (4.6 及以后) 不认 budget_tokens (Haiku 5.5 等直接 400): 开思考用 adaptive; 老的 / 别家不变
+        for mid in ("claude-haiku-5-5", "claude-sonnet-5-5", "claude-sonnet-5", "claude-opus-5-5", "claude-opus-4-7", "claude-opus-4-6",
+                    "claude-fable-5-1", "anthropic/claude-haiku-5-5", "Claude-Sonnet-4.6"):
+            assert adaptive_thinking({"model": mid}), mid
+            for proto in ("anthropic", "openai"):
+                b = _build_body(dict(p, protocol=proto, model=mid), "SYS", m1, 4096, 0.8, True, False, True)
+                assert b["thinking"] == {"type": "adaptive"} and "temperature" not in b, (mid, proto)
+        for mid in ("claude-haiku-4-5", "claude-haiku-4-5-20251001", "claude-sonnet-4-5", "claude-sonnet-4-20250514", "claude-opus-4-1-20250805",
+                    "claude-3-5-sonnet-20241022", "gpt-5", "deepseek-flash", "m", ""):
+            assert not adaptive_thinking({"model": mid}), mid
+            assert think_on_field({"model": mid}) == {"type": "enabled", "budget_tokens": THINK_BUDGET}, mid
+        b = _build_body(dict(ds, protocol="anthropic", base_url="https://api.deepseek.com/anthropic", model="claude-haiku-5-5"), "SYS", m1, 4096, 0.8, True, False, True)
+        assert b["reasoning"] == {"effort": "medium"}, "DeepSeek 官方地址永远用自己的字段"
         chat_messages(p, "SYS", m1, max_tokens=4096, think=True)
         assert seen[-1][2]["thinking"]["type"] == "enabled", "think=True 真的发出了开思考"
         chat_messages(p, "SYS", m1, max_tokens=4096)

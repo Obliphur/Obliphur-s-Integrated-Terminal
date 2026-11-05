@@ -185,6 +185,23 @@ object Ai {
     /** 开思考时的思考 token 上限 (Anthropic 的最小值). */
     const val THINK_BUDGET = 1024
 
+    private val ADAPTIVE_RE = Regex("claude[-_ ]?(opus|sonnet|haiku)[-_ ]?(\\d+)(?:[-_.](\\d{1,2})(?!\\d))?", RegexOption.IGNORE_CASE)
+    private val ADAPTIVE_NAME_RE = Regex("claude[-_ ]?(fable|mythos)", RegexOption.IGNORE_CASE)
+
+    /** 这个模型开思考要用 {"type":"adaptive"}: Claude 4.6 及以后的 opus / sonnet / haiku (含 5.x) 和 fable / mythos (同 ai_assist.adaptive_thinking);
+     *  它们不认 enabled + budget_tokens (Haiku 5.5 等直接 400). 更老的 Claude 和别家的模型仍然用 budget_tokens. */
+    fun adaptiveThinking(model: String): Boolean {
+        if (ADAPTIVE_NAME_RE.containsMatchIn(model)) return true
+        val m = ADAPTIVE_RE.find(model) ?: return false
+        val major = m.groupValues[2].toInt()
+        val minor = m.groupValues[3].ifEmpty { "0" }.toInt()
+        return major > 4 || (major == 4 && minor >= 6)
+    }
+
+    internal fun thinkOnField(model: String): JSONObject =
+        if (adaptiveThinking(model)) JSONObject().put("type", "adaptive")
+        else JSONObject().put("type", "enabled").put("budget_tokens", THINK_BUDGET)
+
     private fun buildBody(p: Profile, system: String, messages: List<Pair<String, String>>, maxTokens: Int, temperature: Double,
                           cache: Boolean, thinkOff: Boolean, thinkOn: Boolean): JSONObject {
         val body = JSONObject().put("model", p.model).put("max_tokens", maxTokens)
@@ -193,7 +210,7 @@ object Ai {
             if (isDeepSeek(p)) {
                 if (p.protocol == "anthropic") body.put("reasoning", JSONObject().put("effort", "medium"))
                 else body.put("thinking", JSONObject().put("type", "enabled"))
-            } else body.put("thinking", JSONObject().put("type", "enabled").put("budget_tokens", THINK_BUDGET))
+            } else body.put("thinking", thinkOnField(p.model))
         } else if (isDeepSeek(p)) {
             if (p.protocol == "anthropic") body.put("reasoning", JSONObject().put("effort", "none"))
             else body.put("thinking", JSONObject().put("type", "disabled"))

@@ -2273,7 +2273,7 @@ t 的单位是小时; 完成时给的休息时间 = **t × 3 分钟**.
   3. 英文为主 (至少 8 个英文字母且占一半以上): 要指出不自然 / 错误的地方;
   4. **很长**: 一共 80 字以上 (`THINK_LONG`);
   5. 对方此刻按日程该在**专注 / 睡眠**, 而用户这时开始一段新的谈话 (对方上一条消息是 3 分钟以前, `THINK_NEW_AFTER`): 要判断回不回. 正在进行的谈话里 (3 分钟内) 不因为这一条开.
-- **开思考的请求体** (`ai_assist._build_body` / `Ai.chatOnce`): Anthropic 协议 `thinking: {type: enabled, budget_tokens: 1024}` (不带 temperature, `max_tokens` 4096 > 1024); OpenAI 协议同样的字段且不带 temperature; DeepSeek 官方地址用它自己的 (`thinking: {type: enabled}` / `reasoning: {effort: medium}`).
+- **开思考的请求体** (`ai_assist._build_body` / `Ai.chatOnce`): Anthropic 协议 `thinking: {type: enabled, budget_tokens: 1024}` (不带 temperature, `max_tokens` 4096 > 1024); OpenAI 协议同样的字段且不带 temperature; **Claude 4.6 及以后的模型** (opus / sonnet / haiku 含 5.x, fable / mythos; `ai_assist.adaptive_thinking` / `Ai.adaptiveThinking`, 按模型名认) 不认 budget_tokens (Haiku 5.5 等直接 400), 改发 `thinking: {type: adaptive}` (1.0.352); DeepSeek 官方地址用它自己的 (`thinking: {type: enabled}` / `reasoning: {effort: medium}`).
   服务商回 400 (不认这个字段) 时这一次改回不开思考重试, 并记住这个地址 (`THINK_ON_REJECT`, 只在内存里) 不再开. 回复里的思考块不进聊天记录.
 - 请求日志 (`comm.log`) 里开了思考的写 `THINK <kind> on: <原因>`.
 - **费用**: 输出 token 变多 (思考最多 1024), 估计触发的请求输出 5 到 20 倍, 总费用在触发比例 15% 到 20% 时约涨 20% 到 40%; 每次回复慢几秒.
