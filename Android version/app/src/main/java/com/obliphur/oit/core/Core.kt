@@ -269,6 +269,8 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         comm.snapshot = { commSnapshot() }
         comm.fog = { contract.fog() }
         comm.infoFn = { tag -> commInfo(tag) }
+        comm.shareFn = { page -> commShare(page) }            // share data (MECHANICS 24.12): 某一页上用户和对方的数据
+        comm.onShareOpen = { host.openPage("timer") }          // 用户接受了对方的 share data 邀请: 跳到计时器页
         comm.device = { myId() }
         comm.leader = { commLeader() }
         comm.onSync = { syncNow() }
@@ -285,6 +287,21 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
                 runCatching { com.obliphur.oit.service.appLabel(com.obliphur.oit.OitApp.instance, pkg) }.getOrDefault(pkg)
             }
         }
+    }
+
+    private val shareSel = mapOf(
+        "timer" to CommSel(today = listOf("timer")), "log" to CommSel(today = listOf("log")),
+        "cal" to CommSel(cal = listOf("study", "break", "idle", "sleep")),
+        "stats" to CommSel(stats = listOf("log", "net", "window", "focus", "contracts")))
+    private val shareTags = mapOf("timer" to "timer", "log" to "log", "cal" to "calendar", "stats" to "stats")
+
+    /** share data: 这一页上 (页面名, 用户的数据, 对方的数据). 黑雾中用户的数据不给; 对方没有日程文件就没有自己的数据. */
+    private fun commShare(page: String): Triple<String, String, String> {
+        val name = Comm.SHARE_PAGE_NAMES[page] ?: page
+        val sel = shareSel[page] ?: return Triple(name, "", "")
+        val mine = comm.dataFn(sel).ifEmpty { if (contract.fog()) CommData.FOG_TEXT else "" }
+        val ai = comm.routineInfo(shareTags.getValue(page))
+        return Triple(name, mine, ai)
     }
 
     /** 计时器现在的状态: sleep / focus / break / out / idle. 沟通只在 break / idle 时能用:

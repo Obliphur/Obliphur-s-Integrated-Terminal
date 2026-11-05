@@ -57,6 +57,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.obliphur.oit.OitApp
+import com.obliphur.oit.core.Comm
 import com.obliphur.oit.core.I18n
 import com.obliphur.oit.core.tr
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -367,6 +368,14 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
     val req by pageRequest.collectAsState()
     // 还没有用户名: 先填写 (MECHANICS 1.1), 填好之前不显示其他提示窗
     var needName by remember { mutableStateOf(core.username.isEmpty()) }
+    // share data: (打开着, 分享着的页面, 看谁的数据); 页面下方有聊天悬浮窗, 数据页上可以看 AI 的数据
+    var shareUi by remember { mutableStateOf(Triple(false, "", "me")) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            Triple(core.comm.shareOn(), core.comm.sharePage(), core.comm.shareView()).let { if (it != shareUi) shareUi = it }
+            kotlinx.coroutines.delay(250)
+        }
+    }
 
     fun go(p: String) {
         val parts = p.split(":")
@@ -399,6 +408,7 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
     // 合约页也藏起状态栏 (从顶部下滑时临时出现), 让整页在一屏里显示得大一些
     LaunchedEffect(page) {
         core.currentPage = page
+        core.comm.sharePageChanged(page)                      // share data 打开着: 开始 / 暂停 / 结束分享 (回到沟通 = 结束并总结)
         core.notePrescriptPage(page == "prescript")           // 进入 / 退出指令页: 马上同步, 其他设备跟着 (MECHANICS 22.8)
         runCatching { core.prescript.pageChanged() }          // 指令 V 要一直停在指令页, VI 要连续停在统计页
         act.requestedOrientation = if (page == "contract") android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
@@ -549,6 +559,9 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
                         }
                         val scroll = rememberScrollState()
                         val scrollable = page != "log" && page != "stats" && page != "contract" && page != "comm"
+                        val showDock = shareUi.first && shareUi.second.isNotEmpty()
+                        val shareAi = showDock && shareUi.second in Comm.SHARE_DATA_PAGES && core.comm.shareHasAi()
+                        Box(Modifier.weight(1f).fillMaxWidth()) {
                         Column(if (scrollable) Modifier.verticalScroll(scroll) else Modifier.fillMaxSize()) {
                             when (page) {
                                 "timer" -> TimerScreen()
@@ -572,6 +585,9 @@ fun Root(act: MainActivity, pageRequest: MutableStateFlow<String?>) {
                                 "reset" -> ResetScreen()
                             }
                         }
+                        if (shareAi && shareUi.third == "ai") ShareAiScreen(shareUi.second)       // 看 AI 的数据: 盖在原页面上
+                        }
+                        if (showDock) ShareDock(shareUi.second, shareAi)
                     }
                     // "我累了" 固定在 Timer 页的右下角
                     if (page == "timer") BonusCorner(Modifier.align(Alignment.BottomEnd))

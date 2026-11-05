@@ -50,6 +50,7 @@ from settings_manager import SettingsManager
 from pages import (CalendarPage, HourLogPage, SettingsPage, RulesPage, StatsPage,
                    ContractPage, AchievementsPage, AchievementPopups, PrescriptPage, CommPage)
 from pages.prestart_dialog import PrestartDialog
+from pages.share_dock import ShareDock, AiDataView
 from pages.outing_dialog import OutingDialog
 from pages.file_channel import FileChannel, fmt_size
 from pages.widgets import (frozen, LoadingCover, FocusGlow, cfg, flavor,
@@ -352,6 +353,8 @@ class BreakTimerApp:
         self.comm.on_change = self.update_comm_badge
         self.comm.data_fn = self._comm_data
         self.comm.info_fn = self._comm_info
+        self.comm.share_fn = self._comm_share            # share data (MECHANICS 24.12): 某一页上用户和对方的数据
+        self.comm.on_share_open = lambda: self.show_page("timer")      # 用户接受了对方的 share data 邀请: 跳到计时器页
         # 设备同步 (MECHANICS 24.6): 聊天记录随同步; 只有最后有人操作的设备调用 AI
         self.comm.device = lambda: self.sync.my_id
         self.comm.leader = self._comm_leader
@@ -874,6 +877,11 @@ class BreakTimerApp:
         self.pages["reset"] = tk.Frame(self.content, bg=bg)
         self._build_reset_page(self.pages["reset"])
         self._prepare_page(self.pages["reset"])
+        # share data: 页面下方的聊天悬浮窗 (第 1 行), 和盖在原页面上的"AI 的数据" (第 0 行, 在所有页面上面)
+        self.share_dock = ShareDock(self.content, self.comm, on_view=lambda: self._share_sync_ui(True))
+        self.ai_data_view = AiDataView(self.content)
+        self.ai_data_view.bind("<<AiKind>>", lambda _e: self._share_sync_ui(True))
+        self._share_ai_at = 0.0
         yield
 
 
@@ -1100,6 +1108,11 @@ class BreakTimerApp:
             self.refresh_reset()
         if key != "comm":
             self.comm.set_viewing(False)
+        try:
+            self.comm.share_page_changed(key)           # share data 打开着: 开始 / 暂停 / 结束分享 (回到沟通 = 结束并总结)
+            self._share_sync_ui(True)
+        except Exception as e:      # noqa: BLE001
+            self._log_window(f"ERROR    share {type(e).__name__}: {e}")
         self.update_log_badge()
         self.update_settings_badge()
         self.update_comm_badge()
@@ -1165,8 +1178,52 @@ class BreakTimerApp:
             snap["break_total_s"] = (self.break_end_wall - self.break_start_wall).total_seconds()
         return snap
 
+    SHARE_SEL = {"timer": {"today": ["timer"]}, "log": {"today": ["log"]},
+                 "cal": {"cal": ["study", "break", "idle", "sleep"]},
+                 "stats": {"stats": ["log", "net", "window", "focus", "contracts"]}}
+    SHARE_TAGS = {"timer": "timer", "log": "log", "cal": "calendar", "stats": "stats"}
+
+    def _comm_share(self, page: str) -> tuple:
+        """share data: 这一页上 (页面名, 用户的数据, 对方的数据). 黑雾中用户的数据不给; 对方没有日程文件就没有自己的数据."""
+        name = comm_mod.SHARE_PAGE_NAMES.get(page, page)
+        sel = self.SHARE_SEL.get(page)
+        if not sel:
+            return name, "", ""
+        mine = self._comm_data(sel) or (comm_data.FOG_TEXT if self.contract.fog() else "")
+        ai = self.comm.routine_info(self.SHARE_TAGS[page])
+        return name, mine, ai
+
+    def _share_sync_ui(self, force: bool = False):
+        """share data 的界面: 聊天悬浮窗 (打开着、在设置 / 指令 / 重置 / 沟通以外的页面时显示) 和"AI 的数据"."""
+        if not hasattr(self, "share_dock"):          # 界面还没建好
+            return
+        c = self.comm
+        page = c.share_page()
+        show = c.share_on() and bool(page)
+        has_ai = show and page in comm_mod.SHARE_DATA_PAGES and bool(self.comm._rt)
+        if show:
+            if self.share_dock.winfo_manager() != "grid":
+                self.share_dock.grid(row=1, column=0, sticky="ew")
+            self.share_dock.refresh(has_ai)
+        elif self.share_dock.winfo_manager() == "grid":
+            self.share_dock.grid_remove()
+        want_ai = has_ai and c.share_view() == "ai"
+        if want_ai:
+            now = time.monotonic()
+            if force or now - self._share_ai_at >= 5:
+                self._share_ai_at = now
+                try:
+                    self.ai_data_view.render(c.share_ai_view(page))
+                except Exception as e:      # noqa: BLE001
+                    self._log_window(f"ERROR    share view {type(e).__name__}: {e}")
+            if self.ai_data_view.winfo_manager() != "grid":
+                self.ai_data_view.grid(row=0, column=0, sticky="nsew")
+            self.ai_data_view.lift()
+        elif self.ai_data_view.winfo_manager() == "grid":
+            self.ai_data_view.grid_remove()
+
     def _comm_data(self, sel: dict) -> str:
-        """📎 发送的数据: 今天的整点记录 / 专注计时, 日历, 统计的几页 (黑雾中什么也不给)."""
+        """share data 里用户的数据: 今天的整点记录 / 计时器, 日历, 统计 (黑雾中什么也不给)."""
         if self.contract.fog():
             return ""
         return comm_data.build(sel, self.dm, self.net, self.contract, focus_live=self._focus_live(),
@@ -1187,7 +1244,7 @@ class BreakTimerApp:
         return comm_data.template(tag, rows)
 
     def _comm_real(self, tag: str) -> str:
-        """今天的整点记录 / 计时器的真实文字 (📎 附件 "今天" 用): 黑雾中不给."""
+        """今天的整点记录 / 计时器的真实文字 (share data 用): 黑雾中不给."""
         if self.contract.fog():
             return comm_data.FOG_TEXT
         if tag == "timer":
@@ -1229,6 +1286,7 @@ class BreakTimerApp:
                 self._show_persona_change(change)
             if self.current_page == "comm" and "comm" in self.pages:
                 self.pages["comm"].refresh()
+            self._share_sync_ui()
         except Exception as e:
             self._log_window(f"ERROR    comm {type(e).__name__}: {e}")
 

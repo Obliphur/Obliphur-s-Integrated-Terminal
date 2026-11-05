@@ -86,7 +86,7 @@ class RoutineTest {
             "focus 01 21:14-01 22:06 专注",
             "rest 01 22:06-01 22:23 休息",
             "focus 01 22:23-01 23:06 专注",
-            "idle 01 23:06-01 23:35 空闲",
+            "idle 01 23:06-01 23:35 特殊空闲",
             "idle 01 23:35-01 23:36 空闲 gap",
             "sleep 01 23:36-02 06:33 睡眠"), plan.map { fmt(it) })
         val dir = Files.createTempDirectory("rt").toFile()

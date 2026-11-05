@@ -12,7 +12,6 @@ import contract as C
 STATS_KEYS = (("log", "整点记录"), ("focus", "专注计时"), ("net", "联网理由"), ("window", "窗口"), ("contracts", "合约记录"))
 STATS_NAME = "统计(月数据)"
 TODAY_KEYS = (("log", "整点记录(今天)"), ("timer", "专注计时(今天)"))      # 今天的整点记录 / 计时器 (对方查询的 [log] / [timer] 也是这两块)
-DEFAULT_TODAY = ("log", "timer")        # 📎 窗口第一次打开时默认勾上的
 CAL_KEYS = (("study", "专注"), ("break", "休息"), ("idle", "空闲"), ("sleep", "睡眠"))
 WEEKDAY = "一二三四五六日"
 TOP = 30
@@ -465,7 +464,7 @@ def _selftest():
     order = [tt.index(k) for k in ("【整点记录·今天】", "【计时器】", "【日历·专注", "【统计·联网理由")]
     assert order == sorted(order), order
     assert build({"today": ["log", "timer"]}, DM(), Net(), Con(), now=now) == ""
-    assert DEFAULT_TODAY == ("log", "timer") and dict(TODAY_KEYS)["log"] == "整点记录(今天)"
+    assert dict(TODAY_KEYS)["log"] == "整点记录(今天)"
     assert label({"stats": [], "cal": []}) == ""
     # 专注计时(今天): 先按时间顺序列出每一段休息 / 专注 / 睡眠的持续区间, 最后才是总时间
     d0 = datetime(2026, 11, 4)

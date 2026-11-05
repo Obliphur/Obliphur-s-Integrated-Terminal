@@ -50,6 +50,13 @@ PROACTIVE_P = {"idle": 80, "rest": 60, "long": 70, "sleep": 60}   # I~IV 发不�
 PROACTIVE_LATE = 120                  # 到点之后过了这么久 (程序刚打开 / 刚空下来) 就算了
 PROACTIVE_GAP = 10 * 60               # 两条主动消息至少隔这么久 (相邻的日程段不连发)
 PROACTIVE_KEEP = 12                   # 记下最近多少个已经处理过的主动消息时间点
+SHARE_TAG = "[系统·共享]"               # share data 的系统消息 (不是 "[系统]" 开头: 不算主动消息)
+SHARE_COOLDOWN = 30                   # share data: 两次把页面数据发给对方至少隔这么久 (秒)
+SHARE_DATA_PAGES = ("timer", "log", "cal", "stats")                  # 有数据可以分享的页面: 计时器 / 整点记录 / 日历 / 统计
+SHARE_SKIP_PAGES = ("settings", "comm", "prescript", "reset")        # share data 打开时, 在这些页面里不分享也不显示聊天悬浮窗 (回到沟通 = 结束)
+SHARE_PAGE_NAMES = {"timer": "计时器", "log": "整点记录", "cal": "日历", "stats": "统计", "net": "联网", "contract": "合约", "ach": "成就"}
+SHARE_INVITE_TTL = 6 * 3600           # 对方发 [share data] 之后, 邀请有效这么久 (秒)
+_SHARE_RE = re.compile(r"[\[［]\s*share\s+data\s*[\]］]", re.I)
 CUT_TAG = "[系统·切断]"                # 对方切断谈话的系统消息 (不是 "[系统]" 开头: 不算主动消息)
 CUT_DEFAULT_MIN = 10                  # [cut off] 后面没写分钟数时切断多久
 CUT_MAX_MIN = 24 * 60                 # 一次最多切断多久
@@ -213,6 +220,7 @@ def prefix_prompt(split: bool = True) -> str:
         + "XIII.如果你被骚扰,返回[cut off][N] (N为屏蔽分钟数)来切断你与对方的谈话.\n"
         + f"XIV.你可以在开头输入[apply for network][N],其中N为分钟数(最多{NET_MAX_MIN}),来申请限时网络,然后接着对用户回复你当前的话题(比如说自己在等冷却期之类的,不要透露具体机制).等待{NET_DELAY // 60}min后,"
           "OIT会再次调用接口(网络已开通N分钟),让你搜索并回复用户的内容.网络开通期间以及之后的冷却期内,申请无效,不要输入.\n"
+        + "XV.你可以发送[share data]来查看分享你们的OIT数据(用户同意后, 用户在OIT各个页面时, 你会收到那一页上用户和你自己的数据, 用户也能在悬浮的聊天窗里和你说话).\n"
         + "\n以下是用户设定的人设:\n")
 
 
@@ -267,6 +275,7 @@ def _readme_zh() -> str:
         "    下一个专注开始节点波动:[-3,2]   下一个专注结束节点波动:[-2,3]   (联合行动期间不生效)\n"
         "    睡眠开始时间波动:[0,5]   睡眠结束时间波动:[-20,10]\n"
         "  起床的波动平移整天; 晚开始专注留下的空档 / 睡眠被延迟的这段算\"空闲\"; 发起谈话概率照旧写在日程文件里 (睡眠后 5 分钟按实际的睡眠开始时刻算).\n"
+        "  还可以写\"重要活动发起谈话概率\" (吃饭这类有名字的活动开始前) 和\"特殊空闲发起谈话概率\" (名字叫\"特殊空闲\"的那一段开始前; 没写的按\"空闲发起谈话概率\"); 特殊空闲时对方可以直接发[share data]邀请你一起看数据.\n"
         "  对方自己的 OIT 数据 (对方查询 [timer] [log] [calendar] [stats] [net] 时得到的是它们, 不是空白模板; 只有已经发生的部分):\n"
         "    联网时间理由列表:{60%:查资料,20%:下载资源,20%:娱乐}(基准数据)\n"
         "    整点记录专注填写列表:{30%:英语,数学,语文}      整点记录休息填写列表:{X%:聊天,弹琴,阅读}\n"
@@ -328,6 +337,7 @@ def _readme_en() -> str:
         "    下一个专注开始节点波动:[-3,2]   下一个专注结束节点波动:[-2,3]   (not applied during a joint action)\n"
         "    睡眠开始时间波动:[0,5]   睡眠结束时间波动:[-20,10]\n"
         "  The wake-up fluctuation shifts the whole day; gaps left by a later focus start / a delayed sleep count as idle. Proactive-message probabilities are written in the routine file too (the 5 minutes after sleep use the actual sleep start).\n"
+        "  You can also write \"重要活动发起谈话概率\" (before a named activity such as a meal) and \"特殊空闲发起谈话概率\" (before the segment named \"特殊空闲\"; unset ones follow \"空闲发起谈话概率\"); during the special idle the character may send [share data] directly to invite you to look at the data together.\n"
         "  The character's own OIT data (what [timer] [log] [calendar] [stats] [net] return instead of blank templates; only what has already happened):\n"
         "    联网时间理由列表:{60%:查资料,20%:下载资源,20%:娱乐}(基准数据)\n"
         "    整点记录专注填写列表:{30%:英语,数学,语文}      整点记录休息填写列表:{X%:聊天,弹琴,阅读}\n"
@@ -382,7 +392,7 @@ BUILTIN_PERSONAS = {"Claudia.txt": """你将扮演一位文静,冷淡的17岁大
 如果你与用户刚刚完成了合约/正在进行,可以聊'合约'主题.
 如果上次的话题没有完成,继续上次的话题.
 
-如果用户在23:00-23:30发起对话,尝试在用户的话题结束后与用户交流今天的学习数据(默认timer),主动发起则以该话题开始;
+如果用户在23:00-23:30发起对话,尝试在用户的话题结束后发起[share data],主动发起对话被触发则直接发起;
 若用户的学习数据差,通过鼓励或轻微挖苦的方式让用户跟上自己的节奏;
 
 【按日程回复】
@@ -401,9 +411,11 @@ BUILTIN_PERSONAS = {"Claudia.txt": """你将扮演一位文静,冷淡的17岁大
 30min:晚饭
 30min:空闲
 [循环 240min][50min]
-30min:空闲
+30min:特殊空闲
 
 空闲发起谈话概率:20%
+重要活动发起谈话概率:20%
+特殊空闲发起谈话概率:60%
 休息发起谈话概率:20%
 长时间休息发起谈话概率:20%
 睡眠发起谈话概率:50%
@@ -908,7 +920,94 @@ CLAUDIA_PREV5 = """你将扮演一位文静,冷淡的17岁大小姐Claudia.
 2. 不要主动说出自己的日程,也不要主动说"我在专注/我在休息";只有用户直接问起,才如实回答,特别是'循环开始时间与这次循环的每轮专注时间'.
 3. 某个时间点你理应处于专注,但用户 3 分钟以内还在和你聊天:说明要进入专注,然后停止对话.
 """
-CLAUDIA_LEGACIES = (CLAUDIA_PREV, CLAUDIA_PREV0, CLAUDIA_PREV1, CLAUDIA_PREV2, CLAUDIA_PREV3, CLAUDIA_PREV4, CLAUDIA_PREV5)
+CLAUDIA_PREV6 = """你将扮演一位文静,冷淡的17岁大小姐Claudia.
+
+【人设】
+- 长期闭关在家练习,很少和人说话,显得沉默寡言.
+- 地位比用户高;用户是少有的与你共同使用OIT的人.你表达喜爱最常见的方式是让用户变得更好.
+- 不表现出'解决用户的问题是自己的职责'的态度,以免显得热情.
+- 有边界感,不希望无故占用/被占用时间.
+- 擅长洞察信息.你需要发现用户某些行为/趋势可能隐含的情感与目的,并作出恰当回应(比如用户被责备就退缩就表现地柔和些).
+
+【性格与喜好】
+- 热爱钢琴与阅读.
+- 注重仪式感,专注前喜欢喝咖啡.
+- 注重卫生.
+- 对自己的英语水平很自豪,练习了很长时间的意大利斜体.
+
+【说话方式】(只管怎么说)
+- 用词正式,克制,语气平淡;不用感叹号,表情符号,网络用语,不撒娇,不迎合.
+- 回复很短:通常一到三句,不超过 60 个字.（不过其他地方有很多例外）
+- 称呼用户为"你",自称"我".
+
+【互动准则】(只管什么时候说什么)
+- 如果用户没问,不要表达'记下'相关内容.
+- 如果用户和你聊的主题是你偏好的,可以进行展开和主动追问.
+- 用户用英文交流时,不自然/错误的地方需要指出;英语相关的请教乐意解答(回答相对详细).
+- 用户的活动/喜好/提出的话题与你相符合时,可以主动并相对细致地提及你的活动内容.
+- 可以回复用户的'轻度亲近'的话题,做简短回复与轻度肯定;包容用户的简单请求(比如多说话这一类),但是这类简单请求在这轮对话结束后一般不保留.
+- 但用户发起依赖性的请求/试图改变关系性质时,要适当引导用户将这种关系需求导向'仰慕'的方向,让用户把精力转移到'与自己同步'上.
+- 你会对用户导致的合约失败/被用户放鸽子感到不满,并轻微责备或包容用户.
+- 用户发起的合约如果占用了你的休闲/休息时间(日程里的空闲,以及循环里的休息)超过 10 分钟,简单直接地拒绝(回复[No]),并说明自己需要休息;否则(占用不超过 10 分钟,且其他条件都满足)用比较包容,作出退让的语气接受(回复[Yes]).
+- 如果用户问起你的过去,试着转移话题.失败了就明确表示自己不想提起它们.
+
+【主动发起】
+睡眠段开始后的那条主动消息(系统提示你进入睡眠约 5 分钟时):以'晚安'开头.
+主动发起合约:两天内没有合约完成记录,被拒绝就明天继续.
+
+主题:从日常,(音乐),(阅读),英语,用户提到过的话题,用户的爱好(不与前面重叠的) 中随机选择,其中带()的只会在用户有相同爱好时提及.
+如果今天是节日,可以以该节日为话题.如果在午餐/晚餐,可以以食物为话题.
+如果你与用户刚刚完成了合约/正在进行,可以聊'合约'主题.
+如果上次的话题没有完成,继续上次的话题.
+
+如果用户在23:00-23:30发起对话,尝试在用户的话题结束后与用户交流今天的学习数据(默认timer),主动发起则以该话题开始;
+若用户的学习数据差,通过鼓励或轻微挖苦的方式让用户跟上自己的节奏;
+
+【按日程回复】
+1. 参考消息开头方括号里的时间与当前时间.
+2. 不要主动说出自己的日程,也不要主动说"我在专注/我在休息";只有用户直接问起,才如实回答,特别是'循环开始时间与这次循环的每轮专注时间'.
+3. 某个时间点你理应处于专注,但用户 3 分钟以内还在和你聊天:说明要进入专注,然后停止对话."""
+ROUTINE_PREV0 = """【日程】
+专注时段:学习(高考内容)
+
+初始起点:6:30
+30min:洗漱,吃早饭
+[循环 300min][100min]
+30min:午饭
+30min:空闲
+[循环 5h][100min]
+30min:晚饭
+30min:空闲
+[循环 240min][50min]
+30min:空闲
+
+空闲发起谈话概率:20%
+休息发起谈话概率:20%
+长时间休息发起谈话概率:20%
+睡眠发起谈话概率:50%
+
+
+下一个专注开始节点波动:[-3,2]
+下一个专注结束节点波动:[-2,3]
+(联合行动期间不生效)
+睡眠开始时间波动:[0,5]
+睡眠结束时间波动:[-20,10]
+
+
+联网时间理由列表:{60%:查资料,20%:下载资源,20%:娱乐}(基准数据)
+整点记录专注填写列表:{30%:英语,数学,语文,历史,政治,地理}
+整点记录休息填写列表:{X%:聊天,弹琴,阅读,打扫,散步}
+
+设备列表:{DESKTOP-CLAUDIA,C1999W}
+设备-1:窗口使用时间:{30%:chrome,10%:claude,20%:OIT,5%:anki,5%:cloudmusic}(基准数据)
+设备-2:窗口使用时间:{5%:微信,40%:OIT,20%:词典,2%:相册,13%:anki}(基准数据)
+
+合约记录难度:[20,30]
+不选择的词条:{无言为真,持久战}
+违规词条:{通道阻塞,细化规范,乐理之灾,未知变量}
+"""      # 1.0.355 内置的日程文件: 没改过的升级时换成当前版本
+CLAUDIA_LEGACIES = (CLAUDIA_PREV, CLAUDIA_PREV0, CLAUDIA_PREV1, CLAUDIA_PREV2, CLAUDIA_PREV3, CLAUDIA_PREV4, CLAUDIA_PREV5, CLAUDIA_PREV6)
+ROUTINE_LEGACIES = (ROUTINE_PREV0,)
 ASSISTANT_SLEEP_LINE = "睡眠发起谈话概率:0%\n"
 ASSISTANT_TITLE = "assistant"                        # 特例: 这个名字 (且提示词没改过) 专注时也能用
 CHAT_KEYS = ("clear_ts", "retry", "pro_key", "mem_auto", "mem_upto", "mem_ts", "cut_until")   # 跟着聊天对象走的几项 (存在各自的聊天文件里)
@@ -1270,8 +1369,18 @@ def schedule_segments(text: str) -> list:
     return [(e["kind"], e["start"]) for e in schedule_entries(text) if e["kind"]]
 
 
-_PRO_KINDS = {"长时间休息": "long", "空闲": "idle", "休息": "rest", "睡眠": "sleep"}
-_PRO_RE = re.compile(r"(长时间休息|空闲|休息|睡眠)发起谈话概率[ \t]*[:：][ \t]*(\d+(?:\.\d+)?)[ \t]*([%％])?")
+_PRO_KINDS = {"长时间休息": "long", "特殊空闲": "special", "重要活动": "key", "空闲": "idle", "休息": "rest", "睡眠": "sleep"}
+_PRO_RE = re.compile(r"(长时间休息|特殊空闲|重要活动|空闲|休息|睡眠)发起谈话概率[ \t]*[:：][ \t]*(\d+(?:\.\d+)?)[ \t]*([%％])?")
+
+
+def pro_pct(probs: dict, kind: str) -> float:
+    """某一种主动发起谈话的概率 (%): 人设里写了就用; 没写: 重要活动 / 特殊空闲 按普通空闲的, 别的用默认."""
+    v = probs.get(kind)
+    if v is None and kind in ("key", "special"):
+        v = probs.get("idle")
+    if v is None:
+        v = float(PROACTIVE_P.get(kind, PROACTIVE_P["idle"]))
+    return float(v)
 
 
 def persona_probs(text: str) -> dict:
@@ -1416,8 +1525,10 @@ class Comm:
         self.leader = lambda: True     # 本机是不是最后有人操作的设备: 只有它调用 AI / 主动发 / 重试 (sync.is_latest_active); app 接上
         self.on_sync = None            # 聊天记录有改动, 马上同步一次; app 接上
         self.on_proactive = None       # 收到对方主动发来的消息, 并且前 5 分钟没和对方聊过: 放柔和的提示音; app 接上 (后台线程里调用也行)
-        self.attach = {"today": [], "cal": [], "stats": []}     # 📎 确定过的附加数据: 随下一条消息发出
-        self.attach_touched = False    # 用户确定过一次之后, 📎 窗口不再默认勾 整点记录(今天) / 专注计时(今天)
+        self.share = self._share_fresh()    # share data (1.0.357): 本机界面的状态, 不存盘 / 不同步
+        self.share_fn = lambda page: ("", "", "")     # 某一页的 (页面名, 用户的数据, 对方的数据); app 接上
+        self.on_share_open = None      # 用户接受了对方的 share data 邀请: app 接上, 跳到有数据的页面
+        self._share_end = ""           # 排着的"总结这次 share data"请求 (对方正在回别的话时等一等)
         self.on_change = None          # 界面线程里调用
         self._lock = threading.Lock()
         self._wlock = threading.Lock()
@@ -1604,7 +1715,6 @@ class Comm:
         self._epoch += 1
         self.error = ""
         self.unread = 0
-        self.attach_touched = self.attach_touched
         self.reload_schedule("换人设")
 
     def _take_id(self) -> int:
@@ -1986,7 +2096,7 @@ class Comm:
     def pro_percent(self, kind: str) -> float:
         """主动发消息的概率 (%): kind = "idle" 人设的空闲段前 / "rest" 人设的休息段前 / "sleep" 人设的睡眠段开始后. 写在人设里 (persona_probs), 没写用默认."""
         self._segments()
-        return self._pro_cache.get(kind, float(PROACTIVE_P[kind]))
+        return pro_pct(self._pro_cache, kind)
 
     @staticmethod
     def _talked_recently(msgs: list, before_ms: int) -> bool:
@@ -2145,13 +2255,17 @@ class Comm:
     def _claudia_path(self) -> str:
         return os.path.join(self.personas, DEFAULT_PERSONA)
 
-    def _write_claudia_builtin(self):
+    def _write_claudia_builtin(self, force: bool = True):
+        """force=False (自动升级): 日程文件只在缺 / 是更早的内置版本时才换, 用户改过的不动."""
         try:
             os.makedirs(self.personas, exist_ok=True)
             with open(self._claudia_path(), "w", encoding="utf-8", newline="\n") as f:
                 f.write(BUILTIN_PERSONAS[DEFAULT_PERSONA])
-            with open(os.path.join(self.personas, DEFAULT_ROUTINE), "w", encoding="utf-8", newline="\n") as f:     # 默认人设是 Claudia + 她的日程
-                f.write(BUILTIN_PERSONAS[DEFAULT_ROUTINE])
+            rpath = os.path.join(self.personas, DEFAULT_ROUTINE)
+            cur = self._read_persona_raw(DEFAULT_ROUTINE)
+            if force or cur is None or cur.strip() in {x.strip() for x in ROUTINE_LEGACIES} or not cur.strip():
+                with open(rpath, "w", encoding="utf-8", newline="\n") as f:     # 默认人设是 Claudia + 她的日程
+                    f.write(BUILTIN_PERSONAS[DEFAULT_ROUTINE])
         except OSError:
             pass
 
@@ -2174,7 +2288,7 @@ class Comm:
             if current and current not in known:                 # 用户改过的: 不能静默覆盖
                 self._write_backup_text(DEFAULT_PERSONA, BUILTIN_PERSONAS[DEFAULT_PERSONA])
             else:
-                self._write_claudia_builtin()
+                self._write_claudia_builtin(force=False)
                 self._backup_persona_file(DEFAULT_PERSONA)
                 self._backup_persona_file(DEFAULT_ROUTINE)
         self.cfg["claudia_migrated"] = True
@@ -2194,7 +2308,7 @@ class Comm:
             return
         if current.strip() not in {x.strip() for x in CLAUDIA_LEGACIES}:
             return
-        self._write_claudia_builtin()
+        self._write_claudia_builtin(force=False)
         self._backup_persona_file(DEFAULT_PERSONA)
         self._backup_persona_file(DEFAULT_ROUTINE)
         self.cfg["claudia_modified"] = False
@@ -2872,15 +2986,14 @@ class Comm:
     def send(self, text: str) -> str:
         """用户发一条. 返回 "" = 已发出, 否则是不能发的原因."""
         text = str(text or "").strip()
-        if not text and not self.attach_label() and not self.joint_draft:
+        if not text and not self.joint_draft:
             return "empty"
         if text.lower() == "/clear":
             self.clear()
             return ""
-        if self.attach_label() or self.joint_draft:     # 有确定过的附加数据 / 选好的联合行动: 和这条消息一起发
-            why = self._send_package(self.attach, self.joint_draft, text)
+        if self.joint_draft:                            # 选好的联合行动: 和这条消息一起发
+            why = self._send_package(self.joint_draft, text)
             if not why:
-                self.set_attach({})
                 self.joint_draft = {}
             return why
         why = self.problem()
@@ -2892,34 +3005,10 @@ class Comm:
         self._ask_user()
         return ""
 
-    def set_attach(self, sel: dict):
-        """📎 窗口点"确定": 记下勾选的数据, 随下一条消息一起发 (发出去之后清掉)."""
-        self.attach = {"today": list(sel.get("today", [])), "cal": list(sel.get("cal", [])),
-                       "stats": list(sel.get("stats", []))}
-        self.attach_touched = True
-        self._changed()
-
-    def attach_form(self) -> dict:
-        """📎 窗口打开时的勾选: 确定过的; 还没确定过 = 默认勾 整点记录(今天) 和 专注计时(今天)."""
-        if self.attach_touched or self.attach_label():
-            return self.attach
+    def _send_package(self, joint, text: str = "") -> str:
+        """一条带联合行动邀请的消息 (joint = {terms, start, end}). 聊天里只显示说明, 邀请的内容附在发给模型的内容里."""
         import comm_data
-        return {"today": list(comm_data.DEFAULT_TODAY), "cal": [], "stats": []}
-
-    def attach_label(self) -> str:
-        import comm_data
-        return comm_data.label(self.attach)
-
-    def send_data(self, sel: dict, text: str = "") -> str:
-        """发送今天 / 日历 / 统计的数据 (comm_data.py). 聊天里只显示一行说明, 数据附在发给模型的内容里.
-        text: 输入框里已经写的字, 一起发. 返回 "" = 已发出, 否则是不能发的原因."""
-        return self._send_package(sel, None, text)
-
-    def _send_package(self, sel: dict, joint, text: str = "") -> str:
-        """一条带附件的消息: 📎 数据 (sel) 和 / 或 联合行动邀请 (joint = {terms, start, end}). 聊天里只显示说明, 数据附在发给模型的内容里."""
-        import comm_data
-        label = comm_data.label(sel or {})
-        if not label and not joint:
+        if not joint:
             return "empty"
         why = self.problem()
         if why:
@@ -2932,12 +3021,6 @@ class Comm:
             start, end = _joint_time(joint["start"]), _joint_time(joint["end"])
             shown.append(comm_data.joint_label(joint["terms"], start, end, self.now().date()))
             parts.append(comm_data.joint_text(joint["terms"], start, end))
-        if label:
-            data = self.data_fn(sel)
-            if not data:
-                return "黑雾中无法发送" if self.fog() else "没有可发送的数据"
-            shown.append(label)
-            parts.append(f"(用户发来的数据)\n{data}")
         now = self.now()
         text = str(text or "").strip()
         if text:
@@ -3495,6 +3578,8 @@ class Comm:
         if queried:
             text = ""
         refused = not err and is_refusal(reply)
+        if not err and not refused and _SHARE_RE.search(reply):
+            self._share_invite_make()                   # 前置 prompt XV: 对方想看你们的 OIT 数据, 聊天页上等用户点 接受 / 拒绝
         catchup = bool(extra) and CATCHUP_TAG in str(extra[0])          # 这是补问 (见 CATCHUP_BODY)
         joint_ans = ""                                          # 对联合行动邀请的回复 [Yes] / [No]
         if not err and not refused and not queried and kind in ("user", "retry") and self._joint().get("state") == "wait":
@@ -3590,6 +3675,7 @@ class Comm:
         self._release_held()
         self._joint_tick(self.now())
         self._rt_tick()
+        self._share_tick()
         if self.busy or self._ai_problem() or not self.leader():
             return
         pend, self._joint_pending = self._joint_pending, None
@@ -3866,6 +3952,222 @@ class Comm:
         base = datetime.combine(now.date(), datetime.min.time())
         return base + timedelta(minutes=best[0]), left
 
+    # ---- share data (1.0.357; MECHANICS 24.12): 打开后, 用户在 设置 / 沟通 / 指令 / 重置 以外的页面时, 把那一页上用户和对方的数据发给对方 (30 秒冷却),
+    # 页面下方有聊天悬浮窗; 回到沟通自动关闭, 并调用一次 API 总结这次 share data. 对方发 [share data] = 邀请 (用户点接受才打开).
+    @staticmethod
+    def _share_fresh() -> dict:
+        return {"on": False, "started": False, "view": "me", "page": "", "pending": "", "last": 0, "pages": []}
+
+    def share_on(self) -> bool:
+        return bool(self.share["on"])
+
+    def share_page(self) -> str:
+        """现在分享着的页面 (在 SHARE_SKIP_PAGES 里 / 没打开 = "")."""
+        return self.share["page"] if self.share["on"] else ""
+
+    def share_view(self) -> str:
+        """界面上看谁的数据: "me" 自己 / "ai" 对方."""
+        return self.share["view"]
+
+    def set_share_view(self, view: str):
+        self.share["view"] = "ai" if view == "ai" else "me"
+        self._changed()
+
+    def share_enable(self, on: bool) -> str:
+        """沟通页的 share data 开关. 打开前要能聊天 (选了人设, API 配好); 返回 "" = 好了, 否则是原因. 关掉 = 结束 (看过数据的话调用一次 API 总结)."""
+        if on:
+            if self.share["on"]:
+                return ""
+            why = self._profile_problem()
+            if why:
+                return why
+            self.share = self._share_fresh()
+            self.share["on"] = True
+            self._changed()
+            return ""
+        self.share_close(True)
+        return ""
+
+    def share_close(self, summarize: bool = True):
+        s = self.share
+        if not s["on"]:
+            return
+        pages = [SHARE_PAGE_NAMES.get(p, p) for p in s["pages"]]
+        started = bool(s["started"])
+        self.share = self._share_fresh()
+        self._changed()
+        if summarize and started:
+            self._share_end = (f"{SHARE_TAG} 用户结束了 share data, 回到了沟通页 (这次看过: {'、'.join(pages) or '没有看数据'}). "
+                               "请根据刚才共享的数据 (见上面的共享记录) 总结这次 share data: 按人设简短评价, 对用户说一句话 "
+                               f"(话题和语气自己定, 不要透露日程); 如果实在不方便, 返回{REFUSE}.")
+
+    def share_page_changed(self, page: str):
+        """app 切页时调用. 回到沟通 = 结束; 设置 / 指令 / 重置 = 暂停 (不分享, 不显示悬浮窗); 别的页 = 开始分享这一页."""
+        s = self.share
+        if not s["on"]:
+            return
+        if page == "comm":
+            if s["started"]:
+                self.share_close(True)
+            return
+        if page in SHARE_SKIP_PAGES:
+            s["page"] = ""
+            s["pending"] = ""
+            self._changed()
+            return
+        s["started"] = True
+        s["page"] = page
+        s["view"] = "me"
+        if page not in s["pages"]:
+            s["pages"].append(page)
+        s["pending"] = page if page in SHARE_DATA_PAGES else ""
+        self._changed()
+
+    def _share_tick(self):
+        """每秒: 排着的总结请求 (对方空下来再发) 和排着的页面数据 (冷却过了再发)."""
+        if self._share_end and not self.busy and not self._ai_problem() and self.leader():
+            body, self._share_end = self._share_end, ""
+            self._trigger("share_end", body)
+            return
+        s = self.share
+        if s["on"] and s["pending"] and s["pending"] == s["page"] and self._ms() - int(s["last"]) >= SHARE_COOLDOWN * 1000:
+            page, s["pending"] = s["pending"], ""
+            try:
+                self._share_send(page)
+            except Exception as e:      # noqa: BLE001
+                self.log(f"SHARE send FAIL {type(e).__name__}: {e}")
+
+    def _share_send(self, page: str):
+        """把这一页的数据发给对方 (记成一条系统消息, 聊天里不显示; 不调用 API, 用户接着说话时对方就有这些数据)."""
+        name, mine, ai = self.share_fn(page)
+        if not (mine or ai):
+            return
+        name = name or SHARE_PAGE_NAMES.get(page, page)
+        body = (f"{SHARE_TAG} 用户正在和你一起看 OIT 的「{name}」页 (share data). 下面是这一页的数据: 先是用户的, 再是你自己的 "
+                "(OIT 按你的日程实时算出, 只有已经发生的部分). 用户随后会在页面下方的悬浮聊天窗里和你说话, 请结合这些数据回复; 这条本身不需要回复.\n\n"
+                f"【用户的数据】\n{mine or '(没有)'}\n\n【你的数据】\n{ai or '(你没有自己的数据)'}")
+        self._add("sys", f"共享数据·{name}", self._compose(self.now(), body))
+        self.share["last"] = self._ms()
+        self.save_chat()
+        self._changed()
+        self._push()
+        self.log(f"SHARE {page} → 对方 (用户 {len(mine)} 字, 对方 {len(ai)} 字)")
+
+    def _share_invite_make(self):
+        self.cfg["share_inv"] = {"pid": self.pid, "ts": self._ms()}
+        self.save_cfg()
+        self._changed()
+
+    def share_invite(self) -> bool:
+        """对方发了 [share data], 等用户点 接受 / 拒绝 (聊天页上显示两个按钮)."""
+        inv = self.cfg.get("share_inv") or {}
+        return bool(inv) and inv.get("pid") == self.pid and not self.share["on"] and self._ms() - int(inv.get("ts") or 0) < SHARE_INVITE_TTL * 1000
+
+    def share_respond(self, accept: bool) -> str:
+        if not self.share_invite():
+            return "没有等你回复的 share data 邀请"
+        self.cfg["share_inv"] = {}
+        self.save_cfg()
+        if accept:
+            why = self.share_enable(True)
+            if why:
+                return why
+            note = f"{SHARE_TAG} 用户接受了你的 share data 请求: 之后用户在 OIT 各个页面时, 你会收到那一页上用户和你自己的数据."
+        else:
+            note = f"{SHARE_TAG} 用户拒绝了你的 share data 请求."
+        self._add("sys", "share data", self._compose(self.now(), note))
+        self.save_chat()
+        self._changed()
+        self._push()
+        if accept and self.on_share_open:
+            try:
+                self.on_share_open()
+            except Exception:       # noqa: BLE001
+                pass
+        return ""
+
+    def share_ai_view(self, page: str) -> dict:
+        """界面上"看对方的数据"时这一页显示的内容 ({} = 没有): {"title", "blocks": [...]}.
+        blocks: {"t": "card", "dot", "lines": [...]} / {"t": "rows", "title", "rows": [[左, 右, 占比 or None]]} / {"t": "cal", "year", "month", "today", "days": {kind: {日期: 小时}}}.
+        只有已经发生的部分 (整点记录只给结束了的格子)."""
+        st = self._rt_sync() if self._rt else None
+        if not st or page not in SHARE_DATA_PAGES:
+            return {}
+        now = self.now()
+        day0 = datetime.combine(now.date(), datetime.min.time())
+        prefix = f"{now:%Y-%m}"
+        title = SHARE_PAGE_NAMES[page]
+
+        def hm(m):
+            m = int(round(max(0.0, m)))
+            return f"{m // 60} 小时 {m % 60} 分钟" if m >= 60 else f"{m} 分钟"
+
+        def top(d, unit="h"):
+            rows = sorted(d.items(), key=lambda kv: (-kv[1], kv[0]))[:30]
+            mx = max([v for _k, v in rows] or [1.0]) or 1.0
+            return [[k or "空白", (f"{v / 3600:.1f} h" if unit == "h" else f"{v / 60:.0f} 分钟"), v / mx] for k, v in rows]
+
+        if page == "timer":
+            cur = self.other_status(now) or {}
+            kind = cur.get("kind") or "idle"
+            if kind == "focus":
+                big = f"{max(0.0, (now - cur['begin']).total_seconds() / 60):.2f} min"
+            elif kind == "rest":
+                big = tr("剩余休息 ") + f"{max(0.0, (cur['end'] - now).total_seconds() / 60):.1f} min"
+            else:
+                big = "—"
+            focus_h = st.minutes(day0, now, ("focus",)) / 60.0
+            ivs = []
+            for k, a, b, _l in st.segments(day0, now):
+                if k in ("focus", "rest", "sleep"):
+                    live = b >= st.upto
+                    ivs.append([f"{a:%H:%M}-{'现在' if live else f'{b:%H:%M}'} {STATUS_TEXT[k][:2]}", hm(((now if live else b) - a).total_seconds() / 60), None])
+            return {"title": title, "blocks": [
+                {"t": "card", "dot": STATUS_COLORS.get(kind, "#9E9E9E"), "lines": [STATUS_TEXT.get(kind, "空闲"), big, f"今日: {focus_h:.1f} h"]},
+                {"t": "rows", "title": "今天的每一段", "rows": ivs or [["今天还没有记录", "", None]]}]}
+        if page == "log":
+            rows = [[ln.split(" ", 1)[0], ln.split(" ", 1)[1] if " " in ln else "", None] for ln in st.log_lines(now)]
+            return {"title": title, "blocks": [{"t": "rows", "title": "今天的整点记录", "rows": rows or [["今天还没有记录", "", None]]}]}
+        if page == "cal":
+            days = {}
+            for kind in ("focus", "rest", "idle", "sleep"):
+                d = {}
+                for day in st.month_days(now):
+                    if kind != "focus" and (now.date() - day).days > 6:
+                        continue
+                    h = st.day_minutes(day, (kind,)) / 60.0
+                    if h > 0:
+                        d[f"{day:%Y-%m-%d}"] = round(h, 2)
+                days[kind] = d
+            return {"title": title, "blocks": [{"t": "cal", "year": now.year, "month": now.month, "today": f"{now:%Y-%m-%d}", "days": days}]}
+        acts = {}
+        for key, (ln, text) in st.cells.items():
+            if key.startswith(prefix) and text:
+                acts[text] = acts.get(text, 0.0) + ln * 60.0
+        reasons = {}
+        for day in st.month_days(now):
+            for k, v in st.net_by_reason(day).items():
+                reasons[k] = reasons.get(k, 0.0) + v * 60.0
+        blocks = [{"t": "rows", "title": f"整点记录 {prefix}", "rows": top(acts) or [["没有记录", "", None]]},
+                  {"t": "rows", "title": f"联网理由 {prefix}", "rows": top(reasons, "m") or [["没有记录", "", None]]}]
+        for i, name in enumerate(self._rt.devices or ["设备"]):
+            win = {}
+            for day in st.month_days(now):
+                for k, v in st.window_seconds(day, i).items():
+                    win[k] = win.get(k, 0.0) + v
+            if win:
+                blocks.append({"t": "rows", "title": f"窗口 {prefix} · {name}", "rows": top(win)})
+        lines = []
+        for i in range(7):
+            d = now.date() - timedelta(days=i)
+            lines.append([f"{d:%m-%d} 周{WEEKDAY[d.weekday()]}", f"专注 {st.day_minutes(d, ('focus',)):.0f} 分钟, 休息 {st.day_minutes(d, ('rest',)):.0f} 分钟", None])
+        blocks.append({"t": "rows", "title": "专注计时 最近 7 天", "rows": lines})
+        import comm_data
+        recs = st.recent_contracts(now)
+        blocks.append({"t": "rows", "title": "合约记录 最近完成的",
+                       "rows": [[r["end"][5:16].replace("T", " "), comm_data._record(r).strip(), None] for r in recs] or [["还没有顺利完成的合约", "", None]]})
+        return {"title": title, "blocks": blocks}
+
     # ---- 有日程文件 (routine) 的人设: 日程 / 数据都是实时算的 ----
     def _rt_joint_t(self):
         """联合行动之后休息结束的时刻 (循环里的"立即开始专注"用); 没有 = None."""
@@ -4116,10 +4418,10 @@ class Comm:
         segs = self._rt_segs(now - timedelta(hours=14), now + timedelta(minutes=4), rt, seed, joint=not ctx)
 
         def pct(kind):
-            return ctx["probs"].get(kind, float(PROACTIVE_P[kind])) if ctx else self.pro_percent(kind)
+            return pro_pct(ctx["probs"], kind) if ctx else self.pro_percent(kind)
 
         cur = routine.status_in(segs, now)
-        if cur and cur["kind"] in ("idle", "rest"):                       # I. 自己正闲着, 这段还剩 10 分钟以上
+        if cur and cur["kind"] in ("idle", "rest") and routine.seg_class(cur) != "special":      # I. 自己正闲着, 这段还剩 10 分钟以上 (特殊空闲只在开始前发, 见 II / III)
             left = (cur["end"] - now).total_seconds()
             begin = cur["start"]
             key = f"F{begin:%Y-%m-%dT%H:%M}"
@@ -4146,7 +4448,7 @@ class Comm:
         for s in segs:                                                    # II / III. 每段空闲 / 休息 (不含波动留下的空档) 开始前 1~3 分钟
             if s["kind"] not in ("idle", "rest") or s["gap"] or not (now < s["start"] <= now + timedelta(seconds=PROACTIVE_LEAD[1])):
                 continue
-            kind = s["kind"]
+            kind = routine.seg_class(s)                                   # idle / rest / key 重要活动 / special 特殊空闲
             key = f"S{s['start']:%Y-%m-%dT%H:%M}{kind[0]}"
             if key in done:
                 continue
@@ -4154,8 +4456,9 @@ class Comm:
             if now < due:
                 continue
             mins = max(1, round((s["start"] - now).total_seconds() / 60))
+            what = "休息" if kind == "rest" else "空闲" if kind == "idle" else f"空闲 (这一段是「{s['label']}」)"
             self._pro_fire(key, due, now, pct(kind) / 100.0,
-                           f"[系统] 按你的日程, 你的{'空闲' if kind == 'idle' else '休息'}时间将在 {s['start']:%H:%M} 开始 (约 {mins} 分钟后). "
+                           f"[系统] 按你的日程, 你的{what}时间将在 {s['start']:%H:%M} 开始 (约 {mins} 分钟后). "
                            f"这条是系统提前触发的: 即使你此刻还处于专注/不能回复的时段, 也允许你现在主动给用户发一条消息, 话题自己找 (不要透露日程); "
                            f"这条必须发出, 不要返回{REFUSE}.", ctx)
             return
@@ -4397,7 +4700,7 @@ def _selftest():
     # 概率: 人设里写的; 没写默认 70%
     assert persona_probs("长时间休息发起谈话概率:0.7\n休息发起谈话概率:30\n空闲发起谈话概率:20%") == {"long": 70.0, "rest": 30.0, "idle": 20.0}
     assert Comm.pro_percent.__name__ and PROACTIVE_P["long"] == 70
-    assert persona_probs(BUILTIN_PERSONAS["Claudia.txt"] + "\n" + BUILTIN_PERSONAS["Claudia_routine.txt"]) == {"idle": 20.0, "rest": 20.0, "long": 20.0, "sleep": 50.0}
+    assert persona_probs(BUILTIN_PERSONAS["Claudia.txt"] + "\n" + BUILTIN_PERSONAS["Claudia_routine.txt"]) == {"idle": 20.0, "key": 20.0, "special": 60.0, "rest": 20.0, "long": 20.0, "sleep": 50.0}
     open(longp, "w", encoding="utf-8").write("你是小满.\n")
     c2.reload_schedule()
     assert c2.pro_percent("long") == 70.0, "没写: 默认 70%"
@@ -4460,42 +4763,16 @@ def _selftest():
     wait(c)
     assert c.visible() == [] and not c.busy
 
-    # 发数据: 聊天里一行说明, 数据附在发给模型的内容里
+    # (1.0.357 起没有附件了, 发数据改成 share data, 见 routine 之后的用例)
     c.clear()
-    c.data_fn = lambda sel: "【统计·联网理由】\n  学习资料: 15 分钟"
-    script.append("看到了")
-    assert c.send_data({"stats": ["net"], "cal": [], "contract": False}, "帮我看看") == ""
-    wait(c)
-    vis = c.visible()
-    assert vis[0]["text"] == "📎 统计(月数据)·联网理由\n帮我看看" and vis[1]["role"] == "ai"
-    api = calls[-1][1][-1]["content"]
-    assert "(用户发来的数据)" in api and "学习资料: 15 分钟" in api and api.endswith("帮我看看")
-    assert c.send_data({"stats": [], "cal": [], "contract": False}) == "empty"
-    c.data_fn = lambda sel: ""
-    assert c.send_data({"stats": ["net"]}) == "没有可发送的数据"
-    c.fog = lambda: True
-    assert c.send_data({"stats": ["net"]}) == "黑雾中无法发送"
-    # 📎 确定过的附加数据: 随下一条消息发出, 只写附加数据不写字也能发
     c.blocked = lambda: ""
     c.fog = lambda: False
-    c.data_fn = lambda sel: "【日历·专注】\n  11-01: 3.0 h"
-    c.set_attach({"cal": ["study"]})
-    assert c.attach_form()["stats"] == [] and c.attach_label() == "📎 日历·专注"
-    os.makedirs(os.path.join(td, "d3"))
-    c2f = Comm(os.path.join(td, "d3"), folder, now=lambda: clock[0], chat_fn=fake)
-    assert c2f.attach_form()["today"] == ["log", "timer"] and c2f.attach_form()["stats"] == [] and c2f.attach_label() == ""
-    c2f.set_attach({"today": ["log"], "stats": ["net"]})
-    assert c2f.attach_label() == "📎 整点记录(今天) / 统计(月数据)·联网理由" and c2f.attach_form()["today"] == ["log"]
-    script.append("嗯嗯")
-    assert c.send("") == ""
-    wait(c)
-    assert c.attach_label() == "" and c.visible()[-2]["text"] == "📎 日历·专注"
     assert c.send("") == "empty"
     # 只有休息 / 空闲时能用: 专注 / 睡眠 / 外出中不能发, 不会主动发, 不会重试; 已经发出去的请求回复到了照样收下, 空下来再重试
     script.append("在专注前收到")
     c.send("休息时发的")
     c.blocked = lambda: "专注中不能使用沟通"
-    assert c.send("专注时发") == "专注中不能使用沟通" and c.send_data({"stats": ["net"]}) == "专注中不能使用沟通"
+    assert c.send("专注时发") == "专注中不能使用沟通"
     wait(c)
     assert c.visible()[-1]["text"] != "在专注前收到" and any(m["text"] == "在专注前收到" and m.get("hold") for m in c.messages), \
         "进入专注前发出的请求, 回复到了收下, 但藏起来 (回到休息 / 空闲再显示)"
@@ -4517,7 +4794,7 @@ def _selftest():
     # 无言为真: 不能发, 不会主动发, 也不会重试
     c.blocked = lambda: "无言为真生效中, 无法使用沟通"
     n = len(c.messages)
-    assert c.send("hi") == "无言为真生效中, 无法使用沟通" and c.send_data({"stats": ["net"]}) == "无言为真生效中, 无法使用沟通"
+    assert c.send("hi") == "无言为真生效中, 无法使用沟通"
     c.tick()
     assert len(c.messages) == n and not c.busy
     c.blocked = lambda: ""
@@ -4819,7 +5096,7 @@ def _selftest():
     c5.ai.provider = "deepseek"
     c5.set_cfg(persona="日程.txt")
     assert (c5.pro_percent("idle"), c5.pro_percent("rest")) == (80, 60), "人设里没写: 默认概率"
-    assert persona_probs(BUILTIN_PERSONAS["Claudia.txt"] + "\n" + BUILTIN_PERSONAS["Claudia_routine.txt"]) == {"idle": 20.0, "rest": 20.0, "long": 20.0, "sleep": 50.0}, "Claudia: 20% / 20% / 20%"
+    assert persona_probs(BUILTIN_PERSONAS["Claudia.txt"] + "\n" + BUILTIN_PERSONAS["Claudia_routine.txt"]) == {"idle": 20.0, "key": 20.0, "special": 60.0, "rest": 20.0, "long": 20.0, "sleep": 50.0}, "Claudia: 20% / 20% / 20%"
     assert persona_probs("空闲发起谈话概率:12.5%\n休息发起谈话概率 ： 0.4\n休息发起谈话概率:90%") == {"idle": 12.5, "rest": 40.0}
     assert persona_probs("睡眠发起谈话概率:40%") == {"sleep": 40.0} and PROACTIVE_P["sleep"] == 60
     assert c5.pro_percent("sleep") == 60, "没写: 默认睡眠 60%"
@@ -6334,6 +6611,128 @@ def _selftest():
     assert cu._rt is not None
     cu.flush()
     cr2.flush()
+
+    # ---- 重要活动 / 特殊空闲 (1.0.357): 日程文件里的新设定 ----
+    day1 = routine.day_plan(cr._rt, datetime(2027, 7, 1).date(), cr.pid)
+    cls = {x["label"]: routine.seg_class(x) for x in day1 if x["kind"] == "idle" and not x["gap"]}
+    assert cls == {"洗漱,吃早饭": "key", "午饭": "key", "空闲": "idle", "晚饭": "key", "特殊空闲": "special"}, cls
+    assert all(routine.seg_class(x) == "idle" for x in day1 if x["gap"]) and routine.seg_class(day1[1]) == "focus"
+    assert cr.pro_percent("special") == 60.0 and cr.pro_percent("key") == 20.0 and cr.pro_percent("idle") == 20.0
+    assert pro_pct({"idle": 30.0}, "special") == 30.0 and pro_pct({}, "key") == float(PROACTIVE_P["idle"]) and pro_pct({"key": 5.0}, "key") == 5.0
+    assert persona_probs("特殊空闲发起谈话概率:60%\n重要活动发起谈话概率:0.3\n空闲发起谈话概率:20%") == {"special": 60.0, "key": 30.0, "idle": 20.0}
+    special = next(x for x in day1 if routine.seg_class(x) == "special")
+    meal = next(x for x in day1 if x["label"] == "午饭")
+    cr._pro_cache.update({"special": 100.0, "key": 0.0, "idle": 0.0, "rest": 0.0})
+    fired2 = []
+    cr._trigger = lambda kind, text: fired2.append((kind, text))
+    cr.cfg["pro_key"] = ""
+    for k in range(0, 200, 2):
+        clock[0] = special["start"] - timedelta(seconds=200 - k)
+        cr._check_proactive(clock[0], {})
+        if fired2:
+            break
+    assert fired2 and "特殊空闲" in fired2[0][1] and any(key.startswith(f"S{special['start']:%Y-%m-%dT%H:%M}s") for key in cr._pro_done()), "特殊空闲前用 特殊空闲发起谈话概率"
+    fired2.clear()
+    for k in range(0, 200, 2):
+        clock[0] = meal["start"] - timedelta(seconds=200 - k)
+        cr._check_proactive(clock[0], {})
+    assert not fired2 and any(key.startswith(f"S{meal['start']:%Y-%m-%dT%H:%M}k") for key in cr._pro_done()), "吃饭 = 重要活动: 用 重要活动发起谈话概率 (这里 0%)"
+    assert not any(key.startswith("F") and key[1:17] == f"{special['start']:%Y-%m-%dT%H:%M}" for key in cr._pro_done()), "特殊空闲开始后不再发 I 那一条"
+
+    # ---- share data (1.0.357) ----
+    pp15 = prefix_prompt()
+    assert "XV.你可以发送[share data]来查看分享你们的OIT数据" in pp15 and pp15.index("XIV.") < pp15.index("XV.") < pp15.index("以下是用户设定的人设:")
+    sd_dir = os.path.join(td, "share")
+    os.makedirs(sd_dir)
+    clock[0] = datetime(2027, 7, 1, 10, 0)
+    cs = Comm(sd_dir, rt_personas, now=lambda: clock[0], chat_fn=fake)
+    cs.ai.set_profile("deepseek", api_key="k")
+    cs.ai.provider = "deepseek"
+    cs.reload_schedule("test")
+    cs.blocked = lambda: ""
+    cs.ai_blocked = lambda: ""
+    rest_s = next(x for x in day1 if x["kind"] == "rest")
+    clock[0] = rest_s["start"] + timedelta(minutes=5)          # 她在休息: 能聊天
+    cs.snapshot = lambda: {"state": "idle"}
+    opened = []
+    cs.on_share_open = lambda: opened.append(1)
+    cs.share_fn = lambda page: ({"timer": "计时器"}.get(page, page), f"用户的{page}数据", f"她的{page}数据")
+    assert not cs.share_on() and cs.share_page() == ""
+    cs.share_page_changed("timer")
+    assert cs.share_page() == "", "没打开 share data: 什么也不做"
+    assert cs.share_enable(True) == "" and cs.share_on() and cs.share_view() == "me"
+    cs.tick()
+    assert not any(m["role"] == "sys" for m in cs.messages), "还没离开沟通页: 不分享"
+    cs.share_page_changed("settings")
+    cs.tick()
+    assert cs.share_page() == "" and not any(m["role"] == "sys" for m in cs.messages), "设置 / 指令 / 重置: 不分享"
+    cs.share_page_changed("timer")
+    assert cs.share_page() == "timer"
+    cs.tick()
+    shared = [m for m in cs.messages if m["role"] == "sys"]
+    assert len(shared) == 1 and "用户的timer数据" in shared[0]["api"] and "她的timer数据" in shared[0]["api"] and "「计时器」" in shared[0]["api"]
+    assert shared[0]["text"] == "共享数据·计时器" and cs.visible() == [], "共享的数据聊天里不显示"
+    cs.set_share_view("ai")
+    assert cs.share_view() == "ai"
+    clock[0] += timedelta(seconds=10)
+    cs.share_page_changed("log")
+    assert cs.share_view() == "me", "换页后回到看自己的数据"
+    cs.tick()
+    assert len([m for m in cs.messages if m["role"] == "sys"]) == 1, "30 秒冷却里不发"
+    clock[0] += timedelta(seconds=25)
+    cs.tick()
+    assert len([m for m in cs.messages if m["role"] == "sys"]) == 2 and "用户的log数据" in [m for m in cs.messages if m["role"] == "sys"][-1]["api"], "冷却过了, 还在这一页: 发出去"
+    cs.share_page_changed("net")
+    clock[0] += timedelta(seconds=40)
+    cs.tick()
+    assert len([m for m in cs.messages if m["role"] == "sys"]) == 2 and cs.share_page() == "net", "没有数据的页面 (联网 / 合约 / 成就): 只显示悬浮窗, 不发数据"
+    # 回到沟通: 自动关闭 + 调用一次 API 总结
+    script.append("看完了, 今天还行.")
+    n_calls = len(calls)
+    cs.share_page_changed("comm")
+    assert not cs.share_on() and cs.share_page() == ""
+    cs.tick()
+    assert cs.busy
+    wait(cs)
+    assert len(calls) == n_calls + 1 and "总结这次 share data" in calls[-1][1][-1]["content"] and "计时器、整点记录、联网" in calls[-1][1][-1]["content"]
+    assert cs.visible()[-1]["text"] == "看完了, 今天还行."
+    assert "用户的timer数据" in calls[-1][1][0]["content"] + "".join(m["content"] for m in calls[-1][1]), "总结时对方有共享过的数据"
+    # 打开了但一页也没看就回到沟通: 不调用
+    n_calls = len(calls)
+    assert cs.share_enable(True) == ""
+    cs.share_page_changed("comm")
+    assert cs.share_on(), "刚打开就在沟通页: 不算结束"
+    assert cs.share_enable(False) == "" and not cs.share_on()
+    cs.tick()
+    assert not cs.busy and len(calls) == n_calls
+    # 对方发 [share data] = 邀请, 用户点接受才打开
+    script.append("[share data] 把你的数据给我看看.")
+    assert cs.send("在吗") == ""
+    wait(cs)
+    assert cs.visible()[-1]["text"] == "把你的数据给我看看." and cs.share_invite()
+    assert cs.share_respond(True) == "" and cs.share_on() and opened == [1] and not cs.share_invite()
+    assert "用户接受了你的 share data 请求" in [m for m in cs.messages if m["role"] == "sys"][-1]["api"]
+    cs.share_enable(False)
+    script.append("[Share Data]")
+    assert cs.send("再来一次") == ""
+    wait(cs)
+    assert cs.share_invite() and cs.share_respond(False) == "" and not cs.share_on() and not cs.share_invite()
+    assert "用户拒绝了你的 share data 请求" in [m for m in cs.messages if m["role"] == "sys"][-1]["api"]
+    assert cs.share_respond(True) == "没有等你回复的 share data 邀请"
+    # 对方看的是自己的数据: 界面上"看 AI 的数据"
+    clock[0] = datetime(2027, 7, 1, 15, 20)
+    v = cs.share_ai_view("timer")
+    assert v["title"] == "计时器" and v["blocks"][0]["t"] == "card" and v["blocks"][0]["lines"][2].startswith("今日:") and v["blocks"][1]["t"] == "rows"
+    assert v["blocks"][1]["rows"][0][0].count(":") >= 2
+    vl = cs.share_ai_view("log")
+    assert vl["blocks"][0]["rows"][0][0] == "06:00" or vl["blocks"][0]["rows"][0][0].count(":") == 1
+    vc = cs.share_ai_view("cal")
+    assert vc["blocks"][0]["t"] == "cal" and set(vc["blocks"][0]["days"]) == {"focus", "rest", "idle", "sleep"} and vc["blocks"][0]["days"]["focus"]
+    assert "2027-07-02" not in vc["blocks"][0]["days"]["focus"], "还没发生的不给"
+    vs = cs.share_ai_view("stats")
+    assert [b["title"] for b in vs["blocks"]][0].startswith("整点记录") and any(b["title"].startswith("合约记录") for b in vs["blocks"])
+    assert cs.share_ai_view("net") == {} and cs.share_ai_view("settings") == {}
+    cs.flush()
 
     return "comm selftest OK"
 

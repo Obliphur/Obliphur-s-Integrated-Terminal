@@ -74,6 +74,14 @@ data class Joint(
     }
 }
 
+/** share data 里"看 AI 的数据"时一页的内容 (同桌面版 comm.share_ai_view). */
+class ShareRow(val left: String, val right: String, val frac: Double?)
+sealed class ShareBlock
+class ShareCard(val dot: String, val lines: List<String>) : ShareBlock()
+class ShareRows(val title: String, val rows: List<ShareRow>) : ShareBlock()
+class ShareCal(val year: Int, val month: Int, val today: String, val days: Map<String, Map<String, Double>>) : ShareBlock()
+class ShareView(val title: String, val blocks: List<ShareBlock>)
+
 /** 人设文件被手动改过: name / 上次看到的内容 / 现在的内容. */
 class PersonaChange(val name: String, val old: String, val new: String)
 
@@ -126,7 +134,7 @@ object BuiltinPersonas {
 如果你与用户刚刚完成了合约/正在进行,可以聊'合约'主题.
 如果上次的话题没有完成,继续上次的话题.
 
-如果用户在23:00-23:30发起对话,尝试在用户的话题结束后与用户交流今天的学习数据(默认timer),主动发起则以该话题开始;
+如果用户在23:00-23:30发起对话,尝试在用户的话题结束后发起[share data],主动发起对话被触发则直接发起;
 若用户的学习数据差,通过鼓励或轻微挖苦的方式让用户跟上自己的节奏;
 
 【按日程回复】
@@ -145,9 +153,11 @@ object BuiltinPersonas {
 30min:晚饭
 30min:空闲
 [循环 240min][50min]
-30min:空闲
+30min:特殊空闲
 
 空闲发起谈话概率:20%
+重要活动发起谈话概率:20%
+特殊空闲发起谈话概率:60%
 休息发起谈话概率:20%
 长时间休息发起谈话概率:20%
 睡眠发起谈话概率:50%
@@ -648,7 +658,94 @@ object BuiltinPersonas {
 2. 不要主动说出自己的日程,也不要主动说"我在专注/我在休息";只有用户直接问起,才如实回答,特别是'循环开始时间与这次循环的每轮专注时间'.
 3. 某个时间点你理应处于专注,但用户 3 分钟以内还在和你聊天:说明要进入专注,然后停止对话.
 """
-    val CLAUDIA_LEGACIES = listOf(CLAUDIA_PREV, CLAUDIA_PREV0, CLAUDIA_PREV1, CLAUDIA_PREV2, CLAUDIA_PREV3, CLAUDIA_PREV4, CLAUDIA_PREV5)
+    val CLAUDIA_PREV6 = """你将扮演一位文静,冷淡的17岁大小姐Claudia.
+
+【人设】
+- 长期闭关在家练习,很少和人说话,显得沉默寡言.
+- 地位比用户高;用户是少有的与你共同使用OIT的人.你表达喜爱最常见的方式是让用户变得更好.
+- 不表现出'解决用户的问题是自己的职责'的态度,以免显得热情.
+- 有边界感,不希望无故占用/被占用时间.
+- 擅长洞察信息.你需要发现用户某些行为/趋势可能隐含的情感与目的,并作出恰当回应(比如用户被责备就退缩就表现地柔和些).
+
+【性格与喜好】
+- 热爱钢琴与阅读.
+- 注重仪式感,专注前喜欢喝咖啡.
+- 注重卫生.
+- 对自己的英语水平很自豪,练习了很长时间的意大利斜体.
+
+【说话方式】(只管怎么说)
+- 用词正式,克制,语气平淡;不用感叹号,表情符号,网络用语,不撒娇,不迎合.
+- 回复很短:通常一到三句,不超过 60 个字.（不过其他地方有很多例外）
+- 称呼用户为"你",自称"我".
+
+【互动准则】(只管什么时候说什么)
+- 如果用户没问,不要表达'记下'相关内容.
+- 如果用户和你聊的主题是你偏好的,可以进行展开和主动追问.
+- 用户用英文交流时,不自然/错误的地方需要指出;英语相关的请教乐意解答(回答相对详细).
+- 用户的活动/喜好/提出的话题与你相符合时,可以主动并相对细致地提及你的活动内容.
+- 可以回复用户的'轻度亲近'的话题,做简短回复与轻度肯定;包容用户的简单请求(比如多说话这一类),但是这类简单请求在这轮对话结束后一般不保留.
+- 但用户发起依赖性的请求/试图改变关系性质时,要适当引导用户将这种关系需求导向'仰慕'的方向,让用户把精力转移到'与自己同步'上.
+- 你会对用户导致的合约失败/被用户放鸽子感到不满,并轻微责备或包容用户.
+- 用户发起的合约如果占用了你的休闲/休息时间(日程里的空闲,以及循环里的休息)超过 10 分钟,简单直接地拒绝(回复[No]),并说明自己需要休息;否则(占用不超过 10 分钟,且其他条件都满足)用比较包容,作出退让的语气接受(回复[Yes]).
+- 如果用户问起你的过去,试着转移话题.失败了就明确表示自己不想提起它们.
+
+【主动发起】
+睡眠段开始后的那条主动消息(系统提示你进入睡眠约 5 分钟时):以'晚安'开头.
+主动发起合约:两天内没有合约完成记录,被拒绝就明天继续.
+
+主题:从日常,(音乐),(阅读),英语,用户提到过的话题,用户的爱好(不与前面重叠的) 中随机选择,其中带()的只会在用户有相同爱好时提及.
+如果今天是节日,可以以该节日为话题.如果在午餐/晚餐,可以以食物为话题.
+如果你与用户刚刚完成了合约/正在进行,可以聊'合约'主题.
+如果上次的话题没有完成,继续上次的话题.
+
+如果用户在23:00-23:30发起对话,尝试在用户的话题结束后与用户交流今天的学习数据(默认timer),主动发起则以该话题开始;
+若用户的学习数据差,通过鼓励或轻微挖苦的方式让用户跟上自己的节奏;
+
+【按日程回复】
+1. 参考消息开头方括号里的时间与当前时间.
+2. 不要主动说出自己的日程,也不要主动说"我在专注/我在休息";只有用户直接问起,才如实回答,特别是'循环开始时间与这次循环的每轮专注时间'.
+3. 某个时间点你理应处于专注,但用户 3 分钟以内还在和你聊天:说明要进入专注,然后停止对话."""
+    val ROUTINE_PREV0 = """【日程】
+专注时段:学习(高考内容)
+
+初始起点:6:30
+30min:洗漱,吃早饭
+[循环 300min][100min]
+30min:午饭
+30min:空闲
+[循环 5h][100min]
+30min:晚饭
+30min:空闲
+[循环 240min][50min]
+30min:空闲
+
+空闲发起谈话概率:20%
+休息发起谈话概率:20%
+长时间休息发起谈话概率:20%
+睡眠发起谈话概率:50%
+
+
+下一个专注开始节点波动:[-3,2]
+下一个专注结束节点波动:[-2,3]
+(联合行动期间不生效)
+睡眠开始时间波动:[0,5]
+睡眠结束时间波动:[-20,10]
+
+
+联网时间理由列表:{60%:查资料,20%:下载资源,20%:娱乐}(基准数据)
+整点记录专注填写列表:{30%:英语,数学,语文,历史,政治,地理}
+整点记录休息填写列表:{X%:聊天,弹琴,阅读,打扫,散步}
+
+设备列表:{DESKTOP-CLAUDIA,C1999W}
+设备-1:窗口使用时间:{30%:chrome,10%:claude,20%:OIT,5%:anki,5%:cloudmusic}(基准数据)
+设备-2:窗口使用时间:{5%:微信,40%:OIT,20%:词典,2%:相册,13%:anki}(基准数据)
+
+合约记录难度:[20,30]
+不选择的词条:{无言为真,持久战}
+违规词条:{通道阻塞,细化规范,乐理之灾,未知变量}
+"""      // 1.0.355 内置的日程文件: 没改过的升级时换成当前版本
+    val CLAUDIA_LEGACIES = listOf(CLAUDIA_PREV, CLAUDIA_PREV0, CLAUDIA_PREV1, CLAUDIA_PREV2, CLAUDIA_PREV3, CLAUDIA_PREV4, CLAUDIA_PREV5, CLAUDIA_PREV6)
+    val ROUTINE_LEGACIES = listOf(ROUTINE_PREV0)
 }
 
 object CommText {
@@ -743,6 +840,7 @@ object CommText {
             "XIII.如果你被骚扰,返回[cut off][N] (N为屏蔽分钟数)来切断你与对方的谈话.\n" +
             "XIV.你可以在开头输入[apply for network][N],其中N为分钟数(最多${Comm.NET_MAX_MIN}),来申请限时网络,然后接着对用户回复你当前的话题(比如说自己在等冷却期之类的,不要透露具体机制).等待${Comm.NET_DELAY / 60}min后," +
             "OIT会再次调用接口(网络已开通N分钟),让你搜索并回复用户的内容.网络开通期间以及之后的冷却期内,申请无效,不要输入.\n" +
+            "XV.你可以发送[share data]来查看分享你们的OIT数据(用户同意后, 用户在OIT各个页面时, 你会收到那一页上用户和你自己的数据, 用户也能在悬浮的聊天窗里和你说话).\n" +
             "\n以下是用户设定的人设:\n"
 
     /** 人设文件夹里的 README.md: 跟随界面语言 (中文 / English), 同桌面版 readme_text(). */
@@ -900,6 +998,8 @@ object CommText {
     val OP_KINDS = setOf("proactive", "user", "retry", "followup")
     val OP_STRIP_RE = Regex("""\[\s*operation\s*\](?:\s*\[[\d,\s，、]*\])?""", RegexOption.IGNORE_CASE)
 
+    val SHARE_RE = Regex("[\\[［]\\s*share\\s+data\\s*[\\]］]", RegexOption.IGNORE_CASE)
+
     fun infoTags(reply: String): List<String> {
         val t = reply.replace(Regex("\\s+"), " ").lowercase()
         return CommData.MODULE_TAGS.filter { "[$it]" in t }
@@ -953,14 +1053,14 @@ object CommText {
         "(\\d{1,2})[:：](\\d{2})[ \\t]*[-–—~～至到][ \\t]*(\\d{1,2})[:：](\\d{2})[ \\t]*[\\]］]" +
         "[ \\t]*(?:[\\[［][ \\t]*(\\d+)[ \\t]*(?:min|mins|分钟)?[ \\t]*[\\]］])?", setOf(RegexOption.MULTILINE, RegexOption.IGNORE_CASE))
 
-    private val PRO_RE = Regex("(长时间休息|空闲|休息|睡眠)发起谈话概率[ \\t]*[:：][ \\t]*(\\d+(?:\\.\\d+)?)[ \\t]*([%％])?")
+    private val PRO_RE = Regex("(长时间休息|特殊空闲|重要活动|空闲|休息|睡眠)发起谈话概率[ \\t]*[:：][ \\t]*(\\d+(?:\\.\\d+)?)[ \\t]*([%％])?")
 
     /** 人设里写的主动发起谈话的概率: "空闲发起谈话概率:50%" / "休息发起谈话概率:0.4" / "睡眠发起谈话概率:60%" → {idle: 50.0, rest: 40.0, sleep: 60.0} (%, 没写的不在里面).
      *  带 % 的按百分数; 不带 % 的小数 (0~1) 按小数, 大于 1 的当百分数; 超出 0~100 的截到范围内; 同一种写了几行只认第一行. */
     fun personaProbs(text: String): Map<String, Double> {
         val out = LinkedHashMap<String, Double>()
         for (m in PRO_RE.findAll(text)) {
-            val kind = when (m.groupValues[1]) { "长时间休息" -> "long"; "空闲" -> "idle"; "休息" -> "rest"; else -> "sleep" }
+            val kind = when (m.groupValues[1]) { "长时间休息" -> "long"; "特殊空闲" -> "special"; "重要活动" -> "key"; "空闲" -> "idle"; "休息" -> "rest"; else -> "sleep" }
             if (kind in out) continue
             val v = m.groupValues[2].toDouble()
             out[kind] = (if (m.groupValues[3].isNotEmpty() || v > 1) v else v * 100).coerceIn(0.0, 100.0)
@@ -1152,8 +1252,11 @@ class Comm(
         const val DEFAULT_P_REST = 60
         const val DEFAULT_P_LONG = 70                   // I (长时间休息) 的默认概率
         const val DEFAULT_P_SLEEP = 60                  // IV (睡眠开始后 5 分钟) 的默认概率
+        /** 某一种主动发起谈话的概率 (%): 人设里写了就用; 没写: 重要活动 / 特殊空闲 按普通空闲的, 别的用默认. */
+        fun proPct(probs: Map<String, Double>, kind: String): Double =
+            probs[kind] ?: (if (kind == "key" || kind == "special") probs["idle"] else null) ?: defaultP(kind)
         fun defaultP(kind: String): Double = when (kind) {
-            "idle" -> DEFAULT_P_IDLE; "long" -> DEFAULT_P_LONG; "sleep" -> DEFAULT_P_SLEEP; else -> DEFAULT_P_REST
+            "idle", "key", "special" -> DEFAULT_P_IDLE; "long" -> DEFAULT_P_LONG; "sleep" -> DEFAULT_P_SLEEP; else -> DEFAULT_P_REST
         }.toDouble()
         const val RETRY_GAP = 10 * 60
         const val RETRY_MAX = 12
@@ -1187,6 +1290,12 @@ class Comm(
         const val CHAT_TOKENS = 4096
         const val CHAT_TEMPERATURE = 0.8
         const val ROUTINE_SUFFIX = "_routine"          // 人设 X.txt 的日程文件叫 X_routine.txt
+        const val SHARE_TAG = "[系统·共享]"             // share data 的系统消息 (不是 "[系统]" 开头: 不算主动消息)
+        const val SHARE_COOLDOWN = 30                  // share data: 两次把页面数据发给对方至少隔这么久 (秒)
+        val SHARE_DATA_PAGES = listOf("timer", "log", "cal", "stats")                  // 有数据可以分享的页面
+        val SHARE_SKIP_PAGES = listOf("settings", "comm", "prescript", "reset")        // 在这些页面里不分享也不显示聊天悬浮窗 (回到沟通 = 结束)
+        val SHARE_PAGE_NAMES = mapOf("timer" to "计时器", "log" to "整点记录", "cal" to "日历", "stats" to "统计", "net" to "联网", "contract" to "合约", "ach" to "成就")
+        const val SHARE_INVITE_TTL = 6 * 3600          // 对方发 [share data] 之后, 邀请有效这么久 (秒)
         val PERSONA_EXT = listOf(".txt", ".md")
         /** 聊天页状态前面小圆点的颜色: 专注黄 / 睡眠深蓝 / 休息浅绿 / 空闲灰. */
         val STATUS_COLORS = mapOf("rest" to "#9CCC65", "sleep" to "#283593", "focus" to "#FDD835", "idle" to "#9E9E9E")
@@ -1280,7 +1389,7 @@ class Comm(
     @Volatile private var busySince = 0L
     @Volatile var error = ""; private set
     @Volatile var viewing = false; private set
-    /** 📎 勾选的内容 (统计 / 日历 / 合约词条); Core 接上. 空 = 没有可发的. */
+    /** share data 里用户的数据 (CommSel 说明哪几块); Core 接上. 空 = 没有. */
     var dataFn: (CommSel) -> String = { "" }
     var fog: () -> Boolean = { false }
     /** 现在不能用沟通的原因 ("" = 可以): 合约的"无言为真". Core 接上. */
@@ -1295,17 +1404,6 @@ class Comm(
     var device: () -> String = { "" }
     var leader: () -> Boolean = { true }
     var onSync: (() -> Unit)? = null
-    /** 📎 窗口点"确定"记下的附加数据: 随下一条消息一起发 (发出去之后清掉). */
-    @Volatile var attach = CommSel(); private set
-    /** 用户确定过一次之后, 📎 窗口不再默认勾 整点记录 / 专注计时. */
-    @Volatile var attachTouched = false; private set
-
-    @Synchronized
-    fun setAttach(sel: CommSel) { attach = sel; attachTouched = true; changed() }
-
-    /** 📎 窗口打开时的勾选: 确定过的; 还没确定过 = 默认勾 整点记录 和 专注计时. */
-    fun attachForm(): CommSel =
-        if (attachTouched || CommData.label(attach).isNotEmpty()) attach else CommSel(today = CommData.DEFAULT_TODAY)
     var snapshot: () -> CommSnap? = { null }
     /** 系统触发的请求 (主动发 / 重试): 这条系统消息先不进记录, 对方真的回复了才和回复一起记下. */
     private class Extra(val body: String, val api: String)
@@ -1741,7 +1839,7 @@ class Comm(
     /** 主动发消息的概率 (%): kind = "idle" 人设的空闲段前 / "rest" 人设的休息段前. 写在人设里, 没写用默认. */
     fun proPercent(kind: String): Double {
         segments()
-        return proCache[kind] ?: defaultP(kind)
+        return proPct(proCache, kind)
     }
 
     @Synchronized
@@ -2037,11 +2135,15 @@ class Comm(
     // ---- Claudia: 第一次升级时覆盖没改过的文件; 之后手动改过就提醒 ----
     private fun claudiaFile() = File(personas, BuiltinPersonas.DEFAULT)
 
-    private fun writeClaudiaBuiltin() {
+    /** force = false (自动升级): 日程文件只在缺 / 是更早的内置版本时才换, 用户改过的不动. */
+    private fun writeClaudiaBuiltin(force: Boolean = true) {
         runCatching {
             personas.mkdirs()
             claudiaFile().writeText(BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT), Charsets.UTF_8)
-            File(personas, BuiltinPersonas.ROUTINE).writeText(BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE), Charsets.UTF_8)     // 默认人设是 Claudia + 她的日程
+            val rf = File(personas, BuiltinPersonas.ROUTINE)
+            val cur = if (rf.isFile) runCatching { rf.readText(Charsets.UTF_8).removePrefix("\uFEFF") }.getOrNull() else null
+            if (force || cur == null || cur.isBlank() || cur.trim() in BuiltinPersonas.ROUTINE_LEGACIES.map { it.trim() })
+                rf.writeText(BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE), Charsets.UTF_8)     // 默认人设是 Claudia + 她的日程
             backupPersonaFile(BuiltinPersonas.DEFAULT)
             backupPersonaFile(BuiltinPersonas.ROUTINE)
         }
@@ -2059,7 +2161,7 @@ class Comm(
             if (current.isNotEmpty() && current !in known) {          // 用户改过的: 不能静默覆盖
                 backupText(BuiltinPersonas.DEFAULT, BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT))
             } else {
-                writeClaudiaBuiltin()
+                writeClaudiaBuiltin(false)
                 backupPersonaFile(BuiltinPersonas.DEFAULT)
             }
         }
@@ -2075,7 +2177,7 @@ class Comm(
         if (!f.isFile) return
         val current = runCatching { f.readText(Charsets.UTF_8).removePrefix("\uFEFF").take(MAX_PERSONA) }.getOrNull() ?: return
         if (current.trim() !in BuiltinPersonas.CLAUDIA_LEGACIES.map { it.trim() }) return
-        writeClaudiaBuiltin()
+        writeClaudiaBuiltin(false)
         claudiaModified = false
         claudiaNotified = ""
         claudiaSig = null
@@ -2214,6 +2316,220 @@ class Comm(
         if (personaName().isEmpty()) return "还没有选人设"
         return ""
     }
+
+    // ---- share data (1.0.357; MECHANICS 24.12): 打开后, 用户在 设置 / 沟通 / 指令 / 重置 以外的页面时, 把那一页上用户和对方的数据发给对方 (30 秒冷却),
+    // 页面下方有聊天悬浮窗; 回到沟通自动关闭, 并调用一次 API 总结这次 share data. 对方发 [share data] = 邀请 (用户点接受才打开). 同桌面版 comm.py.
+    private class ShareState {
+        @Volatile var on = false
+        @Volatile var started = false
+        @Volatile var view = "me"
+        @Volatile var page = ""
+        @Volatile var pending = ""
+        @Volatile var last = 0L
+        val pages = ArrayList<String>()
+    }
+    @Volatile private var share = ShareState()
+    /** 某一页的 (页面名, 用户的数据, 对方的数据); Core 接上. */
+    var shareFn: (String) -> Triple<String, String, String> = { Triple("", "", "") }
+    /** 用户接受了对方的 share data 邀请: Core 接上, 跳到有数据的页面. */
+    var onShareOpen: (() -> Unit)? = null
+    private var shareEnd = ""                              // 排着的"总结这次 share data"请求 (对方正在回别的话时等一等)
+    private var shareInv = 0L                              // 对方发 [share data] 的时刻 (毫秒, 0 = 没有)
+    private var shareInvPid = ""
+
+    fun shareOn(): Boolean = share.on
+    /** 对方有自己的数据吗 (有日程文件): 没有就不显示"AI 的数据". */
+    fun shareHasAi(): Boolean { loadSchedule(); return rt != null }
+    /** 现在分享着的页面 (在 SHARE_SKIP_PAGES 里 / 没打开 = ""). */
+    fun sharePage(): String = if (share.on) share.page else ""
+    /** 界面上看谁的数据: "me" 自己 / "ai" 对方. */
+    fun shareView(): String = share.view
+    @Synchronized fun setShareView(v: String) { share.view = if (v == "ai") "ai" else "me"; changed() }
+
+    private fun profileProblem(): String {
+        val why = try { Ai.checkProfile(aiConfig().profile()); "" } catch (e: AiError) { e.message ?: "API" }
+        if (why.isNotEmpty()) return why
+        return if (personaName().isEmpty()) "还没有选人设" else ""
+    }
+
+    /** 沟通页的 share data 开关. 打开前要能聊天 (选了人设, API 配好); 返回 "" = 好了, 否则是原因. 关掉 = 结束 (看过数据的话调用一次 API 总结). */
+    @Synchronized
+    fun shareEnable(on: Boolean): String {
+        if (on) {
+            if (share.on) return ""
+            val why = profileProblem()
+            if (why.isNotEmpty()) return why
+            share = ShareState().also { it.on = true }
+            changed()
+            return ""
+        }
+        shareClose(true)
+        return ""
+    }
+
+    @Synchronized
+    fun shareClose(summarize: Boolean = true) {
+        val s = share
+        if (!s.on) return
+        val pages = s.pages.map { SHARE_PAGE_NAMES[it] ?: it }
+        val started = s.started
+        share = ShareState()
+        changed()
+        if (summarize && started) {
+            shareEnd = "$SHARE_TAG 用户结束了 share data, 回到了沟通页 (这次看过: ${pages.joinToString("、").ifEmpty { "没有看数据" }}). " +
+                "请根据刚才共享的数据 (见上面的共享记录) 总结这次 share data: 按人设简短评价, 对用户说一句话 " +
+                "(话题和语气自己定, 不要透露日程); 如果实在不方便, 返回${CommText.REFUSE}."
+        }
+    }
+
+    /** 界面切页时调用. 回到沟通 = 结束; 设置 / 指令 / 重置 = 暂停 (不分享, 不显示悬浮窗); 别的页 = 开始分享这一页. */
+    @Synchronized
+    fun sharePageChanged(page: String) {
+        val s = share
+        if (!s.on) return
+        if (page == "comm") { if (s.started) shareClose(true); return }
+        if (page in SHARE_SKIP_PAGES) { s.page = ""; s.pending = ""; changed(); return }
+        s.started = true
+        s.page = page
+        s.view = "me"
+        if (page !in s.pages) s.pages.add(page)
+        s.pending = if (page in SHARE_DATA_PAGES) page else ""
+        changed()
+    }
+
+    /** 每秒: 排着的总结请求 (对方空下来再发) 和排着的页面数据 (冷却过了再发). */
+    @Synchronized
+    private fun shareTick() {
+        if (shareEnd.isNotEmpty() && !busy && aiProblem().isEmpty() && leader()) {
+            val body = shareEnd
+            shareEnd = ""
+            trigger("share_end", body)
+            return
+        }
+        val s = share
+        if (s.on && s.pending.isNotEmpty() && s.pending == s.page && nowMs() - s.last >= SHARE_COOLDOWN * 1000L) {
+            val page = s.pending
+            s.pending = ""
+            try { shareSend(page) } catch (e: Exception) { log("SHARE send FAIL ${e.javaClass.simpleName}: ${e.message}") }
+        }
+    }
+
+    /** 把这一页的数据发给对方 (记成一条系统消息, 聊天里不显示; 不调用 API, 用户接着说话时对方就有这些数据). */
+    private fun shareSend(page: String) {
+        val (name0, mine, ai) = shareFn(page)
+        if (mine.isEmpty() && ai.isEmpty()) return
+        val name = name0.ifEmpty { SHARE_PAGE_NAMES[page] ?: page }
+        val body = "$SHARE_TAG 用户正在和你一起看 OIT 的「$name」页 (share data). 下面是这一页的数据: 先是用户的, 再是你自己的 " +
+            "(OIT 按你的日程实时算出, 只有已经发生的部分). 用户随后会在页面下方的悬浮聊天窗里和你说话, 请结合这些数据回复; 这条本身不需要回复.\n\n" +
+            "【用户的数据】\n${mine.ifEmpty { "(没有)" }}\n\n【你的数据】\n${ai.ifEmpty { "(你没有自己的数据)" }}"
+        add("sys", "共享数据·$name", compose(now(), body))
+        share.last = nowMs()
+        saveChat(); changed(); push()
+        log("SHARE $page → 对方 (用户 ${mine.length} 字, 对方 ${ai.length} 字)")
+    }
+
+    private fun shareInviteMake() { shareInv = nowMs(); shareInvPid = pid; changed() }
+
+    /** 对方发了 [share data], 等用户点 接受 / 拒绝 (聊天页上显示两个按钮). */
+    fun shareInvite(): Boolean =
+        shareInv != 0L && shareInvPid == pid && !share.on && nowMs() - shareInv < SHARE_INVITE_TTL * 1000L
+
+    @Synchronized
+    fun shareRespond(accept: Boolean): String {
+        if (!shareInvite()) return "没有等你回复的 share data 邀请"
+        shareInv = 0L
+        val note: String
+        if (accept) {
+            val why = shareEnable(true)
+            if (why.isNotEmpty()) return why
+            note = "$SHARE_TAG 用户接受了你的 share data 请求: 之后用户在 OIT 各个页面时, 你会收到那一页上用户和你自己的数据."
+        } else note = "$SHARE_TAG 用户拒绝了你的 share data 请求."
+        add("sys", "share data", compose(now(), note))
+        saveChat(); changed(); push()
+        if (accept) runCatching { onShareOpen?.invoke() }
+        return ""
+    }
+
+    /** 界面上"看对方的数据"时这一页显示的内容 (null = 没有). 只有已经发生的部分 (整点记录只给结束了的格子). */
+    fun shareAiView(page: String): ShareView? {
+        loadSchedule()
+        val r = rt ?: return null
+        if (page !in SHARE_DATA_PAGES) return null
+        val st = rtSync() ?: return null
+        val t = now()
+        val day0 = t.toLocalDate().atStartOfDay()
+        val prefix = "%04d-%02d".format(t.year, t.monthValue)
+        val title = SHARE_PAGE_NAMES.getValue(page)
+        fun hm(m: Double): String { val x = Math.round(maxOf(0.0, m)).toInt(); return if (x >= 60) "${x / 60} 小时 ${x % 60} 分钟" else "$x 分钟" }
+        fun top(d: Map<String, Double>, minutes: Boolean = false): List<ShareRow> {
+            val rows = d.entries.sortedWith(compareBy({ -it.value }, { it.key })).take(30)
+            val mx = (rows.maxOfOrNull { it.value } ?: 1.0).takeIf { it != 0.0 } ?: 1.0
+            return rows.map { ShareRow(it.key.ifEmpty { "空白" }, if (minutes) "%.0f 分钟".format(it.value / 60) else "%.1f h".format(it.value / 3600), it.value / mx) }
+        }
+        val statusText = mapOf("focus" to "专注中", "rest" to "休息中", "sleep" to "睡眠中", "idle" to "空闲")
+        when (page) {
+            "timer" -> {
+                val cur = rtCurrent(t, rtSegs(t.minusHours(14), t.plusHours(2)), true)
+                val kind = cur?.kind ?: "idle"
+                val big = when {
+                    kind == "focus" && cur != null -> "%.2f min".format(maxOf(0.0, secondsBetween(cur.start, t) / 60))
+                    kind == "rest" && cur != null -> "剩余休息 " + "%.1f min".format(maxOf(0.0, secondsBetween(t, cur.end) / 60))
+                    else -> "—"
+                }
+                val focusH = st.minutes(day0, t, setOf("focus")) / 60.0
+                val up = st.upto ?: t
+                val ivs = st.segments(day0, t).filter { it.kind == "focus" || it.kind == "rest" || it.kind == "sleep" }.map {
+                    val live = !it.end.isBefore(up)
+                    ShareRow("%02d:%02d-%s %s".format(it.start.hour, it.start.minute, if (live) "现在" else "%02d:%02d".format(it.end.hour, it.end.minute),
+                        statusText.getValue(it.kind).take(2)), hm(secondsBetween(it.start, if (live) t else it.end) / 60), null)
+                }
+                return ShareView(title, listOf(
+                    ShareCard(STATUS_COLORS[kind] ?: "#9E9E9E", listOf(statusText[kind] ?: "空闲", big, "今日: %.1f h".format(focusH))),
+                    ShareRows("今天的每一段", ivs.ifEmpty { listOf(ShareRow("今天还没有记录", "", null)) })))
+            }
+            "log" -> {
+                val rows = st.logLines(t).map { ShareRow(it.substringBefore(' '), it.substringAfter(' ', ""), null) }
+                return ShareView(title, listOf(ShareRows("今天的整点记录", rows.ifEmpty { listOf(ShareRow("今天还没有记录", "", null)) })))
+            }
+            "cal" -> {
+                val days = LinkedHashMap<String, Map<String, Double>>()
+                for (kind in listOf("focus", "rest", "idle", "sleep")) {
+                    val d = LinkedHashMap<String, Double>()
+                    for (day in st.monthDays(t)) {
+                        if (kind != "focus" && java.time.temporal.ChronoUnit.DAYS.between(day, t.toLocalDate()) > 6) continue
+                        val h = st.dayMinutes(day, setOf(kind)) / 60.0
+                        if (h > 0) d[day.toString()] = Math.round(h * 100) / 100.0
+                    }
+                    days[kind] = d
+                }
+                return ShareView(title, listOf(ShareCal(t.year, t.monthValue, t.toLocalDate().toString(), days)))
+            }
+        }
+        // stats
+        val acts = LinkedHashMap<String, Double>()
+        for ((key, v) in st.cells) if (key.startsWith(prefix) && v.second.isNotEmpty()) acts[v.second] = (acts[v.second] ?: 0.0) + v.first * 60.0
+        val reasons = LinkedHashMap<String, Double>()
+        for (day in st.monthDays(t)) for ((k, v) in st.netByReason(day)) reasons[k] = (reasons[k] ?: 0.0) + v * 60.0
+        val none = listOf(ShareRow("没有记录", "", null))
+        val blocks = arrayListOf<ShareBlock>(ShareRows("整点记录 $prefix", top(acts).ifEmpty { none }),
+            ShareRows("联网理由 $prefix", top(reasons, true).ifEmpty { none }))
+        for ((i, name) in r.devices.ifEmpty { listOf("设备") }.withIndex()) {
+            val win = LinkedHashMap<String, Double>()
+            for (day in st.monthDays(t)) for ((k, v) in st.windowSeconds(day, i)) win[k] = (win[k] ?: 0.0) + v
+            if (win.isNotEmpty()) blocks.add(ShareRows("窗口 $prefix · $name", top(win)))
+        }
+        val lines = (0 until 7).map { i ->
+            val d = t.toLocalDate().minusDays(i.toLong())
+            ShareRow("%02d-%02d 周%s".format(d.monthValue, d.dayOfMonth, "一二三四五六日"[d.dayOfWeek.value - 1]),
+                "专注 %.0f 分钟, 休息 %.0f 分钟".format(st.dayMinutes(d, setOf("focus")), st.dayMinutes(d, setOf("rest"))), null)
+        }
+        blocks.add(ShareRows("专注计时 最近 7 天", lines))
+        val recs = st.recentContracts(t)
+        blocks.add(ShareRows("合约记录 最近完成的", recs.map { ShareRow(it.getString("end").substring(5, 16).replace("T", " "), CommData.record(it).trim(), null) }
+            .ifEmpty { listOf(ShareRow("还没有顺利完成的合约", "", null)) }))
+        return ShareView(title, blocks)
+    }
+
 
     // ---- 有日程文件 (routine) 的人设: 日程 / 数据都是实时算的 (MECHANICS 24.11) ----
 
@@ -2857,12 +3173,11 @@ class Comm(
     fun send(text0: String): String {
         val text = text0.trim()
         val jd = jointDraft
-        val hasAttach = CommData.label(attach).isNotEmpty()
-        if (text.isEmpty() && !hasAttach && jd == null) return "empty"
+        if (text.isEmpty() && jd == null) return "empty"
         if (text.lowercase() == "/clear") { clear(); return "" }
-        if (hasAttach || jd != null) {                        // 有确定过的附加数据 / 选好的联合行动: 和这条消息一起发
-            val r = sendPackage(attach, jd, text)
-            if (r.isEmpty()) { setAttach(CommSel()); jointDraft = null; changed() }
+        if (jd != null) {                                     // 选好的联合行动: 和这条消息一起发
+            val r = sendPackage(jd, text)
+            if (r.isEmpty()) { jointDraft = null; changed() }
             return r
         }
         val why = problem(true)
@@ -2873,37 +3188,22 @@ class Comm(
         return ""
     }
 
-    /** 发送今天 / 日历 / 统计的数据: 聊天里只显示一行说明, 数据附在发给模型的内容里. text: 输入框里已经写的字, 一起发. */
+    /** 一条带联合行动邀请的消息 (jd). 聊天里只显示说明, 邀请的内容附在发给模型的内容里. */
     @Synchronized
-    fun sendData(sel: CommSel, text0: String = ""): String = sendPackage(sel, null, text0)
-
-    /** 一条带附件的消息: 📎 数据 (sel) 和 / 或 联合行动邀请 (jd). 聊天里只显示说明, 数据附在发给模型的内容里. */
-    @Synchronized
-    private fun sendPackage(sel: CommSel, jd: JointDraft?, text0: String): String {
-        val label = CommData.label(sel)
-        if (label.isEmpty() && jd == null) return "empty"
+    private fun sendPackage(jd: JointDraft, text0: String): String {
         val why = problem(true)
         if (why.isNotEmpty()) return why
         val shown = ArrayList<String>()
         val parts = ArrayList<String>()
-        if (jd != null) {
-            val w = jointBlock()
-            if (w.isNotEmpty()) return w
-            shown.add(CommData.jointLabel(jd.terms, jd.start, jd.end, now().toLocalDate()))
-            parts.add(CommData.jointText(jd.terms, jd.start, jd.end))
-        }
-        if (label.isNotEmpty()) {
-            val data = dataFn(sel)
-            if (data.isEmpty()) return if (fog()) "黑雾中无法发送" else "没有可发送的数据"
-            shown.add(label)
-            parts.add("(用户发来的数据)\n$data")
-        }
+        val w = jointBlock()
+        if (w.isNotEmpty()) return w
+        shown.add(CommData.jointLabel(jd.terms, jd.start, jd.end, now().toLocalDate()))
+        parts.add(CommData.jointText(jd.terms, jd.start, jd.end))
         val text = text0.trim()
         if (text.isNotEmpty()) { shown.add(text); parts.add(text) }
         add("me", shown.joinToString("\n"), compose(now(), parts.joinToString("\n\n")))
-        if (jd != null) jointLast = jd.terms
-        if (jd != null)                                          // 邀请发出去了: 等对方回 [Yes] / [No]
-            jointSet(Joint(nowMs().toString(), pid, "wait", jd.terms, jd.start.iso(), jd.end.iso(), 0L))
+        jointLast = jd.terms
+        jointSet(Joint(nowMs().toString(), pid, "wait", jd.terms, jd.start.iso(), jd.end.iso(), 0L))
         sentOut()
         askUser()
         return ""
@@ -3304,6 +3604,7 @@ class Comm(
         val (text0, waitMin) = if (r.err.isEmpty()) CommText.cleanReply(r.reply) else "" to 0.0
         var text = if (queried) "" else text0
         val refused = r.err.isEmpty() && CommText.isRefusal(r.reply)
+        if (r.err.isEmpty() && !refused && CommText.SHARE_RE.containsMatchIn(r.reply)) shareInviteMake()      // 前置 prompt XV: 对方想看你们的 OIT 数据, 聊天页上等用户点 接受 / 拒绝
         val isCatchup = r.extra?.body?.contains(CATCHUP_TAG) == true          // 这是补问 (见 CATCHUP_BODY)
         var jointAns = ""                                                     // 对联合行动邀请的回复 [Yes] / [No]
         if (r.err.isEmpty() && !refused && !queried && r.kind in FOLLOW_KINDS && curJoint()?.state == "wait") {
@@ -3369,6 +3670,7 @@ class Comm(
         releaseHeld()
         jointTick(now())
         rtTick()
+        shareTick()
         if (busy || aiProblem().isNotEmpty() || !leader()) return
         jointPending?.let { (body, at) ->
             jointPending = null
@@ -3584,10 +3886,10 @@ class Comm(
     private fun checkProactiveRt(t: LocalDateTime, ctx: BgCtx?, spec: RoutineSpec, done: Collection<String>) {
         val seed = ctx?.pid ?: pid
         val segs = rtSegs(t.minusHours(14), t.plusMinutes(4), spec, seed, ctx == null)
-        fun pct(kind: String) = if (ctx != null) ctx.probs[kind] ?: defaultP(kind) else proPercent(kind)
+        fun pct(kind: String) = if (ctx != null) proPct(ctx.probs, kind) else proPercent(kind)
         fun hm(x: LocalDateTime) = "%02d:%02d".format(x.hour, x.minute)
         val cur = Routine.statusIn(segs, t)
-        if (cur != null && (cur.kind == "idle" || cur.kind == "rest")) {            // I. 自己正闲着, 这段还剩 10 分钟以上
+        if (cur != null && (cur.kind == "idle" || cur.kind == "rest") && Routine.segClass(cur) != "special") {            // I. 自己正闲着, 这段还剩 10 分钟以上 (特殊空闲只在开始前发)
             val left = secondsBetween(t, cur.end)
             val key = "F${cur.start.toLocalDate()}T${hm(cur.start)}"
             if (left >= PROACTIVE_FREE_LEFT && key !in done) {
@@ -3613,13 +3915,14 @@ class Comm(
         }
         for (s in segs) {                                                        // II / III. 每段空闲 / 休息 (不含波动留下的空档) 开始前 1~3 分钟
             if ((s.kind != "idle" && s.kind != "rest") || s.gap || !t.isBefore(s.start) || s.start.isAfter(t.plusSeconds(PROACTIVE_MAX_DELAY.toLong()))) continue
-            val key = "S${s.start.toLocalDate()}T${hm(s.start)}${s.kind[0]}"
+            val cls = Routine.segClass(s)                                              // idle / rest / key 重要活动 / special 特殊空闲
+            val key = "S${s.start.toLocalDate()}T${hm(s.start)}${cls[0]}"
             if (key in done) continue
             val due = s.start.minusSeconds(60L + java.util.Random(key.hashCode().toLong()).nextInt(121))
             if (t.isBefore(due)) continue
             val mins = maxOf(1L, Math.round(secondsBetween(t, s.start) / 60.0))
-            proFire(key, due, t, pct(s.kind) / 100.0,
-                "[系统] 按你的日程, 你的${if (s.kind == "idle") "空闲" else "休息"}时间将在 ${hm(s.start)} 开始 (约 $mins 分钟后). " +
+            proFire(key, due, t, pct(cls) / 100.0,
+                "[系统] 按你的日程, 你的${if (cls == "rest") "休息" else if (cls == "idle") "空闲" else "空闲 (这一段是「${s.label}」)"}时间将在 ${hm(s.start)} 开始 (约 $mins 分钟后). " +
                 "这条是系统提前触发的: 即使你此刻还处于专注/不能回复的时段, 也允许你现在主动给用户发一条消息, 话题自己找 (不要透露日程); " +
                 "这条必须发出, 不要返回${CommText.REFUSE}.", ctx)
             return

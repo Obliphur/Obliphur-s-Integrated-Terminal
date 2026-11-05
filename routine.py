@@ -307,6 +307,19 @@ def shift_for_joint(segs: list, t: datetime, now: datetime) -> list:
     return segs
 
 
+def seg_class(s: dict) -> str:
+    """日程段 → 主动发起谈话概率的种类: rest 休息 / special 特殊空闲 (名字里有"特殊空闲") / key 重要活动 (吃饭这类有名字的) /
+    idle 普通空闲 (名字就是"空闲", 或者波动留下的空档) / focus / sleep."""
+    if s["kind"] != "idle":
+        return s["kind"]
+    if s.get("gap"):
+        return "idle"
+    head = re.split(r"[(（]", str(s.get("label") or ""), maxsplit=1)[0].strip()
+    if "特殊空闲" in head:
+        return "special"
+    return "idle" if Store.plain(s.get("label")) else "key"
+
+
 def status_in(segs: list, now: datetime):
     """now 所在的那一段 (没有 = None)."""
     for s in segs:
@@ -694,7 +707,7 @@ def _selftest():
     d0 = _date(2026, 3, 1)
     p0 = day_plan(r, d0, seed, fluct=False)
     assert [(s["kind"], int((s["end"] - s["start"]).total_seconds() // 60)) for s in p0[:6]] == [("idle", 30), ("focus", 100), ("rest", 38), ("focus", 100), ("rest", 38), ("focus", 24)]
-    assert [s["label"] for s in p0 if s["kind"] == "idle"] == ["洗漱,吃早饭", "午饭", "空闲", "晚饭", "空闲", "空闲"]
+    assert [s["label"] for s in p0 if s["kind"] == "idle"] == ["洗漱,吃早饭", "午饭", "空闲", "晚饭", "空闲", "特殊空闲"]
     assert day_plan(r, d0, seed) == day_plan(r, d0, seed), "同一天总是同一个结果 (设备一致)"
     assert day_plan(r, d0, seed) != day_plan(r, d0 + timedelta(days=1), seed)
     # 相邻两天首尾相接

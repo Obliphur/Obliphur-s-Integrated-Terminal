@@ -266,6 +266,15 @@ object Routine {
         return segs
     }
 
+    /** 日程段 → 主动发起谈话概率的种类: rest / special (名字里有"特殊空闲") / key (重要活动: 吃饭这类有名字的) / idle (普通空闲, 波动留下的空档) / focus / sleep. */
+    fun segClass(s: RtSeg): String {
+        if (s.kind != "idle") return s.kind
+        if (s.gap) return "idle"
+        val head = s.label.split('(', '（')[0].trim()
+        if ("特殊空闲" in head) return "special"
+        return if (plain(s.label)) "idle" else "key"
+    }
+
     fun statusIn(segs: List<RtSeg>, now: LocalDateTime): RtSeg? = segs.firstOrNull { !it.start.isAfter(now) && now.isBefore(it.end) }
 
     // ══════════════ 带波动的概率 ══════════════

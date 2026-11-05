@@ -71,11 +71,12 @@ fun CommScreen(go: (String) -> Unit) {
     DisposableEffect(Unit) { comm.setViewing(true); onDispose { comm.setViewing(false) } }
     var input by rememberSaveable { mutableStateOf("") }
     var askClear by remember { mutableStateOf(false) }
-    var attach by remember { mutableStateOf(false) }
     var help by remember { mutableStateOf(false) }
     var jointAsk by remember { mutableStateOf(core.jointAsk) }                  // 合约页选好词条回来了: 输入开始时间
     var jointLine by remember { mutableStateOf(comm.jointLabel() to comm.jointStatusText()) }
     var invite by remember { mutableStateOf(comm.jointInvite() != null) }          // 对方发起的联合行动: 等用户点 接受 / 拒绝
+    var shareOn by remember { mutableStateOf(comm.shareOn()) }                     // share data 开着吗
+    var shareInv by remember { mutableStateOf(comm.shareInvite()) }                // 对方发了 [share data]: 等用户点 接受 / 拒绝
     // 不跟着每秒一次的 LocalTick 重画 (整页每秒重画一遍会有卡顿感): 只在聊天记录 / 状态变了才刷新
     var ver by remember { mutableIntStateOf(comm.version) }
     var waitHint by remember { mutableStateOf("") }
@@ -91,6 +92,8 @@ fun CommScreen(go: (String) -> Unit) {
             if (core.jointAsk != jointAsk) jointAsk = core.jointAsk
             (comm.jointLabel() to comm.jointStatusText()).let { if (it != jointLine) jointLine = it }
             (comm.jointInvite() != null).let { if (it != invite) invite = it }
+            comm.shareOn().let { if (it != shareOn) shareOn = it }
+            comm.shareInvite().let { if (it != shareInv) shareInv = it }
             kotlinx.coroutines.delay(250)
         }
     }
@@ -141,13 +144,23 @@ fun CommScreen(go: (String) -> Unit) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             // ❓ 帮助 (最左边): 解释每个按钮的作用
             TextButton({ help = true }, contentPadding = tight) { Text("❓", fontSize = 18.sp) }
-            TextButton({ attach = true }, contentPadding = tight) { Text("📎", fontSize = 18.sp) }
             // 🔔 可以主动发起 / 🔕 禁止这个人主动发起 (主动发消息和追问都不发)
             TextButton({ comm.setMuted(!comm.isMuted()) }, contentPadding = tight) {
                 Text(if (comm.isMuted()) "🔕" else "🔔", fontSize = 18.sp)
             }
             // 🤝 联合行动: 界面移到合约页选词条, 回来输入开始时间
             TextButton({ core.jointPickStart() }, contentPadding = tight) { Text("🤝", fontSize = 18.sp) }
+            // share data: 打开后离开沟通页, 在别的页面里对方能看到那一页上你们的数据, 页面下方有聊天悬浮窗; 回到沟通自动关闭
+            TextButton({
+                comm.shareEnable(!shareOn).let { if (it.isNotEmpty()) core.toast(tr(it), "warn") }
+                shareOn = comm.shareOn()
+            }, contentPadding = tight) { Text("share data" + if (shareOn) " ✓" else "", color = if (shareOn) o.accent else o.dim, fontSize = 13.sp) }
+        }
+        if (shareInv) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(start = 8.dp)) {
+            Text(tr("对方想看你们的数据"), color = o.accent, fontSize = 12.sp)
+            AccentButton(tr("接受")) { comm.shareRespond(true).let { if (it.isNotEmpty()) core.toast(tr(it), "warn") } }
+            TextButton({ comm.shareRespond(false).let { if (it.isNotEmpty()) core.toast(tr(it), "warn") } }) { Text(tr("拒绝"), color = o.dim) }
         }
         // 选好、还没发出去的联合行动 (开始 - 结束时间, 结束时间自动算好) 或发出去之后的进展; 📎 勾选的数据
         if (jointLine.first.isNotEmpty()) Row(verticalAlignment = Alignment.CenterVertically) {
@@ -160,11 +173,6 @@ fun CommScreen(go: (String) -> Unit) {
             AccentButton(tr("接受")) { comm.jointRespond(true).let { if (it.isNotEmpty()) core.toast(tr(it), "warn") } }
             TextButton({ comm.jointRespond(false).let { if (it.isNotEmpty()) core.toast(tr(it), "warn") } }) { Text(tr("拒绝"), color = o.dim) }
         }
-        val attached = CommData.label(comm.attach)
-        if (attached.isNotEmpty()) Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(attached, color = o.accent, fontSize = 12.sp, modifier = Modifier.weight(1f, false).padding(start = 8.dp).clickable { attach = true })
-            TextButton({ comm.setAttach(CommSel()) }, contentPadding = tight) { Text("✕", color = o.dim, fontSize = 14.sp) }
-        }
         Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.Bottom,
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(input, { input = it }, modifier = Modifier.weight(1f), maxLines = 4, enabled = blocked.isEmpty())
@@ -174,7 +182,6 @@ fun CommScreen(go: (String) -> Unit) {
             }
         }
     }
-    if (attach) AttachDialog(comm.attachForm(), { attach = false }) { sel -> comm.setAttach(sel); attach = false }
     if (help) HelpDialog { help = false }
     jointAsk?.let { terms -> JointTimeDialog(terms, { core.jointAsk = null; jointAsk = null }) { start ->
         val why = comm.setJointDraft(terms, start)
@@ -183,47 +190,15 @@ fun CommScreen(go: (String) -> Unit) {
     if (askClear) Confirm(tr("清空"), tr("清空聊天记录?"), true, { askClear = false }) { comm.clear() }
 }
 
-/** 📎 勾选要发送的数据: 今天的整点记录 / 专注计时, 日历 (选类别), 统计 (月数据) 的几页. (合约词条只在联合行动的邀请里发.) */
-@Composable
-private fun AttachDialog(current: CommSel, onDismiss: () -> Unit, onOk: (CommSel) -> Unit) {
-    val o = LocalOit.current
-    val today = remember { mutableStateListOf<String>().apply { addAll(current.today) } }
-    val stats = remember { mutableStateListOf<String>().apply { addAll(current.stats) } }
-    val cal = remember { mutableStateListOf<String>().apply { addAll(current.cal) } }
-    @Composable
-    fun box(label: String, on: Boolean, set: (Boolean) -> Unit) {
-        Row(Modifier.fillMaxWidth().clickable { set(!on) }, verticalAlignment = Alignment.CenterVertically) {
-            androidx.compose.material3.Checkbox(on, { set(it) },
-                colors = androidx.compose.material3.CheckboxDefaults.colors(checkedColor = o.accent, checkmarkColor = o.onAccent))
-            Text(label, color = o.text)
-        }
-    }
-    fun toggle(list: MutableList<String>, key: String, on: Boolean) { if (on) list.add(key) else list.remove(key) }
-    // 关掉窗口 (点外面 / 返回键) 也保存, 和"确定"一样
-    AlertDialog(onDismissRequest = { onOk(CommSel(stats.toList(), cal.toList(), today.toList())) }, containerColor = o.bg,
-        title = { Text(tr("发送数据")) },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState())) {
-                Text(tr("🕒  今天"), fontWeight = FontWeight.Bold, color = o.text, modifier = Modifier.padding(top = 4.dp))
-                for ((k, label) in CommData.TODAY_KEYS) box(tr(label), k in today) { toggle(today, k, it) }
-                Text(tr("📅  日历"), fontWeight = FontWeight.Bold, color = o.text, modifier = Modifier.padding(top = 10.dp))
-                for ((k, label) in CommData.CAL_KEYS) box(tr(label), k in cal) { toggle(cal, k, it) }
-                // 统计 (月数据) 和它的子项放在最下面
-                Text(tr("📊  " + CommData.STATS_NAME), fontWeight = FontWeight.Bold, color = o.text, modifier = Modifier.padding(top = 10.dp))
-                for ((k, label) in CommData.STATS_KEYS) box(tr(label), k in stats) { toggle(stats, k, it) }
-            }
-        },
-        confirmButton = { TextButton({ onOk(CommSel(stats.toList(), cal.toList(), today.toList())) }) { Text(tr("确定"), color = o.accent) } })
-}
-
 /** ❓ 帮助: 沟通页上每个小按钮是干什么的, 还有"无言为真"会禁止沟通的提醒. */
 @Composable
 private fun HelpDialog(onDismiss: () -> Unit) {
     val o = LocalOit.current
     val rows = listOf(
         "❓" to tr("帮助") + ": " + tr("打开这个说明."),
-        "📎" to tr("发送数据") + ": " + tr("选好要发给对方的数据 (今天的整点记录 / 专注计时, 日历, 统计), 点「确定」后随下一条消息一起发出. " +
-            "「专注计时(今天)」会先按时间顺序列出今天的每一段休息 / 专注 / 睡眠, 最后才是总时间."),
+        "share data" to tr("分享数据") + ": " + tr("打开后去别的页面 (设置 / 沟通 / 指令 / 重置 以外): 对方会收到那一页上你和它自己的数据 (30 秒冷却), " +
+            "页面下方有聊天悬浮窗, 计时器 / 整点记录 / 日历 / 统计页还能切换看自己 / 对方的数据; 回到沟通自动关闭, 对方会总结一次. " +
+            "对方也可以发 [share data] 邀请你, 点「接受」才会打开."),
         "🔔 / 🔕" to tr("主动发起") + ": " + tr("点一下切换: 🔔 = 允许这个对象主动给你发消息 / 追问, 🔕 = 禁止."),
         "🤝" to tr("联合行动") + ": " + tr("邀请对方一起完成一次合约: 界面会移到合约页, 选好词条后点「确定选择」(原来「开始行动」的位置), " +
             "再输入开始时间; 词条和合约的基础规则会打包发给对方, 结束时间自动算好写在聊天框上方. " +

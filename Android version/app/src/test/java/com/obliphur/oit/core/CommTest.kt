@@ -169,48 +169,17 @@ class CommTest {
         c.flush()
         assertTrue(Comm(dir, File(td, "personas"), { clock }) { _, _, _ -> "" }.visible().isEmpty())
 
-        // 发数据: 聊天里一行说明, 数据附在发给模型的内容里
+        // (1.0.357 起没有附件了, 发数据改成 share data, 见 shareData 用例)
         c.clear()
-        c.dataFn = { "【统计·联网理由】\n  学习资料: 15 分钟" }
-        script.add("看到了")
-        assertEquals("", c.sendData(CommSel(stats = listOf("net")), "帮我看看")); wait(c)
-        assertEquals("📎 统计(月数据)·联网理由\n帮我看看", c.visible()[0].text)
-        assertEquals("ai", c.visible()[1].role)
-        val api = calls.last().second.last().second
-        assertTrue("(用户发来的数据)" in api && "学习资料: 15 分钟" in api && api.endsWith("帮我看看"))
-        assertEquals("empty", c.sendData(CommSel()))
-        c.dataFn = { "" }
-        assertEquals("没有可发送的数据", c.sendData(CommSel(stats = listOf("net"))))
-        c.fog = { true }
-        assertEquals("黑雾中无法发送", c.sendData(CommSel(stats = listOf("net"))))
-        // 📎 确定过的附加数据: 随下一条消息发出, 只写附加数据不写字也能发
-        c.fog = { false }
-        c.dataFn = { "【日历·专注】\n  11-01: 3.0 h" }
-        c.setAttach(CommSel(cal = listOf("study")))
-        script.add("嗯嗯")
-        assertEquals("", c.send("")); wait(c)
-        assertEquals("", CommData.label(c.attach))
-        assertEquals("📎 日历·专注", c.visible()[c.visible().size - 2].text)
         assertEquals("empty", c.send(""))
         // 无言为真: 不能发, 不会主动发, 也不会重试
         c.dataFn = { "x" }
         c.blocked = { "无言为真生效中, 无法使用沟通" }
         val n = c.messages.size
         assertEquals("无言为真生效中, 无法使用沟通", c.send("hi"))
-        assertEquals("无言为真生效中, 无法使用沟通", c.sendData(CommSel(stats = listOf("net"))))
         c.tick()
         assertTrue(c.messages.size == n && !c.busy)
         c.blocked = { "" }
-        assertEquals("📎 日历·睡眠 / 统计(月数据)·整点记录、应用",
-            CommData.label(CommSel(listOf("log", "window"), listOf("sleep"))))
-        // 今天的整点记录 / 专注计时: 排在最前面, 第一次打开默认勾上; 统计(月数据)默认不勾
-        assertEquals("📎 整点记录(今天) / 专注计时(今天)", CommData.label(CommSel(today = listOf("timer", "log"))))
-        val fresh = comm(File(td, "fresh").also { it.mkdirs() }, File(td, "freshp"))
-        assertEquals(CommSel(today = listOf("log", "timer")), fresh.attachForm())
-        assertTrue(fresh.attachForm().stats.isEmpty())
-        fresh.setAttach(CommSel(stats = listOf("net"), today = listOf("log")))
-        assertEquals("📎 整点记录(今天) / 统计(月数据)·联网理由", CommData.label(fresh.attach))
-        assertEquals(listOf("log"), fresh.attachForm().today)
     }
 
     @Test
@@ -289,7 +258,6 @@ class CommTest {
             "持久战-I(环境, 等级1)", "[Yes]", "[No]", "危机等级 1")) assertTrue(k, k in jt)
         assertTrue(jt.indexOf("【合约的基础规则】") < jt.indexOf("【联合行动】") && jt.indexOf("【联合行动】") < jt.indexOf("【选择的词条】"))
         assertTrue(CommData.jointLabel(listOf("long1"), a, b, a.toLocalDate()).endsWith("14:00 - 18:00 · 1 个词条") && "(没有选词条)" in CommData.jointText(emptyList(), a, b))
-        assertEquals("", CommData.label(CommSel()))
         assertTrue("09:00 写代码" in CommData.hourText(listOf("09:00 写代码")) && "没有开启" in CommData.hourText(emptyList(), false))
         assertTrue("已用 30 分钟 / 共 2 小时 0 分钟" in CommData.netText("offline", 1800.0, 7200.0, "Proxy"))
         assertTrue("白名单 · 网站 (2): a.com、b.com" in CommData.rulesText("黑名单模式", listOf("白名单 · 网站" to listOf("a.com", "b.com"), "黑名单 · 应用" to emptyList())))
@@ -373,7 +341,6 @@ class CommTest {
         assertEquals("", c.send("休息时发的"))
         c.blocked = { "专注中不能使用沟通" }
         assertEquals("专注中不能使用沟通", c.send("专注时发"))
-        assertEquals("专注中不能使用沟通", c.sendData(CommSel(stats = listOf("net"))))
         wait(c)
         assertEquals("休息时发的", c.visible().last().text)                   // 进入专注前发出的请求, 回复到了收下, 但藏起来
         assertTrue(c.messages.any { it.text == "在专注前收到" && it.hold })
@@ -998,7 +965,7 @@ class CommTest {
         c.importPersona("日程.txt", "你是小满.\n12:30-13:00:空闲\n[循环 19:00-21:18][100min]\n".byteInputStream())   // 19:00-20:40 专注, 20:40-21:18 休息
         c.set(persona = "日程.txt")
         assertEquals(80.0 to 60.0, c.proPercent("idle") to c.proPercent("rest"))          // 人设里没写: 默认概率
-        assertEquals(mapOf("idle" to 20.0, "rest" to 20.0, "long" to 20.0, "sleep" to 50.0), CommText.personaProbs(BuiltinPersonas.ALL.getValue("Claudia.txt") + "\n" + BuiltinPersonas.ALL.getValue("Claudia_routine.txt")))   // Claudia: 20% / 20% / 20% / 50%
+        assertEquals(mapOf("idle" to 20.0, "key" to 20.0, "special" to 60.0, "rest" to 20.0, "long" to 20.0, "sleep" to 50.0), CommText.personaProbs(BuiltinPersonas.ALL.getValue("Claudia.txt") + "\n" + BuiltinPersonas.ALL.getValue("Claudia_routine.txt")))   // Claudia: 20% / 20% / 20% / 50%
         assertEquals(0.0, CommText.personaProbs(BuiltinPersonas.ALL.getValue("Assistant.txt"))["sleep"] ?: -1.0, 0.0)
         assertEquals(mapOf("sleep" to 40.0), CommText.personaProbs("睡眠发起谈话概率:40%"))
         assertEquals(60.0, Comm.defaultP("sleep"), 0.0)
@@ -1994,6 +1961,91 @@ class CommTest {
         assertEquals("", c.send("在吗"))
         assertTrue(c.busy)
         wait(c)
+        c.flush()
+    }
+
+
+    // ---- 重要活动 / 特殊空闲 + share data (1.0.357) ----
+    @Test
+    fun specialIdleAndShareData() {
+        val td = Files.createTempDirectory("oit").toFile()
+        clock = LocalDateTime.of(2027, 7, 1, 10, 0)
+        val dir = File(td, "d").also { it.mkdirs() }
+        val c = comm(dir, File(td, "p"))
+        c.reloadSchedule("test")
+        val spec = Routine.parse(c.readRoutine("Claudia.txt"))!!
+        val seed = c.pid
+        val day1 = Routine.dayPlan(spec, java.time.LocalDate.of(2027, 7, 1), seed)
+        val cls = day1.filter { it.kind == "idle" && !it.gap }.associate { it.label to Routine.segClass(it) }
+        assertEquals(mapOf("洗漱,吃早饭" to "key", "午饭" to "key", "空闲" to "idle", "晚饭" to "key", "特殊空闲" to "special"), cls)
+        assertTrue(day1.filter { it.gap }.all { Routine.segClass(it) == "idle" })
+        assertEquals(60.0, c.proPercent("special"), 0.0); assertEquals(20.0, c.proPercent("key"), 0.0)
+        assertEquals(30.0, Comm.proPct(mapOf("idle" to 30.0), "special"), 0.0)
+        assertEquals(Comm.defaultP("idle"), Comm.proPct(emptyMap(), "key"), 0.0)
+        assertEquals(mapOf("special" to 60.0, "key" to 30.0, "idle" to 20.0), CommText.personaProbs("特殊空闲发起谈话概率:60%\n重要活动发起谈话概率:0.3\n空闲发起谈话概率:20%"))
+        assertTrue("XV.你可以发送[share data]来查看分享你们的OIT数据" in CommText.prefixPrompt())
+        assertTrue(CommText.prefixPrompt().indexOf("XIV.") < CommText.prefixPrompt().indexOf("XV."))
+        // share data
+        val rest = day1.first { it.kind == "rest" }
+        clock = rest.start.plusMinutes(5)
+        c.snapshot = { CommSnap("idle") }
+        var opened = 0
+        c.onShareOpen = { opened++ }
+        c.shareFn = { p -> Triple(Comm.SHARE_PAGE_NAMES[p] ?: p, "用户的${p}数据", "她的${p}数据") }
+        c.sharePageChanged("timer")
+        assertEquals("", c.sharePage())                                  // 没打开: 什么也不做
+        assertEquals("", c.shareEnable(true)); assertTrue(c.shareOn() && c.shareView() == "me")
+        c.tick(); assertTrue(c.messages.none { it.role == "sys" })       // 还没离开沟通页: 不分享
+        c.sharePageChanged("settings"); c.tick()
+        assertTrue(c.sharePage() == "" && c.messages.none { it.role == "sys" })
+        c.sharePageChanged("timer"); assertEquals("timer", c.sharePage())
+        c.tick()
+        var shared = c.messages.filter { it.role == "sys" }
+        assertEquals(1, shared.size)
+        assertTrue("用户的timer数据" in shared[0].api && "她的timer数据" in shared[0].api && "「计时器」" in shared[0].api)
+        assertEquals("共享数据·计时器", shared[0].text); assertTrue(c.visible().isEmpty())
+        c.setShareView("ai"); assertEquals("ai", c.shareView())
+        clock = clock.plusSeconds(10)
+        c.sharePageChanged("log"); assertEquals("me", c.shareView())
+        c.tick(); assertEquals(1, c.messages.count { it.role == "sys" })       // 30 秒冷却里不发
+        clock = clock.plusSeconds(25); c.tick()
+        shared = c.messages.filter { it.role == "sys" }
+        assertTrue(shared.size == 2 && "用户的log数据" in shared.last().api)
+        c.sharePageChanged("net"); clock = clock.plusSeconds(40); c.tick()
+        assertTrue(c.messages.count { it.role == "sys" } == 2 && c.sharePage() == "net")      // 没有数据的页面: 只显示悬浮窗
+        script.add("看完了, 今天还行.")
+        val n0 = calls.size
+        c.sharePageChanged("comm")
+        assertTrue(!c.shareOn() && c.sharePage() == "")
+        c.tick(); assertTrue(c.busy); wait(c)
+        assertEquals(n0 + 1, calls.size)
+        assertTrue("总结这次 share data" in calls.last().second.last().second && "计时器、整点记录、联网" in calls.last().second.last().second)
+        assertEquals("看完了, 今天还行.", c.visible().last().text)
+        // 一页也没看就回到沟通: 不调用
+        val n1 = calls.size
+        assertEquals("", c.shareEnable(true)); c.sharePageChanged("comm"); assertTrue(c.shareOn())
+        assertEquals("", c.shareEnable(false)); c.tick(); assertTrue(!c.busy && calls.size == n1)
+        // 对方发 [share data] = 邀请
+        script.add("[share data] 把你的数据给我看看.")
+        assertEquals("", c.send("在吗")); wait(c)
+        assertEquals("把你的数据给我看看.", c.visible().last().text); assertTrue(c.shareInvite())
+        assertEquals("", c.shareRespond(true)); assertTrue(c.shareOn() && opened == 1 && !c.shareInvite())
+        assertTrue("用户接受了你的 share data 请求" in c.messages.filter { it.role == "sys" }.last().api)
+        c.shareEnable(false)
+        script.add("[Share Data]")
+        assertEquals("", c.send("再来一次")); wait(c)
+        assertTrue(c.shareInvite()); assertEquals("", c.shareRespond(false)); assertTrue(!c.shareOn() && !c.shareInvite())
+        assertTrue("用户拒绝了你的 share data 请求" in c.messages.filter { it.role == "sys" }.last().api)
+        assertEquals("没有等你回复的 share data 邀请", c.shareRespond(true))
+        // 看 AI 的数据
+        clock = LocalDateTime.of(2027, 7, 1, 15, 20)
+        val v = c.shareAiView("timer")!!
+        assertTrue(v.title == "计时器" && v.blocks[0] is ShareCard && (v.blocks[0] as ShareCard).lines[2].startsWith("今日:") && v.blocks[1] is ShareRows)
+        val cal = c.shareAiView("cal")!!.blocks[0] as ShareCal
+        assertEquals(setOf("focus", "rest", "idle", "sleep"), cal.days.keys); assertTrue(cal.days.getValue("focus").isNotEmpty() && "2027-07-02" !in cal.days.getValue("focus"))
+        val st = c.shareAiView("stats")!!
+        assertTrue((st.blocks[0] as ShareRows).title.startsWith("整点记录") && st.blocks.any { (it as? ShareRows)?.title?.startsWith("合约记录") == true })
+        assertNull(c.shareAiView("net")); assertNull(c.shareAiView("settings"))
         c.flush()
     }
 

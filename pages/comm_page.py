@@ -86,15 +86,19 @@ class CommPage(tk.Frame):
         tools = tk.Frame(self, bg=bg)
         tools.pack(fill="x", padx=28, pady=(2, 0))
         ttk.Button(tools, text="❓", width=3, command=self._help).pack(side="left")                # 帮助: 每个按钮是干什么的
-        ttk.Button(tools, text="📎", width=3, command=self._attach).pack(side="left", padx=(4, 0))
         self.btn_mute = ttk.Button(tools, text="🔔", width=3, command=self._toggle_mute)        # 🔔 可以主动发起 / 🔕 禁止这个人主动发起
         self.btn_mute.pack(side="left", padx=(4, 0))
         ttk.Button(tools, text="🤝", width=3, command=self._joint).pack(side="left", padx=(4, 0))   # 联合行动
-        self.lbl_attach = tk.Label(tools, text="", bg=bg, fg=COLORS["accent"], font=config.font("small"), cursor="hand2")
-        self.lbl_attach.pack(side="left", padx=(8, 0))
-        self.lbl_attach.bind("<Button-1>", lambda _e: self._attach())
-        self.btn_attach_x = tk.Label(tools, text="✕", bg=bg, fg=COLORS["text_dim"], font=config.font("small"), cursor="hand2")
-        self.btn_attach_x.bind("<Button-1>", lambda _e: self.comm.set_attach({}))
+        # share data: 打开后离开沟通页, 在别的页面里对方能看到那一页上你们的数据, 页面下方有聊天悬浮窗; 回到沟通自动关闭
+        self.var_share = tk.BooleanVar(value=False)
+        tk.Checkbutton(tools, text="share data", variable=self.var_share, command=self._toggle_share, bg=bg, fg=COLORS["text"],
+                       selectcolor=COLORS["bg_card"], activebackground=bg, activeforeground=COLORS["text"],
+                       font=config.font("small")).pack(side="left", padx=(8, 0))
+        # 对方发了 [share data]: 等用户点 接受 / 拒绝
+        self.share_btns = tk.Frame(tools, bg=bg)
+        tk.Label(self.share_btns, text=tr("对方想看你们的数据"), bg=bg, fg=COLORS["accent"], font=config.font("small")).pack(side="left")
+        ttk.Button(self.share_btns, text=tr("接受"), width=6, command=lambda: self._share_respond(True)).pack(side="left", padx=(6, 0))
+        ttk.Button(self.share_btns, text=tr("拒绝"), width=6, command=lambda: self._share_respond(False)).pack(side="left", padx=(4, 0))
         # 联合行动: 选好的 (还没发, 带 ✕ 可以取消) 或发出去之后的进展; 结束时间自动算好写在这里 (聊天框上方)
         self.lbl_joint = tk.Label(tools, text="", bg=bg, fg=COLORS["accent"], font=config.font("small"))
         self.lbl_joint.pack(side="left", padx=(8, 0))
@@ -219,13 +223,13 @@ class CommPage(tk.Frame):
                 self.joint_btns.pack(side="left", padx=(8, 0))
         elif self.joint_btns.winfo_manager() == "pack":
             self.joint_btns.pack_forget()
-        label = c.attach_label()
-        cfg(self.lbl_attach, text=label)
-        if label:
-            if self.btn_attach_x.winfo_manager() != "pack":
-                self.btn_attach_x.pack(side="left", padx=(6, 0))
-        elif self.btn_attach_x.winfo_manager() == "pack":
-            self.btn_attach_x.pack_forget()
+        if self.var_share.get() != c.share_on():
+            self.var_share.set(c.share_on())
+        if c.share_invite():
+            if self.share_btns.winfo_manager() != "pack":
+                self.share_btns.pack(side="left", padx=(8, 0))
+        elif self.share_btns.winfo_manager() == "pack":
+            self.share_btns.pack_forget()
         self.entry.config(state="disabled" if blocked else "normal")
         self._sync_rows()
 
@@ -419,7 +423,7 @@ class CommPage(tk.Frame):
 
     def _send(self):
         text = self.entry.get("1.0", "end").strip()
-        why = self.comm.send(text)             # "/clear" 在 send 里处理: 清空记录; 确定过的 📎 附加数据一起发
+        why = self.comm.send(text)             # "/clear" 在 send 里处理: 清空记录
         if why == "empty":
             return
         if why:
@@ -435,7 +439,19 @@ class CommPage(tk.Frame):
             self.comm.clear()
             self.refresh(force=True)
 
-    # ---- 📎 发送数据: 今天的整点记录 / 专注计时, 日历 (选类别), 合约的词条, 统计 (月数据) 的几页 ----
+    # ---- share data ----
+    def _toggle_share(self):
+        why = self.comm.share_enable(self.var_share.get())
+        if why:
+            self.var_share.set(False)
+            toast.warn(tr(why))
+        self.refresh(force=True)
+
+    def _share_respond(self, accept: bool):
+        why = self.comm.share_respond(accept)
+        if why:
+            toast.warn(tr(why))
+        self.refresh(force=True)
 
     def _toggle_mute(self):
         """禁止 / 允许这个人主动发起对话 (主动发消息和追问都不发); 没选人的时候不动."""
@@ -449,8 +465,9 @@ class CommPage(tk.Frame):
         dlg = Modal(self.winfo_toplevel(), tr("帮助"), width=width, height=config.scaled(520))
         bg = COLORS["bg"]
         rows = (("❓", "帮助", "打开这个说明."),
-                ("📎", "发送数据", "选好要发给对方的数据 (今天的整点记录 / 专注计时, 日历, 统计), 点「确定」后随下一条消息一起发出. "
-                                "「专注计时(今天)」会先按时间顺序列出今天的每一段休息 / 专注 / 睡眠, 最后才是总时间."),
+                ("share data", "分享数据", "打开后去别的页面 (设置 / 沟通 / 指令 / 重置 以外): 对方会收到那一页上你和它自己的数据 (30 秒冷却), "
+                                      "页面下方有聊天悬浮窗, 计时器 / 整点记录 / 日历 / 统计页还能切换看自己 / 对方的数据; 回到沟通自动关闭, 对方会总结一次. "
+                                      "对方也可以发 [share data] 邀请你, 点「接受」才会打开."),
                 ("🔔 / 🔕", "主动发起", "点一下切换: 🔔 = 允许这个对象主动给你发消息 / 追问, 🔕 = 禁止."),
                 ("🤝", "联合行动", "邀请对方一起完成一次合约: 界面会移到合约页, 选好词条后点「确定选择」(原来「开始行动」的位置), "
                                 "再输入开始时间; 词条和合约的基础规则会打包发给对方, 结束时间自动算好写在聊天框上方. "
@@ -539,38 +556,3 @@ class CommPage(tk.Frame):
         ent.select_range(0, "end")
         dlg.wait()
 
-    def _attach(self):
-        width = config.scaled(320)
-        dlg = Modal(self.winfo_toplevel(), tr("发送数据"), width=width, height=config.scaled(700))
-        bg = COLORS["bg"]
-        vars_ = {}
-
-        def group(title, items, prefix):
-            tk.Label(dlg.body, text=tr(title), bg=bg, fg=COLORS["text"], font=config.font("body", bold=True),
-                     anchor="w").pack(fill="x", pady=(8, 2))
-            for key, text in items:
-                cur = self.comm.attach_form()
-                v = tk.BooleanVar(value=key in cur.get(prefix, []))
-                vars_[(prefix, key)] = v
-                tk.Checkbutton(dlg.body, text=tr(text), variable=v, bg=bg, fg=COLORS["text"], selectcolor=COLORS["bg_card"],
-                               activebackground=bg, activeforeground=COLORS["text"], font=config.font("body"),
-                               anchor="w").pack(fill="x", padx=8)
-
-        group("🕒  今天", comm_data.TODAY_KEYS, "today")
-        group("📅  日历", comm_data.CAL_KEYS, "cal")
-        group("📊  " + comm_data.STATS_NAME, comm_data.STATS_KEYS, "stats")          # 统计和它的子项放在最下面
-
-        def go():
-            sel = {"today": [k for (p, k), v in vars_.items() if p == "today" and v.get()],
-                   "cal": [k for (p, k), v in vars_.items() if p == "cal" and v.get()],
-                   "stats": [k for (p, k), v in vars_.items() if p == "stats" and v.get()]}
-            self.comm.set_attach(sel)          # 不立刻发: 记下来, 随下一条消息一起发
-            dlg.finish(True)
-            self.refresh(force=True)
-
-        ttk.Button(dlg.buttons, text=tr("确定"), style="Accent.TButton", command=go).pack(side="right")
-        dlg.protocol("WM_DELETE_WINDOW", go)             # 关掉窗口 (X / Esc) 也保存
-        dlg.bind("<Escape>", lambda _e: go())
-        dlg.update_idletasks()
-        dlg._center(self.winfo_toplevel(), width, dlg.winfo_reqheight())      # 高度按内容, 按钮不会被截掉
-        dlg.wait()

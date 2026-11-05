@@ -3,7 +3,7 @@ package com.obliphur.oit.core
 import java.time.LocalDate
 import java.time.LocalDateTime
 
-/** 沟通页 📎 勾选的内容: 统计(月数据)的几页, 日历 (选类别), 今天的整点记录 / 专注计时 (today: log / timer). 对应桌面版 comm_data.py.
+/** share data 里用户的数据 (一页对应哪几块): 统计(月数据)的几页, 日历 (选类别), 今天的整点记录 / 专注计时 (today: log / timer). 对应桌面版 comm_data.py.
  *  (1.0.308 起没有"合约词条"了; 合约词条只在联合行动的邀请里发.) */
 data class CommSel(val stats: List<String> = emptyList(), val cal: List<String> = emptyList(),
                    val today: List<String> = emptyList())
@@ -13,8 +13,6 @@ object CommData {
     const val STATS_NAME = "统计(月数据)"
     /** 今天的整点记录 / 计时器 (对方查询的 [log] / [timer] 也是这两块). */
     val TODAY_KEYS = listOf("log" to "整点记录(今天)", "timer" to "专注计时(今天)")
-    /** 📎 窗口第一次打开时默认勾上的. */
-    val DEFAULT_TODAY = listOf("log", "timer")
     val CAL_KEYS = listOf("study" to "专注", "break" to "休息", "idle" to "空闲", "sleep" to "睡眠")
     private const val WEEKDAY = "一二三四五六日"
     private const val TOP = 30
@@ -172,17 +170,6 @@ object CommData {
         if (!urban) return "【指令】\n  指令是都市之意主题独占的模块, 现在没有启用"
         if (history.isEmpty()) return "【指令】\n  还没有结束过的指令"
         return "【指令】(最近结束的)\n" + history.joinToString("\n") { "  ${it[0]} 指令 ${it[1]}: ${it[3]} → ${it[2]}" }
-    }
-
-    /** 聊天里显示的那一行. */
-    fun label(sel: CommSel): String {
-        val parts = ArrayList<String>()                 // 顺序和 📎 窗口里一样: 今天 → 日历 → 统计(月数据)
-        for ((k, name) in TODAY_KEYS) if (k in sel.today) parts.add(name)
-        val cl = sel.cal.mapNotNull { k -> CAL_KEYS.firstOrNull { it.first == k }?.second }
-        if (cl.isNotEmpty()) parts.add("日历·" + cl.joinToString("、"))
-        val st = sel.stats.mapNotNull { k -> STATS_KEYS.firstOrNull { it.first == k }?.second }
-        if (st.isNotEmpty()) parts.add("$STATS_NAME·" + st.joinToString("、"))
-        return if (parts.isEmpty()) "" else "📎 " + parts.joinToString(" / ")
     }
 
     fun top(d: Map<String, Double>, minutes: Boolean = false): String {
