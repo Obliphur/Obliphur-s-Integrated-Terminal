@@ -819,7 +819,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             checkSetupPeriod()
             val unbound = runCatching { checkUnbind() }.getOrDefault(emptyList())
             for (name in unbound) logNotice("SYNC unbind done $name")
-            if (unbound.isNotEmpty()) resetAfterUnbind(unbound.joinToString(", "))     // 只重置本机: 不转告其他设备, 也不清空对方
+            if (unbound.isNotEmpty()) { if (!com.obliphur.oit.sync.SyncService.UNBIND_FREE) resetAfterUnbind(unbound.joinToString(", ")) }     // 只重置本机: 不转告其他设备, 也不清空对方 (UNBIND_FREE 时不重置)
             // 绑定的设备被卸载了 (连续 24 小时拒绝连接, MECHANICS 9.2): 只解除和它的绑定, 清掉本机保留的它的数据, 本机自己的数据不动
             else for (name in runCatching { checkGone(behavior.current() != null) }.getOrDefault(emptyList())) {
                 logNotice("SYNC peer gone (refusing connections for 24 h, uninstalled?) $name")

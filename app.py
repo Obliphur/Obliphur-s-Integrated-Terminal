@@ -6303,7 +6303,7 @@ class BreakTimerApp:
             names = self.sync.check_unbind()
             for name in names:
                 self._log_notice(f"SYNC unbind done {name}")
-            if names:
+            if names and not devsync.UNBIND_FREE:
                 self.do_reset(leave=True, unbound=", ".join(names))          # 只重置操作这一台: 不转告其他设备, 也不清空对方
             if names:
                 return

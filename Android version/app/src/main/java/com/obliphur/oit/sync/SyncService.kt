@@ -125,6 +125,7 @@ class SyncService(
         /** 解除全部绑定要等这么久 (期间可以取消). */
         /** 解除绑定要等这么久 (冷静期, 期间可以取消). */
         const val UNBIND_WAIT_MS = 120 * 3600 * 1000L
+        const val UNBIND_FREE = true            // 1.0.376 临时 (用户要求, 之后改回 false): 解除绑定马上生效 (已有的冷静期计划也算到期), 并且不清空本机
         /** 解除绑定后还没送到的清空请求, 每隔这么久 (毫秒) 再送一次. */
         const val EVICT_RETRY_MS = 30_000L
         /** 设备离线时请它重新启动 OIT, 连不上就每隔这么久再试一次; 本机因为这个重启过之后这么久之内不再理会重启请求. 同 devsync.RESTART_RETRY / RESTART_GAP_MS. */
@@ -1244,7 +1245,7 @@ class SyncService(
         val done = mutableListOf<String>()
         val plans = lock.withLock { JSONObject(state.getJSONObject("unbinds").toString()) }
         for (id in plans.keys()) {
-            if (now < plans.optLong(id)) continue
+            if (now < plans.optLong(id) && !UNBIND_FREE) continue
             val p = peers()[id]
             lock.withLock {
                 state.getJSONObject("unbinds").remove(id)
