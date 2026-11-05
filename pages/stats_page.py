@@ -27,7 +27,8 @@ def journal_wait(viewed: str, now: datetime) -> float:
         at = datetime.fromisoformat(str(viewed))
     except ValueError:
         return 0.0
-    return max(0.0, JOURNAL_GAP - (now - at).total_seconds())
+    # 上限 2 小时: 别的设备的时钟比本机快时, 同步来的"看过的时刻"会在未来, 不能因此等得更久
+    return min(float(JOURNAL_GAP), max(0.0, JOURNAL_GAP - (now - at).total_seconds()))
 
 
 # 图表颜色都跟随当前主题 (config.CHART_PALETTE / COLORS 会在切换主题时原地更新)
@@ -949,5 +950,8 @@ class StatsPage(tk.Frame):
         cv.tag_raise(tid, rect)
 
     def show(self):
+        # 每次进入统计页都从默认页开始 (和手机一样), 不停在上次的标签: 否则上次停在日志的话,
+        # 只是点进统计页就会自动"看了"日志, 白白用掉 2 小时 (MECHANICS 8.7)
+        self.page = "log"                   # 没开整点记录时 refresh() 会改成 net
         self._journal_open = False          # 每次进入统计页都重新判断日志 (MECHANICS 8.7)
         self.refresh()
