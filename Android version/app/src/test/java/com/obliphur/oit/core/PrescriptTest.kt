@@ -495,7 +495,7 @@ class PrescriptTest {
         env.mode = "idle"
         var hour = "09:00  学习\n10:00  写代码"
         val eng = PrescriptEngine(File(env.dir, "prescript.json"), stateFn = { env.mode }, pageFn = { env.page },
-            hourLogFn = { hour })
+            hourLogFn = { hour }, focusLogFn = { "09:05-09:55 专注 (50 分钟)\n10:10-10:40 专注 (30 分钟)" })
         val day = at(23, 10)
         eng.rawData().getJSONArray("history").put(JSONObject().put("id", "h1").put("type", "III").put("body", "休息5min.")
             .put("accepted", at(13).iso()).put("ended", at(13).iso()).put("result", "completed").put("t", 0.2))
@@ -507,12 +507,13 @@ class PrescriptTest {
         assertTrue(cur.isNull("due") && cur.isNull("expires"))
         val base = eng.logPrefill(day)
         val paras = base.split("\n\n")
-        assertEquals(3, paras.size)
+        assertEquals(4, paras.size)
         assertEquals("09:00  学习\n10:00  写代码", paras[0])
-        assertTrue(paras[1].contains("休息5min. (完成)"))
-        assertTrue(paras[1].contains("接下来的1h专注50min. (废弃)"))
-        assertTrue(paras[1].contains("(进行中)"))
-        assertEquals("08:15", paras[2])
+        assertEquals("09:05-09:55 专注 (50 分钟)\n10:10-10:40 专注 (30 分钟)", paras[1])
+        assertTrue(paras[2].contains("休息5min. (完成)"))
+        assertTrue(paras[2].contains("接下来的1h专注50min. (废弃)"))
+        assertTrue(paras[2].contains("(进行中)"))
+        assertEquals("08:15", paras[3])
         eng.tick(day.plusMinutes(40))                          // 没有计时: 一直等着
         assertNotNull(eng.current)
         assertEquals("void", eng.submitLog(base + "  \n", day.plusMinutes(41)))        // 一点没改: 作废
@@ -528,6 +529,8 @@ class PrescriptTest {
         hour = ""                                              // 没启用整点记录: 第一段空白
         eng.draw(day.plusMinutes(44), choose = "X")
         assertTrue(eng.logPrefill(day.plusMinutes(44)).startsWith("\n\n"))
+        assertTrue(CommData.intervalLines(listOf(Triple("study", at(9, 5), at(9, 55)), Triple("study", at(14, 0), day)), day, liveWord = "")
+            .let { it[0] == "09:05-09:55 专注 (50 分钟)" && it[1] == "14:00-23:10 专注 (9 小时 10 分钟)" })
         eng.abandonLog(day.plusMinutes(45))                    // 没保存就关了: 作废
         assertNull(eng.current)
         eng.draw(day.plusMinutes(46), choose = "X")            // 离开指令页也作废

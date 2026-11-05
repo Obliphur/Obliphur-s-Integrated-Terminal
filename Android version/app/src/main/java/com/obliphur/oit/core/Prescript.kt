@@ -156,6 +156,8 @@ class PrescriptEngine(
     private val onComplete: (() -> Unit)? = null,
     /** 今天的整点记录 (没启用返回空串), X 词条的输入框第一段. */
     private val hourLogFn: () -> String = { "" },
+    /** 今天每一段专注的时间段 (一行一段, 没有返回空串), X 词条的输入框第二段. */
+    private val focusLogFn: () -> String = { "" },
     /** 某个空闲词条现在的提升时段 (设置 → 日常; 起止分钟, 左闭右开). */
     private val windowsFn: (String) -> List<Pair<Int, Int>> = { Cfg.defaultWindows(it) },
     /** 绑定的其他设备里有没有哪台此刻正停在指令页 (空闲词条要所有设备都离开才作废). */
@@ -823,15 +825,16 @@ class PrescriptEngine(
     }
 
     /**
-     * X 的输入框一开始的文字: 三段 -- 今天的整点记录 (没启用是空白) / 今天领到的指令和状态 /
-     * 今天 OIT 被手动关闭的时刻. 第一次生成时存下来, 保存时拿它判断用户改没改.
+     * X 的输入框一开始的文字: 四段 -- 今天的整点记录 (没启用是空白) / 今天专注的时间段 /
+     * 今天领到的指令和状态 / 今天 OIT 被手动关闭的时刻. 第一次生成时存下来, 保存时拿它判断用户改没改.
      */
     @Synchronized
     fun logPrefill(now: LocalDateTime = LocalDateTime.now()): String {
         val cur = activeOf("X")
         if (cur != null && cur.has("log_base")) return cur.optString("log_base")
         val hour = try { hourLogFn().trim() } catch (_: Exception) { "" }
-        val text = listOf(hour, todayInstructionLines(now).joinToString("\n"), todayCloseLines(now).joinToString("\n"))
+        val focus = try { focusLogFn().trim() } catch (_: Exception) { "" }
+        val text = listOf(hour, focus, todayInstructionLines(now).joinToString("\n"), todayCloseLines(now).joinToString("\n"))
             .joinToString("\n\n")
         if (cur != null) { cur.put("log_base", text); dirty = true }
         return text

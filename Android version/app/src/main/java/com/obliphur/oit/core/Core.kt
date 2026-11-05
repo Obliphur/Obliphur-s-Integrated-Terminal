@@ -257,6 +257,12 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
                         .joinToString("\n")
                 }
             },
+            focusLogFn = {
+                // 今天每一段专注的时间段, 一行一段 (还在进行的一段写到此刻); 指令 X 的输入框第二段
+                val now = LocalDateTime.now()
+                val study = dm.dayIntervals(now.toLocalDate(), timer.calendarLive(), now).filter { it.first == "study" }
+                CommData.intervalLines(study, now, liveWord = "").joinToString("\n")
+            },
         )
         loadViolations()
         comm = Comm(dir, host.personasDir() ?: File(dir, "personas"))

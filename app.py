@@ -341,6 +341,7 @@ class BreakTimerApp:
             contract_active_fn=lambda: self.contract.active,
             on_complete=self._prescript_completed,
             hour_log_fn=self._prescript_hour_log,
+            focus_log_fn=self._prescript_focus_log,
             peers_on_page_fn=lambda: self.sync.peer_flag("prescript"),
             page_event_fn=self._prescript_page_event,
         )
@@ -5305,6 +5306,12 @@ class BreakTimerApp:
             if text:
                 lines.append(f"{hour:02d}:00  {text}")
         return "\n".join(lines)
+
+    def _prescript_focus_log(self) -> str:
+        """今天每一段专注的时间段, 一行一段 ("09:05-09:55 专注 (50 分钟)"; 还在进行的一段写到此刻); 没有就是空白 (X 词条输入框的第二段)."""
+        now = datetime.now()
+        intervals = [x for x in self.dm.day_intervals(now, self._calendar_live(), now) if x[0] == "study"]
+        return "\n".join(comm_data.interval_lines(intervals, now, live_word=""))
 
     def _prescript_changed(self):
         self._sync_prescript_marks()

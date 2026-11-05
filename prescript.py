@@ -196,6 +196,7 @@ class PrescriptEngine:
     dev_fn()          -> 开发者模式 (现在领取对谁都没有冷却, 这个只留着兼容)
     pause_media_fn()  -> 领取空闲词条 (IDLE_ENTRIES) 时暂停后台正在播放的音频 / 视频
     hour_log_fn()     -> 今天的整点记录 (没启用返回空串), 给 X 词条的输入框第一段
+    focus_log_fn()    -> 今天每一段专注的时间段 (一行一段, 没有返回空串), 给 X 词条的输入框第二段
     peers_on_page_fn() -> 绑定的其他设备里有没有哪台此刻正停在指令页 (空闲词条要所有设备都离开才作废)
     contract_active_fn() -> 现在有没有进行中的合约 (合约期间抽不到 VI)
     on_complete()     -> 有一条指令被完成了 (播完成音效)
@@ -204,7 +205,7 @@ class PrescriptEngine:
 
     def __init__(self, data_dir, *, state_fn=None, today_hours_fn=None, contracts_fn=None,
                  page_fn=None, minimized_fn=None, grant_rest_fn=None, username_fn=None,
-                 blocked_fn=None, on_change=None, dev_fn=None, pause_media_fn=None, remaining_rest_fn=None, contract_active_fn=None, on_complete=None, hour_log_fn=None, peers_on_page_fn=None, page_event_fn=None, rng=None):
+                 blocked_fn=None, on_change=None, dev_fn=None, pause_media_fn=None, remaining_rest_fn=None, contract_active_fn=None, on_complete=None, hour_log_fn=None, focus_log_fn=None, peers_on_page_fn=None, page_event_fn=None, rng=None):
         self.path = os.path.join(data_dir, "prescript.json")
         self.state_fn = state_fn or (lambda: "idle")
         self.today_hours_fn = today_hours_fn or (lambda: 0.0)
@@ -219,6 +220,7 @@ class PrescriptEngine:
         self.remaining_rest_fn = remaining_rest_fn or (lambda: 0.0)
         self.contract_active_fn = contract_active_fn or (lambda: False)
         self.hour_log_fn = hour_log_fn or (lambda: "")
+        self.focus_log_fn = focus_log_fn or (lambda: "")
         self.peers_on_page_fn = peers_on_page_fn or (lambda: False)
         # 其他设备进入 / 退出了指令页 (事件): page_event_fn(on) 让本机跟着进入 / 退出 (MECHANICS 22.8)
         self.page_event_fn = page_event_fn
@@ -1052,8 +1054,8 @@ class PrescriptEngine:
         return out
 
     def log_prefill(self, now: datetime = None) -> str:
-        """X 的输入框一开始的文字: 三段 -- 今天的整点记录 (没启用是空白) / 今天领到的指令和状态 /
-        今天 OIT 被手动关闭的时刻. 第一次生成时存下来, 保存时拿它判断用户改没改."""
+        """X 的输入框一开始的文字: 四段 -- 今天的整点记录 (没启用是空白) / 今天专注的时间段 /
+        今天领到的指令和状态 / 今天 OIT 被手动关闭的时刻. 第一次生成时存下来, 保存时拿它判断用户改没改."""
         cur = self.active_of("X")
         if cur is not None and isinstance(cur.get("log_base"), str):
             return cur["log_base"]
@@ -1062,7 +1064,11 @@ class PrescriptEngine:
             hour = str(self.hour_log_fn() or "").strip()
         except Exception:       # noqa: BLE001
             hour = ""
-        text = "\n\n".join([hour, "\n".join(self._today_instruction_lines(now)),
+        try:
+            focus = str(self.focus_log_fn() or "").strip()
+        except Exception:       # noqa: BLE001
+            focus = ""
+        text = "\n\n".join([hour, focus, "\n".join(self._today_instruction_lines(now)),
                               "\n".join(self._today_close_lines(now))])
         if cur is not None:
             cur["log_base"] = text
@@ -1395,6 +1401,7 @@ def _selftest():
         # X: 输入框三段文字, 没改保存 = 作废, 改过保存 = 完成
         clear()
         eng.hour_log_fn = lambda: "09:00  学习\n10:00  写代码"
+        eng.focus_log_fn = lambda: "09:05-09:55 专注 (50 分钟)\n10:10-10:40 专注 (30 分钟)"
         eng._data["history"].append({"id": "h1", "type": "III", "body": "休息5min.", "accepted": _iso(t1),
                                      "ended": _iso(t1), "result": "completed", "t": 0.2})
         eng._data["history"].append({"id": "h2", "type": "I", "body": "接下来的1h专注50min.", "accepted": _iso(t1),
@@ -1405,9 +1412,10 @@ def _selftest():
         assert cur["type"] == "X" and cur["due"] is None and cur["expires"] is None
         base = eng.log_prefill(at(23, 10))
         paras = base.split("\n\n")
-        assert len(paras) == 3 and paras[0] == "09:00  学习\n10:00  写代码", paras
-        assert "休息5min. (完成)" in paras[1] and "接下来的1h专注50min. (废弃)" in paras[1] and "(进行中)" in paras[1]
-        assert paras[2] == "08:15", paras[2]
+        assert len(paras) == 4 and paras[0] == "09:00  学习\n10:00  写代码", paras
+        assert paras[1] == "09:05-09:55 专注 (50 分钟)\n10:10-10:40 专注 (30 分钟)", paras[1]
+        assert "休息5min. (完成)" in paras[2] and "接下来的1h专注50min. (废弃)" in paras[2] and "(进行中)" in paras[2]
+        assert paras[3] == "08:15", paras[3]
         assert eng.log_prefill(at(23, 40)) == base
         eng._last_tick = at(23, 10)
         eng.tick(at(23, 55))                      # 没有计时: 一直等着
@@ -1421,8 +1429,9 @@ def _selftest():
         assert "今天读了书" in eng._data["logs"][at(23, 58).strftime("%Y-%m-%d")]
         assert eng.submit_log("x") is None
         eng.hour_log_fn = lambda: ""              # 没启用整点记录: 第一段空白
+        eng.focus_log_fn = lambda: (_ for _ in ()).throw(RuntimeError("x"))   # 取专注时间段出错: 这一段空白, 其他照常
         cur = eng.draw(at(23, 59), choose="X", pool="idle")
-        assert eng.log_prefill(at(23, 59)).startswith("\n\n")
+        assert eng.log_prefill(at(23, 59)).startswith("\n\n\n\n")
         eng.abandon_log(at(23, 59))
         assert eng.current is None and eng._data["history"][-1]["result"] == "void"
         eng.note_close(at(23, 59))

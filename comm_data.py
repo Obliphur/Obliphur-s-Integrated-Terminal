@@ -208,9 +208,9 @@ def _hm(minutes: float) -> str:
 KIND_TEXT = {"study": "专注", "break": "休息", "sleep": "睡眠"}
 
 
-def interval_lines(intervals, now: datetime = None) -> list:
+def interval_lines(intervals, now: datetime = None, live_word: str = "现在") -> list:
     """今天每一段专注 / 休息 / 睡眠的持续区间, 按开始时间排好: [(kind, 开始, 结束)] → ["HH:MM-HH:MM 专注 (X 小时 Y 分钟)"].
-    结束不早于现在的 (还在进行的一段) 写成 "HH:MM-现在"."""
+    结束不早于现在的 (还在进行的一段) 写成 "HH:MM-现在"; live_word 为空时写成此刻的时间 (要存下来的记录用, 日志的专注时间段)."""
     now = now or datetime.now()
     out = []
     for kind, a, b in sorted(intervals or [], key=lambda x: (x[1], x[2])):
@@ -218,7 +218,7 @@ def interval_lines(intervals, now: datetime = None) -> list:
         if not name or b <= a:
             continue
         live = b >= now
-        end_text = "现在" if live else f"{b:%H:%M}"
+        end_text = (live_word or f"{now:%H:%M}") if live else f"{b:%H:%M}"
         out.append(f"{a:%H:%M}-{end_text} {name} ({_hm(((now if live else b) - a).total_seconds() / 60)})")
     return out
 

@@ -76,15 +76,16 @@ object CommData {
 
     private val KIND_TEXT = mapOf("study" to "专注", "break" to "休息", "sleep" to "睡眠")
 
-    /** 今天每一段专注 / 休息 / 睡眠的持续区间, 按开始时间排好 → "HH:MM-HH:MM 专注 (X 小时 Y 分钟)". 结束不早于现在的 (还在进行的一段) 写成 "HH:MM-现在". */
-    fun intervalLines(intervals: List<Triple<String, LocalDateTime, LocalDateTime>>, now: LocalDateTime = LocalDateTime.now()): List<String> {
+    /** 今天每一段专注 / 休息 / 睡眠的持续区间, 按开始时间排好 → "HH:MM-HH:MM 专注 (X 小时 Y 分钟)". 结束不早于现在的 (还在进行的一段) 写成 "HH:MM-现在"; liveWord 为空时写成此刻的时间 (要存下来的记录用, 日志的专注时间段). */
+    fun intervalLines(intervals: List<Triple<String, LocalDateTime, LocalDateTime>>, now: LocalDateTime = LocalDateTime.now(),
+                      liveWord: String = "现在"): List<String> {
         val out = ArrayList<String>()
         for ((kind, a, b) in intervals.sortedWith(compareBy({ it.second }, { it.third }))) {
             val name = KIND_TEXT[kind] ?: continue
             if (!b.isAfter(a)) continue
             val live = !b.isBefore(now)
             val end = if (live) now else b
-            out.add("%02d:%02d-%s %s (%s)".format(a.hour, a.minute, if (live) "现在" else "%02d:%02d".format(b.hour, b.minute), name,
+            out.add("%02d:%02d-%s %s (%s)".format(a.hour, a.minute, if (live) liveWord.ifEmpty { "%02d:%02d".format(now.hour, now.minute) } else "%02d:%02d".format(b.hour, b.minute), name,
                 hm(secondsBetween(a, end) / 60)))
         }
         return out
