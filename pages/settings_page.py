@@ -826,7 +826,7 @@ class SettingsPage(tk.Frame):
         self.cb_persona.bind("<<ComboboxSelected>>", lambda _e: self._comm_pick_persona())
         # 选着 Claudia 而它的内容和默认人设不一样时, 显示"还原"
         self.row_restore = tk.Frame(fr, bg=card)
-        tk.Label(self.row_restore, text=tr("Claudia 的内容和默认人设不一样"), bg=card, fg=COLORS["dim"], font=small,
+        tk.Label(self.row_restore, text=tr("Claudia 的内容和默认人设不一样"), bg=card, fg=COLORS["text_dim"], font=small,
                  anchor="w").pack(side="left", padx=(12, 8))
         ttk.Button(self.row_restore, text=tr("还原"), command=self._comm_restore_claudia).pack(side="left")
 
