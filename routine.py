@@ -19,7 +19,8 @@ import config
 
 KEEP_JOINT = 20                   # 存下来的真实联合行动合约记录最多留多少条
 KEEP_DAYS = 35                    # 存下来的时间线 / 整点记录最多留多少天
-BACKFILL_DAYS = 7                 # 第一次使用 (没有存档) 时往前补多少天
+SLEEP_CELL = "睡眠"                # 睡着的整点记录格子的内容 (同 OIT 自己的整点记录)
+BACKFILL_DAYS = 7                # 第一次使用 (没有存档) 时往前补多少天
 SYNC_MAX_DAYS = 14                # 一次最多补多少天 (很久没开程序也只补最近这些)
 CHAT_FULL = 50.0                  # 上一个区间用户发了 >= CHAT_FULL_MSGS 条 → "聊天" 的概率 (%)
 CHAT_FULL_MSGS = 20               # (一个小时的区间; 半小时的格子按比例是 10 条)
@@ -504,7 +505,7 @@ class Store:
                     if st < first or st + timedelta(minutes=ln) > limit:
                         continue
                     key = f"{st:%Y-%m-%dT%H:%M}"
-                    if key in self.cells:
+                    if self.cells.get(key, ["", ""])[1] != "":      # 空文本 = 旧版本留下的睡着的格子 (1.0.368 之前不写"睡眠"): 重新算一次
                         continue
                     n = msgs_fn(st, st + timedelta(minutes=ln)) if msgs_fn else 0
                     self.cells[key] = [ln, self.cell_text(st, ln, n)]
@@ -512,14 +513,16 @@ class Store:
             d += timedelta(days=1)
 
     def cell_text(self, st: datetime, ln: int, n_msgs: int) -> str:
-        """这一格对方做了什么 ("" = 没有记录: 睡着的格子). 专注为主 → 专注填写列表; 吃饭这类有名字的活动为主 → 活动的名字; 其余 → 休息填写列表 (聊天的概率随用户发的消息数变)."""
+        """这一格对方做了什么 ("" = 时间线里没有这段时间). 睡眠占一半以上 → "睡眠" (同 OIT 的整点记录); 专注为主 → 专注填写列表; 吃饭这类有名字的活动为主 → 活动的名字; 其余 → 休息填写列表 (聊天的概率随用户发的消息数变)."""
         en = st + timedelta(minutes=ln)
         by = {}                                            # (kind, 名字) → 分钟
         for kind, x, y, label in self.segments(st, en):
             by[(kind, label)] = by.get((kind, label), 0.0) + (y - x).total_seconds() / 60.0
-        sleep = sum(v for (k, _l), v in by.items() if k == "sleep")
-        if not by or sleep >= ln / 2.0:
+        if not by:
             return ""
+        sleep = sum(v for (k, _l), v in by.items() if k == "sleep")
+        if sleep >= ln / 2.0:                              # OIT 的规则 (MECHANICS 8.2): 睡眠占了这一格一半以上 (一小时 = 30 分钟以上) 记成"睡眠"
+            return SLEEP_CELL
         awake = sum(v for (k, _l), v in by.items() if k != "sleep")
         focus = sum(v for (k, _l), v in by.items() if k == "focus")
         day = f"{st:%Y-%m-%d}"
@@ -760,8 +763,16 @@ def _selftest():
         st.fill_cells(later, lambda a, b: 0)
         assert abs(st.minutes(datetime(2026, 3, 3), later) - (later - datetime(2026, 3, 3)).total_seconds() / 60) < 1e-6
         assert f"2026-03-11T08:00" in st.cells and st.cells["2026-03-11T08:00"][1], "三天没调用: 自动按规则填充"
-        # 睡着的格子没有记录
-        assert st.cells["2026-03-11T03:00"][1] == ""
+        # 睡着的格子 (睡眠占一半以上) 记成"睡眠"; 旧版本留下的空格子重新算
+        assert st.cells["2026-03-11T03:00"][1] == "睡眠" and "03:00 睡眠" in st.log_lines(datetime(2026, 3, 11, 8, 0))
+        for k in [k for k, v in st.cells.items() if v[1] == "睡眠"]:
+            sl = st.minutes(datetime.fromisoformat(k), datetime.fromisoformat(k) + timedelta(minutes=st.cells[k][0]), ("sleep",))
+            assert sl >= st.cells[k][0] / 2.0, ("不到一半的睡眠不记成睡眠", k, sl)
+        assert not any(v[1] == "" for v in st.cells.values())
+        _old = Store(os.path.join(td, "old.json"), r, seed)
+        _old.tl, _old.upto, _old.cells = list(st.tl), st.upto, {k: [v[0], ""] if v[1] == "睡眠" else list(v) for k, v in st.cells.items()}
+        _old.fill_cells(later, lambda a, b: 0)
+        assert _old.cells == st.cells, "旧存档里的空格子补成睡眠"
         # 聊天概率: 用户一小时发 40 条 → 休息格里 "聊天" 的概率 50%; 0 条 → 不会出现聊天
         st2 = Store(os.path.join(td, "b.json"), r, "chat")
         st2.fill_timeline(datetime(2026, 3, 12, 0), fn)

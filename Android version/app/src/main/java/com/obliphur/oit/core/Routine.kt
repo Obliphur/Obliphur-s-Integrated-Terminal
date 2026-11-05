@@ -40,6 +40,7 @@ class RoutineSpec {
 object Routine {
     const val KEEP_DAYS = 35
     const val KEEP_JOINT = 20
+    const val SLEEP_CELL = "睡眠"                 // 睡着的整点记录格子的内容 (同 OIT 自己的整点记录)
     const val BACKFILL_DAYS = 7
     const val SYNC_MAX_DAYS = 14
     const val CHAT_FULL = 50.0
@@ -488,7 +489,7 @@ class RoutineStore(val file: File, var r: RoutineSpec, val seed: String) {
                 for ((st, ln) in parts) {
                     if (st.isBefore(first) || st.plusMinutes(ln.toLong()).isAfter(limit)) continue
                     val key = cellKey(st)
-                    if (key in cells) continue
+                    if (cells[key]?.second?.isNotEmpty() == true) continue   // 空文本 = 旧版本留下的睡着的格子 (1.0.368 之前不写"睡眠"): 重新算一次
                     cells[key] = ln to cellText(st, ln, msgsFn(st, st.plusMinutes(ln.toLong())))
                     dirty = true
                 }
@@ -499,7 +500,7 @@ class RoutineStore(val file: File, var r: RoutineSpec, val seed: String) {
 
     private fun cellKey(st: LocalDateTime) = "%04d-%02d-%02dT%02d:%02d".format(st.year, st.monthValue, st.dayOfMonth, st.hour, st.minute)
 
-    /** 这一格对方做了什么 ("" = 没有记录: 睡着的格子). */
+    /** 这一格对方做了什么 ("" = 时间线里没有这段时间). 睡眠占一半以上 → "睡眠" (同 OIT 的整点记录). */
     fun cellText(st: LocalDateTime, ln: Int, nMsgs: Int): String {
         val en = st.plusMinutes(ln.toLong())
         val by = LinkedHashMap<Pair<String, String>, Double>()
@@ -508,7 +509,8 @@ class RoutineStore(val file: File, var r: RoutineSpec, val seed: String) {
             by[k] = (by[k] ?: 0.0) + ChronoUnit.SECONDS.between(s.start, s.end) / 60.0
         }
         val sleep = by.filter { it.key.first == "sleep" }.values.sum()
-        if (by.isEmpty() || sleep >= ln / 2.0) return ""
+        if (by.isEmpty()) return ""
+        if (sleep >= ln / 2.0) return Routine.SLEEP_CELL                // OIT 的规则 (MECHANICS 8.2): 睡眠占了这一格一半以上记成"睡眠"
         val awake = by.filter { it.key.first != "sleep" }.values.sum()
         val focus = by.filter { it.key.first == "focus" }.values.sum()
         val key = "$seed|cell|${cellKey(st)}"

@@ -96,11 +96,11 @@ class RoutineTest {
         val fn = { a: LocalDateTime, b: LocalDateTime -> Routine.planBetween(spec, a, b, "t") }
         st.fillTimeline(now, fn)
         st.fillCells(now, { _, _ -> 0 })
-        assertEquals(mapOf("2026-03-09T06:00" to "洗漱,吃早饭", "2026-03-09T08:00" to "打扫", "2026-03-09T09:00" to "地理", "2026-03-09T12:00" to "阅读", "2026-03-09T13:00" to "英语", "2026-03-09T20:00" to "英语", "2026-03-09T23:00" to "", "2026-03-10T03:00" to "", "2026-03-10T07:00" to "数学", "2026-03-10T09:00" to "语文"), listOf("2026-03-09T06:00", "2026-03-09T08:00", "2026-03-09T09:00", "2026-03-09T12:00", "2026-03-09T13:00", "2026-03-09T20:00", "2026-03-09T23:00", "2026-03-10T03:00", "2026-03-10T07:00", "2026-03-10T09:00").associateWith { st.cells.getValue(it).second })
+        assertEquals(mapOf("2026-03-09T06:00" to "洗漱,吃早饭", "2026-03-09T08:00" to "打扫", "2026-03-09T09:00" to "地理", "2026-03-09T12:00" to "阅读", "2026-03-09T13:00" to "英语", "2026-03-09T20:00" to "英语", "2026-03-09T23:00" to "睡眠", "2026-03-10T03:00" to "睡眠", "2026-03-10T07:00" to "数学", "2026-03-10T09:00" to "语文"), listOf("2026-03-09T06:00", "2026-03-09T08:00", "2026-03-09T09:00", "2026-03-09T12:00", "2026-03-09T13:00", "2026-03-09T20:00", "2026-03-09T23:00", "2026-03-10T03:00", "2026-03-10T07:00", "2026-03-10T09:00").associateWith { st.cells.getValue(it).second })
         val st2 = RoutineStore(File(dir, "y.json"), spec, "t")
         st2.fillTimeline(now, fn)
         st2.fillCells(now, { _, _ -> 15 })
-        assertEquals(listOf("", "", "", "", "", "", "洗漱,吃早饭", "语文", "阅读", "地理", "政治", "午饭", "聊天", "英语", "打扫", "英语", "数学", "晚饭", "聊天", "语文", "英语", "政治", "语文", ""), st2.cells.keys.sorted().filter { it.startsWith("2026-03-09") }.map { st2.cells.getValue(it).second })
+        assertEquals(listOf("睡眠", "睡眠", "睡眠", "睡眠", "睡眠", "睡眠", "洗漱,吃早饭", "语文", "阅读", "地理", "政治", "午饭", "聊天", "英语", "打扫", "英语", "数学", "晚饭", "聊天", "语文", "英语", "政治", "语文", "睡眠"), st2.cells.keys.sorted().filter { it.startsWith("2026-03-09") }.map { st2.cells.getValue(it).second })
         val day = LocalDate.of(2026, 3, 9)
         fun near(exp: Map<String, Double>, got: Map<String, Double>) {
             assertEquals(exp.keys, got.keys)
@@ -110,7 +110,7 @@ class RoutineTest {
         near(mapOf("chrome" to 11299.451237, "claude" to 3861.349901, "OIT" to 7649.520698, "anki" to 1906.99042, "cloudmusic" to 1909.30874, "" to 11473.379005), st.windowSeconds(day, 0))
         near(mapOf("微信" to 1164.184326, "OIT" to 9060.327928, "词典" to 4537.407564, "相册" to 458.159569, "anki" to 2957.928168, "" to 4921.992445), st.windowSeconds(day, 1))
         assertEquals(635.0, st.dayMinutes(day, setOf("focus")), 1e-6)
-        assertEquals(listOf("06:00 洗漱,吃早饭", "07:00 数学", "08:00 语文", "09:00 语文"), st.logLines(now))
+        assertEquals(listOf("00:00 睡眠", "01:00 睡眠", "02:00 睡眠", "03:00 睡眠", "04:00 睡眠", "05:00 睡眠", "06:00 洗漱,吃早饭", "07:00 数学", "08:00 语文", "09:00 语文"), st.logLines(now))
         val recs = Routine.contractsBefore(spec, LocalDateTime.of(2026, 4, 1, 0, 0), "t", days = 60).take(3)
         assertEquals(listOf(
             Triple("2026-03-29T12:58:00", 24, listOf("retreat2", "deep2", "tired2", "short2", "seal", "info3", "erode1", "suppress", "jam", "quiet", "game", "video", "gaze", "scar", "move", "confine", "fog")),
@@ -174,7 +174,7 @@ class RoutineTest {
         assertTrue(lines.isNotEmpty() && lines.none { it.startsWith("10:") })                       // 没结束的格子不给
         val later = LocalDateTime.of(2026, 3, 13, 9, 40)                                           // 3 天没人调用: 自动补齐
         st.fillTimeline(later, fn); st.fillCells(later, { _, _ -> 0 })
-        assertTrue(st.cells.getValue("2026-03-11T08:00").second.isNotEmpty() && st.cells.getValue("2026-03-11T03:00").second.isEmpty())
+        assertTrue(st.cells.getValue("2026-03-11T08:00").second.isNotEmpty() && st.cells.getValue("2026-03-11T03:00").second == "睡眠")
         assertTrue(st.netByReason(later.toLocalDate().plusDays(1)).isEmpty())                        // 还没发生: 没有数据
         Store.write(file, st.payload())
         val st4 = RoutineStore(file, spec, "t")
