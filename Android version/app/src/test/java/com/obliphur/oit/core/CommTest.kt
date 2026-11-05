@@ -645,6 +645,7 @@ class CommTest {
         assertTrue(c.readPersona("Assistant.txt").startsWith("你是名为 Assistant 的助理"))
         c.set(persona = "")
         File(td, "pp/Claudia.txt").delete()
+        File(td, "pp/Claudia_routine.txt").delete()
         File(td, "pp/Assistant.txt").delete()
         c.flush()
         val c2 = Comm(dir, File(td, "pp"), { clock }) { _, _, _ -> "" }
@@ -955,7 +956,7 @@ class CommTest {
             "idle" to 720, "idle" to 750, "focus" to 780, "rest" to 880, "focus" to 918, "rest" to 1018,
             "focus" to 1056, "idle" to 1080, "idle" to 1110, "focus" to 1140, "rest" to 1190, "focus" to 1206,
             "rest" to 1256, "focus" to 1272, "rest" to 1322, "focus" to 1338, "idle" to 1380, "sleep" to 1410),
-            CommText.scheduleSegments(BuiltinPersonas.ALL.getValue("Claudia.txt")))
+            CommText.scheduleSegments(BuiltinPersonas.CLAUDIA_PREV5))
         assertEquals(listOf("idle" to 545, "idle" to 720), CommText.scheduleSegments(     // 逐段写的休息 (09:10-10:00:休息) 不再被认出来
             "- 9:05 ~ 9:35 : Idle time\n  09：10-10:00：休息\n24:00-25:00:空闲\n12:00-13:00:不休息\n" +
                 "12:00-13:00:午饭\n每天 8 点到 12 点上课.\n9:05-9:35:idle again\n"))
@@ -997,7 +998,7 @@ class CommTest {
         c.importPersona("日程.txt", "你是小满.\n12:30-13:00:空闲\n[循环 19:00-21:18][100min]\n".byteInputStream())   // 19:00-20:40 专注, 20:40-21:18 休息
         c.set(persona = "日程.txt")
         assertEquals(80.0 to 60.0, c.proPercent("idle") to c.proPercent("rest"))          // 人设里没写: 默认概率
-        assertEquals(mapOf("idle" to 20.0, "rest" to 20.0, "long" to 20.0, "sleep" to 50.0), CommText.personaProbs(BuiltinPersonas.ALL.getValue("Claudia.txt")))   // Claudia: 20% / 20% / 20% / 50%
+        assertEquals(mapOf("idle" to 20.0, "rest" to 20.0, "long" to 20.0, "sleep" to 50.0), CommText.personaProbs(BuiltinPersonas.ALL.getValue("Claudia.txt") + "\n" + BuiltinPersonas.ALL.getValue("Claudia_routine.txt")))   // Claudia: 20% / 20% / 20% / 50%
         assertEquals(0.0, CommText.personaProbs(BuiltinPersonas.ALL.getValue("Assistant.txt"))["sleep"] ?: -1.0, 0.0)
         assertEquals(mapOf("sleep" to 40.0), CommText.personaProbs("睡眠发起谈话概率:40%"))
         assertEquals(60.0, Comm.defaultP("sleep"), 0.0)
@@ -1057,7 +1058,7 @@ class CommTest {
         // 相邻的日程段 (22:58 休息, 23:00 空闲) 不连着发
         val c2 = comm(File(td, "d2").also { it.mkdirs() }, File(td, "p2"))
         assertEquals("Claudia.txt", c2.personaName())
-        File(td, "p2/全发.txt").writeText(BuiltinPersonas.ALL.getValue("Claudia.txt")
+        File(td, "p2/全发.txt").writeText(BuiltinPersonas.CLAUDIA_PREV5
             .replace("空闲发起谈话概率:20%", "空闲发起谈话概率:100%").replace("休息发起谈话概率:20%", "休息发起谈话概率:100%")
             .replace("[循环 19:00-23:00][50min]", "[循环 19:00-23:00][100min]"))
         c2.set(persona = "全发.txt")
@@ -1995,5 +1996,106 @@ class CommTest {
         wait(c)
         c.flush()
     }
-}
 
+    // ---- 日程文件 (routine, 1.0.355): Claudia + Claudia_routine 是默认人设 ----
+    @Test
+    fun routineIntegration() {
+        val td = Files.createTempDirectory("oit").toFile()
+        clock = LocalDateTime.of(2027, 6, 1, 7, 0)
+        val dir = File(td, "d").also { it.mkdirs() }
+        val c = comm(dir, File(td, "p"))
+        assertEquals("Claudia.txt", c.personaName())
+        assertEquals(listOf("Assistant.txt", "Claudia.txt"), c.listPersonas())              // Claudia_routine 是配套文件, 不是人设
+        assertEquals(listOf("Claudia_routine.txt"), c.routineFiles())
+        assertEquals("Claudia_routine.txt", c.routineNameOf("Claudia.txt"))
+        assertTrue(c.isRoutineName("Claudia_routine.txt") && !c.isRoutineName("Claudia.txt"))
+        assertEquals("Claudia.txt", c.baseOfRoutine("Claudia_routine.txt"))
+        val full = c.readPersonaFull("Claudia.txt")
+        assertTrue(full.startsWith("你将扮演一位文静") && "初始起点:6:30" in full && "联网时间理由列表" in full)
+        assertEquals(c.readPersona("Assistant.txt"), c.readPersonaFull("Assistant.txt"))
+        assertTrue("Claudia_routine.txt" in c.personaDoc() && "Claudia.txt" in c.personaDoc())    // 日程文件随设备同步
+        c.reloadSchedule("test")
+        assertEquals(20.0 to 50.0, c.proPercent("idle") to c.proPercent("sleep"))            // 概率从日程文件里读
+        val spec = Routine.parse(c.readRoutine("Claudia.txt"))!!
+        val seed = c.pid
+        val plan = Routine.dayPlan(spec, java.time.LocalDate.of(2027, 6, 1), seed)
+        clock = plan[0].start.minusMinutes(1)
+        assertEquals("sleep", c.otherStatus()!!.first.kind); assertEquals("睡眠中", c.otherStatusText())
+        clock = plan[0].start.plusMinutes(1)
+        assertEquals("洗漱,吃早饭", c.otherStatus()!!.first.label); assertEquals("空闲", c.otherStatusText())
+        val firstFocus = plan.first { it.kind == "focus" }
+        clock = firstFocus.start.plusMinutes(1)
+        assertEquals("专注中", c.otherStatusText())
+        clock = plan.last().start.plusMinutes(1)
+        assertEquals("sleep", c.otherStatus()!!.first.kind)                                  // 做完最后一项就睡
+        // 发给模型的内容: 系统提示里有日程文件, 最后一条用户消息后面贴着实时状态 (不写进聊天记录)
+        val rest1 = plan.first { it.kind == "rest" }
+        clock = rest1.start.plusMinutes(5)
+        c.snapshot = { CommSnap("idle") }
+        val n0 = calls.size
+        script.add("嗯")
+        assertEquals("", c.send("在吗")); wait(c)
+        val (sysmsg, msgs0) = calls[n0]
+        assertTrue("初始起点:6:30" in sysmsg && "联网时间理由列表" in sysmsg)
+        assertTrue(msgs0.last().second, "你此刻的状态" in msgs0.last().second && "休息中" in msgs0.last().second)
+        assertTrue(c.messages.none { "你此刻的状态" in it.api || "你此刻的状态" in it.text })
+        val nxt = plan.first { it.kind == "focus" && it.start > rest1.end }
+        assertTrue("你的专注将在" !in c.noteForTest(rest1.start.plusMinutes(1)))
+        assertTrue("你的专注将在 %02d:%02d 开始".format(nxt.start.hour, nxt.start.minute) in c.noteForTest(nxt.start.minusMinutes(3)))
+        assertTrue("每轮专注 100 分钟" in c.noteForTest(firstFocus.start.plusMinutes(20)) && "已经 20 分钟" in c.noteForTest(firstFocus.start.plusMinutes(20)))
+        // 联合行动之后休息结束落在循环里: 立即开始专注 (T 之前是休息, 之后马上专注)
+        val plan2 = Routine.planBetween(spec, LocalDateTime.of(2027, 6, 2, 5, 0), LocalDateTime.of(2027, 6, 3, 5, 0), seed)
+        val rs = plan2.first { it.kind == "rest" }
+        val tj = rs.start.plusMinutes(12)
+        c.jointRestForTest(tj, rs.start)
+        clock = tj.plusMinutes(1)
+        assertTrue(c.otherStatus()!!.first.kind == "focus" && c.otherStatus()!!.second > tj)
+        c.jointClearForTest()
+        // 数据: 只给已经发生的 (实时算), 存盘; 好几天没调用就按规则补齐
+        clock = LocalDateTime.of(2027, 6, 5, 10, 20)
+        for (tag in listOf("timer", "log", "calendar", "stats", "net")) assertTrue(tag, c.routineInfo(tag).isNotEmpty())
+        val log = c.routineInfo("log")
+        assertTrue(log, log.startsWith("【整点记录·今天】") && "  10:00" !in log && "  09:00" in log)
+        val tm = c.routineInfo("timer")
+        assertTrue(tm, "现在" in tm && "总计" in tm && "目前状态:" in tm)
+        assertTrue("2027-06-06" !in c.routineInfo("calendar"))                               // 还没发生的不给
+        c.flush()
+        assertTrue(File(dir, "routine_${c.pid}.json").isFile)                                // 数据存盘
+        clock = LocalDateTime.of(2027, 6, 9, 15, 5)                                          // 4 天没人调用
+        val info = c.routineInfo("log")
+        assertTrue(info, "  14:00" in info)
+        c.flush()
+        val c2 = comm(dir, File(td, "p"))
+        c2.reloadSchedule("test")
+        assertTrue("存档读回来", c2.routineInfo("stats").contains("【统计·合约记录 最近完成的】"))
+        val stats = c2.routineInfo("stats")
+        assertTrue("【统计·窗口 2027-06 · DESKTOP-CLAUDIA】" in stats && "【统计·联网理由 2027-06】" in stats)
+        for (banned in listOf("持久战", "无言为真", "通道阻塞", "细化规范", "乐理之灾", "未知变量")) assertFalse(banned, banned in stats.substringAfter("【统计·合约记录"))
+        assertTrue(Routine.bannedIds(spec).none { it in c.opTermsForTest() })                // 对方发起联合行动也不选这些词条
+        // 要资料: 她自己的数据 (OIT 算出的), 不是空白模板
+        val restDay = Routine.planBetween(spec, LocalDateTime.of(2027, 6, 9, 8, 0), LocalDateTime.of(2027, 6, 9, 23, 0), seed).first { it.kind == "rest" }
+        clock = restDay.start.plusMinutes(5)
+        script.add("[refuse to reply][log]"); script.add("好")
+        val n1 = calls.size
+        assertEquals("", c.send("今天做了什么")); wait(c)
+        val ic = calls[n1 + 1].second.last().second
+        assertTrue(ic, "你自己的 OIT 数据" in ic && "【整点记录·今天】" in ic && "<HH>" !in ic && "格式模板" !in ic)
+        c.flush(); c2.flush()
+        // 改日程文件 → 弹"修改人设"; 聊天清的是它的人设
+        c.checkPersonaChanges()
+        File(td, "p/Claudia_routine.txt").appendText("\n")
+        val chg = c.checkPersonaChanges()
+        assertEquals("Claudia_routine.txt", chg!!.name)
+        c.resolvePersonaChange("Claudia_routine.txt", true)
+        // 旧版 (没有日程文件) 的 Claudia 升级: 没改过的换成新版 + 日程文件
+        val up = File(td, "up").also { it.mkdirs() }
+        val upp = File(td, "upp").also { it.mkdirs() }
+        File(upp, "Claudia.txt").writeText(BuiltinPersonas.CLAUDIA_PREV5)
+        File(up, "comm_config.json").writeText("""{"seeded":true,"assistant_seeded":true,"persona":"Claudia.txt","claudia_migrated":true}""")
+        val cu = comm(up, upp)
+        assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).trim(), cu.readPersona("Claudia.txt"))
+        assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE).trim(), cu.readPersona("Claudia_routine.txt"))   // 升级时补上日程文件
+        cu.reloadSchedule("test")
+        assertNotNull(cu.routineInfo("timer"))
+    }
+}

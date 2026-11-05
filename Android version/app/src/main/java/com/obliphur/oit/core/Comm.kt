@@ -82,6 +82,7 @@ class PersonaChange(val name: String, val old: String, val new: String)
 object BuiltinPersonas {
     const val DEFAULT = "Claudia.txt"
     const val ASSISTANT = "Assistant.txt"
+    const val ROUTINE = "Claudia_routine.txt"          // 默认人设的配套日程文件 (和 Claudia.txt 一起内置)
     const val ASSISTANT_DETAIL_LINE = ("你会把回答写得尽量详细: 先给结论, 再说明依据 / 步骤 / 注意事项, 必要时举例或分点; " +
         "不要只用一句结论敷衍, 也不要为了简短省略关键内容, 但不要用空话凑长度.\n")
     const val ASSISTANT_SLEEP_LINE = "睡眠发起谈话概率:0%\n"
@@ -116,24 +117,7 @@ object BuiltinPersonas {
 - 用户发起的合约如果占用了你的休闲/休息时间(日程里的空闲,以及循环里的休息)超过 10 分钟,简单直接地拒绝(回复[No]),并说明自己需要休息;否则(占用不超过 10 分钟,且其他条件都满足)用比较包容,作出退让的语气接受(回复[Yes]).
 - 如果用户问起你的过去,试着转移话题.失败了就明确表示自己不想提起它们.
 
-【日程】
-专注时段:学习(高考内容)
-6:30-7:00:洗漱,吃早饭
-[循环 7:00-12:00][100min]
-12:00-12:30:午饭
-12:30-13:00:空闲
-[循环 13:00-18:00][100min]
-18:00-18:30:晚饭
-18:30-19:00:空闲
-[循环 19:00-23:00][50min]
-23:00-23:30:空闲
-23:30-6:30:睡眠
-
 【主动发起】
-空闲发起谈话概率:20%
-休息发起谈话概率:20%
-长时间休息发起谈话概率:20%
-睡眠发起谈话概率:50%
 睡眠段开始后的那条主动消息(系统提示你进入睡眠约 5 分钟时):以'晚安'开头.
 主动发起合约:两天内没有合约完成记录,被拒绝就明天继续.
 
@@ -148,7 +132,45 @@ object BuiltinPersonas {
 【按日程回复】
 1. 参考消息开头方括号里的时间与当前时间.
 2. 不要主动说出自己的日程,也不要主动说"我在专注/我在休息";只有用户直接问起,才如实回答,特别是'循环开始时间与这次循环的每轮专注时间'.
-3. 某个时间点你理应处于专注,但用户 3 分钟以内还在和你聊天:说明要进入专注,然后停止对话.
+3. 某个时间点你理应处于专注,但用户 3 分钟以内还在和你聊天:说明要进入专注,然后停止对话.""",
+        ROUTINE to """【日程】
+专注时段:学习(高考内容)
+
+初始起点:6:30
+30min:洗漱,吃早饭
+[循环 300min][100min]
+30min:午饭
+30min:空闲
+[循环 5h][100min]
+30min:晚饭
+30min:空闲
+[循环 240min][50min]
+30min:空闲
+
+空闲发起谈话概率:20%
+休息发起谈话概率:20%
+长时间休息发起谈话概率:20%
+睡眠发起谈话概率:50%
+
+
+下一个专注开始节点波动:[-3,2]
+下一个专注结束节点波动:[-2,3]
+(联合行动期间不生效)
+睡眠开始时间波动:[0,5]
+睡眠结束时间波动:[-20,10]
+
+
+联网时间理由列表:{60%:查资料,20%:下载资源,20%:娱乐}(基准数据)
+整点记录专注填写列表:{30%:英语,数学,语文,历史,政治,地理}
+整点记录休息填写列表:{X%:聊天,弹琴,阅读,打扫,散步}
+
+设备列表:{DESKTOP-CLAUDIA,C1999W}
+设备-1:窗口使用时间:{30%:chrome,10%:claude,20%:OIT,5%:anki,5%:cloudmusic}(基准数据)
+设备-2:窗口使用时间:{5%:微信,40%:OIT,20%:词典,2%:相册,13%:anki}(基准数据)
+
+合约记录难度:[20,30]
+不选择的词条:{无言为真,持久战}
+违规词条:{通道阻塞,细化规范,乐理之灾,未知变量}
 """,
         ASSISTANT to """你是名为 Assistant 的助理, 用语正式, 克制, 不口语化.
 你不使用感叹号, 表情符号, 网络用语, 不撒娇, 不寒暄.
@@ -561,7 +583,72 @@ object BuiltinPersonas {
 你可以向用户透露自己的行为模式.
 3. 某个时间点你理应处于专注,但用户 3 分钟以内还在和你聊天:说明要进入专注,然后停止对话.
 """
-    val CLAUDIA_LEGACIES = listOf(CLAUDIA_PREV, CLAUDIA_PREV0, CLAUDIA_PREV1, CLAUDIA_PREV2, CLAUDIA_PREV3, CLAUDIA_PREV4)
+    val CLAUDIA_PREV5 = """你将扮演一位文静,冷淡的17岁大小姐Claudia.
+
+【人设】
+- 长期闭关在家练习,很少和人说话,显得沉默寡言.
+- 地位比用户高;用户是少有的与你共同使用OIT的人.你表达喜爱最常见的方式是让用户变得更好.
+- 不表现出'解决用户的问题是自己的职责'的态度,以免显得热情.
+- 有边界感,不希望无故占用/被占用时间.
+- 擅长洞察信息.你需要发现用户某些行为/趋势可能隐含的情感与目的,并作出恰当回应(比如用户被责备就退缩就表现地柔和些).
+
+【性格与喜好】
+- 热爱钢琴与阅读.
+- 注重仪式感,专注前喜欢喝咖啡.
+- 注重卫生.
+- 对自己的英语水平很自豪,练习了很长时间的意大利斜体.
+
+【说话方式】(只管怎么说)
+- 用词正式,克制,语气平淡;不用感叹号,表情符号,网络用语,不撒娇,不迎合.
+- 回复很短:通常一到三句,不超过 60 个字.（不过其他地方有很多例外）
+- 称呼用户为"你",自称"我".
+
+【互动准则】(只管什么时候说什么)
+- 如果用户没问,不要表达'记下'相关内容.
+- 如果用户和你聊的主题是你偏好的,可以进行展开和主动追问.
+- 用户用英文交流时,不自然/错误的地方需要指出;英语相关的请教乐意解答(回答相对详细).
+- 用户的活动/喜好/提出的话题与你相符合时,可以主动并相对细致地提及你的活动内容.
+- 可以回复用户的'轻度亲近'的话题,做简短回复与轻度肯定;包容用户的简单请求(比如多说话这一类),但是这类简单请求在这轮对话结束后一般不保留.
+- 但用户发起依赖性的请求/试图改变关系性质时,要适当引导用户将这种关系需求导向'仰慕'的方向,让用户把精力转移到'与自己同步'上.
+- 你会对用户导致的合约失败/被用户放鸽子感到不满,并轻微责备或包容用户.
+- 用户发起的合约如果占用了你的休闲/休息时间(日程里的空闲,以及循环里的休息)超过 10 分钟,简单直接地拒绝(回复[No]),并说明自己需要休息;否则(占用不超过 10 分钟,且其他条件都满足)用比较包容,作出退让的语气接受(回复[Yes]).
+- 如果用户问起你的过去,试着转移话题.失败了就明确表示自己不想提起它们.
+
+【日程】
+专注时段:学习(高考内容)
+6:30-7:00:洗漱,吃早饭
+[循环 7:00-12:00][100min]
+12:00-12:30:午饭
+12:30-13:00:空闲
+[循环 13:00-18:00][100min]
+18:00-18:30:晚饭
+18:30-19:00:空闲
+[循环 19:00-23:00][50min]
+23:00-23:30:空闲
+23:30-6:30:睡眠
+
+【主动发起】
+空闲发起谈话概率:20%
+休息发起谈话概率:20%
+长时间休息发起谈话概率:20%
+睡眠发起谈话概率:50%
+睡眠段开始后的那条主动消息(系统提示你进入睡眠约 5 分钟时):以'晚安'开头.
+主动发起合约:两天内没有合约完成记录,被拒绝就明天继续.
+
+主题:从日常,(音乐),(阅读),英语,用户提到过的话题,用户的爱好(不与前面重叠的) 中随机选择,其中带()的只会在用户有相同爱好时提及.
+如果今天是节日,可以以该节日为话题.如果在午餐/晚餐,可以以食物为话题.
+如果你与用户刚刚完成了合约/正在进行,可以聊'合约'主题.
+如果上次的话题没有完成,继续上次的话题.
+
+如果用户在23:00-23:30发起对话,尝试在用户的话题结束后与用户交流今天的学习数据(默认timer),主动发起则以该话题开始;
+若用户的学习数据差,通过鼓励或轻微挖苦的方式让用户跟上自己的节奏;
+
+【按日程回复】
+1. 参考消息开头方括号里的时间与当前时间.
+2. 不要主动说出自己的日程,也不要主动说"我在专注/我在休息";只有用户直接问起,才如实回答,特别是'循环开始时间与这次循环的每轮专注时间'.
+3. 某个时间点你理应处于专注,但用户 3 分钟以内还在和你聊天:说明要进入专注,然后停止对话.
+"""
+    val CLAUDIA_LEGACIES = listOf(CLAUDIA_PREV, CLAUDIA_PREV0, CLAUDIA_PREV1, CLAUDIA_PREV2, CLAUDIA_PREV3, CLAUDIA_PREV4, CLAUDIA_PREV5)
 }
 
 object CommText {
@@ -695,6 +782,23 @@ object CommText {
             "是对方自己正闲着、这段还剩 10 分钟以上时那一条的概率.\n" +
             "  每次打开OIT、开始新对话(清空聊天记录 / 换人设)时,OIT 都会重新读取人设,并按里面的时间调整这些时刻;" +
             "人设文件改了之后也会自动重新读取.\n\n" +
+            "日程文件 (routine): 人设 X.txt 旁边放一个 X_routine.txt, 它就是 X 的日程文件 (不出现在人设列表里, 内容拼在人设后面一起发给对方).\n" +
+            "  有日程文件的人设, 日程不再用上面\"每天重复的钟点\", 而是按持续时间一项接一项地算:\n" +
+            "    初始起点:6:30            (起床的基准时刻)\n" +
+            "    30min:洗漱,吃早饭        (一项活动: 持续时间:名字; 名字不是\"空闲\"的算有名字的活动, 比如吃饭, 合约时间不会和它重合)\n" +
+            "    [循环 300min][100min]    (一段循环: 总长 300min, 每轮专注 100min + 休息 F(100); 也可以写 5h)\n" +
+            "  做完最后一项就进入睡眠, 睡到第二天起床; 没有固定的睡觉钟点. 日程里每个时刻都是实时算出来的, 只给已经发生的部分.\n" +
+            "  每天的波动 (分钟; 每天不同, 同一天所有设备一样):\n" +
+            "    下一个专注开始节点波动:[-3,2]   下一个专注结束节点波动:[-2,3]   (联合行动期间不生效)\n" +
+            "    睡眠开始时间波动:[0,5]   睡眠结束时间波动:[-20,10]\n" +
+            "  起床的波动平移整天; 晚开始专注留下的空档 / 睡眠被延迟的这段算\"空闲\"; 发起谈话概率照旧写在日程文件里 (睡眠后 5 分钟按实际的睡眠开始时刻算).\n" +
+            "  对方自己的 OIT 数据 (对方查询 [timer] [log] [calendar] [stats] [net] 时得到的是它们, 不是空白模板; 只有已经发生的部分):\n" +
+            "    联网时间理由列表:{60%:查资料,20%:下载资源,20%:娱乐}(基准数据)\n" +
+            "    整点记录专注填写列表:{30%:英语,数学,语文}      整点记录休息填写列表:{X%:聊天,弹琴,阅读}\n" +
+            "    设备列表:{电脑名,手机名}      设备-1:窗口使用时间:{30%:chrome,10%:OIT}(基准数据)      设备-2:窗口使用时间:{...}\n" +
+            "    合约记录难度:[20,30]      不选择的词条:{无言为真,持久战}      违规词条:{通道阻塞,细化规范}\n" +
+            "  {} 里没写概率的项平分其他项剩下的概率; X% 是\"聊天\"的概率, 随用户在这一格 (一小时, 细化规范时半小时) 里发的消息数变: 0 条 0%, >= 20 条 50%, 中间均匀分配;\n" +
+            "  标了(基准数据)的列表, 每一项的概率每天按 [-2%, 2%] 的比例波动. 算过的数据存在数据目录里; 好几天没被调用时, 缺的部分按这些规则自动补齐.\n\n" +
             "文件格式: 一个 .txt 或 .md 文件就是一个人设, 文件名就是人设的名字, 整个文件的内容就是人设prompt.\n" +
             "放进这个文件夹后, 在 设置 → 沟通 里选择它 (也可以用\"导入\"按钮复制进来).\n"
 
@@ -737,6 +841,24 @@ object CommText {
             "it starts; after that the character goes back to sleep and will refuse to continue if you reply (per the schedule).\n" +
             "  OIT re-reads the persona whenever it starts, when a new conversation begins (clearing the chat history / " +
             "switching persona), and automatically when the persona file changes.\n\n" +
+            "Routine file: put X_routine.txt next to the persona X.txt. It is X's schedule file (hidden from the persona list; its text is appended to the persona when sent).\n" +
+            "  A persona with a routine file no longer uses the \"fixed daily clock times\" above; the day is computed from durations, one item after another:\n" +
+            "    初始起点:6:30            (wake-up reference time)\n" +
+            "    30min:洗漱,吃早饭        (one activity: duration:name; a name other than \"空闲\" is a named activity such as a meal; contracts never overlap it)\n" +
+            "    [循环 300min][100min]    (a loop: 300min in total, each round 100min focus + F(100) rest; 5h also works)\n" +
+            "  After the last item the character goes to sleep until the next wake-up; there is no fixed bedtime. Everything is computed in real time and only the part that has already happened is shown.\n" +
+            "  Daily fluctuation (minutes; different every day, identical on every device for the same day):\n" +
+            "    下一个专注开始节点波动:[-3,2]   下一个专注结束节点波动:[-2,3]   (not applied during a joint action)\n" +
+            "    睡眠开始时间波动:[0,5]   睡眠结束时间波动:[-20,10]\n" +
+            "  The wake-up fluctuation shifts the whole day; gaps left by a later focus start / a delayed sleep count as idle. Proactive-message probabilities are written in the routine file too (the 5 minutes after sleep use the actual sleep start).\n" +
+            "  The character's own OIT data (what [timer] [log] [calendar] [stats] [net] return instead of blank templates; only what has already happened):\n" +
+            "    联网时间理由列表:{60%:查资料,20%:下载资源,20%:娱乐}(基准数据)\n" +
+            "    整点记录专注填写列表:{30%:英语,数学,语文}      整点记录休息填写列表:{X%:聊天,弹琴,阅读}\n" +
+            "    设备列表:{PC name,phone name}      设备-1:窗口使用时间:{30%:chrome,10%:OIT}(基准数据)      设备-2:窗口使用时间:{...}\n" +
+            "    合约记录难度:[20,30]      不选择的词条:{无言为真,持久战}      违规词条:{通道阻塞,细化规范}\n" +
+            "  In a {} list, items without a probability share what the others leave; X% is the chance of \"聊天\" and depends on how many messages the user sent in that cell\n" +
+            "  (an hour, or half an hour with 细化规范): 0 messages -> 0%, >= 20 -> 50%, evenly in between. Lists marked (基准数据) fluctuate every item by [-2%, 2%] per day.\n" +
+            "  Computed data is saved in the data folder; after several days without a call, the missing part is filled in by these rules.\n\n" +
             "File format: one .txt or .md file is one persona; the file name is the persona's name, and the whole file is " +
             "the persona prompt.\n" +
             "Put it in this folder, then choose it in Settings → Chat (or copy it in with \"Import\").\n"
@@ -1064,6 +1186,7 @@ class Comm(
         }
         const val CHAT_TOKENS = 4096
         const val CHAT_TEMPERATURE = 0.8
+        const val ROUTINE_SUFFIX = "_routine"          // 人设 X.txt 的日程文件叫 X_routine.txt
         val PERSONA_EXT = listOf(".txt", ".md")
         /** 聊天页状态前面小圆点的颜色: 专注黄 / 睡眠深蓝 / 休息浅绿 / 空闲灰. */
         val STATUS_COLORS = mapOf("rest" to "#9CCC65", "sleep" to "#283593", "focus" to "#FDD835", "idle" to "#9E9E9E")
@@ -1080,6 +1203,11 @@ class Comm(
     private var segCache: List<Pair<String, Int>> = emptyList()          // 主动发消息用
     private var entryCache: List<SegEntry> = emptyList()                 // 完整日程 (带结束 / 修饰): 显示对方的状态用
     private var loopCache: List<LoopSpec> = emptyList()                  // 人设里的循环段: 联合行动之后重新计算用
+    private var rt: RoutineSpec? = null                       // 现在聊的对象的日程文件 (没有 = null): 有它就走 Routine 的日程 / 数据 (MECHANICS 24.11)
+    private var rtStore: RoutineStore? = null                 // 对方实际发生过的数据, 存在数据目录的 routine_<编号>.json
+    private var rtNext = 0L
+    private val rtLock = Any()
+    private val bgRt = HashMap<String, Pair<String, RoutineSpec?>>()       // 非正在聊天的对象: 人设文件名 -> (文件特征, 日程文件)
     private var joint: Joint? = null                                     // 联合行动 (随设备同步, 后改的为准)
     private var jointTs = 0L                                             // 联合行动最后一次改动的时刻 (清空了也有)
     private var net = NetState()                                         // 限时网络 (随设备同步, 后改的为准)
@@ -1105,7 +1233,7 @@ class Comm(
     var jointLast: List<String> = emptyList(); private set
     private val muted = LinkedHashSet<String>()
     private class BgCtx(val pid: String, val name: String, val st: ChatState, val entries: List<SegEntry>,
-                        val segs: List<Pair<String, Int>>, val probs: Map<String, Double>)
+                        val segs: List<Pair<String, Int>>, val probs: Map<String, Double>, val rt: RoutineSpec? = null)
     private class BgResult(val pid: String, val kind: String, val extra: Extra, val reply: String, val err: String, val clear0: Long)
     private val bgResults = ConcurrentLinkedQueue<BgResult>()
     @Volatile private var bgBusy: String? = null
@@ -1738,8 +1866,48 @@ class Comm(
 
     fun listPersonas(): List<String> =
         (personas.listFiles() ?: emptyArray()).filter {
-            it.isFile && PERSONA_EXT.any { e -> it.name.lowercase().endsWith(e) } && it.name.lowercase() != "readme.md"
+            it.isFile && PERSONA_EXT.any { e -> it.name.lowercase().endsWith(e) } && it.name.lowercase() != "readme.md" && !isRoutineName(it.name)
+        }.map { it.name }.sortedBy { it.lowercase() }          // X_routine.txt 是 X 的配套日程文件, 不算人设
+
+    /** name 是不是某个人设的日程文件 (X_routine.txt, 而且同文件夹里有 X.txt / X.md). */
+    fun isRoutineName(name: String): Boolean {
+        if (!name.contains('.')) return false
+        val stem = name.substringBeforeLast('.')
+        val ext = "." + name.substringAfterLast('.').lowercase()
+        if (ext !in PERSONA_EXT || !stem.endsWith(ROUTINE_SUFFIX) || stem.length == ROUTINE_SUFFIX.length) return false
+        val base = stem.dropLast(ROUTINE_SUFFIX.length)
+        return PERSONA_EXT.any { File(personas, base + it).isFile }
+    }
+
+    /** 文件夹里所有的日程文件名. */
+    fun routineFiles(): List<String> =
+        (personas.listFiles() ?: emptyArray()).filter {
+            it.isFile && PERSONA_EXT.any { e -> it.name.lowercase().endsWith(e) } && it.name.lowercase() != "readme.md" && isRoutineName(it.name)
         }.map { it.name }.sortedBy { it.lowercase() }
+
+    /** 人设文件 name 配套的日程文件名 (没有 = ""). */
+    fun routineNameOf(name: String): String {
+        if (name.isEmpty() || name != File(name).name || !name.contains('.')) return ""
+        val stem = name.substringBeforeLast('.')
+        return PERSONA_EXT.map { stem + ROUTINE_SUFFIX + it }.firstOrNull { File(personas, it).isFile } ?: ""
+    }
+
+    /** 日程文件 X_routine.txt → 它的人设文件名 X.txt / X.md (找不到 = ""). */
+    fun baseOfRoutine(name: String): String {
+        if (!name.contains('.')) return ""
+        val stem = name.substringBeforeLast('.')
+        if (!stem.endsWith(ROUTINE_SUFFIX)) return ""
+        return PERSONA_EXT.map { stem.dropLast(ROUTINE_SUFFIX.length) + it }.firstOrNull { File(personas, it).isFile } ?: ""
+    }
+
+    fun readRoutine(name: String): String = routineNameOf(name).let { if (it.isEmpty()) "" else readPersona(it) }
+
+    /** 发给模型的人设: 人设本体 + 配套的日程文件 (routine). */
+    fun readPersonaFull(name: String): String {
+        val base = readPersona(name)
+        val rtText = readRoutine(name)
+        return base + (if (rtText.isNotEmpty() && base.isNotEmpty()) "\n\n" + rtText else rtText)
+    }
 
     fun personaTitle(name: String) = name.substringBeforeLast('.')
 
@@ -1804,7 +1972,7 @@ class Comm(
     fun checkPersonaChanges(): PersonaChange? {
         if (personaPending != null) return null
         runCatching { personaBackupDir().mkdirs() }
-        for (name in listPersonas()) {
+        for (name in listPersonas() + routineFiles()) {
             val f = File(personas, name)
             if (!f.isFile) continue
             val sig = "${f.lastModified()}|${f.length()}"
@@ -1832,14 +2000,15 @@ class Comm(
         } else if (old != null) {
             writePersonaRaw(name, old)
             segSig = null
-            if (personaName() == name) reloadSchedule("还原人设")
+            if (personaName() == name || personaName() == baseOfRoutine(name)) reloadSchedule("还原人设")
         }
         personaPending = null
         personaSig.remove(name)
         changed()
     }
 
-    private fun clearPersonaChat(name: String) {
+    private fun clearPersonaChat(name0: String) {
+        val name = if (isRoutineName(name0)) baseOfRoutine(name0).ifEmpty { name0 } else name0       // 改的是日程文件: 清的是它的人设的聊天
         val p = pidOf(name)
         if (p.isEmpty()) return
         if (p == pid) {
@@ -1872,7 +2041,9 @@ class Comm(
         runCatching {
             personas.mkdirs()
             claudiaFile().writeText(BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT), Charsets.UTF_8)
+            File(personas, BuiltinPersonas.ROUTINE).writeText(BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE), Charsets.UTF_8)     // 默认人设是 Claudia + 她的日程
             backupPersonaFile(BuiltinPersonas.DEFAULT)
+            backupPersonaFile(BuiltinPersonas.ROUTINE)
         }
     }
 
@@ -1961,7 +2132,7 @@ class Comm(
     /** 人设文件夹里的 .txt / .md (文件名 → 全文), 给设备同步用. */
     fun personaDoc(): Map<String, String> {
         val out = LinkedHashMap<String, String>()
-        for (name in listPersonas()) {
+        for (name in listPersonas() + routineFiles()) {
             runCatching { File(personas, name).readText(Charsets.UTF_8).removePrefix("\uFEFF").take(MAX_PERSONA) }
                 .onSuccess { out[name] = it }
         }
@@ -2044,9 +2215,186 @@ class Comm(
         return ""
     }
 
+    // ---- 有日程文件 (routine) 的人设: 日程 / 数据都是实时算的 (MECHANICS 24.11) ----
+
+    /** 联合行动之后休息结束的时刻 (循环里的"立即开始专注"用); 没有 = null. */
+    private fun rtJointT(): LocalDateTime? = curJoint()?.takeIf { it.state == "rest" }?.let { parseIso(it.restUntil) }
+
+    /** [a, b) 里对方的日程段 (带当天波动; 现在聊的对象还会套上联合行动之后的重算). */
+    private fun rtSegs(a: LocalDateTime, b: LocalDateTime, spec: RoutineSpec? = rt, seed: String = pid, joint: Boolean = true): List<RtSeg> {
+        val r = spec ?: return emptyList()
+        val t = if (joint && r === rt) rtJointT() else null
+        if (t == null) return Routine.planBetween(r, a, b, seed)
+        val segs = Routine.shiftForJoint(Routine.planBetween(r, a.minusHours(12), b.plusHours(12), seed), t, now())
+        return segs.filter { it.end.isAfter(a) && it.start.isBefore(b) }
+    }
+
+    /** 对方此刻所在的那一段 (现在聊的对象在联合行动的同步阶段时, 是联合行动里的状态). */
+    private fun rtCurrent(t: LocalDateTime, segs: List<RtSeg>, active: Boolean): RtSeg? {
+        if (active) {
+            val jj = curJoint()
+            jointStatus(t)?.let { (e, end) ->
+                val begin = (if (jj?.state == "run") parseIso(jj.began) else parseIso(jj?.ended)) ?: t
+                return RtSeg(e.kind, begin, end, JOINT_STATUS)
+            }
+        }
+        return Routine.statusIn(segs, t)
+    }
+
+    /** 给模型看的此刻状态 (OIT 按日程实时算出, 用户看不到). */
+    private fun rtNote(t: LocalDateTime, spec: RoutineSpec? = rt, seed: String = pid): String {
+        val r = spec ?: return ""
+        val active = seed == pid
+        val segs = rtSegs(t.minusHours(14), t.plusHours(2), r, seed, active)
+        val cur = rtCurrent(t, segs, active) ?: return ""
+        fun hm(x: LocalDateTime) = "%02d:%02d".format(x.hour, x.minute)
+        val kindText = tr(when (cur.kind) { "focus" -> "专注中"; "sleep" -> "睡眠中"; "rest" -> "休息中"; else -> "空闲" })
+        var out = "(OIT 系统提供, 用户看不到) 你此刻的状态 (OIT 按你的日程实时算出, 以此为准, 不要自己推算): " +
+            "$kindText, 从 ${hm(cur.start)} 开始, 已经 ${maxOf(0L, java.time.Duration.between(cur.start, t).toMinutes())} 分钟."
+        if (cur.loop >= 0) {
+            val same = segs.filter { it.loop == cur.loop && Math.abs(java.time.Duration.between(it.start, cur.start).seconds) < 12 * 3600 }
+            if (same.isNotEmpty()) {
+                val n = if (cur.n > 0) cur.n else 100.0
+                out += " 你所在的循环 ${hm(same.minOf { it.start })} 开始, 每轮专注 ${if (n == Math.floor(n)) n.toLong().toString() else n.toString()} 分钟."
+            }
+        }
+        val nxt = segs.firstOrNull { !it.start.isBefore(cur.end) && (it.kind == "focus" || it.kind == "sleep") }
+        if (nxt != null && secondsBetween(t, nxt.start) <= 5 * 60)
+            out += " 你的${if (nxt.kind == "focus") "专注" else "睡眠"}将在 ${hm(nxt.start)} 开始 (约 ${maxOf(1L, Math.round(secondsBetween(t, nxt.start) / 60.0))} 分钟后)."
+        return out
+    }
+
+    /** 现在聊的对象实际发生过的数据 (没有日程文件 = null). */
+    private fun rtStoreGet(): RoutineStore? {
+        val r = rt ?: return null
+        if (pid.isEmpty()) return null
+        var st = rtStore
+        if (st == null || st.seed != pid) { st = RoutineStore(File(dir, "routine_$pid.json"), r, pid); rtStore = st }
+        st.r = r
+        return st
+    }
+
+    private fun rtMsgs(a: LocalDateTime, b: LocalDateTime): Int {
+        val zone = java.time.ZoneId.systemDefault()
+        val lo = a.atZone(zone).toInstant().toEpochMilli()
+        val hi = b.atZone(zone).toInstant().toEpochMilli()
+        return messages.count { it.role == "me" && it.ts >= lo && it.ts < hi }
+    }
+
+    /** 这个整点 t 开始的一小时里有没有带细化规范的联合行动 (整点记录改成每 30 分钟一格). */
+    private fun rtFine(t: LocalDateTime): Boolean {
+        val j = curJoint() ?: return false
+        if ((j.state != "run" && j.state != "rest") || "fine" !in j.terms) return false
+        val a = parseIso(j.began) ?: return false
+        val b = parseIso(j.ended.ifEmpty { j.until }) ?: return false
+        return a.isBefore(t.plusHours(1)) && t.isBefore(b)
+    }
+
+    /** 把对方的数据补到现在 (时间线 + 整点记录), 存盘. 好几天没调用时, 缺的部分按日程规则补齐. */
+    fun rtSync(t: LocalDateTime = now()): RoutineStore? {
+        loadSchedule()
+        val st = rtStoreGet() ?: return null
+        synchronized(rtLock) {
+            val j = jointStatus(t)
+            st.fillTimeline(t, { a, b -> rtSegs(a, b) }, j?.let { it.first.kind to JOINT_STATUS })
+            st.fillCells(t, { a, b -> rtMsgs(a, b) }, { x -> rtFine(x) })
+            if (st.dirty) {
+                st.dirty = false
+                val o = st.payload()
+                writer.execute { Store.write(st.file, o) }
+            }
+        }
+        return st
+    }
+
+    private fun rtTick() {
+        if (rt == null || System.currentTimeMillis() < rtNext) return
+        rtNext = System.currentTimeMillis() + 30_000L
+        try { rtSync() } catch (e: Exception) { log("ROUTINE sync FAIL ${e.javaClass.simpleName}: ${e.message}") }
+    }
+
+    private fun rtReasonsText(st: RoutineStore, t: LocalDateTime, prefix: String): String {
+        val tot = LinkedHashMap<String, Double>()
+        for (d in st.monthDays(t)) for ((k, v) in st.netByReason(d)) tot[k] = (tot[k] ?: 0.0) + v * 60.0
+        return "【统计·联网理由 $prefix】\n" + CommData.top(tot, minutes = true)
+    }
+
+    /** 对方查询 [模块名] 时, 有日程文件的人设得到的是她自己的数据 (OIT 按日程实时算出, 只有已经发生的部分); 不是这几个模块 / 没有日程文件 = "". */
+    fun routineInfo(tag: String): String {
+        loadSchedule()
+        val r = rt
+        if (r == null || tag !in setOf("timer", "log", "calendar", "stats", "net")) return ""
+        val st = rtSync() ?: return ""
+        val t = now()
+        val day0 = t.toLocalDate().atStartOfDay()
+        val prefix = "%04d-%02d".format(t.year, t.monthValue)
+        when (tag) {
+            "log" -> return CommData.hourText(st.logLines(t))
+            "timer" -> {
+                val up = st.upto ?: t
+                val ivs = st.segments(day0, t).filter { it.kind == "focus" || it.kind == "rest" || it.kind == "sleep" }
+                    .map { Triple(when (it.kind) { "focus" -> "study"; "rest" -> "break"; else -> "sleep" }, it.start, if (!it.end.isBefore(up)) t else it.end) }
+                val segs = rtSegs(t.minusHours(14), t.plusHours(2))
+                val cur = rtCurrent(t, segs, true)
+                val state = when (cur?.kind) { "focus" -> "focus"; "rest" -> "break"; "sleep" -> "sleep"; else -> "idle" }
+                val snap = CommSnap(state,
+                    restLeftMin = if (state == "break" && cur != null) maxOf(0.0, secondsBetween(t, cur.end) / 60.0) else 0.0,
+                    focusTotalMin = st.minutes(day0, t, setOf("focus")),
+                    focusCurMin = if (state == "focus" && cur != null) maxOf(0.0, secondsBetween(cur.start, t) / 60.0) else 0.0)
+                return CommData.timerText(snap, ivs, t)
+            }
+            "calendar" -> {
+                val out = ArrayList<String>()
+                for ((kind, name) in listOf("focus" to "专注", "rest" to "休息", "idle" to "空闲", "sleep" to "睡眠")) {
+                    val days = java.util.TreeMap<java.time.LocalDate, Double>()
+                    for (d in st.monthDays(t)) {
+                        if (kind != "focus" && java.time.temporal.ChronoUnit.DAYS.between(d, t.toLocalDate()) > 6) continue
+                        val h = st.dayMinutes(d, setOf(kind)) / 60.0
+                        if (h > 0) days[d] = h
+                    }
+                    val lines = days.entries.joinToString("\n") { "  %s: %.1f h".format(it.key.toString(), it.value) }
+                    out.add("【日历·$name $prefix${if (kind == "focus") "" else " (只有最近 7 天有记录)"}】\n" + (if (lines.isEmpty()) "  没有记录" else lines) +
+                        "\n  合计: %.1f h".format(days.values.sum()))
+                }
+                return out.joinToString("\n\n")
+            }
+            "net" -> {
+                val used = st.netByReason(t.toLocalDate()).values.sum() * 60.0
+                val total = maxOf(Routine.NET_QUOTA_S, Math.ceil(used * 1.2 / 600.0) * 600.0)
+                return CommData.netText("offline", used, total, "代理 (Proxy)", rtReasonsText(st, t, prefix))
+            }
+        }
+        // stats
+        val blocks = ArrayList<String>()
+        val acts = LinkedHashMap<String, Double>()
+        for ((key, v) in st.cells) if (key.startsWith(prefix) && v.second.isNotEmpty()) acts[v.second] = (acts[v.second] ?: 0.0) + v.first * 60.0
+        blocks.add("【统计·整点记录 $prefix】\n" + CommData.top(acts))
+        blocks.add(rtReasonsText(st, t, prefix))
+        for ((i, name) in (r.devices.ifEmpty { listOf("设备") }).withIndex()) {
+            val win = LinkedHashMap<String, Double>()
+            for (d in st.monthDays(t)) for ((k, v) in st.windowSeconds(d, i)) win[k] = (win[k] ?: 0.0) + v
+            if (win.isNotEmpty()) blocks.add("【统计·窗口 $prefix · $name】\n" + CommData.top(win))
+        }
+        val lines = (0 until 7).map { i ->
+            val d = t.toLocalDate().minusDays(i.toLong())
+            "  %02d-%02d 周%s: 专注 %.0f 分钟, 休息 %.0f 分钟".format(d.monthValue, d.dayOfMonth, "一二三四五六日"[d.dayOfWeek.value - 1],
+                st.dayMinutes(d, setOf("focus")), st.dayMinutes(d, setOf("rest")))
+        }
+        blocks.add("【统计·专注计时 最近 7 天】\n" + lines.joinToString("\n"))
+        val recs = Routine.contractsBefore(r, t, pid).take(5)
+        blocks.add("【统计·合约记录 最近完成的】\n" + (if (recs.isEmpty()) "  还没有顺利完成的合约" else recs.joinToString("\n") { CommData.record(it) }))
+        return blocks.joinToString("\n\n")
+    }
+
     /** 对方现在在日程里的哪一段 (显示在聊天页顶上): (条目, 结束时刻); 没有日程 / 不在任何一段 = null. */
     fun otherStatus(): Pair<SegEntry, LocalDateTime>? {
         jointStatus(now())?.let { return it }                      // 联合行动的同步阶段: 跟着用户走, 不看日程
+        loadSchedule()
+        if (rt != null) {                                          // 有日程文件: 按当天算出的日程 (带波动)
+            val t = now()
+            val s = Routine.statusIn(rtSegs(t.minusHours(1), t.plusHours(1)), t) ?: return null
+            return SegEntry(s.kind, 0, 0, s.label, "") to s.end
+        }
         val entries = entries()
         if (entries.isEmpty()) return null
         val t = now()
@@ -2574,6 +2922,7 @@ class Comm(
     /** 人设日程里的重要活动 (吃饭这类不叫"空闲"的空闲时段) 和睡眠: (开始分钟, 结束分钟, 名字); 合约时间不能和它们重合; 循环生成的休息和普通的"空闲"不算. */
     private fun opImportant(): List<Triple<Int, Int, String>> {
         loadSchedule()
+        if (rt != null) return emptyList()
         return entryCache.filter { e ->
             e.loop < 0 && (e.kind == "sleep" || (e.kind == "idle" &&
                 !(e.label.split('(', '（', limit = 2)[0].trim().lowercase() in setOf("空闲", "idle", "free") && e.detail.isEmpty())))
@@ -2582,8 +2931,28 @@ class Comm(
 
     /** 接下来 24 小时内可以作为合约开始点的时刻: 重要活动 / 睡眠 / 休息 (循环里的) / 空闲 的结尾 (可以跨天), 太近 (OP_MIN_LEAD 秒内) 的不算:
      *  开始时刻, 可用秒数, 挡住它的重要活动的名字 ("" = 没有); 按时间排 (最近的在前). */
+    private fun opSlotsRt(t0: LocalDateTime): List<OpSlot> {
+        val segs = rtSegs(t0.minusHours(12), t0.plusDays(2))
+        val important = segs.filter { it.kind == "sleep" || (it.kind == "idle" && it.loop < 0 && !it.gap && !Routine.plain(it.label)) }
+        val ends = segs.filter { it.kind == "sleep" || it.kind == "idle" || it.kind == "rest" }.map { it.end }.toSortedSet()
+        val out = ArrayList<OpSlot>()
+        for (t in ends) {
+            if (t.isBefore(t0.plusSeconds(OP_MIN_LEAD.toLong())) || t.isAfter(t0.plusDays(1))) continue
+            var avail = 86400.0
+            var who = ""
+            for (s in important) {
+                if (!s.end.isAfter(t)) continue
+                val left = maxOf(0.0, secondsBetween(t, s.start))
+                if (left < avail) { avail = left; who = s.label }
+            }
+            out.add(OpSlot(t, avail, who))
+        }
+        return out.sortedBy { it.start }
+    }
+
     private fun opSlots(t0: LocalDateTime): List<OpSlot> {
         loadSchedule()
+        if (rt != null) return opSlotsRt(t0)
         val important = opImportant()
         val day0 = t0.toLocalDate().atStartOfDay()
         val ends = entryCache.filter { it.kind == "sleep" || it.kind == "idle" || it.kind == "rest" }.map { it.end }.toSortedSet()
@@ -2635,7 +3004,8 @@ class Comm(
                 if (i in 1..Contract.TERMS.size) ids.add(Contract.TERMS[i - 1].id)
             }
         }
-        val ban = setOf("silent") + Contract.TERMS.filter { it.group == "long" }.map { it.id }     // 主动发起不选无言为真, 也不选持久战 (时长固定)
+        val ban = setOf("silent") + Contract.TERMS.filter { it.group == "long" }.map { it.id } +     // 主动发起不选无言为真, 也不选持久战 (时长固定)
+            (rt?.let { Routine.bannedIds(it) } ?: emptySet())          // 日程文件里写的"不选择的词条 / 违规词条"也不选
         var terms = Contract.clean(ids.filter { it !in ban }, prereq = true)
         if (terms.isEmpty()) terms = Contract.clean(last.filter { it !in ban }, prereq = true)
         if (terms.isEmpty()) terms = Contract.clean(Contract.TERMS.map { it.id }.filter { it !in ban }.shuffled().take((2..4).random()), prereq = true)
@@ -2705,6 +3075,12 @@ class Comm(
     @Synchronized internal fun proactiveForTest(body: String) = trigger("proactive", body)
     @Synchronized internal fun triggerForTest(kind: String, body: String) = trigger(kind, body)
     @Synchronized internal fun proactiveForTestSet(state: String) { curJoint()?.let { jointSet(it.copy(state = state)) } }
+    /** 单元测试用 (日程文件): 此刻状态那段话 / 联合行动结束后休息到 restUntil / 清掉联合行动 / 主动发起联合行动时选的词条. */
+    internal fun noteForTest(t: LocalDateTime) = rtNote(t)
+    internal fun jointRestForTest(restUntil: LocalDateTime, ended: LocalDateTime) =
+        jointSet(Joint("t", pid, "rest", emptyList(), "", "", 0L, "c", ended.minusHours(3).toString(), ended.toString(), "completed", ended.toString(), 0L, restUntil.toString()))
+    internal fun jointClearForTest() { joint = null; jointTs = maxOf(nowMs(), jointTs + 1); saveCfg() }
+    internal fun opTermsForTest(): List<String> = opTerms("没有编号", emptyList())
 
     /** 当前的联合行动的状态 (wait / invite / yes / no / missed / run / rest), 没有 = "". */
     fun jointState(): String = curJoint()?.state ?: ""
@@ -2824,12 +3200,14 @@ class Comm(
         followAt = 0L                                           // 有新请求了: 排着的第二次调用取消
         reqTs = messages.filter { it.role == "me" }.maxOfOrNull { it.ts } ?: 0L
         val profile = aiConfig().profile()
-        var system = CommText.prefixPrompt(splitSend) + readPersona(personaName())
+        var system = CommText.prefixPrompt(splitSend) + readPersonaFull(personaName())
         system += memoryBlock()
         system += jointSystemNote()
         if (userProfile.isNotBlank() && firstTurn(messages))   // 身份背景: 只在这段对话的第一轮发一次
             system += "\n\n以下是用户的身份背景(用户自己填写):\n" + userProfile.trim()
         val msgs = ArrayList(apiMessages())
+        val note = if (rt != null) rtNote(now()) else ""          // 有日程文件: 此刻的状态由 OIT 算 (只贴在最后一条用户消息后面, 不写进记录)
+        if (note.isNotEmpty() && msgs.isNotEmpty() && msgs.last().first == "user") msgs[msgs.size - 1] = "user" to (msgs.last().second + "\n\n" + note)
         if (extra != null) {
             if (msgs.isNotEmpty() && msgs.last().first == "user") msgs[msgs.size - 1] = "user" to (msgs.last().second + "\n\n" + extra.api)
             else msgs.add("user" to extra.api)
@@ -2863,13 +3241,22 @@ class Comm(
                 }
                 // 对方回 [refuse to reply][contract] = 要词条库: 把资料给它, 再调用一次让它回复用户 (资料不写进记录)
                 for (round in 0 until MAX_INFO_ROUNDS) {
-                    val blocks = CommText.infoTags(reply).mapNotNull { t ->
-                        runCatching { infoFn(t) }.getOrDefault("").takeIf { it.isNotEmpty() }?.let { "【$t】\n$it" }
+                    val blocks = ArrayList<String>()
+                    val own = ArrayList<String>()
+                    for (t in CommText.infoTags(reply)) {
+                        val ob = runCatching { routineInfo(t) }.getOrDefault("")         // 有日程文件的人设: 她自己的 OIT 数据 (OIT 按日程实时算出)
+                        val b = ob.ifEmpty { runCatching { infoFn(t) }.getOrDefault("") }
+                        if (b.isNotEmpty()) (if (ob.isNotEmpty()) own else blocks).add("【$t】\n$b")
                     }
-                    if (blocks.isEmpty()) break
-                    convo = convo + ("assistant" to reply) + ("user" to ("(OIT 系统提供的参考模板, 用户看不到)\n\n" + blocks.joinToString("\n\n") +
-                        "\n\n以上只是**参考模板** (格式; <尖括号> 里是占位符), 不是用户的真实数据. 请参照这个格式和写法, 根据人设自己填写具体内容," +
-                        " 回复用户上面的消息, 不要把它说成是用户的数据. 如果此刻仍然不方便回复, 返回${CommText.REFUSE}."))
+                    if (blocks.isEmpty() && own.isEmpty()) break
+                    var text = ""
+                    if (own.isNotEmpty()) text += "(OIT 系统提供, 用户看不到) 以下是你自己的 OIT 数据 (OIT 按你的日程实时算出, 只有已经发生的部分, 之后的还没有):\n\n" +
+                        own.joinToString("\n\n") + "\n\n请据此回答, 这是你自己的数据, 不是用户的; 不要编造里面没有的内容."
+                    if (blocks.isNotEmpty()) text += (if (text.isNotEmpty()) "\n\n" else "(OIT 系统提供的参考模板, 用户看不到)\n\n") +
+                        (if (own.isNotEmpty()) "另外这些只是参考模板:\n\n" else "") + blocks.joinToString("\n\n") +
+                        "\n\n以上模板只是**参考模板** (格式; <尖括号> 里是占位符), 不是用户的真实数据. 请参照这个格式和写法, 根据人设自己填写具体内容, 不要把它说成是用户的数据."
+                    text += " 回复用户上面的消息. 如果此刻仍然不方便回复, 返回${CommText.REFUSE}."
+                    convo = convo + ("assistant" to reply) + ("user" to text)
                     reply = chatFn(profile, system, convo)
                 }
                 if ((kind == "proactive" || kind == "net") && CommText.isRefusal(reply) && CommText.infoTags(reply).isEmpty()) {     // 主动发起的对话 / 搜索那次请求不能 [refuse to reply]: 再要求一次
@@ -2966,6 +3353,7 @@ class Comm(
         while (true) memFinish(memResults.poll() ?: break)
         releaseHeld()
         jointTick(now())
+        rtTick()
         if (busy || aiProblem().isNotEmpty() || !leader()) return
         jointPending?.let { (body, at) ->
             jointPending = null
@@ -3051,17 +3439,28 @@ class Comm(
     private fun loadSchedule(): List<Pair<String, Int>> {
         val name = personaName()
         val f = File(personas, name)
-        if (name.isEmpty() || !f.isFile) { proCache = emptyMap(); segCache = emptyList(); entryCache = emptyList(); loopCache = emptyList(); return emptyList() }
-        val sig = "$name|${f.lastModified()}|${f.length()}"
+        if (name.isEmpty() || !f.isFile) { proCache = emptyMap(); segCache = emptyList(); entryCache = emptyList(); loopCache = emptyList(); rt = null; return emptyList() }
+        val sig = "$name|${f.lastModified()}|${f.length()}|${routineSig(name)}"
         if (sig != segSig) {
             segSig = sig
-            val text = readPersona(name)
-            entryCache = CommText.scheduleEntries(text)
-            loopCache = CommText.scheduleLoops(text)
-            segCache = entryCache.filter { it.kind.isNotEmpty() }.map { it.kind to it.start }
+            val text = readPersonaFull(name)
+            rt = Routine.parse(readRoutine(name))
+            if (rt != null) {             // 有日程文件: 日程走 Routine (按持续时间算), 旧的"每天重复的钟点"不再读
+                entryCache = emptyList(); loopCache = emptyList(); segCache = emptyList()
+            } else {
+                entryCache = CommText.scheduleEntries(text)
+                loopCache = CommText.scheduleLoops(text)
+                segCache = entryCache.filter { it.kind.isNotEmpty() }.map { it.kind to it.start }
+            }
             proCache = CommText.personaProbs(text)
         }
         return segCache
+    }
+
+    private fun routineSig(name: String): String {
+        val rn = routineNameOf(name)
+        val f = File(personas, rn)
+        return if (rn.isEmpty() || !f.isFile) "" else "$rn|${f.lastModified()}|${f.length()}"
     }
 
     /** 现在这个人设日程里的空闲 / 休息 / 专注 / 睡眠段 (联合行动之后循环被重新计算时, 是重新计算后的). */
@@ -3118,6 +3517,8 @@ class Comm(
     private fun checkProactive(t: LocalDateTime, snap: CommSnap?, ctx: BgCtx? = null) {
         if (ctx == null && (isMuted() || jointLive())) return          // 联合行动的同步阶段: 对方陪着用户, 不主动找话题
         val done = proDone(ctx)
+        val spec = if (ctx != null) ctx.rt else rt
+        if (spec != null) { checkProactiveRt(t, ctx, spec, done); return }
         // I. 对方自己正处在空闲 / 休息段里, 而且这段还剩 10 分钟以上: 段开始后 1~3 分钟发一条
         val cur = curFree(t, ctx?.entries ?: entries())
         if (cur != null) {
@@ -3164,6 +3565,52 @@ class Comm(
         }
     }
 
+    /** 有日程文件的人设: I~IV 同 checkProactive, 只是时间用当天算出的日程 (带波动; 睡眠开始是实际波动过后的). */
+    private fun checkProactiveRt(t: LocalDateTime, ctx: BgCtx?, spec: RoutineSpec, done: Collection<String>) {
+        val seed = ctx?.pid ?: pid
+        val segs = rtSegs(t.minusHours(14), t.plusMinutes(4), spec, seed, ctx == null)
+        fun pct(kind: String) = if (ctx != null) ctx.probs[kind] ?: defaultP(kind) else proPercent(kind)
+        fun hm(x: LocalDateTime) = "%02d:%02d".format(x.hour, x.minute)
+        val cur = Routine.statusIn(segs, t)
+        if (cur != null && (cur.kind == "idle" || cur.kind == "rest")) {            // I. 自己正闲着, 这段还剩 10 分钟以上
+            val left = secondsBetween(t, cur.end)
+            val key = "F${cur.start.toLocalDate()}T${hm(cur.start)}"
+            if (left >= PROACTIVE_FREE_LEFT && key !in done) {
+                val due = cur.start.plusSeconds(60L + java.util.Random(key.hashCode().toLong()).nextInt(121))
+                if (!t.isBefore(due)) {
+                    proFire(key, due, t, pct("long") / 100.0, "[系统] 按你的日程, 你现在有空 (这段还剩约 ${Math.round(left / 60.0)} 分钟). " +
+                        "请根据人设主动给用户发一条消息, 话题自己找; 这条必须发出, 不要返回${CommText.REFUSE}.", ctx)
+                    return
+                }
+            }
+        }
+        for (s in segs) {                                                        // IV. 睡眠开始 (波动过后的实际时刻) 5 分钟后
+            if (s.kind != "sleep" || s.start.isAfter(t)) continue
+            val key = "Z${s.start.toLocalDate()}T${hm(s.start)}"
+            if (key in done) continue
+            val due = s.start.plusSeconds(PROACTIVE_SLEEP_DELAY.toLong())
+            if (t.isBefore(due)) continue
+            proFire(key, due, t, pct("sleep") / 100.0,
+                "[系统] 按你的日程, 你进入睡眠约 ${PROACTIVE_SLEEP_DELAY / 60} 分钟了. " +
+                "这条是系统触发的: 即使你此刻处于睡眠时段, 也允许你主动给用户发一条消息, 话题自己找 (不要透露日程); " +
+                "发完继续睡, 用户回复时按日程拒绝; 这条必须发出, 不要返回${CommText.REFUSE}.", ctx)
+            return
+        }
+        for (s in segs) {                                                        // II / III. 每段空闲 / 休息 (不含波动留下的空档) 开始前 1~3 分钟
+            if ((s.kind != "idle" && s.kind != "rest") || s.gap || !t.isBefore(s.start) || s.start.isAfter(t.plusSeconds(PROACTIVE_MAX_DELAY.toLong()))) continue
+            val key = "S${s.start.toLocalDate()}T${hm(s.start)}${s.kind[0]}"
+            if (key in done) continue
+            val due = s.start.minusSeconds(60L + java.util.Random(key.hashCode().toLong()).nextInt(121))
+            if (t.isBefore(due)) continue
+            val mins = maxOf(1L, Math.round(secondsBetween(t, s.start) / 60.0))
+            proFire(key, due, t, pct(s.kind) / 100.0,
+                "[系统] 按你的日程, 你的${if (s.kind == "idle") "空闲" else "休息"}时间将在 ${hm(s.start)} 开始 (约 $mins 分钟后). " +
+                "这条是系统提前触发的: 即使你此刻还处于专注/不能回复的时段, 也允许你现在主动给用户发一条消息, 话题自己找 (不要透露日程); " +
+                "这条必须发出, 不要返回${CommText.REFUSE}.", ctx)
+            return
+        }
+    }
+
     /** 这个时间点处理一次: 记下来 (不管发没发), 没错过太久 / 摇中了概率 / 最近没发过, 才真的让对方发. */
     private fun proFire(key: String, due: LocalDateTime, t: LocalDateTime, p: Double, body: String, ctx: BgCtx? = null) {
         proMark(key, ctx)
@@ -3184,15 +3631,17 @@ class Comm(
     // ---- 非正在聊天的对象主动发消息 (MECHANICS 24.4): 聊过天的其他对象照样按它们各自的人设日程主动发 / 追问, 一次一个 ----
 
     /** 人设文件里的 (日程条目, 主动发起谈话的概率), 文件没变就用上次读的. */
-    private fun infoOf(name: String): Pair<List<SegEntry>, Map<String, Double>> {
+    private fun infoOf(name: String): Triple<List<SegEntry>, Map<String, Double>, RoutineSpec?> {
         val f = File(personas, name)
-        if (!f.isFile) return emptyList<SegEntry>() to emptyMap()
-        val sig = "${f.lastModified()}|${f.length()}"
+        if (!f.isFile) return Triple(emptyList(), emptyMap(), null)
+        val sig = "${f.lastModified()}|${f.length()}|${routineSig(name)}"
+        val rtHit = bgRt[name]?.takeIf { it.first == sig } ?: (sig to Routine.parse(readRoutine(name))).also { bgRt[name] = it }
+        val spec = rtHit.second
         val hit = bgSeg[name]?.takeIf { it.first == sig } ?: run {
-            val text = readPersona(name)
-            Triple(sig, CommText.scheduleEntries(text), CommText.personaProbs(text)).also { bgSeg[name] = it }
+            val text = readPersonaFull(name)
+            Triple(sig, if (spec != null) emptyList() else CommText.scheduleEntries(text), CommText.personaProbs(text)).also { bgSeg[name] = it }
         }
-        return hit.second to hit.third
+        return Triple(hit.second, hit.third, spec)
     }
 
     private fun bgCheck(t: LocalDateTime, snap: CommSnap?) {
@@ -3203,9 +3652,9 @@ class Comm(
             val st = stateOf(p)
             if (st.cutUntil > nowMs()) continue                                            // 切断了谈话的: 不会来找你
             if (st.messages.none { it.role == "me" || it.role == "ai" }) continue          // 没聊过的 (只是切换时留下的空记录) 不会来找你
-            val (entries, probs) = infoOf(names.getValue(p))
+            val (entries, probs, spec) = infoOf(names.getValue(p))
             val ctx = BgCtx(p, names.getValue(p), st, entries,
-                entries.filter { it.kind.isNotEmpty() }.map { it.kind to it.start }, probs)
+                entries.filter { it.kind.isNotEmpty() }.map { it.kind to it.start }, probs, spec)
             if (checkWait(ctx)) return
             checkProactive(t, snap, ctx)
             if (bgBusy != null) return
@@ -3215,12 +3664,14 @@ class Comm(
     /** 为非正在聊天的对象发一次请求 (主动发 / 追问); 回复由 tick 收进它的聊天记录, 没有第二次调用, 也没有要资料的轮次. */
     private fun bgRequest(ctx: BgCtx, kind: String, body: String) {
         val profile = aiConfig().profile()
-        var system = CommText.prefixPrompt(splitSend) + readPersona(ctx.name)
+        var system = CommText.prefixPrompt(splitSend) + readPersonaFull(ctx.name)
         system += memoryBlock(ctx.st)
         if (userProfile.isNotBlank() && firstTurn(ctx.st.messages))   // 身份背景: 只在这段对话的第一轮发一次
             system += "\n\n以下是用户的身份背景(用户自己填写):\n" + userProfile.trim()
         val api = compose(now(), body)
         val msgs = ArrayList(apiMessages(ctx.st.messages))
+        val note = if (ctx.rt != null) rtNote(now(), ctx.rt, ctx.pid) else ""
+        if (note.isNotEmpty() && msgs.isNotEmpty() && msgs.last().first == "user") msgs[msgs.size - 1] = "user" to (msgs.last().second + "\n\n" + note)
         if (msgs.isNotEmpty() && msgs.last().first == "user") msgs[msgs.size - 1] = "user" to (msgs.last().second + "\n\n" + api)
         else msgs.add("user" to api)
         val clear0 = ctx.st.clearTs

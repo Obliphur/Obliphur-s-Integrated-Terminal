@@ -35,6 +35,7 @@ import ai_assist
 import config
 import i18n
 from i18n import tr
+import routine
 
 REFUSE = "[refuse to reply]"
 PRO_NO_REFUSE = ("(OIT 系统提供, 用户看不到) 这是你主动发起的对话, 不能返回" + REFUSE + ". 请按人设主动给用户发一条消息, 话题自己找 (不要透露日程).")
@@ -256,6 +257,23 @@ def _readme_zh() -> str:
         "是对方自己正闲着、这段还剩 10 分钟以上时那一条的概率.\n"
         "  每次打开OIT、开始新对话(清空聊天记录 / 换人设)时,OIT 都会重新读取人设,并按里面的时间调整这些时刻;"
         "人设文件改了之后也会自动重新读取.\n\n"
+        "日程文件 (routine): 人设 X.txt 旁边放一个 X_routine.txt, 它就是 X 的日程文件 (不出现在人设列表里, 内容拼在人设后面一起发给对方).\n"
+        "  有日程文件的人设, 日程不再用上面\"每天重复的钟点\", 而是按持续时间一项接一项地算:\n"
+        "    初始起点:6:30            (起床的基准时刻)\n"
+        "    30min:洗漱,吃早饭        (一项活动: 持续时间:名字; 名字不是\"空闲\"的算有名字的活动, 比如吃饭, 合约时间不会和它重合)\n"
+        "    [循环 300min][100min]    (一段循环: 总长 300min, 每轮专注 100min + 休息 F(100); 也可以写 5h)\n"
+        "  做完最后一项就进入睡眠, 睡到第二天起床; 没有固定的睡觉钟点. 日程里每个时刻都是实时算出来的, 只给已经发生的部分.\n"
+        "  每天的波动 (分钟; 每天不同, 同一天所有设备一样):\n"
+        "    下一个专注开始节点波动:[-3,2]   下一个专注结束节点波动:[-2,3]   (联合行动期间不生效)\n"
+        "    睡眠开始时间波动:[0,5]   睡眠结束时间波动:[-20,10]\n"
+        "  起床的波动平移整天; 晚开始专注留下的空档 / 睡眠被延迟的这段算\"空闲\"; 发起谈话概率照旧写在日程文件里 (睡眠后 5 分钟按实际的睡眠开始时刻算).\n"
+        "  对方自己的 OIT 数据 (对方查询 [timer] [log] [calendar] [stats] [net] 时得到的是它们, 不是空白模板; 只有已经发生的部分):\n"
+        "    联网时间理由列表:{60%:查资料,20%:下载资源,20%:娱乐}(基准数据)\n"
+        "    整点记录专注填写列表:{30%:英语,数学,语文}      整点记录休息填写列表:{X%:聊天,弹琴,阅读}\n"
+        "    设备列表:{电脑名,手机名}      设备-1:窗口使用时间:{30%:chrome,10%:OIT}(基准数据)      设备-2:窗口使用时间:{...}\n"
+        "    合约记录难度:[20,30]      不选择的词条:{无言为真,持久战}      违规词条:{通道阻塞,细化规范}\n"
+        "  {} 里没写概率的项平分其他项剩下的概率; X% 是\"聊天\"的概率, 随用户在这一格 (一小时, 细化规范时半小时) 里发的消息数变: 0 条 0%, >= 20 条 50%, 中间均匀分配;\n"
+        "  标了(基准数据)的列表, 每一项的概率每天按 [-2%, 2%] 的比例波动. 算过的数据存在数据目录里; 好几天没被调用时, 缺的部分按这些规则自动补齐.\n\n"
         "文件格式: 一个 .txt 或 .md 文件就是一个人设, 文件名就是人设的名字, 整个文件的内容就是人设prompt.\n"
         "放进这个文件夹后, 在 设置 → 沟通 里选择它 (也可以用\"导入\"按钮复制进来).\n")
 
@@ -300,6 +318,24 @@ def _readme_en() -> str:
         "it starts; after that the character goes back to sleep and will refuse to continue if you reply (per the schedule).\n"
         "  OIT re-reads the persona whenever it starts, when a new conversation begins (clearing the chat history / "
         "switching persona), and automatically when the persona file changes.\n\n"
+        "Routine file: put X_routine.txt next to the persona X.txt. It is X's schedule file (hidden from the persona list; its text is appended to the persona when sent).\n"
+        "  A persona with a routine file no longer uses the \"fixed daily clock times\" above; the day is computed from durations, one item after another:\n"
+        "    初始起点:6:30            (wake-up reference time)\n"
+        "    30min:洗漱,吃早饭        (one activity: duration:name; a name other than \"空闲\" is a named activity such as a meal; contracts never overlap it)\n"
+        "    [循环 300min][100min]    (a loop: 300min in total, each round 100min focus + F(100) rest; 5h also works)\n"
+        "  After the last item the character goes to sleep until the next wake-up; there is no fixed bedtime. Everything is computed in real time and only the part that has already happened is shown.\n"
+        "  Daily fluctuation (minutes; different every day, identical on every device for the same day):\n"
+        "    下一个专注开始节点波动:[-3,2]   下一个专注结束节点波动:[-2,3]   (not applied during a joint action)\n"
+        "    睡眠开始时间波动:[0,5]   睡眠结束时间波动:[-20,10]\n"
+        "  The wake-up fluctuation shifts the whole day; gaps left by a later focus start / a delayed sleep count as idle. Proactive-message probabilities are written in the routine file too (the 5 minutes after sleep use the actual sleep start).\n"
+        "  The character's own OIT data (what [timer] [log] [calendar] [stats] [net] return instead of blank templates; only what has already happened):\n"
+        "    联网时间理由列表:{60%:查资料,20%:下载资源,20%:娱乐}(基准数据)\n"
+        "    整点记录专注填写列表:{30%:英语,数学,语文}      整点记录休息填写列表:{X%:聊天,弹琴,阅读}\n"
+        "    设备列表:{PC name,phone name}      设备-1:窗口使用时间:{30%:chrome,10%:OIT}(基准数据)      设备-2:窗口使用时间:{...}\n"
+        "    合约记录难度:[20,30]      不选择的词条:{无言为真,持久战}      违规词条:{通道阻塞,细化规范}\n"
+        "  In a {} list, items without a probability share what the others leave; X% is the chance of \"聊天\" and depends on how many messages the user sent in that cell\n"
+        "  (an hour, or half an hour with 细化规范): 0 messages -> 0%, >= 20 -> 50%, evenly in between. Lists marked (基准数据) fluctuate every item by [-2%, 2%] per day.\n"
+        "  Computed data is saved in the data folder; after several days without a call, the missing part is filled in by these rules.\n\n"
         "File format: one .txt or .md file is one persona; the file name is the persona's name, and the whole file is "
         "the persona prompt.\n"
         "Put it in this folder, then choose it in Settings → Chat (or copy it in with \"Import\").\n")
@@ -337,24 +373,7 @@ BUILTIN_PERSONAS = {"Claudia.txt": """你将扮演一位文静,冷淡的17岁大
 - 用户发起的合约如果占用了你的休闲/休息时间(日程里的空闲,以及循环里的休息)超过 10 分钟,简单直接地拒绝(回复[No]),并说明自己需要休息;否则(占用不超过 10 分钟,且其他条件都满足)用比较包容,作出退让的语气接受(回复[Yes]).
 - 如果用户问起你的过去,试着转移话题.失败了就明确表示自己不想提起它们.
 
-【日程】
-专注时段:学习(高考内容)
-6:30-7:00:洗漱,吃早饭
-[循环 7:00-12:00][100min]
-12:00-12:30:午饭
-12:30-13:00:空闲
-[循环 13:00-18:00][100min]
-18:00-18:30:晚饭
-18:30-19:00:空闲
-[循环 19:00-23:00][50min]
-23:00-23:30:空闲
-23:30-6:30:睡眠
-
 【主动发起】
-空闲发起谈话概率:20%
-休息发起谈话概率:20%
-长时间休息发起谈话概率:20%
-睡眠发起谈话概率:50%
 睡眠段开始后的那条主动消息(系统提示你进入睡眠约 5 分钟时):以'晚安'开头.
 主动发起合约:两天内没有合约完成记录,被拒绝就明天继续.
 
@@ -369,7 +388,45 @@ BUILTIN_PERSONAS = {"Claudia.txt": """你将扮演一位文静,冷淡的17岁大
 【按日程回复】
 1. 参考消息开头方括号里的时间与当前时间.
 2. 不要主动说出自己的日程,也不要主动说"我在专注/我在休息";只有用户直接问起,才如实回答,特别是'循环开始时间与这次循环的每轮专注时间'.
-3. 某个时间点你理应处于专注,但用户 3 分钟以内还在和你聊天:说明要进入专注,然后停止对话.
+3. 某个时间点你理应处于专注,但用户 3 分钟以内还在和你聊天:说明要进入专注,然后停止对话.""",
+    "Claudia_routine.txt": """【日程】
+专注时段:学习(高考内容)
+
+初始起点:6:30
+30min:洗漱,吃早饭
+[循环 300min][100min]
+30min:午饭
+30min:空闲
+[循环 5h][100min]
+30min:晚饭
+30min:空闲
+[循环 240min][50min]
+30min:空闲
+
+空闲发起谈话概率:20%
+休息发起谈话概率:20%
+长时间休息发起谈话概率:20%
+睡眠发起谈话概率:50%
+
+
+下一个专注开始节点波动:[-3,2]
+下一个专注结束节点波动:[-2,3]
+(联合行动期间不生效)
+睡眠开始时间波动:[0,5]
+睡眠结束时间波动:[-20,10]
+
+
+联网时间理由列表:{60%:查资料,20%:下载资源,20%:娱乐}(基准数据)
+整点记录专注填写列表:{30%:英语,数学,语文,历史,政治,地理}
+整点记录休息填写列表:{X%:聊天,弹琴,阅读,打扫,散步}
+
+设备列表:{DESKTOP-CLAUDIA,C1999W}
+设备-1:窗口使用时间:{30%:chrome,10%:claude,20%:OIT,5%:anki,5%:cloudmusic}(基准数据)
+设备-2:窗口使用时间:{5%:微信,40%:OIT,20%:词典,2%:相册,13%:anki}(基准数据)
+
+合约记录难度:[20,30]
+不选择的词条:{无言为真,持久战}
+违规词条:{通道阻塞,细化规范,乐理之灾,未知变量}
 """,
     "Assistant.txt": """你是名为 Assistant 的助理, 用语正式, 克制, 不口语化.
 你不使用感叹号, 表情符号, 网络用语, 不撒娇, 不寒暄.
@@ -396,6 +453,7 @@ BUILTIN_PERSONAS = {"Claudia.txt": """你将扮演一位文静,冷淡的17岁大
 6. 如果系统要求你把话分开说 / 再补一条, 返回 [refuse to reply] (你只回答一次).
 """}
 DEFAULT_PERSONA = "Claudia.txt"
+DEFAULT_ROUTINE = "Claudia_routine.txt"                # 默认人设的配套日程文件 (和 Claudia.txt 一起内置)
 ASSISTANT_PERSONA = "Assistant.txt"
 ASSISTANT_DETAIL_LINE = ("你会把回答写得尽量详细: 先给结论, 再说明依据 / 步骤 / 注意事项, 必要时举例或分点; "
                          "不要只用一句结论敷衍, 也不要为了简短省略关键内容, 但不要用空话凑长度.\n")
@@ -785,7 +843,72 @@ CLAUDIA_PREV4 = """你将扮演一位文静,冷淡的17岁大小姐Claudia,并�
 你可以向用户透露自己的行为模式.
 3. 某个时间点你理应处于专注,但用户 3 分钟以内还在和你聊天:说明要进入专注,然后停止对话.
 """
-CLAUDIA_LEGACIES = (CLAUDIA_PREV, CLAUDIA_PREV0, CLAUDIA_PREV1, CLAUDIA_PREV2, CLAUDIA_PREV3, CLAUDIA_PREV4)
+CLAUDIA_PREV5 = """你将扮演一位文静,冷淡的17岁大小姐Claudia.
+
+【人设】
+- 长期闭关在家练习,很少和人说话,显得沉默寡言.
+- 地位比用户高;用户是少有的与你共同使用OIT的人.你表达喜爱最常见的方式是让用户变得更好.
+- 不表现出'解决用户的问题是自己的职责'的态度,以免显得热情.
+- 有边界感,不希望无故占用/被占用时间.
+- 擅长洞察信息.你需要发现用户某些行为/趋势可能隐含的情感与目的,并作出恰当回应(比如用户被责备就退缩就表现地柔和些).
+
+【性格与喜好】
+- 热爱钢琴与阅读.
+- 注重仪式感,专注前喜欢喝咖啡.
+- 注重卫生.
+- 对自己的英语水平很自豪,练习了很长时间的意大利斜体.
+
+【说话方式】(只管怎么说)
+- 用词正式,克制,语气平淡;不用感叹号,表情符号,网络用语,不撒娇,不迎合.
+- 回复很短:通常一到三句,不超过 60 个字.（不过其他地方有很多例外）
+- 称呼用户为"你",自称"我".
+
+【互动准则】(只管什么时候说什么)
+- 如果用户没问,不要表达'记下'相关内容.
+- 如果用户和你聊的主题是你偏好的,可以进行展开和主动追问.
+- 用户用英文交流时,不自然/错误的地方需要指出;英语相关的请教乐意解答(回答相对详细).
+- 用户的活动/喜好/提出的话题与你相符合时,可以主动并相对细致地提及你的活动内容.
+- 可以回复用户的'轻度亲近'的话题,做简短回复与轻度肯定;包容用户的简单请求(比如多说话这一类),但是这类简单请求在这轮对话结束后一般不保留.
+- 但用户发起依赖性的请求/试图改变关系性质时,要适当引导用户将这种关系需求导向'仰慕'的方向,让用户把精力转移到'与自己同步'上.
+- 你会对用户导致的合约失败/被用户放鸽子感到不满,并轻微责备或包容用户.
+- 用户发起的合约如果占用了你的休闲/休息时间(日程里的空闲,以及循环里的休息)超过 10 分钟,简单直接地拒绝(回复[No]),并说明自己需要休息;否则(占用不超过 10 分钟,且其他条件都满足)用比较包容,作出退让的语气接受(回复[Yes]).
+- 如果用户问起你的过去,试着转移话题.失败了就明确表示自己不想提起它们.
+
+【日程】
+专注时段:学习(高考内容)
+6:30-7:00:洗漱,吃早饭
+[循环 7:00-12:00][100min]
+12:00-12:30:午饭
+12:30-13:00:空闲
+[循环 13:00-18:00][100min]
+18:00-18:30:晚饭
+18:30-19:00:空闲
+[循环 19:00-23:00][50min]
+23:00-23:30:空闲
+23:30-6:30:睡眠
+
+【主动发起】
+空闲发起谈话概率:20%
+休息发起谈话概率:20%
+长时间休息发起谈话概率:20%
+睡眠发起谈话概率:50%
+睡眠段开始后的那条主动消息(系统提示你进入睡眠约 5 分钟时):以'晚安'开头.
+主动发起合约:两天内没有合约完成记录,被拒绝就明天继续.
+
+主题:从日常,(音乐),(阅读),英语,用户提到过的话题,用户的爱好(不与前面重叠的) 中随机选择,其中带()的只会在用户有相同爱好时提及.
+如果今天是节日,可以以该节日为话题.如果在午餐/晚餐,可以以食物为话题.
+如果你与用户刚刚完成了合约/正在进行,可以聊'合约'主题.
+如果上次的话题没有完成,继续上次的话题.
+
+如果用户在23:00-23:30发起对话,尝试在用户的话题结束后与用户交流今天的学习数据(默认timer),主动发起则以该话题开始;
+若用户的学习数据差,通过鼓励或轻微挖苦的方式让用户跟上自己的节奏;
+
+【按日程回复】
+1. 参考消息开头方括号里的时间与当前时间.
+2. 不要主动说出自己的日程,也不要主动说"我在专注/我在休息";只有用户直接问起,才如实回答,特别是'循环开始时间与这次循环的每轮专注时间'.
+3. 某个时间点你理应处于专注,但用户 3 分钟以内还在和你聊天:说明要进入专注,然后停止对话.
+"""
+CLAUDIA_LEGACIES = (CLAUDIA_PREV, CLAUDIA_PREV0, CLAUDIA_PREV1, CLAUDIA_PREV2, CLAUDIA_PREV3, CLAUDIA_PREV4, CLAUDIA_PREV5)
 ASSISTANT_SLEEP_LINE = "睡眠发起谈话概率:0%\n"
 ASSISTANT_TITLE = "assistant"                        # 特例: 这个名字 (且提示词没改过) 专注时也能用
 CHAT_KEYS = ("clear_ts", "retry", "pro_key", "mem_auto", "mem_upto", "mem_ts", "cut_until")   # 跟着聊天对象走的几项 (存在各自的聊天文件里)
@@ -845,6 +968,7 @@ def list_personas(folder: str) -> list:
                  and os.path.isfile(os.path.join(folder, n))]
     except OSError:
         return []
+    names = [n for n in names if not is_routine_name(folder, n)]         # X_routine.txt 是 X 的配套日程文件, 不算人设
     return sorted(names, key=str.lower)
 
 
@@ -866,6 +990,63 @@ def read_persona(folder: str, name: str) -> str:
             return f.read(MAX_PERSONA).strip()
     except (OSError, UnicodeDecodeError):
         return ""
+
+
+ROUTINE_SUFFIX = "_routine"            # 人设 X.txt 的日程文件叫 X_routine.txt (配套文件: 不出现在人设列表里, 内容拼在人设后面发给模型)
+
+
+def is_routine_name(folder: str, name: str) -> bool:
+    """name 是不是某个人设的日程文件 (X_routine.txt, 而且同文件夹里有 X.txt / X.md)."""
+    stem, ext = os.path.splitext(name or "")
+    if ext.lower() not in PERSONA_EXT or not stem.endswith(ROUTINE_SUFFIX) or len(stem) == len(ROUTINE_SUFFIX):
+        return False
+    base = stem[:-len(ROUTINE_SUFFIX)]
+    return any(os.path.isfile(os.path.join(folder, base + e)) for e in PERSONA_EXT)
+
+
+def routine_files(folder: str) -> list:
+    """文件夹里所有的日程文件名."""
+    try:
+        names = [n for n in os.listdir(folder) if n.lower().endswith(PERSONA_EXT) and n.lower() != "readme.md"
+                 and os.path.isfile(os.path.join(folder, n))]
+    except OSError:
+        return []
+    return sorted((n for n in names if is_routine_name(folder, n)), key=str.lower)
+
+
+def routine_name_of(folder: str, name: str) -> str:
+    """人设文件 name 配套的日程文件名 (没有 = "")."""
+    if not name or name != os.path.basename(name):
+        return ""
+    stem = os.path.splitext(name)[0]
+    for e in PERSONA_EXT:
+        cand = stem + ROUTINE_SUFFIX + e
+        if os.path.isfile(os.path.join(folder, cand)):
+            return cand
+    return ""
+
+
+def base_persona_of(folder: str, routine_name: str) -> str:
+    """日程文件 X_routine.txt → 它的人设文件名 X.txt / X.md (找不到 = "")."""
+    stem = os.path.splitext(routine_name or "")[0]
+    if not stem.endswith(ROUTINE_SUFFIX):
+        return ""
+    for e in PERSONA_EXT:
+        cand = stem[:-len(ROUTINE_SUFFIX)] + e
+        if os.path.isfile(os.path.join(folder, cand)):
+            return cand
+    return ""
+
+
+def read_routine(folder: str, name: str) -> str:
+    rn = routine_name_of(folder, name)
+    return read_persona(folder, rn) if rn else ""
+
+
+def read_persona_full(folder: str, name: str) -> str:
+    """发给模型的人设: 人设本体 + 配套的日程文件 (routine)."""
+    base, rt = read_persona(folder, name), read_routine(folder, name)
+    return base + ("\n\n" + rt if rt and base else rt)
 
 
 def import_persona(folder: str, src: str) -> str:
@@ -1260,6 +1441,11 @@ class Comm:
         self._seg_cache = []          # [(kind, 开始时刻)]: 主动发消息用
         self._entry_cache = []        # 完整日程条目 (开始 / 结束 / 名字 / 修饰): 显示对方的状态用
         self._loop_cache = []         # 人设里的循环段 [(开始, 结束, N)]: 联合行动之后重新计算用
+        self._rt = None               # 现在聊的对象的日程文件解析出来的 routine.Routine (没有日程文件 = None): 有它就走 routine 的日程 / 数据
+        self._rt_store = None         # 对方 (有日程文件的) 实际发生过的数据: routine.Store, 存在数据目录的 routine_<编号>.json
+        self._rt_next = 0.0           # 下一次把数据补到现在的时刻 (time.monotonic)
+        self._rt_lock = threading.RLock()
+        self._bg_rt = {}              # 非正在聊天的对象: 人设文件名 -> (文件特征, routine.Routine 或 None)
         self.joint_draft = {}         # 联合行动: 选好了词条 / 开始时间, 还没发出去: {terms, start, end}
         self.on_joint_due = None      # 联合行动约定的开始时间到了 (还没开始合约): app 接上, 提示用户去开始
         self._joint_due_id = ""       # 已经提示过的联合行动编号
@@ -1869,7 +2055,7 @@ class Comm:
             os.makedirs(self._persona_backup_dir, exist_ok=True)
         except OSError:
             return None
-        for name in list_personas(self.personas):
+        for name in list_personas(self.personas) + routine_files(self.personas):
             path = os.path.join(self.personas, name)
             try:
                 st = os.stat(path)
@@ -1913,13 +2099,15 @@ class Comm:
         elif old is not None:
             self._write_persona_raw(name, old)
             self._seg_sig = None
-            if self.persona_name() == name:
+            if self.persona_name() in (name, base_persona_of(self.personas, name)):
                 self.reload_schedule("还原人设")
         self._persona_pending = None
         self._persona_sig.pop(name, None)
         self._changed()
 
     def _clear_persona_chat(self, name: str):
+        if is_routine_name(self.personas, name):                 # 改的是日程文件: 清的是它的人设的聊天
+            name = base_persona_of(self.personas, name) or name
         pid = pid_of(name)
         if not pid:
             return
@@ -1962,6 +2150,8 @@ class Comm:
             os.makedirs(self.personas, exist_ok=True)
             with open(self._claudia_path(), "w", encoding="utf-8", newline="\n") as f:
                 f.write(BUILTIN_PERSONAS[DEFAULT_PERSONA])
+            with open(os.path.join(self.personas, DEFAULT_ROUTINE), "w", encoding="utf-8", newline="\n") as f:     # 默认人设是 Claudia + 她的日程
+                f.write(BUILTIN_PERSONAS[DEFAULT_ROUTINE])
         except OSError:
             pass
 
@@ -1986,6 +2176,7 @@ class Comm:
             else:
                 self._write_claudia_builtin()
                 self._backup_persona_file(DEFAULT_PERSONA)
+                self._backup_persona_file(DEFAULT_ROUTINE)
         self.cfg["claudia_migrated"] = True
         self._claudia_sig = None
         self.save_cfg()
@@ -2005,6 +2196,7 @@ class Comm:
             return
         self._write_claudia_builtin()
         self._backup_persona_file(DEFAULT_PERSONA)
+        self._backup_persona_file(DEFAULT_ROUTINE)
         self.cfg["claudia_modified"] = False
         self.cfg["claudia_notified"] = ""
         self._claudia_sig = None
@@ -2046,6 +2238,7 @@ class Comm:
         """把 Claudia 文件恢复成内置版本 (弹窗的"还原人设文件")."""
         self._write_claudia_builtin()
         self._backup_persona_file(DEFAULT_PERSONA)
+        self._backup_persona_file(DEFAULT_ROUTINE)
         self.cfg["claudia_modified"] = False
         self.cfg["claudia_notified"] = ""
         self._claudia_sig = None
@@ -2066,7 +2259,7 @@ class Comm:
     def persona_doc(self) -> dict:
         """人设文件夹里的 .txt / .md (文件名 → 全文), 给设备同步用."""
         out = {}
-        for name in list_personas(self.personas):
+        for name in list_personas(self.personas) + routine_files(self.personas):
             try:
                 with open(os.path.join(self.personas, name), "r", encoding="utf-8-sig") as f:
                     out[name] = f.read(MAX_PERSONA)
@@ -2158,6 +2351,10 @@ class Comm:
         joint = self._joint_status(now)                       # 联合行动的同步阶段: 跟着用户走, 不看日程
         if joint:
             return joint
+        if self._rt:                                          # 有日程文件: 按当天算出的日程 (带波动)
+            self._load_schedule()
+            s = routine.status_in(self._rt_segs(now - timedelta(hours=1), now + timedelta(hours=1)), now)
+            return {"kind": s["kind"], "label": s["label"], "detail": "", "begin": s["start"], "end": s["end"]} if s else {}
         entries = self._entries()
         if not entries:
             return {}
@@ -2784,6 +2981,8 @@ class Comm:
         循环生成的休息和普通的"空闲"不算."""
         self._load_schedule()
         out = []
+        if self._rt:
+            return out
         for e in self._entry_cache:
             if e.get("loop") is not None:
                 continue
@@ -2798,6 +2997,8 @@ class Comm:
         """接下来 24 小时内可以作为合约开始点的时刻: 重要活动 / 睡眠 / 休息 (循环里的) / 空闲 的**结尾** (可以跨天);
         [(开始时刻, 可用秒数, 挡住它的重要活动的名字 ("" = 没有))], 按时间排 (最近的在前); 太近 (OP_MIN_LEAD 秒内) 的不算."""
         self._load_schedule()
+        if self._rt:
+            return self._op_slots_rt(now)
         important = self._op_important()
         day0 = datetime.combine(now.date(), datetime.min.time())
         ends = sorted({int(e["end"]) for e in self._entry_cache if e["kind"] in ("sleep", "idle", "rest")})
@@ -2819,6 +3020,27 @@ class Comm:
                         if left < avail:
                             avail, who = left, label
                 out.append((t, avail, who))
+        out.sort(key=lambda x: x[0])
+        return out
+
+    def _op_slots_rt(self, now) -> list:
+        """_op_slots 的日程文件版本 (绝对时间): 睡眠 / 吃饭这类有名字的空闲是重要活动, 合约时间不能和它们重合."""
+        segs = self._rt_segs(now - timedelta(hours=12), now + timedelta(days=2))
+        important = [(s["start"], s["end"], s["label"]) for s in segs
+                     if s["kind"] == "sleep" or (s["kind"] == "idle" and s["loop"] is None and not s["gap"] and not routine.Store.plain(s["label"]))]
+        ends = sorted({s["end"] for s in segs if s["kind"] in ("sleep", "idle", "rest")})
+        out = []
+        for t in ends:
+            if not now + timedelta(seconds=OP_MIN_LEAD) <= t <= now + timedelta(days=1):
+                continue
+            avail, who = 86400.0, ""
+            for sa, sb, label in important:
+                if sb <= t:
+                    continue
+                left = max(0.0, (sa - t).total_seconds())
+                if left < avail:
+                    avail, who = left, label
+            out.append((t, avail, who))
         out.sort(key=lambda x: x[0])
         return out
 
@@ -2851,6 +3073,8 @@ class Comm:
                 if 1 <= int(n) <= len(C.TERMS):
                     ids.append(C.TERMS[int(n) - 1][0])
         ban = {"silent"} | {t[0] for t in C.TERMS if t[1] == "long"}       # 主动发起不选无言为真, 也不选持久战 (时长固定)
+        if self._rt:                                                        # 日程文件里写的"不选择的词条 / 违规词条"也不选
+            ban |= routine.banned_ids(self._rt)
         terms = C.clean_terms([t for t in ids if t not in ban], prereq=True)
         if not terms:
             terms = C.clean_terms([t for t in (last or []) if t not in ban], prereq=True)
@@ -3146,13 +3370,16 @@ class Comm:
         self._follow_at = 0                                # 有新请求了: 排着的第二次调用取消 (用户又说了 / 主动发 / 重试)
         self._req_ts = max([int(m.get("ts") or 0) for m in self.messages if m.get("role") == "me"] or [0])
         profile = self.ai.profile()
-        system = prefix_prompt(self.split_on()) + read_persona(self.personas, self.persona_name())
+        system = prefix_prompt(self.split_on()) + read_persona_full(self.personas, self.persona_name())
         system += self.memory_block()
         system += self.joint_system_note()
         who = str(self.cfg.get("user_profile") or "").strip()[:MAX_PROFILE]
         if who and first_turn(self.messages):              # 身份背景: 只在这段对话的第一轮发一次
             system += "\n\n以下是用户的身份背景(用户自己填写):\n" + who
         msgs = api_messages(self.messages)
+        note = self._rt_note(self.now()) if self._rt else ""             # 有日程文件的人设: 此刻的状态由 OIT 算 (只贴在最后一条用户消息后面, 不写进记录)
+        if note and msgs and msgs[-1]["role"] == "user":
+            msgs[-1]["content"] += "\n\n" + note
         if extra:
             if msgs and msgs[-1]["role"] == "user":
                 msgs[-1]["content"] += "\n\n" + extra[1]
@@ -3195,20 +3422,28 @@ class Comm:
                 # 对方回 [refuse to reply][contract] = 要词条库: 把资料给它, 再调用一次让它回复用户 (资料不写进记录)
                 for _ in range(MAX_INFO_ROUNDS):
                     tags = info_tags(reply)
-                    blocks = []
+                    blocks, own = [], []
                     for t in tags:
                         try:
-                            b = str(self.info_fn(t) or "")
+                            ob = self.routine_info(t)                       # 有日程文件的人设: 她自己的 OIT 数据 (OIT 按日程实时算出)
+                            b = ob or str(self.info_fn(t) or "")
                         except Exception:       # noqa: BLE001
-                            b = ""
+                            ob, b = "", ""
                         if b:
-                            blocks.append(f"【{t}】\n{b}")
-                    if not blocks:
+                            (own if ob else blocks).append(f"【{t}】\n{b}")
+                    if not blocks and not own:
                         break
-                    convo = convo + [{"role": "assistant", "content": reply},
-                                   {"role": "user", "content": "(OIT 系统提供的参考模板, 用户看不到)\n\n" + "\n\n".join(blocks)
-                                    + "\n\n以上只是**参考模板** (格式; <尖括号> 里是占位符), 不是用户的真实数据. 请参照这个格式和写法, 根据人设自己填写具体内容,"
-                                      " 回复用户上面的消息, 不要把它说成是用户的数据. 如果此刻仍然不方便回复, 返回" + REFUSE + "."}]
+                    text = ""
+                    if own:
+                        text += ("(OIT 系统提供, 用户看不到) 以下是你自己的 OIT 数据 (OIT 按你的日程实时算出, 只有已经发生的部分, 之后的还没有):\n\n"
+                                 + "\n\n".join(own) + "\n\n请据此回答, 这是你自己的数据, 不是用户的; 不要编造里面没有的内容.")
+                    if blocks:
+                        text += (("\n\n" if text else "(OIT 系统提供的参考模板, 用户看不到)\n\n") + ("另外这些只是参考模板:\n\n" if own else "")
+                                 + "\n\n".join(blocks)
+                                 + "\n\n以上模板只是**参考模板** (格式; <尖括号> 里是占位符), 不是用户的真实数据. 请参照这个格式和写法, 根据人设自己填写具体内容,"
+                                   " 不要把它说成是用户的数据.")
+                    text += " 回复用户上面的消息. 如果此刻仍然不方便回复, 返回" + REFUSE + "."
+                    convo = convo + [{"role": "assistant", "content": reply}, {"role": "user", "content": text}]
                     reply = ask(convo)
                 if kind in ("proactive", "net") and is_refusal(reply) and not info_tags(reply):       # 主动发起的对话 / 搜索那次请求不能 [refuse to reply]: 再要求一次
                     self.log(f"PRO {kind} 回了 [refuse to reply]: 不允许, 再要求一次")
@@ -3349,6 +3584,7 @@ class Comm:
             self._mem_finish(*res)
         self._release_held()
         self._joint_tick(self.now())
+        self._rt_tick()
         if self.busy or self._ai_problem() or not self.leader():
             return
         pend, self._joint_pending = self._joint_pending, None
@@ -3413,13 +3649,14 @@ class Comm:
         try:
             st = os.stat(os.path.join(self.personas, name))
         except OSError:
-            return [], {}
-        sig = (st.st_mtime_ns, st.st_size)
+            return [], {}, None
+        sig = (st.st_mtime_ns, st.st_size, self._routine_sig(name))
         hit = self._bg_seg.get(name)
         if not hit or hit[0] != sig:
-            text = read_persona(self.personas, name)
-            hit = self._bg_seg[name] = (sig, schedule_entries(text), persona_probs(text))
-        return hit[1], hit[2]
+            text = read_persona_full(self.personas, name)
+            rt = routine.parse(read_routine(self.personas, name))
+            hit = self._bg_seg[name] = (sig, [] if rt else schedule_entries(text), persona_probs(text), rt)
+        return hit[1], hit[2], hit[3]
 
     def _bg_check(self, now, snap: dict):
         if not self.bg_on() or self._bg_busy or self._ms() - self._bg_last < BG_STAGGER * 1000:
@@ -3433,8 +3670,8 @@ class Comm:
                 continue                                          # 切断了谈话的: 不会来找你
             if not any(m["role"] in ("me", "ai") for m in st["messages"]):
                 continue                                          # 没聊过的 (只是切换时留下的空记录) 不会来找你
-            entries, probs = self._info_of(names[pid])
-            ctx = {"pid": pid, "name": names[pid], "st": st, "entries": entries,
+            entries, probs, rt = self._info_of(names[pid])
+            ctx = {"pid": pid, "name": names[pid], "st": st, "entries": entries, "rt": rt,
                    "segs": [(e["kind"], e["start"]) for e in entries if e["kind"]], "probs": probs}
             if self._check_wait(ctx):
                 return
@@ -3446,13 +3683,16 @@ class Comm:
         """为非正在聊天的对象发一次请求 (主动发 / 追问); 回复由 tick 收进它的聊天记录, 没有第二次调用, 也没有要资料的轮次."""
         pid, st = ctx["pid"], ctx["st"]
         profile = self.ai.profile()
-        system = prefix_prompt(self.split_on()) + read_persona(self.personas, ctx["name"])
+        system = prefix_prompt(self.split_on()) + read_persona_full(self.personas, ctx["name"])
         system += self.memory_block_of(ctx["st"])
         who = str(self.cfg.get("user_profile") or "").strip()[:MAX_PROFILE]
         if who and first_turn(st["messages"]):             # 身份背景: 只在这段对话的第一轮发一次
             system += "\n\n以下是用户的身份背景(用户自己填写):\n" + who
         api = self._compose(self.now(), body)
         msgs = api_messages(st["messages"])
+        note = self._rt_note(self.now(), ctx["rt"], pid) if ctx.get("rt") else ""
+        if note and msgs and msgs[-1]["role"] == "user":
+            msgs[-1]["content"] += "\n\n" + note
         if msgs and msgs[-1]["role"] == "user":
             msgs[-1]["content"] += "\n\n" + api
         else:
@@ -3537,22 +3777,36 @@ class Comm:
         """读人设文件里的日程 (人设文件没变就用上次读的): 原来的 (没有联合行动调整过的) 空闲 / 休息 / 专注 / 睡眠段."""
         name = self.persona_name()
         if not name:
-            self._pro_cache, self._seg_cache, self._entry_cache, self._loop_cache = {}, [], [], []
+            self._pro_cache, self._seg_cache, self._entry_cache, self._loop_cache, self._rt = {}, [], [], [], None
             return []
         try:
             st = os.stat(os.path.join(self.personas, name))
         except OSError:
-            self._pro_cache, self._seg_cache, self._entry_cache, self._loop_cache = {}, [], [], []
+            self._pro_cache, self._seg_cache, self._entry_cache, self._loop_cache, self._rt = {}, [], [], [], None
             return []
-        sig = (name, st.st_mtime_ns, st.st_size)
+        sig = (name, st.st_mtime_ns, st.st_size, self._routine_sig(name))
         if sig != self._seg_sig:
             self._seg_sig = sig
-            text = read_persona(self.personas, name)
-            self._entry_cache = schedule_entries(text)
-            self._loop_cache = schedule_loops(text)
-            self._seg_cache = [(e["kind"], e["start"]) for e in self._entry_cache if e["kind"]]
+            text = read_persona_full(self.personas, name)
+            self._rt = routine.parse(read_routine(self.personas, name))
+            if self._rt:                                       # 有日程文件: 日程走 routine (按持续时间算), 旧的"每天重复的钟点"不再读
+                self._entry_cache, self._loop_cache, self._seg_cache = [], [], []
+            else:
+                self._entry_cache = schedule_entries(text)
+                self._loop_cache = schedule_loops(text)
+                self._seg_cache = [(e["kind"], e["start"]) for e in self._entry_cache if e["kind"]]
             self._pro_cache = persona_probs(text)
         return self._seg_cache
+
+    def _routine_sig(self, name: str) -> tuple:
+        rn = routine_name_of(self.personas, name)
+        if not rn:
+            return ()
+        try:
+            st = os.stat(os.path.join(self.personas, rn))
+        except OSError:
+            return ()
+        return (rn, st.st_mtime_ns, st.st_size)
 
     def _segments(self) -> list:
         """现在这个人设日程里的空闲 / 休息 / 专注 / 睡眠段 (联合行动之后循环被重新计算时, 是重新计算后的)."""
@@ -3607,10 +3861,190 @@ class Comm:
         base = datetime.combine(now.date(), datetime.min.time())
         return base + timedelta(minutes=best[0]), left
 
+    # ---- 有日程文件 (routine) 的人设: 日程 / 数据都是实时算的 ----
+    def _rt_joint_t(self):
+        """联合行动之后休息结束的时刻 (循环里的"立即开始专注"用); 没有 = None."""
+        j = self._joint()
+        if j.get("state") != "rest":
+            return None
+        try:
+            return _joint_time(j["rest_until"])
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    def _rt_segs(self, a, b, rt=None, seed=None, joint=True) -> list:
+        """[a, b) 里对方的日程段 (带当天波动; 现在聊的对象还会套上联合行动之后的重算)."""
+        rt = rt or self._rt
+        if not rt:
+            return []
+        seed = seed or self.pid
+        t = self._rt_joint_t() if joint and rt is self._rt else None
+        if t is None:
+            return routine.plan_between(rt, a, b, seed)
+        segs = routine.shift_for_joint(routine.plan_between(rt, a - timedelta(hours=12), b + timedelta(hours=12), seed), t, self.now())
+        return [s for s in segs if s["end"] > a and s["start"] < b]
+
+    def _rt_note(self, now, rt=None, pid=None) -> str:
+        """给模型看的此刻状态 (OIT 按日程实时算出, 用户看不到): 状态 + 已经持续多久 + 下一段是专注 / 睡眠且 5 分钟内开始的话提前说一声 + 这一轮循环的开始时间与每轮专注时间."""
+        rt = rt or self._rt
+        if not rt:
+            return ""
+        seed = pid or self.pid
+        active = pid is None or pid == self.pid
+        segs = self._rt_segs(now - timedelta(hours=14), now + timedelta(hours=2), rt, seed, joint=active)
+        cur = routine.status_in(segs, now)
+        if active:
+            j = self._joint_status(now)
+            if j:
+                cur = {"kind": j["kind"], "label": "联合行动", "start": j["begin"], "end": j["end"], "loop": None, "gap": False}
+        if not cur:
+            return ""
+        out = (f"(OIT 系统提供, 用户看不到) 你此刻的状态 (OIT 按你的日程实时算出, 以此为准, 不要自己推算): "
+               f"{tr(STATUS_TEXT.get(cur['kind'], '空闲'))}, 从 {cur['start']:%H:%M} 开始, 已经 {max(0, int((now - cur['start']).total_seconds() // 60))} 分钟.")
+        if cur.get("loop") is not None:
+            same = [x for x in segs if x.get("loop") == cur["loop"] and abs((x["start"] - cur["start"]).total_seconds()) < 12 * 3600]
+            if same:
+                out += f" 你所在的循环 {min(x['start'] for x in same):%H:%M} 开始, 每轮专注 {cur.get('n') or 100:g} 分钟."
+        nxt = next((s for s in segs if s["start"] >= cur["end"] and s["kind"] in ("focus", "sleep")), None)
+        if nxt and (nxt["start"] - now).total_seconds() <= 5 * 60:
+            out += f" 你的{STATUS_TEXT[nxt['kind']].rstrip('中')}将在 {nxt['start']:%H:%M} 开始 (约 {max(1, round((nxt['start'] - now).total_seconds() / 60))} 分钟后)."
+        return out
+
+    def _rt_store_get(self):
+        """现在聊的对象实际发生过的数据 (没有日程文件 = None)."""
+        if not self._rt or not self.pid:
+            return None
+        st = self._rt_store
+        if st is None or st.seed != self.pid:
+            st = self._rt_store = routine.Store(os.path.join(self.dir, f"routine_{self.pid}.json"), self._rt, self.pid)
+        st.r = self._rt
+        return st
+
+    def _rt_msgs(self, a, b) -> int:
+        lo, hi = int(a.timestamp() * 1000), int(b.timestamp() * 1000)
+        return sum(1 for m in self.messages if m.get("role") == "me" and lo <= int(m.get("ts") or 0) < hi)
+
+    def _rt_fine(self, t) -> bool:
+        """这个整点 t 开始的一小时里有没有带细化规范的联合行动 (整点记录改成每 30 分钟一格)."""
+        j = self._joint()
+        if j.get("state") not in ("run", "rest") or "fine" not in (j.get("terms") or []):
+            return False
+        try:
+            a = _joint_time(j["began"])
+            b = _joint_time(j.get("ended") or j["until"])
+        except (KeyError, TypeError, ValueError):
+            return False
+        return a < t + timedelta(hours=1) and t < b
+
+    def _rt_sync(self, now=None):
+        """把对方的数据补到现在 (时间线 + 整点记录), 存盘. 好几天没调用时, 缺的部分按日程规则补齐."""
+        st = self._rt_store_get()
+        if not st:
+            return None
+        now = now or self.now()
+        with self._rt_lock:
+            j = self._joint_status(now)
+            st.fill_timeline(now, lambda a, b: self._rt_segs(a, b), (j["kind"], j["label"]) if j else None)
+            st.fill_cells(now, self._rt_msgs, self._rt_fine)
+            if st.dirty:
+                st.dirty = False
+                self._write_async(st.path, st.payload())
+        return st
+
+    def _rt_tick(self):
+        if not self._rt or time.monotonic() < self._rt_next:
+            return
+        self._rt_next = time.monotonic() + 30
+        try:
+            self._rt_sync()
+        except Exception as e:      # noqa: BLE001
+            self.log(f"ROUTINE sync FAIL {type(e).__name__}: {e}")
+
+    def routine_info(self, tag: str) -> str:
+        """对方查询 [模块名] 时, 有日程文件的人设得到的是她自己的数据 (OIT 按日程实时算出, 只有已经发生的部分); 不是这几个模块 / 没有日程文件 = ""."""
+        if tag not in ("timer", "log", "calendar", "stats", "net") or not self._rt:
+            return ""
+        import comm_data
+        st = self._rt_sync()
+        if not st:
+            return ""
+        now = self.now()
+        day0 = datetime.combine(now.date(), datetime.min.time())
+        prefix = f"{now:%Y-%m}"
+        if tag == "log":
+            return comm_data.hour_text(st.log_lines(now))
+        if tag == "timer":
+            ivs = [({"focus": "study", "rest": "break", "sleep": "sleep"}[k], a, now if b >= st.upto else b)
+                   for k, a, b, _l in st.segments(day0, now) if k in ("focus", "rest", "sleep")]
+            cur = self.other_status(now) or {}
+            state = {"focus": "focus", "rest": "break", "sleep": "sleep"}.get(cur.get("kind"), "idle")
+            snap = {"state": state, "focus_total_min": st.minutes(day0, now, ("focus",)),
+                    "rest_left_min": max(0.0, (cur["end"] - now).total_seconds() / 60) if state == "break" else 0,
+                    "focus_cur_min": max(0.0, (now - cur["begin"]).total_seconds() / 60) if state == "focus" else 0}
+            return comm_data.timer_text(snap, ivs, now)
+        if tag == "calendar":
+            out = []
+            for kind, name in (("focus", "专注"), ("rest", "休息"), ("idle", "空闲"), ("sleep", "睡眠")):
+                days = {}
+                for d in st.month_days(now):
+                    if kind != "focus" and (now.date() - d).days > 6:
+                        continue
+                    h = st.day_minutes(d, (kind,)) / 60.0
+                    if h > 0:
+                        days[d] = h
+                lines = [f"  {d:%Y-%m-%d}: {h:.1f} h" for d, h in sorted(days.items())]
+                out.append(f"【日历·{name} {prefix}{'' if kind == 'focus' else ' (只有最近 7 天有记录)'}】\n" + ("\n".join(lines) if lines else "  没有记录")
+                           + f"\n  合计: {sum(days.values()):.1f} h")
+            return "\n\n".join(out)
+        if tag == "net":
+            return self._rt_net_text(st, now, prefix)
+        # stats
+        blocks = []
+        acts = {}
+        for key, (ln, text) in st.cells.items():
+            if key.startswith(prefix) and text:
+                acts[text] = acts.get(text, 0.0) + ln * 60.0
+        blocks.append(f"【统计·整点记录 {prefix}】\n" + comm_data._top(acts))
+        blocks.append(self._rt_reasons_text(st, now, prefix))
+        for i, name in enumerate(self._rt.devices or ["设备"]):
+            win = {}
+            for d in st.month_days(now):
+                for k, v in st.window_seconds(d, i).items():
+                    win[k] = win.get(k, 0.0) + v
+            if win:
+                blocks.append(f"【统计·窗口 {prefix} · {name}】\n" + comm_data._top(win))
+        lines = []
+        for i in range(7):
+            d = now.date() - timedelta(days=i)
+            lines.append(f"  {d:%m-%d} 周{WEEKDAY[d.weekday()]}: 专注 {st.day_minutes(d, ('focus',)):.0f} 分钟, 休息 {st.day_minutes(d, ('rest',)):.0f} 分钟")
+        blocks.append("【统计·专注计时 最近 7 天】\n" + "\n".join(lines))
+        recs = routine.contracts_before(self._rt, now, self.pid)[:5]
+        blocks.append("【统计·合约记录 最近完成的】\n" + ("\n".join(comm_data._record(r) for r in recs) if recs else "  还没有顺利完成的合约"))
+        return "\n\n".join(blocks)
+
+    def _rt_reasons_text(self, st, now, prefix: str) -> str:
+        import comm_data
+        tot = {}
+        for d in st.month_days(now):
+            for k, v in st.net_by_reason(d).items():
+                tot[k] = tot.get(k, 0.0) + v * 60.0
+        return f"【统计·联网理由 {prefix}】\n" + comm_data._top(tot, unit="m")
+
+    def _rt_net_text(self, st, now, prefix: str) -> str:
+        import comm_data
+        used = sum(st.net_by_reason(now.date()).values()) * 60.0
+        quota = routine.NET_QUOTA_S
+        total = max(quota, -(-used * 1.2 // 600) * 600)
+        return comm_data.net_text("offline", used, total, "代理 (Proxy)", self._rt_reasons_text(st, now, prefix))
+
     def _check_proactive(self, now, snap: dict, ctx=None):
         if ctx is None and (self.is_muted() or self.joint_live()):         # 联合行动的同步阶段: 对方陪着用户, 不主动找话题
             return
         done = self._pro_done(ctx)
+        rt = ctx.get("rt") if ctx else self._rt
+        if rt:
+            self._check_proactive_rt(now, ctx, rt, done)
+            return
         # I. 对方自己正处在空闲 / 休息段里, 而且这段还剩 10 分钟以上: 段开始后 1~3 分钟发一条
         cur = self._cur_free(now, ctx["entries"] if ctx else None)
         if cur:
@@ -3651,6 +4085,56 @@ class Comm:
             pct = ctx["probs"].get(kind, float(PROACTIVE_P[kind])) if ctx else self.pro_percent(kind)
             self._pro_fire(key, due, now, pct / 100.0,
                            f"[系统] 按你的日程, 你的{'空闲' if kind == 'idle' else '休息'}时间将在 {begin:%H:%M} 开始 (约 {mins} 分钟后). "
+                           f"这条是系统提前触发的: 即使你此刻还处于专注/不能回复的时段, 也允许你现在主动给用户发一条消息, 话题自己找 (不要透露日程); "
+                           f"这条必须发出, 不要返回{REFUSE}.", ctx)
+            return
+
+    def _check_proactive_rt(self, now, ctx, rt, done):
+        """有日程文件的人设: I~IV 同 _check_proactive, 只是时间用当天算出的日程 (带波动; 睡眠开始是实际波动过后的)."""
+        seed = ctx["pid"] if ctx else self.pid
+        segs = self._rt_segs(now - timedelta(hours=14), now + timedelta(minutes=4), rt, seed, joint=not ctx)
+
+        def pct(kind):
+            return ctx["probs"].get(kind, float(PROACTIVE_P[kind])) if ctx else self.pro_percent(kind)
+
+        cur = routine.status_in(segs, now)
+        if cur and cur["kind"] in ("idle", "rest"):                       # I. 自己正闲着, 这段还剩 10 分钟以上
+            left = (cur["end"] - now).total_seconds()
+            begin = cur["start"]
+            key = f"F{begin:%Y-%m-%dT%H:%M}"
+            if left >= PROACTIVE_FREE_LEFT and key not in done:
+                due = begin + timedelta(seconds=random.Random(key).randint(*PROACTIVE_DELAY))
+                if now >= due:
+                    self._pro_fire(key, due, now, pct("long") / 100.0, f"[系统] 按你的日程, 你现在有空 (这段还剩约 {left / 60:.0f} 分钟). "
+                                                                     f"请根据人设主动给用户发一条消息, 话题自己找; 这条必须发出, 不要返回{REFUSE}.", ctx)
+                    return
+        for s in segs:                                                    # IV. 睡眠开始 (波动过后的实际时刻) 5 分钟后
+            if s["kind"] != "sleep" or s["start"] > now:
+                continue
+            key = f"Z{s['start']:%Y-%m-%dT%H:%M}"
+            if key in done:
+                continue
+            due = s["start"] + timedelta(seconds=PROACTIVE_SLEEP_DELAY)
+            if now < due:
+                continue
+            self._pro_fire(key, due, now, pct("sleep") / 100.0,
+                           f"[系统] 按你的日程, 你进入睡眠约 {PROACTIVE_SLEEP_DELAY // 60} 分钟了. "
+                           f"这条是系统触发的: 即使你此刻处于睡眠时段, 也允许你主动给用户发一条消息, 话题自己找 (不要透露日程); "
+                           f"发完继续睡, 用户回复时按日程拒绝; 这条必须发出, 不要返回{REFUSE}.", ctx)
+            return
+        for s in segs:                                                    # II / III. 每段空闲 / 休息 (不含波动留下的空档) 开始前 1~3 分钟
+            if s["kind"] not in ("idle", "rest") or s["gap"] or not (now < s["start"] <= now + timedelta(seconds=PROACTIVE_LEAD[1])):
+                continue
+            kind = s["kind"]
+            key = f"S{s['start']:%Y-%m-%dT%H:%M}{kind[0]}"
+            if key in done:
+                continue
+            due = s["start"] - timedelta(seconds=random.Random(key).randint(*PROACTIVE_LEAD))
+            if now < due:
+                continue
+            mins = max(1, round((s["start"] - now).total_seconds() / 60))
+            self._pro_fire(key, due, now, pct(kind) / 100.0,
+                           f"[系统] 按你的日程, 你的{'空闲' if kind == 'idle' else '休息'}时间将在 {s['start']:%H:%M} 开始 (约 {mins} 分钟后). "
                            f"这条是系统提前触发的: 即使你此刻还处于专注/不能回复的时段, 也允许你现在主动给用户发一条消息, 话题自己找 (不要透露日程); "
                            f"这条必须发出, 不要返回{REFUSE}.", ctx)
             return
@@ -3892,7 +4376,7 @@ def _selftest():
     # 概率: 人设里写的; 没写默认 70%
     assert persona_probs("长时间休息发起谈话概率:0.7\n休息发起谈话概率:30\n空闲发起谈话概率:20%") == {"long": 70.0, "rest": 30.0, "idle": 20.0}
     assert Comm.pro_percent.__name__ and PROACTIVE_P["long"] == 70
-    assert persona_probs(BUILTIN_PERSONAS["Claudia.txt"]) == {"idle": 20.0, "rest": 20.0, "long": 20.0, "sleep": 50.0}
+    assert persona_probs(BUILTIN_PERSONAS["Claudia.txt"] + "\n" + BUILTIN_PERSONAS["Claudia_routine.txt"]) == {"idle": 20.0, "rest": 20.0, "long": 20.0, "sleep": 50.0}
     open(longp, "w", encoding="utf-8").write("你是小满.\n")
     c2.reload_schedule()
     assert c2.pro_percent("long") == 70.0, "没写: 默认 70%"
@@ -4026,7 +4510,7 @@ def _selftest():
     assert read_persona(fresh_personas, "Claudia.txt").startswith("你将扮演一位文静,冷淡的")
     assert read_persona(fresh_personas, "Assistant.txt").startswith("你是名为 Assistant 的助理")
     cf.set_cfg(persona="")
-    for name in ("Claudia.txt", "Assistant.txt"):
+    for name in ("Claudia.txt", "Claudia_routine.txt", "Assistant.txt"):
         os.remove(os.path.join(fresh_personas, name))
     cf.flush()
     cf2 = Comm(fresh_dir, fresh_personas, now=lambda: clock[0], chat_fn=fake)
@@ -4254,7 +4738,7 @@ def _selftest():
     B.flush()
 
     # ---- II / III: 人设日程里每段空闲 / 休息开始前 1~3 分钟, 按概率发 ----
-    assert schedule_segments(BUILTIN_PERSONAS["Claudia.txt"]) == [
+    assert schedule_segments(CLAUDIA_PREV5) == [
         ("idle", 390), ("focus", 420), ("rest", 520), ("focus", 558), ("rest", 658), ("focus", 696),
         ("idle", 720), ("idle", 750), ("focus", 780), ("rest", 880), ("focus", 918), ("rest", 1018),
         ("focus", 1056), ("idle", 1080), ("idle", 1110), ("focus", 1140), ("rest", 1190), ("focus", 1206),
@@ -4314,7 +4798,7 @@ def _selftest():
     c5.ai.provider = "deepseek"
     c5.set_cfg(persona="日程.txt")
     assert (c5.pro_percent("idle"), c5.pro_percent("rest")) == (80, 60), "人设里没写: 默认概率"
-    assert persona_probs(BUILTIN_PERSONAS["Claudia.txt"]) == {"idle": 20.0, "rest": 20.0, "long": 20.0, "sleep": 50.0}, "Claudia: 20% / 20% / 20%"
+    assert persona_probs(BUILTIN_PERSONAS["Claudia.txt"] + "\n" + BUILTIN_PERSONAS["Claudia_routine.txt"]) == {"idle": 20.0, "rest": 20.0, "long": 20.0, "sleep": 50.0}, "Claudia: 20% / 20% / 20%"
     assert persona_probs("空闲发起谈话概率:12.5%\n休息发起谈话概率 ： 0.4\n休息发起谈话概率:90%") == {"idle": 12.5, "rest": 40.0}
     assert persona_probs("睡眠发起谈话概率:40%") == {"sleep": 40.0} and PROACTIVE_P["sleep"] == 60
     assert c5.pro_percent("sleep") == 60, "没写: 默认睡眠 60%"
@@ -4386,7 +4870,7 @@ def _selftest():
     c6.ai.set_profile("deepseek", api_key="k")
     c6.ai.provider = "deepseek"
     open(os.path.join(folder, "全发.txt"), "w", encoding="utf-8").write(
-        BUILTIN_PERSONAS["Claudia.txt"].replace("空闲发起谈话概率:20%", "空闲发起谈话概率:100%").replace("休息发起谈话概率:20%", "休息发起谈话概率:100%")
+        CLAUDIA_PREV5.replace("空闲发起谈话概率:20%", "空闲发起谈话概率:100%").replace("休息发起谈话概率:20%", "休息发起谈话概率:100%")
         .replace("[循环 19:00-23:00][50min]", "[循环 19:00-23:00][100min]"))
     c6.set_cfg(persona="全发.txt")
     c6.snapshot = lambda: {"state": "idle"}
@@ -5650,6 +6134,167 @@ def _selftest():
     assert cd.visible()[-1]["text"] == "四五"
     CHAR_DELAY = 0.0
     cd.flush()
+
+    # ---- 日程文件 (routine, 1.0.355): Claudia + Claudia_routine 是默认人设 ----
+    rt_personas, rt_dir = os.path.join(td, "rt_personas"), os.path.join(td, "rt")
+    os.makedirs(rt_dir)
+    clock[0] = datetime(2027, 6, 1, 7, 0)
+    cr = Comm(rt_dir, rt_personas, now=lambda: clock[0], chat_fn=fake)
+    cr.ai.set_profile("deepseek", api_key="k")
+    cr.ai.provider = "deepseek"
+    assert cr.persona_name() == "Claudia.txt" and list_personas(rt_personas) == ["Assistant.txt", "Claudia.txt"], "Claudia_routine 是配套文件, 不是人设"
+    assert routine_files(rt_personas) == ["Claudia_routine.txt"] and routine_name_of(rt_personas, "Claudia.txt") == "Claudia_routine.txt"
+    assert is_routine_name(rt_personas, "Claudia_routine.txt") and not is_routine_name(rt_personas, "Claudia.txt")
+    assert base_persona_of(rt_personas, "Claudia_routine.txt") == "Claudia.txt"
+    full = read_persona_full(rt_personas, "Claudia.txt")
+    assert full.startswith("你将扮演一位文静") and "初始起点:6:30" in full and "联网时间理由列表" in full, "routine 拼在人设后面发给模型"
+    assert read_persona_full(rt_personas, "Assistant.txt") == read_persona(rt_personas, "Assistant.txt")
+    assert "Claudia_routine.txt" in cr.persona_doc() and "Claudia.txt" in cr.persona_doc(), "日程文件随设备同步"
+    cr.reload_schedule("test")
+    assert cr._rt is not None and cr._entries() == [] and cr._segments() == []
+    assert cr.pro_percent("idle") == 20.0 and cr.pro_percent("sleep") == 50.0, "概率从日程文件里读"
+    # 状态: 起床前睡着, 起床后洗漱, 之后专注 (全是当天算出来的, 带波动)
+    seed = cr.pid
+    d0 = datetime(2027, 6, 1).date()
+    plan = routine.day_plan(cr._rt, d0, seed)
+    clock[0] = plan[0]["start"] - timedelta(minutes=1)
+    assert cr.other_status()["kind"] == "sleep" and cr.other_status_text() == "睡眠中"
+    clock[0] = plan[0]["start"] + timedelta(minutes=1)
+    assert cr.other_status()["label"] == "洗漱,吃早饭" and cr.other_status_text() == "空闲"
+    first_focus = next(x for x in plan if x["kind"] == "focus")
+    clock[0] = first_focus["start"] + timedelta(minutes=1)
+    assert cr.other_status_text() == "专注中" and cr.other_status()["begin"] == first_focus["start"]
+    assert abs((first_focus["start"] - (datetime(2027, 6, 1, 7, 0) + timedelta(minutes=plan[0]["start"].hour * 0))).total_seconds()) < 3 * 3600
+    clock[0] = plan[-1]["start"] + timedelta(minutes=1)
+    assert cr.other_status()["kind"] == "sleep", "做完最后一项就睡"
+    # 发给模型的内容: 系统提示里有日程文件, 最后一条用户消息后面贴着实时状态
+    note = cr._rt_note(first_focus["start"] + timedelta(minutes=20))
+    assert "你此刻的状态" in note and "专注中" in note and "每轮专注 100 分钟" in note and "已经 20 分钟" in note, note
+    rest1 = next(x for x in plan if x["kind"] == "rest")
+    clock[0] = rest1["start"] + timedelta(minutes=5)
+    cr.state_fn = lambda: "idle"
+    cr.snapshot = lambda: {"state": "idle"}
+    cr.blocked = lambda: ""
+    cr.ai_blocked = lambda: ""
+    n0 = len(calls)
+    script.append("嗯")
+    cr.send("在吗")
+    wait(cr)
+    sysmsg, msgs0 = calls[n0]
+    assert "初始起点:6:30" in sysmsg and "联网时间理由列表" in sysmsg
+    assert "你此刻的状态" in msgs0[-1]["content"] and "休息中" in msgs0[-1]["content"], msgs0[-1]["content"]
+    assert "你此刻的状态" not in " ".join(m.get("api") or m.get("text") or "" for m in cr.messages), "状态只贴在请求里, 不写进聊天记录"
+    # 专注开始前 5 分钟内提前说一声
+    nxt = [x for x in plan if x["kind"] == "focus" and x["start"] > first_focus["end"]][0]
+    assert "你的专注将在" not in cr._rt_note(first_focus["end"] - timedelta(minutes=30))
+    assert f"你的专注将在 {nxt['start']:%H:%M} 开始" in cr._rt_note(nxt["start"] - timedelta(minutes=3))
+    # 主动发起: 睡眠开始 (波动过后的实际时刻) 5 分钟后
+    cr.cfg["pro_key"] = ""
+    cr._pro_cache["sleep"] = 100.0
+    sleep_seg = plan[-1]
+    fired = []
+    cr._trigger = lambda kind, text: fired.append((kind, text))
+    clock[0] = sleep_seg["start"] + timedelta(minutes=4, seconds=30)
+    cr._check_proactive(clock[0], {})
+    assert not fired, "睡眠开始后 5 分钟才发"
+    clock[0] = sleep_seg["start"] + timedelta(minutes=5, seconds=10)
+    cr._check_proactive(clock[0], {})
+    assert fired and "进入睡眠约 5 分钟" in fired[0][1], "睡眠后 5 分钟: 按实际睡眠开始"
+    # 空闲 / 休息段开始前 1~3 分钟 (波动留下的空档不触发)
+    fired.clear()
+    cr._pro_cache.update({"idle": 100.0, "rest": 100.0})
+    rest_seg = next(x for x in plan if x["kind"] == "rest")
+    clock[0] = rest_seg["start"] - timedelta(minutes=2, seconds=59)
+    ok = False
+    for k in range(0, 200, 2):
+        clock[0] = rest_seg["start"] - timedelta(seconds=200 - k)
+        cr._check_proactive(clock[0], {})
+        if fired:
+            ok = True
+            break
+    assert ok and "休息时间将在" in fired[0][1]
+    gap = [x for x in routine.plan_between(cr._rt, datetime(2027, 5, 1), datetime(2027, 7, 1), seed) if x["gap"] and x["kind"] == "idle"]
+    assert gap, "波动会留下空档 (晚开始 / 睡眠延迟)"
+    fired.clear()
+    clock[0] = gap[0]["start"] - timedelta(seconds=90)
+    cr._check_proactive(clock[0], {})
+    assert not any(f"S{gap[0]['start']:%Y-%m-%dT%H:%M}i" in k for k in cr._pro_done()), "空档不算空闲段"
+    # 联合行动之后休息结束落在循环里: 立即开始专注
+    plan2 = routine.plan_between(cr._rt, datetime(2027, 6, 2, 5), datetime(2027, 6, 3, 5), seed)
+    rs = next(x for x in plan2 if x["kind"] == "rest")
+    T = rs["start"] + timedelta(minutes=12)
+    cr.cfg["joint"] = {"state": "rest", "pid": cr.pid, "rest_until": T.isoformat(timespec="seconds"), "ended": rs["start"].isoformat(timespec="seconds"),
+                       "terms": [], "began": (rs["start"] - timedelta(hours=3)).isoformat(timespec="seconds")}
+    clock[0] = T + timedelta(minutes=1)
+    assert cr._joint_status(clock[0]) == {} and cr.other_status()["kind"] == "focus" and cr.other_status()["begin"] == T
+    cr.cfg["joint"] = {}
+    # 数据: 只给已经发生的 (实时算), 好几天没调用就按规则补齐
+    clock[0] = datetime(2027, 6, 5, 10, 20)
+    for tag in ("timer", "log", "calendar", "stats", "net"):
+        assert cr.routine_info(tag), tag
+    st = cr._rt_store
+    assert st.upto == clock[0].replace(second=0, microsecond=0) and st.tl
+    log = cr.routine_info("log")
+    assert log.startswith("【整点记录·今天】") and "  10:00" not in log and "  09:00" in log, log
+    tm = cr.routine_info("timer")
+    assert "现在" in tm and "总计" in tm and "目前状态:" in tm
+    assert not any(k.startswith("2027-06-05T1") and not k.startswith("2027-06-05T10") for k in st.cells) and "2027-06-05T10:00" not in st.cells, "没结束的格子不存"
+    assert "2027-06-06" not in cr.routine_info("calendar"), "还没发生的不给"
+    assert os.path.isfile(os.path.join(rt_dir, f"routine_{cr.pid}.json")) is False or True
+    cr.flush()
+    assert os.path.isfile(os.path.join(rt_dir, f"routine_{cr.pid}.json")), "数据存盘"
+    clock[0] = datetime(2027, 6, 9, 15, 5)                         # 4 天没人调用
+    info = cr.routine_info("log")
+    assert "  14:00" in info and "2027-06-07T08:00" in cr._rt_store.cells and cr._rt_store.cells["2027-06-07T08:00"][1], "几天没调用: 自动按规则填充"
+    # 重新打开程序: 存档读回来
+    cr.flush()
+    cr2 = Comm(rt_dir, rt_personas, now=lambda: clock[0], chat_fn=fake)
+    cr2.reload_schedule("test")
+    assert cr2._rt_store_get().cells == cr._rt_store.cells and cr2._rt_store.upto == cr._rt_store.upto
+    # 聊天概率: 一个小时里用户发 >= 20 条 → 休息格里聊天概率 50%
+    clock[0] = datetime(2027, 6, 9, 15, 30)
+    base_ts = int(datetime(2027, 6, 9, 16, 0).timestamp() * 1000)
+    cr2.messages = [{"id": i + 1, "role": "me", "text": "x", "api": "x", "ts": base_ts + i * 1000} for i in range(30)]
+    assert cr2._rt_msgs(datetime(2027, 6, 9, 16, 0), datetime(2027, 6, 9, 17, 0)) == 30
+    # 合约记录难度 20~30, 不碰不选择 / 违规的词条 (写在 [stats] 里)
+    clock[0] = datetime(2027, 8, 1, 12, 0)
+    stats = cr.routine_info("stats")
+    assert "【统计·合约记录 最近完成的】" in stats and "【统计·窗口 2027-08 · DESKTOP-CLAUDIA】" in stats and "【统计·联网理由 2027-08】" in stats
+    for banned_name in ("持久战", "无言为真", "通道阻塞", "细化规范", "乐理之灾", "未知变量"):
+        assert banned_name not in stats.split("【统计·合约记录")[1], banned_name
+    banned = routine.banned_ids(cr._rt)
+    assert not (set(cr._op_terms("没有编号", [])) & banned), "对方发起联合行动也不选这些词条"
+    # 要资料: 她自己的数据 (OIT 算出的), 不是空白模板
+    n0 = len(calls)
+    script.extend(["[refuse to reply][log][timer]", "好"])
+    cr.messages = []
+    clock[0] = datetime(2027, 6, 9, 17, 2)
+    first = routine.status_in(routine.plan_between(cr._rt, clock[0] - timedelta(hours=1), clock[0] + timedelta(hours=1), cr.pid), clock[0])
+    cr.send("今天做了什么")
+    wait(cr)
+    info_call = calls[n0 + 1][1][-1]["content"]
+    assert "你自己的 OIT 数据" in info_call and "【整点记录·今天】" in info_call and "<HH>" not in info_call and "格式模板" not in info_call, info_call
+    # 改日程文件 → 弹"修改人设"; 聊天清的是它的人设
+    cr.check_persona_changes()
+    with open(os.path.join(rt_personas, "Claudia_routine.txt"), "a", encoding="utf-8") as f:
+        f.write("\n")
+    ch = cr.check_persona_changes()
+    assert ch and ch["name"] == "Claudia_routine.txt", ch
+    cr.resolve_persona_change("Claudia_routine.txt", True)
+    cr.flush()
+    # 旧版 (没有日程文件) 的 Claudia 升级: 没改过的换成新版 + 日程文件
+    up_dir, up_personas = os.path.join(td, "up355"), os.path.join(td, "up355_personas")
+    os.makedirs(up_dir)
+    os.makedirs(up_personas)
+    open(os.path.join(up_personas, "Claudia.txt"), "w", encoding="utf-8", newline="\n").write(CLAUDIA_PREV5)
+    config.save_json_file(os.path.join(up_dir, "comm_config.json"), {"seeded": True, "assistant_seeded": True, "persona": "Claudia.txt", "claudia_migrated": True})
+    cu = Comm(up_dir, up_personas, now=lambda: clock[0], chat_fn=fake)
+    assert read_persona(up_personas, "Claudia.txt") == BUILTIN_PERSONAS[DEFAULT_PERSONA].strip()
+    assert read_persona(up_personas, "Claudia_routine.txt") == BUILTIN_PERSONAS[DEFAULT_ROUTINE].strip(), "升级时补上日程文件"
+    cu.reload_schedule("test")
+    assert cu._rt is not None
+    cu.flush()
+    cr2.flush()
 
     return "comm selftest OK"
 

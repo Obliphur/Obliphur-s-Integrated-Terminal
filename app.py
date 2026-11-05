@@ -1261,7 +1261,7 @@ class BreakTimerApp:
         try:
             name = change["name"]
             msg = tr("{name},修改人设会清除聊天数据,你确定吗?", name=self.dm.username or "")
-            if comm_mod.persona_title(name).casefold() == "claudia":
+            if comm_mod.persona_title(name).casefold() in ("claudia", "claudia_routine"):
                 msg = tr("主管{name},我希望你尊重她的人格.", name=self.dm.username or "") + "\n" + msg
             toast.notice(tr("人设文件被修改"), msg, [
                 (tr("还原文件"), lambda: self.comm.resolve_persona_change(name, False), True),

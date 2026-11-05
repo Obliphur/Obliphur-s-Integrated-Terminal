@@ -197,7 +197,7 @@ object CommData {
 
     fun termText(id: String): String = Contract.BY_ID[id]?.let { "${it.name.substringAfter(':')} (等级${it.level}): ${it.desc}" } ?: id
 
-    private fun record(rec: org.json.JSONObject): String {
+    internal fun record(rec: org.json.JSONObject): String {
         val rows = Contract.recordRows(rec)
         val level = rec.optInt("level")
         val head = "危机等级 " + Contract.levelLabel(level, rec.optInt("orig_level", level))
