@@ -2,7 +2,7 @@
 合约的录像 (MECHANICS.md 18.8 目光 / 刻痕): 摄像头和整个屏幕各存成 mp4 (H.264, 没有声音), 只用标准库.
 
 不录连续的视频 (视频有时长限制, 占地方): 每 STILL_EVERY 秒拍一张照片 (目光) / 截一张图 (刻痕),
-照片按顺序每张 STILL_STEP 秒接成视频 (片段里和合并后都是), 放的时候就是 0.5 秒一张.
+照片按顺序每张 STILL_STEP 秒接成视频 (片段里和合并后都是), 放的时候就是 0.2 秒一张.
 编码用 Windows 自带的 Media Foundation (mfplat / mfreadwrite, 经 ctypes 调用 COM 接口):
 - 屏幕: GDI 截取整个虚拟屏幕 (所有显示器, 带鼠标指针), 缩到最宽 SCREEN_WIDTH;
 - 摄像头: 第一个视频采集设备, 挑最接近 640×480 的格式 (摄像头一直开着, 只留每 STILL_EVERY 秒的那一张).
@@ -38,12 +38,12 @@ REC_KEY = hashlib.sha256(b"obliphur-terminal/recording/v1").digest()   # 所有 
 SEGMENT = 30 * 60                 # 每个文件最长 30 分钟 (30 分钟 = 60 张)
 FOCUS_EVERY = 20                  # 刻痕: 每这么多秒判定一次焦点设备 (MECHANICS 18.8)
 STILL_EVERY = 30                  # 每这么多秒拍一张照片 / 截一张图
-STILL_STEP = 5_000_000            # 照片接成视频后每张放这么久 (100ns): 0.5 秒
-SCREEN_FPS = 2                    # 视频的帧率标记 (= 1 / STILL_STEP)
+STILL_STEP = 2_000_000            # 照片接成视频后每张放这么久 (100ns): 0.2 秒
+SCREEN_FPS = 5                    # 视频的帧率标记 (= 1 / STILL_STEP)
 SCREEN_WIDTH = 960               # 画面缩到最宽这么多 (压一下画质 / 体积; 合并画布也按它封顶)
-SCREEN_BITRATE = 800_000          # 每张 0.5 秒 → 约 50 KB 一张
-CAMERA_FPS = 2
-CAMERA_BITRATE = 400_000          # 约 25 KB 一张 (传给别的设备合并 / 同步时不会太大)
+SCREEN_BITRATE = 2_000_000        # 每张 0.2 秒 → 约 50 KB 一张
+CAMERA_FPS = 5
+CAMERA_BITRATE = 1_000_000        # 每张 0.2 秒 → 约 25 KB 一张 (传给别的设备合并 / 同步时不会太大)
 CAMERA_SIZE = (480, 360)
 CAMERA_STALL = 12                 # 摄像头这么多秒没有新画面: 视为被关掉了
 
@@ -997,7 +997,7 @@ class Recorder(threading.Thread):
                 k = 0
                 try:
                     while not self._stop.is_set() and time.monotonic() - seg0 < SEGMENT:
-                        bits = scr.grab()                           # 截一张图, 在视频里放 STILL_STEP (0.5 秒)
+                        bits = scr.grab()                           # 截一张图, 在视频里放 STILL_STEP (0.2 秒)
                         w.write_bytes(bits, scr.size, k * STILL_STEP, STILL_STEP)
                         k += 1
                         self.frames += 1
@@ -1297,7 +1297,7 @@ def _canvas(info, weights=None):
 def _reencode_concat(out_path, inputs, fps=SCREEN_FPS, size=None, bitrate=SCREEN_BITRATE, fit_turn=True):
     """把几个 mp4 (已解密) 按顺序解码 → 重新编码接成一个 (画面统一到 size 给的画布, 没给时用第一段的大小;
     每一段等比缩放居中留黑, 不同朝向也兼容). 只接画面 (旧版本录的声音丢掉).
-    照片的时间戳不管原来是什么 (手机的片段里是真实的间隔 30 秒), 按顺序每张放 STILL_STEP (0.5 秒). 返回输出的 (宽, 高)."""
+    照片的时间戳不管原来是什么 (手机的片段里是真实的间隔 30 秒), 按顺序每张放 STILL_STEP (0.2 秒). 返回输出的 (宽, 高)."""
     lib, own = _startup()
     writer = None
     dw, dh = (size or (0, 0))
@@ -1476,8 +1476,11 @@ def merge(data_dir: str, cid: str, kind: str = "screen", extra=()) -> str:
         segs.sort(key=when)
     except ValueError:
         segs.sort(key=lambda s: s["name"])
-    work = os.path.join(work_dir(data_dir, "merged"), cid)
-    os.makedirs(work, exist_ok=True)
+    # 每次合并用自己的临时文件夹: 目光和刻痕同时合并 (两个线程) 时, 共用一个文件夹会互相覆盖 / 删掉对方的 0000.mp4 和 merged.mp4,
+    # 结果是 MFCreateSinkWriterFromURL 0x80070020 / open 0x80070003 / Permission denied, 两路都合并失败
+    root = work_dir(data_dir, "merged")
+    os.makedirs(root, exist_ok=True)
+    work = tempfile.mkdtemp(prefix=f"{_safe_cid(cid)}-{kind}-", dir=root)
     plain = []          # [(解密后的 mp4 路径, 是不是本机录的)]
     try:
         for i, s in enumerate(segs):
@@ -1504,7 +1507,7 @@ def merge(data_dir: str, cid: str, kind: str = "screen", extra=()) -> str:
         plain = ok
         if not plain:
             return ""
-        # 目光 (摄像头) 的合并结果按目光的码率压 (要同步给所有设备, 不能太大); 照片按顺序每张 0.5 秒
+        # 目光 (摄像头) 的合并结果按目光的码率压 (要同步给所有设备, 不能太大); 照片按顺序每张 0.2 秒
         cam = kind == "camera"
         _reencode_concat(raw, [p for p, _ in plain], size=_canvas(info, weights),
                          bitrate=CAMERA_BITRATE if cam else SCREEN_BITRATE, fit_turn=not cam)
@@ -1616,6 +1619,24 @@ def _selftest(data_dir=None, seconds=3):
     decrypt_file(mp, mo)
     assert _streams(mo) == 1 and os.path.getsize(mp) > 1000, (mp, _streams(mo))
     merged = f", merged {_dims(mo)}"
+    # 目光和刻痕在合约结束时同时合并 (两个线程): 不能共用临时文件夹 (1.0.367 以前互相删对方的文件, 两路都失败)
+    seg = files_of(d, "screen", "x1")[0]
+    os.makedirs(folder(d, "camera"), exist_ok=True)
+    shutil.copyfile(seg["path"], os.path.join(folder(d, "camera"), seg["name"]))
+    errs, outs = [], {}
+
+    def both(kind):
+        try:
+            outs[kind] = merge(d, "x1", kind)
+        except Exception as e:      # noqa: BLE001
+            errs.append((kind, repr(e)))
+    ts = [threading.Thread(target=both, args=(k,)) for k in ("screen", "camera")]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    assert not errs and all(outs.get(k) for k in ("screen", "camera")), (errs, outs)
+    assert not os.listdir(os.path.join(work_dir(d, "merged"))), "合并的临时文件夹用完要删"
     # 目光: 摄像头要在合约开始前先打开 (那时还不知道合约 id), 合约开始后再补上 tag ——
     # 这一段 / 这一整场录像结束时都要能按合约 id 找到 (否则就是"摄像头录像存不下来").
     late = Recorder(d, "screen")

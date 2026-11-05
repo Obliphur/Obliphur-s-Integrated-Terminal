@@ -36,7 +36,7 @@ import java.time.format.DateTimeFormatter
  * 再用 MainActivity 拿到的授权造投屏. 每段写完 (stop / Finalize) 后用 [RecCrypto] 加密成 .oitv 存进数据目录,
  * 原始 mp4 写在缓存里 (不进数据目录, 防止被网盘自动上传).
  * 不录连续的视频 (视频有时长限制, 占地方): 每 [STILL_EVERY_MS] 毫秒 (30 秒) 拍一张照片 (目光) / 截一张图 (刻痕) 送进 mp4,
- * 没有声音; 电脑合并时把照片按顺序接成每张 0.5 秒的视频.
+ * 没有声音; 电脑合并时把照片按顺序接成每张 0.2 秒的视频.
  */
 class RecordService : Service() {
     private val thread = HandlerThread("oit-rec").apply { start() }
