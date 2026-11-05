@@ -154,7 +154,7 @@ fun CommScreen(go: (String) -> Unit) {
             TextButton({
                 comm.shareEnable(!shareOn).let { if (it.isNotEmpty()) core.toast(tr(it), "warn") }
                 shareOn = comm.shareOn()
-            }, contentPadding = tight) { Text("share data" + if (shareOn) " ✓" else "", color = if (shareOn) o.accent else o.dim, fontSize = 13.sp) }
+            }, contentPadding = tight) { Text(if (shareOn) "👀" else "🙈", fontSize = 18.sp) }          // 👀 share data 开着 / 🙈 关着
         }
         if (shareInv) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.padding(start = 8.dp)) {
@@ -196,7 +196,7 @@ private fun HelpDialog(onDismiss: () -> Unit) {
     val o = LocalOit.current
     val rows = listOf(
         "❓" to tr("帮助") + ": " + tr("打开这个说明."),
-        "share data" to tr("分享数据") + ": " + tr("打开后去别的页面 (设置 / 沟通 / 指令 / 重置 以外): 对方会收到那一页上你和它自己的数据 (30 秒冷却), " +
+        "👀 / 🙈" to tr("分享数据") + ": " + tr("点一下切换 (👀 = 打开). 打开后去别的页面 (设置 / 沟通 / 指令 / 重置 以外): 对方会收到那一页上你和它自己的数据 (30 秒冷却), " +
             "页面下方有聊天悬浮窗, 计时器 / 整点记录 / 日历 / 统计页还能切换看自己 / 对方的数据; 回到沟通自动关闭, 对方会总结一次. " +
             "对方也可以发 [share data] 邀请你, 点「接受」才会打开."),
         "🔔 / 🔕" to tr("主动发起") + ": " + tr("点一下切换: 🔔 = 允许这个对象主动给你发消息 / 追问, 🔕 = 禁止."),

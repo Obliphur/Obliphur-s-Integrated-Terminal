@@ -90,10 +90,8 @@ class CommPage(tk.Frame):
         self.btn_mute.pack(side="left", padx=(4, 0))
         ttk.Button(tools, text="🤝", width=3, command=self._joint).pack(side="left", padx=(4, 0))   # 联合行动
         # share data: 打开后离开沟通页, 在别的页面里对方能看到那一页上你们的数据, 页面下方有聊天悬浮窗; 回到沟通自动关闭
-        self.var_share = tk.BooleanVar(value=False)
-        tk.Checkbutton(tools, text="share data", variable=self.var_share, command=self._toggle_share, bg=bg, fg=COLORS["text"],
-                       selectcolor=COLORS["bg_card"], activebackground=bg, activeforeground=COLORS["text"],
-                       font=config.font("small")).pack(side="left", padx=(8, 0))
+        self.btn_share = ttk.Button(tools, text="🙈", width=3, command=self._toggle_share)         # 👀 share data 开着 / 🙈 关着
+        self.btn_share.pack(side="left", padx=(4, 0))
         # 对方发了 [share data]: 等用户点 接受 / 拒绝
         self.share_btns = tk.Frame(tools, bg=bg)
         tk.Label(self.share_btns, text=tr("对方想看你们的数据"), bg=bg, fg=COLORS["accent"], font=config.font("small")).pack(side="left")
@@ -223,8 +221,7 @@ class CommPage(tk.Frame):
                 self.joint_btns.pack(side="left", padx=(8, 0))
         elif self.joint_btns.winfo_manager() == "pack":
             self.joint_btns.pack_forget()
-        if self.var_share.get() != c.share_on():
-            self.var_share.set(c.share_on())
+        cfg(self.btn_share, text="👀" if c.share_on() else "🙈")
         if c.share_invite():
             if self.share_btns.winfo_manager() != "pack":
                 self.share_btns.pack(side="left", padx=(8, 0))
@@ -441,9 +438,8 @@ class CommPage(tk.Frame):
 
     # ---- share data ----
     def _toggle_share(self):
-        why = self.comm.share_enable(self.var_share.get())
+        why = self.comm.share_enable(not self.comm.share_on())
         if why:
-            self.var_share.set(False)
             toast.warn(tr(why))
         self.refresh(force=True)
 
@@ -465,7 +461,7 @@ class CommPage(tk.Frame):
         dlg = Modal(self.winfo_toplevel(), tr("帮助"), width=width, height=config.scaled(520))
         bg = COLORS["bg"]
         rows = (("❓", "帮助", "打开这个说明."),
-                ("share data", "分享数据", "打开后去别的页面 (设置 / 沟通 / 指令 / 重置 以外): 对方会收到那一页上你和它自己的数据 (30 秒冷却), "
+                ("👀 / 🙈", "分享数据 (share data)", "点一下切换 (👀 = 打开). 打开后去别的页面 (设置 / 沟通 / 指令 / 重置 以外): 对方会收到那一页上你和它自己的数据 (30 秒冷却), "
                                       "页面下方有聊天悬浮窗, 计时器 / 整点记录 / 日历 / 统计页还能切换看自己 / 对方的数据; 回到沟通自动关闭, 对方会总结一次. "
                                       "对方也可以发 [share data] 邀请你, 点「接受」才会打开."),
                 ("🔔 / 🔕", "主动发起", "点一下切换: 🔔 = 允许这个对象主动给你发消息 / 追问, 🔕 = 禁止."),
