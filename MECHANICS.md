@@ -893,6 +893,7 @@ OIT 是 Python 源码, 装在程序文件夹里. 直接改源码 (去掉限制, 
 - **程序文件** = 程序文件夹里的所有 `.py` / `.pyw` (跳过 `__pycache__`, `.git`, 安卓版, `closed_test` 等); 新增 / 删除 / 内容变了都算. **清单**: 每个文件的 SHA-256, 记在数据文件夹的 `source_manifest.json` 里 (9.4 的加密 + 校验: 改不了, 删不了, 倒不回去).
 - **合法的改动只有两种**: ① 更新 (16): 覆盖完文件马上记下新的清单 (不管成功没有); ② 重新运行 `setup.exe` (装 / 修复): 解压完用 DPAPI 封一个"现在这些程序文件的指纹"令牌放在 `%LOCALAPPDATA%\Obliphur\OIT\src_update.dat`,
   OIT 下次启动时发现程序文件和清单对不上、但指纹和令牌一致 → 是安装, 接受, 记下新清单, 令牌作废.
+  **1.0.375**: 1.0.374 的 `setup.exe` 重新安装会清数据 — PyInstaller 打的 exe 里没有 `secrets` / `hmac`, 在 exe 里 `import srcguard` → `continuity` 失败, 异常被吞掉, 令牌没发出, OIT 把这次安装当成源码被改过. 现在令牌由装好的那个 Python 子进程发 (有完整标准库, `setup.issue_source_token(dest, python)`), 发不出去才在 exe 里试, 都不行安装日志里写明 (`token_fail`); `release.py` 也给 PyInstaller 加了 `--hidden-import secrets/hmac`.
 - **启动时** (数据核对之前) 对比: 对不上又没有令牌 → 数据核对多一个信号 `source-modified` (和数据被搬走一样): 有用过的数据就清, 弹出 "`<用户名>,覆水难收.`", `guard.log` 里记哪些文件变了.
   清完以现在的源码为新的基准 —— **清一次**, 不是每次启动都清. 清单文件在却读不出来 / 被删 (索引里有) 也当作被改过.
 - **运行中**每 5 分钟对比内存里的清单; 对不上 (隔 20 秒再看一次还对不上; 正在更新时不报) → 在锚点里标记 pending, 立即重启, 下一次启动清数据.

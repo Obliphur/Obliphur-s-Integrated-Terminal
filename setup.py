@@ -76,6 +76,8 @@ TEXT = {
     "py_install": ("安装 Python (几分钟) …", "Installing Python (a few minutes) …"),
     "py_fail": ("没能安装 Python ({e}). 请手动安装 Python {p}+ (勾选 tcl/tk) 后再运行安装程序.", "Could not install Python ({e}). Install Python {p}+ (with tcl/tk) yourself and run setup again."),
     "step_pip": ("安装可选依赖库 pywin32 …", "Installing optional library pywin32 …"),
+    "token_fail": ("没能留下\"这是安装\"的令牌: 第一次启动时 OIT 会把这次安装当成源码被改过, 清掉数据! 请先备份数据文件夹, 或把这条日志发给开发者.",
+                   "Could not leave the \"this is an install\" token: on first start OIT will treat this install as modified source and wipe its data! Back up the data folder first, or send this log to the developer."),
     "pip_fail": ("pywin32 没装上 (不影响使用).", "pywin32 was not installed (OIT works without it)."),
     "step_copy": ("复制程序文件到 {d} …", "Copying program files to {d} …"),
     "step_compile": ("预编译 …", "Precompiling …"),
@@ -160,14 +162,26 @@ def extract(zip_path: str, dest: str, log=lambda s: None) -> int:
     return n
 
 
-def issue_source_token(dest: str):
-    """装好 / 修复之后: 用 DPAPI 封一个"现在这些程序文件是安装程序装的"的令牌, OIT 下次启动时据此知道程序文件的变化是安装, 不是被人改的 (srcguard.py)."""
+_TOKEN_CODE = ("import sys; sys.path.insert(0, sys.argv[1]); import srcguard; sys.exit(0 if srcguard.issue_token(sys.argv[1]) else 1)")
+
+
+def issue_source_token(dest: str, python: str = "", run=subprocess.run) -> bool:
+    """装好 / 修复之后: 用 DPAPI 封一个"现在这些程序文件是安装程序装的"的令牌, OIT 下次启动时据此知道程序文件的变化是安装, 不是被人改的 (srcguard.py).
+    1.0.374 的坑: setup.exe 是 PyInstaller 打的, 只带了它自己 import 的标准库, srcguard / continuity 需要的 secrets / hmac 不在里面,
+    在 exe 里 import 失败, 异常被吞掉, 令牌没发出去 → OIT 以为源码被改了, 清了数据. 所以优先让装好的那个 Python (有完整标准库) 来发令牌; 发不出去才在本进程里试, 都不行返回 False (调用方要告诉用户)."""
+    if python:
+        try:
+            r = run([python, "-c", _TOKEN_CODE, dest], capture_output=True, timeout=120, creationflags=NO_WINDOW)
+            if r.returncode == 0:
+                return True
+        except Exception:
+            pass
     sys.path.insert(0, dest)
     try:
         import importlib
-        importlib.import_module("srcguard").issue_token(dest)
+        return bool(importlib.import_module("srcguard").issue_token(dest))
     except Exception:
-        pass
+        return False
     finally:
         try:
             sys.path.remove(dest)
@@ -384,7 +398,8 @@ def install(opts: dict, log=print, progress=lambda n: None, zip_path: str = None
         log(t("step_copy", d=dest))
         n = extract(zip_path, dest, log)
         log(f"{n} files")
-        issue_source_token(dest)
+        if not issue_source_token(dest, python):
+            log(t("token_fail"))
         if opts.get("compile", True):
             log(t("step_compile"))
             try:
@@ -582,6 +597,7 @@ def main(argv=None):
 # ---------- 自检 ----------
 
 def _selftest():
+    real_lad = os.environ.get("LOCALAPPDATA")
     global oit_running
     real_running = oit_running
     d = tempfile.mkdtemp()
@@ -635,11 +651,17 @@ def _selftest():
         assert not signature_ok("x.exe", sig("NotSigned|"))
         # 整个安装流程 (不注册表, 不快捷方式, 不装 Python / pip, 不预编译)
         oit_running = lambda: False        # 本机真有 OIT 在运行也不影响自检
+        os.environ["LOCALAPPDATA"] = os.path.join(d, "LocalAppData")      # 令牌写在这里, 不碰真正的
         prog = os.path.join(d, "Program Files", "OIT")
         m = install({"dir": prog, "python_exe": fake_py, "register": False, "compile": False, "pip": False, "desktop": False, "start": False},
                     lambda s: None, zip_path=z)
         assert m["version"] == v and m["python"] == fake_py and registration.read_marker(prog)["version"] == v
         assert os.path.isfile(os.path.join(prog, "main.py"))
+        # 令牌: 用完整的 Python 发 (1.0.374: exe 里缺 secrets / hmac, 在 exe 里发不出, OIT 把安装当成源码被改, 清了数据), 而且发出来的令牌 srcguard 认得
+        tok = os.path.join(d, "LocalAppData", "Obliphur", "OIT", "src_update.dat")
+        assert issue_source_token(prog, sys.executable) and os.path.isfile(tok)
+        os.remove(tok)
+        assert not issue_source_token(prog, os.path.join(d, "no-such-python.exe"), run=lambda *a, **k: (_ for _ in ()).throw(OSError("x"))) or os.path.isfile(tok)
         # 再装一遍 = 升级: 不报错
         install({"dir": prog, "python_exe": fake_py, "register": False, "compile": False, "pip": False}, lambda s: None, zip_path=z)
         # git 仓库不能装
@@ -655,8 +677,12 @@ def _selftest():
             raise AssertionError("OIT 在运行时不能装")
         except SetupError:
             pass
-        assert lang() in (0, 1) and t("done")
+        assert lang() in (0, 1) and t("done") and t("token_fail")
     finally:
+        if real_lad is None:
+            os.environ.pop("LOCALAPPDATA", None)
+        else:
+            os.environ["LOCALAPPDATA"] = real_lad
         oit_running = real_running
         shutil.rmtree(d, ignore_errors=True)
     return "setup selftest OK"
