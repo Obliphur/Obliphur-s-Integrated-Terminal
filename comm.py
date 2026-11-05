@@ -168,7 +168,7 @@ WEEKDAY = "一二三四五六日"
 
 DEFAULTS = {"persona": "", "show_avatar": False,
             "avatar_me": "", "avatar_ai": "", "pro_key": "", "retry": {}, "clear_ts": 0, "seeded": False, "assistant_seeded": False,
-            "claudia_migrated": False, "claudia_modified": False, "claudia_notified": "",
+            "claudia_migrated": False, "claudia_modified": False, "claudia_notified": "", "claudia_base": "", "routine_base": "",
             "legacy_done": False, "joint_last": [], "user_profile": "", "split_send": True,
             "bg_pro": True, "mute_pro": [], "idle_use": {}, "joint": {},
             "mem_auto": "", "mem_upto": 0, "mem_ts": 0,      # 记忆卡 (跟着聊天对象走; 全部由模型自动整理)
@@ -1627,6 +1627,8 @@ class Comm:
         self._upgrade_assistant_prompt()
         self._migrate_claudia()
         self._upgrade_claudia_prompt()
+        self._upgrade_routine()
+        self._note_builtin_base()
         self._migrate_avatars()
         last = self.messages[-1] if self.messages else None
         rt = self.cfg.get("retry") or {}
@@ -2429,8 +2431,10 @@ class Comm:
                 current = f.read(MAX_PERSONA)
         except (OSError, UnicodeDecodeError):
             return
-        if current.strip() not in {x.strip() for x in CLAUDIA_LEGACIES}:
+        if current.strip() == BUILTIN_PERSONAS[DEFAULT_PERSONA].strip():
             return
+        if current.strip() not in {x.strip() for x in CLAUDIA_LEGACIES} and self._text_crc(current) != self.cfg.get("claudia_base"):
+            return                                  # 用户改过的: 不动 (改回上一次见到的内置版本就算没改过, 见 _note_builtin_base)
         self._write_claudia_builtin(force=False)
         self._backup_persona_file(DEFAULT_PERSONA)
         self._backup_persona_file(DEFAULT_ROUTINE)
@@ -2438,6 +2442,42 @@ class Comm:
         self.cfg["claudia_notified"] = ""
         self._claudia_sig = None
         self.save_cfg()
+
+    def _upgrade_routine(self):
+        """日程文件 Claudia_routine.txt 自己升级, 不看 Claudia.txt 有没有被改过: 缺 / 空白 → 补上当前内置版本;
+        是更早的内置版本 (用户没改过) → 换成当前内置版本; 用户改过的不动. Claudia.txt 不在时不补 (不然它会被当成人设)."""
+        if not os.path.isfile(self._claudia_path()):
+            return
+        cur = self._read_persona_raw(DEFAULT_ROUTINE)
+        builtin = BUILTIN_PERSONAS[DEFAULT_ROUTINE]
+        if cur is not None and cur.strip() and (cur.strip() == builtin.strip() or (
+                cur.strip() not in {x.strip() for x in ROUTINE_LEGACIES} and self._text_crc(cur) != self.cfg.get("routine_base"))):
+            return
+        try:
+            with open(os.path.join(self.personas, DEFAULT_ROUTINE), "w", encoding="utf-8", newline="\n") as f:
+                f.write(builtin)
+        except OSError:
+            return
+        self._backup_persona_file(DEFAULT_ROUTINE)          # 记成"上次看到的样子": 不弹"修改人设"
+        self._seg_sig = None
+        self.log("ROUTINE 日程文件" + ("已补上" if cur is None or not cur.strip() else "已升级"))
+
+    @staticmethod
+    def _text_crc(text: str) -> str:
+        return f"{zlib.crc32((text or '').strip().encode('utf-8')):08x}"
+
+    def _note_builtin_base(self):
+        """记下 Claudia.txt / Claudia_routine.txt 现在是不是内置版本: 是的话把这一版的校验值记成"上一次见到的内置版本".
+        之后程序更新了内置版本, 文件只要还是 (或者用户改过又改回了) 这个旧版本, 就当没改过, 自动换成新版 ——
+        不管中间弹窗点过什么, 也不用每个旧版本都进升级链."""
+        changed = False
+        for name, key in ((DEFAULT_PERSONA, "claudia_base"), (DEFAULT_ROUTINE, "routine_base")):
+            cur = self._read_persona_raw(name)
+            if cur is not None and cur.strip() == BUILTIN_PERSONAS[name].strip() and self.cfg.get(key) != self._text_crc(cur):
+                self.cfg[key] = self._text_crc(cur)
+                changed = True
+        if changed:
+            self.save_cfg()
 
     def check_claudia_integrity(self) -> bool:
         """Claudia 文件被手动改过吗. True = 现在该弹窗提醒 (同一份内容只提醒一次)."""
@@ -2476,6 +2516,7 @@ class Comm:
         self._write_claudia_builtin()
         self._backup_persona_file(DEFAULT_PERSONA)
         self._backup_persona_file(DEFAULT_ROUTINE)
+        self._note_builtin_base()
         self.cfg["claudia_modified"] = False
         self.cfg["claudia_notified"] = ""
         self._claudia_sig = None
@@ -6737,6 +6778,46 @@ def _selftest():
     cu.reload_schedule("test")
     assert cu._rt is not None
     cu.flush()
+    # 弹窗点了"确定" (保留修改) 之后又改回了原样 (上一次见到的内置版本, 不在升级链里): 更新后照样换成新版
+    bs_dir, bs_personas = os.path.join(td, "base_rt"), os.path.join(td, "base_rt_personas")
+    os.makedirs(bs_dir)
+    os.makedirs(bs_personas)
+    old_claudia = BUILTIN_PERSONAS[DEFAULT_PERSONA] + "\n(上一版内置, 不在升级链里)"
+    old_routine = BUILTIN_PERSONAS[DEFAULT_ROUTINE] + "\n(上一版内置日程, 不在升级链里)"
+    open(os.path.join(bs_personas, "Claudia.txt"), "w", encoding="utf-8", newline="\n").write(old_claudia)
+    open(os.path.join(bs_personas, "Claudia_routine.txt"), "w", encoding="utf-8", newline="\n").write(old_routine)
+    config.save_json_file(os.path.join(bs_dir, "comm_config.json"), {"seeded": True, "assistant_seeded": True, "persona": "Claudia.txt", "claudia_migrated": True,
+                                                                 "claudia_base": f"{zlib.crc32(old_claudia.strip().encode('utf-8')):08x}",
+                                                                 "routine_base": f"{zlib.crc32(old_routine.strip().encode('utf-8')):08x}",
+                                                                 "claudia_modified": True, "claudia_notified": "deadbeef"})
+    cb = Comm(bs_dir, bs_personas, now=lambda: clock[0], chat_fn=fake)
+    assert read_persona(bs_personas, "Claudia.txt") == BUILTIN_PERSONAS[DEFAULT_PERSONA].strip(), "改回上一次见到的内置版本: 更新后换成新版"
+    assert read_persona(bs_personas, "Claudia_routine.txt") == BUILTIN_PERSONAS[DEFAULT_ROUTINE].strip()
+    assert not cb.cfg["claudia_modified"] and cb.cfg["claudia_base"] == Comm._text_crc(BUILTIN_PERSONAS[DEFAULT_PERSONA])
+    cb.flush()
+    open(os.path.join(bs_personas, "Claudia.txt"), "w", encoding="utf-8", newline="\n").write("用户改过的另一个版本")
+    cb2 = Comm(bs_dir, bs_personas, now=lambda: clock[0], chat_fn=fake)
+    assert read_persona(bs_personas, "Claudia.txt") == "用户改过的另一个版本", "真改过的不覆盖"
+    cb2.flush()
+    # Claudia.txt 被用户改过 (认不出来): 日程文件照样补上 / 升级; 用户改过的日程文件不动
+    mod_dir, mod_personas = os.path.join(td, "mod_rt"), os.path.join(td, "mod_rt_personas")
+    os.makedirs(mod_dir)
+    os.makedirs(mod_personas)
+    open(os.path.join(mod_personas, "Claudia.txt"), "w", encoding="utf-8", newline="\n").write("我自己改过的 Claudia")
+    config.save_json_file(os.path.join(mod_dir, "comm_config.json"), {"seeded": True, "assistant_seeded": True, "persona": "Claudia.txt", "claudia_migrated": True})
+    cm = Comm(mod_dir, mod_personas, now=lambda: clock[0], chat_fn=fake)
+    assert read_persona(mod_personas, "Claudia.txt") == "我自己改过的 Claudia", "改过的 Claudia 不动"
+    assert read_persona(mod_personas, "Claudia_routine.txt") == BUILTIN_PERSONAS[DEFAULT_ROUTINE].strip(), "Claudia 改过, 日程文件也要补上"
+    assert cm.check_persona_changes() is None, "补上日程文件不弹修改人设"
+    cm.flush()
+    open(os.path.join(mod_personas, "Claudia_routine.txt"), "w", encoding="utf-8", newline="\n").write(ROUTINE_PREV1)
+    cm2 = Comm(mod_dir, mod_personas, now=lambda: clock[0], chat_fn=fake)
+    assert read_persona(mod_personas, "Claudia_routine.txt") == BUILTIN_PERSONAS[DEFAULT_ROUTINE].strip(), "更早的内置日程文件换成当前版本"
+    cm2.flush()
+    open(os.path.join(mod_personas, "Claudia_routine.txt"), "w", encoding="utf-8", newline="\n").write(BUILTIN_PERSONAS[DEFAULT_ROUTINE] + "\n我的日程")
+    cm3 = Comm(mod_dir, mod_personas, now=lambda: clock[0], chat_fn=fake)
+    assert read_persona(mod_personas, "Claudia_routine.txt").endswith("我的日程"), "用户改过的日程文件不动"
+    cm3.flush()
     cr2.flush()
 
     # ---- 重要活动 / 特殊空闲 (1.0.357): 日程文件里的新设定 ----

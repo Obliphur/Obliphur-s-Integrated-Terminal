@@ -1399,6 +1399,8 @@ class Comm(
     private var claudiaMigrated = false
     private var claudiaModified = false
     private var claudiaNotified = ""
+    private var claudiaBase = ""        // 上一次见到的内置 Claudia.txt 的校验值 (改回这一版就算没改过)
+    private var routineBase = ""        // 同上, Claudia_routine.txt
     private var claudiaSig: String? = null
     private val personaSig = HashMap<String, String>()      // 人设文件名 → 修改时间+大小
     private var personaPending: String? = null               // 正在等用户决定的人设修改
@@ -1503,6 +1505,8 @@ class Comm(
         upgradeAssistantPrompt()
         migrateClaudia()
         upgradeClaudiaPrompt()
+        upgradeRoutine()
+        noteBuiltinBase()
         migrateAvatars()
         val last = messages.lastOrNull()
         if (last != null && last.role == "me" && ageSeconds(last) < 6 * 3600 && retryAt == 0L)
@@ -1629,6 +1633,8 @@ class Comm(
             claudiaMigrated = d.optBoolean("claudia_migrated", false)
             claudiaModified = d.optBoolean("claudia_modified", false)
             claudiaNotified = d.optString("claudia_notified", "")
+            claudiaBase = d.optString("claudia_base", "")
+            routineBase = d.optString("routine_base", "")
             legacyDone = d.optBoolean("legacy_done", false)
             // 旧版本这几项存在设置里 (所有对象共用): 迁移时归给现在选着的对象
             proKey = d.optString("pro_key", "")
@@ -1665,7 +1671,7 @@ class Comm(
             .put("show_avatar", showAvatar).put("avatar_me", avatarMe).put("avatar_ai", avatarAi)
             .put("user_profile", userProfile).put("seeded", seeded).put("assistant_seeded", assistantSeeded)
             .put("claudia_migrated", claudiaMigrated).put("claudia_modified", claudiaModified)
-            .put("claudia_notified", claudiaNotified)
+            .put("claudia_notified", claudiaNotified).put("claudia_base", claudiaBase).put("routine_base", routineBase)
             .put("legacy_done", legacyDone).put("split_send", splitSend).put("think_auto", thinkAuto)
             .put("bg_pro", bgPro).put("mute_pro", JSONArray(muted.toList()))
             .put("idle_use", JSONObject().put("d", idleDay).put("s", idleSec))
@@ -2280,12 +2286,42 @@ class Comm(
         val f = claudiaFile()
         if (!f.isFile) return
         val current = runCatching { f.readText(Charsets.UTF_8).removePrefix("\uFEFF").take(MAX_PERSONA) }.getOrNull() ?: return
-        if (current.trim() !in BuiltinPersonas.CLAUDIA_LEGACIES.map { it.trim() }) return
+        if (current.trim() == BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).trim()) return
+        if (current.trim() !in BuiltinPersonas.CLAUDIA_LEGACIES.map { it.trim() } && textCrc(current) != claudiaBase) return   // 用户改过的: 不动 (改回上一次见到的内置版本就算没改过)
         writeClaudiaBuiltin(false)
         claudiaModified = false
         claudiaNotified = ""
         claudiaSig = null
         saveCfg()
+    }
+
+    /** 日程文件 Claudia_routine.txt 自己升级, 不看 Claudia.txt 有没有被改过: 缺 / 空白 → 补上当前内置版本;
+     *  是更早的内置版本 (用户没改过) → 换成当前内置版本; 用户改过的不动. Claudia.txt 不在时不补 (不然它会被当成人设). */
+    private fun upgradeRoutine() {
+        if (!claudiaFile().isFile) return
+        val rf = File(personas, BuiltinPersonas.ROUTINE)
+        val cur = if (rf.isFile) runCatching { rf.readText(Charsets.UTF_8).removePrefix("\uFEFF") }.getOrNull() else null
+        val builtin = BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE)
+        if (cur != null && cur.isNotBlank() && (cur.trim() == builtin.trim() ||
+                (cur.trim() !in BuiltinPersonas.ROUTINE_LEGACIES.map { it.trim() } && textCrc(cur) != routineBase))) return
+        if (runCatching { rf.writeText(builtin, Charsets.UTF_8) }.isFailure) return
+        backupPersonaFile(BuiltinPersonas.ROUTINE)          // 记成"上次看到的样子": 不弹"修改人设"
+        claudiaSig = null
+        log("ROUTINE 日程文件" + if (cur.isNullOrBlank()) "已补上" else "已升级")
+    }
+
+    private fun textCrc(text: String): String = "%08x".format(java.util.zip.CRC32().apply { update(text.trim().toByteArray(Charsets.UTF_8)) }.value)
+
+    /** 记下 Claudia.txt / Claudia_routine.txt 现在是不是内置版本: 是的话把这一版的校验值记成"上一次见到的内置版本".
+     *  之后程序更新了内置版本, 文件只要还是 (或者用户改过又改回了) 这个旧版本, 就当没改过, 自动换成新版 ——
+     *  不管中间弹窗点过什么, 也不用每个旧版本都进升级链. */
+    private fun noteBuiltinBase() {
+        var changed = false
+        val cur = readPersonaRaw(BuiltinPersonas.DEFAULT)
+        if (cur != null && cur.trim() == BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).trim() && claudiaBase != textCrc(cur)) { claudiaBase = textCrc(cur); changed = true }
+        val rt = readPersonaRaw(BuiltinPersonas.ROUTINE)
+        if (rt != null && rt.trim() == BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE).trim() && routineBase != textCrc(rt)) { routineBase = textCrc(rt); changed = true }
+        if (changed) saveCfg()
     }
 
     /** Claudia 文件被手动改过吗. true = 现在该弹窗提醒 (同一份内容只提醒一次). */
@@ -2316,6 +2352,7 @@ class Comm(
     /** 把 Claudia 文件恢复成内置版本 (弹窗的"还原人设文件"). */
     fun restoreClaudia() {
         writeClaudiaBuiltin()
+        noteBuiltinBase()
         claudiaModified = false
         claudiaNotified = ""
         claudiaSig = null
