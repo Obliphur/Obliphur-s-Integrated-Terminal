@@ -28,8 +28,8 @@ class AiDataView(tk.Frame):
         self.area = ScrollArea(self, height=300, bg=COLORS["bg"])
         self.area.pack(fill="both", expand=True)
 
-    def render(self, view: dict):
-        sig = json.dumps(view, sort_keys=True, ensure_ascii=False) + self._kind
+    def render(self, view: dict, name: str = "AI"):
+        sig = json.dumps(view, sort_keys=True, ensure_ascii=False) + self._kind + "|" + name
         if sig == self._sig:
             return
         self._sig = sig
@@ -38,9 +38,9 @@ class AiDataView(tk.Frame):
             w.destroy()
         bg, card = COLORS["bg"], COLORS["bg_card"]
         if not view:
-            tk.Label(inner, text=tr("这一页没有 AI 的数据."), bg=bg, fg=COLORS["text_dim"], font=config.font("body")).pack(padx=28, pady=28, anchor="w")
+            tk.Label(inner, text=tr("这一页没有 {name} 的数据.", name=name), bg=bg, fg=COLORS["text_dim"], font=config.font("body")).pack(padx=28, pady=28, anchor="w")
             return
-        tk.Label(inner, text="🤖  " + tr("AI 的数据") + " · " + tr(view.get("title", "")), bg=bg, fg=COLORS["text"],
+        tk.Label(inner, text="🤖  " + tr("{name} 的数据", name=name) + " · " + tr(view.get("title", "")), bg=bg, fg=COLORS["text"],
                  font=config.font("h1", bold=True), anchor="w").pack(fill="x", padx=28, pady=(22, 8))
         for b in view.get("blocks", []):
             t = b.get("t")
@@ -194,6 +194,7 @@ class ShareDock(tk.Frame):
         page = c.share_page()
         name = comm_mod_names().get(page, page)
         cfg(self.lbl_title, text="💬  " + tr("share data") + " · " + tr(name))
+        cfg(self.btn_ai, text=tr("{name} 的数据", name=c.share_ai_name()))      # 对方的数据按钮写人设名
         for btn, on in ((self.btn_me, c.share_view() == "me"), (self.btn_ai, c.share_view() == "ai")):
             if btn.instate(["disabled"]) != on:
                 btn.state(["disabled" if on else "!disabled"])

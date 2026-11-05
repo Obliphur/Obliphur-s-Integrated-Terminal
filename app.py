@@ -1221,7 +1221,7 @@ class BreakTimerApp:
             if force or now - self._share_ai_at >= 5:
                 self._share_ai_at = now
                 try:
-                    self.ai_data_view.render(c.share_ai_view(page))
+                    self.ai_data_view.render(c.share_ai_view(page), c.share_ai_name())
                 except Exception as e:      # noqa: BLE001
                     self._log_window(f"ERROR    share view {type(e).__name__}: {e}")
             if self.ai_data_view.winfo_manager() != "grid":

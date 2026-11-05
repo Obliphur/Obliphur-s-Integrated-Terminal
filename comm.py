@@ -4092,6 +4092,10 @@ class Comm:
         """界面上看谁的数据: "me" 自己 / "ai" 对方."""
         return self.share["view"]
 
+    def share_ai_name(self) -> str:
+        """share data 的界面上对方的名字: 人设名 (不带后缀), 没选人设时是 "AI"; 切换按钮 / 标题写成"<名字> 的数据"."""
+        return persona_title(self.persona_name()) or "AI"
+
     def set_share_view(self, view: str):
         self.share["view"] = "ai" if view == "ai" else "me"
         self._changed()

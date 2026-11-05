@@ -69,7 +69,7 @@ fun ShareDock(page: String, hasAi: Boolean) {
                 modifier = Modifier.weight(1f))
             if (hasAi) {
                 TextButton({ comm.setShareView("me") }) { Text(tr("我的数据"), color = if (view == "me") o.accent else o.dim, fontSize = 12.sp) }
-                TextButton({ comm.setShareView("ai") }) { Text(tr("AI 的数据"), color = if (view == "ai") o.accent else o.dim, fontSize = 12.sp) }
+                TextButton({ comm.setShareView("ai") }) { Text(tr("{name} 的数据", "name" to comm.personaTitle(comm.personaName()).ifEmpty { "AI" }), color = if (view == "ai") o.accent else o.dim, fontSize = 12.sp) }
             }
             TextButton({ folded = !folded }) { Text(if (folded) "▴" else "▾", color = o.dim) }
         }
@@ -107,8 +107,9 @@ fun ShareAiScreen(page: String) {
     }
     Column(Modifier.fillMaxSize().background(o.bg).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         val v = view
-        if (v == null) { Text(tr("这一页没有 AI 的数据."), color = o.dim); return@Column }
-        Text("🤖  " + tr("AI 的数据") + " · " + tr(v.title), color = o.text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        val who = comm.personaTitle(comm.personaName()).ifEmpty { "AI" }          // 对方的数据写人设名
+        if (v == null) { Text(tr("这一页没有 {name} 的数据.", "name" to who), color = o.dim); return@Column }
+        Text("🤖  " + tr("{name} 的数据", "name" to who) + " · " + tr(v.title), color = o.text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
         for (b in v.blocks) ShareBlockView(b, kind) { kind = it }
     }
 }
