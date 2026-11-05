@@ -351,6 +351,10 @@ fun CommSettings() {
         if (names.isNotEmpty()) Box(Modifier.padding(top = 8.dp)) {
             Segmented(names, comm.personaName()) { comm.set(persona = it) }
         }
+        if (comm.claudiaDiffers()) Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {   // 选着 Claudia 而内容和默认人设不一样
+            Text(tr("Claudia 的内容和默认人设不一样"), color = o.dim, fontSize = 12.sp, modifier = Modifier.weight(1f))
+            PlainButton(tr("还原")) { comm.restoreClaudia(); core.toast(tr("已还原默认人设")) }
+        }
     }
 
     OitCard {

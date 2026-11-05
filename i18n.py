@@ -564,6 +564,9 @@ EN = {
     "还没有选人设": "No persona selected",
     "还没有日志.": "No journal entries yet.",
     "写法": "How to write",
+    "Claudia 的内容和默认人设不一样": "Claudia differs from the default persona",
+    "还原": "Restore",
+    "已还原默认人设": "Default persona restored",
     "默认全屏": "Fullscreen by default",
     "即时生效.打开程序时默认全屏 (没有标题栏), 改这一项时当场切换; 平时按 F11 也随时可以切换全屏.仅电脑, 每台设备各自设置, 不同步.":
         "Instant. Open OIT in fullscreen (no title bar) by default; changing this switches right away, and F11 toggles fullscreen any time. PC only, per device, not synced.",

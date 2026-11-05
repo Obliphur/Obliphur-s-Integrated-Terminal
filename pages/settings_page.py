@@ -824,6 +824,11 @@ class SettingsPage(tk.Frame):
         self.cb_persona = ttk.Combobox(fr, textvariable=self.comm_persona, state="readonly", width=40)
         self.cb_persona.pack(fill="x", padx=12, pady=(2, 10))
         self.cb_persona.bind("<<ComboboxSelected>>", lambda _e: self._comm_pick_persona())
+        # 选着 Claudia 而它的内容和默认人设不一样时, 显示"还原"
+        self.row_restore = tk.Frame(fr, bg=card)
+        tk.Label(self.row_restore, text=tr("Claudia 的内容和默认人设不一样"), bg=card, fg=COLORS["dim"], font=small,
+                 anchor="w").pack(side="left", padx=(12, 8))
+        ttk.Button(self.row_restore, text=tr("还原"), command=self._comm_restore_claudia).pack(side="left")
 
         fr, _head = self._card(body, "🧑  我的身份背景")
         self.txt_profile = tk.Text(fr, height=6, wrap="word", font=config.font("body"), bg=card, fg=COLORS["text"],
@@ -941,6 +946,11 @@ class SettingsPage(tk.Frame):
             self.comm.set_cfg(persona=name)
             self._refresh_comm()
 
+    def _comm_restore_claudia(self):
+        self.comm.restore_claudia()
+        self._refresh_comm()
+        toast.info(tr("已还原默认人设"))
+
     def _comm_flag(self, key):
         self.comm.set_cfg(**{key: bool(self.comm_vars[key].get())})
         if key == "show_avatar":
@@ -991,6 +1001,10 @@ class SettingsPage(tk.Frame):
         self.cb_persona.config(values=[lab for _n, lab in self._persona_labels])
         cur = c.persona_name()
         set_var(self.comm_persona, next((lab for n, lab in self._persona_labels if n == cur), ""))
+        if c.claudia_differs():
+            show_pack(self.row_restore, fill="x", pady=(0, 10))
+        else:
+            hide_pack(self.row_restore)
         if focus_name(self.txt_profile) != str(self.txt_profile) \
                 and self.txt_profile.get("1.0", "end").strip() != str(c.cfg.get("user_profile") or ""):
             self.txt_profile.delete("1.0", "end")                       # 别的设备同步来了新的身份背景

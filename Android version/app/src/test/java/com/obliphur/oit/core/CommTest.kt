@@ -17,7 +17,11 @@ import java.time.LocalDateTime
 
 /** 沟通 (MECHANICS 24). 对应桌面版 comm.py 的 _selftest. */
 class CommTest {
-    init { Comm.charDelay = 0.0 }          // 其余用例里对方的回复马上显示 (打字延时见 typingDelay)
+    init {
+        Comm.charDelay = 0.0
+        BuiltinPersonas.CLAUDIA_LEGACIES = listOf(TEST_OLD_CLAUDIA, TEST_SCHEDULE_PERSONA)       // 现在内置的升级链是空的: 测试里放两份假的旧版
+        BuiltinPersonas.ROUTINE_LEGACIES = listOf(TEST_OLD_ROUTINE)
+    }          // 其余用例里对方的回复马上显示 (打字延时见 typingDelay)
 
     private var clock = LocalDateTime.of(2026, 11, 2, 9, 0, 0)
     private val calls = mutableListOf<Pair<String, List<Pair<String, String>>>>()
@@ -522,7 +526,7 @@ class CommTest {
         assertTrue("我的改动" in ma.readPersona("Assistant.txt"))
     }
 
-    /** Claudia: 内置版本不会自动更新; 和内置版本不一样 (= 改过) 的走"修改人设"提醒. */
+    /** Claudia: 更新上来时认不出来的内容 (= 改过) 不覆盖, 走"修改人设"提醒; 认得的旧内置才静默升级. */
     @Test
     fun claudiaIntegrity() {
         val td = Files.createTempDirectory("oit").toFile()
@@ -532,23 +536,38 @@ class CommTest {
         File(cd, "comm_config.json").writeText("""{"seeded":true,"persona":"Claudia.txt"}""")
         val c = Comm(cd, cp, { clock }) { _, _, _ -> "" }
         assertEquals("认不出来的内容不能被更新覆盖", "旧的自定义", c.readPersona("Claudia.txt"))
-        assertNull("第一次见到: 只记备份", c.checkPersonaChanges())
-        File(cp, "Claudia.txt").appendText("再改一点")
         assertNotNull("改过的: 要提醒", c.checkPersonaChanges())
         assertTrue(c.checkClaudiaIntegrity())
         assertFalse(c.checkClaudiaIntegrity())
         c.restoreClaudia()
         assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).trim(), c.readPersona("Claudia.txt"))
-        // 默认人设不会自动更新: 和内置版本不一样的 Claudia 原样不动, 缺的配套文件也不补
-        val ud = File(td, "ud").also { it.mkdirs() }
-        val up = File(td, "up").also { it.mkdirs() }
-        val oldText = BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).replace("注重卫生.", "注重卫生.\n- 旧版的一行.")
-        File(up, "Claudia.txt").writeText(oldText)
-        File(ud, "comm_config.json").writeText("""{"seeded":true,"assistant_seeded":true,"persona":"Claudia.txt"}""")
-        val uc = Comm(ud, up, { clock }) { _, _, _ -> "" }
-        assertEquals("不自动更新: 和内置版本不一样的 Claudia 原样不动", oldText.trim(), uc.readPersona("Claudia.txt"))
-        assertFalse("不自动更新: 缺的配套文件也不补", File(up, "Claudia_routine.txt").exists() || File(up, "Claudia_background.txt").exists())
-        assertNull("第一次见到: 只记备份, 不弹修改人设", uc.checkPersonaChanges())
+        assertFalse("还原后: 三个文件都是内置版本, 不显示还原按钮", c.claudiaDiffers())
+        File(cp, "Claudia_background.txt").appendText("我加的一句")
+        assertTrue("背景文件被改过: 显示还原按钮", c.claudiaDiffers())
+        c.restoreClaudia()
+        assertFalse(c.claudiaDiffers())
+        File(cp, "Claudia_routine.txt").delete()
+        assertTrue("缺文件也算和默认人设不一样", c.claudiaDiffers())
+        c.restoreClaudia()
+        assertTrue("还原把缺的文件补上", !c.claudiaDiffers() && File(cp, "Claudia_routine.txt").isFile)
+        c.set(persona = "Assistant.txt")
+        assertFalse("没选 Claudia: 不显示", c.claudiaDiffers())
+        c.set(persona = "Claudia.txt")
+        // 更早版本没改过的 Claudia 都自动升级; 改过的不动
+        BuiltinPersonas.CLAUDIA_LEGACIES.forEachIndexed { i, legacy ->
+            val ud = File(td, "ud$i").also { it.mkdirs() }
+            val up = File(td, "up$i").also { it.mkdirs() }
+            File(up, "Claudia.txt").writeText(legacy)
+            File(ud, "comm_config.json").writeText("""{"seeded":true,"persona":"Claudia.txt","claudia_migrated":true}""")
+            val uc = Comm(ud, up, { clock }) { _, _, _ -> "" }
+            assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).trim(), uc.readPersona("Claudia.txt"))
+        }
+        val md = File(td, "md").also { it.mkdirs() }
+        val mp = File(td, "mp").also { it.mkdirs() }
+        File(mp, "Claudia.txt").writeText(TEST_OLD_CLAUDIA + "\n我的改动")
+        File(md, "comm_config.json").writeText("""{"seeded":true,"persona":"Claudia.txt","claudia_migrated":true}""")
+        val mc = Comm(md, mp, { clock }) { _, _, _ -> "" }
+        assertTrue("改过的老版本不动", "我的改动" in mc.readPersona("Claudia.txt"))
     }
 
     /** IV. 人设睡眠开始后 5 分钟, 按睡眠发起谈话概率发一条. */
@@ -1079,17 +1098,20 @@ class CommTest {
         assertEquals(n + 1, followCalls.size)
     }
 
-    /** 改过的 Claudia 启动后原样不动 (不会自动更新). */
+    /** 从老版本更新上来 (第一次迁移): 改过的 Claudia 不能被覆盖, 并且要能弹"修改人设"提醒. */
     @Test
     fun editedClaudiaSurvivesUpdate() {
         val td = Files.createTempDirectory("oit").toFile()
         val dir = File(td, "d").also { it.mkdirs() }
         val personas = File(td, "p").also { it.mkdirs() }
-        val edited = BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).replace("注重卫生.", "注重卫生.\n- 我的改动: 喜欢猫.")
+        val edited = TEST_OLD_CLAUDIA.replace("注重卫生.", "注重卫生.\n- 我的改动: 喜欢猫.")
         File(personas, "Claudia.txt").writeText(edited)
         File(dir, "comm_config.json").writeText("""{"seeded":true,"persona":"Claudia.txt"}""")
         val c = comm(dir, personas)
-        assertTrue("改过的人设不能被覆盖", "我的改动" in c.readPersona("Claudia.txt"))
+        assertTrue("更新上来: 改过的人设不能被覆盖", "我的改动" in c.readPersona("Claudia.txt"))
+        val chg = c.checkPersonaChanges()
+        assertNotNull(chg)
+        assertEquals("Claudia.txt", chg!!.name)
     }
 
     /** 开思考的 thinking 字段: Claude 4.6 及以后 adaptive (Haiku 5.5 等不认 budget_tokens), 老的 / 别家 enabled + budget_tokens (同 ai_assist.adaptive_thinking). */
@@ -1141,6 +1163,18 @@ class CommTest {
         assertTrue("以下是关于用户的长期记忆" in sys && "喜欢钢琴" in sys)
         c.clear()                                                  // 清空聊天: 记忆卡一起清掉
         assertEquals("", c.memAuto)
+    }
+
+    /** Claudia 1.0.308: 去掉"交流时间 15 分钟", 加了"合约失败不满" / "合约主题"; 上一版没改过的会被自动换成新的. */
+    @Test
+    fun claudia308() {
+        val cur = BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT)
+        assertTrue(TEST_OLD_CLAUDIA != cur)
+        val td = Files.createTempDirectory("oit").toFile()
+        val pf = File(td, "p").also { it.mkdirs() }
+        File(pf, "Claudia.txt").writeText(TEST_OLD_CLAUDIA, Charsets.UTF_8)       // 用户电脑里没改过的上一版
+        val c = comm(File(td, "d").also { it.mkdirs() }, pf)
+        assertEquals(cur.trim(), c.readPersona("Claudia.txt"))
     }
 
     /** 联合行动 (24.9): 选词条 + 开始时间 → 打包发给对方 → [Yes] / [No] → 合约进行 (状态同步) → 结束后休息同步 → 重新计算日程. */
@@ -2154,6 +2188,49 @@ class CommTest {
         val chg = c.checkPersonaChanges()
         assertEquals("Claudia_routine.txt", chg!!.name)
         c.resolvePersonaChange("Claudia_routine.txt", true)
+        // 旧版 (没有日程文件) 的 Claudia 升级: 没改过的换成新版 + 日程文件
+        val up = File(td, "up").also { it.mkdirs() }
+        val upp = File(td, "upp").also { it.mkdirs() }
+        File(upp, "Claudia.txt").writeText(TEST_SCHEDULE_PERSONA)
+        File(up, "comm_config.json").writeText("""{"seeded":true,"assistant_seeded":true,"persona":"Claudia.txt","claudia_migrated":true}""")
+        val cu = comm(up, upp)
+        assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).trim(), cu.readPersona("Claudia.txt"))
+        assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE).trim(), cu.readPersona("Claudia_routine.txt"))   // 升级时补上日程文件
+        assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.BACKGROUND).trim(), cu.readPersona("Claudia_background.txt"))   // 升级时补上背景文件
+        assertTrue("Claudia_background.txt" !in cu.listPersonas())
+        cu.reloadSchedule("test")
+        assertNotNull(cu.routineInfo("timer"))
+        // Claudia.txt 被用户改过 (认不出来): 日程文件照样补上 / 升级; 用户改过的日程文件不动
+        val md = File(td, "mod").also { it.mkdirs() }
+        val mp = File(td, "modp").also { it.mkdirs() }
+        File(mp, "Claudia.txt").writeText("我自己改过的 Claudia")
+        File(md, "comm_config.json").writeText("""{"seeded":true,"assistant_seeded":true,"persona":"Claudia.txt","claudia_migrated":true}""")
+        val cm = comm(md, mp)
+        assertEquals("我自己改过的 Claudia", cm.readPersona("Claudia.txt"))
+        assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE).trim(), cm.readPersona("Claudia_routine.txt"))   // Claudia 改过, 日程文件也要补上
+        assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.BACKGROUND).trim(), cm.readPersona("Claudia_background.txt"))   // Claudia 改过, 背景文件也要补上
+        assertNull(cm.checkPersonaChanges())                                                                              // 补上日程 / 背景文件不弹修改人设
+        File(mp, "Claudia_routine.txt").writeText(TEST_OLD_ROUTINE)
+        comm(md, mp)
+        assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE).trim(), cm.readPersona("Claudia_routine.txt"))   // 更早的内置日程文件换成当前版本
+        File(mp, "Claudia_routine.txt").writeText(BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE) + "\n我的日程")
+        comm(md, mp)
+        assertTrue(cm.readPersona("Claudia_routine.txt").endsWith("我的日程"))                                              // 用户改过的日程文件不动
+        // 弹窗点了"确定" (保留修改) 之后又改回了原样 (上一次见到的内置版本, 不在升级链里): 更新后照样换成新版
+        val bd = File(td, "base").also { it.mkdirs() }
+        val bp = File(td, "basep").also { it.mkdirs() }
+        val oldC = BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT) + "\n(上一版内置, 不在升级链里)"
+        val oldR = BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE) + "\n(上一版内置日程, 不在升级链里)"
+        fun crc(t: String) = "%08x".format(java.util.zip.CRC32().apply { update(t.trim().toByteArray(Charsets.UTF_8)) }.value)
+        File(bp, "Claudia.txt").writeText(oldC)
+        File(bp, "Claudia_routine.txt").writeText(oldR)
+        File(bd, "comm_config.json").writeText("""{"seeded":true,"assistant_seeded":true,"persona":"Claudia.txt","claudia_migrated":true,"claudia_modified":true,"claudia_notified":"deadbeef","claudia_base":"${crc(oldC)}","routine_base":"${crc(oldR)}"}""")
+        val cb = comm(bd, bp)
+        assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).trim(), cb.readPersona("Claudia.txt"))
+        assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE).trim(), cb.readPersona("Claudia_routine.txt"))
+        File(bp, "Claudia.txt").writeText("用户改过的另一个版本")
+        comm(bd, bp)
+        assertEquals("用户改过的另一个版本", cb.readPersona("Claudia.txt"))                                                   // 真改过的不覆盖
     }
 
     /** 共时闹钟 (1.0.359): 闹钟跟随被设为共时闹钟的对象的实际起床时间 (Claudia 起床波动 [-20,0]); 对应 comm.py 自检. */
@@ -2207,7 +2284,7 @@ class CommTest {
     }
 }
 
-/** 只给测试用: 一份带完整日程的老格式人设 (日程写在提示词里), 用来测日程解析 / 主动发起. */
+/** 只给测试用: 一份带完整日程的老格式人设 (日程写在提示词里). */
 private val TEST_SCHEDULE_PERSONA = """你将扮演一位文静,冷淡的17岁大小姐Claudia.
 
 【人设】
@@ -2273,3 +2350,6 @@ private val TEST_SCHEDULE_PERSONA = """你将扮演一位文静,冷淡的17岁�
 2. 不要主动说出自己的日程,也不要主动说"我在专注/我在休息";只有用户直接问起,才如实回答,特别是'循环开始时间与这次循环的每轮专注时间'.
 3. 某个时间点你理应处于专注,但用户 3 分钟以内还在和你聊天:说明要进入专注,然后停止对话.
 """
+/** 假装的"上一版内置 Claudia" / "上一版内置日程". */
+private val TEST_OLD_CLAUDIA = BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).replace("注重卫生.", "注重卫生.\n- 旧版的一行.")
+private val TEST_OLD_ROUTINE = BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE).replace("合约记录难度:[20,30]", "合约记录难度:[10,20]")
