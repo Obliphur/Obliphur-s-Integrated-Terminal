@@ -2295,6 +2295,7 @@ class Comm(
         loadSchedule()
         val st = rtStoreGet() ?: return null
         synchronized(rtLock) {
+            rtJointRecord(st)
             val j = jointStatus(t)
             st.fillTimeline(t, { a, b -> rtSegs(a, b) }, j?.let { it.first.kind to JOINT_STATUS })
             st.fillCells(t, { a, b -> rtMsgs(a, b) }, { x -> rtFine(x) })
@@ -2305,6 +2306,18 @@ class Comm(
             }
         }
         return st
+    }
+
+    /** 和用户一起顺利完成的联合行动 (state=rest, result=completed): 把这次真实的合约 (词条 / 等级 / 结束时间) 记进她的合约记录.
+     *  联合行动的状态会随设备同步, 哪台设备都能记; 失败 / 提前终止的不算"顺利完成". */
+    private fun rtJointRecord(st: RoutineStore) {
+        val j = curJoint() ?: return
+        if (j.state != "rest" || j.result != "completed" || j.ended.isEmpty()) return
+        val terms = Contract.clean(j.terms)
+        if (terms.isEmpty()) return
+        val lv = Contract.levelOf(terms)
+        st.addJoint(JSONObject().put("id", j.cid.ifEmpty { j.id.ifEmpty { j.ended } }).put("result", "completed").put("end", j.ended.take(19))
+            .put("level", lv).put("orig_level", lv).put("orig", JSONArray(terms)).put("terms", JSONArray(terms)).put("rand", JSONArray()))
     }
 
     private fun rtTick() {
@@ -2381,7 +2394,7 @@ class Comm(
                 st.dayMinutes(d, setOf("focus")), st.dayMinutes(d, setOf("rest")))
         }
         blocks.add("【统计·专注计时 最近 7 天】\n" + lines.joinToString("\n"))
-        val recs = Routine.contractsBefore(r, t, pid).take(5)
+        val recs = st.recentContracts(t)
         blocks.add("【统计·合约记录 最近完成的】\n" + (if (recs.isEmpty()) "  还没有顺利完成的合约" else recs.joinToString("\n") { CommData.record(it) }))
         return blocks.joinToString("\n\n")
     }
@@ -2544,6 +2557,7 @@ class Comm(
         val until = n.plusSeconds(restS)
         val lost = jointHpText(j)
         jointSet(j.copy(state = "rest", result = result, ended = n.iso(), restS = restS, restUntil = until.iso(), hp = emptyList()))
+        if (rt != null) runCatching { rtSync() }.onFailure { log("ROUTINE joint record FAIL ${it.javaClass.simpleName}: ${it.message}") }   // 顺利完成的: 马上记进她的合约记录
         val rest = if (restS > 0) "你与用户一起得到了 ${restS / 60} 分钟休息, 休息到 %02d:%02d 结束, 之后你需要重新计算日程.".format(until.hour, until.minute)
         else "这次没有得到休息时间, 你立即重新计算日程."
         val tail = if (lost.isNotEmpty()) " $lost" else ""
@@ -3077,10 +3091,11 @@ class Comm(
     @Synchronized internal fun proactiveForTestSet(state: String) { curJoint()?.let { jointSet(it.copy(state = state)) } }
     /** 单元测试用 (日程文件): 此刻状态那段话 / 联合行动结束后休息到 restUntil / 清掉联合行动 / 主动发起联合行动时选的词条. */
     internal fun noteForTest(t: LocalDateTime) = rtNote(t)
-    internal fun jointRestForTest(restUntil: LocalDateTime, ended: LocalDateTime) =
-        jointSet(Joint("t", pid, "rest", emptyList(), "", "", 0L, "c", ended.minusHours(3).toString(), ended.toString(), "completed", ended.toString(), 0L, restUntil.toString()))
+    internal fun jointRestForTest(restUntil: LocalDateTime, ended: LocalDateTime, terms: List<String> = emptyList(), cid: String = "c", result: String = "completed") =
+        jointSet(Joint("t", pid, "rest", terms, "", "", 0L, cid, ended.minusHours(3).toString(), ended.toString(), result, ended.toString(), 0L, restUntil.toString()))
     internal fun jointClearForTest() { joint = null; jointTs = maxOf(nowMs(), jointTs + 1); saveCfg() }
     internal fun opTermsForTest(): List<String> = opTerms("没有编号", emptyList())
+    internal fun rtStoreForTest(): RoutineStore? = rtStoreGet()
 
     /** 当前的联合行动的状态 (wait / invite / yes / no / missed / run / rest), 没有 = "". */
     fun jointState(): String = curJoint()?.state ?: ""

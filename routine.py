@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, date as _date
 
 import config
 
+KEEP_JOINT = 20                   # 存下来的真实联合行动合约记录最多留多少条
 KEEP_DAYS = 35                    # 存下来的时间线 / 整点记录最多留多少天
 BACKFILL_DAYS = 7                 # 第一次使用 (没有存档) 时往前补多少天
 SYNC_MAX_DAYS = 14                # 一次最多补多少天 (很久没开程序也只补最近这些)
@@ -366,6 +367,7 @@ class Store:
         self.upto = None                   # 时间线记到什么时候
         self.tl = []                       # [kind, 开始 iso, 结束 iso, 名字]
         self.cells = {}                    # "2026-11-05T09:00" → [分钟数, 文字 ("" = 没有记录)]
+        self.joint = []                    # 和用户真的一起完成过的联合行动的合约记录 (按完成先后), 同合约记录的格式 + "id"
         self.dirty = False
         self.load()
 
@@ -382,12 +384,29 @@ class Store:
             self.upto = _dt(d["upto"]) if d.get("upto") else None
             self.tl = [x for x in d.get("tl", []) if isinstance(x, list) and len(x) == 4]
             self.cells = {k: v for k, v in (d.get("cells") or {}).items() if isinstance(v, list) and len(v) == 2}
+            self.joint = [x for x in (d.get("joint") or []) if isinstance(x, dict) and x.get("id") and x.get("end")]
         except (ValueError, TypeError):
             self.upto, self.tl, self.cells = None, [], {}
 
     def payload(self) -> dict:
         return {"seed": self.seed, "upto": _iso(self.upto) if self.upto else "",
-                "tl": [list(x) for x in self.tl], "cells": {k: list(v) for k, v in self.cells.items()}}     # 副本: 后台线程写盘时主线程还在改
+                "tl": [list(x) for x in self.tl], "cells": {k: list(v) for k, v in self.cells.items()},
+                "joint": [dict(x) for x in self.joint]}     # 副本: 后台线程写盘时主线程还在改
+
+    # ---- 真的完成过的联合行动 ----
+    def add_joint(self, rec: dict) -> bool:
+        """记一条真实完成的联合行动合约 (rec["id"] 去重). 返回是不是新记的."""
+        if not rec.get("id") or any(x.get("id") == rec["id"] for x in self.joint):
+            return False
+        self.joint.append(dict(rec))
+        self.joint = sorted(self.joint, key=lambda x: x["end"])[-KEEP_JOINT:]
+        self.dirty = True
+        return True
+
+    def recent_contracts(self, now: datetime, n: int = 5) -> list:
+        """合约记录 (最近完成的 n 个, 从新到旧): 真的一起完成过的联合行动排在前面, 不够的用按日程生成的补."""
+        real = sorted((x for x in self.joint if _dt(x["end"]) <= now), key=lambda x: x["end"], reverse=True)
+        return (real + contracts_before(self.r, now, self.seed))[:n]
 
     # ---- 时间线 ----
     def _append(self, kind: str, a: datetime, b: datetime, label: str):

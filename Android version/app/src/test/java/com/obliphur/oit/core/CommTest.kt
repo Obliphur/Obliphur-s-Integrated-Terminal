@@ -2051,6 +2051,19 @@ class CommTest {
         clock = tj.plusMinutes(1)
         assertTrue(c.otherStatus()!!.first.kind == "focus" && c.otherStatus()!!.second > tj)
         c.jointClearForTest()
+        // 和用户真的一起顺利完成的联合行动: 照实记进她的合约记录 (含违规词条), 排在按日程生成的前面; 失败的不记
+        clock = LocalDateTime.of(2027, 6, 4, 15, 5)
+        c.jointRestForTest(LocalDateTime.of(2027, 6, 4, 15, 20), LocalDateTime.of(2027, 6, 4, 15, 0), listOf("tired1", "fine", "silent"), "cx1")
+        c.rtSync(); c.rtSync()
+        val recs0 = c.rtStoreForTest()!!.recentContracts(clock)
+        assertEquals("cx1", recs0[0].getString("id"))
+        assertEquals(Contract.clean(listOf("tired1", "fine", "silent")), (0 until recs0[0].getJSONArray("terms").length()).map { recs0[0].getJSONArray("terms").getString(it) })
+        assertEquals(listOf("cx1"), c.rtStoreForTest()!!.joint.map { it.getString("id") })           // 同一次联合行动只记一条
+        assertTrue("细化规范" in c.routineInfo("stats").substringAfter("【统计·合约记录"))             // 照实写, 包括她平时不选的词条
+        c.jointRestForTest(LocalDateTime.of(2027, 6, 4, 15, 20), LocalDateTime.of(2027, 6, 4, 15, 0), listOf("tired1"), "cx2", "failed")
+        c.rtSync()
+        assertEquals(listOf("cx1"), c.rtStoreForTest()!!.joint.map { it.getString("id") })           // 失败 / 提前终止的不算顺利完成
+        c.jointClearForTest()
         // 数据: 只给已经发生的 (实时算), 存盘; 好几天没调用就按规则补齐
         clock = LocalDateTime.of(2027, 6, 5, 10, 20)
         for (tag in listOf("timer", "log", "calendar", "stats", "net")) assertTrue(tag, c.routineInfo(tag).isNotEmpty())
@@ -2070,7 +2083,10 @@ class CommTest {
         assertTrue("存档读回来", c2.routineInfo("stats").contains("【统计·合约记录 最近完成的】"))
         val stats = c2.routineInfo("stats")
         assertTrue("【统计·窗口 2027-06 · DESKTOP-CLAUDIA】" in stats && "【统计·联网理由 2027-06】" in stats)
-        for (banned in listOf("持久战", "无言为真", "通道阻塞", "细化规范", "乐理之灾", "未知变量")) assertFalse(banned, banned in stats.substringAfter("【统计·合约记录"))
+        val gen = Routine.contractsBefore(spec, clock, seed, days = 60)
+        assertTrue(gen.isNotEmpty() && gen.all { it.getInt("level") in 20..30 })
+        val bannedIds = Routine.bannedIds(spec)
+        assertTrue(gen.none { r -> (0 until r.getJSONArray("terms").length()).any { r.getJSONArray("terms").getString(it) in bannedIds } })     // 按日程生成的合约记录不碰不选择 / 违规的词条
         assertTrue(Routine.bannedIds(spec).none { it in c.opTermsForTest() })                // 对方发起联合行动也不选这些词条
         // 要资料: 她自己的数据 (OIT 算出的), 不是空白模板
         val restDay = Routine.planBetween(spec, LocalDateTime.of(2027, 6, 9, 8, 0), LocalDateTime.of(2027, 6, 9, 23, 0), seed).first { it.kind == "rest" }

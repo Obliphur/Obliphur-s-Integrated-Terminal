@@ -39,6 +39,7 @@ class RoutineSpec {
 
 object Routine {
     const val KEEP_DAYS = 35
+    const val KEEP_JOINT = 20
     const val BACKFILL_DAYS = 7
     const val SYNC_MAX_DAYS = 14
     const val CHAT_FULL = 50.0
@@ -359,6 +360,8 @@ class RoutineStore(val file: File, var r: RoutineSpec, val seed: String) {
     var upto: LocalDateTime? = null
     val tl = ArrayList<Array<String>>()
     val cells = LinkedHashMap<String, Pair<Int, String>>()
+    /** 和用户真的一起完成过的联合行动的合约记录 (按完成先后), 同合约记录的格式 + "id". */
+    var joint: List<JSONObject> = emptyList()
     var dirty = false
 
     init { load() }
@@ -372,6 +375,8 @@ class RoutineStore(val file: File, var r: RoutineSpec, val seed: String) {
             for (i in 0 until a.length()) a.optJSONArray(i)?.takeIf { it.length() == 4 }?.let { tl.add(arrayOf(it.getString(0), it.getString(1), it.getString(2), it.getString(3))) }
             val c = d.optJSONObject("cells") ?: JSONObject()
             for (k in c.keys()) c.optJSONArray(k)?.takeIf { it.length() == 2 }?.let { cells[k] = it.getInt(0) to it.getString(1) }
+            val ja = d.optJSONArray("joint") ?: JSONArray()
+            joint = (0 until ja.length()).mapNotNull { ja.optJSONObject(it) }.filter { it.optString("id").isNotEmpty() && it.optString("end").isNotEmpty() }
         }.onFailure { upto = null; tl.clear(); cells.clear() }
     }
 
@@ -380,9 +385,25 @@ class RoutineStore(val file: File, var r: RoutineSpec, val seed: String) {
         for ((k, v) in cells) c.put(k, JSONArray().put(v.first).put(v.second))
         return JSONObject().put("seed", seed).put("upto", upto?.let { iso(it) } ?: "")
             .put("tl", JSONArray(tl.map { JSONArray(it.toList()) })).put("cells", c)
+            .put("joint", JSONArray(joint.map { JSONObject(it.toString()) }))
     }
 
     private fun iso(t: LocalDateTime): String = t.withNano(0).toString().let { if (it.length == 16) "$it:00" else it }
+
+    /** 记一条真实完成的联合行动合约 (id 去重). 返回是不是新记的. */
+    fun addJoint(rec: JSONObject): Boolean {
+        val id = rec.optString("id")
+        if (id.isEmpty() || joint.any { it.optString("id") == id }) return false
+        joint = (joint + rec).sortedBy { it.getString("end") }.takeLast(Routine.KEEP_JOINT)
+        dirty = true
+        return true
+    }
+
+    /** 合约记录 (最近完成的 n 个, 从新到旧): 真的一起完成过的联合行动排在前面, 不够的用按日程生成的补. */
+    fun recentContracts(now: LocalDateTime, n: Int = 5): List<JSONObject> {
+        val real = joint.filter { !LocalDateTime.parse(it.getString("end")).isAfter(now) }.sortedByDescending { it.getString("end") }
+        return (real + Routine.contractsBefore(r, now, seed)).take(n)
+    }
 
     private fun append(kind: String, a: LocalDateTime, b: LocalDateTime, label: String) {
         if (!b.isAfter(a)) return

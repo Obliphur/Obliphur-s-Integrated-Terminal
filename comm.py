@@ -2538,6 +2538,11 @@ class Comm:
         lost = self._joint_hp_text(j)
         self._joint_set({"state": "rest", "result": str(result), "ended": now.isoformat(timespec="seconds"),
                          "rest_s": rest_s, "rest_until": until.isoformat(timespec="seconds"), "hp": []})
+        if self._rt:                                          # 顺利完成的: 马上记进她的合约记录 (别的设备在下一次整理数据时从同步来的联合行动状态里记)
+            try:
+                self._rt_sync()
+            except Exception as e:      # noqa: BLE001
+                self.log(f"ROUTINE joint record FAIL {type(e).__name__}: {e}")
         rest = f"你与用户一起得到了 {rest_s // 60} 分钟休息, 休息到 {until:%H:%M} 结束, 之后你需要重新计算日程." if rest_s > 0 else             "这次没有得到休息时间, 你立即重新计算日程."
         tail = (" " + lost) if lost else ""
         if result == "completed":
@@ -3943,6 +3948,7 @@ class Comm:
             return None
         now = now or self.now()
         with self._rt_lock:
+            self._rt_joint_record(st)
             j = self._joint_status(now)
             st.fill_timeline(now, lambda a, b: self._rt_segs(a, b), (j["kind"], j["label"]) if j else None)
             st.fill_cells(now, self._rt_msgs, self._rt_fine)
@@ -3950,6 +3956,21 @@ class Comm:
                 st.dirty = False
                 self._write_async(st.path, st.payload())
         return st
+
+    def _rt_joint_record(self, st):
+        """和用户一起顺利完成的联合行动 (state=rest, result=completed): 把这次真实的合约 (词条 / 等级 / 结束时间) 记进她的合约记录.
+        联合行动的状态会随设备同步, 所以哪台设备都能记; 失败 / 提前终止的不算"顺利完成"."""
+        j = self._joint()
+        if j.get("state") != "rest" or j.get("result") != "completed":
+            return
+        import contract as C
+        terms = C.clean_terms(j.get("terms") or [])
+        ended = j.get("ended")
+        if not terms or not ended:
+            return
+        lv = C.level_of(terms)
+        st.add_joint({"id": str(j.get("cid") or j.get("id") or ended), "result": "completed", "end": str(ended)[:19], "level": lv,
+                      "orig_level": lv, "orig": list(terms), "terms": list(terms), "rand": []})
 
     def _rt_tick(self):
         if not self._rt or time.monotonic() < self._rt_next:
@@ -4018,7 +4039,7 @@ class Comm:
             d = now.date() - timedelta(days=i)
             lines.append(f"  {d:%m-%d} 周{WEEKDAY[d.weekday()]}: 专注 {st.day_minutes(d, ('focus',)):.0f} 分钟, 休息 {st.day_minutes(d, ('rest',)):.0f} 分钟")
         blocks.append("【统计·专注计时 最近 7 天】\n" + "\n".join(lines))
-        recs = routine.contracts_before(self._rt, now, self.pid)[:5]
+        recs = st.recent_contracts(now)
         blocks.append("【统计·合约记录 最近完成的】\n" + ("\n".join(comm_data._record(r) for r in recs) if recs else "  还没有顺利完成的合约"))
         return "\n\n".join(blocks)
 
@@ -6228,6 +6249,22 @@ def _selftest():
     clock[0] = T + timedelta(minutes=1)
     assert cr._joint_status(clock[0]) == {} and cr.other_status()["kind"] == "focus" and cr.other_status()["begin"] == T
     cr.cfg["joint"] = {}
+    # 和用户真的一起顺利完成的联合行动: 照实记进她的合约记录 (含违规词条), 排在按日程生成的前面; 失败的不记
+    jt = {"state": "rest", "pid": cr.pid, "result": "completed", "cid": "cx1", "terms": ["tired1", "fine", "silent"],
+          "began": "2027-06-04T12:00:00", "until": "2027-06-04T15:00:00", "ended": "2027-06-04T15:00:00", "rest_until": "2027-06-04T15:20:00"}
+    cr.cfg["joint"] = dict(jt)
+    clock[0] = datetime(2027, 6, 4, 15, 5)
+    cr._rt_sync()
+    cr._rt_sync()
+    recs0 = cr._rt_store.recent_contracts(clock[0])
+    import contract as C
+    assert recs0[0]["id"] == "cx1" and recs0[0]["terms"] == C.clean_terms(["tired1", "fine", "silent"]) and recs0[0]["level"] == C.level_of(recs0[0]["terms"])
+    assert [x["id"] for x in cr._rt_store.joint] == ["cx1"], "同一次联合行动只记一条"
+    assert "细化规范" in cr.routine_info("stats").split("【统计·合约记录")[1], "照实写, 包括她平时不选的词条"
+    cr.cfg["joint"] = dict(jt, cid="cx2", result="failed")
+    cr._rt_sync()
+    assert [x["id"] for x in cr._rt_store.joint] == ["cx1"], "失败 / 提前终止的不算顺利完成"
+    cr.cfg["joint"] = {}
     # 数据: 只给已经发生的 (实时算), 好几天没调用就按规则补齐
     clock[0] = datetime(2027, 6, 5, 10, 20)
     for tag in ("timer", "log", "calendar", "stats", "net"):
@@ -6260,8 +6297,10 @@ def _selftest():
     clock[0] = datetime(2027, 8, 1, 12, 0)
     stats = cr.routine_info("stats")
     assert "【统计·合约记录 最近完成的】" in stats and "【统计·窗口 2027-08 · DESKTOP-CLAUDIA】" in stats and "【统计·联网理由 2027-08】" in stats
-    for banned_name in ("持久战", "无言为真", "通道阻塞", "细化规范", "乐理之灾", "未知变量"):
-        assert banned_name not in stats.split("【统计·合约记录")[1], banned_name
+    import contract as C
+    gen = routine.contracts_before(cr._rt, clock[0], cr.pid, days=60)
+    assert gen and all(20 <= x["level"] <= 30 for x in gen)
+    assert not any(set(x["terms"]) & routine.banned_ids(cr._rt) for x in gen), "按日程生成的合约记录不碰不选择 / 违规的词条"
     banned = routine.banned_ids(cr._rt)
     assert not (set(cr._op_terms("没有编号", [])) & banned), "对方发起联合行动也不选这些词条"
     # 要资料: 她自己的数据 (OIT 算出的), 不是空白模板
