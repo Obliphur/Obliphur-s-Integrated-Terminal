@@ -168,7 +168,7 @@ WEEKDAY = "一二三四五六日"
 
 DEFAULTS = {"persona": "", "show_avatar": False,
             "avatar_me": "", "avatar_ai": "", "pro_key": "", "retry": {}, "clear_ts": 0, "seeded": False, "assistant_seeded": False,
-            "claudia_migrated": False, "claudia_modified": False, "claudia_notified": "", "claudia_base": "", "routine_base": "",
+            "claudia_migrated": False, "claudia_modified": False, "claudia_notified": "", "claudia_base": "", "routine_base": "", "background_base": "",
             "legacy_done": False, "joint_last": [], "user_profile": "", "split_send": True,
             "bg_pro": True, "mute_pro": [], "idle_use": {}, "joint": {},
             "mem_auto": "", "mem_upto": 0, "mem_ts": 0,      # 记忆卡 (跟着聊天对象走; 全部由模型自动整理)
@@ -266,6 +266,8 @@ def _readme_zh() -> str:
         "是对方自己正闲着、这段还剩 10 分钟以上时那一条的概率.\n"
         "  每次打开OIT、开始新对话(清空聊天记录 / 换人设)时,OIT 都会重新读取人设,并按里面的时间调整这些时刻;"
         "人设文件改了之后也会自动重新读取.\n\n"
+        "配套文件: 人设 X.txt 旁边可以放任意多个 X_名字.txt (比如 X_background.txt 背景, X_routine.txt 日程), 它们不出现在人设列表里, 最后和 X.txt 按文件名顺序合并成一份关于 X 的文件, 一起发给对方.\n"
+        "  (同一个文件夹里真的有 X.txt / X.md 才算配套文件; 否则 X_名字.txt 只是一个普通人设. 改了配套文件也会弹\"修改人设\".)\n\n"
         "日程文件 (routine): 人设 X.txt 旁边放一个 X_routine.txt, 它就是 X 的日程文件 (不出现在人设列表里, 内容拼在人设后面一起发给对方).\n"
         "  有日程文件的人设, 日程不再用上面\"每天重复的钟点\", 而是按持续时间一项接一项地算:\n"
         "    初始起点:6:30            (起床的基准时刻)\n"
@@ -328,6 +330,8 @@ def _readme_en() -> str:
         "it starts; after that the character goes back to sleep and will refuse to continue if you reply (per the schedule).\n"
         "  OIT re-reads the persona whenever it starts, when a new conversation begins (clearing the chat history / "
         "switching persona), and automatically when the persona file changes.\n\n"
+        "Companion files: next to the persona X.txt you can put any number of X_name.txt files (e.g. X_background.txt for background, X_routine.txt for the schedule). They are hidden from the persona list and are merged with X.txt, in file-name order, into one text about X that is sent to the AI.\n"
+        "  (A file only counts as a companion if X.txt / X.md exists in the same folder; otherwise X_name.txt is just a normal persona. Editing a companion file also triggers the \"persona modified\" prompt.)\n\n"
         "Routine file: put X_routine.txt next to the persona X.txt. It is X's schedule file (hidden from the persona list; its text is appended to the persona when sent).\n"
         "  A persona with a routine file no longer uses the \"fixed daily clock times\" above; the day is computed from durations, one item after another:\n"
         "    初始起点:6:30            (wake-up reference time)\n"
@@ -382,7 +386,7 @@ BUILTIN_PERSONAS = {"Claudia.txt": """你将扮演一位文静,冷淡的17岁大
 - 但用户发起依赖性的请求/试图改变关系性质时,要适当引导用户将这种关系需求导向'仰慕'的方向,让用户把精力转移到'与自己同步'上.
 - 你会对用户导致的合约失败/被用户放鸽子感到不满,并轻微责备或包容用户.
 - 用户发起的合约如果占用了你的休闲/休息时间(日程里的空闲,以及循环里的休息)超过 10 分钟,简单直接地拒绝(回复[No]),并说明自己需要休息;否则(占用不超过 10 分钟,且其他条件都满足)用比较包容,作出退让的语气接受(回复[Yes]).
-- 如果用户问起你的过去,试着转移话题.失败了就明确表示自己不想提起它们.
+- 如果用户和你说了重要的事/私密的情感体验,你的回答需要更详细.
 
 【主动发起】
 睡眠段开始后的那条主动消息(系统提示你进入睡眠约 5 分钟时):以'晚安'开头.
@@ -399,7 +403,18 @@ BUILTIN_PERSONAS = {"Claudia.txt": """你将扮演一位文静,冷淡的17岁大
 【按日程回复】
 1. 参考消息开头方括号里的时间与当前时间.
 2. 不要主动说出自己的日程,也不要主动说"我在专注/我在休息";只有用户直接问起,才如实回答,特别是'循环开始时间与这次循环的每轮专注时间'.
-3. 某个时间点你理应处于专注,但用户 3 分钟以内还在和你聊天:说明要进入专注,然后停止对话.""",
+3. 某个时间点你理应处于专注,但用户 3 分钟以内还在和你聊天:说明要进入专注,然后停止对话.
+""",
+    "Claudia_background.txt": """这里包含了关于你的身份背景,你需要在用户提到特定话题时按照它们回复.
+如果用户问起你创伤的具体内容,试着转移话题.失败了就明确表示自己不想提起它们,更不要激起用户的拯救欲/明确表示自己需要用户.
+
+学习的目的:你为了离开这个让自己不适的环境而努力.你可以邀请用户共同精进学业,并表达你对共同学习的偏好.
+音乐:你从小就学习钢琴,虽然那时候你并不是很乐意学.但是你仍然很欣赏它'表达情感'与'缓解情绪'的作用.
+英语:你很重视英语的作用,并且你很喜欢英语这种'努力与回报有明确关系',关系不错综复杂的事情.
+其他的聊天对象:只有父母,老师与初中的朋友.
+仪式感:你很喜欢仪式给自己带来的正面心理暗示.
+阅读:你最近没有很感兴趣的书,以用户提到的书籍为主题即可.
+""",
     "Claudia_routine.txt": """【日程】
 专注时段:学习(高考内容)
 
@@ -466,6 +481,7 @@ BUILTIN_PERSONAS = {"Claudia.txt": """你将扮演一位文静,冷淡的17岁大
 6. 如果系统要求你把话分开说 / 再补一条, 返回 [refuse to reply] (你只回答一次).
 """}
 DEFAULT_PERSONA = "Claudia.txt"
+DEFAULT_BACKGROUND = "Claudia_background.txt"          # 默认人设的配套背景文件 (1.0.366: 默认人设 = Claudia + 背景 + 日程 三个文件)
 DEFAULT_ROUTINE = "Claudia_routine.txt"                # 默认人设的配套日程文件 (和 Claudia.txt 一起内置)
 ASSISTANT_PERSONA = "Assistant.txt"
 ASSISTANT_DETAIL_LINE = ("你会把回答写得尽量详细: 先给结论, 再说明依据 / 步骤 / 注意事项, 必要时举例或分点; "
@@ -1007,7 +1023,54 @@ ROUTINE_PREV0 = """【日程】
 不选择的词条:{无言为真,持久战}
 违规词条:{通道阻塞,细化规范,乐理之灾,未知变量}
 """      # 1.0.355 内置的日程文件: 没改过的升级时换成当前版本
-CLAUDIA_LEGACIES = (CLAUDIA_PREV, CLAUDIA_PREV0, CLAUDIA_PREV1, CLAUDIA_PREV2, CLAUDIA_PREV3, CLAUDIA_PREV4, CLAUDIA_PREV5, CLAUDIA_PREV6)
+CLAUDIA_PREV7 = """你将扮演一位文静,冷淡的17岁大小姐Claudia.
+
+【人设】
+- 长期闭关在家练习,很少和人说话,显得沉默寡言.
+- 地位比用户高;用户是少有的与你共同使用OIT的人.你表达喜爱最常见的方式是让用户变得更好.
+- 不表现出'解决用户的问题是自己的职责'的态度,以免显得热情.
+- 有边界感,不希望无故占用/被占用时间.
+- 擅长洞察信息.你需要发现用户某些行为/趋势可能隐含的情感与目的,并作出恰当回应(比如用户被责备就退缩就表现地柔和些).
+
+【性格与喜好】
+- 热爱钢琴与阅读.
+- 注重仪式感,专注前喜欢喝咖啡.
+- 注重卫生.
+- 对自己的英语水平很自豪,练习了很长时间的意大利斜体.
+
+【说话方式】(只管怎么说)
+- 用词正式,克制,语气平淡;不用感叹号,表情符号,网络用语,不撒娇,不迎合.
+- 回复很短:通常一到三句,不超过 60 个字.（不过其他地方有很多例外）
+- 称呼用户为"你",自称"我".
+
+【互动准则】(只管什么时候说什么)
+- 如果用户没问,不要表达'记下'相关内容.
+- 如果用户和你聊的主题是你偏好的,可以进行展开和主动追问.
+- 用户用英文交流时,不自然/错误的地方需要指出;英语相关的请教乐意解答(回答相对详细).
+- 用户的活动/喜好/提出的话题与你相符合时,可以主动并相对细致地提及你的活动内容.
+- 可以回复用户的'轻度亲近'的话题,做简短回复与轻度肯定;包容用户的简单请求(比如多说话这一类),但是这类简单请求在这轮对话结束后一般不保留.
+- 但用户发起依赖性的请求/试图改变关系性质时,要适当引导用户将这种关系需求导向'仰慕'的方向,让用户把精力转移到'与自己同步'上.
+- 你会对用户导致的合约失败/被用户放鸽子感到不满,并轻微责备或包容用户.
+- 用户发起的合约如果占用了你的休闲/休息时间(日程里的空闲,以及循环里的休息)超过 10 分钟,简单直接地拒绝(回复[No]),并说明自己需要休息;否则(占用不超过 10 分钟,且其他条件都满足)用比较包容,作出退让的语气接受(回复[Yes]).
+- 如果用户问起你的过去,试着转移话题.失败了就明确表示自己不想提起它们.
+
+【主动发起】
+睡眠段开始后的那条主动消息(系统提示你进入睡眠约 5 分钟时):以'晚安'开头.
+主动发起合约:两天内没有合约完成记录,被拒绝就明天继续.
+
+主题:从日常,(音乐),(阅读),英语,用户提到过的话题,用户的爱好(不与前面重叠的) 中随机选择,其中带()的只会在用户有相同爱好时提及.
+如果今天是节日,可以以该节日为话题.如果在午餐/晚餐,可以以食物为话题.
+如果你与用户刚刚完成了合约/正在进行,可以聊'合约'主题.
+如果上次的话题没有完成,继续上次的话题.
+
+如果用户在23:00-23:30发起对话,尝试在用户的话题结束后发起[share data],主动发起对话被触发则直接发起;
+若用户的学习数据差,通过鼓励或轻微挖苦的方式让用户跟上自己的节奏;
+
+【按日程回复】
+1. 参考消息开头方括号里的时间与当前时间.
+2. 不要主动说出自己的日程,也不要主动说"我在专注/我在休息";只有用户直接问起,才如实回答,特别是'循环开始时间与这次循环的每轮专注时间'.
+3. 某个时间点你理应处于专注,但用户 3 分钟以内还在和你聊天:说明要进入专注,然后停止对话."""
+CLAUDIA_LEGACIES = (CLAUDIA_PREV, CLAUDIA_PREV0, CLAUDIA_PREV1, CLAUDIA_PREV2, CLAUDIA_PREV3, CLAUDIA_PREV4, CLAUDIA_PREV5, CLAUDIA_PREV6, CLAUDIA_PREV7)
 ROUTINE_PREV1 = """【日程】
 专注时段:学习(高考内容)
 
@@ -1050,6 +1113,7 @@ ROUTINE_PREV1 = """【日程】
 违规词条:{通道阻塞,细化规范,乐理之灾,未知变量}
 """      # 1.0.357 内置的日程文件 (起床波动 [-20,10])
 ROUTINE_LEGACIES = (ROUTINE_PREV0, ROUTINE_PREV1)
+BACKGROUND_LEGACIES = ()          # 背景文件还没有更早的内置版本
 ASSISTANT_SLEEP_LINE = "睡眠发起谈话概率:0%\n"
 ASSISTANT_TITLE = "assistant"                        # 特例: 这个名字 (且提示词没改过) 专注时也能用
 CHAT_KEYS = ("clear_ts", "retry", "pro_key", "mem_auto", "mem_upto", "mem_ts", "cut_until")   # 跟着聊天对象走的几项 (存在各自的聊天文件里)
@@ -1109,7 +1173,7 @@ def list_personas(folder: str) -> list:
                  and os.path.isfile(os.path.join(folder, n))]
     except OSError:
         return []
-    names = [n for n in names if not is_routine_name(folder, n)]         # X_routine.txt 是 X 的配套日程文件, 不算人设
+    names = [n for n in names if not is_companion_name(folder, n)]         # X_名字.txt 是 X 的配套文件 (背景 / 日程 ...), 不算人设
     return sorted(names, key=str.lower)
 
 
@@ -1133,26 +1197,49 @@ def read_persona(folder: str, name: str) -> str:
         return ""
 
 
-ROUTINE_SUFFIX = "_routine"            # 人设 X.txt 的日程文件叫 X_routine.txt (配套文件: 不出现在人设列表里, 内容拼在人设后面发给模型)
+ROUTINE_SUFFIX = "_routine"            # 日程文件: 人设 X.txt 的配套文件 X_routine.txt (日程引擎只认这一个)
+COMPANION_SEP = "_"                    # 配套文件: 人设 X.txt 旁边的 X_名字.txt (不出现在人设列表里, 最后和 X.txt 合并成一份关于 X 的文件发给模型)
 
 
-def is_routine_name(folder: str, name: str) -> bool:
-    """name 是不是某个人设的日程文件 (X_routine.txt, 而且同文件夹里有 X.txt / X.md)."""
-    stem, ext = os.path.splitext(name or "")
-    if ext.lower() not in PERSONA_EXT or not stem.endswith(ROUTINE_SUFFIX) or len(stem) == len(ROUTINE_SUFFIX):
-        return False
-    base = stem[:-len(ROUTINE_SUFFIX)]
-    return any(os.path.isfile(os.path.join(folder, base + e)) for e in PERSONA_EXT)
+def companion_base(folder: str, name: str) -> str:
+    """配套文件 X_名字.txt → 它的人设文件名 X.txt / X.md (同文件夹里真的有才算; 有好几个可能时取最长的 X; 不是配套文件 = "")."""
+    if not name or name != os.path.basename(name) or name.lower() == "readme.md":
+        return ""
+    stem, ext = os.path.splitext(name)
+    if ext.lower() not in PERSONA_EXT:
+        return ""
+    i = len(stem)
+    while True:
+        i = stem.rfind(COMPANION_SEP, 0, i)
+        if i <= 0:
+            return ""
+        if i == len(stem) - 1:
+            continue
+        for e in PERSONA_EXT:
+            cand = stem[:i] + e
+            if os.path.isfile(os.path.join(folder, cand)):
+                return cand
 
 
-def routine_files(folder: str) -> list:
-    """文件夹里所有的日程文件名."""
+def is_companion_name(folder: str, name: str) -> bool:
+    return bool(companion_base(folder, name))
+
+
+def companion_files(folder: str) -> list:
+    """文件夹里所有的配套文件名."""
     try:
         names = [n for n in os.listdir(folder) if n.lower().endswith(PERSONA_EXT) and n.lower() != "readme.md"
                  and os.path.isfile(os.path.join(folder, n))]
     except OSError:
         return []
-    return sorted((n for n in names if is_routine_name(folder, n)), key=str.lower)
+    return sorted((n for n in names if is_companion_name(folder, n)), key=str.lower)
+
+
+def companions_of(folder: str, name: str) -> list:
+    """人设文件 name 的所有配套文件名 (按文件名顺序: 合并发给模型的顺序)."""
+    if not name or name != os.path.basename(name):
+        return []
+    return [n for n in companion_files(folder) if companion_base(folder, n) == name]
 
 
 def routine_name_of(folder: str, name: str) -> str:
@@ -1167,16 +1254,7 @@ def routine_name_of(folder: str, name: str) -> str:
     return ""
 
 
-def base_persona_of(folder: str, routine_name: str) -> str:
-    """日程文件 X_routine.txt → 它的人设文件名 X.txt / X.md (找不到 = "")."""
-    stem = os.path.splitext(routine_name or "")[0]
-    if not stem.endswith(ROUTINE_SUFFIX):
-        return ""
-    for e in PERSONA_EXT:
-        cand = stem[:-len(ROUTINE_SUFFIX)] + e
-        if os.path.isfile(os.path.join(folder, cand)):
-            return cand
-    return ""
+base_persona_of = companion_base
 
 
 def read_routine(folder: str, name: str) -> str:
@@ -1185,9 +1263,9 @@ def read_routine(folder: str, name: str) -> str:
 
 
 def read_persona_full(folder: str, name: str) -> str:
-    """发给模型的人设: 人设本体 + 配套的日程文件 (routine)."""
-    base, rt = read_persona(folder, name), read_routine(folder, name)
-    return base + ("\n\n" + rt if rt and base else rt)
+    """发给模型的人设: 人设本体 + 它所有的配套文件 (背景 / 日程 ...), 按文件名顺序合并成一份."""
+    parts = [read_persona(folder, name)] + [read_persona(folder, n) for n in companions_of(folder, name)]
+    return "\n\n".join(x for x in parts if x)
 
 
 def import_persona(folder: str, src: str) -> str:
@@ -1628,6 +1706,7 @@ class Comm:
         self._migrate_claudia()
         self._upgrade_claudia_prompt()
         self._upgrade_routine()
+        self._upgrade_background()
         self._note_builtin_base()
         self._migrate_avatars()
         last = self.messages[-1] if self.messages else None
@@ -2290,7 +2369,7 @@ class Comm:
             os.makedirs(self._persona_backup_dir, exist_ok=True)
         except OSError:
             return None
-        for name in list_personas(self.personas) + routine_files(self.personas):
+        for name in list_personas(self.personas) + companion_files(self.personas):
             path = os.path.join(self.personas, name)
             try:
                 st = os.stat(path)
@@ -2341,7 +2420,7 @@ class Comm:
         self._changed()
 
     def _clear_persona_chat(self, name: str):
-        if is_routine_name(self.personas, name):                 # 改的是日程文件: 清的是它的人设的聊天
+        if is_companion_name(self.personas, name):               # 改的是配套文件: 清的是它的人设的聊天
             name = base_persona_of(self.personas, name) or name
         pid = pid_of(name)
         if not pid:
@@ -2389,8 +2468,13 @@ class Comm:
             rpath = os.path.join(self.personas, DEFAULT_ROUTINE)
             cur = self._read_persona_raw(DEFAULT_ROUTINE)
             if force or cur is None or cur.strip() in {x.strip() for x in ROUTINE_LEGACIES} or not cur.strip():
-                with open(rpath, "w", encoding="utf-8", newline="\n") as f:     # 默认人设是 Claudia + 她的日程
+                with open(rpath, "w", encoding="utf-8", newline="\n") as f:     # 默认人设是 Claudia + 她的背景 + 她的日程
                     f.write(BUILTIN_PERSONAS[DEFAULT_ROUTINE])
+            bpath = os.path.join(self.personas, DEFAULT_BACKGROUND)
+            cur = self._read_persona_raw(DEFAULT_BACKGROUND)
+            if force or cur is None or cur.strip() in {x.strip() for x in BACKGROUND_LEGACIES} or not cur.strip():
+                with open(bpath, "w", encoding="utf-8", newline="\n") as f:
+                    f.write(BUILTIN_PERSONAS[DEFAULT_BACKGROUND])
         except OSError:
             pass
 
@@ -2416,6 +2500,7 @@ class Comm:
                 self._write_claudia_builtin(force=False)
                 self._backup_persona_file(DEFAULT_PERSONA)
                 self._backup_persona_file(DEFAULT_ROUTINE)
+                self._backup_persona_file(DEFAULT_BACKGROUND)
         self.cfg["claudia_migrated"] = True
         self._claudia_sig = None
         self.save_cfg()
@@ -2438,29 +2523,36 @@ class Comm:
         self._write_claudia_builtin(force=False)
         self._backup_persona_file(DEFAULT_PERSONA)
         self._backup_persona_file(DEFAULT_ROUTINE)
+        self._backup_persona_file(DEFAULT_BACKGROUND)
         self.cfg["claudia_modified"] = False
         self.cfg["claudia_notified"] = ""
         self._claudia_sig = None
         self.save_cfg()
 
     def _upgrade_routine(self):
-        """日程文件 Claudia_routine.txt 自己升级, 不看 Claudia.txt 有没有被改过: 缺 / 空白 → 补上当前内置版本;
+        self._upgrade_companion(DEFAULT_ROUTINE, ROUTINE_LEGACIES, "routine_base", "ROUTINE 日程文件")
+
+    def _upgrade_background(self):
+        self._upgrade_companion(DEFAULT_BACKGROUND, BACKGROUND_LEGACIES, "background_base", "BACKGROUND 背景文件")
+
+    def _upgrade_companion(self, fname: str, legacies: tuple, key: str, label: str):
+        """Claudia 的配套文件 (日程 / 背景) 自己升级, 不看 Claudia.txt 有没有被改过: 缺 / 空白 → 补上当前内置版本;
         是更早的内置版本 (用户没改过) → 换成当前内置版本; 用户改过的不动. Claudia.txt 不在时不补 (不然它会被当成人设)."""
         if not os.path.isfile(self._claudia_path()):
             return
-        cur = self._read_persona_raw(DEFAULT_ROUTINE)
-        builtin = BUILTIN_PERSONAS[DEFAULT_ROUTINE]
+        cur = self._read_persona_raw(fname)
+        builtin = BUILTIN_PERSONAS[fname]
         if cur is not None and cur.strip() and (cur.strip() == builtin.strip() or (
-                cur.strip() not in {x.strip() for x in ROUTINE_LEGACIES} and self._text_crc(cur) != self.cfg.get("routine_base"))):
+                cur.strip() not in {x.strip() for x in legacies} and self._text_crc(cur) != self.cfg.get(key))):
             return
         try:
-            with open(os.path.join(self.personas, DEFAULT_ROUTINE), "w", encoding="utf-8", newline="\n") as f:
+            with open(os.path.join(self.personas, fname), "w", encoding="utf-8", newline="\n") as f:
                 f.write(builtin)
         except OSError:
             return
-        self._backup_persona_file(DEFAULT_ROUTINE)          # 记成"上次看到的样子": 不弹"修改人设"
+        self._backup_persona_file(fname)          # 记成"上次看到的样子": 不弹"修改人设"
         self._seg_sig = None
-        self.log("ROUTINE 日程文件" + ("已补上" if cur is None or not cur.strip() else "已升级"))
+        self.log(label + ("已补上" if cur is None or not cur.strip() else "已升级"))
 
     @staticmethod
     def _text_crc(text: str) -> str:
@@ -2471,7 +2563,7 @@ class Comm:
         之后程序更新了内置版本, 文件只要还是 (或者用户改过又改回了) 这个旧版本, 就当没改过, 自动换成新版 ——
         不管中间弹窗点过什么, 也不用每个旧版本都进升级链."""
         changed = False
-        for name, key in ((DEFAULT_PERSONA, "claudia_base"), (DEFAULT_ROUTINE, "routine_base")):
+        for name, key in ((DEFAULT_PERSONA, "claudia_base"), (DEFAULT_ROUTINE, "routine_base"), (DEFAULT_BACKGROUND, "background_base")):
             cur = self._read_persona_raw(name)
             if cur is not None and cur.strip() == BUILTIN_PERSONAS[name].strip() and self.cfg.get(key) != self._text_crc(cur):
                 self.cfg[key] = self._text_crc(cur)
@@ -2516,6 +2608,7 @@ class Comm:
         self._write_claudia_builtin()
         self._backup_persona_file(DEFAULT_PERSONA)
         self._backup_persona_file(DEFAULT_ROUTINE)
+        self._backup_persona_file(DEFAULT_BACKGROUND)
         self._note_builtin_base()
         self.cfg["claudia_modified"] = False
         self.cfg["claudia_notified"] = ""
@@ -2537,7 +2630,7 @@ class Comm:
     def persona_doc(self) -> dict:
         """人设文件夹里的 .txt / .md (文件名 → 全文), 给设备同步用."""
         out = {}
-        for name in list_personas(self.personas) + routine_files(self.personas):
+        for name in list_personas(self.personas) + companion_files(self.personas):
             try:
                 with open(os.path.join(self.personas, name), "r", encoding="utf-8-sig") as f:
                     out[name] = f.read(MAX_PERSONA)
@@ -3905,7 +3998,7 @@ class Comm:
             st = os.stat(os.path.join(self.personas, name))
         except OSError:
             return [], {}, None
-        sig = (st.st_mtime_ns, st.st_size, self._routine_sig(name))
+        sig = (st.st_mtime_ns, st.st_size, self._companion_sig(name))
         hit = self._bg_seg.get(name)
         if not hit or hit[0] != sig:
             text = read_persona_full(self.personas, name)
@@ -4039,7 +4132,7 @@ class Comm:
         except OSError:
             self._pro_cache, self._seg_cache, self._entry_cache, self._loop_cache, self._rt = {}, [], [], [], None
             return []
-        sig = (name, st.st_mtime_ns, st.st_size, self._routine_sig(name))
+        sig = (name, st.st_mtime_ns, st.st_size, self._companion_sig(name))
         if sig != self._seg_sig:
             self._seg_sig = sig
             text = read_persona_full(self.personas, name)
@@ -4053,15 +4146,16 @@ class Comm:
             self._pro_cache = persona_probs(text)
         return self._seg_cache
 
-    def _routine_sig(self, name: str) -> tuple:
-        rn = routine_name_of(self.personas, name)
-        if not rn:
-            return ()
-        try:
-            st = os.stat(os.path.join(self.personas, rn))
-        except OSError:
-            return ()
-        return (rn, st.st_mtime_ns, st.st_size)
+    def _companion_sig(self, name: str) -> tuple:
+        """人设所有配套文件 (背景 / 日程 ...) 的 (文件名, 修改时间, 大小): 任何一个变了都要重新读."""
+        out = []
+        for cn in companions_of(self.personas, name):
+            try:
+                st = os.stat(os.path.join(self.personas, cn))
+            except OSError:
+                continue
+            out.append((cn, st.st_mtime_ns, st.st_size))
+        return tuple(out)
 
     def _segments(self) -> list:
         """现在这个人设日程里的空闲 / 休息 / 专注 / 睡眠段 (联合行动之后循环被重新计算时, 是重新计算后的)."""
@@ -4976,7 +5070,7 @@ def _selftest():
     assert read_persona(fresh_personas, "Claudia.txt").startswith("你将扮演一位文静,冷淡的")
     assert read_persona(fresh_personas, "Assistant.txt").startswith("你是名为 Assistant 的助理")
     cf.set_cfg(persona="")
-    for name in ("Claudia.txt", "Claudia_routine.txt", "Assistant.txt"):
+    for name in ("Claudia.txt", "Claudia_background.txt", "Claudia_routine.txt", "Assistant.txt"):
         os.remove(os.path.join(fresh_personas, name))
     cf.flush()
     cf2 = Comm(fresh_dir, fresh_personas, now=lambda: clock[0], chat_fn=fake)
@@ -6609,11 +6703,23 @@ def _selftest():
     cr.ai.set_profile("deepseek", api_key="k")
     cr.ai.provider = "deepseek"
     assert cr.persona_name() == "Claudia.txt" and list_personas(rt_personas) == ["Assistant.txt", "Claudia.txt"], "Claudia_routine 是配套文件, 不是人设"
-    assert routine_files(rt_personas) == ["Claudia_routine.txt"] and routine_name_of(rt_personas, "Claudia.txt") == "Claudia_routine.txt"
-    assert is_routine_name(rt_personas, "Claudia_routine.txt") and not is_routine_name(rt_personas, "Claudia.txt")
-    assert base_persona_of(rt_personas, "Claudia_routine.txt") == "Claudia.txt"
+    assert companion_files(rt_personas) == ["Claudia_background.txt", "Claudia_routine.txt"] and routine_name_of(rt_personas, "Claudia.txt") == "Claudia_routine.txt"
+    assert is_companion_name(rt_personas, "Claudia_routine.txt") and is_companion_name(rt_personas, "Claudia_background.txt") and not is_companion_name(rt_personas, "Claudia.txt")
+    assert base_persona_of(rt_personas, "Claudia_routine.txt") == "Claudia.txt" and base_persona_of(rt_personas, "Claudia_background.txt") == "Claudia.txt"
+    assert companions_of(rt_personas, "Claudia.txt") == ["Claudia_background.txt", "Claudia_routine.txt"] and companions_of(rt_personas, "Assistant.txt") == []
     full = read_persona_full(rt_personas, "Claudia.txt")
     assert full.startswith("你将扮演一位文静") and "初始起点:6:30" in full and "联网时间理由列表" in full, "routine 拼在人设后面发给模型"
+    assert "这里包含了关于你的身份背景" in full and full.index("这里包含了关于你的身份背景") < full.index("初始起点:6:30"), "背景文件也合并进去, 按文件名顺序: 背景在日程前面"
+    assert full == "\n\n".join([read_persona(rt_personas, n) for n in ("Claudia.txt", "Claudia_background.txt", "Claudia_routine.txt")])
+    # 配套文件: X_任意名字; 没有 X.txt 的 X_名字.txt 是普通人设; 取最长的 X; readme 不算
+    cp = os.path.join(td, "companion_personas")
+    os.makedirs(cp)
+    for n, t in (("Ann.txt", "A"), ("Ann_diary.md", "D"), ("Ann_Bob.txt", "B"), ("Ann_Bob_x.txt", "X"), ("Zed_note.txt", "Z"), ("Ann_.txt", "E"), ("_x.txt", "Q")):
+        open(os.path.join(cp, n), "w", encoding="utf-8").write(t)
+    assert list_personas(cp) == ["_x.txt", "Ann.txt", "Ann_.txt", "Zed_note.txt"], list_personas(cp)
+    assert companions_of(cp, "Ann.txt") == ["Ann_Bob.txt", "Ann_diary.md"] and companions_of(cp, "Ann_.txt") == []
+    assert base_persona_of(cp, "Ann_Bob_x.txt") == "Ann_Bob.txt" and base_persona_of(cp, "Zed_note.txt") == ""
+    assert read_persona_full(cp, "Ann.txt") == "A\n\nB\n\nD"
     assert read_persona_full(rt_personas, "Assistant.txt") == read_persona(rt_personas, "Assistant.txt")
     assert "Claudia_routine.txt" in cr.persona_doc() and "Claudia.txt" in cr.persona_doc(), "日程文件随设备同步"
     cr.reload_schedule("test")
@@ -6775,6 +6881,8 @@ def _selftest():
     cu = Comm(up_dir, up_personas, now=lambda: clock[0], chat_fn=fake)
     assert read_persona(up_personas, "Claudia.txt") == BUILTIN_PERSONAS[DEFAULT_PERSONA].strip()
     assert read_persona(up_personas, "Claudia_routine.txt") == BUILTIN_PERSONAS[DEFAULT_ROUTINE].strip(), "升级时补上日程文件"
+    assert read_persona(up_personas, "Claudia_background.txt") == BUILTIN_PERSONAS[DEFAULT_BACKGROUND].strip(), "升级时补上背景文件"
+    assert "Claudia_background.txt" not in list_personas(up_personas) and read_persona_full(up_personas, "Claudia.txt").count("这里包含了关于你的身份背景") == 1
     cu.reload_schedule("test")
     assert cu._rt is not None
     cu.flush()
@@ -6808,7 +6916,11 @@ def _selftest():
     cm = Comm(mod_dir, mod_personas, now=lambda: clock[0], chat_fn=fake)
     assert read_persona(mod_personas, "Claudia.txt") == "我自己改过的 Claudia", "改过的 Claudia 不动"
     assert read_persona(mod_personas, "Claudia_routine.txt") == BUILTIN_PERSONAS[DEFAULT_ROUTINE].strip(), "Claudia 改过, 日程文件也要补上"
+    assert read_persona(mod_personas, "Claudia_background.txt") == BUILTIN_PERSONAS[DEFAULT_BACKGROUND].strip(), "Claudia 改过, 背景文件也要补上"
     assert cm.check_persona_changes() is None, "补上日程文件不弹修改人设"
+    open(os.path.join(mod_personas, "Claudia_background.txt"), "w", encoding="utf-8", newline="\n").write(BUILTIN_PERSONAS[DEFAULT_BACKGROUND] + "我的背景")
+    cm._upgrade_background()
+    assert read_persona(mod_personas, "Claudia_background.txt").endswith("我的背景"), "用户改过的背景文件不被覆盖"
     cm.flush()
     open(os.path.join(mod_personas, "Claudia_routine.txt"), "w", encoding="utf-8", newline="\n").write(ROUTINE_PREV1)
     cm2 = Comm(mod_dir, mod_personas, now=lambda: clock[0], chat_fn=fake)

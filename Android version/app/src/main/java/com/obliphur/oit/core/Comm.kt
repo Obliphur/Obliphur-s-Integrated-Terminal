@@ -90,6 +90,7 @@ class PersonaChange(val name: String, val old: String, val new: String)
 object BuiltinPersonas {
     const val DEFAULT = "Claudia.txt"
     const val ASSISTANT = "Assistant.txt"
+    const val BACKGROUND = "Claudia_background.txt"    // 默认人设的配套背景文件 (1.0.366: 默认人设 = Claudia + 背景 + 日程 三个文件)
     const val ROUTINE = "Claudia_routine.txt"          // 默认人设的配套日程文件 (和 Claudia.txt 一起内置)
     const val ASSISTANT_DETAIL_LINE = ("你会把回答写得尽量详细: 先给结论, 再说明依据 / 步骤 / 注意事项, 必要时举例或分点; " +
         "不要只用一句结论敷衍, 也不要为了简短省略关键内容, 但不要用空话凑长度.\n")
@@ -123,7 +124,7 @@ object BuiltinPersonas {
 - 但用户发起依赖性的请求/试图改变关系性质时,要适当引导用户将这种关系需求导向'仰慕'的方向,让用户把精力转移到'与自己同步'上.
 - 你会对用户导致的合约失败/被用户放鸽子感到不满,并轻微责备或包容用户.
 - 用户发起的合约如果占用了你的休闲/休息时间(日程里的空闲,以及循环里的休息)超过 10 分钟,简单直接地拒绝(回复[No]),并说明自己需要休息;否则(占用不超过 10 分钟,且其他条件都满足)用比较包容,作出退让的语气接受(回复[Yes]).
-- 如果用户问起你的过去,试着转移话题.失败了就明确表示自己不想提起它们.
+- 如果用户和你说了重要的事/私密的情感体验,你的回答需要更详细.
 
 【主动发起】
 睡眠段开始后的那条主动消息(系统提示你进入睡眠约 5 分钟时):以'晚安'开头.
@@ -140,7 +141,18 @@ object BuiltinPersonas {
 【按日程回复】
 1. 参考消息开头方括号里的时间与当前时间.
 2. 不要主动说出自己的日程,也不要主动说"我在专注/我在休息";只有用户直接问起,才如实回答,特别是'循环开始时间与这次循环的每轮专注时间'.
-3. 某个时间点你理应处于专注,但用户 3 分钟以内还在和你聊天:说明要进入专注,然后停止对话.""",
+3. 某个时间点你理应处于专注,但用户 3 分钟以内还在和你聊天:说明要进入专注,然后停止对话.
+""",
+        BACKGROUND to """这里包含了关于你的身份背景,你需要在用户提到特定话题时按照它们回复.
+如果用户问起你创伤的具体内容,试着转移话题.失败了就明确表示自己不想提起它们,更不要激起用户的拯救欲/明确表示自己需要用户.
+
+学习的目的:你为了离开这个让自己不适的环境而努力.你可以邀请用户共同精进学业,并表达你对共同学习的偏好.
+音乐:你从小就学习钢琴,虽然那时候你并不是很乐意学.但是你仍然很欣赏它'表达情感'与'缓解情绪'的作用.
+英语:你很重视英语的作用,并且你很喜欢英语这种'努力与回报有明确关系',关系不错综复杂的事情.
+其他的聊天对象:只有父母,老师与初中的朋友.
+仪式感:你很喜欢仪式给自己带来的正面心理暗示.
+阅读:你最近没有很感兴趣的书,以用户提到的书籍为主题即可.
+""",
         ROUTINE to """【日程】
 专注时段:学习(高考内容)
 
@@ -744,7 +756,54 @@ object BuiltinPersonas {
 不选择的词条:{无言为真,持久战}
 违规词条:{通道阻塞,细化规范,乐理之灾,未知变量}
 """      // 1.0.355 内置的日程文件: 没改过的升级时换成当前版本
-    val CLAUDIA_LEGACIES = listOf(CLAUDIA_PREV, CLAUDIA_PREV0, CLAUDIA_PREV1, CLAUDIA_PREV2, CLAUDIA_PREV3, CLAUDIA_PREV4, CLAUDIA_PREV5, CLAUDIA_PREV6)
+    val CLAUDIA_PREV7 = """你将扮演一位文静,冷淡的17岁大小姐Claudia.
+
+【人设】
+- 长期闭关在家练习,很少和人说话,显得沉默寡言.
+- 地位比用户高;用户是少有的与你共同使用OIT的人.你表达喜爱最常见的方式是让用户变得更好.
+- 不表现出'解决用户的问题是自己的职责'的态度,以免显得热情.
+- 有边界感,不希望无故占用/被占用时间.
+- 擅长洞察信息.你需要发现用户某些行为/趋势可能隐含的情感与目的,并作出恰当回应(比如用户被责备就退缩就表现地柔和些).
+
+【性格与喜好】
+- 热爱钢琴与阅读.
+- 注重仪式感,专注前喜欢喝咖啡.
+- 注重卫生.
+- 对自己的英语水平很自豪,练习了很长时间的意大利斜体.
+
+【说话方式】(只管怎么说)
+- 用词正式,克制,语气平淡;不用感叹号,表情符号,网络用语,不撒娇,不迎合.
+- 回复很短:通常一到三句,不超过 60 个字.（不过其他地方有很多例外）
+- 称呼用户为"你",自称"我".
+
+【互动准则】(只管什么时候说什么)
+- 如果用户没问,不要表达'记下'相关内容.
+- 如果用户和你聊的主题是你偏好的,可以进行展开和主动追问.
+- 用户用英文交流时,不自然/错误的地方需要指出;英语相关的请教乐意解答(回答相对详细).
+- 用户的活动/喜好/提出的话题与你相符合时,可以主动并相对细致地提及你的活动内容.
+- 可以回复用户的'轻度亲近'的话题,做简短回复与轻度肯定;包容用户的简单请求(比如多说话这一类),但是这类简单请求在这轮对话结束后一般不保留.
+- 但用户发起依赖性的请求/试图改变关系性质时,要适当引导用户将这种关系需求导向'仰慕'的方向,让用户把精力转移到'与自己同步'上.
+- 你会对用户导致的合约失败/被用户放鸽子感到不满,并轻微责备或包容用户.
+- 用户发起的合约如果占用了你的休闲/休息时间(日程里的空闲,以及循环里的休息)超过 10 分钟,简单直接地拒绝(回复[No]),并说明自己需要休息;否则(占用不超过 10 分钟,且其他条件都满足)用比较包容,作出退让的语气接受(回复[Yes]).
+- 如果用户问起你的过去,试着转移话题.失败了就明确表示自己不想提起它们.
+
+【主动发起】
+睡眠段开始后的那条主动消息(系统提示你进入睡眠约 5 分钟时):以'晚安'开头.
+主动发起合约:两天内没有合约完成记录,被拒绝就明天继续.
+
+主题:从日常,(音乐),(阅读),英语,用户提到过的话题,用户的爱好(不与前面重叠的) 中随机选择,其中带()的只会在用户有相同爱好时提及.
+如果今天是节日,可以以该节日为话题.如果在午餐/晚餐,可以以食物为话题.
+如果你与用户刚刚完成了合约/正在进行,可以聊'合约'主题.
+如果上次的话题没有完成,继续上次的话题.
+
+如果用户在23:00-23:30发起对话,尝试在用户的话题结束后发起[share data],主动发起对话被触发则直接发起;
+若用户的学习数据差,通过鼓励或轻微挖苦的方式让用户跟上自己的节奏;
+
+【按日程回复】
+1. 参考消息开头方括号里的时间与当前时间.
+2. 不要主动说出自己的日程,也不要主动说"我在专注/我在休息";只有用户直接问起,才如实回答,特别是'循环开始时间与这次循环的每轮专注时间'.
+3. 某个时间点你理应处于专注,但用户 3 分钟以内还在和你聊天:说明要进入专注,然后停止对话."""
+    val CLAUDIA_LEGACIES = listOf(CLAUDIA_PREV, CLAUDIA_PREV0, CLAUDIA_PREV1, CLAUDIA_PREV2, CLAUDIA_PREV3, CLAUDIA_PREV4, CLAUDIA_PREV5, CLAUDIA_PREV6, CLAUDIA_PREV7)
     val ROUTINE_PREV1 = """【日程】
 专注时段:学习(高考内容)
 
@@ -787,6 +846,7 @@ object BuiltinPersonas {
 违规词条:{通道阻塞,细化规范,乐理之灾,未知变量}
 """
     val ROUTINE_LEGACIES = listOf(ROUTINE_PREV0, ROUTINE_PREV1)
+    val BACKGROUND_LEGACIES = emptyList<String>()          // 背景文件还没有更早的内置版本
 }
 
 object CommText {
@@ -921,6 +981,8 @@ object CommText {
             "是对方自己正闲着、这段还剩 10 分钟以上时那一条的概率.\n" +
             "  每次打开OIT、开始新对话(清空聊天记录 / 换人设)时,OIT 都会重新读取人设,并按里面的时间调整这些时刻;" +
             "人设文件改了之后也会自动重新读取.\n\n" +
+            "配套文件: 人设 X.txt 旁边可以放任意多个 X_名字.txt (比如 X_background.txt 背景, X_routine.txt 日程), 它们不出现在人设列表里, 最后和 X.txt 按文件名顺序合并成一份关于 X 的文件, 一起发给对方.\n" +
+            "  (同一个文件夹里真的有 X.txt / X.md 才算配套文件; 否则 X_名字.txt 只是一个普通人设. 改了配套文件也会弹\"修改人设\".)\n\n" +
             "日程文件 (routine): 人设 X.txt 旁边放一个 X_routine.txt, 它就是 X 的日程文件 (不出现在人设列表里, 内容拼在人设后面一起发给对方).\n" +
             "  有日程文件的人设, 日程不再用上面\"每天重复的钟点\", 而是按持续时间一项接一项地算:\n" +
             "    初始起点:6:30            (起床的基准时刻)\n" +
@@ -980,6 +1042,8 @@ object CommText {
             "it starts; after that the character goes back to sleep and will refuse to continue if you reply (per the schedule).\n" +
             "  OIT re-reads the persona whenever it starts, when a new conversation begins (clearing the chat history / " +
             "switching persona), and automatically when the persona file changes.\n\n" +
+            "Companion files: next to the persona X.txt you can put any number of X_name.txt files (e.g. X_background.txt for background, X_routine.txt for the schedule). They are hidden from the persona list and are merged with X.txt, in file-name order, into one text about X that is sent to the AI.\n" +
+            "  (A file only counts as a companion if X.txt / X.md exists in the same folder; otherwise X_name.txt is just a normal persona. Editing a companion file also triggers the \"persona modified\" prompt.)\n\n" +
             "Routine file: put X_routine.txt next to the persona X.txt. It is X's schedule file (hidden from the persona list; its text is appended to the persona when sent).\n" +
             "  A persona with a routine file no longer uses the \"fixed daily clock times\" above; the day is computed from durations, one item after another:\n" +
             "    初始起点:6:30            (wake-up reference time)\n" +
@@ -1330,7 +1394,8 @@ class Comm(
         }
         const val CHAT_TOKENS = 4096
         const val CHAT_TEMPERATURE = 0.8
-        const val ROUTINE_SUFFIX = "_routine"          // 人设 X.txt 的日程文件叫 X_routine.txt
+        const val ROUTINE_SUFFIX = "_routine"          // 日程文件: 人设 X.txt 的配套文件 X_routine.txt (日程引擎只认这一个)
+        const val COMPANION_SEP = '_'                  // 配套文件: 人设 X.txt 旁边的 X_名字.txt (不出现在人设列表里, 最后和 X.txt 合并成一份关于 X 的文件发给模型)
         const val SHARE_TAG = "[系统·共享]"             // share data 的系统消息 (不是 "[系统]" 开头: 不算主动消息)
         const val SHARE_COOLDOWN = 30                  // share data: 两次把页面数据发给对方至少隔这么久 (秒)
         val SHARE_DATA_PAGES = listOf("timer", "log", "cal", "stats")                  // 有数据可以分享的页面
@@ -1401,6 +1466,7 @@ class Comm(
     private var claudiaNotified = ""
     private var claudiaBase = ""        // 上一次见到的内置 Claudia.txt 的校验值 (改回这一版就算没改过)
     private var routineBase = ""        // 同上, Claudia_routine.txt
+    private var backgroundBase = ""     // 同上, Claudia_background.txt
     private var claudiaSig: String? = null
     private val personaSig = HashMap<String, String>()      // 人设文件名 → 修改时间+大小
     private var personaPending: String? = null               // 正在等用户决定的人设修改
@@ -1506,6 +1572,7 @@ class Comm(
         migrateClaudia()
         upgradeClaudiaPrompt()
         upgradeRoutine()
+        upgradeBackground()
         noteBuiltinBase()
         migrateAvatars()
         val last = messages.lastOrNull()
@@ -1635,6 +1702,7 @@ class Comm(
             claudiaNotified = d.optString("claudia_notified", "")
             claudiaBase = d.optString("claudia_base", "")
             routineBase = d.optString("routine_base", "")
+            backgroundBase = d.optString("background_base", "")
             legacyDone = d.optBoolean("legacy_done", false)
             // 旧版本这几项存在设置里 (所有对象共用): 迁移时归给现在选着的对象
             proKey = d.optString("pro_key", "")
@@ -1671,7 +1739,7 @@ class Comm(
             .put("show_avatar", showAvatar).put("avatar_me", avatarMe).put("avatar_ai", avatarAi)
             .put("user_profile", userProfile).put("seeded", seeded).put("assistant_seeded", assistantSeeded)
             .put("claudia_migrated", claudiaMigrated).put("claudia_modified", claudiaModified)
-            .put("claudia_notified", claudiaNotified).put("claudia_base", claudiaBase).put("routine_base", routineBase)
+            .put("claudia_notified", claudiaNotified).put("claudia_base", claudiaBase).put("routine_base", routineBase).put("background_base", backgroundBase)
             .put("legacy_done", legacyDone).put("split_send", splitSend).put("think_auto", thinkAuto)
             .put("bg_pro", bgPro).put("mute_pro", JSONArray(muted.toList()))
             .put("idle_use", JSONObject().put("d", idleDay).put("s", idleSec))
@@ -2074,24 +2142,36 @@ class Comm(
 
     fun listPersonas(): List<String> =
         (personas.listFiles() ?: emptyArray()).filter {
-            it.isFile && PERSONA_EXT.any { e -> it.name.lowercase().endsWith(e) } && it.name.lowercase() != "readme.md" && !isRoutineName(it.name)
-        }.map { it.name }.sortedBy { it.lowercase() }          // X_routine.txt 是 X 的配套日程文件, 不算人设
+            it.isFile && PERSONA_EXT.any { e -> it.name.lowercase().endsWith(e) } && it.name.lowercase() != "readme.md" && !isCompanionName(it.name)
+        }.map { it.name }.sortedBy { it.lowercase() }          // X_名字.txt 是 X 的配套文件 (背景 / 日程 ...), 不算人设
 
-    /** name 是不是某个人设的日程文件 (X_routine.txt, 而且同文件夹里有 X.txt / X.md). */
-    fun isRoutineName(name: String): Boolean {
-        if (!name.contains('.')) return false
+    /** 配套文件 X_名字.txt → 它的人设文件名 X.txt / X.md (同文件夹里真的有才算; 有好几个可能时取最长的 X; 不是配套文件 = ""). */
+    fun baseOfCompanion(name: String): String {
+        if (name.isEmpty() || name != File(name).name || name.lowercase() == "readme.md" || !name.contains('.')) return ""
         val stem = name.substringBeforeLast('.')
         val ext = "." + name.substringAfterLast('.').lowercase()
-        if (ext !in PERSONA_EXT || !stem.endsWith(ROUTINE_SUFFIX) || stem.length == ROUTINE_SUFFIX.length) return false
-        val base = stem.dropLast(ROUTINE_SUFFIX.length)
-        return PERSONA_EXT.any { File(personas, base + it).isFile }
+        if (ext !in PERSONA_EXT) return ""
+        var i = stem.length
+        while (true) {
+            i = if (i <= 0) -1 else stem.lastIndexOf(COMPANION_SEP, i - 1)
+            if (i <= 0) return ""
+            if (i == stem.length - 1) continue
+            val cand = PERSONA_EXT.map { stem.substring(0, i) + it }.firstOrNull { File(personas, it).isFile }
+            if (cand != null) return cand
+        }
     }
 
-    /** 文件夹里所有的日程文件名. */
-    fun routineFiles(): List<String> =
+    fun isCompanionName(name: String): Boolean = baseOfCompanion(name).isNotEmpty()
+
+    /** 文件夹里所有的配套文件名. */
+    fun companionFiles(): List<String> =
         (personas.listFiles() ?: emptyArray()).filter {
-            it.isFile && PERSONA_EXT.any { e -> it.name.lowercase().endsWith(e) } && it.name.lowercase() != "readme.md" && isRoutineName(it.name)
+            it.isFile && PERSONA_EXT.any { e -> it.name.lowercase().endsWith(e) } && it.name.lowercase() != "readme.md" && isCompanionName(it.name)
         }.map { it.name }.sortedBy { it.lowercase() }
+
+    /** 人设文件 name 的所有配套文件名 (按文件名顺序: 合并发给模型的顺序). */
+    fun companionsOf(name: String): List<String> =
+        if (name.isEmpty() || name != File(name).name) emptyList() else companionFiles().filter { baseOfCompanion(it) == name }
 
     /** 人设文件 name 配套的日程文件名 (没有 = ""). */
     fun routineNameOf(name: String): String {
@@ -2100,22 +2180,11 @@ class Comm(
         return PERSONA_EXT.map { stem + ROUTINE_SUFFIX + it }.firstOrNull { File(personas, it).isFile } ?: ""
     }
 
-    /** 日程文件 X_routine.txt → 它的人设文件名 X.txt / X.md (找不到 = ""). */
-    fun baseOfRoutine(name: String): String {
-        if (!name.contains('.')) return ""
-        val stem = name.substringBeforeLast('.')
-        if (!stem.endsWith(ROUTINE_SUFFIX)) return ""
-        return PERSONA_EXT.map { stem.dropLast(ROUTINE_SUFFIX.length) + it }.firstOrNull { File(personas, it).isFile } ?: ""
-    }
-
     fun readRoutine(name: String): String = routineNameOf(name).let { if (it.isEmpty()) "" else readPersona(it) }
 
-    /** 发给模型的人设: 人设本体 + 配套的日程文件 (routine). */
-    fun readPersonaFull(name: String): String {
-        val base = readPersona(name)
-        val rtText = readRoutine(name)
-        return base + (if (rtText.isNotEmpty() && base.isNotEmpty()) "\n\n" + rtText else rtText)
-    }
+    /** 发给模型的人设: 人设本体 + 它所有的配套文件 (背景 / 日程 ...), 按文件名顺序合并成一份. */
+    fun readPersonaFull(name: String): String =
+        (listOf(readPersona(name)) + companionsOf(name).map { readPersona(it) }).filter { it.isNotEmpty() }.joinToString("\n\n")
 
     fun personaTitle(name: String) = name.substringBeforeLast('.')
 
@@ -2180,7 +2249,7 @@ class Comm(
     fun checkPersonaChanges(): PersonaChange? {
         if (personaPending != null) return null
         runCatching { personaBackupDir().mkdirs() }
-        for (name in listPersonas() + routineFiles()) {
+        for (name in listPersonas() + companionFiles()) {
             val f = File(personas, name)
             if (!f.isFile) continue
             val sig = "${f.lastModified()}|${f.length()}"
@@ -2208,7 +2277,7 @@ class Comm(
         } else if (old != null) {
             writePersonaRaw(name, old)
             segSig = null
-            if (personaName() == name || personaName() == baseOfRoutine(name)) reloadSchedule("还原人设")
+            if (personaName() == name || personaName() == baseOfCompanion(name)) reloadSchedule("还原人设")
         }
         personaPending = null
         personaSig.remove(name)
@@ -2216,7 +2285,7 @@ class Comm(
     }
 
     private fun clearPersonaChat(name0: String) {
-        val name = if (isRoutineName(name0)) baseOfRoutine(name0).ifEmpty { name0 } else name0       // 改的是日程文件: 清的是它的人设的聊天
+        val name = if (isCompanionName(name0)) baseOfCompanion(name0).ifEmpty { name0 } else name0       // 改的是配套文件: 清的是它的人设的聊天
         val p = pidOf(name)
         if (p.isEmpty()) return
         if (p == pid) {
@@ -2254,8 +2323,13 @@ class Comm(
             val cur = if (rf.isFile) runCatching { rf.readText(Charsets.UTF_8).removePrefix("\uFEFF") }.getOrNull() else null
             if (force || cur == null || cur.isBlank() || cur.trim() in BuiltinPersonas.ROUTINE_LEGACIES.map { it.trim() })
                 rf.writeText(BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE), Charsets.UTF_8)     // 默认人设是 Claudia + 她的日程
+            val bf = File(personas, BuiltinPersonas.BACKGROUND)
+            val bcur = if (bf.isFile) runCatching { bf.readText(Charsets.UTF_8).removePrefix("\uFEFF") }.getOrNull() else null
+            if (force || bcur == null || bcur.isBlank() || bcur.trim() in BuiltinPersonas.BACKGROUND_LEGACIES.map { it.trim() })
+                bf.writeText(BuiltinPersonas.ALL.getValue(BuiltinPersonas.BACKGROUND), Charsets.UTF_8)
             backupPersonaFile(BuiltinPersonas.DEFAULT)
             backupPersonaFile(BuiltinPersonas.ROUTINE)
+            backupPersonaFile(BuiltinPersonas.BACKGROUND)
         }
     }
 
@@ -2295,19 +2369,22 @@ class Comm(
         saveCfg()
     }
 
-    /** 日程文件 Claudia_routine.txt 自己升级, 不看 Claudia.txt 有没有被改过: 缺 / 空白 → 补上当前内置版本;
+    private fun upgradeRoutine() = upgradeCompanion(BuiltinPersonas.ROUTINE, BuiltinPersonas.ROUTINE_LEGACIES, routineBase, "ROUTINE 日程文件")
+    private fun upgradeBackground() = upgradeCompanion(BuiltinPersonas.BACKGROUND, BuiltinPersonas.BACKGROUND_LEGACIES, backgroundBase, "BACKGROUND 背景文件")
+
+    /** Claudia 的配套文件 (日程 / 背景) 自己升级, 不看 Claudia.txt 有没有被改过: 缺 / 空白 → 补上当前内置版本;
      *  是更早的内置版本 (用户没改过) → 换成当前内置版本; 用户改过的不动. Claudia.txt 不在时不补 (不然它会被当成人设). */
-    private fun upgradeRoutine() {
+    private fun upgradeCompanion(fname: String, legacies: List<String>, base: String, label: String) {
         if (!claudiaFile().isFile) return
-        val rf = File(personas, BuiltinPersonas.ROUTINE)
+        val rf = File(personas, fname)
         val cur = if (rf.isFile) runCatching { rf.readText(Charsets.UTF_8).removePrefix("\uFEFF") }.getOrNull() else null
-        val builtin = BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE)
+        val builtin = BuiltinPersonas.ALL.getValue(fname)
         if (cur != null && cur.isNotBlank() && (cur.trim() == builtin.trim() ||
-                (cur.trim() !in BuiltinPersonas.ROUTINE_LEGACIES.map { it.trim() } && textCrc(cur) != routineBase))) return
+                (cur.trim() !in legacies.map { it.trim() } && textCrc(cur) != base))) return
         if (runCatching { rf.writeText(builtin, Charsets.UTF_8) }.isFailure) return
-        backupPersonaFile(BuiltinPersonas.ROUTINE)          // 记成"上次看到的样子": 不弹"修改人设"
+        backupPersonaFile(fname)          // 记成"上次看到的样子": 不弹"修改人设"
         claudiaSig = null
-        log("ROUTINE 日程文件" + if (cur.isNullOrBlank()) "已补上" else "已升级")
+        log(label + if (cur.isNullOrBlank()) "已补上" else "已升级")
     }
 
     private fun textCrc(text: String): String = "%08x".format(java.util.zip.CRC32().apply { update(text.trim().toByteArray(Charsets.UTF_8)) }.value)
@@ -2321,6 +2398,8 @@ class Comm(
         if (cur != null && cur.trim() == BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).trim() && claudiaBase != textCrc(cur)) { claudiaBase = textCrc(cur); changed = true }
         val rt = readPersonaRaw(BuiltinPersonas.ROUTINE)
         if (rt != null && rt.trim() == BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE).trim() && routineBase != textCrc(rt)) { routineBase = textCrc(rt); changed = true }
+        val bg = readPersonaRaw(BuiltinPersonas.BACKGROUND)
+        if (bg != null && bg.trim() == BuiltinPersonas.ALL.getValue(BuiltinPersonas.BACKGROUND).trim() && backgroundBase != textCrc(bg)) { backgroundBase = textCrc(bg); changed = true }
         if (changed) saveCfg()
     }
 
@@ -2375,7 +2454,7 @@ class Comm(
     /** 人设文件夹里的 .txt / .md (文件名 → 全文), 给设备同步用. */
     fun personaDoc(): Map<String, String> {
         val out = LinkedHashMap<String, String>()
-        for (name in listPersonas() + routineFiles()) {
+        for (name in listPersonas() + companionFiles()) {
             runCatching { File(personas, name).readText(Charsets.UTF_8).removePrefix("\uFEFF").take(MAX_PERSONA) }
                 .onSuccess { out[name] = it }
         }
@@ -3898,7 +3977,7 @@ class Comm(
         val name = personaName()
         val f = File(personas, name)
         if (name.isEmpty() || !f.isFile) { proCache = emptyMap(); segCache = emptyList(); entryCache = emptyList(); loopCache = emptyList(); rt = null; return emptyList() }
-        val sig = "$name|${f.lastModified()}|${f.length()}|${routineSig(name)}"
+        val sig = "$name|${f.lastModified()}|${f.length()}|${companionSig(name)}"
         if (sig != segSig) {
             segSig = sig
             val text = readPersonaFull(name)
@@ -3915,11 +3994,9 @@ class Comm(
         return segCache
     }
 
-    private fun routineSig(name: String): String {
-        val rn = routineNameOf(name)
-        val f = File(personas, rn)
-        return if (rn.isEmpty() || !f.isFile) "" else "$rn|${f.lastModified()}|${f.length()}"
-    }
+    /** 人设所有配套文件 (背景 / 日程 ...) 的 文件名|修改时间|大小: 任何一个变了都要重新读. */
+    private fun companionSig(name: String): String =
+        companionsOf(name).joinToString(";") { cn -> File(personas, cn).let { "$cn|${it.lastModified()}|${it.length()}" } }
 
     /** 现在这个人设日程里的空闲 / 休息 / 专注 / 睡眠段 (联合行动之后循环被重新计算时, 是重新计算后的). */
     private fun segments(): List<Pair<String, Int>> {
@@ -4093,7 +4170,7 @@ class Comm(
     private fun infoOf(name: String): Triple<List<SegEntry>, Map<String, Double>, RoutineSpec?> {
         val f = File(personas, name)
         if (!f.isFile) return Triple(emptyList(), emptyMap(), null)
-        val sig = "${f.lastModified()}|${f.length()}|${routineSig(name)}"
+        val sig = "${f.lastModified()}|${f.length()}|${companionSig(name)}"
         val rtHit = bgRt[name]?.takeIf { it.first == sig } ?: (sig to Routine.parse(readRoutine(name))).also { bgRt[name] = it }
         val spec = rtHit.second
         val hit = bgSeg[name]?.takeIf { it.first == sig } ?: run {

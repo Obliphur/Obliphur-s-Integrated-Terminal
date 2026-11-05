@@ -357,7 +357,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     /** 人设文件被手动改过: 确认是否清空对应的聊天数据, 或者还原文件. */
     private fun showPersonaChange(change: PersonaChange) {
         var msg = tr("{name},修改人设会清除聊天数据,你确定吗?", "name" to username)
-        if (comm.personaTitle(change.name).equals("claudia", ignoreCase = true)) {
+        if (comm.personaTitle(change.name).substringBefore('_').equals("claudia", ignoreCase = true)) {
             msg = tr("主管{name},我希望你尊重她的人格.", "name" to username) + "\n" + msg
         }
         notice(tr("人设文件被修改"), msg,
