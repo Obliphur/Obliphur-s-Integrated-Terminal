@@ -591,7 +591,7 @@ class CommTest {
         assertTrue("进入睡眠约 5 分钟" in body && "即使你此刻处于睡眠时段" in body)
         assertFalse("'晚安'不再写进代码: 系统提示里没有它, 要不要说由人设自己写", "晚安" in body)
         val builtin = BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT)
-        assertTrue("自带 Claudia 的提示词里写了'晚安'", "以'晚安'开头" in builtin)
+        assertTrue("自带 Claudia 的提示词里写了'晚安'", "以“晚安”开头" in builtin)
     }
 
     /** 手动改人设: 还原文件保留聊天; 确定清空对应聊天. */
@@ -624,7 +624,7 @@ class CommTest {
         val c = comm(dir, File(td, "pp"))
         assertEquals(listOf("Assistant.txt", "Claudia.txt"), c.listPersonas())
         assertEquals("Claudia.txt", c.personaName())            // 第一次运行默认选中
-        assertTrue(c.readPersona("Claudia.txt").startsWith("你将扮演一位文静,冷淡的"))
+        assertTrue(c.readPersona("Claudia.txt").startsWith("你将扮演一位文静、冷淡"))
         assertTrue(c.readPersona("Assistant.txt").startsWith("你是名为 Assistant 的助理"))
         c.set(persona = "")
         File(td, "pp/Claudia.txt").delete()
@@ -1104,7 +1104,7 @@ class CommTest {
         val td = Files.createTempDirectory("oit").toFile()
         val dir = File(td, "d").also { it.mkdirs() }
         val personas = File(td, "p").also { it.mkdirs() }
-        val edited = TEST_OLD_CLAUDIA.replace("注重卫生.", "注重卫生.\n- 我的改动: 喜欢猫.")
+        val edited = TEST_OLD_CLAUDIA + "\n- 我的改动: 喜欢猫."
         File(personas, "Claudia.txt").writeText(edited)
         File(dir, "comm_config.json").writeText("""{"seeded":true,"persona":"Claudia.txt"}""")
         val c = comm(dir, personas)
@@ -2084,7 +2084,7 @@ class CommTest {
         assertTrue(c.companionsOf("Assistant.txt").isEmpty())
         val full = c.readPersonaFull("Claudia.txt")
         assertTrue(full.startsWith("你将扮演一位文静") && "初始起点:6:30" in full && "联网时间理由列表" in full)
-        assertTrue("这里包含了关于你的身份背景" in full && full.indexOf("这里包含了关于你的身份背景") < full.indexOf("初始起点:6:30"))     // 背景在日程前面 (按文件名顺序)
+        assertTrue("这里是你的身份背景" in full && full.indexOf("这里是你的身份背景") < full.indexOf("初始起点:6:30"))     // 背景在日程前面 (按文件名顺序)
         assertEquals(listOf("Claudia.txt", "Claudia_background.txt", "Claudia_routine.txt").joinToString("\n\n") { c.readPersona(it) }, full)
         // 配套文件: X_任意名字; 没有 X.txt 的 X_名字.txt 是普通人设; 取最长的 X; 下划线开头 / 结尾不算
         val cpd = File(td, "cp").also { it.mkdirs() }
@@ -2351,5 +2351,5 @@ private val TEST_SCHEDULE_PERSONA = """你将扮演一位文静,冷淡的17岁�
 3. 某个时间点你理应处于专注,但用户 3 分钟以内还在和你聊天:说明要进入专注,然后停止对话.
 """
 /** 假装的"上一版内置 Claudia" / "上一版内置日程". */
-private val TEST_OLD_CLAUDIA = BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).replace("注重卫生.", "注重卫生.\n- 旧版的一行.")
+private val TEST_OLD_CLAUDIA = BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT) + "\n- 旧版的一行."
 private val TEST_OLD_ROUTINE = BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE).replace("合约记录难度:[20,30]", "合约记录难度:[10,20]")
