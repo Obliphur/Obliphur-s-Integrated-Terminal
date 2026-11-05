@@ -167,7 +167,7 @@ object BuiltinPersonas {
 下一个专注结束节点波动:[-2,3]
 (联合行动期间不生效)
 睡眠开始时间波动:[0,5]
-睡眠结束时间波动:[-20,10]
+睡眠结束时间波动:[-20,0]
 
 
 联网时间理由列表:{60%:查资料,20%:下载资源,20%:娱乐}(基准数据)
@@ -745,7 +745,48 @@ object BuiltinPersonas {
 违规词条:{通道阻塞,细化规范,乐理之灾,未知变量}
 """      // 1.0.355 内置的日程文件: 没改过的升级时换成当前版本
     val CLAUDIA_LEGACIES = listOf(CLAUDIA_PREV, CLAUDIA_PREV0, CLAUDIA_PREV1, CLAUDIA_PREV2, CLAUDIA_PREV3, CLAUDIA_PREV4, CLAUDIA_PREV5, CLAUDIA_PREV6)
-    val ROUTINE_LEGACIES = listOf(ROUTINE_PREV0)
+    val ROUTINE_PREV1 = """【日程】
+专注时段:学习(高考内容)
+
+初始起点:6:30
+30min:洗漱,吃早饭
+[循环 300min][100min]
+30min:午饭
+30min:空闲
+[循环 5h][100min]
+30min:晚饭
+30min:空闲
+[循环 240min][50min]
+30min:特殊空闲
+
+空闲发起谈话概率:20%
+重要活动发起谈话概率:20%
+特殊空闲发起谈话概率:60%
+休息发起谈话概率:20%
+长时间休息发起谈话概率:20%
+睡眠发起谈话概率:50%
+
+
+下一个专注开始节点波动:[-3,2]
+下一个专注结束节点波动:[-2,3]
+(联合行动期间不生效)
+睡眠开始时间波动:[0,5]
+睡眠结束时间波动:[-20,10]
+
+
+联网时间理由列表:{60%:查资料,20%:下载资源,20%:娱乐}(基准数据)
+整点记录专注填写列表:{30%:英语,数学,语文,历史,政治,地理}
+整点记录休息填写列表:{X%:聊天,弹琴,阅读,打扫,散步}
+
+设备列表:{DESKTOP-CLAUDIA,C1999W}
+设备-1:窗口使用时间:{30%:chrome,10%:claude,20%:OIT,5%:anki,5%:cloudmusic}(基准数据)
+设备-2:窗口使用时间:{5%:微信,40%:OIT,20%:词典,2%:相册,13%:anki}(基准数据)
+
+合约记录难度:[20,30]
+不选择的词条:{无言为真,持久战}
+违规词条:{通道阻塞,细化规范,乐理之灾,未知变量}
+"""
+    val ROUTINE_LEGACIES = listOf(ROUTINE_PREV0, ROUTINE_PREV1)
 }
 
 object CommText {
@@ -1320,6 +1361,9 @@ class Comm(
     private var joint: Joint? = null                                     // 联合行动 (随设备同步, 后改的为准)
     private var jointTs = 0L                                             // 联合行动最后一次改动的时刻 (清空了也有)
     private var net = NetState()                                         // 限时网络 (随设备同步, 后改的为准)
+    private var coPid = ""                                                 // 共时闹钟 (1.0.359): 闹钟跟随哪个对象的起床时间 (空 = 关闭); 随设备同步, 后改的为准
+    private var coDevs: List<String> = emptyList()                           // 响铃的设备 id (手动选; 关掉之后也留着, 再打开时沿用)
+    private var coTs = 0L
     /** 联合行动: 选好了词条和开始时间, 还没发出去 (结束时间 = 开始时间 + 这些词条的合约时长). */
     class JointDraft(val terms: List<String>, val start: LocalDateTime, val end: LocalDateTime)
     @Volatile var jointDraft: JointDraft? = null; private set
@@ -1403,6 +1447,8 @@ class Comm(
     /** 本机的设备 id; 本机是不是最后有人操作的设备 (只有它调用 AI / 主动发 / 重试); 聊天记录有改动时马上同步一次. Core 接上. */
     var device: () -> String = { "" }
     var leader: () -> Boolean = { true }
+    /** 本机 + 绑定的设备 (id, 名字): 共时闹钟选响铃的设备用. Core 接上. */
+    var devices: () -> List<Pair<String, String>> = { emptyList() }
     var onSync: (() -> Unit)? = null
     var snapshot: () -> CommSnap? = { null }
     /** 系统触发的请求 (主动发 / 重试): 这条系统消息先不进记录, 对方真的回复了才和回复一起记下. */
@@ -1576,6 +1622,7 @@ class Comm(
             d.optJSONArray("joint_last")?.let { a -> jointLast = (0 until a.length()).map { a.optString(it) }.filter { it.isNotEmpty() } }
             d.optJSONObject("joint")?.let { jointTs = it.optLong("ts", 0L); joint = Joint.parse(it) }
             d.optJSONObject("net")?.let { net = NetState.parse(it) }
+            d.optJSONObject("alarm_co")?.let { o -> coPid = o.optString("pid"); coDevs = o.optJSONArray("devs")?.strings() ?: emptyList(); coTs = o.optLong("ts", 0L) }
             d.optJSONArray("mute_pro")?.let { a -> for (i in 0 until a.length()) a.optString(i).takeIf { it.isNotEmpty() }?.let { muted.add(it) } }
             seeded = d.optBoolean("seeded", false)
             assistantSeeded = d.optBoolean("assistant_seeded", false)
@@ -1622,7 +1669,7 @@ class Comm(
             .put("legacy_done", legacyDone).put("split_send", splitSend).put("think_auto", thinkAuto)
             .put("bg_pro", bgPro).put("mute_pro", JSONArray(muted.toList()))
             .put("idle_use", JSONObject().put("d", idleDay).put("s", idleSec))
-            .put("joint", jointJson()).put("joint_last", JSONArray(jointLast)).put("net", net.json())
+            .put("joint", jointJson()).put("joint_last", JSONArray(jointLast)).put("net", net.json()).put("alarm_co", coJson())
         writer.execute { Store.write(cfgFile, o) }
     }
 
@@ -1688,6 +1735,7 @@ class Comm(
         if (idleDay.isNotEmpty()) doc["idle"] = JSONObject().put("d", idleDay).put("s", idleSec)      // 两台设备共用一份额度 (各自累计的取大的)
         if (joint != null || jointTs != 0L) doc["joint"] = jointJson()                                // 联合行动: 后改的为准
         if (net.ts != 0L) doc["net"] = net.json()                                                    // 限时网络: 后改的为准
+        if (coTs != 0L) doc["alarm"] = coJson()                                                       // 共时闹钟: 后改的为准
         for (p in (chatPids() + muted).toSet()) doc["mute:$p"] = p in muted
         for (p in chatPids()) {
             val st = stateOf(p)
@@ -1734,6 +1782,10 @@ class Comm(
                 key == "net" && v is JSONObject -> {
                     val t = v.optLong("ts", 0L)
                     if (t > net.ts) { net = NetState.parse(v); saveCfg(); changed() }
+                }
+                key == "alarm" && v is JSONObject -> {
+                    val t = v.optLong("ts", 0L)
+                    if (t > coTs) { coTs = t; coPid = v.optString("pid"); coDevs = v.optJSONArray("devs")?.strings() ?: emptyList(); saveCfg(); changed() }
                 }
                 key == "bgpro" && v is Boolean -> if (v != bgPro) { bgPro = v; saveCfg(); changed() }
                 key == "avatar" && v is Boolean -> if (v != showAvatar) { showAvatar = v; saveCfg(); changed() }
@@ -1886,6 +1938,58 @@ class Comm(
         if (p.isEmpty()) return
         if (m) muted.add(p) else muted.remove(p)
         saveCfg(); changed(); push()
+    }
+
+    // ---- 共时闹钟 (1.0.359): 闹钟的时间跟随被设为"共时闹钟"的对象的实际起床时间 (同 comm.py) ----
+
+    private fun coJson() = JSONObject().put("pid", coPid).put("devs", JSONArray(coDevs)).put("ts", coTs)
+
+    fun coAlarmPid(): String = coPid
+
+    /** 响铃的设备 id (没开共时闹钟 = 空). */
+    fun coAlarmDevs(): List<String> = if (coPid.isEmpty()) emptyList() else coDevs
+
+    private fun coSet(p: String, devs: List<String>) {
+        coPid = p; coDevs = devs; coTs = maxOf(nowMs(), coTs + 1)
+        saveCfg(); changed(); push()
+    }
+
+    /** 把 p 设为共时闹钟 (一次只有一个对象; p 为空 = 关闭). 响铃的设备没指定时沿用原来的, 都没有就是本机. */
+    @Synchronized
+    fun setCoAlarm(p: String, devs: List<String>? = null) {
+        if (p.isEmpty()) { coSet("", coDevs); return }
+        coSet(p, devs ?: coDevs.ifEmpty { device().let { if (it.isEmpty()) emptyList() else listOf(it) } })
+    }
+
+    /** 手动设置哪些设备响铃 (只在共时闹钟开着时有意义). */
+    @Synchronized
+    fun setCoAlarmDevs(devs: List<String>) { if (coPid.isNotEmpty()) coSet(coPid, devs) }
+
+    /** 共时闹钟对象的名字 (人设文件已经删了 = ""). */
+    fun coAlarmName(): String = listPersonas().firstOrNull { pidOf(it) == coPid }?.let { personaTitle(it) } ?: ""
+
+    /** 本机要按共时闹钟响铃时, 返回 f(after) → after 之后对方的下一次起床时刻 (算不出来 = null); 否则 null. */
+    fun coAlarmFn(): ((LocalDateTime) -> LocalDateTime?)? {
+        val p = coPid
+        val me = device()
+        if (p.isEmpty() || me.isEmpty() || me !in coDevs) return null
+        return { after -> wakeAfter(p, after) }
+    }
+
+    /** 对象 p 在 after 之后的下一次实际起床时刻: 有日程文件的是每天算出来的起床时刻 (睡眠段的结束); 旧式固定钟点日程的是睡眠段的结束时刻. */
+    fun wakeAfter(p: String, after: LocalDateTime): LocalDateTime? {
+        val name = listPersonas().firstOrNull { pidOf(it) == p } ?: return null
+        val (entries, _, spec) = infoOf(name)
+        if (spec != null) return Routine.wakeTimes(spec, after, after.plusDays(3), p).firstOrNull { it.isAfter(after) }
+        var best: LocalDateTime? = null
+        for (e in entries) {
+            if (e.kind != "sleep") continue
+            for (k in 0 until 3) {
+                val t = after.toLocalDate().atStartOfDay().plusDays(k.toLong()).plusMinutes((e.end % 1440).toLong())
+                if (t.isAfter(after)) { if (best == null || t.isBefore(best)) best = t; break }
+            }
+        }
+        return best
     }
 
     // ---- 记忆卡 (MECHANICS 24.2.4): 每 MEM_EVERY 条新消息让模型整理一次; 全部由模型自动维护, UI 上不展示 ----

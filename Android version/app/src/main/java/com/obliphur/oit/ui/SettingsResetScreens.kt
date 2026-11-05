@@ -97,6 +97,7 @@ fun SettingsScreen(tab: String, setTab: (String) -> Unit, act: MainActivity) {
         for (spec in opts.filter { it.key != "FILTER_MODE" }) OptionRow(spec, edits)    // 过滤名单模式在规则弹窗里切换
         PageExtras(tab, act)
         if (tab == "comm") CommSettings()
+        if (tab == "alarm") AlarmSettings()
         if (nums.isNotEmpty()) {
             Heading(tr("数值"))
             for (spec in nums.filter { it.group == null }) NumRow(spec, edits)

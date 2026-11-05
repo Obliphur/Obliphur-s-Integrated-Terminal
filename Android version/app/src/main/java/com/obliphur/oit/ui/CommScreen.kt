@@ -72,6 +72,7 @@ fun CommScreen(go: (String) -> Unit) {
     var input by rememberSaveable { mutableStateOf("") }
     var askClear by remember { mutableStateOf(false) }
     var help by remember { mutableStateOf(false) }
+    var coAlarm by remember { mutableStateOf(false) }                           // 共时闹钟的弹窗
     var jointAsk by remember { mutableStateOf(core.jointAsk) }                  // 合约页选好词条回来了: 输入开始时间
     var jointLine by remember { mutableStateOf(comm.jointLabel() to comm.jointStatusText()) }
     var invite by remember { mutableStateOf(comm.jointInvite() != null) }          // 对方发起的联合行动: 等用户点 接受 / 拒绝
@@ -150,6 +151,10 @@ fun CommScreen(go: (String) -> Unit) {
             }
             // 🤝 联合行动: 界面移到合约页选词条, 回来输入开始时间
             TextButton({ core.jointPickStart() }, contentPadding = tight) { Text("🤝", fontSize = 18.sp) }
+            // ⏰ 共时闹钟: 闹钟的时间跟随这个对象的实际起床时间, 手动选响铃的设备; ⏰ = 现在这个对象是共时闹钟 / ⏲ 不是
+            TextButton({ coAlarm = true }, contentPadding = tight) {
+                Text(if (comm.coAlarmPid().isNotEmpty() && comm.coAlarmPid() == comm.pid) "⏰" else "⏲", fontSize = 18.sp)
+            }
             // share data: 打开后离开沟通页, 在别的页面里对方能看到那一页上你们的数据, 页面下方有聊天悬浮窗; 回到沟通自动关闭
             TextButton({
                 comm.shareEnable(!shareOn).let { if (it.isNotEmpty()) core.toast(tr(it), "warn") }
@@ -183,6 +188,7 @@ fun CommScreen(go: (String) -> Unit) {
         }
     }
     if (help) HelpDialog { help = false }
+    if (coAlarm) CoAlarmDialog { coAlarm = false }
     jointAsk?.let { terms -> JointTimeDialog(terms, { core.jointAsk = null; jointAsk = null }) { start ->
         val why = comm.setJointDraft(terms, start)
         if (why.isEmpty()) { core.jointAsk = null; jointAsk = null } else core.toast(tr(why), "warn")
@@ -200,6 +206,8 @@ private fun HelpDialog(onDismiss: () -> Unit) {
             "页面下方有聊天悬浮窗, 计时器 / 整点记录 / 日历 / 统计页还能切换看自己 / 对方的数据; 回到沟通自动关闭, 对方会总结一次. " +
             "对方也可以发 [share data] 邀请你, 点「接受」才会打开."),
         "🔔 / 🔕" to tr("主动发起") + ": " + tr("点一下切换: 🔔 = 允许这个对象主动给你发消息 / 追问, 🔕 = 禁止."),
+        "⏰ / ⏲" to tr("共时闹钟") + ": " + tr("点开设置: 把这个对象设为共时闹钟后 (⏰), 闹钟的时间跟随它的日程里的实际起床时间 (睡眠中也会响); " +
+            "哪些设备响铃由你手动选, 铃声和音量用「设置 → 闹钟」里的. 一次只有一个对象是共时闹钟."),
         "🤝" to tr("联合行动") + ": " + tr("邀请对方一起完成一次合约: 界面会移到合约页, 选好词条后点「确定选择」(原来「开始行动」的位置), " +
             "再输入开始时间; 词条和合约的基础规则会打包发给对方, 结束时间自动算好写在聊天框上方. " +
             "对方回 [Yes] 就按约开始合约; 合约期间你们的专注 / 休息同步, 合约后得到的休息也同步."),

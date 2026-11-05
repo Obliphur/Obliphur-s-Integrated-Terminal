@@ -172,6 +172,7 @@ DEFAULTS = {"persona": "", "show_avatar": False,
             "legacy_done": False, "joint_last": [], "user_profile": "", "split_send": True,
             "bg_pro": True, "mute_pro": [], "idle_use": {}, "joint": {},
             "mem_auto": "", "mem_upto": 0, "mem_ts": 0,      # 记忆卡 (跟着聊天对象走; 全部由模型自动整理)
+            "alarm_co": {},                                  # 共时闹钟 (1.0.359): {pid, devs: [响铃的设备 id], ts}; pid 为空 = 关闭
             "net": {}}                                       # 限时网络 (规则 XIV): {ts, pid, n, due, until, cool, st: wait | on | cool, tries}
 
 
@@ -425,7 +426,7 @@ BUILTIN_PERSONAS = {"Claudia.txt": """你将扮演一位文静,冷淡的17岁大
 下一个专注结束节点波动:[-2,3]
 (联合行动期间不生效)
 睡眠开始时间波动:[0,5]
-睡眠结束时间波动:[-20,10]
+睡眠结束时间波动:[-20,0]
 
 
 联网时间理由列表:{60%:查资料,20%:下载资源,20%:娱乐}(基准数据)
@@ -1007,7 +1008,48 @@ ROUTINE_PREV0 = """【日程】
 违规词条:{通道阻塞,细化规范,乐理之灾,未知变量}
 """      # 1.0.355 内置的日程文件: 没改过的升级时换成当前版本
 CLAUDIA_LEGACIES = (CLAUDIA_PREV, CLAUDIA_PREV0, CLAUDIA_PREV1, CLAUDIA_PREV2, CLAUDIA_PREV3, CLAUDIA_PREV4, CLAUDIA_PREV5, CLAUDIA_PREV6)
-ROUTINE_LEGACIES = (ROUTINE_PREV0,)
+ROUTINE_PREV1 = """【日程】
+专注时段:学习(高考内容)
+
+初始起点:6:30
+30min:洗漱,吃早饭
+[循环 300min][100min]
+30min:午饭
+30min:空闲
+[循环 5h][100min]
+30min:晚饭
+30min:空闲
+[循环 240min][50min]
+30min:特殊空闲
+
+空闲发起谈话概率:20%
+重要活动发起谈话概率:20%
+特殊空闲发起谈话概率:60%
+休息发起谈话概率:20%
+长时间休息发起谈话概率:20%
+睡眠发起谈话概率:50%
+
+
+下一个专注开始节点波动:[-3,2]
+下一个专注结束节点波动:[-2,3]
+(联合行动期间不生效)
+睡眠开始时间波动:[0,5]
+睡眠结束时间波动:[-20,10]
+
+
+联网时间理由列表:{60%:查资料,20%:下载资源,20%:娱乐}(基准数据)
+整点记录专注填写列表:{30%:英语,数学,语文,历史,政治,地理}
+整点记录休息填写列表:{X%:聊天,弹琴,阅读,打扫,散步}
+
+设备列表:{DESKTOP-CLAUDIA,C1999W}
+设备-1:窗口使用时间:{30%:chrome,10%:claude,20%:OIT,5%:anki,5%:cloudmusic}(基准数据)
+设备-2:窗口使用时间:{5%:微信,40%:OIT,20%:词典,2%:相册,13%:anki}(基准数据)
+
+合约记录难度:[20,30]
+不选择的词条:{无言为真,持久战}
+违规词条:{通道阻塞,细化规范,乐理之灾,未知变量}
+"""      # 1.0.357 内置的日程文件 (起床波动 [-20,10])
+ROUTINE_LEGACIES = (ROUTINE_PREV0, ROUTINE_PREV1)
 ASSISTANT_SLEEP_LINE = "睡眠发起谈话概率:0%\n"
 ASSISTANT_TITLE = "assistant"                        # 特例: 这个名字 (且提示词没改过) 专注时也能用
 CHAT_KEYS = ("clear_ts", "retry", "pro_key", "mem_auto", "mem_upto", "mem_ts", "cut_until")   # 跟着聊天对象走的几项 (存在各自的聊天文件里)
@@ -1522,6 +1564,7 @@ class Comm:
         self.hard_block = lambda: False   # 连等回复的这条也不要了的那种 (无言为真); 只是不在休息 / 空闲时, 已经发出去的请求回复到了照样收下
         self.info_fn = lambda tag: ""  # 对方要的资料: "contract" → 词条库; app 接上
         self.device = lambda: ""       # 本机的设备 id (sync.my_id); app 接上
+        self.devices = lambda: []      # 本机 + 绑定的设备 [(id, 名字)]: 共时闹钟选响铃的设备用; app 接上
         self.leader = lambda: True     # 本机是不是最后有人操作的设备: 只有它调用 AI / 主动发 / 重试 (sync.is_latest_active); app 接上
         self.on_sync = None            # 聊天记录有改动, 马上同步一次; app 接上
         self.on_proactive = None       # 收到对方主动发来的消息, 并且前 5 分钟没和对方聊过: 放柔和的提示音; app 接上 (后台线程里调用也行)
@@ -1845,6 +1888,8 @@ class Comm:
             doc["joint"] = dict(self.cfg["joint"])           # 联合行动: 后改的为准
         if self.cfg.get("net"):
             doc["net"] = dict(self.cfg["net"])               # 限时网络: 后改的为准
+        if (self.cfg.get("alarm_co") or {}).get("ts"):
+            doc["alarm"] = dict(self.cfg["alarm_co"])        # 共时闹钟: 后改的为准
         for pid in set(self.chat_pids()) | set(self.cfg.get("mute_pro") or []):
             doc[f"mute:{pid}"] = self.is_muted(pid)
         for pid in self.chat_pids():
@@ -1953,6 +1998,15 @@ class Comm:
                     self.cfg["net"] = dict(val)
                     self.save_cfg()
                     self._changed()
+            elif key == "alarm" and isinstance(val, dict):
+                try:
+                    t = int(val.get("ts") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if t > int((self.cfg.get("alarm_co") or {}).get("ts") or 0):
+                    self.cfg["alarm_co"] = {"pid": str(val.get("pid") or ""), "devs": [str(x) for x in (val.get("devs") or [])], "ts": t}
+                    self.save_cfg()
+                    self._changed()
             elif key == "bgpro" and isinstance(val, bool):
                 if val != self.bg_on():
                     self.cfg["bg_pro"] = val
@@ -2058,6 +2112,75 @@ class Comm:
         pid = pid if pid is not None else self.pid
         cur = [p for p in (self.cfg.get("mute_pro") or []) if p != pid]
         self.set_cfg(mute_pro=cur + [pid] if muted and pid else cur)
+
+    # ---- 共时闹钟 (1.0.359): 闹钟的时间跟随被设为"共时闹钟"的对象的实际起床时间 ----
+    def co_alarm(self) -> dict:
+        """{pid, devs, ts}; 没有开 = {}."""
+        c = self.cfg.get("alarm_co")
+        return dict(c) if isinstance(c, dict) and c.get("pid") else {}
+
+    def co_alarm_pid(self) -> str:
+        return str(self.co_alarm().get("pid") or "")
+
+    def co_alarm_devs(self) -> list:
+        return [str(x) for x in (self.co_alarm().get("devs") or [])]
+
+    def _co_set(self, pid: str, devs: list):
+        old = int((self.cfg.get("alarm_co") or {}).get("ts") or 0)
+        self.cfg["alarm_co"] = {"pid": pid, "devs": list(devs), "ts": max(self._ms(), old + 1)}
+        self.save_cfg()
+        self._changed()
+        self._push()
+
+    def set_co_alarm(self, pid: str, devs: list = None):
+        """把 pid 设为共时闹钟 (一次只有一个对象; pid 为空 = 关闭). 响铃的设备没指定时沿用原来的, 都没有就是本机."""
+        kept = [str(x) for x in ((self.cfg.get("alarm_co") or {}).get("devs") or [])]        # 关掉之后也留着, 再打开时沿用
+        if not pid:
+            self._co_set("", kept)
+            return
+        if devs is None:
+            devs = kept or ([self.device()] if self.device() else [])
+        self._co_set(pid, devs)
+
+    def set_co_alarm_devs(self, devs: list):
+        """手动设置哪些设备响铃 (只在共时闹钟开着时有意义)."""
+        if self.co_alarm_pid():
+            self._co_set(self.co_alarm_pid(), devs)
+
+    def co_alarm_name(self) -> str:
+        """共时闹钟对象的名字 (人设文件已经删了 = "")."""
+        pid = self.co_alarm_pid()
+        for n in list_personas(self.personas):
+            if pid_of(n) == pid:
+                return persona_title(n)
+        return ""
+
+    def co_alarm_fn(self):
+        """本机要按共时闹钟响铃时, 返回 f(after) → after 之后对方的下一次起床时刻 (算不出来 = None); 否则 None."""
+        pid = self.co_alarm_pid()
+        me = self.device()
+        if not pid or not me or me not in self.co_alarm_devs():
+            return None
+        return lambda after: self.wake_after(pid, after)
+
+    def wake_after(self, pid: str, after):
+        """对象 pid 在 after 之后的下一次实际起床时刻: 有日程文件的是每天算出来的起床时刻 (睡眠段的结束); 旧式固定钟点日程的是睡眠段的结束时刻."""
+        name = next((n for n in list_personas(self.personas) if pid_of(n) == pid), "")
+        if not name:
+            return None
+        entries, _probs, rt = self._info_of(name)
+        if rt:
+            return next((w for w in routine.wake_times(rt, after, after + timedelta(days=3), pid) if w > after), None)
+        best = None
+        for e in entries:
+            if e.get("kind") != "sleep":
+                continue
+            for k in range(3):
+                t = datetime.combine(after.date(), datetime.min.time()) + timedelta(days=k, minutes=int(e["end"]) % 1440)
+                if t > after:
+                    best = t if best is None or t < best else best
+                    break
+        return best
 
     def think_auto(self) -> bool:
         """自动开思考 (设置 → 沟通 → 思考) 开着吗: 默认开. 开着时, 规则判断 (think_reason) 需要的那几次请求开思考; 关掉就一直不开."""
@@ -6733,6 +6856,53 @@ def _selftest():
     assert [b["title"] for b in vs["blocks"]][0].startswith("整点记录") and any(b["title"].startswith("合约记录") for b in vs["blocks"])
     assert cs.share_ai_view("net") == {} and cs.share_ai_view("settings") == {}
     cs.flush()
+
+    # ---- 共时闹钟 (1.0.359): 闹钟跟随被设为共时闹钟的对象的实际起床时间 (Claudia 起床波动 [-20,0]) ----
+    clock[0] = datetime(2027, 6, 1, 12, 0)
+    cr.device = lambda: "devA"
+    cr.devices = lambda: [("devA", "电脑"), ("devB", "手机")]
+    cpid = cr.pid
+    assert cr.co_alarm() == {} and cr.co_alarm_fn() is None and cr.co_alarm_name() == ""
+    cr.set_co_alarm(cpid)
+    assert cr.co_alarm_pid() == cpid and cr.co_alarm_devs() == ["devA"] and cr.co_alarm_fn() is not None and cr.co_alarm_name() == "Claudia"
+    w1 = cr.co_alarm_fn()(clock[0])
+    assert w1 == routine.wake_at(cr._rt, datetime(2027, 6, 2).date(), cpid) and w1.date() == datetime(2027, 6, 2).date()
+    ws = routine.wake_times(cr._rt, datetime(2027, 6, 1), datetime(2027, 9, 1), cpid)
+    mins = [w.hour * 60 + w.minute for w in ws]
+    assert len(ws) >= 90 and all(6 * 60 + 10 <= m <= 6 * 60 + 30 for m in mins), "起床时刻在 6:10 - 6:30 (波动 [-20,0])"
+    assert len(set(mins)) > 5 and min(mins) < 6 * 60 + 15 and max(mins) > 6 * 60 + 25, "每天不一样, 用满整个范围"
+    w2 = cr.co_alarm_fn()(w1)
+    assert w2.date() == datetime(2027, 6, 3).date() and w2 > w1, "响过之后找下一天的"
+    assert cr.co_alarm_fn()(w1 - timedelta(seconds=1)) == w1
+    cr.set_co_alarm_devs(["devB"])
+    assert cr.co_alarm_devs() == ["devB"] and cr.co_alarm_fn() is None, "响铃的设备手动设置: 本机不在名单里就不响"
+    cr.set_co_alarm_devs(["devA", "devB"])
+    assert cr.co_alarm_fn() is not None
+    co_dir = os.path.join(td, "co2")
+    os.makedirs(co_dir)
+    co2 = Comm(co_dir, rt_personas, now=lambda: clock[0], chat_fn=fake)
+    co2.device = lambda: "devB"
+    assert co2.co_alarm() == {}
+    co2.apply_doc({"alarm": cr.sync_doc()["alarm"]})
+    assert co2.co_alarm() == cr.co_alarm() and co2.co_alarm_fn() is not None, "共时闹钟的设置随设备同步"
+    co2.apply_doc({"alarm": dict(cr.sync_doc()["alarm"], pid="", ts=1)})
+    assert co2.co_alarm_pid() == cpid, "旧的改动不覆盖新的"
+    cr.set_co_alarm("")
+    assert cr.co_alarm() == {} and cr.co_alarm_fn() is None and cr.sync_doc()["alarm"]["pid"] == ""
+    co2.apply_doc({"alarm": cr.sync_doc()["alarm"]})
+    assert co2.co_alarm() == {} and co2.co_alarm_fn() is None, "关闭也同步"
+    cr.set_co_alarm(cpid)
+    assert cr.co_alarm_devs() == ["devA", "devB"], "再打开时沿用原来选的设备"
+    # 旧式固定钟点日程的人设: 睡眠段的结束时刻就是起床时间
+    with open(os.path.join(rt_personas, "老式.txt"), "w", encoding="utf-8") as f:
+        f.write("你是老式.\n23:30-6:45:睡眠\n")
+    old_pid = pid_of("老式.txt")
+    assert cr.wake_after(old_pid, datetime(2027, 6, 1, 12, 0)) == datetime(2027, 6, 2, 6, 45)
+    assert cr.wake_after(old_pid, datetime(2027, 6, 2, 6, 45)) == datetime(2027, 6, 3, 6, 45)
+    assert cr.wake_after("00000000", datetime(2027, 6, 1)) is None
+    os.remove(os.path.join(rt_personas, "老式.txt"))
+    cr.set_co_alarm("")
+    co2.flush()
 
     return "comm selftest OK"
 

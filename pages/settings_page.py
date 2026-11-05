@@ -22,10 +22,16 @@ class SettingsPage(tk.Frame):
                  on_theme=None, on_end_setup=None, updater=None, on_update_check=None,
                  on_update_install=None, on_update_relay=None, sync=None, achievements=None,
                  on_open_achievements=None, data_dir=None, recording=None, on_delete_record=None,
-                 on_contract_theme=None, comm=None, on_open_rules=None):
+                 on_contract_theme=None, comm=None, on_open_rules=None,
+                 alarm=None, ringer=None, co_alarm_fn=None, ring_busy=None):
         super().__init__(master, bg=COLORS["bg"])
         self.comm = comm
         self.on_open_rules = on_open_rules
+        self.alarm = alarm                              # 闹钟 (1.0.359): alarm.Alarm / alarm.Ringer / 共时闹钟 f() / 现在有没有在响
+        self.ringer = ringer
+        self._co_alarm_fn = co_alarm_fn or (lambda: None)
+        self._ring_busy = ring_busy or (lambda: False)
+        self.alarm_ui = None
         self.sm = settings
         self.ach_store = achievements
         self.on_open_achievements = on_open_achievements
@@ -143,6 +149,9 @@ class SettingsPage(tk.Frame):
                 self._build_rules_card(self.areas[key].inner)
             if key == "comm":
                 self._build_comm_page(self.areas[key].inner)
+            if key == "alarm" and self.alarm is not None:
+                from .alarm_ui import AlarmSettings
+                self.alarm_ui = AlarmSettings(self, self.areas[key].inner)
             self._build_page_items(key)
             if key == "record":
                 self._build_record_lists(self.areas[key].inner)
@@ -168,6 +177,17 @@ class SettingsPage(tk.Frame):
 
         self.show_tab(self._tab)
 
+    def co_alarm_fn(self):
+        return self._co_alarm_fn()
+
+    def ring_busy(self) -> bool:
+        return bool(self._ring_busy())
+
+    def refresh_alarm(self):
+        """闹钟页开着时每秒调一次: 下一次响铃的时间 / 试听按钮."""
+        if self.alarm_ui is not None and self._tab == "alarm":
+            self.alarm_ui.refresh()
+
     @smooth
     def _click_tab(self, key: str):
         self.show_tab(key)
@@ -184,9 +204,12 @@ class SettingsPage(tk.Frame):
             self._rec_sig = {}
             self._check_camera()
             self.refresh_records()
-        if key == "comm":
-            self._refresh_comm()
-            hide_pack(self.foot)                 # 沟通页的设置即时保存, 没有"保存本页修改"
+        if key == "alarm" and self.alarm_ui is not None:
+            self.alarm_ui.refresh()
+        if key in ("comm", "alarm"):
+            if key == "comm":
+                self._refresh_comm()
+            hide_pack(self.foot)                 # 沟通页 / 闹钟页的设置即时保存, 没有"保存本页修改"
         else:
             show_pack(self.foot, fill="x", padx=28, pady=(4, 10))
         for k, b in self._tab_btns.items():

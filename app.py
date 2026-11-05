@@ -37,6 +37,7 @@ import media_pause
 import prescript
 import comm as comm_mod
 import comm_data
+import alarm as alarm_mod
 from sync_local import PcLocal
 from config import (
     COLORS, APP_NAME, IDLE, RUNNING, READY_BREAK, ON_BREAK,
@@ -349,6 +350,11 @@ class BreakTimerApp:
         self.prescript_job = None
         # 沟通 (MECHANICS 24): 人设文件夹和数据文件夹并排, 不加密
         self.comm = comm_mod.Comm(self.dm.data_dir, os.path.join(self.dm.low_dir, "OIT_personas"))
+        # 闹钟 (1.0.359, MECHANICS 25): 本机的闹钟配置 / 响铃线程; 共时闹钟的设置在 comm 里 (随设备同步)
+        self.alarm = alarm_mod.Alarm(self.dm.data_dir)
+        self.ringer = alarm_mod.Ringer(self.dm.data_dir)
+        self._alarm_win = None
+        self.comm.devices = self._comm_devices
         self.comm.snapshot = self._comm_snapshot
         self.comm.on_change = self.update_comm_badge
         self.comm.data_fn = self._comm_data
@@ -852,7 +858,9 @@ class BreakTimerApp:
             sync=self.sync, achievements=self.ach,
             on_open_achievements=self._open_achievements,
             data_dir=self.dm.data_dir, recording=self.recording, on_delete_record=self.delete_recording,
-            comm=self.comm, on_open_rules=self.open_rules_popup
+            comm=self.comm, on_open_rules=self.open_rules_popup,
+            alarm=self.alarm, ringer=self.ringer, co_alarm_fn=self._co_alarm_fn,
+            ring_busy=lambda: self._alarm_win is not None
         )
         self._prepare_page(self.pages["settings"])
         yield
@@ -1289,6 +1297,48 @@ class BreakTimerApp:
             self._share_sync_ui()
         except Exception as e:
             self._log_window(f"ERROR    comm {type(e).__name__}: {e}")
+
+    # ---- 闹钟 (1.0.359, MECHANICS 25): 每秒看一次该不该响; 睡眠 / 合约 / 任何页面都照响 ----
+    def _comm_devices(self):
+        """共时闹钟选响铃设备用: 本机 + 绑定的设备 [(id, 名字)]."""
+        out = [(self.sync.my_id, self.sync.my_name)]
+        try:
+            out += [(s["id"], s["name"]) for s in self.sync.device_states()]
+        except Exception:       # noqa: BLE001
+            pass
+        return out
+
+    def _co_alarm_fn(self):
+        """本机要按共时闹钟响铃时 = f(after) → 对象的下一次起床时刻; 否则 None."""
+        try:
+            return self.comm.co_alarm_fn()
+        except Exception:       # noqa: BLE001
+            return None
+
+    def _alarm_tick(self):
+        if self.shutting_down or self.dm.resetting:
+            return
+        try:
+            if self._alarm_win is None:
+                co_fn = self._co_alarm_fn()
+                hit = self.alarm.check(datetime.now(), co_fn, self.comm.co_alarm_pid() if co_fn else "")
+                if hit:
+                    self._alarm_ring(hit)
+            if self.current_page == "settings" and "settings" in self.pages:
+                self.pages["settings"].refresh_alarm()
+        except Exception as e:      # noqa: BLE001
+            self._log_window(f"ERROR    alarm {type(e).__name__}: {e}")
+
+    def _alarm_ring(self, hit: dict):
+        from pages.alarm_ui import RingWindow
+        name = self.comm.co_alarm_name() if hit["co"] else ""
+        self._log_notice(f"ALARM ring {hit['at']:%Y-%m-%d %H:%M}" + (f" co={name}" if hit["co"] else ""))
+        self.ringer.start(self.alarm.cfg)
+        self._alarm_win = RingWindow(self.root, hit["at"], name, self._alarm_closed)
+
+    def _alarm_closed(self):
+        self.ringer.stop()
+        self._alarm_win = None
 
     def _joint_break_watch(self):
         """联合行动: 用户开始休息时告诉对方这次休息的时间 (和之前损失的生命值一起, 对方可以回应); 休息结束 (走完 / 提前结束)
@@ -6117,6 +6167,7 @@ class BreakTimerApp:
         if "rules" in self.pages:
             self.pages["rules"].refresh()
         self._comm_tick()
+        self._alarm_tick()
         if self.current_page == "settings" and "settings" in self.pages:
             self.pages["settings"].refresh_sync()
         if event == "started" and self._update_retry and getattr(config, "UPDATE_CHECK", 1):

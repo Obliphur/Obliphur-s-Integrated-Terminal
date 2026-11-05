@@ -18,6 +18,8 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!-- 闹钟 (1.0.359): 响铃时用全屏通知点亮屏幕 -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- 更新: 打开系统的安装界面 -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />

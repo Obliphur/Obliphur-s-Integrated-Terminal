@@ -169,6 +169,18 @@ object Routine {
         return d.atStartOfDay().plusMinutes((r.start!! + rint("$seed|wake|$d", lo, hi)).toLong())
     }
 
+    /** [a, b] 里对方起床的时刻 (按时间排) = 每天睡眠段的结束 (wakeAt). 共时闹钟 (1.0.359) 据此响铃; 同 routine.wake_times. */
+    fun wakeTimes(r: RoutineSpec, a: LocalDateTime, b: LocalDateTime, seed: String): List<LocalDateTime> {
+        val out = ArrayList<LocalDateTime>()
+        var d = a.toLocalDate().minusDays(1)
+        while (!d.isAfter(b.toLocalDate().plusDays(1))) {
+            val w = wakeAt(r, d, seed)
+            if (!w.isBefore(a) && !w.isAfter(b)) out.add(w)
+            d = d.plusDays(1)
+        }
+        return out
+    }
+
     /** d 这一天 (从起床到下一次起床) 的日程, 按时间排, 首尾相接: 各项活动 → 睡眠开始前的空闲 (如果有) → 睡眠. */
     fun dayPlan(r: RoutineSpec, d: LocalDate, seed: String, fluct: Boolean = true): List<RtSeg> {
         val ck = "$d|$seed|$fluct"

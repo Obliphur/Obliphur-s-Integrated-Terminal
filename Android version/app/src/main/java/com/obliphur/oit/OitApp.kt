@@ -155,6 +155,7 @@ class OitApp : Application(), Host {
         core.popAdapterBack = { s.popAdapterBack() }
         core.popAwayPrio = { s.popAwayPrio() }
         core.syncNow = { if (s.peers().isNotEmpty()) s.syncNow() }
+        core.deviceList = { listOf(s.myId to s.myName) + s.deviceStates().map { it.id to it.name } }      // 共时闹钟选响铃的设备
         core.deviceOnline = { pre -> s.deviceStates().any { it.id.startsWith(pre) && it.online } }
         core.addSelfOff = { a, b -> s.addSelfOff(a, b) }
         core.wentOff = { autostartOk() && (powerOff || (battery()?.let { it < com.obliphur.oit.sync.SyncService.LOW_BATTERY } == true)) }
@@ -325,6 +326,11 @@ class OitApp : Application(), Host {
     }
 
     override fun scheduleWake(seconds: Double) = Waker.schedule(this, seconds)
+
+    // ---- 闹钟 (1.0.359, MECHANICS 25) ----
+    override fun startAlarmSound(tone: String, custom: String, volume: Int) = com.obliphur.oit.service.AlarmSound.start(this, tone, custom, volume)
+    override fun stopAlarmSound() = com.obliphur.oit.service.AlarmSound.stop(this)
+    override fun scheduleAlarm(atMs: Long) = Waker.alarmClock(this, atMs)
 
     // ---- 更新 (MECHANICS 16) ----
 

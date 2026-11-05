@@ -2166,4 +2166,54 @@ class CommTest {
         cu.reloadSchedule("test")
         assertNotNull(cu.routineInfo("timer"))
     }
+
+    /** 共时闹钟 (1.0.359): 闹钟跟随被设为共时闹钟的对象的实际起床时间 (Claudia 起床波动 [-20,0]); 对应 comm.py 自检. */
+    @Test
+    fun coAlarm() {
+        val td = Files.createTempDirectory("oit").toFile()
+        val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
+        c.set(persona = "Claudia.txt")
+        c.reloadSchedule("test")
+        c.device = { "devA" }
+        c.devices = { listOf("devA" to "电脑", "devB" to "手机") }
+        clock = LocalDateTime.of(2027, 6, 1, 12, 0)
+        val pid = c.pid
+        assertEquals("1795162c", pid)
+        assertEquals("", c.coAlarmPid()); assertNull(c.coAlarmFn()); assertEquals("", c.coAlarmName())
+        c.setCoAlarm(pid)
+        assertEquals(pid, c.coAlarmPid()); assertEquals(listOf("devA"), c.coAlarmDevs()); assertNotNull(c.coAlarmFn()); assertEquals("Claudia", c.coAlarmName())
+        val spec = Routine.parse(BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE))!!
+        val w1 = c.coAlarmFn()!!(clock)!!
+        assertEquals(Routine.wakeAt(spec, java.time.LocalDate.of(2027, 6, 2), pid), w1)
+        assertEquals(LocalDateTime.of(2027, 6, 2, 6, 15), w1)                                    // 桌面版算出来的 (电脑和手机必须一样)
+        assertEquals(LocalDateTime.of(2027, 6, 3, 6, 24), c.coAlarmFn()!!(w1)); assertEquals(LocalDateTime.of(2027, 6, 4, 6, 14), c.coAlarmFn()!!(LocalDateTime.of(2027, 6, 3, 6, 24)))
+        assertEquals(c.coAlarmFn()!!(w1)!!.toLocalDate(), LocalDateTime.of(2027, 6, 3, 0, 0).toLocalDate())
+        val ws = Routine.wakeTimes(spec, LocalDateTime.of(2027, 6, 1, 0, 0), LocalDateTime.of(2027, 9, 1, 0, 0), pid)
+        val mins = ws.map { it.hour * 60 + it.minute }
+        assertTrue(ws.size >= 90 && mins.all { it in (6 * 60 + 10)..(6 * 60 + 30) })               // 起床时刻在 6:10 - 6:30 (波动 [-20,0])
+        assertTrue(mins.toSet().size > 5 && mins.min() < 6 * 60 + 15 && mins.max() > 6 * 60 + 25)
+        assertEquals(w1, c.coAlarmFn()!!(w1.minusSeconds(1)))
+        c.setCoAlarmDevs(listOf("devB"))
+        assertEquals(listOf("devB"), c.coAlarmDevs()); assertNull(c.coAlarmFn())                  // 响铃的设备手动设置: 本机不在名单里就不响
+        c.setCoAlarmDevs(listOf("devA", "devB")); assertNotNull(c.coAlarmFn())
+        val c2 = comm(File(td, "d2").also { it.mkdirs() }, File(td, "p"))
+        c2.device = { "devB" }
+        c2.applyDoc(mapOf("alarm" to c.syncDoc().getValue("alarm")))
+        assertEquals(pid, c2.coAlarmPid()); assertEquals(listOf("devA", "devB"), c2.coAlarmDevs()); assertNotNull(c2.coAlarmFn())   // 随设备同步
+        c2.applyDoc(mapOf("alarm" to JSONObject().put("pid", "").put("devs", org.json.JSONArray()).put("ts", 1L)))
+        assertEquals(pid, c2.coAlarmPid())                                                       // 旧的改动不覆盖新的
+        c.setCoAlarm("")
+        assertEquals("", c.coAlarmPid()); assertNull(c.coAlarmFn()); assertEquals("", (c.syncDoc().getValue("alarm") as JSONObject).getString("pid"))
+        c2.applyDoc(mapOf("alarm" to c.syncDoc().getValue("alarm")))
+        assertEquals("", c2.coAlarmPid()); assertNull(c2.coAlarmFn())                             // 关闭也同步
+        c.setCoAlarm(pid)
+        assertEquals(listOf("devA", "devB"), c.coAlarmDevs())                                     // 再打开时沿用原来选的设备
+        // 旧式固定钟点日程的人设: 睡眠段的结束时刻就是起床时间
+        c.importPersona("老式.txt", "你是老式.\n23:30-6:45:睡眠\n".byteInputStream())
+        val oldPid = Comm.pidOf("老式.txt")
+        assertEquals(LocalDateTime.of(2027, 6, 2, 6, 45), c.wakeAfter(oldPid, LocalDateTime.of(2027, 6, 1, 12, 0)))
+        assertEquals(LocalDateTime.of(2027, 6, 3, 6, 45), c.wakeAfter(oldPid, LocalDateTime.of(2027, 6, 2, 6, 45)))
+        assertNull(c.wakeAfter("00000000", LocalDateTime.of(2027, 6, 1, 0, 0)))
+        c.flush(); c2.flush()
+    }
 }

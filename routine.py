@@ -187,6 +187,17 @@ def wake_at(r: Routine, d: _date, seed: str) -> datetime:
     return datetime.combine(d, datetime.min.time()) + timedelta(minutes=r.start + rint(f"{seed}|wake|{d}", lo, hi))
 
 
+def wake_times(r: Routine, a: datetime, b: datetime, seed: str) -> list:
+    """[a, b] 里对方起床的时刻 (按时间排) = 每天睡眠段的结束 (wake_at). 共时闹钟 (1.0.359) 据此响铃; Kotlin: Routine.wakeTimes."""
+    out, d = [], a.date() - timedelta(days=1)
+    while d <= b.date() + timedelta(days=1):
+        w = wake_at(r, d, seed)
+        if a <= w <= b:
+            out.append(w)
+        d += timedelta(days=1)
+    return out
+
+
 def day_plan(r: Routine, d: _date, seed: str, fluct: bool = True) -> list:
     """d 这一天 (从起床到下一次起床) 的日程 → [seg], 按时间排, 首尾相接: 各项活动 → 睡眠开始前的空闲 (如果有) → 睡眠.
     seg 是 {"kind" (focus / rest / idle / sleep), "start", "end", "label", "detail", "loop" (第几个循环段生成的, 没有 = None), "gap" (波动留下的空档)}."""
@@ -652,6 +663,9 @@ def _selftest():
     import tempfile
     here = os.path.dirname(os.path.abspath(__file__))
     routine_text = open(os.path.join(here, "personas", "Claudia_routine.txt"), encoding="utf-8").read()
+    # 1.0.359 起床波动改成了 [-20,0]; 这里仍用 [-20,10] 测 (Kotlin RoutineTest 的期望值是按它算的, 电脑和手机必须一样), 新范围见 comm.py 自检的共时闹钟
+    assert "睡眠结束时间波动:[-20,0]" in routine_text
+    routine_text = routine_text.replace("睡眠结束时间波动:[-20,0]", "睡眠结束时间波动:[-20,10]")
     r = parse(routine_text)
     assert r and r.start == 390 and r.focus_label == "学习(高考内容)"
     assert [(it["type"], it["dur"]) for it in r.items] == [("block", 30), ("loop", 300), ("block", 30), ("block", 30), ("loop", 300), ("block", 30), ("block", 30), ("loop", 240), ("block", 30)]

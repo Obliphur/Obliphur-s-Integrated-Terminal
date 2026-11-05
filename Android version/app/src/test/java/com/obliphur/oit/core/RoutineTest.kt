@@ -13,7 +13,8 @@ import java.time.LocalDateTime
 
 /** 日程引擎 (MECHANICS 24.11). 对应桌面版 routine.py 的 _selftest; 下面的期望值是桌面版算出来的 (电脑和手机必须一样). */
 class RoutineTest {
-    private val text = BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE)
+    // 1.0.359 起床波动改成了 [-20,0]; 这里仍用 [-20,10] 测 (期望值是按它算的, 电脑和手机必须一样), 新范围见 CommTest.coAlarm
+    private val text = BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE).also { assertTrue("睡眠结束时间波动:[-20,0]" in it) }.replace("睡眠结束时间波动:[-20,0]", "睡眠结束时间波动:[-20,10]")
     private val spec = Routine.parse(text)!!
 
     private fun fmt(s: RtSeg) = "${s.kind} %02d %02d:%02d-%02d %02d:%02d ${s.label}${if (s.gap) " gap" else ""}".format(

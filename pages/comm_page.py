@@ -89,6 +89,8 @@ class CommPage(tk.Frame):
         self.btn_mute = ttk.Button(tools, text="🔔", width=3, command=self._toggle_mute)        # 🔔 可以主动发起 / 🔕 禁止这个人主动发起
         self.btn_mute.pack(side="left", padx=(4, 0))
         ttk.Button(tools, text="🤝", width=3, command=self._joint).pack(side="left", padx=(4, 0))   # 联合行动
+        self.btn_alarm = ttk.Button(tools, text="⏲", width=3, command=self._co_alarm)           # ⏰ 现在的对象是共时闹钟 / ⏲ 不是
+        self.btn_alarm.pack(side="left", padx=(4, 0))
         # share data: 打开后离开沟通页, 在别的页面里对方能看到那一页上你们的数据, 页面下方有聊天悬浮窗; 回到沟通自动关闭
         self.btn_share = ttk.Button(tools, text="🙈", width=3, command=self._toggle_share)         # 👀 share data 开着 / 🙈 关着
         self.btn_share.pack(side="left", padx=(4, 0))
@@ -209,6 +211,7 @@ class CommPage(tk.Frame):
         if self.var_who.get() != cur:
             self.var_who.set(cur)
         cfg(self.btn_mute, text="🔕" if c.is_muted() else "🔔")
+        cfg(self.btn_alarm, text="⏰" if c.co_alarm_pid() and c.co_alarm_pid() == c.pid else "⏲")
         draft = c.joint_label()
         cfg(self.lbl_joint, text=draft or c.joint_status_text(), fg=COLORS["accent"] if draft else COLORS["text_dim"])
         if draft:
@@ -455,6 +458,12 @@ class CommPage(tk.Frame):
             self.comm.set_muted(not self.comm.is_muted())
             self.refresh(force=True)
 
+    def _co_alarm(self):
+        """⏰ 共时闹钟: 闹钟的时间跟随这个对象的实际起床时间, 手动选响铃的设备."""
+        from .alarm_ui import open_co_alarm
+        open_co_alarm(self.winfo_toplevel(), self.comm)
+        self.refresh(force=True)
+
     def _help(self):
         """帮助: 沟通页上每个小按钮是干什么的, 还有"无言为真"会禁止沟通的提醒."""
         width = config.scaled(460)
@@ -465,6 +474,8 @@ class CommPage(tk.Frame):
                                       "页面下方有聊天悬浮窗, 计时器 / 整点记录 / 日历 / 统计页还能切换看自己 / 对方的数据; 回到沟通自动关闭, 对方会总结一次. "
                                       "对方也可以发 [share data] 邀请你, 点「接受」才会打开."),
                 ("🔔 / 🔕", "主动发起", "点一下切换: 🔔 = 允许这个对象主动给你发消息 / 追问, 🔕 = 禁止."),
+                ("⏰ / ⏲", "共时闹钟", "点开设置: 把这个对象设为共时闹钟后 (⏰), 闹钟的时间跟随它的日程里的实际起床时间 (睡眠中也会响); "
+                                    "哪些设备响铃由你手动选, 铃声和音量用「设置 → 闹钟」里的. 一次只有一个对象是共时闹钟."),
                 ("🤝", "联合行动", "邀请对方一起完成一次合约: 界面会移到合约页, 选好词条后点「确定选择」(原来「开始行动」的位置), "
                                 "再输入开始时间; 词条和合约的基础规则会打包发给对方, 结束时间自动算好写在聊天框上方. "
                                 "对方回 [Yes] 就按约开始合约; 合约期间你们的专注 / 休息同步, 合约后得到的休息也同步."))

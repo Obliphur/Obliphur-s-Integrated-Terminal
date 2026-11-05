@@ -357,6 +357,7 @@ SETTINGS_PAGES = [
     ("window", "窗口"),
     ("daily", "日常"),
     ("comm", "沟通"),
+    ("alarm", "闹钟"),
 ]
 
 SCHEMA_BY_KEY = {s["key"]: s for s in SETTINGS_SCHEMA}

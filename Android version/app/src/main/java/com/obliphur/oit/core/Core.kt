@@ -50,6 +50,11 @@ interface Host {
     fun playPrescriptSound() {}
     /** 沟通收到对方主动发来的消息 (前 5 分钟没聊过) 的提示音: 柔和的两声钟. */
     fun playCommSound() {}
+    /** 闹钟 (1.0.359): 开始循环响铃 (tone: classic / chime / soft / custom, custom = 系统铃声 Uri, volume 0-100); 停止. */
+    fun startAlarmSound(tone: String, custom: String, volume: Int) {}
+    fun stopAlarmSound() {}
+    /** 在这个时刻 (epoch 毫秒) 安排一个系统闹钟叫醒本程序 (0 = 取消), 熄屏 / 后台也能按时响. */
+    fun scheduleAlarm(atMs: Long) {}
 }
 
 /** VPN 应该处于的状态 (见 MECHANICS 14.2). */
@@ -70,6 +75,8 @@ const val TIRED_TEXT = "主管{name}你好.我是Obliphur.\n你的休息时间�
 class Core(val dir: File, val host: Host, val mono: () -> Double) {
     val settings = Settings(File(dir, "app_settings.json"))
     val firstRun = settings.fresh
+    /** 闹钟 (1.0.359, MECHANICS 25): 本机的闹钟配置; 共时闹钟的设置在 comm 里 (随设备同步). */
+    val alarm = AlarmStore(File(dir, "alarm.json"))
     /** 睡觉时间的两个提示 (MECHANICS 19). */
     val daily = Daily(File(dir, "daily.json"), settings)
     /** 行为模式 / 外出 (MECHANICS 21). */
@@ -164,6 +171,8 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     var popAwayPrio: () -> List<Triple<String, Long, Long>> = { emptyList() }
     /** 马上和绑定的设备同步一次 (没有绑定的设备时什么都不做). */
     var syncNow: () -> Unit = {}
+    /** 本机 + 绑定的设备 (id, 名字): 共时闹钟选响铃的设备用. */
+    var deviceList: () -> List<Pair<String, String>> = { emptyList() }
     /** 设备 id 以这 4 位开头的绑定设备此刻在线吗 (沟通的主端判断). */
     var deviceOnline: (String) -> Boolean = { false }
     /** 本机关机的那段 (MECHANICS 15.4): 记下来, 之后记下的专注里这段记为空闲, 不计入统计. */
@@ -274,6 +283,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         comm.device = { myId() }
         comm.leader = { commLeader() }
         comm.onSync = { syncNow() }
+        comm.devices = { deviceList() }
         // 沟通只能在休息 / 空闲时用 (专注 / 睡眠 / 外出中不能用); 合约的"无言为真" (社交软件和与 AI 聊天的软件禁止联网) 生效期间也不能用
         comm.blocked = { commBlocked() }
         comm.cutExempt = { settings.devMode }                 // 开发者模式: 不受对方 [cut off] 限制
@@ -542,11 +552,36 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
                tag: String = "", onClose: (String?) -> Unit = {}): Int {
         // 黑雾: 只能手动关闭的提醒 (也是系统通知) 一样遮住内容, 例如专注记了多少分钟; 合约冲突要靠内容选, 不遮;
         // "还在吗"自己在黑雾时不写专注了多久, 不遮 (要看到最晚关闭的时刻)
-        val shown = if (contract.fog() && tag != "conflict" && tag != "check") "[???]" else message
+        val shown = if (contract.fog() && tag != "conflict" && tag != "check" && tag != "alarm") "[???]" else message
         val n = Notice(nextNoticeId++, title, shown, buttons, page, onClose, tag)
         notices.add(n)
         host.noticesChanged()
         return n.id
+    }
+
+    // ---- 闹钟 (1.0.359, MECHANICS 25): 每秒看一次该不该响; 睡眠 / 合约 / 任何页面都照响 (提示窗也不被黑雾遮住) ----
+    /** 正在响的闹钟的提示窗编号 (-1 = 没有在响). */
+    private var alarmNotice = -1
+
+    fun alarmRinging() = alarmNotice >= 0 && noticeOpen(alarmNotice)
+
+    /** 每秒: 该响就响; 顺便把下一次响铃的时间交给系统闹钟 (熄屏 / 后台也能叫醒). */
+    fun alarmTick() {
+        if (dm.resetting) return
+        val t = LocalDateTime.now()
+        val co = comm.coAlarmFn()
+        if (alarmNotice >= 0 && !noticeOpen(alarmNotice)) alarmNotice = -1
+        if (alarmNotice < 0) alarm.check(t, co, if (co != null) comm.coAlarmPid() else "")?.let { alarmRing(it) }
+        host.scheduleAlarm(alarm.nextRingMs(t, co))
+    }
+
+    private fun alarmRing(hit: AlarmHit) {
+        val name = if (hit.co) comm.coAlarmName() else ""
+        val hm = "%02d:%02d".format(hit.at.hour, hit.at.minute)
+        logNotice("ALARM ring $hm" + if (hit.co) " co=$name" else "")
+        host.startAlarmSound(alarm.tone, alarm.custom, alarm.volume)
+        alarmNotice = notice(tr("⏰  闹钟") + "  " + hm, if (name.isNotEmpty()) tr("{name} 起床了 · 共时闹钟", "name" to name) else tr("闹钟"),
+            listOf(NoticeButton(tr("关闭闹钟"), "ok", true)), tag = "alarm", onClose = { host.stopAlarmSound(); alarmNotice = -1 })
     }
 
     fun noticeOpen(id: Int) = notices.any { it.id == id }
@@ -764,6 +799,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         runCatching { prescript.tick() }
         runCatching { jointBreakWatch() }
         runCatching { comm.tick() }
+        runCatching { alarmTick() }
         runCatching { jointInviteWatch() }
         runCatching { comm.checkPersonaChanges() }.getOrNull()?.let { showPersonaChange(it) }
         beatPower()

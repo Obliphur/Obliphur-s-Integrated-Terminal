@@ -92,6 +92,7 @@ obliphur_terminal/
 ├─ prescript.py          指令: 都市之意主题独占的抽取 / 计时 / 存档
 ├─ comm.py               沟通: 人设, 聊天记录, 主动消息, 对方的状态
 ├─ comm_data.py          沟通: 📎 发送的数据 / 对方查询的参考模板
+├─ alarm.py              闹钟: 本机闹钟, 铃声, 共时闹钟 (跟随对方的起床时间) 的响铃判断
 ├─ achievements.py       成就: 条件判定与存档
 ├─ contract.py           合约: 词条, 违反与降级, 休息倍率, 整点记录锁定
 ├─ net_guard.py          联网额度, 申请 / 快速访问 / 借贷, 断网方式切换

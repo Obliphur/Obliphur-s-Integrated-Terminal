@@ -130,7 +130,7 @@ object Schema {
     val PAGES = listOf(
         "basic" to "基本设置", "timer" to "计时器", "net" to "联网",
         "log" to "整点记录", "contract" to "合约", "window" to "应用",
-        "record" to "录像", "daily" to "日常", "comm" to "沟通",
+        "record" to "录像", "daily" to "日常", "comm" to "沟通", "alarm" to "闹钟",
     )
 
     val BY_KEY = ALL.associateBy { it.key }

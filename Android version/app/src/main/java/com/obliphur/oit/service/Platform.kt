@@ -15,9 +15,11 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.media.AudioAttributes
+import android.media.AudioManager
 import android.media.AudioFormat
 import android.media.AudioTrack
 import android.media.MediaPlayer
+import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
@@ -36,6 +38,7 @@ import com.obliphur.oit.core.fmtHm
 import com.obliphur.oit.core.fmtMs
 import com.obliphur.oit.core.tr
 import com.obliphur.oit.ui.MainActivity
+import java.io.File
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.exp
@@ -146,6 +149,8 @@ object Notifier {
             n.buttons.forEachIndexed { i, btn ->
                 b.addAction(Notification.Action.Builder(null, btn.label, noticeAction(ctx, n.id, btn.action, nid * 8 + 1 + i)).build())
             }
+            // 闹钟 (1.0.359): 闹钟类通知, 熄屏时点亮屏幕 (全屏意图)
+            if (n.tag == "alarm") b.setCategory(Notification.CATEGORY_ALARM).setFullScreenIntent(openIntent(ctx, null, nid), true)
             nm.notify(nid, b.build())
             posted.add(nid)
         }
@@ -315,6 +320,26 @@ object Waker {
         }
     }
 
+    private var alarmAt = -1L
+
+    /** 闹钟 (1.0.359): 在 atMs (epoch 毫秒) 安排一个"闹钟"类的系统闹钟 (熄屏 / 打盹 / 后台都准点叫醒); 0 = 取消. 到点后 AlarmReceiver 推进 Core, 由 Core.alarmTick 开始响. */
+    fun alarmClock(ctx: Context, atMs: Long) {
+        if (atMs == alarmAt) return
+        alarmAt = atMs
+        val am = ctx.getSystemService(AlarmManager::class.java)
+        val pi = PendingIntent.getBroadcast(ctx, 2, Intent(ctx, AlarmReceiver::class.java).setAction("oit.alarm"),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        if (atMs <= 0L) { am.cancel(pi); return }
+        val at = maxOf(atMs, System.currentTimeMillis() + 1000)
+        val show = PendingIntent.getActivity(ctx, 6, Intent(ctx, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        try {
+            am.setAlarmClock(AlarmManager.AlarmClockInfo(at, show), pi)
+        } catch (_: SecurityException) {
+            am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi)
+        }
+    }
+
     fun schedule(ctx: Context, seconds: Double) {
         val at = SystemClock.elapsedRealtime() + (seconds * 1000).toLong()
         if (kotlin.math.abs(at - target) < 2000) return
@@ -378,6 +403,20 @@ object Chime {
 
     fun playSoft() = playPcm(softData) {}
 
+    /** 闹钟用 (1.0.359): 三音提示 / 柔和钟声写成 wav 放在缓存里, 后面补一段静音 (循环播放时两遍之间有间隔). */
+    fun wavFile(ctx: Context, soft: Boolean): File {
+        val f = File(ctx.cacheDir, if (soft) "alarm_soft.wav" else "alarm_chime.wav")
+        if (f.length() > 44) return f
+        val all = (if (soft) softData else pcm()) + ShortArray(44100 * 8 / 10)
+        val data = ByteArray(all.size * 2)
+        for (i in all.indices) { data[2 * i] = (all[i].toInt() and 0xff).toByte(); data[2 * i + 1] = (all[i].toInt() shr 8).toByte() }
+        val h = java.nio.ByteBuffer.allocate(44).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        h.put("RIFF".toByteArray()).putInt(36 + data.size).put("WAVE".toByteArray()).put("fmt ".toByteArray()).putInt(16)
+            .putShort(1).putShort(1).putInt(44100).putInt(44100 * 2).putShort(2).putShort(16).put("data".toByteArray()).putInt(data.size)
+        f.outputStream().use { it.write(h.array()); it.write(data) }
+        return f
+    }
+
     private fun playPcm(data: ShortArray, fin: () -> Unit) {
         try {
             val track = AudioTrack.Builder()
@@ -411,6 +450,63 @@ object Chime {
             mp.prepareAsync()
         } catch (e: Exception) {
             builtin(fin)
+        }
+    }
+}
+
+// ════════════════ 闹钟的铃声 (1.0.359, MECHANICS 25) ════════════════
+
+/** 循环播放闹钟铃声直到 stop (最多 seconds 秒). 走闹钟音量: 响的时候把系统闹钟音量拉到最大 (实际音量由 gain 控制), 停了恢复. */
+object AlarmSound {
+    private val handler = Handler(Looper.getMainLooper())
+    private var player: MediaPlayer? = null
+    private var savedVol = -1
+    private var stopper: Runnable? = null
+
+    val playing: Boolean get() = player != null
+
+    fun start(ctx: Context, tone: String, custom: String, volume: Int, seconds: Long = 300L) {
+        stop(ctx)
+        val gain = com.obliphur.oit.core.AlarmStore.gainOf(volume)
+        runCatching {
+            val am = ctx.getSystemService(AudioManager::class.java)
+            savedVol = am.getStreamVolume(AudioManager.STREAM_ALARM)
+            am.setStreamVolume(AudioManager.STREAM_ALARM, am.getStreamMaxVolume(AudioManager.STREAM_ALARM), 0)
+        }
+        val mp = MediaPlayer()
+        fun fallback() { if (tone != "classic") start(ctx, "classic", "", volume, seconds) }
+        try {
+            mp.setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build())
+            when (tone) {
+                "chime", "soft" -> mp.setDataSource(Chime.wavFile(ctx, tone == "soft").path)
+                "custom" -> mp.setDataSource(ctx, if (custom.isBlank()) RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM) else Uri.parse(custom))
+                else -> ctx.resources.openRawResourceFd(R.raw.target_alarm).use { mp.setDataSource(it.fileDescriptor, it.startOffset, it.length) }
+            }
+            mp.isLooping = true
+            mp.setVolume(gain, gain)
+            runCatching { mp.setWakeMode(ctx, PowerManager.PARTIAL_WAKE_LOCK) }
+            mp.setOnErrorListener { p, _, _ -> runCatching { p.release() }; if (player === p) { player = null; fallback() }; true }
+            mp.setOnPreparedListener { it.start() }
+            mp.prepareAsync()
+            player = mp
+        } catch (e: Exception) {
+            runCatching { mp.release() }
+            fallback()
+            return
+        }
+        val r = Runnable { stop(ctx) }
+        stopper = r
+        handler.postDelayed(r, seconds * 1000)
+    }
+
+    fun stop(ctx: Context) {
+        stopper?.let { handler.removeCallbacks(it) }
+        stopper = null
+        player?.let { runCatching { it.stop() }; runCatching { it.release() } }
+        player = null
+        if (savedVol >= 0) {
+            runCatching { ctx.getSystemService(AudioManager::class.java).setStreamVolume(AudioManager.STREAM_ALARM, savedVol, 0) }
+            savedVol = -1
         }
     }
 }
