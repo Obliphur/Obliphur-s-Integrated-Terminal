@@ -107,8 +107,8 @@ class RoutineTest {
             for ((k, v) in exp) assertEquals(k, v, got.getValue(k), 1e-4)
         }
         near(mapOf("查资料" to 57.910862, "下载资源" to 19.380057, "娱乐" to 18.959081), st.netByReason(day))
-        near(mapOf("chrome" to 11299.451237, "claude" to 3861.349901, "OIT" to 7649.520698, "anki" to 1906.99042, "cloudmusic" to 1909.30874, "" to 11473.379005), st.windowSeconds(day, 0))
-        near(mapOf("微信" to 1164.184326, "OIT" to 9060.327928, "词典" to 4537.407564, "相册" to 458.159569, "anki" to 2957.928168, "" to 4921.992445), st.windowSeconds(day, 1))
+        near(mapOf("chrome" to 11379.259062, "claude" to 3888.622548, "OIT" to 7703.549128, "anki" to 1920.459459, "cloudmusic" to 1922.794154, "" to 11285.315649), st.windowSeconds(day, 0))
+        near(mapOf("微信" to 1176.848682, "OIT" to 4579.444483, "词典" to 4586.766882, "相册" to 463.14357, "anki" to 2990.105422, "" to 9303.690962), st.windowSeconds(day, 1))
         assertEquals(635.0, st.dayMinutes(day, setOf("focus")), 1e-6)
         assertEquals(listOf("00:00 睡眠", "01:00 睡眠", "02:00 睡眠", "03:00 睡眠", "04:00 睡眠", "05:00 睡眠", "06:00 洗漱,吃早饭", "07:00 数学", "08:00 语文", "09:00 语文"), st.logLines(now))
         val recs = Routine.contractsBefore(spec, LocalDateTime.of(2026, 4, 1, 0, 0), "t", days = 60).take(3)

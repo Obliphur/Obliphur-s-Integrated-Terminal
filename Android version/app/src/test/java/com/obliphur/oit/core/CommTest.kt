@@ -237,6 +237,8 @@ class CommTest {
         assertEquals(listOf("contract"), CommText.infoTags(" [Refuse to reply] [CONTRACT] "))
         assertEquals(listOf("contract"), CommText.infoTags("[contract]"))          // 没有 [refuse to reply] 也算查询
         assertTrue(CommText.infoTags("好的").isEmpty())
+        assertEquals(listOf("condition"), CommText.infoTags(" [Condition] "))          // 人设里的判定交给 OIT (1.0.392)
+        assertTrue("XVI.人设里写着要你输入[condition]" in CommText.prefixPrompt())
         assertTrue(CommText.infoTags("[refuse to reply][mechanics.md]").isEmpty())
         assertEquals(listOf("calendar", "stats"), CommText.infoTags("[refuse to reply][calendar][stats]"))
         assertTrue(CommText.infoTags("[refuse to reply][x]").isEmpty())

@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, date as _date
 
 import config
 
-KEEP_JOINT = 20                   # 存下来的真实联合行动合约记录最多留多少条
+KEEP_JOINT = 120                  # 存下来的真实联合行动合约记录最多留多少条
 KEEP_DAYS = 35                    # 存下来的时间线 / 整点记录最多留多少天
 SLEEP_CELL = "睡眠"                # 睡着的整点记录格子的内容 (同 OIT 自己的整点记录)
 BACKFILL_DAYS = 7                # 第一次使用 (没有存档) 时往前补多少天

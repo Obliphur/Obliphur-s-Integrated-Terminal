@@ -39,7 +39,7 @@ class RoutineSpec {
 
 object Routine {
     const val KEEP_DAYS = 35
-    const val KEEP_JOINT = 20
+    const val KEEP_JOINT = 120
     const val SLEEP_CELL = "睡眠"                 // 睡着的整点记录格子的内容 (同 OIT 自己的整点记录)
     const val BACKFILL_DAYS = 7
     const val SYNC_MAX_DAYS = 14

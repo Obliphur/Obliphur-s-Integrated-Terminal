@@ -290,6 +290,11 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         comm.cutExempt = { settings.devMode }                 // 开发者模式: 不受对方 [cut off] 限制
         comm.aiBlocked = { commAiBlocked() }
         comm.stateFn = { commState() }
+        comm.userDayFn = { day ->                                   // 人设里的 [condition] 判定用: 某一天用户的 (专注秒, 空闲秒)
+            val now = java.time.LocalDateTime.now()
+            val k = dm.dayKinds(day, if (day == now.toLocalDate()) timer.calendarLive() else null, now)
+            (k["study"] ?: 0.0) to (k["idle"] ?: 0.0)
+        }
         comm.hardBlock = { contract.has("silent") && !settings.devMode }
         comm.onProactive = { host.playCommSound() }
         comm.onJointDue = { j -> jointDue(j) }

@@ -359,6 +359,7 @@ class BreakTimerApp:
         self.comm.on_change = self.update_comm_badge
         self.comm.data_fn = self._comm_data
         self.comm.info_fn = self._comm_info
+        self.comm.user_day_fn = self._comm_user_day          # 人设里的 [condition] 判定用: 某一天的 (专注秒, 空闲秒)
         self.comm.share_fn = self._comm_share            # share data (MECHANICS 24.12): 某一页上用户和对方的数据
         self.comm.on_share_open = lambda: self.show_page("timer")      # 用户接受了对方的 share data 邀请: 跳到计时器页
         self.comm.on_share_notice = lambda text: toast.info(tr(text))      # 对方拒绝 / 没回复用户的 share data 请求
@@ -1238,6 +1239,12 @@ class BreakTimerApp:
         return comm_data.build(sel, self.dm, self.net, self.contract, focus_live=self._focus_live(),
                                cal_live=self._calendar_live(),
                                today_log=lambda: self._comm_real("log"), today_timer=lambda: self._comm_real("timer"))
+
+    def _comm_user_day(self, day) -> tuple:
+        """某一天 (date) 用户的 (专注秒, 空闲秒); 只有最近 7 天有计时记录 (dm.day_kinds), 更早的由沟通模块自己存的账补."""
+        now = datetime.now()
+        k = self.dm.day_kinds(datetime.combine(day, datetime.min.time()), self._calendar_live() if day == now.date() else None, now)
+        return k["study"], k["idle"]
 
     def _comm_info(self, tag: str) -> str:
         """对方查询的模块 ([模块名]): 只给一个参考模板 (格式和占位符, 24.2.1), 具体内容由对方按人设自己填写; 没有用户的真实数据, 黑雾中也能给."""
