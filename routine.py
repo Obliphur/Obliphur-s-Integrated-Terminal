@@ -693,7 +693,7 @@ def _selftest():
         for (n, p), (n0, p0) in zip(fl, resolve_list(r.lists["联网时间理由列表"])):
             assert abs(p / p0 - 1) <= 0.0201 * 100 / 100 + 0.021, (n, p, p0)
     w = fluct_list(r.lists["设备-1:窗口使用时间"], "s|w", True)
-    assert all(abs(p / p0 - 1) <= 0.02 + 1e-9 for (_n, p), (_m, p0) in zip(w, resolve_list(r.lists["设备-1:窗口使用时间"]))), "窗口项: 每项 ±2%"
+    assert all(abs(p / p0 - 1) <= 0.045 for (_n, p), (_m, p0) in zip(w, resolve_list(r.lists["设备-1:窗口使用时间"]))), "窗口项: 每项 ±2% (名单加起来 100% 时再归一, 最多约 ±4%)"
     assert fluct_list(r.lists["整点记录专注填写列表"], "s|x", False) == resolve_list(r.lists["整点记录专注填写列表"])
     # 日程: 持续时间依次排下去, 做完最后一项进入睡眠; 起床波动平移整天
     seed = "t"

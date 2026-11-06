@@ -52,7 +52,7 @@ class RoutineTest {
         }
         val w = Routine.fluctList(spec.lists.getValue("设备-1:窗口使用时间"), "s|w", true)
         val w0 = Routine.resolveList(spec.lists.getValue("设备-1:窗口使用时间"))
-        assertTrue(w.zip(w0).all { (a, b) -> Math.abs(a.second / b.second - 1) <= 0.02 + 1e-9 })
+        assertTrue(w.zip(w0).all { (a, b) -> Math.abs(a.second / b.second - 1) <= 0.045 })   // 名单加起来 100% 时再归一, 最多约 ±4%
         assertEquals(Routine.resolveList(spec.lists.getValue("整点记录专注填写列表")), Routine.fluctList(spec.lists.getValue("整点记录专注填写列表"), "s|x", false))
     }
 
