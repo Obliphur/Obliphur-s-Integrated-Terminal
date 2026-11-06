@@ -1376,7 +1376,9 @@ class CommTest {
         assertTrue(jnote, "联合行动失败了" in jnote && "目标生命值归零" in jnote && "损失生命值的记录" in jnote)
         wait(ch)
         assertEquals(n0 + 3, calls.size)
-        assertEquals("哼.", ch.visible().last().text)
+        assertEquals("哼.", ch.messages.last().text)
+        assertTrue("合约结束后对方回到日程里的专注: 这条推迟到下一个空闲 / 休息再发 (24.3.9)", ch.messages.last().late && ch.visible().last().text != "哼.")
+        ch.messages.last().let { it.hold = false; it.late = false; it.due = 0L }      // 下面的用例接着用这条
         n0 = calls.size
         val ch3 = running("联合八", "c6")
         n0 = calls.size
@@ -1959,13 +1961,15 @@ class CommTest {
         clock = LocalDateTime.of(2026, 12, 11, 14, 0, 10)
         assertEquals("", c.send("b"))
         wait(c)
-        assertTrue(calls.size == n0 + 1 && c.visible().last().text == "嗯, 在.")
-        assertTrue("回复显示后, 存着的还在", c.syncDoc().keys.any { it.startsWith("retry:") })
+        assertTrue("回复到的时候对方已经在专注: 推迟 (24.3.9)", calls.size == n0 + 1 && c.messages.filter { it.late }.map { it.text } == listOf("嗯, 在.") && c.visible().last().text == "b")
+        assertTrue("存着的还在", c.syncDoc().keys.any { it.startsWith("retry:") })
         clock = LocalDateTime.of(2026, 12, 11, 15, 41)
         script.add("看到 b 了.")
         c.tick()
         wait(c)
         assertTrue(calls.size == n0 + 2 && c.visible().last().text == "看到 b 了.")
+        assertEquals(listOf("b", "嗯, 在.", "看到 b 了."), c.visible().takeLast(3).map { it.text })
+        assertEquals("推迟的那条在休息开始时发出, 发送时间 = 休息开始的时刻", "2026-12-11T15:40:00", c.visible()[c.visible().size - 2].at)
         // 清空聊天: 存着的不要了; 没有日程的人设不会存
         clock = LocalDateTime.of(2026, 12, 11, 16, 0)
         clock = LocalDateTime.of(2026, 12, 12, 14, 30)

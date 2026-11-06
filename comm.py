@@ -2524,6 +2524,26 @@ class Comm:
         kind = s["kind"] if s and s["kind"] in STATUS_TEXT else "idle"
         return tr(STATUS_TEXT[kind]) + ((" · " + tr("联合行动")) if s and s.get("joint") else ""), kind
 
+    def ai_free_at(self, now=None):
+        """对方此刻在专注 (按人设日程) 时: 下一个空闲 / 休息开始的时刻 (中间接着的睡眠也跳过); 不在专注 / 联合行动中 / 找不到 = None.
+        对方在专注期间发出的消息不马上显示, 推迟到这个时刻再发 (MECHANICS 24.3.9)."""
+        now = now or self.now()
+        if not self.persona_name():
+            return None
+        s = self.other_status(now)
+        if not s or s.get("kind") != "focus" or s.get("joint"):
+            return None
+        t = now
+        for _ in range(24):
+            s = self.other_status(t)
+            if not s or s.get("kind") not in ("focus", "sleep"):
+                return t if t > now and t - now <= timedelta(hours=24) else None
+            end = s.get("end")
+            if not end or end <= t:
+                return None
+            t = end
+        return None
+
     def other_status_text(self, now=None) -> str:
         """聊天页顶上那一行 (没有前缀 / 修饰 / 结束时间, 前面加什么颜色的小圆点看 kind)."""
         return self.other_status_display(now)[0]
@@ -2927,8 +2947,13 @@ class Comm:
         first = self.messages.index(held[0])
         for m in held:
             del m["hold"]
-            m.pop("due", None)
+            due = int(m.pop("due", 0) or 0)
             m["shown"] = now                               # 等用户回复的时间从这时候算起 (规则 IX)
+            if m.pop("late", False):                       # 对方专注时发的: 发送时间改成下一个空闲 / 休息开始的时刻, 排到最后 (还没同步给别的设备, 改 ts 没关系)
+                m["at"] = datetime.fromtimestamp(due / 1000).isoformat(timespec="seconds")
+                self._last_ts = m["ts"] = max(self._ms(), self._last_ts + 1)
+                self.messages.remove(m)
+                self.messages.append(m)
         if not self.viewing:
             self.unread += len(held)
         if not self._talked_recently(self.messages[:first], int(held[0]["ts"])):
@@ -2997,7 +3022,12 @@ class Comm:
             m["api"] = api
         if role == "ai" and self.blocked():                # 专注 / 睡眠 / 外出中收到的: 先藏起来, 回到休息 / 空闲再显示
             m["hold"] = True
-        if delay and role == "ai" and text and CHAR_DELAY > 0:      # 打字延时: 每个字符 CHAR_DELAY 秒, 接在前一条还没显示的后面
+        free = self.ai_free_at(now) if role == "ai" else None
+        if free:                                           # 对方在专注: 推迟到下一个空闲 / 休息开始时才发 (到点再重新盖发送时间, 见 _release_held)
+            m["hold"] = True
+            m["late"] = True
+            m["due"] = max([int(free.timestamp() * 1000)] + [int(x.get("due") or 0) for x in self.messages if x.get("hold")])
+        elif delay and role == "ai" and text and CHAR_DELAY > 0:      # 打字延时: 每个字符 CHAR_DELAY 秒, 接在前一条还没显示的后面
             base = max([self._ms()] + [int(x.get("due") or 0) for x in self.messages if x.get("hold")])
             m["due"] = base + int(len(text) * CHAR_DELAY * 1000)
             m["hold"] = True
@@ -6039,7 +6069,9 @@ def _selftest():
     note = [m for m in ch.messages if m["role"] == "sys" and m["text"].startswith(JOINT_TAG)][-1]["text"]
     assert "联合行动失败了" in note and "16:40" not in note and "目标生命值归零" in note and "损失生命值的记录" in note, note
     wait(ch)
-    assert len(calls) == n_calls + 4 and ch.visible()[-1]["text"] == "哼."
+    assert len(calls) == n_calls + 4 and ch.messages[-1]["text"] == "哼.", "结束后对方回应"
+    assert ch.messages[-1].get("late") and ch.visible()[-1]["text"] != "哼.", "合约结束后对方回到日程里的专注: 这条推迟到下一个空闲 / 休息再发 (24.3.9)"
+    ch.messages[-1].pop("hold"), ch.messages[-1].pop("late"), ch.messages[-1].pop("due")      # 下面的用例接着用这条
     n_calls = len(calls)
     ch3 = joint_comm("联合八", JTXT)
     ch3._joint_set({"id": "k", "pid": ch3.pid, "state": "run", "terms": [], "start": day.replace(hour=14).isoformat(),
@@ -6498,12 +6530,14 @@ def _selftest():
     assert ch._away_kind() == "focus"
     assert ch.send("b") == ""
     wait(ch)
-    assert len(calls) == n0 + 1 and ch.visible()[-1]["text"] == "嗯, 在." and ch.cfg["retry"].get("hold"), "回复显示后, 存着的还在"
+    late_m = [m for m in ch.messages if m.get("late")]
+    assert len(calls) == n0 + 1 and [m["text"] for m in late_m] == ["嗯, 在."] and ch.visible()[-1]["text"] == "b" and ch.cfg["retry"].get("hold"), "回复到的时候对方已经在专注: 推迟 (24.3.9); 存着的还在"
     clock[0] = day.replace(hour=15, minute=41) + timedelta(days=1)
     script.append("看到 b 了.")
     ch.tick()
     wait(ch)
     assert len(calls) == n0 + 2 and ch.visible()[-1]["text"] == "看到 b 了." and not ch.cfg["retry"]
+    assert [m["text"] for m in ch.visible()[-3:]] == ["b", "嗯, 在.", "看到 b 了."] and ch.visible()[-2]["at"] == (day + timedelta(days=1)).replace(hour=15, minute=40).isoformat(timespec="seconds"), "推迟的那条在休息开始时发出, 发送时间 = 休息开始的时刻"
     # 清空聊天: 存着的不要了; 没有日程的人设不会存
     clock[0] = day.replace(hour=14, minute=30)
     assert ch.send("清空前") == "" and ch.cfg["retry"].get("hold")
@@ -6516,6 +6550,30 @@ def _selftest():
     wait(cp)
     for x in (ch, cp):
         x.flush()
+
+    # ---- 对方在专注期间发的消息: 推迟到下一个空闲 / 休息开始时才发, 发送时间也改成那个时刻 (24.3.9) ----
+    cl = joint_comm("延迟发", "你是延迟发."+'\n'+"12:30-13:00:空闲"+'\n'+"[循环 14:00-18:00][100min]"+'\n'+"23:30-6:30:睡眠"+'\n')
+    clock[0] = day.replace(hour=12, minute=40)
+    assert cl.ai_free_at() is None and not cl._add("ai", "空闲时发的").get("hold"), "对方不在专注: 照常显示"
+    cl.messages.clear()
+    clock[0] = day.replace(hour=14, minute=30)
+    free = cl.ai_free_at()
+    assert cl.other_status()["kind"] == "focus" and free is not None and free > clock[0] and cl.other_status(free)["kind"] in ("rest", "idle"), free
+    ma = cl._add("ai", "专注时发的")
+    assert ma["hold"] and ma["late"] and ma["due"] == int(free.timestamp() * 1000) and cl.visible() == []
+    assert not any(k.startswith("m:") for k in cl.sync_doc()), "还没发出去: 不同步"
+    clock[0] += timedelta(minutes=5)
+    cl._add("me", "中间用户说的")
+    clock[0] = free - timedelta(seconds=1)
+    cl._release_held()
+    assert [m["text"] for m in cl.visible()] == ["中间用户说的"], "没到点: 还藏着"
+    clock[0] = free
+    cl._release_held()
+    assert [m["text"] for m in cl.visible()] == ["中间用户说的", "专注时发的"], "到点: 排到最后"
+    last = cl.visible()[-1]
+    assert last["at"] == free.isoformat(timespec="seconds") and "late" not in last and "due" not in last and cl.unread == 1
+    assert last["ts"] > cl.visible()[0]["ts"] and any(k.startswith("m:") and v["text"] == "专注时发的" for k, v in cl.sync_doc().items())
+    cl.flush()
 
     # ---- 打字延时: 文本里每个字符让对方的消息晚 0.2 s 显示, 一条一条按顺序出来, 显示之前不同步给别的设备 ----
     CHAR_DELAY = 0.2

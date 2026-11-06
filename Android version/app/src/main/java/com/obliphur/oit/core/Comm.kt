@@ -12,11 +12,13 @@ import java.time.LocalDateTime
 import java.util.concurrent.ConcurrentLinkedQueue
 
 /** 沟通 (MECHANICS 24) 的一条聊天记录. role: me / ai / sys (sys 是系统触发的请求, 不显示). */
-class ChatMsg(val id: Int, val role: String, val text: String, val at: String, val api: String = "", val uid: String = "", val ts: Long = 0L) {
+class ChatMsg(val id: Int, val role: String, val text: String, var at: String, val api: String = "", val uid: String = "", var ts: Long = 0L) {
     /** 不能用沟通的时候 (专注 / 睡眠 / 外出 / 无言为真) 收到的对方的消息先藏起来, 回到休息 / 空闲再显示 (MECHANICS 24.4). */
     var hold = false
     /** 打字延时 (Comm.charDelay): 对方的消息每个字符晚这么多秒才显示; 到这个时刻 (毫秒) 前一直 hold. 0 = 没有. */
     var due = 0L
+    /** 对方在专注期间发的: 推迟到下一个空闲 / 休息开始 (due) 才显示, 到点时把 at / ts 改成那个时刻 (MECHANICS 24.3.9). */
+    var late = false
     /** 规则 IX: 对方在这条消息末尾写了 [waiting for reply]:[N], 等用户回复的分钟数 (0 = 没有); chased: 已经追问过了; shown: 藏着的消息显示出来的时刻. */
     var wait = 0.0
     var chased = false
@@ -1378,7 +1380,7 @@ class Comm(
             val ts = m.optLong("ts", 0L).takeIf { it != 0L }
                 ?: parseIso(at)?.atZone(java.time.ZoneId.systemDefault())?.toInstant()?.toEpochMilli() ?: 0L     // 旧版本的记录没有 uid / ts
             st.messages.add(ChatMsg(id, role, m.optString("text"), at, m.optString("api"), m.optString("uid").ifEmpty { "L$id" }, ts)
-                .also { it.hold = m.optBoolean("hold"); it.due = m.optLong("due"); it.wait = m.optDouble("wait", 0.0); it.chased = m.optBoolean("chased"); it.shown = m.optLong("shown") })
+                .also { it.hold = m.optBoolean("hold"); it.due = m.optLong("due"); it.late = m.optBoolean("late"); it.wait = m.optDouble("wait", 0.0); it.chased = m.optBoolean("chased"); it.shown = m.optLong("shown") })
         }
         st.messages.sortWith(compareBy({ it.ts }, { it.uid }))
         st.clearTs = o?.optLong("clear_ts", 0L) ?: 0L
@@ -1396,7 +1398,7 @@ class Comm(
         val arr = JSONArray()
         for (m in st.messages.takeLast(KEEP)) arr.put(JSONObject().put("id", m.id).put("role", m.role).put("text", m.text).put("at", m.at)
             .put("uid", m.uid).put("ts", m.ts).apply {
-                if (m.api.isNotEmpty()) put("api", m.api); if (m.hold) put("hold", true); if (m.due != 0L) put("due", m.due)
+                if (m.api.isNotEmpty()) put("api", m.api); if (m.hold) put("hold", true); if (m.due != 0L) put("due", m.due); if (m.late) put("late", true)
                 if (m.wait > 0) put("wait", m.wait); if (m.chased) put("chased", true); if (m.shown != 0L) put("shown", m.shown)
             })
         return JSONObject().put("messages", arr).put("clear_ts", st.clearTs).put("retry_at", st.retryAt)
@@ -2710,17 +2712,17 @@ class Comm(
     }
 
     /** 对方现在在日程里的哪一段 (显示在聊天页顶上): (条目, 结束时刻); 没有日程 / 不在任何一段 = null. */
-    fun otherStatus(): Pair<SegEntry, LocalDateTime>? {
-        jointStatus(now())?.let { return it }                      // 联合行动的同步阶段: 跟着用户走, 不看日程
+    fun otherStatus(t0: LocalDateTime = now()): Pair<SegEntry, LocalDateTime>? {
+        jointStatus(t0)?.let { return it }                      // 联合行动的同步阶段: 跟着用户走, 不看日程
         loadSchedule()
         if (rt != null) {                                          // 有日程文件: 按当天算出的日程 (带波动)
-            val t = now()
+            val t = t0
             val s = Routine.statusIn(rtSegs(t.minusHours(1), t.plusHours(1)), t) ?: return null
             return SegEntry(s.kind, 0, 0, s.label, "") to s.end
         }
         val entries = entries()
         if (entries.isEmpty()) return null
-        val t = now()
+        val t = t0
         val mins = t.hour * 60 + t.minute
         var best: Triple<Int, Int, SegEntry>? = null              // (开始, 结束, 条目): 重叠时取最晚开始的那段
         for (e in entries) for (shift in listOf(0, -24 * 60)) {  // 今天 / 昨天开始的跨零点段
@@ -2731,6 +2733,23 @@ class Comm(
         val hit = best ?: return null
         val base = t.toLocalDate().atStartOfDay()
         return hit.third to base.plusMinutes(hit.second.toLong())
+    }
+
+    /** 对方此刻在专注 (按人设日程) 时: 下一个空闲 / 休息开始的时刻 (中间接着的睡眠也跳过); 不在专注 / 联合行动中 / 找不到 = null.
+     *  对方在专注期间发出的消息不马上显示, 推迟到这个时刻再发 (MECHANICS 24.3.9). */
+    fun aiFreeAt(from: LocalDateTime = now()): LocalDateTime? {
+        if (personaName().isEmpty()) return null
+        val first = otherStatus(from)?.first ?: return null
+        if (first.kind != "focus" || first.label == JOINT_STATUS) return null
+        var t = from
+        for (i in 0 until 24) {
+            val s = otherStatus(t)
+            if (s == null || (s.first.kind != "focus" && s.first.kind != "sleep"))
+                return if (t.isAfter(from) && java.time.Duration.between(from, t).toHours() < 24) t else null
+            if (!s.second.isAfter(t)) return null
+            t = s.second
+        }
+        return null
     }
 
     /** 聊天页顶上那一行: (状态文字, kind). 只显示 专注中 / 睡眠中 / 休息中 / 空闲 四种状态;
@@ -3071,7 +3090,16 @@ class Comm(
         val held = messages.filter { it.hold }.takeWhile { it.due <= now }          // 打字延时没到点的和它后面的继续藏着 (按顺序一条一条出来)
         if (held.isEmpty()) return
         val first = messages.indexOf(held[0])
-        held.forEach { it.hold = false; it.due = 0L; it.shown = now }         // 等用户回复的时间从这时候算起 (规则 IX)
+        held.forEach {
+            it.hold = false; it.shown = now                                   // 等用户回复的时间从这时候算起 (规则 IX)
+            if (it.late) {                                                    // 对方专注时发的: 发送时间改成下一个空闲 / 休息开始的时刻, 排到最后 (还没同步给别的设备, 改 ts 没关系)
+                it.at = java.time.Instant.ofEpochMilli(it.due).atZone(java.time.ZoneId.systemDefault()).toLocalDateTime().iso()
+                lastTs = maxOf(nowMs(), lastTs + 1); it.ts = lastTs
+                it.late = false
+                messages.remove(it); messages.add(it)
+            }
+            it.due = 0L
+        }
         if (!viewing) unread += held.size
         if (!talkedRecently(messages.subList(0, first), held[0].ts)) ping()
         saveChat(); changed(); push()
@@ -3146,7 +3174,12 @@ class Comm(
         lastTs = ts
         val m = ChatMsg(nextId++, role, text, now().iso(), api, "$ts-${device().ifEmpty { "local" }.take(4)}", ts)
         if (role == "ai" && blocked().isNotEmpty()) m.hold = true       // 专注 / 睡眠 / 外出中收到的: 先藏起来, 回到休息 / 空闲再显示
-        if (delay && role == "ai" && text.isNotEmpty() && charDelay > 0) {  // 打字延时: 每个字符 charDelay 秒, 接在前一条还没显示的后面
+        val free = if (role == "ai") aiFreeAt() else null
+        if (free != null) {                                              // 对方在专注: 推迟到下一个空闲 / 休息开始时才发 (到点再重新盖发送时间, 见 releaseHeld)
+            m.hold = true
+            m.late = true
+            m.due = maxOf(free.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli(), messages.filter { it.hold }.maxOfOrNull { it.due } ?: 0L)
+        } else if (delay && role == "ai" && text.isNotEmpty() && charDelay > 0) {  // 打字延时: 每个字符 charDelay 秒, 接在前一条还没显示的后面
             val base = maxOf(nowMs(), messages.filter { it.hold }.maxOfOrNull { it.due } ?: 0L)
             m.due = base + (text.length * charDelay * 1000).toLong()
             m.hold = true
