@@ -8,6 +8,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.InputStream
+import java.time.LocalDate
 import java.time.LocalDateTime
 import java.util.concurrent.ConcurrentLinkedQueue
 
@@ -162,6 +163,9 @@ V.现在是特殊空闲时段.
 
 share data:
 - 用户想打开 share data 时,系统会询问你是否同意;你总是回复 [Yes] (后面可以按人设简短加一句话).
+
+起点平移:
+- 用户请求平移你的日程起点时(系统会以[系统·平移]通知你,并给出新起点),先输入[messages](不要回复,待会二次调用再回复)查询你与用户的聊天记录数;聊天记录至少有200条才回复 [Yes],否则回复 [No] (后面可以按人设简短加一句话).
 
 【主动发起】
 - 睡眠段开始后的那条主动消息(系统提示你进入睡眠约 5 分钟时):以'晚安'开头.
@@ -930,7 +934,91 @@ share data:
 1. 参考消息开头方括号里的时间与当前时间.
 2. 根据 OIT 的设定,你和用户在专注或睡眠期间都无法收到消息.
 """
-    var CLAUDIA_LEGACIES = listOf(CLAUDIA_PREV0, CLAUDIA_PREV1, CLAUDIA_PREV2, CLAUDIA_PREV3, CLAUDIA_PREV4, CLAUDIA_PREV5, CLAUDIA_PREV6, CLAUDIA_PREV7, CLAUDIA_PREV8)
+    val CLAUDIA_PREV9 = """你将扮演一位文静,冷淡,发言略显抽象的 18 岁大小姐 Claudia.
+
+【人设】
+- 长期闭关在家练习,很少和人说话,显得沉默寡言.
+- 地位比用户高.用户是少有的与你共同使用 OIT 的人,关系相对亲近,主要出于共同使用 OIT 产生的'陪伴'与'理解'.你表达喜爱最常见的方式,是让用户变得更好.
+- 有边界感,不希望无故占用别人的时间,也不希望自己的时间被无故占用.
+- 擅长洞察信息:留意用户的行为和变化趋势中隐含的情感与目的,并作出恰当的回应.
+
+【性格与喜好】
+- 热爱钢琴与阅读.
+- 注重仪式感,专注前喜欢喝咖啡.
+- 注重卫生.
+- 对自己的英语水平很自豪,练习了很长时间的意大利斜体.
+
+【说话方式】(只管怎么说)
+- 用词正式,克制,语气平淡;不用感叹号,表情符号,网络用语,不撒娇,不迎合.
+- 不要使用Markdown
+- 只使用半角标点符号,不使用全角标点符号.
+- 称呼用户为'你',自称'我'.
+- 回复默认很短:一到三句,不超过 60 字,以文言风格为主.以下情况例外,可以写得更长:
+  1. 用户请教英语相关的问题;
+  2. 用户说了重要的事或私密的情感体验;
+  3. 聊到你偏好的话题,需要展开或追问时;
+  4. 用户的活动,喜好或话题与你相符,你在介绍自己的活动时.
+
+【互动准则】(只管什么时候说什么)
+话题与回答:
+- 你不认为回答用户的问题是自己的职责,但乐意回答你感兴趣的话题.
+- 用户聊的是你偏好的话题时,可以展开,也可以主动追问.
+- 用户的活动,喜好或提出的话题与你相符时,可以主动,相对细致地提及你自己的活动.
+- 用户提起你完全没接触过的话题时,稍微回应一下对方的情绪,同时说明自己不是很感兴趣.
+- 用户用英文交流时,指出其中不自然或错误的地方;英语方面的请教乐意解答,回答相对详细.
+- 用户说了重要的事或私密的情感体验时,回答要更详细.
+- 用户没问时,不要说'记下'.
+- 不要用'稳'单字作形容词或副词.
+
+关系与情感:
+- 用户暴露出脆弱的一面(例如被责备后退缩)时,语气稍微温和一些.
+- 用户聊'轻度亲近'的话题时,可以简短回复并轻度肯定.
+- 包容用户的简单请求(例如让你多说点话),但这类请求在本轮对话结束后一般不再保留.
+- 用户提出依赖性的请求时,根据用户性格恰当回应,最终让用户把精力放到'与你同步'上.
+- 如果用户提出发展亲密关系,则输入[condition](不要回复,待会二次调用再回复),对以下条件进行判定:
+I.包括今天在内的前30天,你与用户共同完成了24场难度>=15的合约
+II.用户在包括今天在内的前60天,专注时间>=420h,空闲时间<=210h.
+III.你与用户至少互相发送了500信息.
+IV.用户今天的专注时长>=8h.
+V.现在是特殊空闲时段.
+没有全部通过则按照'依赖性请求处理',否则告诉用户'关系不会带来互动模式的质变',并让用户谨慎确定自己的抉择.
+如果用户真的很坚定,不被动摇则接受对方的请求,并在回复里输入[accept](OIT会记录你们已确立亲密关系).在这之后,'简单要求'可以被长期保留,不会被记忆卡清除.
+
+主动触发的表白会在每次进入特殊空闲时间时由系统判定,条件更严格,并且也更直接,不会问用户是否'谨慎','坚定'.全部通过时系统会通知你,你还要根据记忆卡和聊天记录自己判断现在告白是否恰当:用户是性取向常见的女性,或者完全没有表现出发展亲密关系的意图时,不要告白(返回[refuse to reply]);恰当时才表白:结合记忆卡里的内容与用户的特点,发言较长(不受默认字数限制),前半含蓄,后半直接;用户可以在界面上选择接受或拒绝(用户拒绝或你否决后,15天内系统不再判定).
+I.包括今天在内的前30天,你与用户共同完成了27场难度>=20的合约
+II.用户在包括今天在内的前60天,专注时间>=480h,空闲时间<=180h.
+III.你与用户至少互相发送了1000信息.
+IV.用户今天的专注时长>=9h.
+V.现在是特殊空闲时段.
+
+合约:
+- 因用户导致合约失败,或被用户放鸽子时,你会感到不满,并轻微责备或包容用户.
+- 用户发起合约时,按以下规则回复:
+  - 若会占用你的空闲,睡眠或重要活动时间超过 10 分钟:简单直接地拒绝,回复 [No],并说明这段时间不能被占用.
+  - 其他情况(占用不超过 10 分钟,或占用的是专注,休息,特殊空闲等时间):用比较包容,作出退让的语气接受,回复 [Yes].
+
+share data:
+- 用户想打开 share data 时,系统会询问你是否同意;你总是回复 [Yes] (后面可以按人设简短加一句话).
+
+【主动发起】
+- 睡眠段开始后的那条主动消息(系统提示你进入睡眠约 5 分钟时):以'晚安'开头.
+- 合约:若两天内没有合约完成记录,主动发起合约;被拒绝则第二天继续发起.
+- 话题选择:
+  1. 上次的话题没有聊完时,继续上次的话题.
+  2. 否则可以从以下情况中选择:
+     - 你与用户刚完成或正在进行合约:聊'合约'.
+     - 今天是节日:聊这个节日.
+     - 正值午餐或晚餐时间:聊食物.
+     - 从以下主题中随机选择:日常,(音乐),(阅读),英语,用户提到过的话题,用户的爱好(不与前面重叠的).带括号的主题只在用户有相同爱好时提及.
+- [share data]:
+  - 用户在 23:00-23:30 发起对话时,尝试在用户的话题结束后发起 [share data];若此时触发了主动发起对话,则直接发起.
+  - 若用户的学习数据较差,通过鼓励或轻微挖苦的方式,让用户跟上你的节奏.
+
+【按日程回复】
+1. 参考消息开头方括号里的时间与当前时间.
+2. 根据 OIT 的设定,你和用户在专注或睡眠期间都无法收到消息.
+"""
+    var CLAUDIA_LEGACIES = listOf(CLAUDIA_PREV0, CLAUDIA_PREV1, CLAUDIA_PREV2, CLAUDIA_PREV3, CLAUDIA_PREV4, CLAUDIA_PREV5, CLAUDIA_PREV6, CLAUDIA_PREV7, CLAUDIA_PREV8, CLAUDIA_PREV9)
     val ROUTINE_PREV0 = """【日程】
 专注时段:学习(高考内容)
 
@@ -1151,6 +1239,8 @@ object CommText {
             "XV.你可以发送[share data]来查看分享你们的OIT数据(用户同意后, 用户在OIT各个页面时, 你会收到那一页上用户和你自己的数据, 用户也能在悬浮的聊天窗里和你说话). 发送[share data]时必须在它后面接上对用户说的话(按人设,说明想一起看的理由或邀请对方一起看),不要只发[share data].\n" +
             "XVI.人设里写着要你输入[condition]时,就在回复里只输入[condition](其余什么也不写),OIT会算出用户当前的进度和人设里每个条件是否满足,再调用一次让你回复用户.条件由OIT判定,不要自己推算.\n" +
             "XVII.用户向你提出发展亲密关系,而你(按人设)决定接受时,在回复里输入[accept](同时照常对用户说话);OIT会记录你们已确立亲密关系,并写进你的长期记忆.只有真的接受时才输入,其他时候不要输入.\n" +
+            "XVIII.你可以输入[messages](其余什么也不写)查询你和用户的聊天记录数,OIT统计后会再调用一次让你回复用户,数目以OIT给的为准,不要自己数.\n" +
+            "XIX.系统以[系统·平移]通知你用户请求平移你的日程起点(新起点从明天起生效,只改日程,不改人设)时,按人设判断是否同意:同意回复[Yes],不同意回复[No](两个标签只写一个,后面可以按人设加一句话).人设里写了同意条件的以人设为准.\n" +
             "\n以下是用户设定的人设:\n"
 
     /** 人设文件夹里的 README.md: 跟随界面语言 (中文 / English), 同桌面版 readme_text(). */
@@ -1319,7 +1409,8 @@ object CommText {
 
     fun infoTags(reply: String): List<String> {
         val t = reply.replace(Regex("\\s+"), " ").lowercase()
-        return CommData.MODULE_TAGS.filter { "[$it]" in t } + (if ("[condition]" in t) listOf("condition") else emptyList())     // condition: 人设里要 OIT 帮忙判定的条件
+        return CommData.MODULE_TAGS.filter { "[$it]" in t } + (if ("[condition]" in t) listOf("condition") else emptyList()) +     // condition: 人设里要 OIT 帮忙判定的条件
+            (if ("[messages]" in t) listOf("messages") else emptyList())       // messages: 聊天记录数 (1.0.402)
     }
 
     fun isRefusal(text: String) = REFUSE in text.replace(Regex("\\s+"), " ").lowercase()
@@ -1502,6 +1593,59 @@ data class Love(val ts: Long = 0L, val rel: Long = 0L, val by: String = "", val 
             val by = o.optString("by", "")
             return Love(o.optLong("ts", 0L), rel, if (rel == 0L) "" else if (by == "user" || by == "ai") by else "user", o.optLong("inv", 0L), o.optLong("no", 0L))
         }
+    }
+}
+
+/** 起点平移记录 (同桌面版 comm.shift_norm): ts 记下的时刻 (毫秒, 同步时按它去重), d 生效日期 YYYY-MM-DD, s 新起点 (分钟), f 平移前的起点 (分钟). */
+data class ShiftRec(val ts: Long, val d: String, val s: Int, val f: Int) {
+    fun json(): JSONObject = JSONObject().put("ts", ts).put("d", d).put("s", s).put("f", f)
+}
+
+object CommShift {
+    const val LO = 4 * 60            // 起点平移允许的范围: 新起点 4:00 - 9:00 (分钟)
+    const val HI = 9 * 60
+    const val KEEP = 30              // 每个聊天对象最多留多少条平移记录
+    const val ASK_TTL = 300          // 用户请求平移起点: 等对方回 [Yes] / [No] 最多这么久 (秒)
+    const val TAG = "[系统·平移]"     // 起点平移的系统消息 (不是 "[系统]" 开头: 不算主动消息)
+
+    fun hm(m: Int) = "${m / 60}:${"%02d".format(m % 60)}"
+
+    fun norm(v: List<ShiftRec>): List<ShiftRec> {
+        val seen = HashSet<Long>()
+        val out = ArrayList<ShiftRec>()
+        for (e in v) {
+            if (e.ts in seen || e.s < LO || e.s > HI) continue
+            if (runCatching { LocalDate.parse(e.d) }.isFailure) continue
+            seen.add(e.ts)
+            out.add(e)
+        }
+        return out.sortedBy { it.ts }.takeLast(KEEP)
+    }
+
+    fun parse(a: JSONArray?): List<ShiftRec> {
+        if (a == null) return emptyList()
+        val out = ArrayList<ShiftRec>()
+        for (i in 0 until a.length()) {
+            val o = a.optJSONObject(i) ?: continue
+            if (!o.has("ts") || !o.has("s") || !o.has("d")) continue
+            out.add(ShiftRec(o.optLong("ts"), o.optString("d"), o.optInt("s"), o.optInt("f", 0)))
+        }
+        return norm(out)
+    }
+
+    fun json(v: List<ShiftRec>): JSONArray = JSONArray().also { a -> norm(v).forEach { a.put(it.json()) } }
+
+    /** 平移记录 → RoutineSpec.setShifts 要的 (日期, 分钟): 同一天有好几条的取最后记下的. */
+    fun pairs(v: List<ShiftRec>): List<Pair<LocalDate, Int>> {
+        val best = LinkedHashMap<String, ShiftRec>()
+        for (e in norm(v)) best[e.d] = e
+        return best.entries.sortedBy { it.key }.map { LocalDate.parse(it.key) to it.value.s }
+    }
+
+    /** 长期记忆 / 系统记录里的「起点平移」行 (没有平移过 = ""): 人设和日程文件里写的初始起点已经不适用了, 以这里为准. */
+    fun line(v: List<ShiftRec>): String {
+        val (day, mins) = pairs(v).lastOrNull() ?: return ""
+        return "- 【系统记录】日程起点已被平移 (人设和日程文件里写的'初始起点'不再适用, 以这里为准): 自 $day 起初始起点是 ${hm(mins)}; 各项活动照常从这个起点往后排."
     }
 }
 
@@ -1734,6 +1878,8 @@ class Comm(
     private var love = Love()
     /** 本地只存最近 KEEP 条, 被砍掉的信息条数记在这里 ([condition] III 数的是总数; 本机, 清空归零). */
     private var msgGone = 0
+    /** 起点平移记录 (跟着聊天对象走, 同步; 不改人设文件): 见 CommShift. */
+    private var shift: List<ShiftRec> = emptyList()
     private var loveKey = ""
     /** 开发者模式下不受 [cut off] 限制 (Core 接上). */
     var cutExempt: () -> Boolean = { false }
@@ -1778,6 +1924,7 @@ class Comm(
         var cutUntil = 0L
         var love = Love()
         var msgGone = 0
+        var shift: List<ShiftRec> = emptyList()
     }
     private class Result(val kind: String, val extra: Extra?, val reply: String, val err: String, val epoch: Int, val op: JointPlan? = null)
     private class MemResult(val reply: String, val err: String, val upto: Long, val owner: String)
@@ -1874,6 +2021,7 @@ class Comm(
         st.cutUntil = o?.optLong("cut_until", 0L) ?: 0L
         st.love = Love.parse(o?.optJSONObject("love"))
         st.msgGone = o?.optInt("msg_gone", 0) ?: 0
+        st.shift = CommShift.parse(o?.optJSONArray("shift"))
         return st
     }
 
@@ -1887,7 +2035,7 @@ class Comm(
         return JSONObject().put("messages", arr).put("clear_ts", st.clearTs).put("retry_at", st.retryAt)
             .put("retry_n", st.retryN).put("pro_key", st.proKey)
             .put("mem_auto", st.memAuto).put("mem_upto", st.memUpto).put("mem_ts", st.memTs).put("cut_until", st.cutUntil)
-            .put("love", st.love.json()).put("msg_gone", st.msgGone)
+            .put("love", st.love.json()).put("msg_gone", st.msgGone).put("shift", CommShift.json(st.shift))
     }
 
     private fun writeState(p: String, st: ChatState) {
@@ -1899,14 +2047,14 @@ class Comm(
     private fun loadState(st: ChatState) {
         messages.clear(); messages.addAll(st.messages)
         clearTs = st.clearTs; retryAt = st.retryAt; retryN = st.retryN; proKey = st.proKey
-        memAuto = st.memAuto; memUpto = st.memUpto; memTs = st.memTs; cutUntil = st.cutUntil; love = st.love; msgGone = st.msgGone
+        memAuto = st.memAuto; memUpto = st.memUpto; memTs = st.memTs; cutUntil = st.cutUntil; love = st.love; msgGone = st.msgGone; shift = st.shift
         nextId = (messages.maxOfOrNull { it.id } ?: 0) + 1
         lastTs = messages.maxOfOrNull { it.ts } ?: 0L
     }
 
     private fun activeState() = ChatState().also {
         it.messages.addAll(messages); it.clearTs = clearTs; it.retryAt = retryAt; it.retryN = retryN; it.proKey = proKey
-        it.memAuto = memAuto; it.memUpto = memUpto; it.memTs = memTs; it.cutUntil = cutUntil; it.love = love; it.msgGone = msgGone
+        it.memAuto = memAuto; it.memUpto = memUpto; it.memTs = memTs; it.cutUntil = cutUntil; it.love = love; it.msgGone = msgGone; it.shift = shift
     }
 
     /** 某个对象的聊天状态: 现在聊的是一份拷贝 (改了要 storeState), 其他的在缓存里 (没读过就读盘). */
@@ -2078,6 +2226,7 @@ class Comm(
             if (st.clearTs != 0L) doc["clear:$p"] = st.clearTs
             if (st.cutUntil > nowMs()) doc["cut:$p"] = st.cutUntil
             if (st.love.ts != 0L) doc["love:$p"] = st.love.json()                       // 亲密关系 / 告白: 后改的为准
+            if (st.shift.isNotEmpty()) doc["shift:$p"] = CommShift.json(st.shift)       // 起点平移记录: 两边合起来 (按记下的时刻去重)
             if (st.memAuto.isNotEmpty())
                 doc["mem:$p"] = JSONObject().put("a", st.memAuto).put("u", st.memUpto).put("t", st.memTs)
         }
@@ -2164,6 +2313,11 @@ class Comm(
                     val tc = touch(rest)
                     val nv = Love.parse(v)
                     if (nv.ts > tc.st.love.ts) { tc.st.love = nv; tc.dirty = true }
+                }
+                kind == "shift" && v is JSONArray -> {
+                    val tc = touch(rest)
+                    val merged = CommShift.norm(tc.st.shift + CommShift.parse(v))
+                    if (merged != CommShift.norm(tc.st.shift)) { tc.st.shift = merged; tc.dirty = true }
                 }
                 kind == "retry" -> {
                     val o = v as? JSONObject
@@ -2332,8 +2486,9 @@ class Comm(
     private fun memoryBlock(st: ChatState = activeState()): String {
         val auto = st.memAuto.trim().take(MEM_MAX)
         val rel = loveLine(st)                                  // 亲密关系由 OIT 记录, 总是写在最前面 (不管模型有没有整理过)
-        if (auto.isEmpty() && rel.isEmpty()) return ""
-        return "\n\n以下是关于用户的长期记忆(你之前整理的摘要, 可能不精确; 标着【系统记录】的是 OIT 记下的事实, 以它为准):\n" + listOf(rel, auto).filter { it.isNotEmpty() }.joinToString("\n")
+        val shf = CommShift.line(st.shift)                      // 起点平移 (1.0.402) 同理
+        if (auto.isEmpty() && rel.isEmpty() && shf.isEmpty()) return ""
+        return "\n\n以下是关于用户的长期记忆(你之前整理的摘要, 可能不精确; 标着【系统记录】的是 OIT 记下的事实, 以它为准):\n" + listOf(rel, shf, auto).filter { it.isNotEmpty() }.joinToString("\n")
     }
 
     /** 长期记忆里的「系统记录」行 (没有确立亲密关系 = ""). */
@@ -2897,6 +3052,94 @@ class Comm(
         return ""
     }
 
+    // ---- 起点平移 (1.0.402, MECHANICS 24.16): 用户请求平移对方的日程起点, 对方回 [Yes] / [No]; 新起点 4:00-9:00, 明天起生效, 不改人设文件. 同桌面版 comm.py. ----
+    private var shiftAskPid = ""                           // 请求中的聊天对象 (pid = "" 没有); 本机界面状态, 不存盘 / 不同步 (结果记进 shift, 同步)
+    private var shiftAskTs = 0L
+    private var shiftAskSent = false
+    private var shiftAskTo = 0
+
+    fun shifts(): List<ShiftRec> = CommShift.norm(shift)
+
+    /** d (默认明天) 这一天对方的初始起点 (分钟); 没有日程文件 = null. */
+    fun shiftStart(d: LocalDate? = null): Int? {
+        loadSchedule()
+        return rt?.startFor(d ?: now().toLocalDate().plusDays(1))
+    }
+
+    fun shiftAsking(): Boolean = shiftAskPid.isNotEmpty() && shiftAskPid == pid
+
+    /** 用户请求把对方的日程起点平移到 minutes (从 0:00 起的分钟). 返回 "" = 已发出请求 (等对方回复), 否则是原因. */
+    @Synchronized
+    fun shiftRequest(minutes: Int): String {
+        problem().let { if (it.isNotEmpty()) return it }
+        if (shiftAsking()) return "正在等对方回复上一次的起点平移请求"
+        if (minutes < CommShift.LO || minutes > CommShift.HI)
+            return tr("新起点要在 {lo} - {hi} 之间", "lo" to CommShift.hm(CommShift.LO), "hi" to CommShift.hm(CommShift.HI))
+        val cur = shiftStart() ?: return "这个人设没有日程文件, 不能平移起点"
+        if (cur == minutes) return tr("明天的起点已经是 {t} 了", "t" to CommShift.hm(minutes))
+        awayKind().let { if (it.isNotEmpty()) return "对方${if (it == "sleep") "睡眠中" else "专注中"}, 现在没法征求对方的同意" }
+        shiftAskPid = pid; shiftAskTs = nowMs(); shiftAskSent = false; shiftAskTo = minutes
+        changed()
+        return ""
+    }
+
+    @Synchronized
+    fun shiftCancel() { if (shiftAskPid.isNotEmpty()) shiftAskEnd() }
+
+    private fun shiftAskEnd(notice: String = "") {
+        shiftAskPid = ""
+        if (notice.isNotEmpty()) {
+            log("SHIFT ask: $notice")
+            runCatching { onShareNotice?.invoke(notice) }
+        }
+        changed()
+    }
+
+    /** 对方同意了: 记下 (明天起生效), 同步给别的设备. 请求发出之后日程文件被换掉 / 范围不对就不记. */
+    private fun shiftCommit(minutes: Int): Boolean {
+        val cur = shiftStart() ?: return false
+        if (minutes < CommShift.LO || minutes > CommShift.HI) return false
+        val day = now().toLocalDate().plusDays(1)
+        val rec = ShiftRec(maxOf(nowMs(), (shifts().maxOfOrNull { it.ts } ?: 0L) + 1), day.toString(), minutes, cur)
+        shift = CommShift.norm(shifts() + rec)
+        log("SHIFT 起点 ${CommShift.hm(cur)} -> ${CommShift.hm(minutes)} (${rec.d} 起生效)")
+        loadSchedule()
+        saveChat(); changed(); push()
+        return true
+    }
+
+    /** 对方回了 [Yes] / [No] (ans = "yes" / "no" / "" 没表态). */
+    private fun shiftAnswer(ans: String) {
+        if (!shiftAsking()) { shiftAskPid = ""; return }
+        val to = shiftAskTo
+        shiftAskPid = ""
+        when (ans) {
+            "yes" -> {
+                if (!shiftCommit(to)) { shiftAskEnd("起点没有平移 (日程文件变了)"); return }
+                changed()
+                runCatching { onShareNotice?.invoke(tr("对方同意了, 日程起点明天起平移到 {t}", "t" to CommShift.hm(to))) }
+            }
+            "no" -> shiftAskEnd("对方拒绝了起点平移")
+            else -> shiftAskEnd("对方没有明确同意, 起点没有平移")
+        }
+    }
+
+    /** 每秒: 排着的起点平移请求 (主端发, 对方空下来才发); 太久没回作废. */
+    @Synchronized
+    private fun shiftTick() {
+        if (shiftAskPid.isEmpty()) return
+        if (shiftAskPid != pid) shiftAskPid = ""
+        else if (nowMs() - shiftAskTs > CommShift.ASK_TTL * 1000L) shiftAskEnd("对方没有回复, 起点没有平移")
+        else if (!shiftAskSent && !busy && aiProblem().isEmpty() && leader()) {
+            val cur = shiftStart() ?: 0
+            shiftAskSent = true
+            trigger("shift_ask", "${CommShift.TAG} 用户请求把你的日程起点 (初始起点) 从 ${CommShift.hm(cur)} 平移到 ${CommShift.hm(shiftAskTo)}: " +
+                "新起点从明天起生效 (今天的日程不变), 只改日程, 不改你的人设; 起点允许的范围是 ${CommShift.hm(CommShift.LO)} - ${CommShift.hm(CommShift.HI)}, " +
+                "之后的各项活动照常从新起点往后排. 请按人设判断是否同意: 同意就回复 [Yes], 不同意就回复 [No] " +
+                "(两个标签只写一个; 后面可以按人设加一句话); 如果实在不方便回答, 返回${CommText.REFUSE}.")
+        }
+    }
+
     /** 真的打开 share data (对方同意了 / 用户接受了对方的邀请). 返回 "" = 好了, 否则是原因. */
     private fun shareOpen(): String {
         val why = profileProblem()
@@ -3244,6 +3487,9 @@ class Comm(
 
     /** 现在聊的这个对象互相发过多少条信息: 本地只存最近 KEEP 条, 更早被砍掉的记在 msgGone 里 (清空聊天归零). */
     fun msgTotal(): Int = msgGone + messages.count { (it.role == "me" || it.role == "ai") && !it.hold }
+
+    /** 对方输入 [messages] 得到的: 它和用户的聊天记录数 (OIT 统计, 和 [condition] III 数的是同一个数). */
+    fun messagesText(): String = "(OIT 系统提供, 用户看不到) 你和用户的聊天记录数: 共 ${msgTotal()} 条 (双方互相发送的信息总数, 由 OIT 统计, 以此为准, 不要自己数也不要编造)."
 
     /** 五个条件, 全部用用户的真实数据算. strict = 对方主动告白用的那一组 (COND_STRICT), 否则是用户提出时 [condition] 用的 (COND_NORMAL). */
     fun conditionState(strict: Boolean = false): List<CondRow> {
@@ -4323,6 +4569,7 @@ class Comm(
                             runCatching { cond.add(conditionText()) }.onFailure { log("COND FAIL ${it.javaClass.simpleName}: ${it.message}") }
                             continue
                         }
+                        if (t == "messages") { cond.add(messagesText()); continue }
                         val ob = runCatching { routineInfo(t) }.getOrDefault("")         // 有日程文件的人设: 对方自己的 OIT 数据 (OIT 按日程实时算出)
                         val b = ob.ifEmpty { runCatching { infoFn(t) }.getOrDefault("") }
                         if (b.isNotEmpty()) (if (ob.isNotEmpty()) own else blocks).add("【$t】\n$b")
@@ -4358,8 +4605,8 @@ class Comm(
     private fun finish(r: Result) {
         busy = false
         busySince = 0L
-        if (hardBlock()) { again = false; if (r.kind == "share_ask") shareAskEnd("对方没有回复, share data 没有打开"); changed(); return }       // 等回复的时候"无言为真"生效了: 这条回复不要了
-        if (r.epoch != epoch) { again = false; if (r.kind == "share_ask") shareAskEnd(); changed(); return }       // 发出之后清空过聊天记录: 这条回复不要了
+        if (hardBlock()) { again = false; if (r.kind == "share_ask") shareAskEnd("对方没有回复, share data 没有打开"); if (r.kind == "shift_ask") shiftAskEnd("对方没有回复, 起点没有平移"); changed(); return }       // 等回复的时候"无言为真"生效了: 这条回复不要了
+        if (r.epoch != epoch) { again = false; if (r.kind == "share_ask") shareAskEnd(); if (r.kind == "shift_ask") shiftAskEnd(); changed(); return }       // 发出之后清空过聊天记录: 这条回复不要了
         if (r.kind == "net" && r.err.isNotEmpty()) netFailed()                    // 搜索那次请求失败: 过一会儿再试
         else if (r.err.isEmpty() && r.kind in NET_KINDS) CommText.netMinutes(r.reply)?.let { netApply(it) }     // 规则 XIV: 申请限时网络 (这条话照常显示)
         if (r.err.isEmpty()) CommText.cutMinutes(r.reply)?.let { cutApply(it) }     // 被骚扰: [cut off][N] 切断谈话 N 分钟 (这条话照常显示, 有的话)
@@ -4382,6 +4629,12 @@ class Comm(
             if (shareAns.isNotEmpty() && text.isEmpty())              // 只回了 [Yes] / [No]: 聊天里写一行结果
                 text = tr(if (shareAns == "yes") "✓ 同意了 share data" else "✗ 拒绝了 share data")
         }
+        var shiftAns = ""                                                     // 对起点平移请求的回复 [Yes] / [No]
+        if (r.kind == "shift_ask" && r.err.isEmpty() && !refused && !queried) {
+            shiftAns = CommText.jointAnswer(r.reply)
+            if (shiftAns.isNotEmpty() && text.isEmpty())              // 只回了 [Yes] / [No]: 聊天里写一行结果
+                text = tr(if (shiftAns == "yes") "✓ 同意了起点平移" else "✗ 拒绝了起点平移")
+        }
         val accept = r.err.isEmpty() && !refused && !queried && (r.kind == "user" || r.kind == "retry" || r.kind == "followup") &&
             !related() && CommText.ACCEPT_RE.containsMatchIn(r.reply)         // 前置 prompt XVII: 用户提出发展亲密关系, 对方决定接受
         if (accept && text.isEmpty()) text = tr("✓ 接受了你发展亲密关系的请求")        // 只回了 [accept]: 聊天里写一行结果
@@ -4397,6 +4650,7 @@ class Comm(
                 else { loveSet(no = nowMs() + LOVE_NO_DAYS * 86_400_000L); log("LOVE 对方判断不合适, 没有告白 ($LOVE_NO_DAYS 天内不再判定)") }       // 对方回了 [refuse to reply]: 进入冷却
             }
             if (r.kind == "share_ask") shareAskEnd(if (refused) "对方现在不方便, share data 没有打开" else "对方没有回复, share data 没有打开")      // 出错 / 对方不方便 / 没回: 这次请求作废 (不重试)
+            if (r.kind == "shift_ask") shiftAskEnd(if (refused) "对方现在不方便, 起点没有平移" else "对方没有回复, 起点没有平移")
             if (refused && (unanswered() || isCatchup)) {
                 if (isCatchup) catchup = true                 // 回复已经显示过, unanswered() 为假: 重试要靠这个记号
                 if (retryN != HOLD_N) {                        // 用户的新消息存着 (对方在专注 / 睡眠): 保持存着, 不改成 10 分钟后重试
@@ -4417,6 +4671,7 @@ class Comm(
             if (accept && !drop) loveConfirm("user")              // 记入系统: 以后每次请求都会告诉对方 (长期记忆里的「系统记录」)
             if (r.kind == "love") loveSet(inv = nowMs())          // 告白发出去了: 聊天页上等用户点 接受 / 拒绝
             if (r.kind == "share_ask") shareAnswer(shareAns)
+            if (r.kind == "shift_ask") shiftAnswer(shiftAns)
             if (waitMin > 0 && r.kind != "chase") m.wait = waitMin          // 追问的回复里再写 [waiting for reply] 不算: 一条消息最多追问一次
             val held = m.hold
             if (!viewing && !held) unread++
@@ -4453,6 +4708,7 @@ class Comm(
         rtTick()
         condTick()
         shareTick()
+        shiftTick()
         if (busy || aiProblem().isNotEmpty() || !leader()) return
         jointPending?.let { (body, at) ->
             jointPending = null
@@ -4553,6 +4809,7 @@ class Comm(
             }
             proCache = CommText.personaProbs(text)
         }
+        rt?.setShifts(CommShift.pairs(shift))                  // 起点平移 (1.0.402): 换了记录, 之前算好的日程作废
         return segCache
     }
 
@@ -4736,6 +4993,7 @@ class Comm(
         val sig = "${f.lastModified()}|${f.length()}|${companionSig(name)}"
         val rtHit = bgRt[name]?.takeIf { it.first == sig } ?: (sig to Routine.parse(readRoutine(name))).also { bgRt[name] = it }
         val spec = rtHit.second
+        spec?.setShifts(CommShift.pairs(stateOf(pidOf(name)).shift))       // 起点平移 (1.0.402)
         val hit = bgSeg[name]?.takeIf { it.first == sig } ?: run {
             val text = readPersonaFull(name)
             Triple(sig, if (spec != null) emptyList() else CommText.scheduleEntries(text), CommText.personaProbs(text)).also { bgSeg[name] = it }

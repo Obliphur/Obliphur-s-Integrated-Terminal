@@ -91,6 +91,8 @@ class CommPage(tk.Frame):
         ttk.Button(tools, text="🤝", width=3, command=self._joint).pack(side="left", padx=(4, 0))   # 联合行动
         self.btn_alarm = ttk.Button(tools, text="⏲", width=3, command=self._co_alarm)           # ⏰ 现在的对象是共时闹钟 / ⏲ 不是
         self.btn_alarm.pack(side="left", padx=(4, 0))
+        self.btn_shift = ttk.Button(tools, text="🕰", width=3, command=self._shift)              # 起点平移: 请求对方把日程起点换到 4:00-9:00 之间 (⏳ = 等对方回复)
+        self.btn_shift.pack(side="left", padx=(4, 0))
         # share data: 打开后离开沟通页, 在别的页面里对方能看到那一页上你们的数据, 页面下方有聊天悬浮窗; 回到沟通自动关闭
         self.btn_share = ttk.Button(tools, text="🙈", width=3, command=self._toggle_share)         # 👀 share data 开着 / 🙈 关着
         self.btn_share.pack(side="left", padx=(4, 0))
@@ -237,6 +239,7 @@ class CommPage(tk.Frame):
         elif self.love_btns.winfo_manager() == "pack":
             self.love_btns.pack_forget()
         cfg(self.btn_share, text="👀" if c.share_on() else ("⏳" if c.share_asking() else "🙈"))      # ⏳ = 等对方同意
+        cfg(self.btn_shift, text="⏳" if c.shift_asking() else "🕰")
         if c.share_invite():
             if self.share_btns.winfo_manager() != "pack":
                 self.share_btns.pack(side="left", padx=(8, 0))
@@ -458,6 +461,59 @@ class CommPage(tk.Frame):
             toast.warn(tr(why))
         self.refresh(force=True)
 
+    # ---- 起点平移 ----
+    def _shift(self):
+        """🕰 起点平移: 请求对方把日程起点 (初始起点) 换到 4:00-9:00 之间的某个时刻, 明天起生效; 对方回 [Yes] / [No]. 等回复的时候再点 = 取消."""
+        c = self.comm
+        if c.shift_asking():
+            c.shift_cancel()
+            self.refresh(force=True)
+            return
+        if not c.pid:
+            toast.warn(tr("先选一个聊天对象."))
+            return
+        cur = c.shift_start()
+        if cur is None:
+            toast.warn(tr("这个人设没有日程文件, 不能平移起点"))
+            return
+        bg = COLORS["bg"]
+        width = config.scaled(460)
+        dlg = Modal(self.winfo_toplevel(), tr("起点平移"), width=width, height=config.scaled(300))
+        wrap = width - config.scaled(60)
+        tk.Label(dlg.body, text=tr("请求对方把日程的起点平移到新的时刻 (4:00 - 9:00). 对方同意后明天起生效, 今天的日程不变; "
+                                   "只记在 OIT 里, 不会修改人设文件. 对方可以拒绝."),
+                 bg=bg, fg=COLORS["text_dim"], font=config.font("small"), justify="left", anchor="w", wraplength=wrap).pack(fill="x")
+        tk.Label(dlg.body, text=tr("明天的起点: {t}", t=comm_mod.hm_text(cur)), bg=bg, fg=COLORS["text"],
+                 font=config.font("body"), anchor="w").pack(fill="x", pady=(10, 4))
+        row = tk.Frame(dlg.body, bg=bg)
+        row.pack(fill="x")
+        lo_h, hi_h = comm_mod.SHIFT_LO // 60, comm_mod.SHIFT_HI // 60
+        var_h = tk.StringVar(value=str(min(hi_h, max(lo_h, cur // 60))))
+        var_m = tk.StringVar(value=f"{cur % 60:02d}")
+        ttk.Spinbox(row, from_=lo_h, to=hi_h, textvariable=var_h, width=4, wrap=False).pack(side="left")
+        tk.Label(row, text=":", bg=bg, fg=COLORS["text"], font=config.font("body", bold=True)).pack(side="left", padx=4)
+        ttk.Spinbox(row, from_=0, to=59, textvariable=var_m, width=4, format="%02.0f", wrap=True).pack(side="left")
+
+        def go():
+            try:
+                mins = int(var_h.get()) * 60 + int(var_m.get())
+            except ValueError:
+                toast.warn(tr("时间不对"))
+                return
+            why = c.shift_request(mins)
+            if why:
+                toast.warn(tr(why))
+                return
+            toast.info(tr("已向对方提出请求, 等待回复"))
+            dlg.finish(True)
+
+        ttk.Button(dlg.buttons, text=tr("请求"), style="Accent.TButton", command=go).pack(side="right")
+        ttk.Button(dlg.buttons, text=tr("取消"), command=lambda: dlg.finish(False)).pack(side="right", padx=(0, 8))
+        dlg.update_idletasks()
+        dlg._center(self.winfo_toplevel(), width, dlg.winfo_reqheight())
+        dlg.wait()
+        self.refresh(force=True)
+
     def _love_respond(self, accept: bool):
         why = self.comm.love_respond(accept)
         if why:
@@ -535,6 +591,7 @@ class CommPage(tk.Frame):
                 ("🔔 / 🔕", "主动发起", "点一下切换: 🔔 = 允许这个对象主动给你发消息 / 追问, 🔕 = 禁止."),
                 ("⏰ / ⏲", "共时闹钟", "点开设置: 把这个对象设为共时闹钟后 (⏰), 闹钟的时间跟随它的日程里的实际起床时间 (睡眠中也会响); "
                                     "哪些设备响铃由你手动选, 铃声和音量用「设置 → 闹钟」里的. 一次只有一个对象是共时闹钟."),
+                ("🕰", "起点平移", "请求对方把日程的起点平移到新的时刻 (4:00 - 9:00). 对方同意后明天起生效, 今天的日程不变; 只记在 OIT 里, 不会修改人设文件. 对方可以拒绝."),
                 ("🖼", "识别字体", "选一张图片, OIT 让模型把图片上的文字读出来, 放进聊天框 (可以再改). 不能发送图片, 只能提取文字; 图片不会被保存, 对方也看不到."),
                 ("🤝", "联合行动", "邀请对方一起完成一次合约: 界面会移到合约页, 选好词条后点「确定选择」(原来「开始行动」的位置), "
                                 "再输入开始时间; 词条和合约的基础规则会打包发给对方, 结束时间自动算好写在聊天框上方. "

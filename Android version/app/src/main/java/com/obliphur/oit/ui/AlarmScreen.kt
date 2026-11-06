@@ -54,6 +54,45 @@ private fun AlarmSwitch(label: String, value: Boolean, onChange: (Boolean) -> Un
     }
 }
 
+private const val ALARM_FILE_MAX_MB = 25
+
+/** 把用户选的音频文件复制进应用私有目录: 成功 = (复制后的路径, 原文件名); 太大 / 读不出 / 不是能播放的音频 = null. */
+private fun importAlarmFile(ctx: android.content.Context, uri: Uri): Pair<String, String>? {
+    var name = ""
+    runCatching {
+        ctx.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+            if (c.moveToFirst()) name = c.getString(0) ?: ""
+        }
+    }
+    val ext = name.substringAfterLast('.', "").lowercase().takeIf { it.length in 1..5 && it.all { ch -> ch.isLetterOrDigit() } } ?: "audio"
+    val dst = java.io.File(ctx.filesDir, "alarm_sound_${System.currentTimeMillis()}.$ext")
+    try {
+        var total = 0L
+        val limit = ALARM_FILE_MAX_MB * 1024L * 1024L
+        ctx.contentResolver.openInputStream(uri)?.use { ins ->
+            dst.outputStream().use { out ->
+                val buf = ByteArray(64 * 1024)
+                while (true) {
+                    val n = ins.read(buf)
+                    if (n < 0) break
+                    total += n
+                    if (total > limit) throw java.io.IOException("too big")
+                    out.write(buf, 0, n)
+                }
+            }
+        } ?: throw java.io.IOException("cannot open")
+        val r = android.media.MediaMetadataRetriever()
+        try {
+            r.setDataSource(dst.path)
+            if (r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_HAS_AUDIO) == null) throw java.io.IOException("no audio")
+        } finally { runCatching { r.release() } }
+        return dst.path to name.ifEmpty { dst.name }
+    } catch (e: Exception) {
+        runCatching { dst.delete() }
+        return null
+    }
+}
+
 /** 设置 → 闹钟: 开关 + 时间, 铃声 (+ 试听), 音量. 即时保存, 没有等待期. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -74,6 +113,21 @@ fun AlarmSettings() {
             else @Suppress("DEPRECATION") r.data?.getParcelableExtra(RingtoneManager.EXTRA_RINGTONE_PICKED_URI)
             a.set(custom = uri?.toString() ?: "", tone = "custom")
         }
+    }
+
+    // 从文件里选一个音频当铃声: 复制进应用私有目录 (大小有限制), 能被系统读出时长才算数
+    val pickFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        Thread {
+            val res = importAlarmFile(ctx, uri)
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                if (res == null) core.toast(tr("音频文件无法使用 (要能播放, 且不超过 {n} MB).", "n" to ALARM_FILE_MAX_MB), "warn")
+                else {
+                    if (a.audio.isNotEmpty() && a.audio != res.first) runCatching { java.io.File(a.audio).delete() }
+                    a.set(audio = res.first, audioName = res.second, tone = "file")
+                }
+            }
+        }.apply { isDaemon = true }.start()
     }
 
     OitCard {
@@ -117,10 +171,17 @@ fun AlarmSettings() {
                 }
             }
         }
+        if (a.tone == "file") {
+            val ok = a.audio.isNotEmpty() && java.io.File(a.audio).isFile
+            Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Dim(if (ok) a.audioName.ifEmpty { java.io.File(a.audio).name } else tr("还没有选择文件 (现在响经典警报)"), size = 13, modifier = Modifier.weight(1f))
+                PlainButton(tr("选择音频文件…")) { pickFile.launch(arrayOf("audio/*")) }
+            }
+        }
         Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Dim(tr("铃声会循环播放, 直到你把它关掉 (最多 5 分钟). 睡眠中也会响."), size = 12, modifier = Modifier.weight(1f))
             PlainButton(if (AlarmSound.playing) tr("■ 停止") else tr("▶ 试听"), enabled = !core.alarmRinging()) {
-                if (AlarmSound.playing) AlarmSound.stop(ctx) else AlarmSound.start(ctx, a.tone, a.custom, a.volume, AlarmStore.PREVIEW_SECONDS)
+                if (AlarmSound.playing) AlarmSound.stop(ctx) else AlarmSound.start(ctx, a.tone, a.soundArg(), a.volume, AlarmStore.PREVIEW_SECONDS)
             }
         }
     }

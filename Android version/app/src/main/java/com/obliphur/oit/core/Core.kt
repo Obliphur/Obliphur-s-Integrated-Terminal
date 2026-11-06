@@ -585,7 +585,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         val name = if (hit.co) comm.coAlarmName() else ""
         val hm = "%02d:%02d".format(hit.at.hour, hit.at.minute)
         logNotice("ALARM ring $hm" + if (hit.co) " co=$name" else "")
-        host.startAlarmSound(alarm.tone, alarm.custom, alarm.volume)
+        host.startAlarmSound(alarm.tone, alarm.soundArg(), alarm.volume)
         alarmNotice = notice(tr("⏰  闹钟") + "  " + hm, if (name.isNotEmpty()) tr("{name} 起床了 · 共时闹钟", "name" to name) else tr("闹钟"),
             listOf(NoticeButton(tr("关闭闹钟"), "ok", true)), tag = "alarm", onClose = { host.stopAlarmSound(); alarmNotice = -1 })
     }

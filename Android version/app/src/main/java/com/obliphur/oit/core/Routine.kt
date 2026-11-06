@@ -34,7 +34,26 @@ class RoutineSpec {
     var skipTerms: List<String> = emptyList()
     var badTerms: List<String> = emptyList()
     internal val plans = HashMap<String, List<RtSeg>>()
+    /** 起点平移 (1.0.402): (生效日期, 分钟) 按日期排, 从那一天起起点换成这个分钟数; 记在聊天状态里, 不改日程文件. */
+    var shifts: List<Pair<LocalDate, Int>> = emptyList()
+        private set
     fun ok() = start != null && items.isNotEmpty()
+
+    /** d 这一天的初始起点 (从 0:00 起的分钟): 日程文件里写的, 被平移过的话是最近一次生效的平移 (生效日期 <= d). */
+    fun startFor(d: LocalDate): Int {
+        var s = start!!
+        for ((day, m) in shifts) { if (!day.isAfter(d)) s = m else break }
+        return s
+    }
+
+    /** 换一份起点平移记录; 变了就清掉算好的日程缓存. 返回变没变. 同 routine.Routine.set_shifts. */
+    fun setShifts(v: List<Pair<LocalDate, Int>>): Boolean {
+        val sh = v.sortedWith(compareBy({ it.first }, { it.second }))
+        if (sh == shifts) return false
+        shifts = sh
+        plans.clear()
+        return true
+    }
 }
 
 object Routine {
@@ -201,7 +220,7 @@ object Routine {
 
     fun wakeAt(r: RoutineSpec, d: LocalDate, seed: String): LocalDateTime {
         val (lo, hi) = r.fluct.getValue("sleep_end")
-        return d.atStartOfDay().plusMinutes((r.start!! + rint("$seed|wake|$d", lo, hi)).toLong())
+        return d.atStartOfDay().plusMinutes((r.startFor(d) + rint("$seed|wake|$d", lo, hi)).toLong())
     }
 
     /** [a, b] 里对方起床的时刻 (按时间排) = 每天睡眠段的结束 (wakeAt). 共时闹钟 (1.0.359) 据此响铃; 同 routine.wake_times. */

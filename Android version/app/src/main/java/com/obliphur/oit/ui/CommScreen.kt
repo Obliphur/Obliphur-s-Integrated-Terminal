@@ -57,6 +57,7 @@ import com.obliphur.oit.core.ChatMsg
 import com.obliphur.oit.core.Comm
 import com.obliphur.oit.core.CommData
 import com.obliphur.oit.core.CommSel
+import com.obliphur.oit.core.CommShift
 import com.obliphur.oit.core.CommText
 import com.obliphur.oit.core.parseIso
 import com.obliphur.oit.core.tr
@@ -73,6 +74,8 @@ fun CommScreen(go: (String) -> Unit) {
     var askClear by remember { mutableStateOf(false) }
     var help by remember { mutableStateOf(false) }
     var coAlarm by remember { mutableStateOf(false) }                           // 共时闹钟的弹窗
+    var shiftDlg by remember { mutableStateOf(false) }                          // 起点平移的弹窗
+    var shiftAsk by remember { mutableStateOf(comm.shiftAsking()) }              // 请求了起点平移, 等对方回复 (⏳)
     var jointAsk by remember { mutableStateOf(core.jointAsk) }                  // 合约页选好词条回来了: 输入开始时间
     var jointLine by remember { mutableStateOf(comm.jointLabel() to comm.jointStatusText()) }
     var invite by remember { mutableStateOf(comm.jointInvite() != null) }          // 对方发起的联合行动: 等用户点 接受 / 拒绝
@@ -117,6 +120,7 @@ fun CommScreen(go: (String) -> Unit) {
             (comm.jointInvite() != null).let { if (it != invite) invite = it }
             comm.shareOn().let { if (it != shareOn) shareOn = it }
             comm.shareAsking().let { if (it != shareAsk) shareAsk = it }
+            comm.shiftAsking().let { if (it != shiftAsk) shiftAsk = it }
             comm.shareInvite().let { if (it != shareInv) shareInv = it }
             comm.loveInvite().let { if (it != loveInv) loveInv = it }
             kotlinx.coroutines.delay(250)
@@ -181,6 +185,13 @@ fun CommScreen(go: (String) -> Unit) {
             TextButton({ coAlarm = true }, contentPadding = tight) {
                 Text(if (comm.coAlarmPid().isNotEmpty() && comm.coAlarmPid() == comm.pid) "⏰" else "⏲", fontSize = 18.sp)
             }
+            // 🕰 起点平移: 请求对方把日程起点换到 4:00-9:00 之间的某个时刻, 明天起生效; ⏳ = 等对方回复 (再点 = 取消)
+            TextButton({
+                if (shiftAsk) { comm.shiftCancel(); shiftAsk = comm.shiftAsking() }
+                else if (comm.pid.isEmpty()) core.toast(tr("先选一个聊天对象."), "warn")
+                else if (comm.shiftStart() == null) core.toast(tr("这个人设没有日程文件, 不能平移起点"), "warn")
+                else shiftDlg = true
+            }, contentPadding = tight) { Text(if (shiftAsk) "⏳" else "🕰", fontSize = 18.sp) }
             // share data: 打开后离开沟通页, 在别的页面里对方能看到那一页上你们的数据, 页面下方有聊天悬浮窗; 回到沟通自动关闭
             TextButton({
                 comm.shareEnable(!(shareOn || shareAsk)).let { if (it.isNotEmpty()) core.toast(tr(it), "warn") }      // 等对方同意的时候再点 = 取消
@@ -221,6 +232,10 @@ fun CommScreen(go: (String) -> Unit) {
     }
     if (help) HelpDialog { help = false }
     if (coAlarm) CoAlarmDialog { coAlarm = false }
+    if (shiftDlg) ShiftDialog(comm.shiftStart() ?: CommShift.LO, { shiftDlg = false }) { minutes ->
+        val why = comm.shiftRequest(minutes)
+        if (why.isEmpty()) { shiftDlg = false; shiftAsk = comm.shiftAsking(); core.toast(tr("已向对方提出请求, 等待回复")) } else core.toast(tr(why), "warn")
+    }
     jointAsk?.let { terms -> JointTimeDialog(terms, { core.jointAsk = null; jointAsk = null }) { start ->
         val why = comm.setJointDraft(terms, start)
         if (why.isEmpty()) { core.jointAsk = null; jointAsk = null } else core.toast(tr(why), "warn")
@@ -262,6 +277,8 @@ private fun HelpDialog(onDismiss: () -> Unit) {
         "🔔 / 🔕" to tr("主动发起") + ": " + tr("点一下切换: 🔔 = 允许这个对象主动给你发消息 / 追问, 🔕 = 禁止."),
         "⏰ / ⏲" to tr("共时闹钟") + ": " + tr("点开设置: 把这个对象设为共时闹钟后 (⏰), 闹钟的时间跟随它的日程里的实际起床时间 (睡眠中也会响); " +
             "哪些设备响铃由你手动选, 铃声和音量用「设置 → 闹钟」里的. 一次只有一个对象是共时闹钟."),
+        "🕰" to tr("起点平移") + ": " + tr("请求对方把日程的起点平移到新的时刻 (4:00 - 9:00). 对方同意后明天起生效, 今天的日程不变; " +
+            "只记在 OIT 里, 不会修改人设文件. 对方可以拒绝."),
         "🖼" to tr("识别字体") + ": " + tr("选一张图片, OIT 让模型把图片上的文字读出来, 放进聊天框 (可以再改). 不能发送图片, 只能提取文字; 图片不会被保存, 对方也看不到."),
         "🤝" to tr("联合行动") + ": " + tr("邀请对方一起完成一次合约: 界面会移到合约页, 选好词条后点「确定选择」(原来「开始行动」的位置), " +
             "再输入开始时间; 词条和合约的基础规则会打包发给对方, 结束时间自动算好写在聊天框上方. " +
@@ -279,6 +296,33 @@ private fun HelpDialog(onDismiss: () -> Unit) {
             }
         },
         confirmButton = { TextButton(onDismiss) { Text(tr("知道了"), color = o.accent) } })
+}
+
+/** 🕰 起点平移: 输入新的起点 (时:分, 4:00 - 9:00); 确定后向对方提出请求, 对方回 [Yes] / [No]. */
+@Composable
+private fun ShiftDialog(cur: Int, onCancel: () -> Unit, onOk: (Int) -> Unit) {
+    val o = LocalOit.current
+    var text by remember { mutableStateOf(CommShift.hm(cur).let { if (it.length < 5) "0$it" else it }) }
+    fun parse(): Int? {
+        val m = Regex("\\s*(\\d{1,2})\\s*[:：]?\\s*(\\d{2})\\s*").matchEntire(text) ?: return null
+        val h = m.groupValues[1].toInt()
+        val mi = m.groupValues[2].toInt()
+        return if (mi > 59) null else h * 60 + mi
+    }
+    val v = parse()
+    AlertDialog(onDismissRequest = onCancel, containerColor = o.bg, title = { Text(tr("起点平移")) },
+        text = {
+            Column {
+                Text(tr("请求对方把日程的起点平移到新的时刻 (4:00 - 9:00). 对方同意后明天起生效, 今天的日程不变; " +
+                    "只记在 OIT 里, 不会修改人设文件. 对方可以拒绝."), color = o.dim, fontSize = 12.sp)
+                Text(tr("明天的起点: {t}", "t" to CommShift.hm(cur)), color = o.text, modifier = Modifier.padding(top = 10.dp))
+                OutlinedTextField(text, { text = it.take(8) }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                if (v == null) Text(tr("请输入 时:分, 例如 14:30"), color = o.danger, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
+            }
+        },
+        dismissButton = { TextButton(onCancel) { Text(tr("取消"), color = o.dim) } },
+        confirmButton = { TextButton({ v?.let(onOk) }) { Text(tr("请求"), color = o.accent) } })
 }
 
 /** 合约页点了"确定选择"之后: 输入开始时间 (时:分, 已经过了的算明天), 下面实时算出结束时间; 确定后打包成联合行动, 随下一条消息发出. */

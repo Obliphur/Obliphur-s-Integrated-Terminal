@@ -479,6 +479,7 @@ object AlarmSound {
             mp.setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build())
             when (tone) {
                 "chime", "soft" -> mp.setDataSource(Chime.wavFile(ctx, tone == "soft").path)
+                "file" -> mp.setDataSource(custom)          // 自选的音频文件: custom 是复制进应用目录之后的路径 (文件没了 / 放不出来 → 抛异常 → 回到经典警报)
                 "custom" -> mp.setDataSource(ctx, if (custom.isBlank()) RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM) else Uri.parse(custom))
                 else -> ctx.resources.openRawResourceFd(R.raw.target_alarm).use { mp.setDataSource(it.fileDescriptor, it.startOffset, it.length) }
             }

@@ -22,6 +22,9 @@ class AlarmStore(private val file: File, private val now: () -> LocalDateTime = 
     var tone = "classic"; private set
     /** 系统铃声的 Uri (空 = 系统默认闹钟铃声). */
     var custom = ""; private set
+    /** 自选的音频文件: 选的时候复制进应用私有目录 (file = 复制后的路径, fileName = 原来的文件名), 之后不依赖原文件. */
+    var audio = ""; private set
+    var audioName = ""; private set
     var volume = 80; private set
     private var armed = ""
     private var fired = ""
@@ -35,6 +38,8 @@ class AlarmStore(private val file: File, private val now: () -> LocalDateTime = 
         time = d.optString("time", "07:00").let { if (parseHm(it) != null) fmtHm(parseHm(it)!!) else "07:00" }
         tone = d.optString("tone", "classic").takeIf { t -> TONES.any { it.first == t } } ?: "classic"
         custom = d.optString("custom", "")
+        audio = d.optString("file", "")
+        audioName = d.optString("file_name", "")
         volume = d.optInt("volume", 80).coerceIn(0, 100)
         armed = d.optString("armed", "")
         fired = d.optString("fired", "")
@@ -42,13 +47,14 @@ class AlarmStore(private val file: File, private val now: () -> LocalDateTime = 
     }
 
     private fun save() {
-        Store.write(file, JSONObject().put("on", on).put("time", time).put("tone", tone).put("custom", custom).put("volume", volume)
+        Store.write(file, JSONObject().put("on", on).put("time", time).put("tone", tone).put("custom", custom).put("file", audio).put("file_name", audioName).put("volume", volume)
             .put("armed", armed).put("fired", fired).put("co_sig", coSig))
     }
 
     /** 改设置并马上存; 开关 / 时间变了就重新计时 (之前过去的钟点不补响). */
     @Synchronized
-    fun set(on: Boolean? = null, time: String? = null, tone: String? = null, custom: String? = null, volume: Int? = null) {
+    fun set(on: Boolean? = null, time: String? = null, tone: String? = null, custom: String? = null, volume: Int? = null,
+            audio: String? = null, audioName: String? = null) {
         var reArm = false
         on?.let { if (this.on != it) reArm = true; this.on = it }
         time?.let { t ->
@@ -57,12 +63,17 @@ class AlarmStore(private val file: File, private val now: () -> LocalDateTime = 
         }
         tone?.let { t -> if (TONES.any { it.first == t }) this.tone = t }
         custom?.let { this.custom = it }
+        audio?.let { this.audio = it }
+        audioName?.let { this.audioName = it }
         volume?.let { this.volume = it.coerceIn(0, 100) }
         if (reArm) armed = iso(now())
         save()
     }
 
     fun hm(): Pair<Int, Int> = parseHm(time) ?: (7 to 0)
+
+    /** 交给播放器的"自定义声音"参数: 自选文件的路径 / 系统铃声的 Uri. */
+    fun soundArg(): String = if (tone == "file") audio else custom
 
     private fun ref(t: LocalDateTime): LocalDateTime {
         val a = parseIso(armed) ?: t
@@ -115,8 +126,8 @@ class AlarmStore(private val file: File, private val now: () -> LocalDateTime = 
         const val MISS_SECONDS = 900L                 // 到点后超过这么久才发现 (手机没电关机 / 程序被杀): 这次不响了
         const val RING_SECONDS = 300L                 // 响铃最长多久 (没人关就自己停)
         const val PREVIEW_SECONDS = 6L                // 试听最长多久
-        /** 铃声: classic 经典警报 (res/raw/target_alarm), chime 三音提示, soft 柔和钟声, custom 系统铃声 (设置里挑). */
-        val TONES = listOf("classic" to "经典警报", "chime" to "三音提示", "soft" to "柔和钟声", "custom" to "系统铃声")
+        /** 铃声: classic 经典警报 (res/raw/target_alarm), chime 三音提示, soft 柔和钟声, custom 系统铃声 (设置里挑), file 自选的音频文件 (从文件里选). */
+        val TONES = listOf("classic" to "经典警报", "chime" to "三音提示", "soft" to "柔和钟声", "custom" to "系统铃声", "file" to "自选文件")
         private val HM_RE = Regex("""^\s*(\d{1,2})\s*[:：]\s*(\d{1,2})\s*$""")
 
         fun parseHm(text: String): Pair<Int, Int>? {

@@ -99,6 +99,7 @@ class Routine:
     def __init__(self):
         self.focus_label = ""
         self.start = None             # 初始起点 (从 0:00 起的分钟)
+        self.shifts = []              # 起点平移 (1.0.402): [(日期, 分钟)] 按日期排, 从那一天起起点换成这个分钟数; 记在聊天状态里, 不改日程文件
         self.items = []               # {"type": "block", "dur", "label"} / {"type": "loop", "dur", "focus"}
         self.fluct = {k: (0, 0) for k, _n in _FLUCT_KEYS}
         self.lists = {}               # 列表名 → [item]
@@ -111,6 +112,25 @@ class Routine:
 
     def ok(self) -> bool:
         return self.start is not None and bool(self.items)
+
+    def start_for(self, d: _date) -> int:
+        """d 这一天的初始起点 (从 0:00 起的分钟): 日程文件里写的, 被平移过的话是最近一次生效的平移 (生效日期 <= d)."""
+        s = self.start
+        for day, m in self.shifts:
+            if day <= d:
+                s = m
+            else:
+                break
+        return s
+
+    def set_shifts(self, shifts) -> bool:
+        """换一份起点平移记录 [(日期, 分钟)]; 变了就清掉算好的日程缓存. 返回变没变. Kotlin: Routine.setShifts."""
+        sh = sorted((d, int(m)) for d, m in shifts)
+        if sh == self.shifts:
+            return False
+        self.shifts = sh
+        self.__dict__.pop("_plans", None)
+        return True
 
 
 def parse(text: str):
@@ -229,9 +249,9 @@ def seg(kind: str, a: datetime, b: datetime, label: str, **kw) -> dict:
 
 
 def wake_at(r: Routine, d: _date, seed: str) -> datetime:
-    """d 这一天起床的时刻 = 初始起点 + 睡眠结束时间波动."""
+    """d 这一天起床的时刻 = 初始起点 (平移过的用平移后的, 见 Routine.start_for) + 睡眠结束时间波动."""
     lo, hi = r.fluct["sleep_end"]
-    return datetime.combine(d, datetime.min.time()) + timedelta(minutes=r.start + rint(f"{seed}|wake|{d}", lo, hi))
+    return datetime.combine(d, datetime.min.time()) + timedelta(minutes=r.start_for(d) + rint(f"{seed}|wake|{d}", lo, hi))
 
 
 def wake_times(r: Routine, a: datetime, b: datetime, seed: str) -> list:

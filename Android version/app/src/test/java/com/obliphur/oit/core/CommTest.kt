@@ -862,8 +862,8 @@ class CommTest {
         assertEquals(listOf("你好", "甲", "等等", "回应等等"), c.visible().map { it.text })
         // 分条发的开关: 关着时不调用第二次, 前置 prompt 里也没有第 VIII 条; 开关随设备同步
         c.set(splitSend = false)
-        assertFalse("VIII." in CommText.prefixPrompt(false))
-        assertTrue("VIII." in CommText.prefixPrompt(true))
+        assertFalse("\nVIII." in CommText.prefixPrompt(false))
+        assertTrue("\nVIII." in CommText.prefixPrompt(true))
         val nf = followCalls.size
         script.add("单条"); follow.add("不该出现")
         c.send("关了吗"); wait(c)
@@ -2184,6 +2184,73 @@ class CommTest {
         val st = c.shareAiView("stats")!!
         assertTrue((st.blocks[0] as ShareRows).title.startsWith("整点记录") && st.blocks.any { (it as? ShareRows)?.title?.startsWith("合约记录") == true })
         assertNull(c.shareAiView("net")); assertNull(c.shareAiView("settings"))
+        c.flush()
+    }
+
+    // ---- 起点平移 (1.0.402): 用户请求 → 对方 [messages] 查聊天记录数 → [Yes] / [No]; 明天起生效, 记进聊天状态, 同步, 不改人设文件 ----
+    @Test
+    fun startShift() {
+        val td = Files.createTempDirectory("oit").toFile()
+        clock = LocalDateTime.of(2027, 7, 1, 10, 0)
+        val dir = File(td, "d").also { it.mkdirs() }
+        val c = comm(dir, File(td, "p"))
+        c.reloadSchedule("test")
+        val spec = Routine.parse(c.readRoutine("Claudia.txt"))!!
+        val day1 = Routine.dayPlan(spec, java.time.LocalDate.of(2027, 7, 1), c.pid)
+        clock = day1.first { it.kind == "rest" }.start.plusMinutes(5)
+        c.snapshot = { CommSnap("idle") }
+        val notices = ArrayList<String>()
+        c.onShareNotice = { notices.add(it) }
+        val d1 = java.time.LocalDate.of(2027, 7, 1); val d2 = d1.plusDays(1); val d3 = d1.plusDays(2)
+        assertEquals(listOf("messages"), CommText.infoTags("[Messages]")); assertTrue(CommText.infoTags("好的").isEmpty())
+        assertTrue("XVIII." in CommText.prefixPrompt() && "XIX." in CommText.prefixPrompt())
+        val base = c.shiftStart(d1)!!
+        assertEquals(390, base)
+        val wakeBefore = Routine.wakeAt(spec, d2, c.pid)
+        val personaBefore = c.readPersonaFull("Claudia.txt")
+        assertTrue("之间" in c.shiftRequest(3 * 60) && "之间" in c.shiftRequest(9 * 60 + 1) && "已经是" in c.shiftRequest(base))
+        assertTrue(!c.shiftAsking() && c.shifts().isEmpty())
+        val n0 = calls.size
+        script.add("[messages]"); script.add("[Yes] 行.")
+        assertEquals("", c.shiftRequest(7 * 60)); assertTrue(c.shiftAsking())
+        assertTrue("正在等" in c.shiftRequest(8 * 60) && calls.size == n0)
+        c.tick(); wait(c)
+        assertEquals("[messages] 查询那一轮 + 回复那一轮", n0 + 2, calls.size)
+        val ask = calls[calls.size - 2].second.last().second
+        assertTrue(ask, CommShift.TAG in ask && "从 6:30 平移到 7:00" in ask && "[Yes]" in ask)
+        val info = calls.last().second.last().second
+        assertTrue(info, "聊天记录数: 共" in info && "共 ${c.msgTotal() - 1} 条" in info)
+        assertTrue(!c.shiftAsking() && c.visible().last().text == "行." && notices == listOf("对方同意了, 日程起点明天起平移到 7:00"))
+        assertEquals(listOf("2027-07-02" to 420), c.shifts().map { it.d to it.s })
+        assertEquals(base, c.shiftStart(d1)); assertEquals(420, c.shiftStart(d2)); assertEquals(420, c.shiftStart(d3))     // 明天起生效, 今天不变
+        assertEquals(c.readPersonaFull("Claudia.txt"), personaBefore)                                                    // 人设文件不改
+        assertTrue("日程起点已被平移" in CommShift.line(c.shifts()) && "自 2027-07-02 起初始起点是 7:00" in CommShift.line(c.shifts()))
+        // 同步: 记录合并 (按 ts 去重)
+        val saved = c.syncDoc()["shift:${c.pid}"] as org.json.JSONArray
+        assertEquals(1, saved.length())
+        assertEquals(listOf(ShiftRec(1, "2027-07-02", 420, 390)), CommShift.norm(listOf(ShiftRec(1, "2027-07-02", 100, 0), ShiftRec(2, "bad", 420, 0), ShiftRec(1, "2027-07-02", 420, 390))))
+        c.applyDoc(mapOf("shift:${c.pid}" to saved)); c.applyDoc(mapOf("shift:${c.pid}" to saved))
+        assertEquals(1, c.shifts().size)
+        // 拒绝 / 没表态 / 不方便: 不变
+        for ((reply, note) in listOf("[No] 不行." to "对方拒绝了起点平移", "嗯." to "对方没有明确同意, 起点没有平移", CommText.REFUSE to "对方现在不方便, 起点没有平移")) {
+            notices.clear(); script.add(reply)
+            assertEquals("", c.shiftRequest(8 * 60)); c.tick(); wait(c)
+            assertTrue(reply, !c.shiftAsking() && notices == listOf(note) && c.shifts().size == 1 && c.shiftStart(d2) == 420)
+        }
+        // 只回 [Yes]: 聊天里写一行结果; 同一天再平移一次, 以后一次为准
+        script.add("[Yes]")
+        assertEquals("", c.shiftRequest(8 * 60)); c.tick(); wait(c)
+        assertEquals("✓ 同意了起点平移", c.visible().last().text); assertEquals(2, c.shifts().size)
+        assertEquals(base, c.shiftStart(d1)); assertEquals(480, c.shiftStart(d2)); assertEquals(480, c.shiftStart(d3))
+        assertTrue("自 2027-07-02 起初始起点是 8:00" in CommShift.line(c.shifts()))
+        // 取消
+        val n1 = calls.size
+        assertEquals("", c.shiftRequest(7 * 60)); assertTrue(c.shiftAsking())
+        c.shiftCancel(); c.tick()
+        assertTrue(!c.shiftAsking() && !c.busy && calls.size == n1)
+        // 对方在专注: 问不了
+        clock = day1.first { it.kind == "focus" }.start.plusMinutes(5)
+        assertTrue("没法征求对方的同意" in c.shiftRequest(7 * 60) && !c.shiftAsking())
         c.flush()
     }
 
