@@ -591,7 +591,7 @@ class CommTest {
         assertTrue("进入睡眠约 5 分钟" in body && "即使你此刻处于睡眠时段" in body)
         assertFalse("'晚安'不再写进代码: 系统提示里没有它, 要不要说由人设自己写", "晚安" in body)
         val builtin = BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT)
-        assertTrue("自带 Claudia 的提示词里写了'晚安'", "以“晚安”开头" in builtin)
+        assertTrue("自带 Claudia 的提示词里写了'晚安'", "以'晚安'开头" in builtin)
     }
 
     /** 手动改人设: 还原文件保留聊天; 确定清空对应聊天. */
@@ -624,7 +624,7 @@ class CommTest {
         val c = comm(dir, File(td, "pp"))
         assertEquals(listOf("Assistant.txt", "Claudia.txt"), c.listPersonas())
         assertEquals("Claudia.txt", c.personaName())            // 第一次运行默认选中
-        assertTrue(c.readPersona("Claudia.txt").startsWith("你将扮演一位文静、冷淡"))
+        assertTrue(c.readPersona("Claudia.txt").startsWith("你将扮演一位文静,冷淡"))
         assertTrue(c.readPersona("Assistant.txt").startsWith("你是名为 Assistant 的助理"))
         c.set(persona = "")
         File(td, "pp/Claudia.txt").delete()
