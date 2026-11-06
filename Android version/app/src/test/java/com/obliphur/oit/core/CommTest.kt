@@ -2020,7 +2020,7 @@ class CommTest {
             c.tick(); assertTrue(c.busy); wait(c)
             opened = 0
         }
-        c.shareFn = { p -> Triple(Comm.SHARE_PAGE_NAMES[p] ?: p, "用户的${p}数据", "她的${p}数据") }
+        c.shareFn = { p -> Triple(Comm.SHARE_PAGE_NAMES[p] ?: p, "用户的${p}数据", "对方的${p}数据") }
         c.sharePageChanged("timer")
         assertEquals("", c.sharePage())                                  // 没打开: 什么也不做
         shareOpen(); assertTrue(c.shareOn() && !c.shareAsking() && c.shareView() == "me")
@@ -2032,7 +2032,7 @@ class CommTest {
         c.tick()
         var shared = sharedMsgs()
         assertEquals(1, shared.size)
-        assertTrue("用户的timer数据" in shared[0].api && "她的timer数据" in shared[0].api && "「计时器」" in shared[0].api)
+        assertTrue("用户的timer数据" in shared[0].api && "对方的timer数据" in shared[0].api && "「计时器」" in shared[0].api)
         assertEquals("共享数据·计时器", shared[0].text); assertTrue(c.visible().none { it.text.startsWith("共享数据") })
         c.setShareView("ai"); assertEquals("ai", c.shareView())
         clock = clock.plusSeconds(10)
@@ -2094,7 +2094,7 @@ class CommTest {
         c.tick(); assertTrue("等对方回复的时候又点一下 = 取消, 不调用", !c.busy && calls.size == n3)
         val fs = day1.first { it.kind == "focus" }
         clock = fs.start.plusMinutes(5)
-        assertTrue("她在专注 / 睡眠: 问不了", "没法征求她的同意" in c.shareEnable(true) && !c.shareAsking())
+        assertTrue("对方在专注 / 睡眠: 问不了", "没法征求对方的同意" in c.shareEnable(true) && !c.shareAsking())
         // 看 AI 的数据
         clock = LocalDateTime.of(2027, 7, 1, 15, 20)
         val v = c.shareAiView("timer")!!
@@ -2177,7 +2177,7 @@ class CommTest {
         clock = tj.plusMinutes(1)
         assertTrue(c.otherStatus()!!.first.kind == "focus" && c.otherStatus()!!.second > tj)
         c.jointClearForTest()
-        // 和用户真的一起顺利完成的联合行动: 照实记进她的合约记录 (含违规词条), 排在按日程生成的前面; 失败的不记
+        // 和用户真的一起顺利完成的联合行动: 照实记进对方的合约记录 (含违规词条), 排在按日程生成的前面; 失败的不记
         clock = LocalDateTime.of(2027, 6, 4, 15, 5)
         c.jointRestForTest(LocalDateTime.of(2027, 6, 4, 15, 20), LocalDateTime.of(2027, 6, 4, 15, 0), listOf("tired1", "fine", "silent"), "cx1")
         c.rtSync(); c.rtSync()
@@ -2185,7 +2185,7 @@ class CommTest {
         assertEquals("cx1", recs0[0].getString("id"))
         assertEquals(Contract.clean(listOf("tired1", "fine", "silent")), (0 until recs0[0].getJSONArray("terms").length()).map { recs0[0].getJSONArray("terms").getString(it) })
         assertEquals(listOf("cx1"), c.rtStoreForTest()!!.joint.map { it.getString("id") })           // 同一次联合行动只记一条
-        assertTrue("细化规范" in c.routineInfo("stats").substringAfter("【统计·合约记录"))             // 照实写, 包括她平时不选的词条
+        assertTrue("细化规范" in c.routineInfo("stats").substringAfter("【统计·合约记录"))             // 照实写, 包括对方平时不选的词条
         c.jointRestForTest(LocalDateTime.of(2027, 6, 4, 15, 20), LocalDateTime.of(2027, 6, 4, 15, 0), listOf("tired1"), "cx2", "failed")
         c.rtSync()
         assertEquals(listOf("cx1"), c.rtStoreForTest()!!.joint.map { it.getString("id") })           // 失败 / 提前终止的不算顺利完成
@@ -2214,7 +2214,7 @@ class CommTest {
         val bannedIds = Routine.bannedIds(spec)
         assertTrue(gen.none { r -> (0 until r.getJSONArray("terms").length()).any { r.getJSONArray("terms").getString(it) in bannedIds } })     // 按日程生成的合约记录不碰不选择 / 违规的词条
         assertTrue(Routine.bannedIds(spec).none { it in c.opTermsForTest() })                // 对方发起联合行动也不选这些词条
-        // 要资料: 她自己的数据 (OIT 算出的), 不是空白模板
+        // 要资料: 对方自己的数据 (OIT 算出的), 不是空白模板
         val restDay = Routine.planBetween(spec, LocalDateTime.of(2027, 6, 9, 8, 0), LocalDateTime.of(2027, 6, 9, 23, 0), seed).first { it.kind == "rest" }
         clock = restDay.start.plusMinutes(5)
         script.add("[refuse to reply][log]"); script.add("好")

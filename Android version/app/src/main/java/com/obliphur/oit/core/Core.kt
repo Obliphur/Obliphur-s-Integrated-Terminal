@@ -359,7 +359,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     private fun showPersonaChange(change: PersonaChange) {
         var msg = tr("{name},修改人设会清除聊天数据,你确定吗?", "name" to username)
         if (comm.personaTitle(change.name).substringBefore('_').equals("claudia", ignoreCase = true)) {
-            msg = tr("主管{name},我希望你尊重她的人格.", "name" to username) + "\n" + msg
+            msg = tr("主管{name},我希望你尊重对方的人格.", "name" to username) + "\n" + msg
         }
         notice(tr("人设文件被修改"), msg,
             listOf(NoticeButton(tr("还原文件"), "restore", true), NoticeButton(tr("确定"), "ok", false)),

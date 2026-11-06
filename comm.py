@@ -55,7 +55,7 @@ SHARE_COOLDOWN = 30                   # share data: 两次把页面数据发给�
 SHARE_DATA_PAGES = ("timer", "log", "cal", "stats")                  # 有数据可以分享的页面: 计时器 / 整点记录 / 日历 / 统计
 SHARE_SKIP_PAGES = ("settings", "comm", "prescript", "reset")        # share data 打开时, 在这些页面里不分享也不显示聊天悬浮窗 (回到沟通 = 结束)
 SHARE_PAGE_NAMES = {"timer": "计时器", "log": "整点记录", "cal": "日历", "stats": "统计", "net": "联网", "contract": "合约", "ach": "成就"}
-SHARE_ASK_TTL = 300                   # 用户打开 share data 要先问对方: 等她回 [Yes] / [No] 最多这么久 (秒)
+SHARE_ASK_TTL = 300                   # 用户打开 share data 要先问对方: 等对方回 [Yes] / [No] 最多这么久 (秒)
 SHARE_INVITE_TTL = 6 * 3600           # 对方发 [share data] 之后, 邀请有效这么久 (秒)
 _SHARE_RE = re.compile(r"[\[［]\s*share\s+data\s*[\]］]", re.I)
 CUT_TAG = "[系统·切断]"                # 对方切断谈话的系统消息 (不是 "[系统]" 开头: 不算主动消息)
@@ -2412,7 +2412,7 @@ class Comm:
             rpath = os.path.join(self.personas, DEFAULT_ROUTINE)
             cur = self._read_persona_raw(DEFAULT_ROUTINE)
             if force or cur is None or cur.strip() in {x.strip() for x in ROUTINE_LEGACIES} or not cur.strip():
-                with open(rpath, "w", encoding="utf-8", newline="\n") as f:     # 默认人设是 Claudia + 她的背景 + 她的日程
+                with open(rpath, "w", encoding="utf-8", newline="\n") as f:     # 默认人设是 Claudia + 对方的背景 + 对方的日程
                     f.write(BUILTIN_PERSONAS[DEFAULT_ROUTINE])
             bpath = os.path.join(self.personas, DEFAULT_BACKGROUND)
             cur = self._read_persona_raw(DEFAULT_BACKGROUND)
@@ -2884,7 +2884,7 @@ class Comm:
         lost = self._joint_hp_text(j)
         self._joint_set({"state": "rest", "result": str(result), "ended": now.isoformat(timespec="seconds"),
                          "rest_s": rest_s, "rest_until": until.isoformat(timespec="seconds"), "hp": []})
-        if self._rt:                                          # 顺利完成的: 马上记进她的合约记录 (别的设备在下一次整理数据时从同步来的联合行动状态里记)
+        if self._rt:                                          # 顺利完成的: 马上记进对方的合约记录 (别的设备在下一次整理数据时从同步来的联合行动状态里记)
             try:
                 self._rt_sync()
             except Exception as e:      # noqa: BLE001
@@ -3756,7 +3756,7 @@ class Comm:
                     blocks, own = [], []
                     for t in tags:
                         try:
-                            ob = self.routine_info(t)                       # 有日程文件的人设: 她自己的 OIT 数据 (OIT 按日程实时算出)
+                            ob = self.routine_info(t)                       # 有日程文件的人设: 对方自己的 OIT 数据 (OIT 按日程实时算出)
                             b = ob or str(self.info_fn(t) or "")
                         except Exception:       # noqa: BLE001
                             ob, b = "", ""
@@ -4244,7 +4244,7 @@ class Comm:
                 return why
             st = self.other_status()
             if st and st.get("kind") in HELD_KINDS and not st.get("joint"):
-                return f"对方{STATUS_TEXT[st['kind']]}, 现在没法征求她的同意"
+                return f"对方{STATUS_TEXT[st['kind']]}, 现在没法征求对方的同意"
             self.share_ask = {"pid": self.pid, "ts": self._ms(), "sent": False}      # 用户发起的 share data 要先争取对方同意 (MECHANICS 24.12): 对方回 [Yes] 才真的打开
             self._changed()
             return ""
@@ -4582,7 +4582,7 @@ class Comm:
         return st
 
     def _rt_joint_record(self, st):
-        """和用户一起顺利完成的联合行动 (state=rest, result=completed): 把这次真实的合约 (词条 / 等级 / 结束时间) 记进她的合约记录.
+        """和用户一起顺利完成的联合行动 (state=rest, result=completed): 把这次真实的合约 (词条 / 等级 / 结束时间) 记进对方的合约记录.
         联合行动的状态会随设备同步, 所以哪台设备都能记; 失败 / 提前终止的不算"顺利完成"."""
         j = self._joint()
         if j.get("state") != "rest" or j.get("result") != "completed":
@@ -4606,7 +4606,7 @@ class Comm:
             self.log(f"ROUTINE sync FAIL {type(e).__name__}: {e}")
 
     def routine_info(self, tag: str) -> str:
-        """对方查询 [模块名] 时, 有日程文件的人设得到的是她自己的数据 (OIT 按日程实时算出, 只有已经发生的部分); 不是这几个模块 / 没有日程文件 = ""."""
+        """对方查询 [模块名] 时, 有日程文件的人设得到的是对方自己的数据 (OIT 按日程实时算出, 只有已经发生的部分); 不是这几个模块 / 没有日程文件 = ""."""
         if tag not in ("timer", "log", "calendar", "stats", "net") or not self._rt:
             return ""
         import comm_data
@@ -6973,7 +6973,7 @@ def _selftest():
     clock[0] = T + timedelta(minutes=1)
     assert cr._joint_status(clock[0]) == {} and cr.other_status()["kind"] == "focus" and cr.other_status()["begin"] == T
     cr.cfg["joint"] = {}
-    # 和用户真的一起顺利完成的联合行动: 照实记进她的合约记录 (含违规词条), 排在按日程生成的前面; 失败的不记
+    # 和用户真的一起顺利完成的联合行动: 照实记进对方的合约记录 (含违规词条), 排在按日程生成的前面; 失败的不记
     jt = {"state": "rest", "pid": cr.pid, "result": "completed", "cid": "cx1", "terms": ["tired1", "fine", "silent"],
           "began": "2027-06-04T12:00:00", "until": "2027-06-04T15:00:00", "ended": "2027-06-04T15:00:00", "rest_until": "2027-06-04T15:20:00"}
     cr.cfg["joint"] = dict(jt)
@@ -6984,7 +6984,7 @@ def _selftest():
     import contract as C
     assert recs0[0]["id"] == "cx1" and recs0[0]["terms"] == C.clean_terms(["tired1", "fine", "silent"]) and recs0[0]["level"] == C.level_of(recs0[0]["terms"])
     assert [x["id"] for x in cr._rt_store.joint] == ["cx1"], "同一次联合行动只记一条"
-    assert "细化规范" in cr.routine_info("stats").split("【统计·合约记录")[1], "照实写, 包括她平时不选的词条"
+    assert "细化规范" in cr.routine_info("stats").split("【统计·合约记录")[1], "照实写, 包括对方平时不选的词条"
     cr.cfg["joint"] = dict(jt, cid="cx2", result="failed")
     cr._rt_sync()
     assert [x["id"] for x in cr._rt_store.joint] == ["cx1"], "失败 / 提前终止的不算顺利完成"
@@ -7027,7 +7027,7 @@ def _selftest():
     assert not any(set(x["terms"]) & routine.banned_ids(cr._rt) for x in gen), "按日程生成的合约记录不碰不选择 / 违规的词条"
     banned = routine.banned_ids(cr._rt)
     assert not (set(cr._op_terms("没有编号", [])) & banned), "对方发起联合行动也不选这些词条"
-    # 要资料: 她自己的数据 (OIT 算出的), 不是空白模板
+    # 要资料: 对方自己的数据 (OIT 算出的), 不是空白模板
     n0 = len(calls)
     script.extend(["[refuse to reply][log][timer]", "好"])
     cr.messages = []
@@ -7145,7 +7145,7 @@ def _selftest():
     cs.blocked = lambda: ""
     cs.ai_blocked = lambda: ""
     rest_s = next(x for x in day1 if x["kind"] == "rest")
-    clock[0] = rest_s["start"] + timedelta(minutes=5)          # 她在休息: 能聊天
+    clock[0] = rest_s["start"] + timedelta(minutes=5)          # 对方在休息: 能聊天
     cs.snapshot = lambda: {"state": "idle"}
     opened = []
     notices = []
@@ -7161,7 +7161,7 @@ def _selftest():
         wait(c)
         opened.clear()
 
-    cs.share_fn = lambda page: ({"timer": "计时器"}.get(page, page), f"用户的{page}数据", f"她的{page}数据")
+    cs.share_fn = lambda page: ({"timer": "计时器"}.get(page, page), f"用户的{page}数据", f"对方的{page}数据")
     assert not cs.share_on() and cs.share_page() == ""
     cs.share_page_changed("timer")
     assert cs.share_page() == "", "没打开 share data: 什么也不做"
@@ -7176,7 +7176,7 @@ def _selftest():
     assert cs.share_page() == "timer"
     cs.tick()
     shared = [m for m in cs.messages if m["role"] == "sys" and m["text"].startswith("共享数据")]
-    assert len(shared) == 1 and "用户的timer数据" in shared[0]["api"] and "她的timer数据" in shared[0]["api"] and "「计时器」" in shared[0]["api"]
+    assert len(shared) == 1 and "用户的timer数据" in shared[0]["api"] and "对方的timer数据" in shared[0]["api"] and "「计时器」" in shared[0]["api"]
     assert shared[0]["text"] == "共享数据·计时器" and all(not m["text"].startswith("共享数据") for m in cs.visible()), "共享的数据聊天里不显示"
     cs.set_share_view("ai")
     assert cs.share_view() == "ai"
@@ -7267,7 +7267,7 @@ def _selftest():
     clock[0] = rest_s["start"] + timedelta(minutes=5)
     focus_s = next(x for x in day1 if x["kind"] == "focus")
     clock[0] = focus_s["start"] + timedelta(minutes=5)
-    assert "没法征求她的同意" in cs.share_enable(True) and not cs.share_asking(), "她在专注 / 睡眠: 问不了"
+    assert "没法征求对方的同意" in cs.share_enable(True) and not cs.share_asking(), "对方在专注 / 睡眠: 问不了"
     clock[0] = rest_s["start"] + timedelta(minutes=5)
     # 对方看的是自己的数据: 界面上"看 AI 的数据"
     clock[0] = datetime(2027, 7, 1, 15, 20)

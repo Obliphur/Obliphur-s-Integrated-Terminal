@@ -1345,7 +1345,7 @@ class Comm(
         val SHARE_DATA_PAGES = listOf("timer", "log", "cal", "stats")                  // 有数据可以分享的页面
         val SHARE_SKIP_PAGES = listOf("settings", "comm", "prescript", "reset")        // 在这些页面里不分享也不显示聊天悬浮窗 (回到沟通 = 结束)
         val SHARE_PAGE_NAMES = mapOf("timer" to "计时器", "log" to "整点记录", "cal" to "日历", "stats" to "统计", "net" to "联网", "contract" to "合约", "ach" to "成就")
-        const val SHARE_ASK_TTL = 300                  // 用户打开 share data 要先问对方: 等她回 [Yes] / [No] 最多这么久 (秒)
+        const val SHARE_ASK_TTL = 300                  // 用户打开 share data 要先问对方: 等对方回 [Yes] / [No] 最多这么久 (秒)
         const val SHARE_INVITE_TTL = 6 * 3600          // 对方发 [share data] 之后, 邀请有效这么久 (秒)
         val PERSONA_EXT = listOf(".txt", ".md")
         /** 聊天页状态前面小圆点的颜色: 专注黄 / 睡眠深蓝 / 休息浅绿 / 空闲灰. */
@@ -2269,7 +2269,7 @@ class Comm(
             val rf = File(personas, BuiltinPersonas.ROUTINE)
             val cur = if (rf.isFile) runCatching { rf.readText(Charsets.UTF_8).removePrefix("\uFEFF") }.getOrNull() else null
             if (force || cur == null || cur.isBlank() || cur.trim() in BuiltinPersonas.ROUTINE_LEGACIES.map { it.trim() })
-                rf.writeText(BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE), Charsets.UTF_8)     // 默认人设是 Claudia + 她的日程
+                rf.writeText(BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE), Charsets.UTF_8)     // 默认人设是 Claudia + 对方的日程
             val bf = File(personas, BuiltinPersonas.BACKGROUND)
             val bcur = if (bf.isFile) runCatching { bf.readText(Charsets.UTF_8).removePrefix("\uFEFF") }.getOrNull() else null
             if (force || bcur == null || bcur.isBlank() || bcur.trim() in BuiltinPersonas.BACKGROUND_LEGACIES.map { it.trim() })
@@ -2542,7 +2542,7 @@ class Comm(
             if (share.on || shareAsking()) return ""
             val why = problem()
             if (why.isNotEmpty()) return why
-            awayKind().let { if (it.isNotEmpty()) return "对方${if (it == "sleep") "睡眠中" else "专注中"}, 现在没法征求她的同意" }
+            awayKind().let { if (it.isNotEmpty()) return "对方${if (it == "sleep") "睡眠中" else "专注中"}, 现在没法征求对方的同意" }
             shareAskPid = pid; shareAskTs = nowMs(); shareAskSent = false        // 用户发起的 share data 要先争取对方同意 (MECHANICS 24.12): 对方回 [Yes] 才真的打开
             changed()
             return ""
@@ -2856,7 +2856,7 @@ class Comm(
         return st
     }
 
-    /** 和用户一起顺利完成的联合行动 (state=rest, result=completed): 把这次真实的合约 (词条 / 等级 / 结束时间) 记进她的合约记录.
+    /** 和用户一起顺利完成的联合行动 (state=rest, result=completed): 把这次真实的合约 (词条 / 等级 / 结束时间) 记进对方的合约记录.
      *  联合行动的状态会随设备同步, 哪台设备都能记; 失败 / 提前终止的不算"顺利完成". */
     private fun rtJointRecord(st: RoutineStore) {
         val j = curJoint() ?: return
@@ -2880,7 +2880,7 @@ class Comm(
         return "【统计·联网理由 $prefix】\n" + CommData.top(tot, minutes = true)
     }
 
-    /** 对方查询 [模块名] 时, 有日程文件的人设得到的是她自己的数据 (OIT 按日程实时算出, 只有已经发生的部分); 不是这几个模块 / 没有日程文件 = "". */
+    /** 对方查询 [模块名] 时, 有日程文件的人设得到的是对方自己的数据 (OIT 按日程实时算出, 只有已经发生的部分); 不是这几个模块 / 没有日程文件 = "". */
     fun routineInfo(tag: String): String {
         loadSchedule()
         val r = rt
@@ -3122,7 +3122,7 @@ class Comm(
         val until = n.plusSeconds(restS)
         val lost = jointHpText(j)
         jointSet(j.copy(state = "rest", result = result, ended = n.iso(), restS = restS, restUntil = until.iso(), hp = emptyList()))
-        if (rt != null) runCatching { rtSync() }.onFailure { log("ROUTINE joint record FAIL ${it.javaClass.simpleName}: ${it.message}") }   // 顺利完成的: 马上记进她的合约记录
+        if (rt != null) runCatching { rtSync() }.onFailure { log("ROUTINE joint record FAIL ${it.javaClass.simpleName}: ${it.message}") }   // 顺利完成的: 马上记进对方的合约记录
         val rest = if (restS > 0) "你与用户一起得到了 ${restS / 60} 分钟休息, 休息到 %02d:%02d 结束, 之后你需要重新计算日程.".format(until.hour, until.minute)
         else "这次没有得到休息时间, 你立即重新计算日程."
         val tail = if (lost.isNotEmpty()) " $lost" else ""
@@ -3822,7 +3822,7 @@ class Comm(
                     val blocks = ArrayList<String>()
                     val own = ArrayList<String>()
                     for (t in CommText.infoTags(reply)) {
-                        val ob = runCatching { routineInfo(t) }.getOrDefault("")         // 有日程文件的人设: 她自己的 OIT 数据 (OIT 按日程实时算出)
+                        val ob = runCatching { routineInfo(t) }.getOrDefault("")         // 有日程文件的人设: 对方自己的 OIT 数据 (OIT 按日程实时算出)
                         val b = ob.ifEmpty { runCatching { infoFn(t) }.getOrDefault("") }
                         if (b.isNotEmpty()) (if (ob.isNotEmpty()) own else blocks).add("【$t】\n$b")
                     }
