@@ -14,7 +14,7 @@ import java.time.temporal.ChronoUnit
 
 /** 日程里的一段 (绝对时间). kind = focus / rest / idle / sleep; loop = 第几个循环段生成的 (-1 没有); gap = 波动留下的空档; n = 循环的每轮专注分钟. */
 data class RtSeg(val kind: String, val start: LocalDateTime, val end: LocalDateTime, val label: String,
-                 val loop: Int = -1, val gap: Boolean = false, val n: Double = 0.0)
+                 val loop: Int = -1, val gap: Boolean = false, val n: Double = 0.0, val fm: Double = 0.0)
 
 class RtItem(val isLoop: Boolean, val dur: Double, val label: String = "", val focus: Double = 0.0)
 
@@ -50,7 +50,8 @@ object Routine {
     const val NET_QUOTA_S = 2 * 3600.0
     const val CONTRACT_DAY_P = 0.3
     val FLUCT_KEYS = listOf("focus_start" to "下一个专注开始节点波动", "focus_end" to "下一个专注结束节点波动",
-        "sleep_start" to "睡眠开始时间波动", "sleep_end" to "睡眠结束时间波动")
+        "sleep_start" to "睡眠开始时间波动", "sleep_end" to "睡眠结束时间波动",
+        "rest_end" to "循环末尾休息结束时间波动")        // 1.0.400: 每个循环最后那次休息比循环的结束晚多少分钟 (没写 = 不晚)
 
     private const val NUM = """(\d+(?:\.\d+)?)"""
     private const val UNIT = """(min|mins|分钟|h|hr|hrs|小时)"""
@@ -148,19 +149,39 @@ object Routine {
     }
 
     // ══════════════ 日程 ══════════════
-    fun loopSegs(start: LocalDateTime, end: LocalDateTime, nMin: Double, loop: Int = -1, anchor: LocalDateTime = start): List<RtSeg> {
+    /** 分钟 → 整秒 (四舍五入; 同 routine._secs). */
+    fun secs(minutes: Double): Long = Math.floor(minutes * 60.0 + 0.5).toLong()
+
+    /** 一个循环 (总长 totalS 秒, 每轮专注 nS 秒 + 休息 restS 秒) → [("focus" | "rest", 秒)]. 同 routine.loop_pieces (1.0.400):
+     *  循环总以休息结束, 休息的末尾对上循环的末尾, 靠"提前结束专注"凑 (最后一轮的专注提前结束; 排不下就把专注平分给每一轮; 连一轮都放不下就只剩专注). */
+    fun loopPieces(totalS: Long, nS: Long, restS: Long): List<Pair<String, Long>> {
+        val cyc = nS + restS
+        val k = maxOf(1L, (totalS + cyc - 1) / cyc)
+        val foc = totalS - k * restS
+        if (foc <= 0) return listOf("focus" to totalS)
+        val sizes: List<Long> = if (foc > (k - 1) * nS) List(k.toInt()) { i -> if (i < k - 1) nS else foc - (k - 1) * nS }
+        else { val q = foc / k; val rem = foc % k; List(k.toInt()) { i -> q + (if (i < rem) 1L else 0L) } }
+        val out = ArrayList<Pair<String, Long>>()
+        for (s in sizes) { out.add("focus" to s); out.add("rest" to restS) }
+        return out
+    }
+
+    /** [start, end) 这个循环里的专注 / 休息段 (以休息结束, 末尾对上 end). extraMin: 最后那次休息的结束比 end 晚多少分钟 (休息至少留 1 分钟). */
+    fun loopSegs(start: LocalDateTime, end: LocalDateTime, nMin: Double, loop: Int = -1, extraMin: Long = 0): List<RtSeg> {
         val rest = maxOf(1, Math.rint(computeF(nMin)).toInt()).toLong()
+        val totalS = Math.floor(java.time.Duration.between(start, end).toNanos() / 1e9 + 0.5).toLong()
         val out = ArrayList<RtSeg>()
-        var t = anchor
-        val n = (nMin * 60).toLong()
-        while (t.isBefore(end)) {
-            val fEnd = minOf(t.plusSeconds(n), end)
-            if (fEnd.isAfter(t)) out.add(RtSeg("focus", t, fEnd, "专注", loop, false, nMin))
-            t = fEnd
-            if (!t.isBefore(end)) break
-            val rEnd = minOf(t.plusMinutes(rest), end)
-            if (rEnd.isAfter(t)) out.add(RtSeg("rest", t, rEnd, "休息", loop, false, nMin))
-            t = rEnd
+        var t = start
+        var fm = 0.0
+        for ((kind, s) in loopPieces(totalS, secs(nMin), rest * 60)) {
+            val e = t.plusSeconds(s)
+            if (kind == "focus") fm = s / 60.0                      // fm = 这一轮 (专注 + 随后的休息) 计划的专注分钟, 提前结束的比 n 短
+            out.add(RtSeg(kind, t, e, if (kind == "focus") "专注" else "休息", loop, false, nMin, fm))
+            t = e
+        }
+        if (extraMin != 0L && out.isNotEmpty() && out.last().kind == "rest") {
+            val l = out.last()
+            out[out.size - 1] = l.copy(end = maxOf(l.start.plusMinutes(1), l.end.plusMinutes(extraMin)))
         }
         return out
     }
@@ -195,9 +216,14 @@ object Routine {
         var segs = ArrayList<RtSeg>()
         var c = base
         for ((idx, it) in r.items.withIndex()) {
-            val end = c.plusNanos((it.dur * 60e9).toLong())
+            var end = c.plusNanos((it.dur * 60e9).toLong())
             if (!it.isLoop) segs.add(RtSeg("idle", c, end, it.label))
-            else segs.addAll(loopSegs(c, end, it.focus, idx))
+            else {
+                val (lo, hi) = if (fluct) r.fluct.getValue("rest_end") else (0.0 to 0.0)
+                val part = loopSegs(c, end, it.focus, idx, rint("$seed|le|$d|$idx", lo, hi).toLong())
+                segs.addAll(part)
+                if (part.isNotEmpty()) end = part.last().end            // 最后一次休息晚结束了: 后面的日程整体往后推
+            }
             c = end
         }
         val n = segs.size

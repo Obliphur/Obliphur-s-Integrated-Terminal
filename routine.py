@@ -4,6 +4,7 @@
   · 日程是一串**持续时间**: 起床 (初始起点 + 起床波动) 之后, 一项接一项; 做完最后一项就进入睡眠, 睡到第二天起床. 没有固定的睡觉钟点.
   · 每天的波动 (起床 / 专注开始 / 专注结束 / 睡眠开始) 由 (日期 + 人设) 决定, 同一天任何设备算出来都一样 (sha256, Python 和 Kotlin 一致).
     起床波动平移整天; 专注开始 / 结束的波动挪动专注段的两端 (晚开始的空档算"空闲", 早开始则前一段被截短); 睡眠开始的延迟算"空闲".
+  · 循环 (1.0.400) 总是以休息结束: 不直接截断最后一轮, 而是让专注提前结束, 休息的末尾对上循环的末尾; 最后那次休息再比循环的结束晚 [循环末尾休息结束时间波动] 分钟, 后面的日程整体往后推.
   · 所有数据都是**实时算**的: 只给已经发生的部分 (整点记录只给已经结束的格子, 计时器 / 日历 / 统计只算到现在).
   · 算过的会存下来 (Store): 时间线 (实际发生的一段段) 和整点记录的格子. 好几天没被调用 (程序没开 / 没人查) 之后, 缺的部分按规则补齐.
 
@@ -11,6 +12,7 @@
 """
 import hashlib
 import json
+import math
 import os
 import re
 from datetime import datetime, timedelta, date as _date
@@ -39,7 +41,8 @@ _START_RE = re.compile(r"初始起点[ \t]*[:：][ \t]*(\d{1,2})[:：](\d{2})")
 _FOCUS_RE = re.compile(r"^[ \t]*专注时段[ \t]*[:：][ \t]*(\S[^\n]*)$", re.M)
 _RANGE = r"[\[［][ \t]*([+-]?\d+(?:\.\d+)?)[ \t]*[,，~～][ \t]*([+-]?\d+(?:\.\d+)?)[ \t]*[\]］]"
 _FLUCT_KEYS = (("focus_start", "下一个专注开始节点波动"), ("focus_end", "下一个专注结束节点波动"),
-               ("sleep_start", "睡眠开始时间波动"), ("sleep_end", "睡眠结束时间波动"))
+               ("sleep_start", "睡眠开始时间波动"), ("sleep_end", "睡眠结束时间波动"),
+               ("rest_end", "循环末尾休息结束时间波动"))          # 1.0.400: 每个循环最后那次休息比循环的结束晚多少分钟 (没写 = 不晚, 正好对上)
 _LIST_RE = re.compile(r"^[ \t]*(?:[-*•][ \t]*)?([^\n{}]+?)[ \t]*[:：][ \t]*[{｛]([^{}｛｝\n]*)[}｝][ \t]*(\([ \t]*基准数据[ \t]*\)|（[ \t]*基准数据[ \t]*）)?", re.M)
 _DEV_WIN_RE = re.compile(r"^设备[-－](\d+)[ \t]*[:：][ \t]*窗口使用时间$")
 _ITEM_RE = re.compile(r"^[ \t]*(X|x|\d+(?:\.\d+)?)[ \t]*[%％][ \t]*[:：][ \t]*(\S.*)$")
@@ -158,21 +161,50 @@ def parse(text: str):
 
 
 # ══════════════ 日程 ══════════════
-def loop_segs(start: datetime, end: datetime, n_min: float, anchor: datetime = None) -> list:
-    """[start, end) 里从 anchor 起: n 分钟专注 + F(n) 分钟休息交替, 到 end 截断."""
+def _secs(minutes: float) -> int:
+    """分钟 → 整秒 (四舍五入; Kotlin: Routine.secs 一样)."""
+    return int(math.floor(float(minutes) * 60.0 + 0.5))
+
+
+def loop_pieces(total_s: int, n_s: int, rest_s: int) -> list:
+    """一个循环 (总长 total_s 秒, 每轮专注 n_s 秒 + 休息 rest_s 秒) → [("focus" | "rest", 秒)].
+    1.0.400 起不再把最后一轮直接截断: 循环**总是以休息结束**, 休息的末尾正好对上循环的末尾, 靠"提前结束专注"凑 ——
+      · 轮数 k = ceil(总长 / (n + 休息)); 专注总时长 = 总长 - k × 休息;
+      · 前 k-1 轮满 n, 最后一轮的专注提前结束 (剩多少是多少);
+      · 如果这样最后一轮连专注都排不下 (专注总时长 <= (k-1) × n), 就把专注总时长平分给 k 轮 (每轮都提前结束, 多出的秒数给前面的轮);
+      · 连一轮"专注 + 休息"都放不下 (总长 <= 休息): 退回成只有一段专注 (整个循环).
+    休息时长始终是 F(n), 不随提前结束的专注变短. Kotlin: Routine.loopPieces."""
+    cyc = n_s + rest_s
+    k = max(1, -(-total_s // cyc))
+    foc = total_s - k * rest_s
+    if foc <= 0:
+        return [("focus", total_s)]
+    if foc > (k - 1) * n_s:
+        sizes = [n_s] * (k - 1) + [foc - (k - 1) * n_s]
+    else:
+        q, rem = divmod(foc, k)
+        sizes = [q + (1 if i < rem else 0) for i in range(k)]
+    out = []
+    for s in sizes:
+        out.append(("focus", s))
+        out.append(("rest", rest_s))
+    return out
+
+
+def loop_segs(start: datetime, end: datetime, n_min: float, extra: timedelta = None) -> list:
+    """[start, end) 这个循环里的 专注 / 休息 段 (见 loop_pieces: 以休息结束, 末尾对上 end).
+    extra: 最后那次休息的结束比 end 晚多少 (可以是负的, 但休息至少留 1 分钟); 调用的人要把后面的日程也平移同样的时间."""
     rest = max(1, int(round(config.compute_F(n_min))))
-    out, t = [], anchor or start
-    while t < end:
-        f_end = min(t + timedelta(minutes=n_min), end)
-        if f_end > t:
-            out.append(seg("focus", t, f_end, "专注"))
-        t = f_end
-        if t >= end:
-            break
-        r_end = min(t + timedelta(minutes=rest), end)
-        if r_end > t:
-            out.append(seg("rest", t, r_end, "休息"))
-        t = r_end
+    out, t = [], start
+    fm = 0.0
+    for kind, s in loop_pieces(int(math.floor((end - start).total_seconds() + 0.5)), _secs(n_min), rest * 60):
+        e = t + timedelta(seconds=s)
+        if kind == "focus":
+            fm = s / 60.0
+        out.append(seg(kind, t, e, "专注" if kind == "focus" else "休息", fm=fm))      # fm = 这一轮 (专注 + 随后的休息) 计划的专注分钟, 提前结束的比 n 短
+        t = e
+    if extra and out and out[-1]["kind"] == "rest":
+        out[-1]["end"] = max(out[-1]["start"] + timedelta(minutes=1), out[-1]["end"] + extra)
     return out
 
 
@@ -220,10 +252,15 @@ def _day_plan(r: Routine, d: _date, seed: str, fluct: bool) -> list:
         if it["type"] == "block":
             segs.append(seg("idle", c, end, it["label"], block=idx))
         else:
-            for s in loop_segs(c, end, it["focus"]):
+            lo, hi = r.fluct["rest_end"] if fluct else (0, 0)
+            extra = timedelta(minutes=rint(f"{seed}|le|{d}|{idx}", lo, hi))
+            part = loop_segs(c, end, it["focus"], extra)
+            for s in part:
                 s["loop"] = idx
                 s["n"] = it["focus"]
                 segs.append(s)
+            if part:
+                end = part[-1]["end"]                      # 最后一次休息晚结束了: 后面的日程整体往后推
         c = end
     n = len(segs)
     ns = [s["start"] for s in segs]
@@ -677,7 +714,9 @@ def _selftest():
     assert r and r.start == 390 and r.focus_label == "学习(高考内容)"
     assert [(it["type"], it["dur"]) for it in r.items] == [("block", 30), ("loop", 300), ("block", 30), ("block", 30), ("loop", 300), ("block", 30), ("block", 30), ("loop", 240), ("block", 30)]
     assert [it.get("focus") for it in r.items if it["type"] == "loop"] == [100, 100, 50]
-    assert r.fluct == {"focus_start": (-3, 2), "focus_end": (-2, 3), "sleep_start": (0, 5), "sleep_end": (-20, 10)}
+    assert r.fluct == {"focus_start": (-3, 2), "focus_end": (-2, 3), "sleep_start": (0, 5), "sleep_end": (-20, 10), "rest_end": (0, 5)}
+    assert parse(routine_text.replace("循环末尾休息结束时间波动:[0,5]", "")).fluct["rest_end"] == (0, 0), "没写 = 不晚"
+    assert parse(routine_text.replace("循环末尾休息结束时间波动:[0,5]", "循环末尾休息结束时间波动:[1,7]")).fluct["rest_end"] == (1, 7), "改了文件自动识别"
     assert r.devices == ["DESKTOP-CLAUDIA", "C1999W"] and set(r.windows) == {0, 1}
     assert r.diff == (20, 30) and r.skip_terms == ["无言为真", "持久战"] and r.bad_terms == ["通道阻塞", "细化规范", "乐理之灾", "未知变量"]
     assert "联网时间理由列表" in r.base and "整点记录专注填写列表" not in r.base
@@ -711,13 +750,27 @@ def _selftest():
         for a, b in zip(plan, plan[1:]):
             assert a["end"] == b["start"], (a, b)                    # 首尾相接, 没有重叠也没有缺口
         assert plan[-1]["kind"] == "sleep" and plan[-1]["end"] == wake_at(r, d + timedelta(days=1), seed)
-        act_end = wk + timedelta(minutes=sum(it["dur"] for it in r.items))
+        late = sum(rint(f"{seed}|le|{d}|{i}", 0, 5) for i, it in enumerate(r.items) if it["type"] == "loop")      # 三个循环最后一次休息各自晚结束的分钟, 后面的日程跟着推
+        act_end = wk + timedelta(minutes=sum(it["dur"] for it in r.items) + late)
         s_start = plan[-1]["start"]
         assert act_end <= s_start <= act_end + timedelta(minutes=5), "睡眠开始 = 活动做完 + [0,5] 分钟"
         if s_start > act_end:
             assert plan[-2]["kind"] == "idle" and plan[-2]["gap"] and plan[-2]["end"] == s_start, "II: 睡眠被延迟的这段算空闲"
         foc = [s for s in plan if s["kind"] == "focus"]
         assert len(foc) == 10, len(foc)
+        # 循环总以休息结束, 休息的末尾 = 循环的末尾 + [0,5] 分钟, 下一项活动紧接着从那里开始
+        cur_nom = wk
+        for i, it in enumerate(r.items):
+            nom_end = cur_nom + timedelta(minutes=it["dur"])
+            if it["type"] == "loop":
+                ls = [s for s in plan if s["loop"] == i]
+                assert ls[-1]["kind"] == "rest" and ls[0]["kind"] == "focus", "循环以休息结束"
+                dl = (ls[-1]["end"] - nom_end).total_seconds() / 60
+                assert dl == rint(f"{seed}|le|{d}|{i}", 0, 5) and 0 <= dl <= 5, ("休息比循环的结束晚 [0,5] 分钟", dl)
+                nom_end = ls[-1]["end"]
+                nxt = next((s for s in plan if s["start"] == nom_end and s["loop"] is None), None)
+                assert nxt is not None, "循环后面的活动从休息结束处开始"
+            cur_nom = nom_end
         saw_gap |= any(s["gap"] and s["kind"] == "idle" for s in plan[:-2])
         first = foc[0]
         nominal_first = wk + timedelta(minutes=30)
@@ -727,7 +780,16 @@ def _selftest():
     # 休息时长 = F(n): 100 分钟专注后休息 38 分钟
     d0 = _date(2026, 3, 1)
     p0 = day_plan(r, d0, seed, fluct=False)
-    assert [(s["kind"], int((s["end"] - s["start"]).total_seconds() // 60)) for s in p0[:6]] == [("idle", 30), ("focus", 100), ("rest", 38), ("focus", 100), ("rest", 38), ("focus", 24)]
+    assert [(s["kind"], int((s["end"] - s["start"]).total_seconds() // 60)) for s in p0[:8]] == [("idle", 30), ("focus", 62), ("rest", 38), ("focus", 62), ("rest", 38), ("focus", 62), ("rest", 38), ("idle", 30)], "300min 循环: 专注提前结束, 休息的末尾对上循环的末尾"
+    assert p0[6]["end"] == p0[0]["end"] + timedelta(minutes=300) and p0[7]["label"] == "午饭"
+    assert [(s["kind"], int((s["end"] - s["start"]).total_seconds() // 60)) for s in p0 if s["loop"] == 7] == [("focus", 50), ("rest", 16), ("focus", 50), ("rest", 16), ("focus", 50), ("rest", 16), ("focus", 26), ("rest", 16)], "240min / 50min 循环: 最后一轮的专注提前结束"
+    pp = lambda total, n: [(k, s / 60) for k, s in loop_pieces(total * 60, n * 60, max(1, round(config.compute_F(n))) * 60)]
+    assert pp(276, 100) == [("focus", 100), ("rest", 38), ("focus", 100), ("rest", 38)], "正好排满"
+    assert pp(200, 100) == [("focus", 100), ("rest", 38), ("focus", 24), ("rest", 38)], "只有最后一轮的专注提前结束"
+    assert pp(100, 100) == [("focus", 62), ("rest", 38)] and pp(20, 100) == [("focus", 20)], "放不下一轮 → 只剩专注"
+    for tot in range(30, 700, 7):
+        ps = pp(tot, 100)
+        assert tot <= 38 or (ps[-1][0] == "rest" and sum(m for _k, m in ps) == tot and all(m <= 100 for k, m in ps if k == "focus")), (tot, ps)
     assert [s["label"] for s in p0 if s["kind"] == "idle"] == ["洗漱,吃早饭", "午饭", "空闲", "晚饭", "空闲", "特殊空闲"]
     assert day_plan(r, d0, seed) == day_plan(r, d0, seed), "同一天总是同一个结果 (设备一致)"
     assert day_plan(r, d0, seed) != day_plan(r, d0 + timedelta(days=1), seed)

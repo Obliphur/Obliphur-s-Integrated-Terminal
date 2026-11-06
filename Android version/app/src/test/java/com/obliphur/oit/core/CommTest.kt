@@ -23,7 +23,7 @@ class CommTest {
         BuiltinPersonas.ROUTINE_LEGACIES = listOf(TEST_OLD_ROUTINE)
     }          // 其余用例里对方的回复马上显示 (打字延时见 typingDelay)
 
-    private var clock = LocalDateTime.of(2026, 11, 2, 9, 0, 0)
+    private var clock = LocalDateTime.of(2026, 11, 2, 10, 0, 0)       // 1.0.400: Claudia 那天 9:42-10:18 在休息 (循环里专注提前结束, 以前是 8:40-9:18)
     private val calls = mutableListOf<Pair<String, List<Pair<String, String>>>>()
     private val script = ArrayDeque<String>()
     /** 第二次调用 (规则 VIII) 单独记: 不占 script / calls, 没有安排的回 [refuse to reply]. */
@@ -170,7 +170,7 @@ class CommTest {
         val (system, msgs) = calls.last()
         assertTrue(system.startsWith(CommText.prefixPrompt()) && system.endsWith("上课."))
         val first = msgs[0].second
-        assertTrue("2026-11-02 周一 09:00" in first)
+        assertTrue("2026-11-02 周一 10:00" in first)
         assertTrue("OIT 附带信息" !in first && "整点记录" !in first && "计时器" !in first && first.endsWith("早"))   // 默认只有时间, 没有任何附带的数据
         assertEquals(listOf("me", "ai"), c.visible().map { it.role })
         assertEquals(1, c.unread)
@@ -451,9 +451,9 @@ class CommTest {
         val td = Files.createTempDirectory("oit").toFile()
         val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
         c.set(persona = "Claudia.txt")
-        clock = LocalDateTime.of(2026, 11, 2, 8, 0)
+        clock = LocalDateTime.of(2026, 11, 2, 7, 30)
         assertEquals("专注中", c.otherStatusText())
-        clock = LocalDateTime.of(2026, 11, 2, 9, 0)
+        clock = LocalDateTime.of(2026, 11, 2, 8, 10)
         assertEquals("休息中", c.otherStatusText())
         clock = LocalDateTime.of(2026, 11, 2, 12, 40)
         assertEquals("空闲", c.otherStatusText())
@@ -2248,7 +2248,7 @@ class CommTest {
         val nxt = plan.first { it.kind == "focus" && it.start > rest1.end }
         assertTrue("你的专注将在" !in c.noteForTest(rest1.start.plusMinutes(1)))
         assertTrue("你的专注将在 %02d:%02d 开始".format(nxt.start.hour, nxt.start.minute) in c.noteForTest(nxt.start.minusMinutes(3)))
-        assertTrue("每轮专注 100 分钟" in c.noteForTest(firstFocus.start.plusMinutes(20)) && "已经 20 分钟" in c.noteForTest(firstFocus.start.plusMinutes(20)))
+        assertTrue("每轮专注 62 分钟" in c.noteForTest(firstFocus.start.plusMinutes(20)) && "已经 20 分钟" in c.noteForTest(firstFocus.start.plusMinutes(20)))
         // 联合行动之后休息结束落在循环里: 立即开始专注 (T 之前是休息, 之后马上专注)
         val plan2 = Routine.planBetween(spec, LocalDateTime.of(2027, 6, 2, 5, 0), LocalDateTime.of(2027, 6, 3, 5, 0), seed)
         val rs = plan2.first { it.kind == "rest" }

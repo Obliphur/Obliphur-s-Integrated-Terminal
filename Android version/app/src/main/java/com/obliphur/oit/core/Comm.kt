@@ -228,6 +228,7 @@ share data:
 (联合行动期间不生效)
 睡眠开始时间波动:[0,5]
 睡眠结束时间波动:[-20,0]
+循环末尾休息结束时间波动:[0,5]
 
 
 联网时间理由列表:{60%:查资料,20%:下载资源,20%:娱乐}(基准数据)
@@ -971,7 +972,48 @@ share data:
 不选择的词条:{无言为真,持久战}
 违规词条:{通道阻塞,细化规范,乐理之灾,未知变量}
 """
-    var ROUTINE_LEGACIES = listOf(ROUTINE_PREV0)
+    val ROUTINE_PREV1 = """【日程】
+专注时段:学习(高考内容)
+
+初始起点:6:30
+30min:洗漱,吃早饭
+[循环 300min][100min]
+30min:午饭
+30min:空闲
+[循环 5h][100min]
+30min:晚饭
+30min:空闲
+[循环 240min][50min]
+30min:特殊空闲
+
+空闲发起谈话概率:20%
+重要活动发起谈话概率:20%
+特殊空闲发起谈话概率:60%
+休息发起谈话概率:20%
+长时间休息发起谈话概率:20%
+睡眠发起谈话概率:50%
+
+
+下一个专注开始节点波动:[-3,2]
+下一个专注结束节点波动:[-2,3]
+(联合行动期间不生效)
+睡眠开始时间波动:[0,5]
+睡眠结束时间波动:[-20,0]
+
+
+联网时间理由列表:{60%:查资料,20%:下载资源,20%:娱乐}(基准数据)
+整点记录专注填写列表:{30%:英语,数学,语文,历史,政治,地理}
+整点记录休息填写列表:{X%:聊天,弹琴,阅读,打扫,散步}
+
+设备列表:{DESKTOP-CLAUDIA,C1999W}
+设备-1:窗口使用时间:{30%:chrome,10%:claude,20%:OIT,5%:anki,5%:cloudmusic,空白}(基准数据)
+设备-2:窗口使用时间:{5%:微信,20%:OIT,20%:词典,2%:相册,13%:anki,空白}(基准数据)
+
+合约记录难度:[20,30]
+不选择的词条:{无言为真,持久战}
+违规词条:{通道阻塞,细化规范,乐理之灾,未知变量}
+"""
+    var ROUTINE_LEGACIES = listOf(ROUTINE_PREV0, ROUTINE_PREV1)
     val BACKGROUND_PREV5 = """这里是你的身份背景.用户提到下列话题时,按照这些设定回复.
 
 【使用规则】
@@ -1154,11 +1196,12 @@ object CommText {
             "  有日程文件的人设, 日程不再用上面\"每天重复的钟点\", 而是按持续时间一项接一项地算:\n" +
             "    初始起点:6:30            (起床的基准时刻)\n" +
             "    30min:洗漱,吃早饭        (一项活动: 持续时间:名字; 名字不是\"空闲\"的算有名字的活动, 比如吃饭, 合约时间不会和它重合)\n" +
-            "    [循环 300min][100min]    (一段循环: 总长 300min, 每轮专注 100min + 休息 F(100); 也可以写 5h)\n" +
+            "    [循环 300min][100min]    (一段循环: 总长 300min, 每轮专注 100min + 休息 F(100); 也可以写 5h; 循环总以休息结束: 排不满的最后一轮不截断, 而是让专注提前结束, 休息的末尾对上循环的末尾)\n" +
             "  做完最后一项就进入睡眠, 睡到第二天起床; 没有固定的睡觉钟点. 日程里每个时刻都是实时算出来的, 只给已经发生的部分.\n" +
             "  每天的波动 (分钟; 每天不同, 同一天所有设备一样):\n" +
             "    下一个专注开始节点波动:[-3,2]   下一个专注结束节点波动:[-2,3]   (联合行动期间不生效)\n" +
             "    睡眠开始时间波动:[0,5]   睡眠结束时间波动:[-20,10]\n" +
+            "    循环末尾休息结束时间波动:[0,5]   (每个循环最后那次休息的结束比循环的结束晚这么多分钟, 后面的日程跟着往后推; 没写 = 不晚)\n" +
             "  起床的波动平移整天; 晚开始专注留下的空档 / 睡眠被延迟的这段算\"空闲\"; 发起谈话概率照旧写在日程文件里 (睡眠后 5 分钟按实际的睡眠开始时刻算).\n" +
             "  对方自己的 OIT 数据 (对方查询 [timer] [log] [calendar] [stats] [net] 时得到的是它们, 不是空白模板; 只有已经发生的部分):\n" +
             "    联网时间理由列表:{60%:查资料,20%:下载资源,20%:娱乐}(基准数据)\n" +
@@ -1215,11 +1258,12 @@ object CommText {
             "  A persona with a routine file no longer uses the \"fixed daily clock times\" above; the day is computed from durations, one item after another:\n" +
             "    初始起点:6:30            (wake-up reference time)\n" +
             "    30min:洗漱,吃早饭        (one activity: duration:name; a name other than \"空闲\" is a named activity such as a meal; contracts never overlap it)\n" +
-            "    [循环 300min][100min]    (a loop: 300min in total, each round 100min focus + F(100) rest; 5h also works)\n" +
+            "    [循环 300min][100min]    (a loop: 300min in total, each round 100min focus + F(100) rest; 5h also works; a loop always ends with a rest: the last round is not cut off, its focus ends early so the rest ends exactly at the loop's end)\n" +
             "  After the last item the character goes to sleep until the next wake-up; there is no fixed bedtime. Everything is computed in real time and only the part that has already happened is shown.\n" +
             "  Daily fluctuation (minutes; different every day, identical on every device for the same day):\n" +
             "    下一个专注开始节点波动:[-3,2]   下一个专注结束节点波动:[-2,3]   (not applied during a joint action)\n" +
             "    睡眠开始时间波动:[0,5]   睡眠结束时间波动:[-20,10]\n" +
+            "    循环末尾休息结束时间波动:[0,5]   (the last rest of every loop ends this many minutes after the loop's end and everything after it shifts later; unset = on time)\n" +
             "  The wake-up fluctuation shifts the whole day; gaps left by a later focus start / a delayed sleep count as idle. Proactive-message probabilities are written in the routine file too (the 5 minutes after sleep use the actual sleep start).\n" +
             "  The character's own OIT data (what [timer] [log] [calendar] [stats] [net] return instead of blank templates; only what has already happened):\n" +
             "    联网时间理由列表:{60%:查资料,20%:下载资源,20%:娱乐}(基准数据)\n" +
@@ -3103,8 +3147,10 @@ class Comm(
         if (cur.loop >= 0) {
             val same = segs.filter { it.loop == cur.loop && Math.abs(java.time.Duration.between(it.start, cur.start).seconds) < 12 * 3600 }
             if (same.isNotEmpty()) {
-                val n = if (cur.n > 0) cur.n else 100.0
-                out += " 你所在的循环 ${hm(same.minOf { it.start })} 开始, 每轮专注 ${if (n == Math.floor(n)) n.toLong().toString() else n.toString()} 分钟."
+                fun g(x: Double) = if (x == Math.floor(x)) x.toLong().toString() else x.toString()
+                val nr = same.maxOf { it.fm }.let { if (it > 0) it else if (cur.n > 0) cur.n else 100.0 }      // 1.0.400: 循环里最后一轮的专注会提前结束, 每轮专注按实际排出来的算 (不是写的 100)
+                out += " 你所在的循环 ${hm(same.minOf { it.start })} 开始, 每轮专注 ${g(nr)} 分钟."
+                if (cur.fm > 0 && cur.fm < nr - 0.5) out += " (这一轮的专注提前结束了, 只有 ${g(cur.fm)} 分钟)"
             }
         }
         val nxt = segs.firstOrNull { !it.start.isBefore(cur.end) && (it.kind == "focus" || it.kind == "sleep") }

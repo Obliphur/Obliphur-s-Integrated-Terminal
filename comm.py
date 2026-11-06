@@ -291,11 +291,12 @@ def _readme_zh() -> str:
         "  有日程文件的人设, 日程不再用上面\"每天重复的钟点\", 而是按持续时间一项接一项地算:\n"
         "    初始起点:6:30            (起床的基准时刻)\n"
         "    30min:洗漱,吃早饭        (一项活动: 持续时间:名字; 名字不是\"空闲\"的算有名字的活动, 比如吃饭, 合约时间不会和它重合)\n"
-        "    [循环 300min][100min]    (一段循环: 总长 300min, 每轮专注 100min + 休息 F(100); 也可以写 5h)\n"
+        "    [循环 300min][100min]    (一段循环: 总长 300min, 每轮专注 100min + 休息 F(100); 也可以写 5h; 循环总以休息结束: 排不满的最后一轮不截断, 而是让专注提前结束, 休息的末尾对上循环的末尾)\n"
         "  做完最后一项就进入睡眠, 睡到第二天起床; 没有固定的睡觉钟点. 日程里每个时刻都是实时算出来的, 只给已经发生的部分.\n"
         "  每天的波动 (分钟; 每天不同, 同一天所有设备一样):\n"
         "    下一个专注开始节点波动:[-3,2]   下一个专注结束节点波动:[-2,3]   (联合行动期间不生效)\n"
         "    睡眠开始时间波动:[0,5]   睡眠结束时间波动:[-20,10]\n"
+        "    循环末尾休息结束时间波动:[0,5]   (每个循环最后那次休息的结束比循环的结束晚这么多分钟, 后面的日程跟着往后推; 没写 = 不晚)\n"
         "  起床的波动平移整天; 晚开始专注留下的空档 / 睡眠被延迟的这段算\"空闲\"; 发起谈话概率照旧写在日程文件里 (睡眠后 5 分钟按实际的睡眠开始时刻算).\n"
         "  还可以写\"重要活动发起谈话概率\" (吃饭这类有名字的活动开始前) 和\"特殊空闲发起谈话概率\" (名字叫\"特殊空闲\"的那一段开始前; 没写的按\"空闲发起谈话概率\"); 特殊空闲时对方可以直接发[share data]邀请你一起看数据.\n"
         "  对方自己的 OIT 数据 (对方查询 [timer] [log] [calendar] [stats] [net] 时得到的是它们, 不是空白模板; 只有已经发生的部分):\n"
@@ -355,11 +356,12 @@ def _readme_en() -> str:
         "  A persona with a routine file no longer uses the \"fixed daily clock times\" above; the day is computed from durations, one item after another:\n"
         "    初始起点:6:30            (wake-up reference time)\n"
         "    30min:洗漱,吃早饭        (one activity: duration:name; a name other than \"空闲\" is a named activity such as a meal; contracts never overlap it)\n"
-        "    [循环 300min][100min]    (a loop: 300min in total, each round 100min focus + F(100) rest; 5h also works)\n"
+        "    [循环 300min][100min]    (a loop: 300min in total, each round 100min focus + F(100) rest; 5h also works; a loop always ends with a rest: the last round is not cut off, its focus ends early so the rest ends exactly at the loop's end)\n"
         "  After the last item the character goes to sleep until the next wake-up; there is no fixed bedtime. Everything is computed in real time and only the part that has already happened is shown.\n"
         "  Daily fluctuation (minutes; different every day, identical on every device for the same day):\n"
         "    下一个专注开始节点波动:[-3,2]   下一个专注结束节点波动:[-2,3]   (not applied during a joint action)\n"
         "    睡眠开始时间波动:[0,5]   睡眠结束时间波动:[-20,10]\n"
+        "    循环末尾休息结束时间波动:[0,5]   (the last rest of every loop ends this many minutes after the loop's end and everything after it shifts later; unset = on time)\n"
         "  The wake-up fluctuation shifts the whole day; gaps left by a later focus start / a delayed sleep count as idle. Proactive-message probabilities are written in the routine file too (the 5 minutes after sleep use the actual sleep start).\n"
         "  You can also write \"重要活动发起谈话概率\" (before a named activity such as a meal) and \"特殊空闲发起谈话概率\" (before the segment named \"特殊空闲\"; unset ones follow \"空闲发起谈话概率\"); during the special idle the character may send [share data] directly to invite you to look at the data together.\n"
         "  The character's own OIT data (what [timer] [log] [calendar] [stats] [net] return instead of blank templates; only what has already happened):\n"
@@ -507,6 +509,7 @@ share data:
 (联合行动期间不生效)
 睡眠开始时间波动:[0,5]
 睡眠结束时间波动:[-20,0]
+循环末尾休息结束时间波动:[0,5]
 
 
 联网时间理由列表:{60%:查资料,20%:下载资源,20%:娱乐}(基准数据)
@@ -1254,7 +1257,48 @@ ROUTINE_PREV0 = """【日程】
 不选择的词条:{无言为真,持久战}
 违规词条:{通道阻塞,细化规范,乐理之灾,未知变量}
 """      # 1.0.389 的内置日程
-ROUTINE_LEGACIES = (ROUTINE_PREV0,)
+ROUTINE_PREV1 = """【日程】
+专注时段:学习(高考内容)
+
+初始起点:6:30
+30min:洗漱,吃早饭
+[循环 300min][100min]
+30min:午饭
+30min:空闲
+[循环 5h][100min]
+30min:晚饭
+30min:空闲
+[循环 240min][50min]
+30min:特殊空闲
+
+空闲发起谈话概率:20%
+重要活动发起谈话概率:20%
+特殊空闲发起谈话概率:60%
+休息发起谈话概率:20%
+长时间休息发起谈话概率:20%
+睡眠发起谈话概率:50%
+
+
+下一个专注开始节点波动:[-3,2]
+下一个专注结束节点波动:[-2,3]
+(联合行动期间不生效)
+睡眠开始时间波动:[0,5]
+睡眠结束时间波动:[-20,0]
+
+
+联网时间理由列表:{60%:查资料,20%:下载资源,20%:娱乐}(基准数据)
+整点记录专注填写列表:{30%:英语,数学,语文,历史,政治,地理}
+整点记录休息填写列表:{X%:聊天,弹琴,阅读,打扫,散步}
+
+设备列表:{DESKTOP-CLAUDIA,C1999W}
+设备-1:窗口使用时间:{30%:chrome,10%:claude,20%:OIT,5%:anki,5%:cloudmusic,空白}(基准数据)
+设备-2:窗口使用时间:{5%:微信,20%:OIT,20%:词典,2%:相册,13%:anki,空白}(基准数据)
+
+合约记录难度:[20,30]
+不选择的词条:{无言为真,持久战}
+违规词条:{通道阻塞,细化规范,乐理之灾,未知变量}
+"""      # 1.0.399 的内置日程
+ROUTINE_LEGACIES = (ROUTINE_PREV0, ROUTINE_PREV1)
 BACKGROUND_PREV5 = """这里是你的身份背景.用户提到下列话题时,按照这些设定回复.
 
 【使用规则】
@@ -4857,7 +4901,11 @@ class Comm:
         if cur.get("loop") is not None:
             same = [x for x in segs if x.get("loop") == cur["loop"] and abs((x["start"] - cur["start"]).total_seconds()) < 12 * 3600]
             if same:
-                out += f" 你所在的循环 {min(x['start'] for x in same):%H:%M} 开始, 每轮专注 {cur.get('n') or 100:g} 分钟."
+                nr = max((x.get("fm") or 0) for x in same) or (cur.get("n") or 100)       # 1.0.400: 循环里最后一轮的专注会提前结束, 每轮专注按实际排出来的算 (不是写的 100)
+                out += f" 你所在的循环 {min(x['start'] for x in same):%H:%M} 开始, 每轮专注 {nr:g} 分钟."
+                fm = cur.get("fm") or 0
+                if fm and fm < nr - 0.5:
+                    out += f" (这一轮的专注提前结束了, 只有 {fm:g} 分钟)"
         nxt = next((s for s in segs if s["start"] >= cur["end"] and s["kind"] in ("focus", "sleep")), None)
         if nxt and (nxt["start"] - now).total_seconds() <= 5 * 60:
             out += f" 你的{STATUS_TEXT[nxt['kind']].rstrip('中')}将在 {nxt['start']:%H:%M} 开始 (约 {max(1, round((nxt['start'] - now).total_seconds() / 60))} 分钟后)."
@@ -5972,8 +6020,8 @@ def _selftest():
     # 沟通界面显示的对方状态: 按人设日程, 跨零点也认; 只显示四种状态, 别的都算空闲; 不显示结束时间
     cst = Comm(os.path.join(td, "status"), folder, now=lambda: clock[0], chat_fn=fake)
     cst.set_cfg(persona="Claudia.txt")
-    assert cst.other_status_text(datetime(2026, 11, 2, 8, 0)) == "专注中"
-    assert cst.other_status_text(datetime(2026, 11, 2, 9, 0)) == "休息中"
+    assert cst.other_status_text(datetime(2026, 11, 2, 7, 30)) == "专注中"        # 1.0.400: 循环里专注提前结束 (62 分钟一轮), 第一轮专注约 6:40-8:02, 休息 7:42-8:40 之间
+    assert cst.other_status_text(datetime(2026, 11, 2, 8, 10)) == "休息中"
     assert cst.other_status_text(datetime(2026, 11, 2, 12, 40)) == "空闲"
     assert cst.other_status_text(datetime(2026, 11, 2, 12, 15)) == "空闲", "午饭等非四类: 算空闲"
     assert cst.other_status_text(datetime(2026, 11, 2, 6, 45)) == "空闲", "不在四类段里: 也算空闲"
@@ -7420,7 +7468,7 @@ def _selftest():
     assert cr.other_status()["kind"] == "sleep", "做完最后一项就睡"
     # 发给模型的内容: 系统提示里有日程文件, 最后一条用户消息后面贴着实时状态
     note = cr._rt_note(first_focus["start"] + timedelta(minutes=20))
-    assert "你此刻的状态" in note and "专注中" in note and "每轮专注 100 分钟" in note and "已经 20 分钟" in note, note
+    assert "你此刻的状态" in note and "专注中" in note and "每轮专注 62 分钟" in note and "已经 20 分钟" in note, note
     rest1 = next(x for x in plan if x["kind"] == "rest")
     clock[0] = rest1["start"] + timedelta(minutes=5)
     cr.state_fn = lambda: "idle"
@@ -7733,7 +7781,8 @@ def _selftest():
     n0 = len(calls)
     script.extend(["[refuse to reply][log][timer]", "好"])
     cr.messages = []
-    clock[0] = datetime(2027, 6, 9, 17, 2)
+    _pl = routine.plan_between(cr._rt, datetime(2027, 6, 9, 16, 0), datetime(2027, 6, 10, 0, 0), cr.pid)
+    clock[0] = next(x for x in _pl if x["kind"] in ("rest", "idle") and x["start"] >= datetime(2027, 6, 9, 17, 0))["start"] + timedelta(minutes=2)      # 1.0.400: 循环以休息结束, 17:02 不一定在休息 / 空闲 (专注时用户的消息会被藏起来)
     first = routine.status_in(routine.plan_between(cr._rt, clock[0] - timedelta(hours=1), clock[0] + timedelta(hours=1), cr.pid), clock[0])
     cr.send("今天做了什么")
     wait(cr)
