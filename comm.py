@@ -89,7 +89,7 @@ FOLLOW_DELAY = 3.0                    # 规则 VIII 的第二次调用先等这�
 CHAR_DELAY = 0.2                      # 对方发来的消息: 文本里每个字符让它晚这么多秒才显示 (像在打字; 排在前一条后面, 一条一条出来)
 RETRY_GAP = 10 * 60                   # 对方不方便回复时, 多久再把消息交给模型
 RETRY_MAX = 12
-HISTORY_SENT = 400                    # 每次请求最多带多少条聊天记录 (等于本地最多存的 400 条): 原话全带上, 量由下面的字数兜底
+HISTORY_SENT = 400                    # 每次请求最多带多少条聊天记录 (1.0.394 起本地存 600 条, 带的还是最近 400 条): 原话全带上, 量由下面的字数兜底
 HISTORY_CHARS = 120000                # 带的聊天记录总共最多多少字 (超了从最老的开始不带)
 HISTORY_STEP = 10                     # 带的聊天记录的起点一次往后挪这么多条 (不是每条都挪): 请求的开头 (前面的历史) 才能在这么多条消息里保持不变,
                                       # 服务商的提示缓存才命中 (分条发连着调用两次, 第二次的前面全是第一次发过的内容)
@@ -99,13 +99,13 @@ OP_OFFER_MAX = 12                     # 给对方看的开始时间最多列几�
 COND_TAG = "condition"               # 人设里的判定交给 OIT: 对方输入 [condition], OIT 算出用户当前的进度和每个条件满足没有, 再调用一次 (1.0.392)
 COND_JOINT_DAYS, COND_JOINT_N, COND_JOINT_LV = 30, 24, 15      # I.  前 30 天 (含今天) 和对方共同完成 24 场难度 >= 15 的合约
 COND_STUDY_DAYS, COND_STUDY_H, COND_IDLE_H = 60, 420.0, 210.0  # II. 前 60 天 (含今天) 专注 >= 420 h, 空闲 <= 210 h
-COND_MSGS = 200                       # III. 双方一共发了至少 200 条信息 (现在聊天记录里有的)
+COND_MSGS = 500                       # III. 双方一共发了至少 500 条信息 (现在聊天记录里有的; 本地存的条数 KEEP 要比它大)
 COND_TODAY_H = 8.0                    # IV. 今天专注 >= 8 h
 COND_KEEP_DAYS = 70                   # 每天的 (专注, 空闲) 秒数留多久 (用户的计时记录只留 7 天, 所以 OIT 自己每天存一份)
 MAX_INFO_ROUNDS = 2                   # 一次回复里, 对方最多可以要几次资料 ([contract])
 CHAT_TIMEOUT = 240.0                  # 一次请求最多等多久 (回复长 / 资料多时要久一点)
 WAIT_HINT = 15                        # 请求发出去多少秒还没回应, 聊天页就提示一句
-KEEP = 400                            # 本地最多存多少条
+KEEP = 600                            # 本地最多存多少条 (每次请求带多少条看 HISTORY_SENT, 和这个无关; [condition] 的信息条数也数这里)
 SYNC_N = 60                           # 随设备同步最近多少条
 MAX_PERSONA = 60000
 MAX_PROFILE = 5000                    # 用户自己填的身份背景最多多少字
@@ -117,6 +117,7 @@ MEM_PROMPT = ("你是 OIT 沟通模块的记忆整理器. 给你「现有记忆�
               "只保留以后还有用的事实: 用户的身份, 偏好, 计划, 约定, 禁区, 以及没聊完的话题和只处理了一部分的请求 (写明大概是什么时候的事).\n"
               "每次整理都要先逐条检查现有记忆卡, 对照「当前时间」和最近的对话, 删掉已经失效 / 过期的内容: 已经聊完 / 办完的话题和请求, 已经过去的计划和约定, 被新对话推翻的事实.\n"
               "重点记:\n用户的性格,反应模式,情感类型;用户希望AI记下的内容;用户的爱好;\n不要记日常琐事.\n"
+              "用户的'简单要求'(例如让你多说点话)一般只在本轮对话有效, 不记; 但如果对话里已经确立了'亲密关系'(对方接受了用户发展亲密关系的请求, 记成一条「已确立亲密关系」), 这之后用户的简单要求要长期保留, 检查失效 / 过期内容时也不能清除. 其余哪些内容该长期保留 / 不能清除, 以「对方的人设」里写的为准.\n"
               "删掉寒暄, 重复, 一次性的内容. 每条一行, 以 \"- \" 开头, 不超过 40 字, 最多 15 条.\n"
               "和新对话冲突时以新对话为准; 不确定的条目末尾加 \"?\". 不要编造对话里没有的事.\n"
               "只输出记忆卡本身, 不要解释, 不要标题, 不要代码块.")
@@ -3777,7 +3778,8 @@ class Comm:
             who = "用户" if m.get("role") == "me" else "对方"
             when = stamp(datetime.fromtimestamp(int(m.get("ts") or 0) / 1000))
             lines.append(f"[{when}] {who}: {clip_message(str(m.get('api') or m.get('text') or ''), 1500)}")
-        body = (f"当前时间: {stamp(self.now())}\n\n现有记忆卡:\n" + memory + "\n\n最近一段对话 (每条前面是发送时间):\n" + "\n".join(lines))
+        persona = clip_message(read_persona_full(self.personas, self.persona_name()), 8000)
+        body = (f"当前时间: {stamp(self.now())}\n\n对方的人设 (只用来判断哪些内容该长期保留 / 不能清除, 不要抄进记忆卡):\n{persona}\n\n现有记忆卡:\n" + memory + "\n\n最近一段对话 (每条前面是发送时间):\n" + "\n".join(lines))
         upto = int(batch[-1].get("ts") or 0)
         pid = self.pid
         profile = self.ai.profile()
@@ -5837,7 +5839,7 @@ def _selftest():
     big = [{"role": "me" if i % 2 == 0 else "ai", "text": f"m{i}"} for i in range(900)]
     firsts = {api_messages(big[:n])[0]["content"] for n in range(401, 480)}
     assert all(len(api_messages(big[:n])) <= HISTORY_SENT for n in range(1, 900))
-    assert HISTORY_SENT == 400 and len(api_messages(big)) == 400, "窗口 = 本机存的 400 条"
+    assert HISTORY_SENT == 400 and len(api_messages(big)) == 400, "窗口 = 最近 400 条"
     assert len(firsts) <= (480 - 401) // HISTORY_STEP + 2, "开头 (最老的一条) 每 %d 条才变一次" % HISTORY_STEP
     a_old, a_new = api_messages(big[:495]), api_messages(big[:496])
     assert a_old[0]["content"] == a_new[0]["content"], "新增一条消息不改变请求的开头"
@@ -7247,14 +7249,14 @@ def _selftest():
     assert rows["I"][2] == "2 场" and not rows["I"][4], rows["I"]
     assert rows["II"][2].startswith("专注 63.0h, 空闲 14.0h") and "7 / 60" in rows["II"][2] and not rows["II"][4]
     assert rows["IV"][2] == "9.0h" and rows["IV"][4], "今天专注 9h >= 8h"
-    assert not rows["III"][4] and rows["III"][3] == "200 条"
+    assert not rows["III"][4] and rows["III"][3] == "500 条"
     assert "cond_days" in cr.cfg and len(cr.cfg["cond_days"]) == 7, "最近 7 天的数存下来了"
     cr.user_day_fn = lambda d: None                                  # 以后读不到 (记录只留 7 天): 用存下来的
     assert cr.condition_state()[1][2].startswith("专注 63.0h"), "更早的天用以前存的"
     txt = cr.condition_text()
     assert "条件判定结果" in txt and "I." in txt and "V." in txt and "没有全部满足" in txt and "用户看不到" in txt
-    cr.messages += [{"role": "me" if i % 2 else "ai", "text": "x", "ts": 1 + i} for i in range(210)]
-    assert cr.condition_state()[2][4], "信息 >= 200 条"
+    cr.messages += [{"role": "me" if i % 2 else "ai", "text": "x", "ts": 1 + i} for i in range(510)]
+    assert cr.condition_state()[2][4], "信息 >= 500 条"
     # 聊天概率: 一个小时里用户发 >= 20 条 → 休息格里聊天概率 50%
     clock[0] = datetime(2027, 6, 9, 15, 30)
     base_ts = int(datetime(2027, 6, 9, 16, 0).timestamp() * 1000)

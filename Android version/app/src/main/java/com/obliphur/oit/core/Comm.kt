@@ -1179,6 +1179,7 @@ object CommText {
         "只保留以后还有用的事实: 用户的身份, 偏好, 计划, 约定, 禁区, 以及没聊完的话题和只处理了一部分的请求 (写明大概是什么时候的事).\n" +
         "每次整理都要先逐条检查现有记忆卡, 对照「当前时间」和最近的对话, 删掉已经失效 / 过期的内容: 已经聊完 / 办完的话题和请求, 已经过去的计划和约定, 被新对话推翻的事实.\n" +
         "重点记:\n用户的性格,反应模式,情感类型;用户希望AI记下的内容;用户的爱好;\n不要记日常琐事.\n" +
+        "用户的'简单要求'(例如让你多说点话)一般只在本轮对话有效, 不记; 但如果对话里已经确立了'亲密关系'(对方接受了用户发展亲密关系的请求, 记成一条「已确立亲密关系」), 这之后用户的简单要求要长期保留, 检查失效 / 过期内容时也不能清除. 其余哪些内容该长期保留 / 不能清除, 以「对方的人设」里写的为准.\n" +
         "删掉寒暄, 重复, 一次性的内容. 每条一行, 以 \"- \" 开头, 不超过 40 字, 最多 15 条.\n" +
         "和新对话冲突时以新对话为准; 不确定的条目末尾加 \"?\". 不要编造对话里没有的事.\n" +
         "只输出记忆卡本身, 不要解释, 不要标题, 不要代码块."
@@ -1438,11 +1439,11 @@ class Comm(
         const val OP_OFFER_MAX = 12                     // 给对方看的开始时间最多列几个 (最近的; 定开始时间时仍然从全部里找)
         const val COND_JOINT_DAYS = 30; const val COND_JOINT_N = 24; const val COND_JOINT_LV = 15         // I.  前 30 天 (含今天) 共同完成 24 场难度 >= 15 的合约
         const val COND_STUDY_DAYS = 60; const val COND_STUDY_H = 420.0; const val COND_IDLE_H = 210.0     // II. 前 60 天 (含今天) 专注 >= 420 h, 空闲 <= 210 h
-        const val COND_MSGS = 200; const val COND_TODAY_H = 8.0; const val COND_KEEP_DAYS = 70            // III. 信息 >= 200 条; IV. 今天专注 >= 8 h; 每天的 (专注, 空闲) 留 70 天
+        const val COND_MSGS = 500; const val COND_TODAY_H = 8.0; const val COND_KEEP_DAYS = 70            // III. 信息 >= 200 条; IV. 今天专注 >= 8 h; 每天的 (专注, 空闲) 留 70 天
         const val MAX_INFO_ROUNDS = 2                   // 一次回复里, 对方最多可以要几次资料 ([contract])
         const val CHAT_TIMEOUT_MS = 240_000             // 一次请求最多等多久 (回复长 / 资料多时要久一点)
         const val WAIT_HINT = 15                        // 请求发出去多少秒还没回应, 聊天页就提示一句
-        const val KEEP = 400
+        const val KEEP = 600                      // 本地最多存多少条 (每次请求带多少条看 HISTORY_SENT, 和这个无关; [condition] 的信息条数也数这里)
         const val SYNC_N = 60
         const val MAX_PERSONA = 60000
         const val MAX_PROFILE = 5000                    // 用户自己填的身份背景最多多少字
@@ -2163,7 +2164,8 @@ class Comm(
         val batch = memDelta().take(MEM_EVERY)
         val memory = memoryBlock().trim().ifEmpty { "(空)" }
         val zone = java.time.ZoneId.systemDefault()
-        val body = "当前时间: ${CommText.stamp(now())}\n\n现有记忆卡:\n$memory\n\n最近一段对话 (每条前面是发送时间):\n" + batch.joinToString("\n") {
+        val personaText = clipMessage(readPersonaFull(personaName()), 8000)
+        val body = "当前时间: ${CommText.stamp(now())}\n\n对方的人设 (只用来判断哪些内容该长期保留 / 不能清除, 不要抄进记忆卡):\n$personaText\n\n现有记忆卡:\n$memory\n\n最近一段对话 (每条前面是发送时间):\n" + batch.joinToString("\n") {
             "[${CommText.stamp(java.time.Instant.ofEpochMilli(it.ts).atZone(zone).toLocalDateTime())}] " +
                 (if (it.role == "me") "用户: " else "对方: ") + clipMessage(it.api.ifEmpty { it.text }, 1500)
         }
