@@ -564,9 +564,9 @@ class RoutineStore(val file: File, var r: RoutineSpec, val seed: String) {
         val used = if (dev == 0) dayMinutes(d, setOf("focus")) else awakeFreeMinutes(d)
         val w = Routine.fluctList(items, "$seed|win$dev|$d", name in r.base)
         val out = LinkedHashMap<String, Double>()
-        for ((n, p) in w) if (p > 0) out[n] = used * 60.0 * p / 100.0
+        for ((n, p) in w) if (p > 0) { val k = if (n == "空白") "" else n; out[k] = (out[k] ?: 0.0) + used * 60.0 * p / 100.0 }   // 名单里明写的"空白"和没写满的剩余是同一项
         val rest = maxOf(0.0, 100.0 - w.sumOf { it.second })
-        if (rest > 0.05) out[""] = used * 60.0 * rest / 100.0
+        if (rest > 0.05) out[""] = (out[""] ?: 0.0) + used * 60.0 * rest / 100.0
         return out
     }
 }

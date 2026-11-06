@@ -594,10 +594,14 @@ class Store:
             return {}
         used = self.day_minutes(d, ("focus",)) if dev == 0 else self.awake_free_minutes(d)
         weights = fluct_list(items, f"{self.seed}|win{dev}|{d}", name in self.r.base)
-        out = {n: used * 60.0 * p / 100.0 for n, p in weights if p > 0}
+        out = {}
+        for n, p in weights:
+            if p > 0:
+                k = "" if n == "空白" else n            # 名单里明写的"空白"和没写满的剩余是同一项
+                out[k] = out.get(k, 0.0) + used * 60.0 * p / 100.0
         rest = max(0.0, 100.0 - sum(p for _n, p in weights))
         if rest > 0.05:
-            out[""] = used * 60.0 * rest / 100.0
+            out[""] = out.get("", 0.0) + used * 60.0 * rest / 100.0
         return out
 
 
