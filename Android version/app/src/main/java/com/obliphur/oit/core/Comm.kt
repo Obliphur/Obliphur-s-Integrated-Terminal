@@ -1037,7 +1037,8 @@ object CommText {
 
     /** 记忆整理器的系统提示 (和桌面版 comm.MEM_PROMPT 一致). */
     val MEM_PROMPT = "你是 OIT 沟通模块的记忆整理器. 给你「现有记忆卡」和「最近一段对话」, 输出更新后的记忆卡.\n" +
-        "只保留以后还有用的事实: 用户的身份, 偏好, 计划, 约定, 禁区. 不要记没有完成的话题.\n" +
+        "只保留以后还有用的事实: 用户的身份, 偏好, 计划, 约定, 禁区, 以及没聊完的话题和只处理了一部分的请求 (写明大概是什么时候的事).\n" +
+        "每次整理都要先逐条检查现有记忆卡, 对照「当前时间」和最近的对话, 删掉已经失效 / 过期的内容: 已经聊完 / 办完的话题和请求, 已经过去的计划和约定, 被新对话推翻的事实.\n" +
         "重点记:\n用户的性格,反应模式,情感类型;用户希望AI记下的内容;用户的爱好;\n不要记日常琐事.\n" +
         "删掉寒暄, 重复, 一次性的内容. 每条一行, 以 \"- \" 开头, 不超过 40 字, 最多 15 条.\n" +
         "和新对话冲突时以新对话为准; 不确定的条目末尾加 \"?\". 不要编造对话里没有的事.\n" +
@@ -2014,8 +2015,10 @@ class Comm(
         if (!memDue()) return
         val batch = memDelta().take(MEM_EVERY)
         val memory = memoryBlock().trim().ifEmpty { "(空)" }
-        val body = "现有记忆卡:\n$memory\n\n最近一段对话:\n" + batch.joinToString("\n") {
-            (if (it.role == "me") "用户: " else "对方: ") + clipMessage(it.api.ifEmpty { it.text }, 1500)
+        val zone = java.time.ZoneId.systemDefault()
+        val body = "当前时间: ${CommText.stamp(now())}\n\n现有记忆卡:\n$memory\n\n最近一段对话 (每条前面是发送时间):\n" + batch.joinToString("\n") {
+            "[${CommText.stamp(java.time.Instant.ofEpochMilli(it.ts).atZone(zone).toLocalDateTime())}] " +
+                (if (it.role == "me") "用户: " else "对方: ") + clipMessage(it.api.ifEmpty { it.text }, 1500)
         }
         val upto = batch.last().ts
         val owner = pid

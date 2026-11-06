@@ -108,7 +108,8 @@ MEM_GAP = 3 * 3600                    # 两次整理至少隔这么久 (秒): �
 MEM_TOKENS = 3000                     # 整理记忆卡一次请求的 max_tokens: 开了思考, 要比思考预算 (ai_assist.THINK_BUDGET) 大, 还得留出记忆卡本身的长度
 MEM_MAX = 2000                        # 记忆卡最多多少字
 MEM_PROMPT = ("你是 OIT 沟通模块的记忆整理器. 给你「现有记忆卡」和「最近一段对话」, 输出更新后的记忆卡.\n"
-              "只保留以后还有用的事实: 用户的身份, 偏好, 计划, 约定, 禁区. 不要记没有完成的话题.\n"
+              "只保留以后还有用的事实: 用户的身份, 偏好, 计划, 约定, 禁区, 以及没聊完的话题和只处理了一部分的请求 (写明大概是什么时候的事).\n"
+              "每次整理都要先逐条检查现有记忆卡, 对照「当前时间」和最近的对话, 删掉已经失效 / 过期的内容: 已经聊完 / 办完的话题和请求, 已经过去的计划和约定, 被新对话推翻的事实.\n"
               "重点记:\n用户的性格,反应模式,情感类型;用户希望AI记下的内容;用户的爱好;\n不要记日常琐事.\n"
               "删掉寒暄, 重复, 一次性的内容. 每条一行, 以 \"- \" 开头, 不超过 40 字, 最多 15 条.\n"
               "和新对话冲突时以新对话为准; 不确定的条目末尾加 \"?\". 不要编造对话里没有的事.\n"
@@ -3624,8 +3625,9 @@ class Comm:
         lines = []
         for m in batch:
             who = "用户" if m.get("role") == "me" else "对方"
-            lines.append(f"{who}: {clip_message(str(m.get('api') or m.get('text') or ''), 1500)}")
-        body = "现有记忆卡:\n" + memory + "\n\n最近一段对话:\n" + "\n".join(lines)
+            when = stamp(datetime.fromtimestamp(int(m.get("ts") or 0) / 1000))
+            lines.append(f"[{when}] {who}: {clip_message(str(m.get('api') or m.get('text') or ''), 1500)}")
+        body = (f"当前时间: {stamp(self.now())}\n\n现有记忆卡:\n" + memory + "\n\n最近一段对话 (每条前面是发送时间):\n" + "\n".join(lines))
         upto = int(batch[-1].get("ts") or 0)
         pid = self.pid
         profile = self.ai.profile()
