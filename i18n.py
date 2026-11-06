@@ -545,6 +545,8 @@ EN = {
     "确定": "OK",
     "取消": "Cancel",
     "💬  沟通": "💬  Chat",
+    "沟通": "Chat",
+    "设置": "Settings",
     "🛡  规则": "🛡  Rules",
     "清空": "Clear",
     "发送": "Send",

@@ -672,6 +672,8 @@ object EnStrings {
         "确定" to "OK",
         "取消" to "Cancel",
         "💬  沟通" to "💬  Chat",
+        "沟通" to "Chat",
+        "设置" to "Settings",
         "🛡  规则" to "🛡  Rules",
         "清空" to "Clear",
         "发送" to "Send",
