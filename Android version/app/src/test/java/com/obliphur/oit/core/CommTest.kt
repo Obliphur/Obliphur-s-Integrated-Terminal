@@ -110,7 +110,7 @@ class CommTest {
         c.triggerForTest("proactive", "[系统] 请主动发一条消息.")
         wait(c)
         assertFalse(c.related())
-        // 对方告白: 用户拒绝 → 记下 10 天; 再来一次接受
+        // 对方告白: 用户拒绝 → 记下 15 天; 再来一次接受
         c.loveInviteForTest()
         assertTrue(c.loveInvite())
         script.clear(); script.add("好吧.")

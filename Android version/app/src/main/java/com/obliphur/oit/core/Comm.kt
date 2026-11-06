@@ -147,7 +147,7 @@ V.现在是特殊空闲时段.
 没有全部通过则按照'依赖性请求处理',否则告诉用户'关系不会带来互动模式的质变',并让用户谨慎确定自己的抉择.
 如果用户真的很坚定,不被动摇则接受对方的请求,并在回复里输入[accept](OIT会记录你们已确立亲密关系).在这之后,'简单要求'可以被长期保留,不会被记忆卡清除.
 
-主动触发的表白会在每次进入特殊空闲时间时由系统判定,条件更严格,并且也更直接,不会问用户是否'谨慎','坚定'.全部通过时系统会通知你,你还要根据记忆卡和聊天记录自己判断现在告白是否恰当:用户是性取向常见的女性,或者完全没有表现出发展亲密关系的意图时,不要告白(返回[refuse to reply]);恰当时才表白:结合记忆卡里的内容与用户的特点,发言较长(不受默认字数限制),前半含蓄,后半直接;用户可以在界面上选择接受或拒绝(拒绝后10天内系统不再判定).
+主动触发的表白会在每次进入特殊空闲时间时由系统判定,条件更严格,并且也更直接,不会问用户是否'谨慎','坚定'.全部通过时系统会通知你,你还要根据记忆卡和聊天记录自己判断现在告白是否恰当:用户是性取向常见的女性,或者完全没有表现出发展亲密关系的意图时,不要告白(返回[refuse to reply]);恰当时才表白:结合记忆卡里的内容与用户的特点,发言较长(不受默认字数限制),前半含蓄,后半直接;用户可以在界面上选择接受或拒绝(用户拒绝或你否决后,15天内系统不再判定).
 I.包括今天在内的前30天,你与用户共同完成了27场难度>=20的合约
 II.用户在包括今天在内的前60天,专注时间>=480h,空闲时间<=180h.
 III.你与用户至少互相发送了1000信息.
@@ -1559,7 +1559,7 @@ class Comm(
         const val COND_JOINT_DAYS = 30; const val COND_JOINT_N = 24; const val COND_JOINT_LV = 15         // I.  前 30 天 (含今天) 共同完成 24 场难度 >= 15 的合约
         const val COND_STUDY_DAYS = 60; const val COND_STUDY_H = 420.0; const val COND_IDLE_H = 210.0     // II. 前 60 天 (含今天) 专注 >= 420 h, 空闲 <= 210 h
         class CondSet(val jointDays: Int, val jointN: Int, val jointLv: Int, val studyDays: Int, val studyH: Double, val idleH: Double, val msgs: Int, val todayH: Double)
-        const val LOVE_NO_DAYS = 10                    // 用户拒绝了对方的告白之后, 这么多天内不再判定主动告白
+        const val LOVE_NO_DAYS = 15                    // 用户拒绝了对方的告白 / 对方自己否决了 (回 [refuse to reply]) 之后, 这么多天内不再判定主动告白
         const val LOVE_TAG = "[系统·告白]"              // 告白相关的系统消息 (不是 "[系统]" 开头: 不算主动消息)
         const val COND_MSGS = 500; const val COND_TODAY_H = 8.0; const val COND_KEEP_DAYS = 70            // III. 信息 >= 200 条; IV. 今天专注 >= 8 h; 每天的 (专注, 空闲) 留 70 天
         val COND_NORMAL = CondSet(COND_JOINT_DAYS, COND_JOINT_N, COND_JOINT_LV, COND_STUDY_DAYS, COND_STUDY_H, COND_IDLE_H, COND_MSGS, COND_TODAY_H)      // 用户提出发展亲密关系: 人设里 [condition] 的五个条件
@@ -4348,7 +4348,7 @@ class Comm(
             error = r.err
             if (r.kind == "love") {
                 if (r.err.isNotEmpty()) loveUnmark()           // 出错: 这次的判定作废, 下一轮 tick 再来 (这一段特殊空闲里)
-                else log("LOVE 对方判断不合适, 没有告白")        // 对方回了 [refuse to reply]: 这一段不再问, 下一个特殊空闲再判定
+                else { loveSet(no = nowMs() + LOVE_NO_DAYS * 86_400_000L); log("LOVE 对方判断不合适, 没有告白 ($LOVE_NO_DAYS 天内不再判定)") }       // 对方回了 [refuse to reply]: 进入冷却
             }
             if (r.kind == "share_ask") shareAskEnd(if (refused) "对方现在不方便, share data 没有打开" else "对方没有回复, share data 没有打开")      // 出错 / 对方不方便 / 没回: 这次请求作废 (不重试)
             if (refused && (unanswered() || isCatchup)) {
