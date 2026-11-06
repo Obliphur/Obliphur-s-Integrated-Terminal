@@ -791,6 +791,54 @@ def _web_chat(profile: dict, system: str, messages: list, timeout: float, opener
 MODEL_CACHE = {}                # (服务商, Base URL) -> 取到过的模型 id 列表 (只在内存里)
 
 
+def image_mime(data: bytes) -> str:
+    """图片文件头 → MIME (模型接口只认 PNG / JPEG / WEBP / GIF); 认不出返回 ""."""
+    d = bytes(data[:16])
+    if d.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if d.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if d[:4] == b"RIFF" and d[8:12] == b"WEBP":
+        return "image/webp"
+    if d[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    return ""
+
+
+OCR_SYSTEM = ("你是文字识别工具. 把用户给的图片上的文字原样提取出来: 保持原来的语言, 顺序和换行, 不要翻译, 不要总结, 不要解释, "
+              "不要加标题或代码块. 看不清的字用 ? 代替. 如果图片上没有任何文字, 只回复 [no text].")
+OCR_USER = "请提取这张图片上的文字."
+OCR_MAX_BYTES = 4_500_000                  # 图片文件最大多大 (Anthropic 接口的上限是 5 MB, 这里留出 base64 之前的余量)
+OCR_TOKENS = 4096
+
+
+def image_content(profile: dict, data: bytes, mime: str, text: str) -> list:
+    """一条带图片的用户消息的 content (两种协议的写法不同)."""
+    b64 = base64.b64encode(data).decode("ascii")
+    if profile["protocol"] == "anthropic":
+        return [{"type": "image", "source": {"type": "base64", "media_type": mime, "data": b64}},
+                {"type": "text", "text": text}]
+    return [{"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+            {"type": "text", "text": text}]
+
+
+def ocr_image(profile: dict, data: bytes, timeout: float = 120.0, opener=None, chat=None) -> str:
+    """识别字体: 让模型把图片上的文字返回. 图片不会存下来, 也不会发进聊天. 没有文字返回 "". 失败抛 AIError.
+    chat: 发请求的函数 (默认 chat_messages; 沟通模块会传自己的, 测试里换成假的)."""
+    if len(data) > OCR_MAX_BYTES:
+        raise AIError("format", "图片太大了 (最大 4.5 MB)")
+    mime = image_mime(data)
+    if not mime:
+        raise AIError("format", "只支持 PNG / JPG / WEBP / GIF 图片")
+    msgs = [{"role": "user", "content": image_content(profile, data, mime, OCR_USER)}]
+    if chat is None:
+        reply = chat_messages(profile, OCR_SYSTEM, msgs, timeout=timeout, opener=opener, max_tokens=OCR_TOKENS, temperature=0.0)
+    else:
+        reply = chat(profile, OCR_SYSTEM, msgs, max_tokens=OCR_TOKENS, temperature=0.0, timeout=timeout, cache=False)
+    t = re.sub(r"```[^\n]*", "", str(reply or "")).replace("```", "").strip()
+    return "" if t.lower().replace(" ", "") == "[notext]" else t
+
+
 def models_url(profile: dict) -> str:
     base = profile["base_url"].strip().rstrip("/")
     if profile.get("protocol") == "anthropic":

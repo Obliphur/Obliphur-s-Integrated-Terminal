@@ -202,6 +202,50 @@ object Ai {
         if (adaptiveThinking(model)) JSONObject().put("type", "adaptive")
         else JSONObject().put("type", "enabled").put("budget_tokens", THINK_BUDGET)
 
+    // ---- 识别字体 (沟通 🖼, 同 ai_assist.ocr_image): 图片只发给模型一次, 不存下来, 也不进聊天记录 ----
+    class ImagePart(val mime: String, val b64: String)
+    /** 这个线程里的下一次请求, 最后一条用户消息带上这张图片 (请求线程开头设置, 用完清掉; chatFn 的签名不变). */
+    val imageLocal = ThreadLocal<ImagePart?>()
+    const val OCR_MAX_BYTES = 4_500_000                 // 图片文件最大多大 (Anthropic 接口的上限是 5 MB)
+    const val OCR_TOKENS = 4096
+    const val OCR_USER = "请提取这张图片上的文字."
+    const val OCR_SYSTEM = "你是文字识别工具. 把用户给的图片上的文字原样提取出来: 保持原来的语言, 顺序和换行, 不要翻译, 不要总结, 不要解释, " +
+        "不要加标题或代码块. 看不清的字用 ? 代替. 如果图片上没有任何文字, 只回复 [no text]."
+
+    /** 图片文件头 → MIME (模型接口只认 PNG / JPEG / WEBP / GIF); 认不出返回 "". */
+    fun imageMime(d: ByteArray): String {
+        fun at(i: Int) = if (i < d.size) d[i].toInt() and 0xFF else -1
+        fun str(from: Int, s: String) = s.indices.all { at(from + it) == s[it].code }
+        return when {
+            at(0) == 0x89 && str(1, "PNG") && at(4) == 0x0D && at(5) == 0x0A && at(6) == 0x1A && at(7) == 0x0A -> "image/png"
+            at(0) == 0xFF && at(1) == 0xD8 && at(2) == 0xFF -> "image/jpeg"
+            str(0, "RIFF") && str(8, "WEBP") -> "image/webp"
+            str(0, "GIF87a") || str(0, "GIF89a") -> "image/gif"
+            else -> ""
+        }
+    }
+
+    /** 一条带图片的用户消息的 content (两种协议的写法不同). */
+    private fun imageContent(p: Profile, img: ImagePart, text: String): JSONArray =
+        if (p.protocol == "anthropic") JSONArray()
+            .put(JSONObject().put("type", "image").put("source", JSONObject().put("type", "base64").put("media_type", img.mime).put("data", img.b64)))
+            .put(JSONObject().put("type", "text").put("text", text))
+        else JSONArray()
+            .put(JSONObject().put("type", "image_url").put("image_url", JSONObject().put("url", "data:${img.mime};base64,${img.b64}")))
+            .put(JSONObject().put("type", "text").put("text", text))
+
+    /** 测试用: 带这张图片的识别请求体长什么样 (不发出去). */
+    internal fun requestBodyForTest(p: Profile, data: ByteArray): String {
+        imageLocal.set(ImagePart(imageMime(data), java.util.Base64.getEncoder().encodeToString(data)))
+        try { return buildBody(p, OCR_SYSTEM, listOf("user" to OCR_USER), OCR_TOKENS, 0.0, false, true, false).toString() } finally { imageLocal.remove() }
+    }
+
+    /** 模型返回的识别结果 → 文字: 去掉代码块; "[no text]" = 没有文字 (返回 ""). */
+    fun cleanOcr(reply: String): String {
+        val t = reply.replace(Regex("```[^\\n]*"), "").replace("```", "").trim()
+        return if (t.lowercase().replace(" ", "") == "[notext]") "" else t
+    }
+
     private fun buildBody(p: Profile, system: String, messages: List<Pair<String, String>>, maxTokens: Int, temperature: Double,
                           cache: Boolean, thinkOff: Boolean, thinkOn: Boolean): JSONObject {
         val body = JSONObject().put("model", p.model).put("max_tokens", maxTokens)
@@ -226,7 +270,9 @@ object Ai {
         }
         for ((i, m) in messages.withIndex()) {
             val (role, content) = m
-            if (cache && p.protocol == "anthropic" && i == messages.size - 1)
+            val img = imageLocal.get()
+            if (img != null && i == messages.size - 1 && role == "user") arr.put(JSONObject().put("role", role).put("content", imageContent(p, img, content)))
+            else if (cache && p.protocol == "anthropic" && i == messages.size - 1)
                 arr.put(JSONObject().put("role", role).put("content", JSONArray().put(JSONObject().put("type", "text").put("text", content)
                     .put("cache_control", JSONObject().put("type", "ephemeral")))))
             else arr.put(JSONObject().put("role", role).put("content", content))

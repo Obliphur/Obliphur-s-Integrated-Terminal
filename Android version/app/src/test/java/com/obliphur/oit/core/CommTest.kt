@@ -1133,6 +1133,40 @@ class CommTest {
         }
     }
 
+    /** 识别字体 (沟通 🖼): 图片 → 模型 → 文字; 图片只在这一次请求里带上, 不进聊天记录. */
+    @Test
+    fun ocrImage() {
+        val td = Files.createTempDirectory("oit").toFile()
+        File(td, "p").mkdirs()
+        val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
+        val png = byteArrayOf(0x89.toByte(), 'P'.code.toByte(), 'N'.code.toByte(), 'G'.code.toByte(), 0x0D, 0x0A, 0x1A, 0x0A) + ByteArray(64) { '0'.code.toByte() }
+        assertEquals("image/png", Ai.imageMime(png))
+        assertEquals("image/jpeg", Ai.imageMime(byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xE0.toByte())))
+        assertEquals("image/gif", Ai.imageMime("GIF89a..".toByteArray()))
+        assertEquals("image/webp", Ai.imageMime("RIFF....WEBPVP8 ".toByteArray()))
+        assertEquals("", Ai.imageMime("BM....".toByteArray()))
+        assertEquals("第一行\n第二行", Ai.cleanOcr("```\n第一行\n第二行\n```"))
+        assertEquals("", Ai.cleanOcr("[No text]"))
+        val n0 = calls.size
+        script.clear(); script.add("```\n第一行\n第二行\n```")
+        assertEquals("第一行\n第二行", c.ocrImage(png))
+        assertEquals(n0 + 1, calls.size)
+        assertEquals(Ai.OCR_SYSTEM, calls.last().first)
+        assertEquals(listOf("user" to Ai.OCR_USER), calls.last().second)
+        assertNull("用完就清掉, 不会带进下一次请求", Ai.imageLocal.get())
+        assertTrue("图片不进聊天记录", c.messages.isEmpty())
+        script.add("[no text]")
+        assertEquals("", c.ocrImage(png))
+        for ((data, why) in listOf("BM....".toByteArray() to "只支持", ByteArray(Ai.OCR_MAX_BYTES + 1) { 'x'.code.toByte() } to "太大")) {
+            val e = runCatching { c.ocrImage(data) }.exceptionOrNull()
+            assertTrue("$why: ${e?.message}", e is AiError && why in (e.message ?: ""))
+        }
+        val body = org.json.JSONObject(Ai.requestBodyForTest(Profile("a", "http://localhost:1", "anthropic", "m", ""), png))
+        assertEquals("image", body.getJSONArray("messages").getJSONObject(0).getJSONArray("content").getJSONObject(0).getString("type"))
+        val body2 = org.json.JSONObject(Ai.requestBodyForTest(Profile("o", "http://localhost:1/v1", "openai", "m", ""), png))
+        assertTrue(body2.getJSONArray("messages").getJSONObject(1).getJSONArray("content").getJSONObject(0).getJSONObject("image_url").getString("url").startsWith("data:image/png;base64,"))
+    }
+
     /** 记忆卡: 每 40 条整理一次; 全部自动; 清空聊天时一起清掉. */
     @Test
     fun stripThink() {

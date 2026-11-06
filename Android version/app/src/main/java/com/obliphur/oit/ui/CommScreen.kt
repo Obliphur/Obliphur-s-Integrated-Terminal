@@ -79,6 +79,26 @@ fun CommScreen(go: (String) -> Unit) {
     var shareOn by remember { mutableStateOf(comm.shareOn()) }                     // share data 开着吗
     var shareAsk by remember { mutableStateOf(comm.shareAsking()) }                 // 点了 share data, 等对方同意 (⏳)
     var shareInv by remember { mutableStateOf(comm.shareInvite()) }                // 对方发了 [share data]: 等用户点 接受 / 拒绝
+    var ocrBusy by remember { mutableStateOf(false) }                          // 识别字体进行中
+    val ocrCtx = androidx.compose.ui.platform.LocalContext.current
+    // 🖼 识别字体: 选一张图片, 让模型读出上面的文字, 放进聊天框 (图片本身不会发出去, 也不会保存)
+    val pickOcr = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        ocrBusy = true
+        core.toast(tr("正在识别图片上的文字…"))
+        Thread {
+            var text = ""; var err = ""
+            try { text = comm.ocrImage(loadOcrImage(ocrCtx, uri)) }
+            catch (e: com.obliphur.oit.ai.AiError) { err = e.message ?: "" }
+            catch (e: Exception) { err = e.javaClass.simpleName }
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                ocrBusy = false
+                if (err.isNotEmpty()) core.toast(tr(err), "warn")
+                else if (text.isBlank()) core.toast(tr("图片上没有识别到文字."), "warn")
+                else { input = if (input.isBlank()) text else input + "\n" + text; core.toast(tr("文字已放进聊天框.")) }
+            }
+        }.apply { isDaemon = true }.start()
+    }
     // 不跟着每秒一次的 LocalTick 重画 (整页每秒重画一遍会有卡顿感): 只在聊天记录 / 状态变了才刷新
     var ver by remember { mutableIntStateOf(comm.version) }
     var waitHint by remember { mutableStateOf("") }
@@ -153,6 +173,8 @@ fun CommScreen(go: (String) -> Unit) {
             }
             // 🤝 联合行动: 界面移到合约页选词条, 回来输入开始时间
             TextButton({ core.jointPickStart() }, contentPadding = tight) { Text("🤝", fontSize = 18.sp) }
+            // 🖼 识别字体: 选一张图片, 让模型读出上面的文字, 放进聊天框 (不能发送图片)
+            TextButton({ if (!ocrBusy) pickOcr.launch("image/*") }, contentPadding = tight) { Text(if (ocrBusy) "…" else "🖼", fontSize = 18.sp) }
             // ⏰ 共时闹钟: 闹钟的时间跟随这个对象的实际起床时间, 手动选响铃的设备; ⏰ = 现在这个对象是共时闹钟 / ⏲ 不是
             TextButton({ coAlarm = true }, contentPadding = tight) {
                 Text(if (comm.coAlarmPid().isNotEmpty() && comm.coAlarmPid() == comm.pid) "⏰" else "⏲", fontSize = 18.sp)
@@ -199,6 +221,28 @@ fun CommScreen(go: (String) -> Unit) {
 }
 
 /** ❓ 帮助: 沟通页上每个小按钮是干什么的, 还有"无言为真"会禁止沟通的提醒. */
+/** 识别字体用的图片: 够小又是 PNG / JPG / WEBP / GIF 的原样用; 太大或者格式不认 (BMP / HEIC …) 的解码后缩小, 重新压成 JPEG. */
+private fun loadOcrImage(ctx: android.content.Context, uri: android.net.Uri): ByteArray {
+    val raw = ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: throw com.obliphur.oit.ai.AiError("format", "打不开这张图片.")
+    if (raw.size <= Ai.OCR_MAX_BYTES && Ai.imageMime(raw).isNotEmpty()) return raw
+    val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    android.graphics.BitmapFactory.decodeByteArray(raw, 0, raw.size, bounds)
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) throw com.obliphur.oit.ai.AiError("format", "只支持 PNG / JPG / WEBP / GIF 图片")
+    var sample = 1
+    while (maxOf(bounds.outWidth, bounds.outHeight) / sample > 2400) sample *= 2
+    val bmp = android.graphics.BitmapFactory.decodeByteArray(raw, 0, raw.size, android.graphics.BitmapFactory.Options().apply { inSampleSize = sample })
+        ?: throw com.obliphur.oit.ai.AiError("format", "打不开这张图片.")
+    try {
+        var q = 88
+        while (true) {
+            val out = java.io.ByteArrayOutputStream()
+            bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, q, out)
+            if (out.size() <= Ai.OCR_MAX_BYTES || q <= 40) return out.toByteArray()
+            q -= 12
+        }
+    } finally { bmp.recycle() }
+}
+
 @Composable
 private fun HelpDialog(onDismiss: () -> Unit) {
     val o = LocalOit.current
@@ -210,6 +254,7 @@ private fun HelpDialog(onDismiss: () -> Unit) {
         "🔔 / 🔕" to tr("主动发起") + ": " + tr("点一下切换: 🔔 = 允许这个对象主动给你发消息 / 追问, 🔕 = 禁止."),
         "⏰ / ⏲" to tr("共时闹钟") + ": " + tr("点开设置: 把这个对象设为共时闹钟后 (⏰), 闹钟的时间跟随它的日程里的实际起床时间 (睡眠中也会响); " +
             "哪些设备响铃由你手动选, 铃声和音量用「设置 → 闹钟」里的. 一次只有一个对象是共时闹钟."),
+        "🖼" to tr("识别字体") + ": " + tr("选一张图片, OIT 让模型把图片上的文字读出来, 放进聊天框 (可以再改). 不能发送图片, 只能提取文字; 图片不会被保存, 对方也看不到."),
         "🤝" to tr("联合行动") + ": " + tr("邀请对方一起完成一次合约: 界面会移到合约页, 选好词条后点「确定选择」(原来「开始行动」的位置), " +
             "再输入开始时间; 词条和合约的基础规则会打包发给对方, 结束时间自动算好写在聊天框上方. " +
             "对方回 [Yes] 就按约开始合约; 合约期间你们的专注 / 休息同步, 合约后得到的休息也同步."),

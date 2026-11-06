@@ -1957,6 +1957,26 @@ class Comm:
     def current_model(self) -> str:
         return self.ai.profile().get("model") or ""
 
+    def ocr_image(self, path: str) -> str:
+        """识别字体 (沟通页 🖼): 让模型把这张图片上的文字读出来, 返回文字 (没有文字 = ""). 阻塞, 要放在后台线程里调; 失败抛 AIError.
+        图片只发给模型一次, 不存下来, 也不会进聊天记录 (OIT 不能发送图片)."""
+        try:
+            if os.path.getsize(path) > ai_assist.OCR_MAX_BYTES:
+                raise ai_assist.AIError("format", "图片太大了 (最大 4.5 MB)")
+            with open(path, "rb") as f:
+                data = f.read()
+        except OSError:
+            raise ai_assist.AIError("format", "打不开这张图片.")
+        started = time.monotonic()
+        self.log(f"OCR start bytes={len(data)}")
+        try:
+            text = ai_assist.ocr_image(self.ai.profile(), data, timeout=CHAT_TIMEOUT, chat=self.chat_fn)
+        except ai_assist.AIError as e:
+            self.log(f"OCR FAIL {time.monotonic() - started:.1f}s {e.kind}: {e.message}")
+            raise
+        self.log(f"OCR ok {time.monotonic() - started:.1f}s chars={len(text)}")
+        return text
+
     def set_model(self, model: str):
         model = str(model or "").strip()
         if not model or model == self.current_model():
@@ -7236,6 +7256,49 @@ def _selftest():
     cr2 = Comm(rt_dir, rt_personas, now=lambda: clock[0], chat_fn=fake)
     cr2.reload_schedule("test")
     assert cr2._rt_store_get().cells == cr._rt_store.cells and cr2._rt_store.upto == cr._rt_store.upto
+    # ---- 识别字体 (1.0.395): 图片 → 模型 → 文字, 图片不进聊天记录 ----
+    png = b"\x89PNG\r\n\x1a\n" + b"0" * 64
+    assert ai_assist.image_mime(png) == "image/png" and ai_assist.image_mime(b"\xff\xd8\xff\xe0xx") == "image/jpeg"
+    assert ai_assist.image_mime(b"RIFF....WEBPVP8 ") == "image/webp" and ai_assist.image_mime(b"GIF89a..") == "image/gif" and ai_assist.image_mime(b"BM....") == ""
+    seen = []
+
+    def ocr_fake(profile, system, messages, **kw):
+        seen.append((profile["protocol"], system, messages, dict(kw)))
+        return seen_reply[0]
+    seen_reply = ["```\n第一行\n第二行\n```"]
+    ocr_dir, ocr_personas = os.path.join(td, "ocr"), os.path.join(td, "ocr_personas")
+    oc = Comm(ocr_dir, ocr_personas, now=lambda: clock[0], chat_fn=ocr_fake)
+    ipath = os.path.join(td, "t.png")
+    open(ipath, "wb").write(png)
+    got = oc.ocr_image(ipath)
+    assert got == "第一行\n第二行", repr(got)
+    proto, osys, omsgs, okw = seen[-1]
+    blocks = omsgs[0]["content"]
+    assert osys == ai_assist.OCR_SYSTEM and len(omsgs) == 1 and isinstance(blocks, list) and blocks[-1]["type"] == "text"
+    assert (blocks[0]["type"] == "image" and blocks[0]["source"]["media_type"] == "image/png") if proto == "anthropic" else \
+        (blocks[0]["type"] == "image_url" and blocks[0]["image_url"]["url"].startswith("data:image/png;base64,"))
+    assert okw.get("temperature") == 0.0 and okw.get("cache") is False and not oc.messages, "图片不进聊天记录"
+    for prof in ({"protocol": "anthropic"}, {"protocol": "openai"}):
+        c_ = ai_assist.image_content(prof, png, "image/png", "x")
+        assert c_[0]["type"] == ("image" if prof["protocol"] == "anthropic" else "image_url") and c_[1] == {"type": "text", "text": "x"}
+    seen_reply[0] = "[No text]"
+    assert oc.ocr_image(ipath) == "", "没有文字"
+    bad = os.path.join(td, "t.bmp")
+    open(bad, "wb").write(b"BM" + b"0" * 30)
+    for p_, why in ((bad, "只支持"), (os.path.join(td, "nope.png"), "打不开")):
+        try:
+            oc.ocr_image(p_)
+            assert False, why
+        except ai_assist.AIError as e:
+            assert why in e.message, e.message
+    big = os.path.join(td, "big.png")
+    open(big, "wb").write(png + b"0" * ai_assist.OCR_MAX_BYTES)
+    try:
+        oc.ocr_image(big)
+        assert False
+    except ai_assist.AIError as e:
+        assert "太大" in e.message
+    assert "OCR ok" in open(os.path.join(ocr_dir, "comm.log"), encoding="utf-8").read() if os.path.exists(os.path.join(ocr_dir, "comm.log")) else True
     # ---- [condition] (1.0.392): 人设里的判定由 OIT 算, 返回当前进度 + 满足没有 ----
     assert info_tags(" [Condition] ") == ["condition"] and info_tags("好的") == []
     assert "XVI.人设里写着要你输入[condition]" in prefix_prompt()

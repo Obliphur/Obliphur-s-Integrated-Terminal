@@ -2275,6 +2275,26 @@ class Comm(
         return runCatching { File(personas, name).readText(Charsets.UTF_8).removePrefix("\uFEFF").take(MAX_PERSONA).trim() }.getOrDefault("")
     }
 
+    /** 识别字体 (沟通 🖼): 让模型把这张图片上的文字读出来, 返回文字 (没有文字 = ""). 阻塞, 要放在后台线程里调; 失败抛 AiError.
+     *  图片只发给模型一次, 不存下来, 也不会进聊天记录 (OIT 不能发送图片). */
+    fun ocrImage(data: ByteArray): String {
+        if (data.size > Ai.OCR_MAX_BYTES) throw AiError("format", "图片太大了 (最大 4.5 MB)")
+        val mime = Ai.imageMime(data)
+        if (mime.isEmpty()) throw AiError("format", "只支持 PNG / JPG / WEBP / GIF 图片")
+        val started = System.currentTimeMillis()
+        log("OCR start bytes=${data.size}")
+        Ai.imageLocal.set(Ai.ImagePart(mime, java.util.Base64.getEncoder().encodeToString(data)))
+        val reply = try {
+            chatFn(aiConfig().profile(), Ai.OCR_SYSTEM, listOf("user" to Ai.OCR_USER))
+        } catch (e: AiError) {
+            log("OCR FAIL ${(System.currentTimeMillis() - started) / 1000.0}s ${e.kind}: ${e.message}")
+            throw e
+        } finally { Ai.imageLocal.remove() }
+        val text = Ai.cleanOcr(reply)
+        log("OCR ok ${(System.currentTimeMillis() - started) / 1000.0}s chars=${text.length}")
+        return text
+    }
+
     /** 把外面的一个文件复制进人设文件夹, 返回新文件名 (重名加序号); 不是 .txt / .md 返回 "". */
     fun importPersona(displayName: String, input: InputStream): String {
         val base = File(displayName).name

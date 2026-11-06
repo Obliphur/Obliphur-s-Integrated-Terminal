@@ -94,6 +94,8 @@ class CommPage(tk.Frame):
         # share data: 打开后离开沟通页, 在别的页面里对方能看到那一页上你们的数据, 页面下方有聊天悬浮窗; 回到沟通自动关闭
         self.btn_share = ttk.Button(tools, text="🙈", width=3, command=self._toggle_share)         # 👀 share data 开着 / 🙈 关着
         self.btn_share.pack(side="left", padx=(4, 0))
+        self.btn_ocr = ttk.Button(tools, text="🖼", width=3, command=self._ocr)                    # 识别字体: 选一张图片, 把上面的文字放进聊天框 (不能发送图片)
+        self.btn_ocr.pack(side="left", padx=(4, 0))
         # 对方发了 [share data]: 等用户点 接受 / 拒绝
         self.share_btns = tk.Frame(tools, bg=bg)
         tk.Label(self.share_btns, text=tr("对方想看你们的数据"), bg=bg, fg=COLORS["accent"], font=config.font("small")).pack(side="left")
@@ -464,6 +466,47 @@ class CommPage(tk.Frame):
         open_co_alarm(self.winfo_toplevel(), self.comm)
         self.refresh(force=True)
 
+    def _ocr(self):
+        """🖼 识别字体: 选一张图片, 让模型读出上面的文字, 放进聊天框 (可以再改); 图片本身不会发出去."""
+        from tkinter import filedialog
+        import ai_assist
+        path = filedialog.askopenfilename(
+            parent=self.winfo_toplevel(), title=tr("选择要识别文字的图片"),
+            filetypes=[(tr("图片"), "*.png *.jpg *.jpeg *.webp *.gif"), (tr("所有文件"), "*.*")])
+        if not path:
+            return
+        self.btn_ocr.config(state="disabled", text="…")
+        toast.info(tr("正在识别图片上的文字…"))
+
+        def work():
+            try:
+                res = ("ok", self.comm.ocr_image(path))
+            except ai_assist.AIError as e:
+                res = ("err", e.message)
+            except Exception as e:      # noqa: BLE001
+                res = ("err", type(e).__name__)
+            try:
+                self.after(0, lambda: done(res))
+            except Exception:
+                pass
+
+        def done(res):
+            if not self.winfo_exists():
+                return
+            self.btn_ocr.config(state="normal", text="🖼")
+            if res[0] != "ok":
+                toast.warn(tr(res[1]))
+            elif not res[1].strip():
+                toast.warn(tr("图片上没有识别到文字."))
+            else:
+                cur = self.entry.get("1.0", "end-1c")
+                self.entry.insert("end", ("\n" if cur.strip() else "") + res[1])
+                self.entry.focus_set()
+                self.entry.see("end")
+                toast.success(tr("文字已放进聊天框."))
+        import threading
+        threading.Thread(target=work, daemon=True).start()
+
     def _help(self):
         """帮助: 沟通页上每个小按钮是干什么的, 还有"无言为真"会禁止沟通的提醒."""
         width = config.scaled(460)
@@ -476,6 +519,7 @@ class CommPage(tk.Frame):
                 ("🔔 / 🔕", "主动发起", "点一下切换: 🔔 = 允许这个对象主动给你发消息 / 追问, 🔕 = 禁止."),
                 ("⏰ / ⏲", "共时闹钟", "点开设置: 把这个对象设为共时闹钟后 (⏰), 闹钟的时间跟随它的日程里的实际起床时间 (睡眠中也会响); "
                                     "哪些设备响铃由你手动选, 铃声和音量用「设置 → 闹钟」里的. 一次只有一个对象是共时闹钟."),
+                ("🖼", "识别字体", "选一张图片, OIT 让模型把图片上的文字读出来, 放进聊天框 (可以再改). 不能发送图片, 只能提取文字; 图片不会被保存, 对方也看不到."),
                 ("🤝", "联合行动", "邀请对方一起完成一次合约: 界面会移到合约页, 选好词条后点「确定选择」(原来「开始行动」的位置), "
                                 "再输入开始时间; 词条和合约的基础规则会打包发给对方, 结束时间自动算好写在聊天框上方. "
                                 "对方回 [Yes] 就按约开始合约; 合约期间你们的专注 / 休息同步, 合约后得到的休息也同步."))
