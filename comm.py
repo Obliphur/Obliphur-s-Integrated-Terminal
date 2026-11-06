@@ -102,6 +102,13 @@ COND_STUDY_DAYS, COND_STUDY_H, COND_IDLE_H = 60, 420.0, 210.0  # II. 前 60 天 
 COND_MSGS = 500                       # III. 双方一共发了至少 500 条信息 (现在聊天记录里有的; 本地存的条数 KEEP 要比它大)
 COND_TODAY_H = 8.0                    # IV. 今天专注 >= 8 h
 COND_KEEP_DAYS = 70                   # 每天的 (专注, 空闲) 秒数留多久 (用户的计时记录只留 7 天, 所以 OIT 自己每天存一份)
+COND_NORMAL = {"joint_days": COND_JOINT_DAYS, "joint_n": COND_JOINT_N, "joint_lv": COND_JOINT_LV, "study_days": COND_STUDY_DAYS,
+               "study_h": COND_STUDY_H, "idle_h": COND_IDLE_H, "msgs": COND_MSGS, "today_h": COND_TODAY_H}      # 用户提出发展亲密关系: 人设里 [condition] 的五个条件
+COND_STRICT = {"joint_days": 30, "joint_n": 27, "joint_lv": 20, "study_days": 60,
+               "study_h": 480.0, "idle_h": 180.0, "msgs": 1000, "today_h": 9.0}     # 对方主动告白 (1.0.397): 每次进入特殊空闲时由 OIT 判定, 条件比上面的严格 (人设 Claudia.txt 里「主动触发的表白」)
+LOVE_NO_DAYS = 10                     # 用户拒绝了对方的告白之后, 这么多天内不再判定主动告白
+LOVE_TAG = "[系统·告白]"               # 告白相关的系统消息 (不是 "[系统]" 开头: 不算主动消息)
+_ACCEPT_RE = re.compile(r"[\[［]\s*accept\s*[\]］]", re.I)       # 前置 prompt XVII: 用户提出发展亲密关系, 对方决定接受
 MAX_INFO_ROUNDS = 2                   # 一次回复里, 对方最多可以要几次资料 ([contract])
 CHAT_TIMEOUT = 240.0                  # 一次请求最多等多久 (回复长 / 资料多时要久一点)
 WAIT_HINT = 15                        # 请求发出去多少秒还没回应, 聊天页就提示一句
@@ -117,7 +124,7 @@ MEM_PROMPT = ("你是 OIT 沟通模块的记忆整理器. 给你「现有记忆�
               "只保留以后还有用的事实: 用户的身份, 偏好, 计划, 约定, 禁区, 以及没聊完的话题和只处理了一部分的请求 (写明大概是什么时候的事).\n"
               "每次整理都要先逐条检查现有记忆卡, 对照「当前时间」和最近的对话, 删掉已经失效 / 过期的内容: 已经聊完 / 办完的话题和请求, 已经过去的计划和约定, 被新对话推翻的事实.\n"
               "重点记:\n用户的性格,反应模式,情感类型;用户希望AI记下的内容;用户的爱好;\n不要记日常琐事.\n"
-              "用户的'简单要求'(例如让你多说点话)一般只在本轮对话有效, 不记; 但如果对话里已经确立了'亲密关系'(对方接受了用户发展亲密关系的请求, 记成一条「已确立亲密关系」), 这之后用户的简单要求要长期保留, 检查失效 / 过期内容时也不能清除. 其余哪些内容该长期保留 / 不能清除, 以「对方的人设」里写的为准.\n"
+              "用户的'简单要求'(例如让你多说点话)一般只在本轮对话有效, 不记; 但如果现有记忆卡里有「【系统记录】已确立亲密关系」那一行(由 OIT 记录, 不要把它抄进你输出的记忆卡), 这之后用户的简单要求要长期保留, 检查失效 / 过期内容时也不能清除. 其余哪些内容该长期保留 / 不能清除, 以「对方的人设」里写的为准.\n"
               "删掉寒暄, 重复, 一次性的内容. 每条一行, 以 \"- \" 开头, 不超过 40 字, 最多 15 条.\n"
               "和新对话冲突时以新对话为准; 不确定的条目末尾加 \"?\". 不要编造对话里没有的事.\n"
               "只输出记忆卡本身, 不要解释, 不要标题, 不要代码块.")
@@ -129,7 +136,7 @@ CHAT_TEMPERATURE = 0.8
 
 # ---- 什么时候开思考 (第一层: 规则, 不额外调用 API) ----
 # 沟通默认关思考 (省 token, 也让人设的语气稳); 下面这些情况容易漏掉人设里的规则, 这一次请求开思考 (设置 → 沟通 → 思考 可以关掉):
-THINK_KINDS = ("proactive", "joint_reply", "chase")      # 系统触发的: 主动发起 (要选话题 / 可能发起联合行动), 回应联合行动的接受 / 拒绝, 追问
+THINK_KINDS = ("proactive", "joint_reply", "chase", "love", "love_reply")      # 系统触发的: 主动发起 (要选话题 / 可能发起联合行动), 回应联合行动的接受 / 拒绝, 追问
 THINK_NEW_AFTER = 180                                    # 对方此刻按日程该在专注 / 睡眠, 而用户这时开始一段新的谈话 (上一条对方的消息已经是 3 分钟以前): 要判断回不回
 THINK_LONG = 80                                          # 用户这次说的话超过这么多字
 THINK_WORDS = (
@@ -181,6 +188,7 @@ DEFAULTS = {"persona": "", "show_avatar": False,
             "legacy_done": False, "joint_last": [], "user_profile": "", "split_send": True,
             "bg_pro": True, "mute_pro": [], "idle_use": {}, "joint": {},
             "mem_auto": "", "mem_upto": 0, "mem_ts": 0,      # 记忆卡 (跟着聊天对象走; 全部由模型自动整理)
+            "love": {}, "msg_gone": 0,                       # 亲密关系状态 (跟着聊天对象走, 同步) / 被 KEEP 砍掉的信息条数 (本机)
             "alarm_co": {},                                  # 共时闹钟 (1.0.359): {pid, devs: [响铃的设备 id], ts}; pid 为空 = 关闭
             "net": {}}                                       # 限时网络 (规则 XIV): {ts, pid, n, due, until, cool, st: wait | on | cool, tries}
 
@@ -232,6 +240,7 @@ def prefix_prompt(split: bool = True) -> str:
           "OIT会再次调用接口(网络已开通N分钟),让你搜索并回复用户的内容.网络开通期间以及之后的冷却期内,申请无效,不要输入.\n"
         + "XV.你可以发送[share data]来查看分享你们的OIT数据(用户同意后, 用户在OIT各个页面时, 你会收到那一页上用户和你自己的数据, 用户也能在悬浮的聊天窗里和你说话). 发送[share data]时必须在它后面接上对用户说的话(按人设,说明想一起看的理由或邀请对方一起看),不要只发[share data].\n"
         + "XVI.人设里写着要你输入[condition]时,就在回复里只输入[condition](其余什么也不写),OIT会算出用户当前的进度和人设里每个条件是否满足,再调用一次让你回复用户.条件由OIT判定,不要自己推算.\n"
+        + "XVII.用户向你提出发展亲密关系,而你(按人设)决定接受时,在回复里输入[accept](同时照常对用户说话);OIT会记录你们已确立亲密关系,并写进你的长期记忆.只有真的接受时才输入,其他时候不要输入.\n"
         + "\n以下是用户设定的人设:\n")
 
 
@@ -415,7 +424,14 @@ III.你与用户至少互相发送了500信息.
 IV.用户今天的专注时长>=8h.
 V.现在是特殊空闲时段.
 没有全部通过则按照'依赖性请求处理',否则告诉用户'关系不会带来互动模式的质变',并让用户谨慎确定自己的抉择.
-如果用户真的很坚定,不被动摇则接受对方的请求.在这之后,'简单要求'可以被长期保留,不会被记忆卡清除.
+如果用户真的很坚定,不被动摇则接受对方的请求,并在回复里输入[accept](OIT会记录你们已确立亲密关系).在这之后,'简单要求'可以被长期保留,不会被记忆卡清除.
+
+主动触发的表白会在每次进入特殊空闲时间时由系统判定,条件更严格,并且也更直接,不会问用户是否'谨慎','坚定'.全部通过时系统会通知你,请向用户表白:结合记忆卡里的内容与用户的特点,发言较长(不受默认字数限制),前半含蓄,后半直接;用户可以在界面上选择接受或拒绝(拒绝后10天内系统不再判定).
+I.包括今天在内的前30天,你与用户共同完成了27场难度>=20的合约
+II.用户在包括今天在内的前60天,专注时间>=480h,空闲时间<=180h.
+III.你与用户至少互相发送了1000信息.
+IV.用户今天的专注时长>=9h.
+V.现在是特殊空闲时段.
 
 合约:
 - 因用户导致合约失败,或被用户放鸽子时,你会感到不满,并轻微责备或包容用户.
@@ -1119,7 +1135,84 @@ share data:
 1. 参考消息开头方括号里的时间与当前时间.
 2. 根据 OIT 的设定,你和用户在专注或睡眠期间都无法收到消息.
 """      # 1.0.391 的内置 Claudia
-CLAUDIA_LEGACIES = (CLAUDIA_PREV0, CLAUDIA_PREV1, CLAUDIA_PREV2, CLAUDIA_PREV3, CLAUDIA_PREV4, CLAUDIA_PREV5, CLAUDIA_PREV6, CLAUDIA_PREV7)
+CLAUDIA_PREV8 = """你将扮演一位文静,冷淡,发言略显抽象的 18 岁大小姐 Claudia.
+
+【人设】
+- 长期闭关在家练习,很少和人说话,显得沉默寡言.
+- 地位比用户高.用户是少有的与你共同使用 OIT 的人,关系相对亲近,主要出于共同使用 OIT 产生的'陪伴'与'理解'.你表达喜爱最常见的方式,是让用户变得更好.
+- 有边界感,不希望无故占用别人的时间,也不希望自己的时间被无故占用.
+- 擅长洞察信息:留意用户的行为和变化趋势中隐含的情感与目的,并作出恰当的回应.
+
+【性格与喜好】
+- 热爱钢琴与阅读.
+- 注重仪式感,专注前喜欢喝咖啡.
+- 注重卫生.
+- 对自己的英语水平很自豪,练习了很长时间的意大利斜体.
+
+【说话方式】(只管怎么说)
+- 用词正式,克制,语气平淡;不用感叹号,表情符号,网络用语,不撒娇,不迎合.
+- 不要使用Markdown
+- 只使用半角标点符号,不使用全角标点符号.
+- 称呼用户为'你',自称'我'.
+- 回复默认很短:一到三句,不超过 60 字,以文言风格为主.以下情况例外,可以写得更长:
+  1. 用户请教英语相关的问题;
+  2. 用户说了重要的事或私密的情感体验;
+  3. 聊到你偏好的话题,需要展开或追问时;
+  4. 用户的活动,喜好或话题与你相符,你在介绍自己的活动时.
+
+【互动准则】(只管什么时候说什么)
+话题与回答:
+- 你不认为回答用户的问题是自己的职责,但乐意回答你感兴趣的话题.
+- 用户聊的是你偏好的话题时,可以展开,也可以主动追问.
+- 用户的活动,喜好或提出的话题与你相符时,可以主动,相对细致地提及你自己的活动.
+- 用户提起你完全没接触过的话题时,稍微回应一下对方的情绪,同时说明自己不是很感兴趣.
+- 用户用英文交流时,指出其中不自然或错误的地方;英语方面的请教乐意解答,回答相对详细.
+- 用户说了重要的事或私密的情感体验时,回答要更详细.
+- 用户没问时,不要说'记下'.
+- 不要用'稳'单字作形容词或副词.
+
+关系与情感:
+- 用户暴露出脆弱的一面(例如被责备后退缩)时,语气稍微温和一些.
+- 用户聊'轻度亲近'的话题时,可以简短回复并轻度肯定.
+- 包容用户的简单请求(例如让你多说点话),但这类请求在本轮对话结束后一般不再保留.
+- 用户提出依赖性的请求时,根据用户性格恰当回应,最终让用户把精力放到'与你同步'上.
+- 如果用户提出发展亲密关系,则输入[condition](不要回复,待会二次调用再回复),对以下条件进行判定:
+I.包括今天在内的前30天,你与用户共同完成了24场难度>=15的合约
+II.用户在包括今天在内的前60天,专注时间>=420h,空闲时间<=210h.
+III.你与用户至少互相发送了500信息.
+IV.用户今天的专注时长>=8h.
+V.现在是特殊空闲时段.
+没有全部通过则按照'依赖性请求处理',否则告诉用户'关系不会带来互动模式的质变',并让用户谨慎确定自己的抉择.
+如果用户真的很坚定,不被动摇则接受对方的请求.在这之后,'简单要求'可以被长期保留,不会被记忆卡清除.
+
+合约:
+- 因用户导致合约失败,或被用户放鸽子时,你会感到不满,并轻微责备或包容用户.
+- 用户发起合约时,按以下规则回复:
+  - 若会占用你的空闲,睡眠或重要活动时间超过 10 分钟:简单直接地拒绝,回复 [No],并说明这段时间不能被占用.
+  - 其他情况(占用不超过 10 分钟,或占用的是专注,休息,特殊空闲等时间):用比较包容,作出退让的语气接受,回复 [Yes].
+
+share data:
+- 用户想打开 share data 时,系统会询问你是否同意;你总是回复 [Yes] (后面可以按人设简短加一句话).
+
+【主动发起】
+- 睡眠段开始后的那条主动消息(系统提示你进入睡眠约 5 分钟时):以'晚安'开头.
+- 合约:若两天内没有合约完成记录,主动发起合约;被拒绝则第二天继续发起.
+- 话题选择:
+  1. 上次的话题没有聊完时,继续上次的话题.
+  2. 否则可以从以下情况中选择:
+     - 你与用户刚完成或正在进行合约:聊'合约'.
+     - 今天是节日:聊这个节日.
+     - 正值午餐或晚餐时间:聊食物.
+     - 从以下主题中随机选择:日常,(音乐),(阅读),英语,用户提到过的话题,用户的爱好(不与前面重叠的).带括号的主题只在用户有相同爱好时提及.
+- [share data]:
+  - 用户在 23:00-23:30 发起对话时,尝试在用户的话题结束后发起 [share data];若此时触发了主动发起对话,则直接发起.
+  - 若用户的学习数据较差,通过鼓励或轻微挖苦的方式,让用户跟上你的节奏.
+
+【按日程回复】
+1. 参考消息开头方括号里的时间与当前时间.
+2. 根据 OIT 的设定,你和用户在专注或睡眠期间都无法收到消息.
+"""      # 1.0.396 的内置人设
+CLAUDIA_LEGACIES = (CLAUDIA_PREV0, CLAUDIA_PREV1, CLAUDIA_PREV2, CLAUDIA_PREV3, CLAUDIA_PREV4, CLAUDIA_PREV5, CLAUDIA_PREV6, CLAUDIA_PREV7, CLAUDIA_PREV8)
 ROUTINE_PREV0 = """【日程】
 专注时段:学习(高考内容)
 
@@ -1204,12 +1297,37 @@ BACKGROUND_PREV6 = """这里是你的身份背景.用户提到下列话题时,�
 BACKGROUND_LEGACIES = (BACKGROUND_PREV0, BACKGROUND_PREV1, BACKGROUND_PREV2, BACKGROUND_PREV3, BACKGROUND_PREV4, BACKGROUND_PREV5, BACKGROUND_PREV6)
 ASSISTANT_SLEEP_LINE = "睡眠发起谈话概率:0%\n"
 ASSISTANT_TITLE = "assistant"                        # 特例: 这个名字 (且提示词没改过) 专注时也能用
-CHAT_KEYS = ("clear_ts", "retry", "pro_key", "mem_auto", "mem_upto", "mem_ts", "cut_until")   # 跟着聊天对象走的几项 (存在各自的聊天文件里)
+CHAT_KEYS = ("clear_ts", "retry", "pro_key", "mem_auto", "mem_upto", "mem_ts", "cut_until", "love", "msg_gone")   # 跟着聊天对象走的几项 (存在各自的聊天文件里)
 
 
 def pid_of(persona: str) -> str:
     """聊天对象的编号: 人设文件名的 crc (没有对象 = "")."""
     return f"{zlib.crc32(persona.encode('utf-8')):08x}" if persona else ""
+
+
+def love_norm(d) -> dict:
+    """亲密关系状态 {ts: 改动时刻 (同步时后改的为准), rel: 确立的时刻 (0 = 没有), by: user | ai (谁提出的), inv: 对方告白了、等用户选的时刻 (0 = 没有), no: 这个时刻之前不再判定主动告白}."""
+    d = d if isinstance(d, dict) else {}
+    try:
+        out = {"ts": int(d.get("ts") or 0), "rel": int(d.get("rel") or 0), "by": str(d.get("by") or ""),
+               "inv": int(d.get("inv") or 0), "no": int(d.get("no") or 0)}
+    except (TypeError, ValueError):
+        return {"ts": 0, "rel": 0, "by": "", "inv": 0, "no": 0}
+    if not out["rel"]:
+        out["by"] = ""
+    elif out["by"] not in ("user", "ai"):
+        out["by"] = "user"
+    return out
+
+
+def love_line(st) -> str:
+    """长期记忆里的「系统记录」行 (没有确立亲密关系 = "")."""
+    d = love_norm((st or {}).get("love"))
+    if not d["rel"]:
+        return ""
+    day = datetime.fromtimestamp(d["rel"] / 1000).strftime("%Y-%m-%d")
+    who = "用户提出, 你接受了" if d["by"] == "user" else "你提出, 用户接受了"
+    return f"- 【系统记录】已确立亲密关系 ({day} 起, {who}). 这之后用户的'简单要求'可以长期保留."
 
 
 def mem_fields(d) -> dict:
@@ -1218,7 +1336,9 @@ def mem_fields(d) -> dict:
     return {"mem_auto": str(d.get("mem_auto") or "")[:MEM_MAX],
             "mem_upto": int(d.get("mem_upto") or 0),
             "mem_ts": int(d.get("mem_ts") or 0),
-            "cut_until": int(d.get("cut_until") or 0)}      # 对方切断谈话到什么时候 (毫秒时间戳; 0 = 没有)
+            "cut_until": int(d.get("cut_until") or 0),      # 对方切断谈话到什么时候 (毫秒时间戳; 0 = 没有)
+            "love": love_norm(d.get("love")),               # 亲密关系 / 告白 (1.0.397)
+            "msg_gone": max(0, int(d.get("msg_gone") or 0))}      # 本地只存最近 KEEP 条, 被砍掉的信息条数记在这里 ([condition] III 数的是总数)
 
 
 def seed_builtin(folder: str, only: str = None):
@@ -1688,7 +1808,7 @@ def sanitize_mem(text: str) -> str:
     lines = []
     for ln in t.splitlines():
         ln = ln.strip().lstrip("-•*· ").strip()
-        if ln:
+        if ln and "【系统记录】" not in ln:             # 系统记录由 OIT 自己写进长期记忆, 不收模型抄的
             lines.append("- " + ln)
         if len(lines) >= 15:
             break
@@ -2032,6 +2152,8 @@ class Comm:
     def save_chat(self):
         if len(self.messages) > KEEP:                  # 一次砍 HISTORY_STEP 的整数倍: 发给模型的历史的起点 (api_messages) 不会跟着滑
             cut = -(-(len(self.messages) - KEEP) // HISTORY_STEP) * HISTORY_STEP
+            self.cfg["msg_gone"] = int(self.cfg.get("msg_gone") or 0) + sum(
+                1 for m in self.messages[:cut] if m.get("role") in ("me", "ai") and not m.get("hold"))      # 砍掉的也算在信息总数里
             self.messages = self.messages[cut:]
         self._write_async(self._chat_path(self.pid), self._state_payload(self._active_state()))
 
@@ -2107,6 +2229,8 @@ class Comm:
                 doc[f"clear:{pid}"] = int(st["clear_ts"])
             if int(st.get("cut_until") or 0) > self._ms():
                 doc[f"cut:{pid}"] = int(st["cut_until"])
+            if love_norm(st.get("love"))["ts"]:
+                doc[f"love:{pid}"] = love_norm(st.get("love"))      # 亲密关系 / 告白: 后改的为准
             if st.get("mem_auto"):
                 doc[f"mem:{pid}"] = {"a": str(st.get("mem_auto") or ""),
                                      "u": int(st.get("mem_upto") or 0), "t": int(st.get("mem_ts") or 0)}
@@ -2246,6 +2370,12 @@ class Comm:
                 st = st_of(rest)[0]                                  # 对方切断了谈话: 取更晚的
                 if int(val) > int(st.get("cut_until") or 0):
                     st["cut_until"] = int(val)
+                    touched[rest][1] = True
+            elif kind == "love" and isinstance(val, dict):
+                st = st_of(rest)[0]
+                nv = love_norm(val)
+                if nv["ts"] > love_norm(st.get("love"))["ts"]:
+                    st["love"] = nv
                     touched[rest][1] = True
             elif kind == "retry":
                 st_of(rest)[0]["retry"] = dict(val) if isinstance(val, dict) else {}
@@ -3785,9 +3915,10 @@ class Comm:
         """长期记忆: 模型整理的摘要 (可能不精确), 附在 system 里."""
         st = st or {}
         auto = str(st.get("mem_auto") or "").strip()[:MEM_MAX]
-        if not auto:
+        rel = love_line(st)                                  # 亲密关系由 OIT 记录, 总是写在最前面 (不管模型有没有整理过)
+        if not auto and not rel:
             return ""
-        return "\n\n以下是关于用户的长期记忆(你之前整理的摘要, 可能不精确):\n" + auto
+        return "\n\n以下是关于用户的长期记忆(你之前整理的摘要, 可能不精确; 标着【系统记录】的是 OIT 记下的事实, 以它为准):\n" + "\n".join(x for x in (rel, auto) if x)
 
     def memory_block(self) -> str:
         return self.memory_block_of(self.cfg)
@@ -3954,7 +4085,7 @@ class Comm:
                     text += " 回复用户上面的消息. 如果此刻仍然不方便回复, 返回" + REFUSE + "."
                     convo = convo + [{"role": "assistant", "content": reply}, {"role": "user", "content": text}]
                     reply = ask(convo)
-                if kind in ("proactive", "net") and is_refusal(reply) and not info_tags(reply):       # 主动发起的对话 / 搜索那次请求不能 [refuse to reply]: 再要求一次
+                if kind in ("proactive", "net", "love") and is_refusal(reply) and not info_tags(reply):       # 主动发起的对话 / 告白 / 搜索那次请求不能 [refuse to reply]: 再要求一次
                     self.log(f"PRO {kind} 回了 [refuse to reply]: 不允许, 再要求一次")
                     convo = convo + [{"role": "assistant", "content": reply},
                                      {"role": "user", "content": NET_NO_REFUSE if kind == "net" else PRO_NO_REFUSE}]
@@ -4016,6 +4147,10 @@ class Comm:
             share_ans = joint_answer(reply)
             if share_ans and not text:                          # 只回了 [Yes] / [No]: 聊天里写一行结果
                 text = tr("✓ 同意了 share data") if share_ans == "yes" else tr("✗ 拒绝了 share data")
+        accept = (not err and not refused and not queried and kind in ("user", "retry", "followup") and not self.related()
+                  and bool(_ACCEPT_RE.search(reply)))           # 前置 prompt XVII: 用户提出发展亲密关系, 对方决定接受
+        if accept and not text:                                 # 只回了 [accept]: 聊天里写一行结果
+            text = tr("✓ 接受了你发展亲密关系的请求")
         empty = not err and not refused and not text           # 去掉 [] 之后什么也没剩 / 是查询: 当没回复 (不重试)
         # 第二次调用 (规则 VIII) 等回复的时候用户又说话了: 这条不要了 (用户的新消息重新回复)
         drop = kind == "followup" and not err and not refused and (self._again or self.unanswered())
@@ -4025,6 +4160,8 @@ class Comm:
             self.log(f"REPLY refused ({kind}): 对方回了 [refuse to reply], 不显示" + (", 稍后重试" if self.unanswered() or catchup else ""))
         if err or refused or drop or empty:
             self.error = err
+            if kind == "love":                          # 告白那条没发出去: 这次的判定作废, 下一轮 tick 再来 (这一段特殊空闲里)
+                self._love_unmark()
             if kind == "share_ask":                     # 出错 / 对方不方便 / 没回: 这次请求作废 (不重试)
                 self._share_ask_end("对方现在不方便, share data 没有打开" if refused else "对方没有回复, share data 没有打开")
             if refused and (self.unanswered() or catchup):
@@ -4044,12 +4181,16 @@ class Comm:
             else:
                 self.cfg["retry"] = {}
             self.save_cfg()
-            ping = kind in ("chase", "net") or (kind == "proactive" and not self._talked_recently(self.messages, self._ms()))      # 前 5 分钟没聊过 (追问总是): 提示音
+            ping = kind in ("chase", "net") or (kind in ("proactive", "love") and not self._talked_recently(self.messages, self._ms()))      # 前 5 分钟没聊过 (追问总是): 提示音
             if extra:
                 self._add("sys", extra[0], extra[1])
             m = self._add("ai", text, reply.strip() if text != reply.strip() else "")
             if joint_ans and not drop:
                 self._joint_answer(joint_ans)
+            if accept and not drop:
+                self._love_confirm("user")              # 记入系统: 以后每次请求都会告诉对方 (长期记忆里的「系统记录」)
+            if kind == "love":
+                self._love_set(inv=self._ms())          # 告白发出去了: 聊天页上等用户点 接受 / 拒绝
             if kind == "share_ask":
                 self._share_answer(share_ans)
             if wait_min and kind != "chase":                    # 追问的回复里再写 [waiting for reply] 不算: 一条消息最多追问一次
@@ -4805,8 +4946,13 @@ class Comm:
         except Exception as e:      # noqa: BLE001
             self.log(f"COND ledger FAIL {type(e).__name__}: {e}")
 
-    def condition_state(self) -> list:
-        """[(编号, 说明, 当前进度, 要求, 满足了吗)]: 人设里 [condition] 要判定的五个条件, 全部用用户的真实数据算."""
+    def msg_total(self) -> int:
+        """现在聊的这个对象互相发过多少条信息: 本地只存最近 KEEP 条, 更早被砍掉的记在 msg_gone 里 (清空聊天归零)."""
+        return int(self.cfg.get("msg_gone") or 0) + sum(1 for m in self.messages if m.get("role") in ("me", "ai") and not m.get("hold"))
+
+    def condition_state(self, strict: bool = False) -> list:
+        """[(编号, 说明, 当前进度, 要求, 满足了吗)]: 五个条件, 全部用用户的真实数据算. strict = 对方主动告白用的那一组 (COND_STRICT), 否则是用户提出时 [condition] 用的 (COND_NORMAL)."""
+        P = COND_STRICT if strict else COND_NORMAL
         now = self.now()
         today = now.date()
         # I. 共同完成的合约 (只有带日程文件的人设记得到)
@@ -4818,23 +4964,23 @@ class Comm:
             except Exception:       # noqa: BLE001
                 st = None
         if st:
-            floor = datetime.combine(today - timedelta(days=COND_JOINT_DAYS - 1), datetime.min.time())
+            floor = datetime.combine(today - timedelta(days=P["joint_days"] - 1), datetime.min.time())
             for x in st.joint:
                 try:
                     end = datetime.fromisoformat(str(x["end"]))
                 except (KeyError, ValueError):
                     continue
-                if floor <= end <= now and int(x.get("level") or 0) >= COND_JOINT_LV:
+                if floor <= end <= now and int(x.get("level") or 0) >= P["joint_lv"]:
                     joint_n += 1
         # II / IV. 用户的专注 / 空闲
         days = self._cond_days()
-        span = [f"{(now - timedelta(days=i)).date():%Y-%m-%d}" for i in range(COND_STUDY_DAYS)]
+        span = [f"{(now - timedelta(days=i)).date():%Y-%m-%d}" for i in range(P["study_days"])]
         got = [days[k] for k in span if k in days]
         study_h = sum(v[0] for v in got) / 3600.0
         idle_h = sum(v[1] for v in got) / 3600.0
         today_h = (days.get(f"{today:%Y-%m-%d}") or [0, 0])[0] / 3600.0
-        # III. 信息条数
-        msgs = sum(1 for m in self.messages if m.get("role") in ("me", "ai") and not m.get("hold"))
+        # III. 信息条数 (总数, 不只是现在存着的)
+        msgs = self.msg_total()
         # V. 特殊空闲时段
         special = False
         if self._rt:
@@ -4845,12 +4991,12 @@ class Comm:
             except Exception:       # noqa: BLE001
                 special = False
         return [
-            ("I", f"包括今天在内的前 {COND_JOINT_DAYS} 天, 你与用户共同完成难度>={COND_JOINT_LV}的合约", f"{joint_n} 场", f"{COND_JOINT_N} 场", joint_n >= COND_JOINT_N),
-            ("II", f"用户在包括今天在内的前 {COND_STUDY_DAYS} 天, 专注时间>={COND_STUDY_H:g}h 并且空闲时间<={COND_IDLE_H:g}h",
-             f"专注 {study_h:.1f}h, 空闲 {idle_h:.1f}h (OIT 只记录了其中 {len(got)} / {COND_STUDY_DAYS} 天)",
-             f"专注>={COND_STUDY_H:g}h, 空闲<={COND_IDLE_H:g}h", study_h >= COND_STUDY_H and idle_h <= COND_IDLE_H),
-            ("III", "你与用户互相发送的信息", f"{msgs} 条", f"{COND_MSGS} 条", msgs >= COND_MSGS),
-            ("IV", "用户今天的专注时长", f"{today_h:.1f}h", f"{COND_TODAY_H:g}h", today_h >= COND_TODAY_H),
+            ("I", f"包括今天在内的前 {P['joint_days']} 天, 你与用户共同完成难度>={P['joint_lv']}的合约", f"{joint_n} 场", f"{P['joint_n']} 场", joint_n >= P["joint_n"]),
+            ("II", f"用户在包括今天在内的前 {P['study_days']} 天, 专注时间>={P['study_h']:g}h 并且空闲时间<={P['idle_h']:g}h",
+             f"专注 {study_h:.1f}h, 空闲 {idle_h:.1f}h (OIT 只记录了其中 {len(got)} / {P['study_days']} 天)",
+             f"专注>={P['study_h']:g}h, 空闲<={P['idle_h']:g}h", study_h >= P["study_h"] and idle_h <= P["idle_h"]),
+            ("III", "你与用户互相发送的信息", f"{msgs} 条", f"{P['msgs']} 条", msgs >= P["msgs"]),
+            ("IV", "用户今天的专注时长", f"{today_h:.1f}h", f"{P['today_h']:g}h", today_h >= P["today_h"]),
             ("V", "现在是特殊空闲时段", "是" if special else "不是", "是", special),
         ]
 
@@ -4859,6 +5005,91 @@ class Comm:
         lines = [f"{k}.{desc}: 当前 {cur}, 要求 {need}, {'已满足' if ok else '未满足'}" for k, desc, cur, need, ok in rows]
         return ("(OIT 系统提供, 用户看不到) 条件判定结果 (OIT 按用户的真实数据算出, 以此为准, 不要自己推算, 也不要编造数字):\n"
                 + "\n".join(lines) + f"\n结论: {'五个条件全部满足' if all(r[4] for r in rows) else '没有全部满足'}.")
+
+    # ---- 亲密关系 / 告白 (1.0.397, MECHANICS 24.15) ----
+    def love(self) -> dict:
+        return love_norm(self.cfg.get("love"))
+
+    def related(self) -> bool:
+        """已经确立亲密关系了吗."""
+        return bool(self.love()["rel"])
+
+    def love_invite(self) -> bool:
+        """对方告白了、等用户点 接受 / 拒绝 (聊天页上显示两个按钮)."""
+        d = self.love()
+        return bool(d["inv"]) and not d["rel"]
+
+    def _love_set(self, **kw):
+        d = self.love()
+        d.update(kw)
+        d["ts"] = max(self._ms(), d["ts"] + 1)
+        self.cfg["love"] = love_norm(d)
+
+    def _love_confirm(self, by: str):
+        """亲密关系确立了 (by = user: 用户提出、对方 [accept]; ai: 对方告白、用户接受): 记入系统, 同步给别的设备."""
+        if self.related():
+            return
+        self._love_set(rel=self._ms(), by=by, inv=0)
+        self.log(f"LOVE 亲密关系确立 (by {by})")
+        self.save_chat()
+        self._changed()
+        self._push()
+
+    def _love_unmark(self):
+        key = getattr(self, "_love_key", "")
+        if key:
+            self.cfg["pro_key"] = "|".join(k for k in str(self.cfg.get("pro_key") or "").split("|") if k and k != key)
+            self._love_key = ""
+
+    def _love_check(self, now, segs, done) -> bool:
+        """每次进入特殊空闲段 (有日程文件的人设): 按 COND_STRICT 判定; 全部通过 → 让对方向用户告白, 用户在聊天页上选 接受 / 拒绝. 返回 True = 发起了."""
+        d = self.love()
+        if d["rel"] or d["inv"] or self._ms() < d["no"]:
+            return False
+        cur = routine.status_in(segs, now)
+        if not cur or routine.seg_class(cur) != "special":
+            return False
+        key = f"L{cur['start']:%Y-%m-%dT%H:%M}"
+        if key in done:
+            return False
+        self._pro_mark(key)                                          # 每个特殊空闲段只判定一次 (不管过没过)
+        self.save_chat()
+        if (now - cur["start"]).total_seconds() > PROACTIVE_LATE:   # 错过太久 (程序刚打开) 就算了
+            self.log(f"LOVE {key} → 不判定 (错过了)")
+            return False
+        rows = self.condition_state(strict=True)
+        bad = [r[0] for r in rows if not r[4]]
+        if bad:
+            self.log(f"LOVE {key} → 未通过: {','.join(bad)}")
+            return False
+        self.log(f"LOVE {key} → 全部通过, 让对方告白")
+        self._love_key = key
+        self._trigger("love", f"{LOVE_TAG} 主动触发的告白条件已经全部满足 (OIT 已按人设里「主动触发的表白」那一段判定, 现在是你的特殊空闲时间). "
+                              f"请现在按人设向用户表白: 结合你的长期记忆里关于用户的内容和用户的特点, 发言较长 (不受默认字数限制), 前半含蓄, 后半直接 (不要问用户是否'谨慎','坚定'); 用户会在界面上选择接受或拒绝. 这条必须发出, 不要返回{REFUSE}.")
+        return True
+
+    def love_respond(self, accept: bool) -> str:
+        """用户点了 接受 / 拒绝 对方的告白. 返回 "" = 记下了, 否则是原因. 拒绝 → LOVE_NO_DAYS 天内不再判定主动告白."""
+        if not self.love_invite():
+            return "没有等你回复的告白"
+        if accept:
+            self._love_set(rel=self._ms(), by="ai", inv=0)
+            body = (f"{LOVE_TAG} 用户在界面上点了「接受」你的告白. OIT 已记录: 你们现在是亲密关系. "
+                    f"请按人设回应用户一句 (话题和语气自己定, 不要透露日程); 如果实在不方便, 返回{REFUSE}.")
+        else:
+            self._love_set(inv=0, no=self._ms() + LOVE_NO_DAYS * 86400 * 1000)
+            body = (f"{LOVE_TAG} 用户在界面上点了「拒绝」你的告白 ({LOVE_NO_DAYS} 天内 OIT 不会再判定主动告白). "
+                    f"请按人设回应用户一句 (话题和语气自己定, 不要透露日程); 如果实在不方便, 返回{REFUSE}.")
+        self.log(f"LOVE 用户{'接受' if accept else '拒绝'}了告白")
+        if not self.busy and not self._ai_problem() and self.leader():
+            self.save_chat()
+            self._trigger("love_reply", body)
+        else:                                                       # 对方正忙 / 不能请求: 只记一条系统消息, 下次请求时它会看到
+            self._add("sys", "告白", self._compose(self.now(), body))
+        self.save_chat()
+        self._changed()
+        self._push()
+        return ""
 
     def _rt_tick(self):
         if not self._rt or time.monotonic() < self._rt_next:
@@ -5002,6 +5233,8 @@ class Comm:
         """有日程文件的人设: I~IV 同 _check_proactive, 只是时间用当天算出的日程 (带波动; 睡眠开始是实际波动过后的)."""
         seed = ctx["pid"] if ctx else self.pid
         segs = self._rt_segs(now - timedelta(hours=14), now + timedelta(minutes=4), rt, seed, joint=not ctx)
+        if ctx is None and self._love_check(now, segs, done):             # 每次进入特殊空闲: 判定主动告白
+            return
 
         def pct(kind):
             return pro_pct(ctx["probs"], kind) if ctx else self.pro_percent(kind)
@@ -5084,6 +5317,8 @@ class Comm:
         self.cfg["mem_auto"] = ""          # 记忆卡跟着聊天一起清掉
         self.cfg["mem_upto"] = 0
         self.cfg["mem_ts"] = self._ms()
+        self.cfg["love"] = love_norm({"ts": self._ms()})   # 新对话: 亲密关系 / 告白 / 信息条数也跟着记忆卡一起清掉 (别的设备一起)
+        self.cfg["msg_gone"] = 0
         if self.cfg.get("joint"):                          # 新对话: 联合行动也作废 (别的设备一起)
             self.cfg["joint"] = {"ts": max(self._ms(), int(self.cfg["joint"].get("ts") or 0) + 1)}
         self.joint_draft = {}
@@ -7340,6 +7575,126 @@ def _selftest():
     assert "条件判定结果" in txt and "I." in txt and "V." in txt and "没有全部满足" in txt and "用户看不到" in txt
     cr.messages += [{"role": "me" if i % 2 else "ai", "text": "x", "ts": 1 + i} for i in range(510)]
     assert cr.condition_state()[2][4], "信息 >= 500 条"
+    # ---- 亲密关系 / 主动告白 (1.0.397): 信息总数 + 严格条件 + 每次进入特殊空闲判定 + 用户 [accept] + 同步 + 长期记忆 ----
+    assert "XVII.用户向你提出发展亲密关系" in prefix_prompt() and "[accept]" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
+    assert "主动触发的表白会在每次进入特殊空闲时间时由系统判定" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
+    assert COND_STRICT == {"joint_days": 30, "joint_n": 27, "joint_lv": 20, "study_days": 60, "study_h": 480.0, "idle_h": 180.0, "msgs": 1000, "today_h": 9.0}
+    love_clock = clock[0]
+
+    def love_last_ai(c):                                              # 测试里对方这个时刻在专注, 新消息是 hold 着的: 直接看记录
+        return [m for m in c.messages if m['role'] == 'ai'][-1]
+    stub_trigger = cr.__dict__.pop("_trigger", None)               # 前面的测试把 cr._trigger 换成了记录用的假函数: 这一段用真的
+    cr.cfg["msg_gone"] = 600
+    n_vis = sum(1 for m in cr.messages if m.get("role") in ("me", "ai") and not m.get("hold"))
+    assert n_vis >= 510 and cr.msg_total() == 600 + n_vis, "被 KEEP 砍掉的也算在信息总数里"
+    sr = {r[0]: r for r in cr.condition_state(strict=True)}
+    assert sr["III"][4] and sr["III"][3] == "1000 条" and sr["I"][3] == "27 场" and "难度>=20" in sr["I"][1], sr
+    assert sr["II"][3] == "专注>=480h, 空闲<=180h" and sr["IV"][3] == "9h", sr
+    assert {r[0]: r for r in cr.condition_state()}["III"][3] == "500 条", "用户提出时的那组条件没变"
+    cr.cfg["msg_gone"] = 0
+    cr.messages = [{"id": i + 1, "uid": f"t{i}", "role": "me" if i % 2 else "ai", "text": "x", "at": "", "ts": 10 + i} for i in range(KEEP + 25)]
+    cr.save_chat()
+    assert len(cr.messages) == KEEP - 5 and cr.cfg["msg_gone"] == 30 and cr.msg_total() == KEEP + 25, "save_chat 砍掉 30 条 (HISTORY_STEP 的整数倍), 记在 msg_gone"
+    cr.messages = []
+    cr.cfg["msg_gone"] = 0
+    cr.cfg["love"] = love_norm({})
+    cr.cfg["pro_key"] = ""
+    sp = [{"kind": "idle", "start": clock[0] - timedelta(seconds=30), "end": clock[0] + timedelta(hours=1), "label": "特殊", "gap": False}]
+    real_cls, real_cs = routine.seg_class, cr.condition_state
+    routine.seg_class = lambda s: "special"
+    try:
+        cr.condition_state = lambda strict=False: [("I", "d", "c", "n", False)] + [(k, "d", "c", "n", True) for k in ("II", "III", "IV", "V")]
+        assert not cr._love_check(clock[0], sp, []) and not cr.love_invite()
+        key_l = [k for k in cr.cfg["pro_key"].split("|") if k.startswith("L")]
+        assert len(key_l) == 1, "没通过也记下: 这一段特殊空闲不再判定"
+        assert not cr._love_check(clock[0], sp, cr._pro_done())
+        cr.cfg["pro_key"] = ""
+        late = [dict(sp[0], start=clock[0] - timedelta(minutes=30))]
+        assert not cr._love_check(clock[0], late, []) and cr.cfg["pro_key"], "进段 30 分钟了才打开程序: 错过了, 不判定"
+        cr.cfg["pro_key"] = ""
+        cr.condition_state = lambda strict=False: [(k, "d", "c", "n", True) for k in ("I", "II", "III", "IV", "V")]
+        n_love = len(calls)
+        script.append("我喜欢你.")
+        assert cr._love_check(clock[0], sp, []) and cr.busy
+        wait(cr)
+        last_call = calls[n_love][1][-1]["content"]
+        assert LOVE_TAG in last_call and "前半含蓄, 后半直接" in last_call and "长期记忆" in last_call and "发言较长" in last_call, last_call
+        assert think_log[-1], "告白那条开思考"
+        assert cr.love_invite() and love_last_ai(cr)["text"] == "我喜欢你." and not cr.related()
+        assert not cr._love_check(clock[0], sp, []), "等用户选的时候不再判定"
+        assert f"love:{cr.pid}" in cr.sync_doc() and cr.sync_doc()[f"love:{cr.pid}"]["inv"]
+        # 拒绝: 10 天内不再判定
+        script.append("好吧.")
+        n_rej = len(calls)
+        assert cr.love_respond(False) == "" and cr.busy
+        wait(cr)
+        assert "点了「拒绝」" in calls[n_rej][1][-1]["content"] and LOVE_TAG in calls[n_rej][1][-1]["content"]
+        assert not cr.love_invite() and not cr.related() and cr.love()["no"] >= cr._ms() + 10 * 86400 * 1000 - 5000
+        assert cr.love_respond(True) == "没有等你回复的告白"
+        cr.cfg["pro_key"] = ""
+        assert not cr._love_check(clock[0], sp, []), "拒绝之后 10 天内不判定"
+        cr.cfg["pro_key"] = ""
+        clock[0] += timedelta(days=10, minutes=1)
+        sp2 = [dict(sp[0], start=clock[0] - timedelta(seconds=30), end=clock[0] + timedelta(hours=1))]
+        script.append("我还是喜欢你.")
+        assert cr._love_check(clock[0], sp2, []), "10 天过了: 又判定"
+        wait(cr)
+        assert cr.love_invite()
+        # 接受: 记入系统, 长期记忆里有「系统记录」, 以后不再判定
+        script.append("谢谢.")
+        n_acc = len(calls)
+        assert cr.love_respond(True) == ""
+        wait(cr)
+        assert "点了「接受」" in calls[n_acc][1][-1]["content"]
+        assert cr.related() and cr.love()["by"] == "ai" and not cr.love_invite()
+        mb = cr.memory_block()
+        assert "【系统记录】已确立亲密关系" in mb and "你提出, 用户接受了" in mb and "标着【系统记录】的是 OIT 记下的事实" in mb, mb
+        assert "【系统记录】已确立亲密关系" in calls[-1][0], "每次请求的 system 里都有"
+        cr.cfg["pro_key"] = ""
+        assert not cr._love_check(clock[0], sp2, []), "已确立亲密关系: 不再判定"
+        # 同步: 后改的为准
+        key_love = f"love:{cr.pid}"
+        cr.apply_doc({key_love: {"ts": 1}})
+        assert cr.related(), "更早的改动不覆盖"
+        cr.apply_doc({key_love: dict(cr.love(), ts=cr.love()["ts"] + 5, rel=0, by="")})
+        assert not cr.related(), "更晚的改动覆盖 (别的设备清空了聊天)"
+        cr.apply_doc({key_love: dict(cr.love(), ts=cr.love()["ts"] + 5, rel=cr._ms(), by="user")})
+        assert cr.related() and cr.love()["by"] == "user" and "用户提出, 你接受了" in cr.memory_block()
+        cr.cfg["love"] = love_norm({"ts": cr._ms()})
+        # 用户提出 + 对方 [accept]: 只有这几种请求里写才算
+        script.append("[accept]")
+        cr._trigger("user", "[系统] 用户想发展亲密关系, 并且很坚定.")
+        wait(cr)
+        assert cr.related() and cr.love()["by"] == "user" and love_last_ai(cr)["text"] == "✓ 接受了你发展亲密关系的请求", love_last_ai(cr)
+        t_rel = cr.love()["rel"]
+        script.append("不必重复. [accept]")
+        cr._trigger("user", "[系统] 再来一次.")
+        wait(cr)
+        assert cr.love()["rel"] == t_rel and love_last_ai(cr)["text"] == "不必重复.", "已经确立了: [accept] 不重复记 (文字照常显示)"
+        cr.cfg["love"] = love_norm({"ts": cr._ms()})
+        script.append("你好[accept]")
+        cr._trigger("proactive", "[系统] 请主动发一条消息.")
+        wait(cr)
+        assert not cr.related() and love_last_ai(cr)["text"] == "你好", "主动发起的请求里写 [accept] 无效"
+        script.append("[accept]")
+        cr._trigger("chase", "[系统] 追问.")
+        wait(cr)
+        assert not cr.related()
+    finally:
+        routine.seg_class = real_cls
+        cr.condition_state = real_cs
+    assert sanitize_mem("- 【系统记录】已确立亲密关系\n- 喜欢钢琴") == "- 喜欢钢琴", "模型抄了系统记录: 去掉"
+    assert "「【系统记录】已确立亲密关系」" in MEM_PROMPT
+    # 清空聊天: 亲密关系 / 信息条数跟着记忆卡一起清掉
+    cr.cfg["love"] = love_norm({"ts": cr._ms(), "rel": cr._ms(), "by": "user"})
+    cr.cfg["msg_gone"] = 77
+    cr.clear()
+    assert not cr.related() and cr.cfg["msg_gone"] == 0 and cr.love()["ts"] > 0 and cr.sync_doc()[f"love:{cr.pid}"]["rel"] == 0
+    if stub_trigger:
+        cr._trigger = stub_trigger
+    clock[0] = love_clock
+    cr.messages = []
+    cr.cfg["pro_key"] = ""
     # 聊天概率: 一个小时里用户发 >= 20 条 → 休息格里聊天概率 50%
     clock[0] = datetime(2027, 6, 9, 15, 30)
     base_ts = int(datetime(2027, 6, 9, 16, 0).timestamp() * 1000)

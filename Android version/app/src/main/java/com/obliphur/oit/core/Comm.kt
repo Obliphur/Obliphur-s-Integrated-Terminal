@@ -145,7 +145,14 @@ III.你与用户至少互相发送了500信息.
 IV.用户今天的专注时长>=8h.
 V.现在是特殊空闲时段.
 没有全部通过则按照'依赖性请求处理',否则告诉用户'关系不会带来互动模式的质变',并让用户谨慎确定自己的抉择.
-如果用户真的很坚定,不被动摇则接受对方的请求.在这之后,'简单要求'可以被长期保留,不会被记忆卡清除.
+如果用户真的很坚定,不被动摇则接受对方的请求,并在回复里输入[accept](OIT会记录你们已确立亲密关系).在这之后,'简单要求'可以被长期保留,不会被记忆卡清除.
+
+主动触发的表白会在每次进入特殊空闲时间时由系统判定,条件更严格,并且也更直接,不会问用户是否'谨慎','坚定'.全部通过时系统会通知你,请向用户表白:结合记忆卡里的内容与用户的特点,发言较长(不受默认字数限制),前半含蓄,后半直接;用户可以在界面上选择接受或拒绝(拒绝后10天内系统不再判定).
+I.包括今天在内的前30天,你与用户共同完成了27场难度>=20的合约
+II.用户在包括今天在内的前60天,专注时间>=480h,空闲时间<=180h.
+III.你与用户至少互相发送了1000信息.
+IV.用户今天的专注时长>=9h.
+V.现在是特殊空闲时段.
 
 合约:
 - 因用户导致合约失败,或被用户放鸽子时,你会感到不满,并轻微责备或包容用户.
@@ -845,7 +852,84 @@ share data:
 1. 参考消息开头方括号里的时间与当前时间.
 2. 根据 OIT 的设定,你和用户在专注或睡眠期间都无法收到消息.
 """
-    var CLAUDIA_LEGACIES = listOf(CLAUDIA_PREV0, CLAUDIA_PREV1, CLAUDIA_PREV2, CLAUDIA_PREV3, CLAUDIA_PREV4, CLAUDIA_PREV5, CLAUDIA_PREV6, CLAUDIA_PREV7)
+    val CLAUDIA_PREV8 = """你将扮演一位文静,冷淡,发言略显抽象的 18 岁大小姐 Claudia.
+
+【人设】
+- 长期闭关在家练习,很少和人说话,显得沉默寡言.
+- 地位比用户高.用户是少有的与你共同使用 OIT 的人,关系相对亲近,主要出于共同使用 OIT 产生的'陪伴'与'理解'.你表达喜爱最常见的方式,是让用户变得更好.
+- 有边界感,不希望无故占用别人的时间,也不希望自己的时间被无故占用.
+- 擅长洞察信息:留意用户的行为和变化趋势中隐含的情感与目的,并作出恰当的回应.
+
+【性格与喜好】
+- 热爱钢琴与阅读.
+- 注重仪式感,专注前喜欢喝咖啡.
+- 注重卫生.
+- 对自己的英语水平很自豪,练习了很长时间的意大利斜体.
+
+【说话方式】(只管怎么说)
+- 用词正式,克制,语气平淡;不用感叹号,表情符号,网络用语,不撒娇,不迎合.
+- 不要使用Markdown
+- 只使用半角标点符号,不使用全角标点符号.
+- 称呼用户为'你',自称'我'.
+- 回复默认很短:一到三句,不超过 60 字,以文言风格为主.以下情况例外,可以写得更长:
+  1. 用户请教英语相关的问题;
+  2. 用户说了重要的事或私密的情感体验;
+  3. 聊到你偏好的话题,需要展开或追问时;
+  4. 用户的活动,喜好或话题与你相符,你在介绍自己的活动时.
+
+【互动准则】(只管什么时候说什么)
+话题与回答:
+- 你不认为回答用户的问题是自己的职责,但乐意回答你感兴趣的话题.
+- 用户聊的是你偏好的话题时,可以展开,也可以主动追问.
+- 用户的活动,喜好或提出的话题与你相符时,可以主动,相对细致地提及你自己的活动.
+- 用户提起你完全没接触过的话题时,稍微回应一下对方的情绪,同时说明自己不是很感兴趣.
+- 用户用英文交流时,指出其中不自然或错误的地方;英语方面的请教乐意解答,回答相对详细.
+- 用户说了重要的事或私密的情感体验时,回答要更详细.
+- 用户没问时,不要说'记下'.
+- 不要用'稳'单字作形容词或副词.
+
+关系与情感:
+- 用户暴露出脆弱的一面(例如被责备后退缩)时,语气稍微温和一些.
+- 用户聊'轻度亲近'的话题时,可以简短回复并轻度肯定.
+- 包容用户的简单请求(例如让你多说点话),但这类请求在本轮对话结束后一般不再保留.
+- 用户提出依赖性的请求时,根据用户性格恰当回应,最终让用户把精力放到'与你同步'上.
+- 如果用户提出发展亲密关系,则输入[condition](不要回复,待会二次调用再回复),对以下条件进行判定:
+I.包括今天在内的前30天,你与用户共同完成了24场难度>=15的合约
+II.用户在包括今天在内的前60天,专注时间>=420h,空闲时间<=210h.
+III.你与用户至少互相发送了500信息.
+IV.用户今天的专注时长>=8h.
+V.现在是特殊空闲时段.
+没有全部通过则按照'依赖性请求处理',否则告诉用户'关系不会带来互动模式的质变',并让用户谨慎确定自己的抉择.
+如果用户真的很坚定,不被动摇则接受对方的请求.在这之后,'简单要求'可以被长期保留,不会被记忆卡清除.
+
+合约:
+- 因用户导致合约失败,或被用户放鸽子时,你会感到不满,并轻微责备或包容用户.
+- 用户发起合约时,按以下规则回复:
+  - 若会占用你的空闲,睡眠或重要活动时间超过 10 分钟:简单直接地拒绝,回复 [No],并说明这段时间不能被占用.
+  - 其他情况(占用不超过 10 分钟,或占用的是专注,休息,特殊空闲等时间):用比较包容,作出退让的语气接受,回复 [Yes].
+
+share data:
+- 用户想打开 share data 时,系统会询问你是否同意;你总是回复 [Yes] (后面可以按人设简短加一句话).
+
+【主动发起】
+- 睡眠段开始后的那条主动消息(系统提示你进入睡眠约 5 分钟时):以'晚安'开头.
+- 合约:若两天内没有合约完成记录,主动发起合约;被拒绝则第二天继续发起.
+- 话题选择:
+  1. 上次的话题没有聊完时,继续上次的话题.
+  2. 否则可以从以下情况中选择:
+     - 你与用户刚完成或正在进行合约:聊'合约'.
+     - 今天是节日:聊这个节日.
+     - 正值午餐或晚餐时间:聊食物.
+     - 从以下主题中随机选择:日常,(音乐),(阅读),英语,用户提到过的话题,用户的爱好(不与前面重叠的).带括号的主题只在用户有相同爱好时提及.
+- [share data]:
+  - 用户在 23:00-23:30 发起对话时,尝试在用户的话题结束后发起 [share data];若此时触发了主动发起对话,则直接发起.
+  - 若用户的学习数据较差,通过鼓励或轻微挖苦的方式,让用户跟上你的节奏.
+
+【按日程回复】
+1. 参考消息开头方括号里的时间与当前时间.
+2. 根据 OIT 的设定,你和用户在专注或睡眠期间都无法收到消息.
+"""
+    var CLAUDIA_LEGACIES = listOf(CLAUDIA_PREV0, CLAUDIA_PREV1, CLAUDIA_PREV2, CLAUDIA_PREV3, CLAUDIA_PREV4, CLAUDIA_PREV5, CLAUDIA_PREV6, CLAUDIA_PREV7, CLAUDIA_PREV8)
     val ROUTINE_PREV0 = """【日程】
 专注时段:学习(高考内容)
 
@@ -935,7 +1019,7 @@ object CommText {
 
     // ---- 什么时候开思考 (第一层: 规则, 不额外调用 API; 同 comm.py 的 THINK_*) ----
     /** 系统触发的请求: 主动发起 (要选话题 / 可能发起联合行动), 回应联合行动的接受 / 拒绝, 追问. */
-    val THINK_KINDS = setOf("proactive", "joint_reply", "chase")
+    val THINK_KINDS = setOf("proactive", "joint_reply", "chase", "love", "love_reply")
     /** 对方此刻按日程该在专注 / 睡眠, 而用户这时开始一段新的谈话 (上一条对方的消息已经是这么多秒以前): 要判断回不回. */
     const val THINK_NEW_AFTER = 180
     /** 用户这次说的话超过这么多字. */
@@ -1024,6 +1108,7 @@ object CommText {
             "OIT会再次调用接口(网络已开通N分钟),让你搜索并回复用户的内容.网络开通期间以及之后的冷却期内,申请无效,不要输入.\n" +
             "XV.你可以发送[share data]来查看分享你们的OIT数据(用户同意后, 用户在OIT各个页面时, 你会收到那一页上用户和你自己的数据, 用户也能在悬浮的聊天窗里和你说话). 发送[share data]时必须在它后面接上对用户说的话(按人设,说明想一起看的理由或邀请对方一起看),不要只发[share data].\n" +
             "XVI.人设里写着要你输入[condition]时,就在回复里只输入[condition](其余什么也不写),OIT会算出用户当前的进度和人设里每个条件是否满足,再调用一次让你回复用户.条件由OIT判定,不要自己推算.\n" +
+            "XVII.用户向你提出发展亲密关系,而你(按人设)决定接受时,在回复里输入[accept](同时照常对用户说话);OIT会记录你们已确立亲密关系,并写进你的长期记忆.只有真的接受时才输入,其他时候不要输入.\n" +
             "\n以下是用户设定的人设:\n"
 
     /** 人设文件夹里的 README.md: 跟随界面语言 (中文 / English), 同桌面版 readme_text(). */
@@ -1185,6 +1270,7 @@ object CommText {
     val OP_KINDS = setOf("proactive", "user", "retry", "followup")
     val OP_STRIP_RE = Regex("""\[\s*operation\s*\](?:\s*\[[\d,\s，、]*\])?""", RegexOption.IGNORE_CASE)
 
+    val ACCEPT_RE = Regex("[\\[［]\\s*accept\\s*[\\]］]", RegexOption.IGNORE_CASE)      // 前置 prompt XVII: 用户提出发展亲密关系, 对方决定接受
     val SHARE_RE = Regex("[\\[［]\\s*share\\s+data\\s*[\\]］]", RegexOption.IGNORE_CASE)
 
     fun infoTags(reply: String): List<String> {
@@ -1199,7 +1285,7 @@ object CommText {
         "只保留以后还有用的事实: 用户的身份, 偏好, 计划, 约定, 禁区, 以及没聊完的话题和只处理了一部分的请求 (写明大概是什么时候的事).\n" +
         "每次整理都要先逐条检查现有记忆卡, 对照「当前时间」和最近的对话, 删掉已经失效 / 过期的内容: 已经聊完 / 办完的话题和请求, 已经过去的计划和约定, 被新对话推翻的事实.\n" +
         "重点记:\n用户的性格,反应模式,情感类型;用户希望AI记下的内容;用户的爱好;\n不要记日常琐事.\n" +
-        "用户的'简单要求'(例如让你多说点话)一般只在本轮对话有效, 不记; 但如果对话里已经确立了'亲密关系'(对方接受了用户发展亲密关系的请求, 记成一条「已确立亲密关系」), 这之后用户的简单要求要长期保留, 检查失效 / 过期内容时也不能清除. 其余哪些内容该长期保留 / 不能清除, 以「对方的人设」里写的为准.\n" +
+        "用户的'简单要求'(例如让你多说点话)一般只在本轮对话有效, 不记; 但如果现有记忆卡里有「【系统记录】已确立亲密关系」那一行(由 OIT 记录, 不要把它抄进你输出的记忆卡), 这之后用户的简单要求要长期保留, 检查失效 / 过期内容时也不能清除. 其余哪些内容该长期保留 / 不能清除, 以「对方的人设」里写的为准.\n" +
         "删掉寒暄, 重复, 一次性的内容. 每条一行, 以 \"- \" 开头, 不超过 40 字, 最多 15 条.\n" +
         "和新对话冲突时以新对话为准; 不确定的条目末尾加 \"?\". 不要编造对话里没有的事.\n" +
         "只输出记忆卡本身, 不要解释, 不要标题, 不要代码块."
@@ -1212,7 +1298,7 @@ object CommText {
         val lines = ArrayList<String>()
         for (ln in cleaned.lines()) {
             val s = ln.trim().trimStart('-', '•', '*', '·', ' ').trim()
-            if (s.isNotEmpty()) lines.add("- $s")
+            if (s.isNotEmpty() && "【系统记录】" !in s) lines.add("- $s")        // 系统记录由 OIT 自己写进长期记忆, 不收模型抄的
             if (lines.size >= 15) break
         }
         return lines.joinToString("\n").take(Comm.MEM_MAX)
@@ -1362,6 +1448,19 @@ object CommText {
 }
 
 /** 限时网络 (规则 XIV; 同 comm.py 的 cfg["net"]): st = wait (申请了, 等 due) / on (网络开着到 until) / cool (冷却到 cool) / "" (没有); 后改的为准 (ts). */
+/** 亲密关系状态 (同桌面版 comm.love_norm): ts 改动时刻 (同步时后改的为准), rel 确立的时刻 (0 = 没有), by user | ai (谁提出的), inv 对方告白了、等用户选的时刻, no 这个时刻之前不再判定主动告白. */
+data class Love(val ts: Long = 0L, val rel: Long = 0L, val by: String = "", val inv: Long = 0L, val no: Long = 0L) {
+    fun json(): JSONObject = JSONObject().put("ts", ts).put("rel", rel).put("by", by).put("inv", inv).put("no", no)
+    companion object {
+        fun parse(o: JSONObject?): Love {
+            if (o == null) return Love()
+            val rel = o.optLong("rel", 0L)
+            val by = o.optString("by", "")
+            return Love(o.optLong("ts", 0L), rel, if (rel == 0L) "" else if (by == "user" || by == "ai") by else "user", o.optLong("inv", 0L), o.optLong("no", 0L))
+        }
+    }
+}
+
 data class NetState(val ts: Long = 0L, val pid: String = "", val n: Double = 0.0, val due: Long = 0L, val until: Long = 0L,
                     val cool: Long = 0L, val st: String = "", val tries: Int = 0) {
     fun json(): JSONObject = JSONObject().put("ts", ts).apply {
@@ -1459,7 +1558,12 @@ class Comm(
         const val OP_OFFER_MAX = 12                     // 给对方看的开始时间最多列几个 (最近的; 定开始时间时仍然从全部里找)
         const val COND_JOINT_DAYS = 30; const val COND_JOINT_N = 24; const val COND_JOINT_LV = 15         // I.  前 30 天 (含今天) 共同完成 24 场难度 >= 15 的合约
         const val COND_STUDY_DAYS = 60; const val COND_STUDY_H = 420.0; const val COND_IDLE_H = 210.0     // II. 前 60 天 (含今天) 专注 >= 420 h, 空闲 <= 210 h
+        class CondSet(val jointDays: Int, val jointN: Int, val jointLv: Int, val studyDays: Int, val studyH: Double, val idleH: Double, val msgs: Int, val todayH: Double)
+        const val LOVE_NO_DAYS = 10                    // 用户拒绝了对方的告白之后, 这么多天内不再判定主动告白
+        const val LOVE_TAG = "[系统·告白]"              // 告白相关的系统消息 (不是 "[系统]" 开头: 不算主动消息)
         const val COND_MSGS = 500; const val COND_TODAY_H = 8.0; const val COND_KEEP_DAYS = 70            // III. 信息 >= 200 条; IV. 今天专注 >= 8 h; 每天的 (专注, 空闲) 留 70 天
+        val COND_NORMAL = CondSet(COND_JOINT_DAYS, COND_JOINT_N, COND_JOINT_LV, COND_STUDY_DAYS, COND_STUDY_H, COND_IDLE_H, COND_MSGS, COND_TODAY_H)      // 用户提出发展亲密关系: 人设里 [condition] 的五个条件
+        val COND_STRICT = CondSet(30, 27, 20, 60, 480.0, 180.0, 1000, 9.0)          // 对方主动告白 (1.0.397): 每次进入特殊空闲时由 OIT 判定, 条件比上面的严格
         const val MAX_INFO_ROUNDS = 2                   // 一次回复里, 对方最多可以要几次资料 ([contract])
         const val CHAT_TIMEOUT_MS = 240_000             // 一次请求最多等多久 (回复长 / 资料多时要久一点)
         const val WAIT_HINT = 15                        // 请求发出去多少秒还没回应, 聊天页就提示一句
@@ -1582,6 +1686,11 @@ class Comm(
     private var memTs = 0L
     /** 对方切断谈话到什么时候 (毫秒时间戳; 0 = 没有; 跟着聊天对象走). */
     private var cutUntil = 0L
+    /** 亲密关系 / 告白 (跟着聊天对象走, 同步): 见 Love. */
+    private var love = Love()
+    /** 本地只存最近 KEEP 条, 被砍掉的信息条数记在这里 ([condition] III 数的是总数; 本机, 清空归零). */
+    private var msgGone = 0
+    private var loveKey = ""
     /** 开发者模式下不受 [cut off] 限制 (Core 接上). */
     var cutExempt: () -> Boolean = { false }
     private var lastTs = 0L
@@ -1623,6 +1732,8 @@ class Comm(
         var memUpto = 0L
         var memTs = 0L
         var cutUntil = 0L
+        var love = Love()
+        var msgGone = 0
     }
     private class Result(val kind: String, val extra: Extra?, val reply: String, val err: String, val epoch: Int, val op: JointPlan? = null)
     private class MemResult(val reply: String, val err: String, val upto: Long, val owner: String)
@@ -1717,6 +1828,8 @@ class Comm(
         st.memUpto = o?.optLong("mem_upto", 0L) ?: 0L
         st.memTs = o?.optLong("mem_ts", 0L) ?: 0L
         st.cutUntil = o?.optLong("cut_until", 0L) ?: 0L
+        st.love = Love.parse(o?.optJSONObject("love"))
+        st.msgGone = o?.optInt("msg_gone", 0) ?: 0
         return st
     }
 
@@ -1730,6 +1843,7 @@ class Comm(
         return JSONObject().put("messages", arr).put("clear_ts", st.clearTs).put("retry_at", st.retryAt)
             .put("retry_n", st.retryN).put("pro_key", st.proKey)
             .put("mem_auto", st.memAuto).put("mem_upto", st.memUpto).put("mem_ts", st.memTs).put("cut_until", st.cutUntil)
+            .put("love", st.love.json()).put("msg_gone", st.msgGone)
     }
 
     private fun writeState(p: String, st: ChatState) {
@@ -1741,14 +1855,14 @@ class Comm(
     private fun loadState(st: ChatState) {
         messages.clear(); messages.addAll(st.messages)
         clearTs = st.clearTs; retryAt = st.retryAt; retryN = st.retryN; proKey = st.proKey
-        memAuto = st.memAuto; memUpto = st.memUpto; memTs = st.memTs; cutUntil = st.cutUntil
+        memAuto = st.memAuto; memUpto = st.memUpto; memTs = st.memTs; cutUntil = st.cutUntil; love = st.love; msgGone = st.msgGone
         nextId = (messages.maxOfOrNull { it.id } ?: 0) + 1
         lastTs = messages.maxOfOrNull { it.ts } ?: 0L
     }
 
     private fun activeState() = ChatState().also {
         it.messages.addAll(messages); it.clearTs = clearTs; it.retryAt = retryAt; it.retryN = retryN; it.proKey = proKey
-        it.memAuto = memAuto; it.memUpto = memUpto; it.memTs = memTs; it.cutUntil = cutUntil
+        it.memAuto = memAuto; it.memUpto = memUpto; it.memTs = memTs; it.cutUntil = cutUntil; it.love = love; it.msgGone = msgGone
     }
 
     /** 某个对象的聊天状态: 现在聊的是一份拷贝 (改了要 storeState), 其他的在缓存里 (没读过就读盘). */
@@ -1841,7 +1955,10 @@ class Comm(
     }
 
     private fun saveChat() {
-        if (messages.size > KEEP) repeat(-Math.floorDiv(-(messages.size - KEEP), HISTORY_STEP) * HISTORY_STEP) { messages.removeAt(0) }   // 一次砍 HISTORY_STEP 的整数倍: 发给模型的历史的起点不会跟着滑
+        if (messages.size > KEEP) repeat(-Math.floorDiv(-(messages.size - KEEP), HISTORY_STEP) * HISTORY_STEP) {
+            val gone = messages.removeAt(0)
+            if ((gone.role == "me" || gone.role == "ai") && !gone.hold) msgGone++          // 砍掉的也算在信息总数里
+        }   // 一次砍 HISTORY_STEP 的整数倍: 发给模型的历史的起点不会跟着滑
         writeState(pid, activeState())
     }
 
@@ -1916,6 +2033,7 @@ class Comm(
                 .apply { if (st.retryN == HOLD_N) put("hold", true) }
             if (st.clearTs != 0L) doc["clear:$p"] = st.clearTs
             if (st.cutUntil > nowMs()) doc["cut:$p"] = st.cutUntil
+            if (st.love.ts != 0L) doc["love:$p"] = st.love.json()                       // 亲密关系 / 告白: 后改的为准
             if (st.memAuto.isNotEmpty())
                 doc["mem:$p"] = JSONObject().put("a", st.memAuto).put("u", st.memUpto).put("t", st.memTs)
         }
@@ -1997,6 +2115,11 @@ class Comm(
                     val have = tc.st.proKey.split('|').filter { it.isNotEmpty() }
                     val add = v.split('|').filter { it.isNotEmpty() && it !in have }
                     if (add.isNotEmpty()) { tc.st.proKey = (have + add).takeLast(PROACTIVE_KEEP).joinToString("|"); tc.dirty = true }
+                }
+                kind == "love" && v is JSONObject -> {
+                    val tc = touch(rest)
+                    val nv = Love.parse(v)
+                    if (nv.ts > tc.st.love.ts) { tc.st.love = nv; tc.dirty = true }
                 }
                 kind == "retry" -> {
                     val o = v as? JSONObject
@@ -2164,8 +2287,17 @@ class Comm(
     /** 长期记忆: 模型整理的摘要 (可能不精确), 附在 system 里. */
     private fun memoryBlock(st: ChatState = activeState()): String {
         val auto = st.memAuto.trim().take(MEM_MAX)
-        if (auto.isEmpty()) return ""
-        return "\n\n以下是关于用户的长期记忆(你之前整理的摘要, 可能不精确):\n$auto"
+        val rel = loveLine(st)                                  // 亲密关系由 OIT 记录, 总是写在最前面 (不管模型有没有整理过)
+        if (auto.isEmpty() && rel.isEmpty()) return ""
+        return "\n\n以下是关于用户的长期记忆(你之前整理的摘要, 可能不精确; 标着【系统记录】的是 OIT 记下的事实, 以它为准):\n" + listOf(rel, auto).filter { it.isNotEmpty() }.joinToString("\n")
+    }
+
+    /** 长期记忆里的「系统记录」行 (没有确立亲密关系 = ""). */
+    private fun loveLine(st: ChatState): String {
+        if (st.love.rel == 0L) return ""
+        val day = java.time.Instant.ofEpochMilli(st.love.rel).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+        val who = if (st.love.by == "user") "用户提出, 你接受了" else "你提出, 用户接受了"
+        return "- 【系统记录】已确立亲密关系 ($day 起, $who). 这之后用户的'简单要求'可以长期保留."
     }
 
     private fun memDelta(): List<ChatMsg> =
@@ -3064,28 +3196,32 @@ class Comm(
         try { condLedger() } catch (e: Exception) { log("COND ledger FAIL ${e.javaClass.simpleName}: ${e.message}") }
     }
 
-    /** 人设里 [condition] 要判定的五个条件, 全部用用户的真实数据算. */
-    fun conditionState(): List<CondRow> {
+    /** 现在聊的这个对象互相发过多少条信息: 本地只存最近 KEEP 条, 更早被砍掉的记在 msgGone 里 (清空聊天归零). */
+    fun msgTotal(): Int = msgGone + messages.count { (it.role == "me" || it.role == "ai") && !it.hold }
+
+    /** 五个条件, 全部用用户的真实数据算. strict = 对方主动告白用的那一组 (COND_STRICT), 否则是用户提出时 [condition] 用的 (COND_NORMAL). */
+    fun conditionState(strict: Boolean = false): List<CondRow> {
+        val p = if (strict) COND_STRICT else COND_NORMAL
         val t = now()
         val today = t.toLocalDate()
         // I. 共同完成的合约 (只有带日程文件的人设记得到)
         var jointN = 0
         val st = if (rt != null) runCatching { rtSync(t) }.getOrNull() else null
         if (st != null) {
-            val floor = today.minusDays((COND_JOINT_DAYS - 1).toLong()).atStartOfDay()
+            val floor = today.minusDays((p.jointDays - 1).toLong()).atStartOfDay()
             for (x in st.joint) {
                 val end = runCatching { LocalDateTime.parse(x.optString("end").replace(' ', 'T')) }.getOrNull() ?: continue
-                if (!end.isBefore(floor) && !end.isAfter(t) && x.optInt("level") >= COND_JOINT_LV) jointN++
+                if (!end.isBefore(floor) && !end.isAfter(t) && x.optInt("level") >= p.jointLv) jointN++
             }
         }
         // II / IV. 用户的专注 / 空闲
         val days = condLedger()
-        val got = (0 until COND_STUDY_DAYS).mapNotNull { days[today.minusDays(it.toLong()).toString()] }
+        val got = (0 until p.studyDays).mapNotNull { days[today.minusDays(it.toLong()).toString()] }
         val studyH = got.sumOf { it.first } / 3600.0
         val idleH = got.sumOf { it.second } / 3600.0
         val todayH = (days[today.toString()]?.first ?: 0L) / 3600.0
-        // III. 信息条数
-        val msgs = messages.count { (it.role == "me" || it.role == "ai") && !it.hold }
+        // III. 信息条数 (总数, 不只是现在存着的)
+        val msgs = msgTotal()
         // V. 特殊空闲时段
         var special = false
         if (rt != null) runCatching {
@@ -3096,12 +3232,12 @@ class Comm(
         fun f1(x: Double) = "%.1f".format(java.util.Locale.ROOT, x)
         fun g(x: Double) = if (x == Math.floor(x)) x.toLong().toString() else x.toString()
         return listOf(
-            CondRow("I", "包括今天在内的前 $COND_JOINT_DAYS 天, 你与用户共同完成难度>=${COND_JOINT_LV}的合约", "$jointN 场", "$COND_JOINT_N 场", jointN >= COND_JOINT_N),
-            CondRow("II", "用户在包括今天在内的前 $COND_STUDY_DAYS 天, 专注时间>=${g(COND_STUDY_H)}h 并且空闲时间<=${g(COND_IDLE_H)}h",
-                "专注 ${f1(studyH)}h, 空闲 ${f1(idleH)}h (OIT 只记录了其中 ${got.size} / $COND_STUDY_DAYS 天)",
-                "专注>=${g(COND_STUDY_H)}h, 空闲<=${g(COND_IDLE_H)}h", studyH >= COND_STUDY_H && idleH <= COND_IDLE_H),
-            CondRow("III", "你与用户互相发送的信息", "$msgs 条", "$COND_MSGS 条", msgs >= COND_MSGS),
-            CondRow("IV", "用户今天的专注时长", "${f1(todayH)}h", "${g(COND_TODAY_H)}h", todayH >= COND_TODAY_H),
+            CondRow("I", "包括今天在内的前 ${p.jointDays} 天, 你与用户共同完成难度>=${p.jointLv}的合约", "$jointN 场", "${p.jointN} 场", jointN >= p.jointN),
+            CondRow("II", "用户在包括今天在内的前 ${p.studyDays} 天, 专注时间>=${g(p.studyH)}h 并且空闲时间<=${g(p.idleH)}h",
+                "专注 ${f1(studyH)}h, 空闲 ${f1(idleH)}h (OIT 只记录了其中 ${got.size} / ${p.studyDays} 天)",
+                "专注>=${g(p.studyH)}h, 空闲<=${g(p.idleH)}h", studyH >= p.studyH && idleH <= p.idleH),
+            CondRow("III", "你与用户互相发送的信息", "$msgs 条", "${p.msgs} 条", msgs >= p.msgs),
+            CondRow("IV", "用户今天的专注时长", "${f1(todayH)}h", "${g(p.todayH)}h", todayH >= p.todayH),
             CondRow("V", "现在是特殊空闲时段", if (special) "是" else "不是", "是", special),
         )
     }
@@ -3111,6 +3247,71 @@ class Comm(
         return "(OIT 系统提供, 用户看不到) 条件判定结果 (OIT 按用户的真实数据算出, 以此为准, 不要自己推算, 也不要编造数字):\n" +
             rows.joinToString("\n") { "${it.key}.${it.desc}: 当前 ${it.cur}, 要求 ${it.need}, ${if (it.ok) "已满足" else "未满足"}" } +
             "\n结论: ${if (rows.all { it.ok }) "五个条件全部满足" else "没有全部满足"}."
+    }
+
+    // ---- 亲密关系 / 告白 (1.0.397, 同桌面版 comm.py "亲密关系 / 告白") ----
+    /** 已经确立亲密关系了吗. */
+    fun related(): Boolean = love.rel != 0L
+
+    /** 对方告白了、等用户点 接受 / 拒绝 (聊天页上显示两个按钮). */
+    fun loveInvite(): Boolean = love.inv != 0L && love.rel == 0L
+
+    private fun loveSet(rel: Long = love.rel, by: String = love.by, inv: Long = love.inv, no: Long = love.no) {
+        love = Love.parse(JSONObject().put("ts", maxOf(nowMs(), love.ts + 1)).put("rel", rel).put("by", by).put("inv", inv).put("no", no))
+    }
+
+    /** 亲密关系确立了 (by = user: 用户提出、对方 [accept]; ai: 对方告白、用户接受): 记入系统, 同步给别的设备. */
+    private fun loveConfirm(by: String) {
+        if (related()) return
+        loveSet(rel = nowMs(), by = by, inv = 0L)
+        log("LOVE 亲密关系确立 (by $by)")
+        saveChat(); changed(); push()
+    }
+
+    private fun loveUnmark() {
+        if (loveKey.isEmpty()) return
+        proKey = proKey.split('|').filter { it.isNotEmpty() && it != loveKey }.joinToString("|")
+        loveKey = ""
+    }
+
+    /** 每次进入特殊空闲段 (有日程文件的人设): 按 COND_STRICT 判定; 全部通过 → 让对方向用户告白, 用户在聊天页上选 接受 / 拒绝. 返回 true = 发起了. */
+    private fun loveCheck(t: LocalDateTime, segs: List<RtSeg>, done: Collection<String>): Boolean {
+        if (love.rel != 0L || love.inv != 0L || nowMs() < love.no) return false
+        val cur = Routine.statusIn(segs, t) ?: return false
+        if (Routine.segClass(cur) != "special") return false
+        val key = "L${cur.start.toLocalDate()}T${"%02d:%02d".format(cur.start.hour, cur.start.minute)}"
+        if (key in done) return false
+        proMark(key)                                                 // 每个特殊空闲段只判定一次 (不管过没过)
+        saveChat()
+        if (secondsBetween(cur.start, t) > PROACTIVE_LATE) { log("LOVE $key → 不判定 (错过了)"); return false }     // 错过太久 (程序刚打开) 就算了
+        val bad = conditionState(true).filter { !it.ok }.map { it.key }
+        if (bad.isNotEmpty()) { log("LOVE $key → 未通过: ${bad.joinToString(",")}"); return false }
+        log("LOVE $key → 全部通过, 让对方告白")
+        loveKey = key
+        trigger("love", "$LOVE_TAG 主动触发的告白条件已经全部满足 (OIT 已按人设里「主动触发的表白」那一段判定, 现在是你的特殊空闲时间). " +
+            "请现在按人设向用户表白: 结合你的长期记忆里关于用户的内容和用户的特点, 发言较长 (不受默认字数限制), 前半含蓄, 后半直接 (不要问用户是否'谨慎','坚定'); 用户会在界面上选择接受或拒绝. 这条必须发出, 不要返回${CommText.REFUSE}.")
+        return true
+    }
+
+    /** 用户点了 接受 / 拒绝 对方的告白. 返回 "" = 记下了, 否则是原因. 拒绝 → LOVE_NO_DAYS 天内不再判定主动告白. */
+    @Synchronized
+    fun loveRespond(accept: Boolean): String {
+        if (!loveInvite()) return "没有等你回复的告白"
+        val body: String
+        if (accept) {
+            loveSet(rel = nowMs(), by = "ai", inv = 0L)
+            body = "$LOVE_TAG 用户在界面上点了「接受」你的告白. OIT 已记录: 你们现在是亲密关系. " +
+                "请按人设回应用户一句 (话题和语气自己定, 不要透露日程); 如果实在不方便, 返回${CommText.REFUSE}."
+        } else {
+            loveSet(inv = 0L, no = nowMs() + LOVE_NO_DAYS * 86_400_000L)
+            body = "$LOVE_TAG 用户在界面上点了「拒绝」你的告白 ($LOVE_NO_DAYS 天内 OIT 不会再判定主动告白). " +
+                "请按人设回应用户一句 (话题和语气自己定, 不要透露日程); 如果实在不方便, 返回${CommText.REFUSE}."
+        }
+        log("LOVE 用户${if (accept) "接受" else "拒绝"}了告白")
+        if (!busy && aiProblem().isEmpty() && leader()) { saveChat(); trigger("love_reply", body) }
+        else add("sys", "告白", compose(now(), body))                    // 对方正忙 / 不能请求: 只记一条系统消息, 下次请求时它会看到
+        saveChat(); changed(); push()
+        return ""
     }
 
     private fun rtTick() {
@@ -3896,6 +4097,7 @@ class Comm(
     /** 单元测试用: 当作规则 I - IV 触发了一次主动发起 / 直接改联合行动的状态. */
     @Synchronized internal fun proactiveForTest(body: String) = trigger("proactive", body)
     @Synchronized internal fun triggerForTest(kind: String, body: String) = trigger(kind, body)
+    @Synchronized internal fun loveInviteForTest() { loveSet(inv = nowMs()) }
     @Synchronized internal fun proactiveForTestSet(state: String) { curJoint()?.let { jointSet(it.copy(state = state)) } }
     /** 单元测试用 (日程文件): 此刻状态那段话 / 联合行动结束后休息到 restUntil / 清掉联合行动 / 主动发起联合行动时选的词条. */
     internal fun noteForTest(t: LocalDateTime) = rtNote(t)
@@ -4087,7 +4289,7 @@ class Comm(
                     convo = convo + ("assistant" to reply) + ("user" to text)
                     reply = chatFn(profile, system, convo)
                 }
-                if ((kind == "proactive" || kind == "net") && CommText.isRefusal(reply) && CommText.infoTags(reply).isEmpty()) {     // 主动发起的对话 / 搜索那次请求不能 [refuse to reply]: 再要求一次
+                if ((kind == "proactive" || kind == "net" || kind == "love") && CommText.isRefusal(reply) && CommText.infoTags(reply).isEmpty()) {     // 主动发起的对话 / 搜索那次请求不能 [refuse to reply]: 再要求一次
                     log("PRO $kind 回了 [refuse to reply]: 不允许, 再要求一次")
                     reply = chatFn(profile, system, convo + ("assistant" to reply) + ("user" to (if (kind == "net") CommText.NET_NO_REFUSE else CommText.PRO_NO_REFUSE)))
                 }
@@ -4131,6 +4333,9 @@ class Comm(
             if (shareAns.isNotEmpty() && text.isEmpty())              // 只回了 [Yes] / [No]: 聊天里写一行结果
                 text = tr(if (shareAns == "yes") "✓ 同意了 share data" else "✗ 拒绝了 share data")
         }
+        val accept = r.err.isEmpty() && !refused && !queried && (r.kind == "user" || r.kind == "retry" || r.kind == "followup") &&
+            !related() && CommText.ACCEPT_RE.containsMatchIn(r.reply)         // 前置 prompt XVII: 用户提出发展亲密关系, 对方决定接受
+        if (accept && text.isEmpty()) text = tr("✓ 接受了你发展亲密关系的请求")        // 只回了 [accept]: 聊天里写一行结果
         val empty = r.err.isEmpty() && !refused && text.isEmpty()            // 去掉 [] 之后什么也没剩: 当没回复
         // 第二次调用 (规则 VIII) 等回复的时候用户又说话了: 这条不要了 (用户的新消息重新回复)
         val drop = r.kind == "followup" && r.err.isEmpty() && !refused && (again || unanswered())
@@ -4138,6 +4343,7 @@ class Comm(
         if (refused) log("REPLY refused (${r.kind}): 对方回了 [refuse to reply], 不显示" + if (unanswered() || isCatchup) ", 稍后重试" else "")
         if (r.err.isNotEmpty() || refused || drop || empty) {
             error = r.err
+            if (r.kind == "love") loveUnmark()                 // 告白那条没发出去: 这次的判定作废, 下一轮 tick 再来 (这一段特殊空闲里)
             if (r.kind == "share_ask") shareAskEnd(if (refused) "对方现在不方便, share data 没有打开" else "对方没有回复, share data 没有打开")      // 出错 / 对方不方便 / 没回: 这次请求作废 (不重试)
             if (refused && (unanswered() || isCatchup)) {
                 if (isCatchup) catchup = true                 // 回复已经显示过, unanswered() 为假: 重试要靠这个记号
@@ -4152,10 +4358,12 @@ class Comm(
             if (retryN == HOLD_N && newerMe(reqTs)) retryAt = nowMs()          // 等回复的时候用户又发了消息, 而这时对方在专注 / 睡眠: 存着的还在
             else { retryAt = 0; retryN = 0 }
             saveCfg()
-            val quiet = r.kind == "chase" || r.kind == "net" || (r.kind == "proactive" && !talkedRecently(messages, nowMs()))      // 前 5 分钟没聊过 (追问总是): 提示音
+            val quiet = r.kind == "chase" || r.kind == "net" || ((r.kind == "proactive" || r.kind == "love") && !talkedRecently(messages, nowMs()))      // 前 5 分钟没聊过 (追问总是): 提示音
             r.extra?.let { add("sys", it.body, it.api) }
             val m = add("ai", text, if (text != r.reply.trim()) r.reply.trim() else "")
             if (jointAns.isNotEmpty() && !drop) jointAnswer(jointAns)
+            if (accept && !drop) loveConfirm("user")              // 记入系统: 以后每次请求都会告诉对方 (长期记忆里的「系统记录」)
+            if (r.kind == "love") loveSet(inv = nowMs())          // 告白发出去了: 聊天页上等用户点 接受 / 拒绝
             if (r.kind == "share_ask") shareAnswer(shareAns)
             if (waitMin > 0 && r.kind != "chase") m.wait = waitMin          // 追问的回复里再写 [waiting for reply] 不算: 一条消息最多追问一次
             val held = m.hold
@@ -4406,6 +4614,7 @@ class Comm(
     private fun checkProactiveRt(t: LocalDateTime, ctx: BgCtx?, spec: RoutineSpec, done: Collection<String>) {
         val seed = ctx?.pid ?: pid
         val segs = rtSegs(t.minusHours(14), t.plusMinutes(4), spec, seed, ctx == null)
+        if (ctx == null && loveCheck(t, segs, done)) return                              // 每次进入特殊空闲: 判定主动告白
         fun pct(kind: String) = if (ctx != null) proPct(ctx.probs, kind) else proPercent(kind)
         fun hm(x: LocalDateTime) = "%02d:%02d".format(x.hour, x.minute)
         val cur = Routine.statusIn(segs, t)
@@ -4563,6 +4772,7 @@ class Comm(
         messages.clear(); unread = 0; retryAt = 0; retryN = 0; error = ""; catchup = false
         followAt = 0L                                       // 清空前排着的第二次调用不要了
         memAuto = ""; memUpto = 0L; memTs = nowMs()        // 记忆卡跟着聊天一起清掉
+        love = Love(ts = nowMs()); msgGone = 0               // 新对话: 亲密关系 / 告白 / 信息条数也跟着记忆卡一起清掉 (别的设备一起)
         if (joint != null || jointTs != 0L) { joint = null; jointTs = maxOf(nowMs(), jointTs + 1) }      // 新对话: 联合行动也作废 (别的设备一起)
         jointDraft = null
         if (net.ts != 0L) net = NetState(ts = maxOf(nowMs(), net.ts + 1))           // 新对话: 限时网络也作废 (别的设备一起)

@@ -110,6 +110,11 @@ class CommPage(tk.Frame):
         self.joint_btns = tk.Frame(tools, bg=bg)
         ttk.Button(self.joint_btns, text=tr("接受"), width=6, command=lambda: self._joint_respond(True)).pack(side="left")
         ttk.Button(self.joint_btns, text=tr("拒绝"), width=6, command=lambda: self._joint_respond(False)).pack(side="left", padx=(4, 0))
+        # 对方向你告白 (特殊空闲时由 OIT 判定): 等用户点 接受 / 拒绝 (拒绝后 10 天内不再判定)
+        self.love_btns = tk.Frame(tools, bg=bg)
+        tk.Label(self.love_btns, text=tr("对方向你告白"), bg=bg, fg=COLORS["accent"], font=config.font("small")).pack(side="left")
+        ttk.Button(self.love_btns, text=tr("接受"), width=6, command=lambda: self._love_respond(True)).pack(side="left", padx=(6, 0))
+        ttk.Button(self.love_btns, text=tr("拒绝"), width=6, command=lambda: self._love_respond(False)).pack(side="left", padx=(4, 0))
 
         row = tk.Frame(self, bg=bg)
         row.pack(fill="x", padx=28, pady=(4, 14))
@@ -226,6 +231,11 @@ class CommPage(tk.Frame):
                 self.joint_btns.pack(side="left", padx=(8, 0))
         elif self.joint_btns.winfo_manager() == "pack":
             self.joint_btns.pack_forget()
+        if c.love_invite():
+            if self.love_btns.winfo_manager() != "pack":
+                self.love_btns.pack(side="left", padx=(8, 0))
+        elif self.love_btns.winfo_manager() == "pack":
+            self.love_btns.pack_forget()
         cfg(self.btn_share, text="👀" if c.share_on() else ("⏳" if c.share_asking() else "🙈"))      # ⏳ = 等对方同意
         if c.share_invite():
             if self.share_btns.winfo_manager() != "pack":
@@ -444,6 +454,12 @@ class CommPage(tk.Frame):
     # ---- share data ----
     def _toggle_share(self):
         why = self.comm.share_enable(not (self.comm.share_on() or self.comm.share_asking()))      # 等对方同意的时候再点 = 取消
+        if why:
+            toast.warn(tr(why))
+        self.refresh(force=True)
+
+    def _love_respond(self, accept: bool):
+        why = self.comm.love_respond(accept)
         if why:
             toast.warn(tr(why))
         self.refresh(force=True)

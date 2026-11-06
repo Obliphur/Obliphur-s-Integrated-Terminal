@@ -79,6 +79,7 @@ fun CommScreen(go: (String) -> Unit) {
     var shareOn by remember { mutableStateOf(comm.shareOn()) }                     // share data 开着吗
     var shareAsk by remember { mutableStateOf(comm.shareAsking()) }                 // 点了 share data, 等对方同意 (⏳)
     var shareInv by remember { mutableStateOf(comm.shareInvite()) }                // 对方发了 [share data]: 等用户点 接受 / 拒绝
+    var loveInv by remember { mutableStateOf(comm.loveInvite()) }                  // 对方告白了: 等用户点 接受 / 拒绝
     var ocrBusy by remember { mutableStateOf(false) }                          // 识别字体进行中
     val ocrCtx = androidx.compose.ui.platform.LocalContext.current
     // 🖼 识别字体: 选一张图片, 让模型读出上面的文字, 放进聊天框 (图片本身不会发出去, 也不会保存)
@@ -117,6 +118,7 @@ fun CommScreen(go: (String) -> Unit) {
             comm.shareOn().let { if (it != shareOn) shareOn = it }
             comm.shareAsking().let { if (it != shareAsk) shareAsk = it }
             comm.shareInvite().let { if (it != shareInv) shareInv = it }
+            comm.loveInvite().let { if (it != loveInv) loveInv = it }
             kotlinx.coroutines.delay(250)
         }
     }
@@ -190,6 +192,12 @@ fun CommScreen(go: (String) -> Unit) {
             Text(tr("对方想看你们的数据"), color = o.accent, fontSize = 12.sp)
             AccentButton(tr("接受")) { comm.shareRespond(true).let { if (it.isNotEmpty()) core.toast(tr(it), "warn") } }
             TextButton({ comm.shareRespond(false).let { if (it.isNotEmpty()) core.toast(tr(it), "warn") } }) { Text(tr("拒绝"), color = o.dim) }
+        }
+        if (loveInv) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(start = 8.dp)) {
+            Text(tr("对方向你告白"), color = o.accent, fontSize = 12.sp)
+            AccentButton(tr("接受")) { comm.loveRespond(true).let { if (it.isNotEmpty()) core.toast(tr(it), "warn") } }
+            TextButton({ comm.loveRespond(false).let { if (it.isNotEmpty()) core.toast(tr(it), "warn") } }) { Text(tr("拒绝"), color = o.dim) }
         }
         // 选好、还没发出去的联合行动 (开始 - 结束时间, 结束时间自动算好) 或发出去之后的进展; 📎 勾选的数据
         if (jointLine.first.isNotEmpty()) Row(verticalAlignment = Alignment.CenterVertically) {

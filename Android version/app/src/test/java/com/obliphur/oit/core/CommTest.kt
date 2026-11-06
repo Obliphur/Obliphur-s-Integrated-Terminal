@@ -83,6 +83,50 @@ class CommTest {
     }
 
     @Test
+    fun loveAndAccept() {
+        assertTrue("XVII.用户向你提出发展亲密关系" in CommText.prefixPrompt() && "[accept]" in BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT))
+        assertTrue("主动触发的表白会在每次进入特殊空闲时间时由系统判定" in BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT))
+        assertEquals("- 喜欢钢琴", CommText.sanitizeMem("- 【系统记录】已确立亲密关系\n- 喜欢钢琴"))
+        assertTrue("「【系统记录】已确立亲密关系」" in CommText.MEM_PROMPT)
+        val td = Files.createTempDirectory("oit").toFile()
+        val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "personas"))
+        val strict = c.conditionState(true)
+        assertEquals(listOf("27 场", "专注>=480h, 空闲<=180h", "1000 条", "9h"), strict.take(4).map { it.need })
+        assertEquals("500 条", c.conditionState()[2].need)
+        // 用户提出 + 对方 [accept]: 记入系统
+        script.clear(); script.add("[accept]")
+        c.triggerForTest("user", "[系统] 用户想发展亲密关系, 并且很坚定.")
+        wait(c)
+        assertTrue(c.related())
+        assertEquals("✓ 接受了你发展亲密关系的请求", c.messages.last { it.role == "ai" }.text)
+        script.clear(); script.add("嗯.")
+        c.triggerForTest("user", "[系统] 再说一句.")
+        wait(c)
+        assertTrue("【系统记录】已确立亲密关系" in calls.last().first && "用户提出, 你接受了" in calls.last().first)
+        // 清空聊天: 跟着记忆卡一起清掉; 主动发起的请求里写 [accept] 无效
+        c.clear()
+        assertFalse(c.related())
+        script.clear(); script.add("你好[accept]")
+        c.triggerForTest("proactive", "[系统] 请主动发一条消息.")
+        wait(c)
+        assertFalse(c.related())
+        // 对方告白: 用户拒绝 → 记下 10 天; 再来一次接受
+        c.loveInviteForTest()
+        assertTrue(c.loveInvite())
+        script.clear(); script.add("好吧.")
+        assertEquals("", c.loveRespond(false))
+        wait(c)
+        assertTrue(!c.loveInvite() && "「拒绝」" in calls.last().second.last().second && Comm.LOVE_TAG in calls.last().second.last().second)
+        assertEquals("没有等你回复的告白", c.loveRespond(true))
+        c.loveInviteForTest()
+        script.clear(); script.add("谢谢.")
+        assertEquals("", c.loveRespond(true))
+        wait(c)
+        assertTrue(c.related() && !c.loveInvite() && "「接受」" in calls.last().second.last().second)
+        assertEquals(c.messages.count { (it.role == "me" || it.role == "ai") && !it.hold }, c.msgTotal())
+    }
+
+    @Test
     fun prefixAndPersonas() {
         val p = CommText.prefixPrompt()
         assertTrue(p.startsWith("你需要回复来自自律软件OIT用户的信息"))
