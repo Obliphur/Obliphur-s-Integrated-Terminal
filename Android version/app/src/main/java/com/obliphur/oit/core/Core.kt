@@ -280,6 +280,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         comm.infoFn = { tag -> commInfo(tag) }
         comm.shareFn = { page -> commShare(page) }            // share data (MECHANICS 24.12): 某一页上用户和对方的数据
         comm.onShareOpen = { host.openPage("timer") }          // 用户接受了对方的 share data 邀请: 跳到计时器页
+        comm.onShareNotice = { toast(tr(it)) }          // 对方拒绝 / 没回复用户的 share data 请求
         comm.device = { myId() }
         comm.leader = { commLeader() }
         comm.onSync = { syncNow() }

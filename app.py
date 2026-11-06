@@ -361,6 +361,7 @@ class BreakTimerApp:
         self.comm.info_fn = self._comm_info
         self.comm.share_fn = self._comm_share            # share data (MECHANICS 24.12): 某一页上用户和对方的数据
         self.comm.on_share_open = lambda: self.show_page("timer")      # 用户接受了对方的 share data 邀请: 跳到计时器页
+        self.comm.on_share_notice = lambda text: toast.info(tr(text))      # 对方拒绝 / 没回复用户的 share data 请求
         # 设备同步 (MECHANICS 24.6): 聊天记录随同步; 只有最后有人操作的设备调用 AI
         self.comm.device = lambda: self.sync.my_id
         self.comm.leader = self._comm_leader

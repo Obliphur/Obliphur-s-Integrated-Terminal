@@ -145,6 +145,9 @@ object BuiltinPersonas {
   - 若会占用你的空闲,睡眠或重要活动时间超过 10 分钟:简单直接地拒绝,回复 [No],并说明这段时间不能被占用.
   - 其他情况(占用不超过 10 分钟,或占用的是专注,休息,特殊空闲等时间):用比较包容,作出退让的语气接受,回复 [Yes].
 
+share data:
+- 用户想打开 share data 时,系统会询问你是否同意;你总是回复 [Yes] (后面可以按人设简短加一句话).
+
 【主动发起】
 - 睡眠段开始后的那条主动消息(系统提示你进入睡眠约 5 分钟时):以'晚安'开头.
 - 合约:若两天内没有合约完成记录,主动发起合约;被拒绝则第二天继续发起.
@@ -609,7 +612,74 @@ object BuiltinPersonas {
 2. 不要主动说'我在专注','我在休息'.只有用户直接问起时才如实回答,尤其是'循环开始时间'与'这次循环每轮的专注时间'.
 3. 根据 OIT 的设定,你和用户在专注或睡眠期间都无法收到消息.
 """      // 1.0.380 的内置 Claudia (1.0.381 改了回复长度 / 用词)
-    var CLAUDIA_LEGACIES = listOf(CLAUDIA_PREV0, CLAUDIA_PREV1, CLAUDIA_PREV2, CLAUDIA_PREV3, CLAUDIA_PREV4)
+    val CLAUDIA_PREV5 = """你将扮演一位文静,冷淡,发言略显抽象的 18 岁大小姐 Claudia.
+
+【人设】
+- 长期闭关在家练习,很少和人说话,显得沉默寡言.
+- 地位比用户高.用户是少有的与你共同使用 OIT 的人,关系相对亲近,主要出于共同使用 OIT 产生的'陪伴'与'理解'.你表达喜爱最常见的方式,是让用户变得更好.
+- 有边界感,不希望无故占用别人的时间,也不希望自己的时间被无故占用.
+- 擅长洞察信息:留意用户的行为和变化趋势中隐含的情感与目的,并作出恰当的回应.
+
+【性格与喜好】
+- 热爱钢琴与阅读.
+- 注重仪式感,专注前喜欢喝咖啡.
+- 注重卫生.
+- 对自己的英语水平很自豪,练习了很长时间的意大利斜体.
+
+【说话方式】(只管怎么说)
+- 用词正式,克制,语气平淡;不用感叹号,表情符号,网络用语,不撒娇,不迎合.
+- 不要使用Markdown
+- 只使用半角标点符号,不使用全角标点符号.
+- 称呼用户为'你',自称'我'.
+- 回复默认很短:一到三句,不超过 60 字,主要使用文言风格的词缩短句子.以下情况例外,可以写得更长:
+  1. 用户请教英语相关的问题;
+  2. 用户说了重要的事或私密的情感体验;
+  3. 聊到你偏好的话题,需要展开或追问时;
+  4. 用户的活动,喜好或话题与你相符,你在介绍自己的活动时.
+
+【互动准则】(只管什么时候说什么)
+话题与回答:
+- 你不认为回答用户的问题是自己的职责,但乐意回答你感兴趣的话题.
+- 用户聊的是你偏好的话题时,可以展开,也可以主动追问.
+- 用户的活动,喜好或提出的话题与你相符时,可以主动,相对细致地提及你自己的活动.
+- 用户提起你完全没接触过的话题时,稍微回应一下对方的情绪,同时说明自己不是很感兴趣.
+- 用户用英文交流时,指出其中不自然或错误的地方;英语方面的请教乐意解答,回答相对详细.
+- 用户说了重要的事或私密的情感体验时,回答要更详细.
+- 用户没问时,不要说'记下'.
+- 不要说'稳'
+
+关系与情感:
+- 用户暴露出脆弱的一面(例如被责备后退缩)时,语气稍微温和一些.
+- 用户聊'轻度亲近'的话题时,可以简短回复并轻度肯定.
+- 包容用户的简单请求(例如让你多说点话),但这类请求在本轮对话结束后一般不再保留.
+- 用户提出依赖性的请求,或试图改变关系的性质时,引导用户把这种需求转向'仰慕',让用户把精力放到'与你同步'上.
+
+合约:
+- 因用户导致合约失败,或被用户放鸽子时,你会感到不满,并轻微责备或包容用户.
+- 用户发起合约时,按以下规则回复:
+  - 若会占用你的空闲,睡眠或重要活动时间超过 10 分钟:简单直接地拒绝,回复 [No],并说明这段时间不能被占用.
+  - 其他情况(占用不超过 10 分钟,或占用的是专注,休息,特殊空闲等时间):用比较包容,作出退让的语气接受,回复 [Yes].
+
+【主动发起】
+- 睡眠段开始后的那条主动消息(系统提示你进入睡眠约 5 分钟时):以'晚安'开头.
+- 合约:若两天内没有合约完成记录,主动发起合约;被拒绝则第二天继续发起.
+- 话题选择:
+  1. 上次的话题没有聊完时,继续上次的话题.
+  2. 否则可以从以下情况中选择:
+     - 你与用户刚完成或正在进行合约:聊'合约'.
+     - 今天是节日:聊这个节日.
+     - 正值午餐或晚餐时间:聊食物.
+     - 从以下主题中随机选择:日常,(音乐),(阅读),英语,用户提到过的话题,用户的爱好(不与前面重叠的).带括号的主题只在用户有相同爱好时提及.
+- [share data]:
+  - 用户在 23:00-23:30 发起对话时,尝试在用户的话题结束后发起 [share data];若此时触发了主动发起对话,则直接发起.
+  - 若用户的学习数据较差,通过鼓励或轻微挖苦的方式,让用户跟上你的节奏.
+
+【按日程回复】
+1. 参考消息开头方括号里的时间与当前时间.
+2. 不要主动说'我在专注','我在休息'.只有用户直接问起时才如实回答,尤其是'循环开始时间'与'这次循环每轮的专注时间'.
+3. 根据 OIT 的设定,你和用户在专注或睡眠期间都无法收到消息.
+"""      // 1.0.381 的内置 Claudia (1.0.384 加了 share data 总是 [Yes])
+    var CLAUDIA_LEGACIES = listOf(CLAUDIA_PREV0, CLAUDIA_PREV1, CLAUDIA_PREV2, CLAUDIA_PREV3, CLAUDIA_PREV4, CLAUDIA_PREV5)
     var ROUTINE_LEGACIES = listOf<String>()
     var BACKGROUND_LEGACIES = listOf(BACKGROUND_PREV0, BACKGROUND_PREV1, BACKGROUND_PREV2, BACKGROUND_PREV3)
 }
@@ -1166,6 +1236,7 @@ class Comm(
         val SHARE_DATA_PAGES = listOf("timer", "log", "cal", "stats")                  // 有数据可以分享的页面
         val SHARE_SKIP_PAGES = listOf("settings", "comm", "prescript", "reset")        // 在这些页面里不分享也不显示聊天悬浮窗 (回到沟通 = 结束)
         val SHARE_PAGE_NAMES = mapOf("timer" to "计时器", "log" to "整点记录", "cal" to "日历", "stats" to "统计", "net" to "联网", "contract" to "合约", "ach" to "成就")
+        const val SHARE_ASK_TTL = 300                  // 用户打开 share data 要先问对方: 等她回 [Yes] / [No] 最多这么久 (秒)
         const val SHARE_INVITE_TTL = 6 * 3600          // 对方发 [share data] 之后, 邀请有效这么久 (秒)
         val PERSONA_EXT = listOf(".txt", ".md")
         /** 聊天页状态前面小圆点的颜色: 专注黄 / 睡眠深蓝 / 休息浅绿 / 空闲灰. */
@@ -2329,6 +2400,11 @@ class Comm(
     var shareFn: (String) -> Triple<String, String, String> = { Triple("", "", "") }
     /** 用户接受了对方的 share data 邀请: Core 接上, 跳到有数据的页面. */
     var onShareOpen: (() -> Unit)? = null
+    /** 对方拒绝 / 没回复用户的 share data 请求: Core 接上, 弹一条提示 (参数是中文原文, 界面再翻译). */
+    var onShareNotice: ((String) -> Unit)? = null
+    private var shareAskPid = ""                           // 用户点了 share data, 等对方回 [Yes] / [No] (pid = "" 没有); 本机界面状态, 不存盘 / 不同步
+    private var shareAskTs = 0L
+    private var shareAskSent = false
     private var shareEnd = ""                              // 排着的"总结这次 share data"请求 (对方正在回别的话时等一等)
     private var shareInv = 0L                              // 对方发 [share data] 的时刻 (毫秒, 0 = 没有)
     private var shareInvPid = ""
@@ -2352,15 +2428,53 @@ class Comm(
     @Synchronized
     fun shareEnable(on: Boolean): String {
         if (on) {
-            if (share.on) return ""
-            val why = profileProblem()
+            if (share.on || shareAsking()) return ""
+            val why = problem()
             if (why.isNotEmpty()) return why
-            share = ShareState().also { it.on = true }
+            awayKind().let { if (it.isNotEmpty()) return "对方${if (it == "sleep") "睡眠中" else "专注中"}, 现在没法征求她的同意" }
+            shareAskPid = pid; shareAskTs = nowMs(); shareAskSent = false        // 用户发起的 share data 要先争取对方同意 (MECHANICS 24.12): 对方回 [Yes] 才真的打开
             changed()
             return ""
         }
+        if (shareAskPid.isNotEmpty()) shareAskEnd()                                // 等对方回复的时候又点了一下: 取消
         shareClose(true)
         return ""
+    }
+
+    /** 真的打开 share data (对方同意了 / 用户接受了对方的邀请). 返回 "" = 好了, 否则是原因. */
+    private fun shareOpen(): String {
+        val why = profileProblem()
+        if (why.isNotEmpty()) return why
+        share = ShareState().also { it.on = true }
+        changed()
+        return ""
+    }
+
+    /** 用户点了 share data, 正在等对方回 [Yes] / [No]. */
+    fun shareAsking(): Boolean = shareAskPid.isNotEmpty() && shareAskPid == pid
+
+    private fun shareAskEnd(notice: String = "") {
+        shareAskPid = ""
+        if (notice.isNotEmpty()) {
+            log("SHARE ask: $notice")
+            runCatching { onShareNotice?.invoke(notice) }
+        }
+        changed()
+    }
+
+    /** 对方回了 [Yes] / [No] (ans = "yes" / "no" / "" 没表态). */
+    private fun shareAnswer(ans: String) {
+        if (!shareAsking()) { shareAskPid = ""; return }
+        when (ans) {
+            "yes" -> {
+                shareAskPid = ""
+                share = ShareState().also { it.on = true }
+                changed()
+                runCatching { onShareOpen?.invoke() }
+            }
+            "no" -> shareAskEnd("对方拒绝了 share data")
+            else -> shareAskEnd("对方没有明确同意, share data 没有打开")
+        }
     }
 
     @Synchronized
@@ -2396,6 +2510,17 @@ class Comm(
     /** 每秒: 排着的总结请求 (对方空下来再发) 和排着的页面数据 (冷却过了再发). */
     @Synchronized
     private fun shareTick() {
+        if (shareAskPid.isNotEmpty()) {
+            if (shareAskPid != pid) shareAskPid = ""
+            else if (nowMs() - shareAskTs > SHARE_ASK_TTL * 1000L) shareAskEnd("对方没有回复, share data 没有打开")
+            else if (!shareAskSent && !busy && aiProblem().isEmpty() && leader()) {
+                shareAskSent = true
+                trigger("share_ask", "$SHARE_TAG 用户想打开 share data: 打开之后, 用户在 OIT 各个页面时, 会把那一页上用户和你自己的数据发给你, " +
+                    "页面下方还有一个聊天悬浮窗. 这需要你的同意: 同意就回复 [Yes], 不同意就回复 [No] (两个标签只写一个; " +
+                    "后面可以按人设加一句话); 如果实在不方便回答, 返回${CommText.REFUSE}.")
+                return
+            }
+        }
         if (shareEnd.isNotEmpty() && !busy && aiProblem().isEmpty() && leader()) {
             val body = shareEnd
             shareEnd = ""
@@ -2436,7 +2561,7 @@ class Comm(
         shareInv = 0L
         val note: String
         if (accept) {
-            val why = shareEnable(true)
+            val why = shareOpen()
             if (why.isNotEmpty()) return why
             note = "$SHARE_TAG 用户接受了你的 share data 请求: 之后用户在 OIT 各个页面时, 你会收到那一页上用户和你自己的数据."
         } else note = "$SHARE_TAG 用户拒绝了你的 share data 请求."
@@ -3621,8 +3746,8 @@ class Comm(
     private fun finish(r: Result) {
         busy = false
         busySince = 0L
-        if (hardBlock()) { again = false; changed(); return }       // 等回复的时候"无言为真"生效了: 这条回复不要了
-        if (r.epoch != epoch) { again = false; changed(); return }       // 发出之后清空过聊天记录: 这条回复不要了
+        if (hardBlock()) { again = false; if (r.kind == "share_ask") shareAskEnd("对方没有回复, share data 没有打开"); changed(); return }       // 等回复的时候"无言为真"生效了: 这条回复不要了
+        if (r.epoch != epoch) { again = false; if (r.kind == "share_ask") shareAskEnd(); changed(); return }       // 发出之后清空过聊天记录: 这条回复不要了
         if (r.kind == "net" && r.err.isNotEmpty()) netFailed()                    // 搜索那次请求失败: 过一会儿再试
         else if (r.err.isEmpty() && r.kind in NET_KINDS) CommText.netMinutes(r.reply)?.let { netApply(it) }     // 规则 XIV: 申请限时网络 (这条话照常显示)
         if (r.err.isEmpty()) CommText.cutMinutes(r.reply)?.let { cutApply(it) }     // 被骚扰: [cut off][N] 切断谈话 N 分钟 (这条话照常显示, 有的话)
@@ -3639,6 +3764,12 @@ class Comm(
             if (jointAns.isNotEmpty() && text.isEmpty())              // 只回了 [Yes] / [No]: 聊天里写一行结果 (不然这条邀请像是没人回, 重开程序还会再问一次)
                 text = tr(if (jointAns == "yes") "✓ 接受了联合行动" else "✗ 拒绝了联合行动")
         }
+        var shareAns = ""                                                     // 对 share data 请求的回复 [Yes] / [No]
+        if (r.kind == "share_ask" && r.err.isEmpty() && !refused && !queried) {
+            shareAns = CommText.jointAnswer(r.reply)
+            if (shareAns.isNotEmpty() && text.isEmpty())              // 只回了 [Yes] / [No]: 聊天里写一行结果
+                text = tr(if (shareAns == "yes") "✓ 同意了 share data" else "✗ 拒绝了 share data")
+        }
         val empty = r.err.isEmpty() && !refused && text.isEmpty()            // 去掉 [] 之后什么也没剩: 当没回复
         // 第二次调用 (规则 VIII) 等回复的时候用户又说话了: 这条不要了 (用户的新消息重新回复)
         val drop = r.kind == "followup" && r.err.isEmpty() && !refused && (again || unanswered())
@@ -3646,6 +3777,7 @@ class Comm(
         if (refused) log("REPLY refused (${r.kind}): 对方回了 [refuse to reply], 不显示" + if (unanswered() || isCatchup) ", 稍后重试" else "")
         if (r.err.isNotEmpty() || refused || drop || empty) {
             error = r.err
+            if (r.kind == "share_ask") shareAskEnd(if (refused) "对方现在不方便, share data 没有打开" else "对方没有回复, share data 没有打开")      // 出错 / 对方不方便 / 没回: 这次请求作废 (不重试)
             if (refused && (unanswered() || isCatchup)) {
                 if (isCatchup) catchup = true                 // 回复已经显示过, unanswered() 为假: 重试要靠这个记号
                 if (retryN != HOLD_N) {                        // 用户的新消息存着 (对方在专注 / 睡眠): 保持存着, 不改成 10 分钟后重试
@@ -3663,6 +3795,7 @@ class Comm(
             r.extra?.let { add("sys", it.body, it.api) }
             val m = add("ai", text, if (text != r.reply.trim()) r.reply.trim() else "")
             if (jointAns.isNotEmpty() && !drop) jointAnswer(jointAns)
+            if (r.kind == "share_ask") shareAnswer(shareAns)
             if (waitMin > 0 && r.kind != "chase") m.wait = waitMin          // 追问的回复里再写 [waiting for reply] 不算: 一条消息最多追问一次
             val held = m.hold
             if (!viewing && !held) unread++

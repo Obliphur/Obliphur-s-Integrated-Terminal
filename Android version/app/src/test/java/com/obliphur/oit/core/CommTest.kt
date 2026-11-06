@@ -2012,28 +2012,37 @@ class CommTest {
         c.snapshot = { CommSnap("idle") }
         var opened = 0
         c.onShareOpen = { opened++ }
+        val notices = ArrayList<String>()
+        c.onShareNotice = { notices.add(it) }
+        fun shareOpen(reply: String = "[Yes]") {                       // 用户点 share data: 先问对方, 对方回 reply (默认 [Yes]) 才打开
+            script.add(reply)
+            assertEquals("", c.shareEnable(true)); assertTrue(c.shareAsking() && !c.shareOn())
+            c.tick(); assertTrue(c.busy); wait(c)
+            opened = 0
+        }
         c.shareFn = { p -> Triple(Comm.SHARE_PAGE_NAMES[p] ?: p, "用户的${p}数据", "她的${p}数据") }
         c.sharePageChanged("timer")
         assertEquals("", c.sharePage())                                  // 没打开: 什么也不做
-        assertEquals("", c.shareEnable(true)); assertTrue(c.shareOn() && c.shareView() == "me")
-        c.tick(); assertTrue(c.messages.none { it.role == "sys" })       // 还没离开沟通页: 不分享
+        shareOpen(); assertTrue(c.shareOn() && !c.shareAsking() && c.shareView() == "me")
+        fun sharedMsgs() = c.messages.filter { it.role == "sys" && it.text.startsWith("共享数据") }
+        c.tick(); assertTrue(sharedMsgs().isEmpty())       // 还没离开沟通页: 不分享
         c.sharePageChanged("settings"); c.tick()
-        assertTrue(c.sharePage() == "" && c.messages.none { it.role == "sys" })
+        assertTrue(c.sharePage() == "" && sharedMsgs().isEmpty())
         c.sharePageChanged("timer"); assertEquals("timer", c.sharePage())
         c.tick()
-        var shared = c.messages.filter { it.role == "sys" }
+        var shared = sharedMsgs()
         assertEquals(1, shared.size)
         assertTrue("用户的timer数据" in shared[0].api && "她的timer数据" in shared[0].api && "「计时器」" in shared[0].api)
-        assertEquals("共享数据·计时器", shared[0].text); assertTrue(c.visible().isEmpty())
+        assertEquals("共享数据·计时器", shared[0].text); assertTrue(c.visible().none { it.text.startsWith("共享数据") })
         c.setShareView("ai"); assertEquals("ai", c.shareView())
         clock = clock.plusSeconds(10)
         c.sharePageChanged("log"); assertEquals("me", c.shareView())
-        c.tick(); assertEquals(1, c.messages.count { it.role == "sys" })       // 30 秒冷却里不发
+        c.tick(); assertEquals(1, sharedMsgs().size)       // 30 秒冷却里不发
         clock = clock.plusSeconds(25); c.tick()
-        shared = c.messages.filter { it.role == "sys" }
+        shared = sharedMsgs()
         assertTrue(shared.size == 2 && "用户的log数据" in shared.last().api)
         c.sharePageChanged("net"); clock = clock.plusSeconds(40); c.tick()
-        assertTrue(c.messages.count { it.role == "sys" } == 2 && c.sharePage() == "net")      // 没有数据的页面: 只显示悬浮窗
+        assertTrue(sharedMsgs().size == 2 && c.sharePage() == "net")      // 没有数据的页面: 只显示悬浮窗
         script.add("看完了, 今天还行.")
         val n0 = calls.size
         c.sharePageChanged("comm")
@@ -2043,8 +2052,9 @@ class CommTest {
         assertTrue("总结这次 share data" in calls.last().second.last().second && "计时器、整点记录、联网" in calls.last().second.last().second)
         assertEquals("看完了, 今天还行.", c.visible().last().text)
         // 一页也没看就回到沟通: 不调用
+        shareOpen()
         val n1 = calls.size
-        assertEquals("", c.shareEnable(true)); c.sharePageChanged("comm"); assertTrue(c.shareOn())
+        c.sharePageChanged("comm"); assertTrue(c.shareOn())
         assertEquals("", c.shareEnable(false)); c.tick(); assertTrue(!c.busy && calls.size == n1)
         // 对方发 [share data] = 邀请
         script.add("[share data] 把你的数据给我看看.")
@@ -2058,6 +2068,33 @@ class CommTest {
         assertTrue(c.shareInvite()); assertEquals("", c.shareRespond(false)); assertTrue(!c.shareOn() && !c.shareInvite())
         assertTrue("用户拒绝了你的 share data 请求" in c.messages.filter { it.role == "sys" }.last().api)
         assertEquals("没有等你回复的 share data 邀请", c.shareRespond(true))
+        // 用户发起 share data: 先争取对方同意, 回 [Yes] 才打开, 回 [No] / 没表态 / 不方便都不开 (MECHANICS 24.12)
+        val n2 = calls.size
+        notices.clear(); opened = 0
+        script.add("[No]")
+        assertEquals("", c.shareEnable(true)); assertTrue(c.shareAsking() && !c.shareOn() && calls.size == n2)
+        c.tick(); assertTrue(c.busy); wait(c)
+        val askBody = calls.last().second.last().second
+        assertTrue(askBody, calls.size == n2 + 1 && "用户想打开 share data" in askBody && "[Yes]" in askBody && "[No]" in askBody)
+        assertTrue(!c.shareAsking() && !c.shareOn() && notices == listOf("对方拒绝了 share data") && c.visible().last().text == "✗ 拒绝了 share data")
+        script.add("[Yes] 可以.")
+        assertEquals("", c.shareEnable(true)); c.tick(); wait(c)
+        assertTrue(c.shareOn() && !c.shareAsking() && opened == 1 && c.visible().last().text == "可以.")      // 回 [Yes]: 打开, 并跳到有数据的页
+        c.shareEnable(false); opened = 0
+        for ((reply, note) in listOf("嗯." to "对方没有明确同意, share data 没有打开", "[Yes][No]" to "对方拒绝了 share data",
+                CommText.REFUSE to "对方现在不方便, share data 没有打开")) {
+            notices.clear(); script.add(reply)
+            assertEquals("", c.shareEnable(true)); c.tick(); wait(c)
+            assertTrue(reply, !c.shareOn() && !c.shareAsking() && notices == listOf(note))
+        }
+        assertEquals(0, opened)
+        val n3 = calls.size
+        assertEquals("", c.shareEnable(true)); assertTrue(c.shareAsking())
+        assertEquals("", c.shareEnable(false)); assertTrue(!c.shareAsking())
+        c.tick(); assertTrue("等对方回复的时候又点一下 = 取消, 不调用", !c.busy && calls.size == n3)
+        val fs = day1.first { it.kind == "focus" }
+        clock = fs.start.plusMinutes(5)
+        assertTrue("她在专注 / 睡眠: 问不了", "没法征求她的同意" in c.shareEnable(true) && !c.shareAsking())
         // 看 AI 的数据
         clock = LocalDateTime.of(2027, 7, 1, 15, 20)
         val v = c.shareAiView("timer")!!

@@ -224,7 +224,7 @@ class CommPage(tk.Frame):
                 self.joint_btns.pack(side="left", padx=(8, 0))
         elif self.joint_btns.winfo_manager() == "pack":
             self.joint_btns.pack_forget()
-        cfg(self.btn_share, text="👀" if c.share_on() else "🙈")
+        cfg(self.btn_share, text="👀" if c.share_on() else ("⏳" if c.share_asking() else "🙈"))      # ⏳ = 等对方同意
         if c.share_invite():
             if self.share_btns.winfo_manager() != "pack":
                 self.share_btns.pack(side="left", padx=(8, 0))
@@ -441,7 +441,7 @@ class CommPage(tk.Frame):
 
     # ---- share data ----
     def _toggle_share(self):
-        why = self.comm.share_enable(not self.comm.share_on())
+        why = self.comm.share_enable(not (self.comm.share_on() or self.comm.share_asking()))      # 等对方同意的时候再点 = 取消
         if why:
             toast.warn(tr(why))
         self.refresh(force=True)
@@ -470,7 +470,7 @@ class CommPage(tk.Frame):
         dlg = Modal(self.winfo_toplevel(), tr("帮助"), width=width, height=config.scaled(520))
         bg = COLORS["bg"]
         rows = (("❓", "帮助", "打开这个说明."),
-                ("👀 / 🙈", "分享数据 (share data)", "点一下切换 (👀 = 打开). 打开后去别的页面 (设置 / 沟通 / 指令 / 重置 以外): 对方会收到那一页上你和它自己的数据 (30 秒冷却), "
+                ("👀 / 🙈", "分享数据 (share data)", "点一下切换 (👀 = 打开; 打开前要先征得对方同意: ⏳ = 等对方回复, 再点一下取消). 打开后去别的页面 (设置 / 沟通 / 指令 / 重置 以外): 对方会收到那一页上你和它自己的数据 (30 秒冷却), "
                                       "页面下方有聊天悬浮窗, 计时器 / 整点记录 / 日历 / 统计页还能切换看自己 / 对方的数据; 回到沟通自动关闭, 对方会总结一次. "
                                       "对方也可以发 [share data] 邀请你, 点「接受」才会打开."),
                 ("🔔 / 🔕", "主动发起", "点一下切换: 🔔 = 允许这个对象主动给你发消息 / 追问, 🔕 = 禁止."),

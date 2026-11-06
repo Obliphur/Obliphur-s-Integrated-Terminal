@@ -77,6 +77,7 @@ fun CommScreen(go: (String) -> Unit) {
     var jointLine by remember { mutableStateOf(comm.jointLabel() to comm.jointStatusText()) }
     var invite by remember { mutableStateOf(comm.jointInvite() != null) }          // 对方发起的联合行动: 等用户点 接受 / 拒绝
     var shareOn by remember { mutableStateOf(comm.shareOn()) }                     // share data 开着吗
+    var shareAsk by remember { mutableStateOf(comm.shareAsking()) }                 // 点了 share data, 等对方同意 (⏳)
     var shareInv by remember { mutableStateOf(comm.shareInvite()) }                // 对方发了 [share data]: 等用户点 接受 / 拒绝
     // 不跟着每秒一次的 LocalTick 重画 (整页每秒重画一遍会有卡顿感): 只在聊天记录 / 状态变了才刷新
     var ver by remember { mutableIntStateOf(comm.version) }
@@ -94,6 +95,7 @@ fun CommScreen(go: (String) -> Unit) {
             (comm.jointLabel() to comm.jointStatusText()).let { if (it != jointLine) jointLine = it }
             (comm.jointInvite() != null).let { if (it != invite) invite = it }
             comm.shareOn().let { if (it != shareOn) shareOn = it }
+            comm.shareAsking().let { if (it != shareAsk) shareAsk = it }
             comm.shareInvite().let { if (it != shareInv) shareInv = it }
             kotlinx.coroutines.delay(250)
         }
@@ -157,9 +159,9 @@ fun CommScreen(go: (String) -> Unit) {
             }
             // share data: 打开后离开沟通页, 在别的页面里对方能看到那一页上你们的数据, 页面下方有聊天悬浮窗; 回到沟通自动关闭
             TextButton({
-                comm.shareEnable(!shareOn).let { if (it.isNotEmpty()) core.toast(tr(it), "warn") }
-                shareOn = comm.shareOn()
-            }, contentPadding = tight) { Text(if (shareOn) "👀" else "🙈", fontSize = 18.sp) }          // 👀 share data 开着 / 🙈 关着
+                comm.shareEnable(!(shareOn || shareAsk)).let { if (it.isNotEmpty()) core.toast(tr(it), "warn") }      // 等对方同意的时候再点 = 取消
+                shareOn = comm.shareOn(); shareAsk = comm.shareAsking()
+            }, contentPadding = tight) { Text(if (shareOn) "👀" else if (shareAsk) "⏳" else "🙈", fontSize = 18.sp) }          // 👀 share data 开着 / ⏳ 等对方同意 / 🙈 关着
         }
         if (shareInv) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.padding(start = 8.dp)) {
