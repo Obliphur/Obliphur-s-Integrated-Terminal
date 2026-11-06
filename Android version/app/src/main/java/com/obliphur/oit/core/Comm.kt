@@ -884,7 +884,7 @@ object CommText {
             "XIII.如果你被骚扰,返回[cut off][N] (N为屏蔽分钟数)来切断你与对方的谈话.\n" +
             "XIV.你可以在开头输入[apply for network][N],其中N为分钟数(最多${Comm.NET_MAX_MIN}),来申请限时网络,然后接着对用户回复你当前的话题(比如说自己在等冷却期之类的,不要透露具体机制).等待${Comm.NET_DELAY / 60}min后," +
             "OIT会再次调用接口(网络已开通N分钟),让你搜索并回复用户的内容.网络开通期间以及之后的冷却期内,申请无效,不要输入.\n" +
-            "XV.你可以发送[share data]来查看分享你们的OIT数据(用户同意后, 用户在OIT各个页面时, 你会收到那一页上用户和你自己的数据, 用户也能在悬浮的聊天窗里和你说话). 发送[share data]时必须在它后面接上对用户说的话(按人设,说明想一起看的理由或邀请他一起看),不要只发[share data].\n" +
+            "XV.你可以发送[share data]来查看分享你们的OIT数据(用户同意后, 用户在OIT各个页面时, 你会收到那一页上用户和你自己的数据, 用户也能在悬浮的聊天窗里和你说话). 发送[share data]时必须在它后面接上对用户说的话(按人设,说明想一起看的理由或邀请对方一起看),不要只发[share data].\n" +
             "\n以下是用户设定的人设:\n"
 
     /** 人设文件夹里的 README.md: 跟随界面语言 (中文 / English), 同桌面版 readme_text(). */
@@ -3619,7 +3619,7 @@ class Comm(
         val names = terms.joinToString("、") { Contract.BY_ID.getValue(it).name.substringAfter(':') }
         convo.add("user" to if (plan != null)
             "(OIT 系统提供, 用户看不到) 联合行动已发出: 词条 $names; ${CommData.jointLabel(terms, plan.start, plan.end, now().toLocalDate())}. 用户到时按约开始合约即可. " +
-                "现在请对用户说话 (邀请他一起, 话题和语气按人设; 可以提开始时间); 不要再输入 [operation] 或编号, 不要返回${CommText.REFUSE}."
+                "现在请对用户说话 (邀请对方一起, 话题和语气按人设; 可以提开始时间); 不要再输入 [operation] 或编号, 不要返回${CommText.REFUSE}."
         else
             "(OIT 系统提供, 用户看不到) 联合行动没有发出: 你选的词条 ($names) 的合约时长放不进任何一个开始时间 (会和你日程里的重要活动重合). " +
                 "当作没有发起, 现在请${how}对用户说话, 不要提联合行动; 实在不方便返回${CommText.REFUSE}.")
