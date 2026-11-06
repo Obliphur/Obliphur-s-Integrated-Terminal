@@ -512,15 +512,25 @@ class Behavior:
 
     def hour_auto_text(self, hour_start: datetime) -> str:
         """这一小时的超时自动记录内容; "" = 用普通的超时自动记录内容.
-        和外出重叠的小时按这次外出的种类: 上学 / 工作 / 外出 (各自独立); 封闭式管理 / 工作里其他时间是「休息」."""
+        和外出重叠的小时按这次外出的种类: 上学 / 工作 / 外出 (各自独立).
+        封闭式管理 / 工作 (1.0.392): 没有被填充专注与休息的小时 (外出里夜里超出名额的、外出之外的时间) 一律自动填成「睡眠」."""
         hour_end = hour_start + timedelta(hours=1)
         if self._mode_since is not None and hour_end <= self._mode_since:
             return ""
         for o in self.outings:
             end = self._effective_end(o)
             if o["start"] < hour_end and end > hour_start and end > o["start"]:   # 作废的外出 (0 长度) 不算
+                if o.get("mode") in (config.BEHAVIOR_CLOSED, config.BEHAVIOR_WORK) and not self._hour_filled(hour_start, hour_end):
+                    return i18n.auto_name("Sleeping")
                 return self.outing_text(o)
-        return i18n.auto_name(config.REST_TEXT) if self.enabled() else ""
+        return i18n.auto_name("Sleeping") if self.enabled() else ""
+
+    def _hour_filled(self, hour_start: datetime, hour_end: datetime) -> bool:
+        """这一小时里有没有被外出填充出来的专注 / 休息."""
+        try:
+            return any(a < hour_end and b > hour_start for _k, a, b in self.focus_segments(hour_start))
+        except Exception:       # noqa: BLE001
+            return True
 
     # ---- 设备同步 ----
 
@@ -616,11 +626,11 @@ def _selftest():
         assert abs(rest - 7200 * 0.2) < 1e-6, (rest, segs)
         assert abs(b.study_hours(datetime(2026, 10, 19, 0, 0), now=now) - 1.6) < 1e-9
         assert b.recorded_hours(o, now) == 2, "进行中的按到此刻算"
-        # 整点记录: 外出的小时是"上学" (封闭式管理), 其他时间是"休息"; 模式切换之前的不改
+        # 整点记录: 外出的小时是"上学" (封闭式管理), 其他时间是"睡眠"; 模式切换之前的不改
         assert b.hour_auto_text(datetime(2026, 10, 19, 10, 0)) == "上学"
         assert b.hour_auto_text(datetime(2026, 10, 19, 13, 0)) == "上学"
-        assert b.hour_auto_text(datetime(2026, 10, 19, 14, 0)) == "休息"
-        assert b.hour_auto_text(datetime(2026, 10, 19, 8, 0)) == "休息"
+        assert b.hour_auto_text(datetime(2026, 10, 19, 14, 0)) == "睡眠"
+        assert b.hour_auto_text(datetime(2026, 10, 19, 8, 0)) == "睡眠"
         assert b.hour_auto_text(datetime(2026, 10, 18, 23, 0)) == ""
 
         # 提前结束: 记到 12:00, 2 小时 → 12 min 休息
@@ -700,7 +710,7 @@ def _selftest():
         o = b9.yield_to_contract(datetime(2026, 10, 19, 15, 0), datetime(2026, 10, 19, 15, 21))
         assert o["stopped"] == o["start"] and b9.recorded_hours(o) == 0
         assert b9.quota_factor(datetime(2026, 10, 19)) == 1.0 and not b9.days()
-        assert b9.hour_auto_text(datetime(2026, 10, 19, 15, 0)) == config.REST_TEXT, "作废的外出不填「上学」"
+        assert b9.hour_auto_text(datetime(2026, 10, 19, 15, 0)) == "睡眠", "作废的外出不填「上学」"
         ev = b9.tick(datetime(2026, 10, 19, 15, 22))
         assert ev["reward"] == 0, ev
 
@@ -750,7 +760,7 @@ def _selftest():
         bw = Behavior(tempfile.mkdtemp(), now=at)
         bw.start(2, datetime(2026, 10, 19, 10, 0))
         assert bw.hour_auto_text(datetime(2026, 10, 19, 10, 0)) == "工作"
-        assert bw.hour_auto_text(datetime(2026, 10, 19, 12, 0)) == "休息"
+        assert bw.hour_auto_text(datetime(2026, 10, 19, 12, 0)) == "睡眠"
 
         # 模式切回自由学习: 没有记录规则, 不填「休息」; 以前的上学 / 工作各自独立, 仍然叫原来的名字
         config.BEHAVIOR_MODE = config.BEHAVIOR_FREE

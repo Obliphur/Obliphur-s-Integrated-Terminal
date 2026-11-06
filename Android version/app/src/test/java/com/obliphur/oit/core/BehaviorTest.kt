@@ -48,11 +48,11 @@ class BehaviorTest {
         assertEquals(7200 * 0.2, rest, 1e-6)
         assertEquals(1.6, b.studyHours(LocalDate.of(2026, 10, 19), clock), 1e-9)
         assertEquals(2.0, b.recordedHours(o!!, clock), 1e-9)
-        // 整点记录: 外出的小时是"上学" (封闭式管理), 其他时间是"休息"; 模式切换之前的不改
+        // 整点记录: 外出的小时是"上学" (封闭式管理), 其他时间是"睡眠"; 模式切换之前的不改
         assertEquals("上学", b.hourAutoText(at(2026, 10, 19, 10, 0)))
         assertEquals("上学", b.hourAutoText(at(2026, 10, 19, 11, 0)))
-        assertEquals("休息", b.hourAutoText(at(2026, 10, 19, 14, 0)))
-        assertEquals("休息", b.hourAutoText(at(2026, 10, 19, 8, 0)))
+        assertEquals("睡眠", b.hourAutoText(at(2026, 10, 19, 14, 0)))
+        assertEquals("睡眠", b.hourAutoText(at(2026, 10, 19, 8, 0)))
         assertEquals("", b.hourAutoText(at(2026, 10, 18, 23, 0)))
 
         // 提前结束: 记到 12:00, 2 小时 → 12 min 休息; 只发一次
@@ -176,7 +176,7 @@ class BehaviorTest {
         assertEquals(0.0, b2.recordedHours(o2, clock), 1e-9)
         assertEquals(1.0, b2.quotaFactor(LocalDate.of(2026, 10, 19)), 1e-9)
         assertTrue(b2.days().isEmpty())
-        assertEquals("休息", b2.hourAutoText(at(2026, 10, 19, 15, 0)))
+        assertEquals("睡眠", b2.hourAutoText(at(2026, 10, 19, 15, 0)))
         assertEquals(0, b2.tick(clock) { true }.reward)
     }
 
@@ -188,7 +188,7 @@ class BehaviorTest {
         assertEquals("", w.start(2, "dev", at(2026, 10, 19, 10, 0)))
         clock = at(2026, 10, 19, 11, 0)
         assertEquals("工作", w.hourAutoText(at(2026, 10, 19, 10, 0)))
-        assertEquals("休息", w.hourAutoText(at(2026, 10, 19, 12, 0)))
+        assertEquals("睡眠", w.hourAutoText(at(2026, 10, 19, 12, 0)))
 
         clock = at(2026, 10, 19, 0, 0)
         val b = Behavior(tmp(), settings(Cfg.BEHAVIOR_FREE)) { clock }

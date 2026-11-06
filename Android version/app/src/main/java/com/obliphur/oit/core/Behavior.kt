@@ -406,10 +406,18 @@ class Behavior(
         val at = now()
         for (o in outings) {
             val end = o.effectiveEnd(at)
-            if (o.start < hourEnd && end > hourStart && end > o.start) return outingText(o)      // 作废的外出 (0 长度) 不算
+            if (o.start < hourEnd && end > hourStart && end > o.start) {      // 作废的外出 (0 长度) 不算
+                // 封闭式管理 / 工作 (1.0.392): 没有被填充专注与休息的小时一律自动填成「睡眠」
+                if ((o.mode == Cfg.BEHAVIOR_CLOSED || o.mode == Cfg.BEHAVIOR_WORK) && !hourFilled(hourStart, hourEnd)) return I18n.autoName("Sleeping")
+                return outingText(o)
+            }
         }
-        return if (enabled()) I18n.autoName(Cfg.REST_TEXT) else ""
+        return if (enabled()) I18n.autoName("Sleeping") else ""
     }
+
+    /** 这一小时里有没有被外出填充出来的专注 / 休息. */
+    private fun hourFilled(hourStart: LocalDateTime, hourEnd: LocalDateTime): Boolean =
+        runCatching { focusSegments(hourStart.toLocalDate()).any { it.start < hourEnd && it.end > hourStart } }.getOrDefault(true)
 
     // ---- 设备同步 ----
 
