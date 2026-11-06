@@ -6020,8 +6020,8 @@ def _selftest():
     # 沟通界面显示的对方状态: 按人设日程, 跨零点也认; 只显示四种状态, 别的都算空闲; 不显示结束时间
     cst = Comm(os.path.join(td, "status"), folder, now=lambda: clock[0], chat_fn=fake)
     cst.set_cfg(persona="Claudia.txt")
-    assert cst.other_status_text(datetime(2026, 11, 2, 7, 30)) == "专注中"        # 1.0.400: 循环里专注提前结束 (62 分钟一轮), 第一轮专注约 6:40-8:02, 休息 7:42-8:40 之间
-    assert cst.other_status_text(datetime(2026, 11, 2, 8, 10)) == "休息中"
+    assert cst.other_status_text(datetime(2026, 11, 2, 8, 0)) == "专注中"
+    assert cst.other_status_text(datetime(2026, 11, 2, 9, 0)) == "休息中"
     assert cst.other_status_text(datetime(2026, 11, 2, 12, 40)) == "空闲"
     assert cst.other_status_text(datetime(2026, 11, 2, 12, 15)) == "空闲", "午饭等非四类: 算空闲"
     assert cst.other_status_text(datetime(2026, 11, 2, 6, 45)) == "空闲", "不在四类段里: 也算空闲"
@@ -7468,7 +7468,7 @@ def _selftest():
     assert cr.other_status()["kind"] == "sleep", "做完最后一项就睡"
     # 发给模型的内容: 系统提示里有日程文件, 最后一条用户消息后面贴着实时状态
     note = cr._rt_note(first_focus["start"] + timedelta(minutes=20))
-    assert "你此刻的状态" in note and "专注中" in note and "每轮专注 62 分钟" in note and "已经 20 分钟" in note, note
+    assert "你此刻的状态" in note and "专注中" in note and "每轮专注 100 分钟" in note and "已经 20 分钟" in note, note
     rest1 = next(x for x in plan if x["kind"] == "rest")
     clock[0] = rest1["start"] + timedelta(minutes=5)
     cr.state_fn = lambda: "idle"

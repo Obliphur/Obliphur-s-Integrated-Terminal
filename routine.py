@@ -166,38 +166,52 @@ def _secs(minutes: float) -> int:
     return int(math.floor(float(minutes) * 60.0 + 0.5))
 
 
-def loop_pieces(total_s: int, n_s: int, rest_s: int) -> list:
-    """一个循环 (总长 total_s 秒, 每轮专注 n_s 秒 + 休息 rest_s 秒) → [("focus" | "rest", 秒)].
+def _rest_min(f_min: float) -> int:
+    """专注 f_min 分钟之后休息多少整分钟 = round(F(f)), 至少 1 分钟."""
+    return max(1, int(round(config.compute_F(f_min))))
+
+
+def loop_pieces(total_s: int, n_s: int) -> list:
+    """一个循环 (总长 total_s 秒, 每轮专注 n_s 秒) → [("focus" | "rest", 秒)]. 休息 = F(这一轮的专注) 取整分钟.
     1.0.400 起不再把最后一轮直接截断: 循环**总是以休息结束**, 休息的末尾正好对上循环的末尾, 靠"提前结束专注"凑 ——
-      · 轮数 k = ceil(总长 / (n + 休息)); 专注总时长 = 总长 - k × 休息;
-      · 前 k-1 轮满 n, 最后一轮的专注提前结束 (剩多少是多少);
-      · 如果这样最后一轮连专注都排不下 (专注总时长 <= (k-1) × n), 就把专注总时长平分给 k 轮 (每轮都提前结束, 多出的秒数给前面的轮);
-      · 连一轮"专注 + 休息"都放不下 (总长 <= 休息): 退回成只有一段专注 (整个循环).
-    休息时长始终是 F(n), 不随提前结束的专注变短. Kotlin: Routine.loopPieces."""
-    cyc = n_s + rest_s
-    k = max(1, -(-total_s // cyc))
-    foc = total_s - k * rest_s
-    if foc <= 0:
-        return [("focus", total_s)]
-    if foc > (k - 1) * n_s:
-        sizes = [n_s] * (k - 1) + [foc - (k - 1) * n_s]
-    else:
-        q, rem = divmod(foc, k)
-        sizes = [q + (1 if i < rem else 0) for i in range(k)]
+      · 满轮 (专注 n + 休息 F(n)) 能排几轮排几轮;
+      · 剩下的时间 R 做最后一轮: 专注提前结束, 休息**随这一轮的专注长度重新算** (解 f + F(f) = R, 休息取整分钟, 专注 = R - 休息);
+      · 剩下的时间太短 (最后一轮专注不到 1 分钟): 并进上一次休息 (上一次休息一直到循环结束);
+      · 总长连这样都放不下 (一轮都排不了): 退回成只有一段专注 (整个循环).
+    Kotlin: Routine.loopPieces."""
+    rest_n = _rest_min(n_s / 60.0) * 60
+    cyc = n_s + rest_n
+    k = total_s // cyc
     out = []
-    for s in sizes:
-        out.append(("focus", s))
-        out.append(("rest", rest_s))
+    for _ in range(k):
+        out.append(("focus", n_s))
+        out.append(("rest", rest_n))
+    left = total_s - k * cyc
+    if left > 0:
+        lo, hi = 0.0, left / 60.0                       # 二分解 f + F(f) = left (F 单调增)
+        for _ in range(60):
+            mid = (lo + hi) / 2.0
+            if mid + config.compute_F(mid) < left / 60.0:
+                lo = mid
+            else:
+                hi = mid
+        rest_s = _rest_min(hi) * 60
+        if left - rest_s >= 60:
+            out.append(("focus", left - rest_s))
+            out.append(("rest", rest_s))
+        elif out:
+            out[-1] = ("rest", out[-1][1] + left)
+        else:
+            out.append(("focus", total_s))
     return out
 
 
 def loop_segs(start: datetime, end: datetime, n_min: float, extra: timedelta = None) -> list:
     """[start, end) 这个循环里的 专注 / 休息 段 (见 loop_pieces: 以休息结束, 末尾对上 end).
     extra: 最后那次休息的结束比 end 晚多少 (可以是负的, 但休息至少留 1 分钟); 调用的人要把后面的日程也平移同样的时间."""
-    rest = max(1, int(round(config.compute_F(n_min))))
     out, t = [], start
     fm = 0.0
-    for kind, s in loop_pieces(int(math.floor((end - start).total_seconds() + 0.5)), _secs(n_min), rest * 60):
+    for kind, s in loop_pieces(int(math.floor((end - start).total_seconds() + 0.5)), _secs(n_min)):
         e = t + timedelta(seconds=s)
         if kind == "focus":
             fm = s / 60.0
@@ -780,16 +794,22 @@ def _selftest():
     # 休息时长 = F(n): 100 分钟专注后休息 38 分钟
     d0 = _date(2026, 3, 1)
     p0 = day_plan(r, d0, seed, fluct=False)
-    assert [(s["kind"], int((s["end"] - s["start"]).total_seconds() // 60)) for s in p0[:8]] == [("idle", 30), ("focus", 62), ("rest", 38), ("focus", 62), ("rest", 38), ("focus", 62), ("rest", 38), ("idle", 30)], "300min 循环: 专注提前结束, 休息的末尾对上循环的末尾"
+    mins = lambda ss: [(s["kind"], int((s["end"] - s["start"]).total_seconds() // 60)) for s in ss]
+    assert mins(p0[:9]) == [("idle", 30), ("focus", 100), ("rest", 38), ("focus", 100), ("rest", 38), ("focus", 19), ("rest", 5), ("idle", 30), ("idle", 30)][:9], "300min 循环: 最后一轮专注提前结束, 休息随它重新算 (F(19) = 5), 末尾对上循环的末尾"
     assert p0[6]["end"] == p0[0]["end"] + timedelta(minutes=300) and p0[7]["label"] == "午饭"
-    assert [(s["kind"], int((s["end"] - s["start"]).total_seconds() // 60)) for s in p0 if s["loop"] == 7] == [("focus", 50), ("rest", 16), ("focus", 50), ("rest", 16), ("focus", 50), ("rest", 16), ("focus", 26), ("rest", 16)], "240min / 50min 循环: 最后一轮的专注提前结束"
-    pp = lambda total, n: [(k, s / 60) for k, s in loop_pieces(total * 60, n * 60, max(1, round(config.compute_F(n))) * 60)]
+    assert mins([s for s in p0 if s["loop"] == 7]) == [("focus", 50), ("rest", 16), ("focus", 50), ("rest", 16), ("focus", 50), ("rest", 16), ("focus", 32), ("rest", 10)], "240min / 50min 循环: 最后一轮专注 32 + 休息 10"
+    pp = lambda total, n: [(k, s / 60) for k, s in loop_pieces(total * 60, n * 60)]
     assert pp(276, 100) == [("focus", 100), ("rest", 38), ("focus", 100), ("rest", 38)], "正好排满"
-    assert pp(200, 100) == [("focus", 100), ("rest", 38), ("focus", 24), ("rest", 38)], "只有最后一轮的专注提前结束"
-    assert pp(100, 100) == [("focus", 62), ("rest", 38)] and pp(20, 100) == [("focus", 20)], "放不下一轮 → 只剩专注"
-    for tot in range(30, 700, 7):
+    assert pp(200, 100) == [("focus", 100), ("rest", 38), ("focus", 47), ("rest", 15)], "最后一轮的专注提前结束, 休息跟着变短"
+    assert pp(100, 100) == [("focus", 74), ("rest", 26)] and pp(20, 100) == [("focus", 16), ("rest", 4)], "放不下一整轮: 专注提前结束"
+    assert pp(139, 100) == [("focus", 100), ("rest", 39)], "剩下的太短 (专注不到 1 分钟): 并进上一次休息"
+    assert pp(1, 100) == [("focus", 1)], "一轮都排不了: 只剩专注"
+    for tot in range(2, 700, 7):
         ps = pp(tot, 100)
-        assert tot <= 38 or (ps[-1][0] == "rest" and sum(m for _k, m in ps) == tot and all(m <= 100 for k, m in ps if k == "focus")), (tot, ps)
+        assert ps[-1][0] == "rest" and sum(m for _k, m in ps) == tot and all(m <= 100 for k, m in ps if k == "focus"), (tot, ps)
+        for (k1, m1), (k2, m2) in zip(ps, ps[1:]):
+            if k1 == "focus" and k2 == "rest" and m1 < 100 and m2 == ps[-1][1]:
+                assert abs(m2 - config.compute_F(m1)) <= 1.01, (tot, ps)      # 提前结束的专注: 休息按它的长度算 (取整分钟, 差不到 1 分钟)
     assert [s["label"] for s in p0 if s["kind"] == "idle"] == ["洗漱,吃早饭", "午饭", "空闲", "晚饭", "空闲", "特殊空闲"]
     assert day_plan(r, d0, seed) == day_plan(r, d0, seed), "同一天总是同一个结果 (设备一致)"
     assert day_plan(r, d0, seed) != day_plan(r, d0 + timedelta(days=1), seed)

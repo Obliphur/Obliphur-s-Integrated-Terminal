@@ -68,20 +68,20 @@ class RoutineTest {
         val plan = Routine.dayPlan(spec, LocalDate.of(2026, 3, 1), "t")
         assertEquals(listOf(
             "idle 01 06:35-01 07:04 洗漱,吃早饭",
-            "focus 01 07:04-01 08:07 专注",
-            "rest 01 08:07-01 08:43 休息",
-            "focus 01 08:43-01 09:49 专注",
-            "rest 01 09:49-01 10:23 休息",
-            "focus 01 10:23-01 11:25 专注",
-            "rest 01 11:25-01 12:07 休息",
+            "focus 01 07:04-01 08:45 专注",
+            "rest 01 08:45-01 09:21 休息",
+            "focus 01 09:21-01 11:05 专注",
+            "rest 01 11:05-01 11:39 休息",
+            "focus 01 11:39-01 11:58 专注",
+            "rest 01 11:58-01 12:07 休息",
             "idle 01 12:07-01 12:37 午饭",
             "idle 01 12:37-01 13:05 空闲",
-            "focus 01 13:05-01 14:09 专注",
-            "rest 01 14:09-01 14:44 休息",
-            "focus 01 14:44-01 15:47 专注",
-            "rest 01 15:47-01 16:25 休息",
-            "focus 01 16:25-01 17:27 专注",
-            "rest 01 17:27-01 18:09 休息",
+            "focus 01 13:05-01 14:47 专注",
+            "rest 01 14:47-01 15:22 休息",
+            "focus 01 15:22-01 17:03 专注",
+            "rest 01 17:03-01 17:41 休息",
+            "focus 01 17:41-01 18:00 专注",
+            "rest 01 18:00-01 18:09 休息",
             "idle 01 18:09-01 18:39 晚饭",
             "idle 01 18:39-01 19:06 空闲",
             "focus 01 19:06-01 19:57 专注",
@@ -91,8 +91,8 @@ class RoutineTest {
             "rest 01 21:08-01 21:18 休息",
             "focus 01 21:18-01 22:10 专注",
             "rest 01 22:10-01 22:27 休息",
-            "focus 01 22:27-01 22:54 专注",
-            "rest 01 22:54-01 23:14 休息",
+            "focus 01 22:27-01 23:00 专注",
+            "rest 01 23:00-01 23:14 休息",
             "idle 01 23:14-01 23:44 特殊空闲",
             "idle 01 23:44-01 23:45 空闲 gap",
             "sleep 01 23:45-02 06:33 睡眠"), plan.map { fmt(it) })
@@ -102,21 +102,21 @@ class RoutineTest {
         val fn = { a: LocalDateTime, b: LocalDateTime -> Routine.planBetween(spec, a, b, "t") }
         st.fillTimeline(now, fn)
         st.fillCells(now, { _, _ -> 0 })
-        assertEquals(mapOf("2026-03-09T06:00" to "洗漱,吃早饭", "2026-03-09T08:00" to "历史", "2026-03-09T09:00" to "散步", "2026-03-09T12:00" to "阅读", "2026-03-09T13:00" to "英语", "2026-03-09T20:00" to "英语", "2026-03-09T23:00" to "睡眠", "2026-03-10T03:00" to "睡眠", "2026-03-10T07:00" to "数学", "2026-03-10T09:00" to "语文"), listOf("2026-03-09T06:00", "2026-03-09T08:00", "2026-03-09T09:00", "2026-03-09T12:00", "2026-03-09T13:00", "2026-03-09T20:00", "2026-03-09T23:00", "2026-03-10T03:00", "2026-03-10T07:00", "2026-03-10T09:00").associateWith { st.cells.getValue(it).second })
+        assertEquals(mapOf("2026-03-09T06:00" to "洗漱,吃早饭", "2026-03-09T08:00" to "打扫", "2026-03-09T09:00" to "地理", "2026-03-09T12:00" to "阅读", "2026-03-09T13:00" to "英语", "2026-03-09T20:00" to "英语", "2026-03-09T23:00" to "睡眠", "2026-03-10T03:00" to "睡眠", "2026-03-10T07:00" to "数学", "2026-03-10T09:00" to "语文"), listOf("2026-03-09T06:00", "2026-03-09T08:00", "2026-03-09T09:00", "2026-03-09T12:00", "2026-03-09T13:00", "2026-03-09T20:00", "2026-03-09T23:00", "2026-03-10T03:00", "2026-03-10T07:00", "2026-03-10T09:00").associateWith { st.cells.getValue(it).second })
         val st2 = RoutineStore(File(dir, "y.json"), spec, "t")
         st2.fillTimeline(now, fn)
         st2.fillCells(now, { _, _ -> 15 })
-        assertEquals(listOf("睡眠", "睡眠", "睡眠", "睡眠", "睡眠", "睡眠", "洗漱,吃早饭", "语文", "历史", "散步", "政治", "阅读", "聊天", "英语", "政治", "聊天", "数学", "聊天", "聊天", "语文", "英语", "政治", "特殊空闲", "睡眠"), st2.cells.keys.sorted().filter { it.startsWith("2026-03-09") }.map { st2.cells.getValue(it).second })
+        assertEquals(listOf("睡眠", "睡眠", "睡眠", "睡眠", "睡眠", "睡眠", "洗漱,吃早饭", "语文", "阅读", "地理", "政治", "阅读", "聊天", "英语", "打扫", "英语", "数学", "聊天", "聊天", "语文", "英语", "政治", "语文", "睡眠"), st2.cells.keys.sorted().filter { it.startsWith("2026-03-09") }.map { st2.cells.getValue(it).second })
         val day = LocalDate.of(2026, 3, 9)
         fun near(exp: Map<String, Double>, got: Map<String, Double>) {
             assertEquals(exp.keys, got.keys)
             for ((k, v) in exp) assertEquals(k, v, got.getValue(k), 1e-4)
         }
-        near(mapOf("查资料" to 72.050137, "下载资源" to 24.111812, "娱乐" to 23.588051), st.netByReason(day))
-        near(mapOf("chrome" to 9730.610505, "claude" to 3325.231565, "OIT" to 6587.444372, "anki" to 1642.219664, "cloudmusic" to 1644.216103, "" to 9650.277791), st.windowSeconds(day, 0))
-        near(mapOf("微信" to 1464.183165, "OIT" to 5697.542616, "词典" to 5706.652822, "相册" to 576.222779, "anki" to 3720.157135, "" to 11575.241483), st.windowSeconds(day, 1))
-        assertEquals(543.0, st.dayMinutes(day, setOf("focus")), 1e-6)
-        assertEquals(listOf("00:00 睡眠", "01:00 睡眠", "02:00 睡眠", "03:00 睡眠", "04:00 睡眠", "05:00 睡眠", "06:00 洗漱,吃早饭", "07:00 数学", "08:00 打扫", "09:00 语文"), st.logLines(now))
+        near(mapOf("查资料" to 61.220054, "下载资源" to 20.487489, "娱乐" to 20.042457), st.netByReason(day))
+        near(mapOf("chrome" to 11020.857202, "claude" to 3766.146247, "OIT" to 7460.917659, "anki" to 1859.972547, "cloudmusic" to 1862.233708, "" to 10929.872636), st.windowSeconds(day, 0))
+        near(mapOf("微信" to 1244.097178, "OIT" to 4841.127025, "词典" to 4848.867846, "相册" to 489.608917, "anki" to 3160.968589, "" to 9835.330446), st.windowSeconds(day, 1))
+        assertEquals(615.0, st.dayMinutes(day, setOf("focus")), 1e-6)
+        assertEquals(listOf("00:00 睡眠", "01:00 睡眠", "02:00 睡眠", "03:00 睡眠", "04:00 睡眠", "05:00 睡眠", "06:00 洗漱,吃早饭", "07:00 数学", "08:00 语文", "09:00 语文"), st.logLines(now))
         val recs = Routine.contractsBefore(spec, LocalDateTime.of(2026, 4, 1, 0, 0), "t", days = 60).take(3)
         assertEquals(listOf(
             Triple("2026-03-29T12:58:00", 24, listOf("retreat2", "deep2", "tired2", "short2", "seal", "info3", "erode1", "suppress", "jam", "quiet", "game", "video", "gaze", "scar", "move", "confine", "fog")),
@@ -164,19 +164,20 @@ class RoutineTest {
         }
         assertTrue(sawGap && sawEarly)
         val p0 = Routine.dayPlan(spec, LocalDate.of(2026, 3, 1), "t", fluct = false)
-        // 300min / 100min 循环: 专注提前结束, 休息的末尾对上循环的末尾; 240min / 50min 循环: 最后一轮的专注提前结束
-        assertEquals(listOf("idle" to 30L, "focus" to 62L, "rest" to 38L, "focus" to 62L, "rest" to 38L, "focus" to 62L, "rest" to 38L, "idle" to 30L),
-            p0.take(8).map { it.kind to java.time.Duration.between(it.start, it.end).toMinutes() })
+        // 循环以休息结束: 满轮排完, 最后一轮专注提前结束, 休息随它重新算, 末尾对上循环的末尾
+        assertEquals(listOf("idle" to 30L, "focus" to 100L, "rest" to 38L, "focus" to 100L, "rest" to 38L, "focus" to 19L, "rest" to 5L, "idle" to 30L, "idle" to 30L),
+            p0.take(9).map { it.kind to java.time.Duration.between(it.start, it.end).toMinutes() })
         assertEquals(p0[0].end.plusMinutes(300), p0[6].end); assertEquals("午饭", p0[7].label)
-        assertEquals(listOf("focus" to 50L, "rest" to 16L, "focus" to 50L, "rest" to 16L, "focus" to 50L, "rest" to 16L, "focus" to 26L, "rest" to 16L),
+        assertEquals(listOf("focus" to 50L, "rest" to 16L, "focus" to 50L, "rest" to 16L, "focus" to 50L, "rest" to 16L, "focus" to 32L, "rest" to 10L),
             p0.filter { it.loop == 7 }.map { it.kind to java.time.Duration.between(it.start, it.end).toMinutes() })
-        fun pp(total: Int, n: Int) = Routine.loopPieces(total * 60L, n * 60L, Math.rint(computeF(n.toDouble())).toLong().coerceAtLeast(1) * 60).map { it.first to it.second / 60.0 }
-        assertEquals(listOf("focus" to 100.0, "rest" to 38.0, "focus" to 100.0, "rest" to 38.0), pp(276, 100))                  // 正好排满
-        assertEquals(listOf("focus" to 100.0, "rest" to 38.0, "focus" to 24.0, "rest" to 38.0), pp(200, 100))                  // 只有最后一轮的专注提前结束
-        assertEquals(listOf("focus" to 62.0, "rest" to 38.0), pp(100, 100)); assertEquals(listOf("focus" to 20.0), pp(20, 100))   // 放不下一轮 → 只剩专注
-        for (tot in 30 until 700 step 7) {
+        fun pp(total: Int, n: Int) = Routine.loopPieces(total * 60L, n * 60L).map { it.first to it.second / 60.0 }
+        assertEquals(listOf("focus" to 100.0, "rest" to 38.0, "focus" to 100.0, "rest" to 38.0), pp(276, 100))
+        assertEquals(listOf("focus" to 100.0, "rest" to 38.0, "focus" to 47.0, "rest" to 15.0), pp(200, 100))
+        assertEquals(listOf("focus" to 74.0, "rest" to 26.0), pp(100, 100)); assertEquals(listOf("focus" to 16.0, "rest" to 4.0), pp(20, 100))
+        assertEquals(listOf("focus" to 100.0, "rest" to 39.0), pp(139, 100)); assertEquals(listOf("focus" to 1.0), pp(1, 100))
+        for (tot in 2 until 700 step 7) {
             val ps = pp(tot, 100)
-            assertTrue(tot <= 38 || (ps.last().first == "rest" && Math.abs(ps.sumOf { it.second } - tot) < 1e-6 && ps.filter { it.first == "focus" }.all { it.second <= 100.0 }))
+            assertTrue(ps.last().first == "rest" && Math.abs(ps.sumOf { it.second } - tot) < 1e-6 && ps.filter { it.first == "focus" }.all { it.second <= 100.0 })
         }
         // 联合行动之后: 休息结束落在循环里 → 立即开始专注; 落在吃饭里不影响
         val segs = Routine.planBetween(spec, LocalDateTime.of(2026, 3, 2, 6, 0), LocalDateTime.of(2026, 3, 2, 23, 0), "t")

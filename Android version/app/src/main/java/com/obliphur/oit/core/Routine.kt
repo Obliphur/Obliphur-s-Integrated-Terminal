@@ -152,28 +152,41 @@ object Routine {
     /** 分钟 → 整秒 (四舍五入; 同 routine._secs). */
     fun secs(minutes: Double): Long = Math.floor(minutes * 60.0 + 0.5).toLong()
 
-    /** 一个循环 (总长 totalS 秒, 每轮专注 nS 秒 + 休息 restS 秒) → [("focus" | "rest", 秒)]. 同 routine.loop_pieces (1.0.400):
-     *  循环总以休息结束, 休息的末尾对上循环的末尾, 靠"提前结束专注"凑 (最后一轮的专注提前结束; 排不下就把专注平分给每一轮; 连一轮都放不下就只剩专注). */
-    fun loopPieces(totalS: Long, nS: Long, restS: Long): List<Pair<String, Long>> {
-        val cyc = nS + restS
-        val k = maxOf(1L, (totalS + cyc - 1) / cyc)
-        val foc = totalS - k * restS
-        if (foc <= 0) return listOf("focus" to totalS)
-        val sizes: List<Long> = if (foc > (k - 1) * nS) List(k.toInt()) { i -> if (i < k - 1) nS else foc - (k - 1) * nS }
-        else { val q = foc / k; val rem = foc % k; List(k.toInt()) { i -> q + (if (i < rem) 1L else 0L) } }
+    /** 专注 fMin 分钟之后休息多少整分钟 = round(F(f)), 至少 1 分钟 (同 routine._rest_min). */
+    fun restMin(fMin: Double): Long = maxOf(1, Math.rint(computeF(fMin)).toInt()).toLong()
+
+    /** 一个循环 (总长 totalS 秒, 每轮专注 nS 秒) → [("focus" | "rest", 秒)]. 同 routine.loop_pieces (1.0.400):
+     *  循环总以休息结束, 休息的末尾对上循环的末尾: 满轮能排几轮排几轮; 剩下的时间 R 做最后一轮, 专注提前结束, 休息随这一轮的专注长度重新算
+     *  (解 f + F(f) = R, 休息取整分钟, 专注 = R - 休息); 剩下的太短 (专注不到 1 分钟) 并进上一次休息; 一轮都排不了就只剩专注. */
+    fun loopPieces(totalS: Long, nS: Long): List<Pair<String, Long>> {
+        val restN = restMin(nS / 60.0) * 60
+        val cyc = nS + restN
+        val k = totalS / cyc
         val out = ArrayList<Pair<String, Long>>()
-        for (s in sizes) { out.add("focus" to s); out.add("rest" to restS) }
+        for (i in 0 until k) { out.add("focus" to nS); out.add("rest" to restN) }
+        val left = totalS - k * cyc
+        if (left > 0) {
+            var lo = 0.0
+            var hi = left / 60.0
+            repeat(60) {
+                val mid = (lo + hi) / 2.0
+                if (mid + computeF(mid) < left / 60.0) lo = mid else hi = mid
+            }
+            val restS = restMin(hi) * 60
+            if (left - restS >= 60) { out.add("focus" to left - restS); out.add("rest" to restS) }
+            else if (out.isNotEmpty()) out[out.size - 1] = "rest" to (out.last().second + left)
+            else out.add("focus" to totalS)
+        }
         return out
     }
 
     /** [start, end) 这个循环里的专注 / 休息段 (以休息结束, 末尾对上 end). extraMin: 最后那次休息的结束比 end 晚多少分钟 (休息至少留 1 分钟). */
     fun loopSegs(start: LocalDateTime, end: LocalDateTime, nMin: Double, loop: Int = -1, extraMin: Long = 0): List<RtSeg> {
-        val rest = maxOf(1, Math.rint(computeF(nMin)).toInt()).toLong()
         val totalS = Math.floor(java.time.Duration.between(start, end).toNanos() / 1e9 + 0.5).toLong()
         val out = ArrayList<RtSeg>()
         var t = start
         var fm = 0.0
-        for ((kind, s) in loopPieces(totalS, secs(nMin), rest * 60)) {
+        for ((kind, s) in loopPieces(totalS, secs(nMin))) {
             val e = t.plusSeconds(s)
             if (kind == "focus") fm = s / 60.0                      // fm = 这一轮 (专注 + 随后的休息) 计划的专注分钟, 提前结束的比 n 短
             out.add(RtSeg(kind, t, e, if (kind == "focus") "专注" else "休息", loop, false, nMin, fm))
