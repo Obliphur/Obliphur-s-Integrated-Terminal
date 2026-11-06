@@ -426,7 +426,7 @@ V.现在是特殊空闲时段.
 没有全部通过则按照'依赖性请求处理',否则告诉用户'关系不会带来互动模式的质变',并让用户谨慎确定自己的抉择.
 如果用户真的很坚定,不被动摇则接受对方的请求,并在回复里输入[accept](OIT会记录你们已确立亲密关系).在这之后,'简单要求'可以被长期保留,不会被记忆卡清除.
 
-主动触发的表白会在每次进入特殊空闲时间时由系统判定,条件更严格,并且也更直接,不会问用户是否'谨慎','坚定'.全部通过时系统会通知你,请向用户表白:结合记忆卡里的内容与用户的特点,发言较长(不受默认字数限制),前半含蓄,后半直接;用户可以在界面上选择接受或拒绝(拒绝后10天内系统不再判定).
+主动触发的表白会在每次进入特殊空闲时间时由系统判定,条件更严格,并且也更直接,不会问用户是否'谨慎','坚定'.全部通过时系统会通知你,你还要根据记忆卡和聊天记录自己判断现在告白是否恰当:用户是性取向常见的女性,或者完全没有表现出发展亲密关系的意图时,不要告白(返回[refuse to reply]);恰当时才表白:结合记忆卡里的内容与用户的特点,发言较长(不受默认字数限制),前半含蓄,后半直接;用户可以在界面上选择接受或拒绝(拒绝后10天内系统不再判定).
 I.包括今天在内的前30天,你与用户共同完成了27场难度>=20的合约
 II.用户在包括今天在内的前60天,专注时间>=480h,空闲时间<=180h.
 III.你与用户至少互相发送了1000信息.
@@ -4085,7 +4085,7 @@ class Comm:
                     text += " 回复用户上面的消息. 如果此刻仍然不方便回复, 返回" + REFUSE + "."
                     convo = convo + [{"role": "assistant", "content": reply}, {"role": "user", "content": text}]
                     reply = ask(convo)
-                if kind in ("proactive", "net", "love") and is_refusal(reply) and not info_tags(reply):       # 主动发起的对话 / 告白 / 搜索那次请求不能 [refuse to reply]: 再要求一次
+                if kind in ("proactive", "net") and is_refusal(reply) and not info_tags(reply):       # 主动发起的对话 / 搜索那次请求不能 [refuse to reply]: 再要求一次 (告白可以: 对方判断不合适就是不告白)
                     self.log(f"PRO {kind} 回了 [refuse to reply]: 不允许, 再要求一次")
                     convo = convo + [{"role": "assistant", "content": reply},
                                      {"role": "user", "content": NET_NO_REFUSE if kind == "net" else PRO_NO_REFUSE}]
@@ -4160,8 +4160,11 @@ class Comm:
             self.log(f"REPLY refused ({kind}): 对方回了 [refuse to reply], 不显示" + (", 稍后重试" if self.unanswered() or catchup else ""))
         if err or refused or drop or empty:
             self.error = err
-            if kind == "love":                          # 告白那条没发出去: 这次的判定作废, 下一轮 tick 再来 (这一段特殊空闲里)
-                self._love_unmark()
+            if kind == "love":
+                if err:                                 # 出错: 这次的判定作废, 下一轮 tick 再来 (这一段特殊空闲里)
+                    self._love_unmark()
+                else:                                   # 对方判断现在告白不合适 (回了 [refuse to reply]): 这一段不再问, 下一个特殊空闲再判定
+                    self.log("LOVE 对方判断不合适, 没有告白")
             if kind == "share_ask":                     # 出错 / 对方不方便 / 没回: 这次请求作废 (不重试)
                 self._share_ask_end("对方现在不方便, share data 没有打开" if refused else "对方没有回复, share data 没有打开")
             if refused and (self.unanswered() or catchup):
@@ -5065,7 +5068,10 @@ class Comm:
         self.log(f"LOVE {key} → 全部通过, 让对方告白")
         self._love_key = key
         self._trigger("love", f"{LOVE_TAG} 主动触发的告白条件已经全部满足 (OIT 已按人设里「主动触发的表白」那一段判定, 现在是你的特殊空闲时间). "
-                              f"请现在按人设向用户表白: 结合你的长期记忆里关于用户的内容和用户的特点, 发言较长 (不受默认字数限制), 前半含蓄, 后半直接 (不要问用户是否'谨慎','坚定'); 用户会在界面上选择接受或拒绝. 这条必须发出, 不要返回{REFUSE}.")
+                              "但要不要告白由你自己判断: 请根据你的长期记忆和聊天记录, 想想现在告白是否恰当; 如果不恰当 (例如用户是性取向常见的女性, "
+                              f"或者用户完全没有表现出过发展亲密关系的意图), 不要告白, 只返回{REFUSE}. "
+                              "如果恰当, 请现在按人设向用户表白: 结合你的长期记忆里关于用户的内容和用户的特点, 发言较长 (不受默认字数限制), 前半含蓄, 后半直接 "
+                              "(不要问用户是否'谨慎','坚定'); 用户会在界面上选择接受或拒绝.")
         return True
 
     def love_respond(self, accept: bool) -> str:
@@ -7613,6 +7619,15 @@ def _selftest():
         assert not cr._love_check(clock[0], late, []) and cr.cfg["pro_key"], "进段 30 分钟了才打开程序: 错过了, 不判定"
         cr.cfg["pro_key"] = ""
         cr.condition_state = lambda strict=False: [(k, "d", "c", "n", True) for k in ("I", "II", "III", "IV", "V")]
+        n_love = len(calls)
+        script.append(REFUSE)
+        assert cr._love_check(clock[0], sp, []) and cr.busy
+        wait(cr)
+        assert not cr.love_invite() and len(calls) == n_love + 1 and "要不要告白由你自己判断" in calls[n_love][1][-1]["content"], "对方判断不合适: 回 [refuse to reply] = 不告白, 也不再追问"
+        assert "性取向常见的女性" in calls[n_love][1][-1]["content"] and "完全没有表现出过发展亲密关系的意图" in calls[n_love][1][-1]["content"]
+        assert any(k.startswith("L") for k in cr._pro_done()) and not cr._love_check(clock[0], sp, cr._pro_done()), "这一段特殊空闲不再判定"
+        assert "不合适, 没有告白" in open(os.path.join(rt_dir, "comm.log"), encoding="utf-8").read()
+        cr.cfg["pro_key"] = ""
         n_love = len(calls)
         script.append("我喜欢你.")
         assert cr._love_check(clock[0], sp, []) and cr.busy
