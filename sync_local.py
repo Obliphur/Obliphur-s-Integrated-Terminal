@@ -12,6 +12,7 @@ import i18n
 import toast
 from i18n import tr
 from settings_manager import SCHEMA_BY_KEY
+import ai_assist
 import devsync
 import os
 
@@ -222,6 +223,19 @@ class PcLocal:
 
     # ---- 文档 ----
 
+    def _ai_doc(self) -> dict:
+        """API 设置 (1.0.416): 服务商 / 模型类型 / 型号 / Key. Key 在同步通道里由配对密钥封着传,
+        落到对方设备后再用本机的 DPAPI 加密保存; 空 Key 不往外发 (免得未配置的设备把另一台的 Key 冲掉)."""
+        cfg = self.app.comm.ai
+        out = {"provider": cfg.provider}
+        for prov, prof in cfg.profiles.items():
+            out[f"{prov}/family"] = str(prof.get("family") or "")
+            out[f"{prov}/base_url"] = str(prof.get("base_url") or "")
+            out[f"{prov}/model"] = str(prof.get("model") or "")
+            if prof.get("api_key"):
+                out[f"{prov}/api_key"] = str(prof.get("api_key") or "")
+        return out
+
     def docs(self) -> dict:
         a = self.app
         s = a.settings
@@ -262,7 +276,7 @@ class PcLocal:
         return {"settings": settings, "hours": hours, "timer": timer, "achievements": a.ach.doc(),
                 "contract": a.contract.doc(), "behavior": a.behavior.doc(),
                 "prescript": a.prescripts.sync_doc(), "comm": a.comm.sync_doc(),
-                "personas": self._personas()}
+                "personas": self._personas(), "ai": self._ai_doc()}
 
     def apply(self, doc: str, changes: dict):
         a = self.app
@@ -339,6 +353,25 @@ class PcLocal:
             a.prescripts.sync_apply(changes)
         elif doc == "comm":
             a.comm.apply_doc(changes)
+        elif doc == "ai":
+            cfg = a.comm.ai
+            allowed = ("family", "base_url", "model", "api_key")
+            for key, val in changes.items():
+                text = "" if val is None else str(val)
+                if key == "provider":
+                    if text in ai_assist.PROVIDERS:
+                        cfg.provider = text
+                    continue
+                prov, _, field = key.partition("/")
+                if prov not in ai_assist.PROVIDERS or field not in allowed:
+                    continue
+                if field == "family":
+                    if text not in ai_assist.FAMILY_PROTOCOL:
+                        continue
+                elif text == "" and str(cfg.profiles.get(prov, {}).get(field) or ""):
+                    continue          # 空值不覆盖已有的: 没配置过的设备不会把另一台的型号 / Key 冲掉
+                cfg.set_profile(prov, **{field: text})
+            cfg.save()
         elif doc == "personas":
             try:
                 a.comm.apply_persona_doc(changes)

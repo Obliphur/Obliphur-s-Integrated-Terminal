@@ -1,6 +1,8 @@
 package com.obliphur.oit.sync
 
 import com.obliphur.oit.OitApp
+import com.obliphur.oit.ai.Ai
+import com.obliphur.oit.ai.AiConfig
 import com.obliphur.oit.core.Fmt
 import com.obliphur.oit.core.I18n
 import com.obliphur.oit.core.Kind
@@ -194,6 +196,21 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
         else v?.toString() ?: ""
     }
 
+    /** API 设置 (1.0.416): 服务商 / 模型类型 / 型号 / Key. Key 在同步通道里由配对密钥封着传,
+     *  落到对方设备后再用本机的 Keystore 加密保存; 空 Key 不往外发 (免得未配置的设备把另一台的 Key 冲掉). */
+    private fun aiDoc(): Map<String, Any?> {
+        val cfg = AiConfig(java.io.File(core.dir, "ai_config.json"))
+        val out = LinkedHashMap<String, Any?>()
+        out["provider"] = cfg.provider
+        for ((prov, p) in cfg.profiles) {
+            out["$prov/family"] = p.family
+            out["$prov/base_url"] = p.baseUrl
+            out["$prov/model"] = p.model
+            if (p.apiKey.isNotEmpty()) out["$prov/api_key"] = p.apiKey
+        }
+        return out
+    }
+
     override fun docs(): Map<String, Map<String, Any?>> {
         val s = core.settings
         val settings = LinkedHashMap<String, Any?>()
@@ -227,7 +244,8 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
         // 行为模式的外出: 每一项单独比较, 计时 / 统计跟着它走 (MECHANICS 21)
         return mapOf("settings" to settings, "hours" to hours, "timer" to timer, "achievements" to core.ach.doc(),
             "contract" to core.contract.doc(), "behavior" to core.behavior.doc(),
-            "prescript" to core.prescript.syncDoc(), "comm" to core.comm.syncDoc(), "personas" to personas())
+            "prescript" to core.prescript.syncDoc(), "comm" to core.comm.syncDoc(), "personas" to personas(),
+            "ai" to aiDoc())
     }
 
     override fun apply(doc: String, changes: Map<String, Any?>) {
@@ -293,6 +311,35 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
                 core.behaviorTick()
             }
             "prescript" -> core.prescript.syncApply(changes)
+            "ai" -> {
+                val cfg = AiConfig(java.io.File(core.dir, "ai_config.json"))
+                var dirty = false
+                for ((key, v) in changes) {
+                    val text = v?.toString() ?: ""
+                    if (key == "provider") {
+                        if (text in Ai.PROVIDERS) { cfg.provider = text; dirty = true }
+                        continue
+                    }
+                    val prov = key.substringBefore('/')
+                    val field = key.substringAfter('/', "")
+                    if (prov !in Ai.PROVIDERS) continue
+                    val cur = cfg.profiles[prov] ?: continue
+                    val next = when (field) {
+                        "family" -> {
+                            // 预设服务商的类型固定是它自己 (同 AiConfig / setProfile), 只有自定义才听同步的
+                            val fam = if (prov in Ai.FAMILY_PROTOCOL) prov else text
+                            if (fam in Ai.FAMILY_PROTOCOL) cur.copy(family = fam, protocol = Ai.FAMILY_PROTOCOL[fam]!!) else cur
+                        }
+                        // 空值不覆盖已有的: 没配置过的设备不会把另一台的型号 / Key 冲掉
+                        "base_url" -> if (text.isEmpty() && cur.baseUrl.isNotEmpty()) cur else cur.copy(baseUrl = text)
+                        "model" -> if (text.isEmpty() && cur.model.isNotEmpty()) cur else cur.copy(model = text)
+                        "api_key" -> if (text.isEmpty() && cur.apiKey.isNotEmpty()) cur else cur.copy(apiKey = text)
+                        else -> cur
+                    }
+                    if (next != cur) { cfg.profiles[prov] = next; dirty = true }
+                }
+                if (dirty) cfg.save()
+            }
             "comm" -> core.comm.applyDoc(changes)
             "personas" -> {
                 core.comm.applyPersonaDoc(changes)
