@@ -583,29 +583,31 @@ class CommPage(tk.Frame):
         threading.Thread(target=work, daemon=True).start()
 
     def _help(self):
-        """帮助: 沟通页上每个小按钮是干什么的, 还有"无言为真"会禁止沟通的提醒."""
-        width = config.scaled(460)
-        dlg = Modal(self.winfo_toplevel(), tr("帮助"), width=width, height=config.scaled(520))
+        """帮助: 沟通页上每个小按钮是干什么的 (分两栏, 说明尽量短), 还有"无言为真"会禁止沟通的提醒."""
+        width = config.scaled(780)
+        dlg = Modal(self.winfo_toplevel(), tr("帮助"), width=width, height=config.scaled(400))
         bg = COLORS["bg"]
         rows = (("❓", "帮助", "打开这个说明."),
-                ("👀 / 🙈", "分享数据 (share data)", "点一下切换 (👀 = 打开; 打开前要先征得对方同意: ⏳ = 等对方回复, 再点一下取消). 打开后去别的页面 (设置 / 沟通 / 指令 / 重置 以外): 对方会收到那一页上你和它自己的数据 (30 秒冷却), "
-                                      "页面下方有聊天悬浮窗, 计时器 / 整点记录 / 日历 / 统计页还能切换看自己 / 对方的数据; 回到沟通自动关闭, 对方会总结一次. "
-                                      "对方也可以发 [share data] 邀请你, 点「接受」才会打开."),
-                ("🔔 / 🔕", "主动发起", "点一下切换: 🔔 = 允许这个对象主动给你发消息 / 追问, 🔕 = 禁止."),
-                ("⏰ / ⏲", "共时闹钟", "点开设置: 把这个对象设为共时闹钟后 (⏰), 闹钟的时间跟随它的日程里的实际起床时间 (睡眠中也会响); "
-                                    "哪些设备响铃由你手动选, 铃声和音量用「设置 → 闹钟」里的. 一次只有一个对象是共时闹钟."),
-                ("🕰", "起点平移", "请求对方把日程的起点平移到新的时刻 (4:00 - 9:00). 对方同意后明天起生效, 今天的日程不变; 只记在 OIT 里, 不会修改人设文件. 对方可以拒绝."),
-                ("🖼", "识别字体", "选一张图片, OIT 让模型把图片上的文字读出来, 放进聊天框 (可以再改). 不能发送图片, 只能提取文字; 图片不会被保存, 对方也看不到."),
-                ("🤝", "联合行动", "邀请对方一起完成一次合约: 界面会移到合约页, 选好词条后点「确定选择」(原来「开始行动」的位置), "
-                                "再输入开始时间; 词条和合约的基础规则会打包发给对方, 结束时间自动算好写在聊天框上方. "
-                                "对方回 [Yes] 就按约开始合约; 合约期间你们的专注 / 休息同步, 合约后得到的休息也同步."))
-        for icon, name, text in rows:
-            f = tk.Frame(dlg.body, bg=bg)
-            f.pack(fill="x", pady=(0, 8))
+                ("👀 / 🙈", "分享数据 (share data)", "点一下切换 (👀 = 打开, 要先征得对方同意; ⏳ = 等对方回复). 打开后去别的页面, 对方会收到那一页上你们的数据; 回到沟通自动关闭. 对方也可以发邀请, 点「接受」才会打开."),
+                ("🔔 / 🔕", "主动发起", "🔔 = 允许这个对象主动找你, 🔕 = 禁止."),
+                ("⏰ / ⏲", "共时闹钟", "⏰ = 闹钟跟随这个对象的起床时间; 响铃的设备手动选, 一次只能有一个对象."),
+                ("🕰", "起点平移", "请求对方把日程起点平移到 4:00 - 9:00 之间, 同意后明天起生效."),
+                ("🖼", "识别字体", "选一张图片, 把上面的文字读出来放进聊天框. 不能发送图片."),
+                ("🤝", "联合行动", "邀请对方一起做一次合约: 在合约页选词条, 输入开始时间; 对方回 [Yes] 就按约开始."))
+        cols = tk.Frame(dlg.body, bg=bg)
+        cols.pack(fill="x")
+        cols.columnconfigure(0, weight=1, uniform="help")
+        cols.columnconfigure(1, weight=1, uniform="help")
+        half = (len(rows) + 1) // 2                                   # 左栏先排满, 剩下的放第二栏
+        cell = (width - config.scaled(60)) // 2
+        for i, (icon, name, text) in enumerate(rows):
+            col = 0 if i < half else 1
+            f = tk.Frame(cols, bg=bg)
+            f.grid(row=i if col == 0 else i - half, column=col, sticky="nw", padx=(0, config.scaled(12)) if col == 0 else 0, pady=(0, 8))
             tk.Label(f, text=icon, bg=bg, fg=COLORS["text"], font=config.font("body", bold=True), width=7, anchor="nw").pack(side="left", anchor="n")
             tk.Label(f, text=tr(name) + ": " + tr(text), bg=bg, fg=COLORS["text"], font=config.font("body"), justify="left",
-                     anchor="w", wraplength=width - config.scaled(120)).pack(side="left", fill="x", expand=True)
-        tk.Label(dlg.body, text="⚠  " + tr("特别提醒: 合约词条「无言为真」生效时会禁止「沟通」的使用 (不能发消息, 对方的消息也收不到), 合约结束后才能恢复."),
+                     anchor="w", wraplength=cell - config.scaled(100)).pack(side="left", fill="x", expand=True)
+        tk.Label(dlg.body, text="⚠  " + tr("特别提醒: 「无言为真」生效时无法使用「沟通」."),
                  bg=bg, fg=COLORS["danger"], font=config.font("body", bold=True), justify="left", anchor="w",
                  wraplength=width - config.scaled(60)).pack(fill="x", pady=(6, 0))
         ttk.Button(dlg.buttons, text=tr("知道了"), style="Accent.TButton", command=lambda: dlg.finish(True)).pack(side="right")

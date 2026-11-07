@@ -506,6 +506,30 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         armIdleNudge()
     }
 
+    /** 开始合约时正在专注 (1.0.407): 这段专注立即暂停 —— 学习时长照常记 (合约还没开始, 按普通规则), 它换来的休息时间存进积攒的休息时间
+     *  并马上折算 (和专注自动结束后手动开始专注一样, MECHANICS 6.8), 回到空闲; 合约开始后由 startFocusForContract 接着开始新一轮专注.
+     *  返回 true = 暂停了一段专注. */
+    fun pauseFocusForContract(): Boolean {
+        if (state != TState.RUNNING) return false
+        val start = startWall ?: return false
+        val sec = mono() - startMono
+        closeCheck()
+        val (_, brk) = bookFocus(start, sec, null)
+        mine()
+        resetToIdle()
+        setCarry(breakCarry + brk)
+        addAutoRest(brk)
+        settleAutoRest(paused = true)
+        return true
+    }
+
+    /** 合约已经开始: 接着开始新一轮专注 (和手动开始专注一样: 阻滞从这一刻起算). */
+    fun startFocusForContract() {
+        enterFocus(LocalDateTime.now(), mono())
+        if (core.contract.slowBind(startWall!!))
+            core.toast(tr("阻滞: 合约内这段专注的时间按 {p}% 增长", "p" to Math.round(Contract.RANDOM_SLOW * 100)), "warn", long = true)
+    }
+
     /** 联合行动开始: 合约开始前积攒的休息时间收起来 (放进合约里, 合约结束后还回去). */
     fun clearCarry() = setCarry(0)
 
@@ -549,7 +573,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
     }
 
     /** 手动开始专注 (6.8): 非手动结束的专注留下的那部分休息时间, 先按暂停休息的结转比例折算一次. */
-    private fun settleAutoRest() {
+    private fun settleAutoRest(paused: Boolean = false) {
         val a = minOf(autoRest, breakCarry)
         autoRest = 0
         if (a <= 0) {
@@ -559,7 +583,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         val keep = Math.round(a * rate).toInt()
         setCarry(breakCarry - (a - keep))
         if (core.contract.active) core.contract.preCap(breakCarry.toDouble())
-        core.toast(tr("休息时间折算: 专注自动结束留下的 {a} ×{r} = {k}.", "a" to fmtMs(a.toDouble()),
+        core.toast(tr(if (paused) "休息时间折算: 这段专注换来的 {a} ×{r} = {k}." else "休息时间折算: 专注自动结束留下的 {a} ×{r} = {k}.", "a" to fmtMs(a.toDouble()),
             "r" to numText(rate), "k" to fmtMs(keep.toDouble())), "info", long = true)
     }
 

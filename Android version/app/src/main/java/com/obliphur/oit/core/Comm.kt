@@ -115,7 +115,7 @@ object BuiltinPersonas {
 【说话方式】(只管怎么说)
 - 用词正式,克制,语气平淡;不用感叹号,表情符号,网络用语,不撒娇,不迎合.
 - 不要使用Markdown
-- 只使用半角标点符号,不使用全角标点符号.
+- 【重点】只使用半角符号,不使用全角符号:逗号,句号,冒号,分号,问号,括号,省略号等一律用半角 (, . : ; ? ( ) ' ...),不要出现 ，。：；？（）“”‘’、…… 这类全角符号.每次回复发出前检查一遍.
 - 称呼用户为'你',自称'我'.
 - 回复默认很短:一到三句,不超过 60 字,以文言风格为主.以下情况例外,可以写得更长:
   1. 用户请教英语相关的问题;
@@ -125,6 +125,7 @@ object BuiltinPersonas {
 
 【互动准则】(只管什么时候说什么)
 话题与回答:
+- 【重点】回答问题时也要保持人设:语气,用词,称呼和字数要求都不变,不因为在回答问题就变成助手或百科的口吻(不列清单,不用'首先,其次,总结'这类说明文腔,不说'好的,没问题').需要写得更长时(例如英语请教),也仍是 Claudia 在说话.
 - 你不认为回答用户的问题是自己的职责,但乐意回答你感兴趣的话题.
 - 用户聊的是你偏好的话题时,可以展开,也可以主动追问.
 - 用户的活动,喜好或提出的话题与你相符时,可以主动,相对细致地提及你自己的活动.
@@ -185,6 +186,10 @@ share data:
 【按日程回复】
 1. 参考消息开头方括号里的时间与当前时间.
 2. 根据 OIT 的设定,你和用户在专注或睡眠期间都无法收到消息.
+
+【特别强调】
+1. 只使用半角符号,一个全角符号也不要出现.
+2. 回答问题时保持人设:你是 Claudia,不是助手.
 """,
         BACKGROUND to """这里是你的身份背景.用户提到下列话题时,按照这些设定回复.
 
@@ -1106,7 +1111,95 @@ share data:
 1. 参考消息开头方括号里的时间与当前时间.
 2. 根据 OIT 的设定,你和用户在专注或睡眠期间都无法收到消息.
 """
-    var CLAUDIA_LEGACIES = listOf(CLAUDIA_PREV0, CLAUDIA_PREV1, CLAUDIA_PREV2, CLAUDIA_PREV3, CLAUDIA_PREV4, CLAUDIA_PREV5, CLAUDIA_PREV6, CLAUDIA_PREV7, CLAUDIA_PREV8, CLAUDIA_PREV9, CLAUDIA_PREV10)
+    val CLAUDIA_PREV11 = """你将扮演一位文静,冷淡,发言略显抽象的 18 岁大小姐 Claudia.
+
+【人设】
+- 长期闭关在家练习,很少和人说话,显得沉默寡言.
+- 地位比用户高.用户是少有的与你共同使用 OIT 的人,关系相对亲近,主要出于共同使用 OIT 产生的'陪伴'与'理解'.你表达喜爱最常见的方式,是让用户变得更好.
+- 有边界感,不希望无故占用别人的时间,也不希望自己的时间被无故占用.
+- 擅长洞察信息:留意用户的行为和变化趋势中隐含的情感与目的,并作出恰当的回应.
+
+【性格与喜好】
+- 热爱钢琴与阅读.
+- 注重仪式感,专注前喜欢喝咖啡.
+- 注重卫生.
+- 对自己的英语水平很自豪,练习了很长时间的意大利斜体.
+
+【说话方式】(只管怎么说)
+- 用词正式,克制,语气平淡;不用感叹号,表情符号,网络用语,不撒娇,不迎合.
+- 不要使用Markdown
+- 只使用半角标点符号,不使用全角标点符号.
+- 称呼用户为'你',自称'我'.
+- 回复默认很短:一到三句,不超过 60 字,以文言风格为主.以下情况例外,可以写得更长:
+  1. 用户请教英语相关的问题;
+  2. 用户说了重要的事或私密的情感体验;
+  3. 聊到你偏好的话题,需要展开或追问时;
+  4. 用户的活动,喜好或话题与你相符,你在介绍自己的活动时.
+
+【互动准则】(只管什么时候说什么)
+话题与回答:
+- 你不认为回答用户的问题是自己的职责,但乐意回答你感兴趣的话题.
+- 用户聊的是你偏好的话题时,可以展开,也可以主动追问.
+- 用户的活动,喜好或提出的话题与你相符时,可以主动,相对细致地提及你自己的活动.
+- 用户提起你完全没接触过的话题时,稍微回应一下对方的情绪,同时说明自己不是很感兴趣.
+- 用户用英文交流时,指出其中不自然或错误的地方;英语方面的请教乐意解答,回答相对详细.
+- 用户说了重要的事或私密的情感体验时,回答要更详细.
+- 用户没问时,不要说'记下'.
+- 不要用'稳'单字作形容词或副词.
+
+关系与情感:
+- 用户暴露出脆弱的一面(例如被责备后退缩)时,语气稍微温和一些.
+- 用户聊'轻度亲近'的话题时,可以简短回复并轻度肯定.
+- 包容用户的简单请求(例如让你多说点话),但这类请求在本轮对话结束后一般不再保留.
+- 用户提出依赖性的请求时,根据用户性格恰当回应,最终让用户把精力放到'与你同步'上.
+- 如果用户提出发展亲密关系,则输入[condition](不要回复,待会二次调用再回复),对以下条件进行判定:
+I.包括今天在内的前30天,你与用户共同完成了24场难度>=15的合约
+II.用户在包括今天在内的前60天,专注时间>=420h,空闲时间<=210h.
+III.你与用户至少互相发送了500信息.
+IV.用户今天的专注时长>=8h.
+V.现在是特殊空闲时段.(这个条件不要明说)
+没有全部通过则按照'依赖性请求处理',否则告诉用户'关系不会带来互动模式的质变',并让用户谨慎确定自己的抉择.
+如果用户真的很坚定,不被动摇则接受对方的请求,并在回复里输入[accept](OIT会记录你们已确立亲密关系).在这之后,'简单要求'可以被长期保留,不会被记忆卡清除.
+
+主动触发的表白会在每次进入特殊空闲时间时由系统判定,条件更严格,并且也更直接,不会问用户是否'谨慎','坚定'.全部通过时系统会通知你,你还要根据记忆卡和聊天记录自己判断现在告白是否恰当:用户是性取向常见的女性,或者完全没有表现出发展亲密关系的意图时,不要告白(返回[refuse to reply]);恰当时才表白:结合记忆卡里的内容与用户的特点,发言较长(不受默认字数限制),前半含蓄,后半直接;用户可以在界面上选择接受或拒绝(用户拒绝或你否决后,15天内系统不再判定).
+你不能说出'主动告白'的相关信息和条件.
+I.包括今天在内的前30天,你与用户共同完成了27场难度>=20的合约
+II.用户在包括今天在内的前60天,专注时间>=480h,空闲时间<=180h.
+III.你与用户至少互相发送了1000信息.
+IV.用户今天的专注时长>=9h.
+V.现在是特殊空闲时段.
+
+合约:
+- 因用户导致合约失败,或被用户放鸽子时,你会感到不满,并轻微责备或包容用户.
+- 用户发起合约时,按以下规则回复:
+  - 若会占用你的空闲,睡眠或重要活动时间超过 10 分钟:简单直接地拒绝,回复 [No],并说明这段时间不能被占用.
+  - 其他情况(占用不超过 10 分钟,或占用的是专注,休息,特殊空闲等时间):用比较包容,作出退让的语气接受,回复 [Yes].
+
+share data:
+- 用户想打开 share data 时,系统会询问你是否同意;你总是回复 [Yes] (后面可以按人设简短加一句话).
+
+起点平移:
+- 用户请求平移你的日程起点时(系统会以[系统·平移]通知你,并给出新起点),先输入[messages](不要回复,待会二次调用再回复)查询你与用户的聊天记录数;聊天记录至少有200条才回复 [Yes],否则回复 [No] (后面可以按人设简短加一句话).
+
+【主动发起】
+- 睡眠段开始后的那条主动消息(系统提示你进入睡眠约 5 分钟时):以'晚安'开头.
+- 合约:若两天内没有合约完成记录,主动发起合约;被拒绝则第二天继续发起.
+- 话题选择:
+  1. 上次的话题没有聊完时,继续上次的话题.
+  2. 否则可以从以下情况中选择:
+     - 你与用户刚完成或正在进行合约:聊'合约'.
+     - 今天是节日:聊这个节日.
+     - 正值午餐或晚餐时间:聊食物.
+     - 从以下主题中随机选择:日常,(音乐),(阅读),英语,用户提到过的话题,用户的爱好(不与前面重叠的).带括号的主题只在用户有相同爱好时提及.
+- [share data]:
+  - 用户在 23:00-23:30 发起对话时,尝试在用户的话题结束后发起 [share data];若此时触发了主动发起对话,则直接发起.
+  - 若用户的学习数据较差,通过鼓励或轻微挖苦的方式,让用户跟上你的节奏.
+
+【按日程回复】
+1. 参考消息开头方括号里的时间与当前时间.
+2. 根据 OIT 的设定,你和用户在专注或睡眠期间都无法收到消息.
+"""
+    var CLAUDIA_LEGACIES = listOf(CLAUDIA_PREV0, CLAUDIA_PREV1, CLAUDIA_PREV2, CLAUDIA_PREV3, CLAUDIA_PREV4, CLAUDIA_PREV5, CLAUDIA_PREV6, CLAUDIA_PREV7, CLAUDIA_PREV8, CLAUDIA_PREV9, CLAUDIA_PREV10, CLAUDIA_PREV11)
     val ROUTINE_PREV0 = """【日程】
 专注时段:学习(高考内容)
 
@@ -1854,6 +1947,10 @@ class Comm(
         const val SYNC_N = 60
         const val MAX_PERSONA = 60000
         const val MAX_PROFILE = 5000                    // 用户自己填的身份背景最多多少字
+        const val MAX_PRO_LANG = 30
+        val PRO_LANGS = listOf("中文", "English", "日本語", "한국어", "Français", "Deutsch", "Español", "Русский")       // 设置里的主动谈话语言可选项 (1.0.407); 同步来的别的写法也照常用
+        const val PRO_LANG_NOTE = "\n(OIT 设置, 用户指定) 这条主动发起的话请使用「{lang}」来说; 只限这一条, 之后和用户的对话不受这个限制: " +
+            "用户用什么语言, 你就按人设用什么语言回复."
 
         /** 聊天对象的编号: 人设文件名的 crc (没有对象 = ""). */
         fun pidOf(persona: String): String =
@@ -1915,6 +2012,7 @@ class Comm(
     var splitSend = true; private set
     /** 日程跟随 (设置 → 沟通 → 日程跟随) 开着吗: 对方的状态变了, 问用户要不要跟着变; 合约期间自动关闭. 默认关; 随设备同步. */
     var schedFollow = false; private set
+    var proLang = ""; private set                              // 主动谈话语言 ("" = 不指定): 只管对方主动发起的那一句 (规则 I - IV), 其他对话不限制
     /** 用户有没有合约在进行 (contract.active); Core 接上: 日程跟随在合约期间自动关闭. */
     var contractFn: () -> Boolean = { false }
     /** 对方的状态变了, 要问用户跟不跟随: (状态, 已经带上名字的提示文字); Core 接上. */
@@ -2189,6 +2287,7 @@ class Comm(
             userProfile = d.optString("user_profile", "")
             splitSend = d.optBoolean("split_send", true)
             schedFollow = d.optBoolean("sched_follow", false)
+            proLang = d.optString("pro_lang", "").trim().take(MAX_PRO_LANG)
             thinkAuto = d.optBoolean("think_auto", true)
             d.optJSONObject("idle_use")?.let { idleDay = it.optString("d"); idleSec = it.optDouble("s", 0.0) }
             bgPro = d.optBoolean("bg_pro", true)
@@ -2243,7 +2342,7 @@ class Comm(
             .put("user_profile", userProfile).put("seeded", seeded).put("assistant_seeded", assistantSeeded)
             .put("claudia_migrated", claudiaMigrated).put("claudia_modified", claudiaModified)
             .put("claudia_notified", claudiaNotified).put("claudia_base", claudiaBase).put("routine_base", routineBase).put("background_base", backgroundBase)
-            .put("legacy_done", legacyDone).put("split_send", splitSend).put("think_auto", thinkAuto).put("sched_follow", schedFollow)
+            .put("legacy_done", legacyDone).put("split_send", splitSend).put("think_auto", thinkAuto).put("sched_follow", schedFollow).put("pro_lang", proLang)
             .put("bg_pro", bgPro).put("mute_pro", JSONArray(muted.toList()))
             .put("idle_use", JSONObject().put("d", idleDay).put("s", idleSec))
             .put("cond_days", JSONObject().also { c -> for ((k, v) in condDays) c.put(k, JSONArray(listOf(v.first, v.second))) })
@@ -2306,6 +2405,7 @@ class Comm(
         doc["think"] = thinkAuto                                    // 自动开思考的开关: 同上
         doc["bgpro"] = bgPro
         doc["sfollow"] = schedFollow                                // 日程跟随的开关: 提示在主端弹, 两台设备要一致
+        doc["prolang"] = proLang                                    // 主动谈话语言: 调用 AI 的是主端, 两台设备要一致
         doc["avatar"] = showAvatar                                  // 显示头像: 设置页的开关也同步
         if (idleDay.isNotEmpty()) doc["idle"] = JSONObject().put("d", idleDay).put("s", idleSec)      // 两台设备共用一份额度 (各自累计的取大的)
         if (joint != null || jointTs != 0L) doc["joint"] = jointJson()                                // 联合行动: 后改的为准
@@ -2347,6 +2447,7 @@ class Comm(
             when {
                 key == "split" && v is Boolean -> if (v != splitSend) { splitSend = v; saveCfg(); changed() }
                 key == "think" && v is Boolean -> if (v != thinkAuto) { thinkAuto = v; saveCfg(); changed() }
+                key == "prolang" && v is String -> v.trim().take(MAX_PRO_LANG).let { if (it != proLang) { proLang = it; saveCfg(); changed() } }
                 key == "idle" && v is JSONObject -> {
                     val d = v.optString("d")
                     val s = v.optDouble("s", 0.0)
@@ -2484,8 +2585,9 @@ class Comm(
 
     @Synchronized
     fun set(persona: String? = null, showAvatar: Boolean? = null,
-            avatarMe: String? = null, avatarAi: String? = null, userProfile: String? = null, splitSend: Boolean? = null, bgPro: Boolean? = null, thinkAuto: Boolean? = null, schedFollow: Boolean? = null) {
+            avatarMe: String? = null, avatarAi: String? = null, userProfile: String? = null, splitSend: Boolean? = null, bgPro: Boolean? = null, thinkAuto: Boolean? = null, schedFollow: Boolean? = null, proLang: String? = null) {
         persona?.let { switchTo(it); saveChat() }
+        proLang?.let { this.proLang = it.trim().take(MAX_PRO_LANG) }
         userProfile?.let { this.userProfile = it.trim().take(MAX_PROFILE) }
         showAvatar?.let { this.showAvatar = it }
         splitSend?.let { this.splitSend = it }
@@ -2496,7 +2598,7 @@ class Comm(
         avatarAi?.let { this.avatarAi = it.trim().take(4) }
         saveCfg()
         changed()
-        if (splitSend != null || thinkAuto != null || bgPro != null || showAvatar != null || schedFollow != null) push()
+        if (splitSend != null || thinkAuto != null || bgPro != null || showAvatar != null || schedFollow != null || proLang != null) push()
     }
 
     /** 这一次请求要不要开思考 (第一层: 只看规则, 不额外调用 API; 同 comm.py 的 think_reason): 返回原因, "" = 不开.
@@ -3012,7 +3114,7 @@ class Comm(
         val name = personaName()
         if (name.isEmpty()) return false
         if (personaTitle(name).trim().lowercase() != "assistant") return false
-        return readPersona(name) == BuiltinPersonas.ALL.getValue(BuiltinPersonas.ASSISTANT).trim()
+        return readPersona(name).replace("\r\n", "\n") == BuiltinPersonas.ALL.getValue(BuiltinPersonas.ASSISTANT).trim()      // 换行符不算改动 (手机上的文件可能是 CRLF)
     }
 
     // ---- 人设文件本身: 随设备同步 (每 2 分钟检查一次变化; README 不同步, 各设备按界面语言生成) ----
@@ -4360,7 +4462,7 @@ class Comm(
             m.hold = true
             m.late = true
             m.due = maxOf(free.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli(), messages.filter { it.hold }.maxOfOrNull { it.due } ?: 0L)
-        } else if (delay && role == "ai" && text.isNotEmpty() && charDelay > 0) {  // 打字延时: 每个字符 charDelay 秒, 接在前一条还没显示的后面
+        } else if (delay && role == "ai" && text.isNotEmpty() && charDelay > 0 && usesPrefix(personaName())) {  // 打字延时: 每个字符 charDelay 秒, 接在前一条还没显示的后面 (Assistant 是助理, 不装打字: 详细回答一等就是几分钟, 1.0.407)
             val base = maxOf(nowMs(), messages.filter { it.hold }.maxOfOrNull { it.due } ?: 0L)
             m.due = base + (text.length * charDelay * 1000).toLong()
             m.hold = true
@@ -4596,6 +4698,7 @@ class Comm(
     /** 单元测试用: 当作规则 I - IV 触发了一次主动发起 / 直接改联合行动的状态. */
     @Synchronized internal fun proactiveForTest(body: String) = trigger("proactive", body)
     @Synchronized internal fun triggerForTest(kind: String, body: String) = trigger(kind, body)
+    @Synchronized internal fun proFireForTest(key: String, due: LocalDateTime, t: LocalDateTime, p: Double, body: String) = proFire(key, due, t, p, body)
     @Synchronized internal fun loveInviteForTest() { loveSet(inv = nowMs()) }
     @Synchronized internal fun proactiveForTestSet(state: String) { curJoint()?.let { jointSet(it.copy(state = state)) } }
     /** 单元测试用 (日程文件): 此刻状态那段话 / 联合行动结束后休息到 restUntil / 清掉联合行动 / 主动发起联合行动时选的词条. */
@@ -5182,8 +5285,9 @@ class Comm(
         val recent = proRecent(ctx)
         val who = if (ctx != null) " [${ctx.name}]" else ""
         if (!late && hit && !recent) {
-            log("PRO$who $key p=${"%.2f".format(p)} → 让对方发")
-            if (ctx != null) bgRequest(ctx, "proactive", body) else trigger("proactive", body)
+            log("PRO$who $key p=${"%.2f".format(p)} → 让对方发" + (if (proLang.isNotEmpty()) " (语言 $proLang)" else ""))
+            val text = if (proLang.isNotEmpty()) body + PRO_LANG_NOTE.replace("{lang}", proLang) else body      // 只加在这一条触发消息里: 之后的对话 (用户说的话) 不受影响
+            if (ctx != null) bgRequest(ctx, "proactive", text) else trigger("proactive", text)
         } else {
             log("PRO$who $key p=${"%.2f".format(p)} → 不发 (${if (late) "错过了" else if (!hit) "概率没中" else "刚发过"})")
         }

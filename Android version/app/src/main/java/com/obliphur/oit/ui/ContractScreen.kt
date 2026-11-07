@@ -609,7 +609,8 @@ fun ContractScreen() {
             val lv = Contract.levelOf(c.draft)
             // 不显示时长和结束时刻
             Confirm(tr("▶  开始行动"), tr("危机等级 {lv}", "lv" to lv) + "\n" +
-                tr("完成后休息 +{n} 分钟", "n" to Contract.restMinutesTotal(lv, c.draft, bonusTheme)), true, { ask = "" }) {
+                tr("完成后休息 +{n} 分钟", "n" to Contract.restMinutesTotal(lv, c.draft, bonusTheme)) +
+                (if (core.timer.state == com.obliphur.oit.core.TState.RUNNING) "\n" + tr("正在专注: 开始后这段专注立即暂停并折算休息, 然后开始新一轮专注.") else ""), true, { ask = "" }) {
                 core.startContract(c.draft)
             }
         }

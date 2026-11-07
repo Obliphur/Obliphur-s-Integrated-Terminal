@@ -1599,6 +1599,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     fun startContract(terms: Collection<String>) {
         if (contract.active) return
         contractBlock().let { if (it.isNotEmpty()) { toast(it, "warn"); return } }
+        val paused = timer.pauseFocusForContract()      // 正在专注: 这段专注先暂停并折算休息, 合约开始后接着开始新一轮 (1.0.407)
         // 联合行动 (1.0.404): 合约开始前积攒的休息时间收起来 —— 合约中看不到, 不能用, 也不会触发支援短缺, 合约结束后原样还回去
         val joint = runCatching { comm.jointPending(terms.toList()) }.getOrDefault(false)
         val stash = if (joint) timer.breakCarry.toDouble() else 0.0
@@ -1616,8 +1617,10 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         host.applyNet(false)
         syncHourLog()
         logNotice("CONTRACT start level ${contract.level} terms ${contract.terms.joinToString(",").ifEmpty { "-" }} until ${contract.endAt?.format(Fmt.YMDHM)}" +
-            (if (gift > 0) " gift ${gift}s" else ""))
-        toast(tr("合约开始.") + (if (gift > 0) "\n" + tr("积攒的休息时间 +{t}.", "t" to fmtMs(gift.toDouble())) else ""), "success")
+            (if (gift > 0) " gift ${gift}s" else "") + (if (paused) " (focus paused, new round)" else ""))
+        if (paused) timer.startFocusForContract()
+        toast(tr("合约开始.") + (if (gift > 0) "\n" + tr("积攒的休息时间 +{t}.", "t" to fmtMs(gift.toDouble())) else "") +
+            (if (paused) "\n" + tr("原来的专注已暂停并折算休息, 新一轮专注已开始.") else ""), "success")
         changed()
     }
 

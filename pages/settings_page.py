@@ -873,6 +873,18 @@ class SettingsPage(tk.Frame):
                                    command=lambda: self._comm_flag("bg_pro")), "允许非正在聊天的人发起对话").pack(
             fill="x", padx=12, pady=(0, 8))
 
+        fr, _head = self._card(body, "🌐  主动谈话语言")
+        tk.Label(fr, text=tr("对方主动发起谈话时使用的语言 (只管主动发起的那一句, 其他对话不限制)."), bg=card, fg=COLORS["text_dim"],
+                 font=small, anchor="w", justify="left", wraplength=560).pack(fill="x", padx=12, pady=(0, 4))
+        import comm as comm_mod
+        self.var_pro_lang = tk.StringVar(value=c.pro_lang() or tr("不指定"))
+        self.cb_pro_lang = ttk.Combobox(fr, textvariable=self.var_pro_lang, width=24,
+                                        values=[tr("不指定")] + list(comm_mod.PRO_LANGS))      # 可以直接输入别的语言
+        self.cb_pro_lang.pack(anchor="w", padx=12, pady=(0, 10))
+        self.cb_pro_lang.bind("<<ComboboxSelected>>", lambda _e: self._comm_pro_lang_save())
+        self.cb_pro_lang.bind("<Return>", lambda _e: self._comm_pro_lang_save())
+        self.cb_pro_lang.bind("<FocusOut>", lambda _e: self._comm_pro_lang_save())
+
         fr, _head = self._card(body, "📅  日程跟随")
         tk.Label(fr, text=tr("人设的日程状态改变时 (包括睡眠), 询问是否跟随; 合约期间自动关闭, 结束后再开启."), bg=card, fg=COLORS["text_dim"],
                  font=small, anchor="w", justify="left", wraplength=560).pack(fill="x", padx=12, pady=(0, 2))
@@ -949,6 +961,16 @@ class SettingsPage(tk.Frame):
         text = self.txt_profile.get("1.0", "end").strip()[:comm_mod.MAX_PROFILE]
         if text != str(self.comm.cfg.get("user_profile") or ""):
             self.comm.set_cfg(user_profile=text)
+
+    def _comm_pro_lang_save(self):
+        """主动谈话语言: 选了 / 输入了就保存 (「不指定」或空 = 不指定)."""
+        import comm as comm_mod
+        text = self.var_pro_lang.get().strip()
+        if text == tr("不指定"):
+            text = ""
+        text = text[:comm_mod.MAX_PRO_LANG]
+        if text != self.comm.pro_lang():
+            self.comm.set_cfg(pro_lang=text)
 
     def _comm_pick_persona(self):
         label = self.comm_persona.get().strip()
@@ -1028,6 +1050,10 @@ class SettingsPage(tk.Frame):
             self.comm_vars["think_auto"].set(c.think_auto())
         if self.comm_vars["sched_follow"].get() != c.sf_on():
             self.comm_vars["sched_follow"].set(c.sf_on())
+        if focus_name(self.cb_pro_lang) not in (str(self.cb_pro_lang), "popdown"):          # 不在输入时: 别的设备同步来了新的语言
+            want = c.pro_lang() or tr("不指定")
+            if self.var_pro_lang.get() != want:
+                self.var_pro_lang.set(want)
         prof = c.ai.profile()
         text = f"{tr(_provider_label(c.ai.provider))} · {prof.get('model') or '—'}"
         text += "  ✗" if self._comm_api_missing() else "  ✓"

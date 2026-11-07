@@ -2632,8 +2632,9 @@ class BreakTimerApp:
         self.auto_rest = min(self.break_carry, self.auto_rest + max(0, int(seconds)))
         self._save_timer_state()
 
-    def _settle_auto_rest(self):
-        """手动开始专注 (6.8): 非手动结束的专注留下的那部分休息时间, 先按暂停休息的结转比例折算一次."""
+    def _settle_auto_rest(self, paused: bool = False):
+        """手动开始专注 (6.8): 非手动结束的专注留下的那部分休息时间, 先按暂停休息的结转比例折算一次.
+        paused: 合约开始时暂停了正在进行的专注 (_pause_focus_for_contract), 提示文字不同."""
         a = min(int(self.auto_rest), int(self.break_carry))
         self.auto_rest = 0
         if a <= 0:
@@ -2643,8 +2644,8 @@ class BreakTimerApp:
         self._set_break_carry(self.break_carry - (a - keep))
         if self.contract.active:
             self.contract.pre_cap(self.break_carry)
-        toast.info(tr("休息时间折算: 专注自动结束留下的 {a} ×{r:g} = {k}.", a=fmt_ms(a),
-                      r=float(config.BREAK_CARRY_RATE), k=fmt_ms(keep)), timeout=8000)
+        text = tr("休息时间折算: 这段专注换来的 {a} ×{r:g} = {k}.") if paused else tr("休息时间折算: 专注自动结束留下的 {a} ×{r:g} = {k}.")
+        toast.info(text.format(a=fmt_ms(a), r=float(config.BREAK_CARRY_RATE), k=fmt_ms(keep)), timeout=8000)
 
     def _save_timer_state(self):
         """timer_state.json: 积攒的休息时间 + 本周连点领取的记录 + 进行中的专注."""
@@ -4191,6 +4192,8 @@ class BreakTimerApp:
             return
         msg = tr("危机等级 {lv}", lv=lv)                        # 不显示时长和结束时刻
         msg += "\n" + tr("完成后休息 +{n} 分钟", n=contract_mod.rest_minutes_total(lv, terms, contract_mod.clean_theme(config.CONTRACT_THEME)))
+        if self.state == RUNNING:                               # 1.0.407: 正在专注时开始合约 = 这段专注立即暂停并折算休息, 再开始新一轮
+            msg += "\n" + tr("正在专注: 开始后这段专注立即暂停并折算休息, 然后开始新一轮专注.")
         if not toast.ask(msg, title=tr("▶  开始行动"), ok_text=tr("开始行动"), danger=True):
             return
         rec = self._record_lines(terms)
@@ -4276,6 +4279,7 @@ class BreakTimerApp:
             self._stop_recorder("camera")
             return
         lv = contract_mod.level_of(terms)
+        paused = self._pause_focus_for_contract()          # 正在专注: 这段专注先暂停并折算休息, 合约开始后接着开始新一轮 (1.0.407)
         # 联合行动 (1.0.404): 合约开始前积攒的休息时间收起来 —— 合约中看不到, 不能用, 也不会触发支援短缺, 合约结束后原样还回去
         try:
             joint = self.comm.joint_pending(list(terms))
@@ -4302,7 +4306,7 @@ class BreakTimerApp:
             self._sync_timer_buttons()
         self._rec_started_cid = c.live.get("id")
         self._log_notice(f"CONTRACT start level {lv} terms {','.join(terms) or '-'} until {c.end_at:%Y-%m-%d %H:%M}"
-                         + (f" gift {gift}s" if gift else ""))
+                         + (f" gift {gift}s" if gift else "") + (" (focus paused, new round)" if paused else ""))
         self._contract_seen = (c.live.get("id"), "active")
         try:
             if self.comm.joint_started(list(c.terms), c.live.get("id"), c.end_at):      # 联合行动: 按约开始了
@@ -4311,9 +4315,12 @@ class BreakTimerApp:
                 self._set_break_carry(self.break_carry + int(c.unstash()))
         except Exception as e:      # noqa: BLE001
             self._log_window(f"ERROR    joint_started {type(e).__name__}: {e}")
+        if paused:
+            self._start_focus_for_contract()
         self._contract_changed()
         self._sync_recorders()
-        toast.success(tr("合约开始.") + ("\n" + tr("积攒的休息时间 +{t}.", t=fmt_ms(gift)) if gift else ""))
+        toast.success(tr("合约开始.") + ("\n" + tr("积攒的休息时间 +{t}.", t=fmt_ms(gift)) if gift else "")
+                      + ("\n" + tr("原来的专注已暂停并折算休息, 新一轮专注已开始.") if paused else ""))
         if self.sync.peers():
             self.sync.sync_now()
 
@@ -4328,6 +4335,31 @@ class BreakTimerApp:
         if not toast.ask(msg, title=tr("■  提前结束"), danger=True):
             return
         self.end_contract("abandoned")
+
+    def _pause_focus_for_contract(self) -> bool:
+        """开始合约时正在专注 (1.0.407): 这段专注立即暂停 —— 学习时长照常记 (合约还没开始, 按普通规则), 它换来的休息时间
+        存进积攒的休息时间并马上折算 (和专注自动结束后手动开始专注一样, MECHANICS 6.8), 回到空闲;
+        合约开始后由 _start_focus_for_contract 接着开始新一轮专注. 返回 True = 暂停了一段专注."""
+        if self.state != RUNNING or self.start_wall is None:
+            return False
+        start = self.start_wall
+        elapsed = time.monotonic() - self.start_mono
+        self._close_check_win()
+        self.cancel_update()
+        _minutes, brk = self._book_focus(start, elapsed)
+        self._mine()
+        self.reset_to_idle()
+        self._set_break_carry(self.break_carry + brk)
+        self._add_auto_rest(brk)
+        self._settle_auto_rest(paused=True)
+        self._refresh_if_visible("stats", "cal")
+        return True
+
+    def _start_focus_for_contract(self):
+        """合约已经开始: 接着开始新一轮专注 (和手动开始专注一样: 阻滞从这一刻起算)."""
+        self._enter_focus(datetime.now(), time.monotonic())
+        if self.contract.slow_bind(self.start_wall):
+            toast.warn(tr("阻滞: 合约内这段专注的时间按 {p}% 增长", p=int(round(contract_mod.RANDOM_SLOW * 100))), timeout=10000)
 
     def _stop_break_for_contract(self):
         """结束合约前先停止休息 (MECHANICS 18.1): 剩下的休息时间按"暂停休息"算.

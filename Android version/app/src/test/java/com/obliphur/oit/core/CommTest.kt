@@ -2421,6 +2421,41 @@ class CommTest {
         assertEquals("用户改过的另一个版本", cb.readPersona("Claudia.txt"))                                                   // 真改过的不覆盖
     }
 
+    /** 主动谈话语言 (1.0.407, MECHANICS 24.19): 只加在主动发起那一条的触发消息里, 用户说的话不受影响; 随设备同步. 对应 comm.py 自检. */
+    @Test
+    fun proactiveLanguage() {
+        val td = Files.createTempDirectory("oit").toFile()
+        File(td, "p").mkdirs()
+        File(td, "p/语言.txt").writeText("你是语言.\n")
+        val c0 = comm(File(td, "d0").also { it.mkdirs() }, File(td, "p"))
+        c0.set(persona = "语言.txt", splitSend = false)
+        c0.snapshot = { CommSnap("idle") }
+        assertEquals("", c0.proLang)
+        assertEquals("", c0.syncDoc()["prolang"])
+        script.clear(); script.add("随便聊聊.")
+        val n0 = calls.size
+        c0.proFireForTest("L0", clock, clock, 1.0, "[系统] 请主动发一条消息.")
+        wait(c0)
+        assertTrue("没指定语言: 触发消息原样", calls.size == n0 + 1 && "OIT 设置" !in calls.last().second.last().second)
+        val c = comm(File(td, "d1").also { it.mkdirs() }, File(td, "p"))
+        c.set(persona = "语言.txt", splitSend = false, proLang = "  English ")
+        c.snapshot = { CommSnap("idle") }
+        assertEquals("English", c.proLang)
+        assertEquals("English", c.syncDoc()["prolang"])
+        script.clear(); script.add("Let us talk."); script.add("好的.")
+        val n1 = calls.size
+        c.proFireForTest("L1", clock, clock, 1.0, "[系统] 请主动发一条消息.")
+        wait(c)
+        assertTrue("主动发起: 带上语言", calls.size == n1 + 1 && "「English」" in calls.last().second.last().second && "只限这一条" in calls.last().second.last().second)
+        assertEquals("", c.send("你好"))
+        wait(c)
+        assertTrue("用户说的话: 不强制语言", calls.size == n1 + 2 && "「English」" !in calls.last().second.last().second.substringAfterLast("你好"))
+        c.applyDoc(mapOf("prolang" to "日本語"))
+        assertEquals("日本語", c.proLang)
+        c.applyDoc(mapOf("prolang" to ""))
+        assertEquals("", c.proLang)
+    }
+
     /** 共时闹钟 (1.0.359): 闹钟跟随被设为共时闹钟的对象的实际起床时间 (Claudia 起床波动 [-20,0]); 对应 comm.py 自检. */
     /** 日程跟随 (1.0.406, MECHANICS 24.17) + 合约改了对方的状态后, 专注时发的消息不再等原来日程的休息 (24.3.9). */
     @Test
