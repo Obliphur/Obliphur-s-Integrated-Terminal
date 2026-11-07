@@ -4951,13 +4951,18 @@ class Comm(
         reqTs = messages.filter { it.role == "me" }.maxOfOrNull { it.ts } ?: 0L
         val profile = aiConfig().profile()
         var system = systemHead(personaName()) + readPersonaFull(personaName())
-        system += memoryBlock()
-        system += jointSystemNote()
+        var dynamic = memoryBlock() + jointSystemNote()
         if (userProfile.isNotBlank() && firstTurn(messages))   // 身份背景: 只在这段对话的第一轮发一次
-            system += "\n\n以下是用户的身份背景(用户自己填写):\n" + userProfile.trim()
+            dynamic += "\n\n以下是用户的身份背景(用户自己填写):\n" + userProfile.trim()
         val msgs = ArrayList(apiMessages())
         val note = if (rt != null) rtNote(now()) else ""          // 有日程文件: 此刻的状态由 OIT 算 (只贴在最后一条用户消息后面, 不写进记录)
         if (note.isNotEmpty() && msgs.isNotEmpty() && msgs.last().first == "user") msgs[msgs.size - 1] = "user" to (msgs.last().second + "\n\n" + note)
+        if (Ai.cachePlan(profile).staticSystem) {                 // Gemini: system 逐字节不变才会命中隐式缓存, 变的部分贴到最后一条用户消息
+            if (dynamic.isNotEmpty()) {
+                if (msgs.isNotEmpty() && msgs.last().first == "user") msgs[msgs.size - 1] = "user" to (msgs.last().second + dynamic)
+                else msgs.add("user" to dynamic.trim())
+            }
+        } else system += dynamic
         if (extra != null) {
             if (msgs.isNotEmpty() && msgs.last().first == "user") msgs[msgs.size - 1] = "user" to (msgs.last().second + "\n\n" + extra.api)
             else msgs.add("user" to extra.api)
@@ -5119,9 +5124,13 @@ class Comm(
                 }
             }
         } else if (splitSend && usesPrefix(personaName()) && r.kind in FOLLOW_KINDS && r.err.isEmpty() && !refused && aiProblem().isEmpty() && leader()) {
-            // 规则 VIII: 隔一会儿再调用第二次, 让对方可以把话分开说. 延时是为了让提示缓存落盘:
-            // DeepSeek 的磁盘缓存是异步写的, 紧跟着发会赶不上; Anthropic 的 cache_control 随第一次请求写好, 不用等.
-            val delay = if (aiConfig().profile().protocol == "anthropic") 0L else followDelayMs
+            // 规则 VIII: 隔一会儿再调用第二次, 让对方可以把话分开说. 等多久按模型类型来 (Ai.cachePlan):
+            // Anthropic / OpenAI / Gemini 的缓存随第一次请求就写好, 不用等; DeepSeek 的磁盘缓存异步, 等几秒; 中转照旧等.
+            val delay = when {
+                followDelayMs == 0L -> 0L
+                followDelayMs != FOLLOW_DELAY_MS -> followDelayMs
+                else -> (Ai.cachePlan(aiConfig().profile()).delay * 1000).toLong()
+            }
             followAt = nowMs() + delay
             followEpoch = epoch
         }
@@ -5455,13 +5464,19 @@ class Comm(
     private fun bgRequest(ctx: BgCtx, kind: String, body: String) {
         val profile = aiConfig().profile()
         var system = systemHead(ctx.name) + readPersonaFull(ctx.name)
-        system += memoryBlock(ctx.st)
+        var dynamic = memoryBlock(ctx.st)
         if (userProfile.isNotBlank() && firstTurn(ctx.st.messages))   // 身份背景: 只在这段对话的第一轮发一次
-            system += "\n\n以下是用户的身份背景(用户自己填写):\n" + userProfile.trim()
+            dynamic += "\n\n以下是用户的身份背景(用户自己填写):\n" + userProfile.trim()
         val api = compose(now(), body)
         val msgs = ArrayList(apiMessages(ctx.st.messages))
         val note = if (ctx.rt != null) rtNote(now(), ctx.rt, ctx.pid) else ""
         if (note.isNotEmpty() && msgs.isNotEmpty() && msgs.last().first == "user") msgs[msgs.size - 1] = "user" to (msgs.last().second + "\n\n" + note)
+        if (Ai.cachePlan(profile).staticSystem) {                 // Gemini: 动态内容不能进 system
+            if (dynamic.isNotEmpty()) {
+                if (msgs.isNotEmpty() && msgs.last().first == "user") msgs[msgs.size - 1] = "user" to (msgs.last().second + dynamic)
+                else msgs.add("user" to dynamic.trim())
+            }
+        } else system += dynamic
         if (msgs.isNotEmpty() && msgs.last().first == "user") msgs[msgs.size - 1] = "user" to (msgs.last().second + "\n\n" + api)
         else msgs.add("user" to api)
         val clear0 = ctx.st.clearTs

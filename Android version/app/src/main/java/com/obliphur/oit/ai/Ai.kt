@@ -33,10 +33,20 @@ object Ai {
         "claude" to Provider("Claude", "https://api.anthropic.com", "anthropic", "claude-sonnet-5-5",
             listOf("claude-sonnet-5-5", "claude-haiku-5-5", "claude-opus-5-5")),
         "chatgpt" to Provider("ChatGPT", "https://api.openai.com/v1", "openai", "gpt-4o-mini", listOf("gpt-4o-mini", "gpt-4o")),
+        "gemini" to Provider("Gemini", "https://generativelanguage.googleapis.com", "gemini", "gemini-3.5-flash",
+            listOf("gemini-3.5-flash", "gemini-3.1-pro", "gemini-3.5-flash-lite")),
         "deepseek" to Provider("DeepSeek", "https://api.deepseek.com", "openai", "deepseek-chat",
             listOf("deepseek-chat", "deepseek-reasoner")),
         "custom" to Provider("自定义供应商", "", "openai", "", emptyList()),
     )
+
+    /** 模型类型 (family): 决定接口协议和提示缓存的策略, 一个类型只走自己的那一条路. 自定义供应商必须由用户明确选 (同 ai_assist.FAMILIES). */
+    val FAMILIES = listOf("claude", "chatgpt", "gemini", "deepseek", "other")
+    val FAMILY_LABELS = mapOf("claude" to "Claude", "chatgpt" to "ChatGPT", "gemini" to "Gemini",
+        "deepseek" to "DeepSeek", "other" to "其他")
+    val FAMILY_PROTOCOL = mapOf("claude" to "anthropic", "chatgpt" to "openai", "gemini" to "gemini",
+        "deepseek" to "openai", "other" to "openai")
+
     const val MAX_ITEMS = 30
     const val MAX_EXTRA_DOMAINS = 12
     const val REASON_LEN = 30
@@ -105,8 +115,15 @@ object Ai {
 
     private fun endpoint(p: Profile): String {
         val base = p.baseUrl.trim().trimEnd('/')
-        return if (p.protocol == "anthropic") base + (if (base.endsWith("/v1")) "/messages" else "/v1/messages")
-        else "$base/chat/completions"
+        return when (p.protocol) {
+            "anthropic" -> base + (if (base.endsWith("/v1")) "/messages" else "/v1/messages")
+            "gemini" -> {                                        // 原生 Gemini: /v1beta/models/<model>:generateContent
+                val root = if (base.endsWith("/v1beta")) base else "$base/v1beta"
+                val model = p.model.removePrefix("models/")
+                "$root/models/$model:generateContent"
+            }
+            else -> "$base/chat/completions"
+        }
     }
 
     private fun errorText(body: String): String = try {
@@ -125,9 +142,40 @@ object Ai {
         host == "deepseek.com" || host.endsWith(".deepseek.com")
     }.getOrDefault(false)
 
+    /** 这个配置是哪一类模型: 存的 family 优先; 没有就按预设供应商 / 协议 / 官方地址认 (同 ai_assist.family_of). */
+    fun familyOf(p: Profile): String {
+        if (p.family in FAMILY_PROTOCOL) return p.family
+        if (p.provider in FAMILY_PROTOCOL) return p.provider
+        if (isDeepSeek(p)) return "deepseek"
+        return when (p.protocol) {
+            "anthropic" -> "claude"
+            "gemini" -> "gemini"
+            else -> "other"
+        }
+    }
+
+    /** 提示缓存的策略 (同 ai_assist.cache_plan): claude 显式 cache_control; chatgpt 自动前缀缓存 + prompt_cache_key;
+     *  gemini 隐式缓存 (systemInstruction 必须逐字节相同); deepseek 自动前缀缓存但磁盘缓存异步 (第二次调用等几秒);
+     *  other 不假设有缓存. */
+    data class CachePlan(val family: String, val explicit: Boolean, val key: Boolean, val staticSystem: Boolean, val delay: Double)
+
+    fun cachePlan(p: Profile): CachePlan {
+        val fam = familyOf(p)
+        return CachePlan(fam, explicit = fam == "claude", key = fam == "chatgpt", staticSystem = fam == "gemini",
+            delay = if (fam == "deepseek" || fam == "other") 3.0 else 0.0)
+    }
+
+    /** prompt_cache_key: 同一段稳定的 system + 同一个模型 → 同一个键 (OpenAI 按它路由, 提高命中). */
+    fun cacheKey(system: String, model: String): String =
+        java.security.MessageDigest.getInstance("SHA-256").digest((model + "\n" + system).toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }.take(40)
+
     /** 响应里的用量 → (输入 token 总数, 其中命中缓存的). Anthropic cache_read_input_tokens (输入 = input + 读缓存 + 写缓存),
-     *  DeepSeek prompt_cache_hit_tokens, OpenAI prompt_tokens_details.cached_tokens; 没有就是 0 (同 ai_assist.usage_of). */
+     *  Gemini usageMetadata.promptTokenCount / cachedContentTokenCount, DeepSeek prompt_cache_hit_tokens,
+     *  OpenAI prompt_tokens_details.cached_tokens; 没有就是 0 (同 ai_assist.usage_of). */
     fun usageOf(d: JSONObject): Pair<Long, Long> {
+        val meta = d.optJSONObject("usageMetadata")                 // 原生 Gemini: 没有 usage 字段
+        if (meta != null) return meta.optLong("promptTokenCount") to meta.optLong("cachedContentTokenCount")
         val u = d.optJSONObject("usage") ?: return 0L to 0L
         if (u.has("input_tokens")) {
             val read = u.optLong("cache_read_input_tokens")
@@ -225,11 +273,14 @@ object Ai {
         }
     }
 
-    /** 一条带图片的用户消息的 content (两种协议的写法不同). */
+    /** 一条带图片的用户消息的 content (各协议的写法不同). */
     private fun imageContent(p: Profile, img: ImagePart, text: String): JSONArray =
         if (p.protocol == "anthropic") JSONArray()
             .put(JSONObject().put("type", "image").put("source", JSONObject().put("type", "base64").put("media_type", img.mime).put("data", img.b64)))
             .put(JSONObject().put("type", "text").put("text", text))
+        else if (p.protocol == "gemini") JSONArray()
+            .put(JSONObject().put("inlineData", JSONObject().put("mimeType", img.mime).put("data", img.b64)))
+            .put(JSONObject().put("text", text))
         else JSONArray()
             .put(JSONObject().put("type", "image_url").put("image_url", JSONObject().put("url", "data:${img.mime};base64,${img.b64}")))
             .put(JSONObject().put("type", "text").put("text", text))
@@ -246,38 +297,76 @@ object Ai {
         return if (t.lowercase().replace(" ", "") == "[notext]") "" else t
     }
 
+    /** 原生 Gemini 的请求体: 隐式缓存由 Google 按完全相同的 systemInstruction 建, 请求里不用标缓存位置. */
+    private fun geminiBody(p: Profile, system: String, messages: List<Pair<String, String>>,
+                           maxTokens: Int, temperature: Double): JSONObject {
+        val contents = JSONArray()
+        for ((i, m) in messages.withIndex()) {
+            val (role, content) = m
+            val img = imageLocal.get()
+            val parts = JSONArray()
+            if (img != null && i == messages.size - 1 && role == "user") {
+                val ip = imageContent(p, img, content)
+                for (k in 0 until ip.length()) parts.put(ip.opt(k))
+            } else parts.put(JSONObject().put("text", content))
+            contents.put(JSONObject().put("role", if (role == "assistant") "model" else "user").put("parts", parts))
+        }
+        return JSONObject()
+            .apply { if (system.isNotBlank()) put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", system)))) }
+            .put("contents", contents)
+            .put("generationConfig", JSONObject().put("maxOutputTokens", maxTokens).put("temperature", temperature))
+    }
+
     private fun buildBody(p: Profile, system: String, messages: List<Pair<String, String>>, maxTokens: Int, temperature: Double,
                           cache: Boolean, thinkOff: Boolean, thinkOn: Boolean): JSONObject {
-        val body = JSONObject().put("model", p.model).put("max_tokens", maxTokens)
-        // DeepSeek 的思考模式默认开: 思考 token 按输出价计费, 而且会忽略 temperature (人设语气不稳), 所以显式关掉
-        if (thinkOn) {                                  // 开思考: Anthropic 协议要 budget_tokens 且不能带 temperature; OpenAI 协议的 temperature 也不带
-            if (isDeepSeek(p)) {
-                if (p.protocol == "anthropic") body.put("reasoning", JSONObject().put("effort", "medium"))
-                else body.put("thinking", JSONObject().put("type", "enabled"))
-            } else body.put("thinking", thinkOnField(p.model))
-        } else if (isDeepSeek(p)) {
-            if (p.protocol == "anthropic") body.put("reasoning", JSONObject().put("effort", "none"))
-            else body.put("thinking", JSONObject().put("type", "disabled"))
-        } else if (thinkOff) body.put("thinking", JSONObject().put("type", "disabled"))
+        val fam = familyOf(p)
+        if (p.protocol == "gemini") return geminiBody(p, system, messages, maxTokens, temperature)
         val arr = JSONArray()
         if (p.protocol == "anthropic") {
+            val body = JSONObject().put("model", p.model).put("max_tokens", maxTokens)
             if (cache) body.put("system", JSONArray().put(JSONObject().put("type", "text").put("text", system)
                 .put("cache_control", JSONObject().put("type", "ephemeral"))))
             else body.put("system", system)
-        } else {
-            if (!thinkOn) body.put("temperature", temperature)
-            arr.put(JSONObject().put("role", "system").put("content", system))
+            for ((i, m) in messages.withIndex()) {
+                val (role, content) = m
+                val img = imageLocal.get()
+                if (img != null && i == messages.size - 1 && role == "user") arr.put(JSONObject().put("role", role).put("content", imageContent(p, img, content)))
+                else if (cache && i == messages.size - 1)
+                    arr.put(JSONObject().put("role", role).put("content", JSONArray().put(JSONObject().put("type", "text").put("text", content)
+                        .put("cache_control", JSONObject().put("type", "ephemeral")))))
+                else arr.put(JSONObject().put("role", role).put("content", content))
+            }
+            body.put("messages", arr)
+            // DeepSeek 的 anthropic 中转用自己的 reasoning 字段; 官方 Anthropic 用 thinking
+            if (thinkOn) {
+                if (isDeepSeek(p)) body.put("reasoning", JSONObject().put("effort", "medium"))
+                else body.put("thinking", thinkOnField(p.model))
+            } else if (isDeepSeek(p)) body.put("reasoning", JSONObject().put("effort", "none"))
+            else if (thinkOff) body.put("thinking", JSONObject().put("type", "disabled"))
+            return body
         }
+        val body = JSONObject().put("model", p.model).put("max_tokens", maxTokens).put("temperature", temperature)
+        arr.put(JSONObject().put("role", "system").put("content", system))
         for ((i, m) in messages.withIndex()) {
             val (role, content) = m
             val img = imageLocal.get()
             if (img != null && i == messages.size - 1 && role == "user") arr.put(JSONObject().put("role", role).put("content", imageContent(p, img, content)))
-            else if (cache && p.protocol == "anthropic" && i == messages.size - 1)
-                arr.put(JSONObject().put("role", role).put("content", JSONArray().put(JSONObject().put("type", "text").put("text", content)
-                    .put("cache_control", JSONObject().put("type", "ephemeral")))))
             else arr.put(JSONObject().put("role", role).put("content", content))
         }
         body.put("messages", arr)
+        when (fam) {
+            "chatgpt" -> if (cache) body.put("prompt_cache_key", cacheKey(system, p.model))   // OpenAI 不认 thinking 字段
+            "deepseek" -> {
+                if (thinkOn) body.remove("temperature")
+                body.put("thinking", JSONObject().put("type", if (thinkOn) "enabled" else "disabled"))
+            }
+            else -> {                                      // 中转 / 本地模型: 默认关思考, 不认就 400 后去掉重试
+                if (thinkOn) {
+                    body.remove("temperature")
+                    body.put("thinking", thinkOnField(p.model))
+                } else if (thinkOff) body.put("thinking", JSONObject().put("type", "disabled"))
+            }
+        }
         return body
     }
 
@@ -296,6 +385,8 @@ object Ai {
         if (p.protocol == "anthropic") {
             conn.setRequestProperty("x-api-key", key)
             conn.setRequestProperty("anthropic-version", ANTHROPIC_VERSION)
+        } else if (p.protocol == "gemini") {
+            conn.setRequestProperty("x-goog-api-key", key)      // 原生 Gemini: Key 走请求头, 不放 URL
         } else if (key.isNotEmpty()) conn.setRequestProperty("Authorization", "Bearer $key")
         val code: Int
         val text: String
@@ -315,11 +406,27 @@ object Ai {
         return try { JSONObject(text) } catch (e: Exception) { throw AiError("format", "服务商返回了无法识别的内容") }
     }
 
+    /** generateContent 的回复 → 文字: candidates[0] 里所有不是 thought 的 text (思考摘要不要). */
+    private fun geminiText(d: JSONObject): String {
+        val cands = d.optJSONArray("candidates")
+        if (cands == null || cands.length() == 0) {
+            val reason = d.optJSONObject("promptFeedback")?.optString("blockReason").orEmpty()
+            throw AiError("format", "Gemini 没有返回内容" + if (reason.isNotEmpty()) " (被拦截: $reason)" else "")
+        }
+        val parts = cands.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts") ?: return ""
+        val sb = StringBuilder()
+        for (i in 0 until parts.length()) {
+            val part = parts.optJSONObject(i) ?: continue
+            if (!part.optBoolean("thought", false)) sb.append(part.optString("text"))
+        }
+        return sb.toString()
+    }
+
     private fun chatOnce(p: Profile, system: String, messages: List<Pair<String, String>>,
                          maxTokens: Int, temperature: Double, timeoutMs: Int,
                          cache: Boolean, onUsage: ((Long, Long) -> Unit)?, thinkOff: Boolean, thinkOn: Boolean = false): String {
         val d = send(p, buildBody(p, system, messages, maxTokens, temperature, cache, thinkOff, thinkOn), timeoutMs)
-        val out = try {
+        val out = if (p.protocol == "gemini") geminiText(d) else try {
             if (p.protocol == "anthropic") {
                 val arr = d.optJSONArray("content") ?: JSONArray()
                 (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
@@ -357,8 +464,9 @@ object Ai {
             .put("properties", JSONObject().put("query", JSONObject().put("type", "string").put("description", "搜索关键词")))
             .put("required", JSONArray().put("query"))))
 
-    /** 这个服务商用哪种方式联网: "responses" (ChatGPT 官方) / "anthropic" (Claude 的服务端工具) / "function" (DeepSeek 等: OIT 自己搜). */
+    /** 这个服务商用哪种方式联网: "gemini" (原生 google_search) / "responses" (ChatGPT 官方) / "anthropic" (Claude 的服务端工具) / "function" (DeepSeek 等: OIT 自己搜). */
     fun webMode(p: Profile): String {
+        if (p.protocol == "gemini") return "gemini"
         val host = runCatching { URL(p.baseUrl).host.lowercase() }.getOrDefault("")
         return when {
             host == "api.openai.com" -> "responses"
@@ -469,6 +577,13 @@ object Ai {
                 used(d)
                 text = responsesText(d)
             }
+            "gemini" -> {
+                val body = geminiBody(p, system, messages, maxTokens, temperature)
+                body.put("tools", JSONArray().put(JSONObject().put("google_search", JSONObject())))
+                val d = send(p, body, timeoutMs)
+                used(d)
+                text = geminiText(d)
+            }
             "anthropic" -> {
                 val body = buildBody(p, system, messages, maxTokens, temperature, cache, false, false)
                 body.put("tools", JSONArray().put(JSONObject().put("type", "web_search_20250305").put("name", "web_search").put("max_uses", 3)))
@@ -540,10 +655,14 @@ object Ai {
 
     private fun modelsUrl(p: Profile): String {
         val base = p.baseUrl.trim().trimEnd('/')
-        return if (p.protocol == "anthropic") base + (if (base.endsWith("/v1")) "/models" else "/v1/models") else "$base/models"
+        return when (p.protocol) {
+            "anthropic" -> base + (if (base.endsWith("/v1")) "/models" else "/v1/models")
+            "gemini" -> (if (base.endsWith("/v1beta")) base else "$base/v1beta") + "/models"
+            else -> "$base/models"
+        }
     }
 
-    /** 向服务商取可用的模型 id (GET /models, 两种协议都有). 失败抛 AiError; 取到的记进 MODEL_CACHE. */
+    /** 向服务商取可用的模型 id (GET /models, 各协议都有). 失败抛 AiError; 取到的记进 MODEL_CACHE. */
     fun listModels(p: Profile): List<String> {
         checkProfile(p.copy(model = p.model.ifBlank { "-" }))
         val key = p.apiKey.trim()
@@ -555,6 +674,8 @@ object Ai {
         if (p.protocol == "anthropic") {
             conn.setRequestProperty("x-api-key", key)
             conn.setRequestProperty("anthropic-version", ANTHROPIC_VERSION)
+        } else if (p.protocol == "gemini") {
+            conn.setRequestProperty("x-goog-api-key", key)
         } else if (key.isNotEmpty()) conn.setRequestProperty("Authorization", "Bearer $key")
         val code: Int
         val text: String
@@ -570,8 +691,21 @@ object Ai {
         if (code == 401 || code == 403) throw AiError("auth", "API Key 无效或没有权限:" + redact(errorText(text), key))
         if (code !in 200..299) throw AiError("http", "服务商返回 $code:" + redact(errorText(text), key))
         val ids = try {
-            val arr = JSONObject(text).getJSONArray("data")
-            (0 until arr.length()).mapNotNull { arr.optJSONObject(it)?.optString("id")?.takeIf { s -> s.isNotEmpty() } }
+            val obj = JSONObject(text)
+            if (p.protocol == "gemini") {                      // {"models":[{"name":"models/...","supportedGenerationMethods":[...]}]}
+                val arr = obj.getJSONArray("models")
+                (0 until arr.length()).mapNotNull { i ->
+                    val m = arr.optJSONObject(i) ?: return@mapNotNull null
+                    val name = m.optString("name").substringAfterLast('/')
+                    val methods = m.optJSONArray("supportedGenerationMethods")
+                    if (name.isEmpty()) null
+                    else if (methods != null && methods.length() > 0 && (0 until methods.length()).none { methods.optString(it) == "generateContent" }) null
+                    else name
+                }
+            } else {
+                val arr = obj.getJSONArray("data")
+                (0 until arr.length()).mapNotNull { arr.optJSONObject(it)?.optString("id")?.takeIf { s -> s.isNotEmpty() } }
+            }
         } catch (e: Exception) {
             throw AiError("format", "服务商返回了无法识别的内容")
         }.distinct().sorted()
@@ -761,7 +895,8 @@ object Ai {
     }
 }
 
-data class Profile(val provider: String, val baseUrl: String, val protocol: String, val model: String, val apiKey: String)
+data class Profile(val provider: String, val baseUrl: String, val protocol: String, val model: String, val apiKey: String,
+                   val family: String = "")
 
 /** AI 服务商配置, 保存在数据目录的 ai_config.json (API Key 加密保存). */
 class AiConfig(private val file: File) {
@@ -774,11 +909,18 @@ class AiConfig(private val file: File) {
         val ps = raw.optJSONObject("profiles") ?: JSONObject()
         for ((k, def) in Ai.PROVIDERS) {
             val o = ps.optJSONObject(k)
-            profiles[k] = Profile(k,
-                if (k == "custom") o?.optString("base_url", "") ?: "" else def.baseUrl,
-                if (k == "custom") o?.optString("protocol", "openai") ?: "openai" else def.protocol,
+            val base = if (k == "custom") o?.optString("base_url", "") ?: "" else def.baseUrl
+            // 模型类型: 预设服务商固定是它自己; 自定义供应商用存的, 老配置按协议 / 地址认一次 (同 desktop)
+            var fam = if (k in Ai.FAMILY_PROTOCOL) k else (o?.optString("family", "") ?: "")
+            if (fam !in Ai.FAMILY_PROTOCOL) fam = when {
+                o?.optString("protocol", "openai") == "anthropic" -> "claude"
+                o?.optString("protocol", "openai") == "gemini" -> "gemini"
+                base.contains("deepseek.com") -> "deepseek"
+                else -> "other"
+            }
+            profiles[k] = Profile(k, base, Ai.FAMILY_PROTOCOL[fam]!!,
                 o?.optString("model", def.model) ?: def.model,
-                Ai.decryptKey(o?.optString("api_key", "") ?: ""))
+                Ai.decryptKey(o?.optString("api_key", "") ?: ""), fam)
         }
     }
 
@@ -787,7 +929,7 @@ class AiConfig(private val file: File) {
     fun save(): Boolean {
         val ps = JSONObject()
         for ((k, p) in profiles) ps.put(k, JSONObject().put("base_url", p.baseUrl).put("protocol", p.protocol)
-            .put("model", p.model).put("api_key", runCatching { Ai.encryptKey(p.apiKey) }.getOrDefault("")))
+            .put("model", p.model).put("family", p.family).put("api_key", runCatching { Ai.encryptKey(p.apiKey) }.getOrDefault("")))
         return Store.write(file, JSONObject().put("provider", provider).put("profiles", ps))
     }
 }

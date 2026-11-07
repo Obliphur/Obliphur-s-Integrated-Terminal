@@ -6,25 +6,36 @@
    "base_url": "https://api.anthropic.com",
    "model": "claude-sonnet-5-5",
    "protocol": "anthropic",
-   "api_key": ""
+   "api_key": "",
+   "family": "claude"
   },
   "chatgpt": {
    "base_url": "https://api.openai.com/v1",
    "model": "gpt-4o-mini",
    "protocol": "openai",
-   "api_key": ""
+   "api_key": "",
+   "family": "chatgpt"
+  },
+  "gemini": {
+   "base_url": "https://generativelanguage.googleapis.com",
+   "model": "gemini-3.5-flash",
+   "protocol": "gemini",
+   "api_key": "",
+   "family": "gemini"
   },
   "deepseek": {
    "base_url": "https://api.deepseek.com/v1",
    "model": "deepseek-chat",
    "protocol": "openai",
-   "api_key": ""
+   "api_key": "",
+   "family": "deepseek"
   },
   "custom": {
    "base_url": "",
    "model": "",
    "protocol": "openai",
-   "api_key": ""
+   "api_key": "",
+   "family": "other"
   }
  }
 }

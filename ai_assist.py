@@ -34,7 +34,15 @@ import securefile
 MODE_BLACKLIST = "blacklist"
 MODE_WHITELIST = "whitelist"
 
-PROTOCOLS = ("openai", "anthropic")
+PROTOCOLS = ("openai", "anthropic", "gemini")
+
+# 模型类型 (family): 决定接口协议和提示缓存的策略, 一个类型只走自己的那一条路.
+# 预设服务商的类型就是它自己; 自定义供应商的 Base URL 看不出是哪家, 必须由用户明确选.
+FAMILIES = ("claude", "chatgpt", "gemini", "deepseek", "other")
+FAMILY_LABELS = {"claude": "Claude", "chatgpt": "ChatGPT", "gemini": "Gemini",
+                 "deepseek": "DeepSeek", "other": "其他"}
+FAMILY_PROTOCOL = {"claude": "anthropic", "chatgpt": "openai", "gemini": "gemini",
+                   "deepseek": "openai", "other": "openai"}
 
 # 预设:选中后 Base URL / 协议 / 常用模型自动填入;custom 全部留空由用户自己写.
 # 模型名只是「默认建议」,输入框可改 —— 服务商改名后不用等本程序更新.
@@ -53,6 +61,13 @@ PROVIDERS = {
         "model": "gpt-4o-mini",
         "models": ["gpt-4o-mini", "gpt-4o"],
     },
+    "gemini": {
+        "label": "Gemini",
+        "base_url": "https://generativelanguage.googleapis.com",
+        "protocol": "gemini",
+        "model": "gemini-3.5-flash",
+        "models": ["gemini-3.5-flash", "gemini-3.1-pro", "gemini-3.5-flash-lite"],
+    },
     "deepseek": {
         "label": "DeepSeek",
         "base_url": "https://api.deepseek.com",
@@ -68,7 +83,7 @@ PROVIDERS = {
         "models": [],
     },
 }
-PROVIDER_ORDER = ("claude", "chatgpt", "deepseek", "custom")
+PROVIDER_ORDER = ("claude", "chatgpt", "gemini", "deepseek", "custom")
 ANTHROPIC_VERSION = "2023-06-01"
 
 MAX_ITEMS = 30                 # 每类最多返回多少条
@@ -205,8 +220,9 @@ def proxy_hint() -> str:
 # ══════════════ 配置 ══════════════
 def default_profile(provider: str) -> dict:
     p = PROVIDERS.get(provider, PROVIDERS["custom"])
+    fam = provider if provider in FAMILY_PROTOCOL else "other"
     return {"base_url": p["base_url"], "model": p["model"],
-            "protocol": p["protocol"], "api_key": ""}
+            "protocol": p["protocol"], "api_key": "", "family": fam}
 
 
 DEFAULT_TEMPLATE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -244,7 +260,7 @@ class AIConfig:
             for k in PROVIDER_ORDER:
                 prof = saved.get(k)
                 if isinstance(prof, dict):
-                    for field in ("base_url", "model", "protocol", "api_key"):
+                    for field in ("base_url", "model", "protocol", "api_key", "family"):
                         if isinstance(prof.get(field), str):
                             self.profiles[k][field] = prof[field]
                     enc = prof.get("api_key_enc")
@@ -252,10 +268,26 @@ class AIConfig:
                         self.profiles[k]["api_key"] = decrypt_key(enc)
                     elif self.profiles[k]["api_key"] and not from_template:
                         self.needs_migration = True   # 旧版明文 Key: 下次保存时加密
-                    if self.profiles[k]["protocol"] not in PROTOCOLS:
-                        self.profiles[k]["protocol"] = PROVIDERS[k]["protocol"]
                     if from_template:
                         self.profiles[k]["api_key"] = ""
+                # 模型类型: 预设服务商固定是它自己; 自定义供应商用存的, 老配置按协议 / 地址认一次
+                fam = self._norm_family(k, self.profiles[k])
+                self.profiles[k]["family"] = fam
+                self.profiles[k]["protocol"] = FAMILY_PROTOCOL[fam]
+
+    def _norm_family(self, provider: str, prof: dict) -> str:
+        if provider in FAMILY_PROTOCOL:
+            return provider
+        fam = str(prof.get("family") or "")
+        if fam in FAMILY_PROTOCOL:
+            return fam
+        if str(prof.get("protocol") or "") == "anthropic":
+            return "claude"                       # 老的自定义中转: 协议就是它的策略
+        if str(prof.get("protocol") or "") == "gemini":
+            return "gemini"
+        if is_deepseek(prof):
+            return "deepseek"
+        return "other"
 
     def _template_data(self):
         if not self.template:
@@ -308,13 +340,17 @@ class AIConfig:
         for k, v in fields.items():
             if k in prof and isinstance(v, str):
                 prof[k] = v.strip()
-        # 预设服务商的 Base URL / 协议留空时,自动回到预设值;custom 允许留空
-        if provider != "custom":
-            if not prof["base_url"]:
-                prof["base_url"] = PROVIDERS[provider]["base_url"]
-            prof["protocol"] = PROVIDERS[provider]["protocol"]
-        if prof["protocol"] not in PROTOCOLS:
-            prof["protocol"] = "openai"
+        # 模型类型决定协议: 预设服务商固定是它自己, 自定义供应商必须由用户选了才算. 不再接受单独的协议参数.
+        fam = prof.get("family") or ""
+        if provider in FAMILY_PROTOCOL:
+            fam = provider
+        elif fam not in FAMILY_PROTOCOL:
+            fam = "other"
+        prof["family"] = fam
+        prof["protocol"] = FAMILY_PROTOCOL[fam]
+        # 预设服务商的 Base URL 留空时,自动回到预设值;custom 允许留空
+        if provider != "custom" and not prof["base_url"]:
+            prof["base_url"] = PROVIDERS[provider]["base_url"]
 
 
 _CONFIGS = {}
@@ -327,6 +363,47 @@ def shared_config(path: str, template: str = None) -> "AIConfig":
     if cfg is None:
         cfg = _CONFIGS[key] = AIConfig(path, template=template)
     return cfg
+
+
+def family_of(profile: dict) -> str:
+    """这个配置是哪一类模型. 存的 family 优先; 没有就按预设供应商 / 协议 / 官方地址认."""
+    fam = str(profile.get("family") or "")
+    if fam in FAMILY_PROTOCOL:
+        return fam
+    prov = str(profile.get("provider") or "")
+    if prov in FAMILY_PROTOCOL:
+        return prov
+    if is_deepseek(profile):
+        return "deepseek"
+    proto = str(profile.get("protocol") or "")
+    if proto == "anthropic":
+        return "claude"
+    if proto == "gemini":
+        return "gemini"
+    return "other"
+
+
+def cache_plan(profile: dict) -> dict:
+    """提示缓存的策略: 一家只走自己的一条路, 不把别家的机制混进来.
+      claude   显式 cache_control (随第一次请求写好, 第二次调用不用等);
+      chatgpt  OpenAI 自动前缀缓存, 带 prompt_cache_key 让同一前缀落到同一台机器, 第二次调用不用等;
+      gemini   隐式缓存: systemInstruction 必须逐字节相同, 所以动态内容 (记忆卡等) 不能放进 system,
+               要贴到最后一条用户消息里; 缓存由 Google 自己建, 第二次调用不用等;
+      deepseek 自动前缀缓存, 磁盘缓存是异步落盘的, 第二次调用等几秒;
+      other    不假设有缓存 (中转 / 本地模型), 第二次调用照旧等几秒."""
+    fam = family_of(profile)
+    return {"family": fam,
+            "explicit": fam == "claude",          # 只有 Anthropic 协议要标 cache_control
+            "key": fam == "chatgpt",              # 只有 OpenAI 认 prompt_cache_key
+            "static_system": fam == "gemini",     # Gemini: system 不能掺任何动态内容
+            "delay": {"claude": 0.0, "chatgpt": 0.0, "gemini": 0.0,
+                      "deepseek": 3.0, "other": 3.0}[fam]}
+
+
+def cache_key(system: str, model: str = "") -> str:
+    """prompt_cache_key: 同一段稳定的 system + 同一个模型 → 同一个键 (OpenAI 按它把请求路由到同一台机器)."""
+    import hashlib
+    return hashlib.sha256((str(model or "") + "\n" + str(system or "")).encode("utf-8")).hexdigest()[:40]
 
 
 def check_profile(profile: dict):
@@ -356,6 +433,12 @@ def endpoint(profile: dict) -> str:
     base = profile["base_url"].strip().rstrip("/")
     if profile.get("protocol") == "anthropic":
         return base + ("/messages" if base.endswith("/v1") else "/v1/messages")
+    if profile.get("protocol") == "gemini":                 # 原生 Gemini: /v1beta/models/<model>:generateContent
+        root = base if base.endswith("/v1beta") else base + "/v1beta"
+        model = str(profile.get("model") or "").strip()
+        if model.startswith("models/"):
+            model = model[len("models/"):]
+        return f"{root}/models/{urllib.parse.quote(model, safe='')}:generateContent"
     return base + "/chat/completions"
 
 
@@ -381,13 +464,19 @@ def chat(profile: dict, system: str, user: str, timeout: float = 90.0, opener=No
 
 def usage_of(data: dict) -> tuple:
     """响应里的用量 → (输入 token 总数, 其中命中缓存的). 各家字段不同: Anthropic cache_read_input_tokens (输入 = input + 读缓存 + 写缓存),
-    DeepSeek prompt_cache_hit_tokens, OpenAI prompt_tokens_details.cached_tokens; 没有就是 0."""
-    u = data.get("usage") if isinstance(data, dict) else None
-    if not isinstance(u, dict):
-        return 0, 0
+    Gemini usageMetadata.promptTokenCount / cachedContentTokenCount, DeepSeek prompt_cache_hit_tokens,
+    OpenAI prompt_tokens_details.cached_tokens; 没有就是 0."""
 
     def num(v):
         return int(v) if isinstance(v, (int, float)) else 0
+    if not isinstance(data, dict):
+        return 0, 0
+    meta = data.get("usageMetadata")                        # 原生 Gemini: 没有 usage 字段
+    if isinstance(meta, dict):
+        return num(meta.get("promptTokenCount")), num(meta.get("cachedContentTokenCount"))
+    u = data.get("usage")
+    if not isinstance(u, dict):
+        return 0, 0
     if "input_tokens" in u:
         read = num(u.get("cache_read_input_tokens"))
         return num(u.get("input_tokens")) + read + num(u.get("cache_creation_input_tokens")), read
@@ -430,10 +519,33 @@ THINK_ON_REJECT = set()         # 开思考时回了 400 的 endpoint (只在内
 THINK_BUDGET = 1024             # 开思考时的思考 token 上限 (Anthropic 的最小值)
 
 
+def _gemini_parts(content) -> list:
+    """一条消息的内容 → Gemini 的 parts. 文字包成 {"text"}; 图片 (OCR) 已经是 parts 形状, 原样带过去."""
+    if isinstance(content, list):
+        return content
+    return [{"text": str(content)}]
+
+
+def _gemini_body(profile: dict, system: str, messages: list, max_tokens: int, temperature: float) -> dict:
+    """原生 Gemini (generateContent). 隐式缓存由 Google 按完全相同的 systemInstruction 建,
+    请求里不用标缓存位置; 所以 system 里不能放会变的东西 (动态内容由 comm 贴到最后一条用户消息)."""
+    contents = [{"role": "model" if m.get("role") == "assistant" else "user",
+                 "parts": _gemini_parts(m.get("content"))} for m in messages]
+    body = {"contents": contents,
+            "generationConfig": {"maxOutputTokens": max_tokens, "temperature": temperature}}
+    if str(system or "").strip():                            # 空的 systemInstruction 会被拒
+        body["systemInstruction"] = {"parts": [{"text": system}]}
+    return body
+
+
 def _build_body(profile: dict, system: str, messages: list, max_tokens: int, temperature: float,
                 cache: bool, think_off: bool = True, think_on: bool = False) -> dict:
-    """请求体. DeepSeek 的思考模式默认是开的: 聊天只要一两句话, 思考 token 按输出价计费, 而且思考模式下
-    temperature 会被忽略 (人设的语气就不稳了), 所以对它的官方地址显式关掉."""
+    """请求体 + 这个模型自己的策略. 每家的思考 / 缓存字段都只出现在自己那一支里:
+    Anthropic 只认 cache_control 和 thinking; OpenAI 不认 thinking 字段 (带了可能 400), 缓存用 prompt_cache_key;
+    Gemini 用原生 generateContent, 隐式缓存不用在请求里标; DeepSeek / 中转才要 thinking 开关."""
+    fam = family_of(profile)
+    if profile["protocol"] == "gemini":
+        return _gemini_body(profile, system, messages, max_tokens, temperature)
     if profile["protocol"] == "anthropic":
         sys_field, msgs = system, list(messages)
         if cache:
@@ -455,10 +567,20 @@ def _build_body(profile: dict, system: str, messages: list, max_tokens: int, tem
         return body
     body = {"model": profile["model"], "max_tokens": max_tokens, "temperature": temperature,
             "messages": [{"role": "system", "content": system}] + list(messages)}
-    if think_on:                                            # 思考模式下 temperature 不起作用 (有的中转还会因此报错): 不带
-        del body["temperature"]
-        body["thinking"] = {"type": "enabled"} if is_deepseek(profile) else think_on_field(profile)
-    elif is_deepseek(profile) or think_off:
+    if fam == "chatgpt":                                    # OpenAI: 不认 thinking, 只带缓存键; 前缀稳定就自动命中
+        if cache:
+            body["prompt_cache_key"] = cache_key(system, profile.get("model"))
+        return body
+    if fam == "deepseek":                                   # 官方地址: 用自己的思考开关
+        if think_on:
+            body.pop("temperature", None)                    # 思考模式下 temperature 不起作用
+        body["thinking"] = {"type": "enabled"} if think_on else {"type": "disabled"}
+        return body
+    # other: 中转 / 本地模型: 默认关思考, 不认就 400 后去掉重试 (chat_messages)
+    if think_on:
+        body.pop("temperature", None)
+        body["thinking"] = think_on_field(profile)
+    elif think_off:
         body["thinking"] = {"type": "disabled"}
     return body
 
@@ -516,23 +638,42 @@ def strip_think(text: str) -> str:
     return t.strip() if t != text else text
 
 
+def _gemini_text(data: dict) -> str:
+    """generateContent 的回复 → 文字: candidates[0] 里所有不是 thought 的 text (思考摘要不要)."""
+    cands = data.get("candidates") if isinstance(data, dict) else None
+    if not isinstance(cands, list) or not cands or not isinstance(cands[0], dict):
+        fb = data.get("promptFeedback") if isinstance(data, dict) else None
+        reason = fb.get("blockReason") if isinstance(fb, dict) else ""
+        raise AIError("format", "Gemini 没有返回内容" + (f" (被拦截: {reason})" if reason else ""))
+    content = cands[0].get("content")
+    parts = content.get("parts") if isinstance(content, dict) else None
+    if not isinstance(parts, list):
+        return ""
+    return "".join(str(p.get("text") or "") for p in parts if isinstance(p, dict) and not p.get("thought"))
+
+
 def _chat_once(profile: dict, system: str, messages: list, timeout: float, opener, max_tokens: int,
                temperature: float, cache: bool, on_usage, think_off: bool, think_on: bool = False) -> str:
     """带历史的一次请求: messages = [{"role": "user" | "assistant", "content": 文字}], 以 user 开头, 以 user 结尾.
     API 本身没有记忆, 想让模型记得前面说过的话, 就得每次把历史一起发过去 (沟通页, comm.py).
-    cache: 提示缓存 (沟通里"分条发"会连着调用两次, 第二次的前面全是第一次发过的内容). Anthropic 协议要明确标出缓存位置 (系统提示和最后一条消息),
-    OpenAI 协议的服务商 (DeepSeek, OpenAI …) 自动按相同的开头缓存, 不用标, 只要每次请求的开头一模一样.
+    cache: 提示缓存 (沟通里"分条发"会连着调用两次, 第二次的前面全是第一次发过的内容). 标缓存位置 / 带缓存键的只有
+    Anthropic (cache_control) 和 ChatGPT (prompt_cache_key); Gemini 靠相同的 systemInstruction 自动命中, 别家不假设有缓存.
     on_usage(输入 token 数, 命中缓存的 token 数): 响应里有用量时调用."""
     body = _build_body(profile, system, messages, max_tokens, temperature, cache, think_off, think_on)
     data = _send(profile, body, timeout, opener)
-    try:
-        if profile["protocol"] == "anthropic":
+    if profile["protocol"] == "anthropic":
+        try:
             text = "".join(b.get("text", "") for b in data.get("content", [])
                            if isinstance(b, dict) and b.get("type") == "text")
-        else:
+        except (KeyError, IndexError, TypeError, AttributeError):
+            raise AIError("format", "服务商返回了无法识别的内容")
+    elif profile["protocol"] == "gemini":
+        text = _gemini_text(data)
+    else:
+        try:
             text = data["choices"][0]["message"]["content"] or ""
-    except (KeyError, IndexError, TypeError, AttributeError):
-        raise AIError("format", "服务商返回了无法识别的内容")
+        except (KeyError, IndexError, TypeError, AttributeError):
+            raise AIError("format", "服务商返回了无法识别的内容")
     if on_usage:
         try:
             on_usage(*usage_of(data))
@@ -552,6 +693,8 @@ def _send(profile: dict, body: dict, timeout: float, opener, url: str = None) ->
     if profile["protocol"] == "anthropic":
         headers["x-api-key"] = key
         headers["anthropic-version"] = ANTHROPIC_VERSION
+    elif profile["protocol"] == "gemini":
+        headers["x-goog-api-key"] = key                  # 原生 Gemini: Key 走请求头, 不放 URL
     elif key:
         headers["Authorization"] = "Bearer " + key
     req = urllib.request.Request(url or endpoint(profile),
@@ -610,7 +753,10 @@ WEB_FUNCTION = {"type": "function", "function": {
 
 
 def web_mode(profile: dict) -> str:
-    """这个服务商用哪种方式联网: "responses" (ChatGPT 官方) / "anthropic" (Claude 的服务端工具) / "function" (DeepSeek 等: OIT 自己搜)."""
+    """这个服务商用哪种方式联网: "gemini" (原生 google_search) / "responses" (ChatGPT 官方) /
+    "anthropic" (Claude 的服务端工具) / "function" (DeepSeek 等: OIT 自己搜)."""
+    if profile.get("protocol") == "gemini":
+        return "gemini"
     try:
         host = (urllib.parse.urlsplit(str(profile.get("base_url") or "")).hostname or "").lower()
     except ValueError:
@@ -739,6 +885,12 @@ def _web_chat(profile: dict, system: str, messages: list, timeout: float, opener
         data = _send(profile, body, timeout, opener, url=responses_url(profile))
         used(data)
         text = _responses_text(data)
+    elif mode == "gemini":                                # 原生 Gemini: 服务端 google_search 工具
+        body = _gemini_body(profile, system, messages, max_tokens, temperature)
+        body["tools"] = [{"google_search": {}}]
+        data = _send(profile, body, timeout, opener)
+        used(data)
+        text = _gemini_text(data)
     elif mode == "anthropic":
         msgs = list(messages)
         text = ""
@@ -813,11 +965,13 @@ OCR_TOKENS = 4096
 
 
 def image_content(profile: dict, data: bytes, mime: str, text: str) -> list:
-    """一条带图片的用户消息的 content (两种协议的写法不同)."""
+    """一条带图片的用户消息的 content (各协议的写法不同)."""
     b64 = base64.b64encode(data).decode("ascii")
     if profile["protocol"] == "anthropic":
         return [{"type": "image", "source": {"type": "base64", "media_type": mime, "data": b64}},
                 {"type": "text", "text": text}]
+    if profile["protocol"] == "gemini":
+        return [{"inlineData": {"mimeType": mime, "data": b64}}, {"text": text}]
     return [{"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
             {"type": "text", "text": text}]
 
@@ -843,17 +997,21 @@ def models_url(profile: dict) -> str:
     base = profile["base_url"].strip().rstrip("/")
     if profile.get("protocol") == "anthropic":
         return base + ("/models" if base.endswith("/v1") else "/v1/models")
+    if profile.get("protocol") == "gemini":
+        return (base if base.endswith("/v1beta") else base + "/v1beta") + "/models"
     return base + "/models"
 
 
 def list_models(profile: dict, timeout: float = 20.0, opener=None) -> list:
-    """向服务商取可用的模型 id (GET /models, 两种协议都有). 失败抛 AIError. 取到的记进 MODEL_CACHE."""
+    """向服务商取可用的模型 id (GET /models, 各协议都有). 失败抛 AIError. 取到的记进 MODEL_CACHE."""
     check_profile(dict(profile, model=profile.get("model") or "-"))
     key = (profile.get("api_key") or "").strip()
     headers = {"User-Agent": "OIT/1.0"}
     if profile["protocol"] == "anthropic":
         headers["x-api-key"] = key
         headers["anthropic-version"] = ANTHROPIC_VERSION
+    elif profile["protocol"] == "gemini":
+        headers["x-goog-api-key"] = key
     elif key:
         headers["Authorization"] = "Bearer " + key
     req = urllib.request.Request(models_url(profile), headers=headers, method="GET")
@@ -874,7 +1032,12 @@ def list_models(profile: dict, timeout: float = 20.0, opener=None) -> list:
         raise AIError("network", redact(f"连接失败:{getattr(e, 'reason', e)}", key))
     try:
         data = json.loads(raw.decode("utf-8", "replace"))
-        ids = [str(m["id"]) for m in data["data"] if isinstance(m, dict) and m.get("id")]
+        if profile["protocol"] == "gemini":                  # 原生 Gemini: {"models":[{"name":"models/...","supportedGenerationMethods":[...]}]}
+            ids = [str(m["name"]).split("/")[-1] for m in data["models"]
+                   if isinstance(m, dict) and m.get("name")
+                   and (not m.get("supportedGenerationMethods") or "generateContent" in m["supportedGenerationMethods"])]
+        else:
+            ids = [str(m["id"]) for m in data["data"] if isinstance(m, dict) and m.get("id")]
     except (ValueError, KeyError, TypeError):
         raise AIError("format", "服务商返回了无法识别的内容")
     ids = sorted(dict.fromkeys(ids))
@@ -1111,14 +1274,24 @@ def _selftest():
     c = AIConfig(os.path.join(tempfile.mkdtemp(), "ai.json"))
     assert c.profile("claude")["base_url"] == "https://api.anthropic.com"
     assert c.profile("chatgpt")["base_url"] == "https://api.openai.com/v1"
+    assert c.profile("gemini")["base_url"] == "https://generativelanguage.googleapis.com"
     assert c.profile("deepseek")["base_url"] == "https://api.deepseek.com"
     assert c.profile("custom")["base_url"] == "" and c.profile("custom")["model"] == ""
+    assert c.profile("gemini")["family"] == "gemini" and c.profile("gemini")["protocol"] == "gemini"
     c.set_profile("deepseek", base_url="", api_key=" sk-x ")
     assert c.profile("deepseek")["base_url"] == "https://api.deepseek.com"
     assert c.profile("deepseek")["api_key"] == "sk-x"
+    # 自定义供应商: 模型类型决定协议, 不是随便填的协议字段
+    c.set_profile("custom", base_url="https://relay.example/v1", model="gemini-3.5-flash", family="gemini")
+    assert c.profile("custom")["protocol"] == "gemini" and c.profile("custom")["family"] == "gemini"
+    c.set_profile("custom", family="claude")
+    assert c.profile("custom")["protocol"] == "anthropic"
+    c.set_profile("custom", family="other")
+    assert c.profile("custom")["protocol"] == "openai"
     c.provider = "deepseek"
     assert c.save()
     assert AIConfig(c.path).profile()["api_key"] == "sk-x"
+    assert AIConfig(c.path).profile("custom")["family"] == "other", "模型类型要存下来"
 
     assert endpoint({"base_url": "https://api.openai.com/v1", "protocol": "openai"}) \
         == "https://api.openai.com/v1/chat/completions"
@@ -1126,6 +1299,12 @@ def _selftest():
         == "https://api.deepseek.com/chat/completions"
     assert endpoint({"base_url": "https://api.anthropic.com", "protocol": "anthropic"}) \
         == "https://api.anthropic.com/v1/messages"
+    assert endpoint({"base_url": "https://generativelanguage.googleapis.com", "protocol": "gemini",
+                     "model": "gemini-3.5-flash"}) \
+        == "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent"
+    assert endpoint({"base_url": "https://relay.example/v1beta", "protocol": "gemini",
+                     "model": "models/gemini-3.1-pro"}) \
+        == "https://relay.example/v1beta/models/gemini-3.1-pro:generateContent"
     for bad in ({"base_url": "", "model": "m", "api_key": "k"},
                 {"base_url": "http://evil.example/v1", "model": "m", "api_key": "k"},
                 {"base_url": "https://a.example", "model": "", "api_key": "k"},
@@ -1178,7 +1357,10 @@ def _selftest():
             body = json.loads(self.rfile.read(n))
             seen.append((self.path, {k.lower(): v for k, v in self.headers.items()}, body))
             answer = '{"domains":["bilibili.com"],"apps":["steam.exe"]}'
-            if self.path.endswith("/messages"):
+            if ":generateContent" in self.path:                    # 原生 Gemini
+                out = {"candidates": [{"content": {"parts": [{"text": "你好"}]}}],
+                       "usageMetadata": {"promptTokenCount": 10, "cachedContentTokenCount": 4}}
+            elif self.path.endswith("/messages"):
                 out = {"content": [{"type": "text", "text": answer}]}
             elif self.path.startswith("/redir"):
                 self.send_response(302)
@@ -1228,6 +1410,45 @@ def _selftest():
         assert body["messages"] == [{"role": "user", "content": [{"type": "text", "text": "hi", "cache_control": {"type": "ephemeral"}}]}]
         chat_messages(p, "SYS", [{"role": "user", "content": "hi"}], cache=True)
         assert seen[-1][2]["messages"] == [{"role": "system", "content": "SYS"}, {"role": "user", "content": "hi"}]
+        # 模型类型 → 缓存策略: 一家只走自己的一条路, 不把别家的字段带进来
+        mm = [{"role": "user", "content": "hi"}]
+        assert family_of({"provider": "custom", "model": "gemini-3.5-flash",
+                          "base_url": "https://relay.example/v1"}) == "other", "自定义不按模型名猜, 必须用户选"
+        assert family_of({"provider": "custom", "protocol": "anthropic"}) == "claude"
+        assert family_of({"provider": "custom", "base_url": "https://api.deepseek.com"}) == "deepseek"
+        assert cache_plan({"provider": "claude"}) == {"family": "claude", "explicit": True, "key": False, "static_system": False, "delay": 0.0}
+        assert cache_plan({"provider": "chatgpt"})["key"] and not cache_plan({"provider": "chatgpt"})["explicit"]
+        assert cache_plan({"provider": "gemini"})["static_system"] and cache_plan({"provider": "gemini"})["delay"] == 0.0
+        assert cache_plan({"provider": "deepseek"})["delay"] == 3.0
+        # ChatGPT: 不带 thinking (OpenAI 不认), 带 prompt_cache_key
+        pg = {"base_url": base, "model": "gpt-4o", "protocol": "openai", "api_key": "k", "provider": "chatgpt"}
+        b = _build_body(pg, "SYS", mm, 4096, 0.8, True)
+        assert "thinking" not in b and b["prompt_cache_key"] == cache_key("SYS", "gpt-4o"), b
+        assert "prompt_cache_key" not in _build_body(pg, "SYS", mm, 4096, 0.8, False)
+        assert "thinking" not in _build_body(pg, "SYS", mm, 4096, 0.8, True, False, True), "开思考也不带 OpenAI 不认的字段"
+        # Gemini: 原生请求体; 缓存靠相同的 systemInstruction, 请求里不标缓存位置
+        gm = {"base_url": "https://generativelanguage.googleapis.com", "model": "gemini-3.5-flash",
+              "protocol": "gemini", "api_key": "k", "provider": "gemini"}
+        b = _build_body(gm, "SYS", mm, 4096, 0.9, True)
+        assert b["systemInstruction"] == {"parts": [{"text": "SYS"}]} and b["contents"] == [{"role": "user", "parts": [{"text": "hi"}]}]
+        assert b["generationConfig"] == {"maxOutputTokens": 4096, "temperature": 0.9}
+        assert "thinking" not in b and "cache_control" not in json.dumps(b)
+        assert _gemini_text({"candidates": [{"content": {"parts": [{"text": "a"}, {"text": "想", "thought": True}, {"text": "b"}]}}]}) == "ab"
+        try:
+            _gemini_text({"promptFeedback": {"blockReason": "SAFETY"}})
+            raise AssertionError
+        except AIError as e:
+            assert "拦截" in e.message
+        assert usage_of({"usageMetadata": {"promptTokenCount": 120, "cachedContentTokenCount": 80}}) == (120, 80)
+        assert usage_of({"usageMetadata": {"promptTokenCount": 10}}) == (10, 0)
+        # 原生 Gemini 端到端: 路径 / Key 请求头 / 请求体 / 缓存用量
+        gp = {"base_url": base, "model": "gemini-3.5-flash", "protocol": "gemini", "api_key": "gk", "provider": "custom"}
+        us = []
+        assert chat_messages(gp, "SYS", mm, cache=True, on_usage=lambda *a: us.append(a)) == "你好"
+        path, hdr, body = seen[-1]
+        assert path == "/v1beta/models/gemini-3.5-flash:generateContent" and hdr["x-goog-api-key"] == "gk"
+        assert body["systemInstruction"] == {"parts": [{"text": "SYS"}]} and "cache_control" not in json.dumps(body)
+        assert us[-1] == (10, 4), "Gemini 的 cachedContentTokenCount 要算进命中"
         # DeepSeek 官方地址: 显式关掉思考 (它默认开, 思考 token 按输出计费, 而且会忽略 temperature); 别家不加
         ds = dict(p, base_url="https://api.deepseek.com", model="deepseek-flash")
         b = _build_body(ds, "SYS", [{"role": "user", "content": "hi"}], 4096, 0.8, True)
@@ -1300,7 +1521,12 @@ def _selftest():
 
         def do_GET(self):
             seen.append((self.path, {k.lower(): v for k, v in self.headers.items()}))
-            body = json.dumps({"data": [{"id": "m-b"}, {"id": "m-a"}, {"id": "m-b"}]}).encode()
+            if "/v1beta/models" in self.path:                 # 原生 Gemini
+                obj = {"models": [{"name": "models/gemini-3.5-flash", "supportedGenerationMethods": ["generateContent"]},
+                                  {"name": "models/text-embed", "supportedGenerationMethods": ["embedContent"]}]}
+            else:
+                obj = {"data": [{"id": "m-b"}, {"id": "m-a"}, {"id": "m-b"}]}
+            body = json.dumps(obj).encode()
             self.send_response(200)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
@@ -1315,7 +1541,10 @@ def _selftest():
         assert seen[-1][0] == "/v1/models" and seen[-1][1]["authorization"] == "Bearer k9"
         list_models({"base_url": base2, "protocol": "anthropic", "api_key": "k9", "provider": "custom"})
         assert seen[-1][0] == "/v1/models" and seen[-1][1]["x-api-key"] == "k9" and seen[-1][1]["anthropic-version"] == ANTHROPIC_VERSION
+        gem = {"base_url": base2, "protocol": "gemini", "api_key": "k9", "provider": "custom"}
         assert models_for({"provider": "custom", "base_url": base2, "model": "mine"}) == ["mine", "m-a", "m-b"]
+        assert list_models(gem) == ["gemini-3.5-flash"], "只留能 generateContent 的"
+        assert seen[-1][0] == "/v1beta/models" and seen[-1][1]["x-goog-api-key"] == "k9"
         assert models_for({"provider": "deepseek", "base_url": "https://api.deepseek.com", "model": "deepseek-chat"})[0] == "deepseek-chat"
     finally:
         srv2.shutdown()

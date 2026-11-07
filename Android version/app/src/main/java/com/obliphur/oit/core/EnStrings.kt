@@ -1152,6 +1152,8 @@ object EnStrings {
         "AI 模型设置" to "AI model settings",
         "Base URL" to "Base URL",
         "接口协议" to "API protocol",
+        "模型类型" to "Model type",
+        "Gemini 类型要填官方地址, 不要用 OpenAI 兼容地址." to "For the Gemini type use the official endpoint, not the OpenAI-compatible one.",
         "API Key" to "API Key",
         "显示 Key" to "Show key",
         "为防止 Key 泄露,预设服务商的 Key 只会发往它的官方地址 {host}.要用其他地址(如中转),请选择「自定义供应商」." to "To protect your key, a preset provider's key is only sent to its official address {host}. To use another address (such as a relay), choose \"Custom provider\".",

@@ -46,9 +46,9 @@ def _host(url: str) -> str:
 # ══════════════ 模型设置 ══════════════
 def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
     """返回 True 表示保存过."""
-    dlg = Modal(parent, tr("AI 模型设置"), width=540, height=470)
+    dlg = Modal(parent, tr("AI 模型设置"), width=540, height=520)
     b = dlg.body
-    state = {"cur": cfg.provider}
+    state = {"cur": cfg.provider, "family": ""}
 
     _label(b, tr("模型")).pack(fill="x")
     cb_provider = ttk.Combobox(b, state="readonly",
@@ -59,6 +59,11 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
     _label(b, tr("Base URL")).pack(fill="x")
     var_url = tk.StringVar()
     ttk.Entry(b, textvariable=var_url).pack(fill="x", pady=(2, 8))
+
+    _label(b, tr("模型类型")).pack(fill="x")
+    cb_family = ttk.Combobox(b, state="readonly",
+                             values=[tr(ai_assist.FAMILY_LABELS[f]) for f in ai_assist.FAMILIES])
+    cb_family.pack(fill="x", pady=(2, 8))
 
     _label(b, tr("型号")).pack(fill="x")
     mrow = tk.Frame(b, bg=COLORS["bg"])
@@ -87,21 +92,28 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
     def key_of():
         return ai_assist.PROVIDER_ORDER[cb_provider.current()]
 
+    def family_of_ui() -> str:
+        return state.get("family") or "other"
+
     def store_current():
         """把界面上的值记回 cfg(内存),切换供应商前调用."""
-        k = state["cur"]
-        cfg.set_profile(k, base_url=var_url.get(), model=cb_model.get(),
-                        protocol=cb_proto.get() or "openai", api_key=var_key.get())
+        cfg.set_profile(state["cur"], base_url=var_url.get(), model=cb_model.get(),
+                        api_key=var_key.get(), family=family_of_ui())
 
     def load(k):
         prof = cfg.profile(k)
+        fam = prof.get("family") or (k if k in ai_assist.FAMILY_PROTOCOL else "other")
+        state["family"] = fam
         var_url.set(prof["base_url"])
         cb_model.config(values=ai_assist.models_for(dict(prof, provider=k)))
         cb_model.set(prof["model"])
-        cb_proto.set(prof["protocol"])
-        cb_proto.config(state="readonly" if k == "custom" else "disabled")
+        cb_family.set(tr(ai_assist.FAMILY_LABELS[fam]))
+        cb_family.config(state="readonly" if k == "custom" else "disabled")
+        cb_proto.set(ai_assist.FAMILY_PROTOCOL[fam])
+        cb_proto.config(state="disabled")                 # 协议由模型类型决定, 不再单选
         var_key.set(prof["api_key"])
-        note.config(text=(tr("请填写 Base URL 与型号,协议选 openai 或 anthropic.")
+        note.config(text=(tr("请填写 Base URL 与型号,并选一个模型类型 (决定协议与缓存方式).")
+                          + "\n" + tr("Gemini 类型要填官方地址, 不要用 OpenAI 兼容地址.")
                           if k == "custom"
                           else tr("已填入 {name} 的 Base URL.")
                           ).format(name=_provider_label(k)) + "\n" +
@@ -141,7 +153,16 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
     def on_provider(_e=None):
         store_current()
         load(key_of())
+
+    def on_family(_e=None):
+        idx = cb_family.current()
+        if idx < 0:
+            return
+        state["family"] = ai_assist.FAMILIES[idx]
+        cb_proto.set(ai_assist.FAMILY_PROTOCOL[state["family"]])
+
     cb_provider.bind("<<ComboboxSelected>>", on_provider)
+    cb_family.bind("<<ComboboxSelected>>", on_family)
     load(state["cur"])
 
     saved = {"ok": False}

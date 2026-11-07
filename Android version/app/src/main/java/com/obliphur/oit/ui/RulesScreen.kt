@@ -447,7 +447,14 @@ fun AiSettingsDialog(onDismiss: () -> Unit) {
                 val custom = provider == "custom"
                 OutlinedTextField(p.baseUrl, { if (custom) p = p.copy(baseUrl = it) }, enabled = custom,
                     label = { Text("Base URL") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                if (custom) Segmented(listOf("openai" to "OpenAI", "anthropic" to "Anthropic"), p.protocol) { p = p.copy(protocol = it) }
+                if (custom) {
+                    Text(tr("模型类型"), color = o.dim, fontSize = 12.sp)
+                    Segmented(Ai.FAMILIES.map { it to tr(Ai.FAMILY_LABELS[it]!!) }, p.family.ifEmpty { "other" }) { fam ->
+                        p = p.copy(family = fam, protocol = Ai.FAMILY_PROTOCOL[fam]!!)
+                    }
+                    if (p.family == "gemini")
+                        Text(tr("Gemini 类型要填官方地址, 不要用 OpenAI 兼容地址."), color = o.dim, fontSize = 11.sp)
+                }
                 OutlinedTextField(p.model, { p = p.copy(model = it) }, label = { Text(tr("模型")) }, singleLine = true,
                     modifier = Modifier.fillMaxWidth())
                 ModelPicker({ p.copy(provider = provider) }) { p = p.copy(model = it) }

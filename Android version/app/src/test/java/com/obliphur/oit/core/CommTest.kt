@@ -1911,6 +1911,30 @@ class CommTest {
         c.flush(); other.flush()
     }
 
+    /** 模型类型 → 协议 / 缓存策略 (同 ai_assist.cache_plan): 一家只走自己的一条路. */
+    @Test
+    fun cachePlanByFamily() {
+        val cl = Ai.cachePlan(Profile("claude", "https://api.anthropic.com", "anthropic", "m", "k"))
+        assertTrue(cl.explicit && !cl.key && !cl.staticSystem && cl.delay == 0.0)
+        val gm = Ai.cachePlan(Profile("gemini", "https://generativelanguage.googleapis.com", "gemini", "gemini-3.5-flash", "k"))
+        assertTrue(gm.staticSystem && !gm.explicit && gm.delay == 0.0)
+        val oa = Ai.cachePlan(Profile("chatgpt", "https://api.openai.com/v1", "openai", "gpt-4o", "k"))
+        assertTrue(oa.key && !oa.staticSystem && !oa.explicit)
+        val ds = Ai.cachePlan(Profile("deepseek", "https://api.deepseek.com", "openai", "deepseek-chat", "k"))
+        assertEquals(3.0, ds.delay, 0.0)
+        // 自定义供应商: 明确选的 family 说了算, 不按模型名猜
+        val cu = Profile("custom", "https://relay.example/v1", "openai", "gemini-3.5-flash", "k")
+        assertEquals("other", Ai.familyOf(cu))
+        assertEquals("gemini", Ai.familyOf(cu.copy(family = "gemini")))
+        assertEquals("anthropic", Ai.FAMILY_PROTOCOL[Ai.familyOf(cu.copy(family = "claude"))])
+        // Gemini 原生用量字段
+        assertEquals(120L to 80L, Ai.usageOf(JSONObject("""{"usageMetadata":{"promptTokenCount":120,"cachedContentTokenCount":80}}""")))
+        assertEquals(10L to 0L, Ai.usageOf(JSONObject("""{"usageMetadata":{"promptTokenCount":10}}""")))
+        // prompt_cache_key 稳定, 前缀变了就变
+        assertEquals(Ai.cacheKey("SYS", "gpt-4o"), Ai.cacheKey("SYS", "gpt-4o"))
+        assertTrue(Ai.cacheKey("SYS", "gpt-4o") != Ai.cacheKey("SYS2", "gpt-4o"))
+    }
+
     /** 限时网络: 三家的联网方式 (对应 ai_assist.py 自检). */
     @Test
     fun webSearchAdapters() {
