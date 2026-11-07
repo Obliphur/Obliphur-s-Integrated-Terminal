@@ -100,7 +100,8 @@ class CommPage(tk.Frame):
         self.btn_ocr.pack(side="left", padx=(4, 0))
         # 对方发了 [share data]: 等用户点 接受 / 拒绝
         self.share_btns = tk.Frame(tools, bg=bg)
-        tk.Label(self.share_btns, text=tr("对方想看你们的数据"), bg=bg, fg=COLORS["accent"], font=config.font("small")).pack(side="left")
+        self.lbl_share_inv = tk.Label(self.share_btns, text="", bg=bg, fg=COLORS["accent"], font=config.font("small"))
+        self.lbl_share_inv.pack(side="left")
         ttk.Button(self.share_btns, text=tr("接受"), width=6, command=lambda: self._share_respond(True)).pack(side="left", padx=(6, 0))
         ttk.Button(self.share_btns, text=tr("拒绝"), width=6, command=lambda: self._share_respond(False)).pack(side="left", padx=(4, 0))
         # 联合行动: 选好的 (还没发, 带 ✕ 可以取消) 或发出去之后的进展; 结束时间自动算好写在这里 (聊天框上方)
@@ -114,7 +115,8 @@ class CommPage(tk.Frame):
         ttk.Button(self.joint_btns, text=tr("拒绝"), width=6, command=lambda: self._joint_respond(False)).pack(side="left", padx=(4, 0))
         # 对方向你告白 (特殊空闲时由 OIT 判定): 等用户点 接受 / 拒绝 (拒绝后 10 天内不再判定)
         self.love_btns = tk.Frame(tools, bg=bg)
-        tk.Label(self.love_btns, text=tr("对方向你告白"), bg=bg, fg=COLORS["accent"], font=config.font("small")).pack(side="left")
+        self.lbl_love_inv = tk.Label(self.love_btns, text="", bg=bg, fg=COLORS["accent"], font=config.font("small"))
+        self.lbl_love_inv.pack(side="left")
         ttk.Button(self.love_btns, text=tr("接受"), width=6, command=lambda: self._love_respond(True)).pack(side="left", padx=(6, 0))
         ttk.Button(self.love_btns, text=tr("拒绝"), width=6, command=lambda: self._love_respond(False)).pack(side="left", padx=(4, 0))
 
@@ -187,11 +189,10 @@ class CommPage(tk.Frame):
         threading.Thread(target=work, daemon=True).start()
 
     def _sync_status(self):
-        """状态行: 不能用的原因 > 出错 > 等了很久还没回应 (每秒看一次, 不用重画消息)."""
+        """状态行: 不能用的原因 > 出错 (每秒看一次, 不用重画消息)."""
         c = self.comm
         blocked = c.blocked()
-        wait = c.waiting_text()
-        text = blocked or (tr(c.error) if c.error else "") or (tr(wait) if wait else "")
+        text = blocked or (tr(c.error) if c.error else "")
         cfg(self.lbl_status, text=text, fg=COLORS["danger"] if (blocked or c.error) else COLORS["text_dim"])
         other, kind = c.other_status_display()
         cfg(self.lbl_other_dot, text="●" if other else "", fg=comm_mod.STATUS_COLORS.get(kind, COLORS["text_dim"]))
@@ -234,6 +235,7 @@ class CommPage(tk.Frame):
         elif self.joint_btns.winfo_manager() == "pack":
             self.joint_btns.pack_forget()
         if c.love_invite():
+            cfg(self.lbl_love_inv, text=tr("{name} 向你告白", name=c.share_ai_name()))
             if self.love_btns.winfo_manager() != "pack":
                 self.love_btns.pack(side="left", padx=(8, 0))
         elif self.love_btns.winfo_manager() == "pack":
@@ -241,6 +243,7 @@ class CommPage(tk.Frame):
         cfg(self.btn_share, text="👀" if c.share_on() else ("⏳" if c.share_asking() else "🙈"))      # ⏳ = 等对方同意
         cfg(self.btn_shift, text="⏳" if c.shift_asking() else "🕰")
         if c.share_invite():
+            cfg(self.lbl_share_inv, text=tr("{name} 想看你们的数据", name=c.share_ai_name()))
             if self.share_btns.winfo_manager() != "pack":
                 self.share_btns.pack(side="left", padx=(8, 0))
         elif self.share_btns.winfo_manager() == "pack":
@@ -504,7 +507,7 @@ class CommPage(tk.Frame):
             if why:
                 toast.warn(tr(why))
                 return
-            toast.info(tr("已向对方提出请求, 等待回复"))
+            toast.info(tr("已向 {name} 提出请求, 等待回复", name=c.share_ai_name()))
             dlg.finish(True)
 
         ttk.Button(dlg.buttons, text=tr("请求"), style="Accent.TButton", command=go).pack(side="right")

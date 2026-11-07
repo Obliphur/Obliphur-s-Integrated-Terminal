@@ -105,13 +105,11 @@ fun CommScreen(go: (String) -> Unit) {
     }
     // 不跟着每秒一次的 LocalTick 重画 (整页每秒重画一遍会有卡顿感): 只在聊天记录 / 状态变了才刷新
     var ver by remember { mutableIntStateOf(comm.version) }
-    var waitHint by remember { mutableStateOf("") }
     var otherStatus by remember { mutableStateOf(comm.otherStatusDisplay().first) }
     var otherStatusKind by remember { mutableStateOf(comm.otherStatusDisplay().second) }
     LaunchedEffect(Unit) {
         while (true) {
             if (comm.version != ver) ver = comm.version
-            comm.waitingText().let { if (it != waitHint) waitHint = it }
             val (text, kind) = comm.otherStatusDisplay()
             if (text != otherStatus) otherStatus = text
             if (kind != otherStatusKind) otherStatusKind = kind
@@ -168,7 +166,6 @@ fun CommScreen(go: (String) -> Unit) {
         val blocked = comm.blocked()
         if (blocked.isNotEmpty() || comm.error.isNotEmpty()) Text(blocked.ifEmpty { tr(comm.error) }, color = o.danger, fontSize = 12.sp,
             modifier = Modifier.padding(top = 4.dp))
-        else if (waitHint.isNotEmpty()) Text(tr(waitHint), color = o.dim, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
         val tight = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp)
         Row(verticalAlignment = Alignment.CenterVertically) {
             // ❓ 帮助 (最左边): 解释每个按钮的作用
@@ -200,13 +197,13 @@ fun CommScreen(go: (String) -> Unit) {
         }
         if (shareInv) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.padding(start = 8.dp)) {
-            Text(tr("对方想看你们的数据"), color = o.accent, fontSize = 12.sp)
+            Text(tr("{name} 想看你们的数据", "name" to comm.aiName()), color = o.accent, fontSize = 12.sp)
             AccentButton(tr("接受")) { comm.shareRespond(true).let { if (it.isNotEmpty()) core.toast(tr(it), "warn") } }
             TextButton({ comm.shareRespond(false).let { if (it.isNotEmpty()) core.toast(tr(it), "warn") } }) { Text(tr("拒绝"), color = o.dim) }
         }
         if (loveInv) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.padding(start = 8.dp)) {
-            Text(tr("对方向你告白"), color = o.accent, fontSize = 12.sp)
+            Text(tr("{name} 向你告白", "name" to comm.aiName()), color = o.accent, fontSize = 12.sp)
             AccentButton(tr("接受")) { comm.loveRespond(true).let { if (it.isNotEmpty()) core.toast(tr(it), "warn") } }
             TextButton({ comm.loveRespond(false).let { if (it.isNotEmpty()) core.toast(tr(it), "warn") } }) { Text(tr("拒绝"), color = o.dim) }
         }
@@ -234,7 +231,7 @@ fun CommScreen(go: (String) -> Unit) {
     if (coAlarm) CoAlarmDialog { coAlarm = false }
     if (shiftDlg) ShiftDialog(comm.shiftStart() ?: CommShift.LO, { shiftDlg = false }) { minutes ->
         val why = comm.shiftRequest(minutes)
-        if (why.isEmpty()) { shiftDlg = false; shiftAsk = comm.shiftAsking(); core.toast(tr("已向对方提出请求, 等待回复")) } else core.toast(tr(why), "warn")
+        if (why.isEmpty()) { shiftDlg = false; shiftAsk = comm.shiftAsking(); core.toast(tr("已向 {name} 提出请求, 等待回复", "name" to comm.aiName())) } else core.toast(tr(why), "warn")
     }
     jointAsk?.let { terms -> JointTimeDialog(terms, { core.jointAsk = null; jointAsk = null }) { start ->
         val why = comm.setJointDraft(terms, start)
@@ -483,6 +480,13 @@ fun CommSettings() {
     OitCard {
         Text(tr("💬  主动发起"), fontWeight = FontWeight.Bold, color = o.text)
         SwitchRow(tr("允许非正在聊天的人发起对话"), comm.bgPro) { comm.set(bgPro = it) }
+    }
+
+    OitCard {
+        Text(tr("📅  日程跟随"), fontWeight = FontWeight.Bold, color = o.text)
+        Text(tr("人设的日程状态改变时 (包括睡眠), 询问是否跟随; 合约期间自动关闭, 结束后再开启."), color = o.dim, fontSize = 12.sp,
+            modifier = Modifier.padding(top = 2.dp))
+        SwitchRow(tr("开启"), comm.schedFollow) { comm.set(schedFollow = it) }
     }
 
     OitCard {

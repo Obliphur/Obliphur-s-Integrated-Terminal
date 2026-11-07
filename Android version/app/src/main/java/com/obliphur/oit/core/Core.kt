@@ -299,6 +299,8 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         comm.hardBlock = { contract.has("silent") && !settings.devMode }
         comm.onProactive = { host.playCommSound() }
         comm.onJointDue = { j -> jointDue(j) }
+        comm.contractFn = { contract.active }                       // 日程跟随: 合约期间自动关闭
+        comm.onSf = { kind, text -> sfAsk(kind, text) }
         comm.dataFn = { sel ->
             if (contract.fog()) "" else CommData.build(sel, this) { pkg ->
                 runCatching { com.obliphur.oit.service.appLabel(com.obliphur.oit.OitApp.instance, pkg) }.getOrDefault(pkg)
@@ -373,6 +375,45 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             if (action == "restore") comm.resolvePersonaChange(change.name, false)
             else comm.resolvePersonaChange(change.name, true)
         }
+    }
+
+    // ---- 日程跟随 (1.0.406, MECHANICS 24.17): 对方的状态变了 → 弹窗问用户要不要跟着变 ----
+    private var sfNotice = -1
+
+    /** 对方的状态变了 (Comm.sfTick 在主端调用): 问用户跟不跟随; 上一个还没回答的提示换成这个. */
+    private fun sfAsk(kind: String, text: String) {
+        if (sfNotice >= 0 && noticeOpen(sfNotice)) dismissNotice(sfNotice)
+        sfNotice = notice(tr("📅  日程跟随"), text,
+            listOf(NoticeButton(tr("不用"), "no", false), NoticeButton(tr("跟随"), "yes", true)), tag = "follow") { act ->
+            sfNotice = -1
+            if (act == "yes") sfFollow(kind)
+        }
+    }
+
+    /** 用户点了"跟随": 把计时器带到和对方一样的状态 (等于按对应的按钮; 合约 / 外出中不能跟随). */
+    private fun sfFollow(kind: String) {
+        if (contract.active) { toast(tr("合约中不能跟随."), "warn"); return }
+        if (behavior.active() != null) { toast(tr("外出中不能跟随."), "warn"); return }
+        if (timer.sleepSince != null && kind != "sleep") timer.wake()
+        when (kind) {
+            "focus" -> if (timer.state != TState.RUNNING) timer.onAction()               // 空闲 → 开始专注; 休息中 → 暂停休息并马上开始专注
+            "rest" -> when (timer.state) {
+                TState.RUNNING -> timer.onAction()                                       // 结束专注, 直接进入休息
+                TState.IDLE -> timer.onBreakButton()                                     // 用积攒的休息时间开始休息 (没有积攒的会提示)
+                else -> {}
+            }
+            "sleep" -> if (timer.sleepSince == null) {
+                if (timer.state == TState.RUNNING) timer.onAction()
+                if (timer.state == TState.ON_BREAK) timer.endBreakEarly()
+                val why = if (timer.state == TState.IDLE) timer.startSleep() else tr("请先结束专注 / 休息再睡眠.")
+                if (why.isNotEmpty()) toast(why, "warn")
+            }
+            else -> {                                                                    // 空闲: 结束专注 / 休息
+                if (timer.state == TState.RUNNING) timer.onAction()
+                if (timer.state == TState.ON_BREAK) timer.endBreakEarly()
+            }
+        }
+        changed()
     }
 
     /** 对方现在不能主动发消息的原因 ("" = 可以). 用户专注 / 睡眠时对方仍可以发 (消息先藏起来, 回到休息 / 空闲再通知);
@@ -490,7 +531,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     /** 联合行动约定的开始时间到了 (对方已经接受): 把约定的词条放进合约页, 提示用户开始行动. */
     private fun jointDue(j: Joint) {
         if (!contract.active) { contract.setDraft(j.terms); changed() }
-        notice(tr("🤝  联合行动"), tr("约定的开始时间到了: 在合约页点「开始行动」(词条已经选好), 对方会和你同步专注 / 休息."),
+        notice(tr("🤝  联合行动"), tr("约定的开始时间到了: 在合约页点「开始行动」(词条已经选好), {name} 会和你同步专注 / 休息.", "name" to comm.aiName()),
             listOf(NoticeButton(tr("知道了"), "ok", true)), page = "contract")
     }
 
@@ -809,6 +850,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         runCatching { alarmTick() }
         runCatching { jointInviteWatch() }
         runCatching { comm.checkPersonaChanges() }.getOrNull()?.let { showPersonaChange(it) }
+        if (sfNotice >= 0 && !comm.sfLive()) { dismissNotice(sfNotice); sfNotice = -1 }      // 合约开始了 / 开关关了: 还没回答的提示作废
         beatPower()
         runCatching { checkAdapterBack(); checkAwayPriority(); checkContractConflicts() }
         checkContract()

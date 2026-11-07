@@ -1788,6 +1788,10 @@ class Comm(
         const val NET_DELAY = 2 * 60                    // 对方 [apply for network] 之后等这么久 (秒), OIT 才再次调用接口让它搜索并回复
         const val NET_DEFAULT_MIN = 5                   // [apply for network] 后面没写分钟数时开通多久
         const val NET_MAX_MIN = 30                      // 一次最多开通多久
+        /** 日程跟随 (1.0.406, MECHANICS 24.17): 对方的状态 → 提示文字 ({name} = 人设名) / 计时器的同一种状态 (stateFn 的值). */
+        val SF_TEXT = mapOf("focus" to "{name} 开始专注了, 要跟着专注吗?", "rest" to "{name} 开始休息了, 要跟着休息吗?",
+            "sleep" to "{name} 去睡觉了, 要跟着睡眠吗?", "idle" to "{name} 现在空闲了, 要跟着空闲吗?")
+        val SF_STATE = mapOf("focus" to "focus", "rest" to "break", "sleep" to "sleep", "idle" to "idle")
         const val NET_COOLDOWN = 10 * 60                // 网络关闭之后的冷却期 (秒): 期间的申请无效
         const val NET_RETRY = 60                        // 搜索那次请求失败了, 隔多久再试 (秒)
         const val NET_TRIES = 2                         // 搜索那次请求最多再试几次
@@ -1846,7 +1850,6 @@ class Comm(
         val COND_STRICT = CondSet(30, 27, 20, 60, 480.0, 180.0, 1000, 9.0)          // 对方主动告白 (1.0.397): 每次进入特殊空闲时由 OIT 判定, 条件比上面的严格
         const val MAX_INFO_ROUNDS = 2                   // 一次回复里, 对方最多可以要几次资料 ([contract])
         const val CHAT_TIMEOUT_MS = 240_000             // 一次请求最多等多久 (回复长 / 资料多时要久一点)
-        const val WAIT_HINT = 15                        // 请求发出去多少秒还没回应, 聊天页就提示一句
         const val KEEP = 600                      // 本地最多存多少条 (每次请求带多少条看 HISTORY_SENT, 和这个无关; [condition] 的信息条数也数这里)
         const val SYNC_N = 60
         const val MAX_PERSONA = 60000
@@ -1910,6 +1913,13 @@ class Comm(
     private var jointPending: Pair<String, Long>? = null          // 联合行动: 要让对方回应一句, 但对方正在回别的话: (系统消息, 毫秒时间戳), 等对方空下来再调用
     /** 分条发 (规则 VIII) 开着吗: 用户说完话, 对方的第一条收到之后再调用一次 API, 让对方可以把话分开说. 默认开; 随设备同步. */
     var splitSend = true; private set
+    /** 日程跟随 (设置 → 沟通 → 日程跟随) 开着吗: 对方的状态变了, 问用户要不要跟着变; 合约期间自动关闭. 默认关; 随设备同步. */
+    var schedFollow = false; private set
+    /** 用户有没有合约在进行 (contract.active); Core 接上: 日程跟随在合约期间自动关闭. */
+    var contractFn: () -> Boolean = { false }
+    /** 对方的状态变了, 要问用户跟不跟随: (状态, 已经带上名字的提示文字); Core 接上. */
+    var onSf: ((String, String) -> Unit)? = null
+    private var sfLast: Pair<String, String>? = null          // 上一秒对方的状态 (pid, kind); null = 没在看 (开关关着 / 合约中), 重新开始看时先记下现在的状态, 不提示
     /** 自动开思考 (设置 → 沟通 → 思考) 开着吗: 默认开. 开着时, [thinkReason] 判断需要的那几次请求开思考; 关掉就一直不开. */
     var thinkAuto = true; private set
     /** 计时器现在的状态 (idle / break / focus / sleep / out); Core 接上, 用来记空闲时间里开着沟通界面多久. */
@@ -2178,6 +2188,7 @@ class Comm(
             avatarAi = d.optString("avatar_ai", "")
             userProfile = d.optString("user_profile", "")
             splitSend = d.optBoolean("split_send", true)
+            schedFollow = d.optBoolean("sched_follow", false)
             thinkAuto = d.optBoolean("think_auto", true)
             d.optJSONObject("idle_use")?.let { idleDay = it.optString("d"); idleSec = it.optDouble("s", 0.0) }
             bgPro = d.optBoolean("bg_pro", true)
@@ -2232,7 +2243,7 @@ class Comm(
             .put("user_profile", userProfile).put("seeded", seeded).put("assistant_seeded", assistantSeeded)
             .put("claudia_migrated", claudiaMigrated).put("claudia_modified", claudiaModified)
             .put("claudia_notified", claudiaNotified).put("claudia_base", claudiaBase).put("routine_base", routineBase).put("background_base", backgroundBase)
-            .put("legacy_done", legacyDone).put("split_send", splitSend).put("think_auto", thinkAuto)
+            .put("legacy_done", legacyDone).put("split_send", splitSend).put("think_auto", thinkAuto).put("sched_follow", schedFollow)
             .put("bg_pro", bgPro).put("mute_pro", JSONArray(muted.toList()))
             .put("idle_use", JSONObject().put("d", idleDay).put("s", idleSec))
             .put("cond_days", JSONObject().also { c -> for ((k, v) in condDays) c.put(k, JSONArray(listOf(v.first, v.second))) })
@@ -2257,13 +2268,6 @@ class Comm(
         runCatching {
             if (f.length() > 200_000) f.writeText(f.readText(Charsets.UTF_8).let { it.substring(it.length / 2) }, Charsets.UTF_8)
         }
-    }
-
-    /** 请求发出去很久还没有回应时的提示 (刚发出去的几秒不提示). */
-    fun waitingText(): String {
-        if (!busy || busySince == 0L) return ""
-        val sec = ((System.currentTimeMillis() - busySince) / 1000).toInt()
-        return if (sec >= WAIT_HINT) "API 还没有回应 (已等待 $sec 秒)" else ""
     }
 
     // ---- 模型 (聊天和 AI 名单建议用的是同一份模型设置) ----
@@ -2301,6 +2305,7 @@ class Comm(
         doc["split"] = splitSend                                    // 分条发的开关: 调用 AI 的是主端, 两台设备要一致
         doc["think"] = thinkAuto                                    // 自动开思考的开关: 同上
         doc["bgpro"] = bgPro
+        doc["sfollow"] = schedFollow                                // 日程跟随的开关: 提示在主端弹, 两台设备要一致
         doc["avatar"] = showAvatar                                  // 显示头像: 设置页的开关也同步
         if (idleDay.isNotEmpty()) doc["idle"] = JSONObject().put("d", idleDay).put("s", idleSec)      // 两台设备共用一份额度 (各自累计的取大的)
         if (joint != null || jointTs != 0L) doc["joint"] = jointJson()                                // 联合行动: 后改的为准
@@ -2359,6 +2364,7 @@ class Comm(
                     val t = v.optLong("ts", 0L)
                     if (t > coTs) { coTs = t; coPid = v.optString("pid"); coDevs = v.optJSONArray("devs")?.strings() ?: emptyList(); saveCfg(); changed() }
                 }
+                key == "sfollow" && v is Boolean -> if (v != schedFollow) { schedFollow = v; saveCfg(); changed() }
                 key == "bgpro" && v is Boolean -> if (v != bgPro) { bgPro = v; saveCfg(); changed() }
                 key == "avatar" && v is Boolean -> if (v != showAvatar) { showAvatar = v; saveCfg(); changed() }
                 kind == "mute" && v is Boolean -> if (v != (rest in muted)) { if (v) muted.add(rest) else muted.remove(rest); saveCfg(); changed() }
@@ -2478,18 +2484,19 @@ class Comm(
 
     @Synchronized
     fun set(persona: String? = null, showAvatar: Boolean? = null,
-            avatarMe: String? = null, avatarAi: String? = null, userProfile: String? = null, splitSend: Boolean? = null, bgPro: Boolean? = null, thinkAuto: Boolean? = null) {
+            avatarMe: String? = null, avatarAi: String? = null, userProfile: String? = null, splitSend: Boolean? = null, bgPro: Boolean? = null, thinkAuto: Boolean? = null, schedFollow: Boolean? = null) {
         persona?.let { switchTo(it); saveChat() }
         userProfile?.let { this.userProfile = it.trim().take(MAX_PROFILE) }
         showAvatar?.let { this.showAvatar = it }
         splitSend?.let { this.splitSend = it }
         thinkAuto?.let { this.thinkAuto = it }
         bgPro?.let { this.bgPro = it }
+        schedFollow?.let { this.schedFollow = it }
         avatarMe?.let { this.avatarMe = it.trim().take(4) }
         avatarAi?.let { this.avatarAi = it.trim().take(4) }
         saveCfg()
         changed()
-        if (splitSend != null || thinkAuto != null || bgPro != null || showAvatar != null) push()
+        if (splitSend != null || thinkAuto != null || bgPro != null || showAvatar != null || schedFollow != null) push()
     }
 
     /** 这一次请求要不要开思考 (第一层: 只看规则, 不额外调用 API; 同 comm.py 的 think_reason): 返回原因, "" = 不开.
@@ -3142,7 +3149,7 @@ class Comm(
             if (share.on || shareAsking()) return ""
             val why = problem()
             if (why.isNotEmpty()) return why
-            awayKind().let { if (it.isNotEmpty()) return "对方${if (it == "sleep") "睡眠中" else "专注中"}, 现在没法征求对方的同意" }
+            awayKind().let { if (it.isNotEmpty()) return tr("{name} {st}, 现在没法征求同意", "name" to aiName(), "st" to tr(if (it == "sleep") "睡眠中" else "专注中")) }
             shareAskPid = pid; shareAskTs = nowMs(); shareAskSent = false        // 用户发起的 share data 要先争取对方同意 (MECHANICS 24.12): 对方回 [Yes] 才真的打开
             changed()
             return ""
@@ -3172,12 +3179,12 @@ class Comm(
     @Synchronized
     fun shiftRequest(minutes: Int): String {
         problem().let { if (it.isNotEmpty()) return it }
-        if (shiftAsking()) return "正在等对方回复上一次的起点平移请求"
+        if (shiftAsking()) return tr("正在等 {name} 回复上一次的起点平移请求", "name" to aiName())
         if (minutes < CommShift.LO || minutes > CommShift.HI)
             return tr("新起点要在 {lo} - {hi} 之间", "lo" to CommShift.hm(CommShift.LO), "hi" to CommShift.hm(CommShift.HI))
         val cur = shiftStart() ?: return "这个人设没有日程文件, 不能平移起点"
         if (cur == minutes) return tr("明天的起点已经是 {t} 了", "t" to CommShift.hm(minutes))
-        awayKind().let { if (it.isNotEmpty()) return "对方${if (it == "sleep") "睡眠中" else "专注中"}, 现在没法征求对方的同意" }
+        awayKind().let { if (it.isNotEmpty()) return tr("{name} {st}, 现在没法征求同意", "name" to aiName(), "st" to tr(if (it == "sleep") "睡眠中" else "专注中")) }
         shiftAskPid = pid; shiftAskTs = nowMs(); shiftAskSent = false; shiftAskTo = minutes
         changed()
         return ""
@@ -3189,8 +3196,9 @@ class Comm(
     private fun shiftAskEnd(notice: String = "") {
         shiftAskPid = ""
         if (notice.isNotEmpty()) {
-            log("SHIFT ask: $notice")
-            runCatching { onShareNotice?.invoke(notice) }
+            val text = tr(notice, "name" to aiName())                  // 指代对方一律用 {name} (人设名)
+            log("SHIFT ask: $text")
+            runCatching { onShareNotice?.invoke(text) }
         }
         changed()
     }
@@ -3217,10 +3225,10 @@ class Comm(
             "yes" -> {
                 if (!shiftCommit(to)) { shiftAskEnd("起点没有平移 (日程文件变了)"); return }
                 changed()
-                runCatching { onShareNotice?.invoke(tr("对方同意了, 日程起点明天起平移到 {t}", "t" to CommShift.hm(to))) }
+                runCatching { onShareNotice?.invoke(tr("{name} 同意了, 日程起点明天起平移到 {t}", "name" to aiName(), "t" to CommShift.hm(to))) }
             }
-            "no" -> shiftAskEnd("对方拒绝了起点平移")
-            else -> shiftAskEnd("对方没有明确同意, 起点没有平移")
+            "no" -> shiftAskEnd("{name} 拒绝了起点平移")
+            else -> shiftAskEnd("{name} 没有明确同意, 起点没有平移")
         }
     }
 
@@ -3229,7 +3237,7 @@ class Comm(
     private fun shiftTick() {
         if (shiftAskPid.isEmpty()) return
         if (shiftAskPid != pid) shiftAskPid = ""
-        else if (nowMs() - shiftAskTs > CommShift.ASK_TTL * 1000L) shiftAskEnd("对方没有回复, 起点没有平移")
+        else if (nowMs() - shiftAskTs > CommShift.ASK_TTL * 1000L) shiftAskEnd("{name} 没有回复, 起点没有平移")
         else if (!shiftAskSent && !busy && aiProblem().isEmpty() && leader()) {
             val cur = shiftStart() ?: 0
             shiftAskSent = true
@@ -3255,8 +3263,9 @@ class Comm(
     private fun shareAskEnd(notice: String = "") {
         shareAskPid = ""
         if (notice.isNotEmpty()) {
-            log("SHARE ask: $notice")
-            runCatching { onShareNotice?.invoke(notice) }
+            val text = tr(notice, "name" to aiName())
+            log("SHARE ask: $text")
+            runCatching { onShareNotice?.invoke(text) }
         }
         changed()
     }
@@ -3271,8 +3280,8 @@ class Comm(
                 changed()
                 runCatching { onShareOpen?.invoke() }
             }
-            "no" -> shareAskEnd("对方拒绝了 share data")
-            else -> shareAskEnd("对方没有明确同意, share data 没有打开")
+            "no" -> shareAskEnd("{name} 拒绝了 share data")
+            else -> shareAskEnd("{name} 没有明确同意, share data 没有打开")
         }
     }
 
@@ -3311,7 +3320,7 @@ class Comm(
     private fun shareTick() {
         if (shareAskPid.isNotEmpty()) {
             if (shareAskPid != pid) shareAskPid = ""
-            else if (nowMs() - shareAskTs > SHARE_ASK_TTL * 1000L) shareAskEnd("对方没有回复, share data 没有打开")
+            else if (nowMs() - shareAskTs > SHARE_ASK_TTL * 1000L) shareAskEnd("{name} 没有回复, share data 没有打开")
             else if (!shareAskSent && !busy && aiProblem().isEmpty() && leader()) {
                 shareAskSent = true
                 trigger("share_ask", "$SHARE_TAG 用户想打开 share data: 打开之后, 用户在 OIT 各个页面时, 会把那一页上用户和你自己的数据发给你, " +
@@ -3848,6 +3857,36 @@ class Comm(
             (if (st != null && st.label == JOINT_STATUS) " · " + tr("联合行动") else "") to kind
     }
 
+    // ---- 日程跟随 (1.0.406, MECHANICS 24.17): 对方的状态 (专注 / 休息 / 睡眠 / 空闲) 变了, 问用户要不要跟着变 ----
+
+    /** 日程跟随现在真的在看着对方吗: 开关开着, 并且没有合约 (用户自己的合约, 或联合行动里对方跟着用户的同步阶段). 合约期间自动关闭, 结束后再开启. */
+    fun sfLive(): Boolean = schedFollow && !contractFn() && !jointLive()
+
+    /** 系统提示里指代对方用的名字: 人设名 (不带后缀), 没选人设时是 "AI" (文字里写成 {name}). */
+    fun aiName(): String = personaTitle(personaName()).ifEmpty { "AI" }
+
+    /** 提示文字 (指代对方用 {name} = 人设名). */
+    fun sfText(kind: String): String = tr(SF_TEXT[kind] ?: SF_TEXT.getValue("idle"), "name" to aiName())
+
+    private fun statusKind(): String {
+        val raw = otherStatus()?.first?.kind ?: ""
+        return when (raw) { "focus", "sleep", "rest", "idle" -> raw; else -> "idle" }
+    }
+
+    /** 每秒: 日程跟随开着 (并且没有合约) 时看对方的状态; 变了就问用户要不要跟着变 (只在主端问; 用户的计时器已经是同一种状态 / 外出中不问).
+     *  开关关着 / 合约中 / 没选人设 / 换了聊天对象 = 重新开始看: 先记下对方现在的状态, 不提示 (合约里对方被改的状态也不算). */
+    private fun sfTick() {
+        if (personaName().isEmpty() || !sfLive()) { sfLast = null; return }
+        val key = pid to statusKind()
+        val prev = sfLast
+        sfLast = key
+        if (prev == null || prev == key || prev.first != key.first) return
+        val cb = onSf ?: return
+        if (!leader() || stateFn() == SF_STATE[key.second] || stateFn() == "out") return
+        log("FOLLOW 对方 ${prev.second} → ${key.second}: 问用户跟不跟随")
+        cb(key.second, sfText(key.second))
+    }
+
     // ---- 联合行动 (MECHANICS 24.9): 用户选好合约词条和开始时间发给对方, 对方回 [Yes] / [No] ----
 
     private fun jointJson(): JSONObject = joint?.json() ?: JSONObject().put("ts", jointTs)
@@ -3925,14 +3964,14 @@ class Comm(
         val head = tr("🤝 联合行动") + " $span"
         val late = (nowMs() - j.ts) / 1000.0 > 1800
         return when {
-            j.state == "wait" -> head + " · " + tr("等对方回复")
-            j.state == "invite" -> head + " · " + tr("对方邀请你一起行动")
-            j.state == "yes" -> head + " · " + tr("对方已接受, 到点后在合约页开始行动")
-            j.state == "no" || j.state == "missed" -> if (late) "" else head + " · " + tr(if (j.state == "no") "对方拒绝了" else "已错过")
+            j.state == "wait" -> head + " · " + tr("等 {name} 回复", "name" to aiName())
+            j.state == "invite" -> head + " · " + tr("{name} 邀请你一起行动", "name" to aiName())
+            j.state == "yes" -> head + " · " + tr("{name} 已接受, 到点后在合约页开始行动", "name" to aiName())
+            j.state == "no" || j.state == "missed" -> if (late) "" else head + " · " + if (j.state == "no") tr("{name} 拒绝了", "name" to aiName()) else tr("已错过")
             j.state == "run" -> head + " · " + tr("进行中")
             j.state == "rest" && jointRestLeft(j) > 0 -> {
                 val u = parseIso(j.restUntil)
-                head + " · " + tr("合约结束, 对方同步休息到 {t}", "t" to (if (u != null) "%02d:%02d".format(u.hour, u.minute) else ""))
+                head + " · " + tr("合约结束, {name} 同步休息到 {t}", "name" to aiName(), "t" to (if (u != null) "%02d:%02d".format(u.hour, u.minute) else ""))
             }
             else -> ""
         }
@@ -4223,14 +4262,19 @@ class Comm(
     /** 回到休息 / 空闲: 藏着的消息现在显示 (未读 +N, 前 5 分钟没聊过的话响一声). */
     private fun releaseHeld() {
         if (blocked().isNotEmpty()) return
+        if (messages.none { it.hold }) return
         val now = nowMs()
-        val held = messages.filter { it.hold }.takeWhile { it.due <= now }          // 打字延时没到点的和它后面的继续藏着 (按顺序一条一条出来)
+        val away = awayKind()                                                 // 对方此刻 (按日程, 合约进行中 / 合约后的同步休息按合约) 还在专注 / 睡眠吗
+        // 对方专注时发的, 现在已经不在专注了 (日程到了 / 合约让对方休息了): 不用再等原来排的时刻
+        fun dueOf(m: ChatMsg): Long = if (m.late && away.isEmpty()) minOf(m.due, now) else m.due
+        val held = messages.filter { it.hold }.takeWhile { dueOf(it) <= now }          // 打字延时没到点的和它后面的继续藏着 (按顺序一条一条出来)
         if (held.isEmpty()) return
         val first = messages.indexOf(held[0])
         held.forEach {
+            val due = dueOf(it)
             it.hold = false; it.shown = now                                   // 等用户回复的时间从这时候算起 (规则 IX)
             if (it.late) {                                                    // 对方专注时发的: 发送时间改成下一个空闲 / 休息开始的时刻, 排到最后 (还没同步给别的设备, 改 ts 没关系)
-                it.at = java.time.Instant.ofEpochMilli(it.due).atZone(java.time.ZoneId.systemDefault()).toLocalDateTime().iso()
+                it.at = java.time.Instant.ofEpochMilli(due).atZone(java.time.ZoneId.systemDefault()).toLocalDateTime().iso()
                 lastTs = maxOf(nowMs(), lastTs + 1); it.ts = lastTs
                 it.late = false
                 messages.remove(it); messages.add(it)
@@ -4559,6 +4603,8 @@ class Comm(
     internal fun jointRestForTest(restUntil: LocalDateTime, ended: LocalDateTime, terms: List<String> = emptyList(), cid: String = "c", result: String = "completed") =
         jointSet(Joint("t", pid, "rest", terms, "", "", 0L, cid, ended.minusHours(3).toString(), ended.toString(), result, ended.toString(), 0L, restUntil.toString()))
     internal fun jointClearForTest() { joint = null; jointTs = maxOf(nowMs(), jointTs + 1); saveCfg() }
+    /** 单元测试用: 直接加一条消息 (对方在专注时会被推迟, 和真正收到回复一样). */
+    @Synchronized internal fun addForTest(role: String, text: String): ChatMsg = add(role, text)
     internal fun opTermsForTest(): List<String> = opTerms("没有编号", emptyList())
     internal fun rtStoreForTest(): RoutineStore? = rtStoreGet()
 
@@ -4591,7 +4637,7 @@ class Comm(
         val left = cutLeft()
         if (left <= 0 || cutExempt()) return ""
         val u = java.time.Instant.ofEpochMilli(cutUntil).atZone(java.time.ZoneId.systemDefault())
-        return "对方切断了与你的谈话, 还有 ${maxOf(1L, Math.round(left / 60))} 分钟 (到 %02d:%02d)".format(u.hour, u.minute)
+        return tr("{name} 切断了与你的谈话, 还有 {n} 分钟 (到 {t})", "name" to aiName(), "n" to maxOf(1L, Math.round(left / 60)), "t" to "%02d:%02d".format(u.hour, u.minute))
     }
 
     /** 主线程: 对方回了 [cut off][N]: 记下切断到什么时候 (再次切断取更晚的), 并记一条给对方看的系统消息. 清空聊天不会解除切断. */
@@ -4765,7 +4811,7 @@ class Comm(
     private fun finish(r: Result) {
         busy = false
         busySince = 0L
-        if (hardBlock()) { again = false; if (r.kind == "share_ask") shareAskEnd("对方没有回复, share data 没有打开"); if (r.kind == "shift_ask") shiftAskEnd("对方没有回复, 起点没有平移"); changed(); return }       // 等回复的时候"无言为真"生效了: 这条回复不要了
+        if (hardBlock()) { again = false; if (r.kind == "share_ask") shareAskEnd("{name} 没有回复, share data 没有打开"); if (r.kind == "shift_ask") shiftAskEnd("{name} 没有回复, 起点没有平移"); changed(); return }       // 等回复的时候"无言为真"生效了: 这条回复不要了
         if (r.epoch != epoch) { again = false; if (r.kind == "share_ask") shareAskEnd(); if (r.kind == "shift_ask") shiftAskEnd(); changed(); return }       // 发出之后清空过聊天记录: 这条回复不要了
         if (r.kind == "net" && r.err.isNotEmpty()) netFailed()                    // 搜索那次请求失败: 过一会儿再试
         else if (r.err.isEmpty() && r.kind in NET_KINDS) CommText.netMinutes(r.reply)?.let { netApply(it) }     // 规则 XIV: 申请限时网络 (这条话照常显示)
@@ -4809,8 +4855,8 @@ class Comm(
                 if (r.err.isNotEmpty()) loveUnmark()           // 出错: 这次的判定作废, 下一轮 tick 再来 (这一段特殊空闲里)
                 else { loveSet(no = nowMs() + LOVE_NO_DAYS * 86_400_000L); log("LOVE 对方判断不合适, 没有告白 ($LOVE_NO_DAYS 天内不再判定)") }       // 对方回了 [refuse to reply]: 进入冷却
             }
-            if (r.kind == "share_ask") shareAskEnd(if (refused) "对方现在不方便, share data 没有打开" else "对方没有回复, share data 没有打开")      // 出错 / 对方不方便 / 没回: 这次请求作废 (不重试)
-            if (r.kind == "shift_ask") shiftAskEnd(if (refused) "对方现在不方便, 起点没有平移" else "对方没有回复, 起点没有平移")
+            if (r.kind == "share_ask") shareAskEnd(if (refused) "{name} 现在不方便, share data 没有打开" else "{name} 没有回复, share data 没有打开")      // 出错 / 对方不方便 / 没回: 这次请求作废 (不重试)
+            if (r.kind == "shift_ask") shiftAskEnd(if (refused) "{name} 现在不方便, 起点没有平移" else "{name} 没有回复, 起点没有平移")
             if (refused && (unanswered() || isCatchup)) {
                 if (isCatchup) catchup = true                 // 回复已经显示过, unanswered() 为假: 重试要靠这个记号
                 if (retryN != HOLD_N) {                        // 用户的新消息存着 (对方在专注 / 睡眠): 保持存着, 不改成 10 分钟后重试
@@ -4869,6 +4915,7 @@ class Comm(
         condTick()
         shareTick()
         shiftTick()
+        sfTick()
         if (busy || aiProblem().isNotEmpty() || !leader()) return
         jointPending?.let { (body, at) ->
             jointPending = null

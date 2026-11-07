@@ -873,6 +873,17 @@ class SettingsPage(tk.Frame):
                                    command=lambda: self._comm_flag("bg_pro")), "允许非正在聊天的人发起对话").pack(
             fill="x", padx=12, pady=(0, 8))
 
+        fr, _head = self._card(body, "📅  日程跟随")
+        tk.Label(fr, text=tr("人设的日程状态改变时 (包括睡眠), 询问是否跟随; 合约期间自动关闭, 结束后再开启."), bg=card, fg=COLORS["text_dim"],
+                 font=small, anchor="w", justify="left", wraplength=560).pack(fill="x", padx=12, pady=(0, 2))
+        v = tk.BooleanVar(value=c.sf_on())
+        self.comm_vars["sched_follow"] = v
+        self._track(tk.Checkbutton(fr, text=tr("开启"), variable=v, bg=card, fg=COLORS["text"],
+                                   selectcolor=card, activebackground=card, activeforeground=COLORS["text"],
+                                   font=config.font("body"), anchor="w",
+                                   command=lambda: self._comm_flag("sched_follow")), "开启").pack(
+            fill="x", padx=12, pady=(0, 8))
+
         fr, _head = self._card(body, "🖼  头像")
         v = tk.BooleanVar(value=bool(c.cfg.get("show_avatar")))
         self.comm_vars["show_avatar"] = v
@@ -1015,6 +1026,8 @@ class SettingsPage(tk.Frame):
             self.comm_vars["split_send"].set(c.split_on())              # 别的设备同步来了新的开关
         if self.comm_vars["think_auto"].get() != c.think_auto():
             self.comm_vars["think_auto"].set(c.think_auto())
+        if self.comm_vars["sched_follow"].get() != c.sf_on():
+            self.comm_vars["sched_follow"].set(c.sf_on())
         prof = c.ai.profile()
         text = f"{tr(_provider_label(c.ai.provider))} · {prof.get('model') or '—'}"
         text += "  ✗" if self._comm_api_missing() else "  ✓"

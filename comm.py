@@ -118,7 +118,6 @@ LOVE_TAG = "[系统·告白]"               # 告白相关的系统消息 (不�
 _ACCEPT_RE = re.compile(r"[\[［]\s*accept\s*[\]］]", re.I)       # 前置 prompt XVII: 用户提出发展亲密关系, 对方决定接受
 MAX_INFO_ROUNDS = 2                   # 一次回复里, 对方最多可以要几次资料 ([contract])
 CHAT_TIMEOUT = 240.0                  # 一次请求最多等多久 (回复长 / 资料多时要久一点)
-WAIT_HINT = 15                        # 请求发出去多少秒还没回应, 聊天页就提示一句
 KEEP = 600                            # 本地最多存多少条 (每次请求带多少条看 HISTORY_SENT, 和这个无关; [condition] 的信息条数也数这里)
 SYNC_N = 60                           # 随设备同步最近多少条
 MAX_PERSONA = 60000
@@ -138,6 +137,10 @@ MEM_PROMPT = ("你是 OIT 沟通模块的记忆整理器. 给你「现有记忆�
 PERSONA_EXT = (".txt", ".md")
 STATUS_TEXT = {"focus": "专注中", "sleep": "睡眠中", "rest": "休息中", "idle": "空闲"}
 STATUS_COLORS = {"rest": "#9CCC65", "sleep": "#283593", "focus": "#FDD835", "idle": "#9E9E9E"}   # 聊天页状态前面的小圆点
+# 日程跟随 (1.0.406, MECHANICS 24.17): 对方的状态 (按日程) 变了, 问用户要不要跟着变; 文字里指代对方一律用 {name} (人设名)
+SF_TEXT = {"focus": "{name} 开始专注了, 要跟着专注吗?", "rest": "{name} 开始休息了, 要跟着休息吗?",
+           "sleep": "{name} 去睡觉了, 要跟着睡眠吗?", "idle": "{name} 现在空闲了, 要跟着空闲吗?"}
+SF_STATE = {"focus": "focus", "rest": "break", "sleep": "sleep", "idle": "idle"}      # 对方的状态 → 计时器的同一种状态 (state_fn 的值)
 CHAT_TOKENS = 4096
 CHAT_TEMPERATURE = 0.8
 
@@ -193,7 +196,7 @@ DEFAULTS = {"persona": "", "show_avatar": False,
             "avatar_me": "", "avatar_ai": "", "pro_key": "", "retry": {}, "clear_ts": 0, "seeded": False, "assistant_seeded": False,
             "claudia_migrated": False, "claudia_modified": False, "claudia_notified": "", "claudia_base": "", "routine_base": "", "background_base": "",
             "legacy_done": False, "joint_last": [], "user_profile": "", "split_send": True,
-            "bg_pro": True, "mute_pro": [], "idle_use": {}, "joint": {},
+            "bg_pro": True, "mute_pro": [], "idle_use": {}, "joint": {}, "sched_follow": False,
             "mem_auto": "", "mem_upto": 0, "mem_ts": 0,      # 记忆卡 (跟着聊天对象走; 全部由模型自动整理)
             "shift": [],                                     # 起点平移记录 (跟着聊天对象走, 同步; 不改人设文件)
             "love": {}, "msg_gone": 0,                       # 亲密关系状态 (跟着聊天对象走, 同步) / 被 KEEP 砍掉的信息条数 (本机)
@@ -2125,6 +2128,9 @@ class Comm:
         self._cond_next = 0.0
         self.break_end_fn = lambda: None     # 用户这次休息真正结束的时刻 (datetime; 没在休息 = None); app 接上, 联合行动结束后对方的休息跟着它
         self.state_fn = lambda: ""    # 计时器现在的状态 ("idle" / "break" / "focus" / "sleep" / "out"); app 接上, 用来记空闲时间里开着沟通界面多久
+        self.contract_fn = lambda: False     # 用户有没有合约在进行 (contract.active); app 接上: 日程跟随在合约期间自动关闭
+        self.on_sf = None                    # 对方的状态变了, 要问用户跟不跟随 (kind, 已经带上名字的提示文字); app 接上
+        self._sf_last = None                 # 上一秒对方的状态 (pid, kind); None = 没在看 (开关关着 / 合约中), 重新开始看时先记下现在的状态, 不提示
         self._idle_last = None
         self._idle_push = 0
         self.busy = False
@@ -2368,13 +2374,6 @@ class Comm:
         except OSError:
             pass
 
-    def waiting_text(self) -> str:
-        """请求发出去很久还没有回应时的提示 (刚发出去的几秒不提示)."""
-        if not self.busy or not self.busy_since:
-            return ""
-        sec = int(time.monotonic() - self.busy_since)
-        return f"API 还没有回应 (已等待 {sec} 秒)" if sec >= WAIT_HINT else ""
-
     # ---- 模型 (聊天和 AI 名单建议用的是同一份模型设置) ----
     def model_options(self) -> list:
         return ai_assist.models_for(self.ai.profile())
@@ -2449,7 +2448,7 @@ class Comm:
         self.cfg.update(kw)
         self.save_cfg()
         self._changed()
-        if "split_send" in kw or "think_auto" in kw or "bg_pro" in kw or "mute_pro" in kw or "show_avatar" in kw:
+        if "split_send" in kw or "think_auto" in kw or "bg_pro" in kw or "mute_pro" in kw or "show_avatar" in kw or "sched_follow" in kw:
             self._push()
 
     def _changed(self):
@@ -2483,6 +2482,7 @@ class Comm:
         doc["split"] = self.split_on()                  # 分条发的开关: 调用 AI 的是主端, 两台设备要一致
         doc["think"] = self.think_auto()                # 自动开思考的开关: 同上
         doc["bgpro"] = self.bg_on()
+        doc["sfollow"] = self.sf_on()                   # 日程跟随的开关: 提示在主端弹, 两台设备要一致
         doc["avatar"] = bool(self.cfg.get("show_avatar"))      # 显示头像: 设置页的开关也同步
         rec = self.cfg.get("idle_use") or {}
         if rec.get("d"):
@@ -2612,6 +2612,11 @@ class Comm:
                     continue
                 if t > int((self.cfg.get("alarm_co") or {}).get("ts") or 0):
                     self.cfg["alarm_co"] = {"pid": str(val.get("pid") or ""), "devs": [str(x) for x in (val.get("devs") or [])], "ts": t}
+                    self.save_cfg()
+                    self._changed()
+            elif key == "sfollow" and isinstance(val, bool):
+                if val != self.sf_on():
+                    self.cfg["sched_follow"] = val
                     self.save_cfg()
                     self._changed()
             elif key == "bgpro" and isinstance(val, bool):
@@ -3325,6 +3330,41 @@ class Comm:
         """聊天页顶上那一行 (没有前缀 / 修饰 / 结束时间, 前面加什么颜色的小圆点看 kind)."""
         return self.other_status_display(now)[0]
 
+    # ---- 日程跟随 (1.0.406, MECHANICS 24.17): 对方的状态 (专注 / 休息 / 睡眠 / 空闲) 变了, 问用户要不要跟着变 ----
+    def sf_on(self) -> bool:
+        """设置里的日程跟随开关 (默认关, 随设备同步)."""
+        return bool(self.cfg.get("sched_follow"))
+
+    def sf_live(self) -> bool:
+        """日程跟随现在真的在看着对方吗: 开关开着, 并且没有合约 (用户自己的合约, 或联合行动里对方跟着用户的同步阶段). 合约期间自动关闭, 结束后再开启."""
+        return self.sf_on() and not self.contract_fn() and not self.joint_live()
+
+    def sf_text(self, kind: str) -> str:
+        """提示文字 (指代对方用 {name} = 人设名)."""
+        return tr(SF_TEXT.get(kind, SF_TEXT["idle"]), name=self.share_ai_name())
+
+    def _status_kind(self) -> str:
+        s = self.other_status()
+        return s["kind"] if s and s["kind"] in STATUS_TEXT else "idle"
+
+    def _sf_tick(self):
+        """每秒: 日程跟随开着 (并且没有合约) 时看对方的状态; 变了就问用户要不要跟着变 (只在主端问; 用户的计时器已经是同一种状态 / 外出中不问).
+        开关关着 / 合约中 / 没选人设 / 换了聊天对象 = 重新开始看: 先记下对方现在的状态, 不提示 (合约里对方被改的状态也不算)."""
+        if not self.persona_name() or not self.sf_live():
+            self._sf_last = None
+            return
+        key = (self.pid, self._status_kind())
+        prev, self._sf_last = self._sf_last, key
+        if prev is None or prev == key or prev[0] != key[0]:
+            return
+        if not self.on_sf or not self.leader() or self.state_fn() in (SF_STATE[key[1]], "out"):
+            return
+        self.log(f"FOLLOW 对方 {STATUS_TEXT[prev[1]]} → {STATUS_TEXT[key[1]]}: 问用户跟不跟随")
+        try:
+            self.on_sf(key[1], self.sf_text(key[1]))
+        except Exception:       # noqa: BLE001
+            pass
+
     # ---- 联合行动 (MECHANICS 24.9): 用户选好合约词条和开始时间发给对方, 对方回 [Yes] / [No] ----
     def _joint(self) -> dict:
         """现在聊的这个对象的联合行动 ({} = 没有)."""
@@ -3422,19 +3462,20 @@ class Comm:
         now = self.now()
         span = f"{a:%H:%M} - {b:%H:%M}" if a.date() == now.date() else f"{a:%m-%d %H:%M} - {b:%H:%M}"
         head = tr("🤝 联合行动") + f" {span}"
+        who = self.share_ai_name()
         late = (now - datetime.fromtimestamp(int(j.get("ts") or 0) / 1000)).total_seconds() > 1800
         if st == "wait":
-            return head + " · " + tr("等对方回复")
+            return head + " · " + tr("等 {name} 回复", name=who)
         if st == "invite":
-            return head + " · " + tr("对方邀请你一起行动")
+            return head + " · " + tr("{name} 邀请你一起行动", name=who)
         if st == "yes":
-            return head + " · " + tr("对方已接受, 到点后在合约页开始行动")
+            return head + " · " + tr("{name} 已接受, 到点后在合约页开始行动", name=who)
         if st in ("no", "missed"):
-            return "" if late else head + " · " + (tr("对方拒绝了") if st == "no" else tr("已错过"))
+            return "" if late else head + " · " + (tr("{name} 拒绝了", name=who) if st == "no" else tr("已错过"))
         if st == "run":
             return head + " · " + tr("进行中")
         if st == "rest" and self._joint_rest_left(j) > 0:
-            return head + " · " + tr("合约结束, 对方同步休息到 {t}", t=f"{_joint_time(j['rest_until']):%H:%M}")
+            return head + " · " + tr("合约结束, {name} 同步休息到 {t}", name=who, t=f"{_joint_time(j['rest_until']):%H:%M}")
         return ""
 
     def _joint_answer(self, ans: str):
@@ -3775,11 +3816,18 @@ class Comm:
         if not any(m.get("hold") for m in self.messages) or self.blocked():
             return
         now = self._ms()
+        away = self._away_kind()                           # 对方此刻 (按日程, 合约进行中 / 合约后的同步休息按合约) 还在专注 / 睡眠吗
+
+        def due_of(m) -> int:
+            d = int(m.get("due") or 0)
+            if m.get("late") and not away:                 # 对方专注时发的, 现在已经不在专注了 (日程到了 / 合约让对方休息了): 不用再等原来排的时刻
+                return min(d, now)
+            return d
         held = []
         for m in self.messages:
             if not m.get("hold"):
                 continue
-            if int(m.get("due") or 0) > now:
+            if due_of(m) > now:
                 break
             held.append(m)
         if not held:
@@ -3787,7 +3835,8 @@ class Comm:
         first = self.messages.index(held[0])
         for m in held:
             del m["hold"]
-            due = int(m.pop("due", 0) or 0)
+            due = due_of(m)
+            m.pop("due", None)
             m["shown"] = now                               # 等用户回复的时间从这时候算起 (规则 IX)
             if m.pop("late", False):                       # 对方专注时发的: 发送时间改成下一个空闲 / 休息开始的时刻, 排到最后 (还没同步给别的设备, 改 ts 没关系)
                 m["at"] = datetime.fromtimestamp(due / 1000).isoformat(timespec="seconds")
@@ -4172,7 +4221,7 @@ class Comm:
         if left <= 0 or self.cut_exempt():
             return ""
         until = datetime.fromtimestamp(int(self.cfg.get("cut_until") or 0) / 1000)
-        return f"对方切断了与你的谈话, 还有 {max(1, round(left / 60))} 分钟 (到 {until:%H:%M})"
+        return tr("{name} 切断了与你的谈话, 还有 {n} 分钟 (到 {t})", name=self.share_ai_name(), n=max(1, round(left / 60)), t=f"{until:%H:%M}")
 
     def _cut_apply(self, minutes: float):
         """主线程: 对方回了 [cut off][N]: 记下切断到什么时候 (再次切断取更晚的), 并记一条给对方看的系统消息. 清空聊天不会解除切断."""
@@ -4470,9 +4519,9 @@ class Comm:
         if self.hard_block():                           # 等回复的时候"无言为真"生效了: 这条回复不要了
             self._again = False
             if kind == "share_ask":
-                self._share_ask_end("对方没有回复, share data 没有打开")
+                self._share_ask_end("{name} 没有回复, share data 没有打开")
             if kind == "shift_ask":
-                self._shift_ask_end("对方没有回复, 起点没有平移")
+                self._shift_ask_end("{name} 没有回复, 起点没有平移")
             self._changed()
             return
         if epoch != self._epoch:                        # 发出之后清空过聊天记录: 这条回复不要了
@@ -4537,9 +4586,9 @@ class Comm:
                     self._love_set(no=self._ms() + LOVE_NO_DAYS * 86400 * 1000)
                     self.log(f"LOVE 对方判断不合适, 没有告白 ({LOVE_NO_DAYS} 天内不再判定)")
             if kind == "share_ask":                     # 出错 / 对方不方便 / 没回: 这次请求作废 (不重试)
-                self._share_ask_end("对方现在不方便, share data 没有打开" if refused else "对方没有回复, share data 没有打开")
+                self._share_ask_end("{name} 现在不方便, share data 没有打开" if refused else "{name} 没有回复, share data 没有打开")
             if kind == "shift_ask":
-                self._shift_ask_end("对方现在不方便, 起点没有平移" if refused else "对方没有回复, 起点没有平移")
+                self._shift_ask_end("{name} 现在不方便, 起点没有平移" if refused else "{name} 没有回复, 起点没有平移")
             if refused and (self.unanswered() or catchup):
                 if catchup:
                     self._catchup = True                  # 回复已经显示过, unanswered() 为假: 重试要靠这个记号
@@ -4631,6 +4680,7 @@ class Comm:
         self._cond_tick()
         self._share_tick()
         self._shift_tick()
+        self._sf_tick()
         if self.busy or self._ai_problem() or not self.leader():
             return
         pend, self._joint_pending = self._joint_pending, None
@@ -4947,7 +4997,7 @@ class Comm:
                 return why
             st = self.other_status()
             if st and st.get("kind") in HELD_KINDS and not st.get("joint"):
-                return f"对方{STATUS_TEXT[st['kind']]}, 现在没法征求对方的同意"
+                return tr("{name} {st}, 现在没法征求同意", name=self.share_ai_name(), st=tr(STATUS_TEXT[st["kind"]]))
             self.share_ask = {"pid": self.pid, "ts": self._ms(), "sent": False}      # 用户发起的 share data 要先争取对方同意 (MECHANICS 24.12): 对方回 [Yes] 才真的打开
             self._changed()
             return ""
@@ -4976,7 +5026,7 @@ class Comm:
         if why:
             return why
         if self.shift_asking():
-            return "正在等对方回复上一次的起点平移请求"
+            return tr("正在等 {name} 回复上一次的起点平移请求", name=self.share_ai_name())
         try:
             minutes = int(minutes)
         except (TypeError, ValueError):
@@ -4990,7 +5040,7 @@ class Comm:
             return tr("明天的起点已经是 {t} 了", t=hm_text(minutes))
         st = self.other_status()
         if st and st.get("kind") in HELD_KINDS and not st.get("joint"):
-            return f"对方{STATUS_TEXT[st['kind']]}, 现在没法征求对方的同意"
+            return tr("{name} {st}, 现在没法征求同意", name=self.share_ai_name(), st=tr(STATUS_TEXT[st["kind"]]))
         self.shift_ask = {"pid": self.pid, "ts": self._ms(), "sent": False, "to": minutes}
         self._changed()
         return ""
@@ -5002,6 +5052,7 @@ class Comm:
     def _shift_ask_end(self, notice: str = ""):
         self.shift_ask = None
         if notice:
+            notice = tr(notice, name=self.share_ai_name())
             self.log("SHIFT ask: " + notice)
             if self.on_share_notice:
                 try:
@@ -5039,13 +5090,13 @@ class Comm:
             self._changed()
             if self.on_share_notice:
                 try:
-                    self.on_share_notice(tr("对方同意了, 日程起点明天起平移到 {t}", t=hm_text(a["to"])))
+                    self.on_share_notice(tr("{name} 同意了, 日程起点明天起平移到 {t}", name=self.share_ai_name(), t=hm_text(a["to"])))
                 except Exception:       # noqa: BLE001
                     pass
         elif ans == "no":
-            self._shift_ask_end("对方拒绝了起点平移")
+            self._shift_ask_end("{name} 拒绝了起点平移")
         else:
-            self._shift_ask_end("对方没有明确同意, 起点没有平移")
+            self._shift_ask_end("{name} 没有明确同意, 起点没有平移")
 
     def _shift_tick(self):
         """每秒: 排着的起点平移请求 (主端发, 对方空下来才发); 太久没回作废."""
@@ -5055,7 +5106,7 @@ class Comm:
         if a.get("pid") != self.pid:
             self.shift_ask = None
         elif self._ms() - int(a["ts"]) > SHIFT_ASK_TTL * 1000:
-            self._shift_ask_end("对方没有回复, 起点没有平移")
+            self._shift_ask_end("{name} 没有回复, 起点没有平移")
         elif not a.get("sent") and not self.busy and not self._ai_problem() and self.leader():
             cur = self.shift_start()
             a["sent"] = True
@@ -5081,6 +5132,7 @@ class Comm:
     def _share_ask_end(self, notice: str = ""):
         self.share_ask = None
         if notice:
+            notice = tr(notice, name=self.share_ai_name())              # 指代对方一律用 {name} (人设名)
             self.log("SHARE ask: " + notice)
             if self.on_share_notice:
                 try:
@@ -5105,9 +5157,9 @@ class Comm:
                 except Exception:       # noqa: BLE001
                     pass
         elif ans == "no":
-            self._share_ask_end("对方拒绝了 share data")
+            self._share_ask_end("{name} 拒绝了 share data")
         else:
-            self._share_ask_end("对方没有明确同意, share data 没有打开")
+            self._share_ask_end("{name} 没有明确同意, share data 没有打开")
 
     def share_close(self, summarize: bool = True):
         s = self.share
@@ -5151,7 +5203,7 @@ class Comm:
             if a.get("pid") != self.pid:
                 self.share_ask = None
             elif self._ms() - int(a["ts"]) > SHARE_ASK_TTL * 1000:
-                self._share_ask_end("对方没有回复, share data 没有打开")
+                self._share_ask_end("{name} 没有回复, share data 没有打开")
             elif not a.get("sent") and not self.busy and not self._ai_problem() and self.leader():
                 a["sent"] = True
                 self._trigger("share_ask", (f"{SHARE_TAG} 用户想打开 share data: 打开之后, 用户在 OIT 各个页面时, 会把那一页上用户和你自己的数据发给你, "
@@ -6236,10 +6288,7 @@ def _selftest():
     c.set_model("m-x")
     assert c.current_model() == "m-x" and "m-x" in c.model_options()
     assert ai_assist.AIConfig(c.ai.path).profile()["model"] == "m-x", "选的模型存进了模型设置"
-    c.busy, c.busy_since = True, time.monotonic() - 20
-    assert c.waiting_text().startswith("API 还没有回应") and c.waiting_text().endswith("秒)")
-    c.busy, c.busy_since = False, 0.0
-    assert c.waiting_text() == ""
+    assert not hasattr(c, "waiting_text"), "不再提示 'API 还没有回应'"
     # ---- 聊天对象: 每个对象各自的聊天记录, 切换, 旧记录迁移 ----
     dm_dir = os.path.join(td, "multi")
     os.makedirs(dm_dir)
@@ -7191,7 +7240,7 @@ def _selftest():
     assert "【合约的基础规则】" in body and "持久战-I(环境, 等级1)" in body and "开始时间 2026-12-10 14:00" in body and "[Yes]" in body
     assert body.index("【合约的基础规则】") < body.index("【联合行动】") < body.index("【选择的词条】") < body.index("一起吧")
     assert cj.visible()[-1]["text"] == "好的,到时见." and cj._joint()["state"] == "yes", cj._joint()
-    assert "对方已接受" in cj.joint_status_text() and cj.joint_busy()
+    assert "已接受" in cj.joint_status_text() and cj.joint_busy()
     assert cj.set_joint_draft(["long1"], day.replace(hour=15)) == "已经有一个联合行动在进行了"
     assert cj.cfg["joint"] and "joint" in cj.sync_doc()
     jid = cj._joint()["id"]
@@ -7236,7 +7285,7 @@ def _selftest():
     assert not note[0]["text"].startswith("[系统]"), "不算主动消息 (不触发 10 分钟间隔 / 提示音)"
     ustate[0] = "idle"
     clock[0] = day.replace(hour=16, minute=5)
-    assert cj.other_status_display() == ("休息中 · 联合行动", "rest") and cj.joint_live() and "对方同步休息到 16:11" in cj.joint_status_text()
+    assert cj.other_status_display() == ("休息中 · 联合行动", "rest") and cj.joint_live() and "同步休息到 16:11" in cj.joint_status_text()
     assert "[联合行动已完成]" in cj.joint_system_note() and "16:11" in cj.joint_system_note()
     assert cj._joint_shift_info() is None, "休息还没结束"
     # 休息结束 (16:11) 落在循环里 (原来是 15:40-16:18 休息): 立即开始专注, 循环重新计算到 18:00 结束
@@ -7913,7 +7962,97 @@ def _selftest():
     last = cl.visible()[-1]
     assert last["at"] == free.isoformat(timespec="seconds") and "late" not in last and "due" not in last and cl.unread == 1
     assert last["ts"] > cl.visible()[0]["ts"] and any(k.startswith("m:") and v["text"] == "专注时发的" for k, v in cl.sync_doc().items())
+    # 合约改了对方的状态 (日程里在专注, 合约里跟着用户休息): 专注时发的消息不再等原来排的那个时刻
+    cl.messages.clear()
+    clock[0] = day.replace(hour=14, minute=30)
+    free = cl.ai_free_at()
+    mb = cl._add("ai", "合约前发的")
+    assert mb["late"] and mb["due"] == int(free.timestamp() * 1000) and cl.visible() == []
+    jst = ["focus"]
+    cl.state_fn = lambda: jst[0]
+    cl._joint_set({"id": "z", "pid": cl.pid, "state": "run", "terms": [], "start": day.replace(hour=14).isoformat(),
+                   "end": day.replace(hour=18).isoformat(), "cid": "cz", "began": day.replace(hour=14).isoformat(),
+                   "until": day.replace(hour=18).isoformat()}, replace=True)
+    clock[0] += timedelta(minutes=2)
+    cl._release_held()
+    assert cl.other_status()["kind"] == "focus" and cl.visible() == [], "合约里用户在专注, 对方也在专注: 还藏着"
+    jst[0] = "break"
+    assert cl.other_status()["kind"] == "rest" and cl.other_status().get("joint")
+    cl._release_held()
+    assert [m["text"] for m in cl.visible()] == ["合约前发的"] and cl.unread == 2, "界面上对方休息了: 马上发, 不等原来日程的休息"
+    assert cl.visible()[-1]["at"] == clock[0].isoformat(timespec="seconds") and "late" not in cl.visible()[-1] and "due" not in cl.visible()[-1]
+    cl._joint_set({"state": ""}, replace=True)
     cl.flush()
+
+    # ---- 日程跟随 (24.17): 对方的状态变了, 问用户要不要跟着变; 合约期间自动关闭 ----
+    sf = joint_comm("跟随", "你是跟随.\n")
+    sfk = ["focus"]
+    sf.other_status = lambda now=None: {"kind": sfk[0], "label": "", "detail": "", "begin": clock[0], "end": clock[0]}
+    sfu = ["idle"]
+    sf.state_fn = lambda: sfu[0]
+    sfc = [False]
+    sf.contract_fn = lambda: sfc[0]
+    asked = []
+    sf.on_sf = lambda kind, text: asked.append((kind, text))
+    assert not sf.sf_on() and sf.sync_doc()["sfollow"] is False
+    sf._sf_tick()
+    sfk[0] = "rest"
+    sf._sf_tick()
+    assert asked == [], "开关关着: 不问"
+    sf.set_cfg(sched_follow=True)
+    assert sf.sf_on() and sf.sf_live() and sf.sync_doc()["sfollow"] is True
+    sf._sf_tick()
+    sf._sf_tick()
+    assert asked == [], "刚开启: 只记下对方现在的状态"
+    sfk[0] = "focus"
+    sf._sf_tick()
+    assert asked == [("focus", "跟随 开始专注了, 要跟着专注吗?")], asked
+    sf._sf_tick()
+    assert len(asked) == 1, "同一个状态只问一次"
+    sfu[0], sfk[0] = "break", "rest"
+    sf._sf_tick()
+    assert len(asked) == 1, "用户的计时器已经是同一种状态: 不问"
+    sfk[0] = "sleep"
+    sf._sf_tick()
+    assert asked[-1] == ("sleep", "跟随 去睡觉了, 要跟着睡眠吗?") and len(asked) == 2
+    sfu[0], sfk[0] = "out", "idle"
+    sf._sf_tick()
+    assert len(asked) == 2, "用户外出中: 不问"
+    sfu[0], sfk[0] = "idle", "focus"
+    sf.leader = lambda: False
+    sf._sf_tick()
+    assert len(asked) == 2, "不是主端: 不问"
+    sf.leader = lambda: True
+    sfk[0] = "idle"
+    sf._sf_tick()
+    sfk[0] = "rest"
+    sfc[0] = True
+    assert not sf.sf_live()
+    sf._sf_tick()
+    sfk[0] = "focus"
+    sf._sf_tick()
+    assert len(asked) == 2, "合约期间: 自动关闭"
+    sfk[0] = "idle"
+    sfc[0] = False
+    sf._sf_tick()
+    assert len(asked) == 2, "合约结束: 重新开启, 合约里变的状态不算"
+    sfk[0] = "rest"
+    sf._sf_tick()
+    assert asked[-1][0] == "rest" and len(asked) == 3, "合约结束后: 照常问"
+    sf._joint_set({"id": "sf", "pid": sf.pid, "state": "run", "terms": [], "start": clock[0].isoformat(), "end": (clock[0] + timedelta(hours=2)).isoformat(),
+                   "cid": "sf", "began": clock[0].isoformat(), "until": (clock[0] + timedelta(hours=2)).isoformat()}, replace=True)
+    assert sf.joint_live() and not sf.sf_live(), "联合行动的同步阶段: 也算合约"
+    sfk[0] = "focus"
+    sf._sf_tick()
+    sf._joint_set({"state": ""}, replace=True)
+    sf._sf_tick()
+    assert len(asked) == 3 and sf._sf_last == (sf.pid, "focus")
+    sf2 = joint_comm("跟随二", "你是跟随二.\n")
+    sf2.apply_doc({"sfollow": True})
+    assert sf2.sf_on()
+    sf2.apply_doc({"sfollow": False})
+    assert not sf2.sf_on()
+    sf.flush()
 
     # ---- 打字延时: 文本里每个字符让对方的消息晚 0.2 s 显示, 一条一条按顺序出来, 显示之前不同步给别的设备 ----
     CHAR_DELAY = 0.2
@@ -8516,7 +8655,7 @@ def _selftest():
     wait(cs)
     ask_body = calls[-1][1][-1]["content"]
     assert len(calls) == n_calls + 1 and "用户想打开 share data" in ask_body and "[Yes]" in ask_body and "[No]" in ask_body, ask_body
-    assert not cs.share_asking() and not cs.share_on() and notices == ["对方拒绝了 share data"] and cs.visible()[-1]["text"] == "✗ 拒绝了 share data"
+    assert not cs.share_asking() and not cs.share_on() and notices == [f"{cs.share_ai_name()} 拒绝了 share data"] and cs.visible()[-1]["text"] == "✗ 拒绝了 share data"
     script.append("[Yes] 可以.")
     assert cs.share_enable(True) == ""
     cs.tick()
@@ -8524,13 +8663,13 @@ def _selftest():
     assert cs.share_on() and not cs.share_asking() and opened == [1] and cs.visible()[-1]["text"] == "可以.", "回 [Yes]: 打开, 并跳到有数据的页"
     cs.share_enable(False)
     opened.clear()
-    for reply, note in (("嗯.", "对方没有明确同意, share data 没有打开"), ("[Yes][No]", "对方拒绝了 share data"), (REFUSE, "对方现在不方便, share data 没有打开")):
+    for reply, note in (("嗯.", "{name} 没有明确同意, share data 没有打开"), ("[Yes][No]", "{name} 拒绝了 share data"), (REFUSE, "{name} 现在不方便, share data 没有打开")):
         notices.clear()
         script.append(reply)
         assert cs.share_enable(True) == ""
         cs.tick()
         wait(cs)
-        assert not cs.share_on() and not cs.share_asking() and notices == [note], (reply, notices)
+        assert not cs.share_on() and not cs.share_asking() and notices == [note.format(name=cs.share_ai_name())], (reply, notices)
     assert not opened
     n_calls = len(calls)
     assert cs.share_enable(True) == "" and cs.share_asking()
@@ -8543,11 +8682,11 @@ def _selftest():
     clock[0] += timedelta(seconds=SHARE_ASK_TTL + 1)
     cs.tick()
     cs.busy = False
-    assert not cs.share_asking() and notices == ["对方没有回复, share data 没有打开"], "太久没回: 作废"
+    assert not cs.share_asking() and notices == [f"{cs.share_ai_name()} 没有回复, share data 没有打开"], "太久没回: 作废"
     clock[0] = rest_s["start"] + timedelta(minutes=5)
     focus_s = next(x for x in day1 if x["kind"] == "focus")
     clock[0] = focus_s["start"] + timedelta(minutes=5)
-    assert "没法征求对方的同意" in cs.share_enable(True) and not cs.share_asking(), "对方在专注 / 睡眠: 问不了"
+    assert "现在没法征求同意" in cs.share_enable(True) and not cs.share_asking(), "对方在专注 / 睡眠: 问不了"
     clock[0] = rest_s["start"] + timedelta(minutes=5)
     # 对方看的是自己的数据: 界面上"看 AI 的数据"
     clock[0] = datetime(2027, 7, 1, 15, 20)
@@ -8582,7 +8721,7 @@ def _selftest():
     assert len(calls) == n_calls + 2, "[messages] 查询那一轮 + 回复那一轮"
     assert SHIFT_TAG in calls[-2][1][-1]["content"] and "从 6:30 平移到 7:00" in calls[-2][1][-1]["content"] and "[Yes]" in calls[-2][1][-1]["content"]
     assert "聊天记录数: 共" in calls[-1][1][-1]["content"] and f"共 {cs.msg_total() - 1} 条" in calls[-1][1][-1]["content"], calls[-1][1][-1]["content"]
-    assert not cs.shift_asking() and cs.visible()[-1]["text"] == "行." and notices == ["对方同意了, 日程起点明天起平移到 7:00"], notices
+    assert not cs.shift_asking() and cs.visible()[-1]["text"] == "行." and notices == [f"{cs.share_ai_name()} 同意了, 日程起点明天起平移到 7:00"], notices
     assert cs.shifts() == [{"ts": cs.shifts()[0]["ts"], "d": "2027-07-02", "s": 420, "f": base_start}]
     assert cs._rt.start_for(d1) == base_start and cs._rt.start_for(d2) == 420 and cs._rt.start_for(d3) == 420, "明天起生效, 今天不变"
     assert routine.wake_at(cs._rt, d2, cs.pid) - wake_before == timedelta(minutes=420 - base_start) and cs._rt.start == base_start
@@ -8601,13 +8740,13 @@ def _selftest():
     cs._load_schedule()
     assert cs.shifts() == saved and cs._rt.start_for(d2) == 420
     # 拒绝 / 没表态 / 不方便: 不变
-    for reply, note in (("[No] 不行.", "对方拒绝了起点平移"), ("嗯.", "对方没有明确同意, 起点没有平移"), (REFUSE, "对方现在不方便, 起点没有平移")):
+    for reply, note in (("[No] 不行.", "{name} 拒绝了起点平移"), ("嗯.", "{name} 没有明确同意, 起点没有平移"), (REFUSE, "{name} 现在不方便, 起点没有平移")):
         notices.clear()
         script.append(reply)
         assert cs.shift_request(8 * 60) == ""
         cs.tick()
         wait(cs)
-        assert not cs.shift_asking() and notices == [note] and cs.shifts() == saved and cs._rt.start_for(d2) == 420, (reply, notices)
+        assert not cs.shift_asking() and notices == [note.format(name=cs.share_ai_name())] and cs.shifts() == saved and cs._rt.start_for(d2) == 420, (reply, notices)
     # 只回 [Yes]: 聊天里写一行结果; 同一天再平移一次, 以后一次为准
     script.append("[Yes]")
     assert cs.shift_request(8 * 60) == ""
@@ -8628,10 +8767,10 @@ def _selftest():
     clock[0] += timedelta(seconds=SHIFT_ASK_TTL + 1)
     cs.tick()
     cs.busy = False
-    assert not cs.shift_asking() and notices == ["对方没有回复, 起点没有平移"] and len(cs.shifts()) == 2
+    assert not cs.shift_asking() and notices == [f"{cs.share_ai_name()} 没有回复, 起点没有平移"] and len(cs.shifts()) == 2
     # 对方在专注: 问不了
     clock[0] = focus_s["start"] + timedelta(minutes=5)
-    assert "没法征求对方的同意" in cs.shift_request(7 * 60) and not cs.shift_asking()
+    assert "现在没法征求同意" in cs.shift_request(7 * 60) and not cs.shift_asking()
     clock[0] = rest_s["start"] + timedelta(minutes=5)
     # 记录的整理: 范围外 / 日期不对的丢掉, 同一个时刻只留一条
     assert shift_norm([{"ts": 1, "d": "2027-07-02", "s": 100, "f": 0}, {"ts": 2, "d": "bad", "s": 420}, {"ts": 1, "d": "2027-07-02", "s": 420}]) == [{"ts": 1, "d": "2027-07-02", "s": 420, "f": 0}]

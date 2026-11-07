@@ -1307,7 +1307,7 @@ class CommTest {
             body.indexOf("【选择的词条】") < body.indexOf("一起吧"))
         assertEquals("好的,到时见.", cj.visible().last().text)
         assertEquals("yes", cj.syncDoc()["joint"].let { (it as JSONObject).optString("state") })
-        assertTrue("对方已接受" in cj.jointStatusText() && cj.jointBusy())
+        assertTrue("已接受" in cj.jointStatusText() && cj.jointBusy())
         assertEquals("已经有一个联合行动在进行了", cj.setJointDraft(listOf("long1"), day.withHour(15)))
         val jid = Joint.parse(cj.syncDoc()["joint"] as JSONObject)!!.id
         // 还没到时间: 词条不对 / 离约定时间太远的合约不算
@@ -1352,7 +1352,7 @@ class CommTest {
         ustate = "idle"
         clock = day.withHour(16).withMinute(5)
         assertEquals("休息中 · 联合行动" to "rest", cj.otherStatusDisplay())
-        assertTrue(cj.jointLive() && "对方同步休息到 16:11" in cj.jointStatusText())
+        assertTrue(cj.jointLive() && "同步休息到 16:11" in cj.jointStatusText())
         assertTrue("[联合行动已完成]" in cj.jointSystemNote() && "16:11" in cj.jointSystemNote())
         // 休息结束 (16:11) 落在循环里 (原来是 15:40-16:18 休息): 立即开始专注, 循环重新计算到 18:00 结束
         clock = day.withHour(16).withMinute(11).withSecond(30)
@@ -1514,13 +1514,13 @@ class CommTest {
         ca.setJointDraft(listOf("long1"), day.withHour(16))
         assertEquals("", ca.send("")); wait(ca)
         cb.applyDoc(mapOf("joint" to ca.syncDoc()["joint"]))
-        assertTrue("对方已接受" in cb.jointStatusText())
+        assertTrue("已接受" in cb.jointStatusText())
         cb.applyDoc(mapOf("joint" to JSONObject(ca.syncDoc()["joint"].toString()).put("state", "wait").put("ts", 1L)))
-        assertTrue("旧的 (ts 更小) 不覆盖", "对方已接受" in cb.jointStatusText())
+        assertTrue("旧的 (ts 更小) 不覆盖", "已接受" in cb.jointStatusText())
         cb.set(persona = "联合.txt")
         assertEquals("", cb.jointStatusText())                         // 联合行动只属于那个聊天对象
         cb.set(persona = "联合五.txt")
-        assertTrue("对方已接受" in cb.jointStatusText())
+        assertTrue("已接受" in cb.jointStatusText())
         ca.clear()
         assertFalse(ca.jointBusy())
         assertEquals("", ca.jointStatusText())
@@ -2156,16 +2156,16 @@ class CommTest {
         c.tick(); assertTrue(c.busy); wait(c)
         val askBody = calls.last().second.last().second
         assertTrue(askBody, calls.size == n2 + 1 && "用户想打开 share data" in askBody && "[Yes]" in askBody && "[No]" in askBody)
-        assertTrue(!c.shareAsking() && !c.shareOn() && notices == listOf("对方拒绝了 share data") && c.visible().last().text == "✗ 拒绝了 share data")
+        assertTrue(!c.shareAsking() && !c.shareOn() && notices == listOf("${c.aiName()} 拒绝了 share data") && c.visible().last().text == "✗ 拒绝了 share data")
         script.add("[Yes] 可以.")
         assertEquals("", c.shareEnable(true)); c.tick(); wait(c)
         assertTrue(c.shareOn() && !c.shareAsking() && opened == 1 && c.visible().last().text == "可以.")      // 回 [Yes]: 打开, 并跳到有数据的页
         c.shareEnable(false); opened = 0
-        for ((reply, note) in listOf("嗯." to "对方没有明确同意, share data 没有打开", "[Yes][No]" to "对方拒绝了 share data",
-                CommText.REFUSE to "对方现在不方便, share data 没有打开")) {
+        for ((reply, note) in listOf("嗯." to "{name} 没有明确同意, share data 没有打开", "[Yes][No]" to "{name} 拒绝了 share data",
+                CommText.REFUSE to "{name} 现在不方便, share data 没有打开")) {
             notices.clear(); script.add(reply)
             assertEquals("", c.shareEnable(true)); c.tick(); wait(c)
-            assertTrue(reply, !c.shareOn() && !c.shareAsking() && notices == listOf(note))
+            assertTrue(reply, !c.shareOn() && !c.shareAsking() && notices == listOf(note.replace("{name}", c.aiName())))
         }
         assertEquals(0, opened)
         val n3 = calls.size
@@ -2174,7 +2174,7 @@ class CommTest {
         c.tick(); assertTrue("等对方回复的时候又点一下 = 取消, 不调用", !c.busy && calls.size == n3)
         val fs = day1.first { it.kind == "focus" }
         clock = fs.start.plusMinutes(5)
-        assertTrue("对方在专注 / 睡眠: 问不了", "没法征求对方的同意" in c.shareEnable(true) && !c.shareAsking())
+        assertTrue("对方在专注 / 睡眠: 问不了", "现在没法征求同意" in c.shareEnable(true) && !c.shareAsking())
         // 看 AI 的数据
         clock = LocalDateTime.of(2027, 7, 1, 15, 20)
         val v = c.shareAiView("timer")!!
@@ -2220,7 +2220,7 @@ class CommTest {
         assertTrue(ask, CommShift.TAG in ask && "从 6:30 平移到 7:00" in ask && "[Yes]" in ask)
         val info = calls.last().second.last().second
         assertTrue(info, "聊天记录数: 共" in info && "共 ${c.msgTotal() - 1} 条" in info)
-        assertTrue(!c.shiftAsking() && c.visible().last().text == "行." && notices == listOf("对方同意了, 日程起点明天起平移到 7:00"))
+        assertTrue(!c.shiftAsking() && c.visible().last().text == "行." && notices == listOf("${c.aiName()} 同意了, 日程起点明天起平移到 7:00"))
         assertEquals(listOf("2027-07-02" to 420), c.shifts().map { it.d to it.s })
         assertEquals(base, c.shiftStart(d1)); assertEquals(420, c.shiftStart(d2)); assertEquals(420, c.shiftStart(d3))     // 明天起生效, 今天不变
         assertEquals(c.readPersonaFull("Claudia.txt"), personaBefore)                                                    // 人设文件不改
@@ -2232,10 +2232,10 @@ class CommTest {
         c.applyDoc(mapOf("shift:${c.pid}" to saved)); c.applyDoc(mapOf("shift:${c.pid}" to saved))
         assertEquals(1, c.shifts().size)
         // 拒绝 / 没表态 / 不方便: 不变
-        for ((reply, note) in listOf("[No] 不行." to "对方拒绝了起点平移", "嗯." to "对方没有明确同意, 起点没有平移", CommText.REFUSE to "对方现在不方便, 起点没有平移")) {
+        for ((reply, note) in listOf("[No] 不行." to "{name} 拒绝了起点平移", "嗯." to "{name} 没有明确同意, 起点没有平移", CommText.REFUSE to "{name} 现在不方便, 起点没有平移")) {
             notices.clear(); script.add(reply)
             assertEquals("", c.shiftRequest(8 * 60)); c.tick(); wait(c)
-            assertTrue(reply, !c.shiftAsking() && notices == listOf(note) && c.shifts().size == 1 && c.shiftStart(d2) == 420)
+            assertTrue(reply, !c.shiftAsking() && notices == listOf(note.replace("{name}", c.aiName())) && c.shifts().size == 1 && c.shiftStart(d2) == 420)
         }
         // 只回 [Yes]: 聊天里写一行结果; 同一天再平移一次, 以后一次为准
         script.add("[Yes]")
@@ -2250,7 +2250,7 @@ class CommTest {
         assertTrue(!c.shiftAsking() && !c.busy && calls.size == n1)
         // 对方在专注: 问不了
         clock = day1.first { it.kind == "focus" }.start.plusMinutes(5)
-        assertTrue("没法征求对方的同意" in c.shiftRequest(7 * 60) && !c.shiftAsking())
+        assertTrue("现在没法征求同意" in c.shiftRequest(7 * 60) && !c.shiftAsking())
         c.flush()
     }
 
@@ -2422,6 +2422,81 @@ class CommTest {
     }
 
     /** 共时闹钟 (1.0.359): 闹钟跟随被设为共时闹钟的对象的实际起床时间 (Claudia 起床波动 [-20,0]); 对应 comm.py 自检. */
+    /** 日程跟随 (1.0.406, MECHANICS 24.17) + 合约改了对方的状态后, 专注时发的消息不再等原来日程的休息 (24.3.9). */
+    @Test
+    fun scheduleFollowAndLateRelease() {
+        val td = Files.createTempDirectory("oit").toFile()
+        File(td, "p").mkdirs()
+        File(td, "p/跟随.txt").writeText("你是跟随.\n12:30-13:00:空闲\n[循环 14:00-18:00][100min]\n23:30-6:30:睡眠\n")
+        val day = LocalDateTime.of(2026, 12, 10, 0, 0)
+        val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
+        c.set(persona = "跟随.txt", splitSend = false)
+        c.setMuted(true)                                     // 不主动发消息 (这个测试没有安排回复)
+        c.snapshot = { CommSnap("idle") }
+        var ust = "idle"
+        c.stateFn = { ust }
+        var inContract = false
+        c.contractFn = { inContract }
+        val asked = mutableListOf<Pair<String, String>>()
+        c.onSf = { k, t -> asked.add(k to t) }
+        clock = day.withHour(14).withMinute(30)
+        assertEquals("focus", c.otherStatusDisplay().second)
+        c.tick()
+        assertTrue("开关关着: 不问", asked.isEmpty() && !c.sfLive())
+        c.set(schedFollow = true)
+        assertTrue(c.sfLive() && c.syncDoc()["sfollow"] == true)
+        c.tick(); c.tick()
+        assertTrue("刚开启: 只记下对方现在的状态", asked.isEmpty())
+        var steps = 0
+        while (asked.isEmpty() && steps < 300) { clock = clock.plusMinutes(1); c.tick(); steps++ }
+        assertEquals(1, asked.size)
+        assertTrue(asked[0].first in listOf("rest", "idle") && asked[0].second.startsWith("跟随 "))
+        if (asked[0].first == "rest") assertEquals("跟随 开始休息了, 要跟着休息吗?", asked[0].second)
+        c.tick()
+        assertEquals("同一个状态只问一次", 1, asked.size)
+        // 合约期间自动关闭, 合约里变的状态不算, 结束后照常
+        inContract = true
+        assertFalse(c.sfLive())
+        val k0 = c.otherStatusDisplay().second
+        steps = 0
+        while (c.otherStatusDisplay().second == k0 && steps < 300) { clock = clock.plusMinutes(1); c.tick(); steps++ }
+        assertEquals("合约期间: 不问", 1, asked.size)
+        inContract = false
+        c.tick()
+        assertEquals("合约结束: 重新开启, 合约里变的状态不算", 1, asked.size)
+        val k1 = c.otherStatusDisplay().second
+        steps = 0
+        while (c.otherStatusDisplay().second == k1 && steps < 300) { clock = clock.plusMinutes(1); c.tick(); steps++ }
+        assertEquals("合约结束后: 照常问", 2, asked.size)
+        // 用户外出中: 不问
+        ust = "out"
+        val k3 = c.otherStatusDisplay().second
+        steps = 0
+        while (c.otherStatusDisplay().second == k3 && steps < 300) { clock = clock.plusMinutes(1); c.tick(); steps++ }
+        assertEquals("用户外出中: 不问", 2, asked.size)
+        // 合约改了对方的状态: 专注时发的消息不再等原来日程的休息
+        File(td, "p/延迟.txt").writeText("你是延迟.\n12:30-13:00:空闲\n[循环 14:00-18:00][100min]\n23:30-6:30:睡眠\n")
+        val d = comm(File(td, "d2").also { it.mkdirs() }, File(td, "p"))
+        d.set(persona = "延迟.txt", splitSend = false)
+        d.setMuted(true)
+        d.snapshot = { CommSnap("idle") }
+        var dst = "focus"
+        d.stateFn = { dst }
+        clock = day.withHour(14).withMinute(30)
+        val m = d.addForTest("ai", "合约前发的")
+        assertTrue(m.late && m.hold && m.due > 0L && d.visible().isEmpty())
+        d.jointRestForTest(clock.plusHours(1), clock.minusMinutes(5))
+        clock = clock.plusMinutes(2)
+        d.tick()
+        assertTrue("合约里用户在专注, 对方也在专注: 还藏着", d.otherStatusDisplay().second == "focus" && d.visible().isEmpty())
+        dst = "break"
+        assertEquals("rest", d.otherStatusDisplay().second)
+        d.tick()
+        assertEquals("界面上对方休息了: 马上发", listOf("合约前发的"), d.visible().map { it.text })
+        assertFalse(m.late)
+        assertEquals(clock.withNano(0).format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm")), m.at.take(16))
+    }
+
     @Test
     fun coAlarm() {
         val td = Files.createTempDirectory("oit").toFile()

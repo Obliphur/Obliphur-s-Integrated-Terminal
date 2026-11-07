@@ -377,7 +377,10 @@ class BreakTimerApp:
         self.comm.hard_block = lambda: self.contract.has("silent") and not config.dev_mode_enabled()
         self.comm.on_proactive = self._comm_ping
         self.comm.on_joint_due = self._joint_due
-        self._joint_pick = False         # 联合行动: 正在合约页选词条 (点"确定选择"回到沟通页)
+        self.comm.contract_fn = lambda: self.contract.active       # 日程跟随: 合约期间自动关闭
+        self.comm.on_sf = self._sf_ask
+        self._sf_win = None              # 日程跟随: 正在显示的提示窗
+        self._joint_pick = False        # 联合行动: 正在合约页选词条 (点"确定选择"回到沟通页)
         self._joint_break_prev = None    # 联合行动: 上一秒用户是不是在休息 (None = 还没看过): 开始 / 结束休息时通知对方
         self._inv_id = ""                # 对方 (AI) 发起的联合行动: 已经跳到合约页的那一个邀请的编号
         self._inv_prev = []              # 邀请把合约页的词条换成对方选的之前, 用户自己选的词条 (拒绝 / 错过后换回去)
@@ -1306,6 +1309,8 @@ class BreakTimerApp:
             self._joint_break_watch()
             self.comm.tick()
             self._joint_invite_watch()
+            if self._sf_win is not None and not self.comm.sf_live():       # 合约开始了 / 开关关了: 还没回答的提示作废
+                self._sf_close()
             change = self.comm.check_persona_changes()
             if change:
                 self._show_persona_change(change)
@@ -1314,6 +1319,62 @@ class BreakTimerApp:
             self._share_sync_ui()
         except Exception as e:
             self._log_window(f"ERROR    comm {type(e).__name__}: {e}")
+
+    # ---- 日程跟随 (1.0.406, MECHANICS 24.17): 对方的状态变了 → 弹窗问用户要不要跟着变 ----
+    def _sf_close(self):
+        win, self._sf_win = self._sf_win, None
+        try:
+            if win is not None and win.winfo_exists():
+                win.close()
+        except Exception:       # noqa: BLE001
+            pass
+
+    def _sf_ask(self, kind: str, text: str):
+        """对方的状态变了 (comm._sf_tick 在主端调用): 问用户跟不跟随; 上一个还没回答的提示换成这个."""
+        self._sf_close()
+        if self.shutting_down:
+            return
+        self._sf_win = toast.notice(tr("📅  日程跟随"), text, [
+            (tr("不用"), None, False),
+            (tr("跟随"), lambda: self._sf_follow(kind), True)])
+
+    def _sf_follow(self, kind: str):
+        """用户点了"跟随": 把计时器带到和对方一样的状态 (等于按对应的按钮; 合约 / 外出中不能跟随)."""
+        self._sf_win = None
+        try:
+            if self.contract.active:
+                toast.warn(tr("合约中不能跟随."))
+                return
+            if self.behavior.active() is not None:
+                toast.warn(tr("外出中不能跟随."))
+                return
+            if self.sleep_since is not None and kind != "sleep":
+                self.wake()
+            if kind == "focus":
+                if self.state != RUNNING:
+                    self.on_action()                 # 空闲 → 开始专注; 休息中 → 暂停休息并马上开始专注
+            elif kind == "rest":
+                if self.state == RUNNING:
+                    self.on_action()                 # 结束专注, 直接进入休息
+                elif self.state == IDLE:
+                    self.on_break_button()           # 用积攒的休息时间开始休息 (没有积攒的会提示)
+            elif kind == "sleep":
+                if self.sleep_since is None:
+                    if self.state == RUNNING:
+                        self.on_action()
+                    if self.state == ON_BREAK:
+                        self.end_break_early()
+                    if self.state == IDLE:
+                        self.start_sleep()
+                    else:
+                        toast.warn(tr("请先结束专注 / 休息再睡眠."))
+            else:                                    # 空闲: 结束专注 / 休息
+                if self.state == RUNNING:
+                    self.on_action()
+                if self.state == ON_BREAK:
+                    self.end_break_early()
+        except Exception as e:      # noqa: BLE001
+            self._log_window(f"ERROR    follow {type(e).__name__}: {e}")
 
     # ---- 闹钟 (1.0.359, MECHANICS 25): 每秒看一次该不该响; 睡眠 / 合约 / 任何页面都照响 ----
     def _comm_devices(self):
@@ -1491,7 +1552,7 @@ class BreakTimerApp:
                 self._paint_sidebar()
                 if "contract" in self.pages:
                     self.pages["contract"].refresh()
-            toast.notice(tr("🤝  联合行动"), tr("约定的开始时间到了: 在合约页点「开始行动」(词条已经选好), 对方会和你同步专注 / 休息."))
+            toast.notice(tr("🤝  联合行动"), tr("约定的开始时间到了: 在合约页点「开始行动」(词条已经选好), {name} 会和你同步专注 / 休息.", name=self.comm.joint_partner() or "AI"))
         except Exception as e:      # noqa: BLE001
             self._log_window(f"ERROR    joint_due {type(e).__name__}: {e}")
 
