@@ -3975,10 +3975,15 @@ class Comm(
      *  对方同步得到同样的休息, 休息结束后重新计算日程 (jointShiftInfo). */
     @Synchronized
     fun jointEnded(cid: String, result: String, rewardS: Double = 0.0): Boolean {
-        val j = curJoint()?.takeIf { it.state == "run" && (cid.isEmpty() || it.cid.isEmpty() || cid == it.cid) } ?: return false
+        val foreign = curJoint() == null && joint?.let { it.state == "run" && it.pid.isNotEmpty() && it.pid != pid } == true      // 联合行动属于另一个对象 (合约期间用户切到了别的聊天): 状态照样转成同步休息, 不往现在这个聊天里写记录
+        val j = (if (foreign) joint else curJoint())?.takeIf { it.state == "run" && (cid.isEmpty() || it.cid.isEmpty() || cid == it.cid) } ?: return false
         val n = now()
         val restS = maxOf(0L, rewardS.toLong())
         val until = userBreakEnd(n) ?: n.plusSeconds(restS)     // 合约结束时用户正在休息 (这次休息接着休息): 对方休息到用户这次休息结束
+        if (foreign) {
+            jointSet(j.copy(state = "rest", result = result, ended = n.iso(), restS = restS, restUntil = until.iso(), hp = emptyList()))
+            return true
+        }
         rtSyncSafe()                                            // 联合行动期间的状态按用户的专注 / 休息记下来
         val lost = jointHpText(j)
         jointSet(j.copy(state = "rest", result = result, ended = n.iso(), restS = restS, restUntil = until.iso(), hp = emptyList()))
@@ -5238,7 +5243,7 @@ class Comm(
         followAt = 0L                                       // 清空前排着的第二次调用不要了
         memAuto = ""; memUpto = 0L; memTs = nowMs()        // 记忆卡跟着聊天一起清掉
         love = Love(ts = nowMs()); msgGone = 0               // 新对话: 亲密关系 / 告白 / 信息条数也跟着记忆卡一起清掉 (别的设备一起)
-        if (joint != null || jointTs != 0L) { joint = null; jointTs = maxOf(nowMs(), jointTs + 1) }      // 新对话: 联合行动也作废 (别的设备一起)
+        if (joint != null && joint?.pid == pid) { joint = null; jointTs = maxOf(nowMs(), jointTs + 1) }      // 新对话: 联合行动也作废 (别的设备一起); 清空的是别的对象的聊天 (联合行动属于另一个对象) 不动它 (1.0.404)
         jointDraft = null
         if (net.ts != 0L) net = NetState(ts = maxOf(nowMs(), net.ts + 1))           // 新对话: 限时网络也作废 (别的设备一起)
         epoch++

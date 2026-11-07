@@ -3478,6 +3478,11 @@ class Comm:
         """联合行动里的合约结束了 (app 在合约结束时调用): result = completed / failed / idle / offline / abandoned; reward_s = 合约给的休息时间 (秒).
         对方同步得到同样的休息, 休息结束后重新计算日程 (_joint_shift). 合约期间损失生命值的记录在这时一起告诉对方 (有记录就再调用一次 API 让对方回应)."""
         j = self._joint()
+        foreign = False
+        if not j:                                             # 联合行动属于另一个对象 (合约期间用户切到了别的聊天): 状态照样转成"合约结束后的同步休息", 只是不往现在这个聊天里写记录
+            raw = self.cfg.get("joint")
+            if isinstance(raw, dict) and raw.get("state") == "run" and raw.get("pid") and raw.get("pid") != self.pid:
+                j, foreign = raw, True
         if j.get("state") != "run" or (cid and str(cid) != str(j.get("cid") or cid)):
             return False
         now = self.now()
@@ -3486,6 +3491,10 @@ class Comm:
         be = self._user_break_end(now)
         if be is not None:                                    # 合约结束时用户正在休息 (这次休息接着休息): 对方休息到用户这次休息结束
             until = be
+        if foreign:
+            self._joint_set({"state": "rest", "result": str(result), "ended": now.isoformat(timespec="seconds"),
+                             "rest_s": rest_s, "rest_until": until.isoformat(timespec="seconds"), "hp": []})
+            return True
         self._rt_sync_safe()                                  # 联合行动期间的状态按用户的专注 / 休息记下来
         lost = self._joint_hp_text(j)
         self._joint_set({"state": "rest", "result": str(result), "ended": now.isoformat(timespec="seconds"),
@@ -5822,8 +5831,9 @@ class Comm:
         self.cfg["mem_ts"] = self._ms()
         self.cfg["love"] = love_norm({"ts": self._ms()})   # 新对话: 亲密关系 / 告白 / 信息条数也跟着记忆卡一起清掉 (别的设备一起)
         self.cfg["msg_gone"] = 0
-        if self.cfg.get("joint"):                          # 新对话: 联合行动也作废 (别的设备一起)
-            self.cfg["joint"] = {"ts": max(self._ms(), int(self.cfg["joint"].get("ts") or 0) + 1)}
+        jj = self.cfg.get("joint")
+        if jj and (not jj.get("pid") or jj.get("pid") == self.pid):     # 新对话: 联合行动也作废 (别的设备一起); 清空的是别的对象的聊天 (联合行动属于另一个对象) 不动它 (1.0.404)
+            self.cfg["joint"] = {"ts": max(self._ms(), int(jj.get("ts") or 0) + 1)}
         self.joint_draft = {}
         if self.cfg.get("net"):                            # 新对话: 限时网络也作废 (别的设备一起)
             self.cfg["net"] = {"ts": max(self._ms(), int(self.cfg["net"].get("ts") or 0) + 1)}
@@ -7294,6 +7304,20 @@ def _selftest():
                     "until": day.replace(hour=15).isoformat()}, replace=True)
     assert cj6.joint_ended("c6", "completed", 1200) and cj6._joint()["rest_until"] == day.replace(hour=15, minute=7).isoformat(), "合约结束时用户正在休息: 对方休息到用户这次休息结束"
 
+    # 1.0.404: 清空别的对象的聊天不会让联合行动作废; 合约期间用户切到了别的聊天, 合约结束时联合行动照样转成同步休息 (不往那个聊天里写记录)
+    clock[0] = day.replace(hour=14, minute=0)
+    cf = joint_comm("外人一", JTXT)
+    cf._joint_set({"id": "f", "pid": "other-pid", "state": "run", "terms": [], "start": day.replace(hour=14).isoformat(), "end": day.replace(hour=17).isoformat(),
+                   "cid": "cf1", "began": day.replace(hour=14).isoformat(), "until": day.replace(hour=17).isoformat()}, replace=True)
+    cf.clear()
+    assert cf.cfg["joint"].get("state") == "run", "清空别的对象的聊天: 联合行动还在"
+    n_msgs = len(cf.messages)
+    clock[0] = day.replace(hour=16, minute=30)
+    assert cf.joint_ended("cf1", "completed", 600) and cf.cfg["joint"]["state"] == "rest" and cf.cfg["joint"]["rest_until"] == day.replace(hour=16, minute=40).isoformat()
+    assert len(cf.messages) == n_msgs, "别的对象的联合行动: 不往现在这个聊天里写记录"
+    cf.cfg["joint"]["pid"] = cf.pid
+    cf.clear()
+    assert not cf._joint() and cf.cfg["joint"].get("ts"), "自己的聊天清空: 联合行动作废"
     # 1.0.404: Assistant (名字, 不分大小写) 不会收到前置 prompt, 也没有规则 VIII 的第二次调用; 别的人设照旧
     assert not uses_prefix("Assistant.txt") and not uses_prefix("assistant.md") and uses_prefix("Assisstant.md") and uses_prefix("Claudia.txt")
     assert system_head("Assistant.txt") == "" and system_head("Claudia.txt", True) == prefix_prompt(True)
