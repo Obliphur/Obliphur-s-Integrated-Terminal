@@ -759,8 +759,9 @@ class Contract:
         self.save()
 
     def start(self, terms, owner: str = "", now: datetime = None, pre: float = 0, cam: str = "",
-              theme: str = "") -> dict:
+              theme: str = "", stash: float = 0) -> dict:
         """pre: 开始时积攒的休息时间 (秒). 合约中暂停休息时这部分不打折; 支援短缺限制它能用几成.
+        stash: 联合行动 (1.0.404): 合约开始前积攒的休息时间收起来 (pre = 0: 合约中看不到, 不能用, 也不会触发支援短缺), 合约结束后原样还回去.
         cam: 目光由哪台设备的摄像头录 (设备 id, MECHANICS 18.8). theme: 合约主题 (THEMES, 完成时的主题加成)."""
         now = (now or datetime.now()).replace(microsecond=0)
         terms = clean_terms(terms, prereq=True)
@@ -777,9 +778,27 @@ class Contract:
             self.live["cam"] = str(cam)
         if clean_theme(theme):
             self.live["theme"] = clean_theme(theme)
+        if float(stash) > 0:
+            self.live["stash"] = round(float(stash), 1)
         self._watch = {}
         self.save()
         return self.live
+
+    @property
+    def stash(self) -> float:
+        """联合行动开始时收起来的休息时间 (秒), 合约结束才还回去."""
+        return float(self.live.get("stash") or 0) if self.active else 0.0
+
+    def unstash(self) -> float:
+        """把收起来的休息时间拿出来 (联合行动其实没有开始: 还回去). 返回秒数."""
+        x = self.stash
+        if x > 0:
+            share = self._supply_share(self.live.get("terms"))
+            self.live.pop("stash", None)
+            self.live.update({"pre": round(x, 1), "pre_left": round(x, 1), "pre_used": 0,
+                              "supply": None if share is None else round(x * share, 1)})      # 像一开始就没收起来一样: 这部分又是合约前积攒的 (支援短缺照常)
+            self.save()
+        return x
 
     def tag_joint(self, name: str):
         """进行中的合约是联合行动: 记下对象的名字 (结束时进合约记录)."""
@@ -800,6 +819,8 @@ class Contract:
                "level": self.level, "orig_level": self.orig_level, "cut": dict(self.cut),
                "result": result, "violations": self.violations, "reward": reward,
                "pre_left": self.pre_left, "rand": self.rand, "owner": self.live.get("owner", "")}
+        if self.stash > 0:
+            rec["stash"] = self.stash                       # 联合行动开始时收起来的休息时间: 合约结束时还回去
         if self.theme:
             rec["theme"] = self.theme
         if self.live.get("joint"):
@@ -2527,7 +2548,16 @@ def _selftest():
     assert c.violate("short2") == (False, "short1") and c.supply_limit == 600, "降级: 多给 50%"
     assert c.supply_check(0, 0) == "" and c.supply_until(1100, 1100) == 1100 - (1100 - 500)
     rec = c.finish("abandoned", t0 + timedelta(hours=1))
-    assert rec["pre_left"] == 1100
+    assert rec["pre_left"] == 1100 and "stash" not in rec
+
+    # 联合行动 (1.0.404): 合约开始前积攒的休息时间收起来 (pre = 0: 不能用, 不触发支援短缺), 合约结束时原样还回去
+    c.start(["short2"], owner="me", now=t0, pre=0, stash=1200)
+    assert c.pre == 0 and c.pre_left == 0 and c.stash == 1200 and c.supply_limit == 0
+    assert c.pre_take(1500) == 0 and c.supply_check(0, 0) == "" and c.supply_until(600, 0) is None, "收起来的时间不能用, 也不会触发支援短缺"
+    assert c.unstash() == 1200 and c.stash == 0 and c.unstash() == 0
+    c.start(["short2"], owner="me", now=t0, pre=0, stash=900)
+    rec = c.finish("completed", t0 + timedelta(hours=4))
+    assert rec["stash"] == 900 and rec["pre_left"] == 0 and c.stash == 0
 
     # 整点记录: 超时未填写算违反 (每格一次); 细化规范分成半小时; 记录封锁只在合约中有效
     fill = timedelta(hours=1)

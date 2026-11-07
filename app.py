@@ -373,6 +373,7 @@ class BreakTimerApp:
         self.comm.cut_exempt = config.dev_mode_enabled        # 开发者模式: 不受对方 [cut off] 限制
         self.comm.ai_blocked = self._comm_ai_blocked
         self.comm.state_fn = self._comm_state
+        self.comm.break_end_fn = self._comm_break_end
         self.comm.hard_block = lambda: self.contract.has("silent") and not config.dev_mode_enabled()
         self.comm.on_proactive = self._comm_ping
         self.comm.on_joint_due = self._joint_due
@@ -1142,6 +1143,14 @@ class BreakTimerApp:
         if self.behavior.active() is not None:
             return "out"
         return "idle"
+
+    def _comm_break_end(self):
+        """用户这次休息结束的时刻 (没在休息 = None): 联合行动结束后对方的休息跟着它."""
+        if self.state != ON_BREAK:
+            return None
+        if self.break_end_wall is not None:
+            return self.break_end_wall
+        return datetime.now() + timedelta(seconds=max(0, int(self.countdown_seconds)))
 
     def _comm_blocked(self) -> str:
         """现在不能用沟通的原因 ("" = 可以). 开发者模式下沟通总是开放."""
@@ -4206,8 +4215,17 @@ class BreakTimerApp:
             self._stop_recorder("camera")
             return
         lv = contract_mod.level_of(terms)
-        c.start(terms, owner=self.sync.my_id, pre=self.break_carry, cam=getattr(self, "_pending_cam", ""),
-                theme=config.CONTRACT_THEME)
+        # 联合行动 (1.0.404): 合约开始前积攒的休息时间收起来 —— 合约中看不到, 不能用, 也不会触发支援短缺, 合约结束后原样还回去
+        try:
+            joint = self.comm.joint_pending(list(terms))
+        except Exception as e:      # noqa: BLE001
+            joint = False
+            self._log_window(f"ERROR    joint_pending {type(e).__name__}: {e}")
+        stash = float(self.break_carry) if joint else 0.0
+        c.start(terms, owner=self.sync.my_id, pre=0 if joint else self.break_carry, cam=getattr(self, "_pending_cam", ""),
+                theme=config.CONTRACT_THEME, stash=stash)
+        if stash > 0:
+            self._set_break_carry(0)
         # 目光: 摄像头在合约开始前就打开了 (要先确认能录), 那时的 recorder 还不知道合约 id;
         # 现在补上, 不然这一段 / 这一整场录像在结束后按合约 id 找不到 (MECHANICS 18.8).
         cid = str(c.live.get("id") or "")
@@ -4228,6 +4246,8 @@ class BreakTimerApp:
         try:
             if self.comm.joint_started(list(c.terms), c.live.get("id"), c.end_at):      # 联合行动: 按约开始了
                 c.tag_joint(self.comm.joint_partner())
+            elif c.stash > 0:                                                           # 没能算作联合行动 (差了一瞬间): 收起来的休息时间还回去
+                self._set_break_carry(self.break_carry + int(c.unstash()))
         except Exception as e:      # noqa: BLE001
             self._log_window(f"ERROR    joint_started {type(e).__name__}: {e}")
         self._contract_changed()
@@ -4311,7 +4331,7 @@ class BreakTimerApp:
         rec = c.finish(result, at, by=self.sync.my_id)
         self._contract_seen = None
         reward = int(rec.get("reward") or 0)
-        keep = min(int(self.break_carry), int(float(rec.get("pre_left") or 0)))
+        keep = min(int(self.break_carry), int(float(rec.get("pre_left") or 0))) + int(float(rec.get("stash") or 0))    # 联合行动收起来的休息时间还回去
         if reward > 0 or keep != self.break_carry:
             self._set_break_carry(keep + reward)
             if self.state == IDLE:

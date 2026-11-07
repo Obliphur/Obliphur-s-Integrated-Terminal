@@ -514,7 +514,8 @@ class Store:
             self.tl.append([kind, _iso(a), _iso(b), label])
 
     def fill_timeline(self, now: datetime, segs_fn, override=None):
-        """把时间线补到 now (整分钟). segs_fn(a, b) → [seg] (现在生效的日程, 联合行动之后重算过的); override: (kind, label) = 这段时间对方在联合行动里, 按这个记.
+        """把时间线补到 now (整分钟). segs_fn(a, b) → [seg] (现在生效的日程, 联合行动之后重算过的); override: (kind, label[, since]) = 对方在联合行动里,
+        从 since (没有 = 整段) 起的时间按这个记, since 之前的按日程补.
         没记到的部分 (好几天没调用) 按日程补齐. 第一次: 从 BACKFILL_DAYS 天前的 0 点开始."""
         now = now.replace(second=0, microsecond=0)
         if self.upto is None:
@@ -525,19 +526,23 @@ class Store:
         if now <= self.upto:
             return
         a = self.upto
-        if override:
+        since = override[2].replace(second=0, microsecond=0) if override and len(override) > 2 and override[2] else None
+        if override and (since is None or since <= a):
             self._append(override[0], a, now, override[1])
         else:
+            stop = now if not override else min(now, since)       # 联合行动开始之前没记到的部分 (好几分钟没调用) 按日程补, 不算联合行动
             cur = a
-            for s in segs_fn(a, now):
-                s0, s1 = max(cur, s["start"]), min(now, s["end"])
+            for s in segs_fn(a, stop):
+                s0, s1 = max(cur, s["start"]), min(stop, s["end"])
                 if s0 > cur:
                     self._append("idle", cur, s0, "空闲")
                 if s1 > s0:
                     self._append(s["kind"], s0, s1, s["label"])
                     cur = s1
-            if cur < now:
-                self._append("idle", cur, now, "空闲")
+            if cur < stop:
+                self._append("idle", cur, stop, "空闲")
+            if override and stop < now:
+                self._append(override[0], stop, now, override[1])
         self.upto = now
         self.dirty = True
         cut = _iso(datetime.combine(now.date() - timedelta(days=KEEP_DAYS), datetime.min.time()))
@@ -863,6 +868,17 @@ def _selftest():
         lines = st.log_lines(now)
         assert lines and all(not l.startswith("10:") for l in lines), "没结束的格子不给 (10:00 这一格要到 11:00)"
         assert any(" " in l for l in lines)
+        # 联合行动 (override 带 since): since 之前没记到的按日程补, since 之后按联合行动里的状态记; 联合行动里的空闲记成"空闲"
+        stj = Store(os.path.join(td, "routine_joint.json"), r, seed)
+        stj.fill_timeline(now, fn)
+        t1, t2 = now + timedelta(minutes=30), now + timedelta(minutes=45)
+        stj.fill_timeline(t2, fn, ("focus", "联合行动", t1))
+        assert stj.upto == t2 and abs(stj.minutes(now, t2) - 45) < 1e-6, "时间线没有缺口"
+        assert abs(stj.minutes(t1, t2, ("focus",)) - 15) < 1e-6 and all(l == "联合行动" for k, a, b, l in stj.segments(t1, t2)), "since 之后记成联合行动"
+        assert not any(l == "联合行动" for k, a, b, l in stj.segments(now, t1)), "since 之前不算联合行动"
+        t3 = t2 + timedelta(minutes=10)
+        stj.fill_timeline(t3, fn, ("idle", "空闲", t1))
+        assert [(k, l) for k, a, b, l in stj.segments(t2, t3)] == [("idle", "空闲")], "联合行动里的空闲记成空闲"
         # 没被调用的时候: 往后补
         later = datetime(2026, 3, 13, 9, 40)
         st.fill_timeline(later, fn)

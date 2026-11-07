@@ -605,7 +605,7 @@ class Contract(private val file: File) {
 
     /** pre: 开始时积攒的休息时间 (秒). 合约中暂停休息时这部分不打折; 支援短缺限制它能用几成. theme: 合约主题 (THEMES). */
     fun start(terms: Collection<String>, owner: String, now: LocalDateTime = LocalDateTime.now(), pre: Double = 0.0,
-              cam: String = "", theme: String = "") {
+              cam: String = "", theme: String = "", stash: Double = 0.0) {
         val t = clean(terms, prereq = true)
         val n = now.withNano(0)
         val p = maxOf(0.0, pre)
@@ -620,8 +620,25 @@ class Contract(private val file: File) {
             .put("rand", JSONArray()).put("rand_n", 0).put("fog_words", fogWordsJson(java.util.Random()))
         if ("gaze" in t && cam.isNotEmpty()) live.put("cam", cam)
         if (cleanTheme(theme).isNotEmpty()) live.put("theme", cleanTheme(theme))
+        if (stash > 0) live.put("stash", r1(stash))                 // 联合行动 (1.0.404): 合约开始前积攒的休息时间收起来 (pre = 0), 合约结束后还回去
         watch.clear()
         save()
+    }
+
+    /** 联合行动开始时收起来的休息时间 (秒), 合约结束才还回去. */
+    val stash get() = if (active) live.dbl("stash") else 0.0
+
+    /** 把收起来的休息时间拿出来 (联合行动其实没有开始: 还回去). 返回秒数. */
+    fun unstash(): Double {
+        val x = stash
+        if (x > 0) {
+            val share = supplyShare(terms)
+            live.remove("stash")
+            live.put("pre", r1(x)).put("pre_left", r1(x)).put("pre_used", 0)          // 像一开始就没收起来一样: 这部分又是合约前积攒的 (支援短缺照常)
+            live.put("supply", if (share == null) JSONObject.NULL else r1(x * share))
+            save()
+        }
+        return x
     }
 
     /** 结束合约: result = completed / failed / idle / abandoned. 返回这一条记录 (含给出的休息时间). */
@@ -644,6 +661,7 @@ class Contract(private val file: File) {
             .put("rand", JSONArray(rand))
         if (theme.isNotEmpty()) rec.put("theme", theme)
         live.optString("joint").takeIf { it.isNotEmpty() }?.let { rec.put("joint", it) }       // 联合行动的对象 (统计 → 合约界面显示名字)
+        if (stash > 0) rec.put("stash", stash)                                                 // 联合行动开始时收起来的休息时间: 合约结束时还回去
         live.optJSONArray("seals")?.let { if (it.length() > 0) rec.put("seals", JSONArray(it.toString())) }   // 封锁了的记录格 (合约结束后照样锁着)
         live.optJSONObject("slow")?.optString("start")?.takeIf { it.isNotEmpty() }?.let { rec.put("slow", it) }
         history.add(rec)

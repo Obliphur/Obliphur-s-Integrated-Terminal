@@ -290,6 +290,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         comm.cutExempt = { settings.devMode }                 // 开发者模式: 不受对方 [cut off] 限制
         comm.aiBlocked = { commAiBlocked() }
         comm.stateFn = { commState() }
+        comm.breakEndFn = { if (timer.state == TState.ON_BREAK) java.time.LocalDateTime.now().plusNanos((timer.countdown * 1e9).toLong()) else null }
         comm.userDayFn = { day ->                                   // 人设里的 [condition] 判定用: 某一天用户的 (专注秒, 空闲秒)
             val now = java.time.LocalDateTime.now()
             val k = dm.dayKinds(day, if (day == now.toLocalDate()) timer.calendarLive() else null, now)
@@ -1556,13 +1557,20 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     fun startContract(terms: Collection<String>) {
         if (contract.active) return
         contractBlock().let { if (it.isNotEmpty()) { toast(it, "warn"); return } }
-        contract.start(terms, myId(), pre = timer.breakCarry.toDouble(),
-            theme = Contract.cleanTheme(settings.str("CONTRACT_THEME")))
+        // 联合行动 (1.0.404): 合约开始前积攒的休息时间收起来 —— 合约中看不到, 不能用, 也不会触发支援短缺, 合约结束后原样还回去
+        val joint = runCatching { comm.jointPending(terms.toList()) }.getOrDefault(false)
+        val stash = if (joint) timer.breakCarry.toDouble() else 0.0
+        contract.start(terms, myId(), pre = if (joint) 0.0 else timer.breakCarry.toDouble(),
+            theme = Contract.cleanTheme(settings.str("CONTRACT_THEME")), stash = stash)
+        if (stash > 0) timer.clearCarry()
         // 凑齐的词条组合: 积攒的休息时间 +N 分钟 (在 pre 之后加: 算合约中得到的, 合约结束后不留下)
         val gift = Contract.restGift(contract.terms)
         timer.addCarry(gift)
         contractSeen = contract.id
-        runCatching { if (comm.jointStarted(contract.terms.toList(), contract.id.toString(), contract.endAt)) contract.tagJoint(comm.jointPartner()) }      // 联合行动: 按约开始了
+        runCatching {
+            if (comm.jointStarted(contract.terms.toList(), contract.id.toString(), contract.endAt)) contract.tagJoint(comm.jointPartner())      // 联合行动: 按约开始了
+            else if (contract.stash > 0) timer.addCarry(contract.unstash().toInt())                                                          // 没能算作联合行动 (差了一瞬间): 收起来的休息时间还回去
+        }
         host.applyNet(false)
         syncHourLog()
         logNotice("CONTRACT start level ${contract.level} terms ${contract.terms.joinToString(",").ifEmpty { "-" }} until ${contract.endAt?.format(Fmt.YMDHM)}" +
@@ -1590,7 +1598,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         syncHourLog()
         val reward = rec.optInt("reward", 0)
         // 合约中得到的休息时间不留下: 只留合约开始前积攒的那部分, 加上奖励
-        timer.contractEnded(rec.optDouble("pre_left", 0.0), reward)
+        timer.contractEnded(rec.optDouble("pre_left", 0.0), reward, rec.optDouble("stash", 0.0))
         checkAchievements()
         if (heldAchievements.isNotEmpty()) {
             host.achievementsUnlocked(heldAchievements.toList())

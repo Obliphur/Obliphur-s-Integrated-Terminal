@@ -465,8 +465,8 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
     }
 
     /** 合约结束 (MECHANICS 18.2): 积攒的休息时间只留下合约开始前积攒的那部分, 加上奖励. */
-    fun contractEnded(preLeft: Double, reward: Int) {
-        setCarry(minOf(breakCarry, preLeft.toInt()) + reward)
+    fun contractEnded(preLeft: Double, reward: Int, stash: Double = 0.0) {
+        setCarry(minOf(breakCarry, preLeft.toInt()) + stash.toInt() + reward)      // stash: 联合行动开始时收起来的休息时间, 原样还回去
     }
 
     /** 结束合约前先停止休息 (MECHANICS 18.1): 剩下的休息时间按"暂停休息"算, 合约中得到的部分由 endContract 作废.
@@ -505,6 +505,9 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         saveState()
         armIdleNudge()
     }
+
+    /** 联合行动开始: 合约开始前积攒的休息时间收起来 (放进合约里, 合约结束后还回去). */
+    fun clearCarry() = setCarry(0)
 
     /** 合约开始时多给的休息时间 (凑齐的词条组合), 存进积攒的休息时间. */
     fun addCarry(seconds: Int) {

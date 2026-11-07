@@ -668,11 +668,12 @@ class ContractPage(tk.Frame):
     def _rules_text(self):
         """右上角: 合约期间的特别规则 (左栏, 右栏)."""
         n = self.c.violation_limit if self.c.active else C.life_of(self.c.draft)
+        joint = bool(self.c.active and self.c.live.get("joint"))          # 联合行动: 合约前积攒的休息时间收起来了, 不提它
         return ("\n".join([tr("· 目标生命值 {n}: 违反一次 -1, 归零即失败", n=n),
                            tr("· 空闲 / 设备离线共 15 分钟: 失败"),
                            tr("· 整点记录超时未填写: 违反 1 次")]),
                 "\n".join([tr("· \"我累了\"不可用"),
-                           tr("· 暂停休息: 合约前积攒的时间不打折"),
+                           *([] if joint else [tr("· 暂停休息: 合约前积攒的时间不打折")]),
                            tr("· 合约中得到的休息时间结束后作废 (奖励照常)")]))
 
     # ---- 刷新 ----

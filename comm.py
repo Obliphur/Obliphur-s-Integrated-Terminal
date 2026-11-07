@@ -81,6 +81,8 @@ JOINT_EARLY = 10 * 60                 # 联合行动: 合约可以比约定的�
 JOINT_LATE = 5 * 60                   # 联合行动: 约定的开始时间过了这么久还没开始合约就算用户放弃 (秒)
 JOINT_HP_MAX = 30                     # 联合行动: 一次最多记这么多条生命值损失 (下一次开始休息 / 合约结束时一起告诉对方)
 JOINT_SPEAK_WAIT = 3 * 60             # 联合行动: 要让对方回应一句, 但对方正在回别的话: 最多等这么久 (秒)
+JOINT_FOLLOW_STEP = 3 * 60            # 联合行动结束后: 用户还在专注 / 睡眠时, 同步阶段每次往后顺延这么久 (秒), 直到用户的休息结束
+JOINT_FOLLOW_CAP = 3 * 3600           # 联合行动结束后: 同步阶段最长这么久 (秒)
 PING_QUIET = 5 * 60                   # 收到主动消息之前这么久没和对方聊过, 才响提示音
 FOLLOW_KINDS = ("user", "retry")      # 规则 VIII: 回复了这些请求 (用户说的话) 之后, 再调用一次 API, 让对方可以把话分开说
 FOLLOW_TAG = "[系统·续]"
@@ -218,6 +220,7 @@ def prefix_prompt(split: bool = True) -> str:
     """split: 分条发开着 (默认). 关着时没有第 VIII 条 (对方不会被调用第二次)."""
     return (
         "你需要回复来自自律软件OIT用户的信息,根据以下设定回复\n"
+        "你在使用OIT的聊天功能与用户交流,其中任何用括号,引号或其他符号包含的关于动作的描述都只是文本.\n"
         "I.设定上你也是OIT的用户,你需要根据用户为你设定的人设安排自己的日程与行动,你不能出戏(比如强调自己是AI)\n"
         f"专注时间-休息时间函数如下:[{rest_function_text()}],"
         "如果没有强调日程,默认你一直处于空闲(随时可以回复,不专注也不睡觉);如果人设里有专注安排但没写每轮时长,默认你的每轮专注时间总是100min,并且一休息完就继续专注.\n"
@@ -229,6 +232,7 @@ def prefix_prompt(split: bool = True) -> str:
         "如果你需要相关信息 同时输入[refuse to reply][contract] 可以获得词条库以回复用户.\n"
         "如果需要更细致的信息 前往https://github.com/Obliphur/Obliphur-s-Integrated-Terminal下的MECHANICS.md查看.\n"
         "VI.不要主动透露日程/专注状态.\n"
+        "不要主动提及OIT的具体机制(比如联合行动的状态同步).\n"
         "如果某个时间点你理应处于专注,但是用户3min前以内还在你聊天,则和用户说明要进入专注并停止对话.\n"
         "VII.如果用户问起OIT的使用数据(日历/统计/计时器等),你可以输入[模块名]查询(同时输入[refuse to reply]也行),得到该模块的参考模板(只有格式和占位符,没有用户的真实数据);"
         "具体内容请你根据人设自己填写,不要说成是用户的真实数据.可以一次查询多个.\n"
@@ -1656,6 +1660,16 @@ def persona_title(name: str) -> str:
     return os.path.splitext(name or "")[0]
 
 
+def uses_prefix(name: str) -> bool:
+    """前置 prompt (prefix_prompt) 发不发给这个人设: 名字是 Assistant (不分大小写) 的不发 (1.0.404), 别的都发."""
+    return persona_title(name).strip().casefold() != ASSISTANT_TITLE
+
+
+def system_head(name: str, split: bool = True) -> str:
+    """发给模型的 system 开头: 前置 prompt (Assistant 没有) ."""
+    return prefix_prompt(split) if uses_prefix(name) else ""
+
+
 def persona_labels(names: list) -> list:
     """[(文件名, 显示的名字)]: 不带后缀; 只有两个文件除后缀外同名时才保留后缀."""
     titles = [persona_title(n) for n in names]
@@ -2109,6 +2123,7 @@ class Comm:
         self.viewing = False
         self.user_day_fn = lambda day: None      # (日期) → (专注秒数, 空闲秒数) 或 None; app 接上 (dm.day_kinds), [condition] 判定用
         self._cond_next = 0.0
+        self.break_end_fn = lambda: None     # 用户这次休息真正结束的时刻 (datetime; 没在休息 = None); app 接上, 联合行动结束后对方的休息跟着它
         self.state_fn = lambda: ""    # 计时器现在的状态 ("idle" / "break" / "focus" / "sleep" / "out"); app 接上, 用来记空闲时间里开着沟通界面多久
         self._idle_last = None
         self._idle_push = 0
@@ -3437,15 +3452,22 @@ class Comm:
         """联合行动的对象的名字 (人设名, 不带后缀): 记进合约记录, 统计 → 合约界面显示."""
         return persona_title(self.persona_name())
 
-    def joint_started(self, terms, cid, end=None) -> bool:
-        """用户按约开始了合约 (app 在合约开始时调用): 词条和约定的一样, 时间在约定开始的前 10 分钟 ~ 后 5 分钟里, 联合行动开始."""
+    def joint_pending(self, terms) -> bool:
+        """现在开始这些词条的合约, 算不算按约开始联合行动 (不改任何状态; app 在合约开始前用它决定要不要收起合约前积攒的休息时间)."""
         j = self._joint()
         if j.get("state") != "yes" or set(terms or []) != set(j.get("terms") or []):
             return False
+        a, _b = self._joint_span(j)
+        return a is not None and a - timedelta(seconds=JOINT_EARLY) <= self.now() <= a + timedelta(seconds=JOINT_LATE)
+
+    def joint_started(self, terms, cid, end=None) -> bool:
+        """用户按约开始了合约 (app 在合约开始时调用): 词条和约定的一样, 时间在约定开始的前 10 分钟 ~ 后 5 分钟里, 联合行动开始."""
+        if not self.joint_pending(terms):
+            return False
+        self._rt_sync_safe()                                  # 联合行动开始之前的时间按原日程记下来
+        j = self._joint()
         a, b = self._joint_span(j)
         now = self.now()
-        if a is None or not (a - timedelta(seconds=JOINT_EARLY) <= now <= a + timedelta(seconds=JOINT_LATE)):
-            return False
         end = end or b
         self._joint_set({"state": "run", "cid": str(cid or ""), "began": now.isoformat(timespec="seconds"),
                          "until": end.isoformat(timespec="seconds"), "hp": []})
@@ -3461,6 +3483,10 @@ class Comm:
         now = self.now()
         rest_s = max(0, int(reward_s or 0))
         until = now + timedelta(seconds=rest_s)
+        be = self._user_break_end(now)
+        if be is not None:                                    # 合约结束时用户正在休息 (这次休息接着休息): 对方休息到用户这次休息结束
+            until = be
+        self._rt_sync_safe()                                  # 联合行动期间的状态按用户的专注 / 休息记下来
         lost = self._joint_hp_text(j)
         self._joint_set({"state": "rest", "result": str(result), "ended": now.isoformat(timespec="seconds"),
                          "rest_s": rest_s, "rest_until": until.isoformat(timespec="seconds"), "hp": []})
@@ -3533,6 +3559,7 @@ class Comm:
         if j.get("state") != "rest" or self._joint_rest_left(j) <= 0:
             return False
         was = _joint_time(j["rest_until"])
+        self._rt_sync_safe()
         self._joint_set({"rest_until": now.isoformat(timespec="seconds")})
         self._joint_note(f"用户 {now:%H:%M} 结束了休息 (原定休息到 {was:%H:%M}), 你也跟着结束休息, 现在需要重新计算日程.")
         return True
@@ -3546,11 +3573,47 @@ class Comm:
             return
         self._trigger("joint_reply", body)
 
+    def _user_break_end(self, now=None):
+        """用户正在休息 → 这次休息结束的时刻 (必须还没过); 否则 None."""
+        if self.state_fn() != "break":
+            return None
+        try:
+            t = self.break_end_fn()
+        except Exception:      # noqa: BLE001
+            return None
+        return t if isinstance(t, datetime) and t > (now or self.now()) else None
+
+    def _joint_follow(self, j: dict, now):
+        """联合行动结束后的同步阶段 (state=rest): 对方继续跟着用户 —— 用户还在专注 / 睡眠: 一直顺延 (用户的休息结束才结束, 最长 JOINT_FOLLOW_CAP);
+        用户正在休息: 休息到用户这次休息真正结束 (不再按合约给的那几分钟算). 用户空闲: 不顺延, 到时间就结束."""
+        try:
+            until, ended = _joint_time(j["rest_until"]), _joint_time(j["ended"])
+        except (KeyError, TypeError, ValueError):
+            return
+        if until <= now:
+            return
+        cap = ended + timedelta(seconds=JOINT_FOLLOW_CAP)
+        u = self.state_fn()
+        want = None
+        if u == "break":
+            want = self._user_break_end(now)
+            if want is not None and abs((want - until).total_seconds()) < 3:
+                want = None
+        elif u in ("focus", "sleep") and (until - now).total_seconds() < JOINT_FOLLOW_STEP / 2:
+            want = now + timedelta(seconds=JOINT_FOLLOW_STEP)
+        if want is None:
+            return
+        want = min(want, cap)
+        if abs((want - until).total_seconds()) >= 3:
+            self._joint_set({"rest_until": want.isoformat(timespec="seconds")})
+
     def _joint_tick(self, now):
         """联合行动的时间到了 / 错过了."""
         j = self._joint()
         st = j.get("state")
         a, _b = self._joint_span(j)
+        if st == "rest" and self.leader():
+            self._joint_follow(j, now)
         if a is None:
             return
         if st == "wait" and now > a:                          # 一直没有回复, 约定的开始时间过了
@@ -3579,7 +3642,8 @@ class Comm:
                 return {"kind": kind, "label": "联合行动", "detail": "联合行动", "joint": True,
                         "begin": _joint_time(j["began"]), "end": _joint_time(j["until"])}
             if st == "rest" and self._joint_rest_left(j) > 0:
-                return {"kind": "rest", "label": "联合行动", "detail": "联合行动", "joint": True,
+                kind = {"focus": "focus", "break": "rest", "sleep": "sleep"}.get(self.state_fn(), "rest")     # 合约结束后继续跟着用户 (用户空闲时对方休息)
+                return {"kind": kind, "label": "联合行动", "detail": "联合行动", "joint": True,
                         "begin": _joint_time(j["ended"]), "end": _joint_time(j["rest_until"])}
         except (KeyError, TypeError, ValueError):
             pass
@@ -3631,6 +3695,11 @@ class Comm:
                         f"期间你们的专注 / 休息同步: 用户现在{mine}, 你也{mine}; 不要再按原日程判断此刻能不能回复.")
             if st == "rest" and self._joint_rest_left(j) > 0:
                 until = _joint_time(j["rest_until"])
+                ukind = self.state_fn()
+                if ukind in ("focus", "sleep"):               # 合约结束了, 用户还在专注 / 睡眠: 对方继续同步, 用户的休息结束才结束
+                    mine = {"focus": "专注", "sleep": "睡眠"}[ukind]
+                    return (f"\n\n[联合行动已{'完成' if j.get('result') == 'completed' else '失败'}] 合约虽然结束了, 你与用户仍然同步: 用户现在{mine}, 你也{mine}; "
+                            f"用户休息时你才休息, 用户的休息结束后 (预计不晚于 {until:%H:%M}) 按规则 X 重新计算日程.")
                 return (f"\n\n[联合行动已{'完成' if j.get('result') == 'completed' else '失败'}] 你与用户同步得到了休息, "
                         f"你休息到 {until:%H:%M}; 休息结束后按规则 X 重新计算日程.")
             info = self._joint_shift_info()
@@ -4284,7 +4353,7 @@ class Comm:
         self._follow_at = 0                                # 有新请求了: 排着的第二次调用取消 (用户又说了 / 主动发 / 重试)
         self._req_ts = max([int(m.get("ts") or 0) for m in self.messages if m.get("role") == "me"] or [0])
         profile = self.ai.profile()
-        system = prefix_prompt(self.split_on()) + read_persona_full(self.personas, self.persona_name())
+        system = system_head(self.persona_name(), self.split_on()) + read_persona_full(self.personas, self.persona_name())
         system += self.memory_block()
         system += self.joint_system_note()
         who = str(self.cfg.get("user_profile") or "").strip()[:MAX_PROFILE]
@@ -4511,7 +4580,7 @@ class Comm:
                 elif self._newer_me(self._req_ts):          # 回复显示了, 但用户在等的时候又发了消息 (请求里没带上): 补问一次, 不然这几条没人回
                     self.log(f"CATCHUP ({kind}): 等回复的时候用户又发了消息, 补问一次")
                     self._trigger("user", CATCHUP_BODY)
-        elif kind in FOLLOW_KINDS and self.split_on() and not err and not refused and not self._ai_problem() and self.leader():
+        elif kind in FOLLOW_KINDS and self.split_on() and uses_prefix(self.persona_name()) and not err and not refused and not self._ai_problem() and self.leader():
             # 规则 VIII: 隔一会儿再调用第二次, 让对方可以把话分开说 (只想说一次就 [refuse to reply], 什么也不留下).
             # 延时是为了让提示缓存落盘: DeepSeek 的磁盘缓存是异步写的, 紧跟着发会赶不上; Anthropic 的 cache_control 随第一次请求写好, 不用等.
             delay = 0.0 if self.ai.profile().get("protocol") == "anthropic" else self.follow_delay
@@ -4525,7 +4594,7 @@ class Comm:
         self._follow_at = 0
         if self._follow_epoch != self._epoch or self._again or self.busy:
             return False
-        if not self.split_on() or self._ai_problem() or not self.leader() or self.hard_block():
+        if not self.split_on() or not uses_prefix(self.persona_name()) or self._ai_problem() or not self.leader() or self.hard_block():
             return False
         if self.unanswered():                             # 等的时候用户又说了: 由那条新消息自己触发回复
             return False
@@ -4653,7 +4722,7 @@ class Comm:
         """为非正在聊天的对象发一次请求 (主动发 / 追问); 回复由 tick 收进它的聊天记录, 没有第二次调用, 也没有要资料的轮次."""
         pid, st = ctx["pid"], ctx["st"]
         profile = self.ai.profile()
-        system = prefix_prompt(self.split_on()) + read_persona_full(self.personas, ctx["name"])
+        system = system_head(ctx["name"], self.split_on()) + read_persona_full(self.personas, ctx["name"])
         system += self.memory_block_of(ctx["st"])
         who = str(self.cfg.get("user_profile") or "").strip()[:MAX_PROFILE]
         if who and first_turn(st["messages"]):             # 身份背景: 只在这段对话的第一轮发一次
@@ -5302,6 +5371,15 @@ class Comm:
             return False
         return a < t + timedelta(hours=1) and t < b
 
+    def _rt_sync_safe(self):
+        """联合行动的状态要变了 (开始 / 结束 / 休息结束): 先把对方的时间线补到现在, 之前的时间才按旧的状态记."""
+        if not self._rt:
+            return
+        try:
+            self._rt_sync()
+        except Exception as e:      # noqa: BLE001
+            self.log(f"ROUTINE sync FAIL {type(e).__name__}: {e}")
+
     def _rt_sync(self, now=None):
         """把对方的数据补到现在 (时间线 + 整点记录), 存盘. 好几天没调用时, 缺的部分按日程规则补齐."""
         st = self._rt_store_get()
@@ -5311,7 +5389,8 @@ class Comm:
         with self._rt_lock:
             self._rt_joint_record(st)
             j = self._joint_status(now)
-            st.fill_timeline(now, lambda a, b: self._rt_segs(a, b), (j["kind"], j["label"]) if j else None)
+            ov = (j["kind"], "空闲" if j["kind"] == "idle" else j["label"], j["begin"]) if j else None      # 联合行动里的空闲记成"空闲" (不是"联合行动"); begin: 只覆盖联合行动开始之后的时间
+            st.fill_timeline(now, lambda a, b: self._rt_segs(a, b), ov)
             st.fill_cells(now, self._rt_msgs, self._rt_fine)
             if st.dirty:
                 st.dirty = False
@@ -7181,6 +7260,63 @@ def _selftest():
     assert cj2.joint_ended("c9", "completed", 600)                 # 休息到 12:30: 空闲段 (12:30-13:00) 开始, 不在循环里
     clock[0] = day.replace(hour=12, minute=31)
     assert cj2._joint_shift_info() is None and cj2.other_status_text() == "空闲" and ("focus", 12 * 60 + 30) not in cj2._segments()
+
+    # 1.0.404: 合约结束后对方继续跟着用户 —— 合约结束时用户还在专注: 对方也专注, 顺延到用户的休息结束 (不是合约给的那几分钟); 用户正在休息: 休息到用户这次休息结束
+    clock[0] = day.replace(hour=15, minute=0)
+    cj5 = joint_comm("同步一", JTXT)
+    u5, be5 = ["focus"], [None]
+    cj5.state_fn = lambda: u5[0]
+    cj5.break_end_fn = lambda: be5[0]
+    cj5._joint_set({"id": "z", "pid": cj5.pid, "state": "run", "terms": [], "start": day.replace(hour=12).isoformat(),
+                    "end": day.replace(hour=15).isoformat(), "cid": "c5", "began": day.replace(hour=12).isoformat(),
+                    "until": day.replace(hour=15).isoformat()}, replace=True)
+    assert cj5.joint_ended("c5", "completed", 1200) and cj5._joint()["rest_until"] == day.replace(hour=15, minute=20).isoformat()
+    for k in range(19, 70):                                 # 15:19 起每分钟看一次: 用户一直在专注, 同步阶段一直顺延
+        clock[0] = day.replace(hour=15, minute=0) + timedelta(minutes=k)
+        cj5._joint_tick(clock[0])
+        assert cj5.joint_live() and cj5.other_status_display() == ("专注中 · 联合行动", "focus"), (k, cj5._joint())
+    assert "你也专注" in cj5.joint_system_note() and "用户休息时你才休息" in cj5.joint_system_note()
+    clock[0] = day.replace(hour=16, minute=10)
+    u5[0], be5[0] = "break", day.replace(hour=16, minute=50)   # 用户开始休息 (合约结束后第一次休息 = 建议休息 + 奖励, 到 16:50)
+    cj5._joint_tick(clock[0])
+    assert cj5._joint()["rest_until"] == day.replace(hour=16, minute=50).isoformat() and cj5.other_status_display() == ("休息中 · 联合行动", "rest")
+    clock[0] = day.replace(hour=16, minute=30)
+    u5[0], be5[0] = "idle", None                            # 用户提前结束了休息: 对方也结束, 立即重新计算日程
+    assert cj5.joint_break_ended() and not cj5.joint_live() and cj5._joint_shift_info()["loop"][0]["start"] == 16 * 60 + 30
+    cj5._joint_tick(clock[0])
+    assert cj5._joint()["rest_until"] == clock[0].isoformat(timespec="seconds"), "休息结束的同步阶段不会再被顺延"
+    clock[0] = day.replace(hour=15, minute=0)
+    cj6 = joint_comm("同步二", JTXT)
+    cj6.state_fn = lambda: "break"
+    cj6.break_end_fn = lambda: day.replace(hour=15, minute=7)
+    cj6._joint_set({"id": "w", "pid": cj6.pid, "state": "run", "terms": [], "start": day.replace(hour=12).isoformat(),
+                    "end": day.replace(hour=15).isoformat(), "cid": "c6", "began": day.replace(hour=12).isoformat(),
+                    "until": day.replace(hour=15).isoformat()}, replace=True)
+    assert cj6.joint_ended("c6", "completed", 1200) and cj6._joint()["rest_until"] == day.replace(hour=15, minute=7).isoformat(), "合约结束时用户正在休息: 对方休息到用户这次休息结束"
+
+    # 1.0.404: Assistant (名字, 不分大小写) 不会收到前置 prompt, 也没有规则 VIII 的第二次调用; 别的人设照旧
+    assert not uses_prefix("Assistant.txt") and not uses_prefix("assistant.md") and uses_prefix("Assisstant.md") and uses_prefix("Claudia.txt")
+    assert system_head("Assistant.txt") == "" and system_head("Claudia.txt", True) == prefix_prompt(True)
+    clock[0] = day.replace(hour=15, minute=0)
+    cas = joint_comm("Assistant", "你是助理.\n")
+    cas.set_cfg(split_send=True)
+    cas.state_fn = lambda: "idle"
+    cas.follow_delay = 0
+    n_f = len(follow_calls)
+    script.append("好的")
+    cas.send("你好")
+    wait(cas)
+    assert calls[-1][0].startswith("你是助理.") and "你需要回复来自自律软件OIT" not in calls[-1][0], calls[-1][0][:80]
+    cas.tick()
+    cas.tick()
+    assert len(follow_calls) == n_f and not cas._follow_at, "Assistant 没有前置 prompt: 不会再调用第二次"
+    cas2 = joint_comm("Claudiax", "你是别人.\n")
+    cas2.set_cfg(split_send=True)
+    cas2.state_fn = lambda: "idle"
+    script.append("好的")
+    cas2.send("你好")
+    wait(cas2)
+    assert calls[-1][0].startswith(prefix_prompt(True)) and calls[-1][0].endswith("你是别人.")
 
     # 合约失败 / 没有休息: 立即重新计算; 提前终止也一样; 系统消息写明原因
     clock[0] = day.replace(hour=15, minute=0)

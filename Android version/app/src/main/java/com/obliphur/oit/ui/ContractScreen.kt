@@ -313,7 +313,8 @@ fun ContractScreen() {
                 Text(tr("合约期间"), color = p.danger, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                 Text(listOf(tr("· 目标生命值 {n}: 违反一次 -1, 归零即失败", "n" to n), tr("· 空闲 / 设备离线共 15 分钟: 失败"),
                     tr("· 整点记录超时未填写: 违反 1 次")).joinToString("\n"), color = p.dim, fontSize = 10.sp, lineHeight = 13.sp)
-                Text(listOf(tr("· \"我累了\"不可用"), tr("· 暂停休息: 合约前积攒的时间不打折"),
+                Text(listOfNotNull(tr("· \"我累了\"不可用"),
+                    if (active && c.live.optString("joint").isNotEmpty()) null else tr("· 暂停休息: 合约前积攒的时间不打折"),      // 联合行动: 合约前积攒的休息时间收起来了, 不提它
                     tr("· 合约中得到的休息时间结束后作废 (奖励照常)")).joinToString("\n"),
                     color = p.dim, fontSize = 10.sp, lineHeight = 13.sp)
             }

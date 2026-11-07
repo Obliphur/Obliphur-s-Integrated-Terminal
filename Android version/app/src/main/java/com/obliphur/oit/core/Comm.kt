@@ -1300,6 +1300,7 @@ object CommText {
 
     fun prefixPrompt(split: Boolean = true): String =
         "你需要回复来自自律软件OIT用户的信息,根据以下设定回复\n" +
+            "你在使用OIT的聊天功能与用户交流,其中任何用括号,引号或其他符号包含的关于动作的描述都只是文本.\n" +
             "I.设定上你也是OIT的用户,你需要根据用户为你设定的人设安排自己的日程与行动,你不能出戏(比如强调自己是AI)\n" +
             "专注时间-休息时间函数如下:[${restFunctionText()}],如果没有强调日程,默认你一直处于空闲(随时可以回复,不专注也不睡觉);如果人设里有专注安排但没写每轮时长,默认你的每轮专注时间总是100min,并且一休息完就继续专注.\n" +
             "II.根据日程,你在专注/外出/睡觉和其他不能随时回复的时段是不能回复消息的:返回$REFUSE" +
@@ -1310,6 +1311,7 @@ object CommText {
             "如果你需要相关信息 同时输入[refuse to reply][contract] 可以获得词条库以回复用户.\n" +
             "如果需要更细致的信息 前往https://github.com/Obliphur/Obliphur-s-Integrated-Terminal下的MECHANICS.md查看.\n" +
             "VI.不要主动透露日程/专注状态.\n" +
+            "不要主动提及OIT的具体机制(比如联合行动的状态同步).\n" +
             "如果某个时间点你理应处于专注,但是用户3min前以内还在你聊天,则和用户说明要进入专注并停止对话.\n" +
             "VII.如果用户问起OIT的使用数据(日历/统计/计时器等),你可以输入[模块名]查询(同时输入[refuse to reply]也行),得到该模块的参考模板(只有格式和占位符,没有用户的真实数据);" +
             "具体内容请你根据人设自己填写,不要说成是用户的真实数据.可以一次查询多个.\n" +
@@ -1798,6 +1800,8 @@ class Comm(
         const val JOINT_TAG = "[系统·联合行动]"           // 联合行动进展的系统消息 (不是 "[系统]" 开头: 不算主动消息, 不触发提示音)
         const val JOINT_EARLY = 10 * 60                 // 联合行动: 合约可以比约定的开始时间早开始这么久 (秒)
         const val JOINT_LATE = 5 * 60                   // 联合行动: 约定的开始时间过了这么久还没开始合约就算用户放弃 (秒)
+        const val JOINT_FOLLOW_STEP = 3 * 60            // 联合行动结束后: 用户还在专注 / 睡眠时, 同步阶段每次往后顺延这么久 (秒), 直到用户的休息结束
+        const val JOINT_FOLLOW_CAP = 3 * 3600           // 联合行动结束后: 同步阶段最长这么久 (秒)
         const val JOINT_HP_MAX = 30                     // 联合行动: 一次最多记这么多条生命值损失 (下一次开始休息 / 合约结束时一起告诉对方)
         const val JOINT_SPEAK_WAIT = 3 * 60            // 联合行动: 要让对方回应一句, 但对方正在回别的话: 最多等这么久 (秒)
         const val PING_QUIET = 5 * 60                   // 收到主动消息之前这么久没和对方聊过, 才响提示音
@@ -1910,6 +1914,8 @@ class Comm(
     var thinkAuto = true; private set
     /** 计时器现在的状态 (idle / break / focus / sleep / out); Core 接上, 用来记空闲时间里开着沟通界面多久. */
     var stateFn: () -> String = { "" }
+    /** 用户这次休息真正结束的时刻 (没在休息 = null); Core 接上, 联合行动结束后对方的休息跟着它. */
+    var breakEndFn: () -> LocalDateTime? = { null }
     var userDayFn: (java.time.LocalDate) -> Pair<Double, Double>? = { null }      // (日期) → (专注秒, 空闲秒); Core 接上 (dm.dayKinds), [condition] 判定用
     private val condDays = LinkedHashMap<String, Pair<Long, Long>>()               // 每天的 (专注秒, 空闲秒): 用户的计时记录只留 7 天, 所以 OIT 自己存一份
     private var condNext = 0L
@@ -2702,6 +2708,12 @@ class Comm(
         (listOf(readPersona(name)) + companionsOf(name).map { readPersona(it) }).filter { it.isNotEmpty() }.joinToString("\n\n")
 
     fun personaTitle(name: String) = name.substringBeforeLast('.')
+
+    /** 前置 prompt (prefixPrompt) 发不发给这个人设: 名字是 Assistant (不分大小写) 的不发 (1.0.404), 别的都发. */
+    fun usesPrefix(name: String) = personaTitle(name).trim().lowercase() != "assistant"
+
+    /** 发给模型的 system 开头: 前置 prompt (Assistant 没有). */
+    private fun systemHead(name: String): String = if (usesPrefix(name)) CommText.prefixPrompt(splitSend) else ""
 
     /** (文件名, 显示的名字): 不带后缀; 只有两个文件除后缀外同名时才保留后缀. */
     fun personaLabels(): List<Pair<String, String>> {
@@ -3516,6 +3528,12 @@ class Comm(
         return a.isBefore(t.plusHours(1)) && t.isBefore(b)
     }
 
+    /** 联合行动的状态要变了 (开始 / 结束 / 休息结束): 先把对方的时间线补到现在, 之前的时间才按旧的状态记. */
+    private fun rtSyncSafe() {
+        if (rt == null) return
+        runCatching { rtSync() }.onFailure { log("ROUTINE sync FAIL ${it.javaClass.simpleName}: ${it.message}") }
+    }
+
     /** 把对方的数据补到现在 (时间线 + 整点记录), 存盘. 好几天没调用时, 缺的部分按日程规则补齐. */
     fun rtSync(t: LocalDateTime = now()): RoutineStore? {
         loadSchedule()
@@ -3523,7 +3541,9 @@ class Comm(
         synchronized(rtLock) {
             rtJointRecord(st)
             val j = jointStatus(t)
-            st.fillTimeline(t, { a, b -> rtSegs(a, b) }, j?.let { it.first.kind to JOINT_STATUS })
+            val jj = curJoint()
+            val since = jj?.let { if (it.state == "run") parseIso(it.began) else parseIso(it.ended) }          // 只覆盖联合行动开始之后的时间
+            st.fillTimeline(t, { a, b -> rtSegs(a, b) }, j?.let { Triple(it.first.kind, if (it.first.kind == "idle") "空闲" else JOINT_STATUS, since) })     // 联合行动里的空闲记成"空闲" (不是"联合行动")
             st.fillCells(t, { a, b -> rtMsgs(a, b) }, { x -> rtFine(x) })
             if (st.dirty) {
                 st.dirty = false
@@ -3929,12 +3949,22 @@ class Comm(
     /** 联合行动的对象的名字 (人设名, 不带后缀): 记进合约记录, 统计 → 合约界面显示. */
     fun jointPartner(): String = personaTitle(personaName())
 
+    /** 现在开始这些词条的合约, 算不算按约开始联合行动 (不改任何状态; Core 在合约开始前用它决定要不要收起合约前积攒的休息时间). */
+    @Synchronized
+    fun jointPending(terms: List<String>): Boolean {
+        val j = curJoint()?.takeIf { it.state == "yes" && it.terms.toSet() == terms.toSet() } ?: return false
+        val (a, _) = jointSpan(j) ?: return false
+        val n = now()
+        return !(n.isBefore(a.minusSeconds(JOINT_EARLY.toLong())) || n.isAfter(a.plusSeconds(JOINT_LATE.toLong())))
+    }
+
     @Synchronized
     fun jointStarted(terms: List<String>, cid: String, end: LocalDateTime? = null): Boolean {
-        val j = curJoint()?.takeIf { it.state == "yes" && it.terms.toSet() == terms.toSet() } ?: return false
-        val (a, b) = jointSpan(j) ?: return false
+        if (!jointPending(terms)) return false
+        rtSyncSafe()                                            // 联合行动开始之前的时间按原日程记下来
+        val j = curJoint() ?: return false
+        val (_, b) = jointSpan(j) ?: return false
         val n = now()
-        if (n.isBefore(a.minusSeconds(JOINT_EARLY.toLong())) || n.isAfter(a.plusSeconds(JOINT_LATE.toLong()))) return false
         val e = end ?: b
         jointSet(j.copy(state = "run", cid = cid, began = n.iso(), until = e.iso(), hp = emptyList()))
         jointNote("联合行动开始了 (合约 %02d:%02d - 预计 %02d:%02d). 从现在起你与用户的专注 / 休息同步.".format(n.hour, n.minute, e.hour, e.minute))
@@ -3948,7 +3978,8 @@ class Comm(
         val j = curJoint()?.takeIf { it.state == "run" && (cid.isEmpty() || it.cid.isEmpty() || cid == it.cid) } ?: return false
         val n = now()
         val restS = maxOf(0L, rewardS.toLong())
-        val until = n.plusSeconds(restS)
+        val until = userBreakEnd(n) ?: n.plusSeconds(restS)     // 合约结束时用户正在休息 (这次休息接着休息): 对方休息到用户这次休息结束
+        rtSyncSafe()                                            // 联合行动期间的状态按用户的专注 / 休息记下来
         val lost = jointHpText(j)
         jointSet(j.copy(state = "rest", result = result, ended = n.iso(), restS = restS, restUntil = until.iso(), hp = emptyList()))
         if (rt != null) runCatching { rtSync() }.onFailure { log("ROUTINE joint record FAIL ${it.javaClass.simpleName}: ${it.message}") }   // 顺利完成的: 马上记进对方的合约记录
@@ -4014,6 +4045,7 @@ class Comm(
         }
         val j = j0.takeIf { it.state == "rest" && jointRestLeft(it) > 0 } ?: return false
         val was = parseIso(j.restUntil)
+        rtSyncSafe()
         jointSet(j.copy(restUntil = n.iso()))
         jointNote("用户 %02d:%02d 结束了休息 (原定休息到 %s), 你也跟着结束休息, 现在需要重新计算日程.".format(n.hour, n.minute,
             was?.let { "%02d:%02d".format(it.hour, it.minute) } ?: "?"))
@@ -4028,8 +4060,32 @@ class Comm(
     }
 
     /** 联合行动的时间到了 / 错过了. */
+    /** 用户正在休息 → 这次休息结束的时刻 (必须还没过); 否则 null. */
+    private fun userBreakEnd(t: LocalDateTime): LocalDateTime? {
+        if (stateFn() != "break") return null
+        val e = runCatching { breakEndFn() }.getOrNull() ?: return null
+        return if (e.isAfter(t)) e else null
+    }
+
+    /** 联合行动结束后的同步阶段 (state=rest): 对方继续跟着用户 —— 用户还在专注 / 睡眠: 一直顺延 (用户的休息结束才结束, 最长 JOINT_FOLLOW_CAP);
+     *  用户正在休息: 休息到用户这次休息真正结束 (不再按合约给的那几分钟算). 用户空闲: 不顺延, 到时间就结束. */
+    private fun jointFollow(j: Joint, t: LocalDateTime) {
+        val until = parseIso(j.restUntil) ?: return
+        val ended = parseIso(j.ended) ?: return
+        if (!until.isAfter(t)) return
+        val cap = ended.plusSeconds(JOINT_FOLLOW_CAP.toLong())
+        var want: LocalDateTime? = null
+        when (stateFn()) {
+            "break" -> want = userBreakEnd(t)?.takeIf { Math.abs(secondsBetween(until, it)) >= 3 }
+            "focus", "sleep" -> if (secondsBetween(t, until) < JOINT_FOLLOW_STEP / 2.0) want = t.plusSeconds(JOINT_FOLLOW_STEP.toLong())
+        }
+        val w = want?.let { if (it.isAfter(cap)) cap else it } ?: return
+        if (Math.abs(secondsBetween(until, w)) >= 3) jointSet(j.copy(restUntil = w.iso()))
+    }
+
     private fun jointTick(t: LocalDateTime) {
         val j = curJoint() ?: return
+        if (j.state == "rest" && leader()) jointFollow(j, t)
         val a = jointSpan(j)?.first ?: return
         if (j.state == "wait" && t.isAfter(a)) {                // 一直没有回复, 约定的开始时间过了
             if (leader()) jointSet(j.copy(state = "missed"))
@@ -4051,7 +4107,10 @@ class Comm(
             val kind = when (stateFn()) { "focus" -> "focus"; "break" -> "rest"; "sleep" -> "sleep"; else -> "idle" }
             return SegEntry(kind, 0, 0, JOINT_STATUS, JOINT_STATUS) to (parseIso(j.until) ?: t)
         }
-        if (j.state == "rest" && jointRestLeft(j) > 0) return SegEntry("rest", 0, 0, JOINT_STATUS, JOINT_STATUS) to (parseIso(j.restUntil) ?: t)
+        if (j.state == "rest" && jointRestLeft(j) > 0) {
+            val kind = when (stateFn()) { "focus" -> "focus"; "break" -> "rest"; "sleep" -> "sleep"; else -> "rest" }      // 合约结束后继续跟着用户 (用户空闲时对方休息)
+            return SegEntry(kind, 0, 0, JOINT_STATUS, JOINT_STATUS) to (parseIso(j.restUntil) ?: t)
+        }
         return null
     }
 
@@ -4087,9 +4146,17 @@ class Comm(
             return "\n\n[联合行动进行中] 你与用户的联合行动(合约) ${hm(parseIso(j.began))} 开始, 预计 ${hm(parseIso(j.until))} 结束. " +
                 "期间你们的专注 / 休息同步: 用户现在$mine, 你也$mine; 不要再按原日程判断此刻能不能回复."
         }
-        if (j.state == "rest" && jointRestLeft(j) > 0)
-            return "\n\n[联合行动已${if (j.result == "completed") "完成" else "失败"}] 你与用户同步得到了休息, 你休息到 ${hm(parseIso(j.restUntil))}; " +
+        if (j.state == "rest" && jointRestLeft(j) > 0) {
+            val u = stateFn()
+            val res = if (j.result == "completed") "完成" else "失败"
+            if (u == "focus" || u == "sleep") {                 // 合约结束了, 用户还在专注 / 睡眠: 对方继续同步, 用户的休息结束才结束
+                val mine = if (u == "focus") "专注" else "睡眠"
+                return "\n\n[联合行动已$res] 合约虽然结束了, 你与用户仍然同步: 用户现在$mine, 你也$mine; " +
+                    "用户休息时你才休息, 用户的休息结束后 (预计不晚于 ${hm(parseIso(j.restUntil))}) 按规则 X 重新计算日程."
+            }
+            return "\n\n[联合行动已$res] 你与用户同步得到了休息, 你休息到 ${hm(parseIso(j.restUntil))}; " +
                 "休息结束后按规则 X 重新计算日程."
+        }
         val info = jointShiftInfo() ?: return ""
         val lines = info.loop.joinToString("\n") {
             "%d:%02d-%d:%02d:%s".format(it.start % 1440 / 60, it.start % 60, it.end % 1440 / 60, it.end % 60, it.label)
@@ -4608,7 +4675,7 @@ class Comm(
         followAt = 0L                                           // 有新请求了: 排着的第二次调用取消
         reqTs = messages.filter { it.role == "me" }.maxOfOrNull { it.ts } ?: 0L
         val profile = aiConfig().profile()
-        var system = CommText.prefixPrompt(splitSend) + readPersonaFull(personaName())
+        var system = systemHead(personaName()) + readPersonaFull(personaName())
         system += memoryBlock()
         system += jointSystemNote()
         if (userProfile.isNotBlank() && firstTurn(messages))   // 身份背景: 只在这段对话的第一轮发一次
@@ -4775,7 +4842,7 @@ class Comm(
                     trigger("user", CATCHUP_BODY)
                 }
             }
-        } else if (splitSend && r.kind in FOLLOW_KINDS && r.err.isEmpty() && !refused && aiProblem().isEmpty() && leader()) {
+        } else if (splitSend && usesPrefix(personaName()) && r.kind in FOLLOW_KINDS && r.err.isEmpty() && !refused && aiProblem().isEmpty() && leader()) {
             // 规则 VIII: 隔一会儿再调用第二次, 让对方可以把话分开说. 延时是为了让提示缓存落盘:
             // DeepSeek 的磁盘缓存是异步写的, 紧跟着发会赶不上; Anthropic 的 cache_control 随第一次请求写好, 不用等.
             val delay = if (aiConfig().profile().protocol == "anthropic") 0L else followDelayMs
@@ -4838,7 +4905,7 @@ class Comm(
         if (followAt == 0L || nowMs() < followAt) return false
         followAt = 0L
         if (followEpoch != epoch || again || busy) return false
-        if (!splitSend || aiProblem().isNotEmpty() || !leader() || hardBlock()) return false
+        if (!splitSend || !usesPrefix(personaName()) || aiProblem().isNotEmpty() || !leader() || hardBlock()) return false
         if (unanswered()) return false                     // 等的时候用户又说了: 由那条新消息自己触发回复
         trigger("followup", FOLLOW_BODY)
         return true
@@ -5109,7 +5176,7 @@ class Comm(
     /** 为非正在聊天的对象发一次请求 (主动发 / 追问); 回复由 tick 收进它的聊天记录, 没有第二次调用, 也没有要资料的轮次. */
     private fun bgRequest(ctx: BgCtx, kind: String, body: String) {
         val profile = aiConfig().profile()
-        var system = CommText.prefixPrompt(splitSend) + readPersonaFull(ctx.name)
+        var system = systemHead(ctx.name) + readPersonaFull(ctx.name)
         system += memoryBlock(ctx.st)
         if (userProfile.isNotBlank() && firstTurn(ctx.st.messages))   // 身份背景: 只在这段对话的第一轮发一次
             system += "\n\n以下是用户的身份背景(用户自己填写):\n" + userProfile.trim()

@@ -492,23 +492,27 @@ class RoutineStore(val file: File, var r: RoutineSpec, val seed: String) {
     }
 
     /** 把时间线补到 now (整分钟). segsFn(a, b): 现在生效的日程; override: (kind, label) = 这段时间对方在联合行动里. */
-    fun fillTimeline(now0: LocalDateTime, segsFn: (LocalDateTime, LocalDateTime) -> List<RtSeg>, override: Pair<String, String>? = null) {
+    /** override: (kind, label, since) = 对方在联合行动里, 从 since (null = 整段) 起的时间按这个记, since 之前的按日程补. */
+    fun fillTimeline(now0: LocalDateTime, segsFn: (LocalDateTime, LocalDateTime) -> List<RtSeg>, override: Triple<String, String, LocalDateTime?>? = null) {
         val now = now0.withSecond(0).withNano(0)
         if (upto == null) upto = now.toLocalDate().minusDays(Routine.BACKFILL_DAYS.toLong()).atStartOfDay()
         val floor = now.toLocalDate().minusDays(Routine.SYNC_MAX_DAYS.toLong()).atStartOfDay()
         if (upto!!.isBefore(floor)) upto = floor
         val a = upto!!
         if (!now.isAfter(a)) return
-        if (override != null) append(override.first, a, now, override.second)
+        val since = override?.third?.withSecond(0)?.withNano(0)
+        if (override != null && (since == null || !since.isAfter(a))) append(override.first, a, now, override.second)
         else {
+            val stop = if (override == null) now else minOf(now, since!!)       // 联合行动开始之前没记到的部分 (好几分钟没调用) 按日程补, 不算联合行动
             var cur = a
-            for (s in segsFn(a, now)) {
+            for (s in segsFn(a, stop)) {
                 val s0 = maxOf(cur, s.start)
-                val s1 = minOf(now, s.end)
+                val s1 = minOf(stop, s.end)
                 if (s0.isAfter(cur)) append("idle", cur, s0, "空闲")
                 if (s1.isAfter(s0)) { append(s.kind, s0, s1, s.label); cur = s1 }
             }
-            if (cur.isBefore(now)) append("idle", cur, now, "空闲")
+            if (cur.isBefore(stop)) append("idle", cur, stop, "空闲")
+            if (override != null && stop.isBefore(now)) append(override.first, stop, now, override.second)
         }
         upto = now
         dirty = true
