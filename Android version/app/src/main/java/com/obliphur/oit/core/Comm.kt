@@ -2022,7 +2022,6 @@ class Comm(
         const val JOINT_FOLLOW_CAP = 3 * 3600           // 联合行动结束后: 同步阶段最长这么久 (秒)
         const val JOINT_HP_MAX = 30                     // 联合行动: 一次最多记这么多条生命值损失 (下一次开始休息 / 合约结束时一起告诉对方)
         const val JOINT_SPEAK_WAIT = 3 * 60            // 联合行动: 要让对方回应一句, 但对方正在回别的话: 最多等这么久 (秒)
-        const val PING_QUIET = 5 * 60                   // 收到主动消息之前这么久没和对方聊过, 才响提示音
         /** 规则 VIII: 回复了这些请求 (用户说的话) 之后, 再调用一次 API, 让对方可以把话分开说. */
         val FOLLOW_KINDS = setOf("user", "retry")
         const val FOLLOW_TAG = "[系统·续]"
@@ -2674,27 +2673,21 @@ class Comm(
         syncedPing(fresh)
     }
 
-    /** 别的设备收到的主动消息同步过来了 (系统触发的那条 + 对方的回复, 刚刚才写的): 这台也提示一声 (前 5 分钟没聊过的话). */
+    /** 别的设备刚收到的新消息同步过来了: 这台不在沟通页面的话也提示一声. */
     private fun syncedPing(fresh: List<ChatMsg>) {
-        val uids = fresh.map { it.uid }.toHashSet()
         val t = nowMs()
         for (m in fresh) {
-            if (m.role != "ai" || t - m.ts > 90_000) continue
-            val i = messages.indexOfFirst { it.uid == m.uid }
-            val prev = if (i > 0) messages[i - 1] else null
-            if (prev != null && prev.role == "sys" && prev.text.startsWith("[系统]") && prev.uid in uids) {
-                if (!talkedRecently(messages.subList(0, i - 1), prev.ts)) ping()
+            if (m.role == "ai" && t - m.ts <= 90_000L) {
+                ping()
                 return
             }
         }
     }
 
-    /** beforeMs 之前 5 分钟内, 用户和对方有没有说过话 (系统消息不算). */
-    private fun talkedRecently(msgs: List<ChatMsg>, beforeMs: Long): Boolean =
-        msgs.any { it.role != "sys" && beforeMs - it.ts in 0..PING_QUIET * 1000L }
-
     /** 收到主动消息的提示音 (不能用沟通的时候, 例如已经开始专注了, 不响). */
+    /** 有新消息, 而用户不在沟通页面: 柔和的提示音 (在页面上看着 / 不能用沟通时不响). */
     private fun ping() {
+        if (viewing) return
         if (blocked().isEmpty()) runCatching { onProactive() }
     }
 
@@ -4492,7 +4485,6 @@ class Comm(
         fun dueOf(m: ChatMsg): Long = if (m.late && away.isEmpty()) minOf(m.due, now) else m.due
         val held = messages.filter { it.hold }.takeWhile { dueOf(it) <= now }          // 打字延时没到点的和它后面的继续藏着 (按顺序一条一条出来)
         if (held.isEmpty()) return
-        val first = messages.indexOf(held[0])
         held.forEach {
             val due = dueOf(it)
             it.hold = false; it.shown = now                                   // 等用户回复的时间从这时候算起 (规则 IX)
@@ -4504,8 +4496,10 @@ class Comm(
             }
             it.due = 0L
         }
-        if (!viewing) unread += held.size
-        if (!talkedRecently(messages.subList(0, first), held[0].ts)) ping()
+        if (!viewing) {
+            unread += held.size
+            ping()                                               // 不在沟通页面: 藏着的消息现在显示, 提示一声
+        }
         saveChat(); changed(); push()
     }
 
@@ -5100,7 +5094,6 @@ class Comm(
             if (retryN == HOLD_N && newerMe(reqTs)) retryAt = nowMs()          // 等回复的时候用户又发了消息, 而这时对方在专注 / 睡眠: 存着的还在
             else { retryAt = 0; retryN = 0 }
             saveCfg()
-            val quiet = r.kind == "chase" || r.kind == "net" || ((r.kind == "proactive" || r.kind == "love") && !talkedRecently(messages, nowMs()))      // 前 5 分钟没聊过 (追问总是): 提示音
             r.extra?.let { add("sys", it.body, it.api) }
             val m = add("ai", text, if (text != r.reply.trim()) r.reply.trim() else "")
             if (jointAns.isNotEmpty() && !drop) jointAnswer(jointAns)
@@ -5111,7 +5104,7 @@ class Comm(
             if (waitMin > 0 && r.kind != "chase") m.wait = waitMin          // 追问的回复里再写 [waiting for reply] 不算: 一条消息最多追问一次
             val held = m.hold
             if (!viewing && !held) unread++
-            if (quiet && !held) ping()
+            if (!held) ping()                                    // 不在沟通页面: 任何新消息都提示一声 (在页面上看着就不响)
         }
         saveChat(); changed(); push()
         if (again) {
@@ -5516,10 +5509,9 @@ class Comm(
         val m = mk("ai", text, if (text != r.reply.trim()) r.reply.trim() else "")
         if (waitMin > 0 && r.kind != "chase") m.wait = waitMin
         st.messages.add(sysm); st.messages.add(m)
-        val talked = talkedRecently(st.messages.dropLast(2), sysm.ts)
         if (!m.hold) {
             if (!(viewing && r.pid == pid)) unread++
-            if (r.kind == "chase" || !talked) ping()
+            ping()                                               // 不在沟通页面: 新消息提示一声
         }
         storeState(r.pid, st); changed(); push()
     }

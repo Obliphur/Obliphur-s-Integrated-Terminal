@@ -12,7 +12,8 @@
   · 模型会主动发消息 (MECHANICS 24.4): I. 人设自己正处在空闲 / 休息段里, 而且这段还剩 10 分钟以上: 段开始后 1~3 分钟;
     II. 人设日程里每段"空闲"开始前 1~3 分钟
     (概率写在人设里: "空闲发起谈话概率:n%", 没写默认 80%); III. 人设日程里每段"休息"开始前 1~3 分钟 ("休息发起谈话概率:n%", 默认 60%);
-    IV. 人设日程里每段"睡眠"开始后 5 分钟 ("睡眠发起谈话概率:n%", 默认 60%; 睡眠期间只发这一条, 用户回复按日程拒绝). 收到时如果前 5 分钟没和对方聊过, 有柔和的提示音.
+    IV. 人设日程里每段"睡眠"开始后 5 分钟 ("睡眠发起谈话概率:n%", 默认 60%; 睡眠期间只发这一条, 用户回复按日程拒绝). 收到时如果用户不在沟通页面, 有柔和的提示音.
+  · 任何新消息 (对方主动发的, 回复用户的, 追问……) 只要用户不在沟通页面, 都会响一声柔和的提示音 (在页面上看着就不响).
   · 用户专注 / 睡眠时对方仍会按日程发 / 重试 / 追问, 但消息先藏起来、不通知 (回到休息 / 空闲才显示 + 提示音);
     用户外出时对方不会尝试发.
   · 聊天页顶上显示对方现在的状态 (按人设日程里的专注 / 休息 / 空闲 / 睡眠段, 例如 "专注中"; 前面有一个颜色跟着状态变的小圆点).
@@ -87,7 +88,6 @@ JOINT_HP_MAX = 30                     # 联合行动: 一次最多记这么多�
 JOINT_SPEAK_WAIT = 3 * 60             # 联合行动: 要让对方回应一句, 但对方正在回别的话: 最多等这么久 (秒)
 JOINT_FOLLOW_STEP = 3 * 60            # 联合行动结束后: 用户还在专注 / 睡眠时, 同步阶段每次往后顺延这么久 (秒), 直到用户的休息结束
 JOINT_FOLLOW_CAP = 3 * 3600           # 联合行动结束后: 同步阶段最长这么久 (秒)
-PING_QUIET = 5 * 60                   # 收到主动消息之前这么久没和对方聊过, 才响提示音
 FOLLOW_KINDS = ("user", "retry")      # 规则 VIII: 回复了这些请求 (用户说的话) 之后, 再调用一次 API, 让对方可以把话分开说
 FOLLOW_TAG = "[系统·续]"
 FOLLOW_BODY = (FOLLOW_TAG + " 你刚才已经回复了用户. 如果还有想接着说的话, 请现在再发一条 (不要重复上一条); "
@@ -2389,7 +2389,7 @@ class Comm:
         self.devices = lambda: []      # 本机 + 绑定的设备 [(id, 名字)]: 共时闹钟选响铃的设备用; app 接上
         self.leader = lambda: True     # 本机是不是最后有人操作的设备: 只有它调用 AI / 主动发 / 重试 (sync.is_latest_active); app 接上
         self.on_sync = None            # 聊天记录有改动, 马上同步一次; app 接上
-        self.on_proactive = None       # 收到对方主动发来的消息, 并且前 5 分钟没和对方聊过: 放柔和的提示音; app 接上 (后台线程里调用也行)
+        self.on_proactive = None       # 有新消息, 而用户不在沟通页面: 放柔和的提示音; app 接上 (后台线程里调用也行)
         self.share = self._share_fresh()    # share data (1.0.357): 本机界面的状态, 不存盘 / 不同步
         self.share_fn = lambda page: ("", "", "")     # 某一页的 (页面名, 用户的数据, 对方的数据); app 接上
         self.on_share_open = None      # 用户接受了对方的 share data 邀请 / 对方同意了用户的 share data 请求: app 接上, 跳到有数据的页面
@@ -2960,17 +2960,11 @@ class Comm:
         self._synced_ping([m for pid, m in fresh if pid == self.pid])
 
     def _synced_ping(self, fresh: list):
-        """别的设备收到的主动消息同步过来了 (系统触发的那条 + 对方的回复, 刚刚才写的): 这台也提示一声 (前 5 分钟没聊过的话)."""
-        new = {m["uid"] for m in fresh}
+        """别的设备刚收到的新消息同步过来了: 这台不在沟通页面的话也提示一声."""
         now = self._ms()
         for m in fresh:
-            if m["role"] != "ai" or now - int(m["ts"]) > 90 * 1000:
-                continue
-            i = next((j for j, x in enumerate(self.messages) if x["uid"] == m["uid"]), 0)
-            prev = self.messages[i - 1] if i > 0 else None
-            if prev and prev["role"] == "sys" and str(prev["text"]).startswith("[系统]") and prev["uid"] in new:
-                if not self._talked_recently(self.messages[:i - 1], int(prev["ts"])):
-                    self._ping()
+            if m["role"] == "ai" and now - int(m["ts"]) <= 90 * 1000:
+                self._ping()
                 return
 
     def bg_on(self) -> bool:
@@ -3098,13 +3092,10 @@ class Comm:
         self._segments()
         return pro_pct(self._pro_cache, kind)
 
-    @staticmethod
-    def _talked_recently(msgs: list, before_ms: int) -> bool:
-        """before_ms 之前 5 分钟内, 用户和对方有没有说过话 (系统消息不算)."""
-        return any(m["role"] in ("me", "ai") and 0 <= before_ms - int(m["ts"]) <= PING_QUIET * 1000 for m in msgs)
-
     def _ping(self):
-        """收到主动消息的提示音 (不能用沟通的时候, 例如已经开始专注了, 不响)."""
+        """有新消息, 而用户不在沟通页面: 柔和的提示音 (在页面上看着就不用响; 不能用沟通的时候也不响)."""
+        if self.viewing:
+            return
         if self.on_proactive and not self.blocked():
             try:
                 self.on_proactive()
@@ -4064,7 +4055,7 @@ class Comm:
         return any(m.get("role") == "me" and int(m.get("ts") or 0) > int(ts) for m in self.messages)
 
     def _release_held(self):
-        """回到休息 / 空闲: 藏着的消息现在显示 (未读 +N, 前 5 分钟没聊过的话响一声). 带 due 的 (CHAR_DELAY 的打字延时) 到点才显示, 按顺序一条一条出来."""
+        """回到休息 / 空闲: 藏着的消息现在显示 (未读 +N; 不在沟通页面的话响一声). 带 due 的 (CHAR_DELAY 的打字延时) 到点才显示, 按顺序一条一条出来."""
         if not any(m.get("hold") for m in self.messages) or self.blocked():
             return
         now = self._ms()
@@ -4084,7 +4075,6 @@ class Comm:
             held.append(m)
         if not held:
             return
-        first = self.messages.index(held[0])
         for m in held:
             del m["hold"]
             due = due_of(m)
@@ -4097,7 +4087,6 @@ class Comm:
                 self.messages.append(m)
         if not self.viewing:
             self.unread += len(held)
-        if not self._talked_recently(self.messages[:first], int(held[0]["ts"])):
             self._ping()
         self.save_chat()
         self._changed()
@@ -4860,7 +4849,6 @@ class Comm:
             else:
                 self.cfg["retry"] = {}
             self.save_cfg()
-            ping = kind in ("chase", "net") or (kind in ("proactive", "love") and not self._talked_recently(self.messages, self._ms()))      # 前 5 分钟没聊过 (追问总是): 提示音
             if extra:
                 self._add("sys", extra[0], extra[1])
             m = self._add("ai", text, reply.strip() if text != reply.strip() else "")
@@ -4879,8 +4867,8 @@ class Comm:
             held = m.get("hold")
             if not self.viewing and not held:
                 self.unread += 1
-            if ping and not held:
-                self._ping()
+            if not held:
+                self._ping()                                # 不在沟通页面: 任何新消息都提示一声 (在页面上看着就不响)
         self.save_chat()
         self._changed()
         self._push()
@@ -5097,12 +5085,10 @@ class Comm:
         if wait_min and kind != "chase":
             m["wait"] = wait_min
         st["messages"].extend([sysm, m])
-        talked = self._talked_recently(st["messages"][:-2], int(sysm["ts"]))
         if not m.get("hold"):
             if not (self.viewing and pid == self.pid):
                 self.unread += 1
-            if kind == "chase" or not talked:
-                self._ping()
+            self._ping()                                    # 不在沟通页面: 新消息提示一声 (在页面上看着就不响)
         self._store(pid, st)
         self._changed()
         self._push()
@@ -6753,7 +6739,7 @@ def _selftest():
     wait(A)
     assert pA == [1]
     pull(A, B)
-    assert pB == [1], "同步过来的主动消息: 这台也响一声"
+    assert pB == [1], ("同步过来的主动消息: 这台也响一声", pB)
     pull(A, B)
     assert pB == [1] and B.cfg["pro_key"] == A.cfg["pro_key"]
     B.leader = lambda: True
@@ -6857,7 +6843,7 @@ def _selftest():
     body = calls[-1][1][-1]["content"]
     assert c5.visible()[-1]["text"] == "来了" and "空闲时间将在 12:30 开始" in body and "主动给用户发一条消息" in body
     assert pings5 == [1]
-    # 前 5 分钟聊过 → 不响
+    # 1.0.413 起: 不在沟通页面时, 新消息一律响 (不再看前 5 分钟有没有聊过)
     clock[0] = datetime(2026, 12, 2, 12, 25)
     script.append("嗯")
     assert c5.send("在吗") == ""
@@ -6865,7 +6851,14 @@ def _selftest():
     script.append("有空吗")
     assert fire_before(c5, datetime(2026, 12, 2, 12, 30)) is not None
     wait(c5)
-    assert c5.visible()[-1]["text"] == "有空吗" and pings5 == [1], "刚聊过, 不响"
+    assert c5.visible()[-1]["text"] == "有空吗" and pings5 == [1, 1, 1], "回复与主动消息都响 (不在沟通页面)"
+    # 在沟通页面上看着: 不响, 也不加未读
+    c5.set_viewing(True)
+    script.append("在页面上")
+    c5.send("看着呢")
+    wait(c5)
+    assert c5.visible()[-1]["text"] == "在页面上" and pings5 == [1, 1, 1] and c5.unread == 0, "在页面上看着: 不响"
+    c5.set_viewing(False)
     # 概率 0: 不发, 但这个时间点算处理过了
     set_probs(c5, "0%", "60%")
     assert fire_before(c5, datetime(2026, 12, 3, 12, 30)) is None and any(k.startswith("S2026-12-03T12:30") for k in c5._pro_done())

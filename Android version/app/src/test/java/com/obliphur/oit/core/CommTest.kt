@@ -816,7 +816,7 @@ class CommTest {
         assertEquals(listOf("ai"), c.visible().map { it.role })
         assertTrue("主动给用户发一条消息" in calls.last().second.last().second)
         assertTrue("对方在自己空闲段里主动发", "你现在有空" in calls.last().second.last().second)
-        assertEquals("前 5 分钟没聊过: 响一声", listOf(1), pings)
+        assertEquals("不在沟通页面: 响一声", listOf(1), pings)
         clock = begin.plusMinutes(30)
         c.tick(); assertFalse("同一段空闲只主动发一次", c.busy)
         val pf = File(td, "personas/长休.txt")
@@ -1074,7 +1074,7 @@ class CommTest {
         assertEquals("来了", c.visible().last().text)
         assertTrue("空闲时间将在 12:30 开始" in body && "主动给用户发一条消息" in body)
         assertEquals(1, pings.size)
-        // 前 5 分钟聊过 → 不响
+        // 1.0.413 起: 不在沟通页面时新消息一律响 (不再看前 5 分钟)
         clock = LocalDateTime.of(2026, 12, 2, 12, 25)
         script.add("嗯")
         assertEquals("", c.send("在吗")); wait(c)
@@ -1082,7 +1082,14 @@ class CommTest {
         assertNotNull(fireBefore(c, LocalDateTime.of(2026, 12, 2, 12, 30)))
         wait(c)
         assertEquals("有空吗", c.visible().last().text)
-        assertEquals("刚聊过, 不响", 1, pings.size)
+        assertEquals("回复与主动消息都响", 3, pings.size)
+        // 在沟通页面上看着: 不响
+        c.setViewing(true)
+        script.add("在页面上")
+        c.send("看着呢"); wait(c)
+        assertEquals("在页面上", c.visible().last().text)
+        assertEquals("在页面上看着: 不响", 3, pings.size)
+        c.setViewing(false)
         // 概率 0: 不发, 但这个时间点算处理过了
         setProbs("0%", "60%")
         assertNull(fireBefore(c, LocalDateTime.of(2026, 12, 3, 12, 30)))

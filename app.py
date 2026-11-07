@@ -1456,7 +1456,7 @@ class BreakTimerApp:
             pass
 
     def _comm_ping(self):
-        """收到对方主动发来的消息 (前 5 分钟没聊过): 柔和的提示音 (后台线程里放)."""
+        """有新的聊天消息, 而用户不在沟通页面: 柔和的提示音 (后台线程里放)."""
         if sys.platform != "win32" or self.shutting_down:
             return
         path = config.ensure_soft_chime(os.path.join(self.dm.data_dir, "comm_ping.wav"))

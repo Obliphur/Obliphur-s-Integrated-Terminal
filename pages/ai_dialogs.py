@@ -46,7 +46,7 @@ def _host(url: str) -> str:
 # ══════════════ 模型设置 ══════════════
 def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
     """返回 True 表示保存过."""
-    dlg = Modal(parent, tr("AI 模型设置"), width=540, height=520)
+    dlg = Modal(parent, tr("AI 模型设置"), width=540, height=610)
     b = dlg.body
     state = {"cur": cfg.provider, "family": ""}
 

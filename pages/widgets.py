@@ -120,12 +120,13 @@ class Modal(tk.Toplevel):
         self.transient(parent)
         self.result = None
 
+        # 按钮先占住底部: 内容再长也只会把 body 挤小, 不会把"确定 / 取消"顶出窗口外
+        self.buttons = tk.Frame(self, bg=COLORS["bg"])
+        self.buttons.pack(side="bottom", fill="x", padx=20, pady=(0, 16))
+
         body = tk.Frame(self, bg=COLORS["bg"])
         body.pack(fill="both", expand=True, padx=20, pady=16)
         self.body = body
-
-        self.buttons = tk.Frame(self, bg=COLORS["bg"])
-        self.buttons.pack(fill="x", padx=20, pady=(0, 16))
 
         self.bind("<Escape>", lambda e: self.cancel())
         self.protocol("WM_DELETE_WINDOW", self.cancel)
