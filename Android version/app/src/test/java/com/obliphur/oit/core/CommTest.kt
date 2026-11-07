@@ -82,6 +82,27 @@ class CommTest {
         throw AssertionError("超时")
     }
 
+    /** 名字是 Claudia 的人设: 显示前全角符号换成半角 (1.0.408, MECHANICS 24.3.10). */
+    @Test
+    fun claudiaHalfwidth() {
+        assertEquals("他说,好.", CommText.toHalfWidth("他说，好。"))
+        assertEquals("\"你好\"", CommText.toHalfWidth("“你好”"))
+        assertEquals("等等...", CommText.toHalfWidth("等等……"))
+        assertEquals("甲--乙", CommText.toHalfWidth("甲——乙"))
+        assertEquals("(注)[1][2]", CommText.toHalfWidth("（注）［1］【2】"))
+        assertEquals("A1~", CommText.toHalfWidth("Ａ１～"))
+        val td = Files.createTempDirectory("oit").toFile()
+        val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "personas"))
+        assertEquals("Claudia.txt", c.personaName())
+        c.snapshot = { CommSnap("idle") }
+        script.add("他说，好。然后走了……")
+        assertEquals("", c.send("在吗")); wait(c)
+        assertEquals("他说,好.然后走了...", c.visible().last().text)
+        val ai = c.messages.last { it.role == "ai" }
+        assertTrue("，" in ai.api && "……" in ai.api)          // 给模型的那份保留原文
+        c.flush()
+    }
+
     @Test
     fun loveAndAccept() {
         assertTrue("XVII.用户向你提出发展亲密关系" in CommText.prefixPrompt() && "[accept]" in BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT))
