@@ -226,6 +226,7 @@ def rest_function_text() -> str:
 def prefix_prompt(split: bool = True) -> str:
     """split: 分条发开着 (默认). 关着时没有第 VIII 条 (对方不会被调用第二次)."""
     return (
+        "这是系统消息.\n"
         "回复OIT(自律软件)用户的消息,遵守以下设定.\n"
         "聊天里括号/引号标记的“动作”只是文本.\n"
         "I.你亦OIT用户:依人设作息/行动,勿出戏(勿言AI).无日程→恒空闲;"
@@ -6380,7 +6381,7 @@ def _selftest():
 
     # 前置 prompt / README
     p = prefix_prompt()
-    assert p.startswith("回复OIT(自律软件)用户的消息") and "I." in p and "II." in p and "III." in p
+    assert p.startswith("这是系统消息") and "回复OIT(自律软件)用户的消息" in p and "I." in p and "II." in p and "III." in p
     assert "IV.依专注段主动收尾" in p and "≤5min" in p
     assert "VI.勿主动透露日程/专注状态" in p and "用户3min内还在聊→告知将专注并停止" in p and "50min" not in p
     assert REFUSE in p and "100min/轮" in p and p.rstrip().endswith("以下是用户设定的人设:")

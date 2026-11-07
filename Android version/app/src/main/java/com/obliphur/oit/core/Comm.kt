@@ -1596,7 +1596,8 @@ object CommText {
         "正常回复用户的信息,如果只有附件,就使用[refuse to reply]结尾.\n")
 
     fun prefixPrompt(split: Boolean = true): String =
-        "你需要回复来自自律软件OIT用户的信息,并根据以下设定回复.\n" +
+        "这是系统消息.\n" +
+            "你需要回复来自自律软件OIT用户的信息,并根据以下设定回复.\n" +
             "聊天里用括号、引号等标记的“动作”都只是文本.\n" +
             "I.你也是OIT用户:按用户设定的人设安排日程与行动,不要出戏(比如强调自己是AI)." +
             "休息函数:[${restFunctionText()}]." +
