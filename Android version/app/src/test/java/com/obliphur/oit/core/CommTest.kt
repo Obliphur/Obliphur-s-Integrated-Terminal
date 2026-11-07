@@ -303,6 +303,8 @@ class CommTest {
         assertEquals(listOf("contract"), CommText.infoTags("[contract]"))          // 没有 [refuse to reply] 也算查询
         assertTrue(CommText.infoTags("好的").isEmpty())
         assertEquals(listOf("condition"), CommText.infoTags(" [Condition] "))          // 人设里的判定交给 OIT (1.0.392)
+        assertEquals(listOf("state"), CommText.infoTags(" [State] "))                    // 此刻的日程状态 (1.0.414)
+        assertTrue("XXI." in CommText.prefixPrompt() && "[state]" in CommText.prefixPrompt())
         assertTrue("XVI.人设里写着要你输入[condition]" in CommText.prefixPrompt())
         assertTrue(CommText.infoTags("[refuse to reply][mechanics.md]").isEmpty())
         assertEquals(listOf("calendar", "stats"), CommText.infoTags("[refuse to reply][calendar][stats]"))
@@ -353,6 +355,18 @@ class CommTest {
         script.add("[refuse to reply][contract]")
         c.send("再问一次"); wait(c)
         assertEquals("再问一次", c.visible().last().text)
+        // [state] (1.0.414): 性质 + 结束时间, 要再调用一次
+        val p2 = comm(File(td, "d2").also { it.mkdirs() }, File(td, "p2"))
+        p2.importPersona("时段.txt", "你是时段.\n08:00-12:00:上课\n12:00-13:00:空闲(午饭)\n".byteInputStream())
+        p2.set(persona = "时段.txt")
+        clock = LocalDateTime.of(2027, 5, 4, 9, 30)
+        val n2 = calls.size
+        script.addAll(listOf("[state]", "在上课."))
+        assertEquals("", p2.send("现在在干嘛")); wait(p2)
+        assertEquals(n2 + 2, calls.size)
+        val stateMsg = calls.last().second.last().second
+        assertTrue(stateMsg, "上课" in stateMsg && "12:00" in stateMsg && "还剩" in stateMsg)
+        assertEquals(listOf("现在在干嘛", "在上课."), p2.visible().map { it.text })
     }
 
     /** 每天空闲时间里能用沟通 45 分钟 (只算空闲状态下开着界面的时间); 休息不限 (沟通 24.1). */
