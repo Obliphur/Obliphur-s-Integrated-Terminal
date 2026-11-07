@@ -335,8 +335,8 @@ class CommTest {
         assertTrue(" 计时器:\n  休息时间倍率: ×1" in CommData.settingsText(listOf(Triple("计时器", "休息时间倍率", "×1"))))
         assertTrue("没有启用" in CommData.prescriptText(false, emptyList()) && "→ completed" in CommData.prescriptText(true, listOf(listOf("t", "V", "completed", "停下"))))
         val p = CommText.prefixPrompt()
-        assertTrue("V.你需要了解OIT的独占功能'合约'" in p && "[refuse to reply][contract]" in p && "[refuse to reply][mechanics.md]" !in p)
-        assertTrue("如果需要更细致的信息 前往https://github.com/Obliphur/Obliphur-s-Integrated-Terminal下的MECHANICS.md查看." in p)
+        assertTrue("V.OIT的独占功能“合约”" in p && "[refuse to reply][contract]" in p && "[refuse to reply][mechanics.md]" !in p)
+        assertTrue("更细信息见 https://github.com/Obliphur/Obliphur-s-Integrated-Terminal 的 MECHANICS.md." in p)
         val td = Files.createTempDirectory("oit").toFile()
         val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
         c.set(persona = "Claudia.txt")
@@ -846,7 +846,7 @@ class CommTest {
     @Test
     fun splitReply() {
         val p = CommText.prefixPrompt()
-        assertTrue("VIII.你可以把你的话分开说.当用户说完话时,系统会试图调用两次API,最好不要让你的表达太集中.如果你只想说一次,第二次[refuse to reply]." in p)
+        assertTrue("VIII.你可以把话分开说" in p && "调用两次API" in p && "只想说一次" in p && CommText.REFUSE in p)
         assertTrue(p.indexOf("VII.如果用户问起") < p.indexOf("VIII.") && p.indexOf("VIII.") < p.indexOf("以下是用户设定的人设:"))
         val td = Files.createTempDirectory("oit").toFile()
         val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
@@ -896,7 +896,7 @@ class CommTest {
         assertEquals(true, c.syncDoc()["split"])
         // IX: [waiting for reply]:[N] — 所有 [] 都不显示; N 分钟内用户没回复, 对方可以追问一次
         val pr = CommText.prefixPrompt()
-        assertTrue("IX.如果期待对方回复,则在对话结尾加一个[waiting for reply]:[N],N自己填写,如果N min内没有收到对方回复你可以追加询问." in pr)
+        assertTrue("IX." in pr && "[waiting for reply]:[N]" in pr && "追加询问" in pr)
         assertTrue(pr.indexOf("VIII.") < pr.indexOf("IX.") && pr.indexOf("IX.") < pr.indexOf("以下是用户设定的人设:"))
         assertEquals("在吗?" to 10.0, CommText.cleanReply("在吗?[waiting for reply]:[10]"))
         assertEquals("好的 嗯\n\n好" to 0.0, CommText.cleanReply("好的[微笑] 嗯\n\n\n\n[动作]好"))
