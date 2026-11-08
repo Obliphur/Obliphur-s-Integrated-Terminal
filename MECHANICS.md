@@ -2259,7 +2259,7 @@ t 的单位是小时; 完成时给的休息时间 = **t × 3 分钟**.
 - **开关** (1.0.276): 设置 → 沟通 → "✂ 分条发送" (没有说明文字, 切换也没有提示), 默认开. 关了: 不调用第二次, 前置 prompt 里也没有第 VIII 条 (对方不会被告知要调用两次). 开关随设备同步 (调用 AI 的是主端, 两台要一致; 同步文档 `comm` 的 `split` 键).
 - **提示缓存** (为了第二次调用不重复付全部历史的 token): 第二次请求的前面和第一次完全一样 (系统提示 + 历史 + 第一次的最后一条用户消息), 服务商按"相同的开头"缓存, 命中的部分便宜得多.
   1.0.412 起缓存策略**按模型类型分开** (`ai_assist.cache_plan` / `Ai.cachePlan`), 一家只走自己的一条路, 不把别家的字段混进来:
-  - **Claude**: 显式 `cache_control: ephemeral` (标在系统提示和最后一条消息上). 缓存随第一次请求写好, 第二次调用**不等**.
+  - **Claude**: 显式 `cache_control: ephemeral` (标在系统提示和最后一条消息上). 缓存随第一次请求写好, 第二次调用**不等**. 中转不认 `cache_control` 回 400 时, 去掉缓存标记重试一次并记住这个地址 (`CACHE_REJECT`, 1.0.427).
   - **ChatGPT**: OpenAI 自动前缀缓存. 请求里带 `prompt_cache_key` (模型名 + 稳定 system 的 sha256), 让同一段前缀落到同一台机器; **不带** `thinking` (OpenAI 不认, 带了会 400, 以前要白费一次请求). 第二次调用**不等**.
   - **Gemini**: 原生 `generateContent` + **隐式缓存**. Google 按**逐字节相同的 `systemInstruction`** 自己建缓存, 请求里不用标缓存位置; 所以 system 里**不能放会变的东西** —— 记忆卡 / 联合行动状态 / 身份背景都贴到最后一条用户消息里 (`comm.cache_layout` / `Comm`), system 只留前置 prompt + 人设. 用量读 `usageMetadata.cachedContentTokenCount`. 第二次调用**不等**. 隐式缓存有最小 token 门槛 (文档 1024, 实测更高), 短对话本来就不会命中.
   - **DeepSeek**: 自动前缀缓存, 但磁盘缓存是异步落盘的, 第二次调用等 **3 秒**.
@@ -2287,7 +2287,7 @@ t 的单位是小时; 完成时给的休息时间 = **t × 3 分钟**.
 
 ### 24.3.7 思考 (1.0.341)
 
-沟通请求默认**关思考** (`thinking: disabled`, 省 token, 也让人设的语气稳). 容易漏掉人设规则的几种情况, 这一次请求**开思考** (`think=True`); 设置 → 沟通 → "🧠 思考" → "需要时自动开启" (默认开, 随设备同步, 因为调用 AI 的是主端) 关掉就一直不开.
+沟通请求默认**关思考** (省 token, 也让人设的语气稳): Anthropic 协议**不写 `thinking` 字段** (新版 Claude 不认 `{"type":"disabled"}`, 带了会 400, 1.0.427), OpenAI 兼容的中转带 `thinking: disabled` (不认回 400 就去掉重试). 容易漏掉人设规则的几种情况, 这一次请求**开思考** (`think=True`); 设置 → 沟通 → "🧠 思考" → "需要时自动开启" (默认开, 随设备同步, 因为调用 AI 的是主端) 关掉就一直不开.
 判断是**第一层: 规则, 不额外调用 API** (将来可以在规则判断不出来时再加一层"让小模型看最近几条决定", 现在没有):
 
 - **系统触发的请求** (`THINK_KINDS`): 主动发起 `proactive` (包括非正在聊天的对象)、联合行动里对方回应接受 / 拒绝 `joint_reply`、追问 `chase`. 分条发的第二次调用 `followup` 不开.
@@ -2301,6 +2301,7 @@ t 的单位是小时; 完成时给的休息时间 = **t × 3 分钟**.
 - **开思考的请求体** (`ai_assist._build_body` / `Ai.chatOnce`): Anthropic 协议 `thinking: {type: enabled, budget_tokens: 1024}` (不带 temperature, `max_tokens` 4096 > 1024); OpenAI 协议同样的字段且不带 temperature; **Claude 4.6 及以后的模型** (opus / sonnet / haiku 含 5.x, fable / mythos; `ai_assist.adaptive_thinking` / `Ai.adaptiveThinking`, 按模型名认) 不认 budget_tokens (Haiku 5.5 等直接 400), 改发 `thinking: {type: adaptive}` (1.0.352); DeepSeek 官方地址用它自己的 (`thinking: {type: enabled}` / `reasoning: {effort: medium}`).
   服务商回 400 (不认这个字段) 时这一次改回不开思考重试, 并记住这个地址 (`THINK_ON_REJECT`, 只在内存里) 不再开. 回复里的思考块不进聊天记录.
   **1.0.412**: 思考字段严格按模型类型发 —— Claude 走 `thinking`, DeepSeek 官方地址走 `reasoning` / `thinking`, 中转 ("其他") 默认带 `thinking: disabled` (不认就 400 重试); **ChatGPT 与 Gemini 不带任何思考字段** (OpenAI 不认 `thinking`, 以前要白费一次 400; Gemini 由模型自己决定思考, 原生请求里没有这个开关), `think=True` 对它们没有作用.
+   **1.0.427**: Anthropic 协议关思考时**完全不写 `thinking`** (新版 Claude 会把 `disabled` 当错误请求, 直接 400); 另外中转拒绝 `cache_control` 时去掉缓存标记重试一次.
 - 请求日志 (`comm.log`) 里开了思考的写 `THINK <kind> on: <原因>`.
 - **费用**: 输出 token 变多 (思考最多 1024), 估计触发的请求输出 5 到 20 倍, 总费用在触发比例 15% 到 20% 时约涨 20% 到 40%; 每次回复慢几秒.
 

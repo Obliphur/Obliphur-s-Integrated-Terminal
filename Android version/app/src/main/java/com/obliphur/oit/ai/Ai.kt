@@ -230,6 +230,9 @@ object Ai {
     /** 开思考时回了 400 的 endpoint (只在内存里): 它不认开思考的字段, 之后这个地址不再开. */
     val THINK_ON_REJECT: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
 
+    /** 回了 400 的 endpoint (只在内存里): 它不认 cache_control, 之后不再标缓存. */
+    val CACHE_REJECT: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
     /** 开思考时的思考 token 上限 (Anthropic 的最小值). */
     const val THINK_BUDGET = 1024
 
@@ -342,7 +345,7 @@ object Ai {
                 if (isDeepSeek(p)) body.put("reasoning", JSONObject().put("effort", "medium"))
                 else body.put("thinking", thinkOnField(p.model))
             } else if (isDeepSeek(p)) body.put("reasoning", JSONObject().put("effort", "none"))
-            else if (thinkOff) body.put("thinking", JSONObject().put("type", "disabled"))
+            // 关思考: 不写 thinking. 新版 Claude 不认 {"type": "disabled"}, 带上会 400 (1.0.427)
             return body
         }
         val body = JSONObject().put("model", p.model).put("max_tokens", maxTokens).put("temperature", temperature)
@@ -425,7 +428,15 @@ object Ai {
     private fun chatOnce(p: Profile, system: String, messages: List<Pair<String, String>>,
                          maxTokens: Int, temperature: Double, timeoutMs: Int,
                          cache: Boolean, onUsage: ((Long, Long) -> Unit)?, thinkOff: Boolean, thinkOn: Boolean = false): String {
-        val d = send(p, buildBody(p, system, messages, maxTokens, temperature, cache, thinkOff, thinkOn), timeoutMs)
+        var useCache = cache && endpoint(p) !in CACHE_REJECT       // 这个地址以前就不认 cache_control: 这次直接不标
+        val d = try {
+            send(p, buildBody(p, system, messages, maxTokens, temperature, useCache, thinkOff, thinkOn), timeoutMs)
+        } catch (e: AiError) {
+            if (!(useCache && e.kind == "http" && (e.message ?: "").startsWith("服务商返回 400"))) throw e
+            CACHE_REJECT.add(endpoint(p))                          // 中转不认 cache_control: 去掉缓存标记再试一次, 以后不再带
+            useCache = false
+            send(p, buildBody(p, system, messages, maxTokens, temperature, false, thinkOff, thinkOn), timeoutMs)
+        }
         val out = if (p.protocol == "gemini") geminiText(d) else try {
             if (p.protocol == "anthropic") {
                 val arr = d.optJSONArray("content") ?: JSONArray()

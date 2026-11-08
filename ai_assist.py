@@ -516,6 +516,7 @@ def think_on_field(profile: dict) -> dict:
 
 THINK_REJECT = set()            # 回了 400 的 endpoint (只在内存里): 它不认 thinking 字段, 之后不再带
 THINK_ON_REJECT = set()         # 开思考时回了 400 的 endpoint (只在内存里): 它不认开思考的字段, 之后这个地址不再开
+CACHE_REJECT = set()            # 回了 400 的 endpoint (只在内存里): 它不认 cache_control, 之后不再标缓存
 THINK_BUDGET = 1024             # 开思考时的思考 token 上限 (Anthropic 的最小值)
 
 
@@ -562,8 +563,7 @@ def _build_body(profile: dict, system: str, messages: list, max_tokens: int, tem
                 body["thinking"] = think_on_field(profile)   # enabled 要求 max_tokens 大于 budget_tokens; 都不能带 temperature
         elif is_deepseek(profile):
             body["reasoning"] = {"effort": "none"}          # Anthropic 格式: none = 关思考
-        elif think_off:
-            body["thinking"] = {"type": "disabled"}         # 中转 / 官方 Anthropic: 默认关思考 (不认就 400, chat_messages 会去掉重试)
+        # 关思考: 不写 thinking. 新版 Claude 不认 {"type": "disabled"}, 带上会 400 (1.0.427)
         return body
     body = {"model": profile["model"], "max_tokens": max_tokens, "temperature": temperature,
             "messages": [{"role": "system", "content": system}] + list(messages)}
@@ -588,8 +588,10 @@ def _build_body(profile: dict, system: str, messages: list, max_tokens: int, tem
 def chat_messages(profile: dict, system: str, messages: list, timeout: float = 90.0, opener=None,
                   max_tokens: int = MAX_TOKENS, temperature: float = 0.2, cache: bool = False, on_usage=None,
                   think: bool = False, web: bool = False) -> str:
-    """默认关思考: 请求里带 thinking: {"type": "disabled"}; 服务商 (中转) 不认这个字段回 400 时, 去掉它重试一次,
+    """默认关思考: OpenAI 兼容的中转会带 thinking: {"type": "disabled"}; 服务商不认这个字段回 400 时, 去掉它重试一次,
     并记住这个地址 (THINK_REJECT), 以后不再带. DeepSeek 官方地址一直带 (它认).
+    Anthropic 协议关思考时不写 thinking (新版 Claude 不认 disabled). 中转不认 cache_control 回 400 时, 去掉缓存标记
+    重试一次, 并记住这个地址 (CACHE_REJECT).
     think=True: 这一次开思考 (沟通里规则判断出需要时, comm.think_reason); 开思考的字段回 400 时改回不开思考重试, 并记住这个地址 (THINK_ON_REJECT).
     web=True: 这一次开着网络 (沟通 规则 XIV 的限时网络, 方式见 web_mode); 服务商的接口不认搜索 (400 / 404 / 405 / 422) 时, 不联网再答一次, 并在系统提示里说明没能联网."""
     if web and profile.get("base_url"):
@@ -659,8 +661,17 @@ def _chat_once(profile: dict, system: str, messages: list, timeout: float, opene
     cache: 提示缓存 (沟通里"分条发"会连着调用两次, 第二次的前面全是第一次发过的内容). 标缓存位置 / 带缓存键的只有
     Anthropic (cache_control) 和 ChatGPT (prompt_cache_key); Gemini 靠相同的 systemInstruction 自动命中, 别家不假设有缓存.
     on_usage(输入 token 数, 命中缓存的 token 数): 响应里有用量时调用."""
+    if cache and endpoint(profile) in CACHE_REJECT:          # 这个地址以前就不认 cache_control: 这次直接不标
+        cache = False
     body = _build_body(profile, system, messages, max_tokens, temperature, cache, think_off, think_on)
-    data = _send(profile, body, timeout, opener)
+    try:
+        data = _send(profile, body, timeout, opener)
+    except AIError as e:
+        if not (cache and e.kind == "http" and e.message.startswith("服务商返回 400")):
+            raise
+        CACHE_REJECT.add(endpoint(profile))                   # 中转不认 cache_control: 去掉缓存标记再试一次, 以后不再带
+        body = _build_body(profile, system, messages, max_tokens, temperature, False, think_off, think_on)
+        data = _send(profile, body, timeout, opener)
     if profile["protocol"] == "anthropic":
         try:
             text = "".join(b.get("text", "") for b in data.get("content", [])
@@ -1360,6 +1371,11 @@ def _selftest():
             if ":generateContent" in self.path:                    # 原生 Gemini
                 out = {"candidates": [{"content": {"parts": [{"text": "你好"}]}}],
                        "usageMetadata": {"promptTokenCount": 10, "cachedContentTokenCount": 4}}
+            elif self.path.startswith("/cache400") and "cache_control" in json.dumps(body):
+                self.send_response(400)
+                self.end_headers()
+                self.wfile.write(b'{"error":{"message":"Malformed request: unknown field cache_control"}}')
+                return
             elif self.path.endswith("/messages"):
                 out = {"content": [{"type": "text", "text": answer}]}
             elif self.path.startswith("/redir"):
@@ -1410,6 +1426,12 @@ def _selftest():
         assert body["messages"] == [{"role": "user", "content": [{"type": "text", "text": "hi", "cache_control": {"type": "ephemeral"}}]}]
         chat_messages(p, "SYS", [{"role": "user", "content": "hi"}], cache=True)
         assert seen[-1][2]["messages"] == [{"role": "system", "content": "SYS"}, {"role": "user", "content": "hi"}]
+        # 中转不认 cache_control: 400 后去掉缓存标记重试一次, 并记住这个地址
+        pc = dict(p, protocol="anthropic", base_url=base + "/cache400")
+        assert chat_messages(pc, "SYS", [{"role": "user", "content": "hi"}], cache=True) == \
+            '{"domains":["bilibili.com"],"apps":["steam.exe"]}'
+        assert "cache_control" not in json.dumps(seen[-1][2])
+        assert endpoint(pc) in CACHE_REJECT
         # 模型类型 → 缓存策略: 一家只走自己的一条路, 不把别家的字段带进来
         mm = [{"role": "user", "content": "hi"}]
         assert family_of({"provider": "custom", "model": "gemini-3.5-flash",
@@ -1456,6 +1478,8 @@ def _selftest():
         # 别家 / 中转: 默认也关 (thinking disabled); 不认回 400 就去掉重试, 并记住
         assert _build_body(p, "SYS", [{"role": "user", "content": "hi"}], 4096, 0.8, True)["thinking"] == {"type": "disabled"}
         assert "thinking" not in _build_body(p, "SYS", [{"role": "user", "content": "hi"}], 4096, 0.8, True, False)
+        assert "thinking" not in _build_body(dict(p, protocol="anthropic"), "SYS", [{"role": "user", "content": "hi"}], 4096, 0.8, True), \
+            "Anthropic 关思考不写 thinking (新 Claude 不认 disabled)"
         b = _build_body(dict(ds, protocol="anthropic", base_url="https://api.deepseek.com/anthropic"),
                         "SYS", [{"role": "user", "content": "hi"}], 4096, 0.8, True)
         assert b["reasoning"] == {"effort": "none"} and "thinking" not in b
