@@ -585,7 +585,6 @@ ASSISTANT_PERSONA = "Assistant.txt"
 ASSISTANT_DETAIL_LINE = ("你会把回答写得尽量详细: 先给结论, 再说明依据 / 步骤 / 注意事项, 必要时举例或分点; "
                          "不要只用一句结论敷衍, 也不要为了简短省略关键内容, 但不要用空话凑长度.\n")
 # 更早版本内置过的文本 (升级时判断文件是不是没被用户改过, 一字不差才换成当前版本).
-# 1.0.442 起升级链清空: 代码里不再保留旧的默认人设文本; 没改过的旧文件靠 comm_config.json 里上一次见到的内置版本
 # (claudia_base / routine_base / background_base) 判断, 以后改默认人设再按需往里放.
 CLAUDIA_LEGACIES = ()
 ROUTINE_LEGACIES = ()
