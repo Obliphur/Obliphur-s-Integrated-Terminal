@@ -46,7 +46,7 @@ class CommTest {
             if (system == CommText.MEM_PROMPT) {
                 memCalls.add(msgs.last().second)
                 memScript.removeFirstOrNull() ?: ""
-            } else if (Comm.FOLLOW_TAG in msgs.last().second) {
+            } else if ("你刚才已经回复了用户" in msgs.last().second) {      // 规则 VIII 的第二次调用 (标记已被 OIT_TAG 取代)
                 followCalls.add(system to msgs.toList())
                 follow.removeFirstOrNull() ?: CommText.REFUSE
             } else {
@@ -137,7 +137,7 @@ class CommTest {
         script.clear(); script.add("好吧.")
         assertEquals("", c.loveRespond(false))
         wait(c)
-        assertTrue(!c.loveInvite() && "「拒绝」" in calls.last().second.last().second && Comm.LOVE_TAG in calls.last().second.last().second)
+        assertTrue(!c.loveInvite() && "「拒绝」" in calls.last().second.last().second && CommText.OIT_TAG in calls.last().second.last().second)
         assertEquals("没有等你回复的告白", c.loveRespond(true))
         c.loveInviteForTest()
         script.clear(); script.add("谢谢.")
@@ -305,6 +305,10 @@ class CommTest {
         assertTrue(CommText.infoTags("好的").isEmpty())
         assertEquals(listOf("condition"), CommText.infoTags(" [Condition] "))          // 人设里的判定交给 OIT (1.0.392)
         assertEquals(listOf("state"), CommText.infoTags(" [State] "))                    // 此刻的日程状态 (1.0.414)
+        assertEquals(CommText.OIT_TAG + "\nx", CommText.oitText("x"))
+        assertEquals(CommText.OIT_TAG + "\nx", CommText.oitText("[系统] x"))             // 有标记就不再发 [系统]
+        assertEquals(CommText.OIT_TAG + "\nx", CommText.oitText("[系统·续] x"))          // 带事件名的系统标签也去掉
+        assertEquals(CommText.OIT_TAG + "\nx", CommText.oitText(CommText.oitText("[系统] x")))
         assertTrue("XXI." in CommText.prefixPrompt() && "[state]" in CommText.prefixPrompt())
         assertTrue("XVI.人设里写着要你输入[condition]" in CommText.prefixPrompt())
         assertTrue(CommText.infoTags("[refuse to reply][mechanics.md]").isEmpty())
@@ -873,7 +877,7 @@ class CommTest {
         assertEquals("", c.send("在吗")); wait(c)
         assertEquals(listOf("在吗", "第一句", "第二句"), c.visible().map { it.text })
         assertEquals(1, followCalls.size)
-        assertTrue(Comm.FOLLOW_TAG in followCalls.last().second.last().second)
+        assertTrue("你刚才已经回复了用户" in followCalls.last().second.last().second)
         assertEquals("第一句", followCalls.last().second[followCalls.last().second.size - 2].second)   // 第二次请求里带着第一条
         val n = followCalls.size
         // 只想说一次: 第二次 [refuse to reply], 什么也不留下
@@ -1391,7 +1395,7 @@ class CommTest {
         assertEquals("开始 / 结束各记一条", 2, note.size)
         assertTrue("联合行动开始了" in note[0].text && "顺利完成" in note[1].text && "21 分钟休息" in note[1].text && "16:11" in note[1].text)
         assertTrue("进展不显示在聊天里", cj.visible().none { it.role == "sys" })
-        assertTrue("但发给对方的历史里有", cj.apiMessages().last().second.contains(Comm.JOINT_TAG))
+        assertTrue("但发给对方的历史里有 (带 OIT 标记)", cj.apiMessages().last().second.contains(CommText.OIT_TAG))
         assertFalse("不算主动消息", note[1].text.startsWith("[系统]"))
         ustate = "idle"
         clock = day.withHour(16).withMinute(5)
@@ -1737,7 +1741,7 @@ class CommTest {
         assertTrue("消息1" in calls[n0].second.last().second && "消息2" !in calls[n0].second.last().second)
         val sent2 = calls[n0 + 1].second
         assertEquals(listOf("user", "assistant", "user"), sent2.map { it.first })
-        assertTrue(Comm.CATCHUP_TAG in sent2.last().second)
+        assertTrue("你上一条回复发出的时候" in sent2.last().second)
         assertTrue((1..3).all { "消息$it" in sent2[0].second } && sent2[1].second == "回复一")
         assertEquals(listOf("消息1", "消息2", "消息3", "回复一", "回复二"), c.visible().map { it.text })
         assertTrue(c.messages.any { it.role == "sys" && Comm.CATCHUP_TAG in it.text })
@@ -1862,7 +1866,7 @@ class CommTest {
         wait(c)
         assertEquals(listOf(false, true), webLog)                      // 到点那次请求带联网搜索
         val body = calls.last().second.last().second
-        assertTrue(Comm.NET_TAG in body && "网络已开通 3 分钟" in body && "13:05" in body)
+        assertTrue(CommText.OIT_TAG in body && "网络已开通 3 分钟" in body && "13:05" in body)
         assertTrue(c.visible().last().text == "搜到了: 今天没什么大事." && c.netPhase() == "on")
         // 开着的期间: 用户再说话照样带联网搜索; 这时申请无效 (不会改开通时长)
         clock = clock.plusSeconds(30)
@@ -2285,7 +2289,7 @@ class CommTest {
         c.tick(); wait(c)
         assertEquals("[messages] 查询那一轮 + 回复那一轮", n0 + 2, calls.size)
         val ask = calls[calls.size - 2].second.last().second
-        assertTrue(ask, CommShift.TAG in ask && "从 6:30 平移到 7:00" in ask && "[Yes]" in ask)
+        assertTrue(ask, CommText.OIT_TAG in ask && "从 6:30 平移到 7:00" in ask && "[Yes]" in ask)
         val info = calls.last().second.last().second
         assertTrue(info, "聊天记录数: 共" in info && "共 ${c.msgTotal() - 1} 条" in info)
         assertTrue(!c.shiftAsking() && c.visible().last().text == "行." && notices == listOf("${c.aiName()} 同意了, 日程起点明天起平移到 7:00"))
