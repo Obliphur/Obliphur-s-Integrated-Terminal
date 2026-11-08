@@ -384,7 +384,7 @@ private fun Bubble(m: ChatMsg) {
     }
 }
 
-/** 头像: 选过图片就显示图片 (圆形), 否则是名字的第一个字. */
+/** 头像: 选过图片就显示图片 (聊天里是圆形), 否则是名字的第一个字. 点对方的头像可以看完整的大图 (不是圆的). */
 @Composable
 private fun Avatar(who: String, fallback: String, size: Int) {
     val o = LocalOit.current
@@ -394,8 +394,17 @@ private fun Avatar(who: String, fallback: String, size: Int) {
     val image = remember(file?.path, file?.lastModified()) {
         file?.let { runCatching { android.graphics.BitmapFactory.decodeFile(it.path)?.asImageBitmap() }.getOrNull() }
     }
+    var full by remember(file?.path) { mutableStateOf(false) }
+    if (full && image != null) {
+        androidx.compose.ui.window.Dialog(onDismissRequest = { full = false }) {
+            Box(Modifier.background(o.bg, RoundedCornerShape(10.dp)).padding(10.dp)) {
+                androidx.compose.foundation.Image(image, null, Modifier.size(320.dp))      // 完整头像: 不裁成圆
+            }
+        }
+    }
     if (image != null) {
-        androidx.compose.foundation.Image(image, null, Modifier.size(size.dp).clip(CircleShape))
+        val click = if (mine) Modifier else Modifier.clickable { full = true }
+        androidx.compose.foundation.Image(image, null, Modifier.size(size.dp).clip(CircleShape).then(click))
         return
     }
     Box(Modifier.size(size.dp).background(if (mine) o.accent else o.card, CircleShape).border(1.dp, o.border, CircleShape),

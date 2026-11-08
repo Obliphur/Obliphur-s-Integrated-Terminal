@@ -278,7 +278,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         )
         loadViolations()
         comm = Comm(dir, host.personasDir() ?: File(dir, "personas"))
-        runCatching { comm.seedDefaultAvatar(host.defaultAvatar("Claudia")) }
+        runCatching { comm.seedDefaultAvatar(host.defaultAvatar("Claudia"), host.defaultAvatar("Claudia_legacy")) }
         comm.snapshot = { commSnapshot() }
         comm.fog = { contract.fog() }
         comm.infoFn = { tag -> commInfo(tag) }

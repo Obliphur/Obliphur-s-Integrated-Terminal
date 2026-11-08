@@ -121,6 +121,11 @@ def pixel(path: str, x: int, y: int) -> int:
         g.GdipDisposeImage(img)
 
 
+def full_path(master: str) -> str:
+    """完整 (没有裁成圆形) 的那份头像: 和圆形的那份放在一起, 叫 xxx.full.png."""
+    return (master[:-4] if master.lower().endswith(".png") else master) + ".full.png"
+
+
 def sized(master: str, px: int) -> str:
     """头像 (圆形 PNG) 缩到 px × px 的缓存文件, 主文件更新了就重画; 返回路径."""
     out = f"{master}.{px}.png"

@@ -2143,6 +2143,7 @@ class Comm(
         const val JOINT_TAG = "[系统·联合行动]"           // 联合行动进展的系统消息 (不是 "[系统]" 开头: 不算主动消息, 不触发提示音)
         const val JOINT_EARLY = 10 * 60                 // 联合行动: 合约可以比约定的开始时间早开始这么久 (秒)
         const val JOINT_LATE = 5 * 60                   // 联合行动: 约定的开始时间过了这么久还没开始合约就算用户放弃 (秒)
+    const val JOINT_INVITE_TTL = 5 * 60             // 联合行动: 对方发起的邀请这么久没人接受 / 拒绝就自动清理 (秒, 1.0.428)
         const val JOINT_FOLLOW_STEP = 3 * 60            // 联合行动结束后: 用户还在专注 / 睡眠时, 同步阶段每次往后顺延这么久 (秒), 直到用户的休息结束
         const val JOINT_FOLLOW_CAP = 3 * 3600           // 联合行动结束后: 同步阶段最长这么久 (秒)
         const val JOINT_HP_MAX = 30                     // 联合行动: 一次最多记这么多条生命值损失 (下一次开始休息 / 合约结束时一起告诉对方)
@@ -2218,7 +2219,7 @@ class Comm(
         val SHARE_SKIP_PAGES = listOf("settings", "comm", "prescript", "reset")        // 在这些页面里不分享也不显示聊天悬浮窗 (回到沟通 = 结束)
         val SHARE_PAGE_NAMES = mapOf("timer" to "计时器", "log" to "整点记录", "cal" to "日历", "stats" to "统计", "net" to "联网", "contract" to "合约", "ach" to "成就")
         const val SHARE_ASK_TTL = 300                  // 用户打开 share data 要先问对方: 等对方回 [Yes] / [No] 最多这么久 (秒)
-        const val SHARE_INVITE_TTL = 6 * 3600          // 对方发 [share data] 之后, 邀请有效这么久 (秒)
+        const val SHARE_INVITE_TTL = 5 * 60           // 对方发 [share data] 之后, 邀请有效这么久 (秒, 1.0.428 起 5 分钟, 超时自动清理)
         val PERSONA_EXT = listOf(".txt", ".md")
         /** 聊天页状态前面小圆点的颜色: 专注黄 / 睡眠深蓝 / 休息浅绿 / 空闲灰. */
         val STATUS_COLORS = mapOf("rest" to "#9CCC65", "sleep" to "#283593", "focus" to "#FDD835", "idle" to "#9E9E9E")
@@ -2227,10 +2228,10 @@ class Comm(
     private val cfgFile = File(dir, "comm_config.json")
     private val legacyChatFile = File(dir, "comm_chat.json")           // 以前所有对象共用的一份
     var persona = ""; private set
-    var showAvatar = false; private set
+    var showAvatar = true; private set
     var avatarMe = ""; private set
     var avatarAi = ""; private set
-    var defaultAvatars = false; private set
+    var defaultAvatarVersion = 0; private set
     private var proKey = ""
     private var segSig: String? = null                      // 人设文件的 (名字, 修改时间, 大小): 变了才重新读日程
     private var segCache: List<Pair<String, Int>> = emptyList()          // 主动发消息用
@@ -2527,10 +2528,14 @@ class Comm(
     private fun load() {
         Store.readObj(cfgFile)?.let { d ->
             persona = d.optString("persona", "")
-            showAvatar = d.optBoolean("show_avatar", false)
+            showAvatar = d.optBoolean("show_avatar", true)
             avatarMe = d.optString("avatar_me", "")
             avatarAi = d.optString("avatar_ai", "")
-            defaultAvatars = d.optBoolean("default_avatars", false)
+            defaultAvatarVersion = when (val v = d.opt("default_avatars")) {
+                is Boolean -> if (v) 1 else 0
+                is Number -> v.toInt()
+                else -> 0
+            }
             userProfile = d.optString("user_profile", "")
             splitSend = d.optBoolean("split_send", true)
             schedFollow = d.optBoolean("sched_follow", false)
@@ -2585,7 +2590,7 @@ class Comm(
 
     private fun saveCfg() {
         val o = JSONObject().put("persona", persona)
-            .put("show_avatar", showAvatar).put("avatar_me", avatarMe).put("avatar_ai", avatarAi).put("default_avatars", defaultAvatars)
+            .put("show_avatar", showAvatar).put("avatar_me", avatarMe).put("avatar_ai", avatarAi).put("default_avatars", defaultAvatarVersion)
             .put("user_profile", userProfile).put("seeded", seeded).put("assistant_seeded", assistantSeeded)
             .put("claudia_migrated", claudiaMigrated).put("claudia_modified", claudiaModified)
             .put("claudia_notified", claudiaNotified).put("claudia_base", claudiaBase).put("routine_base", routineBase).put("background_base", backgroundBase)
@@ -3667,6 +3672,11 @@ class Comm(
     /** 每秒: 排着的总结请求 (对方空下来再发) 和排着的页面数据 (冷却过了再发). */
     @Synchronized
     private fun shareTick() {
+        if (shareInv != 0L && nowMs() - shareInv >= SHARE_INVITE_TTL * 1000L) {
+            shareInv = 0L                                       // 发出的 share data 邀请 5 分钟没人接受: 自动清理 (1.0.428)
+            shareInvPid = ""
+            changed()
+        }
         if (shareAskPid.isNotEmpty()) {
             if (shareAskPid != pid) shareAskPid = ""
             else if (nowMs() - shareAskTs > SHARE_ASK_TTL * 1000L) shareAskEnd("{name} 没有回复, share data 没有打开")
@@ -4496,6 +4506,10 @@ class Comm(
 
     private fun jointTick(t: LocalDateTime) {
         val j = curJoint() ?: return
+        if ((j.state == "invite" || j.state == "wait") && nowMs() - j.ts >= JOINT_INVITE_TTL * 1000L) {
+            jointSet(j.copy(state = ""))                        // 发出的邀请 5 分钟没人接受 / 回复: 自动清理 (1.0.428, 1.0.429 连用户发起的也算)
+            return
+        }
         if (j.state == "rest" && leader()) jointFollow(j, t)
         val a = jointSpan(j)?.first ?: return
         if (j.state == "wait" && t.isAfter(a)) {                // 一直没有回复, 约定的开始时间过了
@@ -4601,18 +4615,19 @@ class Comm(
         }
     }
 
-    /** 自带人设的默认头像 (1.0.426): 第一次运行 (或重置后) 放一份; 用户换过 / 删过的不动 (设置里记一个标志). */
-    fun seedDefaultAvatar(bytes: ByteArray?) {
-        if (defaultAvatars) return
+    /** 自带人设的默认头像 (1.0.426; 1.0.431 换成方形原图): 第一次运行 (或重置后) 放一份;
+     *  以前默认的圆形图还是原样时一并换掉; 用户自己换过 / 删过的不动 (设置里记版本). */
+    fun seedDefaultAvatar(bytes: ByteArray?, legacy: ByteArray? = null) {
+        if (defaultAvatarVersion >= 2) return
         val name = "Claudia.txt"
-        if (bytes != null && listPersonas().contains(name)) {
-            val dst = File(File(dir, "avatars"), avatarName("ai", name))
-            if (!dst.exists()) runCatching {
-                dst.parentFile?.mkdirs()
-                dst.writeBytes(bytes)
-            }
+        val dst = File(File(dir, "avatars"), avatarName("ai", name))
+        val cur = if (dst.isFile) runCatching { dst.readBytes() }.getOrNull() else null
+        val old = legacy != null && cur != null && cur.contentEquals(legacy)
+        if (bytes != null && listPersonas().contains(name) && (cur == null || old)) runCatching {
+            dst.parentFile?.mkdirs()
+            dst.writeBytes(bytes)
         }
-        defaultAvatars = true
+        defaultAvatarVersion = 2
         saveCfg()
     }
 

@@ -536,6 +536,7 @@ EN = {
     "黑雾中无法发送": "Can't send during the fog",
     "没有可发送的数据": "Nothing to send",
     "选择头像": "Choose avatar",
+    "头像": "Avatar",
     "图片": "Images",
     "截取头像": "Crop avatar",
     "打不开这张图片.": "Can't open this image.",

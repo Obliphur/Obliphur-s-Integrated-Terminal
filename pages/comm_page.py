@@ -276,7 +276,11 @@ class CommPage(tk.Frame):
         img = self.comm.avatar_path("me" if mine else "ai")
         photo = self._photo(img, size) if img else None
         if photo is not None:
-            return tk.Label(parent, image=photo, bg=COLORS["bg"], bd=0)
+            lab = tk.Label(parent, image=photo, bg=COLORS["bg"], bd=0)
+            if not mine:
+                lab.configure(cursor="hand2")
+                lab.bind("<Button-1>", lambda e: self._show_avatar())
+            return lab
         cv = tk.Canvas(parent, width=size, height=size, bg=COLORS["bg"], highlightthickness=0)
         cv.create_oval(1, 1, size - 1, size - 1, outline=COLORS["border"],
                        fill=COLORS.get("accent_fill", COLORS["accent"]) if mine else COLORS["bg_card"])
@@ -284,6 +288,26 @@ class CommPage(tk.Frame):
                        fill=COLORS.get("on_accent_fill", COLORS["on_accent"]) if mine else COLORS["text"],
                        font=config.font("body", bold=True))
         return cv
+
+    def _show_avatar(self):
+        """点对方的头像: 弹窗放大显示完整头像 (没有裁成圆形的那份; 老头像没有就显示圆形的那份)."""
+        c = self.comm
+        cur = c.avatar_path("ai")
+        if not cur:
+            return
+        p = avatar_mod.full_path(c.avatar_dest("ai"))
+        if not os.path.isfile(p):
+            p = cur
+        size = config.scaled(420)
+        try:
+            photo = tk.PhotoImage(file=avatar_mod.sized(p, size))
+        except (OSError, tk.TclError):
+            return
+        dlg = Modal(self.winfo_toplevel(), tr("头像"), width=size + 48, height=size + 104)
+        tk.Label(dlg.body, image=photo, bg=COLORS["bg"], bd=0).pack(expand=True)
+        dlg._photo = photo                                  # 别让图片被回收
+        ttk.Button(dlg.buttons, text=tr("关闭"), command=dlg.cancel).pack(side="right")
+        dlg.wait()
 
     def _pad_height(self) -> int:
         return max(40, int(self.area.canvas.winfo_height() * 0.45))      # 上下各留半屏左右的空白: 第一条 / 最后一条也能继续滑过去

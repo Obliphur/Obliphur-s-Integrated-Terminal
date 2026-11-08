@@ -1544,8 +1544,9 @@ class CommTest {
         assertEquals("wait", Joint.parse(cn.syncDoc()["joint"] as JSONObject)!!.state)
         assertTrue(cn.visible().last().role == "me")                  // 对方不方便: 邀请留着
         clock = clock.plusMinutes(11); cn.tick(); wait(cn)
-        assertEquals("yes", Joint.parse(cn.syncDoc()["joint"] as JSONObject)!!.state)
-        assertEquals("✓ 接受了联合行动", cn.visible().last().text)
+        assertEquals("", cn.jointState())                              // 用户发起的邀请 5 分钟没回: 也自动清理
+        cn.proactiveForTestSet("yes")                                  // 对方接受了 (直接构造)
+        assertEquals("yes", cn.jointState())
         // 对方接受了, 用户没按约开始合约 (超过 5 分钟): 视为放弃, 对方知道用户爽约了
         clock = day.withHour(15).withMinute(4); cn.tick()
         assertEquals("yes", Joint.parse(cn.syncDoc()["joint"] as JSONObject)!!.state)

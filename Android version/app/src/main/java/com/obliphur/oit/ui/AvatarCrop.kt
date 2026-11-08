@@ -112,7 +112,6 @@ fun AvatarCropDialog(uri: Uri, onDone: (Bitmap?) -> Unit) {
                 clamp()
                 val out = Bitmap.createBitmap(OUT_PX, OUT_PX, Bitmap.Config.ARGB_8888)
                 val canvas = android.graphics.Canvas(out)
-                canvas.clipPath(android.graphics.Path().apply { addCircle(OUT_PX / 2f, OUT_PX / 2f, OUT_PX / 2f, android.graphics.Path.Direction.CW) })
                 val half = r / scale
                 val rect = android.graphics.Rect((cx - half).roundToInt(), (cy - half).roundToInt(),
                     (cx + half).roundToInt(), (cy + half).roundToInt())

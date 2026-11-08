@@ -42,6 +42,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REFUSE = "[refuse to reply]"
 OIT_TAG = "[OIT_SYSTEM_MESSAGES]"      # OIT 直接发出的消息都带这个标记 (1.0.423)
 DEFAULT_AVATARS = {"Claudia.txt": "Claudia.png"}    # 自带人设的默认头像 (1.0.426): defaults/avatars/ 里的文件
+DEFAULT_AVATAR_VERSION = 2                         # 2 = 1.0.431 换成方形原图; 以前的圆形默认图见 Claudia_legacy.png
 PRO_LANGS = ("中文", "English", "日本語", "한국어", "Français", "Deutsch", "Español", "Русский")       # 设置里的主动谈话语言可选项 (1.0.407); 也可以自己写别的
 MAX_PRO_LANG = 30
 PRO_LANG_NOTE = ("\n(OIT 设置, 用户指定) 这条主动发起的话请使用「{lang}」来说; 只限这一条, 之后和用户的对话不受这个限制: "
@@ -70,7 +71,7 @@ SHIFT_KEEP = 30                       # 每个聊天对象最多留多少条平�
 MSGS_TAG = "messages"                 # 对方输入 [messages]: OIT 告诉它和用户的聊天记录数 (1.0.402)
 STATE_TAG = "state"                   # 对方输入 [state]: OIT 告诉它此刻的日程状态 (这一段的性质 + 结束时间), 再调用一次 (1.0.414)
 SHARE_ASK_TTL = 300                   # 用户打开 share data 要先问对方: 等对方回 [Yes] / [No] 最多这么久 (秒)
-SHARE_INVITE_TTL = 6 * 3600           # 对方发 [share data] 之后, 邀请有效这么久 (秒)
+SHARE_INVITE_TTL = 5 * 60             # 对方发 [share data] 之后, 邀请有效这么久 (秒, 1.0.428 起 5 分钟, 超时自动清理)
 _SHARE_RE = re.compile(r"[\[［]\s*share\s+data\s*[\]］]", re.I)
 CUT_TAG = "[系统·切断]"                # 对方切断谈话的系统消息 (不是 "[系统]" 开头: 不算主动消息)
 CUT_DEFAULT_MIN = 10                  # [cut off] 后面没写分钟数时切断多久
@@ -88,6 +89,7 @@ NET_NO_REFUSE = ("(OIT 系统提供, 用户看不到) 网络已经开通, 这一
 JOINT_TAG = "[系统·联合行动]"           # 联合行动进展的系统消息 (不是 "[系统]" 开头: 不算主动消息, 不触发提示音)
 JOINT_EARLY = 10 * 60                 # 联合行动: 合约可以比约定的开始时间早开始这么久 (秒)
 JOINT_LATE = 5 * 60                   # 联合行动: 约定的开始时间过了这么久还没开始合约就算用户放弃 (秒)
+JOINT_INVITE_TTL = 5 * 60             # 联合行动: 对方发起的邀请这么久没人接受 / 拒绝就自动清理 (秒, 1.0.428)
 JOINT_HP_MAX = 30                     # 联合行动: 一次最多记这么多条生命值损失 (下一次开始休息 / 合约结束时一起告诉对方)
 JOINT_SPEAK_WAIT = 3 * 60             # 联合行动: 要让对方回应一句, 但对方正在回别的话: 最多等这么久 (秒)
 JOINT_FOLLOW_STEP = 3 * 60            # 联合行动结束后: 用户还在专注 / 睡眠时, 同步阶段每次往后顺延这么久 (秒), 直到用户的休息结束
@@ -200,8 +202,8 @@ def think_text_reason(text: str) -> str:
     return ""
 WEEKDAY = "一二三四五六日"
 
-DEFAULTS = {"persona": "", "show_avatar": False,
-            "avatar_me": "", "avatar_ai": "", "default_avatars": False, "pro_key": "", "retry": {}, "clear_ts": 0, "seeded": False, "assistant_seeded": False,
+DEFAULTS = {"persona": "", "show_avatar": True,
+            "avatar_me": "", "avatar_ai": "", "default_avatars": 0, "pro_key": "", "retry": {}, "clear_ts": 0, "seeded": False, "assistant_seeded": False,
             "claudia_migrated": False, "claudia_modified": False, "claudia_notified": "", "claudia_base": "", "routine_base": "", "background_base": "",
             "legacy_done": False, "joint_last": [], "user_profile": "", "split_send": True,
             "bg_pro": True, "mute_pro": [], "idle_use": {}, "joint": {}, "sched_follow": False, "pro_lang": "",
@@ -4045,6 +4047,9 @@ class Comm:
         """联合行动的时间到了 / 错过了."""
         j = self._joint()
         st = j.get("state")
+        if st in ("invite", "wait") and self._ms() - int(j.get("ts") or 0) >= JOINT_INVITE_TTL * 1000:
+            self._joint_set({"state": ""})                     # 发出的邀请 5 分钟没人接受 / 回复: 自动清理 (1.0.428, 1.0.429 连用户发起的也算)
+            return
         a, _b = self._joint_span(j)
         if st == "rest" and self.leader():
             self._joint_follow(j, now)
@@ -4170,23 +4175,40 @@ class Comm:
             pass
 
     def _seed_default_avatars(self):
-        """自带人设的默认头像 (1.0.426): 第一次运行 (或重置后) 放一份到 avatars.
-        用户自己换过 / 删过的不动 (设置里记一个标志, 之后不再放)."""
-        if self.cfg.get("default_avatars"):
+        """自带人设的默认头像 (1.0.426; 1.0.431 换成方形原图): 第一次运行 (或重置后) 放一份到 avatars.
+        以前默认的那张圆形图还是原样时一并换成新的; 用户自己换过 / 删过的不动 (设置里记版本, 之后不再放)."""
+        have = self.cfg.get("default_avatars")
+        ver = 1 if have is True else (int(have) if isinstance(have, int) and not isinstance(have, bool) else 0)
+        if ver >= DEFAULT_AVATAR_VERSION:
             return
+        legacy = None
+        try:
+            with open(os.path.join(HERE, "defaults", "avatars", "Claudia_legacy.png"), "rb") as f:
+                legacy = f.read()
+        except OSError:
+            pass
         names = set(list_personas(self.personas))
         for persona, file in DEFAULT_AVATARS.items():
             if persona not in names:
                 continue
             src = os.path.join(HERE, "defaults", "avatars", file)
             dst = os.path.join(self.dir, "avatars", self._avatar_name("ai", persona))
-            if not os.path.exists(dst) and os.path.isfile(src):
+            cur = None
+            try:
+                with open(dst, "rb") as f:
+                    cur = f.read()
+            except OSError:
+                pass
+            if cur is None or (legacy is not None and cur == legacy):
                 try:
                     os.makedirs(os.path.dirname(dst), exist_ok=True)
                     shutil.copyfile(src, dst)
+                    full_src = src[:-4] + ".full.png"
+                    if os.path.isfile(full_src):
+                        shutil.copyfile(full_src, dst[:-4] + ".full.png")
                 except OSError:
                     pass
-        self.cfg["default_avatars"] = True
+        self.cfg["default_avatars"] = DEFAULT_AVATAR_VERSION
         self.save_cfg()
 
     def avatar_path(self, who: str) -> str:
@@ -4194,10 +4216,12 @@ class Comm:
         return p if os.path.isfile(p) else ""
 
     def remove_avatar(self, who: str):
-        try:
-            os.remove(self.avatar_dest(who))
-        except OSError:
-            pass
+        p = self.avatar_dest(who)
+        for f in (p, p[:-4] + ".full.png"):         # 完整版也一起删 (1.0.430)
+            try:
+                os.remove(f)
+            except OSError:
+                pass
         self._changed()
 
     def avatars_changed(self):
@@ -5609,6 +5633,11 @@ class Comm:
 
     def _share_tick(self):
         """每秒: 排着的征求同意请求 / 总结请求 (对方空下来再发) 和排着的页面数据 (冷却过了再发)."""
+        inv = self.cfg.get("share_inv") or {}
+        if inv and self._ms() - int(inv.get("ts") or 0) >= SHARE_INVITE_TTL * 1000:
+            self.cfg["share_inv"] = {}                         # 发出的 share data 邀请 5 分钟没人接受: 自动清理 (1.0.428)
+            self.save_cfg()
+            self._changed()
         a = self.share_ask
         if a:
             if a.get("pid") != self.pid:
@@ -8015,7 +8044,7 @@ def _selftest():
     clock[0] += timedelta(minutes=11)
     cn.tick()
     wait(cn)
-    assert cn._joint()["state"] == "yes" and cn.visible()[-1]["text"] == "✓ 接受了联合行动" and not cn.unanswered()
+    assert cn.joint_state() == "" and not cn.joint_busy(), "5 分钟没回复: 用户发起的邀请也自动清理"
     # 回 [refuse to reply] 同时带了 [Yes]: 当作不方便
     cn._joint_set({"state": "wait"})
     cn._add("me", "x")
@@ -8024,6 +8053,8 @@ def _selftest():
     wait(cn)
     assert cn._joint()["state"] == "wait"
     # 约定的开始时间过了还没回复: 错过; 回复得太晚也算错过
+    clock[0] = day.replace(hour=15, minute=0)
+    cn._joint_set({"state": "wait"})
     clock[0] = day.replace(hour=15, minute=1)
     cn.tick()
     assert cn._joint()["state"] == "missed" and cn.joint_status_text().endswith("已错过") and not cn.joint_busy()
@@ -8111,6 +8142,12 @@ def _selftest():
     co._joint_set({"state": "invite"})
     clock[0] = day.replace(hour=14, minute=1)
     assert co.joint_respond(True) == "约定的开始时间已经过了" and co._joint()["state"] == "missed"
+    # 发出的邀请 5 分钟没人接受: 自动清理 (1.0.428)
+    clock[0] = day.replace(hour=14, minute=10)
+    co._joint_set({"state": "invite"})
+    clock[0] = day.replace(hour=14, minute=15, second=1)
+    co._joint_tick(clock[0])
+    assert co.joint_state() == "" and not co.joint_invite() and not co.joint_busy(), "5 分钟没人接受: 自动清理"
     clock[0] = day.replace(hour=13)
     co._joint_set({"state": "invite"})
     # 已经有联合行动: 再回 [operation] 也不能发起 (当作没发起), 联合行动不变
@@ -9200,6 +9237,14 @@ def _selftest():
     assert cs.share_invite() and cs.share_respond(False) == "" and not cs.share_on() and not cs.share_invite()
     assert "用户拒绝了你的 share data 请求" in [m for m in cs.messages if m["role"] == "sys"][-1]["api"]
     assert cs.share_respond(True) == "没有等你回复的 share data 邀请"
+    # 发出的 share data 邀请 5 分钟没人接受: 自动清理 (1.0.428)
+    cs._share_invite_make()
+    assert cs.share_invite()
+    keep_t = clock[0]
+    clock[0] = keep_t + timedelta(minutes=5, seconds=1)
+    cs._share_tick()
+    assert not cs.share_invite() and not cs.cfg.get("share_inv"), "5 分钟没人接受: 自动清理"
+    clock[0] = keep_t
     # 用户发起 share data: 先争取对方同意, 回 [Yes] 才打开, 回 [No] / 没表态 / 不方便 / 没回都不开 (MECHANICS 24.12)
     n_calls = len(calls)
     notices.clear()
