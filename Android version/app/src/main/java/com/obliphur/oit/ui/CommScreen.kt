@@ -395,10 +395,16 @@ private fun Avatar(who: String, fallback: String, size: Int) {
         file?.let { runCatching { android.graphics.BitmapFactory.decodeFile(it.path)?.asImageBitmap() }.getOrNull() }
     }
     var full by remember(file?.path) { mutableStateOf(false) }
-    if (full && image != null) {
+    val fullFile = if (full) comm.avatarFullPath(who) else null
+    val fullImage = remember(fullFile?.path, fullFile?.lastModified()) {
+        fullFile?.let { runCatching { android.graphics.BitmapFactory.decodeFile(it.path)?.asImageBitmap() }.getOrNull() }
+    }
+    if (full) {
         androidx.compose.ui.window.Dialog(onDismissRequest = { full = false }) {
             Box(Modifier.background(o.bg, RoundedCornerShape(10.dp)).padding(10.dp)) {
-                androidx.compose.foundation.Image(image, null, Modifier.size(320.dp))      // 完整头像: 不裁成圆
+                (fullImage ?: image)?.let {
+                    androidx.compose.foundation.Image(it, null, Modifier.size(320.dp))      // 完整头像: 不裁成圆
+                }
             }
         }
     }

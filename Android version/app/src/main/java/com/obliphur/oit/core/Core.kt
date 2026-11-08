@@ -41,6 +41,8 @@ interface Host {
 
     /** 自带人设的默认头像 (assets/avatars/<name>.png 的字节); 没有就 null (1.0.426). */
     fun defaultAvatar(name: String): ByteArray? = null
+    /** 默认头像的完整方形版 (assets/avatars/<name>.full.png); 没有就 null (1.0.435). */
+    fun defaultAvatarFull(name: String): ByteArray? = null
 
     fun scheduleWake(seconds: Double)
     /** 新达成了成就 (界面上的提示由界面读 Core.ach.unseen 画出; 在后台时可以另外发通知). */
@@ -278,7 +280,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         )
         loadViolations()
         comm = Comm(dir, host.personasDir() ?: File(dir, "personas"))
-        runCatching { comm.seedDefaultAvatar(host.defaultAvatar("Claudia")) }
+        runCatching { comm.seedDefaultAvatar(host.defaultAvatar("Claudia"), host.defaultAvatarFull("Claudia")) }
         comm.snapshot = { commSnapshot() }
         comm.fog = { contract.fog() }
         comm.infoFn = { tag -> commInfo(tag) }

@@ -2658,13 +2658,15 @@ class CommTest {
     fun defaultAvatarSeed() {
         val td = Files.createTempDirectory("oit").toFile()
         val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
-        c.seedDefaultAvatar(byteArrayOf(1, 2, 3))
+        c.seedDefaultAvatar(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
         val f = c.avatarPath("ai")
         assertNotNull(f)
         assertTrue(f!!.readBytes().contentEquals(byteArrayOf(1, 2, 3)))
+        assertTrue(c.avatarFullPath("ai")!!.readBytes().contentEquals(byteArrayOf(4, 5, 6)))
         c.removeAvatar("ai")
         assertNull(c.avatarPath("ai"))
-        c.seedDefaultAvatar(byteArrayOf(4, 5, 6))
+        assertNull(c.avatarFullPath("ai"))
+        c.seedDefaultAvatar(byteArrayOf(4, 5, 6), null)
         assertNull(c.avatarPath("ai"))          // 标志记住了: 删掉的不会再放回来
         c.flush()
     }

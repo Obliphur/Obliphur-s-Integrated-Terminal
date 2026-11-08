@@ -56,7 +56,7 @@ OFFLINE_MS = 3 * SYNC_EVERY * 1000
 # 同步失败的原因里, 下面这几种说明对方明确不接受 / 不在线 (不是偶然的网络问题): 不等 OFFLINE_MS, 马上算离线
 HARD_ERRORS = ("unpaired", "wipe-pending", "away", "peer-not-proxy", "not-proxy")
 UNBIND_WAIT_MS = 120 * 3600 * 1000      # 解除绑定要等这么久 (冷静期 120 小时, 期间可以取消)
-UNBIND_FREE = False                     # 1.0.376 临时开过 (True: 解除绑定马上生效并且不清空本机), 1.0.377 改回 False
+UNBIND_FREE = True                      # 1.0.435: 解除绑定马上生效, 也不清空本机 (无代价)
 RESTART_RETRY = 30                    # 秒: 设备离线时请它重新启动 OIT, 连不上就每隔这么久再试一次, 直到有回应或它回来 (MECHANICS 15.3)
 RESTART_FRESH_MS = 90_000             # 本机刚打开这么久之内不理重启请求 (对方看到的离线是打开之前的事)
 RESTART_HEALTHY_MS = 30_000           # 刚和发请求的设备同步成功过 (任何一个方向) 这么久之内不理重启请求: 本机明明在线
@@ -2653,23 +2653,34 @@ def _selftest():
         sa.state["gone"].pop(sb.my_id)
         sa.state["peers"][sb.my_id] = dict(sb.peers()[sa.my_id], name="B", addr="127.0.0.1", port=sb.port,
                                            mother=sa.my_id)
-        # 解除绑定: 120 小时后才解除, 期间可以取消; 到时间后解除, 通知对方 (它的数据不动), 本机由调用方重置
-        assert not sb.request_unbind(sa.my_id)
-        assert sb.unbind_at(sa.my_id) and sb.check_unbind() == [] and sa.my_id in sb.peers()
-        sb.cancel_unbind(sa.my_id)
-        assert sb.unbind_at(sa.my_id) is None
+        # 解除绑定: 1.0.435 起 UNBIND_FREE=True, 马上解除, 通知对方 (它的数据不动), 本机由调用方重置 (实际不重置)
         keep_a = dict(sb.peers()[sa.my_id])
-        sb.request_unbind(sa.my_id)
-        sb.state["unbinds"][sa.my_id] = _now_ms() - 1
-        la.wiped = None
-        assert sb.check_unbind() == ["A"] and sa.my_id not in sb.peers()
-        for _ in range(100):
-            if sb.my_id not in sa.peers() and not sb.state["evict_out"]:
-                break
-            time.sleep(0.05)
-        assert la.wiped is None, "对方的数据不清空"
-        assert sb.my_id not in sa.peers() and sb.my_id in sa.state["gone"], "对方只是少了这条绑定"
-        assert not sb.state["evict_out"], "送到了就不再送"
+        assert not sb.request_unbind(sa.my_id)
+        if UNBIND_FREE:
+            assert sb.check_unbind() == ["A"] and sa.my_id not in sb.peers()
+            la.wiped = None
+            for _ in range(100):
+                if sb.my_id not in sa.peers() and not sb.state["evict_out"]:
+                    break
+                time.sleep(0.05)
+            assert la.wiped is None, "对方的数据不清空"
+            assert sb.my_id not in sa.peers() and sb.my_id in sa.state["gone"], "对方只是少了这条绑定"
+            assert not sb.state["evict_out"], "送到了就不再送"
+        else:
+            assert sb.unbind_at(sa.my_id) and sb.check_unbind() == [] and sa.my_id in sb.peers()
+            sb.cancel_unbind(sa.my_id)
+            assert sb.unbind_at(sa.my_id) is None
+            sb.request_unbind(sa.my_id)
+            sb.state["unbinds"][sa.my_id] = _now_ms() - 1
+            la.wiped = None
+            assert sb.check_unbind() == ["A"] and sa.my_id not in sb.peers()
+            for _ in range(100):
+                if sb.my_id not in sa.peers() and not sb.state["evict_out"]:
+                    break
+                time.sleep(0.05)
+            assert la.wiped is None, "对方的数据不清空"
+            assert sb.my_id not in sa.peers() and sb.my_id in sa.state["gone"], "对方只是少了这条绑定"
+            assert not sb.state["evict_out"], "送到了就不再送"
         assert UNBIND_WAIT_MS == 120 * 3600 * 1000
         kept = sb.kept_state("", unbound="A")
         assert kept["unbound_from"] == "A" and not kept["ledgers"] and "wiped_by" not in kept

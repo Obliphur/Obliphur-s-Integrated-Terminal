@@ -4615,27 +4615,29 @@ class Comm(
         }
     }
 
-    /** 自带人设的默认头像 (1.0.426; 1.0.431 / 1.0.432 / 1.0.433 换过图): 第一次运行 (或重置后) 放一份;
-     *  以前默认的图还是原样时一并换掉; 用户自己换过 / 删过的不动 (设置里记版本). */
-    fun seedDefaultAvatar(bytes: ByteArray?) {
-        if (defaultAvatarVersion >= 4) return
+    /** 自带人设的默认头像 (1.0.426): 第一次运行 (或重置后) 放一份, 之后不再自动更新 (1.0.434); 用户自己换过 / 删过的不动. */
+    fun seedDefaultAvatar(main: ByteArray?, full: ByteArray?) {
+        if (defaultAvatarVersion >= 1) return
         val name = "Claudia.txt"
-        val dst = File(File(dir, "avatars"), avatarName("ai", name))
-        val cur = if (dst.isFile) runCatching { dst.readBytes() }.getOrNull() else null
-        val oldHashes = setOf("22ed518b732f5de56182d8ba6dd98c6c282d08d37c40dcbec91b062fc8a54cb3",   // v1 圆形
-            "662016f628f9fe21fefa644f669e4d0c00c5d10dd8c61ccd468ee204e16188ee",              // v2 方形 (手机)
-            "af2c22e1d7f4b6b0c99701f9da2f65ba890752735d82467dd143b54b51ea0e8e")               // v3 方形 (手机)
-        val old = cur != null && sha256(cur) in oldHashes
-        if (bytes != null && listPersonas().contains(name) && (cur == null || old)) runCatching {
-            dst.parentFile?.mkdirs()
-            dst.writeBytes(bytes)
+        if (listPersonas().contains(name)) {
+            val dst = File(File(dir, "avatars"), avatarName("ai", name))
+            val dstFull = avatarFullFile("ai")
+            runCatching {
+                dst.parentFile?.mkdirs()
+                if (!dst.exists() && main != null) dst.writeBytes(main)
+                if (!dstFull.exists() && full != null) dstFull.writeBytes(full)
+            }
         }
-        defaultAvatarVersion = 4
+        defaultAvatarVersion = 1
         saveCfg()
     }
 
-    private fun sha256(b: ByteArray): String = java.security.MessageDigest.getInstance("SHA-256")
-        .digest(b).joinToString("") { "%02x".format(it.toInt() and 0xff) }
+    /** 完整 (没裁成圆形) 的头像文件: 点开对方头像时显示的那份 (1.0.430). */
+    fun avatarFullFile(who: String): File =
+        File(File(dir, "avatars"), avatarName(who, personaName()).replace(".png", ".full.png"))
+
+    /** 完整头像 (没有完整版就用显示用的那份). */
+    fun avatarFullPath(who: String): File? = avatarFullFile(who).takeIf { it.isFile } ?: avatarPath(who)
 
     /** 头像文件 (没有就是 null). */
     fun avatarPath(who: String): File? = avatarFile(who).takeIf { it.isFile }
@@ -4646,13 +4648,18 @@ class Comm(
         val ok = runCatching {
             f.parentFile?.mkdirs()
             f.outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+            avatarFullFile(who).outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
         }.getOrDefault(false)
         changed()
         return ok
     }
 
     @Synchronized
-    fun removeAvatar(who: String) { avatarFile(who).delete(); changed() }
+    fun removeAvatar(who: String) {
+        avatarFile(who).delete()
+        avatarFullFile(who).delete()
+        changed()
+    }
 
     /** 聊天里显示的消息 (藏起来的不算, 见 ChatMsg.hold). */
     fun visible() = messages.filter { (it.role == "me" || it.role == "ai") && !it.hold }
