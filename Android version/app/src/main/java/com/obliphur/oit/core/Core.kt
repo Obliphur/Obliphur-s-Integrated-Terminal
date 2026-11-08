@@ -39,6 +39,9 @@ interface Host {
     /** 沟通的人设文件夹 (用户自己往里放 .txt / .md); null = 放在数据目录里. */
     fun personasDir(): File? = null
 
+    /** 自带人设的默认头像 (assets/avatars/<name>.png 的字节); 没有就 null (1.0.426). */
+    fun defaultAvatar(name: String): ByteArray? = null
+
     fun scheduleWake(seconds: Double)
     /** 新达成了成就 (界面上的提示由界面读 Core.ach.unseen 画出; 在后台时可以另外发通知). */
     fun achievementsUnlocked(ids: List<String>) {}
@@ -275,6 +278,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         )
         loadViolations()
         comm = Comm(dir, host.personasDir() ?: File(dir, "personas"))
+        runCatching { comm.seedDefaultAvatar(host.defaultAvatar("Claudia")) }
         comm.snapshot = { commSnapshot() }
         comm.fog = { contract.fog() }
         comm.infoFn = { tag -> commInfo(tag) }

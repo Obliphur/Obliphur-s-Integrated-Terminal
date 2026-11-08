@@ -2652,6 +2652,21 @@ class CommTest {
         assertNull(c.wakeAfter("00000000", LocalDateTime.of(2027, 6, 1, 0, 0)))
         c.flush(); c2.flush()
     }
+
+    @Test
+    fun defaultAvatarSeed() {
+        val td = Files.createTempDirectory("oit").toFile()
+        val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
+        c.seedDefaultAvatar(byteArrayOf(1, 2, 3))
+        val f = c.avatarPath("ai")
+        assertNotNull(f)
+        assertTrue(f!!.readBytes().contentEquals(byteArrayOf(1, 2, 3)))
+        c.removeAvatar("ai")
+        assertNull(c.avatarPath("ai"))
+        c.seedDefaultAvatar(byteArrayOf(4, 5, 6))
+        assertNull(c.avatarPath("ai"))          // 标志记住了: 删掉的不会再放回来
+        c.flush()
+    }
 }
 
 /** 只给测试用: 一份带完整日程的老格式人设 (日程写在提示词里). */

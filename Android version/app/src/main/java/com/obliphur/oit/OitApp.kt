@@ -319,6 +319,10 @@ class OitApp : Application(), Host {
 
     override fun personasDir(): File = getExternalFilesDir("personas") ?: File(filesDir, "personas")
 
+    override fun defaultAvatar(name: String): ByteArray? = runCatching {
+        assets.open("avatars/$name.png").use { it.readBytes() }
+    }.getOrNull()
+
     override fun openPage(page: String) {
         navRequests.tryEmit(page)
         if (!foreground) startActivity(Intent(this, MainActivity::class.java)

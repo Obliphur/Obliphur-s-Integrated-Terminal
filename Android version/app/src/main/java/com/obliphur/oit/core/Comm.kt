@@ -2230,6 +2230,7 @@ class Comm(
     var showAvatar = false; private set
     var avatarMe = ""; private set
     var avatarAi = ""; private set
+    var defaultAvatars = false; private set
     private var proKey = ""
     private var segSig: String? = null                      // 人设文件的 (名字, 修改时间, 大小): 变了才重新读日程
     private var segCache: List<Pair<String, Int>> = emptyList()          // 主动发消息用
@@ -2529,6 +2530,7 @@ class Comm(
             showAvatar = d.optBoolean("show_avatar", false)
             avatarMe = d.optString("avatar_me", "")
             avatarAi = d.optString("avatar_ai", "")
+            defaultAvatars = d.optBoolean("default_avatars", false)
             userProfile = d.optString("user_profile", "")
             splitSend = d.optBoolean("split_send", true)
             schedFollow = d.optBoolean("sched_follow", false)
@@ -2583,7 +2585,7 @@ class Comm(
 
     private fun saveCfg() {
         val o = JSONObject().put("persona", persona)
-            .put("show_avatar", showAvatar).put("avatar_me", avatarMe).put("avatar_ai", avatarAi)
+            .put("show_avatar", showAvatar).put("avatar_me", avatarMe).put("avatar_ai", avatarAi).put("default_avatars", defaultAvatars)
             .put("user_profile", userProfile).put("seeded", seeded).put("assistant_seeded", assistantSeeded)
             .put("claudia_migrated", claudiaMigrated).put("claudia_modified", claudiaModified)
             .put("claudia_notified", claudiaNotified).put("claudia_base", claudiaBase).put("routine_base", routineBase).put("background_base", backgroundBase)
@@ -4597,6 +4599,21 @@ class Comm(
             }
             old.delete()
         }
+    }
+
+    /** 自带人设的默认头像 (1.0.426): 第一次运行 (或重置后) 放一份; 用户换过 / 删过的不动 (设置里记一个标志). */
+    fun seedDefaultAvatar(bytes: ByteArray?) {
+        if (defaultAvatars) return
+        val name = "Claudia.txt"
+        if (bytes != null && listPersonas().contains(name)) {
+            val dst = File(File(dir, "avatars"), avatarName("ai", name))
+            if (!dst.exists()) runCatching {
+                dst.parentFile?.mkdirs()
+                dst.writeBytes(bytes)
+            }
+        }
+        defaultAvatars = true
+        saveCfg()
     }
 
     /** 头像文件 (没有就是 null). */

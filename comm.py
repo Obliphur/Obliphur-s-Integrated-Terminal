@@ -38,8 +38,10 @@ import i18n
 from i18n import tr
 import routine
 
+HERE = os.path.dirname(os.path.abspath(__file__))
 REFUSE = "[refuse to reply]"
 OIT_TAG = "[OIT_SYSTEM_MESSAGES]"      # OIT 直接发出的消息都带这个标记 (1.0.423)
+DEFAULT_AVATARS = {"Claudia.txt": "Claudia.png"}    # 自带人设的默认头像 (1.0.426): defaults/avatars/ 里的文件
 PRO_LANGS = ("中文", "English", "日本語", "한국어", "Français", "Deutsch", "Español", "Русский")       # 设置里的主动谈话语言可选项 (1.0.407); 也可以自己写别的
 MAX_PRO_LANG = 30
 PRO_LANG_NOTE = ("\n(OIT 设置, 用户指定) 这条主动发起的话请使用「{lang}」来说; 只限这一条, 之后和用户的对话不受这个限制: "
@@ -199,7 +201,7 @@ def think_text_reason(text: str) -> str:
 WEEKDAY = "一二三四五六日"
 
 DEFAULTS = {"persona": "", "show_avatar": False,
-            "avatar_me": "", "avatar_ai": "", "pro_key": "", "retry": {}, "clear_ts": 0, "seeded": False, "assistant_seeded": False,
+            "avatar_me": "", "avatar_ai": "", "default_avatars": False, "pro_key": "", "retry": {}, "clear_ts": 0, "seeded": False, "assistant_seeded": False,
             "claudia_migrated": False, "claudia_modified": False, "claudia_notified": "", "claudia_base": "", "routine_base": "", "background_base": "",
             "legacy_done": False, "joint_last": [], "user_profile": "", "split_send": True,
             "bg_pro": True, "mute_pro": [], "idle_use": {}, "joint": {}, "sched_follow": False, "pro_lang": "",
@@ -2594,6 +2596,7 @@ class Comm:
         self._upgrade_background()
         self._note_builtin_base()
         self._migrate_avatars()
+        self._seed_default_avatars()
         last = self.messages[-1] if self.messages else None
         rt = self.cfg.get("retry") or {}
         if last and last["role"] == "me" and self._age(last) < 6 * 3600 and not rt.get("at"):
@@ -4165,6 +4168,26 @@ class Comm:
             os.remove(old)
         except OSError:
             pass
+
+    def _seed_default_avatars(self):
+        """自带人设的默认头像 (1.0.426): 第一次运行 (或重置后) 放一份到 avatars.
+        用户自己换过 / 删过的不动 (设置里记一个标志, 之后不再放)."""
+        if self.cfg.get("default_avatars"):
+            return
+        names = set(list_personas(self.personas))
+        for persona, file in DEFAULT_AVATARS.items():
+            if persona not in names:
+                continue
+            src = os.path.join(HERE, "defaults", "avatars", file)
+            dst = os.path.join(self.dir, "avatars", self._avatar_name("ai", persona))
+            if not os.path.exists(dst) and os.path.isfile(src):
+                try:
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    shutil.copyfile(src, dst)
+                except OSError:
+                    pass
+        self.cfg["default_avatars"] = True
+        self.save_cfg()
 
     def avatar_path(self, who: str) -> str:
         p = self.avatar_dest(who)
