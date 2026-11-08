@@ -1694,7 +1694,7 @@ object CommText {
             "    下一个专注开始节点波动:[-3,2]   下一个专注结束节点波动:[-2,3]   (联合行动期间不生效)\n" +
             "    睡眠开始时间波动:[0,5]   睡眠结束时间波动:[-20,10]\n" +
             "    循环末尾休息结束时间波动:[0,5]   (每个循环最后那次休息的结束比循环的结束晚这么多分钟, 后面的日程跟着往后推; 没写 = 不晚)\n" +
-            "  起床的波动平移整天; 晚开始专注留下的空档 / 睡眠被延迟的这段算\"空闲\"; 发起谈话概率照旧写在日程文件里 (睡眠后 5 分钟按实际的睡眠开始时刻算).\n" +
+            "  起床的波动平移整天; 晚开始专注时前一段变长 (不留空档), 睡眠被延迟的这段算\"空闲\"; 发起谈话概率照旧写在日程文件里 (睡眠后 5 分钟按实际的睡眠开始时刻算).\n" +
             "  对方自己的 OIT 数据 (对方查询 [timer] [log] [calendar] [stats] [net] 时得到的是它们, 不是空白模板; 只有已经发生的部分):\n" +
             "    联网时间理由列表:{60%:查资料,20%:下载资源,20%:娱乐}(基准数据)\n" +
             "    整点记录专注填写列表:{30%:英语,数学,语文}      整点记录休息填写列表:{X%:聊天,弹琴,阅读}\n" +
@@ -1756,7 +1756,7 @@ object CommText {
             "    下一个专注开始节点波动:[-3,2]   下一个专注结束节点波动:[-2,3]   (not applied during a joint action)\n" +
             "    睡眠开始时间波动:[0,5]   睡眠结束时间波动:[-20,10]\n" +
             "    循环末尾休息结束时间波动:[0,5]   (the last rest of every loop ends this many minutes after the loop's end and everything after it shifts later; unset = on time)\n" +
-            "  The wake-up fluctuation shifts the whole day; gaps left by a later focus start / a delayed sleep count as idle. Proactive-message probabilities are written in the routine file too (the 5 minutes after sleep use the actual sleep start).\n" +
+            "  The wake-up fluctuation shifts the whole day; a later focus start stretches the previous segment (leaving no gap), and a delayed sleep counts as idle. Proactive-message probabilities are written in the routine file too (the 5 minutes after sleep use the actual sleep start).\n" +
             "  The character's own OIT data (what [timer] [log] [calendar] [stats] [net] return instead of blank templates; only what has already happened):\n" +
             "    联网时间理由列表:{60%:查资料,20%:下载资源,20%:娱乐}(基准数据)\n" +
             "    整点记录专注填写列表:{30%:英语,数学,语文}      整点记录休息填写列表:{X%:聊天,弹琴,阅读}\n" +
@@ -5588,7 +5588,7 @@ class Comm(
                 "发完继续睡, 用户回复时按日程拒绝; 这条必须发出, 不要返回${CommText.REFUSE}.", ctx)
             return
         }
-        for (s in segs) {                                                        // II / III. 每段空闲 / 休息 (不含波动留下的空档) 开始前 1~3 分钟
+        for (s in segs) {                                                        // II / III. 每段空闲 / 休息 (不含睡眠被延迟的空档) 开始前 1~3 分钟
             if ((s.kind != "idle" && s.kind != "rest") || s.gap || !t.isBefore(s.start) || s.start.isAfter(t.plusSeconds(PROACTIVE_MAX_DELAY.toLong()))) continue
             val cls = Routine.segClass(s)                                              // idle / rest / key 重要活动 / special 特殊空闲
             val key = "S${s.start.toLocalDate()}T${hm(s.start)}${cls[0]}"

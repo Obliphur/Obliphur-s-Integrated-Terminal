@@ -85,8 +85,7 @@ class RoutineTest {
             "idle 01 18:09-01 18:39 晚饭",
             "idle 01 18:39-01 19:06 空闲",
             "focus 01 19:06-01 19:57 专注",
-            "rest 01 19:57-01 20:15 休息",
-            "idle 01 20:15-01 20:16 空闲 gap",
+            "rest 01 19:57-01 20:16 休息",
             "focus 01 20:16-01 21:08 专注",
             "rest 01 21:08-01 21:18 休息",
             "focus 01 21:18-01 22:10 专注",
@@ -126,7 +125,6 @@ class RoutineTest {
 
     @Test
     fun dayPlanInvariants() {
-        var sawGap = false
         var sawEarly = false
         for (k in 0 until 60) {
             val d = LocalDate.of(2026, 3, 1).plusDays(k.toLong())
@@ -156,13 +154,13 @@ class RoutineTest {
                 }
                 curNom = nomEnd
             }
-            sawGap = sawGap || plan.dropLast(2).any { it.gap }
+            assertFalse(plan.dropLast(2).any { it.gap })                                      // 循环里不留空档 (专注晚开始 → 前一段变长)
             val nominal = wk.plusMinutes(30)
             val diff = java.time.Duration.between(nominal, foc[0].start).toMinutes()
             assertTrue(diff in -3..2)
             sawEarly = sawEarly || foc[0].start < nominal
         }
-        assertTrue(sawGap && sawEarly)
+        assertTrue(sawEarly)
         val p0 = Routine.dayPlan(spec, LocalDate.of(2026, 3, 1), "t", fluct = false)
         // 循环以休息结束: 满轮排完, 最后一轮专注提前结束, 休息随它重新算, 末尾对上循环的末尾
         assertEquals(listOf("idle" to 30L, "focus" to 100L, "rest" to 38L, "focus" to 100L, "rest" to 38L, "focus" to 19L, "rest" to 5L, "idle" to 30L, "idle" to 30L),

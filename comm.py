@@ -318,7 +318,7 @@ def _readme_zh() -> str:
         "    下一个专注开始节点波动:[-3,2]   下一个专注结束节点波动:[-2,3]   (联合行动期间不生效)\n"
         "    睡眠开始时间波动:[0,5]   睡眠结束时间波动:[-20,10]\n"
         "    循环末尾休息结束时间波动:[0,5]   (每个循环最后那次休息的结束比循环的结束晚这么多分钟, 后面的日程跟着往后推; 没写 = 不晚)\n"
-        "  起床的波动平移整天; 晚开始专注留下的空档 / 睡眠被延迟的这段算\"空闲\"; 发起谈话概率照旧写在日程文件里 (睡眠后 5 分钟按实际的睡眠开始时刻算).\n"
+        "  起床的波动平移整天; 晚开始专注时前一段变长 (不留空档), 睡眠被延迟的这段算\"空闲\"; 发起谈话概率照旧写在日程文件里 (睡眠后 5 分钟按实际的睡眠开始时刻算).\n"
         "  还可以写\"重要活动发起谈话概率\" (吃饭这类有名字的活动开始前) 和\"特殊空闲发起谈话概率\" (名字叫\"特殊空闲\"的那一段开始前; 没写的按\"空闲发起谈话概率\"); 特殊空闲时对方可以直接发[share data]邀请你一起看数据.\n"
         "  对方自己的 OIT 数据 (对方查询 [timer] [log] [calendar] [stats] [net] 时得到的是它们, 不是空白模板; 只有已经发生的部分):\n"
         "    联网时间理由列表:{60%:查资料,20%:下载资源,20%:娱乐}(基准数据)\n"
@@ -383,7 +383,7 @@ def _readme_en() -> str:
         "    下一个专注开始节点波动:[-3,2]   下一个专注结束节点波动:[-2,3]   (not applied during a joint action)\n"
         "    睡眠开始时间波动:[0,5]   睡眠结束时间波动:[-20,10]\n"
         "    循环末尾休息结束时间波动:[0,5]   (the last rest of every loop ends this many minutes after the loop's end and everything after it shifts later; unset = on time)\n"
-        "  The wake-up fluctuation shifts the whole day; gaps left by a later focus start / a delayed sleep count as idle. Proactive-message probabilities are written in the routine file too (the 5 minutes after sleep use the actual sleep start).\n"
+        "  The wake-up fluctuation shifts the whole day; a later focus start stretches the previous segment (leaving no gap), and a delayed sleep counts as idle. Proactive-message probabilities are written in the routine file too (the 5 minutes after sleep use the actual sleep start).\n"
         "  You can also write \"重要活动发起谈话概率\" (before a named activity such as a meal) and \"特殊空闲发起谈话概率\" (before the segment named \"特殊空闲\"; unset ones follow \"空闲发起谈话概率\"); during the special idle the character may send [share data] directly to invite you to look at the data together.\n"
         "  The character's own OIT data (what [timer] [log] [calendar] [stats] [net] return instead of blank templates; only what has already happened):\n"
         "    联网时间理由列表:{60%:查资料,20%:下载资源,20%:娱乐}(基准数据)\n"
@@ -6292,7 +6292,7 @@ class Comm:
                            f"这条是系统触发的: 即使你此刻处于睡眠时段, 也允许你主动给用户发一条消息, 话题自己找 (不要透露日程); "
                            f"发完继续睡, 用户回复时按日程拒绝; 这条必须发出, 不要返回{REFUSE}.", ctx)
             return
-        for s in segs:                                                    # II / III. 每段空闲 / 休息 (不含波动留下的空档) 开始前 1~3 分钟
+        for s in segs:                                                    # II / III. 每段空闲 / 休息 (不含睡眠被延迟的空档) 开始前 1~3 分钟
             if s["kind"] not in ("idle", "rest") or s["gap"] or not (now < s["start"] <= now + timedelta(seconds=PROACTIVE_LEAD[1])):
                 continue
             kind = routine.seg_class(s)                                   # idle / rest / key 重要活动 / special 特殊空闲
@@ -8758,7 +8758,7 @@ def _selftest():
     clock[0] = sleep_seg["start"] + timedelta(minutes=5, seconds=10)
     cr._check_proactive(clock[0], {})
     assert fired and "进入睡眠约 5 分钟" in fired[0][1], "睡眠后 5 分钟: 按实际睡眠开始"
-    # 空闲 / 休息段开始前 1~3 分钟 (波动留下的空档不触发)
+    # 空闲 / 休息段开始前 1~3 分钟 (睡眠被延迟的空档不触发)
     fired.clear()
     cr._pro_cache.update({"idle": 100.0, "rest": 100.0})
     rest_seg = next(x for x in plan if x["kind"] == "rest")
@@ -8772,7 +8772,7 @@ def _selftest():
             break
     assert ok and "休息时间将在" in fired[0][1]
     gap = [x for x in routine.plan_between(cr._rt, datetime(2027, 5, 1), datetime(2027, 7, 1), seed) if x["gap"] and x["kind"] == "idle"]
-    assert gap, "波动会留下空档 (晚开始 / 睡眠延迟)"
+    assert gap, "睡眠延迟会留下空档"
     fired.clear()
     clock[0] = gap[0]["start"] - timedelta(seconds=90)
     cr._check_proactive(clock[0], {})

@@ -12,7 +12,7 @@ import java.time.temporal.ChronoUnit
 /** 日程引擎 (1.0.355; 同桌面版 routine.py): 读 <人设>_routine.txt, 按"持续时间"一项接一项地算出对方每天的日程, 并生成对方的 OIT 数据.
  *  每天的波动由 (人设 + 日期) 的 sha256 决定, 电脑和手机算出来一模一样. 所有数据实时算, 只给已经发生的部分; 算过的存下来 (RoutineStore). */
 
-/** 日程里的一段 (绝对时间). kind = focus / rest / idle / sleep; loop = 第几个循环段生成的 (-1 没有); gap = 波动留下的空档; n = 循环的每轮专注分钟. */
+/** 日程里的一段 (绝对时间). kind = focus / rest / idle / sleep; loop = 第几个循环段生成的 (-1 没有); gap = 睡眠延迟留下的空档; n = 循环的每轮专注分钟. */
 data class RtSeg(val kind: String, val start: LocalDateTime, val end: LocalDateTime, val label: String,
                  val loop: Int = -1, val gap: Boolean = false, val n: Double = 0.0, val fm: Double = 0.0)
 
@@ -261,7 +261,6 @@ object Routine {
         val n = segs.size
         val ns = segs.map { it.start }.toTypedArray()
         val ne = segs.map { it.end }.toTypedArray()
-        val gaps = HashMap<Int, Pair<LocalDateTime, LocalDateTime>>()
         if (fluct) {
             val fs = r.fluct.getValue("focus_start")
             val fe = r.fluct.getValue("focus_end")
@@ -277,7 +276,10 @@ object Routine {
                 if (i > 0 && cs != s.start) {
                     if (cs.isBefore(s.start)) {
                         if (cs.isAfter(ns[i - 1].plusMinutes(1))) { ne[i - 1] = cs; ns[i] = cs }
-                    } else { ns[i] = cs; gaps[i] = ne[i - 1] to cs }
+                    } else if (cs.isAfter(ne[i - 1])) {
+                        ne[i - 1] = cs                              // 循环里晚开始: 前一段 (休息 / 循环前的活动) 变长, 不留空档
+                        ns[i] = cs
+                    }
                 }
                 if (i + 1 < n && ce != s.end && ce.isBefore(ne[i + 1].minusMinutes(1)) && ce.isAfter(ns[i].plusMinutes(5))) {
                     ne[i] = ce; ns[i + 1] = ce
@@ -285,10 +287,7 @@ object Routine {
             }
         }
         val out = ArrayList<RtSeg>()
-        for ((i, s) in segs.withIndex()) {
-            gaps[i]?.let { g -> if (g.second.isAfter(g.first)) out.add(RtSeg("idle", g.first, g.second, "空闲", -1, true)) }
-            out.add(s.copy(start = ns[i], end = ne[i]))
-        }
+        for ((i, s) in segs.withIndex()) out.add(s.copy(start = ns[i], end = ne[i]))
         val nxt = wakeAt(r, d.plusDays(1), seed)
         val (lo, hi) = if (fluct) r.fluct.getValue("sleep_start") else (0.0 to 0.0)
         val sleepStart = maxOf(c, c.plusMinutes(rint("$seed|ss|$d", lo, hi).toLong()))
@@ -337,7 +336,7 @@ object Routine {
         return segs
     }
 
-    /** 日程段 → 主动发起谈话概率的种类: rest / special (名字里有"特殊空闲") / key (重要活动: 吃饭这类有名字的) / idle (普通空闲, 波动留下的空档) / focus / sleep. */
+    /** 日程段 → 主动发起谈话概率的种类: rest / special (名字里有"特殊空闲") / key (重要活动: 吃饭这类有名字的) / idle (普通空闲, 睡眠延迟留下的空档) / focus / sleep. */
     fun segClass(s: RtSeg): String {
         if (s.kind != "idle") return s.kind
         if (s.gap) return "idle"

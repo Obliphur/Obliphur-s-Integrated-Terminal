@@ -3,7 +3,7 @@
 和旧的"每天重复的固定钟点"日程 (comm.schedule_entries) 不同:
   · 日程是一串**持续时间**: 起床 (初始起点 + 起床波动) 之后, 一项接一项; 做完最后一项就进入睡眠, 睡到第二天起床. 没有固定的睡觉钟点.
   · 每天的波动 (起床 / 专注开始 / 专注结束 / 睡眠开始) 由 (日期 + 人设) 决定, 同一天任何设备算出来都一样 (sha256, Python 和 Kotlin 一致).
-    起床波动平移整天; 专注开始 / 结束的波动挪动专注段的两端 (晚开始的空档算"空闲", 早开始则前一段被截短); 睡眠开始的延迟算"空闲".
+    起床波动平移整天; 专注开始 / 结束的波动挪动专注段的两端 (晚开始则前一段变长, 早开始则前一段被截短, 不留空档); 睡眠开始的延迟算"空闲".
   · 循环 (1.0.400) 总是以休息结束: 不直接截断最后一轮, 而是让专注提前结束, 休息的末尾对上循环的末尾; 最后那次休息再比循环的结束晚 [循环末尾休息结束时间波动] 分钟, 后面的日程整体往后推.
   · 所有数据都是**实时算**的: 只给已经发生的部分 (整点记录只给已经结束的格子, 计时器 / 日历 / 统计只算到现在).
   · 算过的会存下来 (Store): 时间线 (实际发生的一段段) 和整点记录的格子. 好几天没被调用 (程序没开 / 没人查) 之后, 缺的部分按规则补齐.
@@ -267,7 +267,7 @@ def wake_times(r: Routine, a: datetime, b: datetime, seed: str) -> list:
 
 def day_plan(r: Routine, d: _date, seed: str, fluct: bool = True) -> list:
     """d 这一天 (从起床到下一次起床) 的日程 → [seg], 按时间排, 首尾相接: 各项活动 → 睡眠开始前的空闲 (如果有) → 睡眠.
-    seg 是 {"kind" (focus / rest / idle / sleep), "start", "end", "label", "detail", "loop" (第几个循环段生成的, 没有 = None), "gap" (波动留下的空档)}."""
+    seg 是 {"kind" (focus / rest / idle / sleep), "start", "end", "label", "detail", "loop" (第几个循环段生成的, 没有 = None), "gap" (睡眠延迟留下的空档)}."""
     cache = r.__dict__.setdefault("_plans", {})
     ck = (d, seed, bool(fluct))
     if ck in cache:
@@ -299,7 +299,6 @@ def _day_plan(r: Routine, d: _date, seed: str, fluct: bool) -> list:
     n = len(segs)
     ns = [s["start"] for s in segs]
     ne = [s["end"] for s in segs]
-    gaps = {}                                              # 下标 → 它前面的空档 (开始, 结束)
     if fluct:
         fs, fe = r.fluct["focus_start"], r.fluct["focus_end"]
         k = 0
@@ -317,18 +316,15 @@ def _day_plan(r: Routine, d: _date, seed: str, fluct: bool) -> list:
                     if cs > ns[i - 1] + timedelta(minutes=1):
                         ne[i - 1] = cs
                         ns[i] = cs
-                else:
+                elif cs > ne[i - 1]:
+                    ne[i - 1] = cs                             # 循环里晚开始: 前一段 (休息 / 循环前的活动) 变长, 不留空档
                     ns[i] = cs
-                    gaps[i] = (ne[i - 1], cs)
             if i + 1 < n and ce != s["end"] and ce < ne[i + 1] - timedelta(minutes=1) and ce > ns[i] + timedelta(minutes=5):
                 ne[i] = ce
                 ns[i + 1] = ce
     out = []
     for i, s in enumerate(segs):
-        if i in gaps and gaps[i][1] > gaps[i][0]:
-            out.append(seg("idle", gaps[i][0], gaps[i][1], "空闲", gap=True))
-        s = dict(s, start=ns[i], end=ne[i])
-        out.append(s)
+        out.append(dict(s, start=ns[i], end=ne[i]))
     nxt = wake_at(r, d + timedelta(days=1), seed)
     lo, hi = r.fluct["sleep_start"] if fluct else (0, 0)
     sleep_start = max(c, c + timedelta(minutes=rint(f"{seed}|ss|{d}", lo, hi)))
@@ -392,7 +388,7 @@ def shift_for_joint(segs: list, t: datetime, now: datetime) -> list:
 
 def seg_class(s: dict) -> str:
     """日程段 → 主动发起谈话概率的种类: rest 休息 / special 特殊空闲 (名字里有"特殊空闲") / key 重要活动 (吃饭这类有名字的) /
-    idle 普通空闲 (名字就是"空闲", 或者波动留下的空档) / focus / sleep."""
+    idle 普通空闲 (名字就是"空闲", 或者睡眠延迟留下的空档) / focus / sleep."""
     if s["kind"] != "idle":
         return s["kind"]
     if s.get("gap"):
@@ -779,7 +775,7 @@ def _selftest():
     assert fluct_list(r.lists["整点记录专注填写列表"], "s|x", False) == resolve_list(r.lists["整点记录专注填写列表"])
     # 日程: 持续时间依次排下去, 做完最后一项进入睡眠; 起床波动平移整天
     seed = "t"
-    saw_gap = saw_early = False
+    saw_early = False
     for k in range(60):
         d = _date(2026, 3, 1) + timedelta(days=k)
         plan = day_plan(r, d, seed)
@@ -810,12 +806,12 @@ def _selftest():
                 nxt = next((s for s in plan if s["start"] == nom_end and s["loop"] is None), None)
                 assert nxt is not None, "循环后面的活动从休息结束处开始"
             cur_nom = nom_end
-        saw_gap |= any(s["gap"] and s["kind"] == "idle" for s in plan[:-2])
+        assert not any(s["gap"] for s in plan[:-2]), "循环里不留空档 (专注晚开始 → 前一段变长)"
         first = foc[0]
         nominal_first = wk + timedelta(minutes=30)
         assert -3 <= (first["start"] - nominal_first).total_seconds() / 60 <= 2, "专注开始波动 [-3,2]"
         saw_early |= first["start"] < nominal_first
-    assert saw_gap and saw_early
+    assert saw_early
     # 休息时长 = F(n): 100 分钟专注后休息 38 分钟
     d0 = _date(2026, 3, 1)
     p0 = day_plan(r, d0, seed, fluct=False)
