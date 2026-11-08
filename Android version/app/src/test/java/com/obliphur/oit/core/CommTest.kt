@@ -150,7 +150,7 @@ class CommTest {
     @Test
     fun prefixAndPersonas() {
         val p = CommText.prefixPrompt()
-        assertTrue(p.startsWith("这是系统消息") && "你需要回复来自自律软件OIT用户的信息" in p)
+        assertTrue(p.startsWith("[SYSTEM_MESSAGES]") && "你需要回复来自自律软件OIT用户的信息" in p)
         for (k in listOf("I.", "II.", "III.", "IV.根据你的专注时间段", "不超过5min", CommText.REFUSE, "默认你的每轮专注时间总是100min", "ln1.2"))
             assertTrue(k, k in p)
         assertTrue(p.trimEnd().endsWith("再调一次.") && "以下是用户设定的人设:" !in p)
