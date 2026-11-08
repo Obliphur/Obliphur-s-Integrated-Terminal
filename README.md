@@ -163,3 +163,5 @@ obliphur_terminal/
       ├─ ai/Ai.kt        AI 名单建议
       └─ ui/             各页面 (Jetpack Compose)
 ```
+
+对了,Claudia的默认头像取自https://www.pixiv.net/artworks/150995828.
