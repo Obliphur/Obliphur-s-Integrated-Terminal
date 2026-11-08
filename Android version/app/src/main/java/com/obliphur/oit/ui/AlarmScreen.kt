@@ -214,7 +214,6 @@ fun CoAlarmDialog(onDismiss: () -> Unit) {
         title = { Text(tr("共时闹钟")) },
         text = {
             Column {
-                Dim(tr("开启后, 闹钟的时间跟随这个对象的日程里的实际起床时间 (睡眠中也会响). 响铃用「设置 → 闹钟」里的铃声和音量; 哪些设备响, 在下面手动选."), size = 12)
                 Row(Modifier.fillMaxWidth().padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(tr("把「{name}」设为共时闹钟", "name" to name), color = o.text, fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.weight(1f))
                     Switch(on, { comm.setCoAlarm(if (it) pid else "") }, enabled = pid.isNotEmpty(),
@@ -230,13 +229,12 @@ fun CoAlarmDialog(onDismiss: () -> Unit) {
                             colors = CheckboxDefaults.colors(checkedColor = o.accent, checkmarkColor = o.onAccent))
                         Text(dn + if (id == me) " (" + tr("本机") + ")" else "", color = o.text)
                     }
-                    val t = comm.wakeAfter(pid, LocalDateTime.now())
                     val line = when {
-                        t == null -> tr("这个对象的日程里没有起床时间 (没有日程文件, 也没有睡眠段), 闹钟不会响.")
+                        comm.wakeAfter(pid, LocalDateTime.now()) == null -> tr("这个对象的日程里没有起床时间 (没有日程文件, 也没有睡眠段), 闹钟不会响.")
                         chosen.isEmpty() -> tr("没有选响铃的设备: 不会响.")
-                        else -> tr("下一次起床: {day} {t}", "day" to tr(AlarmStore.dayWord(t, LocalDateTime.now())), "t" to "%02d:%02d".format(t.hour, t.minute))
+                        else -> ""
                     }
-                    Dim(line, size = 13, color = o.accent, modifier = Modifier.padding(top = 8.dp))
+                    if (line.isNotEmpty()) Dim(line, size = 13, color = o.accent, modifier = Modifier.padding(top = 8.dp))
                 }
             }
         },

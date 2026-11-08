@@ -1511,12 +1511,10 @@ EN = {
     "{name} 起床了 · 共时闹钟": "{name} is up · co-time alarm",
     "共时闹钟": "Co-time alarm",
     "先选一个聊天对象.": "Pick someone to chat with first.",
-    "开启后, 闹钟的时间跟随这个对象的日程里的实际起床时间 (睡眠中也会响). 响铃用「设置 → 闹钟」里的铃声和音量; 哪些设备响, 在下面手动选.": "When on, the alarm time follows this character's actual wake-up time in their schedule (it also rings while you are asleep). It uses the ringtone and volume from Settings → Alarm; choose below which devices ring.",
     "把「{name}」设为共时闹钟": "Set {name} as the co-time alarm",
     "现在的共时闹钟是「{name}」, 打开会换成这个对象.": "The current co-time alarm is {name}; turning this on replaces it.",
     "响铃的设备": "Ringing devices",
     "没有选响铃的设备: 不会响.": "No ringing device selected: it will not ring.",
-    "下一次起床: {day} {t}": "Next wake-up: {day} {t}",
     "这个对象的日程里没有起床时间 (没有日程文件, 也没有睡眠段), 闹钟不会响.": "This character's schedule has no wake-up time (no schedule file and no sleep segment), so the alarm will not ring.",
     "点开设置: 把这个对象设为共时闹钟后 (⏰), 闹钟的时间跟随它的日程里的实际起床时间 (睡眠中也会响); 哪些设备响铃由你手动选, 铃声和音量用「设置 → 闹钟」里的. 一次只有一个对象是共时闹钟.": "Open the settings: once this character is the co-time alarm (⏰), the alarm time follows the actual wake-up time in their schedule (it also rings while you are asleep); you choose by hand which devices ring, and the ringtone and volume come from Settings → Alarm. Only one character can be the co-time alarm at a time.",
 }

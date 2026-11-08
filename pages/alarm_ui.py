@@ -268,13 +268,11 @@ def open_co_alarm(parent, comm):
     import comm as comm_mod
     name = comm_mod.persona_title(comm.persona_name())
     wrap = width - config.scaled(60)
-    tk.Label(dlg.body, text=tr("开启后, 闹钟的时间跟随这个对象的日程里的实际起床时间 (睡眠中也会响). 响铃用「设置 → 闹钟」里的铃声和音量; 哪些设备响, 在下面手动选."),
-             bg=bg, fg=COLORS["text_dim"], font=small, justify="left", anchor="w", wraplength=wrap).pack(fill="x")
     var_on = tk.BooleanVar(value=comm.co_alarm_pid() == pid)
     lbl_other = tk.Label(dlg.body, text="", bg=bg, fg=COLORS["warn"] if "warn" in COLORS else COLORS["accent"], font=small,
                          justify="left", anchor="w", wraplength=wrap)
     dev_box = tk.Frame(dlg.body, bg=bg)
-    lbl_next = tk.Label(dlg.body, text="", bg=bg, fg=COLORS["accent"], font=config.font("body"), justify="left", anchor="w", wraplength=wrap)
+    lbl_warn = tk.Label(dlg.body, text="", bg=bg, fg=COLORS["accent"], font=config.font("body"), justify="left", anchor="w", wraplength=wrap)
     dev_vars = {}
 
     def sync_ui():
@@ -283,21 +281,21 @@ def open_co_alarm(parent, comm):
         cfg(lbl_other, text=tr("现在的共时闹钟是「{name}」, 打开会换成这个对象.", name=comm.co_alarm_name()) if other else "")
         if on:
             if dev_box.winfo_manager() != "pack":
-                dev_box.pack(fill="x", pady=(8, 0), before=lbl_next)
+                dev_box.pack(fill="x", pady=(8, 0))
         elif dev_box.winfo_manager() == "pack":
             dev_box.pack_forget()
+        text = ""
         if on:
-            t = comm.wake_after(pid, datetime.now())
-            if t is None:
+            if comm.wake_after(pid, datetime.now()) is None:
                 text = tr("这个对象的日程里没有起床时间 (没有日程文件, 也没有睡眠段), 闹钟不会响.")
             elif not comm.co_alarm_devs():
                 text = tr("没有选响铃的设备: 不会响.")
-            else:
-                import alarm as am
-                text = tr("下一次起床: {day} {t}", day=tr(am.day_word(t, datetime.now())), t=f"{t:%H:%M}")
-        else:
-            text = ""
-        cfg(lbl_next, text=text)
+        cfg(lbl_warn, text=text)
+        if text:
+            if lbl_warn.winfo_manager() != "pack":
+                lbl_warn.pack(fill="x", pady=(10, 0))
+        elif lbl_warn.winfo_manager() == "pack":
+            lbl_warn.pack_forget()
 
     def toggle():
         comm.set_co_alarm(pid if var_on.get() else "")
@@ -326,7 +324,6 @@ def open_co_alarm(parent, comm):
         label = dname + (" (" + tr("本机") + ")" if did == mine else "")
         tk.Checkbutton(dev_box, text=label, variable=v, command=devs_changed, bg=bg, fg=COLORS["text"], selectcolor=bg,
                        activebackground=bg, activeforeground=COLORS["text"], font=config.font("body"), anchor="w").pack(fill="x")
-    lbl_next.pack(fill="x", pady=(10, 0))
     sync_ui()
     ttk.Button(dlg.buttons, text=tr("关闭"), style="Accent.TButton", command=lambda: dlg.finish(True)).pack(side="right")
     dlg.update_idletasks()
