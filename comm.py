@@ -43,11 +43,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REFUSE = "[refuse to reply]"
 OIT_TAG = "[OIT_SYSTEM_MESSAGES]"      # OIT 直接发出的消息都带这个标记 (1.0.423)
 DEFAULT_AVATARS = {"Claudia.txt": "Claudia.png"}    # 自带人设的默认头像 (1.0.426): defaults/avatars/ 里的文件
-DEFAULT_AVATAR_VERSION = 3                         # 3 = 1.0.432 换成新版方形原图
-# 以前默认头像的 sha256 (只在升级时比对, 不带旧图): v1 圆形 / v2 圆形
+DEFAULT_AVATAR_VERSION = 4                         # 4 = 1.0.433 换成用户给的方形原图
+# 以前默认头像的 sha256 (只在升级时比对, 不带旧图): v1 圆形 / v2 圆形 / v3 圆形
 DEFAULT_AVATAR_OLD_HASHES = {"Claudia.txt": {
     "22ed518b732f5de56182d8ba6dd98c6c282d08d37c40dcbec91b062fc8a54cb3",
-    "fd463e216f5afed73f2ccf155b6813202c10c1ddbedd8106effdfc6875c39253"}}
+    "fd463e216f5afed73f2ccf155b6813202c10c1ddbedd8106effdfc6875c39253",
+    "0418794f3d177ac64c12e77f8b8dd1f94e18d2539a1aa3e6be77dfe00364d5a9"}}
 PRO_LANGS = ("中文", "English", "日本語", "한국어", "Français", "Deutsch", "Español", "Русский")       # 设置里的主动谈话语言可选项 (1.0.407); 也可以自己写别的
 MAX_PRO_LANG = 30
 PRO_LANG_NOTE = ("\n(OIT 设置, 用户指定) 这条主动发起的话请使用「{lang}」来说; 只限这一条, 之后和用户的对话不受这个限制: "
@@ -4180,7 +4181,7 @@ class Comm:
             pass
 
     def _seed_default_avatars(self):
-        """自带人设的默认头像 (1.0.426; 1.0.431 / 1.0.432 换过图): 第一次运行 (或重置后) 放一份到 avatars.
+        """自带人设的默认头像 (1.0.426; 1.0.431 / 1.0.432 / 1.0.433 换过图): 第一次运行 (或重置后) 放一份到 avatars.
         以前默认的图还是原样时一并换成新的; 用户自己换过 / 删过的不动 (设置里记版本, 之后不再放)."""
         have = self.cfg.get("default_avatars")
         ver = 1 if have is True else (int(have) if isinstance(have, int) and not isinstance(have, bool) else 0)
