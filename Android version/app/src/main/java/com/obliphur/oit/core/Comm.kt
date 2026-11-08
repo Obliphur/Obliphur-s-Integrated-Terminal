@@ -4615,21 +4615,26 @@ class Comm(
         }
     }
 
-    /** 自带人设的默认头像 (1.0.426; 1.0.431 换成方形原图): 第一次运行 (或重置后) 放一份;
-     *  以前默认的圆形图还是原样时一并换掉; 用户自己换过 / 删过的不动 (设置里记版本). */
-    fun seedDefaultAvatar(bytes: ByteArray?, legacy: ByteArray? = null) {
-        if (defaultAvatarVersion >= 2) return
+    /** 自带人设的默认头像 (1.0.426; 1.0.431 / 1.0.432 换过图): 第一次运行 (或重置后) 放一份;
+     *  以前默认的图还是原样时一并换掉; 用户自己换过 / 删过的不动 (设置里记版本). */
+    fun seedDefaultAvatar(bytes: ByteArray?) {
+        if (defaultAvatarVersion >= 3) return
         val name = "Claudia.txt"
         val dst = File(File(dir, "avatars"), avatarName("ai", name))
         val cur = if (dst.isFile) runCatching { dst.readBytes() }.getOrNull() else null
-        val old = legacy != null && cur != null && cur.contentEquals(legacy)
+        val oldHashes = setOf("22ed518b732f5de56182d8ba6dd98c6c282d08d37c40dcbec91b062fc8a54cb3",   // v1 圆形
+            "662016f628f9fe21fefa644f669e4d0c00c5d10dd8c61ccd468ee204e16188ee")              // v2 方形 (手机)
+        val old = cur != null && sha256(cur) in oldHashes
         if (bytes != null && listPersonas().contains(name) && (cur == null || old)) runCatching {
             dst.parentFile?.mkdirs()
             dst.writeBytes(bytes)
         }
-        defaultAvatarVersion = 2
+        defaultAvatarVersion = 3
         saveCfg()
     }
+
+    private fun sha256(b: ByteArray): String = java.security.MessageDigest.getInstance("SHA-256")
+        .digest(b).joinToString("") { "%02x".format(it.toInt() and 0xff) }
 
     /** 头像文件 (没有就是 null). */
     fun avatarPath(who: String): File? = avatarFile(who).takeIf { it.isFile }
