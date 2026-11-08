@@ -1593,7 +1593,8 @@ class CommTest {
             wait(c)
             assertEquals(listOf("me"), c.visible().map { it.role })
             assertEquals(0, c.unread)
-            assertTrue(c.syncDoc().none { (k, v) -> k.startsWith("m:") && (v as JSONObject).getString("role") == "ai" })
+            val typing = c.syncDoc().entries.first { (k, v) -> k.startsWith("m:") && (v as JSONObject).getString("role") == "ai" }.value as JSONObject
+            assertTrue("打字中的回复也要同步 (带 hold/due)", typing.optBoolean("hold") && typing.has("due"))
             clock = clock.plusNanos(1_900_000_000)
             c.tick()
             assertEquals(listOf("me"), c.visible().map { it.role })

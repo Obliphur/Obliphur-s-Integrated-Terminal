@@ -2882,13 +2882,17 @@ class Comm:
         for pid in self.chat_pids():
             st = self._state_of(pid)
             for m in st["messages"][-SYNC_N:]:
-                if m.get("due"):
-                    continue                              # 还在"打字"的: 显示出来之后才同步给别的设备
                 e = {"role": m["role"], "text": m["text"], "at": m["at"], "ts": int(m["ts"])}
                 if m.get("api"):
                     e["api"] = m["api"]
                 if m.get("wait"):
                     e["wait"] = m["wait"]
+                if m.get("hold"):
+                    e["hold"] = True                          # 还在藏着的 (打字延时 / 等空闲): 内容也要同步, 对方也先藏着 (1.0.438)
+                if m.get("late"):
+                    e["late"] = True
+                if m.get("due"):
+                    e["due"] = int(m["due"])
                 doc[f"m:{pid}:{m['uid']}"] = e
             if st["pro_key"]:
                 doc[f"pro:{pid}"] = st["pro_key"]
@@ -2953,6 +2957,12 @@ class Comm:
                     m["wait"] = float(val["wait"])
                 if m["role"] == "ai" and self.blocked():       # 不能用沟通的时候同步来的也先藏起来
                     m["hold"] = True
+                if val.get("hold") or isinstance(val.get("due"), (int, float)):
+                    m["hold"] = True                            # 对方那边还在藏着的: 这边也先藏着 (1.0.438)
+                if val.get("late"):
+                    m["late"] = True
+                if isinstance(val.get("due"), (int, float)):
+                    m["due"] = int(val["due"])
                 st["messages"].append(m)
                 fresh.append((pid, m))
                 known.add(uid)
@@ -8483,7 +8493,8 @@ def _selftest():
     assert cl.other_status()["kind"] == "focus" and free is not None and free > clock[0] and cl.other_status(free)["kind"] in ("rest", "idle"), free
     ma = cl._add("ai", "专注时发的")
     assert ma["hold"] and ma["late"] and ma["due"] == int(free.timestamp() * 1000) and cl.visible() == []
-    assert not any(k.startswith("m:") for k in cl.sync_doc()), "还没发出去: 不同步"
+    held_sync = next(v for k, v in cl.sync_doc().items() if k.startswith("m:") and v["text"] == "专注时发的")
+    assert held_sync.get("hold") and held_sync.get("late") and held_sync.get("due"), "还在藏着的回复也要同步 (带 hold/due/late)"
     clock[0] += timedelta(minutes=5)
     cl._add("me", "中间用户说的")
     clock[0] = free - timedelta(seconds=1)
@@ -8633,7 +8644,8 @@ def _selftest():
     assert [m["role"] for m in cd.visible()] == ["me"] and cd.unread == 0, "还在打字: 先不显示"
     held = [m for m in cd.messages if m.get("hold")]
     assert len(held) == 1 and held[0]["due"] - cd._ms() == 2000
-    assert not any(k.startswith("m:") and v["role"] == "ai" for k, v in cd.sync_doc().items()), "显示之前不同步"
+    typing = next(v for k, v in cd.sync_doc().items() if k.startswith("m:") and v["role"] == "ai")
+    assert typing.get("hold") and typing.get("due"), "打字中的回复也要同步 (带 hold/due)"
     clock[0] += timedelta(seconds=1.9)
     cd.tick()
     assert [m["role"] for m in cd.visible()] == ["me"], "没到 2 s"

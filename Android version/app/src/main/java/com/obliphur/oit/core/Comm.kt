@@ -2667,9 +2667,11 @@ class Comm(
         for (p in chatPids()) {
             val st = stateOf(p)
             for (m in st.messages.takeLast(SYNC_N)) {
-                if (m.due != 0L) continue                           // 还在"打字"的: 显示出来之后才同步给别的设备
                 doc["m:$p:${m.uid}"] = JSONObject().put("role", m.role).put("text", m.text).put("at", m.at).put("ts", m.ts)
-                    .apply { if (m.api.isNotEmpty()) put("api", m.api); if (m.wait > 0) put("wait", m.wait) }
+                    .apply {
+                        if (m.api.isNotEmpty()) put("api", m.api); if (m.wait > 0) put("wait", m.wait)
+                        if (m.hold) put("hold", true); if (m.late) put("late", true); if (m.due != 0L) put("due", m.due)   // 藏着的也要同步 (1.0.438)
+                    }
             }
             if (st.proKey.isNotEmpty()) doc["pro:$p"] = st.proKey
             if (st.retryAt != 0L || st.retryN != 0) doc["retry:$p"] = JSONObject().put("at", st.retryAt).put("n", if (st.retryN == HOLD_N) 0 else st.retryN)
@@ -2747,6 +2749,9 @@ class Comm(
                     val msg = ChatMsg(nextId++, role, v.optString("text"), v.optString("at"), v.optString("api"), uid, ts)
                     v.optDouble("wait", 0.0).let { if (it > 0 && it <= CommText.WAIT_MAX_MIN) msg.wait = it }
                     if (role == "ai" && blocked().isNotEmpty()) msg.hold = true       // 不能用沟通的时候同步来的也先藏起来
+                    if (v.optBoolean("hold", false) || v.has("due")) msg.hold = true   // 对方那边还在藏着的: 这边也先藏着 (1.0.438)
+                    if (v.optBoolean("late", false)) msg.late = true
+                    if (v.has("due")) msg.due = v.optLong("due", 0L)
                     tc.st.messages.add(msg)
                     if (p == pid) fresh.add(msg)
                     tc.known.add(uid)
