@@ -150,7 +150,7 @@ class CommTest {
     @Test
     fun prefixAndPersonas() {
         val p = CommText.prefixPrompt()
-        assertTrue(p.startsWith("[SYSTEM_MESSAGES]") && "你需要回复来自自律软件OIT用户的信息" in p)
+        assertTrue(p.startsWith("[OIT_SYSTEM_MESSAGES]") && "你需要回复来自自律软件OIT用户的信息" in p)
         for (k in listOf("I.", "II.", "III.", "IV.根据你的专注时间段", "不超过5min", CommText.REFUSE, "默认你的每轮专注时间总是100min", "ln1.2"))
             assertTrue(k, k in p)
         assertTrue(p.trimEnd().endsWith("再调一次.") && "以下是用户设定的人设:" !in p)
@@ -830,6 +830,7 @@ class CommTest {
         wait(c)
         assertEquals(listOf("ai"), c.visible().map { it.role })
         assertTrue("主动给用户发一条消息" in calls.last().second.last().second)
+        assertTrue("OIT 直接发的消息都带标记", CommText.OIT_TAG in calls.last().second.last().second)
         assertTrue("对方在自己空闲段里主动发", "你现在有空" in calls.last().second.last().second)
         assertEquals("不在沟通页面: 响一声", listOf(1), pings)
         clock = begin.plusMinutes(30)
