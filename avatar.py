@@ -126,6 +126,49 @@ def full_path(master: str) -> str:
     return (master[:-4] if master.lower().endswith(".png") else master) + ".full.png"
 
 
+def render_full(src: str, out: str, max_side: int = 0):
+    """整张图 (不裁) 存成 PNG: 最长边超过 max_side 时等比缩小, 0 = 保持原分辨率."""
+    g = _gdi()
+    img = _load(src)
+    dst = c_void_p()
+    gr = c_void_p()
+    try:
+        w, h = c_uint(), c_uint()
+        g.GdipGetImageWidth(img, byref(w))
+        g.GdipGetImageHeight(img, byref(h))
+        w0, h0 = int(w.value), int(h.value)
+        scale = min(1.0, max_side / max(w0, h0)) if max_side else 1.0
+        tw, th = max(1, int(round(w0 * scale))), max(1, int(round(h0 * scale)))
+        _ok(g.GdipCreateBitmapFromScan0(tw, th, 0, _FORMAT_ARGB, None, byref(dst)), "create")
+        _ok(g.GdipGetImageGraphicsContext(dst, byref(gr)), "context")
+        g.GdipSetInterpolationMode(gr, 7)
+        g.GdipSetPixelOffsetMode(gr, 2)
+        g.GdipSetSmoothingMode(gr, 4)
+        _ok(g.GdipDrawImageRectRect(gr, img, c_float(0), c_float(0), c_float(tw), c_float(th),
+                                    c_float(0), c_float(0), c_float(w0), c_float(h0), 2, None, None, None), "draw")
+        clsid = _Guid(_PNG_CLSID[0], _PNG_CLSID[1], _PNG_CLSID[2], (ctypes.c_ubyte * 8)(*_PNG_CLSID[3]))
+        os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
+        _ok(g.GdipSaveImageToFile(dst, ctypes.c_wchar_p(os.path.abspath(out)), byref(clsid), None), "save")
+    finally:
+        if gr:
+            g.GdipDeleteGraphics(gr)
+        if dst:
+            g.GdipDisposeImage(dst)
+        g.GdipDisposeImage(img)
+
+
+def fit(master: str, max_side: int) -> str:
+    """点开头像时用的完整图: 等比缩到最长边 max_side 以内 (不裁), 缓存成 PNG. 原图更新了重画."""
+    out = f"{master}.fit{max_side}.png"
+    try:
+        if os.path.exists(out) and os.path.getmtime(out) >= os.path.getmtime(master):
+            return out
+    except OSError:
+        pass
+    render_full(master, out, max_side)
+    return out
+
+
 def sized(master: str, px: int) -> str:
     """头像 (圆形 PNG) 缩到 px × px 的缓存文件, 主文件更新了就重画; 返回路径."""
     out = f"{master}.{px}.png"

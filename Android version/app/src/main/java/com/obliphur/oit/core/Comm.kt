@@ -4648,12 +4648,12 @@ class Comm(
     fun avatarPath(who: String): File? = avatarFile(who).takeIf { it.isFile }
 
     @Synchronized
-    fun saveAvatar(who: String, bitmap: android.graphics.Bitmap): Boolean {
+    fun saveAvatar(who: String, bitmap: android.graphics.Bitmap, full: android.graphics.Bitmap? = null): Boolean {
         val f = avatarFile(who)
         val ok = runCatching {
             f.parentFile?.mkdirs()
             f.outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
-            avatarFullFile(who).outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+            avatarFullFile(who).outputStream().use { (full ?: bitmap).compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
         }.getOrDefault(false)
         changed()
         return ok

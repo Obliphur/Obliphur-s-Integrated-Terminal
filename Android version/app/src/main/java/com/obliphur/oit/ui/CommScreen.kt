@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
@@ -403,7 +404,8 @@ private fun Avatar(who: String, fallback: String, size: Int) {
         androidx.compose.ui.window.Dialog(onDismissRequest = { full = false }) {
             Box(Modifier.background(o.bg, RoundedCornerShape(10.dp)).padding(10.dp)) {
                 (fullImage ?: image)?.let {
-                    androidx.compose.foundation.Image(it, null, Modifier.size(320.dp))      // 完整头像: 不裁成圆
+                    androidx.compose.foundation.Image(it, null,
+                        Modifier.fillMaxWidth(0.92f).aspectRatio(it.width.toFloat() / it.height))      // 整张原图: 不裁, 等比放大
                 }
             }
         }
@@ -543,9 +545,9 @@ fun CommSettings() {
         }
     }
     cropUri?.let { u ->
-        AvatarCropDialog(u) { bmp ->
+        AvatarCropDialog(u) { bmp, full ->
             cropUri = null
-            if (bmp != null && !comm.saveAvatar(avatarWho, bmp)) core.toast(tr("保存头像失败."), "warn")
+            if (bmp != null && !comm.saveAvatar(avatarWho, bmp, full)) core.toast(tr("保存头像失败."), "warn")
         }
     }
 

@@ -290,7 +290,7 @@ class CommPage(tk.Frame):
         return cv
 
     def _show_avatar(self):
-        """点对方的头像: 弹窗放大显示完整头像 (没有裁成圆形的那份; 老头像没有就显示圆形的那份)."""
+        """点对方的头像: 弹窗显示完整原图 (不裁, 等比缩到屏幕放得下; 老头像没有完整图就显示圆形那份)."""
         c = self.comm
         cur = c.avatar_path("ai")
         if not cur:
@@ -298,12 +298,14 @@ class CommPage(tk.Frame):
         p = avatar_mod.full_path(c.avatar_dest("ai"))
         if not os.path.isfile(p):
             p = cur
-        size = config.scaled(420)
+        max_side = max(200, min(self.winfo_screenwidth() - 160, self.winfo_screenheight() - 220))
         try:
-            photo = tk.PhotoImage(file=avatar_mod.sized(p, size))
+            p = avatar_mod.fit(p, max_side)
+            iw, ih = avatar_mod.image_size(p)
+            photo = tk.PhotoImage(file=p)
         except (OSError, tk.TclError):
             return
-        dlg = Modal(self.winfo_toplevel(), tr("头像"), width=size + 48, height=size + 104)
+        dlg = Modal(self.winfo_toplevel(), tr("头像"), width=iw + 48, height=ih + 104)
         tk.Label(dlg.body, image=photo, bg=COLORS["bg"], bd=0).pack(expand=True)
         dlg._photo = photo                                  # 别让图片被回收
         ttk.Button(dlg.buttons, text=tr("关闭"), command=dlg.cancel).pack(side="right")

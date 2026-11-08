@@ -50,14 +50,14 @@ private fun decode(ctx: android.content.Context, uri: Uri, maxSide: Int): Bitmap
     }
 }.getOrNull()
 
-/** 截取头像: 拖动 / 双指缩放, 圆框里的就是头像. onDone(null) = 取消. */
+/** 截取头像: 拖动 / 双指缩放, 圆框里的就是头像. onDone(裁剪后的圆图, 整张原图) = 取消时两个都是 null. */
 @Composable
-fun AvatarCropDialog(uri: Uri, onDone: (Bitmap?) -> Unit) {
+fun AvatarCropDialog(uri: Uri, onDone: (Bitmap?, Bitmap?) -> Unit) {
     val o = LocalOit.current
     val ctx = LocalContext.current
-    val src = remember(uri) { decode(ctx, uri, 1600) }
+    val src = remember(uri) { decode(ctx, uri, 2048) }
     if (src == null) {
-        LaunchedEffect(uri) { OitAppToast(tr("打不开这张图片.")); onDone(null) }
+        LaunchedEffect(uri) { OitAppToast(tr("打不开这张图片.")); onDone(null, null) }
         return
     }
     val box = 300.dp
@@ -76,7 +76,7 @@ fun AvatarCropDialog(uri: Uri, onDone: (Bitmap?) -> Unit) {
         cy = cy.coerceIn(half, src.height - half)
     }
 
-    AlertDialog(onDismissRequest = { onDone(null) }, containerColor = o.bg,
+    AlertDialog(onDismissRequest = { onDone(null, null) }, containerColor = o.bg,
         title = { Text(tr("截取头像")) },
         text = {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -117,10 +117,10 @@ fun AvatarCropDialog(uri: Uri, onDone: (Bitmap?) -> Unit) {
                     (cx + half).roundToInt(), (cy + half).roundToInt())
                 canvas.drawBitmap(src, rect, android.graphics.Rect(0, 0, OUT_PX, OUT_PX),
                     android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG or android.graphics.Paint.ANTI_ALIAS_FLAG))
-                onDone(out)
+                onDone(out, src)                              // 第二份是整张原图 (点开时看的那张)
             }) { Text(tr("确定"), color = o.accent) }
         },
-        dismissButton = { TextButton({ onDone(null) }) { Text(tr("取消"), color = o.dim) } })
+        dismissButton = { TextButton({ onDone(null, null) }) { Text(tr("取消"), color = o.dim) } })
 }
 
 private fun OitAppToast(text: String) = com.obliphur.oit.OitApp.instance.core.toast(text, "warn")

@@ -95,7 +95,7 @@ def pick_avatar(parent, dest: str) -> bool:
         crop = side() * (2 * R) / S                       # 圆框直径对应的源图边长
         try:
             avatar.render(path, dest, st["cx"], st["cy"], crop, OUT_PX, circle=True)
-            avatar.render(path, avatar.full_path(dest), st["cx"], st["cy"], crop, OUT_PX, circle=False)
+            avatar.render_full(path, avatar.full_path(dest), 4096)     # 点开时看的是整张原图 (不裁, 保持原分辨率)
         except OSError:
             toast.warn(tr("保存头像失败."))
             return
