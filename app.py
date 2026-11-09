@@ -295,6 +295,8 @@ class BreakTimerApp:
         self.ach = achievements.AchievementStore(self.dm.data_dir, lambda: achievements.guess_first_launch(
             self.dm.data_dir, self.settings.setup_until, list(self.dm.study_data) + list(self.dm.hour_days)))
         self.ach.blocked = lambda: self.dm.resetting
+        self.prestart_list = prestart.ListStore(self.dm.data_dir)   # 提前启动清单的添加 / 删除 (MECHANICS 20)
+        self.prestart_list.blocked = lambda: self.dm.resetting
         # 合约 (MECHANICS 18): 先把盖过设置的项套上, 断网方式才会一开始就对
         self.contract = contract_mod.Contract(self.dm.data_dir)
         self.contract.blocked = lambda: self.dm.resetting
@@ -2217,11 +2219,9 @@ class BreakTimerApp:
         except Exception as e:
             toast.warn(tr("扫描程序失败: {e}", e=f"{type(e).__name__}: {e}"))
             return
-        if not apps:
-            toast.warn(tr("没有找到可以提前启动的程序."))
-            return
+        apps = self.prestart_list.apply(apps)        # 套上之前的添加 / 删除; 清单空了也能开, 好用文件管理器再加
         self._prestart_win = PrestartDialog(self.root, apps, self._prestart_chosen,
-                                           limit=prestart.MAX_APPS)
+                                           limit=prestart.MAX_APPS, store=self.prestart_list)
 
     def _prestart_chosen(self, items):
         """选好了: 启动 (没在跑的), 进入 3 分钟的操作空窗期; 空窗期过了才藏窗口 / 静音."""

@@ -19,7 +19,7 @@ from .widgets import ScrollArea
 class PrestartDialog(tk.Toplevel):
     """程序清单: 最多选 limit 个. on_done(apps) 在点"确定"时调用."""
 
-    def __init__(self, master, apps, on_done=None, limit: int = 2):
+    def __init__(self, master, apps, on_done=None, limit: int = 2, store=None):
         super().__init__(master, bg=COLORS["bg"], highlightbackground=COLORS["accent"],
                          highlightthickness=2)
         self.title(tr("⏩  提前启动"))
@@ -27,6 +27,7 @@ class PrestartDialog(tk.Toplevel):
         self.attributes("-topmost", True)
         self.apps = [dict(a) for a in (apps or [])]
         self.on_done = on_done
+        self.store = store               # prestart.ListStore: 添加 / 删除都存档, 下次打开还在
         self.limit = max(1, int(limit))
         self.shown = []
         self.picked = []                 # 选中的 exe (按选中的先后, 最多 limit 个)
@@ -149,6 +150,8 @@ class PrestartDialog(tk.Toplevel):
     def remove(self, exe: str):
         """点行右边的 ✕: 把这个程序从清单里去掉了."""
         self.apps = [a for a in self.apps if a["exe"] != exe]
+        if self.store is not None:
+            self.store.remove(exe)
         if exe in self.picked:
             self.picked.remove(exe)
         self._filter(self.var.get())
@@ -181,6 +184,8 @@ class PrestartDialog(tk.Toplevel):
                 self.toggle(exe)
             return
         self.apps.append(dict(item))
+        if self.store is not None:
+            self.store.add(item)
         self.var.set("")                     # 清掉搜索, 保证新加的那条看得见
         self._filter("")
         self.area.canvas.yview_moveto(1.0)

@@ -195,6 +195,86 @@ def program_from_path(path: str):
     return {"name": name, "exe": exe, "launch": path, "running": exe in _running_exes()}
 
 
+class ListStore:
+    """提前启动清单的用户修改 (存档 prestart_list.json): 手动添加的程序 + 被 ✕ 去掉的程序.
+
+    每次扫描完用 apply() 套上去: 去掉的不再出现, 添加的一直在 (除非文件没了又没在跑); 再次添加会取消"去掉"."""
+
+    def __init__(self, data_dir: str):
+        self.path = os.path.join(data_dir, "prestart_list.json")
+        self.added = []              # [{"name", "exe", "launch"}]
+        self.removed = set()         # exe 小写
+        self.blocked = lambda: False  # 重置中: 不再写文件
+        self._load()
+
+    def _load(self):
+        import json
+        import securefile
+        try:
+            with securefile.open(self.path, "r", encoding="utf-8") as f:
+                d = json.load(f)
+        except (OSError, ValueError):
+            return
+        if not isinstance(d, dict):
+            return
+        for it in d.get("added") or []:
+            if isinstance(it, dict) and str(it.get("exe") or "").strip():
+                self.added.append({"name": str(it.get("name") or it["exe"]),
+                                   "exe": str(it["exe"]).strip().lower(),
+                                   "launch": str(it.get("launch") or "")})
+        self.removed = {str(e).strip().lower() for e in (d.get("removed") or []) if str(e).strip()}
+
+    def save(self):
+        if self.blocked():
+            return
+        import json
+        import securefile
+        try:
+            os.makedirs(os.path.dirname(self.path), exist_ok=True)
+            tmp = self.path + ".tmp"
+            with securefile.open(tmp, "w", encoding="utf-8") as f:
+                json.dump({"added": self.added, "removed": sorted(self.removed)},
+                          f, ensure_ascii=False, indent=1)
+            os.replace(tmp, self.path)
+        except OSError:
+            pass
+
+    def add(self, item: dict):
+        exe = str(item.get("exe") or "").strip().lower()
+        if not exe:
+            return
+        self.removed.discard(exe)
+        self.added = [a for a in self.added if a["exe"] != exe]
+        self.added.append({"name": str(item.get("name") or exe), "exe": exe,
+                           "launch": str(item.get("launch") or "")})
+        self.save()
+
+    def remove(self, exe: str):
+        exe = str(exe or "").strip().lower()
+        if not exe:
+            return
+        self.added = [a for a in self.added if a["exe"] != exe]
+        self.removed.add(exe)
+        self.save()
+
+    def apply(self, apps: list) -> list:
+        """扫描结果 + 用户修改 → 最终清单 (去掉被 ✕ 的, 补上手动添加的)."""
+        out = [dict(a) for a in apps if str(a.get("exe") or "").lower() not in self.removed]
+        have = {a["exe"] for a in out}
+        running = None
+        for it in self.added:
+            if it["exe"] in have or it["exe"] in self.removed:
+                continue
+            if running is None:
+                running = _running_exes()
+            is_run = it["exe"] in running
+            if not is_run and not (it["launch"] and os.path.isfile(it["launch"])):
+                continue                 # 文件没了又没在跑: 选了也没用
+            out.append({"name": it["name"], "exe": it["exe"], "launch": it["launch"],
+                        "running": is_run})
+        return out
+
+
 def descendants(pids, procs=None) -> set:
     """pids 以及它们派生出来的子进程 (启动器 → 游戏这种)."""
     procs = window_guard.list_processes_full() if procs is None else procs
@@ -398,6 +478,20 @@ def _selftest():
     procs2 = [(2, 0, "b.exe"), (3, 2, "c.exe"), (4, 0, "d.exe")]          # 启动器 (1) 退出了
     pids, marked = track(procs2, {"a.exe"}, pids, marked)
     assert pids == {2, 3} and marked == {"a.exe", "b.exe", "c.exe"}, "退出的程序仍然标记着"
+
+    # 清单存档: 删除 / 添加都留着, 再添加会取消删除
+    import tempfile
+    td = tempfile.mkdtemp()
+    st = ListStore(td)
+    base = [{"name": "A", "exe": "a.exe", "launch": "x", "running": True},
+            {"name": "B", "exe": "b.exe", "launch": "x", "running": True}]
+    st.remove("a.exe")
+    st.add({"name": "C", "exe": "C.exe", "launch": ""})
+    st2 = ListStore(td)
+    assert st2.removed == {"a.exe"} and [a["exe"] for a in st2.added] == ["c.exe"]
+    assert [a["exe"] for a in st2.apply(base)] == ["b.exe"], "C 没有文件又没在跑, 不显示"
+    st2.add({"name": "A", "exe": "a.exe", "launch": ""})
+    assert not st2.removed and "a.exe" in {a["exe"] for a in ListStore(td).added}
 
     ps = Prestart()
     assert not ps.chosen
