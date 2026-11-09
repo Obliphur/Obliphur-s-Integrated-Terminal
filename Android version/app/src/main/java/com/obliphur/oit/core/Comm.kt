@@ -945,7 +945,7 @@ class Comm(
         }.toDouble()
         const val RETRY_GAP = 10 * 60
         const val RETRY_MAX = 12
-        const val HISTORY_SENT = 400                    // 每次请求最多带多少条 (= 本地存的 400 条)
+        const val HISTORY_SENT = 200                    // 每次请求最多带多少条 (本地存 600 条, 带的取最近 200 条)
         const val HISTORY_CHARS = 120000                // 带的聊天记录总共最多多少字 (超了从最老的开始不带)
         const val MAX_MSG_CHARS = 8000                  // 单条消息超过这么多字: 只截掉中间 (发给模型的那份, 本地记录不动)
         const val MEM_EVERY = 40                        // 每这么多条新消息, 让模型整理一次"记忆卡"

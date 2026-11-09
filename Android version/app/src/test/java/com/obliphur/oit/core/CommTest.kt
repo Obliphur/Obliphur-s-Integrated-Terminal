@@ -1212,14 +1212,14 @@ class CommTest {
         assertTrue("新对话: 人设改过的日程马上生效", "SCHEDULE 新对话: 空闲 2 段, 休息 1 段, 专注 1 段, 睡眠 0 段" in log())
     }
 
-    /** 窗口 = 本地存的 400 条; 单条太长只截中间 (发给模型的那份). */
+    /** 窗口 = 最近 200 条; 单条太长只截中间 (发给模型的那份). */
     @Test
     fun windowAndClip() {
         val td = Files.createTempDirectory("oit").toFile()
         val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
-        assertEquals(400, Comm.HISTORY_SENT)
+        assertEquals(200, Comm.HISTORY_SENT)
         val many = (0 until 500).map { ChatMsg(it, if (it % 2 == 0) "me" else "ai", "m$it", "", "", "u$it", it.toLong()) }
-        assertEquals(400, c.apiMessages(many).size)
+        assertEquals(200, c.apiMessages(many).size)
         val long = "HEAD" + "x".repeat(20000) + "TAIL"
         val one = c.apiMessages(listOf(ChatMsg(1, "me", long, "", "", "u", 1L)))[0].second
         assertTrue(one.startsWith("HEAD") && one.endsWith("TAIL") && "中间省略" in one)

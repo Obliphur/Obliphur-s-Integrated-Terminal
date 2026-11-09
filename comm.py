@@ -114,7 +114,7 @@ def char_delay(text: str) -> float:
     return n * CHAR_DELAY_CJK + (len(s) - n) * CHAR_DELAY
 RETRY_GAP = 10 * 60                   # 对方不方便回复时, 多久再把消息交给模型
 RETRY_MAX = 12
-HISTORY_SENT = 400                    # 每次请求最多带多少条聊天记录 (1.0.394 起本地存 600 条, 带的还是最近 400 条): 原话全带上, 量由下面的字数兜底
+HISTORY_SENT = 200                    # 每次请求最多带多少条聊天记录 (本地存 600 条, 带的取最近 200 条): 原话全带上, 量由下面的字数兜底
 HISTORY_CHARS = 120000                # 带的聊天记录总共最多多少字 (超了从最老的开始不带)
 HISTORY_STEP = 10                     # 带的聊天记录的起点一次往后挪这么多条 (不是每条都挪): 请求的开头 (前面的历史) 才能在这么多条消息里保持不变,
                                       # 服务商的提示缓存才命中 (分条发连着调用两次, 第二次的前面全是第一次发过的内容)
@@ -6006,10 +6006,10 @@ def _selftest():
     clock[0] = clock_before_sleep
     # ---- 缓存: 请求的开头要稳定 (api_messages 的起点一格一格挪), 带用量记录 ----
     big = [{"role": "me" if i % 2 == 0 else "ai", "text": f"m{i}"} for i in range(900)]
-    firsts = {api_messages(big[:n])[0]["content"] for n in range(401, 480)}
+    firsts = {api_messages(big[:n])[0]["content"] for n in range(201, 280)}
     assert all(len(api_messages(big[:n])) <= HISTORY_SENT for n in range(1, 900))
-    assert HISTORY_SENT == 400 and len(api_messages(big)) == 400, "窗口 = 最近 400 条"
-    assert len(firsts) <= (480 - 401) // HISTORY_STEP + 2, "开头 (最老的一条) 每 %d 条才变一次" % HISTORY_STEP
+    assert HISTORY_SENT == 200 and len(api_messages(big)) == 200, "窗口 = 最近 200 条"
+    assert len(firsts) <= (280 - 201) // HISTORY_STEP + 2, "开头 (最老的一条) 每 %d 条才变一次" % HISTORY_STEP
     a_old, a_new = api_messages(big[:495]), api_messages(big[:496])
     assert a_old[0]["content"] == a_new[0]["content"], "新增一条消息不改变请求的开头"
     # 单条超长 (粘贴 / 附件): 只截中间, 头和尾都留着
