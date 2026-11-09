@@ -17,6 +17,12 @@ python release.py               # 发布（PyInstaller）
 - 每次开发完成递增 `config.py` 的 `APP_VERSION`。
 - 别提交调试/预览截图，截图放系统临时目录。
 
+## 读文件规则（控制上下文）
+
+- **禁止整文件读取大文件**：`comm.py`(500KB)、`MECHANICS.md`(380KB)、`app.py`(330KB)、`contract.py`、`devsync.py`、`i18n.py`、`ai_assist.py` 等。先用 Grep 搜关键词定位行号，再用 Read 的 `offset/limit` 只读相关片段。
+- 查 `MECHANICS.md` 时同样：Grep 章节标题/关键词，只读对应章节，不要通读。
+- 宽泛的跨文件搜索交给 Explore 子代理，只带回结论。
+
 ## 硬性约定（见 for_developer.md）
 
 1. 改机制前查 `MECHANICS.md` 保兼容；改完同步 `i18n.py`、`MECHANICS.md`、`README.md`（README 只记模块级要点，细节进 MECHANICS）。
