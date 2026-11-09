@@ -57,6 +57,8 @@ MODE_WHITELIST = "whitelist"
 # 代理-全屏蔽 (Proxy block-all) (断网方式 proxy_all): 联网判定不看名单, 离线时除本机地址外全部拦截,
 # 联网会话中全部放行. 应用名单照样按过滤名单模式 (黑 / 白) 关窗口, 只在专注 / 空闲时, 和联不联网无关 (app_allowed, MECHANICS 3.2.1 / 4.7)
 MODE_BLOCKALL = "blockall"
+# Claude Code 的连接 (API / 登录 / 更新): 任何模式都放行, 只有合约的网络禁令能拦 (MECHANICS 4.1)
+CLAUDE_CODE_DOMAINS = ("anthropic.com", "claude.ai")
 
 CHANGE_DELAY_HOURS = 48
 LOOSEN_DELAY_HOURS = CHANGE_DELAY_HOURS   # 旧名字, 保留兼容
@@ -521,6 +523,8 @@ class RuleStore:
             return False, "ban"              # 网络禁令的网站: 联网会话 / 白名单 / 提前启动都放行不了
         if self.api_hosts and any(domain_match(host, h) for h in self.api_hosts):
             return True, "api"              # AI 接口: 名单 / 代理-全屏蔽都放行 (聊天 / 名单建议要用)
+        if any(domain_match(host, d) for d in CLAUDE_CODE_DOMAINS):
+            return True, "claude-code"      # Claude Code: 名单 / 代理-全屏蔽都放行
         if online:
             return True, "online"           # 联网会话中全部放行 (MECHANICS 4.1)
         if exe and exe in self.exempt:
@@ -656,6 +660,13 @@ def _selftest():
     assert rs.decide("sub.api.deepseek.com", "code.exe", False, MODE_WHITELIST) == (True, "api")
     assert rs.decide("other.com", "chrome.exe", False, MODE_BLOCKALL) == (False, "blockall")
     rs.api_hosts = set()
+    # Claude Code: 代理-全屏蔽 / 白名单 / 黑名单都放行; 合约的网络禁令仍然优先
+    assert rs.decide("api.anthropic.com", "claude.exe", False, MODE_BLOCKALL) == (True, "claude-code")
+    assert rs.decide("claude.ai", "node.exe", False, MODE_WHITELIST) == (True, "claude-code")
+    assert rs.decide("notanthropic.com", "claude.exe", False, MODE_BLOCKALL) == (False, "blockall")
+    rs.banned_domains = {"anthropic.com"}
+    assert rs.decide("api.anthropic.com", "claude.exe", False, MODE_BLOCKALL) == (False, "ban")
+    rs.banned_domains = set()
     assert keys_for_mode("whatever") == (BLACK_DOMAINS, BLACK_APPS)
 
     assert rs.app_allowed("Steam.exe", False, MODE_BLACKLIST) == (False, "blacklist-app")

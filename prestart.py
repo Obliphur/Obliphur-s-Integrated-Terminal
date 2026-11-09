@@ -209,6 +209,18 @@ def descendants(pids, procs=None) -> set:
     return out
 
 
+def track(procs, exes, pids, marked) -> tuple:
+    """每秒的跟踪: 选中的程序 (exes) 和上一秒还活着的跟踪进程, 连同它们的子进程 → (pids, marked).
+
+    marked 是这次专注里所有跟踪过的程序 exe 名, 只增不减: 程序退出 (比如启动器关掉) 也保留."""
+    alive = {int(pid) for pid, _ppid, _exe in procs}
+    seed = {pid for pid in pids if pid in alive} | {pid for pid, _ppid, exe in procs if exe in exes}
+    pids = descendants(seed, procs)
+    pids.discard(os.getpid())
+    marked = set(marked) | {exe for pid, _ppid, exe in procs if pid in pids}
+    return pids, marked
+
+
 class Prestart:
     """一次专注的"提前启动": 启动、藏窗口、静音; 专注结束时全部放出来.
 
@@ -219,7 +231,8 @@ class Prestart:
     def __init__(self):
         self.items = []          # 选中的程序 {"name", "exe", "launch", "running"}
         self.active = False
-        self.pids = set()        # 跟踪的进程 (含子进程)
+        self.pids = set()        # 跟踪的进程 (含子进程, 只含还活着的)
+        self.marked = set()      # 被标记的程序 exe 名 (整个专注期间保留, 退出也不删)
         self.hidden = set()      # 藏起来的窗口
         self.phase = ""          # "" 没开始 / "grace" 操作空窗期 / "active" 藏窗口 + 静音
         self.grace_until = 0.0   # 操作空窗期结束的时刻 (monotonic)
@@ -240,6 +253,7 @@ class Prestart:
         self.items = [dict(it) for it in (items or [])][:MAX_APPS]
         self.active = True
         self.pids = set()
+        self.marked = set()
         self.hidden = set()
         self.phase = "grace"
         self.grace_until = time.monotonic() + GRACE_SECONDS
@@ -263,28 +277,20 @@ class Prestart:
             self.step()
 
     def exe_names(self) -> set:
-        """跟踪的进程 (含子进程) 的 exe 名: 网络名单放行它们用 (MECHANICS 20).
+        """被标记的程序 exe 名 (选中的程序 + 它们派生的子进程, 整个专注期间保留): 网络 / 应用名单放行它们用 (MECHANICS 20).
         不在提前启动状态时返回空集合."""
-        if not self.active or not self.pids:
-            return set()
-        try:
-            procs = window_guard.list_processes_full()
-        except Exception:
-            return set()
-        return {exe for pid, _ppid, exe in procs if pid in self.pids}
+        return set(self.marked) if self.active else set()
 
     def step(self):
-        """每秒调一次: 找进程 (含新出现的子进程); 空窗期过了才藏窗口, 静音."""
+        """每秒调一次: 找进程 (含新出现的子进程), 更新标记; 空窗期过了才藏窗口, 静音."""
         if not self.active:
             return
         try:
             procs = window_guard.list_processes_full()
         except Exception:
             return
-        pids = {pid for pid, _ppid, exe in procs if exe in self._exes}
-        pids = descendants(pids, procs)
-        pids.discard(os.getpid())
-        self.pids = pids
+        self.pids, self.marked = track(procs, self._exes, self.pids, self.marked)
+        pids = self.pids
         if self.phase == "grace":
             if time.monotonic() < self.grace_until:
                 return                   # 操作空窗期: 什么都不藏、不静音
@@ -307,7 +313,7 @@ class Prestart:
             pass
 
     def stop(self):
-        """结束专注: 显示藏起来的窗口 (不抢焦点), 取消静音."""
+        """结束专注: 显示藏起来的窗口 (不抢焦点), 取消静音; 标记清空."""
         self.active = False
         self.phase = ""
         self.grace_until = 0.0
@@ -324,6 +330,7 @@ class Prestart:
         except Exception:
             pass
         self.pids = set()
+        self.marked = set()
         self.items = []
 
 
@@ -355,6 +362,11 @@ def _selftest():
     assert descendants({1}, procs) == {1, 2, 3}
     assert descendants({4}, procs) == {4}
     assert descendants(set(), procs) == set()
+    pids, marked = track(procs, {"a.exe"}, set(), set())
+    assert pids == {1, 2, 3} and marked == {"a.exe", "b.exe", "c.exe"}
+    procs2 = [(2, 0, "b.exe"), (3, 2, "c.exe"), (4, 0, "d.exe")]          # 启动器 (1) 退出了
+    pids, marked = track(procs2, {"a.exe"}, pids, marked)
+    assert pids == {2, 3} and marked == {"a.exe", "b.exe", "c.exe"}, "退出的程序仍然标记着"
 
     ps = Prestart()
     assert not ps.chosen
