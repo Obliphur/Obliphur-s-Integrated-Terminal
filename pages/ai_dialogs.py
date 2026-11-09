@@ -189,10 +189,9 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
         set_proto(ai_assist.FAMILY_PROTOCOL[state["family"]])
         ent_url.config(state="normal" if preset == "custom" else "readonly")
         var_key.set(prof["api_key"])
-        note.config(text=(tr("中转站或 OpenAI 兼容接口请选「其他」; 「Gemini」只用于原生 Gemini 接口.")
-                          if preset == "custom"
-                          else tr("已填入 {name} 的官方地址.").format(name=_provider_label(preset))
-                          ) + "\n" + tr("API Key 加密保存在本机,只会发给上面填的 Base URL."))
+        filled = "" if preset == "custom" else tr("已填入 {name} 的官方地址.").format(name=_provider_label(preset))
+        note.config(text=(filled + "\n" if filled else "")
+                        + tr("API Key 加密保存在本机,只会发给上面填的 Base URL."))
         state["loading"] = False
 
     def on_pick(_e=None):

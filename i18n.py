@@ -924,7 +924,6 @@ EN = {
     "Adapter 模式 · 规则未启用": "Adapter mode · rules inactive",
     "将于 {at} 生效.": "Takes effect {at}.",
     "模型类型": "Model type",
-    "中转站或 OpenAI 兼容接口请选「其他」; 「Gemini」只用于原生 Gemini 接口.": "For a relay or an OpenAI-compatible endpoint choose \"Other\"; use \"Gemini\" only for the native Gemini API.",
     "已填入 {name} 的官方地址.": "{name}'s official endpoint filled in.",
     "API Key 加密保存在本机,只会发给上面填的 Base URL.": "The API key is stored encrypted here and only sent to the Base URL above.",
     "· 只读取你勾选的内容,点「发送」后才联网.": "· Only what you tick is read; nothing goes online until you press \"Send\".",
