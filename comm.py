@@ -548,7 +548,7 @@ share data:
 下一个专注结束节点波动:[-2,3]
 (联合行动期间不生效)
 睡眠开始时间波动:[0,5]
-睡眠结束时间波动:[-20,0]
+睡眠结束时间波动:[-5,0]
 循环末尾休息结束时间波动:[0,5]
 
 
@@ -8258,7 +8258,7 @@ def _selftest():
     assert shift_norm([{"ts": 1, "d": "2027-07-02", "s": 100, "f": 0}, {"ts": 2, "d": "bad", "s": 420}, {"ts": 1, "d": "2027-07-02", "s": 420}]) == [{"ts": 1, "d": "2027-07-02", "s": 420, "f": 0}]
     cs.flush()
 
-    # ---- 共时闹钟 (1.0.359): 闹钟跟随被设为共时闹钟的对象的实际起床时间 (Claudia 起床波动 [-20,0]) ----
+    # ---- 共时闹钟 (1.0.359): 闹钟跟随被设为共时闹钟的对象的实际起床时间 (Claudia 起床波动 [-5,0]) ----
     clock[0] = datetime(2027, 6, 1, 12, 0)
     cr.device = lambda: "devA"
     cr.devices = lambda: [("devA", "电脑"), ("devB", "手机")]
@@ -8270,8 +8270,8 @@ def _selftest():
     assert w1 == routine.wake_at(cr._rt, datetime(2027, 6, 2).date(), cpid) and w1.date() == datetime(2027, 6, 2).date()
     ws = routine.wake_times(cr._rt, datetime(2027, 6, 1), datetime(2027, 9, 1), cpid)
     mins = [w.hour * 60 + w.minute for w in ws]
-    assert len(ws) >= 90 and all(6 * 60 + 10 <= m <= 6 * 60 + 30 for m in mins), "起床时刻在 6:10 - 6:30 (波动 [-20,0])"
-    assert len(set(mins)) > 5 and min(mins) < 6 * 60 + 15 and max(mins) > 6 * 60 + 25, "每天不一样, 用满整个范围"
+    assert len(ws) >= 90 and all(6 * 60 + 25 <= m <= 6 * 60 + 30 for m in mins), "起床时刻在 6:25 - 6:30 (波动 [-5,0])"
+    assert len(set(mins)) >= 5 and min(mins) <= 6 * 60 + 26 and max(mins) >= 6 * 60 + 29, "每天不一样, 用满整个范围"
     w2 = cr.co_alarm_fn()(w1)
     assert w2.date() == datetime(2027, 6, 3).date() and w2 > w1, "响过之后找下一天的"
     assert cr.co_alarm_fn()(w1 - timedelta(seconds=1)) == w1

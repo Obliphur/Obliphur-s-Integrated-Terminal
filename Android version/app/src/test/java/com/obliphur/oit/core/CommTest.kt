@@ -2593,7 +2593,7 @@ class CommTest {
         assertEquals("", c.proLang)
     }
 
-    /** 共时闹钟 (1.0.359): 闹钟跟随被设为共时闹钟的对象的实际起床时间 (Claudia 起床波动 [-20,0]); 对应 comm.py 自检. */
+    /** 共时闹钟 (1.0.359): 闹钟跟随被设为共时闹钟的对象的实际起床时间 (Claudia 起床波动 [-5,0]); 对应 comm.py 自检. */
     /** 日程跟随 (1.0.406, MECHANICS 24.17) + 合约改了对方的状态后, 专注时发的消息不再等原来日程的休息 (24.3.9). */
     @Test
     fun scheduleFollowAndLateRelease() {
@@ -2686,13 +2686,13 @@ class CommTest {
         val spec = Routine.parse(BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE))!!
         val w1 = c.coAlarmFn()!!(clock)!!
         assertEquals(Routine.wakeAt(spec, java.time.LocalDate.of(2027, 6, 2), pid), w1)
-        assertEquals(LocalDateTime.of(2027, 6, 2, 6, 15), w1)                                    // 桌面版算出来的 (电脑和手机必须一样)
-        assertEquals(LocalDateTime.of(2027, 6, 3, 6, 24), c.coAlarmFn()!!(w1)); assertEquals(LocalDateTime.of(2027, 6, 4, 6, 14), c.coAlarmFn()!!(LocalDateTime.of(2027, 6, 3, 6, 24)))
+        assertEquals(LocalDateTime.of(2027, 6, 2, 6, 26), w1)                                    // 桌面版算出来的 (电脑和手机必须一样)
+        assertEquals(LocalDateTime.of(2027, 6, 3, 6, 29), c.coAlarmFn()!!(w1)); assertEquals(LocalDateTime.of(2027, 6, 4, 6, 26), c.coAlarmFn()!!(LocalDateTime.of(2027, 6, 3, 6, 29)))
         assertEquals(c.coAlarmFn()!!(w1)!!.toLocalDate(), LocalDateTime.of(2027, 6, 3, 0, 0).toLocalDate())
         val ws = Routine.wakeTimes(spec, LocalDateTime.of(2027, 6, 1, 0, 0), LocalDateTime.of(2027, 9, 1, 0, 0), pid)
         val mins = ws.map { it.hour * 60 + it.minute }
-        assertTrue(ws.size >= 90 && mins.all { it in (6 * 60 + 10)..(6 * 60 + 30) })               // 起床时刻在 6:10 - 6:30 (波动 [-20,0])
-        assertTrue(mins.toSet().size > 5 && mins.min() < 6 * 60 + 15 && mins.max() > 6 * 60 + 25)
+        assertTrue(ws.size >= 90 && mins.all { it in (6 * 60 + 25)..(6 * 60 + 30) })               // 起床时刻在 6:25 - 6:30 (波动 [-5,0])
+        assertTrue(mins.toSet().size >= 5 && mins.min() <= 6 * 60 + 26 && mins.max() >= 6 * 60 + 29)
         assertEquals(w1, c.coAlarmFn()!!(w1.minusSeconds(1)))
         c.setCoAlarmDevs(listOf("devB"))
         assertEquals(listOf("devB"), c.coAlarmDevs()); assertNull(c.coAlarmFn())                  // 响铃的设备手动设置: 本机不在名单里就不响

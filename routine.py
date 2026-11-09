@@ -742,9 +742,9 @@ def _selftest():
     import tempfile
     here = os.path.dirname(os.path.abspath(__file__))
     routine_text = open(os.path.join(here, "personas", "Claudia_routine.txt"), encoding="utf-8").read()
-    # 1.0.359 起床波动改成了 [-20,0]; 这里仍用 [-20,10] 测 (Kotlin RoutineTest 的期望值是按它算的, 电脑和手机必须一样), 新范围见 comm.py 自检的共时闹钟
-    assert "睡眠结束时间波动:[-20,0]" in routine_text
-    routine_text = routine_text.replace("睡眠结束时间波动:[-20,0]", "睡眠结束时间波动:[-20,10]")
+    # 起床波动是 [-5,0]; 这里仍用 [-20,10] 测 (Kotlin RoutineTest 的期望值是按它算的, 电脑和手机必须一样), 新范围见 comm.py 自检的共时闹钟
+    assert "睡眠结束时间波动:[-5,0]" in routine_text
+    routine_text = routine_text.replace("睡眠结束时间波动:[-5,0]", "睡眠结束时间波动:[-20,10]")
     r = parse(routine_text)
     assert r and r.start == 390 and r.focus_label == "学习(高考内容)"
     assert [(it["type"], it["dur"]) for it in r.items] == [("block", 30), ("loop", 300), ("block", 30), ("block", 30), ("loop", 300), ("block", 30), ("block", 30), ("loop", 240), ("block", 30)]
