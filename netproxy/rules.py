@@ -566,6 +566,11 @@ class RuleStore:
             return False
 
 
+    def in_white_apps(self, exe: str) -> bool:
+        """这个程序在 Rules 页的应用白名单里吗 (提前启动不去标记 / 藏它们, MECHANICS 20)."""
+        exe = norm_app(exe) if exe else ""
+        return bool(exe) and exe in self._snap[WHITE_APPS]
+
     def app_allowed(self, exe: str, rest: bool, mode: str = MODE_BLACKLIST):
         """前台窗口的程序能不能用 (Rules 页的应用名单, 见 MECHANICS 4.7). 只管专注 / 空闲, 休息中 (rest) 全部放行; 和联不联网无关.
         (允许?, 原因). 原因: rest / whitelist-app / not-whitelisted / blacklist-app / default-allow"""

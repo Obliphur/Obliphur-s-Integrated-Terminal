@@ -333,6 +333,7 @@ class Prestart:
         self.phase = ""          # "" 没开始 / "grace" 操作空窗期 / "active" 藏窗口 + 静音
         self.grace_until = 0.0   # 操作空窗期结束的时刻 (monotonic)
         self._exes = set()
+        self.keep = lambda exe: False   # 用户本来就放行的程序 (应用白名单): 不标记、不藏、不静音 (除非是专门选中的)
         self._seeds = set()      # 空窗期里新启动的程序的进程
         self._baseline = None    # 开始时已在运行的进程 (空窗期里不算"新启动")
 
@@ -384,6 +385,15 @@ class Prestart:
         不在提前启动状态时返回空集合."""
         return set(self.marked) if self.active else set()
 
+    def _kept(self, exe: str) -> bool:
+        exe = str(exe or "").lower()
+        if not exe or exe in self._exes:
+            return False
+        try:
+            return bool(self.keep(exe))
+        except Exception:
+            return False
+
     def _collect_new(self, procs):
         """操作空窗期里新出现了窗口的程序 (开始时不在运行的, 排除 OIT 自己和系统程序) → 记为跟踪种子."""
         if self._baseline is None:
@@ -391,6 +401,7 @@ class Prestart:
             return
         skip = _skip_exes()
         me = os.getpid()
+        procs = [p for p in procs if not self._kept(p[2])]
         # 不要求有任务栏窗口: java.exe 这类后台 / 无窗口的衍生进程也算 (启动器退出后链条断了也能认到)
         for pid, _ppid, exe in procs:
             if pid != me and pid not in self._baseline and exe and exe not in skip:
@@ -407,6 +418,11 @@ class Prestart:
         if self.phase == "grace":
             self._collect_new(procs)     # 空窗期里新启动的程序也标记
         self.pids, self.marked = track(procs, self._exes, self.pids | self._seeds, self.marked)
+        # 应用白名单里的程序不算"提前启动的": 去掉它们的标记 / 跟踪 (专门选中的除外)
+        exe_of = {int(pid): exe for pid, _p, exe in procs}
+        self.marked = {e for e in self.marked if not self._kept(e)}
+        self.pids = {p for p in self.pids if not self._kept(exe_of.get(p, ""))}
+        self._seeds = {p for p in self._seeds if not self._kept(exe_of.get(p, ""))}
         # 被标记的程序再次开窗 (比如启动器退出后又被拉起来): 按 exe 名也认
         hide_exes = self.marked - _skip_exes()
         pids = self.pids | {int(pid) for pid, _ppid, exe in procs
