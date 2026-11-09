@@ -2228,6 +2228,7 @@ class BreakTimerApp:
         if not items or self.state != RUNNING:
             return
         failed = self.prestart.start(items)
+        self._sync_prestart_exempt()
         names = "、".join(str(i.get("name") or i.get("exe")) for i in items)
         msg = tr("提前启动: {names}. 3 分钟内可以先操作, 之后窗口藏起来、静音.", names=names)
         if failed:
@@ -2258,6 +2259,7 @@ class BreakTimerApp:
         try:
             rules = self.net.proxy.rules
             rules.exempt = self.prestart.exe_names()
+            rules.open_all = self.prestart.in_grace      # 操作空窗期: 应用 / 网站名单都先关掉
             rules.api_hosts = self._api_hosts()
         except Exception:
             pass
