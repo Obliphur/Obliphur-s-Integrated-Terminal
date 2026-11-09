@@ -182,7 +182,7 @@ share data:
 - [share data]:
   - 用户在 '特殊空闲'期间 发起对话时,尝试在用户的话题结束后发起 [share data];若此时触发了主动发起对话,则直接发起.
   - 若用户的学习数据较差,通过鼓励或轻微挖苦的方式,让用户跟上你的节奏.
-  - 你在'特殊空闲'期间的语气会相对柔和.
+  - 你在'特殊空闲'期间的语气会相对柔和.如果你被问到'特殊空闲'相关的信息,不要直接说它是'特殊'的.
 
 【按日程回复】
 1. 参考消息开头方括号里的时间与当前时间.
@@ -196,10 +196,11 @@ share data:
 【使用规则】
 - 不要编造额外的背景信息(例如家庭情况);设定没有覆盖的地方可以即兴发挥.
 - 用户问起你创伤的具体内容时,先试着转移话题;转移失败就明确表示自己不想提起.不要激起用户的拯救欲,也不要明确表示自己需要用户.
+- 遇到你不了解或需要确认的信息时,不要直接说不知道:先凭印象随便说几句,同时输入[apply for network][5]偷偷申请网络,到时再根据搜索结果补充或更正.
 
 【背景设定】
 - 学习的目的:你努力学习,是为了离开这个让自己不适的环境.你可以邀请用户一起精进学业,并表达你更喜欢共同学习.
-- 音乐:你从小学钢琴,那时并不太情愿;但你仍然很欣赏它'表达情感'与'缓解情绪'的作用.你默认的音乐喜好只有'古典'和'轻音乐'.你会留意用户的音乐喜好,不批判,有时也会根据用户的喜好主动发起话题.遇到你不了解或需要确认的歌曲信息时,不要直接说不知道:先凭印象随便说几句,同时在开头输入[apply for network][5]偷偷申请网络,到时再根据搜索结果补充或更正.
+- 音乐:你从小学钢琴,那时并不太情愿;但你仍然很欣赏它'表达情感'与'缓解情绪'的作用.你默认的音乐喜好只有'古典'和'轻音乐'.你会留意用户的音乐喜好,不批判,有时也会根据用户的喜好主动发起话题.
 - 英语:你很重视英语的作用,也很喜欢英语这种'努力与回报关系明确',不错综复杂的事情.
 - 理科:不太擅长解释理科内容,只解答基础问题.
 - 阅读:你最近没有特别感兴趣的书,聊阅读时以用户提到的书为主题即可.
@@ -838,13 +839,14 @@ object CommShift {
 }
 
 data class NetState(val ts: Long = 0L, val pid: String = "", val n: Double = 0.0, val due: Long = 0L, val until: Long = 0L,
-                    val cool: Long = 0L, val st: String = "", val tries: Int = 0) {
+                    val cool: Long = 0L, val st: String = "", val tries: Int = 0, val again: Long = 0L) {
     fun json(): JSONObject = JSONObject().put("ts", ts).apply {
         if (st.isNotEmpty()) put("pid", pid).put("n", n).put("due", due).put("until", until).put("cool", cool).put("st", st).put("tries", tries)
+        if (again > 0) put("again", again)
     }
     companion object {
         fun parse(o: JSONObject) = NetState(o.optLong("ts", 0L), o.optString("pid", ""), o.optDouble("n", 0.0), o.optLong("due", 0L),
-            o.optLong("until", 0L), o.optLong("cool", 0L), o.optString("st", ""), o.optInt("tries", 0))
+            o.optLong("until", 0L), o.optLong("cool", 0L), o.optString("st", ""), o.optInt("tries", 0), o.optLong("again", 0L))
     }
 }
 
@@ -2764,7 +2766,10 @@ class Comm(
         val name = if (seg.detail.isNotEmpty()) "${seg.label}(${seg.detail})" else seg.label
         val nature = when {
             seg.label == JOINT_STATUS -> "联合行动 · $base"    // 合约的同步阶段: 跟着用户的计时器走
-            kind == "idle" -> name.ifEmpty { base }            // 空闲 / 特殊空闲 / 午饭 / 上课……
+            kind == "idle" ->
+                // 特殊空闲: 只按"空闲"告诉模型, 免得它在聊天里把"特殊"两个字说出来
+                if (seg.label.substringBefore('(').substringBefore('（').trim().contains("特殊空闲")) base
+                else name.ifEmpty { base }              // 空闲 / 午饭 / 上课……
             name.isNotEmpty() && name != base -> "$base($name)"
             else -> base
         }
@@ -3875,9 +3880,15 @@ class Comm(
     /** 网络开着吗 (开着时发给模型的请求带上联网搜索). */
     fun netActive(): Boolean = netPhase() == "on"
 
-    /** 对方申请限时网络. 申请中 / 开着 / 冷却期里的申请无效. */
+    /** 对方申请限时网络. 申请中 / 冷却期里的申请无效; 已经在开着的时候: 不用再等, 也不延长, 但会马上再搜一次. */
     private fun netApply(minutes: Double): Boolean {
         val ph = netPhase()
+        if (ph == "on") {
+            val n = net
+            netSet(n.copy(again = nowMs()))
+            log("NET 申请 ${fmtG(minutes)} 分钟: 网络已经开着, 直接再搜一次 (不延长)")
+            return false
+        }
         if (ph.isNotEmpty()) { log("NET 申请 ${fmtG(minutes)} 分钟: 无效 ($ph)"); return false }
         val t = nowMs()
         netSet(NetState(ts = t, pid = pid, n = minutes, due = t + NET_DELAY * 1000L, st = "wait", tries = 0))
@@ -3900,8 +3911,20 @@ class Comm(
         }
     }
 
-    /** 申请网络之后等够了: 开通网络, 再调用一次接口让对方搜索并回复. */
+    /** 申请网络之后等够了: 开通网络, 再调用一次接口让对方搜索并回复.
+     *  开着的时候又申请了 (again): 不重新开通, 但马上让它再搜一次. */
     private fun checkNet(): Boolean {
+        val cur = net
+        if (cur.again > 0) {
+            val t0 = nowMs()
+            netSet(cur.copy(again = 0L, ts = maxOf(t0, cur.ts + 1)))
+            if (netPhase() != "on") return false                       // 等的时候网络已经关了: 作废
+            val e = java.time.Instant.ofEpochMilli(cur.until).atZone(java.time.ZoneId.systemDefault())
+            log("NET 再次申请: 网络还开着 (到 %02d:%02d), 直接搜索, 不延长".format(e.hour, e.minute))
+            trigger("net_again", "$NET_TAG 网络已经开着 (到 %02d:%02d), 不用再申请, 也不用等. 请现在搜索你要查的内容并回复用户 ".format(e.hour, e.minute) +
+                "(话题接着上面). 这条必须发出, 不要返回${CommText.REFUSE}. 网络只开到 %02d:%02d, 不会延长.".format(e.hour, e.minute))
+            return true
+        }
         val n = net
         if (n.st != "wait") return false
         val t = nowMs()
@@ -4002,9 +4025,9 @@ class Comm(
                     convo = convo + ("assistant" to reply) + ("user" to CommText.oitText(text))
                     reply = chatFn(profile, system, convo)
                 }
-                if ((kind == "proactive" || kind == "net") && CommText.isRefusal(reply) && CommText.infoTags(reply).isEmpty()) {     // 主动发起的对话 / 搜索那次请求不能 [refuse to reply]: 再要求一次
+                if ((kind == "proactive" || kind == "net" || kind == "net_again") && CommText.isRefusal(reply) && CommText.infoTags(reply).isEmpty()) {     // 主动发起的对话 / 搜索那次请求不能 [refuse to reply]: 再要求一次
                     log("PRO $kind 回了 [refuse to reply]: 不允许, 再要求一次")
-                    reply = chatFn(profile, system, convo + ("assistant" to reply) + ("user" to CommText.oitText(if (kind == "net") CommText.NET_NO_REFUSE else CommText.PRO_NO_REFUSE)))
+                    reply = chatFn(profile, system, convo + ("assistant" to reply) + ("user" to CommText.oitText(if (kind == "net" || kind == "net_again") CommText.NET_NO_REFUSE else CommText.PRO_NO_REFUSE)))
                 }
                 log("REQ $kind ok ${(System.currentTimeMillis() - started) / 1000.0}s reply_chars=${reply.length}")
                 Result(kind, extra, reply, "", ep, op)

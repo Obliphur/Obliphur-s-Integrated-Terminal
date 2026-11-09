@@ -1927,13 +1927,19 @@ class CommTest {
         val body = calls.last().second.last().second
         assertTrue(CommText.OIT_TAG in body && "网络已开通 3 分钟" in body && "13:05" in body)
         assertTrue(c.visible().last().text == "搜到了: 今天没什么大事." && c.netPhase() == "on")
-        // 开着的期间: 用户再说话照样带联网搜索; 这时申请无效 (不会改开通时长)
+        // 开着的期间: 用户再说话照样带联网搜索; 这时再申请: 不用等、不延长, 但马上再搜一次
         clock = clock.plusSeconds(30)
+        val nBefore = calls.size
         script.add("[apply for network][20] 我再查一下.")
+        script.add("查到了: 局部有雨.")
         assertEquals("", c.send("再查查天气"))
         wait(c)
         assertTrue(webLog.last() && c.netPhase() == "on")
         assertEquals(3.0, (c.syncDoc()["net"] as JSONObject).optDouble("n"), 0.0)
+        assertEquals(nBefore + 2, calls.size)
+        val againBody = calls.last().second.last().second
+        assertTrue("网络已经开着" in againBody && "不会延长" in againBody)
+        assertTrue(c.visible().last().text == "查到了: 局部有雨.")
         // 到期之后进入冷却: 不带联网, 申请无效
         clock = clock.plusMinutes(3)
         assertTrue(!c.netActive() && c.netPhase() == "cool")

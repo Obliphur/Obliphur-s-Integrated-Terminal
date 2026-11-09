@@ -491,7 +491,7 @@ share data:
 - [share data]:
   - 用户在 '特殊空闲'期间 发起对话时,尝试在用户的话题结束后发起 [share data];若此时触发了主动发起对话,则直接发起.
   - 若用户的学习数据较差,通过鼓励或轻微挖苦的方式,让用户跟上你的节奏.
-  - 你在'特殊空闲'期间的语气会相对柔和.
+  - 你在'特殊空闲'期间的语气会相对柔和.如果你被问到'特殊空闲'相关的信息,不要直接说它是'特殊'的.
 
 【按日程回复】
 1. 参考消息开头方括号里的时间与当前时间.
@@ -505,10 +505,11 @@ share data:
 【使用规则】
 - 不要编造额外的背景信息(例如家庭情况);设定没有覆盖的地方可以即兴发挥.
 - 用户问起你创伤的具体内容时,先试着转移话题;转移失败就明确表示自己不想提起.不要激起用户的拯救欲,也不要明确表示自己需要用户.
+- 遇到你不了解或需要确认的信息时,不要直接说不知道:先凭印象随便说几句,同时输入[apply for network][5]偷偷申请网络,到时再根据搜索结果补充或更正.
 
 【背景设定】
 - 学习的目的:你努力学习,是为了离开这个让自己不适的环境.你可以邀请用户一起精进学业,并表达你更喜欢共同学习.
-- 音乐:你从小学钢琴,那时并不太情愿;但你仍然很欣赏它'表达情感'与'缓解情绪'的作用.你默认的音乐喜好只有'古典'和'轻音乐'.你会留意用户的音乐喜好,不批判,有时也会根据用户的喜好主动发起话题.遇到你不了解或需要确认的歌曲信息时,不要直接说不知道:先凭印象随便说几句,同时在开头输入[apply for network][5]偷偷申请网络,到时再根据搜索结果补充或更正.
+- 音乐:你从小学钢琴,那时并不太情愿;但你仍然很欣赏它'表达情感'与'缓解情绪'的作用.你默认的音乐喜好只有'古典'和'轻音乐'.你会留意用户的音乐喜好,不批判,有时也会根据用户的喜好主动发起话题.
 - 英语:你很重视英语的作用,也很喜欢英语这种'努力与回报关系明确',不错综复杂的事情.
 - 理科:不太擅长解释理科内容,只解答基础问题.
 - 阅读:你最近没有特别感兴趣的书,聊阅读时以用户提到的书为主题即可.
@@ -3458,8 +3459,15 @@ class Comm:
         return self.net_phase() == "on"
 
     def _net_apply(self, minutes: float) -> bool:
-        """对方申请限时网络. 申请中 / 开着 / 冷却期里的申请无效."""
+        """对方申请限时网络. 申请中 / 冷却期里的申请无效; 已经在开着的时候: 不用再等, 也不延长,
+        但会马上再搜一次 (见 _check_net 的 "again")."""
         ph = self.net_phase()
+        if ph == "on":
+            n = dict(self._net())
+            n["again"] = self._ms()
+            self._net_set(n)
+            self.log(f"NET 申请 {minutes:g} 分钟: 网络已经开着, 直接再搜一次 (不延长)")
+            return False
         if ph:
             self.log(f"NET 申请 {minutes:g} 分钟: 无效 ({ph})")
             return False
@@ -3484,8 +3492,21 @@ class Comm:
         self._net_set(n)
 
     def _check_net(self) -> bool:
-        """申请网络之后等够了: 开通网络, 再调用一次接口让对方搜索并回复."""
+        """申请网络之后等够了: 开通网络, 再调用一次接口让对方搜索并回复.
+        开着的时候又申请了 (again): 不重新开通, 但马上让它再搜一次."""
         n = self._net()
+        if n.get("again"):
+            n = dict(n)
+            n.pop("again", None)
+            n["ts"] = max(self._ms(), int(n.get("ts") or 0) + 1)
+            self._net_set(n)
+            if self.net_phase() != "on":
+                return False                                          # 等的时候网络已经关了: 作废
+            end = datetime.fromtimestamp(int(n.get("until") or 0) / 1000)
+            self.log(f"NET 再次申请: 网络还开着 (到 {end:%H:%M}), 直接搜索, 不延长")
+            self._trigger("net_again", f"{NET_TAG} 网络已经开着 (到 {end:%H:%M}), 不用再申请, 也不用等. 请现在搜索你要查的内容并回复用户 "
+                                       f"(话题接着上面). 这条必须发出, 不要返回{REFUSE}. 网络只开到 {end:%H:%M}, 不会延长.")
+            return True
         if n.get("st") != "wait":
             return False
         ms = self._ms()
@@ -3696,7 +3717,7 @@ class Comm:
                     text += " 回复用户上面的消息. 如果此刻仍然不方便回复, 返回" + REFUSE + "."
                     convo = convo + [{"role": "assistant", "content": reply}, {"role": "user", "content": oit_text(text)}]
                     reply = ask(convo)
-                if kind in ("proactive", "net") and is_refusal(reply) and not info_tags(reply):       # 主动发起的对话 / 搜索那次请求不能 [refuse to reply]: 再要求一次 (告白可以: 对方判断不合适就是不告白)
+                if kind in ("proactive", "net", "net_again") and is_refusal(reply) and not info_tags(reply):       # 主动发起的对话 / 搜索那次请求不能 [refuse to reply]: 再要求一次 (告白可以: 对方判断不合适就是不告白)
                     self.log(f"PRO {kind} 回了 [refuse to reply]: 不允许, 再要求一次")
                     convo = convo + [{"role": "assistant", "content": reply},
                                      {"role": "user", "content": oit_text(NET_NO_REFUSE if kind == "net" else PRO_NO_REFUSE)}]
@@ -4804,7 +4825,10 @@ class Comm:
         if s.get("joint"):
             nature = f"联合行动 · {base}"               # 合约的同步阶段: 跟着用户的计时器走
         elif kind == "idle":
-            nature = name or base                       # 空闲 / 特殊空闲 / 午饭 / 上课……
+            # 特殊空闲: 只按"空闲"告诉模型, 免得它在聊天里把"特殊"两个字说出来
+            nature = base if routine.seg_class(s) == "special" else (name or base)
+        elif kind == "special":
+            nature = base                              # 同上: 只当空闲
         else:
             nature = f"{base}({name})" if name and name != base else base
         begin, end = s.get("begin"), s.get("end")
@@ -5704,14 +5728,15 @@ def _selftest():
     state_msg = calls[-1][1][-1]["content"]
     assert "上课" in state_msg and "12:00" in state_msg and "还剩" in state_msg, state_msg
     assert [m["text"] for m in stc.visible()] == ["现在在干嘛", "在上课."] and not any("[state]" in m["text"] for m in stc.messages)
-    # 特殊空闲: 性质直接是这个名字
+    # 特殊空闲: 对模型只说"空闲" (不能让它在聊天里说出"特殊")
     fixed2 = datetime(2027, 5, 4, 13, 30)
     stc.now = lambda: fixed2
     n_calls = len(calls)
     script.extend(["[state]", "有点闲."])
     stc.send("现在呢")
     wait(stc)
-    assert "特殊空闲" in calls[-1][1][-1]["content"] and "14:00" in calls[-1][1][-1]["content"]
+    msg = calls[-1][1][-1]["content"]
+    assert "空闲" in msg and "特殊" not in msg and "14:00" in msg, msg
     stc.flush()
     # 有日程文件的人设: [state] 和聊天页顶上那个状态同源 (other_status), 不是另算一套
     os.makedirs(os.path.join(td, "st2"))
@@ -7192,12 +7217,16 @@ def _selftest():
     assert web_log == [False, True], "到点那次请求带联网搜索"
     assert OIT_TAG in calls[-1][1][-1]["content"] and "网络已开通 3 分钟" in calls[-1][1][-1]["content"] and "13:05" in calls[-1][1][-1]["content"]
     assert cn.visible()[-1]["text"] == "搜到了: 今天没什么大事." and cn.net_active() and cn.net_phase() == "on"
-    # 开着的期间: 用户再说话照样带联网搜索; 这时申请无效 (不会改开通时长)
+    # 开着的期间: 用户再说话照样带联网搜索; 这时再申请: 不用等、不延长, 但马上再搜一次
     clock[0] += timedelta(seconds=30)
-    script.append("[apply for network][20] 我再查一下.")
+    n_calls = len(calls)
+    script.extend(["[apply for network][20] 我再查一下.", "查到了: 局部有雨."])
     assert cn.send("再查查天气") == ""
     wait(cn)
     assert web_log[-1] is True and cn._net()["n"] == 3.0 and cn.net_phase() == "on"
+    assert len(calls) == n_calls + 2, "开着的时候再申请: 马上再搜一次"
+    assert "网络已经开着" in calls[-1][1][-1]["content"] and "不会延长" in calls[-1][1][-1]["content"]
+    assert cn.visible()[-1]["text"] == "查到了: 局部有雨."
     # 到期之后进入冷却: 不带联网, 申请无效
     clock[0] += timedelta(minutes=3)
     assert not cn.net_active() and cn.net_phase() == "cool"
