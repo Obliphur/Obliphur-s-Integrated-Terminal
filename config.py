@@ -215,7 +215,7 @@ OUTING_MAX_HOURS = 24 * 7
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.454"                       # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.455"                       # 和 GitHub 上发布的版本号比较 (见 updater.py)
 UPDATE_CHECK = 1                              # 打开程序时检查更新
 FULLSCREEN_DEFAULT = 0                        # 打开程序时默认全屏 (设置 → 基本设置, 仅电脑, 不同步; F11 随时切换)
 UPDATE_AUTO = 1                               # 发现新版本时自动下载安装
@@ -848,6 +848,45 @@ def ensure_soft_chime(path: str) -> str:
         peak = max(abs(x) for x in buf) or 1.0
         gain = 6500.0 / peak
         fade = int(rate * 0.04)
+        frames = bytearray()
+        for i, x in enumerate(buf):
+            f = min(1.0, (total - 1 - i) / fade)
+            frames += struct.pack('<h', int(x * gain * f))
+        d = os.path.dirname(path)
+        if d:
+            os.makedirs(d, exist_ok=True)
+        with wave.open(path, 'wb') as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(rate)
+            w.writeframes(bytes(frames))
+        return path
+    except Exception:
+        return ""
+
+
+def ensure_break_chime(path: str) -> str:
+    """休息只剩 1 分钟的提示音: 比沟通提示音更低, 更轻 (两声下行, 音头很软, 渐弱拖得长).
+    只用在电脑上; Android 的同一个提醒走系统通知, 不共用这个文件."""
+    if os.path.exists(path) and os.path.getsize(path) > 44:
+        return path
+    try:
+        import struct
+        import wave
+        rate = 44100
+        total = int(rate * 2.6)
+        buf = [0.0] * total
+        for t0, freq, dur, amp in ((0.0, 523.25, 1.2, 0.9), (0.42, 392.0, 1.8, 0.75)):
+            start = int(rate * t0)
+            for i in range(int(rate * dur)):
+                t = i / rate
+                env = min(1.0, t / 0.06) * math.exp(-t * 2.1)
+                v = math.sin(2 * math.pi * freq * t) + 0.10 * math.sin(4 * math.pi * freq * t)
+                if start + i < total:
+                    buf[start + i] += amp * v * env
+        peak = max(abs(x) for x in buf) or 1.0
+        gain = 4200.0 / peak                    # 比沟通提示音 (6500) 再轻一些
+        fade = int(rate * 0.08)
         frames = bytearray()
         for i, x in enumerate(buf):
             f = min(1.0, (total - 1 - i) / fade)

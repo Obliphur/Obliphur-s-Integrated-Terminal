@@ -19,7 +19,7 @@ import toast
 from config import COLORS
 from i18n import tr
 from netproxy import WHITE_DOMAINS, WHITE_APPS, BLACK_DOMAINS, BLACK_APPS
-from .widgets import Modal, wrap_label
+from .widgets import Modal, ScrollArea, wrap_label
 
 _DAYS = context_collect.HISTORY_WINDOWS
 
@@ -47,8 +47,12 @@ def _host(url: str) -> str:
 def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
     """API 配置: 最多 ai_assist.MAX_CONFIGS 份, 每份独立 (名字 / 预设 / Base URL / 型号 / Key).
     返回 True 表示保存过."""
-    dlg = Modal(parent, tr("AI 模型设置"), width=600, height=660)
-    b = dlg.body
+    # 字段多, 小屏 / 大字号下一屏放不下: 内容放进滚动区, 免得下面的字段被切掉、点不到
+    height = int(min(780, max(460, parent.winfo_screenheight() * 0.85)))
+    dlg = Modal(parent, tr("AI 模型设置"), width=620, height=height)
+    area = ScrollArea(dlg.body, height=max(240, height - 150))
+    area.pack(fill="both", expand=True)
+    b = area.inner
     state = {"cid": "", "family": "other", "loading": False}
     small = config.font("small")
 
@@ -291,6 +295,8 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
     ttk.Button(dlg.buttons, text=tr("保存"), style="Accent.TButton", command=save).pack(
         side="right")
     ttk.Button(dlg.buttons, text=tr("取消"), command=dlg.cancel).pack(side="right", padx=(0, 8))
+    area.bind_children()          # 动态加进来的控件也要能滚
+    area.scroll_to_top()
     dlg.wait()
     return saved["ok"]
 

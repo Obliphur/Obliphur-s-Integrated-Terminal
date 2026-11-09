@@ -83,6 +83,23 @@ python main.py
 obliphur_terminal/
 ├─ main.py               入口: 申请管理员权限, 启动界面
 ├─ app.py                主窗口: 各页面, 计时器, 联网页, 定时检查, 关闭 / 重置
+├─ app_base.py           共用的小工具 (提示音文件, 放音频, 疲劳文案)
+├─ app_comm.py           沟通 / 分享 / 联合行动 (BreakTimerApp 的 CommMixin)
+├─ app_sync.py           设备同步 / 更新 (BreakTimerApp 的 SyncMixin)
+├─ app_contract.py       合约的检查 / 开始 / 结束 (ContractMixin)
+├─ app_contract_media.py 合约的录像 / 合并发送 / 违规 / 禁网 (ContractMediaMixin)
+├─ app_timer.py          计时器状态机 / 专注存档恢复 / 结算 / 每秒 tick (TimerMixin)
+├─ app_break.py          休息与结转 / 奖励休息 / 休息后提醒 (BreakMixin)
+├─ app_daily.py          睡觉 / 外出与行为模式 / 提前启动 (DailyMixin)
+├─ app_net.py            联网页: 额度 / 申请 / 借贷 / 断网检查 (NetMixin)
+├─ app_achievements.py   成就的判定 / 同步 / 弹窗 (AchievementsMixin)
+├─ app_prescript.py      指令 (Prescript): 抽取 / 计时 / 刻痕 (PrescriptMixin)
+├─ app_update.py         开发者模式跟着母端 / 更新中继 (UpdateMixin)
+├─ app_settings.py       设置生效 / 冷静期 / 关闭程序 / 日志与徽章 (SettingsMixin)
+├─ app_window.py         窗口 / 主题 / 布局 / 重建界面 / 页面切换 (WindowMixin)
+├─ app_pages.py          日程跟随 / 闹钟 / 规则弹窗 / 侧边栏 / 计时页 UI (PagesMixin)
+├─ app_guard.py          窗口事件与心跳 / 窗口守护 / 自启 / 网卡与应用规则检查 (GuardMixin)
+├─ app_misc.py           配置期 / 快捷方式 / 重置页 (MiscMixin)
 ├─ config.py             默认数值, 主题与字号, 版本号 (APP_VERSION)
 ├─ themes/               界面主题 (classic / claude / urban_will; 都市之意的字体和预览都在里面)
 ├─ settings_manager.py   设置项定义, 48 小时冷静期, 配置期
@@ -138,7 +155,8 @@ obliphur_terminal/
 │  └─ widgets.py         共用控件 (滚动区, 开关, 加载页 …)
 ├─ defaults/             空模板 (名单, AI 配置)
 ├─ sounds/               违反合约的警报
-├─ MECHANICS.md          各机制的具体规则与数值
+├─ MECHANICS.md          机制说明的目录 (每节一个文件, 在 docs/mechanics/)
+├─ docs/mechanics/       各机制的具体规则与数值 (一节一个文件)
 ├─ for_developer.md      开发约定
 └─ Android version/      Android 版
    └─ app/src/main/java/com/obliphur/oit/

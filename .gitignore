@@ -54,7 +54,7 @@ release.bat
 release_token.txt
 
 # 测试 / 检查 / 预览类的本地工具和它们的输出: 只在本机用, 不提交
-_*_check.py
+# (*_check.py 不再忽略: 带断言的检查脚本要进仓库, 并在 CLAUDE.md 的命令表里登记)
 _ui_debug.py
 themes/urban_will/preview.py
 themes/urban_will/screenshots/
@@ -62,6 +62,7 @@ themes/urban_will/screenshots/
 screenshots/
 _review/*.png
 .tmp_ps_shots/
+_tmp_desc/
 
 # 封闭测试 (closedtest.py): 开发环境的沙盒数据, 不提交
 closed_test/
