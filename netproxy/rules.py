@@ -528,7 +528,7 @@ class RuleStore:
             return True, "claude-code"      # Claude Code: 名单 / 代理-全屏蔽都放行
         if online:
             return True, "online"           # 联网会话中全部放行 (MECHANICS 4.1)
-        if exe and (exe in self.exempt or self._grace_new(exe)):
+        if exe and (exe in self.exempt or self._grace_new(exe, mode)):
             return True, "prestart"         # 提前启动的程序 / 空窗期新启动的程序: 代理-全屏蔽和名单都不拦 (MECHANICS 20)
         if mode == MODE_BLOCKALL:
             return False, "blockall"
@@ -566,10 +566,12 @@ class RuleStore:
             return False
 
 
-    def _grace_new(self, exe: str) -> bool:
-        """空窗期里: 开始时没在运行的程序 (新启动的) 先放行, 不等下一秒的标记."""
+    def _grace_new(self, exe: str, mode: str = MODE_BLACKLIST) -> bool:
+        """空窗期里: 开始时没在运行的程序 (新启动的) 先放行, 不等下一秒的标记. 黑名单里的程序不放 (禁令不能借空窗期绕过)."""
         base = self.open_new_except
-        return base is not None and exe not in base
+        if base is None or exe in base:
+            return False
+        return not (mode == MODE_BLACKLIST and exe in self._snap[BLACK_APPS])
 
     def in_white_apps(self, exe: str) -> bool:
         """这个程序在 Rules 页的应用白名单里吗 (提前启动不去标记 / 藏它们, MECHANICS 20)."""
@@ -581,7 +583,7 @@ class RuleStore:
         (允许?, 原因). 原因: rest / whitelist-app / not-whitelisted / blacklist-app / default-allow"""
         exe = norm_app(exe) if exe else ""
         s = self._snap
-        if exe and (exe in self.exempt or self._grace_new(exe)):
+        if exe and (exe in self.exempt or self._grace_new(exe, mode)):
             return True, "prestart"         # 提前启动的程序 / 空窗期新启动的程序: 不看名单 (MECHANICS 20)
         if rest:
             return True, "rest"
@@ -715,6 +717,12 @@ def _selftest():
     assert rs.app_allowed("javaw.exe", False, MODE_WHITELIST) == (True, "prestart")
     assert rs.decide("zhihu.com", "chrome.exe", False, MODE_WHITELIST) == (False, "offline")
     assert rs.app_allowed("chrome.exe", False, MODE_WHITELIST) == (False, "not-whitelisted")
+    rs.lists[BLACK_APPS] = ["game.exe"]
+    rs._rebuild()
+    assert rs.app_allowed("game.exe", False, MODE_BLACKLIST) == (False, "blacklist-app"), "被禁的不能借空窗期绕过"
+    assert rs.app_allowed("other.exe", False, MODE_BLACKLIST) == (True, "prestart")
+    rs.lists[BLACK_APPS] = []
+    rs._rebuild()
     rs.open_new_except = None
 
     # 删除一律要等

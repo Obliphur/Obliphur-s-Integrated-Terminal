@@ -295,7 +295,9 @@ class BreakTimerApp:
         self.ach = achievements.AchievementStore(self.dm.data_dir, lambda: achievements.guess_first_launch(
             self.dm.data_dir, self.settings.setup_until, list(self.dm.study_data) + list(self.dm.hour_days)))
         self.ach.blocked = lambda: self.dm.resetting
-        self.prestart.keep = lambda exe: self.net.proxy.rules.in_white_apps(exe)   # 应用白名单里的不去标记 / 藏
+        # 不去标记 / 藏: 黑名单模式下所有程序 (没被禁的本来就放行, 被禁的不能借提前启动绕过); 其它模式只管应用白名单里的
+        self.prestart.keep = lambda exe: (getattr(config, "FILTER_MODE", "blacklist") == "blacklist"
+                                          or self.net.proxy.rules.in_white_apps(exe))
         self.prestart_list = prestart.ListStore(self.dm.data_dir)   # 提前启动清单的添加 / 删除 (MECHANICS 20)
         self.prestart_list.blocked = lambda: self.dm.resetting
         # 合约 (MECHANICS 18): 先把盖过设置的项套上, 断网方式才会一开始就对
