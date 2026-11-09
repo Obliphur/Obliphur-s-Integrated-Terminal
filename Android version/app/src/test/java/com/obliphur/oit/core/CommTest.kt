@@ -19,6 +19,7 @@ import java.time.LocalDateTime
 class CommTest {
     init {
         Comm.charDelay = 0.0
+        Comm.charDelayCjk = 0.0
         BuiltinPersonas.CLAUDIA_LEGACIES = listOf(TEST_OLD_CLAUDIA, TEST_SCHEDULE_PERSONA)       // 现在内置的升级链是空的: 测试里放两份假的旧版
         BuiltinPersonas.ROUTINE_LEGACIES = listOf(TEST_OLD_ROUTINE)
     }          // 其余用例里对方的回复马上显示 (打字延时见 typingDelay)
@@ -745,12 +746,23 @@ class CommTest {
         assertEquals("", a.send("你好")); wait(a)
         pull(a, b)
         assertEquals(listOf("你好", "A 的回复"), b.visible().map { it.text })
-        // 请求日志 / 选模型 (聊天和 AI 名单建议用同一份模型设置)
+        // 请求日志 / AI 配置 (最多 10 份, 每个 AI 各选一份)
         val logText = File(td, "a/comm.log").readText()
         assertTrue("REQ user start" in logText && "REQ user ok" in logText)
-        a.setModel("m-x")
-        assertEquals("m-x", a.modelProfile().model)
-        assertTrue("m-x" in com.obliphur.oit.ai.Ai.modelsFor(a.modelProfile()))
+        val ac = a.aiConfig()
+        val cid = ac.addConfig("备用")
+        assertTrue(cid.isNotEmpty())
+        assertEquals("备用", ac.configName(cid))
+        assertTrue(ac.renameConfig(cid, "备用2"))
+        ac.save()
+        a.setConfig(cid)
+        assertEquals(cid, a.currentConfig())
+        assertEquals("备用2", a.currentConfigName())
+        assertEquals(cid, AiConfig(File(td, "a/ai_config.json")).configFor(a.personaName()))
+        a.setConfig("custom")
+        assertEquals("custom", a.currentConfig())
+        while (ac.addConfig("x").isNotEmpty()) {}
+        assertEquals("最多 10 份配置", com.obliphur.oit.ai.Ai.MAX_CONFIGS.toLong(), ac.order.size.toLong())
         assertEquals(1, b.unread)
         pull(a, b)
         assertEquals(2, b.visible().size)               // 同一条不会并两次
@@ -914,6 +926,48 @@ class CommTest {
         follow.clear()
         c.set(splitSend = true)
         assertEquals(true, c.syncDoc()["split"])
+        // 第二条调用要等第一条真的显示出来: 打字延时没走完时先不调用; 被藏起来也算显示过
+        val td2 = Files.createTempDirectory("oit").toFile()
+        val ch = comm(File(td2, "d").also { it.mkdirs() }, File(td2, "p"))
+        ch.importPersona("小夏.txt", "你是小夏".byteInputStream())
+        ch.set(persona = "小夏.txt")
+        ch.snapshot = { CommSnap("idle") }
+        Comm.charDelay = 0.1
+        Comm.charDelayCjk = 0.2
+        try {
+            script.clear(); follow.clear()
+            script.add("你好"); follow.add("接着")
+            val nh = followCalls.size
+            assertEquals("", ch.send("在吗")); wait(ch)
+            assertEquals(listOf("me"), ch.visible().map { it.role })
+            assertEquals("第一条还在打字: 不调用第二次", nh.toLong(), followCalls.size.toLong())
+            clock = clock.plusNanos(500_000_000)
+            ch.tick()
+            assertEquals("你好", ch.visible().last().text)
+            clock = clock.plusNanos(600_000_000)
+            for (i in 0 until 200) {
+                Thread.sleep(10); ch.tick()
+                if (followCalls.size > nh) break
+            }
+            assertEquals("第一条显示出来之后才调用第二次", (nh + 1).toLong(), followCalls.size.toLong())
+            ch.flush()
+            val hd = comm(File(td2, "h").also { it.mkdirs() }, File(td2, "p"))
+            hd.importPersona("小夏2.txt", "你是小夏".byteInputStream())
+            hd.set(persona = "小夏2.txt")
+            hd.snapshot = { CommSnap("focus") }
+            script.clear(); follow.clear()
+            script.add("藏着的"); follow.add("跟着")
+            val nx = followCalls.size
+            assertEquals("", hd.send("在吗"))
+            hd.blocked = { "专注中" }
+            wait(hd)
+            assertEquals(listOf("me"), hd.visible().map { it.role })
+            assertEquals("第一条被藏起来也算显示过: 第二次照常调用", (nx + 1).toLong(), followCalls.size.toLong())
+            hd.flush()
+        } finally {
+            Comm.charDelay = 0.0
+            Comm.charDelayCjk = 0.0
+        }
         // IX: [waiting for reply]:[N] — 所有 [] 都不显示; N 分钟内用户没回复, 对方可以追问一次
         val pr = CommText.prefixPrompt()
         assertTrue("IX." in pr && "[waiting for reply]:[N]" in pr && "追加询问" in pr)
@@ -1576,7 +1630,7 @@ class CommTest {
         for (x in listOf(cj, cj2, cj3, cn, ca, cb)) x.flush()
     }
 
-    /** 打字延时: 文本里每个字符让对方的消息晚 0.2 s 显示, 一条一条按顺序出来, 显示之前不同步给别的设备 (对应 comm.py 自检的最后一段). */
+    /** 打字延时: 中文每字 0.2 s, 英文每字 0.1 s; 一条一条按顺序出来, 显示之前不同步给别的设备 (对应 comm.py 自检). */
     @Test
     fun typingDelay() {
         val td = Files.createTempDirectory("oit").toFile()
@@ -1585,10 +1639,12 @@ class CommTest {
         val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
         c.set(persona = "小夏.txt", splitSend = false)
         c.snapshot = { CommSnap("idle") }
-        Comm.charDelay = 0.2
+        Comm.charDelay = 0.1
+        Comm.charDelayCjk = 0.2
         try {
+            assertEquals(0.6, Comm.charDelayOf("中文ab"), 1e-9)
             script.clear(); follow.clear()
-            script.add("你好呀今天过得怎么样")                         // 10 个字 = 2 s
+            script.add("你好呀今天过得怎么样")                         // 10 个中文字 = 2 s
             assertEquals("", c.send("早"))
             wait(c)
             assertEquals(listOf("me"), c.visible().map { it.role })
@@ -1606,6 +1662,7 @@ class CommTest {
             c.flush()
         } finally {
             Comm.charDelay = 0.0
+            Comm.charDelayCjk = 0.0
         }
     }
 

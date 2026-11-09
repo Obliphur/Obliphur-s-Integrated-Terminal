@@ -38,7 +38,8 @@ class CoreTest {
         cfg.provider = "custom"
         cfg.profiles["custom"] = Profile("custom", "https://relay.example/v1", "openai", "m", "k")
         cfg.save()
-        assertEquals(setOf("relay.example"), core.apiHosts())
+        // 所有配置的地址都要放行 (聊天可能给不同 AI 用不同配置), 默认配置也在里面
+        assertTrue(core.apiHosts().containsAll(listOf("relay.example", "api.anthropic.com")))
     }
 
     @Test
@@ -273,7 +274,7 @@ class CoreTest {
     @Test
     fun sleepKindAndAutoText() {
         val dm = DataStore(tmp(), { 3600.0 }, { "Distracted" })
-        val day = LocalDate.of(2026, 10, 30)
+        val day = LocalDate.now().minusDays(2)          // 专注记录只留最近 7 天: 用最近的日期, 别被时间淘汰
         fun at(h: Int, m: Int = 0) = day.atTime(h, m)
         dm.addFocusSession("sleep", at(0), at(7, 30))
         dm.addFocusSession("study", at(9), at(11))
@@ -294,16 +295,16 @@ class CoreTest {
             assertEquals("Sleeping", dm.autoTextFor(at(3)))
             assertEquals("Distracted", dm.autoTextFor(at(8)))
             // 切换语言: 默认内容换成新语言, 同一项合并
-            dm.hourDays["2026-10-30"] = hashMapOf("1" to "睡眠", "2" to "Sleeping/学习", "3" to "分心", "4" to "读书")
+            dm.hourDays[day.toString()] = hashMapOf("1" to "睡眠", "2" to "Sleeping/学习", "3" to "分心", "4" to "读书")
             I18n.lang = "en"
             assertTrue(dm.localizeAutoTexts())
-            assertEquals(mapOf("1" to "Sleeping", "2" to "Sleeping/学习", "3" to "Distracted", "4" to "读书"), dm.hourDays["2026-10-30"])
+            assertEquals(mapOf("1" to "Sleeping", "2" to "Sleeping/学习", "3" to "Distracted", "4" to "读书"), dm.hourDays[day.toString()])
             val t = tallyItems(listOf("睡眠" to 3600.0, "Sleeping" to 3600.0, "分心/Sleeping" to 3600.0))
             assertEquals(9000.0, t["Sleeping"]!!, 1e-9)
             assertEquals(1800.0, t["Distracted"]!!, 1e-9)
             I18n.lang = "zh"
             assertTrue(dm.localizeAutoTexts())
-            assertEquals("睡眠", dm.hourDays["2026-10-30"]!!["1"])
+            assertEquals("睡眠", dm.hourDays[day.toString()]!!["1"])
         } finally {
             I18n.lang = old
         }

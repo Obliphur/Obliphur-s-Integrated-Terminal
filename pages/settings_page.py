@@ -1055,7 +1055,7 @@ class SettingsPage(tk.Frame):
             if self.var_pro_lang.get() != want:
                 self.var_pro_lang.set(want)
         prof = c.ai.profile()
-        text = f"{tr(_provider_label(c.ai.provider))} · {prof.get('model') or '—'}"
+        text = f"{c.ai.config_name()} · {prof.get('model') or '—'}"
         text += "  ✗" if self._comm_api_missing() else "  ✓"
         cfg(self.lbl_comm_api, text=text)
         self._refresh_avatars()

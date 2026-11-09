@@ -45,20 +45,46 @@ def _host(url: str) -> str:
 
 # ══════════════ 模型设置 ══════════════
 def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
-    """返回 True 表示保存过."""
-    dlg = Modal(parent, tr("AI 模型设置"), width=540, height=610)
+    """API 配置: 最多 ai_assist.MAX_CONFIGS 份, 每份独立 (名字 / 预设 / Base URL / 型号 / Key).
+    返回 True 表示保存过."""
+    dlg = Modal(parent, tr("AI 模型设置"), width=600, height=660)
     b = dlg.body
-    state = {"cur": cfg.provider, "family": ""}
+    state = {"cid": "", "family": "other", "loading": False}
+    small = config.font("small")
 
-    _label(b, tr("模型")).pack(fill="x")
-    cb_provider = ttk.Combobox(b, state="readonly",
-                               values=[_provider_label(k) for k in ai_assist.PROVIDER_ORDER])
-    cb_provider.current(ai_assist.PROVIDER_ORDER.index(cfg.provider))
-    cb_provider.pack(fill="x", pady=(2, 8))
+    _label(b, tr("配置 (最多 {n} 个)").format(n=ai_assist.MAX_CONFIGS)).pack(fill="x")
+    row = tk.Frame(b, bg=COLORS["bg"])
+    row.pack(fill="x", pady=(2, 8))
+    lb = tk.Listbox(row, height=5, exportselection=False, activestyle="none", font=config.font("body"),
+                    bg=COLORS["bg_card"], fg=COLORS["text"], selectbackground=COLORS["accent"],
+                    selectforeground=COLORS["bg"], highlightthickness=0)
+    sb = ttk.Scrollbar(row, orient="vertical", command=lb.yview)
+    lb.config(yscrollcommand=sb.set)
+    lb.pack(side="left", fill="both", expand=True)
+    sb.pack(side="left", fill="y")
+    col = tk.Frame(row, bg=COLORS["bg"])
+    col.pack(side="left", fill="y", padx=(8, 0))
+    btn_add = ttk.Button(col, text=tr("新建"), width=8)
+    btn_del = ttk.Button(col, text=tr("删除"), width=8)
+    btn_def = ttk.Button(col, text=tr("设为默认"), width=8)
+    for w in (btn_add, btn_del, btn_def):
+        w.pack(fill="x", pady=(0, 4))
+    lbl_default = _label(b, "", dim=True, small=True)
+    lbl_default.pack(fill="x", pady=(0, 6))
+
+    _label(b, tr("名称")).pack(fill="x")
+    var_name = tk.StringVar()
+    ttk.Entry(b, textvariable=var_name).pack(fill="x", pady=(2, 8))
+
+    _label(b, tr("预设")).pack(fill="x")
+    cb_preset = ttk.Combobox(b, state="readonly",
+                             values=[_provider_label(k) for k in ai_assist.PROVIDER_ORDER])
+    cb_preset.pack(fill="x", pady=(2, 8))
 
     _label(b, tr("Base URL")).pack(fill="x")
     var_url = tk.StringVar()
-    ttk.Entry(b, textvariable=var_url).pack(fill="x", pady=(2, 8))
+    ent_url = ttk.Entry(b, textvariable=var_url)
+    ent_url.pack(fill="x", pady=(2, 8))
 
     _label(b, tr("模型类型")).pack(fill="x")
     cb_family = ttk.Combobox(b, state="readonly",
@@ -89,41 +115,100 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
     note.pack(fill="x", pady=(6, 0))
     wrap_label(note, 20)
 
-    def key_of():
-        return ai_assist.PROVIDER_ORDER[cb_provider.current()]
+    def preset_key() -> str:
+        return ai_assist.PROVIDER_ORDER[max(0, cb_preset.current())]
 
     def family_of_ui() -> str:
         return state.get("family") or "other"
 
-    def store_current():
-        """把界面上的值记回 cfg(内存),切换供应商前调用."""
-        cfg.set_profile(state["cur"], base_url=var_url.get(), model=cb_model.get(),
+    def list_ids() -> list:
+        return [c["id"] for c in cfg.configs()]
+
+    def refresh_list(select: str = ""):
+        ids = list_ids()
+        lb.delete(0, "end")
+        for cid in ids:
+            name = cfg.config_name(cid)
+            if cid == cfg.provider:
+                name += tr(" (默认)")
+            lb.insert("end", name)
+        state["cid"] = select or state["cid"] or (ids[0] if ids else "")
+        if state["cid"] in ids:
+            lb.selection_clear(0, "end")
+            lb.selection_set(ids.index(state["cid"]))
+            lb.see(ids.index(state["cid"]))
+        lbl_default.config(text=tr("默认配置: {name} (规则页的 AI 建议等用它)").format(name=cfg.config_name()))
+
+    def store():
+        """把界面上的值记回 cfg (内存), 切换配置 / 保存前调用."""
+        cid = state["cid"]
+        if not cid or state["loading"]:
+            return
+        name = var_name.get().strip()
+        if name and name != cfg.config_name(cid):
+            cfg.rename_config(cid, name)
+        cfg.set_profile(cid, preset=preset_key(), base_url=var_url.get(), model=cb_model.get(),
                         api_key=var_key.get(), family=family_of_ui())
 
-    def load(k):
-        prof = cfg.profile(k)
-        fam = prof.get("family") or (k if k in ai_assist.FAMILY_PROTOCOL else "other")
-        state["family"] = fam
+    def load():
+        cid = state["cid"]
+        if not cid:
+            return
+        state["loading"] = True
+        prof = cfg.profile(cid)
+        preset = prof.get("provider") or "custom"
+        state["family"] = prof.get("family") or "other"
+        var_name.set(cfg.config_name(cid))
+        cb_preset.current(ai_assist.PROVIDER_ORDER.index(preset) if preset in ai_assist.PROVIDER_ORDER else 4)
         var_url.set(prof["base_url"])
-        cb_model.config(values=ai_assist.models_for(dict(prof, provider=k)))
+        cb_model.config(values=ai_assist.models_for(prof))
         cb_model.set(prof["model"])
-        cb_family.set(tr(ai_assist.FAMILY_LABELS[fam]))
-        cb_family.config(state="readonly" if k == "custom" else "disabled")
-        cb_proto.set(ai_assist.FAMILY_PROTOCOL[fam])
+        cb_family.set(tr(ai_assist.FAMILY_LABELS[state["family"]]))
+        cb_family.config(state="readonly" if preset == "custom" else "disabled")
+        cb_proto.set(ai_assist.FAMILY_PROTOCOL[state["family"]])
         cb_proto.config(state="disabled")                 # 协议由模型类型决定, 不再单选
+        ent_url.config(state="normal" if preset == "custom" else "readonly")
         var_key.set(prof["api_key"])
         note.config(text=(tr("请填写 Base URL 与型号,并选一个模型类型 (决定协议与缓存方式).")
                           + "\n" + tr("Gemini 类型要填官方地址, 不要用 OpenAI 兼容地址.")
-                          if k == "custom"
-                          else tr("已填入 {name} 的 Base URL.")
-                          ).format(name=_provider_label(k)) + "\n" +
-                 tr("API Key 加密保存在本机,只发往所选服务商."))
-        state["cur"] = k
+                          if preset == "custom"
+                          else tr("已填入 {name} 的 Base URL.").format(name=_provider_label(preset))
+                          ) + "\n" + tr("API Key 加密保存在本机,只发往所选服务商."))
+        state["loading"] = False
+
+    def on_pick(_e=None):
+        idx = lb.curselection()
+        ids = list_ids()
+        if not idx or idx[0] >= len(ids):
+            return
+        store()
+        state["cid"] = ids[idx[0]]
+        load()
+
+    def on_preset(_e=None):
+        k = preset_key()
+        prof = ai_assist.default_profile(k)
+        state["family"] = prof["family"]
+        var_url.set(prof["base_url"])
+        cb_family.set(tr(ai_assist.FAMILY_LABELS[state["family"]]))
+        cb_family.config(state="readonly" if k == "custom" else "disabled")
+        cb_proto.set(ai_assist.FAMILY_PROTOCOL[state["family"]])
+        cb_model.config(values=ai_assist.models_for(dict(prof, provider=k)))
+        cb_model.set(prof["model"])
+        ent_url.config(state="normal" if k == "custom" else "readonly")
+
+    def on_family(_e=None):
+        idx = cb_family.current()
+        if idx < 0:
+            return
+        state["family"] = ai_assist.FAMILIES[idx]
+        cb_proto.set(ai_assist.FAMILY_PROTOCOL[state["family"]])
 
     def fetch():
         """向服务商取模型列表 (后台线程), 填进型号下拉框."""
-        store_current()
-        prof = cfg.profile(state["cur"])
+        store()
+        cid = state["cid"]
+        prof = cfg.profile(cid)
         btn_fetch.config(state="disabled")
 
         def work():
@@ -148,28 +233,54 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
             else:
                 toast.warn(tr(res[1]))
         threading.Thread(target=work, daemon=True).start()
-    btn_fetch.config(command=fetch)
 
-    def on_provider(_e=None):
-        store_current()
-        load(key_of())
-
-    def on_family(_e=None):
-        idx = cb_family.current()
-        if idx < 0:
+    def add():
+        store()
+        cid = cfg.add_config(tr("配置 {n}").format(n=len(cfg.order) + 1))
+        if not cid:
+            toast.info(tr("最多只能有 {n} 个配置.").format(n=ai_assist.MAX_CONFIGS))
             return
-        state["family"] = ai_assist.FAMILIES[idx]
-        cb_proto.set(ai_assist.FAMILY_PROTOCOL[state["family"]])
+        refresh_list(cid)
+        load()
 
-    cb_provider.bind("<<ComboboxSelected>>", on_provider)
+    def remove():
+        store()
+        if not cfg.remove_config(state["cid"]):
+            toast.info(tr("至少要留一个配置."))
+            return
+        state["cid"] = ""
+        refresh_list()
+        load()
+
+    def make_default():
+        store()
+        if cfg.set_active(state["cid"]):
+            refresh_list(state["cid"])
+
+    lb.bind("<<ListboxSelect>>", on_pick)
+    cb_preset.bind("<<ComboboxSelected>>", on_preset)
     cb_family.bind("<<ComboboxSelected>>", on_family)
-    load(state["cur"])
+    btn_add.config(command=add)
+    btn_del.config(command=remove)
+    btn_def.config(command=make_default)
+    btn_fetch.config(command=fetch)
+    state["cid"] = cfg.config_for("") if cfg.config_for("") else (list_ids()[0] if list_ids() else "")
+    state["cid"] = state["cid"] if state["cid"] in list_ids() else (list_ids()[0] if list_ids() else "")
+    refresh_list(state["cid"])
+    load()
 
     saved = {"ok": False}
 
     def save():
-        store_current()
-        cfg.provider = state["cur"]
+        store()
+        cid = state["cid"]
+        name = var_name.get().strip()
+        if not name:
+            toast.warn(tr("名称不能为空."))
+            return
+        if not cfg.rename_config(cid, name):
+            toast.warn(tr("这个名称已经有了."))
+            return
         if cfg.save():
             saved["ok"] = True
             toast.success(tr("已保存."))
@@ -194,7 +305,7 @@ def open_suggest(parent, cfg: "ai_assist.AIConfig", rules, mode: str, on_done=No
     except ai_assist.AIError as e:
         toast.warn(tr(e.message) + " —— " + tr("请先到「模型设置」里配置."))
         return
-    provider = _provider_label(cfg.provider)
+    provider = cfg.config_name(cfg.provider)
     target = f"{provider} · {prof['model']} · {_host(prof['base_url'])}"
     title = tr("AI 建议 · 黑名单") if black else tr("AI 建议 · 白名单")
     dlg = Modal(parent, title, width=640, height=600)

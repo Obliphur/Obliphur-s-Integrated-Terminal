@@ -224,16 +224,21 @@ class PcLocal:
     # ---- 文档 ----
 
     def _ai_doc(self) -> dict:
-        """API 设置 (1.0.416): 服务商 / 模型类型 / 型号 / Key. Key 在同步通道里由配对密钥封着传,
+        """API 配置 (1.0.443): 最多 10 份命名配置 + 默认配置 + 每个 AI 用哪份. Key 在同步通道里由配对密钥封着传,
         落到对方设备后再用本机的 DPAPI 加密保存; 空 Key 不往外发 (免得未配置的设备把另一台的 Key 冲掉)."""
         cfg = self.app.comm.ai
-        out = {"provider": cfg.provider}
-        for prov, prof in cfg.profiles.items():
-            out[f"{prov}/family"] = str(prof.get("family") or "")
-            out[f"{prov}/base_url"] = str(prof.get("base_url") or "")
-            out[f"{prov}/model"] = str(prof.get("model") or "")
+        out = {"provider": cfg.provider, "order": ",".join(cfg.order)}
+        for cid in cfg.order:
+            prof = cfg.profiles[cid]
+            out[f"{cid}/preset"] = str(prof.get("preset") or "custom")
+            out[f"{cid}/family"] = str(prof.get("family") or "")
+            out[f"{cid}/base_url"] = str(prof.get("base_url") or "")
+            out[f"{cid}/model"] = str(prof.get("model") or "")
             if prof.get("api_key"):
-                out[f"{prov}/api_key"] = str(prof.get("api_key") or "")
+                out[f"{cid}/api_key"] = str(prof.get("api_key") or "")
+            out[f"names/{cid}"] = cfg.config_name(cid)
+        for persona, cid in cfg.assign.items():
+            out[f"assign/{persona}"] = cid
         return out
 
     def docs(self) -> dict:
@@ -355,22 +360,53 @@ class PcLocal:
             a.comm.apply_doc(changes)
         elif doc == "ai":
             cfg = a.comm.ai
-            allowed = ("family", "base_url", "model", "api_key")
-            for key, val in changes.items():
+            items = dict(changes)
+            order_text = items.pop("order", None)
+            active = items.pop("provider", None)
+            if isinstance(order_text, str):                 # 配置列表 (增删) 以这份为准, 再把每一项填进去
+                ids = [x for x in order_text.split(",") if x]
+                for cid in ids:
+                    if cid not in cfg.profiles:
+                        cfg.profiles[cid] = ai_assist.default_profile("custom")
+                        cfg.names.setdefault(cid, cid)
+                cfg.order = [cid for cid in ids if cid in cfg.profiles][:ai_assist.MAX_CONFIGS]
+                for cid in list(cfg.profiles):
+                    if cid not in cfg.order:
+                        cfg.profiles.pop(cid, None)
+                        cfg.names.pop(cid, None)
+                cfg.assign = {p: c for p, c in cfg.assign.items() if c in cfg.order}
+                if cfg.order and cfg.provider not in cfg.order:
+                    cfg.provider = cfg.order[0]
+            allowed = ("preset", "family", "base_url", "model", "api_key")
+            for key, val in items.items():
                 text = "" if val is None else str(val)
-                if key == "provider":
-                    if text in ai_assist.PROVIDERS:
-                        cfg.provider = text
+                if key.startswith("names/"):
+                    cid = key[len("names/"):]
+                    if cid in cfg.profiles and text:
+                        cfg.rename_config(cid, text)
                     continue
-                prov, _, field = key.partition("/")
-                if prov not in ai_assist.PROVIDERS or field not in allowed:
+                if key.startswith("assign/"):
+                    persona = key[len("assign/"):]
+                    if persona:
+                        if text:
+                            cfg.assign_config(persona, text)
+                        else:
+                            cfg.assign.pop(persona, None)
                     continue
-                if field == "family":
+                cid, _, field = key.partition("/")
+                if cid not in cfg.profiles or field not in allowed:
+                    continue
+                if field == "preset":
+                    if text not in ai_assist.PROVIDERS:
+                        continue
+                elif field == "family":
                     if text not in ai_assist.FAMILY_PROTOCOL:
                         continue
-                elif text == "" and str(cfg.profiles.get(prov, {}).get(field) or ""):
+                elif text == "" and str(cfg.profiles[cid].get(field) or ""):
                     continue          # 空值不覆盖已有的: 没配置过的设备不会把另一台的型号 / Key 冲掉
-                cfg.set_profile(prov, **{field: text})
+                cfg.set_profile(cid, **{field: text})
+            if isinstance(active, str) and active in cfg.profiles:
+                cfg.set_active(active)
             cfg.save()
         elif doc == "personas":
             try:

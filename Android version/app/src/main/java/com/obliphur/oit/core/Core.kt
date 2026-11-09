@@ -358,12 +358,14 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     fun apiHosts(): Set<String> {
         val now = System.currentTimeMillis()
         if (now - apiHostsAt < 5000) return apiHostsCache
-        val prof = comm.modelProfile()
-        val host = runCatching { java.net.URI(prof.baseUrl).host }.getOrNull()?.lowercase().orEmpty()
+        val cfg = comm.aiConfig()
+        val profs = cfg.order.mapNotNull { cfg.profiles[it] }
+        val hosts = profs.mapNotNull { runCatching { java.net.URI(it.baseUrl).host }.getOrNull()?.lowercase() }
+            .filter { it.isNotEmpty() }.toSet()
         apiHostsAt = now
-        val hosts = if (host.isEmpty()) emptySet() else setOf(host)
         // 限时网络开着, 并且由 OIT 自己搜索 (DeepSeek 等): 搜索页的域名也放行
-        apiHostsCache = if (comm.netActive() && com.obliphur.oit.ai.Ai.webLocal(prof)) hosts + com.obliphur.oit.ai.Ai.SEARCH_HOSTS else hosts
+        apiHostsCache = if (comm.netActive() && profs.any { com.obliphur.oit.ai.Ai.webLocal(it) })
+            hosts + com.obliphur.oit.ai.Ai.SEARCH_HOSTS else hosts
         return apiHostsCache
     }
     @Volatile private var apiHostsCache: Set<String> = emptySet()

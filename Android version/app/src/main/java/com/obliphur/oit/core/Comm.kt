@@ -1,6 +1,7 @@
 package com.obliphur.oit.core
 
 import com.obliphur.oit.ai.Ai
+import com.obliphur.oit.ai.AiCfg
 import com.obliphur.oit.ai.AiConfig
 import com.obliphur.oit.ai.AiError
 import com.obliphur.oit.ai.Profile
@@ -862,8 +863,23 @@ class Comm(
         val thinkLocal: ThreadLocal<Boolean> = ThreadLocal.withInitial { false }
         /** 这个线程里的请求要不要开着网络 (限时网络, 规则 XIV; 同 thinkLocal 的做法). */
         val webLocal: ThreadLocal<Boolean> = ThreadLocal.withInitial { false }
-        /** 对方发来的消息: 文本里每个字符让它晚这么多秒才显示 (像在打字; 排在前一条后面, 一条一条出来). 单元测试里设成 0. */
-        @Volatile var charDelay = 0.2
+        /** 对方发来的消息: 英文 / 数字 / 符号每个字符晚这么多秒才显示 (像在打字; 排在前一条后面, 一条一条出来). 单元测试里设成 0. */
+        @Volatile var charDelay = 0.1
+        /** 中文字符每个晚这么多秒 (Assistant 是助理, 不装打字, 见 mk). */
+        @Volatile var charDelayCjk = 0.2
+        /** 一条消息的打字延时 (秒): 中文每个 charDelayCjk, 其他每个 charDelay. */
+        fun charDelayOf(text: String): Double {
+            var cjk = 0
+            var total = 0
+            var i = 0
+            while (i < text.length) {                       // 按码点算 (和桌面版 len() 一致; 表情算一个字)
+                val cp = text.codePointAt(i)
+                total++
+                if (cp in 0x3400..0x4dbf || cp in 0x4e00..0x9fff || cp in 0xf900..0xfaff) cjk++
+                i += Character.charCount(cp)
+            }
+            return cjk * charDelayCjk + (total - cjk) * charDelay
+        }
         /** 带的聊天记录的起点一次往后挪这么多条 (不是每条都挪): 请求的开头 (前面的历史) 才能在这么多条消息里保持不变, 服务商的提示缓存才命中. */
         const val HISTORY_STEP = 10
         /** 非正在聊天的对象主动发消息: 两次请求之间至少隔这么多秒 (一个一个来, 不会同时好几个人找你). */
@@ -1145,6 +1161,7 @@ class Comm(
     internal var followDelayMs = FOLLOW_DELAY_MS      // 第二次调用等多久; 测试里设成 0
     private var followAt = 0L                          // 安排在什么时候 (毫秒, 0 = 没有)
     private var followEpoch = 0                        // 安排的时候的 epoch: 期间清空过就不发
+    private var followMsg = 0                          // 第一条回复的消息 id (0 = 没有): 等它显示出来 (打字延时走完 / 被藏起来也算) 才调用第二次
     private var nextId = 1
     /** clear() 加一: 清空之前发出的请求, 回复到了也丢掉. */
     private var epoch = 0
@@ -1379,16 +1396,24 @@ class Comm(
         }
     }
 
-    // ---- 模型 (聊天和 AI 名单建议用的是同一份模型设置) ----
-    fun modelProfile(): Profile = aiConfig().profile()
+    // ---- AI 配置 (每个 AI 各用一份; 规则页的 AI 建议用默认的那份) ----
+    fun profileFor(persona: String? = null): Profile {
+        val cfg = aiConfig()
+        return cfg.profile(cfg.configFor(persona ?: personaName()))
+    }
+
+    fun configOptions(): List<AiCfg> = aiConfig().configs()
+
+    fun currentConfig(): String = aiConfig().let { it.configFor(personaName()) }
+
+    fun currentConfigName(): String = aiConfig().let { it.configName(it.configFor(personaName())) }
 
     @Synchronized
-    fun setModel(model: String) {
-        val m = model.trim()
+    fun setConfig(id: String) {
+        if (id.isEmpty()) return
         val cfg = aiConfig()
-        val p = cfg.profile()
-        if (m.isEmpty() || m == p.model) return
-        cfg.profiles[cfg.provider] = p.copy(model = m)
+        if (id == cfg.configFor(personaName())) return
+        cfg.assignConfig(personaName(), id)
         cfg.save()
         problemAt = 0L
         changed()
@@ -1734,7 +1759,7 @@ class Comm(
         }
         val upto = batch.last().ts
         val owner = pid
-        val profile = aiConfig().profile()
+        val profile = profileFor()
         memBusy = true
         val started = System.currentTimeMillis()
         log("MEM start n=${batch.size}")
@@ -1860,7 +1885,7 @@ class Comm(
         log("OCR start bytes=${data.size}")
         Ai.imageLocal.set(Ai.ImagePart(mime, java.util.Base64.getEncoder().encodeToString(data)))
         val reply = try {
-            chatFn(aiConfig().profile(), Ai.OCR_SYSTEM, listOf("user" to Ai.OCR_USER))
+            chatFn(profileFor(), Ai.OCR_SYSTEM, listOf("user" to Ai.OCR_USER))
         } catch (e: AiError) {
             log("OCR FAIL ${(System.currentTimeMillis() - started) / 1000.0}s ${e.kind}: ${e.message}")
             throw e
@@ -2187,7 +2212,7 @@ class Comm(
         if (fresh || t - problemAt > 5000) {
             problemAt = t
             problemCache = try {
-                Ai.checkProfile(aiConfig().profile()); ""
+                Ai.checkProfile(profileFor()); ""
             } catch (e: AiError) {
                 e.message ?: "API"
             }
@@ -2209,7 +2234,7 @@ class Comm(
         if (t - aiProblemAt > 5000) {
             aiProblemAt = t
             aiProblemCache = try {
-                Ai.checkProfile(aiConfig().profile()); ""
+                Ai.checkProfile(profileFor()); ""
             } catch (e: AiError) {
                 e.message ?: "API"
             }
@@ -2254,7 +2279,7 @@ class Comm(
     @Synchronized fun setShareView(v: String) { share.view = if (v == "ai") "ai" else "me"; changed() }
 
     private fun profileProblem(): String {
-        val why = try { Ai.checkProfile(aiConfig().profile()); "" } catch (e: AiError) { e.message ?: "API" }
+        val why = try { Ai.checkProfile(profileFor()); "" } catch (e: AiError) { e.message ?: "API" }
         if (why.isNotEmpty()) return why
         return if (personaName().isEmpty()) "还没有选人设" else ""
     }
@@ -3534,9 +3559,9 @@ class Comm(
             m.hold = true
             m.late = true
             m.due = maxOf(free.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli(), messages.filter { it.hold }.maxOfOrNull { it.due } ?: 0L)
-        } else if (delay && role == "ai" && text.isNotEmpty() && charDelay > 0 && usesPrefix(personaName())) {  // 打字延时: 每个字符 charDelay 秒, 接在前一条还没显示的后面 (Assistant 是助理, 不装打字: 详细回答一等就是几分钟, 1.0.407)
+        } else if (delay && role == "ai" && text.isNotEmpty() && (charDelay > 0 || charDelayCjk > 0) && usesPrefix(personaName())) {  // 打字延时: 中文每字 0.2 s, 其他每字 0.1 s, 接在前一条还没显示的后面 (Assistant 是助理, 不装打字: 详细回答一等就是几分钟, 1.0.407)
             val base = maxOf(nowMs(), messages.filter { it.hold }.maxOfOrNull { it.due } ?: 0L)
-            m.due = base + (text.length * charDelay * 1000).toLong()
+            m.due = base + (charDelayOf(text) * 1000).toLong()
             m.hold = true
         }
         return m
@@ -3819,6 +3844,7 @@ class Comm(
     private fun cutApply(minutes: Double) {
         cutUntil = maxOf(cutUntil, nowMs() + (minutes * 60000).toLong())
         followAt = 0L
+        followMsg = 0
         again = false
         val e = java.time.Instant.ofEpochMilli(cutUntil).atZone(java.time.ZoneId.systemDefault())
         val n = now()
@@ -3899,8 +3925,9 @@ class Comm(
     private fun request(kind: String, extra: Extra? = null) {
         if (busy) { again = true; return }
         followAt = 0L                                           // 有新请求了: 排着的第二次调用取消
+        followMsg = 0
         reqTs = messages.filter { it.role == "me" }.maxOfOrNull { it.ts } ?: 0L
-        val profile = aiConfig().profile()
+        val profile = profileFor()
         var system = systemFor(personaName())
         var dynamic = memoryBlock() + jointSystemNote()
         if (userProfile.isNotBlank() && firstTurn(messages))   // 身份背景: 只在这段对话的第一轮发一次
@@ -4034,6 +4061,8 @@ class Comm(
         val drop = r.kind == "followup" && r.err.isEmpty() && !refused && (again || unanswered())
         if (drop) log("REPLY followup dropped: 等回复的时候用户又发了消息")
         if (refused) log("REPLY refused (${r.kind}): 对方回了 [refuse to reply], 不显示" + if (unanswered() || isCatchup) ", 稍后重试" else "")
+        var delivered = false
+        var deliveredId = 0
         if (r.err.isNotEmpty() || refused || drop || empty) {
             error = r.err
             if (r.kind == "love") {
@@ -4057,6 +4086,8 @@ class Comm(
             saveCfg()
             r.extra?.let { add("sys", it.body, it.api) }
             val m = add("ai", text, if (text != r.reply.trim()) r.reply.trim() else "")
+            delivered = true
+            deliveredId = m.id
             if (jointAns.isNotEmpty() && !drop) jointAnswer(jointAns)
             if (accept && !drop) loveConfirm("user")              // 记入系统: 以后每次请求都会告诉对方 (长期记忆里的「系统记录」)
             if (r.kind == "love") loveSet(inv = nowMs())          // 告白发出去了: 聊天页上等用户点 接受 / 拒绝
@@ -4077,16 +4108,19 @@ class Comm(
                     trigger("user", CATCHUP_BODY)
                 }
             }
-        } else if (splitSend && usesPrefix(personaName()) && r.kind in FOLLOW_KINDS && r.err.isEmpty() && !refused && aiProblem().isEmpty() && leader()) {
-            // 规则 VIII: 隔一会儿再调用第二次, 让对方可以把话分开说. 等多久按模型类型来 (Ai.cachePlan):
-            // Anthropic / OpenAI / Gemini 的缓存随第一次请求就写好, 不用等; DeepSeek 的磁盘缓存异步, 等几秒; 中转照旧等.
+        } else if (delivered && splitSend && usesPrefix(personaName()) && r.kind in FOLLOW_KINDS && profileProblem().isEmpty() && cutBlock().isEmpty() && leader()) {
+            // 规则 VIII: 第一条回复**明确显示出来之后** (被藏起来也算显示过), 隔一会儿再调用第二次, 让对方可以把话分开说
+            // (只想说一次就 [refuse to reply], 什么也不留下). 第一条被拒绝 / 为空 / 出错时不存在"第一条消息", 不调用.
+            // 等多久按模型类型来 (Ai.cachePlan): Anthropic / OpenAI / Gemini 的缓存随第一次请求就写好, 不用等;
+            // DeepSeek 的磁盘缓存异步, 等几秒; 中转照旧等.
             val delay = when {
                 followDelayMs == 0L -> 0L
                 followDelayMs != FOLLOW_DELAY_MS -> followDelayMs
-                else -> (Ai.cachePlan(aiConfig().profile()).delay * 1000).toLong()
+                else -> (Ai.cachePlan(profileFor()).delay * 1000).toLong()
             }
             followAt = nowMs() + delay
             followEpoch = epoch
+            followMsg = deliveredId
         }
     }
 
@@ -4104,7 +4138,9 @@ class Comm(
         shareTick()
         shiftTick()
         sfTick()
-        if (busy || aiProblem().isNotEmpty() || !leader()) return
+        if (busy || !leader()) return
+        if (checkFollow()) return                          // 第二条: 第一条被藏起来 (用户专注 / 睡眠中) 也算显示过
+        if (aiProblem().isNotEmpty()) return
         jointPending?.let { (body, at) ->
             jointPending = null
             if (nowMs() - at <= JOINT_SPEAK_WAIT * 1000L && !hardBlock()) { trigger("joint_reply", body); return }
@@ -4132,7 +4168,6 @@ class Comm(
                 return
             }
         }
-        if (checkFollow()) return
         if (checkNet()) return
         if (checkWait()) return
         checkProactive(t, snap)
@@ -4140,12 +4175,22 @@ class Comm(
         memKick()
     }
 
+    /** 第二条调用要等第一条真的到了用户眼前: 还在打字延时里 (hold + due 没到) 就先等; 被藏起来 (专注 / 睡眠中) 也算显示过. */
+    private fun followReady(): Boolean {
+        val m = messages.firstOrNull { it.id == followMsg } ?: return true
+        if (!m.hold) return true
+        if (m.late || blocked().isNotEmpty()) return true     // 对方在专注 / 用户不能用沟通: 先藏起来也算显示过
+        return m.due <= nowMs()
+    }
+
     /** 规则 VIII 的第二次调用到点了 (延时见 FOLLOW_DELAY_MS). */
     private fun checkFollow(): Boolean {
         if (followAt == 0L || nowMs() < followAt) return false
+        if (!followReady()) { followAt = nowMs() + 500; return false }      // 第一条还没显示出来 (打字动画): 等它出来再调用
         followAt = 0L
+        followMsg = 0
         if (followEpoch != epoch || again || busy) return false
-        if (!splitSend || !usesPrefix(personaName()) || aiProblem().isNotEmpty() || !leader() || hardBlock()) return false
+        if (!splitSend || !usesPrefix(personaName()) || profileProblem().isNotEmpty() || cutBlock().isNotEmpty() || !leader() || hardBlock()) return false
         if (unanswered()) return false                     // 等的时候用户又说了: 由那条新消息自己触发回复
         trigger("followup", FOLLOW_BODY)
         return true
@@ -4416,7 +4461,7 @@ class Comm(
 
     /** 为非正在聊天的对象发一次请求 (主动发 / 追问); 回复由 tick 收进它的聊天记录, 没有第二次调用, 也没有要资料的轮次. */
     private fun bgRequest(ctx: BgCtx, kind: String, body: String) {
-        val profile = aiConfig().profile()
+        val profile = profileFor(ctx.name)
         var system = systemFor(ctx.name)
         var dynamic = memoryBlock(ctx.st)
         if (userProfile.isNotBlank() && firstTurn(ctx.st.messages))   // 身份背景: 只在这段对话的第一轮发一次
@@ -4484,6 +4529,7 @@ class Comm(
         clearTs = maxOf(nowMs(), lastTs)
         messages.clear(); unread = 0; retryAt = 0; retryN = 0; error = ""; catchup = false
         followAt = 0L                                       // 清空前排着的第二次调用不要了
+        followMsg = 0
         memAuto = ""; memUpto = 0L; memTs = nowMs()        // 记忆卡跟着聊天一起清掉
         love = Love(ts = nowMs()); msgGone = 0               // 新对话: 亲密关系 / 告白 / 信息条数也跟着记忆卡一起清掉 (别的设备一起)
         if (joint != null && joint?.pid == pid) { joint = null; jointTs = maxOf(nowMs(), jointTs + 1) }      // 新对话: 联合行动也作废 (别的设备一起); 清空的是别的对象的聊天 (联合行动属于另一个对象) 不动它 (1.0.404)

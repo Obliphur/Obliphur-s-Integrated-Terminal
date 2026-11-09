@@ -399,7 +399,7 @@ class RulesPage(tk.Frame):
     def _ai(self):
         if self._ai_cfg is None:
             import ai_assist
-            self._ai_cfg = ai_assist.AIConfig(
+            self._ai_cfg = ai_assist.shared_config(
                 os.path.join(os.path.dirname(self.rules.path), "ai_config.json"),
                 template=ai_assist.DEFAULT_TEMPLATE)
         return self._ai_cfg

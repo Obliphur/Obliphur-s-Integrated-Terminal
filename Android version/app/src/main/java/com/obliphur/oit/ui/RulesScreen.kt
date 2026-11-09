@@ -3,6 +3,7 @@ package com.obliphur.oit.ui
 import android.content.Intent
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -18,6 +19,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -41,6 +44,7 @@ import com.obliphur.oit.OitApp
 import com.obliphur.oit.ai.Ai
 import com.obliphur.oit.ai.AiConfig
 import com.obliphur.oit.ai.AiError
+import com.obliphur.oit.ai.Profile
 import com.obliphur.oit.core.Fmt
 import com.obliphur.oit.core.RuleKeys
 import com.obliphur.oit.core.RuleResult
@@ -432,19 +436,69 @@ private fun aiConfig() = AiConfig(File(OitApp.instance.core.dir, "ai_config.json
 @Composable
 fun AiSettingsDialog(onDismiss: () -> Unit) {
     val o = LocalOit.current
+    val core = OitApp.instance.core
     val cfg = remember { aiConfig() }
-    var provider by remember { mutableStateOf(cfg.provider) }
-    val edits = remember { HashMap(cfg.profiles) }
-    var p by remember { mutableStateOf(cfg.profile()) }
-    fun switch(k: String) {
-        edits[provider] = p; provider = k; p = edits[k]!!
+    var sel by remember { mutableStateOf(cfg.configFor("").ifEmpty { cfg.order.firstOrNull() ?: "" }) }
+    var name by remember { mutableStateOf(cfg.configName(sel)) }
+    var p by remember { mutableStateOf(cfg.profile(sel)) }
+    var pickOpen by remember { mutableStateOf(false) }
+    fun store() {
+        if (sel in cfg.profiles) {
+            cfg.putProfile(sel, p)
+            if (name.trim().isNotEmpty()) cfg.names[sel] = name.trim()
+        }
+    }
+    fun load(id: String) {
+        store()
+        sel = id
+        p = cfg.profile(id)
+        name = cfg.configName(id)
     }
     AlertDialog(onDismissRequest = onDismiss, containerColor = o.bg,
-        title = { Text(tr("⚙ 模型")) },
+        title = { Text(tr("AI 模型设置")) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Segmented(Ai.PROVIDERS.map { it.key to tr(it.value.label) }, provider) { switch(it) }
-                val custom = provider == "custom"
+                Text(tr("配置 (最多 {n} 个)", "n" to Ai.MAX_CONFIGS), color = o.dim, fontSize = 12.sp)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.weight(1f)) {
+                        TextButton({ pickOpen = true }) { Text("▾  " + cfg.configName(sel), color = o.text) }
+                        DropdownMenu(pickOpen, { pickOpen = false }) {
+                            for (c in cfg.configs()) DropdownMenuItem(
+                                text = { Text(c.name + if (c.id == cfg.provider) tr(" (默认)") else "", color = if (c.id == sel) o.accent else o.text) },
+                                onClick = { pickOpen = false; load(c.id) })
+                        }
+                    }
+                    PlainButton(tr("新建")) {
+                        store()
+                        val id = cfg.addConfig(tr("配置 {n}", "n" to (cfg.order.size + 1)))
+                        if (id.isEmpty()) core.toast(tr("最多只能有 {n} 个配置.", "n" to Ai.MAX_CONFIGS), "warn")
+                        else { cfg.save(); load(id) }
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    PlainButton(tr("设为默认")) {
+                        store()
+                        if (cfg.setActive(sel)) cfg.save()
+                    }
+                    PlainButton(tr("删除")) {
+                        if (cfg.removeConfig(sel)) {
+                            cfg.save()
+                            val nid = cfg.order.firstOrNull() ?: ""
+                            sel = nid
+                            p = cfg.profile(nid)
+                            name = cfg.configName(nid)
+                        } else core.toast(tr("至少要留一个配置."), "warn")
+                    }
+                    Text(tr("默认配置: {name} (规则页的 AI 建议等用它)", "name" to cfg.configName()), color = o.dim, fontSize = 11.sp)
+                }
+                OutlinedTextField(name, { name = it }, label = { Text(tr("名称")) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                Text(tr("预设"), color = o.dim, fontSize = 12.sp)
+                Segmented(Ai.PROVIDERS.map { it.key to tr(it.value.label) }, p.preset.ifEmpty { p.provider }) { k ->
+                    val def = Ai.PROVIDERS[k]!!
+                    p = Profile(k, def.baseUrl, def.protocol, def.model, p.apiKey,
+                        if (k in Ai.FAMILY_PROTOCOL) k else "other", k)
+                }
+                val custom = p.preset.ifEmpty { p.provider } == "custom"
                 OutlinedTextField(p.baseUrl, { if (custom) p = p.copy(baseUrl = it) }, enabled = custom,
                     label = { Text("Base URL") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 if (custom) {
@@ -457,9 +511,7 @@ fun AiSettingsDialog(onDismiss: () -> Unit) {
                 }
                 OutlinedTextField(p.model, { p = p.copy(model = it) }, label = { Text(tr("模型")) }, singleLine = true,
                     modifier = Modifier.fillMaxWidth())
-                ModelPicker({ p.copy(provider = provider) }) { p = p.copy(model = it) }
-                val models = Ai.PROVIDERS[provider]!!.models
-                if (models.isNotEmpty()) Segmented(models.map { it to it }, p.model) { p = p.copy(model = it) }
+                ModelPicker({ p.copy(provider = p.preset.ifEmpty { p.provider }) }) { p = p.copy(model = it) }
                 OutlinedTextField(p.apiKey, { p = p.copy(apiKey = it.trim()) }, label = { Text("API Key") }, singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth())
@@ -467,15 +519,22 @@ fun AiSettingsDialog(onDismiss: () -> Unit) {
         },
         confirmButton = {
             TextButton({
-                edits[provider] = p
-                cfg.provider = provider
-                cfg.profiles.putAll(edits)
-                if (cfg.save()) OitApp.instance.core.toast(tr("已保存."), "success")
+                store()
+                if (name.trim().isEmpty()) {
+                    core.toast(tr("名称不能为空."), "warn")
+                    return@TextButton
+                }
+                if (!cfg.renameConfig(sel, name)) {
+                    core.toast(tr("这个名称已经有了."), "warn")
+                    return@TextButton
+                }
+                if (cfg.save()) core.toast(tr("已保存."), "success")
                 onDismiss()
             }) { Text(tr("保存"), color = o.accent) }
         },
         dismissButton = { TextButton(onDismiss) { Text(tr("取消"), color = o.dim) } })
 }
+
 
 @Composable
 fun AiSuggestDialog(mode: String, onDismiss: () -> Unit) {
@@ -498,7 +557,7 @@ fun AiSuggestDialog(mode: String, onDismiss: () -> Unit) {
                 when (step) {
                     "consent" -> {
                         ModelPicker({ aiConfig().profile() }) { m ->
-                            val c = aiConfig(); c.profiles[c.provider] = c.profile().copy(model = m); c.save()
+                            val c = aiConfig(); c.putProfile(c.provider, c.profile().copy(model = m)); c.save()
                         }
                         Text(tr("将采集: 已安装的应用 (名称与包名), 所选天数内各应用的使用时长, 以及本次运行通过 OIT 查询过的域名和次数. 采集结果只在内存里, 发送前可以预览和修改."), color = o.text)
                         Text(tr("回看天数"), color = o.dim)

@@ -3,6 +3,7 @@ package com.obliphur.oit.sync
 import com.obliphur.oit.OitApp
 import com.obliphur.oit.ai.Ai
 import com.obliphur.oit.ai.AiConfig
+import com.obliphur.oit.ai.Profile
 import com.obliphur.oit.core.Fmt
 import com.obliphur.oit.core.I18n
 import com.obliphur.oit.core.Kind
@@ -196,18 +197,23 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
         else v?.toString() ?: ""
     }
 
-    /** API 设置 (1.0.416): 服务商 / 模型类型 / 型号 / Key. Key 在同步通道里由配对密钥封着传,
+    /** API 配置 (1.0.443): 最多 10 份命名配置 + 默认配置 + 每个 AI 用哪份. Key 在同步通道里由配对密钥封着传,
      *  落到对方设备后再用本机的 Keystore 加密保存; 空 Key 不往外发 (免得未配置的设备把另一台的 Key 冲掉). */
     private fun aiDoc(): Map<String, Any?> {
         val cfg = AiConfig(java.io.File(core.dir, "ai_config.json"))
         val out = LinkedHashMap<String, Any?>()
         out["provider"] = cfg.provider
-        for ((prov, p) in cfg.profiles) {
-            out["$prov/family"] = p.family
-            out["$prov/base_url"] = p.baseUrl
-            out["$prov/model"] = p.model
-            if (p.apiKey.isNotEmpty()) out["$prov/api_key"] = p.apiKey
+        out["order"] = cfg.order.joinToString(",")
+        for (id in cfg.order) {
+            val p = cfg.profiles[id] ?: continue
+            out["$id/preset"] = p.preset
+            out["$id/family"] = p.family
+            out["$id/base_url"] = p.baseUrl
+            out["$id/model"] = p.model
+            if (p.apiKey.isNotEmpty()) out["$id/api_key"] = p.apiKey
+            out["names/$id"] = cfg.configName(id)
         }
+        for ((persona, id) in cfg.assign) out["assign/$persona"] = id
         return out
     }
 
@@ -313,32 +319,53 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
             "prescript" -> core.prescript.syncApply(changes)
             "ai" -> {
                 val cfg = AiConfig(java.io.File(core.dir, "ai_config.json"))
-                var dirty = false
-                for ((key, v) in changes) {
+                val items = LinkedHashMap(changes)
+                val orderText = items.remove("order")?.toString() ?: ""
+                val active = items.remove("provider")?.toString() ?: ""
+                if ("order" in changes) {                    // 配置列表 (增删) 以这份为准, 再把每一项填进去
+                    val ids = orderText.split(",").filter { it.isNotEmpty() }
+                    for (id in ids) if (id !in cfg.profiles) {
+                        cfg.profiles[id] = Profile("custom", "", "openai", "", "", "other", "custom")
+                        cfg.names.putIfAbsent(id, id)
+                    }
+                    cfg.order.clear()
+                    cfg.order.addAll(ids.filter { it in cfg.profiles }.take(Ai.MAX_CONFIGS))
+                    for (id in cfg.profiles.keys.toList()) {
+                        if (id !in cfg.order) { cfg.profiles.remove(id); cfg.names.remove(id) }
+                    }
+                    cfg.assign.entries.removeAll { it.value !in cfg.order }
+                    if (cfg.order.isNotEmpty() && cfg.provider !in cfg.order) cfg.provider = cfg.order.first()
+                }
+                for ((key, v) in items) {
                     val text = v?.toString() ?: ""
-                    if (key == "provider") {
-                        if (text in Ai.PROVIDERS) { cfg.provider = text; dirty = true }
+                    if (key.startsWith("names/")) {
+                        val id = key.removePrefix("names/")
+                        if (id in cfg.profiles && text.isNotEmpty()) cfg.renameConfig(id, text)
                         continue
                     }
-                    val prov = key.substringBefore('/')
-                    val field = key.substringAfter('/', "")
-                    if (prov !in Ai.PROVIDERS) continue
-                    val cur = cfg.profiles[prov] ?: continue
-                    val next = when (field) {
-                        "family" -> {
-                            // 预设服务商的类型固定是它自己 (同 AiConfig / setProfile), 只有自定义才听同步的
-                            val fam = if (prov in Ai.FAMILY_PROTOCOL) prov else text
-                            if (fam in Ai.FAMILY_PROTOCOL) cur.copy(family = fam, protocol = Ai.FAMILY_PROTOCOL[fam]!!) else cur
+                    if (key.startsWith("assign/")) {
+                        val persona = key.removePrefix("assign/")
+                        if (persona.isNotEmpty()) {
+                            if (text.isEmpty()) cfg.assign.remove(persona) else cfg.assignConfig(persona, text)
                         }
+                        continue
+                    }
+                    val id = key.substringBefore('/')
+                    val field = key.substringAfter('/', "")
+                    val cur = cfg.profiles[id] ?: continue
+                    val next = when (field) {
+                        "preset" -> if (text in Ai.PROVIDERS) cur.copy(preset = text) else cur
+                        "family" -> if (text in Ai.FAMILY_PROTOCOL) cur.copy(family = text, protocol = Ai.FAMILY_PROTOCOL[text]!!) else cur
                         // 空值不覆盖已有的: 没配置过的设备不会把另一台的型号 / Key 冲掉
                         "base_url" -> if (text.isEmpty() && cur.baseUrl.isNotEmpty()) cur else cur.copy(baseUrl = text)
                         "model" -> if (text.isEmpty() && cur.model.isNotEmpty()) cur else cur.copy(model = text)
                         "api_key" -> if (text.isEmpty() && cur.apiKey.isNotEmpty()) cur else cur.copy(apiKey = text)
                         else -> cur
                     }
-                    if (next != cur) { cfg.profiles[prov] = next; dirty = true }
+                    if (next != cur) cfg.putProfile(id, next)
                 }
-                if (dirty) cfg.save()
+                if (active in cfg.profiles) cfg.setActive(active)
+                cfg.save()
             }
             "comm" -> core.comm.applyDoc(changes)
             "personas" -> {

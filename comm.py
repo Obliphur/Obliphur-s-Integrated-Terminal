@@ -102,7 +102,16 @@ CATCHUP_BODY = (CATCHUP_TAG + " 你上一条回复发出的时候, 用户又发�
                 "请现在回复这些新消息 (不要重复上一条回复的内容); 如果仍然不方便, 返回" + REFUSE + ".")
 FOLLOW_DELAY = 3.0                    # 规则 VIII 的第二次调用先等这么久 (秒): 服务商的提示缓存是异步落盘的 (DeepSeek 说"几秒"),
                                       # 紧跟着调用常常赶不上, 白付一次全量历史; 隔几秒再发, 第二次的前缀才能命中
-CHAR_DELAY = 0.2                      # 对方发来的消息: 文本里每个字符让它晚这么多秒才显示 (像在打字; 排在前一条后面, 一条一条出来)
+CHAR_DELAY = 0.1                      # 对方发来的消息: 英文 / 数字 / 符号每个字符晚这么多秒才显示 (像在打字; 排在前一条后面)
+CHAR_DELAY_CJK = 0.2                  # 中文字符每个晚这么多秒 (Assistant 是助理, 不装打字, 见 _mk)
+_CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+
+
+def char_delay(text: str) -> float:
+    """一条消息的打字延时 (秒): 中文每个 0.2, 其他每个 0.1."""
+    s = str(text or "")
+    n = len(_CJK_RE.findall(s))
+    return n * CHAR_DELAY_CJK + (len(s) - n) * CHAR_DELAY
 RETRY_GAP = 10 * 60                   # 对方不方便回复时, 多久再把消息交给模型
 RETRY_MAX = 12
 HISTORY_SENT = 400                    # 每次请求最多带多少条聊天记录 (1.0.394 起本地存 600 条, 带的还是最近 400 条): 原话全带上, 量由下面的字数兜底
@@ -1308,6 +1317,7 @@ class Comm:
         self.follow_delay = FOLLOW_DELAY   # 第二次调用等多久 (秒); 自检里设成 0
         self._follow_at = 0           # 第二次调用安排在什么时候 (毫秒, 0 = 没有)
         self._follow_epoch = 0        # 安排的时候的 _epoch: 期间清空过就不发
+        self._follow_msg = ""         # 第一条回复的消息 id: 等它显示出来 (打字延时走完 / 被藏起来也算) 才调用第二次
         self._next_id = 1
         self._last_ts = 0
         self._seg_sig = None          # 人设文件的 (名字, 修改时间, 大小): 变了才重新读日程
@@ -1514,12 +1524,24 @@ class Comm:
         except OSError:
             pass
 
-    # ---- 模型 (聊天和 AI 名单建议用的是同一份模型设置) ----
-    def model_options(self) -> list:
-        return ai_assist.models_for(self.ai.profile())
+    # ---- AI 配置 (每个 AI 各用一份; 规则页的 AI 建议用默认的那份) ----
+    def profile(self, persona: str = None) -> dict:
+        """这个人设现在用的 API 配置的接口参数."""
+        return self.ai.profile(self.ai.config_for(persona or self.persona_name()))
 
-    def current_model(self) -> str:
-        return self.ai.profile().get("model") or ""
+    def config_options(self) -> list:
+        """沟通页下拉框: [{"id", "name", "model"}]."""
+        return self.ai.configs()
+
+    def current_config(self) -> str:
+        return self.ai.config_for(self.persona_name())
+
+    def set_config(self, cid: str):
+        if not cid or cid == self.current_config():
+            return
+        self.ai.assign_config(self.persona_name(), cid)
+        self.ai.save()
+        self._changed()
 
     def ocr_image(self, path: str) -> str:
         """识别字体 (沟通页 🖼): 让模型把这张图片上的文字读出来, 返回文字 (没有文字 = ""). 阻塞, 要放在后台线程里调; 失败抛 AIError.
@@ -1534,20 +1556,12 @@ class Comm:
         started = time.monotonic()
         self.log(f"OCR start bytes={len(data)}")
         try:
-            text = ai_assist.ocr_image(self.ai.profile(), data, timeout=CHAT_TIMEOUT, chat=self.chat_fn)
+            text = ai_assist.ocr_image(self.profile(), data, timeout=CHAT_TIMEOUT, chat=self.chat_fn)
         except ai_assist.AIError as e:
             self.log(f"OCR FAIL {time.monotonic() - started:.1f}s {e.kind}: {e.message}")
             raise
         self.log(f"OCR ok {time.monotonic() - started:.1f}s chars={len(text)}")
         return text
-
-    def set_model(self, model: str):
-        model = str(model or "").strip()
-        if not model or model == self.current_model():
-            return
-        self.ai.set_profile(self.ai.provider, model=model)
-        self.ai.save()
-        self._changed()
 
     def _write_loop(self):
         while True:
@@ -2405,7 +2419,7 @@ class Comm:
     def _profile_problem(self) -> str:
         """API / 人设没配置好的原因 ("" = 可以)."""
         try:
-            ai_assist.check_profile(self.ai.profile())
+            ai_assist.check_profile(self.profile())
         except ai_assist.AIError as e:
             return e.message
         if not self.persona_name():
@@ -3095,9 +3109,9 @@ class Comm:
             m["hold"] = True
             m["late"] = True
             m["due"] = max([int(free.timestamp() * 1000)] + [int(x.get("due") or 0) for x in self.messages if x.get("hold")])
-        elif delay and role == "ai" and text and CHAR_DELAY > 0 and uses_prefix(self.persona_name()):      # 打字延时: 每个字符 CHAR_DELAY 秒, 接在前一条还没显示的后面 (Assistant 是助理, 不装打字: 详细回答一等就是几分钟, 1.0.407)
+        elif delay and role == "ai" and text and (CHAR_DELAY > 0 or CHAR_DELAY_CJK > 0) and uses_prefix(self.persona_name()):   # 打字延时: 中文每字 0.2 s, 其他每字 0.1 s, 接在前一条还没显示的后面 (Assistant 是助理, 不装打字: 详细回答一等就是几分钟, 1.0.407)
             base = max([self._ms()] + [int(x.get("due") or 0) for x in self.messages if x.get("hold")])
-            m["due"] = base + int(len(text) * CHAR_DELAY * 1000)
+            m["due"] = base + int(char_delay(text) * 1000)
             m["hold"] = True
         return m
 
@@ -3407,6 +3421,7 @@ class Comm:
         until = self._ms() + int(float(minutes) * 60000)
         self.cfg["cut_until"] = max(int(self.cfg.get("cut_until") or 0), until)
         self._follow_at = 0
+        self._follow_msg = ""
         self._again = False
         end = datetime.fromtimestamp(int(self.cfg["cut_until"]) / 1000)
         body = f"{CUT_TAG} 你在 {self.now():%H:%M} 切断了与用户的谈话 {minutes:g} 分钟, 到 {end:%H:%M} 才会恢复; 这段时间用户发不了消息, 你也不会被调用."
@@ -3539,7 +3554,7 @@ class Comm:
         body = (f"当前时间: {stamp(self.now())}\n\n对方的人设 (只用来判断哪些内容该长期保留 / 不能清除, 不要抄进记忆卡):\n{persona}\n\n现有记忆卡:\n" + memory + "\n\n最近一段对话 (每条前面是发送时间):\n" + "\n".join(lines))
         upto = int(batch[-1].get("ts") or 0)
         pid = self.pid
-        profile = self.ai.profile()
+        profile = self.profile()
         self._mem_busy = True
         started = time.monotonic()
         self.log(f"MEM start n={len(batch)}")
@@ -3588,8 +3603,9 @@ class Comm:
             self._again = True
             return
         self._follow_at = 0                                # 有新请求了: 排着的第二次调用取消 (用户又说了 / 主动发 / 重试)
+        self._follow_msg = ""
         self._req_ts = max([int(m.get("ts") or 0) for m in self.messages if m.get("role") == "me"] or [0])
-        profile = self.ai.profile()
+        profile = self.profile()
         system = persona_system(self.personas, self.persona_name(), self.split_on())
         dynamic = self.memory_block() + self.joint_system_note()
         who = str(self.cfg.get("user_profile") or "").strip()[:MAX_PROFILE]
@@ -3764,6 +3780,7 @@ class Comm:
             self.log("REPLY followup dropped: 等回复的时候用户又发了消息")
         if refused:
             self.log(f"REPLY refused ({kind}): 对方回了 [refuse to reply], 不显示" + (", 稍后重试" if self.unanswered() or catchup else ""))
+        delivered = False
         if err or refused or drop or empty:
             self.error = err
             if kind == "love":
@@ -3796,6 +3813,7 @@ class Comm:
             if extra:
                 self._add("sys", extra[0], extra[1])
             m = self._add("ai", text, reply.strip() if text != reply.strip() else "")
+            delivered = True
             if joint_ans and not drop:
                 self._joint_answer(joint_ans)
             if accept and not drop:
@@ -3824,22 +3842,38 @@ class Comm:
                 elif self._newer_me(self._req_ts):          # 回复显示了, 但用户在等的时候又发了消息 (请求里没带上): 补问一次, 不然这几条没人回
                     self.log(f"CATCHUP ({kind}): 等回复的时候用户又发了消息, 补问一次")
                     self._trigger("user", CATCHUP_BODY)
-        elif kind in FOLLOW_KINDS and self.split_on() and uses_prefix(self.persona_name()) and not err and not refused and not self._ai_problem() and self.leader():
-            # 规则 VIII: 隔一会儿再调用第二次, 让对方可以把话分开说 (只想说一次就 [refuse to reply], 什么也不留下).
+        elif delivered and kind in FOLLOW_KINDS and self.split_on() and uses_prefix(self.persona_name()) and not self._profile_problem() and not self.cut_block() and self.leader():
+            # 规则 VIII: 第一条回复**明确显示出来之后** (被藏起来也算显示过), 隔一会儿再调用第二次, 让对方可以把话分开说
+            # (只想说一次就 [refuse to reply], 什么也不留下). 第一条被拒绝 / 为空 / 出错时不存在"第一条消息", 不调用.
             # 等多久按模型类型来 (ai_assist.cache_plan): Anthropic / OpenAI / Gemini 的缓存随第一次请求就写好, 不用等;
             # DeepSeek 的磁盘缓存是异步写的, 紧跟着发会赶不上, 等几秒; 中转 / 本地模型照旧等.
-            delay = follow_delay(self.ai.profile(), self.follow_delay)
+            delay = follow_delay(self.profile(), self.follow_delay)
             self._follow_at = self._ms() + int(delay * 1000)
             self._follow_epoch = self._epoch
+            self._follow_msg = m["id"]
+
+    def _follow_ready(self) -> bool:
+        """第二条调用要等第一条真的到了用户眼前: 还在打字延时里 (hold + due 没到) 就先等;
+        被藏起来 (专注 / 睡眠中, hold 但没有 due 或已经到期) 也算显示过."""
+        m = next((x for x in self.messages if x.get("id") == self._follow_msg), None)
+        if m is None or not m.get("hold"):
+            return True
+        if m.get("late") or self.blocked():          # 对方在专注 / 用户不能用沟通: 先藏起来也算显示过
+            return True
+        return int(m.get("due") or 0) <= self._ms()
 
     def _check_follow(self) -> bool:
         """规则 VIII 的第二次调用到点了 (延时见 FOLLOW_DELAY)."""
         if not self._follow_at or self._ms() < self._follow_at:
             return False
+        if not self._follow_ready():                      # 第一条还没显示出来 (打字动画): 等它出来再调用
+            self._follow_at = self._ms() + 500
+            return False
         self._follow_at = 0
+        self._follow_msg = ""
         if self._follow_epoch != self._epoch or self._again or self.busy:
             return False
-        if not self.split_on() or not uses_prefix(self.persona_name()) or self._ai_problem() or not self.leader() or self.hard_block():
+        if not self.split_on() or not uses_prefix(self.persona_name()) or self._profile_problem() or self.cut_block() or not self.leader() or self.hard_block():
             return False
         if self.unanswered():                             # 等的时候用户又说了: 由那条新消息自己触发回复
             return False
@@ -3868,7 +3902,11 @@ class Comm:
         self._share_tick()
         self._shift_tick()
         self._sf_tick()
-        if self.busy or self._ai_problem() or not self.leader():
+        if self.busy or not self.leader():
+            return
+        if self._check_follow():                       # 第二条: 第一条被藏起来 (用户专注 / 睡眠中) 也算显示过
+            return
+        if self._ai_problem():
             return
         pend, self._joint_pending = self._joint_pending, None
         if pend and self._ms() - pend[1] <= JOINT_SPEAK_WAIT * 1000 and not self.hard_block():
@@ -3895,8 +3933,6 @@ class Comm:
                 self._trigger("retry", f"现在是 {stamp(now)}. 用户之前发来的消息你还没有回复, 请现在一次性处理并回复; "
                                        f"如果仍然不方便, 返回{REFUSE}.")
                 return
-        if self._check_follow():
-            return
         if self._check_net():
             return
         if self._check_wait():
@@ -3967,7 +4003,7 @@ class Comm:
     def _bg_request(self, ctx, kind: str, body: str):
         """为非正在聊天的对象发一次请求 (主动发 / 追问); 回复由 tick 收进它的聊天记录, 没有第二次调用, 也没有要资料的轮次."""
         pid, st = ctx["pid"], ctx["st"]
-        profile = self.ai.profile()
+        profile = self.profile(ctx["name"])
         system = persona_system(self.personas, ctx["name"], self.split_on())
         system += self.memory_block_of(ctx["st"])
         who = str(self.cfg.get("user_profile") or "").strip()[:MAX_PROFILE]
@@ -5099,6 +5135,7 @@ class Comm:
         self.unread = 0
         self._epoch += 1
         self._follow_at = 0                # 清空前排着的第二次调用不要了
+        self._follow_msg = ""
         self.error = ""
         self._catchup = False
         self.cfg["retry"] = {}
@@ -5198,8 +5235,8 @@ def _selftest():
     globals()["CLAUDIA_LEGACIES"] = (TEST_OLD_CLAUDIA, TEST_SCHEDULE_PERSONA)       # 现在内置的升级链是空的: 自测里放两份假的旧版
     globals()["ROUTINE_LEGACIES"] = (TEST_OLD_ROUTINE,)
 
-    global FOLLOW_DELAY, CHAR_DELAY
-    CHAR_DELAY = 0.0              # 自检里回复马上显示 (测打字延时的用例自己设回非 0)
+    global FOLLOW_DELAY, CHAR_DELAY, CHAR_DELAY_CJK
+    CHAR_DELAY = CHAR_DELAY_CJK = 0.0              # 自检里回复马上显示 (测打字延时的用例自己设回非 0)
     FOLLOW_DELAY = 0.0            # 自检不等这 3 秒 (测延时的用例自己设回非 0)
 
     td = tempfile.mkdtemp()
@@ -5521,13 +5558,21 @@ def _selftest():
     co = Comm(old_dir, old_personas, now=lambda: clock[0], chat_fn=fake)
     assert "Assistant.txt" in list_personas(old_personas) and "Claudia.txt" not in list_personas(old_personas)
     co.flush()
-    # 请求日志 / 选模型 / 等待提示
+    # 请求日志 / 配置 (最多 10 份, 每个 AI 各选一份) / 等待提示
     logp = os.path.join(data, "comm.log")
     assert os.path.exists(logp) and "REQ user start" in open(logp, encoding="utf-8").read()
     assert "REQ user ok" in open(logp, encoding="utf-8").read() and "k1" not in open(logp, encoding="utf-8").read()
-    c.set_model("m-x")
-    assert c.current_model() == "m-x" and "m-x" in c.model_options()
-    assert ai_assist.AIConfig(c.ai.path).profile()["model"] == "m-x", "选的模型存进了模型设置"
+    cid = c.ai.add_config("备用")
+    assert cid and c.ai.config_name(cid) == "备用" and c.ai.profile(cid)["provider"] == "custom"
+    assert c.ai.rename_config(cid, "备用2") and c.ai.config_name(cid) == "备用2"
+    c.set_config(cid)                                     # 小夏.txt 单独用 "备用2"
+    assert c.current_config() == cid and c.profile()["config_id"] == cid
+    assert ai_assist.AIConfig(c.ai.path).config_for("小夏.txt") == cid, "每个 AI 用的配置存盘了"
+    c.set_config("deepseek")
+    assert c.current_config() == "deepseek"
+    while c.ai.add_config("x"):
+        pass
+    assert len(c.ai.order) == ai_assist.MAX_CONFIGS, "最多 10 份配置"
     assert not hasattr(c, "waiting_text"), "不再提示 'API 还没有回应'"
     # ---- 聊天对象: 每个对象各自的聊天记录, 切换, 旧记录迁移 ----
     dm_dir = os.path.join(td, "multi")
@@ -6038,6 +6083,54 @@ def _selftest():
             break
     assert len(follow_calls) == n_d + 1, "到点后才发第二次"
     cd.flush()
+    # 第二条调用要等第一条真的显示出来: 打字延时没走完时先不调用 (被藏起来也算显示过)
+    CHAR_DELAY, CHAR_DELAY_CJK = 0.1, 0.2
+    os.makedirs(os.path.join(td, "fhold"))
+    ch = Comm(os.path.join(td, "fhold"), folder, now=lambda: clock[0], chat_fn=fake)
+    ch.ai.set_profile("deepseek", api_key="k")
+    ch.set_cfg(persona="小夏.txt")
+    ch.snapshot = lambda: {"state": "idle"}
+    ch.follow_delay = 0
+    n_h = len(follow_calls)
+    script.append("你好")                                    # 2 个中文字 = 0.4 s 打字
+    follow.append("接着")
+    assert ch.send("在吗") == ""
+    wait(ch)
+    assert [m["text"] for m in ch.visible()] == ["在吗"] and len(follow_calls) == n_h, "第一条还在打字: 不调用第二次"
+    clock[0] += timedelta(seconds=0.5)
+    ch.tick()                                               # 打字走完, 第一条显示出来
+    assert ch.visible()[-1]["text"] == "你好"
+    clock[0] += timedelta(seconds=0.6)                      # 越过推迟的 500 ms
+    for _ in range(200):
+        time.sleep(0.01)
+        ch.tick()
+        if len(follow_calls) > n_h:
+            break
+    assert len(follow_calls) == n_h + 1, "第一条显示出来之后才调用第二次"
+    ch.flush()
+    os.makedirs(os.path.join(td, "fhidden"))
+    ch2 = Comm(os.path.join(td, "fhidden"), folder, now=lambda: clock[0], chat_fn=fake)
+    ch2.ai.set_profile("deepseek", api_key="k")
+    ch2.set_cfg(persona="小夏.txt")
+    ch2.snapshot = lambda: {"state": "focus"}               # 用户专注中: 消息先藏起来
+    hidden = {"on": False}
+    ch2.blocked = lambda: "专注中" if hidden["on"] else ""
+    ch2.follow_delay = 0
+    n_x = len(follow_calls)
+    script.append("藏着的")
+    follow.append("跟着")
+    ch2.send("在吗")
+    hidden["on"] = True
+    wait(ch2)
+    clock[0] += timedelta(seconds=1)
+    for _ in range(200):
+        time.sleep(0.01)
+        ch2.tick()
+        if len(follow_calls) > n_x:
+            break
+    assert len(follow_calls) == n_x + 1, "第一条被藏起来也算显示过: 第二次照常调用"
+    ch2.flush()
+    CHAR_DELAY = CHAR_DELAY_CJK = 0.0
     # 分条发的开关: 关着时不调用第二次, 前置 prompt 里也没有第 VIII 条; 开关随设备同步
     cu.set_cfg(split_send=False)
     assert "\nVIII." not in prefix_prompt(False) and "\nVIII." in prefix_prompt(True) and not cu.split_on()
@@ -7385,8 +7478,9 @@ def _selftest():
     for x in (cl0, cl, cl2):
         x.flush()
 
-    # ---- 打字延时: 文本里每个字符让对方的消息晚 0.2 s 显示, 一条一条按顺序出来, 显示之前不同步给别的设备 ----
-    CHAR_DELAY = 0.2
+    # ---- 打字延时: 中文每字 0.2 s, 英文每字 0.1 s; 一条一条按顺序出来, 显示之前不同步给别的设备 ----
+    CHAR_DELAY, CHAR_DELAY_CJK = 0.1, 0.2
+    assert char_delay("中文ab") == 0.2 * 2 + 0.1 * 2 and char_delay("") == 0
     os.makedirs(os.path.join(td, "dd"))
     cd = Comm(os.path.join(td, "dd"), folder, now=lambda: clock[0], chat_fn=fake)
     cd.ai.set_profile("deepseek", api_key="k")
@@ -7419,6 +7513,8 @@ def _selftest():
     clock[0] += timedelta(seconds=0.5)
     cd.tick()
     assert cd.visible()[-1]["text"] == "四五"
+    me1 = cd._add("ai", "hello")                       # 5 个英文字母 = 0.5 s
+    assert me1["due"] - cd._ms() == 500, "英文每字 0.1 s"
     # 名字是 Assistant 的人设不延时 (1.0.407): 详细回答动辄几百字, 每字 0.2 s 会让回复晚几分钟才出现
     os.makedirs(os.path.join(td, "dd2"))
     adp = os.path.join(td, "ad_personas")
@@ -7435,7 +7531,7 @@ def _selftest():
     wait(cda)
     assert [m["role"] for m in cda.visible()] == ["me", "ai"] and not any(m.get("hold") for m in cda.messages), "Assistant: 回复马上显示, 不等打字延时"
     cda.flush()
-    CHAR_DELAY = 0.0
+    CHAR_DELAY = CHAR_DELAY_CJK = 0.0
     cd.flush()
 
     # ---- 日程文件 (routine, 1.0.355): Claudia + Claudia_routine 是默认人设 ----

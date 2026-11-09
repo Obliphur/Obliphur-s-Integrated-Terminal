@@ -148,8 +148,16 @@ fun CommScreen(go: (String) -> Unit) {
                         onClick = { whoOpen = false; comm.set(persona = name) })
                 }
             }
-            // 模型: 和 AI 名单建议用同一份模型设置, 选了两边都生效
-            ModelPicker({ comm.modelProfile() }) { comm.setModel(it) }
+            // AI 配置: 每个聊天对象各选一份 (在 设置 → 沟通 → API 里建 / 改, 最多 10 份)
+            var cfgOpen by remember { mutableStateOf(false) }
+            Box {
+                TextButton({ cfgOpen = true }) { Text("▾  " + comm.currentConfigName().ifEmpty { "—" }, color = o.dim, fontSize = 13.sp) }
+                androidx.compose.material3.DropdownMenu(cfgOpen, { cfgOpen = false }) {
+                    for (c in comm.configOptions()) androidx.compose.material3.DropdownMenuItem(
+                        text = { Text(c.name, color = if (c.id == comm.currentConfig()) o.accent else o.text) },
+                        onClick = { cfgOpen = false; comm.setConfig(c.id) })
+                }
+            }
             TextButton({ if (comm.messages.isNotEmpty()) askClear = true }) { Text(tr("清空"), color = o.dim) }
         }
         // 对方现在在做什么 (按人设日程; 没有选人设时不显示): 小圆点的颜色跟着状态变
@@ -453,8 +461,9 @@ fun CommSettings() {
             PlainButton(tr("设置")) { apiDialog = true }
         }
         val cfg = comm.aiConfig()
-        val ok = runCatching { Ai.checkProfile(cfg.profile()) }.isSuccess
-        Text("${tr(Ai.PROVIDERS[cfg.provider]?.label ?: "")} · ${cfg.profile().model.ifEmpty { "—" }}  ${if (ok) "✓" else "✗"}",
+        val p = cfg.profile()
+        val ok = runCatching { Ai.checkProfile(p) }.isSuccess
+        Text("${cfg.configName()} · ${p.model.ifEmpty { "—" }}  ${if (ok) "✓" else "✗"}",
             color = o.text, fontSize = 13.sp, modifier = Modifier.padding(top = 6.dp))
     }
 

@@ -63,14 +63,12 @@ class CommPage(tk.Frame):
         self.lbl_other_dot.pack(side="left")
         self.lbl_other = tk.Label(self.other_row, text="", bg=bg, fg=COLORS["text_dim"], font=config.font("small"), anchor="w")
         self.lbl_other.pack(side="left", padx=(4, 0))
-        # 模型: 和 AI 名单建议用同一份模型设置, 选了两边都生效
-        self.var_model = tk.StringVar()
-        self.cb_model = ttk.Combobox(hdr, textvariable=self.var_model, width=22)
-        self.cb_model.pack(side="right", padx=(0, 8))
-        self.cb_model.bind("<<ComboboxSelected>>", lambda _e: self._pick_model())
-        self.cb_model.bind("<Return>", lambda _e: self._pick_model())
-        self.btn_models = ttk.Button(hdr, text="↻", width=3, command=self._fetch_models)
-        self.btn_models.pack(side="right", padx=(0, 2))
+        # AI 配置: 每个聊天对象各用一份 (在 设置 → 沟通 → API 里建 / 改)
+        self.var_cfg = tk.StringVar()
+        self._cfg_ids = []
+        self.cb_cfg = ttk.Combobox(hdr, textvariable=self.var_cfg, state="readonly", width=18)
+        self.cb_cfg.pack(side="right", padx=(0, 8))
+        self.cb_cfg.bind("<<ComboboxSelected>>", lambda _e: self._pick_config())
 
         self.area = ScrollArea(self, height=300, bg=bg)
         self.area.pack(fill="both", expand=True, padx=26, pady=(4, 4))
@@ -155,38 +153,12 @@ class CommPage(tk.Frame):
             self.refresh(force=True)
             self.entry.focus_set()
 
-    def _pick_model(self):
-        self.comm.set_model(self.var_model.get())
-
-    def _fetch_models(self):
-        """向服务商取模型列表 (后台线程), 填进下拉框."""
-        import ai_assist
-        prof = self.comm.ai.profile()
-        self.btn_models.config(state="disabled")
-
-        def work():
-            try:
-                res = ("ok", ai_assist.list_models(prof))
-            except ai_assist.AIError as e:
-                res = ("err", e.message)
-            except Exception as e:      # noqa: BLE001
-                res = ("err", type(e).__name__)
-            try:
-                self.after(0, lambda: done(res))
-            except Exception:
-                pass
-
-        def done(res):
-            if not self.winfo_exists():
-                return
-            self.btn_models.config(state="normal")
-            if res[0] == "ok":
-                self.cb_model.config(values=res[1])
-                toast.success(tr("取到 {n} 个模型.").format(n=len(res[1])))
-            else:
-                toast.warn(tr(res[1]))
-        import threading
-        threading.Thread(target=work, daemon=True).start()
+    def _pick_config(self):
+        label = self.var_cfg.get()
+        values = list(self.cb_cfg.cget("values"))
+        idx = values.index(label) if label in values else -1
+        if 0 <= idx < len(self._cfg_ids):
+            self.comm.set_config(self._cfg_ids[idx])
 
     def _sync_status(self):
         """状态行: 不能用的原因 > 出错 (每秒看一次, 不用重画消息)."""
@@ -202,12 +174,15 @@ class CommPage(tk.Frame):
         c = self.comm
         self._resize_job = None
         self._sync_status()
-        if focus_name(self.cb_model) not in (str(self.cb_model), "popdown"):          # 正在选模型 (下拉框开着) 时不动它
-            options = c.model_options()
-            if list(self.cb_model.cget("values")) != options:
-                self.cb_model.config(values=options)
-            if self.var_model.get() != c.current_model():
-                self.var_model.set(c.current_model())
+        if focus_name(self.cb_cfg) not in (str(self.cb_cfg), "popdown"):          # 正在选配置 (下拉框开着) 时不动它
+            options = c.config_options()
+            labels = [o["name"] for o in options]
+            self._cfg_ids = [o["id"] for o in options]
+            if list(self.cb_cfg.cget("values")) != labels:
+                self.cb_cfg.config(values=labels)
+            cur = next((o["name"] for o in options if o["id"] == c.current_config()), "")
+            if self.var_cfg.get() != cur:
+                self.var_cfg.set(cur)
         blocked = c.blocked()
         if not force and blocked == self._blocked and c.version == self._ver and self._sig == self._signature():
             return

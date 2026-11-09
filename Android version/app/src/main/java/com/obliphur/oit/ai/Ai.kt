@@ -48,6 +48,7 @@ object Ai {
         "deepseek" to "openai", "other" to "openai")
 
     const val MAX_ITEMS = 30
+    const val MAX_CONFIGS = 10          // 最多 10 份 API 配置 (同 desktop ai_assist.MAX_CONFIGS)
     const val MAX_EXTRA_DOMAINS = 12
     const val REASON_LEN = 30
     const val MAX_TOKENS = 1500
@@ -727,7 +728,8 @@ object Ai {
 
     /** 下拉框里的模型: 取到过的 > 预设的; 当前用着的一定在里面. */
     fun modelsFor(p: Profile): List<String> {
-        val ids = (MODEL_CACHE["${p.provider}|${p.baseUrl.trim()}"] ?: PROVIDERS[p.provider]?.models ?: emptyList()).toMutableList()
+        val preset = PROVIDERS[p.provider]?.models ?: PROVIDERS[p.family]?.models ?: emptyList()
+        val ids = (MODEL_CACHE["${p.provider}|${p.baseUrl.trim()}"] ?: preset).toMutableList()
         if (p.model.isNotBlank() && p.model !in ids) ids.add(0, p.model)
         return ids
     }
@@ -907,40 +909,193 @@ object Ai {
 }
 
 data class Profile(val provider: String, val baseUrl: String, val protocol: String, val model: String, val apiKey: String,
-                   val family: String = "")
+                   val family: String = "", val preset: String = "")
 
-/** AI 服务商配置, 保存在数据目录的 ai_config.json (API Key 加密保存). */
+data class AiCfg(val id: String, val name: String)
+
+/** AI 配置: 最多 Ai.MAX_CONFIGS 份命名的配置, 互相独立 (同 desktop ai_assist.AIConfig).
+ *  provider = 默认配置的 id (AI 名单建议等用它); assign = {人设文件名: 配置 id} (沟通页每个 AI 各选一份). */
 class AiConfig(private val file: File) {
-    var provider = "deepseek"
-    val profiles = HashMap<String, Profile>()
+    var provider = "deepseek"                       // 默认配置的 id
+    val profiles = LinkedHashMap<String, Profile>()
+    val order = ArrayList<String>()
+    val names = HashMap<String, String>()
+    val assign = HashMap<String, String>()
 
     init {
-        val raw = Store.readObj(file) ?: JSONObject()
-        if (raw.optString("provider") in Ai.PROVIDERS) provider = raw.optString("provider")
-        val ps = raw.optJSONObject("profiles") ?: JSONObject()
+        val raw = Store.readObj(file)
+        if (raw == null) defaults() else load(raw)
+        trim()
+    }
+
+    private fun defaults() {
         for ((k, def) in Ai.PROVIDERS) {
-            val o = ps.optJSONObject(k)
-            val base = if (k == "custom") o?.optString("base_url", "") ?: "" else def.baseUrl
-            // 模型类型: 预设服务商固定是它自己; 自定义供应商用存的, 老配置按协议 / 地址认一次 (同 desktop)
-            var fam = if (k in Ai.FAMILY_PROTOCOL) k else (o?.optString("family", "") ?: "")
-            if (fam !in Ai.FAMILY_PROTOCOL) fam = when {
-                o?.optString("protocol", "openai") == "anthropic" -> "claude"
-                o?.optString("protocol", "openai") == "gemini" -> "gemini"
-                base.contains("deepseek.com") -> "deepseek"
-                else -> "other"
+            val fam = if (k in Ai.FAMILY_PROTOCOL) k else "other"
+            profiles[k] = Profile(k, def.baseUrl, Ai.FAMILY_PROTOCOL[fam]!!, def.model, "", fam, k)
+            order.add(k)
+            names[k] = def.label
+        }
+        provider = if ("deepseek" in profiles) "deepseek" else (order.firstOrNull() ?: "claude")
+    }
+
+    private fun load(raw: JSONObject) {
+        val ps = raw.optJSONObject("profiles")
+        if (ps != null) {
+            val keys = ps.keys()
+            while (keys.hasNext()) {
+                val k = keys.next()
+                val o = ps.optJSONObject(k) ?: continue
+                val preset = o.optString("preset", "").takeIf { it in Ai.PROVIDERS }
+                    ?: if (k in Ai.PROVIDERS) k else "custom"
+                val def = Ai.PROVIDERS[preset] ?: Ai.PROVIDERS["custom"]!!
+                val base = if (preset == "custom") o.optString("base_url", "") else o.optString("base_url", def.baseUrl)
+                var fam = o.optString("family", "")
+                if (preset in Ai.FAMILY_PROTOCOL) fam = preset
+                if (fam !in Ai.FAMILY_PROTOCOL) fam = when {       // 老配置按协议 / 地址认一次
+                    o.optString("protocol", "openai") == "anthropic" -> "claude"
+                    o.optString("protocol", "openai") == "gemini" -> "gemini"
+                    base.contains("deepseek.com") -> "deepseek"
+                    else -> "other"
+                }
+                profiles[k] = Profile(preset, base, Ai.FAMILY_PROTOCOL[fam]!!,
+                    o.optString("model", def.model), Ai.decryptKey(o.optString("api_key", "")), fam, preset)
             }
-            profiles[k] = Profile(k, base, Ai.FAMILY_PROTOCOL[fam]!!,
-                o?.optString("model", def.model) ?: def.model,
-                Ai.decryptKey(o?.optString("api_key", "") ?: ""), fam)
+        }
+        if (profiles.isEmpty()) { defaults(); return }
+        val ord = raw.optJSONArray("order")
+        if (ord != null) {
+            for (i in 0 until ord.length()) {
+                val id = ord.optString(i, "")
+                if (id in profiles && id !in order) order.add(id)
+            }
+        } else {
+            for (k in Ai.PROVIDERS.keys) if (k in profiles) order.add(k)
+        }
+        for (k in profiles.keys) if (k !in order) order.add(k)
+        raw.optJSONObject("names")?.let { n ->
+            val ks = n.keys()
+            while (ks.hasNext()) {
+                val id = ks.next()
+                val name = n.optString(id, "").trim()
+                if (id in profiles && name.isNotEmpty()) names[id] = name
+            }
+        }
+        for (id in order) if (!names.containsKey(id)) names[id] = Ai.PROVIDERS[id]?.label ?: id
+        val active = raw.optString("provider", "").ifEmpty { raw.optString("active", "") }
+        provider = if (active in profiles) active else (order.firstOrNull() ?: provider)
+        raw.optJSONObject("assign")?.let { a ->
+            val ks = a.keys()
+            while (ks.hasNext()) {
+                val p = ks.next()
+                val id = a.optString(p, "")
+                if (id in profiles) assign[p] = id
+            }
         }
     }
 
-    fun profile(k: String = provider) = profiles[k]!!
+    private fun trim() {
+        while (order.size > Ai.MAX_CONFIGS) {
+            val victim = order.asReversed().firstOrNull { it != provider } ?: break
+            order.remove(victim)
+            profiles.remove(victim)
+            names.remove(victim)
+            assign.entries.removeAll { it.value == victim }
+        }
+        if (order.isEmpty()) defaults()
+        if (provider !in profiles) provider = order.firstOrNull() ?: "claude"
+    }
+
+    // ---- 配置列表 ----
+    fun configs(): List<AiCfg> = order.map { AiCfg(it, names[it] ?: it) }
+
+    fun configName(id: String = provider): String = names[id] ?: Ai.PROVIDERS[id]?.label ?: id
+
+    fun configFor(persona: String?): String {
+        val cid = assign[persona ?: ""]
+        if (cid != null && cid in profiles) return cid
+        return if (provider in profiles) provider else (order.firstOrNull() ?: "")
+    }
+
+    fun assignConfig(persona: String, id: String) {
+        if (persona.isEmpty() || id !in profiles) return
+        if (id == provider) assign.remove(persona) else assign[persona] = id
+    }
+
+    fun setActive(id: String): Boolean {
+        if (id !in profiles) return false
+        provider = id
+        assign.entries.removeAll { it.value == id }
+        return true
+    }
+
+    fun addConfig(name: String = ""): String {
+        if (order.size >= Ai.MAX_CONFIGS) return ""
+        var id: String
+        do {
+            id = "cfg" + kotlin.random.Random.nextInt(0x1000000).toString(16).padStart(6, '0')
+        } while (id in profiles)
+        profiles[id] = Profile("custom", "", "openai", "", "", "other", "custom")
+        order.add(id)
+        names[id] = uniqueName(name)
+        return id
+    }
+
+    private fun uniqueName(base: String): String {
+        val b = base.trim().ifEmpty { "配置" }
+        val used = names.values.toSet()
+        if (b !in used) return b
+        var n = 2
+        while ("$b $n" in used) n++
+        return "$b $n"
+    }
+
+    fun renameConfig(id: String, name: String): Boolean {
+        val nm = name.trim()
+        if (id !in profiles || nm.isEmpty() || names.any { it.key != id && it.value == nm }) return false
+        names[id] = nm
+        return true
+    }
+
+    fun removeConfig(id: String): Boolean {
+        if (id !in profiles || order.size <= 1) return false
+        order.remove(id)
+        profiles.remove(id)
+        names.remove(id)
+        assign.entries.removeAll { it.value == id }
+        if (provider == id) provider = order.first()
+        return true
+    }
+
+    // ---- 单份配置 ----
+    fun profile(k: String = provider): Profile {
+        val p = profiles[k] ?: profiles[provider] ?: Profile("custom", "", "openai", "", "", "other", "custom")
+        val preset = p.preset.ifEmpty { if (k in Ai.PROVIDERS) k else p.provider }
+        return p.copy(provider = preset)
+    }
+
+    /** 存一份配置: 预设 / 模型类型 / 协议 / Base URL 的默认值在这里统一修正 (同 desktop set_profile). */
+    fun putProfile(id: String, p: Profile) {
+        if (id !in profiles) return
+        val preset = p.preset.ifEmpty { if (id in Ai.PROVIDERS) id else "custom" }
+            .takeIf { it in Ai.PROVIDERS } ?: "custom"
+        val fam = (if (preset in Ai.FAMILY_PROTOCOL) preset else p.family)
+            .takeIf { it in Ai.FAMILY_PROTOCOL } ?: "other"
+        var base = p.baseUrl.trim()
+        if (preset != "custom" && base.isEmpty()) base = Ai.PROVIDERS[preset]!!.baseUrl
+        profiles[id] = p.copy(provider = preset, preset = preset, family = fam,
+            protocol = Ai.FAMILY_PROTOCOL[fam]!!, baseUrl = base, model = p.model.trim(),
+            apiKey = p.apiKey.trim())
+    }
 
     fun save(): Boolean {
         val ps = JSONObject()
         for ((k, p) in profiles) ps.put(k, JSONObject().put("base_url", p.baseUrl).put("protocol", p.protocol)
-            .put("model", p.model).put("family", p.family).put("api_key", runCatching { Ai.encryptKey(p.apiKey) }.getOrDefault("")))
-        return Store.write(file, JSONObject().put("provider", provider).put("profiles", ps))
+            .put("model", p.model).put("family", p.family).put("preset", p.preset)
+            .put("api_key", runCatching { Ai.encryptKey(p.apiKey) }.getOrDefault("")))
+        val ord = JSONArray()
+        order.forEach { ord.put(it) }
+        return Store.write(file, JSONObject().put("provider", provider).put("order", ord)
+            .put("names", JSONObject(names as Map<*, *>)).put("profiles", ps)
+            .put("assign", JSONObject(assign as Map<*, *>)))
     }
 }
