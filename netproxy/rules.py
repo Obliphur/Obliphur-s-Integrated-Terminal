@@ -184,7 +184,7 @@ class RuleStore:
         # 提前启动的程序 (MECHANICS 20): 不看网站 / 应用名单, 直接放行 (代理-全屏蔽照样拦).
         # 由 app.py 在提前启动期间每秒钟更新成这些程序的 exe 名.
         self.exempt = set()
-        self.open_all = False            # 提前启动的操作空窗期: 名单 / 代理-全屏蔽全部放行 (合约网络禁令除外, MECHANICS 20)
+        self.open_new_except = None      # 提前启动的操作空窗期: 不在这个集合里的程序 (开始时没在运行的) 名单 / 代理-全屏蔽都放行; None = 不开 (合约网络禁令除外, MECHANICS 20)
         # AI 接口的域名 (当前服务商 Base URL 的主机): 名单 / 代理-全屏蔽都放行 (合约网络禁令仍然优先).
         # 由 app.py 每秒按 ai_config.json 更新.
         self.api_hosts = set()
@@ -528,8 +528,8 @@ class RuleStore:
             return True, "claude-code"      # Claude Code: 名单 / 代理-全屏蔽都放行
         if online:
             return True, "online"           # 联网会话中全部放行 (MECHANICS 4.1)
-        if self.open_all or (exe and exe in self.exempt):
-            return True, "prestart"         # 提前启动的程序 / 空窗期: 代理-全屏蔽和名单都不拦 (MECHANICS 20)
+        if exe and (exe in self.exempt or self._grace_new(exe)):
+            return True, "prestart"         # 提前启动的程序 / 空窗期新启动的程序: 代理-全屏蔽和名单都不拦 (MECHANICS 20)
         if mode == MODE_BLOCKALL:
             return False, "blockall"
         if mode == MODE_WHITELIST:
@@ -566,6 +566,11 @@ class RuleStore:
             return False
 
 
+    def _grace_new(self, exe: str) -> bool:
+        """空窗期里: 开始时没在运行的程序 (新启动的) 先放行, 不等下一秒的标记."""
+        base = self.open_new_except
+        return base is not None and exe not in base
+
     def in_white_apps(self, exe: str) -> bool:
         """这个程序在 Rules 页的应用白名单里吗 (提前启动不去标记 / 藏它们, MECHANICS 20)."""
         exe = norm_app(exe) if exe else ""
@@ -576,8 +581,8 @@ class RuleStore:
         (允许?, 原因). 原因: rest / whitelist-app / not-whitelisted / blacklist-app / default-allow"""
         exe = norm_app(exe) if exe else ""
         s = self._snap
-        if self.open_all or (exe and exe in self.exempt):
-            return True, "prestart"         # 提前启动的程序 / 空窗期: 不看名单 (MECHANICS 20)
+        if exe and (exe in self.exempt or self._grace_new(exe)):
+            return True, "prestart"         # 提前启动的程序 / 空窗期新启动的程序: 不看名单 (MECHANICS 20)
         if rest:
             return True, "rest"
         if mode == MODE_WHITELIST:
@@ -705,10 +710,12 @@ def _selftest():
     assert rs.decide("notbilibili.com", "chrome.exe", True, MODE_BLACKLIST) == (True, "online")
     rs.banned_domains = set()
     rs.exempt = set()
-    rs.open_all = True                  # 空窗期: 谁都放行, 合约禁令仍然拦
+    rs.open_new_except = {"chrome.exe"}  # 空窗期: 开始时没在跑的程序放行, 原来就开着的照旧受名单管
     assert rs.decide("zhihu.com", "javaw.exe", False, MODE_WHITELIST) == (True, "prestart")
     assert rs.app_allowed("javaw.exe", False, MODE_WHITELIST) == (True, "prestart")
-    rs.open_all = False
+    assert rs.decide("zhihu.com", "chrome.exe", False, MODE_WHITELIST) == (False, "offline")
+    assert rs.app_allowed("chrome.exe", False, MODE_WHITELIST) == (False, "not-whitelisted")
+    rs.open_new_except = None
 
     # 删除一律要等
     assert rs.remove(BLACK_DOMAINS, "bilibili.com")[0] == "staged"

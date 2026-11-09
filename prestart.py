@@ -336,6 +336,7 @@ class Prestart:
         self.keep = lambda exe: False   # 用户本来就放行的程序 (应用白名单): 不标记、不藏、不静音 (除非是专门选中的)
         self._seeds = set()      # 空窗期里新启动的程序的进程
         self._baseline = None    # 开始时已在运行的进程 (空窗期里不算"新启动")
+        self.baseline_exes = None  # 开始时已在运行的程序 exe 名 (空窗期里联网 / 名单放行"新程序"用)
 
     @property
     def chosen(self) -> bool:
@@ -359,9 +360,12 @@ class Prestart:
         self._exes = {str(it.get("exe") or "").lower() for it in self.items if it.get("exe")}
         self._seeds = set()
         try:
-            self._baseline = {int(pid) for pid, _p, _e in window_guard.list_processes_full()}
+            base = window_guard.list_processes_full()
+            self._baseline = {int(pid) for pid, _p, _e in base}
+            self.baseline_exes = {exe for _pid, _p, exe in base} | _skip_exes()
         except Exception:
             self._baseline = None
+            self.baseline_exes = None
         failed = []
         for it in self.items:
             if it.get("running") or not it.get("launch"):
@@ -402,9 +406,13 @@ class Prestart:
         skip = _skip_exes()
         me = os.getpid()
         procs = [p for p in procs if not self._kept(p[2])]
+        # 开始时就有同名程序在跑的: 标记是按 exe 名认的, 标了会连原来那个一起放行 / 藏起来, 所以不标
+        old_exes = self.baseline_exes or set()
+        old_exes = old_exes - self._exes
         # 不要求有任务栏窗口: java.exe 这类后台 / 无窗口的衍生进程也算 (启动器退出后链条断了也能认到)
         for pid, _ppid, exe in procs:
-            if pid != me and pid not in self._baseline and exe and exe not in skip:
+            if pid != me and pid not in self._baseline and exe and exe not in skip \
+                    and exe not in old_exes:
                 self._seeds.add(int(pid))
 
     def step(self):
