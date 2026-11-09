@@ -2253,18 +2253,33 @@ class BreakTimerApp:
         """每秒: 跟着这些进程 (含子进程); 空窗期过了 (或提前终止) 就藏窗口 / 静音; 专注结束就放出来."""
         if self.shutting_down:
             return
-        self._behavior_tick()
-        if self.prestart.active and self.state != RUNNING:
-            self.prestart.stop()
-            self._sync_timer_buttons()
-        if self.prestart.active:
+        try:
             try:
-                self.prestart.step()
+                self._behavior_tick()
             except Exception as e:
-                self._log_window(f"ERROR    prestart {type(e).__name__}: {e}")
+                # 这一步出错也不能让整个每秒循环停掉: 停了的话提前启动藏着的窗口就再也放不出来
+                self._log_window(f"ERROR    behavior tick {type(e).__name__}: {e}")
+            if self.prestart.active and self.state != RUNNING:
+                try:
+                    self._stop_prestart()
+                except Exception as e:
+                    self._log_window(f"ERROR    prestart stop {type(e).__name__}: {e}")
+            if self.prestart.active:
+                try:
+                    self.prestart.step()
+                except Exception as e:
+                    self._log_window(f"ERROR    prestart {type(e).__name__}: {e}")
+            self._sync_prestart_exempt()
+            self._sync_prestart_button()
+        finally:
+            if not self.shutting_down:
+                self.prestart_job = self.root.after(1000, self._prestart_tick)
+
+    def _stop_prestart(self):
+        """放出来: 显示藏起来的窗口 (不抢焦点), 取消静音, 清掉放行名单; 下次专注可以重新选."""
+        self.prestart.stop()
         self._sync_prestart_exempt()
-        self._sync_prestart_button()
-        self.prestart_job = self.root.after(1000, self._prestart_tick)
+        self._sync_timer_buttons()
 
     def _sync_prestart_exempt(self):
         """提前启动的程序联网不受网站 / 应用名单和代理-全屏蔽限制 (MECHANICS 20); AI 接口的域名也例外放行."""
@@ -2411,6 +2426,9 @@ class BreakTimerApp:
 
     def _start_break(self, announce: bool = False):
         """开始休息倒计时 = 建议休息时长 + 之前暂停休息结转的时间."""
+        # 结束专注时提前启动的程序全部放出来 (不等下一秒的 tick, 也不依赖 tick 还活着)
+        if self.prestart.active:
+            self._stop_prestart()
         total = self._break_seconds()
         if total <= 0:
             toast.info(tr("剩余时间为 0,已重置."))
@@ -2761,6 +2779,10 @@ class BreakTimerApp:
         self._focus_ok = ok
         self._close_check_win()
         self.state = RUNNING
+        # 从休息接着专注 / 从别的状态恢复: 上一次专注遗留的提前启动程序放出来,
+        # 新的一段专注重新选, 重新有 3 分钟操作空窗期
+        if self.prestart.active:
+            self._stop_prestart()
         self._status(tr("专注中…"), COLORS["accent"])
         self.lbl_sub.config(text="")
         self._sync_timer_buttons()
@@ -3259,6 +3281,9 @@ class BreakTimerApp:
 
     def reset_to_idle(self):
         self.cancel_update()
+        # 回到空闲 = 这段专注 (或休息) 结束了: 提前启动的程序全部放出来
+        if getattr(self, "prestart", None) is not None and self.prestart.active:
+            self._stop_prestart()
         self.state = IDLE
         self.start_mono = None
         self.start_wall = None
@@ -5408,7 +5433,7 @@ class BreakTimerApp:
                 pass
         # 提前启动藏起来的窗口要放出来, 不然关掉 OIT 以后它们一直藏着
         try:
-            self.prestart.stop()
+            self._stop_prestart()
         except Exception:
             pass
         # 绑定了其他设备: 关闭程序就结束共享的专注, 并马上告诉其他设备 (MECHANICS 8.2)
