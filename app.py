@@ -187,6 +187,7 @@ class BreakTimerApp:
         self._bonus_job = None
         self._timer_extra = None
         self._bonus_break_active = False   # 这一次休息含领到的时间: 可在联网中暂停, 暂停不打折
+        self._break_warned = False         # 这一次休息已经提醒过"只剩 1 分钟"
         self._contract_break_active = False  # 完成合约后的第一次休息: 暂停时结转比例 1 - (1 - x) / 2
         self._break_pre = 0.0         # 这次休息里有多少秒是合约开始前积攒的 (放在最后用; 暂停时原样还回去)
         self._break_cid = None        # 这次休息是在哪个合约中开始的 (合约结束后暂停: 只还合约开始前的那部分)
@@ -1462,11 +1463,19 @@ class BreakTimerApp:
 
     def _comm_ping(self):
         """有新的聊天消息, 而用户不在沟通页面: 柔和的提示音 (后台线程里放)."""
+        self._play_soft_chime()
+
+    def _play_soft_chime(self):
         if sys.platform != "win32" or self.shutting_down:
             return
         path = config.ensure_soft_chime(os.path.join(self.dm.data_dir, "comm_ping.wav"))
         if path:
             threading.Thread(target=_play_audio_file, args=(path,), daemon=True).start()
+
+    def _break_one_min_warn(self):
+        """休息只剩 1 分钟: 柔和的提示音 + 弹窗 (弹窗不挡住倒计时)."""
+        self._play_soft_chime()
+        config.show_topmost_info("OIT", tr("休息只剩 1 分钟了"), parent=self.root)
 
     def update_comm_badge(self):
         b = getattr(self, "nav_btns", {}).get("comm")
@@ -2431,6 +2440,7 @@ class BreakTimerApp:
         if carry > 0 or bonus:
             self._set_break_carry(0)
         self.countdown_seconds = total
+        self._break_warned = False
         self.state = ON_BREAK
         self.break_start_wall = datetime.now().replace(microsecond=0)
         self.break_end_wall = self.break_start_wall + timedelta(seconds=total)
@@ -3216,6 +3226,9 @@ class BreakTimerApp:
 
         elif self.state == ON_BREAK:
             if self.countdown_seconds > 0:
+                if config.BREAK_WARN_ENABLED and not self._break_warned and self.countdown_seconds <= 60:
+                    self._break_warned = True
+                    self._break_one_min_warn()
                 m = self.countdown_seconds // 60
                 s = self.countdown_seconds % 60
                 self.lbl_time.config(text=f"{m:02d}:{s:02d}")

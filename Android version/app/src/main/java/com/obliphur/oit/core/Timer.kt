@@ -63,6 +63,8 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         private set
     /** 这次休息结束的时刻 (墙上时间, 同步用). */
     private var breakEndWall: LocalDateTime? = null
+    /** 这次休息是否已经提醒过"还剩1分钟" (每次休息只提醒一次). */
+    private var breakWarnShown = false
 
     /** 睡眠 (MECHANICS 23): 独立的一种时间, 不同于专注 / 休息 / 空闲; 开始睡眠的时刻, null = 醒着. */
     var sleepSince: LocalDateTime? = null
@@ -329,6 +331,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         autoRest = 0                             // 一起用进这次休息, 结束休息时照常折算 (6.8)
         breakEndMono = mono() + total
         state = TState.ON_BREAK
+        breakWarnShown = false
         breakStartWall = LocalDateTime.now().withNano(0)
         breakEndWall = breakStartWall!!.plusSeconds(total.toLong())
         saveState()
@@ -630,6 +633,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
             if (st != null && en != null && !st.isAfter(now)) {
                 if (en.isAfter(now)) {
                     state = TState.ON_BREAK
+                    breakWarnShown = false
                     breakStartWall = st
                     breakEndMono = mono() + secondsBetween(now, en)
                     breakEndWall = en
@@ -891,6 +895,11 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
     /** 每秒. */
     fun tick() {
         bonusExpire()
+        if (state == TState.ON_BREAK && !breakWarnShown && countdown in 0.1..60.0 && settings.str("BREAK_WARN_ENABLED") == "1") {
+            breakWarnShown = true
+            core.host.playCommSound()
+            core.toast(tr("休息还剩 1 分钟"), "info", long = true)
+        }
         if (state == TState.ON_BREAK && countdown <= 0) {
             // 设备睡眠中走完的: 按倒计时真正走完的时刻记; 这一段由开始休息的那台设备记
             if (!autoOk()) breakStartWall = null
@@ -1007,6 +1016,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
                     resetToIdle()
                 } else {
                     state = TState.ON_BREAK
+                    breakWarnShown = false
                     startWall = null
                     breakStartWall = parseIso(l.optString("break_start"))
                     breakEndWall = end

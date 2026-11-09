@@ -72,6 +72,7 @@ object Schema {
         // ---- 计时器 ----
         num("BREAK_TIME_SCALE", "休息时间倍率", "×", 1.0, 0.1, 5.0, false, 1.0, "timer"),
         num("BREAK_CARRY_RATE", "暂停休息结转比例", "×", 1.0, 0.0, 1.0, false, 0.7, "timer"),
+        Spec("BREAK_WARN_ENABLED", "休息剩余1分钟提醒", Kind.CHOICE, true, "timer", "1", choices = ONOFF),
         // ---- 联网 ----
         Spec("NET_MODE", "断网方式", Kind.CHOICE, true, "net", "proxy",
             choices = listOf("adapter" to "代理-全屏蔽 (Proxy block-all)", "proxy" to "代理 - 规则过滤")),

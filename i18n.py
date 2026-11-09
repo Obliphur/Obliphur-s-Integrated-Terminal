@@ -708,6 +708,9 @@ EN = {
     "今天借 1 分钟额度,明天要扣多少分钟.": "For each minute borrowed today, this many minutes come off tomorrow.",
     "休息倒计时中提交的普通申请,若时长不超过剩余休息时间,冷静期乘以这个倍率.": "A normal request made during a break, if it fits within the break time left, has its cooldown multiplied by this.",
     "暂停休息(或关闭程序)时,剩余休息时间按这个比例计入下一次休息.": "When a break is paused (or the program closes), this share of the remaining break goes to the next one.",
+    "休息剩余1分钟提醒": "1-minute break warning",
+    "休息倒计时只剩 1 分钟时,响一声柔和的提示音并弹窗提醒.": "When the break countdown has 1 minute left, a soft chime sounds and a popup appears.",
+    "休息只剩 1 分钟了": "Only 1 minute of break left",
     "整点过后多久之内还能补填;超时自动记为「超时自动记录内容」.": "How long after each hour you can still fill it in; after that it is filled with the auto-fill text.",
     # ---- window_guard (任务栏窗口数上限) ----
     "任务栏窗口数上限": "Taskbar window limit",

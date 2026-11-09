@@ -31,6 +31,7 @@ LOAN_RATE = 2.0              # 紧急借贷: 今日额度 +1 秒, 明天额度 -
 BREAK_COOLDOWN_RATE = 0.4    # 休息中提交的普通申请(时长不超过剩余休息): 冷静期 ×0.4
 BREAK_CARRY_RATE = 0.7       # 暂停休息(含关闭程序): 剩余休息时间 ×0.7 计入下一次休息
 BREAK_TIME_SCALE = 1.0       # 休息时间倍率: 建议休息时长 F(t) 再乘以它
+BREAK_WARN_ENABLED = 1       # 休息只剩 1 分钟时: 柔和提示音 + 弹窗
 
 # 紧急借贷借掉明天额度的这个比例以上时: 提醒增加休息时间, 并让下一次修改每日联网额度免等待
 LOAN_WARN_SHARE = 0.5
@@ -214,7 +215,7 @@ OUTING_MAX_HOURS = 24 * 7
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.452"                        # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.453"                       # 和 GitHub 上发布的版本号比较 (见 updater.py)
 UPDATE_CHECK = 1                              # 打开程序时检查更新
 FULLSCREEN_DEFAULT = 0                        # 打开程序时默认全屏 (设置 → 基本设置, 仅电脑, 不同步; F11 随时切换)
 UPDATE_AUTO = 1                               # 发现新版本时自动下载安装
@@ -461,6 +462,7 @@ DEFAULT_SETTINGS = {
     "BREAK_COOLDOWN_RATE": BREAK_COOLDOWN_RATE,
     "BREAK_CARRY_RATE": BREAK_CARRY_RATE,
     "BREAK_TIME_SCALE": BREAK_TIME_SCALE,
+    "BREAK_WARN_ENABLED": BREAK_WARN_ENABLED,
     "QUOTA_MULT_MON": QUOTA_MULT_MON,
     "QUOTA_MULT_TUE": QUOTA_MULT_TUE,
     "QUOTA_MULT_WED": QUOTA_MULT_WED,
