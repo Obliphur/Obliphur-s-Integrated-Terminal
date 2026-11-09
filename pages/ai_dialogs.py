@@ -54,46 +54,61 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
     area.pack(fill="both", expand=True)
     b = area.inner
     state = {"cid": "", "family": "other", "loading": False}
-    small = config.font("small")
 
+    # ---- 配置列表: 列表在左, 三个操作按钮在右 ----
     _label(b, tr("配置 (最多 {n} 个)").format(n=ai_assist.MAX_CONFIGS)).pack(fill="x")
     row = tk.Frame(b, bg=COLORS["bg"])
-    row.pack(fill="x", pady=(2, 8))
-    lb = tk.Listbox(row, height=5, exportselection=False, activestyle="none", font=config.font("body"),
-                    bg=COLORS["bg_card"], fg=COLORS["text"], selectbackground=COLORS["accent"],
-                    selectforeground=COLORS["bg"], highlightthickness=0)
-    sb = ttk.Scrollbar(row, orient="vertical", command=lb.yview)
+    row.pack(fill="x", pady=(4, 6))
+    list_box = tk.Frame(row, bg=COLORS["bg"])
+    list_box.pack(side="left", fill="both", expand=True)
+    lb = tk.Listbox(list_box, height=6, exportselection=False, activestyle="none",
+                    font=config.font("body"), bg=COLORS["bg_card"], fg=COLORS["text"],
+                    selectbackground=COLORS["accent"], selectforeground=COLORS["bg"],
+                    highlightthickness=0, relief="flat", borderwidth=0)
+    sb = ttk.Scrollbar(list_box, orient="vertical", command=lb.yview)
     lb.config(yscrollcommand=sb.set)
+    sb.pack(side="right", fill="y")
     lb.pack(side="left", fill="both", expand=True)
-    sb.pack(side="left", fill="y")
     col = tk.Frame(row, bg=COLORS["bg"])
-    col.pack(side="left", fill="y", padx=(8, 0))
-    btn_add = ttk.Button(col, text=tr("新建"), width=8)
-    btn_del = ttk.Button(col, text=tr("删除"), width=8)
-    btn_def = ttk.Button(col, text=tr("设为默认"), width=8)
+    col.pack(side="left", fill="y", padx=(10, 0))
+    btn_add = ttk.Button(col, text=tr("新建"), width=10)
+    btn_del = ttk.Button(col, text=tr("删除"), width=10)
+    btn_def = ttk.Button(col, text=tr("设为默认"), width=10)
     for w in (btn_add, btn_del, btn_def):
-        w.pack(fill="x", pady=(0, 4))
-    lbl_default = _label(b, "", dim=True, small=True)
-    lbl_default.pack(fill="x", pady=(0, 6))
+        w.pack(fill="x", pady=(0, 6))
+    lbl_default = _label(b, "", dim=True)
+    lbl_default.pack(fill="x")
+    tk.Frame(b, bg=COLORS["border"], height=1).pack(fill="x", pady=(10, 12))
 
-    _label(b, tr("名称")).pack(fill="x")
+    # ---- 当前配置的详情: 短字段两列, 长字段占一整行 ----
+    def two_col(left: str, right: str):
+        r = tk.Frame(b, bg=COLORS["bg"])
+        r.pack(fill="x", pady=(0, 8))
+        a, c = tk.Frame(r, bg=COLORS["bg"]), tk.Frame(r, bg=COLORS["bg"])
+        a.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        c.pack(side="left", fill="x", expand=True)
+        _label(a, left).pack(fill="x")
+        _label(c, right).pack(fill="x")
+        return a, c
+
+    box, rbox = two_col(tr("名称"), tr("预设"))
     var_name = tk.StringVar()
-    ttk.Entry(b, textvariable=var_name).pack(fill="x", pady=(2, 8))
-
-    _label(b, tr("预设")).pack(fill="x")
-    cb_preset = ttk.Combobox(b, state="readonly",
+    ttk.Entry(box, textvariable=var_name).pack(fill="x", pady=(2, 0))
+    cb_preset = ttk.Combobox(rbox, state="readonly",
                              values=[_provider_label(k) for k in ai_assist.PROVIDER_ORDER])
-    cb_preset.pack(fill="x", pady=(2, 8))
+    cb_preset.pack(fill="x", pady=(2, 0))
 
     _label(b, tr("Base URL")).pack(fill="x")
     var_url = tk.StringVar()
     ent_url = ttk.Entry(b, textvariable=var_url)
     ent_url.pack(fill="x", pady=(2, 8))
 
-    _label(b, tr("模型类型")).pack(fill="x")
-    cb_family = ttk.Combobox(b, state="readonly",
+    box, rbox = two_col(tr("模型类型"), tr("接口协议"))
+    cb_family = ttk.Combobox(box, state="readonly",
                              values=[tr(ai_assist.FAMILY_LABELS[f]) for f in ai_assist.FAMILIES])
-    cb_family.pack(fill="x", pady=(2, 8))
+    cb_family.pack(fill="x", pady=(2, 0))
+    ent_proto = ttk.Entry(rbox, state="readonly")      # 协议由模型类型决定, 只显示
+    ent_proto.pack(fill="x", pady=(2, 0))
 
     _label(b, tr("型号")).pack(fill="x")
     mrow = tk.Frame(b, bg=COLORS["bg"])
@@ -101,11 +116,7 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
     cb_model = ttk.Combobox(mrow)
     cb_model.pack(side="left", fill="x", expand=True)
     btn_fetch = ttk.Button(mrow, text=tr("获取模型列表"))
-    btn_fetch.pack(side="left", padx=(6, 0))
-
-    _label(b, tr("接口协议")).pack(fill="x")
-    cb_proto = ttk.Combobox(b, state="readonly", values=list(ai_assist.PROTOCOLS))
-    cb_proto.pack(fill="x", pady=(2, 8))
+    btn_fetch.pack(side="left", padx=(8, 0))
 
     _label(b, tr("API Key")).pack(fill="x")
     var_key = tk.StringVar()
@@ -116,8 +127,14 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
                     command=lambda: ent_key.config(show="" if var_show.get() else "•")
                     ).pack(anchor="w")
     note = _label(b, "", dim=True, small=True)
-    note.pack(fill="x", pady=(6, 0))
+    note.pack(fill="x", pady=(8, 0))
     wrap_label(note, 20)
+
+    def set_proto(value: str):
+        ent_proto.config(state="normal")
+        ent_proto.delete(0, "end")
+        ent_proto.insert(0, value)
+        ent_proto.config(state="readonly")
 
     def preset_key() -> str:
         return ai_assist.PROVIDER_ORDER[max(0, cb_preset.current())]
@@ -169,15 +186,13 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
         cb_model.set(prof["model"])
         cb_family.set(tr(ai_assist.FAMILY_LABELS[state["family"]]))
         cb_family.config(state="readonly" if preset == "custom" else "disabled")
-        cb_proto.set(ai_assist.FAMILY_PROTOCOL[state["family"]])
-        cb_proto.config(state="disabled")                 # 协议由模型类型决定, 不再单选
+        set_proto(ai_assist.FAMILY_PROTOCOL[state["family"]])
         ent_url.config(state="normal" if preset == "custom" else "readonly")
         var_key.set(prof["api_key"])
-        note.config(text=(tr("请填写 Base URL 与型号,并选一个模型类型 (决定协议与缓存方式).")
-                          + "\n" + tr("Gemini 类型要填官方地址, 不要用 OpenAI 兼容地址.")
+        note.config(text=(tr("中转站或 OpenAI 兼容接口请选「其他」; 「Gemini」只用于原生 Gemini 接口.")
                           if preset == "custom"
-                          else tr("已填入 {name} 的 Base URL.").format(name=_provider_label(preset))
-                          ) + "\n" + tr("API Key 加密保存在本机,只发往所选服务商."))
+                          else tr("已填入 {name} 的官方地址.").format(name=_provider_label(preset))
+                          ) + "\n" + tr("API Key 加密保存在本机,只会发给上面填的 Base URL."))
         state["loading"] = False
 
     def on_pick(_e=None):
@@ -196,7 +211,7 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
         var_url.set(prof["base_url"])
         cb_family.set(tr(ai_assist.FAMILY_LABELS[state["family"]]))
         cb_family.config(state="readonly" if k == "custom" else "disabled")
-        cb_proto.set(ai_assist.FAMILY_PROTOCOL[state["family"]])
+        set_proto(ai_assist.FAMILY_PROTOCOL[state["family"]])
         cb_model.config(values=ai_assist.models_for(dict(prof, provider=k)))
         cb_model.set(prof["model"])
         ent_url.config(state="normal" if k == "custom" else "readonly")
@@ -206,7 +221,7 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
         if idx < 0:
             return
         state["family"] = ai_assist.FAMILIES[idx]
-        cb_proto.set(ai_assist.FAMILY_PROTOCOL[state["family"]])
+        set_proto(ai_assist.FAMILY_PROTOCOL[state["family"]])
 
     def fetch():
         """向服务商取模型列表 (后台线程), 填进型号下拉框."""
@@ -297,6 +312,24 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
     ttk.Button(dlg.buttons, text=tr("取消"), command=dlg.cancel).pack(side="right", padx=(0, 8))
     area.bind_children()          # 动态加进来的控件也要能滚
     area.scroll_to_top()
+
+    # 内容放得下就别留一大截空白: 按实际高度收一下窗口 (仍然不超过屏幕)
+    dlg.update_idletasks()
+    need = area.inner.winfo_reqheight() + dlg.buttons.winfo_reqheight() + 60
+    h = int(min(max(420, need), height))
+    if h < height:
+        dlg._center(parent, 620, h)
+
+    def fit_scrollbar():
+        """放得下就不显示外层滚动条 (留着也滚不动, 看着像有两个滚动条)."""
+        try:
+            dlg.update_idletasks()
+            if area.inner.winfo_reqheight() <= area.canvas.winfo_height():
+                area.scroll.pack_forget()
+        except tk.TclError:
+            pass
+
+    dlg.after(10, fit_scrollbar)
     dlg.wait()
     return saved["ok"]
 

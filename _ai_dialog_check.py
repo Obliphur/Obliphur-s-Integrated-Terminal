@@ -1,6 +1,6 @@
-"""AI 模型设置弹窗: 字段多 / 字号大时内容要能滚到底, 最下面的字段能点到.
+"""AI 模型设置弹窗: 内容放得下时窗口收紧, 放不下时能滚到底, 字段都点得到.
 
-以前窗口固定 600x660, 125% 缩放下 "接口协议 / API Key / 保存" 下面的内容被切掉、点不到.
+以前窗口固定 600x660, 125% 缩放下后面的字段被切掉、点不到.
 窗口开在屏幕外, 只读 AI 配置的临时副本, 不碰真实数据.
 """
 import os
@@ -27,7 +27,8 @@ def fake_wait(self):
     area = seen["area"]
     x0, y0, x1, y1 = area.canvas.bbox("all")
     seen.update(viewport=area.canvas.winfo_height(), content=y1,
-                inner=area.inner.winfo_reqheight())
+                inner=area.inner.winfo_reqheight(), height=self.winfo_height(),
+                screen=self.winfo_screenheight())
     self.destroy()
 
 
@@ -45,14 +46,15 @@ try:
         config.UI_SCALE = scale
         seen.clear()
         ai_dialogs.open_model_settings(root, cfg)
-        assert seen["content"] >= seen["inner"] - 2, (scale, seen)   # 滚动区包住全部内容
+        assert seen["content"] >= seen["inner"] - 2, (scale, seen)     # 滚动区包住全部内容
         assert seen["viewport"] > 0, (scale, seen)
-        if scale > 1.0:
-            # 放大字号后内容一定放不下: 这时才真的在测滚动
+        assert seen["height"] <= seen["screen"] * 0.9, (scale, seen)   # 不能高过屏幕
+        if scale >= 1.5:
+            # 字号很大时一定放不下: 这时才真的在测滚动
             assert seen["content"] > seen["viewport"], (scale, seen)
 finally:
     Modal.wait, ai_dialogs.ScrollArea = orig_wait, orig_area
     config.UI_SCALE = 1.0
 
 root.destroy()
-print("AI 模型设置弹窗 check OK (各缩放都能滚到底)")
+print("AI 模型设置弹窗 check OK (放得下就收紧, 放不下能滚到底)")
