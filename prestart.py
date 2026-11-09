@@ -237,6 +237,8 @@ class Prestart:
         self.phase = ""          # "" 没开始 / "grace" 操作空窗期 / "active" 藏窗口 + 静音
         self.grace_until = 0.0   # 操作空窗期结束的时刻 (monotonic)
         self._exes = set()
+        self._seeds = set()      # 空窗期里新启动的程序的进程
+        self._baseline = None    # 开始时已在运行的进程 (空窗期里不算"新启动")
 
     @property
     def chosen(self) -> bool:
@@ -258,6 +260,11 @@ class Prestart:
         self.phase = "grace"
         self.grace_until = time.monotonic() + GRACE_SECONDS
         self._exes = {str(it.get("exe") or "").lower() for it in self.items if it.get("exe")}
+        self._seeds = set()
+        try:
+            self._baseline = {int(pid) for pid, _p, _e in window_guard.list_processes_full()}
+        except Exception:
+            self._baseline = None
         failed = []
         for it in self.items:
             if it.get("running") or not it.get("launch"):
@@ -281,6 +288,23 @@ class Prestart:
         不在提前启动状态时返回空集合."""
         return set(self.marked) if self.active else set()
 
+    def _collect_new(self, procs):
+        """操作空窗期里新出现了窗口的程序 (开始时不在运行的, 排除 OIT 自己和系统程序) → 记为跟踪种子."""
+        if self._baseline is None:
+            self._baseline = {int(pid) for pid, _p, _e in procs}
+            return
+        skip = {"python.exe", "pythonw.exe"} | set(getattr(window_guard, "PROTECTED_EXES", set()))
+        exe_of = {int(pid): exe for pid, _p, exe in procs}
+        try:
+            wins = window_guard.taskbar_windows()
+        except Exception:
+            return
+        for w in wins:
+            pid = int(w.get("pid") or 0)
+            exe = exe_of.get(pid, "")
+            if pid and pid not in self._baseline and exe and exe not in skip:
+                self._seeds.add(pid)
+
     def step(self):
         """每秒调一次: 找进程 (含新出现的子进程), 更新标记; 空窗期过了才藏窗口, 静音."""
         if not self.active:
@@ -289,8 +313,13 @@ class Prestart:
             procs = window_guard.list_processes_full()
         except Exception:
             return
-        self.pids, self.marked = track(procs, self._exes, self.pids, self.marked)
-        pids = self.pids
+        if self.phase == "grace":
+            self._collect_new(procs)     # 空窗期里新启动的程序也标记
+        self.pids, self.marked = track(procs, self._exes, self.pids | self._seeds, self.marked)
+        # 被标记的程序再次开窗 (比如启动器退出后又被拉起来): 按 exe 名也认
+        hide_exes = self.marked - set(getattr(window_guard, "PROTECTED_EXES", set()))
+        pids = self.pids | {int(pid) for pid, _ppid, exe in procs
+                            if exe in hide_exes and pid != os.getpid()}
         if self.phase == "grace":
             if time.monotonic() < self.grace_until:
                 return                   # 操作空窗期: 什么都不藏、不静音
@@ -332,6 +361,8 @@ class Prestart:
         self.pids = set()
         self.marked = set()
         self.items = []
+        self._seeds = set()
+        self._baseline = None
 
 
 def _selftest():
