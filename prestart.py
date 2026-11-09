@@ -29,6 +29,22 @@ MAX_APPS = 2                     # 一次专注最多提前启动几个程序
 GRACE_SECONDS = 180.0            # 选好以后的"操作空窗期": 这么多秒内程序照常显示, 之后才藏 / 静音
 
 
+# 空窗期里"新启动的进程"也要标记, 但这些系统 / 壳 / 辅助进程不算 (标记了等于放行 + 按名字藏窗口)
+_NOISE_EXES = {
+    "python.exe", "pythonw.exe", "svchost.exe", "conhost.exe", "cmd.exe", "powershell.exe",
+    "pwsh.exe", "wmiprvse.exe", "werfault.exe", "wermgr.exe", "dllhost.exe", "runtimebroker.exe",
+    "backgroundtaskhost.exe", "taskhostw.exe", "sihost.exe", "audiodg.exe", "smartscreen.exe",
+    "searchprotocolhost.exe", "searchfilterhost.exe", "explorer.exe", "ctfmon.exe", "fontdrvhost.exe",
+    "wudfhost.exe", "msiexec.exe", "tasklist.exe", "wmic.exe", "taskkill.exe", "net.exe", "net1.exe",
+    "ipconfig.exe", "netsh.exe", "reg.exe", "sc.exe", "where.exe", "timeout.exe", "curl.exe",
+    "consent.exe", "openconsole.exe", "windowsterminal.exe", "applicationframehost.exe",
+}
+
+
+def _skip_exes() -> set:
+    return _NOISE_EXES | set(getattr(window_guard, "PROTECTED_EXES", set()))
+
+
 def _clean(name: str) -> str:
     try:
         import context_collect
@@ -373,17 +389,12 @@ class Prestart:
         if self._baseline is None:
             self._baseline = {int(pid) for pid, _p, _e in procs}
             return
-        skip = {"python.exe", "pythonw.exe"} | set(getattr(window_guard, "PROTECTED_EXES", set()))
-        exe_of = {int(pid): exe for pid, _p, exe in procs}
-        try:
-            wins = window_guard.taskbar_windows()
-        except Exception:
-            return
-        for w in wins:
-            pid = int(w.get("pid") or 0)
-            exe = exe_of.get(pid, "")
-            if pid and pid not in self._baseline and exe and exe not in skip:
-                self._seeds.add(pid)
+        skip = _skip_exes()
+        me = os.getpid()
+        # 不要求有任务栏窗口: java.exe 这类后台 / 无窗口的衍生进程也算 (启动器退出后链条断了也能认到)
+        for pid, _ppid, exe in procs:
+            if pid != me and pid not in self._baseline and exe and exe not in skip:
+                self._seeds.add(int(pid))
 
     def step(self):
         """每秒调一次: 找进程 (含新出现的子进程), 更新标记; 空窗期过了才藏窗口, 静音."""
@@ -397,7 +408,7 @@ class Prestart:
             self._collect_new(procs)     # 空窗期里新启动的程序也标记
         self.pids, self.marked = track(procs, self._exes, self.pids | self._seeds, self.marked)
         # 被标记的程序再次开窗 (比如启动器退出后又被拉起来): 按 exe 名也认
-        hide_exes = self.marked - set(getattr(window_guard, "PROTECTED_EXES", set()))
+        hide_exes = self.marked - _skip_exes()
         pids = self.pids | {int(pid) for pid, _ppid, exe in procs
                             if exe in hide_exes and pid != os.getpid()}
         if self.phase == "grace":
