@@ -6,7 +6,7 @@
 
     1. 起一个只记录的本地代理 (netproxy.server.FilterProxy, 全部放行, 不碰系统代理);
     2. 无界面浏览器用一个临时的用户目录, 通过这个代理打开网站 (浏览器围栏只拦浏览器直连外网, 连本机代理不受影响, 3.2.2);
-    3. 没有新的连接了 (网站加载完了) 就关掉浏览器, 清掉临时目录. 代理看到的所有域名 = 它引发的网站.
+    3. 没有新的连接了 (网站加载完了) 就关掉浏览器, 清掉临时目录 (在 %TEMP%\\OIT\\scan 里). 代理看到的所有域名 = 它引发的网站.
 
 代理转发走 OIT 自己的进程: 先试能不能直连这个网站, 连不上的话经过用户原来的代理 (updater.upstream_proxy). 不经过 OIT 自己的过滤代理, 所以离线时也能探测.
 找不到浏览器 / 浏览器没起来时退回"读网页": 下载首页, 从里面的 script / link / img / iframe 等标签和样式表里取域名 (看不到脚本运行之后才发出的请求).
@@ -22,7 +22,7 @@ import shutil
 import socket
 import subprocess
 import sys
-import tempfile
+import tempstore
 import threading
 import time
 from urllib.parse import urljoin, urlsplit
@@ -142,11 +142,11 @@ def _kill_tree(pid: int):
 
 def _purge_old_profiles(older_than: float = 3600.0):
     """上次没清干净的临时用户目录 (浏览器还占着文件时删不掉) 这次一起清."""
-    tmp = tempfile.gettempdir()
+    d = os.path.join(tempstore.root(), "scan")          # 临时用户目录放在 %TEMP%\OIT\scan
     try:
-        for name in os.listdir(tmp):
-            p = os.path.join(tmp, name)
-            if name.startswith("oit-scan-") and os.path.isdir(p) and time.time() - os.path.getmtime(p) > older_than:
+        for name in os.listdir(d):
+            p = os.path.join(d, name)
+            if os.path.isdir(p) and time.time() - os.path.getmtime(p) > older_than:
                 shutil.rmtree(p, ignore_errors=True)
     except OSError:
         pass
@@ -185,7 +185,7 @@ def browser_scan(domain: str, up=None, browser: str = None, launch=None, dial=No
     if dial is not None:
         proxy._dial = dial
     port = proxy.start()
-    prof = tempfile.mkdtemp(prefix="oit-scan-")
+    prof = tempstore.mkdtemp("scan", prefix="scan-")
     proc = None
     try:
         url = f"https://{domain}/"
@@ -411,8 +411,8 @@ def _selftest():
         globals()["_kill_tree"] = real_kill
         for s in keep:
             s.close()
-    assert not [n for n in os.listdir(tempfile.gettempdir()) if n.startswith("oit-scan-")
-                and time.time() - os.path.getmtime(os.path.join(tempfile.gettempdir(), n)) < 120], "临时目录没清掉"
+    d = tempstore.path("scan")
+    assert not [n for n in os.listdir(d) if time.time() - os.path.getmtime(os.path.join(d, n)) < 120], "临时目录没清掉"
     return "netproxy.sitescan selftest OK"
 
 

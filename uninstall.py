@@ -45,6 +45,7 @@ import bypassguard
 import registration
 import continuity
 import securefile
+import tempstore
 
 
 CONFIRM_WORD = "UNINSTALL"
@@ -251,6 +252,7 @@ def enable_adapters(ps=powershell):
 def delete_data(paths: Paths, tries: int = 6):
     """返回删不掉的路径. 刚结束的进程可能还占着文件, 所以多试几次."""
     left = []
+    tempstore.clean()                  # 临时文件夹 (%TEMP%\OIT) 一起删掉: 录了一半的 mp4 / 更新包 / 自检目录
     for path, is_dir in paths.data_targets():
         for i in range(tries):
             if not os.path.exists(path):

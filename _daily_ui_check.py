@@ -1,3 +1,6 @@
+import tempstore
+tempstore.session("daily_ui_check")      # 临时文件放在 %TEMP%\OIT 里, 退出时整个删掉 (tempstore.py)
+
 import os
 import tempfile
 import tkinter as tk

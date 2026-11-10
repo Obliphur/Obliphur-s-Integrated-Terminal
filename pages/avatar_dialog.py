@@ -2,12 +2,12 @@
 """选头像: 资源管理器里选一张图 → 拖动 / 缩放, 圆框里的就是头像 (逻辑在 avatar.py)."""
 
 import os
-import tempfile
 import tkinter as tk
 from tkinter import filedialog, ttk
 
 import avatar
 import config
+import tempstore
 import toast
 from config import COLORS
 from i18n import tr
@@ -35,7 +35,7 @@ def pick_avatar(parent, dest: str) -> bool:
     dlg = Modal(parent, tr("截取头像"), width=S + 50, height=S + config.scaled(150))
     st = {"cx": w / 2, "cy": h / 2, "z": 0.0, "job": None, "photo": None, "drag": None, "ok": False}
     base = float(min(w, h))
-    tmp = os.path.join(tempfile.gettempdir(), f"oit_avatar_{os.getpid()}.png")
+    tmp = os.path.join(tempstore.path("misc"), f"avatar_{os.getpid()}.png")      # 临时文件放在 OIT 的临时文件夹里
 
     def side() -> float:
         return base * (ZOOM_MAX ** st["z"])

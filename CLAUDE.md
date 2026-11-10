@@ -33,6 +33,7 @@ python release.py               # 发布（PyInstaller）
 | `_daily_ui_check.py` | 设置 → 日常（睡觉时间、行为模式） | `pages/settings_page.py` |
 | `_ai_dialog_check.py` | AI 模型设置弹窗：小屏 / 大字号下能滚到底、字段点得到 | `pages/ai_dialogs.py`、`pages/widgets.py` 的 `Modal` / `ScrollArea` |
 | `_joint_invite_check.py` | AI 发起联合行动的邀请模式 | `pages/contract_page.py` 邀请、`app_comm._joint_invite_watch` |
+| `_temp_check.py` | 临时文件都在 `%TEMP%\OIT` 里：启动清旧（含旧版本散落的 `oit*`）、自检退出即删、重置 / 卸载删干净 | `tempstore.py`、`recorder.py`、`updater.py`、`setup.py`、`netproxy/sitescan.py` |
 
 **规矩**：
 
@@ -88,6 +89,7 @@ python release.py               # 发布（PyInstaller）
 - **断网两条路**（`NET_MODE`）：Adapter 直接禁网卡；Proxy 走 `netproxy/` 过滤代理（`bypassguard.py` 补拦直连）。优先级链在 `rules.py` 的 `decide()`：localhost → 合约网络禁令 → 联网会话 → 提前启动豁免 → 全屏蔽 → 白/黑名单。
 - **提前启动豁免**：`app_daily.py` 每秒把 `prestart.exe_names()`（含子进程）刷到 `rules.exempt`，绕过名单和全屏蔽，但绕不过合约网络禁令。
 - **合约 override 设置**：`config.CONTRACT_OVERRIDES` 由 settings_manager 套在生效值之上。
+- **临时文件**：全部在 `%TEMP%\OIT\`（`tempstore.py`）。启动时 `sweep()` 清掉一天前没动过的；自检 / 检查脚本开头 `tempstore.session("名字")` 退出即删。要临时目录就用 `tempstore.path(...)` / `tempstore.mkdtemp(...)`，别再自己拼 `tempfile.gettempdir()`。
 - 数据在 `%USERPROFILE%\AppData\LocalLow\Obliphur's Integrated Terminal\`，发布版经 `securefile.py` 加密；`continuity.py` 处理数据被搬走/回滚。改数据读写前读 `docs/mechanics/10-data-files.md`、`15-sync.md`。
 - 手机版对应模块在 `Android version/app/src/main/java/com/obliphur/oit/core/`，与桌面版同名一一对应，改一边要查另一边。
 

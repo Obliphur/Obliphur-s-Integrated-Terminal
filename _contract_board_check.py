@@ -1,3 +1,6 @@
+import tempstore
+tempstore.session("contract_board_check")     # 临时文件放在 %TEMP%\OIT 里, 退出时整个删掉 (tempstore.py)
+
 import tempfile
 import tkinter as tk
 

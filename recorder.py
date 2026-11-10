@@ -8,7 +8,7 @@
 - 摄像头: 第一个视频采集设备, 挑最接近 640×480 的格式 (摄像头一直开着, 只留每 STILL_EVERY 秒的那一张).
 录像在后台线程里写. 每 SEGMENT 秒换一个文件 (程序被强行关掉时最多丢这一段).
 
-加密 (防止被网盘 / 云相册自动上传后看到): 正在写的 mp4 放在系统的临时文件夹里 (work_dir, 不在数据目录),
+加密 (防止被网盘 / 云相册自动上传后看到): 正在写的 mp4 放在 OIT 的临时文件夹里 (work_dir → %TEMP%\\OIT\\rec, 不在数据目录),
 写完 (Finalize) 后用 AES-256-CTR 加密成 .oitv 存进数据目录, 再删掉 mp4. 只能在 OIT 里播放 (play: 解密到临时文件夹再打开).
 文件格式: MAGIC + 8 字节 nonce + 密文 (计数器 = nonce + 第几个 16 字节块, 同 Android 的 RecCrypto).
 
@@ -24,6 +24,7 @@ import secrets
 import shutil
 import sys
 import tempfile
+import tempstore
 import threading
 import time
 import uuid
@@ -53,13 +54,14 @@ def folder(data_dir: str, kind: str) -> str:
 
 
 def work_dir(data_dir: str, kind: str) -> str:
-    """正在写的 (还没加密的) mp4 放在这里: 系统的临时文件夹, 不在数据目录 (数据目录可能在网盘里)."""
+    """正在写的 (还没加密的) mp4 放在这里: OIT 的临时文件夹 (%TEMP%\\OIT\\rec, 不在数据目录, 数据目录可能在网盘里)."""
     tag = hashlib.sha1(os.path.abspath(data_dir).lower().encode("utf-8")).hexdigest()[:10]
-    return os.path.join(tempfile.gettempdir(), "oit_rec", tag, kind)
+    return tempstore.path("rec", tag, kind)
 
 
 def play_dir() -> str:
-    return os.path.join(tempfile.gettempdir(), "oit_play")
+    """回放时解密出来的 mp4 放在这里 (临时文件夹)."""
+    return tempstore.path("rec", "play")
 
 
 def list_files(data_dir: str, kind: str) -> list:

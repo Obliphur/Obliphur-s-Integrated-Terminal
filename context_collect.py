@@ -22,7 +22,7 @@ import re
 import shutil
 import sqlite3
 import sys
-import tempfile
+import tempstore
 from datetime import datetime, timedelta
 
 # Windows FILETIME 纪元(1601-01-01)与 Unix 纪元之间的微秒差
@@ -447,7 +447,7 @@ def collect_browser_domains(days: int = 90, progress=None) -> tuple:
     merged = {}
     sources = []
     paths = browser_history_paths()
-    tmpdir = tempfile.mkdtemp(prefix="oit_hist_")
+    tmpdir = tempstore.mkdtemp("misc", prefix="hist-")      # 历史库的副本, 用完就删 (放在 OIT 的临时文件夹里)
     try:
         by_browser = {}
         for label, path in paths:

@@ -3,6 +3,9 @@
 以前窗口固定 600x660, 125% 缩放下后面的字段被切掉、点不到.
 窗口开在屏幕外, 只读 AI 配置的临时副本, 不碰真实数据.
 """
+import tempstore
+tempstore.session("ai_dialog_check")     # 临时文件放在 %TEMP%\OIT 里, 退出时整个删掉 (tempstore.py)
+
 import os
 import tempfile
 import tkinter as tk

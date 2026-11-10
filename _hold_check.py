@@ -1,4 +1,7 @@
 """合约开始前的限制 (MECHANICS 18): 休息 / 外出 / 联网中不能开始行动, 由 app.BreakTimerApp.contract_block 给出提示."""
+import tempstore
+tempstore.session("hold_check")          # 临时文件放在 %TEMP%\OIT 里, 退出时整个删掉 (tempstore.py)
+
 import config
 import app
 

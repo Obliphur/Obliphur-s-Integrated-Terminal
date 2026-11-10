@@ -30,6 +30,7 @@ import re
 import filecmp
 import shutil
 import tempfile
+import tempstore
 import threading
 import time
 import urllib.error
@@ -385,7 +386,7 @@ def _install_zip(zip_path: str, target: str) -> int:
 
     内容没变的文件不动 (运行中被占用的文件, 例如私有加载的字体, 覆盖会失败: WinError 32);
     有变化但被占用的资源文件跳过, 留到下一次; 被占用的 .py 才算失败."""
-    tmp = tempfile.mkdtemp(prefix="oit-update-")
+    tmp = tempstore.mkdtemp("update")          # 解包目录放在 OIT 的临时文件夹里 (%TEMP%\OIT\update)
     try:
         with zipfile.ZipFile(zip_path) as z:
             for info in z.infolist():
@@ -538,7 +539,7 @@ class Updater:
                 src, _zipball = pick_download(self.release)
                 if not src or not src.get("url"):
                     raise ValueError("nothing to download")
-                fd, path = tempfile.mkstemp(suffix=".zip", prefix="oit-")
+                fd, path = tempstore.mkstemp("update", prefix=f"oit-{version}-", suffix=".zip")
                 os.close(fd)
                 download(src, path)
                 install_zip(path, program_dir())

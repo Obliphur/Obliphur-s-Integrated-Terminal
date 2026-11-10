@@ -965,6 +965,11 @@ class DataManager:
             shutil.rmtree(recorder.play_dir(), ignore_errors=True)
         except Exception:
             pass
+        try:
+            import tempstore
+            tempstore.sweep(0)          # 临时文件夹 (%TEMP%\OIT) 里的也清掉: 录了一半的 mp4 / 解密的回放 / 解包目录
+        except Exception:
+            pass
         shutil.rmtree(self.data_dir, ignore_errors=True)
         shutil.rmtree(self.old_dir, ignore_errors=True)
         try:

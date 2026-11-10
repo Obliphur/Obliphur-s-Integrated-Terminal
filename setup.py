@@ -28,6 +28,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tempstore
 import threading
 import time
 import urllib.request
@@ -44,7 +45,7 @@ PYTHON_SIGNER = "Python Software Foundation"
 MIN_PYTHON = (3, 10)
 MAX_PYTHON_DOWNLOAD = 80 * 1024 * 1024
 NO_WINDOW = 0x08000000
-LOG_FILE = os.path.join(tempfile.gettempdir(), "oit-setup.log")
+LOG_FILE = os.path.join(tempstore.root(), "setup", "oit-setup.log")      # 日志放在 OIT 的临时文件夹里
 # 不进安装包的东西 (和 updater.SKIP_DIRS 一致, 再加上只在开发时用的)
 SKIP_TOP = {"Android version", ".git", ".github", "__pycache__", ".vscode", ".idea", "_review", "build", "dist"}
 SKIP_FILES = {".gitignore", ".gitattributes", "setup.py", "make_icon.py", "closed_test.bat"}
@@ -383,7 +384,7 @@ def install(opts: dict, log=print, progress=lambda n: None, zip_path: str = None
     if os.path.isdir(os.path.join(dest, ".git")):
         raise SetupError(t("git"))
     version = payload_version(zip_path)
-    tmp = os.path.join(tempfile.gettempdir(), "oit-setup")
+    tmp = tempstore.path("setup", "download")          # 下载的 Python 安装包放在 OIT 的临时文件夹里
     try:
         python, installed_python = ensure_python(opts, log, progress, tmp) if opts.get("python_exe") is None else (opts["python_exe"], False)
         if opts.get("pip", True) and opts.get("python_exe") is None:
@@ -471,6 +472,7 @@ def elevate_self():
 
 
 def run_silent(opts: dict) -> int:
+    tempstore.path("setup")                       # 静默安装的日志目录 (setup.py 不开界面时用它看失败原因)
     with open(LOG_FILE, "w", encoding="utf-8") as f:
         def log(s):
             f.write(s + "\n")

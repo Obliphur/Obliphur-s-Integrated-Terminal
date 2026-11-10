@@ -3,7 +3,7 @@
 所有方法都在界面线程里调用 (devsync.MainRunner 负责转过来).
 """
 
-import tempfile
+import tempstore
 import time
 from datetime import datetime
 
@@ -73,7 +73,7 @@ class PcLocal:
         return self.app.update_wanted(platform, version)
 
     def update_dest(self, version: str) -> str:
-        fd, path = tempfile.mkstemp(prefix=f"oit-{version}-", suffix=".zip")
+        fd, path = tempstore.mkstemp("update", prefix=f"oit-{version}-", suffix=".zip")    # 收下的安装包放在 OIT 的临时文件夹里
         os.close(fd)
         return path
 

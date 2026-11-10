@@ -1,4 +1,6 @@
 """提前启动的逻辑 + 弹窗自检 (不启动真程序, 不碰真窗口)."""
+import tempstore
+tempstore.session("prestart_check")      # 临时文件放在 %TEMP%\OIT 里, 退出时整个删掉 (tempstore.py)
 
 import os
 import shutil

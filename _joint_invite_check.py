@@ -1,4 +1,7 @@
 """AI 发起联合行动 (MECHANICS 24.9.3): 合约页的邀请模式 + app 的 _joint_invite_watch (跳转 / 换词条 / 换回). 窗口开在屏幕外, 不碰网络."""
+import tempstore
+tempstore.session("joint_invite_check")  # 临时文件放在 %TEMP%\OIT 里, 退出时整个删掉 (tempstore.py)
+
 import tempfile
 import tkinter as tk
 import types

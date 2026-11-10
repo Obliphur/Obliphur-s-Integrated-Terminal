@@ -42,3 +42,23 @@
 仓库里的 `defaults/` 只放空模板 (空名单, 不含 API Key 的 AI 配置), 本机还没有对应文件时才会用到.
 
 ---
+
+## 10.6 临时文件
+
+OIT 自己的临时文件都在 `%TEMP%\OIT\` 一个文件夹里 (`tempstore.py`), 不再散落在系统临时目录里.
+
+| 目录 | 内容 | 什么时候清 |
+| --- | --- | --- |
+| `rec\` | 正在录的 mp4 (按数据目录哈希分成 `camera` / `screen`), 回放时解密出来的 mp4 (`play`) | 加密 / 播放完就删; 没删掉的启动时清 |
+| `scan\` | 扫描网站时无界面浏览器用的临时用户目录 (4.9) | 扫完就删; 浏览器占着删不掉的, 1 小时后再清 |
+| `update\` | 更新包 (`.zip`) 和解包目录 (16) | 装完就删 |
+| `setup\` | 安装程序的日志 `oit-setup.log` 和下载的 Python 安装包 | 安装完就删 (日志留到启动时清) |
+| `misc\` | 其它: 自检 / 检查脚本, 头像临时图, 历史库副本, 主题预览 …… | 脚本退出时删自己那份; 启动时清超过 1 天的 |
+
+- `config.py` 导入时把本进程的默认临时目录指到 `misc\`, 所以 `tempfile.mkdtemp()` 和第三方库写的临时文件也落在 OIT 里.
+- 每次启动 (`main.py`) 调 `tempstore.sweep()`: 清掉 `%TEMP%\OIT` 里一天前没动过的, 所以它不会越攒越多.
+- 旧版本直接把临时文件扔在 `%TEMP%` 顶层 (`oit_rec` / `oit_play` / `oit-scan-*` / `oit-*.zip` / 自检留下的一堆 `oit?????` 目录), 升级后第一次启动时由 `tempstore.sweep_legacy()` 清掉 (只认 `%TEMP%` 顶层 `oit` 开头的名字, 一天内动过的先不动).
+- 自检 / 检查脚本 (`python _xxx_check.py`) 开头调 `tempstore.session("名字")`: 这个进程的临时文件全在一个子目录里, 退出时整个删掉.
+- 重置 (`data_manager.erase_all_data`) 调 `tempstore.sweep(0)`, 卸载 (`uninstall.delete_data`) 调 `tempstore.clean()`.
+- 新代码要临时目录就用 `tempstore.path(...)` / `tempstore.mkdtemp(...)`, 不要自己拼 `tempfile.gettempdir()`.
+

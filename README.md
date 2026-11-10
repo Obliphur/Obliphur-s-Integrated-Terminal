@@ -101,6 +101,7 @@ obliphur_terminal/
 ├─ app_guard.py          窗口事件与心跳 / 窗口守护 / 自启 / 网卡与应用规则检查 (GuardMixin)
 ├─ app_misc.py           配置期 / 快捷方式 / 重置页 (MiscMixin)
 ├─ config.py             默认数值, 主题与字号, 版本号 (APP_VERSION)
+├─ tempstore.py          临时文件: 全部放进 %TEMP%\OIT 一个文件夹 (启动时清掉一天前没动过的)
 ├─ themes/               界面主题 (classic / claude / urban_will; 都市之意的字体和预览都在里面)
 ├─ settings_manager.py   设置项定义, 48 小时冷静期, 配置期
 ├─ data_manager.py       学习时长, 整点记录, 专注时间段, 窗口使用时间 (统计)

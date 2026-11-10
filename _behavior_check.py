@@ -3,6 +3,9 @@
 在临时目录里跑, 不碰本机的数据.
 """
 
+import tempstore
+tempstore.session("behavior_check")      # 临时文件放在 %TEMP%\OIT 里, 退出时整个删掉 (tempstore.py)
+
 import os
 import tempfile
 from datetime import datetime, timedelta
