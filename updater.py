@@ -132,6 +132,7 @@ def _open(url: str, timeout: float, accept: str = ACCEPT_JSON, extra: dict = Non
     routes = _routes()
     last = None
     for i, (via, up) in enumerate(routes):
+        _route["last"] = via                # 失败时日志里看得出试过哪条路线
         # 永远不走 OIT 自己的过滤代理; 直连不通再经过用户原来的代理
         proxies = {"http": f"http://{up[0]}:{up[1]}", "https": f"http://{up[0]}:{up[1]}"} if up else {}
         opener = urllib.request.build_opener(urllib.request.ProxyHandler(proxies), _CheckedRedirect())

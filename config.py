@@ -417,8 +417,14 @@ CONTRACT_OVERRIDES = {}
 
 
 
+BYPASS_GUARD = True    # 发现不走系统代理、直连外面的程序就封锁它 (bypassguard.py, MECHANICS 3.2.3); 只在 Proxy / 代理-全屏蔽 方式下
+BYPASS_ALLOW = ()      # 不封锁的程序 (exe 名, 如 ("steam.exe",)); 只在开发版本的 config_local.py 里改得动 (公开发布版忽略 config_local)
+DEV_MODE = False
+DEV_AUTO = True        # 开发版本打开程序时自动开启开发者模式 (不然测试用的实例一启动就断网); 不想要就在 config_local.py 里写 DEV_AUTO = False
+
 try:
-    # 本地配置 config_local.py (任意覆盖上面的数值) 只在开发版本里生效; 公开发布版忽略它 (MECHANICS 9.4: 设置不能被绕开修改)
+    # 本地配置 config_local.py (任意覆盖上面的数值) 只在开发版本里生效; 公开发布版忽略它 (MECHANICS 9.4: 设置不能被绕开修改).
+    # 必须在这些常量之后导入: 否则 config_local 里的 BYPASS_ALLOW / DEV_MODE / DEV_AUTO 会被默认值盖回去.
     if dev_allowed():
         from config_local import *  # noqa: F401,F403
 except ImportError:
@@ -427,10 +433,6 @@ except ImportError:
 # 开发者模式: 只能在"每日联网额度"里填 325799 开 / 关 (settings_manager.DEV_TOGGLE_CODE), 只在内存里;
 # 不管 config_local 里写了什么, 启动时都是关的 —— 除非是本地开发版本 (git 仓库里, dev_allowed) 且 DEV_AUTO 开着: 打开程序时自动开启.
 # 公开发布版没有开发者模式 (dev_allowed 为假时 dev_mode_enabled 永远是假, 填 325799 也没用). 界面上不显示.
-BYPASS_GUARD = True    # 发现不走系统代理、直连外面的程序就封锁它 (bypassguard.py, MECHANICS 3.2.3); 只在 Proxy / 代理-全屏蔽 方式下
-BYPASS_ALLOW = ()      # 不封锁的程序 (exe 名, 如 ("steam.exe",)); 只在开发版本的 config_local.py 里改得动 (公开发布版忽略 config_local)
-DEV_MODE = False
-DEV_AUTO = True        # 开发版本打开程序时自动开启开发者模式 (不然测试用的实例一启动就断网); 不想要就在 config_local.py 里写 DEV_AUTO = False
 
 
 DEFAULT_SETTINGS = {

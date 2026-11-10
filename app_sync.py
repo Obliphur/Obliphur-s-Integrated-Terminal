@@ -135,6 +135,10 @@ class SyncMixin:
         elif u.state == "latest" and not auto:
             toast.info(tr("已是最新版本") + f" ({config.APP_VERSION})")
         elif u.state == "error":
+            # 更新失败只弹提示的话事后查不到原因: 记进 settings_changes.log (路线见 updater._route)
+            import updater as updater_mod
+            via = updater_mod._route.get("last") or updater_mod._route.get("via") or "?"
+            self._log_notice(f"UPDATE failed via {via}: {u.error}")
             if auto:
                 self._update_retry = True
             else:
