@@ -15,7 +15,7 @@
 下载服务器对每条连接限速 (国内不开 VPN 时每条连接 40 KB/s 上下, 15 MB 要 7 分钟), 但条数越多总速度越高:
 附件 (知道大小, 服务器支持 Range) 切成 256 KB 一段, 同时开 PARALLEL_CONNS 条连接分头下 (实测 15 MB 约 15 秒);
 服务器不支持 Range / 分段失败时退回一条连接下完整文件. 源码包是边打包边发的 (没有大小, 不能分段), 还是一条连接.
-直连不通时再经过用户原来的代理 (Clash 之类, 见 sysproxy_backup.json).
+直连连不上 (超时 / 拒绝) 或回 5xx 网关错误时, 再经过用户原来的代理 (Clash 之类, 见 sysproxy_backup.json).
 Adapter 方式离线时网卡是禁用的, 检查会失败, 下一次联网时再查.
 
     python updater.py       自检 (不联网)
@@ -129,8 +129,9 @@ def _open(url: str, timeout: float, accept: str = ACCEPT_JSON, extra: dict = Non
     if u.scheme != "https" or (u.hostname or "").lower() not in ALLOWED_HOSTS:
         raise ValueError("only GitHub https addresses are allowed")
     req_headers = {"User-Agent": f"OIT/{config.APP_VERSION}", "Accept": accept, **(extra or {})}
+    routes = _routes()
     last = None
-    for via, up in _routes():
+    for i, (via, up) in enumerate(routes):
         # 永远不走 OIT 自己的过滤代理; 直连不通再经过用户原来的代理
         proxies = {"http": f"http://{up[0]}:{up[1]}", "https": f"http://{up[0]}:{up[1]}"} if up else {}
         opener = urllib.request.build_opener(urllib.request.ProxyHandler(proxies), _CheckedRedirect())
@@ -138,8 +139,14 @@ def _open(url: str, timeout: float, accept: str = ACCEPT_JSON, extra: dict = Non
             r = opener.open(urllib.request.Request(url, headers=req_headers), timeout=timeout)
             _route["via"] = via
             return r
-        except urllib.error.HTTPError:
-            raise                      # 服务器回了错误: 换路线也一样
+        except urllib.error.HTTPError as e:
+            # 502 / 503 这类是一个路线上的网关出错 (GitHub 或中间的透明代理), 换另一条路线再试;
+            # 403 / 404 之类是明确的服务器回答, 换路线也一样, 直接抛
+            if e.code in (408, 500, 502, 503, 504) and i + 1 < len(routes):
+                last = e
+                e.close()
+                continue
+            raise
         except OSError as e:           # 连不上 / 超时: 换下一条路线
             last = e
     raise last
