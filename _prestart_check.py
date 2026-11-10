@@ -233,19 +233,19 @@ assert [i["exe"] for i in ps4.last_items] == ["demo.exe"]
 ps4.drop_last()
 assert ps4.resume_last() is False
 
-# 触发隐藏的窗口 (设置 → 窗口): 标题命中就藏, 只藏 (应用名单不关) 但不给联网豁免
+# 触发隐藏的窗口 (设置 → 窗口): 程序名命中就藏, 只藏 (应用名单不关) 但不给联网豁免
 td2 = tempfile.mkdtemp(prefix="oit_hidden_")
 ts = prestart.TriggerStore(td2)
-assert ts.titles == [] and not ts.matches("anything")
-assert ts.set_titles(["  Game Launcher ", "", "game launcher", "OIT"])
-assert ts.titles == ["Game Launcher", "OIT"], ts.titles
-assert prestart.TriggerStore(td2).titles == ["Game Launcher", "OIT"], "存档后重新读出来"
-assert ts.matches("My Game Launcher - v1") and ts.matches("game launcher")
-assert not ts.matches("Notepad")
+assert ts.programs == [] and not ts.matches("")
+assert ts.set_programs(["  Game Launcher ", "", "game launcher.exe", "C:\\Tools\\OIT.exe"])
+assert ts.programs == ["game launcher.exe", "oit.exe"], ts.programs
+assert prestart.TriggerStore(td2).programs == ["game launcher.exe", "oit.exe"], "存档后重新读出来"
+assert ts.matches("Game Launcher.exe") and ts.matches(r"C:\Games\game launcher.exe")
+assert not ts.matches("notepad.exe")
 shutil.rmtree(td2, ignore_errors=True)
 
 ps5 = prestart.Prestart()
-ps5.triggers = lambda: ["Trailer"]
+ps5.triggers = lambda: ["other.exe"]
 assert ps5.hidden_exes() == set()
 assert ps5.hide_triggered({"hwnd": 201, "root": 201, "pid": 99, "exe": "other.exe",
                            "title": "Movie Trailer", "visible": True})
@@ -253,9 +253,9 @@ assert ps5.hidden_exes() == {"other.exe"}
 assert ps5.exe_names() == set(), "触发隐藏不算联网豁免"
 assert 201 in state["hidden"]
 assert state["muted"][-1] == ({99}, True)
-# 不是这些标题的窗口不动
-assert not ps5.hide_triggered({"hwnd": 202, "pid": 99, "exe": "other.exe",
-                               "title": "Notepad", "visible": True})
+# 不是这些程序的窗口不动
+assert not ps5.hide_triggered({"hwnd": 202, "pid": 99, "exe": "notepad.exe",
+                               "title": "other.exe", "visible": True})
 ps5.release_auto()
 assert ps5.hidden_exes() == set() and 201 in state["shown"]
 assert state["muted"][-1][1] is False

@@ -286,7 +286,7 @@ def foreground_program() -> str:
 
 def foreground_window_info():
     """前台窗口的完整信息 (含标题 / 根窗口 / 是否可见); 没有前台窗口返回 None.
-    "触发隐藏的窗口" 要在关窗口之前先按标题判断 (MECHANICS 20)."""
+    "触发隐藏的窗口" 要在关窗口之前先按程序名判断 (MECHANICS 20)."""
     w = foreground_window()
     if not w:
         return None

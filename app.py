@@ -212,10 +212,10 @@ class BreakTimerApp(CommMixin, SyncMixin, ContractMixin, ContractMediaMixin,
                                           or self.net.proxy.rules.in_white_apps(exe))
         self.prestart_list = prestart.ListStore(self.dm.data_dir)   # 提前启动清单的添加 / 删除 (MECHANICS 20)
         self.prestart_list.blocked = lambda: self.dm.resetting
-        # 触发隐藏的窗口 (设置 → 窗口): 标题命中就让程序提前启动藏起来, 但不给联网豁免 (MECHANICS 20)
+        # 触发隐藏的窗口 (设置 → 窗口): 程序名命中就让程序提前启动藏起来, 但不给联网豁免 (MECHANICS 20)
         self.hidden_windows = prestart.TriggerStore(self.dm.data_dir)
         self.hidden_windows.blocked = lambda: self.dm.resetting
-        self.prestart.triggers = lambda: self.hidden_windows.titles
+        self.prestart.triggers = lambda: self.hidden_windows.programs
         # 合约 (MECHANICS 18): 先把盖过设置的项套上, 断网方式才会一开始就对
         self.contract = contract_mod.Contract(self.dm.data_dir)
         self.contract.blocked = lambda: self.dm.resetting

@@ -678,9 +678,6 @@ class SettingsPage(tk.Frame):
 
     def _save_all(self):
         """保存当前这一页: 上半部分的选项和下半部分的数值一起提交."""
-        # 窗口页的"触发隐藏的窗口"列表也一起保存 (它自己也有一个保存按钮)
-        if self._tab == "window" and self.hidden_windows is not None and hasattr(self, "txt_hidden"):
-            self._save_hidden_windows(quiet=True)
         choices, nums = page_specs(self._tab)
         staged, instant, same = 0, 0, 0
         ui_keys, errors = [], []
@@ -811,39 +808,76 @@ class SettingsPage(tk.Frame):
     # ---- 窗口页: 触发隐藏的窗口 (MECHANICS 20) ----
 
     def _build_hidden_windows(self, body):
-        """设置 → 窗口: 标题匹配的窗口总被当成提前启动藏起来 (而不是被应用名单关掉), 但不获得联网权限."""
+        """设置 → 窗口: 程序名匹配的窗口总被当成提前启动藏起来 (而不是被应用名单关掉), 但不获得联网权限.
+        添加式列表: 填一个程序名点添加, 下面是已有的程序; 选中后删除, 都是即时保存."""
         if self.hidden_windows is None:
             return
         card = COLORS["bg_card"]
         fr, head = self._card(body, "🫥  触发隐藏的窗口")
-        self._track(ttk.Button(head, text=tr("保存列表"), style="Accent.TButton",
-                               command=self._save_hidden_windows), "保存列表").pack(side="right")
-        tk.Label(fr, text=tr("一行一个窗口标题关键字: 标题里包含它就藏起来 (不关掉); 藏起来的程序不获得联网权限."),
+        tk.Label(fr, text=tr("程序名填 exe 名, 例如 chrome.exe 或 chrome; 这些程序的窗口会藏起来, 但不获得联网权限."),
                  bg=card, fg=COLORS["text_dim"], font=config.font("small"),
                  anchor="w", justify="left", wraplength=config.scaled(560)).pack(
             fill="x", padx=12, pady=(2, 4))
-        self.txt_hidden = tk.Text(
-            fr, height=5, wrap="none", font=config.font("body"), bg=card, fg=COLORS["text"],
-            insertbackground=COLORS["text"], relief="flat", highlightthickness=1,
-            highlightbackground=COLORS["border"], highlightcolor=COLORS["accent"])
-        self.txt_hidden.pack(fill="x", padx=12, pady=(0, 10))
-        self.txt_hidden.insert("1.0", "\n".join(self.hidden_windows.titles))
+        lf = tk.Frame(fr, bg=card)
+        lf.pack(fill="both", expand=True, padx=12, pady=(0, 4))
+        sb = ttk.Scrollbar(lf, orient="vertical")
+        self.hidden_list = tk.Listbox(
+            lf, height=5, activestyle="none", exportselection=False,
+            font=config.font("body"), yscrollcommand=sb.set,
+            highlightbackground=COLORS["border"], selectmode="extended")
+        sb.config(command=self.hidden_list.yview)
+        sb.pack(side="right", fill="y")
+        self.hidden_list.pack(side="left", fill="both", expand=True)
+        er = tk.Frame(fr, bg=card)
+        er.pack(fill="x", padx=12, pady=(0, 4))
+        self.hidden_var = tk.StringVar()
+        ent = ttk.Entry(er, textvariable=self.hidden_var)
+        ent.pack(side="left", fill="x", expand=True)
+        ent.bind("<Return>", lambda _e: self._add_hidden_window())
+        self._track(ttk.Button(er, text=tr("添加"), style="Accent.TButton",
+                               command=self._add_hidden_window), "添加").pack(side="left", padx=(6, 0))
+        br = tk.Frame(fr, bg=card)
+        br.pack(fill="x", padx=12, pady=(0, 10))
+        self._track(ttk.Button(br, text=tr("删除选中"),
+                               command=self._remove_hidden_window), "删除选中").pack(side="left")
+        self._refresh_hidden_list()
         self.areas["window"].bind_children()
 
-    def _save_hidden_windows(self, quiet: bool = False):
+    def _refresh_hidden_list(self):
+        self.hidden_list.delete(0, "end")
+        for program in self.hidden_windows.programs:
+            self.hidden_list.insert("end", program)
+
+    def _add_hidden_window(self):
         if self.hidden_windows is None:
             return
-        lines = self.txt_hidden.get("1.0", "end").splitlines()
-        changed = self.hidden_windows.set_titles(lines)
-        # 去重 / 去掉空行以后把框里的内容也对齐
-        self.txt_hidden.delete("1.0", "end")
-        self.txt_hidden.insert("1.0", "\n".join(self.hidden_windows.titles))
-        if changed:
-            self.on_hidden_windows()
-            if not quiet:
-                toast.success(tr("触发隐藏的窗口已保存."))
-        elif not quiet:
-            toast.info(tr("没有改动."))
+        text = self.hidden_var.get().strip()
+        if not text:
+            return
+        if not self.hidden_windows.set_programs(list(self.hidden_windows.programs) + [text]):
+            toast.info(tr("已经在名单里了."))
+            self.hidden_var.set("")
+            return
+        self.hidden_var.set("")
+        self._refresh_hidden_list()
+        self.on_hidden_windows()
+        toast.success(tr("触发隐藏的窗口已保存."))
+
+    def _remove_hidden_window(self):
+        if self.hidden_windows is None:
+            return
+        picks = list(self.hidden_list.curselection())
+        if not picks:
+            toast.info(tr("先在列表里选中要删除的项."))
+            return
+        programs = list(self.hidden_windows.programs)
+        for i in reversed(picks):
+            if 0 <= i < len(programs):
+                programs.pop(i)
+        self.hidden_windows.set_programs(programs)
+        self._refresh_hidden_list()
+        self.on_hidden_windows()
+        toast.success(tr("触发隐藏的窗口已保存."))
 
     # ---- 沟通页: API, 人设, 头像 (即时保存, 没有等待期) ----
 

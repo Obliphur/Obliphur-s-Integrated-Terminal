@@ -84,11 +84,9 @@ EN = {
     "休息中直接开始下一轮专注时, 上一段的提前启动会原样接着 (不再给 3 分钟); 这些程序只在专注期间无条件联网, 休息 / 结束后照常按名单判定.":
         "When the next focus starts directly from a break, the previous focus's pre-started programs carry over as-is (no new 3-minute window); they only get unrestricted network during focus, and follow the lists again during the break and afterwards.",
     "🫥  触发隐藏的窗口": "🫥  Windows that trigger hiding",
-    "保存列表": "Save list",
-    "一行一个窗口标题关键字: 标题里包含它就藏起来 (不关掉); 藏起来的程序不获得联网权限.":
-        "One window-title keyword per line: if a title contains it, that window is hidden (not closed); hidden programs do not gain network access.",
+    "程序名填 exe 名, 例如 chrome.exe 或 chrome; 这些程序的窗口会藏起来, 但不获得联网权限.":
+        "Use the exe name, e.g. chrome.exe or chrome; these programs' windows are hidden, but they do not gain network access.",
     "触发隐藏的窗口已保存.": "Windows that trigger hiding saved.",
-    "没有改动.": "No changes.",
     "当前": "Current",
     "立即生效中…": "applying…",
     "名单改动已生效:": "List changes now in effect:",

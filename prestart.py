@@ -17,7 +17,7 @@
 休息中直接开始下一段专注时, 上一段专注的提前启动会原样接着 (不再重新给操作空窗期, 免得程序被应用名单关掉);
 联网豁免只在专注期间生效 (休息中照常按名单判定).
 
-另外管"触发隐藏的窗口" (设置 → 窗口): 标题匹配这些关键字的窗口藏起来而不关掉, 并把这个程序也标记成
+另外管"触发隐藏的窗口" (设置 → 窗口): 程序名匹配这些名字的窗口藏起来而不关掉, 并把这个程序也标记成
 只藏不联网的提前启动 (应用名单不关它, 但联网照常判定).
 
     python prestart.py            自检 (不启动、不碰真实窗口, 只测挑程序和进程树)
@@ -297,10 +297,19 @@ class ListStore:
         return out
 
 
-class TriggerStore:
-    """触发隐藏的窗口 (设置 → 窗口): 窗口标题关键字列表, 存档 hidden_windows.json.
+def _norm_program(name: str) -> str:
+    """程序名 → 统一的 exe 名 (小写, 带 .exe; 兼容 chrome / chrome.exe / 全路径)."""
+    text = str(name or "").strip().strip('"').replace("\\", "/")
+    text = text.rsplit("/", 1)[-1].strip().lower()
+    if not text:
+        return ""
+    return text if text.endswith(".exe") else text + ".exe"
 
-    只要窗口标题里包含其中一项 (不分大小写) 就把它藏起来 —— 这类窗口总被当成"提前启动"藏起来,
+
+class TriggerStore:
+    """触发隐藏的窗口 (设置 → 窗口): 程序名列表, 存档 hidden_windows.json.
+
+    列表里写程序名 (exe 名, 例如 chrome.exe 或 chrome). 这些程序的窗口总被当成"提前启动"藏起来,
     不会被应用名单关掉; 但它们不因此获得联网权限 (MECHANICS 20).
     """
 
@@ -309,7 +318,7 @@ class TriggerStore:
 
     def __init__(self, data_dir: str):
         self.path = os.path.join(data_dir, "hidden_windows.json")
-        self.titles = []             # 原样保存, 匹配时 casefold
+        self.programs = []           # 统一的 exe 名 (小写, 带 .exe)
         self.blocked = lambda: False  # 重置中: 不再写文件
         self._load()
 
@@ -321,18 +330,17 @@ class TriggerStore:
                 d = json.load(f)
         except (OSError, ValueError):
             return
-        raw = d.get("titles") if isinstance(d, dict) else d
-        self.titles = self._clean(raw)
+        raw = d.get("programs") if isinstance(d, dict) else d
+        self.programs = self._clean(raw)
 
     @classmethod
     def _clean(cls, lines) -> list:
         out, seen = [], set()
         for line in lines or []:
-            text = str(line or "").strip()[:cls.MAX_LEN]
-            key = text.casefold()
-            if not text or key in seen:
+            text = _norm_program(str(line or "")[:cls.MAX_LEN])
+            if not text or text in seen:
                 continue
-            seen.add(key)
+            seen.add(text)
             out.append(text)
             if len(out) >= cls.MAX_ITEMS:
                 break
@@ -347,23 +355,22 @@ class TriggerStore:
             os.makedirs(os.path.dirname(self.path), exist_ok=True)
             tmp = self.path + ".tmp"
             with securefile.open(tmp, "w", encoding="utf-8") as f:
-                json.dump({"titles": self.titles}, f, ensure_ascii=False, indent=1)
+                json.dump({"programs": self.programs}, f, ensure_ascii=False, indent=1)
             os.replace(tmp, self.path)
         except OSError:
             pass
 
-    def set_titles(self, lines):
+    def set_programs(self, lines):
         """整份替换 (设置页的文本框保存). 返回有没有变."""
-        titles = self._clean(lines)
-        if titles == self.titles:
+        programs = self._clean(lines)
+        if programs == self.programs:
             return False
-        self.titles = titles
+        self.programs = programs
         self.save()
         return True
 
-    def matches(self, title: str) -> bool:
-        text = str(title or "").casefold()
-        return bool(text) and any(t.casefold() in text for t in self.titles)
+    def matches(self, exe: str) -> bool:
+        return bool(exe) and _norm_program(exe) in set(self.programs)
 
 
 def descendants(pids, procs=None) -> set:
@@ -413,9 +420,9 @@ class Prestart:
         self._seeds = set()      # 空窗期里新启动的程序的进程
         self._baseline = None    # 开始时已在运行的进程 (空窗期里不算"新启动")
         self.baseline_exes = None  # 开始时已在运行的程序 exe 名 (空窗期里联网 / 名单放行"新程序"用)
-        # 触发隐藏的窗口 (设置 → 窗口): 只藏 / 不联网放行. 这些窗口和程序在 OIT 运行期间一直藏着,
-        # 直到列表里去掉对应的标题 / 关闭 OIT.
-        self.triggers = lambda: []      # 窗口标题关键字 (小写也行)
+        # 触发隐藏的窗口 (设置 → 窗口): 只藏 / 不联网放行. 这些程序在 OIT 运行期间一直藏着,
+        # 直到列表里去掉对应的程序名 / 关闭 OIT.
+        self.triggers = lambda: []      # 程序名 (exe 名, 大小写随意)
         self.hidden_only = set()        # 被触发隐藏的程序的 exe 名 (应用名单不关, 但联网照常判定)
         self.auto_hidden = set()        # 自动藏起来的窗口
         self.auto_pids = set()          # 自动藏起来的进程 (静音用)
@@ -506,23 +513,22 @@ class Prestart:
         """窗口数上限 / 通道阻塞不数这些进程: 提前启动的 + 触发隐藏的."""
         return set(self.pids) | set(self.auto_pids)
 
-    def _matching_title(self, title: str) -> bool:
-        text = str(title or "").casefold()
-        if not text:
+    def _matching_program(self, exe: str) -> bool:
+        program = _norm_program(exe)
+        if not program:
             return False
         try:
-            return any(str(t).strip().casefold() in text for t in (self.triggers() or [])
+            return any(_norm_program(t) == program for t in (self.triggers() or [])
                        if str(t).strip())
         except Exception:
             return False
 
     def hide_triggered(self, w: dict) -> bool:
-        """一个前台窗口的标题命中"触发隐藏的窗口": 藏起来并标记它的程序 (只藏, 不联网放行).
-        w: window_guard.foreground_window_info() 的结果 (含 root / title / pid / exe)."""
-        title = str((w or {}).get("title") or "")
-        if not self._matching_title(title):
-            return False
+        """一个前台窗口的程序名命中"触发隐藏的窗口": 藏起来并标记它的程序 (只藏, 不联网放行).
+        w: window_guard.foreground_window_info() 的结果 (含 root / pid / exe)."""
         exe = str((w or {}).get("exe") or "").strip().lower()
+        if not self._matching_program(exe):
+            return False
         pid = int((w or {}).get("pid") or 0)
         if exe and exe in _skip_exes():
             return False
@@ -543,10 +549,11 @@ class Prestart:
         return True
 
     def auto_step(self):
-        """每秒: 标题命中"触发隐藏的窗口"的窗口藏起来, 并把它们的程序一直当提前启动藏着.
+        """每秒: 程序名命中"触发隐藏的窗口"的窗口藏起来, 并把它们的程序一直当提前启动藏着.
         只藏窗口 / 静音, 不加入联网豁免 (MECHANICS 20)."""
-        patterns = [str(t).strip() for t in (self.triggers() or []) if str(t).strip()]
-        if not patterns:
+        wanted = {_norm_program(str(t)) for t in (self.triggers() or []) if str(t).strip()}
+        wanted.discard("")
+        if not wanted:
             return
         try:
             procs = window_guard.list_processes_full()
@@ -558,14 +565,11 @@ class Prestart:
         me = os.getpid()
         alive = set(exe_of)
         matched = set()
-        # 标题命中的窗口: 标记程序, 藏窗口
+        # 程序名命中的窗口: 标记程序, 藏窗口
         for w in windows:
-            title = str(w.get("title") or "")
-            if not self._matching_title(title):
-                continue
             pid = int(w.get("pid") or 0)
             exe = exe_of.get(pid, "")
-            if not exe or pid == me or exe in skip:
+            if not exe or pid == me or exe in skip or exe not in wanted:
                 continue
             matched.add(pid)
             self.hidden_only.add(exe)
