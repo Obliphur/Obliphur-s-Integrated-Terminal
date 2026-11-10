@@ -163,7 +163,8 @@ class MiscMixin:
         toast.warn(tr("{name} 离线了.", name=names), clear=True)   # 离线消息黑雾也不遮 (18.3)
 
     def _check_unbind(self):
-        """每 5 秒: 冷静期 (120 小时) 到了的解除绑定就解除, 通知那台设备 (它的数据不动), 并清空本机的数据 (MECHANICS 15.1)."""
+        """每 5 秒: 冷静期 (120 小时) 到了的解除绑定就解除, 通知那台设备 (它的数据不动), 并清空本机的数据 (MECHANICS 15.1).
+        devsync.UNBIND_FREE 为真 (无代价解绑) 时: 马上解除, 并且不清空本机."""
         try:
             names = self.sync.check_unbind()
             for name in names:

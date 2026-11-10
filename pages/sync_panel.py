@@ -8,6 +8,7 @@ from datetime import datetime
 from tkinter import ttk
 
 import config
+import devsync
 import toast
 from config import COLORS
 from i18n import tr
@@ -158,7 +159,8 @@ class SyncPanel(tk.Frame):
         self.sync.cancel_pairing()
 
     def _sync_unpair(self):
-        """解除绑定 (MECHANICS 15.1): 冷静期 120 小时, 期间再按一次取消; 到时间后解除, 并清空本机上的全部数据 (对方的数据不受影响)."""
+        """解除绑定 (MECHANICS 15.1): 默认冷静期 120 小时, 期间再按一次取消; 到时间后解除, 并清空本机上的全部数据 (对方的数据不受影响).
+        devsync.UNBIND_FREE 为真 (无代价解绑) 时: 确认后马上解除, 本机的数据不清空."""
         sel = self.lb_peers.curselection()
         if not sel or sel[0] >= len(self._peer_ids):
             toast.warn(tr("先在上面选一台设备."))
@@ -173,9 +175,11 @@ class SyncPanel(tk.Frame):
             return
         if p.get("last_err") == "unpaired":
             msg = tr("解除和 {name} 的绑定?", name=name)          # 对方已经解除了 / 重置过: 直接解除
+        elif devsync.UNBIND_FREE:
+            msg = tr("解除和 {name} 的绑定? (不会清空本机的数据.)", name=name)     # 无代价解绑 (MECHANICS 15.1)
         else:
             msg = tr("120 小时后解除和 {name} 的绑定, 并清空本机上的全部数据 ({name} 的数据不受影响). 期间可以取消.", name=name)
-        if toast.ask(msg, title=tr("解除绑定"), danger=True):
+        if toast.ask(msg, title=tr("解除绑定"), danger=not devsync.UNBIND_FREE):
             self.sync.request_unbind(pid)
 
     def refresh(self):

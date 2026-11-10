@@ -1128,6 +1128,7 @@ EN = {
     "取消解除和 {name} 的绑定?": "Cancel unpairing from {name}?",
     "录像超过 3 天会自动清除.": "Recordings older than 3 days are deleted automatically.",
     "120 小时后解除和 {name} 的绑定, 并清空本机上的全部数据 ({name} 的数据不受影响). 期间可以取消.": "Unpair from {name} in 120 hours and clear all data on this device (the data on {name} is not affected). You can cancel until then.",
+    "解除和 {name} 的绑定? (不会清空本机的数据.)": "Unpair from {name}? (This device's data will not be cleared.)",
     "将在 {t} 解除绑定": "unpairs at {t}",
     "在专注期间的最大窗口数改为4": "Window limit becomes 4 during focus",
     "[与 {name} 冲突]": "[conflicts with {name}]",

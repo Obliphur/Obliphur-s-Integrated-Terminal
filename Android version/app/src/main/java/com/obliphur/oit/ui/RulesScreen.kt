@@ -320,7 +320,7 @@ fun SyncCard() {
             val whenText = syncStateText(err, okAt)
             val st = live[pid]?.takeIf { now - it.optLong("ts") < 60_000 }
             val busy = when (st?.optString("timer")) { "running" -> tr("专注中…"); "break" -> tr("休息中 ☕"); else -> "" }
-            // 解除绑定 (MECHANICS 15.1): 冷静期 120 小时, 期间可以取消
+            // 解除绑定 (MECHANICS 15.1): UNBIND_FREE 时立即解除 (本机数据不动); 否则冷静期 120 小时, 期间可以取消
             val unbindAt = s.unbindAt(pid)
             val planText = unbindAt?.let {
                 tr("将在 {t} 解除绑定", "t" to java.time.LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(it),
@@ -349,10 +349,12 @@ fun SyncCard() {
     askUnpair?.let { pid ->
         val peer = s.peers()[pid]
         val name = peer?.optString("name") ?: "?"
-        // 对方已经解除了 / 重置过 (unpaired): 直接解除; 否则 120 小时后解除, 并清空本机的全部数据 (对方的数据不受影响)
+        // 对方已经解除了 / 重置过 (unpaired): 直接解除; UNBIND_FREE: 马上解除, 本机数据不清空;
+        // 否则 120 小时后解除, 并清空本机的全部数据 (对方的数据不受影响)
         val msg = if (peer?.optString("last_err") == "unpaired") tr("解除和 {name} 的绑定?", "name" to name)
+            else if (com.obliphur.oit.sync.SyncService.UNBIND_FREE) tr("解除和 {name} 的绑定? (不会清空本机的数据.)", "name" to name)
             else tr("120 小时后解除和 {name} 的绑定, 并清空本机上的全部数据 ({name} 的数据不受影响). 期间可以取消.", "name" to name)
-        Confirm(tr("解除绑定"), msg, true, { askUnpair = null }) { s.requestUnbind(pid) }
+        Confirm(tr("解除绑定"), msg, !com.obliphur.oit.sync.SyncService.UNBIND_FREE, { askUnpair = null }) { s.requestUnbind(pid) }
     }
 }
 

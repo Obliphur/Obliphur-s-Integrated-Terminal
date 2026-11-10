@@ -287,6 +287,14 @@ def _commit(path: str, name: str, plain: bytes):
     """写一个受管理的文件: 计数 +1, 信封写盘 (先写临时文件再改名), 索引更新."""
     with _lock:
         idx = _load_idx()
+        # 两个 OIT 同时开着 (开发版本 + 装好的版本, 9.4) 时各有一份内存里的计数: 写之前先看盘上的索引
+        # (别的进程可能刚写过), 取大的那个. 否则写得少的那个进程会用旧的计数盖掉新文件, 对方下一次读就
+        # 当成 "rollback", 在锚点里标记 pending, 下一次启动清掉数据 (1.0.467 前发生过的误清).
+        disk = _idx_plain(os.path.join(_dir, IDXFILE))
+        if disk:
+            for k, v in disk.items():
+                if v > idx.get(k, 0):
+                    idx[k] = v
         ctr = idx.get(name, 0) + 1
         given = os.path.abspath(path)
         final = given[:-4] if given.endswith(".tmp") else given
@@ -548,6 +556,25 @@ def _selftest():
         with open(os.path.join(d, "t.json"), "r") as f:
             assert json.load(f) == {"t": 1}
         assert _load_idx()["t.json"] == 1
+        # 两个 OIT 同时开着写同一个数据文件夹 (开发版本 + 装好的版本, 9.4): 写之前先看盘上的索引 (取大的),
+        # 另一个进程写得更多时计数也不会倒退 —— 不然对方读到的计数比索引小, 当成 "rollback" 清掉数据 (1.0.467)
+        p2 = os.path.join(d, "two.json")
+        with open(p2, "w") as f:
+            f.write("{}")
+        mine = dict(_idx)                       # 本进程内存里的索引 (two.json = 1)
+        _idx = None                             # 另一个进程: 自己的缓存, 又写了两次 (2, 3)
+        with open(p2, "w") as f:
+            f.write("{}")
+        with open(p2, "w") as f:
+            f.write("{}")
+        assert _idx_plain(os.path.join(d, IDXFILE))["two.json"] == 3
+        _idx = mine                             # 切回本进程: 缓存里记着的还是 1
+        n = len(tampered)
+        with open(p2, "w") as f:
+            f.write("{}")
+        assert _idx["two.json"] == 4, "按盘上的索引往上写 (3 + 1), 不倒退"
+        with open(p2, "r", encoding="utf-8") as f:
+            assert f.read() == "{}" and len(tampered) == n, "不算倒回去"
         # 写到一半出了错: 不写半截内容
         try:
             with open(os.path.join(d, "t.json"), "w") as f:

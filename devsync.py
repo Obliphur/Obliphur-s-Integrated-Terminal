@@ -56,7 +56,7 @@ OFFLINE_MS = 3 * SYNC_EVERY * 1000
 # 同步失败的原因里, 下面这几种说明对方明确不接受 / 不在线 (不是偶然的网络问题): 不等 OFFLINE_MS, 马上算离线
 HARD_ERRORS = ("unpaired", "wipe-pending", "away", "peer-not-proxy", "not-proxy")
 UNBIND_WAIT_MS = 120 * 3600 * 1000      # 解除绑定要等这么久 (冷静期 120 小时, 期间可以取消)
-UNBIND_FREE = False                     # 1.0.437: 改回 False (冷静期 120 小时, 到时清空操作解除的那台)
+UNBIND_FREE = True                      # 1.0.467: 解绑设备无代价 (立即解除, 不清空本机); 改回 False 恢复冷静期 120 小时
 RESTART_RETRY = 30                    # 秒: 设备离线时请它重新启动 OIT, 连不上就每隔这么久再试一次, 直到有回应或它回来 (MECHANICS 15.3)
 RESTART_FRESH_MS = 90_000             # 本机刚打开这么久之内不理重启请求 (对方看到的离线是打开之前的事)
 RESTART_HEALTHY_MS = 30_000           # 刚和发请求的设备同步成功过 (任何一个方向) 这么久之内不理重启请求: 本机明明在线
@@ -852,7 +852,7 @@ class SyncService:
         self.runner.call(lambda: self.local.restart_requested(sender, str(p.get("name") or "?")))
         return 200, {}
 
-    # ---- 解除绑定 (MECHANICS 15.1): 冷静期 120 小时, 期间可以取消; 到时间后解除, 并清空操作这一台 (本机) 上的全部数据, 不影响对方的数据 ----
+    # ---- 解除绑定 (MECHANICS 15.1): UNBIND_FREE 时立即解除, 本机数据不动; 否则冷静期 120 小时 (期间可以取消), 到时间后解除并清空这一台 (本机) 上的全部数据, 不影响对方 ----
 
     def unbind_at(self, peer_id: str):
         """计划解除和这台设备的绑定的时刻 (毫秒), 没有计划时 None."""
@@ -869,7 +869,8 @@ class SyncService:
             self.unpair(peer_id, notify=False)
             return True
         with self.lock:
-            self.state.setdefault("unbinds", {})[peer_id] = _now_ms() + UNBIND_WAIT_MS
+            # 无代价解绑: 计划就是"现在", 下一次 check_unbind (每 5 秒) 马上解除, 界面上也不会写 120 小时后的时刻
+            self.state.setdefault("unbinds", {})[peer_id] = _now_ms() + (0 if UNBIND_FREE else UNBIND_WAIT_MS)
         self._save()
         return False
 
