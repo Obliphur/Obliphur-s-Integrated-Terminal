@@ -395,7 +395,8 @@ class WindowMixin:
             data_dir=self.dm.data_dir, recording=self.recording, on_delete_record=self.delete_recording,
             comm=self.comm, on_open_rules=self.open_rules_popup,
             alarm=self.alarm, ringer=self.ringer, co_alarm_fn=self._co_alarm_fn,
-            ring_busy=lambda: self._alarm_win is not None
+            ring_busy=lambda: self._alarm_win is not None,
+            hidden_windows=self.hidden_windows, on_hidden_windows=self._hidden_windows_changed
         )
         self._prepare_page(self.pages["settings"])
         yield

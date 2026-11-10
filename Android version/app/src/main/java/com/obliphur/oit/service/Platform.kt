@@ -403,6 +403,32 @@ object Chime {
 
     fun playSoft() = playPcm(softData) {}
 
+    /** 休息只剩 1 分钟的提示音: 比沟通提示音更低、更轻 (两声下行, 音头很软, 渐弱拖得长).
+     *  和桌面版 config.ensure_break_chime 是同一个音. */
+    private fun breakPcm(): ShortArray {
+        val rate = 44100
+        val total = (rate * 2.6).toInt()
+        val buf = DoubleArray(total)
+        for ((t0, freq, dur, amp) in listOf(
+                listOf(0.0, 523.25, 1.2, 0.9), listOf(0.42, 392.0, 1.8, 0.75))) {
+            val start = (rate * t0).toInt()
+            for (i in 0 until (rate * dur).toInt()) {
+                val t = i.toDouble() / rate
+                val env = minOf(1.0, t / 0.06) * exp(-t * 2.1)
+                val v = sin(2 * PI * freq * t) + 0.10 * sin(4 * PI * freq * t)
+                if (start + i < total) buf[start + i] += amp * v * env
+            }
+        }
+        val peak = buf.maxOf { abs(it) }.takeIf { it > 0.0 } ?: 1.0
+        val gain = 4200.0 / peak                       // 比沟通提示音 (6500) 再轻一些
+        val fade = (rate * 0.08).toInt()
+        return ShortArray(total) { i -> (buf[i] * gain * minOf(1.0, (total - 1 - i).toDouble() / fade)).toInt().toShort() }
+    }
+
+    private val breakData by lazy { breakPcm() }
+
+    fun playBreakSoon() = playPcm(breakData) {}
+
     /** 闹钟用 (1.0.359): 三音提示 / 柔和钟声写成 wav 放在缓存里, 后面补一段静音 (循环播放时两遍之间有间隔). */
     fun wavFile(ctx: Context, soft: Boolean): File {
         val f = File(ctx.cacheDir, if (soft) "alarm_soft.wav" else "alarm_chime.wav")

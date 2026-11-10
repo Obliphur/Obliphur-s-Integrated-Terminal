@@ -2,7 +2,6 @@ package com.obliphur.oit.service
 
 import android.net.VpnService
 import android.os.SystemClock
-import android.system.OsConstants
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.nio.ByteBuffer
@@ -27,6 +26,9 @@ class Forwarder(
     private val write: (ByteArray) -> Unit,
     /** 这个连接是不是名单里的应用发出的: 返回包名 (用来写拦截记录), 不是时 null. */
     private val blocked: (proto: Int, src: InetSocketAddress, dst: InetSocketAddress) -> String?,
+    /** 全部断网时只放行特定的连接 (OIT 自己的 AI 接口); 默认全部放行. */
+    private val allow: (proto: Int, src: InetSocketAddress, dst: InetSocketAddress) -> Boolean =
+        { _, _, _ -> true },
 ) {
     private companion object {
         const val TCP = 6
@@ -134,7 +136,7 @@ class Forwarder(
     private val inboxSize = AtomicInteger()
     private val tcp = HashMap<String, Tcp>()
     private val udp = HashMap<String, Udp>()
-    private val dropped = HashMap<String, Long>()          // 名单里的应用的连接: 一段时间里不再查是谁发的
+    private val dropped = java.util.concurrent.ConcurrentHashMap<String, Long>()  // 名单里的应用的连接: 一段时间里不再查是谁发的
     private val readBuf = ByteBuffer.allocate(64 * 1024)
     private val bytes = ByteArray(64 * 1024)
     private var lastSweep = 0L
@@ -153,6 +155,11 @@ class Forwarder(
     fun close() {
         alive = false
         runCatching { selector.wakeup() }
+    }
+
+    /** 换 VPN 计划时清掉"已丢弃连接"的缓存: 全屏蔽和正常过滤的判定不一样, 不能沿用上一轮的结论. */
+    fun clearDrops() {
+        dropped.clear()
     }
 
     // ---- 主循环 ----
@@ -262,10 +269,11 @@ class Forwarder(
         val now = SystemClock.elapsedRealtime()
         if (dropped.containsKey(key)) { dropped[key] = now; return true }
         if (bypassesDns(proto, dport, ip.dst)) { dropped[key] = now; return true }
-        val pkg = runCatching {
-            blocked(if (proto == TCP) OsConstants.IPPROTO_TCP else OsConstants.IPPROTO_UDP,
-                sockAddr(ip.src, sport), sockAddr(ip.dst, dport))
-        }.getOrNull() ?: return false
+        val src = sockAddr(ip.src, sport)
+        val dst = sockAddr(ip.dst, dport)
+        // 全部断网 (Mode.OIT): 只放行 OIT 自己的 AI 接口连接, 其余全部丢掉
+        if (!allow(proto, src, dst)) { dropped[key] = now; return true }
+        val pkg = runCatching { blocked(proto, src, dst) }.getOrNull() ?: return false
         dropped[key] = now
         BlockLog.add(InetAddress.getByAddress(ip.dst).hostAddress ?: "?", pkg)
         return true

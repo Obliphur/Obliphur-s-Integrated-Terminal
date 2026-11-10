@@ -69,7 +69,7 @@ class ForwarderTest {
     }
 
     private fun forwarder(out: LinkedBlockingQueue<ByteArray>, block: String? = null) =
-        Forwarder(object : VpnService() {}, { out.add(it) }) { _, _, _ -> block }
+        Forwarder(object : VpnService() {}, { out.add(it) }, { _, _, _ -> block })
 
     @Test
     fun tcpEcho() {

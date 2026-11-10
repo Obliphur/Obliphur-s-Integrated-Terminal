@@ -897,7 +897,8 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         bonusExpire()
         if (state == TState.ON_BREAK && !breakWarnShown && countdown in 0.1..60.0 && settings.str("BREAK_WARN_ENABLED") == "1") {
             breakWarnShown = true
-            core.host.playCommSound()
+            // 提示音只在焦点设备 (最后有人操作的那台) 上响; 其他设备只弹提示
+            if (core.isLatestActive()) core.host.playBreakSoon()
             core.toast(tr("休息还剩 1 分钟"), "info", long = true)
         }
         if (state == TState.ON_BREAK && countdown <= 0) {

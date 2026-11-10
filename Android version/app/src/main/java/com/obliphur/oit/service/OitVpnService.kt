@@ -122,8 +122,9 @@ class OitVpnService : VpnService() {
         }
     }
 
-    /** 接口怎样建的: 只接管 DNS / 全部进 VPN 后丢掉 / 只有屏蔽的应用进 VPN 后丢掉 / 全部进 VPN, 屏蔽的应用丢掉, 其余转发. */
-    private enum class Mode { DNS, DROP, APPS, FORWARD }
+    /** 接口怎样建的: 只接管 DNS / 全部进 VPN 后丢掉 / 只有屏蔽的应用进 VPN 后丢掉 / 全部进 VPN, 屏蔽的应用丢掉, 其余转发
+     *  / 全部进 VPN 后丢掉, 只放行 OIT 自己的 AI 接口连接 (BlockAll). */
+    private enum class Mode { DNS, DROP, APPS, FORWARD, OIT }
 
     private inner class Session(val pfd: ParcelFileDescriptor, val plan: VpnPlan, val mode: Mode,
                                 val apps: Set<String>) {
@@ -147,6 +148,11 @@ class OitVpnService : VpnService() {
                             val dns = Packets.parseUdp(buf, n)?.takeIf { it.dstPort == 53 }
                             if (dns != null) handle(buf, n, plan as VpnPlan.Dns)
                             else forwarder?.offer(buf.copyOf(n))
+                        }
+                        // 全部断网, 但 OIT 自己的 AI 接口连接 (TCP 443) 放行: 让聊天 / 名单建议在断网时也能用
+                        Mode.OIT -> {
+                            val dns = Packets.parseUdp(buf, n)?.takeIf { it.dstPort == 53 }
+                            if (dns != null) handleBlockAll(buf, n) else forwarder?.offer(buf.copyOf(n))
                         }
                         // BlockAll / 只有屏蔽的应用在 VPN 里: 丢掉
                         Mode.DROP, Mode.APPS -> {}
@@ -201,6 +207,24 @@ class OitVpnService : VpnService() {
             synchronized(out) { runCatching { out.write(b) } }
         }
 
+        /** 全部断网 (VpnPlan.BlockAll): DNS 只放行 AI 接口的域名 (聊天 / 名单建议要用), 其余回 NXDOMAIN.
+         *  非 DNS 的包由 Forwarder 只放行 OIT 自己的 TCP 443 (见 allowOit). */
+        private fun handleBlockAll(buf: ByteArray, n: Int) {
+            val p = Packets.parseUdp(buf, n) ?: return
+            if (p.dstPort != 53) return
+            val host = Dns.qname(p.payload) ?: return
+            BlockLog.seen(host)
+            val core = OitApp.instance.core
+            val apiOk = core.apiHosts().any { com.obliphur.oit.core.domainMatch(host, it) }
+            if (!(apiOk || host == "localhost" || host.endsWith(".localhost"))) {
+                BlockLog.add(host, owner(p).firstOrNull() ?: "?")
+                Dns.nxdomain(p.payload)?.let { write(Packets.buildReply(p, it)) }
+                return
+            }
+            BlockLog.allowed++
+            pool.execute { forward(p) }
+        }
+
         private fun forward(p: UdpPacket) {
             for (server in upstream()) {
                 try {
@@ -226,7 +250,7 @@ class OitVpnService : VpnService() {
     }
 
     private val pool = Executors.newFixedThreadPool(8)
-    private var session: Session? = null
+    @Volatile private var session: Session? = null
     /** 全部流量进 VPN 时的转发 (Mode.FORWARD). 换接口时留着, 已经建立的连接不断. */
     private var forwarder: Forwarder? = null
 
@@ -249,6 +273,11 @@ class OitVpnService : VpnService() {
         uidCache[uid] = now to pkgs
         return pkgs
     }
+
+    /** 全部断网时被放行的 OIT 连接: 只有 OIT 自己发出的 TCP 443 (AI 接口的 HTTPS).
+     *  DNS 由 [Session.handleBlockAll] 另外按 API 域名放行. 其余应用 / 端口一律丢掉. */
+    private fun allowOit(proto: Int, src: InetSocketAddress, dst: InetSocketAddress): Boolean =
+        proto == OsConstants.IPPROTO_TCP && dst.port == 443 && owner(proto, src, dst).contains(packageName)
 
     // 真正的 DNS: 底层网络 (Wi-Fi / 移动数据) 的 DNS, 缓存 10 秒; 拿不到就用公共 DNS
     private var upCache: Pair<Long, List<InetAddress>>? = null
@@ -327,7 +356,8 @@ class OitVpnService : VpnService() {
     }.toSet()
 
     private fun modeOf(p: VpnPlan, apps: Set<String>) = when {
-        p is VpnPlan.BlockAll -> Mode.DROP
+        // 全部断网: 走 Forwarder 只放行 OIT 自己的 AI 接口 (TCP 443), 其余一律丢掉
+        p is VpnPlan.BlockAll -> Mode.OIT
         // 有网站过滤 / 要封锁的网站: 全部流量进 VPN (FORWARD), 才能堵住 DoH / DoT / QUIC 绕过明文 DNS 过滤;
         // 否则 (只接管 DNS 时) 社交平台用自带的加密 DNS 直接解析, 屏蔽不干净 (#3)
         p is VpnPlan.Dns && (p.filter || p.blockDomains.isNotEmpty()) -> Mode.FORWARD
@@ -361,6 +391,9 @@ class OitVpnService : VpnService() {
                 } else {
                     b.addRoute("0.0.0.0", 0); b.addRoute("::", 0)
                 }
+                // 接管 DNS: 只放行 OIT 的 AI 接口域名, 其余回 NXDOMAIN (Mode.OIT)
+                b.addDnsServer(V4_DNS); b.addRoute(V4_DNS, 32)
+                b.addDnsServer(V6_DNS); b.addRoute(V6_DNS, 128)
             }
             is VpnPlan.Dns -> when (mode) {
                 Mode.APPS -> {
@@ -398,12 +431,19 @@ class OitVpnService : VpnService() {
         }
         lastError = null
         val old = session
-        if (mode == Mode.FORWARD && forwarder == null) {
-            forwarder = Forwarder(this, { session?.write(it) }) { proto, src, dst ->
-                val ban = session?.apps ?: emptySet()
-                owner(proto, src, dst).firstOrNull { it in ban }
-            }
-        } else if (mode != Mode.FORWARD) stopForwarder()
+        if ((mode == Mode.FORWARD || mode == Mode.OIT) && forwarder == null) {
+            forwarder = Forwarder(
+                this, { session?.write(it) },
+                { proto, src, dst ->
+                    val ban = session?.apps ?: emptySet()
+                    owner(proto, src, dst).firstOrNull { it in ban }
+                },
+                // 全部断网时只放行 OIT 自己的 AI 接口连接 (HTTPS 443); 其余应用 / 端口一律丢掉
+                { proto, src, dst ->
+                    session?.mode != Mode.OIT || allowOit(proto, src, dst)
+                })
+        } else if (mode != Mode.FORWARD && mode != Mode.OIT) stopForwarder()
+        forwarder?.clearDrops()
         session = Session(pfd, p, mode, apps).also { it.thread.start() }
         plan = p
         appBlock = mode == Mode.APPS || mode == Mode.FORWARD

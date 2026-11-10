@@ -299,6 +299,11 @@ class OitApp : Application(), Host {
         runCatching { com.obliphur.oit.service.Chime.playSoft() }
     }
 
+    /** 休息只剩 1 分钟的提示音 (MECHANICS 6): 和电脑版 config.ensure_break_chime 同一个音. */
+    override fun playBreakSoon() {
+        runCatching { com.obliphur.oit.service.Chime.playBreakSoon() }
+    }
+
     /** 违反合约的警报 (MECHANICS 18). */
     override fun playAlarm() {
         runCatching {

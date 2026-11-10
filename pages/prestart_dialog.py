@@ -52,7 +52,12 @@ class PrestartDialog(tk.Toplevel):
                                "之后窗口藏起来、静音; 结束专注时再放出来.",
                                n=self.limit),
                  bg=bg, fg=COLORS["text_dim"], font=config.font("small"), anchor="w",
-                 justify="left", wraplength=config.scaled(560)).pack(fill="x", pady=(2, 10))
+                 justify="left", wraplength=config.scaled(560)).pack(fill="x", pady=(2, 2))
+        tk.Label(body, text=tr("休息中直接开始下一轮专注时, 上一段的提前启动会原样接着 "
+                               "(不再给 3 分钟); 这些程序只在专注期间无条件联网, "
+                               "休息 / 结束后照常按名单判定."),
+                 bg=bg, fg=COLORS["text_dim"], font=config.font("small"), anchor="w",
+                 justify="left", wraplength=config.scaled(560)).pack(fill="x", pady=(0, 10))
 
         row = tk.Frame(body, bg=bg)
         row.pack(fill="x")

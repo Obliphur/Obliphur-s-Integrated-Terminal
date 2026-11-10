@@ -16,6 +16,7 @@
 | `focus_log.json` | 每一段专注 / 休息的起止时刻, 以及共享专注中 OIT 被关掉的空闲段 (8.4) | 最近 7 天 |
 | `window_usage.json` | 每天每个程序在前台的秒数 (`""` 是空白, `"?"` 是未知程序), 以及按分钟的时间线 (统计页合并多台设备用) | 本月 + 上月 |
 | `timer_state.json` | 积攒的休息时间, 本周连点领取了多少 (时长和次数), 进行中的专注 | 永久 |
+| `hidden_windows.json` | "触发隐藏的窗口"的标题关键字 (第 20.1 节) | 永久; 不同步 |
 | `profile.json` | 用户名 (1.1) | 永久; 不同步 |
 | `ai_config.json` | AI 服务商配置 (API Key 用 DPAPI 加密保存); 设置随绑定同步 (Key 到对方设备后用对方的 DPAPI 重新加密) | 永久 |
 | `sysproxy_backup.json` | 启用 Proxy 前的系统代理设置 | 还原后删除 |

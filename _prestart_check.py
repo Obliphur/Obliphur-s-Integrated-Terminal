@@ -206,6 +206,60 @@ assert ps2.exe_names() == {"demo.exe", "helper.exe"}, ps2.exe_names()
 ps2.stop()
 assert ps2.exe_names() == set()
 
+# 休息中直接开始专注: 上一段的提前启动保留下来 (park), 新一段不给 3 分钟空窗期
+state["hidden"].clear()
+state["muted"].clear()
+ps4 = prestart.Prestart()
+ps4.start([{"name": "Demo", "exe": "demo.exe", "launch": "", "running": True}])
+ps4.grace_until = 0.0
+ps4.step()
+assert ps4.active and ps4.hidden
+ps4.park()
+ps4.stop()
+assert not ps4.active and not ps4.chosen
+assert [i["exe"] for i in ps4.last_items] == ["demo.exe"], ps4.last_items
+assert ps4.resume_last()
+assert ps4.active and ps4.chosen and not ps4.in_grace and ps4.phase == "active"
+assert ps4.hidden, "接着上一段: 马上藏窗口, 不重新给 3 分钟"
+ps4.drop_last()
+ps4.stop()
+assert ps4.last_items == []
+
+# 从空闲开始的真正新专注: 不沿用上一段
+ps4.start([{"name": "Demo", "exe": "demo.exe", "launch": "", "running": True}])
+ps4.park()
+ps4.stop()
+assert [i["exe"] for i in ps4.last_items] == ["demo.exe"]
+ps4.drop_last()
+assert ps4.resume_last() is False
+
+# 触发隐藏的窗口 (设置 → 窗口): 标题命中就藏, 只藏 (应用名单不关) 但不给联网豁免
+td2 = tempfile.mkdtemp(prefix="oit_hidden_")
+ts = prestart.TriggerStore(td2)
+assert ts.titles == [] and not ts.matches("anything")
+assert ts.set_titles(["  Game Launcher ", "", "game launcher", "OIT"])
+assert ts.titles == ["Game Launcher", "OIT"], ts.titles
+assert prestart.TriggerStore(td2).titles == ["Game Launcher", "OIT"], "存档后重新读出来"
+assert ts.matches("My Game Launcher - v1") and ts.matches("game launcher")
+assert not ts.matches("Notepad")
+shutil.rmtree(td2, ignore_errors=True)
+
+ps5 = prestart.Prestart()
+ps5.triggers = lambda: ["Trailer"]
+assert ps5.hidden_exes() == set()
+assert ps5.hide_triggered({"hwnd": 201, "root": 201, "pid": 99, "exe": "other.exe",
+                           "title": "Movie Trailer", "visible": True})
+assert ps5.hidden_exes() == {"other.exe"}
+assert ps5.exe_names() == set(), "触发隐藏不算联网豁免"
+assert 201 in state["hidden"]
+assert state["muted"][-1] == ({99}, True)
+# 不是这些标题的窗口不动
+assert not ps5.hide_triggered({"hwnd": 202, "pid": 99, "exe": "other.exe",
+                               "title": "Notepad", "visible": True})
+ps5.release_auto()
+assert ps5.hidden_exes() == set() and 201 in state["shown"]
+assert state["muted"][-1][1] is False
+
 root.destroy()
 shutil.rmtree(_tmp, ignore_errors=True)
 print("prestart check OK")

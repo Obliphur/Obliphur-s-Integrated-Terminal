@@ -80,8 +80,10 @@ class TimerMixin:
             if self._break_locked():
                 toast.warn(self._pause_block())
                 return
+            # 休息中直接开始专注: 上一段专注的提前启动要接着 (见 _enter_focus; MECHANICS 20)
             self.end_break_early()
             if self.state == IDLE:
+                self._focus_from_break = True
                 self.on_action()
 
     def on_break_button(self):
@@ -244,11 +246,19 @@ class TimerMixin:
         self._focus_checks = checks
         self._focus_ok = ok
         self._close_check_win()
-        self.state = RUNNING
-        # 从休息接着专注 / 从别的状态恢复: 上一次专注遗留的提前启动程序放出来,
-        # 新的一段专注重新选, 重新有 3 分钟操作空窗期
+        # 从休息接着专注 (点"开始专注" / 别的设备开始 / 暂停休息后马上开始): 上一段专注的提前启动原样接着 —
+        # 不重新给 3 分钟操作空窗期, 否则程序在空窗期外会被应用名单关掉 (MECHANICS 20).
+        # 从空闲开始的真正新专注: 上一段的不再沿用, 重新选.
+        was_break = self.state == ON_BREAK or bool(getattr(self, "_focus_from_break", False))
         if self.prestart.active:
-            self._stop_prestart()
+            self._stop_prestart(park=was_break)
+        if was_break:
+            self.prestart.resume_last()
+        else:
+            self.prestart.drop_last()
+        self._focus_from_break = False
+        self.state = RUNNING
+        self._sync_prestart_exempt()
         self._status(tr("专注中…"), COLORS["accent"])
         self.lbl_sub.config(text="")
         self._sync_timer_buttons()
@@ -257,6 +267,9 @@ class TimerMixin:
 
     def _resume_break(self, live: dict, end: datetime, left: int):
         """照着计时器状态 (同步来的 / 关闭前存下的) 进入休息, 还剩 left 秒."""
+        # 从专注进休息: 提前启动的程序马上放出来, 选过的留给休息中直接开始专注时接着用 (MECHANICS 20)
+        if self.prestart.active:
+            self._stop_prestart(park=True)
         self.state = ON_BREAK
         self.start_wall = None
         self.break_start_wall = datetime.fromisoformat(live["break_start"])
@@ -747,9 +760,10 @@ class TimerMixin:
 
     def reset_to_idle(self):
         self.cancel_update()
-        # 回到空闲 = 这段专注 (或休息) 结束了: 提前启动的程序全部放出来
+        # 回到空闲 = 这段专注 (或休息) 结束了: 提前启动的程序全部放出来.
+        # 选过的程序先记下; 紧接着如果是从休息直接开始专注, _enter_focus 会接着用, 否则丢掉 (MECHANICS 20)
         if getattr(self, "prestart", None) is not None and self.prestart.active:
-            self._stop_prestart()
+            self._stop_prestart(park=True)
         self.state = IDLE
         self.start_mono = None
         self.start_wall = None

@@ -124,6 +124,7 @@ class BreakTimerApp(CommMixin, SyncMixin, ContractMixin, ContractMediaMixin,
         self._focus_ok = 0.0          # 最后一次确认 (关掉提醒窗) 时已专注的秒数
         self._check_win = None        # 当前开着的"还在吗"提醒窗
         self._focus_saved = 0.0       # 上一次把专注状态写进文件的时刻 (monotonic)
+        self._focus_from_break = False  # 这一下开始专注是从休息里直接开始的 (提前启动要接着, MECHANICS 20)
         # 绑定了其他设备, 上次在共享的专注中 OIT 被关掉了: 等第一次同步后决定要不要终止这段专注 (MECHANICS 8.2)
         self._close_pending = None
         # 关机 (MECHANICS 15.4): 收到系统的关机指令 (power_off), 本机电量 (只在用电池时, 其他时候 None)
@@ -211,6 +212,10 @@ class BreakTimerApp(CommMixin, SyncMixin, ContractMixin, ContractMediaMixin,
                                           or self.net.proxy.rules.in_white_apps(exe))
         self.prestart_list = prestart.ListStore(self.dm.data_dir)   # 提前启动清单的添加 / 删除 (MECHANICS 20)
         self.prestart_list.blocked = lambda: self.dm.resetting
+        # 触发隐藏的窗口 (设置 → 窗口): 标题命中就让程序提前启动藏起来, 但不给联网豁免 (MECHANICS 20)
+        self.hidden_windows = prestart.TriggerStore(self.dm.data_dir)
+        self.hidden_windows.blocked = lambda: self.dm.resetting
+        self.prestart.triggers = lambda: self.hidden_windows.titles
         # 合约 (MECHANICS 18): 先把盖过设置的项套上, 断网方式才会一开始就对
         self.contract = contract_mod.Contract(self.dm.data_dir)
         self.contract.blocked = lambda: self.dm.resetting

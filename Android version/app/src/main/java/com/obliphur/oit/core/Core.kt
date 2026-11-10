@@ -55,6 +55,8 @@ interface Host {
     fun playPrescriptSound() {}
     /** 沟通收到对方主动发来的消息 (前 5 分钟没聊过) 的提示音: 柔和的两声钟. */
     fun playCommSound() {}
+    /** 休息只剩 1 分钟的提示音: 比沟通提示音更低更轻 (和电脑版 config.ensure_break_chime 同一个音). */
+    fun playBreakSoon() {}
     /** 闹钟 (1.0.359): 开始循环响铃 (tone: classic / chime / soft / custom, custom = 系统铃声 Uri, volume 0-100); 停止. */
     fun startAlarmSound(tone: String, custom: String, volume: Int) {}
     fun stopAlarmSound() {}
@@ -126,7 +128,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     var myId: () -> String = { "" }
     /** 这台设备最近 2 分钟内同步过吗. */
     var peerFresh: (String) -> Boolean = { false }
-    /** 本机是不是最后有人操作的设备 (整点提示音只在它上面响). */
+    /** 本机是不是最后有人操作的设备 (整点 / 沟通 / 休息剩 1 分钟等提示音只在它上面响). */
     var isLatestActive: () -> Boolean = { true }
     /** 绑定了其他设备吗. */
     var hasPeers: () -> Boolean = { false }
@@ -303,7 +305,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
             (k["study"] ?: 0.0) to (k["idle"] ?: 0.0)
         }
         comm.hardBlock = { contract.has("silent") && !settings.devMode }
-        comm.onProactive = { host.playCommSound() }
+        comm.onProactive = { if (isLatestActive()) host.playCommSound() }
         comm.onJointDue = { j -> jointDue(j) }
         comm.contractFn = { contract.active }                       // 日程跟随: 合约期间自动关闭
         comm.onSf = { kind, text -> sfAsk(kind, text) }

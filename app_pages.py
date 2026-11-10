@@ -159,8 +159,10 @@ class PagesMixin:
             pass
 
     def _comm_ping(self):
-        """有新的聊天消息, 而用户不在沟通页面: 柔和的提示音 (后台线程里放)."""
-        self._play_soft_chime()
+        """有新的聊天消息, 而用户不在沟通页面: 柔和的提示音 (后台线程里放).
+        绑定了其他设备时只在焦点设备 (最后有人操作的那台) 上响, 其他设备只标未读."""
+        if self.sync.is_latest_active():
+            self._play_soft_chime()
 
     def _play_soft_chime(self):
         if sys.platform != "win32" or self.shutting_down:
@@ -170,8 +172,10 @@ class PagesMixin:
             threading.Thread(target=_play_audio_file, args=(path,), daemon=True).start()
 
     def _play_break_soon_chime(self):
-        """休息快结束的提示音: 比沟通提示音更低更轻 (后台线程里放)."""
+        """休息快结束的提示音: 比沟通提示音更低更轻 (后台线程里放). 只在焦点设备上响."""
         if sys.platform != "win32" or self.shutting_down:
+            return
+        if not self.sync.is_latest_active():
             return
         path = config.ensure_break_chime(os.path.join(self.dm.data_dir, "break_soon.wav"))
         if path:

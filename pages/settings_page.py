@@ -23,7 +23,8 @@ class SettingsPage(tk.Frame):
                  on_update_install=None, on_update_relay=None, sync=None, achievements=None,
                  on_open_achievements=None, data_dir=None, recording=None, on_delete_record=None,
                  on_contract_theme=None, comm=None, on_open_rules=None,
-                 alarm=None, ringer=None, co_alarm_fn=None, ring_busy=None):
+                 alarm=None, ringer=None, co_alarm_fn=None, ring_busy=None,
+                 hidden_windows=None, on_hidden_windows=None):
         super().__init__(master, bg=COLORS["bg"])
         self.comm = comm
         self.on_open_rules = on_open_rules
@@ -31,6 +32,8 @@ class SettingsPage(tk.Frame):
         self.ringer = ringer
         self._co_alarm_fn = co_alarm_fn or (lambda: None)
         self._ring_busy = ring_busy or (lambda: False)
+        self.hidden_windows = hidden_windows      # 触发隐藏的窗口 (prestart.TriggerStore)
+        self.on_hidden_windows = on_hidden_windows or (lambda: None)
         self.alarm_ui = None
         self.sm = settings
         self.ach_store = achievements
@@ -153,6 +156,8 @@ class SettingsPage(tk.Frame):
                 from .alarm_ui import AlarmSettings
                 self.alarm_ui = AlarmSettings(self, self.areas[key].inner)
             self._build_page_items(key)
+            if key == "window":
+                self._build_hidden_windows(self.areas[key].inner)
             if key == "record":
                 self._build_record_lists(self.areas[key].inner)
 
@@ -673,6 +678,9 @@ class SettingsPage(tk.Frame):
 
     def _save_all(self):
         """保存当前这一页: 上半部分的选项和下半部分的数值一起提交."""
+        # 窗口页的"触发隐藏的窗口"列表也一起保存 (它自己也有一个保存按钮)
+        if self._tab == "window" and self.hidden_windows is not None and hasattr(self, "txt_hidden"):
+            self._save_hidden_windows(quiet=True)
         choices, nums = page_specs(self._tab)
         staged, instant, same = 0, 0, 0
         ui_keys, errors = [], []
@@ -799,6 +807,43 @@ class SettingsPage(tk.Frame):
         fr, head = self._card(body, "🛡  规则")
         self._track(ttk.Button(head, text=tr("打开"), command=lambda: self.on_open_rules and self.on_open_rules()),
                     "打开").pack(side="right")
+
+    # ---- 窗口页: 触发隐藏的窗口 (MECHANICS 20) ----
+
+    def _build_hidden_windows(self, body):
+        """设置 → 窗口: 标题匹配的窗口总被当成提前启动藏起来 (而不是被应用名单关掉), 但不获得联网权限."""
+        if self.hidden_windows is None:
+            return
+        card = COLORS["bg_card"]
+        fr, head = self._card(body, "🫥  触发隐藏的窗口")
+        self._track(ttk.Button(head, text=tr("保存列表"), style="Accent.TButton",
+                               command=self._save_hidden_windows), "保存列表").pack(side="right")
+        tk.Label(fr, text=tr("一行一个窗口标题关键字: 标题里包含它就藏起来 (不关掉); 藏起来的程序不获得联网权限."),
+                 bg=card, fg=COLORS["text_dim"], font=config.font("small"),
+                 anchor="w", justify="left", wraplength=config.scaled(560)).pack(
+            fill="x", padx=12, pady=(2, 4))
+        self.txt_hidden = tk.Text(
+            fr, height=5, wrap="none", font=config.font("body"), bg=card, fg=COLORS["text"],
+            insertbackground=COLORS["text"], relief="flat", highlightthickness=1,
+            highlightbackground=COLORS["border"], highlightcolor=COLORS["accent"])
+        self.txt_hidden.pack(fill="x", padx=12, pady=(0, 10))
+        self.txt_hidden.insert("1.0", "\n".join(self.hidden_windows.titles))
+        self.areas["window"].bind_children()
+
+    def _save_hidden_windows(self, quiet: bool = False):
+        if self.hidden_windows is None:
+            return
+        lines = self.txt_hidden.get("1.0", "end").splitlines()
+        changed = self.hidden_windows.set_titles(lines)
+        # 去重 / 去掉空行以后把框里的内容也对齐
+        self.txt_hidden.delete("1.0", "end")
+        self.txt_hidden.insert("1.0", "\n".join(self.hidden_windows.titles))
+        if changed:
+            self.on_hidden_windows()
+            if not quiet:
+                toast.success(tr("触发隐藏的窗口已保存."))
+        elif not quiet:
+            toast.info(tr("没有改动."))
 
     # ---- 沟通页: API, 人设, 头像 (即时保存, 没有等待期) ----
 

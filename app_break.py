@@ -137,9 +137,10 @@ class BreakMixin:
 
     def _start_break(self, announce: bool = False):
         """开始休息倒计时 = 建议休息时长 + 之前暂停休息结转的时间."""
-        # 结束专注时提前启动的程序全部放出来 (不等下一秒的 tick, 也不依赖 tick 还活着)
+        # 结束专注时提前启动的程序全部放出来 (不等下一秒的 tick, 也不依赖 tick 还活着);
+        # 选过的程序保留到 last_items: 休息中直接开始专注时接着用 (MECHANICS 20)
         if self.prestart.active:
-            self._stop_prestart()
+            self._stop_prestart(park=True)
         total = self._break_seconds()
         if total <= 0:
             toast.info(tr("剩余时间为 0,已重置."))
