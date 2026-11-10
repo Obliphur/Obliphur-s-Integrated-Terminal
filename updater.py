@@ -94,6 +94,7 @@ def _backup_file() -> str:
 
 def upstream_proxy():
     """用户自己的代理 (host, port): OIT 接管系统代理之前的设置; 没接管时就是现在的系统代理.
+    系统代理关着、但注册表里还留着 ProxyServer 时也算 (Clash TUN / 手动代理会这么留).
     OIT 自己的过滤代理不算. 没有返回 None."""
     try:
         from netproxy.sysproxy import SystemProxy, parse_proxy_server
@@ -101,8 +102,9 @@ def upstream_proxy():
         up = sp.original_upstream()
         if up is None and not os.path.exists(_backup_file()):
             cur = sp.backend.read()
-            if cur.get("ProxyEnable") == 1:
-                up = parse_proxy_server(cur.get("ProxyServer"))
+            # 不只看 ProxyEnable: 用 TUN 模式时系统代理是关的, 但 ProxyServer 仍是 Clash 的端口,
+            # 更新检查和 bypassguard 都要把它当上游, 否则会去封 Clash / 直连被 TUN 转给 Clash 后回 502.
+            up = parse_proxy_server(cur.get("ProxyServer"))
     except Exception:
         return None
     if not up or (up[0] in ("127.0.0.1", "localhost") and up[1] in OIT_PORTS):
@@ -602,6 +604,9 @@ def _selftest():
             assert upstream_proxy() is None
             _Reg.state = {"ProxyEnable": 1, "ProxyServer": "10.0.0.2:8080"}
             assert upstream_proxy() == ("10.0.0.2", 8080)
+            # 系统代理关着 (Clash TUN) 但 ProxyServer 还留着: 也要当上游代理
+            _Reg.state = {"ProxyEnable": 0, "ProxyServer": "127.0.0.1:7897"}
+            assert upstream_proxy() == ("127.0.0.1", 7897)
     finally:
         globals()["_backup_file"] = saved_bf
         _sp.RegistryBackend = saved_rb
