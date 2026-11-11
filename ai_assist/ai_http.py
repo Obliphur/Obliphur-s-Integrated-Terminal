@@ -89,6 +89,14 @@ def proxy_hint() -> str:
         return "?"
 
 
+def _openai_root(profile: dict) -> str:
+    """OpenAI 兼容接口只填域名时补 /v1; 显式路径与 DeepSeek 官方根地址保持原样."""
+    base = profile["base_url"].strip().rstrip("/")
+    if not urllib.parse.urlsplit(base).path and not is_deepseek(profile):
+        return base + "/v1"
+    return base
+
+
 def endpoint(profile: dict) -> str:
     base = profile["base_url"].strip().rstrip("/")
     if profile.get("protocol") == "anthropic":
@@ -99,7 +107,7 @@ def endpoint(profile: dict) -> str:
         if model.startswith("models/"):
             model = model[len("models/"):]
         return f"{root}/models/{urllib.parse.quote(model, safe='')}:generateContent"
-    return base + "/chat/completions"
+    return _openai_root(profile) + "/chat/completions"
 
 
 def _error_text(body: bytes) -> str:
@@ -191,8 +199,8 @@ def _build_body(profile: dict, system: str, messages: list, max_tokens: int, tem
         return body
     body = {"model": profile["model"], "max_tokens": max_tokens, "temperature": temperature,
             "messages": [{"role": "system", "content": system}] + list(messages)}
-    if fam == "chatgpt":                                    # OpenAI: 不认 thinking, 只带缓存键; 前缀稳定就自动命中
-        if cache:
+    if fam in ("chatgpt", "gemini"):                        # Gemini 的 OpenAI 中转也不发送其他模型的 thinking 字段
+        if cache and fam == "chatgpt":
             body["prompt_cache_key"] = cache_key(system, profile.get("model"))
         return body
     if fam == "deepseek":                                   # 官方地址: 用自己的思考开关
@@ -358,8 +366,7 @@ def _send(profile: dict, body: dict, timeout: float, opener, url: str = None) ->
 
 
 def responses_url(profile: dict) -> str:
-    base = profile["base_url"].strip().rstrip("/")
-    return base + "/responses"
+    return _openai_root(profile) + "/responses"
 
 
 def _responses_text(data: dict) -> str:
@@ -503,7 +510,7 @@ def models_url(profile: dict) -> str:
         return base + ("/models" if base.endswith("/v1") else "/v1/models")
     if profile.get("protocol") == "gemini":
         return (base if base.endswith(("/v1beta", "/v1")) else base + "/v1beta") + "/models"
-    return base + "/models"
+    return _openai_root(profile) + "/models"
 
 
 def list_models(profile: dict, timeout: float = 20.0, opener=None) -> list:

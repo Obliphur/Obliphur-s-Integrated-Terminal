@@ -2068,6 +2068,7 @@ class CommTest {
                     seen.add(path to req)
                     val out = it.getOutputStream()
                     when {
+                        method == "GET" && path == "/v1/models" -> reply(out, 200, """{"data":[{"id":"gemini-test"}]}""")
                         method == "GET" -> reply(out, 200, bing)
                         path.startsWith("/nosearch") -> reply(out, 400, """{"error":{"message":"unknown tool"}}""")
                         path.endsWith("/messages") -> reply(out, 200, """{"content":[{"type":"text","text":"我先查一下. "},{"type":"server_tool_use","id":"s1","name":"web_search","input":{}},{"type":"web_search_tool_result","tool_use_id":"s1","content":[]},{"type":"text","text":"查到了: "},{"type":"text","text":"答案 A"}],"stop_reason":"end_turn","usage":{"input_tokens":7}}""")
@@ -2115,6 +2116,15 @@ class CommTest {
             seen.clear()
             assertEquals("答案 F", Ai.chatMessages(pf, "SYS", m1))
             assertFalse(JSONObject(seen.last().second).has("tools"))
+            // Gemini 经 OpenAI 中转: 只填域名也能列模型、对话, 不混入别家的思考字段。
+            seen.clear()
+            val relay = pf.copy(baseUrl = base, family = "gemini")
+            assertEquals(listOf("gemini-test"), Ai.listModels(relay))
+            assertEquals("/v1/models", seen.last().first)
+            assertEquals("答案 F", Ai.chatMessages(relay, "SYS", m1, cache = true, think = true))
+            assertEquals("/v1/chat/completions", seen.last().first)
+            val rb = JSONObject(seen.last().second)
+            assertFalse(rb.has("thinking") || rb.has("prompt_cache_key") || rb.has("cache_control"))
         } finally {
             Ai.SEARCH_URL = saved
             srv.close()

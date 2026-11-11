@@ -114,6 +114,12 @@ object Ai {
         if (p.apiKey.isBlank() && !local) throw AiError("config", "还没有填 API Key")
     }
 
+    private fun openaiRoot(p: Profile): String {
+        // 只填中转域名时补 /v1; 自定义路径和 DeepSeek 官方根地址不改。
+        val base = p.baseUrl.trim().trimEnd('/')
+        return if (URL(base).path.isNullOrEmpty() && !isDeepSeek(p)) "$base/v1" else base
+    }
+
     private fun endpoint(p: Profile): String {
         val base = p.baseUrl.trim().trimEnd('/')
         return when (p.protocol) {
@@ -123,7 +129,7 @@ object Ai {
                 val model = p.model.removePrefix("models/")
                 "$root/models/$model:generateContent"
             }
-            else -> "$base/chat/completions"
+            else -> openaiRoot(p) + "/chat/completions"
         }
     }
 
@@ -360,6 +366,7 @@ object Ai {
         body.put("messages", arr)
         when (fam) {
             "chatgpt" -> if (cache) body.put("prompt_cache_key", cacheKey(system, p.model))   // OpenAI 不认 thinking 字段
+            "gemini" -> Unit                               // OpenAI 中转不发送其他模型的思考字段
             "deepseek" -> {
                 if (thinkOn) body.remove("temperature")
                 body.put("thinking", JSONObject().put("type", if (thinkOn) "enabled" else "disabled"))
@@ -585,7 +592,7 @@ object Ai {
                 for ((role, content) in messages) input.put(JSONObject().put("role", role).put("content", content))
                 val body = JSONObject().put("model", p.model).put("instructions", system).put("max_output_tokens", maxTokens)
                     .put("input", input).put("tools", JSONArray().put(JSONObject().put("type", "web_search")))
-                val d = send(p, body, timeoutMs, p.baseUrl.trim().trimEnd('/') + "/responses")
+                val d = send(p, body, timeoutMs, openaiRoot(p) + "/responses")
                 used(d)
                 text = responsesText(d)
             }
@@ -670,7 +677,7 @@ object Ai {
         return when (p.protocol) {
             "anthropic" -> base + (if (base.endsWith("/v1")) "/models" else "/v1/models")
             "gemini" -> (if ((base.endsWith("/v1beta") || base.endsWith("/v1"))) base else "$base/v1beta") + "/models"
-            else -> "$base/models"
+            else -> openaiRoot(p) + "/models"
         }
     }
 

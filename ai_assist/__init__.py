@@ -383,6 +383,15 @@ def _selftest():
         assert path == "/v1/chat/completions" and hdr["authorization"] == "Bearer k1"
         assert body["messages"][0]["content"] == PROMPT_BLACKLIST
         assert "少看视频" in body["messages"][1]["content"]
+        # 中转只填域名: 对话、模型列表、Responses 共用 /v1 根路径。
+        relay = dict(p, base_url=base, provider="custom", family="gemini")
+        chat_messages(relay, "SYS", [{"role": "user", "content": "hi"}], cache=True, think=True)
+        path, hdr, body = seen[-1]
+        assert path == "/v1/chat/completions" and hdr["authorization"] == "Bearer k1"
+        assert not ({"thinking", "prompt_cache_key", "cache_control"} & body.keys()), body
+        assert responses_url(relay) == base + "/v1/responses"
+        assert endpoint(dict(relay, base_url=base + "/custom")) == base + "/custom/chat/completions"
+        assert endpoint(dict(relay, base_url="https://api.deepseek.com", provider="deepseek", family="deepseek")) == "https://api.deepseek.com/chat/completions"
         r = suggest(dict(p, protocol="anthropic", base_url=base), MODE_WHITELIST,
                     "ctx", doms, apps)
         path, hdr, body = seen[-1]
@@ -532,6 +541,8 @@ def _selftest():
     try:
         seen = []
         assert list_models({"base_url": base2 + "/v1", "protocol": "openai", "api_key": "k9", "provider": "custom"}) == ["m-a", "m-b"]
+        assert seen[-1][0] == "/v1/models" and seen[-1][1]["authorization"] == "Bearer k9"
+        assert list_models({"base_url": base2, "protocol": "openai", "api_key": "k9", "provider": "custom", "family": "gemini"}) == ["m-a", "m-b"]
         assert seen[-1][0] == "/v1/models" and seen[-1][1]["authorization"] == "Bearer k9"
         list_models({"base_url": base2, "protocol": "anthropic", "api_key": "k9", "provider": "custom"})
         assert seen[-1][0] == "/v1/models" and seen[-1][1]["x-api-key"] == "k9" and seen[-1][1]["anthropic-version"] == ANTHROPIC_VERSION
