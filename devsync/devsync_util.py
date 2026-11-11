@@ -14,11 +14,13 @@ import os
 import re
 import secrets
 import socket
+import sys
 import threading
 import time
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler
 
+import securefile
 from devsync.devsync_crypto import file_xor
 
 

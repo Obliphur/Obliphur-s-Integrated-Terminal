@@ -6,6 +6,7 @@
 from datetime import datetime, timedelta
 
 from data_manager.data_common import (
+    _RANK,
     _subtract,
 )
 

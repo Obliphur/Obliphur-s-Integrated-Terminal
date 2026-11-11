@@ -140,7 +140,7 @@ class CommSettingsMixin:
         self.areas["comm"].bind_children()
 
     def _comm_api(self):
-        from . import ai_dialogs
+        from .. import ai_dialogs
         ai_dialogs.open_model_settings(self.winfo_toplevel(), self.comm.ai)
         self._refresh_comm()
 
@@ -204,7 +204,7 @@ class CommSettingsMixin:
             self._comm_avatar_visible()
 
     def _comm_pick_avatar(self, who):
-        from .avatar_dialog import pick_avatar
+        from ..avatar_dialog import pick_avatar
         if not self.comm.persona_name():                              # 我的头像和对方的头像都跟着人设走
             toast.warn(tr("还没有选人设"))
             return

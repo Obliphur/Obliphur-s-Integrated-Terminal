@@ -540,7 +540,7 @@ class Updater:
                 src, _zipball = pick_download(self.release)
                 if not src or not src.get("url"):
                     raise ValueError("nothing to download")
-                fd, path = tempstore.mkstemp("update", prefix=f"oit-{version}-", suffix=".zip")
+                fd, path = tempstore.mkstemp("update", prefix=f"oit-{vtext(self.latest)}-", suffix=".zip")
                 os.close(fd)
                 download(src, path)
                 install_zip(path, program_dir())

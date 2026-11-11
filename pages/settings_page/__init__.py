@@ -133,7 +133,7 @@ class SettingsPage(FormMixin, CardsMixin, CommSettingsMixin, RecordSettingsMixin
         self._build_setup_card(body)
         self._build_achievements_card(body)
         if self.sync is not None:
-            from .sync_panel import SyncPanel
+            from ..sync_panel import SyncPanel
             self.sync_panel = SyncPanel(body, self.sync)
             self.sync_panel.pack(fill="x")
         self._build_page_items("basic")
@@ -156,7 +156,7 @@ class SettingsPage(FormMixin, CardsMixin, CommSettingsMixin, RecordSettingsMixin
             if key == "comm":
                 self._build_comm_page(self.areas[key].inner)
             if key == "alarm" and self.alarm is not None:
-                from .alarm_ui import AlarmSettings
+                from ..alarm_ui import AlarmSettings
                 self.alarm_ui = AlarmSettings(self, self.areas[key].inner)
             self._build_page_items(key)
             if key == "window":
