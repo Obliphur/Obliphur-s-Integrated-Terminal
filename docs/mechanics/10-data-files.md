@@ -53,12 +53,23 @@ OIT 自己的临时文件都在 `%TEMP%\OIT\` 一个文件夹里 (`tempstore.py`
 | `scan\` | 扫描网站时无界面浏览器用的临时用户目录 (4.9) | 扫完就删; 浏览器占着删不掉的, 1 小时后再清 |
 | `update\` | 更新包 (`.zip`) 和解包目录 (16) | 装完就删 |
 | `setup\` | 安装程序的日志 `oit-setup.log` 和下载的 Python 安装包 | 安装完就删 (日志留到启动时清) |
-| `misc\` | 其它: 自检 / 检查脚本, 头像临时图, 历史库副本, 主题预览 …… | 脚本退出时删自己那份; 启动时清超过 1 天的 |
+| `misc\` | 其它: 自检 / 检查脚本, 头像临时图, 历史库副本, 主题预览 …… | 脚本退出时删自己那份; 开会话时清掉 1 小时前的残留; 启动时清超过 1 天的 |
 
 - `config.py` 导入时把本进程的默认临时目录指到 `misc\`, 所以 `tempfile.mkdtemp()` 和第三方库写的临时文件也落在 OIT 里.
 - 每次启动 (`main.py`) 调 `tempstore.sweep()`: 清掉 `%TEMP%\OIT` 里一天前没动过的, 所以它不会越攒越多.
 - 旧版本直接把临时文件扔在 `%TEMP%` 顶层 (`oit_rec` / `oit_play` / `oit-scan-*` / `oit-*.zip` / 自检留下的一堆 `oit?????` 目录), 升级后第一次启动时由 `tempstore.sweep_legacy()` 清掉 (只认 `%TEMP%` 顶层 `oit` 开头的名字, 一天内动过的先不动).
-- 自检 / 检查脚本 (`python _xxx_check.py`) 开头调 `tempstore.session("名字")`: 这个进程的临时文件全在一个子目录里, 退出时整个删掉.
+- 自检 / 工具脚本 (`python xxx.py`): `config.py` 导入时调 `tempstore.autosession()`, 自动开一个会话目录, 退出时整个删掉
+  (`main.py` / `setup.py` / `release.py` / `uninstall.py` 不开: 安装日志和更新包退出后还要能看; 打包后的 exe 也不会开).
+  检查脚本也可以开头自己调 `tempstore.session("名字")`. 开会话前会把 `misc` 里 1 小时前没动过的清掉 (上次被强杀 / 断电留下的).
 - 重置 (`data_manager.erase_all_data`) 调 `tempstore.sweep(0)`, 卸载 (`uninstall.delete_data`) 调 `tempstore.clean()`.
+- 老版本 / 没有走 `config` 的模块自检会把 `tmp??????` 留在 `%TEMP%` 顶层 (这些模块不导入 config, `tempfile` 还没被重定向):
+  这些入口的 `__main__` 现在先调 `tempstore.autosession()`; 以前留下的由 `tempstore.sweep_orphans()` 清
+  (程序启动时, 以及 `python tempstore.py --clean`), 只认目录里全是 OIT 自检会留下的文件、并且有一眼能认出的名字
+  (或 JSON 结构 / 内容对得上) 的; 旧版 recorder 留在顶层的 `rec<数字>` / `rec-data<数字>` 工作目录
+  (里面只有 `recordings/` 和 mp4 / `.oitv`) 也一起清; 现在的录像工作文件都在 `OIT\rec` 里.
+  别的程序的临时目录、没有权限读的目录 (别的账户建的) 不碰.
+- 自检 / 工具脚本开会话时 (`autosession` / `session`), 用过的录像工作目录 `OIT\rec\<tag>` 退出时一起删
+  (`tempstore.path` 自动记下来), 空的 `rec` / `OIT` 目录也一并去掉; 所以反复跑 `python recorder.py` 不会留下空目录.
+- 想看占了多大 / 手动清空: `python tempstore.py --status` (含顶层 `tmp*` 残留的个数和大小) / `python tempstore.py --clean`.
 - 新代码要临时目录就用 `tempstore.path(...)` / `tempstore.mkdtemp(...)`, 不要自己拼 `tempfile.gettempdir()`.
 

@@ -89,12 +89,12 @@ obliphur_terminal/
 ├─ data_manager.py       Study time, hour logs, focus periods, window usage time (statistics)
 ├─ daily.py              Sleep time (Settings → Daily)
 ├─ behavior.py           Behavior modes / going out (optional; adds to statistics and hour logs)
-├─ prescript.py          Prescripts: draw / timer / save, exclusive to the urban_will theme
+├─ prescript.py          Prescripts: draw / timer / save, exclusive to the urban_will theme (mixins in prescript_parts/)
 ├─ comm.py               Chat: personas, chat history, proactive messages, the other party's status
 ├─ comm_parts/comm_data.py          Chat: data sent with 📎 / reference templates the other party can query
 ├─ alarm.py              Alarm: the device alarm, ringtones, and when the co-time alarm (follows the other party's wake-up time) rings
 ├─ achievements.py       Achievements: condition checks and saving
-├─ contract.py           Contracts: terms, violations and demotion, rest multiplier, hour-log locking
+├─ contract.py           Contracts: terms, violations and demotion, rest multiplier, hour-log locking (mixins in contract_parts/)
 ├─ net_guard.py          Network quota, requests / quick access / loans, switching cut-off method
 ├─ netproxy/             Local filtering proxy (Proxy cut-off method)
 │  ├─ server.py          HTTP / HTTPS tunnel proxy, 403 block page
@@ -108,19 +108,19 @@ obliphur_terminal/
 ├─ window_guard.py       Taskbar window limit (reminder while focusing), close programs by foreground window, foreground program detection, hide / show windows
 ├─ prestart.py           Pre-start (PC only) + windows that trigger hiding: hide / mute, and keep them going when focus restarts directly from a break
 ├─ audiomute.py          Mute / unmute by process (audio sessions, used by pre-start)
-├─ recorder.py           Contract recording (camera / screen, using Windows' built-in H.264 encoder)
-├─ devsync.py            Device sync: discovery, pairing, encryption, syncing, direct package / file transfer
+├─ recorder.py           Contract recording (camera / screen, using Windows' built-in H.264 encoder; storage / MF / merging in recorder_parts/)
+├─ devsync.py            Device sync: discovery, pairing, encryption, syncing, direct package / file transfer (mixins / utils in devsync_parts/)
 ├─ sync_local.py         Device sync ↔ local data
 ├─ firewall.py           Windows Firewall: allow the sync port
 ├─ updater.py            Check / install updates from GitHub
-├─ ai_assist.py          AI list suggestions: providers, prompts, parsing
+├─ ai_assist.py          AI list suggestions: providers, prompts, parsing (config / HTTP / search in ai_parts/)
 ├─ context_collect.py    Local information for AI suggestions (installed apps, domains in browsing history)
 ├─ i18n.py               Chinese / English UI strings
 ├─ toast.py              Notifications / confirmations / notices that can only be dismissed by hand
 ├─ shortcut.py           Desktop shortcut, Start menu
 ├─ uninstall.py / .bat   Standalone uninstaller
 ├─ pages/                UI for each page
-│  ├─ settings_page.py   Settings (grouped into pages)
+│  ├─ settings_page.py   Settings (grouped into pages; forms / cards / chat / recording in settings_parts/)
 │  ├─ sync_panel.py      Device sync (Settings → Basic Settings)
 │  ├─ rules_page.py      Rules (lists)
 │  ├─ up_dialog.py       Uploader lists under a website entry

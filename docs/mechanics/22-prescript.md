@@ -6,7 +6,8 @@
 黑底居中, 图标 (`themes/urban_will/image/Index.png`,
 没有这个文件就不画) / 蓝色代码 / 白色正文 / `- 接收指令 -`, 逐字打出正文、蓝色代码乱码定字. **不显示任何时间或限时**
 (没有倒计时, 没有进度); 左上角一个几乎看不见的 `×`, 或按 ESC 退出回到上一页. 数据存在 `prescript.json`; 领到的指令和奖励会在绑定的设备之间同步 (见 22.8). 判定 / 计时在
-`prescript.py`, 界面在 `pages/prescript_page.py`.
+`prescript.py` (常量 / 纯工具在 `prescript_parts/prescript_common.py`, 判定与同步按功能拆成 `prescript_parts/` 的 mixin),
+界面在 `pages/prescript_page.py`.
 
 也许我们时刻都在随波逐流,只不过是被赋予了选择漂流对象的那一缕所谓的自由...
 

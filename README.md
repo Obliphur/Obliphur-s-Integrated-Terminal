@@ -107,12 +107,12 @@ obliphur_terminal/
 ├─ data_manager.py       学习时长, 整点记录, 专注时间段, 窗口使用时间 (统计)
 ├─ daily.py              睡觉时间 (设置 → 日常)
 ├─ behavior.py           行为模式 / 外出 (可选, 统计与整点记录叠加)
-├─ prescript.py          指令: 都市之意主题独占的抽取 / 计时 / 存档
-├─ comm.py               沟通: 人设, 聊天记录, 主动消息, 对方的状态
+├─ prescript.py          指令: 都市之意主题独占的抽取 / 计时 / 存档 (mixin 在 prescript_parts/)
+├─ comm.py               沟通: 人设, 聊天记录, 主动消息, 对方的状态 (mixin 在 comm_parts/)
 ├─ comm_parts/comm_data.py          沟通: 📎 发送的数据 / 对方查询的参考模板
 ├─ alarm.py              闹钟: 本机闹钟, 铃声, 共时闹钟 (跟随对方的起床时间) 的响铃判断
 ├─ achievements.py       成就: 条件判定与存档
-├─ contract.py           合约: 词条, 违反与降级, 休息倍率, 整点记录锁定
+├─ contract.py           合约: 词条, 违反与降级, 休息倍率, 整点记录锁定 (mixin 在 contract_parts/)
 ├─ net_guard.py          联网额度, 申请 / 快速访问 / 借贷, 断网方式切换
 ├─ netproxy/             本地过滤代理 (Proxy 断网方式)
 │  ├─ server.py          HTTP / HTTPS 隧道代理, 403 拦截页
@@ -126,19 +126,19 @@ obliphur_terminal/
 ├─ window_guard.py       任务栏窗口数上限 (专注中提醒), 按前台窗口关程序, 前台程序识别, 窗口藏 / 显示
 ├─ prestart.py           提前启动 (仅 PC) + 触发隐藏的窗口: 藏窗口 / 静音, 休息中直接开始专注时接着上一段
 ├─ audiomute.py          按进程静音 / 取消静音 (音频会话, 提前启动用)
-├─ recorder.py          合约的录像 (摄像头 / 屏幕, Windows 自带的 H.264 编码器)
-├─ devsync.py            设备同步: 发现, 绑定, 加密, 同步, 安装包 / 文件直接传输
+├─ recorder.py          合约的录像 (摄像头 / 屏幕, Windows 自带的 H.264 编码器; 存档 / MF / 合并在 recorder_parts/)
+├─ devsync.py            设备同步: 发现, 绑定, 加密, 同步, 安装包 / 文件直接传输 (mixin / 工具在 devsync_parts/)
 ├─ sync_local.py         设备同步 ↔ 本机数据
 ├─ firewall.py           Windows 防火墙: 放行同步端口
 ├─ updater.py            从 GitHub 检查 / 安装更新
-├─ ai_assist.py          AI 名单建议: 服务商, 提示词, 解析
+├─ ai_assist.py          AI 名单建议: 服务商, 提示词, 解析 (配置 / 请求 / 搜索在 ai_parts/)
 ├─ context_collect.py    AI 建议用的本机信息 (已安装应用, 浏览记录里的域名)
 ├─ i18n.py               中英文界面文字
 ├─ toast.py              提示 / 确认 / 只能手动关闭的提醒窗
 ├─ shortcut.py           桌面快捷方式, 开始菜单
 ├─ uninstall.py / .bat   独立的卸载程序
 ├─ pages/                各页面的界面
-│  ├─ settings_page.py   设置 (按模块分页)
+│  ├─ settings_page.py   设置 (按模块分页; 表单 / 卡片 / 沟通 / 录像在 settings_parts/)
 │  ├─ sync_panel.py      设备同步 (设置 → 基本设置)
 │  ├─ rules_page.py      规则 (名单)
 │  ├─ up_dialog.py       网站条目下的 UP 主名单

@@ -185,6 +185,10 @@ class PcLocal:
     def status(self) -> dict:
         from config import RUNNING, ON_BREAK
         a, n = self.app, self.app.net
+        try:
+            a._note_input()          # 电脑上别的程序里的键盘 / 鼠标也算"有人在用" (焦点设备, MECHANICS 15.2)
+        except Exception:
+            pass
         st = {"timer": "idle", "net": n.mode, "last_op": int(a.last_op)}
         # 关机 (MECHANICS 15.4): 收到关机指令 / 电量很低时突然离线, 其他设备把本机算作"关机" (效果和在线一样)
         if getattr(a, "power_off", False):

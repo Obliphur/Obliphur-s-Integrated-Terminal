@@ -505,6 +505,10 @@ class ContractMediaMixin:
     def _scar_focus(self) -> str:
         """刻痕的焦点设备 (MECHANICS 18.8): 哪台设备有操作就录哪台的屏幕, 每 20 秒判定一次;
         20 秒内两台都有操作时优先录电脑. 都没有操作时保持上一个焦点设备. 返回焦点设备的 id."""
+        try:
+            self._note_input()          # 别的程序里的键盘 / 鼠标也算本机有人操作 (同提示音的焦点判定)
+        except Exception:
+            pass
         mono = time.monotonic()
         if self._scar_focus_id and mono - self._scar_focus_at < recorder.FOCUS_EVERY:
             return self._scar_focus_id

@@ -451,3 +451,6 @@
 - **存哪**: 本地键 `pro_lang` (comm_config), 随设备同步 (文档键 `prolang`, 后改的为准; 两台设备哪台是主端都要一致)。`comm.log` 里 `PRO … → 让对方发 (语言 X)`。
 - 我替用户定的假设: "那四个条件触发的主动谈话" = 规则 I - IV (24.4); 语言只是写给模型的一句要求, OIT 不检查模型有没有照做。
 - 自检: `python comm.py` (主动谈话语言一段), `CommTest.proactiveLanguage`。
+
+- **代码 (电脑)**: `comm.py` 只剩装配 (`Comm.__init__` / 聊天存档 / 设备同步 / 人设文件与升级链 / `_mk` / `_finish` / `tick`); 方法群在 `comm_parts/` 的 8 个 mixin (`comm_joint` / `comm_status` / `comm_chat` / `comm_flow` / `comm_sched` / `comm_share` / `comm_rt` / `comm_misc`), 常量在 `comm_const.py`; 自检在 `comm_selftest.py`, `python comm.py` 时用 `exec(..., globals())` 在 comm 的命名空间里执行.
+

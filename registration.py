@@ -235,4 +235,6 @@ def _selftest():
 
 
 if __name__ == "__main__":
+    import tempstore
+    tempstore.autosession()      # 自检的临时文件进 %TEMP%\OIT 的会话目录, 退出即删 (tempstore.py)
     print(_selftest())

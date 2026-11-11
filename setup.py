@@ -691,4 +691,7 @@ def _selftest():
 
 
 if __name__ == "__main__":
+    if "--selftest" in sys.argv:
+        import tempstore
+        tempstore.session("setup_selftest")      # 自检的临时文件进会话目录, 退出即删
     sys.exit(main())

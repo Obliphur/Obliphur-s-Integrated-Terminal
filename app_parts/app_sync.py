@@ -3,7 +3,10 @@
 从 app.py 的 BreakTimerApp 拆出来的 mixin: 状态都在 self 上, 这里只放方法.
 """
 
+import ctypes
+import sys
 import time
+from ctypes import wintypes
 from datetime import datetime
 
 import config
@@ -13,6 +16,24 @@ import tkinter as tk
 import toast
 from config import IDLE, ON_BREAK, RUNNING
 from i18n import tr
+
+
+class _LASTINPUTINFO(ctypes.Structure):
+    _fields_ = [("cbSize", wintypes.UINT), ("dwTime", wintypes.DWORD)]
+
+
+def system_idle_ms() -> float:
+    """Windows: 距上一次键盘 / 鼠标输入多少毫秒 (整个系统, 不只 OIT 的窗口). 取不到时 -1."""
+    if sys.platform != "win32":
+        return -1.0
+    try:
+        li = _LASTINPUTINFO()
+        li.cbSize = ctypes.sizeof(li)
+        if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(li)):
+            return -1.0
+        return float((ctypes.windll.kernel32.GetTickCount() - li.dwTime) & 0xFFFFFFFF)
+    except Exception:
+        return -1.0
 
 
 class SyncMixin:
@@ -27,6 +48,20 @@ class SyncMixin:
 
     def _touch(self, _e=None):
         self.last_op = time.time() * 1000
+
+    def _note_input(self):
+        """本机最后一次有人操作的时刻 (毫秒), 用来判断焦点设备 (提示音 / 刻痕, MECHANICS 15.2 / 18.8).
+
+        只认 OIT 窗口里的点击 / 按键是不够的: 用户可能在别的程序里用这台电脑, 这时这台电脑
+        仍然是"有人在用", 提示音 / 录屏该跟着它. Windows 的 GetLastInputInfo 给的是全系统的
+        键盘 / 鼠标输入时间; 取不到时 (非 Windows / 调用失败) 不动, 免得把它误判成一直在用.
+        """
+        idle = system_idle_ms()
+        if idle < 0:
+            return
+        when = time.time() * 1000 - idle
+        if when > self.last_op:
+            self.last_op = when
 
     def _mine(self):
         """本机改动了计时器状态: 本机成为这个状态的主人 (自动结束 / 记录由主人做)."""
