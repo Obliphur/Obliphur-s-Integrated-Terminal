@@ -338,20 +338,15 @@ SETTINGS_SCHEMA = [
         "fmt": lambda v: "ON" if v else "OFF",
         "desc": "即时生效.发现新版本时自动下载并安装, 重启后生效.",
     },
-    {
-        "key": "CHIME_WAV", "label": "整点提示音",
-        "kind": "combo", "apply": APPLY_INSTANT,
-        "choices": [
-            ("__builtin__", "内置三音提示音 (推荐)"),
-            ("", "Windows 蜂鸣声 (Beep)"),
-        ],
-        # 自选的音频只显示文件名, 不显示路径
-        "fmt": lambda v: "内置三音提示音" if str(v).strip() in ("", "__builtin__") else (
-            "Windows 蜂鸣声" if str(v) == "__beep__" else chime_name(v)),
-        "desc": "即时生效.可粘贴本地 .wav / .mp3 的完整路径.",
-        "page": "log",
-    },
+
 ]
+
+from sound_effects import EVENTS as SOUND_EVENTS, CHOICES as SOUND_CHOICES, display as sound_display
+
+SETTINGS_SCHEMA.extend({
+    "key": key, "label": label, "kind": "combo", "apply": APPLY_INSTANT,
+    "page": "sound", "choices": SOUND_CHOICES, "fmt": sound_display,
+} for key, (label, _tone) in SOUND_EVENTS.items())
 
 for _s in SETTINGS_SCHEMA:
     _s.setdefault("page", "basic")
@@ -368,6 +363,7 @@ SETTINGS_PAGES = [
     ("daily", "日常"),
     ("comm", "沟通"),
     ("alarm", "闹钟"),
+    ("sound", "音效"),
 ]
 
 SCHEMA_BY_KEY = {s["key"]: s for s in SETTINGS_SCHEMA}

@@ -14,6 +14,7 @@ from settings_manager import APPLY_INSTANT
 from settings_manager import SCHEMA_BY_KEY
 from settings_manager import page_specs
 from settings_manager import chime_name
+from sound_effects import EVENTS, display as sound_display
 
 from ..widgets import (frozen, set_var)
 
@@ -162,18 +163,20 @@ class FormMixin:
         ctrl.pack(fill="x", padx=12, pady=(6, 4))
 
         custom_var = None
-        if key == "CHIME_WAV":
+        if key in EVENTS:
             var = tk.StringVar()
             widget = ttk.Combobox(ctrl, textvariable=var, state="readonly", width=28)
-            widget.pack(side="left")
+            widget.pack(side="left", fill="x", expand=True)
+            ctrl = tk.Frame(inner, bg=card)
+            ctrl.pack(fill="x", padx=12, pady=(2, 4))
             custom_var = tk.StringVar()          # 选好的音频文件的完整路径 (不显示)
             self._track(ttk.Button(ctrl, text=tr("选择音频…"),
-                                   command=lambda: self._pick_wav(widget, custom_var)),
+                                   command=lambda: self._pick_wav(widget, custom_var, key)),
                         "选择音频…").pack(side="left", padx=(8, 0))
-            self._track(ttk.Button(ctrl, text=tr("▶ 试听"), command=self._preview_chime),
+            self._track(ttk.Button(ctrl, text=tr("▶ 试听"), command=lambda k=key: self._preview_chime(k)),
                         "▶ 试听").pack(side="left", padx=(8, 0))
-            widget.bind("<<ComboboxSelected>>", lambda _e: self._rows["CHIME_WAV"].update(
-                picked=bool(self._rows["CHIME_WAV"]["custom"].get().strip())))
+            widget.bind("<<ComboboxSelected>>", lambda _e: self._rows[key].update(
+                picked=True))
         elif kind in ("choice", "combo", "float"):
             var = tk.StringVar()
             widget = ttk.Combobox(
@@ -224,14 +227,14 @@ class FormMixin:
             "frame": inner, "custom": custom_var, "badge": badge,
         }
 
-        if key != "CHIME_WAV" and kind in ("choice", "combo", "float"):
+        if key not in EVENTS and kind in ("choice", "combo", "float"):
             self._choices_widgets.append((key, widget))
 
         area.bind_children()
 
-    def _chime_values(self, path: str = ""):
-        """提示音下拉框的选项: 内置 / 蜂鸣, 以及选好的那个文件 (只显示文件名)."""
-        out = [(v, lab) for v, lab in self.sm.labeled_values("CHIME_WAV", translate=True)]
+    def _chime_values(self, path: str = "", key="CHIME_WAV"):
+        """内置音效与选好的文件；自选音频只显示文件名。"""
+        out = [(v, lab) for v, lab in self.sm.labeled_values(key, translate=True)]
         if path:
             out.append((path, chime_name(path)))
         return out
@@ -239,9 +242,9 @@ class FormMixin:
     def _widget_value(self, key: str):
         spec = SCHEMA_BY_KEY[key]
         row = self._rows[key]
-        if key == "CHIME_WAV":
+        if key in EVENTS:
             label = row["var"].get().strip()
-            for value, lab in self._chime_values(row["custom"].get().strip()):
+            for value, lab in self._chime_values(row["custom"].get().strip(), key):
                 if lab == label:
                     return value
             return self.sm.value(key)
@@ -255,7 +258,7 @@ class FormMixin:
             for value, label in self.sm.labeled_values(key, translate=True):
                 if label == raw:
                     return value
-            if key == "CHIME_WAV" and not raw:
+            if key in EVENTS and not raw:
                 return "__builtin__"
             return self.sm._coerce(key, raw)
         if spec["kind"] == "float":
@@ -269,18 +272,18 @@ class FormMixin:
         spec = SCHEMA_BY_KEY[key]
         row = self._rows[key]
         current = self.sm.value(key)
-        if key == "CHIME_WAV":
-            path = str(current).strip() if str(current).strip() not in ("", "__builtin__", "__beep__") else ""
+        if key in EVENTS:
+            path = str(current).strip() if str(current).strip() not in ("", "__beep__", *dict(self.sm.labeled_values(key))) else ""
             if row.get("picked"):
                 path = row["custom"].get().strip()     # 选了文件还没提交: 不要被刷新盖掉
             else:
                 set_var(row["custom"], path)
-            values = self._chime_values(path)
+            values = self._chime_values(path, key)
             labels = [lab for _v, lab in values]
             if list(row["widget"].cget("values")) != labels:
                 row["widget"].config(values=labels)
             if not row.get("picked"):
-                set_var(row["var"], self.sm.label_for(key, current, translate=True) or chime_name(current))
+                set_var(row["var"], sound_display(current))
             return
 
         if spec["kind"] in ("choice", "combo", "instant", "float"):
@@ -317,7 +320,7 @@ class FormMixin:
         value = self._widget_value(key)
         if not self._adapter_ok(key, value):
             return
-        if key == "CHIME_WAV":
+        if key in EVENTS:
             self._rows[key]["picked"] = False
         status, msg = self.sm.stage(key, value)
         if status == "invalid":
@@ -386,6 +389,8 @@ class FormMixin:
                     self.sm.stage(key, value)
                     instant += 1
                     ui_keys.append(key)
+                if key in EVENTS:
+                    self._rows[key]["picked"] = False
                 continue
             if value == self.sm.value(key):
                 same += 1
@@ -429,17 +434,21 @@ class FormMixin:
         elif not silent_if_none:
             toast.info(tr("没有需要保存的修改"))
 
-    def _preview_chime(self):
+    def _preview_chime(self, key="CHIME_WAV"):
         """试听下拉框里此刻选中的提示音 (还没提交也可以试听)."""
         if not self.on_sound:
             return
         try:
-            value = self._widget_value("CHIME_WAV")
+            value = self._widget_value(key)
         except Exception:
             value = None
-        self.on_sound(value)
+        if key == "CHIME_WAV":
+            self.on_sound(value)
+        else:
+            import sound_effects
+            sound_effects.play(key, self.data_dir or config.app_data_dir(), value)
 
-    def _pick_wav(self, widget, custom_var=None):
+    def _pick_wav(self, widget, custom_var=None, key="CHIME_WAV"):
         path = filedialog.askopenfilename(
             title=tr("选择提示音"),
             filetypes=[(tr("音频文件"), "*.wav *.mp3"), (tr("WAV 音频"), "*.wav"),
@@ -450,10 +459,10 @@ class FormMixin:
             return
         if custom_var is not None:
             custom_var.set(path)
-            values = self._chime_values(path)
+            values = self._chime_values(path, key)
             widget.config(values=[lab for _v, lab in values])
             widget.set(chime_name(path))
-            self._rows["CHIME_WAV"]["picked"] = True
+            self._rows[key]["picked"] = True
         else:
             widget.set(path)
 

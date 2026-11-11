@@ -220,9 +220,6 @@ private fun LogEditor(initial: String, onSave: (String) -> Unit, onClose: () -> 
 }
 
 /** 接收指令的 "滴答" 音效 (三个里随机一个), 准备好但还没播; 放完自动释放. */
-private fun openSound(ctx: android.content.Context): android.media.MediaPlayer? = try {
-    val res = listOf(R.raw.ticktock_type1, R.raw.ticktock_type2, R.raw.ticktock_type3).random()
-    android.media.MediaPlayer.create(ctx, res)?.also { mp -> mp.setOnCompletionListener { it.release() } }
-} catch (_: Exception) {
-    null
-}
+private fun openSound(ctx: android.content.Context): android.media.MediaPlayer? =
+    com.obliphur.oit.service.EffectPlayer.prepare(ctx, "PRESCRIPT_RECEIVE_SOUND",
+        OitApp.instance.core.settings.str("PRESCRIPT_RECEIVE_SOUND"))

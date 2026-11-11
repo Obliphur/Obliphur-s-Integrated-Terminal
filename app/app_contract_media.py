@@ -17,7 +17,6 @@ import recorder
 import securefile
 import toast
 import window_guard
-from app.app_base import ALARM_WAV, _play_audio_file
 from config import ON_BREAK, RUNNING
 from i18n import tr
 
@@ -730,18 +729,10 @@ class ContractMediaMixin:
         if tid:
             self.contract_violation(tr("使用了快速访问"), tid)
 
-    def _play_alarm(self):
-        """违反合约的警报 (sounds/target_alarm.wav); 放不出来时蜂鸣."""
-        def run():
-            if _play_audio_file(ALARM_WAV):
-                return
-            try:
-                import winsound
-                for _ in range(3):
-                    winsound.Beep(1400, 140)
-            except Exception:
-                pass
-        threading.Thread(target=run, daemon=True).start()
+    def _play_alarm(self, key="DAMAGE_SOUND"):
+        """违反合约或窗口超限时播放各自选择的音效。"""
+        import sound_effects
+        sound_effects.play(key, self.dm.data_dir)
 
     def _sync_bonus_button(self):
         """合约中 / 外出中 / 本周已经领完时隐藏"我累了"按钮 (下周一再出现)."""

@@ -55,6 +55,7 @@ interface Host {
     fun playPrescriptSound() {}
     /** 沟通收到对方主动发来的消息 (前 5 分钟没聊过) 的提示音: 柔和的两声钟. */
     fun playCommSound() {}
+    fun playOfflineSound() {}
     /** 休息只剩 1 分钟的提示音: 比沟通提示音更低更轻 (和电脑版 config.ensure_break_chime 同一个音). */
     fun playBreakSoon() {}
     /** 闹钟 (1.0.359): 开始循环响铃 (tone: classic / chime / soft / custom, custom = 系统铃声 Uri, volume 0-100); 停止. */
@@ -989,7 +990,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         if (behavior.current() != null) return               // 外出中: 其他设备离线是正常的
         val names = fresh.sorted().joinToString(", ") { off[it] ?: "?" }
         logNotice("SYNC offline $names")
-        host.playChime {}
+        host.playOfflineSound()
         toast(tr("{name} 离线了.", "name" to names), "warn", clear = true)   // 离线消息黑雾也不遮 (18.3)
     }
 

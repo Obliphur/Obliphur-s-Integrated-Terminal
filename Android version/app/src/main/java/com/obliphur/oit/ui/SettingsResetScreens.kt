@@ -272,33 +272,34 @@ private fun OptionRow(spec: Spec, edits: MutableMap<String, String>) {
                     }) { Text(tr("应用修改"), color = o.accent) }
                 }
             }
-            Kind.CHIME -> ChimePicker()
+            Kind.CHIME -> ChimePicker(spec.key)
             Kind.NUM, Kind.TIME -> {}
         }
     }
 }
 
 @Composable
-private fun ChimePicker() {
+private fun ChimePicker(key: String) {
     val o = LocalOit.current
     val core = OitApp.instance.core
     val ctx = LocalContext.current
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             runCatching { ctx.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
-            core.stageSetting("CHIME_WAV", uri.toString())
+            core.stageSetting(key, uri.toString())
         }
     }
-    val custom = core.settings.str("CHIME_WAV").isNotBlank()
+    val value = core.settings.str(key).ifBlank { "__builtin__" }
+    val choices = com.obliphur.oit.core.SoundEffects.choices
+    val custom = choices.none { it.first == value }
+    Segmented(choices.map { it.first to tr(it.second) }, value) { core.stageSetting(key, it) }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Segmented(listOf("builtin" to tr("内置三音提示音 (推荐)"), "file" to tr("选择音频文件…")),
-            if (custom) "file" else "builtin") {
-            if (it == "builtin") core.stageSetting("CHIME_WAV", "") else launcher.launch(arrayOf("audio/*"))
+        PlainButton(tr("选择音频…")) { launcher.launch(arrayOf("audio/*")) }
+        PlainButton(tr("▶ 试听")) {
+            com.obliphur.oit.service.EffectPlayer.play(ctx, key, value) {}
         }
     }
-    PlainButton(tr("▶ 试听")) { core.previewChime() }
-    // 只显示文件名, 不显示路径
-    if (custom) Dim("🎵 " + audioName(ctx, core.settings.str("CHIME_WAV")), size = 12, color = o.dim)
+    if (custom) Dim("🎵 " + audioName(ctx, value), size = 12, color = o.dim)
 }
 
 /** 选好的音频文件的名字 (不含路径). */

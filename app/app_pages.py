@@ -6,7 +6,6 @@
 
 import os
 import sys
-import threading
 from datetime import datetime
 
 import tkinter as tk
@@ -15,7 +14,7 @@ from tkinter import ttk
 import comm as comm_mod
 import config
 import toast
-from app.app_base import _blend, _play_audio_file
+from app.app_base import _blend
 from config import COLORS, IDLE, ON_BREAK, RUNNING
 from i18n import tr
 from pages import RulesPage
@@ -167,9 +166,8 @@ class PagesMixin:
     def _play_soft_chime(self):
         if sys.platform != "win32" or self.shutting_down:
             return
-        path = config.ensure_soft_chime(os.path.join(self.dm.data_dir, "comm_ping.wav"))
-        if path:
-            threading.Thread(target=_play_audio_file, args=(path,), daemon=True).start()
+        import sound_effects
+        sound_effects.play("COMM_SOUND", self.dm.data_dir)
 
     def _play_break_soon_chime(self):
         """休息快结束的提示音: 比沟通提示音更低更轻 (后台线程里放). 只在焦点设备上响."""
@@ -177,9 +175,8 @@ class PagesMixin:
             return
         if not self.sync.is_latest_active():
             return
-        path = config.ensure_break_chime(os.path.join(self.dm.data_dir, "break_soon.wav"))
-        if path:
-            threading.Thread(target=_play_audio_file, args=(path,), daemon=True).start()
+        import sound_effects
+        sound_effects.play("BREAK_SOUND", self.dm.data_dir)
 
     def _break_one_min_warn(self):
         """休息只剩 1 分钟: 轻提示音 + 右下角消息 (不挡住倒计时)."""

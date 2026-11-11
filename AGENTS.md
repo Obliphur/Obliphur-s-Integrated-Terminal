@@ -42,6 +42,7 @@ python release.py               # 发布（PyInstaller）
 | `_contract_board_check.py` | 词条板分页 / 翻页 / 组合页排版 / 锁定描述 | `contract/contract_rules.py` 的 `TERMS`、`PAGES`、`LAYOUT`；`_draw_*` 在 `pages/contract_page.py` |
 | `_stats_ui_check.py` | 统计页：合约记录、违规记录、黑雾、等级写法 | `pages/stats_page.py`、`contract.level_label` |
 | `_behavior_check.py` | 行为模式 / 外出与数据叠加 | `behavior.py`、`data_manager/` |
+| `_sound_check.py` | 音效独立设置、试听草稿、静音、默认回退与窄窗口标签换行 | `sound_effects.py`、音效设置 / 播放入口 |
 | `_daily_ui_check.py` | 设置 → 日常（睡觉时间、行为模式） | `pages/settings_page/` |
 | `_ai_dialog_check.py` | AI 模型设置弹窗：小屏 / 大字号下能滚到底、字段点得到 | `pages/ai_dialogs.py`、`pages/widgets.py` 的 `Modal` / `ScrollArea` |
 | `_joint_invite_check.py` | AI 发起联合行动的邀请模式 | `pages/contract_page.py` 邀请、`app_comm._joint_invite_watch` |

@@ -159,7 +159,8 @@ class MiscMixin:
                         f"silent={int((time.time() * 1000 - float(sts[i].get('seen') or 0)) / 1000)}s"
                         f"{' outdated' if sts[i].get('outdated') else ''}" for i in sorted(now_off - was))
         self._log_notice(f"SYNC offline {names} ({why})")
-        self._play_chime()
+        import sound_effects
+        sound_effects.play("OFFLINE_SOUND", self.dm.data_dir)
         toast.warn(tr("{name} 离线了.", name=names), clear=True)   # 离线消息黑雾也不遮 (18.3)
 
     def _check_unbind(self):

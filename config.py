@@ -220,7 +220,7 @@ OUTING_MAX_HOURS = 24 * 7
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.492"                  # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.493"                  # 和 GitHub 上发布的版本号比较 (见 updater.py)
 UPDATE_CHECK = 1                              # 打开程序时检查更新
 FULLSCREEN_DEFAULT = 0                        # 打开程序时默认全屏 (设置 → 基本设置, 仅电脑, 不同步; F11 随时切换)
 UPDATE_AUTO = 1                               # 发现新版本时自动下载安装
@@ -230,6 +230,13 @@ FINE_FILL_WINDOW = timedelta(minutes=30)      # 细化规范的半小时格补�
 AUTO_TEXT = "Distracted"                     # 非睡眠时间没填写的小时自动记成这个 (睡眠期间的小时记成 Sleeping / 睡眠)
 HOUR_LOG_ENABLED = True                       
 CHIME_WAV = ""
+DAMAGE_SOUND = "__builtin__"
+COMM_SOUND = "__builtin__"
+BREAK_SOUND = "__builtin__"
+OFFLINE_SOUND = "__builtin__"
+WINDOW_SOUND = "__builtin__"
+PRESCRIPT_RECEIVE_SOUND = "__builtin__"
+PRESCRIPT_COMPLETE_SOUND = "__builtin__"
 LANGUAGE = "zh"
 NET_MODE = "proxy"                            # "adapter" 禁用网卡 / "proxy" 本地代理过滤 / "proxy_all" 代理-全屏蔽 (Proxy block-all)
 FILTER_MODE = "blacklist"                     # proxy 模式下生效的名单:"blacklist" / "whitelist"
@@ -447,6 +454,13 @@ DEFAULT_SETTINGS = {
     "AUTO_TEXT": AUTO_TEXT,
     "ENFORCE_EVERY": ENFORCE_EVERY,
     "CHIME_WAV": CHIME_WAV,
+    "DAMAGE_SOUND": DAMAGE_SOUND,
+    "COMM_SOUND": COMM_SOUND,
+    "BREAK_SOUND": BREAK_SOUND,
+    "OFFLINE_SOUND": OFFLINE_SOUND,
+    "WINDOW_SOUND": WINDOW_SOUND,
+    "PRESCRIPT_RECEIVE_SOUND": PRESCRIPT_RECEIVE_SOUND,
+    "PRESCRIPT_COMPLETE_SOUND": PRESCRIPT_COMPLETE_SOUND,
     "LANGUAGE": LANGUAGE,
     "NET_MODE": NET_MODE,
     "FILTER_MODE": FILTER_MODE,

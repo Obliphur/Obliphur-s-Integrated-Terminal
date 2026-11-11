@@ -3,6 +3,27 @@ package com.obliphur.oit.core
 /** 英文界面文字. 由 gen_en.py 从桌面版 i18n.py 和补充的译文生成; 键是中文原文. */
 object EnStrings {
     val MAP: Map<String, String> = hashMapOf(
+        "音效" to "Sound effects",
+        "默认音效" to "Default sound",
+        "静音" to "Silent",
+        "三音提示" to "Three-tone chime",
+        "柔和钟声" to "Soft bells",
+        "低音钟声" to "Low bells",
+        "警报" to "Alarm",
+        "随机滴答" to "Random ticking",
+        "清脆铃声" to "Bright bell",
+        "上行音阶" to "Rising notes",
+        "下行音阶" to "Falling notes",
+        "木琴轻敲" to "Wooden taps",
+        "星光" to "Starlight",
+        "损失生命值" to "HP loss",
+        "收到信息" to "New message",
+        "休息即将结束" to "Break ending soon",
+        "设备离线" to "Device offline",
+        "窗口超限" to "Window limit exceeded",
+        "领取指令" to "Receive prescript",
+        "完成指令" to "Complete prescript",
+
         "专注暂停倒退倍率" to "Focus pause rewind multiplier",
         "⏸  暂停专注" to "⏸  Pause focus",
         "▶  继续专注" to "▶  Resume focus",

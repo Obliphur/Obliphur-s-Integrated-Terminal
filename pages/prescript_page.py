@@ -459,21 +459,27 @@ class PrescriptPage(tk.Frame):
         self._sound_open = False
         if sys.platform != "win32":
             return 0
-        name = f"ticktock_type{random.randint(1, 3)}.mp3"
-        path = config.asset_path("themes", "urban_will", "audio", name)
-        if not os.path.isfile(path):
+        import sound_effects
+        path = sound_effects.resolve("PRESCRIPT_RECEIVE_SOUND", config.PRESCRIPT_RECEIVE_SOUND,
+                                     config.app_data_dir())
+        if not path:
             return 0
-        try:
-            self._mci(f"close {SOUND_ALIAS}")
-            if self._mci(f'open "{path}" type mpegvideo alias {SOUND_ALIAS}') != 0:
-                return 0
-            self._mci(f"set {SOUND_ALIAS} time format milliseconds")
-            code, text = self._mci(f"status {SOUND_ALIAS} length", want_text=True)
-            self._sound_open = True
-            self._sound_len = int(text) if code == 0 and text.isdigit() else 0
-            return self._sound_len
-        except Exception:
-            return 0
+        fallback = sound_effects.resolve("PRESCRIPT_RECEIVE_SOUND", "__builtin__", config.app_data_dir())
+        for candidate in dict.fromkeys((path, fallback) if path else ()):
+            if not os.path.isfile(candidate):
+                continue
+            try:
+                self._mci(f"close {SOUND_ALIAS}")
+                if self._mci(f'open "{candidate}" type mpegvideo alias {SOUND_ALIAS}') != 0:
+                    continue
+                self._mci(f"set {SOUND_ALIAS} time format milliseconds")
+                code, text = self._mci(f"status {SOUND_ALIAS} length", want_text=True)
+                self._sound_open = True
+                self._sound_len = int(text) if code == 0 and text.isdigit() else 0
+                return self._sound_len
+            except Exception:
+                continue
+        return 0
 
     def _play_sound(self):
         if getattr(self, "_sound_open", False):

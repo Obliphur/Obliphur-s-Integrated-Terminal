@@ -6,7 +6,6 @@
 
 import random
 import sys
-import threading
 import time
 import tkinter as tk
 from datetime import datetime, timedelta
@@ -14,7 +13,6 @@ from tkinter import ttk
 
 from comm import comm_data
 import config
-from app.app_base import _play_audio_file
 from config import COLORS, IDLE, ON_BREAK, RUNNING
 
 
@@ -107,9 +105,8 @@ class PrescriptMixin:
         if now - self._last_complete_sound < 0.5:        # 同一秒完成好几条只响一次
             return
         self._last_complete_sound = now
-        path = config.asset_path("themes", "urban_will", "audio",
-                                 f"ticktock_type{random.randint(1, 3)}.mp3")
-        threading.Thread(target=_play_audio_file, args=(path,), daemon=True).start()
+        import sound_effects
+        sound_effects.play("PRESCRIPT_COMPLETE_SOUND", self.dm.data_dir)
 
     def _prescript_mark_image(self):
         """指令标记 (几乎看不见的蓝花, 文件里已经是半透明), 缩到和按钮差不多高; 文件不在就是 None."""

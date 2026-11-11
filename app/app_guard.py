@@ -130,7 +130,7 @@ class GuardMixin:
             self._win_warn_at = now
             self._log_window(f"OVER     {n} > {limit}")
             toast.warn(tr("窗口超过上限 {x} 个 (现在 {n} 个), 关掉一些吧.", n=n, x=limit))
-            self._play_alarm()                       # 和违约同一个音效 (MECHANICS 12)
+            self._play_alarm("WINDOW_SOUND")         # 独立的窗口超限音效 (MECHANICS 12)
         self._win_over = True
 
 

@@ -6,7 +6,6 @@
 
 import os
 import sys
-import threading
 import time
 import tkinter as tk
 from datetime import datetime, time as dt_time, timedelta
@@ -15,9 +14,8 @@ import config
 import contract as contract_mod
 import devsync
 import toast
-from app.app_base import _play_audio_file
 from config import (COLORS, IDLE, ON_BREAK, READY_BREAK, RUNNING,
-                    compute_F, ensure_builtin_chime, fmt_hm, fmt_ms,
+                    compute_F, fmt_hm, fmt_ms,
                     load_json_file, save_json_file)
 from i18n import tr
 
@@ -1041,28 +1039,8 @@ class TimerMixin:
                 pass
             return None
 
-        path = (self.settings.value("CHIME_WAV") if choice is None else choice) or ""
-        if path and not os.path.exists(path):
-            path = ""
-        builtin = os.path.join(self.dm.data_dir, "chime.wav")
-        if not path or path == "__builtin__":
-            path = ensure_builtin_chime(builtin) or ""
-
-        def run():
-            # 自选文件 (.wav / .mp3) 放不出来时, 退回内置提示音, 再不行就蜂鸣
-            if _play_audio_file(path):
-                return
-            if path != builtin and _play_audio_file(ensure_builtin_chime(builtin) or ""):
-                return
-            try:
-                import winsound
-                for freq, ms in ((784, 200), (988, 200), (1319, 450)):
-                    winsound.Beep(freq, ms)
-            except Exception:
-                pass
-        t = threading.Thread(target=run, daemon=True)
-        t.start()
-        return t
+        import sound_effects
+        return sound_effects.play("CHIME_WAV", self.dm.data_dir, choice)
 
     def play_chime(self, choice=None):
         self._play_chime(choice)

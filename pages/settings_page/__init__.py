@@ -114,9 +114,22 @@ class SettingsPage(FormMixin, CardsMixin, CommSettingsMixin, RecordSettingsMixin
             b = self._track(tk.Label(
                 tabs, text=tr(text), font=config.font("body", bold=True),
                 padx=14, pady=4, cursor="hand2"), text)
-            b.pack(side="left", padx=(0, 6))
+            b.place(x=0, y=0)
             b.bind("<Button-1>", lambda e, k=key: self._click_tab(k))
             self._tab_btns[key] = b
+
+        def wrap_tabs(event):
+            row = used = 0
+            height = max(button.winfo_reqheight() for button in self._tab_btns.values()) + 4
+            for button in self._tab_btns.values():
+                width = button.winfo_reqwidth() + 6
+                if used and used + width > event.width:
+                    row += 1
+                    used = 0
+                button.place(x=used, y=row * height)
+                used += width
+            tabs.configure(height=(row + 1) * height)
+        tabs.bind("<Configure>", wrap_tabs)
 
         self.stack = tk.Frame(self, bg=bg)
         self.stack.pack(fill="both", expand=True, padx=26, pady=(6, 0))

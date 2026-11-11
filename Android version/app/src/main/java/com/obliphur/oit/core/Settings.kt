@@ -99,7 +99,6 @@ object Schema {
         // 睡眠期间的小时固定记成 睡眠 / Sleeping; 这一项是非睡眠时间的 (默认 分心 / Distracted)
         Spec("AUTO_TEXT", "超时自动记录内容", Kind.INSTANT_TEXT, false, "log", "Distracted",
             choices = listOf("Distracted" to "Distracted(分心)", "Sleeping" to "Sleeping(睡觉)", "Idle" to "Idle(发呆)", "Break" to "Break(休息)")),
-        Spec("CHIME_WAV", "整点提示音", Kind.CHIME, false, "log", ""),
         num("FILL_WINDOW", "整点记录补填时限", "min", 60.0, 1.0, 1440.0, true, 3600.0, "log"),
         // ---- 合约 ----
         Spec("CONTRACT_THEME", "合约页主题", Kind.CHOICE, false, "contract", "ops",
@@ -127,12 +126,14 @@ object Schema {
         window("IX", "凝视"),
         window("X", "反思"),
         window("XI", "整理房间"),
-    )
+    ) + SoundEffects.events.map { (key, event) ->
+        Spec(key, event.first, Kind.CHIME, false, "sound", "")
+    }
 
     val PAGES = listOf(
         "basic" to "基本设置", "timer" to "计时器", "net" to "联网",
         "log" to "整点记录", "contract" to "合约", "window" to "应用",
-        "record" to "录像", "daily" to "日常", "comm" to "沟通", "alarm" to "闹钟",
+        "record" to "录像", "daily" to "日常", "comm" to "沟通", "alarm" to "闹钟", "sound" to "音效",
     )
 
     val BY_KEY = ALL.associateBy { it.key }
@@ -471,7 +472,7 @@ class Settings(
             }
             Kind.CHOICE -> spec.choices.firstOrNull { it.first == v.toString() }?.second?.let { tr(it) } ?: v.toString()
             Kind.TIME -> slotText(v)
-            Kind.CHIME -> if (v.toString().isBlank()) tr("内置三音提示音") else tr("自选音频")
+            Kind.CHIME -> SoundEffects.display(v.toString())
             Kind.INSTANT_TEXT, Kind.TEXT -> v.toString()
         }
     }

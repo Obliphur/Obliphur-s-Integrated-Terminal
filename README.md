@@ -155,7 +155,8 @@ obliphur_terminal/
 │  ├─ prestart_dialog.py 提前启动的程序清单弹窗
 │  └─ widgets.py         共用控件 (滚动区, 开关, 加载页 …)
 ├─ defaults/             空模板 (名单, AI 配置)
-├─ sounds/               违反合约的警报
+├─ sound_effects.py     事件音效与独立音效设置页（内置 / 自选 / 静音 / 试听）
+├─ sounds/               合约警报与内置音效
 ├─ MECHANICS.md          机制说明的目录 (每节一个文件, 在 docs/mechanics/)
 ├─ docs/mechanics/       各机制的具体规则与数值 (一节一个文件)
 ├─ for_developer.md      开发约定

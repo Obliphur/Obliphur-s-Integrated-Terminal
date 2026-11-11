@@ -2,6 +2,28 @@
 
 
 EN = {
+    # 音效设置
+    "音效": "Sound effects",
+    "默认音效": "Default sound",
+    "静音": "Silent",
+    "三音提示": "Three-tone chime",
+    "柔和钟声": "Soft bells",
+    "低音钟声": "Low bells",
+    "警报": "Alarm",
+    "随机滴答": "Random ticking",
+    "清脆铃声": "Bright bell",
+    "上行音阶": "Rising notes",
+    "下行音阶": "Falling notes",
+    "木琴轻敲": "Wooden taps",
+    "星光": "Starlight",
+    "损失生命值": "HP loss",
+    "收到信息": "New message",
+    "休息即将结束": "Break ending soon",
+    "设备离线": "Device offline",
+    "窗口超限": "Window limit exceeded",
+    "领取指令": "Receive prescript",
+    "完成指令": "Complete prescript",
+
     # ---- 录像状态同步 / 终止整个录制 (MECHANICS 18.8) ----
     "{who} 录像中": "{who} recording",
     "终止整个录制过程?": "Stop the whole recording?",

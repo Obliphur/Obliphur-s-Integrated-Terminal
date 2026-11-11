@@ -245,7 +245,7 @@ class OitApp : Application(), Host {
 
     fun vpnChanged() = changed()
 
-    override fun playChime(done: () -> Unit) = Chime.play(this, core.settings.str("CHIME_WAV"), done)
+    override fun playChime(done: () -> Unit) = com.obliphur.oit.service.EffectPlayer.play(this, "CHIME_WAV", core.settings.str("CHIME_WAV"), done)
 
     override fun hourPrompt(slot: LocalDateTime, silent: Boolean) {
         Notifier.hourPrompt(this, tr("{a} ~ {b} 做了什么?",
@@ -286,34 +286,15 @@ class OitApp : Application(), Host {
         val now = android.os.SystemClock.elapsedRealtime()
         if (now - lastPrescriptSound < 500) return
         lastPrescriptSound = now
-        runCatching {
-            val res = listOf(R.raw.ticktock_type1, R.raw.ticktock_type2, R.raw.ticktock_type3).random()
-            val mp = android.media.MediaPlayer.create(this, res) ?: return
-            mp.setOnCompletionListener { it.release() }
-            mp.start()
-        }
+        playEffect("PRESCRIPT_COMPLETE_SOUND")
     }
 
-    /** 沟通收到对方主动发来的消息的提示音 (MECHANICS 24.4): 柔和的两声钟, 走通知音量. */
-    override fun playCommSound() {
-        runCatching { com.obliphur.oit.service.Chime.playSoft() }
-    }
+    private fun playEffect(key: String) = com.obliphur.oit.service.EffectPlayer.play(this, key, core.settings.str(key)) {}
 
-    /** 休息只剩 1 分钟的提示音 (MECHANICS 6): 和电脑版 config.ensure_break_chime 同一个音. */
-    override fun playBreakSoon() {
-        runCatching { com.obliphur.oit.service.Chime.playBreakSoon() }
-    }
-
-    /** 违反合约的警报 (MECHANICS 18). */
-    override fun playAlarm() {
-        runCatching {
-            val mp = android.media.MediaPlayer.create(this, R.raw.target_alarm,
-                android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_ALARM)
-                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION).build(), 0) ?: return
-            mp.setOnCompletionListener { it.release() }
-            mp.start()
-        }
-    }
+    override fun playCommSound() = playEffect("COMM_SOUND")
+    override fun playBreakSoon() = playEffect("BREAK_SOUND")
+    override fun playAlarm() = playEffect("DAMAGE_SOUND")
+    override fun playOfflineSound() = playEffect("OFFLINE_SOUND")
 
     override fun achievementsUnlocked(ids: List<String>) {
         // 界面上的提示由 Root 画出; 不在前台时另外发一条普通通知
