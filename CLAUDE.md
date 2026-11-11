@@ -18,9 +18,9 @@ python release.py               # 发布（PyInstaller）
 - 每次开发完成递增 `config.py` 的 `APP_VERSION`。
 - 别提交调试/预览截图，截图放系统临时目录。
 
-## 检查脚本（根目录 `_*_check.py`）
+## 检查脚本（`checks/_*_check.py`）
 
-这些是带断言的独立脚本：`python _xxx_check.py`，退出码 0 且最后打印 `… OK` 即通过。它们会开 tkinter 窗口，窗口开在屏幕外；不碰真实数据（用临时目录）。
+这些是带断言的独立脚本：`python checks/_xxx_check.py`，退出码 0 且最后打印 `… OK` 即通过。它们会开 tkinter 窗口，窗口开在屏幕外；不碰真实数据（用临时目录）。
 
 | 脚本 | 覆盖 | 改这些之后跑 |
 | --- | --- | --- |
@@ -37,7 +37,7 @@ python release.py               # 发布（PyInstaller）
 
 **规矩**：
 
-- 新增 `*_check.py` 必须登记到上表，否则下一个会话找不到它。
+- 新增 `checks/*_check.py` 必须登记到上表，否则下一个会话找不到它。
 - 提交前跑与改动相关的检查；红了当场修，修不动就删掉——留一个红着的检查比没有更费时间。
 - 检查脚本进仓库，不再被 `.gitignore` 忽略。
 
@@ -47,37 +47,38 @@ python release.py               # 发布（PyInstaller）
 
 | 文件 | Mixin | 内容 |
 | --- | --- | --- |
-| `app_base.py` | — | 无状态小工具：`ALARM_WAV` / `_play_audio_file` / `tired_text` / 颜色混合 |
-| `app_window.py` | WindowMixin | 窗口与主题、布局、重建界面、页面切换（`show_page`） |
-| `app_pages.py` | PagesMixin | 日程跟随、闹钟、规则弹窗、侧边栏、计时页 UI 与按钮状态 |
-| `app_guard.py` | GuardMixin | 窗口事件与 5 秒心跳、窗口守护、自启、网卡重叠/应用规则/窗口使用时间 |
-| `app_timer.py` | TimerMixin | 状态机入口、专注存档恢复、结算、每秒 tick、跨天/整点、提示音 |
-| `app_break.py` | BreakMixin | 奖励休息、开始/暂停休息、结转、休息后提醒 |
-| `app_daily.py` | DailyMixin | 睡觉、外出与行为模式、提前启动 |
-| `app_contract.py` | ContractMixin | 合约检查 / 开始 / 结束 |
-| `app_contract_media.py` | ContractMediaMixin | 合约录像、合并与发送、违规、禁网 |
-| `app_comm.py` | CommMixin | 沟通页状态、分享、联合行动 |
-| `app_sync.py` | SyncMixin | 设备同步、检查与安装更新 |
-| `app_net.py` | NetMixin | 联网页、额度/申请/借贷、`_net_tick`、源码与时间篡改检查 |
-| `app_settings.py` | SettingsMixin | 设置生效、48 小时冷静期、关闭程序、日志与徽章 |
-| `app_achievements.py` | AchievementsMixin | 成就判定 / 同步 / 弹窗 |
-| `app_prescript.py` | PrescriptMixin | 指令（都市之意）：抽取 / 计时 / 刻痕 |
-| `app_update.py` | UpdateMixin | 开发者模式跟着母端、更新中继 |
-| `app_misc.py` | MiscMixin | 配置期、第一次打开的快捷方式、重置页 |
+| `app_parts/app_base.py` | — | 无状态小工具：`ALARM_WAV` / `_play_audio_file` / `tired_text` / 颜色混合 |
+| `app_parts/app_window.py` | WindowMixin | 窗口与主题、布局、重建界面、页面切换（`show_page`） |
+| `app_parts/app_pages.py` | PagesMixin | 日程跟随、闹钟、规则弹窗、侧边栏、计时页 UI 与按钮状态 |
+| `app_parts/app_guard.py` | GuardMixin | 窗口事件与 5 秒心跳、窗口守护、自启、网卡重叠/应用规则/窗口使用时间 |
+| `app_parts/app_timer.py` | TimerMixin | 状态机入口、专注存档恢复、结算、每秒 tick、跨天/整点、提示音 |
+| `app_parts/app_break.py` | BreakMixin | 奖励休息、开始/暂停休息、结转、休息后提醒 |
+| `app_parts/app_daily.py` | DailyMixin | 睡觉、外出与行为模式、提前启动 |
+| `app_parts/app_contract.py` | ContractMixin | 合约检查 / 开始 / 结束 |
+| `app_parts/app_contract_media.py` | ContractMediaMixin | 合约录像、合并与发送、违规、禁网 |
+| `app_parts/app_comm.py` | CommMixin | 沟通页状态、分享、联合行动 |
+| `app_parts/app_sync.py` | SyncMixin | 设备同步、检查与安装更新 |
+| `app_parts/app_net.py` | NetMixin | 联网页、额度/申请/借贷、`_net_tick`、源码与时间篡改检查 |
+| `app_parts/app_settings.py` | SettingsMixin | 设置生效、48 小时冷静期、关闭程序、日志与徽章 |
+| `app_parts/app_achievements.py` | AchievementsMixin | 成就判定 / 同步 / 弹窗 |
+| `app_parts/app_prescript.py` | PrescriptMixin | 指令（都市之意）：抽取 / 计时 / 刻痕 |
+| `app_parts/app_update.py` | UpdateMixin | 开发者模式跟着母端、更新中继 |
+| `app_parts/app_misc.py` | MiscMixin | 配置期、第一次打开的快捷方式、重置页 |
 
-### 沟通模块（`comm.py` 与 `comm_*.py`）
+### 沟通模块（`comm.py` 与 `comm_parts/`）
 
-`comm.py`（约 7300 行）只留 `Comm` 类（状态、发请求、主动消息、重试、设备同步）和 `_selftest`；无状态的部分拆到同目录的兄弟模块（不用包，避免遮住 `comm.py`）。依赖方向：`comm.py` 导入它们，它们从不导入 `comm.py`。
+`comm.py`（约 7300 行）只留 `Comm` 类（状态、发请求、主动消息、重试、设备同步）和 `_selftest`；无状态的部分拆到 `comm_parts/` 包里。依赖方向：`comm.py` 导入它们，它们从不导入 `comm.py`。
 
 | 文件 | 内容 |
 | --- | --- |
-| `comm_util.py` | 无状态小工具：消息包装（`oit_text`）、历史截取（`api_messages`）、记忆卡整理、拒绝语判断、缓存布局 |
-| `comm_persona.py` | 人设文件 / 伴侣文件 / 日程文件的读写、平移与告白设置、系统 prompt 拼装 |
-| `comm_prompt.py` | 前置 prompt 文本（日程 / 休息函数 / 回复规则）与各种 `[标记]` 常量 |
-| `comm_reply.py` | 回复解析：去掉标记、`[wait]` / `[cut]` / `[network]` 的分钟数、半角化 |
-| `comm_schedule.py` | 人设日程解析：段类型 / 段内容、循环段、主动发消息概率 |
-| `comm_builtin.py` | 内置人设、默认背景 / 日程 / 助理文本、旧版升级链 |
-| `comm_readme.py` | OIT_personas 文件夹里的 README 文本（中 / 英） |
+| `comm_parts/comm_util.py` | 无状态小工具：消息包装（`oit_text`）、历史截取（`api_messages`）、记忆卡整理、拒绝语判断、缓存布局 |
+| `comm_parts/comm_persona.py` | 人设文件 / 伴侣文件 / 日程文件的读写、平移与告白设置、系统 prompt 拼装 |
+| `comm_parts/comm_prompt.py` | 前置 prompt 文本（日程 / 休息函数 / 回复规则）与各种 `[标记]` 常量 |
+| `comm_parts/comm_reply.py` | 回复解析：去掉标记、`[wait]` / `[cut]` / `[network]` 的分钟数、半角化 |
+| `comm_parts/comm_schedule.py` | 人设日程解析：段类型 / 段内容、循环段、主动发消息概率 |
+| `comm_parts/comm_builtin.py` | 内置人设、默认背景 / 日程 / 助理文本、旧版升级链 |
+| `comm_parts/comm_readme.py` | OIT_personas 文件夹里的 README 文本（中 / 英） |
+| `comm_parts/comm_data.py` | 今天 / 日历 / 统计 / 合约记录等数据的文字化（分享给对方、附件用） |
 
 运行时被自检改写的模块全局量（`CLAUDIA_LEGACIES`、`ROUTINE_LEGACIES`、`FOLLOW_DELAY`、`CHAR_DELAY`、`CHAR_DELAY_CJK`）仍留在 `comm.py`，因为 `_selftest` 通过 `globals()` / `global` 改它们。
 
@@ -85,7 +86,7 @@ python release.py               # 发布（PyInstaller）
 
 ## 读文件规则（控制上下文）
 
-- **禁止整文件读取大文件**：`comm.py`(约 7300 行)、`app_timer.py`(45KB)、`app_contract_media.py`、`contract.py`、`devsync.py`、`i18n.py`、`ai_assist.py` 等。先用 Grep 搜关键词定位行号，再用 Read 的 `offset/limit` 只读相关片段。
+- **禁止整文件读取大文件**：`comm.py`(约 7300 行)、`app_parts/app_timer.py`(45KB)、`app_parts/app_contract_media.py`、`contract.py`、`devsync.py`、`i18n.py`、`ai_assist.py` 等。先用 Grep 搜关键词定位行号，再用 Read 的 `offset/limit` 只读相关片段。
 - **查机制先看 `MECHANICS.md` 的目录**，再只读 `docs/mechanics/` 里对应的那一节（多数 1–30KB；18 合约 56KB、24 沟通 119KB 仍然只读相关段落）。不要通读。
 - 宽泛的跨文件搜索交给 Explore 子代理，只带回结论。
 
@@ -101,9 +102,9 @@ python release.py               # 发布（PyInstaller）
 ## 架构
 
 - **`config.py` 是数值中枢**：默认常量都在此，`settings_manager.py` 把用户设置 apply 回 config 的 globals（代码里常见 `config.X` / `globals().get(...)`）。别处不要复制数值。
-- **`app.py` 只剩装配**：`__init__` 里读状态、建页面、挂定时器；页面、计时器状态机（`IDLE / RUNNING / READY_BREAK / ON_BREAK`）、tick、关闭/重置都在 `app_*.py` 的 mixin 里（明细见「实现地图」）。页面 UI 在 `pages/`。再拆新子系统就照这个模式：一个 `app_xxx.py` + 一个 `XxxMixin`，状态仍全放 `self`，无状态工具放 `app_base.py`。
+- **`app.py` 只剩装配**：`__init__` 里读状态、建页面、挂定时器；页面、计时器状态机（`IDLE / RUNNING / READY_BREAK / ON_BREAK`）、tick、关闭/重置都在 `app_*.py` 的 mixin 里（明细见「实现地图」）。页面 UI 在 `pages/`。再拆新子系统就照这个模式：一个 `app_xxx.py` + 一个 `XxxMixin`，状态仍全放 `self`，无状态工具放 `app_parts/app_base.py`。
 - **断网两条路**（`NET_MODE`）：Adapter 直接禁网卡；Proxy 走 `netproxy/` 过滤代理（`bypassguard.py` 补拦直连）。优先级链在 `rules.py` 的 `decide()`：localhost → 合约网络禁令 → 联网会话 → 提前启动豁免 → 全屏蔽 → 白/黑名单。
-- **提前启动豁免**：`app_daily.py` 每秒把 `prestart.exe_names()`（含子进程）刷到 `rules.exempt`，绕过名单和全屏蔽，但绕不过合约网络禁令。
+- **提前启动豁免**：`app_parts/app_daily.py` 每秒把 `prestart.exe_names()`（含子进程）刷到 `rules.exempt`，绕过名单和全屏蔽，但绕不过合约网络禁令。
 - **合约 override 设置**：`config.CONTRACT_OVERRIDES` 由 settings_manager 套在生效值之上。
 - **临时文件**：全部在 `%TEMP%\OIT\`（`tempstore.py`）。启动时 `sweep()` 清掉一天前没动过的；自检 / 检查脚本开头 `tempstore.session("名字")` 退出即删。要临时目录就用 `tempstore.path(...)` / `tempstore.mkdtemp(...)`，别再自己拼 `tempfile.gettempdir()`。
 - 数据在 `%USERPROFILE%\AppData\LocalLow\Obliphur's Integrated Terminal\`，发布版经 `securefile.py` 加密；`continuity.py` 处理数据被搬走/回滚。改数据读写前读 `docs/mechanics/10-data-files.md`、`15-sync.md`。

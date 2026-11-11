@@ -83,23 +83,23 @@ python main.py
 obliphur_terminal/
 ├─ main.py               入口: 申请管理员权限, 启动界面
 ├─ app.py                主窗口: 各页面, 计时器, 联网页, 定时检查, 关闭 / 重置
-├─ app_base.py           共用的小工具 (提示音文件, 放音频, 疲劳文案)
-├─ app_comm.py           沟通 / 分享 / 联合行动 (BreakTimerApp 的 CommMixin)
-├─ app_sync.py           设备同步 / 更新 (BreakTimerApp 的 SyncMixin)
-├─ app_contract.py       合约的检查 / 开始 / 结束 (ContractMixin)
-├─ app_contract_media.py 合约的录像 / 合并发送 / 违规 / 禁网 (ContractMediaMixin)
-├─ app_timer.py          计时器状态机 / 专注存档恢复 / 结算 / 每秒 tick (TimerMixin)
-├─ app_break.py          休息与结转 / 奖励休息 / 休息后提醒 (BreakMixin)
-├─ app_daily.py          睡觉 / 外出与行为模式 / 提前启动 (DailyMixin)
-├─ app_net.py            联网页: 额度 / 申请 / 借贷 / 断网检查 (NetMixin)
-├─ app_achievements.py   成就的判定 / 同步 / 弹窗 (AchievementsMixin)
-├─ app_prescript.py      指令 (Prescript): 抽取 / 计时 / 刻痕 (PrescriptMixin)
-├─ app_update.py         开发者模式跟着母端 / 更新中继 (UpdateMixin)
-├─ app_settings.py       设置生效 / 冷静期 / 关闭程序 / 日志与徽章 (SettingsMixin)
-├─ app_window.py         窗口 / 主题 / 布局 / 重建界面 / 页面切换 (WindowMixin)
-├─ app_pages.py          日程跟随 / 闹钟 / 规则弹窗 / 侧边栏 / 计时页 UI (PagesMixin)
-├─ app_guard.py          窗口事件与心跳 / 窗口守护 / 自启 / 网卡与应用规则检查 (GuardMixin)
-├─ app_misc.py           配置期 / 快捷方式 / 重置页 (MiscMixin)
+├─ app_parts/app_base.py           共用的小工具 (提示音文件, 放音频, 疲劳文案)
+├─ app_parts/app_comm.py           沟通 / 分享 / 联合行动 (BreakTimerApp 的 CommMixin)
+├─ app_parts/app_sync.py           设备同步 / 更新 (BreakTimerApp 的 SyncMixin)
+├─ app_parts/app_contract.py       合约的检查 / 开始 / 结束 (ContractMixin)
+├─ app_parts/app_contract_media.py 合约的录像 / 合并发送 / 违规 / 禁网 (ContractMediaMixin)
+├─ app_parts/app_timer.py          计时器状态机 / 专注存档恢复 / 结算 / 每秒 tick (TimerMixin)
+├─ app_parts/app_break.py          休息与结转 / 奖励休息 / 休息后提醒 (BreakMixin)
+├─ app_parts/app_daily.py          睡觉 / 外出与行为模式 / 提前启动 (DailyMixin)
+├─ app_parts/app_net.py            联网页: 额度 / 申请 / 借贷 / 断网检查 (NetMixin)
+├─ app_parts/app_achievements.py   成就的判定 / 同步 / 弹窗 (AchievementsMixin)
+├─ app_parts/app_prescript.py      指令 (Prescript): 抽取 / 计时 / 刻痕 (PrescriptMixin)
+├─ app_parts/app_update.py         开发者模式跟着母端 / 更新中继 (UpdateMixin)
+├─ app_parts/app_settings.py       设置生效 / 冷静期 / 关闭程序 / 日志与徽章 (SettingsMixin)
+├─ app_parts/app_window.py         窗口 / 主题 / 布局 / 重建界面 / 页面切换 (WindowMixin)
+├─ app_parts/app_pages.py          日程跟随 / 闹钟 / 规则弹窗 / 侧边栏 / 计时页 UI (PagesMixin)
+├─ app_parts/app_guard.py          窗口事件与心跳 / 窗口守护 / 自启 / 网卡与应用规则检查 (GuardMixin)
+├─ app_parts/app_misc.py           配置期 / 快捷方式 / 重置页 (MiscMixin)
 ├─ config.py             默认数值, 主题与字号, 版本号 (APP_VERSION)
 ├─ tempstore.py          临时文件: 全部放进 %TEMP%\OIT 一个文件夹 (启动时清掉一天前没动过的)
 ├─ themes/               界面主题 (classic / claude / urban_will; 都市之意的字体和预览都在里面)
@@ -109,7 +109,7 @@ obliphur_terminal/
 ├─ behavior.py           行为模式 / 外出 (可选, 统计与整点记录叠加)
 ├─ prescript.py          指令: 都市之意主题独占的抽取 / 计时 / 存档
 ├─ comm.py               沟通: 人设, 聊天记录, 主动消息, 对方的状态
-├─ comm_data.py          沟通: 📎 发送的数据 / 对方查询的参考模板
+├─ comm_parts/comm_data.py          沟通: 📎 发送的数据 / 对方查询的参考模板
 ├─ alarm.py              闹钟: 本机闹钟, 铃声, 共时闹钟 (跟随对方的起床时间) 的响铃判断
 ├─ achievements.py       成就: 条件判定与存档
 ├─ contract.py           合约: 词条, 违反与降级, 休息倍率, 整点记录锁定

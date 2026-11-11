@@ -358,7 +358,7 @@
 
 **6. 其他**
 - 联合行动属于发起它的那个聊天对象 (换人设就看不到, 也不影响别人); 清空聊天 = 联合行动作废 (包括进行中的同步状态)。
-- 自检: `python comm.py` (联合行动整条链路: 选词条 / 开始时间 / 打包 / [Yes] [No] / 开始 / 同步状态 / 结束 / 重新计算日程 / 设备同步), `python comm_data.py`; 手机 `CommTest.jointAction`。
+- 自检: `python comm.py` (联合行动整条链路: 选词条 / 开始时间 / 打包 / [Yes] [No] / 开始 / 同步状态 / 结束 / 重新计算日程 / 设备同步), `python comm_parts/comm_data.py`; 手机 `CommTest.jointAction`。
 
 ### 24.9.3 对方主动发起联合行动 (前置 prompt XII, 1.0.317 起)
 

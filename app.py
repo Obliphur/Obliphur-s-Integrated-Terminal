@@ -39,25 +39,25 @@ from pages import (CalendarPage, HourLogPage, SettingsPage, RulesPage, StatsPage
 from pages.file_channel import FileChannel, fmt_size
 from pages.widgets import (frozen, LoadingCover, FocusGlow, cfg, flavor,
                            show_pack, hide_pack)
-from app_comm import CommMixin
-from app_sync import SyncMixin
-from app_contract import ContractMixin
-from app_contract_media import ContractMediaMixin
-from app_timer import TimerMixin
-from app_break import BreakMixin
-from app_daily import DailyMixin
-from app_net import NetMixin
-from app_achievements import AchievementsMixin
-from app_prescript import PrescriptMixin
-from app_update import UpdateMixin
-from app_settings import SettingsMixin
-from app_window import WindowMixin
-from app_pages import PagesMixin
-from app_guard import GuardMixin
-from app_misc import MiscMixin
+from app_parts.app_comm import CommMixin
+from app_parts.app_sync import SyncMixin
+from app_parts.app_contract import ContractMixin
+from app_parts.app_contract_media import ContractMediaMixin
+from app_parts.app_timer import TimerMixin
+from app_parts.app_break import BreakMixin
+from app_parts.app_daily import DailyMixin
+from app_parts.app_net import NetMixin
+from app_parts.app_achievements import AchievementsMixin
+from app_parts.app_prescript import PrescriptMixin
+from app_parts.app_update import UpdateMixin
+from app_parts.app_settings import SettingsMixin
+from app_parts.app_window import WindowMixin
+from app_parts.app_pages import PagesMixin
+from app_parts.app_guard import GuardMixin
+from app_parts.app_misc import MiscMixin
 
 
-from app_base import (_blend, _enable_per_monitor_dpi, _hours_text, _play_audio_file,
+from app_parts.app_base import (_blend, _enable_per_monitor_dpi, _hours_text, _play_audio_file,
                       tired_text, URBAN_NOTICE_FLAG, URBAN_NOTICE_HINTS)
 
 

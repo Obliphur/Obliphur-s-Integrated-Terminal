@@ -91,7 +91,7 @@ obliphur_terminal/
 ├─ behavior.py           Behavior modes / going out (optional; adds to statistics and hour logs)
 ├─ prescript.py          Prescripts: draw / timer / save, exclusive to the urban_will theme
 ├─ comm.py               Chat: personas, chat history, proactive messages, the other party's status
-├─ comm_data.py          Chat: data sent with 📎 / reference templates the other party can query
+├─ comm_parts/comm_data.py          Chat: data sent with 📎 / reference templates the other party can query
 ├─ alarm.py              Alarm: the device alarm, ringtones, and when the co-time alarm (follows the other party's wake-up time) rings
 ├─ achievements.py       Achievements: condition checks and saving
 ├─ contract.py           Contracts: terms, violations and demotion, rest multiplier, hour-log locking

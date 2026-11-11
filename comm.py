@@ -37,12 +37,12 @@ import config
 import i18n
 from i18n import tr
 import routine
-import comm_readme
-from comm_schedule import PROACTIVE_P, seg_kind, seg_detail, schedule_entries, schedule_loops, loop_entries, schedule_segments, pro_pct, persona_probs
-from comm_reply import CUT_DEFAULT_MIN, CUT_MAX_MIN, HALFWIDTH_SYMBOLS, NET_DEFAULT_MIN, NET_MAX_MIN, WAIT_MAX_MIN, _BRACKET_RE, _CUT_N_RE, _CUT_RE, _EMPTY_WRAP_RE, _NET_RE, _WAIT_RE, clean_reply, cut_minutes, net_minutes, to_halfwidth
-from comm_builtin import BUILTIN_PERSONAS, DEFAULT_PERSONA, DEFAULT_BACKGROUND, DEFAULT_ROUTINE, ASSISTANT_PERSONA, ASSISTANT_DETAIL_LINE, BACKGROUND_LEGACIES, ASSISTANT_SLEEP_LINE, ASSISTANT_TITLE
-from comm_prompt import REFUSE, SHIFT_TAG, MSGS_TAG, THINK_LONG, THINK_WORDS, THINK_TIME_RE, think_text_reason, JOINT_RULE, rest_function_text, prefix_prompt
-from comm_persona import SHIFT_LO, SHIFT_HI, SHIFT_KEEP, MAX_PERSONA, MEM_MAX, PERSONA_EXT, readme_text, pid_of, love_norm, love_line, shift_norm, shift_pairs, hm_text, shift_line, mem_fields, seed_builtin, ensure_personas, list_personas, persona_title, uses_prefix, system_head, PERSONA_HEAD, persona_system, persona_labels, read_persona, ROUTINE_SUFFIX, COMPANION_SEP, companion_base, is_companion_name, companion_files, companions_of, routine_name_of, read_routine, read_persona_full, import_persona
+from comm_parts import comm_readme
+from comm_parts.comm_schedule import PROACTIVE_P, seg_kind, seg_detail, schedule_entries, schedule_loops, loop_entries, schedule_segments, pro_pct, persona_probs
+from comm_parts.comm_reply import CUT_DEFAULT_MIN, CUT_MAX_MIN, HALFWIDTH_SYMBOLS, NET_DEFAULT_MIN, NET_MAX_MIN, WAIT_MAX_MIN, _BRACKET_RE, _CUT_N_RE, _CUT_RE, _EMPTY_WRAP_RE, _NET_RE, _WAIT_RE, clean_reply, cut_minutes, net_minutes, to_halfwidth
+from comm_parts.comm_builtin import BUILTIN_PERSONAS, DEFAULT_PERSONA, DEFAULT_BACKGROUND, DEFAULT_ROUTINE, ASSISTANT_PERSONA, ASSISTANT_DETAIL_LINE, BACKGROUND_LEGACIES, ASSISTANT_SLEEP_LINE, ASSISTANT_TITLE
+from comm_parts.comm_prompt import REFUSE, SHIFT_TAG, MSGS_TAG, THINK_LONG, THINK_WORDS, THINK_TIME_RE, think_text_reason, JOINT_RULE, rest_function_text, prefix_prompt
+from comm_parts.comm_persona import SHIFT_LO, SHIFT_HI, SHIFT_KEEP, MAX_PERSONA, MEM_MAX, PERSONA_EXT, readme_text, pid_of, love_norm, love_line, shift_norm, shift_pairs, hm_text, shift_line, mem_fields, seed_builtin, ensure_personas, list_personas, persona_title, uses_prefix, system_head, PERSONA_HEAD, persona_system, persona_labels, read_persona, ROUTINE_SUFFIX, COMPANION_SEP, companion_base, is_companion_name, companion_files, companions_of, routine_name_of, read_routine, read_persona_full, import_persona
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_AVATARS = {"Claudia.txt": "Claudia.png"}    # 自带人设的默认头像 (1.0.426): defaults/avatars/ 里的文件
@@ -228,7 +228,7 @@ _OP_STRIP_RE = re.compile(r"\[\s*operation\s*\](?:\s*\[[\d,\s，、]*\])?", re.I
 
 
 
-from comm_util import (OIT_TAG, STATE_TAG, COND_TAG, WEEKDAY, MAX_MSG_CHARS, HISTORY_SENT, HISTORY_STEP, HISTORY_CHARS,
+from comm_parts.comm_util import (OIT_TAG, STATE_TAG, COND_TAG, WEEKDAY, MAX_MSG_CHARS, HISTORY_SENT, HISTORY_STEP, HISTORY_CHARS,
                        is_claudia, is_refusal, stamp, urlsplit_host, info_tags, joint_answer, _joint_time, clip_message,
                        cache_layout, oit_text, first_turn, api_messages, sanitize_mem)
 def follow_delay(profile: dict, override: float = None) -> float:
@@ -1607,7 +1607,7 @@ class Comm:
         d = self.joint_draft
         if not d:
             return ""
-        import comm_data
+        from comm_parts import comm_data
         return comm_data.joint_label(d["terms"], _joint_time(d["start"]), _joint_time(d["end"]), self.now().date())
 
     def joint_status_text(self) -> str:
@@ -2141,7 +2141,7 @@ class Comm:
 
     def _send_package(self, joint, text: str = "") -> str:
         """一条带联合行动邀请的消息 (joint = {terms, start, end}). 聊天里只显示说明, 邀请的内容附在发给模型的内容里."""
-        import comm_data
+        from comm_parts import comm_data
         if not joint:
             return "empty"
         why = self.problem()
@@ -2268,7 +2268,7 @@ class Comm:
 
     def _op_offer(self, slots: list, last: list) -> str:
         """第一次调用的回复: 带编号的词条库 + 可用的开始时间 + 上次的选择."""
-        import comm_data
+        from comm_parts import comm_data
         import contract as C
         lines = ["(OIT 系统提供, 用户看不到) 你要向用户发起联合行动. 下面是词条库, 每条前面是编号.", "", comm_data.numbered_library(), "",
                  f"【合约时长】{C.BASE_SECONDS // 3600:g} 小时 (主动发起的联合行动不选持久战, 时长固定).",
@@ -2317,7 +2317,7 @@ class Comm:
 
     def _operation_rounds(self, ask, convo: list, reply: str, has_system: bool = True):
         """工作线程里: 对方回了 [operation] 之后的两次调用. convo 原地加上这几轮; 返回 (计划 or None, 最后那次 (对用户说话) 的回复)."""
-        import comm_data
+        from comm_parts import comm_data
         import contract as C
         why = self.joint_block() or ("现在是联合行动的同步阶段" if self.joint_live() else "")
         slots = [] if why else self._op_slots(self.now())
@@ -2359,7 +2359,7 @@ class Comm:
 
     def _op_apply(self, plan: dict):
         """主线程: 对方发起的联合行动记下来 (直接是"对方已接受"), 并记一条给对方看的系统消息."""
-        import comm_data
+        from comm_parts import comm_data
         if not plan or self.joint_block():
             return
         a, b = _joint_time(plan["start"]), _joint_time(plan["end"])
@@ -3588,7 +3588,7 @@ class Comm:
             d = now.date() - timedelta(days=i)
             lines.append([f"{d:%m-%d} 周{WEEKDAY[d.weekday()]}", f"专注 {st.day_minutes(d, ('focus',)):.0f} 分钟, 休息 {st.day_minutes(d, ('rest',)):.0f} 分钟", None])
         blocks.append({"t": "rows", "title": "专注计时 最近 7 天", "rows": lines})
-        import comm_data
+        from comm_parts import comm_data
         recs = st.recent_contracts(now)
         blocks.append({"t": "rows", "title": "合约记录 最近完成的",
                        "rows": [[r["end"][5:16].replace("T", " "), comm_data._record(r).strip(), None] for r in recs] or [["还没有顺利完成的合约", "", None]]})
@@ -3940,7 +3940,7 @@ class Comm:
         """对方查询 [模块名] 时, 有日程文件的人设得到的是对方自己的数据 (OIT 按日程实时算出, 只有已经发生的部分); 不是这几个模块 / 没有日程文件 = ""."""
         if tag not in ("timer", "log", "calendar", "stats", "net") or not self._rt:
             return ""
-        import comm_data
+        from comm_parts import comm_data
         st = self._rt_sync()
         if not st:
             return ""
@@ -3999,7 +3999,7 @@ class Comm:
         return "\n\n".join(blocks)
 
     def _rt_reasons_text(self, st, now, prefix: str) -> str:
-        import comm_data
+        from comm_parts import comm_data
         tot = {}
         for d in st.month_days(now):
             for k, v in st.net_by_reason(d).items():
@@ -4007,7 +4007,7 @@ class Comm:
         return f"【统计·联网理由 {prefix}】\n" + comm_data._top(tot, unit="m")
 
     def _rt_net_text(self, st, now, prefix: str) -> str:
-        import comm_data
+        from comm_parts import comm_data
         used = sum(st.net_by_reason(now.date()).values()) * 60.0
         quota = routine.NET_QUOTA_S
         total = max(quota, -(-used * 1.2 // 600) * 600)
@@ -4663,7 +4663,7 @@ def _selftest():
     assert info_tags("[refuse to reply][mechanics.md]") == [] and info_tags("好的") == []
     assert info_tags("[refuse to reply][calendar][stats]") == ["calendar", "stats"] and info_tags("[refuse to reply][x]") == []
     assert info_tags("[state]") == ["state"] and "XXI." in prefix_prompt() and "[state]" in prefix_prompt()
-    import comm_data
+    from comm_parts import comm_data
     assert all(f"[{t}]" in prefix_prompt() for t in comm_data.MODULE_TAGS) and "VII.问OIT使用数据" in prefix_prompt()
     p2 = prefix_prompt()
     assert "V.OIT独占“合约”" in p2 and "[refuse to reply][contract]" in p2 and "[refuse to reply][mechanics.md]" not in p2
