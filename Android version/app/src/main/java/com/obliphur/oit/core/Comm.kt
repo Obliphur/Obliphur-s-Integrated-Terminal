@@ -1002,6 +1002,8 @@ class Comm(
         val STATUS_COLORS = mapOf("rest" to "#9CCC65", "sleep" to "#283593", "focus" to "#FDD835", "idle" to "#9E9E9E")
     }
 
+    val voice = Voice(dir)
+    fun clearTsForVoice() = clearTs
     private val cfgFile = File(dir, "comm_config.json")
     private val legacyChatFile = File(dir, "comm_chat.json")           // 以前所有对象共用的一份
     var persona = ""; private set
@@ -1350,6 +1352,7 @@ class Comm(
     private fun switchTo(name: String) {
         val np = pidOf(name)
         if (np == pid) { persona = name; return }
+        voice.stop()
         others[pid] = activeState()
         saveChat()
         persona = name
@@ -1455,6 +1458,7 @@ class Comm(
     @Synchronized
     fun syncDoc(): Map<String, Any?> {
         val doc = LinkedHashMap<String, Any?>()
+        doc["voice"] = voice.syncDoc()
         focusNotices.filterValues { nowMs() - it.optLong("ts") in 0L..90_000L }.forEach { (key, value) ->
             doc["notice:$key"] = JSONObject(value.toString())
         }
@@ -1498,6 +1502,7 @@ class Comm(
         class Touch(val st: ChatState, var dirty: Boolean, var known: HashSet<String>)
         val touched = LinkedHashMap<String, Touch>()
         var clearedActive = false
+        val voiceMessages = ArrayList<Pair<String, ChatMsg>>()
         val fresh = ArrayList<ChatMsg>()                                        // 这次新并进来的 (现在聊的对象的) 消息
         fun touch(p: String): Touch = touched.getOrPut(p) { stateOf(p).let { Touch(it, false, it.messages.map { m -> m.uid }.toHashSet()) } }
         for (key in changes.keys.sortedBy { !it.startsWith("clear:") }) {       // 清空先处理: 之前的记录不会再并进来
@@ -1505,6 +1510,7 @@ class Comm(
             val kind = key.substringBefore(':')
             val rest = key.substringAfter(':', "")
             when {
+                key == "voice" && v is JSONObject -> { voice.applyDoc(v); changed() }
                 kind == "notice" && v is JSONObject -> {
                     if (nowMs() - v.optLong("ts") in 0L..90_000L && v.opt("text") is String) {
                         val rec = focusNotices.getOrPut(rest) { JSONObject(v.toString()) }
@@ -1543,6 +1549,7 @@ class Comm(
                     val t = (v as? Number)?.toLong() ?: continue
                     val tc = touch(rest)
                     if (t > tc.st.clearTs) {
+                        listPersonas().firstOrNull { pidOf(it) == rest }?.let { voice.clear(it) }
                         tc.st.clearTs = t
                         tc.st.messages.removeAll { it.ts <= t }
                         tc.st.retryAt = 0; tc.st.retryN = 0
@@ -1565,6 +1572,7 @@ class Comm(
                     if (v.optBoolean("late", false)) msg.late = true
                     if (v.has("due")) msg.due = v.optLong("due", 0L)
                     tc.st.messages.add(msg)
+                    listPersonas().firstOrNull { pidOf(it) == p }?.let { voiceMessages.add(it to msg) }
                     if (p == pid) fresh.add(msg)
                     tc.known.add(uid)
                     tc.dirty = true
@@ -1619,6 +1627,7 @@ class Comm(
         }
         if (clearedActive) { unread = 0; error = ""; epoch++; reloadSchedule("新对话") }
         if (touched.isNotEmpty()) changed()
+        voiceMessages.forEach { (name, msg) -> voice.request(name, msg) }
         syncedPing(fresh)
     }
 
@@ -2012,6 +2021,7 @@ class Comm(
     private fun clearPersonaChat(name0: String) {
         val name = if (isCompanionName(name0)) baseOfCompanion(name0).ifEmpty { name0 } else name0       // 改的是配套文件: 清的是它的人设的聊天
         val p = pidOf(name)
+        voice.clear(name)
         if (p.isEmpty()) return
         if (p == pid) {
             clear()
@@ -3543,6 +3553,7 @@ class Comm(
 
     @Synchronized
     fun setViewing(on: Boolean) {
+        if (!on) voice.stop()
         if (viewing && !on) saveCfg()
         viewing = on
         if (on && unread != 0) { unread = 0; changed() }
@@ -3581,7 +3592,7 @@ class Comm(
     private fun add(role: String, text: String, api: String = ""): ChatMsg = mk(role, text, api, true).also { messages.add(it) }
 
     /** 造一条消息 (还没放进任何聊天记录). */
-    private fun mk(role: String, text: String, api: String = "", delay: Boolean = false): ChatMsg {
+    private fun mk(role: String, text: String, api: String = "", delay: Boolean = false, voicePersona: String = personaName()): ChatMsg {
         val ts = maxOf(nowMs(), lastTs + 1)             // 同一台设备上严格递增
         lastTs = ts
         val m = ChatMsg(nextId++, role, text, now().iso(), api, "$ts-${device().ifEmpty { "local" }.take(4)}", ts)
@@ -3596,6 +3607,7 @@ class Comm(
             m.due = base + (charDelayOf(text) * 1000).toLong()
             m.hold = true
         }
+        voice.request(voicePersona, m)
         return m
     }
 
@@ -4562,7 +4574,7 @@ class Comm(
         val text = if (text0.isNotEmpty() && personaTitle(name).trim().equals("Claudia", ignoreCase = true)) CommText.toHalfWidth(text0) else text0
         if (CommText.isRefusal(r.reply) || text.isEmpty() || CommText.infoTags(r.reply).isNotEmpty()) { log("REPLY bg-${r.kind}: 对方不想发 / 什么也没剩, 不显示"); return }
         val sysm = mk("sys", r.extra.body, r.extra.api)
-        val m = mk("ai", text, if (text != r.reply.trim()) r.reply.trim() else "")
+        val m = mk("ai", text, if (text != r.reply.trim()) r.reply.trim() else "", voicePersona = name)
         if (waitMin > 0 && r.kind != "chase") m.wait = waitMin
         st.messages.add(sysm); st.messages.add(m)
         if (!m.hold) {
@@ -4576,6 +4588,7 @@ class Comm(
      */
     @Synchronized
     fun clear() {
+        voice.clear(personaName())
         clearTs = maxOf(nowMs(), lastTs)
         messages.clear(); unread = 0; retryAt = 0; retryN = 0; error = ""; catchup = false
         followAt = 0L                                       // 清空前排着的第二次调用不要了

@@ -435,6 +435,8 @@ class DailyMixin:
             from urllib.parse import urlsplit
             profs = [self.comm.ai.profile(c["id"]) for c in self.comm.ai.configs()]
             bases = [str(p.get("base_url") or "").strip() for p in profs]
+            if self.comm.voice.data["enabled"]:
+                bases += [str(p.get("url") or "").strip() for p in self.comm.voice.data["profiles"]]
             hosts = {(urlsplit(b).hostname or "").lower() for b in bases} - {""}
             if self.comm.net_active() and any(ai_assist.web_local(p) for p in profs):
                 hosts |= set(ai_assist.SEARCH_HOSTS)        # 限时网络开着, 并且由 OIT 自己搜索 (DeepSeek 等): 搜索页的域名也放行

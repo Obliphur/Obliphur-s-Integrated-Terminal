@@ -364,7 +364,8 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         if (now - apiHostsAt < 5000) return apiHostsCache
         val cfg = comm.aiConfig()
         val profs = cfg.order.mapNotNull { cfg.profiles[it] }
-        val hosts = profs.mapNotNull { runCatching { java.net.URI(it.baseUrl).host }.getOrNull()?.lowercase() }
+        val bases = profs.map { it.baseUrl } + if (comm.voice.enabled) comm.voice.profiles().map { it.optString("url") } else emptyList()
+        val hosts = bases.mapNotNull { runCatching { java.net.URI(it).host }.getOrNull()?.lowercase() }
             .filter { it.isNotEmpty() }.toSet()
         apiHostsAt = now
         // 限时网络开着, 并且由 OIT 自己搜索 (DeepSeek 等): 搜索页的域名也放行
@@ -1774,6 +1775,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
 
     /** 删除全部数据. 之后由 Host 新建一个 Core, 就像第一次安装. */
     fun eraseEverything() {
+        comm.voice.close()
         timer.abandon()
         notices.clear()
         dm.resetting = true

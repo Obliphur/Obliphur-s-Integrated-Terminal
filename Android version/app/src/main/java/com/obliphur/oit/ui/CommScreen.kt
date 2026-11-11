@@ -70,7 +70,7 @@ fun CommScreen(go: (String) -> Unit) {
     val o = LocalOit.current
     val core = OitApp.instance.core
     val comm = core.comm
-    DisposableEffect(Unit) { comm.setViewing(true); onDispose { comm.setViewing(false) } }
+    DisposableEffect(Unit) { comm.setViewing(true); onDispose { comm.voice.stop(); comm.setViewing(false) } }
     var input by rememberSaveable { mutableStateOf("") }
     var askClear by remember { mutableStateOf(false) }
     var help by remember { mutableStateOf(false) }
@@ -110,6 +110,8 @@ fun CommScreen(go: (String) -> Unit) {
     var otherStatusKind by remember { mutableStateOf(comm.otherStatusDisplay().second) }
     LaunchedEffect(Unit) {
         while (true) {
+            if (comm.voice.state == "failed" && comm.voice.error.isNotEmpty()) { core.toast(tr(comm.voice.error), "warn"); comm.voice.error = "" }
+            if (comm.blocked().isNotEmpty() && comm.voice.state in listOf("playing", "loading")) comm.voice.stop()
             if (comm.version != ver) ver = comm.version
             val (text, kind) = comm.otherStatusDisplay()
             if (text != otherStatus) otherStatus = text
@@ -127,9 +129,37 @@ fun CommScreen(go: (String) -> Unit) {
     }
     val msgs = remember(ver) { comm.visible() }
     val list = rememberLazyListState()
+    var voiceSession by remember { mutableStateOf(0) }
+    var voiceAutoRunning by remember { mutableStateOf(false) }
+    LaunchedEffect(comm.pid) {
+        comm.voice.stop()
+        val session0 = voiceSession
+        val name = comm.personaName()
+        val clear0 = comm.clearTsForVoice()
+        if (comm.voice.enabled && comm.voice.auto && comm.blocked().isEmpty()) {
+            voiceAutoRunning = true
+            val queue = comm.voice.autoplay(name, comm.visible())
+            try {
+                for (m in queue) {
+                    if (session0 != voiceSession || !comm.voice.enabled || !comm.voice.auto || comm.blocked().isNotEmpty() || clear0 != comm.clearTsForVoice()) break
+                    if (comm.voice.played(name, m)) continue
+                    val index = comm.visible().asReversed().indexOfFirst { it.uid == m.uid }
+                    if (index < 0) continue
+                    list.scrollToItem(index)
+                    comm.voice.play(name, m)
+                    while (comm.voice.state in listOf("loading", "playing")) {
+                        if (session0 != voiceSession) break
+                        if (!comm.voice.enabled || !comm.voice.auto || comm.blocked().isNotEmpty() || clear0 != comm.clearTsForVoice()) { comm.voice.stop(); break }
+                        kotlinx.coroutines.delay(100)
+                    }
+                    kotlinx.coroutines.delay((comm.voice.gap * 1000).toLong())
+                }
+            } finally { voiceAutoRunning = false }
+        }
+    }
     // 倒排: 第 0 项是最新的一条, 在最下面. 新消息来了 (收到的 / 同步来的) 滑到最新; 正在往上翻很早的记录时不打断 (自己发的除外)
     LaunchedEffect(msgs.firstOrNull()?.id, msgs.size) {
-        if (msgs.isNotEmpty() && (list.firstVisibleItemIndex <= 4 || msgs.last().role == "me")) list.scrollToItem(0)
+        if (!voiceAutoRunning && msgs.isNotEmpty() && (list.firstVisibleItemIndex <= 4 || msgs.last().role == "me")) list.scrollToItem(0)
     }
     fun report(why: String) {
         core.toast(tr(why), "warn")
@@ -170,7 +200,7 @@ fun CommScreen(go: (String) -> Unit) {
         LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list, reverseLayout = true,
             contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 64.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(msgs.asReversed(), key = { it.id }) { Bubble(it) }
+            items(msgs.asReversed(), key = { it.id }) { m -> Bubble(m) { voiceSession++; comm.voice.play(comm.personaName(), m) } }
         }
         val blocked = comm.blocked()
         if (blocked.isNotEmpty() || comm.error.isNotEmpty()) Text(blocked.ifEmpty { tr(comm.error) }, color = o.danger, fontSize = 12.sp,
@@ -373,7 +403,7 @@ private fun JointTimeDialog(terms: List<String>, onCancel: () -> Unit, onOk: (ja
 }
 
 @Composable
-private fun Bubble(m: ChatMsg) {
+private fun Bubble(m: ChatMsg, play: (() -> Unit)? = null) {
     val o = LocalOit.current
     val comm = OitApp.instance.core.comm
     val mine = m.role == "me"
@@ -389,6 +419,7 @@ private fun Bubble(m: ChatMsg) {
                     .padding(horizontal = 12.dp, vertical = 8.dp))
             Text(when_, color = o.dim, fontSize = 11.sp)
         }
+        if (!mine && comm.voice.enabled) TextButton({ if (comm.blocked().isEmpty()) play?.invoke() }) { Text(tr("语音")) }
         if (comm.showAvatar && mine) Avatar("me", OitApp.instance.core.username.take(1).ifEmpty { "我" }, 34)
     }
 }
@@ -438,6 +469,7 @@ fun CommSettings() {
     val ctx = LocalContext.current
     val core = OitApp.instance.core
     val comm = core.comm
+    VoiceSettingsCard()
     var apiDialog by remember { mutableStateOf(false) }
     var readme by remember { mutableStateOf(false) }
     var avatarWho by remember { mutableStateOf("me") }

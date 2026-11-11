@@ -54,6 +54,7 @@ class MiscMixin:
 
     def clear(self):
         """清空聊天记录 (界面上的按钮, 或者在聊天框里发 /clear): 以后不再显示, 也不再发给模型; 别的设备也一起清空."""
+        self.voice.clear(self.persona_name())
         self.cfg["clear_ts"] = max(self._ms(), self._last_ts)
         self.messages = []
         self.unread = 0

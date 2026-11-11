@@ -50,6 +50,10 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
     # 字段多, 小屏 / 大字号下一屏放不下: 内容放进滚动区, 免得下面的字段被切掉、点不到
     height = int(min(780, max(460, parent.winfo_screenheight() * 0.85)))
     dlg = Modal(parent, tr("AI 模型设置"), width=620, height=height)
+    from .voice_dialogs import open_help
+    help_row = tk.Frame(dlg.body, bg=COLORS["bg"])
+    help_row.pack(fill="x")
+    ttk.Button(help_row, text=tr("帮助"), command=lambda: open_help(dlg)).pack(side="right")
     area = ScrollArea(dlg.body, height=max(240, height - 150))
     area.pack(fill="both", expand=True)
     b = area.inner

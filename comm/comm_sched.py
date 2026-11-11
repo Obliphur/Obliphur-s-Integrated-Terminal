@@ -159,7 +159,7 @@ class SchedMixin:
             self.log(f"REPLY bg-{kind}: 对方不想发 / 什么也没剩, 不显示")
             return
         sysm = self._mk("sys", extra[0], extra[1])
-        m = self._mk("ai", text, reply.strip() if text != reply.strip() else "")
+        m = self._mk("ai", text, reply.strip() if text != reply.strip() else "", persona=name)
         if wait_min and kind != "chase":
             m["wait"] = wait_min
         st["messages"].extend([sysm, m])

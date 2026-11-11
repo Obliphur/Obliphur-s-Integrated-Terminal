@@ -16,6 +16,7 @@ import toast
 from config import COLORS
 from i18n import tr
 from .widgets import Modal, ScrollArea, cfg, focus_name
+from .comm_voice import CommVoiceMixin
 
 # 这些原因是"还没配置好", 提示之后直接带去 设置 → 沟通
 NEEDS_SETUP = ("还没有选人设",)
@@ -23,7 +24,7 @@ RENDER_MAX = 80          # 打开聊天页时画最近多少条 (全部画出来
 LOAD_MORE = 40           # 每次往上翻到顶, 多加载多少条
 
 
-class CommPage(tk.Frame):
+class CommPage(CommVoiceMixin, tk.Frame):
 
     def __init__(self, master, comm, username=None, on_open_settings=None, on_joint=None):
         super().__init__(master, bg=COLORS["bg"])
@@ -136,8 +137,11 @@ class CommPage(tk.Frame):
         self.refresh(force=True)
         self.entry.focus_set()
         self._to_end()
+        self._voice_start()
+        self._voice_job = self.after(100, self._voice_poll)
 
     def hide(self):
+        self._voice_cancel()
         self.comm.set_viewing(False)
 
     def _on_resize(self, _event):
@@ -234,7 +238,7 @@ class CommPage(tk.Frame):
         on = bool(c.cfg.get("show_avatar"))
         marks = tuple((w, c.avatar_path(w), os.path.getmtime(c.avatar_path(w)) if c.avatar_path(w) else 0)
                       for w in ("me", "ai")) if on else ()
-        return (self._wrap(), on, marks, c.pid, self.username() if on else "")
+        return (self._wrap(), on, marks, c.pid, self.username() if on else "", c.voice.data["enabled"])
 
     def _photo(self, path: str, size: int):
         try:
@@ -335,7 +339,7 @@ class CommPage(tk.Frame):
             self._rows.pop(0).destroy()
             self._rendered.pop(0)
         self._first_draw = False
-        if follow:
+        if follow and not getattr(self, "_voice_queue", []) and not getattr(self, "_voice_active", False):
             self._to_end()
 
     def _check_top(self):
@@ -391,6 +395,8 @@ class CommPage(tk.Frame):
             when = ""
         tk.Label(box, text=when, bg=bg, fg=COLORS["text_dim"], font=config.font("small")).pack(
             anchor="e" if mine else "w")
+        if not mine and c.voice.data["enabled"]:
+            ttk.Button(row, text=tr("语音"), width=6, command=lambda: self._voice_manual(m)).pack(side="left", padx=4)
         self._bind_wheel(row)
         return row
 

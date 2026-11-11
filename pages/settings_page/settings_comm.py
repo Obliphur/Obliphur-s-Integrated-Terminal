@@ -28,6 +28,8 @@ class CommSettingsMixin:
                     "设置").pack(side="right")
         self.lbl_comm_api = tk.Label(fr, text="", bg=card, fg=COLORS["text"], font=small, anchor="w")
         self.lbl_comm_api.pack(fill="x", padx=12, pady=(2, 10))
+        from ..voice_dialogs import build_voice_settings
+        build_voice_settings(self, body)
 
         fr, head = self._card(body, "🎭  人设")
         self._track(ttk.Button(head, text=tr("打开文件夹"), command=self._comm_open_folder),
@@ -247,6 +249,8 @@ class CommSettingsMixin:
         self._persona_labels = comm_mod.persona_labels(comm_mod.list_personas(c.personas))
         self.cb_persona.config(values=[lab for _n, lab in self._persona_labels])
         cur = c.persona_name()
+        if hasattr(self, "_voice_settings_refresh"):
+            self._voice_settings_refresh()
         set_var(self.comm_persona, next((lab for n, lab in self._persona_labels if n == cur), ""))
         if c.claudia_differs():
             show_pack(self.row_restore, fill="x", pady=(0, 10))

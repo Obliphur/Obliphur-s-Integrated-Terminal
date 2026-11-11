@@ -440,6 +440,8 @@ fun AiSettingsDialog(onDismiss: () -> Unit) {
     val o = LocalOit.current
     val core = OitApp.instance.core
     val cfg = remember { aiConfig() }
+    var configHelp by remember { mutableStateOf(false) }
+    if (configHelp) ConfigHelpDialog(false) { configHelp = false }
     var sel by remember { mutableStateOf(cfg.configFor("").ifEmpty { cfg.order.firstOrNull() ?: "" }) }
     var name by remember { mutableStateOf(cfg.configName(sel)) }
     var p by remember { mutableStateOf(cfg.profile(sel)) }
@@ -457,7 +459,10 @@ fun AiSettingsDialog(onDismiss: () -> Unit) {
         name = cfg.configName(id)
     }
     AlertDialog(onDismissRequest = onDismiss, containerColor = o.bg,
-        title = { Text(tr("AI 模型设置")) },
+        title = { Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(tr("AI 模型设置"), modifier = Modifier.weight(1f))
+            TextButton({ configHelp = true }) { Text(tr("帮助")) }
+        } },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(tr("配置 (最多 {n} 个)", "n" to Ai.MAX_CONFIGS), color = o.dim, fontSize = 12.sp)

@@ -33,6 +33,7 @@ python release.py               # 发布（PyInstaller）
 | `_sound_check.py` | 音效独立设置、试听草稿、静音、默认回退与窄窗口标签换行 | `sound_effects.py`、音效设置 / 播放入口 |
 | `_daily_ui_check.py` | 设置 → 日常（睡觉时间、行为模式） | `pages/settings_page/` |
 | `_ai_dialog_check.py` | AI 模型设置弹窗：小屏 / 大字号下能滚到底、字段点得到 | `pages/ai_dialogs.py`、`pages/widgets.py` 的 `Modal` / `ScrollArea` |
+| `_voice_check.py` | AI 语音协议、生成去重、缓存复用、播放记录、未播队列、并发清空与配置窗口 | `ai_voice.py`、`pages/voice_dialogs.py`、`pages/comm_voice.py`、沟通语音入口 |
 | `_joint_invite_check.py` | AI 发起联合行动的邀请模式 | `pages/contract_page.py` 邀请、`app_comm._joint_invite_watch` |
 | `_focus_check.py` | 焦点设备（提示音 / 刻痕）的「最后操作时刻」：Windows 全系统输入、只前进、取不到时不动 | `app/app_sync.py` 的 `system_idle_ms` / `_note_input`、`sync_local.py` 的 `status()` |
 | `_temp_check.py` | 临时文件都在 `%TEMP%\OIT` 里：启动清旧（含旧版本散落的 `oit*` 与顶层 `tmp*` 自检残留）、自检自动开会话退出即删、开会话清 1 小时前残留、重置 / 卸载删干净 | `tempstore.py`、`recorder/`、`updater.py`、`setup.py`、`netproxy/sitescan.py` |

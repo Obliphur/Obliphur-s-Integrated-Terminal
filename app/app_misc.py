@@ -224,6 +224,7 @@ class MiscMixin:
         self.sync.stop()
         self._stop_all_recorders(wait=8.0)
         self.net.release()
+        self.comm.voice.close()
         self.dm.erase_all_data()
         securefile.reset()                  # 数据文件夹没了: 内存里的密钥作废, 之后写的绑定是明文, 下次启动再加密 (MECHANICS 9.4)
         if continuity.current is not None:

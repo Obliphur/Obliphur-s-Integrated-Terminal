@@ -9,6 +9,9 @@ import kotlin.math.ln
 
 /** 不在设置页里的固定数值 (对应桌面版 config.py). 可调的数值见 Settings.kt. */
 object Cfg {
+    const val AI_VOICE_GAP = 1.0
+    const val AI_VOICE_AUTO_COUNT = 10
+    const val AI_VOICE_CLAUDIA_ID = "462298003509468"
     const val APP_NAME = "Obliphur's Integrated Terminal"
 
     const val APPLY_DELAY_HOURS = 48L

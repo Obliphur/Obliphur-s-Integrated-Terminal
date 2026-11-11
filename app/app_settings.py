@@ -136,6 +136,7 @@ class SettingsMixin:
                     pass
         self._stop_all_recorders(wait=8.0)     # 把正在录的文件写完 (Finalize)
         self.net.shutdown()
+        self.comm.voice.close()
         self.root.destroy()
 
     def update_log_badge(self):

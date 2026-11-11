@@ -85,6 +85,8 @@ class Comm(JointMixin, StatusMixin, ChatMixin, FlowMixin, SchedMixin, ShareMixin
 
     def __init__(self, data_dir: str, personas: str, now=datetime.now, chat_fn=None):
         self.dir = data_dir
+        from ai_voice import Voice
+        self.voice = Voice(data_dir)
         self.personas = personas
         self.now = now
         self.chat_fn = chat_fn or ai_assist.chat_messages
@@ -316,6 +318,7 @@ class Comm(JointMixin, StatusMixin, ChatMixin, FlowMixin, SchedMixin, ShareMixin
         if new == self.pid:
             self.cfg["persona"] = name
             return
+        self.voice.stop()
         self._others[self.pid] = self._active_state()           # 现在的记下来 (内存里的 messages 是同一个列表)
         self.save_chat()
         self.cfg["persona"] = name
@@ -462,6 +465,7 @@ class Comm(JointMixin, StatusMixin, ChatMixin, FlowMixin, SchedMixin, ShareMixin
         """随设备同步的内容: 每个对象各自最近 SYNC_N 条消息 (键里带对象的编号 pid), 再早的是各设备自己留着的; 掉出窗口不算删除."""
         doc = {f"notice:{key}": dict(val) for key, val in self.focus_notices.items()
                if 0 <= self._ms() - val["ts"] <= 90_000}
+        doc["voice"] = self.voice.sync_doc()
         if self.cfg.get("user_profile"):
             doc["profile"] = self.cfg["user_profile"]
         doc["split"] = self.split_on()                  # 分条发的开关: 调用 AI 的是主端, 两台设备要一致
@@ -527,6 +531,10 @@ class Comm(JointMixin, StatusMixin, ChatMixin, FlowMixin, SchedMixin, ShareMixin
         for key in sorted(changes, key=lambda k: not k.startswith("clear:")):      # 清空先处理: 之前的记录不会再并进来
             val = changes[key]
             kind, _, rest = key.partition(":")
+            if key == "voice":
+                self.voice.apply_doc(val)
+                self._changed()
+                continue
             if kind == "notice":
                 if isinstance(val, dict) and isinstance(val.get("text"), str) and isinstance(val.get("ts"), (int, float)):
                     if 0 <= self._ms() - val["ts"] <= 90_000:
@@ -541,6 +549,9 @@ class Comm(JointMixin, StatusMixin, ChatMixin, FlowMixin, SchedMixin, ShareMixin
                     continue
                 st, _d, _k = st_of(pid)
                 if t > st["clear_ts"]:
+                    for name in list_personas(self.personas):
+                        if pid_of(name) == pid:
+                            self.voice.clear(name)
                     st["clear_ts"] = t
                     st["messages"][:] = [m for m in st["messages"] if int(m["ts"]) > t]
                     st["retry"] = {}
@@ -717,6 +728,10 @@ class Comm(JointMixin, StatusMixin, ChatMixin, FlowMixin, SchedMixin, ShareMixin
             self.reload_schedule("新对话")
         if touched:
             self._changed()
+        for pid, m in fresh:
+            name = next((n for n in list_personas(self.personas) if pid_of(n) == pid), "")
+            if name:
+                self.voice.request(name, m)
         self._synced_ping([m for pid, m in fresh if pid == self.pid])
 
     def _synced_ping(self, fresh: list):
@@ -826,6 +841,7 @@ class Comm(JointMixin, StatusMixin, ChatMixin, FlowMixin, SchedMixin, ShareMixin
     def _clear_persona_chat(self, name: str):
         if is_companion_name(self.personas, name):               # 改的是配套文件: 清的是它的人设的聊天
             name = base_persona_of(self.personas, name) or name
+        self.voice.clear(name)
         pid = pid_of(name)
         if not pid:
             return
@@ -1101,7 +1117,7 @@ class Comm(JointMixin, StatusMixin, ChatMixin, FlowMixin, SchedMixin, ShareMixin
             self._changed()
 
     # ---- 发消息 ----
-    def _mk(self, role: str, text: str, api: str = "", delay: bool = False) -> dict:
+    def _mk(self, role: str, text: str, api: str = "", delay: bool = False, persona=None) -> dict:
         """造一条消息 (还没放进任何聊天记录)."""
         now = self.now()
         ts = max(self._ms(), self._last_ts + 1)          # 同一台设备上严格递增
@@ -1121,6 +1137,7 @@ class Comm(JointMixin, StatusMixin, ChatMixin, FlowMixin, SchedMixin, ShareMixin
             base = max([self._ms()] + [int(x.get("due") or 0) for x in self.messages if x.get("hold")])
             m["due"] = base + int(char_delay(text) * 1000)
             m["hold"] = True
+        self.voice.request(persona if persona is not None else self.persona_name(), m)
         return m
 
     def _finish(self, kind: str, extra, reply: str, err: str, epoch: int = 0, op=None):

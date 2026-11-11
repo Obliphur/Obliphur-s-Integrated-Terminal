@@ -447,6 +447,8 @@ class WindowMixin:
                 self._rebuilding = False
 
     def _rebuild_ui(self, cover=None):
+        if "comm" in self.pages:
+            self.pages["comm"].hide()
         for job in (self.midnight_job, self.hourly_job, self.update_job,
                     self.net_job, getattr(self, "apply_job", None)):
             if job:

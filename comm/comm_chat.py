@@ -176,6 +176,8 @@ class ChatMixin:
             self._changed()
 
     def set_viewing(self, on: bool):
+        if not on:
+            self.voice.stop()
         if self.viewing and not on:
             self.save_cfg()
         self.viewing = bool(on)
