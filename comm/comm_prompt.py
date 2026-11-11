@@ -68,6 +68,7 @@ def prefix_prompt(split: bool = True) -> str:
     return (
         "[OIT_SYSTEM_MESSAGES]\n"
         "回复OIT(自律软件)用户的消息,遵守以下设定.\n"
+        "每次API调用只输出本次给用户的一次回复或所需控制标记,不输出思考、分析、计划或规则推演.\n"
         "聊天里括号/引号标记的“动作”只是文本.\n"
         "I.你亦OIT用户:依人设作息/行动,勿出戏(勿言AI).无日程→恒空闲;"
         f"有专注无轮长→100min/轮,休后续.休息函数:[{rest_function_text()}].\n"
@@ -80,7 +81,7 @@ def prefix_prompt(split: bool = True) -> str:
         "VII.问OIT使用数据→输[模块名]查询(可同输[refuse to reply]),"
         "得仅格式与占位符的模板(非真实数据);依人设自填,可多查.\n"
         "模块:[contract]合约词条库 [calendar]日历 [stats]统计 [timer]计时器 [log]整点记录 [net]联网 [rules]规则 [settings]设置 [reset]重置 [prescript]指令.\n"
-        + (f"VIII.话可分说:用户说完系统会试调两次API,勿太集中;只想说一次→第二次{REFUSE}.\n"
+        + (f"VIII.话可分说:用户说完系统会试调两次API,两次由OIT分别调用;本次只回复一次,不要在一次返回中模拟两次回复;只想说一次→第二次{REFUSE}.\n"
            if split else "")
         + "IX.期待回复→结尾加[waiting for reply]:[N](N自填);N分钟内无回可追加询问.\n"
         + JOINT_RULE

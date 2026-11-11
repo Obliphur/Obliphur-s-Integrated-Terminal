@@ -53,6 +53,11 @@ _THINK_OPEN_RE = re.compile(r"<" + _THINK_TAGS + r"\b[^>]*>", re.I)
 
 MODEL_CACHE = {}                # (服务商, Base URL) -> 取到过的模型 id 列表 (只在内存里)
 
+# 有的 Gemini 中转把无标签的分析混进 text, 用明确边界提取正文, 不猜测语言或段落。
+_GEMINI_FINAL_RULE = ("\n输出格式:将本次唯一的正式回复(包括所需控制标记、JSON等)完整放在"
+                      "<oit_final>和</oit_final>之间;思考、分析、计划和模拟的后续回复不得放在其中."
+                      "OIT会移除这层标签后使用正文;后续API调用由OIT单独发起.")
+
 
 def redact(text: str, key: str) -> str:
     """把错误信息里出现的 Key 抹掉 (有的服务商会在报错里回显 Key)."""
@@ -166,8 +171,7 @@ def _gemini_body(profile: dict, system: str, messages: list, max_tokens: int, te
                  "parts": _gemini_parts(m.get("content"))} for m in messages]
     body = {"contents": contents,
             "generationConfig": {"maxOutputTokens": max_tokens, "temperature": temperature}}
-    if str(system or "").strip():                            # 空的 systemInstruction 会被拒
-        body["systemInstruction"] = {"parts": [{"text": system}]}
+    body["systemInstruction"] = {"parts": [{"text": (system or "") + _GEMINI_FINAL_RULE}]}
     return body
 
 
@@ -267,7 +271,7 @@ def strip_think(text: str) -> str:
 
 
 def _gemini_text(data: dict) -> str:
-    """generateContent 的回复 → 文字: candidates[0] 里所有不是 thought 的 text (思考摘要不要)."""
+    """跳过 thought 部分, 从剩余 text 中提取最后一个完整的正式回复块."""
     cands = data.get("candidates") if isinstance(data, dict) else None
     if not isinstance(cands, list) or not cands or not isinstance(cands[0], dict):
         fb = data.get("promptFeedback") if isinstance(data, dict) else None
@@ -277,7 +281,12 @@ def _gemini_text(data: dict) -> str:
     parts = content.get("parts") if isinstance(content, dict) else None
     if not isinstance(parts, list):
         return ""
-    return "".join(str(p.get("text") or "") for p in parts if isinstance(p, dict) and not p.get("thought"))
+    text = "".join(str(p.get("text") or "") for p in parts if isinstance(p, dict) and not p.get("thought"))
+    # 最后一个完整正文块才是答案; 缺失或截断时拒绝展示, 防止退回未隔离的分析。
+    blocks = re.findall(r"<oit_final>(.*?)</oit_final>", text, re.S)
+    if not blocks:
+        raise AIError("format", "模型没有返回内容")
+    return blocks[-1].strip()
 
 
 def _chat_once(profile: dict, system: str, messages: list, timeout: float, opener, max_tokens: int,

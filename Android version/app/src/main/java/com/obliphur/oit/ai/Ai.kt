@@ -307,6 +307,9 @@ object Ai {
         return if (t.lowercase().replace(" ", "") == "[notext]") "" else t
     }
 
+    // 中转可能把无标签分析混进 text, 用明确的正文边界提取, 不猜测语言或段落。
+    private const val GEMINI_FINAL_RULE = "\n输出格式:将本次唯一的正式回复(包括所需控制标记、JSON等)完整放在<oit_final>和</oit_final>之间;思考、分析、计划和模拟的后续回复不得放在其中.OIT会移除这层标签后使用正文;后续API调用由OIT单独发起."
+
     /** 原生 Gemini 的请求体: 隐式缓存由 Google 按完全相同的 systemInstruction 建, 请求里不用标缓存位置. */
     private fun geminiBody(p: Profile, system: String, messages: List<Pair<String, String>>,
                            maxTokens: Int, temperature: Double): JSONObject {
@@ -322,7 +325,7 @@ object Ai {
             contents.put(JSONObject().put("role", if (role == "assistant") "model" else "user").put("parts", parts))
         }
         return JSONObject()
-            .apply { if (system.isNotBlank()) put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", system)))) }
+            .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", system + GEMINI_FINAL_RULE))))
             .put("contents", contents)
             .put("generationConfig", JSONObject().put("maxOutputTokens", maxTokens).put("temperature", temperature))
     }
@@ -417,8 +420,8 @@ object Ai {
         return try { JSONObject(text) } catch (e: Exception) { throw AiError("format", "服务商返回了无法识别的内容") }
     }
 
-    /** generateContent 的回复 → 文字: candidates[0] 里所有不是 thought 的 text (思考摘要不要). */
-    private fun geminiText(d: JSONObject): String {
+    /** 跳过 thought 部分, 从剩余 text 中提取最后一个完整的正式回复块. */
+    internal fun geminiText(d: JSONObject): String {
         val cands = d.optJSONArray("candidates")
         if (cands == null || cands.length() == 0) {
             val reason = d.optJSONObject("promptFeedback")?.optString("blockReason").orEmpty()
@@ -430,7 +433,9 @@ object Ai {
             val part = parts.optJSONObject(i) ?: continue
             if (!part.optBoolean("thought", false)) sb.append(part.optString("text"))
         }
-        return sb.toString()
+        // 缺失或截断的边界不能退回原文, 否则会把分析当答案显示。
+        val blocks = Regex("<oit_final>(.*?)</oit_final>", RegexOption.DOT_MATCHES_ALL).findAll(sb.toString())
+        return blocks.lastOrNull()?.groupValues?.get(1)?.trim() ?: throw AiError("format", "模型没有返回内容")
     }
 
     private fun chatOnce(p: Profile, system: String, messages: List<Pair<String, String>>,

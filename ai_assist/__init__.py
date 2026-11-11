@@ -339,7 +339,7 @@ def _selftest():
             seen.append((self.path, {k.lower(): v for k, v in self.headers.items()}, body))
             answer = '{"domains":["bilibili.com"],"apps":["steam.exe"]}'
             if ":generateContent" in self.path:                    # 原生 Gemini
-                out = {"candidates": [{"content": {"parts": [{"text": "你好"}]}}],
+                out = {"candidates": [{"content": {"parts": [{"text": "无标签的分析\n<oit_final>你好</oit_final>"}]}}],
                        "usageMetadata": {"promptTokenCount": 10, "cachedContentTokenCount": 4}}
             elif self.path.startswith("/cache400") and "cache_control" in json.dumps(body):
                 self.send_response(400)
@@ -431,10 +431,20 @@ def _selftest():
         gm = {"base_url": "https://generativelanguage.googleapis.com", "model": "gemini-3.5-flash",
               "protocol": "gemini", "api_key": "k", "provider": "gemini"}
         b = _build_body(gm, "SYS", mm, 4096, 0.9, True)
-        assert b["systemInstruction"] == {"parts": [{"text": "SYS"}]} and b["contents"] == [{"role": "user", "parts": [{"text": "hi"}]}]
+        assert b["systemInstruction"]["parts"][0]["text"].startswith("SYS\n") and "<oit_final>" in b["systemInstruction"]["parts"][0]["text"]
+        assert b["contents"] == [{"role": "user", "parts": [{"text": "hi"}]}]
         assert b["generationConfig"] == {"maxOutputTokens": 4096, "temperature": 0.9}
         assert "thinking" not in b and "cache_control" not in json.dumps(b)
-        assert _gemini_text({"candidates": [{"content": {"parts": [{"text": "a"}, {"text": "想", "thought": True}, {"text": "b"}]}}]}) == "ab"
+        assert _gemini_text({"candidates": [{"content": {"parts": [{"text": "分析\n<oit_final>a"}, {"text": "想", "thought": True}, {"text": "b</oit_final>"}]}}]}) == "ab"
+        for raw, expected in [("分析中引用<oit_final>示例</oit_final>\n<oit_final>[refuse to reply]</oit_final>", "[refuse to reply]"),
+                              ('<oit_final>{"answer":1}</oit_final>', '{"answer":1}')]:
+            assert _gemini_text({"candidates": [{"content": {"parts": [{"text": raw}]}}]}) == expected
+        for raw in ("I'm thinking through how to approach this.\n你好", "分析<oit_final>截断"):
+            try:
+                _gemini_text({"candidates": [{"content": {"parts": [{"text": raw}]}}]})
+                raise AssertionError("缺失正文边界时不得显示分析")
+            except AIError as e:
+                assert e.kind == "format"
         try:
             _gemini_text({"promptFeedback": {"blockReason": "SAFETY"}})
             raise AssertionError
@@ -448,7 +458,7 @@ def _selftest():
         assert chat_messages(gp, "SYS", mm, cache=True, on_usage=lambda *a: us.append(a)) == "你好"
         path, hdr, body = seen[-1]
         assert path == "/v1beta/models/gemini-3.5-flash:generateContent" and hdr["x-goog-api-key"] == "gk"
-        assert body["systemInstruction"] == {"parts": [{"text": "SYS"}]} and "cache_control" not in json.dumps(body)
+        assert body["systemInstruction"] == b["systemInstruction"] and "cache_control" not in json.dumps(body)
         assert us[-1] == (10, 4), "Gemini 的 cachedContentTokenCount 要算进命中"
         # DeepSeek 官方地址: 显式关掉思考 (它默认开, 思考 token 按输出计费, 而且会忽略 temperature); 别家不加
         ds = dict(p, base_url="https://api.deepseek.com", model="deepseek-flash")

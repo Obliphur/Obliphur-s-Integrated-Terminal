@@ -879,6 +879,7 @@ class CommTest {
     fun splitReply() {
         val p = CommText.prefixPrompt()
         assertTrue("VIII.你可以把话分开说" in p && "调用两次API" in p && "只想说一次" in p && CommText.REFUSE in p)
+        assertTrue("本次只回复一次" in p && "不输出思考" in p && "两次由OIT分别调用" in p)
         assertTrue(p.indexOf("VII.如果用户问起") < p.indexOf("VIII.") && p.indexOf("VIII.") < p.indexOf("XXI."))
         val td = Files.createTempDirectory("oit").toFile()
         val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
@@ -1316,6 +1317,14 @@ class CommTest {
     /** 记忆卡: 每 40 条整理一次; 全部自动; 清空聊天时一起清掉. */
     @Test
     fun stripThink() {
+        fun native(text: String) = JSONObject().put("candidates", org.json.JSONArray().put(JSONObject().put("content",
+            JSONObject().put("parts", org.json.JSONArray().put(JSONObject().put("text", text))))))
+        assertEquals("你好", Ai.geminiText(native("I'm thinking through how to approach this.\n<oit_final>你好</oit_final>")))
+        assertEquals("[refuse to reply]", Ai.geminiText(native("分析<oit_final>示例</oit_final>\n<oit_final>[refuse to reply]</oit_final>")))
+        for (raw in listOf("没有正文边界的分析", "分析<oit_final>截断")) {
+            try { Ai.geminiText(native(raw)); org.junit.Assert.fail("不能显示未隔离的分析") }
+            catch (e: AiError) { assertEquals("format", e.kind) }
+        }
         assertEquals("你好", Ai.stripThink("你好"))
         assertEquals("a < b 且 c > d", Ai.stripThink("a < b 且 c > d"))
         assertEquals("你好", Ai.stripThink("<think>想一想\n再想想</think>\n\n你好"))

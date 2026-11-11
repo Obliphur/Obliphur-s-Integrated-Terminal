@@ -804,6 +804,7 @@ def _selftest():
     # ---- VIII: 用户说完话, 对方的第一条收到之后再调用一次, 可以分开说 ----
     pv = prefix_prompt()
     assert "VIII.话可分说" in pv and "试调两次API" in pv and "只想说一次" in pv and REFUSE in pv
+    assert "本次只回复一次" in pv and "不输出思考" in pv and "两次由OIT分别调用" in pv
     assert pv.index("VII.问OIT使用数据") < pv.index("VIII.") < pv.index("XXI.")
     os.makedirs(os.path.join(td, "fu"))
     cu = Comm(os.path.join(td, "fu"), folder, now=lambda: clock[0], chat_fn=fake)
