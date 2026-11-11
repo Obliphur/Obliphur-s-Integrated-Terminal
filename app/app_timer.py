@@ -34,6 +34,8 @@ class TimerMixin:
         """主按钮: 空闲 → 开始专注; 专注中 → 结束专注 (直接进入休息);
         休息中 → 暂停休息并马上开始专注."""
         self._mine()
+        if self._end_rewound_focus():
+            return
         if self.behavior.active() is not None and self.state == IDLE:
             toast.info(tr("外出中, 先结束外出再开始专注."))
             return
@@ -203,6 +205,8 @@ class TimerMixin:
             self._pause_focus()
             return
         self._mine()
+        if self._end_rewound_focus():
+            return
         self._close_focus_pause()
         self._status(tr("专注中…"), COLORS["accent"])
         self.lbl_sub.config(text="")
@@ -210,6 +214,26 @@ class TimerMixin:
         self._save_timer_state()
         self.refresh_display()
         self._refresh_if_visible("stats", "cal")
+
+    def _end_rewound_focus(self) -> bool:
+        """暂停倒退到零时自动结束; 由计时器主人结算, 不开始休息."""
+        if (self.state != RUNNING or self._pause_mono is None
+                or self._close_pending or self._focus_elapsed() > 0
+                or not self._timer_auto_ok()):
+            return False
+        start = self.start_wall
+        data_seconds = self._focus_wall()
+        self._close_check_win()
+        self.cancel_update()
+        self._close_focus_pause()
+        self._book_focus(start, 0.0, data_seconds=data_seconds)
+        self._mine()
+        self.reset_to_idle()
+        self._deep_check_closed(start, data_seconds)
+        self.refresh_display()
+        self._refresh_if_visible("stats", "cal")
+        toast.notice(tr("⏹  专注已自动结束"), tr("暂停使专注时间回退到 0, 专注已自动结束."))
+        return True
 
     def _sync_sleep_button(self):
         """睡眠按钮: 只有空闲 (不在专注 / 休息 / 外出 / 合约) 时能按."""
@@ -698,6 +722,8 @@ class TimerMixin:
             return
         if self._close_pending:
             return                             # 先等 _check_close_pending 决定这段专注还要不要
+        if self._end_rewound_focus():
+            return
         # 绑定的设备非关机离线累计超过 5 分钟: 自动结束专注 (MECHANICS 15.4; 关机算在线, 不计)
         if self.sync.peers() and self._timer_auto_ok() \
                 and self._offline_secs(self.start_wall) >= float(config.OFFLINE_FOCUS_END):
@@ -843,6 +869,9 @@ class TimerMixin:
     def update(self):
         if self.state == RUNNING:
             elapsed = self._focus_elapsed()          # 暂停中会随倒退变小 (MECHANICS 6.9)
+            if self._pause_mono is not None and elapsed <= 0:
+                # 同步 / 存档恢复会立即刷新界面; 等恢复流程装好主人和待裁定状态再结算.
+                self.root.after_idle(self._end_rewound_focus)
             rate = self.contract.focus_rate(self.start_wall)   # 现在还是不是阻滞中 (合约结束后就不再减慢)
             cur_m = self.contract.focus_minutes(self.start_wall, elapsed)
             if self.contract.fog():

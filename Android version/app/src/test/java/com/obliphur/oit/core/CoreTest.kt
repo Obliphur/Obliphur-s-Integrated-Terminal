@@ -62,6 +62,60 @@ class CoreTest {
         assertTrue(DataStore(dir, { 3600.0 }, { "Idle" }).focus.any { it.pause })
     }
 
+    /** 回退到零自动结束, 暂停记录保留; 按继续或结束也不应重新计时或进入休息. */
+    @Test
+    fun focusPauseZeroEnds() {
+        for (action in listOf("tick", "check", "resume", "end")) {
+            val dir = tmp()
+            val core = Core(dir, NoHost) { 1000.0 }
+            val now = LocalDateTime.now().withNano(0)
+            val live = JSONObject().put("state", "running").put("owner", "")
+                .put("start", now.minusSeconds(600).iso()).put("pause", now.minusSeconds(300).iso())
+            core.timer.adopt(live)
+            assertEquals(0.0, core.timer.elapsed, 0.0)
+            assertEquals(0.0, core.timer.nextDeadline()!!, 0.0)
+            when (action) {
+                "tick" -> core.timer.tick()
+                "check" -> core.timer.check()
+                "resume" -> core.timer.toggleFocusPause()
+                "end" -> core.timer.onAction()
+            }
+            assertEquals(action, TState.IDLE, core.timer.state)
+            assertFalse(core.timer.focusPaused)
+            assertEquals(0, core.timer.breakCarry)
+            assertEquals(0, core.timer.autoRest)
+            assertEquals(1, core.notices.size)
+            assertTrue(core.notices.single().message.contains("0"))
+            core.timer.tick()
+            core.timer.check()
+            assertEquals(1, core.notices.size)
+            assertEquals(300.0, core.dm.focusHours(now.toLocalDate(), null).sumOf { it.first }, 3.0)
+            assertEquals(600.0, core.dm.focusHours(now.toLocalDate(), null, false).sumOf { it.first }, 3.0)
+            val saved = Store.readObj(File(dir, "timer_state.json"))!!
+            assertNull(saved.optJSONObject("focus"))
+        }
+    }
+
+    /** 暂停还没退到零不能结束; 手机睡眠时也要按退到零的时刻唤醒. */
+    @Test
+    fun focusPauseZeroDeadline() {
+        var mono = 1000.0
+        val core = Core(tmp(), NoHost) { mono }
+        core.timer.onAction()
+        core.timer.tick()
+        assertEquals(TState.RUNNING, core.timer.state)
+        mono += 600.0
+        core.timer.toggleFocusPause()
+        assertEquals(300.0, core.timer.nextDeadline()!!, 0.001)
+        mono += 299.0
+        core.timer.tick()
+        assertEquals(TState.RUNNING, core.timer.state)
+        mono += 1.0
+        core.timer.tick()
+        assertEquals(TState.IDLE, core.timer.state)
+        assertEquals(1, core.notices.size)
+    }
+
     /** Gemini 模型经 OpenAI 中转时, 重开不能再改回原生协议。 */
     @Test
     fun geminiRelayProtocolPersists() {

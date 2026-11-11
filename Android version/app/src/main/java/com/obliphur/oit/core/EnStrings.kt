@@ -7,6 +7,7 @@ object EnStrings {
         "⏸  暂停专注" to "⏸  Pause focus",
         "▶  继续专注" to "▶  Resume focus",
         "已暂停专注" to "Focus paused",
+        "暂停使专注时间回退到 0, 专注已自动结束." to "Pausing rewound focus time to 0, so focus ended automatically.",
         "暂停中: 专注时间按 ×{r} 倒退" to "Paused: focus time rewinds at ×{r}",
         "{a} ~ {b} 做了什么?" to "What did you do from {a} to {b}?",
         "⚠  系统时间" to "⚠  System clock",

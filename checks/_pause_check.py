@@ -52,6 +52,7 @@ def fake_app():
     a.sleep_since = None
     a._focus_checks = 0
     a._focus_ok = 0
+    a._close_pending = None
     a.schedule_update = lambda: None
     return a
 
@@ -203,19 +204,69 @@ def test_real_sync_pause_resume():
     assert b._pause_mono is None
 
 
-def test_zero_resume_has_no_debt():
-    """倒退到零后仍处于暂停, 继续即可重新累计, 没有隐藏的负时长."""
+def test_zero_ends_focus():
+    """倒退到零后自动结束且只弹一次; 继续/结束按钮也不能绕过, 真实统计仍保留."""
+    from unittest.mock import Mock, patch
+    for trigger in ("_check_focus", "update", "toggle_focus_pause", "on_action"):
+        a = fake_app()
+        a.start_mono = 100.0
+        a.start_wall = datetime.now() - timedelta(seconds=600)
+        a._pause_mono = 400.0
+        a._pause_wall = datetime.now() - timedelta(seconds=300)
+        a._timer_auto_ok = lambda: True
+        a.lbl_time = a.lbl_sub
+        a._idle_sub_text = lambda: ""
+        a.timer_file = "unused"
+        a._save_timer_state = Mock()
+        a.break_carry = 123
+        a._auto_rest = 45
+        a.contract = type("C", (), {"focus_minutes": lambda self, start, sec: sec / 60,
+                                    "focus_rate": lambda self, start: 1.0,
+                                    "fog": lambda self: True})()
+        a.root = Mock()
+        a._cut_offline = lambda *args: 0
+        a._add_study_pieces = lambda start, end: a.dm.add_focus_session("study", start, end)
+        a._focus_rest = lambda *args: 0
+        a._deep_check_closed = Mock()
+        a.dm.focus_sessions = []
+        with patch("app.app_timer.time.monotonic", return_value=700.0), \
+                patch("app.app_timer.toast.notice") as notice:
+            assert a._focus_elapsed() == 0
+            getattr(a, trigger)()
+            if trigger == "update":
+                assert a.state == config.RUNNING   # 等同步 / 恢复流程先装好状态
+                a.root.after_idle.call_args.args[0]()
+            assert a.state == config.IDLE, trigger
+            assert a.start_wall is None and a._pause_mono is None
+            assert a.break_carry == 123 and a._auto_rest == 45
+            a._save_timer_state.assert_called()
+            a._deep_check_closed.assert_called_once()
+            notice.assert_called_once()
+            assert "0" in notice.call_args.args[1]
+            a._check_focus()
+            notice.assert_called_once()
+        assert abs(sum(s for s, _ in a.dm.focus_hours(datetime.now())) - 300) < 3
+        assert abs(sum(s for s, _ in a.dm.focus_hours(datetime.now(), pause_as_idle=False)) - 600) < 3
+
+
+def test_zero_end_guards():
+    """普通专注从零开始, 暂停未到零、等主人或等重开裁定时均不能提前结束."""
     from unittest.mock import patch
     a = fake_app()
-    a.start_mono = 100.0
-    a._pause_mono = 200.0
-    a._pause_wall = datetime.now() - timedelta(seconds=200)
-    with patch("app.app_timer.time.monotonic", return_value=400.0):
-        assert a._focus_elapsed() == 0
-        a._close_focus_pause()
-        assert a._focus_elapsed() == 0
-    with patch("app.app_timer.time.monotonic", return_value=410.0):
-        assert abs(a._focus_elapsed() - 10) < 0.001
+    a._timer_auto_ok = lambda: True
+    with patch("app.app_timer.time.monotonic", return_value=700.0):
+        a.start_mono = 700.0
+        assert not a._end_rewound_focus()
+        a.start_mono = 100.0
+        a._pause_mono = 699.0
+        assert not a._end_rewound_focus()
+        a._pause_mono = 400.0
+        a._timer_auto_ok = lambda: False
+        assert not a._end_rewound_focus()
+        a._timer_auto_ok = lambda: True
+        a._close_pending = object()
+        assert not a._end_rewound_focus()
+        assert a.state == config.RUNNING
 
 
 test_elapsed_rewinds()
@@ -224,5 +275,6 @@ test_sync_roundtrip()
 test_setting_bounds()
 test_live_pause_and_settlement()
 test_real_sync_pause_resume()
-test_zero_resume_has_no_debt()
-print("pause check OK (倒退 / 记空闲 / 同步 / 下限)")
+test_zero_ends_focus()
+test_zero_end_guards()
+print("pause check OK (倒退 / 零点结束与弹窗 / 记空闲 / 同步 / 下限)")

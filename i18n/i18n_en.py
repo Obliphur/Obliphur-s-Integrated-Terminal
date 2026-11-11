@@ -454,6 +454,7 @@ EN = {
     "⏸  暂停专注": "⏸  Pause focus",
     "▶  继续专注": "▶  Resume focus",
     "已暂停专注": "Focus paused",
+    "暂停使专注时间回退到 0, 专注已自动结束.": "Pausing rewound focus time to 0, so focus ended automatically.",
     "暂停中: 专注时间按 ×{r:g} 倒退": "Paused: focus time rewinds at ×{r:g}",
     "上次暂停专注时程序退出了.暂停的时段已记为空闲.":
         "OIT closed while your focus was paused. The paused span has been recorded as idle.",

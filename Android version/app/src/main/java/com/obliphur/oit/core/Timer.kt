@@ -31,6 +31,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
     fun toggleFocusPause() {
         if (state != TState.RUNNING) return
         mine()
+        if (endRewoundFocus()) return
         if (focusPaused) closeFocusPause() else {
             pauseMono = mono()
             pauseWall = LocalDateTime.now()
@@ -47,6 +48,22 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         pauseMono = null
         pauseWall = null
         if (pw != null) dm.addFocusSession("idle", pw, LocalDateTime.now(), startWall, pause = true)
+    }
+
+    /** 暂停倒退到零时由计时器主人结算, 回到准备状态并弹窗. */
+    private fun endRewoundFocus(): Boolean {
+        if (!focusPaused || closePending != null || elapsed > 0.0 || !autoOk()) return false
+        val start = startWall!!
+        val dataSeconds = wallElapsed
+        closeCheck()
+        closeFocusPause()
+        bookFocus(start, 0.0, null, dataSeconds)
+        mine()
+        resetToIdle()
+        deepCheckClosed(start, dataSeconds)
+        core.notice(tr("⏹  专注已自动结束"), tr("暂停使专注时间回退到 0, 专注已自动结束."),
+            listOf(NoticeButton(tr("知道了"), "ok", true)), page = "timer")
+        return true
     }
 
     init { dm.focusPauseLive = { if (focusPaused) startWall?.let { s -> pauseWall?.let { s to it } } else null } }
@@ -171,6 +188,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
 
     fun onAction() {
         mine()
+        if (endRewoundFocus()) return
         if (state == TState.IDLE && core.behavior.active() != null) {
             core.toast(tr("外出中, 先结束外出再开始专注.")); return
         }
@@ -870,6 +888,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
             closeCheck(); return
         }
         if (closePending != null) return         // 先等 checkClosePending 决定这段专注还要不要
+        if (endRewoundFocus()) return
         // 绑定的设备非关机离线累计超过 5 分钟: 自动结束专注 (MECHANICS 15.4; 关机算在线, 不计)
         if (core.hasPeers() && autoOk() && offlineSecs(startWall!!) >= Cfg.OFFLINE_FOCUS_END) {
             closeFocusPause()
@@ -958,6 +977,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
     /** 每秒. */
     fun tick() {
         bonusExpire()
+        if (endRewoundFocus()) return
         if (state == TState.ON_BREAK && !breakWarnShown && countdown in 0.1..60.0 && settings.str("BREAK_WARN_ENABLED") == "1") {
             breakWarnShown = true
             // 声音和通知均只在焦点设备显示。
@@ -993,9 +1013,11 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
     fun nextDeadline(): Double? = when (state) {
         TState.ON_BREAK -> countdown
         TState.RUNNING -> {
-            val mark = checkMark(focusChecks + 1)
-            val el = elapsed
-            if (el < mark) mark - el else maxOf(0.0, mark + Cfg.FOCUS_CHECK_GRACE - el)
+            if (focusPaused) elapsed / (rewindFactor - 1.0) else {
+                val mark = checkMark(focusChecks + 1)
+                val el = elapsed
+                if (el < mark) mark - el else maxOf(0.0, mark + Cfg.FOCUS_CHECK_GRACE - el)
+            }
         }
         TState.IDLE -> idleSince?.let {
             val due = it.plusSeconds(Cfg.IDLE_NUDGE_FIRST + Cfg.IDLE_NUDGE_EVERY * nudges)
