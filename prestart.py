@@ -502,8 +502,11 @@ class Prestart:
 
     def exe_names(self) -> set:
         """被标记的程序 exe 名 (选中的程序 + 它们派生的子进程, 整个专注期间保留): 网络 / 应用名单放行它们用 (MECHANICS 20).
-        不在提前启动状态时返回空集合; 休息中 (park 之后) 不返回, 只有专注期间才有联网豁免."""
-        return set(self.marked) if self.active else set()
+        不在提前启动状态时返回空集合; 休息中 (park 之后) 不返回, 只有专注期间才有联网豁免.
+        触发隐藏的程序优先: 即使也被选为提前启动, 也不给联网豁免 (MECHANICS 20.1)."""
+        if not self.active:
+            return set()
+        return set(self.marked) - self.hidden_only
 
     def hidden_exes(self) -> set:
         """触发隐藏的程序: 应用名单不关它们 (当提前启动藏起来), 但联网不因此放行."""

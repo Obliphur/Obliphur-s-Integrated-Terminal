@@ -253,6 +253,11 @@ assert ps5.hide_triggered({"hwnd": 201, "root": 201, "pid": 99, "exe": "other.ex
                            "title": "Movie Trailer", "visible": True})
 assert ps5.hidden_exes() == {"other.exe"}
 assert ps5.exe_names() == set(), "触发隐藏不算联网豁免"
+ps5.active = True
+ps5.marked = {"other.exe", "demo.exe"}
+assert ps5.exe_names() == {"demo.exe"}, "触发隐藏优先: 同时被选为提前启动也不豁免联网"
+ps5.active = False
+ps5.marked = set()
 assert 201 in state["hidden"]
 assert state["muted"][-1] == ({99}, True)
 # 不是这些程序的窗口不动
