@@ -79,9 +79,15 @@ class SyncMixin:
             return {"state": "sleep", "owner": owner,
                     "since": self.sleep_since.isoformat(timespec="seconds")}
         if self.state == RUNNING and self.start_wall is not None:
-            return {"state": "running", "owner": owner,
-                    "start": self.start_wall.replace(microsecond=0).isoformat(timespec="seconds"),
-                    "checks": int(self._focus_checks), "ok": int(self._focus_ok)}
+            d = {"state": "running", "owner": owner,
+                 "start": self.start_wall.replace(microsecond=0).isoformat(timespec="seconds"),
+                 "checks": int(self._focus_checks), "ok": int(self._focus_ok)}
+            if self._pause_total > 0 or self._pause_mono is not None:
+                # 暂停过 (MECHANICS 6.9): 已经暂停的秒数, 别的设备照着按倍率倒退
+                d["paused"] = round(self._pause_total, 1)
+            if self._pause_mono is not None and self._pause_wall is not None:
+                d["pause"] = self._pause_wall.isoformat(timespec="seconds")
+            return d
         if self.state == ON_BREAK and self.break_end_wall is not None and self.break_start_wall is not None:
             return {"state": "break", "owner": owner,
                     "break_start": self.break_start_wall.isoformat(timespec="seconds"),
@@ -99,7 +105,8 @@ class SyncMixin:
         cur = self.timer_live()
         st, owner = live.get("state"), str(live.get("owner") or "")
         if st == cur["state"] and live.get("start") == cur.get("start") \
-                and live.get("break_end") == cur.get("break_end") and live.get("since") == cur.get("since"):
+                and live.get("break_end") == cur.get("break_end") and live.get("since") == cur.get("since") \
+                and live.get("pause") == cur.get("pause") and live.get("paused", 0) == cur.get("paused", 0):
             if st == "running" and int(live.get("checks", 0)) > self._focus_checks:
                 self._close_check_win()         # 在别的设备上确认过"还在吗"了
                 self._focus_checks = int(live.get("checks", 0))
@@ -124,8 +131,19 @@ class SyncMixin:
             elif st == "running":
                 start = datetime.fromisoformat(live["start"])
                 self.break_start_wall = None
+                pause_wall = None
+                if live.get("pause"):
+                    try:
+                        pause_wall = datetime.fromisoformat(live["pause"])
+                    except (TypeError, ValueError):
+                        pause_wall = None
+                try:
+                    paused = max(0.0, float(live.get("paused") or 0))
+                except (TypeError, ValueError):
+                    paused = 0.0
                 self._enter_focus(start, time.monotonic() - (now - start).total_seconds(),
-                                  int(live.get("checks", 0)), float(live.get("ok", 0)))
+                                  int(live.get("checks", 0)), float(live.get("ok", 0)),
+                                  pause_total=paused, pause_wall=pause_wall)
             elif st == "break":
                 end = datetime.fromisoformat(live["break_end"])
                 left = int((end - now).total_seconds())

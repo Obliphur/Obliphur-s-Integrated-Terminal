@@ -1434,9 +1434,29 @@ class Comm(
     }
 
     /** 随设备同步的内容: 每个对象各自最近 SYNC_N 条消息 (键里带对象的编号 pid), 再早的是各设备自己留着的; 掉出窗口不算删除. */
+    var focusDevice: () -> Boolean = { leader() }
+    private val focusNotices = LinkedHashMap<String, JSONObject>()
+
+    @Synchronized
+    fun queueFocusNotice(text: String) {
+        focusNotices[java.util.UUID.randomUUID().toString()] = JSONObject().put("ts", nowMs()).put("text", text)
+    }
+
+    @Synchronized
+    fun takeFocusNotices(): List<String> {
+        focusNotices.entries.removeAll { nowMs() - it.value.optLong("ts") !in 0L..90_000L }
+        if (!focusDevice()) return emptyList()
+        val out = focusNotices.values.filter { !it.optBoolean("shown") }.map { it.optString("text") }
+        focusNotices.values.forEach { it.put("shown", true) }
+        return out
+    }
+
     @Synchronized
     fun syncDoc(): Map<String, Any?> {
         val doc = LinkedHashMap<String, Any?>()
+        focusNotices.filterValues { nowMs() - it.optLong("ts") in 0L..90_000L }.forEach { (key, value) ->
+            doc["notice:$key"] = JSONObject(value.toString())
+        }
         if (userProfile.isNotEmpty()) doc["profile"] = userProfile
         doc["split"] = splitSend                                    // 分条发的开关: 调用 AI 的是主端, 两台设备要一致
         doc["think"] = thinkAuto                                    // 自动开思考的开关: 同上
@@ -1484,6 +1504,12 @@ class Comm(
             val kind = key.substringBefore(':')
             val rest = key.substringAfter(':', "")
             when {
+                kind == "notice" && v is JSONObject -> {
+                    if (nowMs() - v.optLong("ts") in 0L..90_000L && v.opt("text") is String) {
+                        val rec = focusNotices.getOrPut(rest) { JSONObject(v.toString()) }
+                        rec.put("shown", rec.optBoolean("shown") || v.optBoolean("shown"))
+                    }
+                }
                 key == "split" && v is Boolean -> if (v != splitSend) { splitSend = v; saveCfg(); changed() }
                 key == "think" && v is Boolean -> if (v != thinkAuto) { thinkAuto = v; saveCfg(); changed() }
                 key == "prolang" && v is String -> v.trim().take(MAX_PRO_LANG).let { if (it != proLang) { proLang = it; saveCfg(); changed() } }
@@ -3052,7 +3078,7 @@ class Comm(
         sfLast = key
         if (prev == null || prev == key || prev.first != key.first) return
         val cb = onSf ?: return
-        if (!leader() || stateFn() == SF_STATE[key.second] || stateFn() == "out") return
+        if (!focusDevice() || stateFn() == SF_STATE[key.second] || stateFn() == "out") return
         log("FOLLOW 对方 ${prev.second} → ${key.second}: 问用户跟不跟随")
         cb(key.second, sfText(key.second))
     }

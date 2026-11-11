@@ -128,6 +128,9 @@ class Comm(JointMixin, StatusMixin, ChatMixin, FlowMixin, SchedMixin, ShareMixin
         self.share_fn = lambda page: ("", "", "")     # 某一页的 (页面名, 用户的数据, 对方的数据); app 接上
         self.on_share_open = None      # 用户接受了对方的 share data 邀请 / 对方同意了用户的 share data 请求: app 接上, 跳到有数据的页面
         self.on_share_notice = None    # 对方拒绝 / 没回复用户的 share data 请求: app 接上, 弹一条提示 (参数是中文原文, 界面再翻译)
+        self.focus_device = lambda: self.leader()
+        self.focus_notices = {}
+        self._focus_notice_seen = set()
         self.shift_ask = None          # 用户请求平移对方的日程起点, 等对方回 [Yes] / [No]: {"pid", "ts", "sent", "to"}; 本机界面状态, 不存盘 / 不同步 (结果记进聊天状态里的 shift, 同步)
         self.share_ask = None          # 用户点了 share data, 等对方回 [Yes] / [No]: {"pid", "ts", "sent"}; 本机界面状态, 不存盘 / 不同步
         self._share_end = ""           # 排着的"总结这次 share data"请求 (对方正在回别的话时等一等)
@@ -457,7 +460,8 @@ class Comm(JointMixin, StatusMixin, ChatMixin, FlowMixin, SchedMixin, ShareMixin
     # ---- 设备同步 ----
     def sync_doc(self) -> dict:
         """随设备同步的内容: 每个对象各自最近 SYNC_N 条消息 (键里带对象的编号 pid), 再早的是各设备自己留着的; 掉出窗口不算删除."""
-        doc = {}
+        doc = {f"notice:{key}": dict(val) for key, val in self.focus_notices.items()
+               if 0 <= self._ms() - val["ts"] <= 90_000}
         if self.cfg.get("user_profile"):
             doc["profile"] = self.cfg["user_profile"]
         doc["split"] = self.split_on()                  # 分条发的开关: 调用 AI 的是主端, 两台设备要一致
@@ -523,6 +527,12 @@ class Comm(JointMixin, StatusMixin, ChatMixin, FlowMixin, SchedMixin, ShareMixin
         for key in sorted(changes, key=lambda k: not k.startswith("clear:")):      # 清空先处理: 之前的记录不会再并进来
             val = changes[key]
             kind, _, rest = key.partition(":")
+            if kind == "notice":
+                if isinstance(val, dict) and isinstance(val.get("text"), str) and isinstance(val.get("ts"), (int, float)):
+                    if 0 <= self._ms() - val["ts"] <= 90_000:
+                        rec = self.focus_notices.setdefault(rest, dict(val))
+                        rec["shown"] = bool(rec.get("shown") or val.get("shown"))
+                continue
             if kind == "clear":
                 pid = rest
                 try:

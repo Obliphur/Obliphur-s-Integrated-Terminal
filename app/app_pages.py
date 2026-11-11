@@ -33,7 +33,7 @@ class PagesMixin:
             pass
 
     def _sf_ask(self, kind: str, text: str):
-        """对方的状态变了 (comm._sf_tick 在主端调用): 问用户跟不跟随; 上一个还没回答的提示换成这个."""
+        """对方的状态变了 (comm._sf_tick 在焦点设备调用): 问用户跟不跟随; 上一个还没回答的提示换成这个."""
         self._sf_close()
         if self.shutting_down:
             return
@@ -183,6 +183,8 @@ class PagesMixin:
 
     def _break_one_min_warn(self):
         """休息只剩 1 分钟: 轻提示音 + 右下角消息 (不挡住倒计时)."""
+        if not self.sync.is_latest_active():
+            return
         self._play_break_soon_chime()
         toast.info(tr("休息只剩 1 分钟了"))
 
@@ -334,6 +336,9 @@ class PagesMixin:
             btns, text=tr("☕  开始休息"), command=self.on_break_button
         )
         self.btn_break.pack(side="left", ipadx=10, padx=(10, 0))
+        # 暂停专注 (MECHANICS 6.9): 专注中可用, 暂停时专注时间按倍率倒退
+        self.btn_pause = ttk.Button(btns, text=tr("⏸  暂停专注"), command=self.toggle_focus_pause)
+        self.btn_pause.pack(side="left", ipadx=10, padx=(10, 0))
         # 睡眠 (MECHANICS 23): 盖住整个窗口, 只剩一个"起床"
         self.btn_sleep = ttk.Button(btns2, text=tr("😴  睡眠"), command=self._sleep_click)
         self.btn_sleep.pack(side="left", ipadx=10)

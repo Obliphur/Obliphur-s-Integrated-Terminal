@@ -264,7 +264,7 @@ object CommData {
             val live = core.timer.live()
             val lines = (0..6).map { i ->
                 val day = today.minusDays(i.toLong())
-                val hours = core.dm.focusHours(day, live)
+                val hours = core.dm.focusHours(day, live, false)
                 "  %02d-%02d 周%s: 专注 %.0f 分钟, 休息 %.0f 分钟".format(day.monthValue, day.dayOfMonth, WEEKDAY[day.dayOfWeek.value - 1],
                     hours.sumOf { it.first } / 60, hours.sumOf { it.second } / 60)
             }
@@ -280,7 +280,7 @@ object CommData {
                 val today = LocalDate.now()
                 val live = core.timer.calendarLive()
                 (0..6).map { today.minusDays(it.toLong()) }.filter { it.toString().startsWith(prefix) }
-                    .associate { d -> d.toString() to (core.dm.dayKinds(d, if (d == today) live else null, now)[kind] ?: 0.0) / 3600.0 }
+                    .associate { d -> d.toString() to (core.dm.dayKinds(d, if (d == today) live else null, now, false)[kind] ?: 0.0) / 3600.0 }
             }
             val lines = days.keys.sorted().filter { (days[it] ?: 0.0) > 0 }.map { "  $it: %.1f h".format(days[it]) }
             val tail = if (kind == "study") "" else " (只有最近 7 天有记录)"

@@ -19,6 +19,38 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
     var state = TState.IDLE
         private set
     private var startMono = 0.0
+    private var pauseTotal = 0.0
+    private var pauseMono: Double? = null
+    var pauseWall: LocalDateTime? = null
+        private set
+    val focusPaused get() = state == TState.RUNNING && pauseMono != null
+    val wallElapsed get() = if (state == TState.RUNNING) maxOf(0.0, mono() - startMono) else 0.0
+    private val pauseSeconds get() = pauseTotal + (pauseMono?.let { maxOf(0.0, mono() - it) } ?: 0.0)
+    private val rewindFactor get() = 1.0 + maxOf(1.0, settings.num("PAUSE_REWIND"))
+
+    fun toggleFocusPause() {
+        if (state != TState.RUNNING) return
+        mine()
+        if (focusPaused) closeFocusPause() else {
+            pauseMono = mono()
+            pauseWall = LocalDateTime.now()
+            closeCheck()
+        }
+        saveState()
+        core.changed()
+    }
+
+    private fun closeFocusPause() {
+        val pm = pauseMono ?: return
+        val pw = pauseWall
+        pauseTotal = minOf(pauseTotal + maxOf(0.0, mono() - pm), wallElapsed / rewindFactor)
+        pauseMono = null
+        pauseWall = null
+        if (pw != null) dm.addFocusSession("idle", pw, LocalDateTime.now(), startWall, pause = true)
+    }
+
+    init { dm.focusPauseLive = { if (focusPaused) startWall?.let { s -> pauseWall?.let { s to it } } else null } }
+
     var startWall: LocalDateTime? = null
         private set
     var breakStartWall: LocalDateTime? = null
@@ -120,7 +152,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
 
     private fun readState(): JSONObject = Store.readObj(file) ?: JSONObject()
 
-    val elapsed get() = if (state == TState.RUNNING) mono() - startMono else 0.0
+    val elapsed get() = maxOf(0.0, wallElapsed - rewindFactor * pauseSeconds)
     /** 这段专注的时间按多少增长: 阻滞 0.9, 否则 1. */
     val focusRate get() = if (state == TState.RUNNING) core.contract.focusRate(startWall) else 1.0
     val countdown get() = if (state == TState.ON_BREAK) maxOf(0.0, breakEndMono - mono()) else 0.0
@@ -151,11 +183,13 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
             }
             TState.RUNNING -> {
                 val end = LocalDateTime.now()
-                val minutes = core.contract.focusMinutes(startWall, mono() - startMono)   // 阻滞: 只减慢合约内的那部分时间
+                closeFocusPause()
+                val minutes = core.contract.focusMinutes(startWall, elapsed)   // 阻滞: 只减慢合约内的那部分时间
+                val dataMinutes = core.contract.focusMinutes(startWall, wallElapsed)
                 lastTMinutes = minutes                    // 建议休息时长照常按整段专注算
                 restBase = core.focusRest(minutes, startWall!!, end)
                 val off = cutOffline(startWall!!, end)
-                dm.addStudySession(startWall!!, end, maxOf(0.0, minutes - off / 60.0))
+                dm.addStudySession(startWall!!, end, maxOf(0.0, core.contract.focusMinutes(startWall, wallElapsed) - off / 60.0))
                 addStudyPieces(startWall!!, end)
                 closeCheck()
                 // 合约专注 (开始于合约里) 的下一次休息按合约规则 (合约在专注中完成了也一样, MECHANICS 18.2)
@@ -164,8 +198,8 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
                 saveState()
                 startBreak(announce = true)
                 // 纵深推进: 这段专注不到要求的时长, 算一次违反
-                core.contract.focusCheck(minutes * 60).ifEmpty { null }?.let {
-                    core.contractViolation(tr("专注只有 {m} 分钟 (至少 {n} 分钟)", "m" to minutes.toInt(),
+                core.contract.focusCheck(dataMinutes * 60).ifEmpty { null }?.let {
+                    core.contractViolation(tr("专注只有 {m} 分钟 (至少 {n} 分钟)", "m" to dataMinutes.toInt(),
                         "n" to Contract.DEEP[it]!! / 60), it)
                 }
             }
@@ -401,6 +435,9 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
     private fun resetToIdle() {
         state = TState.IDLE
         startWall = null
+        pauseTotal = 0.0
+        pauseMono = null
+        pauseWall = null
         lastTMinutes = 0.0
         restBase = 0.0
         breakEndMono = 0.0
@@ -455,6 +492,10 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
             .put("checks", focusChecks).put("ok", focusOk.toLong()).put("owner", owner)
             // 关机 / 电量很低: 重新打开时不把关着的这段记成空闲, 跟着其他设备 (MECHANICS 15.4)
             .put("off", runCatching { core.wentOff() }.getOrDefault(false)) else JSONObject.NULL
+        if (f is JSONObject) {
+            if (pauseTotal > 0 || focusPaused) f.put("paused", pauseTotal)
+            pauseWall?.let { f.put("pause", it.iso()) }
+        }
         d.put("focus", f)
         // Android: 休息也写进文件, 进程被系统回收后照样接着倒计时
         val b = if (state == TState.ON_BREAK && breakStartWall != null) JSONObject()
@@ -499,9 +540,10 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
     fun stopFocusForContract() {
         if (state != TState.RUNNING) return
         val start = startWall ?: return
-        val sec = mono() - startMono
+        closeFocusPause()
+        val sec = elapsed
         closeCheck()
-        bookFocus(start, sec, null)              // 休息时间不要
+        bookFocus(start, sec, null, wallElapsed)              // 休息时间不要
         restTag = 0L
         mine()
         resetToIdle()
@@ -515,9 +557,10 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
     fun pauseFocusForContract(): Boolean {
         if (state != TState.RUNNING) return false
         val start = startWall ?: return false
-        val sec = mono() - startMono
+        closeFocusPause()
+        val sec = elapsed
         closeCheck()
-        val (_, brk) = bookFocus(start, sec, null)
+        val (_, brk) = bookFocus(start, sec, null, wallElapsed)
         mine()
         resetToIdle()
         setCarry(breakCarry + brk)
@@ -611,9 +654,12 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         if (state != TState.IDLE) saveState()
     }
 
-    private fun enterFocus(wall: LocalDateTime, m: Double, checks: Int = 0, ok: Double = 0.0) {
+    private fun enterFocus(wall: LocalDateTime, m: Double, checks: Int = 0, ok: Double = 0.0, paused: Double = 0.0, pause: LocalDateTime? = null) {
         startWall = wall
         startMono = m
+        pauseTotal = maxOf(0.0, paused)
+        pauseWall = pause
+        pauseMono = pause?.let { mono() - maxOf(0.0, secondsBetween(it, LocalDateTime.now())) }
         focusChecks = checks
         focusOk = ok
         closeCheck()
@@ -661,10 +707,12 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         if (alive.isBefore(start)) alive = start
         if (alive.isAfter(now)) alive = now
         owner = rec.optString("owner")
+        val paused = maxOf(0.0, rec.optDouble("paused", 0.0))
+        val pause = parseIso(rec.optString("pause"))
         if (rec.optBoolean("off") && secondsBetween(alive, now) > Cfg.CLOSED_GAP) {
             // 本机是关机 / 没电停下的 (MECHANICS 15.4): 效果和在线一样, 专注照常接着计时 ("还在吗"照常按开始时刻算);
             // 关着的这段本机的数据不计入 (见 cutOffline). 绑定了其他设备时, 同步上以后跟着它们
-            enterFocus(start, mono() - secondsBetween(start, now), checks, ok)
+            enterFocus(start, mono() - secondsBetween(start, now), checks, ok, paused, pause)
             core.toast(tr("关机期间专注照常进行, 已接着计时."), "info", long = true)
             return
         }
@@ -674,23 +722,25 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
             // 本机是关机 / 没电了 (MECHANICS 15.4): 其他设备把本机算作在线, 这段不记空闲; 同步上了就跟着它们
             val off = rec.optBoolean("off")
             if (!off) dm.addFocusSession("idle", alive, now, start)
-            enterFocus(start, mono() - secondsBetween(start, now), checks, ok)
-            closePending = ClosePending(start, alive, mono(), System.currentTimeMillis(), off, now)
+            enterFocus(start, mono() - secondsBetween(start, now), checks, ok, paused, pause)
+            closePending = ClosePending(start, alive, mono(), System.currentTimeMillis(), off, now, paused, pause)
             return
         }
         if (secondsBetween(alive, now) <= Cfg.FOCUS_RESUME_GAP) {
-            enterFocus(start, mono() - secondsBetween(start, now), checks, ok)
+            enterFocus(start, mono() - secondsBetween(start, now), checks, ok, paused, pause)
             core.toast(tr("上次专注时程序退出了.已接着计时(从 {at} 开始).", "at" to start.format(Fmt.HM)), "info", long = true)
             return
         }
-        var sec = secondsBetween(start, alive)
+        pauseTotal = paused + (pause?.let { maxOf(0.0, secondsBetween(it, alive)) } ?: 0.0)
+        pause?.let { dm.addFocusSession("idle", it, alive, start, pause = true) }
+        var sec = maxOf(0.0, secondsBetween(start, alive) - rewindFactor * pauseTotal)
         val limit = checkMark(checks + 1, start) + Cfg.FOCUS_CHECK_GRACE
         val penalized = sec >= limit
         if (penalized) sec = limit
-        val (minutes, brkSec) = bookFocus(start, sec, if (penalized) ok else null)
+        val (minutes, brkSec) = bookFocus(start, sec, if (penalized) ok else null, secondsBetween(start, alive))
         setCarry(breakCarry + brkSec)
         addAutoRest(brkSec)
-        if (!rec.optBoolean("off")) deepCheckClosed(start, sec)
+        if (!rec.optBoolean("off")) deepCheckClosed(start, secondsBetween(start, alive))
         if (minutes <= 0) return
         var msg: String
         if (penalized) {
@@ -705,16 +755,17 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
     }
 
     /** 记下一段专注, 返回 (计入的分钟数, 对应的休息秒数). ok: 自动结束时最后一次确认时已专注的秒数. */
-    private fun bookFocus(start: LocalDateTime, secondsIn: Double, okIn: Double?): Pair<Double, Int> {
+    private fun bookFocus(start: LocalDateTime, secondsIn: Double, okIn: Double?, dataSeconds: Double = secondsIn): Pair<Double, Int> {
         var seconds = maxOf(0.0, secondsIn)
         if (okIn != null) {
             val ok = okIn.coerceIn(0.0, seconds)
             seconds = ok + (seconds - ok) * Cfg.FOCUS_CHECK_PENALTY
         }
-        val end = start.plusSec(seconds)
+        val raw = if (pauseTotal > 0) dataSeconds else seconds
+        val end = start.plusSec(raw)
         val minutes = core.contract.focusMinutes(start, seconds)      // 阻滞: 只减慢合约内的那部分时间
         // 有设备离线的那段记为空闲, 不计入学习时长; 建议休息时长照常按计入前的时长算
-        val counted = maxOf(0.0, minutes - cutOffline(start, end) / 60.0)
+        val counted = maxOf(0.0, core.contract.focusMinutes(start, raw) - cutOffline(start, end) / 60.0)
         dm.addStudySession(start, end, counted)
         addStudyPieces(start, end)
         val brk = Math.round(core.focusRest(minutes, start, end)).toInt()
@@ -724,7 +775,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
     /** 专注停止 (手动结束 / 提醒超时自动结束 / OIT 被关掉等, 非关机) 时按纵深推进检查这段够不够长 (18.3).
      *  关机 / 断电导致的停止由调用方用 off 判断豁免 (MECHANICS 15.4), 不走到这里. */
     private fun deepCheckClosed(start: LocalDateTime, seconds: Double) {
-        val minutes = core.contract.focusMinutes(start, seconds)
+        val minutes = core.contract.focusMinutes(start, if (startWall == start) wallElapsed else seconds)
         core.contract.focusCheck(minutes * 60).ifEmpty { null }?.let {
             core.contractViolation(tr("专注只有 {m} 分钟 (至少 {n} 分钟)", "m" to minutes.toInt(),
                 "n" to Contract.DEEP[it]!! / 60), it)
@@ -770,7 +821,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
     }
 
     private class ClosePending(val start: LocalDateTime, val alive: LocalDateTime, val mono: Double, val ms: Long,
-                               val off: Boolean = false, val reopened: LocalDateTime = alive)
+                               val off: Boolean = false, val reopened: LocalDateTime = alive, val paused: Double = 0.0, val pause: LocalDateTime? = null)
     private var closePending: ClosePending? = null
 
     /** 上次在共享的专注中 OIT 被关掉了 (recover): 第一次同步之后 (最多等 CLOSED_DECIDE_WAIT 秒),
@@ -789,17 +840,21 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
             // 没能和任何设备同步上: 和普通的被关掉一样, 关着的那段记为空闲, 专注终止
             dm.addFocusSession("idle", p.alive, p.reopened, p.start)
         }
-        var sec = secondsBetween(p.start, p.alive)
+        pauseTotal = p.paused + (p.pause?.let { maxOf(0.0, secondsBetween(it, p.alive)) } ?: 0.0)
+        p.pause?.let { dm.addFocusSession("idle", it, p.alive, p.start, pause = true) }
+        pauseMono = null
+        pauseWall = null
+        var sec = maxOf(0.0, secondsBetween(p.start, p.alive) - rewindFactor * pauseTotal)
         val limit = checkMark(focusChecks + 1, p.start) + Cfg.FOCUS_CHECK_GRACE
         val penalized = sec >= limit
         if (penalized) sec = limit
         closeCheck()
-        val (minutes, brk) = bookFocus(p.start, sec, if (penalized) focusOk else null)
+        val (minutes, brk) = bookFocus(p.start, sec, if (penalized) focusOk else null, secondsBetween(p.start, p.alive))
         mine()                                     // 终止由本机做, 其他设备照着结束
         resetToIdle()
         setCarry(breakCarry + brk)
         addAutoRest(brk)
-        if (!p.off) deepCheckClosed(p.start, sec)
+        if (!p.off) deepCheckClosed(p.start, secondsBetween(p.start, p.alive))
         var msg = tr("这台设备上的 OIT 在 {at} 被关掉了, 共享的专注已终止.", "at" to p.alive.format(Fmt.MDHM))
         msg += "\n" + tr("专注记到被关掉时为止: 计入 {m} 分钟; 关掉的这段记为空闲.", "m" to f1(minutes))
         if (brk > 0) msg += "\n" + tr("积攒的休息时间 +{t}.", "t" to fmtMs(brk.toDouble())) + "\n" + tr("立即开始专注:先进行一次休息时间的折算")
@@ -817,9 +872,14 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         if (closePending != null) return         // 先等 checkClosePending 决定这段专注还要不要
         // 绑定的设备非关机离线累计超过 5 分钟: 自动结束专注 (MECHANICS 15.4; 关机算在线, 不计)
         if (core.hasPeers() && autoOk() && offlineSecs(startWall!!) >= Cfg.OFFLINE_FOCUS_END) {
-            offlineEndFocus(mono() - startMono); return
+            closeFocusPause()
+            offlineEndFocus(elapsed); return
         }
-        val el = mono() - startMono
+        if (focusPaused) {
+            if (mono() - focusSaved >= Cfg.FOCUS_ALIVE_EVERY) saveState()
+            return
+        }
+        val el = elapsed
         val mark = checkMark(focusChecks + 1)
         if (el >= mark + Cfg.FOCUS_CHECK_GRACE) {
             // 别的设备是这个状态的主人时等它结束, 结果会同步过来
@@ -843,7 +903,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
                 // 被手动关掉了 = 人还在
                 mine()
                 focusChecks += 1
-                focusOk = mono() - startMono
+                focusOk = elapsed
                 saveState()
                 if (action == "end") onAction()
             }
@@ -860,13 +920,14 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
     /** 绑定设备非关机离线累计超过 5 分钟: 自动结束专注 (MECHANICS 15.4). 休息时间存进积攒的休息时间. */
     private fun offlineEndFocus(seconds: Double) {
         val start = startWall!!
+        val dataSeconds = wallElapsed
         closeCheck()
-        val (_, brk) = bookFocus(start, seconds, null)
+        val (_, brk) = bookFocus(start, seconds, null, wallElapsed)
         mine()                                     // 离线判定由本机做, 其他设备照着结束
         resetToIdle()
         setCarry(breakCarry + brk)
         addAutoRest(brk)
-        deepCheckClosed(start, seconds)            // 任何原因停止都查纵深推进
+        deepCheckClosed(start, dataSeconds)            // 任何原因停止都查纵深推进
         var msg = tr("绑定的设备离线累计超过 {n} 分钟, 专注已自动结束.", "n" to (Cfg.OFFLINE_FOCUS_END / 60).toInt())
         if (brk > 0) msg += "\n" + tr("积攒的休息时间 +{t}.", "t" to fmtMs(brk.toDouble())) + "\n" + tr("立即开始专注:先进行一次休息时间的折算")
         core.notice(tr("⏹  专注已自动结束"), msg, listOf(NoticeButton(tr("知道了"), "ok", true)), page = "timer")
@@ -875,14 +936,16 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
     /** 提醒窗没人关: 自动结束专注. 不开始休息倒计时 (人不在), 休息时间存进积攒的休息时间. */
     private fun autoEndFocus(seconds: Double) {
         val start = startWall!!
+        val dataSeconds = wallElapsed
         val ok = minOf(focusOk, seconds)
+        closeFocusPause()
         closeCheck()
-        val (minutes, brk) = bookFocus(start, seconds, ok)
+        val (minutes, brk) = bookFocus(start, seconds, ok, wallElapsed)
         mine()                                     // 自动结束由本机做, 其他设备照着结束
         resetToIdle()
         setCarry(breakCarry + brk)
         addAutoRest(brk)
-        deepCheckClosed(start, seconds)            // 纵深推进: 自动结束的这段也查够不够长 (任何原因停止都查)
+        deepCheckClosed(start, dataSeconds)            // 纵深推进: 自动结束的这段也查够不够长 (任何原因停止都查)
         var msg = tr("提醒窗{n}分钟内没有被关掉,专注已在{at}自动结束.",
             "n" to Math.round(Cfg.FOCUS_CHECK_GRACE / 60).toInt(), "at" to start.plusSec(seconds).format(Fmt.HM))
         msg += "\n" + tr("没有确认的部分按×{p}计入,共计入{m}分钟.", "p" to numText(Cfg.FOCUS_CHECK_PENALTY), "m" to f1(minutes))
@@ -897,9 +960,11 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         bonusExpire()
         if (state == TState.ON_BREAK && !breakWarnShown && countdown in 0.1..60.0 && settings.str("BREAK_WARN_ENABLED") == "1") {
             breakWarnShown = true
-            // 提示音只在焦点设备 (最后有人操作的那台) 上响; 其他设备只弹提示
-            if (core.isLatestActive()) core.host.playBreakSoon()
-            core.toast(tr("休息还剩 1 分钟"), "info", long = true)
+            // 声音和通知均只在焦点设备显示。
+            if (core.isLatestActive()) {
+                core.host.playBreakSoon()
+                core.toast(tr("休息还剩 1 分钟"), "info", long = true)
+            }
         }
         if (state == TState.ON_BREAK && countdown <= 0) {
             // 设备睡眠中走完的: 按倒计时真正走完的时刻记; 这一段由开始休息的那台设备记
@@ -969,6 +1034,10 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
             sl != null && state == TState.IDLE -> JSONObject().put("state", "sleep").put("owner", o).put("since", sl.iso())
             state == TState.RUNNING && sw != null -> JSONObject().put("state", "running").put("owner", o)
                 .put("start", sw.iso()).put("checks", focusChecks).put("ok", focusOk.toLong())
+                .also {
+                    if (pauseTotal > 0 || focusPaused) it.put("paused", pauseTotal)
+                    pauseWall?.let { p -> it.put("pause", p.iso()) }
+                }
             state == TState.ON_BREAK && bs != null && be != null -> JSONObject().put("state", "break").put("owner", o)
                 .put("break_start", bs.iso()).put("break_end", be.iso()).put("bonus", bonusBreakActive)
                 .put("cbreak", contractBreakActive).put("cpre", breakPre).put("ccid", breakCid)
@@ -983,7 +1052,8 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
         val st = l.optString("state")
         val newOwner = l.optString("owner")
         if (st == cur.optString("state") && l.optString("start") == cur.optString("start") &&
-            l.optString("break_end") == cur.optString("break_end") && l.optString("since") == cur.optString("since")) {
+            l.optString("break_end") == cur.optString("break_end") && l.optString("since") == cur.optString("since") &&
+            l.optString("pause") == cur.optString("pause") && l.optDouble("paused", 0.0) == cur.optDouble("paused", 0.0)) {
             if (st == "running" && l.optInt("checks") > focusChecks) {
                 closeCheck()                    // 在别的设备上确认过"还在吗"了
                 focusChecks = l.optInt("checks")
@@ -1007,7 +1077,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
             "running" -> {
                 val start = parseIso(l.optString("start")) ?: return
                 breakStartWall = null
-                enterFocus(start, mono() - secondsBetween(start, now), l.optInt("checks"), l.optDouble("ok", 0.0))
+                enterFocus(start, mono() - secondsBetween(start, now), l.optInt("checks"), l.optDouble("ok", 0.0), l.optDouble("paused", 0.0), parseIso(l.optString("pause")))
             }
             "break" -> {
                 val end = parseIso(l.optString("break_end")) ?: return

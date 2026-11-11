@@ -17,6 +17,61 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 
 class CoreTest {
+    /** 请求处理端不是焦点时不弹, 提示同步给焦点设备且只显示一次。 */
+    @Test
+    fun commNoticesFollowFocus() {
+        val phone = Core(tmp(), NoHost) { 0.0 }
+        val pc = Core(tmp(), NoHost) { 0.0 }
+        phone.isLatestActive = { false }
+        pc.isLatestActive = { true }
+        phone.comm.queueFocusNotice("test notice")
+        assertTrue(phone.comm.takeFocusNotices().isEmpty())
+        pc.comm.applyDoc(phone.comm.syncDoc())
+        assertEquals(listOf("test notice"), pc.comm.takeFocusNotices())
+        assertTrue(pc.comm.takeFocusNotices().isEmpty())
+        phone.comm.applyDoc(pc.comm.syncDoc())
+        phone.isLatestActive = { true }
+        assertTrue(phone.comm.takeFocusNotices().isEmpty())
+    }
+
+    /** 暂停/继续要跨设备生效, 数据按墙上时间记录, 计时器才倒退。 */
+    @Test
+    fun focusPauseSyncAndData() {
+        val dir = tmp()
+        val a = Core(dir, NoHost) { 1000.0 }
+        val b = Core(tmp(), NoHost) { 1000.0 }
+        val now = LocalDateTime.now().withNano(0)
+        val start = now.minusSeconds(600)
+        val live = JSONObject().put("state", "running").put("owner", "a")
+            .put("start", start.iso()).put("checks", 0).put("ok", 0)
+        a.timer.adopt(live)
+        b.timer.adopt(live)
+        a.timer.adopt(JSONObject(live.toString()).put("pause", now.minusSeconds(90).iso()))
+        assertTrue(a.timer.focusPaused)
+        assertEquals(330.0, a.timer.elapsed, 3.0)
+        b.timer.adopt(a.timer.liveState())
+        assertTrue(b.timer.focusPaused)
+        assertEquals(510.0, a.dm.focusHours(now.toLocalDate(), a.timer.calendarLive()).sumOf { it.first }, 3.0)
+        a.timer.toggleFocusPause()
+        b.timer.adopt(a.timer.liveState())
+        assertFalse(b.timer.focusPaused)
+        a.timer.onAction()
+        assertEquals(10.0 / 60.0, a.dm.todayHours(), 0.001)
+        assertEquals(510.0, a.dm.focusHours(now.toLocalDate(), null).sumOf { it.first }, 3.0)
+        assertEquals(600.0, a.dm.focusHours(now.toLocalDate(), null, false).sumOf { it.first }, 3.0)
+        assertTrue(DataStore(dir, { 3600.0 }, { "Idle" }).focus.any { it.pause })
+    }
+
+    /** Gemini 模型经 OpenAI 中转时, 重开不能再改回原生协议。 */
+    @Test
+    fun geminiRelayProtocolPersists() {
+        val file = File(tmp(), "ai_config.json")
+        val cfg = AiConfig(file)
+        cfg.putProfile("custom", Profile("custom", "https://relay.example/v1", "openai", "gemini-test", "k", "gemini", "custom"))
+        assertTrue(cfg.save())
+        assertEquals("openai", AiConfig(file).profile("custom").protocol)
+    }
+
     private fun tmp(): File = Files.createTempDirectory("oit").toFile()
 
     @Test

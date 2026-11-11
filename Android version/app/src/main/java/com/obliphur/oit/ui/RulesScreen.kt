@@ -508,8 +508,10 @@ fun AiSettingsDialog(onDismiss: () -> Unit) {
                     Segmented(Ai.FAMILIES.map { it to tr(Ai.FAMILY_LABELS[it]!!) }, p.family.ifEmpty { "other" }) { fam ->
                         p = p.copy(family = fam, protocol = Ai.FAMILY_PROTOCOL[fam]!!)
                     }
-                    if (p.family == "gemini")
-                        Text(tr("Gemini 类型要填官方地址, 不要用 OpenAI 兼容地址."), color = o.dim, fontSize = 11.sp)
+                    Text(tr("接口协议"), color = o.dim, fontSize = 12.sp)
+                    Segmented(listOf("openai", "anthropic", "gemini").map { it to it }, p.protocol) { proto ->
+                        p = p.copy(protocol = proto)
+                    }
                 }
                 OutlinedTextField(p.model, { p = p.copy(model = it) }, label = { Text(tr("模型")) }, singleLine = true,
                     modifier = Modifier.fillMaxWidth())

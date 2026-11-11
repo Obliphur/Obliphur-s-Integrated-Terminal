@@ -33,6 +33,25 @@ from comm.comm_util import (OIT_TAG, STATE_TAG, COND_TAG, WEEKDAY, MAX_MSG_CHARS
 
 
 class MiscMixin:
+    def queue_focus_notice(self, text):
+        """处理请求的设备发布提示, 由焦点设备显示, 不改变聊天主端."""
+        import uuid
+        self.focus_notices[uuid.uuid4().hex] = {"ts": self._ms(), "text": text}
+
+    def take_focus_notices(self):
+        """仅取一次最近的提示; 过期事件及去重标记一起清理."""
+        now = self._ms()
+        self.focus_notices = {k: v for k, v in self.focus_notices.items() if 0 <= now - v["ts"] <= 90_000}
+        self._focus_notice_seen.intersection_update(self.focus_notices)
+        if not self.focus_device():
+            return []
+        out = [v["text"] for k, v in self.focus_notices.items()
+               if k not in self._focus_notice_seen and not v.get("shown")]
+        for v in self.focus_notices.values():
+            v["shown"] = True
+        self._focus_notice_seen.update(self.focus_notices)
+        return out
+
     def clear(self):
         """清空聊天记录 (界面上的按钮, 或者在聊天框里发 /clear): 以后不再显示, 也不再发给模型; 别的设备也一起清空."""
         self.cfg["clear_ts"] = max(self._ms(), self._last_ts)

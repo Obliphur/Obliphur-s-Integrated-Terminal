@@ -77,6 +77,7 @@ fun TimerScreen() {
         OitCard {
             val (status, color) = when {
                 outing != null -> tr("外出中 🚪") to o.warn
+                t.focusPaused -> tr("已暂停专注") to o.dim
                 t.state == TState.RUNNING -> tr("专注中…") to o.accent
                 t.state == TState.ON_BREAK -> tr("休息中 ☕") to o.warn
                 else -> tr("准备就绪") to o.dim
@@ -92,6 +93,7 @@ fun TimerScreen() {
                     val rate = t.focusRate                   // 阻滞: 合约内的那部分时间按 90% 增长
                     val m = core.contract.focusMinutes(t.startWall, t.elapsed)
                     BigText("${f2(m)} min")
+                    if (t.focusPaused) Dim(tr("暂停中: 专注时间按 ×{r} 倒退", "r" to numText(core.settings.num("PAUSE_REWIND"))))
                     val rem = computeF(m) * scale * core.contract.restFactor()
                     Dim(if (rem > 0) tr("预计停止时的休息时长:  {m} 分钟", "m" to f2(rem)) else tr("预计休息时长: 0.00 分钟"))
                     if (rate < 1) Dim(tr("阻滞: 合约内这段专注的时间按 {p}% 增长", "p" to Math.round(rate * 100)))
@@ -133,6 +135,7 @@ fun TimerScreen() {
                 when (t.state) {
                     TState.RUNNING -> {
                         AccentButton(tr("■  结束专注")) { t.onAction() }
+                        PlainButton(tr(if (t.focusPaused) "▶  继续专注" else "⏸  暂停专注")) { t.toggleFocusPause() }
                         PlainButton(tr("☕  开始休息"), enabled = false, mark = prescriptMark("break")) {}
                     }
                     TState.ON_BREAK -> {

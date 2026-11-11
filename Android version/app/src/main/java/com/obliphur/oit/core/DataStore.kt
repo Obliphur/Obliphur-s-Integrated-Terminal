@@ -58,9 +58,9 @@ fun combineWindow(sources: List<WindowSource>, prefix: String): Map<String, Doub
 
 /** kind: study 专注 / break 休息 / idle 空闲 (共享专注中本机 OIT 被关掉的那一段; focus 是那段专注的开始时刻, MECHANICS 8.2) /
  *  sleep 睡眠 (单独的一种时间, MECHANICS 23). */
-data class FocusSeg(val kind: String, val start: LocalDateTime, val end: LocalDateTime, val focus: String = "") {
+data class FocusSeg(val kind: String, val start: LocalDateTime, val end: LocalDateTime, val focus: String = "", val pause: Boolean = false) {
     fun json(): JSONObject = JSONObject().put("k", kind).put("s", start.format(Fmt.TS)).put("e", end.format(Fmt.TS))
-        .also { if (kind == "idle") it.put("f", focus) }
+        .also { if (kind == "idle") { it.put("f", focus); if (pause) it.put("p", true) } }
 }
 
 /**
@@ -68,6 +68,7 @@ data class FocusSeg(val kind: String, val start: LocalDateTime, val end: LocalDa
  */
 class DataStore(val dir: File, private val fillWindow: () -> Double, private val autoText: () -> String) {
     var resetting = false
+    var focusPauseLive: () -> Pair<LocalDateTime, LocalDateTime>? = { null }
 
     private val studyFile = File(dir, "study_log.json")
     private val hourFile = File(dir, "hour_log.json")
@@ -183,7 +184,7 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
         arr.objects().mapNotNull { r ->
             val s = runCatching { LocalDateTime.parse(r.optString("s"), Fmt.TS) }.getOrNull()
             val e = runCatching { LocalDateTime.parse(r.optString("e"), Fmt.TS) }.getOrNull()
-            if (s != null && e != null && e.isAfter(s)) FocusSeg(r.optString("k"), s, e, r.optString("f")) else null
+            if (s != null && e != null && e.isAfter(s)) FocusSeg(r.optString("k"), s, e, r.optString("f"), r.optBoolean("p")) else null
         }
     }
 
@@ -198,7 +199,7 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
             val s = runCatching { LocalDateTime.parse(r.optString("s"), Fmt.TS) }.getOrNull() ?: continue
             val e = runCatching { LocalDateTime.parse(r.optString("e"), Fmt.TS) }.getOrNull() ?: continue
             val k = r.optString("k")
-            if ((k == "study" || k == "break" || k == "idle" || k == "sleep") && e.isAfter(s)) focus.add(FocusSeg(k, s, e, r.optString("f")))
+            if ((k == "study" || k == "break" || k == "idle" || k == "sleep") && e.isAfter(s)) focus.add(FocusSeg(k, s, e, r.optString("f"), r.optBoolean("p")))
         }
         focus.removeAll { !it.end.isAfter(focusFloor()) }
     }
@@ -209,9 +210,9 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
         Store.write(focusFile, JSONObject().put("sessions", JSONArray(focus.map { it.json() })))
     }
 
-    fun addFocusSession(kind: String, start: LocalDateTime?, end: LocalDateTime?, focusStart: LocalDateTime? = null) {
+    fun addFocusSession(kind: String, start: LocalDateTime?, end: LocalDateTime?, focusStart: LocalDateTime? = null, pause: Boolean = false) {
         if (start == null || end == null || secondsBetween(start, end) < 1) return
-        focus.add(FocusSeg(kind, start.withNano(0), end.withNano(0), focusStart?.withNano(0)?.format(Fmt.TS) ?: ""))
+        focus.add(FocusSeg(kind, start.withNano(0), end.withNano(0), focusStart?.withNano(0)?.format(Fmt.TS) ?: "", pause))
         saveFocus()
     }
 
@@ -221,11 +222,11 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
 
     /** 某一天四种时间各多少秒 (只有最近 7 天有专注计时记录): study 专注 / break 休息 / sleep 睡眠 / idle 空闲.
      *  空闲 = 这一天 (今天只算到此刻) 里不属于前三种的时间. live: 正在进行的一段 (kind, start), kind 可以是 sleep. 同 data_manager.day_kinds. */
-    fun dayKinds(day: LocalDate, live: Pair<String, LocalDateTime>?, now: LocalDateTime = LocalDateTime.now()): Map<String, Double> {
+    fun dayKinds(day: LocalDate, live: Pair<String, LocalDateTime>?, now: LocalDateTime = LocalDateTime.now(), pauseAsIdle: Boolean = true): Map<String, Double> {
         val d0 = day.atStartOfDay()
         val limit = minOf(d0.plusDays(1), now)
         val span = maxOf(0.0, secondsBetween(d0, limit))
-        val hours = focusHours(day, live?.takeIf { it.first == "study" || it.first == "break" })
+        val hours = focusHours(day, live?.takeIf { it.first == "study" || it.first == "break" }, pauseAsIdle)
         val study = hours.sumOf { it.first }
         val rest = hours.sumOf { it.second }
         val spans = (focus + peerFocus()).filter { it.kind == "sleep" }.map { it.start to it.end }.toMutableList()
@@ -253,7 +254,7 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
         }
         runCatching { extraFocus(day) }.getOrDefault(emptyList()).filter { it.kind == "study" || it.kind == "break" }
             .forEach { all.add(FocusSeg(it.kind, it.start, it.end)) }
-        val idle = all.filter { it.kind == "idle" }.groupBy { it.focus }
+        val idle = all.filter { it.kind == "idle" && !it.pause }.groupBy { it.focus }
         val out = LinkedHashSet<Triple<String, LocalDateTime, LocalDateTime>>()
         for (s in all) {
             if (s.kind != "study" && s.kind != "break" && s.kind != "sleep") continue
@@ -284,7 +285,7 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
     }
 
     /** 某一天 24 个小时各自的 (专注秒数, 休息秒数). live: 正在进行的一段 (kind, start). */
-    fun focusHours(day: LocalDate, live: Pair<String, LocalDateTime>?): List<Pair<Double, Double>> {
+    fun focusHours(day: LocalDate, live: Pair<String, LocalDateTime>?, pauseAsIdle: Boolean = true): List<Pair<Double, Double>> {
         val d0 = day.atStartOfDay()
         val st = DoubleArray(24)
         val rs = DoubleArray(24)
@@ -305,7 +306,10 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
             all.add(FocusSeg(it.kind, it.start, it.end))
         }
         // 空闲的优先级最高: 同一段专注 (开始时刻相同) 里和空闲重叠的部分画成空白 (哪台设备记的都一样); 休息照常
-        val idle = all.filter { it.kind == "idle" }.groupBy { it.focus }
+        if (pauseAsIdle) focusPauseLive()?.let { (start, pause) ->
+            all.add(FocusSeg("idle", pause, LocalDateTime.now(), start.withNano(0).format(Fmt.TS), true))
+        }
+        val idle = all.filter { it.kind == "idle" && (pauseAsIdle || !it.pause) }.groupBy { it.focus }
         val segs = all.filter { it.kind == "study" || it.kind == "break" }.flatMap { s ->      // 睡眠不画进专注计时条形图 (留白)
             if (s.kind == "break") listOf(s) else subtract(s, idle[s.start.withNano(0).format(Fmt.TS)] ?: emptyList())
         }
@@ -367,7 +371,7 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
                     x = nxt
                 }
             }
-            for (p in pieces) if (secondsBetween(p.start, p.end) >= 1) kept.add(FocusSeg(r.kind, p.start, p.end, r.focus))
+            for (p in pieces) if (secondsBetween(p.start, p.end) >= 1) kept.add(r.copy(start = p.start, end = p.end))
         }
         focus.clear()
         focus.addAll(kept)
@@ -383,7 +387,7 @@ class DataStore(val dir: File, private val fillWindow: () -> Double, private val
             if (!h.end.isAfter(a) || !h.start.isBefore(b)) listOf(a to b)
             else listOfNotNull(if (h.start.isAfter(a)) a to h.start else null, if (h.end.isBefore(b)) h.end to b else null)
         }
-        return pieces.map { FocusSeg(s.kind, it.first, it.second) }
+        return pieces.map { s.copy(start = it.first, end = it.second) }
     }
 
     // ---- 应用使用时间: {日期: {包名: 秒}}, "" 是空白 ----

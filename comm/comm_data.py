@@ -348,7 +348,7 @@ def build(sel: dict, dm, net, contract, now: datetime = None, focus_live=None, c
         lines = []
         for i in range(7):
             day = today - timedelta(days=i)
-            hours = dm.focus_hours(day, focus_live)
+            hours = dm.focus_hours(day, focus_live, False)
             st = sum(h[0] for h in hours) / 60
             br = sum(h[1] for h in hours) / 60
             lines.append(f"  {day:%m-%d} 周{WEEKDAY[day.weekday()]}: 专注 {st:.0f} 分钟, 休息 {br:.0f} 分钟")

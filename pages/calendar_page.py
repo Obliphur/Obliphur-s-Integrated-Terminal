@@ -123,7 +123,7 @@ class CalendarPage(tk.Frame):
             if d.date() < floor or d.date() > today.date():
                 continue
             is_today = d.date() == today.date()
-            out[date_str] = self.dm.day_kinds(d, self.live() if is_today else None, today)[kind] / 3600.0
+            out[date_str] = self.dm.day_kinds(d, self.live() if is_today else None, today, True)[kind] / 3600.0
         return out
 
     @smooth

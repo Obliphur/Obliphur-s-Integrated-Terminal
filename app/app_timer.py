@@ -48,13 +48,15 @@ class TimerMixin:
 
         elif self.state == RUNNING:
             end_wall = datetime.now()
-            # 阻滞: 只减慢合约内那部分专注的时间 (MECHANICS 18.3)
+            self._close_focus_pause()          # 暂停中结束: 先把暂停的时段记为空闲
+            # 阻滞: 只减慢合约内那部分专注的时间 (MECHANICS 18.3); 暂停倒退已经扣掉 (6.9)
             elapsed_minutes = self.contract.focus_minutes(
-                self.start_wall, time.monotonic() - self.start_mono)
+                self.start_wall, self._focus_elapsed())
             self.last_t_minutes = elapsed_minutes      # 建议休息时长照常按整段专注算
             self.rest_base = self._focus_rest(elapsed_minutes, self.start_wall, end_wall)
             off = self._cut_offline(self.start_wall, end_wall)
-            self.dm.add_study_session(self.start_wall, end_wall, max(0.0, elapsed_minutes - off / 60.0))
+            data_minutes = self.contract.focus_minutes(self.start_wall, self._focus_wall())
+            self.dm.add_study_session(self.start_wall, end_wall, max(0.0, data_minutes - off / 60.0))
             self._add_study_pieces(self.start_wall, end_wall)
             self._close_check_win()
             self.state = READY_BREAK          # 专注已记下: 先清掉文件里的专注状态
@@ -67,9 +69,9 @@ class TimerMixin:
             # 结束专注后直接进入休息, 不再停在"去休息"这一步
             self._start_break(announce=True)
             # 纵深推进: 这段专注不到要求的时长, 算一次违反
-            tid = self.contract.focus_check(elapsed_minutes * 60)
+            tid = self.contract.focus_check(data_minutes * 60)
             if tid:
-                self.contract_violation(tr("专注只有 {m} 分钟 (至少 {n} 分钟)", m=int(elapsed_minutes),
+                self.contract_violation(tr("专注只有 {m} 分钟 (至少 {n} 分钟)", m=int(data_minutes),
                                            n=contract_mod.DEEP[tid] // 60), tid)
 
         elif self.state == READY_BREAK:
@@ -107,7 +109,7 @@ class TimerMixin:
             self.end_break_early()
 
     def _sync_timer_buttons(self):
-        """按当前状态设置两个按钮的文字与可用状态; 提前启动按钮只在专注中、还没选过时出现."""
+        """按当前状态设置两个按钮的文字与可用状态; 暂停按钮只在专注中能用; 提前启动按钮只在专注中、还没选过时出现."""
         if not hasattr(self, "btn_break"):
             return
         locked = self._break_locked()
@@ -130,12 +132,84 @@ class TimerMixin:
                 self.btn_action.config(text=tr("▶  开始专注"), state="!disabled")
                 self.btn_break.config(text=tr("☕  开始休息"),
                                       state="!disabled" if self.break_carry > 0 else "disabled")
+            pause = getattr(self, "btn_pause", None)
+            if pause is not None:
+                if self.state == RUNNING and outing is None:
+                    pause.config(text=tr("▶  继续专注") if self._pause_mono is not None
+                                 else tr("⏸  暂停专注"), state="!disabled")
+                else:
+                    pause.config(state="disabled")
         except Exception:
             pass
         self._sync_prestart_button()
         self._sync_outing_button()
         self._sync_sleep_button()
         self._sync_prescript_marks()
+
+    # ---- 暂停专注 (MECHANICS 6.9): 暂停的时段在统计 / 日历里记为空闲, 其他模块一律当作专注 ----
+
+    def _pause_secs(self) -> float:
+        """这一段专注里已经暂停的秒数 (含正在进行的那次)."""
+        sec = float(self._pause_total)
+        if self._pause_mono is not None:
+            sec += max(0.0, time.monotonic() - self._pause_mono)
+        return sec
+
+    def _focus_wall(self) -> float:
+        """这一段专注从开始到此刻的墙上时间 (暂停的时段也算)."""
+        if self.start_mono is None:
+            return 0.0
+        return max(0.0, time.monotonic() - self.start_mono)
+
+    def _focus_elapsed(self) -> float:
+        """计时器认可的专注秒数: 墙上时间减去暂停时段 × (1 + PAUSE_REWIND) (MECHANICS 6.9)."""
+        rate = 1.0 + max(1.0, float(config.PAUSE_REWIND))
+        return max(0.0, self._focus_wall() - rate * self._pause_secs())
+
+    def _pause_focus(self):
+        """开始暂停: 专注时间从现在起按 PAUSE_REWIND 倍率倒退."""
+        if self.state != RUNNING or self.start_mono is None or self._pause_mono is not None:
+            return
+        self._mine()
+        self._pause_mono = time.monotonic()
+        self._pause_wall = datetime.now()
+        self._close_check_win()
+        self._status(tr("已暂停专注"), COLORS["text_dim"])
+        self.lbl_sub.config(text=tr("暂停中: 专注时间按 ×{r:g} 倒退").format(r=float(config.PAUSE_REWIND)))
+        self._sync_timer_buttons()
+        self._save_timer_state()
+        self.refresh_display()
+        self._refresh_if_visible("stats", "cal")
+
+    def _close_focus_pause(self):
+        """暂停中 → 继续 / 结束专注: 把这段暂停记为空闲 (统计 / 日历), 之后按倒退后的时长继续计时."""
+        if self._pause_mono is None:
+            return
+        ps = self._pause_wall
+        self._pause_total += max(0.0, time.monotonic() - self._pause_mono)
+        self._pause_total = min(self._pause_total, self._focus_wall() / (1.0 + max(1.0, float(config.PAUSE_REWIND))))
+        self._pause_mono = None
+        self._pause_wall = None
+        if ps is not None and self.start_wall is not None:
+            now = datetime.now()
+            if (now - ps).total_seconds() >= 1:
+                self.dm.add_focus_session("idle", ps, now, focus=self.start_wall, pause=True)
+
+    def toggle_focus_pause(self):
+        """暂停 / 继续专注 (计时页的暂停按钮)."""
+        if self.state != RUNNING:
+            return
+        if self._pause_mono is None:
+            self._pause_focus()
+            return
+        self._mine()
+        self._close_focus_pause()
+        self._status(tr("专注中…"), COLORS["accent"])
+        self.lbl_sub.config(text="")
+        self._sync_timer_buttons()
+        self._save_timer_state()
+        self.refresh_display()
+        self._refresh_if_visible("stats", "cal")
 
     def _sync_sleep_button(self):
         """睡眠按钮: 只有空闲 (不在专注 / 休息 / 外出 / 合约) 时能按."""
@@ -170,17 +244,23 @@ class TimerMixin:
     # ---- 专注状态: 随时写进文件, 程序异常退出也不丢 ----
 
     def _focus_record(self):
-        """进行中的专注: 开始时刻, 最后一次保存的时刻, 已关掉的提醒数, 最后一次确认时已专注的秒数."""
+        """进行中的专注: 开始时刻, 最后一次保存的时刻, 已关掉的提醒数, 最后一次确认时已专注的秒数;
+        暂停中再记上暂停开始时刻和已经暂停过的秒数 (MECHANICS 6.9)."""
         if self.state != RUNNING or self.start_wall is None:
             return None
-        return {"start": self.start_wall.isoformat(timespec="seconds"),
-                "alive": datetime.now().isoformat(timespec="seconds"),
-                "checks": int(self._focus_checks),
-                "ok": int(self._focus_ok),
-                # 重开时原样恢复, 同步的计时器状态才不会因为"主人变了"被当成新的改动 (盖掉其他设备更新的状态)
-                "owner": self.timer_owner,
-                # 关机 / 电量很低: 重新打开时不把关着的这段记成空闲, 跟着其他设备 (MECHANICS 15.4)
-                "off": bool(self._went_off())}
+        d = {"start": self.start_wall.isoformat(timespec="seconds"),
+             "alive": datetime.now().isoformat(timespec="seconds"),
+             "checks": int(self._focus_checks),
+             "ok": int(self._focus_ok),
+             # 重开时原样恢复, 同步的计时器状态才不会因为"主人变了"被当成新的改动 (盖掉其他设备更新的状态)
+             "owner": self.timer_owner,
+             # 关机 / 电量很低: 重新打开时不把关着的这段记成空闲, 跟着其他设备 (MECHANICS 15.4)
+             "off": bool(self._went_off())}
+        if self._pause_total > 0 or self._pause_mono is not None:
+            d["paused"] = round(self._pause_total, 1)     # 已经暂停过的秒数: 重开时接着按倍率倒退
+        if self._pause_mono is not None and self._pause_wall is not None:
+            d["pause"] = self._pause_wall.isoformat(timespec="seconds")
+        return d
 
     def _on_power_off(self):
         """Windows 要关机 / 注销了 (MECHANICS 15.4): 存下专注状态 (记上"关机"), 告诉其他设备本机关机了 ——
@@ -240,11 +320,21 @@ class TimerMixin:
                 pass
 
     def _enter_focus(self, start_wall: datetime, start_mono: float, checks: int = 0,
-                     ok: float = 0.0):
+                     ok: float = 0.0, pause_total: float = 0.0, pause_wall: datetime = None):
+        """pause_total / pause_wall: 从存档 / 同步恢复时已经暂停过的秒数和还在进行的那次暂停的开始
+        (MECHANICS 6.9); 新建一段专注时是 0 / None."""
         self.start_wall = start_wall
         self.start_mono = start_mono
         self._focus_checks = checks
         self._focus_ok = ok
+        self._pause_total = max(0.0, float(pause_total))
+        self._pause_mono = None
+        self._pause_wall = None
+        if pause_wall is not None:
+            # 恢复时还在暂停: 这次暂停从 pause_wall 就开始算了 (程序关着的那段也照常倒退)
+            now = datetime.now()
+            self._pause_mono = time.monotonic() - max(0.0, (now - pause_wall).total_seconds())
+            self._pause_wall = pause_wall
         self._close_check_win()
         # 从休息接着专注 (点"开始专注" / 别的设备开始 / 暂停休息后马上开始): 上一段专注的提前启动原样接着 —
         # 不重新给 3 分钟操作空窗期, 否则程序在空窗期外会被应用名单关掉 (MECHANICS 20).
@@ -320,6 +410,8 @@ class TimerMixin:
             alive = datetime.fromisoformat(rec["alive"])
             checks = max(0, int(rec.get("checks", 0)))
             ok = max(0.0, float(rec.get("ok", 0)))
+            pause = rec.get("pause")
+            paused = rec.get("paused")
         except Exception:
             self._save_timer_state()          # 记录坏了: 丢掉
             return
@@ -330,10 +422,19 @@ class TimerMixin:
         alive = min(max(alive, start), now)
         gap = (now - alive).total_seconds()
         self.timer_owner = str(rec.get("owner") or "")
+        try:
+            pause_wall = datetime.fromisoformat(pause) if pause else None
+        except (TypeError, ValueError):
+            pause_wall = None
+        try:
+            paused_sec = max(0.0, float(paused or 0))
+        except (TypeError, ValueError):
+            paused_sec = 0.0
         if rec.get("off") and gap > float(config.CLOSED_GAP):
             # 本机是关机 / 没电停下的 (MECHANICS 15.4): 效果和在线一样, 专注照常接着计时 ("还在吗"照常按开始时刻算);
             # 关着的这段本机的数据不计入 (见 _cut_offline). 绑定了其他设备时, 同步上以后跟着它们
-            self._enter_focus(start, time.monotonic() - (now - start).total_seconds(), checks, ok)
+            self._enter_focus(start, time.monotonic() - (now - start).total_seconds(), checks, ok,
+                              pause_total=paused_sec, pause_wall=pause_wall)
             toast.info(tr("关机期间专注照常进行, 已接着计时."), timeout=8000)
             return
         if self.sync.peers() and gap > float(config.CLOSED_GAP):
@@ -343,26 +444,38 @@ class TimerMixin:
             off = bool(rec.get("off"))
             if not off:
                 self.dm.add_focus_session("idle", alive, now, focus=start)
-            self._enter_focus(start, time.monotonic() - (now - start).total_seconds(), checks, ok)
+            self._enter_focus(start, time.monotonic() - (now - start).total_seconds(), checks, ok,
+                              pause_total=paused_sec, pause_wall=pause_wall)
             self._close_pending = {"start": start, "alive": alive, "t": time.monotonic(),
-                                   "ms": int(time.time() * 1000), "off": off, "now": now}
+                                   "ms": int(time.time() * 1000), "off": off, "now": now,
+                                   "paused": paused_sec, "pause": pause_wall}
             return
         if gap <= float(config.FOCUS_RESUME_GAP):
-            self._enter_focus(start, time.monotonic() - (now - start).total_seconds(), checks, ok)
-            toast.info(tr("上次专注时程序退出了.已接着计时(从 {at} 开始).").format(
-                at=f"{start:%H:%M}"), timeout=8000)
+            self._enter_focus(start, time.monotonic() - (now - start).total_seconds(), checks, ok,
+                              pause_total=paused_sec, pause_wall=pause_wall)
+            if pause_wall is not None:
+                toast.info(tr("上次暂停专注时程序退出了.暂停的时段已记为空闲."), timeout=8000)
+            else:
+                toast.info(tr("上次专注时程序退出了.已接着计时(从 {at} 开始).").format(
+                    at=f"{start:%H:%M}"), timeout=8000)
             return
         # 退出很久了: 专注记到最后一次保存为止, 对应的休息时间存进积攒的休息时间
-        sec = (alive - start).total_seconds()
+        raw = (alive - start).total_seconds()
+        if pause_wall is not None:
+            paused_sec += max(0.0, (alive - pause_wall).total_seconds())
+            self.dm.add_focus_session("idle", pause_wall, alive, focus=start, pause=True)
+        self._pause_total = paused_sec
+        rw = (1.0 + max(1.0, float(config.PAUSE_REWIND))) * paused_sec
+        sec = max(0.0, raw - rw)               # 暂停倒退过的部分不算 (MECHANICS 6.9)
         limit = self._check_mark(checks + 1, start) + float(config.FOCUS_CHECK_GRACE)
         penalized = sec >= limit
         if penalized:
             sec = limit
-        minutes, brk = self._book_focus(start, sec, ok if penalized else None)
+        minutes, brk = self._book_focus(start, sec, ok if penalized else None, data_seconds=raw)
         self._set_break_carry(self.break_carry + brk)   # 同时清掉文件里的专注状态
         self._add_auto_rest(brk)
         if not rec.get("off"):
-            self._deep_check_closed(start, sec)
+            self._deep_check_closed(start, (alive - start).total_seconds())
         self.refresh_display()
         if minutes <= 0:
             return
@@ -401,20 +514,27 @@ class TimerMixin:
             # 没能和任何设备同步上: 和普通的被关掉一样, 关着的那段记为空闲, 专注终止
             self.dm.add_focus_session("idle", p["alive"], p["now"], focus=p["start"])
         start, alive = p["start"], p["alive"]
-        sec = (alive - start).total_seconds()
+        paused_sec = float(p.get("paused") or 0.0)
+        if p.get("pause") is not None:
+            paused_sec += max(0.0, (alive - p["pause"]).total_seconds())
+            self.dm.add_focus_session("idle", p["pause"], alive, focus=start, pause=True)
+        self._pause_total = paused_sec
+        self._pause_mono = self._pause_wall = None
+        rw = (1.0 + max(1.0, float(config.PAUSE_REWIND))) * paused_sec
+        sec = max(0.0, (alive - start).total_seconds() - rw)     # 暂停倒退过的部分不算 (MECHANICS 6.9)
         limit = self._check_mark(self._focus_checks + 1, start) + float(config.FOCUS_CHECK_GRACE)
         penalized = sec >= limit
         if penalized:
             sec = limit
         self._close_check_win()
         self.cancel_update()
-        minutes, brk = self._book_focus(start, sec, self._focus_ok if penalized else None)
+        minutes, brk = self._book_focus(start, sec, self._focus_ok if penalized else None, data_seconds=(alive - start).total_seconds())
         self._mine()                           # 终止由本机做, 其他设备照着结束
         self.reset_to_idle()
         self._set_break_carry(self.break_carry + brk)
         self._add_auto_rest(brk)
         if not p.get("off"):
-            self._deep_check_closed(start, sec)
+            self._deep_check_closed(start, (alive - start).total_seconds())
         self.lbl_sub.config(text=self._idle_sub_text())
         self.refresh_display()
         self._refresh_if_visible("stats", "cal")
@@ -428,16 +548,18 @@ class TimerMixin:
     def _end_focus_for_close(self):
         """绑定了其他设备时关闭程序: 共享的专注就此结束 (记到此刻), 不开始休息, 休息时间存进积攒的休息时间."""
         start = self.start_wall
-        elapsed = time.monotonic() - self.start_mono
+        self._close_focus_pause()                # 暂停中关闭: 先把暂停的时段记为空闲
+        elapsed = self._focus_elapsed()
+        data_seconds = self._focus_wall()
         self._close_check_win()
         self.cancel_update()
-        _minutes, brk = self._book_focus(start, elapsed)
+        _minutes, brk = self._book_focus(start, elapsed, data_seconds=self._focus_wall())
         self._mine()
         self.reset_to_idle()
         self.break_carry += brk
         self._add_auto_rest(brk)                 # 同时写进文件
         if not self._went_off():
-            self._deep_check_closed(start, elapsed)
+            self._deep_check_closed(start, data_seconds)
 
     def _keep_awake(self):
         """专注 / 休息中不让系统自动睡眠 (屏幕照常可以关掉), 计时和同步不会停."""
@@ -452,7 +574,7 @@ class TimerMixin:
         except Exception:
             pass
 
-    def _book_focus(self, start: datetime, seconds: float, ok=None):
+    def _book_focus(self, start: datetime, seconds: float, ok=None, data_seconds=None):
         """记下一段专注, 返回 (计入的分钟数, 对应的休息秒数).
         ok: 没回应"还在吗"被自动结束时, 最后一次确认时已专注的秒数 —— 它之前的照常计,
             之后没有确认的那一段只把前 FOCUS_CHECK_PENALTY 记作专注. 计入的部分在时间上是连续的."""
@@ -460,10 +582,11 @@ class TimerMixin:
         if ok is not None:
             ok = min(max(0.0, float(ok)), seconds)
             seconds = ok + (seconds - ok) * float(config.FOCUS_CHECK_PENALTY)
-        end = start + timedelta(seconds=seconds)
+        data_seconds = seconds if data_seconds is None or not self._pause_total else max(0.0, data_seconds)
+        end = start + timedelta(seconds=data_seconds)
         minutes = self.contract.focus_minutes(start, seconds)   # 阻滞: 只减慢合约内的那部分时间
         # 有设备离线的那段记为空闲, 不计入学习时长; 建议休息时长照常按计入前的时长算
-        counted = max(0.0, minutes - self._cut_offline(start, end) / 60.0)
+        counted = max(0.0, self.contract.focus_minutes(start, data_seconds) - self._cut_offline(start, end) / 60.0)
         self.dm.add_study_session(start, end, counted)
         self._add_study_pieces(start, end)
         brk = int(round(self._focus_rest(minutes, start, end)))
@@ -472,7 +595,7 @@ class TimerMixin:
     def _deep_check_closed(self, start: datetime, seconds: float):
         """专注停止 (手动结束 / 提醒超时自动结束 / OIT 被关掉等, 非关机) 时按纵深推进检查这段够不够长 (18.3).
         关机 / 断电导致的停止由调用方用 off 判断豁免 (MECHANICS 15.4), 不走到这里."""
-        minutes = self.contract.focus_minutes(start, seconds)
+        minutes = self.contract.focus_minutes(start, self._focus_wall() if self.start_wall == start else seconds)
         tid = self.contract.focus_check(minutes * 60)
         if tid:
             self.contract_violation(tr("专注只有 {m} 分钟 (至少 {n} 分钟)", m=int(minutes),
@@ -578,16 +701,23 @@ class TimerMixin:
         # 绑定的设备非关机离线累计超过 5 分钟: 自动结束专注 (MECHANICS 15.4; 关机算在线, 不计)
         if self.sync.peers() and self._timer_auto_ok() \
                 and self._offline_secs(self.start_wall) >= float(config.OFFLINE_FOCUS_END):
-            self._offline_end_focus(time.monotonic() - self.start_mono)
+            self._close_focus_pause()
+            self._offline_end_focus(self._focus_elapsed())
             return
         if self._check_win is not None and not self._check_win.alive():
             self._check_win = None             # 被手动关掉了 = 人还在
             self._mine()
             self._focus_checks += 1
-            self._focus_ok = time.monotonic() - self.start_mono
+            self._focus_ok = self._focus_elapsed()
             self._save_timer_state()
+        if self._pause_mono is not None:
+            # 暂停中: 不弹"还在吗", 专注时间按倍率倒退着走 (MECHANICS 6.9)
+            every = float(config.FOCUS_ALIVE_EVERY if self.sync.peers() else config.FOCUS_SAVE_EVERY)
+            if time.monotonic() - self._focus_saved >= every:
+                self._save_timer_state()
+            return
         grace = float(config.FOCUS_CHECK_GRACE)
-        elapsed = time.monotonic() - self.start_mono
+        elapsed = self._focus_elapsed()
         mark = self._check_mark(self._focus_checks + 1)
         if elapsed >= mark + grace:
             if self._timer_auto_ok():          # 别的设备是主人时等它结束, 结果同步过来
@@ -626,15 +756,17 @@ class TimerMixin:
     def _auto_end_focus(self, seconds: float):
         """提醒窗没人关: 自动结束专注. 不开始休息倒计时 (人不在), 休息时间存进积攒的休息时间."""
         start = self.start_wall
+        data_seconds = self._focus_wall()
         ok = min(self._focus_ok, seconds)
         self._close_check_win()
         self.cancel_update()
-        minutes, brk = self._book_focus(start, seconds, ok)
+        self._close_focus_pause()
+        minutes, brk = self._book_focus(start, seconds, ok, data_seconds=self._focus_wall())
         self._mine()                             # 自动结束由本机做, 其他设备照着结束
         self.reset_to_idle()
         self._set_break_carry(self.break_carry + brk)   # 同时清掉文件里的专注状态
         self._add_auto_rest(brk)
-        self._deep_check_closed(start, seconds)  # 纵深推进: 自动结束的这段也查够不够长 (任何原因停止都查)
+        self._deep_check_closed(start, data_seconds)  # 纵深推进: 自动结束的这段也查够不够长 (任何原因停止都查)
         self.lbl_sub.config(text=self._idle_sub_text())
         self._sync_timer_buttons()
         self.refresh_display()
@@ -661,14 +793,15 @@ class TimerMixin:
     def _offline_end_focus(self, seconds: float):
         """绑定设备非关机离线累计超过 5 分钟: 自动结束专注 (MECHANICS 15.4). 休息时间存进积攒的休息时间."""
         start = self.start_wall
+        data_seconds = self._focus_wall()
         self._close_check_win()
         self.cancel_update()
-        minutes, brk = self._book_focus(start, seconds)
+        minutes, brk = self._book_focus(start, seconds, data_seconds=self._focus_wall())
         self._mine()                             # 离线判定由本机做, 其他设备照着结束
         self.reset_to_idle()
         self._set_break_carry(self.break_carry + brk)
         self._add_auto_rest(brk)
-        self._deep_check_closed(start, seconds)  # 任何原因停止都查纵深推进
+        self._deep_check_closed(start, data_seconds)  # 任何原因停止都查纵深推进
         self.lbl_sub.config(text=self._idle_sub_text())
         self._sync_timer_buttons()
         self.refresh_display()
@@ -686,7 +819,11 @@ class TimerMixin:
         if active is not None and self.state == IDLE:
             self._show_outing(active)
         elif self.state == RUNNING:
-            self._status(tr("专注中…"), COLORS["accent"])
+            if self._pause_mono is not None:
+                self._status(tr("已暂停专注"), COLORS["text_dim"])
+                self.lbl_sub.config(text=tr("暂停中: 专注时间按 ×{r:g} 倒退").format(r=float(config.PAUSE_REWIND)))
+            else:
+                self._status(tr("专注中…"), COLORS["accent"])
             self.schedule_update()
         elif self.state == READY_BREAK:
             self._show_ready_break()
@@ -705,7 +842,7 @@ class TimerMixin:
 
     def update(self):
         if self.state == RUNNING:
-            elapsed = time.monotonic() - self.start_mono
+            elapsed = self._focus_elapsed()          # 暂停中会随倒退变小 (MECHANICS 6.9)
             rate = self.contract.focus_rate(self.start_wall)   # 现在还是不是阻滞中 (合约结束后就不再减慢)
             cur_m = self.contract.focus_minutes(self.start_wall, elapsed)
             if self.contract.fog():
@@ -722,6 +859,8 @@ class TimerMixin:
                 sub = tr("预计休息时长: 0.00 分钟")
             if rate < 1:
                 sub += "\n" + tr("阻滞: 这段专注的时间按 {p}% 增长", p=int(round(rate * 100)))
+            if self._pause_mono is not None:
+                sub = tr("暂停中: 专注时间按 ×{r:g} 倒退").format(r=float(config.PAUSE_REWIND))
             self.lbl_sub.config(text=sub)
             self.update_job = self.root.after(200, self.update)
 
@@ -767,6 +906,9 @@ class TimerMixin:
         self.state = IDLE
         self.start_mono = None
         self.start_wall = None
+        self._pause_total = 0.0
+        self._pause_mono = None
+        self._pause_wall = None
         self.last_t_minutes = 0.0
         self.rest_base = 0.0
         self.countdown_seconds = 0

@@ -22,6 +22,7 @@ object Cfg {
     const val IDLE_NUDGE_EVERY = 60 * 60L
 
     // 专注中的"还在吗"
+    const val PAUSE_REWIND = 2.0
     const val FOCUS_CHECK_EVERY = 60 * 60.0
     const val FOCUS_CHECK_GRACE = 30 * 60.0
     const val FOCUS_CHECK_PENALTY = 0.3

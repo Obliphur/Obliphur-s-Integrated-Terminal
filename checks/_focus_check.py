@@ -77,7 +77,62 @@ def test_status_refreshes():
         assert called == [1], e
 
 
+def test_comm_notices_follow_focus():
+    """消息在手机处理, 电脑取得提示; 确认状态同步回来后不重复弹."""
+    from comm import Comm
+    from pathlib import Path
+    root = Path(tempstore.mkdtemp("focus-notices"))
+    phone = Comm(str(root / "phone"), str(root / "personas"))
+    pc = Comm(str(root / "pc"), str(root / "personas"))
+    phone.focus_device = lambda: False
+    pc.focus_device = lambda: True
+    phone.queue_focus_notice("test notice")
+    assert phone.take_focus_notices() == []
+    pc.apply_doc(phone.sync_doc())
+    assert pc.take_focus_notices() == ["test notice"]
+    assert pc.take_focus_notices() == []
+    phone.apply_doc(pc.sync_doc())
+    phone.focus_device = lambda: True
+    assert phone.take_focus_notices() == []
+
+
+def test_break_notice_follows_focus():
+    """剩余一分钟的声音和弹窗一并遵守焦点判断."""
+    import types
+    from app import app_pages
+    focused, calls = [False], []
+    a = types.SimpleNamespace(sync=types.SimpleNamespace(is_latest_active=lambda: focused[0]),
+                              _play_break_soon_chime=lambda: calls.append("sound"))
+    original = app_pages.toast.info
+    try:
+        app_pages.toast.info = lambda text: calls.append("toast")
+        app_pages.PagesMixin._break_one_min_warn(a)
+        assert calls == []
+        focused[0] = True
+        app_pages.PagesMixin._break_one_min_warn(a)
+        assert calls == ["sound", "toast"]
+    finally:
+        app_pages.toast.info = original
+
+
+def test_schedule_follows_focus_instead_of_chat_leader():
+    """聊天主端在手机时, 电脑仍可作为焦点设备询问日程跟随."""
+    import types
+    from comm.comm_status import StatusMixin
+    asked = []
+    a = types.SimpleNamespace(persona_name=lambda: "AI", sf_live=lambda: True,
+                              pid="p", _sf_last=("p", "focus"), _status_kind=lambda: "rest",
+                              leader=lambda: False, focus_device=lambda: True,
+                              state_fn=lambda: "idle", log=lambda text: None,
+                              sf_text=lambda kind: kind, on_sf=lambda *args: asked.append(args))
+    StatusMixin._sf_tick(a)
+    assert asked == [("rest", "rest")]
+
+
 test_system_idle()
 test_note_input()
 test_status_refreshes()
+test_comm_notices_follow_focus()
+test_break_notice_follows_focus()
+test_schedule_follows_focus_instead_of_chat_leader()
 print("focus device check OK (全系统输入时间 / 只前进 / 取不到时不动)")

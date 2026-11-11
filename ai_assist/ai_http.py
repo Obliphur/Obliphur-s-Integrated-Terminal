@@ -94,7 +94,7 @@ def endpoint(profile: dict) -> str:
     if profile.get("protocol") == "anthropic":
         return base + ("/messages" if base.endswith("/v1") else "/v1/messages")
     if profile.get("protocol") == "gemini":                 # 原生 Gemini: /v1beta/models/<model>:generateContent
-        root = base if base.endswith("/v1beta") else base + "/v1beta"
+        root = base if base.endswith(("/v1beta", "/v1")) else base + "/v1beta"
         model = str(profile.get("model") or "").strip()
         if model.startswith("models/"):
             model = model[len("models/"):]
@@ -502,7 +502,7 @@ def models_url(profile: dict) -> str:
     if profile.get("protocol") == "anthropic":
         return base + ("/models" if base.endswith("/v1") else "/v1/models")
     if profile.get("protocol") == "gemini":
-        return (base if base.endswith("/v1beta") else base + "/v1beta") + "/models"
+        return (base if base.endswith(("/v1beta", "/v1")) else base + "/v1beta") + "/models"
     return base + "/models"
 
 

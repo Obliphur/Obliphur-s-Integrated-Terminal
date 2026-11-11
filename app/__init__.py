@@ -122,6 +122,12 @@ class BreakTimerApp(CommMixin, SyncMixin, ContractMixin, ContractMediaMixin,
         self._merge_again = set()     # 合并中又收到了新片段的 (cid, kind): 合并完再合并一次
         self._focus_checks = 0        # 这一段专注里已经被手动关掉的"还在吗"提醒数
         self._focus_ok = 0.0          # 最后一次确认 (关掉提醒窗) 时已专注的秒数
+        # 暂停专注 (MECHANICS 6.9): 已经暂停的总秒数 / 当前这次暂停的开始 (monotonic) /
+        # 当前这次暂停的开始墙钟 (记空闲用; None = 没在暂停). 倒退只影响计时器的专注时长,
+        # 统计 / 日历里暂停的那段记为空闲, 其余模块一律当作专注.
+        self._pause_total = 0.0
+        self._pause_mono = None
+        self._pause_wall = None
         self._check_win = None        # 当前开着的"还在吗"提醒窗
         self._focus_saved = 0.0       # 上一次把专注状态写进文件的时刻 (monotonic)
         self._focus_from_break = False  # 这一下开始专注是从休息里直接开始的 (提前启动要接着, MECHANICS 20)
@@ -192,6 +198,7 @@ class BreakTimerApp(CommMixin, SyncMixin, ContractMixin, ContractMediaMixin,
         # 要在 DataManager 里补记整点记录之前接上, 否则启动时会先用普通的自动记录内容补一遍.
         self.behavior = behavior.Behavior(config.app_data_dir())
         self.dm = DataManager(hour_auto_text=self.behavior.hour_auto_text)
+        self.dm.focus_pause_live = lambda: (self.start_wall, self._pause_wall) if self.state == RUNNING else (None, None)
         self.dm.sleep_live = lambda: self.sleep_since
         self.timer_file = os.path.join(self.dm.data_dir, "timer_state.json")
         self.break_carry = self._load_break_carry()
@@ -279,7 +286,8 @@ class BreakTimerApp(CommMixin, SyncMixin, ContractMixin, ContractMediaMixin,
         self.comm.user_day_fn = self._comm_user_day          # 人设里的 [condition] 判定用: 某一天的 (专注秒, 空闲秒)
         self.comm.share_fn = self._comm_share            # share data (MECHANICS 24.12): 某一页上用户和对方的数据
         self.comm.on_share_open = lambda: self.show_page("timer")      # 用户接受了对方的 share data 邀请: 跳到计时器页
-        self.comm.on_share_notice = lambda text: toast.info(tr(text))      # 对方拒绝 / 没回复用户的 share data 请求
+        self.comm.on_share_notice = self.comm.queue_focus_notice
+        self.comm.focus_device = lambda: self.sync.is_latest_active()
         # 设备同步 (MECHANICS 24.6): 聊天记录随同步; 只有最后有人操作的设备调用 AI
         self.comm.device = lambda: self.sync.my_id
         self.comm.leader = self._comm_leader

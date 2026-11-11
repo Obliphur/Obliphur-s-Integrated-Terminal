@@ -25,7 +25,8 @@ class PrescriptMixin:
         return getattr(config, "THEME", "") == "urban_will"
 
     def _today_hours_live(self) -> float:
-        """今天的专注小时数, 包括正在进行、还没记进 study_log 的这一段."""
+        """今天的专注小时数, 包括正在进行、还没记进 study_log 的这一段.
+        暂停的时段当作专注 (MECHANICS 6.9): 按完整的墙上时间算, 不扣倒退的部分."""
         hours = float(self.dm.get_today_hours())
         if self.state == RUNNING and self.start_wall is not None:
             now = datetime.now()

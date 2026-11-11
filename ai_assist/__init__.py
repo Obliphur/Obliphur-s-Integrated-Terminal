@@ -255,6 +255,16 @@ def _selftest():
     assert c2.profile(cid)["protocol"] == "anthropic" and c2.profile(cid)["model"] == "m-c"
     c2.set_profile(cid, preset="custom", family="gemini", base_url="https://relay.example/v1")
     assert c2.profile(cid)["protocol"] == "gemini"
+    # 同一 Gemini 模型经 OpenAI 兼容中转: 协议独立保存并在重开后保持。
+    c2.set_profile(cid, family="gemini", protocol="openai")
+    assert c2.profile(cid)["protocol"] == "openai"
+    assert c2.save() and AIConfig(c2.path).profile(cid)["protocol"] == "openai"
+    relay = c2.profile(cid)
+    assert endpoint(relay) == "https://relay.example/v1/chat/completions"
+    assert models_url(relay) == "https://relay.example/v1/models"
+    native = dict(relay, protocol="gemini")
+    assert endpoint(native).startswith("https://relay.example/v1/models/")
+    assert models_url(native) == "https://relay.example/v1/models"
     assert c2.set_active(cid) and c2.config_for("甲.txt") == cid
     c2.assign_config("乙.txt", "deepseek")
     assert c2.config_for("乙.txt") == "deepseek" and c2.config_for("甲.txt") == cid

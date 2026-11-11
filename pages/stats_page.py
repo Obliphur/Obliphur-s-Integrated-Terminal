@@ -818,7 +818,7 @@ class StatsPage(tk.Frame):
                 self._focus_days.append((day, hours))
             return
         self._focus_days = [
-            (today - timedelta(days=i), self.dm.focus_hours(today - timedelta(days=i), live))
+            (today - timedelta(days=i), self.dm.focus_hours(today - timedelta(days=i), live, True))
             for i in range(self.dm.FOCUS_DAYS)
         ]
 

@@ -132,6 +132,8 @@ SETTINGS_SCHEMA = [
          "计时器给出的建议休息时长乘以这个倍率;之前暂停休息结转的时间不受影响.", page="timer"),
     _num("BREAK_CARRY_RATE", "暂停休息结转比例", "×", 1, 0, 1, False,
          "暂停休息(或关闭程序)时,剩余休息时间按这个比例计入下一次休息.", page="timer"),
+    _num("PAUSE_REWIND", "专注暂停倒退倍率", "×", 1, 1, 10, False,
+         "专注中暂停时,专注时间按这个倍率倒退 (暂停 1 分钟,专注时间少记这么多); 暂停的时段在统计 / 日历里记为空闲.", page="timer"),
     {
         "key": "BREAK_WARN_ENABLED", "label": "休息剩余1分钟提醒",
         "kind": "choice", "apply": APPLY_DELAY,

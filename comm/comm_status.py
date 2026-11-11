@@ -281,7 +281,7 @@ class StatusMixin:
         return s["kind"] if s and s["kind"] in STATUS_TEXT else "idle"
 
     def _sf_tick(self):
-        """每秒: 日程跟随开着 (并且没有合约) 时看对方的状态; 变了就问用户要不要跟着变 (只在主端问; 用户的计时器已经是同一种状态 / 外出中不问).
+        """每秒: 日程跟随开着 (并且没有合约) 时看对方的状态; 变了就在焦点设备询问 (用户的计时器已经是同一种状态 / 外出中不问).
         开关关着 / 合约中 / 没选人设 / 换了聊天对象 = 重新开始看: 先记下对方现在的状态, 不提示 (合约里对方被改的状态也不算)."""
         if not self.persona_name() or not self.sf_live():
             self._sf_last = None
@@ -290,7 +290,7 @@ class StatusMixin:
         prev, self._sf_last = self._sf_last, key
         if prev is None or prev == key or prev[0] != key[0]:
             return
-        if not self.on_sf or not self.leader() or self.state_fn() in (SF_STATE[key[1]], "out"):
+        if not self.on_sf or not self.focus_device() or self.state_fn() in (SF_STATE[key[1]], "out"):
             return
         self.log(f"FOLLOW 对方 {STATUS_TEXT[prev[1]]} → {STATUS_TEXT[key[1]]}: 问用户跟不跟随")
         try:

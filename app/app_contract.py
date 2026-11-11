@@ -395,10 +395,11 @@ class ContractMixin:
         if self.state != RUNNING or self.start_wall is None:
             return False
         start = self.start_wall
-        elapsed = time.monotonic() - self.start_mono
+        self._close_focus_pause()                # 暂停中开始合约: 先把暂停的时段记为空闲
+        elapsed = self._focus_elapsed()
         self._close_check_win()
         self.cancel_update()
-        _minutes, brk = self._book_focus(start, elapsed)
+        _minutes, brk = self._book_focus(start, elapsed, data_seconds=self._focus_wall())
         self._mine()
         self.reset_to_idle()
         self._set_break_carry(self.break_carry + brk)
@@ -447,10 +448,11 @@ class ContractMixin:
         if self.state != RUNNING or self.start_wall is None:
             return
         start = self.start_wall
-        elapsed = time.monotonic() - self.start_mono
+        self._close_focus_pause()                # 暂停中合约结束: 先把暂停的时段记为空闲
+        elapsed = self._focus_elapsed()
         self._close_check_win()
         self.cancel_update()
-        self._book_focus(start, elapsed)         # 休息时间不要
+        self._book_focus(start, elapsed, data_seconds=self._focus_wall())         # 休息时间不要
         self._rest_tag = ""
         self._mine()
         self.reset_to_idle()

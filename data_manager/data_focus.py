@@ -42,7 +42,10 @@ class FocusMixin:
             if r.get("k") in ("study", "break", "sleep") and en > st:
                 out.append({"k": r["k"], "s": r["s"], "e": r["e"]})
             elif r.get("k") == "idle" and en > st:
-                out.append({"k": "idle", "s": r["s"], "e": r["e"], "f": str(r.get("f") or "")})
+                rec = {"k": "idle", "s": r["s"], "e": r["e"], "f": str(r.get("f") or "")}
+                if r.get("p"):
+                    rec["p"] = True          # 专注暂停的时段 (MECHANICS 6.9): 只在统计 / 日历里算空闲
+                out.append(rec)
         self.focus_sessions = out
         self._prune_focus()
 
@@ -64,9 +67,11 @@ class FocusMixin:
         except (IOError, OSError):
             pass
 
-    def add_focus_session(self, kind: str, start: datetime, end: datetime, focus: datetime = None):
+    def add_focus_session(self, kind: str, start: datetime, end: datetime, focus: datetime = None,
+                          pause: bool = False):
         """kind: 'study' 专注 / 'break' 休息 / 'idle' 空闲 / 'sleep' 睡眠 (睡眠是单独的一种时间, MECHANICS 23).
-        空闲: 共享专注中本机 OIT 被关掉的那一段; focus 是那段专注的开始时刻 (MECHANICS 8.2)."""
+        空闲: 共享专注中本机 OIT 被关掉的那一段; focus 是那段专注的开始时刻 (MECHANICS 8.2).
+        pause: 这是专注暂停的时段 —— 统计 / 日历里记为空闲, 其他模块一律当作专注 (MECHANICS 6.9)."""
         if kind not in ("study", "break", "idle", "sleep") or start is None or end is None:
             return
         if (end - start).total_seconds() < 1:
@@ -74,6 +79,8 @@ class FocusMixin:
         rec = {"k": kind, "s": start.strftime(self._TS), "e": end.strftime(self._TS)}
         if kind == "idle":
             rec["f"] = focus.strftime(self._TS) if focus else ""
+            if pause:
+                rec["p"] = True
         self.focus_sessions.append(rec)
         self.save_focus_log()
 
@@ -89,10 +96,11 @@ class FocusMixin:
                     continue
         return False
 
-    def focus_hours(self, day: datetime, live=None):
+    def focus_hours(self, day: datetime, live=None, pause_as_idle: bool = True):
         """某一天 24 个小时各自的 (专注秒数, 休息秒数).
 
-        live: 正在进行的一段 (kind, start), 计到此刻为止."""
+        live: 正在进行的一段 (kind, start), 计到此刻为止.
+        pause_as_idle: 专注暂停的时段算空闲 (统计 / 日历用); False 时当作专注 (沟通 / 指令用, MECHANICS 6.9)."""
         day0 = day.replace(hour=0, minute=0, second=0, microsecond=0)
         study = [0.0] * 24
         rest = [0.0] * 24
@@ -100,6 +108,11 @@ class FocusMixin:
         recs = list(self.focus_sessions)
         for led in self.peer_ledgers() or []:
             recs += [r for r in (led.get("focus") or []) if isinstance(r, dict)]
+        if pause_as_idle:
+            start, pause = getattr(self, "focus_pause_live", lambda: (None, None))()
+            if start is not None and pause is not None:
+                recs.append({"k": "idle", "s": pause.strftime(self._TS),
+                             "e": datetime.now().strftime(self._TS), "f": start.strftime(self._TS), "p": True})
         idle = {}                                  # 专注的开始时刻 → [(空闲开始, 空闲结束)]
         for r in recs:
             try:
@@ -107,7 +120,8 @@ class FocusMixin:
             except (KeyError, TypeError, ValueError):
                 continue
             if k == "idle":
-                idle.setdefault(str(r.get("f") or ""), []).append((st, en))
+                if pause_as_idle or not r.get("p"):
+                    idle.setdefault(str(r.get("f") or ""), []).append((st, en))
             elif k in ("study", "break"):
                 segs.append((k, st, en))             # 睡眠不画进专注计时条形图 (留白)
         if live and live[1] is not None:
@@ -163,7 +177,8 @@ class FocusMixin:
             except (KeyError, TypeError, ValueError):
                 continue
             if k == "idle":
-                idle.setdefault(str(r.get("f") or ""), []).append((st, en))
+                if not r.get("p"):                   # 暂停的时段当作专注 (沟通 / 指令里就是专注, MECHANICS 6.9)
+                    idle.setdefault(str(r.get("f") or ""), []).append((st, en))
             elif k in ("study", "break", "sleep"):
                 segs.append((k, st, en))
         if live and live[1] is not None:
@@ -188,16 +203,19 @@ class FocusMixin:
                     out.add((kind, a, b))
         return sorted(out, key=lambda x: (x[1], x[2], x[0]))
 
-    def day_kinds(self, day: datetime, live=None, now: datetime = None) -> dict:
+    def day_kinds(self, day: datetime, live=None, now: datetime = None,
+                  pause_as_idle: bool = True) -> dict:
         """某一天四种时间各多少秒 (只有最近 7 天有专注计时记录): 专注 study / 休息 break / 睡眠 sleep / 空闲 idle.
 
-        空闲 = 这一天 (今天只算到此刻) 里不属于前三种的时间. live: 正在进行的一段 (kind, start), kind 可以是 sleep."""
+        空闲 = 这一天 (今天只算到此刻) 里不属于前三种的时间. live: 正在进行的一段 (kind, start), kind 可以是 sleep.
+        pause_as_idle: 专注暂停的时段算空闲 (统计 / 日历用); False 时当作专注 (沟通的 [condition] 判定用, MECHANICS 6.9)."""
         now = now or datetime.now()
         day0 = day.replace(hour=0, minute=0, second=0, microsecond=0)
         end_of_day = day0 + timedelta(days=1)
         limit = min(end_of_day, now)
         span = max(0.0, (limit - day0).total_seconds())
-        hours = self.focus_hours(day, live if live and live[0] in ("study", "break") else None)
+        hours = self.focus_hours(day, live if live and live[0] in ("study", "break") else None,
+                                 pause_as_idle)
         study = sum(s for s, _r in hours)
         rest = sum(r for _s, r in hours)
         recs = list(self.focus_sessions)

@@ -119,7 +119,7 @@ object Ai {
         return when (p.protocol) {
             "anthropic" -> base + (if (base.endsWith("/v1")) "/messages" else "/v1/messages")
             "gemini" -> {                                        // 原生 Gemini: /v1beta/models/<model>:generateContent
-                val root = if (base.endsWith("/v1beta")) base else "$base/v1beta"
+                val root = if ((base.endsWith("/v1beta") || base.endsWith("/v1"))) base else "$base/v1beta"
                 val model = p.model.removePrefix("models/")
                 "$root/models/$model:generateContent"
             }
@@ -669,7 +669,7 @@ object Ai {
         val base = p.baseUrl.trim().trimEnd('/')
         return when (p.protocol) {
             "anthropic" -> base + (if (base.endsWith("/v1")) "/models" else "/v1/models")
-            "gemini" -> (if (base.endsWith("/v1beta")) base else "$base/v1beta") + "/models"
+            "gemini" -> (if ((base.endsWith("/v1beta") || base.endsWith("/v1"))) base else "$base/v1beta") + "/models"
             else -> "$base/models"
         }
     }
@@ -957,7 +957,7 @@ class AiConfig(private val file: File) {
                     base.contains("deepseek.com") -> "deepseek"
                     else -> "other"
                 }
-                profiles[k] = Profile(preset, base, Ai.FAMILY_PROTOCOL[fam]!!,
+                profiles[k] = Profile(preset, base, if (preset == "custom") o.optString("protocol").takeIf { it in listOf("openai", "anthropic", "gemini") } ?: Ai.FAMILY_PROTOCOL[fam]!! else Ai.FAMILY_PROTOCOL[fam]!!,
                     o.optString("model", def.model), Ai.decryptKey(o.optString("api_key", "")), fam, preset)
             }
         }
@@ -1083,7 +1083,7 @@ class AiConfig(private val file: File) {
         var base = p.baseUrl.trim()
         if (preset != "custom" && base.isEmpty()) base = Ai.PROVIDERS[preset]!!.baseUrl
         profiles[id] = p.copy(provider = preset, preset = preset, family = fam,
-            protocol = Ai.FAMILY_PROTOCOL[fam]!!, baseUrl = base, model = p.model.trim(),
+            protocol = if (preset == "custom") p.protocol.takeIf { it in listOf("openai", "anthropic", "gemini") } ?: Ai.FAMILY_PROTOCOL[fam]!! else Ai.FAMILY_PROTOCOL[fam]!!, baseUrl = base, model = p.model.trim(),
             apiKey = p.apiKey.trim())
     }
 

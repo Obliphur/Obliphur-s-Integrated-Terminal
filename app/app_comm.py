@@ -77,7 +77,7 @@ class CommMixin:
         snap = {"state": st, "focus_total_min": self._today_hours_live() * 60.0, "focus_cur_min": 0.0,
                 "rest_left_min": 0.0, "break_start": None, "break_total_s": 0}
         if self.state == RUNNING and self.start_wall is not None:
-            snap["focus_cur_min"] = self.contract.focus_minutes(self.start_wall, time.monotonic() - self.start_mono)
+            snap["focus_cur_min"] = self.contract.focus_minutes(self.start_wall, self._focus_wall())
         if self.state == ON_BREAK and self.break_end_wall is not None and self.break_start_wall is not None:
             snap["rest_left_min"] = max(0.0, (self.break_end_wall - now).total_seconds()) / 60.0
             snap["break_start"] = self.break_start_wall
@@ -139,7 +139,7 @@ class CommMixin:
     def _comm_user_day(self, day) -> tuple:
         """某一天 (date) 用户的 (专注秒, 空闲秒); 只有最近 7 天有计时记录 (dm.day_kinds), 更早的由沟通模块自己存的账补."""
         now = datetime.now()
-        k = self.dm.day_kinds(datetime.combine(day, datetime.min.time()), self._calendar_live() if day == now.date() else None, now)
+        k = self.dm.day_kinds(datetime.combine(day, datetime.min.time()), self._calendar_live() if day == now.date() else None, now, False)
         return k["study"], k["idle"]
 
     def _comm_info(self, tag: str) -> str:
@@ -192,8 +192,10 @@ class CommMixin:
         try:
             self._joint_break_watch()
             self.comm.tick()
+            for text in self.comm.take_focus_notices():
+                toast.info(tr(text))
             self._joint_invite_watch()
-            if self._sf_win is not None and not self.comm.sf_live():       # 合约开始了 / 开关关了: 还没回答的提示作废
+            if self._sf_win is not None and (not self.comm.sf_live() or not self.sync.is_latest_active()):
                 self._sf_close()
             change = self.comm.check_persona_changes()
             if change:
@@ -251,6 +253,8 @@ class CommMixin:
         inv = self.comm.joint_invite()
         iid = str(inv.get("id") or "") if inv else ""
         if iid and iid != self._inv_id:
+            if not self.sync.is_latest_active():
+                return
             if self.shutting_down or self.contract.active or getattr(self, "current_page", "") == "prescript" or self._comm_blocked():
                 return
             terms = list(inv.get("terms") or [])
@@ -282,6 +286,8 @@ class CommMixin:
 
     def _joint_due(self, joint: dict):
         """联合行动约定的开始时间到了 (对方已经接受): 把约定的词条放进合约页, 提示用户开始行动."""
+        if not self.sync.is_latest_active():
+            return
         try:
             if not self.contract.active:
                 self.contract.set_draft(joint.get("terms") or [])

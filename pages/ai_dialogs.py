@@ -107,7 +107,7 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
     cb_family = ttk.Combobox(box, state="readonly",
                              values=[tr(ai_assist.FAMILY_LABELS[f]) for f in ai_assist.FAMILIES])
     cb_family.pack(fill="x", pady=(2, 0))
-    ent_proto = ttk.Entry(rbox, state="readonly")      # 协议由模型类型决定, 只显示
+    ent_proto = ttk.Combobox(rbox, state="readonly", values=ai_assist.PROTOCOLS)
     ent_proto.pack(fill="x", pady=(2, 0))
 
     _label(b, tr("型号")).pack(fill="x")
@@ -131,10 +131,8 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
     wrap_label(note, 20)
 
     def set_proto(value: str):
-        ent_proto.config(state="normal")
-        ent_proto.delete(0, "end")
-        ent_proto.insert(0, value)
-        ent_proto.config(state="readonly")
+        ent_proto.set(value)
+        ent_proto.config(state="readonly" if preset_key() == "custom" else "disabled")
 
     def preset_key() -> str:
         return ai_assist.PROVIDER_ORDER[max(0, cb_preset.current())]
@@ -169,7 +167,7 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
         if name and name != cfg.config_name(cid):
             cfg.rename_config(cid, name)
         cfg.set_profile(cid, preset=preset_key(), base_url=var_url.get(), model=cb_model.get(),
-                        api_key=var_key.get(), family=family_of_ui())
+                        api_key=var_key.get(), family=family_of_ui(), protocol=ent_proto.get())
 
     def load():
         cid = state["cid"]
@@ -186,7 +184,7 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
         cb_model.set(prof["model"])
         cb_family.set(tr(ai_assist.FAMILY_LABELS[state["family"]]))
         cb_family.config(state="readonly" if preset == "custom" else "disabled")
-        set_proto(ai_assist.FAMILY_PROTOCOL[state["family"]])
+        set_proto(prof["protocol"])
         ent_url.config(state="normal" if preset == "custom" else "readonly")
         var_key.set(prof["api_key"])
         filled = "" if preset == "custom" else tr("已填入 {name} 的官方地址.").format(name=_provider_label(preset))

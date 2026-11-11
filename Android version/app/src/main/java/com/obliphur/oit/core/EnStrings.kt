@@ -3,6 +3,11 @@ package com.obliphur.oit.core
 /** 英文界面文字. 由 gen_en.py 从桌面版 i18n.py 和补充的译文生成; 键是中文原文. */
 object EnStrings {
     val MAP: Map<String, String> = hashMapOf(
+        "专注暂停倒退倍率" to "Focus pause rewind multiplier",
+        "⏸  暂停专注" to "⏸  Pause focus",
+        "▶  继续专注" to "▶  Resume focus",
+        "已暂停专注" to "Focus paused",
+        "暂停中: 专注时间按 ×{r} 倒退" to "Paused: focus time rewinds at ×{r}",
         "{a} ~ {b} 做了什么?" to "What did you do from {a} to {b}?",
         "⚠  系统时间" to "⚠  System clock",
         "同步状态: {s}" to "Sync: {s}",

@@ -100,6 +100,7 @@ def make(draft):
     me.contract = types.SimpleNamespace(active=False, draft=list(draft))
     me.contract.set_draft = lambda terms: setattr(me.contract, "draft", list(terms))
     me.shutting_down = False
+    me.sync = types.SimpleNamespace(is_latest_active=lambda: True)
     me.current_page = "timer"
     me._inv_id = ""
     me._inv_prev = []

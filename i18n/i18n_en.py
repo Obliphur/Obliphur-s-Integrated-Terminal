@@ -451,6 +451,12 @@ EN = {
     "上次专注时程序退出了,专注记到 {at} 为止: 计入 {m:.1f} 分钟.": "OIT closed during your last focus session. It was recorded up to {at}: {m:.1f} minutes.",
     "⏱  上次的专注已记录": "⏱  Last focus session recorded",
     "▶  开始专注": "▶  Start focusing",
+    "⏸  暂停专注": "⏸  Pause focus",
+    "▶  继续专注": "▶  Resume focus",
+    "已暂停专注": "Focus paused",
+    "暂停中: 专注时间按 ×{r:g} 倒退": "Paused: focus time rewinds at ×{r:g}",
+    "上次暂停专注时程序退出了.暂停的时段已记为空闲.":
+        "OIT closed while your focus was paused. The paused span has been recorded as idle.",
     "知道了": "Got it",
     "同步状态: {s}": "Sync: {s}",
     "上次成功 {t}": "last OK {t}",
@@ -691,6 +697,9 @@ EN = {
     "紧急借贷偿还倍率": "Loan repayment multiplier",
     "休息中冷静期倍率": "Cooldown multiplier on break",
     "暂停休息结转比例": "Paused-break carry-over rate",
+    "专注暂停倒退倍率": "Focus pause rewind multiplier",
+    "专注中暂停时,专注时间按这个倍率倒退 (暂停 1 分钟,专注时间少记这么多); 暂停的时段在统计 / 日历里记为空闲.":
+        "While focusing, pausing rewinds the focus time by this multiplier (each paused minute subtracts this many from focus time). Paused spans count as idle in Stats / Calendar.",
     "整点记录补填时限": "Hour log fill-in window",
     "每天最多能联网多久.": "How long you can be online each day.",
     "提出申请后等多久才真的联网.想立刻联网请用快速访问.": "How long to wait after a request before going online. Use quick access to go online right away.",

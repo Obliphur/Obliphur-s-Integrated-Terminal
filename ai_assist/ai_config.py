@@ -85,7 +85,8 @@ class AIConfig:
                     out["api_key"] = ""
                 fam = self._norm_family(preset, out)
                 out["family"] = fam
-                out["protocol"] = FAMILY_PROTOCOL[fam]
+                out["protocol"] = (out.get("protocol") if preset == "custom" and out.get("protocol") in PROTOCOLS
+                                   else FAMILY_PROTOCOL[fam])
                 self.profiles[k] = out
         # 列表顺序: 新格式存了 order; 老格式按预设的固定顺序, 然后是文件里多出来的
         order = data.get("order")
@@ -286,7 +287,7 @@ class AIConfig:
         if fields.get("preset") in PROVIDERS:
             prof["preset"] = fields["preset"]
         preset = prof.get("preset") or "custom"
-        # 模型类型决定协议: 预设服务商固定是它自己, 自定义配置必须由用户选了才算. 不再接受单独的协议参数.
+        # 预设协议固定; 自定义中转可独立选协议, 切换模型类型时默认匹配该类型。
         if preset in FAMILY_PROTOCOL:
             fam = preset
         else:
@@ -294,7 +295,11 @@ class AIConfig:
             if fam not in FAMILY_PROTOCOL:
                 fam = "other"
         prof["family"] = fam
-        prof["protocol"] = FAMILY_PROTOCOL[fam]
+        protocol = fields.get("protocol")
+        if preset == "custom" and protocol in PROTOCOLS:
+            prof["protocol"] = protocol
+        elif preset != "custom" or "family" in fields:
+            prof["protocol"] = FAMILY_PROTOCOL[fam]
         # 预设服务商的 Base URL 留空时,自动回到预设值;自定义允许留空
         if preset != "custom" and not prof["base_url"]:
             prof["base_url"] = PROVIDERS[preset]["base_url"]

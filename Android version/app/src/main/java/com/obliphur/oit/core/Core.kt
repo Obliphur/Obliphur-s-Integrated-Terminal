@@ -288,7 +288,8 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         comm.infoFn = { tag -> commInfo(tag) }
         comm.shareFn = { page -> commShare(page) }            // share data (MECHANICS 24.12): 某一页上用户和对方的数据
         comm.onShareOpen = { host.openPage("timer") }          // 用户接受了对方的 share data 邀请: 跳到计时器页
-        comm.onShareNotice = { toast(tr(it)) }          // 对方拒绝 / 没回复用户的 share data 请求
+        comm.focusDevice = { isLatestActive() }
+        comm.onShareNotice = { comm.queueFocusNotice(it) }          // 对方拒绝 / 没回复用户的 share data 请求
         comm.device = { myId() }
         comm.leader = { commLeader() }
         comm.onSync = { syncNow() }
@@ -301,7 +302,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         comm.breakEndFn = { if (timer.state == TState.ON_BREAK) java.time.LocalDateTime.now().plusNanos((timer.countdown * 1e9).toLong()) else null }
         comm.userDayFn = { day ->                                   // 人设里的 [condition] 判定用: 某一天用户的 (专注秒, 空闲秒)
             val now = java.time.LocalDateTime.now()
-            val k = dm.dayKinds(day, if (day == now.toLocalDate()) timer.calendarLive() else null, now)
+            val k = dm.dayKinds(day, if (day == now.toLocalDate()) timer.calendarLive() else null, now, false)
             (k["study"] ?: 0.0) to (k["idle"] ?: 0.0)
         }
         comm.hardBlock = { contract.has("silent") && !settings.devMode }
@@ -445,7 +446,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         val st = commState()
         val total = todayHoursLive() * 60.0
         if (timer.state == TState.RUNNING)
-            return CommSnap(st, focusTotalMin = total, focusCurMin = contract.focusMinutes(timer.startWall, timer.elapsed))
+            return CommSnap(st, focusTotalMin = total, focusCurMin = contract.focusMinutes(timer.startWall, timer.wallElapsed))
         val bs = timer.breakStartWall
         if (timer.state == TState.ON_BREAK && bs != null) {
             val left = timer.countdown
@@ -512,6 +513,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
     private fun jointInviteWatch() {
         val inv = comm.jointInvite()
         if (inv != null && inv.id != invId) {
+            if (!isLatestActive()) return
             if (!uiForeground || contract.active || currentPage == "prescript" || commBlocked().isNotEmpty()) return
             if (invId.isEmpty()) invPrev = if (contract.draft == inv.terms) emptyList() else contract.draft
             invId = inv.id
@@ -540,6 +542,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
 
     /** 联合行动约定的开始时间到了 (对方已经接受): 把约定的词条放进合约页, 提示用户开始行动. */
     private fun jointDue(j: Joint) {
+        if (!isLatestActive()) return
         if (!contract.active) { contract.setDraft(j.terms); changed() }
         notice(tr("🤝  联合行动"), tr("约定的开始时间到了: 在合约页点「开始行动」(词条已经选好), {name} 会和你同步专注 / 休息.", "name" to comm.aiName()),
             listOf(NoticeButton(tr("知道了"), "ok", true)), page = "contract")
@@ -577,7 +580,7 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         var hours = dm.todayHours()
         if (timer.state == TState.RUNNING) {
             val sinceMidnight = secondsBetween(LocalDate.now().atStartOfDay(), LocalDateTime.now())
-            hours += minOf(timer.elapsed, sinceMidnight) / 3600.0
+            hours += minOf(timer.wallElapsed, sinceMidnight) / 3600.0
         }
         return hours
     }
@@ -857,10 +860,11 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         runCatching { prescript.tick() }
         runCatching { jointBreakWatch() }
         runCatching { comm.tick() }
+        comm.takeFocusNotices().forEach { toast(tr(it)) }
         runCatching { alarmTick() }
         runCatching { jointInviteWatch() }
         runCatching { comm.checkPersonaChanges() }.getOrNull()?.let { showPersonaChange(it) }
-        if (sfNotice >= 0 && !comm.sfLive()) { dismissNotice(sfNotice); sfNotice = -1 }      // 合约开始了 / 开关关了: 还没回答的提示作废
+        if (sfNotice >= 0 && (!comm.sfLive() || !isLatestActive())) { dismissNotice(sfNotice); sfNotice = -1 }      // 合约开始了 / 开关关了: 还没回答的提示作废
         beatPower()
         runCatching { checkAdapterBack(); checkAwayPriority(); checkContractConflicts() }
         checkContract()
