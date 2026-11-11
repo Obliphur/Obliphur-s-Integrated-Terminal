@@ -65,11 +65,27 @@ python release.py               # 发布（PyInstaller）
 | `app_update.py` | UpdateMixin | 开发者模式跟着母端、更新中继 |
 | `app_misc.py` | MiscMixin | 配置期、第一次打开的快捷方式、重置页 |
 
+### 沟通模块（`comm.py` 与 `comm_*.py`）
+
+`comm.py`（约 7300 行）只留 `Comm` 类（状态、发请求、主动消息、重试、设备同步）和 `_selftest`；无状态的部分拆到同目录的兄弟模块（不用包，避免遮住 `comm.py`）。依赖方向：`comm.py` 导入它们，它们从不导入 `comm.py`。
+
+| 文件 | 内容 |
+| --- | --- |
+| `comm_util.py` | 无状态小工具：消息包装（`oit_text`）、历史截取（`api_messages`）、记忆卡整理、拒绝语判断、缓存布局 |
+| `comm_persona.py` | 人设文件 / 伴侣文件 / 日程文件的读写、平移与告白设置、系统 prompt 拼装 |
+| `comm_prompt.py` | 前置 prompt 文本（日程 / 休息函数 / 回复规则）与各种 `[标记]` 常量 |
+| `comm_reply.py` | 回复解析：去掉标记、`[wait]` / `[cut]` / `[network]` 的分钟数、半角化 |
+| `comm_schedule.py` | 人设日程解析：段类型 / 段内容、循环段、主动发消息概率 |
+| `comm_builtin.py` | 内置人设、默认背景 / 日程 / 助理文本、旧版升级链 |
+| `comm_readme.py` | OIT_personas 文件夹里的 README 文本（中 / 英） |
+
+运行时被自检改写的模块全局量（`CLAUDIA_LEGACIES`、`ROUTINE_LEGACIES`、`FOLLOW_DELAY`、`CHAR_DELAY`、`CHAR_DELAY_CJK`）仍留在 `comm.py`，因为 `_selftest` 通过 `globals()` / `global` 改它们。
+
 高频定位：断网判定在 `netproxy/rules.py` 的 `decide()`；数据读写看 `data_manager.py` + MECHANICS 第 10 节；设置项在 `settings_manager.py` + `pages/settings_page.py`；页面 UI 在 `pages/`，`app.py` 只留状态与调度。
 
 ## 读文件规则（控制上下文）
 
-- **禁止整文件读取大文件**：`comm.py`(500KB)、`app_timer.py`(45KB)、`app_contract_media.py`、`contract.py`、`devsync.py`、`i18n.py`、`ai_assist.py` 等。先用 Grep 搜关键词定位行号，再用 Read 的 `offset/limit` 只读相关片段。
+- **禁止整文件读取大文件**：`comm.py`(约 7300 行)、`app_timer.py`(45KB)、`app_contract_media.py`、`contract.py`、`devsync.py`、`i18n.py`、`ai_assist.py` 等。先用 Grep 搜关键词定位行号，再用 Read 的 `offset/limit` 只读相关片段。
 - **查机制先看 `MECHANICS.md` 的目录**，再只读 `docs/mechanics/` 里对应的那一节（多数 1–30KB；18 合约 56KB、24 沟通 119KB 仍然只读相关段落）。不要通读。
 - 宽泛的跨文件搜索交给 Explore 子代理，只带回结论。
 
