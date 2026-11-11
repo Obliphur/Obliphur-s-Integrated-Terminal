@@ -7,7 +7,7 @@
 现在统一成:
 
     %TEMP%\\OIT\\
-        rec\\      录像 / 回放的工作文件 (recorder.py)
+        rec\\      录像 / 回放的工作文件 (recorder/)
         scan\\     浏览器扫描用的临时用户目录 (netproxy/sitescan.py)
         update\\   更新包和解包目录 (updater.py, sync_local.py)
         setup\\    安装程序的日志和下载 (setup.py)

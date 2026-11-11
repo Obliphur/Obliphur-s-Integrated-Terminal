@@ -397,11 +397,12 @@ def _install_zip(zip_path: str, target: str) -> int:
         root = None
         for dirpath, dirnames, filenames in os.walk(tmp):
             dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
-            if "main.py" in filenames and "app.py" in filenames:
+            if "main.py" in filenames and (
+                    "app.py" in filenames or os.path.isfile(os.path.join(dirpath, "app", "__init__.py"))):
                 root = dirpath
                 break
         if root is None:
-            raise ValueError("main.py / app.py not found in the archive")
+            raise ValueError("main.py / app/ not found in the archive")
         n = 0
         locked = []
         for dirpath, dirnames, filenames in os.walk(root):

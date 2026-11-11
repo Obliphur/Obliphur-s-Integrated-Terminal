@@ -112,7 +112,7 @@
   这些规则也管着别的 Python 程序, OIT 不删, 只在 设置 → 基本设置 → 设备同步的"本机"一行标出它们的名字, 需要在 Windows 防火墙设置里自己删掉或改为允许.
 - 绑定时用 Diffie-Hellman (RFC 3526 第 14 组, 2048 位) 交换密钥, 配对码由密钥算出. 之后每个请求都用这把密钥加密 (HMAC-SHA256 生成的密钥流) 并签名 (HMAC-SHA256), 带时间戳, 不接受重放.
   密钥保存在 `sync_state.json` (Android 在应用私有目录里).
-- 只用 Python 标准库 / Android 自带的库, 两端是同一套协议 (`devsync.py` / `sync/SyncService.kt`).
+- 只用 Python 标准库 / Android 自带的库, 两端是同一套协议 (`devsync/` / `sync/SyncService.kt`).
 
 ### 15.4 关机
 
@@ -214,4 +214,4 @@ Adapter 方式离线时整台电脑的网卡都禁用了 (3.1), 没法同步. �
   手机启动 OIT 的常驻服务 (主进程跟着起来, 设备同步重新开始). 密钥不对 / 没绑定的设备发来的请求一律拒绝 (403 / 401).
 - 这是用户在别的设备上**故意关掉 OIT** 时也会起作用的: 只要另一台设备的 OIT 和联动程序在运行, 关掉的 OIT 约 1 分钟后会被重新打开 (外出期间除外).
 - 卸载 OIT (9.1) 时先删联动程序的计划任务、关掉它的进程、删掉 `oitlink.exe`, 再删防火墙规则.
-- **代码**: `devsync.py` 只剩装配与自检; `SyncService` 由 `devsync_parts/` 的 7 个 mixin 组成 (`discover` / `pair` / `wipe` / `link` / `docs` / `transfer` / `status`), 常量与纯工具在 `devsync_util.py`, 密码学在 `devsync_crypto.py`; 旧的 `devsync.XXX` 名字都还在 (重新导出).
+- **代码**: `devsync/` 只剩装配与自检; `SyncService` 由 `devsync/` 的 7 个 mixin 组成 (`discover` / `pair` / `wipe` / `link` / `docs` / `transfer` / `status`), 常量与纯工具在 `devsync_util.py`, 密码学在 `devsync_crypto.py`; 旧的 `devsync.XXX` 名字都还在 (重新导出).

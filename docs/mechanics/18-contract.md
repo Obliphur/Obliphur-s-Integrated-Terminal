@@ -3,8 +3,8 @@
 [← 返回目录](../../MECHANICS.md)
 
 左侧导航 "⚔ 合约" (统计和设置之间). 一段可以自己加难度的挑战. 页面的配色单独设置 (18.7).
-实现: 词条表与公式在 `contract_parts/contract_rules.py`, `Contract` 按功能拆成 `contract_parts/` 的 7 个 mixin
-(存档 / 进行中 / 网络禁令 / 未知变量 / 软规则 / 词条效果 / 整点记录), `contract.py` 只剩装配与自检.
+实现: 词条表与公式在 `contract/contract_rules.py`, `Contract` 按功能拆成 `contract/` 的 7 个 mixin
+(存档 / 进行中 / 网络禁令 / 未知变量 / 软规则 / 词条效果 / 整点记录), `contract/` 只剩装配与自检.
 
 ### 18.1 开始与结束
 
@@ -378,7 +378,7 @@
     主人是手机时, 片段留在手机上, 合并要等一台电脑上线. 片段 / 最终录像的 `.oitv` 格式和电脑完全一致, 两边互通.
   - 录像在 **设置 → 录像** 里看 (**只有摄像头 / 屏幕两组最终录像**, 每条"播放" / "删除"; 删除会同步给别的设备); "播放"解密到缓存再用系统播放器打开. 加密密钥和格式与电脑共用.
   - 手机合约页正在录像时多一个 **■ 终止录像** 按钮 (和"提前结束"同时出现时在左边): 终止算一次违反, 对应词条失效, 已录的照样保存.
-- **代码 (电脑)**: 录像线程在 `recorder.py` (自检 `python recorder.py`, 清理自检 `--cleanup-test`); 常量、存档 / 加密 / 清理、Media Foundation 封装、合并分别在 `recorder_parts/` 的
+- **代码 (电脑)**: 录像线程在 `recorder/` (自检 `python -m recorder`, 清理自检 `--cleanup-test`); 常量、存档 / 加密 / 清理、Media Foundation 封装、合并分别在 `recorder/` 的
   `recorder_common.py`、`recorder_store.py`、`recorder_media.py`、`recorder_merge.py`; 旧的 `recorder.XXX` 名字都还在 (重新导出), 调用方不用改.
 
 ### 18.7 合约页样式 (起源 / 都市之意)

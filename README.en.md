@@ -75,27 +75,27 @@ Each time the program opens it checks for updates from the latest GitHub release
 
 ## Development
 
-Each module can run its own self-test, for example `python net_guard.py`, `python settings_manager.py`...
+Each module can run its own self-test, for example `python -m net_guard`, `python settings_manager.py`...
 
 ### Project structure
 
 ```text
 obliphur_terminal/
 ├─ main.py               Entry point: request admin rights, start the UI
-├─ app.py                Main window: pages, timer, network page, scheduled checks, close / reset
+├─ app/                Main window: pages, timer, network page, scheduled checks, close / reset
 ├─ config.py             Defaults, themes and font sizes, version (APP_VERSION)
 ├─ themes/               UI themes (classic / claude / urban_will; the urban_will font and preview live here)
 ├─ settings_manager.py   Setting definitions, 48-hour cooling-off period, configuration period
-├─ data_manager.py       Study time, hour logs, focus periods, window usage time (statistics)
+├─ data_manager/         Study time, hour logs, focus periods, window usage time (statistics; mixins in data_manager/)
 ├─ daily.py              Sleep time (Settings → Daily)
 ├─ behavior.py           Behavior modes / going out (optional; adds to statistics and hour logs)
-├─ prescript.py          Prescripts: draw / timer / save, exclusive to the urban_will theme (mixins in prescript_parts/)
-├─ comm.py               Chat: personas, chat history, proactive messages, the other party's status
-├─ comm_parts/comm_data.py          Chat: data sent with 📎 / reference templates the other party can query
+├─ prescript/            Prescripts: draw / timer / save, exclusive to the urban_will theme (mixins in prescript/)
+├─ comm/                 Chat: personas, chat history, proactive messages, the other party's status
+│  ├─ comm_data.py          Chat: data sent with 📎 / reference templates the other party can query
 ├─ alarm.py              Alarm: the device alarm, ringtones, and when the co-time alarm (follows the other party's wake-up time) rings
 ├─ achievements.py       Achievements: condition checks and saving
-├─ contract.py           Contracts: terms, violations and demotion, rest multiplier, hour-log locking (mixins in contract_parts/)
-├─ net_guard.py          Network quota, requests / quick access / loans, switching cut-off method
+├─ contract/             Contracts: terms, violations and demotion, rest multiplier, hour-log locking (mixins in contract/)
+├─ net_guard/            Network quota, requests / quick access / loans, switching cut-off method (mixins in net_guard/)
 ├─ netproxy/             Local filtering proxy (Proxy cut-off method)
 │  ├─ server.py          HTTP / HTTPS tunnel proxy, 403 block page
 │  ├─ rules.py           Blacklist / whitelist and decisions, cooling-off period for list changes
@@ -108,19 +108,19 @@ obliphur_terminal/
 ├─ window_guard.py       Taskbar window limit (reminder while focusing), close programs by foreground window, foreground program detection, hide / show windows
 ├─ prestart.py           Pre-start (PC only) + windows that trigger hiding: hide / mute, and keep them going when focus restarts directly from a break
 ├─ audiomute.py          Mute / unmute by process (audio sessions, used by pre-start)
-├─ recorder.py           Contract recording (camera / screen, using Windows' built-in H.264 encoder; storage / MF / merging in recorder_parts/)
-├─ devsync.py            Device sync: discovery, pairing, encryption, syncing, direct package / file transfer (mixins / utils in devsync_parts/)
+├─ recorder/             Contract recording (camera / screen, using Windows' built-in H.264 encoder; storage / MF / merging in recorder/)
+├─ devsync/              Device sync: discovery, pairing, encryption, syncing, direct package / file transfer (mixins / utils in devsync/)
 ├─ sync_local.py         Device sync ↔ local data
 ├─ firewall.py           Windows Firewall: allow the sync port
 ├─ updater.py            Check / install updates from GitHub
-├─ ai_assist.py          AI list suggestions: providers, prompts, parsing (config / HTTP / search in ai_parts/)
+├─ ai_assist/            AI list suggestions: providers, prompts, parsing (config / HTTP / search in ai_assist/)
 ├─ context_collect.py    Local information for AI suggestions (installed apps, domains in browsing history)
-├─ i18n.py               Chinese / English UI strings
+├─ i18n/                 Chinese / English UI strings
 ├─ toast.py              Notifications / confirmations / notices that can only be dismissed by hand
 ├─ shortcut.py           Desktop shortcut, Start menu
 ├─ uninstall.py / .bat   Standalone uninstaller
 ├─ pages/                UI for each page
-│  ├─ settings_page.py   Settings (grouped into pages; forms / cards / chat / recording in settings_parts/)
+│  ├─ settings_page/     Settings (grouped into pages; forms / cards / chat / recording in settings_page/)
 │  ├─ sync_panel.py      Device sync (Settings → Basic Settings)
 │  ├─ rules_page.py      Rules (lists)
 │  ├─ up_dialog.py       Uploader lists under a website entry

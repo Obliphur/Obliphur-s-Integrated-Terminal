@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tempstore
 
 tempstore.autosession()
-from app_parts import app_sync as S  # noqa: E402
+from app import app_sync as S  # noqa: E402
 
 
 def test_system_idle():

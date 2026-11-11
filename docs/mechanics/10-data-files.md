@@ -69,7 +69,7 @@ OIT 自己的临时文件都在 `%TEMP%\OIT\` 一个文件夹里 (`tempstore.py`
   (里面只有 `recordings/` 和 mp4 / `.oitv`) 也一起清; 现在的录像工作文件都在 `OIT\rec` 里.
   别的程序的临时目录、没有权限读的目录 (别的账户建的) 不碰.
 - 自检 / 工具脚本开会话时 (`autosession` / `session`), 用过的录像工作目录 `OIT\rec\<tag>` 退出时一起删
-  (`tempstore.path` 自动记下来), 空的 `rec` / `OIT` 目录也一并去掉; 所以反复跑 `python recorder.py` 不会留下空目录.
+  (`tempstore.path` 自动记下来), 空的 `rec` / `OIT` 目录也一并去掉; 所以反复跑 `python -m recorder` 不会留下空目录.
 - 想看占了多大 / 手动清空: `python tempstore.py --status` (含顶层 `tmp*` 残留的个数和大小) / `python tempstore.py --clean`.
 - 新代码要临时目录就用 `tempstore.path(...)` / `tempstore.mkdtemp(...)`, 不要自己拼 `tempfile.gettempdir()`.
 

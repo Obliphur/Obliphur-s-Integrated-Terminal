@@ -362,7 +362,7 @@ class Link:
 def _mtimes():
     here = os.path.dirname(os.path.abspath(__file__))
     out = []
-    for n in ("linkd.py", "devsync.py"):
+    for n in ("linkd.py", "devsync.py", os.path.join("devsync", "__init__.py")):
         try:
             out.append(os.path.getmtime(os.path.join(here, n)))
         except OSError:

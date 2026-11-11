@@ -10,7 +10,7 @@ from tkinter import ttk
 
 import avatar as avatar_mod
 import comm as comm_mod
-from comm_parts import comm_data
+from comm import comm_data
 import config
 import toast
 from config import COLORS

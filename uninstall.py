@@ -52,8 +52,9 @@ CONFIRM_WORD = "UNINSTALL"
 OUR_PORTS = range(DEFAULT_PORT, DEFAULT_PORT + 21)     # FilterProxy.start 端口被占用时最多往后找 20 个
 NO_WINDOW = 0x08000000
 DETACHED = 0x00000008 | 0x00000200                     # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
-# 确认是 OIT 的程序文件夹才允许整个删掉
-PROGRAM_MARKERS = ("main.py", "app.py", "net_guard.py", "uninstall.py")
+# 确认是 OIT 的程序文件夹才允许整个删掉 (net_guard 现在是包, 检查目录)
+PROGRAM_MARKERS = ("main.py", "app.py", "uninstall.py")
+PROGRAM_DIRS = ("net_guard",)
 
 
 # ───────────────────────── 路径 ─────────────────────────
@@ -105,7 +106,8 @@ def looks_like_program_dir(path: str) -> bool:
     home = os.path.abspath(os.path.expanduser("~"))
     if os.path.normcase(path) == os.path.normcase(home):
         return False
-    return all(os.path.isfile(os.path.join(path, m)) for m in PROGRAM_MARKERS)
+    return (all(os.path.isfile(os.path.join(path, m)) for m in PROGRAM_MARKERS)
+            and all(os.path.isdir(os.path.join(path, m)) for m in PROGRAM_DIRS))
 
 
 def is_git_repo(path: str) -> bool:
@@ -780,12 +782,15 @@ def _selftest():
     assert not is_our_proxy("10.0.0.1:17890") and not is_our_proxy("")
     assert ps_quote("a'b") == "'a''b'"
 
-    tmp = tempfile.mkdtemp()
+    # 假的程序文件夹不能放在 %TEMP%\OIT 里: run_uninstall 会调 tempstore.clean() 把它整个删掉
+    tmp = tempfile.mkdtemp(dir=os.path.dirname(tempstore.root()))
     low = os.path.join(tmp, "LocalLow")
     prog = os.path.join(tmp, "prog")
     os.makedirs(prog)
     for m in PROGRAM_MARKERS:
         open(os.path.join(prog, m), "w").close()
+    for m in PROGRAM_DIRS:
+        os.makedirs(os.path.join(prog, m))
 
     def fresh():
         d = os.path.join(low, APP_NAME)

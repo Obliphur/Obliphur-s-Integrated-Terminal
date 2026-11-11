@@ -64,7 +64,7 @@ root.destroy()
 
 # ---- app._joint_invite_watch (用假的 self 调用, 不启动程序) ----
 import app as A
-from app_parts import app_comm
+from app import app_comm
 from datetime import datetime
 
 log = []

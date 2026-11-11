@@ -50,7 +50,7 @@ def is_english_name(name: str) -> bool:
 
 class Facts:
     """判定用的数据. study: {日期: 小时} (所有设备合计); hours: {日期: {小时: 内容}};
-    contracts: 结束了的合约 (contract.py 的 history); carry: 积攒的休息时间 (秒)."""
+    contracts: 结束了的合约 (contract/ 的 history); carry: 积攒的休息时间 (秒)."""
 
     def __init__(self, now: datetime, first: datetime, in_setup: bool, study: dict, hours: dict,
                  contracts=None, carry: float = 0):
