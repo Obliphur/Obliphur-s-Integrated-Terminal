@@ -45,7 +45,6 @@ from comm_prompt import REFUSE, SHIFT_TAG, MSGS_TAG, THINK_LONG, THINK_WORDS, TH
 from comm_persona import SHIFT_LO, SHIFT_HI, SHIFT_KEEP, MAX_PERSONA, MEM_MAX, PERSONA_EXT, readme_text, pid_of, love_norm, love_line, shift_norm, shift_pairs, hm_text, shift_line, mem_fields, seed_builtin, ensure_personas, list_personas, persona_title, uses_prefix, system_head, PERSONA_HEAD, persona_system, persona_labels, read_persona, ROUTINE_SUFFIX, COMPANION_SEP, companion_base, is_companion_name, companion_files, companions_of, routine_name_of, read_routine, read_persona_full, import_persona
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OIT_TAG = "[OIT_SYSTEM_MESSAGES]"      # OIT 直接发出的消息都带这个标记 (1.0.423)
 DEFAULT_AVATARS = {"Claudia.txt": "Claudia.png"}    # 自带人设的默认头像 (1.0.426): defaults/avatars/ 里的文件
 PRO_LANGS = ("中文", "English", "日本語", "한국어", "Français", "Deutsch", "Español", "Русский")       # 设置里的主动谈话语言可选项 (1.0.407); 也可以自己写别的
 MAX_PRO_LANG = 30
@@ -68,7 +67,6 @@ SHARE_DATA_PAGES = ("timer", "log", "cal", "stats")                  # 有数据
 SHARE_SKIP_PAGES = ("settings", "comm", "prescript", "reset")        # share data 打开时, 在这些页面里不分享也不显示聊天悬浮窗 (回到沟通 = 结束)
 SHARE_PAGE_NAMES = {"timer": "计时器", "log": "整点记录", "cal": "日历", "stats": "统计", "net": "联网", "contract": "合约", "ach": "成就"}
 SHIFT_ASK_TTL = 300                   # 用户请求平移起点: 等对方回 [Yes] / [No] 最多这么久 (秒)
-STATE_TAG = "state"                   # 对方输入 [state]: OIT 告诉它此刻的日程状态 (这一段的性质 + 结束时间), 再调用一次 (1.0.414)
 SHARE_ASK_TTL = 300                   # 用户打开 share data 要先问对方: 等对方回 [Yes] / [No] 最多这么久 (秒)
 SHARE_INVITE_TTL = 5 * 60             # 对方发 [share data] 之后, 邀请有效这么久 (秒, 1.0.428 起 5 分钟, 超时自动清理)
 _SHARE_RE = re.compile(r"[\[［]\s*share\s+data\s*[\]］]", re.I)
@@ -110,14 +108,8 @@ def char_delay(text: str) -> float:
     return n * CHAR_DELAY_CJK + (len(s) - n) * CHAR_DELAY
 RETRY_GAP = 10 * 60                   # 对方不方便回复时, 多久再把消息交给模型
 RETRY_MAX = 12
-HISTORY_SENT = 200                    # 每次请求最多带多少条聊天记录 (本地存 600 条, 带的取最近 200 条): 原话全带上, 量由下面的字数兜底
-HISTORY_CHARS = 120000                # 带的聊天记录总共最多多少字 (超了从最老的开始不带)
-HISTORY_STEP = 10                     # 带的聊天记录的起点一次往后挪这么多条 (不是每条都挪): 请求的开头 (前面的历史) 才能在这么多条消息里保持不变,
-                                      # 服务商的提示缓存才命中 (分条发连着调用两次, 第二次的前面全是第一次发过的内容)
-MAX_MSG_CHARS = 8000                  # 单条消息超过这么多字: 只截掉中间 (发给模型的那份, 本地记录不动), 免得一次粘贴 / 一个附件吃掉整个窗口
 OP_MIN_LEAD = 5 * 60                  # 对方发起联合行动: 开始时间要离现在至少这么久 (秒), 不然用户来不及准备
 OP_OFFER_MAX = 12                     # 给对方看的开始时间最多列几个 (最近的; 定开始时间时 OIT 仍然从全部里找)
-COND_TAG = "condition"               # 人设里的判定交给 OIT: 对方输入 [condition], OIT 算出用户当前的进度和每个条件满足没有, 再调用一次 (1.0.392)
 COND_JOINT_DAYS, COND_JOINT_N, COND_JOINT_LV = 30, 24, 15      # I.  前 30 天 (含今天) 和对方共同完成 24 场难度 >= 15 的合约
 COND_STUDY_DAYS, COND_STUDY_H, COND_IDLE_H = 60, 420.0, 210.0  # II. 前 60 天 (含今天) 专注 >= 420 h, 空闲 <= 210 h
 COND_MSGS = 500                       # III. 双方一共发了至少 500 条信息 (现在聊天记录里有的; 本地存的条数 KEEP 要比它大)
@@ -160,7 +152,6 @@ CHAT_TEMPERATURE = 0.8
 THINK_KINDS = ("proactive", "joint_reply", "chase", "love", "love_reply")      # 系统触发的: 主动发起 (要选话题 / 可能发起联合行动), 回应联合行动的接受 / 拒绝, 追问
 THINK_NEW_AFTER = 180                                    # 对方此刻按日程该在专注 / 睡眠, 而用户这时开始一段新的谈话 (上一条对方的消息已经是 3 分钟以前): 要判断回不回
 
-WEEKDAY = "一二三四五六日"
 
 DEFAULTS = {"persona": "", "show_avatar": True,
             "avatar_me": "", "avatar_ai": "", "default_avatars": 0, "pro_key": "", "retry": {}, "clear_ts": 0, "seeded": False, "assistant_seeded": False,
@@ -237,76 +228,9 @@ _OP_STRIP_RE = re.compile(r"\[\s*operation\s*\](?:\s*\[[\d,\s，、]*\])?", re.I
 
 
 
-def is_claudia(name: str) -> bool:
-    """人设名字是 Claudia (文件名的后缀不算, 不分大小写: Claudia.txt / claudia.md)."""
-    return persona_title(name).strip().casefold() == "claudia"
-
-
-def is_refusal(text: str) -> bool:
-    return REFUSE in re.sub(r"\s+", " ", str(text or "")).lower()
-
-
-def stamp(now: datetime) -> str:
-    return f"{now:%Y-%m-%d} 周{WEEKDAY[now.weekday()]} {now:%H:%M}"
-
-
-def urlsplit_host(url) -> str:
-    from urllib.parse import urlsplit
-    try:
-        return urlsplit(str(url or "")).hostname or "?"
-    except ValueError:
-        return "?"
-
-
-def info_tags(reply: str) -> list:
-    """对方这次回复是在要资料吗: 有 [模块名] (不分大小写和空格; 有没有 [refuse to reply] 都算) → 要的模块列表 (comm_data.MODULE_TAGS)."""
-    t = re.sub(r"\s+", " ", str(reply or "")).lower()
-    import comm_data
-    tags = [tag for tag in comm_data.MODULE_TAGS if f"[{tag}]" in t]
-    if f"[{COND_TAG}]" in t:                 # 人设里要 OIT 帮忙判定的条件
-        tags.append(COND_TAG)
-    if f"[{MSGS_TAG}]" in t:                 # 聊天记录数 (1.0.402)
-        tags.append(MSGS_TAG)
-    if f"[{STATE_TAG}]" in t:                # 此刻的日程状态 / 结束时间 (1.0.414)
-        tags.append(STATE_TAG)
-    return tags
-
-
-def joint_answer(reply: str) -> str:
-    """对方对联合行动邀请的回复: "yes" ([Yes]) / "no" ([No]) / "" (没有表态). 不分大小写和空格; 两个都有按拒绝."""
-    t = re.sub(r"\s+", "", str(reply or "")).lower()
-    if "[no]" in t:
-        return "no"
-    return "yes" if "[yes]" in t else ""
-
-
-def _joint_time(v) -> datetime:
-    return v if isinstance(v, datetime) else datetime.fromisoformat(str(v))
-
-
-def clip_message(text: str, limit: int = MAX_MSG_CHARS) -> str:
-    """一条消息太长时只截掉中间: 开头和结尾通常才是要紧的, 中间省略 (只影响发给模型的那份)."""
-    text = str(text or "")
-    if len(text) <= limit:
-        return text
-    head = limit * 2 // 3
-    tail = limit - head
-    return text[:head] + f"\n…（中间省略 {len(text) - limit} 字）…\n" + text[-tail:]
-
-
-def cache_layout(profile: dict, system: str, dynamic: str, msgs: list) -> tuple:
-    """system 和会变的内容怎么放. Gemini 的隐式缓存要求 systemInstruction 逐字节相同:
-    记忆卡 / 联合行动 / 身份背景都不能放进 system, 要贴到最后一条用户消息里; 别家照旧放 system."""
-    if ai_assist.cache_plan(profile)["static_system"]:
-        if dynamic:
-            if msgs and msgs[-1]["role"] == "user":
-                msgs[-1]["content"] += dynamic
-            else:
-                msgs.append({"role": "user", "content": dynamic.strip()})
-        return system, msgs
-    return system + dynamic, msgs
-
-
+from comm_util import (OIT_TAG, STATE_TAG, COND_TAG, WEEKDAY, MAX_MSG_CHARS, HISTORY_SENT, HISTORY_STEP, HISTORY_CHARS,
+                       is_claudia, is_refusal, stamp, urlsplit_host, info_tags, joint_answer, _joint_time, clip_message,
+                       cache_layout, oit_text, first_turn, api_messages, sanitize_mem)
 def follow_delay(profile: dict, override: float = None) -> float:
     """规则 VIII 第二次调用先等多久 (秒): 按模型类型的缓存策略; override 是手动 / 自检设的值."""
     if override == 0.0:                      # 自检把默认值改成 0: 不等
@@ -315,69 +239,6 @@ def follow_delay(profile: dict, override: float = None) -> float:
         return override
     return ai_assist.cache_plan(profile)["delay"]
 
-
-_OIT_SYS_TAG_RE = re.compile(r"^\[系统[^\]]*\]\s*")
-
-
-def oit_text(text: str) -> str:
-    """OIT 直接发给模型的消息: 开头带上 [OIT_SYSTEM_MESSAGES] 标记 (已经有了就不重复).
-    有标记了就不再发 "[系统]" / "[系统·续]" 这类系统前缀, 免得同一件事标两次."""
-    t = str(text or "")
-    if t.startswith(OIT_TAG):
-        return t
-    t = _OIT_SYS_TAG_RE.sub("", t, count=1)
-    return f"{OIT_TAG}\n{t}"
-
-
-def first_turn(msgs: list) -> bool:
-    """这一段对话是不是刚开始 (最后一条用户消息之前还没有对方的回复).
-    身份背景只在第一轮请求里发一次: 之后不再每次付这份 token."""
-    last_me = -1
-    for i, m in enumerate(msgs):
-        if m.get("role") == "me":
-            last_me = i
-    if last_me < 0:
-        return not any(m.get("role") == "ai" for m in msgs)
-    return not any(m.get("role") == "ai" for m in msgs[:last_me])
-
-
-def api_messages(msgs: list) -> list:
-    """本地聊天记录 → API 的 messages: 连续同角色的合并, 以 user 开头; 总字数太多时从最老的开始不带."""
-    msgs = list(msgs)
-    if len(msgs) > HISTORY_SENT:                      # 起点按 HISTORY_STEP 一格一格挪: 中间的每一次请求, 开头都和上一次一模一样
-        drop = -(-(len(msgs) - HISTORY_SENT) // HISTORY_STEP) * HISTORY_STEP
-        msgs = msgs[drop:]
-    while len(msgs) > 1 and sum(len(str(m.get("api") or m.get("text") or "")) for m in msgs) > HISTORY_CHARS:
-        msgs = msgs[min(HISTORY_STEP, len(msgs) - 1):]
-    out = []
-    for m in msgs:
-        role = "assistant" if m.get("role") == "ai" else "user"
-        text = clip_message(str(m.get("api") or m.get("text") or ""))
-        if not text:
-            continue
-        if out and out[-1]["role"] == role:
-            out[-1]["content"] += "\n\n" + text
-        else:
-            out.append({"role": role, "content": text})
-    while out and out[0]["role"] == "assistant":
-        out.pop(0)
-    return out
-
-
-def sanitize_mem(text: str) -> str:
-    """模型给的记忆卡: 去掉代码块 / 解释, 统一成 "- " 开头的短行, 限制条数和字数; 是拒绝语 / 空的就当没给."""
-    t = str(text or "").strip()
-    if not t or is_refusal(t):
-        return ""
-    t = re.sub(r"```[^\n]*", "", t).replace("```", "").strip()
-    lines = []
-    for ln in t.splitlines():
-        ln = ln.strip().lstrip("-•*· ").strip()
-        if ln and "【系统记录】" not in ln:             # 系统记录由 OIT 自己写进长期记忆, 不收模型抄的
-            lines.append("- " + ln)
-        if len(lines) >= 15:
-            break
-    return "\n".join(lines)[:MEM_MAX]
 
 
 # ══════════════ 管理器 ══════════════
