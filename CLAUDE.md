@@ -27,7 +27,7 @@ python release.py               # 发布（PyInstaller）
 | `_prestart_check.py` | 提前启动：挑选/搜索/去重逻辑，弹窗 | `prestart.py`、`pages/prestart_dialog.py` |
 | `_hold_check.py` | 休息 / 外出 / 联网时不能开始合约（`contract_block`） | `app.contract_block`、合约开始入口 |
 | `_ui_check.py` | 合约页底部按钮：变灰 + 上方提示 + 恢复 | `pages/contract_page.py` 的 `_build_bar` / `refresh` |
-| `_contract_board_check.py` | 词条板分页 / 翻页 / 组合页排版 / 锁定描述 | `contract.py` 的 `TERMS`、`PAGES`、`LAYOUT`、`_draw_*` |
+| `_contract_board_check.py` | 词条板分页 / 翻页 / 组合页排版 / 锁定描述 | `contract_parts/contract_rules.py` 的 `TERMS`、`PAGES`、`LAYOUT`；`_draw_*` 在 `pages/contract_page.py` |
 | `_stats_ui_check.py` | 统计页：合约记录、违规记录、黑雾、等级写法 | `pages/stats_page.py`、`contract.level_label` |
 | `_behavior_check.py` | 行为模式 / 外出与数据叠加 | `behavior.py`、`data_manager.py` |
 | `_daily_ui_check.py` | 设置 → 日常（睡觉时间、行为模式） | `pages/settings_page.py` |
@@ -86,13 +86,13 @@ python release.py               # 发布（PyInstaller）
 
 ## 读文件规则（控制上下文）
 
-- **禁止整文件读取大文件**：`comm.py`(约 7300 行)、`app_parts/app_timer.py`(45KB)、`app_parts/app_contract_media.py`、`contract.py`、`devsync.py`、`i18n.py`、`ai_assist.py` 等。先用 Grep 搜关键词定位行号，再用 Read 的 `offset/limit` 只读相关片段。
+- **禁止整文件读取大文件**：`comm.py`(约 7300 行)、`app_parts/app_timer.py`(45KB)、`app_parts/app_contract_media.py`、`contract.py`、`devsync.py`、`i18n.py`、`ai_assist.py` 等（`contract.py` / `devsync.py` 的纯规则与密码学已拆到 `contract_parts/`、`devsync_parts/`）。先用 Grep 搜关键词定位行号，再用 Read 的 `offset/limit` 只读相关片段。
 - **查机制先看 `MECHANICS.md` 的目录**，再只读 `docs/mechanics/` 里对应的那一节（多数 1–30KB；18 合约 56KB、24 沟通 119KB 仍然只读相关段落）。不要通读。
 - 宽泛的跨文件搜索交给 Explore 子代理，只带回结论。
 
 ## 硬性约定（见 for_developer.md）
 
-1. 改机制前查 `docs/mechanics/` 里对应的那一节（目录在 `MECHANICS.md`）保兼容；改完同步 `i18n.py`、那一节、`README.md`（README 只记模块级要点，细节进 MECHANICS）。
+1. 改机制前查 `docs/mechanics/` 里对应的那一节（目录在 `MECHANICS.md`）保兼容；改完同步 `i18n_parts/i18n_en.py`（英文译文）、那一节、`README.md`（README 只记模块级要点，细节进 MECHANICS）。
 2. 注意**跨天问题**（额度、整点记录、睡觉时间等跨零点）。
 3. 设置项按模块分页（顺序同左侧导航，基本设置永远第一页）；新功能：选项在上、数值在下。
 4. UI 文案走 `i18n.py` 的 `tr()`，不加小字解释。
@@ -105,6 +105,7 @@ python release.py               # 发布（PyInstaller）
 - **`app.py` 只剩装配**：`__init__` 里读状态、建页面、挂定时器；页面、计时器状态机（`IDLE / RUNNING / READY_BREAK / ON_BREAK`）、tick、关闭/重置都在 `app_*.py` 的 mixin 里（明细见「实现地图」）。页面 UI 在 `pages/`。再拆新子系统就照这个模式：一个 `app_xxx.py` + 一个 `XxxMixin`，状态仍全放 `self`，无状态工具放 `app_parts/app_base.py`。
 - **断网两条路**（`NET_MODE`）：Adapter 直接禁网卡；Proxy 走 `netproxy/` 过滤代理（`bypassguard.py` 补拦直连）。优先级链在 `rules.py` 的 `decide()`：localhost → 合约网络禁令 → 联网会话 → 提前启动豁免 → 全屏蔽 → 白/黑名单。
 - **提前启动豁免**：`app_parts/app_daily.py` 每秒把 `prestart.exe_names()`（含子进程）刷到 `rules.exempt`，绕过名单和全屏蔽，但绕不过合约网络禁令。
+- **合约纯规则**在 `contract_parts/contract_rules.py`（词条表、组合、公式，无存档状态）；`contract.py` 用显式 import 重新导出，`C.TERMS` 之类的写法不变。**同步密码学**在 `devsync_parts/devsync_crypto.py`，`devsync.py` 同样重新导出 `seal` / `unseal` / `SealError`。
 - **合约 override 设置**：`config.CONTRACT_OVERRIDES` 由 settings_manager 套在生效值之上。
 - **临时文件**：全部在 `%TEMP%\OIT\`（`tempstore.py`）。启动时 `sweep()` 清掉一天前没动过的；自检 / 检查脚本开头 `tempstore.session("名字")` 退出即删。要临时目录就用 `tempstore.path(...)` / `tempstore.mkdtemp(...)`，别再自己拼 `tempfile.gettempdir()`。
 - 数据在 `%USERPROFILE%\AppData\LocalLow\Obliphur's Integrated Terminal\`，发布版经 `securefile.py` 加密；`continuity.py` 处理数据被搬走/回滚。改数据读写前读 `docs/mechanics/10-data-files.md`、`15-sync.md`。
