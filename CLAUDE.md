@@ -15,7 +15,7 @@ python release.py               # 发布（PyInstaller）
 - 无统一测试套件：各模块 `__main__.py` / `if __name__ == "__main__"` 里的断言即自检（包用 `python -m <包>`）。
 - 别在本机试跑 `setup.exe`（会装 Program Files 并写注册表）。
 - `config_local.py` 只在 git 开发版生效，用于本地覆盖 config 数值。
-- 每次开发完成递增 `config.py` 的 `APP_VERSION`。
+- 每次开发完成递增 `config.py` 的 `APP_VERSION`，同时把 `Android version/app/build.gradle.kts` 的 `versionName` 设为同一个版本号、`versionCode` 加一（手机版与桌面版版本号保持一致）。
 - 别提交调试/预览截图，截图放系统临时目录。
 
 ## 检查脚本（`checks/_*_check.py`）
