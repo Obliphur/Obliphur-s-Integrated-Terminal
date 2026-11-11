@@ -1,7 +1,7 @@
 """合约 (MECHANICS 18): 检查 / 开始 / 结束.
 
 从 app.py 的 BreakTimerApp 拆出来的 mixin: 状态都在 self 上, 这里只放方法.
-录像的合并 / 发送 / 违规 / 禁网在 app_contract_media.py.
+录像的合并 / 发送 / 违规 / 禁网在 app_parts/app_contract_media.py.
 """
 
 import sys
@@ -15,7 +15,7 @@ import devsync
 import recorder
 import toast
 import window_guard
-from app_base import contract_page_results
+from app_parts.app_base import contract_page_results
 from config import IDLE, ON_BREAK, READY_BREAK, RUNNING, fmt_ms
 from i18n import tr
 

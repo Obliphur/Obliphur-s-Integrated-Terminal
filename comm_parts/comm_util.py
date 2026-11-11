@@ -5,8 +5,8 @@ import re
 from datetime import datetime
 
 import ai_assist
-from comm_persona import MEM_MAX, persona_title
-from comm_prompt import REFUSE, MSGS_TAG
+from comm_parts.comm_persona import MEM_MAX, persona_title
+from comm_parts.comm_prompt import REFUSE, MSGS_TAG
 
 
 OIT_TAG = "[OIT_SYSTEM_MESSAGES]"      # OIT 直接发出的消息都带这个标记 (1.0.423)
@@ -44,7 +44,7 @@ def urlsplit_host(url) -> str:
 def info_tags(reply: str) -> list:
     """对方这次回复是在要资料吗: 有 [模块名] (不分大小写和空格; 有没有 [refuse to reply] 都算) → 要的模块列表 (comm_data.MODULE_TAGS)."""
     t = re.sub(r"\s+", " ", str(reply or "")).lower()
-    import comm_data
+    from comm_parts import comm_data
     tags = [tag for tag in comm_data.MODULE_TAGS if f"[{tag}]" in t]
     if f"[{COND_TAG}]" in t:                 # 人设里要 OIT 帮忙判定的条件
         tags.append(COND_TAG)

@@ -1,7 +1,7 @@
 """设置生效 / 48 小时冷静期 / 关闭程序 / 日志与侧边栏徽章.
 
 从 app.py 的 BreakTimerApp 拆出来的 mixin: 状态都在 self 上, 这里只放方法.
-设置项的定义和取值在 settings_manager.py; 关闭程序时的计时器收尾走 app_timer.py.
+设置项的定义和取值在 settings_manager.py; 关闭程序时的计时器收尾走 app_parts/app_timer.py.
 """
 
 import os

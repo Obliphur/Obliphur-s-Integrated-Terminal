@@ -2,7 +2,7 @@
 """沟通页里"📎 数据"能发出去的内容: 今天的整点记录 / 专注计时, 日历 (选类别), 统计 (月数据) 的几页; 还有联合行动的邀请 (合约词条 + 开始 / 结束时间).
 手机版: core/CommData.kt.
 
-    python comm_data.py     自检 (用假数据)
+    python comm_parts/comm_data.py     自检 (用假数据)
 """
 
 from datetime import datetime, timedelta

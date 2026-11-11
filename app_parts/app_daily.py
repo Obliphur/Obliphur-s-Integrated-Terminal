@@ -1,7 +1,7 @@
 """睡觉 (MECHANICS 23) / 外出与行为模式 (MECHANICS 21) / 提前启动 (MECHANICS 20).
 
 从 app.py 的 BreakTimerApp 拆出来的 mixin: 状态都在 self 上, 这里只放方法.
-计时器本体在 app_timer.py; 睡觉时的整点记录直接改 DataManager, 见 MECHANICS 23.1.
+计时器本体在 app_parts/app_timer.py; 睡觉时的整点记录直接改 DataManager, 见 MECHANICS 23.1.
 """
 
 import os
@@ -12,7 +12,7 @@ from tkinter import ttk
 import config
 import prestart
 import toast
-from app_base import _hours_text
+from app_parts.app_base import _hours_text
 from config import COLORS, IDLE, RUNNING, fmt_hm, fmt_ms
 from i18n import tr
 from pages.outing_dialog import OutingDialog

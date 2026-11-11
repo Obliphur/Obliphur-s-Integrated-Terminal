@@ -34,7 +34,7 @@ def _enable_per_monitor_dpi():
         pass
 
 
-ALARM_WAV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sounds", "target_alarm.wav")
+ALARM_WAV = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sounds", "target_alarm.wav")
 
 
 TIRED_TEXT = ("主管{name}你好.我是Obliphur.\n"

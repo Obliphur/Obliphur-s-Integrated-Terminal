@@ -3,6 +3,9 @@
 在临时目录里跑, 不碰本机的数据.
 """
 
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tempstore
 tempstore.session("behavior_check")      # 临时文件放在 %TEMP%\OIT 里, 退出时整个删掉 (tempstore.py)
 

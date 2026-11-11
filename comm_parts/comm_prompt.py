@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """前置 prompt 与休息函数文本的拼装 (从 comm.py 拆出)。"""
 
-from comm_reply import NET_MAX_MIN
+from comm_parts.comm_reply import NET_MAX_MIN
 import config
 import re
 

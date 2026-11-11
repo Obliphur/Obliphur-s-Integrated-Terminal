@@ -12,9 +12,9 @@ import tkinter as tk
 from datetime import datetime, timedelta
 from tkinter import ttk
 
-import comm_data
+from comm_parts import comm_data
 import config
-from app_base import _play_audio_file
+from app_parts.app_base import _play_audio_file
 from config import COLORS, IDLE, ON_BREAK, RUNNING
 
 

@@ -1,4 +1,7 @@
 """合约页: 休息 / 联网中不能开始行动 (按钮变灰 + 上方一行提示), 结束后恢复. 窗口开在屏幕外."""
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tempstore
 tempstore.session("ui_check")            # 临时文件放在 %TEMP%\OIT 里, 退出时整个删掉 (tempstore.py)
 

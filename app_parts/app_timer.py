@@ -1,7 +1,7 @@
 """计时器 (MECHANICS 6): 状态机入口 / 专注状态存档与恢复 / 专注结算 / 每秒 tick / 跨天 / 整点.
 
 从 app.py 的 BreakTimerApp 拆出来的 mixin: 状态都在 self 上, 这里只放方法.
-休息在 app_break.py; 睡觉在 app.py (MECHANICS 23).
+休息在 app_parts/app_break.py; 睡觉在 app.py (MECHANICS 23).
 """
 
 import os
@@ -15,7 +15,7 @@ import config
 import contract as contract_mod
 import devsync
 import toast
-from app_base import _play_audio_file
+from app_parts.app_base import _play_audio_file
 from config import (COLORS, IDLE, ON_BREAK, READY_BREAK, RUNNING,
                     compute_F, ensure_builtin_chime, fmt_hm, fmt_ms,
                     load_json_file, save_json_file)

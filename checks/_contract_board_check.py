@@ -1,3 +1,6 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tempstore
 tempstore.session("contract_board_check")     # 临时文件放在 %TEMP%\OIT 里, 退出时整个删掉 (tempstore.py)
 

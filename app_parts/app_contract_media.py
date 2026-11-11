@@ -1,7 +1,7 @@
 """合约的录像 / 合并 / 发送 / 违规 / 禁网 (MECHANICS 18.3, 18.6, 18.8).
 
 从 app.py 的 BreakTimerApp 拆出来的 mixin: 状态都在 self 上, 这里只放方法.
-检查 / 开始 / 结束在 app_contract.py.
+检查 / 开始 / 结束在 app_parts/app_contract.py.
 """
 
 import os
@@ -17,7 +17,7 @@ import recorder
 import securefile
 import toast
 import window_guard
-from app_base import ALARM_WAV, _play_audio_file
+from app_parts.app_base import ALARM_WAV, _play_audio_file
 from config import ON_BREAK, RUNNING
 from i18n import tr
 

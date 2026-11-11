@@ -1,7 +1,7 @@
 """页面侧的小块: 日程跟随 / 闹钟 / 规则弹窗 / 侧边栏 / 计时页 UI.
 
 从 app.py 的 BreakTimerApp 拆出来的 mixin: 状态都在 self 上, 这里只放方法.
-闹钟的判定在 alarm.py (MECHANICS 25), 计时页的状态机在 app_timer.py.
+闹钟的判定在 alarm.py (MECHANICS 25), 计时页的状态机在 app_parts/app_timer.py.
 """
 
 import os
@@ -15,7 +15,7 @@ from tkinter import ttk
 import comm as comm_mod
 import config
 import toast
-from app_base import _blend, _play_audio_file
+from app_parts.app_base import _blend, _play_audio_file
 from config import COLORS, IDLE, ON_BREAK, RUNNING
 from i18n import tr
 from pages import RulesPage

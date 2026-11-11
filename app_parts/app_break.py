@@ -1,7 +1,7 @@
 """休息 (MECHANICS 6): 奖励休息 / 开始与暂停休息 / 休息结束后的提醒 / 结转.
 
 从 app.py 的 BreakTimerApp 拆出来的 mixin: 状态都在 self 上, 这里只放方法.
-计时状态机、专注结算和每秒 tick 在 app_timer.py.
+计时状态机、专注结算和每秒 tick 在 app_parts/app_timer.py.
 """
 
 import time
@@ -11,7 +11,7 @@ import config
 import contract as contract_mod
 import daily
 import toast
-from app_base import tired_text
+from app_parts.app_base import tired_text
 from config import COLORS, IDLE, ON_BREAK, RUNNING, fmt_hm, fmt_ms, load_json_file
 from i18n import tr
 

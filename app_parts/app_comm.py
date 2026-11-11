@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timedelta
 
 import comm as comm_mod
-import comm_data
+from comm_parts import comm_data
 import config
 import toast
 from config import ON_BREAK, RUNNING

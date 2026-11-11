@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """人设文件的读取、导入、配套文件与聊天对象的状态文本 (从 comm.py 拆出)。"""
 
-from comm_builtin import BUILTIN_PERSONAS, ASSISTANT_TITLE
-import comm_readme
+from comm_parts.comm_builtin import BUILTIN_PERSONAS, ASSISTANT_TITLE
+from comm_parts import comm_readme
 from datetime import datetime
 import os
-from comm_prompt import prefix_prompt
+from comm_parts.comm_prompt import prefix_prompt
 import shutil
 import zlib
 

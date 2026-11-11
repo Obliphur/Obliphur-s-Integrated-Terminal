@@ -9,6 +9,9 @@ import shutil
 import tempfile
 import time
 
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tempstore
 
 _SYS_TEMP = tempstore._SYS_TEMP          # 系统临时目录 (tempstore 自己在改 tempfile.tempdir 之前记下的)

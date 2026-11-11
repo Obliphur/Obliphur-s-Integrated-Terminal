@@ -14,7 +14,7 @@ import comm as comm_mod
 import config
 import i18n
 import toast
-from app_base import URBAN_NOTICE_FLAG, URBAN_NOTICE_HINTS
+from app_parts.app_base import URBAN_NOTICE_FLAG, URBAN_NOTICE_HINTS
 from config import APP_NAME, COLORS
 from i18n import tr
 from pages import (AchievementsPage, CalendarPage, CommPage, ContractPage, HourLogPage,
