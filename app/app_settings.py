@@ -101,7 +101,7 @@ class SettingsMixin:
                 self.prescripts.note_close()        # 指令 X 的输入框要写今天被手动关闭的时刻
             except Exception:
                 pass
-        # 提前启动藏起来的窗口要放出来, 不然关掉 OIT 以后它们一直藏着 (连同触发隐藏的窗口)
+        # 提前启动藏起来的窗口要放出来, 不然关掉 OIT 以后它们一直藏着
         try:
             self._stop_prestart(final=True)
         except Exception:

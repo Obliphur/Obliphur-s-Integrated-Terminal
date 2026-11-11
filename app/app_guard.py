@@ -350,15 +350,6 @@ class GuardMixin:
         rules = self.net.proxy.rules
         mode = getattr(config, "FILTER_MODE", "blacklist")
         rest = self.state == ON_BREAK              # 只管专注 / 空闲, 休息中全部放行; 和联不联网无关 (4.1)
-        # "触发隐藏的窗口" (MECHANICS 20): 程序名命中就先藏起来 (并标记成只藏不联网的提前启动),
-        # 不交给应用名单关掉. 要在关窗口之前判断, 否则可能来不及.
-        try:
-            fg = window_guard.foreground_window_info()
-            if fg and self.prestart.hide_triggered(fg):
-                self._log_window(f"HIDDEN   {fg.get('exe') or '?'}  {fg.get('title') or ''}")
-                return
-        except Exception:
-            pass
         hit = window_guard.check_focus_rules(lambda exe: rules.app_allowed(exe, rest, mode))
         if not hit:
             return

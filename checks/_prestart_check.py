@@ -238,38 +238,6 @@ assert [i["exe"] for i in ps4.last_items] == ["demo.exe"]
 ps4.drop_last()
 assert ps4.resume_last() is False
 
-# 触发隐藏的窗口 (设置 → 窗口): 程序名命中就藏, 只藏 (应用名单不关) 但不给联网豁免
-td2 = tempfile.mkdtemp(prefix="oit_hidden_")
-ts = prestart.TriggerStore(td2)
-assert ts.programs == [] and not ts.matches("")
-assert ts.set_programs(["  Game Launcher ", "", "game launcher.exe", "C:\\Tools\\OIT.exe"])
-assert ts.programs == ["game launcher.exe", "oit.exe"], ts.programs
-assert prestart.TriggerStore(td2).programs == ["game launcher.exe", "oit.exe"], "存档后重新读出来"
-assert ts.matches("Game Launcher.exe") and ts.matches(r"C:\Games\game launcher.exe")
-assert not ts.matches("notepad.exe")
-shutil.rmtree(td2, ignore_errors=True)
-
-ps5 = prestart.Prestart()
-ps5.triggers = lambda: ["other.exe"]
-assert ps5.hidden_exes() == set()
-assert ps5.hide_triggered({"hwnd": 201, "root": 201, "pid": 99, "exe": "other.exe",
-                           "title": "Movie Trailer", "visible": True})
-assert ps5.hidden_exes() == {"other.exe"}
-assert ps5.exe_names() == set(), "触发隐藏不算联网豁免"
-ps5.active = True
-ps5.marked = {"other.exe", "demo.exe"}
-assert ps5.exe_names() == {"demo.exe"}, "触发隐藏优先: 同时被选为提前启动也不豁免联网"
-ps5.active = False
-ps5.marked = set()
-assert 201 in state["hidden"]
-assert state["muted"][-1] == ({99}, True)
-# 不是这些程序的窗口不动
-assert not ps5.hide_triggered({"hwnd": 202, "pid": 99, "exe": "notepad.exe",
-                               "title": "other.exe", "visible": True})
-ps5.release_auto()
-assert ps5.hidden_exes() == set() and 201 in state["shown"]
-assert state["muted"][-1][1] is False
-
 root.destroy()
 shutil.rmtree(_tmp, ignore_errors=True)
 print("prestart check OK")

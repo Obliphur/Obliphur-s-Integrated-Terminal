@@ -124,7 +124,7 @@ obliphur_terminal/
 │  ├─ browserurl.py      读浏览器地址栏 (UI Automation)
 │  └─ selftest.py        端到端自检
 ├─ window_guard.py       任务栏窗口数上限 (专注中提醒), 按前台窗口关程序, 前台程序识别, 窗口藏 / 显示
-├─ prestart.py           提前启动 (仅 PC) + 触发隐藏的窗口: 藏窗口 / 静音, 休息中直接开始专注时接着上一段
+├─ prestart.py           提前启动 (仅 PC): 藏窗口 / 静音, 休息中直接开始专注时接着上一段
 ├─ audiomute.py          按进程静音 / 取消静音 (音频会话, 提前启动用)
 ├─ recorder/            合约的录像 (摄像头 / 屏幕, Windows 自带的 H.264 编码器; 存档 / MF / 合并在 recorder/)
 ├─ devsync/              设备同步: 发现, 绑定, 加密, 同步, 安装包 / 文件直接传输 (mixin / 工具在 devsync/)

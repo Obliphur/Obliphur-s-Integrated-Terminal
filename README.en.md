@@ -106,7 +106,7 @@ obliphur_terminal/
 │  ├─ browserurl.py      Read the browser address bar (UI Automation)
 │  └─ selftest.py        End-to-end self-test
 ├─ window_guard.py       Taskbar window limit (reminder while focusing), close programs by foreground window, foreground program detection, hide / show windows
-├─ prestart.py           Pre-start (PC only) + windows that trigger hiding: hide / mute, and keep them going when focus restarts directly from a break
+├─ prestart.py           Pre-start (PC only): hide / mute, and keep them going when focus restarts directly from a break
 ├─ audiomute.py          Mute / unmute by process (audio sessions, used by pre-start)
 ├─ recorder/             Contract recording (camera / screen, using Windows' built-in H.264 encoder; storage / MF / merging in recorder/)
 ├─ devsync/              Device sync: discovery, pairing, encryption, syncing, direct package / file transfer (mixins / utils in devsync/)

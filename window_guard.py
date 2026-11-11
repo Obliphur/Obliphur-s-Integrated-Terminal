@@ -284,21 +284,6 @@ def foreground_program() -> str:
     return classify_foreground(foreground_window())
 
 
-def foreground_window_info():
-    """前台窗口的完整信息 (含标题 / 根窗口 / 是否可见); 没有前台窗口返回 None.
-    "触发隐藏的窗口" 要在关窗口之前先按程序名判断 (MECHANICS 20)."""
-    w = foreground_window()
-    if not w:
-        return None
-    try:
-        d = _describe(w["hwnd"])
-        w.update(title=d["title"], visible=d["visible"], owned=d["owned"],
-                 root=_root_window(w["hwnd"]))
-    except Exception:
-        w.setdefault("title", "")
-    return w
-
-
 # ───────────────────────── 应用名单: 关掉前台窗口 ─────────────────────────
 
 # 不管名单怎么写都不关的程序: 系统界面, 资源管理器, 命令行, 任务管理器, 设置, 登录 / 权限确认

@@ -380,8 +380,7 @@ class DailyMixin:
         self._sync_timer_buttons()
 
     def _prestart_tick(self):
-        """每秒: 跟着这些进程 (含子进程); 空窗期过了 (或提前终止) 就藏窗口 / 静音; 专注结束就放出来.
-        另外管"触发隐藏的窗口": 程序名命中的窗口一直藏着, 但不给联网豁免."""
+        """每秒: 跟着这些进程 (含子进程); 空窗期过了 (或提前终止) 就藏窗口 / 静音; 专注结束就放出来."""
         if self.shutting_down:
             return
         try:
@@ -400,10 +399,6 @@ class DailyMixin:
                     self.prestart.step()
                 except Exception as e:
                     self._log_window(f"ERROR    prestart {type(e).__name__}: {e}")
-            try:
-                self.prestart.auto_step()
-            except Exception as e:
-                self._log_window(f"ERROR    hidden windows {type(e).__name__}: {e}")
             self._sync_prestart_exempt()
             self._sync_prestart_button()
         finally:
@@ -413,28 +408,20 @@ class DailyMixin:
     def _stop_prestart(self, park: bool = False, final: bool = False):
         """放出来: 显示藏起来的窗口 (不抢焦点), 取消静音, 清掉放行名单; 下次专注可以重新选.
 
-        park=True: 记下这次选过的程序 —— 休息中直接开始专注时接着用 (MECHANICS 20).
-        final=True: 关闭 OIT, 连"触发隐藏的窗口"也一起放出来."""
+        park=True: 记下这次选过的程序 —— 休息中直接开始专注时接着用 (MECHANICS 20)."""
         if park:
             self.prestart.park()
         self.prestart.stop(final=final)
         self._sync_prestart_exempt()
         self._sync_timer_buttons()
 
-    def _hidden_windows_changed(self):
-        """设置 → 窗口 的"触发隐藏的窗口"保存后: 先把以前自动藏起来的放出来, 再按新列表重新藏."""
-        self.prestart.release_auto()
-        self._sync_prestart_exempt()
-
     def _sync_prestart_exempt(self):
         """提前启动的程序联网不受网站 / 应用名单和代理-全屏蔽限制 (MECHANICS 20); AI 接口的域名也例外放行.
-        只有专注期间才有这个豁免; 休息中 / 空闲时照常按名单判定.
-        "触发隐藏的窗口"只进 hidden_exempt (应用名单不关), 不进联网豁免."""
+        只有专注期间才有这个豁免; 休息中 / 空闲时照常按名单判定."""
         try:
             rules = self.net.proxy.rules
             running = self.state == RUNNING
             rules.exempt = self.prestart.exe_names() if running else set()
-            rules.hide_exempt = self.prestart.hidden_exes()
             # 操作空窗期: 新启动的程序 (开始时没在运行的) 不受应用 / 网站名单限制; 原来就开着的照旧
             rules.open_new_except = self.prestart.baseline_exes if running and self.prestart.in_grace else None
             rules.api_hosts = self._api_hosts()

@@ -184,8 +184,6 @@ class RuleStore:
         # 提前启动的程序 (MECHANICS 20): 不看网站 / 应用名单, 直接放行 (代理-全屏蔽照样拦).
         # 由 app.py 在提前启动期间每秒钟更新成这些程序的 exe 名.
         self.exempt = set()
-        # "触发隐藏的窗口" (MECHANICS 20): 应用名单不关这些程序 (窗口被提前藏起来), 但它们不获得联网豁免.
-        self.hide_exempt = set()
         self.open_new_except = None      # 提前启动的操作空窗期: 不在这个集合里的程序 (开始时没在运行的) 名单 / 代理-全屏蔽都放行; None = 不开 (合约网络禁令除外, MECHANICS 20)
         # AI 接口的域名 (当前服务商 Base URL 的主机): 名单 / 代理-全屏蔽都放行 (合约网络禁令仍然优先).
         # 由 app.py 每秒按 ai_config.json 更新.
@@ -569,10 +567,9 @@ class RuleStore:
 
 
     def _grace_new(self, exe: str, mode: str = MODE_BLACKLIST) -> bool:
-        """空窗期里: 开始时没在运行的程序 (新启动的) 先放行, 不等下一秒的标记. 黑名单里的程序不放 (禁令不能借空窗期绕过).
-        "触发隐藏的窗口"标记的程序也不放 (它们不获得联网豁免)."""
+        """空窗期里: 开始时没在运行的程序 (新启动的) 先放行, 不等下一秒的标记. 黑名单里的程序不放 (禁令不能借空窗期绕过)."""
         base = self.open_new_except
-        if base is None or exe in base or exe in self.hide_exempt:
+        if base is None or exe in base:
             return False
         return not (mode == MODE_BLACKLIST and exe in self._snap[BLACK_APPS])
 
@@ -586,7 +583,7 @@ class RuleStore:
         (允许?, 原因). 原因: rest / whitelist-app / not-whitelisted / blacklist-app / default-allow"""
         exe = norm_app(exe) if exe else ""
         s = self._snap
-        if exe and (exe in self.exempt or exe in self.hide_exempt or self._grace_new(exe, mode)):
+        if exe and (exe in self.exempt or self._grace_new(exe, mode)):
             return True, "prestart"         # 提前启动的程序 / 空窗期新启动的程序: 不看名单 (MECHANICS 20)
         if rest:
             return True, "rest"
@@ -690,16 +687,6 @@ def _selftest():
     assert rs.app_allowed("code.exe", False, MODE_WHITELIST) == (True, "whitelist-app")
     assert rs.app_allowed("chrome.exe", False, MODE_WHITELIST) == (False, "not-whitelisted")
     assert rs.app_allowed("chrome.exe", True, MODE_WHITELIST) == (True, "rest")
-    # 触发隐藏的窗口: 应用名单不关 (当提前启动), 但联网不因此放行
-    rs.hide_exempt = {"hidden.exe"}
-    assert rs.app_allowed("hidden.exe", False, MODE_WHITELIST)[0]
-    assert rs.decide("other.com", "hidden.exe", False, MODE_BLOCKALL) == (False, "blockall")
-    open_new = rs.open_new_except
-    rs.open_new_except = {"old.exe"}
-    assert not rs._grace_new("hidden.exe"), "触发隐藏的程序不享受空窗期联网放行"
-    assert rs._grace_new("new.exe")
-    rs.open_new_except = open_new
-    rs.hide_exempt = set()
     assert rs.app_allowed("steam.exe", True, MODE_BLACKLIST) == (True, "rest"), "休息中全部放行"
 
     # 提前启动 (MECHANICS 20): 名单和代理-全屏蔽都不拦

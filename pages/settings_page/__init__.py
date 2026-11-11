@@ -26,8 +26,7 @@ class SettingsPage(FormMixin, CardsMixin, CommSettingsMixin, RecordSettingsMixin
                  on_update_install=None, on_update_relay=None, sync=None, achievements=None,
                  on_open_achievements=None, data_dir=None, recording=None, on_delete_record=None,
                  on_contract_theme=None, comm=None, on_open_rules=None,
-                 alarm=None, ringer=None, co_alarm_fn=None, ring_busy=None,
-                 hidden_windows=None, on_hidden_windows=None):
+                 alarm=None, ringer=None, co_alarm_fn=None, ring_busy=None):
         super().__init__(master, bg=COLORS["bg"])
         self.comm = comm
         self.on_open_rules = on_open_rules
@@ -35,8 +34,6 @@ class SettingsPage(FormMixin, CardsMixin, CommSettingsMixin, RecordSettingsMixin
         self.ringer = ringer
         self._co_alarm_fn = co_alarm_fn or (lambda: None)
         self._ring_busy = ring_busy or (lambda: False)
-        self.hidden_windows = hidden_windows      # 触发隐藏的窗口 (prestart.TriggerStore)
-        self.on_hidden_windows = on_hidden_windows or (lambda: None)
         self.alarm_ui = None
         self.sm = settings
         self.ach_store = achievements
@@ -159,8 +156,6 @@ class SettingsPage(FormMixin, CardsMixin, CommSettingsMixin, RecordSettingsMixin
                 from ..alarm_ui import AlarmSettings
                 self.alarm_ui = AlarmSettings(self, self.areas[key].inner)
             self._build_page_items(key)
-            if key == "window":
-                self._build_hidden_windows(self.areas[key].inner)
             if key == "record":
                 self._build_record_lists(self.areas[key].inner)
 

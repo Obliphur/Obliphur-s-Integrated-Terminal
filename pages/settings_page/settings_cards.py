@@ -1,4 +1,4 @@
-"""设置页的卡片: 首次设置、更新、成就、规则、触发隐藏的窗口。
+"""设置页的卡片: 首次设置、更新、成就、规则。
 
 从 pages/settings_page.py 拆出来的 mixin; 依赖方向: settings_page.py 导入它们, 它们从不导入 settings_page.py.
 """
@@ -143,78 +143,4 @@ class CardsMixin:
         fr, head = self._card(body, "🛡  规则")
         self._track(ttk.Button(head, text=tr("打开"), command=lambda: self.on_open_rules and self.on_open_rules()),
                     "打开").pack(side="right")
-
-    # ---- 窗口页: 触发隐藏的窗口 (MECHANICS 20) ----
-
-    def _build_hidden_windows(self, body):
-        """设置 → 窗口: 程序名匹配的窗口总被当成提前启动藏起来 (而不是被应用名单关掉), 但不获得联网权限.
-        添加式列表: 填一个程序名点添加, 下面是已有的程序; 选中后删除, 都是即时保存."""
-        if self.hidden_windows is None:
-            return
-        card = COLORS["bg_card"]
-        fr, head = self._card(body, "🫥  触发隐藏的窗口")
-        tk.Label(fr, text=tr("程序名填 exe 名, 例如 chrome.exe 或 chrome; 这些程序的窗口会藏起来, 但不获得联网权限."),
-                 bg=card, fg=COLORS["text_dim"], font=config.font("small"),
-                 anchor="w", justify="left", wraplength=config.scaled(560)).pack(
-            fill="x", padx=12, pady=(2, 4))
-        lf = tk.Frame(fr, bg=card)
-        lf.pack(fill="both", expand=True, padx=12, pady=(0, 4))
-        sb = ttk.Scrollbar(lf, orient="vertical")
-        self.hidden_list = tk.Listbox(
-            lf, height=5, activestyle="none", exportselection=False,
-            font=config.font("body"), yscrollcommand=sb.set,
-            highlightbackground=COLORS["border"], selectmode="extended")
-        sb.config(command=self.hidden_list.yview)
-        sb.pack(side="right", fill="y")
-        self.hidden_list.pack(side="left", fill="both", expand=True)
-        er = tk.Frame(fr, bg=card)
-        er.pack(fill="x", padx=12, pady=(0, 4))
-        self.hidden_var = tk.StringVar()
-        ent = ttk.Entry(er, textvariable=self.hidden_var)
-        ent.pack(side="left", fill="x", expand=True)
-        ent.bind("<Return>", lambda _e: self._add_hidden_window())
-        self._track(ttk.Button(er, text=tr("添加"), style="Accent.TButton",
-                               command=self._add_hidden_window), "添加").pack(side="left", padx=(6, 0))
-        br = tk.Frame(fr, bg=card)
-        br.pack(fill="x", padx=12, pady=(0, 10))
-        self._track(ttk.Button(br, text=tr("删除选中"),
-                               command=self._remove_hidden_window), "删除选中").pack(side="left")
-        self._refresh_hidden_list()
-        self.areas["window"].bind_children()
-
-    def _refresh_hidden_list(self):
-        self.hidden_list.delete(0, "end")
-        for program in self.hidden_windows.programs:
-            self.hidden_list.insert("end", program)
-
-    def _add_hidden_window(self):
-        if self.hidden_windows is None:
-            return
-        text = self.hidden_var.get().strip()
-        if not text:
-            return
-        if not self.hidden_windows.set_programs(list(self.hidden_windows.programs) + [text]):
-            toast.info(tr("已经在名单里了."))
-            self.hidden_var.set("")
-            return
-        self.hidden_var.set("")
-        self._refresh_hidden_list()
-        self.on_hidden_windows()
-        toast.success(tr("触发隐藏的窗口已保存."))
-
-    def _remove_hidden_window(self):
-        if self.hidden_windows is None:
-            return
-        picks = list(self.hidden_list.curselection())
-        if not picks:
-            toast.info(tr("先在列表里选中要删除的项."))
-            return
-        programs = list(self.hidden_windows.programs)
-        for i in reversed(picks):
-            if 0 <= i < len(programs):
-                programs.pop(i)
-        self.hidden_windows.set_programs(programs)
-        self._refresh_hidden_list()
-        self.on_hidden_windows()
-        toast.success(tr("触发隐藏的窗口已保存."))
 

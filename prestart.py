@@ -17,9 +17,6 @@
 休息中直接开始下一段专注时, 上一段专注的提前启动会原样接着 (不再重新给操作空窗期, 免得程序被应用名单关掉);
 联网豁免只在专注期间生效 (休息中照常按名单判定).
 
-另外管"触发隐藏的窗口" (设置 → 窗口): 程序名匹配这些名字的窗口藏起来而不关掉, 并把这个程序也标记成
-只藏不联网的提前启动 (应用名单不关它, 但联网照常判定).
-
     python prestart.py            自检 (不启动、不碰真实窗口, 只测挑程序和进程树)
 """
 
@@ -297,82 +294,6 @@ class ListStore:
         return out
 
 
-def _norm_program(name: str) -> str:
-    """程序名 → 统一的 exe 名 (小写, 带 .exe; 兼容 chrome / chrome.exe / 全路径)."""
-    text = str(name or "").strip().strip('"').replace("\\", "/")
-    text = text.rsplit("/", 1)[-1].strip().lower()
-    if not text:
-        return ""
-    return text if text.endswith(".exe") else text + ".exe"
-
-
-class TriggerStore:
-    """触发隐藏的窗口 (设置 → 窗口): 程序名列表, 存档 hidden_windows.json.
-
-    列表里写程序名 (exe 名, 例如 chrome.exe 或 chrome). 这些程序的窗口总被当成"提前启动"藏起来,
-    不会被应用名单关掉; 但它们不因此获得联网权限 (MECHANICS 20).
-    """
-
-    MAX_ITEMS = 100
-    MAX_LEN = 120
-
-    def __init__(self, data_dir: str):
-        self.path = os.path.join(data_dir, "hidden_windows.json")
-        self.programs = []           # 统一的 exe 名 (小写, 带 .exe)
-        self.blocked = lambda: False  # 重置中: 不再写文件
-        self._load()
-
-    def _load(self):
-        import json
-        import securefile
-        try:
-            with securefile.open(self.path, "r", encoding="utf-8") as f:
-                d = json.load(f)
-        except (OSError, ValueError):
-            return
-        raw = d.get("programs") if isinstance(d, dict) else d
-        self.programs = self._clean(raw)
-
-    @classmethod
-    def _clean(cls, lines) -> list:
-        out, seen = [], set()
-        for line in lines or []:
-            text = _norm_program(str(line or "")[:cls.MAX_LEN])
-            if not text or text in seen:
-                continue
-            seen.add(text)
-            out.append(text)
-            if len(out) >= cls.MAX_ITEMS:
-                break
-        return out
-
-    def save(self):
-        if self.blocked():
-            return
-        import json
-        import securefile
-        try:
-            os.makedirs(os.path.dirname(self.path), exist_ok=True)
-            tmp = self.path + ".tmp"
-            with securefile.open(tmp, "w", encoding="utf-8") as f:
-                json.dump({"programs": self.programs}, f, ensure_ascii=False, indent=1)
-            os.replace(tmp, self.path)
-        except OSError:
-            pass
-
-    def set_programs(self, lines):
-        """整份替换 (设置页的文本框保存). 返回有没有变."""
-        programs = self._clean(lines)
-        if programs == self.programs:
-            return False
-        self.programs = programs
-        self.save()
-        return True
-
-    def matches(self, exe: str) -> bool:
-        return bool(exe) and _norm_program(exe) in set(self.programs)
-
-
 def descendants(pids, procs=None) -> set:
     """pids 以及它们派生出来的子进程 (启动器 → 游戏这种)."""
     procs = window_guard.list_processes_full() if procs is None else procs
@@ -420,12 +341,6 @@ class Prestart:
         self._seeds = set()      # 空窗期里新启动的程序的进程
         self._baseline = None    # 开始时已在运行的进程 (空窗期里不算"新启动")
         self.baseline_exes = None  # 开始时已在运行的程序 exe 名 (空窗期里联网 / 名单放行"新程序"用)
-        # 触发隐藏的窗口 (设置 → 窗口): 只藏 / 不联网放行. 这些程序在 OIT 运行期间一直藏着,
-        # 直到列表里去掉对应的程序名 / 关闭 OIT.
-        self.triggers = lambda: []      # 程序名 (exe 名, 大小写随意)
-        self.hidden_only = set()        # 被触发隐藏的程序的 exe 名 (应用名单不关, 但联网照常判定)
-        self.auto_hidden = set()        # 自动藏起来的窗口
-        self.auto_pids = set()          # 自动藏起来的进程 (静音用)
 
     @property
     def chosen(self) -> bool:
@@ -502,131 +417,14 @@ class Prestart:
 
     def exe_names(self) -> set:
         """被标记的程序 exe 名 (选中的程序 + 它们派生的子进程, 整个专注期间保留): 网络 / 应用名单放行它们用 (MECHANICS 20).
-        不在提前启动状态时返回空集合; 休息中 (park 之后) 不返回, 只有专注期间才有联网豁免.
-        触发隐藏的程序优先: 即使也被选为提前启动, 也不给联网豁免 (MECHANICS 20.1)."""
+        不在提前启动状态时返回空集合; 休息中 (park 之后) 不返回, 只有专注期间才有联网豁免."""
         if not self.active:
             return set()
-        return set(self.marked) - self.hidden_only
-
-    def hidden_exes(self) -> set:
-        """触发隐藏的程序: 应用名单不关它们 (当提前启动藏起来), 但联网不因此放行."""
-        return set(self.hidden_only)
+        return set(self.marked)
 
     def count_pids(self) -> set:
-        """窗口数上限 / 通道阻塞不数这些进程: 提前启动的 + 触发隐藏的."""
-        return set(self.pids) | set(self.auto_pids)
-
-    def _matching_program(self, exe: str) -> bool:
-        program = _norm_program(exe)
-        if not program:
-            return False
-        try:
-            return any(_norm_program(t) == program for t in (self.triggers() or [])
-                       if str(t).strip())
-        except Exception:
-            return False
-
-    def hide_triggered(self, w: dict) -> bool:
-        """一个前台窗口的程序名命中"触发隐藏的窗口": 藏起来并标记它的程序 (只藏, 不联网放行).
-        w: window_guard.foreground_window_info() 的结果 (含 root / pid / exe)."""
-        exe = str((w or {}).get("exe") or "").strip().lower()
-        if not self._matching_program(exe):
-            return False
-        pid = int((w or {}).get("pid") or 0)
-        if exe and exe in _skip_exes():
-            return False
-        hwnd = (w or {}).get("root") or (w or {}).get("hwnd")
-        if not hwnd or not (w or {}).get("visible", True) or window_guard.is_iconic(hwnd):
-            return False
-        if exe:
-            self.hidden_only.add(exe)
-        if pid:
-            self.auto_pids.add(pid)
-        if window_guard.hide_window(hwnd):
-            self.auto_hidden.add(hwnd)
-        if self.auto_pids:
-            try:
-                audiomute.set_muted(self.auto_pids, True)
-            except Exception:
-                pass
-        return True
-
-    def auto_step(self):
-        """每秒: 程序名命中"触发隐藏的窗口"的窗口藏起来, 并把它们的程序一直当提前启动藏着.
-        只藏窗口 / 静音, 不加入联网豁免 (MECHANICS 20)."""
-        wanted = {_norm_program(str(t)) for t in (self.triggers() or []) if str(t).strip()}
-        wanted.discard("")
-        if not wanted:
-            return
-        try:
-            procs = window_guard.list_processes_full()
-            windows = window_guard.list_top_windows()
-        except Exception:
-            return
-        exe_of = {int(pid): str(exe or "").lower() for pid, _ppid, exe in procs}
-        skip = _skip_exes()
-        me = os.getpid()
-        alive = set(exe_of)
-        matched = set()
-        # 程序名命中的窗口: 标记程序, 藏窗口
-        for w in windows:
-            pid = int(w.get("pid") or 0)
-            exe = exe_of.get(pid, "")
-            if not exe or pid == me or exe in skip or exe not in wanted:
-                continue
-            matched.add(pid)
-            self.hidden_only.add(exe)
-            self.auto_pids.add(pid)
-            hwnd = w.get("hwnd")
-            if not w.get("visible") or not hwnd or hwnd in self.auto_hidden \
-                    or window_guard.is_iconic(hwnd):
-                continue
-            if window_guard.hide_window(hwnd):
-                self.auto_hidden.add(hwnd)
-        # 和提前启动一样把子进程也算进来 (启动器 → 游戏这种), 之后它们开的窗口也藏
-        tree = descendants((self.auto_pids & alive) | matched, procs)
-        tree.discard(me)
-        for pid in tree:
-            exe = exe_of.get(pid, "")
-            if exe and exe not in skip:
-                self.hidden_only.add(exe)
-                self.auto_pids.add(pid)
-        self.auto_pids &= tree
-        # 被标记的程序之后新开的窗口也藏 (按 exe 名认)
-        hide_exes = self.hidden_only - skip
-        for w in windows:
-            pid = int(w.get("pid") or 0)
-            if pid == me or exe_of.get(pid) not in hide_exes:
-                continue
-            hwnd = w.get("hwnd")
-            if not w.get("visible") or not hwnd or hwnd in self.auto_hidden \
-                    or window_guard.is_iconic(hwnd):
-                continue
-            if window_guard.hide_window(hwnd):
-                self.auto_hidden.add(hwnd)
-            self.auto_pids.add(pid)
-        if self.auto_pids:
-            try:
-                audiomute.set_muted(self.auto_pids, True)
-            except Exception:
-                pass
-
-    def release_auto(self):
-        """去掉"触发隐藏的窗口"列表 / 关闭 OIT: 把自动藏起来的窗口放出来, 取消静音, 清掉标记."""
-        for hwnd in list(self.auto_hidden):
-            try:
-                if window_guard.window_alive(hwnd):
-                    window_guard.show_window(hwnd)
-            except Exception:
-                pass
-        self.auto_hidden.clear()
-        try:
-            if self.auto_pids:
-                audiomute.set_muted(self.auto_pids, False)
-        except Exception:
-            pass
-        self.auto_pids.clear()
-        self.hidden_only.clear()
+        """窗口数上限 / 通道阻塞不数这些进程: 提前启动的."""
+        return set(self.pids)
 
     def _kept(self, exe: str) -> bool:
         exe = str(exe or "").lower()
@@ -698,7 +496,7 @@ class Prestart:
     def stop(self, final: bool = False):
         """结束专注: 显示藏起来的窗口 (不抢焦点), 取消静音; 标记清空.
 
-        final=True (关闭 OIT): 连"触发隐藏的窗口"也一起放出来; 否则它们继续保持隐藏."""
+        final=True (关闭 OIT): 连上一段专注记下的程序也一起清掉, 下次要重新选."""
         self.active = False
         self.phase = ""
         self.grace_until = 0.0
@@ -720,7 +518,6 @@ class Prestart:
         self._seeds = set()
         self._baseline = None
         if final:
-            self.release_auto()
             self.last_items = []
 
 

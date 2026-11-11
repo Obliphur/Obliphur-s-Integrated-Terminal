@@ -173,7 +173,7 @@ python release.py               # 发布（PyInstaller）
 | 文件 | Mixin | 内容 |
 | --- | --- | --- |
 | `pages/settings_page/settings_form.py` | FormMixin | 选项 / 数值行、取值与暂存、保存 / 取消 / 试听 |
-| `pages/settings_page/settings_cards.py` | CardsMixin | 首次设置、更新、成就、规则、触发隐藏的窗口 |
+| `pages/settings_page/settings_cards.py` | CardsMixin | 首次设置、更新、成就、规则 |
 | `pages/settings_page/settings_comm.py` | CommSettingsMixin | 沟通：API / 人设 / 头像 / 思考 / 主动发起 / 日程跟随 |
 | `pages/settings_page/settings_record.py` | RecordSettingsMixin | 录像：摄像头权限 / 选择摄像头 / 录像文件列表（`_fmt_size`） |
 
