@@ -40,6 +40,8 @@
 | `violations.json` | 违规记录: 最近 15 条合约违规的提示文字和时间 (8.1) | 最近 15 条; 不同步 |
 | `recordings/camera/`, `recordings/screen/`, `recordings/merged/` | 合约的录像 (目光 / 刻痕, 18.8), 加密的 `.oitv`; 文件名是这一段开始的时刻加合约 id | 超过 3 天自动清除 (没写完的 1 天, 用完的片段更早), 也可以在 设置 → 录像 里删; 不同步 |
 
+音色合成子页的试听音频仅在临时目录（Windows `%TEMP%\OIT`、Android 应用 cacheDir）中缓存，关闭子页即清理。素材文件和创建出的音色存于 MiniMax 账号；仅点击「使用此音色」并保存父配置后，将实际 `voice_id` 写入 `ai_voice.json`。录音路径、素材 `file_id`、声音描述不写入本机配置或同步文档。
+
 仓库里的 `defaults/` 只放空模板 (空名单, 不含 API Key 的 AI 配置), 本机还没有对应文件时才会用到.
 
 ---

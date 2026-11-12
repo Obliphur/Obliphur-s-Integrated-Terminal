@@ -111,19 +111,24 @@ fun VoiceConfigDialog(onDismiss: () -> Unit) {
     var sel by remember { mutableStateOf(0) }
     var p by remember { mutableStateOf(JSONObject(ps[0].toString())) }
     var help by remember { mutableStateOf(false) }
+    var design by remember { mutableStateOf(false) }
+    var modelStatus by remember { mutableStateOf("") }
+    var refreshModels by remember { mutableStateOf(0) }
     var models by remember(p.optString("id"), p.optString("url"), p.optString("api_key")) { mutableStateOf(Voice.MODELS) }
     val modelCache = remember { HashMap<List<String>, List<String>>() }
-    LaunchedEffect(p.optString("id"), p.optString("url"), p.optString("api_key")) {
+    LaunchedEffect(p.optString("id"), p.optString("url"), p.optString("api_key"), refreshModels) {
         val snapshot = JSONObject(p.toString())
         val key = listOf(snapshot.optString("id"), snapshot.optString("url"), snapshot.optString("api_key"))
-        if (key[1].startsWith("https://") && key[2].isNotBlank()) {
+        run {
             delay(700)
+            modelStatus = tr("正在获取语音模型…")
             try {
                 val found = modelCache[key] ?: withContext(Dispatchers.IO) { Voice.listModels(snapshot) }
                 modelCache[key] = found
                 models = found
+                modelStatus = tr("已获取 MiniMax 官方语音模型")
             } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-            catch (_: Exception) { /* 保留预设及当前型号，支持平台未提供列表接口的情况。 */ }
+            catch (_: Exception) { modelStatus = tr("未能获取语音模型列表，仍可选择预设型号或手动填写.") }
         }
     }
     fun load(index: Int) { ps[sel] = p; sel = index; p = JSONObject(ps[sel].toString()) }
@@ -143,10 +148,13 @@ fun VoiceConfigDialog(onDismiss: () -> Unit) {
             OutlinedTextField(p.optString("name"), { field("name", it) }, label = { Text(tr("名称")) }, singleLine = true, modifier = Modifier.fillMaxWidth())
             VoicePicker(tr("模板"), listOf("minimax" to "MiniMax"), "minimax") {}
             VoicePicker(tr("型号"), (listOf(p.optString("model")) + models).filter { it.isNotBlank() }.distinct().map { it to it }, p.optString("model")) { field("model", it) }
+            if (modelStatus.isNotBlank()) Text(modelStatus)
+            TextButton({ modelCache.clear(); refreshModels++ }) { Text(tr("重新获取模型")) }
             // 模型名称可手填，兼容平台之后发布的新型号。
             OutlinedTextField(p.optString("model"), { field("model", it) }, label = { Text(tr("型号")) }, singleLine = true, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(p.optString("voice_id"), { field("voice_id", it) }, label = { Text(tr("音色 ID")) },
-                readOnly = p.optString("id") == Voice.CLAUDIA, singleLine = true, modifier = Modifier.fillMaxWidth())
+                singleLine = true, modifier = Modifier.fillMaxWidth())
+            TextButton({ design = true }) { Text(tr("音色合成")) }
             VoicePicker(tr("语音 API 地址"), listOf(Voice.CN_URL to Voice.CN_URL, Voice.GLOBAL_URL to Voice.GLOBAL_URL), p.optString("url")) { field("url", it) }
             OutlinedTextField(p.optString("url"), { field("url", it) }, label = { Text(tr("语音 API 地址")) }, singleLine = true, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(p.optString("api_key"), { field("api_key", it) }, label = { Text(tr("API Key")) }, singleLine = true,
@@ -159,7 +167,8 @@ fun VoiceConfigDialog(onDismiss: () -> Unit) {
                 .onFailure { core.toast(tr("保存失败."), "warn") }
         }) { Text(tr("保存")) } }, dismissButton = { TextButton(onDismiss) { Text(tr("取消")) } })
     if (help) ConfigHelpDialog(true) { help = false }
+    if (design) VoiceDesignDialog(p, { id -> field("voice_id", id); design = false }, { design = false })
 }
 
 private const val MODEL_HELP = "1. 先注册一个提供 AI 服务的网站，充值后创建 API Key（相当于调用 AI 的密码）。\n2. 点「新建」，名称随便写，方便自己认出。用中转站就选「自定义」，Base URL 照网站的 API 文档复制。\n3. 按网站说明选择模型类型和接口协议；不确定时先用网站的 OpenAI 兼容协议。\n4. 点「获取模型列表」选择网站支持的模型，或复制网站给的模型名称。\n5. 把 API Key 粘贴进来并保存。聊天页选择这份配置即可；「设为默认」还会让规则页使用它。"
-private const val VOICE_HELP = "1. 打开 MiniMax 平台，注册并开通语音服务，创建 API Key。\n2. 点「新建」，模板选 MiniMax，选择一个语音模型。HD 音质更好，Turbo 更快；费用以平台为准。\n3. 从平台的音色列表复制音色 ID；这是音色的编号，不是显示名称。自定义音色需要当前 API 账号拥有使用权限。\n4. 粘贴 MiniMax 的 API Key。国内账号用国内 API 地址，国际账号用国际地址，不要填写平台网页地址。\n5. 保存后回到「设置 → 沟通」，为当前聊天对象选择这份语音配置。开启语音后，新消息会立即生成语音，点消息框左下角贴边的播放图标。\nClaudia 默认配置只给 Claudia 使用，音色已填好；仍需填写有权使用该音色的 API Key。"
+private const val VOICE_HELP = "1. 打开 MiniMax 平台，注册并开通语音服务，创建 API Key。\n2. 点「新建」，模板选 MiniMax，选择一个语音模型。HD 音质更好，Turbo 更快；费用以平台为准。\n3. 从平台的音色列表复制音色 ID；这是 voice_id，不是文件编号 file_id。尚无音色时，点「音色合成」，用提示词描述声音，或上传录音进行克隆。自定义音色需要当前 API 账号拥有使用权限。\n4. 粘贴 MiniMax 的 API Key。国内账号用国内 API 地址，国际账号用国际地址，不要填写平台网页地址。\n5. 保存后回到「设置 → 沟通」，为当前聊天对象选择这份语音配置。开启语音后，新消息会立即生成语音，点消息框左下角贴边的播放图标。\nClaudia 默认配置只给 Claudia 使用，音色已填好；仍需填写有权使用该音色的 API Key。"

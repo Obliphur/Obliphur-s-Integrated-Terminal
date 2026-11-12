@@ -13,10 +13,14 @@ import java.security.MessageDigest
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
 
+private class VoiceApiError(message: String) : IllegalArgumentException(message)
+
 /** MiniMax 配置、后台生成和本机播放记录；音频不随聊天同步。 */
 class Voice(private val dir: File, private val generate: ((JSONObject, String) -> ByteArray)? = null) {
     companion object {
-        val MODELS = listOf("speech-02-hd", "speech-02-turbo", "speech-2.6-hd", "speech-2.6-turbo")
+        val MODELS = listOf("speech-2.8-hd", "speech-2.8-turbo", "speech-2.6-hd", "speech-2.6-turbo",
+            "speech-02-hd", "speech-02-turbo", "speech-01-hd", "speech-01-turbo")
+        const val MODEL_DOC = "https://platform.minimax.io/docs/api-reference/speech-t2a-http.md"
         const val CN_URL = "https://api.minimaxi.com/v1/t2a_v2"
         const val GLOBAL_URL = "https://api.minimax.io/v1/t2a_v2"
         const val CLAUDIA = "claudia"
@@ -38,20 +42,18 @@ class Voice(private val dir: File, private val generate: ((JSONObject, String) -
                 }?.takeIf { it.startsWith("speech-") }
             }.distinct().sorted()
         }
+        fun parseModelDoc(text: String): List<String> {
+            val block = Regex("(?ms)^        model:\\s*\\n(.*?)(?=^        \\w+:)").find(text)?.groupValues?.get(1) ?: return emptyList()
+            return Regex("(?m)^            - (speech-[\\w.-]+)\\s*$").findAll(block).map { it.groupValues[1] }.distinct().toList()
+        }
         fun listModels(p: JSONObject): List<String> {
-            val base = java.net.URI(p.optString("url", CN_URL).trim())
-            require(base.scheme == "https" && !base.host.isNullOrBlank())
-            val key = p.optString("api_key").trim()
-            require(key.isNotEmpty())
-            val path = base.path.trimEnd('/').removeSuffix("/t2a_v2") + "/models"
-            val conn = java.net.URI(base.scheme, base.authority, path, null, null).toURL().openConnection() as HttpURLConnection
+            // /models 只列文本模型；公开的 T2A schema 不需要也不能携带用户 Key。
+            val conn = URL(MODEL_DOC).openConnection() as HttpURLConnection
             try {
                 conn.instanceFollowRedirects = false; conn.connectTimeout = 15000; conn.readTimeout = 20000
-                conn.setRequestProperty("Authorization", "Bearer $key")
                 require(conn.responseCode in 200..299)
-                val data = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
-                require((data.optJSONObject("base_resp")?.optInt("status_code", 0) ?: 0) == 0)
-                return parseModels(data).also { require(it.isNotEmpty()) }
+                val text = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                return parseModelDoc(text).also { require(it.isNotEmpty()) }
             } finally { conn.disconnect() }
         }
         private fun hash(text: String) = MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
@@ -86,7 +88,8 @@ class Voice(private val dir: File, private val generate: ((JSONObject, String) -
     private fun normalize() {
         val ps = profiles().toMutableList()
         if (ps.none { it.optString("id") == CLAUDIA }) ps.add(0, profile(CLAUDIA, "Claudia"))
-        ps.filter { it.optString("id") == CLAUDIA }.forEach { it.put("voice_id", Cfg.AI_VOICE_CLAUDIA_ID) }
+        ps.filter { it.optString("id") == CLAUDIA && it.optString("voice_id") in listOf("", "462298003509468", "oit_claudia_462298003509468") }
+            .forEach { it.put("voice_id", Cfg.AI_VOICE_CLAUDIA_ID) }
         data.put("profiles", JSONArray(ps)).put("gap", gap)
         if (data.optJSONObject("assign") == null) data.put("assign", JSONObject())
     }
@@ -116,6 +119,11 @@ class Voice(private val dir: File, private val generate: ((JSONObject, String) -
     private fun folder(name: String) = File(dir, "voice_cache/${hash(name)}")
     private fun audio(name: String, m: ChatMsg) = File(folder(name), hash(name + "\u0000" + m.uid.ifEmpty { m.id.toString() } + "\u0000" + m.text) + ".mp3")
     fun played(name: String, m: ChatMsg) = File(audio(name, m).path + ".played").exists()
+    @Synchronized fun cacheAudio(name: String, m: ChatMsg, bytes: ByteArray) {
+        check(!closed)
+        val f = audio(name, m)
+        f.parentFile?.mkdirs(); f.writeBytes(bytes)
+    }
     fun autoplay(name: String, msgs: List<ChatMsg>) = msgs.filter { it.role == "ai" && !played(name, it) }.takeLast(Cfg.AI_VOICE_AUTO_COUNT)
 
     @Synchronized fun request(name: String, m: ChatMsg): Future<File?>? {
@@ -133,15 +141,15 @@ class Voice(private val dir: File, private val generate: ((JSONObject, String) -
                     f.parentFile?.mkdirs(); f.writeBytes(bytes)
                 }
                 f
-            } catch (_: Exception) {
-                error = "语音生成失败，请检查网络和语音配置."
+            } catch (e: Exception) {
+                error = if (e is VoiceApiError) e.message.orEmpty() else "语音生成失败，请检查网络和语音配置."
                 null
             }
         }
         jobs[f.path] = future
         return future
     }
-    private fun synthesize(p: JSONObject, text: String): ByteArray {
+    fun synthesize(p: JSONObject, text: String): ByteArray {
         require(listOf("api_key", "model", "voice_id").all { p.optString(it).isNotBlank() })
         val url = p.optString("url", CN_URL).trim()
         require(url.startsWith("https://"))
@@ -157,7 +165,11 @@ class Voice(private val dir: File, private val generate: ((JSONObject, String) -
             conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
             require(conn.responseCode in 200..299)
             val response = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
-            require((response.optJSONObject("base_resp")?.optInt("status_code", 0) ?: 0) == 0)
+            val resp = response.optJSONObject("base_resp")
+            if (resp != null && resp.optInt("status_code", 0) != 0) {
+                val message = resp.optString("status_msg").take(300).replace(p.getString("api_key"), "***")
+                throw VoiceApiError(tr("语音服务返回错误 {code}：{message}", "code" to resp.optInt("status_code").toString(), "message" to message))
+            }
             val hex = response.getJSONObject("data").getString("audio")
             require(hex.isNotEmpty() && hex.length % 2 == 0)
             val bytes = ByteArray(hex.length / 2) { hex.substring(it * 2, it * 2 + 2).toInt(16).toByte() }

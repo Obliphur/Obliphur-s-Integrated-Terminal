@@ -14,6 +14,17 @@ class VoiceTest {
         assertEquals(listOf("speech-new-hd", "speech-new-turbo"), Voice.parseModels(data))
         assertEquals(listOf("speech-one"), Voice.parseModels(JSONObject("""{"models":["speech-one","text-model"]}""")))
         assertEquals(listOf("speech-two"), Voice.parseModels(JSONObject("""{"data":{"models":[{"model":"speech-two"}]}}""")))
+        assertEquals(emptyList<String>(), Voice.parseModels(JSONObject("""{"data":[{"id":"MiniMax-M3"}]}""")))
+        val schema = """        model:
+          type: string
+          enum:
+            - speech-2.8-hd
+            - speech-2.8-turbo
+        text:
+          description: speech-unrelated
+"""
+        assertEquals(listOf("speech-2.8-hd", "speech-2.8-turbo"), Voice.parseModelDoc(schema))
+        assertEquals(emptyList<String>(), Voice.parseModelDoc("speech-example"))
     }
     @Test fun cacheAndPersonaRestrictions() {
         val dir = Files.createTempDirectory("oit_voice").toFile()
@@ -21,7 +32,7 @@ class VoiceTest {
         val voice = Voice(dir) { _, _ -> calls++; "ID3audio".toByteArray() }
         try {
             assertFalse(voice.enabled)
-            assertEquals("462298003509468", voice.selected("Claudia.txt")!!.getString("voice_id"))
+            assertEquals("claudia1999", voice.selected("Claudia.txt")!!.getString("voice_id"))
             assertNull(voice.selected("Assistant.txt"))
             voice.data.put("enabled", true)
             voice.data.getJSONObject("assign").put("Assistant.txt", Voice.CLAUDIA)
@@ -36,6 +47,16 @@ class VoiceTest {
             voice.clear("Claudia.txt")
             assertTrue(dir.walkTopDown().none { it.extension == "mp3" })
         } finally { voice.close(); dir.deleteRecursively() }
+    }
+
+    @Test fun designRejectsInvalidInputsBeforeNetwork() {
+        for ((mode, prompt, id) in listOf(Triple("clone", "", "valid-name"), Triple("prompt", "", "valid-name"),
+            Triple("prompt", "voice", "462298003509468"))) {
+            try {
+                VoiceDesign.create(JSONObject(), mode, prompt, "", id, "hello")
+                fail("无效参数不应发请求")
+            } catch (_: IllegalArgumentException) { }
+        }
     }
 
     @Test fun clearingDropsPendingAudioAndFailuresCanRetry() {

@@ -14,10 +14,11 @@ from config import COLORS
 from i18n import tr
 from .widgets import Modal, ScrollArea
 from .model_fetch import auto_models
+from .voice_design import open_voice_design
 
 
 MODEL_HELP = "1. 先注册一个提供 AI 服务的网站，充值后创建 API Key（相当于调用 AI 的密码）。\n2. 点「新建」，名称随便写，方便自己认出。用中转站就选「自定义」，Base URL 照网站的 API 文档复制。\n3. 按网站说明选择模型类型和接口协议；不确定时先用网站的 OpenAI 兼容协议。\n4. 点「获取模型列表」选择网站支持的模型，或复制网站给的模型名称。\n5. 把 API Key 粘贴进来并保存。聊天页选择这份配置即可；「设为默认」还会让规则页使用它。"
-VOICE_HELP = "1. 打开 MiniMax 平台，注册并开通语音服务，创建 API Key。\n2. 点「新建」，模板选 MiniMax，选择一个语音模型。HD 音质更好，Turbo 更快；费用以平台为准。\n3. 从平台的音色列表复制音色 ID；这是音色的编号，不是显示名称。自定义音色需要当前 API 账号拥有使用权限。\n4. 粘贴 MiniMax 的 API Key。国内账号用国内 API 地址，国际账号用国际地址，不要填写平台网页地址。\n5. 保存后回到「设置 → 沟通」，为当前聊天对象选择这份语音配置。开启语音后，新消息会立即生成语音，点消息框左下角贴边的播放图标。\nClaudia 默认配置只给 Claudia 使用，音色已填好；仍需填写有权使用该音色的 API Key。"
+VOICE_HELP = "1. 打开 MiniMax 平台，注册并开通语音服务，创建 API Key。\n2. 点「新建」，模板选 MiniMax，选择一个语音模型。HD 音质更好，Turbo 更快；费用以平台为准。\n3. 从平台的音色列表复制音色 ID；这是 voice_id，不是文件编号 file_id。尚无音色时，点「音色合成」，用提示词描述声音，或上传录音进行克隆。自定义音色需要当前 API 账号拥有使用权限。\n4. 粘贴 MiniMax 的 API Key。国内账号用国内 API 地址，国际账号用国际地址，不要填写平台网页地址。\n5. 保存后回到「设置 → 沟通」，为当前聊天对象选择这份语音配置。开启语音后，新消息会立即生成语音，点消息框左下角贴边的播放图标。\nClaudia 默认配置只给 Claudia 使用，音色已填好；仍需填写有权使用该音色的 API Key。"
 
 
 def open_help(parent, voice=False):
@@ -63,25 +64,32 @@ def open_voice_settings(parent, comm):
             w = ttk.Entry(b, textvariable=v, show="•" if key == "api_key" else "")
         w.pack(fill="x", pady=(2, 10))
         widgets[key] = w
+        if key == "model":
+            model_status = tk.StringVar()
+            tk.Label(b, textvariable=model_status, anchor="w", wraplength=520,
+                     bg=COLORS["bg"], fg=COLORS["text"], font=config.font("body")).pack(fill="x")
     current = [0]
 
     def snapshot():
         p = {k: v.get().strip() for k, v in vars_.items()}
         sig = (profiles[current[0]]["id"], p["url"], p["api_key"])
-        return sig, p if p["url"].startswith("https://") and p["api_key"] else None
+        return sig, p
 
     def got_models(models):
         widgets["model"].config(values=list(dict.fromkeys([vars_["model"].get()] + models)))
 
-    schedule_models = auto_models(dlg, snapshot, ai_voice.list_models, got_models)
+    def model_state(state):
+        model_status.set(tr({"loading": "正在获取语音模型…", "done": "已获取 MiniMax 官方语音模型",
+                             "failed": "未能获取语音模型列表，仍可选择预设型号或手动填写."}[state]))
+
+    schedule_models = auto_models(dlg, snapshot, ai_voice.list_models, got_models, status=model_state)
+    ttk.Button(b, text=tr("重新获取模型"), command=lambda: schedule_models(refresh=True)).pack(anchor="w", pady=4)
     for key in ("url", "api_key"):
         vars_[key].trace_add("write", schedule_models)
 
     def store():
         p = profiles[current[0]]
         p.update({k: v.get().strip() for k, v in vars_.items()})
-        if p["id"] == ai_voice.CLAUDIA:
-            p["voice_id"] = config.AI_VOICE_CLAUDIA_ID
 
     def load(index):
         current[0] = index
@@ -91,7 +99,6 @@ def open_voice_settings(parent, comm):
         pick.current(index)
         for k, v in vars_.items():
             v.set(p.get(k, ""))
-        widgets["voice_id"].config(state="readonly" if p["id"] == ai_voice.CLAUDIA else "normal")
         delete.config(state="disabled" if p["id"] == ai_voice.CLAUDIA else "normal")
         schedule_models()
 
@@ -121,6 +128,8 @@ def open_voice_settings(parent, comm):
         dlg.finish(True)
 
     ttk.Button(dlg.buttons, text=tr("新建"), command=add).pack(side="left")
+    ttk.Button(b, text=tr("音色合成"), command=lambda: open_voice_design(
+        dlg, {k: v.get().strip() for k, v in vars_.items()}, lambda vid: vars_["voice_id"].set(vid))).pack(anchor="w", pady=4)
     delete = ttk.Button(dlg.buttons, text=tr("删除"), command=remove)
     delete.pack(side="left", padx=6)
     ttk.Button(dlg.buttons, text=tr("保存"), command=save).pack(side="right")

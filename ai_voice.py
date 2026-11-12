@@ -6,19 +6,22 @@ import hashlib
 import json
 import math
 import os
+import re
 import threading
 import time
 import urllib.request
-from urllib.parse import urlsplit, urlunsplit
 from concurrent.futures import Future
 
 import config
 import securefile
 from ai_assist.ai_key import encrypt_key, decrypt_key
 from ai_assist.ai_http import _open_url
+from i18n import tr
 
 
-MODELS = ("speech-02-hd", "speech-02-turbo", "speech-2.6-hd", "speech-2.6-turbo")
+MODELS = ("speech-2.8-hd", "speech-2.8-turbo", "speech-2.6-hd", "speech-2.6-turbo",
+          "speech-02-hd", "speech-02-turbo", "speech-01-hd", "speech-01-turbo")
+MODEL_DOC = "https://platform.minimax.io/docs/api-reference/speech-t2a-http.md"
 CN_URL = "https://api.minimaxi.com/v1/t2a_v2"
 GLOBAL_URL = "https://api.minimax.io/v1/t2a_v2"
 CLAUDIA = "claudia"
@@ -43,23 +46,21 @@ def parse_models(data):
     return sorted({name for name in ids if isinstance(name, str) and name.startswith("speech-")})
 
 
+def parse_model_doc(text):
+    """只解析官方 T2A 请求结构中的 model 枚举，排除示例和其他接口。"""
+    block = re.search(r"(?m)^        model:\s*\n(.*?)(?=^        \w+:)", text, re.S)
+    if not block:
+        return []
+    return list(dict.fromkeys(re.findall(r"(?m)^            - (speech-[\w.-]+)\s*$", block[1])))
+
+
 def list_models(p):
-    """从当前语音 API 的同一根路径获取型号，不改变用户已选的型号。"""
-    url = urlsplit(p.get("url", CN_URL).strip())
-    if url.scheme != "https" or not url.hostname:
-        raise ValueError("语音 API 地址必须以 https:// 开头.")
-    if not p.get("api_key", "").strip():
-        raise ValueError("请先填写语音配置的模型、音色 ID 和 API Key.")
-    path = url.path.rstrip("/")
-    if path.endswith("/t2a_v2"):
-        path = path[:-len("/t2a_v2")]
-    req = urllib.request.Request(urlunsplit((url.scheme, url.netloc, path + "/models", "", "")),
-                                 headers={"Authorization": "Bearer " + p["api_key"].strip()})
+    """MiniMax 的 /models 只列文本模型；从公开的 T2A schema 获取语音型号。"""
+    req = urllib.request.Request(MODEL_DOC)  # 公开文档不附带用户的 Key。
     try:
         with _open_url(req, timeout=20) as r:
-            data = json.loads(r.read(2 * 1024 * 1024))
-        models = parse_models(data)
-        if not models or data.get("base_resp", {}).get("status_code", 0) != 0:
+            models = parse_model_doc(r.read(2 * 1024 * 1024).decode("utf-8"))
+        if not models:
             raise ValueError()
         return models
     except Exception:
@@ -82,7 +83,9 @@ def synthesize(p, text):
     with _open_url(req, timeout=90) as r:
         data = json.loads(r.read(32 * 1024 * 1024))
     if data.get("base_resp", {}).get("status_code", 0) != 0:
-        raise ValueError("语音生成失败，请检查 API Key、余额和音色权限.")
+        resp = data["base_resp"]
+        message = str(resp.get("status_msg", ""))[:300].replace(p["api_key"], "***")
+        raise ValueError(tr("语音服务返回错误 {code}：{message}").format(code=resp["status_code"], message=message))
     audio = bytes.fromhex(data.get("data", {}).get("audio", ""))
     if not audio or not (audio.startswith(b"ID3") or audio[:1] == b"\xff"):
         raise ValueError("语音服务没有返回有效音频.")
@@ -128,7 +131,7 @@ class Voice:
         if not any(p.get("id") == CLAUDIA for p in ps):
             ps.insert(0, profile(CLAUDIA, "Claudia"))
         for p in ps:
-            if p.get("id") == CLAUDIA:
+            if p.get("id") == CLAUDIA and p.get("voice_id", "") in ("", "462298003509468", "oit_claudia_462298003509468"):
                 p["voice_id"] = config.AI_VOICE_CLAUDIA_ID
         self.data["profiles"] = ps
 
@@ -210,7 +213,7 @@ class Voice:
                             f.write(audio)
                     return target
                 except Exception as e:
-                    self.error = str(e) if isinstance(e, ValueError) else "语音生成失败，请检查网络和语音配置."
+                    self.error = str(e).replace(p.get("api_key") or "\0", "***") if isinstance(e, ValueError) else "语音生成失败，请检查网络和语音配置."
                     return None
             job = Future()
             self.jobs[target] = job

@@ -14,6 +14,7 @@ import tempstore
 tempstore.session("voice_check")
 
 import ai_voice
+import ai_voice_design
 import config
 from comm import Comm
 from pages import voice_dialogs
@@ -44,7 +45,13 @@ def generate(p, text):
 
 voice = ai_voice.Voice(folder, generate)
 assert not voice.data["enabled"] and voice.data["gap"] == 1
-assert voice.selected("Claudia.txt")["voice_id"] == "462298003509468"
+assert voice.selected("Claudia.txt")["voice_id"] == "claudia1999"
+voice.data["profiles"][0]["voice_id"] = "462298003509468"
+voice._normalize()
+assert voice.selected("Claudia.txt")["voice_id"] == "claudia1999"
+voice.data["profiles"][0]["voice_id"] = "custom-claudia"
+voice._normalize()
+assert voice.selected("Claudia.txt")["voice_id"] == "custom-claudia"
 assert voice.selected("Assistant.txt") is None
 custom = ai_voice.profile("custom", "test")
 custom.update(voice_id="test-voice", api_key="secret-key")
@@ -121,18 +128,26 @@ body = json.loads(requests[0].data)
 assert body["voice_setting"]["voice_id"] == "test-voice" and body["output_format"] == "hex"
 assert requests[0].get_header("Authorization") == "Bearer secret-key"
 
-# 自动取模型使用同源 /models 地址，只列语音型号，不把 Key 放进 URL。
+# 官方 /models 实际只列文本模型；语音型号来自公开 schema，绝不向文档站传 Key。
 class ModelsResponse(Response):
     def read(self, size):
-        return json.dumps({"data": [{"id": "speech-new-hd"}, {"id": "MiniMax-M2"},
-                                     {"id": "speech-new-hd"}, {"id": "speech-new-turbo"}]}).encode()
+        return b"""        model:
+          type: string
+          enum:
+            - speech-new-hd
+            - speech-new-turbo
+            - speech-new-hd
+        text:
+          description: speech-unrelated
+"""
 def open_models(req, timeout):
     requests.append(req)
     return ModelsResponse()
 with patch("ai_voice._open_url", side_effect=open_models):
     assert ai_voice.list_models(custom) == ["speech-new-hd", "speech-new-turbo"]
-assert requests[-1].full_url == "https://api.minimaxi.com/v1/models"
-assert requests[-1].get_header("Authorization") == "Bearer secret-key"
+assert requests[-1].full_url == ai_voice.MODEL_DOC
+assert requests[-1].get_header("Authorization") is None
+assert ai_voice.parse_model_doc('{"data":[{"id":"MiniMax-M3"}]}') == []
 assert ai_voice.parse_models({"models": ["speech-one", "text-model"]}) == ["speech-one"]
 assert ai_voice.parse_models({"data": {"models": [{"model": "speech-two"}]}}) == ["speech-two"]
 with patch("ai_voice._open_url", side_effect=OSError("secret-key")):
@@ -142,7 +157,48 @@ with patch("ai_voice._open_url", side_effect=OSError("secret-key")):
     except ValueError as e:
         assert "secret-key" not in str(e)
 
-# 小屏大字号下语音配置字段仍可滚动到达，Claudia 音色不可修改。
+# 提示词模式使用 voice_design，克隆把 file_id 作为数字传入，绝不保存成 voice_id。
+class DesignResponse(Response):
+    def read(self, size):
+        return json.dumps({"base_resp": {"status_code": 0}, "voice_id": "designed-voice", "trial_audio": b"ID3demo".hex(),
+                           "file": {"file_id": 462298003509468}}).encode()
+def open_design(req, timeout):
+    requests.append(req)
+    return DesignResponse()
+with patch("ai_voice_design._open_url", side_effect=open_design):
+    vid, audio = ai_voice_design.create(custom, "prompt", "clear voice", "", "", "hello")
+    assert (vid, audio) == ("designed-voice", b"ID3demo")
+    assert requests[-1].full_url.endswith("/v1/voice_design")
+    assert json.loads(requests[-1].data)["prompt"] == "clear voice"
+    assert requests[-1].get_header("Authorization") == "Bearer secret-key"
+    vid, audio = ai_voice_design.create(custom, "clone", "", "462298003509468", "oit_test_voice", "hello")
+    assert vid == "oit_test_voice" and not audio
+    assert json.loads(requests[-1].data) == {"file_id": 462298003509468, "voice_id": "oit_test_voice"}
+    source = os.path.join(folder, "source.wav")
+    with open(source, "wb") as f:
+        f.write(b"RIFFtest")
+    assert ai_voice_design.upload(custom, source) == "462298003509468"
+    assert requests[-1].full_url.endswith("/v1/files/upload")
+    assert b'name="purpose"\r\n\r\nvoice_clone' in requests[-1].data
+    assert b'RIFFtest\r\n--oit' in requests[-1].data
+    for mode, desc, fid, name, words in (("clone", "", "", "valid-name", "hello"), ("prompt", "", "", "valid-name", "hello"),
+                                        ("prompt", "voice", "", "462298003509468", "hello")):
+        try:
+            ai_voice_design.create(custom, mode, desc, fid, name, words)
+            raise AssertionError("无效输入必须在请求前拒绝")
+        except ValueError:
+            pass
+class ApiFailure(Response):
+    def read(self, size):
+        return json.dumps({"base_resp": {"status_code": 2054, "status_msg": "voice id not exist secret-key"}}).encode()
+with patch("ai_voice._open_url", return_value=ApiFailure()):
+    try:
+        ai_voice.synthesize(custom, "hello")
+        raise AssertionError("不能吞掉服务商的错误")
+    except ValueError as e:
+        assert "2054" in str(e) and "voice id not exist" in str(e) and "secret-key" not in str(e)
+
+# 小屏大字号下配置字段仍可滚动到达；音色 ID 可被合成子页替换，Claudia 仍不能删除。
 root = tk.Tk()
 root.geometry("800x600+5000+5000")
 root.update()
@@ -154,14 +210,17 @@ fetch_dlg.withdraw()
 fetch_state = {"sig": "old"}
 fetch_started, fetch_release = threading.Event(), threading.Event()
 applied = []
+statuses = []
 def fetch_snapshot():
     return fetch_state["sig"], {"sig": fetch_state["sig"]}
 def fetch_models(p):
+    if p["sig"] == "bad":
+        raise OSError("failed")
     if p["sig"] == "old":
         fetch_started.set()
         assert fetch_release.wait(5)
     return [p["sig"]]
-schedule = auto_models(fetch_dlg, fetch_snapshot, fetch_models, applied.append, delay=1)
+schedule = auto_models(fetch_dlg, fetch_snapshot, fetch_models, applied.append, delay=1, status=statuses.append)
 def pump_until(fn):
     end = time.monotonic() + 5
     while not fn() and time.monotonic() < end:
@@ -180,6 +239,10 @@ assert applied == [["new"]]
 fetch_state["sig"] = "old"
 schedule()
 pump_until(lambda: applied[-1] == ["old"])
+fetch_state["sig"] = "bad"
+schedule()
+pump_until(lambda: statuses[-1] == "failed")
+assert applied[-1] == ["old"]
 fetch_dlg.destroy()
 c = Comm(tempstore.mkdtemp("voice_comm"), tempstore.mkdtemp("voice_personas"))
 c.voice.data["profiles"][0]["api_key"] = "test-model-key"
@@ -191,7 +254,8 @@ def fake_wait(dlg):
             yield child
             yield from children(child)
     all_ = list(children(dlg))
-    assert any(w.get() == config.AI_VOICE_CLAUDIA_ID and str(w.cget("state")) == "readonly" for w in all_ if isinstance(w, ttk.Entry))
+    assert any(w.get() == config.AI_VOICE_CLAUDIA_ID for w in all_ if isinstance(w, ttk.Entry))
+    assert any(w.cget("text") == "音色合成" for w in all_ if isinstance(w, ttk.Button))
     assert any(str(w.cget("text")) == "帮助" for w in all_ if isinstance(w, ttk.Button))
     # 打开已配好的配置会自动取列表，当前型号保持不变。
     model = next(w for w in all_ if isinstance(w, ttk.Combobox) and w.get() == ai_voice.MODELS[0])
@@ -208,11 +272,38 @@ finally:
     Modal.wait = orig_wait
     config.UI_SCALE = 1.0
 
+# 合成子页可切换模式、异步显示实际 voice_id，并应用到父页。
+from pages.voice_design import open_voice_design
+used = []
+def design_wait(dlg):
+    def walk(w):
+        for child in w.winfo_children():
+            yield child
+            yield from walk(child)
+    widgets = list(walk(dlg))
+    radios = {w.cget("text"): w for w in widgets if isinstance(w, ttk.Radiobutton)}
+    radios["克隆模式"].invoke()
+    radios["提示词模式"].invoke()
+    next(w for w in widgets if isinstance(w, tk.Text)).insert("1.0", "clear voice")
+    buttons = {w.cget("text"): w for w in widgets if isinstance(w, ttk.Button)}
+    buttons["合成音色"].invoke()
+    pump_until(lambda: str(buttons["使用此音色"].cget("state")) == "normal")
+    assert any(w.get() == "created-voice" for w in widgets if isinstance(w, ttk.Entry))
+    buttons["使用此音色"].invoke()
+Modal.wait = design_wait
+try:
+    with patch("ai_voice_design.create", return_value=("created-voice", b"ID3preview")):
+        open_voice_design(root, custom, used.append)
+    assert used == ["created-voice"]
+finally:
+    Modal.wait = orig_wait
+
 # 收到消息就生成，清空聊天也清理音频；语音按钮和未播队列能定位较早消息。
 c.voice.generate = generate
 c.voice.save(enabled=True, auto=True)
 hosts = DailyMixin._api_hosts(SimpleNamespace(comm=c))
 assert "api.minimaxi.com" in hosts
+assert "platform.minimax.io" in hosts
 c.voice.save(enabled=False)
 assert "api.minimaxi.com" not in DailyMixin._api_hosts(SimpleNamespace(comm=c))
 c.voice.save(enabled=True)

@@ -364,7 +364,8 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
         if (now - apiHostsAt < 5000) return apiHostsCache
         val cfg = comm.aiConfig()
         val profs = cfg.order.mapNotNull { cfg.profiles[it] }
-        val bases = profs.map { it.baseUrl } + if (comm.voice.enabled) comm.voice.profiles().map { it.optString("url") } else emptyList()
+        val bases = profs.map { it.baseUrl } + if (comm.voice.enabled)
+            comm.voice.profiles().map { it.optString("url") } + Voice.MODEL_DOC else emptyList()
         val hosts = bases.mapNotNull { runCatching { java.net.URI(it).host }.getOrNull()?.lowercase() }
             .filter { it.isNotEmpty() }.toSet()
         apiHostsAt = now

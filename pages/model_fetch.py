@@ -4,7 +4,7 @@ import queue
 import threading
 
 
-def auto_models(dlg, snapshot, fetch, apply, delay=700):
+def auto_models(dlg, snapshot, fetch, apply, delay=700, status=None):
     results = queue.Queue()
     state = {"job": None, "poll": None, "pending": set(), "cache": {}}
 
@@ -15,10 +15,14 @@ def auto_models(dlg, snapshot, fetch, apply, delay=700):
             return
         if sig in state["cache"]:
             apply(state["cache"][sig])
+            if status:
+                status("done")
             return
         if sig in state["pending"]:
             return
         state["pending"].add(sig)
+        if status:
+            status("loading")
         def work():
             try:
                 results.put((sig, fetch(profile)))
@@ -26,7 +30,9 @@ def auto_models(dlg, snapshot, fetch, apply, delay=700):
                 results.put((sig, None))  # 自动获取失败保留现有选项，不打断填写。
         threading.Thread(target=work, daemon=True).start()
 
-    def schedule(*_args):
+    def schedule(*_args, refresh=False):
+        if refresh:
+            state["cache"].pop(snapshot()[0], None)
         if state["job"]:
             dlg.after_cancel(state["job"])
         state["job"] = dlg.after(delay, request)
@@ -37,8 +43,11 @@ def auto_models(dlg, snapshot, fetch, apply, delay=700):
             state["pending"].discard(sig)
             if models:
                 state["cache"][sig] = models
-            if models and sig == snapshot()[0]:
-                apply(models)
+            if sig == snapshot()[0]:
+                if models:
+                    apply(models)
+                if status:
+                    status("done" if models else "failed")
         state["poll"] = dlg.after(100, poll)
 
     def destroy(event):
