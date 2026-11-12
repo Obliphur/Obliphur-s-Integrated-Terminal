@@ -12,9 +12,11 @@ import json
 import os
 import re
 import secrets
+import shutil
 import socket
 import threading
 import time
+import tempstore
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -25,6 +27,68 @@ from devsync.devsync_util import *
 
 
 class TransferMixin:
+    def _voice_inventory(self):
+        return {key: {"audio": os.path.isfile(path), "played": os.path.isfile(path + ".played")}
+                for key, path in _call(self.local, "voice_files", {}).items()}
+
+    def _send_voices(self, peer_id, snap):
+        """清单随快照走，缺失的音频走已有加密文件通道，不占文档体积。"""
+        remote = snap.get("voices")
+        if not isinstance(remote, dict):
+            return  # 旧版本不支持自动接收语音。
+        with self.lock:
+            busy = self._voice_sending
+            if peer_id in busy:
+                return
+            busy.add(peer_id)
+
+        def work():
+            try:
+                files = self.runner.call(lambda: _call(self.local, "voice_files", {}))
+                for key, path in files.items():
+                    if self.dead or peer_id not in self.peers():
+                        break
+                    entry = remote.get(key)
+                    if isinstance(entry, dict) and entry.get("audio") is not True and os.path.isfile(path):
+                        try:
+                            self.send_file(peer_id, path, voice=key)
+                        except Exception:
+                            pass  # 下轮同步会再次比较清单并重试。
+            finally:
+                with self.lock:
+                    busy.discard(peer_id)
+        threading.Thread(target=work, name="oit-voice-sync", daemon=True).start()
+
+    def _receive_voice(self, peer_id, offer):
+        key = offer["voice"]
+        files = self.runner.call(lambda: _call(self.local, "voice_files", {}))
+        if key not in files or os.path.isfile(files[key]):
+            return "unneeded"
+        with self.lock:
+            busy = self._voice_receiving
+            if key in busy:
+                return "busy"
+            busy.add(key)
+
+        def work():
+            folder = None
+            try:
+                folder = tempstore.mkdtemp("misc", prefix="voice_sync_")
+                dest = os.path.join(folder, "audio.mp3")
+                self.fetch_file(peer_id, offer, dest)
+                # 下载期间可能清空聊天或解除绑定，落盘前再次核对。
+                if peer_id in self.peers():
+                    self.runner.call(lambda: _call(self.local, "voice_received", None, key, dest))
+            except Exception:
+                pass
+            finally:
+                if folder:
+                    shutil.rmtree(folder, ignore_errors=True)
+                with self.lock:
+                    busy.discard(key)
+        threading.Thread(target=work, name="oit-voice-receive", daemon=True).start()
+        return ""
+
     def offer_update(self, peer_id: str, path: str, platform: str, version: str) -> str:
         """把安装包发给一台设备: 先发签名的说明 (平台, 版本, 大小, SHA-256, 取件码), 对方再来取文件,
         取到后核对大小和 SHA-256. 返回 'sent', 或对方不要的原因 (platform / not-newer / dev …)."""
@@ -65,10 +129,11 @@ class TransferMixin:
         return None, None
 
 
-    def send_file(self, peer_id: str, path: str, cid: str = "", kind: str = "", final: bool = False) -> str:
+    def send_file(self, peer_id: str, path: str, cid: str = "", kind: str = "", final: bool = False, voice: str = "") -> str:
         """后台线程: 先发签名的说明 (文件名, 大小, SHA-256, 取件码, nonce), 对方同意后来取 (内容加密传).
         cid: 不为空时这是合约录像 (MECHANICS 18.8), 对方自动收下 (不问用户存到哪里): kind = camera / screen;
         final=True 时是合约主人合并好的最终录像 (对方直接存进 merged 展示), 否则是片段 (发给主人合并).
+        voice 不为空时自动接收为聊天语音缓存，等待取件确认后再传下一条。
         返回 'sent', 或对方不要的原因 ('old' = 对方的 OIT 太旧)."""
         p = self.peers().get(peer_id)
         if not p:
@@ -85,7 +150,7 @@ class TransferMixin:
         now = time.time()
         with self.lock:
             self.offers = {t: v for t, v in self.offers.items() if v[1] > now}
-            self.offers[token] = (path, now + OFFER_TTL, (file_key(k), nonce))
+            self.offers[token] = (path, now + OFFER_TTL, (file_key(k), nonce), voice)
         offer = {"name": os.path.basename(path), "size": size, "sha256": h.hexdigest(),
                  "token": token, "nonce": nonce.hex()}
         if cid:
@@ -93,6 +158,8 @@ class TransferMixin:
             offer["kind"] = "camera" if kind == "camera" else "screen"
             if final:
                 offer["final"] = True
+        if voice:
+            offer["voice"] = voice
         env = seal(k, self.my_id, {"send": offer})
         st, reply = self._http(p["addr"], p["port"], "POST", "/oit/v1/send", env, timeout=10.0)
         if st == 404:
@@ -101,6 +168,15 @@ class TransferMixin:
             raise RuntimeError("unpaired")
         if st != 200:
             raise RuntimeError(reply.get("error") or f"HTTP {st}")
+        if voice and reply.get("ok"):
+            end = time.monotonic() + 35
+            while time.monotonic() < end:
+                with self.lock:
+                    if token not in self.offers:
+                        break
+                if self.dead or peer_id not in self.peers():
+                    break
+                time.sleep(.1)
         return "sent" if reply.get("ok") else str(reply.get("why") or "declined")
 
 
@@ -182,6 +258,8 @@ class TransferMixin:
             raw = unseal(bytes.fromhex(p["key"]), env)["send"]
             o = {"name": str(raw["name"]), "size": int(raw["size"]), "sha256": str(raw["sha256"]),
                  "token": str(raw["token"]), "nonce": str(raw["nonce"])}
+            if "voice" in raw:
+                o["voice"] = str(raw["voice"])
             if raw.get("cid"):
                 o["cid"] = re.sub(r"[^0-9A-Za-z]", "", str(raw["cid"]))[:24]
                 o["kind"] = "camera" if str(raw.get("kind")) == "camera" else "screen"
@@ -194,6 +272,11 @@ class TransferMixin:
                 or not re.fullmatch(r"[0-9a-f]{32}", o["token"]) or not re.fullmatch(r"[0-9a-f]{32}", o["nonce"]):
             return 400, {"error": "bad-request"}
         o["name"] = safe_name(o["name"])
+        if "voice" in o:
+            if not re.fullmatch(r"[0-9a-f]{64}/[0-9a-f]{64}", o["voice"]):
+                return 400, {"error": "bad-request"}
+            why = self._receive_voice(pid, o)
+            return 200, {"ok": not why, "why": why}
         # 刻痕的录屏片段 (18.8): 合约主人自动收下合并, 不问用户存到哪里
         if o.get("cid"):
             fn = getattr(self.local, "rec_offered", None)
@@ -273,7 +356,7 @@ class TransferMixin:
             return 400, {"error": "bad-request"}
         with self.lock:
             v = self.offers.pop(token, None)
-        if v and len(v) > 2:
+        if v and len(v) > 2 and not (len(v) > 3 and v[3]):
             fn = getattr(self.local, "file_delivered", None)
             if fn is not None:
                 try:

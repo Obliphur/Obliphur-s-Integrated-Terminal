@@ -462,6 +462,28 @@ class Comm(JointMixin, StatusMixin, ChatMixin, FlowMixin, SchedMixin, ShareMixin
             return 1e9
 
     # ---- 设备同步 ----
+    def voice_files(self):
+        """只开放仍在聊天记录中的 AI 消息，清空后旧传输不能恢复缓存。"""
+        files = {}
+        for name in list_personas(self.personas):
+            st = self._state_of(pid_of(name))
+            for m in st["messages"]:
+                if m["role"] == "ai" and int(m["ts"]) > st["clear_ts"]:
+                    path = self.voice.file(name, m)
+                    files[os.path.basename(os.path.dirname(path)) + "/" + os.path.basename(path)[:-4]] = path
+        return files
+
+    def voice_played(self, keys):
+        files = self.voice_files()
+        for key in keys:
+            if key in files:
+                self.voice.mark_played(files[key])
+
+    def voice_received(self, key, source):
+        path = self.voice_files().get(key)
+        if path:
+            self.voice.receive(path, source)
+
     def sync_doc(self) -> dict:
         """随设备同步的内容: 每个对象各自最近 SYNC_N 条消息 (键里带对象的编号 pid), 再早的是各设备自己留着的; 掉出窗口不算删除."""
         doc = {f"notice:{key}": dict(val) for key, val in self.focus_notices.items()
@@ -729,10 +751,7 @@ class Comm(JointMixin, StatusMixin, ChatMixin, FlowMixin, SchedMixin, ShareMixin
             self.reload_schedule("新对话")
         if touched:
             self._changed()
-        for pid, m in fresh:
-            name = next((n for n in list_personas(self.personas) if pid_of(n) == pid), "")
-            if name:
-                self.voice.request(name, m)
+        # 同步消息的音频由原设备传输；缺失时手动播放仍可生成。
         self._synced_ping([m for pid, m in fresh if pid == self.pid])
 
     def _synced_ping(self, fresh: list):

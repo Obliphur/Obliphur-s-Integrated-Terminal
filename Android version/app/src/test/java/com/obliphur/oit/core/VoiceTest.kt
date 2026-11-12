@@ -9,6 +9,61 @@ import java.util.concurrent.TimeUnit
 
 /** 语音生成去重、未播消息筛选与清空期间的并发结果丢弃。 */
 class VoiceTest {
+    @Test fun chatSyncReusesAudioAndRejectsTransfersAfterClear() {
+        val dir = Files.createTempDirectory("oit_voice_chats").toFile()
+        val a = Comm(java.io.File(dir, "a"), java.io.File(dir, "personas_a"))
+        val b = Comm(java.io.File(dir, "b"), java.io.File(dir, "personas_b"))
+        try {
+            val name = a.personaName()
+            val msg = ChatMsg(1, "ai", "同步语音", "", uid = "fixture", ts = System.currentTimeMillis())
+            a.messages.add(msg)
+            b.applyDoc(a.syncDoc())
+            val original = a.voice.audio(name, msg)
+            val key = a.voiceFiles().entries.single { it.value == original }.key
+            assertEquals(b.voice.audio(name, msg), b.voiceFiles()[key])
+            val incoming = java.io.File(dir, "incoming.mp3").apply { writeText("ID3audio") }
+            b.voiceReceived(key, incoming)
+            b.voicePlayed(listOf(key))
+            assertEquals("ID3audio", b.voice.audio(name, msg).readText())
+            assertTrue(b.voice.played(name, msg))
+            b.clear()
+            val stale = java.io.File(dir, "stale.mp3").apply { writeText("ID3stale") }
+            b.voiceReceived(key, stale)
+            b.voicePlayed(listOf(key))
+            assertFalse(b.voice.audio(name, msg).exists())
+            assertFalse(b.voice.played(name, msg))
+        } finally { a.voice.close(); b.voice.close(); dir.deleteRecursively() }
+    }
+
+    @Test fun receivedAudioSurvivesConcurrentGenerationAndKeepsPlayedMarker() {
+        val dir = Files.createTempDirectory("oit_voice_receive").toFile()
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val voice = Voice(dir) { _, _ ->
+            started.countDown(); check(release.await(3, TimeUnit.SECONDS)); "ID3generated".toByteArray()
+        }
+        try {
+            voice.data.put("enabled", true)
+            val msg = ChatMsg(1, "ai", "hello", "", uid = "fixture")
+            // 与桌面 sha256(persona + NUL + UID + NUL + text) 的固定结果一致。
+            assertEquals("2a64e3c54fe4ad9286a9aa72bba143f543ded230cf431ced3fc78a1ab3b6ccc1.mp3", voice.audio("Claudia.txt", msg).name)
+            val pending = voice.request("Claudia.txt", msg)!!
+            assertTrue(started.await(3, TimeUnit.SECONDS))
+            val incoming = java.io.File(dir, "incoming.mp3").apply { writeText("ID3received") }
+            voice.receive(voice.audio("Claudia.txt", msg), incoming)
+            voice.markPlayed(voice.audio("Claudia.txt", msg))
+            release.countDown()
+            assertEquals("ID3received", pending.get(3, TimeUnit.SECONDS)!!.readText())
+            assertTrue(voice.played("Claudia.txt", msg))
+            assertTrue(voice.autoplay("Claudia.txt", listOf(msg)).isEmpty())
+            val stale = java.io.File(dir, "stale.mp3").apply { writeText("ID3stale") }
+            voice.receive(voice.audio("Claudia.txt", msg), stale)
+            assertEquals("ID3received", voice.audio("Claudia.txt", msg).readText())
+            voice.clear("Claudia.txt")
+            assertFalse(voice.played("Claudia.txt", msg))
+        } finally { release.countDown(); voice.close(); dir.deleteRecursively() }
+    }
+
     @Test fun playbackRestrictionUsesStateEvenWhenChatIsAllowed() {
         val dir = Files.createTempDirectory("oit_voice_state").toFile()
         val comm = Comm(dir, java.io.File(dir, "personas"))

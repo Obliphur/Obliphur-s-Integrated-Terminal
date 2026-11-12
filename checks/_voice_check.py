@@ -59,6 +59,7 @@ voice.save(enabled=True, profiles=voice.data["profiles"] + [custom], assign={"As
 assert voice.selected("Assistant.txt") is None, "Claudia 配置不能分配给别人"
 voice.save(assign={"Assistant.txt": "custom"})
 m = {"id": 1, "uid": "one", "text": "hello", "role": "ai"}
+assert voice.key("Claudia.txt", dict(m, uid="fixture")) == "2a64e3c54fe4ad9286a9aa72bba143f543ded230cf431ced3fc78a1ab3b6ccc1"
 assert voice.request("Assistant.txt", m).result(3)
 assert len(calls) == 1 and not voice.played("Assistant.txt", m)
 assert isinstance(voice.request("Assistant.txt", m), str) and len(calls) == 1
@@ -84,6 +85,100 @@ assert voice.played("Assistant.txt", m)
 voice.play("Assistant.txt", m)
 wait_for(lambda: voice.play_state == "done")
 assert len(calls) == 1
+
+# 两台真实 HTTP 同步服务：自动补传缓存、合并已听状态，不重复生成或通知文件送达。
+import devsync
+
+class VoiceLocal(devsync._FakeLocal):
+    def __init__(self, name):
+        super().__init__(name)
+        self.comm = Comm(tempstore.mkdtemp("voice_sync"), tempstore.mkdtemp("voice_personas"))
+        self.generated = 0
+        self.delivered = []
+        def generate_audio(p, text):
+            self.generated += 1
+            return b"ID3" + text.encode("utf-8") * 100
+        self.comm.voice.generate = generate_audio
+
+    def docs(self):
+        return {"comm": self.comm.sync_doc()}
+
+    def apply(self, doc, changes):
+        self.comm.apply_doc(changes)
+
+    def voice_files(self):
+        return self.comm.voice_files()
+
+    def voice_played(self, keys):
+        self.comm.voice_played(keys)
+
+    def voice_received(self, key, source):
+        self.comm.voice_received(key, source)
+
+    def file_delivered(self, *args):
+        self.delivered.append(args)
+
+la, lb = VoiceLocal("A"), VoiceLocal("B")
+runner = devsync.MainRunner()
+pump_stop = threading.Event()
+def pump_sync():
+    while not pump_stop.wait(.005):
+        runner.pump()
+pump_thread = threading.Thread(target=pump_sync, daemon=True)
+pump_thread.start()
+sa = devsync.SyncService(tempstore.mkdtemp("voice_service"), la, runner, http_port=18320, udp_port=0)
+sb = devsync.SyncService(tempstore.mkdtemp("voice_service"), lb, runner, http_port=18340, udp_port=0)
+try:
+    sa.start(); sb.start()
+    key = os.urandom(32).hex()
+    for left, right in ((sa, sb), (sb, sa)):
+        left.state["peers"][right.my_id] = {"key": key, "addr": "127.0.0.1", "port": right.port, "name": "peer"}
+    la.comm.voice.save(enabled=True)
+    sm = la.comm._mk("ai", "你好，同步语音")
+    la.comm.messages.append(sm)
+    wait_for(lambda: os.path.isfile(la.comm.voice.file("Claudia.txt", sm)))
+    assert sa._sync_with(sb.my_id), sa.peers()
+    target = lb.comm.voice.file("Claudia.txt", sm)
+    wait_for(lambda: os.path.isfile(target))
+    with open(target, "rb") as f, open(la.comm.voice.file("Claudia.txt", sm), "rb") as source:
+        assert f.read() == source.read()
+    assert lb.generated == 0, "同步消息必须复用原设备音频"
+    lb.comm.voice.mark_played(target)
+    assert sa._sync_with(sb.my_id), sa.peers()
+    assert la.comm.voice.played("Claudia.txt", sm), "子端听过的消息要回传母端"
+    assert not la.comm.voice.autoplay("Claudia.txt", [sm])
+    assert not la.delivered and not lb.delivered, "自动语音传输不能弹文件送达通知"
+    # 子端也能把缓存补回母端，不受谁主动发同步请求影响。
+    os.remove(la.comm.voice.file("Claudia.txt", sm))
+    assert sa._sync_with(sb.my_id), sa.peers()
+    wait_for(lambda: os.path.isfile(la.comm.voice.file("Claudia.txt", sm)))
+    # 远端旧的未听状态不能把本机已听状态改回去。
+    old = sa.snapshot()
+    for entry in old["voices"].values(): entry["played"] = False
+    sb.merge(old)
+    assert lb.comm.voice.played("Claudia.txt", sm)
+    # 下载已校验、尚未落盘时清空聊天：迟到结果必须被丢弃。
+    lb.comm.voice.clear("Claudia.txt")
+    wait_for(lambda: not getattr(sa, "_voice_sending", set()))
+    downloaded, finish_download = threading.Event(), threading.Event()
+    fetch = sb.fetch_file
+    def delayed_fetch(*args):
+        fetch(*args)
+        downloaded.set()
+        assert finish_download.wait(5)
+    sb.fetch_file = delayed_fetch
+    sa._send_voices(sb.my_id, sb.snapshot())
+    assert downloaded.wait(5)
+    lb.comm.clear()
+    finish_download.set()
+    wait_for(lambda: not getattr(sb, "_voice_receiving", set()))
+    assert not os.path.isdir(lb.comm.voice.folder("Claudia.txt"))
+    sb.merge(old)
+    assert not os.path.isdir(lb.comm.voice.folder("Claudia.txt")), "旧快照不能恢复清空后的播放记录"
+finally:
+    sa.stop(); sb.stop()
+    pump_stop.set(); pump_thread.join(1)
+    la.comm.voice.close(); lb.comm.voice.close()
 
 # 播放门禁独立于聊天可用性；非空闲 / 休息不调用播放器，生成仍可后台进行。
 play_state = {"kind": "idle"}
@@ -150,6 +245,18 @@ voice.generate = retry
 assert voice.request("Assistant.txt", m).result(3) is None
 assert "secret-key" not in voice.error
 assert voice.request("Assistant.txt", m).result(3)
+
+# 同步先落盘时，尚未结束的本机生成不能覆盖传来的音频。
+voice.generate = generate
+started.clear(); release.clear()
+race = {"id": 81, "uid": "receive-race", "text": "delayed", "role": "ai"}
+job = voice.request("Assistant.txt", race)
+assert started.wait(3)
+incoming = os.path.join(tempstore.mkdtemp("voice_incoming"), "incoming.mp3")
+with open(incoming, "wb") as f: f.write(b"ID3received")
+voice.receive(voice.file("Assistant.txt", race), incoming)
+release.set()
+with open(job.result(3), "rb") as f: assert f.read() == b"ID3received"
 
 # 检查真实 MiniMax 请求体和 hex 响应解析，不联网。
 class Response:

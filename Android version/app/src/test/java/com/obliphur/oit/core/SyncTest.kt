@@ -116,6 +116,17 @@ class SyncTest {
         override fun status(): JSONObject = JSONObject().put("timer", "idle").put("net", "offline")
         override fun pairRequest(req: PairRequest) { synchronized(requests) { requests.add(req) } }
         override fun changed() {}
+        val voicePaths = linkedMapOf<String, java.io.File>()
+        override fun voiceFiles() = LinkedHashMap(voicePaths)
+        override fun voicePlayed(keys: List<String>) {
+            keys.forEach { key -> voicePaths[key]?.let { java.io.File(it.path + ".played").writeText("") } }
+        }
+        override fun voiceReceived(key: String, source: java.io.File) {
+            voicePaths[key]?.let { if (!it.exists()) java.nio.file.Files.move(source.toPath(), it.toPath()) }
+        }
+        override fun voiceTempFile(token: String) = java.io.File(voicePaths.values.first().parentFile, "incoming_$token.mp3")
+        var fileNotices = 0
+        override fun fileDelivered(who: String, name: String) { fileNotices++ }
         @Volatile var dev = false
         @Volatile var got: Pair<ByteArray, String>? = null
         @Volatile var restarted: Pair<String, String>? = null
@@ -197,6 +208,33 @@ class SyncTest {
             runner.call { sb.answerPairing(req.token, true) }
             waitFor { sa.outgoing?.state == "accepted" && lb.cleared == 1 && sb.peers()[sa.myId]?.optBoolean("init") == false }
             assertEquals(0, la.cleared)
+            // 音频通过真实 HTTP 加密传输；播放标记在双向同步中合并，不产生文件通知。
+            val voiceDir = Files.createTempDirectory("oit_sync_voice").toFile()
+            try {
+                val key = "a".repeat(64) + "/" + "b".repeat(64)
+                val original = java.io.File(voiceDir, "a.mp3").apply { writeText("ID3你好，同步语音") }
+                val received = java.io.File(voiceDir, "b.mp3")
+                runner.call { la.voicePaths[key] = original; lb.voicePaths[key] = received }
+                assertTrue(sa.syncWith(sb.myId))
+                waitFor { received.exists() }
+                assertTrue(original.readBytes().contentEquals(received.readBytes()))
+                original.delete()
+                assertTrue(sa.syncWith(sb.myId))
+                waitFor { original.exists() }
+                assertTrue(original.readBytes().contentEquals(received.readBytes()))
+                java.io.File(received.path + ".played").writeText("")
+                assertTrue(sa.syncWith(sb.myId))
+                assertTrue(java.io.File(original.path + ".played").exists())
+                // 相同清单再同步不会覆盖本地缓存；旧的未播状态不能清掉已播标记。
+                received.writeText("ID3local")
+                assertTrue(sa.syncWith(sb.myId))
+                assertEquals("ID3local", received.readText())
+                assertTrue(java.io.File(received.path + ".played").exists())
+                assertEquals(0, la.fileNotices + lb.fileNotices)
+            } finally {
+                runner.call { la.voicePaths.clear(); lb.voicePaths.clear() }
+                voiceDir.deleteRecursively()
+            }
             // 绑定刚完成时的先后顺序不能变成"同步失败" (以前子端先同步过去会得到 401 unpaired)
             assertEquals("", sb.peers()[sa.myId]!!.optString("last_err"))
             assertEquals("", sa.peers()[sb.myId]!!.optString("last_err"))

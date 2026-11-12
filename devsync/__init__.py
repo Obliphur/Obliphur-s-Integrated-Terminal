@@ -123,7 +123,9 @@ class SyncService(DiscoverMixin, PairMixin, WipeMixin, LinkMixin, DocSyncMixin, 
         self.incoming = {}        # token -> 别人发来的绑定请求
         self.outgoing = None      # 本机发起的绑定 {state, code, name, …}
         self.found = {}           # id -> 广播找到的设备
-        self.offers = {}          # token -> (文件, 过期时刻[, (密钥, nonce)]): 发给其他设备的安装包 / 文件, 等对方来取
+        self.offers = {}          # token -> (文件, 过期时刻[, (密钥, nonce), 语音键]): 等对方来取
+        self._voice_sending = set()
+        self._voice_receiving = set()
         # 本机算作离线吗 (电脑: 用户切到了 OIT 不在的虚拟桌面, MECHANICS 15.7): 这时不同步, 也不接受同步
         self.away = lambda: False
         self._httpd = None

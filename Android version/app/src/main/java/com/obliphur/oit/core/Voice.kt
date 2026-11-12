@@ -15,7 +15,7 @@ import java.util.concurrent.Future
 
 private class VoiceApiError(message: String) : IllegalArgumentException(message)
 
-/** MiniMax 配置、后台生成和本机播放记录；音频不随聊天同步。 */
+/** MiniMax 配置、后台生成、播放记录与同步音频缓存。 */
 class Voice(private val dir: File, private val generate: ((JSONObject, String) -> ByteArray)? = null) {
     companion object {
         val MODELS = listOf("speech-2.8-hd", "speech-2.8-turbo", "speech-2.6-hd", "speech-2.6-turbo",
@@ -118,8 +118,17 @@ class Voice(private val dir: File, private val generate: ((JSONObject, String) -
         return profiles().firstOrNull { it.optString("id") == id && (id != CLAUDIA || isClaudia(name)) }
     }
     private fun folder(name: String) = File(dir, "voice_cache/${hash(name)}")
-    private fun audio(name: String, m: ChatMsg) = File(folder(name), hash(name + "\u0000" + m.uid.ifEmpty { m.id.toString() } + "\u0000" + m.text) + ".mp3")
+    fun audio(name: String, m: ChatMsg) = File(folder(name), hash(name + "\u0000" + m.uid.ifEmpty { m.id.toString() } + "\u0000" + m.text) + ".mp3")
     fun played(name: String, m: ChatMsg) = File(audio(name, m).path + ".played").exists()
+    @Synchronized fun markPlayed(file: File) {
+        if (!closed) { file.parentFile?.mkdirs(); File(file.path + ".played").apply { if (!exists()) writeText("") } }
+    }
+    @Synchronized fun receive(file: File, source: File) {
+        if (!closed && !file.exists()) {
+            file.parentFile?.mkdirs()
+            java.nio.file.Files.move(source.toPath(), file.toPath())
+        }
+    }
     @Synchronized fun cacheAudio(name: String, m: ChatMsg, bytes: ByteArray) {
         check(!closed)
         val f = audio(name, m)
@@ -139,7 +148,7 @@ class Voice(private val dir: File, private val generate: ((JSONObject, String) -
                 val bytes = generate?.invoke(p, m.text) ?: synthesize(p, m.text)
                 synchronized(this) {
                     if (closed || epoch != epochs[name]) return@submit null
-                    f.parentFile?.mkdirs(); f.writeBytes(bytes)
+                    if (!f.exists()) { f.parentFile?.mkdirs(); f.writeBytes(bytes) }
                 }
                 f
             } catch (e: Exception) {

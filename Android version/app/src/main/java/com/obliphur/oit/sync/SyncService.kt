@@ -32,6 +32,10 @@ interface SyncLocal {
     /** {文档: {项: 值}}, 值是 JSONObject / JSONArray / String / Number / null. */
     fun docs(): Map<String, Map<String, Any?>>
     fun apply(doc: String, changes: Map<String, Any?>)
+    fun voiceFiles(): Map<String, File> = emptyMap()
+    fun voicePlayed(keys: List<String>) {}
+    fun voiceReceived(key: String, source: File) {}
+    fun voiceTempFile(token: String): File? = null
     fun clearHistory()
     fun status(): JSONObject
     /** 本机刚从自由学习的外出回来, 还没同步上: (开始毫秒, 结束毫秒). 这段时间本机的记录在同步里有优先权 (MECHANICS 21.6). */
@@ -554,7 +558,7 @@ class SyncService(
     // ---- 文件通道 (MECHANICS 15.6): 把文件 / 图片发给一台绑定的设备 ----
 
     private class FileOffer(val name: String, val size: Long, val open: () -> java.io.InputStream,
-                            val fk: ByteArray, val nonce: ByteArray, val expires: Long)
+                            val fk: ByteArray, val nonce: ByteArray, val expires: Long, val voice: Boolean = false)
 
     private val fileOffers = java.util.concurrent.ConcurrentHashMap<String, FileOffer>()
 
@@ -581,10 +585,10 @@ class SyncService(
     /** 先发签名的说明 (文件名, 大小, SHA-256, 取件码, nonce), 对方同意后来取 (内容加密传).
      *  open: 每次调用打开一次文件. 返回 "sent", 或对方不要的原因 ("old" = 对方的 OIT 太旧). 在后台线程里调用. */
     /** 合约录像 (MECHANICS 18.8): 发给别的设备. cid = 合约 id, kind = camera / screen, final = 是不是合并好的最终录像. */
-    fun sendFile(peerId: String, file: File, cid: String = "", kind: String = "", final: Boolean = false): String =
-        sendFile(peerId, file.name, file.length(), cid, kind, final) { file.inputStream() }
+    fun sendFile(peerId: String, file: File, cid: String = "", kind: String = "", final: Boolean = false, voice: String = ""): String =
+        sendFile(peerId, file.name, file.length(), cid, kind, final, voice) { file.inputStream() }
 
-    fun sendFile(peerId: String, name: String, size: Long, cid: String = "", kind: String = "", final: Boolean = false,
+    fun sendFile(peerId: String, name: String, size: Long, cid: String = "", kind: String = "", final: Boolean = false, voice: String = "",
                  open: () -> java.io.InputStream): String {
         val p = peers()[peerId] ?: return "unpaired"
         // 真正的大小以读到的字节数为准 (内容提供者报的 size 常常缺失 / 不准, 不能据此判"文件过大")
@@ -609,18 +613,23 @@ class SyncService(
         val nonce = ByteArray(16).also { SecureRandom().nextBytes(it) }
         val now = System.currentTimeMillis()
         fileOffers.entries.removeAll { it.value.expires < now }
-        fileOffers[token] = FileOffer(name, n, open, SyncCrypto.fileKey(k), nonce, now + OFFER_TTL_MS)
+        fileOffers[token] = FileOffer(name, n, open, SyncCrypto.fileKey(k), nonce, now + OFFER_TTL_MS, voice.isNotEmpty())
         val send = JSONObject().put("name", name).put("size", n)
             .put("sha256", SyncCrypto.hex(md.digest())).put("token", token).put("nonce", SyncCrypto.hex(nonce))
         if (cid.isNotEmpty()) {
             send.put("cid", cid).put("kind", if (kind == "camera") "camera" else "screen")
             if (final) send.put("final", true)
         }
+        if (voice.isNotEmpty()) send.put("voice", voice)
         val env = SyncCrypto.seal(k, myId, JSONObject().put("send", send))
         val (st, reply) = http(p.getString("addr"), p.getInt("port"), "POST", "/oit/v1/send", env, 10_000)
         if (st == 404) return "old"
         if (st == 401) throw IllegalStateException("unpaired")
         if (st != 200) throw IllegalStateException(reply.optString("error", "HTTP $st"))
+        if (voice.isNotEmpty() && reply.optBoolean("ok")) {
+            val end = System.nanoTime() + TimeUnit.SECONDS.toNanos(35)
+            while (!dead && System.nanoTime() < end && fileOffers.containsKey(token) && peers().containsKey(peerId)) Thread.sleep(100)
+        }
         return if (reply.optBoolean("ok")) "sent" else reply.optString("why", "declined")
     }
 
@@ -682,6 +691,12 @@ class SyncService(
             !hex32.matches(o.optString("token")) || !hex32.matches(o.optString("nonce"))) return bad
         val clean = JSONObject().put("name", SyncCrypto.safeName(o.optString("name"))).put("size", size)
             .put("sha256", o.optString("sha256")).put("token", o.optString("token")).put("nonce", o.optString("nonce"))
+        if (o.has("voice")) {
+            val key = o.optString("voice")
+            if (!Regex("[0-9a-f]{64}/[0-9a-f]{64}").matches(key)) return bad
+            val why = receiveVoice(id, key, clean)
+            return 200 to JSONObject().put("ok", why.isEmpty()).put("why", why)
+        }
         // 合约录像 (18.8): 带 cid 的发给 recOffered (自动收下), 不走 fileOffered (不问用户存到哪里)
         val cid = o.optString("cid").filter { it.isLetterOrDigit() }.take(24)
         if (cid.isNotEmpty()) {
@@ -754,7 +769,7 @@ class SyncService(
         }
         val token = body.optJSONObject("got")?.optString("token") ?: return 400 to JSONObject().put("error", "bad-request")
         fileOffers.remove(token)?.let { fo ->
-            runCatching { runner.call { local.fileDelivered(p.optString("name", "?"), fo.name) } }
+            if (!fo.voice) runCatching { runner.call { local.fileDelivered(p.optString("name", "?"), fo.name) } }
         }
         return 200 to JSONObject().put("ok", true)
     }
@@ -1438,6 +1453,53 @@ class SyncService(
         else -> v
     }
 
+    private val voiceSending = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private val voiceReceiving = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    private fun voiceInventory(): JSONObject = JSONObject().apply {
+        for ((key, file) in local.voiceFiles()) {
+            val played = File(file.path + ".played").isFile
+            put(key, JSONObject().put("audio", file.isFile).put("played", played))
+        }
+    }
+
+    /** 清单随快照走，缺失的 MP3 复用加密文件通道，传输失败下轮重试。 */
+    private fun sendVoices(peerId: String, snap: JSONObject) {
+        val remote = snap.optJSONObject("voices") ?: return
+        if (!voiceSending.add(peerId)) return
+        Thread {
+            try {
+                val files = runner.call { local.voiceFiles() }
+                for ((key, file) in files) {
+                    if (dead || !peers().containsKey(peerId)) break
+                    if (remote.optJSONObject(key)?.optBoolean("audio") == false && file.isFile) {
+                        runCatching { sendFile(peerId, file, voice = key) }
+                    }
+                }
+            } finally { voiceSending.remove(peerId) }
+        }.apply { isDaemon = true; name = "oit-voice-sync" }.start()
+    }
+
+    private fun receiveVoice(peerId: String, key: String, offer: JSONObject): String {
+        val file = runner.call { local.voiceFiles()[key] } ?: return "unneeded"
+        if (file.isFile) return "unneeded"
+        if (!voiceReceiving.add(key)) return "busy"
+        Thread {
+            var dest: File? = null
+            try {
+                val target = runner.call { local.voiceTempFile(offer.getString("token")) } ?: return@Thread
+                dest = target
+                fetchFile(peerId, offer, target)
+                if (peers().containsKey(peerId)) runner.call { local.voiceReceived(key, target) }
+            } catch (_: Exception) {
+                // 下轮清单仍显示缺失，会再次传输。
+            } finally {
+                dest?.delete(); voiceReceiving.remove(key)
+            }
+        }.apply { isDaemon = true; name = "oit-voice-receive" }.start()
+        return ""
+    }
+
     /** 界面线程: 要发给别人的全部内容. */
     fun snapshot(): JSONObject {
         val own = local.ledger().put("rev", System.currentTimeMillis()).put("name", myName).put("platform", platform)
@@ -1458,7 +1520,7 @@ class SyncService(
             val cutoff = System.currentTimeMillis() - GONE_KEEP_MS
             for (k in gone.keys().asSequence().toList()) if (gone.optLong(k) < cutoff) gone.remove(k)
             JSONObject().put("v", PROTO).put("device", deviceInfo()).put("ledgers", ledgers).put("docs", docs).put("status", status)
-                .put("gone", JSONObject(gone.toString())).put("dev", local.devMode())
+                .put("gone", JSONObject(gone.toString())).put("dev", local.devMode()).put("voices", voiceInventory())
         }
     }
 
@@ -1555,6 +1617,9 @@ class SyncService(
         }
         save()
         local.changed()
+        snap.optJSONObject("voices")?.let { voices ->
+            local.voicePlayed(voices.keys().asSequence().filter { voices.optJSONObject(it)?.optBoolean("played") == true }.toList())
+        }
     }
 
     // ---- 同步 ----
@@ -1584,7 +1649,7 @@ class SyncService(
         }
         return try {
             val snap = runner.call {
-                if (init) snapshot().put("docs", JSONObject()).put("ledgers", JSONObject()) else snapshot()
+                if (init) snapshot().put("docs", JSONObject()).put("ledgers", JSONObject()).put("voices", JSONObject()) else snapshot()
             }
             val env = SyncCrypto.seal(k, myId, JSONObject().put("snap", snap).put("init", init))
             val (st, reply) = http(p.getString("addr"), p.getInt("port"), "POST", "/oit/v1/sync", env, SYNC_CONNECT_MS, SYNC_READ_MS)
@@ -1596,6 +1661,7 @@ class SyncService(
             // 等回复的时候解除了绑定: 回复里的东西不要了 (否则对方的状态又被并回来, 成了解除不掉的"离线"设备)
             if (!peers().containsKey(peerId)) return false
             runner.call { merge(body.optJSONObject("snap"), init) }
+            sendVoices(peerId, body.optJSONObject("snap") ?: JSONObject())
             lock.withLock {
                 state.getJSONObject("peers").optJSONObject(peerId)?.let { q ->
                     q.put("last_ok", System.currentTimeMillis()).put("last_err", "")
@@ -1652,6 +1718,7 @@ class SyncService(
                 ?.also { q -> q.remove("refused_since"); q.remove("refused_last") }
                 ?.let { q -> snap.optJSONObject("device")?.optString("version")?.takeIf { it.isNotEmpty() }?.let { q.put("version", it) } }
         }
+        sendVoices(from, snap)
         return 200 to SyncCrypto.seal(k, myId, JSONObject().put("snap", mine))
     }
 

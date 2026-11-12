@@ -89,7 +89,7 @@ class DocSyncMixin:
             gone = dict(self.state["gone"])
         return {"v": PROTO, "device": self.device_info(), "ledgers": ledgers, "gone": gone,
                 "dev": bool(_call(self.local, "dev_mode", False)),
-                "docs": docs, "status": status}
+                "docs": docs, "status": status, "voices": self._voice_inventory()}
 
 
     def merge(self, snap: dict, init: bool = False):
@@ -174,6 +174,10 @@ class DocSyncMixin:
                     pass
         self._save()
         self.local.changed()
+        voices = snap.get("voices")
+        if isinstance(voices, dict):
+            _call(self.local, "voice_played", None,
+                  [key for key, val in voices.items() if isinstance(val, dict) and val.get("played") is True])
 
 
     def _sync_with(self, peer_id: str, init: bool = False, quiet: bool = False):
@@ -210,7 +214,7 @@ class DocSyncMixin:
         try:
             if init:
                 # 子端第一次: 只要母端的内容, 自己的文档不发过去
-                snap = self.runner.call(lambda: dict(self.snapshot(), docs={}, ledgers={}))
+                snap = self.runner.call(lambda: dict(self.snapshot(), docs={}, ledgers={}, voices={}))
             else:
                 snap = self.runner.call(self.snapshot)
             env = seal(k, self.my_id, {"snap": snap, "init": init})
@@ -227,6 +231,7 @@ class DocSyncMixin:
             if peer_id not in self.peers():
                 return False
             self.runner.call(lambda: self.merge(body.get("snap"), init=init))
+            self._send_voices(peer_id, body.get("snap") or {})
             with self.lock:
                 q = self.state["peers"].get(peer_id)
                 if q:
@@ -290,6 +295,7 @@ class DocSyncMixin:
                 q.pop("refused_last", None)
                 if (snap.get("device") or {}).get("version"):
                     q["version"] = str(snap["device"]["version"])
+        self._send_voices(str(env.get("from")), snap)
         return 200, seal(k, self.my_id, {"snap": mine})
 
 

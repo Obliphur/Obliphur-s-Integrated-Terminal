@@ -217,6 +217,11 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
         return out
     }
 
+    override fun voiceFiles() = core.comm.voiceFiles()
+    override fun voicePlayed(keys: List<String>) = core.comm.voicePlayed(keys)
+    override fun voiceReceived(key: String, source: java.io.File) = core.comm.voiceReceived(key, source)
+    override fun voiceTempFile(token: String) = java.io.File(java.io.File(app.cacheDir, "incoming").apply { mkdirs() }, "voice_$token.mp3")
+
     override fun docs(): Map<String, Map<String, Any?>> {
         val s = core.settings
         val settings = LinkedHashMap<String, Any?>()

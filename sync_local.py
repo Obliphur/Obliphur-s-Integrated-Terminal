@@ -245,6 +245,15 @@ class PcLocal:
             out[f"assign/{persona}"] = cid
         return out
 
+    def voice_files(self):
+        return self.app.comm.voice_files()
+
+    def voice_played(self, keys):
+        self.app.comm.voice_played(keys)
+
+    def voice_received(self, key, source):
+        self.app.comm.voice_received(key, source)
+
     def docs(self) -> dict:
         a = self.app
         s = a.settings

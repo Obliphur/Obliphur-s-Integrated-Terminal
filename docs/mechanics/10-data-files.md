@@ -19,7 +19,7 @@
 | `profile.json` | 用户名 (1.1) | 永久; 不同步 |
 | `ai_config.json` | AI 服务商配置 (API Key 用 DPAPI 加密保存); 设置随绑定同步 (Key 到对方设备后用对方的 DPAPI 重新加密) | 永久 |
 | `ai_voice.json` | MiniMax 语音配置、按人设分配、开关与自动播放间隔；API Key 在本机加密，配置随绑定同步（24.1） | 永久；重置删除 |
-| `voice_cache/` | 按人设和消息哈希保存的 MP3 与 `.played` 播放记录 | 本机保留；清空对应聊天或重置时删除；不同步 |
+| `voice_cache/` | 按人设和消息哈希保存的 MP3 与 `.played` 播放记录 | 随绑定设备同步音频及已听状态；清空对应聊天或重置时删除 |
 | `sysproxy_backup.json` | 启用 Proxy 前的系统代理设置 | 还原后删除 |
 | `chime.wav` | 内置提示音 (自动生成) | 永久 |
 | `comm_ping.wav` / `break_soon.wav` | 沟通提示音 / 休息剩 1 分钟的提示音 (自动生成) | 永久 |

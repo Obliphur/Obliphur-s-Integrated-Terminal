@@ -1457,6 +1457,26 @@ class Comm(
         return out
     }
 
+    /** 只开放仍在聊天记录中的 AI 消息；下载后再次查询，防止清空期间旧缓存复活。 */
+    @Synchronized fun voiceFiles(): Map<String, File> {
+        val files = LinkedHashMap<String, File>()
+        for (name in listPersonas()) {
+            val st = stateOf(pidOf(name))
+            for (m in st.messages) if (m.role == "ai" && m.ts > st.clearTs) {
+                val file = voice.audio(name, m)
+                files[file.parentFile!!.name + "/" + file.nameWithoutExtension] = file
+            }
+        }
+        return files
+    }
+    @Synchronized fun voicePlayed(keys: List<String>) {
+        val files = voiceFiles()
+        keys.forEach { key -> files[key]?.let { voice.markPlayed(it) } }
+    }
+    @Synchronized fun voiceReceived(key: String, source: File) {
+        voiceFiles()[key]?.let { voice.receive(it, source) }
+    }
+
     @Synchronized
     fun syncDoc(): Map<String, Any?> {
         val doc = LinkedHashMap<String, Any?>()
@@ -1504,7 +1524,6 @@ class Comm(
         class Touch(val st: ChatState, var dirty: Boolean, var known: HashSet<String>)
         val touched = LinkedHashMap<String, Touch>()
         var clearedActive = false
-        val voiceMessages = ArrayList<Pair<String, ChatMsg>>()
         val fresh = ArrayList<ChatMsg>()                                        // 这次新并进来的 (现在聊的对象的) 消息
         fun touch(p: String): Touch = touched.getOrPut(p) { stateOf(p).let { Touch(it, false, it.messages.map { m -> m.uid }.toHashSet()) } }
         for (key in changes.keys.sortedBy { !it.startsWith("clear:") }) {       // 清空先处理: 之前的记录不会再并进来
@@ -1574,7 +1593,6 @@ class Comm(
                     if (v.optBoolean("late", false)) msg.late = true
                     if (v.has("due")) msg.due = v.optLong("due", 0L)
                     tc.st.messages.add(msg)
-                    listPersonas().firstOrNull { pidOf(it) == p }?.let { voiceMessages.add(it to msg) }
                     if (p == pid) fresh.add(msg)
                     tc.known.add(uid)
                     tc.dirty = true
@@ -1629,7 +1647,7 @@ class Comm(
         }
         if (clearedActive) { unread = 0; error = ""; epoch++; reloadSchedule("新对话") }
         if (touched.isNotEmpty()) changed()
-        voiceMessages.forEach { (name, msg) -> voice.request(name, msg) }
+        // 同步消息复用原设备的音频；缺失时手动播放仍可生成。
         syncedPing(fresh)
     }
 

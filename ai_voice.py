@@ -185,6 +185,20 @@ class Voice:
     def played(self, persona, m):
         return os.path.isfile(self.file(persona, m) + ".played")
 
+    def mark_played(self, path):
+        with self.lock:
+            if not self.closed:
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path + ".played", "ab"):
+                    pass
+
+    def receive(self, path, source):
+        """校验后的同步音频落盘；不覆盖已生成或正在播放的文件。"""
+        with self.lock:
+            if not self.closed and not os.path.isfile(path):
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                os.replace(source, path)
+
     def request(self, persona, m):
         if m.get("role") != "ai" or not self.data["enabled"] or self.closed:
             return None
@@ -210,8 +224,9 @@ class Voice:
                         if self.closed or epoch != self.epochs.get(persona, 0):
                             return None
                         os.makedirs(os.path.dirname(target), exist_ok=True)
-                        with open(target, "wb") as f:
-                            f.write(audio)
+                        if not os.path.isfile(target):
+                            with open(target, "wb") as f:
+                                f.write(audio)
                     return target
                 except Exception as e:
                     self.error = str(e).replace(p.get("api_key") or "\0", "***") if isinstance(e, ValueError) else "语音生成失败，请检查网络和语音配置."
