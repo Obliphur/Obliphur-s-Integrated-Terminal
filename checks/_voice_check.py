@@ -85,6 +85,44 @@ voice.play("Assistant.txt", m)
 wait_for(lambda: voice.play_state == "done")
 assert len(calls) == 1
 
+# 播放门禁独立于聊天可用性；非空闲 / 休息不调用播放器，生成仍可后台进行。
+play_state = {"kind": "idle"}
+gate_started, gate_release = threading.Event(), threading.Event()
+def gate_generate(p, words):
+    if words == "wait-for-state":
+        gate_started.set()
+        assert gate_release.wait(5)
+    return b"ID3gate"
+gate = ai_voice.Voice(tempstore.mkdtemp("misc", prefix="voice_gate_"), gate_generate)
+gate.data.update(enabled=True, profiles=[custom], assign={"Assistant.txt": "custom"})
+gate.play_allowed = lambda: play_state["kind"] in ("idle", "break")
+gate_commands = []
+def gate_mci(cmd):
+    gate_commands.append(cmd)
+    return "playing" if cmd.startswith("status") else ""
+gate._mci = gate_mci
+gm = dict(m, uid="gate", text="state-restricted")
+for kind in ("focus", "sleep", "out", ""):
+    play_state["kind"] = kind
+    gate.play("Assistant.txt", gm)
+    assert not any(cmd.startswith("play ") for cmd in gate_commands)
+    assert not gate.played("Assistant.txt", gm)
+assert gate.request("Assistant.txt", gm).result(3), "限制播放不限制新消息生成"
+play_state["kind"] = "break"
+gate.play("Assistant.txt", gm)
+wait_for(lambda: gate.play_state == "playing")
+play_state["kind"] = "focus"
+wait_for(lambda: gate.play_state == "idle")
+play_state["kind"] = "idle"
+waiting = dict(gm, uid="gate-wait", text="wait-for-state")
+gate.play("Assistant.txt", waiting)
+assert gate_started.wait(3)
+play_state["kind"] = "sleep"
+gate_release.set()
+wait_for(lambda: gate.play_state == "idle")
+assert not gate.played("Assistant.txt", waiting), "加载期间切状态不能在生成完成后偷播"
+gate.close()
+
 msgs = [{"id": i, "uid": str(i), "text": str(i), "role": "ai"} for i in range(30)]
 assert [x["id"] for x in voice.autoplay("Assistant.txt", msgs)] == list(range(20, 30))
 f = voice.file("Assistant.txt", msgs[-1])
@@ -245,6 +283,7 @@ pump_until(lambda: statuses[-1] == "failed")
 assert applied[-1] == ["old"]
 fetch_dlg.destroy()
 c = Comm(tempstore.mkdtemp("voice_comm"), tempstore.mkdtemp("voice_personas"))
+c.state_fn = lambda: "idle"
 c.voice.data["profiles"][0]["api_key"] = "test-model-key"
 orig_wait = Modal.wait
 def fake_wait(dlg):
@@ -348,6 +387,17 @@ with patch("pages.comm_voice.time.monotonic", return_value=101):
     assert voice_calls == [0, 1]
 page._voice_manual(messages[2])
 assert not page._voice_queue and voice_calls == [0, 1, 2]
+c.state_fn = lambda: "focus"
+assert not c.voice.play_allowed()
+page._voice_start()
+assert not page._voice_queue
+with patch("pages.comm_voice.toast.warn"):
+    page._voice_manual(messages[0])
+assert voice_calls == [0, 1, 2], "聊天允许时也不能在专注中手动播放"
+page._voice_tick()
+assert c.voice.play_state == "idle"
+c.state_fn = lambda: "break"
+assert c.voice.play_allowed()
 c.set_viewing(False)
 assert c.voice.play_state == "idle"
 c.clear()

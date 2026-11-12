@@ -9,6 +9,25 @@ import java.util.concurrent.TimeUnit
 
 /** 语音生成去重、未播消息筛选与清空期间的并发结果丢弃。 */
 class VoiceTest {
+    @Test fun playbackRestrictionUsesStateEvenWhenChatIsAllowed() {
+        val dir = Files.createTempDirectory("oit_voice_state").toFile()
+        val comm = Comm(dir, java.io.File(dir, "personas"))
+        try {
+            comm.blocked = { "" }
+            val msg = ChatMsg(1, "ai", "hello", "", uid = "restricted")
+            for (kind in listOf("focus", "sleep", "out", "")) {
+                comm.stateFn = { kind }
+                assertFalse(comm.voice.playAllowed())
+                comm.voice.play("Claudia.txt", msg)
+                assertEquals("idle", comm.voice.state)
+                assertFalse(comm.voice.played("Claudia.txt", msg))
+            }
+            for (kind in listOf("idle", "break")) {
+                comm.stateFn = { kind }
+                assertTrue(comm.voice.playAllowed())
+            }
+        } finally { comm.voice.close(); dir.deleteRecursively() }
+    }
     @Test fun modelListContainsOnlyUniqueSpeechModels() {
         val data = JSONObject("""{"data":[{"id":"speech-new-turbo"},{"id":"text-model"},{"id":"speech-new-hd"},{"id":"speech-new-hd"}]}""")
         assertEquals(listOf("speech-new-hd", "speech-new-turbo"), Voice.parseModels(data))

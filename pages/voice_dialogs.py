@@ -129,7 +129,7 @@ def open_voice_settings(parent, comm):
 
     ttk.Button(dlg.buttons, text=tr("新建"), command=add).pack(side="left")
     ttk.Button(b, text=tr("音色合成"), command=lambda: open_voice_design(
-        dlg, {k: v.get().strip() for k, v in vars_.items()}, lambda vid: vars_["voice_id"].set(vid))).pack(anchor="w", pady=4)
+        dlg, {k: v.get().strip() for k, v in vars_.items()}, lambda vid: vars_["voice_id"].set(vid), voice.play_allowed)).pack(anchor="w", pady=4)
     delete = ttk.Button(dlg.buttons, text=tr("删除"), command=remove)
     delete.pack(side="left", padx=6)
     ttk.Button(dlg.buttons, text=tr("保存"), command=save).pack(side="right")

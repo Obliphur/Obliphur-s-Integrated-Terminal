@@ -69,6 +69,7 @@ class Voice(private val dir: File, private val generate: ((JSONObject, String) -
     private var closed = false
     @Volatile var state = "idle"; private set
     @Volatile var error = ""
+    var playAllowed: () -> Boolean = { true }
     var data = JSONObject().put("ts", 0L).put("enabled", false).put("auto", false).put("gap", Cfg.AI_VOICE_GAP)
         .put("profiles", JSONArray().put(profile(CLAUDIA, "Claudia"))).put("assign", JSONObject())
         private set
@@ -183,13 +184,23 @@ class Voice(private val dir: File, private val generate: ((JSONObject, String) -
         main.post { runCatching { old?.release() } }
     }
     @Synchronized fun play(name: String, m: ChatMsg) {
+        if (!playAllowed()) { stop(); error = "仅可在空闲或休息期间播放语音."; return }
         stop(); val seq = token; state = "loading"; error = ""
+        fun watch() {
+            synchronized(this) {
+                if (seq != token || state !in listOf("loading", "playing")) return
+                if (!playAllowed()) { stop(); return }
+                main.postDelayed({ watch() }, 100)
+            }
+        }
+        main.post { watch() }
         val job = request(name, m)
         Thread {
             val file = runCatching { job?.get() }.getOrNull()
             main.post {
                 synchronized(this) {
                     if (seq != token || closed || !enabled) return@post
+                    if (!playAllowed()) { stop(); return@post }
                     if (file == null) { state = "failed"; if (error.isEmpty()) error = "请先填写语音配置的模型、音色 ID 和 API Key."; return@post }
                     runCatching {
                         val mp = MediaPlayer(); player = mp
@@ -197,6 +208,7 @@ class Voice(private val dir: File, private val generate: ((JSONObject, String) -
                         mp.setOnPreparedListener {
                             synchronized(this) {
                                 if (seq != token) return@setOnPreparedListener
+                                if (!playAllowed()) { stop(); return@setOnPreparedListener }
                                 mp.start(); File(file.path + ".played").writeText(""); state = "playing"
                             }
                         }

@@ -105,6 +105,7 @@ class Comm(JointMixin, StatusMixin, ChatMixin, FlowMixin, SchedMixin, ShareMixin
         self._cond_next = 0.0
         self.break_end_fn = lambda: None     # 用户这次休息真正结束的时刻 (datetime; 没在休息 = None); app 接上, 联合行动结束后对方的休息跟着它
         self.state_fn = lambda: ""    # 计时器现在的状态 ("idle" / "break" / "focus" / "sleep" / "out"); app 接上, 用来记空闲时间里开着沟通界面多久
+        self.voice.play_allowed = lambda: self.state_fn() in ("idle", "break")
         self.contract_fn = lambda: False     # 用户有没有合约在进行 (contract.active); app 接上: 日程跟随在合约期间自动关闭
         self.on_sf = None                    # 对方的状态变了, 要问用户跟不跟随 (kind, 已经带上名字的提示文字); app 接上
         self._sf_last = None                 # 上一秒对方的状态 (pid, kind); None = 没在看 (开关关着 / 合约中), 重新开始看时先记下现在的状态, 不提示

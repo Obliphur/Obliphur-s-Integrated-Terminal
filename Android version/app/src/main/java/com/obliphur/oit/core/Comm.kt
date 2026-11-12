@@ -1048,6 +1048,7 @@ class Comm(
     var thinkAuto = true; private set
     /** 计时器现在的状态 (idle / break / focus / sleep / out); Core 接上, 用来记空闲时间里开着沟通界面多久. */
     var stateFn: () -> String = { "" }
+    init { voice.playAllowed = { stateFn() in listOf("idle", "break") } }
     /** 用户这次休息真正结束的时刻 (没在休息 = null); Core 接上, 联合行动结束后对方的休息跟着它. */
     var breakEndFn: () -> LocalDateTime? = { null }
     var userDayFn: (java.time.LocalDate) -> Pair<Double, Double>? = { null }      // (日期) → (专注秒, 空闲秒); Core 接上 (dm.dayKinds), [condition] 判定用

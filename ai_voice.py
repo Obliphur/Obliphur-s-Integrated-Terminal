@@ -107,6 +107,7 @@ class Voice:
         self.error = ""
         self.play_token = 0
         self.play_state = "idle"
+        self.play_allowed = lambda: True  # 沟通装配后接入真实状态；独立试听沿用同一门禁。
         self.load()
 
     def load(self):
@@ -247,6 +248,9 @@ class Voice:
 
     def play(self, persona, m):
         self.stop()
+        if not self.play_allowed():
+            self.error = "仅可在空闲或休息期间播放语音."
+            return
         token = self.play_token
         self.play_state = "loading"
         self.error = ""
@@ -256,6 +260,9 @@ class Voice:
                 path = job.result() if hasattr(job, "result") else job
                 with self.lock:
                     if token != self.play_token:
+                        return
+                    if not self.play_allowed():
+                        self.stop()
                         return
                     if not path or not self.data["enabled"]:
                         self.play_state = "failed"
@@ -270,6 +277,9 @@ class Voice:
                     time.sleep(0.1)
                     with self.lock:
                         if token != self.play_token:
+                            return
+                        if not self.play_allowed():
+                            self.stop()
                             return
                         if self._mci("status oit_ai_voice mode") != "playing":
                             self._mci("close oit_ai_voice")

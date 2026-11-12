@@ -16,7 +16,7 @@ from i18n import tr
 from .widgets import Modal, ScrollArea
 
 
-def open_voice_design(parent, profile, apply):
+def open_voice_design(parent, profile, apply, play_allowed=lambda: True):
     dlg = Modal(parent, tr("音色合成"), width=620, height=min(740, int(parent.winfo_screenheight() * .85)))
     area = ScrollArea(dlg.body)
     area.pack(fill="both", expand=True)
@@ -25,6 +25,7 @@ def open_voice_design(parent, profile, apply):
     state = {"busy": False, "closed": False, "audio": b"", "profile": None, "file": ""}
     preview_dir = tempstore.mkdtemp("misc", prefix="voice_preview_")
     preview = ai_voice.Voice(preview_dir)
+    preview.play_allowed = play_allowed
     mode = tk.StringVar(value="prompt")
     status = tk.StringVar()
     result = tk.StringVar()
@@ -102,6 +103,9 @@ def open_voice_design(parent, profile, apply):
         threading.Thread(target=work, name="oit-voice-design", daemon=True).start()
 
     def listen():
+        if not preview.play_allowed():
+            status.set(tr("仅可在空闲或休息期间播放语音."))
+            return
         if not state["profile"]:
             return
         preview.stop()
@@ -124,6 +128,9 @@ def open_voice_design(parent, profile, apply):
     ttk.Button(dlg.buttons, text=tr("关闭"), command=dlg.cancel).pack(side="right", padx=6)
 
     def poll():
+        if not preview.play_allowed() and preview.play_state in ("loading", "playing"):
+            preview.stop()
+            status.set(tr("仅可在空闲或休息期间播放语音."))
         while not events.empty():
             vid, audio, p, words, fid, error = events.get_nowait()
             state["busy"] = False

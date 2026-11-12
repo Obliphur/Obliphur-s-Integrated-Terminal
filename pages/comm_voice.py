@@ -11,7 +11,7 @@ class CommVoiceMixin:
         c = self.comm
         self._voice_context = (c.pid, c.cfg.get("clear_ts", 0))
         self._voice_queue = c.voice.autoplay(c.persona_name(), c.visible()) if (
-            c.voice.data["enabled"] and c.voice.data["auto"] and not c.blocked()) else []
+            c.voice.data["enabled"] and c.voice.data["auto"] and c.voice.play_allowed() and not c.blocked()) else []
         self._voice_next = time.monotonic()
         self._voice_active = False
 
@@ -47,6 +47,9 @@ class CommVoiceMixin:
             self.area.canvas.yview_moveto(row.winfo_y() / max(1, self.area.inner.winfo_height()))
 
     def _voice_manual(self, m):
+        if not self.comm.voice.play_allowed():
+            toast.warn(tr("仅可在空闲或休息期间播放语音."))
+            return
         if self.comm.blocked() or not self.comm.viewing:
             return
         self._voice_cancel()
@@ -56,7 +59,7 @@ class CommVoiceMixin:
     def _voice_tick(self):
         c = self.comm
         context = (c.pid, c.cfg.get("clear_ts", 0))
-        if not c.viewing or c.blocked() or not c.voice.data["enabled"]:
+        if not c.viewing or c.blocked() or not c.voice.data["enabled"] or not c.voice.play_allowed():
             self._voice_cancel()
             return
         if context != getattr(self, "_voice_context", None):

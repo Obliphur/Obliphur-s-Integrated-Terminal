@@ -2,6 +2,7 @@
 
 
 EN = {
+    "仅可在空闲或休息期间播放语音.": "Voice playback is only available while idle or on a break.",
     "请填写不超过 500 字的试听文本.": "Enter preview text of up to 500 characters.",
     "正在获取语音模型…": "Fetching voice models…",
     "已获取 MiniMax 官方语音模型": "MiniMax voice models retrieved",

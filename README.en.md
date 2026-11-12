@@ -2,7 +2,7 @@
 
 # Obliphur's Integrated Terminal (OIT)
 
-AI model and voice configurations fetch model lists automatically; MiniMax speech models come from its official documentation. Voice creation supports text descriptions and recording uploads for cloning, with previews before applying a voice. Play message audio with the icon at the bottom-left edge of its bubble.
+AI model and voice configurations fetch model lists automatically; MiniMax speech models come from its official documentation. Voice creation supports text descriptions and recording uploads for cloning, with previews before applying a voice. Play message audio with the icon at the bottom-left edge of its bubble. Manual playback, automatic playback and voice previews are available only while idle or on a break, and stop when that state ends.
 
 > (Not actually an integrated terminal...)
 

@@ -19,6 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.obliphur.oit.core.ChatMsg
+import com.obliphur.oit.OitApp
 import com.obliphur.oit.core.Voice
 import com.obliphur.oit.core.VoiceDesign
 import com.obliphur.oit.core.tr
@@ -50,6 +51,7 @@ fun VoiceDesignDialog(profile: JSONObject, onUse: (String) -> Unit, onDismiss: (
     var resultWords by remember { mutableStateOf("") }
     val folder = remember { File(ctx.cacheDir, "voice_preview/${UUID.randomUUID()}") }
     val player = remember { Voice(folder) }
+    player.playAllowed = { OitApp.instance.core.comm.voice.playAllowed() }
     DisposableEffect(player) { onDispose { player.close(); folder.deleteRecursively() } }
     LaunchedEffect(player) {
         while (true) {
@@ -104,6 +106,7 @@ fun VoiceDesignDialog(profile: JSONObject, onUse: (String) -> Unit, onDismiss: (
         }
     }
     fun listen() {
+        if (!player.playAllowed()) { status = tr("仅可在空闲或休息期间播放语音."); return }
         val made = result ?: return
         status = tr("音色已创建，可试听或使用.")
         val p = JSONObject(profile.toString()).put("id", "preview").put("voice_id", made.voiceId)

@@ -108,10 +108,13 @@ fun CommScreen(go: (String) -> Unit) {
     var ver by remember { mutableIntStateOf(comm.version) }
     var otherStatus by remember { mutableStateOf(comm.otherStatusDisplay().first) }
     var otherStatusKind by remember { mutableStateOf(comm.otherStatusDisplay().second) }
+    var voiceSession by remember { mutableStateOf(0) }
+    var voiceAutoRunning by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         while (true) {
             if (comm.voice.state == "failed" && comm.voice.error.isNotEmpty()) { core.toast(tr(comm.voice.error), "warn"); comm.voice.error = "" }
-            if (comm.blocked().isNotEmpty() && comm.voice.state in listOf("playing", "loading")) comm.voice.stop()
+            if ((comm.blocked().isNotEmpty() || !comm.voice.playAllowed()) && comm.voice.state in listOf("playing", "loading")) comm.voice.stop()
+            if (!comm.voice.playAllowed() && voiceAutoRunning) { voiceSession++; voiceAutoRunning = false }
             if (comm.version != ver) ver = comm.version
             val (text, kind) = comm.otherStatusDisplay()
             if (text != otherStatus) otherStatus = text
@@ -129,19 +132,17 @@ fun CommScreen(go: (String) -> Unit) {
     }
     val msgs = remember(ver) { comm.visible() }
     val list = rememberLazyListState()
-    var voiceSession by remember { mutableStateOf(0) }
-    var voiceAutoRunning by remember { mutableStateOf(false) }
     LaunchedEffect(comm.pid) {
         comm.voice.stop()
         val session0 = voiceSession
         val name = comm.personaName()
         val clear0 = comm.clearTsForVoice()
-        if (comm.voice.enabled && comm.voice.auto && comm.blocked().isEmpty()) {
+        if (comm.voice.enabled && comm.voice.auto && comm.voice.playAllowed() && comm.blocked().isEmpty()) {
             voiceAutoRunning = true
             val queue = comm.voice.autoplay(name, comm.visible())
             try {
                 for (m in queue) {
-                    if (session0 != voiceSession || !comm.voice.enabled || !comm.voice.auto || comm.blocked().isNotEmpty() || clear0 != comm.clearTsForVoice()) break
+                    if (session0 != voiceSession || !comm.voice.enabled || !comm.voice.auto || !comm.voice.playAllowed() || comm.blocked().isNotEmpty() || clear0 != comm.clearTsForVoice()) break
                     if (comm.voice.played(name, m)) continue
                     val index = comm.visible().asReversed().indexOfFirst { it.uid == m.uid }
                     if (index < 0) continue
@@ -149,7 +150,7 @@ fun CommScreen(go: (String) -> Unit) {
                     comm.voice.play(name, m)
                     while (comm.voice.state in listOf("loading", "playing")) {
                         if (session0 != voiceSession) break
-                        if (!comm.voice.enabled || !comm.voice.auto || comm.blocked().isNotEmpty() || clear0 != comm.clearTsForVoice()) { comm.voice.stop(); break }
+                        if (!comm.voice.enabled || !comm.voice.auto || !comm.voice.playAllowed() || comm.blocked().isNotEmpty() || clear0 != comm.clearTsForVoice()) { comm.voice.stop(); break }
                         kotlinx.coroutines.delay(100)
                     }
                     kotlinx.coroutines.delay((comm.voice.gap * 1000).toLong())
@@ -200,7 +201,7 @@ fun CommScreen(go: (String) -> Unit) {
         LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list, reverseLayout = true,
             contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 64.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(msgs.asReversed(), key = { it.id }) { m -> Bubble(m) { voiceSession++; comm.voice.play(comm.personaName(), m) } }
+            items(msgs.asReversed(), key = { it.id }) { m -> Bubble(m) { if (comm.voice.playAllowed()) { voiceSession++; comm.voice.play(comm.personaName(), m) } else core.toast(tr("仅可在空闲或休息期间播放语音."), "warn") } }
         }
         val blocked = comm.blocked()
         if (blocked.isNotEmpty() || comm.error.isNotEmpty()) Text(blocked.ifEmpty { tr(comm.error) }, color = o.danger, fontSize = 12.sp,
