@@ -44,6 +44,7 @@
   下完照样核对大小和 SHA-256. 电脑上走的路线 (直连 / 原来的代理) 和请求第 0 个字节时走通的那条相同; 手机上进度 / 速度 / 取消照常 (所有连接合计),
   30 秒内合计收不到 64 KB 算卡住. 源码包 (电脑版没有 zip 附件时用的) 是 GitHub 边打包边发的, 没有大小也不能分段, 还是一条连接 (约 2 MB, 不开 VPN 时 40 秒上下).
 - 发布新版本时 (`release.py` 做, 附件是手机的 `OIT.apk` 和电脑的 `setup.exe`, 见 16.4): 先改两端的版本号 (`config.py` 的 `APP_VERSION`, `Android version/app/build.gradle.kts` 的 `versionName` 和 `versionCode`), 发布的名称写版本号, 附上 APK (和可选的电脑版 zip).
+  本机发布脚本的 `git fetch` 和 GitHub API / 附件上传不经过 OIT 的过滤代理: 通过仅放行当前 GitHub HTTPS 主机的本机隧道, 由发布脚本进程转发, 避免 Git 子进程的直连被防绕过守卫封锁. 先直连, 失败后走用户原来的代理; 系统代理关着但仍留着 `ProxyServer` 的 Clash TUN 同样识别. API 的 408 / 500 / 502 / 503 / 504 响应会换路线重试, 401 / 403 等权限错误直接返回. Adapter 方式离线时仍不能发布.
 
 ### 16.4 安装程序 setup.exe (电脑版)
 

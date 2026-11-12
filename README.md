@@ -71,6 +71,8 @@ python main.py
 
 每次打开程序时从 GitHub 的最新发布检查更新, 可以在 设置 → 基本设置 里关闭自动检查 / 自动更新. 规则见 `MECHANICS.md` 第 16 节.
 
+本机发布工具 `release.py` 的 Git 检查与发布请求使用独立联网路线, 兼容 OIT 的 Proxy 模式与用户原来的代理.
+
 ## Android 版
 
 `Android version/` 是 Android 版 (Kotlin + Jetpack Compose, Android 10 及以上), 用本地 VPN 断网. 构建方法见其中的 `README.md`, 和桌面版的差别见 `MECHANICS.md` 第 14 节.
