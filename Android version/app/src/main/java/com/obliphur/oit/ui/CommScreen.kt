@@ -412,14 +412,20 @@ private fun Bubble(m: ChatMsg, play: (() -> Unit)? = null) {
         verticalAlignment = Alignment.Top) {
         if (comm.showAvatar && !mine) Avatar("ai", comm.personaTitle(comm.personaName()).take(1).ifEmpty { "?" }, 34)
         Column(Modifier.widthIn(max = 280.dp).padding(horizontal = 6.dp), horizontalAlignment = if (mine) Alignment.End else Alignment.Start) {
-            Text(m.text, color = if (mine) o.onAccent else o.text, fontSize = 15.sp,
+            Column(
                 modifier = Modifier
                     .background(if (mine) o.accent else o.card, RoundedCornerShape(12.dp))
-                    .then(if (mine) Modifier else Modifier.border(1.dp, o.border, RoundedCornerShape(12.dp)))
-                    .padding(horizontal = 12.dp, vertical = 8.dp))
+                    .then(if (mine) Modifier else Modifier.border(1.dp, o.border, RoundedCornerShape(12.dp)))) {
+                Text(m.text, color = if (mine) o.onAccent else o.text, fontSize = 15.sp,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
+                if (!mine && comm.voice.enabled) Text("▶", color = o.dim, fontSize = 14.sp,
+                    modifier = Modifier.align(Alignment.Start)
+                        .clickable(onClickLabel = tr("播放语音"), role = androidx.compose.ui.semantics.Role.Button) {
+                            if (comm.blocked().isEmpty()) play?.invoke()
+                        }.padding(start = 4.dp, end = 6.dp, bottom = 2.dp))
+            }
             Text(when_, color = o.dim, fontSize = 11.sp)
         }
-        if (!mine && comm.voice.enabled) TextButton({ if (comm.blocked().isEmpty()) play?.invoke() }) { Text(tr("语音")) }
         if (comm.showAvatar && mine) Avatar("me", OitApp.instance.core.username.take(1).ifEmpty { "我" }, 34)
     }
 }

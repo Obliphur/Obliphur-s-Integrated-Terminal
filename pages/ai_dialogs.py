@@ -289,6 +289,20 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
     refresh_list(state["cid"])
     load()
 
+    from .model_fetch import auto_models
+    def model_snapshot():
+        store()
+        prof = cfg.profile(state["cid"])
+        sig = (state["cid"], prof["base_url"], prof["api_key"], prof["protocol"])
+        return sig, prof if prof["base_url"] and prof["api_key"] else None
+    schedule_models = auto_models(dlg, model_snapshot, ai_assist.list_models,
+                                 lambda models: cb_model.config(values=models))
+    for var in (var_url, var_key):
+        var.trace_add("write", schedule_models)
+    for widget in (cb_preset, cb_family, ent_proto, lb):
+        widget.bind("<<ComboboxSelected>>" if widget is not lb else "<<ListboxSelect>>", schedule_models, add="+")
+    schedule_models()
+
     saved = {"ok": False}
 
     def save():

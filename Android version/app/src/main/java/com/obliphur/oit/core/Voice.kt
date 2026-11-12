@@ -24,6 +24,36 @@ class Voice(private val dir: File, private val generate: ((JSONObject, String) -
         fun profile(id: String, name: String) = JSONObject().put("id", id).put("name", name).put("template", "minimax")
             .put("model", MODELS[0]).put("voice_id", if (id == CLAUDIA) Cfg.AI_VOICE_CLAUDIA_ID else "")
             .put("url", CN_URL).put("api_key", "")
+        fun parseModels(data: JSONObject): List<String> {
+            val rows = when (val raw = data.opt("data") ?: data.opt("models")) {
+                is JSONArray -> raw
+                is JSONObject -> raw.optJSONArray("models") ?: JSONArray()
+                else -> JSONArray()
+            }
+            return (0 until rows.length()).mapNotNull { i ->
+                when (val row = rows.opt(i)) {
+                    is String -> row
+                    is JSONObject -> row.optString("id", row.optString("model"))
+                    else -> null
+                }?.takeIf { it.startsWith("speech-") }
+            }.distinct().sorted()
+        }
+        fun listModels(p: JSONObject): List<String> {
+            val base = java.net.URI(p.optString("url", CN_URL).trim())
+            require(base.scheme == "https" && !base.host.isNullOrBlank())
+            val key = p.optString("api_key").trim()
+            require(key.isNotEmpty())
+            val path = base.path.trimEnd('/').removeSuffix("/t2a_v2") + "/models"
+            val conn = java.net.URI(base.scheme, base.authority, path, null, null).toURL().openConnection() as HttpURLConnection
+            try {
+                conn.instanceFollowRedirects = false; conn.connectTimeout = 15000; conn.readTimeout = 20000
+                conn.setRequestProperty("Authorization", "Bearer $key")
+                require(conn.responseCode in 200..299)
+                val data = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+                require((data.optJSONObject("base_resp")?.optInt("status_code", 0) ?: 0) == 0)
+                return parseModels(data).also { require(it.isNotEmpty()) }
+            } finally { conn.disconnect() }
+        }
         private fun hash(text: String) = MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it.toInt() and 255) }
     }

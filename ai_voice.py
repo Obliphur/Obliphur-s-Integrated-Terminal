@@ -9,6 +9,7 @@ import os
 import threading
 import time
 import urllib.request
+from urllib.parse import urlsplit, urlunsplit
 from concurrent.futures import Future
 
 import config
@@ -31,6 +32,38 @@ def profile(cid="", name="MiniMax"):
 
 def is_claudia(name):
     return os.path.basename(name).casefold() == "claudia.txt"
+
+
+def parse_models(data):
+    """仅列出语音合成型号，兼容接口返回的对象列表和字符串列表。"""
+    rows = data.get("data", data.get("models", []))
+    if isinstance(rows, dict):
+        rows = rows.get("models", [])
+    ids = [row.get("id", row.get("model", "")) if isinstance(row, dict) else row for row in rows]
+    return sorted({name for name in ids if isinstance(name, str) and name.startswith("speech-")})
+
+
+def list_models(p):
+    """从当前语音 API 的同一根路径获取型号，不改变用户已选的型号。"""
+    url = urlsplit(p.get("url", CN_URL).strip())
+    if url.scheme != "https" or not url.hostname:
+        raise ValueError("语音 API 地址必须以 https:// 开头.")
+    if not p.get("api_key", "").strip():
+        raise ValueError("请先填写语音配置的模型、音色 ID 和 API Key.")
+    path = url.path.rstrip("/")
+    if path.endswith("/t2a_v2"):
+        path = path[:-len("/t2a_v2")]
+    req = urllib.request.Request(urlunsplit((url.scheme, url.netloc, path + "/models", "", "")),
+                                 headers={"Authorization": "Bearer " + p["api_key"].strip()})
+    try:
+        with _open_url(req, timeout=20) as r:
+            data = json.loads(r.read(2 * 1024 * 1024))
+        models = parse_models(data)
+        if not models or data.get("base_resp", {}).get("status_code", 0) != 0:
+            raise ValueError()
+        return models
+    except Exception:
+        raise ValueError("未能获取语音模型列表，仍可选择预设型号或手动填写.") from None
 
 
 def synthesize(p, text):

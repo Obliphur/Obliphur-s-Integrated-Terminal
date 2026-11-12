@@ -15,6 +15,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -24,7 +25,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.obliphur.oit.OitApp
 import com.obliphur.oit.core.I18n
@@ -33,6 +33,9 @@ import com.obliphur.oit.core.Voice
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 
 /** 配置帮助入口与平台链接，桌面和手机使用相同说明。 */
 @Composable
@@ -108,6 +111,21 @@ fun VoiceConfigDialog(onDismiss: () -> Unit) {
     var sel by remember { mutableStateOf(0) }
     var p by remember { mutableStateOf(JSONObject(ps[0].toString())) }
     var help by remember { mutableStateOf(false) }
+    var models by remember(p.optString("id"), p.optString("url"), p.optString("api_key")) { mutableStateOf(Voice.MODELS) }
+    val modelCache = remember { HashMap<List<String>, List<String>>() }
+    LaunchedEffect(p.optString("id"), p.optString("url"), p.optString("api_key")) {
+        val snapshot = JSONObject(p.toString())
+        val key = listOf(snapshot.optString("id"), snapshot.optString("url"), snapshot.optString("api_key"))
+        if (key[1].startsWith("https://") && key[2].isNotBlank()) {
+            delay(700)
+            try {
+                val found = modelCache[key] ?: withContext(Dispatchers.IO) { Voice.listModels(snapshot) }
+                modelCache[key] = found
+                models = found
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (_: Exception) { /* 保留预设及当前型号，支持平台未提供列表接口的情况。 */ }
+        }
+    }
     fun load(index: Int) { ps[sel] = p; sel = index; p = JSONObject(ps[sel].toString()) }
     fun field(key: String, value: String) { p = JSONObject(p.toString()).put(key, value) }
     AlertDialog(onDismissRequest = onDismiss, containerColor = o.bg,
@@ -124,7 +142,7 @@ fun VoiceConfigDialog(onDismiss: () -> Unit) {
             }
             OutlinedTextField(p.optString("name"), { field("name", it) }, label = { Text(tr("名称")) }, singleLine = true, modifier = Modifier.fillMaxWidth())
             VoicePicker(tr("模板"), listOf("minimax" to "MiniMax"), "minimax") {}
-            VoicePicker(tr("型号"), Voice.MODELS.map { it to it }, p.optString("model")) { field("model", it) }
+            VoicePicker(tr("型号"), (listOf(p.optString("model")) + models).filter { it.isNotBlank() }.distinct().map { it to it }, p.optString("model")) { field("model", it) }
             // 模型名称可手填，兼容平台之后发布的新型号。
             OutlinedTextField(p.optString("model"), { field("model", it) }, label = { Text(tr("型号")) }, singleLine = true, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(p.optString("voice_id"), { field("voice_id", it) }, label = { Text(tr("音色 ID")) },
@@ -144,4 +162,4 @@ fun VoiceConfigDialog(onDismiss: () -> Unit) {
 }
 
 private const val MODEL_HELP = "1. 先注册一个提供 AI 服务的网站，充值后创建 API Key（相当于调用 AI 的密码）。\n2. 点「新建」，名称随便写，方便自己认出。用中转站就选「自定义」，Base URL 照网站的 API 文档复制。\n3. 按网站说明选择模型类型和接口协议；不确定时先用网站的 OpenAI 兼容协议。\n4. 点「获取模型列表」选择网站支持的模型，或复制网站给的模型名称。\n5. 把 API Key 粘贴进来并保存。聊天页选择这份配置即可；「设为默认」还会让规则页使用它。"
-private const val VOICE_HELP = "1. 打开 MiniMax 平台，注册并开通语音服务，创建 API Key。\n2. 点「新建」，模板选 MiniMax，选择一个语音模型。HD 音质更好，Turbo 更快；费用以平台为准。\n3. 从平台的音色列表复制音色 ID；这是音色的编号，不是显示名称。自定义音色需要当前 API 账号拥有使用权限。\n4. 粘贴 MiniMax 的 API Key。国内账号用国内 API 地址，国际账号用国际地址，不要填写平台网页地址。\n5. 保存后回到「设置 → 沟通」，为当前聊天对象选择这份语音配置。开启语音后，新消息会立即生成语音，点消息右侧的「语音」播放。\nClaudia 默认配置只给 Claudia 使用，音色已填好；仍需填写有权使用该音色的 API Key。"
+private const val VOICE_HELP = "1. 打开 MiniMax 平台，注册并开通语音服务，创建 API Key。\n2. 点「新建」，模板选 MiniMax，选择一个语音模型。HD 音质更好，Turbo 更快；费用以平台为准。\n3. 从平台的音色列表复制音色 ID；这是音色的编号，不是显示名称。自定义音色需要当前 API 账号拥有使用权限。\n4. 粘贴 MiniMax 的 API Key。国内账号用国内 API 地址，国际账号用国际地址，不要填写平台网页地址。\n5. 保存后回到「设置 → 沟通」，为当前聊天对象选择这份语音配置。开启语音后，新消息会立即生成语音，点消息框左下角贴边的播放图标。\nClaudia 默认配置只给 Claudia 使用，音色已填好；仍需填写有权使用该音色的 API Key。"

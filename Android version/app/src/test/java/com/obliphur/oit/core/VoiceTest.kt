@@ -9,6 +9,12 @@ import java.util.concurrent.TimeUnit
 
 /** 语音生成去重、未播消息筛选与清空期间的并发结果丢弃。 */
 class VoiceTest {
+    @Test fun modelListContainsOnlyUniqueSpeechModels() {
+        val data = JSONObject("""{"data":[{"id":"speech-new-turbo"},{"id":"text-model"},{"id":"speech-new-hd"},{"id":"speech-new-hd"}]}""")
+        assertEquals(listOf("speech-new-hd", "speech-new-turbo"), Voice.parseModels(data))
+        assertEquals(listOf("speech-one"), Voice.parseModels(JSONObject("""{"models":["speech-one","text-model"]}""")))
+        assertEquals(listOf("speech-two"), Voice.parseModels(JSONObject("""{"data":{"models":[{"model":"speech-two"}]}}""")))
+    }
     @Test fun cacheAndPersonaRestrictions() {
         val dir = Files.createTempDirectory("oit_voice").toFile()
         var calls = 0

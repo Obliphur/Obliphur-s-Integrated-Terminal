@@ -2,6 +2,8 @@
 
 # Obliphur's Integrated Terminal (OIT)
 
+AI model and voice configurations fetch model lists automatically. Play message audio with the icon at the bottom-left edge of its bubble.
+
 > (Not actually an integrated terminal...)
 
 [中文](README.md) | English

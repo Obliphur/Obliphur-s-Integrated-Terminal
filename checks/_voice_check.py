@@ -121,11 +121,68 @@ body = json.loads(requests[0].data)
 assert body["voice_setting"]["voice_id"] == "test-voice" and body["output_format"] == "hex"
 assert requests[0].get_header("Authorization") == "Bearer secret-key"
 
+# 自动取模型使用同源 /models 地址，只列语音型号，不把 Key 放进 URL。
+class ModelsResponse(Response):
+    def read(self, size):
+        return json.dumps({"data": [{"id": "speech-new-hd"}, {"id": "MiniMax-M2"},
+                                     {"id": "speech-new-hd"}, {"id": "speech-new-turbo"}]}).encode()
+def open_models(req, timeout):
+    requests.append(req)
+    return ModelsResponse()
+with patch("ai_voice._open_url", side_effect=open_models):
+    assert ai_voice.list_models(custom) == ["speech-new-hd", "speech-new-turbo"]
+assert requests[-1].full_url == "https://api.minimaxi.com/v1/models"
+assert requests[-1].get_header("Authorization") == "Bearer secret-key"
+assert ai_voice.parse_models({"models": ["speech-one", "text-model"]}) == ["speech-one"]
+assert ai_voice.parse_models({"data": {"models": [{"model": "speech-two"}]}}) == ["speech-two"]
+with patch("ai_voice._open_url", side_effect=OSError("secret-key")):
+    try:
+        ai_voice.list_models(custom)
+        raise AssertionError("失败不应当被当成空列表")
+    except ValueError as e:
+        assert "secret-key" not in str(e)
+
 # 小屏大字号下语音配置字段仍可滚动到达，Claudia 音色不可修改。
 root = tk.Tk()
 root.geometry("800x600+5000+5000")
 root.update()
+
+# 自动获取只采用当前配置的结果；切换后晚返回的旧列表不能污染新配置。
+from pages.model_fetch import auto_models
+fetch_dlg = tk.Toplevel(root)
+fetch_dlg.withdraw()
+fetch_state = {"sig": "old"}
+fetch_started, fetch_release = threading.Event(), threading.Event()
+applied = []
+def fetch_snapshot():
+    return fetch_state["sig"], {"sig": fetch_state["sig"]}
+def fetch_models(p):
+    if p["sig"] == "old":
+        fetch_started.set()
+        assert fetch_release.wait(5)
+    return [p["sig"]]
+schedule = auto_models(fetch_dlg, fetch_snapshot, fetch_models, applied.append, delay=1)
+def pump_until(fn):
+    end = time.monotonic() + 5
+    while not fn() and time.monotonic() < end:
+        root.update()
+        time.sleep(.01)
+    assert fn()
+schedule()
+pump_until(fetch_started.is_set)
+fetch_state["sig"] = "new"
+schedule()
+pump_until(lambda: applied == [["new"]])
+fetch_release.set()
+settle_at = time.monotonic() + .25
+pump_until(lambda: time.monotonic() >= settle_at)
+assert applied == [["new"]]
+fetch_state["sig"] = "old"
+schedule()
+pump_until(lambda: applied[-1] == ["old"])
+fetch_dlg.destroy()
 c = Comm(tempstore.mkdtemp("voice_comm"), tempstore.mkdtemp("voice_personas"))
+c.voice.data["profiles"][0]["api_key"] = "test-model-key"
 orig_wait = Modal.wait
 def fake_wait(dlg):
     dlg.update_idletasks()
@@ -136,11 +193,17 @@ def fake_wait(dlg):
     all_ = list(children(dlg))
     assert any(w.get() == config.AI_VOICE_CLAUDIA_ID and str(w.cget("state")) == "readonly" for w in all_ if isinstance(w, ttk.Entry))
     assert any(str(w.cget("text")) == "帮助" for w in all_ if isinstance(w, ttk.Button))
+    # 打开已配好的配置会自动取列表，当前型号保持不变。
+    model = next(w for w in all_ if isinstance(w, ttk.Combobox) and w.get() == ai_voice.MODELS[0])
+    pump_until(lambda: "speech-auto-test" in model.cget("values"))
+    assert model.get() == ai_voice.MODELS[0]
     dlg.destroy()
 Modal.wait = fake_wait
 try:
     config.UI_SCALE = 1.5
-    voice_dialogs.open_voice_settings(root, c)
+    with patch("ai_voice.list_models", return_value=["speech-auto-test"]) as fetch_models_mock:
+        voice_dialogs.open_voice_settings(root, c)
+    assert fetch_models_mock.call_count == 1
 finally:
     Modal.wait = orig_wait
     config.UI_SCALE = 1.0
@@ -153,6 +216,7 @@ assert "api.minimaxi.com" in hosts
 c.voice.save(enabled=False)
 assert "api.minimaxi.com" not in DailyMixin._api_hosts(SimpleNamespace(comm=c))
 c.voice.save(enabled=True)
+c.ai_free_at = lambda now: None
 msg = c._mk("ai", "received")
 c.messages.append(msg)
 wait_for(lambda: os.path.isfile(c.voice.file(c.persona_name(), msg)))
@@ -161,6 +225,12 @@ page.pack(fill="both", expand=True)
 page.show()
 page._voice_scroll(msg)
 assert msg["id"] in page._rendered
+row = page._rows[page._rendered.index(msg["id"])]
+box = next(w for w in row.winfo_children() if isinstance(w, tk.Frame) and w.winfo_children())
+bubble = box.winfo_children()[0]
+button = next(w for w in bubble.winfo_children() if isinstance(w, tk.Button))
+assert button.cget("text") == "▶" and button.winfo_x() <= 3
+assert button.winfo_y() > bubble.winfo_children()[0].winfo_y()
 
 # 自动播放是按完整音频结束后计算间隔；手动点击取消排队，离开页面立即停止。
 voice_calls = []

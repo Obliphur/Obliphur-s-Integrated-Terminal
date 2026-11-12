@@ -9,6 +9,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -22,6 +23,7 @@ import com.obliphur.oit.ai.AiError
 import com.obliphur.oit.ai.Profile
 import com.obliphur.oit.core.tr
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -39,6 +41,20 @@ fun ModelPicker(profile: () -> Profile, onPick: (String) -> Unit) {
     var version by remember { mutableStateOf(0) }          // 取到新列表后刷新菜单
     val p = profile()
     val options = Ai.modelsFor(p).also { version }
+    val fetched = remember { HashSet<List<String>>() }
+    LaunchedEffect(p.baseUrl, p.apiKey, p.protocol) {
+        val snapshot = p.copy()
+        val key = listOf(snapshot.baseUrl, snapshot.apiKey, snapshot.protocol)
+        if (snapshot.baseUrl.isNotBlank() && snapshot.apiKey.isNotBlank() && key !in fetched) {
+            delay(700)
+            try {
+                withContext(Dispatchers.IO) { Ai.listModels(snapshot) }
+                fetched.add(key)
+                version++
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (_: Exception) { /* 自动获取失败保留现有选项；仍可手动刷新。 */ }
+        }
+    }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box {
             TextButton({ open = true }) { Text("▾  " + p.model.ifEmpty { "—" }, color = o.text, fontSize = 13.sp) }

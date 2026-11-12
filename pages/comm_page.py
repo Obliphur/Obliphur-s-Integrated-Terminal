@@ -386,17 +386,21 @@ class CommPage(CommVoiceMixin, tk.Frame):
             fill, fg, rim = COLORS.get("accent_fill", COLORS["accent"]), COLORS.get("on_accent_fill", COLORS["on_accent"]), None
         else:
             fill, fg, rim = COLORS["bg_card"], COLORS["text"], COLORS["border"]
-        tk.Label(box, text=m["text"], bg=fill, fg=fg, font=config.font("body"), justify="left",
+        bubble = tk.Frame(box, bg=fill, highlightthickness=1 if rim else 0, highlightbackground=rim or fill)
+        bubble.pack(anchor="e" if mine else "w")
+        tk.Label(bubble, text=m["text"], bg=fill, fg=fg, font=config.font("body"), justify="left",
                  anchor="w", wraplength=self._wrap(), padx=12, pady=8,
-                 highlightthickness=1 if rim else 0, highlightbackground=rim or fill).pack(anchor="e" if mine else "w")
+                 highlightthickness=0).pack(anchor="e" if mine else "w")
+        if not mine and c.voice.data["enabled"]:
+            tk.Button(bubble, text="▶", command=lambda: self._voice_manual(m), bg=fill, fg=COLORS["text_dim"],
+                      activebackground=fill, activeforeground=COLORS["accent"], relief="flat", bd=0,
+                      padx=3, pady=0, cursor="hand2", font=config.font("small"), takefocus=True).pack(anchor="sw", padx=1, pady=1)
         try:
             when = datetime.fromisoformat(m["at"]).strftime("%H:%M")
         except (KeyError, ValueError):
             when = ""
         tk.Label(box, text=when, bg=bg, fg=COLORS["text_dim"], font=config.font("small")).pack(
             anchor="e" if mine else "w")
-        if not mine and c.voice.data["enabled"]:
-            ttk.Button(row, text=tr("语音"), width=6, command=lambda: self._voice_manual(m)).pack(side="left", padx=4)
         self._bind_wheel(row)
         return row
 
