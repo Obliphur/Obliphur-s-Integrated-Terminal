@@ -22,6 +22,8 @@ def _selftest():
     os.makedirs(data)
 
     # 前置 prompt / README
+    assert "聊天记录达到400条后" in BUILTIN_PERSONAS[DEFAULT_PERSONA] and "[messages]查询" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
+    assert "不得涉及亲密关系" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
     p = prefix_prompt()
     assert p.startswith("[OIT_SYSTEM_MESSAGES]") and "回复OIT(自律软件)用户的消息" in p and "I." in p and "II." in p and "III." in p
     assert "IV.依专注段主动收尾" in p and "≤5min" in p
