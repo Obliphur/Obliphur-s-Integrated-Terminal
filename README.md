@@ -117,7 +117,8 @@ obliphur_terminal/
 ├─ contract/             合约: 词条, 违反与降级, 休息倍率, 整点记录锁定 (mixin 在 contract/)
 ├─ net_guard/            联网额度, 申请 / 快速访问 / 借贷, 断网方式切换 (mixin 在 net_guard/)
 ├─ netproxy/             本地过滤代理 (Proxy 断网方式)
-│  ├─ server.py          HTTP / HTTPS 隧道代理, 403 拦截页
+│  ├─ server.py          HTTP / HTTPS 隧道代理, 本机 403 拦截页
+│  ├─ browserblock.py    HTTPS 被拦页面转到本机 OIT 提示页
 │  ├─ rules.py           黑白名单与判定, 名单改动的冷静期
 │  ├─ controller.py      把代理, 名单, 系统代理拼在一起
 │  ├─ sysproxy.py        Windows 系统代理的安装 / 还原

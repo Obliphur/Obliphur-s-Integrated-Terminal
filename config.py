@@ -220,7 +220,7 @@ OUTING_MAX_HOURS = 24 * 7
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.497"                  # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.498"                  # 和 GitHub 上发布的版本号比较 (见 updater.py)
 AI_VOICE_GAP = 1.0                       # 两条语音之间的默认间隔（秒）
 AI_VOICE_AUTO_COUNT = 10                  # 打开沟通时自动播放的未播消息上限
 AI_VOICE_CLAUDIA_ID = "claudia1999"       # Claudia 专用音色；voice_id 区分大小写

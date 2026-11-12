@@ -3,15 +3,20 @@
 ──────────────────────────────────────────────────────────
 · 域名取自 CONNECT 目标 / 绝对 URI / Host 头,不碰加密内容.
 · 每条连接先查进程名(procinfo),再交给 decide(host, exe) 判定;拒绝就回 403.
+· 浏览器不能显示 CONNECT 的 403 正文; browserblock 将前台被拦页面转到本机提示页.
 · 若给了 upstream(用户原来的 HTTP 代理),放行的流量转给它而不是直连.
 · 每个请求一条连接(强制 Connection: close),实现简单,没有连接复用的状态要维护.
 """
 
 import select
+import secrets
 import socket
 import threading
 import time
 from urllib.parse import urlsplit
+from html import escape
+
+from i18n import tr
 
 from . import procinfo
 
@@ -62,6 +67,8 @@ class FilterProxy:
         self._sock = None
         self._thread = None
         self._stop = threading.Event()
+        self._pages = {}
+        self._pages_lock = threading.Lock()
 
     @property
     def running(self) -> bool:
@@ -95,6 +102,8 @@ class FilterProxy:
 
     def stop(self):
         self._stop.set()
+        with self._pages_lock:
+            self._pages.clear()
         s, self._sock = self._sock, None
         if s is not None:
             try:
@@ -143,22 +152,49 @@ class FilterProxy:
         head, _, rest = buf.partition(b"\r\n\r\n")
         return head, rest
 
-    def _reply(self, cli, code: int, reason: str, body_text: str = "", why: str = ""):
-        body = (f"<html><head><meta charset='utf-8'><title>{code}</title></head><body "
-                f"style='font-family:sans-serif;margin:3em'><h2>{code} {reason}</h2>"
+    def _reply(self, cli, code: int, reason: str, body_text: str = "", why: str = "", title: str = ""):
+        body = (f"<html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width'>"
+                f"<title>{escape(title or str(code))}</title></head><body "
+                f"style='font-family:sans-serif;margin:3em'><h2>{escape(title) if title else f'{code} {reason}'}</h2>"
                 f"<p>{body_text}</p><p style='color:#888'>Obliphur's Integrated Terminal</p>"
                 f"</body></html>").encode("utf-8")
         head = (f"HTTP/1.1 {code} {reason}\r\nContent-Type: text/html; charset=utf-8\r\n"
                 f"Content-Length: {len(body)}\r\nConnection: close\r\n"
+                f"Cache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n"
+                f"Referrer-Policy: no-referrer\r\n"
+                f"Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'\r\n"
                 f"X-OIT-Reason: {why}\r\n\r\n").encode("latin-1")
         try:
             cli.sendall(head + body)
         except OSError:
             pass
 
-    def _deny(self, cli, host, why):
-        msg = _REASON_ZH.get(why, why)
-        self._reply(cli, 403, "Forbidden", f"已拦截: <b>{host}</b><br>{msg}", why)
+    def _deny(self, cli, host, why, original=""):
+        msg = escape(tr(_REASON_ZH.get(why, why)))
+        text = f"{escape(tr('已拦截'))}: <b>{escape(host)}</b><br>{msg}"
+        if original:
+            text += f"</p><p><a href='{escape(original, quote=True)}'>{escape(tr('重新访问'))}</a>"
+        self._reply(cli, 403, "Forbidden", text, why, tr("OIT 已拦截此网站"))
+
+    def block_page_url(self, host, why, original):
+        """提示页只放在内存里, 随机地址不能用来代理任意目标或改规则."""
+        with self._pages_lock:
+            if len(self._pages) >= 256:
+                self._pages.pop(next(iter(self._pages)))
+            token = secrets.token_urlsafe(24)
+            self._pages[token] = (host, why, original)
+        return f"http://127.0.0.1:{self.port}/oit-block/{token}"
+
+    def _local_page(self, cli, method, host, port, path):
+        if host != "127.0.0.1" or port != self.port or not path.startswith("/oit-block/"):
+            return False
+        with self._pages_lock:
+            page = self._pages.get(path.removeprefix("/oit-block/"))
+        if method != "GET" or page is None:
+            self._reply(cli, 404, "Not Found")
+        else:
+            self._deny(cli, *page[:2], original=page[2])
+        return True
 
     def _dial(self, host: str, port: int):
         return socket.create_connection((host, port), timeout=CONNECT_TIMEOUT)
@@ -249,6 +285,9 @@ class FilterProxy:
             return
         if not host:
             self._reply(cli, 400, "Bad Request")
+            return
+
+        if self._local_page(cli, method, host, port, path):
             return
 
         allow, why = self.decide(host, exe)

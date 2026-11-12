@@ -18,6 +18,7 @@ import sys
 import threading
 import time
 from ctypes import wintypes
+from urllib.parse import urlsplit
 
 # 认得地址栏的浏览器窗口: Chromium 系 (Chrome, Edge, Brave, Vivaldi …) 的地址栏类名是 OmniboxViewViews,
 # Firefox 的是 AutomationId urlbar-input
@@ -32,6 +33,7 @@ TITLE_HINTS = ("哔哩哔哩", "bilibili")
 _UIA_CLASSNAME = 30012
 _UIA_AUTOMATIONID = 30011
 _UIA_VALUE_PATTERN = 10002
+_UIA_HAS_KEYBOARD_FOCUS = 30008
 _SCOPE_DESCENDANTS = 4
 _VT_BSTR = 8
 _NOT_FOUND_RETRY = 30.0           # 某个窗口里找不到地址栏时, 隔多久再找
@@ -58,6 +60,25 @@ def _foreground_hwnd():
         return user32.GetForegroundWindow() or 0
     except Exception:
         return 0
+
+
+def same_address(first, second):
+    """地址栏获得焦点后会补全协议和根路径, 这不算用户换了地址."""
+    if first == second:
+        return True
+    try:
+        a, b = (urlsplit(v if "://" in v else "//" + v) for v in (first, second))
+        if a.scheme and b.scheme and a.scheme != b.scheme:
+            return False
+        ah, bh = a.hostname, b.hostname
+        if not a.scheme and bh == "www." + str(ah):
+            ah = bh
+        elif not b.scheme and ah == "www." + str(bh):
+            bh = ah
+        return ((ah, a.port, a.path or "/", a.query, a.fragment) ==
+                (bh, b.port, b.path or "/", b.query, b.fragment))
+    except (TypeError, ValueError):
+        return False
 
 
 class _VARIANT(ctypes.Structure):
@@ -146,6 +167,43 @@ class _Uia:
         finally:
             self.release(pat)
 
+    def focused(self, element):
+        var = _VARIANT()
+        if self._fn(element, 10, ctypes.c_int, ctypes.POINTER(_VARIANT))(
+                element, _UIA_HAS_KEYBOARD_FOCUS, ctypes.byref(var)) != 0:
+            return True                 # 查不到焦点时不改用户的地址栏
+        return var.vt != 11 or bool(var.val)    # VT_BOOL; 不支持这个属性也按正在编辑处理
+
+    def navigate(self, element, hwnd, expected, target):
+        """只向指定窗口提交地址, 不模拟全局按键, 不碰剪贴板."""
+        user32 = ctypes.WinDLL("user32")
+        def active():
+            # 用户还按着回车 / 修饰键时不提交, 避免浏览器将回车解释为另一种操作.
+            return (_foreground_hwnd() == hwnd and
+                    not any(user32.GetAsyncKeyState(k) & 0x8000 for k in (0x0D, 0x10, 0x11, 0x12, 0x5B, 0x5C)))
+        if self.focused(element) or self.value(element) != expected or _foreground_hwnd() != hwnd:
+            return False
+        pat = ctypes.c_void_p()
+        if self._fn(element, 16, ctypes.c_int, ctypes.POINTER(ctypes.c_void_p))(
+                element, _UIA_VALUE_PATTERN, ctypes.byref(pat)) != 0 or not pat.value:
+            return False
+        try:
+            if not active():
+                return False
+            if self._fn(element, 3)(element) != 0:       # IUIAutomationElement.SetFocus
+                return False
+            if _foreground_hwnd() != hwnd or not same_address(self.value(element), expected):
+                return False
+            if self._fn(pat, 3, ctypes.c_wchar_p)(pat, target) != 0:
+                return False
+            if not active() or not same_address(self.value(element), target):
+                return False
+            user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+            return bool(user32.PostMessageW(hwnd, 0x100, 0x0D, 0x001C0001) and
+                        user32.PostMessageW(hwnd, 0x101, 0x0D, 0xC01C0001))
+        finally:
+            self.release(pat)
+
     def close(self):
         for c in self._conds.values():
             self.release(c)
@@ -157,8 +215,9 @@ class _Uia:
 class AddressBars:
     """窗口 → 地址栏的 UIA 元素 (缓存着, 元素失效了再找); 扫描线程里用."""
 
-    def __init__(self):
+    def __init__(self, missing_retry=_NOT_FOUND_RETRY):
         self.uia = None
+        self.missing_retry = missing_retry
         self.failed = False
         self._els = {}                 # hwnd -> 元素指针
         self._missing = {}             # hwnd -> 上次没找到的时刻
@@ -166,9 +225,13 @@ class AddressBars:
     def read(self, hwnd: int, firefox: bool = False):
         if self.failed:
             return None
-        try:
-            if self.uia is None:
+        if self.uia is None:
+            try:
                 self.uia = _Uia()
+            except Exception:
+                self.failed = True     # 只有接口本身不可用时才永久停用
+                return None
+        try:
             el = self._els.get(hwnd)
             if el is not None:
                 v = self.uia.value(el)
@@ -176,7 +239,7 @@ class AddressBars:
                     return v
                 self.uia.release(self._els.pop(hwnd))
             now = time.monotonic()
-            if now - self._missing.get(hwnd, -1e9) < _NOT_FOUND_RETRY:
+            if now - self._missing.get(hwnd, -1e9) < self.missing_retry:
                 return None
             root = self.uia.element_from_handle(hwnd)
             if root is None:
@@ -195,7 +258,9 @@ class AddressBars:
             self._els[hwnd] = el
             return self.uia.value(el)
         except Exception:
-            self.failed = True         # UIA 用不了 (没有接口 / 虚表对不上): 以后都当认不出来, 回到整站名单
+            # 浏览器启动 / 换窗口时元素可能失效; 只丢掉这个窗口的缓存, 下次重新找.
+            self.uia.release(self._els.pop(hwnd, None))
+            self._missing[hwnd] = time.monotonic()
             return None
 
     def forget_except(self, alive: set):
@@ -205,6 +270,12 @@ class AddressBars:
             self.uia.release(self._els.pop(h))
         for h in [h for h in self._missing if h not in alive]:
             self._missing.pop(h, None)
+
+    def navigate(self, hwnd, expected, target):
+        el = self._els.get(hwnd)
+        if self.uia is None or el is None:
+            return False
+        return self.uia.navigate(el, hwnd, expected, target)
 
     def close(self):
         if self.uia is not None:
@@ -344,6 +415,26 @@ def _selftest():
         assert is_bilibili_url(yes), yes
     for no in ("notbilibili.com/x", "bilibili 官网", "https://google.com/?q=bilibili.com", "bilibili.com.evil.com", None):
         assert not is_bilibili_url(no), no
+
+    class ChangingUia:
+        def value(self, el):
+            if el == "old":
+                raise OSError("窗口已经重建")
+            return "https://google.com/"
+        def release(self, el):
+            pass
+        def element_from_handle(self, hwnd):
+            return "root"
+        def find_first(self, *args):
+            return "new"
+        def close(self):
+            pass
+    changing = AddressBars(missing_retry=0)
+    changing.uia = ChangingUia()
+    changing._els[1] = "old"
+    assert changing.read(1) is None and not changing.failed
+    assert changing.read(1) == "https://google.com/", "窗口元素失效后还能重新读取"
+    changing.close()
 
     calls = []
     w = Watcher(lambda: calls.append(1) or {"chrome.exe": ["u"]}, max_age=0.05, stale=0.5)

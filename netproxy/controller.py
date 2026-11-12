@@ -12,6 +12,7 @@ import time
 from collections import deque
 
 from .browserurl import Watcher
+from .browserblock import BlockPageWatcher
 from .rules import RuleStore, MODE_BLACKLIST, DEFAULT_TEMPLATE
 from .server import FilterProxy, DEFAULT_PORT
 from .sysproxy import SystemProxy
@@ -40,6 +41,7 @@ class ProxyController:
         self._server = None
         self._lock = threading.RLock()
         self._up_cache = (0.0, None)
+        self._block_pages = None
 
     @property
     def running(self) -> bool:
@@ -75,6 +77,9 @@ class ProxyController:
             self.allowed += 1
             return
         self.blocked += 1
+        pages = self._block_pages
+        if pages is not None:
+            pages.denied(host, exe, why)
         last = self.events[-1] if self.events else None
         if last and last["host"] == host and last["exe"] == exe and time.time() - last["ts"] < 2:
             last["count"] += 1
@@ -91,6 +96,7 @@ class ProxyController:
                                   upstream=self._upstream, on_event=self._on_event)
                 srv.start()
                 self._server = srv
+                self._block_pages = BlockPageWatcher(self._decide, srv.block_page_url)
             self.sys.install("127.0.0.1", self._server.port)
 
     def set_online(self, online: bool):
@@ -98,6 +104,9 @@ class ProxyController:
 
     def stop(self, restore: bool = True):
         with self._lock:
+            if self._block_pages is not None:
+                self._block_pages.stop()
+                self._block_pages = None
             srv, self._server = self._server, None
             if srv is not None:
                 srv.stop()

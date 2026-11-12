@@ -97,9 +97,110 @@ def _connect(proxy_port, hostport, payload=b"ping"):
     return status, _read_all(s)
 
 
+def _block_page_test():
+    """HTTPS 提示用本机页面; 不放行被拦目标, 也不跳转其他标签页的子资源."""
+    import time
+    from urllib.parse import urlsplit
+    from .browserblock import BlockPageWatcher, page_target
+    from .browserurl import CHROMIUM_CLASS, same_address
+    from i18n import get_language, set_language
+
+    assert same_address("google.com", "https://google.com/")
+    assert same_address("bilibili.com", "https://www.bilibili.com/")
+    assert not same_address("https://bilibili.com/", "https://www.bilibili.com/")
+    assert same_address("127.0.0.1:17890/oit-block/x", "http://127.0.0.1:17890/oit-block/x")
+    assert not same_address("https://google.com/", "http://google.com/")
+    assert not same_address("google.com/x", "https://google.com/y")
+    assert not same_address(None, "google.com")
+
+    for host in ("www.bilibili.com", "platform.deepseek.com", "google.com"):
+        assert page_target(f"https://{host}/path?q=1") == (host, f"https://{host}/path?q=1")
+        assert page_target(host) == (host, "https://" + host)
+    for bad in (None, "", "搜索 内容", "chrome://settings", "file:///tmp/x", "https://user:pass@x.com",
+                "javascript:alert(1)", "https://[", "https://x.com:bad", "https://x.com:0"):
+        assert page_target(bad) is None, bad
+
+    p = FilterProxy(lambda *a: (False, "blockall"), port=0)
+    port = p.start()
+    lang = get_language()
+    try:
+        set_language("zh")
+        # 模拟浏览器绕过系统代理, 直接向 127.0.0.1 请求本机提示页.
+        original = "https://www.bilibili.com/video/BV123?x=1&next='<script>"
+        url = p.block_page_url("www.bilibili.com", "blockall", original)
+        path = urlsplit(url).path
+        with socket.create_connection(("127.0.0.1", port), timeout=5) as s:
+            s.sendall(f"GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n".encode())
+            r = _read_all(s)
+        assert r.startswith(b"HTTP/1.1 403") and "OIT 已拦截此网站".encode() in r, r
+        assert "全屏蔽".encode() in r and "重新访问".encode() in r, r
+        assert b"&amp;next=&#x27;&lt;script&gt;" in r and b"<script>" not in r, r
+        assert b"Cache-Control: no-store" in r and b"frame-ancestors 'none'" in r, r
+        assert _http_get(port, url).startswith(b"HTTP/1.1 403"), "经代理请求也能显示"
+        assert _http_get(port, f"http://127.0.0.1:{port}/oit-block/missing").startswith(b"HTTP/1.1 404")
+        set_language("en")
+        r = _http_get(port, url)
+        assert b"OIT blocked this website" in r and b"Try again" in r and b"all websites are blocked" in r
+
+        state = {"allow": False}
+        watcher = BlockPageWatcher(lambda *a: (state["allow"], "offline"), p.block_page_url)
+
+        class Bars:
+            value = "https://google.com/search?q=oit"
+            editable = False
+
+            def read(self, *a, **kw):
+                return self.value
+
+            def navigate(self, hwnd, old, new):
+                self.last = (hwnd, old, new)
+                return not self.editable
+
+        bars = Bars()
+        window = {"hwnd": 1, "cls": CHROMIUM_CLASS}
+        key = ("google.com", "msedge.exe")
+        def pending():
+            watcher._pending[key] = time.monotonic() - 1
+        pending()
+        assert not watcher._visit(bars, window, "chrome.exe"), "其他浏览器不跳转"
+        bars.value = "https://mail.google.com/"
+        assert not watcher._visit(bars, window, "msedge.exe"), "子资源 / 其他域名不跳转"
+        bars.value = "https://google.com/search?q=oit"
+        state["allow"] = True
+        assert not watcher._visit(bars, window, "msedge.exe"), "规则已经放行时不跳转"
+        state["allow"] = False
+        pending()
+        watcher._pending[key] = time.monotonic() - 70
+        assert not watcher._visit(bars, window, "msedge.exe"), "过期请求不跳转"
+        pending()
+        bars.editable = True
+        assert not watcher._visit(bars, window, "msedge.exe") and key in watcher._pending
+        bars.editable = False
+        assert watcher._visit(bars, window, "msedge.exe") and key not in watcher._pending
+        r = _http_get(port, bars.last[2])
+        assert b"google.com/search?q=oit" in r and b"X-OIT-Reason: offline" in r
+        bars.value = "bilibili.com/video/test"
+        watcher._pending[("www.bilibili.com", "msedge.exe")] = time.monotonic() - 1
+        assert watcher._visit(bars, window, "msedge.exe"), "地址栏省略 www 时仍能识别"
+        assert b"https://www.bilibili.com/video/test" in _http_get(port, bars.last[2])
+        watcher.decide = lambda host, exe: (host == "bilibili.com", "offline")
+        watcher._pending[("www.bilibili.com", "msedge.exe")] = time.monotonic() - 1
+        assert not watcher._visit(bars, window, "msedge.exe"), "根域名允许时不推断 www, 防止子资源误跳转"
+        watcher.decide = lambda host, exe: (host == "www.bilibili.com", "offline")
+        watcher._pending[("bilibili.com", "msedge.exe")] = time.monotonic() - 1
+        assert not watcher._visit(bars, window, "msedge.exe"), "www 允许时也不推断根域名, 防止子资源误跳转"
+        pending()
+        watcher.stop()
+        assert not watcher._visit(bars, window, "msedge.exe"), "停止后不再跳转"
+    finally:
+        set_language(lang)
+        p.stop()
+
+
 def run():
     import os
     import tempfile
+    _block_page_test()
     assert split_hostport("a.com:8443", 443) == ("a.com", 8443)
     assert split_hostport("[::1]:80", 443) == ("::1", 80)
     assert split_hostport("a.com", 443) == ("a.com", 443)

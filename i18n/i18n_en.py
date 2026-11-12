@@ -2,6 +2,16 @@
 
 
 EN = {
+    "OIT 已拦截此网站": "OIT blocked this website",
+    "已拦截": "Blocked",
+    "重新访问": "Try again",
+    "当前离线,只放行网站白名单": "Currently offline; only whitelisted websites are allowed",
+    "当前离线,全屏蔽": "Currently offline; all websites are blocked",
+    "合约的网络禁令: 这个软件 / 网站禁止联网": "Contract network ban: this app / website is blocked",
+    "该应用在黑名单中": "This app is blacklisted",
+    "该网站在黑名单中": "This website is blacklisted",
+    "该页面不属于 UP 主白名单里的 UP 主": "This page does not belong to a whitelisted creator",
+    "禁止回环到代理自身": "Looping back to the proxy itself is forbidden",
     "仅可在空闲或休息期间播放语音.": "Voice playback is only available while idle or on a break.",
     "请填写不超过 500 字的试听文本.": "Enter preview text of up to 500 characters.",
     "正在获取语音模型…": "Fetching voice models…",
