@@ -1339,6 +1339,7 @@ class CommTest {
         val td = Files.createTempDirectory("oit").toFile()
         val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
         c.set(persona = "Claudia.txt")
+        c.applyDoc(mapOf("milestone:${c.pid}:400" to JSONObject().put("clear", 0L)))
         val base = 1_000_000L
         for (i in 0 until 40)
             c.messages.add(ChatMsg(i, if (i % 2 == 0) "me" else "ai", "m$i", "", "", "u$i", base + i))
@@ -1352,8 +1353,58 @@ class CommTest {
         script.add("好"); c.send("在吗"); wait(c)
         val sys = calls.last().first
         assertTrue("以下是关于用户的长期记忆" in sys && "喜欢钢琴" in sys)
+        assertTrue(sys, "【系统记录】双方互相发送的信息总数已达到 400 条" in sys)
+        assertTrue(memCalls.single(), "已达到 400 条" in memCalls.single())
+        assertEquals(listOf(200, 400, 500, 1000), Cfg.COMM_MESSAGE_MILESTONES)
         c.clear()                                                  // 清空聊天: 记忆卡一起清掉
         assertEquals("", c.memAuto)
+        assertFalse(c.syncDoc().keys.any { it.startsWith("milestone:") })
+    }
+
+    @Test fun messageMilestonesAreFixedSyncedAndClearedWithChat() {
+        val td = Files.createTempDirectory("oit_milestones").toFile()
+        val c = comm(File(td, "d").apply { mkdirs() }, File(td, "p"))
+        c.snapshot = { CommSnap("idle") }
+        try {
+            assertTrue(BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).contains("用户可以要求你在消息中模拟动作"))
+            assertTrue(BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).contains("不要说'接住'"))
+            for (threshold in Cfg.COMM_MESSAGE_MILESTONES) {
+                c.clear()
+                val stamp = clock.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli() + 1
+                for (i in 1 until threshold) c.messages.add(ChatMsg(i, "me", "m$i", "", uid = "m$i", ts = stamp))
+                c.messages.add(ChatMsg(threshold, "ai", "隐藏回复", "", uid = "hidden", ts = stamp).apply { hold = true })
+                c.messages.add(ChatMsg(threshold + 1, "sys", "系统消息", "", uid = "sys", ts = stamp))
+                val key = "milestone:${c.pid}:$threshold"
+                assertFalse("系统消息与隐藏回复不计数", c.syncDoc().containsKey(key))
+                script.add("好")
+                assertEquals("", c.send("跨过门槛")); wait(c)
+                assertTrue(c.syncDoc().containsKey(key))
+                c.flush()
+                val reload = comm(File(td, "d"), File(td, "p"))
+                assertTrue("独立落盘", reload.syncDoc().containsKey(key))
+                reload.flush(); reload.voice.close()
+            }
+            val snap = c.syncDoc()
+            val other = comm(File(td, "other").apply { mkdirs() }, File(td, "p_other"))
+            other.snapshot = { CommSnap("idle") }
+            try {
+                other.applyDoc(snap)
+                assertTrue(other.syncDoc().containsKey("milestone:${other.pid}:1000"))
+                // 本地消息少于门槛也保留系统事实；模型摘要无法撤销。
+                other.messages.clear()
+                assertTrue(other.conditionState(strict = true)[2].ok)
+                assertTrue("系统固定达成记录" in other.messagesText())
+                script.add("好"); other.send("记得吗"); wait(other)
+                assertTrue(calls.last().first, "已达到 1000 条" in calls.last().first)
+                other.clear()
+                other.applyDoc(snap)
+                assertFalse("旧快照不能恢复已清空的固定记录", other.syncDoc().keys.any { it.startsWith("milestone:") })
+                c.applyDoc(other.syncDoc())
+                assertEquals(0, c.msgTotal())
+                assertFalse("远端清空同时清除裁剪计数", c.syncDoc().keys.any { it.startsWith("milestone:") })
+                other.flush()
+            } finally { other.voice.close() }
+        } finally { c.flush(); c.voice.close(); td.deleteRecursively() }
     }
 
     /** Claudia 1.0.308: 去掉"交流时间 15 分钟", 加了"合约失败不满" / "合约主题"; 上一版没改过的会被自动换成新的. */

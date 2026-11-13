@@ -14,6 +14,7 @@ import re
 
 from comm.comm_persona import companion_base
 from comm.comm_prompt import REFUSE
+from comm.comm_builtin import CLAUDIA_PREVIOUS
 
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -105,6 +106,7 @@ MEM_PROMPT = ("你是 OIT 沟通模块的记忆整理器. 给你「现有记忆�
               "删掉寒暄, 重复, 一次性的内容. 每条一行, 以 \"- \" 开头, 不超过 40 字, 最多 15 条.\n"
               "和新对话冲突时以新对话为准; 不确定的条目末尾加 \"?\". 不要编造对话里没有的事.\n"
               "只输出记忆卡本身, 不要解释, 不要标题, 不要代码块.")
+MEM_PROMPT += "\n所有【系统记录】均由 OIT 固定保存, 不要改写、删除或抄入输出; 消息数量门槛的达成记录永久有效, 不等于其他条件也已满足."
 STATUS_TEXT = {"focus": "专注中", "sleep": "睡眠中", "rest": "休息中", "idle": "空闲"}
 STATUS_COLORS = {"rest": "#9CCC65", "sleep": "#283593", "focus": "#FDD835", "idle": "#9E9E9E"}   # 聊天页状态前面的小圆点
 # 日程跟随 (1.0.406, MECHANICS 24.17): 对方的状态 (按日程) 变了, 问用户要不要跟着变; 文字里指代对方一律用 {name} (人设名)
@@ -125,7 +127,7 @@ DEFAULTS = {"persona": "", "show_avatar": True,
             "claudia_migrated": False, "claudia_modified": False, "claudia_notified": "", "claudia_base": "", "routine_base": "", "background_base": "",
             "legacy_done": False, "joint_last": [], "user_profile": "", "split_send": True,
             "bg_pro": True, "mute_pro": [], "idle_use": {}, "joint": {}, "sched_follow": False, "pro_lang": "",
-            "mem_auto": "", "mem_upto": 0, "mem_ts": 0,      # 记忆卡 (跟着聊天对象走; 全部由模型自动整理)
+            "mem_auto": "", "mem_fixed": [], "mem_upto": 0, "mem_ts": 0,  # 模型摘要与系统固定记录
             "shift": [],                                     # 起点平移记录 (跟着聊天对象走, 同步; 不改人设文件)
             "love": {}, "msg_gone": 0,                       # 亲密关系状态 (跟着聊天对象走, 同步) / 被 KEEP 砍掉的信息条数 (本机)
             "alarm_co": {},                                  # 共时闹钟 (1.0.359): {pid, devs: [响铃的设备 id], ts}; pid 为空 = 关闭
@@ -139,9 +141,9 @@ DEFAULTS = {"persona": "", "show_avatar": True,
 
 # 更早版本内置过的文本 (升级时判断文件是不是没被用户改过, 一字不差才换成当前版本).
 # (claudia_base / routine_base / background_base) 判断, 以后改默认人设再按需往里放.
-CLAUDIA_LEGACIES = ()
+CLAUDIA_LEGACIES = (CLAUDIA_PREVIOUS,)
 ROUTINE_LEGACIES = ()
-CHAT_KEYS = ("clear_ts", "retry", "pro_key", "mem_auto", "mem_upto", "mem_ts", "cut_until", "love", "msg_gone", "shift")   # 跟着聊天对象走的几项 (存在各自的聊天文件里)
+CHAT_KEYS = ("clear_ts", "retry", "pro_key", "mem_auto", "mem_fixed", "mem_upto", "mem_ts", "cut_until", "love", "msg_gone", "shift")   # 跟着聊天对象走的几项 (存在各自的聊天文件里)
 
 
 

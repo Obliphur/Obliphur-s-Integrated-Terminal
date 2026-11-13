@@ -216,6 +216,8 @@ class RtMixin:
         today_h = (days.get(f"{today:%Y-%m-%d}") or [0, 0])[0] / 3600.0
         # III. 信息条数 (总数, 不只是现在存着的)
         msgs = self.msg_total()
+        fixed_total = max(mem_fields(self._active_state())["mem_fixed"], default=0)
+        msg_progress = f"{msgs} 条" if msgs >= fixed_total else f"至少 {fixed_total} 条 (系统固定达成记录)"
         # V. 特殊空闲时段
         special = False
         if self._rt:
@@ -230,14 +232,16 @@ class RtMixin:
             ("II", f"用户在包括今天在内的前 {P['study_days']} 天, 专注时间>={P['study_h']:g}h 并且空闲时间<={P['idle_h']:g}h",
              f"专注 {study_h:.1f}h, 空闲 {idle_h:.1f}h (OIT 只记录了其中 {len(got)} / {P['study_days']} 天)",
              f"专注>={P['study_h']:g}h, 空闲<={P['idle_h']:g}h", study_h >= P["study_h"] and idle_h <= P["idle_h"]),
-            ("III", "你与用户互相发送的信息", f"{msgs} 条", f"{P['msgs']} 条", msgs >= P["msgs"]),
+            ("III", "你与用户互相发送的信息", msg_progress, f"{P['msgs']} 条", max(msgs, fixed_total) >= P["msgs"]),
             ("IV", "用户今天的专注时长", f"{today_h:.1f}h", f"{P['today_h']:g}h", today_h >= P["today_h"]),
             ("V", "现在是特殊空闲时段", "是" if special else "不是", "是", special),
         ]
 
     def messages_text(self) -> str:
         """对方输入 [messages] 得到的: 它和用户的聊天记录数 (OIT 统计, 和 [condition] III 数的是同一个数)."""
-        return (f"(OIT 系统提供, 用户看不到) 你和用户的聊天记录数: 共 {self.msg_total()} 条 (双方互相发送的信息总数, 由 OIT 统计, 以此为准, 不要自己数也不要编造).")
+        fixed = mem_fields(self._active_state())["mem_fixed"]
+        reached = f" 系统固定达成记录: 已达到的消息数量门槛为 {', '.join(map(str, fixed))} 条, 这些条件始终有效." if fixed else ""
+        return (f"(OIT 系统提供, 用户看不到) 你和用户的聊天记录数: 共 {self.msg_total()} 条 (双方互相发送的信息总数, 由 OIT 统计, 以此为准, 不要自己数也不要编造)." + reached)
 
     def state_text(self) -> str:
         """对方输入 [state] 得到的: 它此刻的日程状态 (这一段的性质 + 结束时间), OIT 按日程实时算; 用户看不到."""

@@ -9,6 +9,7 @@ import kotlin.math.ln
 
 /** 不在设置页里的固定数值 (对应桌面版 config.py). 可调的数值见 Settings.kt. */
 object Cfg {
+    val COMM_MESSAGE_MILESTONES = listOf(200, 400, 500, 1000) // 当前聊天已达到的消息数量门槛
     const val AI_VOICE_GAP = 1.0
     const val AI_VOICE_AUTO_COUNT = 10
     const val AI_VOICE_CLAUDIA_ID = "claudia1999"

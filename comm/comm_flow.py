@@ -164,12 +164,14 @@ class FlowMixin:
         auto = str(st.get("mem_auto") or "").strip()[:MEM_MAX]
         rel = love_line(st)                                  # 亲密关系由 OIT 记录, 总是写在最前面 (不管模型有没有整理过)
         shf = shift_line(st)                                 # 起点平移 (1.0.402) 同理
-        if not auto and not rel and not shf:
+        fixed = "\n".join(tr("- 【系统记录】双方互相发送的信息总数已达到 {count} 条, 此消息数量条件已满足.", count=n)
+                          for n in mem_fields(st)["mem_fixed"])
+        if not auto and not rel and not shf and not fixed:
             return ""
-        return "\n\n以下是关于用户的长期记忆(你之前整理的摘要, 可能不精确; 标着【系统记录】的是 OIT 记下的事实, 以它为准):\n" + "\n".join(x for x in (rel, shf, auto) if x)
+        return "\n\n以下是关于用户的长期记忆(你之前整理的摘要, 可能不精确; 标着【系统记录】的是 OIT 记下的事实, 以它为准):\n" + "\n".join(x for x in (rel, shf, fixed, auto) if x)
 
     def memory_block(self) -> str:
-        return self.memory_block_of(self.cfg)
+        return self.memory_block_of(self._active_state())
 
     def _mem_delta(self) -> list:
         """上次整理之后的新消息 (对方拒绝 / 系统消息不算)."""

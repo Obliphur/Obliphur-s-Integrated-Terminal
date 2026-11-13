@@ -65,6 +65,7 @@ class MiscMixin:
         self._catchup = False
         self.cfg["retry"] = {}
         self.cfg["mem_auto"] = ""          # 记忆卡跟着聊天一起清掉
+        self.cfg["mem_fixed"] = []
         self.cfg["mem_upto"] = 0
         self.cfg["mem_ts"] = self._ms()
         self.cfg["love"] = love_norm({"ts": self._ms()})   # 新对话: 亲密关系 / 告白 / 信息条数也跟着记忆卡一起清掉 (别的设备一起)

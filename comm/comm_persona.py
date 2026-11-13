@@ -8,6 +8,7 @@ import os
 from comm.comm_prompt import prefix_prompt
 import shutil
 import zlib
+import config
 
 SHIFT_LO, SHIFT_HI = 4 * 60, 9 * 60   # 起点平移允许的范围: 新起点 4:00 - 9:00 (分钟)
 SHIFT_KEEP = 30                       # 每个聊天对象最多留多少条平移记录
@@ -94,12 +95,21 @@ def mem_fields(d) -> dict:
     """聊天状态里的记忆卡 (旧文件没有这几项 → 空)."""
     d = d if isinstance(d, dict) else {}
     return {"mem_auto": str(d.get("mem_auto") or "")[:MEM_MAX],
+            "mem_fixed": message_milestones(d),
             "mem_upto": int(d.get("mem_upto") or 0),
             "mem_ts": int(d.get("mem_ts") or 0),
             "cut_until": int(d.get("cut_until") or 0),      # 对方切断谈话到什么时候 (毫秒时间戳; 0 = 没有)
             "love": love_norm(d.get("love")),               # 亲密关系 / 告白 (1.0.397)
             "shift": shift_norm(d.get("shift")),            # 起点平移记录 (1.0.402)
             "msg_gone": max(0, int(d.get("msg_gone") or 0))}      # 本地只存最近 KEEP 条, 被砍掉的信息条数记在这里 ([condition] III 数的是总数)
+
+
+def message_milestones(st):
+    """系统固定的消息数量门槛；模型摘要不能删除，旧存档按现有总数补记。"""
+    total = max(0, int(st.get("msg_gone") or 0)) + sum(
+        1 for m in st.get("messages", []) if m.get("role") in ("me", "ai") and not m.get("hold"))
+    fixed = st.get("mem_fixed") or []
+    return [n for n in config.COMM_MESSAGE_MILESTONES if total >= n or n in fixed]
 
 
 def seed_builtin(folder: str, only: str = None):

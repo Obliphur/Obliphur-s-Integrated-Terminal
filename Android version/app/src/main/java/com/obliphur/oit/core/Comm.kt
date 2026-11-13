@@ -118,6 +118,7 @@ object BuiltinPersonas {
 - 不要使用Markdown
 - 称呼用户为'你',自称'我'.
 - 聊天记录达到400条后,可以调整对用户和自己的称呼;先输入[messages]查询,以OIT给出的总数为准.称呼不得涉及亲密关系,例如'亲爱的','宝贝'或恋人 / 配偶称谓.
+- 聊天记录达到400条后,用户可以要求你在消息中模拟动作,例如用括号框起动作描写;未达到时不模拟动作.先输入[messages]查询,或以记忆卡中的系统固定达成记录为准.
 - 回复默认很短:一到三句,不超过 60 字,可以夹杂文言/正式用语.以下情况例外,可以写得更长:
   1. 用户请教英语相关的问题;
   2. 用户说了重要的事或私密的情感体验;
@@ -135,6 +136,7 @@ object BuiltinPersonas {
 - 用户说了重要的事或私密的情感体验时,回答要更详细.
 - 用户没问时,不要说'记下'.
 - 不要用'稳'单字作形容词或副词.
+- 不要说'接住'.
 
 关系与情感:
 - 用户暴露出脆弱的一面(例如被责备后退缩)时,语气稍微温和一些.
@@ -285,7 +287,7 @@ share data:
      *  1.0.442 起升级链清空: 代码里不再保留旧的默认人设文本; 没改过的旧文件靠 comm_config.json 里上一次见到的内置版本
      *  (claudiaBase / routineBase / backgroundBase) 判断, 以后改默认人设再按需往里放.
      *  (用 var 只是为了测试里能放几份假的旧版.) */
-    var CLAUDIA_LEGACIES = listOf<String>()
+    var CLAUDIA_LEGACIES = listOf(ALL.getValue(DEFAULT).replace("- 聊天记录达到400条后,用户可以要求你在消息中模拟动作,例如用括号框起动作描写;未达到时不模拟动作.先输入[messages]查询,或以记忆卡中的系统固定达成记录为准.\n", "").replace("- 不要说'接住'.\n", ""))
     var ROUTINE_LEGACIES = listOf<String>()
     var BACKGROUND_LEGACIES = listOf<String>()
 }
@@ -588,7 +590,8 @@ object CommText {
         "用户的'简单要求'(例如让你多说点话)一般只在本轮对话有效, 不记; 但如果现有记忆卡里有「【系统记录】已确立亲密关系」那一行(由 OIT 记录, 不要把它抄进你输出的记忆卡), 这之后用户的简单要求要长期保留, 检查失效 / 过期内容时也不能清除. 其余哪些内容该长期保留 / 不能清除, 以「对方的人设」里写的为准.\n" +
         "删掉寒暄, 重复, 一次性的内容. 每条一行, 以 \"- \" 开头, 不超过 40 字, 最多 15 条.\n" +
         "和新对话冲突时以新对话为准; 不确定的条目末尾加 \"?\". 不要编造对话里没有的事.\n" +
-        "只输出记忆卡本身, 不要解释, 不要标题, 不要代码块."
+        "只输出记忆卡本身, 不要解释, 不要标题, 不要代码块.\n" +
+        "所有【系统记录】均由 OIT 固定保存, 不要改写、删除或抄入输出; 消息数量门槛的达成记录永久有效, 不等于其他条件也已满足."
 
     /** 模型给的记忆卡: 去掉代码块 / 解释, 统一成 "- " 开头的短行, 限制条数和字数; 拒绝语 / 空的当没给. */
     fun sanitizeMem(text: String): String {
@@ -1102,6 +1105,7 @@ class Comm(
     @Volatile var memAuto = ""; private set
     private var memUpto = 0L
     private var memTs = 0L
+    private var memFixed: List<Int> = emptyList()
     /** 对方切断谈话到什么时候 (毫秒时间戳; 0 = 没有; 跟着聊天对象走). */
     private var cutUntil = 0L
     /** 亲密关系 / 告白 (跟着聊天对象走, 同步): 见 Love. */
@@ -1151,6 +1155,7 @@ class Comm(
         var memAuto = ""
         var memUpto = 0L
         var memTs = 0L
+        var memFixed: List<Int> = emptyList()
         var cutUntil = 0L
         var love = Love()
         var msgGone = 0
@@ -1249,6 +1254,7 @@ class Comm(
         st.memAuto = (o?.optString("mem_auto", "") ?: "").take(MEM_MAX)
         st.memUpto = o?.optLong("mem_upto", 0L) ?: 0L
         st.memTs = o?.optLong("mem_ts", 0L) ?: 0L
+        st.memFixed = o?.optJSONArray("mem_fixed")?.let { a -> Cfg.COMM_MESSAGE_MILESTONES.filter { n -> (0 until a.length()).any { a.optInt(it) == n } } } ?: emptyList()
         st.cutUntil = o?.optLong("cut_until", 0L) ?: 0L
         st.love = Love.parse(o?.optJSONObject("love"))
         st.msgGone = o?.optInt("msg_gone", 0) ?: 0
@@ -1266,6 +1272,7 @@ class Comm(
         return JSONObject().put("messages", arr).put("clear_ts", st.clearTs).put("retry_at", st.retryAt)
             .put("retry_n", st.retryN).put("pro_key", st.proKey)
             .put("mem_auto", st.memAuto).put("mem_upto", st.memUpto).put("mem_ts", st.memTs).put("cut_until", st.cutUntil)
+            .put("mem_fixed", JSONArray(messageMilestones(st)))
             .put("love", st.love.json()).put("msg_gone", st.msgGone).put("shift", CommShift.json(st.shift))
     }
 
@@ -1279,6 +1286,7 @@ class Comm(
         messages.clear(); messages.addAll(st.messages)
         clearTs = st.clearTs; retryAt = st.retryAt; retryN = st.retryN; proKey = st.proKey
         memAuto = st.memAuto; memUpto = st.memUpto; memTs = st.memTs; cutUntil = st.cutUntil; love = st.love; msgGone = st.msgGone; shift = st.shift
+        memFixed = messageMilestones(st)
         nextId = (messages.maxOfOrNull { it.id } ?: 0) + 1
         lastTs = messages.maxOfOrNull { it.ts } ?: 0L
     }
@@ -1286,6 +1294,7 @@ class Comm(
     private fun activeState() = ChatState().also {
         it.messages.addAll(messages); it.clearTs = clearTs; it.retryAt = retryAt; it.retryN = retryN; it.proKey = proKey
         it.memAuto = memAuto; it.memUpto = memUpto; it.memTs = memTs; it.cutUntil = cutUntil; it.love = love; it.msgGone = msgGone; it.shift = shift
+        it.memFixed = memFixed
     }
 
     /** 某个对象的聊天状态: 现在聊的是一份拷贝 (改了要 storeState), 其他的在缓存里 (没读过就读盘). */
@@ -1386,6 +1395,7 @@ class Comm(
     }
 
     private fun saveChat() {
+        memFixed = messageMilestones(activeState())
         if (messages.size > KEEP) repeat(-Math.floorDiv(-(messages.size - KEEP), HISTORY_STEP) * HISTORY_STEP) {
             val gone = messages.removeAt(0)
             if ((gone.role == "me" || gone.role == "ai") && !gone.hold) msgGone++          // 砍掉的也算在信息总数里
@@ -1498,6 +1508,7 @@ class Comm(
         for (p in (chatPids() + muted).toSet()) doc["mute:$p"] = p in muted
         for (p in chatPids()) {
             val st = stateOf(p)
+            for (n in messageMilestones(st)) doc["milestone:$p:$n"] = JSONObject().put("clear", st.clearTs)
             for (m in st.messages.takeLast(SYNC_N)) {
                 doc["m:$p:${m.uid}"] = JSONObject().put("role", m.role).put("text", m.text).put("at", m.at).put("ts", m.ts)
                     .apply {
@@ -1566,12 +1577,23 @@ class Comm(
                     val n = (v as? String ?: "").take(MAX_PROFILE)
                     if (n != userProfile) { userProfile = n; saveCfg(); changed() }
                 }
+                kind == "milestone" && v is JSONObject -> {
+                    val p = rest.substringBefore(':')
+                    val threshold = rest.substringAfter(':').toIntOrNull() ?: continue
+                    if (threshold !in Cfg.COMM_MESSAGE_MILESTONES) continue
+                    val tc = touch(p)
+                    if (v.optLong("clear", -1L) != tc.st.clearTs) continue
+                    val fixed = messageMilestones(tc.st)
+                    if (threshold !in fixed) { tc.st.memFixed = (fixed + threshold).sorted(); tc.dirty = true }
+                }
                 kind == "clear" -> {
                     val t = (v as? Number)?.toLong() ?: continue
                     val tc = touch(rest)
                     if (t > tc.st.clearTs) {
                         listPersonas().firstOrNull { pidOf(it) == rest }?.let { voice.clear(it) }
                         tc.st.clearTs = t
+                        tc.st.memFixed = emptyList()
+                        tc.st.msgGone = 0       // 清空累计数量，避免重新补出旧对话的门槛。
                         tc.st.messages.removeAll { it.ts <= t }
                         tc.st.retryAt = 0; tc.st.retryN = 0
                         tc.known = tc.st.messages.map { it.uid }.toHashSet()
@@ -1782,8 +1804,15 @@ class Comm(
         val auto = st.memAuto.trim().take(MEM_MAX)
         val rel = loveLine(st)                                  // 亲密关系由 OIT 记录, 总是写在最前面 (不管模型有没有整理过)
         val shf = CommShift.line(st.shift)                      // 起点平移 (1.0.402) 同理
-        if (auto.isEmpty() && rel.isEmpty() && shf.isEmpty()) return ""
-        return "\n\n以下是关于用户的长期记忆(你之前整理的摘要, 可能不精确; 标着【系统记录】的是 OIT 记下的事实, 以它为准):\n" + listOf(rel, shf, auto).filter { it.isNotEmpty() }.joinToString("\n")
+        val fixed = messageMilestones(st).joinToString("\n") { tr("- 【系统记录】双方互相发送的信息总数已达到 {count} 条, 此消息数量条件已满足.", "count" to it.toString()) }
+        if (auto.isEmpty() && rel.isEmpty() && shf.isEmpty() && fixed.isEmpty()) return ""
+        return "\n\n以下是关于用户的长期记忆(你之前整理的摘要, 可能不精确; 标着【系统记录】的是 OIT 记下的事实, 以它为准):\n" + listOf(rel, shf, fixed, auto).filter { it.isNotEmpty() }.joinToString("\n")
+    }
+
+    /** 固定记录与实时计数取并集；旧存档自动补记，模型重写只更新 memAuto。 */
+    private fun messageMilestones(st: ChatState): List<Int> {
+        val total = st.msgGone.coerceAtLeast(0) + st.messages.count { it.role in listOf("me", "ai") && !it.hold }
+        return Cfg.COMM_MESSAGE_MILESTONES.filter { total >= it || it in st.memFixed }
     }
 
     /** 长期记忆里的「系统记录」行 (没有确立亲密关系 = ""). */
@@ -2812,7 +2841,11 @@ class Comm(
     fun msgTotal(): Int = msgGone + messages.count { (it.role == "me" || it.role == "ai") && !it.hold }
 
     /** 对方输入 [messages] 得到的: 它和用户的聊天记录数 (OIT 统计, 和 [condition] III 数的是同一个数). */
-    fun messagesText(): String = "(OIT 系统提供, 用户看不到) 你和用户的聊天记录数: 共 ${msgTotal()} 条 (双方互相发送的信息总数, 由 OIT 统计, 以此为准, 不要自己数也不要编造)."
+    fun messagesText(): String {
+        val fixed = messageMilestones(activeState())
+        val reached = if (fixed.isEmpty()) "" else " 系统固定达成记录: 已达到的消息数量门槛为 ${fixed.joinToString(", ")} 条, 这些条件始终有效."
+        return "(OIT 系统提供, 用户看不到) 你和用户的聊天记录数: 共 ${msgTotal()} 条 (双方互相发送的信息总数, 由 OIT 统计, 以此为准, 不要自己数也不要编造)." + reached
+    }
 
     /** [state] (1.0.414): 对方此刻的日程状态 (这一段的性质 + 结束时间), OIT 按日程实时算; 用户看不到. */
     fun stateText(): String {
@@ -2858,6 +2891,8 @@ class Comm(
         val todayH = (days[today.toString()]?.first ?: 0L) / 3600.0
         // III. 信息条数 (总数, 不只是现在存着的)
         val msgs = msgTotal()
+        val fixedTotal = messageMilestones(activeState()).maxOrNull() ?: 0
+        val msgProgress = if (msgs >= fixedTotal) "$msgs 条" else "至少 $fixedTotal 条 (系统固定达成记录)"
         // V. 特殊空闲时段
         var special = false
         if (rt != null) runCatching {
@@ -2872,7 +2907,7 @@ class Comm(
             CondRow("II", "用户在包括今天在内的前 ${p.studyDays} 天, 专注时间>=${g(p.studyH)}h 并且空闲时间<=${g(p.idleH)}h",
                 "专注 ${f1(studyH)}h, 空闲 ${f1(idleH)}h (OIT 只记录了其中 ${got.size} / ${p.studyDays} 天)",
                 "专注>=${g(p.studyH)}h, 空闲<=${g(p.idleH)}h", studyH >= p.studyH && idleH <= p.idleH),
-            CondRow("III", "你与用户互相发送的信息", "$msgs 条", "${p.msgs} 条", msgs >= p.msgs),
+            CondRow("III", "你与用户互相发送的信息", msgProgress, "${p.msgs} 条", maxOf(msgs, fixedTotal) >= p.msgs),
             CondRow("IV", "用户今天的专注时长", "${f1(todayH)}h", "${g(p.todayH)}h", todayH >= p.todayH),
             CondRow("V", "现在是特殊空闲时段", if (special) "是" else "不是", "是", special),
         )
@@ -4613,7 +4648,7 @@ class Comm(
         messages.clear(); unread = 0; retryAt = 0; retryN = 0; error = ""; catchup = false
         followAt = 0L                                       // 清空前排着的第二次调用不要了
         followMsg = 0
-        memAuto = ""; memUpto = 0L; memTs = nowMs()        // 记忆卡跟着聊天一起清掉
+        memAuto = ""; memFixed = emptyList(); memUpto = 0L; memTs = nowMs() // 记忆卡跟着聊天一起清掉
         love = Love(ts = nowMs()); msgGone = 0               // 新对话: 亲密关系 / 告白 / 信息条数也跟着记忆卡一起清掉 (别的设备一起)
         if (joint != null && joint?.pid == pid) { joint = null; jointTs = maxOf(nowMs(), jointTs + 1) }      // 新对话: 联合行动也作废 (别的设备一起); 清空的是别的对象的聊天 (联合行动属于另一个对象) 不动它 (1.0.404)
         jointDraft = null

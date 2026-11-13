@@ -263,7 +263,7 @@ class Comm(JointMixin, StatusMixin, ChatMixin, FlowMixin, SchedMixin, ShareMixin
     def _active_state(self) -> dict:
         return {"messages": self.messages, "clear_ts": int(self.cfg.get("clear_ts") or 0),
                 "retry": dict(self.cfg.get("retry") or {}), "pro_key": str(self.cfg.get("pro_key") or ""),
-                **mem_fields(self.cfg)}
+                **mem_fields(dict(self.cfg, messages=self.messages))}
 
     @staticmethod
     def _state_payload(st: dict) -> dict:
@@ -422,6 +422,7 @@ class Comm(JointMixin, StatusMixin, ChatMixin, FlowMixin, SchedMixin, ShareMixin
         self._write_async(self.cfg_path, json.loads(json.dumps(out)))
 
     def save_chat(self):
+        self.cfg["mem_fixed"] = self._active_state()["mem_fixed"]
         if len(self.messages) > KEEP:                  # 一次砍 HISTORY_STEP 的整数倍: 发给模型的历史的起点 (api_messages) 不会跟着滑
             cut = -(-(len(self.messages) - KEEP) // HISTORY_STEP) * HISTORY_STEP
             self.cfg["msg_gone"] = int(self.cfg.get("msg_gone") or 0) + sum(
@@ -510,6 +511,8 @@ class Comm(JointMixin, StatusMixin, ChatMixin, FlowMixin, SchedMixin, ShareMixin
             doc[f"mute:{pid}"] = self.is_muted(pid)
         for pid in self.chat_pids():
             st = self._state_of(pid)
+            for n in mem_fields(st)["mem_fixed"]:
+                doc[f"milestone:{pid}:{n}"] = {"clear": st["clear_ts"]}
             for m in st["messages"][-SYNC_N:]:
                 e = {"role": m["role"], "text": m["text"], "at": m["at"], "ts": int(m["ts"])}
                 if m.get("api"):
@@ -564,7 +567,18 @@ class Comm(JointMixin, StatusMixin, ChatMixin, FlowMixin, SchedMixin, ShareMixin
                         rec = self.focus_notices.setdefault(rest, dict(val))
                         rec["shown"] = bool(rec.get("shown") or val.get("shown"))
                 continue
-            if kind == "clear":
+            if kind == "milestone" and isinstance(val, dict):
+                pid, _, threshold = rest.partition(":")
+                if not threshold.isdigit() or int(threshold) not in config.COMM_MESSAGE_MILESTONES:
+                    continue
+                st = st_of(pid)[0]
+                if val.get("clear") != st["clear_ts"]:
+                    continue
+                fixed = mem_fields(st)["mem_fixed"]
+                if int(threshold) not in fixed:
+                    st["mem_fixed"] = sorted(fixed + [int(threshold)])
+                    touched[pid][1] = True
+            elif kind == "clear":
                 pid = rest
                 try:
                     t = int(val)
@@ -576,6 +590,8 @@ class Comm(JointMixin, StatusMixin, ChatMixin, FlowMixin, SchedMixin, ShareMixin
                         if pid_of(name) == pid:
                             self.voice.clear(name)
                     st["clear_ts"] = t
+                    st["mem_fixed"] = []
+                    st["msg_gone"] = 0       # 清空旧对话的累计数量，不能重新补出已清除的门槛。
                     st["messages"][:] = [m for m in st["messages"] if int(m["ts"]) > t]
                     st["retry"] = {}
                     touched[pid][1] = True

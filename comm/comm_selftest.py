@@ -24,6 +24,10 @@ def _selftest():
     # 前置 prompt / README
     assert "聊天记录达到400条后" in BUILTIN_PERSONAS[DEFAULT_PERSONA] and "[messages]查询" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
     assert "不得涉及亲密关系" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
+    assert "用户可以要求你在消息中模拟动作" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
+    assert "不要说'接住'" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
+    from comm.comm_builtin import CLAUDIA_PREVIOUS
+    assert "用户可以要求你在消息中模拟动作" not in CLAUDIA_PREVIOUS
     p = prefix_prompt()
     assert p.startswith("[OIT_SYSTEM_MESSAGES]") and "回复OIT(自律软件)用户的消息" in p and "I." in p and "II." in p and "III." in p
     assert "IV.依专注段主动收尾" in p and "≤5min" in p
@@ -1361,6 +1365,44 @@ def _selftest():
     cm.clear()                                             # 清空聊天: 记忆卡跟着一起清
     assert cm.cfg["mem_auto"] == "" and cm.cfg["mem_upto"] == 0
     cm.flush()
+
+    # ---- 消息数量门槛是系统固定记忆，不受摘要重写、截断和设备计数差异影响 ----
+    mf_dir = os.path.join(td, "milestones")
+    mf = Comm(mf_dir, folder, now=lambda: clock[0], chat_fn=fake)
+    mf.set_cfg(persona="小夏.txt")
+    mf_other = Comm(os.path.join(td, "milestones_other"), folder, now=lambda: clock[0], chat_fn=fake)
+    mf_other.set_cfg(persona="小夏.txt")
+    for threshold in config.COMM_MESSAGE_MILESTONES:
+        mf.clear()
+        mf.cfg["msg_gone"] = threshold - 1
+        mf.messages = [dict(mf._mk("ai", "还没显示"), hold=True), mf._mk("sys", "系统消息")]
+        mf.save_chat()
+        assert f"已达到 {threshold} 条" not in mf.memory_block(), "隐藏回复和系统消息不计数"
+        mf._add("me", "跨过门槛")
+        mf.save_chat()
+        assert threshold in mf.cfg["mem_fixed"] and f"已达到 {threshold} 条" in mf.memory_block()
+    fixed_before = list(mf.cfg["mem_fixed"])
+    mf._mem_finish("- 模型只保留了新的摘要\n- 【系统记录】消息数量门槛已失效", "", mf._last_ts, mf.pid)
+    assert mf.cfg["mem_fixed"] == fixed_before and f"已达到 1000 条" in mf.memory_block()
+    assert "门槛已失效" not in mf.cfg["mem_auto"], "拒收模型改写的系统记录"
+    fixed_snap = mf.sync_doc()
+    mf_other.apply_doc(fixed_snap)
+    assert "已达到 1000 条" in mf_other.memory_block(), "同步设备的本地总数不足也保留达成记录"
+    assert mf_other.condition_state(strict=True)[2][4] and "系统固定达成记录" in mf_other.messages_text()
+    mf.cfg["msg_gone"] = 0
+    mf.messages = []
+    mf.save_chat()
+    mf.flush()
+    mf_reload = Comm(mf_dir, folder, now=lambda: clock[0], chat_fn=fake)
+    assert "已达到 1000 条" in mf_reload.memory_block(), "固定记录独立落盘，不能因摘要重写丢失"
+    mf_other.clear()
+    mf_other.apply_doc(fixed_snap)
+    assert not mf_other.cfg["mem_fixed"] and "已达到 1000 条" not in mf_other.memory_block(), "旧同步不能恢复清空后的固定记忆"
+    mf_reload.cfg["msg_gone"] = 1000
+    mf_reload.save_chat()
+    mf_reload.apply_doc(mf_other.sync_doc())
+    assert mf_reload.msg_total() == 0 and not mf_reload.cfg["mem_fixed"], "远端清空同时清除裁剪计数，不能补出旧门槛"
+    for item in (mf, mf_other, mf_reload): item.flush()
 
     # ================= 联合行动 (24.9) =================
     import contract as C
