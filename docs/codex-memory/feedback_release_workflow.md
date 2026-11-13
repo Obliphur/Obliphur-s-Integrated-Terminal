@@ -13,4 +13,4 @@
 
 **Why:** 用户明确要求"总是递增, 并且自动提交, 信息为'1'" 以及"并且总是推送", 又补充"更新版本号要带上安卓端的版本号和 versioncode". 这是长期授权, 覆盖默认的"先确认再提交/推送".
 
-**How to apply:** 任务收尾时, 跑完自检, 递增 APP_VERSION + 安卓 versionName/versionCode, `git add` 具体文件, `git commit -m "1"`, `git push`. 不要 force push. 如果推送失败 (比如远端变化), 报告给用户而不是改远端配置.
+**How to apply:** 任务收尾时, 跑完相关自检（纯文本修改无需运行测试，只核对内容与双端同步）, 递增 APP_VERSION + 安卓 versionName/versionCode, `git add` 具体文件, `git commit -m "1"`, `git push`. 不要 force push. 如果推送失败 (比如远端变化), 报告给用户而不是改远端配置.

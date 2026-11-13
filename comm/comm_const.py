@@ -14,7 +14,7 @@ import re
 
 from comm.comm_persona import companion_base
 from comm.comm_prompt import REFUSE
-from comm.comm_builtin import CLAUDIA_PREVIOUS, CLAUDIA_BEFORE_ACTION
+from comm.comm_builtin import CLAUDIA_BEFORE_CONFESSION, CLAUDIA_PREVIOUS, CLAUDIA_BEFORE_ACTION
 
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -141,7 +141,7 @@ DEFAULTS = {"persona": "", "show_avatar": True,
 
 # 更早版本内置过的文本 (升级时判断文件是不是没被用户改过, 一字不差才换成当前版本).
 # (claudia_base / routine_base / background_base) 判断, 以后改默认人设再按需往里放.
-CLAUDIA_LEGACIES = (CLAUDIA_PREVIOUS, CLAUDIA_BEFORE_ACTION)
+CLAUDIA_LEGACIES = (CLAUDIA_BEFORE_CONFESSION, CLAUDIA_PREVIOUS, CLAUDIA_BEFORE_ACTION)
 ROUTINE_LEGACIES = ()
 CHAT_KEYS = ("clear_ts", "retry", "pro_key", "mem_auto", "mem_fixed", "mem_upto", "mem_ts", "cut_until", "love", "msg_gone", "shift")   # 跟着聊天对象走的几项 (存在各自的聊天文件里)
 

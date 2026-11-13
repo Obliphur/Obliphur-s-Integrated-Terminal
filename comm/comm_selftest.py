@@ -2660,7 +2660,7 @@ def _selftest():
         assert cr._love_check(clock[0], sp, []) and cr.busy
         wait(cr)
         assert not cr.love_invite() and len(calls) == n_love + 1 and "要不要告白由你自己判断" in calls[n_love][1][-1]["content"], "对方判断不合适: 回 [refuse to reply] = 不告白, 也不再追问"
-        assert "性取向常见的女性" in calls[n_love][1][-1]["content"] and "完全没有表现出过发展亲密关系的意图" in calls[n_love][1][-1]["content"]
+        assert "性取向不包含女性" in calls[n_love][1][-1]["content"] and "没有表现出发展亲密关系的意图" in calls[n_love][1][-1]["content"]
         assert any(k.startswith("L") for k in cr._pro_done()) and not cr._love_check(clock[0], sp, cr._pro_done()), "这一段特殊空闲不再判定"
         assert "不合适, 没有告白" in open(os.path.join(rt_dir, "comm.log"), encoding="utf-8").read()
         assert cr.love()["no"] >= cr._ms() + 15 * 86400 * 1000 - 5000, "否决也进入 15 天冷却"
