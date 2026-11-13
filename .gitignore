@@ -76,4 +76,3 @@ test_*.py
 .tmp_*/
 .tmp_*.py
 *.selftest.tmp
-personas/scenarios/example.txt
