@@ -17,6 +17,8 @@ import java.util.concurrent.ConcurrentLinkedQueue
 class ChatMsg(val id: Int, val role: String, val text: String, var at: String, val api: String = "", val uid: String = "", var ts: Long = 0L) {
     /** 不能用沟通的时候 (专注 / 睡眠 / 外出 / 无言为真) 收到的对方的消息先藏起来, 回到休息 / 空闲再显示 (MECHANICS 24.4). */
     var hold = false
+    /** 本机 share data 邀请等消息实际展示再生效；不随消息同步。 */
+    var shareInvite = false
     /** 打字延时 (Comm.charDelay): 对方的消息每个字符晚这么多秒才显示; 到这个时刻 (毫秒) 前一直 hold. 0 = 没有. */
     var due = 0L
     /** 对方在专注期间发的: 推迟到下一个空闲 / 休息开始 (due) 才显示, 到点时把 at / ts 改成那个时刻 (MECHANICS 24.3.9). */
@@ -50,6 +52,7 @@ data class Joint(
     val restS: Long = 0L, val restUntil: String = "",
     /** 合约期间损失生命值的记录 (时刻 ISO, 内容): 下一次开始休息 / 合约结束时告诉对方, 然后清空. */
     val hp: List<Pair<String, String>> = emptyList(),
+    val message: String = "",
 ) {
     fun json(): JSONObject = JSONObject().put("id", id).put("pid", pid).put("state", state).put("terms", JSONArray(terms))
         .put("start", start).put("end", end).put("ts", ts).apply {
@@ -60,6 +63,7 @@ data class Joint(
             if (ended.isNotEmpty()) put("ended", ended)
             if (restS != 0L) put("rest_s", restS)
             if (restUntil.isNotEmpty()) put("rest_until", restUntil)
+            if (message.isNotEmpty()) put("message", message)
             if (hp.isNotEmpty()) put("hp", JSONArray().apply { hp.forEach { put(JSONArray().put(it.first).put(it.second)) } })
         }
 
@@ -73,7 +77,7 @@ data class Joint(
             o.optJSONArray("hp")?.let { a -> for (i in 0 until a.length()) a.optJSONArray(i)?.takeIf { it.length() == 2 }?.let { hp.add(it.optString(0) to it.optString(1)) } }
             return Joint(o.optString("id"), o.optString("pid"), o.optString("state"), terms, o.optString("start"), o.optString("end"),
                 o.optLong("ts", 0L), o.optString("cid"), o.optString("began"), o.optString("until"), o.optString("result"),
-                o.optString("ended"), o.optLong("rest_s", 0L), o.optString("rest_until"), hp)
+                o.optString("ended"), o.optLong("rest_s", 0L), o.optString("rest_until"), hp, o.optString("message"))
         }
     }
 }
@@ -118,7 +122,7 @@ object BuiltinPersonas {
 - 不要使用Markdown
 - 称呼用户为'你',自称'我'.
 - 聊天记录达到400条后,可以调整对用户和自己的称呼;先输入[messages]查询,以OIT给出的总数为准.称呼不得涉及亲密关系,例如'亲爱的','宝贝'或恋人 / 配偶称谓.
-- 聊天记录达到400条后,用户可以要求你在消息中模拟动作,例如用括号框起动作描写;未达到时不模拟动作.先输入[messages]查询,或以记忆卡中的系统固定达成记录为准.
+- 聊天记录达到400条后,仅在用户明确要求时才在消息中模拟动作,例如用括号框起动作描写;用户未要求时不主动模拟动作,未达到400条时也不模拟动作.先输入[messages]查询,或以记忆卡中的系统固定达成记录为准.
 - 回复默认很短:一到三句,不超过 60 字,可以夹杂文言/正式用语.以下情况例外,可以写得更长:
   1. 用户请教英语相关的问题;
   2. 用户说了重要的事或私密的情感体验;
@@ -287,7 +291,8 @@ share data:
      *  1.0.442 起升级链清空: 代码里不再保留旧的默认人设文本; 没改过的旧文件靠 comm_config.json 里上一次见到的内置版本
      *  (claudiaBase / routineBase / backgroundBase) 判断, 以后改默认人设再按需往里放.
      *  (用 var 只是为了测试里能放几份假的旧版.) */
-    var CLAUDIA_LEGACIES = listOf(ALL.getValue(DEFAULT).replace("- 聊天记录达到400条后,用户可以要求你在消息中模拟动作,例如用括号框起动作描写;未达到时不模拟动作.先输入[messages]查询,或以记忆卡中的系统固定达成记录为准.\n", "").replace("- 不要说'接住'.\n", ""))
+    private val CLAUDIA_PREVIOUS = ALL.getValue(DEFAULT).replace("聊天记录达到400条后,仅在用户明确要求时才在消息中模拟动作,例如用括号框起动作描写;用户未要求时不主动模拟动作,未达到400条时也不模拟动作.", "聊天记录达到400条后,用户可以要求你在消息中模拟动作,例如用括号框起动作描写;未达到时不模拟动作.")
+    var CLAUDIA_LEGACIES = listOf(CLAUDIA_PREVIOUS, CLAUDIA_PREVIOUS.replace("- 聊天记录达到400条后,用户可以要求你在消息中模拟动作,例如用括号框起动作描写;未达到时不模拟动作.先输入[messages]查询,或以记忆卡中的系统固定达成记录为准.\n", "").replace("- 不要说'接住'.\n", ""))
     var ROUTINE_LEGACIES = listOf<String>()
     var BACKGROUND_LEGACIES = listOf<String>()
 }
@@ -1244,7 +1249,7 @@ class Comm(
             val ts = m.optLong("ts", 0L).takeIf { it != 0L }
                 ?: parseIso(at)?.atZone(java.time.ZoneId.systemDefault())?.toInstant()?.toEpochMilli() ?: 0L     // 旧版本的记录没有 uid / ts
             st.messages.add(ChatMsg(id, role, m.optString("text"), at, m.optString("api"), m.optString("uid").ifEmpty { "L$id" }, ts)
-                .also { it.hold = m.optBoolean("hold"); it.due = m.optLong("due"); it.late = m.optBoolean("late"); it.wait = m.optDouble("wait", 0.0); it.chased = m.optBoolean("chased"); it.shown = m.optLong("shown") })
+                .also { it.hold = m.optBoolean("hold"); it.due = m.optLong("due"); it.late = m.optBoolean("late"); it.wait = m.optDouble("wait", 0.0); it.chased = m.optBoolean("chased"); it.shown = m.optLong("shown"); it.shareInvite = m.optBoolean("share_invite") })
         }
         st.messages.sortWith(compareBy({ it.ts }, { it.uid }))
         st.clearTs = o?.optLong("clear_ts", 0L) ?: 0L
@@ -1268,6 +1273,7 @@ class Comm(
             .put("uid", m.uid).put("ts", m.ts).apply {
                 if (m.api.isNotEmpty()) put("api", m.api); if (m.hold) put("hold", true); if (m.due != 0L) put("due", m.due); if (m.late) put("late", true)
                 if (m.wait > 0) put("wait", m.wait); if (m.chased) put("chased", true); if (m.shown != 0L) put("shown", m.shown)
+                if (m.shareInvite) put("share_invite", true)
             })
         return JSONObject().put("messages", arr).put("clear_ts", st.clearTs).put("retry_at", st.retryAt)
             .put("retry_n", st.retryN).put("pro_key", st.proKey)
@@ -2594,6 +2600,14 @@ class Comm(
 
     private fun shareInviteMake() { shareInv = nowMs(); shareInvPid = pid; changed() }
 
+    /** share data 邀请只在本机展示对应消息时生效，并且只消费一次。 */
+    private fun deliverInvites(message: ChatMsg) {
+        if (!message.hold && message.shareInvite) {
+            message.shareInvite = false
+            shareInviteMake()
+        }
+    }
+
     /** 对方发了 [share data], 等用户点 接受 / 拒绝 (聊天页上显示两个按钮). */
     fun shareInvite(): Boolean =
         shareInv != 0L && shareInvPid == pid && !share.on && nowMs() - shareInv < SHARE_INVITE_TTL * 1000L
@@ -3180,7 +3194,7 @@ class Comm(
     /** 有联合行动还没结束吗 (等回复 / 对方已接受 / 进行中 / 合约结束后的同步休息中). */
     fun jointBusy(): Boolean {
         val j = curJoint() ?: return false
-        return j.state == "wait" || j.state == "invite" || j.state == "yes" || j.state == "run" || (j.state == "rest" && jointRestLeft(j) > 0)
+        return j.state == "queued" || j.state == "wait" || j.state == "invite" || j.state == "yes" || j.state == "run" || (j.state == "rest" && jointRestLeft(j) > 0)
     }
 
     /** 现在是不是联合行动的"同步"阶段 (合约进行中, 或者合约结束后对方跟着休息): 对方的状态跟着用户走, 不主动发消息. */
@@ -3219,6 +3233,7 @@ class Comm(
     /** 聊天框上方: 发出去的联合行动现在怎么样了 ("" = 没有 / 已经过去很久). */
     fun jointStatusText(): String {
         val j = curJoint() ?: return ""
+        if (j.state == "invite" && !jointInviteReady(j)) return ""
         val (a, b) = jointSpan(j) ?: return ""
         val n = now()
         val span = if (a.toLocalDate() == n.toLocalDate()) "%02d:%02d - %02d:%02d".format(a.hour, a.minute, b.hour, b.minute)
@@ -3390,7 +3405,12 @@ class Comm(
     }
 
     private fun jointTick(t: LocalDateTime) {
-        val j = curJoint() ?: return
+        var j = curJoint() ?: return
+        if (j.state == "queued") {
+            if (!leader() || messages.none { it.uid == j.message && !it.hold }) return
+            opDeliver()
+            j = curJoint() ?: return
+        }
         if ((j.state == "invite" || j.state == "wait") && nowMs() - j.ts >= JOINT_INVITE_TTL * 1000L) {
             jointSet(j.copy(state = ""))                        // 发出的邀请 5 分钟没人接受 / 回复: 自动清理 (1.0.428, 1.0.429 连用户发起的也算)
             return
@@ -3574,6 +3594,7 @@ class Comm(
                 messages.remove(it); messages.add(it)
             }
             it.due = 0L
+            deliverInvites(it)
         }
         if (!viewing) {
             unread += held.size
@@ -3882,12 +3903,19 @@ class Comm(
     }
 
     /** 主线程: 对方发起的联合行动记下来 (invite: 等用户点 接受 / 拒绝), 并记一条给对方看的系统消息. */
-    private fun opApply(plan: JointPlan) {
+    private fun opApply(plan: JointPlan, message: ChatMsg) {
         if (jointBlock().isNotEmpty()) return
-        jointSet(Joint(nowMs().toString(), pid, "invite", plan.terms, plan.start.iso(), plan.end.iso(), 0L))
+        jointSet(Joint(nowMs().toString(), pid, "queued", plan.terms, plan.start.iso(), plan.end.iso(), 0L, message = message.uid))
+        if (!message.hold) opDeliver()
+    }
+
+    /** 展示消息时才发出邀请并开始五分钟计时。 */
+    private fun opDeliver() {
+        val plan = curJoint() ?: return
+        jointSet(plan.copy(state = "invite"))
         jointLast = plan.terms
         saveCfg()
-        jointNote("你向用户发起了联合行动: ${CommData.jointLabel(plan.terms, plan.start, plan.end, now().toLocalDate())}. " +
+        jointNote("你向用户发起了联合行动: ${CommData.jointLabel(plan.terms, parseIso(plan.start)!!, parseIso(plan.end)!!, now().toLocalDate())}. " +
             "等用户在界面上点 接受 / 拒绝; 接受了, 到时按约开始合约, 联合行动就开始.")
     }
 
@@ -3911,7 +3939,10 @@ class Comm(
     fun jointState(): String = curJoint()?.state ?: ""
 
     /** 对方发起的、等用户点 接受 / 拒绝 的联合行动 (null = 没有); 聊天页显示两个按钮. */
-    fun jointInvite(): Joint? = curJoint()?.takeIf { it.state == "invite" }
+    fun jointInvite(): Joint? = curJoint()?.takeIf { it.state == "invite" && jointInviteReady(it) }
+
+    /** 同步来的邀请也要等待本机关联消息展示。 */
+    private fun jointInviteReady(j: Joint): Boolean = j.message.isEmpty() || messages.any { it.uid == j.message && !it.hold }
 
     /** 用户点了 接受 / 拒绝. 返回 "" = 记下了, 否则是原因. 接受 → 和用户自己发起、对方答应了的一样; 拒绝 → 对方知道被拒绝了. 都会再调用一次 API 让对方回应. */
     @Synchronized
@@ -4144,13 +4175,14 @@ class Comm(
         if (r.kind == "net" && r.err.isNotEmpty()) netFailed()                    // 搜索那次请求失败: 过一会儿再试
         else if (r.err.isEmpty() && r.kind in NET_KINDS) CommText.netMinutes(r.reply)?.let { netApply(it) }     // 规则 XIV: 申请限时网络 (这条话照常显示)
         if (r.err.isEmpty()) CommText.cutMinutes(r.reply)?.let { cutApply(it) }     // 被骚扰: [cut off][N] 切断谈话 N 分钟 (这条话照常显示, 有的话)
-        if (r.op != null && r.err.isEmpty()) opApply(r.op)           // 对方发起的联合行动: 不管这条话有没有显示, 都记下来
         val queried = r.err.isEmpty() && CommText.infoTags(r.reply).isNotEmpty()      // 对方在查询模块资料 (有没有 [refuse to reply] 都算): 这条一定不显示
         val (text0, waitMin) = if (r.err.isEmpty()) CommText.cleanReply(r.reply) else "" to 0.0
         var text = if (queried) "" else text0
         if (text.isNotEmpty() && personaTitle(personaName()).trim().equals("Claudia", ignoreCase = true)) text = CommText.toHalfWidth(text)      // Claudia: 显示前全角符号换成半角 (1.0.408)
         val refused = r.err.isEmpty() && CommText.isRefusal(r.reply)
-        if (r.err.isEmpty() && !refused && CommText.SHARE_RE.containsMatchIn(r.reply)) shareInviteMake()      // 前置 prompt XV: 对方想看你们的 OIT 数据, 聊天页上等用户点 接受 / 拒绝
+        val shareInvite = r.err.isEmpty() && !refused && !queried && CommText.SHARE_RE.containsMatchIn(r.reply)
+        if (text.isEmpty() && r.err.isEmpty() && !refused && !queried && (r.op != null || shareInvite))
+            text = tr(if (r.op != null) "🤝  联合行动邀请" else "share data 邀请")
         val isCatchup = r.extra?.body?.contains(CATCHUP_TAG) == true          // 这是补问 (见 CATCHUP_BODY)
         var jointAns = ""                                                     // 对联合行动邀请的回复 [Yes] / [No]
         if (r.err.isEmpty() && !refused && !queried && r.kind in FOLLOW_KINDS && curJoint()?.state == "wait") {
@@ -4203,6 +4235,8 @@ class Comm(
             saveCfg()
             r.extra?.let { add("sys", it.body, it.api) }
             val m = add("ai", text, if (text != r.reply.trim()) r.reply.trim() else "")
+            r.op?.let { opApply(it, m) }
+            if (shareInvite) { m.shareInvite = true; deliverInvites(m) }
             delivered = true
             deliveredId = m.id
             if (jointAns.isNotEmpty() && !drop) jointAnswer(jointAns)

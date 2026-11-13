@@ -316,6 +316,11 @@ class ShareMixin:
         self.save_cfg()
         self._changed()
 
+    def _deliver_invites(self, message):
+        """邀请随消息展示生效；share data 仍只属于生成邀请的本机。"""
+        if not message.get("hold") and message.pop("share_invite", False):
+            self._share_invite_make()
+
     def share_invite(self) -> bool:
         """对方发了 [share data], 等用户点 接受 / 拒绝 (聊天页上显示两个按钮)."""
         inv = self.cfg.get("share_inv") or {}

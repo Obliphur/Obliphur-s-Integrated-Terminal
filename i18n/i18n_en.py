@@ -2,6 +2,7 @@
 
 
 EN = {
+    "share data 邀请": "Share-data invitation",
     "OIT 已拦截此网站": "OIT blocked this website",
     "已拦截": "Blocked",
     "重新访问": "Try again",

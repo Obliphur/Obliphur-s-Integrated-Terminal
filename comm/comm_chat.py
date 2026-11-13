@@ -138,6 +138,7 @@ class ChatMixin:
                 self._last_ts = m["ts"] = max(self._ms(), self._last_ts + 1)
                 self.messages.remove(m)
                 self.messages.append(m)
+            self._deliver_invites(m)
         if not self.viewing:
             self.unread += len(held)
             self._ping()

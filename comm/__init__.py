@@ -1195,8 +1195,6 @@ class Comm(JointMixin, StatusMixin, ChatMixin, FlowMixin, SchedMixin, ShareMixin
                 self._shift_ask_end()
             self._changed()
             return
-        if op and not err:
-            self._op_apply(op)                          # 对方发起的联合行动: 不管这条话有没有显示, 都记下来
         if kind == "net" and err:
             self._net_failed()                          # 搜索那次请求失败: 过一会儿再试
         elif not err and kind in NET_KINDS:
@@ -1213,8 +1211,9 @@ class Comm(JointMixin, StatusMixin, ChatMixin, FlowMixin, SchedMixin, ShareMixin
         if queried:
             text = ""
         refused = not err and is_refusal(reply)
-        if not err and not refused and _SHARE_RE.search(reply):
-            self._share_invite_make()                   # 前置 prompt XV: 对方想看你们的 OIT 数据, 聊天页上等用户点 接受 / 拒绝
+        share_invite = not err and not refused and not queried and bool(_SHARE_RE.search(reply))
+        if not text and not err and not refused and not queried and (op or share_invite):
+            text = tr("🤝  联合行动邀请") if op else tr("share data 邀请")
         catchup = bool(extra) and CATCHUP_TAG in str(extra[0])          # 这是补问 (见 CATCHUP_BODY)
         joint_ans = ""                                          # 对联合行动邀请的回复 [Yes] / [No]
         if not err and not refused and not queried and kind in ("user", "retry") and self._joint().get("state") == "wait":
@@ -1275,6 +1274,11 @@ class Comm(JointMixin, StatusMixin, ChatMixin, FlowMixin, SchedMixin, ShareMixin
             if extra:
                 self._add("sys", extra[0], extra[1])
             m = self._add("ai", text, reply.strip() if text != reply.strip() else "")
+            if op:
+                self._op_apply(op, m)
+            if share_invite:
+                m["share_invite"] = True
+                self._deliver_invites(m)
             delivered = True
             if joint_ans and not drop:
                 self._joint_answer(joint_ans)

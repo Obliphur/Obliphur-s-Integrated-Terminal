@@ -3,6 +3,7 @@ package com.obliphur.oit.core
 /** 英文界面文字. 由 gen_en.py 从桌面版 i18n.py 和补充的译文生成; 键是中文原文. */
 object EnStrings {
     val MAP: Map<String, String> = hashMapOf(
+        "share data 邀请" to "Share-data invitation",
         "仅可在空闲或休息期间播放语音." to "Voice playback is only available while idle or on a break.",
         "请填写不超过 500 字的试听文本." to "Enter preview text of up to 500 characters.",
         "正在获取语音模型…" to "Fetching voice models…",

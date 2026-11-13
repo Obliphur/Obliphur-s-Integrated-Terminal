@@ -1366,7 +1366,7 @@ class CommTest {
         val c = comm(File(td, "d").apply { mkdirs() }, File(td, "p"))
         c.snapshot = { CommSnap("idle") }
         try {
-            assertTrue(BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).contains("用户可以要求你在消息中模拟动作"))
+            assertTrue(BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).contains("用户未要求时不主动模拟动作"))
             assertTrue(BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).contains("不要说'接住'"))
             for (threshold in Cfg.COMM_MESSAGE_MILESTONES) {
                 c.clear()
@@ -1723,6 +1723,61 @@ class CommTest {
         } finally {
             Comm.charDelay = 0.0
             Comm.charDelayCjk = 0.0
+        }
+    }
+
+    /** 邀请随消息延迟展示，重启和同步不能提前生效；有效期从展示开始。 */
+    @Test fun invitationsWaitForMessageDelivery() {
+        val td = Files.createTempDirectory("oit_invite_delay").toFile()
+        val instances = mutableListOf<Comm>()
+        val pf = File(td, "p").apply { mkdirs() }
+        File(pf, "邀请.txt").writeText("你是邀请.\n12:30-14:00:空闲\n18:30-19:00:午饭\n[循环 14:00-18:00][100min]\n23:30-6:30:睡眠\n")
+        fun mk(name: String) = comm(File(td, name).apply { mkdirs() }, pf).also {
+            it.set(persona = "邀请.txt", splitSend = false)
+            it.snapshot = { CommSnap("idle") }
+            instances.add(it)
+        }
+        try {
+            clock = LocalDateTime.of(2026, 12, 10, 13, 0)
+            Comm.charDelay = 1.0; Comm.charDelayCjk = 1.0
+            val c = mk("d")
+            script.addAll(listOf("[operation]", "[1,2]", "一".repeat(400) + "[share data]"))
+            c.proactiveForTest("[系统] 请主动发消息."); wait(c)
+            val message = c.messages.last()
+            assertTrue(message.hold)
+            assertEquals("queued", c.jointState())
+            assertNull(c.jointInvite()); assertFalse(c.shareInvite()); assertEquals("", c.jointStatusText())
+            clock = clock.plusSeconds(301); c.tick()
+            assertEquals("queued", c.jointState()); assertFalse(c.shareInvite())
+            c.flush()
+            val restarted = mk("d")
+            assertTrue(restarted.messages.last().shareInvite)
+            val peer = mk("peer")
+            peer.applyDoc(restarted.syncDoc())
+            assertEquals("queued", peer.jointState()); assertNull(peer.jointInvite()); assertFalse(peer.shareInvite())
+            clock = java.time.Instant.ofEpochMilli(message.due).atZone(java.time.ZoneId.systemDefault()).toLocalDateTime()
+            for (item in listOf(restarted, peer)) {
+                item.blocked = { "专注中" }; item.tick()
+                assertNull(item.jointInvite()); assertFalse(item.shareInvite())
+                item.blocked = { "" }
+            }
+            peer.tick()
+            assertNotNull(peer.jointInvite()); assertFalse(peer.shareInvite())
+            restarted.applyDoc(peer.syncDoc())
+            assertNull(restarted.jointInvite()); assertEquals("", restarted.jointStatusText())
+            restarted.tick()
+            assertNotNull(restarted.jointInvite()); assertTrue(restarted.shareInvite())
+            restarted.tick()
+            clock = clock.plusSeconds(301); restarted.tick()
+            assertNull(restarted.jointInvite()); assertFalse(restarted.shareInvite())
+            script.add("[share data]")
+            restarted.proactiveForTest("[系统] 请主动发消息."); wait(restarted)
+            assertTrue(restarted.messages.last().hold); assertFalse(restarted.shareInvite())
+            restarted.clear(); clock = clock.plusMinutes(1); restarted.tick()
+            assertNull(restarted.jointInvite()); assertFalse(restarted.shareInvite())
+        } finally {
+            Comm.charDelay = 0.0; Comm.charDelayCjk = 0.0
+            instances.forEach { it.flush(); it.voice.close() }; td.deleteRecursively()
         }
     }
 

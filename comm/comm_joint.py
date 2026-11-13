@@ -65,7 +65,7 @@ class JointMixin:
         """有联合行动还没结束吗 (等回复 / 对方已接受 / 进行中 / 合约结束后的同步休息中)."""
         j = self._joint()
         st = j.get("state")
-        if st in ("wait", "invite", "yes", "run"):
+        if st in ("queued", "wait", "invite", "yes", "run"):
             return True
         return st == "rest" and self._joint_rest_left(j) > 0
 
@@ -124,6 +124,8 @@ class JointMixin:
         j = self._joint()
         st = j.get("state")
         a, b = self._joint_span(j)
+        if st == "invite" and not self._joint_invite_ready(j):
+            return ""
         if not st or a is None:
             return ""
         now = self.now()
@@ -330,6 +332,12 @@ class JointMixin:
         if st in ("invite", "wait") and self._ms() - int(j.get("ts") or 0) >= JOINT_INVITE_TTL * 1000:
             self._joint_set({"state": ""})                     # 发出的邀请 5 分钟没人接受 / 回复: 自动清理 (1.0.428, 1.0.429 连用户发起的也算)
             return
+        if st == "queued":
+            if not self.leader() or not any(m.get("uid") == j.get("message") and not m.get("hold") for m in self.messages):
+                return
+            self._op_deliver()
+            j = self._joint()
+            st = j.get("state")
         a, _b = self._joint_span(j)
         if st == "rest" and self.leader():
             self._joint_follow(j, now)
@@ -590,14 +598,21 @@ class JointMixin:
                                                           f"当作没有发起, 不要再输入 [operation] 或编号, 也不要说自己发起了联合行动; {how}, 实在不方便返回{REFUSE}.")})
         return _OP_STRIP_RE.sub("", ask(convo)).strip()
 
-    def _op_apply(self, plan: dict):
-        """主线程: 对方发起的联合行动记下来 (直接是"对方已接受"), 并记一条给对方看的系统消息."""
-        from comm import comm_data
+    def _op_apply(self, plan: dict, message=None):
+        """先保存邀请计划，等待对应消息实际显示再生效。"""
         if not plan or self.joint_block():
             return
-        a, b = _joint_time(plan["start"]), _joint_time(plan["end"])
-        self._joint_set({"id": f"{self._ms()}", "pid": self.pid, "state": "invite", "terms": list(plan["terms"]),
-                         "start": plan["start"], "end": plan["end"], "by": "ai"}, replace=True)
+        self._joint_set({"id": f"{self._ms()}", "pid": self.pid, "state": "queued", "terms": list(plan["terms"]),
+                         "start": plan["start"], "end": plan["end"], "by": "ai", "message": (message or {}).get("uid", "")}, replace=True)
+        if not message or not message.get("hold"):
+            self._op_deliver()
+
+    def _op_deliver(self):
+        """消息已展示才发出邀请，五分钟有效期从这时起算。"""
+        from comm import comm_data
+        plan = self._joint()
+        a, b = self._joint_span(plan)
+        self._joint_set({"state": "invite"})
         self.cfg["joint_last"] = list(plan["terms"])
         self.save_cfg()
         self._joint_note(f"你向用户发起了联合行动: {comm_data.joint_label(plan['terms'], a, b, self.now().date())}. "
@@ -606,7 +621,12 @@ class JointMixin:
     def joint_invite(self) -> dict:
         """对方发起的、等用户点 接受 / 拒绝 的联合行动 ({} = 没有); 聊天页顶上和合约页右下角都显示 拒绝 / 接受."""
         j = self._joint()
-        return dict(j) if j.get("state") == "invite" else {}
+        return dict(j) if j.get("state") == "invite" and self._joint_invite_ready(j) else {}
+
+    def _joint_invite_ready(self, invitation):
+        """别的设备已展示的邀请，在本机也必须等关联消息展示。"""
+        uid = invitation.get("message")
+        return not uid or any(m.get("uid") == uid and not m.get("hold") for m in self.messages)
 
     def joint_state(self) -> str:
         """现在的联合行动的状态 (wait / invite / yes / no / missed / run / rest), 没有 = ""."""
@@ -615,7 +635,7 @@ class JointMixin:
     def joint_respond(self, accept: bool) -> str:
         """用户点了 接受 / 拒绝. 返回 "" = 记下了, 否则是原因. 接受 → 和用户自己发起、对方答应了的一样 (到点在合约页按约开始); 拒绝 → 对方知道被拒绝了."""
         j = self._joint()
-        if j.get("state") != "invite":
+        if j.get("state") != "invite" or not self._joint_invite_ready(j):
             return "没有等你回复的联合行动邀请"
         a, _b = self._joint_span(j)
         if a is not None and self.now() > a:

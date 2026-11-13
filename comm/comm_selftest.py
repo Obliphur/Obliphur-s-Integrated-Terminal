@@ -24,10 +24,10 @@ def _selftest():
     # 前置 prompt / README
     assert "聊天记录达到400条后" in BUILTIN_PERSONAS[DEFAULT_PERSONA] and "[messages]查询" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
     assert "不得涉及亲密关系" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
-    assert "用户可以要求你在消息中模拟动作" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
+    assert "用户未要求时不主动模拟动作" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
     assert "不要说'接住'" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
     from comm.comm_builtin import CLAUDIA_PREVIOUS
-    assert "用户可以要求你在消息中模拟动作" not in CLAUDIA_PREVIOUS
+    assert "用户可以要求你在消息中模拟动作" in CLAUDIA_PREVIOUS
     p = prefix_prompt()
     assert p.startswith("[OIT_SYSTEM_MESSAGES]") and "回复OIT(自律软件)用户的消息" in p and "I." in p and "II." in p and "III." in p
     assert "IV.依专注段主动收尾" in p and "≤5min" in p
@@ -1762,6 +1762,53 @@ def _selftest():
     assert ca2._joint() == {} and not ca2.joint_busy() and ca2.cfg["joint"].get("ts")
     for x in (cj, cj2, cj3, cn, ca2, cb2):
         x.flush()
+
+    # ---- 对方发起的邀请等消息展示再生效，重启、同步、专注不能绕过延迟 ----
+    clock[0] = day.replace(hour=13)
+    CHAR_DELAY = CHAR_DELAY_CJK = 1.0
+    delayed = joint_comm("延迟邀请", "你是延迟邀请.")
+    plan = {"terms": ["deep1"], "start": day.replace(hour=15).isoformat(), "end": day.replace(hour=18).isoformat()}
+    delayed._finish("proactive", None, "一" * 400 + "[share data]", "", delayed._epoch, plan)
+    message = delayed.messages[-1]
+    assert message.get("hold") and delayed.joint_state() == "queued"
+    assert not delayed.joint_invite() and not delayed.share_invite() and not delayed.joint_status_text()
+    clock[0] += timedelta(seconds=301)
+    delayed._release_held(); delayed._joint_tick(clock[0])
+    assert delayed.joint_state() == "queued" and not delayed.share_invite(), "五分钟从展示开始，排队时不计时"
+    delayed.flush()
+    restarted = Comm(delayed.dir, folder, now=lambda: clock[0], chat_fn=fake)
+    restarted.snapshot = lambda: {"state": "idle"}
+    assert restarted.messages[-1].get("share_invite") and restarted.joint_state() == "queued"
+    peer = joint_comm("延迟接收", "你是延迟接收.")
+    peer.set_cfg(persona="延迟邀请.txt")
+    peer.apply_doc(restarted.sync_doc())
+    assert peer.joint_state() == "queued" and not peer.joint_invite() and not peer.share_invite()
+    clock[0] = datetime.fromtimestamp(message["due"] / 1000)
+    for item in (restarted, peer):
+        item.blocked = lambda: "专注中"
+        item._release_held(); item._joint_tick(clock[0])
+        assert not item.joint_invite() and not item.share_invite(), "到点仍专注时不能提前生效"
+        item.blocked = lambda: ""
+    peer._release_held(); peer._joint_tick(clock[0])
+    assert peer.joint_invite() and not peer.share_invite(), "同步来的合约按消息展示生效，share data 仍是本机状态"
+    restarted.apply_doc(peer.sync_doc())
+    assert not restarted.joint_invite() and not restarted.joint_status_text(), "远端已展示也不能抢在本机消息之前生效"
+    restarted._release_held(); restarted._joint_tick(clock[0])
+    assert restarted.joint_invite() and restarted.share_invite()
+    invite_ts = restarted.cfg["share_inv"]["ts"]
+    restarted._release_held(); restarted._joint_tick(clock[0])
+    assert restarted.cfg["share_inv"]["ts"] == invite_ts, "显示过的消息不能重复创建邀请"
+    clock[0] += timedelta(seconds=301)
+    restarted._joint_tick(clock[0]); restarted._share_tick()
+    assert not restarted.joint_invite() and not restarted.share_invite()
+    restarted._finish("proactive", None, "[share data]", "", restarted._epoch, plan)
+    assert restarted.messages[-1].get("hold") and not restarted.share_invite(), "纯标签也要有邀请消息承载延迟"
+    restarted.clear()
+    clock[0] += timedelta(minutes=1)
+    restarted._release_held(); restarted._joint_tick(clock[0])
+    assert not restarted.joint_invite() and not restarted.share_invite(), "清空聊天丢弃排队邀请"
+    for item in (delayed, restarted, peer): item.flush()
+    CHAR_DELAY = CHAR_DELAY_CJK = 0.0
 
     # ---- 对方主动发起联合行动 (前置 prompt XII): [operation] → 词条库 (编号) → 回编号 → OIT 定开始时间 (第一个放得下的循环起点) → 对用户说话 ----
     assert "XII.[operation]" in prefix_prompt()
