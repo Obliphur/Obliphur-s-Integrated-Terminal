@@ -193,9 +193,6 @@ fun CommScreen(go: (String) -> Unit) {
             }
             TextButton({ if (comm.messages.isNotEmpty()) askClear = true }) { Text(tr("清空"), color = o.dim) }
         }
-        if (comm.personaTitle(comm.personaName()).trim().equals("Claudia", ignoreCase = true)) {
-            Text(tr("推荐使用Claude或者Gemini"), color = o.text)
-        }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
             TextButton({ comm.setScenario(!comm.scenarioOn()) }, enabled = comm.scenarioUnlocked()) {
                 Text(tr(if (comm.scenarioOn()) "🎭 情景模拟" else "📱 软件聊天"))

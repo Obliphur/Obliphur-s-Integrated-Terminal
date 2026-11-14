@@ -71,13 +71,14 @@ class CommPage(CommVoiceMixin, tk.Frame):
         self.cb_cfg.pack(side="right", padx=(0, 8))
         self.cb_cfg.bind("<<ComboboxSelected>>", lambda _e: self._pick_config())
 
-        self.btn_scenario = ttk.Button(self.other_row, command=self._toggle_scenario)
+        # 模式切换独占一行，避免被较长的对方状态文字挤出可见区域。
+        scenario_row = tk.Frame(self, bg=bg)
+        scenario_row.pack(fill="x", padx=30, pady=(0, 2))
+        self.btn_scenario = ttk.Button(scenario_row, command=self._toggle_scenario)
         self.btn_scenario.pack(side="right")
         self.btn_scenario.bind("<Enter>", self._scenario_hint)
         self.btn_scenario.bind("<Leave>", lambda _e: self._sync_status())
 
-        self.lbl_model_hint = tk.Label(self, text=tr("推荐使用Claude或者Gemini"), bg=bg,
-                                       fg=COLORS["text"], font=config.font("body"), anchor="w")
         self.area = ScrollArea(self, height=300, bg=bg)
         self.area.pack(fill="both", expand=True, padx=26, pady=(4, 4))
         self.area.canvas.bind("<Configure>", self._on_resize, add="+")
@@ -182,11 +183,6 @@ class CommPage(CommVoiceMixin, tk.Frame):
     def _sync_status(self):
         """状态行: 不能用的原因 > 出错 (每秒看一次, 不用重画消息)."""
         c = self.comm
-        if comm_mod.is_claudia(c.persona_name()):
-            if self.lbl_model_hint.winfo_manager() != "pack":
-                self.lbl_model_hint.pack(fill="x", padx=30, pady=(0, 4), before=self.area)
-        else:
-            self.lbl_model_hint.pack_forget()
         blocked = c.blocked()
         text = blocked or (tr(c.error) if c.error else "")
         cfg(self.lbl_status, text=text, fg=COLORS["danger"] if (blocked or c.error) else COLORS["text_dim"])
