@@ -193,6 +193,9 @@ fun CommScreen(go: (String) -> Unit) {
             }
             TextButton({ if (comm.messages.isNotEmpty()) askClear = true }) { Text(tr("清空"), color = o.dim) }
         }
+        if (comm.personaTitle(comm.personaName()).trim().equals("Claudia", ignoreCase = true)) {
+            Text(tr("推荐使用Claude或者Gemini"), color = o.text)
+        }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
             TextButton({ comm.setScenario(!comm.scenarioOn()) }, enabled = comm.scenarioUnlocked()) {
                 Text(tr(if (comm.scenarioOn()) "🎭 情景模拟" else "📱 软件聊天"))
@@ -526,6 +529,9 @@ fun CommSettings() {
         val names = comm.personaLabels()
         if (names.isNotEmpty()) Box(Modifier.padding(top = 8.dp)) {
             Segmented(names, comm.personaName()) { comm.set(persona = it) }
+        }
+        if (comm.personaTitle(comm.personaName()).trim().equals("Claudia", ignoreCase = true)) {
+            Text(tr("推荐使用Claude或者Gemini"), color = o.text, modifier = Modifier.padding(top = 6.dp))
         }
         if (comm.claudiaDiffers()) Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {   // 选着 Claudia 而内容和默认人设不一样
             Text(tr("Claudia 的内容和默认人设不一样"), color = o.dim, fontSize = 12.sp, modifier = Modifier.weight(1f))

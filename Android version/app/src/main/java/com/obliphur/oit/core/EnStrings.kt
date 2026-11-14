@@ -3,6 +3,7 @@ package com.obliphur.oit.core
 /** 英文界面文字. 由 gen_en.py 从桌面版 i18n.py 和补充的译文生成; 键是中文原文. */
 object EnStrings {
     val MAP: Map<String, String> = hashMapOf(
+        "推荐使用Claude或者Gemini" to "Recommended: Claude or Gemini",
         "📱 软件聊天" to "📱 Messaging",
         "🎭 情景模拟" to "🎭 Scenario",
         "累计 {n} 条聊天记录解锁情景模拟" to "Unlock scenario mode after {n} chat messages",

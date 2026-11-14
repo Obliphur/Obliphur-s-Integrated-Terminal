@@ -2,6 +2,7 @@
 
 
 EN = {
+    "推荐使用Claude或者Gemini": "Recommended: Claude or Gemini",
     "📱 软件聊天": "📱 Messaging",
     "🎭 情景模拟": "🎭 Scenario",
     "累计 {n} 条聊天记录解锁情景模拟": "Unlock scenario mode after {n} chat messages",
