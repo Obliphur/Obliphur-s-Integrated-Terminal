@@ -517,13 +517,15 @@ def _selftest():
     assert tension_delta("hug me", False) == 5 and tension_delta("早上好", True) == 0
     assert "EFFECTIVE_STAGE=50-70" in interaction_prompt({"tension": 100}, 200, False)
     assert "EFFECTIVE_STAGE=70+" in interaction_prompt({"tension": 100}, 200, True)
-    assert interaction_roll({"tension": 50, "day": "2027-05-03"}, fixed2.date())["tension"] == 35
+    assert interaction_roll({"tension": 50, "day": "2027-05-03"}, fixed2.date())["tension"] == 20
+    assert interaction_roll({"tension": 70, "day": "2027-05-03"}, fixed2.date())["tension"] == 40
+    assert interaction_roll({"tension": 71, "day": "2027-05-03"}, fixed2.date())["tension"] == 56
     assert interaction_roll({"tension": 50, "day": "2027-05-05"}, fixed2.date())["day"] == "2027-05-05"
     midnight_end = int(datetime(2027, 5, 5, 1).timestamp() * 1000)
     night = {"tension": 95, "burst_until": midnight_end, "day": "2027-05-04"}
     assert interaction_roll(interaction_settle(night, midnight_end - 1), datetime(2027, 5, 5).date())["tension"] == 95
     settled = interaction_settle(night, midnight_end)
-    assert settled["tension"] == 35 and settled["shame_turns"] == 2
+    assert settled["tension"] == 20 and settled["shame_turns"] == 2
     assert interaction_settle(settled, midnight_end + 1) == settled
     stc._follow_at = 0
     stc.set_cfg(split_send=False)
@@ -544,7 +546,7 @@ def _selftest():
     assert stc.cfg["interaction"]["tension"] == 85
     stc.now = lambda: fixed2.replace(hour=14, minute=0)
     stc.tick()
-    assert stc.cfg["interaction"]["tension"] == 35 and stc.cfg["interaction"]["shame_turns"] == 2
+    assert stc.cfg["interaction"]["tension"] == 20 and stc.cfg["interaction"]["shame_turns"] == 2
     for turns in (1, 0):
         script.append("嗯.")
         stc.send("早上好")
@@ -554,14 +556,14 @@ def _selftest():
     sync_interaction = stc.sync_doc()
     stc.flush()
     reload_st = Comm(os.path.join(td, "st"), folder, now=lambda: fixed2, chat_fn=fake)
-    assert reload_st.scenario_on() and reload_st.cfg["interaction"]["tension"] == 35
+    assert reload_st.scenario_on() and reload_st.cfg["interaction"]["tension"] == 20
     reload_st.set_cfg(persona="小夏.txt")
     assert not reload_st.scenario_on() and reload_st.cfg["interaction"]["tension"] == 0
     reload_st.set_cfg(persona="时段.txt")
     peer_st = Comm(os.path.join(td, "stpeer"), folder, now=lambda: fixed2, chat_fn=fake)
     peer_st.set_cfg(persona="时段.txt")
     peer_st.apply_doc(sync_interaction)
-    assert peer_st.scenario_on() and peer_st.cfg["interaction"]["tension"] == 35
+    assert peer_st.scenario_on() and peer_st.cfg["interaction"]["tension"] == 20
     peer_st.clear()
     peer_st.apply_doc(sync_interaction)
     assert not peer_st.scenario_on() and peer_st.cfg["interaction"]["tension"] == 0

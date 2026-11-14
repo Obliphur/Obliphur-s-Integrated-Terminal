@@ -15,8 +15,19 @@ data class CommInteraction(
     fun roll(today: LocalDate): CommInteraction {
         val elapsed = runCatching { ChronoUnit.DAYS.between(LocalDate.parse(day), today) }.getOrDefault(0L)
         return when {
-            elapsed > 0 -> copy(day = today.toString(), tension = if (shameTurns > 0 || burstUntil > 0L) tension else
-                maxOf(0L, tension.toLong() - Cfg.COMM_TENSION_DAY_DECAY * elapsed).toInt())
+            elapsed > 0 -> {
+                var remaining = elapsed
+                var next = tension
+                if (shameTurns == 0 && burstUntil == 0L) {
+                    while (remaining > 0L && next > 0) {
+                        val decay = if (next in Cfg.COMM_TENSION_LOW..Cfg.COMM_TENSION_CAP)
+                            Cfg.COMM_TENSION_DAY_DECAY * 2 else Cfg.COMM_TENSION_DAY_DECAY
+                        next = maxOf(0, next - decay)
+                        remaining--
+                    }
+                }
+                copy(day = today.toString(), tension = next)
+            }
             day.isEmpty() -> copy(day = today.toString())
             else -> this
         }

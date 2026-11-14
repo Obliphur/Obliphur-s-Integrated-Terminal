@@ -46,7 +46,13 @@ def interaction_roll(d, today):
         elapsed = 0
     if elapsed > 0:
         if not d["shame_turns"] and not d["burst_until"]:
-            d["tension"] = max(0, d["tension"] - config.COMM_TENSION_DAY_DECAY * elapsed)
+            for _ in range(elapsed):
+                if not d["tension"]:
+                    break
+                decay = config.COMM_TENSION_DAY_DECAY
+                if config.COMM_TENSION_LOW <= d["tension"] <= config.COMM_TENSION_CAP:
+                    decay *= 2
+                d["tension"] = max(0, d["tension"] - decay)
         d["day"] = today.isoformat()
     elif not d["day"]:
         d["day"] = today.isoformat()
