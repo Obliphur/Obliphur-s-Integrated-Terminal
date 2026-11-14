@@ -1,19 +1,24 @@
 package com.obliphur.oit.core
 
 import org.json.JSONObject
+import org.json.JSONArray
+import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
 import java.time.temporal.ChronoUnit
 
 /** 每个聊天对象的情景模式、张力及冷静期；与桌面端使用相同字段。 */
 data class CommInteraction(
     val scenarioMode: Boolean = false, val tension: Int = 0, val shameTurns: Int = 0,
     val day: String = "", val ts: Long = 0L, val burstUntil: Long = 0L,
-    val pending: Map<String, Boolean> = emptyMap(), val gainUntil: Long = 0L
+    val pending: Map<String, Boolean> = emptyMap(), val gainUntil: Long = 0L,
+    val burstDays: List<String> = emptyList(), val morningDay: String = ""
 ) {
     fun json(): JSONObject = JSONObject().put("scenario_mode", scenarioMode).put("tension", tension)
         .put("shame_turns", shameTurns).put("day", day).put("ts", ts).put("burst_until", burstUntil)
         .put("pending", JSONObject(pending))
         .put("gain_until", gainUntil)
+        .put("burst_days", JSONArray(burstDays)).put("morning_day", morningDay)
 
     fun roll(today: LocalDate): CommInteraction {
         val elapsed = runCatching { ChronoUnit.DAYS.between(LocalDate.parse(day), today) }.getOrDefault(0L)
@@ -59,6 +64,8 @@ data class CommInteraction(
     fun replied(special: Boolean, burst: Boolean, until: Long = 0L, shame: Boolean = shameTurns > 0, nowMs: Long = 0L): CommInteraction = when {
         shame && shameTurns > 0 -> copy(shameTurns = shameTurns - 1)
         special && burst && shameTurns == 0 -> copy(burstUntil = maxOf(burstUntil, until),
+            burstDays = if (burstUntil == 0L && until > 0L)
+                (burstDays + localDay(nowMs)).distinct().sorted().takeLast(2) else burstDays,
             gainUntil = if (burstUntil == 0L && until > 0L) maxOf(gainUntil, nowMs + Cfg.COMM_TENSION_BURST_GAIN_SECONDS * 1000L) else gainUntil)
         else -> this
     }
@@ -69,7 +76,16 @@ data class CommInteraction(
             (o?.optInt("shame_turns") ?: 0).coerceIn(0, Cfg.COMM_SHAME_TURNS),
             o?.optString("day") ?: "", maxOf(0L, o?.optLong("ts") ?: 0L), maxOf(0L, o?.optLong("burst_until") ?: 0L),
             o?.optJSONObject("pending")?.let { p -> p.keys().asSequence().filter { p.opt(it) is Boolean }
-                .toList().takeLast(Comm.KEEP).associateWith { p.getBoolean(it) } } ?: emptyMap(), maxOf(0L, o?.optLong("gain_until") ?: 0L))
+                .toList().takeLast(Comm.KEEP).associateWith { p.getBoolean(it) } } ?: emptyMap(), maxOf(0L, o?.optLong("gain_until") ?: 0L),
+            o?.optJSONArray("burst_days")?.let { a -> (0 until a.length()).mapNotNull { i ->
+                (a.opt(i) as? String)?.takeIf { it.matches(Regex("\\d{4}-\\d{2}-\\d{2}")) }
+            }.distinct().sorted().takeLast(2) } ?: run {
+                // 旧存档的增长窗口只在爆发开始时创建，可还原最近一次触发日期。
+                val end = maxOf(0L, o?.optLong("gain_until") ?: 0L)
+                if (end > 0L) listOf(localDay(end - Cfg.COMM_TENSION_BURST_GAIN_SECONDS * 1000L)) else emptyList()
+            }, o?.optString("morning_day") ?: "")
+
+        private fun localDay(ms: Long): String = Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()).toLocalDate().toString()
 
         private val tensionTag = Regex("""[\[［]\s*tension\b[^\[\]［］\n]*[\]］]""", RegexOption.IGNORE_CASE)
         private val tensionGain = Regex("""[\[［]\s*tension\s*[:：]\s*(\d{1,5})\s*[:：]\s*([+-]?\d{1,6})\s*[\]］]""", RegexOption.IGNORE_CASE)

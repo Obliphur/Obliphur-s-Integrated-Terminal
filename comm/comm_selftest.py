@@ -23,7 +23,7 @@ def _selftest():
 
     # 前置 prompt / README
     assert "聊天记录达到400条后" in BUILTIN_PERSONAS[DEFAULT_PERSONA] and "[messages]查询" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
-    assert "不得涉及亲密关系" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
+    assert "只禁止浪漫关系称呼" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
     assert "MODE=情景模拟" in BUILTIN_PERSONAS[DEFAULT_PERSONA] and "EFFECTIVE_STAGE=70+" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
     assert "不要说'接住'" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
     p = prefix_prompt()
@@ -541,6 +541,7 @@ def _selftest():
     assert stc.cfg["interaction"]["burst_until"] == int(fixed2.replace(hour=14, minute=0).timestamp() * 1000)
     gain_until = int((fixed2 + timedelta(hours=24)).timestamp() * 1000)
     assert stc.cfg["interaction"]["gain_until"] == gain_until
+    assert stc.cfg["interaction"]["burst_days"] == ["2027-05-04"]
     assert interaction_gain(stc.cfg["interaction"], 20, gain_until - 1) == 10
     assert interaction_gain(stc.cfg["interaction"], 20, gain_until) == 20
     assert interaction_gain(stc.cfg["interaction"], tension_model_gain("[tension:1:15]", 1, False), gain_until - 1) == 3
@@ -586,6 +587,68 @@ def _selftest():
     assert reload_st.joint_ended("tension-ok", "completed")
     assert reload_st.cfg["interaction"]["tension"] == 60, "合约无损完成不降低张力"
     reload_st.flush(); peer_st.flush()
+    # 爆发次日早间必谈：概率为零、迟到、短空闲及近期刚谈过均不跳过；静音延后。
+    morning_clock = [datetime(2027, 5, 5, 5, 30)]
+    open(os.path.join(folder, "早间.txt"), "w", encoding="utf-8").write(
+        "你是早间.\n05:00-09:00:空闲\n13:00-14:00:空闲\n长时间休息发起谈话概率:0%\n空闲发起谈话概率:0%\n")
+    morning_dir = os.path.join(td, "morning")
+    morning = Comm(morning_dir, folder, now=lambda: morning_clock[0], chat_fn=fake)
+    morning.ai.set_profile("deepseek", api_key="k")
+    morning.set_cfg(persona="早间.txt", split_send=False)
+    morning._interaction_set({"burst_days": ["2027-05-04"]})
+    before = len(calls)
+    morning.tick()
+    assert not morning.busy and len(calls) == before
+    morning_clock[0] = datetime(2027, 5, 5, 8, 55)
+    morning.set_muted(True)
+    morning.tick()
+    assert not morning.cfg["interaction"]["morning_day"]
+    morning.set_muted(False)
+    morning._pro_recent = lambda now, ctx=None: True
+    script.append("关于昨天,早上想和你说几句.")
+    morning.tick(); wait(morning)
+    assert len(calls) == before + 1 and "昨天你与用户" in calls[-1][1][-1]["content"]
+    assert morning.cfg["interaction"]["morning_day"] == "2027-05-05"
+    morning_doc = morning.sync_doc()
+    morning.flush()
+    again = Comm(morning_dir, folder, now=lambda: morning_clock[0], chat_fn=fake)
+    again.tick()
+    assert not again.busy and len(calls) == before + 1
+    morning_peer = Comm(os.path.join(td, "morning_peer"), folder, now=lambda: morning_clock[0], chat_fn=fake)
+    morning_peer.ai.set_profile("deepseek", api_key="k")
+    morning_peer.set_cfg(persona="早间.txt", split_send=False)
+    morning_peer.apply_doc(morning_doc)
+    morning_peer.tick()
+    assert not morning_peer.busy and morning_peer.cfg["interaction"]["morning_day"] == "2027-05-05"
+    for days, hour in ((["2027-05-03"], 8), (["2027-05-05"], 8), (["2027-05-04"], 13)):
+        morning_clock[0] = datetime(2027, 5, 5, hour, 55)
+        morning._interaction_set({"burst_days": days})
+        morning.tick()
+        assert not morning.busy and not morning.cfg["interaction"]["morning_day"]
+    assert interaction_norm({"gain_until": gain_until})["burst_days"] == ["2027-05-04"]
+    # 持续时间日程与后台对象走同一规则，按对象保存已触发日期。
+    open(os.path.join(folder, "早间_routine.txt"), "w", encoding="utf-8").write("初始起点:6:00\n6h:空闲\n")
+    morning.reload_schedule()
+    morning_clock[0] = datetime(2027, 5, 6, 8, 55)
+    morning._interaction_set({"burst_days": ["2027-05-05"]})
+    script.append("今天也想找你说话.")
+    morning.tick(); wait(morning)
+    assert morning.cfg["interaction"]["morning_day"] == "2027-05-06" and len(calls) == before + 2
+    owner = morning.pid
+    open(os.path.join(folder, "空白.txt"), "w", encoding="utf-8").write("你是空白.")
+    morning.set_cfg(persona="空白.txt")
+    morning_clock[0] = datetime(2027, 5, 7, 8, 55)
+    morning._interaction_set({"burst_days": ["2027-05-06"]}, owner)
+    script.append("后台对象的早间消息.")
+    morning.tick()
+    for _ in range(300):
+        time.sleep(.01)
+        morning.tick()
+        if not morning._bg_busy:
+            break
+    assert morning._state_of(owner)["interaction"]["morning_day"] == "2027-05-07" and len(calls) == before + 3
+    assert not morning.cfg["interaction"]["morning_day"]
+    morning.flush(); again.flush(); morning_peer.flush()
     # 所有消息由模型判断：失败重试不重复，内部标记不入历史。
     from comm.comm_interaction import tension_model_gain, tension_clean
     assert tension_model_gain("[tension:1:-10][tension:1:999999][tension:2:20]", 1, False) == 10

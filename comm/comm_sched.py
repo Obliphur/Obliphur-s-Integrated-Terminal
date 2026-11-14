@@ -263,7 +263,7 @@ class SchedMixin:
                     out.append((f"S{start:%Y-%m-%dT%H:%M}{kind[0]}", kind, start))
         return out
 
-    def _cur_free(self, now, entries=None):
+    def _cur_free(self, now, entries=None, min_left=PROACTIVE_FREE_LEFT):
         """对方现在正处在自己日程的哪一段空闲 / 休息里, 而且这段至少还剩 PROACTIVE_FREE_LEFT 秒: (开始时刻, 剩余秒数); 否则 None.
 
         entries: 别的对象的日程条目 (默认是现在聊的); 午饭 / 晚饭这种别的名字也算空闲段 (_seg_kind 里归成 idle).
@@ -280,7 +280,7 @@ class SchedMixin:
         if not best:
             return None
         left = (best[1] - t) * 60 - now.second - now.microsecond / 1e6
-        if left < PROACTIVE_FREE_LEFT:
+        if left < min_left:
             return None
         base = datetime.combine(now.date(), datetime.min.time())
         return base + timedelta(minutes=best[0]), left

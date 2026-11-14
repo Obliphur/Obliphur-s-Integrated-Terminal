@@ -124,7 +124,7 @@ object BuiltinPersonas {
 - 用词正式,克制,语气平淡;不用感叹号,表情符号,网络用语,不撒娇,不迎合.
 - 不要使用Markdown
 - 称呼用户为'你',自称'我'.
-- 聊天记录达到400条后,可以调整对用户和自己的称呼;先输入[messages]查询,以OIT给出的总数为准.称呼不得涉及亲密关系,例如'亲爱的','宝贝'或恋人 / 配偶称谓.
+- 聊天记录达到400条后,可以调整对用户和自己的称呼;先输入[messages]查询,以OIT给出的总数为准.称呼只禁止浪漫关系称呼,例如恋人 / 配偶称谓.
 - 动作描写受系统【情景模拟模式】与【Tension(张力)】双重控制:
   - 仅在 MODE=情景模拟、且当前 PERIOD=特殊空闲时,才按生效档位在消息中使用括号框起虚构动作描写:EFFECTIVE_STAGE=50-70 时允许柔和、克制、有边界的动作(如轻轻递来手帕、在得到允许后轻拍肩膀),尊重用户意愿,不强迫接触;EFFECTIVE_STAGE=70+ 时才允许打破平时的克制仪态,展现更强烈的接触或拥抱动作.
   - 在 MODE=软件聊天、或 EFFECTIVE_STAGE=0-50、或 PERIOD=日常时,严禁在消息中包含任何动作描写,违者视同出戏.
@@ -4568,7 +4568,7 @@ class Comm(
 
     /** 对方现在正处在自己日程的哪一段空闲 / 休息里, 而且这段至少还剩 PROACTIVE_FREE_LEFT 秒: (开始时刻, 剩余秒数); 否则 null.
      *  午饭 / 晚饭这种别的名字也算空闲段 (segKind 里归成 idle). */
-    private fun curFree(t: LocalDateTime, list: List<SegEntry>): Pair<LocalDateTime, Long>? {
+    private fun curFree(t: LocalDateTime, list: List<SegEntry>, minLeft: Long = PROACTIVE_FREE_LEFT.toLong()): Pair<LocalDateTime, Long>? {
         val nowMin = t.hour * 60 + t.minute
         var best: Pair<Int, Int>? = null                     // (开始, 结束): 重叠时取最晚开始的那段
         for (e in list) {
@@ -4581,7 +4581,7 @@ class Comm(
         }
         val b = best ?: return null
         val left = (b.second - nowMin) * 60L - t.second
-        if (left < PROACTIVE_FREE_LEFT) return null
+        if (left < minLeft) return null
         return t.toLocalDate().atStartOfDay().plusMinutes(b.first.toLong()) to left
     }
 
@@ -4591,7 +4591,9 @@ class Comm(
         val spec = if (ctx != null) ctx.rt else rt
         if (spec != null) { checkProactiveRt(t, ctx, spec, done); return }
         // I. 对方自己正处在空闲 / 休息段里, 而且这段还剩 10 分钟以上: 段开始后 1~3 分钟发一条
-        val cur = curFree(t, ctx?.entries ?: entries())
+        val free = curFree(t, ctx?.entries ?: entries(), 0L)
+        if (free != null && burstMorning(t, free.first, ctx)) return
+        val cur = free?.takeIf { it.second >= PROACTIVE_FREE_LEFT }
         if (cur != null) {
             val begin = cur.first
             val key = "F${begin.toLocalDate()}T%02d:%02d".format(begin.hour, begin.minute)
@@ -4640,6 +4642,8 @@ class Comm(
     private fun checkProactiveRt(t: LocalDateTime, ctx: BgCtx?, spec: RoutineSpec, done: Collection<String>) {
         val seed = ctx?.pid ?: pid
         val segs = rtSegs(t.minusHours(14), t.plusMinutes(4), spec, seed, ctx == null)
+        val morning = Routine.statusIn(segs, t)
+        if (morning != null && morning.kind in listOf("idle", "rest") && !morning.gap && burstMorning(t, morning.start, ctx)) return
         if (ctx == null && loveCheck(t, segs, done)) return                              // 每次进入特殊空闲: 判定主动告白
         fun pct(kind: String) = if (ctx != null) proPct(ctx.probs, kind) else proPercent(kind)
         fun hm(x: LocalDateTime) = "%02d:%02d".format(x.hour, x.minute)
@@ -4685,13 +4689,13 @@ class Comm(
     }
 
     /** 这个时间点处理一次: 记下来 (不管发没发), 没错过太久 / 摇中了概率 / 最近没发过, 才真的让对方发. */
-    private fun proFire(key: String, due: LocalDateTime, t: LocalDateTime, p: Double, body: String, ctx: BgCtx? = null) {
+    private fun proFire(key: String, due: LocalDateTime, t: LocalDateTime, p: Double, body: String, ctx: BgCtx? = null, force: Boolean = false) {
         proMark(key, ctx)
         val late = secondsBetween(due, t) > PROACTIVE_LATE                  // 错过太久 (程序刚打开) 就算了
         val hit = p >= 1.0 || java.util.Random((key + "#p").hashCode().toLong()).nextDouble() < p
         val recent = proRecent(ctx)
         val who = if (ctx != null) " [${ctx.name}]" else ""
-        if (!late && hit && !recent) {
+        if (force || (!late && hit && !recent)) {
             log("PRO$who $key p=${"%.2f".format(p)} → 让对方发" + (if (proLang.isNotEmpty()) " (语言 $proLang)" else ""))
             val text = if (proLang.isNotEmpty()) body + PRO_LANG_NOTE.replace("{lang}", proLang) else body      // 只加在这一条触发消息里: 之后的对话 (用户说的话) 不受影响
             if (ctx != null) bgRequest(ctx, "proactive", text) else trigger("proactive", text)
@@ -4700,6 +4704,22 @@ class Comm(
         }
         if (ctx != null) storeState(ctx.pid, ctx.st) else { saveChat(); saveCfg() }
         push()
+    }
+
+    /** 爆发次日早间首次有空必定找用户谈话，不受概率、迟到和近期谈话限制。 */
+    private fun burstMorning(t: LocalDateTime, begin: LocalDateTime, ctx: BgCtx?): Boolean {
+        if (t.hour !in Cfg.COMM_TENSION_MORNING_HOURS) return false
+        val owner = ctx?.pid ?: pid
+        val d = interactionPrepare(owner)
+        val today = t.toLocalDate().toString()
+        if (t.toLocalDate().minusDays(1).toString() !in d.burstDays || d.morningDay >= today) return false
+        interactionSet(d.copy(morningDay = today), owner)
+        if (ctx != null) ctx.st.interaction = stateOf(owner).interaction
+        proMark("F${begin.toLocalDate()}T%02d:%02d".format(begin.hour, begin.minute), ctx)
+        proFire("B$today", t, t, 1.0,
+            "[系统] 昨天你与用户交流时发生过情绪张力爆发,现在是次日早上的空闲或休息时间. " +
+                "请结合昨天的交流与当前心情,根据人设主动给用户发一条消息,话题自己找;不要透露机制;这条必须发出,不要返回${CommText.REFUSE}.", ctx, force = true)
+        return true
     }
 
     // ---- 非正在聊天的对象主动发消息 (MECHANICS 24.4): 聊过天的其他对象照样按它们各自的人设日程主动发 / 追问, 一次一个 ----

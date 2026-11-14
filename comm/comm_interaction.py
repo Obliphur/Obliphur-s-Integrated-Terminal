@@ -3,7 +3,7 @@
 
 import re
 import json
-from datetime import date
+from datetime import date, datetime
 
 import config
 import routine
@@ -18,12 +18,22 @@ def interaction_norm(value):
         except (ValueError, TypeError, OverflowError):
             return 0
     pending = d.get("pending") if isinstance(d.get("pending"), dict) else {}
+    days = d.get("burst_days")
+    if not isinstance(days, list):
+        # 旧存档的增长窗口只在爆发开始时创建，可还原最近一次触发日期。
+        gain_until = number("gain_until", 2**63 - 1)
+        try:
+            days = [datetime.fromtimestamp(gain_until / 1000 - config.COMM_TENSION_BURST_GAIN_SECONDS).date().isoformat()] if gain_until else []
+        except (ValueError, OverflowError, OSError):
+            days = []
     return {"scenario_mode": d.get("scenario_mode") is True,
             "pending": {k: v for k, v in list(pending.items())[-KEEP:] if isinstance(k, str) and isinstance(v, bool)},
             "tension": number("tension", config.COMM_TENSION_MAX),
             "shame_turns": number("shame_turns", config.COMM_SHAME_TURNS),
             "burst_until": number("burst_until", 2**63 - 1),
             "gain_until": number("gain_until", 2**63 - 1),
+            "burst_days": sorted({s for s in days if isinstance(s, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", s)})[-2:],
+            "morning_day": str(d.get("morning_day") or ""),
             "day": str(d.get("day") or ""), "ts": number("ts", 2**63 - 1)}
 
 
@@ -172,6 +182,7 @@ class InteractionMixin:
         elif special and burst and not d["shame_turns"]:
             if not d["burst_until"] and until:
                 d["gain_until"] = max(d["gain_until"], self._ms() + config.COMM_TENSION_BURST_GAIN_SECONDS * 1000)
+                d["burst_days"] = sorted(set(d["burst_days"] + [self.now().date().isoformat()]))[-2:]
             d["burst_until"] = max(d["burst_until"], until)
         self._interaction_set(interaction_settle(d, self._ms()), pid)
 

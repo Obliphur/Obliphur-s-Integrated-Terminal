@@ -453,6 +453,7 @@ class CommTest {
         assertEquals(85, bursting.optInt("tension")); assertEquals(0, bursting.optInt("shame_turns"))
         val gainUntil = ms + 24 * 60 * 60 * 1000L
         assertEquals(gainUntil, bursting.getLong("gain_until"))
+        assertEquals(listOf("2027-05-04"), CommInteraction.parse(bursting).burstDays)
         val burstState = CommInteraction.parse(bursting)
         assertEquals(10, burstState.gain(20, gainUntil - 1))
         assertEquals(20, burstState.gain(20, gainUntil))
@@ -493,6 +494,71 @@ class CommTest {
         assertEquals(2, settled.replied(true, true, midnightEnd, false).shameTurns)
         assertTrue(Joint.parse(Joint("1", owner, "run", emptyList(), "", "", 1L, violated = true).json())!!.violated)
 
+    }
+
+    /** 爆发次日早间必谈，不受概率、迟到、短空闲和近期谈话影响，记录可存档同步。 */
+    @Test
+    fun burstMorning() {
+        val td = Files.createTempDirectory("oit").toFile()
+        val dir = File(td, "d").also { it.mkdirs() }
+        val personas = File(td, "p")
+        val c = comm(dir, personas)
+        c.importPersona("早间.txt", ("你是早间.\n05:00-09:00:空闲\n13:00-14:00:空闲\n" +
+            "长时间休息发起谈话概率:0%\n空闲发起谈话概率:0%\n").byteInputStream())
+        c.set(persona = "早间.txt", splitSend = false)
+        val owner = Comm.pidOf("早间.txt")
+        fun setDays(days: List<String>) {
+            val old = c.syncDoc()["interaction:$owner"] as? JSONObject
+            val ts = maxOf(clock.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli(), (old?.optLong("ts") ?: 0L) + 1)
+            c.applyDoc(mapOf("interaction:$owner" to CommInteraction(ts = ts, burstDays = days).json().put("clear", 0)))
+        }
+        clock = LocalDateTime.of(2027, 5, 5, 5, 30)
+        setDays(listOf("2027-05-04"))
+        c.tick(); assertFalse(c.busy); assertEquals(0, calls.size)
+        clock = clock.withHour(8).withMinute(55)
+        c.setMuted(true); c.tick()
+        assertEquals("", (c.syncDoc()["interaction:$owner"] as JSONObject).optString("morning_day"))
+        c.setMuted(false)
+        c.addForTest("sys", "[系统] 刚发过")
+        script.add("关于昨天,早上想和你说几句.")
+        c.tick(); wait(c)
+        assertEquals(1, calls.size)
+        assertTrue("昨天你与用户" in calls.last().second.last().second)
+        val doc = c.syncDoc()
+        assertEquals("2027-05-05", (doc["interaction:$owner"] as JSONObject).optString("morning_day"))
+        c.flush()
+        val again = comm(dir, personas)
+        again.tick(); assertFalse(again.busy); assertEquals(1, calls.size)
+        val peer = comm(File(td, "peer").also { it.mkdirs() }, personas)
+        peer.set(persona = "早间.txt", splitSend = false); peer.applyDoc(doc)
+        peer.tick(); assertFalse(peer.busy)
+        assertEquals("2027-05-05", (peer.syncDoc()["interaction:$owner"] as JSONObject).optString("morning_day"))
+        for ((days, hour) in listOf(listOf("2027-05-03") to 8, listOf("2027-05-05") to 8, listOf("2027-05-04") to 13)) {
+            clock = clock.withHour(hour)
+            setDays(days); c.tick(); assertFalse(c.busy)
+            assertEquals("", (c.syncDoc()["interaction:$owner"] as JSONObject).optString("morning_day"))
+        }
+        val end = LocalDateTime.of(2027, 5, 5, 13, 30).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+        assertEquals(listOf("2027-05-04"), CommInteraction.parse(JSONObject().put("gain_until", end)).burstDays)
+        c.importPersona("早间_routine.txt", "初始起点:6:00\n6h:空闲\n".byteInputStream())
+        c.reloadSchedule()
+        clock = LocalDateTime.of(2027, 5, 6, 8, 55)
+        setDays(listOf("2027-05-05"))
+        script.add("今天也想找你说话.")
+        c.tick(); wait(c)
+        assertEquals(2, calls.size)
+        assertEquals("2027-05-06", (c.syncDoc()["interaction:$owner"] as JSONObject).optString("morning_day"))
+        c.importPersona("空白.txt", "你是空白.".byteInputStream())
+        c.set(persona = "空白.txt")
+        clock = LocalDateTime.of(2027, 5, 7, 8, 55)
+        setDays(listOf("2027-05-06"))
+        script.add("后台对象的早间消息.")
+        c.tick()
+        for (i in 0 until 300) { Thread.sleep(10); c.tick(); if (c.bgIdle()) break }
+        assertEquals(3, calls.size)
+        assertEquals("2027-05-07", (c.syncDoc()["interaction:$owner"] as JSONObject).optString("morning_day"))
+        assertTrue(c.visible().none { it.text == "后台对象的早间消息." })
+        c.flush(); again.flush(); peer.flush()
     }
 
     /** 每天空闲时间里能用沟通 45 分钟 (只算空闲状态下开着界面的时间); 休息不限 (沟通 24.1). */

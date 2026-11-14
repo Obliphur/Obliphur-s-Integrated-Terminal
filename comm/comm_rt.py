@@ -462,7 +462,11 @@ class RtMixin:
             self._check_proactive_rt(now, ctx, rt, done)
             return
         # I. 对方自己正处在空闲 / 休息段里, 而且这段还剩 10 分钟以上: 段开始后 1~3 分钟发一条
-        cur = self._cur_free(now, ctx["entries"] if ctx else None)
+        cur = self._cur_free(now, ctx["entries"] if ctx else None, min_left=0)
+        if cur and self._burst_morning(now, cur[0], ctx):
+            return
+        if cur and cur[1] < PROACTIVE_FREE_LEFT:
+            cur = None
         if cur:
             begin, left = cur
             key = f"F{begin:%Y-%m-%dT%H:%M}"
@@ -509,6 +513,9 @@ class RtMixin:
         """有日程文件的人设: I~IV 同 _check_proactive, 只是时间用当天算出的日程 (带波动; 睡眠开始是实际波动过后的)."""
         seed = ctx["pid"] if ctx else self.pid
         segs = self._rt_segs(now - timedelta(hours=14), now + timedelta(minutes=4), rt, seed, joint=not ctx)
+        cur = routine.status_in(segs, now)
+        if cur and cur["kind"] in ("idle", "rest") and not cur.get("gap") and self._burst_morning(now, cur["start"], ctx):
+            return
         if ctx is None and self._love_check(now, segs, done):             # 每次进入特殊空闲: 判定主动告白
             return
 
@@ -558,14 +565,33 @@ class RtMixin:
                            f"这条必须发出, 不要返回{REFUSE}.", ctx)
             return
 
-    def _pro_fire(self, key: str, due, now, p: float, body: str, ctx=None):
+    def _burst_morning(self, now, begin, ctx=None):
+        """爆发次日早间首次有空必定找用户谈话，不受概率、迟到和近期谈话限制。"""
+        if not config.COMM_TENSION_MORNING_HOURS[0] <= now.hour < config.COMM_TENSION_MORNING_HOURS[1]:
+            return False
+        pid = ctx["pid"] if ctx else self.pid
+        d = self._interaction_prepare(pid)
+        today = now.date().isoformat()
+        if (now.date() - timedelta(days=1)).isoformat() not in d["burst_days"] or d["morning_day"] >= today:
+            return False
+        d["morning_day"] = today
+        self._interaction_set(d, pid)
+        if ctx:
+            ctx["st"]["interaction"] = self._state_of(pid)["interaction"]
+        self._pro_mark(f"F{begin:%Y-%m-%dT%H:%M}", ctx)
+        self._pro_fire(f"B{today}", now, now, 1.0,
+                       f"[系统] 昨天你与用户交流时发生过情绪张力爆发,现在是次日早上的空闲或休息时间. "
+                       f"请结合昨天的交流与当前心情,根据人设主动给用户发一条消息,话题自己找;不要透露机制;这条必须发出,不要返回{REFUSE}.", ctx, force=True)
+        return True
+
+    def _pro_fire(self, key: str, due, now, p: float, body: str, ctx=None, force=False):
         """这个时间点处理一次: 记下来 (不管发没发), 没错过太久 / 摇中了概率 / 最近没发过, 才真的让对方发."""
         self._pro_mark(key, ctx)
         late = (now - due).total_seconds() > PROACTIVE_LATE          # 错过太久 (程序刚打开) 就算了
         hit = p >= 1.0 or random.Random(key + "#p").random() < p
         recent = self._pro_recent(now, ctx)
         who = f" [{ctx['name']}]" if ctx else ""
-        if not late and hit and not recent:
+        if force or (not late and hit and not recent):
             lang = self.pro_lang()
             if lang:
                 body += PRO_LANG_NOTE.replace("{lang}", lang)        # 只加在这一条触发消息里: 之后的对话 (用户说的话) 不受影响
