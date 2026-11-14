@@ -83,7 +83,7 @@ python release.py               # 发布（PyInstaller）
 
 ### 沟通模块（`comm/`）
 
-`comm/`（约 1360 行）只留装配：常量再导出、`char_delay` / `follow_delay`、`Comm` 的 `__init__` 与聊天存档 / 设备同步 / 人设文件与升级链、`_mk` / `_finish` / `tick` 等要读模块全局量的方法。`Comm` 由 8 个 mixin 拼成；自检（约 3000 行）在 `comm/comm_selftest.py`，`python -m comm` 时用 `exec(..., globals())` 在 comm 的命名空间里执行——所以它照旧能 `global FOLLOW_DELAY`，也能直接读常量。依赖方向：`comm/` 导入它们，它们从不导入 `comm/`。
+`comm/`（约 1360 行）只留装配：常量再导出、`char_delay` / `follow_delay`、`Comm` 的 `__init__` 与聊天存档 / 设备同步 / 人设文件与升级链、`_mk` / `_finish` / `tick` 等要读模块全局量的方法。`Comm` 由 9 个 mixin 拼成；自检（约 3000 行）在 `comm/comm_selftest.py`，`python -m comm` 时用 `exec(..., globals())` 在 comm 的命名空间里执行——所以它照旧能 `global FOLLOW_DELAY`，也能直接读常量。依赖方向：`comm/` 导入它们，它们从不导入 `comm/`。
 
 | 文件 | Mixin | 内容 |
 | --- | --- | --- |
@@ -95,6 +95,7 @@ python release.py               # 发布（PyInstaller）
 | `comm/comm_share.py` | ShareMixin | share data / 起点平移（24.13、24.14） |
 | `comm/comm_rt.py` | RtMixin | 日程跟随 / 条件与告白 / 主动消息触发（24.15、24.16、24.18） |
 | `comm/comm_misc.py` | MiscMixin | 清空聊天记录 |
+| `comm/comm_interaction.py` | InteractionMixin | 情景模式 / 情绪张力 / 冷静期 / 动态状态（24.20） |
 
 无状态的部分（mixin 和 `comm/` 都从这里取）：
 
@@ -235,7 +236,7 @@ python release.py               # 发布（PyInstaller）
 
 ## 读文件规则（控制上下文）
 
-- **禁止整文件读取大文件**：`app/app_timer.py`(45KB)、`app/app_contract_media.py`、`comm/`、`devsync/`、`i18n/i18n_en.py`、`comm/comm_selftest.py` 等（纯规则已拆到 `contract/`，`Contract` 的 7 个 mixin 也在那里，`contract/` 只剩约 770 行装配与自检；`devsync/` 的密码学 / 工具 / 7 个 mixin 已拆到 `devsync/`，只剩约 1020 行装配与自检；录像的存档 / MF / 合并已拆到 `recorder/`；沟通的常量 / 8 个 mixin / 自检已拆到 `comm/`，`comm/` 只剩约 1400 行装配；AI 接口的配置 / 请求 / 搜索已拆到 `ai_assist/`，`ai_assist/` 只剩约 800 行建议解析与自检；`prescript/` 的常量与 7 个 mixin 已拆到 `prescript/`，只剩约 620 行装配与自检；设置页的表单 / 卡片 / 沟通 / 录像已拆到 `pages/settings_page/`；`net_guard/` 的额度 / 会话 / 后端 / 状态 / 防绕过已拆到 `net_guard/`，只剩约 450 行装配与自检；`data_manager/` 的 7 个 mixin 已拆到 `data_manager/`，只剩约 110 行装配；`routine/` 的解析 / 推算 / 存档 / 查询已拆到 `routine/`，只剩约 270 行再导出与自检）。先用 `rg -n` 搜关键词定位行号，再用 PowerShell 的 `Get-Content -Encoding UTF8 | Select-Object -Skip <起始行减一> -First <行数>` 只读相关片段。
+- **禁止整文件读取大文件**：`app/app_timer.py`(45KB)、`app/app_contract_media.py`、`comm/`、`devsync/`、`i18n/i18n_en.py`、`comm/comm_selftest.py` 等（纯规则已拆到 `contract/`，`Contract` 的 7 个 mixin 也在那里，`contract/` 只剩约 770 行装配与自检；`devsync/` 的密码学 / 工具 / 7 个 mixin 已拆到 `devsync/`，只剩约 1020 行装配与自检；录像的存档 / MF / 合并已拆到 `recorder/`；沟通的常量 / 9 个 mixin / 自检已拆到 `comm/`，`comm/` 只剩约 1400 行装配；AI 接口的配置 / 请求 / 搜索已拆到 `ai_assist/`，`ai_assist/` 只剩约 800 行建议解析与自检；`prescript/` 的常量与 7 个 mixin 已拆到 `prescript/`，只剩约 620 行装配与自检；设置页的表单 / 卡片 / 沟通 / 录像已拆到 `pages/settings_page/`；`net_guard/` 的额度 / 会话 / 后端 / 状态 / 防绕过已拆到 `net_guard/`，只剩约 450 行装配与自检；`data_manager/` 的 7 个 mixin 已拆到 `data_manager/`，只剩约 110 行装配；`routine/` 的解析 / 推算 / 存档 / 查询已拆到 `routine/`，只剩约 270 行再导出与自检）。先用 `rg -n` 搜关键词定位行号，再用 PowerShell 的 `Get-Content -Encoding UTF8 | Select-Object -Skip <起始行减一> -First <行数>` 只读相关片段。
 - **查机制先看 `MECHANICS.md` 的目录**，再只读 `docs/mechanics/` 里对应的那一节（多数 1–30KB；18 合约 56KB、24 沟通 119KB 仍然只读相关段落）。不要通读。
 - 宽泛的跨文件搜索先用 `rg` 缩小范围；只有当前任务和运行环境允许委派时，才交给 Codex 子代理，并只带回结论。
 

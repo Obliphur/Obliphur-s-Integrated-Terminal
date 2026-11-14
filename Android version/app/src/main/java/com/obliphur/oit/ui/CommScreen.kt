@@ -26,6 +26,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.IconButton
+import com.obliphur.oit.core.Cfg
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
@@ -190,6 +192,14 @@ fun CommScreen(go: (String) -> Unit) {
                 }
             }
             TextButton({ if (comm.messages.isNotEmpty()) askClear = true }) { Text(tr("清空"), color = o.dim) }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            TextButton({ comm.setScenario(!comm.scenarioOn()) }, enabled = comm.scenarioUnlocked()) {
+                Text(tr(if (comm.scenarioOn()) "🎭 情景模拟" else "📱 软件聊天"))
+            }
+            if (!comm.scenarioUnlocked()) IconButton({ core.toast(tr("累计 {n} 条聊天记录解锁情景模拟", "n" to Cfg.COMM_SCENARIO_UNLOCK), "info") }) {
+                Text("?")
+            }
         }
         // 对方现在在做什么 (按人设日程; 没有选人设时不显示): 小圆点的颜色跟着状态变
         if (otherStatus.isNotEmpty()) Row(Modifier.padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {

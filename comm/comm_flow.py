@@ -27,7 +27,7 @@ from comm.comm_reply import CUT_DEFAULT_MIN, CUT_MAX_MIN, HALFWIDTH_SYMBOLS, NET
 from comm.comm_builtin import BUILTIN_PERSONAS, DEFAULT_PERSONA, DEFAULT_BACKGROUND, DEFAULT_ROUTINE, ASSISTANT_PERSONA, ASSISTANT_DETAIL_LINE, BACKGROUND_LEGACIES, ASSISTANT_SLEEP_LINE, ASSISTANT_TITLE
 from comm.comm_prompt import REFUSE, SHIFT_TAG, MSGS_TAG, THINK_LONG, THINK_WORDS, THINK_TIME_RE, think_text_reason, JOINT_RULE, rest_function_text, prefix_prompt
 from comm.comm_persona import SHIFT_LO, SHIFT_HI, SHIFT_KEEP, MAX_PERSONA, MEM_MAX, PERSONA_EXT, readme_text, pid_of, love_norm, love_line, shift_norm, shift_pairs, hm_text, shift_line, mem_fields, seed_builtin, ensure_personas, list_personas, persona_title, uses_prefix, system_head, PERSONA_HEAD, persona_system, persona_labels, read_persona, ROUTINE_SUFFIX, COMPANION_SEP, companion_base, is_companion_name, companion_files, companions_of, routine_name_of, read_routine, read_persona_full, import_persona
-from comm.comm_util import (OIT_TAG, STATE_TAG, COND_TAG, WEEKDAY, MAX_MSG_CHARS, HISTORY_SENT, HISTORY_STEP, HISTORY_CHARS,
+from comm.comm_util import (OIT_TAG, COND_TAG, WEEKDAY, MAX_MSG_CHARS, HISTORY_SENT, HISTORY_STEP, HISTORY_CHARS,
                        is_claudia, is_refusal, stamp, urlsplit_host, info_tags, joint_answer, _joint_time, clip_message,
                        cache_layout, oit_text, first_turn, api_messages, sanitize_mem)
 
@@ -261,15 +261,23 @@ class FlowMixin:
         if who and first_turn(self.messages):              # 身份背景: 只在这段对话的第一轮发一次
             dynamic += "\n\n以下是用户的身份背景(用户自己填写):\n" + who
         msgs = api_messages(self.messages)
-        note = self._rt_note(self.now()) if self._rt else ""             # 有日程文件的人设: 此刻的状态由 OIT 算 (只贴在最后一条用户消息后面, 不写进记录)
-        if note and msgs and msgs[-1]["role"] == "user":
-            msgs[-1]["content"] += "\n\n" + note
         system, msgs = cache_layout(profile, system, dynamic, msgs)     # Gemini: 动态块贴到最后一条用户消息 (system 要逐字节不变)
         if extra:
             if msgs and msgs[-1]["role"] == "user":
                 msgs[-1]["content"] += "\n\n" + extra[1]
             else:
                 msgs.append({"role": "user", "content": extra[1]})
+        status = self.other_status()
+        d = self._interaction_prepare()
+        self._interaction_turn = (self._interaction_special(status), d["tension"] > config.COMM_TENSION_CAP,
+                                  int(status["end"].timestamp() * 1000) if status.get("end") else 0, bool(d["shame_turns"]))
+        note = oit_text(self.state_text() + "\n" + self.interaction_note(status))
+        if self._rt:
+            note += "\n" + self._rt_note(self.now())
+        if msgs and msgs[-1]["role"] == "user":
+            msgs[-1]["content"] += "\n\n" + note
+        else:
+            msgs.append({"role": "user", "content": note})
         epoch = self._epoch
         self.busy = True
         self.busy_since = time.monotonic()
@@ -317,12 +325,6 @@ class FlowMixin:
                             continue
                         if t == MSGS_TAG:
                             cond.append(self.messages_text())
-                            continue
-                        if t == STATE_TAG:
-                            try:
-                                cond.append(self.state_text())
-                            except Exception as e:      # noqa: BLE001
-                                self.log(f"STATE FAIL {type(e).__name__}: {e}")
                             continue
                         try:
                             ob = self.routine_info(t)                       # 有日程文件的人设: 对方自己的 OIT 数据 (OIT 按日程实时算出)

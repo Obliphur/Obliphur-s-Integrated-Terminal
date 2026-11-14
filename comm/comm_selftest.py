@@ -24,15 +24,13 @@ def _selftest():
     # 前置 prompt / README
     assert "聊天记录达到400条后" in BUILTIN_PERSONAS[DEFAULT_PERSONA] and "[messages]查询" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
     assert "不得涉及亲密关系" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
-    assert "用户未要求时不主动模拟动作" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
+    assert "MODE=情景模拟" in BUILTIN_PERSONAS[DEFAULT_PERSONA] and "EFFECTIVE_STAGE=70+" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
     assert "不要说'接住'" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
-    from comm.comm_builtin import CLAUDIA_PREVIOUS
-    assert "用户可以要求你在消息中模拟动作" in CLAUDIA_PREVIOUS
     p = prefix_prompt()
     assert p.startswith("[OIT_SYSTEM_MESSAGES]") and "回复OIT(自律软件)用户的消息" in p and "I." in p and "II." in p and "III." in p
     assert "IV.依专注段主动收尾" in p and "≤5min" in p
     assert "VI.勿主动透露日程/专注状态" in p and "用户3min内还在聊→告知将专注并停止" in p and "50min" not in p
-    assert REFUSE in p and "100min/轮" in p and p.rstrip().endswith("再调一次.")
+    assert REFUSE in p and "100min/轮" in p and p.rstrip().endswith("无需查询.")
     assert "以下是用户设定的人设:" not in p, "最后一句已经去掉"
     assert oit_text("x") == OIT_TAG + "\nx" and oit_text(oit_text("x")) == OIT_TAG + "\nx"
     assert oit_text("[系统] x") == OIT_TAG + "\nx", "有标记就不再发 [系统]"
@@ -128,7 +126,7 @@ def _selftest():
     assert system.startswith(prefix_prompt()) and system.endswith("每天 8 点到 12 点上课.")
     assert msgs[0]["role"] == "user" and "2026-11-02 周一 09:00" in msgs[0]["content"]
     assert "OIT 附带信息" not in msgs[0]["content"] and "整点记录" not in msgs[0]["content"] and "计时器" not in msgs[0]["content"]
-    assert msgs[0]["content"].endswith("早"), "默认只有时间, 没有任何附带的数据"
+    assert "早" in msgs[0]["content"] and "[OIT_STATUS:" in msgs[0]["content"] and "没有确定的结束时间" in msgs[0]["content"], "每次请求自动附加状态"
     assert [m["role"] for m in c.visible()] == ["me", "ai"] and c.unread == 1
     clock[0] += timedelta(minutes=31)
     script.append("嗯")
@@ -431,7 +429,7 @@ def _selftest():
     assert info_tags(" [Refuse to reply] [CONTRACT] ") == ["contract"] and info_tags("[contract]") == ["contract"], "没有 [refuse to reply] 也算查询"
     assert info_tags("[refuse to reply][mechanics.md]") == [] and info_tags("好的") == []
     assert info_tags("[refuse to reply][calendar][stats]") == ["calendar", "stats"] and info_tags("[refuse to reply][x]") == []
-    assert info_tags("[state]") == ["state"] and "XXI." in prefix_prompt() and "[state]" in prefix_prompt()
+    assert info_tags("[state]") == [] and "XXI." in prefix_prompt() and "[state]" not in prefix_prompt()
     from comm import comm_data
     assert all(f"[{t}]" in prefix_prompt() for t in comm_data.MODULE_TAGS) and "VII.问OIT使用数据" in prefix_prompt()
     p2 = prefix_prompt()
@@ -472,7 +470,7 @@ def _selftest():
     wait(ci)
     assert ci.visible()[-1]["text"] == "再看一次" and not any("好的" in m["text"] for m in ci.messages), "要不到资料: 带 [模块名] 的回复也不显示"
     ci.flush()
-    # ---- [state]: 此刻属于哪一段日程 / 几点结束 (1.0.414) ----
+    # ---- 日程状态自动附加: 不需要查询或额外请求 ----
     open(os.path.join(folder, "时段.txt"), "w", encoding="utf-8").write(
         "你是时段.\n08:00-12:00:上课\n12:00-13:00:空闲(午饭)\n13:00-14:00:特殊空闲\n14:00-18:00:空闲\n")
     os.makedirs(os.path.join(td, "st"))
@@ -481,10 +479,10 @@ def _selftest():
     stc.ai.set_profile("deepseek", api_key="k")
     stc.set_cfg(persona="时段.txt")
     n_calls = len(calls)
-    script.extend(["[state]", "在上课."])
+    script.append("在上课.")
     stc.send("现在在干嘛")
     wait(stc)
-    assert len(calls) == n_calls + 2, "[state] 要再调用一次"
+    assert len(calls) == n_calls + 1, "日程状态首轮自动附带"
     state_msg = calls[-1][1][-1]["content"]
     assert "上课" in state_msg and "12:00" in state_msg and "还剩" in state_msg, state_msg
     assert [m["text"] for m in stc.visible()] == ["现在在干嘛", "在上课."] and not any("[state]" in m["text"] for m in stc.messages)
@@ -492,13 +490,13 @@ def _selftest():
     fixed2 = datetime(2027, 5, 4, 13, 30)
     stc.now = lambda: fixed2
     n_calls = len(calls)
-    script.extend(["[state]", "有点闲."])
+    script.append("有点闲.")
     stc.send("现在呢")
     wait(stc)
     msg = calls[-1][1][-1]["content"]
-    assert "空闲" in msg and "特殊" not in msg and "14:00" in msg, msg
+    assert "空闲" in msg and "PERIOD=特殊空闲" in msg and "14:00" in msg, msg
     stc.flush()
-    # 有日程文件的人设: [state] 和聊天页顶上那个状态同源 (other_status), 不是另算一套
+    # 有日程文件的人设: 自动附加状态与页面同源 (other_status)
     os.makedirs(os.path.join(td, "st2"))
     rtime = datetime(2027, 5, 4, 7, 20)
     rtc = Comm(os.path.join(td, "st2"), folder, now=lambda: rtime, chat_fn=fake)
@@ -512,6 +510,74 @@ def _selftest():
     else:
         assert str(rs.get("label") or "空闲") in rtxt, rtxt
     rtc.flush()
+    # 张力：真实请求、对象隔离、存档、同步与清空保护。
+    from comm.comm_interaction import interaction_norm, interaction_roll, interaction_settle, tension_delta, interaction_prompt
+    assert tension_delta("我一文不值,想抱抱", True) == 20
+    assert tension_delta("不希望给你压力", False) == 7
+    assert tension_delta("hug me", False) == 5 and tension_delta("早上好", True) == 0
+    assert "EFFECTIVE_STAGE=50-70" in interaction_prompt({"tension": 100}, 200, False)
+    assert "EFFECTIVE_STAGE=70+" in interaction_prompt({"tension": 100}, 200, True)
+    assert interaction_roll({"tension": 50, "day": "2027-05-03"}, fixed2.date())["tension"] == 35
+    assert interaction_roll({"tension": 50, "day": "2027-05-05"}, fixed2.date())["day"] == "2027-05-05"
+    midnight_end = int(datetime(2027, 5, 5, 1).timestamp() * 1000)
+    night = {"tension": 95, "burst_until": midnight_end, "day": "2027-05-04"}
+    assert interaction_roll(interaction_settle(night, midnight_end - 1), datetime(2027, 5, 5).date())["tension"] == 95
+    settled = interaction_settle(night, midnight_end)
+    assert settled["tension"] == 35 and settled["shame_turns"] == 2
+    assert interaction_settle(settled, midnight_end + 1) == settled
+    stc._follow_at = 0
+    stc.set_cfg(split_send=False)
+    assert not stc.set_scenario(True)
+    stc.cfg["msg_gone"] = 200
+    stc.save_chat()
+    assert stc.set_scenario(True) and stc.scenario_on()
+    stc._interaction_set(dict(stc.cfg["interaction"], tension=65))
+    script.append("别把自己说得一无是处.")
+    stc.send("我一文不值")
+    wait(stc)
+    sent_note = calls[-1][1][-1]["content"]
+    assert "TENSION=85" in sent_note and "MODE=情景模拟" in sent_note and "EFFECTIVE_STAGE=70+" in sent_note
+    assert stc.cfg["interaction"]["tension"] == 85 and stc.cfg["interaction"]["shame_turns"] == 0
+    assert stc.cfg["interaction"]["burst_until"] == int(fixed2.replace(hour=14, minute=0).timestamp() * 1000)
+    stc.now = lambda: fixed2.replace(hour=13, minute=59, second=59)
+    stc.tick()
+    assert stc.cfg["interaction"]["tension"] == 85
+    stc.now = lambda: fixed2.replace(hour=14, minute=0)
+    stc.tick()
+    assert stc.cfg["interaction"]["tension"] == 35 and stc.cfg["interaction"]["shame_turns"] == 2
+    for turns in (1, 0):
+        script.append("嗯.")
+        stc.send("早上好")
+        wait(stc)
+        assert stc.cfg["interaction"]["shame_turns"] == turns
+    assert all("OIT_STATUS" not in m.get("api", "") and "OIT_STATUS" not in m["text"] for m in stc.messages)
+    sync_interaction = stc.sync_doc()
+    stc.flush()
+    reload_st = Comm(os.path.join(td, "st"), folder, now=lambda: fixed2, chat_fn=fake)
+    assert reload_st.scenario_on() and reload_st.cfg["interaction"]["tension"] == 35
+    reload_st.set_cfg(persona="小夏.txt")
+    assert not reload_st.scenario_on() and reload_st.cfg["interaction"]["tension"] == 0
+    reload_st.set_cfg(persona="时段.txt")
+    peer_st = Comm(os.path.join(td, "stpeer"), folder, now=lambda: fixed2, chat_fn=fake)
+    peer_st.set_cfg(persona="时段.txt")
+    peer_st.apply_doc(sync_interaction)
+    assert peer_st.scenario_on() and peer_st.cfg["interaction"]["tension"] == 35
+    peer_st.clear()
+    peer_st.apply_doc(sync_interaction)
+    assert not peer_st.scenario_on() and peer_st.cfg["interaction"]["tension"] == 0
+    # 特殊空闲结束后才到达的旧回复，不消耗新冷静期。
+    reload_st._interaction_set(dict(reload_st.cfg["interaction"], tension=85, burst_until=1, shame_turns=0))
+    reload_st._interaction_reply(True, True, 1, False)
+    assert reload_st.cfg["interaction"]["shame_turns"] == 2
+    # 中途休息会清空待播报的 hp，但整场违规标记必须保留。
+    reload_st._interaction_set(dict(reload_st.cfg["interaction"], tension=60, shame_turns=0))
+    reload_st._joint_set({"state": "run", "pid": reload_st.pid, "cid": "tension-check", "hp": [], "violated": True}, replace=True)
+    assert reload_st.joint_ended("tension-check", "completed")
+    assert reload_st.cfg["interaction"]["tension"] == 60
+    reload_st._joint_set({"state": "run", "pid": reload_st.pid, "cid": "tension-ok", "hp": [], "violated": False}, replace=True)
+    assert reload_st.joint_ended("tension-ok", "completed")
+    assert reload_st.cfg["interaction"]["tension"] == 40
+    reload_st.flush(); peer_st.flush()
     # ---- 设备同步: 记录合并, 只有 leader 调用 AI / 重试, 清空一起清 ----
     dA, dB = os.path.join(td, "sa"), os.path.join(td, "sb")
     os.makedirs(dA)

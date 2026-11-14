@@ -27,7 +27,7 @@ from comm.comm_reply import CUT_DEFAULT_MIN, CUT_MAX_MIN, HALFWIDTH_SYMBOLS, NET
 from comm.comm_builtin import BUILTIN_PERSONAS, DEFAULT_PERSONA, DEFAULT_BACKGROUND, DEFAULT_ROUTINE, ASSISTANT_PERSONA, ASSISTANT_DETAIL_LINE, BACKGROUND_LEGACIES, ASSISTANT_SLEEP_LINE, ASSISTANT_TITLE
 from comm.comm_prompt import REFUSE, SHIFT_TAG, MSGS_TAG, THINK_LONG, THINK_WORDS, THINK_TIME_RE, think_text_reason, JOINT_RULE, rest_function_text, prefix_prompt
 from comm.comm_persona import SHIFT_LO, SHIFT_HI, SHIFT_KEEP, MAX_PERSONA, MEM_MAX, PERSONA_EXT, readme_text, pid_of, love_norm, love_line, shift_norm, shift_pairs, hm_text, shift_line, mem_fields, seed_builtin, ensure_personas, list_personas, persona_title, uses_prefix, system_head, PERSONA_HEAD, persona_system, persona_labels, read_persona, ROUTINE_SUFFIX, COMPANION_SEP, companion_base, is_companion_name, companion_files, companions_of, routine_name_of, read_routine, read_persona_full, import_persona
-from comm.comm_util import (OIT_TAG, STATE_TAG, COND_TAG, WEEKDAY, MAX_MSG_CHARS, HISTORY_SENT, HISTORY_STEP, HISTORY_CHARS,
+from comm.comm_util import (OIT_TAG, COND_TAG, WEEKDAY, MAX_MSG_CHARS, HISTORY_SENT, HISTORY_STEP, HISTORY_CHARS,
                        is_claudia, is_refusal, stamp, urlsplit_host, info_tags, joint_answer, _joint_time, clip_message,
                        cache_layout, oit_text, first_turn, api_messages, sanitize_mem)
 
@@ -180,7 +180,7 @@ class JointMixin:
         now = self.now()
         end = end or b
         self._joint_set({"state": "run", "cid": str(cid or ""), "began": now.isoformat(timespec="seconds"),
-                         "until": end.isoformat(timespec="seconds"), "hp": []})
+                         "until": end.isoformat(timespec="seconds"), "hp": [], "violated": False})
         self._joint_note(f"联合行动开始了 (合约 {now:%H:%M} - 预计 {end:%H:%M}). 从现在起你与用户的专注 / 休息同步.")
         return True
 
@@ -195,6 +195,8 @@ class JointMixin:
                 j, foreign = raw, True
         if j.get("state") != "run" or (cid and str(cid) != str(j.get("cid") or cid)):
             return False
+        if result == "completed" and not j.get("hp") and not j.get("violated"):
+            self._interaction_reward(j.get("pid") or self.pid)
         now = self.now()
         rest_s = max(0, int(reward_s or 0))
         until = now + timedelta(seconds=rest_s)
@@ -232,9 +234,10 @@ class JointMixin:
         j = self._joint()
         if j.get("state") != "run":
             return False
+        self._interaction_sent("专注期间违规")
         hp = [x for x in (j.get("hp") or []) if isinstance(x, (list, tuple)) and len(x) == 2][-(JOINT_HP_MAX - 1):]
         hp.append([self.now().isoformat(timespec="seconds"), " ".join(str(text or "").split())[:200]])
-        self._joint_set({"hp": hp})
+        self._joint_set({"hp": hp, "violated": True})
         return True
 
     def _joint_hp_text(self, j: dict) -> str:
@@ -359,9 +362,11 @@ class JointMixin:
                 self._joint_set({"state": "missed"})
                 self._joint_note(f"用户答应了联合行动, 却在约定的开始时间 ({a:%H:%M}) 过了 {JOINT_LATE // 60} 分钟后还没有开始合约: 视为用户放弃了 (放了你的鸽子).")
 
-    def _joint_status(self, now) -> dict:
+    def _joint_status(self, now, pid=None) -> dict:
         """联合行动同步阶段对方的状态: 合约进行中跟着用户的计时器 (专注 / 休息), 合约结束后一直休息到休息时间结束; 不在同步阶段 = {}."""
-        j = self._joint()
+        j = self.cfg.get("joint") or {}
+        if j.get("pid") != (pid or self.pid):
+            return {}
         st = j.get("state")
         try:
             if st == "run":

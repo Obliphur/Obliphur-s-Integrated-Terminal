@@ -71,6 +71,11 @@ class CommPage(CommVoiceMixin, tk.Frame):
         self.cb_cfg.pack(side="right", padx=(0, 8))
         self.cb_cfg.bind("<<ComboboxSelected>>", lambda _e: self._pick_config())
 
+        self.btn_scenario = ttk.Button(self.other_row, command=self._toggle_scenario)
+        self.btn_scenario.pack(side="right")
+        self.btn_scenario.bind("<Enter>", self._scenario_hint)
+        self.btn_scenario.bind("<Leave>", lambda _e: self._sync_status())
+
         self.area = ScrollArea(self, height=300, bg=bg)
         self.area.pack(fill="both", expand=True, padx=26, pady=(4, 4))
         self.area.canvas.bind("<Configure>", self._on_resize, add="+")
@@ -164,6 +169,14 @@ class CommPage(CommVoiceMixin, tk.Frame):
         if 0 <= idx < len(self._cfg_ids):
             self.comm.set_config(self._cfg_ids[idx])
 
+    def _toggle_scenario(self):
+        self.comm.set_scenario(not self.comm.scenario_on())
+        self.refresh(force=True)
+
+    def _scenario_hint(self, _event):
+        if not self.comm.scenario_unlocked():
+            cfg(self.lbl_status, text=tr("累计 {n} 条聊天记录解锁情景模拟", n=config.COMM_SCENARIO_UNLOCK))
+
     def _sync_status(self):
         """状态行: 不能用的原因 > 出错 (每秒看一次, 不用重画消息)."""
         c = self.comm
@@ -173,6 +186,8 @@ class CommPage(CommVoiceMixin, tk.Frame):
         other, kind = c.other_status_display()
         cfg(self.lbl_other_dot, text="●" if other else "", fg=comm_mod.STATUS_COLORS.get(kind, COLORS["text_dim"]))
         cfg(self.lbl_other, text=other)
+        cfg(self.btn_scenario, text=tr("🎭 情景模拟" if c.scenario_on() else "📱 软件聊天"),
+            state="normal" if c.scenario_unlocked() else "disabled")
 
     def refresh(self, force: bool = False):
         c = self.comm

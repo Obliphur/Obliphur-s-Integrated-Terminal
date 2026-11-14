@@ -3,6 +3,9 @@ package com.obliphur.oit.core
 /** 英文界面文字. 由 gen_en.py 从桌面版 i18n.py 和补充的译文生成; 键是中文原文. */
 object EnStrings {
     val MAP: Map<String, String> = hashMapOf(
+        "📱 软件聊天" to "📱 Messaging",
+        "🎭 情景模拟" to "🎭 Scenario",
+        "累计 {n} 条聊天记录解锁情景模拟" to "Unlock scenario mode after {n} chat messages",
         "share data 邀请" to "Share-data invitation",
         "仅可在空闲或休息期间播放语音." to "Voice playback is only available while idle or on a break.",
         "请填写不超过 500 字的试听文本." to "Enter preview text of up to 500 characters.",

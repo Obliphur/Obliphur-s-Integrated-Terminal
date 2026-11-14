@@ -2,6 +2,9 @@
 
 
 EN = {
+    "📱 软件聊天": "📱 Messaging",
+    "🎭 情景模拟": "🎭 Scenario",
+    "累计 {n} 条聊天记录解锁情景模拟": "Unlock scenario mode after {n} chat messages",
     "share data 邀请": "Share-data invitation",
     "OIT 已拦截此网站": "OIT blocked this website",
     "已拦截": "Blocked",

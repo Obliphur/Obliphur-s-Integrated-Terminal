@@ -62,7 +62,7 @@ def char_delay(text: str) -> float:
     return n * CHAR_DELAY_CJK + (len(s) - n) * CHAR_DELAY
 
 
-from .comm_util import (OIT_TAG, STATE_TAG, COND_TAG, WEEKDAY, MAX_MSG_CHARS, HISTORY_SENT, HISTORY_STEP, HISTORY_CHARS,
+from .comm_util import (OIT_TAG, COND_TAG, WEEKDAY, MAX_MSG_CHARS, HISTORY_SENT, HISTORY_STEP, HISTORY_CHARS,
                        is_claudia, is_refusal, stamp, urlsplit_host, info_tags, joint_answer, _joint_time, clip_message,
                        cache_layout, oit_text, first_turn, api_messages, sanitize_mem)
 
@@ -77,7 +77,10 @@ def follow_delay(profile: dict, override: float = None) -> float:
 
 
 # ══════════════ 管理器 ══════════════
-class Comm(JointMixin, StatusMixin, ChatMixin, FlowMixin, SchedMixin, ShareMixin, RtMixin, MiscMixin):
+from .comm_interaction import InteractionMixin, interaction_norm
+
+
+class Comm(InteractionMixin, JointMixin, StatusMixin, ChatMixin, FlowMixin, SchedMixin, ShareMixin, RtMixin, MiscMixin):
     """聊天记录, 设置, 发请求 (线程), 主动发消息, 对方不方便时的重试, 设备同步. 界面线程每秒调一次 tick().
 
     设备同步 (MECHANICS 24.6): 聊天记录 / 清空 / "30 分钟内不重复"的记录 / 重试状态 / 主动消息的标记随设备同步 (文档 comm);
@@ -511,6 +514,9 @@ class Comm(JointMixin, StatusMixin, ChatMixin, FlowMixin, SchedMixin, ShareMixin
             doc[f"mute:{pid}"] = self.is_muted(pid)
         for pid in self.chat_pids():
             st = self._state_of(pid)
+            d = interaction_norm(st.get("interaction"))
+            if d["ts"]:
+                doc[f"interaction:{pid}"] = dict(d, clear=st["clear_ts"])
             for n in mem_fields(st)["mem_fixed"]:
                 doc[f"milestone:{pid}:{n}"] = {"clear": st["clear_ts"]}
             for m in st["messages"][-SYNC_N:]:
@@ -567,6 +573,13 @@ class Comm(JointMixin, StatusMixin, ChatMixin, FlowMixin, SchedMixin, ShareMixin
                         rec = self.focus_notices.setdefault(rest, dict(val))
                         rec["shown"] = bool(rec.get("shown") or val.get("shown"))
                 continue
+            if kind == "interaction" and isinstance(val, dict):
+                st = st_of(rest)[0]
+                incoming = interaction_norm(val)
+                if int(val.get("clear") or 0) == st["clear_ts"] and incoming["ts"] > interaction_norm(st.get("interaction"))["ts"]:
+                    st["interaction"] = incoming
+                    touched[rest][1] = True
+                continue
             if kind == "milestone" and isinstance(val, dict):
                 pid, _, threshold = rest.partition(":")
                 if not threshold.isdigit() or int(threshold) not in config.COMM_MESSAGE_MILESTONES:
@@ -590,6 +603,7 @@ class Comm(JointMixin, StatusMixin, ChatMixin, FlowMixin, SchedMixin, ShareMixin
                         if pid_of(name) == pid:
                             self.voice.clear(name)
                     st["clear_ts"] = t
+                    st["interaction"] = interaction_norm({})
                     st["mem_fixed"] = []
                     st["msg_gone"] = 0       # 清空旧对话的累计数量，不能重新补出已清除的门槛。
                     st["messages"][:] = [m for m in st["messages"] if int(m["ts"]) > t]
@@ -1273,6 +1287,8 @@ class Comm(JointMixin, StatusMixin, ChatMixin, FlowMixin, SchedMixin, ShareMixin
             self.save_cfg()
             if extra:
                 self._add("sys", extra[0], extra[1])
+            if kind in ("user", "retry"):
+                self._interaction_reply(*getattr(self, "_interaction_turn", (False, False, 0, False)))
             m = self._add("ai", text, reply.strip() if text != reply.strip() else "")
             if op:
                 self._op_apply(op, m)
@@ -1320,6 +1336,8 @@ class Comm(JointMixin, StatusMixin, ChatMixin, FlowMixin, SchedMixin, ShareMixin
 
     # ---- 每秒一次 ----
     def tick(self):
+        if self.persona_name():
+            self._interaction_prepare()
         self._count_idle()
         with self._lock:
             done, self._results = self._results, []

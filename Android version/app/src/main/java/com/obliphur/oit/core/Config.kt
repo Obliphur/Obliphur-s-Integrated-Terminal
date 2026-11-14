@@ -9,6 +9,16 @@ import kotlin.math.ln
 
 /** 不在设置页里的固定数值 (对应桌面版 config.py). 可调的数值见 Settings.kt. */
 object Cfg {
+    const val COMM_SCENARIO_UNLOCK = 200
+    const val COMM_TENSION_MAX = 100
+    const val COMM_TENSION_LOW = 50
+    const val COMM_TENSION_CAP = 70
+    const val COMM_TENSION_DAILY_RATE = 0.5
+    val COMM_TENSION_GAINS = mapOf("rumination" to 20, "boundary" to 15, "comfort" to 10, "violation" to 10)
+    const val COMM_TENSION_DAY_DECAY = 15
+    const val COMM_TENSION_JOINT_DECAY = 20
+    const val COMM_TENSION_RELEASE = 35
+    const val COMM_SHAME_TURNS = 2
     val COMM_MESSAGE_MILESTONES = listOf(200, 400, 500, 1000) // 当前聊天已达到的消息数量门槛
     const val AI_VOICE_GAP = 1.0
     const val AI_VOICE_AUTO_COUNT = 10

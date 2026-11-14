@@ -94,7 +94,8 @@ def shift_line(st) -> str:
 def mem_fields(d) -> dict:
     """聊天状态里的记忆卡 (旧文件没有这几项 → 空)."""
     d = d if isinstance(d, dict) else {}
-    return {"mem_auto": str(d.get("mem_auto") or "")[:MEM_MAX],
+    from .comm_interaction import interaction_norm
+    return {"interaction": interaction_norm(d.get("interaction")), "mem_auto": str(d.get("mem_auto") or "")[:MEM_MAX],
             "mem_fixed": message_milestones(d),
             "mem_upto": int(d.get("mem_upto") or 0),
             "mem_ts": int(d.get("mem_ts") or 0),

@@ -10,7 +10,6 @@ from comm.comm_prompt import REFUSE, MSGS_TAG
 
 
 OIT_TAG = "[OIT_SYSTEM_MESSAGES]"      # OIT 直接发出的消息都带这个标记 (1.0.423)
-STATE_TAG = "state"                   # 对方输入 [state]: OIT 告诉它此刻的日程状态 (这一段的性质 + 结束时间), 再调用一次 (1.0.414)
 HISTORY_SENT = 200                    # 每次请求最多带多少条聊天记录 (本地存 600 条, 带的取最近 200 条): 原话全带上, 量由下面的字数兜底
 HISTORY_CHARS = 120000                # 带的聊天记录总共最多多少字 (超了从最老的开始不带)
 HISTORY_STEP = 10                     # 带的聊天记录的起点一次往后挪这么多条 (不是每条都挪): 请求的开头 (前面的历史) 才能在这么多条消息里保持不变,
@@ -50,8 +49,6 @@ def info_tags(reply: str) -> list:
         tags.append(COND_TAG)
     if f"[{MSGS_TAG}]" in t:                 # 聊天记录数 (1.0.402)
         tags.append(MSGS_TAG)
-    if f"[{STATE_TAG}]" in t:                # 此刻的日程状态 / 结束时间 (1.0.414)
-        tags.append(STATE_TAG)
     return tags
 
 

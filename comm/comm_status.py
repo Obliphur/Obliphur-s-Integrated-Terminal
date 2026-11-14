@@ -27,7 +27,7 @@ from comm.comm_reply import CUT_DEFAULT_MIN, CUT_MAX_MIN, HALFWIDTH_SYMBOLS, NET
 from comm.comm_builtin import BUILTIN_PERSONAS, DEFAULT_PERSONA, DEFAULT_BACKGROUND, DEFAULT_ROUTINE, ASSISTANT_PERSONA, ASSISTANT_DETAIL_LINE, BACKGROUND_LEGACIES, ASSISTANT_SLEEP_LINE, ASSISTANT_TITLE
 from comm.comm_prompt import REFUSE, SHIFT_TAG, MSGS_TAG, THINK_LONG, THINK_WORDS, THINK_TIME_RE, think_text_reason, JOINT_RULE, rest_function_text, prefix_prompt
 from comm.comm_persona import SHIFT_LO, SHIFT_HI, SHIFT_KEEP, MAX_PERSONA, MEM_MAX, PERSONA_EXT, readme_text, pid_of, love_norm, love_line, shift_norm, shift_pairs, hm_text, shift_line, mem_fields, seed_builtin, ensure_personas, list_personas, persona_title, uses_prefix, system_head, PERSONA_HEAD, persona_system, persona_labels, read_persona, ROUTINE_SUFFIX, COMPANION_SEP, companion_base, is_companion_name, companion_files, companions_of, routine_name_of, read_routine, read_persona_full, import_persona
-from comm.comm_util import (OIT_TAG, STATE_TAG, COND_TAG, WEEKDAY, MAX_MSG_CHARS, HISTORY_SENT, HISTORY_STEP, HISTORY_CHARS,
+from comm.comm_util import (OIT_TAG, COND_TAG, WEEKDAY, MAX_MSG_CHARS, HISTORY_SENT, HISTORY_STEP, HISTORY_CHARS,
                        is_claudia, is_refusal, stamp, urlsplit_host, info_tags, joint_answer, _joint_time, clip_message,
                        cache_layout, oit_text, first_turn, api_messages, sanitize_mem)
 
@@ -205,17 +205,20 @@ class StatusMixin:
             return why
         return self._profile_problem()
 
-    def other_status(self, now=None) -> dict:
+    def other_status(self, now=None, ctx=None) -> dict:
         """对方现在在日程里的哪一段: {"kind", "label", "detail", "begin", "end"}; 没有日程 / 不在任何一段 = {}."""
         now = now or self.now()
-        joint = self._joint_status(now)                       # 联合行动的同步阶段: 跟着用户走, 不看日程
+        joint = self._joint_status(now, ctx["pid"] if ctx else None)  # 联合行动的同步阶段: 跟着用户走, 不看日程
         if joint:
             return joint
-        if self._rt:                                          # 有日程文件: 按当天算出的日程 (带波动)
-            self._load_schedule()
-            s = routine.status_in(self._rt_segs(now - timedelta(hours=1), now + timedelta(hours=1)), now)
+        rt = ctx.get("rt") if ctx else self._rt
+        if rt:                                          # 有日程文件: 按当天算出的日程 (带波动)
+            if ctx is None:
+                self._load_schedule()
+            s = routine.status_in(self._rt_segs(now - timedelta(hours=1), now + timedelta(hours=1), rt,
+                                               ctx["pid"] if ctx else self.pid, joint=ctx is None), now)
             return {"kind": s["kind"], "label": s["label"], "detail": "", "begin": s["start"], "end": s["end"]} if s else {}
-        entries = self._entries()
+        entries = ctx["entries"] if ctx else self._entries()
         if not entries:
             return {}
         t = now.hour * 60 + now.minute

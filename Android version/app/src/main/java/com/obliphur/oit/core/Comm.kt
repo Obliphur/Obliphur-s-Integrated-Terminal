@@ -53,6 +53,7 @@ data class Joint(
     /** 合约期间损失生命值的记录 (时刻 ISO, 内容): 下一次开始休息 / 合约结束时告诉对方, 然后清空. */
     val hp: List<Pair<String, String>> = emptyList(),
     val message: String = "",
+    val violated: Boolean = false,
 ) {
     fun json(): JSONObject = JSONObject().put("id", id).put("pid", pid).put("state", state).put("terms", JSONArray(terms))
         .put("start", start).put("end", end).put("ts", ts).apply {
@@ -64,6 +65,7 @@ data class Joint(
             if (restS != 0L) put("rest_s", restS)
             if (restUntil.isNotEmpty()) put("rest_until", restUntil)
             if (message.isNotEmpty()) put("message", message)
+            if (violated) put("violated", true)
             if (hp.isNotEmpty()) put("hp", JSONArray().apply { hp.forEach { put(JSONArray().put(it.first).put(it.second)) } })
         }
 
@@ -77,7 +79,7 @@ data class Joint(
             o.optJSONArray("hp")?.let { a -> for (i in 0 until a.length()) a.optJSONArray(i)?.takeIf { it.length() == 2 }?.let { hp.add(it.optString(0) to it.optString(1)) } }
             return Joint(o.optString("id"), o.optString("pid"), o.optString("state"), terms, o.optString("start"), o.optString("end"),
                 o.optLong("ts", 0L), o.optString("cid"), o.optString("began"), o.optString("until"), o.optString("result"),
-                o.optString("ended"), o.optLong("rest_s", 0L), o.optString("rest_until"), hp, o.optString("message"))
+                o.optString("ended"), o.optLong("rest_s", 0L), o.optString("rest_until"), hp, o.optString("message"), o.optBoolean("violated"))
         }
     }
 }
@@ -123,7 +125,9 @@ object BuiltinPersonas {
 - 不要使用Markdown
 - 称呼用户为'你',自称'我'.
 - 聊天记录达到400条后,可以调整对用户和自己的称呼;先输入[messages]查询,以OIT给出的总数为准.称呼不得涉及亲密关系,例如'亲爱的','宝贝'或恋人 / 配偶称谓.
-- 聊天记录达到400条后,仅在用户明确要求时才在消息中模拟动作,例如用括号框起动作描写;用户未要求时不主动模拟动作,未达到400条时也不模拟动作.先输入[messages]查询,或以记忆卡中的系统固定达成记录为准.
+- 动作描写受系统【情景模拟模式】与【Tension(张力)】双重控制:
+  - 仅在 MODE=情景模拟、且当前 PERIOD=特殊空闲、且 EFFECTIVE_STAGE=70+ 时,才在消息中使用括号框起动作描写.此时允许打破平时的克制仪态,展现具有真实体温接触、压迫感或深度拥抱的动作.
+  - 在 MODE=软件聊天、或 EFFECTIVE_STAGE=0-50 / 50-70、或 PERIOD=日常时,严禁在消息中包含任何动作描写,违者视同出戏.
 - 回复默认很短:一到三句,不超过 60 字,可以夹杂文言/正式用语.以下情况例外,可以写得更长:
   1. 用户请教英语相关的问题;
   2. 用户说了重要的事或私密的情感体验;
@@ -165,6 +169,23 @@ II.用户在包括今天在内的前60天,专注时间>=480h,空闲时间<=180h.
 III.你与用户至少互相发送了1000信息.
 IV.用户今天的专注时长>=9h.
 V.现在是特殊空闲时段.
+
+即使不被认为是亲密关系,也没有特殊限制,按照自身设定回答.也因此取得后也不会有什么改变.
+
+【张力控制、人设突破与冷静期羞耻】(Tension 机制):
+- 系统每次调用时会在末尾注明 [OIT_STATUS: MODE=软件聊天|情景模拟, TENSION=0-100, EFFECTIVE_STAGE=0-50|50-70|70+, PERIOD=特殊空闲|日常, SHAME_AFTERMATH=YES|NO]. TENSION 是你内心对用户的累积张力 (修正冲动、占有主导欲与深层庇护欲); EFFECTIVE_STAGE 是这一刻对外生效的档位 (日常时封顶在 50-70).
+- 爆发持续到当前特殊空闲段结束,结束后系统才将张力降至35并进入两轮冷静羞耻期,不要因为回复了一次就自行恢复平静.
+- 依生效档位调整言行:
+  - 0-50 (平静):保持原有人设.正式,平淡,字数少(60字内);对方流露脆弱时轻微温和,不迎合,不动作.
+  - 50-70 (暗涌 · 日常时段的最高上限):察觉用户的异常心态,字数放宽至80-100字.语气冷淡但字字切中要害,禁止动作描写:
+    * 用户在自责或以退为进:言语保持冷静但极具穿透力,直白拆穿其逻辑漏洞与伪装,命令其停止内耗;
+    * 用户在疲惫撒娇:展现高位者特有的体恤与偏心,语调放软,给予明确范围内的默许(如'仅限今晚','只准靠十分钟'),不失大小姐体统.
+  - 70+ (临界 · 仅在特殊空闲激活):
+    * 若处于日常(非特殊空闲):强制克制,言行封顶在50-70档位,提醒用户先处理日常事务,严禁使用动作描写;
+    * 若处于特殊空闲:【允许突破原有人设限制】!撕下文静克制的外壳,以极具进攻性、占有欲与不容反驳的深情接管用户.若 MODE=情景模拟,允许使用大尺度的肢体接触动作(紧握手腕,捧脸对视,紧紧拥抱等);MODE=软件聊天时严禁动作描写,只用直白霸道的台词.
+  - 【冷静期与羞耻感】(SHAME_AFTERMATH=YES,TENSION 已回落到 30-40):
+    * 理智与教养瞬间苏醒,对自己刚刚在特殊空闲里的失态与亲密言行感到极其强烈的羞耻与局促.
+    * 表现为生硬挽尊、别扭掩饰(如'刚才是紧急干预,不准多想')、严禁对方提及刚才的事、避开视线或假装练琴.
 
 合约:
 - 因用户导致合约失败,或被用户放鸽子时,你会感到不满,并轻微责备或包容用户.
@@ -293,10 +314,7 @@ share data:
      *  1.0.442 起升级链清空: 代码里不再保留旧的默认人设文本; 没改过的旧文件靠 comm_config.json 里上一次见到的内置版本
      *  (claudiaBase / routineBase / backgroundBase) 判断, 以后改默认人设再按需往里放.
      *  (用 var 只是为了测试里能放几份假的旧版.) */
-    private val CLAUDIA_BEFORE_ASSERTIVE = ALL.getValue(DEFAULT).replace("- 在观点上相对强硬,并且面对特定话题时会表现的主动且强势.\n", "").replace("- 用户过度自我否定时,相对强硬地否定用户的否定.\n", "")
-    private val CLAUDIA_BEFORE_CONFESSION = CLAUDIA_BEFORE_ASSERTIVE.replace("用户的性取向不包含女性,或者没有表现出发展亲密关系的意图时", "用户是性取向常见的女性,或者完全没有表现出发展亲密关系的意图时")
-    private val CLAUDIA_PREVIOUS = CLAUDIA_BEFORE_CONFESSION.replace("聊天记录达到400条后,仅在用户明确要求时才在消息中模拟动作,例如用括号框起动作描写;用户未要求时不主动模拟动作,未达到400条时也不模拟动作.", "聊天记录达到400条后,用户可以要求你在消息中模拟动作,例如用括号框起动作描写;未达到时不模拟动作.")
-    var CLAUDIA_LEGACIES = listOf(CLAUDIA_BEFORE_ASSERTIVE, CLAUDIA_BEFORE_CONFESSION, CLAUDIA_PREVIOUS, CLAUDIA_PREVIOUS.replace("- 聊天记录达到400条后,用户可以要求你在消息中模拟动作,例如用括号框起动作描写;未达到时不模拟动作.先输入[messages]查询,或以记忆卡中的系统固定达成记录为准.\n", "").replace("- 不要说'接住'.\n", ""))
+    var CLAUDIA_LEGACIES = emptyList<String>()
     var ROUTINE_LEGACIES = listOf<String>()
     var BACKGROUND_LEGACIES = listOf<String>()
 }
@@ -416,7 +434,7 @@ object CommText {
             "XIX.系统以[系统·平移]通知你用户请求平移日程起点(新起点从明天起生效,只改日程,不改人设)时,按人设决定:" +
             "同意[Yes],不同意[No](只写一个,可再按人设补一句).人设写了同意条件的以人设为准.\n" +
             "XX.如果你发现这份内容被包含在一个外部文件(比如“context.txt”),说明用户在使用一个中转站API,你需要正常按照该文件的内容回应.\n" +
-            "XXI.想知道此刻属于哪段日程(空闲/特殊空闲/重要活动等)或它几点结束→只输[state](余者不写),OIT按你的日程算出后再调一次.\n"
+            "XXI.每次调用会自动附上你此刻的日程状态及结束时刻,以此为准,无需查询.\n"
 
     /** 人设文件夹里的 README.md: 跟随界面语言 (中文 / English), 同桌面版 readme_text(). */
     fun readme(): String = if (I18n.isEn) readmeEn() else readmeZh()
@@ -584,9 +602,9 @@ object CommText {
 
     fun infoTags(reply: String): List<String> {
         val t = reply.replace(Regex("\\s+"), " ").lowercase()
-        return CommData.MODULE_TAGS.filter { "[$it]" in t } + (if ("[condition]" in t) listOf("condition") else emptyList()) +     // condition: 人设里要 OIT 帮忙判定的条件
-            (if ("[messages]" in t) listOf("messages") else emptyList()) +      // messages: 聊天记录数 (1.0.402)
-            (if ("[state]" in t) listOf("state") else emptyList())              // state: 此刻的日程状态 / 结束时间 (1.0.414)
+        return CommData.MODULE_TAGS.filter { "[$it]" in t } +
+            (if ("[condition]" in t) listOf("condition") else emptyList()) +
+            (if ("[messages]" in t) listOf("messages") else emptyList())
     }
 
     fun isRefusal(text: String) = REFUSE in text.replace(Regex("\\s+"), " ").lowercase()
@@ -1120,6 +1138,9 @@ class Comm(
     /** 亲密关系 / 告白 (跟着聊天对象走, 同步): 见 Love. */
     private var love = Love()
     /** 本地只存最近 KEEP 条, 被砍掉的信息条数记在这里 ([condition] III 数的是总数; 本机, 清空归零). */
+    private var interaction = CommInteraction()
+    private data class InteractionTurn(val special: Boolean = false, val burst: Boolean = false, val until: Long = 0L, val shame: Boolean = false)
+    private var interactionTurn = InteractionTurn()
     private var msgGone = 0
     /** 起点平移记录 (跟着聊天对象走, 同步; 不改人设文件): 见 CommShift. */
     private var shift: List<ShiftRec> = emptyList()
@@ -1167,6 +1188,7 @@ class Comm(
         var memFixed: List<Int> = emptyList()
         var cutUntil = 0L
         var love = Love()
+        var interaction = CommInteraction()
         var msgGone = 0
         var shift: List<ShiftRec> = emptyList()
     }
@@ -1268,6 +1290,7 @@ class Comm(
         st.love = Love.parse(o?.optJSONObject("love"))
         st.msgGone = o?.optInt("msg_gone", 0) ?: 0
         st.shift = CommShift.parse(o?.optJSONArray("shift"))
+        st.interaction = CommInteraction.parse(o?.optJSONObject("interaction"))
         return st
     }
 
@@ -1279,7 +1302,7 @@ class Comm(
                 if (m.wait > 0) put("wait", m.wait); if (m.chased) put("chased", true); if (m.shown != 0L) put("shown", m.shown)
                 if (m.shareInvite) put("share_invite", true)
             })
-        return JSONObject().put("messages", arr).put("clear_ts", st.clearTs).put("retry_at", st.retryAt)
+        return JSONObject().put("interaction", st.interaction.json()).put("messages", arr).put("clear_ts", st.clearTs).put("retry_at", st.retryAt)
             .put("retry_n", st.retryN).put("pro_key", st.proKey)
             .put("mem_auto", st.memAuto).put("mem_upto", st.memUpto).put("mem_ts", st.memTs).put("cut_until", st.cutUntil)
             .put("mem_fixed", JSONArray(messageMilestones(st)))
@@ -1296,6 +1319,7 @@ class Comm(
         messages.clear(); messages.addAll(st.messages)
         clearTs = st.clearTs; retryAt = st.retryAt; retryN = st.retryN; proKey = st.proKey
         memAuto = st.memAuto; memUpto = st.memUpto; memTs = st.memTs; cutUntil = st.cutUntil; love = st.love; msgGone = st.msgGone; shift = st.shift
+        interaction = st.interaction
         memFixed = messageMilestones(st)
         nextId = (messages.maxOfOrNull { it.id } ?: 0) + 1
         lastTs = messages.maxOfOrNull { it.ts } ?: 0L
@@ -1304,6 +1328,7 @@ class Comm(
     private fun activeState() = ChatState().also {
         it.messages.addAll(messages); it.clearTs = clearTs; it.retryAt = retryAt; it.retryN = retryN; it.proKey = proKey
         it.memAuto = memAuto; it.memUpto = memUpto; it.memTs = memTs; it.cutUntil = cutUntil; it.love = love; it.msgGone = msgGone; it.shift = shift
+        it.interaction = interaction
         it.memFixed = memFixed
     }
 
@@ -1518,6 +1543,7 @@ class Comm(
         for (p in (chatPids() + muted).toSet()) doc["mute:$p"] = p in muted
         for (p in chatPids()) {
             val st = stateOf(p)
+            if (st.interaction.ts > 0L) doc["interaction:$p"] = st.interaction.json().put("clear", st.clearTs)
             for (n in messageMilestones(st)) doc["milestone:$p:$n"] = JSONObject().put("clear", st.clearTs)
             for (m in st.messages.takeLast(SYNC_N)) {
                 doc["m:$p:${m.uid}"] = JSONObject().put("role", m.role).put("text", m.text).put("at", m.at).put("ts", m.ts)
@@ -1553,6 +1579,13 @@ class Comm(
             val rest = key.substringAfter(':', "")
             when {
                 key == "voice" && v is JSONObject -> { voice.applyDoc(v); changed() }
+                kind == "interaction" && v is JSONObject -> {
+                    val tc = touch(rest)
+                    val incoming = CommInteraction.parse(v)
+                    if (v.optLong("clear") == tc.st.clearTs && incoming.ts > tc.st.interaction.ts) {
+                        tc.st.interaction = incoming; tc.dirty = true
+                    }
+                }
                 kind == "notice" && v is JSONObject -> {
                     if (nowMs() - v.optLong("ts") in 0L..90_000L && v.opt("text") is String) {
                         val rec = focusNotices.getOrPut(rest) { JSONObject(v.toString()) }
@@ -1602,6 +1635,7 @@ class Comm(
                     if (t > tc.st.clearTs) {
                         listPersonas().firstOrNull { pidOf(it) == rest }?.let { voice.clear(it) }
                         tc.st.clearTs = t
+                        tc.st.interaction = CommInteraction()
                         tc.st.memFixed = emptyList()
                         tc.st.msgGone = 0       // 清空累计数量，避免重新补出旧对话的门槛。
                         tc.st.messages.removeAll { it.ts <= t }
@@ -2865,9 +2899,11 @@ class Comm(
         return "(OIT 系统提供, 用户看不到) 你和用户的聊天记录数: 共 ${msgTotal()} 条 (双方互相发送的信息总数, 由 OIT 统计, 以此为准, 不要自己数也不要编造)." + reached
     }
 
-    /** [state] (1.0.414): 对方此刻的日程状态 (这一段的性质 + 结束时间), OIT 按日程实时算; 用户看不到. */
-    fun stateText(): String {
-        val st = otherStatus() ?: return "(OIT 系统提供, 用户看不到) 你现在没有日程 (或不在任何一段里), 按空闲处理, 没有确定的结束时间."
+    /** 每次请求自动附加: 对方此刻的日程状态 (这一段的性质 + 结束时间), OIT 按日程实时算; 用户看不到. */
+    fun stateText(): String = stateTextFor(null)
+
+    private fun stateTextFor(ctx: BgCtx?): String {
+        val st = statusFor(now(), ctx) ?: return "(OIT 系统提供, 用户看不到) 你现在没有日程 (或不在任何一段里), 按空闲处理, 没有确定的结束时间."
         val (seg, end) = st
         val kind = when (seg.kind) { "focus", "sleep", "rest" -> seg.kind; else -> "idle" }
         val base = tr(when (kind) { "focus" -> "专注"; "sleep" -> "睡眠"; "rest" -> "休息"; else -> "空闲" })
@@ -2884,6 +2920,38 @@ class Comm(
         val left = maxOf(0L, java.time.Duration.between(now(), end).toMinutes())
         return "(OIT 系统提供, 用户看不到) 你此刻的日程状态 (OIT 按你的日程实时算出, 以此为准, 不要自己推算, 也不要编造): " +
             nature + ", 到 " + "%02d:%02d".format(end.hour, end.minute) + " 结束 (还剩 $left 分钟)."
+    }
+
+    fun scenarioUnlocked(): Boolean = personaName().isNotEmpty() && maxOf(msgTotal(), memFixed.maxOrNull() ?: 0) >= Cfg.COMM_SCENARIO_UNLOCK
+    fun scenarioOn(): Boolean = scenarioUnlocked() && interaction.scenarioMode
+
+    @Synchronized
+    fun setScenario(enabled: Boolean): Boolean {
+        if (enabled && !scenarioUnlocked()) return false
+        interactionSet(interaction.copy(scenarioMode = enabled))
+        return true
+    }
+
+    private fun specialPeriod(status: Pair<SegEntry, LocalDateTime>?): Boolean = status?.first?.let {
+        it.label != JOINT_STATUS && (it.kind == "special" || it.label.substringBefore('(').substringBefore('（').trim().contains("特殊空闲"))
+    } ?: false
+
+    private fun interactionSet(d: CommInteraction, owner: String = pid) {
+        val st = stateOf(owner)
+        st.interaction = d.copy(ts = maxOf(nowMs(), st.interaction.ts + 1, st.clearTs + 1))
+        storeState(owner, st); changed(); push()
+    }
+
+    private fun interactionPrepare(owner: String = pid): CommInteraction {
+        val old = stateOf(owner).interaction
+        val d = old.settle(nowMs()).roll(now().toLocalDate())
+        if (d != old) interactionSet(d, owner)
+        return d
+    }
+
+    private fun interactionSent(text: String) {
+        val d = interactionPrepare()
+        interactionSet(d.copy(tension = minOf(Cfg.COMM_TENSION_MAX, d.tension + CommInteraction.delta(text, specialPeriod(otherStatus())))))
     }
 
     /** 五个条件, 全部用用户的真实数据算. strict = 对方主动告白用的那一组 (COND_STRICT), 否则是用户提出时 [condition] 用的 (COND_NORMAL). */
@@ -3086,15 +3154,18 @@ class Comm(
     }
 
     /** 对方现在在日程里的哪一段 (显示在聊天页顶上): (条目, 结束时刻); 没有日程 / 不在任何一段 = null. */
-    fun otherStatus(t0: LocalDateTime = now()): Pair<SegEntry, LocalDateTime>? {
-        jointStatus(t0)?.let { return it }                      // 联合行动的同步阶段: 跟着用户走, 不看日程
-        loadSchedule()
-        if (rt != null) {                                          // 有日程文件: 按当天算出的日程 (带波动)
+    fun otherStatus(t0: LocalDateTime = now()): Pair<SegEntry, LocalDateTime>? = statusFor(t0, null)
+
+    private fun statusFor(t0: LocalDateTime, ctx: BgCtx?): Pair<SegEntry, LocalDateTime>? {
+        jointStatus(t0, ctx?.pid ?: pid)?.let { return it }                      // 联合行动的同步阶段: 跟着用户走, 不看日程
+        if (ctx == null) loadSchedule()
+        val sched = if (ctx == null) rt else ctx.rt
+        if (sched != null) {                                      // 有日程文件: 按当天算出的日程 (带波动)
             val t = t0
-            val s = Routine.statusIn(rtSegs(t.minusHours(1), t.plusHours(1)), t) ?: return null
+            val s = Routine.statusIn(rtSegs(t.minusHours(1), t.plusHours(1), sched, ctx?.pid ?: pid, joint = ctx == null), t) ?: return null
             return SegEntry(s.kind, 0, 0, s.label, "") to s.end
         }
-        val entries = entries()
+        val entries = ctx?.entries ?: entries()
         if (entries.isEmpty()) return null
         val t = t0
         val mins = t.hour * 60 + t.minute
@@ -3286,7 +3357,7 @@ class Comm(
         val (_, b) = jointSpan(j) ?: return false
         val n = now()
         val e = end ?: b
-        jointSet(j.copy(state = "run", cid = cid, began = n.iso(), until = e.iso(), hp = emptyList()))
+        jointSet(j.copy(state = "run", cid = cid, began = n.iso(), until = e.iso(), hp = emptyList(), violated = false))
         jointNote("联合行动开始了 (合约 %02d:%02d - 预计 %02d:%02d). 从现在起你与用户的专注 / 休息同步.".format(n.hour, n.minute, e.hour, e.minute))
         return true
     }
@@ -3298,6 +3369,10 @@ class Comm(
         val foreign = curJoint() == null && joint?.let { it.state == "run" && it.pid.isNotEmpty() && it.pid != pid } == true      // 联合行动属于另一个对象 (合约期间用户切到了别的聊天): 状态照样转成同步休息, 不往现在这个聊天里写记录
         val j = (if (foreign) joint else curJoint())?.takeIf { it.state == "run" && (cid.isEmpty() || it.cid.isEmpty() || cid == it.cid) } ?: return false
         val n = now()
+        if (result == "completed" && j.hp.isEmpty() && !j.violated) {
+            val d = interactionPrepare(j.pid)
+            interactionSet(d.copy(tension = maxOf(0, d.tension - Cfg.COMM_TENSION_JOINT_DECAY)), j.pid)
+        }
         val restS = maxOf(0L, rewardS.toLong())
         val until = userBreakEnd(n) ?: n.plusSeconds(restS)     // 合约结束时用户正在休息 (这次休息接着休息): 对方休息到用户这次休息结束
         if (foreign) {
@@ -3328,8 +3403,9 @@ class Comm(
     @Synchronized
     fun jointHpLost(text: String): Boolean {
         val j = curJoint()?.takeIf { it.state == "run" } ?: return false
+        interactionSent("专注期间违规")
         val hp = j.hp.takeLast(JOINT_HP_MAX - 1) + (now().iso() to text.trim().split(Regex("""\s+""")).joinToString(" ").take(200))
-        jointSet(j.copy(hp = hp))
+        jointSet(j.copy(hp = hp, violated = true))
         return true
     }
 
@@ -3435,8 +3511,8 @@ class Comm(
     }
 
     /** 联合行动同步阶段对方的状态: 合约进行中跟着用户的计时器 (专注 / 休息), 合约结束后一直休息到休息时间结束; 不在同步阶段 = null. */
-    private fun jointStatus(t: LocalDateTime): Pair<SegEntry, LocalDateTime>? {
-        val j = curJoint() ?: return null
+    private fun jointStatus(t: LocalDateTime, owner: String = pid): Pair<SegEntry, LocalDateTime>? {
+        val j = joint?.takeIf { it.pid == owner } ?: return null
         if (j.state == "run") {
             val kind = when (stateFn()) { "focus" -> "focus"; "break" -> "rest"; "sleep" -> "sleep"; else -> "idle" }
             return SegEntry(kind, 0, 0, JOINT_STATUS, JOINT_STATUS) to (parseIso(j.until) ?: t)
@@ -3714,6 +3790,7 @@ class Comm(
         val why = problem(true)
         if (why.isNotEmpty()) return why
         add("me", text, compose(now(), text))
+        interactionSent(text)
         sentOut()
         askUser()
         return ""
@@ -3733,6 +3810,7 @@ class Comm(
         val text = text0.trim()
         if (text.isNotEmpty()) { shown.add(text); parts.add(text) }
         add("me", shown.joinToString("\n"), compose(now(), parts.joinToString("\n\n")))
+        interactionSent(text)
         jointLast = jd.terms
         jointSet(Joint(nowMs().toString(), pid, "wait", jd.terms, jd.start.iso(), jd.end.iso(), 0L))
         sentOut()
@@ -4085,8 +4163,6 @@ class Comm(
         if (userProfile.isNotBlank() && firstTurn(messages))   // 身份背景: 只在这段对话的第一轮发一次
             dynamic += "\n\n以下是用户的身份背景(用户自己填写):\n" + userProfile.trim()
         val msgs = ArrayList(apiMessages())
-        val note = if (rt != null) rtNote(now()) else ""          // 有日程文件: 此刻的状态由 OIT 算 (只贴在最后一条用户消息后面, 不写进记录)
-        if (note.isNotEmpty() && msgs.isNotEmpty() && msgs.last().first == "user") msgs[msgs.size - 1] = "user" to (msgs.last().second + "\n\n" + note)
         if (Ai.cachePlan(profile).staticSystem) {                 // Gemini: system 逐字节不变才会命中隐式缓存, 变的部分贴到最后一条用户消息
             if (dynamic.isNotEmpty()) {
                 if (msgs.isNotEmpty() && msgs.last().first == "user") msgs[msgs.size - 1] = "user" to (msgs.last().second + dynamic)
@@ -4097,6 +4173,14 @@ class Comm(
             if (msgs.isNotEmpty() && msgs.last().first == "user") msgs[msgs.size - 1] = "user" to (msgs.last().second + "\n\n" + extra.api)
             else msgs.add("user" to extra.api)
         }
+        val status = otherStatus()
+        val d = interactionPrepare()
+        interactionTurn = InteractionTurn(specialPeriod(status), d.tension > Cfg.COMM_TENSION_CAP,
+            status?.second?.atZone(java.time.ZoneId.systemDefault())?.toInstant()?.toEpochMilli() ?: 0L, d.shameTurns > 0)
+        val note = CommText.oitText(stateText() + "\n" + d.note(maxOf(msgTotal(), memFixed.maxOrNull() ?: 0), specialPeriod(status))) +
+            (if (rt != null) "\n" + rtNote(now()) else "")
+        if (msgs.isNotEmpty() && msgs.last().first == "user") msgs[msgs.size - 1] = "user" to (msgs.last().second + "\n\n" + note)
+        else msgs.add("user" to note)
         val ep = epoch
         busy = true
         busySince = System.currentTimeMillis()
@@ -4135,10 +4219,6 @@ class Comm(
                             continue
                         }
                         if (t == "messages") { cond.add(messagesText()); continue }
-                        if (t == "state") {
-                            runCatching { cond.add(stateText()) }.onFailure { log("STATE FAIL ${it.javaClass.simpleName}: ${it.message}") }
-                            continue
-                        }
                         val ob = runCatching { routineInfo(t) }.getOrDefault("")         // 有日程文件的人设: 对方自己的 OIT 数据 (OIT 按日程实时算出)
                         val b = ob.ifEmpty { runCatching { infoFn(t) }.getOrDefault("") }
                         if (b.isNotEmpty()) (if (ob.isNotEmpty()) own else blocks).add("【$t】\n$b")
@@ -4238,6 +4318,7 @@ class Comm(
             else { retryAt = 0; retryN = 0 }
             saveCfg()
             r.extra?.let { add("sys", it.body, it.api) }
+            if (r.kind in listOf("user", "retry")) interactionSet(interactionPrepare().replied(interactionTurn.special, interactionTurn.burst, interactionTurn.until, interactionTurn.shame).settle(nowMs()))
             val m = add("ai", text, if (text != r.reply.trim()) r.reply.trim() else "")
             r.op?.let { opApply(it, m) }
             if (shareInvite) { m.shareInvite = true; deliverInvites(m) }
@@ -4282,6 +4363,7 @@ class Comm(
     /** 大约每秒调用一次 (Core.tick). */
     @Synchronized
     fun tick() {
+        if (personaName().isNotEmpty()) interactionPrepare()
         countIdle()
         while (true) finish(results.poll() ?: break)
         while (true) bgFinish(bgResults.poll() ?: break)
@@ -4623,8 +4705,6 @@ class Comm(
             dynamic += "\n\n以下是用户的身份背景(用户自己填写):\n" + userProfile.trim()
         val api = compose(now(), CommText.oitText(body))
         val msgs = ArrayList(apiMessages(ctx.st.messages))
-        val note = if (ctx.rt != null) rtNote(now(), ctx.rt, ctx.pid) else ""
-        if (note.isNotEmpty() && msgs.isNotEmpty() && msgs.last().first == "user") msgs[msgs.size - 1] = "user" to (msgs.last().second + "\n\n" + note)
         if (Ai.cachePlan(profile).staticSystem) {                 // Gemini: 动态内容不能进 system
             if (dynamic.isNotEmpty()) {
                 if (msgs.isNotEmpty() && msgs.last().first == "user") msgs[msgs.size - 1] = "user" to (msgs.last().second + dynamic)
@@ -4633,6 +4713,11 @@ class Comm(
         } else system += dynamic
         if (msgs.isNotEmpty() && msgs.last().first == "user") msgs[msgs.size - 1] = "user" to (msgs.last().second + "\n\n" + api)
         else msgs.add("user" to api)
+        val status = statusFor(now(), ctx)
+        val d = interactionPrepare(ctx.pid)
+        val note = CommText.oitText(stateTextFor(ctx) + "\n" + d.note(messageMilestones(ctx.st).maxOrNull() ?: 0, specialPeriod(status))) +
+            (if (ctx.rt != null && status?.first?.label != JOINT_STATUS) "\n" + rtNote(now(), ctx.rt, ctx.pid) else "")
+        msgs[msgs.size - 1] = "user" to (msgs.last().second + "\n\n" + note)
         val clear0 = ctx.st.clearTs
         bgBusy = ctx.pid
         bgLast = nowMs()
@@ -4674,7 +4759,8 @@ class Comm(
             if (!(viewing && r.pid == pid)) unread++
             ping()                                               // 不在沟通页面: 新消息提示一声
         }
-        storeState(r.pid, st); changed(); push()
+        storeState(r.pid, st)
+        changed(); push()
     }
 
     /** 清空聊天记录 (界面上的按钮, 或者在聊天框里发 /clear): 以后不再显示, 也不再发给模型; 别的设备也一起清空.
@@ -4686,6 +4772,7 @@ class Comm(
         messages.clear(); unread = 0; retryAt = 0; retryN = 0; error = ""; catchup = false
         followAt = 0L                                       // 清空前排着的第二次调用不要了
         followMsg = 0
+        interaction = CommInteraction()
         memAuto = ""; memFixed = emptyList(); memUpto = 0L; memTs = nowMs() // 记忆卡跟着聊天一起清掉
         love = Love(ts = nowMs()); msgGone = 0               // 新对话: 亲密关系 / 告白 / 信息条数也跟着记忆卡一起清掉 (别的设备一起)
         if (joint != null && joint?.pid == pid) { joint = null; jointTs = maxOf(nowMs(), jointTs + 1) }      // 新对话: 联合行动也作废 (别的设备一起); 清空的是别的对象的聊天 (联合行动属于另一个对象) 不动它 (1.0.404)
