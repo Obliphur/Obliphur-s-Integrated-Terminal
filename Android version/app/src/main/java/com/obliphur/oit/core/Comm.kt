@@ -2966,27 +2966,30 @@ class Comm(
         val d = interactionPrepare()
         interactionCandidates = messages.filter { kind in listOf("user", "retry") && it.role == "me" && it.uid in d.pending }
             .map { Triple(it.uid, d.pending.getValue(it.uid), it.text) }
-        if (interactionCandidates.isEmpty()) return "本次无需判断张力增量，不要输出 [tension:序号:增量]。"
+        if (interactionCandidates.isEmpty()) return "本次无需判断张力增量，不要输出 [tension:序号:条件:增量]。"
         val items = JSONArray(interactionCandidates.mapIndexed { i, (_, _, text) -> JSONObject().put("序号", i + 1).put("用户消息", text) })
         return "请结合人设、上下文和以下用户消息的语义判断是否应增加张力，普通交流无需增加。" +
-            "为每条选择0至${Cfg.COMM_TENSION_GAINS.values.max()}的整数基础增量，在正常回复末尾附加 [tension:序号:增量]；" +
+            "为每条满足的各个条件分别选择0至${Cfg.COMM_TENSION_GAINS.values.max()}的整数原始基础增量，在正常回复末尾分别附加 [tension:序号:条件:增量]；" +
+            "条件只能为rumination(自我构陷/反刍)、boundary(边界试探)、comfort(疲惫撒娇)、violation(违规)、other(其他情绪)，相同条件不要改名规避冷却。" +
             "0表示不增加，可省略。自我构陷参考${Cfg.COMM_TENSION_GAINS.getValue("rumination")}、边界试探${Cfg.COMM_TENSION_GAINS.getValue("boundary")}、" +
             "疲惫撒娇${Cfg.COMM_TENSION_GAINS.getValue("comfort")}、违规${Cfg.COMM_TENSION_GAINS.getValue("violation")}，也可自行判断其他情绪。" +
-            "系统会按发送时段处理日常减半，并处理爆发后24小时的增长减半，无需你减半；不得给其他历史消息加值，不要向用户解释标记。" +
+            "系统先将基础增量乘${Cfg.COMM_TENSION_GAIN_MULTIPLIER}，再按发送时段处理日常减半及爆发后24小时的增长减半，无需你乘倍或减半。" +
+            "每个条件${Cfg.COMM_TENSION_GAIN_COOLDOWN_SECONDS / 3600}小时内仅加一次，真实违规与模型判定违规共用冷却。" +
+            "每条消息先排除冷却中的条件，再选剩余条件中点数最高的一项生效，不叠加；请报告所有满足的条件，不要自行只保留最高项。不得给其他历史消息加值，不要向用户解释标记。" +
             "本轮仍按给定生效档位回复，增量从下次请求生效。待判断消息：$items"
     }
 
     private fun interactionJudged(reply: String) {
-        val d = interactionPrepare()
-        var next = d.tension
+        var d = interactionPrepare()
         val pending = d.pending.toMutableMap()
         interactionCandidates.forEachIndexed { i, (uid, special, _) ->
             if (uid in pending) {
-                next = minOf(Cfg.COMM_TENSION_MAX, next + d.gain(CommInteraction.modelGain(reply, i + 1, special), nowMs()))
+                val (condition, gain) = CommInteraction.modelEvent(reply, i + 1, special, d.gainCooldowns, nowMs())
+                d = d.add(condition, gain, nowMs())
                 pending.remove(uid)
             }
         }
-        interactionSet(d.copy(tension = next, pending = pending))
+        interactionSet(d.copy(pending = pending))
     }
 
     /** 五个条件, 全部用用户的真实数据算. strict = 对方主动告白用的那一组 (COND_STRICT), 否则是用户提出时 [condition] 用的 (COND_NORMAL). */
@@ -3435,9 +3438,9 @@ class Comm(
     fun jointHpLost(text: String): Boolean {
         val j = curJoint()?.takeIf { it.state == "run" } ?: return false
         val d = interactionPrepare()
-        val base = Cfg.COMM_TENSION_GAINS.getValue("violation")
+        val base = Cfg.COMM_TENSION_HP_LOSS_GAIN
         val gain = (if (specialPeriod(otherStatus())) base.toDouble() else base * Cfg.COMM_TENSION_DAILY_RATE).toInt()
-        interactionSet(d.copy(tension = minOf(Cfg.COMM_TENSION_MAX, d.tension + d.gain(gain, nowMs()))))
+        interactionSet(d.add("violation", gain, nowMs()))
         val hp = j.hp.takeLast(JOINT_HP_MAX - 1) + (now().iso() to text.trim().split(Regex("""\s+""")).joinToString(" ").take(200))
         jointSet(j.copy(hp = hp, violated = true))
         return true

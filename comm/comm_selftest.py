@@ -557,7 +557,7 @@ def _selftest():
     assert stc.cfg["interaction"]["burst_days"] == ["2027-05-04"]
     assert interaction_gain(stc.cfg["interaction"], 20, gain_until - 1) == 10
     assert interaction_gain(stc.cfg["interaction"], 20, gain_until) == 20
-    assert interaction_gain(stc.cfg["interaction"], tension_model_gain("[tension:1:15]", 1, False), gain_until - 1) == 3
+    assert interaction_gain(stc.cfg["interaction"], tension_model_gain("[tension:1:15]", 1, False), gain_until - 1) == 7
     stc.now = lambda: fixed2.replace(hour=13, minute=59, second=59)
     stc.tick()
     assert stc.cfg["interaction"]["tension"] == 91
@@ -663,63 +663,89 @@ def _selftest():
     assert not morning.cfg["interaction"]["morning_day"]
     morning.flush(); again.flush(); morning_peer.flush()
     # 所有消息由模型判断：失败重试不重复，内部标记不入历史。
-    from comm.comm_interaction import tension_model_gain, tension_clean
-    assert tension_model_gain("[tension:1:-10][tension:1:999999][tension:2:20]", 1, False) == 10
+    from comm.comm_interaction import tension_model_gain, tension_clean, tension_model_event, interaction_add
+    assert tension_model_gain("[tension:1:-10][tension:1:999999][tension:2:20]", 1, False) == 20
     assert tension_model_gain("[tension:1:no][tension:1:2.5]", 1, True) == 0
     assert tension_clean("好。[TENSION:1:15]［tension:2:10］") == "好。"
+    # 先排除冷却再取最高项；不同条件独立，到三小时整恢复，跨日和回拨不清空冷却。
+    cooldown_now = int(datetime(2027, 5, 4, 23).timestamp() * 1000)
+    cooldown = interaction_norm({})
+    choices = "[tension:1:rumination:20][tension:1:boundary:15][tension:1:unknown:999999]"
+    def add_choice(at):
+        condition, amount = tension_model_event(choices, 1, True, cooldown["gain_cooldowns"], at)
+        interaction_add(cooldown, condition, amount, at)
+        return condition, amount
+    assert add_choice(cooldown_now) == ("rumination", 40) and cooldown["tension"] == 40
+    assert add_choice(cooldown_now) == ("boundary", 30) and cooldown["tension"] == 70
+    assert add_choice(cooldown_now) == ("other", 0) and cooldown["tension"] == 70
+    interaction_add(cooldown, "violation", config.COMM_TENSION_HP_LOSS_GAIN, cooldown_now)
+    assert cooldown["tension"] == 85
+    assert tension_model_event("[tension:1:violation:20]", 1, True, cooldown["gain_cooldowns"], cooldown_now)[1] == 0
+    saved_cooldowns = dict(cooldown["gain_cooldowns"])
+    cooldown = interaction_roll(cooldown, datetime(2027, 5, 5).date())
+    assert cooldown["gain_cooldowns"] == saved_cooldowns
+    assert add_choice(cooldown_now + 3 * 3600 * 1000 - 1) == ("other", 0)
+    assert add_choice(cooldown_now + 3 * 3600 * 1000) == ("rumination", 40)
+    assert add_choice(cooldown_now - 1) == ("other", 0)
+    zero_gain = interaction_norm({"gain_until": cooldown_now + 1})
+    interaction_add(zero_gain, "comfort", tension_model_gain("[tension:1:comfort:1]", 1, False), cooldown_now)
+    assert not zero_gain["gain_cooldowns"] and zero_gain["tension"] == 0
     judge = Comm(os.path.join(td, "judge"), folder, now=lambda: fixed2, chat_fn=fake)
     judge.ai.set_profile("deepseek", api_key="k")
     judge.set_cfg(persona="时段.txt", split_send=False)
     before = len(calls)
-    script.append("我听到了.[tension:1:15][tension:1:15]")
+    script.append("我听到了.[tension:1:rumination:15][tension:1:rumination:15]")
     judge.send("所有人都把我当作透明的影子")
     wait(judge)
-    assert len(calls) == before + 1 and judge.cfg["interaction"]["tension"] == 15
+    assert len(calls) == before + 1 and judge.cfg["interaction"]["tension"] == 30
     assert "以下用户消息的语义判断" in calls[-1][1][-1]["content"]
     assert judge.visible()[-1]["text"] == "我听到了." and not judge.cfg["interaction"]["pending"]
     assert all("[tension:" not in m.get("api", "") + m["text"] for m in judge.messages)
-    script.append("别这么说.[tension:1:20]")
+    script.append("别这么说.[tension:1:rumination:20][tension:1:boundary:10]")
     judge.send("我一文不值")
     wait(judge)
-    assert judge.cfg["interaction"]["tension"] == 35, "原正则关键词也只由模型加值"
+    assert judge.cfg["interaction"]["tension"] == 50, "原正则关键词也只由模型加值"
     assert "以下用户消息的语义判断" in calls[-1][1][-1]["content"]
     script.append("这些词不一定表达当前情绪.[tension:1:0]")
     judge.send("翻译这几个词:我一文不值,抱抱,熬夜")
     wait(judge)
-    assert judge.cfg["interaction"]["tension"] == 35, "关键词本身不再自动增加张力"
+    assert judge.cfg["interaction"]["tension"] == 50, "关键词本身不再自动增加张力"
     script.append("[refuse to reply][tension:1:20]")
     judge.send("仿佛被整个世界遗忘了")
     wait(judge)
-    assert judge.cfg["interaction"]["tension"] == 35 and judge.cfg["interaction"]["pending"]
+    assert judge.cfg["interaction"]["tension"] == 50 and judge.cfg["interaction"]["pending"]
     snapshot = judge.sync_doc()
     pending = dict(judge.cfg["interaction"]["pending"])
     judge.flush()
     judge = Comm(os.path.join(td, "judge"), folder, now=lambda: fixed2, chat_fn=fake)
     assert judge.cfg["interaction"]["pending"] == pending, "待判断消息跨重启保留"
+    assert judge.cfg["interaction"]["gain_cooldowns"] == snapshot[f"interaction:{judge.pid}"]["gain_cooldowns"]
     judge_peer = Comm(os.path.join(td, "judge-peer"), folder, now=lambda: fixed2, chat_fn=fake)
     judge_peer.set_cfg(persona="时段.txt")
     judge_peer.apply_doc(snapshot)
     assert judge_peer.cfg["interaction"]["pending"] == pending
+    assert judge_peer.cfg["interaction"]["gain_cooldowns"] == judge.cfg["interaction"]["gain_cooldowns"]
     judge_peer.clear(); judge_peer.apply_doc(snapshot)
     assert not judge_peer.cfg["interaction"]["pending"], "清空后不恢复待判断消息"
+    assert not judge_peer.cfg["interaction"]["gain_cooldowns"]
     judge_peer.flush()
-    script.append("我在听.[tension:1:10]")
+    script.append("我在听.[tension:1:comfort:10]")
     judge._request("retry")
     wait(judge)
-    assert judge.cfg["interaction"]["tension"] == 45 and not judge.cfg["interaction"]["pending"]
+    assert judge.cfg["interaction"]["tension"] == 70 and not judge.cfg["interaction"]["pending"]
     script.append("继续.[tension:1:20]")
     judge._request("retry")
     wait(judge)
-    assert judge.cfg["interaction"]["tension"] == 45, "已结算消息重试不再加值"
+    assert judge.cfg["interaction"]["tension"] == 70, "已结算消息重试不再加值"
     judge.now = lambda: fixed2.replace(hour=15)
-    script.append("听到了.[tension:1:15]")
+    script.append("听到了.[tension:1:other:5]")
     judge.send("我想把这些复杂的念头告诉你")
     wait(judge)
-    assert judge.cfg["interaction"]["tension"] == 52, "日常时段模型增量也减半取整"
+    assert judge.cfg["interaction"]["tension"] == 75, "日常时段模型增量也减半取整"
     script.append("日常问候不增加.[tension:1:0]")
     judge.send("窗边的花今天开了")
     wait(judge)
-    assert judge.cfg["interaction"]["tension"] == 52
+    assert judge.cfg["interaction"]["tension"] == 75
     # 当前对象已清空时，旧回复不能增加张力。
     previous_epoch = judge._epoch
     judge.clear()
@@ -739,20 +765,20 @@ def _selftest():
     cool._interaction_sent(message["text"], message)
     cool._interaction_judge_note("user")
     cool._interaction_judged("[tension:1:4]")
-    assert cool.cfg["interaction"]["tension"] == 93
+    assert cool.cfg["interaction"]["tension"] == 95
     cool._interaction_reply(True, True, int(fixed2.replace(hour=14, minute=0).timestamp() * 1000))
     assert cool.cfg["interaction"]["gain_until"] == gain_until, "同次爆发后续回复不顺延24小时"
     message = cool._add("me", "所有人都把我当作透明的影子")
     cool._interaction_sent(message["text"], message)
     cool._interaction_judge_note("user")
-    cool._interaction_judged("[tension:1:15]")
+    cool._interaction_judged("[tension:1:rumination:15]")
     assert cool.cfg["interaction"]["tension"] == 100, "模型判断也受爆发后的减半影响"
     cool.now = lambda: fixed2 + timedelta(hours=24)
     message = cool._add("me", "我一文不值")
     cool._interaction_sent(message["text"], message)
     cool._interaction_judge_note("user")
     cool._interaction_judged("[tension:1:20]")
-    assert cool.cfg["interaction"]["tension"] == 40, "爆发已回落20，24小时到点恢复全速增长"
+    assert cool.cfg["interaction"]["tension"] == 60, "爆发已回落20，24小时到点恢复翻倍基础值"
     cool.flush()
     # ---- 设备同步: 记录合并, 只有 leader 调用 AI / 重试, 清空一起清 ----
     dA, dB = os.path.join(td, "sa"), os.path.join(td, "sb")
@@ -1865,8 +1891,10 @@ def _selftest():
     assert not ch2.joint_hp_lost("x") and not ch2.joint_break_started(60) and not ch2.joint_break_ended(), "没有联合行动: 都不管"
     n_calls = len(calls)
     assert ch.joint_hp_lost("⚠ 违反合约: 打开了游戏\n目标生命值 3 / 4")
+    assert ch.cfg["interaction"]["tension"] == 7, "合约扣血基础15，日常减半取整"
     clock[0] = day.replace(hour=15, minute=10, second=5)
     assert ch.joint_hp_lost("解除了网络禁令")
+    assert ch.cfg["interaction"]["tension"] == 7, "三小时内继续记扣血，但不重复加张力"
     assert len(calls) == n_calls and not ch.busy, "损失生命值当时不告诉对方"
     assert len(ch._joint()["hp"]) == 2 and ch._joint()["hp"][0][1] == "⚠ 违反合约: 打开了游戏 目标生命值 3 / 4"
     script.append("休息吧.")

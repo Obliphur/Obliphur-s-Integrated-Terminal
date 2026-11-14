@@ -12,13 +12,15 @@ data class CommInteraction(
     val scenarioMode: Boolean = false, val tension: Int = 0, val shameTurns: Int = 0,
     val day: String = "", val ts: Long = 0L, val burstUntil: Long = 0L,
     val pending: Map<String, Boolean> = emptyMap(), val gainUntil: Long = 0L,
-    val burstDays: List<String> = emptyList(), val morningDay: String = ""
+    val burstDays: List<String> = emptyList(), val morningDay: String = "",
+    val gainCooldowns: Map<String, Long> = emptyMap()
 ) {
     fun json(): JSONObject = JSONObject().put("scenario_mode", scenarioMode).put("tension", tension)
         .put("shame_turns", shameTurns).put("day", day).put("ts", ts).put("burst_until", burstUntil)
         .put("pending", JSONObject(pending))
         .put("gain_until", gainUntil)
         .put("burst_days", JSONArray(burstDays)).put("morning_day", morningDay)
+        .put("gain_cooldowns", JSONObject(gainCooldowns))
 
     fun roll(today: LocalDate): CommInteraction {
         val elapsed = runCatching { ChronoUnit.DAYS.between(LocalDate.parse(day), today) }.getOrDefault(0L)
@@ -64,6 +66,14 @@ data class CommInteraction(
 
     fun gain(gain: Int, nowMs: Long): Int = if (nowMs < gainUntil) (gain * Cfg.COMM_TENSION_BURST_GAIN_RATE).toInt() else gain
 
+    /** 成功加值才占用该条件的三小时窗口；真实违规与模型违规共用冷却。 */
+    fun add(condition: String, value: Int, nowMs: Long): CommInteraction {
+        val amount = gain(value, nowMs)
+        if (amount <= 0 || nowMs < (gainCooldowns[condition] ?: 0L)) return this
+        return copy(tension = minOf(Cfg.COMM_TENSION_MAX, tension + amount),
+            gainCooldowns = gainCooldowns + (condition to nowMs + Cfg.COMM_TENSION_GAIN_COOLDOWN_SECONDS * 1000L))
+    }
+
     fun replied(special: Boolean, burst: Boolean, until: Long = 0L, shame: Boolean = shameTurns > 0, nowMs: Long = 0L): CommInteraction = when {
         shame && shameTurns > 0 -> copy(shameTurns = shameTurns - 1)
         special && burst && shameTurns == 0 -> copy(burstUntil = maxOf(burstUntil, until),
@@ -86,21 +96,28 @@ data class CommInteraction(
                 // 旧存档的增长窗口只在爆发开始时创建，可还原最近一次触发日期。
                 val end = maxOf(0L, o?.optLong("gain_until") ?: 0L)
                 if (end > 0L) listOf(localDay(end - Cfg.COMM_TENSION_BURST_GAIN_SECONDS * 1000L)) else emptyList()
-            }, o?.optString("morning_day") ?: "")
+            }, o?.optString("morning_day") ?: "",
+            o?.optJSONObject("gain_cooldowns")?.let { c -> (Cfg.COMM_TENSION_GAINS.keys + "other")
+                .associateWith { maxOf(0L, c.optLong(it)) }.filterValues { it > 0L } } ?: emptyMap())
 
         private fun localDay(ms: Long): String = Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()).toLocalDate().toString()
 
         private val tensionTag = Regex("""[\[［]\s*tension\b[^\[\]［］\n]*[\]］]""", RegexOption.IGNORE_CASE)
-        private val tensionGain = Regex("""[\[［]\s*tension\s*[:：]\s*(\d{1,5})\s*[:：]\s*([+-]?\d{1,6})\s*[\]］]""", RegexOption.IGNORE_CASE)
+        private val tensionGain = Regex("""[\[［]\s*tension\s*[:：]\s*(\d{1,5})\s*[:：]\s*(?:([a-z_]+)\s*[:：]\s*)?([+-]?\d{1,6})\s*[\]］]""", RegexOption.IGNORE_CASE)
 
         /** 内部张力标记不进入聊天、语音或后续历史。 */
         fun cleanTension(reply: String): String = tensionTag.replace(reply, "").trim()
 
-        fun modelGain(reply: String, index: Int, special: Boolean): Int {
-            val gain = (tensionGain.findAll(reply).filter { it.groupValues[1].toInt() == index }
-                .maxOfOrNull { it.groupValues[2].toInt() } ?: 0).coerceIn(0, Cfg.COMM_TENSION_GAINS.values.max())
-            return (if (special) gain.toDouble() else gain * Cfg.COMM_TENSION_DAILY_RATE).toInt()
+        fun modelEvent(reply: String, index: Int, special: Boolean, cooldowns: Map<String, Long> = emptyMap(), nowMs: Long = 0L): Pair<String, Int> {
+            val event = tensionGain.findAll(reply).filter { it.groupValues[1].toInt() == index }
+                .map { (it.groupValues[2].lowercase().ifEmpty { "other" }) to it.groupValues[3].toInt() }
+                .filter { (it.first in Cfg.COMM_TENSION_GAINS || it.first == "other") && nowMs >= (cooldowns[it.first] ?: 0L) }
+                .maxByOrNull { it.second }
+            val gain = (event?.second ?: 0).coerceIn(0, Cfg.COMM_TENSION_GAINS.values.max()) * Cfg.COMM_TENSION_GAIN_MULTIPLIER
+            return (event?.first ?: "other") to (if (special) gain.toDouble() else gain * Cfg.COMM_TENSION_DAILY_RATE).toInt()
         }
+
+        fun modelGain(reply: String, index: Int, special: Boolean): Int = modelEvent(reply, index, special).second
 
     }
 }

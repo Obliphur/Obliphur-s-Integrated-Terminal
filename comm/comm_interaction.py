@@ -18,6 +18,15 @@ def interaction_norm(value):
         except (ValueError, TypeError, OverflowError):
             return 0
     pending = d.get("pending") if isinstance(d.get("pending"), dict) else {}
+    cooldowns = d.get("gain_cooldowns") if isinstance(d.get("gain_cooldowns"), dict) else {}
+    clean_cooldowns = {}
+    for key in (*config.COMM_TENSION_GAINS, "other"):
+        try:
+            until = max(0, min(2**63 - 1, int(cooldowns.get(key) or 0)))
+        except (ValueError, TypeError, OverflowError):
+            continue
+        if until:
+            clean_cooldowns[key] = until
     days = d.get("burst_days")
     if not isinstance(days, list):
         # 旧存档的增长窗口只在爆发开始时创建，可还原最近一次触发日期。
@@ -32,13 +41,14 @@ def interaction_norm(value):
             "shame_turns": number("shame_turns", config.COMM_SHAME_TURNS),
             "burst_until": number("burst_until", 2**63 - 1),
             "gain_until": number("gain_until", 2**63 - 1),
+            "gain_cooldowns": clean_cooldowns,
             "burst_days": sorted({s for s in days if isinstance(s, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", s)})[-2:],
             "morning_day": str(d.get("morning_day") or ""),
             "day": str(d.get("day") or ""), "ts": number("ts", 2**63 - 1)}
 
 
 _TENSION_TAG = re.compile(r"[\[［]\s*tension\b[^\[\]［］\n]*[\]］]", re.I)
-_TENSION_GAIN = re.compile(r"[\[［]\s*tension\s*[:：]\s*(\d{1,5})\s*[:：]\s*([+-]?\d{1,6})\s*[\]］]", re.I)
+_TENSION_GAIN = re.compile(r"[\[［]\s*tension\s*[:：]\s*(\d{1,5})\s*[:：]\s*(?:([a-z_]+)\s*[:：]\s*)?([+-]?\d{1,6})\s*[\]］]", re.I)
 
 
 def tension_clean(reply):
@@ -46,16 +56,32 @@ def tension_clean(reply):
     return _TENSION_TAG.sub("", reply).strip()
 
 
+def tension_model_event(reply, index, special, cooldowns=None, now_ms=0):
+    """先排除冷却条件，再取最大增量；旧标记归入其他情绪，基础翻倍后处理日常倍率。"""
+    events = [(int(m[3]), (m[2] or "other").lower()) for m in _TENSION_GAIN.finditer(reply)
+              if int(m[1]) == index and (m[2] or "other").lower() in (*config.COMM_TENSION_GAINS, "other")]
+    events = [event for event in events if now_ms >= (cooldowns or {}).get(event[1], 0)]
+    gain, condition = max(events, key=lambda event: event[0], default=(0, "other"))
+    gain = max(0, min(max(config.COMM_TENSION_GAINS.values()), gain)) * config.COMM_TENSION_GAIN_MULTIPLIER
+    return condition, int(gain if special else gain * config.COMM_TENSION_DAILY_RATE)
+
+
 def tension_model_gain(reply, index, special):
-    """同一条只取一个有效增量，并沿用日常减半与单条上限。"""
-    gain = max((int(m[2]) for m in _TENSION_GAIN.finditer(reply) if int(m[1]) == index), default=0)
-    gain = max(0, min(max(config.COMM_TENSION_GAINS.values()), gain))
-    return int(gain if special else gain * config.COMM_TENSION_DAILY_RATE)
+    return tension_model_event(reply, index, special)[1]
 
 
 def interaction_gain(d, gain, now_ms):
     """爆发后按绝对时刻限制增长，与日常减半叠加。"""
     return int(gain * config.COMM_TENSION_BURST_GAIN_RATE) if now_ms < d.get("gain_until", 0) else gain
+
+
+def interaction_add(d, condition, gain, now_ms):
+    """成功加值才占用该条件的三小时窗口；真实违规与模型违规共用冷却。"""
+    gain = interaction_gain(d, gain, now_ms)
+    if gain <= 0 or now_ms < d["gain_cooldowns"].get(condition, 0):
+        return
+    d["tension"] = min(config.COMM_TENSION_MAX, d["tension"] + gain)
+    d["gain_cooldowns"][condition] = now_ms + config.COMM_TENSION_GAIN_COOLDOWN_SECONDS * 1000
 
 
 def interaction_roll(d, today):
@@ -144,10 +170,10 @@ class InteractionMixin:
     def _interaction_violation(self):
         """真实联合行动违规直接结算，不从聊天文本推断。"""
         d = self._interaction_prepare()
-        gain = config.COMM_TENSION_GAINS["violation"]
+        gain = config.COMM_TENSION_HP_LOSS_GAIN
         if not self._interaction_special():
             gain = int(gain * config.COMM_TENSION_DAILY_RATE)
-        d["tension"] = min(config.COMM_TENSION_MAX, d["tension"] + interaction_gain(d, gain, self._ms()))
+        interaction_add(d, "violation", gain, self._ms())
         self._interaction_set(d)
 
     def _interaction_judge_note(self, kind):
@@ -155,21 +181,24 @@ class InteractionMixin:
         self._interaction_candidates = [(m["uid"], d["pending"][m["uid"]], m["text"])
             for m in self.messages if kind in ("user", "retry") and m.get("role") == "me" and m.get("uid") in d["pending"]]
         if not self._interaction_candidates:
-            return "本次无需判断张力增量，不要输出 [tension:序号:增量]。"
+            return "本次无需判断张力增量，不要输出 [tension:序号:条件:增量]。"
         items = [{"序号": i, "用户消息": text} for i, (_uid, _special, text) in enumerate(self._interaction_candidates, 1)]
         return ("请结合人设、上下文和以下用户消息的语义判断是否应增加张力，普通交流无需增加。"
-                f"为每条选择0至{max(config.COMM_TENSION_GAINS.values())}的整数基础增量，在正常回复末尾附加 [tension:序号:增量]；"
+                f"为每条满足的各个条件分别选择0至{max(config.COMM_TENSION_GAINS.values())}的整数原始基础增量，在正常回复末尾分别附加 [tension:序号:条件:增量]；"
+                "条件只能为rumination(自我构陷/反刍)、boundary(边界试探)、comfort(疲惫撒娇)、violation(违规)、other(其他情绪)，相同条件不要改名规避冷却。"
                 f"0表示不增加，可省略。自我构陷参考{config.COMM_TENSION_GAINS['rumination']}、边界试探{config.COMM_TENSION_GAINS['boundary']}、"
                 f"疲惫撒娇{config.COMM_TENSION_GAINS['comfort']}、违规{config.COMM_TENSION_GAINS['violation']}，也可自行判断其他情绪。"
-                "系统会按发送时段处理日常减半，并处理爆发后24小时的增长减半，无需你减半；不得给其他历史消息加值，不要向用户解释标记。"
+                f"系统先将基础增量乘{config.COMM_TENSION_GAIN_MULTIPLIER}，再按发送时段处理日常减半及爆发后24小时的增长减半，无需你乘倍或减半。"
+                f"每个条件{config.COMM_TENSION_GAIN_COOLDOWN_SECONDS // 3600}小时内仅加一次，真实违规与模型判定违规共用冷却。"
+                "每条消息先排除冷却中的条件，再选剩余条件中点数最高的一项生效，不叠加；请报告所有满足的条件，不要自行只保留最高项。不得给其他历史消息加值，不要向用户解释标记。"
                 "本轮仍按给定生效档位回复，增量从下次请求生效。待判断消息：" + json.dumps(items, ensure_ascii=False))
 
     def _interaction_judged(self, reply):
         d = self._interaction_prepare()
         for i, (uid, special, _text) in enumerate(getattr(self, "_interaction_candidates", []), 1):
             if uid in d["pending"]:
-                gain = interaction_gain(d, tension_model_gain(reply, i, special), self._ms())
-                d["tension"] = min(config.COMM_TENSION_MAX, d["tension"] + gain)
+                condition, gain = tension_model_event(reply, i, special, d["gain_cooldowns"], self._ms())
+                interaction_add(d, condition, gain, self._ms())
                 del d["pending"][uid]
         self._interaction_set(d)
 
