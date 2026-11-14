@@ -28,8 +28,11 @@ data class CommInteraction(
                 var next = tension
                 if (shameTurns == 0 && burstUntil == 0L) {
                     while (remaining > 0L && next > 0) {
-                        val decay = if (next in Cfg.COMM_TENSION_LOW..Cfg.COMM_TENSION_CAP)
-                            Cfg.COMM_TENSION_DAY_DECAY * 2 else Cfg.COMM_TENSION_DAY_DECAY
+                        val decay = when {
+                            next > Cfg.COMM_TENSION_CAP -> Cfg.COMM_TENSION_HIGH_DAY_DECAY
+                            next >= Cfg.COMM_TENSION_LOW -> Cfg.COMM_TENSION_DAY_DECAY * 2
+                            else -> Cfg.COMM_TENSION_DAY_DECAY
+                        }
                         next = maxOf(0, next - decay)
                         remaining--
                     }

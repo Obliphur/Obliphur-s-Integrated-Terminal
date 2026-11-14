@@ -73,6 +73,8 @@ def interaction_roll(d, today):
                 decay = config.COMM_TENSION_DAY_DECAY
                 if config.COMM_TENSION_LOW <= d["tension"] <= config.COMM_TENSION_CAP:
                     decay *= 2
+                elif d["tension"] > config.COMM_TENSION_CAP:
+                    decay = config.COMM_TENSION_HIGH_DAY_DECAY
                 d["tension"] = max(0, d["tension"] - decay)
         d["day"] = today.isoformat()
     elif not d["day"]:

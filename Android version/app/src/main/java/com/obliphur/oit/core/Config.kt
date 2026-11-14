@@ -15,7 +15,8 @@ object Cfg {
     const val COMM_TENSION_CAP = 90
     const val COMM_TENSION_DAILY_RATE = 0.5
     val COMM_TENSION_GAINS = mapOf("rumination" to 20, "boundary" to 15, "comfort" to 10, "violation" to 10)
-    const val COMM_TENSION_DAY_DECAY = 15
+    const val COMM_TENSION_DAY_DECAY = 25
+    const val COMM_TENSION_HIGH_DAY_DECAY = 15 // 超过第二临界、尚未爆发时的每日衰减
     const val COMM_TENSION_RELEASE = 20
     const val COMM_TENSION_BURST_GAIN_SECONDS = 24 * 60 * 60
     const val COMM_TENSION_BURST_GAIN_RATE = 0.5

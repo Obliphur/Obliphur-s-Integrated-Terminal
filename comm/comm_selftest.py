@@ -517,10 +517,13 @@ def _selftest():
     assert "EFFECTIVE_STAGE=50-90" in interaction_prompt({"tension": 90}, 200, True)
     assert "EFFECTIVE_STAGE=90+" in interaction_prompt({"tension": 91}, 200, True)
     assert "你知道这是情景模拟,而不是现实中的动作" in interaction_prompt({"scenario_mode": True}, 200, True)
-    assert interaction_roll({"tension": 50, "day": "2027-05-03"}, fixed2.date())["tension"] == 20
-    assert interaction_roll({"tension": 70, "day": "2027-05-03"}, fixed2.date())["tension"] == 40
-    assert interaction_roll({"tension": 71, "day": "2027-05-03"}, fixed2.date())["tension"] == 41
-    assert interaction_roll({"tension": 90, "day": "2027-05-03"}, fixed2.date())["tension"] == 60
+    assert interaction_roll({"tension": 20, "day": "2027-05-03"}, fixed2.date())["tension"] == 0
+    assert interaction_roll({"tension": 49, "day": "2027-05-03"}, fixed2.date())["tension"] == 24
+    assert interaction_roll({"tension": 50, "day": "2027-05-03"}, fixed2.date())["tension"] == 0
+    assert interaction_roll({"tension": 70, "day": "2027-05-03"}, fixed2.date())["tension"] == 20
+    assert interaction_roll({"tension": 71, "day": "2027-05-03"}, fixed2.date())["tension"] == 21
+    assert interaction_roll({"tension": 90, "day": "2027-05-03"}, fixed2.date())["tension"] == 40
+    assert interaction_roll({"tension": 90, "day": "2027-05-02"}, fixed2.date())["tension"] == 15
     assert interaction_roll({"tension": 91, "day": "2027-05-03"}, fixed2.date())["tension"] == 76
     assert interaction_roll({"tension": 50, "day": "2027-05-05"}, fixed2.date())["day"] == "2027-05-05"
     midnight_end = int(datetime(2027, 5, 5, 1).timestamp() * 1000)
