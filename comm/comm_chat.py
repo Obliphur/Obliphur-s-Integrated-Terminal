@@ -221,8 +221,8 @@ class ChatMixin:
         if why:
             return why
         now = self.now()
-        self._add("me", text, self._compose(now, text))
-        self._interaction_sent(text)
+        message = self._add("me", text, self._compose(now, text))
+        self._interaction_sent(text, message)
         self._sent()
         self._ask_user()
         return ""
@@ -248,8 +248,8 @@ class ChatMixin:
         if text:
             shown.append(text)
             parts.append(text)
-        self._add("me", "\n".join(shown), self._compose(now, "\n\n".join(parts)))
-        self._interaction_sent(text)
+        message = self._add("me", "\n".join(shown), self._compose(now, "\n\n".join(parts)))
+        self._interaction_sent(text, message)
         if joint:                                           # 邀请发出去了: 等对方回 [Yes] / [No]
             self.cfg["joint_last"] = list(joint["terms"])
             self._joint_set({"id": f"{self._ms()}", "pid": self.pid, "state": "wait", "terms": list(joint["terms"]),

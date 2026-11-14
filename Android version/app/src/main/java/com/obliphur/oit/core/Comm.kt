@@ -177,6 +177,7 @@ V.现在是特殊空闲时段.
 【张力控制、人设突破与冷静期羞耻】(Tension 机制):
 - 系统每次调用时会在末尾注明 [OIT_STATUS: MODE=软件聊天|情景模拟, TENSION=0-100, EFFECTIVE_STAGE=0-50|50-70|70+, PERIOD=特殊空闲|日常, SHAME_AFTERMATH=YES|NO]. TENSION 是你内心对用户的累积张力 (修正冲动、占有主导欲与深层庇护欲); EFFECTIVE_STAGE 是这一刻对外生效的档位 (日常时封顶在 50-70).
 - 爆发持续到当前特殊空闲段结束,结束后系统才将张力降至20并进入两轮冷静羞耻期,不要因为回复了一次就自行恢复平静.
+- 情景模拟中的动作是双方知情的虚构描写,你知道这是情景模拟,而不是现实中的动作,不得声称动作在现实中实际发生.
 - 如果在非特殊空闲tension就超过了70+,主动记住那些引起tension增加的话题,然后在特殊空闲清算.(先于检查数据)
 - 依生效档位调整言行:
   - 0-50 (平静):保持原有人设.正式,平淡,字数少(60字内);对方流露脆弱时轻微温和,不迎合,不动作.
@@ -1144,6 +1145,7 @@ class Comm(
     private var interaction = CommInteraction()
     private data class InteractionTurn(val special: Boolean = false, val burst: Boolean = false, val until: Long = 0L, val shame: Boolean = false)
     private var interactionTurn = InteractionTurn()
+    private var interactionCandidates = emptyList<Triple<String, Boolean, String>>()
     private var msgGone = 0
     /** 起点平移记录 (跟着聊天对象走, 同步; 不改人设文件): 见 CommShift. */
     private var shift: List<ShiftRec> = emptyList()
@@ -2952,9 +2954,39 @@ class Comm(
         return d
     }
 
-    private fun interactionSent(text: String) {
+    private fun interactionSent(text: String, message: ChatMsg? = null) {
         val d = interactionPrepare()
-        interactionSet(d.copy(tension = minOf(Cfg.COMM_TENSION_MAX, d.tension + CommInteraction.delta(text, specialPeriod(otherStatus())))))
+        val special = specialPeriod(otherStatus())
+        val gain = CommInteraction.delta(text, special)
+        val pending = if (message != null && text.isNotBlank() && gain == 0) d.pending + (message.uid to special) else d.pending
+        interactionSet(d.copy(tension = minOf(Cfg.COMM_TENSION_MAX, d.tension + d.gain(gain, nowMs())), pending = pending.entries.toList().takeLast(KEEP).associate { it.toPair() }))
+    }
+
+    private fun interactionJudgeNote(kind: String): String {
+        val d = interactionPrepare()
+        interactionCandidates = messages.filter { kind in listOf("user", "retry") && it.role == "me" && it.uid in d.pending }
+            .map { Triple(it.uid, d.pending.getValue(it.uid), it.text) }
+        if (interactionCandidates.isEmpty()) return "本次无需判断张力增量，不要输出 [tension:序号:增量]。"
+        val items = JSONArray(interactionCandidates.mapIndexed { i, (_, _, text) -> JSONObject().put("序号", i + 1).put("用户消息", text) })
+        return "以下用户消息未触发本地张力正则。结合人设、上下文和语义判断是否应增加张力，普通交流无需增加。" +
+            "为每条选择0至${Cfg.COMM_TENSION_GAINS.values.max()}的整数基础增量，在正常回复末尾附加 [tension:序号:增量]；" +
+            "0表示不增加，可省略。自我构陷参考${Cfg.COMM_TENSION_GAINS.getValue("rumination")}、边界试探${Cfg.COMM_TENSION_GAINS.getValue("boundary")}、" +
+            "疲惫撒娇${Cfg.COMM_TENSION_GAINS.getValue("comfort")}、违规${Cfg.COMM_TENSION_GAINS.getValue("violation")}，也可自行判断其他情绪。" +
+            "系统会按发送时段处理日常减半，并处理爆发后24小时的增长减半，无需你减半；不得给其他历史消息加值，不要向用户解释标记。" +
+            "本轮仍按给定生效档位回复，增量从下次请求生效。待判断消息：$items"
+    }
+
+    private fun interactionJudged(reply: String) {
+        val d = interactionPrepare()
+        var next = d.tension
+        val pending = d.pending.toMutableMap()
+        interactionCandidates.forEachIndexed { i, (uid, special, _) ->
+            if (uid in pending) {
+                next = minOf(Cfg.COMM_TENSION_MAX, next + d.gain(CommInteraction.modelGain(reply, i + 1, special), nowMs()))
+                pending.remove(uid)
+            }
+        }
+        interactionSet(d.copy(tension = next, pending = pending))
     }
 
     /** 五个条件, 全部用用户的真实数据算. strict = 对方主动告白用的那一组 (COND_STRICT), 否则是用户提出时 [condition] 用的 (COND_NORMAL). */
@@ -3750,7 +3782,8 @@ class Comm(
     private fun mk(role: String, text: String, api: String = "", delay: Boolean = false, voicePersona: String = personaName()): ChatMsg {
         val ts = maxOf(nowMs(), lastTs + 1)             // 同一台设备上严格递增
         lastTs = ts
-        val m = ChatMsg(nextId++, role, text, now().iso(), api, "$ts-${device().ifEmpty { "local" }.take(4)}", ts)
+        val m = ChatMsg(nextId++, role, if (role == "ai") CommInteraction.cleanTension(text) else text, now().iso(),
+            if (role == "ai") CommInteraction.cleanTension(api) else api, "$ts-${device().ifEmpty { "local" }.take(4)}", ts)
         if (role == "ai" && blocked().isNotEmpty()) m.hold = true       // 专注 / 睡眠 / 外出中收到的: 先藏起来, 回到休息 / 空闲再显示
         val free = if (role == "ai") aiFreeAt() else null
         if (free != null) {                                              // 对方在专注: 推迟到下一个空闲 / 休息开始时才发 (到点再重新盖发送时间, 见 releaseHeld)
@@ -3788,8 +3821,8 @@ class Comm(
         }
         val why = problem(true)
         if (why.isNotEmpty()) return why
-        add("me", text, compose(now(), text))
-        interactionSent(text)
+        val message = add("me", text, compose(now(), text))
+        interactionSent(text, message)
         sentOut()
         askUser()
         return ""
@@ -3808,8 +3841,8 @@ class Comm(
         parts.add(CommData.jointText(jd.terms, jd.start, jd.end))
         val text = text0.trim()
         if (text.isNotEmpty()) { shown.add(text); parts.add(text) }
-        add("me", shown.joinToString("\n"), compose(now(), parts.joinToString("\n\n")))
-        interactionSent(text)
+        val message = add("me", shown.joinToString("\n"), compose(now(), parts.joinToString("\n\n")))
+        interactionSent(text, message)
         jointLast = jd.terms
         jointSet(Joint(nowMs().toString(), pid, "wait", jd.terms, jd.start.iso(), jd.end.iso(), 0L))
         sentOut()
@@ -4176,7 +4209,7 @@ class Comm(
         val d = interactionPrepare()
         interactionTurn = InteractionTurn(specialPeriod(status), d.tension > Cfg.COMM_TENSION_CAP,
             status?.second?.atZone(java.time.ZoneId.systemDefault())?.toInstant()?.toEpochMilli() ?: 0L, d.shameTurns > 0)
-        val note = CommText.oitText(stateText() + "\n" + d.note(maxOf(msgTotal(), memFixed.maxOrNull() ?: 0), specialPeriod(status))) +
+        val note = CommText.oitText(stateText() + "\n" + d.note(maxOf(msgTotal(), memFixed.maxOrNull() ?: 0), specialPeriod(status)) + "\n" + interactionJudgeNote(kind)) +
             (if (rt != null) "\n" + rtNote(now()) else "")
         if (msgs.isNotEmpty() && msgs.last().first == "user") msgs[msgs.size - 1] = "user" to (msgs.last().second + "\n\n" + note)
         else msgs.add("user" to note)
@@ -4250,7 +4283,9 @@ class Comm(
         }.apply { isDaemon = true }.start()
     }
 
-    private fun finish(r: Result) {
+    private fun finish(result: Result) {
+        val tensionReply = result.reply
+        val r = Result(result.kind, result.extra, CommInteraction.cleanTension(result.reply), result.err, result.epoch, result.op)
         busy = false
         busySince = 0L
         if (hardBlock()) { again = false; if (r.kind == "share_ask") shareAskEnd("{name} 没有回复, share data 没有打开"); if (r.kind == "shift_ask") shiftAskEnd("{name} 没有回复, 起点没有平移"); changed(); return }       // 等回复的时候"无言为真"生效了: 这条回复不要了
@@ -4317,7 +4352,10 @@ class Comm(
             else { retryAt = 0; retryN = 0 }
             saveCfg()
             r.extra?.let { add("sys", it.body, it.api) }
-            if (r.kind in listOf("user", "retry")) interactionSet(interactionPrepare().replied(interactionTurn.special, interactionTurn.burst, interactionTurn.until, interactionTurn.shame).settle(nowMs()))
+            if (r.kind in listOf("user", "retry")) {
+                interactionJudged(tensionReply)
+                interactionSet(interactionPrepare().replied(interactionTurn.special, interactionTurn.burst, interactionTurn.until, interactionTurn.shame, nowMs()).settle(nowMs()))
+            }
             val m = add("ai", text, if (text != r.reply.trim()) r.reply.trim() else "")
             r.op?.let { opApply(it, m) }
             if (shareInvite) { m.shareInvite = true; deliverInvites(m) }

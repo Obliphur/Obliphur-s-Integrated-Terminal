@@ -17,6 +17,8 @@ object Cfg {
     val COMM_TENSION_GAINS = mapOf("rumination" to 20, "boundary" to 15, "comfort" to 10, "violation" to 10)
     const val COMM_TENSION_DAY_DECAY = 15
     const val COMM_TENSION_RELEASE = 20
+    const val COMM_TENSION_BURST_GAIN_SECONDS = 24 * 60 * 60
+    const val COMM_TENSION_BURST_GAIN_RATE = 0.5
     const val COMM_SHAME_TURNS = 2
     val COMM_MESSAGE_MILESTONES = listOf(200, 400, 500, 1000) // 当前聊天已达到的消息数量门槛
     const val AI_VOICE_GAP = 1.0

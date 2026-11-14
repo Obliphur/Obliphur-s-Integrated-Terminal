@@ -77,7 +77,7 @@ def follow_delay(profile: dict, override: float = None) -> float:
 
 
 # ══════════════ 管理器 ══════════════
-from .comm_interaction import InteractionMixin, interaction_norm
+from .comm_interaction import InteractionMixin, interaction_norm, tension_clean
 
 
 class Comm(InteractionMixin, JointMixin, StatusMixin, ChatMixin, FlowMixin, SchedMixin, ShareMixin, RtMixin, MiscMixin):
@@ -1169,6 +1169,8 @@ class Comm(InteractionMixin, JointMixin, StatusMixin, ChatMixin, FlowMixin, Sche
     # ---- 发消息 ----
     def _mk(self, role: str, text: str, api: str = "", delay: bool = False, persona=None) -> dict:
         """造一条消息 (还没放进任何聊天记录)."""
+        if role == "ai":
+            text, api = tension_clean(text), tension_clean(api)
         now = self.now()
         ts = max(self._ms(), self._last_ts + 1)          # 同一台设备上严格递增
         self._last_ts = ts
@@ -1209,6 +1211,8 @@ class Comm(InteractionMixin, JointMixin, StatusMixin, ChatMixin, FlowMixin, Sche
                 self._shift_ask_end()
             self._changed()
             return
+        tension_reply = reply
+        reply = tension_clean(reply)
         if kind == "net" and err:
             self._net_failed()                          # 搜索那次请求失败: 过一会儿再试
         elif not err and kind in NET_KINDS:
@@ -1288,6 +1292,7 @@ class Comm(InteractionMixin, JointMixin, StatusMixin, ChatMixin, FlowMixin, Sche
             if extra:
                 self._add("sys", extra[0], extra[1])
             if kind in ("user", "retry"):
+                self._interaction_judged(tension_reply)
                 self._interaction_reply(*getattr(self, "_interaction_turn", (False, False, 0, False)))
             m = self._add("ai", text, reply.strip() if text != reply.strip() else "")
             if op:

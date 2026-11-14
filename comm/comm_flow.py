@@ -271,7 +271,7 @@ class FlowMixin:
         d = self._interaction_prepare()
         self._interaction_turn = (self._interaction_special(status), d["tension"] > config.COMM_TENSION_CAP,
                                   int(status["end"].timestamp() * 1000) if status.get("end") else 0, bool(d["shame_turns"]))
-        note = oit_text(self.state_text() + "\n" + self.interaction_note(status))
+        note = oit_text(self.state_text() + "\n" + self.interaction_note(status) + "\n" + self._interaction_judge_note(kind))
         if self._rt:
             note += "\n" + self._rt_note(self.now())
         if msgs and msgs[-1]["role"] == "user":

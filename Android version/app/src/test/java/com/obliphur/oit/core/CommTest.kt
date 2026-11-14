@@ -375,6 +375,59 @@ class CommTest {
         assertEquals(listOf("现在在干嘛", "在上课."), p2.visible().map { it.text })
     }
 
+    /** 未命中正则才由正常回复判断增量，重试不重复，标记不入聊天历史。 */
+    @Test
+    fun modelTensionFallback() {
+        val td = Files.createTempDirectory("oit").toFile()
+        val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
+        c.importPersona("时段.txt", "你是时段.\n13:00-14:00:特殊空闲\n14:00-18:00:空闲\n".byteInputStream())
+        c.set(persona = "时段.txt", splitSend = false)
+        clock = LocalDateTime.of(2027, 5, 4, 13, 30)
+        val owner = Comm.pidOf("时段.txt")
+        fun state() = c.syncDoc()["interaction:$owner"] as JSONObject
+        script.add("我听到了.[tension:1:15][tension:1:15]")
+        c.send("所有人都把我当作透明的影子"); wait(c)
+        assertEquals(1, calls.size)
+        assertEquals(15, state().optInt("tension"))
+        assertTrue("未触发本地张力正则" in calls.last().second.last().second)
+        assertEquals("我听到了.", c.visible().last().text)
+        assertTrue(c.messages.none { "[tension:" in it.text || "[tension:" in it.api })
+        script.add("别这么说.[tension:1:20]")
+        c.send("我一文不值"); wait(c)
+        assertEquals(35, state().optInt("tension"))
+        assertTrue("本次无需判断张力增量" in calls.last().second.last().second)
+        script.add("[refuse to reply][tension:1:20]")
+        c.send("仿佛被整个世界遗忘了"); wait(c)
+        assertEquals(35, state().optInt("tension"))
+        assertEquals(1, state().getJSONObject("pending").length())
+        val snapshot = c.syncDoc()
+        val peer = comm(File(td, "peer").also { it.mkdirs() }, File(td, "p"))
+        peer.set(persona = "时段.txt")
+        peer.applyDoc(snapshot)
+        assertEquals(1, (peer.syncDoc()["interaction:$owner"] as JSONObject).getJSONObject("pending").length())
+        peer.flush()
+        val reloaded = comm(File(td, "peer"), File(td, "p"))
+        assertEquals(1, (reloaded.syncDoc()["interaction:$owner"] as JSONObject).getJSONObject("pending").length())
+        peer.clear(); peer.applyDoc(snapshot)
+        assertEquals(0, (peer.syncDoc()["interaction:$owner"] as? JSONObject)?.optJSONObject("pending")?.length() ?: 0)
+        // 通过已有重试时钟触发，同一条只在成功回复时结算。
+        script.add("我在听.[tension:1:10]")
+        clock = clock.plusMinutes(11); c.tick(); wait(c)
+        assertEquals(45, state().optInt("tension"))
+        assertEquals(0, state().getJSONObject("pending").length())
+        clock = clock.withHour(15)
+        script.add("听到了.[tension:1:15]")
+        c.send("我想把这些复杂的念头告诉你"); wait(c)
+        assertEquals(52, state().optInt("tension"))
+        script.add("日常问候不增加.[tension:1:0]")
+        c.send("窗边的花今天开了"); wait(c)
+        assertEquals(52, state().optInt("tension"))
+        assertEquals(10, CommInteraction.modelGain("[tension:1:-10][tension:1:999999]", 1, false))
+        assertEquals(0, CommInteraction.modelGain("[tension:1:no][tension:1:2.5]", 1, true))
+        assertEquals("好。", CommInteraction.cleanTension("好。[TENSION:1:15]［tension:2:10］"))
+        assertEquals(CommInteraction(pending = mapOf("test" to true)), CommInteraction.parse(CommInteraction(pending = mapOf("test" to true)).json()))
+    }
+
     /** 自动状态首轮发送，模式按对象保存，清空阻止旧同步恢复。 */
     @Test
     fun scenarioInteraction() {
@@ -395,11 +448,25 @@ class CommTest {
         assertTrue(note, "TENSION=85" in note && "MODE=情景模拟" in note && "EFFECTIVE_STAGE=70+" in note)
         val bursting = c.syncDoc()["interaction:$owner"] as JSONObject
         assertEquals(85, bursting.optInt("tension")); assertEquals(0, bursting.optInt("shame_turns"))
+        val gainUntil = ms + 24 * 60 * 60 * 1000L
+        assertEquals(gainUntil, bursting.getLong("gain_until"))
+        val burstState = CommInteraction.parse(bursting)
+        assertEquals(10, burstState.gain(20, gainUntil - 1))
+        assertEquals(20, burstState.gain(20, gainUntil))
+        assertEquals(3, burstState.gain(CommInteraction.delta("不希望给你压力", false), gainUntil - 1))
+        assertEquals(gainUntil, burstState.replied(true, true, burstState.burstUntil, false, ms + 60_000).gainUntil)
         clock = clock.withHour(13).withMinute(59).withSecond(59); c.tick()
         assertEquals(85, (c.syncDoc()["interaction:$owner"] as JSONObject).optInt("tension"))
         clock = clock.withHour(14).withMinute(0).withSecond(0); c.tick()
         val state = c.syncDoc()["interaction:$owner"] as JSONObject
         assertEquals(20, state.optInt("tension")); assertEquals(2, state.optInt("shame_turns"))
+        assertEquals(gainUntil, state.getLong("gain_until"))
+        script.add("我听到了.")
+        c.send("我一文不值"); wait(c)
+        assertEquals(25, (c.syncDoc()["interaction:$owner"] as JSONObject).optInt("tension"))
+        script.add("我还在听.[tension:1:20]")
+        c.send("所有人都把我当作透明的影子"); wait(c)
+        assertEquals(30, (c.syncDoc()["interaction:$owner"] as JSONObject).optInt("tension"))
         val old = c.syncDoc()
         assertTrue(c.messages.none { "OIT_STATUS" in it.api || "OIT_STATUS" in it.text })
         c.clear(); c.applyDoc(old)
@@ -409,6 +476,7 @@ class CommTest {
         assertEquals(7, CommInteraction.delta("不希望给你压力", false))
         assertEquals("50-70", CommInteraction(tension = 100).stage(false))
         assertEquals("70+", CommInteraction(tension = 100).stage(true))
+        assertTrue("你知道这是情景模拟,而不是现实中的动作" in CommInteraction(scenarioMode = true).note(200, true))
         assertEquals(20, CommInteraction(tension = 50, day = "2027-05-03").roll(clock.toLocalDate()).tension)
         assertEquals(40, CommInteraction(tension = 70, day = "2027-05-03").roll(clock.toLocalDate()).tension)
         assertEquals(56, CommInteraction(tension = 71, day = "2027-05-03").roll(clock.toLocalDate()).tension)
