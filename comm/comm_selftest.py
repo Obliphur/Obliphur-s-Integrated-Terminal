@@ -24,7 +24,7 @@ def _selftest():
     # 前置 prompt / README
     assert "聊天记录达到400条后" in BUILTIN_PERSONAS[DEFAULT_PERSONA] and "[messages]查询" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
     assert "只禁止浪漫关系称呼" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
-    assert "MODE=情景模拟" in BUILTIN_PERSONAS[DEFAULT_PERSONA] and "EFFECTIVE_STAGE=70+" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
+    assert "MODE=情景模拟" in BUILTIN_PERSONAS[DEFAULT_PERSONA] and "EFFECTIVE_STAGE=90+" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
     assert "不要说'接住'" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
     p = prefix_prompt()
     assert p.startswith("[OIT_SYSTEM_MESSAGES]") and "回复OIT(自律软件)用户的消息" in p and "I." in p and "II." in p and "III." in p
@@ -512,12 +512,16 @@ def _selftest():
     rtc.flush()
     # 张力：真实请求、对象隔离、存档、同步与清空保护。
     from comm.comm_interaction import interaction_norm, interaction_roll, interaction_settle, interaction_prompt, interaction_gain, tension_model_gain
-    assert "EFFECTIVE_STAGE=50-70" in interaction_prompt({"tension": 100}, 200, False)
-    assert "EFFECTIVE_STAGE=70+" in interaction_prompt({"tension": 100}, 200, True)
+    assert "EFFECTIVE_STAGE=50-90" in interaction_prompt({"tension": 100}, 200, False)
+    assert "EFFECTIVE_STAGE=90+" in interaction_prompt({"tension": 100}, 200, True)
+    assert "EFFECTIVE_STAGE=50-90" in interaction_prompt({"tension": 90}, 200, True)
+    assert "EFFECTIVE_STAGE=90+" in interaction_prompt({"tension": 91}, 200, True)
     assert "你知道这是情景模拟,而不是现实中的动作" in interaction_prompt({"scenario_mode": True}, 200, True)
     assert interaction_roll({"tension": 50, "day": "2027-05-03"}, fixed2.date())["tension"] == 20
     assert interaction_roll({"tension": 70, "day": "2027-05-03"}, fixed2.date())["tension"] == 40
-    assert interaction_roll({"tension": 71, "day": "2027-05-03"}, fixed2.date())["tension"] == 56
+    assert interaction_roll({"tension": 71, "day": "2027-05-03"}, fixed2.date())["tension"] == 41
+    assert interaction_roll({"tension": 90, "day": "2027-05-03"}, fixed2.date())["tension"] == 60
+    assert interaction_roll({"tension": 91, "day": "2027-05-03"}, fixed2.date())["tension"] == 76
     assert interaction_roll({"tension": 50, "day": "2027-05-05"}, fixed2.date())["day"] == "2027-05-05"
     midnight_end = int(datetime(2027, 5, 5, 1).timestamp() * 1000)
     night = {"tension": 95, "burst_until": midnight_end, "day": "2027-05-04"}
@@ -531,13 +535,19 @@ def _selftest():
     stc.cfg["msg_gone"] = 200
     stc.save_chat()
     assert stc.set_scenario(True) and stc.scenario_on()
-    stc._interaction_set(dict(stc.cfg["interaction"], tension=85))
+    stc._interaction_set(dict(stc.cfg["interaction"], tension=90))
+    script.append("我听到了.")
+    stc.send("在这里陪我聊几句")
+    wait(stc)
+    assert "EFFECTIVE_STAGE=50-90" in calls[-1][1][-1]["content"]
+    assert not stc.cfg["interaction"]["burst_until"] and not stc.cfg["interaction"]["gain_until"]
+    stc._interaction_set(dict(stc.cfg["interaction"], tension=91))
     script.append("别把自己说得一无是处.")
     stc.send("我一文不值")
     wait(stc)
     sent_note = calls[-1][1][-1]["content"]
-    assert "TENSION=85" in sent_note and "MODE=情景模拟" in sent_note and "EFFECTIVE_STAGE=70+" in sent_note
-    assert stc.cfg["interaction"]["tension"] == 85 and stc.cfg["interaction"]["shame_turns"] == 0
+    assert "TENSION=91" in sent_note and "MODE=情景模拟" in sent_note and "EFFECTIVE_STAGE=90+" in sent_note
+    assert stc.cfg["interaction"]["tension"] == 91 and stc.cfg["interaction"]["shame_turns"] == 0
     assert stc.cfg["interaction"]["burst_until"] == int(fixed2.replace(hour=14, minute=0).timestamp() * 1000)
     gain_until = int((fixed2 + timedelta(hours=24)).timestamp() * 1000)
     assert stc.cfg["interaction"]["gain_until"] == gain_until
@@ -547,7 +557,7 @@ def _selftest():
     assert interaction_gain(stc.cfg["interaction"], tension_model_gain("[tension:1:15]", 1, False), gain_until - 1) == 3
     stc.now = lambda: fixed2.replace(hour=13, minute=59, second=59)
     stc.tick()
-    assert stc.cfg["interaction"]["tension"] == 85
+    assert stc.cfg["interaction"]["tension"] == 91
     stc.now = lambda: fixed2.replace(hour=14, minute=0)
     stc.tick()
     assert stc.cfg["interaction"]["tension"] == 20 and stc.cfg["interaction"]["shame_turns"] == 2
@@ -575,7 +585,7 @@ def _selftest():
     assert not peer_st.scenario_on() and peer_st.cfg["interaction"]["tension"] == 0
     assert peer_st.cfg["interaction"]["gain_until"] == 0
     # 特殊空闲结束后才到达的旧回复，不消耗新冷静期。
-    reload_st._interaction_set(dict(reload_st.cfg["interaction"], tension=85, burst_until=1, shame_turns=0))
+    reload_st._interaction_set(dict(reload_st.cfg["interaction"], tension=91, burst_until=1, shame_turns=0))
     reload_st._interaction_reply(True, True, 1, False)
     assert reload_st.cfg["interaction"]["shame_turns"] == 2
     # 中途休息会清空待播报的 hp，但整场违规标记必须保留。
@@ -718,22 +728,22 @@ def _selftest():
     judge.flush()
     cool = Comm(os.path.join(td, "cool"), folder, now=lambda: fixed2, chat_fn=fake)
     cool.set_cfg(persona="时段.txt")
-    cool._interaction_set(dict(cool.cfg["interaction"], tension=75))
+    cool._interaction_set(dict(cool.cfg["interaction"], tension=91))
     cool._interaction_reply(True, True, int(fixed2.replace(hour=14, minute=0).timestamp() * 1000))
     assert cool.cfg["interaction"]["gain_until"] == gain_until
     cool.now = lambda: fixed2 + timedelta(minutes=1)
     message = cool._add("me", "我一文不值")
     cool._interaction_sent(message["text"], message)
     cool._interaction_judge_note("user")
-    cool._interaction_judged("[tension:1:20]")
-    assert cool.cfg["interaction"]["tension"] == 85
+    cool._interaction_judged("[tension:1:4]")
+    assert cool.cfg["interaction"]["tension"] == 93
     cool._interaction_reply(True, True, int(fixed2.replace(hour=14, minute=0).timestamp() * 1000))
     assert cool.cfg["interaction"]["gain_until"] == gain_until, "同次爆发后续回复不顺延24小时"
     message = cool._add("me", "所有人都把我当作透明的影子")
     cool._interaction_sent(message["text"], message)
     cool._interaction_judge_note("user")
     cool._interaction_judged("[tension:1:15]")
-    assert cool.cfg["interaction"]["tension"] == 92, "模型判断也受爆发后的减半影响"
+    assert cool.cfg["interaction"]["tension"] == 100, "模型判断也受爆发后的减半影响"
     cool.now = lambda: fixed2 + timedelta(hours=24)
     message = cool._add("me", "我一文不值")
     cool._interaction_sent(message["text"], message)

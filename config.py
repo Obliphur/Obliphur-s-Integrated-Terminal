@@ -220,12 +220,12 @@ OUTING_MAX_HOURS = 24 * 7
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.515"                  # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.516"                  # 和 GitHub 上发布的版本号比较 (见 updater.py)
 AI_VOICE_GAP = 1.0                       # 两条语音之间的默认间隔（秒）
 COMM_SCENARIO_UNLOCK = 200               # 情景模拟解锁的有效消息数
 COMM_TENSION_MAX = 100
 COMM_TENSION_LOW = 50
-COMM_TENSION_CAP = 70
+COMM_TENSION_CAP = 90
 COMM_TENSION_DAILY_RATE = 0.5
 COMM_TENSION_GAINS = {"rumination": 20, "boundary": 15, "comfort": 10, "violation": 10}
 COMM_TENSION_DAY_DECAY = 15
