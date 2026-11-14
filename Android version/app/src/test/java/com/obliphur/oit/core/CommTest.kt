@@ -375,9 +375,9 @@ class CommTest {
         assertEquals(listOf("现在在干嘛", "在上课."), p2.visible().map { it.text })
     }
 
-    /** 未命中正则才由正常回复判断增量，重试不重复，标记不入聊天历史。 */
+    /** 所有消息均由正常回复判断增量，重试不重复，标记不入聊天历史。 */
     @Test
-    fun modelTensionFallback() {
+    fun modelTensionJudgment() {
         val td = Files.createTempDirectory("oit").toFile()
         val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
         c.importPersona("时段.txt", "你是时段.\n13:00-14:00:特殊空闲\n14:00-18:00:空闲\n".byteInputStream())
@@ -389,13 +389,16 @@ class CommTest {
         c.send("所有人都把我当作透明的影子"); wait(c)
         assertEquals(1, calls.size)
         assertEquals(15, state().optInt("tension"))
-        assertTrue("未触发本地张力正则" in calls.last().second.last().second)
+        assertTrue("以下用户消息的语义判断" in calls.last().second.last().second)
         assertEquals("我听到了.", c.visible().last().text)
         assertTrue(c.messages.none { "[tension:" in it.text || "[tension:" in it.api })
         script.add("别这么说.[tension:1:20]")
         c.send("我一文不值"); wait(c)
         assertEquals(35, state().optInt("tension"))
-        assertTrue("本次无需判断张力增量" in calls.last().second.last().second)
+        assertTrue("以下用户消息的语义判断" in calls.last().second.last().second)
+        script.add("这些词不一定表达当前情绪.[tension:1:0]")
+        c.send("翻译这几个词:我一文不值,抱抱,熬夜"); wait(c)
+        assertEquals(35, state().optInt("tension"))
         script.add("[refuse to reply][tension:1:20]")
         c.send("仿佛被整个世界遗忘了"); wait(c)
         assertEquals(35, state().optInt("tension"))
@@ -441,7 +444,7 @@ class CommTest {
         c.applyDoc(mapOf("milestone:$owner:200" to JSONObject().put("clear", 0)))
         assertTrue(c.setScenario(true))
         val ms = clock.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
-        c.applyDoc(mapOf("interaction:$owner" to CommInteraction(true, 65, day = "2027-05-04", ts = ms + 10).json().put("clear", 0)))
+        c.applyDoc(mapOf("interaction:$owner" to CommInteraction(true, 85, day = "2027-05-04", ts = ms + 10).json().put("clear", 0)))
         script.add("别把自己说得一无是处.")
         c.send("我一文不值"); wait(c)
         val note = calls.last().second.last().second
@@ -453,7 +456,7 @@ class CommTest {
         val burstState = CommInteraction.parse(bursting)
         assertEquals(10, burstState.gain(20, gainUntil - 1))
         assertEquals(20, burstState.gain(20, gainUntil))
-        assertEquals(3, burstState.gain(CommInteraction.delta("不希望给你压力", false), gainUntil - 1))
+        assertEquals(3, burstState.gain(CommInteraction.modelGain("[tension:1:15]", 1, false), gainUntil - 1))
         assertEquals(gainUntil, burstState.replied(true, true, burstState.burstUntil, false, ms + 60_000).gainUntil)
         clock = clock.withHour(13).withMinute(59).withSecond(59); c.tick()
         assertEquals(85, (c.syncDoc()["interaction:$owner"] as JSONObject).optInt("tension"))
@@ -461,7 +464,7 @@ class CommTest {
         val state = c.syncDoc()["interaction:$owner"] as JSONObject
         assertEquals(20, state.optInt("tension")); assertEquals(2, state.optInt("shame_turns"))
         assertEquals(gainUntil, state.getLong("gain_until"))
-        script.add("我听到了.")
+        script.add("我听到了.[tension:1:20]")
         c.send("我一文不值"); wait(c)
         assertEquals(25, (c.syncDoc()["interaction:$owner"] as JSONObject).optInt("tension"))
         script.add("我还在听.[tension:1:20]")
@@ -472,8 +475,7 @@ class CommTest {
         c.clear(); c.applyDoc(old)
         assertFalse(c.scenarioOn())
         assertEquals(0, (c.syncDoc()["interaction:$owner"] as? JSONObject)?.optInt("tension") ?: 0)
-        assertEquals(20, CommInteraction.delta("我一文不值,想抱抱", true))
-        assertEquals(7, CommInteraction.delta("不希望给你压力", false))
+        assertEquals(7, CommInteraction.modelGain("[tension:1:15]", 1, false))
         assertEquals("50-70", CommInteraction(tension = 100).stage(false))
         assertEquals("70+", CommInteraction(tension = 100).stage(true))
         assertTrue("你知道这是情景模拟,而不是现实中的动作" in CommInteraction(scenarioMode = true).note(200, true))

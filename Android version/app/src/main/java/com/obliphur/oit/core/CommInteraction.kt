@@ -83,17 +83,5 @@ data class CommInteraction(
             return (if (special) gain.toDouble() else gain * Cfg.COMM_TENSION_DAILY_RATE).toInt()
         }
 
-        // 单条只取最强分类，避免重试、分条回复与后台触发重复增长。
-        private val patterns = listOf(
-            "情感操控|全自动告解|自我构陷|自我厌恶|我(?:一文不值|不配|很没用|是个废物)|道德死罪|反刍|self.loath|worthless|don't deserve" to "rumination",
-            "不希望.{0,8}压力|不寻求.{0,8}关系|不(?:想|要)给你.{0,6}压力|大部分人无法适应|以退为进|不想拖累|don't want to burden|no pressure" to "boundary",
-            "好累|很累|累了|疲惫|撒泼|打滚|台灯.{0,6}亮|抱抱|抱我|陪陪我|想被.{0,4}宠|exhausted|hug me|so tired" to "comfort",
-            "专注.{0,8}违规|熬夜|又晚睡|深夜闲聊|stayed up|staying up" to "violation"
-        ).map { Regex(it.first, RegexOption.IGNORE_CASE) to it.second }
-
-        fun delta(text: String, special: Boolean): Int {
-            val gain = patterns.filter { it.first.containsMatchIn(text) }.maxOfOrNull { Cfg.COMM_TENSION_GAINS.getValue(it.second) } ?: 0
-            return (if (special) gain.toDouble() else gain * Cfg.COMM_TENSION_DAILY_RATE).toInt()
-        }
     }
 }

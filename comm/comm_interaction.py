@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""情景模式与张力：按对象保存，发送时增长，成功回复后释放。"""
+"""情景模式与张力：按对象保存，模型判断增长，特殊空闲结束后释放。"""
 
 import re
 import json
@@ -25,21 +25,6 @@ def interaction_norm(value):
             "burst_until": number("burst_until", 2**63 - 1),
             "gain_until": number("gain_until", 2**63 - 1),
             "day": str(d.get("day") or ""), "ts": number("ts", 2**63 - 1)}
-
-
-# 单条消息只取最强的一类，不额外调用模型。
-TENSION_PATTERNS = (
-    (r"情感操控|全自动告解|自我构陷|自我厌恶|我(?:一文不值|不配|很没用|是个废物)|道德死罪|反刍|self.loath|worthless|don't deserve", "rumination"),
-    (r"不希望.{0,8}压力|不寻求.{0,8}关系|不(?:想|要)给你.{0,6}压力|大部分人无法适应|以退为进|不想拖累|don't want to burden|no pressure", "boundary"),
-    (r"好累|很累|累了|疲惫|撒泼|打滚|台灯.{0,6}亮|抱抱|抱我|陪陪我|想被.{0,4}宠|exhausted|hug me|so tired", "comfort"),
-    (r"专注.{0,8}违规|熬夜|又晚睡|深夜闲聊|stayed up|staying up", "violation"),
-)
-
-
-def tension_delta(text, special):
-    gains = config.COMM_TENSION_GAINS
-    gain = max((gains[key] for pattern, key in TENSION_PATTERNS if re.search(pattern, text, re.I)), default=0)
-    return int(gain if special else gain * config.COMM_TENSION_DAILY_RATE)
 
 
 _TENSION_TAG = re.compile(r"[\[［]\s*tension\b[^\[\]［］\n]*[\]］]", re.I)
@@ -140,10 +125,17 @@ class InteractionMixin:
     def _interaction_sent(self, text, message=None):
         d = self._interaction_prepare()
         special = self._interaction_special()
-        gain = tension_delta(text, special)
-        d["tension"] = min(config.COMM_TENSION_MAX, d["tension"] + interaction_gain(d, gain, self._ms()))
-        if message and text.strip() and not gain:
+        if message and text.strip():
             d["pending"][message["uid"]] = special
+        self._interaction_set(d)
+
+    def _interaction_violation(self):
+        """真实联合行动违规直接结算，不从聊天文本推断。"""
+        d = self._interaction_prepare()
+        gain = config.COMM_TENSION_GAINS["violation"]
+        if not self._interaction_special():
+            gain = int(gain * config.COMM_TENSION_DAILY_RATE)
+        d["tension"] = min(config.COMM_TENSION_MAX, d["tension"] + interaction_gain(d, gain, self._ms()))
         self._interaction_set(d)
 
     def _interaction_judge_note(self, kind):
@@ -153,7 +145,7 @@ class InteractionMixin:
         if not self._interaction_candidates:
             return "本次无需判断张力增量，不要输出 [tension:序号:增量]。"
         items = [{"序号": i, "用户消息": text} for i, (_uid, _special, text) in enumerate(self._interaction_candidates, 1)]
-        return ("以下用户消息未触发本地张力正则。结合人设、上下文和语义判断是否应增加张力，普通交流无需增加。"
+        return ("请结合人设、上下文和以下用户消息的语义判断是否应增加张力，普通交流无需增加。"
                 f"为每条选择0至{max(config.COMM_TENSION_GAINS.values())}的整数基础增量，在正常回复末尾附加 [tension:序号:增量]；"
                 f"0表示不增加，可省略。自我构陷参考{config.COMM_TENSION_GAINS['rumination']}、边界试探{config.COMM_TENSION_GAINS['boundary']}、"
                 f"疲惫撒娇{config.COMM_TENSION_GAINS['comfort']}、违规{config.COMM_TENSION_GAINS['violation']}，也可自行判断其他情绪。"

@@ -2957,9 +2957,8 @@ class Comm(
     private fun interactionSent(text: String, message: ChatMsg? = null) {
         val d = interactionPrepare()
         val special = specialPeriod(otherStatus())
-        val gain = CommInteraction.delta(text, special)
-        val pending = if (message != null && text.isNotBlank() && gain == 0) d.pending + (message.uid to special) else d.pending
-        interactionSet(d.copy(tension = minOf(Cfg.COMM_TENSION_MAX, d.tension + d.gain(gain, nowMs())), pending = pending.entries.toList().takeLast(KEEP).associate { it.toPair() }))
+        val pending = if (message != null && text.isNotBlank()) d.pending + (message.uid to special) else d.pending
+        interactionSet(d.copy(pending = pending.entries.toList().takeLast(KEEP).associate { it.toPair() }))
     }
 
     private fun interactionJudgeNote(kind: String): String {
@@ -2968,7 +2967,7 @@ class Comm(
             .map { Triple(it.uid, d.pending.getValue(it.uid), it.text) }
         if (interactionCandidates.isEmpty()) return "本次无需判断张力增量，不要输出 [tension:序号:增量]。"
         val items = JSONArray(interactionCandidates.mapIndexed { i, (_, _, text) -> JSONObject().put("序号", i + 1).put("用户消息", text) })
-        return "以下用户消息未触发本地张力正则。结合人设、上下文和语义判断是否应增加张力，普通交流无需增加。" +
+        return "请结合人设、上下文和以下用户消息的语义判断是否应增加张力，普通交流无需增加。" +
             "为每条选择0至${Cfg.COMM_TENSION_GAINS.values.max()}的整数基础增量，在正常回复末尾附加 [tension:序号:增量]；" +
             "0表示不增加，可省略。自我构陷参考${Cfg.COMM_TENSION_GAINS.getValue("rumination")}、边界试探${Cfg.COMM_TENSION_GAINS.getValue("boundary")}、" +
             "疲惫撒娇${Cfg.COMM_TENSION_GAINS.getValue("comfort")}、违规${Cfg.COMM_TENSION_GAINS.getValue("violation")}，也可自行判断其他情绪。" +
@@ -3434,7 +3433,10 @@ class Comm(
     @Synchronized
     fun jointHpLost(text: String): Boolean {
         val j = curJoint()?.takeIf { it.state == "run" } ?: return false
-        interactionSent("专注期间违规")
+        val d = interactionPrepare()
+        val base = Cfg.COMM_TENSION_GAINS.getValue("violation")
+        val gain = (if (specialPeriod(otherStatus())) base.toDouble() else base * Cfg.COMM_TENSION_DAILY_RATE).toInt()
+        interactionSet(d.copy(tension = minOf(Cfg.COMM_TENSION_MAX, d.tension + d.gain(gain, nowMs()))))
         val hp = j.hp.takeLast(JOINT_HP_MAX - 1) + (now().iso() to text.trim().split(Regex("""\s+""")).joinToString(" ").take(200))
         jointSet(j.copy(hp = hp, violated = true))
         return true

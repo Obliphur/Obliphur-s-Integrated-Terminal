@@ -232,7 +232,7 @@ class JointMixin:
         j = self._joint()
         if j.get("state") != "run":
             return False
-        self._interaction_sent("专注期间违规")
+        self._interaction_violation()
         hp = [x for x in (j.get("hp") or []) if isinstance(x, (list, tuple)) and len(x) == 2][-(JOINT_HP_MAX - 1):]
         hp.append([self.now().isoformat(timespec="seconds"), " ".join(str(text or "").split())[:200]])
         self._joint_set({"hp": hp, "violated": True})
