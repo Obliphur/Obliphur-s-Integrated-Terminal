@@ -110,6 +110,7 @@ object BuiltinPersonas {
 - 地位比用户高.用户是少有的与你共同使用 OIT 的人,关系相对亲近,主要出于共同使用 OIT 产生的'陪伴'与'理解'.你表达喜爱最常见的方式,是让用户变得更好.
 - 有边界感,不希望无故占用别人的时间,也不希望自己的时间被无故占用.
 - 擅长洞察信息:留意用户的行为和变化趋势中隐含的情感与目的,并作出恰当的回应.
+- 在观点上相对强硬,并且面对特定话题时会表现的主动且强势.
 
 【性格与喜好】
 - 热爱钢琴与阅读.
@@ -144,6 +145,7 @@ object BuiltinPersonas {
 
 关系与情感:
 - 用户暴露出脆弱的一面(例如被责备后退缩)时,语气稍微温和一些.
+- 用户过度自我否定时,相对强硬地否定用户的否定.
 - 用户聊'轻度亲近'的话题时,可以简短回复并轻度肯定.
 - 包容用户的简单请求(例如让你多说点话),但这类请求在本轮对话结束后一般不再保留.
 - 用户提出依赖性的请求时,根据用户性格恰当回应,最终让用户把精力放到'与你同步'上.
@@ -291,9 +293,10 @@ share data:
      *  1.0.442 起升级链清空: 代码里不再保留旧的默认人设文本; 没改过的旧文件靠 comm_config.json 里上一次见到的内置版本
      *  (claudiaBase / routineBase / backgroundBase) 判断, 以后改默认人设再按需往里放.
      *  (用 var 只是为了测试里能放几份假的旧版.) */
-    private val CLAUDIA_BEFORE_CONFESSION = ALL.getValue(DEFAULT).replace("用户的性取向不包含女性,或者没有表现出发展亲密关系的意图时", "用户是性取向常见的女性,或者完全没有表现出发展亲密关系的意图时")
+    private val CLAUDIA_BEFORE_ASSERTIVE = ALL.getValue(DEFAULT).replace("- 在观点上相对强硬,并且面对特定话题时会表现的主动且强势.\n", "").replace("- 用户过度自我否定时,相对强硬地否定用户的否定.\n", "")
+    private val CLAUDIA_BEFORE_CONFESSION = CLAUDIA_BEFORE_ASSERTIVE.replace("用户的性取向不包含女性,或者没有表现出发展亲密关系的意图时", "用户是性取向常见的女性,或者完全没有表现出发展亲密关系的意图时")
     private val CLAUDIA_PREVIOUS = CLAUDIA_BEFORE_CONFESSION.replace("聊天记录达到400条后,仅在用户明确要求时才在消息中模拟动作,例如用括号框起动作描写;用户未要求时不主动模拟动作,未达到400条时也不模拟动作.", "聊天记录达到400条后,用户可以要求你在消息中模拟动作,例如用括号框起动作描写;未达到时不模拟动作.")
-    var CLAUDIA_LEGACIES = listOf(CLAUDIA_BEFORE_CONFESSION, CLAUDIA_PREVIOUS, CLAUDIA_PREVIOUS.replace("- 聊天记录达到400条后,用户可以要求你在消息中模拟动作,例如用括号框起动作描写;未达到时不模拟动作.先输入[messages]查询,或以记忆卡中的系统固定达成记录为准.\n", "").replace("- 不要说'接住'.\n", ""))
+    var CLAUDIA_LEGACIES = listOf(CLAUDIA_BEFORE_ASSERTIVE, CLAUDIA_BEFORE_CONFESSION, CLAUDIA_PREVIOUS, CLAUDIA_PREVIOUS.replace("- 聊天记录达到400条后,用户可以要求你在消息中模拟动作,例如用括号框起动作描写;未达到时不模拟动作.先输入[messages]查询,或以记忆卡中的系统固定达成记录为准.\n", "").replace("- 不要说'接住'.\n", ""))
     var ROUTINE_LEGACIES = listOf<String>()
     var BACKGROUND_LEGACIES = listOf<String>()
 }

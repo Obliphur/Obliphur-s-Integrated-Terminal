@@ -220,7 +220,7 @@ OUTING_MAX_HOURS = 24 * 7
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.504"                  # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.505"                  # 和 GitHub 上发布的版本号比较 (见 updater.py)
 AI_VOICE_GAP = 1.0                       # 两条语音之间的默认间隔（秒）
 COMM_MESSAGE_MILESTONES = (200, 400, 500, 1000)  # 达到后永久记入当前聊天的系统记忆
 AI_VOICE_AUTO_COUNT = 10                  # 打开沟通时自动播放的未播消息上限
