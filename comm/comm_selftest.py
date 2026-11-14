@@ -758,6 +758,8 @@ def _selftest():
     cool = Comm(os.path.join(td, "cool"), folder, now=lambda: fixed2, chat_fn=fake)
     cool.set_cfg(persona="时段.txt")
     cool._interaction_set(dict(cool.cfg["interaction"], tension=91))
+    message = cool._add("me", "我想和你说话")
+    cool._interaction_sent(message["text"], message)
     cool._interaction_reply(True, True, int(fixed2.replace(hour=14, minute=0).timestamp() * 1000))
     assert cool.cfg["interaction"]["gain_until"] == gain_until
     cool.now = lambda: fixed2 + timedelta(minutes=1)
@@ -780,6 +782,82 @@ def _selftest():
     cool._interaction_judged("[tension:1:20]")
     assert cool.cfg["interaction"]["tension"] == 60, "爆发已回落20，24小时到点恢复翻倍基础值"
     cool.flush()
+    # 高张力特殊空闲必谈；用户整段沉默时不爆发，只跳过下一次换日衰减。
+    special_clock = [fixed2.replace(hour=13, minute=40)]
+    special_dir = os.path.join(td, "special_force")
+    special = Comm(special_dir, folder, now=lambda: special_clock[0], chat_fn=fake)
+    special.ai.set_profile("deepseek", api_key="k")
+    special.set_cfg(persona="时段.txt", split_send=False)
+    special._interaction_set({"tension": 90, "day": "2027-05-04"})
+    before = len(calls)
+    special.tick()
+    assert len(calls) == before, "90 仍属于 50-90 档"
+    special._interaction_set({"tension": 91, "day": "2027-05-04"})
+    special._pro_recent = lambda now, ctx=None: True
+    special_clock[0] = special_clock[0].replace(hour=12, minute=58)
+    special.tick()
+    assert len(calls) == before, "高张力不在特殊空闲前另发一次"
+    special_clock[0] = special_clock[0].replace(hour=13, minute=40)
+    special.set_muted(True)
+    special.tick()
+    assert len(calls) == before
+    special.set_muted(False)
+    special._pro_recent = lambda now, ctx=None: True
+    script.append("先前那件事,我还记得.")
+    special.tick(); wait(special)
+    assert len(calls) == before + 1 and "特殊空闲时间" in calls[-1][1][-1]["content"]
+    assert not special.cfg["interaction"]["burst_until"] and not special.cfg["interaction"]["gain_until"]
+    assert not special.cfg["interaction"]["burst_days"]
+    special.tick()
+    assert len(calls) == before + 1
+    special_doc = special.sync_doc()
+    special.flush()
+    again_special = Comm(special_dir, folder, now=lambda: special_clock[0], chat_fn=fake)
+    again_special.tick()
+    peer_special = Comm(os.path.join(td, "special_peer"), folder, now=lambda: special_clock[0], chat_fn=fake)
+    peer_special.ai.set_profile("deepseek", api_key="k")
+    peer_special.set_cfg(persona="时段.txt", split_send=False)
+    peer_special.apply_doc(special_doc)
+    peer_special.tick()
+    assert len(calls) == before + 1, "重启与同步后同一段不重发"
+    special_clock[0] = fixed2.replace(hour=14, minute=0)
+    d = special._interaction_prepare()
+    assert d["tension"] == 91 and d["skip_decay"] and not d["shame_turns"]
+    special_clock[0] = fixed2.replace(hour=8) + timedelta(days=1)
+    d = special._interaction_prepare()
+    assert d["tension"] == 91 and not d["skip_decay"]
+    special_clock[0] += timedelta(days=1)
+    assert special._interaction_prepare()["tension"] == 76, "豁免只消耗一次"
+    # 跨午夜、离线多天和时钟回拨不会重复豁免或漏掉其后的逐日衰减。
+    silent_night = {"tension": 95, "day": "2027-05-04", "special_until": midnight_end}
+    assert interaction_roll(interaction_settle(silent_night, midnight_end - 1), datetime(2027, 5, 5).date())["day"] == "2027-05-04"
+    silent_night = interaction_settle(silent_night, midnight_end)
+    assert interaction_roll(silent_night, datetime(2027, 5, 5).date())["tension"] == 95
+    assert interaction_roll(silent_night, datetime(2027, 5, 6).date())["tension"] == 80
+    assert interaction_roll(silent_night, datetime(2027, 5, 3).date())["skip_decay"]
+    peer_special.now = lambda: fixed2.replace(hour=13, minute=40) + timedelta(days=3)
+    peer_special._interaction_set({"tension": 95, "day": "2027-05-04"})
+    assert peer_special._interaction_prepare()["tension"] == 5, "先结算离线期间的衰减，再判断当前特殊空闲"
+    # 持续时间日程、后台对象同样必谈，前台没有用户发言也不能算爆发。
+    special_clock[0] = fixed2.replace(hour=13, minute=40) + timedelta(days=3)
+    open(os.path.join(folder, "时段_routine.txt"), "w", encoding="utf-8").write("初始起点:12:00\n1h:空闲\n1h:特殊空闲\n10h:空闲\n")
+    special.reload_schedule()
+    owner = special.pid
+    special._interaction_set({"tension": 91, "day": special_clock[0].date().isoformat()})
+    special.set_cfg(persona="空白.txt")
+    script.append("这次也想找你谈谈.")
+    special.tick()
+    for _ in range(300):
+        time.sleep(.01)
+        special.tick()
+        if not special._bg_busy:
+            break
+    assert len(calls) == before + 2 and not special._state_of(owner)["interaction"]["burst_until"]
+    assert special._state_of(owner)["interaction"]["special_until"]
+    special.clear()
+    assert not special.cfg["interaction"]["skip_decay"]
+    special.flush(); again_special.flush(); peer_special.flush()
+    os.remove(os.path.join(folder, "时段_routine.txt"))
     # ---- 设备同步: 记录合并, 只有 leader 调用 AI / 重试, 清空一起清 ----
     dA, dB = os.path.join(td, "sa"), os.path.join(td, "sb")
     os.makedirs(dA)

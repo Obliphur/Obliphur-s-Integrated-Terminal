@@ -39,7 +39,7 @@ class CommSnap(
 const val JOINT_STATUS = "联合行动"
 
 /** 人设日程里的一段: kind = idle / rest / focus / sleep; start / end 是一天中的第几分钟 (跨零点时 end > 1440). */
-class SegEntry(val kind: String, val start: Int, val end: Int, val label: String, val detail: String, val loop: Int = -1)
+class SegEntry(val kind: String, val start: Int, val end: Int, val label: String, val detail: String, val loop: Int = -1, val begin: LocalDateTime? = null)
 
 /** 人设里的循环段 [start, end) (一天中的第几分钟, 跨零点的 end > 1440), n = 每次专注的分钟数. */
 class LoopSpec(val start: Int, val end: Int, val n: Int)
@@ -2948,9 +2948,18 @@ class Comm(
         storeState(owner, st); changed(); push()
     }
 
-    private fun interactionPrepare(owner: String = pid): CommInteraction {
+    private fun interactionPrepare(owner: String = pid, status: Pair<SegEntry, LocalDateTime>? = null): CommInteraction {
         val old = stateOf(owner).interaction
-        val d = old.settle(nowMs()).roll(now().toLocalDate())
+        var d = old.settle(nowMs()).roll(now().toLocalDate())
+        val current = status ?: if (owner == pid && d.tension > Cfg.COMM_TENSION_CAP) otherStatus() else null
+        if (current != null && specialPeriod(current) && d.tension > Cfg.COMM_TENSION_CAP) {
+            val until = current.second.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+            if (d.specialUntil != until) {
+                val begin = specialBegin(current).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+                val spoke = stateOf(owner).messages.any { it.role == "me" && it.text.isNotBlank() && it.ts >= begin && it.ts < until }
+                d = d.copy(specialUntil = until, specialSpoke = spoke)
+            }
+        }
         if (d != old) interactionSet(d, owner)
         return d
     }
@@ -2959,7 +2968,8 @@ class Comm(
         val d = interactionPrepare()
         val special = specialPeriod(otherStatus())
         val pending = if (message != null && text.isNotBlank()) d.pending + (message.uid to special) else d.pending
-        interactionSet(d.copy(pending = pending.entries.toList().takeLast(KEEP).associate { it.toPair() }))
+        interactionSet(d.copy(pending = pending.entries.toList().takeLast(KEEP).associate { it.toPair() },
+            specialSpoke = d.specialSpoke || (special && d.specialUntil > 0L && message != null && text.isNotBlank())))
     }
 
     private fun interactionJudgeNote(kind: String): String {
@@ -3201,7 +3211,7 @@ class Comm(
         if (sched != null) {                                      // 有日程文件: 按当天算出的日程 (带波动)
             val t = t0
             val s = Routine.statusIn(rtSegs(t.minusHours(1), t.plusHours(1), sched, ctx?.pid ?: pid, joint = ctx == null), t) ?: return null
-            return SegEntry(s.kind, 0, 0, s.label, "") to s.end
+            return SegEntry(s.kind, 0, 0, s.label, "", begin = s.start) to s.end
         }
         val entries = ctx?.entries ?: entries()
         if (entries.isEmpty()) return null
@@ -4213,7 +4223,7 @@ class Comm(
         }
         val status = otherStatus()
         val d = interactionPrepare()
-        interactionTurn = InteractionTurn(specialPeriod(status), d.tension > Cfg.COMM_TENSION_CAP,
+        interactionTurn = InteractionTurn(specialPeriod(status), d.tension > Cfg.COMM_TENSION_CAP && d.specialSpoke,
             status?.second?.atZone(java.time.ZoneId.systemDefault())?.toInstant()?.toEpochMilli() ?: 0L, d.shameTurns > 0)
         val note = CommText.oitText(stateText() + "\n" + d.note(maxOf(msgTotal(), memFixed.maxOrNull() ?: 0), specialPeriod(status)) + "\n" + interactionJudgeNote(kind)) +
             (if (rt != null) "\n" + rtNote(now()) else "")
@@ -4591,6 +4601,7 @@ class Comm(
     private fun checkProactive(t: LocalDateTime, snap: CommSnap?, ctx: BgCtx? = null) {
         if (ctx == null && (isMuted() || jointLive())) return          // 联合行动的同步阶段: 对方陪着用户, 不主动找话题
         val done = proDone(ctx)
+        if (tensionSpecial(t, ctx)) return
         val spec = if (ctx != null) ctx.rt else rt
         if (spec != null) { checkProactiveRt(t, ctx, spec, done); return }
         // I. 对方自己正处在空闲 / 休息段里, 而且这段还剩 10 分钟以上: 段开始后 1~3 分钟发一条
@@ -4627,6 +4638,7 @@ class Comm(
         }
         // II / III. 人设日程里每段空闲 / 休息开始前 1~3 分钟, 有概率发一条
         for (ev in scheduleEvents(t, ctx?.segs)) {
+            if (specialPeriod(statusFor(ev.begin, ctx)) && interactionPrepare(ctx?.pid ?: pid).tension > Cfg.COMM_TENSION_CAP) continue
             if (ev.key in done) continue
             val due = ev.begin.minusSeconds(60L + java.util.Random(ev.key.hashCode().toLong()).nextInt(121))
             if (t.isBefore(due)) continue
@@ -4678,6 +4690,7 @@ class Comm(
         for (s in segs) {                                                        // II / III. 每段空闲 / 休息 (不含睡眠被延迟的空档) 开始前 1~3 分钟
             if ((s.kind != "idle" && s.kind != "rest") || s.gap || !t.isBefore(s.start) || s.start.isAfter(t.plusSeconds(PROACTIVE_MAX_DELAY.toLong()))) continue
             val cls = Routine.segClass(s)                                              // idle / rest / key 重要活动 / special 特殊空闲
+            if (cls == "special" && interactionPrepare(ctx?.pid ?: pid).tension > Cfg.COMM_TENSION_CAP) continue
             val key = "S${s.start.toLocalDate()}T${hm(s.start)}${cls[0]}"
             if (key in done) continue
             val due = s.start.minusSeconds(60L + java.util.Random(key.hashCode().toLong()).nextInt(121))
@@ -4707,6 +4720,26 @@ class Comm(
         }
         if (ctx != null) storeState(ctx.pid, ctx.st) else { saveChat(); saveCfg() }
         push()
+    }
+
+    private fun specialBegin(status: Pair<SegEntry, LocalDateTime>): LocalDateTime =
+        status.first.begin ?: status.second.minusMinutes((status.first.end - status.first.start).toLong())
+
+    /** 高张力在特殊空闲内必谈一次，静音等外层限制照常生效。 */
+    private fun tensionSpecial(t: LocalDateTime, ctx: BgCtx?): Boolean {
+        val status = statusFor(t, ctx)
+        val owner = ctx?.pid ?: pid
+        val d = interactionPrepare(owner, status)
+        if (ctx != null) ctx.st.interaction = stateOf(owner).interaction
+        if (status == null || !specialPeriod(status) || d.tension <= Cfg.COMM_TENSION_CAP) return false
+        val key = "T${status.second.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()}"
+        if (key in proDone(ctx)) return false
+        val begin = specialBegin(status)
+        proMark("S${begin.toLocalDate()}T%02d:%02ds".format(begin.hour, begin.minute), ctx)
+        proMark("F${begin.toLocalDate()}T%02d:%02d".format(begin.hour, begin.minute), ctx)
+        proFire(key, t, t, 1.0,
+            "[系统] " + tr("现在是你的特殊空闲时间，请结合先前记住的话题主动谈话；不要透露机制，也不要拒绝回复。"), ctx, force = true)
+        return true
     }
 
     /** 爆发次日早间首次有空必定找用户谈话，不受概率、迟到和近期谈话限制。 */

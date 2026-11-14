@@ -457,6 +457,8 @@ class RtMixin:
         if ctx is None and (self.is_muted() or self.joint_live()):         # 联合行动的同步阶段: 对方陪着用户, 不主动找话题
             return
         done = self._pro_done(ctx)
+        if self._tension_special(now, ctx):
+            return
         rt = ctx.get("rt") if ctx else self._rt
         if rt:
             self._check_proactive_rt(now, ctx, rt, done)
@@ -496,6 +498,9 @@ class RtMixin:
             return
         # II / III. 人设日程里每段空闲 / 休息开始前 1~3 分钟, 有概率发一条
         for key, kind, begin in self._schedule_events(now, ctx["segs"] if ctx else None):
+            if (self._interaction_special(self.other_status(begin, ctx))
+                    and self._interaction_prepare(ctx["pid"] if ctx else None)["tension"] > config.COMM_TENSION_CAP):
+                continue
             if key in done:
                 continue
             due = begin - timedelta(seconds=random.Random(key).randint(*PROACTIVE_LEAD))
@@ -551,6 +556,8 @@ class RtMixin:
             if s["kind"] not in ("idle", "rest") or s["gap"] or not (now < s["start"] <= now + timedelta(seconds=PROACTIVE_LEAD[1])):
                 continue
             kind = routine.seg_class(s)                                   # idle / rest / key 重要活动 / special 特殊空闲
+            if kind == "special" and self._interaction_prepare(ctx["pid"] if ctx else None)["tension"] > config.COMM_TENSION_CAP:
+                continue  # 高张力改在段内必谈，不再提前按概率发一次。
             key = f"S{s['start']:%Y-%m-%dT%H:%M}{kind[0]}"
             if key in done:
                 continue
@@ -564,6 +571,24 @@ class RtMixin:
                            f"这条是系统提前触发的: 即使你此刻还处于专注/不能回复的时段, 也允许你现在主动给用户发一条消息, 话题自己找 (不要透露日程); "
                            f"这条必须发出, 不要返回{REFUSE}.", ctx)
             return
+
+    def _tension_special(self, now, ctx=None):
+        """高张力在特殊空闲内必谈一次，静音等外层限制照常生效。"""
+        status = self.other_status(now, ctx)
+        pid = ctx["pid"] if ctx else self.pid
+        d = self._interaction_prepare(pid, status)
+        if ctx:
+            ctx["st"]["interaction"] = self._state_of(pid)["interaction"]
+        if not self._interaction_special(status) or d["tension"] <= config.COMM_TENSION_CAP:
+            return False
+        key = f"T{int(status['end'].timestamp() * 1000)}"
+        if key in self._pro_done(ctx):
+            return False
+        self._pro_mark(f"S{status['begin']:%Y-%m-%dT%H:%M}s", ctx)
+        self._pro_mark(f"F{status['begin']:%Y-%m-%dT%H:%M}", ctx)
+        self._pro_fire(key, now, now, 1.0,
+                       "[系统] " + tr("现在是你的特殊空闲时间，请结合先前记住的话题主动谈话；不要透露机制，也不要拒绝回复。"), ctx, force=True)
+        return True
 
     def _burst_morning(self, now, begin, ctx=None):
         """爆发次日早间首次有空必定找用户谈话，不受概率、迟到和近期谈话限制。"""

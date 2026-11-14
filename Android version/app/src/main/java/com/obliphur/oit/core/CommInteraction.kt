@@ -13,7 +13,8 @@ data class CommInteraction(
     val day: String = "", val ts: Long = 0L, val burstUntil: Long = 0L,
     val pending: Map<String, Boolean> = emptyMap(), val gainUntil: Long = 0L,
     val burstDays: List<String> = emptyList(), val morningDay: String = "",
-    val gainCooldowns: Map<String, Long> = emptyMap()
+    val gainCooldowns: Map<String, Long> = emptyMap(),
+    val specialUntil: Long = 0L, val specialSpoke: Boolean = false, val skipDecay: Boolean = false
 ) {
     fun json(): JSONObject = JSONObject().put("scenario_mode", scenarioMode).put("tension", tension)
         .put("shame_turns", shameTurns).put("day", day).put("ts", ts).put("burst_until", burstUntil)
@@ -21,12 +22,16 @@ data class CommInteraction(
         .put("gain_until", gainUntil)
         .put("burst_days", JSONArray(burstDays)).put("morning_day", morningDay)
         .put("gain_cooldowns", JSONObject(gainCooldowns))
+        .put("special_until", specialUntil).put("special_spoke", specialSpoke).put("skip_decay", skipDecay)
 
     fun roll(today: LocalDate): CommInteraction {
         val elapsed = runCatching { ChronoUnit.DAYS.between(LocalDate.parse(day), today) }.getOrDefault(0L)
         return when {
             elapsed > 0 -> {
+                // 跨午夜的特殊空闲先等整段结束，再判断是否属于无人回应。
+                if (specialUntil > 0L && !specialSpoke && burstUntil == 0L) return this
                 var remaining = elapsed
+                if (skipDecay) remaining--
                 var next = tension
                 if (shameTurns == 0 && burstUntil == 0L) {
                     while (remaining > 0L && next > 0) {
@@ -39,7 +44,7 @@ data class CommInteraction(
                         remaining--
                     }
                 }
-                copy(day = today.toString(), tension = next)
+                copy(day = today.toString(), tension = next, skipDecay = false)
             }
             day.isEmpty() -> copy(day = today.toString())
             else -> this
@@ -61,8 +66,13 @@ data class CommInteraction(
             "若有思考空间,先校验模式、时段、生效档位和冷静期,再对齐动机与言行."
     }
 
-    fun settle(nowMs: Long): CommInteraction = if (burstUntil > 0L && nowMs >= burstUntil)
-        copy(tension = Cfg.COMM_TENSION_RELEASE, shameTurns = Cfg.COMM_SHAME_TURNS, burstUntil = 0L) else this
+    fun settle(nowMs: Long): CommInteraction {
+        var d = this
+        if (specialUntil > 0L && nowMs >= specialUntil)
+            d = d.copy(skipDecay = skipDecay || (!specialSpoke && burstUntil == 0L), specialUntil = 0L, specialSpoke = false)
+        return if (d.burstUntil > 0L && nowMs >= d.burstUntil)
+            d.copy(tension = Cfg.COMM_TENSION_RELEASE, shameTurns = Cfg.COMM_SHAME_TURNS, burstUntil = 0L) else d
+    }
 
     fun gain(gain: Int, nowMs: Long): Int = if (nowMs < gainUntil) (gain * Cfg.COMM_TENSION_BURST_GAIN_RATE).toInt() else gain
 
@@ -76,7 +86,7 @@ data class CommInteraction(
 
     fun replied(special: Boolean, burst: Boolean, until: Long = 0L, shame: Boolean = shameTurns > 0, nowMs: Long = 0L): CommInteraction = when {
         shame && shameTurns > 0 -> copy(shameTurns = shameTurns - 1)
-        special && burst && shameTurns == 0 -> copy(burstUntil = maxOf(burstUntil, until),
+        special && burst && shameTurns == 0 && (specialUntil != until || specialSpoke) -> copy(burstUntil = maxOf(burstUntil, until),
             burstDays = if (burstUntil == 0L && until > 0L)
                 (burstDays + localDay(nowMs)).distinct().sorted().takeLast(2) else burstDays,
             gainUntil = if (burstUntil == 0L && until > 0L) maxOf(gainUntil, nowMs + Cfg.COMM_TENSION_BURST_GAIN_SECONDS * 1000L) else gainUntil)
@@ -98,7 +108,9 @@ data class CommInteraction(
                 if (end > 0L) listOf(localDay(end - Cfg.COMM_TENSION_BURST_GAIN_SECONDS * 1000L)) else emptyList()
             }, o?.optString("morning_day") ?: "",
             o?.optJSONObject("gain_cooldowns")?.let { c -> (Cfg.COMM_TENSION_GAINS.keys + "other")
-                .associateWith { maxOf(0L, c.optLong(it)) }.filterValues { it > 0L } } ?: emptyMap())
+                .associateWith { maxOf(0L, c.optLong(it)) }.filterValues { it > 0L } } ?: emptyMap(),
+            maxOf(0L, o?.optLong("special_until") ?: 0L), o?.optBoolean("special_spoke") ?: false,
+            o?.optBoolean("skip_decay") ?: false)
 
         private fun localDay(ms: Long): String = Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()).toLocalDate().toString()
 

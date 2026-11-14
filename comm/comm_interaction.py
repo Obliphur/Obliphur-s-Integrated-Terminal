@@ -44,6 +44,9 @@ def interaction_norm(value):
             "gain_cooldowns": clean_cooldowns,
             "burst_days": sorted({s for s in days if isinstance(s, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", s)})[-2:],
             "morning_day": str(d.get("morning_day") or ""),
+            "special_until": number("special_until", 2**63 - 1),
+            "special_spoke": d.get("special_spoke") is True,
+            "skip_decay": d.get("skip_decay") is True,
             "day": str(d.get("day") or ""), "ts": number("ts", 2**63 - 1)}
 
 
@@ -92,6 +95,12 @@ def interaction_roll(d, today):
     except ValueError:
         elapsed = 0
     if elapsed > 0:
+        # 跨午夜的特殊空闲先等整段结束，再判断是否属于无人回应。
+        if d["special_until"] and not d["special_spoke"] and not d["burst_until"]:
+            return d
+        if d["skip_decay"]:
+            elapsed -= 1
+            d["skip_decay"] = False
         if not d["shame_turns"] and not d["burst_until"]:
             for _ in range(elapsed):
                 if not d["tension"]:
@@ -111,6 +120,10 @@ def interaction_roll(d, today):
 def interaction_settle(d, now_ms):
     """爆发持续到触发时的特殊空闲段结束，之后只回落一次。"""
     d = interaction_norm(d)
+    if d["special_until"] and now_ms >= d["special_until"]:
+        if not d["special_spoke"] and not d["burst_until"]:
+            d["skip_decay"] = True
+        d.update(special_until=0, special_spoke=False)
     if d["burst_until"] and now_ms >= d["burst_until"]:
         d.update(tension=config.COMM_TENSION_RELEASE, shame_turns=config.COMM_SHAME_TURNS, burst_until=0)
     return d
@@ -152,10 +165,19 @@ class InteractionMixin:
         self._changed()
         self._push()
 
-    def _interaction_prepare(self, pid=None):
+    def _interaction_prepare(self, pid=None, status=None):
         pid = pid or self.pid
         d = interaction_norm(self._state_of(pid).get("interaction"))
         rolled = interaction_roll(interaction_settle(d, self._ms()), self.now().date())
+        if status is None and pid == self.pid and rolled["tension"] > config.COMM_TENSION_CAP:
+            status = self.other_status()
+        if status and self._interaction_special(status) and rolled["tension"] > config.COMM_TENSION_CAP:
+            until = int(status["end"].timestamp() * 1000)
+            if rolled["special_until"] != until:
+                begin = int(status["begin"].timestamp() * 1000)
+                spoke = any(m["role"] == "me" and str(m.get("text") or "").strip() and begin <= int(m["ts"]) < until
+                            for m in self._state_of(pid)["messages"])
+                rolled.update(special_until=until, special_spoke=spoke)
         if rolled != d:
             self._interaction_set(rolled, pid)
         return rolled
@@ -165,6 +187,8 @@ class InteractionMixin:
         special = self._interaction_special()
         if message and text.strip():
             d["pending"][message["uid"]] = special
+            if special and d["special_until"]:
+                d["special_spoke"] = True
         self._interaction_set(d)
 
     def _interaction_violation(self):
@@ -210,7 +234,7 @@ class InteractionMixin:
         d = self._interaction_prepare(pid)
         if shame and d["shame_turns"]:
             d["shame_turns"] -= 1
-        elif special and burst and not d["shame_turns"]:
+        elif special and burst and not d["shame_turns"] and (d["special_until"] != until or d["special_spoke"]):
             if not d["burst_until"] and until:
                 d["gain_until"] = max(d["gain_until"], self._ms() + config.COMM_TENSION_BURST_GAIN_SECONDS * 1000)
                 d["burst_days"] = sorted(set(d["burst_days"] + [self.now().date().isoformat()]))[-2:]

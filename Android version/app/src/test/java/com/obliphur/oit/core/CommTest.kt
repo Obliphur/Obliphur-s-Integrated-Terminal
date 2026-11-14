@@ -605,6 +605,89 @@ class CommTest {
         c.flush(); again.flush(); peer.flush()
     }
 
+    @Test
+    fun specialTensionProactive() {
+        val td = Files.createTempDirectory("oit").toFile()
+        val dir = File(td, "d").also { it.mkdirs() }
+        val personas = File(td, "p")
+        val c = comm(dir, personas)
+        c.importPersona("特殊.txt", ("你是特殊.\n13:00-14:00:特殊空闲\n" +
+            "长时间休息发起谈话概率:0%\n空闲发起谈话概率:0%\n特殊空闲发起谈话概率:0%\n").byteInputStream())
+        c.set(persona = "特殊.txt", splitSend = false)
+        clock = LocalDateTime.of(2027, 5, 4, 13, 40)
+        val owner = Comm.pidOf("特殊.txt")
+        fun state() = CommInteraction.parse(c.syncDoc()["interaction:$owner"] as JSONObject)
+        fun setTension(tension: Int) {
+            val ts = maxOf(clock.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli(),
+                (c.syncDoc()["interaction:$owner"] as? JSONObject)?.optLong("ts")?.plus(1) ?: 1L)
+            c.applyDoc(mapOf("interaction:$owner" to CommInteraction(tension = tension,
+                day = clock.toLocalDate().toString(), ts = ts).json().put("clear", 0)))
+        }
+        setTension(90); c.tick()
+        assertEquals(0, calls.size)
+        setTension(91)
+        clock = clock.withHour(12).withMinute(58)
+        c.tick(); assertEquals(0, calls.size)
+        clock = clock.withHour(13).withMinute(40)
+        c.setMuted(true); c.tick(); assertEquals(0, calls.size)
+        c.setMuted(false)
+        c.addForTest("sys", "[系统] 刚发过")
+        script.add("先前那件事,我还记得.")
+        c.tick(); wait(c)
+        assertEquals(1, calls.size)
+        assertTrue("特殊空闲时间" in calls.last().second.last().second)
+        assertEquals(0L, state().burstUntil); assertEquals(0L, state().gainUntil)
+        assertTrue(state().burstDays.isEmpty())
+        c.tick(); assertEquals(1, calls.size)
+        val doc = c.syncDoc()
+        c.flush()
+        val again = comm(dir, personas)
+        again.tick(); assertEquals(1, calls.size)
+        val peer = comm(File(td, "peer").also { it.mkdirs() }, personas)
+        peer.set(persona = "特殊.txt", splitSend = false); peer.applyDoc(doc)
+        peer.tick(); assertEquals(1, calls.size)
+        clock = clock.withHour(14).withMinute(0)
+        c.tick()
+        assertEquals(91, state().tension); assertTrue(state().skipDecay)
+        assertEquals(0, state().shameTurns)
+        clock = clock.plusDays(1).withHour(8)
+        c.tick()
+        assertEquals(91, state().tension); assertFalse(state().skipDecay)
+        clock = clock.plusDays(1)
+        c.tick(); assertEquals(76, state().tension)
+        // 跨午夜等待整段结束；离线多天只跳过第一次，回拨不消费豁免。
+        val end = LocalDateTime.of(2027, 5, 5, 1, 0).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+        val night = CommInteraction(tension = 95, day = "2027-05-04", specialUntil = end)
+        assertEquals("2027-05-04", night.settle(end - 1).roll(java.time.LocalDate.of(2027, 5, 5)).day)
+        val silent = night.settle(end)
+        assertEquals(95, silent.roll(java.time.LocalDate.of(2027, 5, 5)).tension)
+        assertEquals(80, silent.roll(java.time.LocalDate.of(2027, 5, 6)).tension)
+        assertTrue(silent.roll(java.time.LocalDate.of(2027, 5, 3)).skipDecay)
+        assertEquals(silent, CommInteraction.parse(silent.json()))
+        clock = LocalDateTime.of(2027, 5, 7, 13, 40)
+        val old = peer.syncDoc()["interaction:$owner"] as JSONObject
+        peer.applyDoc(mapOf("interaction:$owner" to CommInteraction(tension = 95, day = "2027-05-04",
+            ts = maxOf(old.getLong("ts") + 1, clock.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli())).json().put("clear", 0)))
+        peer.tick()
+        assertEquals(5, CommInteraction.parse(peer.syncDoc()["interaction:$owner"] as JSONObject).tension)
+        // 持续时间日程和后台对象同样必谈一次。
+        clock = LocalDateTime.of(2027, 5, 7, 13, 40)
+        c.importPersona("特殊_routine.txt", "初始起点:12:00\n1h:空闲\n1h:特殊空闲\n10h:空闲\n".byteInputStream())
+        c.reloadSchedule()
+        setTension(91)
+        c.importPersona("空白.txt", "你是空白.".byteInputStream())
+        c.set(persona = "空白.txt")
+        script.add("这次也想找你谈谈.")
+        c.tick()
+        for (i in 0 until 300) { Thread.sleep(10); c.tick(); if (c.bgIdle()) break }
+        assertEquals(2, calls.size)
+        assertTrue(state().specialUntil > 0L); assertEquals(0L, state().burstUntil)
+        c.set(persona = "特殊.txt")
+        c.clear()
+        assertFalse((c.syncDoc()["interaction:$owner"] as? JSONObject)?.optBoolean("skip_decay") ?: false)
+        c.flush(); again.flush(); peer.flush()
+    }
+
     /** 每天空闲时间里能用沟通 45 分钟 (只算空闲状态下开着界面的时间); 休息不限 (沟通 24.1). */
     @Test
     fun idleDailyBudget() {

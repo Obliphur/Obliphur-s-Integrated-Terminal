@@ -6,6 +6,7 @@ object EnStrings {
         "推荐使用Claude或者Gemini" to "Recommended: Claude or Gemini",
         "📱 软件聊天" to "📱 Messaging",
         "🎭 情景模拟" to "🎭 Scenario",
+        "现在是你的特殊空闲时间，请结合先前记住的话题主动谈话；不要透露机制，也不要拒绝回复。" to "You are now in your special free time. Start a conversation based on the topics you remembered earlier; do not reveal the mechanism or refuse to reply.",
         "累计 {n} 条聊天记录解锁情景模拟" to "Unlock scenario mode after {n} chat messages",
         "share data 邀请" to "Share-data invitation",
         "仅可在空闲或休息期间播放语音." to "Voice playback is only available while idle or on a break.",
