@@ -2,6 +2,7 @@
 
 由根目录 `AGENTS.md` 引用；按任务读取对应条目。
 
+- [默认任务范围](feedback_uncommitted_scope.md)：未另行指定时，以未提交内容为任务范围，直接完成同步和收尾。
 - [开发收尾流程](feedback_release_workflow.md)：双端版本一起递增，提交信息为 `1`，推送 `origin main`。
 - [上下文与 token 消耗](feedback_token_efficiency.md)：先搜索再局部读，优先已有自检，避免重复探索。
 - [“现在……”表示修改要求](user-now-means-change.md)：将描述落实为期望行为。

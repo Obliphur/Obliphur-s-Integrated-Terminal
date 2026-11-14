@@ -6,6 +6,7 @@
 
 记忆索引在 `docs/codex-memory/MEMORY.md`，相关任务开始前读取对应条目。这些是由本文件显式引用的项目文档，不依赖工具自动扫描记忆目录。
 
+- **默认任务范围**：用户未另行指定时，以仓库中未提交的内容为本次任务范围，直接完成必要同步与开发收尾，无需再询问要改什么。详见 `docs/codex-memory/feedback_uncommitted_scope.md`。
 - **开发收尾**：完成开发并通过相关检查后，读取当前值，同步递增桌面 `APP_VERSION`、安卓 `versionName` 和 `versionCode`；仅暂存本次任务文件，提交信息为 `1`，不加署名尾巴，再推送 `origin main`。不要强推；推送失败时报告原因。详见 `docs/codex-memory/feedback_release_workflow.md`。
 - **控制消耗**：先 `rg` 定位、再局部读；优先现成检查，不重复读取，不为了解全貌通读大文件。详见 `docs/codex-memory/feedback_token_efficiency.md`。
 - **理解用户意图**：用户用“现在……”描述功能行为时，按修改要求处理，落实成描述的行为。详见 `docs/codex-memory/user-now-means-change.md`。

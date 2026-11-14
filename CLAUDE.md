@@ -4,6 +4,8 @@ OIT (Obliphur's Integrated Terminal)：Windows 10/11 + Python 3.10+ 专注计时
 
 ## 命令
 
+- **默认任务范围**：用户未另行指定时，以仓库中未提交的内容为本次任务范围，直接完成必要同步与开发收尾，无需再询问要改什么。详见 `docs/codex-memory/feedback_uncommitted_scope.md`。
+
 ```bash
 python main.py                  # 运行（自动提权）
 python -m <module>              # 模块自检，如 python -m net_guard / python -m settings_manager / python -m netproxy.selftest
