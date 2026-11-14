@@ -1550,8 +1550,12 @@ class CommTest {
         assertTrue("[联合行动进行中]" in system && "用户现在休息, 你也休息" in system && system.indexOf("[联合行动进行中]") > system.indexOf(CommText.PERSONA_HEAD.trim()))
         // 合约结束 (15:50, 给 21 分钟休息): 对方同步休息到 16:11, 然后重新计算日程
         clock = day.withHour(15).withMinute(50)
+        val owner = Comm.pidOf(cj.personaName())
+        val ms = clock.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+        cj.applyDoc(mapOf("interaction:$owner" to CommInteraction(tension = 60, day = clock.toLocalDate().toString(), ts = ms + 10).json().put("clear", 0)))
         assertFalse(cj.jointEnded("别的合约", "completed", 1260.0))
         assertTrue(cj.jointEnded("c1", "completed", 1260.0))
+        assertEquals("合约无损完成不降低张力", 60, (cj.syncDoc()["interaction:$owner"] as JSONObject).optInt("tension"))
         assertFalse(cj.jointEnded("c1", "completed", 1260.0))
         val note = cj.messages.filter { it.role == "sys" && it.text.startsWith(Comm.JOINT_TAG) }
         assertEquals("开始 / 结束各记一条", 2, note.size)

@@ -195,8 +195,6 @@ class JointMixin:
                 j, foreign = raw, True
         if j.get("state") != "run" or (cid and str(cid) != str(j.get("cid") or cid)):
             return False
-        if result == "completed" and not j.get("hp") and not j.get("violated"):
-            self._interaction_reward(j.get("pid") or self.pid)
         now = self.now()
         rest_s = max(0, int(reward_s or 0))
         until = now + timedelta(seconds=rest_s)

@@ -121,11 +121,6 @@ class InteractionMixin:
             d["burst_until"] = max(d["burst_until"], until)
         self._interaction_set(interaction_settle(d, self._ms()), pid)
 
-    def _interaction_reward(self, pid):
-        d = self._interaction_prepare(pid)
-        d["tension"] = max(0, d["tension"] - config.COMM_TENSION_JOINT_DECAY)
-        self._interaction_set(d, pid)
-
     def interaction_note(self, status=None, pid=None):
         from .comm_persona import message_milestones
         d = self._interaction_prepare(pid)

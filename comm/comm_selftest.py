@@ -576,7 +576,7 @@ def _selftest():
     assert reload_st.cfg["interaction"]["tension"] == 60
     reload_st._joint_set({"state": "run", "pid": reload_st.pid, "cid": "tension-ok", "hp": [], "violated": False}, replace=True)
     assert reload_st.joint_ended("tension-ok", "completed")
-    assert reload_st.cfg["interaction"]["tension"] == 40
+    assert reload_st.cfg["interaction"]["tension"] == 60, "合约无损完成不降低张力"
     reload_st.flush(); peer_st.flush()
     # ---- 设备同步: 记录合并, 只有 leader 调用 AI / 重试, 清空一起清 ----
     dA, dB = os.path.join(td, "sa"), os.path.join(td, "sb")

@@ -3371,10 +3371,6 @@ class Comm(
         val foreign = curJoint() == null && joint?.let { it.state == "run" && it.pid.isNotEmpty() && it.pid != pid } == true      // 联合行动属于另一个对象 (合约期间用户切到了别的聊天): 状态照样转成同步休息, 不往现在这个聊天里写记录
         val j = (if (foreign) joint else curJoint())?.takeIf { it.state == "run" && (cid.isEmpty() || it.cid.isEmpty() || cid == it.cid) } ?: return false
         val n = now()
-        if (result == "completed" && j.hp.isEmpty() && !j.violated) {
-            val d = interactionPrepare(j.pid)
-            interactionSet(d.copy(tension = maxOf(0, d.tension - Cfg.COMM_TENSION_JOINT_DECAY)), j.pid)
-        }
         val restS = maxOf(0L, rewardS.toLong())
         val until = userBreakEnd(n) ?: n.plusSeconds(restS)     // 合约结束时用户正在休息 (这次休息接着休息): 对方休息到用户这次休息结束
         if (foreign) {
