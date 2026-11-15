@@ -461,6 +461,8 @@ class RtMixin:
             return
         if self._tension_special(now, ctx):
             return
+        if self._check_special_7m_lure(now, ctx):
+            return
         rt = ctx.get("rt") if ctx else self._rt
         if rt:
             self._check_proactive_rt(now, ctx, rt, done)
@@ -573,6 +575,34 @@ class RtMixin:
                            f"这条是系统提前触发的: 即使你此刻还处于专注/不能回复的时段, 也允许你现在主动给用户发一条消息, 话题自己找 (不要透露日程); "
                            f"这条必须发出, 不要返回{REFUSE}.", ctx)
             return
+
+    def _check_special_7m_lure(self, now, ctx=None):
+        """入场高张力但前七分钟全是普通交流，待结算完成后定向挑起旧话题一次。"""
+        pid = ctx["pid"] if ctx else self.pid
+        status = self.other_status(now, ctx)
+        d = self._interaction_prepare(pid, status)
+        now_ms = int(now.timestamp() * 1000)
+        st = self._state_of(pid)
+        if (not self._interaction_special(status) or self.is_muted(pid)
+                or int(st.get("cut_until") or 0) > now_ms or self.busy or self._bg_busy == pid
+                or not d["special_spoke"] or d["shame_turns"] or d["burst_until"] or d["special_7m_gain_count"]
+                or d["special_entry_tension"] <= config.COMM_TENSION_CAP):
+            return False
+        begin = d["last_special_begin"]
+        due = begin + config.COMM_SPECIAL_LURE_DELAY_SECONDS * 1000
+        if not begin or now_ms < due or now >= status["end"] or d["special_7m_lured_seg"] >= begin:
+            return False
+        window = [m for m in st["messages"] if m["role"] == "me" and str(m.get("text") or "").strip()
+                  and begin <= int(m["ts"]) <= due]
+        if not window or d["pending"]:
+            return False
+        d["special_7m_lured_seg"] = begin
+        self._interaction_set(d, pid)
+        if ctx:
+            ctx["st"]["interaction"] = self._state_of(pid)["interaction"]
+        self._pro_fire(f"L{begin}", now, now, 1.0,
+                       "[系统] " + tr(SPECIAL_7M_LURE_PROMPT, tension=f"{d['tension']:.2f}"), ctx, force=True)
+        return True
 
     def _burst_sleep(self, now, ctx=None):
         """特殊空闲爆发后的下一段睡眠，五分钟消息必谈一次，跨午夜也有效。"""

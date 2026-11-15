@@ -14,7 +14,9 @@ data class CommInteraction(
     val burstDays: List<String> = emptyList(), val morningDay: String = "",
     val gainCooldowns: Map<String, Long> = emptyMap(),
     val specialUntil: Long = 0L, val specialSpoke: Boolean = false, val skipDecay: Boolean = false,
-    val decayAt: Long = 0L, val decayHoldUntil: Long = 0L, val burstSleepAfter: Long = 0L
+    val decayAt: Long = 0L, val decayHoldUntil: Long = 0L, val burstSleepAfter: Long = 0L,
+    val lastSpecialBegin: Long = 0L, val specialEntryTension: Double = 0.0,
+    val special7mGainCount: Int = 0, val special7mLuredSeg: Long = 0L
 ) {
     fun json(): JSONObject = JSONObject().put("scenario_mode", scenarioMode).put("tension", tension)
         .put("shame_turns", shameTurns).put("day", day).put("ts", ts).put("burst_until", burstUntil)
@@ -25,6 +27,8 @@ data class CommInteraction(
         .put("special_until", specialUntil).put("special_spoke", specialSpoke).put("skip_decay", skipDecay)
         .put("decay_at", decayAt).put("decay_hold_until", decayHoldUntil)
         .put("burst_sleep_after", burstSleepAfter)
+        .put("last_special_begin", lastSpecialBegin).put("special_entry_tension", specialEntryTension)
+        .put("special_7m_gain_count", special7mGainCount).put("special_7m_lured_seg", special7mLuredSeg)
 
     /** 每十五分钟结算小数衰减；离线补算，暂停和回拨不补扣。 */
     fun roll(nowMs: Long): CommInteraction {
@@ -114,7 +118,10 @@ data class CommInteraction(
             maxOf(0L, o?.optLong("special_until") ?: 0L), o?.optBoolean("special_spoke") ?: false,
             o?.optBoolean("skip_decay") ?: false,
             maxOf(0L, o?.optLong("decay_at") ?: 0L), maxOf(0L, o?.optLong("decay_hold_until") ?: 0L),
-            maxOf(0L, o?.optLong("burst_sleep_after") ?: 0L))
+            maxOf(0L, o?.optLong("burst_sleep_after") ?: 0L),
+            maxOf(0L, o?.optLong("last_special_begin") ?: 0L),
+            (o?.optDouble("special_entry_tension", 0.0) ?: 0.0).takeIf { it.isFinite() }?.coerceIn(0.0, Cfg.COMM_TENSION_MAX.toDouble()) ?: 0.0,
+            maxOf(0, o?.optInt("special_7m_gain_count") ?: 0), maxOf(0L, o?.optLong("special_7m_lured_seg") ?: 0L))
 
         private fun localDay(ms: Long): String = Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()).toLocalDate().toString()
 

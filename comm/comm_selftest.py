@@ -901,6 +901,90 @@ def _selftest():
         sleeper.flush(); peer_sleep.flush()
         if use_rt:
             os.remove(rt_file)
+    # 高张力入场后前七分钟普通交流必谈；在途消息先结算，重启同步不重发。
+    for use_rt in (False, True):
+        lure_clock = [datetime(2027, 5, 4, 23, 50)]
+        open(os.path.join(folder, "引诱.txt"), "w", encoding="utf-8").write(
+            "你是引诱.\n23:50-00:40:特殊空闲\n"
+            "长时间休息发起谈话概率:0%\n特殊空闲发起谈话概率:0%\n")
+        lure_rt = os.path.join(folder, "引诱_routine.txt")
+        if use_rt:
+            open(lure_rt, "w", encoding="utf-8").write("初始起点:23:50\n50min:特殊空闲\n")
+        lure_dir = os.path.join(td, "lure" + str(use_rt))
+        lure = Comm(lure_dir, folder, now=lambda: lure_clock[0], chat_fn=fake)
+        lure.ai.set_profile("deepseek", api_key="k")
+        lure.set_cfg(persona="引诱.txt", split_send=False)
+        lure._interaction_set({"tension": 95})
+        status = lure.other_status()
+        begin = status["begin"]
+        script.append("白天那件事，我还记着.")
+        lure.tick(); wait(lure)
+        assert lure.cfg["interaction"]["special_entry_tension"] == 95
+        lure_clock[0] = begin + timedelta(minutes=6)
+        message = lure._add("me", "今天的天气还不错")
+        lure._interaction_sent(message["text"], message)
+        lure._interaction_judge_note("user")
+        before_lure = len(calls)
+        lure_clock[0] = begin + timedelta(minutes=7)
+        lure.tick()
+        assert len(calls) == before_lure and not lure.cfg["interaction"]["special_7m_lured_seg"], "pending 不能误触发"
+        assert not lure._interaction_judged("普通交流.[tension:1:other:0]")
+        script.append("白天你没说完的话，现在还想绕开吗？")
+        lure.tick(); wait(lure)
+        assert len(calls) == before_lure + 1
+        assert "距离特殊空闲开始已过去7分钟" in calls[-1][1][-1]["content"]
+        assert "EFFECTIVE_STAGE=50-90" in calls[-1][1][-1]["content"]
+        d = lure.cfg["interaction"]
+        assert d["special_7m_lured_seg"] == int(begin.timestamp() * 1000)
+        assert not d["burst_until"] and not d["gain_until"] and not d["special_7m_gain_count"]
+        snapshot_lure = lure.sync_doc()
+        lure.flush()
+        lure = Comm(lure_dir, folder, now=lambda: lure_clock[0], chat_fn=fake)
+        lure.tick()
+        peer_lure = Comm(os.path.join(td, "lure_peer" + str(use_rt)), folder, now=lambda: lure_clock[0], chat_fn=fake)
+        peer_lure.ai.set_profile("deepseek", api_key="k")
+        peer_lure.set_cfg(persona="引诱.txt", split_send=False)
+        peer_lure.apply_doc(snapshot_lure); peer_lure.tick()
+        assert len(calls) == before_lure + 1
+        lure.clear(); lure.apply_doc(snapshot_lure)
+        assert not lure.cfg["interaction"]["last_special_begin"] and not lure.cfg["interaction"]["special_7m_lured_seg"]
+        lure.flush(); peer_lure.flush()
+        if use_rt:
+            os.remove(lure_rt)
+    # 门槛、窗口、冷却条件、冷静期和静音：调用真实判定，未满足不得标记或发起。
+    guard_clock = [fixed2.replace(hour=13, minute=0)]
+    guard = Comm(os.path.join(td, "lure_guard"), folder, now=lambda: guard_clock[0], chat_fn=fake)
+    guard.set_cfg(persona="时段.txt", split_send=False)
+    guard._interaction_set({"tension": 90})
+    guard._interaction_prepare()
+    guard_clock[0] += timedelta(minutes=1)
+    m = guard._add("me", "天气很好")
+    guard._interaction_sent(m["text"], m)
+    guard._interaction_judge_note("user"); guard._interaction_judged("普通交流")
+    guard._interaction_set(dict(guard.cfg["interaction"], tension=99))
+    guard_clock[0] += timedelta(minutes=6)
+    assert not guard._check_special_7m_lure(guard_clock[0]), "入场90，之后升高不能冒充高张力入场"
+    guard._interaction_set(dict(guard.cfg["interaction"], special_entry_tension=95))
+    guard.set_muted(True)
+    assert not guard._check_special_7m_lure(guard_clock[0])
+    guard.set_muted(False)
+    guard._interaction_set(dict(guard.cfg["interaction"], shame_turns=1))
+    assert not guard._check_special_7m_lure(guard_clock[0])
+    guard._interaction_set(dict(guard.cfg["interaction"], shame_turns=0, tension=89,
+                                gain_cooldowns={"comfort": guard._ms() + 3600000}))
+    guard_clock[0] = fixed2.replace(hour=13, minute=6)
+    m = guard._add("me", "我有点委屈")
+    guard._interaction_sent(m["text"], m)
+    guard._interaction_judge_note("user")
+    guard._interaction_judged("回应.[tension:1:comfort:10]")
+    assert guard.cfg["interaction"]["special_7m_gain_count"] == 1
+    assert guard.cfg["interaction"]["tension"] == 89, "冷却只挡加值，仍记录正数条件"
+    guard_clock[0] = fixed2.replace(hour=13, minute=7)
+    assert not guard._check_special_7m_lure(guard_clock[0])
+    guard_clock[0] = fixed2.replace(hour=14)
+    guard._interaction_prepare()
+    assert not guard.cfg["interaction"]["last_special_begin"] and not guard.cfg["interaction"]["special_entry_tension"]
+    guard.flush()
     # 高张力特殊空闲必谈；用户整段沉默时不爆发，之后豁免 24 小时衰减。
     special_clock = [fixed2.replace(hour=13, minute=40)]
     special_dir = os.path.join(td, "special_force")

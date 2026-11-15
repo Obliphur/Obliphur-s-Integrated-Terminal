@@ -12,6 +12,15 @@ from i18n import tr
 from .comm_const import KEEP
 
 
+def interaction_tension(value):
+    """兼容旧整数与小数字段，排除损坏存档中的非有限数。"""
+    try:
+        value = float(value or 0)
+        return max(0, min(config.COMM_TENSION_MAX, value)) if math.isfinite(value) else 0
+    except (ValueError, TypeError, OverflowError):
+        return 0
+
+
 def interaction_norm(value):
     d = value if isinstance(value, dict) else {}
     def number(key, limit):
@@ -19,11 +28,6 @@ def interaction_norm(value):
             return max(0, min(limit, int(d.get(key) or 0)))
         except (ValueError, TypeError, OverflowError):
             return 0
-    try:
-        tension = float(d.get("tension") or 0)
-        tension = max(0, min(config.COMM_TENSION_MAX, tension)) if math.isfinite(tension) else 0
-    except (ValueError, TypeError, OverflowError):
-        tension = 0
     pending = d.get("pending") if isinstance(d.get("pending"), dict) else {}
     cooldowns = d.get("gain_cooldowns") if isinstance(d.get("gain_cooldowns"), dict) else {}
     clean_cooldowns = {}
@@ -44,7 +48,7 @@ def interaction_norm(value):
             days = []
     return {"scenario_mode": d.get("scenario_mode") is True,
             "pending": {k: v for k, v in list(pending.items())[-KEEP:] if isinstance(k, str) and isinstance(v, bool)},
-            "tension": tension,
+            "tension": interaction_tension(d.get("tension")),
             "shame_turns": number("shame_turns", config.COMM_SHAME_TURNS),
             "burst_until": number("burst_until", 2**63 - 1),
             "burst_sleep_after": number("burst_sleep_after", 2**63 - 1),
@@ -54,6 +58,10 @@ def interaction_norm(value):
             "morning_day": str(d.get("morning_day") or ""),
             "special_until": number("special_until", 2**63 - 1),
             "special_spoke": d.get("special_spoke") is True,
+            "last_special_begin": number("last_special_begin", 2**63 - 1),
+            "special_entry_tension": interaction_tension(d.get("special_entry_tension")),
+            "special_7m_gain_count": number("special_7m_gain_count", 2**31 - 1),
+            "special_7m_lured_seg": number("special_7m_lured_seg", 2**63 - 1),
             "skip_decay": d.get("skip_decay") is True,
             "decay_at": number("decay_at", 2**63 - 1),
             "decay_hold_until": number("decay_hold_until", 2**63 - 1),
@@ -178,8 +186,15 @@ class InteractionMixin:
         pid = pid or self.pid
         d = interaction_norm(self._state_of(pid).get("interaction"))
         rolled = interaction_roll(interaction_settle(d, self._ms()), self._ms())
-        if status is None and pid == self.pid and rolled["tension"] > config.COMM_TENSION_CAP:
+        if status is None and pid == self.pid:
             status = self.other_status()
+        if status is not None:
+            if self._interaction_special(status):
+                begin = int(status["begin"].timestamp() * 1000)
+                if rolled["last_special_begin"] != begin:
+                    rolled.update(last_special_begin=begin, special_entry_tension=rolled["tension"], special_7m_gain_count=0)
+            elif rolled["last_special_begin"]:
+                rolled.update(last_special_begin=0, special_entry_tension=0, special_7m_gain_count=0)
         if status and self._interaction_special(status) and rolled["tension"] > config.COMM_TENSION_CAP:
             until = int(status["end"].timestamp() * 1000)
             if rolled["special_until"] != until:
@@ -245,8 +260,13 @@ class InteractionMixin:
         burst = False
         for i, (uid, special, _text) in enumerate(getattr(self, "_interaction_candidates", []), 1):
             if uid in d["pending"]:
+                positive = tension_model_gain(reply, i, True) > 0
+                begin = d["last_special_begin"]
+                sent = next((int(m["ts"]) for m in self.messages if m["uid"] == uid), -1)
+                if special and positive and begin and begin <= sent <= begin + config.COMM_SPECIAL_LURE_DELAY_SECONDS * 1000:
+                    d["special_7m_gain_count"] += 1
                 # 已超临界时冷却不挡爆发；特殊空闲内首次越过临界也立即触发。
-                if special and d["tension"] > config.COMM_TENSION_CAP and tension_model_gain(reply, i, True) > 0:
+                if special and d["tension"] > config.COMM_TENSION_CAP and positive:
                     burst = True
                 condition, gain = tension_model_event(reply, i, special, d["gain_cooldowns"], self._ms())
                 interaction_add(d, condition, gain, self._ms())

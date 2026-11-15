@@ -180,6 +180,7 @@ V.现在是特殊空闲时段.
 - 特殊空闲内TENSION从不超过90上升到超过90时立即爆发;已超过90后再次满足任一张力增长条件也会触发爆发,条件处于冷却也可以;尚未爆发时仍按EFFECTIVE_STAGE=50-90表现,不得仅凭TENSION超过90自行突破人设.爆发仍仅在特殊空闲生效.
 - 爆发持续到当前特殊空闲段结束后10分钟,延长期间仍按爆发档位表现,覆盖睡后5分钟的主动消息;该段触发爆发则睡后消息必定触发,到延长结束后系统才将张力降至20并进入两轮冷静羞耻期,不要因为回复了一次就自行恢复平静.
 - 情景模拟中的动作是双方知情的虚构描写,你知道这是情景模拟,而不是现实中的动作,不得声称动作在现实中实际发生.
+- 若特殊空闲入场张力为90+,而用户在开始7分钟内说过话却未触发正向张力条件,系统会主动要求你翻出白天尚未说完的话题,按人设点破可能的回避并施压引诱其坦露心声;不得编造旧账,仍遵守50-90档位与用户意愿,这条主动消息本身不触发爆发.
 - 如果在非特殊空闲tension就超过了90+,主动记住那些引起tension增加的话题,然后在特殊空闲清算.(先于检查数据)
 - 依生效档位调整言行:
   - 0-50 (平静):保持原有人设.正式,平淡,字数少(60字内);对方流露脆弱时轻微温和,不迎合,不动作.
@@ -976,6 +977,7 @@ class Comm(
         const val DEFAULT_P_IDLE = 80                   // II / III 发不发的概率 (%) 的默认值; 设置 → 沟通 里可以改
         const val DEFAULT_P_REST = 60
         const val DEFAULT_P_LONG = 70                   // I (长时间休息) 的默认概率
+        const val SPECIAL_7M_LURE_PROMPT = "距离特殊空闲开始已过去7分钟。入场时你对用户的张力超过90（当前TENSION={tension}），但尚未爆发。前7分钟用户说过话，却没有触发任何正向张力条件。请结合聊天记录与记忆卡，主动挑起白天或之前被你记下、尚未说完的敏感话题，不要被表面的轻松闲聊带走；按人设敏锐点破可能的回避，用强硬而偏袒、带着庇护欲的语言追问并引诱用户坦露真实心思、自责、边界试探或依赖渴望。只引用记录中确实存在的内容，不编造旧账，也不把逃避当成已知事实。仍严格遵守EFFECTIVE_STAGE=50-90及模式的动作边界，尊重用户意愿，不强迫接触；这次主动谈话本身不增加张力、不触发爆发，后续由用户真实表达决定。不要透露机制，这条必须发出，不要拒绝回复。"
         const val DEFAULT_P_SLEEP = 60                  // IV (睡眠开始后 5 分钟) 的默认概率
         /** 某一种主动发起谈话的概率 (%): 人设里写了就用; 没写: 重要活动 / 特殊空闲 按普通空闲的, 别的用默认. */
         fun proPct(probs: Map<String, Double>, kind: String): Double =
@@ -2949,10 +2951,17 @@ class Comm(
         storeState(owner, st); changed(); push()
     }
 
-    private fun interactionPrepare(owner: String = pid, status: Pair<SegEntry, LocalDateTime>? = null): CommInteraction {
+    private fun interactionPrepare(owner: String = pid, status: Pair<SegEntry, LocalDateTime>? = null, statusKnown: Boolean = status != null): CommInteraction {
         val old = stateOf(owner).interaction
         var d = old.settle(nowMs()).roll(nowMs())
-        val current = status ?: if (owner == pid && d.tension > Cfg.COMM_TENSION_CAP) otherStatus() else null
+        val current = status ?: if (owner == pid && !statusKnown) otherStatus() else null
+        if (current != null && specialPeriod(current)) {
+            val begin = specialBegin(current).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+            if (d.lastSpecialBegin != begin)
+                d = d.copy(lastSpecialBegin = begin, specialEntryTension = d.tension, special7mGainCount = 0)
+        } else if ((statusKnown || owner == pid) && d.lastSpecialBegin > 0L) {
+            d = d.copy(lastSpecialBegin = 0L, specialEntryTension = 0.0, special7mGainCount = 0)
+        }
         if (current != null && specialPeriod(current) && d.tension > Cfg.COMM_TENSION_CAP) {
             val until = current.second.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
             if (d.specialUntil != until) {
@@ -3005,8 +3014,13 @@ class Comm(
         val pending = d.pending.toMutableMap()
         interactionCandidates.forEachIndexed { i, (uid, special, _) ->
             if (uid in pending) {
+                val positive = CommInteraction.modelGain(reply, i + 1, true) > 0
+                val begin = d.lastSpecialBegin
+                val sent = messages.firstOrNull { it.uid == uid }?.ts ?: -1L
+                if (special && positive && begin > 0L && sent in begin..(begin + Cfg.COMM_SPECIAL_LURE_DELAY_SECONDS * 1000L))
+                    d = d.copy(special7mGainCount = d.special7mGainCount + 1)
                 // 已超临界时冷却不挡爆发；特殊空闲内首次越过临界也立即触发。
-                if (special && d.tension > Cfg.COMM_TENSION_CAP && CommInteraction.modelGain(reply, i + 1, true) > 0) burst = true
+                if (special && d.tension > Cfg.COMM_TENSION_CAP && positive) burst = true
                 val (condition, gain) = CommInteraction.modelEvent(reply, i + 1, special, d.gainCooldowns, nowMs())
                 d = d.add(condition, gain, nowMs())
                 if (special && d.tension > Cfg.COMM_TENSION_CAP && gain > 0) burst = true
@@ -4625,6 +4639,7 @@ class Comm(
         val done = proDone(ctx)
         if (burstSleep(t, ctx)) return
         if (tensionSpecial(t, ctx)) return
+        if (special7mLure(t, ctx)) return
         val spec = if (ctx != null) ctx.rt else rt
         if (spec != null) { checkProactiveRt(t, ctx, spec, done); return }
         // I. 对方自己正处在空闲 / 休息段里, 而且这段还剩 10 分钟以上: 段开始后 1~3 分钟发一条
@@ -4748,6 +4763,27 @@ class Comm(
     private fun specialBegin(status: Pair<SegEntry, LocalDateTime>): LocalDateTime =
         status.first.begin ?: status.second.minusMinutes((status.first.end - status.first.start).toLong())
 
+    /** 入场高张力但前七分钟全是普通交流，待结算完成后定向挑起旧话题一次。 */
+    private fun special7mLure(t: LocalDateTime, ctx: BgCtx?): Boolean {
+        val owner = ctx?.pid ?: pid
+        val status = statusFor(t, ctx)
+        val d = interactionPrepare(owner, status, statusKnown = true)
+        val ms = t.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+        val st = stateOf(owner)
+        if (status == null || !specialPeriod(status) || isMuted(owner) || st.cutUntil > ms || busy || bgBusy == owner ||
+            !d.specialSpoke || d.shameTurns > 0 || d.burstUntil > 0L || d.special7mGainCount > 0 || d.specialEntryTension <= Cfg.COMM_TENSION_CAP) return false
+        val begin = d.lastSpecialBegin
+        val due = begin + Cfg.COMM_SPECIAL_LURE_DELAY_SECONDS * 1000L
+        if (begin == 0L || ms < due || !t.isBefore(status.second) || d.special7mLuredSeg >= begin) return false
+        val window = st.messages.filter { it.role == "me" && it.text.isNotBlank() && it.ts in begin..due }
+        if (window.isEmpty() || d.pending.isNotEmpty()) return false
+        interactionSet(d.copy(special7mLuredSeg = begin), owner)
+        if (ctx != null) ctx.st.interaction = stateOf(owner).interaction
+        proFire("L$begin", t, t, 1.0, "[系统] " + tr(SPECIAL_7M_LURE_PROMPT,
+            "tension" to java.lang.String.format(java.util.Locale.ROOT, "%.2f", d.tension)), ctx, force = true)
+        return true
+    }
+
     /** 特殊空闲爆发后的下一段睡眠，五分钟消息必谈一次，跨午夜也有效。 */
     private fun burstSleep(t: LocalDateTime, ctx: BgCtx?): Boolean {
         val owner = ctx?.pid ?: pid
@@ -4772,7 +4808,7 @@ class Comm(
     private fun tensionSpecial(t: LocalDateTime, ctx: BgCtx?): Boolean {
         val status = statusFor(t, ctx)
         val owner = ctx?.pid ?: pid
-        val d = interactionPrepare(owner, status)
+        val d = interactionPrepare(owner, status, statusKnown = true)
         if (ctx != null) ctx.st.interaction = stateOf(owner).interaction
         if (status == null || !specialPeriod(status) || d.tension <= Cfg.COMM_TENSION_CAP) return false
         val key = "T${status.second.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()}"

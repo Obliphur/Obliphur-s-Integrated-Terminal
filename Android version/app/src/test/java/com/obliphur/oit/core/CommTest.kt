@@ -732,6 +732,109 @@ class CommTest {
     }
 
     @Test
+    fun special7mLure() {
+        for (useRt in listOf(false, true)) {
+            clock = LocalDateTime.of(2027, 5, 4, 23, 50)
+            val td = Files.createTempDirectory("oit").toFile()
+            val dir = File(td, "d").also { it.mkdirs() }
+            val personas = File(td, "p")
+            var c = comm(dir, personas)
+            c.importPersona("引诱.txt", ("你是引诱.\n23:50-00:40:特殊空闲\n" +
+                "长时间休息发起谈话概率:0%\n特殊空闲发起谈话概率:0%\n").byteInputStream())
+            if (useRt) c.importPersona("引诱_routine.txt", "初始起点:23:50\n50min:特殊空闲\n".byteInputStream())
+            c.set(persona = "引诱.txt", splitSend = false)
+            val owner = Comm.pidOf("引诱.txt")
+            fun state() = CommInteraction.parse(c.syncDoc()["interaction:$owner"] as JSONObject)
+            fun set(d: CommInteraction) {
+                val ms = clock.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+                c.applyDoc(mapOf("interaction:$owner" to d.copy(ts = maxOf(ms, state().ts + 1)).json().put("clear", 0)))
+            }
+            val ms = clock.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+            c.applyDoc(mapOf("interaction:$owner" to CommInteraction(tension = 95.0, ts = ms).json().put("clear", 0)))
+            val status = c.otherStatus()!!
+            val begin = status.first.begin ?: status.second.minusMinutes(50)
+            script.add("白天那件事，我还记着.")
+            c.tick(); wait(c)
+            assertEquals(95.0, state().specialEntryTension, 1e-8)
+            clock = begin.plusMinutes(6)
+            val m = c.addForTest("me", "今天的天气还不错")
+            set(state().copy(pending = mapOf(m.uid to true), specialSpoke = true))
+            val before = calls.size
+            clock = begin.plusMinutes(7)
+            c.tick()
+            assertEquals(before, calls.size); assertEquals(0L, state().special7mLuredSeg)
+            script.add("普通交流.[tension:1:other:0]")
+            script.add("白天你没说完的话，现在还想绕开吗？")
+            c.triggerForTest("retry", "请回复用户"); wait(c)
+            assertEquals(before + 2, calls.size)
+            assertTrue("距离特殊空闲开始已过去7分钟" in calls.last().second.last().second)
+            assertTrue("EFFECTIVE_STAGE=50-90" in calls.last().second.last().second)
+            assertEquals(begin.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli(), state().special7mLuredSeg)
+            assertEquals(0L, state().burstUntil); assertEquals(0L, state().gainUntil); assertEquals(0, state().special7mGainCount)
+            val doc = c.syncDoc()
+            assertEquals(state(), CommInteraction.parse(state().json()))
+            c.flush(); c = comm(dir, personas); c.tick()
+            val peer = comm(File(td, "peer").also { it.mkdirs() }, personas)
+            peer.set(persona = "引诱.txt", splitSend = false); peer.applyDoc(doc); peer.tick()
+            assertEquals(before + 2, calls.size)
+            c.clear(); c.applyDoc(doc)
+            val cleared = CommInteraction.parse(c.syncDoc()["interaction:$owner"] as? JSONObject)
+            assertEquals(0L, cleared.lastSpecialBegin); assertEquals(0L, cleared.special7mLuredSeg)
+            c.flush(); peer.flush()
+        }
+    }
+
+    @Test
+    fun special7mLureGuards() {
+        clock = LocalDateTime.of(2027, 5, 4, 13, 0)
+        val td = Files.createTempDirectory("oit").toFile()
+        val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
+        c.importPersona("引诱.txt", ("你是引诱.\n13:00-14:00:特殊空闲\n" +
+            "长时间休息发起谈话概率:0%\n特殊空闲发起谈话概率:0%\n").byteInputStream())
+        c.set(persona = "引诱.txt", splitSend = false)
+        c.setMuted(true)
+        val owner = Comm.pidOf("引诱.txt")
+        fun state() = CommInteraction.parse(c.syncDoc()["interaction:$owner"] as JSONObject)
+        fun set(d: CommInteraction) {
+            val ms = clock.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+            c.applyDoc(mapOf("interaction:$owner" to d.copy(ts = maxOf(ms, state().ts + 1)).json().put("clear", 0)))
+        }
+        val ms = clock.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+        c.applyDoc(mapOf("interaction:$owner" to CommInteraction(tension = 90.0, ts = ms).json().put("clear", 0)))
+        c.tick()
+        clock = clock.plusMinutes(1)
+        script.add("普通交流")
+        c.send("今天的天气很好"); wait(c)
+        set(state().copy(tension = 99.0))
+        clock = clock.withMinute(7)
+        c.setMuted(false)
+        script.add("我还记着白天的事.")
+        c.tick(); wait(c) // 原有高张力必谈，入场90不能触发七分钟引诱。
+        assertEquals(0L, state().special7mLuredSeg)
+        val before = calls.size
+        set(state().copy(specialEntryTension = 95.0, shameTurns = 1))
+        c.tick(); assertEquals(before, calls.size)
+        set(state().copy(shameTurns = 0))
+        c.setMuted(true); c.tick(); assertEquals(before, calls.size)
+        clock = clock.plusDays(1).withMinute(0)
+        set(state().copy(tension = 95.0))
+        c.tick() // 新段重新记录入场张力与窗口，避免为构造测试回拨消息时刻。
+        clock = clock.withMinute(6)
+        val cooldown = clock.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli() + 3600000L
+        set(state().copy(tension = 89.0, gainCooldowns = mapOf("comfort" to cooldown)))
+        script.add("回应.[tension:1:comfort:10]")
+        assertEquals("", c.send("我有点委屈")); wait(c)
+        assertEquals(1, state().special7mGainCount)
+        assertEquals(89.0, state().tension, 1e-8)
+        clock = clock.withMinute(7)
+        c.setMuted(false); c.tick()
+        assertEquals(0L, state().special7mLuredSeg)
+        clock = clock.withHour(14); c.tick()
+        assertEquals(0L, state().lastSpecialBegin); assertEquals(0.0, state().specialEntryTension, 1e-8)
+        c.flush()
+    }
+
+    @Test
     fun specialTensionProactive() {
         val td = Files.createTempDirectory("oit").toFile()
         val dir = File(td, "d").also { it.mkdirs() }
