@@ -68,7 +68,7 @@ def loop_pieces(total_s: int, n_s: int) -> list:
 
 def loop_segs(start: datetime, end: datetime, n_min: float, extra: timedelta = None) -> list:
     """[start, end) 这个循环里的 专注 / 休息 段 (见 loop_pieces: 以休息结束, 末尾对上 end).
-    extra: 最后那次休息的结束比 end 晚多少 (可以是负的, 但休息至少留 1 分钟); 调用的人要把后面的日程也平移同样的时间."""
+    extra: 最后那次休息的结束比 end 晚多少 (可以是负的, 但休息至少留 1 分钟); 调用方保证不越过下一活动的固定结束边界."""
     out, t = [], start
     fm = 0.0
     for kind, s in loop_pieces(int(math.floor((end - start).total_seconds() + 0.5)), _secs(n_min)):
@@ -106,7 +106,7 @@ def wake_times(r: Routine, a: datetime, b: datetime, seed: str) -> list:
 
 
 def day_plan(r: Routine, d: _date, seed: str, fluct: bool = True) -> list:
-    """d 这一天 (从起床到下一次起床) 的日程 → [seg], 按时间排, 首尾相接: 各项活动 → 睡眠开始前的空闲 (如果有) → 睡眠.
+    """d 这一天 (从起床到下一次起床) 的日程 → [seg], 活动结束锚定初始起点累计时长, 各段首尾相接, 最后一项结束立即睡眠.
     seg 是 {"kind" (focus / rest / idle / sleep), "start", "end", "label", "detail", "loop" (第几个循环段生成的, 没有 = None), "gap" (睡眠延迟留下的空档)}."""
     cache = r.__dict__.setdefault("_plans", {})
     ck = (d, seed, bool(fluct))
@@ -121,20 +121,29 @@ def day_plan(r: Routine, d: _date, seed: str, fluct: bool = True) -> list:
 def _day_plan(r: Routine, d: _date, seed: str, fluct: bool) -> list:
     base = wake_at(r, d, seed)
     segs, c = [], base
+    nominal = datetime.combine(d, datetime.min.time()) + timedelta(minutes=r.start_for(d))
     for idx, it in enumerate(r.items):
-        end = c + timedelta(minutes=it["dur"])
+        nominal += timedelta(minutes=it["dur"])
+        end = nominal
         if it["type"] == "block":
-            segs.append(seg("idle", c, end, it["label"], block=idx))
+            if c < end:
+                segs.append(seg("idle", c, end, it["label"], block=idx))
         else:
             lo, hi = r.fluct["rest_end"] if fluct else (0, 0)
             extra = timedelta(minutes=rint(f"{seed}|le|{d}|{idx}", lo, hi))
+            # 循环休息只挤占下一活动开头，至少留一分钟，后续结束边界不变。
+            room = int(max(0, r.items[idx + 1]["dur"] - 1)) if idx + 1 < len(r.items) and r.items[idx + 1]["type"] == "block" else 0
+            extra = min(extra, timedelta(minutes=room))
+            if c >= end:
+                c = end
+                continue
             part = loop_segs(c, end, it["focus"], extra)
             for s in part:
                 s["loop"] = idx
                 s["n"] = it["focus"]
                 segs.append(s)
             if part:
-                end = part[-1]["end"]                      # 最后一次休息晚结束了: 后面的日程整体往后推
+                end = part[-1]["end"]                      # 只挤占下一活动开头，后续固定结束边界不变
         c = end
     n = len(segs)
     ns = [s["start"] for s in segs]
@@ -151,13 +160,13 @@ def _day_plan(r: Routine, d: _date, seed: str, fluct: bool) -> list:
             cs, ce = s["start"] + timedelta(minutes=ds), s["end"] + timedelta(minutes=de)
             if ce - cs < timedelta(minutes=10):
                 continue
-            if i > 0 and cs != s["start"]:
+            if i > 0 and segs[i - 1]["kind"] != "idle" and cs != s["start"]:
                 if cs < s["start"]:
                     if cs > ns[i - 1] + timedelta(minutes=1):
                         ne[i - 1] = cs
                         ns[i] = cs
                 elif cs > ne[i - 1]:
-                    ne[i - 1] = cs                             # 循环里晚开始: 前一段 (休息 / 循环前的活动) 变长, 不留空档
+                    ne[i - 1] = cs                             # 循环里晚开始: 前一段休息变长, 不留空档
                     ns[i] = cs
             if i + 1 < n and ce != s["end"] and ce < ne[i + 1] - timedelta(minutes=1) and ce > ns[i] + timedelta(minutes=5):
                 ne[i] = ce
@@ -166,11 +175,7 @@ def _day_plan(r: Routine, d: _date, seed: str, fluct: bool) -> list:
     for i, s in enumerate(segs):
         out.append(dict(s, start=ns[i], end=ne[i]))
     nxt = wake_at(r, d + timedelta(days=1), seed)
-    lo, hi = r.fluct["sleep_start"] if fluct else (0, 0)
-    sleep_start = max(c, c + timedelta(minutes=rint(f"{seed}|ss|{d}", lo, hi)))
-    last_end = out[-1]["end"] if out else c
-    if sleep_start > last_end and sleep_start - c > timedelta(0):
-        out.append(seg("idle", last_end, min(sleep_start, nxt), "空闲", gap=True))
+    sleep_start = c
     if sleep_start < nxt:
         out.append(seg("sleep", sleep_start, nxt, "睡眠"))
     out.sort(key=lambda s: s["start"])

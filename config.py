@@ -220,7 +220,7 @@ OUTING_MAX_HOURS = 24 * 7
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.535"                  # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.536"                  # 和 GitHub 上发布的版本号比较 (见 updater.py)
 AI_VOICE_GAP = 1.0                       # 两条语音之间的默认间隔（秒）
 COMM_SCENARIO_UNLOCK = 200               # 情景模拟解锁的有效消息数
 COMM_TENSION_MAX = 100
@@ -242,6 +242,7 @@ COMM_TENSION_BURST_GAIN_RATE = 0.5
 COMM_TENSION_MORNING_HOURS = (6, 12)  # 爆发次日必定主动谈话的早间范围，左闭右开
 COMM_SPECIAL_LURE_DELAY_SECONDS = 7 * 60  # 高张力特殊空闲前七分钟无正向条件时主动挑起话题
 COMM_SHAME_TURNS = 2
+COMM_SHIFT_STEP_MINUTES = 15  # 日程起点平移量必须是该分钟数的整数倍
 COMM_MESSAGE_MILESTONES = (200, 400, 500, 1000)  # 达到后永久记入当前聊天的系统记忆
 AI_VOICE_AUTO_COUNT = 10                  # 打开沟通时自动播放的未播消息上限
 AI_VOICE_CLAUDIA_ID = "claudia1999"       # Claudia 专用音色；voice_id 区分大小写

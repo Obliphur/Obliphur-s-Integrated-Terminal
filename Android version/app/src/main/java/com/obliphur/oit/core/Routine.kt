@@ -235,7 +235,7 @@ object Routine {
         return out
     }
 
-    /** d 这一天 (从起床到下一次起床) 的日程, 按时间排, 首尾相接: 各项活动 → 睡眠开始前的空闲 (如果有) → 睡眠. */
+    /** d 这一天 (从起床到下一次起床) 的日程, 活动结束锚定初始起点累计时长，各段首尾相接，最后一项结束立即睡眠。 */
     fun dayPlan(r: RoutineSpec, d: LocalDate, seed: String, fluct: Boolean = true): List<RtSeg> {
         val ck = "$d|$seed|$fluct"
         r.plans[ck]?.let { return it }
@@ -247,14 +247,23 @@ object Routine {
         val base = wakeAt(r, d, seed)
         var segs = ArrayList<RtSeg>()
         var c = base
+        var nominal = d.atStartOfDay().plusMinutes(r.startFor(d).toLong())
         for ((idx, it) in r.items.withIndex()) {
-            var end = c.plusNanos((it.dur * 60e9).toLong())
-            if (!it.isLoop) segs.add(RtSeg("idle", c, end, it.label))
+            nominal = nominal.plusNanos((it.dur * 60e9).toLong())
+            var end = nominal
+            if (!it.isLoop) {
+                if (c.isBefore(end)) segs.add(RtSeg("idle", c, end, it.label))
+            }
             else {
                 val (lo, hi) = if (fluct) r.fluct.getValue("rest_end") else (0.0 to 0.0)
-                val part = loopSegs(c, end, it.focus, idx, rint("$seed|le|$d|$idx", lo, hi).toLong())
+                // 循环休息只挤占下一活动开头，至少留一分钟，后续固定结束边界不变。
+                val next = r.items.getOrNull(idx + 1)
+                val room = if (next != null && !next.isLoop) maxOf(0.0, next.dur - 1).toLong() else 0L
+                val extra = minOf(rint("$seed|le|$d|$idx", lo, hi).toLong(), room)
+                if (!c.isBefore(end)) { c = end; continue }
+                val part = loopSegs(c, end, it.focus, idx, extra)
                 segs.addAll(part)
-                if (part.isNotEmpty()) end = part.last().end            // 最后一次休息晚结束了: 后面的日程整体往后推
+                if (part.isNotEmpty()) end = part.last().end
             }
             c = end
         }
@@ -273,11 +282,11 @@ object Routine {
                 val cs = s.start.plusMinutes(ds.toLong())
                 val ce = s.end.plusMinutes(de.toLong())
                 if (ChronoUnit.SECONDS.between(cs, ce) < 600) continue
-                if (i > 0 && cs != s.start) {
+                if (i > 0 && segs[i - 1].kind != "idle" && cs != s.start) {
                     if (cs.isBefore(s.start)) {
                         if (cs.isAfter(ns[i - 1].plusMinutes(1))) { ne[i - 1] = cs; ns[i] = cs }
                     } else if (cs.isAfter(ne[i - 1])) {
-                        ne[i - 1] = cs                              // 循环里晚开始: 前一段 (休息 / 循环前的活动) 变长, 不留空档
+                        ne[i - 1] = cs                              // 循环里晚开始: 前一段休息变长, 不留空档
                         ns[i] = cs
                     }
                 }
@@ -289,10 +298,7 @@ object Routine {
         val out = ArrayList<RtSeg>()
         for ((i, s) in segs.withIndex()) out.add(s.copy(start = ns[i], end = ne[i]))
         val nxt = wakeAt(r, d.plusDays(1), seed)
-        val (lo, hi) = if (fluct) r.fluct.getValue("sleep_start") else (0.0 to 0.0)
-        val sleepStart = maxOf(c, c.plusMinutes(rint("$seed|ss|$d", lo, hi).toLong()))
-        val lastEnd = if (out.isNotEmpty()) out.last().end else c
-        if (sleepStart.isAfter(lastEnd) && sleepStart.isAfter(c)) out.add(RtSeg("idle", lastEnd, minOf(sleepStart, nxt), "空闲", -1, true))
+        val sleepStart = c
         if (sleepStart.isBefore(nxt)) out.add(RtSeg("sleep", sleepStart, nxt, "睡眠"))
         return out.sortedBy { it.start }
     }

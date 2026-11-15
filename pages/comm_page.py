@@ -515,7 +515,8 @@ class CommPage(CommVoiceMixin, tk.Frame):
         var_m = tk.StringVar(value=f"{cur % 60:02d}")
         ttk.Spinbox(row, from_=lo_h, to=hi_h, textvariable=var_h, width=4, wrap=False).pack(side="left")
         tk.Label(row, text=":", bg=bg, fg=COLORS["text"], font=config.font("body", bold=True)).pack(side="left", padx=4)
-        ttk.Spinbox(row, from_=0, to=59, textvariable=var_m, width=4, format="%02.0f", wrap=True).pack(side="left")
+        minute_values = tuple(f"{m:02d}" for m in range(cur % config.COMM_SHIFT_STEP_MINUTES, 60, config.COMM_SHIFT_STEP_MINUTES))
+        ttk.Spinbox(row, values=minute_values, textvariable=var_m, width=4, wrap=True, state="readonly").pack(side="left")
 
         def go():
             try:
@@ -612,7 +613,7 @@ class CommPage(CommVoiceMixin, tk.Frame):
                 ("👀 / 🙈", "分享数据 (share data)", "点一下切换 (👀 = 打开, 要先征得对方同意; ⏳ = 等对方回复). 打开后去别的页面, 对方会收到那一页上你们的数据; 回到沟通自动关闭. 对方也可以发邀请, 点「接受」才会打开."),
                 ("🔔 / 🔕", "主动发起", "🔔 = 允许这个对象主动找你, 🔕 = 禁止."),
                 ("⏰ / ⏲", "共时闹钟", "⏰ = 闹钟跟随这个对象的起床时间; 响铃的设备手动选, 一次只能有一个对象."),
-                ("🕰", "起点平移", "请求对方把日程起点平移到 4:00 - 9:00 之间, 同意后明天起生效."),
+                ("🕰", "起点平移", "请求对方以15分钟为间隔平移日程起点, 新起点在4:00 - 9:00之间, 同意后明天起生效."),
                 ("🖼", "识别字体", "选一张图片, 把上面的文字读出来放进聊天框. 不能发送图片."),
                 ("🤝", "联合行动", "邀请对方一起做一次合约: 在合约页选词条, 输入开始时间; 对方回 [Yes] 就按约开始."))
         area = ScrollArea(dlg.body, height=config.scaled(400), bg=bg)

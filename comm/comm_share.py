@@ -104,6 +104,8 @@ class ShareMixin:
         cur = self.shift_start()
         if cur is None:
             return "这个人设没有日程文件, 不能平移起点"
+        if (minutes - cur) % config.COMM_SHIFT_STEP_MINUTES:
+            return tr("起点平移必须以 {minutes} 分钟为间隔", minutes=config.COMM_SHIFT_STEP_MINUTES)
         if cur == minutes:
             return tr("明天的起点已经是 {t} 了", t=hm_text(minutes))
         st = self.other_status()
@@ -132,7 +134,7 @@ class ShareMixin:
     def _shift_commit(self, minutes: int) -> bool:
         """对方同意了: 记下 (明天起生效), 同步给别的设备. 请求发出之后日程文件被换掉 / 范围不对就不记."""
         cur = self.shift_start()
-        if cur is None or not (SHIFT_LO <= int(minutes) <= SHIFT_HI):
+        if cur is None or not (SHIFT_LO <= int(minutes) <= SHIFT_HI) or (int(minutes) - cur) % config.COMM_SHIFT_STEP_MINUTES:
             return False
         day = self.now().date() + timedelta(days=1)
         rec = {"ts": max(self._ms(), max([e["ts"] for e in self.shifts()] + [0]) + 1), "d": f"{day:%Y-%m-%d}", "s": int(minutes), "f": int(cur)}

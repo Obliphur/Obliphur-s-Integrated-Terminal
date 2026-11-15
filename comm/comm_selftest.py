@@ -3049,7 +3049,7 @@ def _selftest():
     nxt = [x for x in plan if x["kind"] == "focus" and x["start"] > first_focus["end"]][0]
     assert "你的专注将在" not in cr._rt_note(first_focus["end"] - timedelta(minutes=30))
     assert f"你的专注将在 {nxt['start']:%H:%M} 开始" in cr._rt_note(nxt["start"] - timedelta(minutes=3))
-    # 主动发起: 睡眠开始 (波动过后的实际时刻) 5 分钟后
+    # 主动发起: 固定睡眠开始时刻 5 分钟后
     cr.cfg["pro_key"] = ""
     cr._pro_cache["sleep"] = 100.0
     sleep_seg = plan[-1]
@@ -3075,11 +3075,9 @@ def _selftest():
             break
     assert ok and "休息时间将在" in fired[0][1]
     gap = [x for x in routine.plan_between(cr._rt, datetime(2027, 5, 1), datetime(2027, 7, 1), seed) if x["gap"] and x["kind"] == "idle"]
-    assert gap, "睡眠延迟会留下空档"
-    fired.clear()
-    clock[0] = gap[0]["start"] - timedelta(seconds=90)
-    cr._check_proactive(clock[0], {})
-    assert not any(f"S{gap[0]['start']:%Y-%m-%dT%H:%M}i" in k for k in cr._pro_done()), "空档不算空闲段"
+    assert not gap, "最后一项结束立即睡眠，不再追加延迟空闲"
+    boundary = datetime(2027, 6, 2, 23, 30)
+    assert cr.other_status(boundary)["kind"] == "sleep"
     # 联合行动之后休息结束落在循环里: 立即开始专注
     plan2 = routine.plan_between(cr._rt, datetime(2027, 6, 2, 5), datetime(2027, 6, 3, 5), seed)
     rs = next(x for x in plan2 if x["kind"] == "rest")
@@ -3613,6 +3611,8 @@ def _selftest():
     wake_before = routine.wake_at(cs._rt, d2, cs.pid)
     persona_before = read_persona_full(cs.personas, cs.persona_name())
     assert "之间" in cs.shift_request(3 * 60) and "之间" in cs.shift_request(9 * 60 + 1) and "已经是" in cs.shift_request(base_start)
+    assert "15" in cs.shift_request(base_start + 1) and not cs.shift_asking()
+    assert not cs._shift_commit(base_start + 1)
     assert not cs.shift_asking() and not cs.shifts()
     n_calls = len(calls)
     notices.clear()

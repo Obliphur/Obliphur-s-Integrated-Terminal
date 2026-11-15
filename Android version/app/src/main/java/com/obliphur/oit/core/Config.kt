@@ -29,6 +29,7 @@ object Cfg {
     const val COMM_TENSION_BURST_GAIN_RATE = 0.5
     val COMM_TENSION_MORNING_HOURS = 6 until 12 // 爆发次日必定主动谈话的早间范围
     const val COMM_SHAME_TURNS = 2
+    const val COMM_SHIFT_STEP_MINUTES = 15 // 日程起点平移量必须是该分钟数的整数倍
     val COMM_MESSAGE_MILESTONES = listOf(200, 400, 500, 1000) // 当前聊天已达到的消息数量门槛
     const val AI_VOICE_GAP = 1.0
     const val AI_VOICE_AUTO_COUNT = 10

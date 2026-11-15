@@ -488,12 +488,12 @@ object CommText {
             "    初始起点:6:30            (起床的基准时刻)\n" +
             "    30min:洗漱,吃早饭        (一项活动: 持续时间:名字; 名字不是\"空闲\"的算有名字的活动, 比如吃饭, 合约时间不会和它重合)\n" +
             "    [循环 300min][100min]    (一段循环: 总长 300min, 每轮专注 100min + 休息 F(100); 也可以写 5h; 循环总以休息结束: 排不满的最后一轮不截断, 而是让专注提前结束, 休息的末尾对上循环的末尾)\n" +
-            "  做完最后一项就进入睡眠, 睡到第二天起床; 没有固定的睡觉钟点. 日程里每个时刻都是实时算出来的, 只给已经发生的部分.\n" +
+            "  空闲、重要活动和特殊空闲按初始起点累计时长固定结束, 不随波动移动; 结束后紧接下一段专注或睡眠. 日程里每个时刻都是实时算出来的, 只给已经发生的部分.\n" +
             "  每天的波动 (分钟; 每天不同, 同一天所有设备一样):\n" +
             "    下一个专注开始节点波动:[-3,2]   下一个专注结束节点波动:[-2,3]   (联合行动期间不生效)\n" +
             "    睡眠开始时间波动:[0,5]   睡眠结束时间波动:[-20,10]\n" +
-            "    循环末尾休息结束时间波动:[0,5]   (每个循环最后那次休息的结束比循环的结束晚这么多分钟, 后面的日程跟着往后推; 没写 = 不晚)\n" +
-            "  起床的波动平移整天; 晚开始专注时前一段变长 (不留空档), 睡眠被延迟的这段算\"空闲\"; 发起谈话概率照旧写在日程文件里 (睡眠后 5 分钟按实际的睡眠开始时刻算).\n" +
+            "    循环末尾休息结束时间波动:[0,5]   (每个循环最后那次休息的结束比循环的结束晚这么多分钟, 只挤占下一活动开头, 活动结束时间不变; 没写 = 不晚)\n" +
+            "  起床波动只改变首段活动长度; 循环内专注可波动, 活动后的首段专注准时开始, 最后一项结束立即睡眠, 睡眠开始波动不再生效; 发起谈话概率照旧写在日程文件里 (睡眠后 5 分钟按实际的睡眠开始时刻算).\n" +
             "  对方自己的 OIT 数据 (对方查询 [timer] [log] [calendar] [stats] [net] 时得到的是它们, 不是空白模板; 只有已经发生的部分):\n" +
             "    联网时间理由列表:{60%:查资料,20%:下载资源,20%:娱乐}(基准数据)\n" +
             "    整点记录专注填写列表:{30%:英语,数学,语文}      整点记录休息填写列表:{X%:聊天,弹琴,阅读}\n" +
@@ -550,12 +550,12 @@ object CommText {
             "    初始起点:6:30            (wake-up reference time)\n" +
             "    30min:洗漱,吃早饭        (one activity: duration:name; a name other than \"空闲\" is a named activity such as a meal; contracts never overlap it)\n" +
             "    [循环 300min][100min]    (a loop: 300min in total, each round 100min focus + F(100) rest; 5h also works; a loop always ends with a rest: the last round is not cut off, its focus ends early so the rest ends exactly at the loop's end)\n" +
-            "  After the last item the character goes to sleep until the next wake-up; there is no fixed bedtime. Everything is computed in real time and only the part that has already happened is shown.\n" +
+            "  Activity ends are fixed by the initial start plus cumulative durations, followed immediately by the next focus or sleep segment. Everything is computed in real time and only the part that has already happened is shown.\n" +
             "  Daily fluctuation (minutes; different every day, identical on every device for the same day):\n" +
             "    下一个专注开始节点波动:[-3,2]   下一个专注结束节点波动:[-2,3]   (not applied during a joint action)\n" +
             "    睡眠开始时间波动:[0,5]   睡眠结束时间波动:[-20,10]\n" +
-            "    循环末尾休息结束时间波动:[0,5]   (the last rest of every loop ends this many minutes after the loop's end and everything after it shifts later; unset = on time)\n" +
-            "  The wake-up fluctuation shifts the whole day; a later focus start stretches the previous segment (leaving no gap), and a delayed sleep counts as idle. Proactive-message probabilities are written in the routine file too (the 5 minutes after sleep use the actual sleep start).\n" +
+            "    循环末尾休息结束时间波动:[0,5]   (the last rest of every loop ends this many minutes after the loop's end and only the next activity starts later; its end remains fixed; unset = on time)\n" +
+            "  Wake-up fluctuation only changes the first activity duration. Focus may fluctuate within loops, but starts on time after activities. Sleep begins immediately after the last item; sleep-start fluctuation no longer applies. Proactive-message probabilities are written in the routine file too (the 5 minutes after sleep use the actual sleep start).\n" +
             "  The character's own OIT data (what [timer] [log] [calendar] [stats] [net] return instead of blank templates; only what has already happened):\n" +
             "    联网时间理由列表:{60%:查资料,20%:下载资源,20%:娱乐}(基准数据)\n" +
             "    整点记录专注填写列表:{30%:英语,数学,语文}      整点记录休息填写列表:{X%:聊天,弹琴,阅读}\n" +
@@ -2467,6 +2467,8 @@ class Comm(
         if (minutes < CommShift.LO || minutes > CommShift.HI)
             return tr("新起点要在 {lo} - {hi} 之间", "lo" to CommShift.hm(CommShift.LO), "hi" to CommShift.hm(CommShift.HI))
         val cur = shiftStart() ?: return "这个人设没有日程文件, 不能平移起点"
+        if ((minutes - cur) % Cfg.COMM_SHIFT_STEP_MINUTES != 0)
+            return tr("起点平移必须以 {minutes} 分钟为间隔", "minutes" to Cfg.COMM_SHIFT_STEP_MINUTES)
         if (cur == minutes) return tr("明天的起点已经是 {t} 了", "t" to CommShift.hm(minutes))
         awayKind().let { if (it.isNotEmpty()) return tr("{name} {st}, 现在没法征求同意", "name" to aiName(), "st" to tr(if (it == "sleep") "睡眠中" else "专注中")) }
         shiftAskPid = pid; shiftAskTs = nowMs(); shiftAskSent = false; shiftAskTo = minutes
@@ -2490,7 +2492,7 @@ class Comm(
     /** 对方同意了: 记下 (明天起生效), 同步给别的设备. 请求发出之后日程文件被换掉 / 范围不对就不记. */
     private fun shiftCommit(minutes: Int): Boolean {
         val cur = shiftStart() ?: return false
-        if (minutes < CommShift.LO || minutes > CommShift.HI) return false
+        if (minutes < CommShift.LO || minutes > CommShift.HI || (minutes - cur) % Cfg.COMM_SHIFT_STEP_MINUTES != 0) return false
         val day = now().toLocalDate().plusDays(1)
         val rec = ShiftRec(maxOf(nowMs(), (shifts().maxOfOrNull { it.ts } ?: 0L) + 1), day.toString(), minutes, cur)
         shift = CommShift.norm(shifts() + rec)

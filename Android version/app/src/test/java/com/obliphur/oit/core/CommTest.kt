@@ -3041,6 +3041,7 @@ class CommTest {
         val wakeBefore = Routine.wakeAt(spec, d2, c.pid)
         val personaBefore = c.readPersonaFull("Claudia.txt")
         assertTrue("之间" in c.shiftRequest(3 * 60) && "之间" in c.shiftRequest(9 * 60 + 1) && "已经是" in c.shiftRequest(base))
+        assertTrue("15" in c.shiftRequest(base + 1)); assertFalse(c.shiftAsking())
         assertTrue(!c.shiftAsking() && c.shifts().isEmpty())
         val n0 = calls.size
         script.add("[messages]"); script.add("[Yes] 行.")

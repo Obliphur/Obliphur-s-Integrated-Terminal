@@ -320,7 +320,7 @@ private fun HelpDialog(onDismiss: () -> Unit) {
         Triple("👀 / 🙈", tr("分享数据"), tr("点一下切换 (👀 = 打开, 要先征得对方同意; ⏳ = 等对方回复). 打开后去别的页面, 对方会收到那一页上你们的数据; 回到沟通自动关闭. 对方也可以发邀请, 点「接受」才会打开.")),
         Triple("🔔 / 🔕", tr("主动发起"), tr("🔔 = 允许这个对象主动找你, 🔕 = 禁止.")),
         Triple("⏰ / ⏲", tr("共时闹钟"), tr("⏰ = 闹钟跟随这个对象的起床时间; 响铃的设备手动选, 一次只能有一个对象.")),
-        Triple("🕰", tr("起点平移"), tr("请求对方把日程起点平移到 4:00 - 9:00 之间, 同意后明天起生效.")),
+        Triple("🕰", tr("起点平移"), tr("请求对方以15分钟为间隔平移日程起点, 新起点在4:00 - 9:00之间, 同意后明天起生效.")),
         Triple("🖼", tr("识别字体"), tr("选一张图片, 把上面的文字读出来放进聊天框. 不能发送图片.")),
         Triple("🤝", tr("联合行动"), tr("邀请对方一起做一次合约: 在合约页选词条, 输入开始时间; 对方回 [Yes] 就按约开始.")),
     )
@@ -370,10 +370,12 @@ private fun ShiftDialog(cur: Int, onCancel: () -> Unit, onOk: (Int) -> Unit) {
                 OutlinedTextField(text, { text = it.take(8) }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
                 if (v == null) Text(tr("请输入 时:分, 例如 14:30"), color = o.danger, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
+                else if ((v - cur) % Cfg.COMM_SHIFT_STEP_MINUTES != 0)
+                    Text(tr("起点平移必须以 {minutes} 分钟为间隔", "minutes" to Cfg.COMM_SHIFT_STEP_MINUTES), color = o.danger, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
             }
         },
         dismissButton = { TextButton(onCancel) { Text(tr("取消"), color = o.dim) } },
-        confirmButton = { TextButton({ v?.let(onOk) }) { Text(tr("请求"), color = o.accent) } })
+        confirmButton = { TextButton({ v?.let(onOk) }, enabled = v != null && (v - cur) % Cfg.COMM_SHIFT_STEP_MINUTES == 0) { Text(tr("请求"), color = o.accent) } })
 }
 
 /** 合约页点了"确定选择"之后: 输入开始时间 (时:分, 已经过了的算明天), 下面实时算出结束时间; 确定后打包成联合行动, 随下一条消息发出. */

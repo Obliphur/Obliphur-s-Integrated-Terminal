@@ -3,6 +3,7 @@ package com.obliphur.oit.core
 /** 英文界面文字. 由 gen_en.py 从桌面版 i18n.py 和补充的译文生成; 键是中文原文. */
 object EnStrings {
     val MAP: Map<String, String> = hashMapOf(
+        "起点平移必须以 {minutes} 分钟为间隔" to "Shift the start time in increments of {minutes} minutes",
         "同一条消息可以同时触发多个条件；各条件分别应用倍率并取整后累加，各自进入冷却；重复的同一条件只取最大增量。请报告所有满足的条件，不得给其他历史消息加值，不要向用户解释标记。" to "A single message may trigger multiple conditions. Apply multipliers and rounding to each condition separately, add their gains, and start each condition's cooldown. For duplicate tags of the same condition, use only the largest gain. Report all matching conditions; do not add gains for other historical messages or explain the tags to the user.",
         "每条消息按基础增量从高到低结算。每次成功加值后，其他条件在接下来1小时内的增量乘0.75，再次成功加值会刷新窗口；尚无窗口时最高增量条件不乘，其余条件乘，已有窗口时所有可用条件都乘。该倍率与时段及爆发后倍率叠加，由系统逐步取整，请仍返回原始基础增量。" to "Settle each message's conditions from highest to lowest base gain. Each successful gain multiplies gains from other conditions by 0.75 for the next hour, and each further successful gain refreshes this window. Without an active window, the highest gain is exempt and the remaining gains receive this multiplier; with an active window, all available gains receive it. This stacks with the period and post-burst multipliers; the system rounds down at each step. Return the raw base gains.",
         "推荐使用Claude或者Gemini" to "Recommended: Claude or Gemini",
@@ -1599,7 +1600,7 @@ object EnStrings {
         "点一下切换 (👀 = 打开, 要先征得对方同意; ⏳ = 等对方回复). 打开后去别的页面, 对方会收到那一页上你们的数据; 回到沟通自动关闭. 对方也可以发邀请, 点「接受」才会打开." to "Tap to toggle (👀 = on; needs the other side's consent first, ⏳ = waiting for a reply). Once on, go to another page and the other side receives your data from that page; going back to Chat turns it off. The other side can also invite you; it opens only after you accept.",
         "🔔 = 允许这个对象主动找你, 🔕 = 禁止." to "🔔 = this character may message you first, 🔕 = not allowed.",
         "⏰ = 闹钟跟随这个对象的起床时间; 响铃的设备手动选, 一次只能有一个对象." to "⏰ = the alarm follows this character's wake-up time; pick the ringing devices yourself; only one character at a time.",
-        "请求对方把日程起点平移到 4:00 - 9:00 之间, 同意后明天起生效." to "Ask the other side to shift its schedule start to somewhere between 4:00 and 9:00; it takes effect tomorrow once agreed.",
+        "请求对方以15分钟为间隔平移日程起点, 新起点在4:00 - 9:00之间, 同意后明天起生效." to "Ask to shift the routine start in 15-minute increments, within 4:00 - 9:00. If accepted, it takes effect tomorrow.",
         "选一张图片, 把上面的文字读出来放进聊天框. 不能发送图片." to "Pick an image and its text is read into the chat box. Images cannot be sent.",
         "邀请对方一起做一次合约: 在合约页选词条, 输入开始时间; 对方回 [Yes] 就按约开始." to "Invite the other side to do a contract together: pick terms on the contract page and enter a start time; if they reply [Yes] it starts as agreed.",
         "特别提醒: 「无言为真」生效时无法使用「沟通」." to "Note: while \"Silence\" is in effect, Chat cannot be used.",
