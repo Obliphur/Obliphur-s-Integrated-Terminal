@@ -14,10 +14,9 @@ object Cfg {
     const val COMM_TENSION_LOW = 50
     const val COMM_TENSION_CAP = 90
     const val COMM_TENSION_DAILY_RATE = 0.5
-    val COMM_TENSION_GAINS = mapOf("rumination" to 20, "boundary" to 15, "comfort" to 10, "violation" to 10)
-    const val COMM_TENSION_GAIN_MULTIPLIER = 2 // 基础增量翻倍后再应用时段倍率
+    val COMM_TENSION_GAINS = mapOf("rumination" to 40, "boundary" to 30, "comfort" to 30, "violation" to 25)
     const val COMM_TENSION_GAIN_COOLDOWN_SECONDS = 3 * 60 * 60
-    const val COMM_TENSION_HP_LOSS_GAIN = 15 // 合约扣血单独设定基础增量，不再乘翻倍系数
+    const val COMM_TENSION_HP_LOSS_GAIN = 15 // 合约扣血单独设定基础增量
     const val COMM_TENSION_DAY_DECAY = 25
     const val COMM_TENSION_HIGH_DAY_DECAY = 15 // 超过第二临界、尚未爆发时的每日衰减
     const val COMM_TENSION_RELEASE = 20

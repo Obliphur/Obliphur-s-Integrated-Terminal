@@ -61,12 +61,12 @@ def tension_clean(reply):
 
 
 def tension_model_event(reply, index, special, cooldowns=None, now_ms=0):
-    """先排除冷却条件，再取最大增量；旧标记归入其他情绪，基础翻倍后处理日常倍率。"""
+    """先排除冷却条件，再取最大基础增量；旧标记归入其他情绪，再处理日常倍率。"""
     events = [(int(m[3]), (m[2] or "other").lower()) for m in _TENSION_GAIN.finditer(reply)
               if int(m[1]) == index and (m[2] or "other").lower() in (*config.COMM_TENSION_GAINS, "other")]
     events = [event for event in events if now_ms >= (cooldowns or {}).get(event[1], 0)]
     gain, condition = max(events, key=lambda event: event[0], default=(0, "other"))
-    gain = max(0, min(max(config.COMM_TENSION_GAINS.values()), gain)) * config.COMM_TENSION_GAIN_MULTIPLIER
+    gain = max(0, min(max(config.COMM_TENSION_GAINS.values()), gain))
     return condition, int(gain if special else gain * config.COMM_TENSION_DAILY_RATE)
 
 
@@ -225,7 +225,7 @@ class InteractionMixin:
                 "相同条件不要改名规避冷却。"
                 f"0表示不增加，可省略。自我构陷参考{config.COMM_TENSION_GAINS['rumination']}、边界试探{config.COMM_TENSION_GAINS['boundary']}、"
                 f"疲惫撒娇{config.COMM_TENSION_GAINS['comfort']}、违规{config.COMM_TENSION_GAINS['violation']}，也可自行判断其他情绪。"
-                f"系统先将基础增量乘{config.COMM_TENSION_GAIN_MULTIPLIER}，再按发送时段处理日常减半及爆发后24小时的增长减半，无需你乘倍或减半。"
+                + tr("系统按发送时段处理日常减半及爆发后24小时的增长减半，请返回未减半的基础增量。") +
                 f"每个条件{config.COMM_TENSION_GAIN_COOLDOWN_SECONDS // 3600}小时内仅加一次，真实违规与模型判定违规共用冷却。"
                 "每条消息先排除冷却中的条件，再选剩余条件中点数最高的一项生效，不叠加；请报告所有满足的条件，不要自行只保留最高项。不得给其他历史消息加值，不要向用户解释标记。"
                 "冷却中的条件仍须报告正数原始增量；张力已超过90后再次满足任一增长条件可触发爆发，冷却只限制加值。"

@@ -126,7 +126,7 @@ data class CommInteraction(
                 .map { (it.groupValues[2].lowercase().ifEmpty { "other" }) to it.groupValues[3].toInt() }
                 .filter { (it.first in Cfg.COMM_TENSION_GAINS || it.first == "other") && nowMs >= (cooldowns[it.first] ?: 0L) }
                 .maxByOrNull { it.second }
-            val gain = (event?.second ?: 0).coerceIn(0, Cfg.COMM_TENSION_GAINS.values.max()) * Cfg.COMM_TENSION_GAIN_MULTIPLIER
+            val gain = (event?.second ?: 0).coerceIn(0, Cfg.COMM_TENSION_GAINS.values.max())
             return (event?.first ?: "other") to (if (special) gain.toDouble() else gain * Cfg.COMM_TENSION_DAILY_RATE).toInt()
         }
 

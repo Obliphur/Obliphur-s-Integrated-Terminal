@@ -2990,7 +2990,7 @@ class Comm(
             "相同条件不要改名规避冷却。" +
             "0表示不增加，可省略。自我构陷参考${Cfg.COMM_TENSION_GAINS.getValue("rumination")}、边界试探${Cfg.COMM_TENSION_GAINS.getValue("boundary")}、" +
             "疲惫撒娇${Cfg.COMM_TENSION_GAINS.getValue("comfort")}、违规${Cfg.COMM_TENSION_GAINS.getValue("violation")}，也可自行判断其他情绪。" +
-            "系统先将基础增量乘${Cfg.COMM_TENSION_GAIN_MULTIPLIER}，再按发送时段处理日常减半及爆发后24小时的增长减半，无需你乘倍或减半。" +
+            tr("系统按发送时段处理日常减半及爆发后24小时的增长减半，请返回未减半的基础增量。") +
             "每个条件${Cfg.COMM_TENSION_GAIN_COOLDOWN_SECONDS / 3600}小时内仅加一次，真实违规与模型判定违规共用冷却。" +
             "每条消息先排除冷却中的条件，再选剩余条件中点数最高的一项生效，不叠加；请报告所有满足的条件，不要自行只保留最高项。不得给其他历史消息加值，不要向用户解释标记。" +
             "冷却中的条件仍须报告正数原始增量；张力已超过90后再次满足任一增长条件可触发爆发，冷却只限制加值。" +
