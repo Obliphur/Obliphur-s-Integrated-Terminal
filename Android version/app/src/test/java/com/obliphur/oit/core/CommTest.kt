@@ -563,7 +563,7 @@ class CommTest {
         assertTrue("你知道这是情景模拟,而不是现实中的动作" in CommInteraction(scenarioMode = true).note(200, true))
         val decayMs = clock.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
         val quarter = Cfg.COMM_TENSION_DECAY_SECONDS * 1000L
-        for ((value, rate) in listOf(20.0 to 25, 70.0 to 50, 100.0 to 15)) {
+        for ((value, rate) in listOf(20.0 to 25.0, 70.0 to 50.0, 100.0 to 7.5)) {
             val base = CommInteraction(tension = value.toDouble(), decayAt = decayMs)
             assertEquals(value, base.roll(decayMs + quarter - 1).tension, 1e-8)
             val rolled = base.roll(decayMs + quarter)
@@ -576,9 +576,9 @@ class CommTest {
         assertEquals(0.0, CommInteraction(tension = 100.0, decayAt = decayMs).roll(decayMs + 100 * 86400000L).tension, 1e-8)
         assertEquals(50.0, CommInteraction(tension = 50.0, day = "2027-05-03").roll(decayMs).tension, 1e-8)
         // 离线补算与逐段运行一致，跨档后切换速率，暂停不留补扣债务。
-        val base = CommInteraction(tension = 90.1, decayAt = decayMs)
+        val base = CommInteraction(tension = 90.05, decayAt = decayMs)
         val first = base.roll(decayMs + quarter)
-        assertEquals(90.1 - 15 / 96.0, first.tension, 1e-8)
+        assertEquals(90.05 - 7.5 / 96.0, first.tension, 1e-8)
         assertEquals(first.roll(decayMs + 2 * quarter), base.roll(decayMs + 2 * quarter))
         val paused = CommInteraction(tension = 70.0, shameTurns = 1, decayAt = decayMs).roll(decayMs + 86400000L)
         assertEquals(70.0, paused.tension, 1e-8); assertEquals(decayMs + 86400000L, paused.decayAt)
@@ -912,7 +912,7 @@ class CommTest {
         assertEquals(95.0, night.settle(end - 1).roll(end - 1).tension, 1e-8)
         val silent = night.settle(end)
         assertEquals(95.0, silent.roll(end + 86400000L).tension, 1e-8)
-        assertEquals(95 - 15 / 96.0, silent.roll(end + 86400000L + quarter).tension, 1e-8)
+        assertEquals(95 - 7.5 / 96.0, silent.roll(end + 86400000L + quarter).tension, 1e-8)
         assertEquals(end + 86400000L, silent.roll(end - 86400000L).decayHoldUntil)
         assertEquals(silent, CommInteraction.parse(silent.json()))
         clock = LocalDateTime.of(2027, 5, 7, 13, 40)

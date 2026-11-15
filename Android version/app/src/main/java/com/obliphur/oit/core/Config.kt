@@ -21,7 +21,7 @@ object Cfg {
     const val COMM_TENSION_HP_LOSS_GAIN = 15 // 合约扣血单独设定基础增量
     const val COMM_TENSION_DAY_DECAY = 25
     const val COMM_TENSION_DECAY_SECONDS = 15 * 60
-    const val COMM_TENSION_HIGH_DAY_DECAY = 15 // 超过第二临界、尚未爆发时的每日衰减
+    const val COMM_TENSION_HIGH_DAY_DECAY = COMM_TENSION_DAY_DECAY * 0.3 // 未爆发的90+按低档衰减速度的0.3倍
     const val COMM_TENSION_RELEASE = 20
     const val COMM_SPECIAL_LURE_DELAY_SECONDS = 7 * 60 // 特殊空闲前七分钟无正向条件时主动挑起话题
     const val COMM_TENSION_BURST_EXTRA_SECONDS = 10 * 60 // 特殊空闲结束后仍维持爆发

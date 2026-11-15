@@ -520,7 +520,7 @@ def _selftest():
     assert "你知道这是情景模拟,而不是现实中的动作" in interaction_prompt({"scenario_mode": True}, 200, True)
     decay_ms = int(fixed2.timestamp() * 1000)
     quarter = config.COMM_TENSION_DECAY_SECONDS * 1000
-    for value, rate in ((20, 25), (70, 50), (100, 15)):
+    for value, rate in ((20, 25), (70, 50), (100, 7.5)):
         base = {"tension": value, "decay_at": decay_ms}
         assert interaction_roll(base, decay_ms + quarter - 1)["tension"] == value
         rolled = interaction_roll(base, decay_ms + quarter)
@@ -532,9 +532,9 @@ def _selftest():
     assert interaction_roll({"tension": 100, "decay_at": decay_ms}, decay_ms + 100 * 86400000)["tension"] == 0
     assert interaction_roll({"tension": 50, "day": "2027-05-03"}, decay_ms)["tension"] == 50
     # 离线补算与逐段运行一致；跨档后使用新速率，暂停时段不留补扣债务。
-    base = {"tension": 90.1, "decay_at": decay_ms}
+    base = {"tension": 90.05, "decay_at": decay_ms}
     first = interaction_roll(base, decay_ms + quarter)
-    assert abs(first["tension"] - (90.1 - 15 / 96)) < 1e-8
+    assert abs(first["tension"] - (90.05 - 7.5 / 96)) < 1e-8
     assert interaction_roll(first, decay_ms + 2 * quarter) == interaction_roll(base, decay_ms + 2 * quarter)
     paused = interaction_roll({"tension": 70, "shame_turns": 1, "decay_at": decay_ms}, decay_ms + 86400000)
     assert paused["tension"] == 70 and paused["decay_at"] == decay_ms + 86400000
@@ -1060,7 +1060,7 @@ def _selftest():
     assert interaction_roll(interaction_settle(silent_night, midnight_end - 1), midnight_end - 1)["tension"] == 95
     silent_night = interaction_settle(silent_night, midnight_end)
     assert interaction_roll(silent_night, midnight_end + 86400000)["tension"] == 95
-    assert abs(interaction_roll(silent_night, midnight_end + 86400000 + quarter)["tension"] - (95 - 15 / 96)) < 1e-8
+    assert abs(interaction_roll(silent_night, midnight_end + 86400000 + quarter)["tension"] - (95 - 7.5 / 96)) < 1e-8
     assert interaction_roll(silent_night, midnight_end - 86400000)["decay_hold_until"] == midnight_end + 86400000
     peer_special.now = lambda: fixed2.replace(hour=13, minute=40) + timedelta(days=3)
     peer_special._interaction_set({"tension": 95, "decay_at": decay_ms})

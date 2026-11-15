@@ -46,8 +46,8 @@ data class CommInteraction(
         while (remaining > 0L && next > 0.0) {
             val rate = when {
                 next > Cfg.COMM_TENSION_CAP -> Cfg.COMM_TENSION_HIGH_DAY_DECAY
-                next >= Cfg.COMM_TENSION_LOW -> Cfg.COMM_TENSION_DAY_DECAY * 2
-                else -> Cfg.COMM_TENSION_DAY_DECAY
+                next >= Cfg.COMM_TENSION_LOW -> Cfg.COMM_TENSION_DAY_DECAY * 2.0
+                else -> Cfg.COMM_TENSION_DAY_DECAY.toDouble()
             }
             next = maxOf(0.0, round((next - rate * step / 86400000.0) * 1e10) / 1e10)
             remaining--
