@@ -30,6 +30,7 @@ import androidx.compose.material3.IconButton
 import com.obliphur.oit.core.Cfg
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -193,12 +194,22 @@ fun CommScreen(go: (String) -> Unit) {
             }
             TextButton({ if (comm.messages.isNotEmpty()) askClear = true }) { Text(tr("清空"), color = o.dim) }
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            TextButton({ comm.setScenario(!comm.scenarioOn()) }, enabled = comm.scenarioUnlocked()) {
-                Text(tr(if (comm.scenarioOn()) "🎭 情景模拟" else "📱 软件聊天"))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            val scenario = comm.scenarioOn()
+            OutlinedButton({ comm.setScenario(false) }, modifier = Modifier.weight(1f),
+                colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
+                    containerColor = if (!scenario) o.accent else Color.Transparent,
+                    contentColor = if (!scenario) o.onAccent else o.text)) {
+                Text(tr("📱 软件聊天"))
             }
-            if (!comm.scenarioUnlocked()) IconButton({ core.toast(tr("累计 {n} 条聊天记录解锁情景模拟", "n" to Cfg.COMM_SCENARIO_UNLOCK), "info") }) {
-                Text("?")
+            OutlinedButton({
+                if (comm.scenarioUnlocked()) comm.setScenario(true)
+                else core.toast(tr("累计 {n} 条聊天记录解锁情景模拟", "n" to Cfg.COMM_SCENARIO_UNLOCK), "info")
+            }, modifier = Modifier.weight(1f),
+                colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
+                    containerColor = if (scenario) o.accent else Color.Transparent,
+                    contentColor = if (scenario) o.onAccent else o.text)) {
+                Text(if (comm.scenarioUnlocked()) tr("🎭 情景模拟") else tr("🎭 情景模拟（{n}条解锁）", "n" to Cfg.COMM_SCENARIO_UNLOCK))
             }
         }
         // 对方现在在做什么 (按人设日程; 没有选人设时不显示): 小圆点的颜色跟着状态变
@@ -318,6 +329,7 @@ private fun HelpDialog(onDismiss: () -> Unit) {
     val o = LocalOit.current
     val rows = listOf(
         Triple("❓", tr("帮助"), tr("打开这个说明.")),
+        Triple("📱 / 🎭", tr("聊天模式"), tr("聊天记录上方可选择软件聊天或情景模拟。累计 {n} 条聊天记录后解锁情景模拟；未解锁时点击可查看门槛。软件聊天不描写动作，情景模拟按当前时段与状态描写虚构动作，模式按聊天对象保存。", "n" to Cfg.COMM_SCENARIO_UNLOCK)),
         Triple("👀 / 🙈", tr("分享数据"), tr("点一下切换 (👀 = 打开, 要先征得对方同意; ⏳ = 等对方回复). 打开后去别的页面, 对方会收到那一页上你们的数据; 回到沟通自动关闭. 对方也可以发邀请, 点「接受」才会打开.")),
         Triple("🔔 / 🔕", tr("主动发起"), tr("🔔 = 允许这个对象主动找你, 🔕 = 禁止.")),
         Triple("⏰ / ⏲", tr("共时闹钟"), tr("⏰ = 闹钟跟随这个对象的起床时间; 响铃的设备手动选, 一次只能有一个对象.")),

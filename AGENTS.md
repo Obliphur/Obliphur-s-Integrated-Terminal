@@ -46,6 +46,7 @@ python release.py               # 发布（PyInstaller）
 | `_sound_check.py` | 音效独立设置、试听草稿、静音、默认回退与窄窗口标签换行 | `sound_effects.py`、音效设置 / 播放入口 |
 | `_daily_ui_check.py` | 设置 → 日常（睡觉时间、行为模式） | `pages/settings_page/` |
 | `_ai_dialog_check.py` | AI 模型设置弹窗：小屏 / 大字号下能滚到底、字段点得到 | `pages/ai_dialogs.py`、`pages/widgets.py` 的 `Modal` / `ScrollArea` |
+| `_comm_mode_check.py` | 沟通模式：未解锁入口可见可点、200 条解锁与切换、窄窗口 / 大字号布局、中英文帮助滚动 | `pages/comm_page.py` 的模式入口 / `_help` |
 | `_voice_check.py` | AI 语音协议、官方型号获取、音色设计 / 上传 / 克隆、生成去重、缓存复用、播放记录、跨设备音频与已听状态同步、未播队列、并发清空与配置窗口 | `ai_voice.py`、`ai_voice_design.py`、`pages/voice_dialogs.py`、`pages/voice_design.py`、`pages/comm_voice.py`、沟通语音入口 |
 | `_joint_invite_check.py` | AI 发起联合行动的邀请模式 | `pages/contract_page.py` 邀请、`app_comm._joint_invite_watch` |
 | `_focus_check.py` | 焦点设备（提示音 / 刻痕）的「最后操作时刻」：Windows 全系统输入、只前进、取不到时不动 | `app/app_sync.py` 的 `system_idle_ms` / `_note_input`、`sync_local.py` 的 `status()` |

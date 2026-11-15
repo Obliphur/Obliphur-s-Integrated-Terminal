@@ -57,6 +57,15 @@ class CommPage(CommVoiceMixin, tk.Frame):
         self.cb_who = ttk.Combobox(hdr, textvariable=self.var_who, state="readonly", width=16)
         self.cb_who.pack(side="right", padx=(0, 12))
         self.cb_who.bind("<<ComboboxSelected>>", lambda _e: self._pick_who())
+        # 两个模式始终可见；未解锁时点击情景模拟会明确提示门槛。
+        scenario_row = tk.Frame(self, bg=bg)
+        scenario_row.pack(fill="x", padx=30, pady=(0, 4))
+        tk.Label(scenario_row, text=tr("聊天模式"), bg=bg, fg=COLORS["text"],
+                 font=config.font("body")).pack(side="left", padx=(0, 12))
+        self.btn_chat = ttk.Button(scenario_row, text=tr("📱 软件聊天"), command=lambda: self._set_mode(False))
+        self.btn_chat.pack(side="left")
+        self.btn_scenario = ttk.Button(scenario_row, text=tr("🎭 情景模拟"), command=lambda: self._set_mode(True))
+        self.btn_scenario.pack(side="left", padx=(8, 0))
         # 对方现在在做什么 (按人设日程; 每秒刷新, 没有选人设时不显示): 小圆点的颜色跟着状态变
         self.other_row = tk.Frame(self, bg=bg)
         self.other_row.pack(fill="x", padx=30, pady=(0, 2))
@@ -70,14 +79,6 @@ class CommPage(CommVoiceMixin, tk.Frame):
         self.cb_cfg = ttk.Combobox(hdr, textvariable=self.var_cfg, state="readonly", width=18)
         self.cb_cfg.pack(side="right", padx=(0, 8))
         self.cb_cfg.bind("<<ComboboxSelected>>", lambda _e: self._pick_config())
-
-        # 模式切换独占一行，避免被较长的对方状态文字挤出可见区域。
-        scenario_row = tk.Frame(self, bg=bg)
-        scenario_row.pack(fill="x", padx=30, pady=(0, 2))
-        self.btn_scenario = ttk.Button(scenario_row, command=self._toggle_scenario)
-        self.btn_scenario.pack(side="right")
-        self.btn_scenario.bind("<Enter>", self._scenario_hint)
-        self.btn_scenario.bind("<Leave>", lambda _e: self._sync_status())
 
         self.area = ScrollArea(self, height=300, bg=bg)
         self.area.pack(fill="both", expand=True, padx=26, pady=(4, 4))
@@ -172,13 +173,12 @@ class CommPage(CommVoiceMixin, tk.Frame):
         if 0 <= idx < len(self._cfg_ids):
             self.comm.set_config(self._cfg_ids[idx])
 
-    def _toggle_scenario(self):
-        self.comm.set_scenario(not self.comm.scenario_on())
+    def _set_mode(self, enabled):
+        if enabled and not self.comm.scenario_unlocked():
+            toast.info(tr("累计 {n} 条聊天记录解锁情景模拟", n=config.COMM_SCENARIO_UNLOCK))
+            return
+        self.comm.set_scenario(enabled)
         self.refresh(force=True)
-
-    def _scenario_hint(self, _event):
-        if not self.comm.scenario_unlocked():
-            cfg(self.lbl_status, text=tr("累计 {n} 条聊天记录解锁情景模拟", n=config.COMM_SCENARIO_UNLOCK))
 
     def _sync_status(self):
         """状态行: 不能用的原因 > 出错 (每秒看一次, 不用重画消息)."""
@@ -189,8 +189,11 @@ class CommPage(CommVoiceMixin, tk.Frame):
         other, kind = c.other_status_display()
         cfg(self.lbl_other_dot, text="●" if other else "", fg=comm_mod.STATUS_COLORS.get(kind, COLORS["text_dim"]))
         cfg(self.lbl_other, text=other)
-        cfg(self.btn_scenario, text=tr("🎭 情景模拟" if c.scenario_on() else "📱 软件聊天"),
-            state="normal" if c.scenario_unlocked() else "disabled")
+        scenario = c.scenario_on()
+        cfg(self.btn_chat, style="TButton" if scenario else "Accent.TButton")
+        cfg(self.btn_scenario, text=tr("🎭 情景模拟") if c.scenario_unlocked() else
+            tr("🎭 情景模拟（{n}条解锁）", n=config.COMM_SCENARIO_UNLOCK),
+            style="Accent.TButton" if scenario else "TButton")
 
     def refresh(self, force: bool = False):
         c = self.comm
@@ -617,13 +620,16 @@ class CommPage(CommVoiceMixin, tk.Frame):
         dlg = Modal(self.winfo_toplevel(), tr("帮助"), width=width, height=config.scaled(400))
         bg = COLORS["bg"]
         rows = (("❓", "帮助", "打开这个说明."),
+                ("📱 / 🎭", "聊天模式", tr("聊天记录上方可选择软件聊天或情景模拟。累计 {n} 条聊天记录后解锁情景模拟；未解锁时点击可查看门槛。软件聊天不描写动作，情景模拟按当前时段与状态描写虚构动作，模式按聊天对象保存。", n=config.COMM_SCENARIO_UNLOCK)),
                 ("👀 / 🙈", "分享数据 (share data)", "点一下切换 (👀 = 打开, 要先征得对方同意; ⏳ = 等对方回复). 打开后去别的页面, 对方会收到那一页上你们的数据; 回到沟通自动关闭. 对方也可以发邀请, 点「接受」才会打开."),
                 ("🔔 / 🔕", "主动发起", "🔔 = 允许这个对象主动找你, 🔕 = 禁止."),
                 ("⏰ / ⏲", "共时闹钟", "⏰ = 闹钟跟随这个对象的起床时间; 响铃的设备手动选, 一次只能有一个对象."),
                 ("🕰", "起点平移", "请求对方把日程起点平移到 4:00 - 9:00 之间, 同意后明天起生效."),
                 ("🖼", "识别字体", "选一张图片, 把上面的文字读出来放进聊天框. 不能发送图片."),
                 ("🤝", "联合行动", "邀请对方一起做一次合约: 在合约页选词条, 输入开始时间; 对方回 [Yes] 就按约开始."))
-        cols = tk.Frame(dlg.body, bg=bg)
+        area = ScrollArea(dlg.body, height=config.scaled(400), bg=bg)
+        area.pack(fill="both", expand=True)
+        cols = tk.Frame(area.inner, bg=bg)
         cols.pack(fill="x")
         cols.columnconfigure(0, weight=1, uniform="help")
         cols.columnconfigure(1, weight=1, uniform="help")
@@ -636,12 +642,13 @@ class CommPage(CommVoiceMixin, tk.Frame):
             tk.Label(f, text=icon, bg=bg, fg=COLORS["text"], font=config.font("body", bold=True), width=7, anchor="nw").pack(side="left", anchor="n")
             tk.Label(f, text=tr(name) + ": " + tr(text), bg=bg, fg=COLORS["text"], font=config.font("body"), justify="left",
                      anchor="w", wraplength=cell - config.scaled(100)).pack(side="left", fill="x", expand=True)
-        tk.Label(dlg.body, text="⚠  " + tr("特别提醒: 「无言为真」生效时无法使用「沟通」."),
+        tk.Label(area.inner, text="⚠  " + tr("特别提醒: 「无言为真」生效时无法使用「沟通」."),
                  bg=bg, fg=COLORS["danger"], font=config.font("body", bold=True), justify="left", anchor="w",
                  wraplength=width - config.scaled(60)).pack(fill="x", pady=(6, 0))
         ttk.Button(dlg.buttons, text=tr("知道了"), style="Accent.TButton", command=lambda: dlg.finish(True)).pack(side="right")
         dlg.update_idletasks()
-        dlg._center(self.winfo_toplevel(), width, dlg.winfo_reqheight())
+        dlg._center(self.winfo_toplevel(), min(width, int(dlg.winfo_screenwidth() * .9)),
+                    min(dlg.winfo_reqheight(), int(dlg.winfo_screenheight() * .85)))
         dlg.wait()
 
     def _joint_respond(self, accept: bool):
