@@ -54,6 +54,7 @@ def interaction_norm(value):
             "burst_sleep_after": number("burst_sleep_after", 2**63 - 1),
             "gain_until": number("gain_until", 2**63 - 1),
             "gain_cooldowns": clean_cooldowns,
+            "gain_chain_until": number("gain_chain_until", 2**63 - 1),
             "burst_days": sorted({s for s in days if isinstance(s, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", s)})[-2:],
             "morning_day": str(d.get("morning_day") or ""),
             "special_until": number("special_until", 2**63 - 1),
@@ -77,22 +78,29 @@ def tension_clean(reply):
     return _TENSION_TAG.sub("", reply).strip()
 
 
-def tension_model_event(reply, index, special, cooldowns=None, now_ms=0):
-    """先排除冷却条件，再取最大基础增量；旧标记归入其他情绪，再处理日常倍率。"""
-    events = [(int(m[3]), (m[2] or "other").lower()) for m in _TENSION_GAIN.finditer(reply)
-              if int(m[1]) == index and (m[2] or "other").lower() in (*config.COMM_TENSION_GAINS, "other")]
-    events = [event for event in events if now_ms >= (cooldowns or {}).get(event[1], 0)]
-    gain, condition = max(events, key=lambda event: event[0], default=(0, "other"))
-    gain = max(0, min(max(config.COMM_TENSION_GAINS.values()), gain))
-    return condition, int(gain if special else gain * config.COMM_TENSION_DAILY_RATE)
+def tension_model_events(reply, index, special, cooldowns=None, now_ms=0):
+    """各条件按基础增量降序分别结算，重复条件只取最大值；旧标记归入其他情绪。"""
+    gains = {}
+    for m in _TENSION_GAIN.finditer(reply):
+        condition = (m[2] or "other").lower()
+        if int(m[1]) != index or condition not in (*config.COMM_TENSION_GAINS, "other"):
+            continue
+        if now_ms < (cooldowns or {}).get(condition, 0):
+            continue
+        gain = max(0, min(max(config.COMM_TENSION_GAINS.values()), int(m[3])))
+        gains[condition] = max(gains.get(condition, 0), gain)
+    return [(condition, int(gain if special else gain * config.COMM_TENSION_DAILY_RATE))
+            for condition, gain in sorted(gains.items(), key=lambda item: -item[1]) if gain > 0]
 
 
 def tension_model_gain(reply, index, special):
-    return tension_model_event(reply, index, special)[1]
+    return sum(gain for _condition, gain in tension_model_events(reply, index, special))
 
 
 def interaction_gain(d, gain, now_ms):
-    """爆发后按绝对时刻限制增长，与日常增长系数叠加。"""
+    """先应用条件连锁倍率，再应用爆发后减半；日常倍率由调用方处理。"""
+    if now_ms < d.get("gain_chain_until", 0):
+        gain = int(gain * config.COMM_TENSION_CHAIN_RATE)
     return int(gain * config.COMM_TENSION_BURST_GAIN_RATE) if now_ms < d.get("gain_until", 0) else gain
 
 
@@ -103,6 +111,7 @@ def interaction_add(d, condition, gain, now_ms):
         return
     d["tension"] = min(config.COMM_TENSION_MAX, d["tension"] + gain)
     d["gain_cooldowns"][condition] = now_ms + config.COMM_TENSION_GAIN_COOLDOWN_SECONDS * 1000
+    d["gain_chain_until"] = max(d.get("gain_chain_until", 0), now_ms + config.COMM_TENSION_CHAIN_SECONDS * 1000)
 
 
 def interaction_roll(d, now_ms):
@@ -251,7 +260,8 @@ class InteractionMixin:
                 f"疲惫撒娇{config.COMM_TENSION_GAINS['comfort']}、违规{config.COMM_TENSION_GAINS['violation']}，也可自行判断其他情绪。"
                 + tr("系统按发送时段将非特殊空闲的增量乘0.75，并处理爆发后24小时的增长减半，请返回未经倍率调整的基础增量。") +
                 f"每个条件{config.COMM_TENSION_GAIN_COOLDOWN_SECONDS // 3600}小时内仅加一次，真实违规与模型判定违规共用冷却。"
-                "每条消息先排除冷却中的条件，再选剩余条件中点数最高的一项生效，不叠加；请报告所有满足的条件，不要自行只保留最高项。不得给其他历史消息加值，不要向用户解释标记。"
+                + tr("同一条消息可以同时触发多个条件；各条件分别应用倍率并取整后累加，各自进入冷却；重复的同一条件只取最大增量。请报告所有满足的条件，不得给其他历史消息加值，不要向用户解释标记。")
+                + tr("每条消息按基础增量从高到低结算。每次成功加值后，其他条件在接下来1小时内的增量乘0.75，再次成功加值会刷新窗口；尚无窗口时最高增量条件不乘，其余条件乘，已有窗口时所有可用条件都乘。该倍率与时段及爆发后倍率叠加，由系统逐步取整，请仍返回原始基础增量。")
                 + tr("冷却中的条件仍须报告正数原始增量；特殊空闲内加值首次超过90立即爆发，已超过90时再次满足任一增长条件也可爆发，冷却只限制加值。") +
                 "本轮仍按给定生效档位回复，增量从下次请求生效。待判断消息：" + json.dumps(items, ensure_ascii=False))
 
@@ -268,10 +278,11 @@ class InteractionMixin:
                 # 已超临界时冷却不挡爆发；特殊空闲内首次越过临界也立即触发。
                 if special and d["tension"] > config.COMM_TENSION_CAP and positive:
                     burst = True
-                condition, gain = tension_model_event(reply, i, special, d["gain_cooldowns"], self._ms())
-                interaction_add(d, condition, gain, self._ms())
-                if special and d["tension"] > config.COMM_TENSION_CAP and gain > 0:
-                    burst = True
+                now_ms = self._ms()
+                for condition, gain in tension_model_events(reply, i, special, d["gain_cooldowns"], now_ms):
+                    interaction_add(d, condition, gain, now_ms)
+                    if special and d["tension"] > config.COMM_TENSION_CAP and gain > 0:
+                        burst = True
                 del d["pending"][uid]
         self._interaction_set(d)
         return burst

@@ -3003,7 +3003,8 @@ class Comm(
             "疲惫撒娇${Cfg.COMM_TENSION_GAINS.getValue("comfort")}、违规${Cfg.COMM_TENSION_GAINS.getValue("violation")}，也可自行判断其他情绪。" +
             tr("系统按发送时段将非特殊空闲的增量乘0.75，并处理爆发后24小时的增长减半，请返回未经倍率调整的基础增量。") +
             "每个条件${Cfg.COMM_TENSION_GAIN_COOLDOWN_SECONDS / 3600}小时内仅加一次，真实违规与模型判定违规共用冷却。" +
-            "每条消息先排除冷却中的条件，再选剩余条件中点数最高的一项生效，不叠加；请报告所有满足的条件，不要自行只保留最高项。不得给其他历史消息加值，不要向用户解释标记。" +
+            tr("同一条消息可以同时触发多个条件；各条件分别应用倍率并取整后累加，各自进入冷却；重复的同一条件只取最大增量。请报告所有满足的条件，不得给其他历史消息加值，不要向用户解释标记。") +
+            tr("每条消息按基础增量从高到低结算。每次成功加值后，其他条件在接下来1小时内的增量乘0.75，再次成功加值会刷新窗口；尚无窗口时最高增量条件不乘，其余条件乘，已有窗口时所有可用条件都乘。该倍率与时段及爆发后倍率叠加，由系统逐步取整，请仍返回原始基础增量。") +
             tr("冷却中的条件仍须报告正数原始增量；特殊空闲内加值首次超过90立即爆发，已超过90时再次满足任一增长条件也可爆发，冷却只限制加值。") +
             "本轮仍按给定生效档位回复，增量从下次请求生效。待判断消息：$items"
     }
@@ -3021,9 +3022,11 @@ class Comm(
                     d = d.copy(special7mGainCount = d.special7mGainCount + 1)
                 // 已超临界时冷却不挡爆发；特殊空闲内首次越过临界也立即触发。
                 if (special && d.tension > Cfg.COMM_TENSION_CAP && positive) burst = true
-                val (condition, gain) = CommInteraction.modelEvent(reply, i + 1, special, d.gainCooldowns, nowMs())
-                d = d.add(condition, gain, nowMs())
-                if (special && d.tension > Cfg.COMM_TENSION_CAP && gain > 0) burst = true
+                val at = nowMs()
+                for ((condition, gain) in CommInteraction.modelEvents(reply, i + 1, special, d.gainCooldowns, at)) {
+                    d = d.add(condition, gain, at)
+                    if (special && d.tension > Cfg.COMM_TENSION_CAP && gain > 0) burst = true
+                }
                 pending.remove(uid)
             }
         }

@@ -690,7 +690,7 @@ def _selftest():
     assert not morning.cfg["interaction"]["morning_day"]
     morning.flush(); again.flush(); morning_peer.flush()
     # 所有消息由模型判断：失败重试不重复，内部标记不入历史。
-    from comm.comm_interaction import tension_model_gain, tension_clean, tension_model_event, interaction_add
+    from comm.comm_interaction import tension_model_gain, tension_clean, tension_model_events, interaction_add
     assert config.COMM_TENSION_GAINS == {"rumination": 40, "boundary": 30, "comfort": 30, "violation": 25}
     assert tension_model_gain("[tension:1:comfort:30]", 1, True) == 30
     assert tension_model_gain("[tension:1:violation:25]", 1, True) == 25
@@ -699,26 +699,48 @@ def _selftest():
     assert tension_model_gain("[tension:1:-10][tension:1:999999][tension:2:40]", 1, False) == 30
     assert tension_model_gain("[tension:1:no][tension:1:2.5]", 1, True) == 0
     assert tension_clean("好。[TENSION:1:15]［tension:2:10］") == "好。"
-    # 先排除冷却再取最高项；不同条件独立，到三小时整恢复，跨日和回拨不清空冷却。
+    # 多条件叠加，按基础值降序结算；同条件去重，冷却独立且不因跨日或回拨清空。
     cooldown_now = int(datetime(2027, 5, 4, 23).timestamp() * 1000)
     cooldown = interaction_norm({})
-    choices = "[tension:1:rumination:40][tension:1:boundary:30][tension:1:unknown:999999]"
+    choices = "[tension:1:boundary:30][tension:1:rumination:20][tension:1:rumination:40][tension:1:unknown:999999][tension:2:comfort:40]"
+    available = [("rumination", 40), ("boundary", 30)]
+    assert tension_model_events(choices, 1, True, {"rumination": cooldown_now + 1}, cooldown_now) == [("boundary", 30)]
     def add_choice(at):
-        condition, amount = tension_model_event(choices, 1, True, cooldown["gain_cooldowns"], at)
-        interaction_add(cooldown, condition, amount, at)
-        return condition, amount
-    assert add_choice(cooldown_now) == ("rumination", 40) and cooldown["tension"] == 40
-    assert add_choice(cooldown_now) == ("boundary", 30) and cooldown["tension"] == 70
-    assert add_choice(cooldown_now) == ("other", 0) and cooldown["tension"] == 70
+        events = tension_model_events(choices, 1, True, cooldown["gain_cooldowns"], at)
+        for condition, amount in events:
+            interaction_add(cooldown, condition, amount, at)
+        return events
+    assert add_choice(cooldown_now) == available and cooldown["tension"] == 62
+    assert add_choice(cooldown_now) == [] and cooldown["tension"] == 62
     interaction_add(cooldown, "violation", config.COMM_TENSION_HP_LOSS_GAIN, cooldown_now)
-    assert cooldown["tension"] == 85
-    assert tension_model_event("[tension:1:violation:40]", 1, True, cooldown["gain_cooldowns"], cooldown_now)[1] == 0
+    assert cooldown["tension"] == 73
+    assert tension_model_events("[tension:1:violation:40]", 1, True, cooldown["gain_cooldowns"], cooldown_now) == []
     saved_cooldowns = dict(cooldown["gain_cooldowns"])
     cooldown = interaction_roll(cooldown, decay_ms + 86400000)
     assert cooldown["gain_cooldowns"] == saved_cooldowns
-    assert add_choice(cooldown_now + 3 * 3600 * 1000 - 1) == ("other", 0)
-    assert add_choice(cooldown_now + 3 * 3600 * 1000) == ("rumination", 40)
-    assert add_choice(cooldown_now - 1) == ("other", 0)
+    assert add_choice(cooldown_now + 3 * 3600 * 1000 - 1) == []
+    assert add_choice(cooldown_now + 3 * 3600 * 1000) == available
+    assert cooldown["tension"] == 100 and set(cooldown["gain_cooldowns"]) == {"rumination", "boundary", "violation"}
+    assert add_choice(cooldown_now - 1) == []
+    # 连锁窗口每次成功加值刷新一小时，跨午夜有效，到期瞬间恢复；冷却和零增量不刷新。
+    chain = interaction_norm({})
+    hour = config.COMM_TENSION_CHAIN_SECONDS * 1000
+    interaction_add(chain, "rumination", 40, cooldown_now)
+    interaction_add(chain, "boundary", 30, cooldown_now + hour // 2)
+    assert chain["tension"] == 62 and chain["gain_chain_until"] == cooldown_now + hour * 3 // 2
+    chain = interaction_norm(chain)
+    interaction_add(chain, "comfort", 30, cooldown_now + hour)
+    assert chain["tension"] == 84 and chain["gain_chain_until"] == cooldown_now + 2 * hour
+    interaction_add(chain, "rumination", 40, cooldown_now + hour + 1)
+    interaction_add(chain, "other", 1, cooldown_now + hour + 1)
+    assert chain["tension"] == 84 and chain["gain_chain_until"] == cooldown_now + 2 * hour
+    assert "other" not in chain["gain_cooldowns"]
+    interaction_add(chain, "other", 20, cooldown_now + 2 * hour)
+    assert chain["tension"] == 100 and chain["gain_chain_until"] == cooldown_now + 3 * hour
+    stacked = interaction_norm({"gain_until": cooldown_now + 86400000})
+    for condition, amount in tension_model_events("[tension:1:comfort:25][tension:1:boundary:25]", 1, False):
+        interaction_add(stacked, condition, amount, cooldown_now)
+    assert stacked["tension"] == 15, "日常18，首项爆发后9，次项连锁13再减半6，逐项相加"
     zero_gain = interaction_norm({"gain_until": cooldown_now + 1})
     interaction_add(zero_gain, "comfort", tension_model_gain("[tension:1:comfort:2]", 1, False), cooldown_now)
     assert not zero_gain["gain_cooldowns"] and zero_gain["tension"] == 0
@@ -726,26 +748,26 @@ def _selftest():
     judge.ai.set_profile("deepseek", api_key="k")
     judge.set_cfg(persona="时段.txt", split_send=False)
     before = len(calls)
-    script.append("我听到了.[tension:1:rumination:30][tension:1:rumination:30]")
+    script.append("我听到了.[tension:1:boundary:20][tension:1:rumination:30][tension:1:rumination:20]")
     judge.send("所有人都把我当作透明的影子")
     wait(judge)
-    assert len(calls) == before + 1 and judge.cfg["interaction"]["tension"] == 30
+    assert len(calls) == before + 1 and judge.cfg["interaction"]["tension"] == 45
     assert "以下用户消息的语义判断" in calls[-1][1][-1]["content"]
     assert judge.visible()[-1]["text"] == "我听到了." and not judge.cfg["interaction"]["pending"]
     assert all("[tension:" not in m.get("api", "") + m["text"] for m in judge.messages)
     script.append("别这么说.[tension:1:rumination:40][tension:1:boundary:20]")
     judge.send("我一文不值")
     wait(judge)
-    assert judge.cfg["interaction"]["tension"] == 50, "原正则关键词也只由模型加值"
+    assert judge.cfg["interaction"]["tension"] == 45, "原正则关键词也只由模型加值"
     assert "以下用户消息的语义判断" in calls[-1][1][-1]["content"]
     script.append("这些词不一定表达当前情绪.[tension:1:0]")
     judge.send("翻译这几个词:我一文不值,抱抱,熬夜")
     wait(judge)
-    assert judge.cfg["interaction"]["tension"] == 50, "关键词本身不再自动增加张力"
+    assert judge.cfg["interaction"]["tension"] == 45, "关键词本身不再自动增加张力"
     script.append("[refuse to reply][tension:1:40]")
     judge.send("仿佛被整个世界遗忘了")
     wait(judge)
-    assert judge.cfg["interaction"]["tension"] == 50 and judge.cfg["interaction"]["pending"]
+    assert judge.cfg["interaction"]["tension"] == 45 and judge.cfg["interaction"]["pending"]
     snapshot = judge.sync_doc()
     pending = dict(judge.cfg["interaction"]["pending"])
     judge.flush()
@@ -757,18 +779,19 @@ def _selftest():
     judge_peer.apply_doc(snapshot)
     assert judge_peer.cfg["interaction"]["pending"] == pending
     assert judge_peer.cfg["interaction"]["gain_cooldowns"] == judge.cfg["interaction"]["gain_cooldowns"]
+    assert judge_peer.cfg["interaction"]["gain_chain_until"] == judge.cfg["interaction"]["gain_chain_until"]
     judge_peer.clear(); judge_peer.apply_doc(snapshot)
     assert not judge_peer.cfg["interaction"]["pending"], "清空后不恢复待判断消息"
-    assert not judge_peer.cfg["interaction"]["gain_cooldowns"]
+    assert not judge_peer.cfg["interaction"]["gain_cooldowns"] and not judge_peer.cfg["interaction"]["gain_chain_until"]
     judge_peer.flush()
     script.append("我在听.[tension:1:comfort:20]")
     judge._request("retry")
     wait(judge)
-    assert judge.cfg["interaction"]["tension"] == 70 and not judge.cfg["interaction"]["pending"]
+    assert judge.cfg["interaction"]["tension"] == 60 and not judge.cfg["interaction"]["pending"]
     script.append("继续.[tension:1:40]")
     judge._request("retry")
     wait(judge)
-    assert judge.cfg["interaction"]["tension"] == 70, "已结算消息重试不再加值"
+    assert judge.cfg["interaction"]["tension"] == 60, "已结算消息重试不再加值"
     judge.now = lambda: fixed2.replace(hour=15)
     expected_day_tension = interaction_roll(judge.cfg["interaction"], judge._ms())["tension"] + 7
     script.append("听到了.[tension:1:other:10]")
@@ -820,11 +843,11 @@ def _selftest():
     gate.ai.set_profile("deepseek", api_key="k")
     gate.set_cfg(persona="时段.txt", split_send=False)
     gate.set_muted(True)
-    gate._interaction_set({"tension": 90, "day": fixed2.date().isoformat()})
-    script.append("听到了.[tension:1:comfort:10]")
+    gate._interaction_set({"tension": 80, "day": fixed2.date().isoformat()})
+    script.append("听到了.[tension:1:boundary:10][tension:1:comfort:10]")
     gate.send("我有点累")
     wait(gate)
-    assert gate.cfg["interaction"]["tension"] == 100 and gate.cfg["interaction"]["burst_until"]
+    assert gate.cfg["interaction"]["tension"] == 97 and gate.cfg["interaction"]["burst_until"]
     gate._interaction_set(dict(gate.cfg["interaction"], burst_until=0, gain_until=0, burst_days=[]))
     for reply in ("普通谈话", "[tension:1:other:0]", "[tension:1:comfort:-1]", "[tension:1:unknown:40]", "[tension:2:comfort:40]"):
         script.append("嗯." + reply)
@@ -840,7 +863,7 @@ def _selftest():
     script.append("可以.[tension:1:comfort:10]")
     gate._request("retry")
     wait(gate)
-    assert gate.cfg["interaction"]["burst_until"] and gate.cfg["interaction"]["tension"] == 100
+    assert gate.cfg["interaction"]["burst_until"] and gate.cfg["interaction"]["tension"] == 97
     assert "EFFECTIVE_STAGE=90+" in gate.interaction_note()
     gate._interaction_set(dict(gate.cfg["interaction"], burst_until=0))
     script.append("旧消息.[tension:1:comfort:10]")

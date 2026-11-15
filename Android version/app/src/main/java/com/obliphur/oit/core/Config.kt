@@ -16,6 +16,8 @@ object Cfg {
     const val COMM_TENSION_DAILY_RATE = 0.75
     val COMM_TENSION_GAINS = mapOf("rumination" to 40, "boundary" to 30, "comfort" to 30, "violation" to 25)
     const val COMM_TENSION_GAIN_COOLDOWN_SECONDS = 3 * 60 * 60
+    const val COMM_TENSION_CHAIN_SECONDS = 60 * 60 // 条件成功加值后刷新一小时的其他条件倍率窗口
+    const val COMM_TENSION_CHAIN_RATE = 0.75
     const val COMM_TENSION_HP_LOSS_GAIN = 15 // 合约扣血单独设定基础增量
     const val COMM_TENSION_DAY_DECAY = 25
     const val COMM_TENSION_DECAY_SECONDS = 15 * 60
