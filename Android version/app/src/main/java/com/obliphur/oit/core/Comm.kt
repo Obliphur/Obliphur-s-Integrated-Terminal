@@ -2981,7 +2981,13 @@ class Comm(
         val items = JSONArray(interactionCandidates.mapIndexed { i, (_, _, text) -> JSONObject().put("序号", i + 1).put("用户消息", text) })
         return "请结合人设、上下文和以下用户消息的语义判断是否应增加张力，普通交流无需增加。" +
             "为每条满足的各个条件分别选择0至${Cfg.COMM_TENSION_GAINS.values.max()}的整数原始基础增量，在正常回复末尾分别附加 [tension:序号:条件:增量]；" +
-            "条件只能为rumination(自我构陷/反刍)、boundary(边界试探)、comfort(疲惫撒娇)、violation(违规)、other(其他情绪)，相同条件不要改名规避冷却。" +
+            "条件只能为以下五种：\n" +
+            "- rumination(自我构陷/反刍)：过度解构自身动机，将日常失误或软弱上升为道德审判与虚伪罪名，带有自卑底色并隐秘渴望被坚决否定与打破。\n" +
+            "- boundary(边界试探)：以冷静理智、极度克制或探讨规则为外壳，暗中试探彼此私密边界与特殊性，既怕造成负担又强烈暗示自身意愿。\n" +
+            "- comfort(疲惫撒娇)：撕下成熟伪装展现幼态退行，诉说对外界刺激的抗拒、自怜或委屈，索取专属性的接纳、抚慰与偏袒。\n" +
+            "- violation(违规)：现实中触发规则惩罚、打破契约约定，或明知故犯后流露出等待被管束与问责的心理倾向。\n" +
+            "- other(其他情绪)：未被上述涵盖但同样具有强烈心理张力或依附欲的真实情绪表达。\n" +
+            "相同条件不要改名规避冷却。" +
             "0表示不增加，可省略。自我构陷参考${Cfg.COMM_TENSION_GAINS.getValue("rumination")}、边界试探${Cfg.COMM_TENSION_GAINS.getValue("boundary")}、" +
             "疲惫撒娇${Cfg.COMM_TENSION_GAINS.getValue("comfort")}、违规${Cfg.COMM_TENSION_GAINS.getValue("violation")}，也可自行判断其他情绪。" +
             "系统先将基础增量乘${Cfg.COMM_TENSION_GAIN_MULTIPLIER}，再按发送时段处理日常减半及爆发后24小时的增长减半，无需你乘倍或减半。" +
