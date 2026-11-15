@@ -511,7 +511,7 @@ def _selftest():
         assert str(rs.get("label") or "空闲") in rtxt, rtxt
     rtc.flush()
     # 张力：真实请求、对象隔离、存档、同步与清空保护。
-    from comm.comm_interaction import interaction_norm, interaction_roll, interaction_settle, interaction_prompt, interaction_gain, tension_model_gain
+    from comm.comm_interaction import interaction_norm, interaction_roll, interaction_settle, interaction_prompt, interaction_gain, tension_model_gain, interaction_end, tension_clean
     assert "EFFECTIVE_STAGE=50-90" in interaction_prompt({"tension": 100}, 200, False)
     assert "EFFECTIVE_STAGE=50-90" in interaction_prompt({"tension": 100}, 200, True)
     assert "EFFECTIVE_STAGE=50-90" in interaction_prompt({"tension": 90}, 200, True)
@@ -543,9 +543,15 @@ def _selftest():
     midnight_end = int(datetime(2027, 5, 5, 1).timestamp() * 1000)
     night = {"tension": 95, "burst_until": midnight_end, "day": "2027-05-04"}
     assert interaction_roll(interaction_settle(night, midnight_end - 1), midnight_end - 1)["tension"] == 95
-    settled = interaction_settle(night, midnight_end)
+    ongoing = interaction_settle(night, midnight_end + 86400000)
+    assert ongoing["tension"] == 95 and ongoing["burst_until"] == midnight_end
+    assert interaction_end(ongoing, "[burst:end]", 0, midnight_end) == ongoing
+    assert interaction_end(ongoing, "[burst:end]", midnight_end + 1, midnight_end) == ongoing
+    assert tension_clean("嗯.[burst:end][tension:1:0]") == "嗯."
+    settled = interaction_end(ongoing, "嗯.［BURST：END］", midnight_end, midnight_end + 86400000)
     assert settled["tension"] == 20 and settled["shame_turns"] == 2
     assert interaction_settle(settled, midnight_end + 1) == settled
+    assert interaction_end(settled, "[burst:end]", midnight_end, midnight_end + 1) == settled
     stc._follow_at = 0
     stc.set_cfg(split_send=False)
     assert not stc.set_scenario(True)
@@ -575,7 +581,7 @@ def _selftest():
     assert "EFFECTIVE_STAGE=90+" in stc.interaction_note()
     assert stc.cfg["interaction"]["gain_cooldowns"]["rumination"] == cooldown_until, "冷却内可以爆发但不重复加值或延长冷却"
     assert stc.cfg["interaction"]["tension"] == 91 and stc.cfg["interaction"]["shame_turns"] == 0
-    assert stc.cfg["interaction"]["burst_until"] == int(fixed2.replace(hour=14, minute=10).timestamp() * 1000)
+    assert stc.cfg["interaction"]["burst_until"] == int(fixed2.replace(hour=14, minute=0).timestamp() * 1000)
     gain_until = int((fixed2 + timedelta(hours=24)).timestamp() * 1000)
     assert stc.cfg["interaction"]["gain_until"] == gain_until
     assert stc.cfg["interaction"]["burst_days"] == ["2027-05-04"]
@@ -590,6 +596,17 @@ def _selftest():
     assert stc.cfg["interaction"]["tension"] == 91 and "EFFECTIVE_STAGE=90+" in stc.interaction_note()
     stc.now = lambda: fixed2.replace(hour=14, minute=10)
     stc.tick()
+    assert stc.cfg["interaction"]["tension"] == 91 and not stc.cfg["interaction"]["shame_turns"]
+    for invalid in ("[burst:end]", "[refuse to reply][burst:end]", RuntimeError("failed")):
+        script.append(invalid)
+        stc._trigger("user", "继续")
+        wait(stc)
+        assert stc.cfg["interaction"]["burst_until"] and not stc.cfg["interaction"]["shame_turns"]
+    script.append("我缓过来了.[burst:end]")
+    stc._trigger("user", "继续")
+    wait(stc)
+    assert "BURST=YES" in calls[-1][1][-1]["content"]
+    assert stc.messages[-1]["text"] == "我缓过来了." and "burst" not in stc.messages[-1].get("api", "").lower()
     assert stc.cfg["interaction"]["tension"] == 20 and stc.cfg["interaction"]["shame_turns"] == 2
     for turns in (1, 0):
         script.append("嗯.")
@@ -614,9 +631,11 @@ def _selftest():
     peer_st.apply_doc(sync_interaction)
     assert not peer_st.scenario_on() and peer_st.cfg["interaction"]["tension"] == 0
     assert peer_st.cfg["interaction"]["gain_until"] == 0
-    # 特殊空闲结束后才到达的旧回复，不消耗新冷静期。
+    # 过期时间戳不自动结束；模型结束当轮不消耗新冷静期。
     reload_st._interaction_set(dict(reload_st.cfg["interaction"], tension=91, burst_until=1, shame_turns=0))
     reload_st._interaction_reply(True, True, 1, False)
+    assert reload_st.cfg["interaction"]["burst_until"] == 1
+    reload_st._interaction_end("[burst:end]", 1)
     assert reload_st.cfg["interaction"]["shame_turns"] == 2
     # 中途休息会清空待播报的 hp，但整场违规标记必须保留。
     reload_st._interaction_set(dict(reload_st.cfg["interaction"], tension=60, shame_turns=0))
@@ -831,6 +850,7 @@ def _selftest():
     cool._interaction_judge_note("user")
     cool._interaction_judged("[tension:1:rumination:30]")
     assert cool.cfg["interaction"]["tension"] == 100, "模型判断也受爆发后的减半影响"
+    cool._interaction_end("[burst:end]", cool.cfg["interaction"]["burst_until"])
     cool.now = lambda: fixed2 + timedelta(hours=24)
     message = cool._add("me", "我一文不值")
     cool._interaction_sent(message["text"], message)
@@ -871,7 +891,7 @@ def _selftest():
     wait(gate)
     assert not gate.cfg["interaction"]["burst_until"], "已结算消息不重复触发"
     gate.flush()
-    # 爆发延长十分钟；固定钟点 / 持续时间日程睡后必谈，跨午夜、重启和同步不漏不重。
+    # 爆发由模型结束；固定钟点 / 持续时间日程睡后必谈，跨午夜、重启和同步不漏不重。
     for use_rt in (False, True):
         sleep_clock = [datetime(2027, 5, 4, 23, 50)]
         sleep_name = "睡后.txt"
@@ -888,10 +908,10 @@ def _selftest():
         sleeper.set_muted(True)
         sleeper._interaction_set({"tension": 95})
         sleep_begin = sleeper.other_status()["end"]
-        script.append("听到了.[tension:1:comfort:1]")
+        script.append("听到了.[tension:1:comfort:1][burst:end]")
         sleeper.send("我有点委屈"); wait(sleeper)
         end_ms = int(sleep_begin.timestamp() * 1000)
-        assert sleeper.cfg["interaction"]["burst_until"] == end_ms + 600000
+        assert sleeper.cfg["interaction"]["burst_until"] == end_ms
         assert sleeper.cfg["interaction"]["burst_sleep_after"] == end_ms
         sleeper.set_muted(False)
         sleep_clock[0] = sleep_begin + timedelta(minutes=4, seconds=59)
@@ -920,6 +940,10 @@ def _selftest():
         assert sleeper.cfg["interaction"]["burst_until"]
         sleep_clock[0] = sleep_begin + timedelta(minutes=10)
         sleeper.tick()
+        assert sleeper.cfg["interaction"]["burst_until"] and not sleeper.cfg["interaction"]["shame_turns"]
+        script.append("我平静下来了.[burst:end]")
+        sleeper._trigger("proactive", "再说一句")
+        wait(sleeper)
         assert sleeper.cfg["interaction"]["tension"] == 20 and sleeper.cfg["interaction"]["shame_turns"] == 2
         sleeper.flush(); peer_sleep.flush()
         if use_rt:
@@ -1081,6 +1105,19 @@ def _selftest():
             break
     assert len(calls) == before + 2 and not special._state_of(owner)["interaction"]["burst_until"]
     assert special._state_of(owner)["interaction"]["special_until"]
+    # 后台对象最终正常回复也能结束，拒绝、空回复、错误、查询和清空后的旧结果无效。
+    special._interaction_set(dict(special._state_of(owner)["interaction"], tension=95, burst_until=1), owner)
+    old_clear = special._state_of(owner)["clear_ts"]
+    for raw, error, cleared in (("[burst:end]", "", old_clear), ("[refuse to reply][burst:end]", "", old_clear),
+                                ("嗯.[burst:end]", "failed", old_clear), ("[contract][burst:end]", "", old_clear),
+                                ("嗯.[burst:end]", "", old_clear + 1)):
+        special._bg_finish(owner, "proactive", ("测试", "测试"), raw, error, cleared, 1)
+        assert special._state_of(owner)["interaction"]["burst_until"] == 1
+    special._bg_finish(owner, "proactive", ("测试", "测试"), "我平静下来了.[burst:end]", "", old_clear, 1)
+    ended_bg = special._state_of(owner)
+    assert ended_bg["interaction"]["tension"] == 20 and ended_bg["interaction"]["shame_turns"] == 2
+    assert ended_bg["messages"][-1]["text"] == "我平静下来了."
+    assert "burst" not in ended_bg["messages"][-1].get("api", "")
     special.clear()
     assert not special.cfg["interaction"]["skip_decay"]
     special.flush(); again_special.flush(); peer_special.flush()

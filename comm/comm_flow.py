@@ -269,6 +269,7 @@ class FlowMixin:
                 msgs.append({"role": "user", "content": extra[1]})
         status = self.other_status()
         d = self._interaction_prepare()
+        self._interaction_burst = d["burst_until"]
         self._interaction_turn = (self._interaction_special(status),
                                   int(status["end"].timestamp() * 1000) if status.get("end") else 0, bool(d["shame_turns"]))
         note = oit_text(self.state_text() + "\n" + self.interaction_note(status) + "\n" + self._interaction_judge_note(kind))

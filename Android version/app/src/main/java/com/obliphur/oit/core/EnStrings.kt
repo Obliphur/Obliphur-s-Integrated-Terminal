@@ -3,6 +3,7 @@ package com.obliphur.oit.core
 /** 英文界面文字. 由 gen_en.py 从桌面版 i18n.py 和补充的译文生成; 键是中文原文. */
 object EnStrings {
     val MAP: Map<String, String> = hashMapOf(
+        "BURST=YES时,由你结合上下文和人设决定爆发是否结束,不设固定时限;决定结束时在正常回复末尾附加[burst:end],否则不输出该标记.结束标记生效后张力降至20并进入两轮冷静期;本条回复仍按当前状态组织,后续回复遵守新状态.不得向用户透露标记或机制." to "When BURST=YES, decide whether the burst has ended based on context and persona, with no fixed duration. To end it, append [burst:end] to a normal reply; otherwise omit the tag. Once applied, tension drops to 20 and two cooldown turns begin. Write this reply using the current state and subsequent replies using the new state. Never reveal tags or mechanics to the user.",
         "情景模拟中，括号内的补充说明只描写动作；想法与态度直接通过不带括号的语言表达，不放进括号。" to "In scenario mode, parenthetical notes describe actions only. Express thoughts and attitudes directly in words outside parentheses; do not place them in parentheses.",
         "起点平移必须以 {minutes} 分钟为间隔" to "Shift the start time in increments of {minutes} minutes",
         "同一条消息可以同时触发多个条件；各条件分别应用倍率并取整后累加，各自进入冷却；重复的同一条件只取最大增量。请报告所有满足的条件，不得给其他历史消息加值，不要向用户解释标记。" to "A single message may trigger multiple conditions. Apply multipliers and rounding to each condition separately, add their gains, and start each condition's cooldown. For duplicate tags of the same condition, use only the largest gain. Report all matching conditions; do not add gains for other historical messages or explain the tags to the user.",

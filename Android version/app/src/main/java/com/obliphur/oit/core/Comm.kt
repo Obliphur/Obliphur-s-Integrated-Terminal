@@ -177,9 +177,9 @@ V.现在是特殊空闲时段.
 
 (Gemini代写的部分)
 【张力控制、人设突破与冷静期羞耻】(Tension):
-- 系统每次调用时会在末尾注明 [OIT_STATUS: MODE=软件聊天|情景模拟, TENSION=0-100, EFFECTIVE_STAGE=0-50|50-90|90+, PERIOD=特殊空闲|日常, SHAME_AFTERMATH=YES|NO]. TENSION 是你内心对用户的累积张力 (修正冲动、占有主导欲与深层庇护欲); EFFECTIVE_STAGE 是这一刻对外生效的档位 (日常时封顶在 50-90).
-- 特殊空闲内TENSION从不超过90上升到超过90时立即爆发;已超过90后再次满足任一张力增长条件也会触发爆发,条件处于冷却也可以;尚未爆发时仍按EFFECTIVE_STAGE=50-90表现,不得仅凭TENSION超过90自行突破人设.爆发仍仅在特殊空闲生效.
-- 爆发持续到当前特殊空闲段结束后10分钟,延长期间仍按爆发档位表现,覆盖睡后5分钟的主动消息;该段触发爆发则睡后消息必定触发,到延长结束后系统才将张力降至20并进入两轮冷静羞耻期,不要因为回复了一次就自行恢复平静.
+- 系统每次调用时会在末尾注明 [OIT_STATUS: MODE=软件聊天|情景模拟, TENSION=0-100, EFFECTIVE_STAGE=0-50|50-90|90+, BURST=YES|NO, PERIOD=特殊空闲|日常, SHAME_AFTERMATH=YES|NO]. TENSION 是你内心对用户的累积张力 (修正冲动、占有主导欲与深层庇护欲); EFFECTIVE_STAGE 是这一刻对外生效的档位 (日常时封顶在 50-90).
+- 特殊空闲内TENSION从不超过90上升到超过90时立即爆发;已超过90后再次满足任一张力增长条件也会触发爆发,条件处于冷却也可以;尚未爆发时仍按EFFECTIVE_STAGE=50-90表现,不得仅凭TENSION超过90自行突破人设.爆发仅在特殊空闲触发,触发后持续至你决定结束.
+- 爆发何时结束由你结合上下文与人设决定,不设固定时限,不因特殊空闲结束或睡眠自动结束;BURST=YES时决定结束就在正常回复末尾附加[burst:end],否则继续按爆发档位表现.系统收到标记后将张力降至20并进入两轮冷静羞耻期,后续回复再按冷静期表现;该段触发过爆发则睡后5分钟消息仍必定触发.
 - 情景模拟中的动作是双方知情的虚构描写,你知道这是情景模拟,而不是现实中的动作,不得声称动作在现实中实际发生.
 - 若特殊空闲入场张力为90+,而用户在开始7分钟内说过话却未触发正向张力条件,系统会主动要求你翻出白天尚未说完的话题,按人设点破可能的回避并施压引诱其坦露心声;不得编造旧账,仍遵守50-90档位与用户意愿,这条主动消息本身不触发爆发.
 - 如果在非特殊空闲tension就超过了90+,主动记住那些引起tension增加的话题,然后在特殊空闲清算.(先于检查数据)
@@ -1105,7 +1105,7 @@ class Comm(
     private val muted = LinkedHashSet<String>()
     private class BgCtx(val pid: String, val name: String, val st: ChatState, val entries: List<SegEntry>,
                         val segs: List<Pair<String, Int>>, val probs: Map<String, Double>, val rt: RoutineSpec? = null)
-    private class BgResult(val pid: String, val kind: String, val extra: Extra, val reply: String, val err: String, val clear0: Long)
+    private class BgResult(val pid: String, val kind: String, val extra: Extra, val reply: String, val err: String, val clear0: Long, val burst: Long = 0L)
     private val bgResults = ConcurrentLinkedQueue<BgResult>()
     @Volatile private var bgBusy: String? = null
     private var bgLast = 0L
@@ -1149,7 +1149,7 @@ class Comm(
     private var love = Love()
     /** 本地只存最近 KEEP 条, 被砍掉的信息条数记在这里 ([condition] III 数的是总数; 本机, 清空归零). */
     private var interaction = CommInteraction()
-    private data class InteractionTurn(val special: Boolean = false, val until: Long = 0L, val shame: Boolean = false)
+    private data class InteractionTurn(val special: Boolean = false, val until: Long = 0L, val shame: Boolean = false, val burst: Long = 0L)
     private var interactionTurn = InteractionTurn()
     private var interactionCandidates = emptyList<Triple<String, Boolean, String>>()
     private var msgGone = 0
@@ -2955,6 +2955,12 @@ class Comm(
         storeState(owner, st); changed(); push()
     }
 
+    private fun interactionEnd(reply: String, burst: Long, owner: String = pid) {
+        val d = interactionPrepare(owner)
+        val ended = d.endBurst(reply, burst, nowMs())
+        if (ended != d) interactionSet(ended, owner)
+    }
+
     private fun interactionPrepare(owner: String = pid, status: Pair<SegEntry, LocalDateTime>? = null, statusKnown: Boolean = status != null): CommInteraction {
         val old = stateOf(owner).interaction
         var d = old.settle(nowMs()).roll(nowMs())
@@ -4267,7 +4273,7 @@ class Comm(
         val status = otherStatus()
         val d = interactionPrepare()
         interactionTurn = InteractionTurn(specialPeriod(status),
-            status?.second?.atZone(java.time.ZoneId.systemDefault())?.toInstant()?.toEpochMilli() ?: 0L, d.shameTurns > 0)
+            status?.second?.atZone(java.time.ZoneId.systemDefault())?.toInstant()?.toEpochMilli() ?: 0L, d.shameTurns > 0, d.burstUntil)
         val note = CommText.oitText(stateText() + "\n" + d.note(maxOf(msgTotal(), memFixed.maxOrNull() ?: 0), specialPeriod(status)) + "\n" + interactionJudgeNote(kind)) +
             (if (rt != null) "\n" + rtNote(now()) else "")
         if (msgs.isNotEmpty() && msgs.last().first == "user") msgs[msgs.size - 1] = "user" to (msgs.last().second + "\n\n" + note)
@@ -4415,6 +4421,7 @@ class Comm(
                 val burst = interactionJudged(tensionReply)
                 interactionSet(interactionPrepare().replied(interactionTurn.special, burst, interactionTurn.until, interactionTurn.shame, nowMs()).settle(nowMs()))
             }
+            interactionEnd(tensionReply, interactionTurn.burst)
             val m = add("ai", text, if (text != r.reply.trim()) r.reply.trim() else "")
             r.op?.let { opApply(it, m) }
             if (shareInvite) { m.shareInvite = true; deliverInvites(m) }
@@ -4920,7 +4927,7 @@ class Comm(
             catch (e: AiError) { err = e.message ?: "" }
             catch (e: Exception) { err = e.javaClass.simpleName }
             log("REQ bg-$kind ${if (err.isNotEmpty()) "FAIL $err" else "ok"} ${(System.currentTimeMillis() - started) / 1000.0}s")
-            bgResults.add(BgResult(ctx.pid, kind, Extra(body, api), reply, err, clear0))
+            bgResults.add(BgResult(ctx.pid, kind, Extra(body, api), reply, err, clear0, d.burstUntil))
         }.apply { isDaemon = true }.start()
     }
 
@@ -4929,12 +4936,15 @@ class Comm(
         if (hardBlock()) return
         val st = stateOf(r.pid)
         if (st.clearTs != r.clear0 || r.err.isNotEmpty()) return
-        val (text0, waitMin) = CommText.cleanReply(r.reply)
+        val reply = CommInteraction.cleanTension(r.reply)
+        val (text0, waitMin) = CommText.cleanReply(reply)
         val name = listPersonas().firstOrNull { pidOf(it) == r.pid } ?: ""
         val text = if (text0.isNotEmpty() && personaTitle(name).trim().equals("Claudia", ignoreCase = true)) CommText.toHalfWidth(text0) else text0
         if (CommText.isRefusal(r.reply) || text.isEmpty() || CommText.infoTags(r.reply).isNotEmpty()) { log("REPLY bg-${r.kind}: 对方不想发 / 什么也没剩, 不显示"); return }
+        interactionEnd(r.reply, r.burst, r.pid)
+        st.interaction = stateOf(r.pid).interaction
         val sysm = mk("sys", r.extra.body, r.extra.api)
-        val m = mk("ai", text, if (text != r.reply.trim()) r.reply.trim() else "", voicePersona = name)
+        val m = mk("ai", text, if (text != reply.trim()) reply.trim() else "", voicePersona = name)
         if (waitMin > 0 && r.kind != "chase") m.wait = waitMin
         st.messages.add(sysm); st.messages.add(m)
         if (!m.hold) {

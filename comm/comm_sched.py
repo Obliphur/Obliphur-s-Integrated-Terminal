@@ -22,6 +22,7 @@ from i18n import tr
 import routine
 from comm import comm_readme
 from comm.comm_const import *
+from comm.comm_interaction import tension_clean
 from comm.comm_schedule import PROACTIVE_P, seg_kind, seg_detail, schedule_entries, schedule_loops, loop_entries, schedule_segments, pro_pct, persona_probs
 from comm.comm_reply import CUT_DEFAULT_MIN, CUT_MAX_MIN, HALFWIDTH_SYMBOLS, NET_DEFAULT_MIN, NET_MAX_MIN, WAIT_MAX_MIN, _BRACKET_RE, _CUT_N_RE, _CUT_RE, _EMPTY_WRAP_RE, _NET_RE, _WAIT_RE, clean_reply, cut_minutes, net_minutes, to_halfwidth
 from comm.comm_builtin import BUILTIN_PERSONAS, DEFAULT_PERSONA, DEFAULT_BACKGROUND, DEFAULT_ROUTINE, ASSISTANT_PERSONA, ASSISTANT_DETAIL_LINE, BACKGROUND_LEGACIES, ASSISTANT_SLEEP_LINE, ASSISTANT_TITLE
@@ -119,6 +120,7 @@ class SchedMixin:
             msgs[-1]["content"] += "\n\n" + outgoing
         else:
             msgs.append({"role": "user", "content": outgoing})
+        burst = self._interaction_prepare(pid)["burst_until"]
         clear0 = int(st["clear_ts"])
         self._bg_busy = pid
         self._bg_last = self._ms()
@@ -144,16 +146,18 @@ class SchedMixin:
                 err = type(e).__name__
             self.log(f"REQ bg-{kind} {'FAIL ' + err if err else 'ok'} {time.monotonic() - started:.1f}s")
             with self._lock:
-                self._bg_results.append((pid, kind, (body, api), reply, err, clear0))
+                self._bg_results.append((pid, kind, (body, api), reply, err, clear0, burst))
         threading.Thread(target=work, daemon=True).start()
 
-    def _bg_finish(self, pid, kind, extra, reply, err, clear0):
+    def _bg_finish(self, pid, kind, extra, reply, err, clear0, burst=0):
         self._bg_busy = None
         if self.hard_block():
             return
         st = self._state_of(pid)
         if int(st["clear_ts"]) != clear0 or err:
             return
+        raw_reply = reply
+        reply = tension_clean(reply)
         text, wait_min = clean_reply(reply)
         name = next((n for n in list_personas(self.personas) if pid_of(n) == pid), "")
         if text and is_claudia(name):
@@ -161,6 +165,8 @@ class SchedMixin:
         if is_refusal(reply) or not text or info_tags(reply):
             self.log(f"REPLY bg-{kind}: 对方不想发 / 什么也没剩, 不显示")
             return
+        self._interaction_end(raw_reply, burst, pid)
+        st["interaction"] = self._state_of(pid)["interaction"]
         sysm = self._mk("sys", extra[0], extra[1])
         m = self._mk("ai", text, reply.strip() if text != reply.strip() else "", persona=name)
         if wait_min and kind != "chase":

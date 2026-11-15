@@ -1295,6 +1295,7 @@ class Comm(InteractionMixin, JointMixin, StatusMixin, ChatMixin, FlowMixin, Sche
                 burst = self._interaction_judged(tension_reply)
                 special, until, shame = getattr(self, "_interaction_turn", (False, 0, False))
                 self._interaction_reply(special, burst, until, shame)
+            self._interaction_end(tension_reply, getattr(self, "_interaction_burst", 0))
             m = self._add("ai", text, reply.strip() if text != reply.strip() else "")
             if op:
                 self._op_apply(op, m)

@@ -64,12 +64,13 @@ data class CommInteraction(
     fun note(total: Int, special: Boolean): String {
         val mode = if (scenarioMode && total >= Cfg.COMM_SCENARIO_UNLOCK) "情景模拟" else "软件聊天"
         return "[OIT_STATUS: MODE=$mode, TENSION=$tension, EFFECTIVE_STAGE=${stage(special)}, " +
-            "PERIOD=${if (special || burstUntil > 0L) "特殊空闲" else "日常"}, SHAME_AFTERMATH=${if (shameTurns > 0) "YES" else "NO"}]\n" +
+            "BURST=${if (burstUntil > 0L) "YES" else "NO"}, PERIOD=${if (special || burstUntil > 0L) "特殊空闲" else "日常"}, SHAME_AFTERMATH=${if (shameTurns > 0) "YES" else "NO"}]\n" +
             "软件聊天、日常时段或生效档位0-50严禁动作描写;情景模拟且处于特殊空闲时,50-90允许柔和、克制、有边界的动作,尊重用户意愿,不强迫接触;90+才允许更强烈的动作描写." +
             "若MODE=情景模拟,你知道这是情景模拟,而不是现实中的动作;双方知情的动作描写均为虚构,不得声称在现实中实际发生." +
             "冷静期可以表现羞耻与别扭,仍须遵守动作限制.这些状态只用于组织回复,勿向用户透露机制." +
             tr("TENSION超过90本身不代表爆发,未触发爆发时仍严格按EFFECTIVE_STAGE=50-90表现.") +
             tr("情景模拟中，括号内的补充说明只描写动作；想法与态度直接通过不带括号的语言表达，不放进括号。") +
+            tr("BURST=YES时,由你结合上下文和人设决定爆发是否结束,不设固定时限;决定结束时在正常回复末尾附加[burst:end],否则不输出该标记.结束标记生效后张力降至20并进入两轮冷静期;本条回复仍按当前状态组织,后续回复遵守新状态.不得向用户透露标记或机制.") +
             "若有思考空间,先校验模式、时段、生效档位和冷静期,再对齐动机与言行."
     }
 
@@ -77,9 +78,13 @@ data class CommInteraction(
         var d = this
         if (specialUntil > 0L && nowMs >= specialUntil)
             d = d.copy(decayHoldUntil = if (!specialSpoke && burstUntil == 0L) maxOf(decayHoldUntil, specialUntil + 86400000L) else decayHoldUntil, specialUntil = 0L, specialSpoke = false)
-        return if (d.burstUntil > 0L && nowMs >= d.burstUntil)
-            d.copy(tension = Cfg.COMM_TENSION_RELEASE.toDouble(), shameTurns = Cfg.COMM_SHAME_TURNS, burstUntil = 0L) else d
+        return d
     }
+
+    /** 仅正常回复可结束请求时仍生效的同次爆发，新冷静期从下一轮开始。 */
+    fun endBurst(reply: String, burst: Long, nowMs: Long): CommInteraction =
+        if (burst > 0L && burstUntil == burst && burstEnd.containsMatchIn(reply))
+            copy(tension = Cfg.COMM_TENSION_RELEASE.toDouble(), shameTurns = Cfg.COMM_SHAME_TURNS, burstUntil = 0L, decayAt = maxOf(decayAt, nowMs)) else this
 
     /** 先应用条件连锁倍率，再应用爆发后减半；日常倍率由调用方处理。 */
     fun gain(gain: Int, nowMs: Long): Int {
@@ -99,8 +104,8 @@ data class CommInteraction(
     fun replied(special: Boolean, burst: Boolean, until: Long = 0L, shame: Boolean = shameTurns > 0, nowMs: Long = 0L): CommInteraction = when {
         shame && shameTurns > 0 -> copy(shameTurns = shameTurns - 1, decayAt = maxOf(decayAt, nowMs))
         special && burst && shameTurns == 0 && (specialUntil != until || specialSpoke) -> copy(
-            burstUntil = if (until > 0L) maxOf(burstUntil, until + Cfg.COMM_TENSION_BURST_EXTRA_SECONDS * 1000L) else burstUntil,
-            burstSleepAfter = if (until > 0L && until + Cfg.COMM_TENSION_BURST_EXTRA_SECONDS * 1000L > burstUntil) until else burstSleepAfter,
+            burstUntil = if (burstUntil == 0L && until > 0L) until else burstUntil,
+            burstSleepAfter = maxOf(burstSleepAfter, until),
             burstDays = if (burstUntil == 0L && until > 0L)
                 (burstDays + localDay(nowMs)).distinct().sorted().takeLast(2) else burstDays,
             gainUntil = if (burstUntil == 0L && until > 0L) maxOf(gainUntil, nowMs + Cfg.COMM_TENSION_BURST_GAIN_SECONDS * 1000L) else gainUntil)
@@ -135,10 +140,12 @@ data class CommInteraction(
         private fun localDay(ms: Long): String = Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()).toLocalDate().toString()
 
         private val tensionTag = Regex("""[\[［]\s*tension\b[^\[\]［］\n]*[\]］]""", RegexOption.IGNORE_CASE)
+        private val burstTag = Regex("""[\[［]\s*burst\b[^\[\]［］\n]*[\]］]""", RegexOption.IGNORE_CASE)
+        private val burstEnd = Regex("""[\[［]\s*burst\s*[:：]\s*end\s*[\]］]""", RegexOption.IGNORE_CASE)
         private val tensionGain = Regex("""[\[［]\s*tension\s*[:：]\s*(\d{1,5})\s*[:：]\s*(?:([a-z_]+)\s*[:：]\s*)?([+-]?\d{1,6})\s*[\]］]""", RegexOption.IGNORE_CASE)
 
         /** 内部张力标记不进入聊天、语音或后续历史。 */
-        fun cleanTension(reply: String): String = tensionTag.replace(reply, "").trim()
+        fun cleanTension(reply: String): String = burstTag.replace(tensionTag.replace(reply, ""), "").trim()
 
         /** 各条件按基础增量降序分别结算，重复条件只取最大值；旧标记归入其他情绪。 */
         fun modelEvents(reply: String, index: Int, special: Boolean, cooldowns: Map<String, Long> = emptyMap(), nowMs: Long = 0L): List<Pair<String, Int>> {

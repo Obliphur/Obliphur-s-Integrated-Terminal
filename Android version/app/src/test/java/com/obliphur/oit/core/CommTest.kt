@@ -531,7 +531,7 @@ class CommTest {
         assertEquals(10, burstState.gain(20, gainUntil - 1))
         assertEquals(20, burstState.gain(20, gainUntil))
         assertEquals(11, burstState.gain(CommInteraction.modelGain("[tension:1:30]", 1, false), gainUntil - 1))
-        val repeated = burstState.replied(true, true, burstState.burstUntil - Cfg.COMM_TENSION_BURST_EXTRA_SECONDS * 1000L, false, ms + 60_000)
+        val repeated = burstState.replied(true, true, burstState.burstUntil, false, ms + 60_000)
         assertEquals(gainUntil, repeated.gainUntil)
         assertEquals(burstState.burstUntil, repeated.burstUntil)
         clock = clock.withHour(13).withMinute(59).withSecond(59); c.tick()
@@ -540,6 +540,15 @@ class CommTest {
         assertEquals(91, (c.syncDoc()["interaction:$owner"] as JSONObject).optInt("tension"))
         assertEquals("90+", CommInteraction.parse(c.syncDoc()["interaction:$owner"] as JSONObject).stage(false))
         clock = clock.withMinute(10); c.tick()
+        assertEquals(91, (c.syncDoc()["interaction:$owner"] as JSONObject).optInt("tension"))
+        for (invalid in listOf("[burst:end]", "[refuse to reply][burst:end]", "ERR:failed")) {
+            script.add(invalid); c.triggerForTest("user", "继续"); wait(c)
+            assertTrue((c.syncDoc()["interaction:$owner"] as JSONObject).optLong("burst_until") > 0L)
+        }
+        script.add("我缓过来了.[burst:end]"); c.triggerForTest("user", "继续"); wait(c)
+        assertTrue("BURST=YES" in calls.last().second.last().second)
+        assertEquals("我缓过来了.", c.messages.last().text)
+        assertFalse("burst" in c.messages.last().api.lowercase())
         val state = c.syncDoc()["interaction:$owner"] as JSONObject
         assertEquals(20, state.optInt("tension")); assertEquals(2, state.optInt("shame_turns"))
         assertEquals(gainUntil, state.getLong("gain_until"))
@@ -588,9 +597,15 @@ class CommTest {
         val midnightEnd = clock.toLocalDate().plusDays(1).atTime(1, 0).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
         val night = CommInteraction(tension = 95.0, day = clock.toLocalDate().toString(), burstUntil = midnightEnd)
         assertEquals(95.0, night.settle(midnightEnd - 1).roll(midnightEnd - 1).tension, 1e-8)
-        val settled = night.settle(midnightEnd)
+        val ongoing = night.settle(midnightEnd + 86400000L)
+        assertEquals(95.0, ongoing.tension, 1e-8); assertEquals(midnightEnd, ongoing.burstUntil)
+        assertEquals(ongoing, ongoing.endBurst("[burst:end]", 0L, midnightEnd))
+        assertEquals(ongoing, ongoing.endBurst("[burst:end]", midnightEnd + 1, midnightEnd))
+        assertEquals("嗯.", CommInteraction.cleanTension("嗯.[burst:end][tension:1:0]"))
+        val settled = ongoing.endBurst("嗯.［BURST：END］", midnightEnd, midnightEnd + 86400000L)
         assertEquals(20.0, settled.tension, 1e-8); assertEquals(2, settled.shameTurns)
         assertEquals(settled, settled.settle(midnightEnd + 1))
+        assertEquals(settled, settled.endBurst("[burst:end]", midnightEnd, midnightEnd + 1))
         assertEquals(2, settled.replied(true, true, midnightEnd, false).shameTurns)
         assertTrue(Joint.parse(Joint("1", owner, "run", emptyList(), "", "", 1L, violated = true).json())!!.violated)
 
@@ -614,11 +629,11 @@ class CommTest {
             val ms = clock.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
             c.applyDoc(mapOf("interaction:$owner" to CommInteraction(tension = 95.0, ts = ms).json().put("clear", 0)))
             val sleepBegin = c.otherStatus()!!.second
-            script.add("听到了.[tension:1:comfort:1]")
+            script.add("听到了.[tension:1:comfort:1][burst:end]")
             c.send("我有点委屈"); wait(c)
             fun state() = CommInteraction.parse(c.syncDoc()["interaction:$owner"] as JSONObject)
             val endMs = sleepBegin.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
-            assertEquals(endMs + 600000L, state().burstUntil)
+            assertEquals(endMs, state().burstUntil)
             assertEquals(endMs, state().burstSleepAfter)
             c.setMuted(false)
             clock = sleepBegin.plusMinutes(4).plusSeconds(59)
@@ -643,6 +658,8 @@ class CommTest {
             clock = sleepBegin.plusMinutes(9).plusSeconds(59); c.tick()
             assertTrue(state().burstUntil > 0L)
             clock = sleepBegin.plusMinutes(10); c.tick()
+            assertTrue(state().burstUntil > 0L); assertEquals(0, state().shameTurns)
+            script.add("我平静下来了.[burst:end]"); c.triggerForTest("proactive", "再说一句"); wait(c)
             assertEquals(20.0, state().tension, 1e-8); assertEquals(2, state().shameTurns)
             c.flush(); peer.flush()
         }
@@ -933,7 +950,22 @@ class CommTest {
         for (i in 0 until 300) { Thread.sleep(10); c.tick(); if (c.bgIdle()) break }
         assertEquals(2, calls.size)
         assertTrue(state().specialUntil > 0L); assertEquals(0L, state().burstUntil)
+        // 前台切换后，后台睡后必谈可结束其对象的爆发。
+        File(personas, "特殊_routine.txt").delete()
+        File(personas, "特殊.txt").writeText("你是特殊.\n13:00-14:00:特殊空闲\n14:00-23:00:睡眠\n" +
+            "长时间休息发起谈话概率:0%\n空闲发起谈话概率:0%\n睡眠发起谈话概率:0%\n特殊空闲发起谈话概率:0%\n", Charsets.UTF_8)
+        val bg = state()
+        val until = clock.withHour(14).withMinute(0).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+        c.applyDoc(mapOf("interaction:$owner" to bg.copy(tension = 95.0, burstUntil = 1L, burstSleepAfter = until,
+            ts = bg.ts + 1).json().put("clear", 0)))
+        clock = clock.withHour(14).withMinute(5)
+        script.add("我平静下来了.[burst:end]")
+        c.tick()
+        for (i in 0 until 300) { Thread.sleep(10); c.tick(); if (c.bgIdle()) break }
+        assertEquals(20.0, state().tension, 1e-8); assertEquals(2, state().shameTurns)
         c.set(persona = "特殊.txt")
+        assertEquals("我平静下来了.", c.messages.last().text)
+        assertFalse("burst" in c.messages.last().api.lowercase())
         c.clear()
         assertFalse((c.syncDoc()["interaction:$owner"] as? JSONObject)?.optBoolean("skip_decay") ?: false)
         c.flush(); again.flush(); peer.flush()

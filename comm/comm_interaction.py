@@ -70,12 +70,14 @@ def interaction_norm(value):
 
 
 _TENSION_TAG = re.compile(r"[\[［]\s*tension\b[^\[\]［］\n]*[\]］]", re.I)
+_BURST_TAG = re.compile(r"[\[［]\s*burst\b[^\[\]［］\n]*[\]］]", re.I)
+_BURST_END = re.compile(r"[\[［]\s*burst\s*[:：]\s*end\s*[\]］]", re.I)
 _TENSION_GAIN = re.compile(r"[\[［]\s*tension\s*[:：]\s*(\d{1,5})\s*[:：]\s*(?:([a-z_]+)\s*[:：]\s*)?([+-]?\d{1,6})\s*[\]］]", re.I)
 
 
 def tension_clean(reply):
     """内部张力标记不进入聊天、语音或后续历史。"""
-    return _TENSION_TAG.sub("", reply).strip()
+    return _BURST_TAG.sub("", _TENSION_TAG.sub("", reply)).strip()
 
 
 def tension_model_events(reply, index, special, cooldowns=None, now_ms=0):
@@ -142,14 +144,21 @@ def interaction_roll(d, now_ms):
 
 
 def interaction_settle(d, now_ms):
-    """爆发持续到延长后的截止时刻，之后只回落一次。"""
+    """仅结算特殊空闲；burst_until 非零表示爆发，旧截止时刻不再自动结束。"""
     d = interaction_norm(d)
     if d["special_until"] and now_ms >= d["special_until"]:
         if not d["special_spoke"] and not d["burst_until"]:
             d["decay_hold_until"] = max(d["decay_hold_until"], d["special_until"] + 86400000)
         d.update(special_until=0, special_spoke=False)
-    if d["burst_until"] and now_ms >= d["burst_until"]:
-        d.update(tension=config.COMM_TENSION_RELEASE, shame_turns=config.COMM_SHAME_TURNS, burst_until=0)
+    return d
+
+
+def interaction_end(d, reply, burst, now_ms):
+    """仅正常回复可结束请求时仍生效的同次爆发，新冷静期从下一轮开始。"""
+    d = interaction_norm(d)
+    if burst and d["burst_until"] == burst and _BURST_END.search(reply):
+        d.update(tension=config.COMM_TENSION_RELEASE, shame_turns=config.COMM_SHAME_TURNS,
+                 burst_until=0, decay_at=max(d["decay_at"], now_ms))
     return d
 
 
@@ -160,12 +169,13 @@ def interaction_prompt(d, total, special):
     effective = d["tension"] if special and d["burst_until"] else min(d["tension"], config.COMM_TENSION_CAP)
     stage = "0-50" if effective < config.COMM_TENSION_LOW else "50-90" if effective <= config.COMM_TENSION_CAP else "90+"
     return (f"[OIT_STATUS: MODE={mode}, TENSION={d['tension']}, EFFECTIVE_STAGE={stage}, "
-            f"PERIOD={'特殊空闲' if special else '日常'}, SHAME_AFTERMATH={'YES' if d['shame_turns'] else 'NO'}]\n"
+            f"BURST={'YES' if d['burst_until'] else 'NO'}, PERIOD={'特殊空闲' if special else '日常'}, SHAME_AFTERMATH={'YES' if d['shame_turns'] else 'NO'}]\n"
             "软件聊天、日常时段或生效档位0-50严禁动作描写;情景模拟且处于特殊空闲时,50-90允许柔和、克制、有边界的动作,尊重用户意愿,不强迫接触;90+才允许更强烈的动作描写."
             "若MODE=情景模拟,你知道这是情景模拟,而不是现实中的动作;双方知情的动作描写均为虚构,不得声称在现实中实际发生."
             "冷静期可以表现羞耻与别扭,仍须遵守动作限制.这些状态只用于组织回复,勿向用户透露机制."
             + tr("TENSION超过90本身不代表爆发,未触发爆发时仍严格按EFFECTIVE_STAGE=50-90表现.")
             + tr("情景模拟中，括号内的补充说明只描写动作；想法与态度直接通过不带括号的语言表达，不放进括号。")
+            + tr("BURST=YES时,由你结合上下文和人设决定爆发是否结束,不设固定时限;决定结束时在正常回复末尾附加[burst:end],否则不输出该标记.结束标记生效后张力降至20并进入两轮冷静期;本条回复仍按当前状态组织,后续回复遵守新状态.不得向用户透露标记或机制.")
             + "若有思考空间,先校验模式、时段、生效档位和冷静期,再对齐动机与言行.")
 
 
@@ -302,11 +312,16 @@ class InteractionMixin:
                 d["gain_until"] = max(d["gain_until"], self._ms() + config.COMM_TENSION_BURST_GAIN_SECONDS * 1000)
                 d["burst_days"] = sorted(set(d["burst_days"] + [self.now().date().isoformat()]))[-2:]
             if until:
-                extended = until + config.COMM_TENSION_BURST_EXTRA_SECONDS * 1000
-                if extended > d["burst_until"]:
-                    d["burst_sleep_after"] = until
-                    d["burst_until"] = extended
+                d["burst_sleep_after"] = max(d["burst_sleep_after"], until)
+                if not d["burst_until"]:
+                    d["burst_until"] = until
         self._interaction_set(interaction_settle(d, self._ms()), pid)
+
+    def _interaction_end(self, reply, burst, pid=None):
+        d = self._interaction_prepare(pid)
+        ended = interaction_end(d, reply, burst, self._ms())
+        if ended != d:
+            self._interaction_set(ended, pid)
 
     def interaction_note(self, status=None, pid=None):
         from .comm_persona import message_milestones
