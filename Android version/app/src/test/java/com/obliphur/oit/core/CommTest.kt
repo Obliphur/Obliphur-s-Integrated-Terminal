@@ -512,10 +512,15 @@ class CommTest {
         assertEquals(10, burstState.gain(20, gainUntil - 1))
         assertEquals(20, burstState.gain(20, gainUntil))
         assertEquals(7, burstState.gain(CommInteraction.modelGain("[tension:1:30]", 1, false), gainUntil - 1))
-        assertEquals(gainUntil, burstState.replied(true, true, burstState.burstUntil, false, ms + 60_000).gainUntil)
+        val repeated = burstState.replied(true, true, burstState.burstUntil - Cfg.COMM_TENSION_BURST_EXTRA_SECONDS * 1000L, false, ms + 60_000)
+        assertEquals(gainUntil, repeated.gainUntil)
+        assertEquals(burstState.burstUntil, repeated.burstUntil)
         clock = clock.withHour(13).withMinute(59).withSecond(59); c.tick()
         assertEquals(91, (c.syncDoc()["interaction:$owner"] as JSONObject).optInt("tension"))
         clock = clock.withHour(14).withMinute(0).withSecond(0); c.tick()
+        assertEquals(91, (c.syncDoc()["interaction:$owner"] as JSONObject).optInt("tension"))
+        assertEquals("90+", CommInteraction.parse(c.syncDoc()["interaction:$owner"] as JSONObject).stage(false))
+        clock = clock.withMinute(10); c.tick()
         val state = c.syncDoc()["interaction:$owner"] as JSONObject
         assertEquals(20, state.optInt("tension")); assertEquals(2, state.optInt("shame_turns"))
         assertEquals(gainUntil, state.getLong("gain_until"))
@@ -573,6 +578,57 @@ class CommTest {
     }
 
     /** 爆发次日早间必谈，不受概率、迟到、短空闲和近期谈话影响，记录可存档同步。 */
+    @Test
+    fun burstSleep() {
+        for (useRt in listOf(false, true)) {
+            clock = LocalDateTime.of(2027, 5, 4, 23, 50)
+            val td = Files.createTempDirectory("oit").toFile()
+            val dir = File(td, "d").also { it.mkdirs() }
+            val personas = File(td, "p")
+            var c = comm(dir, personas)
+            c.importPersona("睡后.txt", ("你是睡后.\n23:40-23:59:特殊空闲\n23:59-06:30:睡眠\n" +
+                "长时间休息发起谈话概率:0%\n特殊空闲发起谈话概率:0%\n睡眠发起谈话概率:0%\n").byteInputStream())
+            if (useRt) c.importPersona("睡后_routine.txt", "初始起点:23:40\n19min:特殊空闲\n".byteInputStream())
+            c.set(persona = "睡后.txt", splitSend = false)
+            c.setMuted(true)
+            val owner = Comm.pidOf("睡后.txt")
+            val ms = clock.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+            c.applyDoc(mapOf("interaction:$owner" to CommInteraction(tension = 95.0, ts = ms).json().put("clear", 0)))
+            val sleepBegin = c.otherStatus()!!.second
+            script.add("听到了.[tension:1:comfort:1]")
+            c.send("我有点委屈"); wait(c)
+            fun state() = CommInteraction.parse(c.syncDoc()["interaction:$owner"] as JSONObject)
+            val endMs = sleepBegin.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+            assertEquals(endMs + 600000L, state().burstUntil)
+            assertEquals(endMs, state().burstSleepAfter)
+            c.setMuted(false)
+            clock = sleepBegin.plusMinutes(4).plusSeconds(59)
+            // 刚发送过回复也必须触发睡后消息。
+            script.add("刚才的话还没说完.")
+            c.triggerForTest("user", "再说一句")
+            wait(c)
+            val before = calls.size
+            c.tick(); assertEquals(before, calls.size)
+            c.flush(); c = comm(dir, personas)
+            clock = sleepBegin.plusMinutes(if (useRt) 8 else 5)
+            script.add("晚安.")
+            c.tick(); wait(c)
+            assertEquals(before + 1, calls.size)
+            assertTrue("EFFECTIVE_STAGE=90+" in calls.last().second.last().second)
+            assertTrue("PERIOD=特殊空闲" in calls.last().second.last().second)
+            assertEquals(0L, state().burstSleepAfter)
+            val peer = comm(File(td, "peer").also { it.mkdirs() }, personas)
+            peer.set(persona = "睡后.txt", splitSend = false)
+            peer.applyDoc(c.syncDoc()); peer.tick(); c.tick()
+            assertEquals(before + 1, calls.size)
+            clock = sleepBegin.plusMinutes(9).plusSeconds(59); c.tick()
+            assertTrue(state().burstUntil > 0L)
+            clock = sleepBegin.plusMinutes(10); c.tick()
+            assertEquals(20.0, state().tension, 1e-8); assertEquals(2, state().shameTurns)
+            c.flush(); peer.flush()
+        }
+    }
+
     @Test
     fun burstMorning() {
         val td = Files.createTempDirectory("oit").toFile()

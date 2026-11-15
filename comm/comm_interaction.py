@@ -47,6 +47,7 @@ def interaction_norm(value):
             "tension": tension,
             "shame_turns": number("shame_turns", config.COMM_SHAME_TURNS),
             "burst_until": number("burst_until", 2**63 - 1),
+            "burst_sleep_after": number("burst_sleep_after", 2**63 - 1),
             "gain_until": number("gain_until", 2**63 - 1),
             "gain_cooldowns": clean_cooldowns,
             "burst_days": sorted({s for s in days if isinstance(s, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", s)})[-2:],
@@ -124,7 +125,7 @@ def interaction_roll(d, now_ms):
 
 
 def interaction_settle(d, now_ms):
-    """爆发持续到触发时的特殊空闲段结束，之后只回落一次。"""
+    """爆发持续到延长后的截止时刻，之后只回落一次。"""
     d = interaction_norm(d)
     if d["special_until"] and now_ms >= d["special_until"]:
         if not d["special_spoke"] and not d["burst_until"]:
@@ -137,6 +138,7 @@ def interaction_settle(d, now_ms):
 
 def interaction_prompt(d, total, special):
     d = interaction_norm(d)
+    special = special or bool(d["burst_until"])
     mode = "情景模拟" if d["scenario_mode"] and total >= config.COMM_SCENARIO_UNLOCK else "软件聊天"
     effective = d["tension"] if special and d["burst_until"] else min(d["tension"], config.COMM_TENSION_CAP)
     stage = "0-50" if effective < config.COMM_TENSION_LOW else "50-90" if effective <= config.COMM_TENSION_CAP else "90+"
@@ -267,7 +269,11 @@ class InteractionMixin:
             if not d["burst_until"] and until:
                 d["gain_until"] = max(d["gain_until"], self._ms() + config.COMM_TENSION_BURST_GAIN_SECONDS * 1000)
                 d["burst_days"] = sorted(set(d["burst_days"] + [self.now().date().isoformat()]))[-2:]
-            d["burst_until"] = max(d["burst_until"], until)
+            if until:
+                extended = until + config.COMM_TENSION_BURST_EXTRA_SECONDS * 1000
+                if extended > d["burst_until"]:
+                    d["burst_sleep_after"] = until
+                    d["burst_until"] = extended
         self._interaction_set(interaction_settle(d, self._ms()), pid)
 
     def interaction_note(self, status=None, pid=None):

@@ -575,7 +575,7 @@ def _selftest():
     assert "EFFECTIVE_STAGE=90+" in stc.interaction_note()
     assert stc.cfg["interaction"]["gain_cooldowns"]["rumination"] == cooldown_until, "冷却内可以爆发但不重复加值或延长冷却"
     assert stc.cfg["interaction"]["tension"] == 91 and stc.cfg["interaction"]["shame_turns"] == 0
-    assert stc.cfg["interaction"]["burst_until"] == int(fixed2.replace(hour=14, minute=0).timestamp() * 1000)
+    assert stc.cfg["interaction"]["burst_until"] == int(fixed2.replace(hour=14, minute=10).timestamp() * 1000)
     gain_until = int((fixed2 + timedelta(hours=24)).timestamp() * 1000)
     assert stc.cfg["interaction"]["gain_until"] == gain_until
     assert stc.cfg["interaction"]["burst_days"] == ["2027-05-04"]
@@ -586,6 +586,9 @@ def _selftest():
     stc.tick()
     assert stc.cfg["interaction"]["tension"] == 91
     stc.now = lambda: fixed2.replace(hour=14, minute=0)
+    stc.tick()
+    assert stc.cfg["interaction"]["tension"] == 91 and "EFFECTIVE_STAGE=90+" in stc.interaction_note()
+    stc.now = lambda: fixed2.replace(hour=14, minute=10)
     stc.tick()
     assert stc.cfg["interaction"]["tension"] == 20 and stc.cfg["interaction"]["shame_turns"] == 2
     for turns in (1, 0):
@@ -845,6 +848,59 @@ def _selftest():
     wait(gate)
     assert not gate.cfg["interaction"]["burst_until"], "已结算消息不重复触发"
     gate.flush()
+    # 爆发延长十分钟；固定钟点 / 持续时间日程睡后必谈，跨午夜、重启和同步不漏不重。
+    for use_rt in (False, True):
+        sleep_clock = [datetime(2027, 5, 4, 23, 50)]
+        sleep_name = "睡后.txt"
+        open(os.path.join(folder, sleep_name), "w", encoding="utf-8").write(
+            "你是睡后.\n23:40-23:59:特殊空闲\n23:59-06:30:睡眠\n"
+            "长时间休息发起谈话概率:0%\n特殊空闲发起谈话概率:0%\n睡眠发起谈话概率:0%\n")
+        rt_file = os.path.join(folder, "睡后_routine.txt")
+        if use_rt:
+            open(rt_file, "w", encoding="utf-8").write("初始起点:23:40\n19min:特殊空闲\n")
+        sleep_dir = os.path.join(td, "burst_sleep" + str(use_rt))
+        sleeper = Comm(sleep_dir, folder, now=lambda: sleep_clock[0], chat_fn=fake)
+        sleeper.ai.set_profile("deepseek", api_key="k")
+        sleeper.set_cfg(persona=sleep_name, split_send=False)
+        sleeper.set_muted(True)
+        sleeper._interaction_set({"tension": 95})
+        sleep_begin = sleeper.other_status()["end"]
+        script.append("听到了.[tension:1:comfort:1]")
+        sleeper.send("我有点委屈"); wait(sleeper)
+        end_ms = int(sleep_begin.timestamp() * 1000)
+        assert sleeper.cfg["interaction"]["burst_until"] == end_ms + 600000
+        assert sleeper.cfg["interaction"]["burst_sleep_after"] == end_ms
+        sleeper.set_muted(False)
+        sleep_clock[0] = sleep_begin + timedelta(minutes=4, seconds=59)
+        sleeper._add("ai", "刚才的话还没说完")
+        before_sleep = len(calls)
+        sleeper.tick()
+        assert len(calls) == before_sleep
+        sleeper.flush()
+        sleeper = Comm(sleep_dir, folder, now=lambda: sleep_clock[0], chat_fn=fake)
+        sleep_clock[0] = sleep_begin + timedelta(minutes=8 if use_rt else 5)
+        script.append("晚安.")
+        sleeper.tick(); wait(sleeper)
+        assert len(calls) == before_sleep + 1, "0% 概率、近期谈话及迟到不阻止必谈"
+        assert "EFFECTIVE_STAGE=90+" in calls[-1][1][-1]["content"]
+        assert "PERIOD=特殊空闲" in calls[-1][1][-1]["content"]
+        assert not sleeper.cfg["interaction"]["burst_sleep_after"]
+        sleep_doc = sleeper.sync_doc()
+        peer_sleep = Comm(os.path.join(td, "burst_sleep_peer" + str(use_rt)), folder, now=lambda: sleep_clock[0], chat_fn=fake)
+        peer_sleep.ai.set_profile("deepseek", api_key="k")
+        peer_sleep.set_cfg(persona=sleep_name, split_send=False)
+        peer_sleep.apply_doc(sleep_doc); peer_sleep.tick()
+        sleeper.tick()
+        assert len(calls) == before_sleep + 1, "相同睡眠段重启同步后不重发"
+        sleep_clock[0] = sleep_begin + timedelta(minutes=9, seconds=59)
+        sleeper.tick()
+        assert sleeper.cfg["interaction"]["burst_until"]
+        sleep_clock[0] = sleep_begin + timedelta(minutes=10)
+        sleeper.tick()
+        assert sleeper.cfg["interaction"]["tension"] == 20 and sleeper.cfg["interaction"]["shame_turns"] == 2
+        sleeper.flush(); peer_sleep.flush()
+        if use_rt:
+            os.remove(rt_file)
     # 高张力特殊空闲必谈；用户整段沉默时不爆发，之后豁免 24 小时衰减。
     special_clock = [fixed2.replace(hour=13, minute=40)]
     special_dir = os.path.join(td, "special_force")

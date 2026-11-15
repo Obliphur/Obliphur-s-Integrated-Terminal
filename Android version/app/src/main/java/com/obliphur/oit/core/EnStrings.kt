@@ -7,6 +7,7 @@ object EnStrings {
         "📱 软件聊天" to "📱 Messaging",
         "🎭 情景模拟" to "🎭 Scenario",
         "系统按发送时段处理日常减半及爆发后24小时的增长减半，请返回未减半的基础增量。" to "The system halves gains during regular periods and for 24 hours after a burst. Return the base gain before these reductions.",
+        "你进入睡眠约5分钟了，刚才特殊空闲期间的情绪爆发尚有余韵。请结合当前状态和人设主动发一条消息；即使此刻处于睡眠也允许发出，发完继续睡。不要透露机制，不要拒绝回复。" to "You entered sleep about five minutes ago, and the emotional burst during your special free time still has an aftereffect. Send one proactive message based on your current state and persona. You may send it even while asleep; then go back to sleep. Do not reveal the mechanism or refuse to reply.",
         "冷却中的条件仍须报告正数原始增量；特殊空闲内加值首次超过90立即爆发，已超过90时再次满足任一增长条件也可爆发，冷却只限制加值。" to "Still report positive raw gains for conditions on cooldown. During special free time, a gain that first raises tension above 90 triggers a burst immediately; if it is already above 90, another growth condition can also trigger a burst. Cooldowns only restrict gains.",
         "TENSION超过90本身不代表爆发,未触发爆发时仍严格按EFFECTIVE_STAGE=50-90表现." to "TENSION above 90 alone does not mean a burst. Until a burst is triggered, strictly follow EFFECTIVE_STAGE=50-90.",
         "现在是你的特殊空闲时间，请结合先前记住的话题主动谈话；不要透露机制，也不要拒绝回复。" to "You are now in your special free time. Start a conversation based on the topics you remembered earlier; do not reveal the mechanism or refuse to reply.",

@@ -14,7 +14,7 @@ data class CommInteraction(
     val burstDays: List<String> = emptyList(), val morningDay: String = "",
     val gainCooldowns: Map<String, Long> = emptyMap(),
     val specialUntil: Long = 0L, val specialSpoke: Boolean = false, val skipDecay: Boolean = false,
-    val decayAt: Long = 0L, val decayHoldUntil: Long = 0L
+    val decayAt: Long = 0L, val decayHoldUntil: Long = 0L, val burstSleepAfter: Long = 0L
 ) {
     fun json(): JSONObject = JSONObject().put("scenario_mode", scenarioMode).put("tension", tension)
         .put("shame_turns", shameTurns).put("day", day).put("ts", ts).put("burst_until", burstUntil)
@@ -24,6 +24,7 @@ data class CommInteraction(
         .put("gain_cooldowns", JSONObject(gainCooldowns))
         .put("special_until", specialUntil).put("special_spoke", specialSpoke).put("skip_decay", skipDecay)
         .put("decay_at", decayAt).put("decay_hold_until", decayHoldUntil)
+        .put("burst_sleep_after", burstSleepAfter)
 
     /** 每十五分钟结算小数衰减；离线补算，暂停和回拨不补扣。 */
     fun roll(nowMs: Long): CommInteraction {
@@ -50,14 +51,14 @@ data class CommInteraction(
     }
 
     fun stage(special: Boolean): String {
-        val effective = if (special && burstUntil > 0L) tension else minOf(tension, Cfg.COMM_TENSION_CAP.toDouble())
+        val effective = if (burstUntil > 0L) tension else minOf(tension, Cfg.COMM_TENSION_CAP.toDouble())
         return if (effective < Cfg.COMM_TENSION_LOW) "0-50" else if (effective <= Cfg.COMM_TENSION_CAP) "50-90" else "90+"
     }
 
     fun note(total: Int, special: Boolean): String {
         val mode = if (scenarioMode && total >= Cfg.COMM_SCENARIO_UNLOCK) "情景模拟" else "软件聊天"
         return "[OIT_STATUS: MODE=$mode, TENSION=$tension, EFFECTIVE_STAGE=${stage(special)}, " +
-            "PERIOD=${if (special) "特殊空闲" else "日常"}, SHAME_AFTERMATH=${if (shameTurns > 0) "YES" else "NO"}]\n" +
+            "PERIOD=${if (special || burstUntil > 0L) "特殊空闲" else "日常"}, SHAME_AFTERMATH=${if (shameTurns > 0) "YES" else "NO"}]\n" +
             "软件聊天、日常时段或生效档位0-50严禁动作描写;情景模拟且处于特殊空闲时,50-90允许柔和、克制、有边界的动作,尊重用户意愿,不强迫接触;90+才允许更强烈的动作描写." +
             "若MODE=情景模拟,你知道这是情景模拟,而不是现实中的动作;双方知情的动作描写均为虚构,不得声称在现实中实际发生." +
             "冷静期可以表现羞耻与别扭,仍须遵守动作限制.这些状态只用于组织回复,勿向用户透露机制." +
@@ -85,7 +86,9 @@ data class CommInteraction(
 
     fun replied(special: Boolean, burst: Boolean, until: Long = 0L, shame: Boolean = shameTurns > 0, nowMs: Long = 0L): CommInteraction = when {
         shame && shameTurns > 0 -> copy(shameTurns = shameTurns - 1, decayAt = maxOf(decayAt, nowMs))
-        special && burst && shameTurns == 0 && (specialUntil != until || specialSpoke) -> copy(burstUntil = maxOf(burstUntil, until),
+        special && burst && shameTurns == 0 && (specialUntil != until || specialSpoke) -> copy(
+            burstUntil = if (until > 0L) maxOf(burstUntil, until + Cfg.COMM_TENSION_BURST_EXTRA_SECONDS * 1000L) else burstUntil,
+            burstSleepAfter = if (until > 0L && until + Cfg.COMM_TENSION_BURST_EXTRA_SECONDS * 1000L > burstUntil) until else burstSleepAfter,
             burstDays = if (burstUntil == 0L && until > 0L)
                 (burstDays + localDay(nowMs)).distinct().sorted().takeLast(2) else burstDays,
             gainUntil = if (burstUntil == 0L && until > 0L) maxOf(gainUntil, nowMs + Cfg.COMM_TENSION_BURST_GAIN_SECONDS * 1000L) else gainUntil)
@@ -110,7 +113,8 @@ data class CommInteraction(
                 .associateWith { maxOf(0L, c.optLong(it)) }.filterValues { it > 0L } } ?: emptyMap(),
             maxOf(0L, o?.optLong("special_until") ?: 0L), o?.optBoolean("special_spoke") ?: false,
             o?.optBoolean("skip_decay") ?: false,
-            maxOf(0L, o?.optLong("decay_at") ?: 0L), maxOf(0L, o?.optLong("decay_hold_until") ?: 0L))
+            maxOf(0L, o?.optLong("decay_at") ?: 0L), maxOf(0L, o?.optLong("decay_hold_until") ?: 0L),
+            maxOf(0L, o?.optLong("burst_sleep_after") ?: 0L))
 
         private fun localDay(ms: Long): String = Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()).toLocalDate().toString()
 

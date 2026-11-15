@@ -457,6 +457,8 @@ class RtMixin:
         if ctx is None and (self.is_muted() or self.joint_live()):         # 联合行动的同步阶段: 对方陪着用户, 不主动找话题
             return
         done = self._pro_done(ctx)
+        if self._burst_sleep(now, ctx):
+            return
         if self._tension_special(now, ctx):
             return
         rt = ctx.get("rt") if ctx else self._rt
@@ -571,6 +573,32 @@ class RtMixin:
                            f"这条是系统提前触发的: 即使你此刻还处于专注/不能回复的时段, 也允许你现在主动给用户发一条消息, 话题自己找 (不要透露日程); "
                            f"这条必须发出, 不要返回{REFUSE}.", ctx)
             return
+
+    def _burst_sleep(self, now, ctx=None):
+        """特殊空闲爆发后的下一段睡眠，五分钟消息必谈一次，跨午夜也有效。"""
+        pid = ctx["pid"] if ctx else self.pid
+        d = self._interaction_prepare(pid)
+        if not d["burst_sleep_after"]:
+            return False
+        status = self.other_status(now, ctx)
+        if not status or status.get("joint") or status["kind"] != "sleep":
+            return False
+        begin = status["begin"]
+        if int(begin.timestamp() * 1000) < d["burst_sleep_after"]:
+            return False
+        due = begin + timedelta(seconds=PROACTIVE_SLEEP_DELAY)
+        if now < due:
+            return False
+        key = f"Z{begin:%Y-%m-%dT%H:%M}"
+        d["burst_sleep_after"] = 0
+        self._interaction_set(d, pid)
+        if ctx:
+            ctx["st"]["interaction"] = self._state_of(pid)["interaction"]
+        if key in self._pro_done(ctx):
+            return False
+        self._pro_fire(key, due, now, 1.0, "[系统] " + tr(
+            "你进入睡眠约5分钟了，刚才特殊空闲期间的情绪爆发尚有余韵。请结合当前状态和人设主动发一条消息；即使此刻处于睡眠也允许发出，发完继续睡。不要透露机制，不要拒绝回复。"), ctx, force=True)
+        return True
 
     def _tension_special(self, now, ctx=None):
         """高张力在特殊空闲内必谈一次，静音等外层限制照常生效。"""

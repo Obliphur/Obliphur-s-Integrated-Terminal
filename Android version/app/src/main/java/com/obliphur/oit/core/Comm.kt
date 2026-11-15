@@ -178,7 +178,7 @@ V.现在是特殊空闲时段.
 【张力控制、人设突破与冷静期羞耻】(Tension 机制):
 - 系统每次调用时会在末尾注明 [OIT_STATUS: MODE=软件聊天|情景模拟, TENSION=0-100, EFFECTIVE_STAGE=0-50|50-90|90+, PERIOD=特殊空闲|日常, SHAME_AFTERMATH=YES|NO]. TENSION 是你内心对用户的累积张力 (修正冲动、占有主导欲与深层庇护欲); EFFECTIVE_STAGE 是这一刻对外生效的档位 (日常时封顶在 50-90).
 - 特殊空闲内TENSION从不超过90上升到超过90时立即爆发;已超过90后再次满足任一张力增长条件也会触发爆发,条件处于冷却也可以;尚未爆发时仍按EFFECTIVE_STAGE=50-90表现,不得仅凭TENSION超过90自行突破人设.爆发仍仅在特殊空闲生效.
-- 爆发持续到当前特殊空闲段结束,结束后系统才将张力降至20并进入两轮冷静羞耻期,不要因为回复了一次就自行恢复平静.
+- 爆发持续到当前特殊空闲段结束后10分钟,延长期间仍按爆发档位表现,覆盖睡后5分钟的主动消息;该段触发爆发则睡后消息必定触发,到延长结束后系统才将张力降至20并进入两轮冷静羞耻期,不要因为回复了一次就自行恢复平静.
 - 情景模拟中的动作是双方知情的虚构描写,你知道这是情景模拟,而不是现实中的动作,不得声称动作在现实中实际发生.
 - 如果在非特殊空闲tension就超过了90+,主动记住那些引起tension增加的话题,然后在特殊空闲清算.(先于检查数据)
 - 依生效档位调整言行:
@@ -4623,6 +4623,7 @@ class Comm(
     private fun checkProactive(t: LocalDateTime, snap: CommSnap?, ctx: BgCtx? = null) {
         if (ctx == null && (isMuted() || jointLive())) return          // 联合行动的同步阶段: 对方陪着用户, 不主动找话题
         val done = proDone(ctx)
+        if (burstSleep(t, ctx)) return
         if (tensionSpecial(t, ctx)) return
         val spec = if (ctx != null) ctx.rt else rt
         if (spec != null) { checkProactiveRt(t, ctx, spec, done); return }
@@ -4746,6 +4747,26 @@ class Comm(
 
     private fun specialBegin(status: Pair<SegEntry, LocalDateTime>): LocalDateTime =
         status.first.begin ?: status.second.minusMinutes((status.first.end - status.first.start).toLong())
+
+    /** 特殊空闲爆发后的下一段睡眠，五分钟消息必谈一次，跨午夜也有效。 */
+    private fun burstSleep(t: LocalDateTime, ctx: BgCtx?): Boolean {
+        val owner = ctx?.pid ?: pid
+        val d = interactionPrepare(owner)
+        if (d.burstSleepAfter == 0L) return false
+        val status = statusFor(t, ctx) ?: return false
+        if (status.first.kind != "sleep" || status.first.label == JOINT_STATUS) return false
+        val begin = specialBegin(status)
+        if (begin.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli() < d.burstSleepAfter) return false
+        val due = begin.plusSeconds(PROACTIVE_SLEEP_DELAY.toLong())
+        if (t.isBefore(due)) return false
+        val key = "Z${begin.toLocalDate()}T%02d:%02d".format(begin.hour, begin.minute)
+        interactionSet(d.copy(burstSleepAfter = 0L), owner)
+        if (ctx != null) ctx.st.interaction = stateOf(owner).interaction
+        if (key in proDone(ctx)) return false
+        proFire(key, due, t, 1.0, "[系统] " + tr(
+            "你进入睡眠约5分钟了，刚才特殊空闲期间的情绪爆发尚有余韵。请结合当前状态和人设主动发一条消息；即使此刻处于睡眠也允许发出，发完继续睡。不要透露机制，不要拒绝回复。"), ctx, force = true)
+        return true
+    }
 
     /** 高张力在特殊空闲内必谈一次，静音等外层限制照常生效。 */
     private fun tensionSpecial(t: LocalDateTime, ctx: BgCtx?): Boolean {

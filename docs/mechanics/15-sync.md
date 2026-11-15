@@ -6,7 +6,7 @@
 
 沟通的 AI 语音配置、按人设分配、启用与自动播放开关、播放间隔通过 `comm.voice` 按修改时间同步；API Key 经已有加密同步通道传送，到对方用当地 DPAPI / Keystore 重新加密保存。语音音频通过已有加密文件通道自动补传，已听状态随每轮同步清单合并，任一设备听过即算已听（24.1）。
 
-情景模式与情绪张力按对象通过 `comm.interaction:<pid>` 同步，包含爆发后的增长减半截止时间 `gain_until`、最近两个爆发触发日期 `burst_days` 和早间必谈触发日期 `morning_day`、待模型判断的消息 UID 与发送时段 `pending`、按条件保存的张力增长冷却 `gain_cooldowns`，以及高张力特殊空闲的结束时刻 `special_until`、用户发言标记 `special_spoke`、衰减结算时刻 `decay_at` 与豁免截止时刻 `decay_hold_until`（旧 `skip_decay` 迁移为 24 小时豁免）；记录携带聊天清空时刻，按修改时间采用较新内容；清空后拒收旧会话状态（24.20）。
+情景模式与情绪张力按对象通过 `comm.interaction:<pid>` 同步，包含爆发后的增长减半截止时间 `gain_until`、最近两个爆发触发日期 `burst_days` 和早间必谈触发日期 `morning_day`、爆发后睡眠必谈的待触发边界 `burst_sleep_after`、待模型判断的消息 UID 与发送时段 `pending`、按条件保存的张力增长冷却 `gain_cooldowns`，以及高张力特殊空闲的结束时刻 `special_until`、用户发言标记 `special_spoke`、衰减结算时刻 `decay_at` 与豁免截止时刻 `decay_hold_until`（旧 `skip_decay` 迁移为 24 小时豁免）；记录携带聊天清空时刻，按修改时间采用较新内容；清空后拒收旧会话状态（24.20）。
 
 同一个局域网 (同一个 Wi-Fi / 路由器) 里的 OIT 可以互相绑定, Windows 和 Android 都可以. 不经过任何服务器.
 沟通记忆卡中的消息数量门槛使用 `comm` 的 `milestone:<pid>:<门槛>` 独立同步，按已达成项合并，不受模型摘要重写影响；记录带聊天清空时刻，清空后不接收旧会话的达成记录（24.2.4）。

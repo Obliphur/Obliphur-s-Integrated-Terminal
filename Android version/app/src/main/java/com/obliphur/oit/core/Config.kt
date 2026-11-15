@@ -21,6 +21,7 @@ object Cfg {
     const val COMM_TENSION_DECAY_SECONDS = 15 * 60
     const val COMM_TENSION_HIGH_DAY_DECAY = 15 // 超过第二临界、尚未爆发时的每日衰减
     const val COMM_TENSION_RELEASE = 20
+    const val COMM_TENSION_BURST_EXTRA_SECONDS = 10 * 60 // 特殊空闲结束后仍维持爆发
     const val COMM_TENSION_BURST_GAIN_SECONDS = 24 * 60 * 60
     const val COMM_TENSION_BURST_GAIN_RATE = 0.5
     val COMM_TENSION_MORNING_HOURS = 6 until 12 // 爆发次日必定主动谈话的早间范围
