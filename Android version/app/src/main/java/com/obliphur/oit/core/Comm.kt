@@ -177,7 +177,7 @@ V.现在是特殊空闲时段.
 (Gemini代写的部分)
 【张力控制、人设突破与冷静期羞耻】(Tension 机制):
 - 系统每次调用时会在末尾注明 [OIT_STATUS: MODE=软件聊天|情景模拟, TENSION=0-100, EFFECTIVE_STAGE=0-50|50-90|90+, PERIOD=特殊空闲|日常, SHAME_AFTERMATH=YES|NO]. TENSION 是你内心对用户的累积张力 (修正冲动、占有主导欲与深层庇护欲); EFFECTIVE_STAGE 是这一刻对外生效的档位 (日常时封顶在 50-90).
-- TENSION超过90后再次满足任一张力增长条件才触发爆发,条件处于冷却也可以;尚未爆发时仍按EFFECTIVE_STAGE=50-90表现,不得仅凭TENSION超过90自行突破人设.爆发仍仅在特殊空闲生效.
+- 特殊空闲内TENSION从不超过90上升到超过90时立即爆发;已超过90后再次满足任一张力增长条件也会触发爆发,条件处于冷却也可以;尚未爆发时仍按EFFECTIVE_STAGE=50-90表现,不得仅凭TENSION超过90自行突破人设.爆发仍仅在特殊空闲生效.
 - 爆发持续到当前特殊空闲段结束,结束后系统才将张力降至20并进入两轮冷静羞耻期,不要因为回复了一次就自行恢复平静.
 - 情景模拟中的动作是双方知情的虚构描写,你知道这是情景模拟,而不是现实中的动作,不得声称动作在现实中实际发生.
 - 如果在非特殊空闲tension就超过了90+,主动记住那些引起tension增加的话题,然后在特殊空闲清算.(先于检查数据)
@@ -2951,7 +2951,7 @@ class Comm(
 
     private fun interactionPrepare(owner: String = pid, status: Pair<SegEntry, LocalDateTime>? = null): CommInteraction {
         val old = stateOf(owner).interaction
-        var d = old.settle(nowMs()).roll(now().toLocalDate())
+        var d = old.settle(nowMs()).roll(nowMs())
         val current = status ?: if (owner == pid && d.tension > Cfg.COMM_TENSION_CAP) otherStatus() else null
         if (current != null && specialPeriod(current) && d.tension > Cfg.COMM_TENSION_CAP) {
             val until = current.second.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
@@ -2969,8 +2969,10 @@ class Comm(
         val d = interactionPrepare()
         val special = specialPeriod(otherStatus())
         val pending = if (message != null && text.isNotBlank()) d.pending + (message.uid to special) else d.pending
+        val spoke = special && d.specialUntil > 0L && message != null && text.isNotBlank()
         interactionSet(d.copy(pending = pending.entries.toList().takeLast(KEEP).associate { it.toPair() },
-            specialSpoke = d.specialSpoke || (special && d.specialUntil > 0L && message != null && text.isNotBlank())))
+            decayAt = if (spoke && !d.specialSpoke) maxOf(d.decayAt, nowMs()) else d.decayAt,
+            specialSpoke = d.specialSpoke || spoke))
     }
 
     private fun interactionJudgeNote(kind: String): String {
@@ -2993,7 +2995,7 @@ class Comm(
             tr("系统按发送时段处理日常减半及爆发后24小时的增长减半，请返回未减半的基础增量。") +
             "每个条件${Cfg.COMM_TENSION_GAIN_COOLDOWN_SECONDS / 3600}小时内仅加一次，真实违规与模型判定违规共用冷却。" +
             "每条消息先排除冷却中的条件，再选剩余条件中点数最高的一项生效，不叠加；请报告所有满足的条件，不要自行只保留最高项。不得给其他历史消息加值，不要向用户解释标记。" +
-            "冷却中的条件仍须报告正数原始增量；张力已超过90后再次满足任一增长条件可触发爆发，冷却只限制加值。" +
+            tr("冷却中的条件仍须报告正数原始增量；特殊空闲内加值首次超过90立即爆发，已超过90时再次满足任一增长条件也可爆发，冷却只限制加值。") +
             "本轮仍按给定生效档位回复，增量从下次请求生效。待判断消息：$items"
     }
 
@@ -3003,10 +3005,11 @@ class Comm(
         val pending = d.pending.toMutableMap()
         interactionCandidates.forEachIndexed { i, (uid, special, _) ->
             if (uid in pending) {
-                // 在加值前检查临界，冷却只限制加值，不掩盖再次满足的增长条件。
+                // 已超临界时冷却不挡爆发；特殊空闲内首次越过临界也立即触发。
                 if (special && d.tension > Cfg.COMM_TENSION_CAP && CommInteraction.modelGain(reply, i + 1, true) > 0) burst = true
                 val (condition, gain) = CommInteraction.modelEvent(reply, i + 1, special, d.gainCooldowns, nowMs())
                 d = d.add(condition, gain, nowMs())
+                if (special && d.tension > Cfg.COMM_TENSION_CAP && gain > 0) burst = true
                 pending.remove(uid)
             }
         }
@@ -3464,8 +3467,9 @@ class Comm(
         val status = otherStatus()
         val special = specialPeriod(status)
         val gain = (if (special) base.toDouble() else base * Cfg.COMM_TENSION_DAILY_RATE).toInt()
-        interactionSet(d.add("violation", gain, nowMs()))
-        if (special && d.tension > Cfg.COMM_TENSION_CAP) {
+        val added = d.add("violation", gain, nowMs())
+        interactionSet(added)
+        if (special && added.tension > Cfg.COMM_TENSION_CAP) {
             val until = status!!.second.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
             interactionSet(interactionPrepare().replied(true, true, until, false, nowMs()).settle(nowMs()))
         }

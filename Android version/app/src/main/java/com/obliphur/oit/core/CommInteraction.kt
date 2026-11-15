@@ -3,18 +3,18 @@ package com.obliphur.oit.core
 import org.json.JSONObject
 import org.json.JSONArray
 import java.time.Instant
-import java.time.LocalDate
 import java.time.ZoneId
-import java.time.temporal.ChronoUnit
+import kotlin.math.round
 
 /** 每个聊天对象的情景模式、张力及冷静期；与桌面端使用相同字段。 */
 data class CommInteraction(
-    val scenarioMode: Boolean = false, val tension: Int = 0, val shameTurns: Int = 0,
+    val scenarioMode: Boolean = false, val tension: Double = 0.0, val shameTurns: Int = 0,
     val day: String = "", val ts: Long = 0L, val burstUntil: Long = 0L,
     val pending: Map<String, Boolean> = emptyMap(), val gainUntil: Long = 0L,
     val burstDays: List<String> = emptyList(), val morningDay: String = "",
     val gainCooldowns: Map<String, Long> = emptyMap(),
-    val specialUntil: Long = 0L, val specialSpoke: Boolean = false, val skipDecay: Boolean = false
+    val specialUntil: Long = 0L, val specialSpoke: Boolean = false, val skipDecay: Boolean = false,
+    val decayAt: Long = 0L, val decayHoldUntil: Long = 0L
 ) {
     fun json(): JSONObject = JSONObject().put("scenario_mode", scenarioMode).put("tension", tension)
         .put("shame_turns", shameTurns).put("day", day).put("ts", ts).put("burst_until", burstUntil)
@@ -23,36 +23,34 @@ data class CommInteraction(
         .put("burst_days", JSONArray(burstDays)).put("morning_day", morningDay)
         .put("gain_cooldowns", JSONObject(gainCooldowns))
         .put("special_until", specialUntil).put("special_spoke", specialSpoke).put("skip_decay", skipDecay)
+        .put("decay_at", decayAt).put("decay_hold_until", decayHoldUntil)
 
-    fun roll(today: LocalDate): CommInteraction {
-        val elapsed = runCatching { ChronoUnit.DAYS.between(LocalDate.parse(day), today) }.getOrDefault(0L)
-        return when {
-            elapsed > 0 -> {
-                // 跨午夜的特殊空闲先等整段结束，再判断是否属于无人回应。
-                if (specialUntil > 0L && !specialSpoke && burstUntil == 0L) return this
-                var remaining = elapsed
-                if (skipDecay) remaining--
-                var next = tension
-                if (shameTurns == 0 && burstUntil == 0L) {
-                    while (remaining > 0L && next > 0) {
-                        val decay = when {
-                            next > Cfg.COMM_TENSION_CAP -> Cfg.COMM_TENSION_HIGH_DAY_DECAY
-                            next >= Cfg.COMM_TENSION_LOW -> Cfg.COMM_TENSION_DAY_DECAY * 2
-                            else -> Cfg.COMM_TENSION_DAY_DECAY
-                        }
-                        next = maxOf(0, next - decay)
-                        remaining--
-                    }
-                }
-                copy(day = today.toString(), tension = next, skipDecay = false)
+    /** 每十五分钟结算小数衰减；离线补算，暂停和回拨不补扣。 */
+    fun roll(nowMs: Long): CommInteraction {
+        val step = Cfg.COMM_TENSION_DECAY_SECONDS * 1000L
+        var at = if (decayAt > 0L) decayAt else nowMs
+        val hold = if (skipDecay) maxOf(decayHoldUntil, nowMs + 86400000L) else decayHoldUntil
+        if (shameTurns > 0 || burstUntil > 0L || (specialUntil > 0L && !specialSpoke))
+            at += maxOf(0L, (nowMs - at) / step) * step
+        val start = maxOf(at, hold)
+        val ticks = maxOf(0L, (nowMs - start) / step)
+        var next = tension
+        var remaining = ticks
+        while (remaining > 0L && next > 0.0) {
+            val rate = when {
+                next > Cfg.COMM_TENSION_CAP -> Cfg.COMM_TENSION_HIGH_DAY_DECAY
+                next >= Cfg.COMM_TENSION_LOW -> Cfg.COMM_TENSION_DAY_DECAY * 2
+                else -> Cfg.COMM_TENSION_DAY_DECAY
             }
-            day.isEmpty() -> copy(day = today.toString())
-            else -> this
+            next = maxOf(0.0, round((next - rate * step / 86400000.0) * 1e10) / 1e10)
+            remaining--
         }
+        return copy(tension = next, decayAt = if (ticks > 0L) start + ticks * step else at,
+            decayHoldUntil = hold, skipDecay = false)
     }
 
     fun stage(special: Boolean): String {
-        val effective = if (special && burstUntil > 0L) tension else minOf(tension, Cfg.COMM_TENSION_CAP)
+        val effective = if (special && burstUntil > 0L) tension else minOf(tension, Cfg.COMM_TENSION_CAP.toDouble())
         return if (effective < Cfg.COMM_TENSION_LOW) "0-50" else if (effective <= Cfg.COMM_TENSION_CAP) "50-90" else "90+"
     }
 
@@ -70,9 +68,9 @@ data class CommInteraction(
     fun settle(nowMs: Long): CommInteraction {
         var d = this
         if (specialUntil > 0L && nowMs >= specialUntil)
-            d = d.copy(skipDecay = skipDecay || (!specialSpoke && burstUntil == 0L), specialUntil = 0L, specialSpoke = false)
+            d = d.copy(decayHoldUntil = if (!specialSpoke && burstUntil == 0L) maxOf(decayHoldUntil, specialUntil + 86400000L) else decayHoldUntil, specialUntil = 0L, specialSpoke = false)
         return if (d.burstUntil > 0L && nowMs >= d.burstUntil)
-            d.copy(tension = Cfg.COMM_TENSION_RELEASE, shameTurns = Cfg.COMM_SHAME_TURNS, burstUntil = 0L) else d
+            d.copy(tension = Cfg.COMM_TENSION_RELEASE.toDouble(), shameTurns = Cfg.COMM_SHAME_TURNS, burstUntil = 0L) else d
     }
 
     fun gain(gain: Int, nowMs: Long): Int = if (nowMs < gainUntil) (gain * Cfg.COMM_TENSION_BURST_GAIN_RATE).toInt() else gain
@@ -81,12 +79,12 @@ data class CommInteraction(
     fun add(condition: String, value: Int, nowMs: Long): CommInteraction {
         val amount = gain(value, nowMs)
         if (amount <= 0 || nowMs < (gainCooldowns[condition] ?: 0L)) return this
-        return copy(tension = minOf(Cfg.COMM_TENSION_MAX, tension + amount),
+        return copy(tension = minOf(Cfg.COMM_TENSION_MAX.toDouble(), tension + amount),
             gainCooldowns = gainCooldowns + (condition to nowMs + Cfg.COMM_TENSION_GAIN_COOLDOWN_SECONDS * 1000L))
     }
 
     fun replied(special: Boolean, burst: Boolean, until: Long = 0L, shame: Boolean = shameTurns > 0, nowMs: Long = 0L): CommInteraction = when {
-        shame && shameTurns > 0 -> copy(shameTurns = shameTurns - 1)
+        shame && shameTurns > 0 -> copy(shameTurns = shameTurns - 1, decayAt = maxOf(decayAt, nowMs))
         special && burst && shameTurns == 0 && (specialUntil != until || specialSpoke) -> copy(burstUntil = maxOf(burstUntil, until),
             burstDays = if (burstUntil == 0L && until > 0L)
                 (burstDays + localDay(nowMs)).distinct().sorted().takeLast(2) else burstDays,
@@ -96,7 +94,7 @@ data class CommInteraction(
 
     companion object {
         fun parse(o: JSONObject?): CommInteraction = CommInteraction(o?.optBoolean("scenario_mode") ?: false,
-            (o?.optInt("tension") ?: 0).coerceIn(0, Cfg.COMM_TENSION_MAX),
+            (o?.optDouble("tension", 0.0) ?: 0.0).takeIf { it.isFinite() }?.coerceIn(0.0, Cfg.COMM_TENSION_MAX.toDouble()) ?: 0.0,
             (o?.optInt("shame_turns") ?: 0).coerceIn(0, Cfg.COMM_SHAME_TURNS),
             o?.optString("day") ?: "", maxOf(0L, o?.optLong("ts") ?: 0L), maxOf(0L, o?.optLong("burst_until") ?: 0L),
             o?.optJSONObject("pending")?.let { p -> p.keys().asSequence().filter { p.opt(it) is Boolean }
@@ -111,7 +109,8 @@ data class CommInteraction(
             o?.optJSONObject("gain_cooldowns")?.let { c -> (Cfg.COMM_TENSION_GAINS.keys + "other")
                 .associateWith { maxOf(0L, c.optLong(it)) }.filterValues { it > 0L } } ?: emptyMap(),
             maxOf(0L, o?.optLong("special_until") ?: 0L), o?.optBoolean("special_spoke") ?: false,
-            o?.optBoolean("skip_decay") ?: false)
+            o?.optBoolean("skip_decay") ?: false,
+            maxOf(0L, o?.optLong("decay_at") ?: 0L), maxOf(0L, o?.optLong("decay_hold_until") ?: 0L))
 
         private fun localDay(ms: Long): String = Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()).toLocalDate().toString()
 

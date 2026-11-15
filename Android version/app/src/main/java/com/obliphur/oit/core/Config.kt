@@ -18,6 +18,7 @@ object Cfg {
     const val COMM_TENSION_GAIN_COOLDOWN_SECONDS = 3 * 60 * 60
     const val COMM_TENSION_HP_LOSS_GAIN = 15 // 合约扣血单独设定基础增量
     const val COMM_TENSION_DAY_DECAY = 25
+    const val COMM_TENSION_DECAY_SECONDS = 15 * 60
     const val COMM_TENSION_HIGH_DAY_DECAY = 15 // 超过第二临界、尚未爆发时的每日衰减
     const val COMM_TENSION_RELEASE = 20
     const val COMM_TENSION_BURST_GAIN_SECONDS = 24 * 60 * 60

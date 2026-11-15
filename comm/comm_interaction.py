@@ -3,7 +3,8 @@
 
 import re
 import json
-from datetime import date, datetime
+import math
+from datetime import datetime
 
 import config
 import routine
@@ -18,6 +19,11 @@ def interaction_norm(value):
             return max(0, min(limit, int(d.get(key) or 0)))
         except (ValueError, TypeError, OverflowError):
             return 0
+    try:
+        tension = float(d.get("tension") or 0)
+        tension = max(0, min(config.COMM_TENSION_MAX, tension)) if math.isfinite(tension) else 0
+    except (ValueError, TypeError, OverflowError):
+        tension = 0
     pending = d.get("pending") if isinstance(d.get("pending"), dict) else {}
     cooldowns = d.get("gain_cooldowns") if isinstance(d.get("gain_cooldowns"), dict) else {}
     clean_cooldowns = {}
@@ -38,7 +44,7 @@ def interaction_norm(value):
             days = []
     return {"scenario_mode": d.get("scenario_mode") is True,
             "pending": {k: v for k, v in list(pending.items())[-KEEP:] if isinstance(k, str) and isinstance(v, bool)},
-            "tension": number("tension", config.COMM_TENSION_MAX),
+            "tension": tension,
             "shame_turns": number("shame_turns", config.COMM_SHAME_TURNS),
             "burst_until": number("burst_until", 2**63 - 1),
             "gain_until": number("gain_until", 2**63 - 1),
@@ -48,6 +54,8 @@ def interaction_norm(value):
             "special_until": number("special_until", 2**63 - 1),
             "special_spoke": d.get("special_spoke") is True,
             "skip_decay": d.get("skip_decay") is True,
+            "decay_at": number("decay_at", 2**63 - 1),
+            "decay_hold_until": number("decay_hold_until", 2**63 - 1),
             "day": str(d.get("day") or ""), "ts": number("ts", 2**63 - 1)}
 
 
@@ -88,33 +96,30 @@ def interaction_add(d, condition, gain, now_ms):
     d["gain_cooldowns"][condition] = now_ms + config.COMM_TENSION_GAIN_COOLDOWN_SECONDS * 1000
 
 
-def interaction_roll(d, today):
-    """跨天一次衰减，时钟回拨不增加张力，也不覆盖较新的日期。"""
+def interaction_roll(d, now_ms):
+    """每十五分钟结算小数衰减；离线补算，暂停和回拨不补扣。"""
     d = interaction_norm(d)
-    try:
-        elapsed = (today - date.fromisoformat(d["day"])).days
-    except ValueError:
-        elapsed = 0
-    if elapsed > 0:
-        # 跨午夜的特殊空闲先等整段结束，再判断是否属于无人回应。
-        if d["special_until"] and not d["special_spoke"] and not d["burst_until"]:
-            return d
-        if d["skip_decay"]:
-            elapsed -= 1
-            d["skip_decay"] = False
-        if not d["shame_turns"] and not d["burst_until"]:
-            for _ in range(elapsed):
-                if not d["tension"]:
-                    break
-                decay = config.COMM_TENSION_DAY_DECAY
-                if config.COMM_TENSION_LOW <= d["tension"] <= config.COMM_TENSION_CAP:
-                    decay *= 2
-                elif d["tension"] > config.COMM_TENSION_CAP:
-                    decay = config.COMM_TENSION_HIGH_DAY_DECAY
-                d["tension"] = max(0, d["tension"] - decay)
-        d["day"] = today.isoformat()
-    elif not d["day"]:
-        d["day"] = today.isoformat()
+    if not d["decay_at"]:
+        d["decay_at"] = now_ms
+    if d["skip_decay"]:
+        d["decay_hold_until"] = max(d["decay_hold_until"], now_ms + 86400000)
+        d["skip_decay"] = False
+    step = config.COMM_TENSION_DECAY_SECONDS * 1000
+    if d["shame_turns"] or d["burst_until"] or (d["special_until"] and not d["special_spoke"]):
+        d["decay_at"] += max(0, (now_ms - d["decay_at"]) // step) * step
+    start = max(d["decay_at"], d["decay_hold_until"])
+    ticks = max(0, (now_ms - start) // step)
+    for _ in range(ticks):
+        if d["tension"] <= 0:
+            break
+        rate = config.COMM_TENSION_DAY_DECAY
+        if d["tension"] > config.COMM_TENSION_CAP:
+            rate = config.COMM_TENSION_HIGH_DAY_DECAY
+        elif d["tension"] >= config.COMM_TENSION_LOW:
+            rate *= 2
+        d["tension"] = max(0, round(d["tension"] - rate * step / 86400000, 10))
+    if ticks:
+        d["decay_at"] = start + ticks * step
     return d
 
 
@@ -123,7 +128,7 @@ def interaction_settle(d, now_ms):
     d = interaction_norm(d)
     if d["special_until"] and now_ms >= d["special_until"]:
         if not d["special_spoke"] and not d["burst_until"]:
-            d["skip_decay"] = True
+            d["decay_hold_until"] = max(d["decay_hold_until"], d["special_until"] + 86400000)
         d.update(special_until=0, special_spoke=False)
     if d["burst_until"] and now_ms >= d["burst_until"]:
         d.update(tension=config.COMM_TENSION_RELEASE, shame_turns=config.COMM_SHAME_TURNS, burst_until=0)
@@ -170,7 +175,7 @@ class InteractionMixin:
     def _interaction_prepare(self, pid=None, status=None):
         pid = pid or self.pid
         d = interaction_norm(self._state_of(pid).get("interaction"))
-        rolled = interaction_roll(interaction_settle(d, self._ms()), self.now().date())
+        rolled = interaction_roll(interaction_settle(d, self._ms()), self._ms())
         if status is None and pid == self.pid and rolled["tension"] > config.COMM_TENSION_CAP:
             status = self.other_status()
         if status and self._interaction_special(status) and rolled["tension"] > config.COMM_TENSION_CAP:
@@ -190,6 +195,8 @@ class InteractionMixin:
         if message and text.strip():
             d["pending"][message["uid"]] = special
             if special and d["special_until"]:
+                if not d["special_spoke"]:
+                    d["decay_at"] = max(d["decay_at"], self._ms())
                 d["special_spoke"] = True
         self._interaction_set(d)
 
@@ -204,7 +211,7 @@ class InteractionMixin:
             gain = int(gain * config.COMM_TENSION_DAILY_RATE)
         interaction_add(d, "violation", gain, self._ms())
         self._interaction_set(d)
-        if special and burst:
+        if special and (burst or d["tension"] > config.COMM_TENSION_CAP):
             self._interaction_reply(True, True, int(status["end"].timestamp() * 1000))
 
     def _interaction_judge_note(self, kind):
@@ -228,7 +235,7 @@ class InteractionMixin:
                 + tr("系统按发送时段处理日常减半及爆发后24小时的增长减半，请返回未减半的基础增量。") +
                 f"每个条件{config.COMM_TENSION_GAIN_COOLDOWN_SECONDS // 3600}小时内仅加一次，真实违规与模型判定违规共用冷却。"
                 "每条消息先排除冷却中的条件，再选剩余条件中点数最高的一项生效，不叠加；请报告所有满足的条件，不要自行只保留最高项。不得给其他历史消息加值，不要向用户解释标记。"
-                "冷却中的条件仍须报告正数原始增量；张力已超过90后再次满足任一增长条件可触发爆发，冷却只限制加值。"
+                + tr("冷却中的条件仍须报告正数原始增量；特殊空闲内加值首次超过90立即爆发，已超过90时再次满足任一增长条件也可爆发，冷却只限制加值。") +
                 "本轮仍按给定生效档位回复，增量从下次请求生效。待判断消息：" + json.dumps(items, ensure_ascii=False))
 
     def _interaction_judged(self, reply):
@@ -236,11 +243,13 @@ class InteractionMixin:
         burst = False
         for i, (uid, special, _text) in enumerate(getattr(self, "_interaction_candidates", []), 1):
             if uid in d["pending"]:
-                # 在加值前检查临界，冷却只限制加值，不掩盖再次满足的增长条件。
+                # 已超临界时冷却不挡爆发；特殊空闲内首次越过临界也立即触发。
                 if special and d["tension"] > config.COMM_TENSION_CAP and tension_model_gain(reply, i, True) > 0:
                     burst = True
                 condition, gain = tension_model_event(reply, i, special, d["gain_cooldowns"], self._ms())
                 interaction_add(d, condition, gain, self._ms())
+                if special and d["tension"] > config.COMM_TENSION_CAP and gain > 0:
+                    burst = True
                 del d["pending"][uid]
         self._interaction_set(d)
         return burst
@@ -253,6 +262,7 @@ class InteractionMixin:
         d = self._interaction_prepare(pid)
         if shame and d["shame_turns"]:
             d["shame_turns"] -= 1
+            d["decay_at"] = max(d["decay_at"], self._ms())
         elif special and burst and not d["shame_turns"] and (d["special_until"] != until or d["special_spoke"]):
             if not d["burst_until"] and until:
                 d["gain_until"] = max(d["gain_until"], self._ms() + config.COMM_TENSION_BURST_GAIN_SECONDS * 1000)

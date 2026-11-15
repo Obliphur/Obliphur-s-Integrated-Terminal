@@ -518,18 +518,31 @@ def _selftest():
     assert "EFFECTIVE_STAGE=50-90" in interaction_prompt({"tension": 91}, 200, True)
     assert "EFFECTIVE_STAGE=90+" in interaction_prompt({"tension": 91, "burst_until": 1}, 200, True)
     assert "你知道这是情景模拟,而不是现实中的动作" in interaction_prompt({"scenario_mode": True}, 200, True)
-    assert interaction_roll({"tension": 20, "day": "2027-05-03"}, fixed2.date())["tension"] == 0
-    assert interaction_roll({"tension": 49, "day": "2027-05-03"}, fixed2.date())["tension"] == 24
-    assert interaction_roll({"tension": 50, "day": "2027-05-03"}, fixed2.date())["tension"] == 0
-    assert interaction_roll({"tension": 70, "day": "2027-05-03"}, fixed2.date())["tension"] == 20
-    assert interaction_roll({"tension": 71, "day": "2027-05-03"}, fixed2.date())["tension"] == 21
-    assert interaction_roll({"tension": 90, "day": "2027-05-03"}, fixed2.date())["tension"] == 40
-    assert interaction_roll({"tension": 90, "day": "2027-05-02"}, fixed2.date())["tension"] == 15
-    assert interaction_roll({"tension": 91, "day": "2027-05-03"}, fixed2.date())["tension"] == 76
-    assert interaction_roll({"tension": 50, "day": "2027-05-05"}, fixed2.date())["day"] == "2027-05-05"
+    decay_ms = int(fixed2.timestamp() * 1000)
+    quarter = config.COMM_TENSION_DECAY_SECONDS * 1000
+    for value, rate in ((20, 25), (70, 50), (100, 15)):
+        base = {"tension": value, "decay_at": decay_ms}
+        assert interaction_roll(base, decay_ms + quarter - 1)["tension"] == value
+        rolled = interaction_roll(base, decay_ms + quarter)
+        assert abs(rolled["tension"] - (value - rate / 96)) < 1e-8
+        assert interaction_roll(rolled, decay_ms + quarter) == rolled
+        assert interaction_roll(rolled, decay_ms - 1) == rolled
+        assert interaction_norm(rolled) == rolled
+    assert abs(interaction_roll({"tension": 49, "decay_at": decay_ms}, decay_ms + 86400000)["tension"] - 24) < 1e-8
+    assert interaction_roll({"tension": 100, "decay_at": decay_ms}, decay_ms + 100 * 86400000)["tension"] == 0
+    assert interaction_roll({"tension": 50, "day": "2027-05-03"}, decay_ms)["tension"] == 50
+    # 离线补算与逐段运行一致；跨档后使用新速率，暂停时段不留补扣债务。
+    base = {"tension": 90.1, "decay_at": decay_ms}
+    first = interaction_roll(base, decay_ms + quarter)
+    assert abs(first["tension"] - (90.1 - 15 / 96)) < 1e-8
+    assert interaction_roll(first, decay_ms + 2 * quarter) == interaction_roll(base, decay_ms + 2 * quarter)
+    paused = interaction_roll({"tension": 70, "shame_turns": 1, "decay_at": decay_ms}, decay_ms + 86400000)
+    assert paused["tension"] == 70 and paused["decay_at"] == decay_ms + 86400000
+    legacy = interaction_roll({"tension": 95, "skip_decay": True}, decay_ms)
+    assert interaction_roll(legacy, decay_ms + 86400000)["tension"] == 95
     midnight_end = int(datetime(2027, 5, 5, 1).timestamp() * 1000)
     night = {"tension": 95, "burst_until": midnight_end, "day": "2027-05-04"}
-    assert interaction_roll(interaction_settle(night, midnight_end - 1), datetime(2027, 5, 5).date())["tension"] == 95
+    assert interaction_roll(interaction_settle(night, midnight_end - 1), midnight_end - 1)["tension"] == 95
     settled = interaction_settle(night, midnight_end)
     assert settled["tension"] == 20 and settled["shame_turns"] == 2
     assert interaction_settle(settled, midnight_end + 1) == settled
@@ -698,7 +711,7 @@ def _selftest():
     assert cooldown["tension"] == 85
     assert tension_model_event("[tension:1:violation:40]", 1, True, cooldown["gain_cooldowns"], cooldown_now)[1] == 0
     saved_cooldowns = dict(cooldown["gain_cooldowns"])
-    cooldown = interaction_roll(cooldown, datetime(2027, 5, 5).date())
+    cooldown = interaction_roll(cooldown, decay_ms + 86400000)
     assert cooldown["gain_cooldowns"] == saved_cooldowns
     assert add_choice(cooldown_now + 3 * 3600 * 1000 - 1) == ("other", 0)
     assert add_choice(cooldown_now + 3 * 3600 * 1000) == ("rumination", 40)
@@ -754,14 +767,15 @@ def _selftest():
     wait(judge)
     assert judge.cfg["interaction"]["tension"] == 70, "已结算消息重试不再加值"
     judge.now = lambda: fixed2.replace(hour=15)
+    expected_day_tension = interaction_roll(judge.cfg["interaction"], judge._ms())["tension"] + 5
     script.append("听到了.[tension:1:other:10]")
     judge.send("我想把这些复杂的念头告诉你")
     wait(judge)
-    assert judge.cfg["interaction"]["tension"] == 75, "日常时段模型增量也减半取整"
+    assert judge.cfg["interaction"]["tension"] == expected_day_tension, "日常时段模型增量也减半取整"
     script.append("日常问候不增加.[tension:1:0]")
     judge.send("窗边的花今天开了")
     wait(judge)
-    assert judge.cfg["interaction"]["tension"] == 75
+    assert judge.cfg["interaction"]["tension"] == expected_day_tension
     # 当前对象已清空时，旧回复不能增加张力。
     previous_epoch = judge._epoch
     judge.clear()
@@ -798,7 +812,7 @@ def _selftest():
     cool._interaction_judged("[tension:1:40]")
     assert cool.cfg["interaction"]["tension"] == 60, "爆发已回落20，24小时到点恢复基础值"
     cool.flush()
-    # 刚跨过临界不爆发；其后的有效增长条件才算，冷却与封顶不影响判定。
+    # 特殊空闲内刚跨过临界立即爆发；已超临界后的增长条件不受冷却与封顶影响。
     gate = Comm(os.path.join(td, "burst_gate"), folder, now=lambda: fixed2, chat_fn=fake)
     gate.ai.set_profile("deepseek", api_key="k")
     gate.set_cfg(persona="时段.txt", split_send=False)
@@ -807,7 +821,8 @@ def _selftest():
     script.append("听到了.[tension:1:comfort:10]")
     gate.send("我有点累")
     wait(gate)
-    assert gate.cfg["interaction"]["tension"] == 100 and not gate.cfg["interaction"]["burst_until"]
+    assert gate.cfg["interaction"]["tension"] == 100 and gate.cfg["interaction"]["burst_until"]
+    gate._interaction_set(dict(gate.cfg["interaction"], burst_until=0, gain_until=0, burst_days=[]))
     for reply in ("普通谈话", "[tension:1:other:0]", "[tension:1:comfort:-1]", "[tension:1:unknown:40]", "[tension:2:comfort:40]"):
         script.append("嗯." + reply)
         gate.send("再聊一句")
@@ -830,7 +845,7 @@ def _selftest():
     wait(gate)
     assert not gate.cfg["interaction"]["burst_until"], "已结算消息不重复触发"
     gate.flush()
-    # 高张力特殊空闲必谈；用户整段沉默时不爆发，只跳过下一次换日衰减。
+    # 高张力特殊空闲必谈；用户整段沉默时不爆发，之后豁免 24 小时衰减。
     special_clock = [fixed2.replace(hour=13, minute=40)]
     special_dir = os.path.join(td, "special_force")
     special = Comm(special_dir, folder, now=lambda: special_clock[0], chat_fn=fake)
@@ -858,6 +873,7 @@ def _selftest():
     assert not special.cfg["interaction"]["burst_days"]
     special.tick()
     assert len(calls) == before + 1
+    silent_tension = special.cfg["interaction"]["tension"]
     special_doc = special.sync_doc()
     special.flush()
     again_special = Comm(special_dir, folder, now=lambda: special_clock[0], chat_fn=fake)
@@ -870,22 +886,22 @@ def _selftest():
     assert len(calls) == before + 1, "重启与同步后同一段不重发"
     special_clock[0] = fixed2.replace(hour=14, minute=0)
     d = special._interaction_prepare()
-    assert d["tension"] == 91 and d["skip_decay"] and not d["shame_turns"]
+    assert d["tension"] == silent_tension and d["decay_hold_until"] > special._ms() and not d["shame_turns"]
     special_clock[0] = fixed2.replace(hour=8) + timedelta(days=1)
     d = special._interaction_prepare()
-    assert d["tension"] == 91 and not d["skip_decay"]
+    assert d["tension"] == silent_tension and not d["skip_decay"]
     special_clock[0] += timedelta(days=1)
-    assert special._interaction_prepare()["tension"] == 76, "豁免只消耗一次"
-    # 跨午夜、离线多天和时钟回拨不会重复豁免或漏掉其后的逐日衰减。
-    silent_night = {"tension": 95, "day": "2027-05-04", "special_until": midnight_end}
-    assert interaction_roll(interaction_settle(silent_night, midnight_end - 1), datetime(2027, 5, 5).date())["day"] == "2027-05-04"
+    assert special._interaction_prepare()["tension"] < 91, "豁免只消耗一次"
+    # 跨午夜、离线多天和时钟回拨不会重复豁免或漏掉其后的十五分钟衰减。
+    silent_night = {"tension": 95, "decay_at": midnight_end - quarter, "special_until": midnight_end}
+    assert interaction_roll(interaction_settle(silent_night, midnight_end - 1), midnight_end - 1)["tension"] == 95
     silent_night = interaction_settle(silent_night, midnight_end)
-    assert interaction_roll(silent_night, datetime(2027, 5, 5).date())["tension"] == 95
-    assert interaction_roll(silent_night, datetime(2027, 5, 6).date())["tension"] == 80
-    assert interaction_roll(silent_night, datetime(2027, 5, 3).date())["skip_decay"]
+    assert interaction_roll(silent_night, midnight_end + 86400000)["tension"] == 95
+    assert abs(interaction_roll(silent_night, midnight_end + 86400000 + quarter)["tension"] - (95 - 15 / 96)) < 1e-8
+    assert interaction_roll(silent_night, midnight_end - 86400000)["decay_hold_until"] == midnight_end + 86400000
     peer_special.now = lambda: fixed2.replace(hour=13, minute=40) + timedelta(days=3)
-    peer_special._interaction_set({"tension": 95, "day": "2027-05-04"})
-    assert peer_special._interaction_prepare()["tension"] == 5, "先结算离线期间的衰减，再判断当前特殊空闲"
+    peer_special._interaction_set({"tension": 95, "decay_at": decay_ms})
+    assert peer_special._interaction_prepare()["tension"] < 90
     # 持续时间日程、后台对象同样必谈，前台没有用户发言也不能算爆发。
     special_clock[0] = fixed2.replace(hour=13, minute=40) + timedelta(days=3)
     open(os.path.join(folder, "时段_routine.txt"), "w", encoding="utf-8").write("初始起点:12:00\n1h:空闲\n1h:特殊空闲\n10h:空闲\n")
