@@ -13,7 +13,7 @@ object Cfg {
     const val COMM_TENSION_MAX = 100
     const val COMM_TENSION_LOW = 50
     const val COMM_TENSION_CAP = 90
-    const val COMM_TENSION_DAILY_RATE = 0.5
+    const val COMM_TENSION_DAILY_RATE = 0.75
     val COMM_TENSION_GAINS = mapOf("rumination" to 40, "boundary" to 30, "comfort" to 30, "violation" to 25)
     const val COMM_TENSION_GAIN_COOLDOWN_SECONDS = 3 * 60 * 60
     const val COMM_TENSION_HP_LOSS_GAIN = 15 // 合约扣血单独设定基础增量

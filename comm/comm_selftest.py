@@ -581,7 +581,7 @@ def _selftest():
     assert stc.cfg["interaction"]["burst_days"] == ["2027-05-04"]
     assert interaction_gain(stc.cfg["interaction"], 20, gain_until - 1) == 10
     assert interaction_gain(stc.cfg["interaction"], 20, gain_until) == 20
-    assert interaction_gain(stc.cfg["interaction"], tension_model_gain("[tension:1:30]", 1, False), gain_until - 1) == 7
+    assert interaction_gain(stc.cfg["interaction"], tension_model_gain("[tension:1:30]", 1, False), gain_until - 1) == 11
     stc.now = lambda: fixed2.replace(hour=13, minute=59, second=59)
     stc.tick()
     assert stc.cfg["interaction"]["tension"] == 91
@@ -694,9 +694,9 @@ def _selftest():
     assert config.COMM_TENSION_GAINS == {"rumination": 40, "boundary": 30, "comfort": 30, "violation": 25}
     assert tension_model_gain("[tension:1:comfort:30]", 1, True) == 30
     assert tension_model_gain("[tension:1:violation:25]", 1, True) == 25
-    assert tension_model_gain("[tension:1:violation:25]", 1, False) == 12
-    assert interaction_gain({"gain_until": 2}, tension_model_gain("[tension:1:violation:25]", 1, False), 1) == 6
-    assert tension_model_gain("[tension:1:-10][tension:1:999999][tension:2:40]", 1, False) == 20
+    assert tension_model_gain("[tension:1:violation:25]", 1, False) == 18
+    assert interaction_gain({"gain_until": 2}, tension_model_gain("[tension:1:violation:25]", 1, False), 1) == 9
+    assert tension_model_gain("[tension:1:-10][tension:1:999999][tension:2:40]", 1, False) == 30
     assert tension_model_gain("[tension:1:no][tension:1:2.5]", 1, True) == 0
     assert tension_clean("好。[TENSION:1:15]［tension:2:10］") == "好。"
     # 先排除冷却再取最高项；不同条件独立，到三小时整恢复，跨日和回拨不清空冷却。
@@ -770,11 +770,11 @@ def _selftest():
     wait(judge)
     assert judge.cfg["interaction"]["tension"] == 70, "已结算消息重试不再加值"
     judge.now = lambda: fixed2.replace(hour=15)
-    expected_day_tension = interaction_roll(judge.cfg["interaction"], judge._ms())["tension"] + 5
+    expected_day_tension = interaction_roll(judge.cfg["interaction"], judge._ms())["tension"] + 7
     script.append("听到了.[tension:1:other:10]")
     judge.send("我想把这些复杂的念头告诉你")
     wait(judge)
-    assert judge.cfg["interaction"]["tension"] == expected_day_tension, "日常时段模型增量也减半取整"
+    assert judge.cfg["interaction"]["tension"] == expected_day_tension, "非特殊空闲时段模型增量乘0.75取整"
     script.append("日常问候不增加.[tension:1:0]")
     judge.send("窗边的花今天开了")
     wait(judge)
@@ -2173,10 +2173,10 @@ def _selftest():
     assert not ch2.joint_hp_lost("x") and not ch2.joint_break_started(60) and not ch2.joint_break_ended(), "没有联合行动: 都不管"
     n_calls = len(calls)
     assert ch.joint_hp_lost("⚠ 违反合约: 打开了游戏\n目标生命值 3 / 4")
-    assert ch.cfg["interaction"]["tension"] == 7, "合约扣血基础15，日常减半取整"
+    assert ch.cfg["interaction"]["tension"] == 11, "合约扣血基础15，非特殊空闲乘0.75取整"
     clock[0] = day.replace(hour=15, minute=10, second=5)
     assert ch.joint_hp_lost("解除了网络禁令")
-    assert ch.cfg["interaction"]["tension"] == 7, "三小时内继续记扣血，但不重复加张力"
+    assert ch.cfg["interaction"]["tension"] == 11, "三小时内继续记扣血，但不重复加张力"
     assert len(calls) == n_calls and not ch.busy, "损失生命值当时不告诉对方"
     assert len(ch._joint()["hp"]) == 2 and ch._joint()["hp"][0][1] == "⚠ 违反合约: 打开了游戏 目标生命值 3 / 4"
     script.append("休息吧.")
