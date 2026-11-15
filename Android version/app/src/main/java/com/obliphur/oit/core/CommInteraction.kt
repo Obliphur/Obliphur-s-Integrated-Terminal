@@ -52,7 +52,7 @@ data class CommInteraction(
     }
 
     fun stage(special: Boolean): String {
-        val effective = if (special) tension else minOf(tension, Cfg.COMM_TENSION_CAP)
+        val effective = if (special && burstUntil > 0L) tension else minOf(tension, Cfg.COMM_TENSION_CAP)
         return if (effective < Cfg.COMM_TENSION_LOW) "0-50" else if (effective <= Cfg.COMM_TENSION_CAP) "50-90" else "90+"
     }
 
@@ -63,6 +63,7 @@ data class CommInteraction(
             "软件聊天、日常时段或生效档位0-50严禁动作描写;情景模拟且处于特殊空闲时,50-90允许柔和、克制、有边界的动作,尊重用户意愿,不强迫接触;90+才允许更强烈的动作描写." +
             "若MODE=情景模拟,你知道这是情景模拟,而不是现实中的动作;双方知情的动作描写均为虚构,不得声称在现实中实际发生." +
             "冷静期可以表现羞耻与别扭,仍须遵守动作限制.这些状态只用于组织回复,勿向用户透露机制." +
+            tr("TENSION超过90本身不代表爆发,未触发爆发时仍严格按EFFECTIVE_STAGE=50-90表现.") +
             "若有思考空间,先校验模式、时段、生效档位和冷静期,再对齐动机与言行."
     }
 

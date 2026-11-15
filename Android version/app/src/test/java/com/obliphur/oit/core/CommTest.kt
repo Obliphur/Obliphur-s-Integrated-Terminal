@@ -482,16 +482,27 @@ class CommTest {
         val boundary = c.syncDoc()["interaction:$owner"] as JSONObject
         assertEquals(0L, boundary.optLong("burst_until")); assertEquals(0L, boundary.optLong("gain_until"))
         c.applyDoc(mapOf("interaction:$owner" to CommInteraction(true, 91, day = "2027-05-04", ts = boundary.getLong("ts") + 1).json().put("clear", 0)))
-        script.add("别把自己说得一无是处.")
+        c.setMuted(true)
+        script.add("嗯.[tension:1:0]")
+        c.send("晚上好"); wait(c)
+        val neutral = c.syncDoc()["interaction:$owner"] as JSONObject
+        assertEquals(0L, neutral.optLong("burst_until"))
+        assertTrue("EFFECTIVE_STAGE=50-90" in calls.last().second.last().second)
+        val cooldownUntil = ms + 3 * 3600 * 1000L
+        c.applyDoc(mapOf("interaction:$owner" to CommInteraction.parse(neutral).copy(ts = neutral.getLong("ts") + 1,
+            gainCooldowns = mapOf("rumination" to cooldownUntil)).json().put("clear", 0)))
+        script.add("别把自己说得一无是处.[tension:1:rumination:15]")
         c.send("我一文不值"); wait(c)
         val note = calls.last().second.last().second
-        assertTrue(note, "TENSION=91" in note && "MODE=情景模拟" in note && "EFFECTIVE_STAGE=90+" in note)
+        assertTrue(note, "TENSION=91" in note && "MODE=情景模拟" in note && "EFFECTIVE_STAGE=50-90" in note)
         val bursting = c.syncDoc()["interaction:$owner"] as JSONObject
         assertEquals(91, bursting.optInt("tension")); assertEquals(0, bursting.optInt("shame_turns"))
         val gainUntil = ms + 24 * 60 * 60 * 1000L
         assertEquals(gainUntil, bursting.getLong("gain_until"))
         assertEquals(listOf("2027-05-04"), CommInteraction.parse(bursting).burstDays)
         val burstState = CommInteraction.parse(bursting)
+        assertEquals("90+", burstState.stage(true))
+        assertEquals(cooldownUntil, burstState.gainCooldowns.getValue("rumination"))
         assertEquals(10, burstState.gain(20, gainUntil - 1))
         assertEquals(20, burstState.gain(20, gainUntil))
         assertEquals(7, burstState.gain(CommInteraction.modelGain("[tension:1:15]", 1, false), gainUntil - 1))
@@ -515,9 +526,10 @@ class CommTest {
         assertEquals(0, (c.syncDoc()["interaction:$owner"] as? JSONObject)?.optInt("tension") ?: 0)
         assertEquals(15, CommInteraction.modelGain("[tension:1:15]", 1, false))
         assertEquals("50-90", CommInteraction(tension = 100).stage(false))
-        assertEquals("90+", CommInteraction(tension = 100).stage(true))
+        assertEquals("50-90", CommInteraction(tension = 100).stage(true))
         assertEquals("50-90", CommInteraction(tension = 90).stage(true))
-        assertEquals("90+", CommInteraction(tension = 91).stage(true))
+        assertEquals("50-90", CommInteraction(tension = 91).stage(true))
+        assertEquals("90+", CommInteraction(tension = 91, burstUntil = 1).stage(true))
         assertTrue("你知道这是情景模拟,而不是现实中的动作" in CommInteraction(scenarioMode = true).note(200, true))
         assertEquals(0, CommInteraction(tension = 20, day = "2027-05-03").roll(clock.toLocalDate()).tension)
         assertEquals(24, CommInteraction(tension = 49, day = "2027-05-03").roll(clock.toLocalDate()).tension)
@@ -606,6 +618,42 @@ class CommTest {
     }
 
     @Test
+    fun burstRequiresAnotherGrowthCondition() {
+        val td = Files.createTempDirectory("oit").toFile()
+        val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
+        c.importPersona("特殊.txt", "你是特殊.\n13:00-14:00:特殊空闲\n".byteInputStream())
+        c.set(persona = "特殊.txt", splitSend = false)
+        c.setMuted(true)
+        clock = LocalDateTime.of(2027, 5, 4, 13, 30)
+        val owner = Comm.pidOf("特殊.txt")
+        fun state() = CommInteraction.parse(c.syncDoc()["interaction:$owner"] as JSONObject)
+        val ms = clock.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+        c.applyDoc(mapOf("interaction:$owner" to CommInteraction(tension = 90, day = "2027-05-04", ts = ms).json().put("clear", 0)))
+        script.add("听到了.[tension:1:comfort:5]")
+        c.send("我有点累"); wait(c)
+        assertEquals(100, state().tension); assertEquals(0L, state().burstUntil)
+        for (reply in listOf("普通谈话", "[tension:1:other:0]", "[tension:1:comfort:-1]", "[tension:1:unknown:20]", "[tension:2:comfort:20]")) {
+            script.add("嗯.$reply")
+            c.send("再聊一句"); wait(c)
+            assertEquals(0L, state().burstUntil)
+            assertTrue("EFFECTIVE_STAGE=50-90" in calls.last().second.last().second)
+        }
+        script.add("[refuse to reply][tension:1:comfort:5]")
+        c.send("再让我靠一会儿"); wait(c)
+        assertEquals(0L, state().burstUntil); assertTrue(state().pending.isNotEmpty())
+        script.add("可以.[tension:1:comfort:5]")
+        c.triggerForTest("retry", "请回复用户"); wait(c)
+        assertTrue(state().burstUntil > 0L); assertEquals(100, state().tension)
+        assertEquals("90+", state().stage(true))
+        val d = state()
+        c.applyDoc(mapOf("interaction:$owner" to d.copy(burstUntil = 0L, ts = d.ts + 1).json().put("clear", 0)))
+        script.add("旧消息.[tension:1:comfort:5]")
+        c.triggerForTest("retry", "请回复用户"); wait(c)
+        assertEquals(0L, state().burstUntil)
+        c.flush()
+    }
+
+    @Test
     fun specialTensionProactive() {
         val td = Files.createTempDirectory("oit").toFile()
         val dir = File(td, "d").also { it.mkdirs() }
@@ -636,6 +684,7 @@ class CommTest {
         c.tick(); wait(c)
         assertEquals(1, calls.size)
         assertTrue("特殊空闲时间" in calls.last().second.last().second)
+        assertTrue("EFFECTIVE_STAGE=50-90" in calls.last().second.last().second)
         assertEquals(0L, state().burstUntil); assertEquals(0L, state().gainUntil)
         assertTrue(state().burstDays.isEmpty())
         c.tick(); assertEquals(1, calls.size)

@@ -513,9 +513,10 @@ def _selftest():
     # 张力：真实请求、对象隔离、存档、同步与清空保护。
     from comm.comm_interaction import interaction_norm, interaction_roll, interaction_settle, interaction_prompt, interaction_gain, tension_model_gain
     assert "EFFECTIVE_STAGE=50-90" in interaction_prompt({"tension": 100}, 200, False)
-    assert "EFFECTIVE_STAGE=90+" in interaction_prompt({"tension": 100}, 200, True)
+    assert "EFFECTIVE_STAGE=50-90" in interaction_prompt({"tension": 100}, 200, True)
     assert "EFFECTIVE_STAGE=50-90" in interaction_prompt({"tension": 90}, 200, True)
-    assert "EFFECTIVE_STAGE=90+" in interaction_prompt({"tension": 91}, 200, True)
+    assert "EFFECTIVE_STAGE=50-90" in interaction_prompt({"tension": 91}, 200, True)
+    assert "EFFECTIVE_STAGE=90+" in interaction_prompt({"tension": 91, "burst_until": 1}, 200, True)
     assert "你知道这是情景模拟,而不是现实中的动作" in interaction_prompt({"scenario_mode": True}, 200, True)
     assert interaction_roll({"tension": 20, "day": "2027-05-03"}, fixed2.date())["tension"] == 0
     assert interaction_roll({"tension": 49, "day": "2027-05-03"}, fixed2.date())["tension"] == 24
@@ -545,11 +546,21 @@ def _selftest():
     assert "EFFECTIVE_STAGE=50-90" in calls[-1][1][-1]["content"]
     assert not stc.cfg["interaction"]["burst_until"] and not stc.cfg["interaction"]["gain_until"]
     stc._interaction_set(dict(stc.cfg["interaction"], tension=91))
-    script.append("别把自己说得一无是处.")
+    stc.set_muted(True)
+    script.append("嗯.[tension:1:0]")
+    stc.send("晚上好")
+    wait(stc)
+    assert not stc.cfg["interaction"]["burst_until"], "普通对话不触发爆发"
+    assert "EFFECTIVE_STAGE=50-90" in calls[-1][1][-1]["content"]
+    cooldown_until = stc._ms() + 3 * 3600 * 1000
+    stc._interaction_set(dict(stc.cfg["interaction"], gain_cooldowns={"rumination": cooldown_until}))
+    script.append("别把自己说得一无是处.[tension:1:rumination:15]")
     stc.send("我一文不值")
     wait(stc)
     sent_note = calls[-1][1][-1]["content"]
-    assert "TENSION=91" in sent_note and "MODE=情景模拟" in sent_note and "EFFECTIVE_STAGE=90+" in sent_note
+    assert "TENSION=91" in sent_note and "MODE=情景模拟" in sent_note and "EFFECTIVE_STAGE=50-90" in sent_note
+    assert "EFFECTIVE_STAGE=90+" in stc.interaction_note()
+    assert stc.cfg["interaction"]["gain_cooldowns"]["rumination"] == cooldown_until, "冷却内可以爆发但不重复加值或延长冷却"
     assert stc.cfg["interaction"]["tension"] == 91 and stc.cfg["interaction"]["shame_turns"] == 0
     assert stc.cfg["interaction"]["burst_until"] == int(fixed2.replace(hour=14, minute=0).timestamp() * 1000)
     gain_until = int((fixed2 + timedelta(hours=24)).timestamp() * 1000)
@@ -782,6 +793,38 @@ def _selftest():
     cool._interaction_judged("[tension:1:20]")
     assert cool.cfg["interaction"]["tension"] == 60, "爆发已回落20，24小时到点恢复翻倍基础值"
     cool.flush()
+    # 刚跨过临界不爆发；其后的有效增长条件才算，冷却与封顶不影响判定。
+    gate = Comm(os.path.join(td, "burst_gate"), folder, now=lambda: fixed2, chat_fn=fake)
+    gate.ai.set_profile("deepseek", api_key="k")
+    gate.set_cfg(persona="时段.txt", split_send=False)
+    gate.set_muted(True)
+    gate._interaction_set({"tension": 90, "day": fixed2.date().isoformat()})
+    script.append("听到了.[tension:1:comfort:5]")
+    gate.send("我有点累")
+    wait(gate)
+    assert gate.cfg["interaction"]["tension"] == 100 and not gate.cfg["interaction"]["burst_until"]
+    for reply in ("普通谈话", "[tension:1:other:0]", "[tension:1:comfort:-1]", "[tension:1:unknown:20]", "[tension:2:comfort:20]"):
+        script.append("嗯." + reply)
+        gate.send("再聊一句")
+        wait(gate)
+        assert not gate.cfg["interaction"]["burst_until"]
+        assert "EFFECTIVE_STAGE=50-90" in calls[-1][1][-1]["content"]
+    # 拒绝及重试：只在最终回复成功时生效，不重复给已结算消息判定爆发。
+    script.append("[refuse to reply][tension:1:comfort:5]")
+    gate.send("再让我靠一会儿")
+    wait(gate)
+    assert not gate.cfg["interaction"]["burst_until"] and gate.cfg["interaction"]["pending"]
+    script.append("可以.[tension:1:comfort:5]")
+    gate._request("retry")
+    wait(gate)
+    assert gate.cfg["interaction"]["burst_until"] and gate.cfg["interaction"]["tension"] == 100
+    assert "EFFECTIVE_STAGE=90+" in gate.interaction_note()
+    gate._interaction_set(dict(gate.cfg["interaction"], burst_until=0))
+    script.append("旧消息.[tension:1:comfort:5]")
+    gate._request("retry")
+    wait(gate)
+    assert not gate.cfg["interaction"]["burst_until"], "已结算消息不重复触发"
+    gate.flush()
     # 高张力特殊空闲必谈；用户整段沉默时不爆发，只跳过下一次换日衰减。
     special_clock = [fixed2.replace(hour=13, minute=40)]
     special_dir = os.path.join(td, "special_force")

@@ -2,6 +2,7 @@
 
 
 EN = {
+    "TENSION超过90本身不代表爆发,未触发爆发时仍严格按EFFECTIVE_STAGE=50-90表现.": "TENSION above 90 alone does not mean a burst. Until a burst is triggered, strictly follow EFFECTIVE_STAGE=50-90.",
     "现在是你的特殊空闲时间，请结合先前记住的话题主动谈话；不要透露机制，也不要拒绝回复。": "You are now in your special free time. Start a conversation based on the topics you remembered earlier; do not reveal the mechanism or refuse to reply.",
     "推荐使用Claude或者Gemini": "Recommended: Claude or Gemini",
     "📱 软件聊天": "📱 Messaging",

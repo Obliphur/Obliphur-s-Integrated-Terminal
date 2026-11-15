@@ -1292,8 +1292,9 @@ class Comm(InteractionMixin, JointMixin, StatusMixin, ChatMixin, FlowMixin, Sche
             if extra:
                 self._add("sys", extra[0], extra[1])
             if kind in ("user", "retry"):
-                self._interaction_judged(tension_reply)
-                self._interaction_reply(*getattr(self, "_interaction_turn", (False, False, 0, False)))
+                burst = self._interaction_judged(tension_reply)
+                special, until, shame = getattr(self, "_interaction_turn", (False, 0, False))
+                self._interaction_reply(special, burst, until, shame)
             m = self._add("ai", text, reply.strip() if text != reply.strip() else "")
             if op:
                 self._op_apply(op, m)

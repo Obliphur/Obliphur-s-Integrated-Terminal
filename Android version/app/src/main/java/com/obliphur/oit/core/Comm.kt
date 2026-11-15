@@ -177,6 +177,7 @@ V.现在是特殊空闲时段.
 (Gemini代写的部分)
 【张力控制、人设突破与冷静期羞耻】(Tension 机制):
 - 系统每次调用时会在末尾注明 [OIT_STATUS: MODE=软件聊天|情景模拟, TENSION=0-100, EFFECTIVE_STAGE=0-50|50-90|90+, PERIOD=特殊空闲|日常, SHAME_AFTERMATH=YES|NO]. TENSION 是你内心对用户的累积张力 (修正冲动、占有主导欲与深层庇护欲); EFFECTIVE_STAGE 是这一刻对外生效的档位 (日常时封顶在 50-90).
+- TENSION超过90后再次满足任一张力增长条件才触发爆发,条件处于冷却也可以;尚未爆发时仍按EFFECTIVE_STAGE=50-90表现,不得仅凭TENSION超过90自行突破人设.爆发仍仅在特殊空闲生效.
 - 爆发持续到当前特殊空闲段结束,结束后系统才将张力降至20并进入两轮冷静羞耻期,不要因为回复了一次就自行恢复平静.
 - 情景模拟中的动作是双方知情的虚构描写,你知道这是情景模拟,而不是现实中的动作,不得声称动作在现实中实际发生.
 - 如果在非特殊空闲tension就超过了90+,主动记住那些引起tension增加的话题,然后在特殊空闲清算.(先于检查数据)
@@ -1144,7 +1145,7 @@ class Comm(
     private var love = Love()
     /** 本地只存最近 KEEP 条, 被砍掉的信息条数记在这里 ([condition] III 数的是总数; 本机, 清空归零). */
     private var interaction = CommInteraction()
-    private data class InteractionTurn(val special: Boolean = false, val burst: Boolean = false, val until: Long = 0L, val shame: Boolean = false)
+    private data class InteractionTurn(val special: Boolean = false, val until: Long = 0L, val shame: Boolean = false)
     private var interactionTurn = InteractionTurn()
     private var interactionCandidates = emptyList<Triple<String, Boolean, String>>()
     private var msgGone = 0
@@ -2986,20 +2987,25 @@ class Comm(
             "系统先将基础增量乘${Cfg.COMM_TENSION_GAIN_MULTIPLIER}，再按发送时段处理日常减半及爆发后24小时的增长减半，无需你乘倍或减半。" +
             "每个条件${Cfg.COMM_TENSION_GAIN_COOLDOWN_SECONDS / 3600}小时内仅加一次，真实违规与模型判定违规共用冷却。" +
             "每条消息先排除冷却中的条件，再选剩余条件中点数最高的一项生效，不叠加；请报告所有满足的条件，不要自行只保留最高项。不得给其他历史消息加值，不要向用户解释标记。" +
+            "冷却中的条件仍须报告正数原始增量；张力已超过90后再次满足任一增长条件可触发爆发，冷却只限制加值。" +
             "本轮仍按给定生效档位回复，增量从下次请求生效。待判断消息：$items"
     }
 
-    private fun interactionJudged(reply: String) {
+    private fun interactionJudged(reply: String): Boolean {
         var d = interactionPrepare()
+        var burst = false
         val pending = d.pending.toMutableMap()
         interactionCandidates.forEachIndexed { i, (uid, special, _) ->
             if (uid in pending) {
+                // 在加值前检查临界，冷却只限制加值，不掩盖再次满足的增长条件。
+                if (special && d.tension > Cfg.COMM_TENSION_CAP && CommInteraction.modelGain(reply, i + 1, true) > 0) burst = true
                 val (condition, gain) = CommInteraction.modelEvent(reply, i + 1, special, d.gainCooldowns, nowMs())
                 d = d.add(condition, gain, nowMs())
                 pending.remove(uid)
             }
         }
         interactionSet(d.copy(pending = pending))
+        return burst
     }
 
     /** 五个条件, 全部用用户的真实数据算. strict = 对方主动告白用的那一组 (COND_STRICT), 否则是用户提出时 [condition] 用的 (COND_NORMAL). */
@@ -3449,8 +3455,14 @@ class Comm(
         val j = curJoint()?.takeIf { it.state == "run" } ?: return false
         val d = interactionPrepare()
         val base = Cfg.COMM_TENSION_HP_LOSS_GAIN
-        val gain = (if (specialPeriod(otherStatus())) base.toDouble() else base * Cfg.COMM_TENSION_DAILY_RATE).toInt()
+        val status = otherStatus()
+        val special = specialPeriod(status)
+        val gain = (if (special) base.toDouble() else base * Cfg.COMM_TENSION_DAILY_RATE).toInt()
         interactionSet(d.add("violation", gain, nowMs()))
+        if (special && d.tension > Cfg.COMM_TENSION_CAP) {
+            val until = status!!.second.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+            interactionSet(interactionPrepare().replied(true, true, until, false, nowMs()).settle(nowMs()))
+        }
         val hp = j.hp.takeLast(JOINT_HP_MAX - 1) + (now().iso() to text.trim().split(Regex("""\s+""")).joinToString(" ").take(200))
         jointSet(j.copy(hp = hp, violated = true))
         return true
@@ -4223,7 +4235,7 @@ class Comm(
         }
         val status = otherStatus()
         val d = interactionPrepare()
-        interactionTurn = InteractionTurn(specialPeriod(status), d.tension > Cfg.COMM_TENSION_CAP && d.specialSpoke,
+        interactionTurn = InteractionTurn(specialPeriod(status),
             status?.second?.atZone(java.time.ZoneId.systemDefault())?.toInstant()?.toEpochMilli() ?: 0L, d.shameTurns > 0)
         val note = CommText.oitText(stateText() + "\n" + d.note(maxOf(msgTotal(), memFixed.maxOrNull() ?: 0), specialPeriod(status)) + "\n" + interactionJudgeNote(kind)) +
             (if (rt != null) "\n" + rtNote(now()) else "")
@@ -4369,8 +4381,8 @@ class Comm(
             saveCfg()
             r.extra?.let { add("sys", it.body, it.api) }
             if (r.kind in listOf("user", "retry")) {
-                interactionJudged(tensionReply)
-                interactionSet(interactionPrepare().replied(interactionTurn.special, interactionTurn.burst, interactionTurn.until, interactionTurn.shame, nowMs()).settle(nowMs()))
+                val burst = interactionJudged(tensionReply)
+                interactionSet(interactionPrepare().replied(interactionTurn.special, burst, interactionTurn.until, interactionTurn.shame, nowMs()).settle(nowMs()))
             }
             val m = add("ai", text, if (text != r.reply.trim()) r.reply.trim() else "")
             r.op?.let { opApply(it, m) }

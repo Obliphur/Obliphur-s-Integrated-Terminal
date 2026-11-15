@@ -7,6 +7,7 @@ from datetime import date, datetime
 
 import config
 import routine
+from i18n import tr
 from .comm_const import KEEP
 
 
@@ -132,14 +133,15 @@ def interaction_settle(d, now_ms):
 def interaction_prompt(d, total, special):
     d = interaction_norm(d)
     mode = "情景模拟" if d["scenario_mode"] and total >= config.COMM_SCENARIO_UNLOCK else "软件聊天"
-    effective = d["tension"] if special else min(d["tension"], config.COMM_TENSION_CAP)
+    effective = d["tension"] if special and d["burst_until"] else min(d["tension"], config.COMM_TENSION_CAP)
     stage = "0-50" if effective < config.COMM_TENSION_LOW else "50-90" if effective <= config.COMM_TENSION_CAP else "90+"
     return (f"[OIT_STATUS: MODE={mode}, TENSION={d['tension']}, EFFECTIVE_STAGE={stage}, "
             f"PERIOD={'特殊空闲' if special else '日常'}, SHAME_AFTERMATH={'YES' if d['shame_turns'] else 'NO'}]\n"
             "软件聊天、日常时段或生效档位0-50严禁动作描写;情景模拟且处于特殊空闲时,50-90允许柔和、克制、有边界的动作,尊重用户意愿,不强迫接触;90+才允许更强烈的动作描写."
             "若MODE=情景模拟,你知道这是情景模拟,而不是现实中的动作;双方知情的动作描写均为虚构,不得声称在现实中实际发生."
             "冷静期可以表现羞耻与别扭,仍须遵守动作限制.这些状态只用于组织回复,勿向用户透露机制."
-            "若有思考空间,先校验模式、时段、生效档位和冷静期,再对齐动机与言行.")
+            + tr("TENSION超过90本身不代表爆发,未触发爆发时仍严格按EFFECTIVE_STAGE=50-90表现.")
+            + "若有思考空间,先校验模式、时段、生效档位和冷静期,再对齐动机与言行.")
 
 
 class InteractionMixin:
@@ -194,11 +196,16 @@ class InteractionMixin:
     def _interaction_violation(self):
         """真实联合行动违规直接结算，不从聊天文本推断。"""
         d = self._interaction_prepare()
+        status = self.other_status()
+        special = self._interaction_special(status)
+        burst = d["tension"] > config.COMM_TENSION_CAP
         gain = config.COMM_TENSION_HP_LOSS_GAIN
-        if not self._interaction_special():
+        if not special:
             gain = int(gain * config.COMM_TENSION_DAILY_RATE)
         interaction_add(d, "violation", gain, self._ms())
         self._interaction_set(d)
+        if special and burst:
+            self._interaction_reply(True, True, int(status["end"].timestamp() * 1000))
 
     def _interaction_judge_note(self, kind):
         d = self._interaction_prepare()
@@ -215,16 +222,22 @@ class InteractionMixin:
                 f"系统先将基础增量乘{config.COMM_TENSION_GAIN_MULTIPLIER}，再按发送时段处理日常减半及爆发后24小时的增长减半，无需你乘倍或减半。"
                 f"每个条件{config.COMM_TENSION_GAIN_COOLDOWN_SECONDS // 3600}小时内仅加一次，真实违规与模型判定违规共用冷却。"
                 "每条消息先排除冷却中的条件，再选剩余条件中点数最高的一项生效，不叠加；请报告所有满足的条件，不要自行只保留最高项。不得给其他历史消息加值，不要向用户解释标记。"
+                "冷却中的条件仍须报告正数原始增量；张力已超过90后再次满足任一增长条件可触发爆发，冷却只限制加值。"
                 "本轮仍按给定生效档位回复，增量从下次请求生效。待判断消息：" + json.dumps(items, ensure_ascii=False))
 
     def _interaction_judged(self, reply):
         d = self._interaction_prepare()
+        burst = False
         for i, (uid, special, _text) in enumerate(getattr(self, "_interaction_candidates", []), 1):
             if uid in d["pending"]:
+                # 在加值前检查临界，冷却只限制加值，不掩盖再次满足的增长条件。
+                if special and d["tension"] > config.COMM_TENSION_CAP and tension_model_gain(reply, i, True) > 0:
+                    burst = True
                 condition, gain = tension_model_event(reply, i, special, d["gain_cooldowns"], self._ms())
                 interaction_add(d, condition, gain, self._ms())
                 del d["pending"][uid]
         self._interaction_set(d)
+        return burst
 
     def _interaction_special(self, status=None):
         s = self.other_status() if status is None else status
