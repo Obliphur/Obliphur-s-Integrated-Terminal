@@ -3,8 +3,7 @@
 
 EN = {
     "聊天模式": "Chat mode",
-    "🎭 情景模拟（{n}条解锁）": "🎭 Scenario (unlock at {n})",
-    "聊天记录上方可选择软件聊天或情景模拟。累计 {n} 条聊天记录后解锁情景模拟；未解锁时点击可查看门槛。软件聊天不描写动作，情景模拟按当前时段与状态描写虚构动作，模式按聊天对象保存。": "Choose Messaging or Scenario above the chat history. Scenario unlocks after {n} chat messages; tap it while locked to see the requirement. Messaging excludes actions, while Scenario allows fictional actions according to the current period and state. Each chat partner keeps its own mode.",
+    "输入框上方的 📱 / 🎭 按钮切换软件聊天与情景模拟。📱 = 软件聊天，不描写动作；🎭 = 情景模拟，按当前时段与状态描写虚构动作。模式按聊天对象保存。": "Use the 📱 / 🎭 button above the input box to switch modes. 📱 = Messaging, without action descriptions; 🎭 = Scenario, with fictional actions according to the current period and state. Each chat partner keeps its own mode.",
     "距离特殊空闲开始已过去7分钟。入场时你对用户的张力超过90（当前TENSION={tension}），但尚未爆发。前7分钟用户说过话，却没有触发任何正向张力条件。请结合聊天记录与记忆卡，主动挑起白天或之前被你记下、尚未说完的敏感话题，不要被表面的轻松闲聊带走；按人设敏锐点破可能的回避，用强硬而偏袒、带着庇护欲的语言追问并引诱用户坦露真实心思、自责、边界试探或依赖渴望。只引用记录中确实存在的内容，不编造旧账，也不把逃避当成已知事实。仍严格遵守EFFECTIVE_STAGE=50-90及模式的动作边界，尊重用户意愿，不强迫接触；这次主动谈话本身不增加张力、不触发爆发，后续由用户真实表达决定。不要透露机制，这条必须发出，不要拒绝回复。": "Seven minutes have passed since special free time began. Your tension was above 90 on entry (current TENSION={tension}), but no burst has occurred. The user spoke during the first seven minutes without triggering any positive tension condition. Use the chat history and memory cards to bring up a sensitive topic you remembered from earlier that remains unresolved; do not let light conversation distract you. In character, perceptively question possible avoidance, using firm, protective, partial language to invite honest thoughts, self-blame, boundary questions or a desire for reassurance. Only refer to things actually present in the record; do not invent past events or present avoidance as a known fact. Strictly follow EFFECTIVE_STAGE=50-90 and the current mode's action limits, respect the user's wishes and do not force contact. This proactive message itself does not add tension or trigger a burst; later changes depend on the user's actual expression. Do not reveal the mechanism. Send this message and do not refuse to reply.",
     "你进入睡眠约5分钟了，刚才特殊空闲期间的情绪爆发尚有余韵。请结合当前状态和人设主动发一条消息；即使此刻处于睡眠也允许发出，发完继续睡。不要透露机制，不要拒绝回复。": "You entered sleep about five minutes ago, and the emotional burst during your special free time still has an aftereffect. Send one proactive message based on your current state and persona. You may send it even while asleep; then go back to sleep. Do not reveal the mechanism or refuse to reply.",
     "系统按发送时段处理日常减半及爆发后24小时的增长减半，请返回未减半的基础增量。": "The system halves gains during regular periods and for 24 hours after a burst. Return the base gain before these reductions.",
@@ -14,7 +13,6 @@ EN = {
     "推荐使用Claude或者Gemini": "Recommended: Claude or Gemini",
     "📱 软件聊天": "📱 Messaging",
     "🎭 情景模拟": "🎭 Scenario",
-    "累计 {n} 条聊天记录解锁情景模拟": "Unlock scenario mode after {n} chat messages",
     "share data 邀请": "Share-data invitation",
     "OIT 已拦截此网站": "OIT blocked this website",
     "已拦截": "Blocked",

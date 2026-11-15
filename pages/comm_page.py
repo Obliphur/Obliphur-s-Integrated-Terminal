@@ -57,15 +57,6 @@ class CommPage(CommVoiceMixin, tk.Frame):
         self.cb_who = ttk.Combobox(hdr, textvariable=self.var_who, state="readonly", width=16)
         self.cb_who.pack(side="right", padx=(0, 12))
         self.cb_who.bind("<<ComboboxSelected>>", lambda _e: self._pick_who())
-        # 两个模式始终可见；未解锁时点击情景模拟会明确提示门槛。
-        scenario_row = tk.Frame(self, bg=bg)
-        scenario_row.pack(fill="x", padx=30, pady=(0, 4))
-        tk.Label(scenario_row, text=tr("聊天模式"), bg=bg, fg=COLORS["text"],
-                 font=config.font("body")).pack(side="left", padx=(0, 12))
-        self.btn_chat = ttk.Button(scenario_row, text=tr("📱 软件聊天"), command=lambda: self._set_mode(False))
-        self.btn_chat.pack(side="left")
-        self.btn_scenario = ttk.Button(scenario_row, text=tr("🎭 情景模拟"), command=lambda: self._set_mode(True))
-        self.btn_scenario.pack(side="left", padx=(8, 0))
         # 对方现在在做什么 (按人设日程; 每秒刷新, 没有选人设时不显示): 小圆点的颜色跟着状态变
         self.other_row = tk.Frame(self, bg=bg)
         self.other_row.pack(fill="x", padx=30, pady=(0, 2))
@@ -94,6 +85,9 @@ class CommPage(CommVoiceMixin, tk.Frame):
         tools = tk.Frame(self, bg=bg)
         tools.pack(fill="x", padx=28, pady=(2, 0))
         ttk.Button(tools, text="❓", width=3, command=self._help).pack(side="left")                # 帮助: 每个按钮是干什么的
+        self.btn_scenario = ttk.Button(tools, text="📱", width=3,
+                                       command=lambda: self._set_mode(not self.comm.scenario_on()))
+        self.btn_scenario.pack(side="left", padx=(4, 0))
         self.btn_mute = ttk.Button(tools, text="🔔", width=3, command=self._toggle_mute)        # 🔔 可以主动发起 / 🔕 禁止这个人主动发起
         self.btn_mute.pack(side="left", padx=(4, 0))
         ttk.Button(tools, text="🤝", width=3, command=self._joint).pack(side="left", padx=(4, 0))   # 联合行动
@@ -174,9 +168,6 @@ class CommPage(CommVoiceMixin, tk.Frame):
             self.comm.set_config(self._cfg_ids[idx])
 
     def _set_mode(self, enabled):
-        if enabled and not self.comm.scenario_unlocked():
-            toast.info(tr("累计 {n} 条聊天记录解锁情景模拟", n=config.COMM_SCENARIO_UNLOCK))
-            return
         self.comm.set_scenario(enabled)
         self.refresh(force=True)
 
@@ -190,10 +181,7 @@ class CommPage(CommVoiceMixin, tk.Frame):
         cfg(self.lbl_other_dot, text="●" if other else "", fg=comm_mod.STATUS_COLORS.get(kind, COLORS["text_dim"]))
         cfg(self.lbl_other, text=other)
         scenario = c.scenario_on()
-        cfg(self.btn_chat, style="TButton" if scenario else "Accent.TButton")
-        cfg(self.btn_scenario, text=tr("🎭 情景模拟") if c.scenario_unlocked() else
-            tr("🎭 情景模拟（{n}条解锁）", n=config.COMM_SCENARIO_UNLOCK),
-            style="Accent.TButton" if scenario else "TButton")
+        cfg(self.btn_scenario, text="🎭" if scenario else "📱")
 
     def refresh(self, force: bool = False):
         c = self.comm
@@ -620,7 +608,7 @@ class CommPage(CommVoiceMixin, tk.Frame):
         dlg = Modal(self.winfo_toplevel(), tr("帮助"), width=width, height=config.scaled(400))
         bg = COLORS["bg"]
         rows = (("❓", "帮助", "打开这个说明."),
-                ("📱 / 🎭", "聊天模式", tr("聊天记录上方可选择软件聊天或情景模拟。累计 {n} 条聊天记录后解锁情景模拟；未解锁时点击可查看门槛。软件聊天不描写动作，情景模拟按当前时段与状态描写虚构动作，模式按聊天对象保存。", n=config.COMM_SCENARIO_UNLOCK)),
+                ("📱 / 🎭", "聊天模式", "输入框上方的 📱 / 🎭 按钮切换软件聊天与情景模拟。📱 = 软件聊天，不描写动作；🎭 = 情景模拟，按当前时段与状态描写虚构动作。模式按聊天对象保存。"),
                 ("👀 / 🙈", "分享数据 (share data)", "点一下切换 (👀 = 打开, 要先征得对方同意; ⏳ = 等对方回复). 打开后去别的页面, 对方会收到那一页上你们的数据; 回到沟通自动关闭. 对方也可以发邀请, 点「接受」才会打开."),
                 ("🔔 / 🔕", "主动发起", "🔔 = 允许这个对象主动找你, 🔕 = 禁止."),
                 ("⏰ / ⏲", "共时闹钟", "⏰ = 闹钟跟随这个对象的起床时间; 响铃的设备手动选, 一次只能有一个对象."),
