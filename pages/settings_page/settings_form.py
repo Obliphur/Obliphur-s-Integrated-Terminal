@@ -121,6 +121,9 @@ class FormMixin:
         row = self._num_rows[key]
         value = self.sm.from_ui_number(key, row["var"].get())
         status, msg = self.sm.stage(key, value)
+        if status == "tension":
+            self._sync_num(key, force=True)
+            return status, msg
         if status == "dev":
             # 开发者模式开 / 关: 不是真的修改, 填写框恢复成当前值, 不提示
             self._sync_num(key, force=True)

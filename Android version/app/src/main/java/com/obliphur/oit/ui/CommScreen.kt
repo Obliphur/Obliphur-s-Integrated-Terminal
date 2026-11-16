@@ -111,6 +111,7 @@ fun CommScreen(go: (String) -> Unit) {
     // 不跟着每秒一次的 LocalTick 重画 (整页每秒重画一遍会有卡顿感): 只在聊天记录 / 状态变了才刷新
     var ver by remember { mutableIntStateOf(comm.version) }
     var otherStatus by remember { mutableStateOf(comm.otherStatusDisplay().first) }
+    var tensionText by remember { mutableStateOf(comm.tensionDisplay(core.settings.showTension)) }
     var otherStatusKind by remember { mutableStateOf(comm.otherStatusDisplay().second) }
     var voiceSession by remember { mutableStateOf(0) }
     var voiceAutoRunning by remember { mutableStateOf(false) }
@@ -123,6 +124,7 @@ fun CommScreen(go: (String) -> Unit) {
             val (text, kind) = comm.otherStatusDisplay()
             if (text != otherStatus) otherStatus = text
             if (kind != otherStatusKind) otherStatusKind = kind
+            comm.tensionDisplay(core.settings.showTension).let { if (it != tensionText) tensionText = it }
             if (core.jointAsk != jointAsk) jointAsk = core.jointAsk
             (comm.jointLabel() to comm.jointStatusText()).let { if (it != jointLine) jointLine = it }
             (comm.jointInvite() != null).let { if (it != invite) invite = it }
@@ -201,6 +203,7 @@ fun CommScreen(go: (String) -> Unit) {
                 Color(android.graphics.Color.parseColor(Comm.STATUS_COLORS[otherStatusKind] ?: "#9E9E9E"))))
             Text(otherStatus, color = o.dim, fontSize = 12.sp, modifier = Modifier.padding(start = 6.dp))
         }
+        if (tensionText.isNotEmpty()) Text(tensionText, color = o.dim, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 4.dp))
         // 倒排 + 上下各留一点空白: 第一条 / 最后一条也能再滑过去一些, 新消息总是贴着底部
         LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list, reverseLayout = true,
             contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 64.dp),

@@ -2945,6 +2945,14 @@ class Comm(
         return true
     }
 
+    /** 显示当前对象的真实张力，保留两位小数，关闭时不显示。 */
+    @Synchronized
+    fun tensionDisplay(enabled: Boolean): String {
+        if (!enabled || personaName().isEmpty()) return ""
+        val value = java.lang.String.format(java.util.Locale.ROOT, "%.2f", interactionPrepare().tension).trimEnd('0').trimEnd('.')
+        return tr("Tension: {value}", "value" to value)
+    }
+
     private fun specialPeriod(status: Pair<SegEntry, LocalDateTime>?): Boolean = status?.first?.let {
         it.label != JOINT_STATUS && (it.kind == "special" || it.label.substringBefore('(').substringBefore('（').trim().contains("特殊空闲"))
     } ?: false

@@ -1077,6 +1077,11 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
 
     fun stageSetting(key: String, value: Any?): Pair<StageResult, String> {
         // 开 / 关开发者模式: 不是真的修改, 不排队, 不写文件, 不记流水, 不提示
+        if (isTensionToggle(key, value)) {
+            settings.showTension = !settings.showTension
+            changed()
+            return StageResult.NOCHANGE to ""
+        }
         if (isDevToggle(key, value)) {
             if (!followsMother()) {                  // 子端跟着母端, 自己不能开关
                 setDevMode(!settings.devMode)

@@ -153,6 +153,13 @@ enum class StageResult { INSTANT, STAGED, NOCHANGE, INVALID, UNKNOWN }
 /** 在"每日联网额度"里填这个数 (分钟) 并保存 = 开 / 关开发者模式. 两端相同 (桌面版: settings_manager.DEV_TOGGLE_CODE). */
 const val DEV_TOGGLE_CODE = 325799
 
+/** 联网冷静期使用相同口令切换张力显示，普通设置值不变。 */
+fun isTensionToggle(key: String, value: Any?): Boolean {
+    if (key != "COOLDOWN") return false
+    val v = (value as? Number)?.toDouble() ?: return false
+    return kotlin.math.abs(v - DEV_TOGGLE_CODE * Schema.BY_KEY[key]!!.scale) < 1e-6
+}
+
 fun isDevToggle(key: String, value: Any?): Boolean {
     if (key != "DAILY_LIMIT") return false
     val v = (value as? Number)?.toDouble() ?: return false
@@ -174,6 +181,8 @@ class Settings(
     val freeNext = HashSet<String>()
     var setupUntil: LocalDateTime? = null
         private set
+    /** 联网冷静期口令切换，仅本次运行显示张力，不保存或同步。 */
+    var showTension = false
     /** 开发者模式: 只能用 DEV_TOGGLE_CODE 开 / 关, 不写文件 (每次启动都是关的), 界面上不显示. */
     var devMode = false
         set(v) { field = v && com.obliphur.oit.BuildConfig.DEV_BUILD }       // 公开发布版没有开发者模式

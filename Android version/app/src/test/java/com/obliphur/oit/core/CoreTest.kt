@@ -555,6 +555,45 @@ class CoreTest {
         assertEquals(base + 2400.0, n.todayTotal, 1e-6)
     }
 
+    /** 联网冷静期口令独立切换张力显示，原有设置、文件和开发者模式不变。 */
+    @Test
+    fun tensionDisplayToggle() {
+        val dir = tmp()
+        val core = Core(dir, NoHost) { 0.0 }
+        core.endSetupPeriod()
+        core.stageSetting("COOLDOWN", 120.0)
+        val before = core.settings.effective.toMap() to core.settings.pending.toMap()
+        val file = File(dir, "app_settings.json")
+        val beforeFile = file.readText()
+        val dev = core.settings.devMode
+        assertFalse(core.settings.showTension)
+        core.followsMother = { true }
+        val code = DEV_TOGGLE_CODE * Schema.BY_KEY.getValue("COOLDOWN").scale
+        assertEquals(StageResult.NOCHANGE to "", core.stageSetting("COOLDOWN", code))
+        assertTrue(core.settings.showTension)
+        assertEquals(dev, core.settings.devMode)
+        assertEquals(before, core.settings.effective.toMap() to core.settings.pending.toMap())
+        assertEquals(beforeFile, file.readText())
+        assertFalse(Settings(file).showTension)
+        val name = core.comm.importPersona("张力显示.txt", "你是张力显示.".byteInputStream())
+        core.comm.set(persona = name, splitSend = false)
+        val owner = Comm.pidOf(name)
+        val ms = System.currentTimeMillis()
+        core.comm.applyDoc(mapOf("interaction:$owner" to CommInteraction(tension = 95.126, decayAt = ms, ts = ms).json().put("clear", 0)))
+        assertEquals("", core.comm.tensionDisplay(false))
+        assertEquals("Tension: 95.13", core.comm.tensionDisplay(core.settings.showTension))
+        val other = core.comm.importPersona("另一个.txt", "你是另一个.".byteInputStream())
+        core.comm.set(persona = other)
+        assertEquals("Tension: 0", core.comm.tensionDisplay(true))
+        core.comm.set(persona = name)
+        assertEquals("Tension: 95.13", core.comm.tensionDisplay(true))
+        assertEquals(StageResult.NOCHANGE to "", core.stageSetting("COOLDOWN", code))
+        assertFalse(core.settings.showTension)
+        assertEquals("", core.comm.tensionDisplay(core.settings.showTension))
+        assertEquals(StageResult.INVALID, core.stageSetting("COOLDOWN", code - 60).first)
+        core.comm.flush()
+    }
+
     /** 每日联网额度填 325799 = 开 / 关开发者模式: 不是真的修改, 不排队. */
     @Test
     fun devToggle() {
@@ -572,7 +611,10 @@ class CoreTest {
         assertEquals(StageResult.NOCHANGE, core.stageSetting("DAILY_LIMIT", code).first)
         assertFalse(core.settings.devMode)
         assertEquals(7200.0, core.settings.num("DAILY_LIMIT"), 0.0)
-        assertEquals(StageResult.INVALID, core.stageSetting("COOLDOWN", code).first)   // 只认每日联网额度
+        assertEquals(StageResult.NOCHANGE, core.stageSetting("COOLDOWN", code).first)
+        assertTrue(core.settings.showTension)
+        core.stageSetting("COOLDOWN", code)
+        assertFalse(core.settings.showTension)
         // 子端跟着母端, 自己不能开关
         core.followsMother = { true }
         core.stageSetting("DAILY_LIMIT", code)

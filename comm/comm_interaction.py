@@ -323,6 +323,13 @@ class InteractionMixin:
         if ended != d:
             self._interaction_set(ended, pid)
 
+    def tension_display(self, enabled):
+        """显示当前对象的真实张力，保留两位小数，关闭时不显示。"""
+        if not enabled or not self.persona_name():
+            return ""
+        value = f"{self._interaction_prepare()['tension']:.2f}".rstrip("0").rstrip(".")
+        return tr("Tension: {value}", value=value)
+
     def interaction_note(self, status=None, pid=None):
         from .comm_persona import message_milestones
         d = self._interaction_prepare(pid)

@@ -12,6 +12,8 @@ import config
 import i18n
 from comm import Comm
 from pages.comm_page import CommPage
+from pages.settings_page import SettingsPage
+from settings_manager import SettingsManager
 from pages.widgets import Modal, ScrollArea
 
 
@@ -27,6 +29,20 @@ folder = tempstore.mkdtemp("comm_mode")
 c = Comm(os.path.join(folder, "data"), os.path.join(folder, "personas"))
 original_scale = config.UI_SCALE
 original_language = i18n.get_language()
+original_show_tension = config.COMM_SHOW_TENSION
+sm = SettingsManager(os.path.join(folder, "settings.json"))
+settings = SettingsPage(root, sm, data_dir=folder)
+settings.show_tab("net")
+# 真正通过设置页提交：口令不修改联网冷静期、不影响开发者模式，并恢复填写框。
+row = settings._num_rows["COOLDOWN"]
+before = (dict(sm.effective), dict(sm.pending), config.dev_mode_enabled())
+for expected in (True, False):
+    row["var"].set("325799")
+    assert settings._stage_num("COOLDOWN") == ("tension", "")
+    assert config.COMM_SHOW_TENSION is expected
+    assert row["var"].get() == sm.ui_number("COOLDOWN")
+    assert (dict(sm.effective), dict(sm.pending), config.dev_mode_enabled()) == before
+settings.destroy()
 try:
     for language in ("zh", "en"):
         i18n.set_language(language)
@@ -36,6 +52,22 @@ try:
             page.pack(fill="both", expand=True)
             c.cfg["msg_gone"] = 199
             c.cfg["mem_fixed"] = []
+            c._interaction_set({"scenario_mode": False})
+            # 仅开关开启时显示真实张力；不受情景模式、消息门槛和90档位封顶影响。
+            page._sync_status()
+            assert not page.lbl_tension.winfo_manager()
+            assert sm.stage("COOLDOWN", sm.from_ui_number("COOLDOWN", "325799"))[0] == "tension"
+            c._interaction_set({"tension": 95.126})
+            with patch.object(c, "other_status_display", return_value=("", "idle")):
+                page._sync_status()
+                root.update()
+            assert page.lbl_tension.winfo_ismapped() and page.lbl_tension.cget("text") == "Tension: 95.13"
+            c._interaction_set({"tension": 42.5})
+            page._sync_status()
+            assert page.lbl_tension.cget("text") == "Tension: 42.5"
+            assert sm.stage("COOLDOWN", sm.from_ui_number("COOLDOWN", "325799"))[0] == "tension"
+            page._sync_status()
+            assert not page.lbl_tension.winfo_manager() and page.lbl_tension.cget("text") == ""
             c._interaction_set({"scenario_mode": False})
             # 很长的对方状态不能挤掉模式入口。
             with patch.object(c, "other_status_display", return_value=("long status " * 80, "idle")):
@@ -83,6 +115,7 @@ try:
                 page.after_cancel(page._resize_job)
             page.destroy()
 finally:
+    config.COMM_SHOW_TENSION = original_show_tension
     config.UI_SCALE = original_scale
     i18n.set_language(original_language)
     c.flush()

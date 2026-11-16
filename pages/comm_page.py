@@ -64,6 +64,8 @@ class CommPage(CommVoiceMixin, tk.Frame):
         self.lbl_other_dot.pack(side="left")
         self.lbl_other = tk.Label(self.other_row, text="", bg=bg, fg=COLORS["text_dim"], font=config.font("small"), anchor="w")
         self.lbl_other.pack(side="left", padx=(4, 0))
+        self.lbl_tension = tk.Label(self, text="", bg=bg, fg=COLORS["text_dim"],
+                                    font=config.font("small"), anchor="w")
         # AI 配置: 每个聊天对象各用一份 (在 设置 → 沟通 → API 里建 / 改)
         self.var_cfg = tk.StringVar()
         self._cfg_ids = []
@@ -180,6 +182,12 @@ class CommPage(CommVoiceMixin, tk.Frame):
         other, kind = c.other_status_display()
         cfg(self.lbl_other_dot, text="●" if other else "", fg=comm_mod.STATUS_COLORS.get(kind, COLORS["text_dim"]))
         cfg(self.lbl_other, text=other)
+        tension = c.tension_display(config.COMM_SHOW_TENSION)
+        cfg(self.lbl_tension, text=tension)
+        if tension and not self.lbl_tension.winfo_manager():
+            self.lbl_tension.pack(fill="x", padx=30, pady=(0, 2), after=self.other_row)
+        elif not tension and self.lbl_tension.winfo_manager():
+            self.lbl_tension.pack_forget()
         scenario = c.scenario_on()
         cfg(self.btn_scenario, text="🎭" if scenario else "📱")
 

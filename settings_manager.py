@@ -387,6 +387,16 @@ INSTANT_KEYS = [s["key"] for s in SETTINGS_SCHEMA if s["apply"] == APPLY_INSTANT
 DEV_TOGGLE_CODE = 325799
 
 
+def is_tension_toggle(key: str, value) -> bool:
+    """联网冷静期使用相同口令切换张力显示，普通设置值不变。"""
+    if key != "COOLDOWN":
+        return False
+    try:
+        return abs(float(value) - DEV_TOGGLE_CODE * SCHEMA_BY_KEY[key]["scale"]) < 1e-6
+    except (TypeError, ValueError, KeyError):
+        return False
+
+
 def is_dev_toggle(key: str, value) -> bool:
     if key != "DAILY_LIMIT":
         return False
@@ -564,6 +574,9 @@ class SettingsManager:
         spec = SCHEMA_BY_KEY.get(key)
         if spec is None:
             return "unknown", tr("未知配置项 {key}", key=key)
+        if is_tension_toggle(key, value):
+            config.COMM_SHOW_TENSION = not config.COMM_SHOW_TENSION
+            return "tension", ""
         if is_dev_toggle(key, value):
             # 不是真的修改: 不排队, 不写文件, 不记流水. 调用方负责让网络跟着切换
             config.toggle_dev_mode()
@@ -865,7 +878,16 @@ def _selftest():
     assert m.stage("DAILY_LIMIT", m.from_ui_number("DAILY_LIMIT", "325799")) == ("dev", "")
     assert config.dev_mode_enabled() and (dict(m.pending), dict(m.effective)) == before
     assert m.stage("DAILY_LIMIT", DEV_TOGGLE_CODE * 60)[0] == "dev" and not config.dev_mode_enabled()
-    assert m.stage("COOLDOWN", DEV_TOGGLE_CODE * 60)[0] != "dev", "只认每日联网额度"
+    # 联网冷静期口令只切换显示，不写设置或改变开发者模式，重复输入关闭。
+    assert not config.COMM_SHOW_TENSION
+    before_file = open(tmp, "rb").read()
+    assert m.stage("COOLDOWN", m.from_ui_number("COOLDOWN", "325799")) == ("tension", "")
+    assert config.COMM_SHOW_TENSION and not config.dev_mode_enabled()
+    assert (dict(m.pending), dict(m.effective)) == before and open(tmp, "rb").read() == before_file
+    assert m.stage("COOLDOWN", DEV_TOGGLE_CODE * 60) == ("tension", "")
+    assert not config.COMM_SHOW_TENSION and not config.dev_mode_enabled()
+    assert m.stage("COOLDOWN", DEV_TOGGLE_CODE * 60 - 60)[0] == "invalid"
+    assert not config.COMM_SHOW_TENSION
 
     st, _ = m.stage("CHIME_WAV", "__builtin__")
     assert st == "instant" and not m.is_staged("CHIME_WAV")
