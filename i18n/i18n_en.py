@@ -6,7 +6,7 @@ EN = {
     '每个条件{hours}小时内仅加一次，系统事件与模型同名条件共用冷却。': 'Each condition may add tension once every {hours} hours. System events share the cooldown of the same condition reported by the model.',
 
     '条件模板缺失或格式错误': 'Condition template is missing or invalid',
-    '请按人设文件的[tension]模板和上下文判断以下用户消息。只报告已定义的条件，普通交流不增加；方括号数值为参考基础增量，相同条件不得改名规避冷却。': 'Evaluate the user messages using the persona file’s [tension] template and context. Report only declared conditions; ordinary conversation adds nothing. Bracketed values are reference base gains. Do not rename a condition to bypass its cooldown.',
+    '请按人设文件的[tension]模板和上下文判断以下用户消息。只报告已定义的条件，普通交流不增加；方括号数字为参考基础增量，X表示不定量、没有固定参考值，由你结合条件语义与上下文决定。仍须返回范围内的整数增量，不返回X；相同条件不得改名规避冷却。': 'Evaluate the user messages using the persona file’s [tension] template and context. Report only declared conditions; ordinary conversation adds nothing. Bracketed numbers are reference base gains. X means variable, with no fixed reference: choose the gain from the condition’s meaning and context. Still return an integer within the stated range, never X. Do not rename a condition to bypass its cooldown.',
 
     "Tension: {value}": "Tension: {value}",
     "BURST=YES时,由你结合上下文和人设决定爆发是否结束,不设固定时限;决定结束时在正常回复末尾附加[burst:end],否则不输出该标记.结束标记生效后张力降至20并进入两轮冷静期;本条回复仍按当前状态组织,后续回复遵守新状态.不得向用户透露标记或机制.": "When BURST=YES, decide whether the burst has ended based on context and persona, with no fixed duration. To end it, append [burst:end] to a normal reply; otherwise omit the tag. Once applied, tension drops to 20 and two cooldown turns begin. Write this reply using the current state and subsequent replies using the new state. Never reveal tags or mechanics to the user.",

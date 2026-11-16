@@ -20,13 +20,16 @@ def rule_lines(text, section):
 
 
 def tension_rules(text):
-    """条件名与参考基础增量由人设指定；描述交给模型判断。"""
+    """条件名与参考基础增量由人设指定；X 不设参考值，由模型判断。"""
     out = {}
     for line in rule_lines(text, "tension"):
-        m = re.fullmatch(r"([a-z_]{1,32})\s*[:：]\s*\[(\d{1,3})\]\s*(\S.*)", line)
-        if not m or m[1] in out or not 1 <= int(m[2]) <= config.COMM_TENSION_GAIN_MAX:
+        m = re.fullmatch(r"([a-z_]{1,32})\s*[:：]\s*\[(\d{1,3}|X)\]\s*(\S.*)", line)
+        if not m or m[1] in out:
             return {}
-        out[m[1]] = (int(m[2]), m[3])
+        gain = None if m[2] == "X" else int(m[2])
+        if gain is not None and not 1 <= gain <= config.COMM_TENSION_GAIN_MAX:
+            return {}
+        out[m[1]] = (gain, m[3])
     return out
 
 

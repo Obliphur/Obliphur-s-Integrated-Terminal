@@ -13,7 +13,7 @@ def _selftest():
     from comm.comm_rules import tension_rules, condition_rules
     from functools import partial
     builtin_rules = BUILTIN_PERSONAS[DEFAULT_ROUTINE]
-    test_tension = "\n[tension]\n" + "\n".join(f"{k}:[{v[0]}] {v[1]}" for k, v in tension_rules(builtin_rules).items()) + "\n[/tension]\n[tension:events]\njoint_hp_loss:[violation,15]\n[/tension:events]\n"
+    test_tension = "\n[tension]\n" + "\n".join(f"{k}:[{v[0] if v[0] is not None else 'X'}] {v[1]}" for k, v in tension_rules(builtin_rules).items()) + "\n[/tension]\n[tension:events]\njoint_hp_loss:[violation,15]\n[/tension:events]\n"
     test_conditions = "\n" + builtin_rules[builtin_rules.index("[condition]"):builtin_rules.index("[/condition]") + len("[/condition]")] + "\n" + builtin_rules[builtin_rules.index("[condition:strict]"):builtin_rules.index("[/condition:strict]") + len("[/condition:strict]")] + "\n"
     globals()["CLAUDIA_LEGACIES"] = (TEST_OLD_CLAUDIA, TEST_SCHEDULE_PERSONA)       # 现在内置的升级链是空的: 自测里放两份假的旧版
     globals()["ROUTINE_LEGACIES"] = (TEST_OLD_ROUTINE,)
@@ -3869,4 +3869,27 @@ def _selftest():
         open(rules_file, "w", encoding="utf-8").write(bad)
         assert not rc.condition_state()[0][4]
     rc.flush()
+    # X 不设固定参考值；数值由模型决定，照常结算、冷却和去掉标记。
+    variable_text = "[tension]\nother:[X] 与当前人设相符的真实情绪\ncomfort:[30] 表达疲惫\n[/tension]\n"
+    variable_rules = tension_rules(variable_text)
+    assert set(variable_rules) == {"other", "comfort"}
+    assert variable_rules["other"][0] is None and variable_rules["comfort"][0] == 30
+    for value in ("x", "?", "0", "41", "-1", "NaN", ""):
+        assert not tension_rules(variable_text.replace("[X]", f"[{value}]"))
+    open(os.path.join(folder, "变量.txt"), "w", encoding="utf-8").write(variable_text)
+    variable = Comm(os.path.join(td, "variable_tension"), folder, now=lambda: clock[0], chat_fn=fake)
+    variable.ai.set_profile("deepseek", api_key="k")
+    variable.set_cfg(persona="变量.txt", split_send=False)
+    script.append("听到了.[tension:1:other:12]")
+    variable.send("难以名状的心情"); wait(variable)
+    prompt = calls[-1][1][-1]["content"]
+    assert "other:[X]" in prompt and "X表示不定量" in prompt and "不返回X" in prompt
+    assert variable.cfg["interaction"]["tension"] == 9
+    assert "other" in variable.cfg["interaction"]["gain_cooldowns"]
+    assert variable.visible()[-1]["text"] == "听到了."
+    script.append("继续.[tension:1:other:30]")
+    variable.send("又说起那种感受"); wait(variable)
+    assert variable.cfg["interaction"]["tension"] == 9
+    assert tension_model_gain("[tension:1:other:X]", 1, True, variable_rules) == 0
+    variable.flush()
     return "comm selftest OK"

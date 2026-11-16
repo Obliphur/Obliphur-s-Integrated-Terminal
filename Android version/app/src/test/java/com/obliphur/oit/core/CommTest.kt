@@ -131,6 +131,35 @@ class CommTest {
         assertNotNull(Routine.parse(templates))
     }
 
+    /** X 不设固定参考值，模型仍返回数值，沿用普通增量结算。 */
+    @Test
+    fun variableTension() {
+        val td = Files.createTempDirectory("oit").toFile()
+        val c = comm(File(td, "d").apply { mkdirs() }, File(td, "p"))
+        val text = "[tension]\nother:[X] 与当前人设相符的真实情绪\ncomfort:[30] 表达疲惫\n[/tension]\n"
+        val rules = CommRules.tension(text)
+        assertEquals(setOf("other", "comfort"), rules.keys)
+        assertNull(rules.getValue("other").first)
+        assertEquals(30, rules.getValue("comfort").first)
+        for (value in listOf("x", "?", "0", "41", "-1", "NaN", ""))
+            assertTrue(CommRules.tension(text.replace("[X]", "[$value]")).isEmpty())
+        File(c.personas, "变量.txt").writeText(text)
+        c.set(persona = "变量.txt", splitSend = false)
+        script.add("听到了.[tension:1:other:12]")
+        c.send("难以名状的心情"); wait(c)
+        val prompt = calls.last().second.last().second
+        assertTrue("other:[X]" in prompt && "X表示不定量" in prompt && "不返回X" in prompt)
+        val state = c.syncDoc()["interaction:${c.pid}"] as JSONObject
+        assertEquals(9.0, state.optDouble("tension"), 1e-8)
+        assertTrue(CommInteraction.parse(state).gainCooldowns.containsKey("other"))
+        assertEquals("听到了.", c.visible().last().text)
+        script.add("继续.[tension:1:other:30]")
+        c.send("又说起那种感受"); wait(c)
+        assertEquals(9.0, (c.syncDoc()["interaction:${c.pid}"] as JSONObject).optDouble("tension"), 1e-8)
+        assertEquals(0, CommInteraction.modelGain("[tension:1:other:X]", 1, true, rules.keys))
+        c.flush(); c.voice.close()
+    }
+
     @Test
     fun personaRuleTemplates() {
         val td = Files.createTempDirectory("oit").toFile()

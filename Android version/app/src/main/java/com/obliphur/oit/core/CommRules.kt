@@ -11,14 +11,14 @@ object CommRules {
             .filter { it.isNotEmpty() && !it.startsWith("#") }
     }
 
-    fun tension(text: String): Map<String, Pair<Int, String>> {
-        val out = linkedMapOf<String, Pair<Int, String>>()
-        val pattern = Regex("""([a-z_]{1,32})\s*[:：]\s*\[(\d{1,3})\]\s*(\S.*)""")
+    fun tension(text: String): Map<String, Pair<Int?, String>> {
+        val out = linkedMapOf<String, Pair<Int?, String>>()
+        val pattern = Regex("""([a-z_]{1,32})\s*[:：]\s*\[(\d{1,3}|X)\]\s*(\S.*)""")
         for (line in lines(text, "tension")) {
             val m = pattern.matchEntire(line) ?: return emptyMap()
             val id = m.groupValues[1]
-            val gain = m.groupValues[2].toInt()
-            if (id in out || gain !in 1..Cfg.COMM_TENSION_GAIN_MAX) return emptyMap()
+            val gain = if (m.groupValues[2] == "X") null else m.groupValues[2].toInt()
+            if (id in out || (gain != null && gain !in 1..Cfg.COMM_TENSION_GAIN_MAX)) return emptyMap()
             out[id] = gain to m.groupValues[3]
         }
         return out

@@ -269,9 +269,10 @@ class InteractionMixin:
         from comm.comm_persona import read_persona_full
         rules = tension_rules(read_persona_full(self.personas, self.persona_name()))
         self._interaction_rules = rules
-        return (tr("请按人设文件的[tension]模板和上下文判断以下用户消息。只报告已定义的条件，普通交流不增加；方括号数值为参考基础增量，相同条件不得改名规避冷却。")
+        return (tr("请按人设文件的[tension]模板和上下文判断以下用户消息。只报告已定义的条件，普通交流不增加；方括号数字为参考基础增量，X表示不定量、没有固定参考值，由你结合条件语义与上下文决定。仍须返回范围内的整数增量，不返回X；相同条件不得改名规避冷却。")
                 + tr("基础增量范围0至{maximum}，在正常回复末尾附加[tension:序号:条件:增量]，0可省略。有效条件：", maximum=config.COMM_TENSION_GAIN_MAX)
-                + json.dumps(rules, ensure_ascii=False)
+                + "\n".join(f"{key}:[{gain if gain is not None else 'X'}] {description}"
+                            for key, (gain, description) in rules.items())
                 + tr("系统按发送时段将非特殊空闲的增量乘0.75，并处理爆发后24小时的增长减半，请返回未经倍率调整的基础增量。") +
                 tr("每个条件{hours}小时内仅加一次，系统事件与模型同名条件共用冷却。", hours=config.COMM_TENSION_GAIN_COOLDOWN_SECONDS // 3600)
                 + tr("同一条消息可以同时触发多个条件；各条件分别应用倍率并取整后累加，各自进入冷却；重复的同一条件只取最大增量。请报告所有满足的条件，不得给其他历史消息加值，不要向用户解释标记。")
