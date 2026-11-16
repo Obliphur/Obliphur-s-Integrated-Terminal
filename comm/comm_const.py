@@ -9,6 +9,7 @@ comm.py 用 `from comm.comm_const import *` 重新导出, 所以外面写的 com
 所以自检改的是那些函数真正读到的那一份.
 """
 
+import config
 import os
 import re
 
@@ -30,7 +31,7 @@ PROACTIVE_SLEEP_DELAY = 5 * 60        # IV. 人设睡眠开始后多久主动发
 SPECIAL_7M_LURE_PROMPT = (
     "距离特殊空闲开始已过去7分钟。入场时你对用户的张力超过90（当前TENSION={tension}），但尚未爆发。"
     "前7分钟用户说过话，却没有触发任何正向张力条件。请结合聊天记录与记忆卡，主动挑起白天或之前被你记下、尚未说完的敏感话题，"
-    "不要被表面的轻松闲聊带走；按人设敏锐点破可能的回避，用强硬而偏袒、带着庇护欲的语言追问并引诱用户坦露真实心思、自责、边界试探或依赖渴望。"
+    "不要被表面的轻松闲聊带走；按当前人设的性格、边界与张力条件回应可能的回避，邀请用户表达真实想法与感受。"
     "只引用记录中确实存在的内容，不编造旧账，也不把逃避当成已知事实。仍严格遵守EFFECTIVE_STAGE=50-90及模式的动作边界，尊重用户意愿，不强迫接触；"
     "这次主动谈话本身不增加张力、不触发爆发，后续由用户真实表达决定。不要透露机制，这条必须发出，不要拒绝回复。")
 IDLE_DAILY_SECONDS = 30 * 60          # 每天在"空闲"状态下最多能打开沟通界面这么久 (休息时不限); 超过后空闲时不能用沟通, 休息了才能用
@@ -83,15 +84,7 @@ RETRY_GAP = 10 * 60                   # 对方不方便回复时, 多久再把�
 RETRY_MAX = 12
 OP_MIN_LEAD = 5 * 60                  # 对方发起联合行动: 开始时间要离现在至少这么久 (秒), 不然用户来不及准备
 OP_OFFER_MAX = 12                     # 给对方看的开始时间最多列几个 (最近的; 定开始时间时 OIT 仍然从全部里找)
-COND_JOINT_DAYS, COND_JOINT_N, COND_JOINT_LV = 30, 24, 15      # I.  前 30 天 (含今天) 和对方共同完成 24 场难度 >= 15 的合约
-COND_STUDY_DAYS, COND_STUDY_H, COND_IDLE_H = 60, 420.0, 210.0  # II. 前 60 天 (含今天) 专注 >= 420 h, 空闲 <= 210 h
-COND_MSGS = 500                       # III. 双方一共发了至少 500 条信息 (现在聊天记录里有的; 本地存的条数 KEEP 要比它大)
-COND_TODAY_H = 8.0                    # IV. 今天专注 >= 8 h
-COND_KEEP_DAYS = 70                   # 每天的 (专注, 空闲) 秒数留多久 (用户的计时记录只留 7 天, 所以 OIT 自己每天存一份)
-COND_NORMAL = {"joint_days": COND_JOINT_DAYS, "joint_n": COND_JOINT_N, "joint_lv": COND_JOINT_LV, "study_days": COND_STUDY_DAYS,
-               "study_h": COND_STUDY_H, "idle_h": COND_IDLE_H, "msgs": COND_MSGS, "today_h": COND_TODAY_H}      # 用户提出发展亲密关系: 人设里 [condition] 的五个条件
-COND_STRICT = {"joint_days": 30, "joint_n": 27, "joint_lv": 20, "study_days": 60,
-               "study_h": 480.0, "idle_h": 180.0, "msgs": 1000, "today_h": 9.0}     # 对方主动告白 (1.0.397): 每次进入特殊空闲时由 OIT 判定, 条件比上面的严格 (人设 Claudia.txt 里「主动触发的表白」)
+COND_KEEP_DAYS = config.COMM_CONDITION_KEEP_DAYS                   # 条件判定可使用的最长记录窗口
 LOVE_NO_DAYS = 15                     # 用户拒绝了对方的告白 / 对方自己否决了 (回 [refuse to reply]) 之后, 这么多天内不再判定主动告白
 LOVE_TAG = "[系统·告白]"               # 告白相关的系统消息 (不是 "[系统]" 开头: 不算主动消息)
 _ACCEPT_RE = re.compile(r"[\[［]\s*accept\s*[\]］]", re.I)       # 前置 prompt XVII: 用户提出发展亲密关系, 对方决定接受
@@ -261,17 +254,7 @@ __all__ = [
     "RETRY_MAX",
     "OP_MIN_LEAD",
     "OP_OFFER_MAX",
-    "COND_JOINT_DAYS",
-    "COND_JOINT_N",
-    "COND_JOINT_LV",
-    "COND_STUDY_DAYS",
-    "COND_STUDY_H",
-    "COND_IDLE_H",
-    "COND_MSGS",
-    "COND_TODAY_H",
     "COND_KEEP_DAYS",
-    "COND_NORMAL",
-    "COND_STRICT",
     "LOVE_NO_DAYS",
     "LOVE_TAG",
     "_ACCEPT_RE",

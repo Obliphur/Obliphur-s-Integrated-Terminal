@@ -36,6 +36,13 @@ class CommTest {
     /** 每次调用有没有带联网搜索 (限时网络, Comm.webLocal). */
     private val webLog = mutableListOf<Boolean>()
 
+    private fun seedTestTension(file: File) {
+        val builtin = BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT)
+        if ("[tension]" !in file.readText()) file.appendText("\n[tension]\n" +
+            CommRules.lines(builtin, "tension").joinToString("\n") +
+            "\n[/tension]\n[tension:events]\njoint_hp_loss:[violation,15]\n[/tension:events]\n")
+    }
+
     private fun comm(dir: File, personas: File): Comm {
         // 本机地址不要求 Key: 单元测试里没有 Android Keystore
         AiConfig(File(dir, "ai_config.json")).also {
@@ -83,7 +90,37 @@ class CommTest {
         throw AssertionError("超时")
     }
 
-    /** 名字是 Claudia 的人设: 显示前全角符号换成半角 (1.0.408, MECHANICS 24.3.10). */
+    /** 自定义模板、文件读取与无效配置回退。 */
+    @Test
+    fun personaRuleTemplates() {
+        val td = Files.createTempDirectory("oit").toFile()
+        val c = comm(File(td, "d").apply { mkdirs() }, File(td, "p"))
+        val file = File(c.personas, "规则.txt")
+        val template = "[condition]\nmessages:2\n[/condition]\n" +
+            "[tension]\ndelight:[21] 分享让你欣喜的真实进展\n[/tension]\n" +
+            "[tension:events]\njoint_hp_loss:[delight,7]\n[/tension:events]\n"
+        file.writeText(template)
+        c.set(persona = "规则.txt", splitSend = false)
+        assertEquals(1, c.conditionState().size)
+        assertFalse(c.conditionState().single().ok)
+        assertFalse(c.conditionState(true).single().ok)
+        assertEquals("delight" to 7, CommRules.event(template, "joint_hp_loss"))
+        script.add("为你高兴.[tension:1:delight:21][tension:1:rumination:40]")
+        c.send("今天有了进展"); wait(c)
+        val state = c.syncDoc()["interaction:${c.pid}"] as JSONObject
+        assertEquals(15.0, state.optDouble("tension"), 1e-8)
+        assertTrue(c.conditionState().single().ok)
+        assertEquals(setOf("delight"), CommInteraction.parse(state).gainCooldowns.keys)
+        for (bad in listOf("", "[condition]\n[/condition]", "[condition]\nstudy:[71,1,2]\n[/condition]",
+                "[condition]\nmessages:-1\n[/condition]", "[condition]\nmessages:1\nmessages:2\n[/condition]",
+                "[condition]\nunknown:1\n[/condition]", "[condition]\ntoday:NaN\n[/condition]")) {
+            assertNull(CommRules.conditions(bad))
+            file.writeText(bad)
+            assertFalse(c.conditionState().single().ok)
+        }
+        c.flush(); c.voice.close()
+    }
+
     @Test
     fun claudiaHalfwidth() {
         assertEquals("他说,好.", CommText.toHalfWidth("他说，好。"))
@@ -364,6 +401,7 @@ class CommTest {
         // 日程状态自动附加，首轮请求即包含性质与结束时刻
         val p2 = comm(File(td, "d2").also { it.mkdirs() }, File(td, "p2"))
         p2.importPersona("时段.txt", "你是时段.\n08:00-12:00:上课\n12:00-13:00:空闲(午饭)\n".byteInputStream())
+        seedTestTension(File(p2.personas, "时段.txt"))
         p2.set(persona = "时段.txt")
         clock = LocalDateTime.of(2027, 5, 4, 9, 30)
         val n2 = calls.size
@@ -381,6 +419,7 @@ class CommTest {
         val td = Files.createTempDirectory("oit").toFile()
         val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
         c.importPersona("时段.txt", "你是时段.\n13:00-14:00:特殊空闲\n14:00-18:00:空闲\n".byteInputStream())
+        seedTestTension(File(c.personas, "时段.txt"))
         c.set(persona = "时段.txt", splitSend = false)
         clock = LocalDateTime.of(2027, 5, 4, 13, 30)
         val owner = Comm.pidOf("时段.txt")
@@ -389,13 +428,13 @@ class CommTest {
         c.send("所有人都把我当作透明的影子"); wait(c)
         assertEquals(1, calls.size)
         assertEquals(45, state().optInt("tension"))
-        assertTrue("以下用户消息的语义判断" in calls.last().second.last().second)
+        assertTrue("[tension]模板" in calls.last().second.last().second)
         assertEquals("我听到了.", c.visible().last().text)
         assertTrue(c.messages.none { "[tension:" in it.text || "[tension:" in it.api })
         script.add("别这么说.[tension:1:rumination:40][tension:1:boundary:20]")
         c.send("我一文不值"); wait(c)
         assertEquals(45, state().optInt("tension"))
-        assertTrue("以下用户消息的语义判断" in calls.last().second.last().second)
+        assertTrue("[tension]模板" in calls.last().second.last().second)
         script.add("这些词不一定表达当前情绪.[tension:1:0]")
         c.send("翻译这几个词:我一文不值,抱抱,熬夜"); wait(c)
         assertEquals(45, state().optInt("tension"))
@@ -405,6 +444,7 @@ class CommTest {
         assertEquals(1, state().getJSONObject("pending").length())
         val snapshot = c.syncDoc()
         val peer = comm(File(td, "peer").also { it.mkdirs() }, File(td, "p"))
+        seedTestTension(File(peer.personas, "时段.txt"))
         peer.set(persona = "时段.txt")
         peer.applyDoc(snapshot)
         assertEquals(1, (peer.syncDoc()["interaction:$owner"] as JSONObject).getJSONObject("pending").length())
@@ -440,24 +480,25 @@ class CommTest {
     /** 多条件叠加，最高值优先；各条件冷却与一小时连锁窗口跨日保存。 */
     @Test
     fun tensionConditionCooldown() {
-        assertEquals(mapOf("rumination" to 40, "boundary" to 30, "comfort" to 30, "violation" to 25), Cfg.COMM_TENSION_GAINS)
+        assertEquals(40, Cfg.COMM_TENSION_GAIN_MAX)
         assertEquals(30, CommInteraction.modelGain("[tension:1:comfort:30]", 1, true))
         assertEquals(25, CommInteraction.modelGain("[tension:1:violation:25]", 1, true))
         assertEquals(18, CommInteraction.modelGain("[tension:1:violation:25]", 1, false))
         assertEquals(9, CommInteraction(gainUntil = 2).gain(CommInteraction.modelGain("[tension:1:violation:25]", 1, false), 1))
         val now = LocalDateTime.of(2027, 5, 4, 23, 0).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
         var d = CommInteraction()
+        val conditions = CommRules.tension(BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT)).keys
         val choices = "[tension:1:boundary:30][tension:1:rumination:20][tension:1:rumination:40][tension:1:unknown:999999][tension:2:comfort:40]"
         val available = listOf("rumination" to 40, "boundary" to 30)
-        assertEquals(listOf("boundary" to 30), CommInteraction.modelEvents(choices, 1, true, mapOf("rumination" to now + 1), now))
+        assertEquals(listOf("boundary" to 30), CommInteraction.modelEvents(choices, 1, true, mapOf("rumination" to now + 1), now, conditions))
         fun choose(at: Long): List<Pair<String, Int>> {
-            val events = CommInteraction.modelEvents(choices, 1, true, d.gainCooldowns, at)
+            val events = CommInteraction.modelEvents(choices, 1, true, d.gainCooldowns, at, conditions)
             for ((condition, amount) in events) d = d.add(condition, amount, at)
             return events
         }
         assertEquals(available, choose(now)); assertEquals(62.0, d.tension, 1e-8)
         assertTrue(choose(now).isEmpty()); assertEquals(62.0, d.tension, 1e-8)
-        d = d.add("violation", Cfg.COMM_TENSION_HP_LOSS_GAIN, now)
+        d = d.add("violation", 15, now)
         assertEquals(73.0, d.tension, 1e-8)
         assertTrue(CommInteraction.modelEvents("[tension:1:violation:40]", 1, true, d.gainCooldowns, now).isEmpty())
         val saved = d.gainCooldowns
@@ -493,6 +534,7 @@ class CommTest {
         val td = Files.createTempDirectory("oit").toFile()
         val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
         c.importPersona("时段.txt", "你是时段.\n13:00-14:00:特殊空闲\n".byteInputStream())
+        seedTestTension(File(c.personas, "时段.txt"))
         c.set(persona = "时段.txt")
         clock = LocalDateTime.of(2027, 5, 4, 13, 30)
         assertFalse(c.setScenario(true))
@@ -623,6 +665,7 @@ class CommTest {
             c.importPersona("睡后.txt", ("你是睡后.\n23:40-23:59:特殊空闲\n23:59-06:30:睡眠\n" +
                 "长时间休息发起谈话概率:0%\n特殊空闲发起谈话概率:0%\n睡眠发起谈话概率:0%\n").byteInputStream())
             if (useRt) c.importPersona("睡后_routine.txt", "初始起点:23:40\n19min:特殊空闲\n".byteInputStream())
+            seedTestTension(File(c.personas, "睡后.txt"))
             c.set(persona = "睡后.txt", splitSend = false)
             c.setMuted(true)
             val owner = Comm.pidOf("睡后.txt")
@@ -652,6 +695,7 @@ class CommTest {
             assertTrue("PERIOD=特殊空闲" in calls.last().second.last().second)
             assertEquals(0L, state().burstSleepAfter)
             val peer = comm(File(td, "peer").also { it.mkdirs() }, personas)
+            seedTestTension(File(peer.personas, "睡后.txt"))
             peer.set(persona = "睡后.txt", splitSend = false)
             peer.applyDoc(c.syncDoc()); peer.tick(); c.tick()
             assertEquals(before + 1, calls.size)
@@ -734,6 +778,7 @@ class CommTest {
         val td = Files.createTempDirectory("oit").toFile()
         val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
         c.importPersona("特殊.txt", "你是特殊.\n13:00-14:00:特殊空闲\n".byteInputStream())
+        seedTestTension(File(c.personas, "特殊.txt"))
         c.set(persona = "特殊.txt", splitSend = false)
         c.setMuted(true)
         clock = LocalDateTime.of(2027, 5, 4, 13, 30)
@@ -778,6 +823,7 @@ class CommTest {
             c.importPersona("引诱.txt", ("你是引诱.\n23:50-00:40:特殊空闲\n" +
                 "长时间休息发起谈话概率:0%\n特殊空闲发起谈话概率:0%\n").byteInputStream())
             if (useRt) c.importPersona("引诱_routine.txt", "初始起点:23:50\n50min:特殊空闲\n".byteInputStream())
+            seedTestTension(File(c.personas, "引诱.txt"))
             c.set(persona = "引诱.txt", splitSend = false)
             val owner = Comm.pidOf("引诱.txt")
             fun state() = CommInteraction.parse(c.syncDoc()["interaction:$owner"] as JSONObject)
@@ -811,6 +857,7 @@ class CommTest {
             assertEquals(state(), CommInteraction.parse(state().json()))
             c.flush(); c = comm(dir, personas); c.tick()
             val peer = comm(File(td, "peer").also { it.mkdirs() }, personas)
+            seedTestTension(File(peer.personas, "引诱.txt"))
             peer.set(persona = "引诱.txt", splitSend = false); peer.applyDoc(doc); peer.tick()
             assertEquals(before + 2, calls.size)
             c.clear(); c.applyDoc(doc)
@@ -827,6 +874,7 @@ class CommTest {
         val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
         c.importPersona("引诱.txt", ("你是引诱.\n13:00-14:00:特殊空闲\n" +
             "长时间休息发起谈话概率:0%\n特殊空闲发起谈话概率:0%\n").byteInputStream())
+        seedTestTension(File(c.personas, "引诱.txt"))
         c.set(persona = "引诱.txt", splitSend = false)
         c.setMuted(true)
         val owner = Comm.pidOf("引诱.txt")
@@ -878,6 +926,7 @@ class CommTest {
         val c = comm(dir, personas)
         c.importPersona("特殊.txt", ("你是特殊.\n13:00-14:00:特殊空闲\n" +
             "长时间休息发起谈话概率:0%\n空闲发起谈话概率:0%\n特殊空闲发起谈话概率:0%\n").byteInputStream())
+        seedTestTension(File(c.personas, "特殊.txt"))
         c.set(persona = "特殊.txt", splitSend = false)
         clock = LocalDateTime.of(2027, 5, 4, 13, 40)
         val owner = Comm.pidOf("特殊.txt")
@@ -911,6 +960,7 @@ class CommTest {
         val again = comm(dir, personas)
         again.tick(); assertEquals(1, calls.size)
         val peer = comm(File(td, "peer").also { it.mkdirs() }, personas)
+        seedTestTension(File(peer.personas, "特殊.txt"))
         peer.set(persona = "特殊.txt", splitSend = false); peer.applyDoc(doc)
         peer.tick(); assertEquals(1, calls.size)
         clock = clock.withHour(14).withMinute(0)
@@ -963,6 +1013,7 @@ class CommTest {
         c.tick()
         for (i in 0 until 300) { Thread.sleep(10); c.tick(); if (c.bgIdle()) break }
         assertEquals(20.0, state().tension, 1e-8); assertEquals(2, state().shameTurns)
+        seedTestTension(File(c.personas, "特殊.txt"))
         c.set(persona = "特殊.txt")
         assertEquals("我平静下来了.", c.messages.last().text)
         assertFalse("burst" in c.messages.last().api.lowercase())
@@ -2178,6 +2229,7 @@ class CommTest {
         }
         fun notes(c: Comm) = c.messages.filter { it.role == "sys" && it.text.startsWith(Comm.JOINT_TAG) }.map { it.text }
         val ch = running("联合六", "c7")
+        seedTestTension(File(ch.personas, ch.personaName()))
         val chIdle = mk("联合七")
         assertFalse(chIdle.jointHpLost("x") || chIdle.jointBreakStarted(60.0) || chIdle.jointBreakEnded())      // 没有联合行动: 都不管
         var n0 = calls.size

@@ -96,6 +96,7 @@ python release.py               # 发布（PyInstaller）
 | `comm/comm_util.py` | 无状态小工具：消息包装（`oit_text`）、历史截取（`api_messages`）、记忆卡整理、拒绝语判断、缓存布局 |
 | `comm/comm_persona.py` | 人设文件 / 伴侣文件 / 日程文件的读写、平移与告白设置、系统 prompt 拼装 |
 | `comm/comm_prompt.py` | 前置 prompt 文本（日程 / 休息函数 / 回复规则）与各种 `[标记]` 常量 |
+| `comm/comm_rules.py` | 人设文件的张力条件、事件绑定与关系条件模板解析（双端同格式） |
 | `comm/comm_reply.py` | 回复解析：去掉标记、`[wait]` / `[cut]` / `[network]` 的分钟数、半角化 |
 | `comm/comm_schedule.py` | 人设日程解析：段类型 / 段内容、循环段、主动发消息概率 |
 | `comm/comm_builtin.py` | 内置人设、默认背景 / 日程 / 助理文本、旧版升级链 |

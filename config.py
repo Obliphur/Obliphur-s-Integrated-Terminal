@@ -220,7 +220,7 @@ OUTING_MAX_HOURS = 24 * 7
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.542"                  # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.543"                  # 和 GitHub 上发布的版本号比较 (见 updater.py)
 AI_VOICE_GAP = 1.0                       # 两条语音之间的默认间隔（秒）
 COMM_SHOW_TENSION = False                # 联网冷静期口令切换，仅本次运行显示张力，不保存或同步
 COMM_SCENARIO_UNLOCK = 200               # 情景模拟解锁的有效消息数
@@ -228,11 +228,11 @@ COMM_TENSION_MAX = 100
 COMM_TENSION_LOW = 50
 COMM_TENSION_CAP = 90
 COMM_TENSION_DAILY_RATE = 0.75
-COMM_TENSION_GAINS = {"rumination": 40, "boundary": 30, "comfort": 30, "violation": 25}
+COMM_CONDITION_KEEP_DAYS = 70             # 人设条件可查询的最长天数
+COMM_TENSION_GAIN_MAX = 40  # 人设可配置的单条件基础增量上限
 COMM_TENSION_GAIN_COOLDOWN_SECONDS = 3 * 60 * 60
 COMM_TENSION_CHAIN_SECONDS = 60 * 60  # 条件成功加值后刷新一小时的其他条件倍率窗口
 COMM_TENSION_CHAIN_RATE = 0.75
-COMM_TENSION_HP_LOSS_GAIN = 15  # 合约扣血单独设定基础增量
 COMM_TENSION_DAY_DECAY = 25
 COMM_TENSION_DECAY_SECONDS = 15 * 60
 COMM_TENSION_HIGH_DAY_DECAY = COMM_TENSION_DAY_DECAY * 0.3  # 未爆发的90+按低档衰减速度的0.3倍

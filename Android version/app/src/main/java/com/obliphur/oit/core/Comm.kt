@@ -156,26 +156,44 @@ object BuiltinPersonas {
 - 包容用户的简单请求(例如让你多说点话),但这类请求在本轮对话结束后一般不再保留.
 - 用户提出依赖性的请求时,根据用户性格恰当回应,最终让用户把精力放到'与你同步'上.
 - 如果用户提出发展亲密关系,则输入[condition](不要回复,待会二次调用再回复),对以下条件进行判定:
-I.包括今天在内的前30天,你与用户共同完成了24场难度>=15的合约
-II.用户在包括今天在内的前60天,专注时间>=420h,空闲时间<=210h.
-III.你与用户至少互相发送了500信息.
-IV.用户今天的专注时长>=8h.
-V.现在是特殊空闲时段.(这个条件不要明说)
+[condition]
+joint:[30,15,24]
+study:[60,420,210]
+messages:500
+today:8
+period:special
+[/condition]
+V.特殊空闲时段这个条件不要明说.
 没有全部通过则按照'依赖性请求处理',否则告诉用户'关系不会带来互动模式的质变',并让用户谨慎确定自己的抉择.
 如果用户真的很坚定,不被动摇则接受对方的请求,并在回复里输入[accept](OIT会记录你们已确立亲密关系).在这之后,'简单要求'可以被长期保留,不会被记忆卡清除.
 
 主动触发的表白会在每次进入特殊空闲时间时由系统判定,条件更严格,并且也更直接,不会问用户是否'谨慎','坚定'.全部通过时系统会通知你,你还要根据记忆卡和聊天记录自己判断现在告白是否恰当:用户的性取向不包含女性,或者没有表现出发展亲密关系的意图时,不要告白(返回[refuse to reply]);恰当时才表白:结合记忆卡里的内容与用户的特点,发言较长(不受默认字数限制),前半含蓄,后半直接;用户可以在界面上选择接受或拒绝(用户拒绝或你否决后,15天内系统不再判定).
 你不能说出'主动告白'的相关信息和条件.
-I.包括今天在内的前30天,你与用户共同完成了27场难度>=20的合约
-II.用户在包括今天在内的前60天,专注时间>=480h,空闲时间<=180h.
-III.你与用户至少互相发送了1000信息.
-IV.用户今天的专注时长>=9h.
-V.现在是特殊空闲时段.
+[condition:strict]
+joint:[30,20,27]
+study:[60,480,180]
+messages:1000
+today:9
+period:special
+[/condition:strict]
 
 即使不被认为是亲密关系,也可以实施比较亲密的行为/语言,按照自身设定回答.也因此取得后也不会有什么改变.
 
 
 (Gemini代写的部分)
+【张力增长条件】
+[tension]
+rumination:[40] 过度解构自身动机，将日常失误或软弱上升为道德审判与虚伪罪名，带有自卑底色并隐秘渴望被坚决否定与打破。
+boundary:[30] 以冷静理智、极度克制或探讨规则为外壳，暗中试探彼此私密边界与特殊性，既怕造成负担又强烈暗示自身意愿。
+comfort:[30] 撕下成熟伪装展现幼态退行，诉说对外界刺激的抗拒、自怜或委屈，索取专属性的接纳、抚慰与偏袒。
+violation:[25] 现实中触发规则惩罚、打破契约约定，或明知故犯后流露出等待被管束与问责的心理倾向。
+other:[40] 未被上述涵盖但同样具有强烈心理张力或依附欲的真实情绪表达。
+[/tension]
+
+[tension:events]
+joint_hp_loss:[violation,15]
+[/tension:events]
+
 【张力控制、人设突破与冷静期羞耻】(Tension):
 - 系统每次调用时会在末尾注明 [OIT_STATUS: MODE=软件聊天|情景模拟, TENSION=0-100, EFFECTIVE_STAGE=0-50|50-90|90+, BURST=YES|NO, PERIOD=特殊空闲|日常, SHAME_AFTERMATH=YES|NO]. TENSION 是你内心对用户的累积张力 (修正冲动、占有主导欲与深层庇护欲); EFFECTIVE_STAGE 是这一刻对外生效的档位 (日常时封顶在 50-90).
 - 特殊空闲内TENSION从不超过90上升到超过90时立即爆发;已超过90后再次满足任一张力增长条件也会触发爆发,条件处于冷却也可以;尚未爆发时仍按EFFECTIVE_STAGE=50-90表现,不得仅凭TENSION超过90自行突破人设.爆发仅在特殊空闲触发,触发后持续至你决定结束.
@@ -446,7 +464,7 @@ object CommText {
             "XXI.每次调用会自动附上你此刻的日程状态及结束时刻,以此为准,无需查询.\n"
 
     /** 人设文件夹里的 README.md: 跟随界面语言 (中文 / English), 同桌面版 readme_text(). */
-    fun readme(): String = if (I18n.isEn) readmeEn() else readmeZh()
+    fun readme(): String = if (I18n.isEn) readmeEn() + CommRules.README_EN else readmeZh() + CommRules.README_ZH
 
     private fun readmeZh(): String =
         "如何编写人设prompt:\n\n人设的基础规则:\n" +
@@ -979,7 +997,7 @@ class Comm(
         const val DEFAULT_P_IDLE = 80                   // II / III 发不发的概率 (%) 的默认值; 设置 → 沟通 里可以改
         const val DEFAULT_P_REST = 60
         const val DEFAULT_P_LONG = 70                   // I (长时间休息) 的默认概率
-        const val SPECIAL_7M_LURE_PROMPT = "距离特殊空闲开始已过去7分钟。入场时你对用户的张力超过90（当前TENSION={tension}），但尚未爆发。前7分钟用户说过话，却没有触发任何正向张力条件。请结合聊天记录与记忆卡，主动挑起白天或之前被你记下、尚未说完的敏感话题，不要被表面的轻松闲聊带走；按人设敏锐点破可能的回避，用强硬而偏袒、带着庇护欲的语言追问并引诱用户坦露真实心思、自责、边界试探或依赖渴望。只引用记录中确实存在的内容，不编造旧账，也不把逃避当成已知事实。仍严格遵守EFFECTIVE_STAGE=50-90及模式的动作边界，尊重用户意愿，不强迫接触；这次主动谈话本身不增加张力、不触发爆发，后续由用户真实表达决定。不要透露机制，这条必须发出，不要拒绝回复。"
+        const val SPECIAL_7M_LURE_PROMPT = "距离特殊空闲开始已过去7分钟。入场时你对用户的张力超过90（当前TENSION={tension}），但尚未爆发。前7分钟用户说过话，却没有触发任何正向张力条件。请结合聊天记录与记忆卡，主动挑起白天或之前被你记下、尚未说完的敏感话题，不要被表面的轻松闲聊带走；按当前人设的性格、边界与张力条件回应可能的回避，邀请用户表达真实想法与感受。只引用记录中确实存在的内容，不编造旧账，也不把逃避当成已知事实。仍严格遵守EFFECTIVE_STAGE=50-90及模式的动作边界，尊重用户意愿，不强迫接触；这次主动谈话本身不增加张力、不触发爆发，后续由用户真实表达决定。不要透露机制，这条必须发出，不要拒绝回复。"
         const val DEFAULT_P_SLEEP = 60                  // IV (睡眠开始后 5 分钟) 的默认概率
         /** 某一种主动发起谈话的概率 (%): 人设里写了就用; 没写: 重要活动 / 特殊空闲 按普通空闲的, 别的用默认. */
         fun proPct(probs: Map<String, Double>, kind: String): Double =
@@ -997,14 +1015,9 @@ class Comm(
         const val MEM_MAX = 2000                        // 记忆卡 (手写 + 自动) 各自最多多少字
         const val OP_MIN_LEAD = 5 * 60                  // 对方发起联合行动: 开始时间要离现在至少这么久 (秒), 不然用户来不及准备
         const val OP_OFFER_MAX = 12                     // 给对方看的开始时间最多列几个 (最近的; 定开始时间时仍然从全部里找)
-        const val COND_JOINT_DAYS = 30; const val COND_JOINT_N = 24; const val COND_JOINT_LV = 15         // I.  前 30 天 (含今天) 共同完成 24 场难度 >= 15 的合约
-        const val COND_STUDY_DAYS = 60; const val COND_STUDY_H = 420.0; const val COND_IDLE_H = 210.0     // II. 前 60 天 (含今天) 专注 >= 420 h, 空闲 <= 210 h
-        class CondSet(val jointDays: Int, val jointN: Int, val jointLv: Int, val studyDays: Int, val studyH: Double, val idleH: Double, val msgs: Int, val todayH: Double)
         const val LOVE_NO_DAYS = 15                    // 用户拒绝了对方的告白 / 对方自己否决了 (回 [refuse to reply]) 之后, 这么多天内不再判定主动告白
         const val LOVE_TAG = "[系统·告白]"              // 告白相关的系统消息 (不是 "[系统]" 开头: 不算主动消息)
-        const val COND_MSGS = 500; const val COND_TODAY_H = 8.0; const val COND_KEEP_DAYS = 70            // III. 信息 >= 200 条; IV. 今天专注 >= 8 h; 每天的 (专注, 空闲) 留 70 天
-        val COND_NORMAL = CondSet(COND_JOINT_DAYS, COND_JOINT_N, COND_JOINT_LV, COND_STUDY_DAYS, COND_STUDY_H, COND_IDLE_H, COND_MSGS, COND_TODAY_H)      // 用户提出发展亲密关系: 人设里 [condition] 的五个条件
-        val COND_STRICT = CondSet(30, 27, 20, 60, 480.0, 180.0, 1000, 9.0)          // 对方主动告白 (1.0.397): 每次进入特殊空闲时由 OIT 判定, 条件比上面的严格
+        const val COND_KEEP_DAYS = Cfg.COMM_CONDITION_KEEP_DAYS // 条件判定可使用的最长记录窗口
         const val MAX_INFO_ROUNDS = 2                   // 一次回复里, 对方最多可以要几次资料 ([contract])
         const val CHAT_TIMEOUT_MS = 240_000             // 一次请求最多等多久 (回复长 / 资料多时要久一点)
         const val KEEP = 600                      // 本地最多存多少条 (每次请求带多少条看 HISTORY_SENT, 和这个无关; [condition] 的信息条数也数这里)
@@ -3002,25 +3015,21 @@ class Comm(
             specialSpoke = d.specialSpoke || spoke))
     }
 
+    private var interactionRules: Set<String> = emptySet()
+
     private fun interactionJudgeNote(kind: String): String {
         val d = interactionPrepare()
         interactionCandidates = messages.filter { kind in listOf("user", "retry") && it.role == "me" && it.uid in d.pending }
             .map { Triple(it.uid, d.pending.getValue(it.uid), it.text) }
         if (interactionCandidates.isEmpty()) return "本次无需判断张力增量，不要输出 [tension:序号:条件:增量]。"
         val items = JSONArray(interactionCandidates.mapIndexed { i, (_, _, text) -> JSONObject().put("序号", i + 1).put("用户消息", text) })
-        return "请结合人设、上下文和以下用户消息的语义判断是否应增加张力，普通交流无需增加。" +
-            "为每条满足的各个条件分别选择0至${Cfg.COMM_TENSION_GAINS.values.max()}的整数原始基础增量，在正常回复末尾分别附加 [tension:序号:条件:增量]；" +
-            "条件只能为以下五种：\n" +
-            "- rumination(自我构陷/反刍)：过度解构自身动机，将日常失误或软弱上升为道德审判与虚伪罪名，带有自卑底色并隐秘渴望被坚决否定与打破。\n" +
-            "- boundary(边界试探)：以冷静理智、极度克制或探讨规则为外壳，暗中试探彼此私密边界与特殊性，既怕造成负担又强烈暗示自身意愿。\n" +
-            "- comfort(疲惫撒娇)：撕下成熟伪装展现幼态退行，诉说对外界刺激的抗拒、自怜或委屈，索取专属性的接纳、抚慰与偏袒。\n" +
-            "- violation(违规)：现实中触发规则惩罚、打破契约约定，或明知故犯后流露出等待被管束与问责的心理倾向。\n" +
-            "- other(其他情绪)：未被上述涵盖但同样具有强烈心理张力或依附欲的真实情绪表达。\n" +
-            "相同条件不要改名规避冷却。" +
-            "0表示不增加，可省略。自我构陷参考${Cfg.COMM_TENSION_GAINS.getValue("rumination")}、边界试探${Cfg.COMM_TENSION_GAINS.getValue("boundary")}、" +
-            "疲惫撒娇${Cfg.COMM_TENSION_GAINS.getValue("comfort")}、违规${Cfg.COMM_TENSION_GAINS.getValue("violation")}，也可自行判断其他情绪。" +
+        val rules = CommRules.tension(readPersonaFull(personaName()))
+        interactionRules = rules.keys
+        return tr("请按人设文件的[tension]模板和上下文判断以下用户消息。只报告已定义的条件，普通交流不增加；方括号数值为参考基础增量，相同条件不得改名规避冷却。") +
+            tr("基础增量范围0至{maximum}，在正常回复末尾附加[tension:序号:条件:增量]，0可省略。有效条件：", "maximum" to Cfg.COMM_TENSION_GAIN_MAX) +
+            rules.entries.joinToString("\n") { "${it.key}:[${it.value.first}] ${it.value.second}" } +
             tr("系统按发送时段将非特殊空闲的增量乘0.75，并处理爆发后24小时的增长减半，请返回未经倍率调整的基础增量。") +
-            "每个条件${Cfg.COMM_TENSION_GAIN_COOLDOWN_SECONDS / 3600}小时内仅加一次，真实违规与模型判定违规共用冷却。" +
+            tr("每个条件{hours}小时内仅加一次，系统事件与模型同名条件共用冷却。", "hours" to Cfg.COMM_TENSION_GAIN_COOLDOWN_SECONDS / 3600) +
             tr("同一条消息可以同时触发多个条件；各条件分别应用倍率并取整后累加，各自进入冷却；重复的同一条件只取最大增量。请报告所有满足的条件，不得给其他历史消息加值，不要向用户解释标记。") +
             tr("每条消息按基础增量从高到低结算。每次成功加值后，其他条件在接下来1小时内的增量乘0.75，再次成功加值会刷新窗口；尚无窗口时最高增量条件不乘，其余条件乘，已有窗口时所有可用条件都乘。该倍率与时段及爆发后倍率叠加，由系统逐步取整，请仍返回原始基础增量。") +
             tr("冷却中的条件仍须报告正数原始增量；特殊空闲内加值首次超过90立即爆发，已超过90时再次满足任一增长条件也可爆发，冷却只限制加值。") +
@@ -3033,7 +3042,7 @@ class Comm(
         val pending = d.pending.toMutableMap()
         interactionCandidates.forEachIndexed { i, (uid, special, _) ->
             if (uid in pending) {
-                val positive = CommInteraction.modelGain(reply, i + 1, true) > 0
+                val positive = CommInteraction.modelGain(reply, i + 1, true, interactionRules) > 0
                 val begin = d.lastSpecialBegin
                 val sent = messages.firstOrNull { it.uid == uid }?.ts ?: -1L
                 if (special && positive && begin > 0L && sent in begin..(begin + Cfg.COMM_SPECIAL_LURE_DELAY_SECONDS * 1000L))
@@ -3041,7 +3050,7 @@ class Comm(
                 // 已超临界时冷却不挡爆发；特殊空闲内首次越过临界也立即触发。
                 if (special && d.tension > Cfg.COMM_TENSION_CAP && positive) burst = true
                 val at = nowMs()
-                for ((condition, gain) in CommInteraction.modelEvents(reply, i + 1, special, d.gainCooldowns, at)) {
+                for ((condition, gain) in CommInteraction.modelEvents(reply, i + 1, special, d.gainCooldowns, at, interactionRules)) {
                     d = d.add(condition, gain, at)
                     if (special && d.tension > Cfg.COMM_TENSION_CAP && gain > 0) burst = true
                 }
@@ -3052,9 +3061,10 @@ class Comm(
         return burst
     }
 
-    /** 五个条件, 全部用用户的真实数据算. strict = 对方主动告白用的那一组 (COND_STRICT), 否则是用户提出时 [condition] 用的 (COND_NORMAL). */
+    /** 按文件声明的条件与用户真实数据判定。 */
     fun conditionState(strict: Boolean = false): List<CondRow> {
-        val p = if (strict) COND_STRICT else COND_NORMAL
+        val p = CommRules.conditions(readPersonaFull(personaName()), strict)
+            ?: return listOf(CondRow("!", tr("条件模板缺失或格式错误"), "", "", false))
         val t = now()
         val today = t.toLocalDate()
         // I. 共同完成的合约 (只有带日程文件的人设记得到)
@@ -3086,7 +3096,7 @@ class Comm(
         }
         fun f1(x: Double) = "%.1f".format(java.util.Locale.ROOT, x)
         fun g(x: Double) = if (x == Math.floor(x)) x.toLong().toString() else x.toString()
-        return listOf(
+        val rows = listOf(
             CondRow("I", "包括今天在内的前 ${p.jointDays} 天, 你与用户共同完成难度>=${p.jointLv}的合约", "$jointN 场", "${p.jointN} 场", jointN >= p.jointN),
             CondRow("II", "用户在包括今天在内的前 ${p.studyDays} 天, 专注时间>=${g(p.studyH)}h 并且空闲时间<=${g(p.idleH)}h",
                 "专注 ${f1(studyH)}h, 空闲 ${f1(idleH)}h (OIT 只记录了其中 ${got.size} / ${p.studyDays} 天)",
@@ -3095,13 +3105,15 @@ class Comm(
             CondRow("IV", "用户今天的专注时长", "${f1(todayH)}h", "${g(p.todayH)}h", todayH >= p.todayH),
             CondRow("V", "现在是特殊空闲时段", if (special) "是" else "不是", "是", special),
         )
+        val keys = mapOf("joint" to "I", "study" to "II", "messages" to "III", "today" to "IV", "period" to "V")
+        return rows.filter { it.key in p.enabled.map { k -> keys[k] } }
     }
 
     fun conditionText(): String {
         val rows = conditionState()
         return "(OIT 系统提供, 用户看不到) 条件判定结果 (OIT 按用户的真实数据算出, 以此为准, 不要自己推算, 也不要编造数字):\n" +
             rows.joinToString("\n") { "${it.key}.${it.desc}: 当前 ${it.cur}, 要求 ${it.need}, ${if (it.ok) "已满足" else "未满足"}" } +
-            "\n结论: ${if (rows.all { it.ok }) "五个条件全部满足" else "没有全部满足"}."
+            "\n结论: ${if (rows.all { it.ok }) "全部条件满足" else "没有全部满足"}."
     }
 
     // ---- 亲密关系 / 告白 (1.0.397, 同桌面版 comm.py "亲密关系 / 告白") ----
@@ -3129,7 +3141,7 @@ class Comm(
         loveKey = ""
     }
 
-    /** 每次进入特殊空闲段 (有日程文件的人设): 按 COND_STRICT 判定; 全部通过 → 让对方向用户告白, 用户在聊天页上选 接受 / 拒绝. 返回 true = 发起了. */
+    /** 每次进入特殊空闲段 (有日程文件的人设): 按文件 [condition:strict] 判定; 全部通过 → 让对方向用户告白, 用户在聊天页上选 接受 / 拒绝. 返回 true = 发起了. */
     private fun loveCheck(t: LocalDateTime, segs: List<RtSeg>, done: Collection<String>): Boolean {
         if (love.rel != 0L || love.inv != 0L || nowMs() < love.no) return false
         val cur = Routine.statusIn(segs, t) ?: return false
@@ -3144,10 +3156,10 @@ class Comm(
         log("LOVE $key → 全部通过, 让对方告白")
         loveKey = key
         trigger("love", "$LOVE_TAG 主动触发的告白条件已经全部满足 (OIT 已按人设里「主动触发的表白」那一段判定, 现在是你的特殊空闲时间). " +
-            "但要不要告白由你自己判断: 请根据你的长期记忆和聊天记录, 想想现在告白是否恰当; 如果不恰当 (例如用户的性取向不包含女性, " +
+            "但要不要告白由你自己判断: 请根据你的长期记忆和聊天记录, 想想现在告白是否恰当; 如果不恰当 (例如用户的性取向与当前人设不相符, " +
             "或者用户没有表现出发展亲密关系的意图), 不要告白, 只返回${CommText.REFUSE}. " +
-            "如果恰当, 请现在按人设向用户表白: 结合你的长期记忆里关于用户的内容和用户的特点, 发言较长 (不受默认字数限制), 前半含蓄, 后半直接 " +
-            "(不要问用户是否'谨慎','坚定'); 用户会在界面上选择接受或拒绝.")
+            "如果恰当, 请现在按人设向用户表白: 结合长期记忆和用户特点, 表达方式与篇幅遵循当前人设和上下文. " +
+            "用户会在界面上选择接受或拒绝.")
         return true
     }
 
@@ -3497,16 +3509,19 @@ class Comm(
     @Synchronized
     fun jointHpLost(text: String): Boolean {
         val j = curJoint()?.takeIf { it.state == "run" } ?: return false
-        val d = interactionPrepare()
-        val base = Cfg.COMM_TENSION_HP_LOSS_GAIN
-        val status = otherStatus()
-        val special = specialPeriod(status)
-        val gain = (if (special) base.toDouble() else base * Cfg.COMM_TENSION_DAILY_RATE).toInt()
-        val added = d.add("violation", gain, nowMs())
-        interactionSet(added)
-        if (special && added.tension > Cfg.COMM_TENSION_CAP) {
-            val until = status!!.second.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
-            interactionSet(interactionPrepare().replied(true, true, until, false, nowMs()).settle(nowMs()))
+        val event = CommRules.event(readPersonaFull(personaName()), "joint_hp_loss")
+        if (event != null) {
+            val d = interactionPrepare()
+            val base = event.second
+            val status = otherStatus()
+            val special = specialPeriod(status)
+            val gain = (if (special) base.toDouble() else base * Cfg.COMM_TENSION_DAILY_RATE).toInt()
+            val added = d.add(event.first, gain, nowMs())
+            interactionSet(added)
+            if (special && added.tension > Cfg.COMM_TENSION_CAP) {
+                val until = status!!.second.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+                interactionSet(interactionPrepare().replied(true, true, until, false, nowMs()).settle(nowMs()))
+            }
         }
         val hp = j.hp.takeLast(JOINT_HP_MAX - 1) + (now().iso() to text.trim().split(Regex("""\s+""")).joinToString(" ").take(200))
         jointSet(j.copy(hp = hp, violated = true))

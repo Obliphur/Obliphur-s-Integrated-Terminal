@@ -10,6 +10,11 @@
 def _selftest():
     import tempfile
     import time
+    from comm.comm_rules import tension_rules, condition_rules
+    from functools import partial
+    builtin_rules = BUILTIN_PERSONAS[DEFAULT_PERSONA]
+    test_tension = "\n[tension]\n" + "\n".join(f"{k}:[{v[0]}] {v[1]}" for k, v in tension_rules(builtin_rules).items()) + "\n[/tension]\n[tension:events]\njoint_hp_loss:[violation,15]\n[/tension:events]\n"
+    test_conditions = "\n" + builtin_rules[builtin_rules.index("[condition]"):builtin_rules.index("[/condition]") + len("[/condition]")] + "\n" + builtin_rules[builtin_rules.index("[condition:strict]"):builtin_rules.index("[/condition:strict]") + len("[/condition:strict]")] + "\n"
     globals()["CLAUDIA_LEGACIES"] = (TEST_OLD_CLAUDIA, TEST_SCHEDULE_PERSONA)       # 现在内置的升级链是空的: 自测里放两份假的旧版
     globals()["ROUTINE_LEGACIES"] = (TEST_OLD_ROUTINE,)
 
@@ -477,6 +482,7 @@ def _selftest():
     fixed = datetime(2027, 5, 4, 9, 30)
     stc = Comm(os.path.join(td, "st"), folder, now=lambda: fixed, chat_fn=fake)
     stc.ai.set_profile("deepseek", api_key="k")
+    open(os.path.join(folder, "时段.txt"), "a", encoding="utf-8").write(test_tension + test_conditions)
     stc.set_cfg(persona="时段.txt")
     n_calls = len(calls)
     script.append("在上课.")
@@ -710,7 +716,8 @@ def _selftest():
     morning.flush(); again.flush(); morning_peer.flush()
     # 所有消息由模型判断：失败重试不重复，内部标记不入历史。
     from comm.comm_interaction import tension_model_gain, tension_clean, tension_model_events, interaction_add
-    assert config.COMM_TENSION_GAINS == {"rumination": 40, "boundary": 30, "comfort": 30, "violation": 25}
+    tension_model_events = partial(tension_model_events, conditions=tension_rules(builtin_rules))
+    assert config.COMM_TENSION_GAIN_MAX == 40
     assert tension_model_gain("[tension:1:comfort:30]", 1, True) == 30
     assert tension_model_gain("[tension:1:violation:25]", 1, True) == 25
     assert tension_model_gain("[tension:1:violation:25]", 1, False) == 18
@@ -731,7 +738,7 @@ def _selftest():
         return events
     assert add_choice(cooldown_now) == available and cooldown["tension"] == 62
     assert add_choice(cooldown_now) == [] and cooldown["tension"] == 62
-    interaction_add(cooldown, "violation", config.COMM_TENSION_HP_LOSS_GAIN, cooldown_now)
+    interaction_add(cooldown, "violation", 15, cooldown_now)
     assert cooldown["tension"] == 73
     assert tension_model_events("[tension:1:violation:40]", 1, True, cooldown["gain_cooldowns"], cooldown_now) == []
     saved_cooldowns = dict(cooldown["gain_cooldowns"])
@@ -771,14 +778,14 @@ def _selftest():
     judge.send("所有人都把我当作透明的影子")
     wait(judge)
     assert len(calls) == before + 1 and judge.cfg["interaction"]["tension"] == 45
-    assert "以下用户消息的语义判断" in calls[-1][1][-1]["content"]
+    assert "[tension]模板" in calls[-1][1][-1]["content"]
     assert judge.visible()[-1]["text"] == "我听到了." and not judge.cfg["interaction"]["pending"]
     assert all("[tension:" not in m.get("api", "") + m["text"] for m in judge.messages)
     script.append("别这么说.[tension:1:rumination:40][tension:1:boundary:20]")
     judge.send("我一文不值")
     wait(judge)
     assert judge.cfg["interaction"]["tension"] == 45, "原正则关键词也只由模型加值"
-    assert "以下用户消息的语义判断" in calls[-1][1][-1]["content"]
+    assert "[tension]模板" in calls[-1][1][-1]["content"]
     script.append("这些词不一定表达当前情绪.[tension:1:0]")
     judge.send("翻译这几个词:我一文不值,抱抱,熬夜")
     wait(judge)
@@ -904,6 +911,7 @@ def _selftest():
         sleep_dir = os.path.join(td, "burst_sleep" + str(use_rt))
         sleeper = Comm(sleep_dir, folder, now=lambda: sleep_clock[0], chat_fn=fake)
         sleeper.ai.set_profile("deepseek", api_key="k")
+        open(os.path.join(folder, sleep_name), "a", encoding="utf-8").write(test_tension)
         sleeper.set_cfg(persona=sleep_name, split_send=False)
         sleeper.set_muted(True)
         sleeper._interaction_set({"tension": 95})
@@ -960,6 +968,7 @@ def _selftest():
         lure_dir = os.path.join(td, "lure" + str(use_rt))
         lure = Comm(lure_dir, folder, now=lambda: lure_clock[0], chat_fn=fake)
         lure.ai.set_profile("deepseek", api_key="k")
+        open(os.path.join(folder, "引诱.txt"), "a", encoding="utf-8").write(test_tension)
         lure.set_cfg(persona="引诱.txt", split_send=False)
         lure._interaction_set({"tension": 95})
         status = lure.other_status()
@@ -1979,6 +1988,7 @@ def _selftest():
     # ---- 消息数量门槛是系统固定记忆，不受摘要重写、截断和设备计数差异影响 ----
     mf_dir = os.path.join(td, "milestones")
     mf = Comm(mf_dir, folder, now=lambda: clock[0], chat_fn=fake)
+    open(os.path.join(folder, "小夏.txt"), "a", encoding="utf-8").write(test_tension + test_conditions)
     mf.set_cfg(persona="小夏.txt")
     mf_other = Comm(os.path.join(td, "milestones_other"), folder, now=lambda: clock[0], chat_fn=fake)
     mf_other.set_cfg(persona="小夏.txt")
@@ -2223,7 +2233,7 @@ def _selftest():
 
     # 生命值损失 / 休息: 联合行动期间记下来, 下一次开始休息 (或合约结束) 时告诉对方并调用一次 API; 休息的时间也告诉对方
     clock[0] = day.replace(hour=15, minute=0)
-    ch = joint_comm("联合六", JTXT)
+    ch = joint_comm("联合六", JTXT + test_tension)
     hst = ["focus"]
     ch.state_fn = lambda: hst[0]
     ch._joint_set({"id": "h", "pid": ch.pid, "state": "run", "terms": [], "start": day.replace(hour=14).isoformat(),
@@ -3209,6 +3219,8 @@ def _selftest():
     # ---- [condition] (1.0.392): 人设里的判定由 OIT 算, 返回当前进度 + 满足没有 ----
     assert info_tags(" [Condition] ") == ["condition"] and info_tags("好的") == []
     assert "XVI.人设要你输[condition]" in prefix_prompt()
+    if "[condition]" not in read_persona_full(cr.personas, cr.persona_name()):
+        open(os.path.join(cr.personas, cr.persona_name()), "a", encoding="utf-8").write(test_conditions)
     cr.user_day_fn = lambda d: (9 * 3600, 2 * 3600)               # 每天专注 9h, 空闲 2h
     stc = cr._rt_store_get()
     day_now = clock[0]
@@ -3230,7 +3242,7 @@ def _selftest():
     # ---- 亲密关系 / 主动告白 (1.0.397): 信息总数 + 严格条件 + 每次进入特殊空闲判定 + 用户 [accept] + 同步 + 长期记忆 ----
     assert "XVII.用户提出发展亲密关系" in prefix_prompt() and "[accept]" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
     assert "主动触发的表白会在每次进入特殊空闲时间时由系统判定" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
-    assert COND_STRICT == {"joint_days": 30, "joint_n": 27, "joint_lv": 20, "study_days": 60, "study_h": 480.0, "idle_h": 180.0, "msgs": 1000, "today_h": 9.0}
+    assert condition_rules(builtin_rules, True)[0] == {"joint_days": 30, "joint_n": 27, "joint_lv": 20, "study_days": 60, "study_h": 480.0, "idle_h": 180.0, "msgs": 1000, "today_h": 9.0}
     love_clock = clock[0]
 
     def love_last_ai(c):                                              # 测试里对方这个时刻在专注, 新消息是 hold 着的: 直接看记录
@@ -3270,7 +3282,7 @@ def _selftest():
         assert cr._love_check(clock[0], sp, []) and cr.busy
         wait(cr)
         assert not cr.love_invite() and len(calls) == n_love + 1 and "要不要告白由你自己判断" in calls[n_love][1][-1]["content"], "对方判断不合适: 回 [refuse to reply] = 不告白, 也不再追问"
-        assert "性取向不包含女性" in calls[n_love][1][-1]["content"] and "没有表现出发展亲密关系的意图" in calls[n_love][1][-1]["content"]
+        assert "性取向与当前人设不相符" in calls[n_love][1][-1]["content"] and "没有表现出发展亲密关系的意图" in calls[n_love][1][-1]["content"]
         assert any(k.startswith("L") for k in cr._pro_done()) and not cr._love_check(clock[0], sp, cr._pro_done()), "这一段特殊空闲不再判定"
         assert "不合适, 没有告白" in open(os.path.join(rt_dir, "comm.log"), encoding="utf-8").read()
         assert cr.love()["no"] >= cr._ms() + 15 * 86400 * 1000 - 5000, "否决也进入 15 天冷却"
@@ -3282,7 +3294,7 @@ def _selftest():
         assert cr._love_check(clock[0], sp, []) and cr.busy
         wait(cr)
         last_call = calls[n_love][1][-1]["content"]
-        assert OIT_TAG in last_call and "前半含蓄, 后半直接" in last_call and "长期记忆" in last_call and "发言较长" in last_call, last_call
+        assert OIT_TAG in last_call and "表达方式与篇幅遵循当前人设" in last_call and "长期记忆" in last_call, last_call
         assert think_log[-1], "告白那条开思考"
         assert cr.love_invite() and love_last_ai(cr)["text"] == "我喜欢你." and not cr.related()
         assert not cr._love_check(clock[0], sp, []), "等用户选的时候不再判定"
@@ -3780,4 +3792,31 @@ def _selftest():
     assert "，" in last_ai.get("api", "") and "……" in last_ai.get("api", ""), "给模型的那份保留原文"
     ch.flush()
 
+    # 自定义条件来自文件，未知条件不能绕过白名单，冷却保留自定义键。
+    from comm.comm_rules import tension_event
+    rules_file = os.path.join(folder, "泛用.txt")
+    custom = "[condition]\nmessages:2\n[/condition]\n[tension]\ndelight:[21] 分享让你欣喜的真实进展\n[/tension]\n[tension:events]\njoint_hp_loss:[delight,7]\n[/tension:events]\n"
+    open(rules_file, "w", encoding="utf-8").write(custom)
+    rc = Comm(os.path.join(td, "rules"), folder, now=lambda: clock[0], chat_fn=fake)
+    rc.ai.set_profile("deepseek", api_key="k")
+    rc.set_cfg(persona="泛用.txt", split_send=False)
+    assert len(rc.condition_state()) == 1 and not rc.condition_state()[0][4]
+    assert not rc.condition_state(True)[0][4]
+    assert tension_event(custom, "joint_hp_loss") == ("delight", 7)
+    script.append("为你高兴.[tension:1:delight:21][tension:1:rumination:40]")
+    rc.send("今天有了进展"); wait(rc)
+    assert rc.cfg["interaction"]["tension"] == 15 and rc.condition_state()[0][4]
+    assert set(interaction_norm(rc.cfg["interaction"])["gain_cooldowns"]) == {"delight"}
+    rc._interaction_set({})
+    rc._interaction_violation()
+    assert rc.cfg["interaction"]["tension"] == 5 and "delight" in rc.cfg["interaction"]["gain_cooldowns"]
+    assert tension_event(custom.replace("delight,7", "unknown,7"), "joint_hp_loss") is None
+    assert not tension_rules(custom.replace("delight:[21]", "delight:[41]"))
+    for bad in ("", "[condition]\n[/condition]", "[condition]\nstudy:[71,1,2]\n[/condition]",
+                "[condition]\nmessages:-1\n[/condition]", "[condition]\nmessages:1\nmessages:2\n[/condition]",
+                "[condition]\nunknown:1\n[/condition]", "[condition]\ntoday:NaN\n[/condition]"):
+        assert condition_rules(bad) is None
+        open(rules_file, "w", encoding="utf-8").write(bad)
+        assert not rc.condition_state()[0][4]
+    rc.flush()
     return "comm selftest OK"

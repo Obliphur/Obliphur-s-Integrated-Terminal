@@ -21,6 +21,7 @@ import i18n
 from i18n import tr
 import routine
 from comm import comm_readme
+from comm.comm_rules import condition_rules
 from comm.comm_const import *
 from comm.comm_schedule import PROACTIVE_P, seg_kind, seg_detail, schedule_entries, schedule_loops, loop_entries, schedule_segments, pro_pct, persona_probs
 from comm.comm_reply import CUT_DEFAULT_MIN, CUT_MAX_MIN, HALFWIDTH_SYMBOLS, NET_DEFAULT_MIN, NET_MAX_MIN, WAIT_MAX_MIN, _BRACKET_RE, _CUT_N_RE, _CUT_RE, _EMPTY_WRAP_RE, _NET_RE, _WAIT_RE, clean_reply, cut_minutes, net_minutes, to_halfwidth
@@ -186,8 +187,14 @@ class RtMixin:
         return int(self.cfg.get("msg_gone") or 0) + sum(1 for m in self.messages if m.get("role") in ("me", "ai") and not m.get("hold"))
 
     def condition_state(self, strict: bool = False) -> list:
-        """[(编号, 说明, 当前进度, 要求, 满足了吗)]: 五个条件, 全部用用户的真实数据算. strict = 对方主动告白用的那一组 (COND_STRICT), 否则是用户提出时 [condition] 用的 (COND_NORMAL)."""
-        P = COND_STRICT if strict else COND_NORMAL
+        """[(编号, 说明, 当前进度, 要求, 满足了吗)]: 文件声明的条件全部用用户真实数据判定，strict 读取主动告白组。"""
+        parsed = condition_rules(read_persona_full(self.personas, self.persona_name()), strict)
+        if parsed is None:
+            return [("!", tr("条件模板缺失或格式错误"), "", "", False)]
+        values, enabled = parsed
+        P = dict(joint_days=1, joint_lv=0, joint_n=0, study_days=1, study_h=0.0,
+                 idle_h=0.0, msgs=0, today_h=0.0)
+        P.update(values)
         now = self.now()
         today = now.date()
         # I. 共同完成的合约 (只有带日程文件的人设记得到)
@@ -227,7 +234,7 @@ class RtMixin:
                 special = bool(cur) and routine.seg_class(cur) == "special"
             except Exception:       # noqa: BLE001
                 special = False
-        return [
+        rows = [
             ("I", f"包括今天在内的前 {P['joint_days']} 天, 你与用户共同完成难度>={P['joint_lv']}的合约", f"{joint_n} 场", f"{P['joint_n']} 场", joint_n >= P["joint_n"]),
             ("II", f"用户在包括今天在内的前 {P['study_days']} 天, 专注时间>={P['study_h']:g}h 并且空闲时间<={P['idle_h']:g}h",
              f"专注 {study_h:.1f}h, 空闲 {idle_h:.1f}h (OIT 只记录了其中 {len(got)} / {P['study_days']} 天)",
@@ -236,6 +243,9 @@ class RtMixin:
             ("IV", "用户今天的专注时长", f"{today_h:.1f}h", f"{P['today_h']:g}h", today_h >= P["today_h"]),
             ("V", "现在是特殊空闲时段", "是" if special else "不是", "是", special),
         ]
+
+        keys = dict(joint="I", study="II", messages="III", today="IV", period="V")
+        return [row for row in rows if row[0] in {keys[k] for k in enabled}]
 
     def messages_text(self) -> str:
         """对方输入 [messages] 得到的: 它和用户的聊天记录数 (OIT 统计, 和 [condition] III 数的是同一个数)."""
@@ -278,7 +288,7 @@ class RtMixin:
         rows = self.condition_state()
         lines = [f"{k}.{desc}: 当前 {cur}, 要求 {need}, {'已满足' if ok else '未满足'}" for k, desc, cur, need, ok in rows]
         return ("(OIT 系统提供, 用户看不到) 条件判定结果 (OIT 按用户的真实数据算出, 以此为准, 不要自己推算, 也不要编造数字):\n"
-                + "\n".join(lines) + f"\n结论: {'五个条件全部满足' if all(r[4] for r in rows) else '没有全部满足'}.")
+                + "\n".join(lines) + f"\n结论: {'全部条件满足' if all(r[4] for r in rows) else '没有全部满足'}.")
 
     def love(self) -> dict:
         return love_norm(self.cfg.get("love"))
@@ -315,7 +325,7 @@ class RtMixin:
             self._love_key = ""
 
     def _love_check(self, now, segs, done) -> bool:
-        """每次进入特殊空闲段 (有日程文件的人设): 按 COND_STRICT 判定; 全部通过 → 让对方向用户告白, 用户在聊天页上选 接受 / 拒绝. 返回 True = 发起了."""
+        """每次进入特殊空闲段 (有日程文件的人设): 按文件 [condition:strict] 判定; 全部通过 → 让对方向用户告白, 用户在聊天页上选 接受 / 拒绝. 返回 True = 发起了."""
         d = self.love()
         if d["rel"] or d["inv"] or self._ms() < d["no"]:
             return False
@@ -338,10 +348,10 @@ class RtMixin:
         self.log(f"LOVE {key} → 全部通过, 让对方告白")
         self._love_key = key
         self._trigger("love", f"{LOVE_TAG} 主动触发的告白条件已经全部满足 (OIT 已按人设里「主动触发的表白」那一段判定, 现在是你的特殊空闲时间). "
-                              "但要不要告白由你自己判断: 请根据你的长期记忆和聊天记录, 想想现在告白是否恰当; 如果不恰当 (例如用户的性取向不包含女性, "
+                              "但要不要告白由你自己判断: 请根据你的长期记忆和聊天记录, 想想现在告白是否恰当; 如果不恰当 (例如用户的性取向与当前人设不相符, "
                               f"或者用户没有表现出发展亲密关系的意图), 不要告白, 只返回{REFUSE}. "
-                              "如果恰当, 请现在按人设向用户表白: 结合你的长期记忆里关于用户的内容和用户的特点, 发言较长 (不受默认字数限制), 前半含蓄, 后半直接 "
-                              "(不要问用户是否'谨慎','坚定'); 用户会在界面上选择接受或拒绝.")
+                              "如果恰当, 请现在按人设向用户表白: 结合长期记忆和用户特点, 表达方式与篇幅遵循当前人设和上下文. "
+                              "用户会在界面上选择接受或拒绝.")
         return True
 
     def love_respond(self, accept: bool) -> str:

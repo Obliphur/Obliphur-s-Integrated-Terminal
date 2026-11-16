@@ -126,7 +126,7 @@ data class CommInteraction(
                 val end = maxOf(0L, o?.optLong("gain_until") ?: 0L)
                 if (end > 0L) listOf(localDay(end - Cfg.COMM_TENSION_BURST_GAIN_SECONDS * 1000L)) else emptyList()
             }, o?.optString("morning_day") ?: "",
-            o?.optJSONObject("gain_cooldowns")?.let { c -> (Cfg.COMM_TENSION_GAINS.keys + "other")
+            o?.optJSONObject("gain_cooldowns")?.let { c -> c.keys().asSequence().filter { Regex("[a-z_]{1,32}").matches(it) }.toList()
                 .associateWith { maxOf(0L, c.optLong(it)) }.filterValues { it > 0L } } ?: emptyMap(),
             maxOf(0L, o?.optLong("special_until") ?: 0L), o?.optBoolean("special_spoke") ?: false,
             o?.optBoolean("skip_decay") ?: false,
@@ -148,18 +148,18 @@ data class CommInteraction(
         fun cleanTension(reply: String): String = burstTag.replace(tensionTag.replace(reply, ""), "").trim()
 
         /** 各条件按基础增量降序分别结算，重复条件只取最大值；旧标记归入其他情绪。 */
-        fun modelEvents(reply: String, index: Int, special: Boolean, cooldowns: Map<String, Long> = emptyMap(), nowMs: Long = 0L): List<Pair<String, Int>> {
+        fun modelEvents(reply: String, index: Int, special: Boolean, cooldowns: Map<String, Long> = emptyMap(), nowMs: Long = 0L, conditions: Set<String>? = null): List<Pair<String, Int>> {
             return tensionGain.findAll(reply).filter { it.groupValues[1].toInt() == index }
                 .map { (it.groupValues[2].lowercase().ifEmpty { "other" }) to it.groupValues[3].toInt() }
-                .filter { (it.first in Cfg.COMM_TENSION_GAINS || it.first == "other") && nowMs >= (cooldowns[it.first] ?: 0L) }
-                .groupBy({ it.first }, { it.second.coerceIn(0, Cfg.COMM_TENSION_GAINS.values.max()) })
+                .filter { (conditions == null || it.first in conditions) && nowMs >= (cooldowns[it.first] ?: 0L) }
+                .groupBy({ it.first }, { it.second.coerceIn(0, Cfg.COMM_TENSION_GAIN_MAX) })
                 .mapValues { it.value.max() }
                 .filterValues { it > 0 }
                 .entries.sortedByDescending { it.value }
                 .map { (condition, gain) -> condition to (if (special) gain.toDouble() else gain * Cfg.COMM_TENSION_DAILY_RATE).toInt() }
         }
 
-        fun modelGain(reply: String, index: Int, special: Boolean): Int = modelEvents(reply, index, special).sumOf { it.second }
+        fun modelGain(reply: String, index: Int, special: Boolean, conditions: Set<String>? = null): Int = modelEvents(reply, index, special, conditions = conditions).sumOf { it.second }
 
     }
 }

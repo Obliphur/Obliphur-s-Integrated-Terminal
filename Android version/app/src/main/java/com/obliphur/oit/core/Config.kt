@@ -14,11 +14,11 @@ object Cfg {
     const val COMM_TENSION_LOW = 50
     const val COMM_TENSION_CAP = 90
     const val COMM_TENSION_DAILY_RATE = 0.75
-    val COMM_TENSION_GAINS = mapOf("rumination" to 40, "boundary" to 30, "comfort" to 30, "violation" to 25)
+    const val COMM_CONDITION_KEEP_DAYS = 70 // 人设条件可查询的最长天数
+    const val COMM_TENSION_GAIN_MAX = 40 // 人设可配置的单条件基础增量上限
     const val COMM_TENSION_GAIN_COOLDOWN_SECONDS = 3 * 60 * 60
     const val COMM_TENSION_CHAIN_SECONDS = 60 * 60 // 条件成功加值后刷新一小时的其他条件倍率窗口
     const val COMM_TENSION_CHAIN_RATE = 0.75
-    const val COMM_TENSION_HP_LOSS_GAIN = 15 // 合约扣血单独设定基础增量
     const val COMM_TENSION_DAY_DECAY = 25
     const val COMM_TENSION_DECAY_SECONDS = 15 * 60
     const val COMM_TENSION_HIGH_DAY_DECAY = COMM_TENSION_DAY_DECAY * 0.3 // 未爆发的90+按低档衰减速度的0.3倍
