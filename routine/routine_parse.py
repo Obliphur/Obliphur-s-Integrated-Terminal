@@ -4,6 +4,7 @@
 """
 
 import re
+import config
 from datetime import date as _date
 
 from routine.routine_common import (
@@ -19,6 +20,7 @@ from routine.routine_common import (
     _DIFF_RE,
     _minutes,
     parse_list,
+    special_label,
 )
 
 class Routine:
@@ -72,7 +74,10 @@ def parse(text: str):
     for m in _DUR_RE.finditer(text):
         dur = _minutes(float(m.group(1)), m.group(2))
         if dur > 0:
-            pos.append((m.start(), {"type": "block", "dur": dur, "label": m.group(3).strip()}))
+            label = m.group(3).strip()
+            if special_label(label):
+                dur = config.COMM_SPECIAL_MINUTES
+            pos.append((m.start(), {"type": "block", "dur": dur, "label": label}))
     for m in _LOOP_RE.finditer(text):
         dur = _minutes(float(m.group(1)), m.group(2) or "min")
         foc = _minutes(float(m.group(3)), m.group(4) or "min") if m.group(3) else 100.0

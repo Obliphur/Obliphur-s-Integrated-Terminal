@@ -137,7 +137,8 @@ object Routine {
         val pos = ArrayList<Pair<Int, RtItem>>()
         for (m in DUR_RE.findAll(text)) {
             val dur = minutes(m.groupValues[1].toDouble(), m.groupValues[2])
-            if (dur > 0) pos.add(m.range.first to RtItem(false, dur, m.groupValues[3].trim()))
+            val label = m.groupValues[3].trim()
+            if (dur > 0) pos.add(m.range.first to RtItem(false, if (specialLabel(label)) Cfg.COMM_SPECIAL_MINUTES.toDouble() else dur, label))
         }
         for (m in LOOP_RE.findAll(text)) {
             val dur = minutes(m.groupValues[1].toDouble(), m.groupValues[2].ifEmpty { "min" })
@@ -219,7 +220,8 @@ object Routine {
     }
 
     fun wakeAt(r: RoutineSpec, d: LocalDate, seed: String): LocalDateTime {
-        val (lo, hi) = r.fluct.getValue("sleep_end")
+        // 起床后首段就是特殊空闲时，也完整保留固定半小时。
+        val (lo, hi) = if (r.items.firstOrNull()?.let { !it.isLoop && specialLabel(it.label) } == true) (0.0 to 0.0) else r.fluct.getValue("sleep_end")
         return d.atStartOfDay().plusMinutes((r.startFor(d) + rint("$seed|wake|$d", lo, hi)).toLong())
     }
 
@@ -256,10 +258,10 @@ object Routine {
             }
             else {
                 val (lo, hi) = if (fluct) r.fluct.getValue("rest_end") else (0.0 to 0.0)
-                // 循环休息只挤占下一活动开头，至少留一分钟，后续固定结束边界不变。
+                // 特殊空闲完整保留，其他活动至少留一分钟，后续固定结束边界不变。
                 val next = r.items.getOrNull(idx + 1)
-                val room = if (next != null && !next.isLoop) maxOf(0.0, next.dur - 1).toLong() else 0L
-                val extra = minOf(rint("$seed|le|$d|$idx", lo, hi).toLong(), room)
+                val room = if (next != null && !next.isLoop && !specialLabel(next.label)) maxOf(0.0, next.dur - 1).toLong() else 0L
+                val extra = if (next != null && !next.isLoop && specialLabel(next.label)) 0L else minOf(rint("$seed|le|$d|$idx", lo, hi).toLong(), room)
                 if (!c.isBefore(end)) { c = end; continue }
                 val part = loopSegs(c, end, it.focus, idx, extra)
                 segs.addAll(part)
@@ -341,6 +343,9 @@ object Routine {
         }
         return segs
     }
+
+    /** 按标签主体识别特殊空闲，不把括号里的活动说明当成段类型。 */
+    fun specialLabel(label: String): Boolean = "特殊空闲" in label.split('(', '（')[0]
 
     /** 日程段 → 主动发起谈话概率的种类: rest / special (名字里有"特殊空闲") / key (重要活动: 吃饭这类有名字的) / idle (普通空闲, 睡眠延迟留下的空档) / focus / sleep. */
     fun segClass(s: RtSeg): String {

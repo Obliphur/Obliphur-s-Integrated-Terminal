@@ -91,8 +91,8 @@ class RoutineTest {
             "focus 01 21:09-01 22:01 专注",
             "rest 01 22:01-01 22:18 休息",
             "focus 01 22:18-01 22:51 专注",
-            "rest 01 22:51-01 23:05 休息",
-            "idle 01 23:05-01 23:30 特殊空闲",
+            "rest 01 22:51-01 23:00 休息",
+            "idle 01 23:00-01 23:30 特殊空闲",
             "sleep 01 23:30-02 06:33 睡眠"), plan.map { fmt(it) })
         val dir = Files.createTempDirectory("rt").toFile()
         val st = RoutineStore(File(dir, "x.json"), spec, "t")
@@ -142,16 +142,36 @@ class RoutineTest {
                 else {
                     val ls = plan.filter { s -> s.loop == i }
                     assertTrue(ls.first().kind == "focus" && ls.last().kind == "rest")
-                    assertEquals(nominal.plusMinutes(Routine.rint("t|le|$d|$i", 0.0, 5.0).toLong()), ls.last().end)
+                    val extra = if (spec.items.getOrNull(i + 1)?.let { next -> Routine.specialLabel(next.label) } == true) 0L else Routine.rint("t|le|$d|$i", 0.0, 5.0).toLong()
+                    assertEquals(nominal.plusMinutes(extra), ls.last().end)
                 }
             }
             assertEquals(nominal, plan.last().start); assertFalse(plan.any { it.gap })
+            val special = plan.single { it.label == "特殊空闲" }
+            assertEquals(d.atTime(23, 0), special.start)
+            assertEquals(special.start.plusMinutes(30), special.end)
             for ((h, m, kind) in listOf(Triple(7, 0, "focus"), Triple(13, 0, "focus"), Triple(19, 0, "focus"), Triple(23, 30, "sleep")))
                 assertEquals(kind, plan.single { it.start == d.atTime(h, m) }.kind)
         }
         val shifted = Routine.parse(text)!!
         shifted.setShifts(listOf(LocalDate.of(2026, 3, 1) to 450))
         assertEquals(LocalDateTime.of(2026, 3, 2, 0, 30), Routine.dayPlan(shifted, LocalDate.of(2026, 3, 1), "t").last().start)
+        // 声明时长与波动不影响半小时特殊空闲，跨午夜也与睡眠无缝衔接。
+        for ((declared, jitter) in listOf("5min" to "[5,5]", "2h" to "[-5,-5]")) {
+            val fixed = Routine.parse(text.replace("30min:特殊空闲", "$declared:特殊空闲").replace("循环末尾休息结束时间波动:[0,5]", "循环末尾休息结束时间波动:$jitter"))!!
+            fixed.setShifts(listOf(LocalDate.of(2026, 3, 1) to 465))
+            val fixedPlan = Routine.dayPlan(fixed, LocalDate.of(2026, 3, 1), "t")
+            val special = fixedPlan.single { it.label == "特殊空闲" }
+            assertEquals(LocalDateTime.of(2026, 3, 2, 0, 15), special.start)
+            assertEquals(LocalDateTime.of(2026, 3, 2, 0, 45), special.end)
+            assertEquals(special.end, fixedPlan.last().start)
+            assertTrue(fixedPlan.zipWithNext().all { (a, b) -> a.end == b.start })
+        }
+        val firstSpecial = Routine.parse("初始起点:23:50\n5min:特殊空闲\n睡眠结束时间波动:[-5,5]\n")!!
+        val firstPlan = Routine.dayPlan(firstSpecial, LocalDate.of(2026, 3, 1), "t")
+        assertEquals(LocalDateTime.of(2026, 3, 1, 23, 50), firstPlan.first().start)
+        assertEquals(LocalDateTime.of(2026, 3, 2, 0, 20), firstPlan.first().end)
+        assertEquals(Routine.wakeAt(firstSpecial, LocalDate.of(2026, 3, 2), "t"), firstPlan.last().end)
         val p0 = Routine.dayPlan(spec, LocalDate.of(2026, 3, 1), "t", fluct = false)
         // 循环以休息结束: 满轮排完, 最后一轮专注提前结束, 休息随它重新算, 末尾对上循环的末尾
         assertEquals(listOf("idle" to java.time.Duration.between(Routine.wakeAt(spec, LocalDate.of(2026, 3, 1), "t"), LocalDateTime.of(2026, 3, 1, 7, 0)).toMinutes(), "focus" to 100L, "rest" to 38L, "focus" to 100L, "rest" to 38L, "focus" to 19L, "rest" to 5L, "idle" to 30L, "idle" to 30L),

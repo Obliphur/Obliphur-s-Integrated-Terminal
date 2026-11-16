@@ -476,6 +476,9 @@ def _selftest():
     assert ci.visible()[-1]["text"] == "再看一次" and not any("好的" in m["text"] for m in ci.messages), "要不到资料: 带 [模块名] 的回复也不显示"
     ci.flush()
     # ---- 日程状态自动附加: 不需要查询或额外请求 ----
+    fixed_special = schedule_entries("23:40-23:59:特殊空闲\n23:59-06:30:睡眠\n")
+    assert [(e["start"], e["end"]) for e in fixed_special] == [(1420, 1450), (1450, 1830)], "跨午夜特殊空闲固定半小时，冲突的睡眠起点后移"
+    assert schedule_entries("13:00-15:00:特殊空闲")[0]["end"] == 810, "长于半小时的声明也统一为半小时"
     open(os.path.join(folder, "时段.txt"), "w", encoding="utf-8").write(
         "你是时段.\n08:00-12:00:上课\n12:00-13:00:空闲(午饭)\n13:00-14:00:特殊空闲\n14:00-18:00:空闲\n")
     os.makedirs(os.path.join(td, "st"))
@@ -493,14 +496,14 @@ def _selftest():
     assert "上课" in state_msg and "12:00" in state_msg and "还剩" in state_msg, state_msg
     assert [m["text"] for m in stc.visible()] == ["现在在干嘛", "在上课."] and not any("[state]" in m["text"] for m in stc.messages)
     # 特殊空闲: 对模型只说"空闲" (不能让它在聊天里说出"特殊")
-    fixed2 = datetime(2027, 5, 4, 13, 30)
+    fixed2 = datetime(2027, 5, 4, 13, 15)
     stc.now = lambda: fixed2
     n_calls = len(calls)
     script.append("有点闲.")
     stc.send("现在呢")
     wait(stc)
     msg = calls[-1][1][-1]["content"]
-    assert "空闲" in msg and "PERIOD=特殊空闲" in msg and "14:00" in msg, msg
+    assert "空闲" in msg and "PERIOD=特殊空闲" in msg and "13:30" in msg, msg
     stc.flush()
     # 有日程文件的人设: 自动附加状态与页面同源 (other_status)
     os.makedirs(os.path.join(td, "st2"))
@@ -587,7 +590,7 @@ def _selftest():
     assert "EFFECTIVE_STAGE=90+" in stc.interaction_note()
     assert stc.cfg["interaction"]["gain_cooldowns"]["rumination"] == cooldown_until, "冷却内可以爆发但不重复加值或延长冷却"
     assert stc.cfg["interaction"]["tension"] == 91 and stc.cfg["interaction"]["shame_turns"] == 0
-    assert stc.cfg["interaction"]["burst_until"] == int(fixed2.replace(hour=14, minute=0).timestamp() * 1000)
+    assert stc.cfg["interaction"]["burst_until"] == int(fixed2.replace(hour=13, minute=30).timestamp() * 1000)
     gain_until = int((fixed2 + timedelta(hours=24)).timestamp() * 1000)
     assert stc.cfg["interaction"]["gain_until"] == gain_until
     assert stc.cfg["interaction"]["burst_days"] == ["2027-05-04"]
@@ -903,11 +906,11 @@ def _selftest():
         sleep_clock = [datetime(2027, 5, 4, 23, 50)]
         sleep_name = "睡后.txt"
         open(os.path.join(folder, sleep_name), "w", encoding="utf-8").write(
-            "你是睡后.\n23:40-23:59:特殊空闲\n23:59-06:30:睡眠\n"
+            "你是睡后.\n23:40-00:10:特殊空闲\n00:10-06:30:睡眠\n"
             "长时间休息发起谈话概率:0%\n特殊空闲发起谈话概率:0%\n睡眠发起谈话概率:0%\n")
         rt_file = os.path.join(folder, "睡后_templates.txt")
         if use_rt:
-            open(rt_file, "w", encoding="utf-8").write("初始起点:23:40\n19min:特殊空闲\n")
+            open(rt_file, "w", encoding="utf-8").write("初始起点:23:40\n30min:特殊空闲\n")
         sleep_dir = os.path.join(td, "burst_sleep" + str(use_rt))
         sleeper = Comm(sleep_dir, folder, now=lambda: sleep_clock[0], chat_fn=fake)
         sleeper.ai.set_profile("deepseek", api_key="k")
@@ -960,11 +963,11 @@ def _selftest():
     for use_rt in (False, True):
         lure_clock = [datetime(2027, 5, 4, 23, 50)]
         open(os.path.join(folder, "引诱.txt"), "w", encoding="utf-8").write(
-            "你是引诱.\n23:50-00:40:特殊空闲\n"
+            "你是引诱.\n23:50-00:20:特殊空闲\n"
             "长时间休息发起谈话概率:0%\n特殊空闲发起谈话概率:0%\n")
         lure_rt = os.path.join(folder, "引诱_templates.txt")
         if use_rt:
-            open(lure_rt, "w", encoding="utf-8").write("初始起点:23:50\n50min:特殊空闲\n")
+            open(lure_rt, "w", encoding="utf-8").write("初始起点:23:50\n30min:特殊空闲\n")
         lure_dir = os.path.join(td, "lure" + str(use_rt))
         lure = Comm(lure_dir, folder, now=lambda: lure_clock[0], chat_fn=fake)
         lure.ai.set_profile("deepseek", api_key="k")
@@ -1042,7 +1045,7 @@ def _selftest():
     assert not guard.cfg["interaction"]["last_special_begin"] and not guard.cfg["interaction"]["special_entry_tension"]
     guard.flush()
     # 高张力特殊空闲必谈；用户整段沉默时不爆发，之后豁免 24 小时衰减。
-    special_clock = [fixed2.replace(hour=13, minute=40)]
+    special_clock = [fixed2.replace(hour=13, minute=20)]
     special_dir = os.path.join(td, "special_force")
     special = Comm(special_dir, folder, now=lambda: special_clock[0], chat_fn=fake)
     special.ai.set_profile("deepseek", api_key="k")
@@ -1056,7 +1059,7 @@ def _selftest():
     special_clock[0] = special_clock[0].replace(hour=12, minute=58)
     special.tick()
     assert len(calls) == before, "高张力不在特殊空闲前另发一次"
-    special_clock[0] = special_clock[0].replace(hour=13, minute=40)
+    special_clock[0] = special_clock[0].replace(hour=13, minute=20)
     special.set_muted(True)
     special.tick()
     assert len(calls) == before
@@ -1095,11 +1098,11 @@ def _selftest():
     assert interaction_roll(silent_night, midnight_end + 86400000)["tension"] == 95
     assert abs(interaction_roll(silent_night, midnight_end + 86400000 + quarter)["tension"] - (95 - 7.5 / 96)) < 1e-8
     assert interaction_roll(silent_night, midnight_end - 86400000)["decay_hold_until"] == midnight_end + 86400000
-    peer_special.now = lambda: fixed2.replace(hour=13, minute=40) + timedelta(days=3)
+    peer_special.now = lambda: fixed2.replace(hour=13, minute=20) + timedelta(days=3)
     peer_special._interaction_set({"tension": 95, "decay_at": decay_ms})
     assert peer_special._interaction_prepare()["tension"] < 90
     # 持续时间日程、后台对象同样必谈，前台没有用户发言也不能算爆发。
-    special_clock[0] = fixed2.replace(hour=13, minute=40) + timedelta(days=3)
+    special_clock[0] = fixed2.replace(hour=13, minute=20) + timedelta(days=3)
     open(os.path.join(folder, "时段_templates.txt"), "w", encoding="utf-8").write("初始起点:12:00\n1h:空闲\n1h:特殊空闲\n10h:空闲\n")
     special.reload_schedule()
     owner = special.pid

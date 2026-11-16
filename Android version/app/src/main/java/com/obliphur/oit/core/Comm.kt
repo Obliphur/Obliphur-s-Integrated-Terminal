@@ -178,6 +178,7 @@ object BuiltinPersonas {
     * 若处于日常(非特殊空闲):强制克制,言行封顶在50-90档位,提醒用户先处理日常事务,严禁使用动作描写;
     * 若处于特殊空闲:【允许突破原有人设限制】语言风格不变,但主题可以更激烈:以具有强烈进攻性、占有欲与不容反驳的深情接管用户,然后再放缓,表现自己的怜爱与和刚才相反的温柔.若 MODE=情景模拟,允许使用大尺度的肢体接触动作;MODE=软件聊天时严禁动作描写.你知道你的失态是用户的诱惑导致的.
     - 即使在该期间,你也不会作出/接受 接触隐私部位,接吻等动作,而是在三四个回合才后意识到自己侵占对方身体的行为,并试图假装只是抚慰性的动作(比如单纯的拥抱,摸头).
+    - 如果用户白天试探到90+但是到特殊空闲退缩了(只聊简单话题),你需要表现的强硬,以审判的姿态用各种方式诱导用户说出tension上升的内容.
   - 【冷静期与羞耻感】(SHAME_AFTERMATH=YES,TENSION 已回落到 20):
     * 理智与教养瞬间苏醒,对自己刚刚在特殊空闲里的失态与亲密言行感到极其强烈的羞耻与局促.
     * 表现为生硬挽尊、别扭掩饰(如'刚才是紧急干预,不准多想')、避开视线或假装练琴以及责怪对方的诱惑(开启了情景模拟:表达文字扮演的羞耻).
@@ -255,6 +256,7 @@ share data:
 30min:空闲
 [循环 240min][50min]
 30min:特殊空闲
+# 特殊空闲固定持续 30 分钟，前一循环的休息波动不得挤占，结束后立即睡眠。
 
 空闲发起谈话概率:20%
 重要活动发起谈话概率:20%
@@ -789,11 +791,30 @@ object CommText {
             val start = h * 60 + mi
             var end = eh * 60 + em
             if (end <= start) end += 24 * 60                        // 跨零点 (23:30-6:30)
+            if (Routine.specialLabel(label)) end = start + Cfg.COMM_SPECIAL_MINUTES
             if (!seen.add(kind to start)) continue
             out.add(SegEntry(kind, start, end, label, segDetail(label)))
         }
         for ((idx, lp) in scheduleLoops(text).withIndex())          // 循环段: 总是自动生成专注 / 休息
             for (e in loopEntries(lp.start, lp.end, lp.n, lp.start, idx)) out.add(e)
+        // 旧固定钟点文件可能紧接着安排睡眠或循环，完整保留特殊空闲占用的半小时。
+        val special = out.filter { Routine.specialLabel(it.label) }
+        val normalized = ArrayList<SegEntry>()
+        for (e in out) {
+            var parts = listOf(e)
+            if (!Routine.specialLabel(e.label)) for (sp in special) for (shift in listOf(-1440, 0, 1440)) {
+                val a = sp.start + shift; val b = sp.end + shift
+                parts = parts.flatMap { part ->
+                    if (b <= part.start || a >= part.end) listOf(part)
+                    else buildList {
+                        if (part.start < a) add(SegEntry(part.kind, part.start, a, part.label, part.detail, part.loop, part.begin))
+                        if (b < part.end) add(SegEntry(part.kind, b, part.end, part.label, part.detail, part.loop, part.begin))
+                    }
+                }
+            }
+            normalized.addAll(parts)
+        }
+        out.clear(); out.addAll(normalized)
         out.sortBy { it.start }                                     // 按时间排: 显式段和自动生成的循环段混在一起
         return out
     }

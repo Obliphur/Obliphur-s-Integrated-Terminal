@@ -16,6 +16,7 @@ from routine.routine_common import (
     rint,
     resolve_list,
     plain_label,
+    special_label,
 )
 from routine.routine_parse import (
     Routine,
@@ -91,6 +92,8 @@ def seg(kind: str, a: datetime, b: datetime, label: str, **kw) -> dict:
 def wake_at(r: Routine, d: _date, seed: str) -> datetime:
     """d 这一天起床的时刻 = 初始起点 (平移过的用平移后的, 见 Routine.start_for) + 睡眠结束时间波动."""
     lo, hi = r.fluct["sleep_end"]
+    if r.items and r.items[0]["type"] == "block" and special_label(r.items[0]["label"]):
+        lo, hi = 0, 0                 # 起床后首段就是特殊空闲时，也完整保留固定半小时。
     return datetime.combine(d, datetime.min.time()) + timedelta(minutes=r.start_for(d) + rint(f"{seed}|wake|{d}", lo, hi))
 
 
@@ -131,9 +134,10 @@ def _day_plan(r: Routine, d: _date, seed: str, fluct: bool) -> list:
         else:
             lo, hi = r.fluct["rest_end"] if fluct else (0, 0)
             extra = timedelta(minutes=rint(f"{seed}|le|{d}|{idx}", lo, hi))
-            # 循环休息只挤占下一活动开头，至少留一分钟，后续结束边界不变。
-            room = int(max(0, r.items[idx + 1]["dur"] - 1)) if idx + 1 < len(r.items) and r.items[idx + 1]["type"] == "block" else 0
-            extra = min(extra, timedelta(minutes=room))
+            # 特殊空闲完整保留，其他活动至少留一分钟，后续结束边界不变。
+            following = r.items[idx + 1] if idx + 1 < len(r.items) else None
+            room = int(max(0, following["dur"] - 1)) if following and following["type"] == "block" and not special_label(following["label"]) else 0
+            extra = timedelta(0) if following and following["type"] == "block" and special_label(following["label"]) else min(extra, timedelta(minutes=room))
             if c >= end:
                 c = end
                 continue

@@ -4,6 +4,7 @@
 import re
 
 import config
+from routine.routine_common import special_label
 
 
 PROACTIVE_P = {"idle": 80, "rest": 60, "long": 70, "sleep": 60}   # I~IV 发不发的概率 (%) 的默认值: 人设里没写对应 "xxx发起谈话概率:n%" 时用
@@ -84,6 +85,8 @@ def schedule_entries(text: str) -> list:
         start, end = h * 60 + mi, eh * 60 + em
         if end <= start:                                       # 跨零点 (23:30-6:30)
             end += 24 * 60
+        if special_label(label):
+            end = start + config.COMM_SPECIAL_MINUTES
         if (kind, start) in seen:
             continue
         seen.add((kind, start))
@@ -92,6 +95,27 @@ def schedule_entries(text: str) -> list:
         for e in loop_entries(start, end, n, start):
             e["loop"] = idx
             out.append(e)
+    # 旧固定钟点文件可能紧接着安排睡眠或循环，完整保留特殊空闲占用的半小时。
+    special = [e for e in out if special_label(e["label"])]
+    normalized = []
+    for e in out:
+        parts = [e]
+        if not special_label(e["label"]):
+            for sp in special:
+                for shift in (-1440, 0, 1440):
+                    a, b = sp["start"] + shift, sp["end"] + shift
+                    trimmed = []
+                    for part in parts:
+                        if b <= part["start"] or a >= part["end"]:
+                            trimmed.append(part)
+                        else:
+                            if part["start"] < a:
+                                trimmed.append(dict(part, end=a))
+                            if b < part["end"]:
+                                trimmed.append(dict(part, start=b))
+                    parts = trimmed
+        normalized.extend(parts)
+    out = normalized
     out.sort(key=lambda e: e["start"])                         # 按时间排: 显式段和自动生成的循环段混在一起
     return out
 

@@ -4,7 +4,7 @@
   · 日程是一串**持续时间**: 以初始起点累计各项持续时间固定结束边界; 实际起床可波动, 最后一项结束立即睡眠.
   · 每天的波动 (起床 / 循环内专注开始 / 专注结束) 由 (日期 + 人设) 决定, 同一天任何设备算出来都一样 (sha256, Python 和 Kotlin 一致).
     起床波动只改变首段活动长度; 活动后的专注起点固定, 循环内专注可挪动两端且不留空档; 睡眠开始不再波动.
-  · 循环 (1.0.400) 总是以休息结束: 不直接截断最后一轮, 而是让专注提前结束, 休息的末尾对上循环的末尾; 最后那次休息再比循环的结束晚 [循环末尾休息结束时间波动] 分钟, 只挤占下一活动开头, 不移动活动结束边界.
+  · 循环 (1.0.400) 总是以休息结束: 不直接截断最后一轮, 而是让专注提前结束, 休息的末尾对上循环的末尾; 最后那次休息再比循环的结束晚 [循环末尾休息结束时间波动] 分钟, 只挤占下一活动开头, 不移动活动结束边界. 下一项是特殊空闲时不延后休息, 特殊空闲固定完整 30 分钟.
   · 所有数据都是**实时算**的: 只给已经发生的部分 (整点记录只给已经结束的格子, 计时器 / 日历 / 统计只算到现在).
   · 算过的会存下来 (Store): 时间线 (实际发生的一段段) 和整点记录的格子. 好几天没被调用 (程序没开 / 没人查) 之后, 缺的部分按规则补齐.
 
@@ -84,7 +84,7 @@ from .routine_query import (
 def _selftest():
     import tempfile
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    routine_text = open(os.path.join(here, "personas", "Claudia_routine.txt"), encoding="utf-8").read()
+    routine_text = open(os.path.join(here, "personas", "Claudia_templates.txt"), encoding="utf-8").read()
     # 起床波动是 [-5,0]; 这里仍用 [-20,10] 测 (Kotlin RoutineTest 的期望值是按它算的, 电脑和手机必须一样), 新范围见 comm.py 自检的共时闹钟
     assert "睡眠结束时间波动:[-5,0]" in routine_text
     routine_text = routine_text.replace("睡眠结束时间波动:[-5,0]", "睡眠结束时间波动:[-20,10]")
@@ -136,7 +136,11 @@ def _selftest():
             else:
                 ls = [s for s in plan if s["loop"] == i]
                 assert ls[0]["kind"] == "focus" and ls[-1]["kind"] == "rest"
-                assert ls[-1]["end"] == nominal + timedelta(minutes=rint(f"{seed}|le|{d}|{i}", 0, 5))
+                extra = 0 if i + 1 < len(r.items) and "特殊空闲" in r.items[i + 1].get("label", "") else rint(f"{seed}|le|{d}|{i}", 0, 5)
+                assert ls[-1]["end"] == nominal + timedelta(minutes=extra)
+        special = next(s for s in plan if s["label"] == "特殊空闲")
+        assert special["start"] == datetime.combine(d, datetime.min.time()).replace(hour=23)
+        assert special["end"] - special["start"] == timedelta(minutes=30)
         assert plan[-1]["start"] == nominal and not any(s["gap"] for s in plan)
         for h, m, kind in ((7, 0, "focus"), (13, 0, "focus"), (19, 0, "focus"), (23, 30, "sleep")):
             boundary = datetime.combine(d, datetime.min.time()).replace(hour=h, minute=m)
@@ -145,6 +149,19 @@ def _selftest():
     shifted.set_shifts([(_date(2026, 3, 1), 450)])
     shifted_plan = day_plan(shifted, _date(2026, 3, 1), seed)
     assert shifted_plan[-1]["start"] == datetime(2026, 3, 2, 0, 30), "平移一小时后固定边界跨午夜"
+    # 声明时长与波动不影响半小时特殊空闲，跨午夜也与睡眠无缝衔接。
+    for declared, jitter in (("5min", "[5,5]"), ("2h", "[-5,-5]")):
+        fixed = parse(routine_text.replace("30min:特殊空闲", declared + ":特殊空闲").replace("循环末尾休息结束时间波动:[0,5]", "循环末尾休息结束时间波动:" + jitter))
+        fixed.set_shifts([(_date(2026, 3, 1), 465)])
+        fixed_plan = day_plan(fixed, _date(2026, 3, 1), seed)
+        special = next(s for s in fixed_plan if s["label"] == "特殊空闲")
+        assert special["start"] == datetime(2026, 3, 2, 0, 15)
+        assert special["end"] == fixed_plan[-1]["start"] == datetime(2026, 3, 2, 0, 45)
+        assert all(a["end"] == b["start"] for a, b in zip(fixed_plan, fixed_plan[1:]))
+    first_special = parse("初始起点:23:50\n5min:特殊空闲\n睡眠结束时间波动:[-5,5]\n")
+    first_plan = day_plan(first_special, _date(2026, 3, 1), seed)
+    assert first_plan[0]["start"] == datetime(2026, 3, 1, 23, 50) and first_plan[0]["end"] == datetime(2026, 3, 2, 0, 20)
+    assert first_plan[-1]["end"] == wake_at(first_special, _date(2026, 3, 2), seed)
     # 休息时长 = F(n): 100 分钟专注后休息 38 分钟
     d0 = _date(2026, 3, 1)
     p0 = day_plan(r, d0, seed, fluct=False)

@@ -92,6 +92,11 @@ def _dt(s: str) -> datetime:
     return datetime.fromisoformat(s)
 
 
+def special_label(label: str) -> bool:
+    """按标签主体识别特殊空闲，不把括号里的活动说明当成段类型。"""
+    return "特殊空闲" in re.split(r"[(（]", str(label or ""), maxsplit=1)[0]
+
+
 def plain_label(label: str) -> bool:
     """这一段的标签是不是普通的"空闲 / 休息" (不含"特殊空闲")."""
     head = re.split(r"[(（]", str(label or ""), maxsplit=1)[0].strip().lower()

@@ -490,7 +490,7 @@ class CommTest {
         c.importPersona("时段.txt", "你是时段.\n13:00-14:00:特殊空闲\n14:00-18:00:空闲\n".byteInputStream())
         seedTestTension(File(c.personas, "时段.txt"))
         c.set(persona = "时段.txt", splitSend = false)
-        clock = LocalDateTime.of(2027, 5, 4, 13, 30)
+        clock = LocalDateTime.of(2027, 5, 4, 13, 15)
         val owner = Comm.pidOf("时段.txt")
         fun state() = c.syncDoc()["interaction:$owner"] as JSONObject
         script.add("我听到了.[tension:1:boundary:20][tension:1:rumination:30][tension:1:rumination:20]")
@@ -605,7 +605,7 @@ class CommTest {
         c.importPersona("时段.txt", "你是时段.\n13:00-14:00:特殊空闲\n".byteInputStream())
         seedTestTension(File(c.personas, "时段.txt"))
         c.set(persona = "时段.txt")
-        clock = LocalDateTime.of(2027, 5, 4, 13, 30)
+        clock = LocalDateTime.of(2027, 5, 4, 13, 15)
         assertFalse(c.setScenario(true))
         val owner = Comm.pidOf("时段.txt")
         c.applyDoc(mapOf("milestone:$owner:200" to JSONObject().put("clear", 0)))
@@ -731,9 +731,9 @@ class CommTest {
             val dir = File(td, "d").also { it.mkdirs() }
             val personas = File(td, "p")
             var c = comm(dir, personas)
-            c.importPersona("睡后.txt", ("你是睡后.\n23:40-23:59:特殊空闲\n23:59-06:30:睡眠\n" +
+            c.importPersona("睡后.txt", ("你是睡后.\n23:40-00:10:特殊空闲\n00:10-06:30:睡眠\n" +
                 "长时间休息发起谈话概率:0%\n特殊空闲发起谈话概率:0%\n睡眠发起谈话概率:0%\n").byteInputStream())
-            if (useRt) c.importPersona("睡后_templates.txt", "初始起点:23:40\n19min:特殊空闲\n".byteInputStream())
+            if (useRt) c.importPersona("睡后_templates.txt", "初始起点:23:40\n30min:特殊空闲\n".byteInputStream())
             seedTestTension(File(c.personas, "睡后.txt"))
             c.set(persona = "睡后.txt", splitSend = false)
             c.setMuted(true)
@@ -850,7 +850,7 @@ class CommTest {
         seedTestTension(File(c.personas, "特殊.txt"))
         c.set(persona = "特殊.txt", splitSend = false)
         c.setMuted(true)
-        clock = LocalDateTime.of(2027, 5, 4, 13, 30)
+        clock = LocalDateTime.of(2027, 5, 4, 13, 15)
         val owner = Comm.pidOf("特殊.txt")
         fun state() = CommInteraction.parse(c.syncDoc()["interaction:$owner"] as JSONObject)
         val ms = clock.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
@@ -889,9 +889,9 @@ class CommTest {
             val dir = File(td, "d").also { it.mkdirs() }
             val personas = File(td, "p")
             var c = comm(dir, personas)
-            c.importPersona("引诱.txt", ("你是引诱.\n23:50-00:40:特殊空闲\n" +
+            c.importPersona("引诱.txt", ("你是引诱.\n23:50-00:20:特殊空闲\n" +
                 "长时间休息发起谈话概率:0%\n特殊空闲发起谈话概率:0%\n").byteInputStream())
-            if (useRt) c.importPersona("引诱_templates.txt", "初始起点:23:50\n50min:特殊空闲\n".byteInputStream())
+            if (useRt) c.importPersona("引诱_templates.txt", "初始起点:23:50\n30min:特殊空闲\n".byteInputStream())
             seedTestTension(File(c.personas, "引诱.txt"))
             c.set(persona = "引诱.txt", splitSend = false)
             val owner = Comm.pidOf("引诱.txt")
@@ -903,7 +903,7 @@ class CommTest {
             val ms = clock.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
             c.applyDoc(mapOf("interaction:$owner" to CommInteraction(tension = 95.0, ts = ms).json().put("clear", 0)))
             val status = c.otherStatus()!!
-            val begin = status.first.begin ?: status.second.minusMinutes(50)
+            val begin = status.first.begin ?: status.second.minusMinutes(Cfg.COMM_SPECIAL_MINUTES.toLong())
             script.add("白天那件事，我还记着.")
             c.tick(); wait(c)
             assertEquals(95.0, state().specialEntryTension, 1e-8)
@@ -997,7 +997,7 @@ class CommTest {
             "长时间休息发起谈话概率:0%\n空闲发起谈话概率:0%\n特殊空闲发起谈话概率:0%\n").byteInputStream())
         seedTestTension(File(c.personas, "特殊.txt"))
         c.set(persona = "特殊.txt", splitSend = false)
-        clock = LocalDateTime.of(2027, 5, 4, 13, 40)
+        clock = LocalDateTime.of(2027, 5, 4, 13, 20)
         val owner = Comm.pidOf("特殊.txt")
         fun state() = CommInteraction.parse(c.syncDoc()["interaction:$owner"] as JSONObject)
         fun setTension(tension: Int) {
@@ -1011,7 +1011,7 @@ class CommTest {
         setTension(91)
         clock = clock.withHour(12).withMinute(58)
         c.tick(); assertEquals(0, calls.size)
-        clock = clock.withHour(13).withMinute(40)
+        clock = clock.withHour(13).withMinute(20)
         c.setMuted(true); c.tick(); assertEquals(0, calls.size)
         c.setMuted(false)
         c.addForTest("sys", "[系统] 刚发过")
@@ -1051,14 +1051,14 @@ class CommTest {
         assertEquals(95 - 7.5 / 96.0, silent.roll(end + 86400000L + quarter).tension, 1e-8)
         assertEquals(end + 86400000L, silent.roll(end - 86400000L).decayHoldUntil)
         assertEquals(silent, CommInteraction.parse(silent.json()))
-        clock = LocalDateTime.of(2027, 5, 7, 13, 40)
+        clock = LocalDateTime.of(2027, 5, 7, 13, 20)
         val old = peer.syncDoc()["interaction:$owner"] as JSONObject
         peer.applyDoc(mapOf("interaction:$owner" to CommInteraction(tension = 95.0, decayAt = end - 86400000L,
             ts = maxOf(old.getLong("ts") + 1, clock.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli())).json().put("clear", 0)))
         peer.tick()
         assertTrue(CommInteraction.parse(peer.syncDoc()["interaction:$owner"] as JSONObject).tension < 90)
         // 持续时间日程和后台对象同样必谈一次。
-        clock = LocalDateTime.of(2027, 5, 7, 13, 40)
+        clock = LocalDateTime.of(2027, 5, 7, 13, 20)
         c.importPersona("特殊_templates.txt", "初始起点:12:00\n1h:空闲\n1h:特殊空闲\n10h:空闲\n".byteInputStream())
         c.reloadSchedule()
         setTension(91)
@@ -1816,6 +1816,8 @@ class CommTest {
         assertEquals("", CommText.segKind("不休息"))
         assertEquals("", CommText.segKind(""))
         assertEquals(6 * 60 + 30 + 24 * 60, CommText.scheduleEntries("23:30-6:30:睡眠").first().end)
+        assertEquals(listOf(1420 to 1450, 1450 to 1830), CommText.scheduleEntries("23:40-23:59:特殊空闲\n23:59-06:30:睡眠\n").map { it.start to it.end })
+        assertEquals(810, CommText.scheduleEntries("13:00-15:00:特殊空闲").first().end)
         assertEquals("午饭", CommText.scheduleEntries("12:30-13:00:空闲(午饭)").first().detail)
         // 专注 / 休息只能用循环写: 逐段写的 (中英文) 一律不认
         assertEquals(listOf("sleep" to 1410), CommText.scheduleSegments(
