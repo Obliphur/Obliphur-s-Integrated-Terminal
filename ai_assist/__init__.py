@@ -274,6 +274,42 @@ def _selftest():
         pass
     assert len(c2.order) == MAX_CONFIGS
 
+    # 删除预设后重开: 列表、默认项、名称和人设分配不能被预设补回或挤掉。
+    c3 = AIConfig(os.path.join(tempfile.mkdtemp(), "ai3.json"))
+    cid = c3.add_config("保留的中转")
+    c3.set_profile(cid, family="gemini", protocol="openai", model="relay-model")
+    assert c3.set_active("claude")
+    c3.assign_config("保留.txt", cid)
+    c3.assign_config("删除.txt", "gemini")
+    assert c3.remove_config("claude") and c3.remove_config("gemini")
+    assert c3.rename_config("deepseek", "保留的预设")
+    assert c3.save()
+    reopened = AIConfig(c3.path, template=DEFAULT_TEMPLATE)
+    assert reopened.order == c3.order, "删除的默认 AI 配置不应在重启后重新生成"
+    assert reopened.profiles == c3.profiles and reopened.names == c3.names
+    assert reopened.provider == c3.provider and reopened.assign == c3.assign
+    assert reopened.config_for("删除.txt") == reopened.provider
+
+    # 只保留自建配置并填满 10 份, 重启不能让恢复的预设挤掉自建项。
+    for preset in PROVIDER_ORDER:
+        if preset in c3.profiles:
+            assert c3.remove_config(preset)
+    while c3.add_config("自建"):
+        pass
+    assert c3.set_active(c3.order[-1]) and c3.save()
+    for _ in range(2):
+        reopened = AIConfig(c3.path, template=DEFAULT_TEMPLATE)
+        assert reopened.order == c3.order and len(reopened.order) == MAX_CONFIGS
+        assert reopened.profiles == c3.profiles and reopened.names == c3.names
+        assert reopened.provider == c3.provider and reopened.assign == c3.assign
+        assert reopened.save()
+
+    # 空列表不是界面允许保存的状态, 仍保留原来的预设兜底。
+    empty_path = os.path.join(tempfile.mkdtemp(), "empty.json")
+    with securefile.open(empty_path, "w", encoding="utf-8") as f:
+        json.dump({"order": [], "profiles": {}}, f)
+    assert AIConfig(empty_path).order == list(PROVIDER_ORDER)
+
     assert endpoint({"base_url": "https://api.openai.com/v1", "protocol": "openai"}) \
         == "https://api.openai.com/v1/chat/completions"
     assert endpoint({"base_url": "https://api.deepseek.com/", "protocol": "openai"}) \
@@ -708,6 +744,7 @@ def _selftest():
                 "api_key": "sk-plain-777"}}}, f)
         m = AIConfig(path)
         assert m.profile("deepseek")["api_key"] == "sk-plain-777"
+        assert m.order == list(PROVIDER_ORDER), "旧版稀疏配置仍补齐服务商预设"
         txt = open(path, encoding="utf-8").read()
         assert "sk-plain-777" not in txt and "dpapi:" in txt, "旧明文 Key 应被加密改存"
         assert AIConfig(path).profile("deepseek")["api_key"] == "sk-plain-777"

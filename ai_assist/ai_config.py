@@ -68,6 +68,10 @@ class AIConfig:
             return
         saved = data.get("profiles")
         if isinstance(saved, dict):
+            # 带 order 的命名配置是完整列表, 不能补回已删除的预设; 旧格式仍按预设补全。
+            if isinstance(data.get("order"), list):
+                self.profiles = {}
+                self.names = {}
             for k, prof in saved.items():
                 if not isinstance(k, str) or not isinstance(prof, dict):
                     continue

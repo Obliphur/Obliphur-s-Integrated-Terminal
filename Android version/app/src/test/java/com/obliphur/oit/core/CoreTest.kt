@@ -126,6 +126,46 @@ class CoreTest {
         assertEquals("openai", AiConfig(file).profile("custom").protocol)
     }
 
+    /** 删除默认或其他预设后, 重启保留列表与分配; 满额自建项不能被预设挤掉。 */
+    @Test
+    fun deletedAiPresetsStayDeleted() {
+        val file = File(tmp(), "ai_config.json")
+        val cfg = AiConfig(file)
+        val presets = cfg.order.toList()
+        val id = cfg.addConfig("保留的中转")
+        assertTrue(id.isNotEmpty())
+        cfg.putProfile(id, Profile("custom", "https://relay.example/v1", "openai", "relay-model", "", "gemini", "custom"))
+        assertTrue(cfg.setActive("claude"))
+        cfg.assignConfig("保留.txt", id)
+        cfg.assignConfig("删除.txt", "gemini")
+        assertTrue(cfg.removeConfig("claude"))
+        assertTrue(cfg.removeConfig("gemini"))
+        assertTrue(cfg.renameConfig("deepseek", "保留的预设"))
+        assertTrue(cfg.save())
+        var reopened = AiConfig(file)
+        assertEquals(cfg.order, reopened.order)
+        assertEquals(cfg.profiles, reopened.profiles)
+        assertEquals(cfg.names, reopened.names)
+        assertEquals(cfg.provider, reopened.provider)
+        assertEquals(cfg.assign, reopened.assign)
+        assertEquals(reopened.provider, reopened.configFor("删除.txt"))
+
+        for (preset in presets) if (preset in cfg.profiles) assertTrue(cfg.removeConfig(preset))
+        while (cfg.addConfig("自建").isNotEmpty()) { }
+        assertTrue(cfg.setActive(cfg.order.last()))
+        assertTrue(cfg.save())
+        repeat(2) {
+            reopened = AiConfig(file)
+            assertEquals(cfg.order, reopened.order)
+            assertEquals(com.obliphur.oit.ai.Ai.MAX_CONFIGS, reopened.order.size)
+            assertEquals(cfg.profiles, reopened.profiles)
+            assertEquals(cfg.names, reopened.names)
+            assertEquals(cfg.provider, reopened.provider)
+            assertEquals(cfg.assign, reopened.assign)
+            assertTrue(reopened.save())
+        }
+    }
+
     private fun tmp(): File = Files.createTempDirectory("oit").toFile()
 
     @Test
