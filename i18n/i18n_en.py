@@ -2,6 +2,8 @@
 
 
 EN = {
+    "TENSION的具体含义、各档位的情绪与言行表现、BURST期间及SHAME_AFTERMATH冷静期的反应均以当前人设文件为准。状态字段只提供数值、档位与阶段，不预设任何情感、关系或性格含义；人设未定义的含义不自行补设。": "The current persona file defines what TENSION means, the emotions and behavior at each stage, and reactions during BURST and the SHAME_AFTERMATH cooldown. Status fields provide values and stages only, without prescribing emotions, relationships or personality. Do not invent meanings absent from the persona.",
+    "软件聊天、日常时段或生效档位0-50严禁动作描写;情景模拟且处于特殊空闲时,50-90允许有边界的动作,尊重用户意愿,不强迫接触;90+才允许更强烈的动作描写.具体动作与表达风格遵循人设.": "Action descriptions are forbidden in software chat, during ordinary periods, or at effective stage 0-50. In scenario mode during special free time, stage 50-90 permits bounded actions that respect the user's wishes without forced contact; only 90+ permits more intense action descriptions. Specific actions and expression follow the persona.",
     '基础增量范围0至{maximum}，在正常回复末尾附加[tension:序号:条件:增量]，0可省略。有效条件：': 'Base gains range from 0 to {maximum}. Append [tension:index:condition:gain] to the normal reply; omit zero gains. Declared conditions: ',
     '每个条件{hours}小时内仅加一次，系统事件与模型同名条件共用冷却。': 'Each condition may add tension once every {hours} hours. System events share the cooldown of the same condition reported by the model.',
 
