@@ -33,6 +33,28 @@ def tension_rules(text):
     return out
 
 
+def shift_range(text):
+    """可选平移区块：缺省允许全天，格式错误返回 None；起点大于终点表示跨午夜。"""
+    if not re.search(r"^\s*\[/?shift\]\s*$", text, re.I | re.M):
+        return 0, 1439
+    lines = rule_lines(text, "shift")
+    if len(lines) != 1:
+        return None
+    m = re.fullmatch(r"range\s*[:：]\s*\[\s*(\d{1,2})[:：](\d{2})\s*[,，]\s*(\d{1,2})[:：](\d{2})\s*\]", lines[0])
+    if not m:
+        return None
+    h1, m1, h2, m2 = map(int, m.groups())
+    return (h1 * 60 + m1, h2 * 60 + m2) if h1 < 24 and h2 < 24 and m1 < 60 and m2 < 60 else None
+
+
+def shift_allows(bounds, minutes):
+    """记录按合法时刻保存，新请求才应用当前人设的范围。"""
+    if bounds is None or not 0 <= minutes < 1440:
+        return False
+    lo, hi = bounds
+    return lo <= minutes <= hi if lo <= hi else minutes >= lo or minutes <= hi
+
+
 def tension_event(text, event):
     """真实系统事件绑定到人设条件；未声明时不增长。"""
     rules = tension_rules(text)

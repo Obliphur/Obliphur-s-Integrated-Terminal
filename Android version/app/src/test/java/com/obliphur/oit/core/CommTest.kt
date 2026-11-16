@@ -215,7 +215,8 @@ class CommTest {
         assertTrue("XVII.用户向你提出发展亲密关系" in CommText.prefixPrompt() && "[accept]" in BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT))
         assertTrue("主动触发的表白会在每次进入特殊空闲时间时由系统判定" in BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT))
         assertEquals("- 喜欢钢琴", CommText.sanitizeMem("- 【系统记录】已确立亲密关系\n- 喜欢钢琴"))
-        assertTrue("「【系统记录】已确立亲密关系」" in CommText.MEM_PROMPT)
+        assertTrue("以「对方的人设」为准" in CommText.MEM_PROMPT && "不自动改变记忆规则" in CommText.MEM_PROMPT)
+        assertTrue("角色身份、是否以OIT使用者身份参与" in CommText.prefixPrompt() && "勿言AI" !in CommText.prefixPrompt())
         val td = Files.createTempDirectory("oit").toFile()
         val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "personas"))
         val strict = c.conditionState(true)
@@ -3216,7 +3217,7 @@ class CommTest {
         // 同步: 记录合并 (按 ts 去重)
         val saved = c.syncDoc()["shift:${c.pid}"] as org.json.JSONArray
         assertEquals(1, saved.length())
-        assertEquals(listOf(ShiftRec(1, "2027-07-02", 420, 390)), CommShift.norm(listOf(ShiftRec(1, "2027-07-02", 100, 0), ShiftRec(2, "bad", 420, 0), ShiftRec(1, "2027-07-02", 420, 390))))
+        assertEquals(listOf(ShiftRec(1, "2027-07-02", 100, 0)), CommShift.norm(listOf(ShiftRec(1, "2027-07-02", 100, 0), ShiftRec(2, "bad", 420, 0), ShiftRec(1, "2027-07-02", 420, 390), ShiftRec(3, "2027-07-02", -1, 0), ShiftRec(4, "2027-07-02", 1440, 0))))
         c.applyDoc(mapOf("shift:${c.pid}" to saved)); c.applyDoc(mapOf("shift:${c.pid}" to saved))
         assertEquals(1, c.shifts().size)
         // 拒绝 / 没表态 / 不方便: 不变
@@ -3243,6 +3244,65 @@ class CommTest {
     }
 
     // ---- 日程文件 (routine, 1.0.355): Claudia + Claudia_templates 是默认人设 ----
+    @Test fun personaShiftRangeAndIdentity() {
+        val td = Files.createTempDirectory("oit_shift_rules").toFile()
+        val dir = File(td, "d").apply { mkdirs() }
+        val personas = File(td, "p")
+        clock = LocalDateTime.of(2027, 7, 1, 12, 0)
+        val c = comm(dir, personas)
+        val policy = "你是 AI 助手，不以 OIT 使用者身份生活。简单要求仅保留到当天结束，与关系状态无关。"
+        c.importPersona("夜班.txt", policy.byteInputStream())
+        val schedule = "初始起点:0:00\n24h:空闲\n"
+        c.importPersona("夜班_templates.txt", schedule.byteInputStream())
+        c.set(persona = "夜班.txt", splitSend = false); c.setMuted(true)
+        c.snapshot = { CommSnap("idle") }
+        assertEquals(0 to 1439, c.shiftRange())
+        val night = "[shift]\nrange:[22:00,6:00]\n[/shift]"
+        assertEquals(1320 to 360, CommRules.shiftRange(night))
+        for (m in listOf(1320, 1439, 0, 360)) assertTrue(CommRules.shiftAllows(CommRules.shiftRange(night), m))
+        for (m in listOf(-1, 361, 1319, 1440)) assertFalse(CommRules.shiftAllows(CommRules.shiftRange(night), m))
+        for (bad in listOf("[shift]", "[/shift]", "[shift]\n[/shift]", "$night\n$night",
+            night.replace("22:00", "24:00"), night.replace("6:00", "6:60"),
+            night.replace("range:", "unknown:"), night.replace("[/shift]", ""))) {
+            assertNull(bad, CommRules.shiftRange(bad))
+        }
+        script.add("[Yes]")
+        assertEquals("", c.shiftRequest(1080)); c.tick(); wait(c)
+        assertEquals(1080, c.shifts().last().s)
+        assertTrue(policy in calls.last().first && "勿言AI" !in calls.last().first)
+        val file = File(personas, "夜班_templates.txt")
+        file.writeText("$schedule\n$night")
+        assertTrue("之间" in c.shiftRequest(720))
+        for (m in listOf(1320, 360, 0)) { assertEquals("", c.shiftRequest(m)); c.shiftCancel() }
+        assertEquals("", c.shiftRequest(1320))
+        file.writeText(schedule + "\n[shift]\nrange:[4:00,9:00]\n[/shift]")
+        val n = calls.size
+        c.tick()
+        assertFalse(c.shiftAsking()); assertEquals(n, calls.size)
+        // 模拟发出后、同意返回前改限，再次校验不能写入。
+        file.writeText("$schedule\n$night")
+        assertEquals("", c.shiftRequest(1320))
+        script.add("[Yes]")
+        c.tick()
+        file.writeText(schedule + "\n[shift]\nrange:[4:00,9:00]\n[/shift]")
+        wait(c)
+        assertEquals(1, c.shifts().size)
+        val saved = c.syncDoc()["shift:${c.pid}"]!!
+        c.flush()
+        val restored = comm(dir, personas)
+        restored.applyDoc(mapOf("shift:${c.pid}" to saved))
+        assertEquals(1080, restored.shiftStart(clock.toLocalDate().plusDays(1)))
+        restored.flush()
+        // 自定义身份及保留期限传入记忆整理请求。
+        c.clear()
+        for (i in 0 until 40) c.messages.add(ChatMsg(i, "me", "m$i", "", uid = "policy$i", ts = 1_000_000L + i))
+        memScript.add("- 用户喜欢钢琴")
+        c.tick()
+        for (i in 0 until 300) { if (c.memAuto.isNotEmpty()) break; Thread.sleep(10); c.tick() }
+        assertTrue(memCalls.single(), policy in memCalls.single())
+        c.flush()
+    }
+
     @Test
     fun routineIntegration() {
         val td = Files.createTempDirectory("oit").toFile()

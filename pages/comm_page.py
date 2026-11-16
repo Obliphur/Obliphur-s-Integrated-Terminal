@@ -95,7 +95,7 @@ class CommPage(CommVoiceMixin, tk.Frame):
         ttk.Button(tools, text="🤝", width=3, command=self._joint).pack(side="left", padx=(4, 0))   # 联合行动
         self.btn_alarm = ttk.Button(tools, text="⏲", width=3, command=self._co_alarm)           # ⏰ 现在的对象是共时闹钟 / ⏲ 不是
         self.btn_alarm.pack(side="left", padx=(4, 0))
-        self.btn_shift = ttk.Button(tools, text="🕰", width=3, command=self._shift)              # 起点平移: 请求对方把日程起点换到 4:00-9:00 之间 (⏳ = 等对方回复)
+        self.btn_shift = ttk.Button(tools, text="🕰", width=3, command=self._shift)              # 起点平移：范围由人设模板声明 (⏳ = 等对方回复)
         self.btn_shift.pack(side="left", padx=(4, 0))
         # share data: 打开后离开沟通页, 在别的页面里对方能看到那一页上你们的数据, 页面下方有聊天悬浮窗; 回到沟通自动关闭
         self.btn_share = ttk.Button(tools, text="🙈", width=3, command=self._toggle_share)         # 👀 share data 开着 / 🙈 关着
@@ -494,7 +494,7 @@ class CommPage(CommVoiceMixin, tk.Frame):
 
     # ---- 起点平移 ----
     def _shift(self):
-        """🕰 起点平移: 请求对方把日程起点 (初始起点) 换到 4:00-9:00 之间的某个时刻, 明天起生效; 对方回 [Yes] / [No]. 等回复的时候再点 = 取消."""
+        """🕰 起点平移：范围由人设模板声明，明天起生效；等回复时再点即取消。"""
         c = self.comm
         if c.shift_asking():
             c.shift_cancel()
@@ -507,19 +507,23 @@ class CommPage(CommVoiceMixin, tk.Frame):
         if cur is None:
             toast.warn(tr("这个人设没有日程文件, 不能平移起点"))
             return
+        bounds = c.shift_range()
+        if bounds is None:
+            toast.warn(tr("起点平移模板格式错误"))
+            return
         bg = COLORS["bg"]
         width = config.scaled(460)
         dlg = Modal(self.winfo_toplevel(), tr("起点平移"), width=width, height=config.scaled(300))
         wrap = width - config.scaled(60)
-        tk.Label(dlg.body, text=tr("请求对方把日程的起点平移到新的时刻 (4:00 - 9:00). 对方同意后明天起生效, 今天的日程不变; "
-                                   "只记在 OIT 里, 不会修改人设文件. 对方可以拒绝."),
+        tk.Label(dlg.body, text=tr("请求对方把日程的起点平移到新的时刻 ({lo} - {hi}). 对方同意后明天起生效, 今天的日程不变; "
+                                   "只记在 OIT 里, 不会修改人设文件. 对方可以拒绝.", lo=comm_mod.hm_text(bounds[0]), hi=comm_mod.hm_text(bounds[1])),
                  bg=bg, fg=COLORS["text_dim"], font=config.font("small"), justify="left", anchor="w", wraplength=wrap).pack(fill="x")
         tk.Label(dlg.body, text=tr("明天的起点: {t}", t=comm_mod.hm_text(cur)), bg=bg, fg=COLORS["text"],
                  font=config.font("body"), anchor="w").pack(fill="x", pady=(10, 4))
         row = tk.Frame(dlg.body, bg=bg)
         row.pack(fill="x")
-        lo_h, hi_h = comm_mod.SHIFT_LO // 60, comm_mod.SHIFT_HI // 60
-        var_h = tk.StringVar(value=str(min(hi_h, max(lo_h, cur // 60))))
+        lo_h, hi_h = 0, 23
+        var_h = tk.StringVar(value=str(cur // 60))
         var_m = tk.StringVar(value=f"{cur % 60:02d}")
         ttk.Spinbox(row, from_=lo_h, to=hi_h, textvariable=var_h, width=4, wrap=False).pack(side="left")
         tk.Label(row, text=":", bg=bg, fg=COLORS["text"], font=config.font("body", bold=True)).pack(side="left", padx=4)
@@ -621,7 +625,7 @@ class CommPage(CommVoiceMixin, tk.Frame):
                 ("👀 / 🙈", "分享数据 (share data)", "点一下切换 (👀 = 打开, 要先征得对方同意; ⏳ = 等对方回复). 打开后去别的页面, 对方会收到那一页上你们的数据; 回到沟通自动关闭. 对方也可以发邀请, 点「接受」才会打开."),
                 ("🔔 / 🔕", "主动发起", "🔔 = 允许这个对象主动找你, 🔕 = 禁止."),
                 ("⏰ / ⏲", "共时闹钟", "⏰ = 闹钟跟随这个对象的起床时间; 响铃的设备手动选, 一次只能有一个对象."),
-                ("🕰", "起点平移", "请求对方以15分钟为间隔平移日程起点, 新起点在4:00 - 9:00之间, 同意后明天起生效."),
+                ("🕰", "起点平移", "请求对方平移日程起点, 允许范围由人设模板决定, 同意后明天起生效."),
                 ("🖼", "识别字体", "选一张图片, 把上面的文字读出来放进聊天框. 不能发送图片."),
                 ("🤝", "联合行动", "邀请对方一起做一次合约: 在合约页选词条, 输入开始时间; 对方回 [Yes] 就按约开始."))
         area = ScrollArea(dlg.body, height=config.scaled(400), bg=bg)

@@ -38,6 +38,23 @@ object CommRules {
         return out[event]
     }
 
+    /** 缺省允许全天；起点大于终点表示跨午夜，错误区块不接受新请求。 */
+    fun shiftRange(text: String): Pair<Int, Int>? {
+        if (!Regex("""^\s*\[/?shift\]\s*$""", setOf(RegexOption.IGNORE_CASE, RegexOption.MULTILINE)).containsMatchIn(text)) return 0 to 1439
+        val entries = lines(text, "shift")
+        if (entries.size != 1) return null
+        val m = Regex("""range\s*[:：]\s*\[\s*(\d{1,2})[:：](\d{2})\s*[,，]\s*(\d{1,2})[:：](\d{2})\s*\]""").matchEntire(entries[0]) ?: return null
+        val (h1, m1, h2, m2) = m.destructured.toList().map { it.toInt() }
+        if (h1 >= 24 || h2 >= 24 || m1 >= 60 || m2 >= 60) return null
+        return (h1 * 60 + m1) to (h2 * 60 + m2)
+    }
+
+    fun shiftAllows(bounds: Pair<Int, Int>?, minutes: Int): Boolean {
+        if (bounds == null || minutes !in 0 until 1440) return false
+        val (lo, hi) = bounds
+        return if (lo <= hi) minutes in lo..hi else minutes >= lo || minutes <= hi
+    }
+
     data class Conditions(val values: Map<String, Double>, val enabled: Set<String>) {
         val jointDays get() = (values["joint_days"] ?: 1.0).toInt()
         val jointLv get() = (values["joint_lv"] ?: 0.0).toInt()

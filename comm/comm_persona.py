@@ -10,7 +10,7 @@ import shutil
 import zlib
 import config
 
-SHIFT_LO, SHIFT_HI = 4 * 60, 9 * 60   # 起点平移允许的范围: 新起点 4:00 - 9:00 (分钟)
+SHIFT_LO, SHIFT_HI = 0, 24 * 60 - 1   # 存档只校验合法钟点；新请求的范围由人设模板决定
 SHIFT_KEEP = 30                       # 每个聊天对象最多留多少条平移记录
 MAX_PERSONA = 60000
 MEM_MAX = 2000                        # 记忆卡最多多少字
@@ -49,7 +49,7 @@ def love_line(st) -> str:
         return ""
     day = datetime.fromtimestamp(d["rel"] / 1000).strftime("%Y-%m-%d")
     who = "用户提出, 你接受了" if d["by"] == "user" else "你提出, 用户接受了"
-    return f"- 【系统记录】已确立亲密关系 ({day} 起, {who}). 这之后用户的'简单要求'可以长期保留."
+    return f"- 【系统记录】已确立亲密关系 ({day} 起, {who})."
 
 
 def shift_norm(v) -> list:

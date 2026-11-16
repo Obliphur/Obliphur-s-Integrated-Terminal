@@ -233,11 +233,12 @@ fun CommScreen(go: (String) -> Unit) {
             TextButton({ coAlarm = true }, contentPadding = tight) {
                 Text(if (comm.coAlarmPid().isNotEmpty() && comm.coAlarmPid() == comm.pid) "⏰" else "⏲", fontSize = 18.sp)
             }
-            // 🕰 起点平移: 请求对方把日程起点换到 4:00-9:00 之间的某个时刻, 明天起生效; ⏳ = 等对方回复 (再点 = 取消)
+            // 🕰 起点平移：范围由人设模板声明，明天起生效；⏳ = 等对方回复。
             TextButton({
                 if (shiftAsk) { comm.shiftCancel(); shiftAsk = comm.shiftAsking() }
                 else if (comm.pid.isEmpty()) core.toast(tr("先选一个聊天对象."), "warn")
                 else if (comm.shiftStart() == null) core.toast(tr("这个人设没有日程文件, 不能平移起点"), "warn")
+                else if (comm.shiftRange() == null) core.toast(tr("起点平移模板格式错误"), "warn")
                 else shiftDlg = true
             }, contentPadding = tight) { Text(if (shiftAsk) "⏳" else "🕰", fontSize = 18.sp) }
             // share data: 打开后离开沟通页, 在别的页面里对方能看到那一页上你们的数据, 页面下方有聊天悬浮窗; 回到沟通自动关闭
@@ -280,7 +281,7 @@ fun CommScreen(go: (String) -> Unit) {
     }
     if (help) HelpDialog { help = false }
     if (coAlarm) CoAlarmDialog { coAlarm = false }
-    if (shiftDlg) ShiftDialog(comm.shiftStart() ?: CommShift.LO, { shiftDlg = false }) { minutes ->
+    if (shiftDlg) ShiftDialog(comm.shiftStart() ?: CommShift.LO, comm.shiftRange() ?: (0 to 1439), { shiftDlg = false }) { minutes ->
         val why = comm.shiftRequest(minutes)
         if (why.isEmpty()) { shiftDlg = false; shiftAsk = comm.shiftAsking(); core.toast(tr("已向 {name} 提出请求, 等待回复", "name" to comm.aiName())) } else core.toast(tr(why), "warn")
     }
@@ -323,7 +324,7 @@ private fun HelpDialog(onDismiss: () -> Unit) {
         Triple("👀 / 🙈", tr("分享数据"), tr("点一下切换 (👀 = 打开, 要先征得对方同意; ⏳ = 等对方回复). 打开后去别的页面, 对方会收到那一页上你们的数据; 回到沟通自动关闭. 对方也可以发邀请, 点「接受」才会打开.")),
         Triple("🔔 / 🔕", tr("主动发起"), tr("🔔 = 允许这个对象主动找你, 🔕 = 禁止.")),
         Triple("⏰ / ⏲", tr("共时闹钟"), tr("⏰ = 闹钟跟随这个对象的起床时间; 响铃的设备手动选, 一次只能有一个对象.")),
-        Triple("🕰", tr("起点平移"), tr("请求对方以15分钟为间隔平移日程起点, 新起点在4:00 - 9:00之间, 同意后明天起生效.")),
+        Triple("🕰", tr("起点平移"), tr("请求对方平移日程起点, 允许范围由人设模板决定, 同意后明天起生效.")),
         Triple("🖼", tr("识别字体"), tr("选一张图片, 把上面的文字读出来放进聊天框. 不能发送图片.")),
         Triple("🤝", tr("联合行动"), tr("邀请对方一起做一次合约: 在合约页选词条, 输入开始时间; 对方回 [Yes] 就按约开始.")),
     )
@@ -352,23 +353,23 @@ private fun HelpDialog(onDismiss: () -> Unit) {
         confirmButton = { TextButton(onDismiss) { Text(tr("知道了"), color = o.accent) } })
 }
 
-/** 🕰 起点平移: 输入新的起点 (时:分, 4:00 - 9:00); 确定后向对方提出请求, 对方回 [Yes] / [No]. */
+/** 🕰 起点平移：范围由人设模板声明，确定后向对方提出请求。 */
 @Composable
-private fun ShiftDialog(cur: Int, onCancel: () -> Unit, onOk: (Int) -> Unit) {
+private fun ShiftDialog(cur: Int, bounds: Pair<Int, Int>, onCancel: () -> Unit, onOk: (Int) -> Unit) {
     val o = LocalOit.current
     var text by remember { mutableStateOf(CommShift.hm(cur).let { if (it.length < 5) "0$it" else it }) }
     fun parse(): Int? {
         val m = Regex("\\s*(\\d{1,2})\\s*[:：]?\\s*(\\d{2})\\s*").matchEntire(text) ?: return null
         val h = m.groupValues[1].toInt()
         val mi = m.groupValues[2].toInt()
-        return if (mi > 59) null else h * 60 + mi
+        return if (h > 23 || mi > 59) null else h * 60 + mi
     }
     val v = parse()
     AlertDialog(onDismissRequest = onCancel, containerColor = o.bg, title = { Text(tr("起点平移")) },
         text = {
             Column {
-                Text(tr("请求对方把日程的起点平移到新的时刻 (4:00 - 9:00). 对方同意后明天起生效, 今天的日程不变; " +
-                    "只记在 OIT 里, 不会修改人设文件. 对方可以拒绝."), color = o.dim, fontSize = 12.sp)
+                Text(tr("请求对方把日程的起点平移到新的时刻 ({lo} - {hi}). 对方同意后明天起生效, 今天的日程不变; " +
+                    "只记在 OIT 里, 不会修改人设文件. 对方可以拒绝.", "lo" to CommShift.hm(bounds.first), "hi" to CommShift.hm(bounds.second)), color = o.dim, fontSize = 12.sp)
                 Text(tr("明天的起点: {t}", "t" to CommShift.hm(cur)), color = o.text, modifier = Modifier.padding(top = 10.dp))
                 OutlinedTextField(text, { text = it.take(8) }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))

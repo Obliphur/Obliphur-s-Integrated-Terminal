@@ -21,6 +21,7 @@ import i18n
 from i18n import tr
 import routine
 from comm import comm_readme
+from comm.comm_rules import shift_range, shift_allows
 from comm.comm_const import *
 from comm.comm_schedule import PROACTIVE_P, seg_kind, seg_detail, schedule_entries, schedule_loops, loop_entries, schedule_segments, pro_pct, persona_probs
 from comm.comm_reply import CUT_DEFAULT_MIN, CUT_MAX_MIN, HALFWIDTH_SYMBOLS, NET_DEFAULT_MIN, NET_MAX_MIN, WAIT_MAX_MIN, _BRACKET_RE, _CUT_N_RE, _CUT_RE, _EMPTY_WRAP_RE, _NET_RE, _WAIT_RE, clean_reply, cut_minutes, net_minutes, to_halfwidth
@@ -88,6 +89,10 @@ class ShareMixin:
     def shift_asking(self) -> bool:
         return bool(self.shift_ask) and self.shift_ask.get("pid") == self.pid
 
+    def shift_range(self):
+        """当前人设声明的起点范围，区块未声明时允许全天，错误时禁用新请求。"""
+        return shift_range(read_persona_full(self.personas, self.persona_name()))
+
     def shift_request(self, minutes: int) -> str:
         """用户请求把对方的日程起点平移到 minutes (从 0:00 起的分钟). 返回 "" = 已发出请求 (等对方回复), 否则是原因."""
         why = self.problem()
@@ -99,8 +104,11 @@ class ShareMixin:
             minutes = int(minutes)
         except (TypeError, ValueError):
             return "时间不对"
-        if not (SHIFT_LO <= minutes <= SHIFT_HI):
-            return tr("新起点要在 {lo} - {hi} 之间", lo=hm_text(SHIFT_LO), hi=hm_text(SHIFT_HI))
+        bounds = self.shift_range()
+        if bounds is None:
+            return tr("起点平移模板格式错误")
+        if not shift_allows(bounds, minutes):
+            return tr("新起点要在 {lo} - {hi} 之间", lo=hm_text(bounds[0]), hi=hm_text(bounds[1]))
         cur = self.shift_start()
         if cur is None:
             return "这个人设没有日程文件, 不能平移起点"
@@ -134,7 +142,7 @@ class ShareMixin:
     def _shift_commit(self, minutes: int) -> bool:
         """对方同意了: 记下 (明天起生效), 同步给别的设备. 请求发出之后日程文件被换掉 / 范围不对就不记."""
         cur = self.shift_start()
-        if cur is None or not (SHIFT_LO <= int(minutes) <= SHIFT_HI) or (int(minutes) - cur) % config.COMM_SHIFT_STEP_MINUTES:
+        if cur is None or not shift_allows(self.shift_range(), int(minutes)) or (int(minutes) - cur) % config.COMM_SHIFT_STEP_MINUTES:
             return False
         day = self.now().date() + timedelta(days=1)
         rec = {"ts": max(self._ms(), max([e["ts"] for e in self.shifts()] + [0]) + 1), "d": f"{day:%Y-%m-%d}", "s": int(minutes), "f": int(cur)}
@@ -178,10 +186,14 @@ class ShareMixin:
         elif self._ms() - int(a["ts"]) > SHIFT_ASK_TTL * 1000:
             self._shift_ask_end("{name} 没有回复, 起点没有平移")
         elif not a.get("sent") and not self.busy and not self._ai_problem() and self.leader():
+            bounds = self.shift_range()
+            if not shift_allows(bounds, a["to"]):
+                self._shift_ask_end("起点没有平移 (日程文件变了)")
+                return
             cur = self.shift_start()
             a["sent"] = True
             self._trigger("shift_ask", (f"{SHIFT_TAG} 用户请求把你的日程起点 (初始起点) 从 {hm_text(cur if cur is not None else 0)} 平移到 {hm_text(a['to'])}: "
-                                        f"新起点从明天起生效 (今天的日程不变), 只改日程, 不改你的人设; 起点允许的范围是 {hm_text(SHIFT_LO)} - {hm_text(SHIFT_HI)}, "
+                                        f"新起点从明天起生效 (今天的日程不变), 只改日程, 不改你的人设; 起点允许的范围是 {hm_text(bounds[0])} - {hm_text(bounds[1])} (起点大于终点表示跨午夜), "
                                         "之后的各项活动照常从新起点往后排. 请按人设判断是否同意: 同意就回复 [Yes], 不同意就回复 [No] "
                                         f"(两个标签只写一个; 后面可以按人设加一句话); 如果实在不方便回答, 返回{REFUSE}."))
 

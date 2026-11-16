@@ -10,7 +10,7 @@
 def _selftest():
     import tempfile
     import time
-    from comm.comm_rules import tension_rules, condition_rules
+    from comm.comm_rules import tension_rules, condition_rules, shift_range, shift_allows
     from functools import partial
     builtin_rules = BUILTIN_PERSONAS[DEFAULT_ROUTINE]
     test_tension = "\n[tension]\n" + "\n".join(f"{k}:[{v[0] if v[0] is not None else 'X'}] {v[1]}" for k, v in tension_rules(builtin_rules).items()) + "\n[/tension]\n[tension:events]\njoint_hp_loss:[violation,15]\n[/tension:events]\n"
@@ -32,6 +32,7 @@ def _selftest():
     assert "MODE=情景模拟" in BUILTIN_PERSONAS[DEFAULT_PERSONA] and "EFFECTIVE_STAGE=90+" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
     assert "不要说'接住'" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
     p = prefix_prompt()
+    assert "角色身份、是否以OIT使用者身份参与" in p and "勿言AI" not in p and "你亦OIT用户" not in p
     assert p.startswith("[OIT_SYSTEM_MESSAGES]") and "回复OIT(自律软件)用户的消息" in p and "I." in p and "II." in p and "III." in p
     assert "IV.依专注段主动收尾" in p and "≤5min" in p
     assert "VI.勿主动透露日程/专注状态" in p and "用户3min内还在聊→告知将专注并停止" in p and "50min" not in p
@@ -1952,7 +1953,9 @@ def _selftest():
     os.makedirs(os.path.join(td, "mem"))
     cm = Comm(os.path.join(td, "mem"), folder, now=lambda: clock[0], chat_fn=fake)
     cm.ai.set_profile("deepseek", api_key="k")
-    cm.set_cfg(persona="小夏.txt")
+    custom_policy = "你是 AI 助手，不以 OIT 使用者身份生活。简单要求仅保留到当天结束，与关系状态无关。"
+    open(os.path.join(folder, "记忆策略.txt"), "w", encoding="utf-8").write(custom_policy)
+    cm.set_cfg(persona="记忆策略.txt")
     cm.snapshot = lambda: {}
     for i in range(40):
         cm._add("me" if i % 2 == 0 else "ai", f"m{i}")
@@ -1965,6 +1968,7 @@ def _selftest():
         if not cm._mem_busy:
             break
     assert len(mem_calls) == 1 and "现有记忆卡" in mem_calls[0][0]["content"]
+    assert custom_policy in mem_calls[0][0]["content"], "整理记忆时传入自定义人设的身份与保留期限"
     assert mem_kws[0].get("think") is True and mem_kws[0]["max_tokens"] == MEM_TOKENS > ai_assist.THINK_BUDGET, "整理记忆卡开思考"
     assert cm.cfg["mem_auto"] == "- 用户在准备考试\n- 喜欢钢琴", cm.cfg["mem_auto"]
     assert cm.cfg["mem_upto"] == int(cm.messages[-1]["ts"])
@@ -1972,6 +1976,7 @@ def _selftest():
     script.append("好")
     cm.send("在吗"); wait(cm)
     sys_text = calls[-1][0]
+    assert custom_policy in sys_text and "勿言AI" not in sys_text
     assert "以下是关于用户的长期记忆" in sys_text and "喜欢钢琴" in sys_text
     for i in range(40):
         cm._add("me", f"n{i}")
@@ -3363,7 +3368,9 @@ def _selftest():
         routine.seg_class = real_cls
         cr.condition_state = real_cs
     assert sanitize_mem("- 【系统记录】已确立亲密关系\n- 喜欢钢琴") == "- 喜欢钢琴", "模型抄了系统记录: 去掉"
-    assert "「【系统记录】已确立亲密关系」" in MEM_PROMPT
+    assert "以「对方的人设」为准" in MEM_PROMPT and "不自动改变记忆规则" in MEM_PROMPT
+    relationship_fact = love_line({"love": {"ts": 1, "rel": 1, "by": "user"}})
+    assert "已确立亲密关系" in relationship_fact and "简单要求" not in relationship_fact
     # 清空聊天: 亲密关系 / 信息条数跟着记忆卡一起清掉
     cr.cfg["love"] = love_norm({"ts": cr._ms(), "rel": cr._ms(), "by": "user"})
     cr.cfg["msg_gone"] = 77
@@ -3728,8 +3735,49 @@ def _selftest():
     assert "现在没法征求同意" in cs.shift_request(7 * 60) and not cs.shift_asking()
     clock[0] = rest_s["start"] + timedelta(minutes=5)
     # 记录的整理: 范围外 / 日期不对的丢掉, 同一个时刻只留一条
-    assert shift_norm([{"ts": 1, "d": "2027-07-02", "s": 100, "f": 0}, {"ts": 2, "d": "bad", "s": 420}, {"ts": 1, "d": "2027-07-02", "s": 420}]) == [{"ts": 1, "d": "2027-07-02", "s": 420, "f": 0}]
+    assert shift_norm([{"ts": 1, "d": "2027-07-02", "s": 100, "f": 0}, {"ts": 2, "d": "bad", "s": 420}, {"ts": 1, "d": "2027-07-02", "s": 420}, {"ts": 3, "d": "2027-07-02", "s": -1}, {"ts": 4, "d": "2027-07-02", "s": 1440}]) == [{"ts": 1, "d": "2027-07-02", "s": 100, "f": 0}]
     cs.flush()
+
+    # 平移范围由文件实时读取，跨午夜及改限不丢历史记录。
+    assert shift_range("") == (0, 1439)
+    night_rule = "[shift]\nrange:[22:00,6:00]\n[/shift]"
+    assert shift_range(night_rule) == (1320, 360)
+    assert all(shift_allows(shift_range(night_rule), m) for m in (1320, 1439, 0, 360))
+    assert all(not shift_allows(shift_range(night_rule), m) for m in (-1, 361, 1319, 1440))
+    for bad in ("[shift]", "[/shift]", "[shift]\n[/shift]", night_rule + "\n" + night_rule,
+                night_rule.replace("22:00", "24:00"), night_rule.replace("6:00", "6:60"),
+                night_rule.replace("range:", "unknown:"), night_rule.replace("[/shift]", "")):
+        assert shift_range(bad) is None, bad
+    shift_file = os.path.join(cs.personas, routine_name_of(cs.personas, cs.persona_name()))
+    shift_original = open(shift_file, encoding="utf-8").read()
+    shift_unlimited = re.sub(r"\[shift\].*?\[/shift\]", "", shift_original, flags=re.S)
+    try:
+        open(shift_file, "w", encoding="utf-8").write(shift_unlimited)
+        assert cs.shift_range() == (0, 1439)
+        script.append("[Yes]")
+        assert cs.shift_request(18 * 60) == ""
+        cs.tick(); wait(cs)
+        assert cs.shifts()[-1]["s"] == 1080 and cs._rt.start_for(d2) == 1080
+        open(shift_file, "w", encoding="utf-8").write(shift_unlimited + "\n" + night_rule)
+        assert "之间" in cs.shift_request(12 * 60)
+        for m in (1320, 360, 0):
+            assert cs.shift_request(m) == ""
+            cs.shift_cancel()
+        assert cs.shift_request(1320) == ""
+        open(shift_file, "w", encoding="utf-8").write(shift_original)
+        n_calls = len(calls)
+        cs.tick()
+        assert not cs.shift_asking() and len(calls) == n_calls
+        assert not cs._shift_commit(1320), "同意落盘时再次校验当前范围"
+        saved_night = cs.shifts()
+        cs.cfg["shift"] = []
+        cs.apply_doc({f"shift:{cs.pid}": saved_night})
+        cs.flush()
+        restored = Comm(cs.dir, cs.personas, now=lambda: clock[0], chat_fn=fake)
+        assert restored.shifts() == saved_night and restored.shift_start(d2) == 1080, "当前范围外的历史记录继续保存和同步"
+        restored.flush()
+    finally:
+        open(shift_file, "w", encoding="utf-8").write(shift_original)
 
     # ---- 共时闹钟 (1.0.359): 闹钟跟随被设为共时闹钟的对象的实际起床时间 (Claudia 起床波动 [-5,0]) ----
     clock[0] = datetime(2027, 6, 1, 12, 0)

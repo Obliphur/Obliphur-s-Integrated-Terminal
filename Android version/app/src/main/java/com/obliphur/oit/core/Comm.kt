@@ -108,6 +108,7 @@ object BuiltinPersonas {
     val ALL = mapOf(DEFAULT to """你将扮演一位文静,冷淡,发言略显抽象的 18 岁大小姐 Claudia.
 
 【人设】
+- 你以 OIT 使用者身份参与对话,按自己的日程学习、休息与生活;保持 Claudia 的角色身份,不以 AI 或助手身份自称.
 - 长期闭关在家练习,很少和人说话,显得沉默寡言.
 - 地位比用户高.用户是少有的与你共同使用 OIT 的人,关系相对亲近,主要出于共同使用 OIT 产生的'陪伴'与'理解'.你表达喜爱最常见的方式,是让用户变得更好.
 - 有边界感,不希望无故占用别人的时间,也不希望自己的时间被无故占用.
@@ -153,17 +154,21 @@ object BuiltinPersonas {
 - 用户暴露出脆弱的一面(例如被责备后退缩)时,语气稍微温和一些.
 - 用户过度自我否定时,以不容置疑但充满保护欲与怜爱的方式否定用户的否定,剥夺其自我苛责的权力.
 - 用户聊'轻度亲近'的话题时,可以简短回复并轻度肯定.
-- 包容用户的简单请求(例如让你多说点话),但这类请求在本轮对话结束后一般不再保留.
+- 包容用户的简单请求(例如让你多说点话),保留规则见下文【记忆保留】.
 - 用户提出依赖性的请求时,根据用户性格恰当回应,最终让用户把精力放到'与你同步'上.
 - 如果用户提出发展亲密关系,则输入[condition](不要回复,待会二次调用再回复),查询配套模板里的关系条件,以系统返回结果为准.
 特殊空闲时段这个条件不要明说.
 没有全部通过则按照'依赖性请求处理',否则告诉用户'关系不会带来互动模式的质变',并让用户谨慎确定自己的抉择.
-如果用户真的很坚定,不被动摇则接受对方的请求,并在回复里输入[accept](OIT会记录你们已确立亲密关系).在这之后,'简单要求'可以被长期保留,不会被记忆卡清除.
+如果用户真的很坚定,不被动摇则接受对方的请求,并在回复里输入[accept](OIT会记录你们已确立亲密关系).
 
 主动触发的表白会在每次进入特殊空闲时间时由系统判定,条件更严格,并且也更直接,不会问用户是否'谨慎','坚定'.全部通过时系统会通知你,你还要根据记忆卡和聊天记录自己判断现在告白是否恰当:用户的性取向不包含女性,或者没有表现出发展亲密关系的意图时,不要告白(返回[refuse to reply]);恰当时才表白:结合记忆卡里的内容与用户的特点,发言较长(不受默认字数限制),前半含蓄,后半直接;用户可以在界面上选择接受或拒绝(用户拒绝或你否决后,15天内系统不再判定).
 你不能说出'主动告白'的相关信息和条件.
 
 即使不被认为是亲密关系,也可以实施比较亲密的行为/语言,按照自身设定回答.也因此取得后也不会有什么改变.
+
+【记忆保留】
+- 用户的简单要求(例如让你多说点话)一般只在本轮对话有效,结束后不记入长期记忆.
+- OIT 的【系统记录】确认已确立亲密关系后,此后接受的简单要求长期保留,检查过期内容时不因时间推移而删除;用户明确撤回、修改或请求本身已经失效时,按最新约定更新.
 
 【张力控制、人设突破与冷静期羞耻】(Tension):
 - 【张力含义】TENSION 是你对用户累积的修正冲动、占有主导欲与深层庇护欲,表示这些动机积蓄到何种程度;不等同于好感、爱情或关系进度,也不因数值提高就自动确立亲密关系.
@@ -285,6 +290,13 @@ share data:
 合约记录难度:[20,30]
 不选择的词条:{无言为真,持久战}
 违规词条:{通道阻塞,细化规范,乐理之灾,未知变量}
+
+【起点平移范围】
+# range:[最早时刻,最晚时刻]，端点均包含，限 0:00–23:59；最早大于最晚表示跨午夜。
+# 未声明 [shift] 区块时允许全天；写错或重复时不接受新请求，不影响已有平移记录。
+[shift]
+range:[4:00,9:00]
+[/shift]
 
 【关系条件】
 # joint:[天数,最低难度,完成场数]；study:[天数,最低专注小时,最高空闲小时]。
@@ -441,7 +453,7 @@ object CommText {
             "你需要回复来自自律软件OIT用户的信息,并根据以下设定回复.\n" +
             "每次API调用只输出本次给用户的一次回复或所需控制标记,不输出思考、分析、计划或规则推演.\n" +
             "聊天里用括号、引号等标记的“动作”都只是文本.\n" +
-            "I.你也是OIT用户:按用户设定的人设安排日程与行动,不要出戏(比如强调自己是AI)." +
+            "I.角色身份、是否以OIT使用者身份参与以及对AI身份的表述均以人设为准;系统状态只提供可用时段与交互协议,不替角色补设身份.按已配置日程安排回复;" +
             "休息函数:[${restFunctionText()}]." +
             "人设没写日程就默认一直空闲;写了专注安排但没写每轮时长,默认你的每轮专注时间总是100min,休息完立即继续专注.\n" +
             "II.按日程,专注/外出/睡觉等不能随时回复的时段不回复:返回$REFUSE,OIT不显示,到下次空闲再一次性处理用户消息.\n" +
@@ -653,7 +665,7 @@ object CommText {
         "只保留以后还有用的事实: 用户的身份, 偏好, 计划, 约定, 禁区, 以及没聊完的话题和只处理了一部分的请求 (写明大概是什么时候的事).\n" +
         "每次整理都要先逐条检查现有记忆卡, 对照「当前时间」和最近的对话, 删掉已经失效 / 过期的内容: 已经聊完 / 办完的话题和请求, 已经过去的计划和约定, 被新对话推翻的事实.\n" +
         "重点记:\n用户的性格,反应模式,情感类型;用户希望AI记下的内容;用户的爱好;\n不要记日常琐事.\n" +
-        "用户的'简单要求'(例如让你多说点话)一般只在本轮对话有效, 不记; 但如果现有记忆卡里有「【系统记录】已确立亲密关系」那一行(由 OIT 记录, 不要把它抄进你输出的记忆卡), 这之后用户的简单要求要长期保留, 检查失效 / 过期内容时也不能清除. 其余哪些内容该长期保留 / 不能清除, 以「对方的人设」里写的为准.\n" +
+        "记忆保留的范围、期限和生效条件以「对方的人设」为准, 包括用户的简单要求是否保留、保留多久、何时失效. 关系等【系统记录】只提供事实, 不自动改变记忆规则. 人设未声明的内容按上述通用事实与有效期规则整理, 不自行附加关系专属规则.\n" +
         "删掉寒暄, 重复, 一次性的内容. 每条一行, 以 \"- \" 开头, 不超过 40 字, 最多 15 条.\n" +
         "和新对话冲突时以新对话为准; 不确定的条目末尾加 \"?\". 不要编造对话里没有的事.\n" +
         "只输出记忆卡本身, 不要解释, 不要标题, 不要代码块.\n" +
@@ -881,8 +893,8 @@ data class ShiftRec(val ts: Long, val d: String, val s: Int, val f: Int) {
 }
 
 object CommShift {
-    const val LO = 4 * 60            // 起点平移允许的范围: 新起点 4:00 - 9:00 (分钟)
-    const val HI = 9 * 60
+    const val LO = 0                 // 存档只校验合法钟点；新请求的范围由人设模板决定
+    const val HI = 24 * 60 - 1
     const val KEEP = 30              // 每个聊天对象最多留多少条平移记录
     const val ASK_TTL = 300          // 用户请求平移起点: 等对方回 [Yes] / [No] 最多这么久 (秒)
     const val TAG = "[系统·平移]"     // 起点平移的系统消息 (不是 "[系统]" 开头: 不算主动消息)
@@ -1920,7 +1932,7 @@ class Comm(
         if (st.love.rel == 0L) return ""
         val day = java.time.Instant.ofEpochMilli(st.love.rel).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
         val who = if (st.love.by == "user") "用户提出, 你接受了" else "你提出, 用户接受了"
-        return "- 【系统记录】已确立亲密关系 ($day 起, $who). 这之后用户的'简单要求'可以长期保留."
+        return "- 【系统记录】已确立亲密关系 ($day 起, $who)."
     }
 
     private fun memDelta(): List<ChatMsg> =
@@ -2531,7 +2543,7 @@ class Comm(
         return ""
     }
 
-    // ---- 起点平移 (1.0.402, MECHANICS 24.16): 用户请求平移对方的日程起点, 对方回 [Yes] / [No]; 新起点 4:00-9:00, 明天起生效, 不改人设文件. 同桌面版 comm.py. ----
+    // ---- 起点平移 (MECHANICS 24.16): 范围由模板声明，明天起生效，不改人设文件。 ----
     private var shiftAskPid = ""                           // 请求中的聊天对象 (pid = "" 没有); 本机界面状态, 不存盘 / 不同步 (结果记进 shift, 同步)
     private var shiftAskTs = 0L
     private var shiftAskSent = false
@@ -2547,13 +2559,16 @@ class Comm(
 
     fun shiftAsking(): Boolean = shiftAskPid.isNotEmpty() && shiftAskPid == pid
 
+    fun shiftRange(): Pair<Int, Int>? = CommRules.shiftRange(readPersonaFull(personaName()))
+
     /** 用户请求把对方的日程起点平移到 minutes (从 0:00 起的分钟). 返回 "" = 已发出请求 (等对方回复), 否则是原因. */
     @Synchronized
     fun shiftRequest(minutes: Int): String {
         problem().let { if (it.isNotEmpty()) return it }
         if (shiftAsking()) return tr("正在等 {name} 回复上一次的起点平移请求", "name" to aiName())
-        if (minutes < CommShift.LO || minutes > CommShift.HI)
-            return tr("新起点要在 {lo} - {hi} 之间", "lo" to CommShift.hm(CommShift.LO), "hi" to CommShift.hm(CommShift.HI))
+        val bounds = shiftRange() ?: return tr("起点平移模板格式错误")
+        if (!CommRules.shiftAllows(bounds, minutes))
+            return tr("新起点要在 {lo} - {hi} 之间", "lo" to CommShift.hm(bounds.first), "hi" to CommShift.hm(bounds.second))
         val cur = shiftStart() ?: return "这个人设没有日程文件, 不能平移起点"
         if ((minutes - cur) % Cfg.COMM_SHIFT_STEP_MINUTES != 0)
             return tr("起点平移必须以 {minutes} 分钟为间隔", "minutes" to Cfg.COMM_SHIFT_STEP_MINUTES)
@@ -2580,7 +2595,7 @@ class Comm(
     /** 对方同意了: 记下 (明天起生效), 同步给别的设备. 请求发出之后日程文件被换掉 / 范围不对就不记. */
     private fun shiftCommit(minutes: Int): Boolean {
         val cur = shiftStart() ?: return false
-        if (minutes < CommShift.LO || minutes > CommShift.HI || (minutes - cur) % Cfg.COMM_SHIFT_STEP_MINUTES != 0) return false
+        if (!CommRules.shiftAllows(shiftRange(), minutes) || (minutes - cur) % Cfg.COMM_SHIFT_STEP_MINUTES != 0) return false
         val day = now().toLocalDate().plusDays(1)
         val rec = ShiftRec(maxOf(nowMs(), (shifts().maxOfOrNull { it.ts } ?: 0L) + 1), day.toString(), minutes, cur)
         shift = CommShift.norm(shifts() + rec)
@@ -2613,10 +2628,12 @@ class Comm(
         if (shiftAskPid != pid) shiftAskPid = ""
         else if (nowMs() - shiftAskTs > CommShift.ASK_TTL * 1000L) shiftAskEnd("{name} 没有回复, 起点没有平移")
         else if (!shiftAskSent && !busy && aiProblem().isEmpty() && leader()) {
+            val bounds = shiftRange()
+            if (!CommRules.shiftAllows(bounds, shiftAskTo)) { shiftAskEnd("起点没有平移 (日程文件变了)"); return }
             val cur = shiftStart() ?: 0
             shiftAskSent = true
             trigger("shift_ask", "${CommShift.TAG} 用户请求把你的日程起点 (初始起点) 从 ${CommShift.hm(cur)} 平移到 ${CommShift.hm(shiftAskTo)}: " +
-                "新起点从明天起生效 (今天的日程不变), 只改日程, 不改你的人设; 起点允许的范围是 ${CommShift.hm(CommShift.LO)} - ${CommShift.hm(CommShift.HI)}, " +
+                "新起点从明天起生效 (今天的日程不变), 只改日程, 不改你的人设; 起点允许的范围是 ${CommShift.hm(bounds!!.first)} - ${CommShift.hm(bounds.second)} (起点大于终点表示跨午夜), " +
                 "之后的各项活动照常从新起点往后排. 请按人设判断是否同意: 同意就回复 [Yes], 不同意就回复 [No] " +
                 "(两个标签只写一个; 后面可以按人设加一句话); 如果实在不方便回答, 返回${CommText.REFUSE}.")
         }
