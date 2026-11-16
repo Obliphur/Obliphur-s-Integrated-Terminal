@@ -12,7 +12,7 @@ def _selftest():
     import time
     from comm.comm_rules import tension_rules, condition_rules
     from functools import partial
-    builtin_rules = BUILTIN_PERSONAS[DEFAULT_PERSONA]
+    builtin_rules = BUILTIN_PERSONAS[DEFAULT_ROUTINE]
     test_tension = "\n[tension]\n" + "\n".join(f"{k}:[{v[0]}] {v[1]}" for k, v in tension_rules(builtin_rules).items()) + "\n[/tension]\n[tension:events]\njoint_hp_loss:[violation,15]\n[/tension:events]\n"
     test_conditions = "\n" + builtin_rules[builtin_rules.index("[condition]"):builtin_rules.index("[/condition]") + len("[/condition]")] + "\n" + builtin_rules[builtin_rules.index("[condition:strict]"):builtin_rules.index("[/condition:strict]") + len("[/condition:strict]")] + "\n"
     globals()["CLAUDIA_LEGACIES"] = (TEST_OLD_CLAUDIA, TEST_SCHEDULE_PERSONA)       # 现在内置的升级链是空的: 自测里放两份假的旧版
@@ -223,7 +223,7 @@ def _selftest():
     # 概率: 人设里写的; 没写默认 70%
     assert persona_probs("长时间休息发起谈话概率:0.7\n休息发起谈话概率:30\n空闲发起谈话概率:20%") == {"long": 70.0, "rest": 30.0, "idle": 20.0}
     assert Comm.pro_percent.__name__ and PROACTIVE_P["long"] == 70
-    assert persona_probs(BUILTIN_PERSONAS["Claudia.txt"] + "\n" + BUILTIN_PERSONAS["Claudia_routine.txt"]) == {"idle": 20.0, "key": 20.0, "special": 60.0, "rest": 20.0, "long": 20.0, "sleep": 50.0}
+    assert persona_probs(BUILTIN_PERSONAS["Claudia.txt"] + "\n" + BUILTIN_PERSONAS["Claudia_templates.txt"]) == {"idle": 20.0, "key": 20.0, "special": 60.0, "rest": 20.0, "long": 20.0, "sleep": 50.0}
     open(longp, "w", encoding="utf-8").write("你是小满.\n")
     c2.reload_schedule()
     assert c2.pro_percent("long") == 70.0, "没写: 默认 70%"
@@ -331,7 +331,7 @@ def _selftest():
     assert read_persona(fresh_personas, "Claudia.txt").startswith("你将扮演一位文静,冷淡")
     assert read_persona(fresh_personas, "Assistant.txt").startswith("你是名为 Assistant 的助理")
     cf.set_cfg(persona="")
-    for name in ("Claudia.txt", "Claudia_background.txt", "Claudia_routine.txt", "Assistant.txt"):
+    for name in ("Claudia.txt", "Claudia_background.txt", "Claudia_templates.txt", "Assistant.txt"):
         os.remove(os.path.join(fresh_personas, name))
     cf.flush()
     cf2 = Comm(fresh_dir, fresh_personas, now=lambda: clock[0], chat_fn=fake)
@@ -692,7 +692,7 @@ def _selftest():
         assert not morning.busy and not morning.cfg["interaction"]["morning_day"]
     assert interaction_norm({"gain_until": gain_until})["burst_days"] == ["2027-05-04"]
     # 持续时间日程与后台对象走同一规则，按对象保存已触发日期。
-    open(os.path.join(folder, "早间_routine.txt"), "w", encoding="utf-8").write("初始起点:6:00\n6h:空闲\n")
+    open(os.path.join(folder, "早间_templates.txt"), "w", encoding="utf-8").write("初始起点:6:00\n6h:空闲\n")
     morning.reload_schedule()
     morning_clock[0] = datetime(2027, 5, 6, 8, 55)
     morning._interaction_set({"burst_days": ["2027-05-05"]})
@@ -905,7 +905,7 @@ def _selftest():
         open(os.path.join(folder, sleep_name), "w", encoding="utf-8").write(
             "你是睡后.\n23:40-23:59:特殊空闲\n23:59-06:30:睡眠\n"
             "长时间休息发起谈话概率:0%\n特殊空闲发起谈话概率:0%\n睡眠发起谈话概率:0%\n")
-        rt_file = os.path.join(folder, "睡后_routine.txt")
+        rt_file = os.path.join(folder, "睡后_templates.txt")
         if use_rt:
             open(rt_file, "w", encoding="utf-8").write("初始起点:23:40\n19min:特殊空闲\n")
         sleep_dir = os.path.join(td, "burst_sleep" + str(use_rt))
@@ -962,7 +962,7 @@ def _selftest():
         open(os.path.join(folder, "引诱.txt"), "w", encoding="utf-8").write(
             "你是引诱.\n23:50-00:40:特殊空闲\n"
             "长时间休息发起谈话概率:0%\n特殊空闲发起谈话概率:0%\n")
-        lure_rt = os.path.join(folder, "引诱_routine.txt")
+        lure_rt = os.path.join(folder, "引诱_templates.txt")
         if use_rt:
             open(lure_rt, "w", encoding="utf-8").write("初始起点:23:50\n50min:特殊空闲\n")
         lure_dir = os.path.join(td, "lure" + str(use_rt))
@@ -1100,7 +1100,7 @@ def _selftest():
     assert peer_special._interaction_prepare()["tension"] < 90
     # 持续时间日程、后台对象同样必谈，前台没有用户发言也不能算爆发。
     special_clock[0] = fixed2.replace(hour=13, minute=40) + timedelta(days=3)
-    open(os.path.join(folder, "时段_routine.txt"), "w", encoding="utf-8").write("初始起点:12:00\n1h:空闲\n1h:特殊空闲\n10h:空闲\n")
+    open(os.path.join(folder, "时段_templates.txt"), "w", encoding="utf-8").write("初始起点:12:00\n1h:空闲\n1h:特殊空闲\n10h:空闲\n")
     special.reload_schedule()
     owner = special.pid
     special._interaction_set({"tension": 91, "day": special_clock[0].date().isoformat()})
@@ -1130,7 +1130,7 @@ def _selftest():
     special.clear()
     assert not special.cfg["interaction"]["skip_decay"]
     special.flush(); again_special.flush(); peer_special.flush()
-    os.remove(os.path.join(folder, "时段_routine.txt"))
+    os.remove(os.path.join(folder, "时段_templates.txt"))
     # ---- 设备同步: 记录合并, 只有 leader 调用 AI / 重试, 清空一起清 ----
     dA, dB = os.path.join(td, "sa"), os.path.join(td, "sb")
     os.makedirs(dA)
@@ -1281,7 +1281,7 @@ def _selftest():
     c5.ai.provider = "deepseek"
     c5.set_cfg(persona="日程.txt")
     assert (c5.pro_percent("idle"), c5.pro_percent("rest")) == (80, 60), "人设里没写: 默认概率"
-    assert persona_probs(BUILTIN_PERSONAS["Claudia.txt"] + "\n" + BUILTIN_PERSONAS["Claudia_routine.txt"]) == {"idle": 20.0, "key": 20.0, "special": 60.0, "rest": 20.0, "long": 20.0, "sleep": 50.0}, "Claudia: 20% / 20% / 20%"
+    assert persona_probs(BUILTIN_PERSONAS["Claudia.txt"] + "\n" + BUILTIN_PERSONAS["Claudia_templates.txt"]) == {"idle": 20.0, "key": 20.0, "special": 60.0, "rest": 20.0, "long": 20.0, "sleep": 50.0}, "Claudia: 20% / 20% / 20%"
     assert persona_probs("空闲发起谈话概率:12.5%\n休息发起谈话概率 ： 0.4\n休息发起谈话概率:90%") == {"idle": 12.5, "rest": 40.0}
     assert persona_probs("睡眠发起谈话概率:40%") == {"sleep": 40.0} and PROACTIVE_P["sleep"] == 60
     assert c5.pro_percent("sleep") == 60, "没写: 默认睡眠 60%"
@@ -1815,10 +1815,10 @@ def _selftest():
     assert cc.claudia_differs(), "背景文件被改过: 显示还原按钮"
     cc.restore_claudia()
     assert not cc.claudia_differs() and read_persona(cpersonas, "Claudia_background.txt") == BUILTIN_PERSONAS[DEFAULT_BACKGROUND].strip()
-    os.remove(os.path.join(cpersonas, "Claudia_routine.txt"))
+    os.remove(os.path.join(cpersonas, "Claudia_templates.txt"))
     assert cc.claudia_differs(), "缺文件也算和默认人设不一样"
     cc.restore_claudia()
-    assert not cc.claudia_differs() and os.path.isfile(os.path.join(cpersonas, "Claudia_routine.txt")), "还原把缺的文件补上"
+    assert not cc.claudia_differs() and os.path.isfile(os.path.join(cpersonas, "Claudia_templates.txt")), "还原把缺的文件补上"
     cc.set_cfg(persona="Assistant.txt")
     assert not cc.claudia_differs(), "没选 Claudia: 不显示"
     cc.set_cfg(persona="Claudia.txt")
@@ -3031,22 +3031,22 @@ def _selftest():
     CHAR_DELAY = CHAR_DELAY_CJK = 0.0
     cd.flush()
 
-    # ---- 日程文件 (routine, 1.0.355): Claudia + Claudia_routine 是默认人设 ----
+    # ---- 日程文件 (routine, 1.0.355): Claudia + Claudia_templates 是默认人设 ----
     rt_personas, rt_dir = os.path.join(td, "rt_personas"), os.path.join(td, "rt")
     os.makedirs(rt_dir)
     clock[0] = datetime(2027, 6, 1, 7, 0)
     cr = Comm(rt_dir, rt_personas, now=lambda: clock[0], chat_fn=fake)
     cr.ai.set_profile("deepseek", api_key="k")
     cr.ai.provider = "deepseek"
-    assert cr.persona_name() == "Claudia.txt" and list_personas(rt_personas) == ["Assistant.txt", "Claudia.txt"], "Claudia_routine 是配套文件, 不是人设"
-    assert companion_files(rt_personas) == ["Claudia_background.txt", "Claudia_routine.txt"] and routine_name_of(rt_personas, "Claudia.txt") == "Claudia_routine.txt"
-    assert is_companion_name(rt_personas, "Claudia_routine.txt") and is_companion_name(rt_personas, "Claudia_background.txt") and not is_companion_name(rt_personas, "Claudia.txt")
-    assert base_persona_of(rt_personas, "Claudia_routine.txt") == "Claudia.txt" and base_persona_of(rt_personas, "Claudia_background.txt") == "Claudia.txt"
-    assert companions_of(rt_personas, "Claudia.txt") == ["Claudia_background.txt", "Claudia_routine.txt"] and companions_of(rt_personas, "Assistant.txt") == []
+    assert cr.persona_name() == "Claudia.txt" and list_personas(rt_personas) == ["Assistant.txt", "Claudia.txt"], "Claudia_templates 是配套文件, 不是人设"
+    assert companion_files(rt_personas) == ["Claudia_background.txt", "Claudia_templates.txt"] and routine_name_of(rt_personas, "Claudia.txt") == "Claudia_templates.txt"
+    assert is_companion_name(rt_personas, "Claudia_templates.txt") and is_companion_name(rt_personas, "Claudia_background.txt") and not is_companion_name(rt_personas, "Claudia.txt")
+    assert base_persona_of(rt_personas, "Claudia_templates.txt") == "Claudia.txt" and base_persona_of(rt_personas, "Claudia_background.txt") == "Claudia.txt"
+    assert companions_of(rt_personas, "Claudia.txt") == ["Claudia_background.txt", "Claudia_templates.txt"] and companions_of(rt_personas, "Assistant.txt") == []
     full = read_persona_full(rt_personas, "Claudia.txt")
     assert full.startswith("你将扮演一位文静") and "初始起点:6:30" in full and "联网时间理由列表" in full, "routine 拼在人设后面发给模型"
     assert "这里是你的身份背景" in full and full.index("这里是你的身份背景") < full.index("初始起点:6:30"), "背景文件也合并进去, 按文件名顺序: 背景在日程前面"
-    assert full == "\n\n".join([read_persona(rt_personas, n) for n in ("Claudia.txt", "Claudia_background.txt", "Claudia_routine.txt")])
+    assert full == "\n\n".join([read_persona(rt_personas, n) for n in ("Claudia.txt", "Claudia_background.txt", "Claudia_templates.txt")])
     # 配套文件: X_任意名字; 没有 X.txt 的 X_名字.txt 是普通人设; 取最长的 X; readme 不算
     cp = os.path.join(td, "companion_personas")
     os.makedirs(cp)
@@ -3057,7 +3057,7 @@ def _selftest():
     assert base_persona_of(cp, "Ann_Bob_x.txt") == "Ann_Bob.txt" and base_persona_of(cp, "Zed_note.txt") == ""
     assert read_persona_full(cp, "Ann.txt") == "A\n\nB\n\nD"
     assert read_persona_full(rt_personas, "Assistant.txt") == read_persona(rt_personas, "Assistant.txt")
-    assert "Claudia_routine.txt" in cr.persona_doc() and "Claudia.txt" in cr.persona_doc(), "日程文件随设备同步"
+    assert "Claudia_templates.txt" in cr.persona_doc() and "Claudia.txt" in cr.persona_doc(), "日程文件随设备同步"
     cr.reload_schedule("test")
     assert cr._rt is not None and cr._entries() == [] and cr._segments() == []
     assert cr.pro_percent("idle") == 20.0 and cr.pro_percent("sleep") == 50.0, "概率从日程文件里读"
@@ -3399,11 +3399,11 @@ def _selftest():
     assert "你自己的 OIT 数据" in info_call and "【整点记录·今天】" in info_call and "<HH>" not in info_call and "格式模板" not in info_call, info_call
     # 改日程文件 → 弹"修改人设"; 聊天清的是它的人设
     cr.check_persona_changes()
-    with open(os.path.join(rt_personas, "Claudia_routine.txt"), "a", encoding="utf-8") as f:
+    with open(os.path.join(rt_personas, "Claudia_templates.txt"), "a", encoding="utf-8") as f:
         f.write("\n")
     ch = cr.check_persona_changes()
-    assert ch and ch["name"] == "Claudia_routine.txt", ch
-    cr.resolve_persona_change("Claudia_routine.txt", True)
+    assert ch and ch["name"] == "Claudia_templates.txt", ch
+    cr.resolve_persona_change("Claudia_templates.txt", True)
     cr.flush()
     # 旧版 (没有日程文件) 的 Claudia 升级: 没改过的换成新版 + 日程文件
     up_dir, up_personas = os.path.join(td, "up355"), os.path.join(td, "up355_personas")
@@ -3413,7 +3413,7 @@ def _selftest():
     config.save_json_file(os.path.join(up_dir, "comm_config.json"), {"seeded": True, "assistant_seeded": True, "persona": "Claudia.txt", "claudia_migrated": True})
     cu = Comm(up_dir, up_personas, now=lambda: clock[0], chat_fn=fake)
     assert read_persona(up_personas, "Claudia.txt") == BUILTIN_PERSONAS[DEFAULT_PERSONA].strip()
-    assert read_persona(up_personas, "Claudia_routine.txt") == BUILTIN_PERSONAS[DEFAULT_ROUTINE].strip(), "升级时补上日程文件"
+    assert read_persona(up_personas, "Claudia_templates.txt") == BUILTIN_PERSONAS[DEFAULT_ROUTINE].strip(), "升级时补上日程文件"
     assert read_persona(up_personas, "Claudia_background.txt") == BUILTIN_PERSONAS[DEFAULT_BACKGROUND].strip(), "升级时补上背景文件"
     assert "Claudia_background.txt" not in list_personas(up_personas) and read_persona_full(up_personas, "Claudia.txt").count("这里是你的身份背景") == 1
     cu.reload_schedule("test")
@@ -3426,14 +3426,14 @@ def _selftest():
     old_claudia = BUILTIN_PERSONAS[DEFAULT_PERSONA] + "\n(上一版内置, 不在升级链里)"
     old_routine = BUILTIN_PERSONAS[DEFAULT_ROUTINE] + "\n(上一版内置日程, 不在升级链里)"
     open(os.path.join(bs_personas, "Claudia.txt"), "w", encoding="utf-8", newline="\n").write(old_claudia)
-    open(os.path.join(bs_personas, "Claudia_routine.txt"), "w", encoding="utf-8", newline="\n").write(old_routine)
+    open(os.path.join(bs_personas, "Claudia_templates.txt"), "w", encoding="utf-8", newline="\n").write(old_routine)
     config.save_json_file(os.path.join(bs_dir, "comm_config.json"), {"seeded": True, "assistant_seeded": True, "persona": "Claudia.txt", "claudia_migrated": True,
                                                                  "claudia_base": f"{zlib.crc32(old_claudia.strip().encode('utf-8')):08x}",
                                                                  "routine_base": f"{zlib.crc32(old_routine.strip().encode('utf-8')):08x}",
                                                                  "claudia_modified": True, "claudia_notified": "deadbeef"})
     cb = Comm(bs_dir, bs_personas, now=lambda: clock[0], chat_fn=fake)
     assert read_persona(bs_personas, "Claudia.txt") == BUILTIN_PERSONAS[DEFAULT_PERSONA].strip(), "改回上一次见到的内置版本: 更新后换成新版"
-    assert read_persona(bs_personas, "Claudia_routine.txt") == BUILTIN_PERSONAS[DEFAULT_ROUTINE].strip()
+    assert read_persona(bs_personas, "Claudia_templates.txt") == BUILTIN_PERSONAS[DEFAULT_ROUTINE].strip()
     assert not cb.cfg["claudia_modified"] and cb.cfg["claudia_base"] == Comm._text_crc(BUILTIN_PERSONAS[DEFAULT_PERSONA])
     cb.flush()
     open(os.path.join(bs_personas, "Claudia.txt"), "w", encoding="utf-8", newline="\n").write("用户改过的另一个版本")
@@ -3448,20 +3448,20 @@ def _selftest():
     config.save_json_file(os.path.join(mod_dir, "comm_config.json"), {"seeded": True, "assistant_seeded": True, "persona": "Claudia.txt", "claudia_migrated": True})
     cm = Comm(mod_dir, mod_personas, now=lambda: clock[0], chat_fn=fake)
     assert read_persona(mod_personas, "Claudia.txt") == "我自己改过的 Claudia", "改过的 Claudia 不动"
-    assert read_persona(mod_personas, "Claudia_routine.txt") == BUILTIN_PERSONAS[DEFAULT_ROUTINE].strip(), "Claudia 改过, 日程文件也要补上"
+    assert read_persona(mod_personas, "Claudia_templates.txt") == BUILTIN_PERSONAS[DEFAULT_ROUTINE].strip(), "Claudia 改过, 日程文件也要补上"
     assert read_persona(mod_personas, "Claudia_background.txt") == BUILTIN_PERSONAS[DEFAULT_BACKGROUND].strip(), "Claudia 改过, 背景文件也要补上"
     assert cm.check_persona_changes() is None, "补上日程文件不弹修改人设"
     open(os.path.join(mod_personas, "Claudia_background.txt"), "w", encoding="utf-8", newline="\n").write(BUILTIN_PERSONAS[DEFAULT_BACKGROUND] + "我的背景")
     cm._upgrade_background()
     assert read_persona(mod_personas, "Claudia_background.txt").endswith("我的背景"), "用户改过的背景文件不被覆盖"
     cm.flush()
-    open(os.path.join(mod_personas, "Claudia_routine.txt"), "w", encoding="utf-8", newline="\n").write(TEST_OLD_ROUTINE)
+    open(os.path.join(mod_personas, "Claudia_templates.txt"), "w", encoding="utf-8", newline="\n").write(TEST_OLD_ROUTINE)
     cm2 = Comm(mod_dir, mod_personas, now=lambda: clock[0], chat_fn=fake)
-    assert read_persona(mod_personas, "Claudia_routine.txt") == BUILTIN_PERSONAS[DEFAULT_ROUTINE].strip(), "更早的内置日程文件换成当前版本"
+    assert read_persona(mod_personas, "Claudia_templates.txt") == BUILTIN_PERSONAS[DEFAULT_ROUTINE].strip(), "更早的内置日程文件换成当前版本"
     cm2.flush()
-    open(os.path.join(mod_personas, "Claudia_routine.txt"), "w", encoding="utf-8", newline="\n").write(BUILTIN_PERSONAS[DEFAULT_ROUTINE] + "\n我的日程")
+    open(os.path.join(mod_personas, "Claudia_templates.txt"), "w", encoding="utf-8", newline="\n").write(BUILTIN_PERSONAS[DEFAULT_ROUTINE] + "\n我的日程")
     cm3 = Comm(mod_dir, mod_personas, now=lambda: clock[0], chat_fn=fake)
-    assert read_persona(mod_personas, "Claudia_routine.txt").endswith("我的日程"), "用户改过的日程文件不动"
+    assert read_persona(mod_personas, "Claudia_templates.txt").endswith("我的日程"), "用户改过的日程文件不动"
     cm3.flush()
     cr2.flush()
 
@@ -3791,6 +3791,56 @@ def _selftest():
     assert last_ai["text"] == "他说,好.然后走了..." and ch.visible()[-1]["text"] == "他说,好.然后走了..."
     assert "，" in last_ai.get("api", "") and "……" in last_ai.get("api", ""), "给模型的那份保留原文"
     ch.flush()
+
+    # 旧日程改名与条件归并不清聊天；自定义内容原样保留。
+    migrate_dir, migrate_folder = os.path.join(td, "template_migrate"), os.path.join(td, "template_personas")
+    mc = Comm(migrate_dir, migrate_folder, now=lambda: clock[0], chat_fn=fake)
+    mc._add("me", "保留的聊天")
+    mc.save_chat()
+    mc.flush()
+    old_main = "用户改过的人设\n[condition]\nmessages:42\n[/condition]\n"
+    old_rt = "初始起点:8:00\n2h:空闲\n# 自定义日程\n"
+    open(os.path.join(migrate_folder, DEFAULT_PERSONA), "w", encoding="utf-8").write(old_main)
+    os.remove(os.path.join(migrate_folder, DEFAULT_ROUTINE))
+    open(os.path.join(migrate_folder, "Claudia_routine.txt"), "w", encoding="utf-8").write(old_rt)
+    for fname, content in (("Ann.txt", "自定义"), ("Ann_routine.txt", old_rt), ("Ann_templates.md", "初始起点:9:00\n3h:空闲\n")):
+        open(os.path.join(migrate_folder, fname), "w", encoding="utf-8").write(content)
+    migrated = Comm(migrate_dir, migrate_folder, now=lambda: clock[0], chat_fn=fake)
+    assert not os.path.exists(os.path.join(migrate_folder, "Claudia_routine.txt"))
+    assert routine_name_of(migrate_folder, "Ann.txt") == "Ann_templates.md"
+    assert "Ann_routine.txt" not in companions_of(migrate_folder, "Ann.txt")
+    assert not os.path.exists(os.path.join(migrate_folder, "Ann_templates.txt"))
+    open(os.path.join(migrate_folder, "Late.txt"), "w", encoding="utf-8").write("晚到的旧人设")
+    open(os.path.join(migrate_folder, "Late_routine.txt"), "w", encoding="utf-8").write(old_rt)
+    assert routine_name_of(migrate_folder, "Late.txt") == "Late_routine.txt"
+
+    assert read_persona(migrate_folder, DEFAULT_ROUTINE).startswith(old_rt.strip())
+    assert "[condition]" not in read_persona(migrate_folder, DEFAULT_PERSONA)
+    assert condition_rules(read_persona_full(migrate_folder, DEFAULT_PERSONA))[0]["msgs"] == 42
+    assert migrated.messages[0]["text"] == "保留的聊天" and migrated.check_persona_changes() is None
+    migrated.flush()
+    # 未改过的旧内置内容仍可经原 CRC 升级，模板齐全且不重复。
+    builtin_dir, builtin_folder = os.path.join(td, "builtin_migrate"), os.path.join(td, "builtin_personas")
+    bc = Comm(builtin_dir, builtin_folder, now=lambda: clock[0], chat_fn=fake)
+    previous_main = BUILTIN_PERSONAS[DEFAULT_PERSONA] + test_conditions + test_tension
+    previous_routine = BUILTIN_PERSONAS[DEFAULT_ROUTINE].split("【关系条件】")[0]
+    bc.cfg["claudia_base"] = bc._text_crc(previous_main)
+    bc.cfg["routine_base"] = bc._text_crc(previous_routine)
+    bc.save_cfg(); bc.flush()
+    open(os.path.join(builtin_folder, DEFAULT_PERSONA), "w", encoding="utf-8").write(previous_main)
+    os.remove(os.path.join(builtin_folder, DEFAULT_ROUTINE))
+    open(os.path.join(builtin_folder, "Claudia_routine.txt"), "w", encoding="utf-8").write(previous_routine)
+    upgraded = Comm(builtin_dir, builtin_folder, now=lambda: clock[0], chat_fn=fake)
+    assert read_persona(builtin_folder, DEFAULT_PERSONA) == BUILTIN_PERSONAS[DEFAULT_PERSONA].strip()
+    assert read_persona(builtin_folder, DEFAULT_ROUTINE) == BUILTIN_PERSONAS[DEFAULT_ROUTINE].strip()
+    assert len(tension_rules(read_persona_full(builtin_folder, DEFAULT_PERSONA))) == 5
+    assert upgraded.check_persona_changes() is None
+    upgraded.flush()
+    # 新文件优先，旧文件即使从旧设备再次同步来也不重复加入模型上下文。
+    migrated.apply_persona_doc({"Claudia_routine.txt": old_rt + test_conditions})
+    assert "Claudia_routine.txt" not in companions_of(migrate_folder, DEFAULT_PERSONA)
+    assert condition_rules(read_persona_full(migrate_folder, DEFAULT_PERSONA))[0]["msgs"] == 42
+    migrated.flush()
 
     # 自定义条件来自文件，未知条件不能绕过白名单，冷却保留自定义键。
     from comm.comm_rules import tension_event

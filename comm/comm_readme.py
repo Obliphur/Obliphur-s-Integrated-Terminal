@@ -5,7 +5,7 @@ import i18n
 
 def readme_text(prefix: str) -> str:
     """人设文件夹里的 README.md: 跟随界面语言 (中文 / English)."""
-    return (_readme_en(prefix) + RULES_EN) if i18n.is_en() else (_readme_zh(prefix) + RULES_ZH)
+    return _readme_en(prefix) if i18n.is_en() else _readme_zh(prefix)
 
 
 def _readme_zh(prefix: str) -> str:
@@ -44,9 +44,9 @@ def _readme_zh(prefix: str) -> str:
         "是对方自己正闲着、这段还剩 10 分钟以上时那一条的概率.\n"
         "  每次打开OIT、开始新对话(清空聊天记录 / 换人设)时,OIT 都会重新读取人设,并按里面的时间调整这些时刻;"
         "人设文件改了之后也会自动重新读取.\n\n"
-        "配套文件: 人设 X.txt 旁边可以放任意多个 X_名字.txt (比如 X_background.txt 背景, X_routine.txt 日程), 它们不出现在人设列表里, 最后和 X.txt 按文件名顺序合并成一份关于 X 的文件, 一起发给对方.\n"
+        "配套文件: 人设 X.txt 旁边可以放任意多个 X_名字.txt (比如 X_background.txt 背景, X_templates.txt 模板), 它们不出现在人设列表里, 最后和 X.txt 按文件名顺序合并成一份关于 X 的文件, 一起发给对方.\n"
         "  (同一个文件夹里真的有 X.txt / X.md 才算配套文件; 否则 X_名字.txt 只是一个普通人设. 改了配套文件也会弹\"修改人设\".)\n\n"
-        "日程文件 (routine): 人设 X.txt 旁边放一个 X_routine.txt, 它就是 X 的日程文件 (不出现在人设列表里, 内容拼在人设后面一起发给对方).\n"
+        "模板文件 (templates): 人设 X.txt 旁边放一个 X_templates.txt, 它集中存放 X 的日程、数据生成、张力与关系条件模板 (不出现在人设列表里, 内容拼在人设后面一起发给对方).\n"
         "  有日程文件的人设, 日程不再用上面\"每天重复的钟点\", 而是按持续时间一项接一项地算:\n"
         "    初始起点:6:30            (起床的基准时刻)\n"
         "    30min:洗漱,吃早饭        (一项活动: 持续时间:名字; 名字不是\"空闲\"的算有名字的活动, 比如吃饭, 合约时间不会和它重合)\n"
@@ -109,9 +109,9 @@ def _readme_en(prefix: str) -> str:
         "it starts; after that the character goes back to sleep and will refuse to continue if you reply (per the schedule).\n"
         "  OIT re-reads the persona whenever it starts, when a new conversation begins (clearing the chat history / "
         "switching persona), and automatically when the persona file changes.\n\n"
-        "Companion files: next to the persona X.txt you can put any number of X_name.txt files (e.g. X_background.txt for background, X_routine.txt for the schedule). They are hidden from the persona list and are merged with X.txt, in file-name order, into one text about X that is sent to the AI.\n"
+        "Companion files: next to the persona X.txt you can put any number of X_name.txt files (e.g. X_background.txt for background, X_templates.txt for templates). They are hidden from the persona list and are merged with X.txt, in file-name order, into one text about X that is sent to the AI.\n"
         "  (A file only counts as a companion if X.txt / X.md exists in the same folder; otherwise X_name.txt is just a normal persona. Editing a companion file also triggers the \"persona modified\" prompt.)\n\n"
-        "Routine file: put X_routine.txt next to the persona X.txt. It is X's schedule file (hidden from the persona list; its text is appended to the persona when sent).\n"
+        "Template file: put X_templates.txt next to the persona X.txt. It holds X's schedule, data-generation, tension and relationship templates (hidden from the persona list; its text is appended to the persona when sent).\n"
         "  A persona with a routine file no longer uses the \"fixed daily clock times\" above; the day is computed from durations, one item after another:\n"
         "    初始起点:6:30            (wake-up reference time)\n"
         "    30min:洗漱,吃早饭        (one activity: duration:name; a name other than \"空闲\" is a named activity such as a meal; contracts never overlap it)\n"
@@ -134,49 +134,3 @@ def _readme_en(prefix: str) -> str:
         "File format: one .txt or .md file is one persona; the file name is the persona's name, and the whole file is "
         "the persona prompt.\n"
         "Put it in this folder, then choose it in Settings → Chat (or copy it in with \"Import\").\n")
-
-
-RULES_ZH = """
-条件模板（与 routine 一样使用字段:数值/列表；放在人设正文或任意配套文件中，每个区块仅一份）：
-[tension]
-delight:[20] 用户分享让当前人设欣喜的真实进展
-[/tension]
-[tension:events]
-joint_hp_loss:[delight,15]
-[/tension:events]
-张力条件名用 1–32 个小写英文字母/下划线，数值为 1–40 的参考基础增量，后面写触发语义；模型只可报告已定义的条件。没有有效 [tension] 时聊天不增加张力。可选的 tension:events 把真实合约扣血事件绑定到已定义条件，未声明不增长；此处是事件的实际基础增量，与聊天共用该条件冷却。
-[condition]
-joint:[30,15,24]
-study:[60,420,210]
-messages:500
-today:8
-period:special
-[/condition]
-[condition:strict]
-messages:1000
-period:special
-[/condition:strict]
-condition 用于 [condition] 查询；condition:strict 用于进入特殊空闲时的主动告白。joint:[天数,最低难度,完成场数]；study:[天数,最低专注小时,最高空闲小时]；messages:最低双方消息总数；today:今天最低专注小时；period:special 要求当前为特殊空闲。只判定写出的项目，全部满足才通过；天数 1–70（含今天），未知字段、重复项、负数、缺失或空区块均视为配置无效，不触发主动告白。可用 # 开头写整行注释。只查询到的真实记录参与判定；不执行任何文件代码。旧自定义人设请补充模板，系统不猜测自然语言条件。未改过的内置人设随正常升级更新。
-"""
-RULES_EN = """
-Rule templates use field:value/list syntax like routine files. Put them in the persona or any companion file, with one complete block of each kind:
-[tension]
-delight:[20] The user shares real progress that delights this persona
-[/tension]
-[tension:events]
-joint_hp_loss:[delight,15]
-[/tension:events]
-Tension IDs contain 1–32 lowercase ASCII letters/underscores. The value is a reference base gain from 1 to 40; the text describes the trigger. The model may report only declared IDs. Without a valid tension block, chat adds no tension. The optional events block binds actual joint-contract HP loss to a declared ID and base gain; an omitted binding adds nothing and configured events share that ID's cooldown with chat.
-[condition]
-joint:[30,15,24]
-study:[60,420,210]
-messages:500
-today:8
-period:special
-[/condition]
-[condition:strict]
-messages:1000
-period:special
-[/condition:strict]
-condition is used by the [condition] query; condition:strict is checked for proactive confession on entering special free time. joint:[days,minimum level,completed count]; study:[days,minimum focus hours,maximum idle hours]; messages:minimum total messages; today:minimum focus hours today; period:special requires special free time. Only declared fields are checked and all must pass. Days range from 1 to 70 including today. Unknown/duplicate fields, negative values, missing or empty blocks are invalid and never trigger proactive confession. Whole-line # comments are allowed. Only actual records are evaluated; file content never executes as code. Add templates to older custom personas; natural-language conditions are not guessed. Unmodified built-in personas update through the existing upgrade process.
-"""

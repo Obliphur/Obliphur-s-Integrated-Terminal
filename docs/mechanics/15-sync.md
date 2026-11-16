@@ -227,3 +227,5 @@ Adapter 方式离线时整台电脑的网卡都禁用了 (3.1), 没法同步. �
 - **代码**: `devsync/` 只剩装配与自检; `SyncService` 由 `devsync/` 的 7 个 mixin 组成 (`discover` / `pair` / `wipe` / `link` / `docs` / `transfer` / `status`), 常量与纯工具在 `devsync_util.py`, 密码学在 `devsync_crypto.py`; 旧的 `devsync.XXX` 名字都还在 (重新导出).
 
 沟通张力的 `gain_cooldowns` 保留人设模板中的合法自定义条件名（1–32 个小写英文字母/下划线），与旧条件名按相同规则保存和同步；改名不清除原键，仍由聊天清空时刻防止旧状态恢复。条件定义来自同步的人设/配套文件，不在聊天存档中重复保存。
+
+统一人设模板文件为 `X_templates.txt`（Claudia 为 `Claudia_templates.txt`）：日程、数据生成、张力与关系条件沿原人设文件通道同步；启动原样迁移旧 `_routine` 名称与备份，保留聊天。新旧文件并存时优先采用新模板，避免旧设备恢复的重复区块影响判定（24.11）。

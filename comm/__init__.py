@@ -42,7 +42,7 @@ from .comm_schedule import PROACTIVE_P, seg_kind, seg_detail, schedule_entries, 
 from .comm_reply import CUT_DEFAULT_MIN, CUT_MAX_MIN, HALFWIDTH_SYMBOLS, NET_DEFAULT_MIN, NET_MAX_MIN, WAIT_MAX_MIN, _BRACKET_RE, _CUT_N_RE, _CUT_RE, _EMPTY_WRAP_RE, _NET_RE, _WAIT_RE, clean_reply, cut_minutes, net_minutes, to_halfwidth
 from .comm_builtin import BUILTIN_PERSONAS, DEFAULT_PERSONA, DEFAULT_BACKGROUND, DEFAULT_ROUTINE, ASSISTANT_PERSONA, ASSISTANT_DETAIL_LINE, BACKGROUND_LEGACIES, ASSISTANT_SLEEP_LINE, ASSISTANT_TITLE
 from .comm_prompt import REFUSE, SHIFT_TAG, MSGS_TAG, THINK_LONG, THINK_WORDS, THINK_TIME_RE, think_text_reason, JOINT_RULE, rest_function_text, prefix_prompt
-from .comm_persona import SHIFT_LO, SHIFT_HI, SHIFT_KEEP, MAX_PERSONA, MEM_MAX, PERSONA_EXT, readme_text, pid_of, love_norm, love_line, shift_norm, shift_pairs, hm_text, shift_line, mem_fields, seed_builtin, ensure_personas, list_personas, persona_title, uses_prefix, system_head, PERSONA_HEAD, persona_system, persona_labels, read_persona, ROUTINE_SUFFIX, COMPANION_SEP, companion_base, is_companion_name, companion_files, companions_of, routine_name_of, read_routine, read_persona_full, import_persona
+from .comm_persona import SHIFT_LO, SHIFT_HI, SHIFT_KEEP, MAX_PERSONA, MEM_MAX, PERSONA_EXT, readme_text, pid_of, love_norm, love_line, shift_norm, shift_pairs, hm_text, shift_line, mem_fields, seed_builtin, ensure_personas, list_personas, persona_title, uses_prefix, system_head, PERSONA_HEAD, persona_system, persona_labels, read_persona, ROUTINE_SUFFIX, ROUTINE_OLD_SUFFIX, COMPANION_SEP, companion_base, is_companion_name, companion_files, companions_of, routine_name_of, read_routine, read_persona_full, import_persona
 
 from .comm_const import *
 
@@ -182,6 +182,7 @@ class Comm(InteractionMixin, JointMixin, StatusMixin, ChatMixin, FlowMixin, Sche
         self._mem_results = []
         self._mem_next = 0            # 下一次可以整理记忆卡的时刻 (毫秒)
         self.load()
+        self._migrate_template_files()
         ensure_personas(self.personas)
         if not self.cfg.get("seeded"):                      # 第一次运行: 放进自带的人设, 还没选过人设就默认选 Claudia
             seed_builtin(self.personas)
@@ -929,6 +930,54 @@ class Comm(InteractionMixin, JointMixin, StatusMixin, ChatMixin, FlowMixin, Sche
     def _claudia_path(self) -> str:
         return os.path.join(self.personas, DEFAULT_PERSONA)
 
+    def _migrate_template_files(self):
+        """旧日程改名；Claudia 已有条件移入模板，保留用户修改与聊天记录。"""
+        for old in companion_files(self.personas):
+            stem, ext = os.path.splitext(old)
+            if not stem.endswith(ROUTINE_OLD_SUFFIX):
+                continue
+            target_stem = stem[:-len(ROUTINE_OLD_SUFFIX)] + ROUTINE_SUFFIX
+            new = target_stem + ext
+            if any(os.path.exists(os.path.join(self.personas, target_stem + e)) for e in PERSONA_EXT):
+                continue
+            try:
+                os.rename(os.path.join(self.personas, old), os.path.join(self.personas, new))
+                backup = self._persona_backup_path(old)
+                if os.path.isfile(backup):
+                    os.replace(backup, self._persona_backup_path(new))
+            except OSError:
+                continue
+        current = self._read_persona_raw(DEFAULT_PERSONA)
+        template = self._read_persona_raw(DEFAULT_ROUTINE)
+        if current is None or template is None:
+            return
+        from .comm_rules import rule_lines
+        original, previous = current, template
+        known_main = self._text_crc(current) == self.cfg.get("claudia_base")
+        known_template = self._text_crc(template) == self.cfg.get("routine_base")
+        for section in ("condition", "condition:strict", "tension", "tension:events"):
+            if not rule_lines(current, section) or rule_lines(template, section):
+                continue
+            pattern = re.compile(r"(?mi)^\[" + re.escape(section) + r"\]\r?$.*?^\[/" + re.escape(section) + r"\]\r?$\n?", re.S)
+            match = pattern.search(current)
+            if match:
+                template = template.rstrip() + "\n\n" + match[0].strip() + "\n"
+                current = current[:match.start()] + current[match.end():]
+        if template != previous:
+            if not self._write_persona_raw(DEFAULT_ROUTINE, template):
+                return
+            self._backup_persona_file(DEFAULT_ROUTINE)
+            if known_main and known_template:
+                self.cfg["routine_base"] = self._text_crc(template)
+        if current != original:
+            if not self._write_persona_raw(DEFAULT_PERSONA, current):
+                return
+            self._backup_persona_file(DEFAULT_PERSONA)
+            if known_main:
+                self.cfg["claudia_base"] = self._text_crc(current)
+        if current != original or template != previous:
+            self.save_cfg()
+
     def _write_claudia_builtin(self, force: bool = True):
         """force=False (自动升级): 日程文件只在缺 / 是更早的内置版本时才换, 用户改过的不动."""
         try:
@@ -1000,7 +1049,7 @@ class Comm(InteractionMixin, JointMixin, StatusMixin, ChatMixin, FlowMixin, Sche
         self.save_cfg()
 
     def _upgrade_routine(self):
-        self._upgrade_companion(DEFAULT_ROUTINE, ROUTINE_LEGACIES, "routine_base", "ROUTINE 日程文件")
+        self._upgrade_companion(DEFAULT_ROUTINE, ROUTINE_LEGACIES, "routine_base", "TEMPLATES 模板文件")
 
     def _upgrade_background(self):
         self._upgrade_companion(DEFAULT_BACKGROUND, BACKGROUND_LEGACIES, "background_base", "BACKGROUND 背景文件")
@@ -1029,7 +1078,7 @@ class Comm(InteractionMixin, JointMixin, StatusMixin, ChatMixin, FlowMixin, Sche
         return f"{zlib.crc32((text or '').strip().encode('utf-8')):08x}"
 
     def _note_builtin_base(self):
-        """记下 Claudia.txt / Claudia_routine.txt 现在是不是内置版本: 是的话把这一版的校验值记成"上一次见到的内置版本".
+        """记下 Claudia.txt / Claudia_templates.txt 现在是不是内置版本: 是的话把这一版的校验值记成"上一次见到的内置版本".
         之后程序更新了内置版本, 文件只要还是 (或者用户改过又改回了) 这个旧版本, 就当没改过, 自动换成新版 ——
         不管中间弹窗点过什么, 也不用每个旧版本都进升级链."""
         changed = False

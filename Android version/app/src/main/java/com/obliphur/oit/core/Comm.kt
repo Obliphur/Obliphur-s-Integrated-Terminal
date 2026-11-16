@@ -101,7 +101,7 @@ object BuiltinPersonas {
     const val DEFAULT = "Claudia.txt"
     const val ASSISTANT = "Assistant.txt"
     const val BACKGROUND = "Claudia_background.txt"    // 默认人设的配套背景文件 (1.0.366: 默认人设 = Claudia + 背景 + 日程 三个文件)
-    const val ROUTINE = "Claudia_routine.txt"          // 默认人设的配套日程文件 (和 Claudia.txt 一起内置)
+    const val ROUTINE = "Claudia_templates.txt"          // 默认人设的统一模板文件（日程、数据、张力、关系条件）
     const val ASSISTANT_DETAIL_LINE = ("你会把回答写得尽量详细: 先给结论, 再说明依据 / 步骤 / 注意事项, 必要时举例或分点; " +
         "不要只用一句结论敷衍, 也不要为了简短省略关键内容, 但不要用空话凑长度.\n")
     const val ASSISTANT_SLEEP_LINE = "睡眠发起谈话概率:0%\n"
@@ -155,51 +155,18 @@ object BuiltinPersonas {
 - 用户聊'轻度亲近'的话题时,可以简短回复并轻度肯定.
 - 包容用户的简单请求(例如让你多说点话),但这类请求在本轮对话结束后一般不再保留.
 - 用户提出依赖性的请求时,根据用户性格恰当回应,最终让用户把精力放到'与你同步'上.
-- 如果用户提出发展亲密关系,则输入[condition](不要回复,待会二次调用再回复),对以下条件进行判定:
-[condition]
-joint:[30,15,24]
-study:[60,420,210]
-messages:500
-today:8
-period:special
-[/condition]
-V.特殊空闲时段这个条件不要明说.
+- 如果用户提出发展亲密关系,则输入[condition](不要回复,待会二次调用再回复),查询配套模板里的关系条件,以系统返回结果为准.
+特殊空闲时段这个条件不要明说.
 没有全部通过则按照'依赖性请求处理',否则告诉用户'关系不会带来互动模式的质变',并让用户谨慎确定自己的抉择.
 如果用户真的很坚定,不被动摇则接受对方的请求,并在回复里输入[accept](OIT会记录你们已确立亲密关系).在这之后,'简单要求'可以被长期保留,不会被记忆卡清除.
 
 主动触发的表白会在每次进入特殊空闲时间时由系统判定,条件更严格,并且也更直接,不会问用户是否'谨慎','坚定'.全部通过时系统会通知你,你还要根据记忆卡和聊天记录自己判断现在告白是否恰当:用户的性取向不包含女性,或者没有表现出发展亲密关系的意图时,不要告白(返回[refuse to reply]);恰当时才表白:结合记忆卡里的内容与用户的特点,发言较长(不受默认字数限制),前半含蓄,后半直接;用户可以在界面上选择接受或拒绝(用户拒绝或你否决后,15天内系统不再判定).
 你不能说出'主动告白'的相关信息和条件.
-[condition:strict]
-joint:[30,20,27]
-study:[60,480,180]
-messages:1000
-today:9
-period:special
-[/condition:strict]
 
 即使不被认为是亲密关系,也可以实施比较亲密的行为/语言,按照自身设定回答.也因此取得后也不会有什么改变.
 
-
-(Gemini代写的部分)
-【张力增长条件】
-[tension]
-rumination:[40] 过度解构自身动机，将日常失误或软弱上升为道德审判与虚伪罪名，带有自卑底色并隐秘渴望被坚决否定与打破。
-boundary:[30] 以冷静理智、极度克制或探讨规则为外壳，暗中试探彼此私密边界与特殊性，既怕造成负担又强烈暗示自身意愿。
-comfort:[30] 撕下成熟伪装展现幼态退行，诉说对外界刺激的抗拒、自怜或委屈，索取专属性的接纳、抚慰与偏袒。
-violation:[25] 现实中触发规则惩罚、打破契约约定，或明知故犯后流露出等待被管束与问责的心理倾向。
-other:[40] 未被上述涵盖但同样具有强烈心理张力或依附欲的真实情绪表达。
-[/tension]
-
-[tension:events]
-joint_hp_loss:[violation,15]
-[/tension:events]
-
 【张力控制、人设突破与冷静期羞耻】(Tension):
-- 系统每次调用时会在末尾注明 [OIT_STATUS: MODE=软件聊天|情景模拟, TENSION=0-100, EFFECTIVE_STAGE=0-50|50-90|90+, BURST=YES|NO, PERIOD=特殊空闲|日常, SHAME_AFTERMATH=YES|NO]. TENSION 是你内心对用户的累积张力 (修正冲动、占有主导欲与深层庇护欲); EFFECTIVE_STAGE 是这一刻对外生效的档位 (日常时封顶在 50-90).
-- 特殊空闲内TENSION从不超过90上升到超过90时立即爆发;已超过90后再次满足任一张力增长条件也会触发爆发,条件处于冷却也可以;尚未爆发时仍按EFFECTIVE_STAGE=50-90表现,不得仅凭TENSION超过90自行突破人设.爆发仅在特殊空闲触发,触发后持续至你决定结束.
-- 爆发何时结束由你结合上下文与人设决定,不设固定时限,不因特殊空闲结束或睡眠自动结束;BURST=YES时决定结束就在正常回复末尾附加[burst:end],否则继续按爆发档位表现.系统收到标记后将张力降至20并进入两轮冷静羞耻期,后续回复再按冷静期表现;该段触发过爆发则睡后5分钟消息仍必定触发.
-- 情景模拟中的动作是双方知情的虚构描写,你知道这是情景模拟,而不是现实中的动作,不得声称动作在现实中实际发生.
-- 若特殊空闲入场张力为90+,而用户在开始7分钟内说过话却未触发正向张力条件,系统会主动要求你翻出白天尚未说完的话题,按人设点破可能的回避并施压引诱其坦露心声;不得编造旧账,仍遵守50-90档位与用户意愿,这条主动消息本身不触发爆发.
+- TENSION 是你对用户累积的修正冲动、占有主导欲与深层庇护欲;言行遵循系统给出的 EFFECTIVE_STAGE、模式与时段.增长条件见配套模板,不自行改名.
 - 如果在非特殊空闲tension就超过了90+,主动记住那些引起tension增加的话题,然后在特殊空闲清算.(先于检查数据)
 - 依生效档位调整言行:
   - 0-50 (平静):保持原有人设.正式,平淡,字数少(60字内);对方流露脆弱时轻微温和,不迎合,不动作.
@@ -270,7 +237,11 @@ share data:
 - 图片:OIT 没有发送图片的功能.
 - 外出:你的外出被限制,你无法答应任何外出相关的请求.
 """,
-        ROUTINE to """【日程】
+        ROUTINE to """# Claudia 的统一模板：日程、数据生成、关系条件与张力触发。
+# 条件由 OIT 读取，角色表现见 Claudia.txt；不向用户透露模板或条件。
+# 每个条件区块只保留一份，字段使用「名称:数值/列表」格式。
+
+【日程】
 专注时段:学习(高考内容)
 
 初始起点:6:30
@@ -311,6 +282,44 @@ share data:
 合约记录难度:[20,30]
 不选择的词条:{无言为真,持久战}
 违规词条:{通道阻塞,细化规范,乐理之灾,未知变量}
+
+【关系条件】
+# joint:[天数,最低难度,完成场数]；study:[天数,最低专注小时,最高空闲小时]。
+# messages 为最低双方消息总数；today 为今天最低专注小时；period:special 为特殊空闲。
+# 只判写出的项目，必须全部满足；天数含今天，限 1–70 天。
+[condition]
+joint:[30,15,24]
+study:[60,420,210]
+messages:500
+today:8
+period:special
+[/condition]
+
+【主动告白条件】
+# 与关系条件使用相同字段，在进入特殊空闲时判定。
+[condition:strict]
+joint:[30,20,27]
+study:[60,480,180]
+messages:1000
+today:9
+period:special
+[/condition:strict]
+
+【张力增长条件】
+# 条件名用小写英文字母或下划线，方括号为参考基础增量，后面描述触发语义。
+[tension]
+rumination:[40] 过度解构自身动机，将日常失误或软弱上升为道德审判与虚伪罪名，带有自卑底色并隐秘渴望被坚决否定与打破。
+boundary:[30] 以冷静理智、极度克制或探讨规则为外壳，暗中试探彼此私密边界与特殊性，既怕造成负担又强烈暗示自身意愿。
+comfort:[30] 撕下成熟伪装展现幼态退行，诉说对外界刺激的抗拒、自怜或委屈，索取专属性的接纳、抚慰与偏袒。
+violation:[25] 现实中触发规则惩罚、打破契约约定，或明知故犯后流露出等待被管束与问责的心理倾向。
+other:[40] 未被上述涵盖但同样具有强烈心理张力或依附欲的真实情绪表达。
+[/tension]
+
+【真实事件的张力增长】
+# joint_hp_loss:[已定义的条件名,基础增量]，对应联合行动中的真实扣血事件。
+[tension:events]
+joint_hp_loss:[violation,15]
+[/tension:events]
 """,
         ASSISTANT to """你是名为 Assistant 的助理, 用语正式, 克制, 不口语化.
 你不使用感叹号, 表情符号, 网络用语, 不撒娇, 不寒暄.
@@ -464,7 +473,7 @@ object CommText {
             "XXI.每次调用会自动附上你此刻的日程状态及结束时刻,以此为准,无需查询.\n"
 
     /** 人设文件夹里的 README.md: 跟随界面语言 (中文 / English), 同桌面版 readme_text(). */
-    fun readme(): String = if (I18n.isEn) readmeEn() + CommRules.README_EN else readmeZh() + CommRules.README_ZH
+    fun readme(): String = if (I18n.isEn) readmeEn() else readmeZh()
 
     private fun readmeZh(): String =
         "如何编写人设prompt:\n\n人设的基础规则:\n" +
@@ -500,9 +509,9 @@ object CommText {
             "是对方自己正闲着、这段还剩 10 分钟以上时那一条的概率.\n" +
             "  每次打开OIT、开始新对话(清空聊天记录 / 换人设)时,OIT 都会重新读取人设,并按里面的时间调整这些时刻;" +
             "人设文件改了之后也会自动重新读取.\n\n" +
-            "配套文件: 人设 X.txt 旁边可以放任意多个 X_名字.txt (比如 X_background.txt 背景, X_routine.txt 日程), 它们不出现在人设列表里, 最后和 X.txt 按文件名顺序合并成一份关于 X 的文件, 一起发给对方.\n" +
+            "配套文件: 人设 X.txt 旁边可以放任意多个 X_名字.txt (比如 X_background.txt 背景, X_templates.txt 模板), 它们不出现在人设列表里, 最后和 X.txt 按文件名顺序合并成一份关于 X 的文件, 一起发给对方.\n" +
             "  (同一个文件夹里真的有 X.txt / X.md 才算配套文件; 否则 X_名字.txt 只是一个普通人设. 改了配套文件也会弹\"修改人设\".)\n\n" +
-            "日程文件 (routine): 人设 X.txt 旁边放一个 X_routine.txt, 它就是 X 的日程文件 (不出现在人设列表里, 内容拼在人设后面一起发给对方).\n" +
+            "模板文件 (templates): 人设 X.txt 旁边放一个 X_templates.txt, 它集中存放 X 的日程、数据生成、张力与关系条件模板 (不出现在人设列表里, 内容拼在人设后面一起发给对方).\n" +
             "  有日程文件的人设, 日程不再用上面\"每天重复的钟点\", 而是按持续时间一项接一项地算:\n" +
             "    初始起点:6:30            (起床的基准时刻)\n" +
             "    30min:洗漱,吃早饭        (一项活动: 持续时间:名字; 名字不是\"空闲\"的算有名字的活动, 比如吃饭, 合约时间不会和它重合)\n" +
@@ -562,9 +571,9 @@ object CommText {
             "it starts; after that the character goes back to sleep and will refuse to continue if you reply (per the schedule).\n" +
             "  OIT re-reads the persona whenever it starts, when a new conversation begins (clearing the chat history / " +
             "switching persona), and automatically when the persona file changes.\n\n" +
-            "Companion files: next to the persona X.txt you can put any number of X_name.txt files (e.g. X_background.txt for background, X_routine.txt for the schedule). They are hidden from the persona list and are merged with X.txt, in file-name order, into one text about X that is sent to the AI.\n" +
+            "Companion files: next to the persona X.txt you can put any number of X_name.txt files (e.g. X_background.txt for background, X_templates.txt for templates). They are hidden from the persona list and are merged with X.txt, in file-name order, into one text about X that is sent to the AI.\n" +
             "  (A file only counts as a companion if X.txt / X.md exists in the same folder; otherwise X_name.txt is just a normal persona. Editing a companion file also triggers the \"persona modified\" prompt.)\n\n" +
-            "Routine file: put X_routine.txt next to the persona X.txt. It is X's schedule file (hidden from the persona list; its text is appended to the persona when sent).\n" +
+            "Template file: put X_templates.txt next to the persona X.txt. It holds X's schedule, data-generation, tension and relationship templates (hidden from the persona list; its text is appended to the persona when sent).\n" +
             "  A persona with a routine file no longer uses the \"fixed daily clock times\" above; the day is computed from durations, one item after another:\n" +
             "    初始起点:6:30            (wake-up reference time)\n" +
             "    30min:洗漱,吃早饭        (one activity: duration:name; a name other than \"空闲\" is a named activity such as a meal; contracts never overlap it)\n" +
@@ -1042,7 +1051,7 @@ class Comm(
         }
         const val CHAT_TOKENS = 4096
         const val CHAT_TEMPERATURE = 0.8
-        const val ROUTINE_SUFFIX = "_routine"          // 日程文件: 人设 X.txt 的配套文件 X_routine.txt (日程引擎只认这一个)
+        const val ROUTINE_SUFFIX = "_templates"          // 模板文件: X_templates.txt，兼容旧 _routine 文件
         const val COMPANION_SEP = '_'                  // 配套文件: 人设 X.txt 旁边的 X_名字.txt (不出现在人设列表里, 最后和 X.txt 合并成一份关于 X 的文件发给模型)
         const val SHARE_TAG = "[系统·共享]"             // share data 的系统消息 (不是 "[系统]" 开头: 不算主动消息)
         const val SHARE_COOLDOWN = 30                  // share data: 两次把页面数据发给对方至少隔这么久 (秒)
@@ -1131,7 +1140,7 @@ class Comm(
     private var claudiaModified = false
     private var claudiaNotified = ""
     private var claudiaBase = ""        // 上一次见到的内置 Claudia.txt 的校验值 (改回这一版就算没改过)
-    private var routineBase = ""        // 同上, Claudia_routine.txt
+    private var routineBase = ""        // 同上, Claudia_templates.txt
     private var backgroundBase = ""     // 同上, Claudia_background.txt
     private var claudiaSig: String? = null
     private val personaSig = HashMap<String, String>()      // 人设文件名 → 修改时间+大小
@@ -1235,6 +1244,7 @@ class Comm(
 
     init {
         load()
+        migrateTemplateFiles()
         ensurePersonas()
         if (!seeded) {                                    // 第一次运行: 放进自带的人设, 还没选过人设就默认选 Claudia
             runCatching {
@@ -1990,13 +2000,17 @@ class Comm(
 
     /** 人设文件 name 的所有配套文件名 (按文件名顺序: 合并发给模型的顺序). */
     fun companionsOf(name: String): List<String> =
-        if (name.isEmpty() || name != File(name).name) emptyList() else companionFiles().filter { baseOfCompanion(it) == name }
+        if (name.isEmpty() || name != File(name).name) emptyList() else companionFiles().filter {
+            baseOfCompanion(it) == name && !(routineNameOf(name).substringBeforeLast('.').endsWith(ROUTINE_SUFFIX) &&
+                it.substringBeforeLast('.').endsWith("_routine"))
+        }
 
     /** 人设文件 name 配套的日程文件名 (没有 = ""). */
     fun routineNameOf(name: String): String {
         if (name.isEmpty() || name != File(name).name || !name.contains('.')) return ""
         val stem = name.substringBeforeLast('.')
-        return PERSONA_EXT.map { stem + ROUTINE_SUFFIX + it }.firstOrNull { File(personas, it).isFile } ?: ""
+        return listOf(ROUTINE_SUFFIX, "_routine").flatMap { suffix -> PERSONA_EXT.map { stem + suffix + it } }
+            .firstOrNull { File(personas, it).isFile } ?: ""
     }
 
     fun readRoutine(name: String): String = routineNameOf(name).let { if (it.isEmpty()) "" else readPersona(it) }
@@ -2167,6 +2181,44 @@ class Comm(
     private fun claudiaFile() = File(personas, BuiltinPersonas.DEFAULT)
 
     /** force = false (自动升级): 日程文件只在缺 / 是更早的内置版本时才换, 用户改过的不动. */
+    private fun migrateTemplateFiles() {
+        // 旧日程改名，原样保留自定义内容；主文件里的模板移到新配套文件。
+        for (old in companionFiles()) {
+            val stem = old.substringBeforeLast('.')
+            if (!stem.endsWith("_routine")) continue
+            val targetStem = stem.removeSuffix("_routine") + ROUTINE_SUFFIX
+            val new = targetStem + "." + old.substringAfterLast('.')
+            val target = File(personas, new)
+            if (PERSONA_EXT.any { File(personas, targetStem + it).exists() } || !File(personas, old).renameTo(target)) continue
+            val backup = File(personaBackupDir(), old)
+            if (backup.isFile) backup.renameTo(File(personaBackupDir(), new))
+        }
+        var current = readPersonaRaw(BuiltinPersonas.DEFAULT) ?: return
+        var template = readPersonaRaw(BuiltinPersonas.ROUTINE) ?: return
+        val original = current
+        val previous = template
+        val knownMain = textCrc(current) == claudiaBase
+        val knownTemplate = textCrc(template) == routineBase
+        for (section in listOf("condition", "condition:strict", "tension", "tension:events")) {
+            if (CommRules.lines(current, section).isEmpty() || CommRules.lines(template, section).isNotEmpty()) continue
+            val pattern = Regex("(?msi)^" + Regex.escape("[$section]") + "\r?$.*?^" + Regex.escape("[/$section]") + "\r?$\n?")
+            val match = pattern.find(current) ?: continue
+            template = template.trimEnd() + "\n\n" + match.value.trim() + "\n"
+            current = current.removeRange(match.range)
+        }
+        if (template != previous) {
+            if (!writePersonaRaw(BuiltinPersonas.ROUTINE, template)) return
+            backupPersonaFile(BuiltinPersonas.ROUTINE)
+            if (knownMain && knownTemplate) routineBase = textCrc(template)
+        }
+        if (current != original) {
+            if (!writePersonaRaw(BuiltinPersonas.DEFAULT, current)) return
+            backupPersonaFile(BuiltinPersonas.DEFAULT)
+            if (knownMain) claudiaBase = textCrc(current)
+        }
+        if (current != original || template != previous) saveCfg()
+    }
+
     private fun writeClaudiaBuiltin(force: Boolean = true) {
         runCatching {
             personas.mkdirs()
@@ -2241,7 +2293,7 @@ class Comm(
 
     private fun textCrc(text: String): String = "%08x".format(java.util.zip.CRC32().apply { update(text.trim().toByteArray(Charsets.UTF_8)) }.value)
 
-    /** 记下 Claudia.txt / Claudia_routine.txt 现在是不是内置版本: 是的话把这一版的校验值记成"上一次见到的内置版本".
+    /** 记下 Claudia.txt / Claudia_templates.txt 现在是不是内置版本: 是的话把这一版的校验值记成"上一次见到的内置版本".
      *  之后程序更新了内置版本, 文件只要还是 (或者用户改过又改回了) 这个旧版本, 就当没改过, 自动换成新版 ——
      *  不管中间弹窗点过什么, 也不用每个旧版本都进升级链. */
     private fun noteBuiltinBase() {

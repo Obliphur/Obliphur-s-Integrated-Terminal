@@ -192,7 +192,8 @@ def read_persona(folder: str, name: str) -> str:
             return f.read(MAX_PERSONA).strip()
     except (OSError, UnicodeDecodeError):
         return ""
-ROUTINE_SUFFIX = "_routine"            # 日程文件: 人设 X.txt 的配套文件 X_routine.txt (日程引擎只认这一个)
+ROUTINE_SUFFIX = "_templates"         # 模板文件: 人设 X.txt 的配套文件 X_templates.txt
+ROUTINE_OLD_SUFFIX = "_routine"       # 旧版日程文件名, 读取时兼容
 COMPANION_SEP = "_"                    # 配套文件: 人设 X.txt 旁边的 X_名字.txt (不出现在人设列表里, 最后和 X.txt 合并成一份关于 X 的文件发给模型)
 
 
@@ -234,18 +235,22 @@ def companions_of(folder: str, name: str) -> list:
     """人设文件 name 的所有配套文件名 (按文件名顺序: 合并发给模型的顺序)."""
     if not name or name != os.path.basename(name):
         return []
-    return [n for n in companion_files(folder) if companion_base(folder, n) == name]
+    selected = routine_name_of(folder, name)
+    return [n for n in companion_files(folder) if companion_base(folder, n) == name
+            and not (selected and os.path.splitext(selected)[0].endswith(ROUTINE_SUFFIX)
+                     and os.path.splitext(n)[0].endswith(ROUTINE_OLD_SUFFIX))]
 
 
 def routine_name_of(folder: str, name: str) -> str:
-    """人设文件 name 配套的日程文件名 (没有 = "")."""
+    """人设文件 name 配套的模板文件名 (兼容旧版 _routine)."""
     if not name or name != os.path.basename(name):
         return ""
     stem = os.path.splitext(name)[0]
-    for e in PERSONA_EXT:
-        cand = stem + ROUTINE_SUFFIX + e
-        if os.path.isfile(os.path.join(folder, cand)):
-            return cand
+    for suffix in (ROUTINE_SUFFIX, ROUTINE_OLD_SUFFIX):
+        for e in PERSONA_EXT:
+            cand = stem + suffix + e
+            if os.path.isfile(os.path.join(folder, cand)):
+                return cand
     return ""
 
 

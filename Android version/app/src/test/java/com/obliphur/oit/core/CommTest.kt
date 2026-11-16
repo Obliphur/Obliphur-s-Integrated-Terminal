@@ -37,7 +37,7 @@ class CommTest {
     private val webLog = mutableListOf<Boolean>()
 
     private fun seedTestTension(file: File) {
-        val builtin = BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT)
+        val builtin = BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE)
         if ("[tension]" !in file.readText()) file.appendText("\n[tension]\n" +
             CommRules.lines(builtin, "tension").joinToString("\n") +
             "\n[/tension]\n[tension:events]\njoint_hp_loss:[violation,15]\n[/tension:events]\n")
@@ -91,6 +91,46 @@ class CommTest {
     }
 
     /** 自定义模板、文件读取与无效配置回退。 */
+    @Test
+    fun templateFileMigration() {
+        val td = Files.createTempDirectory("oit").toFile()
+        val data = File(td, "d").apply { mkdirs() }
+        val personas = File(td, "p")
+        val original = comm(data, personas)
+        original.flush(); original.voice.close()
+        File(personas, BuiltinPersonas.DEFAULT).writeText("自定义人设\n[condition]\nmessages:42\n[/condition]\n")
+        File(personas, BuiltinPersonas.ROUTINE).delete()
+        val oldRoutine = "初始起点:8:00\n2h:空闲\n# 自定义日程\n"
+        File(personas, "Claudia_routine.txt").writeText(oldRoutine)
+        File(personas, "Ann.txt").writeText("自定义")
+        File(personas, "Ann_routine.txt").writeText(oldRoutine)
+        File(personas, "Ann_templates.md").writeText("初始起点:9:00\n3h:空闲\n")
+        val migrated = comm(data, personas)
+        assertEquals("Ann_templates.md", migrated.routineNameOf("Ann.txt"))
+        assertFalse("Ann_routine.txt" in migrated.companionsOf("Ann.txt"))
+        assertFalse(File(personas, "Ann_templates.txt").exists())
+        File(personas, "Late.txt").writeText("晚到的旧人设")
+        File(personas, "Late_routine.txt").writeText(oldRoutine)
+        assertEquals("Late_routine.txt", migrated.routineNameOf("Late.txt"))
+        assertFalse(File(personas, "Claudia_routine.txt").exists())
+        assertTrue(migrated.readRoutine(BuiltinPersonas.DEFAULT).startsWith(oldRoutine.trim()))
+        assertFalse("[condition]" in migrated.readPersona(BuiltinPersonas.DEFAULT))
+        assertEquals(42, CommRules.conditions(migrated.readPersonaFull(BuiltinPersonas.DEFAULT))!!.msgs)
+        assertNull(migrated.checkPersonaChanges())
+        migrated.applyPersonaDoc(mapOf("Claudia_routine.txt" to oldRoutine + "[condition]\nmessages:1\n[/condition]"))
+        assertFalse("Claudia_routine.txt" in migrated.companionsOf(BuiltinPersonas.DEFAULT))
+        assertEquals(42, CommRules.conditions(migrated.readPersonaFull(BuiltinPersonas.DEFAULT))!!.msgs)
+        migrated.flush(); migrated.voice.close()
+        val main = BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT)
+        val templates = BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE)
+        assertTrue(CommRules.tension(main).isEmpty())
+        assertNull(CommRules.conditions(main))
+        assertEquals(5, CommRules.tension(templates).size)
+        assertNotNull(CommRules.conditions(templates))
+        assertNotNull(CommRules.conditions(templates, true))
+        assertNotNull(Routine.parse(templates))
+    }
+
     @Test
     fun personaRuleTemplates() {
         val td = Files.createTempDirectory("oit").toFile()
@@ -487,7 +527,7 @@ class CommTest {
         assertEquals(9, CommInteraction(gainUntil = 2).gain(CommInteraction.modelGain("[tension:1:violation:25]", 1, false), 1))
         val now = LocalDateTime.of(2027, 5, 4, 23, 0).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
         var d = CommInteraction()
-        val conditions = CommRules.tension(BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT)).keys
+        val conditions = CommRules.tension(BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE)).keys
         val choices = "[tension:1:boundary:30][tension:1:rumination:20][tension:1:rumination:40][tension:1:unknown:999999][tension:2:comfort:40]"
         val available = listOf("rumination" to 40, "boundary" to 30)
         assertEquals(listOf("boundary" to 30), CommInteraction.modelEvents(choices, 1, true, mapOf("rumination" to now + 1), now, conditions))
@@ -664,7 +704,7 @@ class CommTest {
             var c = comm(dir, personas)
             c.importPersona("睡后.txt", ("你是睡后.\n23:40-23:59:特殊空闲\n23:59-06:30:睡眠\n" +
                 "长时间休息发起谈话概率:0%\n特殊空闲发起谈话概率:0%\n睡眠发起谈话概率:0%\n").byteInputStream())
-            if (useRt) c.importPersona("睡后_routine.txt", "初始起点:23:40\n19min:特殊空闲\n".byteInputStream())
+            if (useRt) c.importPersona("睡后_templates.txt", "初始起点:23:40\n19min:特殊空闲\n".byteInputStream())
             seedTestTension(File(c.personas, "睡后.txt"))
             c.set(persona = "睡后.txt", splitSend = false)
             c.setMuted(true)
@@ -752,7 +792,7 @@ class CommTest {
         }
         val end = LocalDateTime.of(2027, 5, 5, 13, 30).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
         assertEquals(listOf("2027-05-04"), CommInteraction.parse(JSONObject().put("gain_until", end)).burstDays)
-        c.importPersona("早间_routine.txt", "初始起点:6:00\n6h:空闲\n".byteInputStream())
+        c.importPersona("早间_templates.txt", "初始起点:6:00\n6h:空闲\n".byteInputStream())
         c.reloadSchedule()
         clock = LocalDateTime.of(2027, 5, 6, 8, 55)
         setDays(listOf("2027-05-05"))
@@ -822,7 +862,7 @@ class CommTest {
             var c = comm(dir, personas)
             c.importPersona("引诱.txt", ("你是引诱.\n23:50-00:40:特殊空闲\n" +
                 "长时间休息发起谈话概率:0%\n特殊空闲发起谈话概率:0%\n").byteInputStream())
-            if (useRt) c.importPersona("引诱_routine.txt", "初始起点:23:50\n50min:特殊空闲\n".byteInputStream())
+            if (useRt) c.importPersona("引诱_templates.txt", "初始起点:23:50\n50min:特殊空闲\n".byteInputStream())
             seedTestTension(File(c.personas, "引诱.txt"))
             c.set(persona = "引诱.txt", splitSend = false)
             val owner = Comm.pidOf("引诱.txt")
@@ -990,7 +1030,7 @@ class CommTest {
         assertTrue(CommInteraction.parse(peer.syncDoc()["interaction:$owner"] as JSONObject).tension < 90)
         // 持续时间日程和后台对象同样必谈一次。
         clock = LocalDateTime.of(2027, 5, 7, 13, 40)
-        c.importPersona("特殊_routine.txt", "初始起点:12:00\n1h:空闲\n1h:特殊空闲\n10h:空闲\n".byteInputStream())
+        c.importPersona("特殊_templates.txt", "初始起点:12:00\n1h:空闲\n1h:特殊空闲\n10h:空闲\n".byteInputStream())
         c.reloadSchedule()
         setTension(91)
         c.importPersona("空白.txt", "你是空白.".byteInputStream())
@@ -1001,7 +1041,7 @@ class CommTest {
         assertEquals(2, calls.size)
         assertTrue(state().specialUntil > 0L); assertEquals(0L, state().burstUntil)
         // 前台切换后，后台睡后必谈可结束其对象的爆发。
-        File(personas, "特殊_routine.txt").delete()
+        File(personas, "特殊_templates.txt").delete()
         File(personas, "特殊.txt").writeText("你是特殊.\n13:00-14:00:特殊空闲\n14:00-23:00:睡眠\n" +
             "长时间休息发起谈话概率:0%\n空闲发起谈话概率:0%\n睡眠发起谈话概率:0%\n特殊空闲发起谈话概率:0%\n", Charsets.UTF_8)
         val bg = state()
@@ -1280,10 +1320,10 @@ class CommTest {
         assertTrue("背景文件被改过: 显示还原按钮", c.claudiaDiffers())
         c.restoreClaudia()
         assertFalse(c.claudiaDiffers())
-        File(cp, "Claudia_routine.txt").delete()
+        File(cp, "Claudia_templates.txt").delete()
         assertTrue("缺文件也算和默认人设不一样", c.claudiaDiffers())
         c.restoreClaudia()
-        assertTrue("还原把缺的文件补上", !c.claudiaDiffers() && File(cp, "Claudia_routine.txt").isFile)
+        assertTrue("还原把缺的文件补上", !c.claudiaDiffers() && File(cp, "Claudia_templates.txt").isFile)
         c.set(persona = "Assistant.txt")
         assertFalse("没选 Claudia: 不显示", c.claudiaDiffers())
         c.set(persona = "Claudia.txt")
@@ -1362,7 +1402,7 @@ class CommTest {
         assertTrue(c.readPersona("Assistant.txt").startsWith("你是名为 Assistant 的助理"))
         c.set(persona = "")
         File(td, "pp/Claudia.txt").delete()
-        File(td, "pp/Claudia_routine.txt").delete()
+        File(td, "pp/Claudia_templates.txt").delete()
         File(td, "pp/Claudia_background.txt").delete()
         File(td, "pp/Assistant.txt").delete()
         c.flush()
@@ -1771,7 +1811,7 @@ class CommTest {
         c.importPersona("日程.txt", "你是小满.\n12:30-13:00:空闲\n[循环 19:00-21:18][100min]\n".byteInputStream())   // 19:00-20:40 专注, 20:40-21:18 休息
         c.set(persona = "日程.txt")
         assertEquals(80.0 to 60.0, c.proPercent("idle") to c.proPercent("rest"))          // 人设里没写: 默认概率
-        assertEquals(mapOf("idle" to 20.0, "key" to 20.0, "special" to 60.0, "rest" to 20.0, "long" to 20.0, "sleep" to 50.0), CommText.personaProbs(BuiltinPersonas.ALL.getValue("Claudia.txt") + "\n" + BuiltinPersonas.ALL.getValue("Claudia_routine.txt")))   // Claudia: 20% / 20% / 20% / 50%
+        assertEquals(mapOf("idle" to 20.0, "key" to 20.0, "special" to 60.0, "rest" to 20.0, "long" to 20.0, "sleep" to 50.0), CommText.personaProbs(BuiltinPersonas.ALL.getValue("Claudia.txt") + "\n" + BuiltinPersonas.ALL.getValue("Claudia_templates.txt")))   // Claudia: 20% / 20% / 20% / 50%
         assertEquals(0.0, CommText.personaProbs(BuiltinPersonas.ALL.getValue("Assistant.txt"))["sleep"] ?: -1.0, 0.0)
         assertEquals(mapOf("sleep" to 40.0), CommText.personaProbs("睡眠发起谈话概率:40%"))
         assertEquals(60.0, Comm.defaultP("sleep"), 0.0)
@@ -3171,7 +3211,7 @@ class CommTest {
         c.flush()
     }
 
-    // ---- 日程文件 (routine, 1.0.355): Claudia + Claudia_routine 是默认人设 ----
+    // ---- 日程文件 (routine, 1.0.355): Claudia + Claudia_templates 是默认人设 ----
     @Test
     fun routineIntegration() {
         val td = Files.createTempDirectory("oit").toFile()
@@ -3179,18 +3219,18 @@ class CommTest {
         val dir = File(td, "d").also { it.mkdirs() }
         val c = comm(dir, File(td, "p"))
         assertEquals("Claudia.txt", c.personaName())
-        assertEquals(listOf("Assistant.txt", "Claudia.txt"), c.listPersonas())              // Claudia_routine 是配套文件, 不是人设
-        assertEquals(listOf("Claudia_background.txt", "Claudia_routine.txt"), c.companionFiles())
-        assertEquals("Claudia_routine.txt", c.routineNameOf("Claudia.txt"))
-        assertTrue(c.isCompanionName("Claudia_routine.txt") && c.isCompanionName("Claudia_background.txt") && !c.isCompanionName("Claudia.txt"))
-        assertEquals("Claudia.txt", c.baseOfCompanion("Claudia_routine.txt"))
+        assertEquals(listOf("Assistant.txt", "Claudia.txt"), c.listPersonas())              // Claudia_templates 是配套文件, 不是人设
+        assertEquals(listOf("Claudia_background.txt", "Claudia_templates.txt"), c.companionFiles())
+        assertEquals("Claudia_templates.txt", c.routineNameOf("Claudia.txt"))
+        assertTrue(c.isCompanionName("Claudia_templates.txt") && c.isCompanionName("Claudia_background.txt") && !c.isCompanionName("Claudia.txt"))
+        assertEquals("Claudia.txt", c.baseOfCompanion("Claudia_templates.txt"))
         assertEquals("Claudia.txt", c.baseOfCompanion("Claudia_background.txt"))
-        assertEquals(listOf("Claudia_background.txt", "Claudia_routine.txt"), c.companionsOf("Claudia.txt"))
+        assertEquals(listOf("Claudia_background.txt", "Claudia_templates.txt"), c.companionsOf("Claudia.txt"))
         assertTrue(c.companionsOf("Assistant.txt").isEmpty())
         val full = c.readPersonaFull("Claudia.txt")
         assertTrue(full.startsWith("你将扮演一位文静") && "初始起点:6:30" in full && "联网时间理由列表" in full)
         assertTrue("这里是你的身份背景" in full && full.indexOf("这里是你的身份背景") < full.indexOf("初始起点:6:30"))     // 背景在日程前面 (按文件名顺序)
-        assertEquals(listOf("Claudia.txt", "Claudia_background.txt", "Claudia_routine.txt").joinToString("\n\n") { c.readPersona(it) }, full)
+        assertEquals(listOf("Claudia.txt", "Claudia_background.txt", "Claudia_templates.txt").joinToString("\n\n") { c.readPersona(it) }, full)
         // 配套文件: X_任意名字; 没有 X.txt 的 X_名字.txt 是普通人设; 取最长的 X; 下划线开头 / 结尾不算
         val cpd = File(td, "cp").also { it.mkdirs() }
         for ((n, t) in listOf("Ann.txt" to "A", "Ann_diary.md" to "D", "Ann_Bob.txt" to "B", "Ann_Bob_x.txt" to "X", "Zed_note.txt" to "Z", "Ann_.txt" to "E", "_x.txt" to "Q"))
@@ -3203,7 +3243,7 @@ class CommTest {
         assertEquals("", cc.baseOfCompanion("Zed_note.txt"))
         assertEquals("A\n\nB\n\nD", cc.readPersonaFull("Ann.txt"))
         assertEquals(c.readPersona("Assistant.txt"), c.readPersonaFull("Assistant.txt"))
-        assertTrue("Claudia_routine.txt" in c.personaDoc() && "Claudia.txt" in c.personaDoc())    // 日程文件随设备同步
+        assertTrue("Claudia_templates.txt" in c.personaDoc() && "Claudia.txt" in c.personaDoc())    // 日程文件随设备同步
         c.reloadSchedule("test")
         assertEquals(20.0 to 50.0, c.proPercent("idle") to c.proPercent("sleep"))            // 概率从日程文件里读
         val spec = Routine.parse(c.readRoutine("Claudia.txt"))!!
@@ -3289,10 +3329,10 @@ class CommTest {
         c.flush(); c2.flush()
         // 改日程文件 → 弹"修改人设"; 聊天清的是它的人设
         c.checkPersonaChanges()
-        File(td, "p/Claudia_routine.txt").appendText("\n")
+        File(td, "p/Claudia_templates.txt").appendText("\n")
         val chg = c.checkPersonaChanges()
-        assertEquals("Claudia_routine.txt", chg!!.name)
-        c.resolvePersonaChange("Claudia_routine.txt", true)
+        assertEquals("Claudia_templates.txt", chg!!.name)
+        c.resolvePersonaChange("Claudia_templates.txt", true)
         // 旧版 (没有日程文件) 的 Claudia 升级: 没改过的换成新版 + 日程文件
         val up = File(td, "up").also { it.mkdirs() }
         val upp = File(td, "upp").also { it.mkdirs() }
@@ -3300,7 +3340,7 @@ class CommTest {
         File(up, "comm_config.json").writeText("""{"seeded":true,"assistant_seeded":true,"persona":"Claudia.txt","claudia_migrated":true}""")
         val cu = comm(up, upp)
         assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).trim(), cu.readPersona("Claudia.txt"))
-        assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE).trim(), cu.readPersona("Claudia_routine.txt"))   // 升级时补上日程文件
+        assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE).trim(), cu.readPersona("Claudia_templates.txt"))   // 升级时补上日程文件
         assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.BACKGROUND).trim(), cu.readPersona("Claudia_background.txt"))   // 升级时补上背景文件
         assertTrue("Claudia_background.txt" !in cu.listPersonas())
         cu.reloadSchedule("test")
@@ -3312,15 +3352,15 @@ class CommTest {
         File(md, "comm_config.json").writeText("""{"seeded":true,"assistant_seeded":true,"persona":"Claudia.txt","claudia_migrated":true}""")
         val cm = comm(md, mp)
         assertEquals("我自己改过的 Claudia", cm.readPersona("Claudia.txt"))
-        assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE).trim(), cm.readPersona("Claudia_routine.txt"))   // Claudia 改过, 日程文件也要补上
+        assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE).trim(), cm.readPersona("Claudia_templates.txt"))   // Claudia 改过, 日程文件也要补上
         assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.BACKGROUND).trim(), cm.readPersona("Claudia_background.txt"))   // Claudia 改过, 背景文件也要补上
         assertNull(cm.checkPersonaChanges())                                                                              // 补上日程 / 背景文件不弹修改人设
-        File(mp, "Claudia_routine.txt").writeText(TEST_OLD_ROUTINE)
+        File(mp, "Claudia_templates.txt").writeText(TEST_OLD_ROUTINE)
         comm(md, mp)
-        assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE).trim(), cm.readPersona("Claudia_routine.txt"))   // 更早的内置日程文件换成当前版本
-        File(mp, "Claudia_routine.txt").writeText(BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE) + "\n我的日程")
+        assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE).trim(), cm.readPersona("Claudia_templates.txt"))   // 更早的内置日程文件换成当前版本
+        File(mp, "Claudia_templates.txt").writeText(BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE) + "\n我的日程")
         comm(md, mp)
-        assertTrue(cm.readPersona("Claudia_routine.txt").endsWith("我的日程"))                                              // 用户改过的日程文件不动
+        assertTrue(cm.readPersona("Claudia_templates.txt").endsWith("我的日程"))                                              // 用户改过的日程文件不动
         // 弹窗点了"确定" (保留修改) 之后又改回了原样 (上一次见到的内置版本, 不在升级链里): 更新后照样换成新版
         val bd = File(td, "base").also { it.mkdirs() }
         val bp = File(td, "basep").also { it.mkdirs() }
@@ -3328,11 +3368,11 @@ class CommTest {
         val oldR = BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE) + "\n(上一版内置日程, 不在升级链里)"
         fun crc(t: String) = "%08x".format(java.util.zip.CRC32().apply { update(t.trim().toByteArray(Charsets.UTF_8)) }.value)
         File(bp, "Claudia.txt").writeText(oldC)
-        File(bp, "Claudia_routine.txt").writeText(oldR)
+        File(bp, "Claudia_templates.txt").writeText(oldR)
         File(bd, "comm_config.json").writeText("""{"seeded":true,"assistant_seeded":true,"persona":"Claudia.txt","claudia_migrated":true,"claudia_modified":true,"claudia_notified":"deadbeef","claudia_base":"${crc(oldC)}","routine_base":"${crc(oldR)}"}""")
         val cb = comm(bd, bp)
         assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).trim(), cb.readPersona("Claudia.txt"))
-        assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE).trim(), cb.readPersona("Claudia_routine.txt"))
+        assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE).trim(), cb.readPersona("Claudia_templates.txt"))
         File(bp, "Claudia.txt").writeText("用户改过的另一个版本")
         comm(bd, bp)
         assertEquals("用户改过的另一个版本", cb.readPersona("Claudia.txt"))                                                   // 真改过的不覆盖
