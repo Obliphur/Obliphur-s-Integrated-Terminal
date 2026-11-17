@@ -10,6 +10,7 @@ import kotlin.math.ln
 /** 不在设置页里的固定数值 (对应桌面版 config.py). 可调的数值见 Settings.kt. */
 object Cfg {
     const val COMM_SCENARIO_UNLOCK = 200
+    const val COMM_SPLIT_INTERVAL_SECONDS = 5 // 分条发送间隔（秒）
     const val COMM_TENSION_MAX = 100
     const val COMM_TENSION_LOW = 50
     const val COMM_TENSION_CAP = 90

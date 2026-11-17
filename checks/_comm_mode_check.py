@@ -43,6 +43,26 @@ for expected in (True, False):
     assert row["var"].get() == sm.ui_number("COOLDOWN")
     assert (dict(sm.effective), dict(sm.pending), config.dev_mode_enabled()) == before
 settings.destroy()
+split_settings = SettingsPage(root, sm, data_dir=folder, comm=c)
+split_settings.show_tab("comm")
+root.update()
+assert split_settings.var_split_interval.get() == "5"
+assert split_settings.split_interval_row.winfo_manager() == "pack"
+split_settings.var_split_interval.set("13")
+assert c.split_interval() == 13
+split_settings.var_split_interval.set("")
+assert c.split_interval() == 13
+split_settings.var_split_interval.set("-1")
+assert c.split_interval() == 13
+split_settings.comm_vars["split_send"].set(False)
+split_settings._comm_flag("split_send")
+assert not split_settings.split_interval_row.winfo_manager()
+assert c.split_interval() == 13
+c.apply_doc({"split": True, "split_interval": 8})
+split_settings._refresh_comm()
+assert split_settings.split_interval_row.winfo_manager() == "pack"
+assert split_settings.var_split_interval.get() == "8"
+split_settings.destroy()
 try:
     for language in ("zh", "en"):
         i18n.set_language(language)

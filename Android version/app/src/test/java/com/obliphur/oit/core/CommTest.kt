@@ -1947,23 +1947,39 @@ class CommTest {
         assertEquals("短", Comm.clipMessage("短"))
     }
 
-    /** 第二次调用有延时 (让提示缓存落盘): 到点才发. */
+    /** 用户设置的分条发送间隔：到点才发，并随配置和设备同步保存。 */
     @Test
     fun followUpDelay() {
         val td = Files.createTempDirectory("oit").toFile()
         val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
         c.set(persona = "Claudia.txt")
-        c.followDelayMs = 2000
+        assertEquals(5, c.splitInterval)
+        c.set(splitInterval = 7)
+        c.followDelayMs = null
+        assertEquals(7, c.syncDoc()["split_interval"])
         val n = followCalls.size
         script.add("第一句"); follow.add("第二句")
         c.send("在吗"); wait(c)
         assertEquals("延时没到: 不发第二次", n, followCalls.size)
-        clock = clock.plusSeconds(3)
+        clock = clock.plusSeconds(6)
+        c.tick()
+        assertEquals(n, followCalls.size)
+        clock = clock.plusSeconds(1)
         for (i in 0 until 200) {
             Thread.sleep(10); c.tick()
             if (followCalls.size > n) break
         }
         assertEquals(n + 1, followCalls.size)
+        val peer = comm(File(td, "peer").also { it.mkdirs() }, File(td, "p"))
+        peer.applyDoc(c.syncDoc())
+        assertEquals(7, peer.splitInterval)
+        peer.applyDoc(mapOf("split_interval" to 0))
+        assertEquals(0, peer.splitInterval)
+        peer.applyDoc(mapOf("split_interval" to -1))
+        assertEquals(0, peer.splitInterval)
+        peer.applyDoc(mapOf("split_interval" to true))
+        assertEquals(0, peer.splitInterval)
+        assertEquals(7, comm(File(td, "d"), File(td, "p")).splitInterval)
     }
 
     /** 从老版本更新上来 (第一次迁移): 改过的 Claudia 不能被覆盖, 并且要能弹"修改人设"提醒. */

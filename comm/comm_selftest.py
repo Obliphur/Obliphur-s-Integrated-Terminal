@@ -59,8 +59,7 @@ def _selftest():
     sys2, gm2 = cache_layout({"provider": "claude"}, "SYS", "\n\n记忆", [{"role": "user", "content": "hi"}])
     assert sys2 == "SYS\n\n记忆" and gm2[-1]["content"] == "hi"
     assert cache_layout({"provider": "gemini"}, "SYS", "", []) == ("SYS", [])
-    assert follow_delay({"provider": "claude"}) == 0.0 and follow_delay({"provider": "chatgpt"}) == 0.0
-    assert follow_delay({"provider": "gemini"}) == 0.0 and follow_delay({"provider": "deepseek"}) == 3.0
+    assert all(follow_delay({"provider": p}) == 5 for p in ("claude", "chatgpt", "gemini", "deepseek"))
     assert follow_delay({"provider": "deepseek"}, 2.0) == 2.0 and follow_delay({"provider": "deepseek"}, 0.0) == 0.0
 
     # 人设文件夹
@@ -1471,20 +1470,25 @@ def _selftest():
     cu.send("等等")
     wait(cu)
     assert [m["text"] for m in cu.visible()] == ["你好", "甲", "等等", "回应等等"], [m["text"] for m in cu.visible()]
-    # 第二次调用有延时 (让提示缓存落盘): 到点才发
+    # 用户设置的分条发送间隔：到点才发，不受模型类型影响。
     os.makedirs(os.path.join(td, "fdel"))
     cd = Comm(os.path.join(td, "fdel"), folder, now=lambda: clock[0], chat_fn=fake)
     cd.ai.set_profile("deepseek", api_key="k")
     cd.set_cfg(persona="小夏.txt")
     cd.snapshot = lambda: {"state": "idle"}
-    cd.follow_delay = 2.0
+    assert cd.split_interval() == 5
+    cd.set_cfg(split_interval=7)
+    cd.follow_delay = None
     n_d = len(follow_calls)
     script.append("第一句")
     follow.append("第二句")
     cd.send("在吗")
     wait(cd)
     assert len(follow_calls) == n_d, "延时没到: 不发第二次"
-    clock[0] += timedelta(seconds=3)
+    clock[0] += timedelta(seconds=6)
+    cd.tick()
+    assert len(follow_calls) == n_d, "自定义间隔尚未到，不提前调用"
+    clock[0] += timedelta(seconds=1)
     for _ in range(200):
         time.sleep(0.01)
         cd.tick()
@@ -1553,6 +1557,18 @@ def _selftest():
     follow.clear()
     cu.apply_doc({"split": True})
     assert cu.split_on() and cu.sync_doc()["split"] is True
+    assert cu.split_interval() == 5 and cu.sync_doc()["split_interval"] == 5
+    cu.set_cfg(split_interval=12)
+    assert cu.sync_doc()["split_interval"] == 12
+    cu.apply_doc({"split_interval": 0})
+    assert cu.split_interval() == 0
+    cu.apply_doc({"split_interval": 9})
+    for invalid in (-1, True, "3", 1.5, 2147483648):
+        cu.apply_doc({"split_interval": invalid})
+        assert cu.split_interval() == 9
+    cu.apply_doc({"split": False})
+    assert cu.split_interval() == 9
+    cu.apply_doc({"split": True})
     # 思考 (第一层规则): 默认关; 关键词 / 时刻 / 英文 / 很长 / 系统触发 才开; 设置里可以整个关掉, 随设备同步
     assert think_text_reason("今天天气不错") == "" and think_text_reason("") == ""
     assert think_text_reason("你现在在干嘛呀").startswith("关键词") and think_text_reason("我们订个合约吧").startswith("关键词")

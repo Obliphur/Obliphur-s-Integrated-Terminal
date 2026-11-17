@@ -1031,7 +1031,7 @@ class Comm(
         val FOLLOW_KINDS = setOf("user", "retry")
         const val FOLLOW_TAG = "[系统·续]"
         /** 规则 VIII 的第二次调用先等这么久 (毫秒): 服务商的提示缓存是异步落盘的, 紧跟着发常常赶不上, 白付一次全量历史. */
-        const val FOLLOW_DELAY_MS = 3000L
+        const val FOLLOW_DELAY_MS = Cfg.COMM_SPLIT_INTERVAL_SECONDS * 1000L
         val FOLLOW_BODY = "$FOLLOW_TAG 你刚才已经回复了用户. 如果还有想接着说的话, 请现在再发一条 (不要重复上一条); " +
             "如果你只想说一次, 返回${CommText.REFUSE}."
         /** 回复显示之后才发现用户在等回复的时候又发了消息: 补问一次 (MECHANICS 24.3). */
@@ -1134,6 +1134,7 @@ class Comm(
     private var jointPending: Pair<String, Long>? = null          // 联合行动: 要让对方回应一句, 但对方正在回别的话: (系统消息, 毫秒时间戳), 等对方空下来再调用
     /** 分条发 (规则 VIII) 开着吗: 用户说完话, 对方的第一条收到之后再调用一次 API, 让对方可以把话分开说. 默认开; 随设备同步. */
     var splitSend = true; private set
+    var splitInterval = Cfg.COMM_SPLIT_INTERVAL_SECONDS; private set
     /** 日程跟随 (设置 → 沟通 → 日程跟随) 开着吗: 对方的状态变了, 问用户要不要跟着变; 合约期间自动关闭. 默认关; 随设备同步. */
     var schedFollow = false; private set
     var proLang = ""; private set                              // 主动谈话语言 ("" = 不指定): 只管对方主动发起的那一句 (规则 I - IV), 其他对话不限制
@@ -1269,7 +1270,7 @@ class Comm(
     private var again = false
     private var reqTs = 0L                             // 最近一次请求发出时, 最后一条用户消息的时间 (ts): 回复到了之后看用户有没有又发了新的
     private var catchup = false                        // 补问被拒绝了 (回复已经显示, 后发的消息还没人回): 重试时即使最后一条是对方的也要问
-    internal var followDelayMs = FOLLOW_DELAY_MS      // 第二次调用等多久; 测试里设成 0
+    internal var followDelayMs: Long? = null          // 正式运行读设置；测试可覆盖
     private var followAt = 0L                          // 安排在什么时候 (毫秒, 0 = 没有)
     private var followEpoch = 0                        // 安排的时候的 epoch: 期间清空过就不发
     private var followMsg = 0                          // 第一条回复的消息 id (0 = 没有): 等它显示出来 (打字延时走完 / 被藏起来也算) 才调用第二次
@@ -1433,6 +1434,7 @@ class Comm(
             }
             userProfile = d.optString("user_profile", "")
             splitSend = d.optBoolean("split_send", true)
+            splitInterval = (d.opt("split_interval") as? Number)?.toDouble()?.takeIf { it >= 0 && it <= Int.MAX_VALUE && it % 1.0 == 0.0 }?.toInt() ?: Cfg.COMM_SPLIT_INTERVAL_SECONDS
             schedFollow = d.optBoolean("sched_follow", false)
             proLang = d.optString("pro_lang", "").trim().take(MAX_PRO_LANG)
             thinkAuto = d.optBoolean("think_auto", true)
@@ -1490,7 +1492,7 @@ class Comm(
             .put("user_profile", userProfile).put("seeded", seeded).put("assistant_seeded", assistantSeeded)
             .put("claudia_migrated", claudiaMigrated).put("claudia_modified", claudiaModified)
             .put("claudia_notified", claudiaNotified).put("claudia_base", claudiaBase).put("routine_base", routineBase).put("background_base", backgroundBase)
-            .put("legacy_done", legacyDone).put("split_send", splitSend).put("think_auto", thinkAuto).put("sched_follow", schedFollow).put("pro_lang", proLang)
+            .put("legacy_done", legacyDone).put("split_interval", splitInterval).put("split_send", splitSend).put("think_auto", thinkAuto).put("sched_follow", schedFollow).put("pro_lang", proLang)
             .put("bg_pro", bgPro).put("mute_pro", JSONArray(muted.toList()))
             .put("idle_use", JSONObject().put("d", idleDay).put("s", idleSec))
             .put("cond_days", JSONObject().also { c -> for ((k, v) in condDays) c.put(k, JSONArray(listOf(v.first, v.second))) })
@@ -1599,6 +1601,7 @@ class Comm(
             doc["notice:$key"] = JSONObject(value.toString())
         }
         if (userProfile.isNotEmpty()) doc["profile"] = userProfile
+        doc["split_interval"] = splitInterval
         doc["split"] = splitSend                                    // 分条发的开关: 调用 AI 的是主端, 两台设备要一致
         doc["think"] = thinkAuto                                    // 自动开思考的开关: 同上
         doc["bgpro"] = bgPro
@@ -1660,6 +1663,9 @@ class Comm(
                         val rec = focusNotices.getOrPut(rest) { JSONObject(v.toString()) }
                         rec.put("shown", rec.optBoolean("shown") || v.optBoolean("shown"))
                     }
+                }
+                key == "split_interval" && v is Number -> v.toDouble().takeIf { it >= 0 && it <= Int.MAX_VALUE && it % 1.0 == 0.0 }?.toInt()?.let {
+                    if (it != splitInterval) { splitInterval = it; saveCfg(); changed() }
                 }
                 key == "split" && v is Boolean -> if (v != splitSend) { splitSend = v; saveCfg(); changed() }
                 key == "think" && v is Boolean -> if (v != thinkAuto) { thinkAuto = v; saveCfg(); changed() }
@@ -1812,12 +1818,13 @@ class Comm(
 
     @Synchronized
     fun set(persona: String? = null, showAvatar: Boolean? = null,
-            avatarMe: String? = null, avatarAi: String? = null, userProfile: String? = null, splitSend: Boolean? = null, bgPro: Boolean? = null, thinkAuto: Boolean? = null, schedFollow: Boolean? = null, proLang: String? = null) {
+            avatarMe: String? = null, avatarAi: String? = null, userProfile: String? = null, splitSend: Boolean? = null, splitInterval: Int? = null, bgPro: Boolean? = null, thinkAuto: Boolean? = null, schedFollow: Boolean? = null, proLang: String? = null) {
         persona?.let { switchTo(it); saveChat() }
         proLang?.let { this.proLang = it.trim().take(MAX_PRO_LANG) }
         userProfile?.let { this.userProfile = it.trim().take(MAX_PROFILE) }
         showAvatar?.let { this.showAvatar = it }
         splitSend?.let { this.splitSend = it }
+        splitInterval?.takeIf { it >= 0 }?.let { this.splitInterval = it }
         thinkAuto?.let { this.thinkAuto = it }
         bgPro?.let { this.bgPro = it }
         schedFollow?.let { this.schedFollow = it }
@@ -1825,7 +1832,7 @@ class Comm(
         avatarAi?.let { this.avatarAi = it.trim().take(4) }
         saveCfg()
         changed()
-        if (splitSend != null || thinkAuto != null || bgPro != null || showAvatar != null || schedFollow != null || proLang != null) push()
+        if (splitInterval != null || splitSend != null || thinkAuto != null || bgPro != null || showAvatar != null || schedFollow != null || proLang != null) push()
     }
 
     /** 这一次请求要不要开思考 (第一层: 只看规则, 不额外调用 API; 同 comm.py 的 think_reason): 返回原因, "" = 不开.
@@ -4565,13 +4572,8 @@ class Comm(
         } else if (delivered && splitSend && usesPrefix(personaName()) && r.kind in FOLLOW_KINDS && profileProblem().isEmpty() && cutBlock().isEmpty() && leader()) {
             // 规则 VIII: 第一条回复**明确显示出来之后** (被藏起来也算显示过), 隔一会儿再调用第二次, 让对方可以把话分开说
             // (只想说一次就 [refuse to reply], 什么也不留下). 第一条被拒绝 / 为空 / 出错时不存在"第一条消息", 不调用.
-            // 等多久按模型类型来 (Ai.cachePlan): Anthropic / OpenAI / Gemini 的缓存随第一次请求就写好, 不用等;
-            // DeepSeek 的磁盘缓存异步, 等几秒; 中转照旧等.
-            val delay = when {
-                followDelayMs == 0L -> 0L
-                followDelayMs != FOLLOW_DELAY_MS -> followDelayMs
-                else -> (Ai.cachePlan(profileFor()).delay * 1000).toLong()
-            }
+            // 所有模型统一使用用户设置，保留测试指定延时的入口。
+            val delay = followDelayMs ?: (splitInterval * 1000L)
             followAt = nowMs() + delay
             followEpoch = epoch
             followMsg = deliveredId

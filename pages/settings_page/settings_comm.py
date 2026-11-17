@@ -71,6 +71,17 @@ class CommSettingsMixin:
                                    command=lambda: self._comm_flag("split_send")), "开启").pack(
             fill="x", padx=12, pady=(0, 8))
 
+        self.split_interval_row = tk.Frame(fr, bg=card)
+        self._track(tk.Label(self.split_interval_row, text=tr("发送间隔（秒）"), bg=card,
+                            fg=COLORS["text"], font=config.font("body")), "发送间隔（秒）").pack(side="left")
+        self.var_split_interval = tk.StringVar(value=str(c.split_interval()))
+        self.ent_split_interval = ttk.Entry(self.split_interval_row, textvariable=self.var_split_interval, width=8)
+        self.ent_split_interval.pack(side="right")
+        self.var_split_interval.trace_add("write", lambda *_: self._comm_split_interval_save())
+        self.ent_split_interval.bind("<FocusOut>", lambda _e: self.var_split_interval.set(str(c.split_interval())))
+        self.ent_split_interval.bind("<Return>", lambda _e: self.var_split_interval.set(str(c.split_interval())))
+        self._comm_split_visible()
+
         fr, _head = self._card(body, "🧠  思考")
         tk.Label(fr, text=tr("遇到问日程 / 合约 / 越界 / 英文这类容易漏掉规则的情况(以及主动发起)时,让模型先思考再回复,更稳地遵守人设规则.会增加这几次请求的 token 消耗."),
                  bg=card, fg=COLORS["text_dim"], font=small, anchor="w", justify="left", wraplength=560).pack(fill="x", padx=12, pady=(0, 2))
@@ -204,8 +215,24 @@ class CommSettingsMixin:
 
     def _comm_flag(self, key):
         self.comm.set_cfg(**{key: bool(self.comm_vars[key].get())})
+        if key == "split_send":
+            self._comm_split_visible()
         if key == "show_avatar":
             self._comm_avatar_visible()
+
+    def _comm_split_visible(self):
+        if self.comm.split_on():
+            show_pack(self.split_interval_row, fill="x", padx=12, pady=(0, 10))
+        else:
+            hide_pack(self.split_interval_row)
+
+    def _comm_split_interval_save(self):
+        """合法整数即时保存；编辑中的空值不覆盖原设置。"""
+        value = self.var_split_interval.get().strip()
+        if value.isascii() and value.isdecimal() and len(value) <= 10:
+            seconds = int(value)
+            if seconds <= 2147483647 and seconds != self.comm.split_interval():
+                self.comm.set_cfg(split_interval=seconds)
 
     def _comm_pick_avatar(self, who):
         from ..avatar_dialog import pick_avatar
@@ -270,6 +297,9 @@ class CommSettingsMixin:
             self.comm_vars["bg_pro"].set(c.bg_on())
         if self.comm_vars["split_send"].get() != c.split_on():
             self.comm_vars["split_send"].set(c.split_on())              # 别的设备同步来了新的开关
+        self._comm_split_visible()
+        if focus_name(self.ent_split_interval) != str(self.ent_split_interval):
+            set_var(self.var_split_interval, str(c.split_interval()))
         if self.comm_vars["think_auto"].get() != c.think_auto():
             self.comm_vars["think_auto"].set(c.think_auto())
         if self.comm_vars["sched_follow"].get() != c.sf_on():

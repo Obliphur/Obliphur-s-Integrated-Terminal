@@ -800,6 +800,7 @@ object EnStrings {
         "计时器状态" to "Timer status",
         "🖼  头像" to "🖼  Avatar",
         "显示头像" to "Show avatars",
+        "发送间隔（秒）" to "Send interval (seconds)",
         "✂  分条发送" to "✂  Split replies",
         "🧠  思考" to "🧠  Thinking",
         "遇到问日程 / 合约 / 越界 / 英文这类容易漏掉规则的情况(以及主动发起)时,让模型先思考再回复,更稳地遵守人设规则.会增加这几次请求的 token 消耗." to

@@ -556,6 +556,17 @@ fun CommSettings() {
         Text(tr("经过优化,不怎么会增加token消耗"), color = o.dim, fontSize = 12.sp,
             modifier = Modifier.padding(top = 2.dp))
         SwitchRow(tr("开启"), comm.splitSend) { comm.set(splitSend = it) }
+        if (comm.splitSend) {
+            var interval by remember(comm.splitInterval) { mutableStateOf(comm.splitInterval.toString()) }
+            OutlinedTextField(interval, { value ->
+                if (value.all { it in '0'..'9' } && value.length <= 10) {
+                    interval = value
+                    value.toIntOrNull()?.let { comm.set(splitInterval = it) }
+                }
+            }, label = { Text(tr("发送间隔（秒）")) }, singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
+        }
     }
 
     OitCard {

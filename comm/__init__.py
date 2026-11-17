@@ -67,12 +67,8 @@ from .comm_util import (OIT_TAG, COND_TAG, WEEKDAY, MAX_MSG_CHARS, HISTORY_SENT,
                        cache_layout, oit_text, first_turn, api_messages, sanitize_mem)
 
 def follow_delay(profile: dict, override: float = None) -> float:
-    """规则 VIII 第二次调用先等多久 (秒): 按模型类型的缓存策略; override 是手动 / 自检设的值."""
-    if override == 0.0:                      # 自检把默认值改成 0: 不等
-        return 0.0
-    if override is not None and override != FOLLOW_DELAY:
-        return override
-    return ai_assist.cache_plan(profile)["delay"]
+    """规则 VIII 第二次调用的间隔（秒），所有模型统一使用设置值。"""
+    return config.COMM_SPLIT_INTERVAL_SECONDS if override is None else override
 
 
 
@@ -150,7 +146,7 @@ class Comm(InteractionMixin, JointMixin, StatusMixin, ChatMixin, FlowMixin, Sche
         self._req_ts = 0              # 最近一次请求发出时, 最后一条用户消息的时间 (ts): 回复到了之后看用户有没有又发了新的
         self._catchup = False         # 补问被拒绝了 (回复已经显示, 后发的消息还没人回): 重试时即使最后一条是对方的也要问
         self._epoch = 0               # clear() 加一: 清空之前发出的请求, 回复到了也丢掉
-        self.follow_delay = FOLLOW_DELAY   # 第二次调用等多久 (秒); 自检里设成 0
+        self.follow_delay = 0 if FOLLOW_DELAY == 0 else None  # 正式运行读设置；自检可覆盖
         self._follow_at = 0           # 第二次调用安排在什么时候 (毫秒, 0 = 没有)
         self._follow_epoch = 0        # 安排的时候的 _epoch: 期间清空过就不发
         self._follow_msg = ""         # 第一条回复的消息 id: 等它显示出来 (打字延时走完 / 被藏起来也算) 才调用第二次
@@ -441,7 +437,7 @@ class Comm(InteractionMixin, JointMixin, StatusMixin, ChatMixin, FlowMixin, Sche
         self.cfg.update(kw)
         self.save_cfg()
         self._changed()
-        if "split_send" in kw or "think_auto" in kw or "bg_pro" in kw or "mute_pro" in kw or "show_avatar" in kw or "sched_follow" in kw or "pro_lang" in kw:
+        if "split_interval" in kw or "split_send" in kw or "think_auto" in kw or "bg_pro" in kw or "mute_pro" in kw or "show_avatar" in kw or "sched_follow" in kw or "pro_lang" in kw:
             self._push()
 
     def _changed(self):
@@ -496,6 +492,7 @@ class Comm(InteractionMixin, JointMixin, StatusMixin, ChatMixin, FlowMixin, Sche
         doc["voice"] = self.voice.sync_doc()
         if self.cfg.get("user_profile"):
             doc["profile"] = self.cfg["user_profile"]
+        doc["split_interval"] = self.split_interval()
         doc["split"] = self.split_on()                  # 分条发的开关: 调用 AI 的是主端, 两台设备要一致
         doc["think"] = self.think_auto()                # 自动开思考的开关: 同上
         doc["bgpro"] = self.bg_on()
@@ -701,6 +698,11 @@ class Comm(InteractionMixin, JointMixin, StatusMixin, ChatMixin, FlowMixin, Sche
                 if val != self.is_muted(rest):
                     cur = [p for p in (self.cfg.get("mute_pro") or []) if p != rest]
                     self.cfg["mute_pro"] = cur + [rest] if val else cur
+                    self.save_cfg()
+                    self._changed()
+            elif key == "split_interval" and type(val) is int and 0 <= val <= 2147483647:
+                if val != self.split_interval():
+                    self.cfg["split_interval"] = val
                     self.save_cfg()
                     self._changed()
             elif key == "split" and isinstance(val, bool):
@@ -1383,9 +1385,9 @@ class Comm(InteractionMixin, JointMixin, StatusMixin, ChatMixin, FlowMixin, Sche
         elif delivered and kind in FOLLOW_KINDS and self.split_on() and uses_prefix(self.persona_name()) and not self._profile_problem() and not self.cut_block() and self.leader():
             # 规则 VIII: 第一条回复**明确显示出来之后** (被藏起来也算显示过), 隔一会儿再调用第二次, 让对方可以把话分开说
             # (只想说一次就 [refuse to reply], 什么也不留下). 第一条被拒绝 / 为空 / 出错时不存在"第一条消息", 不调用.
-            # 等多久按模型类型来 (ai_assist.cache_plan): Anthropic / OpenAI / Gemini 的缓存随第一次请求就写好, 不用等;
-            # DeepSeek 的磁盘缓存是异步写的, 紧跟着发会赶不上, 等几秒; 中转 / 本地模型照旧等.
-            delay = follow_delay(self.profile(), self.follow_delay)
+            # 正式运行使用用户设置；保留自检指定的延时（包括零）。
+            override = self.split_interval() if self.follow_delay is None else self.follow_delay
+            delay = follow_delay(self.profile(), override)
             self._follow_at = self._ms() + int(delay * 1000)
             self._follow_epoch = self._epoch
             self._follow_msg = m["id"]

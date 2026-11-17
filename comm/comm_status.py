@@ -148,6 +148,11 @@ class StatusMixin:
         """分条发 (规则 VIII) 开着吗: 用户说完话, 对方的第一条收到之后再调用一次 API, 让对方可以把话分开说. 默认开."""
         return self.cfg.get("split_send") is not False
 
+    def split_interval(self) -> int:
+        """分条发送间隔（秒）；旧配置或无效值使用默认值。"""
+        value = self.cfg.get("split_interval")
+        return value if type(value) is int and 0 <= value <= 2147483647 else config.COMM_SPLIT_INTERVAL_SECONDS
+
     def pro_lang(self) -> str:
         """设置里的主动谈话语言 ("" = 不指定): 只管对方主动发起的那一句 (规则 I - IV 触发的), 其他对话不限制 (1.0.407)."""
         return str(self.cfg.get("pro_lang") or "").strip()[:MAX_PRO_LANG]
