@@ -24,6 +24,47 @@ object CommRules {
         return out
     }
 
+    fun valence(text: String): Map<String, Pair<Int?, String>> {
+        val out = linkedMapOf<String, Pair<Int?, String>>()
+        val pattern = Regex("""([a-z_]{1,32})\s*[:：]\s*\[([+-]?\d{1,3}|X)\]\s*(\S.*)""")
+        for (line in lines(text, "valence")) {
+            val m = pattern.matchEntire(line) ?: return emptyMap()
+            val id = m.groupValues[1]
+            val shift = m.groupValues[2].takeIf { it != "X" }?.toInt()
+            if (id in out || (shift != null && (shift == 0 || kotlin.math.abs(shift) > 40))) return emptyMap()
+            out[id] = shift to m.groupValues[3]
+        }
+        return out
+    }
+
+    fun valenceInitial(text: String): Double {
+        val entries = lines(text, "valence:initial")
+        if (entries.size != 1) return 0.0
+        val m = Regex("""initial\s*[:：]\s*([+-]?\d+(?:\.\d+)?)""").matchEntire(entries.single()) ?: return 0.0
+        return m.groupValues[1].toDoubleOrNull()?.takeIf { it.isFinite() && it in -100.0..100.0 } ?: 0.0
+    }
+
+    data class ValenceBurst(val rate: Double = 1.0, val endShift: Int = 0)
+
+    fun valenceBurst(text: String): ValenceBurst {
+        val entries = lines(text, "valence:burst")
+        if (entries.isEmpty()) return ValenceBurst()
+        var rate = 1.0
+        var endShift = 0
+        val seen = mutableSetOf<String>()
+        for (line in entries) {
+            val m = Regex("""(burst_rate|burst_end_shift)\s*[:：]\s*([+-]?\d+(?:\.\d+)?)""").matchEntire(line) ?: return ValenceBurst()
+            val key = m.groupValues[1]
+            val value = m.groupValues[2].toDoubleOrNull()?.takeIf { it.isFinite() } ?: return ValenceBurst()
+            if (!seen.add(key)) return ValenceBurst()
+            when (key) {
+                "burst_rate" -> { if (value !in 0.0..5.0) return ValenceBurst(); rate = value }
+                "burst_end_shift" -> { if (value % 1.0 != 0.0 || kotlin.math.abs(value) > 100) return ValenceBurst(); endShift = value.toInt() }
+            }
+        }
+        return ValenceBurst(rate, endShift)
+    }
+
     fun event(text: String, event: String): Pair<String, Int>? {
         val rules = tension(text)
         val out = mutableMapOf<String, Pair<String, Int>>()

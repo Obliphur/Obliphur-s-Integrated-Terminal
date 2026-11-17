@@ -140,6 +140,21 @@
           },
           "minItems": 0,
           "maxItems": 100
+        },
+        "valence": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "index": { "type": "integer", "minimum": 1, "maximum": 99999 },
+              "condition": { "type": "string", "maxLength": 32 },
+              "shift": { "type": "integer", "minimum": -40, "maximum": 40 }
+            },
+            "required": ["index", "condition", "shift"],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 100
         }
       },
       "required": [],

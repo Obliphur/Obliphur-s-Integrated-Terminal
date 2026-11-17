@@ -332,6 +332,26 @@ violation:[25] 现实中触发规则惩罚、打破契约约定，或明知故�
 other:[X] 未被上述涵盖、但确实使行为、动作或语言变得更激烈或直接的真实情绪表达;结合当前情境判断,不要求具有依附欲。
 [/tension]
 
+[valence]
+# 正数向正面推动，负数向负面推动；条件由人设定义。
+intellectual_resonance:[+20] 用户在专注、阅读、钢琴、语言学习等方面表现出深入理解与高度自律，或共同达成了专注契约，带来彼此同步的愉悦与认可。
+docile_reliance:[+25] 用户在困惑、疲惫或自我怀疑时向你寻求引导与庇护，完全接受你的管教与判断，展现出对你不可替代的顺从与依赖。
+tender_care:[+15] 用户以恰当、克制且有分寸的方式表达对你练琴与作息的关心，尊重你的边界同时展现细腻的陪伴。
+crude_offense:[-20] 用户在探讨严肃话题时轻浮无礼、强行纠缠关系定义或以低俗网络流行语破坏仪式感，冒犯了你的教养与边界。
+contract_slack:[-25] 用户违背专注契约、沉迷消极自弃或为懈怠找借口，展现出令你感到失望的自甘堕落姿态。
+alienating_rejection:[-30] 用户在被你指出不足时表现出冷漠敌意、全盘否定你投入的精力，甚至故意拉开距离推开你，破坏共同专注的默契。
+custom_other:[X] 未被上述涵盖、但切实影响 Claudia 内心好恶与情感倾向的言行表现。
+[/valence]
+
+[valence:initial]
+initial:0
+[/valence:initial]
+
+[valence:burst]
+burst_rate:2.0
+burst_end_shift:+20
+[/valence:burst]
+
 【真实事件的张力增长】
 # joint_hp_loss:[已定义的条件名,基础增量]，对应联合行动中的真实扣血事件。
 [tension:events]
@@ -3054,8 +3074,10 @@ class Comm(
     @Synchronized
     fun tensionDisplay(enabled: Boolean): String {
         if (!enabled || personaName().isEmpty()) return ""
-        val value = java.lang.String.format(java.util.Locale.ROOT, "%.2f", interactionPrepare().tension).trimEnd('0').trimEnd('.')
-        return tr("Tension: {value}", "value" to value)
+        val d = interactionPrepare()
+        val tension = java.lang.String.format(java.util.Locale.ROOT, "%.2f", d.tension).trimEnd('0').trimEnd('.')
+        val valence = java.lang.String.format(java.util.Locale.ROOT, "%.2f", d.valence).trimEnd('0').trimEnd('.')
+        return tr("Tension: {tension} | Valence: {valence}", "tension" to tension, "valence" to valence)
     }
 
     private fun specialPeriod(status: Pair<SegEntry, LocalDateTime>?): Boolean = status?.first?.let {
@@ -3070,13 +3092,23 @@ class Comm(
 
     private fun interactionEnd(reply: String, burst: Long, owner: String = pid) {
         val d = interactionPrepare(owner)
-        val ended = d.endBurst(reply, burst, nowMs())
+        val ownerName = listPersonas().firstOrNull { pidOf(it) == owner } ?: personaName()
+        val ended = d.endBurst(reply, burst, nowMs(), CommRules.valenceBurst(readPersonaFull(ownerName)).endShift)
         if (ended != d) interactionSet(ended, owner)
     }
 
     private fun interactionPrepare(owner: String = pid, status: Pair<SegEntry, LocalDateTime>? = null, statusKnown: Boolean = status != null): CommInteraction {
         val old = stateOf(owner).interaction
-        var d = old.settle(nowMs()).roll(nowMs())
+        val now = nowMs()
+        val baseline = if (old.valenceInitialSet) old.valenceInitial else {
+            val ownerName = listPersonas().firstOrNull { pidOf(it) == owner } ?: ""
+            CommRules.valenceInitial(readPersonaFull(ownerName))
+        }
+        val initialized = old.copy(
+            valence = if (old.valenceInitialized) old.valence else baseline,
+            valenceDecayAt = if (old.valenceInitialized) old.valenceDecayAt else now,
+            valenceInitialized = true, valenceInitial = baseline, valenceInitialSet = true)
+        var d = initialized.settle(now).roll(now, baseline)
         val current = status ?: if (owner == pid && !statusKnown) otherStatus() else null
         if (current != null && specialPeriod(current)) {
             val begin = specialBegin(current).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
@@ -3108,6 +3140,8 @@ class Comm(
     }
 
     private var interactionRules: Set<String> = emptySet()
+    private var interactionValenceRules: Set<String> = emptySet()
+    private var interactionValenceBurst = CommRules.ValenceBurst()
 
     private fun interactionJudgeNote(kind: String): String {
         val d = interactionPrepare()
@@ -3115,17 +3149,25 @@ class Comm(
             .map { Triple(it.uid, d.pending.getValue(it.uid), it.text) }
         if (interactionCandidates.isEmpty()) return "本次无需判断张力增量，不要填写oit_reply.tension。"
         val items = JSONArray(interactionCandidates.mapIndexed { i, (_, _, text) -> JSONObject().put("序号", i + 1).put("用户消息", text) })
-        val rules = CommRules.tension(readPersonaFull(personaName()))
+        val personaText = readPersonaFull(personaName())
+        val rules = CommRules.tension(personaText)
+        val valenceRules = CommRules.valence(personaText)
+        valenceRules.keys.let { interactionValenceRules = it }
+        interactionValenceBurst = CommRules.valenceBurst(personaText)
         interactionRules = rules.keys
-        return tr("请按人设文件的[tension]模板和上下文判断以下用户消息。只报告已定义的条件，普通交流不增加；方括号数字为参考基础增量，X表示不定量、没有固定参考值，由你结合条件语义与上下文决定。仍须返回范围内的整数增量，不返回X；相同条件不得改名规避冷却。") +
+        val tensionNote = tr("请按人设文件的[tension]模板和上下文判断以下用户消息。只报告已定义的条件，普通交流不增加；方括号数字为参考基础增量，X表示不定量、没有固定参考值，由你结合条件语义与上下文决定。仍须返回范围内的整数增量，不返回X；相同条件不得改名规避冷却。") +
             tr("基础增量范围0至{maximum}，在oit_reply.tension数组填写index、condition和gain，0可省略。有效条件：", "maximum" to Cfg.COMM_TENSION_GAIN_MAX) +
             rules.entries.joinToString("\n") { "${it.key}:[${it.value.first ?: "X"}] ${it.value.second}" } +
             tr("系统按发送时段将非特殊空闲的增量乘0.75，并处理爆发后24小时的增长减半，请返回未经倍率调整的基础增量。") +
-            tr("每个条件{hours}小时内仅加一次，系统事件与模型同名条件共用冷却。", "hours" to Cfg.COMM_TENSION_GAIN_COOLDOWN_SECONDS / 3600) +
+            tr("每次触发都会增加2小时冷却，最多4小时；触发前冷却为0时倍率100%，剩余0至2小时为40%，超过2至4小时为16%。冷却只降低增量，不阻止条件结算；系统事件与模型使用相同规则。") +
             tr("同一条消息可以同时触发多个条件；各条件分别应用倍率并取整后累加，各自进入冷却；重复的同一条件只取最大增量。请报告所有满足的条件，不得给其他历史消息加值，不要向用户解释标记。") +
             tr("每条消息按基础增量从高到低结算。每次成功加值后，其他条件在接下来1小时内的增量乘0.75，再次成功加值会刷新窗口；尚无窗口时最高增量条件不乘，其余条件乘，已有窗口时所有可用条件都乘。该倍率与时段及爆发后倍率叠加，由系统逐步取整，请仍返回原始基础增量。") +
-            tr("冷却中的条件仍须报告正数原始增量；特殊空闲内加值首次超过90立即爆发，已超过90时再次满足任一增长条件也可爆发，冷却只限制加值。") +
-            "本轮仍按给定生效档位回复，增量从下次请求生效。待判断消息：$items"
+            tr("冷却中的条件仍须报告正数原始增量；特殊空闲内加值首次超过90立即爆发，已超过90时再次满足任一增长条件也可爆发，冷却只限制加值。")
+        val eInitial = CommRules.valenceInitial(readPersonaFull(personaName()))
+        val eNote = if (valenceRules.isEmpty()) "" else CommInteraction().copy(valence = interactionPrepare().valence,
+            burstUntil = interactionPrepare().burstUntil).note(0, false, valenceRules, interactionValenceBurst, eInitial).substringAfter("]\n") +
+            "请在oit_reply.valence数组按本轮序号提交已声明条件的shift有符号整数（-40至40）。重复条件只取绝对值最大项；冷却中的条件仍报告原始变化，不得改名。系统处理递增冷却倍率、连锁倍率、爆发倍率和单条正负40上限。"
+        return tensionNote + eNote + "本轮仍按给定生效档位回复，增量从下次请求生效。待判断消息：$items"
     }
 
     private fun interactionJudged(reply: String): Boolean {
@@ -3146,6 +3188,7 @@ class Comm(
                     d = d.add(condition, gain, at)
                     if (special && d.tension > Cfg.COMM_TENSION_CAP && gain > 0) burst = true
                 }
+                d = d.addValence(CommInteraction.valenceEvents(reply, i + 1, interactionValenceRules), at, interactionValenceBurst.rate)
                 pending.remove(uid)
             }
         }
@@ -4451,7 +4494,8 @@ class Comm(
         val d = interactionPrepare()
         interactionTurn = InteractionTurn(specialPeriod(status),
             status?.second?.atZone(java.time.ZoneId.systemDefault())?.toInstant()?.toEpochMilli() ?: 0L, d.shameTurns > 0, d.burstUntil)
-        val note = CommText.oitText(stateText() + "\n" + d.note(maxOf(msgTotal(), memFixed.maxOrNull() ?: 0), specialPeriod(status)) + "\n" + interactionJudgeNote(kind)) +
+        val personaText = readPersonaFull(personaName())
+        val note = CommText.oitText(stateText() + "\n" + d.note(maxOf(msgTotal(), memFixed.maxOrNull() ?: 0), specialPeriod(status), CommRules.valence(personaText), CommRules.valenceBurst(personaText), d.valenceInitial) + "\n" + interactionJudgeNote(kind)) +
             (if (rt != null) "\n" + rtNote(now()) else "")
         if (msgs.isNotEmpty() && msgs.last().first == "user") msgs[msgs.size - 1] = "user" to (msgs.last().second + "\n\n" + note)
         else msgs.add("user" to note)
@@ -5088,7 +5132,8 @@ class Comm(
         else msgs.add("user" to api)
         val status = statusFor(now(), ctx)
         val d = interactionPrepare(ctx.pid)
-        val note = CommText.oitText(stateTextFor(ctx) + "\n" + d.note(messageMilestones(ctx.st).maxOrNull() ?: 0, specialPeriod(status))) +
+        val ctxPersonaText = readPersonaFull(listPersonas().firstOrNull { pidOf(it) == ctx.pid } ?: personaName())
+        val note = CommText.oitText(stateTextFor(ctx) + "\n" + d.note(messageMilestones(ctx.st).maxOrNull() ?: 0, specialPeriod(status), CommRules.valence(ctxPersonaText), CommRules.valenceBurst(ctxPersonaText), d.valenceInitial)) +
             (if (ctx.rt != null && status?.first?.label != JOINT_STATUS) "\n" + rtNote(now(), ctx.rt, ctx.pid) else "")
         msgs[msgs.size - 1] = "user" to (msgs.last().second + "\n\n" + note)
         val clear0 = ctx.st.clearTs

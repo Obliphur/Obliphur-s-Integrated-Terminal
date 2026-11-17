@@ -18,7 +18,8 @@ object Cfg {
     const val COMM_TENSION_DAILY_RATE = 0.75
     const val COMM_CONDITION_KEEP_DAYS = 70 // 人设条件可查询的最长天数
     const val COMM_TENSION_GAIN_MAX = 40 // 人设可配置的单条件基础增量上限
-    const val COMM_TENSION_GAIN_COOLDOWN_SECONDS = 3 * 60 * 60
+    const val COMM_TENSION_GAIN_COOLDOWN_SECONDS = 2 * 60 * 60
+    const val COMM_TENSION_GAIN_COOLDOWN_MAX_SECONDS = 4 * 60 * 60
     const val COMM_TENSION_CHAIN_SECONDS = 60 * 60 // 条件成功加值后刷新一小时的其他条件倍率窗口
     const val COMM_TENSION_CHAIN_RATE = 0.75
     const val COMM_TENSION_DAY_DECAY = 25
@@ -29,6 +30,10 @@ object Cfg {
     const val COMM_SPECIAL_MINUTES = 30 // 特殊空闲固定时长，前一循环的休息波动不得挤占
     const val COMM_TENSION_BURST_GAIN_SECONDS = 24 * 60 * 60
     const val COMM_TENSION_BURST_GAIN_RATE = 0.5
+    const val COMM_VALENCE_MAX = 100
+    const val COMM_VALENCE_DAY_DECAY = 50
+    const val COMM_VALENCE_COOLDOWN_SECONDS = COMM_TENSION_GAIN_COOLDOWN_SECONDS
+    const val COMM_VALENCE_MESSAGE_SHIFT_MAX = 40
     val COMM_TENSION_MORNING_HOURS = 6 until 12 // 爆发次日必定主动谈话的早间范围
     const val COMM_SHAME_TURNS = 2
     const val COMM_SHIFT_STEP_MINUTES = 15 // 日程起点平移量必须是该分钟数的整数倍

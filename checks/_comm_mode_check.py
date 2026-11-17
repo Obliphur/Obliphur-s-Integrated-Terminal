@@ -81,10 +81,10 @@ try:
             with patch.object(c, "other_status_display", return_value=("", "idle")):
                 page._sync_status()
                 root.update()
-            assert page.lbl_tension.winfo_ismapped() and page.lbl_tension.cget("text") == "Tension: 95.13"
+            assert page.lbl_tension.winfo_ismapped() and page.lbl_tension.cget("text") == "Tension: 95.13 | Valence: 0"
             c._interaction_set({"tension": 42.5})
             page._sync_status()
-            assert page.lbl_tension.cget("text") == "Tension: 42.5"
+            assert page.lbl_tension.cget("text") == "Tension: 42.5 | Valence: 0"
             assert sm.stage("COOLDOWN", sm.from_ui_number("COOLDOWN", "325799"))[0] == "tension"
             page._sync_status()
             assert not page.lbl_tension.winfo_manager() and page.lbl_tension.cget("text") == ""

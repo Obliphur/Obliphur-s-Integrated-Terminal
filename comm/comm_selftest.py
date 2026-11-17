@@ -586,8 +586,8 @@ def _selftest():
     sent_note = calls[-1][1][-1]["content"]
     assert "TENSION=91" in sent_note and "MODE=情景模拟" in sent_note and "EFFECTIVE_STAGE=50-90" in sent_note
     assert "EFFECTIVE_STAGE=90+" in stc.interaction_note()
-    assert stc.cfg["interaction"]["gain_cooldowns"]["rumination"] == cooldown_until, "冷却内可以爆发但不重复加值或延长冷却"
-    assert stc.cfg["interaction"]["tension"] == 91 and stc.cfg["interaction"]["shame_turns"] == 0
+    assert stc.cfg["interaction"]["gain_cooldowns"]["rumination"] == stc._ms() + 4 * 3600 * 1000, "冷却内触发仍结算并延长至四小时上限"
+    assert stc.cfg["interaction"]["tension"] == 95 and stc.cfg["interaction"]["shame_turns"] == 0
     assert stc.cfg["interaction"]["burst_until"] == int(fixed2.replace(hour=13, minute=30).timestamp() * 1000)
     gain_until = int((fixed2 + timedelta(hours=24)).timestamp() * 1000)
     assert stc.cfg["interaction"]["gain_until"] == gain_until
@@ -597,13 +597,13 @@ def _selftest():
     assert interaction_gain(stc.cfg["interaction"], tension_model_gain("[tension:1:30]", 1, False), gain_until - 1) == 11
     stc.now = lambda: fixed2.replace(hour=13, minute=59, second=59)
     stc.tick()
-    assert stc.cfg["interaction"]["tension"] == 91
+    assert stc.cfg["interaction"]["tension"] == 95
     stc.now = lambda: fixed2.replace(hour=14, minute=0)
     stc.tick()
-    assert stc.cfg["interaction"]["tension"] == 91 and "EFFECTIVE_STAGE=90+" in stc.interaction_note()
+    assert stc.cfg["interaction"]["tension"] == 95 and "EFFECTIVE_STAGE=90+" in stc.interaction_note()
     stc.now = lambda: fixed2.replace(hour=14, minute=10)
     stc.tick()
-    assert stc.cfg["interaction"]["tension"] == 91 and not stc.cfg["interaction"]["shame_turns"]
+    assert stc.cfg["interaction"]["tension"] == 95 and not stc.cfg["interaction"]["shame_turns"]
     for invalid in ("[burst:end]", "[refuse to reply][burst:end]", RuntimeError("failed")):
         script.append(invalid)
         stc._trigger("user", "继续")
@@ -716,7 +716,8 @@ def _selftest():
     assert not morning.cfg["interaction"]["morning_day"]
     morning.flush(); again.flush(); morning_peer.flush()
     # 所有消息由模型判断：失败重试不重复，内部标记不入历史。
-    from comm.comm_interaction import tension_model_gain, tension_clean, tension_model_events, interaction_add
+    from comm.comm_interaction import (tension_model_gain, tension_clean, tension_model_events, interaction_add,
+                                       condition_repeat_rate, valence_model_events, interaction_valence_add)
     tension_model_events = partial(tension_model_events, conditions=tension_rules(builtin_rules))
     assert config.COMM_TENSION_GAIN_MAX == 40
     assert tension_model_gain("[tension:1:comfort:30]", 1, True) == 30
@@ -726,29 +727,50 @@ def _selftest():
     assert tension_model_gain("[tension:1:-10][tension:1:999999][tension:2:40]", 1, False) == 30
     assert tension_model_gain("[tension:1:no][tension:1:2.5]", 1, True) == 0
     assert tension_clean("好。[TENSION:1:15]［tension:2:10］") == "好。"
-    # 多条件叠加，按基础值降序结算；同条件去重，冷却独立且不因跨日或回拨清空。
+    # 单条件重复触发按剩余冷却降幅，冷却每次增加两小时并封顶四小时。
     cooldown_now = int(datetime(2027, 5, 4, 23).timestamp() * 1000)
-    cooldown = interaction_norm({})
+    two_hours = 2 * 3600 * 1000
+    four_hours = 4 * 3600 * 1000
+    rate, until = condition_repeat_rate({}, "same", cooldown_now)
+    assert rate == 1 and until == cooldown_now + two_hours
+    rate, until = condition_repeat_rate({"same": cooldown_now + two_hours}, "same", cooldown_now)
+    assert rate == .4 and until == cooldown_now + four_hours
+    rate, until = condition_repeat_rate({"same": cooldown_now + four_hours}, "same", cooldown_now)
+    assert rate == .16 and until == cooldown_now + four_hours
+    rate, until = condition_repeat_rate({"same": cooldown_now + 3 * 3600 * 1000}, "same", cooldown_now)
+    assert rate == .16 and until == cooldown_now + four_hours
+    rate, until = condition_repeat_rate({"same": cooldown_now + four_hours}, "same", cooldown_now + two_hours)
+    assert rate == .4 and until == cooldown_now + 6 * 3600 * 1000
+    rate, until = condition_repeat_rate({"same": cooldown_now + two_hours}, "same", cooldown_now + two_hours)
+    assert rate == 1 and until == cooldown_now + four_hours
+    repeated = interaction_norm({})
+    interaction_add(repeated, "same", 40, cooldown_now)
+    assert repeated["tension"] == 40 and repeated["gain_cooldowns"]["same"] == cooldown_now + two_hours
+    interaction_add(repeated, "same", 40, cooldown_now)
+    assert repeated["tension"] == 52 and repeated["gain_cooldowns"]["same"] == cooldown_now + four_hours
+    interaction_add(repeated, "same", 40, cooldown_now)
+    assert repeated["tension"] == 56 and repeated["gain_cooldowns"]["same"] == cooldown_now + four_hours
+    # 多条件仍按基础值排序、同条件去重；E 对正负偏移使用相同递增冷却。
     choices = "[tension:1:boundary:30][tension:1:rumination:20][tension:1:rumination:40][tension:1:unknown:999999][tension:2:comfort:40]"
-    available = [("rumination", 40), ("boundary", 30)]
-    assert tension_model_events(choices, 1, True, {"rumination": cooldown_now + 1}, cooldown_now) == [("boundary", 30)]
-    def add_choice(at):
-        events = tension_model_events(choices, 1, True, cooldown["gain_cooldowns"], at)
-        for condition, amount in events:
-            interaction_add(cooldown, condition, amount, at)
-        return events
-    assert add_choice(cooldown_now) == available and cooldown["tension"] == 62
-    assert add_choice(cooldown_now) == [] and cooldown["tension"] == 62
-    interaction_add(cooldown, "violation", 15, cooldown_now)
-    assert cooldown["tension"] == 73
-    assert tension_model_events("[tension:1:violation:40]", 1, True, cooldown["gain_cooldowns"], cooldown_now) == []
-    saved_cooldowns = dict(cooldown["gain_cooldowns"])
-    cooldown = interaction_roll(cooldown, decay_ms + 86400000)
-    assert cooldown["gain_cooldowns"] == saved_cooldowns
-    assert add_choice(cooldown_now + 3 * 3600 * 1000 - 1) == []
-    assert add_choice(cooldown_now + 3 * 3600 * 1000) == available
-    assert cooldown["tension"] == 100 and set(cooldown["gain_cooldowns"]) == {"rumination", "boundary", "violation"}
-    assert add_choice(cooldown_now - 1) == []
+    assert tension_model_events(choices, 1, True) == [("rumination", 40), ("boundary", 30)]
+    e_rules = {"joy": (20, "正向"), "hurt": (-20, "负向")}
+    from comm.comm_rules import valence_initial
+    assert valence_initial("[valence:initial]\ninitial:+25.5\n[/valence:initial]") == 25.5
+    assert valence_initial("[valence:initial]\ninitial:101\n[/valence:initial]") == 0
+    quarter = config.COMM_TENSION_DECAY_SECONDS * 1000
+    assert abs(interaction_roll({"valence": 40, "valence_decay_at": cooldown_now}, cooldown_now + quarter, 20)["valence"] - (40 - 50 / 96)) < 1e-8
+    assert abs(interaction_roll({"valence": 10, "valence_decay_at": cooldown_now}, cooldown_now + quarter, 20)["valence"] - (10 + 50 / 96)) < 1e-8
+    assert interaction_roll({"valence": -40, "valence_decay_at": cooldown_now}, cooldown_now + 100 * 86400000, -20)["valence"] == -20
+    assert interaction_norm({})["valence_initialized"] is False
+    assert valence_model_events("[valence:1:joy:25][valence:1:joy:10][valence:1:hurt:-20]", 1, e_rules) == [("joy", 25), ("hurt", -20)]
+    e = interaction_norm({})
+    interaction_valence_add(e, [("joy", 30)], 1, cooldown_now)
+    assert e["valence"] == 30 and e["valence_cooldowns"]["joy"] == cooldown_now + two_hours
+    interaction_valence_add(e, [("joy", 30)], 1, cooldown_now)
+    assert e["valence"] == 39 and e["valence_cooldowns"]["joy"] == cooldown_now + four_hours
+    interaction_valence_add(e, [("hurt", -40)], 1, cooldown_now)
+    assert e["valence"] == 9 and e["valence_cooldowns"]["hurt"] == cooldown_now + two_hours
+    assert interaction_norm(e)["valence"] == 9
     # 连锁窗口每次成功加值刷新一小时，跨午夜有效，到期瞬间恢复；冷却和零增量不刷新。
     chain = interaction_norm({})
     hour = config.COMM_TENSION_CHAIN_SECONDS * 1000
@@ -760,8 +782,8 @@ def _selftest():
     assert chain["tension"] == 84 and chain["gain_chain_until"] == cooldown_now + 2 * hour
     interaction_add(chain, "rumination", 40, cooldown_now + hour + 1)
     interaction_add(chain, "other", 1, cooldown_now + hour + 1)
-    assert chain["tension"] == 84 and chain["gain_chain_until"] == cooldown_now + 2 * hour
-    assert "other" not in chain["gain_cooldowns"]
+    assert chain["tension"] == 96 and chain["gain_chain_until"] == cooldown_now + 2 * hour + 1
+    assert chain["gain_cooldowns"]["other"] == cooldown_now + hour + 1 + two_hours
     interaction_add(chain, "other", 20, cooldown_now + 2 * hour)
     assert chain["tension"] == 100 and chain["gain_chain_until"] == cooldown_now + 3 * hour
     stacked = interaction_norm({"gain_until": cooldown_now + 86400000})
@@ -770,7 +792,7 @@ def _selftest():
     assert stacked["tension"] == 15, "日常18，首项爆发后9，次项连锁13再减半6，逐项相加"
     zero_gain = interaction_norm({"gain_until": cooldown_now + 1})
     interaction_add(zero_gain, "comfort", tension_model_gain("[tension:1:comfort:2]", 1, False), cooldown_now)
-    assert not zero_gain["gain_cooldowns"] and zero_gain["tension"] == 0
+    assert "comfort" in zero_gain["gain_cooldowns"] and zero_gain["tension"] == 0
     judge = Comm(os.path.join(td, "judge"), folder, now=lambda: fixed2, chat_fn=fake)
     judge.ai.set_profile("deepseek", api_key="k")
     judge.set_cfg(persona="时段.txt", split_send=False)
@@ -785,16 +807,17 @@ def _selftest():
     script.append("别这么说.[tension:1:rumination:40][tension:1:boundary:20]")
     judge.send("我一文不值")
     wait(judge)
-    assert judge.cfg["interaction"]["tension"] == 45, "原正则关键词也只由模型加值"
+    after_repeat_tension = judge.cfg["interaction"]["tension"]
+    assert after_repeat_tension == 63, "冷却中的有效条件仍按递减倍率由模型加值"
     assert "[tension]模板" in calls[-1][1][-1]["content"]
     script.append("这些词不一定表达当前情绪.[tension:1:0]")
     judge.send("翻译这几个词:我一文不值,抱抱,熬夜")
     wait(judge)
-    assert judge.cfg["interaction"]["tension"] == 45, "关键词本身不再自动增加张力"
+    assert judge.cfg["interaction"]["tension"] == after_repeat_tension, "无有效标记时关键词本身不增加张力"
     script.append("[refuse to reply][tension:1:40]")
     judge.send("仿佛被整个世界遗忘了")
     wait(judge)
-    assert judge.cfg["interaction"]["tension"] == 45 and judge.cfg["interaction"]["pending"]
+    assert judge.cfg["interaction"]["tension"] == after_repeat_tension and judge.cfg["interaction"]["pending"]
     snapshot = judge.sync_doc()
     pending = dict(judge.cfg["interaction"]["pending"])
     judge.flush()
@@ -814,11 +837,13 @@ def _selftest():
     script.append("我在听.[tension:1:comfort:20]")
     judge._request("retry")
     wait(judge)
-    assert judge.cfg["interaction"]["tension"] == 60 and not judge.cfg["interaction"]["pending"]
+    assert judge.cfg["interaction"]["tension"] == 78 and not judge.cfg["interaction"]["pending"]
+    settled_tension = judge.cfg["interaction"]["tension"]
     script.append("继续.[tension:1:40]")
     judge._request("retry")
     wait(judge)
-    assert judge.cfg["interaction"]["tension"] == 60, "已结算消息重试不再加值"
+    after_retry_tension = judge.cfg["interaction"]["tension"]
+    assert after_retry_tension == settled_tension, "已结算消息重试不重复加值"
     judge.now = lambda: fixed2.replace(hour=15)
     expected_day_tension = interaction_roll(judge.cfg["interaction"], judge._ms())["tension"] + 7
     script.append("听到了.[tension:1:other:10]")
@@ -891,7 +916,7 @@ def _selftest():
     script.append("可以.[tension:1:comfort:10]")
     gate._request("retry")
     wait(gate)
-    assert gate.cfg["interaction"]["burst_until"] and gate.cfg["interaction"]["tension"] == 97
+    assert gate.cfg["interaction"]["burst_until"] and gate.cfg["interaction"]["tension"] == 100, "冷却中的有效条件仍结算倍率增量并触发爆发"
     assert "EFFECTIVE_STAGE=90+" in gate.interaction_note()
     gate._interaction_set(dict(gate.cfg["interaction"], burst_until=0))
     script.append("旧消息.[tension:1:comfort:10]")
@@ -1035,7 +1060,7 @@ def _selftest():
     guard._interaction_judge_note("user")
     guard._interaction_judged("回应.[tension:1:comfort:10]")
     assert guard.cfg["interaction"]["special_7m_gain_count"] == 1
-    assert guard.cfg["interaction"]["tension"] == 89, "冷却只挡加值，仍记录正数条件"
+    assert 89 < guard.cfg["interaction"]["tension"] <= 93, "冷却中的正数条件仍按剩余倍率结算并记录"
     guard_clock[0] = fixed2.replace(hour=13, minute=7)
     assert not guard._check_special_7m_lure(guard_clock[0])
     guard_clock[0] = fixed2.replace(hour=14)
@@ -2274,7 +2299,7 @@ def _selftest():
     assert ch.cfg["interaction"]["tension"] == 11, "合约扣血基础15，非特殊空闲乘0.75取整"
     clock[0] = day.replace(hour=15, minute=10, second=5)
     assert ch.joint_hp_lost("解除了网络禁令")
-    assert ch.cfg["interaction"]["tension"] == 11, "三小时内继续记扣血，但不重复加张力"
+    assert ch.cfg["interaction"]["tension"] == 14, "冷却内同条件按递减倍率结算张力"
     assert len(calls) == n_calls and not ch.busy, "损失生命值当时不告诉对方"
     assert len(ch._joint()["hp"]) == 2 and ch._joint()["hp"][0][1] == "⚠ 违反合约: 打开了游戏 目标生命值 3 / 4"
     script.append("休息吧.")
@@ -3960,7 +3985,7 @@ def _selftest():
     assert variable.visible()[-1]["text"] == "听到了."
     script.append("继续.[tension:1:other:30]")
     variable.send("又说起那种感受"); wait(variable)
-    assert variable.cfg["interaction"]["tension"] == 9
+    assert variable.cfg["interaction"]["tension"] == 15, "重复自定义条件仍按递增冷却倍率加值"
     assert tension_model_gain("[tension:1:other:X]", 1, True, variable_rules) == 0
     variable.flush()
     return "comm selftest OK"

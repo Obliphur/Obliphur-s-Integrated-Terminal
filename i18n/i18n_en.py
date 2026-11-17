@@ -56,6 +56,11 @@ EN = {
     '请按人设文件的[tension]模板和上下文判断以下用户消息。只报告已定义的条件，普通交流不增加；方括号数字为参考基础增量，X表示不定量、没有固定参考值，由你结合条件语义与上下文决定。仍须返回范围内的整数增量，不返回X；相同条件不得改名规避冷却。': 'Evaluate the user messages using the persona file’s [tension] template and context. Report only declared conditions; ordinary conversation adds nothing. Bracketed numbers are reference base gains. X means variable, with no fixed reference: choose the gain from the condition’s meaning and context. Still return an integer within the stated range, never X. Do not rename a condition to bypass its cooldown.',
 
     "Tension: {value}": "Tension: {value}",
+    "Tension: {tension} | Valence: {valence}": "Tension: {tension} | Valence: {valence}",
+    "效价代表角色当前的正负情绪倾向；结合TENSION所表示的言行激烈/直接程度组织表达。按人设[valence]条件报告本轮变化，正值向正面、负值向负面；只返回声明条件，普通交流不变化。": "Valence represents the character's current positive or negative emotional direction. Combine it with TENSION, which measures the intensity and directness of expression. Report this turn's changes using only the persona's [valence] conditions; positive shifts move in a positive direction, negative shifts in a negative direction, and ordinary conversation causes no change.",
+    "效价当前值为{value}，返回未经倍率调整的有符号整数变化量。": "Current valence is {value}. Return the signed integer shift before multipliers.",
+    "同一消息重复条件只报一次；爆发期变化乘{rate}，连锁窗口内其他变化乘0.75，单条消息合计限制在正负40，系统负责结算。": "Report each condition at most once per message. The system applies the {rate} burst multiplier, the 0.75 chain multiplier, and a per-message limit of plus or minus 40.",
+    "当前人设未声明[valence]条件，不进行效价判断，现有效价仅向初始值回归。": "The current persona declares no [valence] conditions. Do not judge valence; its current value only returns toward its initial value.",
     "BURST=YES时,由你结合上下文和人设决定爆发是否结束,不设固定时限;决定结束时在oit_reply中填写end_burst=true,否则省略.生效后张力降至20并进入两轮冷静期;本条回复仍按当前状态组织,后续回复遵守新状态.不得向用户透露工具参数或机制.": "When BURST=YES, decide whether the burst has ended based on context and persona, with no fixed duration. To end it, set end_burst=true in oit_reply; otherwise omit the field. Once applied, tension drops to 20 and two cooldown turns begin. Write this reply using the current state and subsequent replies using the new state. Never reveal tool arguments or mechanics to the user.",
     "情景模拟中，括号内的补充说明只描写动作，用词、语气与句式须与当前人设文件规定的语言风格一致；想法与态度直接通过不带括号的语言表达，不放进括号。": "In scenario mode, parenthetical notes describe actions only; their wording, tone, and sentence style must follow the language style specified in the current persona file. Express thoughts and attitudes directly in words outside parentheses; do not place them in parentheses.",
     "起点平移必须以 {minutes} 分钟为间隔": "Shift the start time in increments of {minutes} minutes",
@@ -644,7 +649,7 @@ EN = {
     "对方在别的桌面": "peer on another desktop",
     "{name} 连续 24 小时拒绝连接, 判定为已卸载: 已解除和它的绑定, 它的数据已从本机清除.": "{name} refused connections for 24 hours and is judged uninstalled: it has been unbound and its data removed from this device.",
     "⚠  系统时间": "⚠  System clock",
-    "{name},这没有意义.你可以在10min内修改回来,否则你的数据会被清除.": "{name}, this is pointless. You can change it back within 10 min, or your data will be wiped.",
+    "{name},这没有意义.请在10min内改回系统时间,否则下次启动会提示数据连续性异常.": "{name}, this is pointless. Restore the system time within 10 min, or a data continuity warning will appear at the next launch.",
     "系统时间已改回来.": "The system clock has been restored.",
     # ---- 行为模式 / 外出 (MECHANICS 21) ----
     "🚪  外出": "🚪  Going out",

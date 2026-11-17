@@ -33,6 +33,58 @@ def tension_rules(text):
     return out
 
 
+def valence_rules(text):
+    """情绪效价条件由人设声明；参考值带符号，X 表示不定量。"""
+    out = {}
+    for line in rule_lines(text, "valence"):
+        m = re.fullmatch(r"([a-z_]{1,32})\s*[:：]\s*\[([+-]?\d{1,3}|X)\]\s*(\S.*)", line)
+        if not m or m[1] in out:
+            return {}
+        shift = None if m[2] == "X" else int(m[2])
+        if shift is not None and (shift == 0 or abs(shift) > 40):
+            return {}
+        out[m[1]] = (shift, m[3])
+    return out
+
+
+def valence_initial(text):
+    """读取人设的初始效价；缺省或格式错误时回到 0。"""
+    lines = rule_lines(text, "valence:initial")
+    if len(lines) != 1:
+        return 0.0
+    match = re.fullmatch(r"initial\s*[:：]\s*([+-]?\d+(?:\.\d+)?)", lines[0])
+    if not match:
+        return 0.0
+    value = float(match[1])
+    return value if math.isfinite(value) and -100.0 <= value <= 100.0 else 0.0
+
+
+def valence_burst_rules(text):
+    """读取可选爆发联动参数；格式错误时使用中性默认值。"""
+    lines = rule_lines(text, "valence:burst")
+    if not lines:
+        return {"burst_rate": 1.0, "burst_end_shift": 0}
+    out = {"burst_rate": 1.0, "burst_end_shift": 0}
+    seen = set()
+    for line in lines:
+        pair = re.fullmatch(r"(burst_rate|burst_end_shift)\s*[:：]\s*([+-]?\d+(?:\.\d+)?)", line)
+        if not pair or pair[1] in seen:
+            return {"burst_rate": 1.0, "burst_end_shift": 0}
+        seen.add(pair[1])
+        number = float(pair[2])
+        if not math.isfinite(number):
+            return {"burst_rate": 1.0, "burst_end_shift": 0}
+        if pair[1] == "burst_rate":
+            if not 0.0 <= number <= 5.0:
+                return {"burst_rate": 1.0, "burst_end_shift": 0}
+            out[pair[1]] = number
+        else:
+            if not number.is_integer() or abs(number) > 100:
+                return {"burst_rate": 1.0, "burst_end_shift": 0}
+            out[pair[1]] = int(number)
+    return out
+
+
 def shift_range(text):
     """可选平移区块：缺省允许全天，格式错误返回 None；起点大于终点表示跨午夜。"""
     if not re.search(r"^\s*\[/?shift\]\s*$", text, re.I | re.M):
