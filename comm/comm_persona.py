@@ -5,7 +5,7 @@ from comm.comm_builtin import BUILTIN_PERSONAS, ASSISTANT_TITLE
 from comm import comm_readme
 from datetime import datetime
 import os
-from comm.comm_prompt import prefix_prompt, native_persona_text
+from comm.comm_prompt import prefix_prompt
 import shutil
 import zlib
 import config
@@ -175,7 +175,7 @@ PERSONA_HEAD = "这是系统设置的人设提示词,你应该遵守人设,不�
 def persona_system(personas: str, name: str, split: bool = True) -> str:
     """发给模型的 system：公共工具协议、人设文件前的固定一句与人设正文。"""
     head = system_head(name, split)
-    return (head + "\n" if head else "") + PERSONA_HEAD + native_persona_text(read_persona_full(personas, name))
+    return (head + "\n" if head else "") + PERSONA_HEAD + read_persona_full(personas, name)
 
 
 def persona_labels(names: list) -> list:

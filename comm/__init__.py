@@ -41,7 +41,7 @@ from . import comm_readme
 from .comm_schedule import PROACTIVE_P, seg_kind, seg_detail, schedule_entries, schedule_loops, loop_entries, schedule_segments, pro_pct, persona_probs
 from .comm_reply import CUT_DEFAULT_MIN, CUT_MAX_MIN, HALFWIDTH_SYMBOLS, NET_DEFAULT_MIN, NET_MAX_MIN, WAIT_MAX_MIN, _BRACKET_RE, _CUT_N_RE, _CUT_RE, _EMPTY_WRAP_RE, _NET_RE, _WAIT_RE, clean_reply, cut_minutes, net_minutes, to_halfwidth
 from .comm_builtin import BUILTIN_PERSONAS, DEFAULT_PERSONA, DEFAULT_BACKGROUND, DEFAULT_ROUTINE, ASSISTANT_PERSONA, ASSISTANT_DETAIL_LINE, BACKGROUND_LEGACIES, ASSISTANT_SLEEP_LINE, ASSISTANT_TITLE
-from .comm_prompt import REFUSE, SHIFT_TAG, MSGS_TAG, THINK_LONG, THINK_WORDS, THINK_TIME_RE, think_text_reason, JOINT_RULE, rest_function_text, prefix_prompt, native_persona_text
+from .comm_prompt import REFUSE, SHIFT_TAG, MSGS_TAG, THINK_LONG, THINK_WORDS, THINK_TIME_RE, think_text_reason, JOINT_RULE, rest_function_text, prefix_prompt
 from .comm_persona import SHIFT_LO, SHIFT_HI, SHIFT_KEEP, MAX_PERSONA, MEM_MAX, PERSONA_EXT, readme_text, pid_of, love_norm, love_line, shift_norm, shift_pairs, hm_text, shift_line, mem_fields, seed_builtin, ensure_personas, list_personas, persona_title, uses_prefix, system_head, PERSONA_HEAD, persona_system, persona_labels, read_persona, ROUTINE_SUFFIX, ROUTINE_OLD_SUFFIX, COMPANION_SEP, companion_base, is_companion_name, companion_files, companions_of, routine_name_of, read_routine, read_persona_full, import_persona
 
 from .comm_const import *
@@ -921,9 +921,7 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
         current_builtin = BUILTIN_PERSONAS[ASSISTANT_PERSONA]
         legacies = [current_builtin.replace(ASSISTANT_SLEEP_LINE, ""),
                     current_builtin.replace(ASSISTANT_SLEEP_LINE, "").replace(ASSISTANT_DETAIL_LINE, "")]
-        if native_persona_text(current).strip() not in {current_builtin.strip()} | {x.strip() for x in legacies}:
-            return
-        if current.strip() == current_builtin.strip():
+        if current.strip() not in {x.strip() for x in legacies}:
             return
         try:
             with open(path, "w", encoding="utf-8", newline="\n") as f:
@@ -1043,9 +1041,7 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
             return
         if current.strip() == BUILTIN_PERSONAS[DEFAULT_PERSONA].strip():
             return
-        if (native_persona_text(current).strip() != BUILTIN_PERSONAS[DEFAULT_PERSONA].strip()
-                and current.strip() not in {x.strip() for x in CLAUDIA_LEGACIES}
-                and self._text_crc(current) != self.cfg.get("claudia_base")):
+        if current.strip() not in {x.strip() for x in CLAUDIA_LEGACIES} and self._text_crc(current) != self.cfg.get("claudia_base"):
             return                                  # 用户改过的: 不动 (改回上一次见到的内置版本就算没改过, 见 _note_builtin_base)
         self._write_claudia_builtin(force=False)
         self._backup_persona_file(DEFAULT_PERSONA)

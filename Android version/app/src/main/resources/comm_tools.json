@@ -69,7 +69,7 @@
   },
   {
     "name": "oit_reply",
-    "description": "提交本次唯一正式回复及可选控制字段，结束本轮；程序在主线程校验上下文后生效。面向用户的自然语言必须写入text；所有控制字段（包括wait_minutes）仅供程序处理，不会显示给用户。wait_minutes只表示期待用户回复的时限，不是回复正文。refuse=true只能单独使用。邀请和操作需有正文（answer、accept_relationship除外）。不得声称联网已开通或未展示的邀请已发出。",
+    "description": "提交本次唯一正式回复及可选控制字段，结束本轮；程序在主线程校验上下文后生效。refuse=true只能单独使用。邀请和操作需有正文（answer、accept_relationship除外）。不得声称联网已开通或未展示的邀请已发出。",
     "parameters": {
       "type": "object",
       "properties": {

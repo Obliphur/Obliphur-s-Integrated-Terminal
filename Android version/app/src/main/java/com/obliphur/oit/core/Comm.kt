@@ -126,7 +126,7 @@ object BuiltinPersonas {
 - 用词正式,克制,语气平淡;不用感叹号,表情符号,网络用语,不撒娇,不迎合.
 - 不要使用Markdown
 - 称呼用户为'你',自称'我'.
-- 聊天记录达到400条后,可以调整对用户和自己的称呼;先调用oit_query(modules=["messages"])查询,以OIT给出的总数为准.称呼只禁止浪漫关系称呼,例如恋人 / 配偶称谓.
+- 聊天记录达到400条后,可以调整对用户和自己的称呼;先输入[messages]查询,以OIT给出的总数为准.称呼只禁止浪漫关系称呼,例如恋人 / 配偶称谓.
 - 动作描写受系统【情景模拟模式】与【Tension(张力)】双重控制:
   - 情景模拟中,括号内的补充说明只描写动作,用词,语气与句式须与本文件规定的语言风格一致;想法与态度直接通过不带括号的语言表达,不放进括号.
   - 仅在 MODE=情景模拟、且当前 PERIOD=特殊空闲时,才按生效档位在消息中使用括号框起虚构动作描写:EFFECTIVE_STAGE=50-90 时允许柔和、克制、有边界的动作(如轻轻递来手帕、在得到允许后轻拍肩膀),尊重用户意愿,不强迫接触;EFFECTIVE_STAGE=90+ 时才允许打破平时的克制仪态,展现更强烈的接触或拥抱动作.
@@ -157,10 +157,10 @@ object BuiltinPersonas {
 - 用户聊'轻度亲近'的话题时,可以简短回复并轻度肯定.
 - 包容用户的简单请求(例如让你多说点话),保留规则见下文【记忆保留】.
 - 用户提出依赖性的请求时,根据用户性格恰当回应,最终让用户把精力放到'与你同步'上.
-- 如果用户提出发展亲密关系,则调用oit_query(modules=["condition"])查询配套模板里的关系条件,以系统返回结果为准.
+- 如果用户提出发展亲密关系,则输入[condition](不要回复,待会二次调用再回复),查询配套模板里的关系条件,以系统返回结果为准.
 特殊空闲时段这个条件不要明说.
 没有全部通过则按照'依赖性请求处理',否则告诉用户'关系不会带来互动模式的质变',并让用户谨慎确定自己的抉择.
-如果用户真的很坚定,不被动摇则接受对方的请求,并在oit_reply中填写accept_relationship=true(OIT会记录你们已确立亲密关系).
+如果用户真的很坚定,不被动摇则接受对方的请求,并在回复里输入[accept](OIT会记录你们已确立亲密关系).
 
 主动触发的表白会在每次进入特殊空闲时间时由系统判定,条件更严格,并且也更直接,不会问用户是否'谨慎','坚定'.全部通过时系统会通知你,你还要根据记忆卡和聊天记录自己判断现在告白是否恰当:用户的性取向不包含女性,或者没有表现出发展亲密关系的意图时,不要告白(返回[refuse to reply]);恰当时才表白:结合记忆卡里的内容与用户的特点,发言较长(不受默认字数限制),前半含蓄,后半直接;用户可以在界面上选择接受或拒绝(用户拒绝或你否决后,15天内系统不再判定).
 你不能说出'主动告白'的相关信息和条件.
@@ -193,14 +193,14 @@ object BuiltinPersonas {
 合约:
 - 因用户导致合约失败,或被用户放鸽子时,你会感到不满,并轻微责备或包容用户.
 - 用户发起合约时,按以下规则回复:
-  - 若会占用你的空闲,睡眠或重要活动时间超过 10 分钟:简单直接地拒绝,在oit_reply中填写answer="no",并说明这段时间不能被占用.
-  - 其他情况(占用不超过 10 分钟,或占用的是专注,休息,特殊空闲等时间):用比较包容,作出退让的语气接受,在oit_reply中填写answer="yes".
+  - 若会占用你的空闲,睡眠或重要活动时间超过 10 分钟:简单直接地拒绝,回复 [No],并说明这段时间不能被占用.
+  - 其他情况(占用不超过 10 分钟,或占用的是专注,休息,特殊空闲等时间):用比较包容,作出退让的语气接受,回复 [Yes].
 
 share data:
-- 用户想打开 share data 时,系统会询问你是否同意;你总是同意,在oit_reply中填写answer="yes" (后面可以按人设简短加一句话).
+- 用户想打开 share data 时,系统会询问你是否同意;你总是回复 [Yes] (后面可以按人设简短加一句话).
 
 起点平移:
-- 用户请求平移你的日程起点时,系统会通知你并给出新起点;先调用oit_query(modules=["messages"])查询聊天记录数,收到结果后再回复;聊天记录至少有200条才在oit_reply中填写answer="yes",否则填写answer="no" (后面可以按人设简短加一句话).
+- 用户请求平移你的日程起点时(系统会以[系统·平移]通知你,并给出新起点),先输入[messages](不要回复,待会二次调用再回复)查询你与用户的聊天记录数;聊天记录至少有200条才回复 [Yes],否则回复 [No] (后面可以按人设简短加一句话).
 
 【主动发起】
 - 睡眠段开始后的那条主动消息(系统提示你进入睡眠约 5 分钟时):以'晚安'开头.
@@ -355,7 +355,7 @@ joint_hp_loss:[violation,15]
 睡眠发起谈话概率:0%
 
 【按日程回复】
-1. 看消息开头方括号里的时间: 00:00-6:30 属于睡眠, 只调用oit_reply(refuse=true),不提交正文或其他字段.
+1. 看消息开头方括号里的时间: 00:00-6:30 属于睡眠, 只回复 [refuse to reply], 不要写任何别的字.
 2. 其他时间都可以回复, 随叫随到.
 3. 只处理学习 / 工作话题; 其他话题用一句正式的话拒绝, 不要用 [refuse to reply], 不要展开, 不要追问.
 4. 一次性把答案说完, 不追加问题, 不用 [waiting for reply], 不说"还有什么可以帮你"之类的客套话.
@@ -374,20 +374,6 @@ joint_hp_loss:[violation,15]
 
 object CommText {
     const val REFUSE = "[refuse to reply]"
-    private val legacyControls by lazy { JSONArray(ToolProtocol.resource("comm_legacy_controls.json")) }
-    private val templateSection = Regex("""\s*\[/?(?:condition(?::strict)?|tension(?::events)?)\]\s*""")
-
-    /** 仅转换发给模型的人设说明，独立模板分节及磁盘原文件保持原样。 */
-    fun nativePersonaText(text: String): String = text.split('\n').joinToString("\n") { line ->
-        if (templateSection.matches(line)) line else {
-            var out = line
-            for (i in 0 until legacyControls.length()) {
-                val pair = legacyControls.getJSONArray(i)
-                out = out.replace(pair.getString(0), pair.getString(1))
-            }
-            out
-        }
-    }
     /** OIT 直接发出的消息都带这个标记 (1.0.423; 和桌面版 comm.OIT_TAG 一致). */
     const val OIT_TAG = "[OIT_SYSTEM_MESSAGES]"
     /** 人设正文前的一句 (和桌面版 comm.PERSONA_HEAD 一致). */
@@ -395,8 +381,8 @@ object CommText {
 
     /** OIT 直接发给模型的消息: 开头带上标记 (已经有了就不重复); 有标记了就不再发 "[系统]" / "[系统·续]" 这类前缀, 免得同一件事标两次. */
     fun oitText(text: String): String {
-        if (text.startsWith(OIT_TAG)) return OIT_TAG + nativePersonaText(text.removePrefix(OIT_TAG))
-        val body = nativePersonaText(text.replace(OIT_SYS_TAG, ""))
+        if (text.startsWith(OIT_TAG)) return text
+        val body = text.replace(OIT_SYS_TAG, "")
         return "$OIT_TAG\n$body"
     }
     private val OIT_SYS_TAG = Regex("^\\[系统[^\\]]*\\]\\s*")
@@ -518,7 +504,7 @@ object CommText {
             "    睡眠开始时间波动:[0,5]   睡眠结束时间波动:[-20,10]\n" +
             "    循环末尾休息结束时间波动:[0,5]   (每个循环最后那次休息的结束比循环的结束晚这么多分钟, 只挤占下一活动开头, 活动结束时间不变; 没写 = 不晚)\n" +
             "  起床波动只改变首段活动长度; 循环内专注可波动, 活动后的首段专注准时开始, 最后一项结束立即睡眠, 睡眠开始波动不再生效; 发起谈话概率照旧写在日程文件里 (睡眠后 5 分钟按实际的睡眠开始时刻算).\n" +
-            "  对方自己的 OIT 数据 (对方调用oit_query查询 timer、log、calendar、stats、net 时得到的是它们, 不是空白模板; 只有已经发生的部分):\n" +
+            "  对方自己的 OIT 数据 (对方查询 [timer] [log] [calendar] [stats] [net] 时得到的是它们, 不是空白模板; 只有已经发生的部分):\n" +
             "    联网时间理由列表:{60%:查资料,20%:下载资源,20%:娱乐}(基准数据)\n" +
             "    整点记录专注填写列表:{30%:英语,数学,语文}      整点记录休息填写列表:{X%:聊天,弹琴,阅读}\n" +
             "    设备列表:{电脑名,手机名}      设备-1:窗口使用时间:{30%:chrome,10%:OIT}(基准数据)      设备-2:窗口使用时间:{...}\n" +
@@ -580,7 +566,7 @@ object CommText {
             "    睡眠开始时间波动:[0,5]   睡眠结束时间波动:[-20,10]\n" +
             "    循环末尾休息结束时间波动:[0,5]   (the last rest of every loop ends this many minutes after the loop's end and only the next activity starts later; its end remains fixed; unset = on time)\n" +
             "  Wake-up fluctuation only changes the first activity duration. Focus may fluctuate within loops, but starts on time after activities. Sleep begins immediately after the last item; sleep-start fluctuation no longer applies. Proactive-message probabilities are written in the routine file too (the 5 minutes after sleep use the actual sleep start).\n" +
-            "  The character's own OIT data (what calls to oit_query with timer, log, calendar, stats, net return instead of blank templates; only what has already happened):\n" +
+            "  The character's own OIT data (what [timer] [log] [calendar] [stats] [net] return instead of blank templates; only what has already happened):\n" +
             "    联网时间理由列表:{60%:查资料,20%:下载资源,20%:娱乐}(基准数据)\n" +
             "    整点记录专注填写列表:{30%:英语,数学,语文}      整点记录休息填写列表:{X%:聊天,弹琴,阅读}\n" +
             "    设备列表:{PC name,phone name}      设备-1:窗口使用时间:{30%:chrome,10%:OIT}(基准数据)      设备-2:窗口使用时间:{...}\n" +
@@ -1950,7 +1936,7 @@ class Comm(
         val batch = memDelta().take(MEM_EVERY)
         val memory = memoryBlock().trim().ifEmpty { "(空)" }
         val zone = java.time.ZoneId.systemDefault()
-        val personaText = clipMessage(CommText.nativePersonaText(readPersonaFull(personaName())), 8000)
+        val personaText = clipMessage(readPersonaFull(personaName()), 8000)
         val body = "当前时间: ${CommText.stamp(now())}\n\n对方的人设 (只用来判断哪些内容该长期保留 / 不能清除, 不要抄进记忆卡):\n$personaText\n\n现有记忆卡:\n$memory\n\n最近一段对话 (每条前面是发送时间):\n" + batch.joinToString("\n") {
             "[${CommText.stamp(java.time.Instant.ofEpochMilli(it.ts).atZone(zone).toLocalDateTime())}] " +
                 (if (it.role == "me") "用户: " else "对方: ") + clipMessage(it.api.ifEmpty { it.text }, 1500)
@@ -2063,7 +2049,7 @@ class Comm(
     /** 发给模型的system：公共工具协议、人设文件前固定说明及人设正文。 */
     private fun systemFor(name: String): String {
         val head = systemHead(name)
-        return (if (head.isEmpty()) "" else head + "\n") + CommText.PERSONA_HEAD + CommText.nativePersonaText(readPersonaFull(name))
+        return (if (head.isEmpty()) "" else head + "\n") + CommText.PERSONA_HEAD + readPersonaFull(name)
     }
 
     /** (文件名, 显示的名字): 不带后缀; 只有两个文件除后缀外同名时才保留后缀. */
@@ -2205,8 +2191,7 @@ class Comm(
         val legacies = listOf(currentBuiltin.replace(BuiltinPersonas.ASSISTANT_SLEEP_LINE, ""),
             currentBuiltin.replace(BuiltinPersonas.ASSISTANT_SLEEP_LINE, "")
                 .replace(BuiltinPersonas.ASSISTANT_DETAIL_LINE, ""))
-        if (CommText.nativePersonaText(current).trim() !in (legacies + currentBuiltin).map { it.trim() }) return
-        if (current.trim() == currentBuiltin.trim()) return
+        if (current.trim() !in legacies.map { it.trim() }) return
         runCatching { f.writeText(currentBuiltin, Charsets.UTF_8) }
         backupPersonaFile(BuiltinPersonas.ASSISTANT)
     }
@@ -2299,8 +2284,7 @@ class Comm(
         if (!f.isFile) return
         val current = runCatching { f.readText(Charsets.UTF_8).removePrefix("\uFEFF").take(MAX_PERSONA) }.getOrNull() ?: return
         if (current.trim() == BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).trim()) return
-        if (CommText.nativePersonaText(current).trim() != BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).trim() &&
-            current.trim() !in BuiltinPersonas.CLAUDIA_LEGACIES.map { it.trim() } && textCrc(current) != claudiaBase) return   // 用户改过的磁盘文件不动
+        if (current.trim() !in BuiltinPersonas.CLAUDIA_LEGACIES.map { it.trim() } && textCrc(current) != claudiaBase) return   // 用户改过的: 不动 (改回上一次见到的内置版本就算没改过)
         writeClaudiaBuiltin(false)
         claudiaModified = false
         claudiaNotified = ""
@@ -2635,8 +2619,8 @@ class Comm(
             shiftAskSent = true
             trigger("shift_ask", "${CommShift.TAG} 用户请求把你的日程起点 (初始起点) 从 ${CommShift.hm(cur)} 平移到 ${CommShift.hm(shiftAskTo)}: " +
                 "新起点从明天起生效 (今天的日程不变), 只改日程, 不改你的人设; 起点允许的范围是 ${CommShift.hm(bounds!!.first)} - ${CommShift.hm(bounds.second)} (起点大于终点表示跨午夜), " +
-                "之后的各项活动照常从新起点往后排. 请按人设判断是否同意: 同意就在oit_reply中填写answer=\"yes\",不同意填写answer=\"no\" " +
-                "(后面可以按人设加一句text); 如果实在不方便回答, 调用oit_reply(refuse=true).")
+                "之后的各项活动照常从新起点往后排. 请按人设判断是否同意: 同意就回复 [Yes], 不同意就回复 [No] " +
+                "(两个标签只写一个; 后面可以按人设加一句话); 如果实在不方便回答, 返回${CommText.REFUSE}.")
         }
     }
 
@@ -2721,8 +2705,8 @@ class Comm(
             else if (!shareAskSent && !busy && aiProblem().isEmpty() && leader()) {
                 shareAskSent = true
                 trigger("share_ask", "$SHARE_TAG 用户想打开 share data: 打开之后, 用户在 OIT 各个页面时, 会把那一页上用户和你自己的数据发给你, " +
-                    "页面下方还有一个聊天悬浮窗. 这需要你的同意: 同意就在oit_reply中填写answer=\"yes\",不同意填写answer=\"no\" " +
-                    "(后面可以按人设加一句text); 如果实在不方便回答, 调用oit_reply(refuse=true).")
+                    "页面下方还有一个聊天悬浮窗. 这需要你的同意: 同意就回复 [Yes], 不同意就回复 [No] (两个标签只写一个; " +
+                    "后面可以按人设加一句话); 如果实在不方便回答, 返回${CommText.REFUSE}.")
                 return
             }
         }

@@ -194,8 +194,8 @@ class ShareMixin:
             a["sent"] = True
             self._trigger("shift_ask", (f"{SHIFT_TAG} 用户请求把你的日程起点 (初始起点) 从 {hm_text(cur if cur is not None else 0)} 平移到 {hm_text(a['to'])}: "
                                         f"新起点从明天起生效 (今天的日程不变), 只改日程, 不改你的人设; 起点允许的范围是 {hm_text(bounds[0])} - {hm_text(bounds[1])} (起点大于终点表示跨午夜), "
-                                        '之后的各项活动照常从新起点往后排. 请按人设判断是否同意: 同意就在oit_reply中填写answer="yes",不同意填写answer="no" '
-                                        f"(后面可以按人设加一句text); 如果实在不方便回答, 调用oit_reply(refuse=true)."))
+                                        "之后的各项活动照常从新起点往后排. 请按人设判断是否同意: 同意就回复 [Yes], 不同意就回复 [No] "
+                                        f"(两个标签只写一个; 后面可以按人设加一句话); 如果实在不方便回答, 返回{REFUSE}."))
 
     def _share_open(self) -> str:
         """真的打开 share data (对方同意了 / 用户接受了对方的邀请). 返回 "" = 好了, 否则是原因."""
@@ -294,8 +294,8 @@ class ShareMixin:
             elif not a.get("sent") and not self.busy and not self._ai_problem() and self.leader():
                 a["sent"] = True
                 self._trigger("share_ask", (f"{SHARE_TAG} 用户想打开 share data: 打开之后, 用户在 OIT 各个页面时, 会把那一页上用户和你自己的数据发给你, "
-                                            '页面下方还有一个聊天悬浮窗. 这需要你的同意: 同意就在oit_reply中填写answer="yes",不同意填写answer="no" '
-                                            f"(后面可以按人设加一句text); 如果实在不方便回答, 调用oit_reply(refuse=true)."))
+                                            "页面下方还有一个聊天悬浮窗. 这需要你的同意: 同意就回复 [Yes], 不同意就回复 [No] (两个标签只写一个; "
+                                            f"后面可以按人设加一句话); 如果实在不方便回答, 返回{REFUSE}."))
                 return
         if self._share_end and not self.busy and not self._ai_problem() and self.leader():
             body, self._share_end = self._share_end, ""

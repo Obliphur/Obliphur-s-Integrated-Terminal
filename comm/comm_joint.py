@@ -567,11 +567,11 @@ class JointMixin:
         slots = [] if why else self._op_slots(self.now())
         if not why and not slots:
             why = "你的日程里没有可以作为开始点的时间段, 或者接下来 24 小时里没有合适的开始点"
-        how = "按上面的系统要求" if has_system else "直接回复用户上面的消息, 即"
+        how = "按上面 [系统] 的要求" if has_system else "直接回复用户上面的消息, 即"
         convo.append({"role": "assistant", "content": reply})
         if why:
-            convo.append({"role": "user", "content": oit_text(f"(OIT 系统提供, 用户看不到) 现在不能发起联合行动: {why}. 当作没有发起，不再尝试联合行动；"
-                                                              f"请{how}对用户说话，实在不方便调用oit_reply(refuse=true).")})
+            convo.append({"role": "user", "content": oit_text(f"(OIT 系统提供, 用户看不到) 现在不能发起联合行动: {why}. 当作没有发起, 不要再输入 [operation]; "
+                                                              f"请{how}对用户说话, 实在不方便返回{REFUSE}.")})
             return None, ask(convo)
         last = list(self.cfg.get("joint_last") or [])
         convo.append({"role": "user", "content": oit_text(self._op_offer(slots, last))})
@@ -584,10 +584,10 @@ class JointMixin:
             a, b = _joint_time(plan["start"]), _joint_time(plan["end"])
             msg = (f"(OIT 系统提供, 用户看不到) 联合行动已发出: 词条 {names}; "
                    f"{comm_data.joint_label(terms, a, b, self.now().date())}. 用户到时按约开始合约即可. "
-                   "现在请调用oit_reply(text=邀请正文)对用户发出邀请，不要再调用联合行动工具或提交编号。")
+                   f"现在请对用户说话 (邀请对方一起, 话题和语气按人设; 可以提开始时间); 不要再输入 [operation] 或编号, 不要返回{REFUSE}.")
         else:
             msg = (f"(OIT 系统提供, 用户看不到) 联合行动没有发出: 你选的词条 ({names}) 的合约时长放不进任何一个开始时间 (会和你日程里的重要活动重合). "
-                   f"当作没有发起, 现在请{how}对用户说话, 不要提联合行动; 实在不方便调用oit_reply(refuse=true).")
+                   f"当作没有发起, 现在请{how}对用户说话, 不要提联合行动; 实在不方便返回{REFUSE}.")
         convo.append({"role": "user", "content": oit_text(msg)})
         return plan, ask(convo)
 
@@ -598,7 +598,7 @@ class JointMixin:
         convo.append({"role": "assistant", "content": reply})
         how = "请按上面 [系统] 的要求对用户说话" if has_system else "请直接回复用户上面的消息"
         convo.append({"role": "user", "content": oit_text("(OIT 系统提供, 用户看不到) 现在不能发起联合行动: 只有系统要求你主动发消息 (第 III 条) 或用户邀请你发起时才能发起, 现在不是. "
-                                                          f"当作没有发起, 不要再尝试联合行动或提交编号, 也不要说自己发起了联合行动; {how}, 实在不方便调用oit_reply(refuse=true).")})
+                                                          f"当作没有发起, 不要再输入 [operation] 或编号, 也不要说自己发起了联合行动; {how}, 实在不方便返回{REFUSE}.")})
         return _OP_STRIP_RE.sub("", ask(convo)).strip()
 
     def _op_apply(self, plan: dict, message=None):

@@ -4,29 +4,6 @@
 from comm.comm_reply import NET_MAX_MIN
 import config
 import re
-import json
-from pathlib import Path
-
-_LEGACY_CONTROLS = json.loads((Path(__file__).resolve().parent.parent / "defaults" / "comm_legacy_controls.json").read_text(encoding="utf-8"))
-_TEMPLATE_SECTION = re.compile(r"\s*\[/?(?:condition(?::strict)?|tension(?::events)?)\]\s*")
-
-
-def native_persona_text(text: str) -> str:
-    """旧人设指令转成工具说明；保留独立模板分节，不修改磁盘文件或聊天正文。"""
-    lines = []
-    for line in text.splitlines(keepends=True):
-        if not _TEMPLATE_SECTION.fullmatch(line):
-            for old, new in _LEGACY_CONTROLS:
-                line = line.replace(old, new)
-        lines.append(line)
-    return "".join(lines)
-
-
-def native_control_text(text: str) -> str:
-    """把运行时提示中的旧控制写法改成原生工具说明。"""
-    for old, new in _LEGACY_CONTROLS:
-        text = text.replace(old, new)
-    return text.replace("返回oit_reply(refuse=true)", "调用oit_reply(refuse=true)")
 
 REFUSE = "[refuse to reply]"
 SHIFT_TAG = "[系统·平移]"              # 起点平移的系统消息 (不是 "[系统]" 开头: 不算主动消息)
@@ -74,10 +51,10 @@ def think_text_reason(text: str) -> str:
         return "很长"
     return ""
 JOINT_RULE = ("X.用户可能发起“合约”(联合行动;含起止时间与所选词条)."
-              '时间不撞重要时间(吃饭/睡觉等)且你现在能回→调用oit_reply(answer="yes"),否则answer="no".\n'
+              "时间不撞重要时间(吃饭/睡觉等)且你现在能回→[Yes],否则[No].\n"
               "合约期间专注/休息与用户同步;结束后所得休息也同步,休完重算日程"
               "(与原“空闲”重叠→不影响;落在“循环”内→立即专注).\n"
-              "正常回复用户;只有附件且无其他话题时可调用oit_reply(refuse=true).\n")
+              "正常回复用户;只有附件→以[refuse to reply]结尾.\n")
 
 
 def rest_function_text() -> str:

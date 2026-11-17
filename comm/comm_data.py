@@ -270,7 +270,7 @@ def joint_text(terms, start: datetime, end: datetime) -> str:
         if not sep:
             kind, name = "特殊", kind
         lines.append(f"- {name}({kind}, 等级{t[2]}): {t[4]}".replace("\n", " "))
-    lines += ["", '请按规则 X 回复: 接受就在oit_reply中填写answer="yes",不接受填写answer="no" (后面可以同时提供text).']
+    lines += ["", "请按规则 X 回复: 接受就发送 [Yes], 不接受发送 [No] (后面可以再加一句话)."]
     return "\n".join(lines)
 
 
