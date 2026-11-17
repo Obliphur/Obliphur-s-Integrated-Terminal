@@ -52,6 +52,8 @@ def transport_checks():
             reply = ai_assist.chat_messages(p, "system", [{"role": "user", "content": "请查询"},
                 {"role": "assistant", "content": request}, {"role": "user", "content": result}], tools=True)
         assert comm.clean_reply(reply) == ("已读取", 2)
+        assert tools.text_of(reply) == "已读取"
+        assert "wait_minutes" not in comm.clean_reply(reply)[0]
         assert packets[0]["tools"] and len(packets) == 2
         if protocol == "openai":
             history = packets[1]["messages"]
@@ -134,6 +136,7 @@ def state_checks():
     assert c.send("看看计时器") == ""
     wait()
     assert c.visible()[-1]["text"] == "查询完成" and c.messages[-1]["wait"] == 2
+    assert "wait_minutes" not in c.visible()[-1]["text"] and not str(c.messages[-1].get("api", "")).startswith(tools.PREFIX)
     assert "reference_template" in packets[-1][-1]["content"]
     assert all(not str(m.get("api", "")).startswith(tools.PREFIX) for m in c.messages)
     assert c.cfg.get("cut", {}) == {} or not c.cut_block()
@@ -185,6 +188,13 @@ if __name__ == "__main__":
     transport_checks()
     state_checks()
     root = Path(__file__).resolve().parent.parent
-    for name in ("comm_tools.json", "comm_protocol.txt"):
+    for name in ("comm_tools.json", "comm_protocol.txt", "comm_legacy_controls.json"):
         assert (root / "defaults" / name).read_text(encoding="utf-8") == (root / "Android version/app/src/main/resources" / name).read_text(encoding="utf-8")
+    protocol = (root / "defaults/comm_protocol.txt").read_text(encoding="utf-8")
+    tool = json.loads((root / "defaults/comm_tools.json").read_text(encoding="utf-8"))[3]
+    assert "聊天只显示text" in protocol and "wait_minutes" in tool["description"] and "不会显示给用户" in tool["description"]
+    legacy = "先输入[messages]查询；回复 [Yes]；结尾写 [waiting for reply]:[5]\n[condition]\nmessages:2\n[/condition]\n"
+    migrated = comm.native_persona_text(legacy)
+    assert "输入[messages]" not in migrated and 'answer="yes"' in migrated and "wait_minutes" in migrated
+    assert "[condition]\nmessages:2\n[/condition]" in migrated
     print("comm tools check OK")

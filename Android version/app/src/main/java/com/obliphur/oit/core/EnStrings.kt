@@ -927,9 +927,8 @@ object EnStrings {
         "今日: ???" to "Today: ???",
         "合计: ???" to "Total: ???",
         "请先结束休息再开始合约" to "End the break before starting a contract",
-        "离线 (版本 {v} 较低, 请更新)" to "offline (version {v} is older, please update)",
-        "⚠ 本机版本 {me} 低于 {name} ({v}): 其他设备把本机算作离线, 请更新." to
-            "⚠ This device ({me}) is older than {name} ({v}): other devices count it as offline. Please update.",
+        "⚠ 本机版本 {me} 低于 {name} ({v}), 请更新." to
+            "⚠ This device ({me}) is older than {name} ({v}). Please update.",
         "{name} 的版本 ({v}) 和本机 ({me}) 不一样, 不能开始合约" to
             "{name} runs version {v}, this device runs {me}: a contract can't be started",
         "请先结束联网再开始合约" to "Go offline before starting a contract",
@@ -1485,7 +1484,6 @@ object EnStrings {
         "开始行动" to "Start operation",
         "窗口超过 {n} 个" to "more than {n} windows open",
         "用 {exe} 播放音频" to "played audio with {exe}",
-        "⚠ 本机版本 {me} 低于 {name} ({v}): 其他设备把本机算作离线, 请更新." to "⚠ This device ({me}) is older than {name} ({v}): other devices count it as offline. Please update.",
         "{name} 的版本 ({v}) 和本机 ({me}) 不一样, 不能开始合约" to "{name} runs version {v}, this device runs {me}: a contract can't be started",
         "可选词条" to "Available terms",
         "即时生效.合约页 (和合约页上的侧边栏) 的配色." to "Takes effect at once. Colors of the contract page (and its sidebar).",

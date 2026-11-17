@@ -216,7 +216,6 @@ fun peerLines(): List<String> {
         val name = d.name
         val st = d.status
         if (!d.online && out) return@map "🔗 $name: " + tr("外出中 🚪")      // 外出期间的设备不算离线 (MECHANICS 8.4)
-        if (d.outdated) return@map "🔗 $name: " + tr("离线 (版本 {v} 较低, 请更新)", "v" to d.version)
         if (d.netOff) return@map "🔗 $name: " + tr("断网")      // 换成了 Adapter: 效果和在线一样, 只是不同步 (15.5)
         if (d.off) return@map "🔗 $name: " + tr("关机")          // 效果和在线一样, 只是不同步 (MECHANICS 15.4)
         if (!d.online) return@map "🔗 $name: " + tr("离线")
@@ -232,9 +231,9 @@ fun peerLines(): List<String> {
         val net = when (st.optString("net")) { "online" -> tr("联网中"); "pending" -> tr("冷静期中"); else -> "" }
         com.obliphur.oit.core.I18n.ic("🔗 $name: $t") + if (net.isNotEmpty()) " · $net" else ""
     }
-    // 本机版本低: 对方把本机算作离线
+    // 本机版本低时提示更新, 不影响设备在线状态
     return lines + s.versionMismatch().filter { it.third }.map { (name, v, _) ->
-        tr("⚠ 本机版本 {me} 低于 {name} ({v}): 其他设备把本机算作离线, 请更新.",
+        tr("⚠ 本机版本 {me} 低于 {name} ({v}), 请更新.",
             "me" to com.obliphur.oit.BuildConfig.VERSION_NAME, "name" to name, "v" to v)
     }
 }

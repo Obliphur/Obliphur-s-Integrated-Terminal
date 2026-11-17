@@ -1808,7 +1808,7 @@ class SyncService(
         return peerStatus().any { it.first == id && now - it.third.optLong("ts") < FRESH_MS }
     }
 
-    /** 其他设备此刻的状态: (设备 id, 名字, 状态). outdated: 版本比本机低, 算离线. */
+    /** 其他设备此刻的状态: (设备 id, 名字, 状态). outdated: 标记版本比本机低, 不影响在线与专注计入. */
     /** off: 关机 (连不上了, 但它最后的状态是收到关机指令 / 电量很低); 这时 online 也是 true (效果和在线一样). */
     class DeviceState(val id: String, val name: String, val online: Boolean, val status: JSONObject, val seen: Long,
                       val version: String = "", val outdated: Boolean = false, val off: Boolean = false,
@@ -1839,7 +1839,7 @@ class SyncService(
     }
 
     /** 其他设备此刻的状态 (绑定的, 和转交过来的). online: 绑定的设备 OFFLINE_MS 之内有它的消息 (同步偶然失败一两次不算,
-     *  除非是 HARD_ERRORS 里明确的失败), 版本也不比本机低;
+     *  除非是 HARD_ERRORS 里明确的失败);
      *  转交过来的设备 OFFLINE_FWD_MS 之内有消息. 不管它此刻在专注 / 休息 / 空闲, 一直没有消息就算离线. */
     fun deviceStates(): List<DeviceState> = lock.withLock {
         val now = System.currentTimeMillis()
@@ -1859,11 +1859,11 @@ class SyncService(
             if (p != null) {
                 val seen = maxOf(p.optLong("last_ok"), st.optLong("ts"))
                 val ver = p.optString("version")
-                val old = mine != null && vparse(ver)?.let { vnewer(mine, it) } == true    // 版本比本机低: 算离线
+                val old = mine != null && vparse(ver)?.let { vnewer(mine, it) } == true
                 val err = p.optString("last_err")
-                val online = err !in HARD_ERRORS && now - seen < (if (refused(err)) REFUSED_OFFLINE_MS else OFFLINE_MS) && !old
-                val netOff = !online && !old && st.optLong("adapter", 0L) > 0      // 换成了 Adapter 断网 (15.5)
-                val off = !online && !old && !netOff && wentOff(st)
+                val online = err !in HARD_ERRORS && now - seen < (if (refused(err)) REFUSED_OFFLINE_MS else OFFLINE_MS)
+                val netOff = !online && st.optLong("adapter", 0L) > 0      // 换成了 Adapter 断网 (15.5)
+                val off = !online && !netOff && wentOff(st)
                 DeviceState(id, name, online || off || netOff, st, seen, ver, old, off, netOff, err)
             } else {
                 val seen = st.optLong("ts")

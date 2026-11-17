@@ -897,11 +897,25 @@ def _selftest():
         sc.state["ledgers"]["dX"] = {"rev": 1, "name": "X"}
         states = {d["id"]: d for d in sc.device_states()}
         assert not states["dX"]["online"] and states["dX"]["name"] == "X"
-        # 版本不一样: 版本低的算离线 (本机 1.0.0); 两边都知道版本不一样
+        # 版本不一样不影响在线与专注计入 (本机 1.0.0); 合约仍能查出版本差异
         assert states["pY"]["online"] and sc.version_mismatch() == []
         sc.state["peers"]["pY"]["version"] = "0.9.9"
         st = {d["id"]: d for d in sc.device_states()}["pY"]
-        assert not st["online"] and st["outdated"] and sc.version_mismatch() == [("Y", "0.9.9", False)]
+        assert st["online"] and st["outdated"] and sc.version_mismatch() == [("Y", "0.9.9", False)]
+        sc.track_offline()
+        assert sc._offline["pY"] == [], "版本低但同步正常: 不记录离线, 不扣专注"
+        sc.state["peers"]["pY"]["last_ok"] = t0 - OFFLINE_MS - 1000
+        sc.track_offline()
+        assert sc._offline["pY"] == [[t0 - OFFLINE_MS - 1000, None]], "版本低但实际离线: 照常扣专注"
+        sc.state["status"]["pY"] = {"ts": t0 - OFFLINE_MS - 1000, "off": True, "auto": True}
+        st = {d["id"]: d for d in sc.device_states()}["pY"]
+        assert st["online"] and st["off"] and st["outdated"], "版本低也适用关机豁免"
+        sc.state["status"]["pY"] = {"ts": t0 - OFFLINE_MS - 1000, "adapter": True}
+        st = {d["id"]: d for d in sc.device_states()}["pY"]
+        assert st["online"] and st["net_off"] and st["outdated"], "版本低也适用 Adapter 豁免"
+        sc.state["status"].pop("pY")
+        sc.state["peers"]["pY"]["last_ok"] = t0
+        sc._offline.pop("pY")
         sc.state["peers"]["pY"]["version"] = "1.0.1"
         st = {d["id"]: d for d in sc.device_states()}["pY"]
         assert st["online"] and not st["outdated"] and sc.version_mismatch() == [("Y", "1.0.1", True)]
@@ -948,7 +962,7 @@ def _selftest():
         assert {d["id"]: d for d in sc.device_states()}["pY"]["off"]
         sc.state["peers"]["pY"]["version"] = "0.9.9"
         st = {d["id"]: d for d in sc.device_states()}["pY"]
-        assert not st["online"] and not st["off"], "版本低的照样算离线"
+        assert st["online"] and st["off"], "版本低也照常算关机"
         sc.state["peers"]["pY"].pop("version")
         sc.state["peers"]["pY"]["last_err"] = ""
         sc.state["status"]["pY"] = {"ts": t0, "timer": "idle"}

@@ -65,8 +65,8 @@ class StatusMixin:
     def device_states(self) -> list:
         """其他设备此刻的状态 (绑定的, 和转交过来的): [{id, name, online, off, timer, net, since, seen, version, outdated}].
         online: 绑定的设备 —— OFFLINE_MS 之内有它的消息 (同步偶然失败一两次不算, 除非是 HARD_ERRORS 里明确的失败),
-                版本也不比本机低 (outdated: 版本比本机低, 算离线);
                 转交过来的设备 —— OFFLINE_FWD_MS 之内有它的消息.
+        outdated: 标记版本比本机低, 不影响在线与专注计入.
         off: 关机 —— 连不上了, 但它最后的状态是收到关机指令 / 电量低于 LOW_BATTERY%; 这时 online 也是 True (效果和在线一样).
         net_off: 断网 —— 它换成了 Adapter 断网方式, 走之前告诉了大家 (MECHANICS 15.5); 不同步, 效果也和在线一样.
         本机自己在 Adapter 断网期间, 其他设备都算在线 (连不上是本机的原因, 不把专注记成空闲)."""
@@ -88,12 +88,12 @@ class StatusMixin:
                 old = bool(mine and _vtuple(ver) and _vtuple(ver) < mine)
                 err = str((p or {}).get("last_err") or "")
                 if p is not None:
-                    online = err not in HARD_ERRORS and now - seen < (REFUSED_OFFLINE_MS if refused(err) else OFFLINE_MS) and not old
+                    online = err not in HARD_ERRORS and now - seen < (REFUSED_OFFLINE_MS if refused(err) else OFFLINE_MS)
                 else:
                     online = now - seen < OFFLINE_FWD_MS
-                net_off = not online and not old and bool(st.get("adapter"))
-                off = not online and not old and not net_off and went_off(st)
-                if not online and not old and self.adapter_since():
+                net_off = not online and bool(st.get("adapter"))
+                off = not online and not net_off and went_off(st)
+                if not online and self.adapter_since():
                     online = True                       # 本机在 Adapter 断网: 别人都算在线
                 out.append({"id": i, "name": str(name), "online": online or off or net_off, "off": off,
                             "net_off": net_off,

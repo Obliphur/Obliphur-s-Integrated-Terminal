@@ -302,10 +302,7 @@ class GuardMixin:
                 continue
             if not st["online"]:
                 offline.append(st["name"])
-                if st.get("outdated"):
-                    lines.append(f"🔗 {st['name']}: " + tr("离线 (版本 {v} 较低, 请更新)", v=st.get("version")))
-                else:
-                    lines.append(f"🔗 {st['name']}: {tr('离线')}")
+                lines.append(f"🔗 {st['name']}: {tr('离线')}")
                 continue
             t = {"running": tr("专注中…"), "break": tr("休息中 ☕")}.get(st.get("timer"), tr("准备就绪"))
             if st.get("timer") == "running" and st.get("since") and not self.contract.fog():
@@ -322,8 +319,8 @@ class GuardMixin:
         elif offline:
             lines.append(tr("⚠ 有设备离线: 离线的这段时间专注不会被记录."))
         for name, v, newer in self.sync.version_mismatch():
-            if newer:          # 本机版本低: 对方把本机算作离线
-                lines.append(tr("⚠ 本机版本 {me} 低于 {name} ({v}): 其他设备把本机算作离线, 请更新.",
+            if newer:
+                lines.append(tr("⚠ 本机版本 {me} 低于 {name} ({v}), 请更新.",
                                 me=config.APP_VERSION, name=name, v=v))
         return "\n".join(lines), bool(offline)
 

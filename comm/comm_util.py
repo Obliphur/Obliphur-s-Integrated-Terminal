@@ -6,7 +6,7 @@ from datetime import datetime
 
 import ai_assist
 from comm.comm_persona import MEM_MAX, persona_title
-from comm.comm_prompt import REFUSE, MSGS_TAG
+from comm.comm_prompt import REFUSE, MSGS_TAG, native_control_text
 
 
 OIT_TAG = "[OIT_SYSTEM_MESSAGES]"      # OIT 直接发出的消息都带这个标记 (1.0.423)
@@ -102,12 +102,12 @@ _OIT_SYS_TAG_RE = re.compile(r"^\[系统[^\]]*\]\s*")
 
 def oit_text(text: str) -> str:
     """OIT 直接发给模型的消息: 开头带上 [OIT_SYSTEM_MESSAGES] 标记 (已经有了就不重复).
-    有标记了就不再发 "[系统]" / "[系统·续]" 这类系统前缀, 免得同一件事标两次."""
+    有标记时也转换旧控制写法, 并不再重复添加前缀."""
     t = str(text or "")
     if t.startswith(OIT_TAG):
-        return t
+        return OIT_TAG + native_control_text(t[len(OIT_TAG):])
     t = _OIT_SYS_TAG_RE.sub("", t, count=1)
-    return f"{OIT_TAG}\n{t}"
+    return f"{OIT_TAG}\n{native_control_text(t)}"
 
 
 def first_turn(msgs: list) -> bool:

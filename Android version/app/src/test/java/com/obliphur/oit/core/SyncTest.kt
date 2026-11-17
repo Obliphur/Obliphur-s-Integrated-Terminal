@@ -264,12 +264,16 @@ class SyncTest {
             la.dev = false
             assertTrue(sa.syncWith(sb.myId)); assertFalse(lb.dev)
             assertEquals("1.0.0", sa.peers()[sb.myId]!!.optString("version"))
-            // 版本不一样: 版本低的算离线, 两边都知道不一样 (不能开始合约)
+            // 版本不一样不影响在线与专注计入; 两边仍知道版本差异 (不能开始合约)
             assertTrue(sa.versionMismatch().isEmpty()); assertTrue(sa.deviceStates().single().online)
+            val versionStart = System.currentTimeMillis() - 1000
             la.version = "1.0.1"
             assertTrue(sa.syncWith(sb.myId))
             val low = sa.deviceStates().single()
-            assertFalse(low.online); assertTrue(low.outdated); assertEquals("1.0.0", low.version)
+            assertTrue(low.online); assertTrue(low.outdated); assertEquals("1.0.0", low.version)
+            sa.trackOffline(); sb.trackOffline()
+            assertTrue("版本低但同步正常: 不扣专注", sa.offlineSpans(versionStart, System.currentTimeMillis()).isEmpty())
+            assertTrue("对方版本高也不扣专注", sb.offlineSpans(versionStart, System.currentTimeMillis()).isEmpty())
             assertEquals(listOf(false), sa.versionMismatch().map { it.third })
             assertEquals(listOf("1.0.1" to true), sb.versionMismatch().map { it.second to it.third })
             assertTrue(sb.deviceStates().single().online); assertFalse(sb.deviceStates().single().outdated)
