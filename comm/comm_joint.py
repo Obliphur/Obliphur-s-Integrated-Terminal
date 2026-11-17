@@ -510,7 +510,7 @@ class JointMixin:
         out.sort(key=lambda x: x[0])
         return out
 
-    def _op_offer(self, slots: list, last: list) -> str:
+    def _op_offer(self, slots: list, last: list, native: bool = False) -> str:
         """第一次调用的回复: 带编号的词条库 + 可用的开始时间 + 上次的选择."""
         from comm import comm_data
         import contract as C
@@ -526,18 +526,18 @@ class JointMixin:
             lines.append(f"【上次选择的词条】[{','.join(str(n) for n in nums)}] (默认与上次相同; 想换就自己选)")
         else:
             lines.append("【上次选择的词条】没有 (请随机选择)")
-        lines.append("请按顺序**只回复**选择的词条编号, 写成 [1,2,3,9,10] 这样 (不要回复别的字); 不要选无言为真, 也不要选持久战 (环境:持久战-I / II / III).")
+        lines.append("请调用oit_joint_select，terms填写所选整数编号数组；不要选无言为真或持久战。" if native else "请按顺序**只回复**选择的词条编号, 写成 [1,2,3,9,10] 这样 (不要回复别的字); 不要选无言为真, 也不要选持久战 (环境:持久战-I / II / III).")
         return "\n".join(lines)
 
-    def _op_terms(self, pick: str, last: list) -> list:
+    def _op_terms(self, pick, last: list) -> list:
         """对方回的编号 → 词条 id (去掉无言为真 / 冲突的 / 缺前置的). 一个也没有 = 上次的; 没有上次 = 随机选几个."""
         import contract as C
-        ids = []
-        m = re.search(r"[\[［]\s*(\d+(?:\s*[,，、]\s*\d+)*)\s*[\]］]", str(pick or ""))
-        if m:
-            for n in re.findall(r"\d+", m.group(1)):
-                if 1 <= int(n) <= len(C.TERMS):
-                    ids.append(C.TERMS[int(n) - 1][0])
+        if isinstance(pick, list):
+            numbers = pick
+        else:  # 仅兼容旧自检的字符串输入，实时工具直接传整数数组。
+            m = re.search(r"[\[［]\s*(\d+(?:\s*[,，、]\s*\d+)*)\s*[\]］]", str(pick or ""))
+            numbers = [int(n) for n in re.findall(r"\d+", m.group(1))] if m else []
+        ids = [C.TERMS[n - 1][0] for n in numbers if type(n) is int and 1 <= n <= len(C.TERMS)]
         ban = {"silent"} | {t[0] for t in C.TERMS if t[1] == "long"}       # 主动发起不选无言为真, 也不选持久战 (时长固定)
         if self._rt:                                                        # 日程文件里写的"不选择的词条 / 违规词条"也不选
             ban |= routine.banned_ids(self._rt)

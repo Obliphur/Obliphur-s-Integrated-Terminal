@@ -301,14 +301,17 @@ class FlowMixin:
 
         def ask(m):
             return self.chat_fn(profile, system, m, max_tokens=CHAT_TOKENS, temperature=CHAT_TEMPERATURE,
-                                timeout=CHAT_TIMEOUT, cache=True, on_usage=used, **think_kw)
+                                timeout=CHAT_TIMEOUT, cache=True, on_usage=used, tools=True, **think_kw)
 
         def work():
             try:
                 convo = list(msgs)
                 reply = ask(convo)
                 op = None
-                if _OP_RE.search(reply):                                  # XII: 主动发起 (规则 I - IV) 或用户邀请 / 要求时才能发起联合行动
+                from ai_assist.ai_tools import unpack
+                if unpack(reply) is not None:
+                    op, reply = self._tool_rounds(ask, convo, reply, kind, epoch)
+                if unpack(reply) is None and _OP_RE.search(reply):          # 注入式自检保留旧协议
                     if kind in OP_KINDS:
                         op, reply = self._operation_rounds(ask, convo, reply, bool(extra))
                     else:                                                 # 追问 / 回应接受拒绝时写了: 告诉对方不行, 让它重新回复 (不然去掉 [] 后常常什么也不剩, 这条被丢掉, 对方还以为发出去了)
@@ -353,6 +356,9 @@ class FlowMixin:
                     convo = convo + [{"role": "assistant", "content": reply},
                                      {"role": "user", "content": oit_text(NET_NO_REFUSE if kind == "net" else PRO_NO_REFUSE)}]
                     reply = ask(convo)
+                    if unpack(reply) is not None and unpack(reply)["name"] not in ("", "oit_reply"):
+                        retry_op, reply = self._tool_rounds(ask, convo, reply, kind, epoch)
+                        op = op or retry_op
                 res = (kind, extra, reply, "", epoch, op)
                 self.log(f"REQ {kind} ok {time.monotonic() - started:.1f}s reply_chars={len(reply)}")
             except ai_assist.AIError as e:

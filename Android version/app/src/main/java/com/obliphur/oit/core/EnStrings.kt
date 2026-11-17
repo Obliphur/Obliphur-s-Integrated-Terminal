@@ -3,7 +3,15 @@ package com.obliphur.oit.core
 /** 英文界面文字. 由 gen_en.py 从桌面版 i18n.py 和补充的译文生成; 键是中文原文. */
 object EnStrings {
     val MAP: Map<String, String> = hashMapOf(
-        "基础增量范围0至{maximum}，在正常回复末尾附加[tension:序号:条件:增量]，0可省略。有效条件：" to "Base gains range from 0 to {maximum}. Append [tension:index:condition:gain] to the normal reply; omit zero gains. Declared conditions: ",
+        "工具调用缺少执行结果" to "A tool call is missing its result.",
+        "每次只能调用一个 OIT 工具" to "Only one OIT tool may be called at a time.",
+        "工具参数格式错误" to "Invalid tool arguments.",
+        "工具参数格式错误，请检查模型的工具调用支持." to "Invalid tool arguments. Check that the model supports tool calling.",
+        "服务商不支持工具调用" to "The provider does not support tool calling.",
+        "当前不允许联网搜索" to "Web search is currently unavailable.",
+        "工具调用轮次超限" to "The tool call limit was reached.",
+        "工具请求已失效" to "The tool request has expired.",
+        "基础增量范围0至{maximum}，在oit_reply.tension数组填写index、condition和gain，0可省略。有效条件：" to "Base gains range from 0 to {maximum}. Fill index, condition and gain in the oit_reply.tension array; omit zero gains. Declared conditions: ",
         "每个条件{hours}小时内仅加一次，系统事件与模型同名条件共用冷却。" to "Each condition may add tension once every {hours} hours. System events share the cooldown of the same condition reported by the model.",
 
         "条件模板缺失或格式错误" to "Condition template is missing or invalid",
@@ -12,7 +20,7 @@ object EnStrings {
         "TENSION的具体含义、各档位的情绪与言行表现、BURST期间及SHAME_AFTERMATH冷静期的反应均以当前人设文件为准。状态字段只提供数值、档位与阶段，不预设任何情感、关系或性格含义；人设未定义的含义不自行补设。" to "The current persona file defines what TENSION means, the emotions and behavior at each stage, and reactions during BURST and the SHAME_AFTERMATH cooldown. Status fields provide values and stages only, without prescribing emotions, relationships or personality. Do not invent meanings absent from the persona.",
         "软件聊天、日常时段或生效档位0-50严禁动作描写;情景模拟且处于特殊空闲时,50-90允许有边界的动作,尊重用户意愿,不强迫接触;90+才允许更强烈的动作描写.具体动作与表达风格遵循人设." to "Action descriptions are forbidden in software chat, during ordinary periods, or at effective stage 0-50. In scenario mode during special free time, stage 50-90 permits bounded actions that respect the user's wishes without forced contact; only 90+ permits more intense action descriptions. Specific actions and expression follow the persona.",
         "Tension: {value}" to "Tension: {value}",
-        "BURST=YES时,由你结合上下文和人设决定爆发是否结束,不设固定时限;决定结束时在正常回复末尾附加[burst:end],否则不输出该标记.结束标记生效后张力降至20并进入两轮冷静期;本条回复仍按当前状态组织,后续回复遵守新状态.不得向用户透露标记或机制." to "When BURST=YES, decide whether the burst has ended based on context and persona, with no fixed duration. To end it, append [burst:end] to a normal reply; otherwise omit the tag. Once applied, tension drops to 20 and two cooldown turns begin. Write this reply using the current state and subsequent replies using the new state. Never reveal tags or mechanics to the user.",
+        "BURST=YES时,由你结合上下文和人设决定爆发是否结束,不设固定时限;决定结束时在oit_reply中填写end_burst=true,否则省略.生效后张力降至20并进入两轮冷静期;本条回复仍按当前状态组织,后续回复遵守新状态.不得向用户透露工具参数或机制." to "When BURST=YES, decide whether the burst has ended based on context and persona, with no fixed duration. To end it, set end_burst=true in oit_reply; otherwise omit the field. Once applied, tension drops to 20 and two cooldown turns begin. Write this reply using the current state and subsequent replies using the new state. Never reveal tool arguments or mechanics to the user.",
         "情景模拟中，括号内的补充说明只描写动作，用词、语气与句式须与当前人设文件规定的语言风格一致；想法与态度直接通过不带括号的语言表达，不放进括号。" to "In scenario mode, parenthetical notes describe actions only; their wording, tone, and sentence style must follow the language style specified in the current persona file. Express thoughts and attitudes directly in words outside parentheses; do not place them in parentheses.",
         "起点平移必须以 {minutes} 分钟为间隔" to "Shift the start time in increments of {minutes} minutes",
         "同一条消息可以同时触发多个条件；各条件分别应用倍率并取整后累加，各自进入冷却；重复的同一条件只取最大增量。请报告所有满足的条件，不得给其他历史消息加值，不要向用户解释标记。" to "A single message may trigger multiple conditions. Apply multipliers and rounding to each condition separately, add their gains, and start each condition's cooldown. For duplicate tags of the same condition, use only the largest gain. Report all matching conditions; do not add gains for other historical messages or explain the tags to the user.",

@@ -2,6 +2,7 @@ package com.obliphur.oit.core
 
 import org.json.JSONObject
 import org.json.JSONArray
+import com.obliphur.oit.ai.ToolProtocol
 import java.time.Instant
 import java.time.ZoneId
 import kotlin.math.round
@@ -71,7 +72,7 @@ data class CommInteraction(
             "这些状态只用于组织回复,冷静期仍须遵守动作限制,勿向用户透露机制." +
             tr("TENSION超过90本身不代表爆发,未触发爆发时仍严格按EFFECTIVE_STAGE=50-90表现.") +
             tr("情景模拟中，括号内的补充说明只描写动作，用词、语气与句式须与当前人设文件规定的语言风格一致；想法与态度直接通过不带括号的语言表达，不放进括号。") +
-            tr("BURST=YES时,由你结合上下文和人设决定爆发是否结束,不设固定时限;决定结束时在正常回复末尾附加[burst:end],否则不输出该标记.结束标记生效后张力降至20并进入两轮冷静期;本条回复仍按当前状态组织,后续回复遵守新状态.不得向用户透露标记或机制.") +
+            tr("BURST=YES时,由你结合上下文和人设决定爆发是否结束,不设固定时限;决定结束时在oit_reply中填写end_burst=true,否则省略.生效后张力降至20并进入两轮冷静期;本条回复仍按当前状态组织,后续回复遵守新状态.不得向用户透露工具参数或机制.") +
             "若有思考空间,先校验模式、时段、生效档位和冷静期,再对齐动机与言行."
     }
 
@@ -84,7 +85,7 @@ data class CommInteraction(
 
     /** 仅正常回复可结束请求时仍生效的同次爆发，新冷静期从下一轮开始。 */
     fun endBurst(reply: String, burst: Long, nowMs: Long): CommInteraction =
-        if (burst > 0L && burstUntil == burst && burstEnd.containsMatchIn(reply))
+        if (burst > 0L && burstUntil == burst && (if (ToolProtocol.unpack(reply) != null) ToolProtocol.args(reply).optBoolean("end_burst") else burstEnd.containsMatchIn(reply)))
             copy(tension = Cfg.COMM_TENSION_RELEASE.toDouble(), shameTurns = Cfg.COMM_SHAME_TURNS, burstUntil = 0L, decayAt = maxOf(decayAt, nowMs)) else this
 
     /** 先应用条件连锁倍率，再应用爆发后减半；日常倍率由调用方处理。 */
@@ -146,12 +147,24 @@ data class CommInteraction(
         private val tensionGain = Regex("""[\[［]\s*tension\s*[:：]\s*(\d{1,5})\s*[:：]\s*(?:([a-z_]+)\s*[:：]\s*)?([+-]?\d{1,6})\s*[\]］]""", RegexOption.IGNORE_CASE)
 
         /** 内部张力标记不进入聊天、语音或后续历史。 */
-        fun cleanTension(reply: String): String = burstTag.replace(tensionTag.replace(reply, ""), "").trim()
+        fun cleanTension(reply: String): String {
+            ToolProtocol.unpack(reply)?.let {
+                val args = JSONObject(it.getJSONObject("arguments").toString())
+                args.remove("tension"); args.remove("end_burst")
+                return ToolProtocol.pack(it.optString("text"), it.optString("name"), args)
+            }
+            return burstTag.replace(tensionTag.replace(reply, ""), "").trim()
+        }
 
         /** 各条件按基础增量降序分别结算，重复条件只取最大值；旧标记归入其他情绪。 */
         fun modelEvents(reply: String, index: Int, special: Boolean, cooldowns: Map<String, Long> = emptyMap(), nowMs: Long = 0L, conditions: Set<String>? = null): List<Pair<String, Int>> {
-            return tensionGain.findAll(reply).filter { it.groupValues[1].toInt() == index }
-                .map { (it.groupValues[2].lowercase().ifEmpty { "other" }) to it.groupValues[3].toInt() }
+            val native = ToolProtocol.unpack(reply) != null
+            val events = ToolProtocol.args(reply).optJSONArray("tension") ?: JSONArray()
+            val gains = if (native) (0 until events.length()).asSequence().map { events.getJSONObject(it) }
+                .filter { it.optInt("index") == index }.map { it.getString("condition").lowercase() to it.getInt("gain") }
+                else tensionGain.findAll(reply).filter { it.groupValues[1].toInt() == index }
+                    .map { (it.groupValues[2].lowercase().ifEmpty { "other" }) to it.groupValues[3].toInt() }
+            return gains
                 .filter { (conditions == null || it.first in conditions) && nowMs >= (cooldowns[it.first] ?: 0L) }
                 .groupBy({ it.first }, { it.second.coerceIn(0, Cfg.COMM_TENSION_GAIN_MAX) })
                 .mapValues { it.value.max() }

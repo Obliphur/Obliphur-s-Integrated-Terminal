@@ -74,9 +74,11 @@ def follow_delay(profile: dict, override: float = None) -> float:
 
 # ══════════════ 管理器 ══════════════
 from .comm_interaction import InteractionMixin, interaction_norm, tension_clean
+from .comm_tools import ToolsMixin
+from ai_assist.ai_tools import unpack, args_of, text_of
 
 
-class Comm(InteractionMixin, JointMixin, StatusMixin, ChatMixin, FlowMixin, SchedMixin, ShareMixin, RtMixin, MiscMixin):
+class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, FlowMixin, SchedMixin, ShareMixin, RtMixin, MiscMixin):
     """聊天记录, 设置, 发请求 (线程), 主动发消息, 对方不方便时的重试, 设备同步. 界面线程每秒调一次 tick().
 
     设备同步 (MECHANICS 24.6): 聊天记录 / 清空 / "30 分钟内不重复"的记录 / 重试状态 / 主动消息的标记随设备同步 (文档 comm);
@@ -1280,7 +1282,7 @@ class Comm(InteractionMixin, JointMixin, StatusMixin, ChatMixin, FlowMixin, Sche
         if queried:
             text = ""
         refused = not err and is_refusal(reply)
-        share_invite = not err and not refused and not queried and bool(_SHARE_RE.search(reply))
+        share_invite = not err and not refused and not queried and (bool(args_of(reply).get("share_data")) if unpack(reply) is not None else bool(_SHARE_RE.search(reply)))
         if not text and not err and not refused and not queried and (op or share_invite):
             text = tr("🤝  联合行动邀请") if op else tr("share data 邀请")
         catchup = bool(extra) and CATCHUP_TAG in str(extra[0])          # 这是补问 (见 CATCHUP_BODY)
@@ -1300,7 +1302,7 @@ class Comm(InteractionMixin, JointMixin, StatusMixin, ChatMixin, FlowMixin, Sche
             if shift_ans and not text:                          # 只回了 [Yes] / [No]: 聊天里写一行结果
                 text = tr("✓ 同意了起点平移") if shift_ans == "yes" else tr("✗ 拒绝了起点平移")
         accept = (not err and not refused and not queried and kind in ("user", "retry", "followup") and not self.related()
-                  and bool(_ACCEPT_RE.search(reply)))           # 前置 prompt XVII: 用户提出发展亲密关系, 对方决定接受
+                  and (bool(args_of(reply).get("accept_relationship")) if unpack(reply) is not None else bool(_ACCEPT_RE.search(reply))))
         if accept and not text:                                 # 只回了 [accept]: 聊天里写一行结果
             text = tr("✓ 接受了你发展亲密关系的请求")
         empty = not err and not refused and not text           # 去掉 [] 之后什么也没剩 / 是查询: 当没回复 (不重试)
@@ -1347,7 +1349,8 @@ class Comm(InteractionMixin, JointMixin, StatusMixin, ChatMixin, FlowMixin, Sche
                 special, until, shame = getattr(self, "_interaction_turn", (False, 0, False))
                 self._interaction_reply(special, burst, until, shame)
             self._interaction_end(tension_reply, getattr(self, "_interaction_burst", 0))
-            m = self._add("ai", text, reply.strip() if text != reply.strip() else "")
+            api_reply = text_of(reply) if unpack(reply) is not None else reply.strip()
+            m = self._add("ai", text, api_reply if text != api_reply else "")
             if op:
                 self._op_apply(op, m)
             if share_invite:

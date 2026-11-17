@@ -134,12 +134,12 @@ class SchedMixin:
             try:
                 reply = self.chat_fn(profile, system, msgs, max_tokens=CHAT_TOKENS, temperature=CHAT_TEMPERATURE,
                                      timeout=CHAT_TIMEOUT, cache=True,
-                                     on_usage=lambda t, c: self.log(f"USAGE bg-{kind} input={t} cached={c}"), **think_kw)
+                                     on_usage=lambda t, c: self.log(f"USAGE bg-{kind} input={t} cached={c}"), tools=True, **think_kw)
                 if kind == "proactive" and is_refusal(reply) and not info_tags(reply):          # 主动发起的对话不能 [refuse to reply]: 再要求一次
                     self.log(f"PRO bg [{ctx['name']}] 回了 [refuse to reply]: 不允许, 再要求一次")
                     reply = self.chat_fn(profile, system, msgs + [{"role": "assistant", "content": reply}, {"role": "user", "content": PRO_NO_REFUSE}],
                                          max_tokens=CHAT_TOKENS, temperature=CHAT_TEMPERATURE, timeout=CHAT_TIMEOUT, cache=True,
-                                         on_usage=lambda t, c: self.log(f"USAGE bg-{kind} input={t} cached={c}"), **think_kw)
+                                         on_usage=lambda t, c: self.log(f"USAGE bg-{kind} input={t} cached={c}"), tools=True, **think_kw)
             except ai_assist.AIError as e:
                 err = e.message
             except Exception as e:      # noqa: BLE001
@@ -168,7 +168,9 @@ class SchedMixin:
         self._interaction_end(raw_reply, burst, pid)
         st["interaction"] = self._state_of(pid)["interaction"]
         sysm = self._mk("sys", extra[0], extra[1])
-        m = self._mk("ai", text, reply.strip() if text != reply.strip() else "", persona=name)
+        from ai_assist.ai_tools import text_of, unpack
+        api_reply = text_of(reply) if unpack(reply) is not None else reply.strip()
+        m = self._mk("ai", text, api_reply if text != api_reply else "", persona=name)
         if wait_min and kind != "chase":
             m["wait"] = wait_min
         st["messages"].extend([sysm, m])

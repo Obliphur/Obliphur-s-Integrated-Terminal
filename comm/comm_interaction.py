@@ -80,19 +80,26 @@ _TENSION_GAIN = re.compile(r"[\[［]\s*tension\s*[:：]\s*(\d{1,5})\s*[:：]\s*(
 
 def tension_clean(reply):
     """内部张力标记不进入聊天、语音或后续历史。"""
+    from ai_assist.ai_tools import unpack, pack
+    data = unpack(reply)
+    if data is not None:
+        args = {k: v for k, v in data["arguments"].items() if k not in ("tension", "end_burst")}
+        return pack(data["text"], data["name"], args)
     return _BURST_TAG.sub("", _TENSION_TAG.sub("", reply)).strip()
 
 
 def tension_model_events(reply, index, special, cooldowns=None, now_ms=0, conditions=None):
     """各条件按基础增量降序分别结算，重复条件只取最大值；旧标记归入其他情绪。"""
     gains = {}
-    for m in _TENSION_GAIN.finditer(reply):
-        condition = (m[2] or "other").lower()
-        if int(m[1]) != index or (conditions is not None and condition not in conditions):
+    from ai_assist.ai_tools import unpack, args_of
+    events = [(e["index"], e["condition"], e["gain"]) for e in args_of(reply).get("tension", [])] if unpack(reply) is not None else [(int(m[1]), m[2] or "other", int(m[3])) for m in _TENSION_GAIN.finditer(reply)]
+    for event_index, condition, amount in events:
+        condition = condition.lower()
+        if event_index != index or (conditions is not None and condition not in conditions):
             continue
         if now_ms < (cooldowns or {}).get(condition, 0):
             continue
-        gain = max(0, min(config.COMM_TENSION_GAIN_MAX, int(m[3])))
+        gain = max(0, min(config.COMM_TENSION_GAIN_MAX, amount))
         gains[condition] = max(gains.get(condition, 0), gain)
     return [(condition, int(gain if special else gain * config.COMM_TENSION_DAILY_RATE))
             for condition, gain in sorted(gains.items(), key=lambda item: -item[1]) if gain > 0]
@@ -159,7 +166,9 @@ def interaction_settle(d, now_ms):
 def interaction_end(d, reply, burst, now_ms):
     """仅正常回复可结束请求时仍生效的同次爆发，新冷静期从下一轮开始。"""
     d = interaction_norm(d)
-    if burst and d["burst_until"] == burst and _BURST_END.search(reply):
+    from ai_assist.ai_tools import unpack, args_of
+    ended = args_of(reply).get("end_burst", False) if unpack(reply) is not None else bool(_BURST_END.search(reply))
+    if burst and d["burst_until"] == burst and ended:
         d.update(tension=config.COMM_TENSION_RELEASE, shame_turns=config.COMM_SHAME_TURNS,
                  burst_until=0, decay_at=max(d["decay_at"], now_ms))
     return d
@@ -179,7 +188,7 @@ def interaction_prompt(d, total, special):
             "这些状态只用于组织回复,冷静期仍须遵守动作限制,勿向用户透露机制."
             + tr("TENSION超过90本身不代表爆发,未触发爆发时仍严格按EFFECTIVE_STAGE=50-90表现.")
             + tr("情景模拟中，括号内的补充说明只描写动作，用词、语气与句式须与当前人设文件规定的语言风格一致；想法与态度直接通过不带括号的语言表达，不放进括号。")
-            + tr("BURST=YES时,由你结合上下文和人设决定爆发是否结束,不设固定时限;决定结束时在正常回复末尾附加[burst:end],否则不输出该标记.结束标记生效后张力降至20并进入两轮冷静期;本条回复仍按当前状态组织,后续回复遵守新状态.不得向用户透露标记或机制.")
+            + tr("BURST=YES时,由你结合上下文和人设决定爆发是否结束,不设固定时限;决定结束时在oit_reply中填写end_burst=true,否则省略.生效后张力降至20并进入两轮冷静期;本条回复仍按当前状态组织,后续回复遵守新状态.不得向用户透露工具参数或机制.")
             + "若有思考空间,先校验模式、时段、生效档位和冷静期,再对齐动机与言行.")
 
 
@@ -265,13 +274,13 @@ class InteractionMixin:
         self._interaction_candidates = [(m["uid"], d["pending"][m["uid"]], m["text"])
             for m in self.messages if kind in ("user", "retry") and m.get("role") == "me" and m.get("uid") in d["pending"]]
         if not self._interaction_candidates:
-            return "本次无需判断张力增量，不要输出 [tension:序号:条件:增量]。"
+            return "本次无需判断张力增量，不要填写oit_reply.tension。"
         items = [{"序号": i, "用户消息": text} for i, (_uid, _special, text) in enumerate(self._interaction_candidates, 1)]
         from comm.comm_persona import read_persona_full
         rules = tension_rules(read_persona_full(self.personas, self.persona_name()))
         self._interaction_rules = rules
         return (tr("请按人设文件的[tension]模板和上下文判断以下用户消息。只报告已定义的条件，普通交流不增加；方括号数字为参考基础增量，X表示不定量、没有固定参考值，由你结合条件语义与上下文决定。仍须返回范围内的整数增量，不返回X；相同条件不得改名规避冷却。")
-                + tr("基础增量范围0至{maximum}，在正常回复末尾附加[tension:序号:条件:增量]，0可省略。有效条件：", maximum=config.COMM_TENSION_GAIN_MAX)
+                + tr("基础增量范围0至{maximum}，在oit_reply.tension数组填写index、condition和gain，0可省略。有效条件：", maximum=config.COMM_TENSION_GAIN_MAX)
                 + "\n".join(f"{key}:[{gain if gain is not None else 'X'}] {description}"
                             for key, (gain, description) in rules.items())
                 + tr("系统按发送时段将非特殊空闲的增量乘0.75，并处理爆发后24小时的增长减半，请返回未经倍率调整的基础增量。") +

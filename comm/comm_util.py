@@ -25,6 +25,9 @@ def is_claudia(name: str) -> bool:
 
 
 def is_refusal(text: str) -> bool:
+    from ai_assist.ai_tools import unpack, args_of
+    if unpack(text) is not None:
+        return bool(args_of(text).get("refuse"))
     return REFUSE in re.sub(r"\s+", " ", str(text or "")).lower()
 
 
@@ -42,6 +45,10 @@ def urlsplit_host(url) -> str:
 
 def info_tags(reply: str) -> list:
     """对方这次回复是在要资料吗: 有 [模块名] (不分大小写和空格; 有没有 [refuse to reply] 都算) → 要的模块列表 (comm_data.MODULE_TAGS)."""
+    from ai_assist.ai_tools import unpack
+    data = unpack(reply)
+    if data is not None:
+        return data["arguments"]["modules"] if data["name"] == "oit_query" else []
     t = re.sub(r"\s+", " ", str(reply or "")).lower()
     from comm import comm_data
     tags = [tag for tag in comm_data.MODULE_TAGS if f"[{tag}]" in t]
@@ -54,6 +61,9 @@ def info_tags(reply: str) -> list:
 
 def joint_answer(reply: str) -> str:
     """对方对联合行动邀请的回复: "yes" ([Yes]) / "no" ([No]) / "" (没有表态). 不分大小写和空格; 两个都有按拒绝."""
+    from ai_assist.ai_tools import unpack, args_of
+    if unpack(reply) is not None:
+        return args_of(reply).get("answer", "")
     t = re.sub(r"\s+", "", str(reply or "")).lower()
     if "[no]" in t:
         return "no"

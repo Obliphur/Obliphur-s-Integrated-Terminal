@@ -120,7 +120,7 @@ object Ai {
         return if (URL(base).path.isNullOrEmpty() && !isDeepSeek(p)) "$base/v1" else base
     }
 
-    private fun endpoint(p: Profile): String {
+    internal fun endpoint(p: Profile): String {
         val base = p.baseUrl.trim().trimEnd('/')
         return when (p.protocol) {
             "anthropic" -> base + (if (base.endsWith("/v1")) "/messages" else "/v1/messages")
@@ -197,7 +197,8 @@ object Ai {
      *  OpenAI 协议的服务商自动按相同的开头缓存, 只要每次请求的开头一模一样. onUsage(输入 token, 命中缓存的 token). */
     fun chatMessages(p: Profile, system: String, messages: List<Pair<String, String>>,
                      maxTokens: Int = MAX_TOKENS, temperature: Double = 0.2, timeoutMs: Int = 90_000,
-                     cache: Boolean = false, onUsage: ((Long, Long) -> Unit)? = null, think: Boolean = false, web: Boolean = false): String {
+                     cache: Boolean = false, onUsage: ((Long, Long) -> Unit)? = null, think: Boolean = false, web: Boolean = false, tools: Boolean = false): String {
+        if (tools) return ToolProtocol.chat(p, system, messages, maxTokens, temperature, timeoutMs, cache, onUsage, think, web)
         // web = true: 这一次开着网络 (沟通 规则 XIV 的限时网络, 方式见 webMode); 服务商的接口不认搜索 (400 / 404 / 405 / 422) 时,
         // 不联网再答一次, 并在系统提示里说明没能联网 (同 ai_assist.chat_messages)
         var sys = system
@@ -330,7 +331,7 @@ object Ai {
             .put("generationConfig", JSONObject().put("maxOutputTokens", maxTokens).put("temperature", temperature))
     }
 
-    private fun buildBody(p: Profile, system: String, messages: List<Pair<String, String>>, maxTokens: Int, temperature: Double,
+    internal fun buildBody(p: Profile, system: String, messages: List<Pair<String, String>>, maxTokens: Int, temperature: Double,
                           cache: Boolean, thinkOff: Boolean, thinkOn: Boolean): JSONObject {
         val fam = familyOf(p)
         if (p.protocol == "gemini") return geminiBody(p, system, messages, maxTokens, temperature)
@@ -385,7 +386,7 @@ object Ai {
     }
 
     /** 把请求体 POST 给服务商 (url 默认是聊天接口), 返回解析好的 JSON. 失败抛 AiError (同 ai_assist._send). */
-    private fun send(p: Profile, body: JSONObject, timeoutMs: Int, url: String? = null): JSONObject {
+    internal fun send(p: Profile, body: JSONObject, timeoutMs: Int, url: String? = null): JSONObject {
         checkProfile(p)
         val key = p.apiKey.trim()
         val conn = URL(url ?: endpoint(p)).openConnection() as HttpURLConnection

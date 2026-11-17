@@ -223,13 +223,16 @@ def _build_body(profile: dict, system: str, messages: list, max_tokens: int, tem
 
 def chat_messages(profile: dict, system: str, messages: list, timeout: float = 90.0, opener=None,
                   max_tokens: int = MAX_TOKENS, temperature: float = 0.2, cache: bool = False, on_usage=None,
-                  think: bool = False, web: bool = False) -> str:
+                  think: bool = False, web: bool = False, tools: bool = False) -> str:
     """默认关思考: OpenAI 兼容的中转会带 thinking: {"type": "disabled"}; 服务商不认这个字段回 400 时, 去掉它重试一次,
     并记住这个地址 (THINK_REJECT), 以后不再带. DeepSeek 官方地址一直带 (它认).
     Anthropic 协议关思考时不写 thinking (新版 Claude 不认 disabled). 中转不认 cache_control 回 400 时, 去掉缓存标记
     重试一次, 并记住这个地址 (CACHE_REJECT).
     think=True: 这一次开思考 (沟通里规则判断出需要时, comm.think_reason); 开思考的字段回 400 时改回不开思考重试, 并记住这个地址 (THINK_ON_REJECT).
     web=True: 这一次开着网络 (沟通 规则 XIV 的限时网络, 方式见 web_mode); 服务商的接口不认搜索 (400 / 404 / 405 / 422) 时, 不联网再答一次, 并在系统提示里说明没能联网."""
+    if tools:
+        from .ai_tools import tool_chat
+        return tool_chat(profile, system, messages, timeout, opener, max_tokens, temperature, cache, on_usage, think, web)
     if web and profile.get("base_url"):
         try:
             return _web_chat(profile, system, messages, timeout, opener, max_tokens, temperature, cache, on_usage)

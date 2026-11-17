@@ -2,6 +2,7 @@
 """回复解析: 对方回复里的 [cut off] / [apply for network] / [waiting for reply] 等标记的清理与分钟数 (从 comm.py 拆出; 纯函数)."""
 
 import re
+from ai_assist.ai_tools import args_of, unpack, text_of
 
 
 CUT_DEFAULT_MIN = 10                  # [cut off] 后面没写分钟数时切断多久
@@ -28,6 +29,8 @@ _CUT_N_RE = re.compile(r"\s*(?:[:：]\s*)?[\[［]?\s*(\d+(?:\.\d+)?)")
 
 def cut_minutes(reply: str):
     """对方回复里的 [cut off][N] → 切断多少分钟 (没写 N = CUT_DEFAULT_MIN, 最多 CUT_MAX_MIN, 最少 1); 没有 [cut off] = None."""
+    if unpack(reply) is not None:
+        return args_of(reply).get("cut_minutes")
     s = str(reply or "")
     m = _CUT_RE.search(s)
     if not m:
@@ -43,6 +46,8 @@ _NET_RE = re.compile(r"[\[［]\s*apply\s+for\s+network\s*[\]］]", re.I)
 
 def net_minutes(reply: str):
     """对方回复里的 [apply for network][N] → 申请开通多少分钟 (没写 N = NET_DEFAULT_MIN, 最少 1, 最多 NET_MAX_MIN); 没有这个标记 = None."""
+    if unpack(reply) is not None:
+        return args_of(reply).get("network_minutes")
     s = str(reply or "")
     m = _NET_RE.search(s)
     if not m:
@@ -56,6 +61,8 @@ def net_minutes(reply: str):
 
 def clean_reply(reply: str) -> tuple:
     """对方的回复 → (聊天里显示的文字, 等用户回复的分钟数 or None). 去掉 [waiting for reply]:[N] 和所有别的 [...]; N 不是 0 < N <= 1440 就当没写."""
+    if unpack(reply) is not None:
+        return text_of(reply).strip(), args_of(reply).get("wait_minutes")
     reply = str(reply or "")
     m = _WAIT_RE.search(reply)
     minutes = None

@@ -1,0 +1,166 @@
+[
+  {
+    "name": "oit_query",
+    "description": "查询人设自己的OIT数据或参考模板、关系条件进度、聊天记录数量。查询结果由程序提供，不能把模板说成用户真实数据。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "modules": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "contract",
+              "calendar",
+              "stats",
+              "timer",
+              "log",
+              "net",
+              "rules",
+              "settings",
+              "reset",
+              "prescript",
+              "condition",
+              "messages"
+            ]
+          },
+          "minItems": 1,
+          "maxItems": 12
+        }
+      },
+      "required": [
+        "modules"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "oit_joint_offer",
+    "description": "获取发起联合行动所需的词条库与可用时间，仅主动消息或用户邀请/要求时可用。尚未发出邀请。",
+    "parameters": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "oit_joint_select",
+    "description": "根据刚返回的词条库提交编号，程序校验冲突并生成计划。邀请随下一条正式消息实际显示生效。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "terms": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 999
+          },
+          "minItems": 0,
+          "maxItems": 100
+        }
+      },
+      "required": [
+        "terms"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "oit_reply",
+    "description": "提交本次唯一正式回复及可选控制字段，结束本轮；程序在主线程校验上下文后生效。refuse=true只能单独使用。邀请和操作需有正文（answer、accept_relationship除外）。不得声称联网已开通或未展示的邀请已发出。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "maxLength": 32000
+        },
+        "refuse": {
+          "type": "boolean"
+        },
+        "wait_minutes": {
+          "type": "number",
+          "minimum": 0.01,
+          "maximum": 1440
+        },
+        "cut_minutes": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 1440
+        },
+        "network_minutes": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 30
+        },
+        "share_data": {
+          "type": "boolean"
+        },
+        "answer": {
+          "type": "string",
+          "enum": [
+            "yes",
+            "no"
+          ]
+        },
+        "accept_relationship": {
+          "type": "boolean"
+        },
+        "end_burst": {
+          "type": "boolean"
+        },
+        "tension": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "index": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 99999
+              },
+              "condition": {
+                "type": "string",
+                "maxLength": 32
+              },
+              "gain": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 40
+              }
+            },
+            "required": [
+              "index",
+              "condition",
+              "gain"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 100
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "oit_search",
+    "description": "仅网络已开通时可用，按关键词联网搜索，返回标题、链接与摘要。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "maxLength": 1000
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "additionalProperties": false
+    }
+  }
+]
