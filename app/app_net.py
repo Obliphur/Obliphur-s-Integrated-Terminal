@@ -433,15 +433,15 @@ class NetMixin:
         if ev == "warn":
             self._log_notice("CLOCK modified: warned")
             who = continuity.current.username() if continuity.current is not None else ""
-            toast.notice(tr("⚠  系统时间"), tr("{name},这没有意义.你可以在10min内修改回来,否则你的数据会被清除.", name=who),
+            toast.notice(tr("⚠  系统时间"), tr("{name},这没有意义.请在10min内改回系统时间,否则下次启动会提示数据连续性异常.", name=who),
                          [(tr("知道了"), None, True)])
         elif ev == "restored":
             self._log_notice("CLOCK restored")
             toast.success(tr("系统时间已改回来."))
         elif ev == "wipe" and continuity.current is not None:
-            # 和数据被改过 / 倒回去一样: 在锚点里标记, 马上重启, 下一次启动时清掉数据并弹出 "<用户名>,覆水难收."
+            # 在锚点里标记 pending 并重启, 下次启动由连续性检查提示
             self._cont_broken = True
-            self._log_notice("CLOCK modified: wiping")
+            self._log_notice("CLOCK modified: continuity warning")
             continuity.current.mark_pending("system clock modified")
             self._restart_for_update()
 
@@ -469,7 +469,7 @@ class NetMixin:
             self._battery_at = time.monotonic()
             self.battery = devsync.battery_percent()
         if securefile.tampered and not self._cont_broken and continuity.current is not None and not self.shutting_down and not self.dm.resetting:
-            # 数据文件被改过 / 删了 / 倒回去了 (securefile.py, MECHANICS 9.4): 在锚点里标记, 马上重启, 下一次启动时清掉数据
+            # 数据文件被改过 / 删了 / 倒回去了 (securefile.py, MECHANICS 9.4): 在锚点里标记 pending, 下次启动提示
             self._cont_broken = True
             self._log_notice("SECURE tampered " + ", ".join(f"{n}:{w}" for n, w in securefile.tampered[:8]))
             continuity.current.mark_pending("tampered: " + ", ".join(f"{n}:{w}" for n, w in securefile.tampered[:8]))

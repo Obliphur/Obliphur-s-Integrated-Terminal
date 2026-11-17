@@ -129,7 +129,7 @@ class SyncService(
         /** 解除全部绑定要等这么久 (期间可以取消). */
         /** 解除绑定要等这么久 (冷静期, 期间可以取消). */
         const val UNBIND_WAIT_MS = 120 * 3600 * 1000L
-        const val UNBIND_FREE = true            // 1.0.467: 解绑设备无代价 (立即解除, 不清空本机); 改回 false 恢复冷静期 120 小时
+        const val UNBIND_FREE = false           // 解除绑定需等待冷静期 120 小时
         /** 解除绑定后还没送到的清空请求, 每隔这么久 (毫秒) 再送一次. */
         const val EVICT_RETRY_MS = 30_000L
         /** 设备离线时请它重新启动 OIT, 连不上就每隔这么久再试一次; 本机因为这个重启过之后这么久之内不再理会重启请求. 同 devsync.RESTART_RETRY / RESTART_GAP_MS. */

@@ -35,7 +35,7 @@ def main():
     tempstore.sweep_legacy()
     tempstore.sweep_orphans()
 
-    # 数据的连续性 (MECHANICS 9.3): 数据被搬走 / 倒回去了 (备份还原, 复制到别的电脑 ……) 就清掉, 弹出 "<用户名>,覆水难收."
+    # 数据的连续性 (MECHANICS 9.3): 发现数据被搬走 / 倒回去时提示, 保留数据
     import config
     import continuity
     import securefile

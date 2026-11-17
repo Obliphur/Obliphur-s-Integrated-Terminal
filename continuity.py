@@ -1,5 +1,5 @@
 """
-数据的连续性 (MECHANICS.md 9.3): 发现数据被"非常规手段"搬走 / 倒回去 (备份还原, 整个文件夹复制到别处, 删掉连续性记录 ……) 就清掉
+数据的连续性 (MECHANICS.md 9.3): 发现数据被"非常规手段"搬走 / 倒回去 (备份还原, 整个文件夹复制到别处, 删掉连续性记录 ……) 时提示
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
 OIT 的数据放在 AppData\\LocalLow\\<程序名> 里, 本来只有 OIT 自己写. 为了不让数据被备份 (拿旧的覆盖回来, 躲开已经记下的违规 / 额度 /
 冷静期) 或者被搬到别的电脑上继续用, 数据里有一份"连续性记录" continuity.json, 程序每 30 秒推进一次, 并用几种互相独立的办法核对:
@@ -11,8 +11,7 @@ OIT 的数据放在 AppData\\LocalLow\\<程序名> 里, 本来只有 OIT 自己�
   3. 记录被删: 数据文件夹里别的文件都在, 连续性记录没了, 而锚点还在 (stripped).
   4. 同步的设备: 每台设备的状态里带着 cseq / cep (序号和世代), 其他设备会记着它最后一次发来的; 本机收到它们转来的"你上次是 cseq=…"
      比自己的序号大得多 (同一世代) → 本机的数据被倒回去了, 标记 pending (其他办法倒不回去的, 例如整盘镜像还原, 靠这个), 立即重启.
-  任何一条成立, OIT 主程序**下一次启动**时 (main.py 最先做, guard()) 就把这份数据清掉 (只留系统代理的备份, 免得断网时还原不了), 弹出文本框 "<非法数据里的用户名>,覆水难收.",
-  然后像第一次安装那样重新开始. 只清本机的数据, 不动别的设备 (被搬走的副本和原来的设备共用同一份绑定, 不能连累原来的).
+  任何一条成立, OIT 主程序启动时 (main.py 最先做, guard()) 都会弹出提示, 保留用户数据, 并以新世代重建连续性记录和锚点.
   连续性只在装好的程序里生效 (git 仓库里的开发版本不核对, 也不写锚点). 重置 / 卸载时锚点一起清掉 (reset / clear_anchors).
   升级到有这个功能的版本时, 数据里还没有记录, 锚点也没有: 直接以现在的数据为起点, 不当作非法.
   数据文件夹是个符号链接 / 联接点 (被搬到别的盘) 只记一条日志, 不算非法 (C 盘满了把数据放到别的盘是正常用法).
@@ -469,7 +468,7 @@ class Continuity:
     # -- 启动时的核对 --
 
     def check(self):
-        """→ (判定, 信号). 判定为 fresh / adopt 时已经建好了新的起点; ok 时已经对齐了锚点; break 时什么都没动 (调用方清数据)."""
+        """→ (判定, 信号). 判定为 fresh / adopt 时已经建好了新的起点; ok 时已经对齐了锚点; break 时不修改数据."""
         data = self.read()
         anchors = [_decode_anchor(a.read()) for a in self.anchors]
         if data is None and unclean and self.established():
@@ -550,30 +549,21 @@ class Continuity:
 
 
 def guard(data_dir: str, enabled: bool = True, anchors=None, log=lambda s: None, extra=None):
-    """main.py 最先调用: 核对数据. 返回 None (没问题) 或 非法数据里的用户名 (数据已经清掉, 要弹 "<用户名>,覆水难收."). 返回 (cont, 用户名或 None)."""
+    """main.py 最先调用: 核对数据. 返回 (cont, 用户名或 None); 发现异常时只记录并提示, 保留数据."""
     global current
     c = Continuity(data_dir, anchors, log)
     if not enabled:
         return c, None
     current = c
     verdict, sig = c.check()
-    if extra and verdict != "fresh":              # 别的办法发现的非法信号 (srcguard: 源码被非更新地改动): 有用过的数据就清
+    if extra and verdict != "fresh":              # 别的办法发现的异常信号 (srcguard: 源码被非更新地改动)
         verdict, sig = "break", list(sig) + list(extra)
     if verdict != "break":
         c.hold_lock()
         return c, None
-    if sig == ["pending"] and _recent_wipe():
-        # 刚清过数据, 马上又只有 pending (多半是清数据之后程序自己又标记了, 或者锚点还没对齐): 不再清, 数据以现在的为准, 重新开始一个世代
-        log_event(f"LOOP BREAKER: only 'pending' right after a wipe, keeping the data in {data_dir}")
-        c.load()
-        c.begin()
-        c.hold_lock()
-        return c, None
     who = c.username()
     log("continuity BREAK " + ",".join(sig))
-    log_event(f"BREAK signals={','.join(sig)} dir={data_dir} user={who!r} -> wiping")
-    _stamp_wipe()
-    c.wipe()
+    log_event(f"BREAK signals={','.join(sig)} dir={data_dir} user={who!r} -> data kept")
     c.begin()
     c.hold_lock()
     return c, who
@@ -601,7 +591,8 @@ def _stamp_wipe():
 
 
 def message(username: str) -> str:
-    return f"{username},覆水难收." if username else "覆水难收."
+    prefix = f"{username}, " if username else ""
+    return prefix + "检测到数据连续性异常。数据未被清除，请检查数据状态后继续使用。\nData continuity issue detected. Your data was kept; review its state before continuing."
 
 
 # ---- 自检 ----
@@ -688,11 +679,13 @@ def _selftest_body():
         with open(os.path.join(dd, "extra.json"), "w") as f:
             f.write("{}")
         c3, who = guard(dd, anchors=an)
-        assert who == "小明", "倒回去: 清掉, 用户名取自非法数据"
-        assert not os.path.exists(os.path.join(dd, "profile.json")) and not os.path.exists(os.path.join(dd, "extra.json"))
+        assert who == "小明", "倒回去: 用户名取自异常数据"
+        assert os.path.exists(os.path.join(dd, "profile.json")) and os.path.exists(os.path.join(dd, "extra.json"))
         assert c3.ep != ep and c3.seq == 1
-        assert message(who) == "小明,覆水难收." and message("") == "覆水难收."
-        # 清掉之后是新的起点, 再打开不会再判非法
+        assert "数据未被清除" in message(who) and "数据未被清除" in message("")
+        # 检查不会改动连续性记录; 测试后手动清理以便继续覆盖其他情形
+        c3.wipe()
+        c3.begin()
         with open(os.path.join(dd, "profile.json"), "w", encoding="utf-8") as f:
             json.dump({"username": "新"}, f)
         c3.tick()
@@ -700,6 +693,8 @@ def _selftest_body():
         # 连续性记录被删: stripped
         os.remove(os.path.join(dd, FILE))
         assert guard(dd, anchors=an)[1] == "新"
+        assert os.path.exists(os.path.join(dd, "profile.json"))
+        Continuity(dd, an).begin()
         # 别的电脑 / 别的用户 (封印解不开): 数据里的 seal 换成别人的
         with open(os.path.join(dd, "profile.json"), "w", encoding="utf-8") as f:
             json.dump({"username": "搬运"}, f)
@@ -707,9 +702,11 @@ def _selftest_body():
         d0["seal"] = _b64(b"not-ours")
         json.dump(d0, open(os.path.join(dd, FILE), "w"))
         assert guard(dd, anchors=make("nowhere")[1])[1] == "搬运", "新电脑上没有锚点, 靠封印"
+        assert os.path.exists(os.path.join(dd, "profile.json"))
         # 其他设备的状态: 记着的序号比本机的大得多 = 倒回去了
         for a in an:
             a.clear()
+        Continuity(dd, an).begin()
         with open(os.path.join(dd, "profile.json"), "w", encoding="utf-8") as f:
             json.dump({"username": "同步"}, f)
         c4 = guard(dd, anchors=an)[0]
@@ -719,7 +716,8 @@ def _selftest_body():
         assert not c4.peer_saw({"cep": "other", "cseq": 10 ** 9}) and not c4.peer_saw(None) and not c4.peer_saw({})
         _rm_stamp()                          # 前面清过数据: 循环保护 (刚清过又只有 pending 不再清) 先解除, 这里测的是正常的 pending
         c4.mark_pending("selftest")
-        assert guard(dd, anchors=an)[1] == "同步", "pending: 下一次启动清掉"
+        assert guard(dd, anchors=an)[1] == "同步", "pending: 下一次启动提示"
+        assert os.path.exists(os.path.join(dd, "profile.json"))
         # 重置: 锚点清掉, 之后只有重置留下的绑定: 算新数据
         c5 = guard(dd, anchors=an)[0]
         with open(os.path.join(dd, "sync_state.json"), "w") as f:
@@ -813,14 +811,13 @@ def _selftest_body():
         c9.mark_pending("selftest")
         c10, who = guard(dd, anchors=an3)
         assert who == "回归" and not securefile.tampered, (who, securefile.tampered)
-        c10.username()                       # wipe 之后接着读: 不能记篡改
+        assert os.path.exists(os.path.join(dd, "profile.json"))
+        c10.username()                       # 提示之后接着读: 不能记篡改
         assert not securefile.tampered, securefile.tampered
-        # 循环保护: 刚清过, 又只有 pending → 不再清
-        with open(os.path.join(dd, "profile.json"), "w", encoding="utf-8") as f:
-            json.dump({"username": "新"}, f)
+        # pending 异常只提示, 重复检查仍保留数据
         c10.mark_pending("again")
         c11, who = guard(dd, anchors=an3)
-        assert who is None and os.path.exists(os.path.join(dd, "profile.json")), "刚清过又只有 pending: 保留"
+        assert who == "回归" and os.path.exists(os.path.join(dd, "profile.json")), "pending: 保留数据并提示"
         assert guard(dd, anchors=an3)[1] is None
     finally:
         securefile._dir, securefile._key, securefile._strict, securefile._idx, securefile._on_tamper = saved
