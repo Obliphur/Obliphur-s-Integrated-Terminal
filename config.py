@@ -220,7 +220,7 @@ OUTING_MAX_HOURS = 24 * 7
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.554"                  # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.555"                  # 和 GitHub 上发布的版本号比较 (见 updater.py)
 AI_VOICE_GAP = 1.0                       # 两条语音之间的默认间隔（秒）
 COMM_SPLIT_INTERVAL_SECONDS = 5          # 分条发送间隔（秒）
 COMM_TOOL_ROUNDS = 6                     # 单次沟通最多进行的查询 / 联合行动工具轮数
@@ -252,6 +252,13 @@ AI_VOICE_CLAUDIA_ID = "claudia1999"       # Claudia 专用音色；voice_id 区�
 UPDATE_CHECK = 1                              # 打开程序时检查更新
 FULLSCREEN_DEFAULT = 0                        # 打开程序时默认全屏 (设置 → 基本设置, 仅电脑, 不同步; F11 随时切换)
 UPDATE_AUTO = 1                               # 发现新版本时自动下载安装
+
+# 外部软件：Process Lasso 的保守内存整理与下载上限（只在电脑生效）。
+EXTERNAL_DOWNLOAD_MAX = 64 * 1024 * 1024
+EXTERNAL_TRIM_LOAD = 80
+EXTERNAL_TRIM_MIN_MB = 512
+EXTERNAL_TRIM_INTERVAL = 15
+PIANO_MODEL_SIZE = 171966578
 OLD_APP_DIR = "mrsTimer"
 FILL_WINDOW = timedelta(hours=1)              
 FINE_FILL_WINDOW = timedelta(minutes=30)      # 细化规范的半小时格补填时限最多 30 min (MECHANICS 18.4)

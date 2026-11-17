@@ -362,6 +362,7 @@ SETTINGS_PAGES = [
     ("window", "窗口"),
     ("daily", "日常"),
     ("comm", "沟通"),
+    ("extra", "额外功能"),
     ("alarm", "闹钟"),
     ("sound", "音效"),
 ]

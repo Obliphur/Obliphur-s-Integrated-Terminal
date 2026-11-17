@@ -17,9 +17,11 @@ from .settings_form import FormMixin
 from .settings_cards import CardsMixin
 from .settings_comm import CommSettingsMixin
 from .settings_record import RecordSettingsMixin
+from .settings_external import ExternalSettingsMixin
+from .settings_extra import ExtraSettingsMixin
 
 
-class SettingsPage(FormMixin, CardsMixin, CommSettingsMixin, RecordSettingsMixin, tk.Frame):
+class SettingsPage(FormMixin, CardsMixin, CommSettingsMixin, RecordSettingsMixin, ExternalSettingsMixin, ExtraSettingsMixin, tk.Frame):
     def __init__(self, master, settings, on_changed=None, on_sound=None,
                  on_dev_mode=None, on_language=None, on_font_scale=None,
                  on_theme=None, on_end_setup=None, updater=None, on_update_check=None,
@@ -148,6 +150,7 @@ class SettingsPage(FormMixin, CardsMixin, CommSettingsMixin, RecordSettingsMixin
             self.sync_panel.pack(fill="x")
         self._build_page_items("basic")
         self._build_update_card(body)
+        self._build_external_card(body)
         # 作者的话: 为什么设置要等 48 小时 (MECHANICS.md 1.1)
         for i, zh in enumerate((
                 "在设计预期上 只要不是有绝对的正当理由 应该很少有改变能坚持过48h的等待期.\n这是一个理智与本能的抗争的常见结果.\n这个软件的一个理念就是放大理智优势,保留本能空间.",
@@ -165,6 +168,8 @@ class SettingsPage(FormMixin, CardsMixin, CommSettingsMixin, RecordSettingsMixin
                 self._build_rules_card(self.areas[key].inner)
             if key == "comm":
                 self._build_comm_page(self.areas[key].inner)
+            if key == "extra":
+                self._build_extra_page(self.areas[key].inner)
             if key == "alarm" and self.alarm is not None:
                 from ..alarm_ui import AlarmSettings
                 self.alarm_ui = AlarmSettings(self, self.areas[key].inner)
@@ -222,10 +227,10 @@ class SettingsPage(FormMixin, CardsMixin, CommSettingsMixin, RecordSettingsMixin
             self.refresh_records()
         if key == "alarm" and self.alarm_ui is not None:
             self.alarm_ui.refresh()
-        if key in ("comm", "alarm"):
+        if key in ("comm", "alarm", "extra"):
             if key == "comm":
                 self._refresh_comm()
-            hide_pack(self.foot)                 # 沟通页 / 闹钟页的设置即时保存, 没有"保存本页修改"
+            hide_pack(self.foot)                 # 沟通 / 额外功能 / 闹钟即时保存，无需提交本页。
         else:
             show_pack(self.foot, fill="x", padx=28, pady=(4, 10))
         for k, b in self._tab_btns.items():

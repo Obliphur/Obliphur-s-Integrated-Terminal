@@ -28,9 +28,6 @@ class CommSettingsMixin:
                     "设置").pack(side="right")
         self.lbl_comm_api = tk.Label(fr, text="", bg=card, fg=COLORS["text"], font=small, anchor="w")
         self.lbl_comm_api.pack(fill="x", padx=12, pady=(2, 10))
-        from ..voice_dialogs import build_voice_settings
-        build_voice_settings(self, body)
-
         fr, head = self._card(body, "🎭  人设")
         self._track(ttk.Button(head, text=tr("打开文件夹"), command=self._comm_open_folder),
                     "打开文件夹").pack(side="right")

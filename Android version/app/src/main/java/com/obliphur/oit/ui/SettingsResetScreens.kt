@@ -97,6 +97,7 @@ fun SettingsScreen(tab: String, setTab: (String) -> Unit, act: MainActivity) {
         for (spec in opts.filter { it.key != "FILTER_MODE" }) OptionRow(spec, edits)    // 过滤名单模式在规则弹窗里切换
         PageExtras(tab, act)
         if (tab == "comm") CommSettings()
+        if (tab == "extra") ExtraSettings()
         if (tab == "alarm") AlarmSettings()
         if (nums.isNotEmpty()) {
             Heading(tr("数值"))
@@ -133,6 +134,12 @@ fun SettingsScreen(tab: String, setTab: (String) -> Unit, act: MainActivity) {
             "\n\n" + tr("如果你很有动力,试试合约!"),
             Modifier.padding(top = 16.dp))
     }
+}
+
+/** 设置 → 额外功能: AI 语音及其他本机工具。 */
+@Composable
+private fun ExtraSettings() {
+    VoiceSettingsCard()
 }
 
 private fun savePage(tab: String, edits: MutableMap<String, String>) {

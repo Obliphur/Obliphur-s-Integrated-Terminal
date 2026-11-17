@@ -4,6 +4,8 @@
 
 音效页各项均为本机设置，不随设备同步；设备离线声音单独由 `OFFLINE_SOUND` 控制（1.3），不再跟随整点提示音的自选值。
 
+电脑外部软件安装目录、Process Lasso 配置和钢琴转 MIDI 权重仅属于本机，不随设备同步；额外功能页中的 AI 语音仍沿用下面的配置、音频与已听状态同步规则。
+
 沟通的 AI 语音配置、按人设分配、启用与自动播放开关、播放间隔通过 `comm.voice` 按修改时间同步；API Key 经已有加密同步通道传送，到对方用当地 DPAPI / Keystore 重新加密保存。语音音频通过已有加密文件通道自动补传，已听状态随每轮同步清单合并，任一设备听过即算已听（24.1）。
 
 情景模式与情绪张力按对象通过 `comm.interaction:<pid>` 同步，包含模型决定结束的爆发状态 `burst_until`（非零表示持续，不按旧截止时刻结束）、爆发后的增长减半截止时间 `gain_until`、最近两个爆发触发日期 `burst_days` 和早间必谈触发日期 `morning_day`、爆发后睡眠必谈的待触发边界 `burst_sleep_after`、待模型判断的消息 UID 与发送时段 `pending`、按条件保存的张力增长冷却 `gain_cooldowns`、条件连锁一小时倍率截止时刻 `gain_chain_until`，以及高张力特殊空闲的结束时刻 `special_until`、用户发言标记 `special_spoke`、特殊空闲入场段起点 `last_special_begin` / 入场张力 `special_entry_tension` / 前七分钟正向条件次数 `special_7m_gain_count` / 单段引诱去重 `special_7m_lured_seg`、衰减结算时刻 `decay_at` 与豁免截止时刻 `decay_hold_until`（旧 `skip_decay` 迁移为 24 小时豁免）；记录携带聊天清空时刻，按修改时间采用较新内容；清空后拒收旧会话状态（24.20）。

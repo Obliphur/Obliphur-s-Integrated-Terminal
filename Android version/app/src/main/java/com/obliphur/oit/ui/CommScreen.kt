@@ -491,7 +491,6 @@ fun CommSettings() {
     val ctx = LocalContext.current
     val core = OitApp.instance.core
     val comm = core.comm
-    VoiceSettingsCard()
     var apiDialog by remember { mutableStateOf(false) }
     var readme by remember { mutableStateOf(false) }
     var avatarWho by remember { mutableStateOf("me") }
