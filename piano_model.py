@@ -74,7 +74,7 @@ class ModelDownload:
             if self.busy:
                 return False
             with self.external._lock:
-                if self.external.busy:
+                if self.external.location_busy:
                     raise ValueError(tr("部署进行中，请稍后下载模型."))
                 self.refresh()
                 if not self.external.root:
@@ -90,7 +90,7 @@ class ModelDownload:
                 raise
             return True
 
-    def _download(self):
+    def _download(self, *, release_location=True):
         work = None
         try:
             if not _allowed(MODEL_URL):
@@ -118,8 +118,9 @@ class ModelDownload:
         except Exception as e:
             self.error, self.state = str(e), "error"
         finally:
-            with self.external._lock:
-                self.external.model_busy = False
+            if release_location:
+                with self.external._lock:
+                    self.external.model_busy = False
             if work:
                 base = os.path.realpath(tempstore.path("misc"))
                 resolved = os.path.realpath(work)

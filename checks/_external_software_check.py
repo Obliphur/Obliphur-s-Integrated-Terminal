@@ -107,7 +107,8 @@ assert E.ExternalSoftware(str(base / "data")).installed
 assert all(not d.exists() for d in work_dirs)
 ini = configparser.ConfigParser(interpolation=None)
 ini.read(target / "oit-config/prolasso.ini", encoding="utf-16")
-for name in ("python.exe", "pythonw.exe", "python3.13.exe", "torchrun.exe", "oit.exe", "oitlink.exe"):
+for name in ("python.exe", "pythonw.exe", "python3.13.exe", "torchrun.exe", "oit.exe", "oitlink.exe",
+             "java.exe", "javaw.exe", "Audiveris.exe", "MuseScore4.exe", "mscore.exe"):
     for section, key in (("OutOfControlProcessRestraint", "OocExclusions"), ("MemoryManagement", "SmartTrimExclusions")):
         assert any(fnmatch.fnmatch(name, pat) for pat in ini[section][key].split(",")), name
 assert ini["MemoryManagement"].getboolean("SmartTrimIsEnabled")
@@ -195,6 +196,12 @@ with patch.object(P, "MODEL_SIZE", len(payload)), patch.object(P, "MODEL_MD5", h
         model._download()
     assert ranges.call_count == 1 and model.state == "ready" and model.progress == 100
 
+    # 统一音乐安装持有目录锁时，权重适配器不能提前释放它。
+    model.external.model_busy = True
+    model._download(release_location=False)
+    assert model.external.model_busy and model.ready
+    model.external.model_busy = False
+
 started.clear()
 finish.clear()
 def blocked_model():
@@ -244,8 +251,9 @@ try:
         assert i18n.tr("在部署本地模型时，建议使用该软件。") in label_texts(page.areas["extra"])
         assert i18n.tr("🔊  AI 语音") in label_texts(page.areas["extra"])
         assert i18n.tr("🔊  AI 语音") not in label_texts(page.areas["comm"])
-        assert page.piano_model_button.winfo_ismapped()
-        assert page.piano_model is P.manager(str(base / "ui-data"), page.external)
+        assert page.music_install.winfo_ismapped()
+        assert page.music.model is P.manager(str(base / "ui-data"), page.external)
+        assert i18n.tr("音乐工具") in label_texts(page.areas["extra"])
         assert not page.external_choose.instate(["disabled"])
         page.external.state = "downloading"
         page._refresh_external_card()

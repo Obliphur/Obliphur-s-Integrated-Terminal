@@ -22,6 +22,7 @@
 | `ai_voice.json` | MiniMax 语音配置、按人设分配、开关与自动播放间隔；API Key 在本机加密，配置随绑定同步（24.1） | 永久；重置删除 |
 | `external_software.json` | 本机选择的外部软件目录、Process Lasso 安装位置 | 永久；不随设备同步 |
 | `PianoTranscription/CRNN_note_F1=0.9677_pedal_F1=0.9186.pth` | 钢琴转 MIDI 预训练模型（Zenodo，MD5 校验） | 用户选择的外部软件目录；不随设备同步 |
+| `Audiveris/`、`MuseScore/`、`PianoTranscription/runtime/` | 音乐组件和隔离 CPU 推理环境；各组件根目录的 `oit-install.json` 记录版本和相对可执行路径 | 用户选择的外部软件目录；不随同步，不自动搬移或卸载 |
 | `voice_cache/` | 按人设和消息哈希保存的 MP3 与 `.played` 播放记录 | 随绑定设备同步音频及已听状态；清空对应聊天或重置时删除 |
 | `sysproxy_backup.json` | 启用 Proxy 前的系统代理设置 | 还原后删除 |
 | `chime.wav` | 内置提示音 (自动生成) | 永久 |

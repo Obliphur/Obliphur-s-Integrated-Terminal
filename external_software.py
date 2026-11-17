@@ -91,7 +91,8 @@ def signature_ok(path):
 
 def protected_processes():
     """覆盖虚拟环境、版本化解释器与 PyTorch 的 Python 子进程。"""
-    return sorted({"python*.exe", "torchrun*.exe", "oit.exe", "oitlink.exe", os.path.basename(sys.executable).lower()})
+    return sorted({"python*.exe", "torchrun*.exe", "java*.exe", "audiveris.exe", "musescore4.exe", "mscore.exe",
+                   "oit.exe", "oitlink.exe", os.path.basename(sys.executable).lower()})
 
 
 def write_lasso_config(path):

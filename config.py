@@ -220,7 +220,7 @@ OUTING_MAX_HOURS = 24 * 7
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.561"                  # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.562"                  # 和 GitHub 上发布的版本号比较 (见 updater.py)
 AI_VOICE_GAP = 1.0                       # 两条语音之间的默认间隔（秒）
 COMM_SPLIT_INTERVAL_SECONDS = 5          # 分条发送间隔（秒）
 COMM_TOOL_ROUNDS = 6                     # 单次沟通最多进行的查询 / 联合行动工具轮数
@@ -263,13 +263,24 @@ PIANO_MODEL_CONNECTIONS = 8             # Zenodo 有请求频率限制，减少�
 PIANO_MODEL_SEGMENT = 4 * 1024 * 1024
 MUSIC_PROCESS_TIMEOUT = 1800
 MUSIC_INSTALL_TIMEOUT = 3600
+MUSIC_PROBE_TIMEOUT = 90
+MUSIC_PIP_TIMEOUT = 30
+MUSIC_PIP_RETRIES = 2
 MUSIC_LOG_TAIL = 4096
 MUSIC_CPU_THREADS = 2
 MUSIC_INSTALLER_MAX = 512 * 1024 * 1024
 MUSIC_PYTHON_MAX = 32 * 1024 * 1024
+MUSIC_PYTHON_SIZE = 11249023
 MUSIC_INSTALL_FREE = 3 * 1024 * 1024 * 1024
 MUSIC_PYTHON_VERSION = "3.11.9"
 MUSIC_PIP_VERSION = "24.3.1"
+MUSIC_TORCH_VERSION = "2.5.1+cpu"
+MUSIC_TORCH_WHEEL_URL = "https://download-r2.pytorch.org/whl/cpu/torch-2.5.1%2Bcpu-cp311-cp311-win_amd64.whl"
+MUSIC_TORCH_WHEEL_SIZE = 205462169
+MUSIC_TORCH_WHEEL_SHA256 = "81531d4d5ca74163dc9574b87396531e546a60cceb6253303c7db6a21e867fdf"
+MUSIC_PIANO_SUPPORT_PACKAGES = ("setuptools==75.6.0", "filelock==3.16.1", "typing-extensions==4.12.2",
+                                "sympy==1.13.1", "networkx==3.4.2", "jinja2==3.1.4",
+                                "fsspec==2024.10.0", "mpmath==1.3.0", "markupsafe==3.0.2")
 MUSIC_PIANO_PACKAGES = ("piano-transcription-inference==0.0.6", "numpy==1.26.4", "librosa==0.9.2",
                         "torchlibrosa==0.1.0", "soundfile==0.13.1", "matplotlib==3.9.4", "numba==0.60.0")
 OLD_APP_DIR = "mrsTimer"
