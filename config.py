@@ -220,7 +220,7 @@ OUTING_MAX_HOURS = 24 * 7
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.558"                  # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.559"                  # 和 GitHub 上发布的版本号比较 (见 updater.py)
 AI_VOICE_GAP = 1.0                       # 两条语音之间的默认间隔（秒）
 COMM_SPLIT_INTERVAL_SECONDS = 5          # 分条发送间隔（秒）
 COMM_TOOL_ROUNDS = 6                     # 单次沟通最多进行的查询 / 联合行动工具轮数
@@ -259,6 +259,8 @@ EXTERNAL_TRIM_LOAD = 80
 EXTERNAL_TRIM_MIN_MB = 512
 EXTERNAL_TRIM_INTERVAL = 15
 PIANO_MODEL_SIZE = 171966578
+PIANO_MODEL_CONNECTIONS = 8             # Zenodo 有请求频率限制，减少并发与分段请求数
+PIANO_MODEL_SEGMENT = 4 * 1024 * 1024
 OLD_APP_DIR = "mrsTimer"
 FILL_WINDOW = timedelta(hours=1)              
 FINE_FILL_WINDOW = timedelta(minutes=30)      # 细化规范的半小时格补填时限最多 30 min (MECHANICS 18.4)

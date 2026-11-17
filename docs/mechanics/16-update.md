@@ -30,6 +30,7 @@
     对方的 OIT 太旧不认这个请求时提示"版本太旧". 收到后手机自己还在进行的下载自动取消.
 - 只连 GitHub 的 https 地址, 跳转也只能跳到 GitHub 的下载地址.
   电脑上不经过 OIT 自己的过滤代理, 所以 Proxy 方式下不管名单怎么写都能检查; Adapter 方式离线时网卡被禁用, 检查会失败.
+  电脑 GitHub 文件下载统一调用 `updater.download(src, dest, progress=...)`（进度回调接收已下载字节数）；本机更新和替其他设备下载共用此入口，新功能不得另写 GitHub 下载循环。发布附件通过 `asset_source()` 取得 API 地址、大小和 SHA-256。底层 `download_file()` 可供其他官方来源复用，但必须显式指定主机白名单与大小上限；支持来源给出的 SHA-256 / MD5，主机限制不会跨任务扩大。默认更新包上限仍为 80 MiB，调用方有更大的可信文件时可显式指定 `max_download`。
 - **下载路线** (两端相同): 安装包走 GitHub API 的附件地址 (`api.github.com/…/releases/assets/<id>`), 它直接跳到下载服务器 (release-assets.githubusercontent.com),
   不经过 github.com —— 有的网络里 github.com 连不上, api.github.com 和下载服务器却能直连, 所以**不用开自己的代理**. 电脑版没有 zip 附件时用的源码包走 api.github.com → codeload.github.com.
   下载完核对大小和 GitHub 给的 SHA-256, 对不上就丢掉; 下载失败时不留下半截的文件.

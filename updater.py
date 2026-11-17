@@ -77,10 +77,13 @@ def vtext(v) -> str:
 
 
 class _CheckedRedirect(urllib.request.HTTPRedirectHandler):
+    def __init__(self, hosts=None):
+        super().__init__()
+        self.hosts = ALLOWED_HOSTS if hosts is None else hosts
+
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        u = urllib.parse.urlsplit(newurl)
-        if u.scheme != "https" or (u.hostname or "").lower() not in ALLOWED_HOSTS:
-            raise urllib.error.HTTPError(newurl, code, "redirect to a non-GitHub address refused",
+        if not _allowed_url(newurl, self.hosts):
+            raise urllib.error.HTTPError(newurl, code, "redirect to an unapproved address refused",
                                          headers, fp)
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
@@ -118,30 +121,41 @@ ACCEPT_JSON = "application/vnd.github+json"
 ACCEPT_FILE = "application/octet-stream"
 
 
-def _routes():
+def _routes(route=None):
     """直连在前 (走 API 附件地址就不用代理), 用户原来的代理在后; 上一次走通的那条排第一."""
     up = upstream_proxy()
     routes = [("direct", None), ("proxy", up)] if up else [("direct", None)]
-    if _route["via"] == "proxy":
+    if (_route if route is None else route).get("via") == "proxy":
         routes.sort(key=lambda r: r[0] != "proxy")
     return routes
 
 
-def _open(url: str, timeout: float, accept: str = ACCEPT_JSON, extra: dict = None):
+def _allowed_url(url, hosts):
     u = urllib.parse.urlsplit(url)
-    if u.scheme != "https" or (u.hostname or "").lower() not in ALLOWED_HOSTS:
-        raise ValueError("only GitHub https addresses are allowed")
+    return (u.scheme == "https" and (u.hostname or "").lower() in hosts
+            and not u.username and not u.password and u.port in (None, 443))
+
+
+def _open(url: str, timeout: float, accept: str = ACCEPT_JSON, extra: dict = None,
+          *, allowed_hosts=None, route=None):
+    hosts = ALLOWED_HOSTS if allowed_hosts is None else allowed_hosts
+    route = _route if route is None else route
+    if not _allowed_url(url, hosts):
+        raise ValueError("only approved https addresses are allowed")
     req_headers = {"User-Agent": f"OIT/{config.APP_VERSION}", "Accept": accept, **(extra or {})}
-    routes = _routes()
+    routes = _routes(route)
     last = None
     for i, (via, up) in enumerate(routes):
-        _route["last"] = via                # 失败时日志里看得出试过哪条路线
+        route["last"] = via                # 失败时日志里看得出试过哪条路线
         # 永远不走 OIT 自己的过滤代理; 直连不通再经过用户原来的代理
         proxies = {"http": f"http://{up[0]}:{up[1]}", "https": f"http://{up[0]}:{up[1]}"} if up else {}
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler(proxies), _CheckedRedirect())
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler(proxies), _CheckedRedirect(hosts))
         try:
             r = opener.open(urllib.request.Request(url, headers=req_headers), timeout=timeout)
-            _route["via"] = via
+            if not _allowed_url(r.geturl(), hosts):
+                r.close()
+                raise ValueError("only approved https addresses are allowed")
+            route["via"], route["proxy"] = via, up
             return r
         except urllib.error.HTTPError as e:
             # 502 / 503 这类是一个路线上的网关出错 (GitHub 或中间的透明代理), 换另一条路线再试;
@@ -222,9 +236,10 @@ def _tunnel_conn(host: str, up):
 
 
 def _fetch_ranges(new_conn, target: str, size: int, tmp: str, headers: dict = None,
-                  workers: int = PARALLEL_CONNS, seg: int = SEGMENT):
+                  workers: int = PARALLEL_CONNS, seg: int = SEGMENT, progress=None):
     """把 target (路径 + 查询) 的 size 字节分段下载到 tmp: workers 条连接, 每条连接一段一段地取
-    (Range, 要求回 206 而且起点对得上). 一段失败就换新连接重试 SEGMENT_TRIES 次, 还不行就抛出."""
+    (Range, 要求回 206 而且起点对得上). 一段失败就换新连接重试 SEGMENT_TRIES 次, 还不行就抛出。
+    progress 接收所有已完成分段的总字节数，重试不重复累计。"""
     with open(tmp, "wb") as f:
         f.truncate(size)
     todo = queue.Queue()
@@ -232,8 +247,11 @@ def _fetch_ranges(new_conn, target: str, size: int, tmp: str, headers: dict = No
         todo.put(s)
     errors = []
     stop = threading.Event()
+    progress_lock = threading.Lock()
+    completed = 0
 
     def worker():
+        nonlocal completed
         conn = None
         try:
             with open(tmp, "r+b") as f:
@@ -250,7 +268,7 @@ def _fetch_ranges(new_conn, target: str, size: int, tmp: str, headers: dict = No
                             r = conn.getresponse()
                             if r.status != 206:
                                 raise OSError(f"HTTP {r.status}")
-                            if not str(r.getheader("Content-Range") or "").startswith(f"bytes {a}-"):
+                            if str(r.getheader("Content-Range") or "").strip() != f"bytes {a}-{b}/{size}":
                                 raise OSError("wrong range")
                             pos = a
                             while pos <= b:
@@ -260,6 +278,10 @@ def _fetch_ranges(new_conn, target: str, size: int, tmp: str, headers: dict = No
                                 f.seek(pos)
                                 f.write(chunk)
                                 pos += len(chunk)
+                            if progress is not None:
+                                with progress_lock:
+                                    completed += b - a + 1
+                                    progress(completed)
                             break
                         except (OSError, http.client.HTTPException):
                             if conn is not None:
@@ -286,41 +308,52 @@ def _fetch_ranges(new_conn, target: str, size: int, tmp: str, headers: dict = No
 
 def _download_parallel(src: dict, tmp: str, size: int) -> bool:
     """知道大小的附件分段下载到 tmp. 返回 False = 服务器不支持分段 (该走单条连接); 分段中途失败会抛出."""
-    if size > MAX_DOWNLOAD:
+    if size > src.get("_max_download", MAX_DOWNLOAD):
         raise ValueError("download too large")
     # 先要第 0 个字节: 顺便走完 api.github.com 的跳转, 拿到下载服务器上带签名的地址, 并确认支持 Range 和总大小对得上
-    with _open(src["url"], 60, src.get("accept") or ACCEPT_JSON, {"Range": "bytes=0-0"}) as r:
+    with _open_source(src, {"Range": "bytes=0-0"}) as r:
         final = r.geturl()
         if r.status != 206 or _range_total(r.headers.get("Content-Range")) != size:
             return False
     u = urllib.parse.urlsplit(final)
     host = (u.hostname or "").lower()
-    if u.scheme != "https" or host not in ALLOWED_HOSTS:
-        raise ValueError("only GitHub https addresses are allowed")
-    up = upstream_proxy() if _route["via"] == "proxy" else None        # 和刚才走通的是同一条路线
+    if not _allowed_url(final, src.get("_allowed_hosts", ALLOWED_HOSTS)):
+        raise ValueError("only approved https addresses are allowed")
+    up = src.get("_route", _route).get("proxy")        # 和刚才走通的是同一条路线
     target = u.path + ("?" + u.query if u.query else "")
     _fetch_ranges(lambda: _tunnel_conn(host, up), target,
-                  size, tmp, {"User-Agent": f"OIT/{config.APP_VERSION}", "Accept": src.get("accept") or ACCEPT_JSON})
+                  size, tmp, {"User-Agent": f"OIT/{config.APP_VERSION}", "Accept": src.get("accept") or ACCEPT_JSON,
+                              "Accept-Encoding": "identity"}, workers=src.get("_workers", PARALLEL_CONNS),
+                  seg=src.get("_segment", SEGMENT), progress=src.get("_progress"))
     return True
 
 
 def _download_stream(src: dict, tmp: str):
     """一条连接下完整文件到 tmp."""
     total = 0
-    with _open(src["url"], 60, src.get("accept") or ACCEPT_JSON) as r, open(tmp, "wb") as f:
+    with _open_source(src) as r, open(tmp, "wb") as f:
         while True:
             chunk = r.read(65536)
             if not chunk:
                 break
             total += len(chunk)
-            if total > MAX_DOWNLOAD:
+            if total > src.get("_max_download", MAX_DOWNLOAD):
                 raise ValueError("download too large")
             f.write(chunk)
+            if src.get("_progress"):
+                src["_progress"](total)
+
+
+def _open_source(src, extra=None):
+    return _open(src["url"], 60, src.get("accept") or ACCEPT_JSON,
+                 {"Accept-Encoding": "identity", **(extra or {})},
+                 allowed_hosts=src.get("_allowed_hosts"), route=src.get("_route"))
 
 
 def _verify(path: str, src: dict):
-    """核对大小和 SHA-256 (来源给了才核对)."""
+    """核对大小、SHA-256 和 MD5 (来源给了才核对)。"""
     h = hashlib.sha256()
+    md5 = hashlib.md5() if src.get("md5") else None
     total = 0
     with open(path, "rb") as f:
         while True:
@@ -329,30 +362,53 @@ def _verify(path: str, src: dict):
                 break
             total += len(chunk)
             h.update(chunk)
+            if md5 is not None:
+                md5.update(chunk)
     if src.get("size") is not None and total != int(src["size"]):
         raise ValueError(f"size mismatch ({total} != {src['size']})")
     if src.get("sha256") and h.hexdigest() != src["sha256"]:
         raise ValueError("SHA-256 mismatch")
+    if md5 is not None and md5.hexdigest() != src["md5"]:
+        raise ValueError("MD5 mismatch")
 
 
-def download(src, dest: str):
-    """下载到 dest (先写临时文件, 核对过大小和 SHA-256 再改名; 失败时删掉临时文件).
+def download(src, dest: str, *, progress=None, max_download=MAX_DOWNLOAD):
+    """GitHub 文件下载的统一入口；新调用方一律使用此接口。
+    下载到 dest (先写临时文件, 核对过大小和 SHA-256 再改名; 失败时删掉临时文件).
     src: 下载来源 (pick_download / pick_apk 给的), 或者一个地址.
     知道大小的附件优先分段下载 (多条连接, 见开头的说明), 不行就一条连接."""
+    return download_file(src, dest, allowed_hosts=ALLOWED_HOSTS, max_download=max_download,
+                         progress=progress, route=_route)
+
+
+def download_file(src, dest: str, *, allowed_hosts, max_download, progress=None, route=None,
+                  workers=PARALLEL_CONNS, segment=SEGMENT):
+    """共用下载实现；其他官方来源须显式给出主机白名单与大小上限。
+    progress 接收已下载字节数；分段回退单连接时先归零，校验成功才替换目标文件。
+    有请求频率限制的来源可减少 workers、增大 segment，避免短时间内发出过多请求。"""
     if isinstance(src, str):
         src = {"url": src, "accept": ACCEPT_JSON, "size": None, "sha256": None}
+    src = {**src, "_allowed_hosts": frozenset(allowed_hosts), "_max_download": max_download,
+           "_progress": progress, "_route": {} if route is None else route,
+           "_workers": workers, "_segment": segment}
     tmp = dest + ".part"
     try:
         size = int(src["size"]) if src.get("size") else 0
+        if size > max_download:
+            raise ValueError("download too large")
+        if not _allowed_url(src["url"], src["_allowed_hosts"]):
+            raise ValueError("only approved https addresses are allowed")
         done = False
         if size >= MIN_PARALLEL:
             try:
                 done = _download_parallel(src, tmp, size)
             except ValueError:
-                raise                        # 太大 / 不是 GitHub 的地址: 单条连接也一样
+                raise                        # 太大 / 来源不被允许: 单条连接也一样
             except Exception:                # noqa: BLE001 —— 分段下载失败: 退回一条连接
                 done = False
         if not done:
+            if progress:
+                progress(0)
             _download_stream(src, tmp)
         _verify(tmp, src)
         os.replace(tmp, dest)
@@ -660,10 +716,39 @@ def _selftest():
     try:
         d = _tf.mkdtemp()
         out = os.path.join(d, "big.bin")
+        progress = []
         _fetch_ranges(lambda: http.client.HTTPConnection("127.0.0.1", port, timeout=5), "/x", len(blob), out,
-                      workers=4, seg=SEGMENT)
+                      workers=4, seg=SEGMENT, progress=progress.append)
         assert open(out, "rb").read() == blob, "分段下载的内容不对"
+        assert progress == sorted(set(progress)) and progress[-1] == len(blob), "分段重试不能重复累计进度"
         assert len(_H.conns) >= 2, "只用了一条连接"
+        # 非 GitHub 来源也共用分段实现，但主机白名单、文件大小上限与哈希各自独立。
+        from unittest.mock import patch
+        import io
+
+        class Probe(io.BytesIO):
+            status = 206
+            headers = {"Content-Range": f"bytes 0-0/{len(blob)}"}
+
+            def geturl(self):
+                return "https://zenodo.org/model"
+
+        def probe(url, timeout, accept, extra, *, allowed_hosts, route):
+            assert allowed_hosts == {"zenodo.org"} and extra["Range"] == "bytes=0-0"
+            route["proxy"] = ("test-proxy", 1234)
+            return Probe(blob[:1])
+
+        def conn(host, proxy):
+            assert host == "zenodo.org" and proxy == ("test-proxy", 1234)
+            return http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+
+        progress.clear()
+        with patch.dict(globals(), {"_open": probe, "_tunnel_conn": conn, "MIN_PARALLEL": 1,
+                                    "MAX_DOWNLOAD": 1}):
+            download_file({"url": "https://zenodo.org/model", "size": len(blob),
+                           "md5": hashlib.md5(blob).hexdigest()}, out,
+                          allowed_hosts={"zenodo.org"}, max_download=len(blob), progress=progress.append)
+        assert open(out, "rb").read() == blob and progress[-1] == len(blob)
         assert plan_segments(10, 4) == [(0, 3), (4, 7), (8, 9)] and plan_segments(8, 4) == [(0, 3), (4, 7)]
         assert _range_total("bytes 0-0/15669254") == 15669254 and _range_total("bytes */5") is None
         assert _range_total(None) is None
@@ -723,6 +808,24 @@ def _selftest():
         except ValueError:
             pass
         assert sorted(os.listdir(d)) == ["a.bin", "b.bin", "c.bin"], os.listdir(d)       # 失败的不留 .part
+        # 泛用接口的 MD5 失败保留原文件，GitHub 入口不能靠来源字段扩大白名单。
+        original = os.path.join(d, "model.bin")
+        with open(original, "wb") as f:
+            f.write(b"old-model")
+        progress = []
+        try:
+            download_file({"url": "https://zenodo.org/model", "size": size, "md5": "0" * 32}, original,
+                          allowed_hosts={"zenodo.org"}, max_download=size, progress=progress.append)
+            raise AssertionError("wrong MD5 accepted")
+        except ValueError:
+            pass
+        assert open(original, "rb").read() == b"old-model" and not os.path.exists(original + ".part")
+        assert progress == [0], "分段回退时进度需要清零"
+        try:
+            download({**ok, "url": "https://zenodo.org/model", "_allowed_hosts": {"zenodo.org"}}, original)
+            raise AssertionError("GitHub 来源限制被覆盖")
+        except ValueError:
+            pass
     finally:
         globals()["_download_parallel"], globals()["_download_stream"] = saved
 

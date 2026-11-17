@@ -5,11 +5,10 @@ import functools
 import os
 import shutil
 import threading
-import urllib.parse
-import urllib.request
 
 import config
 import tempstore
+import updater
 from i18n import tr
 
 
@@ -19,16 +18,8 @@ MODEL_MD5 = "22b961b77c1878239fec963362097045"
 MODEL_SIZE = config.PIANO_MODEL_SIZE
 
 
-class _Redirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        if not _allowed(newurl):
-            raise ValueError(tr("模型下载地址不是 Zenodo 官方 HTTPS 地址."))
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
-
-
 def _allowed(url):
-    u = urllib.parse.urlsplit(url)
-    return u.scheme == "https" and u.hostname == "zenodo.org" and not u.username and u.port in (None, 443)
+    return updater._allowed_url(url, {"zenodo.org"})
 
 
 class ModelDownload:
@@ -107,30 +98,14 @@ class ModelDownload:
             os.makedirs(os.path.dirname(self.path), exist_ok=True)
             work = tempstore.mkdtemp("misc", prefix="piano-")
             tmp = os.path.join(work, MODEL_NAME + ".part")
-            req = urllib.request.Request(MODEL_URL, headers={"User-Agent": f"OIT/{config.APP_VERSION}"})
-            # 与更新器一致，避开 OIT 自身过滤代理，使用用户原有的上游代理。
-            from updater import upstream_proxy
-            proxy = upstream_proxy()
-            proxies = {p: f"http://{proxy[0]}:{proxy[1]}" for p in ("http", "https")} if proxy else {}
-            opener = urllib.request.build_opener(urllib.request.ProxyHandler(proxies), _Redirect())
-            with opener.open(req, timeout=60) as r, open(tmp, "wb") as f:
-                if not _allowed(r.geturl()):
-                    raise ValueError(tr("模型下载地址不是 Zenodo 官方 HTTPS 地址."))
-                total = int(r.headers.get("Content-Length") or MODEL_SIZE)
-                if total > MODEL_SIZE:
-                    raise ValueError(tr("模型文件大小异常."))
-                done = 0
-                while True:
-                    chunk = r.read(1024 * 1024)
-                    if not chunk:
-                        break
-                    done += len(chunk)
-                    if done > MODEL_SIZE:
-                        raise ValueError(tr("模型文件大小异常."))
-                    f.write(chunk)
-                    self.progress = min(100, done * 100 // MODEL_SIZE)
-            if done != MODEL_SIZE or self._md5(tmp) != MODEL_MD5:
-                raise ValueError(tr("模型文件校验失败，已删除不完整文件."))
+            try:
+                updater.download_file({"url": MODEL_URL, "accept": updater.ACCEPT_FILE,
+                                       "size": MODEL_SIZE, "md5": MODEL_MD5}, tmp,
+                                      allowed_hosts={"zenodo.org"}, max_download=MODEL_SIZE,
+                                      progress=self._note_progress, workers=config.PIANO_MODEL_CONNECTIONS,
+                                      segment=config.PIANO_MODEL_SEGMENT)
+            except ValueError as e:
+                raise ValueError(tr("模型文件校验失败，已删除不完整文件.")) from e
             # TEMP 和用户选择的目录可能不在同一磁盘，先复制到目标目录再原子替换。
             staged = self.path + ".part"
             try:
@@ -150,6 +125,9 @@ class ModelDownload:
                 resolved = os.path.realpath(work)
                 if os.path.commonpath([base, resolved]) == base and resolved != base:
                     shutil.rmtree(resolved, ignore_errors=True)
+
+    def _note_progress(self, done):
+        self.progress = min(100, done * 100 // MODEL_SIZE)
 
 
 @functools.lru_cache(maxsize=8)

@@ -21,6 +21,7 @@ import urllib.request
 import config
 import external_software as E
 import piano_model as P
+import updater as U
 import i18n
 from pages.settings_page import SettingsPage
 from settings_manager import SettingsManager
@@ -168,6 +169,31 @@ with patch.object(P, "MODEL_SIZE", len(payload)), patch.object(P, "MODEL_MD5", h
     model._download()
     assert model.state == "error" and Path(model.path).read_bytes() == payload
     assert not Path(model.path + ".part").exists()
+
+# 模型接入共用分段下载，进度即时更新；分段连接失败时回退完整下载。
+with patch.object(P, "MODEL_SIZE", len(payload)), patch.object(P, "MODEL_MD5", hashlib.md5(payload).hexdigest()), \
+        patch.object(U, "MIN_PARALLEL", 1), patch.object(U, "upstream_proxy", return_value=None), \
+        patch("urllib.request.build_opener") as op:
+    def model_response(*args, **kwargs):
+        response = ModelResponse(payload)
+        response.status = 206
+        response.headers["Content-Range"] = f"bytes 0-0/{len(payload)}"
+        return response
+
+    op.return_value.open.side_effect = model_response
+
+    def model_ranges(new_conn, target, size, path, headers, *, progress, workers, seg):
+        assert size == len(payload) and "4034264" in target
+        assert workers == config.PIANO_MODEL_CONNECTIONS and seg == config.PIANO_MODEL_SEGMENT
+        Path(path).write_bytes(payload)
+        progress(size)
+
+    with patch.object(U, "_fetch_ranges", model_ranges), patch.object(P.os, "replace", local_replace):
+        model._download()
+    assert model.state == "ready" and model.progress == 100 and model.ready
+    with patch.object(U, "_fetch_ranges", side_effect=OSError("分段连接中断")) as ranges:
+        model._download()
+    assert ranges.call_count == 1 and model.state == "ready" and model.progress == 100
 
 started.clear()
 finish.clear()
