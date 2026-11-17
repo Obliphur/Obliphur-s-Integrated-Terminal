@@ -220,7 +220,7 @@ OUTING_MAX_HOURS = 24 * 7
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.560"                  # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.561"                  # 和 GitHub 上发布的版本号比较 (见 updater.py)
 AI_VOICE_GAP = 1.0                       # 两条语音之间的默认间隔（秒）
 COMM_SPLIT_INTERVAL_SECONDS = 5          # 分条发送间隔（秒）
 COMM_TOOL_ROUNDS = 6                     # 单次沟通最多进行的查询 / 联合行动工具轮数
@@ -261,6 +261,17 @@ EXTERNAL_TRIM_INTERVAL = 15
 PIANO_MODEL_SIZE = 171966578
 PIANO_MODEL_CONNECTIONS = 8             # Zenodo 有请求频率限制，减少并发与分段请求数
 PIANO_MODEL_SEGMENT = 4 * 1024 * 1024
+MUSIC_PROCESS_TIMEOUT = 1800
+MUSIC_INSTALL_TIMEOUT = 3600
+MUSIC_LOG_TAIL = 4096
+MUSIC_CPU_THREADS = 2
+MUSIC_INSTALLER_MAX = 512 * 1024 * 1024
+MUSIC_PYTHON_MAX = 32 * 1024 * 1024
+MUSIC_INSTALL_FREE = 3 * 1024 * 1024 * 1024
+MUSIC_PYTHON_VERSION = "3.11.9"
+MUSIC_PIP_VERSION = "24.3.1"
+MUSIC_PIANO_PACKAGES = ("piano-transcription-inference==0.0.6", "numpy==1.26.4", "librosa==0.9.2",
+                        "torchlibrosa==0.1.0", "soundfile==0.13.1", "matplotlib==3.9.4", "numba==0.60.0")
 OLD_APP_DIR = "mrsTimer"
 FILL_WINDOW = timedelta(hours=1)              
 FINE_FILL_WINDOW = timedelta(minutes=30)      # 细化规范的半小时格补填时限最多 30 min (MECHANICS 18.4)

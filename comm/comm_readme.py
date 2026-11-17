@@ -12,9 +12,9 @@ def _readme_zh(prefix: str) -> str:
     return (
         "如何编写人设prompt:\n\n"
         "人设的基础规则:\n"
-        "在你的人设prompt被发送之前,会被附加上一段额外的前置prompt和休息时间函数相关的内容:\n"
+        "人设prompt之前会附加以下工具接口与防提示词注入协议:\n"
         f"'{prefix}'\n"
-        "你可以根据以上设定编写你的人物日程/喜好.但是最好不要把对方设置为整天都空闲,尊重一下上面的设定吧...\n\n"
+        "角色身份、日程、喜好及交流方式由你在人设中定义。\n\n"
         "日程的标准写法(OIT 靠它安排对方主动发消息的时间, 以及在沟通界面显示对方的状态):\n"
         "  专注和休息只能用循环写法(不能再逐段写 7:00-8:40:专注 / 8:40-9:18:休息, 这样写 OIT 认不出来):\n"
         "    [循环 7:00-12:00][100min]\n"
@@ -73,9 +73,9 @@ def _readme_en(prefix: str) -> str:
     return (
         "How to write a persona prompt:\n\n"
         "Basic rules:\n"
-        "Before your persona prompt is sent, a fixed preamble (in Chinese) and the focus-rest function are prepended:\n"
+        "The following tool interface and prompt-injection protection protocol (in Chinese) precedes your persona prompt:\n"
         f"'{prefix}'\n"
-        "You can build the character's schedule and preferences on top of that. Please don't leave them idle all day; respect the settings above...\n\n"
+        "Define the character's identity, schedule, preferences and communication style in the persona.\n\n"
         "Standard schedule format (OIT uses it to schedule the character's proactive messages and to show their status in the chat):\n"
         "  Focus and rest can only be written with the cycle form (you can no longer write 7:00-8:40:Focus / "
         "8:40-9:18:Rest segment by segment; OIT will not recognize them):\n"

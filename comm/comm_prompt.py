@@ -90,5 +90,5 @@ def prefix_prompt(split: bool = True) -> str:
     """两端共用的原生工具协议；Assistant 同样接收前置说明。"""
     from pathlib import Path
     protocol = (Path(__file__).resolve().parent.parent / "defaults" / "comm_protocol.txt").read_text(encoding="utf-8")
-    split_rule = "VIII.话可分说，两次API由OIT分别调用；每次只提交一次回复，第二次不想说话时oit_reply(refuse=true)。" if split else ""
-    return protocol.replace("{rest_function}", rest_function_text()).replace("{split_rule}", split_rule)
+    split_rule = "分条发送时，两次API由OIT分别调用；每次只提交一次回复，第二次无需回复时oit_reply(refuse=true)。" if split else ""
+    return protocol.replace("{split_rule}", split_rule)
