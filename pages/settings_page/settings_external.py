@@ -1,4 +1,4 @@
-"""基本设置中的外部软件目录和 Process Lasso 部署入口。"""
+"""基本设置中的外部软件目录与额外功能页的 Process Lasso 部署入口。"""
 
 import tkinter as tk
 from tkinter import ttk, filedialog
@@ -26,8 +26,20 @@ class ExternalSettingsMixin:
         self.external_choose = self._track(ttk.Button(fr, text=tr("选择外部软件安装位置…"),
                                                      command=self._choose_external_root), "选择外部软件安装位置…")
         self.external_choose.pack(anchor="w", padx=12, pady=(6, 8))
+        self.areas["basic"].bind_children()
+
+    def _build_external_lasso_card(self, body):
+        card = COLORS["bg_card"]
+        fr = tk.Frame(body, bg=card, highlightbackground=COLORS["border"], highlightthickness=1)
+        fr.pack(fill="x", pady=(2, 8))
         tk.Label(fr, text="Process Lasso", bg=card, fg=COLORS["text"],
-                 font=config.font("body", bold=True)).pack(anchor="w", padx=12)
+                 font=config.font("body", bold=True)).pack(anchor="w", padx=12, pady=(10, 4))
+        note = self._track(tk.Label(
+            fr, text=tr("在部署本地模型时，建议使用该软件。"), bg=card,
+            fg=COLORS["text_dim"], anchor="w", justify="left", font=config.font("body")
+        ), "在部署本地模型时，建议使用该软件。")
+        note.pack(fill="x", padx=12, pady=(2, 2))
+        wrap_label(note, 24)
         self.external_status = tk.Label(fr, bg=card, fg=COLORS["text_dim"], anchor="w", justify="left",
                                         font=config.font("body"))
         self.external_status.pack(fill="x", padx=12, pady=4)
@@ -38,7 +50,6 @@ class ExternalSettingsMixin:
                                                    command=self._open_external), "打开 Process Lasso")
         self.external_open.pack(anchor="w", padx=12, pady=(0, 10))
         self._poll_external()
-        self.areas["basic"].bind_children()
 
     def _poll_external(self):
         self._refresh_external_card()

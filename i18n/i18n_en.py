@@ -1668,6 +1668,7 @@ EN = {
     "这个对象的日程里没有起床时间 (没有日程文件, 也没有睡眠段), 闹钟不会响.": "This character's schedule has no wake-up time (no schedule file and no sleep segment), so the alarm will not ring.",
     "点开设置: 把这个对象设为共时闹钟后 (⏰), 闹钟的时间跟随它的日程里的实际起床时间 (睡眠中也会响); 哪些设备响铃由你手动选, 铃声和音量用「设置 → 闹钟」里的. 一次只有一个对象是共时闹钟.": "Open the settings: once this character is the co-time alarm (⏰), the alarm time follows the actual wake-up time in their schedule (it also rings while you are asleep); you choose by hand which devices ring, and the ringtone and volume come from Settings → Alarm. Only one character can be the co-time alarm at a time.",
     "外部软件": "External software",
+    "在部署本地模型时，建议使用该软件。": "When deploying local models, using this software is recommended.",
     "选择外部软件安装位置…": "Choose external software location…",
     "外部软件安装位置: {path}": "External software location: {path}",
     "尚未选择外部软件安装位置": "No external software location selected",

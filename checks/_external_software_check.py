@@ -192,7 +192,7 @@ with patch.object(model, "_download", blocked_model):
         pass
     finish.set()
 
-# 基本设置入口可滚动、任务状态即时更新；切换语言后仍可使用。
+# 基本设置目录入口与额外功能部署入口可用；任务状态即时更新；切换语言后仍可使用。
 root = tk.Tk()
 root.geometry("700x650+5000+5000")
 sm = SettingsManager(str(base / "settings.json"))
@@ -210,8 +210,12 @@ try:
         page.pack(fill="both", expand=True)
         root.update()
         assert page.external_deploy.winfo_exists()
+        assert "Process Lasso" not in label_texts(page.areas["basic"])
         page.show_tab("extra")
         root.update()
+        assert "Process Lasso" in label_texts(page.areas["extra"])
+        assert page.external_deploy.winfo_ismapped()
+        assert i18n.tr("在部署本地模型时，建议使用该软件。") in label_texts(page.areas["extra"])
         assert i18n.tr("🔊  AI 语音") in label_texts(page.areas["extra"])
         assert i18n.tr("🔊  AI 语音") not in label_texts(page.areas["comm"])
         assert page.piano_model_button.winfo_ismapped()

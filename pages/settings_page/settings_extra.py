@@ -1,4 +1,4 @@
-"""设置 → 额外功能：AI 语音与钢琴转 MIDI 模型。"""
+"""设置 → 额外功能：AI 语音、Process Lasso 与钢琴转 MIDI 模型。"""
 
 import tkinter as tk
 from tkinter import ttk
@@ -15,6 +15,7 @@ class ExtraSettingsMixin:
     def _build_extra_page(self, body):
         if self.comm is not None:
             build_voice_settings(self, body)
+        self._build_external_lasso_card(body)
         card = COLORS["bg_card"]
         fr = tk.Frame(body, bg=card, highlightbackground=COLORS["border"], highlightthickness=1)
         fr.pack(fill="x", pady=(2, 8))

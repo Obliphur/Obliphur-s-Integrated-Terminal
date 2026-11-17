@@ -62,7 +62,7 @@
 
 基本设置里还有"⬆ 更新"一栏: 当前版本, GitHub 上的最新版本, "检查更新" / "立即更新" / "发布页"按钮.
 
-电脑基本设置的「外部软件」可手动选择本机已有文件夹，作为之后部署外部软件和下载模型的根目录；此位置只保存在本机，不随设备同步，修改位置不自动搬动已有软件。部署或模型下载期间暂不能更换位置。Process Lasso 从 Bitsum 官方 HTTPS 地址下载，验证有效的 Bitsum 数字签名后静默安装到 `Process Lasso/`，以服务启动调度引擎。OIT 管理独立的 `oit-config/prolasso.ini` 和日志目录；重新部署时备份旧配置并重写保护规则，不继承旧的限核、节流或终止规则。ProBalance 与 SmartTrim 排除 `python*.exe`、`torchrun*.exe`、OIT、OITLink 和当前解释器，覆盖 Python 虚拟环境与 PyTorch 子进程。SmartTrim 只在内存占用达 80% 时整理工作集大于 512 MiB 的其他进程，间隔至少 15 分钟，不清空待机列表或文件缓存。
+电脑基本设置的「外部软件」可手动选择本机已有文件夹，作为之后部署外部软件和下载模型的根目录；此位置只保存在本机，不随设备同步，修改位置不自动搬动已有软件。部署或模型下载期间暂不能更换位置。Process Lasso 的部署入口位于「额外功能」页；在部署本地模型时，建议使用该软件。它从 Bitsum 官方 HTTPS 地址下载，验证有效的 Bitsum 数字签名后静默安装到 `Process Lasso/`，以服务启动调度引擎。OIT 管理独立的 `oit-config/prolasso.ini` 和日志目录；重新部署时备份旧配置并重写保护规则，不继承旧的限核、节流或终止规则。ProBalance 与 SmartTrim 排除 `python*.exe`、`torchrun*.exe`、OIT、OITLink 和当前解释器，覆盖 Python 虚拟环境与 PyTorch 子进程。SmartTrim 只在内存占用达 80% 时整理工作集大于 512 MiB 的其他进程，间隔至少 15 分钟，不清空待机列表或文件缓存。
 
 「额外功能」独立设置页放在沟通之后，两端均把 AI 语音入口移到此页，语音配置和同步规则不变。电脑还提供 `piano_transcription_inference` 的钢琴转 MIDI 预训练权重下载：从 Zenodo 记录 4034264 下载 171966578 字节（约 164 MiB）的 `.pth`，校验官方 MD5 `22b961b77c1878239fec963362097045` 后保存到所选根目录的 `PianoTranscription/`。下载任务跨界面重建复用，失败保留原有完整模型，跨磁盘复制后在目标目录原子替换。本入口下载模型权重，不自动安装 Python / PyTorch 或启动转录。
 
