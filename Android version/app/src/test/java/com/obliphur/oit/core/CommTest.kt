@@ -1757,7 +1757,7 @@ class CommTest {
         c.tick(); assertFalse(c.busy); assertEquals(nc2, calls.size)          // 一条消息最多追问一次
     }
 
-    /** 提示缓存: 发给模型的历史的起点一格一格挪 (中间每次请求开头一模一样), 各家的用量字段都认得. */
+    /** 提示缓存: 超过条数上限后每 30 条滑动一次, 各家的用量字段都认得. */
     @Test
     fun cacheFriendlyHistory() {
         val td = Files.createTempDirectory("oit").toFile()
@@ -1961,7 +1961,7 @@ class CommTest {
         assertTrue("新对话: 人设改过的日程马上生效", "SCHEDULE 新对话: 空闲 2 段, 休息 1 段, 专注 1 段, 睡眠 0 段" in log())
     }
 
-    /** 窗口 = 最近 200 条; 单条太长只截中间 (发给模型的那份). */
+    /** 窗口最多 200 条, 超过上限后每次丢 30 条; 单条太长只截中间 (发给模型的那份). */
     @Test
     fun windowAndClip() {
         val td = Files.createTempDirectory("oit").toFile()
@@ -1969,6 +1969,13 @@ class CommTest {
         assertEquals(200, Comm.HISTORY_SENT)
         val many = (0 until 500).map { ChatMsg(it, if (it % 2 == 0) "me" else "ai", "m$it", "", "", "u$it", it.toLong()) }
         assertEquals(200, c.apiMessages(many).size)
+        assertEquals(171, c.apiMessages(many.take(201)).size)
+        assertEquals(200, c.apiMessages(many.take(230)).size)
+        assertEquals(171, c.apiMessages(many.take(231)).size)
+        assertEquals(setOf("m30"), (201..230).map { c.apiMessages(many.take(it)).first().second }.toSet())
+        assertEquals(setOf("m60"), (231..260).map { c.apiMessages(many.take(it)).first().second }.toSet())
+        val charLimited = (0 until 25).map { ChatMsg(it, if (it % 2 == 0) "me" else "ai", "x".repeat(5000), "", "", "c$it", it.toLong()) }
+        assertEquals(15, c.apiMessages(charLimited).size)
         val long = "HEAD" + "x".repeat(20000) + "TAIL"
         val one = c.apiMessages(listOf(ChatMsg(1, "me", long, "", "", "u", 1L)))[0].second
         assertTrue(one.startsWith("HEAD") && one.endsWith("TAIL") && "中间省略" in one)

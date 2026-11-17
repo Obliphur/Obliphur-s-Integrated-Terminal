@@ -12,8 +12,8 @@ from comm.comm_prompt import REFUSE, MSGS_TAG
 OIT_TAG = "[OIT_SYSTEM_MESSAGES]"      # OIT 直接发出的消息都带这个标记 (1.0.423)
 HISTORY_SENT = 200                    # 每次请求最多带多少条聊天记录 (本地存 600 条, 带的取最近 200 条): 原话全带上, 量由下面的字数兜底
 HISTORY_CHARS = 120000                # 带的聊天记录总共最多多少字 (超了从最老的开始不带)
-HISTORY_STEP = 10                     # 带的聊天记录的起点一次往后挪这么多条 (不是每条都挪): 请求的开头 (前面的历史) 才能在这么多条消息里保持不变,
-                                      # 服务商的提示缓存才命中 (分条发连着调用两次, 第二次的前面全是第一次发过的内容)
+HISTORY_STEP = 30                     # 超过条数上限后一次淘汰 30 条, 保持历史前缀稳定
+HISTORY_CHAR_STEP = 10                # 超字数上限时小步裁剪, 避免一次丢太多历史
 MAX_MSG_CHARS = 8000                  # 单条消息超过这么多字: 只截掉中间 (发给模型的那份, 本地记录不动), 免得一次粘贴 / 一个附件吃掉整个窗口
 COND_TAG = "condition"               # 人设里的判定交给 OIT: 对方输入 [condition], OIT 算出用户当前的进度和每个条件满足没有, 再调用一次 (1.0.392)
 WEEKDAY = "一二三四五六日"
@@ -129,7 +129,7 @@ def api_messages(msgs: list) -> list:
         drop = -(-(len(msgs) - HISTORY_SENT) // HISTORY_STEP) * HISTORY_STEP
         msgs = msgs[drop:]
     while len(msgs) > 1 and sum(len(str(m.get("api") or m.get("text") or "")) for m in msgs) > HISTORY_CHARS:
-        msgs = msgs[min(HISTORY_STEP, len(msgs) - 1):]
+        msgs = msgs[min(HISTORY_CHAR_STEP, len(msgs) - 1):]
     out = []
     for m in msgs:
         role = "assistant" if m.get("role") == "ai" else "user"

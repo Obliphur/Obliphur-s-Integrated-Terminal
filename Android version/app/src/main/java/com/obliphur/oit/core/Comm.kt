@@ -960,8 +960,10 @@ class Comm(
             }
             return cjk * charDelayCjk + (total - cjk) * charDelay
         }
-        /** 带的聊天记录的起点一次往后挪这么多条 (不是每条都挪): 请求的开头 (前面的历史) 才能在这么多条消息里保持不变, 服务商的提示缓存才命中. */
-        const val HISTORY_STEP = 10
+        /** 超过条数上限后一次淘汰这么多条, 保持提示缓存的历史前缀稳定. */
+        const val HISTORY_STEP = 30
+        /** 超字数上限时小步裁剪, 避免一次丢太多历史. */
+        const val HISTORY_CHAR_STEP = 10
         /** 非正在聊天的对象主动发消息: 两次请求之间至少隔这么多秒 (一个一个来, 不会同时好几个人找你). */
         const val BG_STAGGER = 120
         /** 每天在"空闲"状态下最多能打开沟通界面这么久 (秒; 休息时不限); 超过后空闲时不能用沟通, 休息了才能用. */
@@ -3921,9 +3923,9 @@ class Comm(
         val out = ArrayList<Pair<String, String>>()
         // 总字数太多时从最老的开始不带 (至少带最新的一条)
         var total = 0
-        // 起点按 HISTORY_STEP 一格一格挪: 中间的每一次请求, 开头都和上一次一模一样 (提示缓存才命中)
+        // 超过条数上限后按 HISTORY_STEP 批量淘汰, 让窗口起点保持稳定
         var kept: List<ChatMsg> = if (src.size > HISTORY_SENT) src.drop(-Math.floorDiv(-(src.size - HISTORY_SENT), HISTORY_STEP) * HISTORY_STEP) else src.toList()
-        while (kept.size > 1 && kept.sumOf { it.api.ifEmpty { it.text }.length } > HISTORY_CHARS) kept = kept.drop(minOf(HISTORY_STEP, kept.size - 1))
+        while (kept.size > 1 && kept.sumOf { it.api.ifEmpty { it.text }.length } > HISTORY_CHARS) kept = kept.drop(minOf(HISTORY_CHAR_STEP, kept.size - 1))
         for (m in kept) {
             val role = if (m.role == "ai") "assistant" else "user"
             val text = clipMessage(m.api.ifEmpty { m.text })

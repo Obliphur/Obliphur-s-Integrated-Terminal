@@ -1410,10 +1410,16 @@ def _selftest():
     big = [{"role": "me" if i % 2 == 0 else "ai", "text": f"m{i}"} for i in range(900)]
     firsts = {api_messages(big[:n])[0]["content"] for n in range(201, 280)}
     assert all(len(api_messages(big[:n])) <= HISTORY_SENT for n in range(1, 900))
-    assert HISTORY_SENT == 200 and len(api_messages(big)) == 200, "窗口 = 最近 200 条"
+    assert HISTORY_SENT == 200 and len(api_messages(big[:200])) == 200, "窗口最多 200 条"
+    assert len(api_messages(big[:201])) == 171 and len(api_messages(big[:230])) == 200
+    assert len(api_messages(big[:231])) == 171, "超过 200 条后每次淘汰最早的 30 条"
+    assert {api_messages(big[:n])[0]["content"] for n in range(201, 231)} == {"m30"}
+    assert {api_messages(big[:n])[0]["content"] for n in range(231, 261)} == {"m60"}
     assert len(firsts) <= (280 - 201) // HISTORY_STEP + 2, "开头 (最老的一条) 每 %d 条才变一次" % HISTORY_STEP
     a_old, a_new = api_messages(big[:495]), api_messages(big[:496])
     assert a_old[0]["content"] == a_new[0]["content"], "新增一条消息不改变请求的开头"
+    char_limited = [{"role": "me" if i % 2 == 0 else "ai", "text": "x" * 5000} for i in range(25)]
+    assert len(api_messages(char_limited)) == 15, "字数上限仍每次只裁剪 10 条"
     # 单条超长 (粘贴 / 附件): 只截中间, 头和尾都留着
     long_text = "HEAD" + "x" * 20000 + "TAIL"
     one = api_messages([{"role": "me", "text": long_text}])[0]["content"]
