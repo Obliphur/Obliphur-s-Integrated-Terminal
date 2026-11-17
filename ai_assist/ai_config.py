@@ -49,6 +49,7 @@ class AIConfig:
         self.order = list(PROVIDER_ORDER)
         self.names = {k: PROVIDERS[k]["label"] for k in PROVIDER_ORDER}
         self.assign = {}
+        self.task_assign = {}
         self.profiles = {k: default_profile(k) for k in PROVIDER_ORDER}
         self.needs_migration = False
         self.load()
@@ -119,6 +120,10 @@ class AIConfig:
             for persona, cid in assign.items():
                 if isinstance(persona, str) and cid in self.profiles:
                     self.assign[persona] = cid
+        tasks = data.get("tasks")
+        if isinstance(tasks, dict):
+            self.task_assign = {role: cid for role, cid in tasks.items()
+                                if role in ("vision", "ocr", "review") and cid in self.profiles}
         self._trim()
 
     def _trim(self):
@@ -131,11 +136,13 @@ class AIConfig:
             self.profiles.pop(victim, None)
             self.names.pop(victim, None)
             self.assign = {p: c for p, c in self.assign.items() if c != victim}
+            self.task_assign = {role: cid for role, cid in self.task_assign.items() if cid != victim}
         if not self.order:                        # 配置被删光了: 回到预设
             self.order = list(PROVIDER_ORDER)
             self.profiles = {k: default_profile(k) for k in PROVIDER_ORDER}
             self.names = {k: PROVIDERS[k]["label"] for k in PROVIDER_ORDER}
             self.assign = {}
+            self.task_assign = {}
             self.provider = self.order[0]
         if self.provider not in self.profiles:
             self.provider = self.order[0]
@@ -235,6 +242,7 @@ class AIConfig:
         self.profiles.pop(cid, None)
         self.names.pop(cid, None)
         self.assign = {p: c for p, c in self.assign.items() if c != cid}
+        self.task_assign = {role: value for role, value in self.task_assign.items() if value != cid}
         if self.provider == cid:
             self.provider = self.order[0]
         return True
@@ -258,7 +266,7 @@ class AIConfig:
                 profiles[k] = out
             with securefile.open(tmp, "w", encoding="utf-8") as f:
                 json.dump({"provider": self.provider, "order": list(self.order), "names": dict(self.names),
-                           "profiles": profiles, "assign": dict(self.assign)},
+                           "profiles": profiles, "assign": dict(self.assign), "tasks": dict(self.task_assign)},
                           f, ensure_ascii=False, indent=1)
             try:
                 os.chmod(tmp, 0o600)
@@ -280,6 +288,19 @@ class AIConfig:
         prof = self.profiles.get(cid) or default_profile()
         preset = prof.get("preset") if prof.get("preset") in PROVIDERS else "custom"
         return dict(prof, provider=preset, config_id=cid)
+
+    def task_profile(self, role: str, fallback: str = None) -> dict:
+        """返回视觉/OCR/评判专用配置；未指定时沿用聊天当前配置。"""
+        return self.profile(self.task_assign.get(role) or fallback or self.provider)
+
+    def assign_task(self, role: str, cid: str = "") -> bool:
+        if role not in ("vision", "ocr", "review") or (cid and cid not in self.profiles):
+            return False
+        if cid:
+            self.task_assign[role] = cid
+        else:
+            self.task_assign.pop(role, None)
+        return True
 
     def set_profile(self, cid: str, **fields):
         prof = self.profiles.get(cid)

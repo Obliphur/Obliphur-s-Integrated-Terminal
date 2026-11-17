@@ -168,9 +168,7 @@ class SchedMixin:
         self._interaction_end(raw_reply, burst, pid)
         st["interaction"] = self._state_of(pid)["interaction"]
         sysm = self._mk("sys", extra[0], extra[1])
-        from ai_assist.ai_tools import text_of, unpack
-        api_reply = text_of(reply) if unpack(reply) is not None else reply.strip()
-        m = self._mk("ai", text, api_reply if text != api_reply else "", persona=name)
+        m = self._mk("ai", text, persona=name)
         if wait_min and kind != "chase":
             m["wait"] = wait_min
         st["messages"].extend([sysm, m])

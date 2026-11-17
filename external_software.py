@@ -9,7 +9,6 @@ import shutil
 import subprocess
 import sys
 import threading
-import urllib.request
 import urllib.parse
 
 import config
@@ -25,13 +24,6 @@ def _official_url(url):
     return u.scheme == "https" and u.hostname in HOSTS and not u.username and u.port in (None, 443)
 
 
-class _Redirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        if not _official_url(newurl):
-            raise ValueError(tr("下载地址不是 Bitsum 官方 HTTPS 地址."))
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
-
-
 def installer_url():
     # 32 位 Python 也要按 Windows 的架构选择安装包。
     arch = os.environ.get("PROCESSOR_ARCHITEW6432") or os.environ.get("PROCESSOR_ARCHITECTURE") or platform.machine()
@@ -40,41 +32,14 @@ def installer_url():
 
 
 def download_installer(dest, progress=lambda n: None):
-    """使用 OIT 的上游代理探测，不经过自己的过滤代理。"""
-    from updater import upstream_proxy
-    up = upstream_proxy()
-    routes = [None] + ([up] if up else [])
-    for index, proxy in enumerate(routes):
-        try:
-            proxies = {p: f"http://{proxy[0]}:{proxy[1]}" for p in ("http", "https")} if proxy else {}
-            opener = urllib.request.build_opener(urllib.request.ProxyHandler(proxies), _Redirect())
-            req = urllib.request.Request(installer_url(), headers={"User-Agent": f"OIT/{config.APP_VERSION}"})
-            with opener.open(req, timeout=60) as r, open(dest, "wb") as f:
-                if not _official_url(r.geturl()):
-                    raise ValueError(tr("下载地址不是 Bitsum 官方 HTTPS 地址."))
-                total = int(r.headers.get("Content-Length") or 0)
-                if total > config.EXTERNAL_DOWNLOAD_MAX:
-                    raise ValueError(tr("安装包过大或下载不完整."))
-                done = 0
-                while True:
-                    chunk = r.read(65536)
-                    if not chunk:
-                        break
-                    done += len(chunk)
-                    if done > config.EXTERNAL_DOWNLOAD_MAX:
-                        raise ValueError(tr("安装包过大或下载不完整."))
-                    f.write(chunk)
-                    if total:
-                        progress(min(100, done * 100 // total))
-            if done < 100000 or (total and done != total):
-                raise ValueError(tr("安装包过大或下载不完整."))
-            with open(dest, "rb") as f:
-                if f.read(2) != b"MZ":
-                    raise ValueError(tr("下载内容不是 Windows 安装程序."))
-            return
-        except (OSError, ValueError):
-            if index + 1 == len(routes):
-                raise
+    """通过统一下载器下载官方安装程序，再由调用方验 Authenticode。"""
+    import updater
+    updater.download_file({"url": installer_url(), "accept": "application/octet-stream"}, dest,
+                          allowed_hosts=HOSTS, max_download=config.EXTERNAL_DOWNLOAD_MAX,
+                          progress=lambda done: progress(min(99, done * 100 // config.EXTERNAL_DOWNLOAD_MAX)))
+    with open(dest, "rb") as f:
+        if f.read(2) != b"MZ":
+            raise ValueError(tr("下载内容不是 Windows 安装程序."))
 
 
 def signature_ok(path):

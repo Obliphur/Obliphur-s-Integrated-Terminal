@@ -11,6 +11,7 @@ import sys
 import threading
 import uuid
 import zipfile
+from contextlib import nullcontext
 
 import config
 import piano_model
@@ -55,10 +56,20 @@ def run_process(args, *, cwd=None, timeout=None, env=None, accepted=(0,)):
     log = tempstore.mkdtemp("misc", prefix="music-log-")
     try:
         path = os.path.join(log, "process.log")
+        executable = str(args[0]) if args else ""
+        if os.path.isabs(executable):
+            try:
+                import bypassguard
+                exemption = bypassguard.allow_path_prefix(os.path.dirname(os.path.abspath(executable)))
+            except Exception:
+                exemption = nullcontext()
+        else:
+            exemption = nullcontext()
         with open(path, "wb") as out:
-            result = subprocess.run(args, cwd=cwd, env=env, stdout=out, stderr=subprocess.STDOUT,
-                                    timeout=timeout or config.MUSIC_PROCESS_TIMEOUT,
-                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            with exemption:
+                result = subprocess.run(args, cwd=cwd, env=env, stdout=out, stderr=subprocess.STDOUT,
+                                        timeout=timeout or config.MUSIC_PROCESS_TIMEOUT,
+                                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         if result.returncode not in accepted:
             with open(path, "rb") as out:
                 out.seek(max(0, os.path.getsize(path) - config.MUSIC_LOG_TAIL))
@@ -237,6 +248,44 @@ class MusicTools:
         if Path(source).suffix.lower() not in TOOLS["piano"].inputs:
             raise MusicError(tr("钢琴转录需要 WAV、MP3、FLAC 或 OGG 音频."))
         return self.convert(source, destination)
+
+    def compare_midi(self, reference, performance):
+        """用已安装的 Partitura 环境比较两份 MIDI，返回供评判模型消费的紧凑数据。"""
+        return self._execute("running", lambda: self._compare_midi(reference, performance))
+
+    def _compare_midi(self, reference, performance):
+        ref, perf = Path(reference).resolve(), Path(performance).resolve()
+        if not ref.is_file() or not perf.is_file():
+            raise MusicError(tr("请选择有效的参考 MIDI 和演奏 MIDI."))
+        exe = self._require("partitura")
+        work = Path(tempstore.mkdtemp("misc", prefix="midi-compare-"))
+        try:
+            output = work / "comparison.json"
+            worker = Path(__file__).with_name("music_compare_worker.py")
+            run_process([exe, "-X", "utf8", str(worker), "--reference", str(ref),
+                         "--performance", str(perf), "--output", str(output)], cwd=str(work))
+            result = json.loads(output.read_text(encoding="utf-8"))
+            if not isinstance(result, dict) or result.get("schema") != 1:
+                raise MusicError(tr("MIDI 分析没有生成有效结果."))
+            return result
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+
+    def audio_duration(self, source):
+        """在转录环境读取整段音频长度，保留前后静音时长。"""
+        return self._execute("running", lambda: self._audio_duration(source))
+
+    def _audio_duration(self, source):
+        exe = self._require("piano")
+        work = Path(tempstore.mkdtemp("misc", prefix="music-duration-"))
+        try:
+            output = work / "duration.json"
+            worker = Path(__file__).with_name("music_worker.py")
+            run_process([exe, "-X", "utf8", str(worker), "--audio", str(Path(source).resolve()),
+                         "--duration-output", str(output)], cwd=str(work))
+            return float(json.loads(output.read_text(encoding="utf-8"))["duration_seconds"])
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
 
     def _require(self, tool):
         self.current = tool

@@ -189,8 +189,13 @@ def _build_body(profile: dict, system: str, messages: list, max_tokens: int, tem
             mark = {"type": "ephemeral"}
             sys_field = [{"type": "text", "text": system, "cache_control": mark}]
             if msgs:
-                msgs[-1] = {"role": msgs[-1]["role"],
-                            "content": [{"type": "text", "text": str(msgs[-1]["content"]), "cache_control": mark}]}
+                content = msgs[-1].get("content")
+                if isinstance(content, list):
+                    content = [dict(part, cache_control=mark) if part.get("type") == "text" else part
+                               for part in content]
+                else:
+                    content = [{"type": "text", "text": str(content), "cache_control": mark}]
+                msgs[-1] = {"role": msgs[-1]["role"], "content": content}
         body = {"model": profile["model"], "max_tokens": max_tokens, "system": sys_field, "messages": msgs}
         if think_on:                                        # 开思考 (OIT 的规则判断需要时才开, comm.think_reason)
             if is_deepseek(profile):

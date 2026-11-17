@@ -104,7 +104,8 @@ def apply_body(body, protocol, messages, search=False):
                 converted.append({"role": "tool", "tool_call_id": raw["tool_calls"][0]["id"], "content": content})
             pending = None
         elif protocol == "gemini":
-            converted.append({"role": "model" if m["role"] == "assistant" else "user", "parts": [{"text": content}]})
+            parts = content if isinstance(content, list) else [{"text": content}]
+            converted.append({"role": "model" if m["role"] == "assistant" else "user", "parts": parts})
         else:
             converted.append(dict(m, content=content))
     if pending:

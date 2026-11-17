@@ -14,6 +14,7 @@ import config
 import external_software as E
 import music_install as I
 import music_tools as M
+import bypassguard
 import tempstore
 
 
@@ -108,6 +109,14 @@ with patch.object(type(music.model), "ready", new=property(lambda _: True)), pat
         assert len(calls) == 1 and "--checkpoint" in calls[0][0]
         assert any(str(arg).endswith("music_worker.py") for arg in calls[0][0])
     assert not external.location_busy
+
+    comparison = {"schema": 1, "summary": {"matched": 3, "performance_duration_ms": 1250}}
+    def fake_compare(args, **kwargs):
+        Path(args[args.index("--output") + 1]).write_text(json.dumps(comparison), encoding="utf-8")
+        assert str(args[args.index("--reference") + 1]).endswith("导出 MIDI.mid")
+        assert str(args[args.index("--performance") + 1]).endswith("导出 MIDI.mid")
+    with patch.object(M, "run_process", side_effect=fake_compare):
+        assert music.compare_midi(dest, dest) == comparison
 
     # 报错或生成无效结果时不能破坏原文件，并应清除临时输出。
     for effect in (RuntimeError("conversion failed"), lambda args, **kw: Path(args[args.index("-o") + 1]).write_bytes(b"bad")):
@@ -237,7 +246,7 @@ def partitura_process(args, **kwargs):
     partitura_calls.append((args, kwargs))
     if "-c" in args:
         assert "partitura.load_performance_midi" in args[args.index("-c") + 1]
-        assert "note_array" in args[args.index("-c") + 1] and "'pitch'" in args[args.index("-c") + 1]
+        assert "note_array()" in args[args.index("-c") + 1] and "'pitch'" in args[args.index("-c") + 1]
         assert Path(args[-1]).is_file() and Path(args[-1]).suffix == ".mid"
 with patch.object(I.updater, "download_file", side_effect=partitura_file), \
         patch.object(I.updater, "upstream_proxy", return_value=None), \
@@ -264,5 +273,12 @@ with patch.object(M.subprocess, "run", return_value=subprocess.CompletedProcess(
     assert M.run_process(["msiexec"], accepted=(0, 3010)) == 3010
 with patch.object(M.subprocess, "run", side_effect=subprocess.TimeoutExpired("tool", 1)):
     fails(lambda: M.run_process(["tool"]), subprocess.TimeoutExpired)
+
+runtime_bin = str(base / "PianoTranscription" / "runtime")
+runtime_prefix = os.path.normcase(os.path.abspath(runtime_bin)).rstrip("\\") + "\\"
+assert runtime_prefix not in bypassguard._exempt_prefixes()
+with bypassguard.allow_path_prefix(runtime_bin):
+    assert runtime_prefix in bypassguard._exempt_prefixes()
+assert runtime_prefix not in bypassguard._exempt_prefixes()
 
 print("music tools check OK")

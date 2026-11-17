@@ -1651,7 +1651,7 @@ def _selftest():
     cu.send("嗨")
     wait(cu)
     last_ai = [m for m in cu.messages if m["role"] == "ai"][-1]
-    assert last_ai["text"] == "今天过得怎么样?" and last_ai["wait"] == 10 and "[waiting for reply]" in last_ai["api"]
+    assert last_ai["text"] == "今天过得怎么样?" and last_ai["wait"] == 10 and not last_ai.get("api")
     assert cu.visible()[-1]["text"] == "今天过得怎么样?" and "waiting" not in cu.visible()[-1]["text"]
     assert cu.sync_doc()[f"m:{cu.pid}:{last_ai['uid']}"]["wait"] == 10
     n_c = len(calls)
@@ -3885,7 +3885,7 @@ def _selftest():
     wait(ch)
     last_ai = [m for m in ch.messages if m["role"] == "ai"][-1]
     assert last_ai["text"] == "他说,好.然后走了..." and ch.visible()[-1]["text"] == "他说,好.然后走了..."
-    assert "，" in last_ai.get("api", "") and "……" in last_ai.get("api", ""), "给模型的那份保留原文"
+    assert not last_ai.get("api"), "AI 控制回复不能存进聊天记录"
     ch.flush()
 
     # 旧日程改名与条件归并不清聊天；自定义内容原样保留。

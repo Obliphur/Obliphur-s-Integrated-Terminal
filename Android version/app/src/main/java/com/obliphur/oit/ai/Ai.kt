@@ -934,6 +934,7 @@ class AiConfig(private val file: File) {
     val order = ArrayList<String>()
     val names = HashMap<String, String>()
     val assign = HashMap<String, String>()
+    val taskAssign = HashMap<String, String>()
 
     init {
         val raw = Store.readObj(file)
@@ -1004,6 +1005,14 @@ class AiConfig(private val file: File) {
                 if (id in profiles) assign[p] = id
             }
         }
+        raw.optJSONObject("tasks")?.let { tasks ->
+            val keys = tasks.keys()
+            while (keys.hasNext()) {
+                val role = keys.next()
+                val id = tasks.optString(role, "")
+                if (role in setOf("vision", "ocr", "review") && id in profiles) taskAssign[role] = id
+            }
+        }
     }
 
     private fun trim() {
@@ -1013,6 +1022,7 @@ class AiConfig(private val file: File) {
             profiles.remove(victim)
             names.remove(victim)
             assign.entries.removeAll { it.value == victim }
+            taskAssign.entries.removeAll { it.value == victim }
         }
         if (order.isEmpty()) defaults()
         if (provider !in profiles) provider = order.firstOrNull() ?: "claude"
@@ -1032,6 +1042,13 @@ class AiConfig(private val file: File) {
     fun assignConfig(persona: String, id: String) {
         if (persona.isEmpty() || id !in profiles) return
         if (id == provider) assign.remove(persona) else assign[persona] = id
+    }
+
+    fun taskProfile(role: String, fallback: String = provider): Profile = profile(taskAssign[role] ?: fallback)
+
+    fun assignTask(role: String, id: String) {
+        if (role !in setOf("vision", "ocr", "review") || id.isNotEmpty() && id !in profiles) return
+        if (id.isEmpty()) taskAssign.remove(role) else taskAssign[role] = id
     }
 
     fun setActive(id: String): Boolean {
@@ -1075,6 +1092,7 @@ class AiConfig(private val file: File) {
         profiles.remove(id)
         names.remove(id)
         assign.entries.removeAll { it.value == id }
+        taskAssign.entries.removeAll { it.value == id }
         if (provider == id) provider = order.first()
         return true
     }
@@ -1109,6 +1127,6 @@ class AiConfig(private val file: File) {
         order.forEach { ord.put(it) }
         return Store.write(file, JSONObject().put("provider", provider).put("order", ord)
             .put("names", JSONObject(names as Map<*, *>)).put("profiles", ps)
-            .put("assign", JSONObject(assign as Map<*, *>)))
+            .put("assign", JSONObject(assign as Map<*, *>)).put("tasks", JSONObject(taskAssign as Map<*, *>)))
     }
 }

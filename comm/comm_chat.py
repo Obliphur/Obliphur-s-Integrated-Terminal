@@ -115,9 +115,10 @@ class ChatMixin:
         away = self._away_kind()                           # 对方此刻 (按日程, 合约进行中 / 合约后的同步休息按合约) 还在专注 / 睡眠吗
 
         def due_of(m) -> int:
-            d = int(m.get("due") or 0)
+            floor = int(m.get("reply_after") or 0)
+            d = max(int(m.get("due") or 0), floor)
             if m.get("late") and not away:                 # 对方专注时发的, 现在已经不在专注了 (日程到了 / 合约让对方休息了): 不用再等原来排的时刻
-                return min(d, now)
+                return max(min(d, now), floor)
             return d
         held = []
         for m in self.messages:
@@ -204,15 +205,15 @@ class ChatMixin:
         self._changed()
         self._push()
 
-    def send(self, text: str) -> str:
+    def send(self, text: str, image: bytes = None, reply_delay_seconds: float = 0) -> str:
         """用户发一条. 返回 "" = 已发出, 否则是不能发的原因."""
         text = str(text or "").strip()
-        if not text and not self.joint_draft:
+        if not text and not image and not self.joint_draft:
             return "empty"
         if text.lower() == "/clear":
             self.clear()
             return ""
-        if self.joint_draft:                            # 选好的联合行动: 和这条消息一起发
+        if self.joint_draft and reply_delay_seconds <= 0 and not image:  # 评判结果和图片作为普通聊天消息发送
             why = self._send_package(self.joint_draft, text)
             if not why:
                 self.joint_draft = {}
@@ -221,7 +222,12 @@ class ChatMixin:
         if why:
             return why
         now = self.now()
-        message = self._add("me", text, self._compose(now, text))
+        shown = text or "[图片]"
+        message = self._add("me", shown, self._compose(now, shown))
+        if image:
+            self._request_image = image
+        if reply_delay_seconds > 0:
+            message["reply_after"] = self._ms() + int(reply_delay_seconds * 1000)
         self._interaction_sent(text, message)
         self._sent()
         self._ask_user()

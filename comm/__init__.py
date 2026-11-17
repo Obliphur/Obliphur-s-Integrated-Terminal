@@ -91,6 +91,8 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
         self.personas = personas
         self.now = now
         self.chat_fn = chat_fn or ai_assist.chat_messages
+        self._request_image = None
+        self._active_reply_after = 0
         self.cfg_path = os.path.join(data_dir, "comm_config.json")
         self.legacy_chat_path = os.path.join(data_dir, "comm_chat.json")      # 以前所有对象共用的一份
         self.ai = ai_assist.shared_config(os.path.join(data_dir, "ai_config.json"),
@@ -381,7 +383,7 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
 
     def ocr_image(self, path: str) -> str:
         """识别字体 (沟通页 🖼): 让模型把这张图片上的文字读出来, 返回文字 (没有文字 = ""). 阻塞, 要放在后台线程里调; 失败抛 AIError.
-        图片只发给模型一次, 不存下来, 也不会进聊天记录 (OIT 不能发送图片)."""
+        OCR 图片只用于单次独立识别, 不存下来, 也不会进聊天记录; 聊天图片通过单独的发送入口附在用户消息中. """
         try:
             if os.path.getsize(path) > ai_assist.OCR_MAX_BYTES:
                 raise ai_assist.AIError("format", "图片太大了 (最大 4.5 MB)")
@@ -392,7 +394,8 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
         started = time.monotonic()
         self.log(f"OCR start bytes={len(data)}")
         try:
-            text = ai_assist.ocr_image(self.profile(), data, timeout=CHAT_TIMEOUT, chat=self.chat_fn)
+            profile = self.ai.task_profile("ocr", fallback=self.ai.config_for(self.persona_name()))
+            text = ai_assist.ocr_image(profile, data, timeout=CHAT_TIMEOUT, chat=self.chat_fn)
         except ai_assist.AIError as e:
             self.log(f"OCR FAIL {time.monotonic() - started:.1f}s {e.kind}: {e.message}")
             raise
@@ -531,6 +534,8 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
                     e["late"] = True
                 if m.get("due"):
                     e["due"] = int(m["due"])
+                if m.get("reply_after"):
+                    e["reply_after"] = int(m["reply_after"])
                 doc[f"m:{pid}:{m['uid']}"] = e
             if st["pro_key"]:
                 doc[f"pro:{pid}"] = st["pro_key"]
@@ -635,6 +640,8 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
                     m["late"] = True
                 if isinstance(val.get("due"), (int, float)):
                     m["due"] = int(val["due"])
+                if isinstance(val.get("reply_after"), (int, float)):
+                    m["reply_after"] = int(val["reply_after"])
                 st["messages"].append(m)
                 fresh.append((pid, m))
                 known.add(uid)
@@ -1356,8 +1363,13 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
                 special, until, shame = getattr(self, "_interaction_turn", (False, 0, False))
                 self._interaction_reply(special, burst, until, shame)
             self._interaction_end(tension_reply, getattr(self, "_interaction_burst", 0))
-            api_reply = text_of(reply) if unpack(reply) is not None else reply.strip()
-            m = self._add("ai", text, api_reply if text != api_reply else "")
+            # AI 的 API 原文含控制标记；只存用户可见文本，避免详情/同步接口泄露调用痕迹。
+            m = self._add("ai", text)
+            if self._active_reply_after > self._ms():
+                m["reply_after"] = self._active_reply_after
+                m["due"] = max(int(m.get("due") or 0), self._active_reply_after)
+                m["hold"] = True
+            self._active_reply_after = 0
             if op:
                 self._op_apply(op, m)
             if share_invite:

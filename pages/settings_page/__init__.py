@@ -168,6 +168,8 @@ class SettingsPage(FormMixin, CardsMixin, CommSettingsMixin, RecordSettingsMixin
                 self._build_rules_card(self.areas[key].inner)
             if key == "comm":
                 self._build_comm_page(self.areas[key].inner)
+            if key == "models":
+                self._build_models_page(self.areas[key].inner)
             if key == "extra":
                 self._build_extra_page(self.areas[key].inner)
             if key == "alarm" and self.alarm is not None:
@@ -227,8 +229,10 @@ class SettingsPage(FormMixin, CardsMixin, CommSettingsMixin, RecordSettingsMixin
             self.refresh_records()
         if key == "alarm" and self.alarm_ui is not None:
             self.alarm_ui.refresh()
-        if key in ("comm", "alarm", "extra"):
+        if key in ("comm", "models", "alarm", "extra"):
             if key == "comm":
+                self._refresh_comm()
+            if key == "models":
                 self._refresh_comm()
             hide_pack(self.foot)                 # 沟通 / 额外功能 / 闹钟即时保存，无需提交本页。
         else:

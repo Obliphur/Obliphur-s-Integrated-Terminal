@@ -254,7 +254,10 @@ class FlowMixin:
         self._follow_at = 0                                # 有新请求了: 排着的第二次调用取消 (用户又说了 / 主动发 / 重试)
         self._follow_msg = ""
         self._req_ts = max([int(m.get("ts") or 0) for m in self.messages if m.get("role") == "me"] or [0])
+        self._active_reply_after = max((int(m.get("reply_after") or 0) for m in self.messages
+                                        if m.get("role") == "me" and int(m.get("ts") or 0) <= self._req_ts), default=0)
         profile = self.profile()
+        image_request = bool(self._request_image)
         system = persona_system(self.personas, self.persona_name(), self.split_on())
         dynamic = self.memory_block() + self.joint_system_note()
         who = str(self.cfg.get("user_profile") or "").strip()[:MAX_PROFILE]
@@ -279,6 +282,12 @@ class FlowMixin:
             msgs[-1]["content"] += "\n\n" + note
         else:
             msgs.append({"role": "user", "content": note})
+        image = self._request_image
+        self._request_image = None
+        if image and msgs and msgs[-1]["role"] == "user":
+            mime = ai_assist.image_mime(image)
+            if mime:
+                msgs[-1]["content"] = ai_assist.image_content(profile, image, mime, str(msgs[-1]["content"]))
         epoch = self._epoch
         self.busy = True
         self.busy_since = time.monotonic()
@@ -299,9 +308,36 @@ class FlowMixin:
             think_kw["web"] = True
             self.log(f"NET {kind} 带联网搜索 (还剩 {max(0, int(self._net().get('until') or 0) - self._ms()) // 1000} 秒)")
 
+        vision_analysis = {"done": False}
+
         def ask(m):
-            return self.chat_fn(profile, system, m, max_tokens=CHAT_TOKENS, temperature=CHAT_TEMPERATURE,
-                                timeout=CHAT_TIMEOUT, cache=True, on_usage=used, tools=True, **think_kw)
+            try:
+                return self.chat_fn(profile, system, m, max_tokens=CHAT_TOKENS, temperature=CHAT_TEMPERATURE,
+                                    timeout=CHAT_TIMEOUT, cache=True, on_usage=used, tools=True, **think_kw)
+            except ai_assist.AIError as error:
+                assigned = self.ai.task_assign.get("vision")
+                text = error.message.lower()
+                unsupported = error.kind == "http" and (
+                    any(word in text for word in ("image", "vision", "图片", "图像", "multimodal", "多模态"))
+                    or "400" in text)
+                if not image_request or not unsupported or not assigned or assigned == profile.get("config_id"):
+                    raise
+                fallback = self.ai.profile(assigned)
+                self.log("REQ image fallback to configured vision model")
+                if not vision_analysis["done"]:
+                    visual = ai_assist.chat_messages(
+                        fallback, "你是独立的图片分析器。只描述图片中可确认的内容，简短回答；不要推断用户身份或聊天背景。",
+                        [{"role": "user", "content": ai_assist.image_content(
+                            fallback, image, ai_assist.image_mime(image), "请描述这张图片中与用户消息相关的信息。")}],
+                        max_tokens=500, temperature=0.0, timeout=CHAT_TIMEOUT, cache=False)
+                    vision_analysis["done"] = True
+                    for message in m:
+                        content = message.get("content")
+                        if message.get("role") == "user" and isinstance(content, list):
+                            text = "\n".join(str(part.get("text") or "") for part in content if isinstance(part, dict))
+                            message["content"] = text + "\n\n[独立图片分析] " + str(visual).strip()
+                return self.chat_fn(profile, system, m, max_tokens=CHAT_TOKENS, temperature=CHAT_TEMPERATURE,
+                                    timeout=CHAT_TIMEOUT, cache=True, on_usage=used, tools=True, **think_kw)
 
         def work():
             try:

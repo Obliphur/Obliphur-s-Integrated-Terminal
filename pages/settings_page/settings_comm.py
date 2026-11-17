@@ -16,6 +16,15 @@ from ..widgets import (cfg, set_var, focus_name, show_pack, hide_pack)
 
 
 class CommSettingsMixin:
+    def _build_models_page(self, body):
+        if self.comm is None:
+            return
+        fr, head = self._card(body, "AI 模型配置")
+        self._track(ttk.Button(head, text=tr("设置"), command=self._comm_api), "设置").pack(side="right")
+        self.lbl_comm_api = tk.Label(fr, text="", bg=COLORS["bg_card"], fg=COLORS["text"],
+                                     font=config.font("small"), anchor="w")
+        self.lbl_comm_api.pack(fill="x", padx=12, pady=(2, 10))
+
     def _build_comm_page(self, body):
         c = self.comm
         if c is None:
@@ -23,11 +32,6 @@ class CommSettingsMixin:
         card = COLORS["bg_card"]
         small = config.font("small")
 
-        fr, head = self._card(body, "🔑  API")
-        self._track(ttk.Button(head, text=tr("设置"), command=self._comm_api),
-                    "设置").pack(side="right")
-        self.lbl_comm_api = tk.Label(fr, text="", bg=card, fg=COLORS["text"], font=small, anchor="w")
-        self.lbl_comm_api.pack(fill="x", padx=12, pady=(2, 10))
         fr, head = self._card(body, "🎭  人设")
         self._track(ttk.Button(head, text=tr("打开文件夹"), command=self._comm_open_folder),
                     "打开文件夹").pack(side="right")

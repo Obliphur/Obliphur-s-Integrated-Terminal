@@ -32,11 +32,96 @@ def available() -> bool:
     return sys.platform == "win32"
 
 
+def clipboard_paths() -> list:
+    """剪贴板复制的文件列表 (CF_HDROP)."""
+    if not available():
+        return []
+    user = ctypes.WinDLL("user32", use_last_error=True)
+    shell = ctypes.WinDLL("shell32", use_last_error=True)
+    user.OpenClipboard.argtypes, user.OpenClipboard.restype = [wintypes.HWND], wintypes.BOOL
+    user.GetClipboardData.argtypes, user.GetClipboardData.restype = [wintypes.UINT], wintypes.HANDLE
+    user.CloseClipboard.argtypes, user.CloseClipboard.restype = [], wintypes.BOOL
+    shell.DragQueryFileW.argtypes = [wintypes.HANDLE, wintypes.UINT, wintypes.LPWSTR, wintypes.UINT]
+    shell.DragQueryFileW.restype = wintypes.UINT
+    if not user.OpenClipboard(None):
+        return []
+    try:
+        drop = user.GetClipboardData(15)
+        if not drop:
+            return []
+        count = shell.DragQueryFileW(drop, 0xFFFFFFFF, None, 0)
+        out = []
+        for index in range(count):
+            size = shell.DragQueryFileW(drop, index, None, 0) + 1
+            path = ctypes.create_unicode_buffer(size)
+            shell.DragQueryFileW(drop, index, path, size)
+            out.append(path.value)
+        return out
+    finally:
+        user.CloseClipboard()
+
+
+def clipboard_image(out: str) -> str:
+    """把 Windows 剪贴板 DIB / DIBV5 位图经 GDI+ 保存为 PNG."""
+    if not available():
+        return ""
+    user = ctypes.WinDLL("user32", use_last_error=True)
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    user.OpenClipboard.argtypes, user.OpenClipboard.restype = [wintypes.HWND], wintypes.BOOL
+    user.GetClipboardData.argtypes, user.GetClipboardData.restype = [wintypes.UINT], wintypes.HANDLE
+    user.CloseClipboard.argtypes, user.CloseClipboard.restype = [], wintypes.BOOL
+    kernel.GlobalLock.argtypes, kernel.GlobalLock.restype = [wintypes.HGLOBAL], c_void_p
+    kernel.GlobalUnlock.argtypes, kernel.GlobalUnlock.restype = [wintypes.HGLOBAL], wintypes.BOOL
+    kernel.GlobalSize.argtypes, kernel.GlobalSize.restype = [wintypes.HGLOBAL], c_ulong
+    if not user.OpenClipboard(None):
+        return ""
+    try:
+        g = _gdi()
+        for fmt in (17, 8):
+            handle = user.GetClipboardData(fmt)
+            if not handle:
+                continue
+            address = kernel.GlobalLock(handle)
+            if not address:
+                continue
+            image = c_void_p()
+            try:
+                size = int(kernel.GlobalSize(handle))
+                header = int(ctypes.c_uint.from_address(address).value)
+                if header < 40 or header > size:
+                    continue
+                depth = int(ctypes.c_ushort.from_address(address + 14).value)
+                compression = int(ctypes.c_uint.from_address(address + 16).value)
+                colors = int(ctypes.c_uint.from_address(address + 32).value) or (1 << depth if depth <= 8 else 0)
+                offset = header + (12 if compression == 3 and header == 40 else 16 if compression == 6 and header == 40 else 0) + colors * 4
+                if offset >= size:
+                    continue
+                status = g.GdipCreateBitmapFromGdiDib(c_void_p(address), c_void_p(address + offset), byref(image))
+                if status != 0:
+                    continue
+                clsid = _Guid(_PNG_CLSID[0], _PNG_CLSID[1], _PNG_CLSID[2], (ctypes.c_ubyte * 8)(*_PNG_CLSID[3]))
+                _ok(g.GdipSaveImageToFile(image, ctypes.c_wchar_p(os.path.abspath(out)), byref(clsid), None), "clipboard save")
+                return out
+            finally:
+                if image:
+                    g.GdipDisposeImage(image)
+                kernel.GlobalUnlock(handle)
+        return ""
+    finally:
+        user.CloseClipboard()
+
+
 def _gdi():
     if _state["gdi"] is None:
         if not available():
             raise OSError("GDI+ only on Windows")
         g = ctypes.WinDLL("gdiplus")
+        g.GdipCreateBitmapFromGdiDib.argtypes = [c_void_p, c_void_p, ctypes.POINTER(c_void_p)]
+        g.GdipCreateBitmapFromGdiDib.restype = c_ulong
+        g.GdipSaveImageToFile.argtypes = [c_void_p, wintypes.LPCWSTR, ctypes.POINTER(_Guid), c_void_p]
+        g.GdipSaveImageToFile.restype = c_ulong
+        g.GdipDisposeImage.argtypes = [c_void_p]
+        g.GdipDisposeImage.restype = c_ulong
         token = c_ulong()
         inp = _StartupInput(1, None, False, False)
         if g.GdiplusStartup(byref(token), byref(inp), None) != 0:

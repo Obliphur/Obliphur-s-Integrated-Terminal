@@ -8,6 +8,8 @@
 
 沟通的 AI 语音配置、按人设分配、启用与自动播放开关、播放间隔通过 `comm.voice` 按修改时间同步；API Key 经已有加密同步通道传送，到对方用当地 DPAPI / Keystore 重新加密保存。语音音频通过已有加密文件通道自动补传，已听状态随每轮同步清单合并，任一设备听过即算已听（24.1）。
 
+AI 聊天服务商配置及视觉、OCR、评判任务模型分配随现有设置同步；API Key 到对方设备后用当地 DPAPI / Keystore 重新加密保存。任务模型未指定时跟随聊天配置。
+
 情景模式、情绪张力与情绪效价按对象通过 `comm.interaction:<pid>` 同步，包含模型决定结束的爆发状态 `burst_until`（非零表示持续，不按旧截止时刻结束）、效价值 `valence` 及衰减游标 `valence_decay_at`、效价条件冷却 `valence_cooldowns` 与连锁截止时刻 `valence_chain_until`、爆发后的增长减半截止时间 `gain_until`、最近两个爆发触发日期 `burst_days` 和早间必谈触发日期 `morning_day`、爆发后睡眠必谈的待触发边界 `burst_sleep_after`、待模型判断的消息 UID 与发送时段 `pending`、按条件保存的张力增长冷却 `gain_cooldowns`、条件连锁一小时倍率截止时刻 `gain_chain_until`，以及高张力特殊空闲的结束时刻 `special_until`、用户发言标记 `special_spoke`、特殊空闲入场段起点 `last_special_begin` / 入场张力 `special_entry_tension` / 前七分钟正向条件次数 `special_7m_gain_count` / 单段引诱去重 `special_7m_lured_seg`、张力衰减游标 `decay_at` 与豁免截止时刻 `decay_hold_until`（旧 `skip_decay` 迁移为 24 小时豁免）；记录携带聊天清空时刻，按修改时间采用较新内容；清空后拒收旧会话状态（24.20）。
 
 同一个局域网 (同一个 Wi-Fi / 路由器) 里的 OIT 可以互相绑定, Windows 和 Android 都可以. 不经过任何服务器.

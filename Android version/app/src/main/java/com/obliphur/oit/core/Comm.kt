@@ -22,6 +22,7 @@ class ChatMsg(val id: Int, val role: String, val text: String, var at: String, v
     var shareInvite = false
     /** 打字延时 (Comm.charDelay): 对方的消息每个字符晚这么多秒才显示; 到这个时刻 (毫秒) 前一直 hold. 0 = 没有. */
     var due = 0L
+    var replyAfter = 0L
     /** 对方在专注期间发的: 推迟到下一个空闲 / 休息开始 (due) 才显示, 到点时把 at / ts 改成那个时刻 (MECHANICS 24.3.9). */
     var late = false
     /** 规则 IX: 对方在这条消息末尾写了 [waiting for reply]:[N], 等用户回复的分钟数 (0 = 没有); chased: 已经追问过了; shown: 藏着的消息显示出来的时刻. */
@@ -1282,11 +1283,13 @@ class Comm(
     private var memNext = 0L
     private var again = false
     private var reqTs = 0L                             // 最近一次请求发出时, 最后一条用户消息的时间 (ts): 回复到了之后看用户有没有又发了新的
+    private var activeReplyAfter = 0L
     private var catchup = false                        // 补问被拒绝了 (回复已经显示, 后发的消息还没人回): 重试时即使最后一条是对方的也要问
     internal var followDelayMs: Long? = null          // 正式运行读设置；测试可覆盖
     private var followAt = 0L                          // 安排在什么时候 (毫秒, 0 = 没有)
     private var followEpoch = 0                        // 安排的时候的 epoch: 期间清空过就不发
     private var followMsg = 0                          // 第一条回复的消息 id (0 = 没有): 等它显示出来 (打字延时走完 / 被藏起来也算) 才调用第二次
+    private var pendingImage: Ai.ImagePart? = null
     private var nextId = 1
     /** clear() 加一: 清空之前发出的请求, 回复到了也丢掉. */
     private var epoch = 0
@@ -1358,7 +1361,7 @@ class Comm(
             val ts = m.optLong("ts", 0L).takeIf { it != 0L }
                 ?: parseIso(at)?.atZone(java.time.ZoneId.systemDefault())?.toInstant()?.toEpochMilli() ?: 0L     // 旧版本的记录没有 uid / ts
             st.messages.add(ChatMsg(id, role, m.optString("text"), at, m.optString("api"), m.optString("uid").ifEmpty { "L$id" }, ts)
-                .also { it.hold = m.optBoolean("hold"); it.due = m.optLong("due"); it.late = m.optBoolean("late"); it.wait = m.optDouble("wait", 0.0); it.chased = m.optBoolean("chased"); it.shown = m.optLong("shown"); it.shareInvite = m.optBoolean("share_invite") })
+                .also { it.hold = m.optBoolean("hold"); it.due = m.optLong("due"); it.replyAfter = m.optLong("reply_after"); it.late = m.optBoolean("late"); it.wait = m.optDouble("wait", 0.0); it.chased = m.optBoolean("chased"); it.shown = m.optLong("shown"); it.shareInvite = m.optBoolean("share_invite") })
         }
         st.messages.sortWith(compareBy({ it.ts }, { it.uid }))
         st.clearTs = o?.optLong("clear_ts", 0L) ?: 0L
@@ -1381,7 +1384,7 @@ class Comm(
         val arr = JSONArray()
         for (m in st.messages.takeLast(KEEP)) arr.put(JSONObject().put("id", m.id).put("role", m.role).put("text", m.text).put("at", m.at)
             .put("uid", m.uid).put("ts", m.ts).apply {
-                if (m.api.isNotEmpty()) put("api", m.api); if (m.hold) put("hold", true); if (m.due != 0L) put("due", m.due); if (m.late) put("late", true)
+                if (m.api.isNotEmpty()) put("api", m.api); if (m.hold) put("hold", true); if (m.due != 0L) put("due", m.due); if (m.replyAfter != 0L) put("reply_after", m.replyAfter); if (m.late) put("late", true)
                 if (m.wait > 0) put("wait", m.wait); if (m.chased) put("chased", true); if (m.shown != 0L) put("shown", m.shown)
                 if (m.shareInvite) put("share_invite", true)
             })
@@ -1634,7 +1637,7 @@ class Comm(
                 doc["m:$p:${m.uid}"] = JSONObject().put("role", m.role).put("text", m.text).put("at", m.at).put("ts", m.ts)
                     .apply {
                         if (m.api.isNotEmpty()) put("api", m.api); if (m.wait > 0) put("wait", m.wait)
-                        if (m.hold) put("hold", true); if (m.late) put("late", true); if (m.due != 0L) put("due", m.due)   // 藏着的也要同步 (1.0.438)
+                        if (m.hold) put("hold", true); if (m.late) put("late", true); if (m.due != 0L) put("due", m.due); if (m.replyAfter != 0L) put("reply_after", m.replyAfter)
                     }
             }
             if (st.proKey.isNotEmpty()) doc["pro:$p"] = st.proKey
@@ -1746,6 +1749,7 @@ class Comm(
                     if (v.optBoolean("hold", false) || v.has("due")) msg.hold = true   // 对方那边还在藏着的: 这边也先藏着 (1.0.438)
                     if (v.optBoolean("late", false)) msg.late = true
                     if (v.has("due")) msg.due = v.optLong("due", 0L)
+                    if (v.has("reply_after")) msg.replyAfter = v.optLong("reply_after", 0L)
                     tc.st.messages.add(msg)
                     if (p == pid) fresh.add(msg)
                     tc.known.add(uid)
@@ -2100,7 +2104,7 @@ class Comm(
     }
 
     /** 识别字体 (沟通 🖼): 让模型把这张图片上的文字读出来, 返回文字 (没有文字 = ""). 阻塞, 要放在后台线程里调; 失败抛 AiError.
-     *  图片只发给模型一次, 不存下来, 也不会进聊天记录 (OIT 不能发送图片). */
+     *  OCR 图片只用于单次独立识别, 不存下来, 也不会进聊天记录; 聊天图片通过发送入口附在用户消息中. */
     fun ocrImage(data: ByteArray): String {
         if (data.size > Ai.OCR_MAX_BYTES) throw AiError("format", "图片太大了 (最大 4.5 MB)")
         val mime = Ai.imageMime(data)
@@ -2109,7 +2113,8 @@ class Comm(
         log("OCR start bytes=${data.size}")
         Ai.imageLocal.set(Ai.ImagePart(mime, java.util.Base64.getEncoder().encodeToString(data)))
         val reply = try {
-            chatFn(profileFor(), Ai.OCR_SYSTEM, listOf("user" to Ai.OCR_USER))
+            val cfg = aiConfig()
+            chatFn(cfg.taskProfile("ocr", cfg.configFor(personaName())), Ai.OCR_SYSTEM, listOf("user" to Ai.OCR_USER))
         } catch (e: AiError) {
             log("OCR FAIL ${(System.currentTimeMillis() - started) / 1000.0}s ${e.kind}: ${e.message}")
             throw e
@@ -3918,7 +3923,7 @@ class Comm(
         val now = nowMs()
         val away = awayKind()                                                 // 对方此刻 (按日程, 合约进行中 / 合约后的同步休息按合约) 还在专注 / 睡眠吗
         // 对方专注时发的, 现在已经不在专注了 (日程到了 / 合约让对方休息了): 不用再等原来排的时刻
-        fun dueOf(m: ChatMsg): Long = if (m.late && away.isEmpty()) minOf(m.due, now) else m.due
+        fun dueOf(m: ChatMsg): Long = maxOf(if (m.late && away.isEmpty()) minOf(m.due, now) else m.due, m.replyAfter)
         val held = messages.filter { it.hold }.takeWhile { dueOf(it) <= now }          // 打字延时没到点的和它后面的继续藏着 (按顺序一条一条出来)
         if (held.isEmpty()) return
         held.forEach {
@@ -4038,11 +4043,16 @@ class Comm(
     /** 用户发一条. 返回 "" = 已发出, "empty" = 空消息, 否则是不能发的原因. */
     @Synchronized
     fun send(text0: String): String {
+        return send(text0, 0L)
+    }
+
+    @Synchronized
+    fun send(text0: String, replyDelayMs: Long): String {
         val text = text0.trim()
         val jd = jointDraft
         if (text.isEmpty() && jd == null) return "empty"
         if (text.lowercase() == "/clear") { clear(); return "" }
-        if (jd != null) {                                     // 选好的联合行动: 和这条消息一起发
+        if (jd != null && replyDelayMs <= 0L && pendingImage == null) { // 评判结果和图片作为普通聊天消息发送
             val r = sendPackage(jd, text)
             if (r.isEmpty()) { jointDraft = null; changed() }
             return r
@@ -4050,10 +4060,27 @@ class Comm(
         val why = problem(true)
         if (why.isNotEmpty()) return why
         val message = add("me", text, compose(now(), text))
+        if (replyDelayMs > 0L) message.replyAfter = nowMs() + replyDelayMs
         interactionSent(text, message)
         sentOut()
         askUser()
         return ""
+    }
+
+    @Synchronized
+    fun sendImage(data: ByteArray): String {
+        return sendImage(data, "")
+    }
+
+    @Synchronized
+    fun sendImage(data: ByteArray, text: String): String {
+        if (data.size > Ai.OCR_MAX_BYTES) return "图片太大了 (最大 4.5 MB)"
+        val mime = Ai.imageMime(data)
+        if (mime.isEmpty()) return "只支持 PNG / JPG / WEBP / GIF 图片"
+        pendingImage = Ai.ImagePart(mime, java.util.Base64.getEncoder().encodeToString(data))
+        val result = send(text.ifBlank { "[图片]" })
+        if (result.isNotEmpty()) pendingImage = null
+        return result
     }
 
     /** 一条带联合行动邀请的消息 (jd). 聊天里只显示说明, 邀请的内容附在发给模型的内容里. */
@@ -4477,7 +4504,10 @@ class Comm(
         followAt = 0L                                           // 有新请求了: 排着的第二次调用取消
         followMsg = 0
         reqTs = messages.filter { it.role == "me" }.maxOfOrNull { it.ts } ?: 0L
+        activeReplyAfter = messages.filter { it.role == "me" && it.ts <= reqTs }.maxOfOrNull { it.replyAfter } ?: 0L
         val profile = profileFor()
+        val image = pendingImage
+        pendingImage = null
         var system = systemFor(personaName())
         var dynamic = memoryBlock() + jointSystemNote()
         if (userProfile.isNotBlank() && firstTurn(messages))   // 身份背景: 只在这段对话的第一轮发一次
@@ -4517,9 +4547,27 @@ class Comm(
             toolsLocal.set(true)
             Comm.thinkLocal.set(why.isNotEmpty())
             Comm.webLocal.set(web)
+            if (image != null) Ai.imageLocal.set(image)
             val res = try {
-                var convo: List<Pair<String, String>> = msgs
-                var reply = chatFn(profile, system, convo)
+                var convo = msgs.toMutableList()
+                var reply = try {
+                    chatFn(profile, system, convo)
+                } catch (error: AiError) {
+                    val cfg = aiConfig()
+                    val fallbackId = cfg.taskAssign["vision"]
+                    if (image == null || error.kind != "http" || !error.message.orEmpty().contains("返回 400") ||
+                        fallbackId.isNullOrEmpty() || fallbackId == cfg.configFor(personaName())) throw error
+                    val fallback = cfg.profile(fallbackId)
+                    log("REQ image fallback to configured vision model")
+                    Ai.imageLocal.set(image)
+                    val visual = try {
+                        chatFn(fallback, "你是独立的图片分析器。只描述图片中可确认的内容，简短回答；不要推断聊天背景。",
+                            listOf("user" to "请描述这张图片中与用户消息相关的信息。"))
+                    } finally { Ai.imageLocal.remove() }
+                    val lastUser = convo.indexOfLast { it.first == "user" }
+                    if (lastUser >= 0) convo[lastUser] = "user" to (convo[lastUser].second + "\n\n[独立图片分析] " + visual.trim())
+                    chatFn(profile, system, convo)
+                }
                 var op: JointPlan? = null
                 if (ToolProtocol.unpack(reply) != null) {
                     val handled = toolRounds(profile, system, convo, reply, kind, ep)
@@ -4558,7 +4606,7 @@ class Comm(
                         (if (own.isNotEmpty()) "另外这些只是参考模板:\n\n" else "") + blocks.joinToString("\n\n") +
                         "\n\n以上模板只是**参考模板** (格式; <尖括号> 里是占位符), 不是用户的真实数据. 请参照这个格式和写法, 根据人设自己填写具体内容, 不要把它说成是用户的数据."
                     text += " 回复用户上面的消息. 如果此刻仍然不方便回复, 返回${CommText.REFUSE}."
-                    convo = convo + ("assistant" to reply) + ("user" to CommText.oitText(text))
+                    convo = (convo + ("assistant" to reply) + ("user" to CommText.oitText(text))).toMutableList()
                     reply = chatFn(profile, system, convo)
                 }
                 if ((kind == "proactive" || kind == "net" || kind == "net_again") && CommText.isRefusal(reply) && CommText.infoTags(reply).isEmpty()) {     // 主动发起的对话 / 搜索那次请求不能 [refuse to reply]: 再要求一次
@@ -4579,6 +4627,7 @@ class Comm(
                 log("REQ $kind FAIL ${(System.currentTimeMillis() - started) / 1000.0}s ${e.javaClass.simpleName}: ${e.message}")
                 Result(kind, extra, "", e.javaClass.simpleName, ep)
             }
+            Ai.imageLocal.remove()
             results.add(res)
         }.apply { isDaemon = true }.start()
     }
@@ -4657,8 +4706,14 @@ class Comm(
                 interactionSet(interactionPrepare().replied(interactionTurn.special, burst, interactionTurn.until, interactionTurn.shame, nowMs()).settle(nowMs()))
             }
             interactionEnd(tensionReply, interactionTurn.burst)
-            val apiReply = if (ToolProtocol.unpack(r.reply) != null) ToolProtocol.text(r.reply) else r.reply.trim()
-            val m = add("ai", text, if (text != apiReply) apiReply else "")
+            // AI API 原文含控制标记；只存用户可见文本，避免详情/同步接口泄露调用痕迹。
+            val m = add("ai", text)
+            if (activeReplyAfter > nowMs()) {
+                m.replyAfter = activeReplyAfter
+                m.due = maxOf(m.due, activeReplyAfter)
+                m.hold = true
+            }
+            activeReplyAfter = 0L
             r.op?.let { opApply(it, m) }
             if (shareInvite) { m.shareInvite = true; deliverInvites(m) }
             delivered = true
@@ -5177,8 +5232,7 @@ class Comm(
         interactionEnd(r.reply, r.burst, r.pid)
         st.interaction = stateOf(r.pid).interaction
         val sysm = mk("sys", r.extra.body, r.extra.api)
-        val apiReply = if (ToolProtocol.unpack(reply) != null) ToolProtocol.text(reply) else reply.trim()
-        val m = mk("ai", text, if (text != apiReply) apiReply else "", voicePersona = name)
+        val m = mk("ai", text, voicePersona = name)
         if (waitMin > 0 && r.kind != "chase") m.wait = waitMin
         st.messages.add(sysm); st.messages.add(m)
         if (!m.hold) {

@@ -268,8 +268,12 @@ def _selftest():
     assert c2.set_active(cid) and c2.config_for("甲.txt") == cid
     c2.assign_config("乙.txt", "deepseek")
     assert c2.config_for("乙.txt") == "deepseek" and c2.config_for("甲.txt") == cid
+    assert c2.assign_task("ocr", cid) and c2.assign_task("review", "deepseek")
+    assert c2.task_profile("ocr")["config_id"] == cid and c2.task_profile("vision", fallback="deepseek")["config_id"] == "deepseek"
     assert c2.save() and AIConfig(c2.path).config_for("乙.txt") == "deepseek"
+    assert AIConfig(c2.path).task_assign == {"ocr": cid, "review": "deepseek"}
     assert c2.remove_config(cid)
+    assert c2.task_profile("ocr")["config_id"] == c2.provider
     while c2.add_config("x"):
         pass
     assert len(c2.order) == MAX_CONFIGS

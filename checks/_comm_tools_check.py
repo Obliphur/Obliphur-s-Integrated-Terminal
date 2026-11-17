@@ -125,6 +125,7 @@ def state_checks():
     c.ai.provider = "deepseek"
     c.set_cfg(persona="Assistant.txt", split_send=False)
     c.state_fn = lambda: "idle"
+    c._away_kind = lambda: ""
     c.info_fn = lambda name: "参考模板 [waiting for reply]:[4]" if name == "timer" else ""
     def wait():
         until = time.monotonic() + 5
@@ -135,12 +136,22 @@ def state_checks():
     scripted.extend([call("oit_query", {"modules": ["timer"]}), call("oit_reply", {"text": "查询完成", "wait_minutes": 2})])
     assert c.send("看看计时器") == ""
     wait()
-    assert c.visible()[-1]["text"] == "查询完成" and c.messages[-1]["wait"] == 2
+    assert c.visible()[-1]["text"] == "查询完成" and c.messages[-1]["wait"] == 2 and not c.messages[-1].get("api"), (c.visible()[-1], c.messages[-1])
     assert "wait_minutes" not in c.visible()[-1]["text"] and not str(c.messages[-1].get("api", "")).startswith(tools.PREFIX)
     assert "reference_template" in packets[-1][-1]["content"]
     assert "wait_minutes" in packets[-1][-1]["content"] and "[waiting for reply]" not in packets[-1][-1]["content"]
     assert all(not str(m.get("api", "")).startswith(tools.PREFIX) for m in c.messages)
     assert c.cfg.get("cut", {}) == {} or not c.cut_block()
+
+    for protocol in ("openai", "anthropic", "gemini"):
+        p = {"provider": "custom", "protocol": protocol, "base_url": "http://localhost:1", "model": "test", "api_key": "local"}
+        image = ai_assist.image_content(p, b"\x89PNG\r\n\x1a\n", "image/png", "请看图")
+        body = ai_http._build_body(p, "system", [{"role": "user", "content": image}], 100, 0.0, True)
+        tools.apply_body(body, protocol, [{"role": "user", "content": image}])
+        content = body["contents"][-1]["parts"] if protocol == "gemini" else body["messages"][-1]["content"]
+        assert any("inlineData" in part for part in content) if protocol == "gemini" else any(
+            part.get("type") in ("image", "image_url") for part in content)
+
     c._op_slots = lambda now: [(now + timedelta(hours=1), 36000, "")]
     scripted.extend([call("oit_joint_offer", {}), call("oit_joint_select", {"terms": [1, 2]}), call("oit_reply", {"text": "一起行动吧"})])
     c.send("邀请我一起行动")
@@ -182,6 +193,70 @@ def state_checks():
     else:
         raise AssertionError("硬限制下仍执行工具")
     c.flush()
+
+    c2 = comm.Comm(str(root / "data-delay"), str(root / "personas-delay"), chat_fn=fake)
+    c2.ai.set_profile("deepseek", api_key="local")
+    c2.ai.provider = "deepseek"
+    c2.set_cfg(persona="Assistant.txt", split_send=False)
+    c2._away_kind = lambda: ""
+    scripted.append("自然语言评判")
+    assert c2.send("请评判演奏", reply_delay_seconds=65) == ""
+    review_user = [m for m in c2.messages if m["role"] == "me"][-1]
+    until = time.monotonic() + 5
+    while c2.busy and time.monotonic() < until:
+        time.sleep(0.01)
+        c2.tick()
+    review_reply = [m for m in c2.messages if m["role"] == "ai"][-1]
+    assert review_user["reply_after"] >= review_user["ts"] + 65000
+    assert review_reply.get("hold") and review_reply["due"] >= review_user["reply_after"]
+    synced = c2.sync_doc()[f"m:{c2.pid}:{review_user['uid']}"]
+    assert synced["reply_after"] == review_user["reply_after"]
+    c2_peer = comm.Comm(str(root / "data-delay-peer"), str(root / "personas-delay-peer"), chat_fn=fake)
+    c2_peer.apply_doc({f"m:{c2.pid}:{review_user['uid']}": synced})
+    received = next(m for m in c2_peer._state_of(c2.pid)["messages"] if m["uid"] == review_user["uid"])
+    assert received["reply_after"] == review_user["reply_after"]
+    review_reply["late"] = True
+    review_reply["due"] = review_user["reply_after"] + 60000
+    c2._away_kind = lambda: ""
+    c2._ms = lambda: review_user["reply_after"] - 1000
+    c2._release_held()
+    assert review_reply["hold"], "late acceleration must not release a performance review early"
+    c2._ms = lambda: review_user["reply_after"] + 1000
+    c2._release_held()
+    assert not review_reply.get("hold")
+    c2.flush()
+
+    vision_calls = []
+    vision_analysis_calls = []
+    old_vision_chat = ai_assist.chat_messages
+    ai_assist.chat_messages = lambda profile, system, messages, **kwargs: (
+        vision_analysis_calls.append((profile["config_id"], messages)) or "检测到一张图片")
+    def vision_fake(profile, system, messages, **kwargs):
+        vision_calls.append((profile["config_id"], messages[-1]["content"]))
+        if len(vision_calls) == 1:
+            raise ai_assist.AIError("http", "服务商返回 400: image input unsupported")
+        return "我看到了图片内容"
+    c3 = comm.Comm(str(root / "data-vision"), str(root / "personas-vision"), chat_fn=vision_fake)
+    c3.ai.set_profile("deepseek", api_key="local")
+    c3.ai.provider = "deepseek"
+    vision_id = c3.ai.add_config("视觉回退")
+    c3.ai.set_profile(vision_id, base_url="http://localhost:1", model="vision-test", api_key="local", protocol="anthropic")
+    c3.ai.assign_task("vision", vision_id)
+    c3.set_cfg(persona="Assistant.txt", split_send=False)
+    c3._away_kind = lambda: ""
+    image_data = b"\x89PNG\r\n\x1a\n" + b"0" * 64
+    assert c3.send("请看图", image=image_data) == ""
+    until = time.monotonic() + 5
+    while c3.busy and time.monotonic() < until:
+        time.sleep(0.01)
+        c3.tick()
+    assert [x[0] for x in vision_calls] == ["deepseek", "deepseek"]
+    assert len(vision_analysis_calls) == 1 and vision_analysis_calls[0][0] == vision_id
+    assert len(vision_analysis_calls[0][1]) == 1 and not c3.error
+    assert vision_analysis_calls[0][1][-1]["content"][0]["type"] == "image"
+    assert "独立图片分析" in vision_calls[1][1]
+    ai_assist.chat_messages = old_vision_chat
+    c3.flush()
 
 
 if __name__ == "__main__":

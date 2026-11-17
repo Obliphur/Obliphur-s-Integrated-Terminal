@@ -108,6 +108,15 @@ fun CommScreen(go: (String) -> Unit) {
             }
         }.apply { isDaemon = true }.start()
     }
+    val pickChatImage = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        try {
+            val why = comm.sendImage(loadOcrImage(ocrCtx, uri), input)
+            if (why.isNotEmpty() && why != "empty") core.toast(tr(why), "warn") else if (why.isEmpty()) input = ""
+        } catch (error: Exception) {
+            core.toast(tr(error.message ?: "打不开这张图片."), "warn")
+        }
+    }
     // 不跟着每秒一次的 LocalTick 重画 (整页每秒重画一遍会有卡顿感): 只在聊天记录 / 状态变了才刷新
     var ver by remember { mutableIntStateOf(comm.version) }
     var otherStatus by remember { mutableStateOf(comm.otherStatusDisplay().first) }
@@ -170,7 +179,7 @@ fun CommScreen(go: (String) -> Unit) {
     }
     fun report(why: String) {
         core.toast(tr(why), "warn")
-        if (comm.blocked().isEmpty() && (why == "还没有选人设" || "API" in why || "Base URL" in why || "模型" in why)) go("settings:comm")
+        if (comm.blocked().isEmpty() && (why == "还没有选人设" || "API" in why || "Base URL" in why || "模型" in why)) go(if (why == "还没有选人设") "settings:comm" else "settings:models")
     }
 
     Column(Modifier.fillMaxSize().imePadding().padding(horizontal = 12.dp)) {
@@ -227,8 +236,9 @@ fun CommScreen(go: (String) -> Unit) {
             }
             // 🤝 联合行动: 界面移到合约页选词条, 回来输入开始时间
             TextButton({ core.jointPickStart() }, contentPadding = tight) { Text("🤝", fontSize = 18.sp) }
-            // 🖼 识别字体: 选一张图片, 让模型读出上面的文字, 放进聊天框 (不能发送图片)
+            // 🖼 独立识字; 📎 将图片作为聊天消息发送
             TextButton({ if (!ocrBusy) pickOcr.launch("image/*") }, contentPadding = tight) { Text(if (ocrBusy) "…" else "🖼", fontSize = 18.sp) }
+            TextButton({ if (!ocrBusy) pickChatImage.launch("image/*") }, contentPadding = tight) { Text("📎", fontSize = 18.sp) }
             // ⏰ 共时闹钟: 闹钟的时间跟随这个对象的实际起床时间, 手动选响铃的设备; ⏰ = 现在这个对象是共时闹钟 / ⏲ 不是
             TextButton({ coAlarm = true }, contentPadding = tight) {
                 Text(if (comm.coAlarmPid().isNotEmpty() && comm.coAlarmPid() == comm.pid) "⏰" else "⏲", fontSize = 18.sp)
@@ -325,7 +335,7 @@ private fun HelpDialog(onDismiss: () -> Unit) {
         Triple("🔔 / 🔕", tr("主动发起"), tr("🔔 = 允许这个对象主动找你, 🔕 = 禁止.")),
         Triple("⏰ / ⏲", tr("共时闹钟"), tr("⏰ = 闹钟跟随这个对象的起床时间; 响铃的设备手动选, 一次只能有一个对象.")),
         Triple("🕰", tr("起点平移"), tr("请求对方平移日程起点, 允许范围由人设模板决定, 同意后明天起生效.")),
-        Triple("🖼", tr("识别字体"), tr("选一张图片, 把上面的文字读出来放进聊天框. 不能发送图片.")),
+        Triple("🖼", tr("识别字体"), tr("选一张图片, 把上面的文字读出来放进聊天框. OCR 不发送图片; 也可以用 📎 把图片发给聊天 AI.")),
         Triple("🤝", tr("联合行动"), tr("邀请对方一起做一次合约: 在合约页选词条, 输入开始时间; 对方回 [Yes] 就按约开始.")),
     )
     val half = (rows.size + 1) / 2                                    // 左栏先排满, 剩下的放第二栏
@@ -491,7 +501,6 @@ fun CommSettings() {
     val ctx = LocalContext.current
     val core = OitApp.instance.core
     val comm = core.comm
-    var apiDialog by remember { mutableStateOf(false) }
     var readme by remember { mutableStateOf(false) }
     var avatarWho by remember { mutableStateOf("me") }
     var cropUri by remember { mutableStateOf<android.net.Uri?>(null) }
@@ -506,18 +515,6 @@ fun CommSettings() {
         }.getOrNull() ?: "persona.txt"
         val saved = runCatching { ctx.contentResolver.openInputStream(uri)?.use { comm.importPersona(name, it) } }.getOrNull() ?: ""
         if (saved.isEmpty()) core.toast(tr("只能导入 .txt / .md 文件."), "warn") else comm.set(persona = saved)
-    }
-
-    OitCard {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("🔑  API", fontWeight = FontWeight.Bold, color = o.text, modifier = Modifier.weight(1f))
-            PlainButton(tr("设置")) { apiDialog = true }
-        }
-        val cfg = comm.aiConfig()
-        val p = cfg.profile()
-        val ok = runCatching { Ai.checkProfile(p) }.isSuccess
-        Text("${cfg.configName()} · ${p.model.ifEmpty { "—" }}  ${if (ok) "✓" else "✗"}",
-            color = o.text, fontSize = 13.sp, modifier = Modifier.padding(top = 6.dp))
     }
 
     OitCard {
@@ -627,7 +624,6 @@ fun CommSettings() {
         }
     }
 
-    if (apiDialog) AiSettingsDialog { apiDialog = false }
     if (readme) AlertDialog(onDismissRequest = { readme = false }, containerColor = o.bg,
         title = { Text(tr("🎭  人设")) },
         text = {

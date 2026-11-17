@@ -4,11 +4,13 @@
 消息是增量画的: 新消息只加一行, 不重画整页 (整页重画会有卡顿感); 宽度 / 头像设置变了才重画."""
 
 import os
+import json
 import tkinter as tk
 from datetime import datetime
 from tkinter import ttk
 
 import avatar as avatar_mod
+import ai_assist
 import comm as comm_mod
 from comm import comm_data
 import config
@@ -100,8 +102,13 @@ class CommPage(CommVoiceMixin, tk.Frame):
         # share data: 打开后离开沟通页, 在别的页面里对方能看到那一页上你们的数据, 页面下方有聊天悬浮窗; 回到沟通自动关闭
         self.btn_share = ttk.Button(tools, text="🙈", width=3, command=self._toggle_share)         # 👀 share data 开着 / 🙈 关着
         self.btn_share.pack(side="left", padx=(4, 0))
-        self.btn_ocr = ttk.Button(tools, text="🖼", width=3, command=self._ocr)                    # 识别字体: 选一张图片, 把上面的文字放进聊天框 (不能发送图片)
+        self.btn_ocr = ttk.Button(tools, text="🖼", width=3, command=self._ocr)                    # 独立识字, 图片不进入聊天消息
         self.btn_ocr.pack(side="left", padx=(4, 0))
+        self.btn_image = ttk.Button(tools, text="📎", width=3, command=self._pick_image)
+        self.btn_image.pack(side="left", padx=(4, 0))
+        self.btn_review = ttk.Button(tools, text="🎼", width=3, command=self._review_performance)
+        self.btn_review.pack(side="left", padx=(4, 0))
+        self._pending_image = ""
         # 对方发了 [share data]: 等用户点 接受 / 拒绝
         self.share_btns = tk.Frame(tools, bg=bg)
         self.lbl_share_inv = tk.Label(self.share_btns, text="", bg=bg, fg=COLORS["accent"], font=config.font("small"))
@@ -134,6 +141,7 @@ class CommPage(CommVoiceMixin, tk.Frame):
         ttk.Button(row, text=tr("发送"), style="Accent.TButton", command=self._send).pack(
             side="left", padx=(8, 0), anchor="s")
         self.entry.bind("<Return>", self._on_return)
+        self.entry.bind("<Control-v>", self._paste_image, add="+")
 
     # ---- 显示 ----
 
@@ -469,14 +477,152 @@ class CommPage(CommVoiceMixin, tk.Frame):
 
     def _send(self):
         text = self.entry.get("1.0", "end").strip()
-        why = self.comm.send(text)             # "/clear" 在 send 里处理: 清空记录
+        image = None
+        if self._pending_image:
+            try:
+                if os.path.getsize(self._pending_image) > ai_assist.OCR_MAX_BYTES:
+                    toast.warn(tr("图片太大了 (最大 4.5 MB)"))
+                    return
+                with open(self._pending_image, "rb") as stream:
+                    image = stream.read()
+                if not ai_assist.image_mime(image):
+                    toast.warn(tr("只支持 PNG / JPG / WEBP / GIF 图片"))
+                    return
+            except OSError:
+                toast.warn(tr("打不开这张图片."))
+                return
+        why = self.comm.send(text, image=image)             # "/clear" 在 send 里处理: 清空记录
         if why == "empty":
             return
         if why:
             self._report(why)
             return
         self.entry.delete("1.0", "end")
+        self._pending_image = ""
+        self.btn_image.config(text="📎")
         self.refresh(force=True)
+
+    def _pick_image(self):
+        from tkinter import filedialog
+        path = filedialog.askopenfilename(parent=self.winfo_toplevel(), title=tr("选择图片"),
+                filetypes=[(tr("图片"), "*.png *.jpg *.jpeg *.webp *.gif"), (tr("所有文件"), "*.*")])
+        if path:
+            self._pending_image = path
+            self.btn_image.config(text="🖼")
+            self.entry.focus_set()
+
+    def _paste_image(self, _event=None):
+        try:
+            candidates = avatar_mod.clipboard_paths()
+            path = next((p for p in candidates if os.path.splitext(p)[1].lower() in
+                         (".png", ".jpg", ".jpeg", ".webp", ".gif")), "")
+            if path:
+                self._pending_image = path
+                self.btn_image.config(text="🖼")
+                return "break"
+            from tempstore import path as temp_path
+            target = temp_path("misc", "comm-paste.png")
+            if avatar_mod.clipboard_image(target):
+                self._pending_image = target
+                self.btn_image.config(text="🖼")
+                return "break"
+        except Exception:
+            return None
+        return None
+
+    def _review_performance(self):
+        """选择参考谱与演奏文件，先本机对齐 MIDI，再由独立评判模型整理后交给聊天模型。"""
+        from tkinter import filedialog
+        dlg = Modal(self.winfo_toplevel(), tr("演奏评判"), width=config.scaled(560), height=config.scaled(280))
+        paths = {"reference": "", "performance": ""}
+        labels = {}
+        body = tk.Frame(dlg.body, bg=COLORS["bg"])
+        body.pack(fill="both", expand=True)
+        for col, (key, title) in enumerate((("reference", "参考乐谱 / MIDI"), ("performance", "演奏 MIDI / 音频"))):
+            frame = tk.Frame(body, bg=COLORS["bg"])
+            frame.grid(row=0, column=col, sticky="nsew", padx=(0, 12) if col == 0 else (12, 0))
+            body.grid_columnconfigure(col, weight=1)
+            tk.Label(frame, text=tr(title), bg=COLORS["bg"], fg=COLORS["text"],
+                     font=config.font("body", bold=True)).pack(anchor="w", pady=(4, 8))
+            label = tk.Label(frame, text=tr("未选择"), bg=COLORS["bg"], fg=COLORS["text_dim"],
+                             font=config.font("small"), anchor="w", wraplength=config.scaled(220), justify="left")
+            label.pack(fill="x", pady=(0, 10))
+            labels[key] = label
+            def choose(k=key, lab=label):
+                exts = "*.mid *.midi *.mp3 *.wav *.flac *.ogg *.png *.jpg *.jpeg *.pdf *.tif *.tiff *.bmp"
+                path = filedialog.askopenfilename(parent=dlg, title=tr("选择文件"),
+                    filetypes=[(tr("支持的音乐文件"), exts), (tr("所有文件"), "*.*")])
+                if path:
+                    paths[k] = path
+                    lab.config(text=os.path.basename(path))
+            ttk.Button(frame, text=tr("选择文件"), command=choose).pack(anchor="w")
+
+        def start():
+            if not paths["reference"] or not paths["performance"]:
+                toast.warn(tr("请先选择参考文件和演奏文件."))
+                return
+            target_pid = self.comm.pid
+            target_config = self.comm.current_config()
+            review_profile = self.comm.ai.task_profile("review", fallback=target_config)
+            dlg.finish(True)
+            toast.info(tr("正在分析演奏文件…"))
+            def work():
+                tmp = ""
+                try:
+                    import external_software
+                    import music_tools
+                    import tempstore
+                    ext = external_software.manager(self.comm.dir)
+                    music = music_tools.manager(self.comm.dir, ext)
+                    tmp = tempstore.mkdtemp("misc", prefix="comm-review-")
+                    def as_midi(path, name):
+                        suffix = os.path.splitext(path)[1].lower()
+                        if suffix in (".mid", ".midi"):
+                            return path
+                        out = os.path.join(tmp, name + ".mid")
+                        music.convert(path, out)
+                        return out
+                    reference = as_midi(paths["reference"], "reference")
+                    performance = as_midi(paths["performance"], "performance")
+                    data = music.compare_midi(reference, performance)
+                    ai_assist.check_profile(review_profile)
+                    review = ai_assist.chat_messages(review_profile,
+                        "你是独立的音乐演奏分析器。根据结构化音符差异，用中文写出简短、具体、克制的练习建议；不臆测音色、力度或踏板。",
+                        [{"role": "user", "content": json.dumps(data, ensure_ascii=False, separators=(",", ":"))}],
+                        max_tokens=500, temperature=0.2, cache=False, timeout=120)
+                    duration = max(0, int(data.get("summary", {}).get("performance_duration_ms") or 0)) / 1000
+                    if os.path.splitext(paths["performance"])[1].lower() in (".mp3", ".wav", ".flac", ".ogg"):
+                        duration = max(duration, music.audio_duration(paths["performance"]))
+                    prompt = "请结合下面的独立分析，以你平常的语气自然评判用户演奏，并给出简洁建议：\n" + str(review).strip()
+                    outcome = ("ok", prompt, 60 + duration)
+                except Exception as error:
+                    outcome = ("err", str(error))
+                finally:
+                    if tmp:
+                        import shutil
+                        shutil.rmtree(tmp, ignore_errors=True)
+                try:
+                    self.after(0, lambda: finish(outcome))
+                except Exception:
+                    pass
+            def finish(outcome):
+                if outcome[0] == "err":
+                    toast.warn(tr(outcome[1]))
+                else:
+                    if self.comm.pid != target_pid or self.comm.current_config() != target_config:
+                        toast.warn(tr("聊天对象或模型已更改，评判结果未发送."))
+                        return
+                    why = self.comm.send(outcome[1], reply_delay_seconds=outcome[2])
+                    if why:
+                        toast.warn(tr(why))
+                    else:
+                        self.refresh(force=True)
+            import threading
+            threading.Thread(target=work, daemon=True).start()
+
+        ttk.Button(dlg.buttons, text=tr("开始评判"), style="Accent.TButton", command=start).pack(side="right")
+        ttk.Button(dlg.buttons, text=tr("取消"), command=dlg.cancel).pack(side="right", padx=(0, 8))
+        dlg.wait()
 
     def _clear(self):
         if not self.comm.messages:
@@ -575,7 +721,7 @@ class CommPage(CommVoiceMixin, tk.Frame):
         self.refresh(force=True)
 
     def _ocr(self):
-        """🖼 识别字体: 选一张图片, 让模型读出上面的文字, 放进聊天框 (可以再改); 图片本身不会发出去."""
+        """🖼 识字只把识别结果放入输入框; 用 📎 发送图片本身."""
         from tkinter import filedialog
         import ai_assist
         path = filedialog.askopenfilename(
@@ -626,7 +772,9 @@ class CommPage(CommVoiceMixin, tk.Frame):
                 ("🔔 / 🔕", "主动发起", "🔔 = 允许这个对象主动找你, 🔕 = 禁止."),
                 ("⏰ / ⏲", "共时闹钟", "⏰ = 闹钟跟随这个对象的起床时间; 响铃的设备手动选, 一次只能有一个对象."),
                 ("🕰", "起点平移", "请求对方平移日程起点, 允许范围由人设模板决定, 同意后明天起生效."),
-                ("🖼", "识别字体", "选一张图片, 把上面的文字读出来放进聊天框. 不能发送图片."),
+                ("📎", "图片消息", "选择图片，或在输入框按 Ctrl+V 粘贴剪贴板图片，然后随消息发送."),
+                ("🖼", "识别字体", "选一张图片，把识别出的文字放进聊天框供你编辑；用 📎 发送图片本身."),
+                ("🎼", "演奏评判", "左边选参考乐谱或 MIDI，右边选演奏 MIDI 或音频；分析摘要会交给聊天对象."),
                 ("🤝", "联合行动", "邀请对方一起做一次合约: 在合约页选词条, 输入开始时间; 对方回 [Yes] 就按约开始."))
         area = ScrollArea(dlg.body, height=config.scaled(400), bg=bg)
         area.pack(fill="both", expand=True)

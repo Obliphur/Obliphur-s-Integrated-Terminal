@@ -60,11 +60,27 @@ fun SettingsScreen(tab: String, setTab: (String) -> Unit, act: MainActivity) {
     val s = core.settings
     // 这一页还没保存的修改: key → 填写框里的文字 / 选中的值
     val edits = remember(tab) { mutableStateMapOf<String, String>() }
+    var aiSettings by remember { mutableStateOf(false) }
     PageColumn {
-        Segmented(Schema.PAGES.map { (k, label) ->
+        Segmented((Schema.PAGES.map { (k, label) ->
             val n = s.pending.keys.count { Schema.BY_KEY[it]!!.page == k }
             k to (tr(label) + if (n > 0) " ⏳$n" else "")
-        }, tab) { setTab(it) }
+        } + ("models" to tr("模型"))), tab) { setTab(it) }
+
+        if (tab == "models") {
+            OitCard {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(tr("AI 模型配置"), fontWeight = FontWeight.Bold, color = o.text, modifier = Modifier.weight(1f))
+                    PlainButton(tr("设置")) { aiSettings = true }
+                }
+                val cfg = core.comm.aiConfig()
+                val p = cfg.profile()
+                Text("${cfg.configName()} · ${p.model.ifEmpty { "—" }}", color = o.dim, fontSize = 13.sp,
+                    modifier = Modifier.padding(top = 6.dp))
+            }
+            if (aiSettings) AiSettingsDialog { aiSettings = false }
+            return@PageColumn
+        }
 
         if (tab == "basic") {
             if (s.inSetup()) OitCard(border = o.accent) {

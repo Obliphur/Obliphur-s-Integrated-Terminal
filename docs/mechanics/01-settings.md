@@ -64,7 +64,9 @@
 
 电脑基本设置的「外部软件」可手动选择本机已有文件夹，作为之后部署外部软件和下载模型的根目录；此位置只保存在本机，不随设备同步，修改位置不自动搬动已有软件。部署或模型下载期间暂不能更换位置。Process Lasso 的部署入口位于「额外功能」页；在部署本地模型时，建议使用该软件。它从 Bitsum 官方 HTTPS 地址下载，验证有效的 Bitsum 数字签名后静默安装到 `Process Lasso/`，以服务启动调度引擎。OIT 管理独立的 `oit-config/prolasso.ini` 和日志目录；重新部署时备份旧配置并重写保护规则，不继承旧的限核、节流或终止规则。ProBalance 与 SmartTrim 排除 `python*.exe`、`torchrun*.exe`、OIT、OITLink 和当前解释器，覆盖 Python 虚拟环境与 PyTorch 子进程。SmartTrim 只在内存占用达 80% 时整理工作集大于 512 MiB 的其他进程，间隔至少 15 分钟，不清空待机列表或文件缓存。
 
-「额外功能」独立设置页放在沟通之后，两端均把 AI 语音入口移到此页，语音配置和同步规则不变。电脑的「音乐工具」统一提供 Audiveris、MuseScore Studio、钢琴音频转 MIDI 和 Partitura MIDI 分析环境的状态、单项安装与一键安装，并提供文件转换。Audiveris 识别图片/PDF 为 MusicXML，MuseScore 导出 MIDI/MSCZ，钢琴模型把录音转 MIDI；Partitura 可读取 MIDI 音符事件，但这些工具不提供演奏问题评分。安装与调用接口见 [音乐工具接口](../music-tools.md)，原生音乐组件仅支持 Windows x64，环境与结果不随设备同步。
+「额外功能」独立设置页放在沟通之后，两端均把 AI 语音入口移到此页，语音配置和同步规则不变。电脑的「音乐工具」统一提供 Audiveris、MuseScore Studio、钢琴音频转 MIDI 和 Partitura MIDI 分析环境的状态、单项安装与一键安装，并提供文件转换。Audiveris 识别图片/PDF 为 MusicXML，MuseScore 导出 MIDI/MSCZ，钢琴模型把录音转 MIDI；Partitura 支持参考与演奏 MIDI 差异分析。安装与调用接口见 [音乐工具接口](../music-tools.md)，原生音乐组件仅支持 Windows x64，环境与结果不随设备同步。
+
+AI 模型配置单列设置页，统一管理命名服务商配置和聊天、识图、识字、评判任务的模型选择。任务模型未单独指定时跟随当前聊天配置；图片消息优先使用聊天模型，若服务商明确拒绝图像输入且配置了视觉模型，再自动回退。桌面演奏评判复用额外功能里的本机音乐组件，安卓提供图片消息，不部署该套音乐环境。
 
 钢琴权重从 Zenodo 记录 4034264 下载 171966578 字节（约 164 MiB）的 `.pth`，校验 MD5 `22b961b77c1878239fec963362097045` 后保存到所选根目录的 `PianoTranscription/`。复用更新器 `download_file()`，以 8 条连接、4 MiB 分段下载；失败退回单连接，只允许 Zenodo 官方 HTTPS，下载进度重试不重复累计，跨盘落地原子替换。安装复用已通过校验的权重，并部署独立 Python / CPU PyTorch 环境；推理在子进程运行。默认 CPU 2 线程、识谱逐页处理，全部音乐任务串行，期间不能切换安装目录、重复下载权重或部署 Process Lasso。任务跨页面重建保留；转换失败保留原有输出，识谱多乐章输出不自动丢弃。安装时刷新 OIT 管理的 Lasso 排除规则，新增 Java、Audiveris、MuseScore 进程保护。
 

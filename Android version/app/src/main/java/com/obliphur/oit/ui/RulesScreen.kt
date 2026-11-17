@@ -445,6 +445,8 @@ fun AiSettingsDialog(onDismiss: () -> Unit) {
     var name by remember { mutableStateOf(cfg.configName(sel)) }
     var p by remember { mutableStateOf(cfg.profile(sel)) }
     var pickOpen by remember { mutableStateOf(false) }
+    var taskMenu by remember { mutableStateOf("") }
+    var taskAssign by remember { mutableStateOf(cfg.taskAssign.toMap()) }
     fun store() {
         if (sel in cfg.profiles) {
             cfg.putProfile(sel, p)
@@ -465,6 +467,25 @@ fun AiSettingsDialog(onDismiss: () -> Unit) {
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(tr("配置 (最多 {n} 个)", "n" to Ai.MAX_CONFIGS), color = o.dim, fontSize = 12.sp)
+                for ((role, label) in listOf("vision" to "视觉模型", "ocr" to "识字模型", "review" to "评判模型")) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(tr(label), color = o.text, modifier = Modifier.weight(1f))
+                        Box {
+                            TextButton({ taskMenu = role }) {
+                                val id = taskAssign[role].orEmpty()
+                                Text(if (id.isEmpty()) tr("跟随聊天模型") else cfg.configName(id), color = o.accent)
+                            }
+                            DropdownMenu(taskMenu == role, { taskMenu = "" }) {
+                                (listOf("" to tr("跟随聊天模型")) + cfg.configs().map { it.id to it.name }).forEach { (id, title) ->
+                                    DropdownMenuItem(text = { Text(title, color = o.text) }, onClick = {
+                                        taskAssign = if (id.isEmpty()) taskAssign - role else taskAssign + (role to id)
+                                        taskMenu = ""
+                                    })
+                                }
+                            }
+                        }
+                    }
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.weight(1f)) {
                         TextButton({ pickOpen = true }) { Text("▾  " + cfg.configName(sel), color = o.text) }
@@ -528,6 +549,7 @@ fun AiSettingsDialog(onDismiss: () -> Unit) {
         confirmButton = {
             TextButton({
                 store()
+                for (role in listOf("vision", "ocr", "review")) cfg.assignTask(role, taskAssign[role].orEmpty())
                 if (name.trim().isEmpty()) {
                     core.toast(tr("名称不能为空."), "warn")
                     return@TextButton

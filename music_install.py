@@ -211,8 +211,8 @@ def _install_partitura(manager, work):
     midi = work / "partitura-probe.mid"
     midi.write_bytes(b"MThd\x00\x00\x00\x06\x00\x00\x00\x01\x01\xe0MTrk\x00\x00\x00\x0d"
                      b"\x00\x90\x3c\x50\x83\x60\x80\x3c\x00\x00\xff\x2f\x00")
-    smoke = ("import sys,partitura,mido; p=partitura.load_performance_midi(sys.argv[1]); "
-             "assert len(p.note_array)>0 and 'pitch' in p.note_array.dtype.names")
+    smoke = ("import sys,partitura,mido; p=partitura.load_performance_midi(sys.argv[1]); a=p.note_array(); "
+             "assert len(a)>0 and 'pitch' in a.dtype.names")
     run_process([str(python), "-X", "utf8", "-c", smoke, str(midi)], cwd=str(work), env=env)
     (runtime / "oit-python-version.txt").write_text(version, encoding="utf-8")
     (runtime / "oit-python-ready.txt").write_text(config.MUSIC_PARTITURA_VERSION, encoding="utf-8")

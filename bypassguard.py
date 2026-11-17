@@ -26,18 +26,22 @@ IPv6 的已建立连接掐不断, 只靠规则挡新连接.
 """
 
 import ctypes
+from contextlib import contextmanager
 import ipaddress
 import os
 import socket
 import struct
 import sys
 import time
+import threading
 
 import appban
 
 RULE = "OIT bypass block"
 SCAN_EVERY = 2.0              # 秒
 RULE_TTL = 600.0              # 秒: 规则管的这条连接这么久没再见到就删掉
+_TEMP_EXEMPT_PREFIXES = {}
+_TEMP_EXEMPT_LOCK = threading.RLock()
 AF_INET, AF_INET6 = 2, 23
 TCP_TABLE_OWNER_PID_ALL = 5
 ST_LISTEN, ST_SYN_SENT, ST_ESTAB = 2, 3, 5
@@ -170,12 +174,31 @@ def own_exes() -> set:
 
 
 def _exempt_prefixes() -> list:
+    with _TEMP_EXEMPT_LOCK:
+        sources = tuple(EXEMPT_PREFIXES) + tuple(_TEMP_EXEMPT_PREFIXES.keys())
     out = []
-    for p in EXEMPT_PREFIXES:
+    for p in sources:
         e = os.path.normcase(os.path.expandvars(p))
         if "%" not in e:
             out.append(e.rstrip("\\") + "\\")
     return out
+
+
+@contextmanager
+def allow_path_prefix(path: str):
+    """仅在 OIT 等待直接启动的受控子进程期间豁免其目录。"""
+    prefix = os.path.normcase(os.path.abspath(path)).rstrip("\\") + "\\"
+    with _TEMP_EXEMPT_LOCK:
+        _TEMP_EXEMPT_PREFIXES[prefix] = _TEMP_EXEMPT_PREFIXES.get(prefix, 0) + 1
+    try:
+        yield
+    finally:
+        with _TEMP_EXEMPT_LOCK:
+            count = _TEMP_EXEMPT_PREFIXES.get(prefix, 0) - 1
+            if count > 0:
+                _TEMP_EXEMPT_PREFIXES[prefix] = count
+            else:
+                _TEMP_EXEMPT_PREFIXES.pop(prefix, None)
 
 
 class BypassGuard(appban.AppBan):

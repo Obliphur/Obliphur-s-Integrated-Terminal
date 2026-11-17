@@ -134,6 +134,33 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
     note.pack(fill="x", pady=(8, 0))
     wrap_label(note, 20)
 
+    _label(b, tr("专用模型")).pack(fill="x", pady=(12, 2))
+    task_boxes = {}
+    task_vars = {}
+    task_ids_by_label = {}
+    task_labels = {"vision": "视觉模型", "ocr": "识字模型", "review": "评判模型"}
+
+    def refresh_tasks():
+        configured = cfg.configs()
+        options = [("", tr("跟随聊天模型"))] + [
+            (item["id"], f"{item['name']} [{item['id'][-4:]}]") for item in configured]
+        task_ids_by_label.clear()
+        task_ids_by_label.update({label: cid for cid, label in options})
+        for role, combo in task_boxes.items():
+            ids = [item[0] for item in options]
+            combo.config(values=[item[1] for item in options])
+            current = cfg.task_assign.get(role, "")
+            task_vars[role].set(options[ids.index(current)][1] if current in ids else options[0][1])
+
+    for role, label in task_labels.items():
+        row = tk.Frame(b, bg=COLORS["bg"])
+        row.pack(fill="x", pady=2)
+        _label(row, tr(label)).pack(side="left")
+        var = tk.StringVar()
+        combo = ttk.Combobox(row, textvariable=var, state="readonly", width=24)
+        combo.pack(side="right")
+        task_boxes[role], task_vars[role] = combo, var
+
     def set_proto(value: str):
         ent_proto.set(value)
         ent_proto.config(state="readonly" if preset_key() == "custom" else "disabled")
@@ -262,6 +289,7 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
             return
         refresh_list(cid)
         load()
+        refresh_tasks()
 
     def remove():
         store()
@@ -271,6 +299,7 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
         state["cid"] = ""
         refresh_list()
         load()
+        refresh_tasks()
 
     def make_default():
         store()
@@ -288,6 +317,7 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
     state["cid"] = state["cid"] if state["cid"] in list_ids() else (list_ids()[0] if list_ids() else "")
     refresh_list(state["cid"])
     load()
+    refresh_tasks()
 
     from .model_fetch import auto_models
     def model_snapshot():
@@ -307,6 +337,9 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
 
     def save():
         store()
+        for role, var in task_vars.items():
+            cfg.assign_task(role, task_ids_by_label.get(var.get(), ""))
+        refresh_tasks()
         cid = state["cid"]
         name = var_name.get().strip()
         if not name:

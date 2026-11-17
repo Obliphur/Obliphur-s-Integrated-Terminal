@@ -43,7 +43,9 @@ assert E.ExternalSoftware(str(base / "data")).root == str(root_dir)
 for url in ("http://bitsum.com/x", "https://bitsum.com.evil.test/x", "https://evil.test/x", "https://user@bitsum.com/x"):
     assert not E._official_url(url)
     try:
-        E._Redirect().redirect_request(urllib.request.Request("https://bitsum.com/x"), None, 302, "", {}, url)
+        import updater
+        updater.download_file({"url": url}, str(base / "denied.exe"), allowed_hosts=E.HOSTS,
+                              max_download=config.EXTERNAL_DOWNLOAD_MAX)
         raise AssertionError("不能重定向到非官方地址")
     except ValueError:
         pass
@@ -58,14 +60,19 @@ class Response(io.BytesIO):
 
 
 download = base / "installer.exe"
-for content, size in ((b"MZ" + b"x" * 110000, None), (b"MZ" * 55000, 200000), (b"<html>" * 20000, None)):
-    with patch("updater.upstream_proxy", return_value=None), patch("urllib.request.build_opener") as op:
-        op.return_value.open.return_value = Response(content, size)
+def fake_unified_download(source, destination, **kwargs):
+    assert source["url"].startswith("https://bitsum.com/")
+    assert kwargs["allowed_hosts"] == E.HOSTS and kwargs["max_download"] == config.EXTERNAL_DOWNLOAD_MAX
+    Path(destination).write_bytes(fake_download_content[0])
+
+for content in (b"MZ" + b"x" * 110000, b"<html>" * 20000):
+    fake_download_content = [content]
+    with patch("updater.download_file", side_effect=fake_unified_download) as download_call:
         try:
             E.download_installer(str(download))
-            assert content.startswith(b"MZ") and size is None
+            assert content.startswith(b"MZ") and download_call.call_count == 1
         except ValueError:
-            assert size is not None or not content.startswith(b"MZ")
+            assert not content.startswith(b"MZ")
 
 valid = b"Valid|CN=Bitsum Technologies (Bitsum LLC), O=Bitsum Technologies (Bitsum LLC), C=US"
 for output, expected in ((valid, True), (valid.replace(b"Valid|", b"NotTrusted|"), False),
