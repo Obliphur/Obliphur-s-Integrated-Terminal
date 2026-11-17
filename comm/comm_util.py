@@ -122,18 +122,21 @@ def first_turn(msgs: list) -> bool:
     return not any(m.get("role") == "ai" for m in msgs[:last_me])
 
 
-def api_messages(msgs: list) -> list:
-    """本地聊天记录 → API 的 messages: 连续同角色的合并, 以 user 开头; 总字数太多时从最老的开始不带."""
-    msgs = list(msgs)
+def api_messages(msgs: list, include_latest_api: bool = False) -> list:
+    """历史只用双方可见正文; 当前请求可保留最新用户消息的本轮提示."""
+    source = list(msgs)
+    last_ai = max((i for i, m in enumerate(source) if m.get("role") == "ai"), default=-1)
+    current = {id(m) for m in source[last_ai + 1:] if m.get("role") in ("me", "sys") and m.get("api")} if include_latest_api else set()
+    msgs = [(m, i) for i, m in enumerate(source) if m.get("role") in ("me", "ai") or id(m) in current]
     if len(msgs) > HISTORY_SENT:                      # 起点按 HISTORY_STEP 一格一格挪: 中间的每一次请求, 开头都和上一次一模一样
         drop = -(-(len(msgs) - HISTORY_SENT) // HISTORY_STEP) * HISTORY_STEP
         msgs = msgs[drop:]
-    while len(msgs) > 1 and sum(len(str(m.get("api") or m.get("text") or "")) for m in msgs) > HISTORY_CHARS:
+    while len(msgs) > 1 and sum(len(str((m.get("api") if i > last_ai and m.get("role") in ("me", "sys") else "") or m.get("text") or "")) for m, i in msgs) > HISTORY_CHARS:
         msgs = msgs[min(HISTORY_CHAR_STEP, len(msgs) - 1):]
     out = []
-    for m in msgs:
+    for m, i in msgs:
         role = "assistant" if m.get("role") == "ai" else "user"
-        text = clip_message(str(m.get("api") or m.get("text") or ""))
+        text = clip_message(str((m.get("api") if i > last_ai and m.get("role") in ("me", "sys") else "") or m.get("text") or ""))
         if not text:
             continue
         if out and out[-1]["role"] == role:

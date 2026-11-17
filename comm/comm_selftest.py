@@ -72,10 +72,11 @@ def _selftest():
     assert "大学生" in read_persona(folder, "小夏.txt") and read_persona(folder, "../x") == ""
 
     # 合并 / 拒绝
-    assert api_messages([{"role": "ai", "text": "a"}, {"role": "me", "text": "1"}, {"role": "me", "api": "2"},
-                         {"role": "ai", "text": "b"}, {"role": "sys", "api": "s"}]) == [
-        {"role": "user", "content": "1\n\n2"}, {"role": "assistant", "content": "b"},
-        {"role": "user", "content": "s"}]
+    assert api_messages([{"role": "ai", "text": "a", "api": "old assistant prompt"},
+                         {"role": "me", "text": "1", "api": "old user prompt"},
+                         {"role": "me", "text": "2"}, {"role": "sys", "text": "old system prompt"},
+                         {"role": "ai", "text": "b"}]) == [
+        {"role": "user", "content": "1\n\n2"}, {"role": "assistant", "content": "b"}]
     assert is_refusal(" [Refuse  to reply] ") and not is_refusal("好的")
 
     clock = [datetime(2026, 11, 2, 9, 0, 0)]
@@ -126,7 +127,7 @@ def _selftest():
     wait(c)
     system, msgs = calls[-1]
     assert system.startswith(prefix_prompt()) and system.endswith("每天 8 点到 12 点上课.")
-    assert msgs[0]["role"] == "user" and "2026-11-02 周一 09:00" in msgs[0]["content"]
+    assert msgs[0]["role"] == "user" and "早" in msgs[0]["content"] and "2026-11-02 周一 09:00" in msgs[0]["content"]
     assert "OIT 附带信息" not in msgs[0]["content"] and "整点记录" not in msgs[0]["content"] and "计时器" not in msgs[0]["content"]
     assert "早" in msgs[0]["content"] and "[OIT_STATUS:" in msgs[0]["content"] and "没有确定的结束时间" in msgs[0]["content"], "每次请求自动附加状态"
     assert [m["role"] for m in c.visible()] == ["me", "ai"] and c.unread == 1
@@ -2137,7 +2138,7 @@ def _selftest():
     assert len(note) == 2 and "联合行动开始了" in note[0]["text"], "开始 / 结束各记一条"
     assert "顺利完成" in note[1]["text"] and "21 分钟休息" in note[1]["text"] and "16:11" in note[1]["text"]
     assert not any(m["role"] == "sys" and m["text"].startswith(JOINT_TAG) for m in cj.visible()), "进展不显示在聊天里"
-    assert OIT_TAG in api_messages(cj.messages)[-1]["content"], "但发给对方的历史里有 (带 OIT 标记)"
+    assert not any(OIT_TAG in m["content"] for m in api_messages(cj.messages)), "历史只发可见正文, 不重发旧 OIT 提示"
     assert not note[0]["text"].startswith("[系统]"), "不算主动消息 (不触发 10 分钟间隔 / 提示音)"
     ustate[0] = "idle"
     clock[0] = day.replace(hour=16, minute=5)

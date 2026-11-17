@@ -1981,6 +1981,11 @@ class CommTest {
         val one = c.apiMessages(listOf(ChatMsg(1, "me", long, "", "", "u", 1L)))[0].second
         assertTrue(one.startsWith("HEAD") && one.endsWith("TAIL") && "中间省略" in one)
         assertTrue(one.length < Comm.MAX_MSG_CHARS + 100)
+        val textOnly = c.apiMessages(listOf(
+            ChatMsg(1, "me", "可见正文", "旧接口提示", "", "u1", 1L),
+            ChatMsg(2, "sys", "旧系统提示", "", "", "u2", 2L),
+            ChatMsg(3, "ai", "回复正文", "旧工具调用", "", "u3", 3L)))
+        assertEquals(listOf("user" to "可见正文", "assistant" to "回复正文"), textOnly)
         assertEquals("短", Comm.clipMessage("短"))
     }
 
@@ -2285,7 +2290,7 @@ class CommTest {
         assertEquals("开始 / 结束各记一条", 2, note.size)
         assertTrue("联合行动开始了" in note[0].text && "顺利完成" in note[1].text && "21 分钟休息" in note[1].text && "16:11" in note[1].text)
         assertTrue("进展不显示在聊天里", cj.visible().none { it.role == "sys" })
-        assertTrue("但发给对方的历史里有 (带 OIT 标记)", cj.apiMessages().last().second.contains(CommText.OIT_TAG))
+        assertFalse("历史只发可见正文, 不重发旧 OIT 提示", cj.apiMessages().any { CommText.OIT_TAG in it.second })
         assertFalse("不算主动消息", note[1].text.startsWith("[系统]"))
         ustate = "idle"
         clock = day.withHour(16).withMinute(5)

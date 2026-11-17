@@ -3935,16 +3935,18 @@ class Comm(
         return msgs.subList(0, lastMe).none { it.role == "ai" }
     }
 
-    fun apiMessages(src: List<ChatMsg> = messages): List<Pair<String, String>> {
+    fun apiMessages(src: List<ChatMsg> = messages, includeLatestApi: Boolean = false): List<Pair<String, String>> {
         val out = ArrayList<Pair<String, String>>()
+        val lastAi = src.indexOfLast { it.role == "ai" }
+        val conversation = src.withIndex().filter { (i, m) -> m.role == "me" || m.role == "ai" || includeLatestApi && i > lastAi && m.role == "sys" && m.api.isNotEmpty() }
         // 总字数太多时从最老的开始不带 (至少带最新的一条)
         var total = 0
         // 超过条数上限后按 HISTORY_STEP 批量淘汰, 让窗口起点保持稳定
-        var kept: List<ChatMsg> = if (src.size > HISTORY_SENT) src.drop(-Math.floorDiv(-(src.size - HISTORY_SENT), HISTORY_STEP) * HISTORY_STEP) else src.toList()
-        while (kept.size > 1 && kept.sumOf { it.api.ifEmpty { it.text }.length } > HISTORY_CHARS) kept = kept.drop(minOf(HISTORY_CHAR_STEP, kept.size - 1))
-        for (m in kept) {
+        var kept = if (conversation.size > HISTORY_SENT) conversation.drop(-Math.floorDiv(-(conversation.size - HISTORY_SENT), HISTORY_STEP) * HISTORY_STEP) else conversation
+        while (kept.size > 1 && kept.sumOf { (i, m) -> (if (includeLatestApi && i > lastAi && (m.role == "me" || m.role == "sys")) m.api.ifEmpty { m.text } else m.text).length } > HISTORY_CHARS) kept = kept.drop(minOf(HISTORY_CHAR_STEP, kept.size - 1))
+        for ((i, m) in kept) {
             val role = if (m.role == "ai") "assistant" else "user"
-            val text = clipMessage(m.api.ifEmpty { m.text })
+            val text = clipMessage(if (includeLatestApi && i > lastAi && (m.role == "me" || m.role == "sys")) m.api.ifEmpty { m.text } else m.text)
             if (text.isEmpty()) continue
             if (out.isNotEmpty() && out.last().first == role) out[out.size - 1] = role to (out.last().second + "\n\n" + text)
             else out.add(role to text)
@@ -4434,7 +4436,7 @@ class Comm(
         var dynamic = memoryBlock() + jointSystemNote()
         if (userProfile.isNotBlank() && firstTurn(messages))   // 身份背景: 只在这段对话的第一轮发一次
             dynamic += "\n\n以下是用户的身份背景(用户自己填写):\n" + userProfile.trim()
-        val msgs = ArrayList(apiMessages())
+        val msgs = ArrayList(apiMessages(includeLatestApi = true))
         if (Ai.cachePlan(profile).staticSystem) {                 // Gemini: system 逐字节不变才会命中隐式缓存, 变的部分贴到最后一条用户消息
             if (dynamic.isNotEmpty()) {
                 if (msgs.isNotEmpty() && msgs.last().first == "user") msgs[msgs.size - 1] = "user" to (msgs.last().second + dynamic)

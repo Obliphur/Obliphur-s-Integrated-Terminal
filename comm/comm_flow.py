@@ -260,7 +260,7 @@ class FlowMixin:
         who = str(self.cfg.get("user_profile") or "").strip()[:MAX_PROFILE]
         if who and first_turn(self.messages):              # 身份背景: 只在这段对话的第一轮发一次
             dynamic += "\n\n以下是用户的身份背景(用户自己填写):\n" + who
-        msgs = api_messages(self.messages)
+        msgs = api_messages(self.messages, include_latest_api=True)
         system, msgs = cache_layout(profile, system, dynamic, msgs)     # Gemini: 动态块贴到最后一条用户消息 (system 要逐字节不变)
         if extra:
             if msgs and msgs[-1]["role"] == "user":
