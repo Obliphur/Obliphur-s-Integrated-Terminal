@@ -48,7 +48,7 @@
 
 沟通的实时模型请求统一声明服务商原生工具：OpenAI 兼容接口使用 `tools/function`、`tool_calls` 和带 `tool_call_id` 的 `tool` 结果；Anthropic 使用 `input_schema`、`tool_use` 和 `tool_result`；Gemini 使用 `functionDeclarations`、`functionCall` 和 `functionResponse`。每轮只允许一个调用，往返保留调用编号以及服务商返回的思考签名 / Gemini `thoughtSignature` / DeepSeek `reasoning_content`。本地再次校验工具名、参数类型、必填字段、枚举和数值范围；未知工具、非法参数和多调用报错，不执行。中转须支持所选协议的原生工具；不会降级为正文标记执行。名单建议、OCR 和记忆整理沿用各自文本接口。
 
-工具定义在 `defaults/comm_tools.json`，公共前置 prompt 在 `defaults/comm_protocol.txt`；安卓 `app/src/main/resources/` 保存相同内容。Claudia、Assistant 和其他自定义人设都收到公共协议，Assistant 仍不模拟打字、不触发分条第二次调用，内置 Assistant 的专注可用例外保留。人设文件的身份、日程与关系规则不变，旧文件无需覆盖；旧说明里的控制标记由前置协议映射为对应工具语义，不再让模型输出标记。
+工具定义在 `defaults/comm_tools.json`，公共前置 prompt 在 `defaults/comm_protocol.txt`；安卓 `app/src/main/resources/` 保存相同内容。Claudia、Assistant 和其他自定义人设都收到公共协议，Assistant 仍不模拟打字、不触发分条第二次调用，内置 Assistant 的专注可用例外保留。人设文件的身份、日程与关系规则不变；旧控制写法在发送前转换为工具说明，不覆盖用户自定义文件，内置人设按升级链迁移。工具参数只供程序处理，用户可见正文单独填写 `oit_reply.text`；例如 `wait_minutes` 只设置追问时限，不会显示为聊天内容。旧控制标签只为历史聊天兼容解析，不再要求模型输出。
 
 | 工具 | 参数与结果 |
 | --- | --- |

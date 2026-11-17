@@ -132,7 +132,7 @@ object CommData {
             lines.add("- ${t.name.substringAfter(':')}($kind, 等级${t.level}): ${t.desc}".replace("\n", " "))
         }
         lines.add("")
-        lines.add("请按规则 X 回复: 接受就发送 [Yes], 不接受发送 [No] (后面可以再加一句话).")
+        lines.add("请按规则 X 回复: 接受就在oit_reply中填写answer=\"yes\",不接受填写answer=\"no\" (后面可以同时提供text).")
         return lines.joinToString("\n")
     }
 
