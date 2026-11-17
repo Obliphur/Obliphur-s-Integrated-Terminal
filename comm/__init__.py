@@ -921,7 +921,9 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
         current_builtin = BUILTIN_PERSONAS[ASSISTANT_PERSONA]
         legacies = [current_builtin.replace(ASSISTANT_SLEEP_LINE, ""),
                     current_builtin.replace(ASSISTANT_SLEEP_LINE, "").replace(ASSISTANT_DETAIL_LINE, "")]
-        if native_persona_text(current).strip() not in {current_builtin.strip()} | {x.strip() for x in legacies}:
+        normalized = native_persona_text(current).strip()
+        known = {native_persona_text(x).strip() for x in (current_builtin, *legacies)}
+        if normalized not in known:
             return
         if current.strip() == current_builtin.strip():
             return
@@ -1043,7 +1045,8 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
             return
         if current.strip() == BUILTIN_PERSONAS[DEFAULT_PERSONA].strip():
             return
-        if (native_persona_text(current).strip() != BUILTIN_PERSONAS[DEFAULT_PERSONA].strip()
+        normalized = native_persona_text(current).strip()
+        if (normalized != native_persona_text(BUILTIN_PERSONAS[DEFAULT_PERSONA]).strip()
                 and current.strip() not in {x.strip() for x in CLAUDIA_LEGACIES}
                 and self._text_crc(current) != self.cfg.get("claudia_base")):
             return                                  # 用户改过的: 不动 (改回上一次见到的内置版本就算没改过, 见 _note_builtin_base)

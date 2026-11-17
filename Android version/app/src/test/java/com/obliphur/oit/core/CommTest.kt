@@ -247,7 +247,8 @@ class CommTest {
 
     @Test
     fun loveAndAccept() {
-        assertTrue("XVII.用户提出发展亲密关系" in CommText.prefixPrompt() && "[accept]" in BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT))
+        assertTrue("XVII.用户提出发展亲密关系" in CommText.prefixPrompt() && "accept_relationship=true" in BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT))
+        assertTrue("[waiting for reply]" !in CommText.oitText(CommText.OIT_TAG + "\n等待 [waiting for reply]:[5]") && "wait_minutes" in CommText.oitText(CommText.OIT_TAG + "\n等待 [waiting for reply]:[5]"))
         assertTrue("主动触发的表白会在每次进入特殊空闲时间时由系统判定" in BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT))
         assertEquals("- 喜欢钢琴", CommText.sanitizeMem("- 【系统记录】已确立亲密关系\n- 喜欢钢琴"))
         assertTrue("以「对方的人设」为准" in CommText.MEM_PROMPT && "不自动改变记忆规则" in CommText.MEM_PROMPT)
@@ -470,7 +471,7 @@ class CommTest {
         val b = d0.withHour(18)
         val jt = CommData.jointText(listOf("long1"), a, b)
         for (k in listOf("【合约的基础规则】", "初始时长 3 小时", "目标生命值", "开始时间 2026-11-04 14:00", "预计结束时间 2026-11-04 18:00",
-            "持久战-I(环境, 等级1)", "[Yes]", "[No]", "危机等级 1")) assertTrue(k, k in jt)
+            "持久战-I(环境, 等级1)", "answer=\"yes\"", "answer=\"no\"", "危机等级 1")) assertTrue(k, k in jt)
         assertTrue(jt.indexOf("【合约的基础规则】") < jt.indexOf("【联合行动】") && jt.indexOf("【联合行动】") < jt.indexOf("【选择的词条】"))
         assertTrue(CommData.jointLabel(listOf("long1"), a, b, a.toLocalDate()).endsWith("14:00 - 18:00 · 1 个词条") && "(没有选词条)" in CommData.jointText(emptyList(), a, b))
         assertTrue("09:00 写代码" in CommData.hourText(listOf("09:00 写代码")) && "没有开启" in CommData.hourText(emptyList(), false))
@@ -1749,7 +1750,7 @@ class CommTest {
         c.tick(); assertTrue(c.busy)                                           // N 分钟用户没回复: 追问
         wait(c)
         val body = calls.last().second.last().second
-        assertTrue("[waiting for reply]:[10]" in body && "追加询问" in body)
+        assertTrue("wait_minutes" in body && "[waiting for reply]" !in body && "追加询问" in body)
         assertEquals("还在忙吗?", c.visible().last().text)
         assertEquals(0.0, c.messages.last { it.role == "ai" }.wait, 0.0)       // 追问的回复不再等待
         val nc2 = calls.size
@@ -2235,7 +2236,7 @@ class CommTest {
         val mine = cj.messages.last { it.role == "me" }
         assertTrue(mine.text.startsWith("🤝 联合行动 14:00 - ") && mine.text.endsWith("一起吧"))
         val body = calls.last().second.last().second
-        assertTrue("【合约的基础规则】" in body && "持久战-I(环境, 等级1)" in body && "开始时间 2026-12-10 14:00" in body && "[Yes]" in body)
+        assertTrue("【合约的基础规则】" in body && "持久战-I(环境, 等级1)" in body && "开始时间 2026-12-10 14:00" in body && "answer=\"yes\"" in body)
         assertTrue(body.indexOf("【合约的基础规则】") < body.indexOf("【联合行动】") && body.indexOf("【联合行动】") < body.indexOf("【选择的词条】") &&
             body.indexOf("【选择的词条】") < body.indexOf("一起吧"))
         assertEquals("好的,到时见.", cj.visible().last().text)
@@ -2662,7 +2663,7 @@ class CommTest {
         val n9 = calls.size
         cf.proactiveForTest("[系统] 请主动发一条消息.")
         wait(cf)
-        assertTrue(calls.size == n9 + 2 && CommText.PRO_NO_REFUSE in calls.last().second.last().second)
+        assertTrue(calls.size == n9 + 2 && "调用oit_reply(refuse=true)" in calls.last().second.last().second)
         assertTrue("刚想到" in cf.visible().last().text)
         // 编号 / 默认
         val si = tids.indexOf("silent") + 1
@@ -2868,7 +2869,7 @@ class CommTest {
         val n0 = calls.size
         script.addAll(listOf(CommText.REFUSE, "查到了."))
         c.tick(); wait(c)
-        assertTrue(calls.size == n0 + 2 && CommText.NET_NO_REFUSE in calls.last().second.last().second && c.visible().last().text == "查到了.")
+        assertTrue(calls.size == n0 + 2 && "调用oit_reply(refuse=true)" in calls.last().second.last().second && c.visible().last().text == "查到了.")
         // 设备同步: 后改的为准; 清空聊天 = 作废 (别的设备一起)
         val od = File(td, "d2").also { it.mkdirs() }
         val other = comm(od, File(td, "p"))
@@ -3195,7 +3196,7 @@ class CommTest {
         assertEquals("", c.shareEnable(true)); assertTrue(c.shareAsking() && !c.shareOn() && calls.size == n2)
         c.tick(); assertTrue(c.busy); wait(c)
         val askBody = calls.last().second.last().second
-        assertTrue(askBody, calls.size == n2 + 1 && "用户想打开 share data" in askBody && "[Yes]" in askBody && "[No]" in askBody)
+        assertTrue(askBody, calls.size == n2 + 1 && "用户想打开 share data" in askBody && "answer=\"yes\"" in askBody && "answer=\"no\"" in askBody)
         assertTrue(!c.shareAsking() && !c.shareOn() && notices == listOf("${c.aiName()} 拒绝了 share data") && c.visible().last().text == "✗ 拒绝了 share data")
         script.add("[Yes] 可以.")
         assertEquals("", c.shareEnable(true)); c.tick(); wait(c)
@@ -3258,7 +3259,7 @@ class CommTest {
         c.tick(); wait(c)
         assertEquals("[messages] 查询那一轮 + 回复那一轮", n0 + 2, calls.size)
         val ask = calls[calls.size - 2].second.last().second
-        assertTrue(ask, CommText.OIT_TAG in ask && "从 6:30 平移到 7:00" in ask && "[Yes]" in ask)
+        assertTrue(ask, CommText.OIT_TAG in ask && "从 6:30 平移到 7:00" in ask && "answer=\"yes\"" in ask)
         val info = calls.last().second.last().second
         assertTrue(info, "聊天记录数: 共" in info && "共 ${c.msgTotal() - 1} 条" in info)
         assertTrue(!c.shiftAsking() && c.visible().last().text == "行." && notices == listOf("${c.aiName()} 同意了, 日程起点明天起平移到 7:00"))

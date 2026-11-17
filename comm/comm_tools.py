@@ -6,6 +6,7 @@ import config
 
 from ai_assist.ai_common import AIError
 from ai_assist.ai_tools import unpack
+from comm.comm_prompt import native_persona_text
 
 
 class ToolsMixin:
@@ -27,13 +28,13 @@ class ToolsMixin:
                 for module in args["modules"]:
                     try:
                         if module == "condition":
-                            values[module] = {"type": "condition", "data": self.condition_text()}
+                            values[module] = {"type": "condition", "data": native_persona_text(self.condition_text())}
                         elif module == "messages":
-                            values[module] = {"type": "count", "data": self.messages_text()}
+                            values[module] = {"type": "count", "data": native_persona_text(self.messages_text())}
                         else:
                             own = self.routine_info(module)
                             text = own or str(self.info_fn(module) or "")
-                            values[module] = {"type": "own_data" if own else "reference_template", "data": text, "available": bool(text)}
+                            values[module] = {"type": "own_data" if own else "reference_template", "data": native_persona_text(text), "available": bool(text)}
                     except Exception as e:
                         self.log(f"TOOL query {module} FAIL {type(e).__name__}")
                         values[module] = {"available": False, "error": "unavailable"}

@@ -2205,7 +2205,8 @@ class Comm(
         val legacies = listOf(currentBuiltin.replace(BuiltinPersonas.ASSISTANT_SLEEP_LINE, ""),
             currentBuiltin.replace(BuiltinPersonas.ASSISTANT_SLEEP_LINE, "")
                 .replace(BuiltinPersonas.ASSISTANT_DETAIL_LINE, ""))
-        if (CommText.nativePersonaText(current).trim() !in (legacies + currentBuiltin).map { it.trim() }) return
+        val normalized = CommText.nativePersonaText(current).trim()
+        if (normalized !in (legacies + currentBuiltin).map { CommText.nativePersonaText(it).trim() }) return
         if (current.trim() == currentBuiltin.trim()) return
         runCatching { f.writeText(currentBuiltin, Charsets.UTF_8) }
         backupPersonaFile(BuiltinPersonas.ASSISTANT)
@@ -2299,7 +2300,7 @@ class Comm(
         if (!f.isFile) return
         val current = runCatching { f.readText(Charsets.UTF_8).removePrefix("\uFEFF").take(MAX_PERSONA) }.getOrNull() ?: return
         if (current.trim() == BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).trim()) return
-        if (CommText.nativePersonaText(current).trim() != BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).trim() &&
+        if (CommText.nativePersonaText(current).trim() != CommText.nativePersonaText(BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT)).trim() &&
             current.trim() !in BuiltinPersonas.CLAUDIA_LEGACIES.map { it.trim() } && textCrc(current) != claudiaBase) return   // 用户改过的磁盘文件不动
         writeClaudiaBuiltin(false)
         claudiaModified = false
@@ -4388,7 +4389,7 @@ class Comm(
                             val own = if (module in listOf("condition", "messages")) "" else routineInfo(module)
                             val text = when (module) { "condition" -> conditionText(); "messages" -> messagesText(); else -> own.ifEmpty { infoFn(module) } }
                             val type = when { module == "condition" -> "condition"; module == "messages" -> "count"; own.isNotEmpty() -> "own_data"; else -> "reference_template" }
-                            JSONObject().put("type", type).put("data", text).put("available", text.isNotEmpty())
+                            JSONObject().put("type", type).put("data", CommText.nativePersonaText(text)).put("available", text.isNotEmpty())
                         }.getOrElse {
                             log("TOOL query $module FAIL ${it.javaClass.simpleName}")
                             JSONObject().put("available", false).put("error", "unavailable")

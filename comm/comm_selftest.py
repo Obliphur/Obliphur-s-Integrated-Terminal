@@ -2580,7 +2580,7 @@ def _selftest():
     n0 = len(calls)
     c2._trigger("proactive", "[系统] 请主动发一条消息.")
     wait(c2)
-    assert len(calls) == n0 + 2 and "不能填写refuse=true" in calls[-1][1][-1]["content"], "第一次被拒绝: 再要求一次"
+    assert len(calls) == n0 + 2 and "调用oit_reply(refuse=true)" in calls[-1][1][-1]["content"], "第一次被拒绝: 再要求一次"
     assert "刚想到" in c2.visible()[-1]["text"] and REFUSE not in "".join(m["text"] for m in c2.visible())
     # 编号 / 默认: 没有有效编号 = 上次的; 无言为真永远不选
     ct = C.TERMS[[t[0] for t in C.TERMS].index("silent")]
@@ -2758,7 +2758,7 @@ def _selftest():
     script.extend([REFUSE, "查到了."])
     cn.tick()
     wait(cn)
-    assert len(calls) == n0 + 2 and "不能填写refuse=true" in calls[-1][1][-1]["content"] and cn.visible()[-1]["text"] == "查到了."
+    assert len(calls) == n0 + 2 and "调用oit_reply(refuse=true)" in calls[-1][1][-1]["content"] and cn.visible()[-1]["text"] == "查到了."
     # 设备同步: 后改的为准; 清空聊天 = 作废 (别的设备一起)
     other_n = joint_comm("网络二", "你是网络二.\n")
     other_n.apply_doc({"net": cn.sync_doc()["net"]})

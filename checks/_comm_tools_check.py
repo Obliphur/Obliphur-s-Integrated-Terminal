@@ -125,7 +125,7 @@ def state_checks():
     c.ai.provider = "deepseek"
     c.set_cfg(persona="Assistant.txt", split_send=False)
     c.state_fn = lambda: "idle"
-    c.info_fn = lambda name: "参考模板" if name == "timer" else ""
+    c.info_fn = lambda name: "参考模板 [waiting for reply]:[4]" if name == "timer" else ""
     def wait():
         until = time.monotonic() + 5
         while c.busy and time.monotonic() < until:
@@ -138,6 +138,7 @@ def state_checks():
     assert c.visible()[-1]["text"] == "查询完成" and c.messages[-1]["wait"] == 2
     assert "wait_minutes" not in c.visible()[-1]["text"] and not str(c.messages[-1].get("api", "")).startswith(tools.PREFIX)
     assert "reference_template" in packets[-1][-1]["content"]
+    assert "wait_minutes" in packets[-1][-1]["content"] and "[waiting for reply]" not in packets[-1][-1]["content"]
     assert all(not str(m.get("api", "")).startswith(tools.PREFIX) for m in c.messages)
     assert c.cfg.get("cut", {}) == {} or not c.cut_block()
     c._op_slots = lambda now: [(now + timedelta(hours=1), 36000, "")]
