@@ -24,7 +24,7 @@ root.mkdir()
 external.select_root(str(root))
 music = M.manager(str(base / "data"), external)
 assert music is M.manager(str(base / "data"), external)
-assert {spec["id"] for spec in music.capabilities()} == {"audiveris", "musescore", "piano"}
+assert {spec["id"] for spec in music.capabilities()} == {"audiveris", "musescore", "piano", "partitura"}
 assert not any(item["ready"] for item in music.status().values())
 
 
@@ -56,6 +56,10 @@ def fake_install(manager, tool):
         (path / "runtime").mkdir(exist_ok=True)
         (path / "runtime" / "oit-python-version.txt").write_text(config.MUSIC_PYTHON_VERSION, encoding="utf-8")
         (path / "runtime" / "oit-python-ready.txt").write_text(config.MUSIC_PYTHON_VERSION, encoding="utf-8")
+    if tool == "partitura":
+        (path / "runtime").mkdir(exist_ok=True)
+        (path / "runtime" / "oit-python-version.txt").write_text(config.MUSIC_PYTHON_VERSION, encoding="utf-8")
+        (path / "runtime" / "oit-python-ready.txt").write_text(config.MUSIC_PARTITURA_VERSION, encoding="utf-8")
     I._receipt(path, executable, "test")
 
 
@@ -63,7 +67,7 @@ with patch.object(type(music.model), "ready", new=property(lambda _: True)), pat
     assert all(s["ready"] for s in music.install().values())
     assert [call.args[1] for call in install.call_args_list] == list(M.TOOLS)
     music.install()
-    assert install.call_count == 3, "重复安装应跳过已有组件"
+    assert install.call_count == len(M.TOOLS), "重复安装应跳过已有组件"
     assert not external.location_busy
 
     midi = b"MThd\x00\x00\x00\x06\x00\x00\x00\x01\x00\x60MTrk\x00\x00\x00\x04\x00\xff\x2f\x00"
@@ -218,6 +222,33 @@ assert torch_source["sha256"] == config.MUSIC_TORCH_WHEEL_SHA256
 assert "--no-index" in piano_calls[0][0]
 assert "setuptools==75.6.0" in piano_calls[1][0]
 assert "-c" in piano_calls[2][0] and "--proxy" not in piano_calls[1][0]
+
+# Partitura 独立安装，并通过 MIDI 样本确认可读取音符事件。
+partitura_folder = music._directory("partitura")
+partitura_work = base / "partitura-work"
+partitura_work.mkdir()
+partitura_downloads = []
+def partitura_file(source, destination, **kwargs):
+    partitura_downloads.append(source)
+    with zipfile.ZipFile(destination, "w") as package:
+        package.writestr("python.exe" if "python.zip" in str(destination) else "pip/__init__.py", b"test")
+partitura_calls = []
+def partitura_process(args, **kwargs):
+    partitura_calls.append((args, kwargs))
+    if "-c" in args:
+        assert "partitura.load_performance_midi" in args[args.index("-c") + 1]
+        assert "note_array" in args[args.index("-c") + 1] and "'pitch'" in args[args.index("-c") + 1]
+        assert Path(args[-1]).is_file() and Path(args[-1]).suffix == ".mid"
+with patch.object(I.updater, "download_file", side_effect=partitura_file), \
+        patch.object(I.updater, "upstream_proxy", return_value=None), \
+        patch.object(I, "_pip_source", return_value={"url": "https://files.pythonhosted.org/pip.whl", "size": 100}), \
+        patch.object(I, "run_process", side_effect=partitura_process):
+    I._install_partitura(music, partitura_work)
+assert any("python.org" in source.get("url", "") for source in partitura_downloads)
+assert len(partitura_downloads) == 2
+assert "partitura==" + config.MUSIC_PARTITURA_VERSION in partitura_calls[0][0]
+assert music.status("partitura")["ready"]
+assert music._directory("partitura") not in [music._directory(key) for key in M.CONVERTERS]
 assert M.musescore_env()["QT_QPA_PLATFORM"] == "windows"
 with patch.object(type(music.model), "ready", new=property(lambda _: True)), \
         patch.object(I.updater, "download_file", side_effect=fake_file), \

@@ -45,7 +45,9 @@ TOOLS = {
     "audiveris": ToolSpec("audiveris", "Audiveris", (".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"), (".mxl",)),
     "musescore": ToolSpec("musescore", "MuseScore Studio", (".mxl", ".musicxml", ".xml", ".mscz", ".mscx"), (".mid", ".midi", ".mscz")),
     "piano": ToolSpec("piano", "钢琴音频转 MIDI", (".wav", ".mp3", ".flac", ".ogg"), (".mid", ".midi")),
+    "partitura": ToolSpec("partitura", "Partitura MIDI 分析", (), ()),
 }
+CONVERTERS = frozenset(("audiveris", "musescore", "piano"))
 
 
 def run_process(args, *, cwd=None, timeout=None, env=None, accepted=(0,)):
@@ -109,7 +111,8 @@ class MusicTools:
     def _directory(self, tool):
         if tool not in TOOLS:
             raise MusicError(tr("未知音乐工具: {tool}", tool=tool))
-        return Path(self.external.root) / {"audiveris": "Audiveris", "musescore": "MuseScore", "piano": "PianoTranscription"}[tool]
+        return Path(self.external.root) / {"audiveris": "Audiveris", "musescore": "MuseScore",
+                                           "piano": "PianoTranscription", "partitura": "Partitura"}[tool]
 
     def _receipt(self, tool):
         if not self.external.root:

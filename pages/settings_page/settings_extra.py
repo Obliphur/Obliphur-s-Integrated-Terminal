@@ -102,7 +102,7 @@ class ExtraSettingsMixin:
             cfg(self.music_labels[key], text=tr("{tool}: {state}", tool=tr(info["name"]), state=state))
             self.music_buttons[key].state(["disabled"] if blocked or info["ready"] else ["!disabled"])
         self.music_install.state(["disabled"] if blocked or all(s["ready"] for s in statuses.values()) else ["!disabled"])
-        can_convert = any(s["ready"] for s in statuses.values())
+        can_convert = any(statuses[key]["ready"] for key in music_tools.CONVERTERS)
         self.music_convert.state(["disabled"] if blocked or not can_convert else ["!disabled"])
         m = self.music
         if m.busy:

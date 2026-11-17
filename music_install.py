@@ -167,12 +167,65 @@ def _install_piano(manager, work):
     _receipt(folder, python, "piano-transcription-inference 0.0.6 / torch " + config.MUSIC_TORCH_VERSION)
 
 
+def _install_partitura(manager, work):
+    folder = manager._directory("partitura")
+    runtime = folder / "runtime"
+    runtime.mkdir(parents=True, exist_ok=True)
+    python = runtime / "python.exe"
+    version = config.MUSIC_PYTHON_VERSION
+    runtime_marker = runtime / "oit-python-version.txt"
+    if not python.is_file() or not runtime_marker.is_file() or runtime_marker.read_text(encoding="utf-8") != version:
+        source = {"url": f"https://www.python.org/ftp/python/{version}/python-{version}-embed-amd64.zip",
+                  "accept": updater.ACCEPT_FILE, "size": config.MUSIC_PYTHON_SIZE}
+        archive = work / "partitura-python.zip"
+        updater.download_file(source, str(archive), allowed_hosts={"www.python.org"},
+                              max_download=config.MUSIC_PYTHON_MAX, progress=_progress(manager, source),
+                              workers=config.PIANO_MODEL_CONNECTIONS, segment=config.PIANO_MODEL_SEGMENT)
+        extract_zip(archive, runtime)
+    (runtime / "python311._pth").write_text("python311.zip\n.\nLib/site-packages\nimport site\n", encoding="utf-8")
+    site = runtime / "Lib" / "site-packages"
+    site.mkdir(parents=True, exist_ok=True)
+    source = _pip_source()
+    pip_archive = work / "partitura-pip.whl"
+    updater.download_file(source, str(pip_archive), allowed_hosts={"files.pythonhosted.org"},
+                          max_download=config.MUSIC_PYTHON_MAX, progress=_progress(manager, source))
+    extract_zip(pip_archive, site)
+    proxy = updater.upstream_proxy()
+    env = {key: value for key, value in os.environ.items()
+           if key.lower() not in ("http_proxy", "https_proxy", "all_proxy", "no_proxy", "pip_index_url", "pip_extra_index_url")}
+    env.update(TEMP=str(work), TMP=str(work), NO_PROXY="*")
+    packages = ["--index-url", "https://pypi.org/simple", "numpy==1.26.4",
+                "partitura==" + config.MUSIC_PARTITURA_VERSION]
+    common = [str(python), "-X", "utf8", "-m", "pip", "--isolated", "install", "--no-cache-dir",
+              "--disable-pip-version-check", "--only-binary=:all:", "--timeout", str(config.MUSIC_PIP_TIMEOUT),
+              "--retries", str(config.MUSIC_PIP_RETRIES)]
+    try:
+        run_process(common + packages, cwd=str(work), env=env, timeout=config.MUSIC_INSTALL_TIMEOUT)
+    except (MusicError, OSError):
+        if not proxy:
+            raise
+        run_process(common + ["--proxy", f"http://{proxy[0]}:{proxy[1]}"] + packages,
+                    cwd=str(work), env={**env, "NO_PROXY": ""}, timeout=config.MUSIC_INSTALL_TIMEOUT)
+
+    # 安装验收实际读取 MIDI 音符事件，确认 Partitura 与其 mido 依赖可用。
+    midi = work / "partitura-probe.mid"
+    midi.write_bytes(b"MThd\x00\x00\x00\x06\x00\x00\x00\x01\x01\xe0MTrk\x00\x00\x00\x0d"
+                     b"\x00\x90\x3c\x50\x83\x60\x80\x3c\x00\x00\xff\x2f\x00")
+    smoke = ("import sys,partitura,mido; p=partitura.load_performance_midi(sys.argv[1]); "
+             "assert len(p.note_array)>0 and 'pitch' in p.note_array.dtype.names")
+    run_process([str(python), "-X", "utf8", "-c", smoke, str(midi)], cwd=str(work), env=env)
+    (runtime / "oit-python-version.txt").write_text(version, encoding="utf-8")
+    (runtime / "oit-python-ready.txt").write_text(config.MUSIC_PARTITURA_VERSION, encoding="utf-8")
+    _receipt(folder, python, "Partitura " + config.MUSIC_PARTITURA_VERSION)
+
+
 def install_tool(manager, tool):
     arch = os.environ.get("PROCESSOR_ARCHITEW6432") or os.environ.get("PROCESSOR_ARCHITECTURE") or platform.machine()
     if arch.lower() not in ("amd64", "x86_64"):
         raise MusicError(tr("音乐工具自动部署目前仅支持 Windows x64."))
-    if shutil.disk_usage(manager.external.root).free < config.MUSIC_INSTALL_FREE:
-        raise MusicError(tr("外部软件目录可用空间不足，请至少预留 3 GiB."))
+    required_free = config.MUSIC_PARTITURA_FREE if tool == "partitura" else config.MUSIC_INSTALL_FREE
+    if shutil.disk_usage(manager.external.root).free < required_free:
+        raise MusicError(tr("外部软件目录可用空间不足，请至少预留 {size} MiB.", size=required_free // (1024 * 1024)))
     if manager.external.installed:
         # 更新 OIT 专管的配置，让早先部署的 Lasso 也保护 Java / MuseScore。
         ini = Path(manager.external.installed_dir) / "oit-config" / "prolasso.ini"
@@ -184,6 +237,8 @@ def install_tool(manager, tool):
     try:
         if tool == "piano":
             _install_piano(manager, work)
+        elif tool == "partitura":
+            _install_partitura(manager, work)
         else:
             _install_msi(manager, tool, work)
     finally:

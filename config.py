@@ -220,7 +220,7 @@ OUTING_MAX_HOURS = 24 * 7
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.562"                  # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.563"                  # 和 GitHub 上发布的版本号比较 (见 updater.py)
 AI_VOICE_GAP = 1.0                       # 两条语音之间的默认间隔（秒）
 COMM_SPLIT_INTERVAL_SECONDS = 5          # 分条发送间隔（秒）
 COMM_TOOL_ROUNDS = 6                     # 单次沟通最多进行的查询 / 联合行动工具轮数
@@ -266,6 +266,8 @@ MUSIC_INSTALL_TIMEOUT = 3600
 MUSIC_PROBE_TIMEOUT = 90
 MUSIC_PIP_TIMEOUT = 30
 MUSIC_PIP_RETRIES = 2
+MUSIC_PARTITURA_VERSION = "1.9.0"
+MUSIC_PARTITURA_FREE = 512 * 1024 * 1024
 MUSIC_LOG_TAIL = 4096
 MUSIC_CPU_THREADS = 2
 MUSIC_INSTALLER_MAX = 512 * 1024 * 1024

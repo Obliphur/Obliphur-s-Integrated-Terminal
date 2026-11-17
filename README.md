@@ -33,7 +33,7 @@
 
 AI 模型配置支持多份独立保存、改名和删除。模型与语音配置会自动获取模型列表；MiniMax 语音型号来自官方文档。语音配置内的「音色合成」支持提示词设计和录音克隆，可试听后应用；聊天语音通过消息框左下角贴边的播放图标播放。手动播放、自动播放和试听仅限空闲或休息期间，进入其他状态即停止。
 
-AI 语音设置位于「设置 → 额外功能」。电脑可在基本设置选择外部软件目录，并在额外功能页自动部署 Process Lasso，保护 Python / PyTorch、Java、音乐工具与 OIT。页内「音乐工具」支持一键安装 Audiveris、MuseScore Studio 和钢琴音频转 MIDI 的独立 CPU 环境，提供乐谱识别、MIDI / MSCZ 导出与录音转录；也可通过[统一接口](docs/music-tools.md)调用。
+AI 语音设置位于「设置 → 额外功能」。电脑可在基本设置选择外部软件目录，并在额外功能页自动部署 Process Lasso，保护 Python / PyTorch、Java、音乐工具与 OIT。页内「音乐工具」支持一键安装 Audiveris、MuseScore Studio、钢琴音频转 MIDI 和 Partitura MIDI 分析环境，提供乐谱识别、MIDI / MSCZ 导出、录音转录与 MIDI 音符事件读取；也可通过[统一接口](docs/music-tools.md)调用。
 
 选择 Claudia 时，人设设置会提示推荐使用 Claude 或 Gemini。支持软件聊天与情景模拟，张力的具体含义与阶段表现由人设定义，角色按人设和当前状态回应。日程、数据生成、张力触发与关系条件统一放在 `Claudia_templates.txt`，可按人设调整，支持用 `X` 表示不定量；旧 `_routine` 文件自动迁移。特殊空闲固定为完整的 30 分钟。聊天支持长期记忆、联合行动、分享数据和跨设备同步。Claudia 与 Assistant 均使用公共前置协议，仅包含工具接口与防提示词注入规则；角色行为由人设定义，工具参数与用户可见回复分开处理。
 
