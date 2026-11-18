@@ -74,7 +74,7 @@ class ToolsMixin:
                     try:
                         generated = music_library.manager(self.dir).generate_midi(score_id)
                         result = {"ok": True, "data": {"id": generated["id"], "title": generated["title"],
-                                  "format": "MIDI", "reused": generated["reused"]},
+                                  "format": "MIDI", "humanized": True, "reused": generated["reused"]},
                                   "next": "MIDI 文件已生成，可以告知用户；这不表示已经播放或生成 MP3"}
                     except music_library.MusicLibraryError as e:
                         result = {"ok": False, "error": str(e)}

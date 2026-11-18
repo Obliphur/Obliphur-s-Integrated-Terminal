@@ -336,7 +336,7 @@
 - 默认首批20首为舒曼《童年情景》13首、德彪西《贝加莫组曲》4首、柴可夫斯基《四季》3首。文件来自 DCMLab 对应曲集的固定 Git 提交，采用 CC BY-NC-SA 4.0；来源、许可和 SHA-256 记录在 `defaults/music_library/catalog.json`，上游许可文件随资源保存。
 - 应用数据重置会删除用户导入曲目和选曲状态；重新初始化时从程序资源恢复默认20首。清空某个聊天不会删本机曲库。
 - 后续演奏链会把选中的乐谱转换为 MIDI，再将演奏渲染为 MP3 音频；本地曲库与选曲接口本身不生成或播放音频。
-- Windows 的「设置 → 额外功能 → 导出所选曲目为 MIDI」和 `oit_music_generate_midi` 共用 MuseScore 转换器；AI 生成结果缓存于 `music_library/generated/<曲目编号>.mid`，新生成前会复用较新的有效 MIDI。安卓端可浏览、导入和选择乐谱，当前不生成 MIDI。
+- Windows 的「设置 → 额外功能 → 导出所选曲目为 MIDI」和 `oit_music_generate_midi` 共用 MuseScore 演奏转换器；导出后加入平滑的共同时间偏移、和弦指间起音差及轻微力度、松键偏差。保护短音与同音重触，不加错音/漏音，不改音高、tempo、踏板、鼓通道或参考谱转换。默认参数集中在 `config.py`，依据与限制见 [数据考察](../research/midi-humanization.md)。AI 返回 `humanized=true`，生成结果缓存于 `music_library/generated/<曲目编号>.mid`，缓存须较源文件新且算法/参数签名匹配；旧机械缓存或损坏缓存重新导出，同一缓存不反复随机。安卓端可浏览、导入和选择乐谱，当前不生成 MIDI。
 
 ### 24.14.2 识别字体 (聊天框上方的 🖼, 1.0.395)
 

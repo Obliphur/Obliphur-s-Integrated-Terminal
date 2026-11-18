@@ -244,6 +244,18 @@ class MusicTools:
             raise MusicError(tr("MuseScore 导出需要 MusicXML 或 MuseScore 文件."))
         return self.convert(source, destination)
 
+    def _performance(self, source, destination, seed=None):
+        if Path(source).suffix.lower() not in TOOLS["musescore"].inputs or Path(destination).suffix.lower() not in (".mid", ".midi"):
+            raise MusicError(tr("演奏 MIDI 需要乐谱输入和 .mid 或 .midi 输出."))
+        return self._convert(source, destination, humanize=True, seed=seed)
+
+    def export_performance(self, source, destination, *, seed=None):
+        """乐谱→演奏 MIDI；与参考谱的精确导出分开，防止污染演奏评判。"""
+        return self._execute("running", lambda: self._performance(source, destination, seed))
+
+    def start_performance(self, source, destination):
+        return self._start("running", lambda: self._performance(source, destination))
+
     def transcribe(self, source, destination):
         if Path(source).suffix.lower() not in TOOLS["piano"].inputs:
             raise MusicError(tr("钢琴转录需要 WAV、MP3、FLAC 或 OGG 音频."))
@@ -293,7 +305,7 @@ class MusicTools:
             raise MusicError(tr("请先安装音乐组件: {tool}", tool=TOOLS[tool].name))
         return self.executable(tool)
 
-    def _convert(self, source, destination):
+    def _convert(self, source, destination, *, humanize=False, seed=None):
         src, dest = Path(source).resolve(), Path(destination).resolve()
         if not src.is_file() or src == dest:
             raise MusicError(tr("请选择有效输入文件和不同的输出位置."))
@@ -333,6 +345,12 @@ class MusicTools:
             else:
                 self._transcribe(src, target)
             validate_output(target)
+            if humanize:
+                from music_humanize import MidiError, humanize_file
+                try:
+                    humanize_file(target, seed=seed)
+                except MidiError as error:
+                    raise MusicError(tr("MIDI 人性化处理失败，请重新导出有效乐谱.")) from error
             shutil.copyfile(target, staged)
             os.replace(staged, dest)
             return MusicResult("convert", key, str(src), (str(dest),))

@@ -164,7 +164,7 @@ class MusicLibrary:
         return self.root / "generated" / (score_id + ".mid")
 
     def generate_midi(self, score_id=None):
-        """使用本机 MuseScore 导出选曲 MIDI；已有且较新的有效结果直接复用。"""
+        """使用本机 MuseScore 导出演奏 MIDI；复用当前人性化参数的有效缓存。"""
         selected = self.selection() if score_id is None else None
         score_id = score_id or (selected or {}).get("id")
         item, source = self.get(score_id)
@@ -172,14 +172,15 @@ class MusicLibrary:
             raise MusicLibraryError("请先选择一首仍在曲库中的乐谱")
         destination = self.midi_path(score_id)
         from music_tools import MusicError, manager as music_manager, validate_output
+        from music_humanize import is_current
         try:
-            if destination.is_file() and destination.stat().st_mtime_ns >= source.stat().st_mtime_ns:
+            if destination.is_file() and destination.stat().st_mtime_ns >= source.stat().st_mtime_ns and is_current(destination):
                 validate_output(destination)
                 return {"id": score_id, "title": item["title"], "path": str(destination), "reused": True}
             import external_software
             data_dir = str(self.root.parent)
             tools = music_manager(data_dir, external_software.manager(data_dir))
-            tools.export(source, destination)
+            tools.export_performance(source, destination)
             validate_output(destination)
         except (OSError, MusicError) as error:
             raise MusicLibraryError(str(error)) from error

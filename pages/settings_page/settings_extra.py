@@ -117,7 +117,7 @@ class ExtraSettingsMixin:
         if not destination:
             return
         try:
-            self.music.start_convert(selected["path"], destination)
+            self.music.start_performance(selected["path"], destination)
         except (OSError, ValueError, music_tools.MusicError) as error:
             toast.warn(str(error))
         self._refresh_extra_page()

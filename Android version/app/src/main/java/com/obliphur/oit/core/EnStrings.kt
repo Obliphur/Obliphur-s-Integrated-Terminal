@@ -12,6 +12,8 @@ object EnStrings {
         "导出所选曲目为 MIDI…" to "Export selected score as MIDI…",
         "请先选择一首曲目" to "Choose a score first",
         "保存 MIDI 文件" to "Save MIDI file",
+        "演奏 MIDI 需要乐谱输入和 .mid 或 .midi 输出." to "Performance MIDI requires a score input and a .mid or .midi output.",
+        "MIDI 人性化处理失败，请重新导出有效乐谱." to "MIDI humanization failed. Export again from a valid score.",
         "安卓端暂不支持生成 MIDI；请在 Windows 安装 MuseScore 后重试。MIDI 不是 MP3。" to "MIDI generation is not available on Android. Install MuseScore on Windows and try again. MIDI is not MP3.",
         "工具调用缺少执行结果" to "A tool call is missing its result.",
         "每次只能调用一个 OIT 工具" to "Only one OIT tool may be called at a time.",

@@ -220,7 +220,7 @@ OUTING_MAX_HOURS = 24 * 7
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.574"                  # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.575"                  # 和 GitHub 上发布的版本号比较 (见 updater.py)
 AI_VOICE_GAP = 1.0                       # 两条语音之间的默认间隔（秒）
 COMM_SPLIT_INTERVAL_SECONDS = 5          # 分条发送间隔（秒）
 COMM_TOOL_ROUNDS = 6                     # 单次沟通最多进行的查询 / 联合行动工具轮数
@@ -275,6 +275,19 @@ MUSIC_PARTITURA_VERSION = "1.9.0"
 MUSIC_PARTITURA_FREE = 512 * 1024 * 1024
 MUSIC_LOG_TAIL = 4096
 MUSIC_CPU_THREADS = 2
+# 演奏用 MIDI 的轻微随机偏差；保留评判/格式转换的原始 MIDI，不改谱面速度。
+MUSIC_HUMANIZE_VERSION = 1
+MUSIC_HUMANIZE_DRIFT_MS = 12.0          # 每 8 个四分音符平滑变化，绝对偏移不累计
+MUSIC_HUMANIZE_DRIFT_BEATS = 8.0
+MUSIC_HUMANIZE_GROUP_MS = 3.0           # 同时起音的一组共享的标准差
+MUSIC_HUMANIZE_FINGER_MS = 5.0          # 各音起音标准差（截断为 2 倍）
+MUSIC_HUMANIZE_RELEASE_MS = 8.0         # 松键标准差（同时受原时值 15% 限制）
+MUSIC_HUMANIZE_VELOCITY = 2.0           # 原力度上的随机标准差（截断为 2 倍）
+MUSIC_HUMANIZE_SIGMA_LIMIT = 2.0
+MUSIC_HUMANIZE_IOI_FRACTION = 0.2       # 起音偏移最多占相邻组间隔的比例
+MUSIC_HUMANIZE_RELEASE_FRACTION = 0.15  # 松键偏移最多占原时值的比例
+MUSIC_HUMANIZE_MAX_BYTES = 50 * 1024 * 1024
+MUSIC_HUMANIZE_MAX_EVENTS = 500000
 MUSIC_INSTALLER_MAX = 512 * 1024 * 1024
 MUSIC_PYTHON_MAX = 32 * 1024 * 1024
 MUSIC_PYTHON_SIZE = 11249023

@@ -19,6 +19,8 @@ EN = {
     "导出所选曲目为 MIDI…": "Export selected score as MIDI…",
     "请先选择一首曲目": "Choose a score first",
     "保存 MIDI 文件": "Save MIDI file",
+    "演奏 MIDI 需要乐谱输入和 .mid 或 .midi 输出.": "Performance MIDI requires a score input and a .mid or .midi output.",
+    "MIDI 人性化处理失败，请重新导出有效乐谱.": "MIDI humanization failed. Export again from a valid score.",
     "参考乐谱 / MIDI": "Reference score / MIDI",
     "演奏 MIDI / 音频": "Performance MIDI / audio",
     "支持的音乐文件": "Supported music files",

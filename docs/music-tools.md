@@ -21,6 +21,8 @@ music.install("audiveris")        # 或 musescore / piano
 result = music.convert(r"D:\score.pdf", r"D:\score.mid")
 print(result.to_dict())           # operation / tool / source / files
 # 也可按能力调用：music.recognize(...)、music.export(...)、music.transcribe(...)
+music.export_performance(r"D:\score.mscz", r"D:\performance.mid", seed=42)
+# seed 可省略；演奏用 MIDI 加入轻微起音、力度与松键偏差，普通 export 不加。
 ```
 
 `convert(source, destination)` 按扩展名自动选择适配器。PDF、PNG、JPEG、TIFF、BMP 经 Audiveris 输出 `.mxl`，需要 `.mid` / `.midi` / `.mscz` 时继续经 MuseScore 导出；MusicXML、MXL、MSCZ、MSCX 经 MuseScore 导出 MIDI 或 MSCZ；WAV、MP3、FLAC、OGG 经钢琴模型输出 MIDI。音频转录只适用于钢琴录音，不提供演奏评分。识谱可能出错，结果应在 MuseScore 中校对；多个乐章产生多份 MXL 时明确报错，避免丢失乐章。
@@ -30,6 +32,8 @@ Partitura 是可单独安装的 MIDI 分析依赖，使用独立 Python 环境�
 沟通页的「演奏评判」复用这些工具：左侧参考 MIDI / 乐谱图片或 PDF 转成 MIDI，右侧演奏 MIDI / 钢琴录音转成 MIDI，再由独立 worker 输出紧凑差异 JSON（音符命中、漏音 / 多音、平均起音与时值误差、最长误差和演奏时长）。评判模型只收到此摘要，不收到原始音频；评判文字再交给聊天模型。回复最早在发送后 60 秒加上演奏 MIDI 时长时显示。当前对齐按同音高最近起音匹配，结果用于练习提示，不替代专业乐谱校验。
 
 同步方法返回结果或抛出异常。页面使用 `start_install(tool=None)` / `start_convert(source, destination)`，立即返回并在后台执行；从同一缓存 manager 读取 `state`（idle/installing/running/ready/error）、`current`、`progress`、`error`、`result`。所有音乐任务串行，执行期间锁定外部目录并阻止 Process Lasso 部署及旧权重下载入口。界面重建不会中断任务。转换在 OIT 临时目录生成结果，经验证后复制至目标盘并原子替换；失败保留原输出。
+
+演奏导出使用 `export_performance(source, destination, seed=None)` 或后台 `start_performance(source, destination)`，输入为 MuseScore / MusicXML 乐谱，输出限 MIDI。处理器不增加依赖，保留原谱的音高、速度、踏板与鼓通道；只在组内起音、力度和松键上加入保守微差。普通格式转换、音频转录及演奏评判参考谱保持精确。曲库 AI 缓存包含算法/参数签名，旧机械版本或参数不符时重新生成；同一缓存不反复随机。数据考察、参数和局限见 [MIDI 人性化依据](research/midi-humanization.md)。这一步不输出 MP3。
 
 Audiveris 5.11.0 与 MuseScore Studio 4.7.7 从官方 GitHub Release 获取 x64 MSI，统一下载器核对大小及 SHA-256，再用 MSI 行政解包部署至 `Audiveris/`、`MuseScore/`。Audiveris 自带 Java。调用命令行探测通过后才写 `oit-install.json`，该收据保存组件版本及目录内相对可执行路径。安装不改系统文件关联。两个项目均免费；其开源许可及组件许可保留在官方分发包中。
 
