@@ -46,10 +46,10 @@ settings.destroy()
 split_settings = SettingsPage(root, sm, data_dir=folder, comm=c)
 split_settings.show_tab("comm")
 root.update()
-assert c.split_on() and c.split_interval() == 5
+assert not c.split_on() and c.split_interval() == 0
 assert not any("分条发送" in str(w.cget("text")) for w in descendants(split_settings) if "text" in w.keys())
 c.apply_doc({"split": False, "split_interval": 8})
-assert c.split_on() and c.split_interval() == 5
+assert not c.split_on() and c.split_interval() == 0
 split_settings.destroy()
 try:
     for language in ("zh", "en"):

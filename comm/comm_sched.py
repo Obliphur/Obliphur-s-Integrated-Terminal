@@ -34,34 +34,6 @@ from comm.comm_util import (OIT_TAG, COND_TAG, WEEKDAY, MAX_MSG_CHARS, HISTORY_S
 
 
 class SchedMixin:
-    def _follow_ready(self) -> bool:
-        """第二条调用要等第一条真的到了用户眼前: 还在打字延时里 (hold + due 没到) 就先等;
-        被藏起来 (专注 / 睡眠中, hold 但没有 due 或已经到期) 也算显示过."""
-        m = next((x for x in self.messages if x.get("id") == self._follow_msg), None)
-        if m is None or not m.get("hold"):
-            return True
-        if m.get("late") or self.blocked():          # 对方在专注 / 用户不能用沟通: 先藏起来也算显示过
-            return True
-        return int(m.get("due") or 0) <= self._ms()
-
-    def _check_follow(self) -> bool:
-        """规则 VIII 的第二次调用到点了 (延时见 FOLLOW_DELAY)."""
-        if not self._follow_at or self._ms() < self._follow_at:
-            return False
-        if not self._follow_ready():                      # 第一条还没显示出来 (打字动画): 等它出来再调用
-            self._follow_at = self._ms() + 500
-            return False
-        self._follow_at = 0
-        self._follow_msg = ""
-        if self._follow_epoch != self._epoch or self._again or self.busy:
-            return False
-        if not self.split_on() or not uses_prefix(self.persona_name()) or self._profile_problem() or self.cut_block() or not self.leader() or self.hard_block():
-            return False
-        if self.unanswered():                             # 等的时候用户又说了: 由那条新消息自己触发回复
-            return False
-        self._trigger("followup", FOLLOW_BODY)
-        return True
-
     def _info_of(self, name: str) -> tuple:
         """人设文件里的 (日程条目, 主动发起谈话的概率), 文件没变就用上次读的."""
         try:

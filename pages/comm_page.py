@@ -152,8 +152,19 @@ class CommPage(CommVoiceMixin, tk.Frame):
         self._to_end()
         self._voice_start()
         self._voice_job = self.after(100, self._voice_poll)
+        self._stream_job = self.after(100, self._stream_poll)
+
+    def _stream_poll(self):
+        if self.comm.viewing:
+            if self.comm.poll_stream():
+                self._sync_rows()
+            self._stream_job = self.after(100, self._stream_poll)
 
     def hide(self):
+        job = getattr(self, "_stream_job", None)
+        if job:
+            self.after_cancel(job)
+            self._stream_job = None
         self._voice_cancel()
         self.comm.set_viewing(False)
 

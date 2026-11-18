@@ -318,7 +318,7 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
                 v = d.get(k)
                 if isinstance(v, type(default)):
                     self.cfg[k] = v
-        self.cfg["split_send"] = True
+        self.cfg.pop("split_send", None)
         self.cfg.pop("split_interval", None)
         self.pid = pid_of(self.cfg.get("persona") or "")
         self._load_state(self._read_chat(self.pid))
@@ -1268,6 +1268,7 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
         return m
 
     def _finish(self, kind: str, extra, reply: str, err: str, epoch: int = 0, op=None):
+        streamed = any(m.get("streaming") for m in self.visible())
         self._stream_preview = ""
         self.busy = False
         self.busy_since = 0.0
@@ -1384,7 +1385,8 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
                 self._interaction_reply(special, burst, until, shame)
             self._interaction_end(tension_reply, getattr(self, "_interaction_burst", 0))
             # AI 的 API 原文含控制标记；只存用户可见文本，避免详情/同步接口泄露调用痕迹。
-            m = self._add("ai", text)
+            m = self._mk("ai", text, delay=not streamed)
+            self.messages.append(m)
             if self._active_reply_after > self._ms():
                 m["reply_after"] = self._active_reply_after
                 m["due"] = max(int(m.get("due") or 0), self._active_reply_after)
@@ -1438,15 +1440,23 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
                 elif self._newer_me(self._req_ts):          # 回复显示了, 但用户在等的时候又发了消息 (请求里没带上): 补问一次, 不然这几条没人回
                     self.log(f"CATCHUP ({kind}): 等回复的时候用户又发了消息, 补问一次")
                     self._trigger("user", CATCHUP_BODY)
-        elif delivered and kind in FOLLOW_KINDS and self.split_on() and uses_prefix(self.persona_name()) and not self._profile_problem() and not self.cut_block() and self.leader():
-            # 规则 VIII: 第一条回复**明确显示出来之后** (被藏起来也算显示过), 隔一会儿再调用第二次, 让对方可以把话分开说
-            # (只想说一次就 [refuse to reply], 什么也不留下). 第一条被拒绝 / 为空 / 出错时不存在"第一条消息", 不调用.
-            # 正式运行使用用户设置；保留自检指定的延时（包括零）。
-            override = self.split_interval() if self.follow_delay is None else self.follow_delay
-            delay = follow_delay(self.profile(), override)
-            self._follow_at = self._ms() + int(delay * 1000)
-            self._follow_epoch = self._epoch
-            self._follow_msg = m["id"]
+
+    def _apply_stream(self, events):
+        """在主线程合并预览；后台线程只排队，不操作界面。"""
+        changed = False
+        for epoch, text in events:
+            if epoch == self._epoch and self.busy:
+                self._stream_preview += text
+                changed = True
+        if changed:
+            self._changed()
+        return changed
+
+    def poll_stream(self):
+        """聊天页每 100 毫秒取正文增量，不额外触发业务 tick。"""
+        with self._lock:
+            events, self._stream_events = self._stream_events, []
+        return self._apply_stream(events)
 
     # ---- 每秒一次 ----
     def tick(self):
@@ -1456,13 +1466,7 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
         with self._lock:
             stream, self._stream_events = self._stream_events, []
             done, self._results = self._results, []
-        changed = False
-        for epoch, text in stream:
-            if epoch == self._epoch and self.busy:
-                self._stream_preview += text
-                changed = True
-        if changed:
-            self._changed()
+        self._apply_stream(stream)
         for res in done:
             self._finish(*res)
         with self._lock:
@@ -1482,8 +1486,6 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
         self._shift_tick()
         self._sf_tick()
         if self.busy or not self.leader():
-            return
-        if self._check_follow():                       # 第二条: 第一条被藏起来 (用户专注 / 睡眠中) 也算显示过
             return
         if self._ai_problem():
             return

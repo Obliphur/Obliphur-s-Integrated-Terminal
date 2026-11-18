@@ -295,7 +295,7 @@ def _chat_once(profile: dict, system: str, messages: list, timeout: float, opene
                on_delta=None) -> str:
     """带历史的一次请求: messages = [{"role": "user" | "assistant", "content": 文字}], 以 user 开头, 以 user 结尾.
     API 本身没有记忆, 想让模型记得前面说过的话, 就得每次把历史一起发过去 (沟通页, comm.py).
-    cache: 提示缓存 (沟通里"分条发"会连着调用两次, 第二次的前面全是第一次发过的内容). 标缓存位置 / 带缓存键的只有
+    cache: 提示缓存 (后续对话及工具往返可复用前面的历史). 标缓存位置 / 带缓存键的只有
     Anthropic (cache_control) 和 ChatGPT (prompt_cache_key); Gemini 靠相同的 systemInstruction 自动命中, 别家不假设有缓存.
     on_usage(输入 token 数, 命中缓存的 token 数): 响应里有用量时调用."""
     if cache and endpoint(profile) in CACHE_REJECT:          # 这个地址以前就不认 cache_control: 这次直接不标
@@ -415,7 +415,9 @@ def _partial_json_text(raw: str, sent: str) -> str:
             i += 2
         else:
             break
-    text = "".join(out)
+    if out and 0xD800 <= ord(out[-1]) <= 0xDBFF:
+        out.pop()  # 等待下一片 JSON 的低代理项，避免把半个 emoji 交给界面
+    text = "".join(out).encode("utf-16-le", "surrogatepass").decode("utf-16-le", "replace")
     return text[len(sent):] if text.startswith(sent) else ""
 
 
@@ -450,18 +452,39 @@ def _send_stream(profile: dict, body: dict, timeout: float, opener, on_delta, ur
                 on_delta(text)
             except Exception:
                 pass
+    plain_raw, plain_sent = "", ""
+    def emit_plain(text):
+        """普通文本先过滤思考及未收全的标签；Gemini 只预览正式回复块。"""
+        nonlocal plain_raw, plain_sent
+        plain_raw += text
+        visible = plain_raw
+        if protocol == "gemini":
+            if "<oit_final>" not in visible:
+                return
+            visible = visible.split("<oit_final>", 1)[1].split("</oit_final>", 1)[0]
+        tail = visible.rfind("<")
+        if tail >= 0 and ">" not in visible[tail:]:
+            visible = visible[:tail]
+        visible = strip_think(visible)
+        if visible.startswith(plain_sent):
+            emit(visible[len(plain_sent):])
+            plain_sent = visible
     try:
         with _open_url(req, timeout, opener) as resp:
             content_type = str(getattr(resp, "headers", {}).get("Content-Type", "")).split(";", 1)[0].strip().lower()
             if content_type == "application/json" or content_type.endswith("+json"):
                 STREAM_REJECT.add(endpoint(profile))
                 try:
-                    return json.loads(resp.read(2_000_000).decode("utf-8"))
+                    data = json.loads(resp.read(2_000_000).decode("utf-8"))
+                    if not isinstance(data, dict):
+                        raise ValueError("响应必须是对象")
+                    return data
                 except (ValueError, UnicodeDecodeError) as e:
                     raise AIError("format", "服务商返回了无效的 JSON 响应") from e
             if protocol == "openai":
                 message = {"role": "assistant", "content": "", "tool_calls": []}
                 usage, finish = None, None
+                complete = False
                 tools = {}
                 for line in resp:
                     line = line.decode("utf-8", "replace").strip()
@@ -469,11 +492,14 @@ def _send_stream(profile: dict, body: dict, timeout: float, opener, on_delta, ur
                         continue
                     raw = line[5:].strip()
                     if raw == "[DONE]":
+                        complete = True
                         break
                     try:
                         chunk = json.loads(raw)
                     except ValueError:
-                        continue
+                        raise AIError("format", "服务商返回了无效的流式数据")
+                    if chunk.get("error"):
+                        raise AIError("format", "服务商在流式响应中返回错误")
                     if isinstance(chunk.get("usage"), dict):
                         usage = chunk["usage"]
                     choices = chunk.get("choices") or []
@@ -485,7 +511,7 @@ def _send_stream(profile: dict, body: dict, timeout: float, opener, on_delta, ur
                     if isinstance(content, str):
                         message["content"] += content
                         if not request_body.get("tools"):
-                            emit(content)
+                            emit_plain(content)
                     for part in delta.get("tool_calls") or []:
                         i = part.get("index", 0)
                         tool = tools.setdefault(i, {"id": "", "type": "function", "function": {"name": "", "arguments": ""}, "_sent": ""})
@@ -500,6 +526,10 @@ def _send_stream(profile: dict, body: dict, timeout: float, opener, on_delta, ur
                                 tool["_sent"] += piece
                                 emit(piece)
                     finish = choice.get("finish_reason") or finish
+                if not complete and not finish:
+                    raise AIError("network", "流式响应中断，回复尚未完成")
+                if finish in ("length", "content_filter"):
+                    raise AIError("format", "模型回复被截断或拦截")
                 message["tool_calls"] = [{k: v for k, v in item.items() if not k.startswith("_")} for _, item in sorted(tools.items())]
                 if not message["tool_calls"]:
                     message.pop("tool_calls")
@@ -510,16 +540,21 @@ def _send_stream(profile: dict, body: dict, timeout: float, opener, on_delta, ur
                 return data
             if protocol == "anthropic":
                 blocks, usage, stop_reason = {}, {}, None
+                complete = False
                 event_name, data_lines = "", []
                 def anth_event():
-                    nonlocal usage, stop_reason
+                    nonlocal usage, stop_reason, complete
                     if not data_lines:
                         return
                     try:
                         obj = json.loads("\n".join(data_lines))
                     except ValueError:
-                        return
+                        raise AIError("format", "服务商返回了无效的流式数据")
                     kind = obj.get("type") or event_name
+                    if kind == "error":
+                        raise AIError("format", "服务商在流式响应中返回错误")
+                    if kind == "message_stop":
+                        complete = True
                     if kind == "message_start":
                         usage = (obj.get("message") or {}).get("usage") or {}
                     elif kind == "content_block_start":
@@ -527,7 +562,7 @@ def _send_stream(profile: dict, body: dict, timeout: float, opener, on_delta, ur
                         blocks[i] = dict(block)
                         blocks[i]["_raw"] = ""
                         if block.get("type") == "text" and not request_body.get("tools"):
-                            emit(block.get("text") or "")
+                            emit_plain(block.get("text") or "")
                     elif kind == "content_block_delta":
                         i, delta = obj.get("index", 0), obj.get("delta") or {}
                         block = blocks.setdefault(i, {"type": "text", "text": ""})
@@ -535,7 +570,7 @@ def _send_stream(profile: dict, body: dict, timeout: float, opener, on_delta, ur
                             text = delta.get("text") or ""
                             block["text"] = block.get("text", "") + text
                             if not request_body.get("tools"):
-                                emit(text)
+                                emit_plain(text)
                         elif delta.get("type") == "input_json_delta":
                             raw = block.get("_raw", "") + (delta.get("partial_json") or "")
                             block["_raw"] = raw
@@ -557,12 +592,17 @@ def _send_stream(profile: dict, body: dict, timeout: float, opener, on_delta, ur
                     elif not line:
                         anth_event()
                         event_name, data_lines = "", []
+                anth_event()
+                if not complete and not stop_reason:
+                    raise AIError("network", "流式响应中断，回复尚未完成")
+                if stop_reason == "max_tokens":
+                    raise AIError("format", "模型回复被截断或拦截")
                 content = []
                 for _, source in sorted(blocks.items()):
                     block = {k: v for k, v in source.items() if k not in ("_raw", "_sent")}
                     if block.get("type") == "tool_use":
                         try:
-                            block["input"] = json.loads(source.get("_raw") or "{}")
+                            block["input"] = json.loads(source["_raw"]) if source.get("_raw") else block.get("input", {})
                         except ValueError:
                             raise AIError("format", "工具参数格式错误")
                     content.append(block)
@@ -572,10 +612,14 @@ def _send_stream(profile: dict, body: dict, timeout: float, opener, on_delta, ur
                 line = line.decode("utf-8", "replace").strip()
                 if not line.startswith("data:"):
                     continue
+                if line[5:].strip() == "[DONE]":
+                    break
                 try:
                     chunk = json.loads(line[5:].strip())
                 except ValueError:
-                    continue
+                    raise AIError("format", "服务商返回了无效的流式数据")
+                if chunk.get("error"):
+                    raise AIError("format", "服务商在流式响应中返回错误")
                 for cand in chunk.get("candidates") or []:
                     index = cand.get("index", 0)
                     saved = candidates.setdefault(index, {"content": {"role": "model", "parts": []}})
@@ -587,7 +631,7 @@ def _send_stream(profile: dict, body: dict, timeout: float, opener, on_delta, ur
                             else:
                                 parts.append(dict(incoming))
                             if not request_body.get("tools") and not incoming.get("thought"):
-                                emit(incoming["text"])
+                                emit_plain(incoming["text"])
                         elif "functionCall" in incoming:
                             parts.append(dict(incoming))
                             call = incoming["functionCall"]
@@ -607,6 +651,10 @@ def _send_stream(profile: dict, body: dict, timeout: float, opener, on_delta, ur
                 data["usageMetadata"] = usage
             if not data["candidates"]:
                 raise AIError("format", "服务商没有返回流式内容")
+            if any(not c.get("finishReason") for c in data["candidates"]):
+                raise AIError("network", "流式响应中断，回复尚未完成")
+            if any(c["finishReason"] != "STOP" for c in data["candidates"]):
+                raise AIError("format", "模型回复被截断或拦截")
             return data
     except urllib.error.HTTPError as e:
         _http_error(e, key)

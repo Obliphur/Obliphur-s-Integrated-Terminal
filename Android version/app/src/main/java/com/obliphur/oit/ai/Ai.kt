@@ -435,6 +435,7 @@ object Ai {
             if (value == null) safe = safe.dropLast(1)
         }
         value = value ?: return ""
+        if (value.isNotEmpty() && value.last().isHighSurrogate()) value = value.dropLast(1)
         return if (value.startsWith(sent)) value.substring(sent.length) else ""
     }
 
@@ -467,6 +468,24 @@ object Ai {
             conn.setRequestProperty("anthropic-version", ANTHROPIC_VERSION)
         } else if (p.protocol == "gemini") conn.setRequestProperty("x-goog-api-key", key)
         else if (key.isNotEmpty()) conn.setRequestProperty("Authorization", "Bearer $key")
+        var plainRaw = ""
+        var plainSent = ""
+        fun emitPlain(text: String) {
+            // 普通文本先过滤思考及未收全的标签；Gemini 只预览正式回复块。
+            plainRaw += text
+            var visible = plainRaw
+            if (p.protocol == "gemini") {
+                if ("<oit_final>" !in visible) return
+                visible = visible.substringAfter("<oit_final>").substringBefore("</oit_final>")
+            }
+            val tail = visible.lastIndexOf('<')
+            if (tail >= 0 && '>' !in visible.substring(tail)) visible = visible.substring(0, tail)
+            visible = stripThink(visible)
+            if (visible.startsWith(plainSent)) {
+                visible.substring(plainSent.length).takeIf { it.isNotEmpty() }?.let(onDelta)
+                plainSent = visible
+            }
+        }
         try {
             conn.outputStream.use { it.write(requestBody.toString().toByteArray(Charsets.UTF_8)) }
             val code = conn.responseCode
@@ -489,17 +508,19 @@ object Ai {
                 val tools = sortedMapOf<Int, JSONObject>()
                 var usage: JSONObject? = null
                 var finish = ""
+                var complete = false
                 reader.useLines { lines -> lines.forEach { line ->
                     if (!line.startsWith("data:")) return@forEach
                     val raw = line.substringAfter("data:").trim()
-                    if (raw == "[DONE]") return@forEach
-                    val chunk = runCatching { JSONObject(raw) }.getOrNull() ?: return@forEach
+                    if (raw == "[DONE]") { complete = true; return@forEach }
+                    val chunk = runCatching { JSONObject(raw) }.getOrElse { throw AiError("format", "服务商返回了无效的流式数据") }
+                    if (chunk.has("error")) throw AiError("format", "服务商在流式响应中返回错误")
                     chunk.optJSONObject("usage")?.let { usage = it }
                     val choice = chunk.optJSONArray("choices")?.optJSONObject(0) ?: return@forEach
                     val delta = choice.optJSONObject("delta") ?: JSONObject()
                     delta.optString("content").takeIf { it.isNotEmpty() }?.let {
                         message.put("content", message.optString("content") + it)
-                        if (!requestBody.has("tools")) onDelta(it)
+                        if (!requestBody.has("tools")) emitPlain(it)
                     }
                     val calls = delta.optJSONArray("tool_calls") ?: JSONArray()
                     for (i in 0 until calls.length()) {
@@ -517,8 +538,10 @@ object Ai {
                             if (piece.isNotEmpty()) { tool.put("_sent", sent + piece); onDelta(piece) }
                         }
                     }
-                    finish = choice.optString("finish_reason", finish)
+                    if (!choice.isNull("finish_reason")) finish = choice.optString("finish_reason", finish)
                 } }
+                if (!complete && finish.isEmpty()) throw AiError("network", "流式响应中断，回复尚未完成")
+                if (finish in setOf("length", "content_filter")) throw AiError("format", "模型回复被截断或拦截")
                 if (tools.isNotEmpty()) message.put("tool_calls", JSONArray().also { a -> tools.values.forEach { it.remove("_sent"); a.put(it) } })
                 val choice = JSONObject().put("message", message).put("finish_reason", finish)
                 val result = JSONObject().put("choices", JSONArray().put(choice))
@@ -528,18 +551,21 @@ object Ai {
             if (p.protocol == "anthropic") {
                 val blocks = sortedMapOf<Int, JSONObject>()
                 val usage = JSONObject()
+                var complete = false
                 var event = ""
                 val data = ArrayList<String>()
                 fun processEvent() {
                     if (data.isEmpty()) return
-                    val obj = runCatching { JSONObject(data.joinToString("\n")) }.getOrNull() ?: return
+                    val obj = runCatching { JSONObject(data.joinToString("\n")) }.getOrElse { throw AiError("format", "服务商返回了无效的流式数据") }
                     when (obj.optString("type", event)) {
+                        "error" -> throw AiError("format", "服务商在流式响应中返回错误")
+                        "message_stop" -> complete = true
                         "message_start" -> obj.optJSONObject("message")?.optJSONObject("usage")?.let { merge(usage, it) }
                         "content_block_start" -> {
                             val block = JSONObject(obj.optJSONObject("content_block")?.toString() ?: "{}")
                             block.put("_raw", "").put("_sent", "")
                             blocks[obj.optInt("index")] = block
-                            if (block.optString("type") == "text" && !requestBody.has("tools")) block.optString("text").takeIf { it.isNotEmpty() }?.let(onDelta)
+                            if (block.optString("type") == "text" && !requestBody.has("tools")) emitPlain(block.optString("text"))
                         }
                         "content_block_delta" -> {
                             val block = blocks.getOrPut(obj.optInt("index")) { JSONObject().put("type", "text").put("text", "") }
@@ -547,7 +573,7 @@ object Ai {
                             if (delta.optString("type") == "text_delta") {
                                 val text = delta.optString("text")
                                 block.put("text", block.optString("text") + text)
-                                if (!requestBody.has("tools")) onDelta(text)
+                                if (!requestBody.has("tools")) emitPlain(text)
                             } else if (delta.optString("type") == "input_json_delta") {
                                 val raw = block.optString("_raw") + delta.optString("partial_json")
                                 block.put("_raw", raw)
@@ -572,6 +598,8 @@ object Ai {
                     }
                 } }
                 processEvent()
+                if (!complete && !usage.has("_stop_reason")) throw AiError("network", "流式响应中断，回复尚未完成")
+                if (usage.optString("_stop_reason") == "max_tokens") throw AiError("format", "模型回复被截断或拦截")
                 val content = JSONArray()
                 for (block in blocks.values) {
                     if (block.optString("type") == "tool_use") {
@@ -588,7 +616,8 @@ object Ai {
             var usage: JSONObject? = null
             reader.useLines { lines -> lines.forEach { line ->
                 if (!line.startsWith("data:")) return@forEach
-                val chunk = runCatching { JSONObject(line.substringAfter("data:").trim()) }.getOrNull() ?: return@forEach
+                val chunk = runCatching { JSONObject(line.substringAfter("data:").trim()) }.getOrElse { throw AiError("format", "服务商返回了无效的流式数据") }
+                if (chunk.has("error")) throw AiError("format", "服务商在流式响应中返回错误")
                 val incoming = chunk.optJSONArray("candidates") ?: JSONArray()
                 for (n in 0 until incoming.length()) {
                     val cand = incoming.optJSONObject(n) ?: continue
@@ -599,11 +628,12 @@ object Ai {
                         val part = deltaParts.optJSONObject(i) ?: continue
                         if (part.has("text")) {
                             val text = part.optString("text")
-                            if (parts.length() > 0 && parts.optJSONObject(parts.length() - 1)?.has("text") == true) {
+                            if (parts.length() > 0 && parts.optJSONObject(parts.length() - 1)?.has("text") == true &&
+                                parts.getJSONObject(parts.length() - 1).optBoolean("thought") == part.optBoolean("thought")) {
                                 val last = parts.getJSONObject(parts.length() - 1)
                                 last.put("text", last.optString("text") + text)
                             } else parts.put(JSONObject(part.toString()))
-                            if (!requestBody.has("tools") && !part.optBoolean("thought")) onDelta(text)
+                            if (!requestBody.has("tools") && !part.optBoolean("thought")) emitPlain(text)
                         } else if (part.has("functionCall")) {
                             parts.put(JSONObject(part.toString()))
                             val call = part.getJSONObject("functionCall")
@@ -619,6 +649,8 @@ object Ai {
             val result = JSONObject().put("candidates", JSONArray().also { a -> candidates.values.forEach { it.remove("_sent"); a.put(it) } })
             usage?.let { result.put("usageMetadata", it) }
             if (candidates.isEmpty()) throw AiError("format", "服务商没有返回流式内容")
+            if (candidates.values.any { it.optString("finishReason").isEmpty() }) throw AiError("network", "流式响应中断，回复尚未完成")
+            if (candidates.values.any { it.optString("finishReason") != "STOP" }) throw AiError("format", "模型回复被截断或拦截")
             return result
         } catch (e: AiError) { throw e }
         catch (e: Exception) { throw AiError("network", redact("连接失败:${e.message ?: e.javaClass.simpleName}", key)) }

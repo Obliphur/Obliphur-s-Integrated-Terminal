@@ -98,7 +98,7 @@ class ChatMixin:
     def visible(self) -> list:
         """聊天里显示的消息. 不能用沟通的时候 (专注 / 睡眠 / 外出 / 无言为真) 收到的对方的消息先藏起来 (hold), 回到休息 / 空闲再显示 (24.4)."""
         rows = [m for m in self.messages if m["role"] in ("me", "ai") and not m.get("hold")]
-        if self._stream_preview:
+        if self._stream_preview and not self.blocked() and not self.ai_free_at() and self._active_reply_after <= self._ms():
             rows.append({"id": "streaming", "role": "ai", "text": self._stream_preview,
                          "at": self.now().isoformat(timespec="seconds"), "streaming": True})
         return rows

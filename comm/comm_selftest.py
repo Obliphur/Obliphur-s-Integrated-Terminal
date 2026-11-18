@@ -1458,144 +1458,40 @@ def _selftest():
     assert ai_assist.usage_of({"usage": {"prompt_tokens": 200, "prompt_tokens_details": {"cached_tokens": 128}}}) == (200, 128)
     assert ai_assist.usage_of({}) == (0, 0) and ai_assist.usage_of({"usage": "x"}) == (0, 0)
 
-    # ---- VIII: 用户说完话, 对方的第一条收到之后再调用一次, 可以分开说 ----
-    pv = prefix_prompt()
-    assert "分条发送时" in pv and "两次API由OIT分别调用" in pv and "oit_reply(refuse=true)" in pv
-    assert "每次只提交一次回复" in pv and "不输出思考" in pv
-    assert "分条发送时" not in prefix_prompt(False)
+    # 单次回复代替分条二次调用；旧设置与同步字段均不能恢复续发。
+    assert "两次API由OIT分别调用" not in prefix_prompt()
     os.makedirs(os.path.join(td, "fu"))
     cu = Comm(os.path.join(td, "fu"), folder, now=lambda: clock[0], chat_fn=fake)
     cu.ai.set_profile("deepseek", api_key="k")
-    cu.ai.provider = "deepseek"
-    cu.set_cfg(persona="小夏.txt")
+    cu.set_cfg(persona="小夏.txt", split_send=True, split_interval=0)
     cu.snapshot = lambda: {"state": "idle"}
-    n0 = len(follow_calls)
-    script.append("第一句")
-    follow.append("第二句")
+    n0 = len(calls)
+    script.append("第一句\n\n第二句")
     cu.send("在吗")
     wait(cu)
-    assert [m["text"] for m in cu.visible()] == ["在吗", "第一句", "第二句"]
-    assert len(follow_calls) == n0 + 1 and "你刚才已经回复了用户" in follow_calls[-1][1][-1]["content"]
-    assert follow_calls[-1][1][-2]["content"] == "第一句", "第二次请求里带着第一条"
-    n_f = len(follow_calls)
-    script.append("只有一句")                                  # 只想说一次: 第二次 [refuse to reply], 什么也不留下
-    cu.send("好的")
-    wait(cu)
-    assert cu.visible()[-1]["text"] == "只有一句" and len(follow_calls) == n_f + 1
-    assert sum(m["role"] == "sys" for m in cu.messages) == 1
-    script.append(REFUSE)                                      # 第一次就被拒绝 (对方不方便): 不调用第二次
-    cu.send("在不在")
-    wait(cu)
-    assert len(follow_calls) == n_f + 1 and cu.unanswered()
-    cu.clear()                                                 # 第二次调用还在等的时候用户又说话了: 第二次的回复不要了, 按新消息重新回复
-    script.extend(["甲", "回应等等"])
-    follow.append("乙(不该出现)")
-    cu.send("你好")
-    for _ in range(300):
-        time.sleep(0.01)
-        cu.tick()
-        if cu.busy and any(m["role"] == "ai" for m in cu.messages):
-            break
-    cu.send("等等")
-    wait(cu)
-    assert [m["text"] for m in cu.visible()] == ["你好", "甲", "等等", "回应等等"], [m["text"] for m in cu.visible()]
-    # 分条续发采用固定间隔：到点才发，不受模型类型影响。
-    os.makedirs(os.path.join(td, "fdel"))
-    cd = Comm(os.path.join(td, "fdel"), folder, now=lambda: clock[0], chat_fn=fake)
-    cd.ai.set_profile("deepseek", api_key="k")
-    cd.set_cfg(persona="小夏.txt")
-    cd.snapshot = lambda: {"state": "idle"}
-    assert cd.split_interval() == 5
-    cd.follow_delay = 7.0
-    n_d = len(follow_calls)
-    script.append("第一句")
-    follow.append("第二句")
-    cd.send("在吗")
-    wait(cd)
-    assert len(follow_calls) == n_d, "延时没到: 不发第二次"
-    clock[0] += timedelta(seconds=6)
-    cd.tick()
-    assert len(follow_calls) == n_d, "固定间隔尚未到，不提前调用"
-    clock[0] += timedelta(seconds=1)
-    for _ in range(200):
-        time.sleep(0.01)
-        cd.tick()
-        if len(follow_calls) > n_d:
-            break
-    assert len(follow_calls) == n_d + 1, "到点后才发第二次"
-    cd.flush()
-    # 第二条调用要等第一条真的显示出来: 打字延时没走完时先不调用 (被藏起来也算显示过)
-    CHAR_DELAY, CHAR_DELAY_CJK = 0.1, 0.2
-    os.makedirs(os.path.join(td, "fhold"))
-    ch = Comm(os.path.join(td, "fhold"), folder, now=lambda: clock[0], chat_fn=fake)
-    ch.ai.set_profile("deepseek", api_key="k")
-    ch.set_cfg(persona="小夏.txt")
-    ch.snapshot = lambda: {"state": "idle"}
-    ch.follow_delay = 0
-    n_h = len(follow_calls)
-    script.append("你好")                                    # 2 个中文字 = 0.4 s 打字
-    follow.append("接着")
-    assert ch.send("在吗") == ""
-    wait(ch)
-    assert [m["text"] for m in ch.visible()] == ["在吗"] and len(follow_calls) == n_h, "第一条还在打字: 不调用第二次"
-    clock[0] += timedelta(seconds=0.5)
-    ch.tick()                                               # 打字走完, 第一条显示出来
-    assert ch.visible()[-1]["text"] == "你好"
-    clock[0] += timedelta(seconds=0.6)                      # 越过推迟的 500 ms
-    for _ in range(200):
-        time.sleep(0.01)
-        ch.tick()
-        if len(follow_calls) > n_h:
-            break
-    assert len(follow_calls) == n_h + 1, "第一条显示出来之后才调用第二次"
-    ch.flush()
-    os.makedirs(os.path.join(td, "fhidden"))
-    ch2 = Comm(os.path.join(td, "fhidden"), folder, now=lambda: clock[0], chat_fn=fake)
-    ch2.ai.set_profile("deepseek", api_key="k")
-    ch2.set_cfg(persona="小夏.txt")
-    ch2.snapshot = lambda: {"state": "focus"}               # 用户专注中: 消息先藏起来
-    hidden = {"on": False}
-    ch2.blocked = lambda: "专注中" if hidden["on"] else ""
-    ch2.follow_delay = 0
-    n_x = len(follow_calls)
-    script.append("藏着的")
-    follow.append("跟着")
-    ch2.send("在吗")
-    hidden["on"] = True
-    wait(ch2)
-    clock[0] += timedelta(seconds=1)
-    for _ in range(200):
-        time.sleep(0.01)
-        ch2.tick()
-        if len(follow_calls) > n_x:
-            break
-    assert len(follow_calls) == n_x + 1, "第一条被藏起来也算显示过: 第二次照常调用"
-    ch2.flush()
+    clock[0] += timedelta(seconds=10)
+    cu.tick()
+    assert [m["text"] for m in cu.visible()] == ["在吗", "第一句\n\n第二句"]
+    assert len(calls) == n0 + 1 and not follow_calls and not cu._follow_at
+    assert not cu.split_on() and cu.split_interval() == 0
+    cu.apply_doc({"split": True, "split_interval": 1})
+    assert not cu.split_on() and "split" not in cu.sync_doc() and "split_interval" not in cu.sync_doc()
+    # 预览只在内存，不绕过限制；已经展示的正文完成时不再追加打字等待。
+    preview_messages = len(cu.messages)
+    cu.busy = True
+    cu._stream_events.append((cu._epoch - 1, "过期回复"))
+    cu._stream_events.append((cu._epoch, "流式回复"))
+    assert cu.poll_stream() and cu.visible()[-1]["text"] == "流式回复"
+    assert len(cu.messages) == preview_messages and cu.visible()[-1]["streaming"]
+    blocked = cu.blocked
+    cu.blocked = lambda: "专注中"
+    assert all(not m.get("streaming") for m in cu.visible())
+    cu.blocked = blocked
+    CHAR_DELAY = CHAR_DELAY_CJK = 1.0
+    cu._finish("user", None, "流式回复", "", cu._epoch)
+    assert not cu._stream_preview and cu.visible()[-1]["text"] == "流式回复"
+    assert not cu.messages[-1].get("hold") and not cu._follow_at
     CHAR_DELAY = CHAR_DELAY_CJK = 0.0
-    # 旧本机设置仍可被测试覆盖；正式运行固定启用，开关和间隔不再同步。
-    cu.set_cfg(split_send=False)
-    assert "分条发送时" not in prefix_prompt(False) and "分条发送时" in prefix_prompt(True) and not cu.split_on()
-    n_f = len(follow_calls)
-    script.append("单条")
-    follow.append("不该出现")
-    cu.send("关了吗")
-    wait(cu)
-    assert cu.visible()[-1]["text"] == "单条" and len(follow_calls) == n_f and "分条发送时" not in calls[-1][0]
-    assert "split" not in cu.sync_doc() and "split_interval" not in cu.sync_doc()
-    follow.clear()
-    cu.apply_doc({"split": True})
-    assert not cu.split_on() and cu.split_interval() == 5
-    cu.set_cfg(split_interval=12)
-    assert "split_interval" not in cu.sync_doc()
-    cu.apply_doc({"split_interval": 0})
-    assert cu.split_interval() == 12
-    cu.apply_doc({"split_interval": 9})
-    for invalid in (-1, True, "3", 1.5, 2147483648):
-        cu.apply_doc({"split_interval": invalid})
-        assert cu.split_interval() == 12
-    cu.apply_doc({"split": False})
-    assert cu.split_interval() == 12
-    cu.apply_doc({"split": True})
     # 思考 (第一层规则): 默认关; 关键词 / 时刻 / 英文 / 很长 / 系统触发 才开; 设置里可以整个关掉, 随设备同步
     assert think_text_reason("今天天气不错") == "" and think_text_reason("") == ""
     assert think_text_reason("你现在在干嘛呀").startswith("关键词") and think_text_reason("我们订个合约吧").startswith("关键词")

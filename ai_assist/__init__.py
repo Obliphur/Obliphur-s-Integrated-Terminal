@@ -828,6 +828,14 @@ def _selftest():
     )), deltas.append)
     parsed = _ai_tools.parse_response(oa, "openai", lambda: "")
     assert _ai_tools.text_of(parsed) == "hello world" and "".join(deltas) == "hello world", "OpenAI SSE 重建工具结果并只预览正文"
+    assert _ai_http._partial_json_text('{"text":"a\\ud83d', "") == "a"
+    assert _ai_http._partial_json_text('{"text":"a\\ud83d\\ude00', "a") == "😀"
+    deltas = []
+    _ai_http._send_stream(stream_profile, {}, 10, _SseOpener(sse(*[
+        {"choices": [{"delta": {"content": part}, "finish_reason": None}]}
+        for part in ("<thi", "nk>内部推理</thi", "nk>hello ", "world")
+    ])), deltas.append)
+    assert "".join(deltas) == "hello world", "拆片的思考标签不能泄露到预览"
 
     class _JsonResponse(_SseResponse):
         headers = {"Content-Type": "application/json; charset=utf-8"}
@@ -853,6 +861,31 @@ def _selftest():
         {"candidates": [{"index": 0, "content": {"role": "model", "parts": [{"functionCall": {"name": "oit_reply", "args": {"text": "gemini"}}}]}, "finishReason": "STOP"}]}
     )), lambda _text: None)
     assert _ai_tools.text_of(_ai_tools.parse_response(gem, "gemini", lambda: "")) == "gemini"
+    deltas = []
+    _ai_http._send_stream(gemini, {}, 10, _SseOpener(sse(*[
+        {"candidates": [{"index": 0, "content": {"parts": [{"text": part}]},
+                         **({"finishReason": "STOP"} if last else {})}]}
+        for part, last in (("内部分析<oit_", False), ("final>正式", False), ("正文</oit_", False), ("final>额外分析", True))
+    ])), deltas.append)
+    assert "".join(deltas) == "正式正文", "Gemini 普通流只预览正式回复块"
+
+    # 收到部分正文但没有结束事件，不能当作完整答案保存。
+    incomplete = b'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n'
+    try:
+        _ai_http._send_stream(stream_profile, {}, 10, _SseOpener(incomplete), lambda _text: None)
+        raise AssertionError("不能接受中断的流式回复")
+    except AIError as error:
+        assert error.kind == "network"
+    for rejected in (
+        b'data: {"error":{"message":"overloaded"}}\n\n',
+        b'data: invalid-json\n\n',
+        sse({"choices": [{"delta": {"content": "partial"}, "finish_reason": "length"}]})
+    ):
+        try:
+            _ai_http._send_stream(stream_profile, {}, 10, _SseOpener(rejected), lambda _text: None)
+            raise AssertionError("不能接受错误或截断的流式回复")
+        except AIError as error:
+            assert error.kind == "format"
 
     real_stream, real_send = _ai_http._send_stream, _ai_http._send
     _ai_http.STREAM_REJECT.discard(_ai_http.endpoint(stream_profile))

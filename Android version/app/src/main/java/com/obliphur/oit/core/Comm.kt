@@ -485,7 +485,7 @@ object CommText {
         "正常回复用户的信息,如果只有附件,就使用[refuse to reply]结尾.\n")
 
     fun prefixPrompt(split: Boolean = true): String = ToolProtocol.resource("comm_protocol.txt")
-        .replace("{split_rule}", if (split) "分条发送时，两次API由OIT分别调用；每次只提交一次回复，第二次无需回复时oit_reply(refuse=true)。" else "")
+        .replace("{split_rule}", "")
 
     /** 人设文件夹里的 README.md: 跟随界面语言 (中文 / English), 同桌面版 readme_text(). */
     fun readme(): String = if (I18n.isEn) readmeEn() else readmeZh()
@@ -1151,9 +1151,9 @@ class Comm(
     private var jointDueId = ""
     private var jointPending: Pair<String, Long>? = null          // 联合行动: 要让对方回应一句, 但对方正在回别的话: (系统消息, 毫秒时间戳), 等对方空下来再调用
     /** 分条续发兼容状态；不再提供用户设置或设备同步。 */
-    var splitSend = true; private set
+    val splitSend = false
     /** 固定续发等待时间，不再提供用户设置或设备同步。 */
-    var splitInterval = Cfg.COMM_SPLIT_INTERVAL_SECONDS; private set
+    val splitInterval = 0
     /** 日程跟随 (设置 → 沟通 → 日程跟随) 开着吗: 对方的状态变了, 问用户要不要跟着变; 合约期间自动关闭. 默认关; 随设备同步. */
     var schedFollow = false; private set
     var proLang = ""; private set                              // 主动谈话语言 ("" = 不指定): 只管对方主动发起的那一句 (规则 I - IV), 其他对话不限制
@@ -1455,8 +1455,6 @@ class Comm(
                 else -> 0
             }
             userProfile = d.optString("user_profile", "")
-            splitSend = true
-            splitInterval = Cfg.COMM_SPLIT_INTERVAL_SECONDS
             schedFollow = d.optBoolean("sched_follow", false)
             proLang = d.optString("pro_lang", "").trim().take(MAX_PRO_LANG)
             thinkAuto = d.optBoolean("think_auto", true)
@@ -1841,8 +1839,6 @@ class Comm(
         proLang?.let { this.proLang = it.trim().take(MAX_PRO_LANG) }
         userProfile?.let { this.userProfile = it.trim().take(MAX_PROFILE) }
         showAvatar?.let { this.showAvatar = it }
-        splitSend?.let { this.splitSend = it }
-        splitInterval?.takeIf { it >= 0 }?.let { this.splitInterval = it }
         thinkAuto?.let { this.thinkAuto = it }
         bgPro?.let { this.bgPro = it }
         schedFollow?.let { this.schedFollow = it }
@@ -2081,7 +2077,7 @@ class Comm(
 
     fun personaTitle(name: String) = name.substringBeforeLast('.')
 
-    /** 是否使用角色打字延时与分条第二次调用；Assistant同样接收公共前置协议。 */
+    /** 是否使用非流式回退的角色打字延时；Assistant同样接收公共前置协议。 */
     fun usesPrefix(name: String) = personaTitle(name).trim().lowercase() != "assistant"
 
     /** 所有人设均接收公共工具协议。 */
@@ -3919,7 +3915,7 @@ class Comm(
 
     /** 聊天里显示的消息 (藏起来的不算, 见 ChatMsg.hold). */
     fun visible(): List<ChatMsg> = messages.filter { (it.role == "me" || it.role == "ai") && !it.hold } +
-        if (streamPreview.isNotEmpty()) listOf(ChatMsg(Int.MIN_VALUE, "ai", streamPreview, now().toString(), "streaming")) else emptyList()
+        if (streamPreview.isNotEmpty() && blocked().isEmpty() && aiFreeAt() == null && activeReplyAfter <= nowMs()) listOf(ChatMsg(Int.MIN_VALUE, "ai", streamPreview, now().toString(), "streaming")) else emptyList()
 
     private fun unanswered() = messages.lastOrNull { it.role == "me" || it.role == "ai" }?.role == "me"      // 藏着的回复也算回复过了
 
@@ -4679,6 +4675,7 @@ class Comm(
     }
 
     private fun finish(result: Result) {
+        val streamed = visible().any { it.api == "streaming" }
         streamPreview = ""
         val tensionReply = result.reply
         val r = Result(result.kind, result.extra, CommInteraction.cleanTension(result.reply), result.err, result.epoch, result.op, result.musicId)
@@ -4757,7 +4754,7 @@ class Comm(
             }
             interactionEnd(tensionReply, interactionTurn.burst)
             // AI API 原文含控制标记；只存用户可见文本，避免详情/同步接口泄露调用痕迹。
-            val m = add("ai", text)
+            val m = mk("ai", text, delay = !streamed).also { messages.add(it) }
             if (activeReplyAfter > nowMs()) {
                 m.replyAfter = activeReplyAfter
                 m.due = maxOf(m.due, activeReplyAfter)
@@ -4791,14 +4788,6 @@ class Comm(
                     trigger("user", CATCHUP_BODY)
                 }
             }
-        } else if (delivered && splitSend && usesPrefix(personaName()) && r.kind in FOLLOW_KINDS && profileProblem().isEmpty() && cutBlock().isEmpty() && leader()) {
-            // 规则 VIII: 第一条回复**明确显示出来之后** (被藏起来也算显示过), 隔一会儿再调用第二次, 让对方可以把话分开说
-            // (只想说一次就 [refuse to reply], 什么也不留下). 第一条被拒绝 / 为空 / 出错时不存在"第一条消息", 不调用.
-            // 所有模型统一使用固定间隔，保留测试指定延时的入口。
-            val delay = followDelayMs ?: (splitInterval * 1000L)
-            followAt = nowMs() + delay
-            followEpoch = epoch
-            followMsg = deliveredId
         }
     }
 
@@ -4818,7 +4807,6 @@ class Comm(
         shiftTick()
         sfTick()
         if (busy || !leader()) return
-        if (checkFollow()) return                          // 第二条: 第一条被藏起来 (用户专注 / 睡眠中) 也算显示过
         if (aiProblem().isNotEmpty()) return
         jointPending?.let { (body, at) ->
             jointPending = null
@@ -4852,27 +4840,6 @@ class Comm(
         checkProactive(t, snap)
         bgCheck(t, snap)
         memKick()
-    }
-
-    /** 第二条调用要等第一条真的到了用户眼前: 还在打字延时里 (hold + due 没到) 就先等; 被藏起来 (专注 / 睡眠中) 也算显示过. */
-    private fun followReady(): Boolean {
-        val m = messages.firstOrNull { it.id == followMsg } ?: return true
-        if (!m.hold) return true
-        if (m.late || blocked().isNotEmpty()) return true     // 对方在专注 / 用户不能用沟通: 先藏起来也算显示过
-        return m.due <= nowMs()
-    }
-
-    /** 规则 VIII 的第二次调用到点了 (延时见 FOLLOW_DELAY_MS). */
-    private fun checkFollow(): Boolean {
-        if (followAt == 0L || nowMs() < followAt) return false
-        if (!followReady()) { followAt = nowMs() + 500; return false }      // 第一条还没显示出来 (打字动画): 等它出来再调用
-        followAt = 0L
-        followMsg = 0
-        if (followEpoch != epoch || again || busy) return false
-        if (!splitSend || !usesPrefix(personaName()) || profileProblem().isNotEmpty() || cutBlock().isNotEmpty() || !leader() || hardBlock()) return false
-        if (unanswered()) return false                     // 等的时候用户又说了: 由那条新消息自己触发回复
-        trigger("followup", FOLLOW_BODY)
-        return true
     }
 
     /** 规则 IX: 对方最后一条消息末尾写了 [waiting for reply]:[N], N 分钟 (从用户看到它算起) 过去了用户还没回复: 让对方可以追问一次. */
