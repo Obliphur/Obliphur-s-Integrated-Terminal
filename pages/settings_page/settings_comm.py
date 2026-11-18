@@ -19,11 +19,42 @@ class CommSettingsMixin:
     def _build_models_page(self, body):
         if self.comm is None:
             return
-        fr, head = self._card(body, "AI 模型配置")
-        self._track(ttk.Button(head, text=tr("设置"), command=self._comm_api), "设置").pack(side="right")
-        self.lbl_comm_api = tk.Label(fr, text="", bg=COLORS["bg_card"], fg=COLORS["text"],
-                                     font=config.font("small"), anchor="w")
-        self.lbl_comm_api.pack(fill="x", padx=12, pady=(2, 10))
+        fr, _head = self._card(body, "新增/修改 AI 配置")
+        ttk.Button(fr, text=tr("设置"), command=self._comm_api).pack(anchor="w", padx=12, pady=(2, 10))
+
+        fr, _head = self._card(body, "聊天模型（主模型）")
+        self.lbl_main_model = tk.Label(fr, text="", bg=COLORS["bg_card"], fg=COLORS["text"],
+                                       font=config.font("small"), anchor="w")
+        self.lbl_main_model.pack(fill="x", padx=12, pady=(2, 4))
+        ttk.Button(fr, text=tr("选择"), command=lambda: self._pick_task_model("main", "聊天模型（主模型）"))\
+            .pack(anchor="w", padx=12, pady=(0, 10))
+
+        for role, title in (("vision", "图片模型"), ("ocr", "识字模型"), ("review", "评判模型")):
+            fr, _head = self._card(body, title)
+            label = tk.Label(fr, text="", bg=COLORS["bg_card"], fg=COLORS["text"],
+                             font=config.font("small"), anchor="w")
+            label.pack(fill="x", padx=12, pady=(2, 4))
+            setattr(self, f"lbl_{role}_model", label)
+            ttk.Button(fr, text=tr("选择"), command=lambda r=role, t=title: self._pick_task_model(r, t))\
+                .pack(anchor="w", padx=12, pady=(0, 10))
+
+    def _pick_task_model(self, role, title):
+        from .. import ai_dialogs
+        ai_dialogs.open_task_model_settings(self.winfo_toplevel(), self.comm.ai, role, title)
+        self._refresh_models_page()
+
+    def _refresh_models_page(self):
+        if self.comm is None or not hasattr(self, "lbl_main_model"):
+            return
+        model_cfg = self.comm.ai
+        main_id = model_cfg.provider
+        main = f"{model_cfg.config_name(main_id)} · {model_cfg.profile(main_id).get('model') or '—'}"
+        cfg(self.lbl_main_model, text=main)
+        for role in ("vision", "ocr", "review"):
+            cid = model_cfg.task_assign.get(role, "")
+            text = tr("跟随聊天模型") if not cid else \
+                f"{model_cfg.config_name(cid)} · {model_cfg.profile(cid).get('model') or '—'}"
+            cfg(getattr(self, f"lbl_{role}_model"), text=text)
 
     def _build_comm_page(self, body):
         c = self.comm
@@ -159,6 +190,7 @@ class CommSettingsMixin:
         from .. import ai_dialogs
         ai_dialogs.open_model_settings(self.winfo_toplevel(), self.comm.ai)
         self._refresh_comm()
+        self._refresh_models_page()
 
     def _comm_open_folder(self):
         folder = self.comm.personas
@@ -309,10 +341,8 @@ class CommSettingsMixin:
             want = c.pro_lang() or tr("不指定")
             if self.var_pro_lang.get() != want:
                 self.var_pro_lang.set(want)
-        prof = c.ai.profile()
-        text = f"{c.ai.config_name()} · {prof.get('model') or '—'}"
-        text += "  ✗" if self._comm_api_missing() else "  ✓"
-        cfg(self.lbl_comm_api, text=text)
+        if hasattr(self, "lbl_main_model"):
+            self._refresh_models_page()
         self._refresh_avatars()
 
     def _comm_api_missing(self) -> bool:

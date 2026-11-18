@@ -233,7 +233,7 @@ class SettingsPage(FormMixin, CardsMixin, CommSettingsMixin, RecordSettingsMixin
             if key == "comm":
                 self._refresh_comm()
             if key == "models":
-                self._refresh_comm()
+                self._refresh_models_page()
             hide_pack(self.foot)                 # 沟通 / 额外功能 / 闹钟即时保存，无需提交本页。
         else:
             show_pack(self.foot, fill="x", padx=28, pady=(4, 10))

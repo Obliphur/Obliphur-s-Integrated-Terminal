@@ -68,7 +68,7 @@ class CommPage(CommVoiceMixin, tk.Frame):
         self.lbl_other.pack(side="left", padx=(4, 0))
         self.lbl_tension = tk.Label(self, text="", bg=bg, fg=COLORS["text_dim"],
                                     font=config.font("small"), anchor="w")
-        # AI 配置: 每个聊天对象各用一份 (在 设置 → 沟通 → API 里建 / 改)
+        # AI 配置: 每个聊天对象各用一份 (在 设置 → 模型 里建 / 改)
         self.var_cfg = tk.StringVar()
         self._cfg_ids = []
         self.cb_cfg = ttk.Combobox(hdr, textvariable=self.var_cfg, state="readonly", width=18)

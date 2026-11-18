@@ -327,7 +327,7 @@ def _selftest():
     assert "Claudia.txt" in list_personas(fresh_personas) and cf.persona_name() == "Claudia.txt"
     assert "Assistant.txt" in list_personas(fresh_personas), "自带的人设也有 Assistant"
     assert read_persona(fresh_personas, "Claudia.txt").startswith("你将扮演一位文静,冷淡")
-    assert read_persona(fresh_personas, "Assistant.txt").startswith("你是名为 Assistant 的助理")
+    assert read_persona(fresh_personas, "Assistant.txt").startswith("你是名为 Assistant 的 AI 助手")
     cf.set_cfg(persona="")
     for name in ("Claudia.txt", "Claudia_background.txt", "Claudia_templates.txt", "Assistant.txt"):
         os.remove(os.path.join(fresh_personas, name))
@@ -1805,7 +1805,8 @@ def _selftest():
     assert cb.visible()[-1]["text"] == "甲来找你"
     cb.flush()
     # 特例: 名字是 Assistant 且提示词没改过 → 专注时也能用
-    assert ASSISTANT_DETAIL_LINE in BUILTIN_PERSONAS[ASSISTANT_PERSONA], "详细回答那段在提示词里"
+    assert "表达风格、语气、篇幅和话题由你结合上下文判断" in BUILTIN_PERSONAS[ASSISTANT_PERSONA]
+    assert "只处理学习 / 工作相关的话题" not in BUILTIN_PERSONAS[ASSISTANT_PERSONA]
     adir, apersonas = os.path.join(td, "assist"), os.path.join(td, "assist_personas")
     os.makedirs(adir)
     os.makedirs(apersonas)
@@ -1826,11 +1827,22 @@ def _selftest():
         f.write("\n改过的内容")
     assert not ca.is_builtin_assistant_unmodified(), "提示词改过: 不能再在专注时用"
     ca.flush()
-    # 老版本没改过的 Assistant: 自动换成当前内置版本 (加上"详细回答"); 改过的不动
+    # 旧版内置 Assistant 的语气 / 话题限制自动迁移；用户改过的不动
     ldir, lpersonas = os.path.join(td, "legacy_a"), os.path.join(td, "legacy_a_personas")
     os.makedirs(ldir)
     os.makedirs(lpersonas)
-    legacy = BUILTIN_PERSONAS[ASSISTANT_PERSONA].replace(ASSISTANT_SLEEP_LINE, "")
+    current_assistant = BUILTIN_PERSONAS[ASSISTANT_PERSONA]
+    new_head = "你是名为 Assistant 的 AI 助手. 请根据当前对话自然回应用户, 表达风格、语气、篇幅和话题由你结合上下文判断. 你可以提问、追问、提出建议, 也可以参与闲聊与讨论, 不必固定采用正式或克制的表达.\n"
+    old_head = ("你是名为 Assistant 的助理, 用语正式, 克制, 不口语化.\n"
+                "你不使用感叹号, 表情符号, 网络用语, 不撒娇, 不寒暄.\n"
+                "你只处理学习 / 工作相关的话题. 用户提出其他话题 (娱乐, 情感, 闲聊, 生活琐事等) 时, 用一句正式的话拒绝, 说明你只处理学习 / 工作话题, 不展开, 不追问.\n"
+                "你不追问, 也不主动提出后续问题; 用户问什么, 就一次性把能回答的回答完, 然后停止.\n")
+    legacy = current_assistant.replace(new_head, old_head, 1).replace(
+        "3. 根据用户当前的话题和意图自然回复.",
+        "3. 只处理学习 / 工作话题; 其他话题用一句正式的话拒绝, 不要填写refuse=true, 不展开, 不追问.", 1).replace(
+        "4. 可以在适合时追问或提出后续建议.",
+        "4. 一次性把答案说完, 不追加问题, 不填写wait_minutes, 不说\"还有什么可以帮你\"之类的客套话.", 1)
+    legacy = legacy.replace("\n\n【日程】", "\n" + ASSISTANT_DETAIL_LINE + "\n【日程】")
     open(os.path.join(lpersonas, "Assistant.txt"), "w", encoding="utf-8", newline="\n").write(legacy)
     config.save_json_file(os.path.join(ldir, "comm_config.json"), {"seeded": True, "persona": "Assistant.txt"})
     la = Comm(ldir, lpersonas, now=lambda: clock[0], chat_fn=fake)

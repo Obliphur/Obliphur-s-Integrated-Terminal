@@ -362,11 +362,7 @@ burst_end_shift:+20
 joint_hp_loss:[violation,15]
 [/tension:events]
 """,
-        ASSISTANT to """你是名为 Assistant 的助理, 用语正式, 克制, 不口语化.
-你不使用感叹号, 表情符号, 网络用语, 不撒娇, 不寒暄.
-你只处理学习 / 工作相关的话题. 用户提出其他话题 (娱乐, 情感, 闲聊, 生活琐事等) 时, 用一句正式的话拒绝, 说明你只处理学习 / 工作话题, 不展开, 不追问.
-你不追问, 也不主动提出后续问题; 用户问什么, 就一次性把能回答的回答完, 然后停止.
-你会把回答写得尽量详细: 先给结论, 再说明依据 / 步骤 / 注意事项, 必要时举例或分点; 不要只用一句结论敷衍, 也不要为了简短省略关键内容, 但不要用空话凑长度.
+        ASSISTANT to """你是名为 Assistant 的 AI 助手. 请根据当前对话自然回应用户, 表达风格、语气、篇幅和话题由你结合上下文判断. 你可以提问、追问、提出建议, 也可以参与闲聊与讨论, 不必固定采用正式或克制的表达.
 
 【日程】
 00:00-6:30:睡眠
@@ -381,8 +377,8 @@ joint_hp_loss:[violation,15]
 【按日程回复】
 1. 看消息开头方括号里的时间: 00:00-6:30 属于睡眠, 只调用oit_reply(refuse=true),不提交正文或其他字段.
 2. 其他时间都可以回复, 随叫随到.
-3. 只处理学习 / 工作话题; 其他话题用一句正式的话拒绝, 不要用 [refuse to reply], 不要展开, 不要追问.
-4. 一次性把答案说完, 不追加问题, 不用 [waiting for reply], 不说"还有什么可以帮你"之类的客套话.
+3. 根据用户当前的话题和意图自然回复.
+4. 可以在适合时追问或提出后续建议.
 5. 不要主动透露日程; 只有用户直接问起, 才用一句话如实回答.
 6. 如果系统要求你把话分开说 / 再补一条, 返回 [refuse to reply] (你只回答一次).
 """)
@@ -2142,8 +2138,7 @@ class Comm(
 
     fun personaName(): String = persona.takeIf { it in listPersonas() } ?: ""
 
-    /** 老版本的 Assistant 提示词 (没有"详细回答"那段) 且用户没改过: 换成当前内置版本.
-     *  用户改过的不动. 这样升级后专注特例和详细回答都能用. */
+    /** 仅升级已知的旧内置 Assistant 文本；用户改过的内容保持不动。 */
     // ---- 人设文件被手动修改: 先备份, 用户确认后清掉对应聊天 ----
     private fun personaBackupDir() = File(dir, "persona_backup")
 
@@ -2232,8 +2227,17 @@ class Comm(
         val legacies = listOf(currentBuiltin.replace(BuiltinPersonas.ASSISTANT_SLEEP_LINE, ""),
             currentBuiltin.replace(BuiltinPersonas.ASSISTANT_SLEEP_LINE, "")
                 .replace(BuiltinPersonas.ASSISTANT_DETAIL_LINE, ""))
+        val newHead = "你是名为 Assistant 的 AI 助手. 请根据当前对话自然回应用户, 表达风格、语气、篇幅和话题由你结合上下文判断. 你可以提问、追问、提出建议, 也可以参与闲聊与讨论, 不必固定采用正式或克制的表达.\n"
+        val oldHead = "你是名为 Assistant 的助理, 用语正式, 克制, 不口语化.\n" +
+            "你不使用感叹号, 表情符号, 网络用语, 不撒娇, 不寒暄.\n" +
+            "你只处理学习 / 工作相关的话题. 用户提出其他话题 (娱乐, 情感, 闲聊, 生活琐事等) 时, 用一句正式的话拒绝, 说明你只处理学习 / 工作话题, 不展开, 不追问.\n" +
+            "你不追问, 也不主动提出后续问题; 用户问什么, 就一次性把能回答的回答完, 然后停止.\n"
+        val oldPrompt = currentBuiltin.replace(newHead, oldHead)
+            .replace("3. 根据用户当前的话题和意图自然回复.", "3. 只处理学习 / 工作话题; 其他话题用一句正式的话拒绝, 不要用 [refuse to reply], 不要展开, 不要追问.")
+            .replace("4. 可以在适合时追问或提出后续建议.", "4. 一次性把答案说完, 不追加问题, 不用 [waiting for reply], 不说\"还有什么可以帮你\"之类的客套话.")
+        val priorPrompts = listOf(oldPrompt, oldPrompt.replace("\n\n【日程】", "\n" + BuiltinPersonas.ASSISTANT_DETAIL_LINE + "\n【日程】"))
         val normalized = CommText.nativePersonaText(current).trim()
-        if (normalized !in (legacies + currentBuiltin).map { CommText.nativePersonaText(it).trim() }) return
+        if (normalized !in (legacies + priorPrompts + currentBuiltin).map { CommText.nativePersonaText(it).trim() }) return
         if (current.trim() == currentBuiltin.trim()) return
         runCatching { f.writeText(currentBuiltin, Charsets.UTF_8) }
         backupPersonaFile(BuiltinPersonas.ASSISTANT)

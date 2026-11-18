@@ -44,7 +44,7 @@ class RulesPage(tk.Frame):
     代理-全屏蔽 (Proxy block-all) 下网站一律拦截, 只显示当前模式的应用名单."""
 
     def __init__(self, master, controller, settings=None, on_changed=None,
-                 on_open_settings=None, sync=None):
+                 on_open_settings=None, on_open_assistant=None, sync=None):
         super().__init__(master, bg=COLORS["bg"])
         self.sync = sync
         self._found_ids = []
@@ -54,6 +54,7 @@ class RulesPage(tk.Frame):
         self.settings = settings
         self.on_changed = on_changed
         self.on_open_settings = on_open_settings
+        self.on_open_assistant = on_open_assistant
         self._lists = {}
         self._frames = {}
         self._pending_idx = []
@@ -405,7 +406,8 @@ class RulesPage(tk.Frame):
         return self._ai_cfg
 
     def _ai_settings(self):
-        ai_dialogs.open_model_settings(self.winfo_toplevel(), self._ai())
+        if self.on_open_assistant:
+            self.on_open_assistant()
 
     def _ai_suggest(self):
         ai_dialogs.open_suggest(self.winfo_toplevel(), self._ai(), self.rules, self._view_mode(),

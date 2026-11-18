@@ -219,7 +219,8 @@ class PagesMixin:
         self._rules_win = top
         page = RulesPage(top, self.net.proxy, settings=self.settings, sync=self.sync,
                          on_changed=self.on_settings_changed,
-                         on_open_settings=self._close_rules_popup)
+                         on_open_settings=self._close_rules_popup,
+                         on_open_assistant=self._open_rules_assistant)
         page.pack(fill="both", expand=True)
         self.pages["rules"] = page
         top.protocol("WM_DELETE_WINDOW", self._close_rules_popup)

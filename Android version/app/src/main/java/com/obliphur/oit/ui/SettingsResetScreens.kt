@@ -20,11 +20,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -70,15 +73,16 @@ fun SettingsScreen(tab: String, setTab: (String) -> Unit, act: MainActivity) {
         if (tab == "models") {
             OitCard {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(tr("AI 模型配置"), fontWeight = FontWeight.Bold, color = o.text, modifier = Modifier.weight(1f))
+                    Text(tr("新增/修改 AI 配置"), fontWeight = FontWeight.Bold, color = o.text, modifier = Modifier.weight(1f))
                     PlainButton(tr("设置")) { aiSettings = true }
                 }
-                val cfg = core.comm.aiConfig()
-                val p = cfg.profile()
-                Text("${cfg.configName()} · ${p.model.ifEmpty { "—" }}", color = o.dim, fontSize = 13.sp,
-                    modifier = Modifier.padding(top = 6.dp))
             }
-            if (aiSettings) AiSettingsDialog { aiSettings = false }
+            var modelRevision by remember { mutableIntStateOf(0) }
+            if (aiSettings) AiSettingsDialog { aiSettings = false; modelRevision++ }
+            ModelAssignmentRow("main", "聊天模型（主模型）", modelRevision) { modelRevision++ }
+            ModelAssignmentRow("vision", "图片模型", modelRevision) { modelRevision++ }
+            ModelAssignmentRow("ocr", "识字模型", modelRevision) { modelRevision++ }
+            ModelAssignmentRow("review", "评判模型", modelRevision) { modelRevision++ }
             return@PageColumn
         }
 
@@ -149,6 +153,40 @@ fun SettingsScreen(tab: String, setTab: (String) -> Unit, act: MainActivity) {
             "\n\n" + tr("'放松'方向的改变会被限制,是在希望未来的某一刻,理智只需要占据短暂的上风,就能阻止这个进程.\n为什么'收紧'也需要限制?作者希望用户不要竭泽而渔.你可能想到多的一个小时学习时间有多有价值 但是可能想不到少的一个小时休息时间会对心理健康有多大的压力.所以请在这一段时间好好考虑少的时间/禁用某些关键网站会对你的生活有什么影响.") +
             "\n\n" + tr("如果你很有动力,试试合约!"),
             Modifier.padding(top = 16.dp))
+    }
+}
+
+@Composable
+private fun ModelAssignmentRow(role: String, title: String, revision: Int, changed: () -> Unit) {
+    val o = LocalOit.current
+    val cfg = remember(revision) { OitApp.instance.core.comm.aiConfig() }
+    val ids = if (role == "main") cfg.order else listOf("") + cfg.order
+    var selected by remember(revision) { mutableStateOf(if (role == "main") cfg.provider else cfg.taskAssign[role].orEmpty()) }
+    var open by remember { mutableStateOf(false) }
+    val label = if (selected.isEmpty()) tr("跟随聊天模型") else
+        "${cfg.configName(selected)} · ${cfg.profile(selected).model.ifEmpty { "—" }}"
+    OitCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(tr(title), fontWeight = FontWeight.Bold, color = o.text)
+                Text(label, color = o.dim, fontSize = 13.sp)
+            }
+            androidx.compose.foundation.layout.Box {
+                PlainButton(tr("选择")) { open = true }
+                DropdownMenu(open, { open = false }) {
+                    for (id in ids) {
+                        val name = if (id.isEmpty()) tr("跟随聊天模型") else cfg.configName(id)
+                        DropdownMenuItem(text = { Text(name, color = o.text) }, onClick = {
+                            selected = id
+                            if (role == "main") cfg.setActive(id) else cfg.assignTask(role, id)
+                            cfg.save()
+                            open = false
+                            changed()
+                        })
+                    }
+                }
+            }
+        }
     }
 }
 

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""规则页里的两个对话框:模型设置,AI 名单建议.
+"""AI 配置管理与规则页 AI 名单建议对话框.
 
 AI 建议的每一步都由用户确认:
     ① 勾选要提供什么(应用 / 浏览器域名+次数)→ ② 预览将要发送的完整文本 →
@@ -59,7 +59,7 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
     b = area.inner
     state = {"cid": "", "family": "other", "loading": False}
 
-    # ---- 配置列表: 列表在左, 三个操作按钮在右 ----
+    # ---- 配置列表: 列表在左, 操作按钮在右 ----
     _label(b, tr("配置 (最多 {n} 个)").format(n=ai_assist.MAX_CONFIGS)).pack(fill="x")
     row = tk.Frame(b, bg=COLORS["bg"])
     row.pack(fill="x", pady=(4, 6))
@@ -77,8 +77,7 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
     col.pack(side="left", fill="y", padx=(10, 0))
     btn_add = ttk.Button(col, text=tr("新建"), width=10)
     btn_del = ttk.Button(col, text=tr("删除"), width=10)
-    btn_def = ttk.Button(col, text=tr("设为默认"), width=10)
-    for w in (btn_add, btn_del, btn_def):
+    for w in (btn_add, btn_del):
         w.pack(fill="x", pady=(0, 6))
     lbl_default = _label(b, "", dim=True)
     lbl_default.pack(fill="x")
@@ -134,33 +133,6 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
     note.pack(fill="x", pady=(8, 0))
     wrap_label(note, 20)
 
-    _label(b, tr("专用模型")).pack(fill="x", pady=(12, 2))
-    task_boxes = {}
-    task_vars = {}
-    task_ids_by_label = {}
-    task_labels = {"vision": "视觉模型", "ocr": "识字模型", "review": "评判模型"}
-
-    def refresh_tasks():
-        configured = cfg.configs()
-        options = [("", tr("跟随聊天模型"))] + [
-            (item["id"], f"{item['name']} [{item['id'][-4:]}]") for item in configured]
-        task_ids_by_label.clear()
-        task_ids_by_label.update({label: cid for cid, label in options})
-        for role, combo in task_boxes.items():
-            ids = [item[0] for item in options]
-            combo.config(values=[item[1] for item in options])
-            current = cfg.task_assign.get(role, "")
-            task_vars[role].set(options[ids.index(current)][1] if current in ids else options[0][1])
-
-    for role, label in task_labels.items():
-        row = tk.Frame(b, bg=COLORS["bg"])
-        row.pack(fill="x", pady=2)
-        _label(row, tr(label)).pack(side="left")
-        var = tk.StringVar()
-        combo = ttk.Combobox(row, textvariable=var, state="readonly", width=24)
-        combo.pack(side="right")
-        task_boxes[role], task_vars[role] = combo, var
-
     def set_proto(value: str):
         ent_proto.set(value)
         ent_proto.config(state="readonly" if preset_key() == "custom" else "disabled")
@@ -187,7 +159,7 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
             lb.selection_clear(0, "end")
             lb.selection_set(ids.index(state["cid"]))
             lb.see(ids.index(state["cid"]))
-        lbl_default.config(text=tr("默认配置: {name} (规则页的 AI 建议等用它)").format(name=cfg.config_name()))
+        lbl_default.config(text=tr("默认配置: {name} (聊天页未指定配置时使用)").format(name=cfg.config_name()))
 
     def store():
         """把界面上的值记回 cfg (内存), 切换配置 / 保存前调用."""
@@ -289,7 +261,6 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
             return
         refresh_list(cid)
         load()
-        refresh_tasks()
 
     def remove():
         store()
@@ -299,25 +270,17 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
         state["cid"] = ""
         refresh_list()
         load()
-        refresh_tasks()
-
-    def make_default():
-        store()
-        if cfg.set_active(state["cid"]):
-            refresh_list(state["cid"])
 
     lb.bind("<<ListboxSelect>>", on_pick)
     cb_preset.bind("<<ComboboxSelected>>", on_preset)
     cb_family.bind("<<ComboboxSelected>>", on_family)
     btn_add.config(command=add)
     btn_del.config(command=remove)
-    btn_def.config(command=make_default)
     btn_fetch.config(command=fetch)
     state["cid"] = cfg.config_for("") if cfg.config_for("") else (list_ids()[0] if list_ids() else "")
     state["cid"] = state["cid"] if state["cid"] in list_ids() else (list_ids()[0] if list_ids() else "")
     refresh_list(state["cid"])
     load()
-    refresh_tasks()
 
     from .model_fetch import auto_models
     def model_snapshot():
@@ -337,9 +300,6 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
 
     def save():
         store()
-        for role, var in task_vars.items():
-            cfg.assign_task(role, task_ids_by_label.get(var.get(), ""))
-        refresh_tasks()
         cid = state["cid"]
         name = var_name.get().strip()
         if not name:
@@ -382,6 +342,36 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
     return saved["ok"]
 
 
+def open_task_model_settings(parent, cfg: "ai_assist.AIConfig", role: str, title: str):
+    """选择聊天主模型或某项任务使用的 AI 配置。"""
+    dlg = Modal(parent, tr(title), width=440, height=190)
+    options = cfg.configs()
+    if role != "main":
+        options = [{"id": "", "name": tr("跟随聊天模型")}] + options
+    ids = [item["id"] for item in options]
+    labels = [item["name"] for item in options]
+    selected_id = cfg.provider if role == "main" else cfg.task_assign.get(role, "")
+    selected = tk.StringVar(value=labels[ids.index(selected_id)] if selected_id in ids else labels[0])
+    _label(dlg.body, tr("模型配置")).pack(fill="x", pady=(0, 4))
+    ttk.Combobox(dlg.body, textvariable=selected, values=labels, state="readonly").pack(fill="x")
+
+    def save():
+        index = labels.index(selected.get()) if selected.get() in labels else 0
+        cid = ids[index]
+        if role == "main":
+            cfg.set_active(cid)
+        else:
+            cfg.assign_task(role, cid)
+        if cfg.save():
+            dlg.finish(True)
+        else:
+            toast.error(tr("保存失败,请检查应用数据目录的写入权限."))
+
+    ttk.Button(dlg.buttons, text=tr("保存"), style="Accent.TButton", command=save).pack(side="right")
+    ttk.Button(dlg.buttons, text=tr("取消"), command=dlg.cancel).pack(side="right", padx=(0, 8))
+    dlg.wait()
+
+
 # ══════════════ AI 建议 ══════════════
 def open_suggest(parent, cfg: "ai_assist.AIConfig", rules, mode: str, on_done=None):
     """mode: ai_assist.MODE_BLACKLIST / MODE_WHITELIST."""
@@ -390,7 +380,7 @@ def open_suggest(parent, cfg: "ai_assist.AIConfig", rules, mode: str, on_done=No
     try:
         ai_assist.check_profile(prof)
     except ai_assist.AIError as e:
-        toast.warn(tr(e.message) + " —— " + tr("请先到「模型设置」里配置."))
+        toast.warn(tr(e.message) + " —— " + tr("请先配置聊天主模型."))
         return
     provider = cfg.config_name(cfg.provider)
     target = f"{provider} · {prof['model']} · {_host(prof['base_url'])}"

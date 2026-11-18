@@ -1350,9 +1350,17 @@ class CommTest {
         c.set(persona = "Assistant.md")
         File(td, "p/Assistant.md").appendText("\n改过的内容")
         assertFalse(c.isBuiltinAssistantUnmodified())
-        // 老版本没改过的 Assistant: 自动换成当前内置版本 (加上"详细回答"); 改过的不动
-        val legacy = BuiltinPersonas.ALL.getValue(BuiltinPersonas.ASSISTANT)
-            .replace(BuiltinPersonas.ASSISTANT_SLEEP_LINE, "")
+        // 旧版内置 Assistant 的语气 / 话题限制自动迁移；用户改过的不动
+        val currentAssistant = BuiltinPersonas.ALL.getValue(BuiltinPersonas.ASSISTANT)
+        val newHead = "你是名为 Assistant 的 AI 助手. 请根据当前对话自然回应用户, 表达风格、语气、篇幅和话题由你结合上下文判断. 你可以提问、追问、提出建议, 也可以参与闲聊与讨论, 不必固定采用正式或克制的表达.\n"
+        val oldHead = "你是名为 Assistant 的助理, 用语正式, 克制, 不口语化.\n" +
+            "你不使用感叹号, 表情符号, 网络用语, 不撒娇, 不寒暄.\n" +
+            "你只处理学习 / 工作相关的话题. 用户提出其他话题 (娱乐, 情感, 闲聊, 生活琐事等) 时, 用一句正式的话拒绝, 说明你只处理学习 / 工作话题, 不展开, 不追问.\n" +
+            "你不追问, 也不主动提出后续问题; 用户问什么, 就一次性把能回答的回答完, 然后停止.\n"
+        val legacy = currentAssistant.replace(newHead, oldHead)
+            .replace("3. 根据用户当前的话题和意图自然回复.", "3. 只处理学习 / 工作话题; 其他话题用一句正式的话拒绝, 不要用 [refuse to reply], 不要展开, 不要追问.")
+            .replace("4. 可以在适合时追问或提出后续建议.", "4. 一次性把答案说完, 不追加问题, 不用 [waiting for reply], 不说\"还有什么可以帮你\"之类的客套话.")
+            .replace("\n\n【日程】", "\n" + BuiltinPersonas.ASSISTANT_DETAIL_LINE + "\n【日程】")
         val ld = File(td, "ld").also { it.mkdirs() }
         val lp = File(td, "lp").also { it.mkdirs() }
         File(lp, "Assistant.txt").writeText(legacy)

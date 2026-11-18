@@ -84,7 +84,6 @@ fun RulesScreen(go: (String) -> Unit) {
     val core = OitApp.instance.core
     val mode = core.settings.str("FILTER_MODE")
     var view by rememberSaveable { mutableStateOf(mode) }
-    var aiSettings by remember { mutableStateOf(false) }
     var aiSuggest by remember { mutableStateOf(false) }
     PageColumn {
         OitCard {
@@ -106,7 +105,11 @@ fun RulesScreen(go: (String) -> Unit) {
                     btn()
                 }
                 PlainButton(tr("🤖 AI 建议")) { aiSuggest = true }
-                PlainButton(tr("⚙ 模型")) { aiSettings = true }
+                PlainButton(tr("⚙ 模型")) {
+                    core.comm.set(persona = "Assistant.txt")
+                    OitApp.instance.commDraft = tr("请帮我配置规则页 AI 建议使用的模型。")
+                    go("comm")
+                }
             }
             core.settings.pending["FILTER_MODE"]?.let {
                 Dim(tr("切换到{mode}: {at}", "mode" to core.settings.display("FILTER_MODE", it.value),
@@ -136,7 +139,6 @@ fun RulesScreen(go: (String) -> Unit) {
         }
 
     }
-    if (aiSettings) AiSettingsDialog { aiSettings = false }
     if (aiSuggest) AiSuggestDialog(view) { aiSuggest = false }
 }
 
@@ -445,8 +447,6 @@ fun AiSettingsDialog(onDismiss: () -> Unit) {
     var name by remember { mutableStateOf(cfg.configName(sel)) }
     var p by remember { mutableStateOf(cfg.profile(sel)) }
     var pickOpen by remember { mutableStateOf(false) }
-    var taskMenu by remember { mutableStateOf("") }
-    var taskAssign by remember { mutableStateOf(cfg.taskAssign.toMap()) }
     fun store() {
         if (sel in cfg.profiles) {
             cfg.putProfile(sel, p)
@@ -467,25 +467,6 @@ fun AiSettingsDialog(onDismiss: () -> Unit) {
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(tr("配置 (最多 {n} 个)", "n" to Ai.MAX_CONFIGS), color = o.dim, fontSize = 12.sp)
-                for ((role, label) in listOf("vision" to "视觉模型", "ocr" to "识字模型", "review" to "评判模型")) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(tr(label), color = o.text, modifier = Modifier.weight(1f))
-                        Box {
-                            TextButton({ taskMenu = role }) {
-                                val id = taskAssign[role].orEmpty()
-                                Text(if (id.isEmpty()) tr("跟随聊天模型") else cfg.configName(id), color = o.accent)
-                            }
-                            DropdownMenu(taskMenu == role, { taskMenu = "" }) {
-                                (listOf("" to tr("跟随聊天模型")) + cfg.configs().map { it.id to it.name }).forEach { (id, title) ->
-                                    DropdownMenuItem(text = { Text(title, color = o.text) }, onClick = {
-                                        taskAssign = if (id.isEmpty()) taskAssign - role else taskAssign + (role to id)
-                                        taskMenu = ""
-                                    })
-                                }
-                            }
-                        }
-                    }
-                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.weight(1f)) {
                         TextButton({ pickOpen = true }) { Text("▾  " + cfg.configName(sel), color = o.text) }
@@ -503,10 +484,6 @@ fun AiSettingsDialog(onDismiss: () -> Unit) {
                     }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    PlainButton(tr("设为默认")) {
-                        store()
-                        if (cfg.setActive(sel)) cfg.save()
-                    }
                     PlainButton(tr("删除")) {
                         if (cfg.removeConfig(sel)) {
                             cfg.save()
@@ -516,7 +493,7 @@ fun AiSettingsDialog(onDismiss: () -> Unit) {
                             name = cfg.configName(nid)
                         } else core.toast(tr("至少要留一个配置."), "warn")
                     }
-                    Text(tr("默认配置: {name} (规则页的 AI 建议等用它)", "name" to cfg.configName()), color = o.dim, fontSize = 11.sp)
+                    Text(tr("默认配置: {name} (聊天页未指定配置时使用)", "name" to cfg.configName()), color = o.dim, fontSize = 11.sp)
                 }
                 OutlinedTextField(name, { name = it }, label = { Text(tr("名称")) }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 Text(tr("预设"), color = o.dim, fontSize = 12.sp)
@@ -549,7 +526,6 @@ fun AiSettingsDialog(onDismiss: () -> Unit) {
         confirmButton = {
             TextButton({
                 store()
-                for (role in listOf("vision", "ocr", "review")) cfg.assignTask(role, taskAssign[role].orEmpty())
                 if (name.trim().isEmpty()) {
                     core.toast(tr("名称不能为空."), "warn")
                     return@TextButton

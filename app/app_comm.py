@@ -302,3 +302,14 @@ class CommMixin:
         self.show_page("settings")
         if "settings" in self.pages:
             self.pages["settings"].show_tab("comm")
+
+    def _open_rules_assistant(self):
+        """从规则页切到 Assistant，并预填模型配置请求。"""
+        self._close_rules_popup()
+        self.comm.set_cfg(persona="Assistant.txt")
+        self.show_page("comm")
+        page = self.pages.get("comm")
+        if page is not None:
+            page.entry.delete("1.0", "end")
+            page.entry.insert("1.0", tr("请帮我配置规则页 AI 建议使用的模型。"))
+            page.entry.focus_set()

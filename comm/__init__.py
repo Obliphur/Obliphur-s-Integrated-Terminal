@@ -915,8 +915,7 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
             self._push()
 
     def _upgrade_assistant_prompt(self):
-        """老版本的 Assistant 提示词 (没有"详细回答"那段) 且用户没改过: 换成当前内置版本.
-        用户改过的不动. 这样升级后专注特例和详细回答都能用."""
+        """仅升级已知的旧内置 Assistant 文本；用户改过的内容保持不动。"""
         path = os.path.join(self.personas, ASSISTANT_PERSONA)
         if not os.path.isfile(path):
             return
@@ -928,6 +927,17 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
         current_builtin = BUILTIN_PERSONAS[ASSISTANT_PERSONA]
         legacies = [current_builtin.replace(ASSISTANT_SLEEP_LINE, ""),
                     current_builtin.replace(ASSISTANT_SLEEP_LINE, "").replace(ASSISTANT_DETAIL_LINE, "")]
+        new_head = "你是名为 Assistant 的 AI 助手. 请根据当前对话自然回应用户, 表达风格、语气、篇幅和话题由你结合上下文判断. 你可以提问、追问、提出建议, 也可以参与闲聊与讨论, 不必固定采用正式或克制的表达.\n"
+        old_head = ("你是名为 Assistant 的助理, 用语正式, 克制, 不口语化.\n"
+                    "你不使用感叹号, 表情符号, 网络用语, 不撒娇, 不寒暄.\n"
+                    "你只处理学习 / 工作相关的话题. 用户提出其他话题 (娱乐, 情感, 闲聊, 生活琐事等) 时, 用一句正式的话拒绝, 说明你只处理学习 / 工作话题, 不展开, 不追问.\n"
+                    "你不追问, 也不主动提出后续问题; 用户问什么, 就一次性把能回答的回答完, 然后停止.\n")
+        old3 = "3. 只处理学习 / 工作话题; 其他话题用一句正式的话拒绝, 不要填写refuse=true, 不展开, 不追问."
+        old4 = "4. 一次性把答案说完, 不追加问题, 不填写wait_minutes, 不说\"还有什么可以帮你\"之类的客套话."
+        old_prompt = current_builtin.replace(new_head, old_head, 1).replace(
+            "3. 根据用户当前的话题和意图自然回复.", old3, 1).replace(
+            "4. 可以在适合时追问或提出后续建议.", old4, 1)
+        legacies.extend((old_prompt, old_prompt.replace("\n\n【日程】", "\n" + ASSISTANT_DETAIL_LINE + "\n【日程】")))
         normalized = native_persona_text(current).strip()
         known = {native_persona_text(x).strip() for x in (current_builtin, *legacies)}
         if normalized not in known:

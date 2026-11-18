@@ -46,6 +46,7 @@ class OitApp : Application(), Host {
     val toasts = MutableSharedFlow<Toast>(extraBufferCapacity = 32)
     val notices = MutableStateFlow<List<Notice>>(emptyList())
     val navRequests = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    var commDraft by mutableStateOf("")
     /** 界面在前台 (提示直接显示在界面上, 否则发通知). */
     var foreground = false
     /** 需要用户 (重新) 授予 VPN 权限. */

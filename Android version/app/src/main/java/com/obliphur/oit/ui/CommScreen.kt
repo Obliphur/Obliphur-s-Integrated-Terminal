@@ -76,6 +76,12 @@ fun CommScreen(go: (String) -> Unit) {
     val comm = core.comm
     DisposableEffect(Unit) { comm.setViewing(true); onDispose { comm.voice.stop(); comm.setViewing(false) } }
     var input by rememberSaveable { mutableStateOf("") }
+    LaunchedEffect(OitApp.instance.commDraft) {
+        if (OitApp.instance.commDraft.isNotEmpty()) {
+            input = OitApp.instance.commDraft
+            OitApp.instance.commDraft = ""
+        }
+    }
     var askClear by remember { mutableStateOf(false) }
     var help by remember { mutableStateOf(false) }
     var coAlarm by remember { mutableStateOf(false) }                           // 共时闹钟的弹窗
@@ -194,7 +200,7 @@ fun CommScreen(go: (String) -> Unit) {
                         onClick = { whoOpen = false; comm.set(persona = name) })
                 }
             }
-            // AI 配置: 每个聊天对象各选一份 (在 设置 → 沟通 → API 里建 / 改, 最多 10 份)
+            // AI 配置: 每个聊天对象各选一份 (在 设置 → 模型 里建 / 改, 最多 10 份)
             var cfgOpen by remember { mutableStateOf(false) }
             Box {
                 TextButton({ cfgOpen = true }) { Text("▾  " + comm.currentConfigName().ifEmpty { "—" }, color = o.dim, fontSize = 13.sp) }
