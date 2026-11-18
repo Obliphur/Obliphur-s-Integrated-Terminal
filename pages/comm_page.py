@@ -599,7 +599,15 @@ class CommPage(CommVoiceMixin, tk.Frame):
                     duration = max(0, int(data.get("summary", {}).get("performance_duration_ms") or 0)) / 1000
                     if os.path.splitext(paths["performance"])[1].lower() in (".mp3", ".wav", ".flac", ".ogg"):
                         duration = max(duration, music.audio_duration(paths["performance"]))
-                    prompt = "请结合下面的独立分析，以你平常的语气自然评判用户演奏，并给出简洁建议：\n" + str(review).strip()
+                    prompt = (
+                        "请结合独立评判和结构化演奏差异，以你平常的语气自然评判用户演奏，并给出简洁建议。"
+                        "额外留意用户对这一首的处理意图：根据整体速度比例、起音与时值误差、漏音/多音分布及独立评判，"
+                        "谨慎判断是否存在连贯且有依据的有意处理；只有能与偶发失误区分时，才自然提及你观察到的意图。"
+                        "证据不足、只有零散偏差或无法区分意图与失误时，不要推测或提及演奏意图，也不要把技术误差解释成表达。\n"
+                        "独立评判：\n" + str(review).strip()
+                        + "\n结构化差异：\n"
+                        + json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+                    )
                     outcome = ("ok", prompt, 60 + duration)
                 except Exception as error:
                     outcome = ("err", str(error))
