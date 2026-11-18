@@ -37,19 +37,23 @@ class MusicLibrary(private val dataDir: File, private val assets: AssetManager) 
 
     private fun personaKey(persona: String) = sha(persona.toByteArray(StandardCharsets.UTF_8)).take(20).lowercase()
     private fun isClaudia(persona: String?) = persona == null || persona.substringBeforeLast('.', persona).equals("Claudia", true)
+    private fun available(item: JSONObject, persona: String?, related: Boolean, valence: Double): Boolean {
+        if (!item.optBoolean("relationship_required")) return true
+        return persona != null && isClaudia(persona) && related && valence.isFinite() && valence >= item.optDouble("valence_min", 70.0)
+    }
     private fun uploadDirs(persona: String?) = if (persona == null) listOf(uploads) else buildList {
         add(File(uploads, personaKey(persona)))
         if (isClaudia(persona)) add(uploads)
     }
     private fun stateDir(persona: String?) = if (isClaudia(persona)) root else File(File(root, "personas"), personaKey(persona!!))
 
-    fun catalog(persona: String? = null): JSONArray {
+    fun catalog(persona: String? = null, related: Boolean = false, valence: Double = 0.0): JSONArray {
         val result = JSONArray()
         val claudia = isClaudia(persona)
         if (claudia) {
             for (i in 0 until manifest.length()) {
                 val item = manifest.getJSONObject(i)
-                if (File(defaults, item.getString("file")).isFile) {
+                if (available(item, persona, related, valence) && File(defaults, item.getString("file")).isFile) {
                     result.put(JSONObject().put("id", item.getString("id")).put("title", item.getString("title"))
                         .put("title_zh", item.getString("title_zh")).put("composer", item.getString("composer"))
                         .put("tags", item.getJSONArray("tags")).put("source", item.getString("source"))
@@ -86,10 +90,10 @@ class MusicLibrary(private val dataDir: File, private val assets: AssetManager) 
         return catalog(persona).let { all -> (0 until all.length()).map { all.getJSONObject(it) }.first { it.optString("id") == "upload-${digest.take(16).lowercase()}" } }
     }
 
-    fun get(id: String, persona: String? = null): Pair<JSONObject, File>? {
+    fun get(id: String, persona: String? = null, related: Boolean = false, valence: Double = 0.0): Pair<JSONObject, File>? {
         for (i in 0 until (if (isClaudia(persona)) manifest.length() else 0)) {
             val item = manifest.getJSONObject(i)
-            if (item.optString("id") == id) return item to File(defaults, item.getString("file"))
+            if (item.optString("id") == id && available(item, persona, related, valence)) return item to File(defaults, item.getString("file"))
         }
         if (id.startsWith("upload-")) {
             val file = uploadDirs(persona).asSequence().flatMap { (it.listFiles() ?: emptyArray()).asSequence() }
@@ -102,10 +106,10 @@ class MusicLibrary(private val dataDir: File, private val assets: AssetManager) 
         return null
     }
 
-    fun select(id: String, persona: String? = null): JSONObject {
-        val all = catalog(persona)
+    fun select(id: String, persona: String? = null, related: Boolean = false, valence: Double = 0.0): JSONObject {
+        val all = catalog(persona, related, valence)
         require((0 until all.length()).any { all.getJSONObject(it).optString("id") == id }) { "乐谱不属于当前人设的曲库" }
-        val (item, file) = get(id, persona) ?: error("所选乐谱已不存在")
+        val (item, file) = get(id, persona, related, valence) ?: error("所选乐谱已不存在")
         require(file.isFile) { "所选乐谱已不存在" }
         val state = JSONObject().put("id", id).put("title", item.optString("title"))
             .put("composer", item.optString("composer")).put("path", file.absolutePath).put("selected_at", System.currentTimeMillis())
@@ -116,11 +120,11 @@ class MusicLibrary(private val dataDir: File, private val assets: AssetManager) 
         return state
     }
 
-    fun selection(persona: String? = null): JSONObject? = runCatching {
+    fun selection(persona: String? = null, related: Boolean = false, valence: Double = 0.0): JSONObject? = runCatching {
         val stateDir = stateDir(persona)
         val state = JSONObject(File(stateDir, "selection.json").readText(Charsets.UTF_8))
-        val (_, file) = get(state.getString("id"), persona) ?: return null
-        val allowed = catalog(persona)
+        val (_, file) = get(state.getString("id"), persona, related, valence) ?: return null
+        val allowed = catalog(persona, related, valence)
         if (!file.isFile || (0 until allowed.length()).none { allowed.getJSONObject(it).optString("id") == state.optString("id") }) null
         else state.put("path", file.absolutePath)
     }.getOrNull()

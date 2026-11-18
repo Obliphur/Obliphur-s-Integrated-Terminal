@@ -3,6 +3,7 @@
 
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -111,12 +112,26 @@ class MusicLibrary:
     def _state_dir(self, persona):
         return self.root if persona is None or self._is_claudia(persona) else self.root / "personas" / self._persona_key(persona)
 
-    def catalog(self, persona=None):
+    @classmethod
+    def _available(cls, item, persona, related=False, valence=0):
+        if not item.get("relationship_required"):
+            return True
+        try:
+            current_valence = float(valence)
+            minimum = float(item.get("valence_min", 70))
+        except (TypeError, ValueError, OverflowError):
+            return False
+        return (persona is not None and cls._is_claudia(persona) and bool(related)
+                and math.isfinite(current_valence) and current_valence >= minimum)
+
+    def catalog(self, persona=None, related=False, valence=0):
         include_defaults = persona is None or self._is_claudia(persona)
         upload_dirs = self._upload_dirs(persona)
         entries = []
         if include_defaults:
             for item in self.manifest:
+                if not self._available(item, persona, related, valence):
+                    continue
                 path = self.defaults / item["file"]
                 if path.is_file():
                     entries.append({k: item[k] for k in ("id", "title", "title_zh", "composer", "tags", "license", "source")})
@@ -154,10 +169,10 @@ class MusicLibrary:
             shutil.copy2(source, dest)
         return next(item for item in self.catalog(persona) if item["id"] == "upload-" + digest[:16])
 
-    def get(self, score_id, persona=None):
+    def get(self, score_id, persona=None, related=False, valence=0):
         if persona is None or self._is_claudia(persona):
             for item in self.manifest:
-                if item["id"] == score_id:
+                if item["id"] == score_id and self._available(item, persona, related, valence):
                     return item, self.defaults / item["file"]
         prefix = "upload-"
         if isinstance(score_id, str) and score_id.startswith(prefix):
@@ -171,10 +186,10 @@ class MusicLibrary:
                         return {"id": score_id, "title": title, "composer": composer, "kind": "upload"}, path
         return None, None
 
-    def select(self, score_id, persona=None):
-        if score_id not in {entry["id"] for entry in self.catalog(persona)}:
+    def select(self, score_id, persona=None, related=False, valence=0):
+        if score_id not in {entry["id"] for entry in self.catalog(persona, related, valence)}:
             raise MusicLibraryError("乐谱不属于当前人设的曲库")
-        item, path = self.get(score_id, persona)
+        item, path = self.get(score_id, persona, related, valence)
         if not item or not path.is_file():
             raise MusicLibraryError("所选乐谱已不存在")
         state = {"id": item["id"], "title": item["title"], "composer": item.get("composer", ""),
@@ -186,11 +201,11 @@ class MusicLibrary:
         os.replace(tmp, state_dir / "selection.json")
         return state
 
-    def selection(self, persona=None):
+    def selection(self, persona=None, related=False, valence=0):
         try:
             state_dir = self._state_dir(persona)
             value = json.loads((state_dir / "selection.json").read_text(encoding="utf-8"))
-            item, path = self.get(value.get("id"), persona)
+            item, path = self.get(value.get("id"), persona, related, valence)
             if item and path.is_file():
                 return {**value, "path": str(path)}
         except (OSError, ValueError, TypeError):
@@ -202,11 +217,11 @@ class MusicLibrary:
             raise MusicLibraryError("曲目编号无效")
         return self.root / "generated" / (score_id + ".mid")
 
-    def generate_midi(self, score_id=None, persona=None):
+    def generate_midi(self, score_id=None, persona=None, related=False, valence=0):
         """使用本机 MuseScore 导出演奏 MIDI；复用当前人性化参数的有效缓存。"""
-        selected = self.selection(persona) if score_id is None else None
+        selected = self.selection(persona, related, valence) if score_id is None else None
         score_id = score_id or (selected or {}).get("id")
-        item, source = self.get(score_id, persona)
+        item, source = self.get(score_id, persona, related, valence)
         if not item or not source.is_file():
             raise MusicLibraryError("请先选择一首仍在曲库中的乐谱")
         destination = self.midi_path(score_id)
@@ -225,11 +240,11 @@ class MusicLibrary:
             raise MusicLibraryError(str(error)) from error
         return {"id": score_id, "title": item["title"], "path": str(destination), "reused": False}
 
-    def prepare_performance(self, score_id, persona=None):
+    def prepare_performance(self, score_id, persona=None, related=False, valence=0):
         """生成选中乐谱的人性化演奏音频，尚不播放。"""
         if sys.platform != "win32":
             raise MusicLibraryError(tr("本机演奏目前仅支持 Windows."))
-        generated = self.generate_midi(score_id, persona)
+        generated = self.generate_midi(score_id, persona, related, valence)
         audio = self.root / "generated" / (score_id + ".mp3")
         metadata = audio.with_suffix(".mp3.json")
         import config

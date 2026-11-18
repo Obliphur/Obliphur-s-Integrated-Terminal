@@ -973,7 +973,7 @@ class Comm(
         require(owner.isNotEmpty()) { "请先选择一个人设，再导入乐谱" }
         return musicLibrary.add(source, owner)
     }
-    fun selectedScore() = musicLibrary.selection(personaName())
+    fun selectedScore() = musicLibrary.selection(personaName(), related(), interactionPrepare().valence)
     companion object {
         val toolsLocal = ThreadLocal<Boolean>()
         /** 每次请求的用量记录 (输入 token, 命中缓存的 token): 写进 comm.log. 由 Comm 的实例接上. */
@@ -4485,7 +4485,7 @@ class Comm(
                     result = JSONObject().put("ok", true).put("data", values).put("note", "own_data属于你，不是用户；reference_template仅参考格式与占位符，非真实数据。不可用数据不要编造。")
                 }
                 "oit_music_catalog" -> runCatching {
-                    val all = musicLibrary.catalog(personaName())
+                    val all = musicLibrary.catalog(personaName(), related(), interactionPrepare().valence)
                     val catalog = org.json.JSONArray()
                     for (i in 0 until minOf(80, all.length())) catalog.put(all.getJSONObject(i))
                     musicIds = (0 until catalog.length()).map { catalog.getJSONObject(it).getString("id") }.toSet()
@@ -4493,7 +4493,9 @@ class Comm(
                 }.onFailure { log("TOOL music catalog FAIL ${it.javaClass.simpleName}") }
                 "oit_music_select" -> {
                     val id = args.optString("id")
-                    val found = if (musicIds.isNotEmpty() && id in musicIds) runCatching { musicLibrary.get(id, personaName()) }.getOrNull() else null
+                    val found = if (musicIds.isNotEmpty() && id in musicIds) runCatching {
+                        musicLibrary.get(id, personaName(), related(), interactionPrepare().valence)
+                    }.getOrNull() else null
                     if (found != null && found.second.isFile && musicId.isEmpty()) {
                         musicId = id
                         result = JSONObject().put("ok", true).put("selected", JSONObject().put("id", id)
@@ -4685,7 +4687,7 @@ class Comm(
         val refused = r.err.isEmpty() && CommText.isRefusal(r.reply)
         val shareInvite = r.err.isEmpty() && !refused && !queried && (if (ToolProtocol.unpack(r.reply) != null) ToolProtocol.args(r.reply).optBoolean("share_data") else CommText.SHARE_RE.containsMatchIn(r.reply))
         if (text.isEmpty() && r.err.isEmpty() && !refused && !queried && (r.op != null || r.musicId.isNotEmpty() || shareInvite))
-            text = if (r.musicId.isNotEmpty()) tr("我为你选了《{title}》", "title" to (runCatching { musicLibrary.get(r.musicId)?.first?.optString("title") }.getOrNull() ?: ""))
+            text = if (r.musicId.isNotEmpty()) tr("我为你选了《{title}》", "title" to (runCatching { musicLibrary.get(r.musicId, personaName(), related(), interactionPrepare().valence)?.first?.optString("title") }.getOrNull() ?: ""))
                 else tr(if (r.op != null) "🤝  联合行动邀请" else "share data 邀请")
         val isCatchup = r.extra?.body?.contains(CATCHUP_TAG) == true          // 这是补问 (见 CATCHUP_BODY)
         var jointAns = ""                                                     // 对联合行动邀请的回复 [Yes] / [No]
@@ -4752,7 +4754,7 @@ class Comm(
             }
             activeReplyAfter = 0L
             r.op?.let { opApply(it, m) }
-            if (r.musicId.isNotEmpty()) runCatching { musicLibrary.select(r.musicId, personaName()) }
+            if (r.musicId.isNotEmpty()) runCatching { musicLibrary.select(r.musicId, personaName(), related(), interactionPrepare().valence) }
             if (shareInvite) { m.shareInvite = true; deliverInvites(m) }
             delivered = true
             deliveredId = m.id

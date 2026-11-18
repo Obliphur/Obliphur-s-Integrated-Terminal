@@ -295,15 +295,41 @@ def music_tool_checks():
     root = Path(tempstore.mkdtemp("music-tool-check"))
     library = music_library.manager(root)
     catalog = library.catalog()
-    assert len(catalog) == len(library.manifest)
+    assert len(catalog) == len(library.manifest) - 4
+    intimate_id = next(item["id"] for item in library.manifest if item.get("relationship_required"))
 
     class Context(ToolsMixin):
         _epoch = 7
         dir = str(root)
+        _related = False
+        _valence = 0
         hard_block = lambda self: False
         log = lambda self, message: None
         state_fn = lambda self: "idle"
         persona_name = lambda self: "Claudia.txt"
+        related = lambda self: self._related
+        _interaction_prepare = lambda self: {"valence": self._valence}
+
+    access = Context()
+    access._related, access._valence = True, 70
+    visible = library.catalog("Claudia.txt", access.related(), access._interaction_prepare()["valence"])
+    assert intimate_id in {item["id"] for item in visible}
+    access._valence = 69.99
+    assert intimate_id not in {item["id"] for item in library.catalog("Claudia.txt", access.related(), access._interaction_prepare()["valence"])}
+
+    # 目录通过后状态若跌破门槛，后续选曲仍被拒绝。
+    access._valence = 70
+    select_after_gate = [tools.pack(name="oit_music_catalog"), tools.pack(name="oit_music_select", arguments={"id": intimate_id}),
+                         tools.pack(text="不能选", name="oit_reply", arguments={"text": "不能选"})]
+    calls = 0
+    def drop_valence(history):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            access._valence = 69.99
+        return select_after_gate.pop(0)
+    operation, _ = access._tool_rounds(drop_valence, [], select_after_gate.pop(0), "user", 7)
+    assert operation is None
 
     replies = [tools.pack(name="oit_music_select", arguments={"id": catalog[6]["id"]}),
                tools.pack(text="我选了梦幻曲", name="oit_reply", arguments={"text": "我选了梦幻曲"})]

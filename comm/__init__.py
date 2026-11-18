@@ -1316,7 +1316,8 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
             if isinstance(op, dict) and op.get("type") in ("music_select", "music_perform"):
                 try:
                     import music_library
-                    selected, _ = music_library.manager(self.dir).get(op["id"])
+                    related, valence = self._music_access()
+                    selected, _ = music_library.manager(self.dir).get(op["id"], self.persona_name(), related, valence)
                     text = tr("我为你选了《{title}》", title=selected["title"] if selected else "")
                 except Exception:
                     text = tr("我选好了一首曲子")
@@ -1399,7 +1400,8 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
                 if isinstance(op, dict) and op.get("type") == "music_select":
                     try:
                         import music_library
-                        music_library.manager(self.dir).select(op["id"], self.persona_name())
+                        related, valence = self._music_access()
+                        music_library.manager(self.dir).select(op["id"], self.persona_name(), related, valence)
                     except Exception as e:
                         self.log(f"MUSIC select FAIL {type(e).__name__}")
                 elif isinstance(op, dict) and op.get("type") == "music_perform":

@@ -1,6 +1,6 @@
 # 本地乐谱来源与署名
 
-默认32份 MuseScore MSCX 乐谱来自 DCMLab 的公开古典钢琴语料库，使用各仓库 `reviewed/` 中的校对版文件。各文件地址、固定 Git 提交、SHA-256 和许可见同目录的 `catalog.json`。
+默认36份 MuseScore MSCX 乐谱来自 DCMLab 的公开古典钢琴语料库，使用各仓库 `reviewed/` 中的校对版文件。各文件地址、固定 Git 提交、SHA-256 和许可见同目录的 `catalog.json`。
 
 - Robert Schumann, *Kinderszenen*, Op. 15 (13 pieces): [DCMLab/schumann_kinderszenen](https://github.com/DCMLab/schumann_kinderszenen)
 - Claude Debussy, *Suite bergamasque* (4 pieces): [DCMLab/debussy_suite_bergamasque](https://github.com/DCMLab/debussy_suite_bergamasque)

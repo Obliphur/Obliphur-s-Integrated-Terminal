@@ -21,10 +21,29 @@ tempstore.session("music-library-check")
 root = Path(tempstore.mkdtemp("music-library-check"))
 library = music_library.manager(root)
 manifest = json.loads((music_library.DEFAULT_DIR / "catalog.json").read_text(encoding="utf-8"))
-assert len(manifest) == 32
+assert len(manifest) == 36
 assert len(library.catalog()) == 32
-assert len(library.catalog("Claudia.txt")) == len(manifest)
+assert len(library.catalog("Claudia.txt")) == 32
 assert library.catalog("Other.txt") == []
+intimate = [item for item in manifest if item.get("relationship_required")]
+assert len(intimate) == 4 and all(item["valence_min"] == 70 for item in intimate)
+intimate_ids = {item["id"] for item in intimate}
+assert intimate_ids.isdisjoint({item["id"] for item in library.catalog("Claudia.txt")})
+assert intimate_ids.isdisjoint({item["id"] for item in library.catalog(None, True, 100)})
+assert len(library.catalog("Claudia.txt", True, float("inf"))) == 32
+assert intimate_ids <= {item["id"] for item in library.catalog("Claudia.txt", True, 70)}
+assert len(library.catalog("Claudia.txt", True, 69.99)) == 32
+for item in intimate:
+    assert library.get(item["id"], "Claudia.txt")[0] is None
+    assert library.get(item["id"], "Claudia.txt", True, 69.99)[0] is None
+    assert library.get(item["id"], "Claudia.txt", True, 70)[0] is not None
+    assert library.get(item["id"], "Other.txt", True, 100)[0] is None
+    try:
+        library.select(item["id"], "Claudia.txt", True, 69.99)
+    except music_library.MusicLibraryError:
+        pass
+    else:
+        raise AssertionError("intimate score unlocked below the Valence threshold")
 for entry in manifest:
     path = library.defaults / entry["file"]
     assert hashlib.sha256(path.read_bytes()).hexdigest().upper() == entry["sha256"]
@@ -188,7 +207,7 @@ restored = music_library.manager(root)
 assert len(restored.catalog()) == 32 and restored.selection() is None
 assert not list(restored.uploads.iterdir())
 assert restored.catalog("Other.txt") == [] and restored.selection("Other.txt") is None
-assert len(restored.catalog("Claudia.txt")) == len(manifest)
+assert len(restored.catalog("Claudia.txt")) == 32
 assert restored.catalog("Other.txt") == [] and restored.selection("Other.txt") is None
-assert len(restored.catalog("Claudia.txt")) == len(manifest)
+assert len(restored.catalog("Claudia.txt")) == 32
 print("music library check OK")

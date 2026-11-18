@@ -12,6 +12,9 @@ from comm.comm_prompt import native_persona_text
 
 
 class ToolsMixin:
+    def _music_access(self):
+        return self.related(), self._interaction_prepare()["valence"]
+
     def _tool_rounds(self, ask, convo, reply, kind, epoch):
         from comm.comm_const import OP_KINDS
         op, slots, last = None, None, []
@@ -46,7 +49,8 @@ class ToolsMixin:
                 try:
                     library = music_library.manager(self.dir)
                     persona = self.persona_name()
-                    entries = library.catalog(persona)[:80]
+                    related, valence = self._music_access()
+                    entries = library.catalog(persona, related, valence)[:80]
                     music_ids = {item["id"] for item in entries}
                     result = {"ok": True, "data": entries, "note": "乐谱是本机文件；标签仅供选曲参考。用户上传曲目不会随聊天记录同步。"}
                 except Exception as e:
@@ -59,7 +63,8 @@ class ToolsMixin:
                         raise music_library.MusicLibraryError("乐谱不在刚查询的目录中")
                     library = music_library.manager(self.dir)
                     persona = self.persona_name()
-                    item, path = library.get(score_id, persona)
+                    related, valence = self._music_access()
+                    item, path = library.get(score_id, persona, related, valence)
                     if not item or not path or not path.is_file():
                         raise music_library.MusicLibraryError("乐谱已不存在")
                     op = {"type": "music_select", "id": score_id}
@@ -72,13 +77,14 @@ class ToolsMixin:
                 score_id = args["id"]
                 library = music_library.manager(self.dir)
                 persona = self.persona_name()
-                selected = library.selection(persona)
+                related, valence = self._music_access()
+                selected = library.selection(persona, related, valence)
                 pending_id = op.get("id") if isinstance(op, dict) and op.get("type") == "music_select" else ""
                 if score_id != (selected or {}).get("id") and score_id != pending_id:
                     result = {"ok": False, "error": "请先通过oit_music_select选择这首乐谱"}
                 else:
                     try:
-                        generated = library.generate_midi(score_id, persona)
+                        generated = library.generate_midi(score_id, persona, related, valence)
                         result = {"ok": True, "data": {"id": generated["id"], "title": generated["title"],
                                   "format": "MIDI", "humanized": True, "reused": generated["reused"]},
                                   "next": "MIDI 文件已生成，可以告知用户；这不表示已经播放或生成 MP3"}
@@ -88,7 +94,8 @@ class ToolsMixin:
                 score_id = args["id"]
                 library = music_library.manager(self.dir)
                 persona = self.persona_name()
-                selected = library.selection(persona)
+                related, valence = self._music_access()
+                selected = library.selection(persona, related, valence)
                 pending_id = op.get("id") if isinstance(op, dict) and op.get("type") == "music_select" else ""
                 if score_id != (selected or {}).get("id") and score_id != pending_id:
                     result = {"ok": False, "error": "请先通过oit_music_select选择这首乐谱"}
@@ -98,10 +105,10 @@ class ToolsMixin:
                     result = {"ok": False, "error": "仅可在空闲或休息期间演奏"}
                 else:
                     try:
-                        item, path = library.get(score_id, persona)
+                        item, path = library.get(score_id, persona, related, valence)
                         if not item or not path or not path.is_file():
                             raise music_library.MusicLibraryError("乐谱已不存在")
-                        performance = library.prepare_performance(score_id, persona)
+                        performance = library.prepare_performance(score_id, persona, related, valence)
                         op = {"type": "music_perform", "id": score_id, "path": performance["path"]}
                         result = {"ok": True, "selected": {"id": score_id, "title": item["title"]},
                                   "status": "queued_until_message_visible", "format": "MP3",
@@ -139,7 +146,12 @@ class ToolsMixin:
         if epoch != self._epoch or not self.music_player.allowed():
             return
         try:
-            music_library.manager(self.dir).select(op["id"], self.persona_name())
+            related, valence = self._music_access()
+            library = music_library.manager(self.dir)
+            item, path = library.get(op["id"], self.persona_name(), related, valence)
+            if not item or not path or not path.is_file():
+                return
+            library.select(op["id"], self.persona_name(), related, valence)
             if not self.music_player.play(op["path"]):
                 self.error = tr("演奏播放失败.")
         except (OSError, ValueError) as error:
