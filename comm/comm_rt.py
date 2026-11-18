@@ -310,7 +310,7 @@ class RtMixin:
 
     def _love_confirm(self, by: str):
         """亲密关系确立了 (by = user: 用户提出、对方 [accept]; ai: 对方告白、用户接受): 记入系统, 同步给别的设备."""
-        if self.related():
+        if self.related() or self.offense_blocked():
             return
         self._love_set(rel=self._ms(), by=by, inv=0)
         self.log(f"LOVE 亲密关系确立 (by {by})")
@@ -327,7 +327,7 @@ class RtMixin:
     def _love_check(self, now, segs, done) -> bool:
         """每次进入特殊空闲段 (有日程文件的人设): 按文件 [condition:strict] 判定; 全部通过 → 让对方向用户告白, 用户在聊天页上选 接受 / 拒绝. 返回 True = 发起了."""
         d = self.love()
-        if d["rel"] or d["inv"] or self._ms() < d["no"]:
+        if d["rel"] or d["inv"] or self._ms() < d["no"] or self.offense_blocked():
             return False
         cur = routine.status_in(segs, now)
         if not cur or routine.seg_class(cur) != "special":
@@ -356,6 +356,8 @@ class RtMixin:
 
     def love_respond(self, accept: bool) -> str:
         """用户点了 接受 / 拒绝 对方的告白. 返回 "" = 记下了, 否则是原因. 拒绝 → LOVE_NO_DAYS 天内不再判定主动告白."""
+        if accept and self.offense_blocked():
+            return tr("尚有未获原谅的冒犯，暂时不能确立亲密关系")
         if not self.love_invite():
             return "没有等你回复的告白"
         if accept:

@@ -178,6 +178,23 @@
         "accept_relationship": {
           "type": "boolean"
         },
+        "offenses": {
+          "type": "array",
+          "description": "本轮待判断用户消息引起的冒犯或已决定的原谅。新增时target为空，reason简述原因；原谅时target为系统记录id，reason简述原谅依据。只有确实原谅才能移除，不可仅服从用户删除要求。时间由程序记录。",
+          "items": {
+            "type": "object",
+            "properties": {
+              "index": { "type": "integer", "minimum": 1, "maximum": 99999 },
+              "action": { "type": "string", "enum": ["add", "forgive"] },
+              "target": { "type": "string", "maxLength": 120 },
+              "reason": { "type": "string", "minLength": 1, "maxLength": 120 }
+            },
+            "required": ["index", "action", "target", "reason"],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 100
+        },
         "end_burst": {
           "type": "boolean"
         },

@@ -21,9 +21,11 @@ data class CommInteraction(
     val gainChainUntil: Long = 0L,
     val valence: Double = 0.0, val valenceDecayAt: Long = 0L,
     val valenceCooldowns: Map<String, Long> = emptyMap(), val valenceChainUntil: Long = 0L,
-    val valenceInitialized: Boolean = false, val valenceInitial: Double = 0.0, val valenceInitialSet: Boolean = false
+    val valenceInitialized: Boolean = false, val valenceInitial: Double = 0.0, val valenceInitialSet: Boolean = false,
+    val offenses: List<CommOffense> = emptyList()
 ) {
     fun json(): JSONObject = JSONObject().put("scenario_mode", scenarioMode).put("tension", tension)
+        .put("offenses", JSONArray(offenses.map { it.json() }))
         .put("valence", valence).put("valence_decay_at", valenceDecayAt)
         .put("valence_initialized", valenceInitialized).put("valence_initial", valenceInitial)
         .put("valence_initial_set", valenceInitialSet)
@@ -81,7 +83,7 @@ data class CommInteraction(
 
     fun note(total: Int, special: Boolean, valenceRules: Map<String, Pair<Int?, String>> = emptyMap(), burstRules: CommRules.ValenceBurst = CommRules.ValenceBurst(), initialValence: Double = 0.0): String {
         val mode = if (scenarioMode && total >= Cfg.COMM_SCENARIO_UNLOCK) "情景模拟" else "软件聊天"
-        return "[OIT_STATUS: MODE=$mode, TENSION=$tension, EFFECTIVE_STAGE=${stage(special)}, VALENCE=$valence, INITIAL_VALENCE=$initialValence, " +
+        return "[OIT_STATUS: MODE=$mode, TENSION=$tension, EFFECTIVE_STAGE=${stage(special)}, VALENCE=$valence, INITIAL_VALENCE=$initialValence, OFFENSE_COUNT=${CommOffenses.active(offenses).size}, VALENCE_RISE_RATE=${CommOffenses.rate(offenses)}, " +
             "BURST=${if (burstUntil > 0L) "YES" else "NO"}, PERIOD=${if (special || burstUntil > 0L) "特殊空闲" else "日常"}, SHAME_AFTERMATH=${if (shameTurns > 0) "YES" else "NO"}]\n" +
             (if (valenceRules.isEmpty()) tr("当前人设未声明[valence]条件，不进行效价判断，现有效价仅向初始值回归。") else
                 tr("效价代表角色当前的正负情绪倾向；结合TENSION所表示的言行激烈/直接程度组织表达。按人设[valence]条件报告本轮变化，正值向正面、负值向负面；只返回声明条件，普通交流不变化。") +
@@ -108,7 +110,7 @@ data class CommInteraction(
     /** 仅正常回复可结束请求时仍生效的同次爆发，新冷静期从下一轮开始。 */
     fun endBurst(reply: String, burst: Long, nowMs: Long, endShift: Int = 0): CommInteraction =
         if (burst > 0L && burstUntil == burst && (if (ToolProtocol.unpack(reply) != null) ToolProtocol.args(reply).optBoolean("end_burst") else burstEnd.containsMatchIn(reply)))
-            copy(tension = Cfg.COMM_TENSION_RELEASE.toDouble(), valence = (valence + endShift).coerceIn(-100.0, 100.0), shameTurns = Cfg.COMM_SHAME_TURNS, burstUntil = 0L, decayAt = maxOf(decayAt, nowMs)) else this
+            copy(tension = Cfg.COMM_TENSION_RELEASE.toDouble(), valence = (valence + if (endShift > 0) (endShift * CommOffenses.rate(offenses)).toInt() else endShift).coerceIn(-100.0, 100.0), shameTurns = Cfg.COMM_SHAME_TURNS, burstUntil = 0L, decayAt = maxOf(decayAt, nowMs)) else this
 
     fun addValence(events: List<Pair<String, Int>>, nowMs: Long, burstRate: Double): CommInteraction {
         var total = 0
@@ -120,6 +122,7 @@ data class CommInteraction(
             var shift = (base * repeatRate).toInt()
             if (nowMs < chainUntil) shift = (shift * Cfg.COMM_TENSION_CHAIN_RATE).toInt()
             if (burstUntil > 0L) shift = (shift * burstRate).toInt()
+            if (shift > 0) shift = (shift * CommOffenses.rate(offenses)).toInt()
             if (shift != 0) {
                 total += shift
                 chainUntil = maxOf(chainUntil, nowMs + Cfg.COMM_TENSION_CHAIN_SECONDS * 1000L)
@@ -197,7 +200,8 @@ data class CommInteraction(
             maxOf(0L, o?.optLong("valence_chain_until") ?: 0L),
             if (o?.has("valence_initialized") == true) o.optBoolean("valence_initialized") else o?.has("valence") ?: false,
             (o?.optDouble("valence_initial", 0.0) ?: 0.0).takeIf { it.isFinite() }?.coerceIn(-100.0, 100.0) ?: 0.0,
-            o?.optBoolean("valence_initial_set") ?: false)
+            o?.optBoolean("valence_initial_set") ?: false,
+            CommOffenses.parse(o?.optJSONArray("offenses")))
 
         private fun localDay(ms: Long): String = Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()).toLocalDate().toString()
 
@@ -212,7 +216,7 @@ data class CommInteraction(
         fun cleanTension(reply: String): String {
             ToolProtocol.unpack(reply)?.let {
                 val args = JSONObject(it.getJSONObject("arguments").toString())
-                args.remove("tension"); args.remove("valence"); args.remove("end_burst")
+                args.remove("tension"); args.remove("valence"); args.remove("end_burst"); args.remove("offenses")
                 return ToolProtocol.pack(it.optString("text"), it.optString("name"), args)
             }
             return burstTag.replace(valenceTag.replace(tensionTag.replace(reply, ""), ""), "").trim()

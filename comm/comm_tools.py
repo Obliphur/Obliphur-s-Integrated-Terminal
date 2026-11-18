@@ -119,6 +119,8 @@ class ToolsMixin:
                     result = {"ok": False, "error": "只能响应用户明确的演奏请求"}
                 elif is_claudia(persona) and valence < 30:
                     result = {"ok": False, "error": "Claudia 当前效价低于演奏意愿门槛"}
+                elif is_claudia(persona) and self.offense_blocked():
+                    result = {"ok": False, "error": "Claudia 尚未原谅用户的冒犯，不会演奏"}
                 elif self.state_fn() not in ("idle", "break"):
                     result = {"ok": False, "error": "仅可在空闲或休息期间演奏"}
                 else:
@@ -185,7 +187,7 @@ class ToolsMixin:
             return
         try:
             related, valence = self._music_access()
-            if is_claudia(self.persona_name()) and valence < 30:
+            if is_claudia(self.persona_name()) and (valence < 30 or self.offense_blocked()):
                 return
             library = music_library.manager(self.dir)
             item, path = library.get(op["id"], self.persona_name(), related, valence)
@@ -199,8 +201,10 @@ class ToolsMixin:
             self.log(f"MUSIC perform FAIL {type(error).__name__}")
 
     def _music_tick(self):
-        if not self.music_player.allowed():
+        if not self.music_player.allowed() or self.offense_blocked():
             self.music_player.stop()
+        if self.offense_blocked():
+            self._music_actions.clear()
         if self.music_player.error:
             self.error, self.music_player.error = self.music_player.error, ""
             self._changed()

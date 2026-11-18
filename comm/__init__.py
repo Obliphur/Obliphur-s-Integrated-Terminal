@@ -594,8 +594,14 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             if kind == "interaction" and isinstance(val, dict):
                 st = st_of(rest)[0]
                 incoming = interaction_norm(val)
-                if int(val.get("clear") or 0) == st["clear_ts"] and incoming["ts"] > interaction_norm(st.get("interaction"))["ts"]:
-                    st["interaction"] = incoming
+                current = interaction_norm(st.get("interaction"))
+                from .comm_offenses import offenses_norm
+                same_chat = int(val.get("clear") or 0) == st["clear_ts"]
+                merged = dict(incoming if same_chat and incoming["ts"] > current["ts"] else current)
+                merged["offenses"] = offenses_norm(current["offenses"] + incoming["offenses"])
+                if merged != current:
+                    merged["ts"] = max(merged["ts"], st["clear_ts"] + 1)
+                    st["interaction"] = merged
                     touched[rest][1] = True
                 continue
             if kind == "milestone" and isinstance(val, dict):
@@ -621,7 +627,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                         if pid_of(name) == pid:
                             self.voice.clear(name)
                     st["clear_ts"] = t
-                    st["interaction"] = interaction_norm({})
+                    offenses = interaction_norm(st.get("interaction"))["offenses"]
+                    st["interaction"] = interaction_norm({"offenses": offenses, "ts": t + 1 if offenses else 0})
                     st["mem_fixed"] = []
                     st["msg_gone"] = 0       # 清空旧对话的累计数量，不能重新补出已清除的门槛。
                     st["messages"][:] = [m for m in st["messages"] if int(m["ts"]) > t]
@@ -1309,6 +1316,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                 self._ask_user()
             return
         tension_reply = reply
+        if kind == "love" and self.offense_blocked():
+            reply = REFUSE
         reply = tension_clean(reply)
         if kind == "net" and err:
             self._net_failed()                          # 搜索那次请求失败: 过一会儿再试
@@ -1409,6 +1418,9 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                 special, until, shame = getattr(self, "_interaction_turn", (False, 0, False))
                 self._interaction_reply(special, burst, until, shame)
             self._interaction_end(tension_reply, getattr(self, "_interaction_burst", 0))
+            if accept and self.offense_blocked():
+                accept = False
+                text = tr("尚有未获原谅的冒犯，暂时不能确立亲密关系")
             # AI 的 API 原文含控制标记；只存用户可见文本，避免详情/同步接口泄露调用痕迹。
             already_shown = {id(m) for m in batch.messages if "pending_reply" not in m} if batch else set()
             m = self._reply_complete(text, batch)
@@ -1443,7 +1455,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                 self._joint_answer(joint_ans)
             if accept and not drop:
                 self._love_confirm("user")              # 记入系统: 以后每次请求都会告诉对方 (长期记忆里的「系统记录」)
-            if kind == "love":
+            if kind == "love" and not self.offense_blocked():
                 self._love_set(inv=self._ms())          # 告白发出去了: 聊天页上等用户点 接受 / 拒绝
             if kind == "share_ask":
                 self._share_answer(share_ans)

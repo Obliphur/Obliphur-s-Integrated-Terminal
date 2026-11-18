@@ -11,6 +11,7 @@ from comm.comm_rules import tension_rules, tension_event, valence_rules, valence
 import routine
 from i18n import tr
 from .comm_const import KEEP
+from .comm_offenses import offenses_norm, offenses_active, offenses_rate, offenses_apply
 
 
 def interaction_tension(value):
@@ -60,7 +61,7 @@ def interaction_norm(value):
             days = [datetime.fromtimestamp(gain_until / 1000 - config.COMM_TENSION_BURST_GAIN_SECONDS).date().isoformat()] if gain_until else []
         except (ValueError, OverflowError, OSError):
             days = []
-    return {"scenario_mode": d.get("scenario_mode") is True,
+    return {"offenses": offenses_norm(d.get("offenses")), "scenario_mode": d.get("scenario_mode") is True,
             "pending": {k: v for k, v in list(pending.items())[-KEEP:] if isinstance(k, str) and isinstance(v, bool)},
             "tension": interaction_tension(d.get("tension")),
             "valence": interaction_valence(d.get("valence")),
@@ -112,7 +113,7 @@ def tension_clean(reply):
     from ai_assist.ai_tools import unpack, pack
     data = unpack(reply)
     if data is not None:
-        args = {k: v for k, v in data["arguments"].items() if k not in ("tension", "valence", "end_burst")}
+        args = {k: v for k, v in data["arguments"].items() if k not in ("tension", "valence", "end_burst", "offenses")}
         return pack(data["text"], data["name"], args)
     return _BURST_TAG.sub("", _VALENCE_TAG.sub("", _TENSION_TAG.sub("", reply))).strip()
 
@@ -240,6 +241,8 @@ def interaction_end(d, reply, burst, now_ms, burst_rules=None):
         d.update(tension=config.COMM_TENSION_RELEASE, shame_turns=config.COMM_SHAME_TURNS,
                  burst_until=0, decay_at=max(d["decay_at"], now_ms))
         shift = (burst_rules or {}).get("burst_end_shift", 0)
+        if shift > 0:
+            shift = int(shift * offenses_rate(d))
         d["valence"] = interaction_valence(d["valence"] + shift)
     return d
 
@@ -252,6 +255,8 @@ def interaction_valence_add(d, events, burst_rate, now_ms):
         shift = int(base * repeat)
         shift = int(shift * (config.COMM_TENSION_CHAIN_RATE if now_ms < d["valence_chain_until"] else 1.0))
         shift = int(shift * burst_rate) if d["burst_until"] else shift
+        if shift > 0:
+            shift = int(shift * offenses_rate(d))
         d["valence_cooldowns"][condition] = until
         if not shift:
             continue
@@ -270,7 +275,7 @@ def interaction_prompt(d, total, special, rules=None, burst_rules=None, initial_
     rules = rules or {}
     burst_rules = burst_rules or {"burst_rate": 1.0}
     return (f"[OIT_STATUS: MODE={mode}, TENSION={d['tension']}, EFFECTIVE_STAGE={stage}, "
-            f"VALENCE={d['valence']}, INITIAL_VALENCE={d['valence_initial'] if 'valence_initial' in d else initial_valence}, BURST={'YES' if d['burst_until'] else 'NO'}, PERIOD={'特殊空闲' if special else '日常'}, SHAME_AFTERMATH={'YES' if d['shame_turns'] else 'NO'}]\n"
+            f"VALENCE={d['valence']}, INITIAL_VALENCE={d['valence_initial'] if 'valence_initial' in d else initial_valence}, OFFENSE_COUNT={len(offenses_active(d))}, VALENCE_RISE_RATE={offenses_rate(d):g}, BURST={'YES' if d['burst_until'] else 'NO'}, PERIOD={'特殊空闲' if special else '日常'}, SHAME_AFTERMATH={'YES' if d['shame_turns'] else 'NO'}]\n"
             + (tr("当前人设未声明[valence]条件，不进行效价判断，现有效价仅向初始值回归。") if not rules else
                tr("效价代表角色当前的正负情绪倾向；结合TENSION所表示的言行激烈/直接程度组织表达。按人设[valence]条件报告本轮变化，正值向正面、负值向负面；只返回声明条件，普通交流不变化。") +
                tr("效价当前值为{value}，返回未经倍率调整的有符号整数变化量。", value=d["valence"]) +
@@ -287,6 +292,10 @@ def interaction_prompt(d, total, special, rules=None, burst_rules=None, initial_
 
 
 class InteractionMixin:
+    def offense_blocked(self):
+        from .comm_util import is_claudia
+        return is_claudia(self.persona_name()) and bool(offenses_active(self.cfg.get("interaction")))
+
     def scenario_unlocked(self):
         return bool(self.persona_name()) and max(self.msg_total(), max(self.cfg.get("mem_fixed") or [0])) >= config.COMM_SCENARIO_UNLOCK
 
@@ -410,9 +419,10 @@ class InteractionMixin:
         burst = False
         for i, (uid, special, _text) in enumerate(getattr(self, "_interaction_candidates", []), 1):
             if uid in d["pending"]:
+                sent = next((int(m["ts"]) for m in self.messages if m["uid"] == uid), -1)
+                offenses_apply(d, reply, i, uid, sent, self._ms())
                 positive = tension_model_gain(reply, i, True, getattr(self, "_interaction_rules", {})) > 0
                 begin = d["last_special_begin"]
-                sent = next((int(m["ts"]) for m in self.messages if m["uid"] == uid), -1)
                 if special and positive and begin and begin <= sent <= begin + config.COMM_SPECIAL_LURE_DELAY_SECONDS * 1000:
                     d["special_7m_gain_count"] += 1
                 # 已超临界时冷却不挡爆发；特殊空闲内首次越过临界也立即触发。

@@ -125,6 +125,46 @@ class CommTest {
         c.flush(); c.voice.close()
     }
 
+    /** 所有人设记录冒犯；Claudia门禁、清空保留和跨端原谅墓碑。 */
+    @Test fun offensesAndRelationshipGates() {
+        val tempRoot = File(System.getProperty("java.io.tmpdir"), "OIT").also { it.mkdirs() }
+        val td = Files.createTempDirectory(tempRoot.toPath(), "offenses-").toFile()
+        val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
+        c.set(persona = "Assistant.txt", splitSend = false)
+        c.snapshot = { CommSnap("idle") }
+        fun reply(action: String, target: String = ""): String = ToolProtocol.pack("尊重边界", "oit_reply",
+            JSONObject().put("offenses", org.json.JSONArray().put(JSONObject().put("index", 1).put("action", action)
+                .put("target", target).put("reason", "根据对话判断"))))
+        script.add(reply("add"))
+        assertEquals("", c.send("测试冒犯")); wait(c)
+        val owner = Comm.pidOf("Assistant.txt")
+        val old = JSONObject((c.syncDoc()["interaction:$owner"] as JSONObject).toString())
+        val record = CommInteraction.parse(old).offenses.single()
+        assertFalse(record.forgiven)
+        c.clear()
+        assertEquals(listOf(record), CommInteraction.parse(c.syncDoc()["interaction:$owner"] as JSONObject).offenses)
+        script.add(reply("forgive", record.id))
+        assertEquals("", c.send("已经理解边界，请你考虑原谅")); wait(c)
+        c.applyDoc(mapOf("interaction:$owner" to old))
+        assertTrue(CommInteraction.parse(c.syncDoc()["interaction:$owner"] as JSONObject).offenses.single().forgiven)
+        c.clear()
+        c.applyDoc(mapOf("interaction:$owner" to old))
+        assertTrue(CommInteraction.parse(c.syncDoc()["interaction:$owner"] as JSONObject).offenses.single().forgiven)
+        c.set(persona = "Claudia.txt")
+        val claudia = Comm.pidOf("Claudia.txt")
+        c.applyDoc(mapOf("interaction:$claudia" to CommInteraction(offenses = listOf(record), ts = old.getLong("ts") + 10).json().put("clear", 0)))
+        script.add("我接受[accept]")
+        c.triggerForTest("user", "测试关系门禁"); wait(c)
+        assertFalse(c.related())
+        assertTrue(c.messages.last { it.role == "ai" }.text.contains("尚有未获原谅"))
+        c.applyDoc(mapOf("love:$claudia" to Love(ts = nowForTest(), inv = nowForTest()).json()))
+        assertTrue(c.loveRespond(true).isNotEmpty())
+        assertFalse(c.related())
+        c.flush(); c.voice.close(); td.deleteRecursively()
+    }
+
+    private fun nowForTest(): Long = clock.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+
     /** 自定义模板、文件读取与无效配置回退。 */
     @Test
     fun templateFileMigration() {

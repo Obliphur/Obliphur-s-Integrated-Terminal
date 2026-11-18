@@ -308,6 +308,7 @@ def music_tool_checks():
         state_fn = lambda self: "idle"
         persona_name = lambda self: "Claudia.txt"
         related = lambda self: self._related
+        offense_blocked = lambda self: False
         _interaction_prepare = lambda self: {"valence": self._valence}
 
     access = Context()
@@ -380,6 +381,14 @@ def music_tool_checks():
         access._tool_rounds(lambda history: seen.append(history) or replies.pop(0), [],
                             tools.pack(name="oit_music_catalog"), "user", 7)
     assert not prepare.called and "演奏意愿门槛" in seen[0][-1]["content"]
+    access._valence = 70
+    access.offense_blocked = lambda: True
+    seen.clear()
+    replies = [tools.pack(text="尚未原谅", name="oit_reply", arguments={"text": "尚未原谅"})]
+    with patch("music_library.MusicLibrary.prepare_performance") as prepare:
+        access._tool_rounds(lambda history: seen.append(history) or replies.pop(0), [],
+                           tools.pack(name="oit_music_perform", arguments={"id": catalog[6]["id"]}), "user", 7)
+    assert not prepare.called and "尚未原谅" in seen[0][-1]["content"]
 
 
 def memory_tool_checks():
@@ -406,6 +415,98 @@ def memory_tool_checks():
         assert op["type"] == "memory_event"
         context._memory_event_apply(op)
         assert context.cfg["mem_live"] == expected
+
+
+def offense_checks():
+    from copy import deepcopy
+    from comm.comm_offenses import offenses_norm, offenses_active, offenses_rate, offenses_apply
+    from comm.comm_interaction import interaction_norm, interaction_valence_add, interaction_roll, interaction_end
+    now = 1805491140000
+    record = {"id": "user:1", "at": now, "reason": "无视拒绝，继续纠缠", "ts": now, "forgiven": False}
+    for count in range(7):
+        d = interaction_norm({"offenses": [dict(record, id=f"user:{n}") for n in range(count)]})
+        assert offenses_rate(d) == max(0, round(1 - count * 0.2, 10))
+        interaction_valence_add(d, [("joy", 40)], 1, now)
+        assert d["valence"] == max(0, 40 - count * 8)
+        d.update(valence=0, valence_cooldowns={}, valence_chain_until=0)
+        interaction_valence_add(d, [("hurt", -40)], 1, now)
+        assert d["valence"] == -40, "冒犯倍率不减少负向变化"
+    d = interaction_norm({"offenses": [record], "valence_cooldowns": {"joy": now + 1},
+                          "valence_chain_until": now + 1, "burst_until": 1})
+    interaction_valence_add(d, [("joy", 40)], 0.5, now)
+    assert d["valence"] == 4, "冷却、连锁、爆发和冒犯倍率依次取整"
+    end = interaction_end(d, tools.pack(name="oit_reply", arguments={"text": "平静下来", "end_burst": True}),
+                          1, now, {"burst_end_shift": 20})
+    assert end["valence"] == 20
+    assert interaction_norm(d)["offenses"] == d["offenses"]
+    rolled = interaction_roll(d, now + 86400000, 10)
+    assert rolled["offenses"] == d["offenses"], "跨天与自然回归不清冒犯"
+    event = {"index": 1, "action": "add", "target": "", "reason": record["reason"]}
+    for protocol in ("openai", "anthropic", "gemini"):
+        reply = call("oit_reply", {"text": "请尊重我的边界", "offenses": [event]}, protocol)
+        empty = interaction_norm({})
+        offenses_apply(empty, reply, 1, "user:1", now, now)
+        offenses_apply(empty, reply, 1, "user:1", now, now)
+        assert len(offenses_active(empty)) == 1
+        assert not tools.args_of(tension_clean(reply)).get("offenses")
+        assert offenses_active(empty)[0]["at"] == now
+    root = Path(tempstore.mkdtemp("comm-offenses"))
+    c = comm.Comm(str(root / "data"), str(root / "personas"))
+    c.set_cfg(persona="Assistant.txt", split_send=False)
+    c._away_kind = lambda: ""
+    def settle(args, epoch=None):
+        m = c._add("me", "测试消息")
+        c._interaction_sent(m["text"], m)
+        c._interaction_judge_note("user")
+        c._finish("user", None, call("oit_reply", {"text": "请尊重边界", **args}),
+                  "", c._epoch if epoch is None else epoch)
+        return m
+    settle({"offenses": [dict(event, index=99999)]})
+    assert not offenses_active(c.cfg["interaction"])
+    m = settle({"offenses": [event]})
+    assert len(offenses_active(c.cfg["interaction"])) == 1 and not c.offense_blocked()
+    old_doc = deepcopy(c.sync_doc())
+    assert m["uid"] in c.memory_block() and record["reason"] in c.memory_block()
+    c.cfg["mem_auto"] = "新摘要"
+    assert offenses_active(c.cfg["interaction"])
+    c.clear()
+    assert len(offenses_active(c.cfg["interaction"])) == 1, "普通清空聊天不能代替原谅"
+    c.apply_doc(old_doc)
+    assert len(offenses_active(c.cfg["interaction"])) == 1
+    forgive = {"index": 1, "action": "forgive", "target": m["uid"], "reason": "确认对方已理解边界，愿意原谅"}
+    settle({"offenses": [forgive]}, c._epoch - 1)
+    assert offenses_active(c.cfg["interaction"]), "过期回复不能原谅"
+    # 过期待判断项仍在；明确选择新消息的本轮序号。
+    forgive["index"] = 2
+    settle({"offenses": [forgive]})
+    assert not offenses_active(c.cfg["interaction"])
+    c.apply_doc(old_doc)
+    assert not offenses_active(c.cfg["interaction"]), "旧同步记录不能复活已获原谅的冒犯"
+    c.clear()
+    c.apply_doc(old_doc)
+    assert not offenses_active(c.cfg["interaction"]), "跨清空世代仍保留原谅墓碑"
+    c.set_cfg(persona="Claudia.txt")
+    c._interaction_set(interaction_norm({"offenses": [record]}))
+    assert c.offense_blocked()
+    c._love_confirm("user")
+    assert not c.related()
+    c._finish("user", None, call("oit_reply", {"accept_relationship": True}), "", c._epoch)
+    assert not c.related() and "尚有未获原谅" in c.messages[-1]["text"]
+    c._love_set(inv=c._ms())
+    assert c.love_respond(True) and not c.related()
+    assert not c._love_check(c.now(), [], set())
+    c._finish("love", None, call("oit_reply", {"text": "我喜欢你"}), "", c._epoch)
+    assert not any(x["text"] == "我喜欢你" for x in c.messages)
+    c.save_chat()
+    restored = comm.Comm(str(root / "data"), str(root / "personas"))
+    assert restored.offense_blocked(), "重启保留冒犯及门禁"
+    current = deepcopy(restored.cfg["interaction"])
+    restored.apply_doc({f"interaction:{restored.pid}": {"offenses": [dict(record, id="other-device:2")], "ts": 0,
+                                                         "clear": restored.cfg["clear_ts"]}})
+    assert len(offenses_active(restored.cfg["interaction"])) == 2, "旧情绪版本也须合并独立冒犯"
+    assert restored.cfg["interaction"]["valence"] == current["valence"]
+    c.flush(); c.voice.close(); restored.flush(); restored.voice.close()
+    assert offenses_norm([None, {}, dict(record, at=float("inf"))]) == []
 
 
 def music_commit_checks():
@@ -456,6 +557,16 @@ def music_commit_checks():
         c._finish("user", None, reply, "", c._epoch, op)
         c.clear()
         assert not c._music_actions and play.call_count == 1
+        from comm.comm_interaction import interaction_norm
+        c.cfg["interaction"] = interaction_norm({"offenses": [{"id": "music-offense", "at": c._ms(),
+            "ts": c._ms(), "reason": "无视边界", "forgiven": False}]})
+        c._music_actions[123] = (c._epoch, op)
+        c._music_deliver({"id": 123})
+        assert play.call_count == 1, "准备完成后新增冒犯仍不能播放"
+        c._music_actions[124] = (c._epoch, op)
+        with patch.object(c.music_player, "stop") as stop:
+            c._music_tick()
+            assert stop.called and not c._music_actions, "未原谅时停止演奏并取消待播"
     c.flush()
 
 
@@ -464,6 +575,7 @@ if __name__ == "__main__":
     transport_checks()
     state_checks()
     memory_tool_checks()
+    offense_checks()
     music_tool_checks()
     music_commit_checks()
     root = Path(__file__).resolve().parent.parent

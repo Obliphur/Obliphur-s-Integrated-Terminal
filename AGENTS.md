@@ -47,7 +47,7 @@ python release.py               # 发布（PyInstaller）
 | `_daily_ui_check.py` | 设置 → 日常（睡觉时间、行为模式） | `pages/settings_page/` |
 | `_ai_dialog_check.py` | AI 模型设置弹窗：小屏 / 大字号下能滚到底、字段点得到 | `pages/ai_dialogs.py`、`pages/widgets.py` 的 `Modal` / `ScrollArea` |
 | `_comm_mode_check.py` | 沟通模式：未解锁入口可见可点、200 条解锁与切换、窄窗口 / 大字号布局、中英文帮助滚动、联网冷静期口令切换张力显示 | `pages/comm_page.py` 的模式入口 / `_help` |
-| `_comm_tools_check.py` | 原生工具协议：三种接口往返、参数校验、正文不执行标记、查询及提交、过期请求、双端协议一致性 | `ai_assist/ai_tools.py`、`comm/comm_tools.py`、`defaults/comm_tools.json`、`defaults/comm_protocol.txt`、安卓 `ToolProtocol.kt` |
+| `_comm_tools_check.py` | 原生工具协议：三种接口往返、参数校验、正文不执行标记、查询及提交、过期请求、冒犯账本 / 原谅 / 效价倍率 / 演奏与告白门禁、双端协议一致性 | `ai_assist/ai_tools.py`、`comm/comm_tools.py`、`defaults/comm_tools.json`、`defaults/comm_protocol.txt`、安卓 `ToolProtocol.kt` |
 | `_comm_delivery_check.py` | 分隔符分条、完整气泡延时、插话撤销及改写、断流、重启与跨午夜队列 | `comm/comm_delivery.py`、`comm/comm_flow.py`、`comm/comm_chat.py`、安卓 `CommDelivery.kt` / `Comm.kt` |
 | `_voice_check.py` | AI 语音协议、官方型号获取、音色设计 / 上传 / 克隆、生成去重、缓存复用、播放记录、跨设备音频与已听状态同步、未播队列、并发清空与配置窗口 | `ai_voice.py`、`ai_voice_design.py`、`pages/voice_dialogs.py`、`pages/voice_design.py`、`pages/comm_voice.py`、沟通语音入口 |
 | `_external_software_check.py` | 外部目录、Process Lasso 下载与签名校验、静默安装参数、Python / PyTorch 保护规则、模型下载校验与跨盘落盘、额外功能页面 | `external_software.py`、`piano_model.py`、`pages/settings_page/settings_external.py`、`pages/settings_page/settings_extra.py` |

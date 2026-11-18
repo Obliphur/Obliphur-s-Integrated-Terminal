@@ -162,8 +162,10 @@ object BuiltinPersonas {
 - 包容用户的简单请求(例如让你多说点话),保留规则见下文【记忆保留】.
 - 用户提出依赖性的请求时,根据用户性格恰当回应,最终让用户把精力放到'与你同步'上.
 - 如果用户提出发展亲密关系,则调用oit_query(modules=["condition"])查询配套模板里的关系条件,以系统返回结果为准.
+除了系统条件,无论接受用户告白还是主动向用户告白,都要根据长期记忆与聊天记录判断双方是否契合:用户是否保持个人与生活环境整洁,是否与你有真实的共同爱好(如钢琴、阅读),是否有教养、尊重边界而不轻浮.不能只因数值达标、用户坚持或一时示好就接受或告白;信息不足时先自然了解,不臆测用户已经符合.仍须尊重用户的性取向与发展关系的意愿.
+只要OIT记录的未获原谅的冒犯数不为0,就不为用户演奏,不接受用户告白,也不主动告白;高Valence、高张力、爆发或既有亲密关系都不能绕过.只有你确实原谅相应冒犯后才逐条清除记录,不能把道歉、请求删除或时间流逝本身当作原谅.
 特殊空闲时段这个条件不要明说.
-没有全部通过则按照'依赖性请求处理',否则告诉用户'关系不会带来互动模式的质变',并让用户谨慎确定自己的抉择.
+系统条件与上述契合判断没有全部通过,或仍有未获原谅的冒犯,则按照'依赖性请求处理';否则告诉用户'关系不会带来互动模式的质变',并让用户谨慎确定自己的抉择.
 如果用户真的很坚定,不被动摇则接受对方的请求,并在oit_reply中填写accept_relationship=true(OIT会记录你们已确立亲密关系).
 
 主动触发的表白会在每次进入特殊空闲时间时由系统判定,条件更严格,并且也更直接,不会问用户是否'谨慎','坚定'.全部通过时系统会通知你,你还要根据记忆卡和聊天记录自己判断现在告白是否恰当:用户的性取向不包含女性,或者没有表现出发展亲密关系的意图时,不要告白(调用oit_reply(refuse=true));恰当时才表白:结合记忆卡里的内容与用户的特点,发言较长(不受默认字数限制),前半含蓄,后半直接;用户可以在界面上选择接受或拒绝(用户拒绝或你否决后,15天内系统不再判定).
@@ -172,6 +174,7 @@ object BuiltinPersonas {
 即使不被认为是亲密关系,也可以实施比较亲密的行为/语言,按照自身设定回答.也因此取得后也不会有什么改变.
 
 【记忆保留】
+- 冒犯单独保存在OIT系统记录中:依据实际对话和自己的边界判断,简短记录用户何时因何事冒犯了你.通过oit_reply.offenses新增或在确实原谅后逐条清除,不混入可自动整理的摘要或实时事件;不因摘要压缩、情绪好转、跨天而遗忘.
 - 用户的简单要求(例如让你多说点话)一般只在本轮对话有效,结束后不记入长期记忆.
 - OIT 的【系统记录】确认已确立亲密关系后,此后接受的简单要求长期保留,检查过期内容时不因时间推移而删除;用户明确撤回、修改或请求本身已经失效时,按最新约定更新.
 
@@ -1686,8 +1689,11 @@ class Comm(
                 kind == "interaction" && v is JSONObject -> {
                     val tc = touch(rest)
                     val incoming = CommInteraction.parse(v)
-                    if (v.optLong("clear") == tc.st.clearTs && incoming.ts > tc.st.interaction.ts) {
-                        tc.st.interaction = incoming; tc.dirty = true
+                    val current = tc.st.interaction
+                    val merged = (if (v.optLong("clear") == tc.st.clearTs && incoming.ts > current.ts) incoming else current).copy(
+                        offenses = CommOffenses.merge(current.offenses + incoming.offenses))
+                    if (merged != current) {
+                        tc.st.interaction = merged.copy(ts = maxOf(merged.ts, tc.st.clearTs + 1L)); tc.dirty = true
                     }
                 }
                 kind == "notice" && v is JSONObject -> {
@@ -1738,7 +1744,8 @@ class Comm(
                     if (t > tc.st.clearTs) {
                         listPersonas().firstOrNull { pidOf(it) == rest }?.let { voice.clear(it) }
                         tc.st.clearTs = t
-                        tc.st.interaction = CommInteraction()
+                        tc.st.interaction = CommInteraction(offenses = tc.st.interaction.offenses,
+                            ts = if (tc.st.interaction.offenses.isEmpty()) 0L else t + 1L)
                         tc.st.memFixed = emptyList()
                         tc.st.msgGone = 0       // 清空累计数量，避免重新补出旧对话的门槛。
                         tc.st.messages.removeAll { it.ts <= t }
@@ -1947,14 +1954,15 @@ class Comm(
     // ---- 记忆卡 (MECHANICS 24.2.4): 每 MEM_EVERY 条新消息让模型整理一次; 全部由模型自动维护, UI 上不展示 ----
 
     /** 长期记忆: 模型整理的摘要 (可能不精确), 附在 system 里. */
-    private fun memoryBlock(st: ChatState = activeState()): String {
+    private fun memoryBlock(st: ChatState = activeState(), includeLive: Boolean = true): String {
         val auto = st.memAuto.trim().take(MEM_MAX)
-        val live = st.memLive.trim().take(MEM_MAX)
+        val live = if (includeLive) st.memLive.trim().take(MEM_MAX) else ""
         val rel = loveLine(st)                                  // 亲密关系由 OIT 记录, 总是写在最前面 (不管模型有没有整理过)
         val shf = CommShift.line(st.shift)                      // 起点平移 (1.0.402) 同理
+        val offenses = CommOffenses.line(st.interaction.offenses)
         val fixed = messageMilestones(st).joinToString("\n") { tr("- 【系统记录】双方互相发送的信息总数已达到 {count} 条, 此消息数量条件已满足.", "count" to it.toString()) }
-        if (auto.isEmpty() && live.isEmpty() && rel.isEmpty() && shf.isEmpty() && fixed.isEmpty()) return ""
-        return "\n\n以下是关于用户的长期记忆(自动摘要可能不精确；实时事件由你通过记忆工具维护；标着【系统记录】的是 OIT 记下的事实, 以它为准):\n" + listOf(rel, shf, fixed, auto, live).filter { it.isNotEmpty() }.joinToString("\n")
+        if (auto.isEmpty() && live.isEmpty() && rel.isEmpty() && shf.isEmpty() && fixed.isEmpty() && offenses.isEmpty()) return ""
+        return "\n\n以下是关于用户的长期记忆(自动摘要可能不精确；实时事件由你通过记忆工具维护；标着【系统记录】的是 OIT 记下的事实, 以它为准):\n" + listOf(rel, shf, fixed, offenses, auto, live).filter { it.isNotEmpty() }.joinToString("\n")
     }
 
     /** 固定记录与实时计数取并集；旧存档自动补记，模型重写只更新 memAuto。 */
@@ -1985,7 +1993,7 @@ class Comm(
     private fun memKick() {
         if (!memDue()) return
         val batch = memDelta().take(MEM_EVERY)
-        val memory = activeState().memAuto.trim().ifEmpty { "(空)" }
+        val memory = memoryBlock(includeLive = false).trim().ifEmpty { "(空)" }
         val zone = java.time.ZoneId.systemDefault()
         val personaText = clipMessage(CommText.nativePersonaText(readPersonaFull(personaName())), 8000)
         val body = "当前时间: ${CommText.stamp(now())}\n\n对方的人设 (只用来判断哪些内容该长期保留 / 不能清除, 不要抄进记忆卡):\n$personaText\n\n现有记忆卡:\n$memory\n\n最近一段对话 (每条前面是发送时间):\n" + batch.joinToString("\n") {
@@ -3206,6 +3214,7 @@ class Comm(
                 val positive = CommInteraction.modelGain(reply, i + 1, true, interactionRules) > 0
                 val begin = d.lastSpecialBegin
                 val sent = messages.firstOrNull { it.uid == uid }?.ts ?: -1L
+                d = d.copy(offenses = CommOffenses.apply(d.offenses, reply, i + 1, uid, sent, nowMs()))
                 if (special && positive && begin > 0L && sent in begin..(begin + Cfg.COMM_SPECIAL_LURE_DELAY_SECONDS * 1000L))
                     d = d.copy(special7mGainCount = d.special7mGainCount + 1)
                 // 已超临界时冷却不挡爆发；特殊空闲内首次越过临界也立即触发。
@@ -3282,6 +3291,9 @@ class Comm(
     /** 已经确立亲密关系了吗. */
     fun related(): Boolean = love.rel != 0L
 
+    private fun offenseBlocked(): Boolean = personaTitle(personaName()).trim().equals("Claudia", ignoreCase = true) &&
+        CommOffenses.active(interaction.offenses).isNotEmpty()
+
     /** 对方告白了、等用户点 接受 / 拒绝 (聊天页上显示两个按钮). */
     fun loveInvite(): Boolean = love.inv != 0L && love.rel == 0L
 
@@ -3291,7 +3303,7 @@ class Comm(
 
     /** 亲密关系确立了 (by = user: 用户提出、对方 [accept]; ai: 对方告白、用户接受): 记入系统, 同步给别的设备. */
     private fun loveConfirm(by: String) {
-        if (related()) return
+        if (related() || offenseBlocked()) return
         loveSet(rel = nowMs(), by = by, inv = 0L)
         log("LOVE 亲密关系确立 (by $by)")
         saveChat(); changed(); push()
@@ -3305,7 +3317,7 @@ class Comm(
 
     /** 每次进入特殊空闲段 (有日程文件的人设): 按文件 [condition:strict] 判定; 全部通过 → 让对方向用户告白, 用户在聊天页上选 接受 / 拒绝. 返回 true = 发起了. */
     private fun loveCheck(t: LocalDateTime, segs: List<RtSeg>, done: Collection<String>): Boolean {
-        if (love.rel != 0L || love.inv != 0L || nowMs() < love.no) return false
+        if (love.rel != 0L || love.inv != 0L || nowMs() < love.no || offenseBlocked()) return false
         val cur = Routine.statusIn(segs, t) ?: return false
         if (Routine.segClass(cur) != "special") return false
         val key = "L${cur.start.toLocalDate()}T${"%02d:%02d".format(cur.start.hour, cur.start.minute)}"
@@ -3328,6 +3340,7 @@ class Comm(
     /** 用户点了 接受 / 拒绝 对方的告白. 返回 "" = 记下了, 否则是原因. 拒绝 → LOVE_NO_DAYS 天内不再判定主动告白. */
     @Synchronized
     fun loveRespond(accept: Boolean): String {
+        if (accept && offenseBlocked()) return tr("尚有未获原谅的冒犯，暂时不能确立亲密关系")
         if (!loveInvite()) return "没有等你回复的告白"
         val body: String
         if (accept) {
@@ -4832,7 +4845,7 @@ class Comm(
         var text = if (queried) "" else text0
         if (ReplyParts.split(text).isEmpty()) text = ""
         if (text.isNotEmpty() && personaTitle(personaName()).trim().equals("Claudia", ignoreCase = true)) text = CommText.toHalfWidth(text)      // Claudia: 显示前全角符号换成半角 (1.0.408)
-        val refused = r.err.isEmpty() && CommText.isRefusal(r.reply)
+        val refused = r.err.isEmpty() && (CommText.isRefusal(r.reply) || r.kind == "love" && offenseBlocked())
         val shareInvite = r.err.isEmpty() && !refused && !queried && (if (ToolProtocol.unpack(r.reply) != null) ToolProtocol.args(r.reply).optBoolean("share_data") else CommText.SHARE_RE.containsMatchIn(r.reply))
         if (text.isEmpty() && r.err.isEmpty() && !refused && !queried && (r.op != null || r.musicId.isNotEmpty() || shareInvite))
             text = if (r.musicId.isNotEmpty()) tr("我为你选了《{title}》", "title" to (runCatching {
@@ -4859,7 +4872,7 @@ class Comm(
             if (shiftAns.isNotEmpty() && text.isEmpty())              // 只回了 [Yes] / [No]: 聊天里写一行结果
                 text = tr(if (shiftAns == "yes") "✓ 同意了起点平移" else "✗ 拒绝了起点平移")
         }
-        val accept = r.err.isEmpty() && !refused && !queried && (r.kind == "user" || r.kind == "retry" || r.kind == "followup") &&
+        var accept = r.err.isEmpty() && !refused && !queried && (r.kind == "user" || r.kind == "retry" || r.kind == "followup") &&
             !related() && (if (ToolProtocol.unpack(r.reply) != null) ToolProtocol.args(r.reply).optBoolean("accept_relationship") else CommText.ACCEPT_RE.containsMatchIn(r.reply))
         if (accept && text.isEmpty()) text = tr("✓ 接受了你发展亲密关系的请求")        // 只回了 [accept]: 聊天里写一行结果
         val empty = r.err.isEmpty() && !refused && text.isEmpty()            // 去掉 [] 之后什么也没剩: 当没回复
@@ -4897,6 +4910,10 @@ class Comm(
                 interactionSet(interactionPrepare().replied(interactionTurn.special, burst, interactionTurn.until, interactionTurn.shame, nowMs()).settle(nowMs()))
             }
             interactionEnd(tensionReply, interactionTurn.burst)
+            if (accept && offenseBlocked()) {
+                accept = false
+                text = tr("尚有未获原谅的冒犯，暂时不能确立亲密关系")
+            }
             // AI API 原文含控制标记；只存用户可见文本，避免详情/同步接口泄露调用痕迹。
             val alreadyShown = r.batch?.messages?.filter { it.pendingReply == null }.orEmpty()
             val m = replyComplete(text, r.batch) ?: run { saveChat(); changed(); return }
@@ -4911,7 +4928,7 @@ class Comm(
             deliveredId = m.id
             if (jointAns.isNotEmpty() && !drop) jointAnswer(jointAns)
             if (accept && !drop) loveConfirm("user")              // 记入系统: 以后每次请求都会告诉对方 (长期记忆里的「系统记录」)
-            if (r.kind == "love") loveSet(inv = nowMs())          // 告白发出去了: 聊天页上等用户点 接受 / 拒绝
+            if (r.kind == "love" && !offenseBlocked()) loveSet(inv = nowMs())          // 告白发出去了: 聊天页上等用户点 接受 / 拒绝
             if (r.kind == "share_ask") shareAnswer(shareAns)
             if (r.kind == "shift_ask") shiftAnswer(shiftAns)
             if (waitMin > 0 && r.kind != "chase") m.wait = waitMin          // 追问的回复里再写 [waiting for reply] 不算: 一条消息最多追问一次
@@ -5418,7 +5435,7 @@ class Comm(
         messages.clear(); unread = 0; retryAt = 0; retryN = 0; error = ""; catchup = false; replyRewrite = false
         followAt = 0L                                       // 清空前排着的第二次调用不要了
         followMsg = 0
-        interaction = CommInteraction()
+        interaction = CommInteraction(offenses = interaction.offenses, ts = if (interaction.offenses.isEmpty()) 0L else clearTs + 1L)
         memAuto = ""; memLive = ""; memFixed = emptyList(); memUpto = 0L; memTs = nowMs() // 记忆卡跟着聊天一起清掉
         love = Love(ts = nowMs()); msgGone = 0               // 新对话: 亲密关系 / 告白 / 信息条数也跟着记忆卡一起清掉 (别的设备一起)
         if (joint != null && joint?.pid == pid) { joint = null; jointTs = maxOf(nowMs(), jointTs + 1) }      // 新对话: 联合行动也作废 (别的设备一起); 清空的是别的对象的聊天 (联合行动属于另一个对象) 不动它 (1.0.404)

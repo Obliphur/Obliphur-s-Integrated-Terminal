@@ -69,7 +69,9 @@ class MiscMixin:
         self.cfg["retry"] = {}
         self.cfg["mem_auto"] = ""          # 记忆卡跟着聊天一起清掉
         self.cfg["mem_live"] = ""
-        self.cfg["interaction"] = mem_fields({})["interaction"]
+        old_interaction = mem_fields(self.cfg)["interaction"]
+        self.cfg["interaction"] = mem_fields({"interaction": {"offenses": old_interaction["offenses"],
+            "ts": self.cfg["clear_ts"] + 1 if old_interaction["offenses"] else 0}})["interaction"]
         self.cfg["mem_fixed"] = []
         self.cfg["mem_upto"] = 0
         self.cfg["mem_ts"] = self._ms()

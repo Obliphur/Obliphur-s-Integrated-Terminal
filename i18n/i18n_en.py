@@ -2,6 +2,8 @@
 
 
 EN = {
+    "尚有未获原谅的冒犯，暂时不能确立亲密关系": "An offense remains unforgiven; a relationship cannot be established yet",
+    "- 【系统记录】未获原谅的冒犯 ({count} 条): {records}": "- [System record] Unforgiven offenses ({count}): {records}",
     "AI 模型": "AI models",
     "AI 模型配置": "AI model configuration",
     "专用模型": "Task-specific models",
