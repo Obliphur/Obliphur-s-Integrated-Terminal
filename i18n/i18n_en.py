@@ -14,6 +14,7 @@ EN = {
     "本机演奏目前仅支持 Windows.": "Local performance currently requires Windows.",
     "演奏播放失败.": "Performance playback failed.",
     "演奏已停止": "Performance stopped",
+    "已更新记忆卡": "Memory updated",
     "导入乐谱到曲库…": "Import score to library…",
     "请先选择一个人设，再导入乐谱": "Select a persona before importing a score",
     "选择要导入的乐谱": "Choose a score to import",

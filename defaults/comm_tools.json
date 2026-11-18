@@ -1,5 +1,19 @@
 [
   {
+    "name": "oit_memory_edit",
+    "description": "新增、修正或删除记忆卡中的实时事件。action为add/correct/remove；target逐字匹配现有实时事件，add时为空；text为新内容，remove时为空。随正式回复显示生效。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["add", "correct", "remove"] },
+        "target": { "type": "string", "maxLength": 200 },
+        "text": { "type": "string", "maxLength": 200 }
+      },
+      "required": ["action", "target", "text"],
+      "additionalProperties": false
+    }
+  },
+  {
     "name": "oit_music_catalog",
     "description": "浏览本机可用的古典乐谱目录，返回编号、曲名、作曲家、情绪标签和来源。选择之前必须先查询目录。",
     "parameters": {
@@ -35,7 +49,7 @@
   },
   {
     "name": "oit_music_perform",
-    "description": "按用户明确的演奏请求，准备已选曲目的本机MP3演奏。须先在本轮通过oit_music_select选择，或使用当前已选曲目。仅Windows已部署MuseScore且用户空闲或休息时可用；音频准备好后待正式回复显示时开始播放。",
+    "description": "按用户明确的演奏请求，准备已选曲目的本机MP3演奏。须先在本轮通过oit_music_select选择，或使用当前已选曲目。仅Windows已部署MuseScore且用户空闲或休息时可用；Claudia还要求当前VALENCE>=30。音频准备好后待正式回复显示时开始播放。",
     "parameters": {
       "type": "object",
       "properties": {

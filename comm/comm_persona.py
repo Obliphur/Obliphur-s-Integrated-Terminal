@@ -96,6 +96,7 @@ def mem_fields(d) -> dict:
     d = d if isinstance(d, dict) else {}
     from .comm_interaction import interaction_norm
     return {"interaction": interaction_norm(d.get("interaction")), "mem_auto": str(d.get("mem_auto") or "")[:MEM_MAX],
+            "mem_live": str(d.get("mem_live") or "")[:MEM_MAX],
             "mem_fixed": message_milestones(d),
             "mem_upto": int(d.get("mem_upto") or 0),
             "mem_ts": int(d.get("mem_ts") or 0),

@@ -671,14 +671,14 @@ object CommText {
     fun isRefusal(text: String) = if (ToolProtocol.unpack(text) != null) ToolProtocol.args(text).optBoolean("refuse") else REFUSE in text.replace(Regex("\\s+"), " ").lowercase()
 
     /** 记忆整理器的系统提示 (和桌面版 comm.MEM_PROMPT 一致). */
-    val MEM_PROMPT = "你是 OIT 沟通模块的记忆整理器. 给你「现有记忆卡」和「最近一段对话」, 输出更新后的记忆卡.\n" +
-        "只保留以后还有用的事实: 用户的身份, 偏好, 计划, 约定, 禁区, 以及没聊完的话题和只处理了一部分的请求 (写明大概是什么时候的事).\n" +
-        "每次整理都要先逐条检查现有记忆卡, 对照「当前时间」和最近的对话, 删掉已经失效 / 过期的内容: 已经聊完 / 办完的话题和请求, 已经过去的计划和约定, 被新对话推翻的事实.\n" +
-        "重点记:\n用户的性格,反应模式,情感类型;用户希望AI记下的内容;用户的爱好;\n不要记日常琐事.\n" +
+    val MEM_PROMPT = "你是 OIT 沟通模块的长期记忆整理器. 给你「现有长期记忆摘要」和「最近一段对话」, 输出更新后的长期记忆摘要.\n" +
+        "只保留以后仍有用的稳定事实: 用户身份、偏好、长期计划、约定和禁区. 不要记录尚未解决的话题、临时请求或其他实时事件；这些由对话模型通过记忆工具单独维护.\n" +
+        "每次整理都要逐条检查现有长期记忆, 对照「当前时间」和最近对话, 删除失效或过期的稳定信息及被新对话推翻的事实. 不管理、复制或改写记忆工具维护的实时事件.\n" +
+        "重点记:\n用户的性格、反应模式、情感类型、希望长期保留的稳定信息和爱好; 实时事件由对话模型管理, 不要记录在这里; 不要记日常琐事.\n" +
         "记忆保留的范围、期限和生效条件以「对方的人设」为准, 包括用户的简单要求是否保留、保留多久、何时失效. 关系等【系统记录】只提供事实, 不自动改变记忆规则. 人设未声明的内容按上述通用事实与有效期规则整理, 不自行附加关系专属规则.\n" +
         "删掉寒暄, 重复, 一次性的内容. 每条一行, 以 \"- \" 开头, 不超过 40 字, 最多 15 条.\n" +
         "和新对话冲突时以新对话为准; 不确定的条目末尾加 \"?\". 不要编造对话里没有的事.\n" +
-        "只输出记忆卡本身, 不要解释, 不要标题, 不要代码块.\n" +
+        "只输出长期记忆摘要本身, 不要解释, 不要标题, 不要代码块.\n" +
         "所有【系统记录】均由 OIT 固定保存, 不要改写、删除或抄入输出; 消息数量门槛的达成记录永久有效, 不等于其他条件也已满足."
 
     /** 模型给的记忆卡: 去掉代码块 / 解释, 统一成 "- " 开头的短行, 限制条数和字数; 拒绝语 / 空的当没给. */
@@ -1220,6 +1220,7 @@ class Comm(
     private var clearTs = 0L
     /** 记忆卡 (跟着聊天对象走; 全部由模型自动整理, UI 上不展示): 内容, 整理到哪一条 (ts), 改动时刻. */
     @Volatile var memAuto = ""; private set
+    @Volatile var memLive = ""; private set
     private var memUpto = 0L
     private var memTs = 0L
     private var memFixed: List<Int> = emptyList()
@@ -1274,6 +1275,7 @@ class Comm(
         var retryN = 0
         var proKey = ""
         var memAuto = ""
+        var memLive = ""
         var memUpto = 0L
         var memTs = 0L
         var memFixed: List<Int> = emptyList()
@@ -1283,7 +1285,9 @@ class Comm(
         var msgGone = 0
         var shift: List<ShiftRec> = emptyList()
     }
-    private class Result(val kind: String, val extra: Extra?, val reply: String, val err: String, val epoch: Int, val op: JointPlan? = null, val musicId: String = "", val batch: ReplyBatch? = null)
+    private data class MemoryEdit(val action: String, val target: String, val text: String)
+    private data class ToolOutcome(val plan: JointPlan?, val reply: String, val musicId: String, val memoryEdit: MemoryEdit?)
+    private class Result(val kind: String, val extra: Extra?, val reply: String, val err: String, val epoch: Int, val op: JointPlan? = null, val musicId: String = "", val batch: ReplyBatch? = null, val memoryEdit: MemoryEdit? = null)
     private class MemResult(val reply: String, val err: String, val upto: Long, val owner: String)
     private val results = ConcurrentLinkedQueue<Result>()
     private val replyEvents = ConcurrentLinkedQueue<Pair<ReplyBatch, String>>()
@@ -1381,6 +1385,7 @@ class Comm(
         st.retryN = o?.optInt("retry_n", 0) ?: 0
         st.proKey = o?.optString("pro_key", "") ?: ""
         st.memAuto = (o?.optString("mem_auto", "") ?: "").take(MEM_MAX)
+        st.memLive = (o?.optString("mem_live", "") ?: "").take(MEM_MAX)
         st.memUpto = o?.optLong("mem_upto", 0L) ?: 0L
         st.memTs = o?.optLong("mem_ts", 0L) ?: 0L
         st.memFixed = o?.optJSONArray("mem_fixed")?.let { a -> Cfg.COMM_MESSAGE_MILESTONES.filter { n -> (0 until a.length()).any { a.optInt(it) == n } } } ?: emptyList()
@@ -1403,7 +1408,7 @@ class Comm(
             })
         return JSONObject().put("interaction", st.interaction.json()).put("messages", arr).put("clear_ts", st.clearTs).put("retry_at", st.retryAt)
             .put("retry_n", st.retryN).put("pro_key", st.proKey)
-            .put("mem_auto", st.memAuto).put("mem_upto", st.memUpto).put("mem_ts", st.memTs).put("cut_until", st.cutUntil)
+            .put("mem_auto", st.memAuto).put("mem_live", st.memLive).put("mem_upto", st.memUpto).put("mem_ts", st.memTs).put("cut_until", st.cutUntil)
             .put("mem_fixed", JSONArray(messageMilestones(st)))
             .put("love", st.love.json()).put("msg_gone", st.msgGone).put("shift", CommShift.json(st.shift))
     }
@@ -1417,7 +1422,7 @@ class Comm(
     private fun loadState(st: ChatState) {
         messages.clear(); messages.addAll(st.messages)
         clearTs = st.clearTs; retryAt = st.retryAt; retryN = st.retryN; proKey = st.proKey
-        memAuto = st.memAuto; memUpto = st.memUpto; memTs = st.memTs; cutUntil = st.cutUntil; love = st.love; msgGone = st.msgGone; shift = st.shift
+        memAuto = st.memAuto; memLive = st.memLive; memUpto = st.memUpto; memTs = st.memTs; cutUntil = st.cutUntil; love = st.love; msgGone = st.msgGone; shift = st.shift
         interaction = st.interaction
         memFixed = messageMilestones(st)
         nextId = (messages.maxOfOrNull { it.id } ?: 0) + 1
@@ -1426,7 +1431,7 @@ class Comm(
 
     private fun activeState() = ChatState().also {
         it.messages.addAll(messages); it.clearTs = clearTs; it.retryAt = retryAt; it.retryN = retryN; it.proKey = proKey
-        it.memAuto = memAuto; it.memUpto = memUpto; it.memTs = memTs; it.cutUntil = cutUntil; it.love = love; it.msgGone = msgGone; it.shift = shift
+        it.memAuto = memAuto; it.memLive = memLive; it.memUpto = memUpto; it.memTs = memTs; it.cutUntil = cutUntil; it.love = love; it.msgGone = msgGone; it.shift = shift
         it.interaction = interaction
         it.memFixed = memFixed
     }
@@ -1658,8 +1663,8 @@ class Comm(
             if (st.cutUntil > nowMs()) doc["cut:$p"] = st.cutUntil
             if (st.love.ts != 0L) doc["love:$p"] = st.love.json()                       // 亲密关系 / 告白: 后改的为准
             if (st.shift.isNotEmpty()) doc["shift:$p"] = CommShift.json(st.shift)       // 起点平移记录: 两边合起来 (按记下的时刻去重)
-            if (st.memAuto.isNotEmpty())
-                doc["mem:$p"] = JSONObject().put("a", st.memAuto).put("u", st.memUpto).put("t", st.memTs)
+            if (st.memTs > 0L)
+                doc["mem:$p"] = JSONObject().put("a", st.memAuto).put("e", st.memLive).put("u", st.memUpto).put("t", st.memTs)
         }
         return doc
     }
@@ -1797,8 +1802,8 @@ class Comm(
                     val tc = touch(rest)
                     val t = v.optLong("t", 0L)
                     if (t > tc.st.memTs) {
-                        if (tc.st.clearTs > t) { tc.st.memAuto = ""; tc.st.memUpto = 0L }
-                        else { tc.st.memAuto = v.optString("a", "").take(MEM_MAX); tc.st.memUpto = v.optLong("u", 0L) }
+                        if (tc.st.clearTs > t) { tc.st.memAuto = ""; tc.st.memLive = ""; tc.st.memUpto = 0L }
+                        else { tc.st.memAuto = v.optString("a", "").take(MEM_MAX); tc.st.memLive = v.optString("e", "").take(MEM_MAX); tc.st.memUpto = v.optLong("u", 0L) }
                         tc.st.memTs = t
                         tc.dirty = true
                     }
@@ -1944,11 +1949,12 @@ class Comm(
     /** 长期记忆: 模型整理的摘要 (可能不精确), 附在 system 里. */
     private fun memoryBlock(st: ChatState = activeState()): String {
         val auto = st.memAuto.trim().take(MEM_MAX)
+        val live = st.memLive.trim().take(MEM_MAX)
         val rel = loveLine(st)                                  // 亲密关系由 OIT 记录, 总是写在最前面 (不管模型有没有整理过)
         val shf = CommShift.line(st.shift)                      // 起点平移 (1.0.402) 同理
         val fixed = messageMilestones(st).joinToString("\n") { tr("- 【系统记录】双方互相发送的信息总数已达到 {count} 条, 此消息数量条件已满足.", "count" to it.toString()) }
-        if (auto.isEmpty() && rel.isEmpty() && shf.isEmpty() && fixed.isEmpty()) return ""
-        return "\n\n以下是关于用户的长期记忆(你之前整理的摘要, 可能不精确; 标着【系统记录】的是 OIT 记下的事实, 以它为准):\n" + listOf(rel, shf, fixed, auto).filter { it.isNotEmpty() }.joinToString("\n")
+        if (auto.isEmpty() && live.isEmpty() && rel.isEmpty() && shf.isEmpty() && fixed.isEmpty()) return ""
+        return "\n\n以下是关于用户的长期记忆(自动摘要可能不精确；实时事件由你通过记忆工具维护；标着【系统记录】的是 OIT 记下的事实, 以它为准):\n" + listOf(rel, shf, fixed, auto, live).filter { it.isNotEmpty() }.joinToString("\n")
     }
 
     /** 固定记录与实时计数取并集；旧存档自动补记，模型重写只更新 memAuto。 */
@@ -1979,7 +1985,7 @@ class Comm(
     private fun memKick() {
         if (!memDue()) return
         val batch = memDelta().take(MEM_EVERY)
-        val memory = memoryBlock().trim().ifEmpty { "(空)" }
+        val memory = activeState().memAuto.trim().ifEmpty { "(空)" }
         val zone = java.time.ZoneId.systemDefault()
         val personaText = clipMessage(CommText.nativePersonaText(readPersonaFull(personaName())), 8000)
         val body = "当前时间: ${CommText.stamp(now())}\n\n对方的人设 (只用来判断哪些内容该长期保留 / 不能清除, 不要抄进记忆卡):\n$personaText\n\n现有记忆卡:\n$memory\n\n最近一段对话 (每条前面是发送时间):\n" + batch.joinToString("\n") {
@@ -4529,18 +4535,19 @@ class Comm(
     }
 
     /** 原生工具逐轮调度；写入仍由finish在主线程复核、随消息展示生效。 */
-    private fun toolRounds(profile: Profile, system: String, initial: List<Pair<String, String>>, first: String, kind: String, ep: Int): Triple<JointPlan?, String, String> {
+    private fun toolRounds(profile: Profile, system: String, initial: List<Pair<String, String>>, first: String, kind: String, ep: Int): ToolOutcome {
         var convo = initial
         var reply = first
         var plan: JointPlan? = null
         var musicId = ""
         var musicIds = emptySet<String>()
+        var memoryEdit: MemoryEdit? = null
         var slots: List<OpSlot>? = null
         var last = emptyList<String>()
         repeat(Cfg.COMM_TOOL_ROUNDS + 1) { round ->
-            val envelope = ToolProtocol.unpack(reply) ?: return Triple(plan, reply, musicId)
+            val envelope = ToolProtocol.unpack(reply) ?: return ToolOutcome(plan, reply, musicId, memoryEdit)
             val name = envelope.optString("name")
-            if (name.isEmpty() || name == "oit_reply") return Triple(plan, reply, musicId)
+            if (name.isEmpty() || name == "oit_reply") return ToolOutcome(plan, reply, musicId, memoryEdit)
             if (round >= Cfg.COMM_TOOL_ROUNDS) throw AiError("format", "工具调用轮次超限")
             if (ep != epoch || hardBlock()) throw AiError("format", "工具请求已失效")
             val args = envelope.getJSONObject("arguments")
@@ -4563,6 +4570,20 @@ class Comm(
                         values.put(module, value)
                     }
                     result = JSONObject().put("ok", true).put("data", values).put("note", "own_data属于你，不是用户；reference_template仅参考格式与占位符，非真实数据。不可用数据不要编造。")
+                }
+                "oit_memory_edit" -> {
+                    val action = args.optString("action")
+                    val target = args.optString("target").trim()
+                    val text = args.optString("text").trim()
+                    val entries = activeState().memLive.lineSequence().map { it.trim() }.filter { it.startsWith("- ") }.map { it.drop(2).trim() }.toList()
+                    val validText = '\n' !in text && '\r' !in text && "【系统记录】" !in text
+                    if (memoryEdit == null &&
+                        ((action == "add" && target.isEmpty() && text.isNotEmpty() && validText && text !in entries && entries.size < 15) ||
+                         (action == "correct" && target in entries && text.isNotEmpty() && validText) ||
+                         (action == "remove" && target in entries))) {
+                        memoryEdit = MemoryEdit(action, target, text)
+                        result = JSONObject().put("ok", true).put("status", "queued_until_message_visible").put("next", "正式回复显示时保存这条实时记忆事件")
+                    } else result = JSONObject().put("ok", false).put("error", "记忆事件不匹配或已达到数量上限")
                 }
                 "oit_music_catalog" -> runCatching {
                     val all = musicLibrary.catalog(personaName(), related(), interactionPrepare().valence)
@@ -4612,6 +4633,21 @@ class Comm(
             reply = chatFn(profile, system, convo)
         }
         throw AiError("format", "工具调用轮次超限")
+    }
+
+    private fun applyMemoryEdit(edit: MemoryEdit) {
+        val entries = activeState().memLive.lineSequence().map { it.trim() }.filter { it.startsWith("- ") }.map { it.drop(2).trim() }.toMutableList()
+        when (edit.action) {
+            "add" -> if (edit.target.isEmpty() && edit.text.isNotEmpty() && '\n' !in edit.text && '\r' !in edit.text && "【系统记录】" !in edit.text && edit.text !in entries && entries.size < 15) entries.add(edit.text) else return
+            "correct" -> { val index = entries.indexOf(edit.target); if (index < 0 || edit.text.isEmpty() || '\n' in edit.text || '\r' in edit.text || "【系统记录】" in edit.text) return; entries[index] = edit.text }
+            "remove" -> if (!entries.remove(edit.target)) return
+            else -> return
+        }
+        val updated = entries.joinToString("\n") { "- $it" }
+        if (updated.length > MEM_MAX) return
+        activeState().memLive = updated
+        memLive = updated
+        memTs = nowMs()
     }
 
     private fun request(kind: String, extra: Extra? = null) {
@@ -4696,11 +4732,13 @@ class Comm(
                 }
                 var op: JointPlan? = null
                 var musicId = ""
+                var memoryEdit: MemoryEdit? = null
                 if (ToolProtocol.unpack(reply) != null) {
                     val handled = toolRounds(profile, system, convo, reply, kind, ep)
-                    op = handled.first
-                    reply = handled.second
-                    musicId = handled.third
+                    op = handled.plan
+                    reply = handled.reply
+                    musicId = handled.musicId
+                    memoryEdit = handled.memoryEdit
                 }
                 if (ToolProtocol.unpack(reply) == null && CommText.OP_RE.containsMatchIn(reply)) {
                     if (kind in CommText.OP_KINDS) {
@@ -4743,12 +4781,13 @@ class Comm(
                 }
                 if (ToolProtocol.unpack(reply)?.optString("name")?.let { it.isNotEmpty() && it != "oit_reply" } == true) {
                     val handled = toolRounds(profile, system, convo, reply, kind, ep)
-                    op = op ?: handled.first
-                    reply = handled.second
-                    musicId = musicId.ifEmpty { handled.third }
+                    op = op ?: handled.plan
+                    reply = handled.reply
+                    musicId = musicId.ifEmpty { handled.musicId }
+                    memoryEdit = memoryEdit ?: handled.memoryEdit
                 }
                 log("REQ $kind ok ${(System.currentTimeMillis() - started) / 1000.0}s reply_chars=${reply.length}")
-                Result(kind, extra, reply, "", ep, op, musicId, batch)
+                Result(kind, extra, reply, "", ep, op, musicId, batch, memoryEdit)
             } catch (e: AiError) {
                 log("REQ $kind FAIL ${(System.currentTimeMillis() - started) / 1000.0}s ${e.kind}: ${e.message}")
                 Result(kind, extra, "", e.message ?: "", ep, batch = batch)
@@ -4766,7 +4805,7 @@ class Comm(
         replyDrain()
         result.batch?.finished = true
         val tensionReply = result.reply
-        val r = Result(result.kind, result.extra, CommInteraction.cleanTension(result.reply), result.err, result.epoch, result.op, result.musicId, result.batch)
+        val r = Result(result.kind, result.extra, CommInteraction.cleanTension(result.reply), result.err, result.epoch, result.op, result.musicId, result.batch, result.memoryEdit)
         busy = false
         busySince = 0L
         if (hardBlock()) { replyDiscard(r.batch); again = false; if (r.kind == "share_ask") shareAskEnd("{name} 没有回复, share data 没有打开"); if (r.kind == "shift_ask") shiftAskEnd("{name} 没有回复, 起点没有平移"); changed(); return }       // 等回复的时候"无言为真"生效了: 这条回复不要了
@@ -4800,6 +4839,7 @@ class Comm(
                 musicLibrary.get(r.musicId, personaName(), related(), interactionPrepare().valence)?.first?.optString("title")
             }.getOrNull() ?: ""))
                 else tr(if (r.op != null) "🤝  联合行动邀请" else "share data 邀请")
+        if (text.isEmpty() && r.err.isEmpty() && r.memoryEdit != null) text = tr("已更新记忆卡")
         val isCatchup = r.extra?.body?.contains(CATCHUP_TAG) == true          // 这是补问 (见 CATCHUP_BODY)
         var jointAns = ""                                                     // 对联合行动邀请的回复 [Yes] / [No]
         if (r.err.isEmpty() && !refused && !queried && r.kind in FOLLOW_KINDS && curJoint()?.state == "wait") {
@@ -4862,6 +4902,7 @@ class Comm(
             val m = replyComplete(text, r.batch) ?: run { saveChat(); changed(); return }
             activeReplyAfter = 0L
             r.op?.let { opApply(it, m) }
+            r.memoryEdit?.let { applyMemoryEdit(it) }
             if (r.musicId.isNotEmpty()) runCatching {
                 musicLibrary.select(r.musicId, personaName(), related(), interactionPrepare().valence)
             }
@@ -5378,7 +5419,7 @@ class Comm(
         followAt = 0L                                       // 清空前排着的第二次调用不要了
         followMsg = 0
         interaction = CommInteraction()
-        memAuto = ""; memFixed = emptyList(); memUpto = 0L; memTs = nowMs() // 记忆卡跟着聊天一起清掉
+        memAuto = ""; memLive = ""; memFixed = emptyList(); memUpto = 0L; memTs = nowMs() // 记忆卡跟着聊天一起清掉
         love = Love(ts = nowMs()); msgGone = 0               // 新对话: 亲密关系 / 告白 / 信息条数也跟着记忆卡一起清掉 (别的设备一起)
         if (joint != null && joint?.pid == pid) { joint = null; jointTs = maxOf(nowMs(), jointTs + 1) }      // 新对话: 联合行动也作废 (别的设备一起); 清空的是别的对象的聊天 (联合行动属于另一个对象) 不动它 (1.0.404)
         jointDraft = null

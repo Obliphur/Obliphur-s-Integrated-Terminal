@@ -351,15 +351,17 @@ def music_tool_checks():
     replies = [tools.pack(name="oit_music_select", arguments={"id": catalog[6]["id"]}),
                tools.pack(name="oit_music_perform", arguments={"id": catalog[6]["id"]}),
                tools.pack(text="我来演奏", name="oit_reply", arguments={"text": "我来演奏"})]
+    access._valence = 30
     ready = {"id": catalog[6]["id"], "title": catalog[6]["title"], "path": str(root / "song.mp3")}
     with patch("music_library.MusicLibrary.prepare_performance", return_value=ready):
-        operation, reply = Context()._tool_rounds(lambda _: replies.pop(0), [],
+        operation, reply = access._tool_rounds(lambda _: replies.pop(0), [],
                                                   tools.pack(name="oit_music_catalog"), "user", 7)
     assert operation == {"type": "music_perform", "id": catalog[6]["id"], "path": ready["path"]}
     assert tools.text_of(reply) == "我来演奏"
 
     # 没有选曲、主动消息或专注时均不能生成演奏音频。
     for kind, context in (("user", Context()), ("proactive", Context()), ("user", Context())):
+        context._valence = 30
         if kind == "user" and library.selection("Claudia.txt"):
             context.state_fn = lambda: "focus"
         seen.clear()
@@ -370,6 +372,41 @@ def music_tool_checks():
         assert not prepare.called and '"ok": false' in seen[0][-1]["content"]
         library.select(catalog[6]["id"], "Claudia.txt")
 
+    access._valence = 29.99
+    replies = [tools.pack(name="oit_music_perform", arguments={"id": catalog[6]["id"]}),
+               tools.pack(text="现在不想弹", name="oit_reply", arguments={"text": "现在不想弹"})]
+    seen.clear()
+    with patch("music_library.MusicLibrary.prepare_performance") as prepare:
+        access._tool_rounds(lambda history: seen.append(history) or replies.pop(0), [],
+                            tools.pack(name="oit_music_catalog"), "user", 7)
+    assert not prepare.called and "演奏意愿门槛" in seen[0][-1]["content"]
+
+
+def memory_tool_checks():
+    class Context(ToolsMixin):
+        _epoch = 9
+        cfg = {"mem_live": ""}
+        hard_block = lambda self: False
+        save_chat = lambda self: None
+        _push = lambda self: None
+        _ms = lambda self: 1234
+
+    context = Context()
+    calls = [tools.pack(name="oit_memory_edit", arguments={"action": "add", "target": "", "text": "用户正在准备考试"}),
+             tools.pack(name="oit_reply", arguments={"text": "我会记住这件事"})]
+    op, _ = context._tool_rounds(lambda _: calls.pop(0), [], calls.pop(0), "proactive", 9)
+    assert op == {"type": "memory_event", "action": "add", "target": "", "text": "用户正在准备考试"}
+    context._memory_event_apply(op)
+    assert context.cfg["mem_live"] == "- 用户正在准备考试" and context.cfg["mem_ts"] == 1234
+    for action, target, text, expected in (("correct", "用户正在准备考试", "用户下周参加考试", "- 用户下周参加考试"),
+                                          ("remove", "用户下周参加考试", "", "")):
+        calls = [tools.pack(name="oit_memory_edit", arguments={"action": action, "target": target, "text": text}),
+                 tools.pack(name="oit_reply", arguments={"text": "已更新"})]
+        op, _ = context._tool_rounds(lambda _: calls.pop(0), [], calls.pop(0), "user", 9)
+        assert op["type"] == "memory_event"
+        context._memory_event_apply(op)
+        assert context.cfg["mem_live"] == expected
+
 
 def music_commit_checks():
     import music_library
@@ -378,6 +415,7 @@ def music_commit_checks():
     c.set_cfg(persona="Claudia.txt", split_send=False)
     c.state_fn = lambda: "idle"
     c.set_viewing(True)
+    c._interaction_prepare = lambda *_: {"valence": 30}
     c._away_kind = lambda: ""
     library = music_library.manager(c.dir)
     score_id = library.catalog("Claudia.txt")[0]["id"]
@@ -396,6 +434,14 @@ def music_commit_checks():
         assert library.selection("Claudia.txt")["id"] == score_id
         c._music_tick()
         assert play.call_count == 1
+        c._active_reply_after = c._ms() + 60000
+        c._finish("user", None, reply, "", c._epoch, op)
+        c._interaction_prepare = lambda *_: {"valence": 29.99}
+        message = c.messages[-1]
+        message["due"] = message["reply_after"] = 0
+        c._release_held()
+        assert play.call_count == 1 and not c._music_actions, "Claudia效价在回复延迟期间跌破30时不播放"
+        c._interaction_prepare = lambda *_: {"valence": 30}
         # 拒绝与过期回复均不能播放。
         c._finish("user", None, tools.pack(name="oit_reply", arguments={"refuse": True}), "", c._epoch, op)
         c._finish("user", None, reply, "", c._epoch - 1, op)
@@ -417,6 +463,7 @@ if __name__ == "__main__":
     tempstore.session("comm-tools-check")
     transport_checks()
     state_checks()
+    memory_tool_checks()
     music_tool_checks()
     music_commit_checks()
     root = Path(__file__).resolve().parent.parent
@@ -424,7 +471,7 @@ if __name__ == "__main__":
         assert (root / "defaults" / name).read_text(encoding="utf-8") == (root / "Android version/app/src/main/resources" / name).read_text(encoding="utf-8")
     protocol = (root / "defaults/comm_protocol.txt").read_text(encoding="utf-8")
     specs = json.loads((root / "defaults/comm_tools.json").read_text(encoding="utf-8"))
-    assert {s["name"] for s in specs} >= {"oit_music_catalog", "oit_music_select", "oit_music_perform"}
+    assert {s["name"] for s in specs} >= {"oit_music_catalog", "oit_music_select", "oit_music_perform", "oit_memory_edit"}
     tool = next(s for s in specs if s["name"] == "oit_reply")
     assert "聊天只显示text" in protocol and "wait_minutes" in tool["description"] and "不会显示给用户" in tool["description"]
     legacy = "先输入[messages]查询；回复 [Yes]；结尾写 [waiting for reply]:[5]\n[condition]\nmessages:2\n[/condition]\n"

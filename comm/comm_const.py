@@ -95,14 +95,14 @@ MAX_PROFILE = 5000                    # 用户自己填的身份背景最多多�
 MEM_EVERY = 40                        # 每这么多条新消息, 让模型整理一次"记忆卡"
 MEM_GAP = 3 * 3600                    # 两次整理至少隔这么久 (秒): 一口气发几十条时不会连着调
 MEM_TOKENS = 3000                     # 整理记忆卡一次请求的 max_tokens: 开了思考, 要比思考预算 (ai_assist.THINK_BUDGET) 大, 还得留出记忆卡本身的长度
-MEM_PROMPT = ("你是 OIT 沟通模块的记忆整理器. 给你「现有记忆卡」和「最近一段对话」, 输出更新后的记忆卡.\n"
-              "只保留以后还有用的事实: 用户的身份, 偏好, 计划, 约定, 禁区, 以及没聊完的话题和只处理了一部分的请求 (写明大概是什么时候的事).\n"
-              "每次整理都要先逐条检查现有记忆卡, 对照「当前时间」和最近的对话, 删掉已经失效 / 过期的内容: 已经聊完 / 办完的话题和请求, 已经过去的计划和约定, 被新对话推翻的事实.\n"
-              "重点记:\n用户的性格,反应模式,情感类型;用户希望AI记下的内容;用户的爱好;\n不要记日常琐事.\n"
+MEM_PROMPT = ("你是 OIT 沟通模块的长期记忆整理器. 给你「现有长期记忆摘要」和「最近一段对话」, 输出更新后的长期记忆摘要.\n"
+              "只保留以后仍有用的稳定事实: 用户身份、偏好、长期计划、约定和禁区. 不要记录尚未解决的话题、临时请求或其他实时事件；这些由对话模型通过记忆工具单独维护.\n"
+              "每次整理都要逐条检查现有长期记忆, 对照「当前时间」和最近对话, 删除失效或过期的稳定信息及被新对话推翻的事实. 不管理、复制或改写记忆工具维护的实时事件.\n"
+              "重点记:\n用户的性格、反应模式、情感类型、希望长期保留的稳定信息和爱好; 实时事件由对话模型管理, 不要记录在这里; 不要记日常琐事.\n"
               "记忆保留的范围、期限和生效条件以「对方的人设」为准, 包括用户的简单要求是否保留、保留多久、何时失效. 关系等【系统记录】只提供事实, 不自动改变记忆规则. 人设未声明的内容按上述通用事实与有效期规则整理, 不自行附加关系专属规则.\n"
               "删掉寒暄, 重复, 一次性的内容. 每条一行, 以 \"- \" 开头, 不超过 40 字, 最多 15 条.\n"
               "和新对话冲突时以新对话为准; 不确定的条目末尾加 \"?\". 不要编造对话里没有的事.\n"
-              "只输出记忆卡本身, 不要解释, 不要标题, 不要代码块.")
+              "只输出长期记忆摘要本身, 不要解释, 不要标题, 不要代码块.")
 MEM_PROMPT += "\n所有【系统记录】均由 OIT 固定保存, 不要改写、删除或抄入输出; 消息数量门槛的达成记录永久有效, 不等于其他条件也已满足."
 STATUS_TEXT = {"focus": "专注中", "sleep": "睡眠中", "rest": "休息中", "idle": "空闲"}
 STATUS_COLORS = {"rest": "#9CCC65", "sleep": "#283593", "focus": "#FDD835", "idle": "#9E9E9E"}   # 聊天页状态前面的小圆点
@@ -124,7 +124,7 @@ DEFAULTS = {"persona": "", "show_avatar": True,
             "claudia_migrated": False, "claudia_modified": False, "claudia_notified": "", "claudia_base": "", "routine_base": "", "background_base": "",
             "legacy_done": False, "joint_last": [], "user_profile": "",
             "bg_pro": True, "mute_pro": [], "idle_use": {}, "joint": {}, "sched_follow": False, "pro_lang": "",
-            "mem_auto": "", "mem_fixed": [], "mem_upto": 0, "mem_ts": 0,  # 模型摘要与系统固定记录
+            "mem_auto": "", "mem_live": "", "mem_fixed": [], "mem_upto": 0, "mem_ts": 0,  # 长期摘要、实时事件与系统固定记录
             "shift": [],                                     # 起点平移记录 (跟着聊天对象走, 同步; 不改人设文件)
             "love": {}, "msg_gone": 0,                       # 亲密关系状态 (跟着聊天对象走, 同步) / 被 KEEP 砍掉的信息条数 (本机)
             "alarm_co": {},                                  # 共时闹钟 (1.0.359): {pid, devs: [响铃的设备 id], ts}; pid 为空 = 关闭
@@ -140,7 +140,7 @@ DEFAULTS = {"persona": "", "show_avatar": True,
 # (claudia_base / routine_base / background_base) 判断, 以后改默认人设再按需往里放.
 CLAUDIA_LEGACIES = ()
 ROUTINE_LEGACIES = ()
-CHAT_KEYS = ("interaction", "clear_ts", "retry", "pro_key", "mem_auto", "mem_fixed", "mem_upto", "mem_ts", "cut_until", "love", "msg_gone", "shift")   # 跟着聊天对象走的几项 (存在各自的聊天文件里)
+CHAT_KEYS = ("interaction", "clear_ts", "retry", "pro_key", "mem_auto", "mem_live", "mem_fixed", "mem_upto", "mem_ts", "cut_until", "love", "msg_gone", "shift")   # 跟着聊天对象走的几项 (存在各自的聊天文件里)
 
 
 

@@ -68,6 +68,7 @@ class MiscMixin:
         self._catchup = False
         self.cfg["retry"] = {}
         self.cfg["mem_auto"] = ""          # 记忆卡跟着聊天一起清掉
+        self.cfg["mem_live"] = ""
         self.cfg["interaction"] = mem_fields({})["interaction"]
         self.cfg["mem_fixed"] = []
         self.cfg["mem_upto"] = 0

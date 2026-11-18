@@ -8,6 +8,7 @@ object EnStrings {
         "选择要导入的乐谱" to "Choose a score to import",
         "MuseScore 和 MusicXML" to "MuseScore and MusicXML",
         "已加入曲库: {title}" to "Added to library: {title}",
+        "已更新记忆卡" to "Memory updated",
         "我为你选了《{title}》" to "I chose {title} for you.",
         "我选好了一首曲子" to "I chose a piece for you.",
         "导出所选曲目为 MIDI…" to "Export selected score as MIDI…",

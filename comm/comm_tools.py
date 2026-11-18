@@ -9,6 +9,8 @@ from i18n import tr
 from ai_assist.ai_common import AIError
 from ai_assist.ai_tools import unpack
 from comm.comm_prompt import native_persona_text
+from comm.comm_persona import MEM_MAX
+from comm.comm_util import is_claudia
 
 
 class ToolsMixin:
@@ -29,7 +31,21 @@ class ToolsMixin:
                 raise AIError("format", "工具请求已失效")
             name, args = data["name"], data["arguments"]
             result = {"ok": False, "error": "当前不允许此工具"}
-            if name == "oit_query":
+            if name == "oit_memory_edit" and op is None:
+                action, target, content = args["action"], args["target"].strip(), args["text"].strip()
+                entries = [line[2:].strip() for line in str(self.cfg.get("mem_live") or "").splitlines()
+                           if line.strip().startswith("- ")]
+                valid_text = "\n" not in content and "\r" not in content and "【系统记录】" not in content
+                if action == "add" and not target and content and valid_text and content not in entries and len(entries) < 15:
+                    op = {"type": "memory_event", "action": action, "target": "", "text": content}
+                elif action in ("correct", "remove") and target in entries and (action == "remove" or content and valid_text):
+                    op = {"type": "memory_event", "action": action, "target": target, "text": content}
+                else:
+                    result = {"ok": False, "error": "记忆事件不匹配或已达到数量上限"}
+                if op:
+                    result = {"ok": True, "status": "queued_until_message_visible",
+                              "next": "正式回复显示时保存这条实时记忆事件"}
+            elif name == "oit_query":
                 values = {}
                 for module in args["modules"]:
                     try:
@@ -101,6 +117,8 @@ class ToolsMixin:
                     result = {"ok": False, "error": "请先通过oit_music_select选择这首乐谱"}
                 elif kind not in ("user", "retry", "followup"):
                     result = {"ok": False, "error": "只能响应用户明确的演奏请求"}
+                elif is_claudia(persona) and valence < 30:
+                    result = {"ok": False, "error": "Claudia 当前效价低于演奏意愿门槛"}
                 elif self.state_fn() not in ("idle", "break"):
                     result = {"ok": False, "error": "仅可在空闲或休息期间演奏"}
                 else:
@@ -135,6 +153,26 @@ class ToolsMixin:
             reply = ask(convo)
         raise AIError("format", "工具调用轮次超限")
 
+    def _memory_event_apply(self, op):
+        entries = [line[2:].strip() for line in str(self.cfg.get("mem_live") or "").splitlines()
+                   if line.strip().startswith("- ")]
+        action, target, content = op.get("action"), op.get("target", ""), op.get("text", "")
+        valid_text = isinstance(content, str) and "\n" not in content and "\r" not in content and "【系统记录】" not in content
+        if action == "add" and target == "" and content and valid_text and content not in entries and len(entries) < 15:
+            entries.append(content)
+        elif action == "correct" and target in entries and content and valid_text:
+            entries[entries.index(target)] = content
+        elif action == "remove" and target in entries:
+            entries.remove(target)
+        else:
+            return False
+        text = "\n".join("- " + item for item in entries)
+        if len(text) > MEM_MAX:
+            return False
+        self.cfg["mem_live"] = text
+        self.cfg["mem_ts"] = self._ms()
+        return True
+
     def _music_deliver(self, message):
         """本机消息实际显示时消费演奏动作；动作不进入聊天存档和同步。"""
         if message.get("hold"):
@@ -147,6 +185,8 @@ class ToolsMixin:
             return
         try:
             related, valence = self._music_access()
+            if is_claudia(self.persona_name()) and valence < 30:
+                return
             library = music_library.manager(self.dir)
             item, path = library.get(op["id"], self.persona_name(), related, valence)
             if not item or not path or not path.is_file():

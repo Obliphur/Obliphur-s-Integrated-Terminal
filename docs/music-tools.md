@@ -32,7 +32,7 @@ music.render_performance(r"D:\performance.mid", r"D:\performance.mp3")
 
 Partitura 是可单独安装的 MIDI 分析依赖，使用独立 Python 环境并包含 `mido`。安装探测会加载一份 MIDI 并验证音符事件；沟通页调用该环境对比两份 MIDI，也不需要额外安装 pretty_midi。
 
-沟通页的「演奏评判」复用这些工具：左侧参考 MIDI / 乐谱图片或 PDF 转成 MIDI，右侧演奏 MIDI / 钢琴录音转成 MIDI，再由独立 worker 输出紧凑差异 JSON（音符命中、漏音 / 多音、平均起音与时值误差、最长误差和演奏时长）。评判模型只收到此摘要，不收到原始音频；聊天模型接收评判文字和结构化差异，可结合误差分布谨慎判断演奏意图，只有证据连贯且能与偶发失误区分时才提及，证据不足时不推测。回复最早在发送后 60 秒加上演奏 MIDI 时长时显示。当前对齐按同音高最近起音匹配，结果用于练习提示，不替代专业乐谱校验。
+沟通页的「演奏评判」复用这些工具：左侧参考 MIDI / 乐谱图片或 PDF 转成 MIDI，右侧演奏 MIDI / 钢琴录音转成 MIDI，再由独立 worker 输出紧凑差异 JSON（音符命中、漏音 / 多音、平均起音与时值误差、最长误差和演奏时长）。评判模型只收到此摘要，不收到原始音频；聊天模型接收评判文字和结构化差异，可结合误差分布谨慎判断演奏意图，只有证据连贯且能与偶发失误区分时才提及，证据不足时不推测。回复最早在发送后 60 秒加上演奏 MIDI 时长时显示。Claudia 仅在当前 Valence ≥ 30 时愿意演奏。当前对齐按同音高最近起音匹配，结果用于练习提示，不替代专业乐谱校验。
 
 同步方法返回结果或抛出异常。页面使用 `start_install(tool=None)` / `start_convert(source, destination)`，立即返回并在后台执行；从同一缓存 manager 读取 `state`（idle/installing/running/ready/error）、`current`、`progress`、`error`、`result`。所有音乐任务串行，执行期间锁定外部目录并阻止 Process Lasso 部署及旧权重下载入口。界面重建不会中断任务。转换在 OIT 临时目录生成结果，经验证后复制至目标盘并原子替换；失败保留原输出。
 

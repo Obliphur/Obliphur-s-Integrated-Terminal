@@ -419,12 +419,15 @@ def _selftest():
     assert other.cfg["user_profile"] == "我是大二的学生, 在准备考研."
     # 记忆卡也随设备同步: 后改的为准
     mc.cfg["mem_auto"] = "- 下周三考试"
+    mc.cfg["mem_live"] = "- 这周内完成报名"
     mc.cfg["mem_ts"] = max(mc._ms(), int(mc.cfg.get("clear_ts") or 0)) + 1
     other.apply_doc(mc.sync_doc())
     assert other._state_of(pid_of("小夏.txt"))["mem_auto"] == "- 下周三考试"
-    mc.apply_doc({"mem:" + pid_of("小夏.txt"): {"a": "- 喜欢钢琴", "u": 5,
+    assert other._state_of(pid_of("小夏.txt"))["mem_live"] == "- 这周内完成报名"
+    mc.apply_doc({"mem:" + pid_of("小夏.txt"): {"a": "- 喜欢钢琴", "e": "- 周末去看医生", "u": 5,
                                                 "t": int(mc.cfg["mem_ts"]) + 1}})
     assert mc.cfg["mem_auto"] == "- 喜欢钢琴"
+    assert mc.cfg["mem_live"] == "- 周末去看医生"
     mc.apply_doc({"mem:" + pid_of("小夏.txt"): {"a": "- 旧的", "u": 1, "t": 1}})     # 更旧的不要
     assert mc.cfg["mem_auto"] == "- 喜欢钢琴"
     mc.flush(); mc2.flush(); lc.flush(); other.flush()
@@ -1963,6 +1966,7 @@ def _selftest():
     custom_policy = "你是 AI 助手，不以 OIT 使用者身份生活。简单要求仅保留到当天结束，与关系状态无关。"
     open(os.path.join(folder, "记忆策略.txt"), "w", encoding="utf-8").write(custom_policy)
     cm.set_cfg(persona="记忆策略.txt")
+    cm.cfg["mem_live"] = "- 用户本周要交项目"
     cm.snapshot = lambda: {}
     for i in range(40):
         cm._add("me" if i % 2 == 0 else "ai", f"m{i}")
@@ -1978,6 +1982,8 @@ def _selftest():
     assert custom_policy in mem_calls[0][0]["content"], "整理记忆时传入自定义人设的身份与保留期限"
     assert mem_kws[0].get("think") is True and mem_kws[0]["max_tokens"] == MEM_TOKENS > ai_assist.THINK_BUDGET, "整理记忆卡开思考"
     assert cm.cfg["mem_auto"] == "- 用户在准备考试\n- 喜欢钢琴", cm.cfg["mem_auto"]
+    assert cm.cfg["mem_live"] == "- 用户本周要交项目" and "用户本周要交项目" in cm.memory_block()
+    assert "用户本周要交项目" not in mem_calls[0][0]["content"], "自动整理不得管理实时事件"
     assert cm.cfg["mem_upto"] == int(cm.messages[-1]["ts"])
     assert "喜欢钢琴" in cm.memory_block()
     script.append("好")

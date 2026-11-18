@@ -562,8 +562,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                 doc[f"love:{pid}"] = love_norm(st.get("love"))      # 亲密关系 / 告白: 后改的为准
             if shift_norm(st.get("shift")):
                 doc[f"shift:{pid}"] = shift_norm(st.get("shift"))   # 起点平移记录: 两边合起来 (按记下的时刻去重)
-            if st.get("mem_auto"):
-                doc[f"mem:{pid}"] = {"a": str(st.get("mem_auto") or ""),
+            if int(st.get("mem_ts") or 0) > 0:
+                doc[f"mem:{pid}"] = {"a": str(st.get("mem_auto") or ""), "e": str(st.get("mem_live") or ""),
                                      "u": int(st.get("mem_upto") or 0), "t": int(st.get("mem_ts") or 0)}
         return doc
 
@@ -776,9 +776,11 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                     continue
                 if int(st.get("clear_ts") or 0) > t:                    # 自动摘要比清空还早: 不要 (旧对话的摘要)
                     st["mem_auto"] = ""
+                    st["mem_live"] = ""
                     st["mem_upto"] = 0
                 else:
                     st["mem_auto"] = str(val.get("a") or "")[:MEM_MAX]
+                    st["mem_live"] = str(val.get("e") or "")[:MEM_MAX]
                     st["mem_upto"] = int(val.get("u") or 0)
                 st["mem_ts"] = t
                 touched[rest][1] = True
@@ -1338,6 +1340,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                     text = tr("我选好了一首曲子")
             elif isinstance(op, dict) and op.get("type") == "music_stop":
                 text = tr("演奏已停止")
+            elif isinstance(op, dict) and op.get("type") == "memory_event":
+                text = tr("已更新记忆卡")
             else:
                 text = tr("🤝  联合行动邀请") if op else tr("share data 邀请")
         catchup = bool(extra) and CATCHUP_TAG in str(extra[0])          # 这是补问 (见 CATCHUP_BODY)
@@ -1427,6 +1431,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                 elif isinstance(op, dict) and op.get("type") == "music_stop":
                     self.music_player.stop()
                     self._music_actions.clear()
+                elif isinstance(op, dict) and op.get("type") == "memory_event":
+                    self._memory_event_apply(op)
                 else:
                     self._op_apply(op, m)
             if share_invite:
