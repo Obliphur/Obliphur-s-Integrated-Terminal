@@ -1499,15 +1499,14 @@ def _selftest():
     cu.send("等等")
     wait(cu)
     assert [m["text"] for m in cu.visible()] == ["你好", "甲", "等等", "回应等等"], [m["text"] for m in cu.visible()]
-    # 用户设置的分条发送间隔：到点才发，不受模型类型影响。
+    # 分条续发采用固定间隔：到点才发，不受模型类型影响。
     os.makedirs(os.path.join(td, "fdel"))
     cd = Comm(os.path.join(td, "fdel"), folder, now=lambda: clock[0], chat_fn=fake)
     cd.ai.set_profile("deepseek", api_key="k")
     cd.set_cfg(persona="小夏.txt")
     cd.snapshot = lambda: {"state": "idle"}
     assert cd.split_interval() == 5
-    cd.set_cfg(split_interval=7)
-    cd.follow_delay = None
+    cd.follow_delay = 7.0
     n_d = len(follow_calls)
     script.append("第一句")
     follow.append("第二句")
@@ -1516,7 +1515,7 @@ def _selftest():
     assert len(follow_calls) == n_d, "延时没到: 不发第二次"
     clock[0] += timedelta(seconds=6)
     cd.tick()
-    assert len(follow_calls) == n_d, "自定义间隔尚未到，不提前调用"
+    assert len(follow_calls) == n_d, "固定间隔尚未到，不提前调用"
     clock[0] += timedelta(seconds=1)
     for _ in range(200):
         time.sleep(0.01)
@@ -1573,7 +1572,7 @@ def _selftest():
     assert len(follow_calls) == n_x + 1, "第一条被藏起来也算显示过: 第二次照常调用"
     ch2.flush()
     CHAR_DELAY = CHAR_DELAY_CJK = 0.0
-    # 分条发的开关: 关着时不调用第二次, 前置 prompt 里也没有分条说明; 开关随设备同步
+    # 旧本机设置仍可被测试覆盖；正式运行固定启用，开关和间隔不再同步。
     cu.set_cfg(split_send=False)
     assert "分条发送时" not in prefix_prompt(False) and "分条发送时" in prefix_prompt(True) and not cu.split_on()
     n_f = len(follow_calls)
@@ -1582,21 +1581,20 @@ def _selftest():
     cu.send("关了吗")
     wait(cu)
     assert cu.visible()[-1]["text"] == "单条" and len(follow_calls) == n_f and "分条发送时" not in calls[-1][0]
-    assert cu.sync_doc()["split"] is False
+    assert "split" not in cu.sync_doc() and "split_interval" not in cu.sync_doc()
     follow.clear()
     cu.apply_doc({"split": True})
-    assert cu.split_on() and cu.sync_doc()["split"] is True
-    assert cu.split_interval() == 5 and cu.sync_doc()["split_interval"] == 5
+    assert not cu.split_on() and cu.split_interval() == 5
     cu.set_cfg(split_interval=12)
-    assert cu.sync_doc()["split_interval"] == 12
+    assert "split_interval" not in cu.sync_doc()
     cu.apply_doc({"split_interval": 0})
-    assert cu.split_interval() == 0
+    assert cu.split_interval() == 12
     cu.apply_doc({"split_interval": 9})
     for invalid in (-1, True, "3", 1.5, 2147483648):
         cu.apply_doc({"split_interval": invalid})
-        assert cu.split_interval() == 9
+        assert cu.split_interval() == 12
     cu.apply_doc({"split": False})
-    assert cu.split_interval() == 9
+    assert cu.split_interval() == 12
     cu.apply_doc({"split": True})
     # 思考 (第一层规则): 默认关; 关键词 / 时刻 / 英文 / 很长 / 系统触发 才开; 设置里可以整个关掉, 随设备同步
     assert think_text_reason("今天天气不错") == "" and think_text_reason("") == ""

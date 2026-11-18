@@ -210,6 +210,9 @@ fun CommScreen(go: (String) -> Unit) {
     LaunchedEffect(msgs.firstOrNull()?.id, msgs.size) {
         if (!voiceAutoRunning && msgs.isNotEmpty() && (list.firstVisibleItemIndex <= 4 || msgs.last().role == "me")) list.scrollToItem(0)
     }
+    LaunchedEffect(msgs.lastOrNull()?.takeIf { it.api == "streaming" }?.text) {
+        if (!voiceAutoRunning && msgs.lastOrNull()?.api == "streaming" && list.firstVisibleItemIndex <= 4) list.scrollToItem(0)
+    }
     fun report(why: String) {
         core.toast(tr(why), "warn")
         if (comm.blocked().isEmpty() && (why == "还没有选人设" || "API" in why || "Base URL" in why || "模型" in why)) go(if (why == "还没有选人设") "settings:comm" else "settings:models")
@@ -478,7 +481,7 @@ private fun Bubble(m: ChatMsg, play: (() -> Unit)? = null) {
                     .then(if (mine) Modifier else Modifier.border(1.dp, o.border, RoundedCornerShape(12.dp)))) {
                 Text(m.text, color = if (mine) o.onAccent else o.text, fontSize = 15.sp,
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
-                if (!mine && comm.voice.enabled) Text("▶", color = o.dim, fontSize = 14.sp,
+                if (!mine && m.api != "streaming" && comm.voice.enabled) Text("▶", color = o.dim, fontSize = 14.sp,
                     modifier = Modifier.align(Alignment.Start)
                         .clickable(onClickLabel = tr("播放语音"), role = androidx.compose.ui.semantics.Role.Button) {
                             if (comm.blocked().isEmpty()) play?.invoke()
@@ -579,24 +582,6 @@ fun CommSettings() {
             modifier = Modifier.fillMaxWidth().padding(top = 6.dp), minLines = 3, maxLines = 8)
         Text(tr("只在这段对话的第一轮发送, 改动在下一段对话生效."), color = o.dim, fontSize = 12.sp,
             modifier = Modifier.padding(top = 4.dp))
-    }
-
-    OitCard {
-        Text(tr("✂  分条发送"), fontWeight = FontWeight.Bold, color = o.text)
-        Text(tr("经过优化,不怎么会增加token消耗"), color = o.dim, fontSize = 12.sp,
-            modifier = Modifier.padding(top = 2.dp))
-        SwitchRow(tr("开启"), comm.splitSend) { comm.set(splitSend = it) }
-        if (comm.splitSend) {
-            var interval by remember(comm.splitInterval) { mutableStateOf(comm.splitInterval.toString()) }
-            OutlinedTextField(interval, { value ->
-                if (value.all { it in '0'..'9' } && value.length <= 10) {
-                    interval = value
-                    value.toIntOrNull()?.let { comm.set(splitInterval = it) }
-                }
-            }, label = { Text(tr("发送间隔（秒）")) }, singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
-        }
     }
 
     OitCard {

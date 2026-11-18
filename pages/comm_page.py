@@ -355,6 +355,14 @@ class CommPage(CommVoiceMixin, tk.Frame):
             new = msgs[ids.index(self._rendered[-1]) + 1:]
         self._ensure_pads()
         if not new:
+            if msgs and msgs[-1].get("streaming") and self._rendered and self._rendered[-1] == "streaming":
+                row = self._rows[-1]
+                label = getattr(row, "_oit_stream_label", None)
+                if label is not None and label.cget("text") != msgs[-1]["text"]:
+                    follow = self._near_end()
+                    label.config(text=msgs[-1]["text"])
+                    if follow:
+                        self._to_end()
             return
         follow = self._first_draw or self._near_end() or any(m["role"] == "me" for m in new)
         for m in new:
@@ -413,10 +421,13 @@ class CommPage(CommVoiceMixin, tk.Frame):
             fill, fg, rim = COLORS["bg_card"], COLORS["text"], COLORS["border"]
         bubble = tk.Frame(box, bg=fill, highlightthickness=1 if rim else 0, highlightbackground=rim or fill)
         bubble.pack(anchor="e" if mine else "w")
-        tk.Label(bubble, text=m["text"], bg=fill, fg=fg, font=config.font("body"), justify="left",
-                 anchor="w", wraplength=self._wrap(), padx=12, pady=8,
-                 highlightthickness=0).pack(anchor="e" if mine else "w")
-        if not mine and c.voice.data["enabled"]:
+        text_label = tk.Label(bubble, text=m["text"], bg=fill, fg=fg, font=config.font("body"), justify="left",
+                              anchor="w", wraplength=self._wrap(), padx=12, pady=8,
+                              highlightthickness=0)
+        text_label.pack(anchor="e" if mine else "w")
+        if m.get("streaming"):
+            row._oit_stream_label = text_label
+        if not mine and not m.get("streaming") and c.voice.data["enabled"]:
             tk.Button(bubble, text="▶", command=lambda: self._voice_manual(m), bg=fill, fg=COLORS["text_dim"],
                       activebackground=fill, activeforeground=COLORS["accent"], relief="flat", bd=0,
                       padx=3, pady=0, cursor="hand2", font=config.font("small"), takefocus=True).pack(anchor="sw", padx=1, pady=1)

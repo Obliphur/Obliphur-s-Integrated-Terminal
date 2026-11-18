@@ -67,7 +67,7 @@ from .comm_util import (OIT_TAG, COND_TAG, WEEKDAY, MAX_MSG_CHARS, HISTORY_SENT,
                        cache_layout, oit_text, first_turn, api_messages, sanitize_mem)
 
 def follow_delay(profile: dict, override: float = None) -> float:
-    """规则 VIII 第二次调用的间隔（秒），所有模型统一使用设置值。"""
+    """规则 VIII 第二次调用的固定间隔（秒），所有模型统一使用。"""
     return config.COMM_SPLIT_INTERVAL_SECONDS if override is None else override
 
 
@@ -149,6 +149,8 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
         self._pending = {}
         self._writing = False
         self._results = []
+        self._stream_events = []
+        self._stream_preview = ""
         self._again = False
         self._req_ts = 0              # 最近一次请求发出时, 最后一条用户消息的时间 (ts): 回复到了之后看用户有没有又发了新的
         self._catchup = False         # 补问被拒绝了 (回复已经显示, 后发的消息还没人回): 重试时即使最后一条是对方的也要问
@@ -316,6 +318,8 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
                 v = d.get(k)
                 if isinstance(v, type(default)):
                     self.cfg[k] = v
+        self.cfg["split_send"] = True
+        self.cfg.pop("split_interval", None)
         self.pid = pid_of(self.cfg.get("persona") or "")
         self._load_state(self._read_chat(self.pid))
 
@@ -336,6 +340,7 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
         st = self._others.pop(new, None) or self._read_chat(new)
         self._load_state(st)
         self._epoch += 1
+        self._stream_preview = ""
         self.error = ""
         self.unread = 0
         self.reload_schedule("换人设")
@@ -428,7 +433,7 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
 
     def save_cfg(self):
         """设置存 comm_config.json; 现在聊的这个对象的清空时刻 / 重试 / 主动消息标记跟着它的聊天记录走, 不存在这里."""
-        out = {k: v for k, v in self.cfg.items() if k not in CHAT_KEYS}
+        out = {k: v for k, v in self.cfg.items() if k not in CHAT_KEYS and k not in ("split_send", "split_interval")}
         self._write_async(self.cfg_path, json.loads(json.dumps(out)))
 
     def save_chat(self):
@@ -447,7 +452,7 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
         self.cfg.update(kw)
         self.save_cfg()
         self._changed()
-        if "split_interval" in kw or "split_send" in kw or "think_auto" in kw or "bg_pro" in kw or "mute_pro" in kw or "show_avatar" in kw or "sched_follow" in kw or "pro_lang" in kw:
+        if "think_auto" in kw or "bg_pro" in kw or "mute_pro" in kw or "show_avatar" in kw or "sched_follow" in kw or "pro_lang" in kw:
             self._push()
 
     def _changed(self):
@@ -502,8 +507,6 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
         doc["voice"] = self.voice.sync_doc()
         if self.cfg.get("user_profile"):
             doc["profile"] = self.cfg["user_profile"]
-        doc["split_interval"] = self.split_interval()
-        doc["split"] = self.split_on()                  # 分条发的开关: 调用 AI 的是主端, 两台设备要一致
         doc["think"] = self.think_auto()                # 自动开思考的开关: 同上
         doc["bgpro"] = self.bg_on()
         doc["sfollow"] = self.sf_on()                   # 日程跟随的开关: 提示在主端弹, 两台设备要一致
@@ -712,16 +715,6 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
                 if val != self.is_muted(rest):
                     cur = [p for p in (self.cfg.get("mute_pro") or []) if p != rest]
                     self.cfg["mute_pro"] = cur + [rest] if val else cur
-                    self.save_cfg()
-                    self._changed()
-            elif key == "split_interval" and type(val) is int and 0 <= val <= 2147483647:
-                if val != self.split_interval():
-                    self.cfg["split_interval"] = val
-                    self.save_cfg()
-                    self._changed()
-            elif key == "split" and isinstance(val, bool):
-                if val != self.split_on():
-                    self.cfg["split_send"] = val
                     self.save_cfg()
                     self._changed()
             elif key == "think" and isinstance(val, bool):
@@ -1275,6 +1268,7 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
         return m
 
     def _finish(self, kind: str, extra, reply: str, err: str, epoch: int = 0, op=None):
+        self._stream_preview = ""
         self.busy = False
         self.busy_since = 0.0
         if self.hard_block():                           # 等回复的时候"无言为真"生效了: 这条回复不要了
@@ -1460,7 +1454,15 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
             self._interaction_prepare()
         self._count_idle()
         with self._lock:
+            stream, self._stream_events = self._stream_events, []
             done, self._results = self._results, []
+        changed = False
+        for epoch, text in stream:
+            if epoch == self._epoch and self.busy:
+                self._stream_preview += text
+                changed = True
+        if changed:
+            self._changed()
         for res in done:
             self._finish(*res)
         with self._lock:

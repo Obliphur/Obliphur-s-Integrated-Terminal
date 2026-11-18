@@ -165,18 +165,21 @@ object ToolProtocol {
         catch (e: Exception) { throw AiError("format", "工具参数格式错误，请检查模型的工具调用支持.") }
     }
 
-    fun chat(p: Profile, system: String, messages: List<Pair<String, String>>, maxTokens: Int, temperature: Double, timeoutMs: Int, cache: Boolean, onUsage: ((Long, Long) -> Unit)?, think: Boolean, web: Boolean): String {
+    fun chat(p: Profile, system: String, messages: List<Pair<String, String>>, maxTokens: Int, temperature: Double, timeoutMs: Int,
+             cache: Boolean, onUsage: ((Long, Long) -> Unit)?, think: Boolean, web: Boolean, onDelta: ((String) -> Unit)? = null): String {
         var history = messages
         for (round in 0..Ai.WEB_ROUNDS) {
             var useCache = cache && Ai.endpoint(p) !in Ai.CACHE_REJECT
             var useThink = think && Ai.endpoint(p) !in Ai.THINK_ON_REJECT
+            var useStream = onDelta != null && Ai.endpoint(p) !in Ai.STREAM_REJECT
             var response: JSONObject? = null
-            for (attempt in 0..2) {
+            for (attempt in 0..3) {
                 val body = applyBody(Ai.buildBody(p, system, history, maxTokens, temperature, useCache, false, useThink), p.protocol, history, web && round < Ai.WEB_ROUNDS)
-                try { response = Ai.send(p, body, timeoutMs); break }
+                try { response = if (useStream) Ai.sendStream(p, body, timeoutMs, onDelta!!) else Ai.send(p, body, timeoutMs); break }
                 catch (e: AiError) {
                     if (e.kind != "http" || !(e.message ?: "").startsWith("服务商返回 400")) throw e
-                    if (useCache) { useCache = false; Ai.CACHE_REJECT.add(Ai.endpoint(p)) }
+                    if (useStream) { useStream = false; Ai.STREAM_REJECT.add(Ai.endpoint(p)) }
+                    else if (useCache) { useCache = false; Ai.CACHE_REJECT.add(Ai.endpoint(p)) }
                     else if (useThink) { useThink = false; Ai.THINK_ON_REJECT.add(Ai.endpoint(p)) }
                     else throw e
                 }

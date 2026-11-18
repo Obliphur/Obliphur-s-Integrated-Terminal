@@ -149,7 +149,7 @@ class StatusMixin:
         return self.cfg.get("split_send") is not False
 
     def split_interval(self) -> int:
-        """分条发送间隔（秒）；旧配置或无效值使用默认值。"""
+        """分条续发等待时间（秒）；已移除用户设置，旧配置不再载入。"""
         value = self.cfg.get("split_interval")
         return value if type(value) is int and 0 <= value <= 2147483647 else config.COMM_SPLIT_INTERVAL_SECONDS
 

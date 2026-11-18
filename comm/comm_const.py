@@ -73,7 +73,7 @@ FOLLOW_BODY = (FOLLOW_TAG + " 你刚才已经回复了用户. 如果还有想接
 CATCHUP_TAG = "[系统·补]"             # 回复显示之后才发现用户在等回复的时候又发了消息: 补问一次 (MECHANICS 24.3)
 CATCHUP_BODY = (CATCHUP_TAG + " 你上一条回复发出的时候, 用户又发来了新消息 (上面用户那一轮里靠后的几条); 你的上一条回复没有针对它们. "
                 "请现在回复这些新消息 (不要重复上一条回复的内容); 如果仍然不方便, 返回" + REFUSE + ".")
-FOLLOW_DELAY = config.COMM_SPLIT_INTERVAL_SECONDS  # 自检可覆盖的分条发送默认间隔（秒）
+FOLLOW_DELAY = config.COMM_SPLIT_INTERVAL_SECONDS  # 分条续发固定等待时间（秒）
 CHAR_DELAY = 0.1                      # 对方发来的消息: 英文 / 数字 / 符号每个字符晚这么多秒才显示 (像在打字; 排在前一条后面)
 CHAR_DELAY_CJK = 0.2                  # 中文字符每个晚这么多秒 (Assistant 是助理, 不装打字, 见 _mk)
 _CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
@@ -122,7 +122,7 @@ THINK_NEW_AFTER = 180                                    # 对方此刻按日程
 DEFAULTS = {"persona": "", "show_avatar": True,
             "avatar_me": "", "avatar_ai": "", "default_avatars": 0, "pro_key": "", "retry": {}, "clear_ts": 0, "seeded": False, "assistant_seeded": False,
             "claudia_migrated": False, "claudia_modified": False, "claudia_notified": "", "claudia_base": "", "routine_base": "", "background_base": "",
-            "legacy_done": False, "joint_last": [], "user_profile": "", "split_send": True,
+            "legacy_done": False, "joint_last": [], "user_profile": "",
             "bg_pro": True, "mute_pro": [], "idle_use": {}, "joint": {}, "sched_follow": False, "pro_lang": "",
             "mem_auto": "", "mem_fixed": [], "mem_upto": 0, "mem_ts": 0,  # 模型摘要与系统固定记录
             "shift": [],                                     # 起点平移记录 (跟着聊天对象走, 同步; 不改人设文件)

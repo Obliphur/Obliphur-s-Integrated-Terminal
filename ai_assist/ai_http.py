@@ -38,6 +38,8 @@ _OPENER = _Fresh()
 
 _DIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)       # 不走系统代理
 
+STREAM_REJECT = set()          # (服务商, API 地址): 不支持流式响应时退回完整 JSON
+
 
 _THINK_TAGS = r"(?:think|thinking|thought)"
 
@@ -68,19 +70,10 @@ def redact(text: str, key: str) -> str:
 
 
 def _open_url(req, timeout, opener=None):
-    """发请求. 系统代理指向的端口拒绝连接 (代理软件没开 / 刚切换代理 / OIT 的过滤代理没在监听: WinError 10061) 时,
-    再直连试一次; 直连也不行就报最初的错误."""
+    """通过当前系统代理发送请求；代理不可用时失败关闭，避免绕过 OIT 过滤规则."""
     if opener is not None:
         return opener(req, timeout=timeout)
-    try:
-        return _OPENER.open(req, timeout=timeout)
-    except urllib.error.URLError as e:
-        if not isinstance(getattr(e, "reason", None), ConnectionRefusedError) or not urllib.request.getproxies():
-            raise
-        try:
-            return _DIRECT.open(req, timeout=timeout)
-        except Exception:       # noqa: BLE001
-            raise e
+    return _OPENER.open(req, timeout=timeout)
 
 
 def proxy_hint() -> str:
@@ -228,7 +221,7 @@ def _build_body(profile: dict, system: str, messages: list, max_tokens: int, tem
 
 def chat_messages(profile: dict, system: str, messages: list, timeout: float = 90.0, opener=None,
                   max_tokens: int = MAX_TOKENS, temperature: float = 0.2, cache: bool = False, on_usage=None,
-                  think: bool = False, web: bool = False, tools: bool = False) -> str:
+                  think: bool = False, web: bool = False, tools: bool = False, on_delta=None) -> str:
     """默认关思考: OpenAI 兼容的中转会带 thinking: {"type": "disabled"}; 服务商不认这个字段回 400 时, 去掉它重试一次,
     并记住这个地址 (THINK_REJECT), 以后不再带. DeepSeek 官方地址一直带 (它认).
     Anthropic 协议关思考时不写 thinking (新版 Claude 不认 disabled). 中转不认 cache_control 回 400 时, 去掉缓存标记
@@ -237,7 +230,7 @@ def chat_messages(profile: dict, system: str, messages: list, timeout: float = 9
     web=True: 这一次开着网络 (沟通 规则 XIV 的限时网络, 方式见 web_mode); 服务商的接口不认搜索 (400 / 404 / 405 / 422) 时, 不联网再答一次, 并在系统提示里说明没能联网."""
     if tools:
         from .ai_tools import tool_chat
-        return tool_chat(profile, system, messages, timeout, opener, max_tokens, temperature, cache, on_usage, think, web)
+        return tool_chat(profile, system, messages, timeout, opener, max_tokens, temperature, cache, on_usage, think, web, on_delta)
     if web and profile.get("base_url"):
         try:
             return _web_chat(profile, system, messages, timeout, opener, max_tokens, temperature, cache, on_usage)
@@ -247,7 +240,7 @@ def chat_messages(profile: dict, system: str, messages: list, timeout: float = 9
             system = system + WEB_FAIL_NOTE
     if think and max_tokens > THINK_BUDGET and profile.get("base_url") and endpoint(profile) not in THINK_ON_REJECT:
         try:
-            return _chat_once(profile, system, messages, timeout, opener, max_tokens, temperature, cache, on_usage, False, True)
+            return _chat_once(profile, system, messages, timeout, opener, max_tokens, temperature, cache, on_usage, False, True, on_delta)
         except AIError as e:
             if not (e.kind == "http" and e.message.startswith("服务商返回 400")):
                 raise
@@ -255,12 +248,12 @@ def chat_messages(profile: dict, system: str, messages: list, timeout: float = 9
     tkey = endpoint(profile) if profile.get("base_url") else ""
     if tkey and tkey not in THINK_REJECT:
         try:
-            return _chat_once(profile, system, messages, timeout, opener, max_tokens, temperature, cache, on_usage, True)
+            return _chat_once(profile, system, messages, timeout, opener, max_tokens, temperature, cache, on_usage, True, on_delta=on_delta)
         except AIError as e:
             if not (e.kind == "http" and e.message.startswith("服务商返回 400") and not is_deepseek(profile)):
                 raise
             THINK_REJECT.add(tkey)
-    return _chat_once(profile, system, messages, timeout, opener, max_tokens, temperature, cache, on_usage, False)
+    return _chat_once(profile, system, messages, timeout, opener, max_tokens, temperature, cache, on_usage, False, on_delta=on_delta)
 
 
 def strip_think(text: str) -> str:
@@ -298,7 +291,8 @@ def _gemini_text(data: dict) -> str:
 
 
 def _chat_once(profile: dict, system: str, messages: list, timeout: float, opener, max_tokens: int,
-               temperature: float, cache: bool, on_usage, think_off: bool, think_on: bool = False) -> str:
+               temperature: float, cache: bool, on_usage, think_off: bool, think_on: bool = False,
+               on_delta=None) -> str:
     """带历史的一次请求: messages = [{"role": "user" | "assistant", "content": 文字}], 以 user 开头, 以 user 结尾.
     API 本身没有记忆, 想让模型记得前面说过的话, 就得每次把历史一起发过去 (沟通页, comm.py).
     cache: 提示缓存 (沟通里"分条发"会连着调用两次, 第二次的前面全是第一次发过的内容). 标缓存位置 / 带缓存键的只有
@@ -307,14 +301,23 @@ def _chat_once(profile: dict, system: str, messages: list, timeout: float, opene
     if cache and endpoint(profile) in CACHE_REJECT:          # 这个地址以前就不认 cache_control: 这次直接不标
         cache = False
     body = _build_body(profile, system, messages, max_tokens, temperature, cache, think_off, think_on)
-    try:
-        data = _send(profile, body, timeout, opener)
-    except AIError as e:
-        if not (cache and e.kind == "http" and e.message.startswith("服务商返回 400")):
-            raise
-        CACHE_REJECT.add(endpoint(profile))                   # 中转不认 cache_control: 去掉缓存标记再试一次, 以后不再带
-        body = _build_body(profile, system, messages, max_tokens, temperature, False, think_off, think_on)
-        data = _send(profile, body, timeout, opener)
+    stream = bool(on_delta and endpoint(profile) not in STREAM_REJECT)
+    while True:
+        try:
+            data = _send_stream(profile, body, timeout, opener, on_delta) if stream else _send(profile, body, timeout, opener)
+            break
+        except AIError as e:
+            if e.kind != "http" or not e.message.startswith("服务商返回 400"):
+                raise
+            if stream:
+                stream = False
+                STREAM_REJECT.add(endpoint(profile))
+            elif cache:
+                cache = False
+                CACHE_REJECT.add(endpoint(profile))
+                body = _build_body(profile, system, messages, max_tokens, temperature, False, think_off, think_on)
+            else:
+                raise
     if profile["protocol"] == "anthropic":
         try:
             text = "".join(b.get("text", "") for b in data.get("content", [])
@@ -339,6 +342,20 @@ def _chat_once(profile: dict, system: str, messages: list, timeout: float, opene
     return text
 
 
+def _http_error(e, key: str):
+    try:
+        payload = e.read(4000) if e.fp is not None else b""
+    except Exception:
+        payload = b""
+    if e.code == 403 and e.headers and e.headers.get("X-OIT-Reason"):
+        raise AIError("blocked", "请求被本程序的过滤代理拦截(该服务商的域名不在白名单中)")
+    if 300 <= e.code < 400:
+        raise AIError("http", f"服务商要求跳转到别的地址({e.code}),为保护 API Key 已拒绝.请检查 Base URL 是否填对.")
+    if e.code in (401, 403):
+        raise AIError("auth", "API Key 无效或没有权限:" + redact(_error_text(payload), key))
+    raise AIError("http", f"服务商返回 {e.code}:" + redact(_error_text(payload), key))
+
+
 def _send(profile: dict, body: dict, timeout: float, opener, url: str = None) -> dict:
     """把请求体 POST 给服务商 (url 默认是聊天接口), 返回解析好的 JSON. 失败抛 AIError."""
     check_profile(profile)
@@ -358,18 +375,7 @@ def _send(profile: dict, body: dict, timeout: float, opener, url: str = None) ->
         with _open_url(req, timeout, opener) as resp:
             raw = resp.read(2_000_000)
     except urllib.error.HTTPError as e:
-        try:
-            payload = e.read(4000) if e.fp is not None else b""
-        except Exception:
-            payload = b""
-        if e.code == 403 and e.headers and e.headers.get("X-OIT-Reason"):
-            raise AIError("blocked", "请求被本程序的过滤代理拦截(该服务商的域名不在白名单中)")
-        if 300 <= e.code < 400:
-            raise AIError("http", f"服务商要求跳转到别的地址({e.code}),为保护 API Key 已拒绝."
-                                  "请检查 Base URL 是否填对.")
-        if e.code in (401, 403):
-            raise AIError("auth", "API Key 无效或没有权限:" + redact(_error_text(payload), key))
-        raise AIError("http", f"服务商返回 {e.code}:" + redact(_error_text(payload), key))
+        _http_error(e, key)
     except (urllib.error.URLError, OSError, TimeoutError) as e:
         raise AIError("network", redact(f"连接失败:{getattr(e, 'reason', e)}", key))
 
@@ -380,6 +386,232 @@ def _send(profile: dict, body: dict, timeout: float, opener, url: str = None) ->
     if not isinstance(data, dict):
         raise AIError("format", "服务商返回了无法识别的内容")
     return data
+
+
+def _partial_json_text(raw: str, sent: str) -> str:
+    """从尚未结束的工具参数 JSON 中安全提取 oit_reply.text 的新增部分."""
+    m = re.search(r'"text"\s*:\s*"((?:\\.|[^"\\])*)', raw, re.S)
+    if not m:
+        return ""
+    src, out, i = m.group(1), [], 0
+    escapes = {'"': '"', "\\": "\\", "/": "/", "b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t"}
+    while i < len(src):
+        ch = src[i]
+        if ch != "\\":
+            out.append(ch)
+            i += 1
+            continue
+        if i + 1 >= len(src):
+            break
+        esc = src[i + 1]
+        if esc == "u":
+            digits = src[i + 2:i + 6]
+            if len(digits) != 4 or not re.fullmatch(r"[0-9a-fA-F]{4}", digits):
+                break
+            out.append(chr(int(digits, 16)))
+            i += 6
+        elif esc in escapes:
+            out.append(escapes[esc])
+            i += 2
+        else:
+            break
+    text = "".join(out)
+    return text[len(sent):] if text.startswith(sent) else ""
+
+
+def _send_stream(profile: dict, body: dict, timeout: float, opener, on_delta, url: str = None) -> dict:
+    """接收 SSE 并重建为原协议完整响应；只把正式回复正文增量交给预览回调."""
+    check_profile(profile)
+    protocol = profile["protocol"]
+    request_body = dict(body)
+    if protocol == "anthropic":
+        request_body["stream"] = True
+    elif protocol == "gemini":
+        request_body.pop("stream", None)
+        target = url or endpoint(profile)
+        target = target.replace(":generateContent", ":streamGenerateContent")
+        url = target + ("&" if "?" in target else "?") + "alt=sse"
+    else:
+        request_body["stream"] = True
+    key = (profile.get("api_key") or "").strip()
+    headers = {"Content-Type": "application/json", "User-Agent": "OIT/1.0", "Accept": "text/event-stream"}
+    if protocol == "anthropic":
+        headers["x-api-key"] = key
+        headers["anthropic-version"] = ANTHROPIC_VERSION
+    elif protocol == "gemini":
+        headers["x-goog-api-key"] = key
+    elif key:
+        headers["Authorization"] = "Bearer " + key
+    req = urllib.request.Request(url or endpoint(profile), data=json.dumps(request_body).encode("utf-8"),
+                                 headers=headers, method="POST")
+    def emit(text):
+        if text:
+            try:
+                on_delta(text)
+            except Exception:
+                pass
+    try:
+        with _open_url(req, timeout, opener) as resp:
+            content_type = str(getattr(resp, "headers", {}).get("Content-Type", "")).split(";", 1)[0].strip().lower()
+            if content_type == "application/json" or content_type.endswith("+json"):
+                STREAM_REJECT.add(endpoint(profile))
+                try:
+                    return json.loads(resp.read(2_000_000).decode("utf-8"))
+                except (ValueError, UnicodeDecodeError) as e:
+                    raise AIError("format", "服务商返回了无效的 JSON 响应") from e
+            if protocol == "openai":
+                message = {"role": "assistant", "content": "", "tool_calls": []}
+                usage, finish = None, None
+                tools = {}
+                for line in resp:
+                    line = line.decode("utf-8", "replace").strip()
+                    if not line.startswith("data:"):
+                        continue
+                    raw = line[5:].strip()
+                    if raw == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(raw)
+                    except ValueError:
+                        continue
+                    if isinstance(chunk.get("usage"), dict):
+                        usage = chunk["usage"]
+                    choices = chunk.get("choices") or []
+                    if not choices:
+                        continue
+                    choice = choices[0]
+                    delta = choice.get("delta") or {}
+                    content = delta.get("content")
+                    if isinstance(content, str):
+                        message["content"] += content
+                        if not request_body.get("tools"):
+                            emit(content)
+                    for part in delta.get("tool_calls") or []:
+                        i = part.get("index", 0)
+                        tool = tools.setdefault(i, {"id": "", "type": "function", "function": {"name": "", "arguments": ""}, "_sent": ""})
+                        if part.get("id"):
+                            tool["id"] = part["id"]
+                        fn = part.get("function") or {}
+                        tool["function"]["name"] += fn.get("name") or ""
+                        tool["function"]["arguments"] += fn.get("arguments") or ""
+                        if tool["function"]["name"] == "oit_reply":
+                            piece = _partial_json_text(tool["function"]["arguments"], tool["_sent"])
+                            if piece:
+                                tool["_sent"] += piece
+                                emit(piece)
+                    finish = choice.get("finish_reason") or finish
+                message["tool_calls"] = [{k: v for k, v in item.items() if not k.startswith("_")} for _, item in sorted(tools.items())]
+                if not message["tool_calls"]:
+                    message.pop("tool_calls")
+                choice = {"message": message, "finish_reason": finish}
+                data = {"choices": [choice]}
+                if usage is not None:
+                    data["usage"] = usage
+                return data
+            if protocol == "anthropic":
+                blocks, usage, stop_reason = {}, {}, None
+                event_name, data_lines = "", []
+                def anth_event():
+                    nonlocal usage, stop_reason
+                    if not data_lines:
+                        return
+                    try:
+                        obj = json.loads("\n".join(data_lines))
+                    except ValueError:
+                        return
+                    kind = obj.get("type") or event_name
+                    if kind == "message_start":
+                        usage = (obj.get("message") or {}).get("usage") or {}
+                    elif kind == "content_block_start":
+                        i, block = obj.get("index", 0), obj.get("content_block") or {}
+                        blocks[i] = dict(block)
+                        blocks[i]["_raw"] = ""
+                        if block.get("type") == "text" and not request_body.get("tools"):
+                            emit(block.get("text") or "")
+                    elif kind == "content_block_delta":
+                        i, delta = obj.get("index", 0), obj.get("delta") or {}
+                        block = blocks.setdefault(i, {"type": "text", "text": ""})
+                        if delta.get("type") == "text_delta":
+                            text = delta.get("text") or ""
+                            block["text"] = block.get("text", "") + text
+                            if not request_body.get("tools"):
+                                emit(text)
+                        elif delta.get("type") == "input_json_delta":
+                            raw = block.get("_raw", "") + (delta.get("partial_json") or "")
+                            block["_raw"] = raw
+                            if block.get("name") == "oit_reply":
+                                piece = _partial_json_text(raw, block.get("_sent", ""))
+                                if piece:
+                                    block["_sent"] = block.get("_sent", "") + piece
+                                    emit(piece)
+                    elif kind == "message_delta":
+                        delta = obj.get("delta") or {}
+                        stop_reason = delta.get("stop_reason") or stop_reason
+                        usage.update(obj.get("usage") or {})
+                for line in resp:
+                    line = line.decode("utf-8", "replace").rstrip("\r\n")
+                    if line.startswith("event:"):
+                        event_name = line[6:].strip()
+                    elif line.startswith("data:"):
+                        data_lines.append(line[5:].lstrip())
+                    elif not line:
+                        anth_event()
+                        event_name, data_lines = "", []
+                content = []
+                for _, source in sorted(blocks.items()):
+                    block = {k: v for k, v in source.items() if k not in ("_raw", "_sent")}
+                    if block.get("type") == "tool_use":
+                        try:
+                            block["input"] = json.loads(source.get("_raw") or "{}")
+                        except ValueError:
+                            raise AIError("format", "工具参数格式错误")
+                    content.append(block)
+                return {"content": content, "usage": usage, "stop_reason": stop_reason}
+            candidates, usage = {}, None
+            for line in resp:
+                line = line.decode("utf-8", "replace").strip()
+                if not line.startswith("data:"):
+                    continue
+                try:
+                    chunk = json.loads(line[5:].strip())
+                except ValueError:
+                    continue
+                for cand in chunk.get("candidates") or []:
+                    index = cand.get("index", 0)
+                    saved = candidates.setdefault(index, {"content": {"role": "model", "parts": []}})
+                    parts = saved["content"]["parts"]
+                    for incoming in (cand.get("content") or {}).get("parts") or []:
+                        if "text" in incoming:
+                            if parts and "text" in parts[-1] and parts[-1].get("thought") == incoming.get("thought"):
+                                parts[-1]["text"] += incoming["text"]
+                            else:
+                                parts.append(dict(incoming))
+                            if not request_body.get("tools") and not incoming.get("thought"):
+                                emit(incoming["text"])
+                        elif "functionCall" in incoming:
+                            parts.append(dict(incoming))
+                            call = incoming["functionCall"]
+                            if call.get("name") == "oit_reply":
+                                text = (call.get("args") or {}).get("text")
+                                if isinstance(text, str):
+                                    prev = saved.get("_sent", "")
+                                    if text.startswith(prev):
+                                        emit(text[len(prev):])
+                                        saved["_sent"] = text
+                    if cand.get("finishReason"):
+                        saved["finishReason"] = cand["finishReason"]
+                if isinstance(chunk.get("usageMetadata"), dict):
+                    usage = chunk["usageMetadata"]
+            data = {"candidates": [{k: v for k, v in c.items() if k != "_sent"} for _, c in sorted(candidates.items())]}
+            if usage is not None:
+                data["usageMetadata"] = usage
+            if not data["candidates"]:
+                raise AIError("format", "服务商没有返回流式内容")
+            return data
+    except urllib.error.HTTPError as e:
+        _http_error(e, key)
+    except (urllib.error.URLError, OSError, TimeoutError) as e:
+        raise AIError("network", redact(f"连接失败:{getattr(e, 'reason', e)}", key))
 
 
 def responses_url(profile: dict) -> str:

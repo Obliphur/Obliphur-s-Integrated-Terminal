@@ -4,6 +4,7 @@ package com.obliphur.oit.core
 object EnStrings {
     val MAP: Map<String, String> = hashMapOf(
         "导入乐谱到曲库…" to "Import score to library…",
+        "请先选择一个人设，再导入乐谱" to "Select a persona before importing a score",
         "选择要导入的乐谱" to "Choose a score to import",
         "MuseScore 和 MusicXML" to "MuseScore and MusicXML",
         "已加入曲库: {title}" to "Added to library: {title}",

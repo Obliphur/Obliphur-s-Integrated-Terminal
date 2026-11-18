@@ -114,12 +114,7 @@ def web_search(query: str, timeout: float = 15.0, opener=None) -> str:
 
 
 def _open_search(req, timeout, opener=None):
-    """搜索页可以跟随跳转 (不带任何 Key); 其余同 _open_url."""
+    """搜索页可以跟随跳转 (不带任何 Key)，但代理不可用时不绕过当前网络规则."""
     if opener is not None:
         return opener(req, timeout=timeout)
-    try:
-        return urllib.request.build_opener().open(req, timeout=timeout)
-    except urllib.error.URLError as e:
-        if not isinstance(getattr(e, "reason", None), ConnectionRefusedError) or not urllib.request.getproxies():
-            raise
-        return urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req, timeout=timeout)
+    return urllib.request.build_opener().open(req, timeout=timeout)

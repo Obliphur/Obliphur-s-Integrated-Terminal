@@ -197,8 +197,9 @@ object Ai {
      *  OpenAI 协议的服务商自动按相同的开头缓存, 只要每次请求的开头一模一样. onUsage(输入 token, 命中缓存的 token). */
     fun chatMessages(p: Profile, system: String, messages: List<Pair<String, String>>,
                      maxTokens: Int = MAX_TOKENS, temperature: Double = 0.2, timeoutMs: Int = 90_000,
-                     cache: Boolean = false, onUsage: ((Long, Long) -> Unit)? = null, think: Boolean = false, web: Boolean = false, tools: Boolean = false): String {
-        if (tools) return ToolProtocol.chat(p, system, messages, maxTokens, temperature, timeoutMs, cache, onUsage, think, web)
+                     cache: Boolean = false, onUsage: ((Long, Long) -> Unit)? = null, think: Boolean = false, web: Boolean = false,
+                     tools: Boolean = false, onDelta: ((String) -> Unit)? = null): String {
+        if (tools) return ToolProtocol.chat(p, system, messages, maxTokens, temperature, timeoutMs, cache, onUsage, think, web, onDelta)
         // web = true: 这一次开着网络 (沟通 规则 XIV 的限时网络, 方式见 webMode); 服务商的接口不认搜索 (400 / 404 / 405 / 422) 时,
         // 不联网再答一次, 并在系统提示里说明没能联网 (同 ai_assist.chat_messages)
         var sys = system
@@ -213,7 +214,7 @@ object Ai {
         // think = true: 这一次开思考 (沟通里规则判断出需要时, Comm.thinkReason); 开思考的字段回 400 时改回不开思考重试, 并记住这个地址 (同 ai_assist.chat_messages)
         if (think && maxTokens > THINK_BUDGET && p.baseUrl.isNotBlank() && endpoint(p) !in THINK_ON_REJECT) {
             try {
-                return chatOnce(p, sys, messages, maxTokens, temperature, timeoutMs, cache, onUsage, false, true)
+                return chatOnce(p, sys, messages, maxTokens, temperature, timeoutMs, cache, onUsage, false, true, onDelta)
             } catch (e: AiError) {
                 if (!(e.kind == "http" && (e.message ?: "").startsWith("服务商返回 400"))) throw e
                 THINK_ON_REJECT.add(endpoint(p))
@@ -223,13 +224,13 @@ object Ai {
         val tkey = if (p.baseUrl.isNotBlank()) endpoint(p) else ""
         if (tkey.isNotEmpty() && tkey !in THINK_REJECT) {
             try {
-                return chatOnce(p, sys, messages, maxTokens, temperature, timeoutMs, cache, onUsage, true)
+                return chatOnce(p, sys, messages, maxTokens, temperature, timeoutMs, cache, onUsage, true, onDelta = onDelta)
             } catch (e: AiError) {
                 if (!(e.kind == "http" && (e.message ?: "").startsWith("服务商返回 400") && !isDeepSeek(p))) throw e
                 THINK_REJECT.add(tkey)
             }
         }
-        return chatOnce(p, sys, messages, maxTokens, temperature, timeoutMs, cache, onUsage, false)
+        return chatOnce(p, sys, messages, maxTokens, temperature, timeoutMs, cache, onUsage, false, onDelta = onDelta)
     }
 
     /** 回了 400 的 endpoint (只在内存里): 它不认 thinking 字段, 之后不再带. */
@@ -240,6 +241,9 @@ object Ai {
 
     /** 回了 400 的 endpoint (只在内存里): 它不认 cache_control, 之后不再标缓存. */
     val CACHE_REJECT: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
+    /** 不支持 SSE 的自定义接口回退到完整响应后不再试流式。 */
+    val STREAM_REJECT: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
 
     /** 开思考时的思考 token 上限 (Anthropic 的最小值). */
     const val THINK_BUDGET = 1024
@@ -421,6 +425,210 @@ object Ai {
         return try { JSONObject(text) } catch (e: Exception) { throw AiError("format", "服务商返回了无法识别的内容") }
     }
 
+    private fun partialText(raw: String, sent: String): String {
+        val match = Regex(""""text"\s*:\s*"((?:\\.|[^"\\])*)""").find(raw) ?: return ""
+        val encoded = match.groupValues[1]
+        var safe = encoded
+        var value: String? = null
+        while (safe.isNotEmpty() && value == null) {
+            value = runCatching { JSONObject("""{"v":"$safe"}""").getString("v") }.getOrNull()
+            if (value == null) safe = safe.dropLast(1)
+        }
+        value = value ?: return ""
+        return if (value.startsWith(sent)) value.substring(sent.length) else ""
+    }
+
+    /** SSE 流结束后重建成现有解析器使用的完整响应对象。 */
+    internal fun sendStream(p: Profile, body: JSONObject, timeoutMs: Int, onDelta: (String) -> Unit, url: String? = null): JSONObject {
+        checkProfile(p)
+        val key = p.apiKey.trim()
+        val requestBody = JSONObject(body.toString())
+        var target = url ?: endpoint(p)
+        when (p.protocol) {
+            "anthropic" -> requestBody.put("stream", true)
+            "gemini" -> {
+                target = target.replace(":generateContent", ":streamGenerateContent") + "?alt=sse"
+            }
+            else -> {
+                requestBody.put("stream", true)
+            }
+        }
+        val conn = URL(target).openConnection() as HttpURLConnection
+        conn.instanceFollowRedirects = false
+        conn.connectTimeout = 30_000
+        conn.readTimeout = timeoutMs
+        conn.requestMethod = "POST"
+        conn.doOutput = true
+        conn.setRequestProperty("Content-Type", "application/json")
+        conn.setRequestProperty("Accept", "text/event-stream")
+        conn.setRequestProperty("User-Agent", "OIT/1.0")
+        if (p.protocol == "anthropic") {
+            conn.setRequestProperty("x-api-key", key)
+            conn.setRequestProperty("anthropic-version", ANTHROPIC_VERSION)
+        } else if (p.protocol == "gemini") conn.setRequestProperty("x-goog-api-key", key)
+        else if (key.isNotEmpty()) conn.setRequestProperty("Authorization", "Bearer $key")
+        try {
+            conn.outputStream.use { it.write(requestBody.toString().toByteArray(Charsets.UTF_8)) }
+            val code = conn.responseCode
+            val source = if (code in 200..299) conn.inputStream else conn.errorStream
+            if (code !in 200..299) {
+                val text = source?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
+                if (code in 300..399) throw AiError("http", "服务商要求跳转到别的地址($code),为保护 API Key 已拒绝.请检查 Base URL 是否填对.")
+                if (code == 401 || code == 403) throw AiError("auth", "API Key 无效或没有权限:" + redact(errorText(text), key))
+                throw AiError("http", "服务商返回 $code:" + redact(errorText(text), key))
+            }
+            val contentType = conn.contentType?.substringBefore(';')?.trim()?.lowercase().orEmpty()
+            if (contentType == "application/json" || contentType.endsWith("+json")) {
+                STREAM_REJECT.add(endpoint(p))
+                return runCatching { JSONObject(source!!.bufferedReader(Charsets.UTF_8).use { it.readText() }) }
+                    .getOrElse { throw AiError("format", "服务商返回了无效的 JSON 响应") }
+            }
+            val reader = source!!.bufferedReader(Charsets.UTF_8)
+            if (p.protocol == "openai") {
+                val message = JSONObject().put("role", "assistant").put("content", "")
+                val tools = sortedMapOf<Int, JSONObject>()
+                var usage: JSONObject? = null
+                var finish = ""
+                reader.useLines { lines -> lines.forEach { line ->
+                    if (!line.startsWith("data:")) return@forEach
+                    val raw = line.substringAfter("data:").trim()
+                    if (raw == "[DONE]") return@forEach
+                    val chunk = runCatching { JSONObject(raw) }.getOrNull() ?: return@forEach
+                    chunk.optJSONObject("usage")?.let { usage = it }
+                    val choice = chunk.optJSONArray("choices")?.optJSONObject(0) ?: return@forEach
+                    val delta = choice.optJSONObject("delta") ?: JSONObject()
+                    delta.optString("content").takeIf { it.isNotEmpty() }?.let {
+                        message.put("content", message.optString("content") + it)
+                        if (!requestBody.has("tools")) onDelta(it)
+                    }
+                    val calls = delta.optJSONArray("tool_calls") ?: JSONArray()
+                    for (i in 0 until calls.length()) {
+                        val part = calls.optJSONObject(i) ?: continue
+                        val index = part.optInt("index")
+                        val tool = tools.getOrPut(index) { JSONObject().put("id", "").put("type", "function").put("function", JSONObject().put("name", "").put("arguments", "")).put("_sent", "") }
+                        if (part.has("id")) tool.put("id", tool.optString("id") + part.optString("id"))
+                        val fn = part.optJSONObject("function") ?: JSONObject()
+                        val call = tool.getJSONObject("function")
+                        if (fn.has("name")) call.put("name", call.optString("name") + fn.optString("name"))
+                        if (fn.has("arguments")) call.put("arguments", call.optString("arguments") + fn.optString("arguments"))
+                        if (call.optString("name") == "oit_reply") {
+                            val sent = tool.optString("_sent")
+                            val piece = partialText(call.optString("arguments"), sent)
+                            if (piece.isNotEmpty()) { tool.put("_sent", sent + piece); onDelta(piece) }
+                        }
+                    }
+                    finish = choice.optString("finish_reason", finish)
+                } }
+                if (tools.isNotEmpty()) message.put("tool_calls", JSONArray().also { a -> tools.values.forEach { it.remove("_sent"); a.put(it) } })
+                val choice = JSONObject().put("message", message).put("finish_reason", finish)
+                val result = JSONObject().put("choices", JSONArray().put(choice))
+                usage?.let { result.put("usage", it) }
+                return result
+            }
+            if (p.protocol == "anthropic") {
+                val blocks = sortedMapOf<Int, JSONObject>()
+                val usage = JSONObject()
+                var event = ""
+                val data = ArrayList<String>()
+                fun processEvent() {
+                    if (data.isEmpty()) return
+                    val obj = runCatching { JSONObject(data.joinToString("\n")) }.getOrNull() ?: return
+                    when (obj.optString("type", event)) {
+                        "message_start" -> obj.optJSONObject("message")?.optJSONObject("usage")?.let { merge(usage, it) }
+                        "content_block_start" -> {
+                            val block = JSONObject(obj.optJSONObject("content_block")?.toString() ?: "{}")
+                            block.put("_raw", "").put("_sent", "")
+                            blocks[obj.optInt("index")] = block
+                            if (block.optString("type") == "text" && !requestBody.has("tools")) block.optString("text").takeIf { it.isNotEmpty() }?.let(onDelta)
+                        }
+                        "content_block_delta" -> {
+                            val block = blocks.getOrPut(obj.optInt("index")) { JSONObject().put("type", "text").put("text", "") }
+                            val delta = obj.optJSONObject("delta") ?: JSONObject()
+                            if (delta.optString("type") == "text_delta") {
+                                val text = delta.optString("text")
+                                block.put("text", block.optString("text") + text)
+                                if (!requestBody.has("tools")) onDelta(text)
+                            } else if (delta.optString("type") == "input_json_delta") {
+                                val raw = block.optString("_raw") + delta.optString("partial_json")
+                                block.put("_raw", raw)
+                                if (block.optString("name") == "oit_reply") {
+                                    val sent = block.optString("_sent")
+                                    val piece = partialText(raw, sent)
+                                    if (piece.isNotEmpty()) { block.put("_sent", sent + piece); onDelta(piece) }
+                                }
+                            }
+                        }
+                        "message_delta" -> {
+                            obj.optJSONObject("usage")?.let { merge(usage, it) }
+                            obj.optJSONObject("delta")?.optString("stop_reason")?.takeIf { it.isNotEmpty() }?.let { usage.put("_stop_reason", it) }
+                        }
+                    }
+                }
+                reader.useLines { lines -> lines.forEach { line ->
+                    when {
+                        line.startsWith("event:") -> event = line.substringAfter("event:").trim()
+                        line.startsWith("data:") -> data.add(line.substringAfter("data:").trimStart())
+                        line.isEmpty() -> { processEvent(); event = ""; data.clear() }
+                    }
+                } }
+                processEvent()
+                val content = JSONArray()
+                for (block in blocks.values) {
+                    if (block.optString("type") == "tool_use") {
+                        val raw = block.optString("_raw")
+                        block.put("input", if (raw.isNotEmpty()) JSONObject(raw) else block.optJSONObject("input") ?: JSONObject())
+                    }
+                    block.remove("_raw"); block.remove("_sent"); content.put(block)
+                }
+                val result = JSONObject().put("content", content).put("usage", usage)
+                if (usage.has("_stop_reason")) result.put("stop_reason", usage.remove("_stop_reason"))
+                return result
+            }
+            val candidates = sortedMapOf<Int, JSONObject>()
+            var usage: JSONObject? = null
+            reader.useLines { lines -> lines.forEach { line ->
+                if (!line.startsWith("data:")) return@forEach
+                val chunk = runCatching { JSONObject(line.substringAfter("data:").trim()) }.getOrNull() ?: return@forEach
+                val incoming = chunk.optJSONArray("candidates") ?: JSONArray()
+                for (n in 0 until incoming.length()) {
+                    val cand = incoming.optJSONObject(n) ?: continue
+                    val saved = candidates.getOrPut(cand.optInt("index")) { JSONObject().put("content", JSONObject().put("role", "model").put("parts", JSONArray())) }
+                    val parts = saved.getJSONObject("content").getJSONArray("parts")
+                    val deltaParts = cand.optJSONObject("content")?.optJSONArray("parts") ?: JSONArray()
+                    for (i in 0 until deltaParts.length()) {
+                        val part = deltaParts.optJSONObject(i) ?: continue
+                        if (part.has("text")) {
+                            val text = part.optString("text")
+                            if (parts.length() > 0 && parts.optJSONObject(parts.length() - 1)?.has("text") == true) {
+                                val last = parts.getJSONObject(parts.length() - 1)
+                                last.put("text", last.optString("text") + text)
+                            } else parts.put(JSONObject(part.toString()))
+                            if (!requestBody.has("tools") && !part.optBoolean("thought")) onDelta(text)
+                        } else if (part.has("functionCall")) {
+                            parts.put(JSONObject(part.toString()))
+                            val call = part.getJSONObject("functionCall")
+                            val text = call.optJSONObject("args")?.optString("text").orEmpty()
+                            val sent = saved.optString("_sent")
+                            if (call.optString("name") == "oit_reply" && text.startsWith(sent)) { onDelta(text.substring(sent.length)); saved.put("_sent", text) }
+                        }
+                    }
+                    cand.optString("finishReason").takeIf { it.isNotEmpty() }?.let { saved.put("finishReason", it) }
+                }
+                chunk.optJSONObject("usageMetadata")?.let { usage = it }
+            } }
+            val result = JSONObject().put("candidates", JSONArray().also { a -> candidates.values.forEach { it.remove("_sent"); a.put(it) } })
+            usage?.let { result.put("usageMetadata", it) }
+            if (candidates.isEmpty()) throw AiError("format", "服务商没有返回流式内容")
+            return result
+        } catch (e: AiError) { throw e }
+        catch (e: Exception) { throw AiError("network", redact("连接失败:${e.message ?: e.javaClass.simpleName}", key)) }
+        finally { conn.disconnect() }
+    }
+
+    private fun merge(target: JSONObject, source: JSONObject) {
+        for (key in source.keys()) target.put(key, source.opt(key))
+    }
+
     /** 跳过 thought 部分, 从剩余 text 中提取最后一个完整的正式回复块. */
     internal fun geminiText(d: JSONObject): String {
         val cands = d.optJSONArray("candidates")
@@ -441,15 +649,22 @@ object Ai {
 
     private fun chatOnce(p: Profile, system: String, messages: List<Pair<String, String>>,
                          maxTokens: Int, temperature: Double, timeoutMs: Int,
-                         cache: Boolean, onUsage: ((Long, Long) -> Unit)?, thinkOff: Boolean, thinkOn: Boolean = false): String {
+                         cache: Boolean, onUsage: ((Long, Long) -> Unit)?, thinkOff: Boolean, thinkOn: Boolean = false,
+                         onDelta: ((String) -> Unit)? = null): String {
         var useCache = cache && endpoint(p) !in CACHE_REJECT       // 这个地址以前就不认 cache_control: 这次直接不标
-        val d = try {
-            send(p, buildBody(p, system, messages, maxTokens, temperature, useCache, thinkOff, thinkOn), timeoutMs)
-        } catch (e: AiError) {
-            if (!(useCache && e.kind == "http" && (e.message ?: "").startsWith("服务商返回 400"))) throw e
-            CACHE_REJECT.add(endpoint(p))                          // 中转不认 cache_control: 去掉缓存标记再试一次, 以后不再带
-            useCache = false
-            send(p, buildBody(p, system, messages, maxTokens, temperature, false, thinkOff, thinkOn), timeoutMs)
+        var useStream = onDelta != null && endpoint(p) !in STREAM_REJECT
+        var d: JSONObject
+        while (true) {
+            try {
+                val body = buildBody(p, system, messages, maxTokens, temperature, useCache, thinkOff, thinkOn)
+                d = if (useStream) sendStream(p, body, timeoutMs, onDelta!!) else send(p, body, timeoutMs)
+                break
+            } catch (e: AiError) {
+                if (e.kind != "http" || !(e.message ?: "").startsWith("服务商返回 400")) throw e
+                if (useStream) { useStream = false; STREAM_REJECT.add(endpoint(p)) }
+                else if (useCache) { useCache = false; CACHE_REJECT.add(endpoint(p)) }
+                else throw e
+            }
         }
         val out = if (p.protocol == "gemini") geminiText(d) else try {
             if (p.protocol == "anthropic") {

@@ -1640,9 +1640,8 @@ class CommTest {
     @Test
     fun splitReply() {
         val p = CommText.prefixPrompt()
-        assertTrue("VIII.话可分说" in p && "两次API由OIT分别调用" in p && "oit_reply(refuse=true)" in p)
-        assertTrue("每次只提交一次回复" in p && "不输出思考" in p)
-        assertTrue(p.indexOf("VII.问OIT使用数据") < p.indexOf("VIII.") && p.indexOf("VIII.") < p.indexOf("XXI."))
+        assertTrue("分条发送时，两次API由OIT分别调用" in p && "oit_reply(refuse=true)" in p)
+        assertTrue("每次调用只提交本次唯一正式回复" in p && "不输出思考" in p)
         val td = Files.createTempDirectory("oit").toFile()
         val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
         c.importPersona("小夏.txt", "你是小夏".byteInputStream())
@@ -1676,19 +1675,19 @@ class CommTest {
         }
         c.send("等等"); wait(c)
         assertEquals(listOf("你好", "甲", "等等", "回应等等"), c.visible().map { it.text })
-        // 分条发的开关: 关着时不调用第二次, 前置 prompt 里也没有第 VIII 条; 开关随设备同步
+        // 分条提示由公共协议固定提供；Assistant 可通过协议组装器排除这一条规则。
         c.set(splitSend = false)
-        assertFalse("\nVIII." in CommText.prefixPrompt(false))
-        assertTrue("\nVIII." in CommText.prefixPrompt(true))
+        assertFalse("分条发送时" in CommText.prefixPrompt(false))
+        assertTrue("分条发送时" in CommText.prefixPrompt(true))
         val nf = followCalls.size
         script.add("单条"); follow.add("不该出现")
         c.send("关了吗"); wait(c)
         assertEquals("单条", c.visible().last().text)
         assertEquals(nf, followCalls.size)
-        assertEquals(false, c.syncDoc()["split"])
+        assertFalse(c.syncDoc().containsKey("split") || c.syncDoc().containsKey("split_interval"))
         follow.clear()
         c.set(splitSend = true)
-        assertEquals(true, c.syncDoc()["split"])
+        assertFalse(c.syncDoc().containsKey("split") || c.syncDoc().containsKey("split_interval"))
         // 第二条调用要等第一条真的显示出来: 打字延时没走完时先不调用; 被藏起来也算显示过
         val td2 = Files.createTempDirectory("oit").toFile()
         val ch = comm(File(td2, "d").also { it.mkdirs() }, File(td2, "p"))
@@ -1733,8 +1732,7 @@ class CommTest {
         }
         // IX: [waiting for reply]:[N] — 所有 [] 都不显示; N 分钟内用户没回复, 对方可以追问一次
         val pr = CommText.prefixPrompt()
-        assertTrue("IX." in pr && "wait_minutes" in pr && "追问" in pr)
-        assertTrue(pr.indexOf("VIII.") < pr.indexOf("IX.") && pr.indexOf("IX.") < pr.indexOf("XXI."))
+        assertTrue("wait_minutes" in pr && "追问" in pr)
         assertEquals("在吗?" to 10.0, CommText.cleanReply("在吗?[waiting for reply]:[10]"))
         assertEquals("好的 嗯\n\n好" to 0.0, CommText.cleanReply("好的[微笑] 嗯\n\n\n\n[动作]好"))
         assertEquals("" to 0.5, CommText.cleanReply("[Waiting For Reply]：[ 0.5 ]"))
@@ -2004,16 +2002,15 @@ class CommTest {
         assertEquals("短", Comm.clipMessage("短"))
     }
 
-    /** 用户设置的分条发送间隔：到点才发，并随配置和设备同步保存。 */
+    /** 分条续发固定等待五秒；旧设置与同步数据不再改变它。 */
     @Test
     fun followUpDelay() {
         val td = Files.createTempDirectory("oit").toFile()
         val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
         c.set(persona = "Claudia.txt")
         assertEquals(5, c.splitInterval)
-        c.set(splitInterval = 7)
-        c.followDelayMs = null
-        assertEquals(7, c.syncDoc()["split_interval"])
+        c.followDelayMs = 7_000L
+        assertFalse(c.syncDoc().containsKey("split_interval") || c.syncDoc().containsKey("split"))
         val n = followCalls.size
         script.add("第一句"); follow.add("第二句")
         c.send("在吗"); wait(c)
@@ -2029,14 +2026,14 @@ class CommTest {
         assertEquals(n + 1, followCalls.size)
         val peer = comm(File(td, "peer").also { it.mkdirs() }, File(td, "p"))
         peer.applyDoc(c.syncDoc())
-        assertEquals(7, peer.splitInterval)
+        assertEquals(5, peer.splitInterval)
         peer.applyDoc(mapOf("split_interval" to 0))
-        assertEquals(0, peer.splitInterval)
+        assertEquals(5, peer.splitInterval)
         peer.applyDoc(mapOf("split_interval" to -1))
-        assertEquals(0, peer.splitInterval)
+        assertEquals(5, peer.splitInterval)
         peer.applyDoc(mapOf("split_interval" to true))
-        assertEquals(0, peer.splitInterval)
-        assertEquals(7, comm(File(td, "d"), File(td, "p")).splitInterval)
+        assertEquals(5, peer.splitInterval)
+        assertEquals(5, comm(File(td, "d"), File(td, "p")).splitInterval)
     }
 
     /** 从老版本更新上来 (第一次迁移): 改过的 Claudia 不能被覆盖, 并且要能弹"修改人设"提醒. */
@@ -2963,7 +2960,8 @@ class CommTest {
         val srv = java.net.ServerSocket(0, 50, java.net.InetAddress.getByName("127.0.0.1"))
         fun reply(out: java.io.OutputStream, code: Int, text: String) {
             val b = text.toByteArray(Charsets.UTF_8)
-            out.write("HTTP/1.1 $code X\r\nContent-Length: ${b.size}\r\nConnection: close\r\n\r\n".toByteArray())
+            val type = if (text.startsWith("data:")) "text/event-stream" else "application/json"
+            out.write("HTTP/1.1 $code X\r\nContent-Type: $type\r\nContent-Length: ${b.size}\r\nConnection: close\r\n\r\n".toByteArray())
             out.write(b)
             out.flush()
         }
@@ -2985,11 +2983,21 @@ class CommTest {
                         method == "GET" && path == "/v1/models" -> reply(out, 200, """{"data":[{"id":"gemini-test"}]}""")
                         method == "GET" -> reply(out, 200, bing)
                         path.startsWith("/nosearch") -> reply(out, 400, """{"error":{"message":"unknown tool"}}""")
+                        path.startsWith("/legacy") -> reply(out, 200, """{"choices":[{"message":{"content":"完整 JSON"}}]}""")
                         path.endsWith("/messages") -> reply(out, 200, """{"content":[{"type":"text","text":"我先查一下. "},{"type":"server_tool_use","id":"s1","name":"web_search","input":{}},{"type":"web_search_tool_result","tool_use_id":"s1","content":[]},{"type":"text","text":"查到了: "},{"type":"text","text":"答案 A"}],"stop_reason":"end_turn","usage":{"input_tokens":7}}""")
                         else -> {
                             val o = JSONObject(req)
                             val toolDone = (0 until o.getJSONArray("messages").length()).any { i -> o.getJSONArray("messages").getJSONObject(i).optString("role") == "tool" }
-                            if (o.has("tools") && !toolDone)
+                            if (o.optBoolean("stream") && o.has("tools") && !toolDone) {
+                                val outText = "{\"text\":\"流式工具\"}"
+                                val first = JSONObject().put("choices", org.json.JSONArray().put(JSONObject().put("delta", JSONObject().put("tool_calls", org.json.JSONArray().put(JSONObject().put("index", 0).put("id", "c2").put("function", JSONObject().put("name", "oit_reply").put("arguments", outText.take(12))))))))
+                                val second = JSONObject().put("choices", org.json.JSONArray().put(JSONObject().put("delta", JSONObject().put("tool_calls", org.json.JSONArray().put(JSONObject().put("index", 0).put("function", JSONObject().put("arguments", outText.drop(12)))))).put("finish_reason", "tool_calls")))
+                                reply(out, 200, "data: $first\n\ndata: $second\n\ndata: [DONE]\n\n")
+                            } else if (o.optBoolean("stream")) {
+                                val first = JSONObject().put("choices", org.json.JSONArray().put(JSONObject().put("delta", JSONObject().put("content", "流"))))
+                                val second = JSONObject().put("choices", org.json.JSONArray().put(JSONObject().put("delta", JSONObject().put("content", "式答案")).put("finish_reason", "stop")))
+                                reply(out, 200, "data: $first\n\ndata: $second\n\ndata: [DONE]\n\n")
+                            } else if (o.has("tools") && !toolDone)
                                 reply(out, 200, """{"choices":[{"message":{"content":null,"tool_calls":[{"id":"c1","type":"function","function":{"name":"web_search","arguments":"{\"query\":\"今天 新闻\"}"}}]}}]}""")
                             else reply(out, 200, """{"choices":[{"message":{"content":"答案 F"}}]}""")
                         }
@@ -3039,6 +3047,21 @@ class CommTest {
             assertEquals("/v1/chat/completions", seen.last().first)
             val rb = JSONObject(seen.last().second)
             assertFalse(rb.has("thinking") || rb.has("prompt_cache_key") || rb.has("cache_control"))
+            seen.clear()
+            val streamed = mutableListOf<String>()
+            assertEquals("流式答案", Ai.chatMessages(pf, "SYS", m1, onDelta = { streamed.add(it) }))
+            assertEquals("流式答案", streamed.joinToString(""))
+            assertTrue(JSONObject(seen.last().second).optBoolean("stream"))
+            seen.clear()
+            val toolParts = mutableListOf<String>()
+            val streamedTool = Ai.chatMessages(pf, "SYS", m1, tools = true, onDelta = { toolParts.add(it) })
+            assertEquals("流式工具", ToolProtocol.args(streamedTool).optString("text"))
+            assertEquals("流式工具", toolParts.joinToString(""))
+            seen.clear()
+            val legacyProfile = pf.copy(baseUrl = "$base/legacy")
+            assertEquals("完整 JSON", Ai.chatMessages(legacyProfile, "SYS", m1, onDelta = {}))
+            assertTrue(JSONObject(seen.single().second).optBoolean("stream"))
+            assertTrue(Ai.STREAM_REJECT.contains(Ai.endpoint(legacyProfile)))
         } finally {
             Ai.SEARCH_URL = saved
             srv.close()

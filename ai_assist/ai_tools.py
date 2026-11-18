@@ -194,7 +194,7 @@ def _parse_response(data, protocol, plain_text):
     return pack(_clean_leaked_reply(args.get("text", "")) if name == "oit_reply" else "", name, args, wire)
 
 
-def tool_chat(profile, system, messages, timeout, opener, max_tokens, temperature, cache, on_usage, think, web):
+def tool_chat(profile, system, messages, timeout, opener, max_tokens, temperature, cache, on_usage, think, web, on_delta=None):
     """工具往返沿用原生协议；搜索也是工具，禁止在限时网络外执行。"""
     from . import ai_http as http
     protocol = profile["protocol"]
@@ -202,16 +202,20 @@ def tool_chat(profile, system, messages, timeout, opener, max_tokens, temperatur
     for round_index in range(http.WEB_ROUNDS + 1):
         use_cache = cache and http.endpoint(profile) not in http.CACHE_REJECT
         use_think = think and http.endpoint(profile) not in http.THINK_ON_REJECT
-        for attempt in range(3):
+        use_stream = bool(on_delta and http.endpoint(profile) not in http.STREAM_REJECT)
+        for attempt in range(4):
             body = http._build_body(profile, system, history, max_tokens, temperature, use_cache, False, use_think)
             apply_body(body, protocol, history, web and round_index < http.WEB_ROUNDS)
             try:
-                data = http._send(profile, body, timeout, opener)
+                data = http._send_stream(profile, body, timeout, opener, on_delta) if use_stream else http._send(profile, body, timeout, opener)
                 break
             except AIError as e:
                 if not (e.kind == "http" and e.message.startswith("服务商返回 400")):
                     raise
-                if use_cache:
+                if use_stream:
+                    use_stream = False
+                    http.STREAM_REJECT.add(http.endpoint(profile))
+                elif use_cache:
                     use_cache = False
                     http.CACHE_REJECT.add(http.endpoint(profile))
                 elif use_think:

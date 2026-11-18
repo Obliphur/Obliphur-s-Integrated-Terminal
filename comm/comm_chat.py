@@ -97,7 +97,11 @@ class ChatMixin:
 
     def visible(self) -> list:
         """聊天里显示的消息. 不能用沟通的时候 (专注 / 睡眠 / 外出 / 无言为真) 收到的对方的消息先藏起来 (hold), 回到休息 / 空闲再显示 (24.4)."""
-        return [m for m in self.messages if m["role"] in ("me", "ai") and not m.get("hold")]
+        rows = [m for m in self.messages if m["role"] in ("me", "ai") and not m.get("hold")]
+        if self._stream_preview:
+            rows.append({"id": "streaming", "role": "ai", "text": self._stream_preview,
+                         "at": self.now().isoformat(timespec="seconds"), "streaming": True})
+        return rows
 
     def unanswered(self) -> bool:
         vis = [m for m in self.messages if m["role"] in ("me", "ai")]          # 藏起来的回复也算回复过了

@@ -966,7 +966,8 @@ class Comm(
     private val now: () -> LocalDateTime = LocalDateTime::now,
     private val chatFn: (Profile, String, List<Pair<String, String>>) -> String =
         { p, s, m -> Ai.chatMessages(p, s, m, Comm.CHAT_TOKENS, Comm.CHAT_TEMPERATURE, Comm.CHAT_TIMEOUT_MS, cache = true,
-            onUsage = { i, c -> Comm.usageSink(i, c) }, think = Comm.thinkLocal.get() == true, web = Comm.webLocal.get() == true, tools = Comm.toolsLocal.get() == true) },
+            onUsage = { i, c -> Comm.usageSink(i, c) }, think = Comm.thinkLocal.get() == true, web = Comm.webLocal.get() == true,
+            tools = Comm.toolsLocal.get() == true, onDelta = Comm.deltaLocal.get()) },
 ) {
     private val musicLibrary by lazy { MusicLibrary(dir, com.obliphur.oit.OitApp.instance.assets) }
     fun importScore(source: File, owner: String = personaName()): JSONObject {
@@ -976,6 +977,7 @@ class Comm(
     fun selectedScore() = musicLibrary.selection(personaName(), related(), interactionPrepare().valence)
     companion object {
         val toolsLocal = ThreadLocal<Boolean>()
+        val deltaLocal = ThreadLocal<((String) -> Unit)?>()
         /** 每次请求的用量记录 (输入 token, 命中缓存的 token): 写进 comm.log. 由 Comm 的实例接上. */
         @Volatile var usageSink: (Long, Long) -> Unit = { _, _ -> }
         /** 这个线程里的请求要不要开思考 (请求线程开头设置; chatFn 的签名不变, 测试里的假 chatFn 不用认识它). */
@@ -1148,8 +1150,9 @@ class Comm(
     var onJointDue: (Joint) -> Unit = {}
     private var jointDueId = ""
     private var jointPending: Pair<String, Long>? = null          // 联合行动: 要让对方回应一句, 但对方正在回别的话: (系统消息, 毫秒时间戳), 等对方空下来再调用
-    /** 分条发 (规则 VIII) 开着吗: 用户说完话, 对方的第一条收到之后再调用一次 API, 让对方可以把话分开说. 默认开; 随设备同步. */
+    /** 分条续发兼容状态；不再提供用户设置或设备同步。 */
     var splitSend = true; private set
+    /** 固定续发等待时间，不再提供用户设置或设备同步。 */
     var splitInterval = Cfg.COMM_SPLIT_INTERVAL_SECONDS; private set
     /** 日程跟随 (设置 → 沟通 → 日程跟随) 开着吗: 对方的状态变了, 问用户要不要跟着变; 合约期间自动关闭. 默认关; 随设备同步. */
     var schedFollow = false; private set
@@ -1235,6 +1238,7 @@ class Comm(
     private var lastTs = 0L
     val messages = ArrayList<ChatMsg>()
     @Volatile var version = 0; private set
+    @Volatile private var streamPreview = ""
     @Volatile var unread = 0; private set
     @Volatile var busy = false; private set
     @Volatile private var busySince = 0L
@@ -1451,8 +1455,8 @@ class Comm(
                 else -> 0
             }
             userProfile = d.optString("user_profile", "")
-            splitSend = d.optBoolean("split_send", true)
-            splitInterval = (d.opt("split_interval") as? Number)?.toDouble()?.takeIf { it >= 0 && it <= Int.MAX_VALUE && it % 1.0 == 0.0 }?.toInt() ?: Cfg.COMM_SPLIT_INTERVAL_SECONDS
+            splitSend = true
+            splitInterval = Cfg.COMM_SPLIT_INTERVAL_SECONDS
             schedFollow = d.optBoolean("sched_follow", false)
             proLang = d.optString("pro_lang", "").trim().take(MAX_PRO_LANG)
             thinkAuto = d.optBoolean("think_auto", true)
@@ -1494,6 +1498,7 @@ class Comm(
         pid = np
         loadState(others.remove(np) ?: readChat(np))
         epoch++
+        streamPreview = ""
         error = ""
         unread = 0
         reloadSchedule("换人设")
@@ -1510,7 +1515,7 @@ class Comm(
             .put("user_profile", userProfile).put("seeded", seeded).put("assistant_seeded", assistantSeeded)
             .put("claudia_migrated", claudiaMigrated).put("claudia_modified", claudiaModified)
             .put("claudia_notified", claudiaNotified).put("claudia_base", claudiaBase).put("routine_base", routineBase).put("background_base", backgroundBase)
-            .put("legacy_done", legacyDone).put("split_interval", splitInterval).put("split_send", splitSend).put("think_auto", thinkAuto).put("sched_follow", schedFollow).put("pro_lang", proLang)
+            .put("legacy_done", legacyDone).put("think_auto", thinkAuto).put("sched_follow", schedFollow).put("pro_lang", proLang)
             .put("bg_pro", bgPro).put("mute_pro", JSONArray(muted.toList()))
             .put("idle_use", JSONObject().put("d", idleDay).put("s", idleSec))
             .put("cond_days", JSONObject().also { c -> for ((k, v) in condDays) c.put(k, JSONArray(listOf(v.first, v.second))) })
@@ -1619,8 +1624,6 @@ class Comm(
             doc["notice:$key"] = JSONObject(value.toString())
         }
         if (userProfile.isNotEmpty()) doc["profile"] = userProfile
-        doc["split_interval"] = splitInterval
-        doc["split"] = splitSend                                    // 分条发的开关: 调用 AI 的是主端, 两台设备要一致
         doc["think"] = thinkAuto                                    // 自动开思考的开关: 同上
         doc["bgpro"] = bgPro
         doc["sfollow"] = schedFollow                                // 日程跟随的开关: 提示在主端弹, 两台设备要一致
@@ -1682,10 +1685,6 @@ class Comm(
                         rec.put("shown", rec.optBoolean("shown") || v.optBoolean("shown"))
                     }
                 }
-                key == "split_interval" && v is Number -> v.toDouble().takeIf { it >= 0 && it <= Int.MAX_VALUE && it % 1.0 == 0.0 }?.toInt()?.let {
-                    if (it != splitInterval) { splitInterval = it; saveCfg(); changed() }
-                }
-                key == "split" && v is Boolean -> if (v != splitSend) { splitSend = v; saveCfg(); changed() }
                 key == "think" && v is Boolean -> if (v != thinkAuto) { thinkAuto = v; saveCfg(); changed() }
                 key == "prolang" && v is String -> v.trim().take(MAX_PRO_LANG).let { if (it != proLang) { proLang = it; saveCfg(); changed() } }
                 key == "idle" && v is JSONObject -> {
@@ -1851,7 +1850,7 @@ class Comm(
         avatarAi?.let { this.avatarAi = it.trim().take(4) }
         saveCfg()
         changed()
-        if (splitInterval != null || splitSend != null || thinkAuto != null || bgPro != null || showAvatar != null || schedFollow != null || proLang != null) push()
+        if (thinkAuto != null || bgPro != null || showAvatar != null || schedFollow != null || proLang != null) push()
     }
 
     /** 这一次请求要不要开思考 (第一层: 只看规则, 不额外调用 API; 同 comm.py 的 think_reason): 返回原因, "" = 不开.
@@ -3919,7 +3918,8 @@ class Comm(
     }
 
     /** 聊天里显示的消息 (藏起来的不算, 见 ChatMsg.hold). */
-    fun visible() = messages.filter { (it.role == "me" || it.role == "ai") && !it.hold }
+    fun visible(): List<ChatMsg> = messages.filter { (it.role == "me" || it.role == "ai") && !it.hold } +
+        if (streamPreview.isNotEmpty()) listOf(ChatMsg(Int.MIN_VALUE, "ai", streamPreview, now().toString(), "streaming")) else emptyList()
 
     private fun unanswered() = messages.lastOrNull { it.role == "me" || it.role == "ai" }?.role == "me"      // 藏着的回复也算回复过了
 
@@ -4568,6 +4568,7 @@ class Comm(
         if (msgs.isNotEmpty() && msgs.last().first == "user") msgs[msgs.size - 1] = "user" to (msgs.last().second + "\n\n" + note)
         else msgs.add("user" to note)
         val ep = epoch
+        streamPreview = ""
         busy = true
         busySince = System.currentTimeMillis()
         val started = busySince
@@ -4582,6 +4583,12 @@ class Comm(
             toolsLocal.set(true)
             Comm.thinkLocal.set(why.isNotEmpty())
             Comm.webLocal.set(web)
+            Comm.deltaLocal.set { text ->
+                if (ep == epoch && busy) {
+                    streamPreview += text
+                    changed()
+                }
+            }
             if (image != null) Ai.imageLocal.set(image)
             val res = try {
                 var convo = msgs.toMutableList()
@@ -4666,11 +4673,13 @@ class Comm(
                 Result(kind, extra, "", e.javaClass.simpleName, ep)
             }
             Ai.imageLocal.remove()
+            Comm.deltaLocal.remove()
             results.add(res)
         }.apply { isDaemon = true }.start()
     }
 
     private fun finish(result: Result) {
+        streamPreview = ""
         val tensionReply = result.reply
         val r = Result(result.kind, result.extra, CommInteraction.cleanTension(result.reply), result.err, result.epoch, result.op, result.musicId)
         busy = false
@@ -4687,7 +4696,9 @@ class Comm(
         val refused = r.err.isEmpty() && CommText.isRefusal(r.reply)
         val shareInvite = r.err.isEmpty() && !refused && !queried && (if (ToolProtocol.unpack(r.reply) != null) ToolProtocol.args(r.reply).optBoolean("share_data") else CommText.SHARE_RE.containsMatchIn(r.reply))
         if (text.isEmpty() && r.err.isEmpty() && !refused && !queried && (r.op != null || r.musicId.isNotEmpty() || shareInvite))
-            text = if (r.musicId.isNotEmpty()) tr("我为你选了《{title}》", "title" to (runCatching { musicLibrary.get(r.musicId, personaName(), related(), interactionPrepare().valence)?.first?.optString("title") }.getOrNull() ?: ""))
+            text = if (r.musicId.isNotEmpty()) tr("我为你选了《{title}》", "title" to (runCatching {
+                musicLibrary.get(r.musicId, personaName(), related(), interactionPrepare().valence)?.first?.optString("title")
+            }.getOrNull() ?: ""))
                 else tr(if (r.op != null) "🤝  联合行动邀请" else "share data 邀请")
         val isCatchup = r.extra?.body?.contains(CATCHUP_TAG) == true          // 这是补问 (见 CATCHUP_BODY)
         var jointAns = ""                                                     // 对联合行动邀请的回复 [Yes] / [No]
@@ -4754,7 +4765,9 @@ class Comm(
             }
             activeReplyAfter = 0L
             r.op?.let { opApply(it, m) }
-            if (r.musicId.isNotEmpty()) runCatching { musicLibrary.select(r.musicId, personaName(), related(), interactionPrepare().valence) }
+            if (r.musicId.isNotEmpty()) runCatching {
+                musicLibrary.select(r.musicId, personaName(), related(), interactionPrepare().valence)
+            }
             if (shareInvite) { m.shareInvite = true; deliverInvites(m) }
             delivered = true
             deliveredId = m.id
@@ -4781,7 +4794,7 @@ class Comm(
         } else if (delivered && splitSend && usesPrefix(personaName()) && r.kind in FOLLOW_KINDS && profileProblem().isEmpty() && cutBlock().isEmpty() && leader()) {
             // 规则 VIII: 第一条回复**明确显示出来之后** (被藏起来也算显示过), 隔一会儿再调用第二次, 让对方可以把话分开说
             // (只想说一次就 [refuse to reply], 什么也不留下). 第一条被拒绝 / 为空 / 出错时不存在"第一条消息", 不调用.
-            // 所有模型统一使用用户设置，保留测试指定延时的入口。
+            // 所有模型统一使用固定间隔，保留测试指定延时的入口。
             val delay = followDelayMs ?: (splitInterval * 1000L)
             followAt = nowMs() + delay
             followEpoch = epoch
@@ -5289,7 +5302,7 @@ class Comm(
     fun clear() {
         voice.clear(personaName())
         clearTs = maxOf(nowMs(), lastTs)
-        messages.clear(); unread = 0; retryAt = 0; retryN = 0; error = ""; catchup = false
+        messages.clear(); streamPreview = ""; unread = 0; retryAt = 0; retryN = 0; error = ""; catchup = false
         followAt = 0L                                       // 清空前排着的第二次调用不要了
         followMsg = 0
         interaction = CommInteraction()

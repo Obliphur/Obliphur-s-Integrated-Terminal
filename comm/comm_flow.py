@@ -289,6 +289,7 @@ class FlowMixin:
             if mime:
                 msgs[-1]["content"] = ai_assist.image_content(profile, image, mime, str(msgs[-1]["content"]))
         epoch = self._epoch
+        self._stream_preview = ""
         self.busy = True
         self.busy_since = time.monotonic()
         started = time.monotonic()
@@ -298,6 +299,10 @@ class FlowMixin:
 
         def used(tokens, cached):
             self.log(f"USAGE {kind} input={tokens} cached={cached}")
+
+        def stream_delta(text):
+            with self._lock:
+                self._stream_events.append((epoch, text))
 
         why = self.think_reason(kind)
         think_kw = {"think": True} if why else {}           # 只在开的时候带这个参数 (别的 chat_fn 不用认识它)
@@ -312,8 +317,11 @@ class FlowMixin:
 
         def ask(m):
             try:
-                return self.chat_fn(profile, system, m, max_tokens=CHAT_TOKENS, temperature=CHAT_TEMPERATURE,
-                                    timeout=CHAT_TIMEOUT, cache=True, on_usage=used, tools=True, **think_kw)
+                kwargs = dict(max_tokens=CHAT_TOKENS, temperature=CHAT_TEMPERATURE, timeout=CHAT_TIMEOUT,
+                              cache=True, on_usage=used, tools=True, **think_kw)
+                if self.chat_fn is ai_assist.chat_messages:
+                    kwargs["on_delta"] = stream_delta
+                return self.chat_fn(profile, system, m, **kwargs)
             except ai_assist.AIError as error:
                 assigned = self.ai.task_assign.get("vision")
                 text = error.message.lower()
@@ -336,8 +344,11 @@ class FlowMixin:
                         if message.get("role") == "user" and isinstance(content, list):
                             text = "\n".join(str(part.get("text") or "") for part in content if isinstance(part, dict))
                             message["content"] = text + "\n\n[独立图片分析] " + str(visual).strip()
-                return self.chat_fn(profile, system, m, max_tokens=CHAT_TOKENS, temperature=CHAT_TEMPERATURE,
-                                    timeout=CHAT_TIMEOUT, cache=True, on_usage=used, tools=True, **think_kw)
+                retry_kw = dict(max_tokens=CHAT_TOKENS, temperature=CHAT_TEMPERATURE, timeout=CHAT_TIMEOUT,
+                                cache=True, on_usage=used, tools=True, **think_kw)
+                if self.chat_fn is ai_assist.chat_messages:
+                    retry_kw["on_delta"] = stream_delta
+                return self.chat_fn(profile, system, m, **retry_kw)
 
         def work():
             try:

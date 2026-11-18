@@ -768,7 +768,7 @@ def _selftest():
     finally:
         urllib.request.build_opener = real_bo
     assert len(built) == 2, "每次请求都新建 opener"
-    # 系统代理指向的端口拒绝连接 (WinError 10061): 再直连试一次; 直连也不行报最初的错误; 没有系统代理时不重试
+    # 代理拒绝连接时失败关闭，不允许回退直连绕过 OIT 过滤规则
     import io
     real = (_ai_http._OPENER, _ai_http._DIRECT, urllib.request.getproxies)
 
@@ -786,24 +786,83 @@ def _selftest():
     try:
         urllib.request.getproxies = lambda: {"https": "http://user:pw@127.0.0.1:7897"}
         assert proxy_hint() == "127.0.0.1:7897", proxy_hint()
-        ok = _Ok()
-        _ai_http._OPENER, _ai_http._DIRECT = _Refuse(), ok
-        assert list_models(prof) == ["m-z"] and ok.n == 1
-        _ai_http._DIRECT = _Refuse()
+        direct = _Ok()
+        _ai_http._OPENER, _ai_http._DIRECT = _Refuse(), direct
         try:
             list_models(prof)
             raise AssertionError
         except AIError as e:
-            assert e.kind == "network" and "连接失败" in e.message
+            assert e.kind == "network" and "连接失败" in e.message and direct.n == 0
         urllib.request.getproxies = lambda: {}
         assert proxy_hint() == "direct"
-        ok = _Ok()
-        _ai_http._OPENER, _ai_http._DIRECT = _Refuse(), ok
+        direct = _Ok()
+        _ai_http._OPENER, _ai_http._DIRECT = _Refuse(), direct
         try:
             list_models(prof)
             raise AssertionError
         except AIError as e:
-            assert e.kind == "network" and ok.n == 0, "没有系统代理: 本来就是直连, 不重试"
+            assert e.kind == "network" and direct.n == 0, "代理失败时不回退直连"
     finally:
         _ai_http._OPENER, _ai_http._DIRECT, urllib.request.getproxies = real
+
+    from . import ai_tools as _ai_tools
+    import io
+
+    class _SseResponse(io.BytesIO):
+        def __enter__(self): return self
+        def __exit__(self, *_): self.close()
+
+    class _SseOpener:
+        def __init__(self, payload, response_type=_SseResponse): self.payload, self.response_type = payload, response_type
+        def __call__(self, _req, timeout=None): return self.response_type(self.payload)
+
+    def sse(*events):
+        return ("".join("data: " + json.dumps(event, ensure_ascii=False) + "\n\n" for event in events) + "data: [DONE]\n\n").encode()
+
+    stream_profile = dict(default_profile("custom"), base_url="https://stream.example/v1", protocol="openai",
+                          model="test-model", api_key="test-key")
+    deltas = []
+    oa = _ai_http._send_stream(stream_profile, {"tools": [{}]}, 10, _SseOpener(sse(
+        {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call_1", "function": {"name": "oit_reply", "arguments": "{\"text\":\"hello "}}]}, "finish_reason": None}]},
+        {"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": "world\"}"}}]}, "finish_reason": "tool_calls"}]}
+    )), deltas.append)
+    parsed = _ai_tools.parse_response(oa, "openai", lambda: "")
+    assert _ai_tools.text_of(parsed) == "hello world" and "".join(deltas) == "hello world", "OpenAI SSE 重建工具结果并只预览正文"
+
+    class _JsonResponse(_SseResponse):
+        headers = {"Content-Type": "application/json; charset=utf-8"}
+
+    rejected_endpoint = _ai_http.endpoint(stream_profile)
+    _ai_http.STREAM_REJECT.discard(rejected_endpoint)
+    legacy = _ai_http._send_stream(stream_profile, {}, 10, _SseOpener(
+        '{"choices":[{"message":{"content":"完整 JSON"}}]}'.encode("utf-8"), _JsonResponse), lambda _text: None)
+    assert legacy["choices"][0]["message"]["content"] == "完整 JSON"
+    assert rejected_endpoint in _ai_http.STREAM_REJECT, "返回普通 JSON 的地址应记住不支持 SSE"
+
+    anthropic = dict(stream_profile, protocol="anthropic")
+    anth_events = (
+        'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"oit_reply","input":{}}}\n\n'
+        'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"text\\":\\"claude\\"}"}}\n\n'
+        'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"input_tokens":8,"output_tokens":2}}\n\n'
+    ).encode()
+    anth = _ai_http._send_stream(anthropic, {"tools": [{}]}, 10, _SseOpener(anth_events), lambda _text: None)
+    assert _ai_tools.text_of(_ai_tools.parse_response(anth, "anthropic", lambda: "")) == "claude"
+
+    gemini = dict(stream_profile, protocol="gemini", base_url="https://stream.example/v1beta")
+    gem = _ai_http._send_stream(gemini, {"tools": [{}]}, 10, _SseOpener(sse(
+        {"candidates": [{"index": 0, "content": {"role": "model", "parts": [{"functionCall": {"name": "oit_reply", "args": {"text": "gemini"}}}]}, "finishReason": "STOP"}]}
+    )), lambda _text: None)
+    assert _ai_tools.text_of(_ai_tools.parse_response(gem, "gemini", lambda: "")) == "gemini"
+
+    real_stream, real_send = _ai_http._send_stream, _ai_http._send
+    _ai_http.STREAM_REJECT.discard(_ai_http.endpoint(stream_profile))
+    try:
+        def rejected(*_args, **_kwargs): raise AIError("http", "服务商返回 400:不支持 stream")
+        _ai_http._send_stream = rejected
+        _ai_http._send = lambda *_args, **_kwargs: {"choices": [{"message": {"content": "完整响应"}}]}
+        assert _ai_http._chat_once(stream_profile, "sys", [{"role": "user", "content": "x"}], 10, None,
+                                   20, 0.2, False, None, False, on_delta=lambda _text: None) == "完整响应"
+        assert _ai_http.endpoint(stream_profile) in _ai_http.STREAM_REJECT
+    finally:
+        _ai_http._send_stream, _ai_http._send = real_stream, real_send
     return "ai_assist selftest OK"
