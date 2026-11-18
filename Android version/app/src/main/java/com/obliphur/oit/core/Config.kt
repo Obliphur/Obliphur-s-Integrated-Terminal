@@ -35,6 +35,7 @@ object Cfg {
     const val COMM_VALENCE_COOLDOWN_SECONDS = COMM_TENSION_GAIN_COOLDOWN_SECONDS
     const val COMM_VALENCE_MESSAGE_SHIFT_MAX = 40
     const val COMM_OFFENSE_VALENCE_RATE_PENALTY = 0.2 // 每条未获原谅的冒犯降低正向效价增长倍率，下限为零
+    const val COMM_OFFENSE_VALENCE_BASELINE_PENALTY = 10
     val COMM_TENSION_MORNING_HOURS = 6 until 12 // 爆发次日必定主动谈话的早间范围
     const val COMM_SHAME_TURNS = 2
     const val COMM_SHIFT_STEP_MINUTES = 15 // 日程起点平移量必须是该分钟数的整数倍

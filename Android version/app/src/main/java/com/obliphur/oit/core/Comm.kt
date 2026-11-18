@@ -3152,10 +3152,10 @@ class Comm(
             CommRules.valenceInitial(readPersonaFull(ownerName))
         }
         val initialized = old.copy(
-            valence = if (old.valenceInitialized) old.valence else baseline,
+            valence = if (old.valenceInitialized) old.valence else old.effectiveValenceBaseline(baseline),
             valenceDecayAt = if (old.valenceInitialized) old.valenceDecayAt else now,
             valenceInitialized = true, valenceInitial = baseline, valenceInitialSet = true)
-        var d = initialized.settle(now).roll(now, baseline)
+        var d = initialized.settle(now).roll(now)
         val current = status ?: if (owner == pid && !statusKnown) otherStatus() else null
         if (current != null && specialPeriod(current)) {
             val begin = specialBegin(current).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
@@ -3210,9 +3210,7 @@ class Comm(
             tr("同一条消息可以同时触发多个条件；各条件分别应用倍率并取整后累加，各自进入冷却；重复的同一条件只取最大增量。请报告所有满足的条件，不得给其他历史消息加值，不要向用户解释标记。") +
             tr("每条消息按基础增量从高到低结算。每次成功加值后，其他条件在接下来1小时内的增量乘0.75，再次成功加值会刷新窗口；尚无窗口时最高增量条件不乘，其余条件乘，已有窗口时所有可用条件都乘。该倍率与时段及爆发后倍率叠加，由系统逐步取整，请仍返回原始基础增量。") +
             tr("冷却中的条件仍须报告正数原始增量；特殊空闲内加值首次超过90立即爆发，已超过90时再次满足任一增长条件也可爆发，冷却只限制加值。")
-        val eInitial = CommRules.valenceInitial(readPersonaFull(personaName()))
-        val eNote = if (valenceRules.isEmpty()) "" else CommInteraction().copy(valence = interactionPrepare().valence,
-            burstUntil = interactionPrepare().burstUntil).note(0, false, valenceRules, interactionValenceBurst, eInitial).substringAfter("]\n") +
+        val eNote = if (valenceRules.isEmpty()) "" else interactionPrepare().note(0, false, valenceRules, interactionValenceBurst).substringAfter("]\n") +
             "请在oit_reply.valence数组按本轮序号提交已声明条件的shift有符号整数（-40至40）。重复条件只取绝对值最大项；冷却中的条件仍报告原始变化，不得改名。系统处理递增冷却倍率、连锁倍率、爆发倍率和单条正负40上限。"
         return tensionNote + eNote + "本轮仍按给定生效档位回复，增量从下次请求生效。待判断消息：$items"
     }
@@ -4716,7 +4714,7 @@ class Comm(
         interactionTurn = InteractionTurn(specialPeriod(status),
             status?.second?.atZone(java.time.ZoneId.systemDefault())?.toInstant()?.toEpochMilli() ?: 0L, d.shameTurns > 0, d.burstUntil)
         val personaText = readPersonaFull(personaName())
-        val note = CommText.oitText(stateText() + "\n" + d.note(maxOf(msgTotal(), memFixed.maxOrNull() ?: 0), specialPeriod(status), CommRules.valence(personaText), CommRules.valenceBurst(personaText), d.valenceInitial) + "\n" + interactionJudgeNote(kind)) +
+        val note = CommText.oitText(stateText() + "\n" + d.note(maxOf(msgTotal(), memFixed.maxOrNull() ?: 0), specialPeriod(status), CommRules.valence(personaText), CommRules.valenceBurst(personaText)) + "\n" + interactionJudgeNote(kind)) +
             (if (rt != null) "\n" + rtNote(now()) else "")
         if (msgs.isNotEmpty() && msgs.last().first == "user") msgs[msgs.size - 1] = "user" to (msgs.last().second + "\n\n" + note)
         else msgs.add("user" to note)
@@ -5388,7 +5386,7 @@ class Comm(
         val status = statusFor(now(), ctx)
         val d = interactionPrepare(ctx.pid)
         val ctxPersonaText = readPersonaFull(listPersonas().firstOrNull { pidOf(it) == ctx.pid } ?: personaName())
-        val note = CommText.oitText(stateTextFor(ctx) + "\n" + d.note(messageMilestones(ctx.st).maxOrNull() ?: 0, specialPeriod(status), CommRules.valence(ctxPersonaText), CommRules.valenceBurst(ctxPersonaText), d.valenceInitial)) +
+        val note = CommText.oitText(stateTextFor(ctx) + "\n" + d.note(messageMilestones(ctx.st).maxOrNull() ?: 0, specialPeriod(status), CommRules.valence(ctxPersonaText), CommRules.valenceBurst(ctxPersonaText))) +
             (if (ctx.rt != null && status?.first?.label != JOINT_STATUS) "\n" + rtNote(now(), ctx.rt, ctx.pid) else "")
         msgs[msgs.size - 1] = "user" to (msgs.last().second + "\n\n" + note)
         val clear0 = ctx.st.clearTs

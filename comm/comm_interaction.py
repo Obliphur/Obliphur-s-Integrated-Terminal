@@ -184,6 +184,11 @@ def interaction_add(d, condition, gain, now_ms):
     d["gain_chain_until"] = max(d.get("gain_chain_until", 0), now_ms + config.COMM_TENSION_CHAIN_SECONDS * 1000)
 
 
+def interaction_valence_baseline(d, initial=None):
+    base = d["valence_initial"] if initial is None else interaction_valence(initial)
+    return interaction_valence(base - len(offenses_active(d)) * config.COMM_OFFENSE_VALENCE_BASELINE_PENALTY)
+
+
 def interaction_roll(d, now_ms, valence_baseline=None):
     """每十五分钟结算小数衰减；离线补算，暂停和回拨不补扣。"""
     d = interaction_norm(d)
@@ -214,7 +219,7 @@ def interaction_roll(d, now_ms, valence_baseline=None):
     if e_ticks:
         amount = config.COMM_VALENCE_DAY_DECAY * step / 86400000
         e = d["valence"]
-        baseline = d["valence_initial"] if valence_baseline is None else interaction_valence(valence_baseline)
+        baseline = interaction_valence_baseline(d, valence_baseline)
         distance = amount * e_ticks
         e = max(baseline, e - distance) if e > baseline else min(baseline, e + distance) if e < baseline else baseline
         d["valence"] = round(e, 10)
@@ -266,7 +271,7 @@ def interaction_valence_add(d, events, burst_rate, now_ms):
         d["valence"] = interaction_valence(d["valence"] + max(-40, min(40, total)))
 
 
-def interaction_prompt(d, total, special, rules=None, burst_rules=None, initial_valence=0.0):
+def interaction_prompt(d, total, special, rules=None, burst_rules=None):
     d = interaction_norm(d)
     special = special or bool(d["burst_until"])
     mode = "情景模拟" if d["scenario_mode"] and total >= config.COMM_SCENARIO_UNLOCK else "软件聊天"
@@ -275,8 +280,8 @@ def interaction_prompt(d, total, special, rules=None, burst_rules=None, initial_
     rules = rules or {}
     burst_rules = burst_rules or {"burst_rate": 1.0}
     return (f"[OIT_STATUS: MODE={mode}, TENSION={d['tension']}, EFFECTIVE_STAGE={stage}, "
-            f"VALENCE={d['valence']}, INITIAL_VALENCE={d['valence_initial'] if 'valence_initial' in d else initial_valence}, OFFENSE_COUNT={len(offenses_active(d))}, VALENCE_RISE_RATE={offenses_rate(d):g}, BURST={'YES' if d['burst_until'] else 'NO'}, PERIOD={'特殊空闲' if special else '日常'}, SHAME_AFTERMATH={'YES' if d['shame_turns'] else 'NO'}]\n"
-            + (tr("当前人设未声明[valence]条件，不进行效价判断，现有效价仅向初始值回归。") if not rules else
+            f"VALENCE={d['valence']}, INITIAL_VALENCE={interaction_valence_baseline(d)}, OFFENSE_COUNT={len(offenses_active(d))}, VALENCE_RISE_RATE={offenses_rate(d):g}, BURST={'YES' if d['burst_until'] else 'NO'}, PERIOD={'特殊空闲' if special else '日常'}, SHAME_AFTERMATH={'YES' if d['shame_turns'] else 'NO'}]\n"
+            + (tr("当前人设未声明[valence]条件，不进行效价判断，现有效价仅向平衡点回归。") if not rules else
                tr("效价代表角色当前的正负情绪倾向；结合TENSION所表示的言行激烈/直接程度组织表达。按人设[valence]条件报告本轮变化，正值向正面、负值向负面；只返回声明条件，普通交流不变化。") +
                tr("效价当前值为{value}，返回未经倍率调整的有符号整数变化量。", value=d["valence"]) +
                "有效条件：" + "\n".join(f"{key}:[{gain if gain is not None else 'X'}] {description}" for key, (gain, description) in rules.items()) +
@@ -346,10 +351,10 @@ class InteractionMixin:
             baseline = valence_initial(read_persona_full(self.personas, owner_name))
         else:
             baseline = d["valence_initial"]
-        if not d["valence_initialized"]:
-            d.update(valence=baseline, valence_decay_at=now_ms, valence_initialized=True)
         d.update(valence_initial=baseline, valence_initial_set=True)
-        rolled = interaction_roll(interaction_settle(d, now_ms), now_ms, baseline)
+        if not d["valence_initialized"]:
+            d.update(valence=interaction_valence_baseline(d), valence_decay_at=now_ms, valence_initialized=True)
+        rolled = interaction_roll(interaction_settle(d, now_ms), now_ms)
         if status is None and pid == self.pid:
             status = self.other_status()
         if status is not None:
@@ -504,4 +509,4 @@ class InteractionMixin:
         from comm.comm_persona import read_persona_full, list_personas, pid_of
         owner_name = next((name for name in list_personas(self.personas) if pid_of(name) == (pid or self.pid)), self.persona_name())
         text = read_persona_full(self.personas, owner_name)
-        return interaction_prompt(d, total, self._interaction_special(status), valence_rules(text), valence_burst_rules(text), d["valence_initial"])
+        return interaction_prompt(d, total, self._interaction_special(status), valence_rules(text), valence_burst_rules(text))

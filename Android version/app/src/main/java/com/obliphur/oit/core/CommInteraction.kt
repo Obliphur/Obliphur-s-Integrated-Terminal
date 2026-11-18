@@ -42,6 +42,10 @@ data class CommInteraction(
         .put("last_special_begin", lastSpecialBegin).put("special_entry_tension", specialEntryTension)
         .put("special_7m_gain_count", special7mGainCount).put("special_7m_lured_seg", special7mLuredSeg)
 
+    fun effectiveValenceBaseline(initial: Double = valenceInitial): Double =
+        (initial.coerceIn(-100.0, 100.0) - CommOffenses.active(offenses).size * Cfg.COMM_OFFENSE_VALENCE_BASELINE_PENALTY)
+            .coerceIn(-100.0, 100.0)
+
     /** 每十五分钟结算小数衰减；离线补算，暂停和回拨不补扣。 */
     fun roll(nowMs: Long, valenceBaseline: Double = valenceInitial): CommInteraction {
         val step = Cfg.COMM_TENSION_DECAY_SECONDS * 1000L
@@ -65,7 +69,7 @@ data class CommInteraction(
         val eAt = if (valenceDecayAt > 0L) valenceDecayAt else nowMs
         val eTicks = maxOf(0L, (nowMs - eAt) / step)
         val eStep = Cfg.COMM_VALENCE_DAY_DECAY * step / 86400000.0
-        val baseline = valenceBaseline.coerceIn(-100.0, 100.0)
+        val baseline = effectiveValenceBaseline(valenceBaseline)
         val distance = eStep * eTicks
         val e = when {
             valence > baseline -> maxOf(baseline, valence - distance)
@@ -81,11 +85,11 @@ data class CommInteraction(
         return if (effective < Cfg.COMM_TENSION_LOW) "0-50" else if (effective <= Cfg.COMM_TENSION_CAP) "50-90" else "90+"
     }
 
-    fun note(total: Int, special: Boolean, valenceRules: Map<String, Pair<Int?, String>> = emptyMap(), burstRules: CommRules.ValenceBurst = CommRules.ValenceBurst(), initialValence: Double = 0.0): String {
+    fun note(total: Int, special: Boolean, valenceRules: Map<String, Pair<Int?, String>> = emptyMap(), burstRules: CommRules.ValenceBurst = CommRules.ValenceBurst()): String {
         val mode = if (scenarioMode && total >= Cfg.COMM_SCENARIO_UNLOCK) "情景模拟" else "软件聊天"
-        return "[OIT_STATUS: MODE=$mode, TENSION=$tension, EFFECTIVE_STAGE=${stage(special)}, VALENCE=$valence, INITIAL_VALENCE=$initialValence, OFFENSE_COUNT=${CommOffenses.active(offenses).size}, VALENCE_RISE_RATE=${CommOffenses.rate(offenses)}, " +
+        return "[OIT_STATUS: MODE=$mode, TENSION=$tension, EFFECTIVE_STAGE=${stage(special)}, VALENCE=$valence, INITIAL_VALENCE=${effectiveValenceBaseline()}, OFFENSE_COUNT=${CommOffenses.active(offenses).size}, VALENCE_RISE_RATE=${CommOffenses.rate(offenses)}, " +
             "BURST=${if (burstUntil > 0L) "YES" else "NO"}, PERIOD=${if (special || burstUntil > 0L) "特殊空闲" else "日常"}, SHAME_AFTERMATH=${if (shameTurns > 0) "YES" else "NO"}]\n" +
-            (if (valenceRules.isEmpty()) tr("当前人设未声明[valence]条件，不进行效价判断，现有效价仅向初始值回归。") else
+            (if (valenceRules.isEmpty()) tr("当前人设未声明[valence]条件，不进行效价判断，现有效价仅向平衡点回归。") else
                 tr("效价代表角色当前的正负情绪倾向；结合TENSION所表示的言行激烈/直接程度组织表达。按人设[valence]条件报告本轮变化，正值向正面、负值向负面；只返回声明条件，普通交流不变化。") +
                 tr("效价当前值为{value}，返回未经倍率调整的有符号整数变化量。", "value" to valence) +
                 "有效条件：" + valenceRules.entries.joinToString("\n") { "${it.key}:[${it.value.first ?: "X"}] ${it.value.second}" } +

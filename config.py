@@ -221,7 +221,7 @@ OUTING_MAX_HOURS = 24 * 7
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.592"                  # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.593"                  # 和 GitHub 上发布的版本号比较 (见 updater.py)
 AI_VOICE_GAP = 1.0                       # 两条语音之间的默认间隔（秒）
 COMM_SPLIT_INTERVAL_SECONDS = 5          # 分条续发固定等待时间（秒）
 COMM_TOOL_ROUNDS = 6                     # 单次沟通最多进行的查询 / 联合行动工具轮数
@@ -248,6 +248,7 @@ COMM_VALENCE_DAY_DECAY = 50
 COMM_VALENCE_COOLDOWN_SECONDS = COMM_TENSION_GAIN_COOLDOWN_SECONDS
 COMM_VALENCE_MESSAGE_SHIFT_MAX = 40
 COMM_OFFENSE_VALENCE_RATE_PENALTY = 0.2  # 每条未获原谅的冒犯降低正向效价增长倍率，下限为零
+COMM_OFFENSE_VALENCE_BASELINE_PENALTY = 10
 COMM_TENSION_MORNING_HOURS = (6, 12)  # 爆发次日必定主动谈话的早间范围，左闭右开
 COMM_SPECIAL_LURE_DELAY_SECONDS = 7 * 60  # 高张力特殊空闲前七分钟无正向条件时主动挑起话题
 COMM_SPECIAL_MINUTES = 30  # 特殊空闲固定时长，前一循环的休息波动不得挤占

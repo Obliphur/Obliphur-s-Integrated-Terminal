@@ -27,6 +27,21 @@ class CommOffensesTest {
         assertEquals(20.0, d.endBurst(reply, 1, now, 20).valence, 0.0)
     }
 
+    @Test fun offensesShiftValenceEquilibrium() {
+        val day = 86400000L
+        val baseline = CommInteraction(valence = 5.0, valenceInitial = 15.0, valenceDecayAt = now,
+            offenses = listOf(record, record.copy(id = "user:2")))
+        assertTrue(baseline.note(0, false).contains("INITIAL_VALENCE=-5.0,"))
+        assertEquals(5.0, baseline.roll(now).valence, 0.0)
+        val settled = baseline.roll(now + day)
+        assertEquals(-5.0, settled.valence, 0.0)
+        assertEquals(15.0, settled.valenceInitial, 0.0)
+        val forgiven = settled.copy(offenses = listOf(record.copy(forgiven = true), settled.offenses[1]))
+        assertTrue(forgiven.note(0, false).contains("INITIAL_VALENCE=5.0,"))
+        assertEquals(5.0, forgiven.roll(now + 2 * day).valence, 0.0)
+        assertEquals(-100.0, forgiven.copy(valenceInitial = -95.0).effectiveValenceBaseline(), 0.0)
+    }
+
     @Test fun additionsAndForgiveness() {
         fun reply(action: String, target: String = "", index: Int = 1): String = ToolProtocol.pack("尊重边界", "oit_reply",
             JSONObject().put("offenses", JSONArray().put(JSONObject().put("index", index).put("action", action)

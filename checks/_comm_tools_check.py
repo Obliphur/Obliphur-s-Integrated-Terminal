@@ -420,7 +420,7 @@ def memory_tool_checks():
 def offense_checks():
     from copy import deepcopy
     from comm.comm_offenses import offenses_norm, offenses_active, offenses_rate, offenses_apply
-    from comm.comm_interaction import interaction_norm, interaction_valence_add, interaction_roll, interaction_end
+    from comm.comm_interaction import interaction_norm, interaction_prompt, interaction_valence_add, interaction_roll, interaction_end
     now = 1805491140000
     record = {"id": "user:1", "at": now, "reason": "无视拒绝，继续纠缠", "ts": now, "forgiven": False}
     for count in range(7):
@@ -441,6 +441,16 @@ def offense_checks():
     assert interaction_norm(d)["offenses"] == d["offenses"]
     rolled = interaction_roll(d, now + 86400000, 10)
     assert rolled["offenses"] == d["offenses"], "跨天与自然回归不清冒犯"
+    baseline = interaction_norm({"valence": 5, "valence_initial": 15, "valence_decay_at": now,
+                                 "offenses": [record, dict(record, id="user:2")]})
+    assert "INITIAL_VALENCE=-5.0," in interaction_prompt(baseline, 0, False)
+    assert interaction_roll(baseline, now)["valence"] == 5
+    settled = interaction_roll(baseline, now + 86400000)
+    assert settled["valence"] == -5 and settled["valence_initial"] == 15
+    settled["offenses"][0] = dict(settled["offenses"][0], forgiven=True)
+    assert "INITIAL_VALENCE=5.0," in interaction_prompt(settled, 0, False)
+    assert interaction_roll(settled, now + 2 * 86400000)["valence"] == 5
+    assert "INITIAL_VALENCE=-100.0," in interaction_prompt(dict(settled, valence_initial=-95), 0, False)
     event = {"index": 1, "action": "add", "target": "", "reason": record["reason"]}
     for protocol in ("openai", "anthropic", "gemini"):
         reply = call("oit_reply", {"text": "请尊重我的边界", "offenses": [event]}, protocol)
