@@ -19,8 +19,8 @@ tempstore.session("music-library-check")
 root = Path(tempstore.mkdtemp("music-library-check"))
 library = music_library.manager(root)
 manifest = json.loads((music_library.DEFAULT_DIR / "catalog.json").read_text(encoding="utf-8"))
-assert len(manifest) == 20
-assert len(library.catalog()) == 20
+assert len(manifest) == 32
+assert len(library.catalog()) == 32
 for entry in manifest:
     path = library.defaults / entry["file"]
     assert hashlib.sha256(path.read_bytes()).hexdigest().upper() == entry["sha256"]
@@ -32,8 +32,8 @@ source = root / "uploaded.mscx"
 source.write_text('<museScore><Score><metaTag name="workTitle">Test Piece</metaTag><metaTag name="composer">Test Composer</metaTag></Score></museScore>', encoding="utf-8")
 uploaded = library.add(source)
 assert uploaded["title"] == "Test Piece" and uploaded["composer"] == "Test Composer"
-assert uploaded["id"].startswith("upload-") and len(library.catalog()) == 21
-assert library.add(source)["id"] == uploaded["id"] and len(library.catalog()) == 21
+assert uploaded["id"].startswith("upload-") and len(library.catalog()) == 33
+assert library.add(source)["id"] == uploaded["id"] and len(library.catalog()) == 33
 
 musicxml = root / "uploaded.musicxml"
 musicxml.write_text('<score-partwise><work><work-title>Wood Song</work-title></work><identification><creator type="composer">A Composer</creator></identification></score-partwise>', encoding="utf-8")
@@ -85,6 +85,6 @@ for invalid in (root / "bad.mscx", root / "wrong.txt"):
 import shutil
 shutil.rmtree(root / "music_library")
 restored = music_library.manager(root)
-assert len(restored.catalog()) == 20 and restored.selection() is None
+assert len(restored.catalog()) == 32 and restored.selection() is None
 assert not list(restored.uploads.iterdir())
 print("music library check OK")
