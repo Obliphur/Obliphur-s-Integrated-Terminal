@@ -100,14 +100,19 @@ class ExtraSettingsMixin:
         if not source:
             return
         try:
-            item = self.music_library.add(source)
+            persona = self.comm.persona_name() if self.comm is not None else ""
+            if not persona:
+                toast.warn(tr("请先选择一个人设，再导入乐谱"))
+                return
+            item = self.music_library.add(source, persona)
             toast.info(tr("已加入曲库: {title}", title=item["title"]))
         except (OSError, ValueError, music_library.MusicLibraryError) as error:
             toast.warn(str(error))
 
     def _export_selected_midi(self):
         from pathlib import Path
-        selected = self.music_library.selection()
+        persona = self.comm.persona_name() if self.comm is not None else ""
+        selected = self.music_library.selection(persona) if persona else None
         if not selected:
             toast.warn(tr("请先选择一首曲目"))
             return
@@ -129,7 +134,8 @@ class ExtraSettingsMixin:
             self._voice_settings_refresh()
         statuses = self.music.status()
         blocked = self.external.location_busy
-        selected = self.music_library.selection()
+        persona = self.comm.persona_name() if self.comm is not None else ""
+        selected = self.music_library.selection(persona) if persona else None
         for key, info in statuses.items():
             state = tr("已就绪") if info["ready"] else tr("未安装")
             if key == "piano" and info["weights_ready"] and not info["ready"]:

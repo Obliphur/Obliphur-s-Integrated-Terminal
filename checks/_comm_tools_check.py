@@ -295,13 +295,15 @@ def music_tool_checks():
     root = Path(tempstore.mkdtemp("music-tool-check"))
     library = music_library.manager(root)
     catalog = library.catalog()
-    assert len(catalog) == 20
+    assert len(catalog) == len(library.manifest)
 
     class Context(ToolsMixin):
         _epoch = 7
         dir = str(root)
         hard_block = lambda self: False
         log = lambda self, message: None
+        state_fn = lambda self: "idle"
+        persona_name = lambda self: "Claudia.txt"
 
     replies = [tools.pack(name="oit_music_select", arguments={"id": catalog[6]["id"]}),
                tools.pack(text="我选了梦幻曲", name="oit_reply", arguments={"text": "我选了梦幻曲"})]
@@ -320,18 +322,83 @@ def music_tool_checks():
     assert operation == {"type": "music_select", "id": catalog[6]["id"]} and tools.text_of(reply) == "MIDI 已生成"
     assert '"format": "MIDI"' in seen[0][-1]["content"]
 
+    replies = [tools.pack(name="oit_music_select", arguments={"id": catalog[6]["id"]}),
+               tools.pack(name="oit_music_perform", arguments={"id": catalog[6]["id"]}),
+               tools.pack(text="我来演奏", name="oit_reply", arguments={"text": "我来演奏"})]
+    ready = {"id": catalog[6]["id"], "title": catalog[6]["title"], "path": str(root / "song.mp3")}
+    with patch("music_library.MusicLibrary.prepare_performance", return_value=ready):
+        operation, reply = Context()._tool_rounds(lambda _: replies.pop(0), [],
+                                                  tools.pack(name="oit_music_catalog"), "user", 7)
+    assert operation == {"type": "music_perform", "id": catalog[6]["id"], "path": ready["path"]}
+    assert tools.text_of(reply) == "我来演奏"
+
+    # 没有选曲、主动消息或专注时均不能生成演奏音频。
+    for kind, context in (("user", Context()), ("proactive", Context()), ("user", Context())):
+        if kind == "user" and library.selection("Claudia.txt"):
+            context.state_fn = lambda: "focus"
+        seen.clear()
+        replies = [tools.pack(name="oit_reply", arguments={"text": "暂时不能演奏"})]
+        with patch("music_library.MusicLibrary.prepare_performance") as prepare:
+            context._tool_rounds(lambda history: seen.append(history) or replies.pop(0), [],
+                                 tools.pack(name="oit_music_perform", arguments={"id": catalog[6]["id"]}), kind, 7)
+        assert not prepare.called and '"ok": false' in seen[0][-1]["content"]
+        library.select(catalog[6]["id"], "Claudia.txt")
+
+
+def music_commit_checks():
+    import music_library
+    root = Path(tempstore.mkdtemp("music-commit-check"))
+    c = comm.Comm(str(root / "data"), str(root / "personas"))
+    c.set_cfg(persona="Claudia.txt", split_send=False)
+    c.state_fn = lambda: "idle"
+    c.set_viewing(True)
+    c._away_kind = lambda: ""
+    library = music_library.manager(c.dir)
+    score_id = library.catalog("Claudia.txt")[0]["id"]
+    op = {"type": "music_perform", "id": score_id, "path": str(root / "song.mp3")}
+    reply = tools.pack(name="oit_reply", arguments={"text": "我来弹这首"})
+    with patch.object(c.music_player, "play", return_value=True) as play:
+        # 延迟消息不提前播放；展示后只播放一次，动作不混入存档或同步。
+        c._active_reply_after = c._ms() + 60000
+        c._finish("user", None, reply, "", c._epoch, op)
+        message = c.messages[-1]
+        assert message.get("hold") and c._music_actions and not play.called
+        assert not any("music" in key or "path" in key for key in message)
+        message["due"] = message["reply_after"] = 0
+        c._release_held()
+        assert play.call_count == 1 and not c._music_actions
+        assert library.selection("Claudia.txt")["id"] == score_id
+        c._music_tick()
+        assert play.call_count == 1
+        # 拒绝与过期回复均不能播放。
+        c._finish("user", None, tools.pack(name="oit_reply", arguments={"refuse": True}), "", c._epoch, op)
+        c._finish("user", None, reply, "", c._epoch - 1, op)
+        assert play.call_count == 1
+        c._active_reply_after = c._ms() + 60000
+        c._finish("user", None, reply, "", c._epoch, op)
+        assert c._music_actions
+        with patch.object(c.music_player, "stop") as stop:
+            c._finish("user", None, tools.pack(name="oit_reply", arguments={"text": "停止了"}), "", c._epoch, {"type": "music_stop"})
+            assert stop.called and not c._music_actions
+        c._active_reply_after = c._ms() + 60000
+        c._finish("user", None, reply, "", c._epoch, op)
+        c.clear()
+        assert not c._music_actions and play.call_count == 1
+    c.flush()
+
 
 if __name__ == "__main__":
     tempstore.session("comm-tools-check")
     transport_checks()
     state_checks()
     music_tool_checks()
+    music_commit_checks()
     root = Path(__file__).resolve().parent.parent
     for name in ("comm_tools.json", "comm_protocol.txt", "comm_legacy_controls.json"):
         assert (root / "defaults" / name).read_text(encoding="utf-8") == (root / "Android version/app/src/main/resources" / name).read_text(encoding="utf-8")
     protocol = (root / "defaults/comm_protocol.txt").read_text(encoding="utf-8")
     specs = json.loads((root / "defaults/comm_tools.json").read_text(encoding="utf-8"))
-    assert {s["name"] for s in specs} >= {"oit_music_catalog", "oit_music_select"}
+    assert {s["name"] for s in specs} >= {"oit_music_catalog", "oit_music_select", "oit_music_perform"}
     tool = next(s for s in specs if s["name"] == "oit_reply")
     assert "聊天只显示text" in protocol and "wait_minutes" in tool["description"] and "不会显示给用户" in tool["description"]
     legacy = "先输入[messages]查询；回复 [Yes]；结尾写 [waiting for reply]:[5]\n[condition]\nmessages:2\n[/condition]\n"

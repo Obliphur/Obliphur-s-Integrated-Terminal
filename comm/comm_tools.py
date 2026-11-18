@@ -4,6 +4,7 @@
 import json
 import config
 import music_library
+from i18n import tr
 
 from ai_assist.ai_common import AIError
 from ai_assist.ai_tools import unpack
@@ -44,7 +45,8 @@ class ToolsMixin:
             elif name == "oit_music_catalog":
                 try:
                     library = music_library.manager(self.dir)
-                    entries = library.catalog()[:80]
+                    persona = self.persona_name()
+                    entries = library.catalog(persona)[:80]
                     music_ids = {item["id"] for item in entries}
                     result = {"ok": True, "data": entries, "note": "乐谱是本机文件；标签仅供选曲参考。用户上传曲目不会随聊天记录同步。"}
                 except Exception as e:
@@ -55,7 +57,9 @@ class ToolsMixin:
                 try:
                     if score_id not in music_ids:
                         raise music_library.MusicLibraryError("乐谱不在刚查询的目录中")
-                    item, path = music_library.manager(self.dir).get(score_id)
+                    library = music_library.manager(self.dir)
+                    persona = self.persona_name()
+                    item, path = library.get(score_id, persona)
                     if not item or not path or not path.is_file():
                         raise music_library.MusicLibraryError("乐谱已不存在")
                     op = {"type": "music_select", "id": score_id}
@@ -66,18 +70,47 @@ class ToolsMixin:
                     result = {"ok": False, "error": str(e)}
             elif name == "oit_music_generate_midi":
                 score_id = args["id"]
-                selected = music_library.manager(self.dir).selection()
+                library = music_library.manager(self.dir)
+                persona = self.persona_name()
+                selected = library.selection(persona)
                 pending_id = op.get("id") if isinstance(op, dict) and op.get("type") == "music_select" else ""
                 if score_id != (selected or {}).get("id") and score_id != pending_id:
                     result = {"ok": False, "error": "请先通过oit_music_select选择这首乐谱"}
                 else:
                     try:
-                        generated = music_library.manager(self.dir).generate_midi(score_id)
+                        generated = library.generate_midi(score_id, persona)
                         result = {"ok": True, "data": {"id": generated["id"], "title": generated["title"],
                                   "format": "MIDI", "humanized": True, "reused": generated["reused"]},
                                   "next": "MIDI 文件已生成，可以告知用户；这不表示已经播放或生成 MP3"}
                     except music_library.MusicLibraryError as e:
                         result = {"ok": False, "error": str(e)}
+            elif name == "oit_music_perform" and (op is None or op.get("type") == "music_select"):
+                score_id = args["id"]
+                library = music_library.manager(self.dir)
+                persona = self.persona_name()
+                selected = library.selection(persona)
+                pending_id = op.get("id") if isinstance(op, dict) and op.get("type") == "music_select" else ""
+                if score_id != (selected or {}).get("id") and score_id != pending_id:
+                    result = {"ok": False, "error": "请先通过oit_music_select选择这首乐谱"}
+                elif kind not in ("user", "retry", "followup"):
+                    result = {"ok": False, "error": "只能响应用户明确的演奏请求"}
+                elif self.state_fn() not in ("idle", "break"):
+                    result = {"ok": False, "error": "仅可在空闲或休息期间演奏"}
+                else:
+                    try:
+                        item, path = library.get(score_id, persona)
+                        if not item or not path or not path.is_file():
+                            raise music_library.MusicLibraryError("乐谱已不存在")
+                        performance = library.prepare_performance(score_id, persona)
+                        op = {"type": "music_perform", "id": score_id, "path": performance["path"]}
+                        result = {"ok": True, "selected": {"id": score_id, "title": item["title"]},
+                                  "status": "queued_until_message_visible", "format": "MP3",
+                                  "next": "音频已准备好；在oit_reply中自然说明曲目；正式回复显示且用户空闲或休息时才开始播放，尚未播放"}
+                    except music_library.MusicLibraryError as e:
+                        result = {"ok": False, "error": str(e)}
+            elif name == "oit_music_stop" and kind in ("user", "retry", "followup") and op is None:
+                op = {"type": "music_stop"}
+                result = {"ok": True, "status": "queued_until_reply", "next": "提交oit_reply后停止本机演奏并取消待播曲目"}
             elif name == "oit_joint_offer":
                 why = "此类请求不能发起联合行动" if kind not in OP_KINDS else self.joint_block() or ("正在联合行动同步" if self.joint_live() else "")
                 slots = None if why else self._op_slots(self.now())
@@ -94,3 +127,32 @@ class ToolsMixin:
             convo += [{"role": "assistant", "content": reply}, {"role": "user", "content": json.dumps(result, ensure_ascii=False)}]
             reply = ask(convo)
         raise AIError("format", "工具调用轮次超限")
+
+    def _music_deliver(self, message):
+        """本机消息实际显示时消费演奏动作；动作不进入聊天存档和同步。"""
+        if message.get("hold"):
+            return
+        pending = self._music_actions.pop(message["id"], None)
+        if not pending:
+            return
+        epoch, op = pending
+        if epoch != self._epoch or not self.music_player.allowed():
+            return
+        try:
+            music_library.manager(self.dir).select(op["id"], self.persona_name())
+            if not self.music_player.play(op["path"]):
+                self.error = tr("演奏播放失败.")
+        except (OSError, ValueError) as error:
+            self.error = str(error)
+            self.log(f"MUSIC perform FAIL {type(error).__name__}")
+
+    def _music_tick(self):
+        if not self.music_player.allowed():
+            self.music_player.stop()
+        if self.music_player.error:
+            self.error, self.music_player.error = self.music_player.error, ""
+            self._changed()
+        if self._music_actions:
+            for message in self.messages:
+                if message["id"] in self._music_actions:
+                    self._music_deliver(message)

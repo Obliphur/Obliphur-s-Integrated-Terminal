@@ -6,9 +6,11 @@ import json
 import os
 import re
 import shutil
+import sys
 import zipfile
 from pathlib import Path
 from xml.etree import ElementTree
+from i18n import tr
 
 DEFAULT_DIR = Path(__file__).resolve().parent / "defaults" / "music_library"
 MAX_SCORE_BYTES = 50 * 1024 * 1024
@@ -89,28 +91,54 @@ class MusicLibrary:
             if not dest.is_file() or hashlib.sha256(dest.read_bytes()).hexdigest().upper() != item["sha256"]:
                 shutil.copy2(source, dest)
 
-    def catalog(self):
+    @staticmethod
+    def _persona_key(persona):
+        return hashlib.sha256(str(persona or "").encode("utf-8")).hexdigest()[:20]
+
+    @staticmethod
+    def _is_claudia(persona):
+        return Path(str(persona or "")).stem.casefold() == "claudia"
+
+    def _uploads_for(self, persona):
+        return self.uploads / self._persona_key(persona)
+
+    def _upload_dirs(self, persona):
+        directories = [self.uploads] if persona is None else [self._uploads_for(persona)]
+        if persona is not None and self._is_claudia(persona):
+            directories.append(self.uploads)
+        return directories
+
+    def _state_dir(self, persona):
+        return self.root if persona is None or self._is_claudia(persona) else self.root / "personas" / self._persona_key(persona)
+
+    def catalog(self, persona=None):
+        include_defaults = persona is None or self._is_claudia(persona)
+        upload_dirs = self._upload_dirs(persona)
         entries = []
-        for item in self.manifest:
-            path = self.defaults / item["file"]
-            if path.is_file():
-                entries.append({k: item[k] for k in ("id", "title", "title_zh", "composer", "tags", "license", "source")})
-                entries[-1]["kind"] = "default"
+        if include_defaults:
+            for item in self.manifest:
+                path = self.defaults / item["file"]
+                if path.is_file():
+                    entries.append({k: item[k] for k in ("id", "title", "title_zh", "composer", "tags", "license", "source")})
+                    entries[-1]["kind"] = "default"
         seen_uploads = set()
-        for path in sorted(self.uploads.iterdir(), key=lambda p: p.name.casefold()):
-            if not path.is_file() or path.suffix.lower() not in SUPPORTED:
+        for directory in upload_dirs:
+            if not directory.is_dir():
                 continue
-            digest = hashlib.sha256(path.read_bytes()).hexdigest()
-            score_id = "upload-" + digest[:16]
-            if score_id in seen_uploads:
-                continue
-            seen_uploads.add(score_id)
-            title, composer = _metadata(path)
-            entries.append({"id": score_id, "title": title, "composer": composer,
-                            "tags": ["user-upload"], "kind": "upload", "format": path.suffix.lower()})
+            for path in sorted(directory.iterdir(), key=lambda p: p.name.casefold()):
+                if not path.is_file() or path.suffix.lower() not in SUPPORTED:
+                    continue
+                digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                score_id = "upload-" + digest[:16]
+                if score_id in seen_uploads:
+                    continue
+                seen_uploads.add(score_id)
+                title, composer = _metadata(path)
+                entries.append({"id": score_id, "title": title, "composer": composer,
+                                "tags": ["user-upload"], "kind": "upload", "format": path.suffix.lower()})
         return entries
 
-    def add(self, source):
+    def add(self, source, persona=None):
         source = Path(source)
         if source.suffix.lower() not in SUPPORTED:
             raise MusicLibraryError("仅支持 MuseScore 和 MusicXML 乐谱")
@@ -118,40 +146,51 @@ class MusicLibrary:
             raise MusicLibraryError("乐谱文件不存在或超过50 MiB")
         title, _ = _metadata(source)
         digest = hashlib.sha256(source.read_bytes()).hexdigest()
-        dest = self.uploads / (digest + source.suffix.lower())
-        duplicate = next((path for path in self.uploads.iterdir() if path.is_file() and path.stem == digest), None)
+        directory = self.uploads if persona is None else self._uploads_for(persona)
+        directory.mkdir(parents=True, exist_ok=True)
+        dest = directory / (digest + source.suffix.lower())
+        duplicate = next((path for path in directory.iterdir() if path.is_file() and path.stem == digest), None)
         if duplicate is None and not dest.exists():
             shutil.copy2(source, dest)
-        return next(item for item in self.catalog() if item["id"] == "upload-" + digest[:16])
+        return next(item for item in self.catalog(persona) if item["id"] == "upload-" + digest[:16])
 
-    def get(self, score_id):
-        for item in self.manifest:
-            if item["id"] == score_id:
-                return item, self.defaults / item["file"]
+    def get(self, score_id, persona=None):
+        if persona is None or self._is_claudia(persona):
+            for item in self.manifest:
+                if item["id"] == score_id:
+                    return item, self.defaults / item["file"]
         prefix = "upload-"
         if isinstance(score_id, str) and score_id.startswith(prefix):
             digest_prefix = score_id[len(prefix):]
-            for path in self.uploads.iterdir():
-                if path.is_file() and path.stem.startswith(digest_prefix) and path.suffix.lower() in SUPPORTED:
-                    title, composer = _metadata(path)
-                    return {"id": score_id, "title": title, "composer": composer, "kind": "upload"}, path
+            for directory in self._upload_dirs(persona):
+                if not directory.is_dir():
+                    continue
+                for path in directory.iterdir():
+                    if path.is_file() and path.stem.startswith(digest_prefix) and path.suffix.lower() in SUPPORTED:
+                        title, composer = _metadata(path)
+                        return {"id": score_id, "title": title, "composer": composer, "kind": "upload"}, path
         return None, None
 
-    def select(self, score_id):
-        item, path = self.get(score_id)
+    def select(self, score_id, persona=None):
+        if score_id not in {entry["id"] for entry in self.catalog(persona)}:
+            raise MusicLibraryError("乐谱不属于当前人设的曲库")
+        item, path = self.get(score_id, persona)
         if not item or not path.is_file():
             raise MusicLibraryError("所选乐谱已不存在")
         state = {"id": item["id"], "title": item["title"], "composer": item.get("composer", ""),
                  "path": str(path), "selected_at": int(__import__("time").time())}
-        tmp = self.root / "selection.json.tmp"
+        state_dir = self._state_dir(persona)
+        state_dir.mkdir(parents=True, exist_ok=True)
+        tmp = state_dir / "selection.json.tmp"
         tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
-        os.replace(tmp, self.root / "selection.json")
+        os.replace(tmp, state_dir / "selection.json")
         return state
 
-    def selection(self):
+    def selection(self, persona=None):
         try:
-            value = json.loads((self.root / "selection.json").read_text(encoding="utf-8"))
-            item, path = self.get(value.get("id"))
+            state_dir = self._state_dir(persona)
+            value = json.loads((state_dir / "selection.json").read_text(encoding="utf-8"))
+            item, path = self.get(value.get("id"), persona)
             if item and path.is_file():
                 return {**value, "path": str(path)}
         except (OSError, ValueError, TypeError):
@@ -163,11 +202,11 @@ class MusicLibrary:
             raise MusicLibraryError("曲目编号无效")
         return self.root / "generated" / (score_id + ".mid")
 
-    def generate_midi(self, score_id=None):
+    def generate_midi(self, score_id=None, persona=None):
         """使用本机 MuseScore 导出演奏 MIDI；复用当前人性化参数的有效缓存。"""
-        selected = self.selection() if score_id is None else None
+        selected = self.selection(persona) if score_id is None else None
         score_id = score_id or (selected or {}).get("id")
-        item, source = self.get(score_id)
+        item, source = self.get(score_id, persona)
         if not item or not source.is_file():
             raise MusicLibraryError("请先选择一首仍在曲库中的乐谱")
         destination = self.midi_path(score_id)
@@ -185,6 +224,43 @@ class MusicLibrary:
         except (OSError, MusicError) as error:
             raise MusicLibraryError(str(error)) from error
         return {"id": score_id, "title": item["title"], "path": str(destination), "reused": False}
+
+    def prepare_performance(self, score_id, persona=None):
+        """生成选中乐谱的人性化演奏音频，尚不播放。"""
+        if sys.platform != "win32":
+            raise MusicLibraryError(tr("本机演奏目前仅支持 Windows."))
+        generated = self.generate_midi(score_id, persona)
+        audio = self.root / "generated" / (score_id + ".mp3")
+        metadata = audio.with_suffix(".mp3.json")
+        import config
+        signature = {"midi_sha256": hashlib.sha256(Path(generated["path"]).read_bytes()).hexdigest(),
+                     "renderer": config.MUSIC_RENDER_VERSION}
+        from music_tools import MusicError, validate_output, manager as music_manager
+        try:
+            valid = False
+            if audio.is_file():
+                try:
+                    if json.loads(metadata.read_text(encoding="utf-8")) != signature:
+                        raise ValueError("stale audio")
+                    validate_output(audio)
+                    valid = True
+                except (OSError, ValueError, MusicError):
+                    pass
+            if not valid:
+                import external_software
+                data_dir = str(self.root.parent)
+                music_manager(data_dir, external_software.manager(data_dir)).render_performance(generated["path"], audio)
+                validate_output(audio)
+                staged = metadata.with_suffix(".json.tmp")
+                try:
+                    staged.write_text(json.dumps(signature), encoding="utf-8")
+                    os.replace(staged, metadata)
+                finally:
+                    if staged.exists():
+                        staged.unlink()
+        except (OSError, MusicError) as error:
+            raise MusicLibraryError(str(error)) from error
+        return {"id": score_id, "title": generated["title"], "path": str(audio), "reused": valid}
 
 
 def manager(data_dir):

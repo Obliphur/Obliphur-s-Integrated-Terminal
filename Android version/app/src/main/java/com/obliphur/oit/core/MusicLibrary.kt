@@ -8,6 +8,7 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.InputStream
 import java.security.MessageDigest
+import java.nio.charset.StandardCharsets
 import java.util.zip.ZipInputStream
 
 /** 本地乐谱列表；默认文件随应用资源安装，用户文件留在数据目录。 */
@@ -34,49 +35,65 @@ class MusicLibrary(private val dataDir: File, private val assets: AssetManager) 
         }
     }
 
-    fun catalog(): JSONArray {
+    private fun personaKey(persona: String) = sha(persona.toByteArray(StandardCharsets.UTF_8)).take(20).lowercase()
+    private fun isClaudia(persona: String?) = persona == null || persona.substringBeforeLast('.', persona).equals("Claudia", true)
+    private fun uploadDirs(persona: String?) = if (persona == null) listOf(uploads) else buildList {
+        add(File(uploads, personaKey(persona)))
+        if (isClaudia(persona)) add(uploads)
+    }
+    private fun stateDir(persona: String?) = if (isClaudia(persona)) root else File(File(root, "personas"), personaKey(persona!!))
+
+    fun catalog(persona: String? = null): JSONArray {
         val result = JSONArray()
-        for (i in 0 until manifest.length()) {
-            val item = manifest.getJSONObject(i)
-            if (File(defaults, item.getString("file")).isFile) {
-                result.put(JSONObject().put("id", item.getString("id")).put("title", item.getString("title"))
-                    .put("title_zh", item.getString("title_zh")).put("composer", item.getString("composer"))
-                    .put("tags", item.getJSONArray("tags")).put("source", item.getString("source"))
-                    .put("license", item.getString("license")).put("kind", "default"))
+        val claudia = isClaudia(persona)
+        if (claudia) {
+            for (i in 0 until manifest.length()) {
+                val item = manifest.getJSONObject(i)
+                if (File(defaults, item.getString("file")).isFile) {
+                    result.put(JSONObject().put("id", item.getString("id")).put("title", item.getString("title"))
+                        .put("title_zh", item.getString("title_zh")).put("composer", item.getString("composer"))
+                        .put("tags", item.getJSONArray("tags")).put("source", item.getString("source"))
+                        .put("license", item.getString("license")).put("kind", "default"))
+                }
             }
         }
         val seen = mutableSetOf<String>()
-        (uploads.listFiles() ?: emptyArray()).filter { it.isFile && it.extension.lowercase() in allowed }
-            .sortedBy { it.name.lowercase() }.forEach { file ->
-                val id = "upload-${sha(file.readBytes()).take(16).lowercase()}"
-                if (!seen.add(id)) return@forEach
-                val score = metadata(file)
-                result.put(JSONObject().put("id", id)
-                    .put("title", score.first).put("composer", score.second).put("tags", JSONArray().put("user-upload"))
-                    .put("kind", "upload").put("format", file.extension.lowercase()))
+        val dirs = uploadDirs(persona)
+        dirs.forEach { dir ->
+            (dir.listFiles() ?: emptyArray()).filter { it.isFile && it.extension.lowercase() in allowed }
+                .sortedBy { it.name.lowercase() }.forEach score@{ file ->
+                    val id = "upload-${sha(file.readBytes()).take(16).lowercase()}"
+                    if (!seen.add(id)) return@score
+                    val score = metadata(file)
+                    result.put(JSONObject().put("id", id)
+                        .put("title", score.first).put("composer", score.second).put("tags", JSONArray().put("user-upload"))
+                        .put("kind", "upload").put("format", file.extension.lowercase()))
+                }
             }
         return result
     }
 
-    fun add(source: File): JSONObject {
+    fun add(source: File, persona: String? = null): JSONObject {
         require(source.isFile && source.length() in 1..(50L * 1024 * 1024)) { "乐谱文件不存在或超过50 MiB" }
         require(source.extension.lowercase() in allowed) { "仅支持 MuseScore 和 MusicXML 乐谱" }
         metadata(source)
         val bytes = source.readBytes()
         val digest = sha(bytes)
-        val target = File(uploads, "$digest.${source.extension.lowercase()}")
-        val duplicate = uploads.listFiles()?.any { it.isFile && it.nameWithoutExtension == digest } == true
+        val dir = if (persona == null) uploads else File(uploads, personaKey(persona)).also { it.mkdirs() }
+        val target = File(dir, "$digest.${source.extension.lowercase()}")
+        val duplicate = dir.listFiles()?.any { it.isFile && it.nameWithoutExtension == digest } == true
         if (!duplicate && !target.exists()) target.writeBytes(bytes)
-        return catalog().let { all -> (0 until all.length()).map { all.getJSONObject(it) }.first { it.optString("id") == "upload-${digest.take(16).lowercase()}" } }
+        return catalog(persona).let { all -> (0 until all.length()).map { all.getJSONObject(it) }.first { it.optString("id") == "upload-${digest.take(16).lowercase()}" } }
     }
 
-    fun get(id: String): Pair<JSONObject, File>? {
-        for (i in 0 until manifest.length()) {
+    fun get(id: String, persona: String? = null): Pair<JSONObject, File>? {
+        for (i in 0 until (if (isClaudia(persona)) manifest.length() else 0)) {
             val item = manifest.getJSONObject(i)
             if (item.optString("id") == id) return item to File(defaults, item.getString("file"))
         }
         if (id.startsWith("upload-")) {
-            val file = uploads.listFiles()?.firstOrNull { it.isFile && it.nameWithoutExtension.startsWith(id.removePrefix("upload-"), true) && it.extension.lowercase() in allowed }
+            val file = uploadDirs(persona).asSequence().flatMap { (it.listFiles() ?: emptyArray()).asSequence() }
+                .firstOrNull { it.isFile && it.nameWithoutExtension.startsWith(id.removePrefix("upload-"), true) && it.extension.lowercase() in allowed }
             if (file != null) {
                 val (title, composer) = metadata(file)
                 return JSONObject().put("id", id).put("title", title).put("composer", composer).put("kind", "upload") to file
@@ -85,21 +102,27 @@ class MusicLibrary(private val dataDir: File, private val assets: AssetManager) 
         return null
     }
 
-    fun select(id: String): JSONObject {
-        val (item, file) = get(id) ?: error("所选乐谱已不存在")
+    fun select(id: String, persona: String? = null): JSONObject {
+        val all = catalog(persona)
+        require((0 until all.length()).any { all.getJSONObject(it).optString("id") == id }) { "乐谱不属于当前人设的曲库" }
+        val (item, file) = get(id, persona) ?: error("所选乐谱已不存在")
         require(file.isFile) { "所选乐谱已不存在" }
         val state = JSONObject().put("id", id).put("title", item.optString("title"))
             .put("composer", item.optString("composer")).put("path", file.absolutePath).put("selected_at", System.currentTimeMillis())
-        val temp = File(root, "selection.json.tmp")
+        val stateDir = stateDir(persona).also { it.mkdirs() }
+        val temp = File(stateDir, "selection.json.tmp")
         temp.writeText(state.toString(), Charsets.UTF_8)
-        check(temp.renameTo(File(root, "selection.json"))) { "无法保存当前选曲" }
+        check(temp.renameTo(File(stateDir, "selection.json"))) { "无法保存当前选曲" }
         return state
     }
 
-    fun selection(): JSONObject? = runCatching {
-        val state = JSONObject(File(root, "selection.json").readText(Charsets.UTF_8))
-        val (_, file) = get(state.getString("id")) ?: return null
-        if (!file.isFile) null else state.put("path", file.absolutePath)
+    fun selection(persona: String? = null): JSONObject? = runCatching {
+        val stateDir = stateDir(persona)
+        val state = JSONObject(File(stateDir, "selection.json").readText(Charsets.UTF_8))
+        val (_, file) = get(state.getString("id"), persona) ?: return null
+        val allowed = catalog(persona)
+        if (!file.isFile || (0 until allowed.length()).none { allowed.getJSONObject(it).optString("id") == state.optString("id") }) null
+        else state.put("path", file.absolutePath)
     }.getOrNull()
 
     private fun metadata(file: File): Pair<String, String> {

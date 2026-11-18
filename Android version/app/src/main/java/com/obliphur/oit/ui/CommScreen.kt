@@ -125,6 +125,7 @@ fun CommScreen(go: (String) -> Unit) {
     }
     val pickScore = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
+        val scoreOwner = comm.personaName()
         Thread {
             var imported = ""; var error = ""
             var staged: java.io.File? = null
@@ -141,7 +142,7 @@ fun CommScreen(go: (String) -> Unit) {
                 staged = java.io.File(ocrCtx.cacheDir, "music-score-import.$ext")
                 ocrCtx.contentResolver.openInputStream(uri)?.use { input -> staged!!.outputStream().use { output -> input.copyTo(output) } }
                     ?: error("无法读取乐谱文件")
-                imported = comm.importScore(staged!!).optString("title")
+                imported = comm.importScore(staged!!, scoreOwner).optString("title")
             } catch (e: Exception) { error = e.message ?: e.javaClass.simpleName }
             finally { staged?.delete() }
             android.os.Handler(android.os.Looper.getMainLooper()).post {

@@ -140,6 +140,7 @@ class ChatMixin:
                 self.messages.remove(m)
                 self.messages.append(m)
             self._deliver_invites(m)
+            self._music_deliver(m)
         if not self.viewing:
             self.unread += len(held)
             self._ping()
@@ -180,6 +181,8 @@ class ChatMixin:
     def set_viewing(self, on: bool):
         if not on:
             self.voice.stop()
+            self.music_player.stop()
+            self._music_actions.clear()
         if self.viewing and not on:
             self.save_cfg()
         self.viewing = bool(on)

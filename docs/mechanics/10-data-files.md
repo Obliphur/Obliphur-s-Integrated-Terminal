@@ -21,6 +21,8 @@
 | `comm_chat_<人设编号>.json` | 各对象的聊天记录、情景模式与情绪张力 `interaction`（含爆发状态 `burst_until`（非零表示持续，兼容旧时间戳，由模型结束）、爆发后的 24 小时增长减半截止时间 `gain_until`、最近两个爆发触发日期 `burst_days` 和早间必谈触发日期 `morning_day`、爆发后睡眠必谈的待触发边界 `burst_sleep_after`，以及待模型判断的消息 UID 与发送时段 `pending`、按条件保存的张力增长冷却 `gain_cooldowns`、条件连锁一小时倍率截止时刻 `gain_chain_until`、高张力特殊空闲结束时刻 `special_until`、用户发言标记 `special_spoke`、特殊空闲入场段起点 `last_special_begin` / 入场张力 `special_entry_tension` / 前七分钟正向条件次数 `special_7m_gain_count` / 单段引诱去重 `special_7m_lured_seg`、衰减结算时刻 `decay_at` 与豁免截止时刻 `decay_hold_until`（旧 `skip_decay` 迁移为 24 小时豁免），24.20）、模型摘要 `mem_auto`、系统固定消息门槛 `mem_fixed`（24.2.4）、本机等待展示的 share data 邀请标记（24.12） | 跟随设备同步；清空对应聊天或重置时删除 |
 | `ai_voice.json` | MiniMax 语音配置、按人设分配、开关与自动播放间隔；API Key 在本机加密，配置随绑定同步（24.1） | 永久；重置删除 |
 | `external_software.json` | 本机选择的外部软件目录、Process Lasso 安装位置 | 永久；不随设备同步 |
+| `music_library/generated/` | 演奏 MIDI 与 MuseScore 渲染的 MP3 缓存，源谱或 MIDI 更新、缓存损坏时重新生成 | 本机缓存；不随设备同步；重置删除 |
+| `music_library/defaults/`、`music_library/uploads/<人设哈希>/`、`music_library/personas/<人设哈希>/selection.json` | 默认曲库只属于 Claudia；上传和选曲按人设文件名 SHA256 前20位隔离。旧共享上传和根目录选曲归 Claudia。UI 不展示或编辑曲目，只允许上传增加 | 本机；不随设备同步；重置删除上传及选曲，只恢复 Claudia 默认曲库 |
 | `PianoTranscription/CRNN_note_F1=0.9677_pedal_F1=0.9186.pth` | 钢琴转 MIDI 预训练模型（Zenodo，MD5 校验） | 用户选择的外部软件目录；不随设备同步 |
 | `Audiveris/`、`MuseScore/`、`PianoTranscription/runtime/` | 音乐组件和隔离 CPU 推理环境；各组件根目录的 `oit-install.json` 记录版本和相对可执行路径 | 用户选择的外部软件目录；不随同步，不自动搬移或卸载 |
 | `voice_cache/` | 按人设和消息哈希保存的 MP3 与 `.played` 播放记录 | 随绑定设备同步音频及已听状态；清空对应聊天或重置时删除 |

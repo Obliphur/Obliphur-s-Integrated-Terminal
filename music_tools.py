@@ -92,6 +92,22 @@ def validate_output(path):
     elif path.suffix.lower() in (".mxl", ".mscz"):
         if not zipfile.is_zipfile(path):
             raise MusicError(tr("音乐工具没有生成有效输出."))
+    elif path.suffix.lower() == ".mp3":
+        with path.open("rb") as stream:
+            header = stream.read(10)
+            if header[:3] == b"ID3" and len(header) == 10 and all(byte < 128 for byte in header[6:10]):
+                size = 0
+                for byte in header[6:10]:
+                    size = (size << 7) | byte
+                stream.seek(10 + size + (10 if header[5] & 16 else 0))
+            else:
+                stream.seek(0)
+            frame = stream.read(4)
+            if (len(frame) < 4 or frame[0] != 255 or frame[1] & 0xe0 != 0xe0
+                    or frame[1] & 6 == 0 or frame[1] & 0x18 == 8
+                    or frame[2] >> 4 in (0, 15) or frame[2] & 12 == 12
+                    or path.stat().st_size - stream.tell() < 32):
+                raise MusicError(tr("音乐工具没有生成有效输出."))
 
 
 def musescore_env():
@@ -252,6 +268,29 @@ class MusicTools:
     def export_performance(self, source, destination, *, seed=None):
         """乐谱→演奏 MIDI；与参考谱的精确导出分开，防止污染演奏评判。"""
         return self._execute("running", lambda: self._performance(source, destination, seed))
+
+    def render_performance(self, source, destination):
+        """将演奏 MIDI 渲染为本机可播放的 MP3。"""
+        return self._execute("running", lambda: self._render_performance(source, destination))
+
+    def _render_performance(self, source, destination):
+        src, dest = Path(source).resolve(), Path(destination).resolve()
+        if not src.is_file() or src.suffix.lower() not in (".mid", ".midi") or dest.suffix.lower() != ".mp3" or src == dest:
+            raise MusicError(tr("演奏音频需要有效的 MIDI 文件和不同的输出位置."))
+        validate_output(src)
+        self._require("musescore")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        staged = dest.with_name(dest.name + "." + uuid.uuid4().hex + ".part")
+        try:
+            self._export(src, staged.with_suffix(".mp3"))
+            rendered = staged.with_suffix(".mp3")
+            validate_output(rendered)
+            os.replace(rendered, dest)
+            return MusicResult("render", "musescore", str(src), (str(dest),))
+        finally:
+            for path in (staged, staged.with_suffix(".mp3")):
+                if path.exists():
+                    path.unlink()
 
     def start_performance(self, source, destination):
         return self._start("running", lambda: self._performance(source, destination))

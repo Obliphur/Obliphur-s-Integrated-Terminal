@@ -969,8 +969,11 @@ class Comm(
             onUsage = { i, c -> Comm.usageSink(i, c) }, think = Comm.thinkLocal.get() == true, web = Comm.webLocal.get() == true, tools = Comm.toolsLocal.get() == true) },
 ) {
     private val musicLibrary by lazy { MusicLibrary(dir, com.obliphur.oit.OitApp.instance.assets) }
-    fun importScore(source: File) = musicLibrary.add(source)
-    fun selectedScore() = musicLibrary.selection()
+    fun importScore(source: File, owner: String = personaName()): JSONObject {
+        require(owner.isNotEmpty()) { "请先选择一个人设，再导入乐谱" }
+        return musicLibrary.add(source, owner)
+    }
+    fun selectedScore() = musicLibrary.selection(personaName())
     companion object {
         val toolsLocal = ThreadLocal<Boolean>()
         /** 每次请求的用量记录 (输入 token, 命中缓存的 token): 写进 comm.log. 由 Comm 的实例接上. */
@@ -4482,7 +4485,7 @@ class Comm(
                     result = JSONObject().put("ok", true).put("data", values).put("note", "own_data属于你，不是用户；reference_template仅参考格式与占位符，非真实数据。不可用数据不要编造。")
                 }
                 "oit_music_catalog" -> runCatching {
-                    val all = musicLibrary.catalog()
+                    val all = musicLibrary.catalog(personaName())
                     val catalog = org.json.JSONArray()
                     for (i in 0 until minOf(80, all.length())) catalog.put(all.getJSONObject(i))
                     musicIds = (0 until catalog.length()).map { catalog.getJSONObject(it).getString("id") }.toSet()
@@ -4490,7 +4493,7 @@ class Comm(
                 }.onFailure { log("TOOL music catalog FAIL ${it.javaClass.simpleName}") }
                 "oit_music_select" -> {
                     val id = args.optString("id")
-                    val found = if (musicIds.isNotEmpty() && id in musicIds) runCatching { musicLibrary.get(id) }.getOrNull() else null
+                    val found = if (musicIds.isNotEmpty() && id in musicIds) runCatching { musicLibrary.get(id, personaName()) }.getOrNull() else null
                     if (found != null && found.second.isFile && musicId.isEmpty()) {
                         musicId = id
                         result = JSONObject().put("ok", true).put("selected", JSONObject().put("id", id)
@@ -4500,6 +4503,8 @@ class Comm(
                 }
                 "oit_music_generate_midi" -> result = JSONObject().put("ok", false)
                     .put("error", "安卓端暂不支持生成 MIDI；请在 Windows 安装 MuseScore 后重试。MIDI 不是 MP3。")
+                "oit_music_perform", "oit_music_stop" -> result = JSONObject().put("ok", false)
+                    .put("error", "安卓端暂不支持本机演奏；请在 Windows 安装 MuseScore 后请求演奏。")
                 "oit_joint_offer" -> {
                     val why = if (kind !in CommText.OP_KINDS) "此类请求不能发起联合行动" else jointBlock().ifEmpty { if (jointLive()) "正在联合行动同步" else "" }
                     slots = if (why.isEmpty()) opSlots(now()) else null
@@ -4747,7 +4752,7 @@ class Comm(
             }
             activeReplyAfter = 0L
             r.op?.let { opApply(it, m) }
-            if (r.musicId.isNotEmpty()) runCatching { musicLibrary.select(r.musicId) }
+            if (r.musicId.isNotEmpty()) runCatching { musicLibrary.select(r.musicId, personaName()) }
             if (shareInvite) { m.shareInvite = true; deliverInvites(m) }
             delivered = true
             deliveredId = m.id

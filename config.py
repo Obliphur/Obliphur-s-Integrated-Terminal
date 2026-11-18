@@ -220,7 +220,7 @@ OUTING_MAX_HOURS = 24 * 7
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.576"                  # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.577"                  # 和 GitHub 上发布的版本号比较 (见 updater.py)
 AI_VOICE_GAP = 1.0                       # 两条语音之间的默认间隔（秒）
 COMM_SPLIT_INTERVAL_SECONDS = 5          # 分条发送间隔（秒）
 COMM_TOOL_ROUNDS = 6                     # 单次沟通最多进行的查询 / 联合行动工具轮数
@@ -275,6 +275,7 @@ MUSIC_PARTITURA_VERSION = "1.9.0"
 MUSIC_PARTITURA_FREE = 512 * 1024 * 1024
 MUSIC_LOG_TAIL = 4096
 MUSIC_CPU_THREADS = 2
+MUSIC_RENDER_VERSION = 1                 # MP3 渲染缓存格式；改变渲染流程时递增
 # 演奏用 MIDI 的轻微随机偏差；保留评判/格式转换的原始 MIDI，不改谱面速度。
 MUSIC_HUMANIZE_VERSION = 1
 MUSIC_HUMANIZE_DRIFT_MS = 12.0          # 每 8 个四分音符平滑变化，绝对偏移不累计

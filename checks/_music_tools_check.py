@@ -281,4 +281,21 @@ with bypassguard.allow_path_prefix(runtime_bin):
     assert runtime_prefix in bypassguard._exempt_prefixes()
 assert runtime_prefix not in bypassguard._exempt_prefixes()
 
+# 演奏渲染必须输出可识别的 MP3，失败不能覆盖旧音频。
+render_input, render_output = base / "performance.mid", base / "performance.mp3"
+render_input.write_bytes(b"MThd" + b"\0" * 10)
+mp3 = b"\xff\xfb\x90\x00" + b"\0" * 500
+def render_audio(source, destination):
+    assert Path(source) == render_input and Path(destination).suffix == ".mp3"
+    Path(destination).write_bytes(mp3)
+with patch.object(music, "_require", return_value="MuseScore4.exe"), patch.object(music, "_export", side_effect=render_audio):
+    assert music.render_performance(render_input, render_output).files == (str(render_output),)
+    M.validate_output(render_output)
+    assert render_output.read_bytes() == mp3
+with patch.object(music, "_require", return_value="MuseScore4.exe"), patch.object(music, "_export", side_effect=lambda src, dst: Path(dst).write_bytes(b"ID3bad")):
+    fails(lambda: music.render_performance(render_input, render_output))
+    assert render_output.read_bytes() == mp3 and not music.busy and not music.external.model_busy
+    assert not list(base.glob("performance.mp3.*"))
+fails(lambda: music.render_performance(render_input, base / "wrong.wav"))
+
 print("music tools check OK")

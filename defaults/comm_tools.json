@@ -34,6 +34,28 @@
     }
   },
   {
+    "name": "oit_music_perform",
+    "description": "按用户明确的演奏请求，准备已选曲目的本机MP3演奏。须先在本轮通过oit_music_select选择，或使用当前已选曲目。仅Windows已部署MuseScore且用户空闲或休息时可用；音频准备好后待正式回复显示时开始播放。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 80 }
+      },
+      "required": ["id"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "oit_music_stop",
+    "description": "响应用户停止演奏的请求；正式回复提交后停止本机正在播放的演奏并取消待播曲目。",
+    "parameters": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  {
     "name": "oit_query",
     "description": "查询人设自己的OIT数据或参考模板、关系条件进度、聊天记录数量。查询结果由程序提供，不能把模板说成用户真实数据。",
     "parameters": {
