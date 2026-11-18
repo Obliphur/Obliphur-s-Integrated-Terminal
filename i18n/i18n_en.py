@@ -2,7 +2,7 @@
 
 
 EN = {
-    "尚有未获原谅的冒犯，暂时不能确立亲密关系": "An offense remains unforgiven; a relationship cannot be established yet",
+    "我现在还不能答应。": "I can't agree to that yet.",
     "- 【系统记录】未获原谅的冒犯 ({count} 条): {records}": "- [System record] Unforgiven offenses ({count}): {records}",
     "AI 模型": "AI models",
     "AI 模型配置": "AI model configuration",
@@ -48,6 +48,17 @@ EN = {
     "图片太大了 (最大 4.5 MB)": "Image is too large (4.5 MB maximum)",
     "打不开这张图片.": "Could not open this image.",
     "音乐工具": "Music tools",
+    "Android 构建 Java": "Java for Android builds",
+    "安装 Microsoft JDK 17": "Install Microsoft JDK 17",
+    "正在安装 Java… {n}%": "Installing Java… {n}%",
+    "Java 安装失败: {error}": "Java installation failed: {error}",
+    "Java 17 已就绪": "Java 17 is ready",
+    "Java 17 未安装": "Java 17 is not installed",
+    "无法读取 Java 安装包校验值.": "Could not read the Java package checksum.",
+    "Java 安装包包含无效路径.": "The Java package contains an invalid path.",
+    "Java 安装包结构无效.": "The Java package has an invalid layout.",
+    "Java 自动部署仅支持 Windows x64.": "Automatic Java deployment requires Windows x64.",
+    "下载的 Java 不是可用的 JDK 17.": "The downloaded Java package is not a working JDK 17.",
     "一键安装音乐工具": "Install all music tools",
     "钢琴音频转 MIDI": "Piano audio to MIDI",
     "Partitura MIDI 分析": "Partitura MIDI analysis",

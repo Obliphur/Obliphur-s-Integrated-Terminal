@@ -189,6 +189,8 @@ class ChatMixin:
 
     def set_viewing(self, on: bool):
         if not on:
+            if self.viewing:
+                self._music_discourtesy()
             self.voice.stop()
             self.music_player.stop()
             self._music_actions.clear()
@@ -237,6 +239,8 @@ class ChatMixin:
         now = self.now()
         shown = text or "[图片]"
         message = self._add("me", shown, self._compose(now, shown))
+        if text and self._music_discourtesy():
+            self._music_discourtesy_uids.add(message["uid"])
         if image:
             self._request_image = image
         if reply_delay_seconds > 0:
@@ -268,6 +272,8 @@ class ChatMixin:
             shown.append(text)
             parts.append(text)
         message = self._add("me", "\n".join(shown), self._compose(now, "\n\n".join(parts)))
+        if text and self._music_discourtesy():
+            self._music_discourtesy_uids.add(message["uid"])
         self._interaction_sent(text, message)
         if joint:                                           # 邀请发出去了: 等对方回 [Yes] / [No]
             self.cfg["joint_last"] = list(joint["terms"])

@@ -292,6 +292,22 @@ def interaction_prompt(d, total, special, rules=None, burst_rules=None, initial_
 
 
 class InteractionMixin:
+    def _music_discourtesy(self):
+        from .comm_util import is_claudia
+        if not is_claudia(self.persona_name()) or not self.music_player.is_playing:
+            return False
+        from comm.comm_persona import read_persona_full
+        persona = read_persona_full(self.personas, self.persona_name())
+        condition = "music_discourtesy"
+        rules = valence_rules(persona)
+        if condition not in rules:
+            return False
+        d = self._interaction_prepare()
+        burst_rate = valence_burst_rules(persona)["burst_rate"]
+        interaction_valence_add(d, [(condition, rules[condition][0])], burst_rate, self._ms())
+        self._interaction_set(d)
+        return True
+
     def offense_blocked(self):
         from .comm_util import is_claudia
         return is_claudia(self.persona_name()) and bool(offenses_active(self.cfg.get("interaction")))
@@ -434,6 +450,10 @@ class InteractionMixin:
                     if special and d["tension"] > config.COMM_TENSION_CAP and gain > 0:
                         burst = True
                 valence_events = valence_model_events(reply, i, getattr(self, "_interaction_valence_rules", {}))
+                if uid in self._music_discourtesy_uids:
+                    valence_events = [(condition, shift) for condition, shift in valence_events
+                                      if condition != "music_discourtesy"]
+                    self._music_discourtesy_uids.discard(uid)
                 interaction_valence_add(d, valence_events, getattr(self, "_interaction_burst_rules", {}).get("burst_rate", 1.0), now_ms)
                 del d["pending"][uid]
         self._interaction_set(d)

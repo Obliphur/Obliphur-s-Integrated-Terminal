@@ -113,6 +113,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         from music_playback import MusicPlayback
         self.music_player = MusicPlayback(lambda: self.viewing and self.state_fn() in ("idle", "break") and not self.hard_block())
         self._music_actions = {}
+        self._music_discourtesy_uids = set()
         self.contract_fn = lambda: False     # 用户有没有合约在进行 (contract.active); app 接上: 日程跟随在合约期间自动关闭
         self.on_sf = None                    # 对方的状态变了, 要问用户跟不跟随 (kind, 已经带上名字的提示文字); app 接上
         self._sf_last = None                 # 上一秒对方的状态 (pid, kind); None = 没在看 (开关关着 / 合约中), 重新开始看时先记下现在的状态, 不提示
@@ -1420,7 +1421,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             self._interaction_end(tension_reply, getattr(self, "_interaction_burst", 0))
             if accept and self.offense_blocked():
                 accept = False
-                text = tr("尚有未获原谅的冒犯，暂时不能确立亲密关系")
+                text = tr("我现在还不能答应。")
             # AI 的 API 原文含控制标记；只存用户可见文本，避免详情/同步接口泄露调用痕迹。
             already_shown = {id(m) for m in batch.messages if "pending_reply" not in m} if batch else set()
             m = self._reply_complete(text, batch)

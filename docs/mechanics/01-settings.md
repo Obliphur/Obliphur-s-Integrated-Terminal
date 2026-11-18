@@ -1,5 +1,7 @@
 # 1. 设置与设置冷静期
 
+Windows x64 的「额外功能」提供 Microsoft OpenJDK 17 安装入口，供 Android Gradle 构建使用。安装包经统一下载器从微软官方地址获取并校验官方 SHA-256，解压到外部软件目录，设置当前用户的 `JAVA_HOME` 和 `Path`；此部署仅配置本机，不随设备同步。
+
 [← 返回目录](../../MECHANICS.md)
 
 ### 1.1 生效规则

@@ -1,6 +1,7 @@
 """本机外部软件目录与 Process Lasso 部署；不参与设备同步。"""
 
 import configparser
+import ctypes
 import functools
 import os
 import platform
@@ -10,6 +11,7 @@ import subprocess
 import sys
 import threading
 import urllib.parse
+from pathlib import Path
 
 import config
 import tempstore
@@ -17,6 +19,8 @@ from i18n import tr
 
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 HOSTS = {"bitsum.com", "www.bitsum.com", "dl.bitsum.com"}
+JAVA_URL = "https:" + "/" * 2 + "aka.ms/download-jdk/microsoft-jdk-17-windows-x64.zip"
+JAVA_HOSTS = {"aka.ms", "download.visualstudio.microsoft.com"}
 
 
 def _official_url(url):
@@ -42,6 +46,51 @@ def download_installer(dest, progress=lambda n: None):
             raise ValueError(tr("下载内容不是 Windows 安装程序."))
 
 
+def install_java(target, work, progress=lambda n: None):
+    import updater
+    url = JAVA_URL
+    with updater._open(url + ".sha256sum.txt", 30, accept="text/plain", allowed_hosts=JAVA_HOSTS) as response:
+        digest = re.search(r"\b[0-9a-fA-F]{64}\b", response.read(4096).decode("ascii", "replace"))
+        if not digest or urllib.parse.urlsplit(response.geturl()).hostname not in JAVA_HOSTS:
+            raise ValueError(tr("无法读取 Java 安装包校验值."))
+    archive = os.path.join(work, "jdk.zip")
+    source = {"url": url, "accept": updater.ACCEPT_FILE, "size": None, "sha256": digest.group().lower()}
+    updater.download_file(source, archive, allowed_hosts=JAVA_HOSTS, max_download=512 * 1024 * 1024,
+                          progress=lambda done: progress(min(99, done * 100 // (512 * 1024 * 1024))))
+    import music_install
+    root = os.path.join(work, "extracted")
+    music_install.extract_zip(archive, root)
+    candidates = [str(path.parent.parent) for path in Path(root).rglob("java.exe")
+                  if path.parent.name.lower() == "bin"]
+    candidates = [path for path in candidates if os.path.isfile(os.path.join(path, "bin", "javac.exe"))]
+    if len(candidates) != 1:
+        raise ValueError(tr("Java 安装包结构无效."))
+    result = subprocess.run([os.path.join(candidates[0], "bin", "java.exe"), "-version"],
+                            capture_output=True, timeout=30, creationflags=NO_WINDOW)
+    version = (result.stderr or result.stdout).decode("utf-8", "replace")
+    if result.returncode or not re.search(r'version "17(?:\.|"|\+)', version):
+        raise ValueError(tr("下载的 Java 不是可用的 JDK 17."))
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    staged = target + ".new"
+    if os.path.isdir(staged):
+        shutil.rmtree(staged)
+    shutil.copytree(candidates[0], staged)
+    backup = target + ".old"
+    if os.path.isdir(backup):
+        shutil.rmtree(backup)
+    if os.path.isdir(target):
+        os.replace(target, backup)
+    try:
+        os.replace(staged, target)
+    except Exception:
+        if os.path.isdir(backup) and not os.path.exists(target):
+            os.replace(backup, target)
+        raise
+    if os.path.isdir(backup):
+        shutil.rmtree(backup)
+    progress(100)
+
+
 def signature_ok(path):
     """执行前要求有效的 Bitsum Authenticode 签名。"""
     script = ("$s=Get-AuthenticodeSignature -LiteralPath '" + path.replace("'", "''") + "'; "
@@ -58,6 +107,24 @@ def protected_processes():
     """覆盖虚拟环境、版本化解释器与 PyTorch 的 Python 子进程。"""
     return sorted({"python*.exe", "torchrun*.exe", "java*.exe", "audiveris.exe", "musescore4.exe", "mscore.exe",
                    "oit.exe", "oitlink.exe", os.path.basename(sys.executable).lower()})
+
+
+def set_java_environment(java_home):
+    import winreg
+    with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, "Environment", 0,
+                            winreg.KEY_READ | winreg.KEY_WRITE) as key:
+        try:
+            path, kind = winreg.QueryValueEx(key, "Path")
+        except FileNotFoundError:
+            path, kind = "", winreg.REG_EXPAND_SZ
+        java_bin = os.path.join(java_home, "bin")
+        entries = [item for item in str(path).split(";") if item]
+        entries = [item for item in entries if os.path.normcase(item.strip('"').rstrip("\\"))
+                   != os.path.normcase(java_bin.rstrip("\\"))]
+        winreg.SetValueEx(key, "JAVA_HOME", 0, winreg.REG_SZ, java_home)
+        path_kind = kind if kind in (winreg.REG_SZ, winreg.REG_EXPAND_SZ) else winreg.REG_EXPAND_SZ
+        winreg.SetValueEx(key, "Path", 0, path_kind, ";".join([java_bin, *entries]))
+    ctypes.windll.user32.SendMessageTimeoutW(0xFFFF, 0x001A, 0, "Environment", 2, 5000, None)
 
 
 def write_lasso_config(path):
@@ -100,6 +167,8 @@ class ExternalSoftware:
         data = config.load_json_file(self.path, {})
         self.data = data if isinstance(data, dict) else {}
         self.state, self.error, self.progress = "idle", "", 0
+        self.java_state, self.java_error, self.java_progress = "idle", "", 0
+        self.java_dir = str(self.data.get("java") or "")
         self.model_busy = False
         self._lock = threading.Lock()
 
@@ -117,7 +186,12 @@ class ExternalSoftware:
 
     @property
     def location_busy(self):
-        return self.busy or self.model_busy
+        return self.busy or self.model_busy or self.java_state in ("downloading", "verifying", "installing")
+
+    @property
+    def java_installed(self):
+        return bool(self.java_dir and os.path.isfile(os.path.join(self.java_dir, "bin", "java.exe"))
+                    and os.path.isfile(os.path.join(self.java_dir, "bin", "javac.exe")))
 
     @property
     def installed(self):
@@ -150,6 +224,45 @@ class ExternalSoftware:
             self.state, self.error, self.progress = "downloading", "", 0
             threading.Thread(target=self._deploy, args=(target,), daemon=True).start()
             return True
+
+    def deploy_java(self):
+        with self._lock:
+            if self.location_busy:
+                return False
+            if sys.platform != "win32":
+                raise ValueError(tr("Java 自动部署仅支持 Windows x64."))
+            if not self.root:
+                raise ValueError(tr("请先选择外部软件安装位置."))
+            target = os.path.join(self.root, "Java", "Microsoft JDK 17")
+            self.java_state, self.java_error, self.java_progress = "downloading", "", 0
+            threading.Thread(target=self._deploy_java, args=(target,), daemon=True).start()
+            return True
+
+    def _deploy_java(self, target):
+        work = None
+        try:
+            work = tempstore.mkdtemp("misc", prefix="java-")
+            install_java(target, work, lambda n: setattr(self, "java_progress", n))
+            self.java_state = "installing"
+            set_java_environment(target)
+            java_bin = os.path.join(target, "bin")
+            os.environ["JAVA_HOME"] = target
+            entries = [entry for entry in os.environ.get("PATH", "").split(os.pathsep)
+                       if os.path.normcase(entry) != os.path.normcase(java_bin)]
+            os.environ["PATH"] = os.pathsep.join([java_bin, *entries])
+            with self._lock:
+                data = {**self.data, "java": target}
+                if not config.save_json_file(self.path, data):
+                    raise OSError(tr("保存失败."))
+                self.data, self.java_dir = data, target
+            self.java_state = "ready"
+        except Exception as error:
+            self.java_error, self.java_state = str(error), "error"
+        finally:
+            if work:
+                base, resolved = os.path.realpath(tempstore.path("misc")), os.path.realpath(work)
+                if os.path.commonpath([base, resolved]) == base and resolved != base:
+                    shutil.rmtree(resolved, ignore_errors=True)
 
     def _deploy(self, target):
         work = None

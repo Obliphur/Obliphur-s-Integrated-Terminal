@@ -18,6 +18,12 @@ class MusicPlayback:
         self.token = 0
         self.error = ""
         self.opened = False
+        self.playing = False
+
+    @property
+    def is_playing(self):
+        with self.lock:
+            return self.playing
 
     def _mci(self, command):
         buf = ctypes.create_unicode_buffer(256)
@@ -29,6 +35,7 @@ class MusicPlayback:
         """通知拥有 MCI 设备的播放线程关闭；跨线程直接 close 会找不到别名。"""
         with self.lock:
             self.token += 1
+            self.playing = False
 
     def play(self, path):
         """停止上一首；加载结束和播放期间均检查是否仍允许播放。"""
@@ -54,6 +61,8 @@ class MusicPlayback:
                     if token != self.token or not self.allowed():
                         return
                     self._mci("play " + self.alias)
+                    with self.lock:
+                        self.playing = True
                     while True:
                         time.sleep(0.1)
                         if token != self.token or not self.allowed():
@@ -71,6 +80,8 @@ class MusicPlayback:
                         except (OSError, AttributeError):
                             pass
                         self.opened = False
+                    with self.lock:
+                        self.playing = False
 
         threading.Thread(target=run, name="oit-music-playback", daemon=True).start()
         return True

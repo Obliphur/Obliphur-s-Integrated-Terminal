@@ -259,6 +259,8 @@ try:
         assert i18n.tr("🔊  AI 语音") in label_texts(page.areas["extra"])
         assert i18n.tr("🔊  AI 语音") not in label_texts(page.areas["comm"])
         assert page.music_install.winfo_ismapped()
+        assert page.java_install.winfo_ismapped()
+        assert i18n.tr("Android 构建 Java") in label_texts(page.areas["extra"])
         assert page.music.model is P.manager(str(base / "ui-data"), page.external)
         assert i18n.tr("音乐工具") in label_texts(page.areas["extra"])
         assert not page.external_choose.instate(["disabled"])

@@ -357,7 +357,11 @@ class RtMixin:
     def love_respond(self, accept: bool) -> str:
         """用户点了 接受 / 拒绝 对方的告白. 返回 "" = 记下了, 否则是原因. 拒绝 → LOVE_NO_DAYS 天内不再判定主动告白."""
         if accept and self.offense_blocked():
-            return tr("尚有未获原谅的冒犯，暂时不能确立亲密关系")
+            self._love_set(inv=0)
+            self.save_chat()
+            self._changed()
+            self._push()
+            return ""
         if not self.love_invite():
             return "没有等你回复的告白"
         if accept:

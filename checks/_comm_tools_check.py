@@ -491,9 +491,9 @@ def offense_checks():
     c._love_confirm("user")
     assert not c.related()
     c._finish("user", None, call("oit_reply", {"accept_relationship": True}), "", c._epoch)
-    assert not c.related() and "尚有未获原谅" in c.messages[-1]["text"]
+    assert not c.related() and "冒犯" not in c.messages[-1]["text"]
     c._love_set(inv=c._ms())
-    assert c.love_respond(True) and not c.related()
+    assert c.love_respond(True) == "" and not c.related() and not c.love_invite()
     assert not c._love_check(c.now(), [], set())
     c._finish("love", None, call("oit_reply", {"text": "我喜欢你"}), "", c._epoch)
     assert not any(x["text"] == "我喜欢你" for x in c.messages)
@@ -518,6 +518,18 @@ def music_commit_checks():
     c.set_viewing(True)
     c._interaction_prepare = lambda *_: {"valence": 30}
     c._away_kind = lambda: ""
+    c.music_player.playing = True
+    from comm.comm_interaction import interaction_norm
+    c._interaction_prepare = lambda *_: interaction_norm({"valence": 30})
+    c.set_viewing(False)
+    assert c._state_of(c.pid)["interaction"]["valence"] < 30, "演奏中离开沟通页降低 Claudia 效价"
+    c.set_viewing(True)
+    c.music_player.playing = False
+    c._interaction_prepare = lambda *_: interaction_norm({"valence": 30})
+    c.music_player.playing = True
+    assert c._music_discourtesy(), "演奏中发言事件被识别"
+    assert c._state_of(c.pid)["interaction"]["valence"] < 30, "演奏中发言降低 Claudia 效价"
+    c.music_player.playing = False
     library = music_library.manager(c.dir)
     score_id = library.catalog("Claudia.txt")[0]["id"]
     op = {"type": "music_perform", "id": score_id, "path": str(root / "song.mp3")}

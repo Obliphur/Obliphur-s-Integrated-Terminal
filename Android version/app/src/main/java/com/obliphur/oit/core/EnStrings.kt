@@ -3,7 +3,7 @@ package com.obliphur.oit.core
 /** 英文界面文字. 由 gen_en.py 从桌面版 i18n.py 和补充的译文生成; 键是中文原文. */
 object EnStrings {
     val MAP: Map<String, String> = hashMapOf(
-        "尚有未获原谅的冒犯，暂时不能确立亲密关系" to "An offense remains unforgiven; a relationship cannot be established yet",
+        "我现在还不能答应。" to "I can't agree to that yet.",
         "- 【系统记录】未获原谅的冒犯 ({count} 条): {records}" to "- [System record] Unforgiven offenses ({count}): {records}",
         "导入乐谱到曲库…" to "Import score to library…",
         "请先选择一个人设，再导入乐谱" to "Select a persona before importing a score",

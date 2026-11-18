@@ -18,6 +18,7 @@ class ExtraSettingsMixin:
         if self.comm is not None:
             build_voice_settings(self, body)
         self._build_external_lasso_card(body)
+        self._build_java_card(body)
         self.music = music_tools.manager(self.data_dir or config.app_data_dir(), self.external)
         self.music_library = music_library.manager(self.data_dir or config.app_data_dir())
         card = COLORS["bg_card"]
@@ -61,6 +62,30 @@ class ExtraSettingsMixin:
             return
         self._refresh_extra_page()
         self._extra_job = self.after(500, self._poll_extra_page)
+
+    def _build_java_card(self, body):
+        card = COLORS["bg_card"]
+        frame = tk.Frame(body, bg=card, highlightbackground=COLORS["border"], highlightthickness=1)
+        frame.pack(fill="x", pady=(2, 8))
+        tk.Label(frame, text=tr("Android 构建 Java"), bg=card, fg=COLORS["text"],
+                 font=config.font("body", bold=True)).pack(anchor="w", padx=12, pady=(10, 4))
+        self.java_install = ttk.Button(frame, text=tr("安装 Microsoft JDK 17"), command=self._install_java)
+        self.java_install.pack(anchor="w", padx=12, pady=4)
+        self.java_status = tk.Label(frame, bg=card, fg=COLORS["text_dim"], font=config.font("body"),
+                                    anchor="w", justify="left")
+        self.java_status.pack(fill="x", padx=12, pady=(4, 10))
+        wrap_label(self.java_status, 24)
+
+    def _install_java(self):
+        if not self.external.root:
+            self._choose_external_root()
+        if not self.external.root:
+            return
+        try:
+            self.external.deploy_java()
+        except (OSError, ValueError) as error:
+            toast.warn(str(error))
+        self._refresh_extra_page()
 
     def _install_music(self, tool=None):
         if not self.external.root:
@@ -143,6 +168,18 @@ class ExtraSettingsMixin:
             cfg(self.music_labels[key], text=tr("{tool}: {state}", tool=tr(info["name"]), state=state))
             self.music_buttons[key].state(["disabled"] if blocked or info["ready"] else ["!disabled"])
         self.music_install.state(["disabled"] if blocked or all(s["ready"] for s in statuses.values()) else ["!disabled"])
+        java_ready = self.external.java_installed
+        self.java_install.state(["disabled"] if blocked or java_ready else ["!disabled"])
+        if self.external.java_state in ("downloading", "installing"):
+            java_text = tr("正在安装 Java… {n}%", n=self.external.java_progress)
+        elif self.external.java_state == "error":
+            java_text = tr("Java 安装失败: {error}", error=self.external.java_error)
+        elif java_ready:
+            java_text = tr("Java 17 已就绪")
+        else:
+            java_text = tr("Java 17 未安装")
+        cfg(self.java_status, text=java_text,
+            fg=COLORS["warn"] if self.external.java_state == "error" else COLORS["text_dim"])
         can_convert = any(statuses[key]["ready"] for key in music_tools.CONVERTERS)
         self.music_convert.state(["disabled"] if blocked or not can_convert else ["!disabled"])
         self.music_export_midi.state(["disabled"] if blocked or not selected or not statuses["musescore"]["ready"] else ["!disabled"])
