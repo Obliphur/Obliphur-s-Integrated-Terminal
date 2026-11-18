@@ -108,6 +108,7 @@ class ToolProtocolTest {
         assertFalse((0 until declared.length()).any { declared.getJSONObject(it).getJSONObject("function").getString("name") == "oit_search" })
         assertTrue((0 until declared.length()).any { declared.getJSONObject(it).getJSONObject("function").getString("name") == "oit_music_catalog" })
         assertTrue((0 until declared.length()).any { declared.getJSONObject(it).getJSONObject("function").getString("name") == "oit_music_select" })
+        assertTrue((0 until declared.length()).any { declared.getJSONObject(it).getJSONObject("function").getString("name") == "oit_music_generate_midi" })
     }
 
     @Test fun structuredTensionOnly() {

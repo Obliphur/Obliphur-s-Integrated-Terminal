@@ -4498,6 +4498,8 @@ class Comm(
                             .put("status", "queued_until_message_visible").put("next", "在oit_reply中自然回复；正式回复显示时该曲目才成为当前选曲，尚未播放")
                     } else result = JSONObject().put("ok", false).put("error", "请先查询曲库，并选择本轮目录里仍存在的一首曲目")
                 }
+                "oit_music_generate_midi" -> result = JSONObject().put("ok", false)
+                    .put("error", "安卓端暂不支持生成 MIDI；请在 Windows 安装 MuseScore 后重试。MIDI 不是 MP3。")
                 "oit_joint_offer" -> {
                     val why = if (kind !in CommText.OP_KINDS) "此类请求不能发起联合行动" else jointBlock().ifEmpty { if (jointLive()) "正在联合行动同步" else "" }
                     slots = if (why.isEmpty()) opSlots(now()) else null

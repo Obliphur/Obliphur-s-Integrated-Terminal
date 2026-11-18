@@ -41,6 +41,8 @@ class ExtraSettingsMixin:
         self.music_convert.pack(anchor="w", padx=12, pady=(10, 4))
         self.music_import = ttk.Button(fr, text=tr("导入乐谱到曲库…"), command=self._import_music_score)
         self.music_import.pack(anchor="w", padx=12, pady=4)
+        self.music_export_midi = ttk.Button(fr, text=tr("导出所选曲目为 MIDI…"), command=self._export_selected_midi)
+        self.music_export_midi.pack(anchor="w", padx=12, pady=4)
         self.music_status = tk.Label(fr, bg=card, fg=COLORS["text_dim"], font=config.font("body"),
                                      anchor="w", justify="left")
         self.music_status.pack(fill="x", padx=12, pady=(4, 10))
@@ -103,6 +105,23 @@ class ExtraSettingsMixin:
         except (OSError, ValueError, music_library.MusicLibraryError) as error:
             toast.warn(str(error))
 
+    def _export_selected_midi(self):
+        from pathlib import Path
+        selected = self.music_library.selection()
+        if not selected:
+            toast.warn(tr("请先选择一首曲目"))
+            return
+        destination = filedialog.asksaveasfilename(parent=self, title=tr("保存 MIDI 文件"),
+                    initialfile=Path(selected["title"]).stem + ".mid", defaultextension=".mid",
+                    filetypes=[("MIDI", "*.mid")])
+        if not destination:
+            return
+        try:
+            self.music.start_convert(selected["path"], destination)
+        except (OSError, ValueError, music_tools.MusicError) as error:
+            toast.warn(str(error))
+        self._refresh_extra_page()
+
     def _refresh_extra_page(self):
         if not hasattr(self, "music"):
             return
@@ -110,6 +129,7 @@ class ExtraSettingsMixin:
             self._voice_settings_refresh()
         statuses = self.music.status()
         blocked = self.external.location_busy
+        selected = self.music_library.selection()
         for key, info in statuses.items():
             state = tr("已就绪") if info["ready"] else tr("未安装")
             if key == "piano" and info["weights_ready"] and not info["ready"]:
@@ -119,6 +139,7 @@ class ExtraSettingsMixin:
         self.music_install.state(["disabled"] if blocked or all(s["ready"] for s in statuses.values()) else ["!disabled"])
         can_convert = any(statuses[key]["ready"] for key in music_tools.CONVERTERS)
         self.music_convert.state(["disabled"] if blocked or not can_convert else ["!disabled"])
+        self.music_export_midi.state(["disabled"] if blocked or not selected or not statuses["musescore"]["ready"] else ["!disabled"])
         m = self.music
         if m.busy:
             name = tr(music_tools.TOOLS[m.current].name) if m.current in music_tools.TOOLS else ""

@@ -309,6 +309,17 @@ def music_tool_checks():
     assert operation == {"type": "music_select", "id": catalog[6]["id"]}
     assert tools.text_of(reply) == "我选了梦幻曲" and library.selection() is None
 
+    generated = {"id": catalog[6]["id"], "title": catalog[6]["title"], "reused": False}
+    seen = []
+    replies = [tools.pack(name="oit_music_select", arguments={"id": catalog[6]["id"]}),
+               tools.pack(name="oit_music_generate_midi", arguments={"id": catalog[6]["id"]}),
+               tools.pack(text="MIDI 已生成", name="oit_reply", arguments={"text": "MIDI 已生成"})]
+    with patch("music_library.MusicLibrary.generate_midi", return_value=generated):
+        operation, reply = Context()._tool_rounds(lambda history: seen.append(history) or replies.pop(0), [],
+                                                  tools.pack(name="oit_music_catalog"), "user", 7)
+    assert operation == {"type": "music_select", "id": catalog[6]["id"]} and tools.text_of(reply) == "MIDI 已生成"
+    assert '"format": "MIDI"' in seen[0][-1]["content"]
+
 
 if __name__ == "__main__":
     tempstore.session("comm-tools-check")

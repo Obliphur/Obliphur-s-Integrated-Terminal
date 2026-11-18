@@ -158,6 +158,33 @@ class MusicLibrary:
             pass
         return None
 
+    def midi_path(self, score_id):
+        if not isinstance(score_id, str) or not re.fullmatch(r"[a-zA-Z0-9_-]{1,80}", score_id):
+            raise MusicLibraryError("曲目编号无效")
+        return self.root / "generated" / (score_id + ".mid")
+
+    def generate_midi(self, score_id=None):
+        """使用本机 MuseScore 导出选曲 MIDI；已有且较新的有效结果直接复用。"""
+        selected = self.selection() if score_id is None else None
+        score_id = score_id or (selected or {}).get("id")
+        item, source = self.get(score_id)
+        if not item or not source.is_file():
+            raise MusicLibraryError("请先选择一首仍在曲库中的乐谱")
+        destination = self.midi_path(score_id)
+        from music_tools import MusicError, manager as music_manager, validate_output
+        try:
+            if destination.is_file() and destination.stat().st_mtime_ns >= source.stat().st_mtime_ns:
+                validate_output(destination)
+                return {"id": score_id, "title": item["title"], "path": str(destination), "reused": True}
+            import external_software
+            data_dir = str(self.root.parent)
+            tools = music_manager(data_dir, external_software.manager(data_dir))
+            tools.export(source, destination)
+            validate_output(destination)
+        except (OSError, MusicError) as error:
+            raise MusicLibraryError(str(error)) from error
+        return {"id": score_id, "title": item["title"], "path": str(destination), "reused": False}
+
 
 def manager(data_dir):
     return MusicLibrary(data_dir)

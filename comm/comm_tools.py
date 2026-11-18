@@ -64,6 +64,20 @@ class ToolsMixin:
                               "next": "在oit_reply中自然回复；正式回复显示时该曲目才成为当前选曲，尚未播放"}
                 except music_library.MusicLibraryError as e:
                     result = {"ok": False, "error": str(e)}
+            elif name == "oit_music_generate_midi":
+                score_id = args["id"]
+                selected = music_library.manager(self.dir).selection()
+                pending_id = op.get("id") if isinstance(op, dict) and op.get("type") == "music_select" else ""
+                if score_id != (selected or {}).get("id") and score_id != pending_id:
+                    result = {"ok": False, "error": "请先通过oit_music_select选择这首乐谱"}
+                else:
+                    try:
+                        generated = music_library.manager(self.dir).generate_midi(score_id)
+                        result = {"ok": True, "data": {"id": generated["id"], "title": generated["title"],
+                                  "format": "MIDI", "reused": generated["reused"]},
+                                  "next": "MIDI 文件已生成，可以告知用户；这不表示已经播放或生成 MP3"}
+                    except music_library.MusicLibraryError as e:
+                        result = {"ok": False, "error": str(e)}
             elif name == "oit_joint_offer":
                 why = "此类请求不能发起联合行动" if kind not in OP_KINDS else self.joint_block() or ("正在联合行动同步" if self.joint_live() else "")
                 slots = None if why else self._op_slots(self.now())

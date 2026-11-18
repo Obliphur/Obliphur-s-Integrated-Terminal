@@ -22,6 +22,18 @@
     }
   },
   {
+    "name": "oit_music_generate_midi",
+    "description": "将指定的本机曲库乐谱导出为 MIDI 文件；须先浏览过目录或已选为当前曲目。需要 Windows 已部署 MuseScore。仅生成 MIDI 文件，不播放，也不代表 MP3 已生成。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 80 }
+      },
+      "required": ["id"],
+      "additionalProperties": false
+    }
+  },
+  {
     "name": "oit_query",
     "description": "查询人设自己的OIT数据或参考模板、关系条件进度、聊天记录数量。查询结果由程序提供，不能把模板说成用户真实数据。",
     "parameters": {

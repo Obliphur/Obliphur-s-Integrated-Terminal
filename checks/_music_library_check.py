@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import sys
 import zipfile
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -47,6 +48,20 @@ with zipfile.ZipFile(xml_zip, "w") as archive:
 assert library.add(xml_zip)["title"] == "Wood Song"
 selected = library.select(uploaded["id"])
 assert Path(selected["path"]).is_file() and library.selection()["id"] == uploaded["id"]
+
+class FakeMusicTools:
+    calls = 0
+    def export(self, source_path, destination):
+        self.calls += 1
+        Path(destination).parent.mkdir(parents=True, exist_ok=True)
+        Path(destination).write_bytes(b"MThd\0\0\0\x06")
+
+fake_music = FakeMusicTools()
+with patch("music_tools.manager", return_value=fake_music), patch("external_software.manager", return_value=object()):
+    midi = library.generate_midi(uploaded["id"])
+    assert Path(midi["path"]).read_bytes().startswith(b"MThd") and not midi["reused"]
+    cached = library.generate_midi(uploaded["id"])
+    assert cached["reused"] and fake_music.calls == 1
 
 for invalid in (root / "bad.mscx", root / "wrong.txt"):
     invalid.write_text("<not-a-score/>", encoding="utf-8")
