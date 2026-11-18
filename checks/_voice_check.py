@@ -220,6 +220,7 @@ gate.close()
 
 msgs = [{"id": i, "uid": str(i), "text": str(i), "role": "ai"} for i in range(30)]
 assert [x["id"] for x in voice.autoplay("Assistant.txt", msgs)] == list(range(20, 30))
+assert voice.autoplay("Assistant.txt", [dict(msgs[-1], streaming=True), dict(msgs[-2], hold=True)]) == []
 f = voice.file("Assistant.txt", msgs[-1])
 with open(f + ".played", "w"):
     pass

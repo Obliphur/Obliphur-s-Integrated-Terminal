@@ -134,7 +134,7 @@ class Voice(private val dir: File, private val generate: ((JSONObject, String) -
         val f = audio(name, m)
         f.parentFile?.mkdirs(); f.writeBytes(bytes)
     }
-    fun autoplay(name: String, msgs: List<ChatMsg>) = msgs.filter { it.role == "ai" && !played(name, it) }.takeLast(Cfg.AI_VOICE_AUTO_COUNT)
+    fun autoplay(name: String, msgs: List<ChatMsg>) = msgs.filter { it.role == "ai" && it.api != "streaming" && !it.hold && !played(name, it) }.takeLast(Cfg.AI_VOICE_AUTO_COUNT)
 
     @Synchronized fun request(name: String, m: ChatMsg): Future<File?>? {
         if (!enabled || closed || m.role != "ai") return null

@@ -97,9 +97,20 @@ class ChatMixin:
 
     def visible(self) -> list:
         """聊天里显示的消息. 不能用沟通的时候 (专注 / 睡眠 / 外出 / 无言为真) 收到的对方的消息先藏起来 (hold), 回到休息 / 空闲再显示 (24.4)."""
-        rows = [m for m in self.messages if m["role"] in ("me", "ai") and not m.get("hold")]
-        if self._stream_preview and not self.blocked() and not self.ai_free_at() and self._active_reply_after <= self._ms():
-            rows.append({"id": "streaming", "role": "ai", "text": self._stream_preview,
+        rows = []
+        allowed = bool(self._stream_display or self._stream_displays) and not self.blocked() and not self.ai_free_at(self.now())
+        for m in self.messages:
+            if m["role"] not in ("me", "ai"):
+                continue
+            if not m.get("hold"):
+                rows.append(m)
+            elif allowed and int(m.get("reply_after") or 0) <= self._ms():
+                display = self._stream_displays.get(m.get("uid"))
+                if display and display.text:
+                    rows.append(dict(m, id=f"typing:{m['id']}", text=display.text, streaming=True))
+        display = self._stream_display
+        if display and display.text and allowed and self._active_reply_after <= self._ms():
+            rows.append({"id": "streaming", "role": "ai", "text": display.text,
                          "at": self.now().isoformat(timespec="seconds"), "streaming": True})
         return rows
 
@@ -120,6 +131,9 @@ class ChatMixin:
 
         def due_of(m) -> int:
             floor = int(m.get("reply_after") or 0)
+            display = self._stream_displays.get(m.get("uid"))
+            if display:
+                floor = max(floor, display.due)
             d = max(int(m.get("due") or 0), floor)
             if m.get("late") and not away:                 # 对方专注时发的, 现在已经不在专注了 (日程到了 / 合约让对方休息了): 不用再等原来排的时刻
                 return max(min(d, now), floor)
@@ -136,6 +150,7 @@ class ChatMixin:
         for m in held:
             del m["hold"]
             due = due_of(m)
+            self._stream_displays.pop(m.get("uid"), None)
             m.pop("due", None)
             m["shown"] = now                               # 等用户回复的时间从这时候算起 (规则 IX)
             if m.pop("late", False):                       # 对方专注时发的: 发送时间改成下一个空闲 / 休息开始的时刻, 排到最后 (还没同步给别的设备, 改 ts 没关系)

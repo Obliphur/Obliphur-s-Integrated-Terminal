@@ -365,15 +365,16 @@ class CommPage(CommVoiceMixin, tk.Frame):
         else:
             new = msgs[ids.index(self._rendered[-1]) + 1:]
         self._ensure_pads()
-        if not new:
-            if msgs and msgs[-1].get("streaming") and self._rendered and self._rendered[-1] == "streaming":
-                row = self._rows[-1]
+        by_id = {m["id"]: m for m in msgs if m.get("streaming")}
+        for mid, row in zip(self._rendered, self._rows):
+            if mid in by_id:
                 label = getattr(row, "_oit_stream_label", None)
-                if label is not None and label.cget("text") != msgs[-1]["text"]:
+                if label is not None and label.cget("text") != by_id[mid]["text"]:
                     follow = self._near_end()
-                    label.config(text=msgs[-1]["text"])
+                    label.config(text=by_id[mid]["text"])
                     if follow:
                         self._to_end()
+        if not new:
             return
         follow = self._first_draw or self._near_end() or any(m["role"] == "me" for m in new)
         for m in new:

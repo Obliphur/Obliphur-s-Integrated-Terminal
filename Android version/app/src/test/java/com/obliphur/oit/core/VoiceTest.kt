@@ -118,6 +118,8 @@ class VoiceTest {
             assertFalse(voice.played("Claudia.txt", m))
             val msgs = (0..29).map { ChatMsg(it, "ai", "$it", "", uid = "$it") }
             assertEquals((20..29).toList(), voice.autoplay("Claudia.txt", msgs).map { it.id })
+            assertTrue(voice.autoplay("Claudia.txt", listOf(ChatMsg(90, "ai", "预览", "", "streaming"),
+                ChatMsg(91, "ai", "隐藏", "").also { it.hold = true })).isEmpty())
             voice.clear("Claudia.txt")
             assertTrue(dir.walkTopDown().none { it.extension == "mp3" })
         } finally { voice.close(); dir.deleteRecursively() }

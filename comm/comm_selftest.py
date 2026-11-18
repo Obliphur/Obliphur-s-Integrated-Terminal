@@ -1476,21 +1476,81 @@ def _selftest():
     assert not cu.split_on() and cu.split_interval() == 0
     cu.apply_doc({"split": True, "split_interval": 1})
     assert not cu.split_on() and "split" not in cu.sync_doc() and "split_interval" not in cu.sync_doc()
-    # 预览只在内存，不绕过限制；已经展示的正文完成时不再追加打字等待。
+    # 流式按原字速显示，接口完成后继续输出尾部；两条回复依次排队。
+    CHAR_DELAY, CHAR_DELAY_CJK = 0.1, 0.2
     preview_messages = len(cu.messages)
     cu.busy = True
     cu._stream_events.append((cu._epoch - 1, "过期回复"))
-    cu._stream_events.append((cu._epoch, "流式回复"))
-    assert cu.poll_stream() and cu.visible()[-1]["text"] == "流式回复"
+    cu._stream_events.append((cu._epoch, "中a文😀"))
+    assert cu.poll_stream() and not any(m.get("streaming") for m in cu.visible())
+    clock[0] += timedelta(milliseconds=199)
+    cu.poll_stream()
+    assert not any(m.get("streaming") for m in cu.visible())
+    clock[0] += timedelta(milliseconds=1)
+    cu.poll_stream()
+    assert cu.visible()[-1]["text"] == "中"
+    clock[0] += timedelta(milliseconds=100)
+    cu.poll_stream()
+    assert cu.visible()[-1]["text"] == "中a"
     assert len(cu.messages) == preview_messages and cu.visible()[-1]["streaming"]
     blocked = cu.blocked
     cu.blocked = lambda: "专注中"
     assert all(not m.get("streaming") for m in cu.visible())
     cu.blocked = blocked
-    CHAR_DELAY = CHAR_DELAY_CJK = 1.0
-    cu._finish("user", None, "流式回复", "", cu._epoch)
-    assert not cu._stream_preview and cu.visible()[-1]["text"] == "流式回复"
-    assert not cu.messages[-1].get("hold") and not cu._follow_at
+    cu._finish("user", None, "中a文😀", "", cu._epoch)
+    first = cu.messages[-1]
+    assert cu._stream_display is None and first["hold"] and cu.visible()[-1]["text"] == "中a"
+    synced = cu.sync_doc()[f"m:{cu.pid}:{first['uid']}"]
+    assert synced["hold"] and synced["text"] == "中a文😀" and not synced.get("streaming")
+    assert not cu.voice.autoplay(cu.persona_name(), [cu.visible()[-1]])
+    cu.busy = True
+    cu._stream_events.append((cu._epoch, "乙"))
+    cu.poll_stream()
+    cu._finish("user", None, "乙", "", cu._epoch)
+    second = cu.messages[-1]
+    assert second["due"] == first["due"] + 200
+    clock[0] += timedelta(milliseconds=200)
+    cu.poll_stream()
+    assert cu.visible()[-1]["text"] == "中a文"
+    clock[0] += timedelta(milliseconds=100)
+    cu.poll_stream()
+    assert not first.get("hold") and cu.visible()[-1]["text"] == "中a文😀"
+    clock[0] += timedelta(milliseconds=200)
+    cu.poll_stream()
+    assert not second.get("hold") and cu.visible()[-1]["text"] == "乙" and not cu._stream_displays
+    assert not cu._follow_at and len(calls) == n0 + 1
+    # 指定回复时间不能被预览绕过；Assistant 仍然即时显示。
+    cu.busy = True
+    cu._active_reply_after = cu._ms() + 1000
+    cu._stream_events.append((cu._epoch, "中"))
+    cu.poll_stream()
+    clock[0] += timedelta(milliseconds=1000)
+    cu.poll_stream()
+    assert not any(m.get("streaming") for m in cu.visible())
+    clock[0] += timedelta(milliseconds=200)
+    cu.poll_stream()
+    assert cu.visible()[-1]["text"] == "中"
+    count = len(cu.messages)
+    cu._finish("user", None, "", "流式响应中断，回复尚未完成", cu._epoch)
+    assert len(cu.messages) == count and cu._stream_display is None
+    cu.set_persona("Assistant.txt")
+    cu._active_reply_after = 0
+    cu.busy = True
+    cu._stream_events.append((cu._epoch, "即时显示"))
+    cu.poll_stream()
+    assert cu.visible()[-1]["text"] == "即时显示"
+    cu._finish("user", None, "即时显示", "", cu._epoch)
+    assert not cu.messages[-1].get("hold")
+    cu.clear()
+    assert cu._stream_display is None and not cu._stream_displays
+    # 服务商慢时不积攒突发显示额度，表情仍按一个字符计时。
+    display = StreamDisplay(char_delay)
+    display.update("😀", 0)
+    assert not display.advance(99) and display.text == ""
+    assert display.advance(100) and display.text == "😀"
+    display.update("😀a", 1000)
+    display.advance(1000)
+    assert display.text == "😀" and display.due == 1100
     CHAR_DELAY = CHAR_DELAY_CJK = 0.0
     # 思考 (第一层规则): 默认关; 关键词 / 时刻 / 英文 / 很长 / 系统触发 才开; 设置里可以整个关掉, 随设备同步
     assert think_text_reason("今天天气不错") == "" and think_text_reason("") == ""

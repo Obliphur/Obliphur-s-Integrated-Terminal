@@ -289,7 +289,7 @@ class FlowMixin:
             if mime:
                 msgs[-1]["content"] = ai_assist.image_content(profile, image, mime, str(msgs[-1]["content"]))
         epoch = self._epoch
-        self._stream_preview = ""
+        self._stream_display = None
         self.busy = True
         self.busy_since = time.monotonic()
         started = time.monotonic()

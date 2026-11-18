@@ -76,6 +76,7 @@ def follow_delay(profile: dict, override: float = None) -> float:
 from .comm_interaction import InteractionMixin, interaction_norm, tension_clean
 from .comm_tools import ToolsMixin
 from ai_assist.ai_tools import unpack, args_of, text_of
+from .comm_stream import StreamDisplay
 
 
 class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, FlowMixin, SchedMixin, ShareMixin, RtMixin, MiscMixin):
@@ -150,7 +151,8 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
         self._writing = False
         self._results = []
         self._stream_events = []
-        self._stream_preview = ""
+        self._stream_display = None
+        self._stream_displays = {}
         self._again = False
         self._req_ts = 0              # 最近一次请求发出时, 最后一条用户消息的时间 (ts): 回复到了之后看用户有没有又发了新的
         self._catchup = False         # 补问被拒绝了 (回复已经显示, 后发的消息还没人回): 重试时即使最后一条是对方的也要问
@@ -340,7 +342,8 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
         st = self._others.pop(new, None) or self._read_chat(new)
         self._load_state(st)
         self._epoch += 1
-        self._stream_preview = ""
+        self._stream_display = None
+        self._stream_displays.clear()
         self.error = ""
         self.unread = 0
         self.reload_schedule("换人设")
@@ -788,6 +791,8 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
             self.unread = 0
             self.error = ""
             self._epoch += 1
+            self._stream_display = None
+            self._stream_displays.clear()
             self.reload_schedule("新对话")
         if touched:
             self._changed()
@@ -1268,8 +1273,7 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
         return m
 
     def _finish(self, kind: str, extra, reply: str, err: str, epoch: int = 0, op=None):
-        streamed = any(m.get("streaming") for m in self.visible())
-        self._stream_preview = ""
+        display, self._stream_display = self._stream_display, None
         self.busy = False
         self.busy_since = 0.0
         if self.hard_block():                           # 等回复的时候"无言为真"生效了: 这条回复不要了
@@ -1385,7 +1389,15 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
                 self._interaction_reply(special, burst, until, shame)
             self._interaction_end(tension_reply, getattr(self, "_interaction_burst", 0))
             # AI 的 API 原文含控制标记；只存用户可见文本，避免详情/同步接口泄露调用痕迹。
-            m = self._mk("ai", text, delay=not streamed)
+            m = self._mk("ai", text, delay=display is None)
+            if display is not None:
+                display.update(text, self._ms())
+                display.advance(self._ms())
+                m["due"] = max(int(m.get("due") or 0), display.due)
+                if m["due"] > self._ms():
+                    m["hold"] = True
+                if m.get("hold"):
+                    self._stream_displays[m["uid"]] = display
             self.messages.append(m)
             if self._active_reply_after > self._ms():
                 m["reply_after"] = self._active_reply_after
@@ -1446,8 +1458,25 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
         changed = False
         for epoch, text in events:
             if epoch == self._epoch and self.busy:
-                self._stream_preview += text
+                if self._stream_display is None:
+                    earliest = max([self._active_reply_after] + [int(m.get("due") or 0) for m in self.messages if m.get("hold")])
+                    delay = char_delay if uses_prefix(self.persona_name()) else lambda _text: 0
+                    self._stream_display = StreamDisplay(delay, earliest)
+                text = self._stream_display.source + text
+                if is_claudia(self.persona_name()):
+                    text = to_halfwidth(text)
+                self._stream_display.update(text, self._ms())
                 changed = True
+        if changed:
+            self._changed()
+        return changed
+
+    def _advance_stream(self):
+        """接口返回后仍继续显示缓冲正文；未完成时沿用 hold/due 的正式消息门禁。"""
+        now = self._ms()
+        changed = False
+        for display in list(self._stream_displays.values()) + ([self._stream_display] if self._stream_display else []):
+            changed = display.advance(now) or changed
         if changed:
             self._changed()
         return changed
@@ -1456,7 +1485,11 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
         """聊天页每 100 毫秒取正文增量，不额外触发业务 tick。"""
         with self._lock:
             events, self._stream_events = self._stream_events, []
-        return self._apply_stream(events)
+        changed = self._apply_stream(events)
+        changed = self._advance_stream() or changed
+        version = self.version
+        self._release_held()
+        return changed or self.version != version
 
     # ---- 每秒一次 ----
     def tick(self):
@@ -1467,6 +1500,7 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
             stream, self._stream_events = self._stream_events, []
             done, self._results = self._results, []
         self._apply_stream(stream)
+        self._advance_stream()
         for res in done:
             self._finish(*res)
         with self._lock:

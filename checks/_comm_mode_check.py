@@ -119,6 +119,32 @@ try:
 
             with patch.object(Modal, "wait", inspect_help):
                 page._help()
+            # 接口已完成但仍在逐字显示：新用户消息在下面时，中间气泡也要继续更新。
+            from comm.comm_stream import StreamDisplay
+            from datetime import datetime
+            original_messages = c.messages
+            display = StreamDisplay(lambda text: 0.2 if text == "中" else 0.1)
+            display.update("中a", 0)
+            display.advance(200)
+            message = {"id": 1, "uid": "typing-ui", "role": "ai", "text": "中a", "hold": True,
+                       "due": 300, "ts": 1, "at": "2026-11-18T12:00:00"}
+            c.messages = [message, {"id": 2, "role": "me", "text": "继续", "ts": 2, "at": message["at"]}]
+            c._stream_displays["typing-ui"] = display
+            try:
+                with patch.object(c, "blocked", lambda: ""), patch.object(c, "ai_free_at", lambda now=None: None), \
+                        patch.object(c, "_ms", lambda: 200), patch.object(c, "now", lambda: datetime(2026, 11, 18, 12)):
+                    page.refresh(force=True)
+                    assert page._rows[0]._oit_stream_label.cget("text") == "中"
+                    display.advance(300)
+                    page._sync_rows()
+                    assert page._rows[0]._oit_stream_label.cget("text") == "中a"
+                    message.pop("hold")
+                    c._stream_displays.clear()
+                    page._sync_rows()
+                    assert not hasattr(page._rows[0], "_oit_stream_label")
+            finally:
+                c.messages = original_messages
+                c._stream_displays.clear()
             if page._resize_job:
                 page.after_cancel(page._resize_job)
             page.destroy()

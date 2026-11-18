@@ -162,7 +162,6 @@ fun CommScreen(go: (String) -> Unit) {
             if (comm.voice.state == "failed" && comm.voice.error.isNotEmpty()) { core.toast(tr(comm.voice.error), "warn"); comm.voice.error = "" }
             if ((comm.blocked().isNotEmpty() || !comm.voice.playAllowed()) && comm.voice.state in listOf("playing", "loading")) comm.voice.stop()
             if (!comm.voice.playAllowed() && voiceAutoRunning) { voiceSession++; voiceAutoRunning = false }
-            if (comm.version != ver) ver = comm.version
             val (text, kind) = comm.otherStatusDisplay()
             if (text != otherStatus) otherStatus = text
             if (kind != otherStatusKind) otherStatusKind = kind
@@ -176,6 +175,13 @@ fun CommScreen(go: (String) -> Unit) {
             comm.shareInvite().let { if (it != shareInv) shareInv = it }
             comm.loveInvite().let { if (it != loveInv) loveInv = it }
             kotlinx.coroutines.delay(250)
+        }
+    }
+    LaunchedEffect(comm) {
+        while (true) {
+            comm.pollStream()
+            if (comm.version != ver) ver = comm.version
+            kotlinx.coroutines.delay(100)
         }
     }
     val msgs = remember(ver) { comm.visible() }

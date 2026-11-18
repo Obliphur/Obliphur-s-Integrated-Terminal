@@ -242,7 +242,8 @@ class Voice:
             return job
 
     def autoplay(self, persona, messages):
-        return [m for m in messages if m["role"] == "ai" and not self.played(persona, m)][-config.AI_VOICE_AUTO_COUNT:]
+        return [m for m in messages if m["role"] == "ai" and not m.get("streaming") and not m.get("hold")
+                and not self.played(persona, m)][-config.AI_VOICE_AUTO_COUNT:]
 
     @staticmethod
     def _mci(command):

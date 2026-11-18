@@ -104,6 +104,7 @@ python release.py               # 发布（PyInstaller）
 | `comm/comm_prompt.py` | 公共工具前置 prompt / 休息函数的拼装，协议正文在 `defaults/comm_protocol.txt`；Assistant同样接收 |
 | `comm/comm_rules.py` | `X_templates.txt` 的张力条件、事件绑定与关系条件模板解析（双端同格式，兼容旧 `_routine` 文件名） |
 | `comm/comm_reply.py` | 回复解析：去掉标记、`[wait]` / `[cut]` / `[network]` 的分钟数、半角化 |
+| `comm/comm_stream.py` | 流式正文显示时钟：按原中英文字速放出缓冲、保留完成前后的显示进度；安卓对应 `CommStream.kt` |
 | `comm/comm_schedule.py` | 人设日程解析：段类型 / 段内容、循环段、主动发消息概率 |
 | `comm/comm_builtin.py` | 内置人设、默认背景 / 日程 / 助理文本、旧版升级链 |
 | `comm/comm_readme.py` | OIT_personas 文件夹里的 README 文本（中 / 英） |

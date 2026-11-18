@@ -121,7 +121,7 @@ class CommTest {
         assertEquals("", c.send("邀请我一起行动")); wait(c)
         assertEquals("invite", c.jointState())
         assertEquals("一起行动吧", c.visible().last().text)
-        assertTrue("queued_until_message_visible" in calls.last().second.last().second)
+        assertTrue(calls.last().second.toString(), "queued_until_message_visible" in calls.last().second.last().second)
         c.flush(); c.voice.close()
     }
 
@@ -1634,6 +1634,90 @@ class CommTest {
         assertEquals(70.0, Comm.defaultP("long"), 0.0)
         pf.writeText("你是小夏\n"); c.reloadSchedule()
         assertEquals(70.0, c.proPercent("long"), 0.0)
+    }
+
+    /** 流式按原字速显示，接口完成后继续输出尾部，两条回复不抢跑。 */
+    @Test fun streamingTypingTiming() {
+        val td = Files.createTempDirectory("oit").toFile()
+        val dir = File(td, "d").also { it.mkdirs() }
+        val personas = File(td, "p")
+        comm(dir, personas).also { it.flush(); it.voice.close() }
+        data class Chunk(val text: String, val ready: java.util.concurrent.CountDownLatch = java.util.concurrent.CountDownLatch(1),
+                         val done: java.util.concurrent.CountDownLatch = java.util.concurrent.CountDownLatch(1))
+        val tasks = java.util.concurrent.ConcurrentLinkedQueue<Chunk>()
+        val all = ArrayList<Chunk>()
+        val requests = java.util.concurrent.atomic.AtomicInteger()
+        val c = Comm(dir, personas, { clock }) { _, _, _ ->
+            requests.incrementAndGet()
+            val task = tasks.remove()
+            Comm.deltaLocal.get()!!.invoke(task.text)
+            task.ready.countDown()
+            check(task.done.await(3, java.util.concurrent.TimeUnit.SECONDS))
+            task.text
+        }
+        val oldDelay = Comm.charDelay
+        val oldCjk = Comm.charDelayCjk
+        try {
+            Comm.charDelay = 0.1; Comm.charDelayCjk = 0.2
+            c.importPersona("小夏.txt", "你是小夏".byteInputStream())
+            c.set(persona = "小夏.txt")
+            c.snapshot = { CommSnap("idle") }
+            fun start(text: String, after: Long = 0L): Chunk {
+                val task = Chunk(text)
+                all.add(task); tasks.add(task)
+                assertEquals("", c.send("在吗", after))
+                assertTrue(task.ready.await(3, java.util.concurrent.TimeUnit.SECONDS))
+                c.pollStream()
+                return task
+            }
+            val task = start("中a文😀")
+            assertTrue(c.visible().none { it.api == "streaming" })
+            clock = clock.plusNanos(199_000_000); c.pollStream()
+            assertTrue(c.visible().none { it.api == "streaming" })
+            clock = clock.plusNanos(1_000_000); c.pollStream()
+            assertEquals("中", c.visible().last().text)
+            clock = clock.plusNanos(100_000_000); c.pollStream()
+            assertEquals("中a", c.visible().last().text)
+            c.blocked = { "专注中" }
+            assertTrue(c.visible().none { it.api == "streaming" })
+            c.blocked = { "" }
+            task.done.countDown(); wait(c)
+            val first = c.messages.last { it.role == "ai" }
+            assertTrue(first.hold)
+            assertEquals("中a", c.visible().last().text)
+            assertTrue((c.syncDoc()["m:${c.pid}:${first.uid}"] as JSONObject).getBoolean("hold"))
+            assertTrue(c.voice.autoplay(c.personaName(), listOf(c.visible().last())).isEmpty())
+            val next = start("乙")
+            next.done.countDown(); wait(c)
+            val second = c.messages.last { it.role == "ai" }
+            assertEquals(first.due + 200L, second.due)
+            clock = clock.plusNanos(200_000_000); c.pollStream()
+            assertEquals("中a文", c.visible().last { it.role == "ai" }.text)
+            clock = clock.plusNanos(100_000_000); c.pollStream()
+            assertFalse(first.hold)
+            assertEquals("中a文😀", c.visible().last { it.role == "ai" }.text)
+            clock = clock.plusNanos(200_000_000); c.pollStream()
+            assertFalse(second.hold)
+            assertEquals("乙", c.visible().last().text)
+            assertEquals(2, requests.get())
+            val delayed = start("中", 1000L)
+            clock = clock.plusSeconds(1); c.pollStream()
+            assertTrue(c.visible().none { it.api == "streaming" })
+            clock = clock.plusNanos(200_000_000); c.pollStream()
+            assertEquals("中", c.visible().last().text)
+            delayed.done.countDown(); wait(c)
+            c.set(persona = "Assistant.txt")
+            val instant = start("即时显示")
+            assertEquals("即时显示", c.visible().last().text)
+            instant.done.countDown(); wait(c)
+            assertFalse(c.messages.last().hold)
+            c.clear()
+            assertTrue(c.visible().isEmpty())
+        } finally {
+            all.forEach { it.done.countDown() }
+            Comm.charDelay = oldDelay; Comm.charDelayCjk = oldCjk
+            c.flush(); c.voice.close()
+        }
     }
 
     /** 同一次回复允许分段，不再为分条显示追加 API 调用。 */
