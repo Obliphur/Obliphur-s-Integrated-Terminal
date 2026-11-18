@@ -634,7 +634,26 @@ class CoreTest {
         core.comm.flush()
     }
 
-    /** 每日联网额度填 325799 = 开 / 关开发者模式: 不是真的修改, 不排队. */
+    /** 复查间隔口令保存相互拉起开关，不修改原间隔或已有排队项。 */
+    @Test
+    fun restartToggle() {
+        val core = Core(tmp(), NoHost) { 0.0 }
+        core.endSetupPeriod()
+        core.stageSetting("ENFORCE_EVERY", 120.0)
+        val before = core.settings.num("ENFORCE_EVERY") to core.settings.pending.toMap()
+        assertTrue(core.settings.bool("SYNC_RESTART_ENABLED"))
+        assertEquals(StageResult.NOCHANGE to "", core.stageSetting("ENFORCE_EVERY", core.settings.fromUiNumber("ENFORCE_EVERY", "325799")))
+        assertFalse(core.settings.bool("SYNC_RESTART_ENABLED"))
+        assertEquals(before, core.settings.num("ENFORCE_EVERY") to core.settings.pending.toMap())
+        val restored = Settings(File(core.dir, "app_settings.json"))
+        assertFalse(restored.bool("SYNC_RESTART_ENABLED"))
+        assertEquals(StageResult.NOCHANGE to "", restored.stage("ENFORCE_EVERY", 325799.0))
+        assertTrue(restored.bool("SYNC_RESTART_ENABLED"))
+        assertEquals(StageResult.INVALID, restored.stage("ENFORCE_EVERY", 325798.0).first)
+        assertTrue(Schema.pageSpecs("net").let { it.first + it.second }.none { it.key == "SYNC_RESTART_ENABLED" })
+    }
+
+    /** 每日联网额度口令独立切换开发者模式。 */
     @Test
     fun devToggle() {
         val core = Core(tmp(), NoHost) { 0.0 }

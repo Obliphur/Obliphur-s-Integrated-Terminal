@@ -10,7 +10,7 @@ OIT 主体被关掉 / 崩溃 / 被冻结时, 别的设备的"请对方重新启�
     就去问它的联动程序: 联动程序答了 = 那台设备还开着, 只是 OIT 没在运行 (不是那台设备离线) → 请它的联动程序启动 OIT;
     联动程序也不答 = 那台设备真的关机 / 断网了, 什么都不做.
 
-只读 OIT 的 sync_state.json (绑定的地址和密钥) 和 link_state.json, 不依赖 tkinter.
+只读 OIT 的 sync_state.json (绑定的地址和密钥)、link_state.json 和 app_settings.json (相互拉起开关), 不依赖 tkinter.
 
 自己设备上的 OIT 也由它看着: 本机的 OIT 连续 35 秒不在运行 (没有互斥体, 同步端口也不答) 就替它重新启动 (外出期间除外); 有没有绑定其他设备都一样.
 
@@ -75,6 +75,16 @@ def load_peers(dd: str):
         return str((st.get("device") or {}).get("id") or ""), dict(st.get("peers") or {})
     except (OSError, ValueError):
         return "", {}
+
+
+def restart_enabled(dd: str) -> bool:
+    """联动进程实时读取已保存的开关，不改变离线判定或本机自守护。"""
+    try:
+        with securefile.open(os.path.join(dd, "app_settings.json"), "r", encoding="utf-8") as f:
+            value = (json.load(f).get("effective") or {}).get("SYNC_RESTART_ENABLED", 1)
+        return str(value) not in ("0", "0.0", "False")
+    except (OSError, ValueError, TypeError, AttributeError):
+        return True
 
 
 def hold_until(dd: str) -> int:
@@ -209,6 +219,8 @@ class Link:
             return 403, {"error": str(e)}
         if body.get("link") != "start":
             return 400, {"error": "bad-request"}
+        if not restart_enabled(self.dd):
+            return 200, {"result": "disabled"}
         res = self.start_oit()
         self.log(f"start request from {p.get('name') or sender}: {res}")
         return 200, {"result": res}
@@ -224,6 +236,8 @@ class Link:
 
     def ask_peer(self, pid: str, p: dict) -> str:
         """去问 p 的联动程序: 请它启动 OIT. 返回它的回复 (result), 联动程序也不答时 ""."""
+        if not restart_enabled(self.dd):
+            return "disabled"
         try:
             env = devsync.seal(bytes.fromhex(p["key"]), self.my_id, {"link": "start"})
             st, d = devsync.SyncService._http(p["addr"], self.peer_link_port(pid), "POST", "/oit/v1/link-start", env, timeout=4.0)
@@ -232,6 +246,10 @@ class Link:
         return str(d.get("result") or f"http-{st}") if st else ""
 
     def probe_once(self):
+        if not restart_enabled(self.dd):
+            self.fail_since.clear()
+            self.asked.clear()
+            return
         my_id, peers = load_peers(self.dd)
         self.my_id = my_id
         now = time.time()
@@ -533,6 +551,19 @@ def _selftest():
         assert hold_until(db) > now_ms() and la.ask_peer("B", load_peers(da)[1]["B"]) == "hold" and launched == []
         write_hold(db, 0)
         assert hold_until(db) == 0
+        # 关闭发送端和接收端的相互拉起，联动进程读取保存的设置即时生效。
+        from settings_manager import SettingsManager
+        ma = SettingsManager(os.path.join(da, "app_settings.json"))
+        mb = SettingsManager(os.path.join(db, "app_settings.json"))
+        mb.stage("ENFORCE_EVERY", 325799)
+        assert la.ask_peer("B", load_peers(da)[1]["B"]) == "disabled" and not launched
+        mb.stage("ENFORCE_EVERY", 325799)
+        ma.stage("ENFORCE_EVERY", 325799)
+        la.fail_since["B"] = time.time() - FAIL_FOR - 1
+        la.probe_once()
+        assert not la.fail_since and not launched
+        assert la.ask_peer("B", load_peers(da)[1]["B"]) == "disabled"
+        ma.stage("ENFORCE_EVERY", 325799)
         # 密钥不对 / 没绑定: 拒绝
         bad = dict(load_peers(da)[1]["B"], key=os.urandom(32).hex())
         assert la.ask_peer("B", bad) == "http-403"

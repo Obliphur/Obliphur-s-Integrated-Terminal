@@ -57,6 +57,7 @@ interface SyncLocal {
     fun wipeRequested(wipeId: String, sender: String, name: String, leave: Boolean = false) {}
     /** 别的设备发现本机离线了, 请本机重新启动 OIT (MECHANICS 15.3). */
     fun restartRequested(sender: String, name: String) {}
+    fun restartEnabled(): Boolean = true
     /** 本机发现 name 离线了, 向它发了重新启动 OIT 的请求 (status: HTTP 状态). */
     fun restartSent(name: String, status: Int) {}
     /** 文件通道 (MECHANICS 15.6): 设备 who 要发文件过来 (o: name / size / sha256 / token / nonce).
@@ -1188,6 +1189,7 @@ class SyncService(
      *  连不上 (0) 就每 RESTART_RETRY_MS 再试, 有回应 (不管是什么) 就不再发, 直到它回来后再次离线.
      *  hold: 本机正在外出 (外出期间的设备不算离线). 刚打开 OIT 时还没同步过的设备要等一轮同步再说. */
     fun checkRestart(hold: Boolean) {
+        if (!local.restartEnabled()) { restartTry.clear(); return }
         if (hold || dead) return
         val warm = System.currentTimeMillis() - startedMs >= OFFLINE_MS + SYNC_EVERY_MS
         val ps = peers()
@@ -1200,6 +1202,7 @@ class SyncService(
             if (t[1] == 1L || now - t[0] < RESTART_RETRY_MS) continue
             t[0] = now
             pool.execute {
+                if (!local.restartEnabled()) return@execute
                 val st = restartTo(p, 4000)
                 if (st != 0) {
                     t[1] = 1L
@@ -1216,6 +1219,7 @@ class SyncService(
             return 403 to JSONObject().put("error", e.message)
         }
         if (!body.optBoolean("restart")) return 400 to JSONObject().put("error", "bad-request")
+        if (!local.restartEnabled()) return 200 to JSONObject().put("ignored", "disabled")
         val now = System.currentTimeMillis()
         if (now - lock.withLock { state.optLong("restart_at") } < RESTART_GAP_MS) return 200 to JSONObject().put("ignored", "recent")
         if (now - startedMs < restartFreshMs) return 200 to JSONObject().put("ignored", "fresh")

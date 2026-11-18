@@ -415,6 +415,7 @@ EN = {
     "整点记录开关": "Hour log switch",
     "超时自动记录内容": "Auto text when a slot is missed",
     "断网复查间隔": "Network re-check interval",
+    "设备相互拉起": "Devices restart each other",
     "整点提示音": "Hourly chime",
     "界面字号": "UI scale",
     "提交修改": "Submit change",

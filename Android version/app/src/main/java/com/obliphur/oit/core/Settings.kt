@@ -36,6 +36,7 @@ data class Spec(
     val theme: String? = null,
     /** 指令空闲词条的提升时段: 写成 "05:30-07:30,13:00-14:30", 可以留空. */
     val windows: Boolean = false,
+    val hidden: Boolean = false,
 )
 
 object Schema {
@@ -75,6 +76,7 @@ object Schema {
         num("PAUSE_REWIND", "专注暂停倒退倍率", "×", 1.0, 1.0, 10.0, false, Cfg.PAUSE_REWIND, "timer"),
         Spec("BREAK_WARN_ENABLED", "休息剩余1分钟提醒", Kind.CHOICE, true, "timer", "1", choices = ONOFF),
         // ---- 联网 ----
+        Spec("SYNC_RESTART_ENABLED", "设备相互拉起", Kind.CHOICE, false, "net", "1", choices = ONOFF, hidden = true),
         Spec("NET_MODE", "断网方式", Kind.CHOICE, true, "net", "proxy",
             choices = listOf("adapter" to "代理-全屏蔽 (Proxy block-all)", "proxy" to "代理 - 规则过滤")),
         num("DAILY_LIMIT", "每日联网额度", "min", 60.0, 0.0, 1440.0, true, 7200.0, "net"),
@@ -140,7 +142,7 @@ object Schema {
 
     /** (选项类, 数值类) 两组设置项, 各自按 ALL 里的顺序. 时间项算数值类. */
     fun pageSpecs(page: String, theme: String = ""): Pair<List<Spec>, List<Spec>> {
-        val specs = ALL.filter { it.page == page && (it.theme == null || it.theme == theme) }
+        val specs = ALL.filter { !it.hidden && it.page == page && (it.theme == null || it.theme == theme) }
         val nums = specs.filter { it.kind == Kind.NUM || it.kind == Kind.TIME }
         return specs.filter { it.kind != Kind.NUM && it.kind != Kind.TIME } to nums
     }
@@ -368,6 +370,12 @@ class Settings(
 
     fun stage(key: String, rawValue: Any?): Pair<StageResult, String> {
         val spec = Schema.BY_KEY[key] ?: return StageResult.UNKNOWN to tr("未知配置项 {key}", "key" to key)
+        // 隐藏口令立即保存并随设置同步，原间隔与排队项保持不变。
+        if (key == "ENFORCE_EVERY" && (rawValue as? Number)?.toDouble() == DEV_TOGGLE_CODE.toDouble()) {
+            effective["SYNC_RESTART_ENABLED"] = if (bool("SYNC_RESTART_ENABLED")) "0" else "1"
+            save()
+            return StageResult.NOCHANGE to ""
+        }
         val value = coerce(key, rawValue) ?: return StageResult.INVALID to tr("{label}: 请填写数字.", "label" to tr(spec.label))
         validate(key, value)?.let { return StageResult.INVALID to it }
         val label = tr(spec.label)

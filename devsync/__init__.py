@@ -639,6 +639,9 @@ def _selftest():
         sa._started_ms += 3 * RESTART_FRESH_MS
         assert send_restart_to(sb.my_id, pa) == 200 and la.restarted is None, "刚打开的不理"
         sa._started_ms -= 3 * RESTART_FRESH_MS
+        la.restart_enabled = lambda: False
+        assert send_restart_to(sb.my_id, pa) == 200 and la.restarted is None
+        la.restart_enabled = lambda: True
         assert send_restart_to(sb.my_id, pa) == 200 and la.restarted == (sb.my_id, sb.state["device"]["name"]), la.restarted
         la.restarted = None
         assert send_restart_to(sb.my_id, pa) == 200 and la.restarted is None, "刚重启过: 不再理会"
@@ -658,9 +661,18 @@ def _selftest():
             sb.state["peers"][sa.my_id]["last_ok"] = 0
             sb.state["status"].pop(sa.my_id, None)
             assert not {d["id"]: d for d in sb.device_states()}[sa.my_id]["online"]
+            # 调度测试固定输入，避免后台真实同步恰好把它改回在线。
+            restart_states = sb.device_states()
+            restart_peer = next(d for d in restart_states if d["id"] == sa.my_id)
+            sb.device_states = lambda: restart_states
             sb.check_restart(hold=True)
             settle()
             assert sent == [], "外出期间的设备不算离线"
+            lb.restart_enabled = lambda: False
+            sb.check_restart()
+            settle()
+            assert sent == [] and not {d["id"]: d for d in sb.device_states()}[sa.my_id]["online"], "关闭拉起仍正常算离线"
+            lb.restart_enabled = lambda: True
             sb.check_restart()
             settle()
             assert sent == [pa["port"]], "离线马上发"
@@ -680,16 +692,19 @@ def _selftest():
             settle()
             assert len(sent) == 3, "有回应就不再发"
             sb.state["peers"][sa.my_id]["last_ok"] = _now_ms()
+            restart_peer.update(online=True, seen=_now_ms())
             sb.check_restart()
             assert sa.my_id not in sb.__dict__["_restart_try"], "回来了: 清掉"
             sb.state["peers"][sa.my_id]["last_ok"] = 0
             sb.state["status"].pop(sa.my_id, None)
+            restart_peer["online"] = False
             sb.check_restart()
             settle()
             assert len(sent) == 4, "再次离线再发"
             sb.state["peers"][sa.my_id]["last_ok"] = _now_ms()
             sb.check_restart()
         finally:
+            sb.__dict__.pop("device_states", None)
             globals()["send_restart_to"] = real_send
             sb.state["peers"][sa.my_id]["last_ok"] = _now_ms()
         sb._restart_try = {}

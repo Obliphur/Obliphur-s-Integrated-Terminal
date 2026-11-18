@@ -15,7 +15,7 @@ class TickMixin:
     # ---- 防绕过: Proxy 断网方式只管得住遵守系统代理的程序 (MECHANICS 3.2.2) ----
 
     def _guard_wanted(self) -> bool:
-        return self.fence is not None and not self.dead and not self.dev_mode and self.net_mode == "proxy"
+        return self.fence is not None and not self.dead and not self.dev_mode and not self.online and self.net_mode == "proxy"
 
     def _guard_tick(self, now: float):
         if self._guard_wanted() and now - self._watch_at >= 1.0:
@@ -25,7 +25,9 @@ class TickMixin:
         self._bypass_tick(now)
 
     def _watch_system_proxy(self):
-        """每秒看一眼系统代理: 被关掉 / 改成别的代理 / 加了 PAC 就马上改回来 (不等"断网复查间隔")."""
+        """非联网期间每秒看守系统代理；联网会话内允许修改。"""
+        if not self._guard_wanted():
+            return
         try:
             if not self.proxy.running or not self.q.empty():
                 return
@@ -44,10 +46,12 @@ class TickMixin:
 
     def _fence_tick(self, now: float):
         """每 10 秒把浏览器围栏调整成正好是现在的浏览器 (后台线程; 不在 Proxy 方式 / 开发者模式时删掉)."""
-        if self.fence is None or self._fence_busy or now - self._fence_at < 10.0:
+        if self.fence is None or self._fence_busy:
             return
         want = self._guard_wanted()
         if not want and self._fence_clean:
+            return
+        if want and now - self._fence_at < 10.0:
             return
         self._fence_at = now
         self._fence_busy = True
@@ -55,9 +59,13 @@ class TickMixin:
 
     def _fence_run(self, want: bool):
         try:
+            want = want and self._guard_wanted()
             if want:
                 self.fence.sync(browserfence.browser_paths())
                 self._fence_clean = False
+                if not self._guard_wanted():
+                    self.fence.clear_all()
+                    self._fence_clean = True
             else:
                 self.fence.clear_all()
                 self._fence_clean = True
@@ -68,10 +76,12 @@ class TickMixin:
 
     def _bypass_tick(self, now: float):
         """每 2 秒看一次连接表 (后台线程): 有不走系统代理的程序直连外面就封锁这条连接; 不在 Proxy 方式 / 开发者模式时删掉规则 (只删一次)."""
-        if self.bypass is None or self._bp_busy or now - self._bp_at < bypassguard.SCAN_EVERY:
+        if self.bypass is None or self._bp_busy:
             return
         want = self._guard_wanted() and bool(getattr(config, "BYPASS_GUARD", True))
         if not want and self._bp_clean:
+            return
+        if want and now - self._bp_at < bypassguard.SCAN_EVERY:
             return
         self._bp_at = now
         self._bp_busy = True
@@ -79,6 +89,7 @@ class TickMixin:
 
     def _bypass_run(self, want: bool):
         try:
+            want = want and self._guard_wanted() and bool(getattr(config, "BYPASS_GUARD", True))
             if want:
                 if not self._bp_init:
                     self._bp_init = True
@@ -87,6 +98,9 @@ class TickMixin:
                 for path, killed, new in self.bypass.scan():
                     if new:           # 不弹提示, 只在流水里记一条 (每个程序一次)
                         self._log(f"BYPASS   blocked a direct connection of {path} (not via the system proxy; {killed} connection(s) cut)")
+                if not self._guard_wanted():
+                    self.bypass.clear_all()
+                    self._bp_clean = True
             else:
                 self.bypass.clear_all()
                 self._bp_clean = True
@@ -151,10 +165,6 @@ class TickMixin:
                 event = "ended"
             elif now - self._last_save >= 5:
                 self._save()
-            if self.net_mode == "proxy" and now - self._last_enforce >= self.enforce_every:
-                self._last_enforce = now
-                if self.q.empty():
-                    self.q.put(lambda: self._proxy_apply(self.online))
         elif now - self._last_enforce >= self.enforce_every:
             self._last_enforce = now
             if self.q.empty():

@@ -42,7 +42,9 @@ class BackendMixin:
 
         任何一步失败都不能留下「没有任何限制」的状态 —— 离线时退回禁用网卡."""
         try:
-            self.proxy.start()
+            # 联网时只更新放行策略，不覆盖用户刚改的系统代理。
+            if not online or not self.proxy.running:
+                self.proxy.start()
             self.proxy.set_online(online)
             if self._nic_off_by_fallback:
                 self._nic_off_by_fallback = False

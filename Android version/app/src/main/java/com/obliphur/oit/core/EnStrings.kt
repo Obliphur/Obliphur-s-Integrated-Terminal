@@ -271,6 +271,7 @@ object EnStrings {
         "每日联网额度" to "Daily network quota",
         "联网冷静期" to "Network cooldown",
         "断网复查间隔" to "Network re-check interval",
+        "设备相互拉起" to "Devices restart each other",
         "计时单步上限" to "Max seconds per tick",
         "快速访问消耗倍率" to "Quick access cost multiplier",
         "紧急借贷偿还倍率" to "Loan repayment multiplier",

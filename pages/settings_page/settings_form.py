@@ -121,7 +121,7 @@ class FormMixin:
         row = self._num_rows[key]
         value = self.sm.from_ui_number(key, row["var"].get())
         status, msg = self.sm.stage(key, value)
-        if status == "tension":
+        if status in ("tension", "restart"):
             self._sync_num(key, force=True)
             return status, msg
         if status == "dev":

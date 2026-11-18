@@ -130,6 +130,8 @@ class SyncTest {
         @Volatile var dev = false
         @Volatile var got: Pair<ByteArray, String>? = null
         @Volatile var restarted: Pair<String, String>? = null
+        @Volatile var allowRestart = true
+        override fun restartEnabled() = allowRestart
         override fun restartRequested(sender: String, name: String) { restarted = sender to name }
         var version = "1.0.0"
         override fun appVersion() = version
@@ -285,6 +287,9 @@ class SyncTest {
             sa.restartFreshMs = 0
             assertEquals(200, sb.restartTo(pa, 4000)); assertNull("刚同步成功过: 本机明明在线", la.restarted)
             sa.restartHealthyMs = 0
+            la.allowRestart = false
+            assertEquals(200, sb.restartTo(pa, 4000)); assertNull(la.restarted)
+            la.allowRestart = true
             assertEquals(200, sb.restartTo(pa, 4000)); assertEquals(sb.myId to "B", la.restarted)
             la.restarted = null
             assertEquals(200, sb.restartTo(pa, 4000)); assertNull(la.restarted)

@@ -30,6 +30,9 @@ class LinkMixin:
         连不上 (0) 就每 RESTART_RETRY 秒再试, 有回应 (不管是什么) 就不再发, 直到它回来后再次离线.
         hold: 本机正在外出 (外出期间的设备不算离线). 本机自己的原因 (在别的虚拟桌面 / Adapter 断网) 连不上不是对方的问题, 不发.
         刚打开 OIT 时还没同步过的设备要等一轮同步再说 (免得把其实在线的设备重启了)."""
+        if not _call(self.local, "restart_enabled", True):
+            self.__dict__.get("_restart_try", {}).clear()
+            return
         if hold or _call(self, "away", False) or self.adapter_since():
             return
         tries = self.__dict__.setdefault("_restart_try", {})
@@ -54,6 +57,8 @@ class LinkMixin:
             t["at"] = time.time()
 
             def go(pid=pid, p=p, t=t):
+                if not _call(self.local, "restart_enabled", True):
+                    return
                 st = self._send_restart_to(p, 4.0)
                 if st:
                     t["done"] = True
@@ -73,6 +78,8 @@ class LinkMixin:
             return 403, {"error": str(e)}
         if not body.get("restart"):
             return 400, {"error": "bad-request"}
+        if not _call(self.local, "restart_enabled", True):
+            return 200, {"ignored": "disabled"}
         if _call(self, "away", False):
             return 503, {"error": "away"}
         now = _now_ms()

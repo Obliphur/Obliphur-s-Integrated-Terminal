@@ -315,6 +315,8 @@ def _selftest():
 
 
         class _FakeProxy:
+            running = True
+
             def __init__(self):
                 self.calls = []
                 self.fail = False
@@ -351,6 +353,30 @@ def _selftest():
         n.unblock()
         n._run(n.q.get_nowait())
         assert fp.online is True and not any("Disable-NetAdapter" in str(c) for c in ran[-3:])
+        assert fp.calls == ["start", ("online", False), ("online", True)], "联网不再覆盖系统代理"
+
+        # 联网时撤掉防绕过规则，不检查或改回系统代理；结束后恢复看守。
+        class _FakeGuard:
+            def __init__(self):
+                self.cleared = 0
+
+            def clear_all(self):
+                self.cleared += 1
+
+        n.fence, n.bypass = _FakeGuard(), _FakeGuard()
+        n.grant_left, n.grant_end = 60.0, time.time() + 60
+        assert n.online and not n._guard_wanted()
+        n._watch_system_proxy()
+        assert n.q.empty(), "联网期间不排队改回系统代理"
+        n._fence_run(True)
+        n._bypass_run(True)
+        assert n.fence.cleared == n.bypass.cleared == 1
+        n._last_enforce = 0
+        n.tick(1)
+        assert n.online and n.q.empty(), "周期复查不覆盖联网期间的代理"
+        n._reset_grant()
+        assert n._guard_wanted(), "联网结束后恢复代理保护"
+        n.fence = n.bypass = None
 
         ran.clear()
         fp.fail = True

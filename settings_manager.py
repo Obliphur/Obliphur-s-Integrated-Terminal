@@ -114,6 +114,9 @@ def _prescript_window(kind: str, label: str):
 
 
 SETTINGS_SCHEMA = [
+    {"key": "SYNC_RESTART_ENABLED", "label": "设备相互拉起", "kind": "choice",
+     "apply": APPLY_INSTANT, "page": "net", "hidden": True,
+     "choices": [(1, "开启 (ON)"), (0, "关闭 (OFF)")], "fmt": str},
     _num("DAILY_LIMIT", "每日联网额度", "min", 60, 0, 1440, True,
          "每天最多能联网多久.", page="net"),
     _num("COOLDOWN", "联网冷静期", "min", 60, 0, 240, True,
@@ -389,6 +392,14 @@ INSTANT_KEYS = [s["key"] for s in SETTINGS_SCHEMA if s["apply"] == APPLY_INSTANT
 DEV_TOGGLE_CODE = 325799
 
 
+def is_restart_toggle(value) -> bool:
+    """断网复查间隔使用相同口令切换设备相互拉起，不改间隔。"""
+    try:
+        return abs(float(value) - DEV_TOGGLE_CODE) < 1e-6
+    except (TypeError, ValueError):
+        return False
+
+
 def is_tension_toggle(key: str, value) -> bool:
     """联网冷静期使用相同口令切换张力显示，普通设置值不变。"""
     if key != "COOLDOWN":
@@ -576,6 +587,11 @@ class SettingsManager:
         spec = SCHEMA_BY_KEY.get(key)
         if spec is None:
             return "unknown", tr("未知配置项 {key}", key=key)
+        if key == "ENFORCE_EVERY" and is_restart_toggle(value):
+            self.effective["SYNC_RESTART_ENABLED"] = int(not self.value("SYNC_RESTART_ENABLED"))
+            self.save()
+            self.apply_to_config()
+            return "restart", ""
         if is_tension_toggle(key, value):
             config.COMM_SHOW_TENSION = not config.COMM_SHOW_TENSION
             return "tension", ""
@@ -890,6 +906,21 @@ def _selftest():
     assert not config.COMM_SHOW_TENSION and not config.dev_mode_enabled()
     assert m.stage("COOLDOWN", DEV_TOGGLE_CODE * 60 - 60)[0] == "invalid"
     assert not config.COMM_SHOW_TENSION
+
+    # 相互拉起口令立即保存，重启保留，不碰复查间隔或已有排队项。
+    assert m.stage("ENFORCE_EVERY", 120)[0] == "staged"
+    before_restart = (m.value("ENFORCE_EVERY"), dict(m.pending))
+    assert m.stage("ENFORCE_EVERY", m.from_ui_number("ENFORCE_EVERY", "325799")) == ("restart", "")
+    assert not config.SYNC_RESTART_ENABLED and not m.value("SYNC_RESTART_ENABLED")
+    assert (m.value("ENFORCE_EVERY"), dict(m.pending)) == before_restart
+    restored = SettingsManager(tmp)
+    assert not restored.value("SYNC_RESTART_ENABLED")
+    assert restored.stage("ENFORCE_EVERY", DEV_TOGGLE_CODE) == ("restart", "")
+    assert config.SYNC_RESTART_ENABLED and restored.value("SYNC_RESTART_ENABLED")
+    assert restored.stage("ENFORCE_EVERY", DEV_TOGGLE_CODE - 1)[0] == "invalid"
+    assert all(s["key"] != "SYNC_RESTART_ENABLED" for group in page_specs("net") for s in group)
+    m = restored
+    m.cancel("ENFORCE_EVERY")
 
     st, _ = m.stage("CHIME_WAV", "__builtin__")
     assert st == "instant" and not m.is_staged("CHIME_WAV")

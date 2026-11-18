@@ -34,6 +34,9 @@ def _norm_setting(key: str, value):
 
 class PcLocal:
 
+    def restart_enabled(self) -> bool:
+        return bool(self.app.settings.value("SYNC_RESTART_ENABLED"))
+
     def __init__(self, app):
         self.app = app
         self._personas_doc = None

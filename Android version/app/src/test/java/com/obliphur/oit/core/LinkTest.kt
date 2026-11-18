@@ -38,6 +38,15 @@ class LinkTest {
             assertEquals("hold", a.askPeer("B", pb)); assertTrue(launched.isEmpty())
             LinkFiles.writeHold(db, 0)
             assertEquals(0L, LinkFiles.holdUntil(db))
+            // 相互拉起的发送端与接收端都会即时读取保存的开关。
+            val sa = Settings(File(da, "app_settings.json")); val sb = Settings(File(db, "app_settings.json"))
+            sb.stage("ENFORCE_EVERY", 325799.0)
+            assertEquals("disabled", a.askPeer("B", pb)); assertTrue(launched.isEmpty())
+            sb.stage("ENFORCE_EVERY", 325799.0)
+            sa.stage("ENFORCE_EVERY", 325799.0)
+            a.probeOnce()
+            assertEquals("disabled", a.askPeer("B", pb)); assertTrue(launched.isEmpty())
+            sa.stage("ENFORCE_EVERY", 325799.0)
             // 密钥不对: 拒绝
             assertEquals("http-403", a.askPeer("B", JSONObject(pb.toString()).put("key", SyncCrypto.hex(ByteArray(32) { 9 }))))
             // 正常启动一次, 之后冷却

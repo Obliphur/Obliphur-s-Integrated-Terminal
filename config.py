@@ -28,6 +28,7 @@ IDLE, RUNNING, READY_BREAK, ON_BREAK = range(4)
 DAILY_LIMIT = 2 * 3600       
 COOLDOWN = 5 * 60            
 ENFORCE_EVERY = 60           
+SYNC_RESTART_ENABLED = 1     # 断网复查间隔口令切换：是否允许设备相互拉起，保存并同步
 TICK_CLAMP = 30              # 联网计时每一步最多计入的秒数(睡眠/卡顿后不会一次扣一大段)
 
 QUICK_MULTIPLIER = 2.0       # 快速访问: 免冷静期, 每联网 1 秒消耗 2 秒今日额度
@@ -220,7 +221,7 @@ OUTING_MAX_HOURS = 24 * 7
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.586"                  # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.587"                  # 和 GitHub 上发布的版本号比较 (见 updater.py)
 AI_VOICE_GAP = 1.0                       # 两条语音之间的默认间隔（秒）
 COMM_SPLIT_INTERVAL_SECONDS = 5          # 分条续发固定等待时间（秒）
 COMM_TOOL_ROUNDS = 6                     # 单次沟通最多进行的查询 / 联合行动工具轮数
@@ -533,6 +534,7 @@ DEFAULT_SETTINGS = {
     "HOUR_LOG_ENABLED": HOUR_LOG_ENABLED,
     "AUTO_TEXT": AUTO_TEXT,
     "ENFORCE_EVERY": ENFORCE_EVERY,
+    "SYNC_RESTART_ENABLED": SYNC_RESTART_ENABLED,
     "CHIME_WAV": CHIME_WAV,
     "DAMAGE_SOUND": DAMAGE_SOUND,
     "COMM_SOUND": COMM_SOUND,

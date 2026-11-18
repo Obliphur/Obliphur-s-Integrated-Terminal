@@ -15,7 +15,7 @@ import java.util.concurrent.Executors
  *  - 每 15 秒看一眼绑定的设备的 OIT 还在不在 (同步端口答不答 hello). 连续 45 秒没答就去问它的联动程序:
  *    答了 = 那台设备还开着, 只是 OIT 没在运行 (不是那台设备离线) → 请它启动 OIT; 也不答 = 那台设备真的关机 / 断网了, 什么都不做.
  * 自己设备上的 OIT 也由它看着 (selfCheck): 本机的 OIT 连续 35 秒不在运行就替它重新启动 (外出期间除外); 有没有绑定其他设备都一样.
- * 只读 OIT 的 sync_state.json (绑定的地址和密钥) 和 link_state.json, 不碰 OitApp / Core (这个进程里没有它们).
+ * 只读 OIT 的 sync_state.json (绑定的地址和密钥)、link_state.json 和 app_settings.json (相互拉起开关), 不碰 OitApp / Core.
  */
 object LinkFiles {
     /** (本机 id, {设备 id: 绑定信息 (addr, port, key, name)}); 读不到时 ("" , {}). */
@@ -29,6 +29,12 @@ object LinkFiles {
     fun holdUntil(dir: File): Long = try {
         JSONObject(File(dir, "link_state.json").readText()).optLong("hold_until")
     } catch (e: Exception) { 0L }
+
+    /** 联动进程实时读取已保存的开关，本机自守护与离线判定不受影响。 */
+    fun restartEnabled(dir: File): Boolean = try {
+        JSONObject(File(dir, "app_settings.json").readText()).optJSONObject("effective")
+            ?.opt("SYNC_RESTART_ENABLED")?.toString() !in setOf("0", "0.0", "false")
+    } catch (_: Exception) { true }
 
     fun writeHold(dir: File, untilMs: Long) {
         val f = File(dir, "link_state.json")
@@ -143,6 +149,7 @@ class LinkCore(
             return 403 to JSONObject().put("error", e.message)
         }
         if (body.optString("link") != "start") return 400 to JSONObject().put("error", "bad-request")
+        if (!LinkFiles.restartEnabled(dir)) return 200 to JSONObject().put("result", "disabled")
         val res = startOit()
         log("start request from ${p.optString("name").ifEmpty { sender }}: $res")
         return 200 to JSONObject().put("result", res)
@@ -154,12 +161,15 @@ class LinkCore(
 
     /** 去问 p 的联动程序: 请它启动 OIT. 返回它的回复, 联动程序也不答时 "". */
     fun askPeer(id: String, p: JSONObject): String = try {
-        val env = SyncCrypto.seal(SyncCrypto.unhex(p.getString("key")), myId, JSONObject().put("link", "start"))
-        val (st, d) = call(p.getString("addr"), peerLinkPort(id), "POST", "/oit/v1/link-start", env, 4000)
-        d.optString("result").ifEmpty { "http-$st" }
+        if (!LinkFiles.restartEnabled(dir)) "disabled" else {
+            val env = SyncCrypto.seal(SyncCrypto.unhex(p.getString("key")), myId, JSONObject().put("link", "start"))
+            val (st, d) = call(p.getString("addr"), peerLinkPort(id), "POST", "/oit/v1/link-start", env, 4000)
+            d.optString("result").ifEmpty { "http-$st" }
+        }
     } catch (e: Exception) { "" }
 
     fun probeOnce() {
+        if (!LinkFiles.restartEnabled(dir)) { failSince.clear(); asked.clear(); return }
         val (id, peers) = LinkFiles.loadPeers(dir)
         myId = id
         val now = System.currentTimeMillis()
