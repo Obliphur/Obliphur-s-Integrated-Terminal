@@ -3,6 +3,7 @@
 
 import json
 import math
+import re
 from pathlib import Path
 
 from .ai_common import AIError
@@ -10,6 +11,22 @@ from .ai_common import AIError
 PREFIX = "\x1eOIT_TOOLS_V1:"
 SPECS = json.loads((Path(__file__).resolve().parent.parent / "defaults" / "comm_tools.json").read_text(encoding="utf-8"))
 BY_NAME = {s["name"]: s for s in SPECS}
+_LEAKED_REPLY_TAG = re.compile(r"<oit_reply\b(?:(?:\"[^\"]*\")|'[^']*'|[^'\">])*/?>", re.I | re.S)
+_LEAKED_REPLY_ATTR = re.compile(r"\b\w+\s*=\s*(?:\"[^\"]*\"|'[^']*')", re.S)
+
+
+def _clean_leaked_reply(text):
+    """接口把工具参数写进正文时，只保留 oit_reply 的 text。"""
+    def replace(match):
+        attrs = {}
+        for attribute in _LEAKED_REPLY_ATTR.findall(match.group()):
+            key, value = attribute.split("=", 1)
+            attrs[key.strip().lower()] = value.strip()[1:-1]
+        return attrs.get("text", "")
+
+    clean = _LEAKED_REPLY_TAG.sub(replace, text)
+    clean = re.sub(r"</oit_reply\s*>", "", clean, flags=re.I)
+    return clean
 
 
 def unpack(reply):
@@ -162,7 +179,7 @@ def _parse_response(data, protocol, plain_text):
         text = plain_text()
         if not text.strip():
             raise AIError("format", "模型没有返回内容")
-        return pack(text)
+        return pack(_clean_leaked_reply(text))
     if len(calls) != 1:
         raise AIError("format", "每次只能调用一个 OIT 工具")
     name, args = calls[0]
@@ -174,7 +191,7 @@ def _parse_response(data, protocol, plain_text):
             raise ValueError("拒绝回复不能同时提交正文或操作")
     except (ValueError, TypeError, KeyError) as e:
         raise AIError("format", "工具参数格式错误，请检查模型的工具调用支持.") from e
-    return pack(args.get("text", "") if name == "oit_reply" else "", name, args, wire)
+    return pack(_clean_leaked_reply(args.get("text", "")) if name == "oit_reply" else "", name, args, wire)
 
 
 def tool_chat(profile, system, messages, timeout, opener, max_tokens, temperature, cache, on_usage, think, web):

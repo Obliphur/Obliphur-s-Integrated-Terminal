@@ -94,6 +94,36 @@ def transport_checks():
     assert tools.text_of(reply) == literal and not comm.is_refusal(reply) and not comm.info_tags(reply)
     assert comm.joint_answer(reply) == "" and comm.net_minutes(reply) is None
 
+    leaked = """<oit_reply
+text="Reply text"
+tension='[{"index":0,"condition":"rumination","gain":40}]'
+valence='[{"index":0,"condition":"docile_reliance","shift":25}]'
+wait_minutes="10"/>"""
+    for protocol in ("openai", "anthropic", "gemini"):
+        if protocol == "openai":
+            data = {"choices": [{"message": {"content": leaked}}]}
+        elif protocol == "anthropic":
+            data = {"content": [{"type": "text", "text": leaked}]}
+        else:
+            data = {"candidates": [{"content": {"parts": [{"text": "<oit_final>" + leaked + "</oit_final>"}]}}]}
+        p["protocol"] = protocol
+        with patch.object(ai_http, "_send", return_value=data):
+            sanitized = ai_assist.chat_messages(p, "system", [{"role": "user", "content": "x"}], tools=True)
+        assert comm.clean_reply(sanitized) == ("Reply text", None)
+        assert "tension" not in tools.args_of(sanitized) and "valence" not in tools.args_of(sanitized)
+        native = call("oit_reply", {"text": leaked, "wait_minutes": 2}, protocol)
+        assert comm.clean_reply(native) == ("Reply text", 2)
+        assert comm.net_minutes(sanitized) is None and not comm.info_tags(sanitized)
+
+    for leaked_text, expected in [
+        ("<oit_reply wait_minutes='10' text='a > b\n[normal text]' />", "a > b\n[normal text]"),
+        ('<oit_reply text="Keep = signs" valence=\'[{"text":"hidden"}]\'></oit_reply>', "Keep = signs"),
+        ('Before <oit_reply text="Reply"/> after', "Before Reply after"),
+    ]:
+        sanitized = tools.parse_response({"choices": [{"message": {"content": leaked_text}}]}, "openai", lambda: leaked_text)
+        assert comm.clean_reply(sanitized) == (expected, None)
+
+    p["protocol"] = "openai"
     packets = []
     scripted = [response("openai", "oit_search", {"query": "天气"}), response("openai", "oit_reply", {"text": "查到了"})]
     def search_send(profile, body, timeout, opener):
@@ -267,7 +297,7 @@ if __name__ == "__main__":
     for name in ("comm_tools.json", "comm_protocol.txt", "comm_legacy_controls.json"):
         assert (root / "defaults" / name).read_text(encoding="utf-8") == (root / "Android version/app/src/main/resources" / name).read_text(encoding="utf-8")
     protocol = (root / "defaults/comm_protocol.txt").read_text(encoding="utf-8")
-    tool = json.loads((root / "defaults/comm_tools.json").read_text(encoding="utf-8"))[3]
+    tool = next(s for s in json.loads((root / "defaults/comm_tools.json").read_text(encoding="utf-8")) if s["name"] == "oit_reply")
     assert "聊天只显示text" in protocol and "wait_minutes" in tool["description"] and "不会显示给用户" in tool["description"]
     legacy = "先输入[messages]查询；回复 [Yes]；结尾写 [waiting for reply]:[5]\n[condition]\nmessages:2\n[/condition]\n"
     migrated = comm.native_persona_text(legacy)

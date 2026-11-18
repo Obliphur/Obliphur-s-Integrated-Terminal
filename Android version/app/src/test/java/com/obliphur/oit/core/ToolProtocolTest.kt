@@ -67,6 +67,31 @@ class ToolProtocolTest {
         assertTrue(CommText.infoTags(reply).isEmpty())
     }
 
+    @Test fun leakedReplyMarkupShowsOnlyText() {
+        val leaked = """<oit_reply
+            text="Reply text"
+            tension='[{"index":0,"condition":"rumination","gain":40}]'
+            valence='[{"index":0,"condition":"docile_reliance","shift":25}]'
+            wait_minutes="10"/>""".trimIndent()
+        for (protocol in listOf("openai", "anthropic", "gemini")) {
+            val data = when (protocol) {
+                "anthropic" -> JSONObject().put("content", JSONArray().put(JSONObject().put("type", "text").put("text", leaked)))
+                "gemini" -> JSONObject().put("candidates", JSONArray().put(JSONObject().put("content", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", leaked))))))
+                else -> JSONObject("""{"choices":[{"message":{"content":"unused"}}]}""")
+            }
+            val reply = ToolProtocol.parse(data, protocol) { leaked }
+            assertEquals("Reply text" to 0.0, CommText.cleanReply(reply))
+            assertFalse(ToolProtocol.args(reply).has("tension"))
+            assertFalse(ToolProtocol.args(reply).has("valence"))
+            assertNull(CommText.netMinutes(reply))
+            val native = call("oit_reply", JSONObject().put("text", leaked).put("wait_minutes", 2), protocol)
+            assertEquals("Reply text" to 2.0, CommText.cleanReply(native))
+        }
+        val text = "<oit_reply wait_minutes='10' text='a > b\n[normal text]' />"
+        val reply = ToolProtocol.parse(JSONObject("""{"choices":[{"message":{}}]}"""), "openai") { text }
+        assertEquals("a > b\n[normal text]" to 0.0, CommText.cleanReply(reply))
+    }
+
     @Test fun rejectInvalidArguments() {
         for ((name, args) in listOf(
             "unknown" to JSONObject(),

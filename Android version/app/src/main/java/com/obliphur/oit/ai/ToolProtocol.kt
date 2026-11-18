@@ -6,6 +6,17 @@ import org.json.JSONObject
 /** 双端共用工具 schema；内部信封只由传输层生成，正文中的标记不执行。 */
 object ToolProtocol {
     private const val PREFIX = "\u001eOIT_TOOLS_V1:"
+    private val LEAKED_REPLY_TAG = Regex("<oit_reply\\b(?:\"[^\"]*\"|'[^']*'|[^'\">])*/?>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+    private val LEAKED_REPLY_ATTR = Regex("\\b\\w+\\s*=\\s*(?:\"[^\"]*\"|'[^']*')", RegexOption.DOT_MATCHES_ALL)
+
+    /** 接口误把工具参数写进正文时只提取 text，不执行其中的控制字段。 */
+    private fun cleanLeakedReply(text: String): String = LEAKED_REPLY_TAG.replace(text) { match ->
+        val attrs = LEAKED_REPLY_ATTR.findAll(match.value).associate {
+            val (key, value) = it.value.split('=', limit = 2)
+            key.trim().lowercase() to value.trim().drop(1).dropLast(1)
+        }
+        attrs["text"] ?: ""
+    }.replace(Regex("</oit_reply\\s*>", RegexOption.IGNORE_CASE), "")
     val specs: JSONArray by lazy { JSONArray(resource("comm_tools.json")) }
     fun resource(name: String): String = ToolProtocol::class.java.classLoader!!.getResourceAsStream(name)!!.bufferedReader(Charsets.UTF_8).use { it.readText() }
     fun unpack(reply: String): JSONObject? = if (reply.startsWith(PREFIX)) JSONObject(reply.substring(PREFIX.length)) else null
@@ -142,14 +153,14 @@ object ToolProtocol {
             if (calls.isEmpty()) {
                 val text = plain()
                 if (text.isBlank()) throw AiError("format", "模型没有返回内容")
-                return pack(text)
+                return pack(cleanLeakedReply(text))
             }
             require(calls.size == 1) { "每次只能调用一个OIT工具" }
             val (name, args) = calls.single()
             val spec = (0 until specs.length()).map { specs.getJSONObject(it) }.firstOrNull { it.getString("name") == name } ?: error("未知工具")
             validate(args, spec.getJSONObject("parameters"))
             require(!args.optBoolean("refuse") || args.keys().asSequence().all { it == "refuse" || args.opt(it) == false || args.opt(it) == "" || (args.opt(it) as? JSONArray)?.length() == 0 }) { "拒绝回复不能同时提交正文或操作" }
-            return pack(if (name == "oit_reply") args.optString("text") else "", name, args, wire)
+            return pack(if (name == "oit_reply") cleanLeakedReply(args.optString("text")) else "", name, args, wire)
         } catch (e: AiError) { throw e }
         catch (e: Exception) { throw AiError("format", "工具参数格式错误，请检查模型的工具调用支持.") }
     }
