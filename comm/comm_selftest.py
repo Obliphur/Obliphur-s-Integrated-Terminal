@@ -307,7 +307,7 @@ def _selftest():
     c.blocked = lambda: ""
     script.append("空下来了")
     c.tick()
-    assert any(m["text"] == "在专注前收到" for m in c.visible()) and c.unread == unread0 + 1, "回到休息 / 空闲: 藏着的消息显示, 未读 +1"
+    assert not any(m["text"] == "在专注前收到" for m in c.messages) and c.unread == unread0, "插话后未发出的旧回复取消，不再计未读"
     assert not any(m.get("hold") for m in c.messages)
     assert c.busy, "回到休息 / 空闲: 马上把没回的消息交给对方"
     wait(c)
@@ -1476,82 +1476,78 @@ def _selftest():
     assert not cu.split_on() and cu.split_interval() == 0
     cu.apply_doc({"split": True, "split_interval": 1})
     assert not cu.split_on() and "split" not in cu.sync_doc() and "split_interval" not in cu.sync_doc()
-    # 流式按原字速显示，接口完成后继续输出尾部；两条回复依次排队。
+    # 后台流式收齐后沿用原来的全文字数延时，期间不显示半条正文。
     CHAR_DELAY, CHAR_DELAY_CJK = 0.1, 0.2
-    preview_messages = len(cu.messages)
-    cu.busy = True
-    cu._stream_events.append((cu._epoch - 1, "过期回复"))
-    cu._stream_events.append((cu._epoch, "中a文😀"))
-    assert cu.poll_stream() and not any(m.get("streaming") for m in cu.visible())
-    clock[0] += timedelta(milliseconds=199)
-    cu.poll_stream()
-    assert not any(m.get("streaming") for m in cu.visible())
-    clock[0] += timedelta(milliseconds=1)
-    cu.poll_stream()
-    assert cu.visible()[-1]["text"] == "中"
-    clock[0] += timedelta(milliseconds=100)
-    cu.poll_stream()
-    assert cu.visible()[-1]["text"] == "中a"
-    assert len(cu.messages) == preview_messages and cu.visible()[-1]["streaming"]
-    blocked = cu.blocked
-    cu.blocked = lambda: "专注中"
-    assert all(not m.get("streaming") for m in cu.visible())
-    cu.blocked = blocked
-    cu._finish("user", None, "中a文😀", "", cu._epoch)
-    first = cu.messages[-1]
-    assert cu._stream_display is None and first["hold"] and cu.visible()[-1]["text"] == "中a"
-    synced = cu.sync_doc()[f"m:{cu.pid}:{first['uid']}"]
-    assert synced["hold"] and synced["text"] == "中a文😀" and not synced.get("streaming")
-    assert not cu.voice.autoplay(cu.persona_name(), [cu.visible()[-1]])
-    cu.busy = True
-    cu._stream_events.append((cu._epoch, "乙"))
-    cu.poll_stream()
-    cu._finish("user", None, "乙", "", cu._epoch)
-    second = cu.messages[-1]
-    assert second["due"] == first["due"] + 200
-    clock[0] += timedelta(milliseconds=200)
-    cu.poll_stream()
-    assert cu.visible()[-1]["text"] == "中a文"
-    clock[0] += timedelta(milliseconds=100)
-    cu.poll_stream()
-    assert not first.get("hold") and cu.visible()[-1]["text"] == "中a文😀"
-    clock[0] += timedelta(milliseconds=200)
-    cu.poll_stream()
-    assert not second.get("hold") and cu.visible()[-1]["text"] == "乙" and not cu._stream_displays
-    assert not cu._follow_at and len(calls) == n0 + 1
-    # 指定回复时间不能被预览绕过；Assistant 仍然即时显示。
-    cu.busy = True
-    cu._active_reply_after = cu._ms() + 1000
-    cu._stream_events.append((cu._epoch, "中"))
-    cu.poll_stream()
-    clock[0] += timedelta(milliseconds=1000)
-    cu.poll_stream()
-    assert not any(m.get("streaming") for m in cu.visible())
-    clock[0] += timedelta(milliseconds=200)
-    cu.poll_stream()
-    assert cu.visible()[-1]["text"] == "中"
-    count = len(cu.messages)
-    cu._finish("user", None, "", "流式响应中断，回复尚未完成", cu._epoch)
-    assert len(cu.messages) == count and cu._stream_display is None
-    cu.set_persona("Assistant.txt")
-    cu._active_reply_after = 0
-    cu.busy = True
-    cu._stream_events.append((cu._epoch, "即时显示"))
-    cu.poll_stream()
-    assert cu.visible()[-1]["text"] == "即时显示"
-    cu._finish("user", None, "即时显示", "", cu._epoch)
-    assert not cu.messages[-1].get("hold")
-    cu.clear()
-    assert cu._stream_display is None and not cu._stream_displays
-    # 服务商慢时不积攒突发显示额度，表情仍按一个字符计时。
-    display = StreamDisplay(char_delay)
-    display.update("😀", 0)
-    assert not display.advance(99) and display.text == ""
-    assert display.advance(100) and display.text == "😀"
-    display.update("😀a", 1000)
-    display.advance(1000)
-    assert display.text == "😀" and display.due == 1100
-    CHAR_DELAY = CHAR_DELAY_CJK = 0.0
+    ready, release = threading.Event(), threading.Event()
+    response = {"text": "中a文😀", "error": False}
+    stream_calls = []
+    real_chat, previous_chat = ai_assist.chat_messages, cu.chat_fn
+    def streamed(profile, system, messages, **kwargs):
+        text, error = response["text"], response["error"]
+        stream_calls.append(text)
+        callback = kwargs.get("on_delta")
+        assert callable(callback), "整条显示仍须启用后台 SSE 接收"
+        callback(text[:1])
+        ready.set()
+        assert release.wait(3)
+        callback(text[1:])
+        if error:
+            raise ai_assist.AIError("network", "流式响应中断，回复尚未完成")
+        return text
+    try:
+        ai_assist.chat_messages = cu.chat_fn = streamed
+        previous_count = len(cu.messages)
+        cu.send("后台流式")
+        assert ready.wait(3)
+        cu.tick()
+        assert len(cu.messages) == previous_count + 1 and cu.visible()[-1]["role"] == "me"
+        assert all(not m.get("streaming") for m in cu.visible())
+        release.set()
+        wait(cu)
+        full = cu.messages[-1]
+        assert full["text"] == "中a文😀" and full["hold"]
+        assert full["due"] - cu._ms() == 600
+        assert cu.visible()[-1]["role"] == "me"
+        assert not cu.voice.autoplay(cu.persona_name(), [full])
+        assert f"m:{cu.pid}:{full['uid']}" not in cu.sync_doc()
+        clock[0] += timedelta(milliseconds=599)
+        cu._release_held()
+        assert full["hold"] and cu.visible()[-1]["role"] == "me"
+        clock[0] += timedelta(milliseconds=1)
+        cu._release_held()
+        assert not full.get("hold") and cu.visible()[-1]["text"] == "中a文😀"
+        assert len(stream_calls) == 1 and not cu._follow_at
+        # 指定回复时间优先；收齐前不显示，收齐后仍等到指定时间整条显示。
+        response["text"] = "中"
+        cu.send("延迟回复", reply_delay_seconds=1)
+        wait(cu)
+        full = cu.messages[-1]
+        clock[0] += timedelta(milliseconds=999)
+        cu._release_held()
+        assert full["hold"] and cu.visible()[-1]["role"] == "me"
+        clock[0] += timedelta(milliseconds=1)
+        cu._release_held()
+        assert not full.get("hold") and cu.visible()[-1]["text"] == "中"
+        # Assistant 免打字等待，但同样不能把尚未收完的正文显示出来。
+        cu.set_persona("Assistant.txt")
+        response["text"] = "完整回复"
+        ready.clear(); release.clear()
+        cu.send("在吗")
+        assert ready.wait(3)
+        cu.tick()
+        assert cu.visible()[-1]["role"] == "me"
+        release.set(); wait(cu)
+        assert cu.visible()[-1]["text"] == "完整回复" and not cu.messages[-1].get("hold")
+        # 中断不能落档，清空后返回的正文仍由原 epoch 校验丢弃。
+        response["error"] = True
+        count = len(cu.messages)
+        cu.send("中断测试"); wait(cu)
+        assert len(cu.messages) == count + 1 and cu.visible()[-1]["role"] == "me"
+        assert cu.error and all(not m.get("streaming") for m in cu.visible())
+    finally:
+        release.set()
+        ai_assist.chat_messages, cu.chat_fn = real_chat, previous_chat
+        CHAR_DELAY = CHAR_DELAY_CJK = 0.0
     # 思考 (第一层规则): 默认关; 关键词 / 时刻 / 英文 / 很长 / 系统触发 才开; 设置里可以整个关掉, 随设备同步
     assert think_text_reason("今天天气不错") == "" and think_text_reason("") == ""
     assert think_text_reason("你现在在干嘛呀").startswith("关键词") and think_text_reason("我们订个合约吧").startswith("关键词")
@@ -2431,11 +2427,13 @@ def _selftest():
         assert not item.joint_invite() and not item.share_invite(), "到点仍专注时不能提前生效"
         item.blocked = lambda: ""
     peer._release_held(); peer._joint_tick(clock[0])
-    assert peer.joint_invite() and not peer.share_invite(), "同步来的合约按消息展示生效，share data 仍是本机状态"
+    assert not peer.joint_invite() and not peer.share_invite(), "未发送正文不跨设备同步，远端不能提前显示邀请"
     restarted.apply_doc(peer.sync_doc())
     assert not restarted.joint_invite() and not restarted.joint_status_text(), "远端已展示也不能抢在本机消息之前生效"
     restarted._release_held(); restarted._joint_tick(clock[0])
     assert restarted.joint_invite() and restarted.share_invite()
+    peer.apply_doc(restarted.sync_doc())
+    assert peer.joint_invite() and not peer.share_invite()
     invite_ts = restarted.cfg["share_inv"]["ts"]
     restarted._release_held(); restarted._joint_tick(clock[0])
     assert restarted.cfg["share_inv"]["ts"] == invite_ts, "显示过的消息不能重复创建邀请"
@@ -2597,10 +2595,10 @@ def _selftest():
     assert len(calls) == n0 + 2, "第 1 次请求只带第 1 条; 回复显示之后补问一次"
     assert "消息1" in calls[n0][1][-1]["content"] and "消息2" not in calls[n0][1][-1]["content"]
     sent2 = calls[n0 + 1][1]
-    assert [m["role"] for m in sent2] == ["user", "assistant", "user"] and "你上一条回复发出的时候" in sent2[-1]["content"], sent2
-    assert all(f"消息{i}" in sent2[0]["content"] for i in (1, 2, 3)) and sent2[1]["content"] == "回复一"
-    assert [m["text"] for m in cq.visible()] == ["消息1", "消息2", "消息3", "回复一", "回复二"] and not cq.unanswered()
-    assert any(m["role"] == "sys" and CATCHUP_TAG in m["text"] for m in cq.messages)
+    assert [m["role"] for m in sent2] == ["user"] and "改写" in sent2[-1]["content"], sent2
+    assert all(f"消息{i}" in sent2[0]["content"] for i in (1, 2, 3)) and "回复一" not in str(sent2)
+    assert [m["text"] for m in cq.visible()] == ["消息1", "消息2", "消息3", "回复二"] and not cq.unanswered()
+    assert not any(m["role"] == "sys" and CATCHUP_TAG in m["text"] for m in cq.messages)
     # 单独一条: 不补问
     script.clear()
     script.append("回复三")
@@ -2615,7 +2613,7 @@ def _selftest():
     cq._trigger("proactive", "[系统] 请主动发一条消息.")
     assert cq.send("我先说一件事") == "" and cq._again
     wait(cq)
-    assert len(calls) == n0 + 2 and [m["text"] for m in cq.visible()][-3:] == ["我先说一件事", "在吗, 想聊聊", "收到, 你说的我看到了"], \
+    assert len(calls) == n0 + 2 and [m["text"] for m in cq.visible()][-2:] == ["我先说一件事", "收到, 你说的我看到了"], \
         [m["text"] for m in cq.visible()]
     # 第 1 次回复被拒绝: 合在一起重新问 (不是补问)
     script.clear()
@@ -2633,8 +2631,8 @@ def _selftest():
     cq.send("消息A")
     cq.send("消息B")
     wait(cq)
-    assert len(calls) == n0 + 2 and cq.visible()[-1]["text"] == "回复A" and not cq.unanswered()
-    assert cq.cfg["retry"].get("at") and cq._catchup, "补问被拒绝: 记下来, 过一阵再问"
+    assert len(calls) == n0 + 2 and cq.visible()[-1]["text"] == "消息B" and cq.unanswered()
+    assert cq.cfg["retry"].get("at") and not cq._catchup, "改写被拒绝: 用户消息仍未回复，稍后重试"
     cq.cfg["retry"] = {"at": cq._ms() - RETRY_GAP * 1000 - 5, "n": 1}
     cq.tick()
     assert cq.busy, "重试"
@@ -2829,13 +2827,13 @@ def _selftest():
     assert ch.send("b") == ""
     wait(ch)
     late_m = [m for m in ch.messages if m.get("late")]
-    assert len(calls) == n0 + 1 and [m["text"] for m in late_m] == ["嗯, 在."] and ch.visible()[-1]["text"] == "b" and ch.cfg["retry"].get("hold"), "回复到的时候对方已经在专注: 推迟 (24.3.9); 存着的还在"
+    assert len(calls) == n0 + 1 and not late_m and ch.visible()[-1]["text"] == "b" and ch.cfg["retry"].get("hold"), "回复到的时候对方已经在专注: 推迟 (24.3.9); 存着的还在"
     clock[0] = day.replace(hour=15, minute=41) + timedelta(days=1)
     script.append("看到 b 了.")
     ch.tick()
     wait(ch)
     assert len(calls) == n0 + 2 and ch.visible()[-1]["text"] == "看到 b 了." and not ch.cfg["retry"]
-    assert [m["text"] for m in ch.visible()[-3:]] == ["b", "嗯, 在.", "看到 b 了."] and ch.visible()[-2]["at"] == (day + timedelta(days=1)).replace(hour=15, minute=40).isoformat(timespec="seconds"), "推迟的那条在休息开始时发出, 发送时间 = 休息开始的时刻"
+    assert [m["text"] for m in ch.visible()[-2:]] == ["b", "看到 b 了."] and not any(m["text"] == "嗯, 在." for m in ch.messages), "插话取消旧回复，空闲后按新消息重写"
     # 清空聊天: 存着的不要了; 没有日程的人设不会存
     clock[0] = day.replace(hour=14, minute=30)
     assert ch.send("清空前") == "" and ch.cfg["retry"].get("hold")
@@ -3011,8 +3009,7 @@ def _selftest():
     assert [m["role"] for m in cd.visible()] == ["me"] and cd.unread == 0, "还在打字: 先不显示"
     held = [m for m in cd.messages if m.get("hold")]
     assert len(held) == 1 and held[0]["due"] - cd._ms() == 2000
-    typing = next(v for k, v in cd.sync_doc().items() if k.startswith("m:") and v["role"] == "ai")
-    assert typing.get("hold") and typing.get("due"), "打字中的回复也要同步 (带 hold/due)"
+    assert not any(k.startswith("m:") and v["role"] == "ai" for k, v in cd.sync_doc().items()), "待发回复仅本机保存，实际发送后才同步"
     clock[0] += timedelta(seconds=1.9)
     cd.tick()
     assert [m["role"] for m in cd.visible()] == ["me"], "没到 2 s"

@@ -256,6 +256,7 @@ class FlowMixin:
         self._req_ts = max([int(m.get("ts") or 0) for m in self.messages if m.get("role") == "me"] or [0])
         self._active_reply_after = max((int(m.get("reply_after") or 0) for m in self.messages
                                         if m.get("role") == "me" and int(m.get("ts") or 0) <= self._req_ts), default=0)
+        batch = self._reply_begin()
         profile = self.profile()
         image_request = bool(self._request_image)
         system = persona_system(self.personas, self.persona_name(), self.split_on())
@@ -270,6 +271,13 @@ class FlowMixin:
                 msgs[-1]["content"] += "\n\n" + extra[1]
             else:
                 msgs.append({"role": "user", "content": extra[1]})
+        if self._reply_rewrite:
+            correction = oit_text("用户在你分条回复期间发来了新消息。尚未发出的旧内容已取消；历史中的 assistant 消息都是已经发出的。请根据用户最新消息改写尚未发送的后续内容，不要重复已发出的消息。")
+            if msgs and msgs[-1]["role"] == "user":
+                msgs[-1]["content"] += "\n\n" + correction
+            else:
+                msgs.append({"role": "user", "content": correction})
+            self._reply_rewrite = False
         status = self.other_status()
         d = self._interaction_prepare()
         self._interaction_burst = d["burst_until"]
@@ -289,7 +297,6 @@ class FlowMixin:
             if mime:
                 msgs[-1]["content"] = ai_assist.image_content(profile, image, mime, str(msgs[-1]["content"]))
         epoch = self._epoch
-        self._stream_display = None
         self.busy = True
         self.busy_since = time.monotonic()
         started = time.monotonic()
@@ -302,7 +309,7 @@ class FlowMixin:
 
         def stream_delta(text):
             with self._lock:
-                self._stream_events.append((epoch, text))
+                self._reply_events.append((batch, text))
 
         why = self.think_reason(kind)
         think_kw = {"think": True} if why else {}           # 只在开的时候带这个参数 (别的 chat_fn 不用认识它)
@@ -406,14 +413,14 @@ class FlowMixin:
                     if unpack(reply) is not None and unpack(reply)["name"] not in ("", "oit_reply"):
                         retry_op, reply = self._tool_rounds(ask, convo, reply, kind, epoch)
                         op = op or retry_op
-                res = (kind, extra, reply, "", epoch, op)
+                res = (kind, extra, reply, "", epoch, op, batch)
                 self.log(f"REQ {kind} ok {time.monotonic() - started:.1f}s reply_chars={len(reply)}")
             except ai_assist.AIError as e:
-                res = (kind, extra, "", e.message, epoch)
+                res = (kind, extra, "", e.message, epoch, None, batch)
                 self.log(f"REQ {kind} FAIL {time.monotonic() - started:.1f}s {e.kind}: {e.message}"
                          + (f" (系统代理 {ai_assist.proxy_hint()})" if e.kind == "network" else ""))
             except Exception as e:      # noqa: BLE001
-                res = (kind, extra, "", f"{type(e).__name__}", epoch)
+                res = (kind, extra, "", f"{type(e).__name__}", epoch, None, batch)
                 self.log(f"REQ {kind} FAIL {time.monotonic() - started:.1f}s {type(e).__name__}: {e}")
             with self._lock:
                 self._results.append(res)

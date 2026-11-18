@@ -48,6 +48,7 @@ python release.py               # 发布（PyInstaller）
 | `_ai_dialog_check.py` | AI 模型设置弹窗：小屏 / 大字号下能滚到底、字段点得到 | `pages/ai_dialogs.py`、`pages/widgets.py` 的 `Modal` / `ScrollArea` |
 | `_comm_mode_check.py` | 沟通模式：未解锁入口可见可点、200 条解锁与切换、窄窗口 / 大字号布局、中英文帮助滚动、联网冷静期口令切换张力显示 | `pages/comm_page.py` 的模式入口 / `_help` |
 | `_comm_tools_check.py` | 原生工具协议：三种接口往返、参数校验、正文不执行标记、查询及提交、过期请求、双端协议一致性 | `ai_assist/ai_tools.py`、`comm/comm_tools.py`、`defaults/comm_tools.json`、`defaults/comm_protocol.txt`、安卓 `ToolProtocol.kt` |
+| `_comm_delivery_check.py` | 分隔符分条、完整气泡延时、插话撤销及改写、断流、重启与跨午夜队列 | `comm/comm_delivery.py`、`comm/comm_flow.py`、`comm/comm_chat.py`、安卓 `CommDelivery.kt` / `Comm.kt` |
 | `_voice_check.py` | AI 语音协议、官方型号获取、音色设计 / 上传 / 克隆、生成去重、缓存复用、播放记录、跨设备音频与已听状态同步、未播队列、并发清空与配置窗口 | `ai_voice.py`、`ai_voice_design.py`、`pages/voice_dialogs.py`、`pages/voice_design.py`、`pages/comm_voice.py`、沟通语音入口 |
 | `_external_software_check.py` | 外部目录、Process Lasso 下载与签名校验、静默安装参数、Python / PyTorch 保护规则、模型下载校验与跨盘落盘、额外功能页面 | `external_software.py`、`piano_model.py`、`pages/settings_page/settings_external.py`、`pages/settings_page/settings_extra.py` |
 | `_music_tools_check.py` | 音乐工具统一接口、安装状态与重入、转换链路、Partitura MIDI 事件探测、MP3 演奏渲染、失败保留原文件、目录锁、官方资产和 MSI 解包 | `music_tools.py`、`music_install.py`、`music_worker.py` |
@@ -90,7 +91,7 @@ python release.py               # 发布（PyInstaller）
 
 ### 沟通模块（`comm/`）
 
-`comm/`（约 1360 行）只留装配：常量再导出、`char_delay` / `follow_delay`、`Comm` 的 `__init__` 与聊天存档 / 设备同步 / 人设文件与升级链、`_mk` / `_finish` / `tick` 等要读模块全局量的方法。`Comm` 由 10 个 mixin 拼成；自检（约 3000 行）在 `comm/comm_selftest.py`，`python -m comm` 时用 `exec(..., globals())` 在 comm 的命名空间里执行——所以它照旧能 `global FOLLOW_DELAY`，也能直接读常量。依赖方向：`comm/` 导入它们，它们从不导入 `comm/`。
+`comm/`（约 1360 行）只留装配：常量再导出、`char_delay` / `follow_delay`、`Comm` 的 `__init__` 与聊天存档 / 设备同步 / 人设文件与升级链、`_mk` / `_finish` / `tick` 等要读模块全局量的方法。`Comm` 由 11 个 mixin 拼成；自检（约 3000 行）在 `comm/comm_selftest.py`，`python -m comm` 时用 `exec(..., globals())` 在 comm 的命名空间里执行——所以它照旧能 `global FOLLOW_DELAY`，也能直接读常量。依赖方向：`comm/` 导入它们，它们从不导入 `comm/`。
 
 | 文件 | Mixin | 内容 |
 | --- | --- | --- |
@@ -104,6 +105,7 @@ python release.py               # 发布（PyInstaller）
 | `comm/comm_misc.py` | MiscMixin | 清空聊天记录 |
 | `comm/comm_interaction.py` | InteractionMixin | 情景模式 / 情绪张力 / 冷静期 / 动态状态（24.20） |
 | `comm/comm_tools.py` | ToolsMixin | 原生工具逐轮调度：查询、联合行动候选与选择；主线程提交写操作 |
+| `comm/comm_delivery.py` | DeliveryMixin | 完整片段分条 / 本机待发队列 / 插话撤销与重写（24.3） |
 
 无状态的部分（mixin 和 `comm/` 都从这里取）：
 
@@ -115,7 +117,6 @@ python release.py               # 发布（PyInstaller）
 | `comm/comm_prompt.py` | 公共工具前置 prompt / 休息函数的拼装，协议正文在 `defaults/comm_protocol.txt`；Assistant同样接收 |
 | `comm/comm_rules.py` | `X_templates.txt` 的张力条件、事件绑定与关系条件模板解析（双端同格式，兼容旧 `_routine` 文件名） |
 | `comm/comm_reply.py` | 回复解析：去掉标记、`[wait]` / `[cut]` / `[network]` 的分钟数、半角化 |
-| `comm/comm_stream.py` | 流式正文显示时钟：按原中英文字速放出缓冲、保留完成前后的显示进度；安卓对应 `CommStream.kt` |
 | `comm/comm_schedule.py` | 人设日程解析：段类型 / 段内容、循环段、主动发消息概率 |
 | `comm/comm_builtin.py` | 内置人设、默认背景 / 日程 / 助理文本、旧版升级链 |
 | `comm/comm_readme.py` | OIT_personas 文件夹里的 README 文本（中 / 英） |

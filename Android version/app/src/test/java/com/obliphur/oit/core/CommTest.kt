@@ -1636,13 +1636,14 @@ class CommTest {
         assertEquals(70.0, c.proPercent("long"), 0.0)
     }
 
-    /** 流式按原字速显示，接口完成后继续输出尾部，两条回复不抢跑。 */
-    @Test fun streamingTypingTiming() {
+    /** 后台流式收齐后经过原有字数延时，正文整条出现；Assistant 也不显示半条消息。 */
+    @Test fun streamingWholeMessageTiming() {
         val td = Files.createTempDirectory("oit").toFile()
         val dir = File(td, "d").also { it.mkdirs() }
         val personas = File(td, "p")
         comm(dir, personas).also { it.flush(); it.voice.close() }
-        data class Chunk(val text: String, val ready: java.util.concurrent.CountDownLatch = java.util.concurrent.CountDownLatch(1),
+        data class Chunk(val text: String, val fail: Boolean = false,
+                         val ready: java.util.concurrent.CountDownLatch = java.util.concurrent.CountDownLatch(1),
                          val done: java.util.concurrent.CountDownLatch = java.util.concurrent.CountDownLatch(1))
         val tasks = java.util.concurrent.ConcurrentLinkedQueue<Chunk>()
         val all = ArrayList<Chunk>()
@@ -1650,9 +1651,12 @@ class CommTest {
         val c = Comm(dir, personas, { clock }) { _, _, _ ->
             requests.incrementAndGet()
             val task = tasks.remove()
-            Comm.deltaLocal.get()!!.invoke(task.text)
+            val delta = Comm.deltaLocal.get()!!
+            delta(task.text.take(1))
             task.ready.countDown()
             check(task.done.await(3, java.util.concurrent.TimeUnit.SECONDS))
+            delta(task.text.drop(1))
+            if (task.fail) throw AiError("network", "流式响应中断，回复尚未完成")
             task.text
         }
         val oldDelay = Comm.charDelay
@@ -1662,55 +1666,53 @@ class CommTest {
             c.importPersona("小夏.txt", "你是小夏".byteInputStream())
             c.set(persona = "小夏.txt")
             c.snapshot = { CommSnap("idle") }
-            fun start(text: String, after: Long = 0L): Chunk {
-                val task = Chunk(text)
+            fun start(text: String, after: Long = 0L, fail: Boolean = false): Chunk {
+                val task = Chunk(text, fail)
                 all.add(task); tasks.add(task)
                 assertEquals("", c.send("在吗", after))
                 assertTrue(task.ready.await(3, java.util.concurrent.TimeUnit.SECONDS))
-                c.pollStream()
+                c.tick()
+                assertEquals("me", c.visible().last().role)
+                assertTrue(c.visible().none { it.api == "streaming" })
                 return task
             }
             val task = start("中a文😀")
-            assertTrue(c.visible().none { it.api == "streaming" })
-            clock = clock.plusNanos(199_000_000); c.pollStream()
-            assertTrue(c.visible().none { it.api == "streaming" })
-            clock = clock.plusNanos(1_000_000); c.pollStream()
-            assertEquals("中", c.visible().last().text)
-            clock = clock.plusNanos(100_000_000); c.pollStream()
-            assertEquals("中a", c.visible().last().text)
-            c.blocked = { "专注中" }
-            assertTrue(c.visible().none { it.api == "streaming" })
-            c.blocked = { "" }
+            assertEquals(1, c.messages.size)
             task.done.countDown(); wait(c)
-            val first = c.messages.last { it.role == "ai" }
-            assertTrue(first.hold)
-            assertEquals("中a", c.visible().last().text)
-            assertTrue((c.syncDoc()["m:${c.pid}:${first.uid}"] as JSONObject).getBoolean("hold"))
-            assertTrue(c.voice.autoplay(c.personaName(), listOf(c.visible().last())).isEmpty())
-            val next = start("乙")
-            next.done.countDown(); wait(c)
-            val second = c.messages.last { it.role == "ai" }
-            assertEquals(first.due + 200L, second.due)
-            clock = clock.plusNanos(200_000_000); c.pollStream()
-            assertEquals("中a文", c.visible().last { it.role == "ai" }.text)
-            clock = clock.plusNanos(100_000_000); c.pollStream()
-            assertFalse(first.hold)
-            assertEquals("中a文😀", c.visible().last { it.role == "ai" }.text)
-            clock = clock.plusNanos(200_000_000); c.pollStream()
-            assertFalse(second.hold)
-            assertEquals("乙", c.visible().last().text)
-            assertEquals(2, requests.get())
+            val full = c.messages.last { it.role == "ai" }
+            val ms = clock.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+            assertEquals(600L, full.due - ms)
+            assertTrue(full.hold)
+            assertEquals("me", c.visible().last().role)
+            assertFalse(c.syncDoc().containsKey("m:${c.pid}:${full.uid}"))
+            assertTrue(c.voice.autoplay(c.personaName(), listOf(full)).isEmpty())
+            clock = clock.plusNanos(599_000_000); c.tick()
+            assertTrue(full.hold)
+            assertEquals("me", c.visible().last().role)
+            clock = clock.plusNanos(1_000_000); c.tick()
+            assertFalse(full.hold)
+            assertEquals("中a文😀", c.visible().last().text)
+            assertEquals(1, requests.get())
             val delayed = start("中", 1000L)
-            clock = clock.plusSeconds(1); c.pollStream()
-            assertTrue(c.visible().none { it.api == "streaming" })
-            clock = clock.plusNanos(200_000_000); c.pollStream()
-            assertEquals("中", c.visible().last().text)
             delayed.done.countDown(); wait(c)
+            val scheduled = c.messages.last { it.role == "ai" }
+            clock = clock.plusNanos(999_000_000); c.tick()
+            assertTrue(scheduled.hold)
+            assertEquals("me", c.visible().last().role)
+            clock = clock.plusNanos(1_000_000); c.tick()
+            assertFalse(scheduled.hold)
+            assertEquals("中", c.visible().last().text)
             c.set(persona = "Assistant.txt")
-            val instant = start("即时显示")
-            assertEquals("即时显示", c.visible().last().text)
+            val instant = start("完整回复")
             instant.done.countDown(); wait(c)
+            assertEquals("完整回复", c.visible().last().text)
             assertFalse(c.messages.last().hold)
+            val failed = start("未完成正文", fail = true)
+            val count = c.messages.size
+            failed.done.countDown(); wait(c)
+            assertEquals(count, c.messages.size)
+            assertEquals("me", c.visible().last().role)
+            assertTrue(c.error.isNotEmpty())
             c.clear()
             assertTrue(c.visible().isEmpty())
         } finally {
@@ -2490,8 +2492,7 @@ class CommTest {
             wait(c)
             assertEquals(listOf("me"), c.visible().map { it.role })
             assertEquals(0, c.unread)
-            val typing = c.syncDoc().entries.first { (k, v) -> k.startsWith("m:") && (v as JSONObject).getString("role") == "ai" }.value as JSONObject
-            assertTrue("打字中的回复也要同步 (带 hold/due)", typing.optBoolean("hold") && typing.has("due"))
+            assertFalse("待发消息仅本机保存", c.syncDoc().any { (k, v) -> k.startsWith("m:") && (v as JSONObject).optString("role") == "ai" })
             clock = clock.plusNanos(1_900_000_000)
             c.tick()
             assertEquals(listOf("me"), c.visible().map { it.role })
@@ -2543,11 +2544,13 @@ class CommTest {
                 item.blocked = { "" }
             }
             peer.tick()
-            assertNotNull(peer.jointInvite()); assertFalse(peer.shareInvite())
+            assertNull(peer.jointInvite()); assertFalse(peer.shareInvite())
             restarted.applyDoc(peer.syncDoc())
             assertNull(restarted.jointInvite()); assertEquals("", restarted.jointStatusText())
             restarted.tick()
             assertNotNull(restarted.jointInvite()); assertTrue(restarted.shareInvite())
+            peer.applyDoc(restarted.syncDoc())
+            assertNotNull(peer.jointInvite()); assertFalse(peer.shareInvite())
             restarted.tick()
             clock = clock.plusSeconds(301); restarted.tick()
             assertNull(restarted.jointInvite()); assertFalse(restarted.shareInvite())
@@ -2695,11 +2698,11 @@ class CommTest {
         assertEquals(n0 + 2, calls.size)                               // 第 1 次请求只带第 1 条; 回复显示之后补问一次
         assertTrue("消息1" in calls[n0].second.last().second && "消息2" !in calls[n0].second.last().second)
         val sent2 = calls[n0 + 1].second
-        assertEquals(listOf("user", "assistant", "user"), sent2.map { it.first })
-        assertTrue("你上一条回复发出的时候" in sent2.last().second)
-        assertTrue((1..3).all { "消息$it" in sent2[0].second } && sent2[1].second == "回复一")
-        assertEquals(listOf("消息1", "消息2", "消息3", "回复一", "回复二"), c.visible().map { it.text })
-        assertTrue(c.messages.any { it.role == "sys" && Comm.CATCHUP_TAG in it.text })
+        assertEquals(listOf("user"), sent2.map { it.first })
+        assertTrue("改写" in sent2.last().second)
+        assertTrue((1..3).all { "消息$it" in sent2[0].second } && "回复一" !in sent2.toString())
+        assertEquals(listOf("消息1", "消息2", "消息3", "回复二"), c.visible().map { it.text })
+        assertFalse(c.messages.any { it.role == "sys" && Comm.CATCHUP_TAG in it.text })
         // 单独一条: 不补问
         script.clear(); script.add("回复三")
         n0 = calls.size
@@ -2714,7 +2717,7 @@ class CommTest {
         assertEquals("", c.send("我先说一件事"))
         wait(c)
         assertEquals(n0 + 2, calls.size)
-        assertEquals(listOf("我先说一件事", "在吗, 想聊聊", "收到, 你说的我看到了"), c.visible().map { it.text }.takeLast(3))
+        assertEquals(listOf("我先说一件事", "收到, 你说的我看到了"), c.visible().map { it.text }.takeLast(2))
         // 第 1 次回复被拒绝: 合在一起重新问 (不是补问)
         script.clear(); script.addAll(listOf(CommText.REFUSE, "合在一起回复"))
         n0 = calls.size
@@ -2730,7 +2733,7 @@ class CommTest {
         c.send("消息A"); c.send("消息B")
         wait(c)
         assertEquals(n0 + 2, calls.size)
-        assertEquals("回复A", c.visible().last().text)
+        assertEquals("消息B", c.visible().last().text)
         clock = clock.plusSeconds(Comm.RETRY_GAP + 5L)
         c.tick()
         assertTrue(c.busy)                                              // 重试
@@ -3153,15 +3156,15 @@ class CommTest {
         clock = LocalDateTime.of(2026, 12, 11, 14, 0, 10)
         assertEquals("", c.send("b"))
         wait(c)
-        assertTrue("回复到的时候对方已经在专注: 推迟 (24.3.9)", calls.size == n0 + 1 && c.messages.filter { it.late }.map { it.text } == listOf("嗯, 在.") && c.visible().last().text == "b")
+        assertTrue("回复到的时候对方已经在专注: 推迟 (24.3.9)", calls.size == n0 + 1 && c.messages.none { it.text == "嗯, 在." } && c.visible().last().text == "b")
         assertTrue("存着的还在", c.syncDoc().keys.any { it.startsWith("retry:") })
         clock = LocalDateTime.of(2026, 12, 11, 15, 41)
         script.add("看到 b 了.")
         c.tick()
         wait(c)
         assertTrue(calls.size == n0 + 2 && c.visible().last().text == "看到 b 了.")
-        assertEquals(listOf("b", "嗯, 在.", "看到 b 了."), c.visible().takeLast(3).map { it.text })
-        assertEquals("推迟的那条在休息开始时发出, 发送时间 = 休息开始的时刻", "2026-12-11T15:40:00", c.visible()[c.visible().size - 2].at)
+        assertEquals(listOf("b", "看到 b 了."), c.visible().takeLast(2).map { it.text })
+        assertFalse(c.messages.any { it.text == "嗯, 在." })
         // 清空聊天: 存着的不要了; 没有日程的人设不会存
         clock = LocalDateTime.of(2026, 12, 11, 16, 0)
         clock = LocalDateTime.of(2026, 12, 12, 14, 30)

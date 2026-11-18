@@ -75,11 +75,11 @@ def follow_delay(profile: dict, override: float = None) -> float:
 # ══════════════ 管理器 ══════════════
 from .comm_interaction import InteractionMixin, interaction_norm, tension_clean
 from .comm_tools import ToolsMixin
+from .comm_delivery import DeliveryMixin, reply_parts
 from ai_assist.ai_tools import unpack, args_of, text_of
-from .comm_stream import StreamDisplay
 
 
-class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, FlowMixin, SchedMixin, ShareMixin, RtMixin, MiscMixin):
+class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, FlowMixin, SchedMixin, ShareMixin, RtMixin, MiscMixin):
     """聊天记录, 设置, 发请求 (线程), 主动发消息, 对方不方便时的重试, 设备同步. 界面线程每秒调一次 tick().
 
     设备同步 (MECHANICS 24.6): 聊天记录 / 清空 / "30 分钟内不重复"的记录 / 重试状态 / 主动消息的标记随设备同步 (文档 comm);
@@ -150,9 +150,9 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
         self._pending = {}
         self._writing = False
         self._results = []
-        self._stream_events = []
-        self._stream_display = None
-        self._stream_displays = {}
+        self._reply_events = []
+        self._reply_batch = None
+        self._reply_rewrite = False
         self._again = False
         self._req_ts = 0              # 最近一次请求发出时, 最后一条用户消息的时间 (ts): 回复到了之后看用户有没有又发了新的
         self._catchup = False         # 补问被拒绝了 (回复已经显示, 后发的消息还没人回): 重试时即使最后一条是对方的也要问
@@ -229,7 +229,8 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
     def _norm_state(d) -> dict:
         d = d if isinstance(d, dict) else {}
         msgs = d.get("messages") if isinstance(d.get("messages"), list) else []
-        msgs = [m for m in msgs if isinstance(m, dict) and m.get("role") in ("me", "ai", "sys")]
+        msgs = [m for m in msgs if isinstance(m, dict) and m.get("role") in ("me", "ai", "sys")
+                and ("pending_reply" not in m or m.get("reply_ready"))]
         for m in msgs:                                       # 旧版本的记录没有 uid / ts
             if not m.get("uid"):
                 m["uid"] = f"L{m.get('id') or 0}"
@@ -335,6 +336,9 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
         self.voice.stop()
         self.music_player.stop()
         self._music_actions.clear()
+        if self.busy:
+            self._reply_discard(self._reply_batch)
+        self._reply_rewrite = False
         self._others[self.pid] = self._active_state()           # 现在的记下来 (内存里的 messages 是同一个列表)
         self.save_chat()
         self.cfg["persona"] = name
@@ -342,8 +346,6 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
         st = self._others.pop(new, None) or self._read_chat(new)
         self._load_state(st)
         self._epoch += 1
-        self._stream_display = None
-        self._stream_displays.clear()
         self.error = ""
         self.unread = 0
         self.reload_schedule("换人设")
@@ -487,7 +489,7 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
         for name in list_personas(self.personas):
             st = self._state_of(pid_of(name))
             for m in st["messages"]:
-                if m["role"] == "ai" and int(m["ts"]) > st["clear_ts"]:
+                if m["role"] == "ai" and "pending_reply" not in m and int(m["ts"]) > st["clear_ts"]:
                     path = self.voice.file(name, m)
                     files[os.path.basename(os.path.dirname(path)) + "/" + os.path.basename(path)[:-4]] = path
         return files
@@ -533,7 +535,7 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
                 doc[f"interaction:{pid}"] = dict(d, clear=st["clear_ts"])
             for n in mem_fields(st)["mem_fixed"]:
                 doc[f"milestone:{pid}:{n}"] = {"clear": st["clear_ts"]}
-            for m in st["messages"][-SYNC_N:]:
+            for m in [x for x in st["messages"] if "pending_reply" not in x][-SYNC_N:]:
                 e = {"role": m["role"], "text": m["text"], "at": m["at"], "ts": int(m["ts"])}
                 if m.get("api"):
                     e["api"] = m["api"]
@@ -791,8 +793,6 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
             self.unread = 0
             self.error = ""
             self._epoch += 1
-            self._stream_display = None
-            self._stream_displays.clear()
             self.reload_schedule("新对话")
         if touched:
             self._changed()
@@ -1272,11 +1272,14 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
         self.voice.request(persona if persona is not None else self.persona_name(), m)
         return m
 
-    def _finish(self, kind: str, extra, reply: str, err: str, epoch: int = 0, op=None):
-        display, self._stream_display = self._stream_display, None
+    def _finish(self, kind: str, extra, reply: str, err: str, epoch: int = 0, op=None, batch=None):
+        self._reply_drain()
+        if batch:
+            batch.finished = True
         self.busy = False
         self.busy_since = 0.0
         if self.hard_block():                           # 等回复的时候"无言为真"生效了: 这条回复不要了
+            self._reply_discard(batch)
             self._again = False
             if kind == "share_ask":
                 self._share_ask_end("{name} 没有回复, share data 没有打开")
@@ -1284,13 +1287,24 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
                 self._shift_ask_end("{name} 没有回复, 起点没有平移")
             self._changed()
             return
-        if epoch != self._epoch:                        # 发出之后清空过聊天记录: 这条回复不要了
-            self._again = False
+        if epoch != self._epoch:                        # 清空 / 换人设后丢掉旧结果，新发的用户消息仍需处理。
+            self._reply_discard(batch)
+            resume, self._again = self._again, False
             if kind == "share_ask":
                 self._share_ask_end()
             if kind == "shift_ask":
                 self._shift_ask_end()
             self._changed()
+            if resume and self.unanswered() and self.leader() and not self._ai_problem():
+                self._ask_user()
+            return
+        if batch and batch.cancelled:
+            self._reply_discard(batch)
+            self._again = False
+            self.save_chat()
+            self._changed()
+            if self.leader() and not self._ai_problem():
+                self._ask_user()
             return
         tension_reply = reply
         reply = tension_clean(reply)
@@ -1304,6 +1318,8 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
         if cut is not None:
             self._cut_apply(cut)                        # 被骚扰: [cut off][N] 切断谈话 N 分钟 (这条话照常显示, 有的话)
         text, wait_min = clean_reply(reply) if not err else ("", None)
+        if not reply_parts(text):
+            text = ""
         if text and is_claudia(self.persona_name()):
             text = to_halfwidth(text)                           # Claudia: 显示前全角符号换成半角 (1.0.408)
         queried = not err and bool(info_tags(reply))           # 对方在查询模块资料 (有没有 [refuse to reply] 都算): 这条一定不显示
@@ -1353,6 +1369,7 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
             self.log(f"REPLY refused ({kind}): 对方回了 [refuse to reply], 不显示" + (", 稍后重试" if self.unanswered() or catchup else ""))
         delivered = False
         if err or refused or drop or empty:
+            self._reply_discard(batch)
             self.error = err
             if kind == "love":
                 if err:                                 # 出错: 这次的判定作废, 下一轮 tick 再来 (这一段特殊空闲里)
@@ -1389,21 +1406,13 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
                 self._interaction_reply(special, burst, until, shame)
             self._interaction_end(tension_reply, getattr(self, "_interaction_burst", 0))
             # AI 的 API 原文含控制标记；只存用户可见文本，避免详情/同步接口泄露调用痕迹。
-            m = self._mk("ai", text, delay=display is None)
-            if display is not None:
-                display.update(text, self._ms())
-                display.advance(self._ms())
-                m["due"] = max(int(m.get("due") or 0), display.due)
-                if m["due"] > self._ms():
-                    m["hold"] = True
-                if m.get("hold"):
-                    self._stream_displays[m["uid"]] = display
-            self.messages.append(m)
-            if self._active_reply_after > self._ms():
-                m["reply_after"] = self._active_reply_after
-                m["due"] = max(int(m.get("due") or 0), self._active_reply_after)
-                m["hold"] = True
+            already_shown = {id(m) for m in batch.messages if "pending_reply" not in m} if batch else set()
+            m = self._reply_complete(text, batch)
             self._active_reply_after = 0
+            if m is None:
+                self.save_chat()
+                self._changed()
+                return
             if op:
                 if isinstance(op, dict) and op.get("type") == "music_select":
                     try:
@@ -1437,9 +1446,9 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
             if wait_min and kind != "chase":                    # 追问的回复里再写 [waiting for reply] 不算: 一条消息最多追问一次
                 m["wait"] = wait_min
             held = m.get("hold")
-            if not self.viewing and not held:
+            if not self.viewing and not held and id(m) not in already_shown:
                 self.unread += 1
-            if not held:
+            if not held and id(m) not in already_shown:
                 self._ping()                                # 不在沟通页面: 任何新消息都提示一声 (在页面上看着就不响)
         self.save_chat()
         self._changed()
@@ -1453,54 +1462,17 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
                     self.log(f"CATCHUP ({kind}): 等回复的时候用户又发了消息, 补问一次")
                     self._trigger("user", CATCHUP_BODY)
 
-    def _apply_stream(self, events):
-        """在主线程合并预览；后台线程只排队，不操作界面。"""
-        changed = False
-        for epoch, text in events:
-            if epoch == self._epoch and self.busy:
-                if self._stream_display is None:
-                    earliest = max([self._active_reply_after] + [int(m.get("due") or 0) for m in self.messages if m.get("hold")])
-                    delay = char_delay if uses_prefix(self.persona_name()) else lambda _text: 0
-                    self._stream_display = StreamDisplay(delay, earliest)
-                text = self._stream_display.source + text
-                if is_claudia(self.persona_name()):
-                    text = to_halfwidth(text)
-                self._stream_display.update(text, self._ms())
-                changed = True
-        if changed:
-            self._changed()
-        return changed
-
-    def _advance_stream(self):
-        """接口返回后仍继续显示缓冲正文；未完成时沿用 hold/due 的正式消息门禁。"""
-        now = self._ms()
-        changed = False
-        for display in list(self._stream_displays.values()) + ([self._stream_display] if self._stream_display else []):
-            changed = display.advance(now) or changed
-        if changed:
-            self._changed()
-        return changed
-
-    def poll_stream(self):
-        """聊天页每 100 毫秒取正文增量，不额外触发业务 tick。"""
-        with self._lock:
-            events, self._stream_events = self._stream_events, []
-        changed = self._apply_stream(events)
-        changed = self._advance_stream() or changed
-        version = self.version
-        self._release_held()
-        return changed or self.version != version
-
     # ---- 每秒一次 ----
     def tick(self):
         if self.persona_name():
             self._interaction_prepare()
         self._count_idle()
+        interrupted = self._reply_interrupt()
+        if (interrupted or self._reply_rewrite) and not self.busy and self.leader() and not self._ai_problem() and not self._away_kind():
+            self._ask_user()
+        self._reply_drain()
         with self._lock:
-            stream, self._stream_events = self._stream_events, []
             done, self._results = self._results, []
-        self._apply_stream(stream)
-        self._advance_stream()
         for res in done:
             self._finish(*res)
         with self._lock:
@@ -1519,7 +1491,7 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
         self._share_tick()
         self._shift_tick()
         self._sf_tick()
-        if self.busy or not self.leader():
+        if self.busy or not self.leader() or any("pending_reply" in m for m in self.messages):
             return
         if self._ai_problem():
             return

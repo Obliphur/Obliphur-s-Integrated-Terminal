@@ -97,22 +97,7 @@ class ChatMixin:
 
     def visible(self) -> list:
         """聊天里显示的消息. 不能用沟通的时候 (专注 / 睡眠 / 外出 / 无言为真) 收到的对方的消息先藏起来 (hold), 回到休息 / 空闲再显示 (24.4)."""
-        rows = []
-        allowed = bool(self._stream_display or self._stream_displays) and not self.blocked() and not self.ai_free_at(self.now())
-        for m in self.messages:
-            if m["role"] not in ("me", "ai"):
-                continue
-            if not m.get("hold"):
-                rows.append(m)
-            elif allowed and int(m.get("reply_after") or 0) <= self._ms():
-                display = self._stream_displays.get(m.get("uid"))
-                if display and display.text:
-                    rows.append(dict(m, id=f"typing:{m['id']}", text=display.text, streaming=True))
-        display = self._stream_display
-        if display and display.text and allowed and self._active_reply_after <= self._ms():
-            rows.append({"id": "streaming", "role": "ai", "text": display.text,
-                         "at": self.now().isoformat(timespec="seconds"), "streaming": True})
-        return rows
+        return [m for m in self.messages if m["role"] in ("me", "ai") and not m.get("hold")]
 
     def unanswered(self) -> bool:
         vis = [m for m in self.messages if m["role"] in ("me", "ai")]          # 藏起来的回复也算回复过了
@@ -131,30 +116,35 @@ class ChatMixin:
 
         def due_of(m) -> int:
             floor = int(m.get("reply_after") or 0)
-            display = self._stream_displays.get(m.get("uid"))
-            if display:
-                floor = max(floor, display.due)
             d = max(int(m.get("due") or 0), floor)
             if m.get("late") and not away:                 # 对方专注时发的, 现在已经不在专注了 (日程到了 / 合约让对方休息了): 不用再等原来排的时刻
                 return max(min(d, now), floor)
             return d
         held = []
-        for m in self.messages:
+        for index, m in enumerate(self.messages):
             if not m.get("hold"):
                 continue
-            if due_of(m) > now:
+            if due_of(m) > now or ("pending_reply" in m and not self.leader()):
                 break
             held.append(m)
+            due = due_of(m)
+            if "pending_reply" in m and due > 0 and now > due:
+                # 心跳迟到、阻塞或离线恢复后仍保留气泡之间的等待，不一口气倾倒整个队列。
+                for following in self.messages[index + 1:]:
+                    if "pending_reply" in following and int(following.get("due") or 0) >= due:
+                        following["due"] += now - due
         if not held:
             return
         for m in held:
             del m["hold"]
             due = due_of(m)
-            self._stream_displays.pop(m.get("uid"), None)
             m.pop("due", None)
             m["shown"] = now                               # 等用户回复的时间从这时候算起 (规则 IX)
-            if m.pop("late", False):                       # 对方专注时发的: 发送时间改成下一个空闲 / 休息开始的时刻, 排到最后 (还没同步给别的设备, 改 ts 没关系)
-                m["at"] = datetime.fromtimestamp(due / 1000).isoformat(timespec="seconds")
+            pending = m.pop("pending_reply", None) is not None
+            m.pop("reply_ready", None)
+            late = m.pop("late", False)
+            if late or pending:                            # 本机待发消息发布时重盖时间；日程延迟保留约定的空闲起点。
+                m["at"] = datetime.fromtimestamp((due if late else now) / 1000).isoformat(timespec="seconds")
                 self._last_ts = m["ts"] = max(self._ms(), self._last_ts + 1)
                 self.messages.remove(m)
                 self.messages.append(m)
@@ -219,6 +209,7 @@ class ChatMixin:
 
     def _sent(self):
         """用户发出一条之后的收尾."""
+        self._reply_interrupt()
         self.error = ""
         self._catchup = False
         self.cfg["retry"] = {}

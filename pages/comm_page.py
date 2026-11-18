@@ -152,19 +152,8 @@ class CommPage(CommVoiceMixin, tk.Frame):
         self._to_end()
         self._voice_start()
         self._voice_job = self.after(100, self._voice_poll)
-        self._stream_job = self.after(100, self._stream_poll)
-
-    def _stream_poll(self):
-        if self.comm.viewing:
-            if self.comm.poll_stream():
-                self._sync_rows()
-            self._stream_job = self.after(100, self._stream_poll)
 
     def hide(self):
-        job = getattr(self, "_stream_job", None)
-        if job:
-            self.after_cancel(job)
-            self._stream_job = None
         self._voice_cancel()
         self.comm.set_viewing(False)
 
@@ -347,9 +336,14 @@ class CommPage(CommVoiceMixin, tk.Frame):
         inner = self.area.inner
         msgs = self.comm.visible()
         ids = [m["id"] for m in msgs]
+        previous_ids = getattr(self, "_visible_ids", set(ids))
+        self._visible_ids = set(ids)
+        # 等待中的回复可能排在后来发送的用户消息之前，到点后也要补出整个气泡。
+        new_before_view = bool(self._rendered and self._rendered[0] in ids and
+                               any(mid not in previous_ids for mid in ids[:ids.index(self._rendered[0])]))
         sig = self._signature()
         if sig != self._sig or not self._rendered or self._rendered[-1] not in ids \
-                or self._rendered[0] not in ids:
+                or self._rendered[0] not in ids or new_before_view:
             for w in inner.winfo_children():
                 w.destroy()
             self._rendered, self._rows, self._top_pad, self._sig = [], [], None, sig
@@ -365,15 +359,6 @@ class CommPage(CommVoiceMixin, tk.Frame):
         else:
             new = msgs[ids.index(self._rendered[-1]) + 1:]
         self._ensure_pads()
-        by_id = {m["id"]: m for m in msgs if m.get("streaming")}
-        for mid, row in zip(self._rendered, self._rows):
-            if mid in by_id:
-                label = getattr(row, "_oit_stream_label", None)
-                if label is not None and label.cget("text") != by_id[mid]["text"]:
-                    follow = self._near_end()
-                    label.config(text=by_id[mid]["text"])
-                    if follow:
-                        self._to_end()
         if not new:
             return
         follow = self._first_draw or self._near_end() or any(m["role"] == "me" for m in new)
@@ -437,9 +422,7 @@ class CommPage(CommVoiceMixin, tk.Frame):
                               anchor="w", wraplength=self._wrap(), padx=12, pady=8,
                               highlightthickness=0)
         text_label.pack(anchor="e" if mine else "w")
-        if m.get("streaming"):
-            row._oit_stream_label = text_label
-        if not mine and not m.get("streaming") and c.voice.data["enabled"]:
+        if not mine and c.voice.data["enabled"]:
             tk.Button(bubble, text="▶", command=lambda: self._voice_manual(m), bg=fill, fg=COLORS["text_dim"],
                       activebackground=fill, activeforeground=COLORS["accent"], relief="flat", bd=0,
                       padx=3, pady=0, cursor="hand2", font=config.font("small"), takefocus=True).pack(anchor="sw", padx=1, pady=1)

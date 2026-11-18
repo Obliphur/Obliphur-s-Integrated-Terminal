@@ -162,6 +162,7 @@ fun CommScreen(go: (String) -> Unit) {
             if (comm.voice.state == "failed" && comm.voice.error.isNotEmpty()) { core.toast(tr(comm.voice.error), "warn"); comm.voice.error = "" }
             if ((comm.blocked().isNotEmpty() || !comm.voice.playAllowed()) && comm.voice.state in listOf("playing", "loading")) comm.voice.stop()
             if (!comm.voice.playAllowed() && voiceAutoRunning) { voiceSession++; voiceAutoRunning = false }
+            if (comm.version != ver) ver = comm.version
             val (text, kind) = comm.otherStatusDisplay()
             if (text != otherStatus) otherStatus = text
             if (kind != otherStatusKind) otherStatusKind = kind
@@ -175,13 +176,6 @@ fun CommScreen(go: (String) -> Unit) {
             comm.shareInvite().let { if (it != shareInv) shareInv = it }
             comm.loveInvite().let { if (it != loveInv) loveInv = it }
             kotlinx.coroutines.delay(250)
-        }
-    }
-    LaunchedEffect(comm) {
-        while (true) {
-            comm.pollStream()
-            if (comm.version != ver) ver = comm.version
-            kotlinx.coroutines.delay(100)
         }
     }
     val msgs = remember(ver) { comm.visible() }
@@ -215,9 +209,6 @@ fun CommScreen(go: (String) -> Unit) {
     // 倒排: 第 0 项是最新的一条, 在最下面. 新消息来了 (收到的 / 同步来的) 滑到最新; 正在往上翻很早的记录时不打断 (自己发的除外)
     LaunchedEffect(msgs.firstOrNull()?.id, msgs.size) {
         if (!voiceAutoRunning && msgs.isNotEmpty() && (list.firstVisibleItemIndex <= 4 || msgs.last().role == "me")) list.scrollToItem(0)
-    }
-    LaunchedEffect(msgs.lastOrNull()?.takeIf { it.api == "streaming" }?.text) {
-        if (!voiceAutoRunning && msgs.lastOrNull()?.api == "streaming" && list.firstVisibleItemIndex <= 4) list.scrollToItem(0)
     }
     fun report(why: String) {
         core.toast(tr(why), "warn")
@@ -487,7 +478,7 @@ private fun Bubble(m: ChatMsg, play: (() -> Unit)? = null) {
                     .then(if (mine) Modifier else Modifier.border(1.dp, o.border, RoundedCornerShape(12.dp)))) {
                 Text(m.text, color = if (mine) o.onAccent else o.text, fontSize = 15.sp,
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
-                if (!mine && m.api != "streaming" && comm.voice.enabled) Text("▶", color = o.dim, fontSize = 14.sp,
+                if (!mine && comm.voice.enabled) Text("▶", color = o.dim, fontSize = 14.sp,
                     modifier = Modifier.align(Alignment.Start)
                         .clickable(onClickLabel = tr("播放语音"), role = androidx.compose.ui.semantics.Role.Button) {
                             if (comm.blocked().isEmpty()) play?.invoke()

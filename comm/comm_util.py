@@ -124,7 +124,7 @@ def first_turn(msgs: list) -> bool:
 
 def api_messages(msgs: list, include_latest_api: bool = False) -> list:
     """历史只用双方可见正文; 当前请求可保留最新用户消息的本轮提示."""
-    source = list(msgs)
+    source = [m for m in msgs if "pending_reply" not in m]
     last_ai = max((i for i, m in enumerate(source) if m.get("role") == "ai"), default=-1)
     current = {id(m) for m in source[last_ai + 1:] if m.get("role") in ("me", "sys") and m.get("api")} if include_latest_api else set()
     msgs = [(m, i) for i, m in enumerate(source) if m.get("role") in ("me", "ai") or id(m) in current]

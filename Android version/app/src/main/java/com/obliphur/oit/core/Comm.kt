@@ -18,6 +18,9 @@ import java.util.concurrent.ConcurrentLinkedQueue
 class ChatMsg(val id: Int, val role: String, val text: String, var at: String, val api: String = "", val uid: String = "", var ts: Long = 0L) {
     /** 不能用沟通的时候 (专注 / 睡眠 / 外出 / 无言为真) 收到的对方的消息先藏起来, 回到休息 / 空闲再显示 (MECHANICS 24.4). */
     var hold = false
+    /** 未发送的本机回复及完整响应校验标记，不进入设备同步或 API 历史。 */
+    internal var pendingReply: Long? = null
+    internal var replyReady = false
     /** 本机 share data 邀请等消息实际展示再生效；不随消息同步。 */
     var shareInvite = false
     /** 打字延时 (Comm.charDelay): 对方的消息每个字符晚这么多秒才显示; 到这个时刻 (毫秒) 前一直 hold. 0 = 没有. */
@@ -1238,9 +1241,6 @@ class Comm(
     private var lastTs = 0L
     val messages = ArrayList<ChatMsg>()
     @Volatile var version = 0; private set
-    private var streamDisplay: CommStream? = null
-    private val streamDisplays = HashMap<String, CommStream>()
-    private val streamEvents = ConcurrentLinkedQueue<Pair<Int, String>>()
     @Volatile var unread = 0; private set
     @Volatile var busy = false; private set
     @Volatile private var busySince = 0L
@@ -1283,9 +1283,12 @@ class Comm(
         var msgGone = 0
         var shift: List<ShiftRec> = emptyList()
     }
-    private class Result(val kind: String, val extra: Extra?, val reply: String, val err: String, val epoch: Int, val op: JointPlan? = null, val musicId: String = "")
+    private class Result(val kind: String, val extra: Extra?, val reply: String, val err: String, val epoch: Int, val op: JointPlan? = null, val musicId: String = "", val batch: ReplyBatch? = null)
     private class MemResult(val reply: String, val err: String, val upto: Long, val owner: String)
     private val results = ConcurrentLinkedQueue<Result>()
+    private val replyEvents = ConcurrentLinkedQueue<Pair<ReplyBatch, String>>()
+    private var replyBatch: ReplyBatch? = null
+    private var replyRewrite = false
     private val memResults = ConcurrentLinkedQueue<MemResult>()
     @Volatile private var memBusy = false
     private var memNext = 0L
@@ -1364,12 +1367,13 @@ class Comm(
             val m = arr.optJSONObject(i) ?: continue
             val role = m.optString("role")
             if (role !in listOf("me", "ai", "sys")) continue
+            if (m.has("pending_reply") && !m.optBoolean("reply_ready")) continue
             val id = m.optInt("id")
             val at = m.optString("at")
             val ts = m.optLong("ts", 0L).takeIf { it != 0L }
                 ?: parseIso(at)?.atZone(java.time.ZoneId.systemDefault())?.toInstant()?.toEpochMilli() ?: 0L     // 旧版本的记录没有 uid / ts
             st.messages.add(ChatMsg(id, role, m.optString("text"), at, m.optString("api"), m.optString("uid").ifEmpty { "L$id" }, ts)
-                .also { it.hold = m.optBoolean("hold"); it.due = m.optLong("due"); it.replyAfter = m.optLong("reply_after"); it.late = m.optBoolean("late"); it.wait = m.optDouble("wait", 0.0); it.chased = m.optBoolean("chased"); it.shown = m.optLong("shown"); it.shareInvite = m.optBoolean("share_invite") })
+                .also { it.hold = m.optBoolean("hold"); it.due = m.optLong("due"); it.replyAfter = m.optLong("reply_after"); it.late = m.optBoolean("late"); it.wait = m.optDouble("wait", 0.0); it.chased = m.optBoolean("chased"); it.shown = m.optLong("shown"); it.shareInvite = m.optBoolean("share_invite"); it.pendingReply = if (m.has("pending_reply")) m.optLong("pending_reply") else null; it.replyReady = m.optBoolean("reply_ready") })
         }
         st.messages.sortWith(compareBy({ it.ts }, { it.uid }))
         st.clearTs = o?.optLong("clear_ts", 0L) ?: 0L
@@ -1395,6 +1399,7 @@ class Comm(
                 if (m.api.isNotEmpty()) put("api", m.api); if (m.hold) put("hold", true); if (m.due != 0L) put("due", m.due); if (m.replyAfter != 0L) put("reply_after", m.replyAfter); if (m.late) put("late", true)
                 if (m.wait > 0) put("wait", m.wait); if (m.chased) put("chased", true); if (m.shown != 0L) put("shown", m.shown)
                 if (m.shareInvite) put("share_invite", true)
+                m.pendingReply?.let { put("pending_reply", it); put("reply_ready", m.replyReady) }
             })
         return JSONObject().put("interaction", st.interaction.json()).put("messages", arr).put("clear_ts", st.clearTs).put("retry_at", st.retryAt)
             .put("retry_n", st.retryN).put("pro_key", st.proKey)
@@ -1492,14 +1497,14 @@ class Comm(
         val np = pidOf(name)
         if (np == pid) { persona = name; return }
         voice.stop()
+        if (busy) replyDiscard(replyBatch)
+        replyRewrite = false
         others[pid] = activeState()
         saveChat()
         persona = name
         pid = np
         loadState(others.remove(np) ?: readChat(np))
         epoch++
-        streamDisplay = null
-        streamDisplays.clear()
         error = ""
         unread = 0
         reloadSchedule("换人设")
@@ -1602,7 +1607,7 @@ class Comm(
         val files = LinkedHashMap<String, File>()
         for (name in listPersonas()) {
             val st = stateOf(pidOf(name))
-            for (m in st.messages) if (m.role == "ai" && m.ts > st.clearTs) {
+            for (m in st.messages) if (m.role == "ai" && m.pendingReply == null && m.ts > st.clearTs) {
                 val file = voice.audio(name, m)
                 files[file.parentFile!!.name + "/" + file.nameWithoutExtension] = file
             }
@@ -1639,7 +1644,7 @@ class Comm(
             val st = stateOf(p)
             if (st.interaction.ts > 0L) doc["interaction:$p"] = st.interaction.json().put("clear", st.clearTs)
             for (n in messageMilestones(st)) doc["milestone:$p:$n"] = JSONObject().put("clear", st.clearTs)
-            for (m in st.messages.takeLast(SYNC_N)) {
+            for (m in st.messages.filter { it.pendingReply == null }.takeLast(SYNC_N)) {
                 doc["m:$p:${m.uid}"] = JSONObject().put("role", m.role).put("text", m.text).put("at", m.at).put("ts", m.ts)
                     .apply {
                         if (m.api.isNotEmpty()) put("api", m.api); if (m.wait > 0) put("wait", m.wait)
@@ -1805,7 +1810,7 @@ class Comm(
             tc.st.messages.sortWith(compareBy({ it.ts }, { it.uid }))
             storeState(p, tc.st)
         }
-        if (clearedActive) { unread = 0; error = ""; epoch++; streamDisplay = null; streamDisplays.clear(); reloadSchedule("新对话") }
+        if (clearedActive) { unread = 0; error = ""; epoch++; reloadSchedule("新对话") }
         if (touched.isNotEmpty()) changed()
         // 同步消息复用原设备的音频；缺失时手动播放仍可生成。
         syncedPing(fresh)
@@ -3916,25 +3921,72 @@ class Comm(
         changed()
     }
 
-    /** 聊天里显示的消息 (藏起来的不算, 见 ChatMsg.hold). */
-    @Synchronized
-    fun visible(): List<ChatMsg> {
-        val allowed = (streamDisplay != null || streamDisplays.isNotEmpty()) && blocked().isEmpty() && aiFreeAt() == null
-        val rows = ArrayList<ChatMsg>()
-        for (m in messages) {
-            if (m.role != "me" && m.role != "ai") continue
-            if (!m.hold) rows.add(m)
-            else if (allowed && m.replyAfter <= nowMs()) {
-                streamDisplays[m.uid]?.text?.takeIf { it.isNotEmpty() }?.let {
-                    rows.add(ChatMsg(m.id, "ai", it, m.at, "streaming", m.uid, m.ts))
-                }
+    /** 完整片段先进入本机待发队列，发送之后才同步给其他设备。 */
+    private fun replyQueue(text: String, batch: ReplyBatch, ready: Boolean = false): ChatMsg {
+        val m = add("ai", text)
+        m.pendingReply = batch.source; m.replyReady = ready; m.hold = true
+        m.replyAfter = batch.after; m.due = maxOf(m.due, batch.after)
+        batch.messages.add(m)
+        return m
+    }
+
+    private fun replyDrain() {
+        var dirty = false
+        while (true) {
+            val (batch, delta) = replyEvents.poll() ?: break
+            if (batch !== replyBatch || batch.cancelled || batch.finished || batch.epoch != epoch || hardBlock()) continue
+            for (part in batch.parser.feed(delta)) {
+                var text = CommInteraction.cleanTension(part).trim()
+                if (personaTitle(personaName()).trim().equals("Claudia", ignoreCase = true)) text = CommText.toHalfWidth(text)
+                if (text.isNotEmpty()) { replyQueue(text, batch); dirty = true }
             }
         }
-        streamDisplay?.text?.takeIf { it.isNotEmpty() && allowed && activeReplyAfter <= nowMs() }?.let {
-            rows.add(ChatMsg(Int.MIN_VALUE, "ai", it, now().toString(), "streaming"))
-        }
-        return rows
+        if (dirty) saveChat()
     }
+
+    private fun replyCancelActions(doomed: List<ChatMsg>) {
+        curJoint()?.takeIf { it.state == "queued" && doomed.any { m -> m.uid == it.message } }?.let {
+            jointSet(it.copy(state = "", ts = maxOf(nowMs(), it.ts + 1)))
+        }
+    }
+
+    private fun replyDiscard(batch: ReplyBatch?) {
+        val doomed = batch?.messages?.filter { it.pendingReply != null }.orEmpty()
+        replyCancelActions(doomed)
+        messages.removeAll(doomed.toSet())
+    }
+
+    /** 插话撤销未发出的正文；已发出的气泡继续留在历史里。 */
+    private fun replyInterrupt(): Boolean {
+        val latest = messages.filter { it.role == "me" }.maxOfOrNull { it.ts } ?: 0L
+        val doomed = messages.filter { it.pendingReply?.let { source -> latest > source } == true }
+        replyCancelActions(doomed)
+        messages.removeAll(doomed.toSet())
+        val batch = replyBatch
+        val interrupted = doomed.isNotEmpty() || busy && batch != null && batch.epoch == epoch && latest > batch.source
+        if (busy && batch != null && batch.epoch == epoch && latest > batch.source) { batch.cancelled = true; again = true }
+        if (interrupted) replyRewrite = true
+        return interrupted
+    }
+
+    private fun replyComplete(text: String, current: ReplyBatch?): ChatMsg? {
+        val batch = current ?: ReplyBatch(epoch, reqTs, activeReplyAfter)
+        val parts = ReplyParts.split(text)
+        val existing = batch.messages.map { it.text }
+        if (parts.take(existing.size) != existing) {
+            val sent = batch.messages.filter { it.pendingReply == null }
+            replyDiscard(batch)
+            batch.messages.clear(); batch.messages.addAll(sent)
+            if (sent.isNotEmpty()) return sent.last()
+        }
+        for (part in parts.drop(batch.messages.size)) replyQueue(part, batch, ready = true)
+        batch.messages.filter { it.pendingReply != null }.forEach { it.replyReady = true }
+        return batch.messages.lastOrNull()
+    }
+
+    /** 聊天里显示的消息 (藏起来的不算, 见 ChatMsg.hold). */
+    @Synchronized
+    fun visible(): List<ChatMsg> = messages.filter { (it.role == "me" || it.role == "ai") && !it.hold }
 
     private fun unanswered() = messages.lastOrNull { it.role == "me" || it.role == "ai" }?.role == "me"      // 藏着的回复也算回复过了
 
@@ -3948,16 +4000,26 @@ class Comm(
         val now = nowMs()
         val away = awayKind()                                                 // 对方此刻 (按日程, 合约进行中 / 合约后的同步休息按合约) 还在专注 / 睡眠吗
         // 对方专注时发的, 现在已经不在专注了 (日程到了 / 合约让对方休息了): 不用再等原来排的时刻
-        fun dueOf(m: ChatMsg): Long = maxOf(if (m.late && away.isEmpty()) minOf(m.due, now) else m.due,
-            m.replyAfter, streamDisplays[m.uid]?.due ?: 0L)
-        val held = messages.filter { it.hold }.takeWhile { dueOf(it) <= now }          // 打字延时没到点的和它后面的继续藏着 (按顺序一条一条出来)
+        fun dueOf(m: ChatMsg): Long = maxOf(if (m.late && away.isEmpty()) minOf(m.due, now) else m.due, m.replyAfter)
+        val held = ArrayList<ChatMsg>()
+        for ((index, m) in messages.withIndex()) {
+            if (!m.hold) continue
+            val due = dueOf(m)
+            if (due > now || m.pendingReply != null && !leader()) break
+            held.add(m)
+            // 心跳迟到或恢复时，仍保留后续气泡之间的等待。
+            if (m.pendingReply != null && due > 0L && now > due) {
+                messages.drop(index + 1).filter { it.pendingReply != null && it.due >= due }.forEach { it.due += now - due }
+            }
+        }
         if (held.isEmpty()) return
         held.forEach {
             val due = dueOf(it)
-            streamDisplays.remove(it.uid)
             it.hold = false; it.shown = now                                   // 等用户回复的时间从这时候算起 (规则 IX)
-            if (it.late) {                                                    // 对方专注时发的: 发送时间改成下一个空闲 / 休息开始的时刻, 排到最后 (还没同步给别的设备, 改 ts 没关系)
-                it.at = java.time.Instant.ofEpochMilli(due).atZone(java.time.ZoneId.systemDefault()).toLocalDateTime().iso()
+            val pending = it.pendingReply != null
+            it.pendingReply = null; it.replyReady = false
+            if (it.late || pending) {                                                    // 对方专注时发的: 发送时间改成下一个空闲 / 休息开始的时刻, 排到最后 (还没同步给别的设备, 改 ts 没关系)
+                it.at = java.time.Instant.ofEpochMilli(if (it.late) due else now).atZone(java.time.ZoneId.systemDefault()).toLocalDateTime().iso()
                 lastTs = maxOf(nowMs(), lastTs + 1); it.ts = lastTs
                 it.late = false
                 messages.remove(it); messages.add(it)
@@ -4015,8 +4077,8 @@ class Comm(
 
     fun apiMessages(src: List<ChatMsg> = messages, includeLatestApi: Boolean = false): List<Pair<String, String>> {
         val out = ArrayList<Pair<String, String>>()
-        val lastAi = src.indexOfLast { it.role == "ai" }
-        val conversation = src.withIndex().filter { (i, m) -> m.role == "me" || m.role == "ai" || includeLatestApi && i > lastAi && m.role == "sys" && m.api.isNotEmpty() }
+        val lastAi = src.indexOfLast { it.role == "ai" && it.pendingReply == null }
+        val conversation = src.withIndex().filter { (i, m) -> m.pendingReply == null && (m.role == "me" || m.role == "ai" || includeLatestApi && i > lastAi && m.role == "sys" && m.api.isNotEmpty()) }
         // 总字数太多时从最老的开始不带 (至少带最新的一条)
         var total = 0
         // 超过条数上限后按 HISTORY_STEP 批量淘汰, 让窗口起点保持稳定
@@ -4061,6 +4123,7 @@ class Comm(
 
     /** 用户发出一条之后的收尾. */
     private fun sentOut() {
+        replyInterrupt()
         error = ""; catchup = false; retryAt = 0; retryN = 0
         saveCfg(); saveChat(); changed(); push()
     }
@@ -4557,6 +4620,8 @@ class Comm(
         followMsg = 0
         reqTs = messages.filter { it.role == "me" }.maxOfOrNull { it.ts } ?: 0L
         activeReplyAfter = messages.filter { it.role == "me" && it.ts <= reqTs }.maxOfOrNull { it.replyAfter } ?: 0L
+        val batch = ReplyBatch(epoch, reqTs, activeReplyAfter)
+        replyBatch = batch
         val profile = profileFor()
         val image = pendingImage
         pendingImage = null
@@ -4575,6 +4640,12 @@ class Comm(
             if (msgs.isNotEmpty() && msgs.last().first == "user") msgs[msgs.size - 1] = "user" to (msgs.last().second + "\n\n" + extra.api)
             else msgs.add("user" to extra.api)
         }
+        if (replyRewrite) {
+            val correction = CommText.oitText("用户在你分条回复期间发来了新消息。尚未发出的旧内容已取消；历史中的 assistant 消息都是已经发出的。请根据用户最新消息改写尚未发送的后续内容，不要重复已发出的消息。")
+            if (msgs.isNotEmpty() && msgs.last().first == "user") msgs[msgs.lastIndex] = "user" to (msgs.last().second + "\n\n" + correction)
+            else msgs.add("user" to correction)
+            replyRewrite = false
+        }
         val status = otherStatus()
         val d = interactionPrepare()
         interactionTurn = InteractionTurn(specialPeriod(status),
@@ -4585,7 +4656,6 @@ class Comm(
         if (msgs.isNotEmpty() && msgs.last().first == "user") msgs[msgs.size - 1] = "user" to (msgs.last().second + "\n\n" + note)
         else msgs.add("user" to note)
         val ep = epoch
-        streamDisplay = null
         busy = true
         busySince = System.currentTimeMillis()
         val started = busySince
@@ -4600,9 +4670,7 @@ class Comm(
             toolsLocal.set(true)
             Comm.thinkLocal.set(why.isNotEmpty())
             Comm.webLocal.set(web)
-            Comm.deltaLocal.set { text ->
-                streamEvents.add(ep to text)
-            }
+            Comm.deltaLocal.set { text -> replyEvents.add(batch to text); Unit }
             if (image != null) Ai.imageLocal.set(image)
             val res = try {
                 var convo = msgs.toMutableList()
@@ -4616,10 +4684,12 @@ class Comm(
                     val fallback = cfg.profile(fallbackId)
                     log("REQ image fallback to configured vision model")
                     Ai.imageLocal.set(image)
+                    val replyDelta = Comm.deltaLocal.get()
+                    Comm.deltaLocal.remove()                    // 图片分析不属于正式回复，不能混入分条缓冲。
                     val visual = try {
                         chatFn(fallback, "你是独立的图片分析器。只描述图片中可确认的内容，简短回答；不要推断聊天背景。",
                             listOf("user" to "请描述这张图片中与用户消息相关的信息。"))
-                    } finally { Ai.imageLocal.remove() }
+                    } finally { Ai.imageLocal.remove(); Comm.deltaLocal.set(replyDelta) }
                     val lastUser = convo.indexOfLast { it.first == "user" }
                     if (lastUser >= 0) convo[lastUser] = "user" to (convo[lastUser].second + "\n\n[独立图片分析] " + visual.trim())
                     chatFn(profile, system, convo)
@@ -4678,13 +4748,13 @@ class Comm(
                     musicId = musicId.ifEmpty { handled.third }
                 }
                 log("REQ $kind ok ${(System.currentTimeMillis() - started) / 1000.0}s reply_chars=${reply.length}")
-                Result(kind, extra, reply, "", ep, op, musicId)
+                Result(kind, extra, reply, "", ep, op, musicId, batch)
             } catch (e: AiError) {
                 log("REQ $kind FAIL ${(System.currentTimeMillis() - started) / 1000.0}s ${e.kind}: ${e.message}")
-                Result(kind, extra, "", e.message ?: "", ep)
+                Result(kind, extra, "", e.message ?: "", ep, batch = batch)
             } catch (e: Exception) {
                 log("REQ $kind FAIL ${(System.currentTimeMillis() - started) / 1000.0}s ${e.javaClass.simpleName}: ${e.message}")
-                Result(kind, extra, "", e.javaClass.simpleName, ep)
+                Result(kind, extra, "", e.javaClass.simpleName, ep, batch = batch)
             }
             Ai.imageLocal.remove()
             Comm.deltaLocal.remove()
@@ -4693,20 +4763,35 @@ class Comm(
     }
 
     private fun finish(result: Result) {
-        val display = streamDisplay
-        streamDisplay = null
+        replyDrain()
+        result.batch?.finished = true
         val tensionReply = result.reply
-        val r = Result(result.kind, result.extra, CommInteraction.cleanTension(result.reply), result.err, result.epoch, result.op, result.musicId)
+        val r = Result(result.kind, result.extra, CommInteraction.cleanTension(result.reply), result.err, result.epoch, result.op, result.musicId, result.batch)
         busy = false
         busySince = 0L
-        if (hardBlock()) { again = false; if (r.kind == "share_ask") shareAskEnd("{name} 没有回复, share data 没有打开"); if (r.kind == "shift_ask") shiftAskEnd("{name} 没有回复, 起点没有平移"); changed(); return }       // 等回复的时候"无言为真"生效了: 这条回复不要了
-        if (r.epoch != epoch) { again = false; if (r.kind == "share_ask") shareAskEnd(); if (r.kind == "shift_ask") shiftAskEnd(); changed(); return }       // 发出之后清空过聊天记录: 这条回复不要了
+        if (hardBlock()) { replyDiscard(r.batch); again = false; if (r.kind == "share_ask") shareAskEnd("{name} 没有回复, share data 没有打开"); if (r.kind == "shift_ask") shiftAskEnd("{name} 没有回复, 起点没有平移"); changed(); return }       // 等回复的时候"无言为真"生效了: 这条回复不要了
+        if (r.epoch != epoch) {
+            replyDiscard(r.batch)
+            val resume = again; again = false
+            if (r.kind == "share_ask") shareAskEnd()
+            if (r.kind == "shift_ask") shiftAskEnd()
+            changed()
+            if (resume && unanswered() && leader() && aiProblem().isEmpty()) askUser()
+            return
+        }       // 发出之后清空过聊天记录: 这条回复不要了
+        if (r.batch?.cancelled == true) {
+            replyDiscard(r.batch); again = false
+            saveChat(); changed()
+            if (leader() && aiProblem().isEmpty()) askUser()
+            return
+        }
         if (r.kind == "net" && r.err.isNotEmpty()) netFailed()                    // 搜索那次请求失败: 过一会儿再试
         else if (r.err.isEmpty() && r.kind in NET_KINDS) CommText.netMinutes(r.reply)?.let { netApply(it) }     // 规则 XIV: 申请限时网络 (这条话照常显示)
         if (r.err.isEmpty()) CommText.cutMinutes(r.reply)?.let { cutApply(it) }     // 被骚扰: [cut off][N] 切断谈话 N 分钟 (这条话照常显示, 有的话)
         val queried = r.err.isEmpty() && CommText.infoTags(r.reply).isNotEmpty()      // 对方在查询模块资料 (有没有 [refuse to reply] 都算): 这条一定不显示
         val (text0, waitMin) = if (r.err.isEmpty()) CommText.cleanReply(r.reply) else "" to 0.0
         var text = if (queried) "" else text0
+        if (ReplyParts.split(text).isEmpty()) text = ""
         if (text.isNotEmpty() && personaTitle(personaName()).trim().equals("Claudia", ignoreCase = true)) text = CommText.toHalfWidth(text)      // Claudia: 显示前全角符号换成半角 (1.0.408)
         val refused = r.err.isEmpty() && CommText.isRefusal(r.reply)
         val shareInvite = r.err.isEmpty() && !refused && !queried && (if (ToolProtocol.unpack(r.reply) != null) ToolProtocol.args(r.reply).optBoolean("share_data") else CommText.SHARE_RE.containsMatchIn(r.reply))
@@ -4745,6 +4830,7 @@ class Comm(
         var delivered = false
         var deliveredId = 0
         if (r.err.isNotEmpty() || refused || drop || empty) {
+            replyDiscard(r.batch)
             error = r.err
             if (r.kind == "love") {
                 if (r.err.isNotEmpty()) loveUnmark()           // 出错: 这次的判定作废, 下一轮 tick 再来 (这一段特殊空闲里)
@@ -4772,18 +4858,8 @@ class Comm(
             }
             interactionEnd(tensionReply, interactionTurn.burst)
             // AI API 原文含控制标记；只存用户可见文本，避免详情/同步接口泄露调用痕迹。
-            val m = mk("ai", text, delay = display == null).also { messages.add(it) }
-            display?.let {
-                it.update(text, nowMs()); it.advance(nowMs())
-                m.due = maxOf(m.due, it.due)
-                if (m.due > nowMs()) m.hold = true
-                if (m.hold) streamDisplays[m.uid] = it
-            }
-            if (activeReplyAfter > nowMs()) {
-                m.replyAfter = activeReplyAfter
-                m.due = maxOf(m.due, activeReplyAfter)
-                m.hold = true
-            }
+            val alreadyShown = r.batch?.messages?.filter { it.pendingReply == null }.orEmpty()
+            val m = replyComplete(text, r.batch) ?: run { saveChat(); changed(); return }
             activeReplyAfter = 0L
             r.op?.let { opApply(it, m) }
             if (r.musicId.isNotEmpty()) runCatching {
@@ -4799,8 +4875,8 @@ class Comm(
             if (r.kind == "shift_ask") shiftAnswer(shiftAns)
             if (waitMin > 0 && r.kind != "chase") m.wait = waitMin          // 追问的回复里再写 [waiting for reply] 不算: 一条消息最多追问一次
             val held = m.hold
-            if (!viewing && !held) unread++
-            if (!held) ping()                                    // 不在沟通页面: 任何新消息都提示一声 (在页面上看着就不响)
+            if (!viewing && !held && m !in alreadyShown) unread++
+            if (!held && m !in alreadyShown) ping()                                    // 不在沟通页面: 任何新消息都提示一声 (在页面上看着就不响)
         }
         saveChat(); changed(); push()
         if (again) {
@@ -4815,39 +4891,15 @@ class Comm(
         }
     }
 
-    /** 主线程推进显示时钟；接口完成后继续显示剩余缓冲文字。 */
-    @Synchronized
-    fun pollStream() {
-        var dirty = false
-        while (true) {
-            val (ep, delta) = streamEvents.poll() ?: break
-            if (ep != epoch || !busy) continue
-            val display = streamDisplay ?: CommStream(
-                { if (usesPrefix(personaName())) charDelayOf(it) else 0.0 },
-                maxOf(activeReplyAfter, messages.filter { it.hold }.maxOfOrNull { it.due } ?: 0L)
-            ).also { streamDisplay = it }
-            var text = display.source + delta
-            if (personaTitle(personaName()).trim().equals("Claudia", ignoreCase = true)) text = CommText.toHalfWidth(text)
-            display.update(text, nowMs())
-            dirty = true
-        }
-        for (display in streamDisplays.values.toList() + listOfNotNull(streamDisplay)) dirty = display.advance(nowMs()) || dirty
-        if (dirty) changed()
-        releaseHeld()
-    }
-
     /** 大约每秒调用一次 (Core.tick). */
     @Synchronized
     fun tick() {
         if (personaName().isNotEmpty()) interactionPrepare()
         countIdle()
-        pollStream()
-        while (true) {
-            val result = results.poll() ?: break
-            // 完成事件可能恰好在上一轮 poll 后到达，先收齐它之前排队的正文。
-            pollStream()
-            finish(result)
-        }
+        val interrupted = replyInterrupt()
+        if ((interrupted || replyRewrite) && !busy && leader() && aiProblem().isEmpty() && awayKind().isEmpty()) askUser()
+        replyDrain()
+        while (true) finish(results.poll() ?: break)
         while (true) bgFinish(bgResults.poll() ?: break)
         while (true) memFinish(memResults.poll() ?: break)
         releaseHeld()
@@ -4857,7 +4909,7 @@ class Comm(
         shareTick()
         shiftTick()
         sfTick()
-        if (busy || !leader()) return
+        if (busy || !leader() || messages.any { it.pendingReply != null }) return
         if (aiProblem().isNotEmpty()) return
         jointPending?.let { (body, at) ->
             jointPending = null
@@ -5303,11 +5355,13 @@ class Comm(
         interactionEnd(r.reply, r.burst, r.pid)
         st.interaction = stateOf(r.pid).interaction
         val sysm = mk("sys", r.extra.body, r.extra.api)
-        val m = mk("ai", text, voicePersona = name)
-        if (waitMin > 0 && r.kind != "chase") m.wait = waitMin
-        st.messages.add(sysm); st.messages.add(m)
-        if (!m.hold) {
-            if (!(viewing && r.pid == pid)) unread++
+        val parts = ReplyParts.split(text).map { mk("ai", it, voicePersona = name) }
+        if (parts.isEmpty()) return
+        if (waitMin > 0 && r.kind != "chase") parts.last().wait = waitMin
+        st.messages.add(sysm); st.messages.addAll(parts)
+        val shown = parts.count { !it.hold }
+        if (shown > 0) {
+            if (!(viewing && r.pid == pid)) unread += shown
             ping()                                               // 不在沟通页面: 新消息提示一声
         }
         storeState(r.pid, st)
@@ -5320,7 +5374,7 @@ class Comm(
     fun clear() {
         voice.clear(personaName())
         clearTs = maxOf(nowMs(), lastTs)
-        messages.clear(); streamDisplay = null; streamDisplays.clear(); unread = 0; retryAt = 0; retryN = 0; error = ""; catchup = false
+        messages.clear(); unread = 0; retryAt = 0; retryN = 0; error = ""; catchup = false; replyRewrite = false
         followAt = 0L                                       // 清空前排着的第二次调用不要了
         followMsg = 0
         interaction = CommInteraction()

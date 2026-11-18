@@ -140,13 +140,17 @@ class SchedMixin:
         self._interaction_end(raw_reply, burst, pid)
         st["interaction"] = self._state_of(pid)["interaction"]
         sysm = self._mk("sys", extra[0], extra[1])
-        m = self._mk("ai", text, persona=name)
+        from .comm_delivery import reply_parts
+        parts = [self._mk("ai", part, persona=name) for part in reply_parts(text)]
+        if not parts:
+            return
         if wait_min and kind != "chase":
-            m["wait"] = wait_min
-        st["messages"].extend([sysm, m])
-        if not m.get("hold"):
+            parts[-1]["wait"] = wait_min
+        st["messages"].extend([sysm, *parts])
+        shown = [m for m in parts if not m.get("hold")]
+        if shown:
             if not (self.viewing and pid == self.pid):
-                self.unread += 1
+                self.unread += len(shown)
             self._ping()                                    # 不在沟通页面: 新消息提示一声 (在页面上看着就不响)
         self._store(pid, st)
         self._changed()

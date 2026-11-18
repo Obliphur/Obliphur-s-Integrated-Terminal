@@ -59,10 +59,9 @@ class MiscMixin:
         self._music_actions.clear()
         self.cfg["clear_ts"] = max(self._ms(), self._last_ts)
         self.messages = []
-        self._stream_display = None
-        self._stream_displays.clear()
         self.unread = 0
         self._epoch += 1
+        self._reply_rewrite = False
         self._follow_at = 0                # 清空前排着的第二次调用不要了
         self._follow_msg = ""
         self.error = ""
