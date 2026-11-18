@@ -21,18 +21,18 @@ tempstore.session("music-library-check")
 root = Path(tempstore.mkdtemp("music-library-check"))
 library = music_library.manager(root)
 manifest = json.loads((music_library.DEFAULT_DIR / "catalog.json").read_text(encoding="utf-8"))
-assert len(manifest) == 36
-assert len(library.catalog()) == 32
-assert len(library.catalog("Claudia.txt")) == 32
+assert len(manifest) == 37
+assert len(library.catalog()) == 33
+assert len(library.catalog("Claudia.txt")) == 33
 assert library.catalog("Other.txt") == []
 intimate = [item for item in manifest if item.get("relationship_required")]
 assert len(intimate) == 4 and all(item["valence_min"] == 70 for item in intimate)
 intimate_ids = {item["id"] for item in intimate}
 assert intimate_ids.isdisjoint({item["id"] for item in library.catalog("Claudia.txt")})
 assert intimate_ids.isdisjoint({item["id"] for item in library.catalog(None, True, 100)})
-assert len(library.catalog("Claudia.txt", True, float("inf"))) == 32
+assert len(library.catalog("Claudia.txt", True, float("inf"))) == 33
 assert intimate_ids <= {item["id"] for item in library.catalog("Claudia.txt", True, 70)}
-assert len(library.catalog("Claudia.txt", True, 69.99)) == 32
+assert len(library.catalog("Claudia.txt", True, 69.99)) == 33
 for item in intimate:
     assert library.get(item["id"], "Claudia.txt")[0] is None
     assert library.get(item["id"], "Claudia.txt", True, 69.99)[0] is None
@@ -55,13 +55,13 @@ source = root / "uploaded.mscx"
 source.write_text('<museScore><Score><metaTag name="workTitle">Test Piece</metaTag><metaTag name="composer">Test Composer</metaTag></Score></museScore>', encoding="utf-8")
 uploaded = library.add(source)
 assert uploaded["title"] == "Test Piece" and uploaded["composer"] == "Test Composer"
-assert uploaded["id"].startswith("upload-") and len(library.catalog()) == 33
-assert library.add(source)["id"] == uploaded["id"] and len(library.catalog()) == 33
+assert uploaded["id"].startswith("upload-") and len(library.catalog()) == 34
+assert library.add(source)["id"] == uploaded["id"] and len(library.catalog()) == 34
 
 persona_upload = library.add(source, "Other.txt")
 assert len(library.catalog("Other.txt")) == 1
 assert library.catalog("Other.txt")[0]["id"] == persona_upload["id"]
-assert len(library.catalog("Claudia.txt")) == 33
+assert len(library.catalog("Claudia.txt")) == 34
 library.select(persona_upload["id"], "Other.txt")
 assert library.selection("Other.txt")["id"] == persona_upload["id"]
 assert library.selection("Claudia.txt") is None
@@ -204,10 +204,10 @@ for invalid in (root / "bad.mscx", root / "wrong.txt"):
 import shutil
 shutil.rmtree(root / "music_library")
 restored = music_library.manager(root)
-assert len(restored.catalog()) == 32 and restored.selection() is None
+assert len(restored.catalog()) == 33 and restored.selection() is None
 assert not list(restored.uploads.iterdir())
 assert restored.catalog("Other.txt") == [] and restored.selection("Other.txt") is None
-assert len(restored.catalog("Claudia.txt")) == 32
+assert len(restored.catalog("Claudia.txt")) == 33
 assert restored.catalog("Other.txt") == [] and restored.selection("Other.txt") is None
-assert len(restored.catalog("Claudia.txt")) == 32
+assert len(restored.catalog("Claudia.txt")) == 33
 print("music library check OK")
