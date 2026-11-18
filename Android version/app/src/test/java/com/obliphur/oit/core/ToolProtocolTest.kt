@@ -106,6 +106,8 @@ class ToolProtocolTest {
         }
         val declared = ToolProtocol.declarations("openai", false)
         assertFalse((0 until declared.length()).any { declared.getJSONObject(it).getJSONObject("function").getString("name") == "oit_search" })
+        assertTrue((0 until declared.length()).any { declared.getJSONObject(it).getJSONObject("function").getString("name") == "oit_music_catalog" })
+        assertTrue((0 until declared.length()).any { declared.getJSONObject(it).getJSONObject("function").getString("name") == "oit_music_select" })
     }
 
     @Test fun structuredTensionOnly() {

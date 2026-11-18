@@ -15,6 +15,7 @@ import ai_assist
 from ai_assist import ai_http
 from ai_assist import ai_tools as tools
 import comm
+from comm.comm_tools import ToolsMixin
 import config
 from comm.comm_interaction import tension_clean, tension_model_events
 
@@ -289,15 +290,38 @@ def state_checks():
     c3.flush()
 
 
+def music_tool_checks():
+    import music_library
+    root = Path(tempstore.mkdtemp("music-tool-check"))
+    library = music_library.manager(root)
+    catalog = library.catalog()
+    assert len(catalog) == 20
+
+    class Context(ToolsMixin):
+        _epoch = 7
+        dir = str(root)
+        hard_block = lambda self: False
+        log = lambda self, message: None
+
+    replies = [tools.pack(name="oit_music_select", arguments={"id": catalog[6]["id"]}),
+               tools.pack(text="我选了梦幻曲", name="oit_reply", arguments={"text": "我选了梦幻曲"})]
+    operation, reply = Context()._tool_rounds(lambda _: replies.pop(0), [], tools.pack(name="oit_music_catalog"), "user", 7)
+    assert operation == {"type": "music_select", "id": catalog[6]["id"]}
+    assert tools.text_of(reply) == "我选了梦幻曲" and library.selection() is None
+
+
 if __name__ == "__main__":
     tempstore.session("comm-tools-check")
     transport_checks()
     state_checks()
+    music_tool_checks()
     root = Path(__file__).resolve().parent.parent
     for name in ("comm_tools.json", "comm_protocol.txt", "comm_legacy_controls.json"):
         assert (root / "defaults" / name).read_text(encoding="utf-8") == (root / "Android version/app/src/main/resources" / name).read_text(encoding="utf-8")
     protocol = (root / "defaults/comm_protocol.txt").read_text(encoding="utf-8")
-    tool = next(s for s in json.loads((root / "defaults/comm_tools.json").read_text(encoding="utf-8")) if s["name"] == "oit_reply")
+    specs = json.loads((root / "defaults/comm_tools.json").read_text(encoding="utf-8"))
+    assert {s["name"] for s in specs} >= {"oit_music_catalog", "oit_music_select"}
+    tool = next(s for s in specs if s["name"] == "oit_reply")
     assert "聊天只显示text" in protocol and "wait_minutes" in tool["description"] and "不会显示给用户" in tool["description"]
     legacy = "先输入[messages]查询；回复 [Yes]；结尾写 [waiting for reply]:[5]\n[condition]\nmessages:2\n[/condition]\n"
     migrated = comm.native_persona_text(legacy)

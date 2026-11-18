@@ -3,6 +3,12 @@ package com.obliphur.oit.core
 /** 英文界面文字. 由 gen_en.py 从桌面版 i18n.py 和补充的译文生成; 键是中文原文. */
 object EnStrings {
     val MAP: Map<String, String> = hashMapOf(
+        "导入乐谱到曲库…" to "Import score to library…",
+        "选择要导入的乐谱" to "Choose a score to import",
+        "MuseScore 和 MusicXML" to "MuseScore and MusicXML",
+        "已加入曲库: {title}" to "Added to library: {title}",
+        "我为你选了《{title}》" to "I chose {title} for you.",
+        "我选好了一首曲子" to "I chose a piece for you.",
         "工具调用缺少执行结果" to "A tool call is missing its result.",
         "每次只能调用一个 OIT 工具" to "Only one OIT tool may be called at a time.",
         "工具参数格式错误" to "Invalid tool arguments.",

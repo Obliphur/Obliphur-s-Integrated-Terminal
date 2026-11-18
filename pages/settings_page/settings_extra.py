@@ -5,6 +5,7 @@ from tkinter import filedialog, ttk
 
 import config
 import music_tools
+import music_library
 import toast
 from config import COLORS
 from i18n import tr
@@ -18,6 +19,7 @@ class ExtraSettingsMixin:
             build_voice_settings(self, body)
         self._build_external_lasso_card(body)
         self.music = music_tools.manager(self.data_dir or config.app_data_dir(), self.external)
+        self.music_library = music_library.manager(self.data_dir or config.app_data_dir())
         card = COLORS["bg_card"]
         fr = tk.Frame(body, bg=card, highlightbackground=COLORS["border"], highlightthickness=1)
         fr.pack(fill="x", pady=(2, 8))
@@ -37,6 +39,8 @@ class ExtraSettingsMixin:
             self.music_labels[key], self.music_buttons[key] = label, button
         self.music_convert = ttk.Button(fr, text=tr("转换文件…"), command=self._convert_music)
         self.music_convert.pack(anchor="w", padx=12, pady=(10, 4))
+        self.music_import = ttk.Button(fr, text=tr("导入乐谱到曲库…"), command=self._import_music_score)
+        self.music_import.pack(anchor="w", padx=12, pady=4)
         self.music_status = tk.Label(fr, bg=card, fg=COLORS["text_dim"], font=config.font("body"),
                                      anchor="w", justify="left")
         self.music_status.pack(fill="x", padx=12, pady=(4, 10))
@@ -87,6 +91,17 @@ class ExtraSettingsMixin:
         except (OSError, ValueError, music_tools.MusicError) as error:
             toast.warn(str(error))
         self._refresh_extra_page()
+
+    def _import_music_score(self):
+        source = filedialog.askopenfilename(parent=self, title=tr("选择要导入的乐谱"),
+                    filetypes=[(tr("MuseScore 和 MusicXML"), "*.mscz *.mscx *.mxl *.musicxml *.xml")])
+        if not source:
+            return
+        try:
+            item = self.music_library.add(source)
+            toast.info(tr("已加入曲库: {title}", title=item["title"]))
+        except (OSError, ValueError, music_library.MusicLibraryError) as error:
+            toast.warn(str(error))
 
     def _refresh_extra_page(self):
         if not hasattr(self, "music"):

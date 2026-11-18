@@ -968,6 +968,9 @@ class Comm(
         { p, s, m -> Ai.chatMessages(p, s, m, Comm.CHAT_TOKENS, Comm.CHAT_TEMPERATURE, Comm.CHAT_TIMEOUT_MS, cache = true,
             onUsage = { i, c -> Comm.usageSink(i, c) }, think = Comm.thinkLocal.get() == true, web = Comm.webLocal.get() == true, tools = Comm.toolsLocal.get() == true) },
 ) {
+    private val musicLibrary by lazy { MusicLibrary(dir, com.obliphur.oit.OitApp.instance.assets) }
+    fun importScore(source: File) = musicLibrary.add(source)
+    fun selectedScore() = musicLibrary.selection()
     companion object {
         val toolsLocal = ThreadLocal<Boolean>()
         /** 每次请求的用量记录 (输入 token, 命中缓存的 token): 写进 comm.log. 由 Comm 的实例接上. */
@@ -1271,7 +1274,7 @@ class Comm(
         var msgGone = 0
         var shift: List<ShiftRec> = emptyList()
     }
-    private class Result(val kind: String, val extra: Extra?, val reply: String, val err: String, val epoch: Int, val op: JointPlan? = null)
+    private class Result(val kind: String, val extra: Extra?, val reply: String, val err: String, val epoch: Int, val op: JointPlan? = null, val musicId: String = "")
     private class MemResult(val reply: String, val err: String, val upto: Long, val owner: String)
     private val results = ConcurrentLinkedQueue<Result>()
     private val memResults = ConcurrentLinkedQueue<MemResult>()
@@ -4443,16 +4446,18 @@ class Comm(
     }
 
     /** 原生工具逐轮调度；写入仍由finish在主线程复核、随消息展示生效。 */
-    private fun toolRounds(profile: Profile, system: String, initial: List<Pair<String, String>>, first: String, kind: String, ep: Int): Pair<JointPlan?, String> {
+    private fun toolRounds(profile: Profile, system: String, initial: List<Pair<String, String>>, first: String, kind: String, ep: Int): Triple<JointPlan?, String, String> {
         var convo = initial
         var reply = first
         var plan: JointPlan? = null
+        var musicId = ""
+        var musicIds = emptySet<String>()
         var slots: List<OpSlot>? = null
         var last = emptyList<String>()
         repeat(Cfg.COMM_TOOL_ROUNDS + 1) { round ->
-            val envelope = ToolProtocol.unpack(reply) ?: return plan to reply
+            val envelope = ToolProtocol.unpack(reply) ?: return Triple(plan, reply, musicId)
             val name = envelope.optString("name")
-            if (name.isEmpty() || name == "oit_reply") return plan to reply
+            if (name.isEmpty() || name == "oit_reply") return Triple(plan, reply, musicId)
             if (round >= Cfg.COMM_TOOL_ROUNDS) throw AiError("format", "工具调用轮次超限")
             if (ep != epoch || hardBlock()) throw AiError("format", "工具请求已失效")
             val args = envelope.getJSONObject("arguments")
@@ -4475,6 +4480,23 @@ class Comm(
                         values.put(module, value)
                     }
                     result = JSONObject().put("ok", true).put("data", values).put("note", "own_data属于你，不是用户；reference_template仅参考格式与占位符，非真实数据。不可用数据不要编造。")
+                }
+                "oit_music_catalog" -> runCatching {
+                    val all = musicLibrary.catalog()
+                    val catalog = org.json.JSONArray()
+                    for (i in 0 until minOf(80, all.length())) catalog.put(all.getJSONObject(i))
+                    musicIds = (0 until catalog.length()).map { catalog.getJSONObject(it).getString("id") }.toSet()
+                    result = JSONObject().put("ok", true).put("data", catalog).put("note", "乐谱是本机文件；用户上传曲目不会随聊天记录同步。选择不等于已播放。")
+                }.onFailure { log("TOOL music catalog FAIL ${it.javaClass.simpleName}") }
+                "oit_music_select" -> {
+                    val id = args.optString("id")
+                    val found = if (musicIds.isNotEmpty() && id in musicIds) runCatching { musicLibrary.get(id) }.getOrNull() else null
+                    if (found != null && found.second.isFile && musicId.isEmpty()) {
+                        musicId = id
+                        result = JSONObject().put("ok", true).put("selected", JSONObject().put("id", id)
+                            .put("title", found.first.optString("title")).put("composer", found.first.optString("composer")))
+                            .put("status", "queued_until_message_visible").put("next", "在oit_reply中自然回复；正式回复显示时该曲目才成为当前选曲，尚未播放")
+                    } else result = JSONObject().put("ok", false).put("error", "请先查询曲库，并选择本轮目录里仍存在的一首曲目")
                 }
                 "oit_joint_offer" -> {
                     val why = if (kind !in CommText.OP_KINDS) "此类请求不能发起联合行动" else jointBlock().ifEmpty { if (jointLive()) "正在联合行动同步" else "" }
@@ -4573,10 +4595,12 @@ class Comm(
                     chatFn(profile, system, convo)
                 }
                 var op: JointPlan? = null
+                var musicId = ""
                 if (ToolProtocol.unpack(reply) != null) {
                     val handled = toolRounds(profile, system, convo, reply, kind, ep)
                     op = handled.first
                     reply = handled.second
+                    musicId = handled.third
                 }
                 if (ToolProtocol.unpack(reply) == null && CommText.OP_RE.containsMatchIn(reply)) {
                     if (kind in CommText.OP_KINDS) {
@@ -4621,9 +4645,10 @@ class Comm(
                     val handled = toolRounds(profile, system, convo, reply, kind, ep)
                     op = op ?: handled.first
                     reply = handled.second
+                    musicId = musicId.ifEmpty { handled.third }
                 }
                 log("REQ $kind ok ${(System.currentTimeMillis() - started) / 1000.0}s reply_chars=${reply.length}")
-                Result(kind, extra, reply, "", ep, op)
+                Result(kind, extra, reply, "", ep, op, musicId)
             } catch (e: AiError) {
                 log("REQ $kind FAIL ${(System.currentTimeMillis() - started) / 1000.0}s ${e.kind}: ${e.message}")
                 Result(kind, extra, "", e.message ?: "", ep)
@@ -4638,7 +4663,7 @@ class Comm(
 
     private fun finish(result: Result) {
         val tensionReply = result.reply
-        val r = Result(result.kind, result.extra, CommInteraction.cleanTension(result.reply), result.err, result.epoch, result.op)
+        val r = Result(result.kind, result.extra, CommInteraction.cleanTension(result.reply), result.err, result.epoch, result.op, result.musicId)
         busy = false
         busySince = 0L
         if (hardBlock()) { again = false; if (r.kind == "share_ask") shareAskEnd("{name} 没有回复, share data 没有打开"); if (r.kind == "shift_ask") shiftAskEnd("{name} 没有回复, 起点没有平移"); changed(); return }       // 等回复的时候"无言为真"生效了: 这条回复不要了
@@ -4652,8 +4677,9 @@ class Comm(
         if (text.isNotEmpty() && personaTitle(personaName()).trim().equals("Claudia", ignoreCase = true)) text = CommText.toHalfWidth(text)      // Claudia: 显示前全角符号换成半角 (1.0.408)
         val refused = r.err.isEmpty() && CommText.isRefusal(r.reply)
         val shareInvite = r.err.isEmpty() && !refused && !queried && (if (ToolProtocol.unpack(r.reply) != null) ToolProtocol.args(r.reply).optBoolean("share_data") else CommText.SHARE_RE.containsMatchIn(r.reply))
-        if (text.isEmpty() && r.err.isEmpty() && !refused && !queried && (r.op != null || shareInvite))
-            text = tr(if (r.op != null) "🤝  联合行动邀请" else "share data 邀请")
+        if (text.isEmpty() && r.err.isEmpty() && !refused && !queried && (r.op != null || r.musicId.isNotEmpty() || shareInvite))
+            text = if (r.musicId.isNotEmpty()) tr("我为你选了《{title}》", "title" to (runCatching { musicLibrary.get(r.musicId)?.first?.optString("title") }.getOrNull() ?: ""))
+                else tr(if (r.op != null) "🤝  联合行动邀请" else "share data 邀请")
         val isCatchup = r.extra?.body?.contains(CATCHUP_TAG) == true          // 这是补问 (见 CATCHUP_BODY)
         var jointAns = ""                                                     // 对联合行动邀请的回复 [Yes] / [No]
         if (r.err.isEmpty() && !refused && !queried && r.kind in FOLLOW_KINDS && curJoint()?.state == "wait") {
@@ -4719,6 +4745,7 @@ class Comm(
             }
             activeReplyAfter = 0L
             r.op?.let { opApply(it, m) }
+            if (r.musicId.isNotEmpty()) runCatching { musicLibrary.select(r.musicId) }
             if (shareInvite) { m.shareInvite = true; deliverInvites(m) }
             delivered = true
             deliveredId = m.id

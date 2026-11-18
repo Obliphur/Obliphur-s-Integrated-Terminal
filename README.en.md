@@ -43,7 +43,7 @@ However, all data transfers in this project happen on the local network and are 
 | **Calendar** | Study time by day |
 | **Statistics** | Distribution of activities, network reasons, and foreground time per program; recent completed contracts and recent violations |
 | **Contract** | Contracts: time-limited challenges where you pick terms and add difficulty |
-| **Settings** | Adjustable parameters, grouped into pages; Extra features contains AI voice settings, music conversion tools, and Partitura MIDI analysis setup |
+| **Settings** | Adjustable parameters, grouped into pages; Extra features contains AI voice settings, music conversion tools, Partitura MIDI analysis setup, and a local score library with import support |
 | **Reset** | Restore networking and clear data |
 
 There are two ways to cut off the network: **Adapter** disables the network adapter directly; **Proxy** filters through the system proxy, and programs that do not read the system proxy are unaffected.

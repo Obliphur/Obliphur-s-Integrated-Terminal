@@ -1,0 +1,65 @@
+# -*- coding: utf-8 -*-
+"""默认曲库、乐谱导入、选曲与数据重置恢复。"""
+
+import hashlib
+import json
+from pathlib import Path
+import sys
+import zipfile
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import tempstore
+import music_library
+
+
+tempstore.session("music-library-check")
+root = Path(tempstore.mkdtemp("music-library-check"))
+library = music_library.manager(root)
+manifest = json.loads((music_library.DEFAULT_DIR / "catalog.json").read_text(encoding="utf-8"))
+assert len(manifest) == 20
+assert len(library.catalog()) == 20
+for entry in manifest:
+    path = library.defaults / entry["file"]
+    assert hashlib.sha256(path.read_bytes()).hexdigest().upper() == entry["sha256"]
+    assert music_library._metadata(path)[0]
+    android = Path(__file__).resolve().parent.parent / "Android version/app/src/main/assets/music_library/scores" / entry["file"]
+    assert android.read_bytes() == path.read_bytes()
+
+source = root / "uploaded.mscx"
+source.write_text('<museScore><Score><metaTag name="workTitle">Test Piece</metaTag><metaTag name="composer">Test Composer</metaTag></Score></museScore>', encoding="utf-8")
+uploaded = library.add(source)
+assert uploaded["title"] == "Test Piece" and uploaded["composer"] == "Test Composer"
+assert uploaded["id"].startswith("upload-") and len(library.catalog()) == 21
+assert library.add(source)["id"] == uploaded["id"] and len(library.catalog()) == 21
+
+musicxml = root / "uploaded.musicxml"
+musicxml.write_text('<score-partwise><work><work-title>Wood Song</work-title></work><identification><creator type="composer">A Composer</creator></identification></score-partwise>', encoding="utf-8")
+assert library.add(musicxml)["title"] == "Wood Song"
+musescore_zip = root / "uploaded.mscz"
+with zipfile.ZipFile(musescore_zip, "w") as archive:
+    archive.writestr("score.mscx", source.read_text(encoding="utf-8"))
+assert library.add(musescore_zip)["title"] == "Test Piece"
+xml_zip = root / "uploaded.mxl"
+with zipfile.ZipFile(xml_zip, "w") as archive:
+    archive.writestr("META-INF/container.xml", '<container><rootfiles><rootfile full-path="score.xml"/></rootfiles></container>')
+    archive.writestr("score.xml", musicxml.read_text(encoding="utf-8"))
+assert library.add(xml_zip)["title"] == "Wood Song"
+selected = library.select(uploaded["id"])
+assert Path(selected["path"]).is_file() and library.selection()["id"] == uploaded["id"]
+
+for invalid in (root / "bad.mscx", root / "wrong.txt"):
+    invalid.write_text("<not-a-score/>", encoding="utf-8")
+    try:
+        library.add(invalid)
+    except music_library.MusicLibraryError:
+        pass
+    else:
+        raise AssertionError(f"invalid score accepted: {invalid.name}")
+
+import shutil
+shutil.rmtree(root / "music_library")
+restored = music_library.manager(root)
+assert len(restored.catalog()) == 20 and restored.selection() is None
+assert not list(restored.uploads.iterdir())
+print("music library check OK")

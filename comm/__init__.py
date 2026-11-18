@@ -1308,7 +1308,15 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
         refused = not err and is_refusal(reply)
         share_invite = not err and not refused and not queried and (bool(args_of(reply).get("share_data")) if unpack(reply) is not None else bool(_SHARE_RE.search(reply)))
         if not text and not err and not refused and not queried and (op or share_invite):
-            text = tr("🤝  联合行动邀请") if op else tr("share data 邀请")
+            if isinstance(op, dict) and op.get("type") == "music_select":
+                try:
+                    import music_library
+                    selected, _ = music_library.manager(self.dir).get(op["id"])
+                    text = tr("我为你选了《{title}》", title=selected["title"] if selected else "")
+                except Exception:
+                    text = tr("我选好了一首曲子")
+            else:
+                text = tr("🤝  联合行动邀请") if op else tr("share data 邀请")
         catchup = bool(extra) and CATCHUP_TAG in str(extra[0])          # 这是补问 (见 CATCHUP_BODY)
         joint_ans = ""                                          # 对联合行动邀请的回复 [Yes] / [No]
         if not err and not refused and not queried and kind in ("user", "retry") and self._joint().get("state") == "wait":
@@ -1381,7 +1389,14 @@ class Comm(ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, Flo
                 m["hold"] = True
             self._active_reply_after = 0
             if op:
-                self._op_apply(op, m)
+                if isinstance(op, dict) and op.get("type") == "music_select":
+                    try:
+                        import music_library
+                        music_library.manager(self.dir).select(op["id"])
+                    except Exception as e:
+                        self.log(f"MUSIC select FAIL {type(e).__name__}")
+                else:
+                    self._op_apply(op, m)
             if share_invite:
                 m["share_invite"] = True
                 self._deliver_invites(m)

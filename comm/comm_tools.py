@@ -3,6 +3,7 @@
 
 import json
 import config
+import music_library
 
 from ai_assist.ai_common import AIError
 from ai_assist.ai_tools import unpack
@@ -13,6 +14,7 @@ class ToolsMixin:
     def _tool_rounds(self, ask, convo, reply, kind, epoch):
         from comm.comm_const import OP_KINDS
         op, slots, last = None, None, []
+        music_ids = set()
         for round_index in range(config.COMM_TOOL_ROUNDS + 1):
             data = unpack(reply)
             if data is None or data["name"] in ("", "oit_reply"):
@@ -39,6 +41,29 @@ class ToolsMixin:
                         self.log(f"TOOL query {module} FAIL {type(e).__name__}")
                         values[module] = {"available": False, "error": "unavailable"}
                 result = {"ok": True, "data": values, "note": "own_data属于你，不是用户；reference_template仅参考格式与占位符，非真实数据。不可用数据不要编造。"}
+            elif name == "oit_music_catalog":
+                try:
+                    library = music_library.manager(self.dir)
+                    entries = library.catalog()[:80]
+                    music_ids = {item["id"] for item in entries}
+                    result = {"ok": True, "data": entries, "note": "乐谱是本机文件；标签仅供选曲参考。用户上传曲目不会随聊天记录同步。"}
+                except Exception as e:
+                    self.log(f"TOOL music catalog FAIL {type(e).__name__}")
+                    result = {"ok": False, "error": "本地曲库暂时不可用"}
+            elif name == "oit_music_select" and music_ids and op is None:
+                score_id = args["id"]
+                try:
+                    if score_id not in music_ids:
+                        raise music_library.MusicLibraryError("乐谱不在刚查询的目录中")
+                    item, path = music_library.manager(self.dir).get(score_id)
+                    if not item or not path or not path.is_file():
+                        raise music_library.MusicLibraryError("乐谱已不存在")
+                    op = {"type": "music_select", "id": score_id}
+                    result = {"ok": True, "selected": {"id": score_id, "title": item["title"],
+                              "composer": item.get("composer", "")}, "status": "queued_until_message_visible",
+                              "next": "在oit_reply中自然回复；正式回复显示时该曲目才成为当前选曲，尚未播放"}
+                except music_library.MusicLibraryError as e:
+                    result = {"ok": False, "error": str(e)}
             elif name == "oit_joint_offer":
                 why = "此类请求不能发起联合行动" if kind not in OP_KINDS else self.joint_block() or ("正在联合行动同步" if self.joint_live() else "")
                 slots = None if why else self._op_slots(self.now())

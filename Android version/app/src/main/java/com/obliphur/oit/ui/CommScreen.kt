@@ -123,6 +123,32 @@ fun CommScreen(go: (String) -> Unit) {
             core.toast(tr(error.message ?: "打不开这张图片."), "warn")
         }
     }
+    val pickScore = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        Thread {
+            var imported = ""; var error = ""
+            var staged: java.io.File? = null
+            try {
+                val name = ocrCtx.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) cursor.getString(0) else null
+                } ?: "score.mscx"
+                val size = ocrCtx.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) cursor.getLong(0) else -1L
+                } ?: -1L
+                require(size <= 50L * 1024 * 1024) { "乐谱文件不存在或超过50 MiB" }
+                val ext = name.substringAfterLast('.', "mscx").lowercase()
+                require(ext in setOf("mscx", "mscz", "mxl", "musicxml", "xml")) { "仅支持 MuseScore 和 MusicXML 乐谱" }
+                staged = java.io.File(ocrCtx.cacheDir, "music-score-import.$ext")
+                ocrCtx.contentResolver.openInputStream(uri)?.use { input -> staged!!.outputStream().use { output -> input.copyTo(output) } }
+                    ?: error("无法读取乐谱文件")
+                imported = comm.importScore(staged!!).optString("title")
+            } catch (e: Exception) { error = e.message ?: e.javaClass.simpleName }
+            finally { staged?.delete() }
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                if (error.isNotEmpty()) core.toast(tr(error), "warn") else core.toast(tr("已加入曲库: {title}", "title" to imported))
+            }
+        }.apply { isDaemon = true }.start()
+    }
     // 不跟着每秒一次的 LocalTick 重画 (整页每秒重画一遍会有卡顿感): 只在聊天记录 / 状态变了才刷新
     var ver by remember { mutableIntStateOf(comm.version) }
     var otherStatus by remember { mutableStateOf(comm.otherStatusDisplay().first) }
@@ -245,6 +271,7 @@ fun CommScreen(go: (String) -> Unit) {
             // 🖼 独立识字; 📎 将图片作为聊天消息发送
             TextButton({ if (!ocrBusy) pickOcr.launch("image/*") }, contentPadding = tight) { Text(if (ocrBusy) "…" else "🖼", fontSize = 18.sp) }
             TextButton({ if (!ocrBusy) pickChatImage.launch("image/*") }, contentPadding = tight) { Text("📎", fontSize = 18.sp) }
+            TextButton({ pickScore.launch(arrayOf("*/*")) }, contentPadding = tight) { Text("🎼", fontSize = 18.sp) }
             // ⏰ 共时闹钟: 闹钟的时间跟随这个对象的实际起床时间, 手动选响铃的设备; ⏰ = 现在这个对象是共时闹钟 / ⏲ 不是
             TextButton({ coAlarm = true }, contentPadding = tight) {
                 Text(if (comm.coAlarmPid().isNotEmpty() && comm.coAlarmPid() == comm.pid) "⏰" else "⏲", fontSize = 18.sp)
