@@ -32,7 +32,7 @@ music.render_performance(r"D:\performance.mid", r"D:\performance.mp3")
 
 Partitura 是可单独安装的 MIDI 分析依赖，使用独立 Python 环境并包含 `mido`。安装探测会加载一份 MIDI 并验证音符事件；沟通页调用该环境对比两份 MIDI，也不需要额外安装 pretty_midi。
 
-沟通页的「演奏评判」复用这些工具。Windows 左侧选参考 MIDI、乐谱图片或 PDF，右侧选演奏 MIDI、钢琴录音或「录制 MIDI」；通过系统配对蓝牙 MIDI 乐器后，OIT 使用 Windows MIDI (WinRT) 枚举并打开 BLE MIDI 端口，WinMM 驱动端口仍可照常使用。安卓支持参考 MIDI、MusicXML / MXL 或当前选曲，演奏 MIDI、音频或 USB MIDI；Android 6.0 及以上可扫描并连接 BLE MIDI。安卓不做图片/PDF 识谱，上传的 MuseScore 文件须先在电脑转换。录制从第一个有力度的按键开始计时，停止后把录制结果用作本次演奏。Windows 评判需要 Partitura，安卓使用 Kotlin MIDI 分析。
+沟通页的「演奏评判」复用这些工具。Windows 左侧选参考 MIDI、乐谱图片或 PDF，右侧选演奏 MIDI、钢琴录音或「录制 MIDI」；通过系统配对蓝牙 MIDI 乐器后，OIT 使用 Windows MIDI (WinRT) 枚举并打开 BLE MIDI 端口，WinMM 驱动端口仍可照常使用。安卓支持参考 MIDI、MusicXML / MXL 或当前选曲，演奏 MIDI、音频、USB MIDI 与蓝牙 MIDI；Android 6.0 及以上可扫描并连接 BLE MIDI。安卓不做图片/PDF 识谱，上传的 MuseScore 文件须先在电脑转换，AI 可自行搜索乐谱。首次使用安卓演奏功能前，从设置 → 额外功能下载按 ABI 区分的可选资源包，包含 FluidSynth 原生库、Verovio、Basic Pitch 模型、钢琴音色与内置曲库 MIDI；ONNX Runtime 随 APK 提供。录制从第一个有力度的按键开始计时，停止后把录制结果用作本次演奏。Windows 评判需要 Partitura，安卓使用 Kotlin MIDI 分析。
 
 独立 worker 将参考与演奏各自的首音作为零点，再按同音高最近起音匹配，输出音符命中、漏音、多音、起音与时值误差以及演奏时长。首音对齐保留了曲中的停顿，适用于从相同位置开始的演奏。评判模型只接收差异摘要，聊天模型接收摘要和评判文字。模型只在误差模式连贯且能与偶发失误区分时提及可能的演奏意图。回复最早在发送后 60 秒加上演奏时长时显示。
 
@@ -40,7 +40,7 @@ Partitura 是可单独安装的 MIDI 分析依赖，使用独立 Python 环境�
 
 演奏导出使用 `export_performance(source, destination, seed=None)` 或后台 `start_performance(source, destination)`，输入为 MuseScore / MusicXML 乐谱，输出限 MIDI。处理器不增加依赖，保留原谱的音高、速度、踏板与鼓通道；只在组内起音、力度和松键上加入保守微差。普通格式转换、音频转录及演奏评判参考谱保持精确。曲库 AI 缓存包含算法/参数签名，旧机械版本或参数不符时重新生成；同一缓存不反复随机。数据考察、参数和局限见 [MIDI 人性化依据](research/midi-humanization.md)。
 
-`render_performance(midi, mp3)` 使用已安装 MuseScore 渲染 MP3，沿用同一音乐任务锁和失败原子保护；结果至少验证 ID3 标签后的 MPEG 音频帧头，不接受空文件或错误文本。`MusicLibrary.prepare_performance(id, persona=None)` 先取得有效演奏 MIDI，再根据 MIDI 的 SHA-256、`MUSIC_RENDER_VERSION` 和音频校验复用 MP3；签名保存在旁边的 `.mp3.json`，避免文件时刻精度导致旧缓存误用。MuseScore 导入 MIDI 时会重新解释部分时值，音频不能保证逐事件保留全部起音与松键微差。沟通工具 `oit_music_perform` 只准备音频，正式回复显示时主线程才向 `MusicPlayback` 提交播放；`oit_music_stop` 可停止并取消待播。Windows MCI 在线程中播放并检查真实空闲/休息状态，不启动外部播放器；Android 使用 MediaPlayer 播放本机 FluidSynth 渲染的音频。音频缓存和待播动作均不随聊天同步。
+`render_performance(midi, mp3)` 使用已安装 MuseScore 渲染 MP3，沿用同一音乐任务锁和失败原子保护；结果至少验证 ID3 标签后的 MPEG 音频帧头，不接受空文件或错误文本。`MusicLibrary.prepare_performance(id, persona=None)` 先取得有效演奏 MIDI，再根据 MIDI 的 SHA-256、`MUSIC_RENDER_VERSION` 和音频校验复用 MP3；签名保存在旁边的 `.mp3.json`，避免文件时刻精度导致旧缓存误用。MuseScore 导入 MIDI 时会重新解释部分时值，音频不能保证逐事件保留全部起音与松键微差。沟通工具 `oit_music_perform` 只准备音频，正式回复显示时主线程才向 `MusicPlayback` 提交播放；`oit_music_stop` 可停止并取消待播。Windows MCI 在线程中播放并检查真实空闲/休息状态，不启动外部播放器；Android 使用 MediaPlayer 播放本机 FluidSynth 渲染的音频。安卓资源按 ABI 从 GitHub Release 的可选音乐资源附件下载，通过统一 Android Updater 校验附件和包内文件 SHA-256 后原子安装；APK 本体不包含 FluidSynth、Verovio、Basic Pitch 模型、钢琴音色或曲库 MIDI，ONNX Runtime 的 Android JNI 库仍随 APK 提供。音频缓存和待播动作均不随聊天同步。
 
 Audiveris 5.11.0 与 MuseScore Studio 4.7.7 从官方 GitHub Release 获取 x64 MSI，统一下载器核对大小及 SHA-256，再用 MSI 行政解包部署至 `Audiveris/`、`MuseScore/`。Audiveris 自带 Java。调用命令行探测通过后才写 `oit-install.json`，该收据保存组件版本及目录内相对可执行路径。安装不改系统文件关联。两个项目均免费；其开源许可及组件许可保留在官方分发包中。
 

@@ -142,7 +142,7 @@ class MusicLibrary(private val dataDir: File, private val assets: AssetManager) 
         val current = runCatching { val info = JSONObject(receipt.readText()); info.optString("signature") == signature &&
             info.optString("sha256") == MusicTools.sha(target.readBytes()) && MusicMidi.notes(MusicMidi.read(target.readBytes())).isNotEmpty() }.getOrDefault(false)
         if (!current) {
-            val raw = if (!id.startsWith("upload-")) assets.open("music_library/midi/$id.mid").use { it.readBytes() } else tools.midi(source)
+            val raw = if (!id.startsWith("upload-")) tools.engineFile("music_library/midi/$id.mid").readBytes() else tools.midi(source)
             val bytes = MusicMidi.humanize(raw)
             MusicTools.atomic(target, bytes)
             MusicTools.atomic(receipt, JSONObject().put("signature", signature).put("sha256", MusicTools.sha(bytes)).toString().toByteArray())
@@ -169,7 +169,7 @@ class MusicLibrary(private val dataDir: File, private val assets: AssetManager) 
             val item = (0 until manifest.length()).map { manifest.getJSONObject(it) }
                 .firstOrNull { source.name == it.optString("file") } ?: throw IllegalArgumentException(
                     "安卓评判请使用 MIDI 或 MusicXML；用户上传的 MuseScore 文件请先在电脑转换")
-            return assets.open("music_library/midi/${item.getString("id")}.mid").use { it.readBytes() }
+            return tools.engineFile("music_library/midi/${item.getString("id")}.mid").readBytes()
         }
         return tools.midi(source)
     }

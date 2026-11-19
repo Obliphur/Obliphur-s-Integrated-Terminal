@@ -13,7 +13,7 @@ Android 版按本文第 1 ~ 11 节实现, 数值和规则都相同. 下面只写
   需要在 设置 → 整点记录 里允许精确闹钟, 否则系统可能推迟几分钟. 每次启动 (VPN 权限问完之后) 还没解除电池优化时会申请一次, 设置 → 基本设置 里也可以解除.
 - 开机后自动启动并接管网络.
 
-沟通模块支持从图片选择器附图发送，可在设置 → AI 模型中配置视觉、OCR 与评判模型；未指定时任务跟随聊天配置。安卓演奏功能使用随包 FluidSynth、钢琴 SoundFont、ONNX Runtime 和 Basic Pitch 模型，支持本机离线演奏、MIDI 生成、录音转 MIDI 以及演奏评判。MusicXML / MXL 可本机转换；用户上传的 MuseScore 文件需先在电脑转换。MIDI 输入支持 USB 以及 Android 6.0 及以上系统提供的蓝牙 MIDI API；不实现图片或 PDF 识谱。音乐组件及许可证见 `Android version/app/src/main/assets/music_engine/SOURCES.txt`。
+沟通模块支持从图片选择器附图发送，可在设置 → AI 模型中配置视觉、OCR 与评判模型；未指定时任务跟随聊天配置。为控制安装包体积，FluidSynth、钢琴 SoundFont、Basic Pitch 模型、Verovio、内置曲库 MIDI 及设备 ABI 对应的 FluidSynth 原生库不随 APK 安装；ONNX Runtime 随 APK 提供。首次使用音乐功能前，在设置 → 额外功能下载音乐资源；下载附件按设备 ABI 区分，并校验发布摘要与包内文件 SHA-256。安装后支持本机离线演奏、MIDI 生成、录音转 MIDI 以及演奏评判。MusicXML / MXL 可本机转换；用户上传的 MuseScore 文件需先在电脑转换。MIDI 输入支持 USB 以及 Android 6.0 及以上系统提供的蓝牙 MIDI API；不实现图片或 PDF 识谱，乐谱由 AI 自行搜索。音乐组件来源及许可证见仓库 `Android version/music-engine/assets/music_engine/SOURCES.txt`。
 
 ### 14.2 断网方式 (VpnService)
 

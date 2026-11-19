@@ -331,6 +331,7 @@ class OitApp : Application(), Host {
     // ---- 更新 (MECHANICS 16) ----
 
     val updater by lazy { com.obliphur.oit.service.Updater(this) }
+    val musicEngine by lazy { com.obliphur.oit.service.MusicEngineInstaller(this, updater) }
     /** 打开时检查失败了 (例如没网): 下一次联网时再查. */
     var updateRetry = false
 

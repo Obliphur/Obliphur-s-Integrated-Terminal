@@ -67,7 +67,7 @@ Windows x64 的「额外功能」提供 Microsoft OpenJDK 17 安装入口，供 
 
 电脑基本设置的「外部软件」可手动选择本机已有文件夹，作为之后部署外部软件和下载模型的根目录；此位置只保存在本机，不随设备同步，修改位置不自动搬动已有软件。部署或模型下载期间暂不能更换位置。Process Lasso 的部署入口位于「额外功能」页；在部署本地模型时，建议使用该软件。它从 Bitsum 官方 HTTPS 地址下载，验证有效的 Bitsum 数字签名后静默安装到 `Process Lasso/`，以服务启动调度引擎。OIT 管理独立的 `oit-config/prolasso.ini` 和日志目录；重新部署时备份旧配置并重写保护规则，不继承旧的限核、节流或终止规则。ProBalance 与 SmartTrim 排除 `python*.exe`、`torchrun*.exe`、OIT、OITLink 和当前解释器，覆盖 Python 虚拟环境与 PyTorch 子进程。SmartTrim 只在内存占用达 80% 时整理工作集大于 512 MiB 的其他进程，间隔至少 15 分钟，不清空待机列表或文件缓存。
 
-「额外功能」独立设置页放在沟通之后，两端均把 AI 语音入口移到此页，语音配置和同步规则不变。电脑的「音乐工具」统一提供 Audiveris、MuseScore Studio、Spotify Basic Pitch 钢琴音频转 MIDI 和 Partitura MIDI 分析环境；安卓在应用资源中带有 FluidSynth、Basic Pitch、Verovio 和钢琴音色，可离线播放、转换 MusicXML、转录录音和评判演奏。图片/PDF 识谱只在电脑提供；安卓曲库内置谱预先生成 MIDI，用户上传 MuseScore 谱需先在电脑转换。详细安装、运行和许可见 [音乐工具接口](../music-tools.md) 及安卓音乐资源清单。
+「额外功能」独立设置页放在沟通之后，两端均把 AI 语音入口移到此页，语音配置和同步规则不变。电脑的「音乐工具」统一提供 Audiveris、MuseScore Studio、Spotify Basic Pitch 钢琴音频转 MIDI 和 Partitura MIDI 分析环境；安卓的 FluidSynth、Basic Pitch 模型、Verovio、钢琴音色、曲库 MIDI 与对应 ABI 原生库改为从额外功能可选下载，按设备架构单独打包并校验；ONNX Runtime 随 APK 提供。安装音乐资源后可离线播放、转换 MusicXML、转录录音和评判演奏。图片/PDF 识谱只在电脑提供；用户上传 MuseScore 谱需先在电脑转换。详细安装、运行和许可见 [音乐工具接口](../music-tools.md) 及安卓音乐资源清单。
 
 AI 模型配置单列设置页，按新增/修改配置、聊天主模型、图片、识字、评判分项管理。后三类任务未单独指定时跟随聊天主模型；图片消息优先使用当前聊天配置，若服务商明确拒绝图像输入且配置了图片模型，再自动回退。规则页的 AI 建议使用聊天主模型，原模型入口会跳转到 Assistant 并预填配置请求。两端的演奏评判均使用本机 MIDI 分析并调用独立评判配置生成建议。
 

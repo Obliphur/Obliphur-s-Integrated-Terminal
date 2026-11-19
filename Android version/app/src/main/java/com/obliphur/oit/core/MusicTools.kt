@@ -31,17 +31,16 @@ class MusicTools(private val ctx: Context, private val dir: File) {
     @Volatile var busy = false; private set
     @Volatile var progress = 0; private set
     @Volatile var error = ""; private set
+    private val engine get() = com.obliphur.oit.OitApp.instance.musicEngine
     private fun <T> task(action: () -> T): T = synchronized(lock) {
         check(Looper.myLooper() != Looper.getMainLooper()) { "音乐转换必须在后台执行" }
         busy = true; progress = 0; error = ""
         try { action().also { progress = 100 } } catch (e: Exception) { error = e.message.orEmpty(); throw e } finally { busy = false }
     }
     fun asset(name: String): File {
-        val target = File(dir, "music_library/engine/$name")
-        val bytes = ctx.assets.open("music_engine/$name").use { it.readBytes() }
-        if (!target.isFile || sha(target.readBytes()) != sha(bytes)) atomic(target, bytes)
-        return target
+        return engine.file("assets/music_engine/$name")
     }
+    fun engineFile(relative: String): File = engine.file("assets/$relative")
     fun midi(source: File, humanize: Boolean = false): ByteArray = task {
         require(source.isFile && source.length() in 1..Cfg.MUSIC_MAX_BYTES.toLong()) { "音乐文件不存在或超过50 MiB" }
         val raw = when (source.extension.lowercase()) {
@@ -85,7 +84,7 @@ class MusicTools(private val ctx: Context, private val dir: File) {
                     webViewClient = object : WebViewClient() {
                         override fun shouldOverrideUrlLoading(view: WebView?, request: android.webkit.WebResourceRequest?) = true
                     }
-                    loadUrl("file:///android_asset/music_engine/convert.html")
+                    loadUrl(asset("convert.html").toURI().toString())
                 }
             } catch (e: Exception) { failure = e.message.orEmpty(); latch.countDown() }
         }
@@ -118,7 +117,13 @@ class MusicTools(private val ctx: Context, private val dir: File) {
     fun render(midi: File, target: File): File = task {
         val duration = MusicMidi.duration(MusicMidi.read(midi.readBytes()))
         require(duration in 0.0..3600.0) { "曲目时长超过一小时" }
-        val fluid = Native.load("fluidsynth", Fluid::class.java)
+        val abi = engine.abi ?: error("此设备 ABI 暂不支持音乐运行时")
+        val native = "jniLibs/$abi/"
+        listOf("libogg.so", "libvorbis.so", "libvorbisenc.so", "libvorbisfile.so", "libFLAC.so",
+            "libopus.so", "libsndfile.so", "liboboe.so", "libfluidsynth.so").forEach { name ->
+            System.load(engine.file(native + name).absolutePath)
+        }
+        val fluid = Native.load(engine.file(native + "libfluidsynth.so").absolutePath, Fluid::class.java)
         val settings = checkNotNull(fluid.new_fluid_settings())
         var synth: Pointer? = null; var player: Pointer? = null; var renderer: Pointer? = null
         target.parentFile!!.mkdirs()

@@ -184,6 +184,12 @@ class Updater(private val ctx: Context) {
             return Source(url, ACCEPT_FILE, a.optLong("size", -1), if (d.startsWith("sha256:")) d.substring(7).lowercase() else null)
         }
 
+        fun releaseAsset(rel: JSONObject, name: String): JSONObject? {
+            val assets = rel.optJSONArray("assets") ?: return null
+            return (0 until assets.length()).mapNotNull { assets.optJSONObject(it) }
+                .firstOrNull { it.optString("name") == name }
+        }
+
         /** 发布里的电脑版安装包: 名字带 windows / win / pc / python 的 .zip, 没有就用源码包 (同 updater.pick_download). */
         fun pickWindows(rel: JSONObject): Source? {
             val assets = rel.optJSONArray("assets")
@@ -306,6 +312,21 @@ class Updater(private val ctx: Context) {
         if (state in setOf("idle", "latest", "available", "noapk", "error"))
             state = if (!newer(v, current)) "latest" else if (pickApk(rel) == null) "noapk" else "available"
         return rel
+    }
+
+    /** 查询指定发布附件，不改动应用更新卡片的状态。 */
+    fun fetchReleaseAsset(name: String): JSONObject? {
+        val c = open(API_LATEST, 20_000)
+        val rel = c.inputStream.use { JSONObject(it.readBytes().toString(Charsets.UTF_8)) }
+        c.disconnect()
+        return releaseAsset(rel, name)
+    }
+
+    /** 通过同一 GitHub 附件下载流程获取带发布端摘要的可选组件。 */
+    fun downloadReleaseAsset(asset: JSONObject, target: File, maxBytes: Long) {
+        val src = assetSource(asset)
+        require(src.size in 1..maxBytes && src.sha256 != null) { "发布附件缺少有效大小或 SHA-256" }
+        downloadTo(src, target, track = false)
     }
 
     /** 下载到 f: 先写 .part, 核对过大小和 SHA-256 再改名; 失败时删掉 .part.

@@ -194,6 +194,38 @@ private fun ModelAssignmentRow(role: String, title: String, revision: Int, chang
 @Composable
 private fun ExtraSettings() {
     VoiceSettingsCard()
+    MusicEngineCard()
+}
+
+@Composable
+private fun MusicEngineCard() {
+    val installer = OitApp.instance.musicEngine
+    val o = LocalOit.current
+    var state by remember { mutableStateOf(installer.state) }
+    var error by remember { mutableStateOf(installer.error) }
+    androidx.compose.runtime.LaunchedEffect(installer) {
+        while (true) {
+            state = installer.state
+            error = installer.error
+            kotlinx.coroutines.delay(500)
+        }
+    }
+    OitCard {
+        Text(tr("🎹  演奏音乐资源"), fontWeight = FontWeight.Bold, color = o.text)
+        Dim(when {
+            installer.abi == null -> tr("此设备 ABI 暂不支持音乐运行时")
+            installer.installed -> tr("已安装 · {abi}", "abi" to installer.abi!!)
+            state == "downloading" -> tr("正在下载并校验…")
+            state == "error" -> tr("安装失败: {e}", "e" to tr(error))
+            else -> tr("尚未安装")
+        }, size = 13, color = if (state == "error") o.warn else o.dim)
+        if (state == "downloading") androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth())
+        if (installer.abi != null && !installer.installed) {
+            PlainButton(if (state == "error") tr("重试下载") else tr("下载资源包"), enabled = state != "downloading") {
+                installer.install()
+            }
+        }
+    }
 }
 
 private fun savePage(tab: String, edits: MutableMap<String, String>) {

@@ -18,7 +18,9 @@ import updater
 
 ROOT = Path(__file__).resolve().parent
 APP = ROOT / "Android version/app/src/main"
-ASSETS = APP / "assets/music_engine"
+ENGINE = ROOT / "Android version/music-engine"
+ASSETS = ENGINE / "assets/music_engine"
+JNI_LIBS = ENGINE / "jniLibs"
 
 
 def metadata(url):
@@ -56,7 +58,7 @@ def main():
                 if name.endswith(".so") and "libfluidsynth-assetloader" not in name:
                     abi = next((x for x in parts if x in ("arm64-v8a", "armeabi-v7a", "x86", "x86_64")), None)
                     if abi:
-                        target = APP / "jniLibs" / abi / Path(name).name
+                        target = JNI_LIBS / abi / Path(name).name
                         target.parent.mkdir(parents=True, exist_ok=True)
                         target.write_bytes(z.read(name))
             print("FluidSynth", z.namelist()[:18], flush=True)
@@ -98,7 +100,7 @@ def main():
         external.select_root(str(deploy))
         music = music_tools.manager(str(data_dir), external)
         music.install("musescore")
-        midi_dir = APP / "assets/music_library/midi"
+        midi_dir = ENGINE / "assets/music_library/midi"
         midi_dir.mkdir(parents=True, exist_ok=True)
         for item in json.loads((ROOT / "defaults/music_library/catalog.json").read_text(encoding="utf-8")):
             source = ROOT / "defaults/music_library/scores" / item["file"]
@@ -114,8 +116,8 @@ def main():
             "TimGM6mb 1.3 (GPL-2.0): https://deb.debian.org/debian/pool/main/t/timgm6mb-soundfont/\n"
             "Score licenses and source attribution: ../music_library/*-LICENSE.txt and catalog.json.\n",
             encoding="utf-8")
-        files = list(ASSETS.glob("*")) + list((APP / "jniLibs").rglob("*.so")) + list(midi_dir.glob("*.mid"))
-        manifest = {str(p.relative_to(APP)).replace("\\", "/"): hashlib.sha256(p.read_bytes()).hexdigest()
+        files = list(ASSETS.glob("*")) + list(JNI_LIBS.rglob("*.so")) + list(midi_dir.glob("*.mid"))
+        manifest = {str(p.relative_to(ENGINE)).replace("\\", "/"): hashlib.sha256(p.read_bytes()).hexdigest()
                     for p in files if p.is_file() and p.name != "manifest.json"}
         (ASSETS / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     finally:
