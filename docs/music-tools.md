@@ -32,7 +32,7 @@ music.render_performance(r"D:\performance.mid", r"D:\performance.mp3")
 
 Partitura 是可单独安装的 MIDI 分析依赖，使用独立 Python 环境并包含 `mido`。安装探测会加载一份 MIDI 并验证音符事件；沟通页调用该环境对比两份 MIDI，也不需要额外安装 pretty_midi。
 
-沟通页的「演奏评判」复用这些工具。Windows 左侧选参考 MIDI、乐谱图片或 PDF，右侧选演奏 MIDI、钢琴录音或「录制 MIDI」；通过系统配对蓝牙 MIDI 乐器后，OIT 使用 Windows MIDI (WinRT) 枚举并打开 BLE MIDI 端口，WinMM 驱动端口仍可照常使用。安卓支持参考 MIDI、MusicXML / MXL 或当前选曲，演奏 MIDI、音频或 USB MIDI；Android 13 及以上可扫描并连接 BLE MIDI。安卓不做图片/PDF 识谱，上传的 MuseScore 文件须先在电脑转换。录制从第一个有力度的按键开始计时，停止后把录制结果用作本次演奏。Windows 评判需要 Partitura，安卓使用 Kotlin MIDI 分析。
+沟通页的「演奏评判」复用这些工具。Windows 左侧选参考 MIDI、乐谱图片或 PDF，右侧选演奏 MIDI、钢琴录音或「录制 MIDI」；通过系统配对蓝牙 MIDI 乐器后，OIT 使用 Windows MIDI (WinRT) 枚举并打开 BLE MIDI 端口，WinMM 驱动端口仍可照常使用。安卓支持参考 MIDI、MusicXML / MXL 或当前选曲，演奏 MIDI、音频或 USB MIDI；Android 6.0 及以上可扫描并连接 BLE MIDI。安卓不做图片/PDF 识谱，上传的 MuseScore 文件须先在电脑转换。录制从第一个有力度的按键开始计时，停止后把录制结果用作本次演奏。Windows 评判需要 Partitura，安卓使用 Kotlin MIDI 分析。
 
 独立 worker 将参考与演奏各自的首音作为零点，再按同音高最近起音匹配，输出音符命中、漏音、多音、起音与时值误差以及演奏时长。首音对齐保留了曲中的停顿，适用于从相同位置开始的演奏。评判模型只接收差异摘要，聊天模型接收摘要和评判文字。模型只在误差模式连贯且能与偶发失误区分时提及可能的演奏意图。回复最早在发送后 60 秒加上演奏时长时显示。
 

@@ -26,6 +26,8 @@ class MusicMidiInput(private val ctx: Context) {
     private val events = ArrayList<Pair<Double, ByteArray>>()
     private val bluetoothPorts = LinkedHashMap<String, MidiDevice>()
     private val openingBluetooth = HashSet<String>()
+    @Volatile private var scanningBluetooth = false
+    @Volatile private var closed = false
     @Volatile var recording = false; private set
     @Volatile var error = ""; private set
     @Volatile var noteCount = 0; private set
@@ -47,6 +49,7 @@ class MusicMidiInput(private val ctx: Context) {
         val adapter = bluetooth.adapter ?: return false
         if (!adapter.isEnabled) return false
         if (adapter.isDiscovering) adapter.cancelDiscovery()
+        closed = false
         // BLE MIDI Service Data (03 B8 80), Bluetooth MIDI 1.0; discovery callback publishes MidiDeviceInfo.
         val filter = android.bluetooth.le.ScanFilter.Builder().setServiceData(
             android.os.ParcelUuid.fromString("03b80e5a-ede8-4b33-a751-6ce34ec4c700"), byteArrayOf(), byteArrayOf()).build()
@@ -57,23 +60,27 @@ class MusicMidiInput(private val ctx: Context) {
             openingBluetooth.clear()
         }
         return runCatching {
-            adapter.bluetoothLeScanner?.startScan(listOf(filter),
+            val scanner = adapter.bluetoothLeScanner ?: return false
+            scanner.startScan(listOf(filter),
                 android.bluetooth.le.ScanSettings.Builder().setScanMode(android.bluetooth.le.ScanSettings.SCAN_MODE_LOW_LATENCY).build(),
                 scanCallback)
-            adapter.bluetoothLeScanner != null
+            scanningBluetooth = true
+            true
         }.getOrDefault(false)
     }
     @Suppress("MissingPermission")
     fun stopBluetoothScan() {
+        scanningBluetooth = false
         if (android.os.Build.VERSION.SDK_INT >= 31 && androidx.core.content.ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.BLUETOOTH_SCAN) != android.content.pm.PackageManager.PERMISSION_GRANTED) return
         runCatching { bluetooth.adapter?.bluetoothLeScanner?.stopScan(scanCallback) }
     }
     private val scanCallback = object : android.bluetooth.le.ScanCallback() {
         override fun onScanResult(callbackType: Int, result: android.bluetooth.le.ScanResult) {
+            if (!scanningBluetooth || closed) return
             val remote = result.device ?: return
             if (android.os.Build.VERSION.SDK_INT >= 31 && androidx.core.content.ContextCompat.checkSelfPermission(
                     ctx, android.Manifest.permission.BLUETOOTH_CONNECT) != android.content.pm.PackageManager.PERMISSION_GRANTED) return
-            if (manager == null || android.os.Build.VERSION.SDK_INT < 33) return
+            if (manager == null || android.os.Build.VERSION.SDK_INT < 23) return
             synchronized(this@MusicMidiInput) {
                 if (remote.address in bluetoothPorts || !openingBluetooth.add(remote.address)) return
             }
@@ -81,12 +88,13 @@ class MusicMidiInput(private val ctx: Context) {
                 synchronized(this@MusicMidiInput) {
                     openingBluetooth.remove(remote.address)
                     if (opened == null) error = "无法连接蓝牙 MIDI 设备"
+                    else if (closed || !scanningBluetooth) runCatching { opened.close() }
                     else if (remote.address in bluetoothPorts) runCatching { opened.close() }
                     else bluetoothPorts[remote.address] = opened
                 }
             }, Handler(Looper.getMainLooper()))
         }
-        override fun onScanFailed(errorCode: Int) { error = "蓝牙 MIDI 扫描失败 ($errorCode)" }
+        override fun onScanFailed(errorCode: Int) { scanningBluetooth = false; error = "蓝牙 MIDI 扫描失败 ($errorCode)" }
     }
     @Synchronized fun start(selected: Port) {
         stopBluetoothScan()
@@ -170,6 +178,7 @@ class MusicMidiInput(private val ctx: Context) {
     }
 
     @Synchronized fun close() {
+        closed = true
         stopBluetoothScan()
         cancel()
         bluetoothPorts.values.forEach { runCatching { it.close() } }
