@@ -49,7 +49,7 @@
 
 ### 16.4 安装程序 setup.exe (电脑版)
 
-发布 (Release) 里除了手机的 `OIT.apk`, 电脑版以一个 **`setup.exe`** 提供 (`setup.py` + 程序文件打成 `payload.zip`, 用 PyInstaller 打包成一个 exe, `release.py` 编译并上传). 它做的事:
+发布 (Release) 里除了手机的 `OIT.apk`, 电脑版同时提供 **`OIT-windows.zip`** 和 **`setup.exe`**。前者是和安装器相同的程序文件 payload，供程序内更新直接覆盖；后者由 `setup.py` + 程序文件打成 `payload.zip` 后用 PyInstaller 打包，负责首次安装和 Python 依赖配置。
 - **依赖库**: OIT 本体是 Python 程序, 需要 Python 3.10+ (带 tkinter 等标准库). setup 先找电脑上有没有 (注册表 PEP 514 / `py -0p` / PATH, 挑版本最高且能 `import tkinter, sqlite3, ssl, ctypes, winreg` 的);
   没有就从 python.org 下载官方安装包 (固定版本 `PYTHON_VERSION`), **核对数字签名有效且签名人是 Python Software Foundation 才运行**, 静默安装 (所有用户, 不改 PATH, 不装 py 启动器, 不抢 `.py` 的关联).
   可选库 pywin32 用 `pip install` 装。安装器也可选装蓝牙 MIDI 所需的 PyWinRT 组件（Python 3.11+）；未安装时 OIT 仍可接收 WinMM 输入端口。两者失败均不阻止安装，也可在安装界面取消勾选。找到的 / 装好的 Python 记在 `install.json`.

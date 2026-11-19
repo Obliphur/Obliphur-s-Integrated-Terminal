@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import sys
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -483,6 +483,13 @@ def offense_checks():
         d.update(valence=0, valence_cooldowns={}, valence_chain_until=0)
         interaction_valence_add(d, [("hurt", -40)], 1, now)
         assert d["valence"] == -40, "冒犯倍率不减少负向变化"
+    for amount, expected in ((40, 20), (-40, -8)):
+        d = interaction_norm({"pending": {"sleeping-message": False},
+                              "pending_sleep": {"sleeping-message": True, "stale-message": True}})
+        assert d["pending_sleep"] == {"sleeping-message": True}
+        interaction_valence_add(d, [("sleep-rate", amount)], 1, now, sleep=True)
+        assert d["valence"] == expected
+    assert "睡眠期间" in interaction_prompt({}, 0, False, {"joy": (None, "开心")}, sleep=True)
     d = interaction_norm({"offenses": [record], "valence_cooldowns": {"joy": now + 1},
                           "valence_chain_until": now + 1, "burst_until": 1})
     interaction_valence_add(d, [("joy", 40)], 0.5, now)
@@ -559,6 +566,21 @@ def offense_checks():
     assert not c._love_check(c.now(), [], set())
     c._finish("love", None, call("oit_reply", {"text": "我喜欢你"}), "", c._epoch)
     assert not any(x["text"] == "我喜欢你" for x in c.messages)
+
+    sleep = comm.Comm(str(root / "sleep-data"), str(root / "sleep-personas"),
+                      now=lambda: datetime(2026, 11, 20, 2), chat_fn=lambda *_: "")
+    sleep.set_cfg(persona="Claudia.txt", split_send=False)
+    sleep.other_status = lambda now=None, ctx=None: {"kind": "sleep"}
+    asleep_message = sleep._add("me", "测试睡眠期间的效价倍率")
+    sleep._interaction_sent(asleep_message["text"], asleep_message)
+    assert sleep.cfg["interaction"]["pending_sleep"] == {asleep_message["uid"]: True}
+    note = sleep._interaction_judge_note("user")
+    assert "发送时处于睡眠" in note and "0.5" in note and "0.2" in note
+    sleep._interaction_judged("[valence:1:custom_other:40]")
+    assert sleep.cfg["interaction"]["valence"] == 20
+    assert not sleep.cfg["interaction"]["pending_sleep"]
+    sleep.flush(); sleep.voice.close()
+
     c.save_chat()
     restored = comm.Comm(str(root / "data"), str(root / "personas"))
     assert restored.offense_blocked(), "重启保留冒犯及门禁"

@@ -31,6 +31,7 @@ def interaction_norm(value):
         except (ValueError, TypeError, OverflowError):
             return 0
     pending = d.get("pending") if isinstance(d.get("pending"), dict) else {}
+    pending_sleep = d.get("pending_sleep") if isinstance(d.get("pending_sleep"), dict) else {}
     cooldowns = d.get("gain_cooldowns") if isinstance(d.get("gain_cooldowns"), dict) else {}
     clean_cooldowns = {}
     for key in cooldowns:
@@ -63,6 +64,8 @@ def interaction_norm(value):
             days = []
     return {"offenses": offenses_norm(d.get("offenses")), "scenario_mode": d.get("scenario_mode") is True,
             "pending": {k: v for k, v in list(pending.items())[-KEEP:] if isinstance(k, str) and isinstance(v, bool)},
+            "pending_sleep": {k: True for k, v in pending_sleep.items()
+                              if isinstance(k, str) and v is True and k in pending},
             "tension": interaction_tension(d.get("tension")),
             "valence": interaction_valence(d.get("valence")),
             "valence_initialized": bool(d.get("valence_initialized", "valence" in d)),
@@ -252,7 +255,7 @@ def interaction_end(d, reply, burst, now_ms, burst_rules=None):
     return d
 
 
-def interaction_valence_add(d, events, burst_rate, now_ms):
+def interaction_valence_add(d, events, burst_rate, now_ms, sleep=False):
     """按冷却、连锁与爆发倍率结算，单条用户消息最多变化 40 点。"""
     total = 0
     for condition, base in events:
@@ -260,6 +263,9 @@ def interaction_valence_add(d, events, burst_rate, now_ms):
         shift = int(base * repeat)
         shift = int(shift * (config.COMM_TENSION_CHAIN_RATE if now_ms < d["valence_chain_until"] else 1.0))
         shift = int(shift * burst_rate) if d["burst_until"] else shift
+        if sleep:
+            shift = int(shift * (config.COMM_CLAUDIA_SLEEP_VALENCE_RISE_RATE if shift > 0
+                                 else config.COMM_CLAUDIA_SLEEP_VALENCE_FALL_RATE))
         if shift > 0:
             shift = int(shift * offenses_rate(d))
         d["valence_cooldowns"][condition] = until
@@ -271,7 +277,7 @@ def interaction_valence_add(d, events, burst_rate, now_ms):
         d["valence"] = interaction_valence(d["valence"] + max(-40, min(40, total)))
 
 
-def interaction_prompt(d, total, special, rules=None, burst_rules=None):
+def interaction_prompt(d, total, special, rules=None, burst_rules=None, sleep=False):
     d = interaction_norm(d)
     special = special or bool(d["burst_until"])
     mode = "情景模拟" if d["scenario_mode"] and total >= config.COMM_SCENARIO_UNLOCK else "软件聊天"
@@ -285,7 +291,8 @@ def interaction_prompt(d, total, special, rules=None, burst_rules=None):
                tr("效价代表角色当前的正负情绪倾向；结合TENSION所表示的言行激烈/直接程度组织表达。按人设[valence]条件报告本轮变化，正值向正面、负值向负面；只返回声明条件，普通交流不变化。") +
                tr("效价当前值为{value}，返回未经倍率调整的有符号整数变化量。", value=d["valence"]) +
                "有效条件：" + "\n".join(f"{key}:[{gain if gain is not None else 'X'}] {description}" for key, (gain, description) in rules.items()) +
-               tr("同一消息重复条件只报一次；爆发期变化乘{rate}，连锁窗口内其他变化乘0.75，单条消息合计限制在正负40，系统负责结算。", rate=burst_rules.get("burst_rate", 1.0)))
+               tr("同一消息重复条件只报一次；爆发期变化乘{rate}，连锁窗口内其他变化乘0.75，单条消息合计限制在正负40，系统负责结算。", rate=burst_rules.get("burst_rate", 1.0)) +
+               (tr("Claudia睡眠期间，效价正向变化结算倍率为0.5、负向变化为0.2；仍只报告未经倍率调整的原始整数变化。") if sleep else ""))
             + tr("TENSION对所有角色都表示行为、动作与语言的激烈/直接程度；各档位的情绪与言行表现、BURST期间及SHAME_AFTERMATH冷静期的具体反应由当前人设决定。不得把张力解释为好感、爱情或关系进度，也不得补设人设未定义的情感与性格含义。")
             + tr("软件聊天、日常时段或生效档位0-50严禁动作描写;情景模拟且处于特殊空闲时,50-90允许有边界的动作,尊重用户意愿,不强迫接触;90+才允许更强烈的动作描写.具体动作与表达风格遵循人设.")
             + "若MODE=情景模拟,你知道这是情景模拟,而不是现实中的动作;双方知情的动作描写均为虚构,不得声称在现实中实际发生."
@@ -377,9 +384,13 @@ class InteractionMixin:
 
     def _interaction_sent(self, text, message=None):
         d = self._interaction_prepare()
-        special = self._interaction_special()
+        status = self.other_status()
+        special = self._interaction_special(status)
         if message and text.strip():
             d["pending"][message["uid"]] = special
+            from .comm_util import is_claudia
+            if is_claudia(self.persona_name()) and status and status.get("kind") == "sleep":
+                d["pending_sleep"][message["uid"]] = True
             if special and d["special_until"]:
                 if not d["special_spoke"]:
                     d["decay_at"] = max(d["decay_at"], self._ms())
@@ -407,11 +418,12 @@ class InteractionMixin:
 
     def _interaction_judge_note(self, kind):
         d = self._interaction_prepare()
-        self._interaction_candidates = [(m["uid"], d["pending"][m["uid"]], m["text"])
+        self._interaction_candidates = [(m["uid"], d["pending"][m["uid"]], m["text"], m["uid"] in d["pending_sleep"])
             for m in self.messages if kind in ("user", "retry") and m.get("role") == "me" and m.get("uid") in d["pending"]]
         if not self._interaction_candidates:
             return "本次无需判断张力增量，不要填写oit_reply.tension。"
-        items = [{"序号": i, "用户消息": text} for i, (_uid, _special, text) in enumerate(self._interaction_candidates, 1)]
+        items = [{"序号": i, "用户消息": text, "发送时处于睡眠": sleep}
+                 for i, (_uid, _special, text, sleep) in enumerate(self._interaction_candidates, 1)]
         from comm.comm_persona import read_persona_full
         rules = tension_rules(read_persona_full(self.personas, self.persona_name()))
         persona_text = read_persona_full(self.personas, self.persona_name())
@@ -431,14 +443,15 @@ class InteractionMixin:
                 + tr("冷却中的条件仍须报告正数原始增量；特殊空闲内加值首次超过90立即爆发，已超过90时再次满足任一增长条件也可爆发。"))
         valence_note = ""
         if e_rules:
-            valence_note = interaction_prompt(interaction_norm(self.cfg.get("interaction")), 0, False, e_rules, burst_rules).split("\n", 1)[1]
+            valence_note = interaction_prompt(interaction_norm(self.cfg.get("interaction")), 0, False, e_rules, burst_rules,
+                                              any(candidate[3] for candidate in self._interaction_candidates)).split("\n", 1)[1]
             valence_note += "在oit_reply.valence数组填写index、condition和shift；shift为-40至40的有符号整数。冷却中的条件仍报告其原始变化，不得改名规避冷却。"
         return (tension_note + valence_note + "本轮仍按给定生效状态回复，增量从下次请求生效。待判断消息：" + json.dumps(items, ensure_ascii=False))
 
     def _interaction_judged(self, reply):
         d = self._interaction_prepare()
         burst = False
-        for i, (uid, special, _text) in enumerate(getattr(self, "_interaction_candidates", []), 1):
+        for i, (uid, special, _text, sleep) in enumerate(getattr(self, "_interaction_candidates", []), 1):
             if uid in d["pending"]:
                 sent = next((int(m["ts"]) for m in self.messages if m["uid"] == uid), -1)
                 offenses_apply(d, reply, i, uid, sent, self._ms())
@@ -459,8 +472,9 @@ class InteractionMixin:
                     valence_events = [(condition, shift) for condition, shift in valence_events
                                       if condition != "music_discourtesy"]
                     self._music_discourtesy_uids.discard(uid)
-                interaction_valence_add(d, valence_events, getattr(self, "_interaction_burst_rules", {}).get("burst_rate", 1.0), now_ms)
+                interaction_valence_add(d, valence_events, getattr(self, "_interaction_burst_rules", {}).get("burst_rate", 1.0), now_ms, sleep)
                 del d["pending"][uid]
+                d["pending_sleep"].pop(uid, None)
         self._interaction_set(d)
         return burst
 
@@ -509,4 +523,8 @@ class InteractionMixin:
         from comm.comm_persona import read_persona_full, list_personas, pid_of
         owner_name = next((name for name in list_personas(self.personas) if pid_of(name) == (pid or self.pid)), self.persona_name())
         text = read_persona_full(self.personas, owner_name)
-        return interaction_prompt(d, total, self._interaction_special(status), valence_rules(text), valence_burst_rules(text))
+        if status is None and (pid is None or pid == self.pid):
+            status = self.other_status()
+        from .comm_util import is_claudia
+        sleep = is_claudia(owner_name) and bool(status) and status.get("kind") == "sleep"
+        return interaction_prompt(d, total, self._interaction_special(status), valence_rules(text), valence_burst_rules(text), sleep)

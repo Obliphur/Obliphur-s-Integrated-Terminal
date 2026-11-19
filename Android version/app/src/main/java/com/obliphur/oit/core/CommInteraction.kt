@@ -11,7 +11,7 @@ import kotlin.math.round
 data class CommInteraction(
     val scenarioMode: Boolean = false, val tension: Double = 0.0, val shameTurns: Int = 0,
     val day: String = "", val ts: Long = 0L, val burstUntil: Long = 0L,
-    val pending: Map<String, Boolean> = emptyMap(), val gainUntil: Long = 0L,
+    val pending: Map<String, Boolean> = emptyMap(), val pendingSleep: Set<String> = emptySet(), val gainUntil: Long = 0L,
     val burstDays: List<String> = emptyList(), val morningDay: String = "",
     val gainCooldowns: Map<String, Long> = emptyMap(),
     val specialUntil: Long = 0L, val specialSpoke: Boolean = false, val skipDecay: Boolean = false,
@@ -31,7 +31,7 @@ data class CommInteraction(
         .put("valence_initial_set", valenceInitialSet)
         .put("valence_cooldowns", JSONObject(valenceCooldowns)).put("valence_chain_until", valenceChainUntil)
         .put("shame_turns", shameTurns).put("day", day).put("ts", ts).put("burst_until", burstUntil)
-        .put("pending", JSONObject(pending))
+        .put("pending", JSONObject(pending)).put("pending_sleep", JSONArray(pendingSleep.toList()))
         .put("gain_until", gainUntil)
         .put("burst_days", JSONArray(burstDays)).put("morning_day", morningDay)
         .put("gain_cooldowns", JSONObject(gainCooldowns))
@@ -85,7 +85,8 @@ data class CommInteraction(
         return if (effective < Cfg.COMM_TENSION_LOW) "0-50" else if (effective <= Cfg.COMM_TENSION_CAP) "50-90" else "90+"
     }
 
-    fun note(total: Int, special: Boolean, valenceRules: Map<String, Pair<Int?, String>> = emptyMap(), burstRules: CommRules.ValenceBurst = CommRules.ValenceBurst()): String {
+    fun note(total: Int, special: Boolean, valenceRules: Map<String, Pair<Int?, String>> = emptyMap(),
+             burstRules: CommRules.ValenceBurst = CommRules.ValenceBurst(), sleep: Boolean = false): String {
         val mode = if (scenarioMode && total >= Cfg.COMM_SCENARIO_UNLOCK) "情景模拟" else "软件聊天"
         return "[OIT_STATUS: MODE=$mode, TENSION=$tension, EFFECTIVE_STAGE=${stage(special)}, VALENCE=$valence, INITIAL_VALENCE=${effectiveValenceBaseline()}, OFFENSE_COUNT=${CommOffenses.active(offenses).size}, VALENCE_RISE_RATE=${CommOffenses.rate(offenses)}, " +
             "BURST=${if (burstUntil > 0L) "YES" else "NO"}, PERIOD=${if (special || burstUntil > 0L) "特殊空闲" else "日常"}, SHAME_AFTERMATH=${if (shameTurns > 0) "YES" else "NO"}]\n" +
@@ -93,7 +94,8 @@ data class CommInteraction(
                 tr("效价代表角色当前的正负情绪倾向；结合TENSION所表示的言行激烈/直接程度组织表达。按人设[valence]条件报告本轮变化，正值向正面、负值向负面；只返回声明条件，普通交流不变化。") +
                 tr("效价当前值为{value}，返回未经倍率调整的有符号整数变化量。", "value" to valence) +
                 "有效条件：" + valenceRules.entries.joinToString("\n") { "${it.key}:[${it.value.first ?: "X"}] ${it.value.second}" } +
-                tr("同一消息重复条件只报一次；爆发期变化乘{rate}，连锁窗口内其他变化乘0.75，单条消息合计限制在正负40，系统负责结算。", "rate" to burstRules.rate)) +
+                tr("同一消息重复条件只报一次；爆发期变化乘{rate}，连锁窗口内其他变化乘0.75，单条消息合计限制在正负40，系统负责结算。", "rate" to burstRules.rate) +
+                if (sleep) tr("Claudia睡眠期间，效价正向变化结算倍率为0.5、负向变化为0.2；仍只报告未经倍率调整的原始整数变化。") else "") +
             tr("TENSION对所有角色都表示行为、动作与语言的激烈/直接程度；各档位的情绪与言行表现、BURST期间及SHAME_AFTERMATH冷静期的具体反应由当前人设决定。不得把张力解释为好感、爱情或关系进度，也不得补设人设未定义的情感与性格含义。") +
             tr("软件聊天、日常时段或生效档位0-50严禁动作描写;情景模拟且处于特殊空闲时,50-90允许有边界的动作,尊重用户意愿,不强迫接触;90+才允许更强烈的动作描写.具体动作与表达风格遵循人设.") +
             "若MODE=情景模拟,你知道这是情景模拟,而不是现实中的动作;双方知情的动作描写均为虚构,不得声称在现实中实际发生." +
@@ -116,7 +118,8 @@ data class CommInteraction(
         if (burst > 0L && burstUntil == burst && (if (ToolProtocol.unpack(reply) != null) ToolProtocol.args(reply).optBoolean("end_burst") else burstEnd.containsMatchIn(reply)))
             copy(tension = Cfg.COMM_TENSION_RELEASE.toDouble(), valence = (valence + if (endShift > 0) (endShift * CommOffenses.rate(offenses)).toInt() else endShift).coerceIn(-100.0, 100.0), shameTurns = Cfg.COMM_SHAME_TURNS, burstUntil = 0L, decayAt = maxOf(decayAt, nowMs)) else this
 
-    fun addValence(events: List<Pair<String, Int>>, nowMs: Long, burstRate: Double): CommInteraction {
+    fun addValence(events: List<Pair<String, Int>>, nowMs: Long, burstRate: Double,
+                   sleep: Boolean = false): CommInteraction {
         var total = 0
         var chainUntil = valenceChainUntil
         val cooldowns = valenceCooldowns.toMutableMap()
@@ -126,6 +129,8 @@ data class CommInteraction(
             var shift = (base * repeatRate).toInt()
             if (nowMs < chainUntil) shift = (shift * Cfg.COMM_TENSION_CHAIN_RATE).toInt()
             if (burstUntil > 0L) shift = (shift * burstRate).toInt()
+            if (sleep) shift = (shift * if (shift > 0) Cfg.COMM_CLAUDIA_SLEEP_VALENCE_RISE_RATE
+                else Cfg.COMM_CLAUDIA_SLEEP_VALENCE_FALL_RATE).toInt()
             if (shift > 0) shift = (shift * CommOffenses.rate(offenses)).toInt()
             if (shift != 0) {
                 total += shift
@@ -180,7 +185,9 @@ data class CommInteraction(
             (o?.optInt("shame_turns") ?: 0).coerceIn(0, Cfg.COMM_SHAME_TURNS),
             o?.optString("day") ?: "", maxOf(0L, o?.optLong("ts") ?: 0L), maxOf(0L, o?.optLong("burst_until") ?: 0L),
             o?.optJSONObject("pending")?.let { p -> p.keys().asSequence().filter { p.opt(it) is Boolean }
-                .toList().takeLast(Comm.KEEP).associateWith { p.getBoolean(it) } } ?: emptyMap(), maxOf(0L, o?.optLong("gain_until") ?: 0L),
+                .toList().takeLast(Comm.KEEP).associateWith { p.getBoolean(it) } } ?: emptyMap(),
+            o?.optJSONArray("pending_sleep")?.let { a -> (0 until a.length()).mapNotNull { a.optString(it).takeIf { it.isNotBlank() } }.toSet() } ?: emptySet(),
+            maxOf(0L, o?.optLong("gain_until") ?: 0L),
             o?.optJSONArray("burst_days")?.let { a -> (0 until a.length()).mapNotNull { i ->
                 (a.opt(i) as? String)?.takeIf { it.matches(Regex("\\d{4}-\\d{2}-\\d{2}")) }
             }.distinct().sorted().takeLast(2) } ?: run {
@@ -205,7 +212,9 @@ data class CommInteraction(
             if (o?.has("valence_initialized") == true) o.optBoolean("valence_initialized") else o?.has("valence") ?: false,
             (o?.optDouble("valence_initial", 0.0) ?: 0.0).takeIf { it.isFinite() }?.coerceIn(-100.0, 100.0) ?: 0.0,
             o?.optBoolean("valence_initial_set") ?: false,
-            CommOffenses.parse(o?.optJSONArray("offenses")))
+            CommOffenses.parse(o?.optJSONArray("offenses"))).let { d ->
+                d.copy(pendingSleep = d.pendingSleep.intersect(d.pending.keys))
+            }
 
         private fun localDay(ms: Long): String = Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()).toLocalDate().toString()
 

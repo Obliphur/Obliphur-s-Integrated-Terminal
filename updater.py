@@ -12,9 +12,9 @@
 下载安装包走 GitHub API 的附件地址 (api.github.com/…/releases/assets/<id>, Accept: application/octet-stream),
 它直接跳到 release-assets.githubusercontent.com —— 不经过 github.com: 有的网络里 github.com 连不上, api.github.com 和下载服务器却能直连.
 下载完核对大小和 GitHub 给的 SHA-256 (附件的 digest). 源码包走 api.github.com → codeload.github.com.
-下载服务器对每条连接限速 (国内不开 VPN 时每条连接 40 KB/s 上下, 15 MB 要 7 分钟), 但条数越多总速度越高:
+下载服务器对每条连接限速 (国内不开 VPN 时每条连接 40 KB/s 上下), 但条数越多总速度越高:
 附件 (知道大小, 服务器支持 Range) 切成 256 KB 一段, 同时开 PARALLEL_CONNS 条连接分头下 (实测 15 MB 约 15 秒);
-服务器不支持 Range / 分段失败时退回一条连接下完整文件. 源码包是边打包边发的 (没有大小, 不能分段), 还是一条连接.
+服务器不支持 Range / 分段失败时退回一条连接下完整文件. 旧版发布缺少 Windows ZIP 时, 源码包边打包边发 (没有大小, 不能分段), 还是一条连接.
 直连连不上 (超时 / 拒绝) 或回 5xx 网关错误时, 再经过用户原来的代理 (Clash 之类, 见 sysproxy_backup.json).
 Adapter 方式离线时网卡是禁用的, 检查会失败, 下一次联网时再查.
 

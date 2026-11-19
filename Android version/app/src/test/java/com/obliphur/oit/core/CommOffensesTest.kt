@@ -27,6 +27,15 @@ class CommOffensesTest {
         assertEquals(20.0, d.endBurst(reply, 1, now, 20).valence, 0.0)
     }
 
+    @Test fun claudiaSleepValenceRates() {
+        assertEquals(20.0, CommInteraction().addValence(listOf("joy" to 40), now, 1.0, sleep = true).valence, 0.0)
+        assertEquals(-8.0, CommInteraction().addValence(listOf("hurt" to -40), now, 1.0, sleep = true).valence, 0.0)
+        val pending = CommInteraction(pending = mapOf("sleeping-message" to false),
+            pendingSleep = setOf("sleeping-message", "stale-message"))
+        assertEquals(setOf("sleeping-message"), CommInteraction.parse(pending.json()).pendingSleep)
+        assertTrue(pending.note(0, false, mapOf("joy" to (null to "开心")), sleep = true).contains("0.5"))
+    }
+
     @Test fun offensesShiftValenceEquilibrium() {
         val day = 86400000L
         val baseline = CommInteraction(valence = 5.0, valenceInitial = 15.0, valenceDecayAt = now,
