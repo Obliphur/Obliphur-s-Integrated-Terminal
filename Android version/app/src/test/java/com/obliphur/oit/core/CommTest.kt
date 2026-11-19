@@ -3622,8 +3622,7 @@ class CommTest {
         assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.EXAMPLE).trim(), cm.readPersona(BuiltinPersonas.EXAMPLE))
         assertNull(cm.checkPersonaChanges())                                                                              // 补上日程 / 背景文件不弹修改人设
         File(mp, BuiltinPersonas.EXAMPLE).writeText("用户改过的范例")
-        comm(md, mp)
-        assertEquals("用户改过的范例", cm.readPersona(BuiltinPersonas.EXAMPLE))
+        assertEquals("用户改过的范例", comm(md, mp).readPersona(BuiltinPersonas.EXAMPLE))
         File(mp, "Claudia_templates.txt").writeText(TEST_OLD_ROUTINE)
         comm(md, mp)
         assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE).trim(), cm.readPersona("Claudia_templates.txt"))   // 更早的内置日程文件换成当前版本

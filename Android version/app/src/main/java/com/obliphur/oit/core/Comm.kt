@@ -2511,9 +2511,7 @@ class Comm(
             val bcur = if (bf.isFile) runCatching { bf.readText(Charsets.UTF_8).removePrefix("\uFEFF") }.getOrNull() else null
             if (force || bcur == null || bcur.isBlank() || bcur.trim() in BuiltinPersonas.BACKGROUND_LEGACIES.map { it.trim() })
                 bf.writeText(BuiltinPersonas.ALL.getValue(BuiltinPersonas.BACKGROUND), Charsets.UTF_8)
-            val ef = File(personas, BuiltinPersonas.EXAMPLE)
-            val ecur = if (ef.isFile) runCatching { ef.readText(Charsets.UTF_8).removePrefix("\uFEFF") }.getOrNull() else null
-            if (force || ecur == null || ecur.isBlank()) ef.writeText(BuiltinPersonas.ALL.getValue(BuiltinPersonas.EXAMPLE), Charsets.UTF_8)
+            if (force) File(personas, BuiltinPersonas.EXAMPLE).writeText(BuiltinPersonas.ALL.getValue(BuiltinPersonas.EXAMPLE), Charsets.UTF_8)
             backupPersonaFile(BuiltinPersonas.DEFAULT)
             backupPersonaFile(BuiltinPersonas.ROUTINE)
             backupPersonaFile(BuiltinPersonas.BACKGROUND)

@@ -1033,10 +1033,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             if force or cur is None or cur.strip() in {x.strip() for x in BACKGROUND_LEGACIES} or not cur.strip():
                 with open(bpath, "w", encoding="utf-8", newline="\n") as f:
                     f.write(BUILTIN_PERSONAS[DEFAULT_BACKGROUND])
-            epath = os.path.join(self.personas, DEFAULT_EXAMPLE)
-            cur = self._read_persona_raw(DEFAULT_EXAMPLE)
-            if force or cur is None or not cur.strip():
-                with open(epath, "w", encoding="utf-8", newline="\n") as f:
+            if force:
+                with open(os.path.join(self.personas, DEFAULT_EXAMPLE), "w", encoding="utf-8", newline="\n") as f:
                     f.write(BUILTIN_PERSONAS[DEFAULT_EXAMPLE])
         except OSError:
             pass

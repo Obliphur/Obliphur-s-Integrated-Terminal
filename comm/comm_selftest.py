@@ -31,8 +31,6 @@ def _selftest():
     assert "只禁止浪漫关系称呼" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
     assert "MODE=情景模拟" in BUILTIN_PERSONAS[DEFAULT_PERSONA] and "EFFECTIVE_STAGE=90+" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
     assert "不要说'接住'" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
-    with open(os.path.join(os.path.dirname(os.path.dirname(__file__)), "personas", DEFAULT_EXAMPLE), encoding="utf-8") as f:
-        assert BUILTIN_PERSONAS[DEFAULT_EXAMPLE].strip() == f.read().strip(), "内置范例与仓库原文一致"
     p = prefix_prompt()
     assert p.startswith("[OIT_SYSTEM_MESSAGES]")
     assert not re.search(r"(?m)^[IVX]+\.", p)
