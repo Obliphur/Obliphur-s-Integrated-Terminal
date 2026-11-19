@@ -17,6 +17,8 @@ EN = {
     "演奏播放失败.": "Performance playback failed.",
     "演奏已停止": "Performance stopped",
     "已更新记忆卡": "Memory updated",
+    "说教": "Lecturing",
+    "你可以请求对方针对现实中想改变的状态、行为、习惯或语言进行说教，分条分析问题与解决方案；主题会简短记入记忆卡，实际完成改变后才移除。": "You can ask the character to lecture you about a real-life state, behavior, habit or way of speaking you want to change. The analysis and practical solutions arrive in separate messages. A brief topic stays in memory until the change is actually complete.",
     "导入乐谱到曲库…": "Import score to library…",
     "请先选择一个人设，再导入乐谱": "Select a persona before importing a score",
     "选择要导入的乐谱": "Choose a score to import",

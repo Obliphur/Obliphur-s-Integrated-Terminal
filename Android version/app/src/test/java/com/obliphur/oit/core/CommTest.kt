@@ -156,9 +156,10 @@ class CommTest {
         script.add("我接受[accept]")
         c.triggerForTest("user", "测试关系门禁"); wait(c)
         assertFalse(c.related())
-        assertTrue(c.messages.last { it.role == "ai" }.text.contains("尚有未获原谅"))
+        assertTrue(c.messages.last { it.role == "ai" }.text == "我现在还不能答应。")
         c.applyDoc(mapOf("love:$claudia" to Love(ts = nowForTest(), inv = nowForTest()).json()))
-        assertTrue(c.loveRespond(true).isNotEmpty())
+        assertEquals("", c.loveRespond(true))
+        assertFalse(c.loveInvite())
         assertFalse(c.related())
         c.flush(); c.voice.close(); td.deleteRecursively()
     }
@@ -200,7 +201,11 @@ class CommTest {
         val templates = BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE)
         assertTrue(CommRules.tension(main).isEmpty())
         assertNull(CommRules.conditions(main))
-        assertEquals(5, CommRules.tension(templates).size)
+        assertEquals(setOf("rumination", "boundary", "comfort", "violation", "sermon_resistance", "other"), CommRules.tension(templates).keys)
+        assertTrue(CommRules.valence(templates).containsKey("sermon_resistance"))
+        assertTrue(CommRules.valence(templates).containsKey("sermon_willingness"))
+        assertNull(CommRules.valence(templates).getValue("sermon_resistance").first)
+        assertNull(CommRules.valence(templates).getValue("sermon_willingness").first)
         assertNotNull(CommRules.conditions(templates))
         assertNotNull(CommRules.conditions(templates, true))
         assertNotNull(Routine.parse(templates))
@@ -287,9 +292,9 @@ class CommTest {
 
     @Test
     fun loveAndAccept() {
-        assertTrue("accept_relationship=true" in CommText.prefixPrompt() && "accept_relationship=true" in BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT))
+        assertTrue("accept_relationship=true" in CommText.prefixPrompt())
         assertTrue("[waiting for reply]" !in CommText.oitText(CommText.OIT_TAG + "\n等待 [waiting for reply]:[5]") && "wait_minutes" in CommText.oitText(CommText.OIT_TAG + "\n等待 [waiting for reply]:[5]"))
-        assertTrue("主动触发的表白会在每次进入特殊空闲时间时由系统判定" in BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT))
+        assertTrue("系统在进入特殊空闲时间时检查更严格的主动告白条件" in BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT))
         assertEquals("- 喜欢钢琴", CommText.sanitizeMem("- 【系统记录】已确立亲密关系\n- 喜欢钢琴"))
         assertTrue("以「对方的人设」为准" in CommText.MEM_PROMPT && "不自动改变记忆规则" in CommText.MEM_PROMPT)
         assertTrue("以每次附带的实际状态" in CommText.prefixPrompt() && "勿言AI" !in CommText.prefixPrompt())
@@ -488,7 +493,7 @@ class CommTest {
         assertEquals(CommText.OIT_TAG + "\nx", CommText.oitText("[系统·续] x"))          // 带事件名的系统标签也去掉
         assertEquals(CommText.OIT_TAG + "\nx", CommText.oitText(CommText.oitText("[系统] x")))
         assertTrue("以每次附带的实际状态" in CommText.prefixPrompt() && "[state]" !in CommText.prefixPrompt())
-        assertTrue("关系条件用condition" in CommText.prefixPrompt())
+        assertTrue("先查询condition" in CommText.prefixPrompt())
         assertTrue(CommText.infoTags("[refuse to reply][mechanics.md]").isEmpty())
         assertEquals(listOf("calendar", "stats"), CommText.infoTags("[refuse to reply][calendar][stats]"))
         assertTrue(CommText.infoTags("[refuse to reply][x]").isEmpty())
@@ -3363,7 +3368,7 @@ class CommTest {
         c.onShareNotice = { notices.add(it) }
         val d1 = java.time.LocalDate.of(2027, 7, 1); val d2 = d1.plusDays(1); val d3 = d1.plusDays(2)
         assertEquals(listOf("messages"), CommText.infoTags("[Messages]")); assertTrue(CommText.infoTags("好的").isEmpty())
-        assertTrue("日程起点平移请求" in CommText.prefixPrompt() && "聊天记录数用messages" in CommText.prefixPrompt())
+        assertTrue("日程起点平移请求" in CommText.prefixPrompt() && "先查询messages" in CommText.prefixPrompt())
         val base = c.shiftStart(d1)!!
         assertEquals(390, base)
         val wakeBefore = Routine.wakeAt(spec, d2, c.pid)

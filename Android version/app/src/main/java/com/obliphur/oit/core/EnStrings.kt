@@ -11,6 +11,8 @@ object EnStrings {
         "MuseScore 和 MusicXML" to "MuseScore and MusicXML",
         "已加入曲库: {title}" to "Added to library: {title}",
         "已更新记忆卡" to "Memory updated",
+        "说教" to "Lecturing",
+        "你可以请求对方针对现实中想改变的状态、行为、习惯或语言进行说教，分条分析问题与解决方案；主题会简短记入记忆卡，实际完成改变后才移除。" to "You can ask the character to lecture you about a real-life state, behavior, habit or way of speaking you want to change. The analysis and practical solutions arrive in separate messages. A brief topic stays in memory until the change is actually complete.",
         "我为你选了《{title}》" to "I chose {title} for you.",
         "我选好了一首曲子" to "I chose a piece for you.",
         "导出所选曲目为 MIDI…" to "Export selected score as MIDI…",

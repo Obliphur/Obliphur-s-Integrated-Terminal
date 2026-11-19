@@ -108,6 +108,8 @@ try:
                 dlg.update_idletasks()
                 text = "\n".join(str(w.cget("text")) for w in descendants(dlg) if "text" in w.keys())
                 assert i18n.tr("聊天模式") in text and "📱 / 🎭" in text
+                assert i18n.tr("说教") in text
+                assert i18n.tr("你可以请求对方针对现实中想改变的状态、行为、习惯或语言进行说教，分条分析问题与解决方案；主题会简短记入记忆卡，实际完成改变后才移除。") in text
                 assert "200" not in text
                 area = next(w for w in descendants(dlg) if isinstance(w, ScrollArea))
                 assert area.winfo_height() > 0
