@@ -329,6 +329,12 @@ def _selftest():
     assert "Assistant.txt" in list_personas(fresh_personas), "自带的人设也有 Assistant"
     assert read_persona(fresh_personas, "Claudia.txt").startswith("你将扮演一位文静,冷淡")
     assert read_persona(fresh_personas, "Assistant.txt").startswith("你是名为 Assistant 的 AI 助手")
+    from comm.persona_codec import MAGIC
+    for name in (DEFAULT_PERSONA, DEFAULT_BACKGROUND, DEFAULT_EXAMPLE, DEFAULT_ROUTINE):
+        with open(os.path.join(fresh_personas, name), encoding="utf-8") as f:
+            assert f.read(len(MAGIC)) == MAGIC
+        assert cf.persona_doc()[name] == BUILTIN_PERSONAS[name]
+    assert not cf.claudia_differs() and cf.check_persona_changes() is None
     cf.set_cfg(persona="")
     for name in ("Claudia.txt", "Claudia_background.txt", "Claudia_example.txt", "Claudia_templates.txt", "Assistant.txt"):
         os.remove(os.path.join(fresh_personas, name))
@@ -1826,12 +1832,13 @@ def _selftest():
     assert read_persona(cpersonas, "Claudia.txt") == BUILTIN_PERSONAS[DEFAULT_PERSONA].strip()
     assert not cc.cfg["claudia_modified"] and not cc.cfg["claudia_notified"]
     assert not cc.claudia_differs(), "还原后: 三个文件都是内置版本, 不显示还原按钮"
-    open(os.path.join(cpersonas, "Claudia_background.txt"), "a", encoding="utf-8").write("我加的一句")
+    background_path = os.path.join(cpersonas, "Claudia_background.txt")
+    write_file(background_path, read_file(background_path) + "我加的一句")
     assert cc.claudia_differs(), "背景文件被改过: 显示还原按钮"
     cc.restore_claudia()
     assert not cc.claudia_differs() and read_persona(cpersonas, "Claudia_background.txt") == BUILTIN_PERSONAS[DEFAULT_BACKGROUND].strip()
-    with open(os.path.join(cpersonas, DEFAULT_EXAMPLE), "a", encoding="utf-8") as f:
-        f.write("用户修改")
+    example_path = os.path.join(cpersonas, DEFAULT_EXAMPLE)
+    write_file(example_path, read_file(example_path) + "用户修改")
     assert cc.claudia_differs(), "范例文件被改过: 显示还原按钮"
     cc.restore_claudia()
     assert read_persona(cpersonas, DEFAULT_EXAMPLE) == BUILTIN_PERSONAS[DEFAULT_EXAMPLE].strip()
@@ -3249,7 +3256,8 @@ def _selftest():
     assert info_tags(" [Condition] ") == ["condition"] and info_tags("好的") == []
     assert "先查询condition" in prefix_prompt()
     if "[condition]" not in read_persona_full(cr.personas, cr.persona_name()):
-        open(os.path.join(cr.personas, cr.persona_name()), "a", encoding="utf-8").write(test_conditions)
+        condition_path = os.path.join(cr.personas, cr.persona_name())
+        write_file(condition_path, read_file(condition_path) + test_conditions)
     cr.user_day_fn = lambda d: (9 * 3600, 2 * 3600)               # 每天专注 9h, 空闲 2h
     stc = cr._rt_store_get()
     day_now = clock[0]
@@ -3430,8 +3438,8 @@ def _selftest():
     assert "你自己的 OIT 数据" in info_call and "【整点记录·今天】" in info_call and "<HH>" not in info_call and "格式模板" not in info_call, info_call
     # 改日程文件 → 弹"修改人设"; 聊天清的是它的人设
     cr.check_persona_changes()
-    with open(os.path.join(rt_personas, "Claudia_templates.txt"), "a", encoding="utf-8") as f:
-        f.write("\n")
+    template_path = os.path.join(rt_personas, "Claudia_templates.txt")
+    write_file(template_path, read_file(template_path) + "\n")
     ch = cr.check_persona_changes()
     assert ch and ch["name"] == "Claudia_templates.txt", ch
     cr.resolve_persona_change("Claudia_templates.txt", True)
@@ -3775,22 +3783,22 @@ def _selftest():
                 night_rule.replace("range:", "unknown:"), night_rule.replace("[/shift]", "")):
         assert shift_range(bad) is None, bad
     shift_file = os.path.join(cs.personas, routine_name_of(cs.personas, cs.persona_name()))
-    shift_original = open(shift_file, encoding="utf-8").read()
+    shift_original = read_file(shift_file)
     shift_unlimited = re.sub(r"\[shift\].*?\[/shift\]", "", shift_original, flags=re.S)
     try:
-        open(shift_file, "w", encoding="utf-8").write(shift_unlimited)
+        write_file(shift_file, shift_unlimited)
         assert cs.shift_range() == (0, 1439)
         script.append("[Yes]")
         assert cs.shift_request(18 * 60) == ""
         cs.tick(); wait(cs)
         assert cs.shifts()[-1]["s"] == 1080 and cs._rt.start_for(d2) == 1080
-        open(shift_file, "w", encoding="utf-8").write(shift_unlimited + "\n" + night_rule)
+        write_file(shift_file, shift_unlimited + "\n" + night_rule)
         assert "之间" in cs.shift_request(12 * 60)
         for m in (1320, 360, 0):
             assert cs.shift_request(m) == ""
             cs.shift_cancel()
         assert cs.shift_request(1320) == ""
-        open(shift_file, "w", encoding="utf-8").write(shift_original)
+        write_file(shift_file, shift_original)
         n_calls = len(calls)
         cs.tick()
         assert not cs.shift_asking() and len(calls) == n_calls
@@ -3803,7 +3811,7 @@ def _selftest():
         assert restored.shifts() == saved_night and restored.shift_start(d2) == 1080, "当前范围外的历史记录继续保存和同步"
         restored.flush()
     finally:
-        open(shift_file, "w", encoding="utf-8").write(shift_original)
+        write_file(shift_file, shift_original)
 
     # ---- 共时闹钟 (1.0.359): 闹钟跟随被设为共时闹钟的对象的实际起床时间 (Claudia 起床波动 [-5,0]) ----
     clock[0] = datetime(2027, 6, 1, 12, 0)

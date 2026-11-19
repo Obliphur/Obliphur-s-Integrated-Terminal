@@ -9,10 +9,10 @@ from comm.comm_prompt import prefix_prompt, native_persona_text
 import shutil
 import zlib
 import config
+from .persona_codec import MAX_PERSONA, read_file, write_file, migrate_file
 
 SHIFT_LO, SHIFT_HI = 0, 24 * 60 - 1   # 存档只校验合法钟点；新请求的范围由人设模板决定
 SHIFT_KEEP = 30                       # 每个聊天对象最多留多少条平移记录
-MAX_PERSONA = 60000
 MEM_MAX = 2000                        # 记忆卡最多多少字
 PERSONA_EXT = (".txt", ".md")
 
@@ -123,8 +123,7 @@ def seed_builtin(folder: str, only: str = None):
                 continue
             path = os.path.join(folder, name)
             if not os.path.exists(path):
-                with open(path, "w", encoding="utf-8", newline="\n") as f:
-                    f.write(body)
+                write_file(path, body)
     except OSError:
         pass
 
@@ -189,9 +188,8 @@ def read_persona(folder: str, name: str) -> str:
     if not name or name != os.path.basename(name):
         return ""
     try:
-        with open(os.path.join(folder, name), "r", encoding="utf-8-sig") as f:
-            return f.read(MAX_PERSONA).strip()
-    except (OSError, UnicodeDecodeError):
+        return read_file(os.path.join(folder, name)).strip()
+    except (OSError, ValueError):
         return ""
 ROUTINE_SUFFIX = "_templates"         # 模板文件: 人设 X.txt 的配套文件 X_templates.txt
 ROUTINE_OLD_SUFFIX = "_routine"       # 旧版日程文件名, 读取时兼容
@@ -278,7 +276,9 @@ def import_persona(folder: str, src: str) -> str:
         n += 1
         name = f"{stem} ({n}){ext}"
     try:
-        shutil.copyfile(src, os.path.join(folder, name))
+        path = os.path.join(folder, name)
+        shutil.copyfile(src, path)
+        migrate_file(path)
     except OSError:
         return ""
     return name

@@ -39,7 +39,7 @@ class CommTest {
 
     private fun seedTestTension(file: File) {
         val builtin = BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE)
-        if ("[tension]" !in file.readText()) file.appendText("\n[tension]\n" +
+        if ("[tension]" !in PersonaCodec.read(file)) PersonaCodec.write(file, PersonaCodec.read(file) + "\n[tension]\n" +
             CommRules.lines(builtin, "tension").joinToString("\n") +
             "\n[/tension]\n[tension:events]\njoint_hp_loss:[violation,15]\n[/tension:events]\n")
     }
@@ -1436,11 +1436,11 @@ class CommTest {
         c.restoreClaudia()
         assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).trim(), c.readPersona("Claudia.txt"))
         assertFalse("还原后: 三个文件都是内置版本, 不显示还原按钮", c.claudiaDiffers())
-        File(cp, "Claudia_background.txt").appendText("我加的一句")
+        File(cp, "Claudia_background.txt").let { PersonaCodec.write(it, PersonaCodec.read(it) + "我加的一句") }
         assertTrue("背景文件被改过: 显示还原按钮", c.claudiaDiffers())
         c.restoreClaudia()
         assertFalse(c.claudiaDiffers())
-        File(cp, BuiltinPersonas.EXAMPLE).appendText("用户修改")
+        File(cp, BuiltinPersonas.EXAMPLE).let { PersonaCodec.write(it, PersonaCodec.read(it) + "用户修改") }
         assertTrue("范例文件被改过: 显示还原按钮", c.claudiaDiffers())
         c.restoreClaudia()
         assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.EXAMPLE).trim(), c.readPersona(BuiltinPersonas.EXAMPLE))
@@ -1524,6 +1524,12 @@ class CommTest {
         assertEquals("Claudia.txt", c.personaName())            // 第一次运行默认选中
         assertTrue(c.readPersona("Claudia.txt").startsWith("你将扮演一位文静,冷淡"))
         assertTrue(c.readPersona("Assistant.txt").startsWith("你是名为 Assistant 的 AI 助手"))
+        for (name in listOf(BuiltinPersonas.DEFAULT, BuiltinPersonas.BACKGROUND, BuiltinPersonas.EXAMPLE, BuiltinPersonas.ROUTINE)) {
+            assertTrue(File(td, "pp/$name").readText().startsWith(PersonaCodec.MAGIC))
+            assertEquals(BuiltinPersonas.ALL.getValue(name), c.personaDoc()[name])
+        }
+        assertFalse(c.claudiaDiffers())
+        assertNull(c.checkPersonaChanges())
         c.set(persona = "")
         File(td, "pp/Claudia.txt").delete()
         File(td, "pp/Claudia_templates.txt").delete()
@@ -3598,7 +3604,7 @@ class CommTest {
         c.flush(); c2.flush()
         // 改日程文件 → 弹"修改人设"; 聊天清的是它的人设
         c.checkPersonaChanges()
-        File(td, "p/Claudia_templates.txt").appendText("\n")
+        File(td, "p/Claudia_templates.txt").let { PersonaCodec.write(it, PersonaCodec.read(it) + "\n") }
         val chg = c.checkPersonaChanges()
         assertEquals("Claudia_templates.txt", chg!!.name)
         c.resolvePersonaChange("Claudia_templates.txt", true)

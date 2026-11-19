@@ -51,7 +51,7 @@ SEGMENT = 256 * 1024                   # 每一段的大小: 小一点, 慢的�
 MIN_PARALLEL = 1024 * 1024             # 小于这个大小的文件不分段
 SEGMENT_TRIES = 3                      # 一段连着失败这么多次就放弃分段下载
 # 覆盖安装时跳过的东西: 安卓版, 版本库, 缓存
-SKIP_DIRS = {"Android version", ".git", ".github", "__pycache__", ".vscode", ".idea"}
+SKIP_DIRS = {"Android version", "personas", ".git", ".github", "__pycache__", ".vscode", ".idea"}
 
 
 def parse_version(text):
@@ -853,10 +853,12 @@ def _selftest():
         z.writestr("Obliphur-OIT-abc/app.py", "x = 1")
         z.writestr("Obliphur-OIT-abc/pages/settings_page.py", "y = 2")
         z.writestr("Obliphur-OIT-abc/Android version/build.gradle.kts", "no")
+        z.writestr("Obliphur-OIT-abc/personas/Claudia.txt", "source only")
     target = tempfile.mkdtemp()
     with open(os.path.join(target, "keep.txt"), "w") as f:
         f.write("mine")
     assert install_zip(zp, target) == 3
+    assert not os.path.exists(os.path.join(target, "personas"))
     assert install_zip(zp, target) == 0                # 内容没变: 一个都不覆盖
     with zipfile.ZipFile(zp, "a") as z:
         z.writestr("Obliphur-OIT-abc/themes/font.ttf", "v1")

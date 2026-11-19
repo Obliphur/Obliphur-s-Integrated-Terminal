@@ -47,7 +47,7 @@ MAX_PYTHON_DOWNLOAD = 80 * 1024 * 1024
 NO_WINDOW = 0x08000000
 LOG_FILE = os.path.join(tempstore.root(), "setup", "oit-setup.log")      # 日志放在 OIT 的临时文件夹里
 # 不进安装包的东西 (和 updater.SKIP_DIRS 一致, 再加上只在开发时用的)
-SKIP_TOP = {"Android version", ".git", ".github", "__pycache__", ".vscode", ".idea", "_review", "build", "dist"}
+SKIP_TOP = {"Android version", "personas", ".git", ".github", "__pycache__", ".vscode", ".idea", "_review", "build", "dist"}
 SKIP_FILES = {".gitignore", ".gitattributes", "setup.py", "make_icon.py", "closed_test.bat"}
 PYTHON_CHECK = ("import sys, tkinter, sqlite3, ssl, ctypes, winreg, json, socket, http.server; "
                 "print(sys.version_info[0], sys.version_info[1], sys.executable)")
@@ -608,6 +608,7 @@ def _selftest():
         assert "main.py" in files and "app.py" in files and "uninstall.py" in files and "registration.py" in files
         assert not any(f.startswith("Android version/") or f in ("setup.py", ".gitignore") for f in files)
         assert not any(f in ("config_local.py", "release.py", "release_token.txt") for f in files)
+        assert not any(f.startswith("personas/") for f in files)
         z = os.path.join(d, "payload.zip")
         assert build_payload(z) == len(files)
         v = payload_version(z)

@@ -4,7 +4,7 @@
 ──────────────────────────────────────
   · 模型接口沿用名单建议的那份 (ai_assist.AIConfig, 设置 → 沟通 里填); API 本身没有记忆,
     每次请求都把最近的聊天记录一起发过去.
-  · 人设 prompt 只能从外部来: 放进人设文件夹 (OIT_personas, 和数据文件夹并排, 不加密), 界面里只能选;
+  · 人设 prompt 来自人设文件夹 (OIT_personas, 和数据文件夹并排, 支持加密格式), 界面里只能选;
     选哪个不算作弊修改, 没有等待期. 文件夹里的 README.md 写着怎么写人设.
   · 发给模型的 system = 前置 prompt (工具接口 / 防提示词注入) + 人设.
   · 不再有"默认发送的信息": 整点记录 / 计时器状态 / 日历 / 合约词条只有用户手动选了 📎 附件才会发.
@@ -40,6 +40,7 @@ import routine
 from . import comm_readme
 from .comm_schedule import PROACTIVE_P, seg_kind, seg_detail, schedule_entries, schedule_loops, loop_entries, schedule_segments, pro_pct, persona_probs
 from .comm_reply import CUT_DEFAULT_MIN, CUT_MAX_MIN, HALFWIDTH_SYMBOLS, NET_DEFAULT_MIN, NET_MAX_MIN, WAIT_MAX_MIN, _BRACKET_RE, _CUT_N_RE, _CUT_RE, _EMPTY_WRAP_RE, _NET_RE, _WAIT_RE, clean_reply, cut_minutes, net_minutes, to_halfwidth
+from .persona_codec import read_file, write_file, migrate_folder, migrate_file, decode as decode_persona
 from .comm_builtin import BUILTIN_PERSONAS, DEFAULT_PERSONA, DEFAULT_BACKGROUND, DEFAULT_ROUTINE, DEFAULT_EXAMPLE, ASSISTANT_PERSONA, ASSISTANT_DETAIL_LINE, BACKGROUND_LEGACIES, ASSISTANT_SLEEP_LINE, ASSISTANT_TITLE
 from .comm_prompt import REFUSE, SHIFT_TAG, MSGS_TAG, THINK_LONG, THINK_WORDS, THINK_TIME_RE, think_text_reason, JOINT_RULE, rest_function_text, prefix_prompt, native_persona_text
 from .comm_persona import SHIFT_LO, SHIFT_HI, SHIFT_KEEP, MAX_PERSONA, MEM_MAX, PERSONA_EXT, readme_text, pid_of, love_norm, love_line, shift_norm, shift_pairs, hm_text, shift_line, mem_fields, seed_builtin, ensure_personas, list_personas, persona_title, uses_prefix, system_head, PERSONA_HEAD, persona_system, persona_labels, read_persona, ROUTINE_SUFFIX, ROUTINE_OLD_SUFFIX, COMPANION_SEP, companion_base, is_companion_name, companion_files, companions_of, routine_name_of, read_routine, read_persona_full, import_persona
@@ -209,6 +210,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         self._upgrade_background()
         self._upgrade_example()
         self._note_builtin_base()
+        migrate_folder(self.personas)
+        migrate_folder(self._persona_backup_dir)
         self._migrate_avatars()
         self._seed_default_avatars()
         last = self.messages[-1] if self.messages else None
@@ -831,17 +834,15 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         if not name or name != os.path.basename(name):
             return None
         try:
-            with open(os.path.join(self.personas, name), "r", encoding="utf-8-sig") as f:
-                return f.read(MAX_PERSONA)
-        except (OSError, UnicodeDecodeError):
+            return read_file(os.path.join(self.personas, name))
+        except (OSError, ValueError):
             return None
 
     def _write_persona_raw(self, name: str, text: str):
         try:
-            with open(os.path.join(self.personas, name), "w", encoding="utf-8", newline="\n") as f:
-                f.write(text)
+            write_file(os.path.join(self.personas, name), text)
             return True
-        except OSError:
+        except (OSError, ValueError):
             return False
 
     def _backup_persona_file(self, name: str):
@@ -851,9 +852,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             return
         try:
             os.makedirs(self._persona_backup_dir, exist_ok=True)
-            with open(self._persona_backup_path(name), "w", encoding="utf-8", newline="\n") as f:
-                f.write(text)
-        except OSError:
+            write_file(self._persona_backup_path(name), text)
+        except (OSError, ValueError):
             pass
 
     def check_persona_changes(self):
@@ -862,13 +862,13 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             return None
         try:
             os.makedirs(self._persona_backup_dir, exist_ok=True)
-        except OSError:
+        except (OSError, ValueError):
             return None
         for name in list_personas(self.personas) + companion_files(self.personas):
             path = os.path.join(self.personas, name)
             try:
                 st = os.stat(path)
-            except OSError:
+            except (OSError, ValueError):
                 continue
             sig = (st.st_mtime_ns, st.st_size)
             if self._persona_sig.get(name) == sig:
@@ -882,9 +882,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                 self._backup_persona_file(name)                 # 第一次见到这个文件: 以现在为准
                 continue
             try:
-                with open(bpath, "r", encoding="utf-8-sig") as f:
-                    old = f.read(MAX_PERSONA)
-            except (OSError, UnicodeDecodeError):
+                old = read_file(bpath)
+            except (OSError, ValueError):
                 self._backup_persona_file(name)
                 continue
             if cur != old:
@@ -896,13 +895,13 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         """accept=True: 确定, 清空这个人设的聊天; False: 还原文件, 聊天保留."""
         old = None
         try:
-            with open(self._persona_backup_path(name), "r", encoding="utf-8-sig") as f:
-                old = f.read(MAX_PERSONA)
-        except (OSError, UnicodeDecodeError):
+            old = read_file(self._persona_backup_path(name))
+        except (OSError, ValueError):
             pass
         if accept:
             cur = self._read_persona_raw(name)
             if cur is not None:
+                migrate_file(os.path.join(self.personas, name))
                 self._backup_persona_file(name)
             self._clear_persona_chat(name)
         elif old is not None:
@@ -934,9 +933,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         if not os.path.isfile(path):
             return
         try:
-            with open(path, "r", encoding="utf-8-sig") as f:
-                current = f.read(MAX_PERSONA)
-        except (OSError, UnicodeDecodeError):
+            current = read_file(path)
+        except (OSError, ValueError):
             return
         current_builtin = BUILTIN_PERSONAS[ASSISTANT_PERSONA]
         legacies = [current_builtin.replace(ASSISTANT_SLEEP_LINE, ""),
@@ -959,10 +957,9 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         if current.strip() == current_builtin.strip():
             return
         try:
-            with open(path, "w", encoding="utf-8", newline="\n") as f:
-                f.write(current_builtin)
+            write_file(path, current_builtin)
             self._backup_persona_file(ASSISTANT_PERSONA)
-        except OSError:
+        except (OSError, ValueError):
             pass
 
     # ---- Claudia: 第一次升级时覆盖没改过的文件; 之后手动改过就提醒 ----
@@ -984,7 +981,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                 backup = self._persona_backup_path(old)
                 if os.path.isfile(backup):
                     os.replace(backup, self._persona_backup_path(new))
-            except OSError:
+            except (OSError, ValueError):
                 continue
         current = self._read_persona_raw(DEFAULT_PERSONA)
         template = self._read_persona_raw(DEFAULT_ROUTINE)
@@ -1021,30 +1018,25 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         """force=False (自动升级): 日程文件只在缺 / 是更早的内置版本时才换, 用户改过的不动."""
         try:
             os.makedirs(self.personas, exist_ok=True)
-            with open(self._claudia_path(), "w", encoding="utf-8", newline="\n") as f:
-                f.write(BUILTIN_PERSONAS[DEFAULT_PERSONA])
+            write_file(self._claudia_path(), BUILTIN_PERSONAS[DEFAULT_PERSONA])
             rpath = os.path.join(self.personas, DEFAULT_ROUTINE)
             cur = self._read_persona_raw(DEFAULT_ROUTINE)
             if force or cur is None or cur.strip() in {x.strip() for x in ROUTINE_LEGACIES} or not cur.strip():
-                with open(rpath, "w", encoding="utf-8", newline="\n") as f:     # 默认人设是 Claudia + 对方的背景 + 对方的日程
-                    f.write(BUILTIN_PERSONAS[DEFAULT_ROUTINE])
+                write_file(rpath, BUILTIN_PERSONAS[DEFAULT_ROUTINE])
             bpath = os.path.join(self.personas, DEFAULT_BACKGROUND)
             cur = self._read_persona_raw(DEFAULT_BACKGROUND)
             if force or cur is None or cur.strip() in {x.strip() for x in BACKGROUND_LEGACIES} or not cur.strip():
-                with open(bpath, "w", encoding="utf-8", newline="\n") as f:
-                    f.write(BUILTIN_PERSONAS[DEFAULT_BACKGROUND])
+                write_file(bpath, BUILTIN_PERSONAS[DEFAULT_BACKGROUND])
             if force:
-                with open(os.path.join(self.personas, DEFAULT_EXAMPLE), "w", encoding="utf-8", newline="\n") as f:
-                    f.write(BUILTIN_PERSONAS[DEFAULT_EXAMPLE])
-        except OSError:
+                write_file(os.path.join(self.personas, DEFAULT_EXAMPLE), BUILTIN_PERSONAS[DEFAULT_EXAMPLE])
+        except (OSError, ValueError):
             pass
 
     def _write_backup_text(self, name: str, text: str):
         try:
             os.makedirs(self._persona_backup_dir, exist_ok=True)
-            with open(self._persona_backup_path(name), "w", encoding="utf-8", newline="\n") as f:
-                f.write(text)
-        except OSError:
+            write_file(self._persona_backup_path(name), text)
+        except (OSError, ValueError):
             pass
 
     def _migrate_claudia(self):
@@ -1073,9 +1065,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         if not os.path.isfile(path):
             return
         try:
-            with open(path, "r", encoding="utf-8-sig") as f:
-                current = f.read(MAX_PERSONA)
-        except (OSError, UnicodeDecodeError):
+            current = read_file(path)
+        except (OSError, ValueError):
             return
         if current.strip() == BUILTIN_PERSONAS[DEFAULT_PERSONA].strip():
             return
@@ -1113,9 +1104,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                 cur.strip() not in {x.strip() for x in legacies} and self._text_crc(cur) != self.cfg.get(key))):
             return
         try:
-            with open(os.path.join(self.personas, fname), "w", encoding="utf-8", newline="\n") as f:
-                f.write(builtin)
-        except OSError:
+            write_file(os.path.join(self.personas, fname), builtin)
+        except (OSError, ValueError):
             return
         self._backup_persona_file(fname)          # 记成"上次看到的样子": 不弹"修改人设"
         self._seg_sig = None
@@ -1143,7 +1133,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         path = self._claudia_path()
         try:
             st = os.stat(path)
-        except OSError:
+        except (OSError, ValueError):
             self._claudia_sig = None
             return False
         sig = (st.st_mtime_ns, st.st_size)
@@ -1151,9 +1141,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             return False
         self._claudia_sig = sig
         try:
-            with open(path, "r", encoding="utf-8-sig") as f:
-                text = f.read(MAX_PERSONA)
-        except (OSError, UnicodeDecodeError):
+            text = read_file(path)
+        except (OSError, ValueError):
             return False
         builtin = BUILTIN_PERSONAS[DEFAULT_PERSONA]
         if text.strip() == builtin.strip():                    # 已经还原 / 本来就是内置版本
@@ -1211,9 +1200,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         out = {}
         for name in list_personas(self.personas) + companion_files(self.personas):
             try:
-                with open(os.path.join(self.personas, name), "r", encoding="utf-8-sig") as f:
-                    out[name] = f.read(MAX_PERSONA)
-            except (OSError, UnicodeDecodeError):
+                out[name] = read_file(os.path.join(self.personas, name))
+            except (OSError, ValueError):
                 pass
         return out
 
@@ -1221,7 +1209,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         """别的设备同步来的人设文件: 新增 / 覆盖 / 删除 (None). 现在选着的人设受影响时重新读日程."""
         try:
             os.makedirs(self.personas, exist_ok=True)
-        except OSError:
+        except (OSError, ValueError):
             return
         dirty = False
         for name, text in dict(changes or {}).items():
@@ -1237,27 +1225,26 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                         dirty = True
                     try:
                         os.remove(self._persona_backup_path(name))      # 备份也删掉 (以后同名新文件算第一次见到)
-                    except OSError:
+                    except (OSError, ValueError):
                         pass
                     continue
-                new = str(text)[:MAX_PERSONA]
+                new = decode_persona(str(text))
                 try:
-                    with open(path, "r", encoding="utf-8-sig") as f:
-                        old = f.read(MAX_PERSONA)
-                except (OSError, UnicodeDecodeError):
+                    old = read_file(path)
+                except (OSError, ValueError):
                     old = None
                 if old != new:
-                    with open(path, "w", encoding="utf-8", newline="\n") as f:
-                        f.write(new)
+                    write_file(path, new)
                     dirty = True
+                else:
+                    migrate_file(path)
                 try:
-                    with open(self._persona_backup_path(name), "r", encoding="utf-8-sig") as f:
-                        bk = f.read(MAX_PERSONA)
-                except (OSError, UnicodeDecodeError):
+                    bk = read_file(self._persona_backup_path(name))
+                except (OSError, ValueError):
                     bk = None
                 if old != new or bk != new:                     # 同步来的不是"手动改的": 备份跟着换 (文件已经一样、只有备份是旧的 —— 老版本留下的 —— 也换), 不弹"人设被修改"
                     self._write_backup_text(name, new)
-            except OSError:
+            except (OSError, ValueError):
                 pass
         if dirty:
             self._seg_sig = None

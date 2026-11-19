@@ -65,7 +65,7 @@ def _readme_zh(prefix: str) -> str:
         "    合约记录难度:[20,30]      不选择的词条:{无言为真,持久战}      违规词条:{通道阻塞,细化规范}\n"
         "  {} 里没写概率的项平分其他项剩下的概率; X% 是\"聊天\"的概率, 随用户在这一格 (一小时, 细化规范时半小时) 里发的消息数变: 0 条 0%, >= 20 条 50%, 中间均匀分配;\n"
         "  标了(基准数据)的列表, 每一项的概率每天按 [-2%, 2%] 的比例波动. 算过的数据存在数据目录里; 好几天没被调用时, 缺的部分按这些规则自动补齐.\n\n"
-        "文件格式: 一个 .txt 或 .md 文件就是一个人设, 文件名就是人设的名字, 整个文件的内容就是人设prompt.\n"
+        "文件格式: 一个 .txt 或 .md 文件就是一个人设, 文件名就是人设的名字, 整个文件的内容就是人设prompt. Claudia 及其配套文件可使用 OIT-PERSONA-ENC:1 加密格式; 用户自定义加密人设请使用相同格式.\n"
         "放进这个文件夹后, 在 设置 → 沟通 里选择它 (也可以用\"导入\"按钮复制进来).\n")
 
 
@@ -132,5 +132,5 @@ def _readme_en(prefix: str) -> str:
         "  (an hour, or half an hour with 细化规范): 0 messages -> 0%, >= 20 -> 50%, evenly in between. Lists marked (基准数据) fluctuate every item by [-2%, 2%] per day.\n"
         "  Computed data is saved in the data folder; after several days without a call, the missing part is filled in by these rules.\n\n"
         "File format: one .txt or .md file is one persona; the file name is the persona's name, and the whole file is "
-        "the persona prompt.\n"
+        "the persona prompt. Claudia files and companions may use the OIT-PERSONA-ENC:1 encrypted format; custom encrypted personas may use it too.\n"
         "Put it in this folder, then choose it in Settings → Chat (or copy it in with \"Import\").\n")
