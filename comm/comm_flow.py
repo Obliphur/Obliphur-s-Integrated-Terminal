@@ -85,7 +85,7 @@ class FlowMixin:
         """网络开着吗 (开着时发给模型的请求带上联网搜索)."""
         return self.net_phase() == "on"
 
-    def _net_apply(self, minutes: float) -> bool:
+    def _net_apply(self, minutes: float, immediate: bool = False) -> bool:
         """对方申请限时网络. 申请中 / 冷却期里的申请无效; 已经在开着的时候: 不用再等, 也不延长,
         但会马上再搜一次 (见 _check_net 的 "again")."""
         ph = self.net_phase()
@@ -99,8 +99,9 @@ class FlowMixin:
             self.log(f"NET 申请 {minutes:g} 分钟: 无效 ({ph})")
             return False
         ms = self._ms()
-        self._net_set({"ts": ms, "pid": self.pid, "n": float(minutes), "due": ms + NET_DELAY * 1000, "st": "wait", "tries": 0})
-        self.log(f"NET 申请 {minutes:g} 分钟: {NET_DELAY} 秒后搜索")
+        delay = 0 if immediate else NET_DELAY
+        self._net_set({"ts": ms, "pid": self.pid, "n": float(minutes), "due": ms + delay * 1000, "st": "wait", "tries": 0})
+        self.log(f"NET 申请 {minutes:g} 分钟: {'立即' if immediate else f'{NET_DELAY} 秒后'}搜索")
         return True
 
     def _net_failed(self):

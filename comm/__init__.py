@@ -1320,7 +1320,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         elif not err and kind in NET_KINDS:
             net_n = net_minutes(reply)                  # 规则 XIV: 申请限时网络 (这条话照常显示)
             if net_n is not None:
-                self._net_apply(net_n)
+                self._net_apply(net_n, immediate=bool(args_of(reply).get("network_now")))
         cut = cut_minutes(reply) if not err else None
         if cut is not None:
             self._cut_apply(cut)                        # 被骚扰: [cut off][N] 切断谈话 N 分钟 (这条话照常显示, 有的话)

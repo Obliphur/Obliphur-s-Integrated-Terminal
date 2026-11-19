@@ -58,7 +58,7 @@
 | `oit_query` | `modules` 数组，支持原十个模块及 `condition`、`messages`；逐项返回 `own_data`、`reference_template`、条件进度或记录数量。自己的日程数据不是用户数据，参考模板也不是真实数据；不可用数据返回空且不可编造。 |
 | `oit_joint_offer` | 无参数；校验请求类型、当前联合行动及日程，返回编号词条库和候选时间，失败返回原因。 |
 | `oit_joint_select` | `terms` 整数编号数组；必须先获取候选，继续沿用原冲突、前置、禁选和时段校验。返回计划或失败；成功状态 `queued_until_message_visible` 表示仍须提交邀请正文，邀请随消息实际显示生效。 |
-| `oit_reply` | `text` 为本次正式回复；可选 `refuse`、`wait_minutes`、`cut_minutes`、`network_minutes`、`share_data`、`answer`（yes / no）、`accept_relationship`、`tension`（index / condition / gain 数组）及 `end_burst`。拒绝不能同时携带正文或操作。字段作为待提交请求，由主线程按当前请求类型、epoch、合约及消息展示规则执行；不能把请求、排队邀请说成已完成或用户已接受。 |
+| `oit_reply` | `text` 为本次正式回复；可选 `refuse`、`wait_minutes`、`cut_minutes`、`network_minutes`、`network_now`、`share_data`、`answer`（yes / no）、`accept_relationship`、`tension`（index / condition / gain 数组）及 `end_burst`。`network_now` 仅用于明确演奏请求的曲库外曲目搜索，跳过联网申请等待。拒绝不能同时携带正文或操作。字段作为待提交请求，由主线程按当前请求类型、epoch、合约及消息展示规则执行；不能把请求、排队邀请说成已完成或用户已接受。 |
 | `oit_search` | `query` 字符串；只在限时网络已开通时声明和执行，沿用原服务商搜索后端：官方 Claude / Gemini / ChatGPT 使用原搜索路径，其他兼容接口仍走本机 Bing。结果通过原生工具结果返回，最多连续搜索三轮。 |
 | `oit_music_catalog` | 无参数；返回本机曲目编号、曲名、作曲家、情绪标签、来源与许可，不返回文件路径。 |
 | `oit_music_select` | `id` 字符串；本轮必须先查过曲库。程序核对曲目仍存在，在最终回复通过校验且展示时保存为当前选曲；不会自动播放。 |
@@ -342,6 +342,7 @@
 - 默认曲库仅供 Claudia 使用，其他人设初始曲库为空。两端均只向 AI 返回当前人设的曲目；曲库不在 UI 展示，也没有编辑、删除或改配入口。新增曲目只能由用户上传，归上传时选中的人设，其他人设不可查询、选择或生成。Windows 在设置 → 额外功能上传，Android 在沟通工具栏使用乐谱按钮上传。支持 MuseScore MSCX / MSCZ 和 MusicXML / MXL，单文件上限 50 MiB。
 - 两端默认资源位于 `music_library/defaults/`；上传位于 `music_library/uploads/<人设文件名SHA256前20位>/`，选曲按人设独立保存。旧版共享上传与选曲保留给 Claudia。曲目文件、归属和选曲仅在本机保存，不随聊天同步。
 - AI 先用 `oit_music_catalog` 浏览最多 80 首，再用 `oit_music_select` 提交曲目编号。选择作为主线程待提交动作，在最终回复通过校验并成功提交时保存；AI 可据曲名、作曲家和标签判断是否适合当前语境。选曲只记录当前曲目，不代表已经播放。
+- 用户明确要求演奏曲名明确但不在当前曲库的曲目时，AI 可在 `oit_reply` 同时申请 3 分钟联网并设置 `network_now=true`，跳过普通申请的 2 分钟等待；联网额度和既有申请、联网中或冷却状态仍有效。联网搜索最多持续 3 分钟；找到可确认的合法乐谱来源后请用户导入，不直接下载或加入本机曲库。3 分钟内找不到则结束搜索并请用户提供乐谱。模糊曲名或仅要求选曲不触发搜索。
 - 33首常驻曲目包含舒曼《童年情景》13首、德彪西《贝加莫组曲》4首、柴可夫斯基《四季》3首，以及格里格《抒情小品》7首、莫扎特钢琴奏鸣曲乐章4首、李斯特《巡礼之年》5首和勃拉姆斯《摇篮曲》1首。另有格里格《Erotikk》和李斯特三首彼特拉克十四行诗，共4首亲密主题曲目。DCMLab 曲目来自对应曲集固定 Git 提交的校对谱，采用 CC BY-NC-SA 4.0；勃拉姆斯曲目来自 OpenScore Lieder 固定 Git 提交，采用 CC0 1.0；来源、许可和 SHA-256 记录在 `defaults/music_library/catalog.json`，上游许可文件随资源保存。
 - 4首亲密主题曲目只属于 Claudia；只有 OIT 已记录亲密关系且当前 Valence ≥ 70 时才会出现在曲库。目录、选曲、MIDI 生成和演奏准备都会复核条件，实际播放时再次检查；关系未确立、Valence 低于门槛或使用其他人设时，直接传曲目编号也不可访问。Valence 回落后，之前保存的受限选曲也不能继续使用。
 - 应用数据重置会删除所有人设的上传曲目和选曲状态；重新初始化时仅 Claudia 恢复内置曲库，其他人设为空。清空某个聊天不会删本机曲库。

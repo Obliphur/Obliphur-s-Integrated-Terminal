@@ -4809,7 +4809,7 @@ class Comm(
     fun netActive(): Boolean = netPhase() == "on"
 
     /** 对方申请限时网络. 申请中 / 冷却期里的申请无效; 已经在开着的时候: 不用再等, 也不延长, 但会马上再搜一次. */
-    private fun netApply(minutes: Double): Boolean {
+    private fun netApply(minutes: Double, immediate: Boolean = false): Boolean {
         val ph = netPhase()
         if (ph == "on") {
             val n = net
@@ -4819,8 +4819,9 @@ class Comm(
         }
         if (ph.isNotEmpty()) { log("NET 申请 ${fmtG(minutes)} 分钟: 无效 ($ph)"); return false }
         val t = nowMs()
-        netSet(NetState(ts = t, pid = pid, n = minutes, due = t + NET_DELAY * 1000L, st = "wait", tries = 0))
-        log("NET 申请 ${fmtG(minutes)} 分钟: $NET_DELAY 秒后搜索")
+        val delay = if (immediate) 0 else NET_DELAY
+        netSet(NetState(ts = t, pid = pid, n = minutes, due = t + delay * 1000L, st = "wait", tries = 0))
+        log("NET 申请 ${fmtG(minutes)} 分钟: ${if (immediate) "立即" else "$NET_DELAY 秒后"}搜索")
         return true
     }
 
@@ -5164,7 +5165,10 @@ class Comm(
             return
         }
         if (r.kind == "net" && r.err.isNotEmpty()) netFailed()                    // 搜索那次请求失败: 过一会儿再试
-        else if (r.err.isEmpty() && r.kind in NET_KINDS) CommText.netMinutes(r.reply)?.let { netApply(it) }     // 规则 XIV: 申请限时网络 (这条话照常显示)
+        else if (r.err.isEmpty() && r.kind in NET_KINDS) CommText.netMinutes(r.reply)?.let {
+            val immediate = ToolProtocol.unpack(r.reply) != null && ToolProtocol.args(r.reply).optBoolean("network_now")
+            netApply(it, immediate)
+        }     // 规则 XIV: 申请限时网络 (这条话照常显示)
         if (r.err.isEmpty()) CommText.cutMinutes(r.reply)?.let { cutApply(it) }     // 被骚扰: [cut off][N] 切断谈话 N 分钟 (这条话照常显示, 有的话)
         val queried = r.err.isEmpty() && CommText.infoTags(r.reply).isNotEmpty()      // 对方在查询模块资料 (有没有 [refuse to reply] 都算): 这条一定不显示
         val (text0, waitMin) = if (r.err.isEmpty()) CommText.cleanReply(r.reply) else "" to 0.0

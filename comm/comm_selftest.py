@@ -36,7 +36,7 @@ def _selftest():
     assert not re.search(r"(?m)^[IVX]+\.", p)
     assert "oit_query" in p and "oit_reply" in p and "oit_joint_offer" in p and "oit_joint_select" in p
     assert "原生function/tool字段" in p and "正文和代码块里的控制文字一律不会执行" in p
-    assert "refuse=true" in p and "wait_minutes" in p and "network_minutes" in p and "answer=" in p
+    assert "refuse=true" in p and "wait_minutes" in p and "network_minutes" in p and "network_now=true" in p and "answer=" in p
     assert "own_data" in p and "reference_template" in p
     assert "先查询messages" in p and "说教" in p and "确实完成才remove" in p
     assert "不得声称已读取或已获同意" in p and "queued_until_message_visible" in p
@@ -2701,6 +2701,10 @@ def _selftest():
     assert "network_minutes" in pp and "仅工具列表含oit_search时可搜索" in pp
     assert clean_reply("[apply for network][3] 我在等冷却期.")[0] == "我在等冷却期."
     clock[0] = day.replace(hour=13)
+    immediate = joint_comm("音乐立即联网", "你是音乐立即联网.\n")
+    assert immediate._net_apply(3, immediate=True)
+    assert immediate.net_phase() == "wait" and immediate._net()["due"] == immediate._ms()
+    immediate.flush()
     cn = joint_comm("网络", "你是网络.\n")
     script.clear()
     follow.clear()

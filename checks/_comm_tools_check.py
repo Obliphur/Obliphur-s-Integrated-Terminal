@@ -608,6 +608,7 @@ if __name__ == "__main__":
     assert {s["name"] for s in specs} >= {"oit_music_catalog", "oit_music_select", "oit_music_perform", "oit_memory_edit"}
     tool = next(s for s in specs if s["name"] == "oit_reply")
     assert "聊天只显示text" in protocol and "wait_minutes" in tool["description"] and "不会显示给用户" in tool["description"]
+    assert "network_now" in tool["parameters"]["properties"] and "最多3分钟" in protocol
     legacy = "先输入[messages]查询；回复 [Yes]；结尾写 [waiting for reply]:[5]\n[condition]\nmessages:2\n[/condition]\n"
     migrated = comm.native_persona_text(legacy)
     assert "输入[messages]" not in migrated and 'answer="yes"' in migrated and "wait_minutes" in migrated
