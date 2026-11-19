@@ -101,7 +101,7 @@ class ChatMixin:
 
     def unanswered(self) -> bool:
         vis = [m for m in self.messages if m["role"] in ("me", "ai")]          # 藏起来的回复也算回复过了
-        return bool(vis) and vis[-1]["role"] == "me"
+        return bool(vis) and vis[-1]["role"] == "me" and not vis[-1].get("no_reply")
 
     def _newer_me(self, ts: int) -> bool:
         """最近一次请求发出之后, 用户又发了消息 (那次请求里没带上)."""

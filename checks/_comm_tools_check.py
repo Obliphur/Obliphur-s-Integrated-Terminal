@@ -78,6 +78,8 @@ def transport_checks():
 
     for name, args in [("unknown", {}), ("oit_reply", {"network_minutes": True}),
                        ("oit_reply", {"network_minutes": 31}), ("oit_reply", {"refuse": True, "text": "正文"}),
+                       ("oit_reply", {"silent": True, "text": "正文"}), ("oit_reply", {"silent": True, "refuse": True}),
+                       ("oit_reply", {"silent": True, "wait_minutes": 1}),
                        ("oit_query", {"modules": ["private_data"]}), ("oit_joint_select", {"terms": [1.5]}),
                        ("oit_reply", {"run_shell": "anything"})]:
         try:
@@ -142,6 +144,56 @@ wait_minutes="10"/>"""
         else:
             raise AssertionError("未开通网络仍搜索")
         assert not search.called
+
+
+def silence_checks():
+    """沉默不生成气泡、不重试、不结算情绪；重启与同步后仍记为已处理。"""
+    root = Path(tempstore.mkdtemp("comm-silence"))
+    packets = []
+    def fake(*args, **kwargs):
+        packets.append(args)
+        return call("oit_reply", {"silent": True})
+    c = comm.Comm(str(root / "data"), str(root / "personas"), chat_fn=fake)
+    c.ai.set_profile("deepseek", api_key="local")
+    c.ai.provider = "deepseek"
+    c.set_cfg(persona="Assistant.txt")
+    c.state_fn = lambda: "idle"
+    c._away_kind = lambda: ""
+    assert c.send("好的") == ""
+    until = time.monotonic() + 5
+    while c.busy and time.monotonic() < until:
+        time.sleep(0.01)
+        c.tick()
+    assert not c.busy and not c.error and len(packets) == 1
+    message = c.messages[-1]
+    assert message["role"] == "me" and message["no_reply"] and not c.unanswered()
+    assert not c.cfg["retry"] and not c.cfg["interaction"]["pending"]
+    assert len(c.visible()) == 1 and c.unread == 0
+    key = f"m:{c.pid}:{message['uid']}"
+    doc = c.sync_doc()
+    assert doc[key]["no_reply"] is True
+    peer = comm.Comm(str(root / "peer"), str(root / "peer-personas"))
+    old_message = dict(doc[key]); old_message.pop("no_reply")
+    peer.apply_doc({key: old_message})
+    peer.apply_doc({key: doc[key]})
+    peer.apply_doc({key: old_message})
+    assert peer._state_of(c.pid)["messages"][-1]["no_reply"], "已有消息合并沉默标记，旧设备不能撤回"
+    c.flush()
+    restored = comm.Comm(str(root / "data"), str(root / "personas"), chat_fn=fake)
+    assert not restored.unanswered() and not restored.cfg["retry"], "重启不重新请求客套话"
+    clock = c.now()
+    c.now = lambda: clock + timedelta(minutes=11)
+    c.tick()
+    assert len(packets) == 1, "沉默不进入十分钟拒绝重试"
+    newer = c._add("me", "我有一个问题")
+    assert c.unanswered() and not newer.get("no_reply"), "新消息仍需处理"
+    c._finish("user", None, call("oit_reply", {"silent": True}), "", c._epoch - 1)
+    assert not newer.get("no_reply"), "过期沉默不能处理新消息"
+    c._finish("user", None, call("oit_reply", {"silent": True}), "network error", c._epoch)
+    assert not newer.get("no_reply"), "失败沉默不能处理新消息"
+    c._finish("user", None, call("oit_reply", {"silent": True}), "", c._epoch)
+    assert c.unanswered() and not newer.get("no_reply"), "旧请求的沉默不能吞掉请求后新增的用户消息"
+    c.flush(); restored.flush(); peer.flush()
 
 
 def state_checks():
@@ -595,6 +647,7 @@ def music_commit_checks():
 if __name__ == "__main__":
     tempstore.session("comm-tools-check")
     transport_checks()
+    silence_checks()
     state_checks()
     memory_tool_checks()
     offense_checks()

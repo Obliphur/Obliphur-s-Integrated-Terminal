@@ -187,8 +187,10 @@ def _parse_response(data, protocol, plain_text):
         if name not in BY_NAME:
             raise ValueError("未知工具")
         validate(args, BY_NAME[name]["parameters"])
-        if name == "oit_reply" and args.get("refuse") and any(v for k, v in args.items() if k != "refuse"):
-            raise ValueError("拒绝回复不能同时提交正文或操作")
+        if name == "oit_reply":
+            for exclusive in ("refuse", "silent"):
+                if args.get(exclusive) and any(v for k, v in args.items() if k != exclusive):
+                    raise ValueError("拒绝或沉默回复不能同时提交正文或操作")
     except (ValueError, TypeError, KeyError) as e:
         raise AIError("format", "工具参数格式错误，请检查模型的工具调用支持.") from e
     return pack(_clean_leaked_reply(args.get("text", "")) if name == "oit_reply" else "", name, args, wire)

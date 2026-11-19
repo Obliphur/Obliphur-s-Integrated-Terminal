@@ -216,7 +216,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         self._seed_default_avatars()
         last = self.messages[-1] if self.messages else None
         rt = self.cfg.get("retry") or {}
-        if last and last["role"] == "me" and self._age(last) < 6 * 3600 and not rt.get("at"):
+        if last and last["role"] == "me" and not last.get("no_reply") and self._age(last) < 6 * 3600 and not rt.get("at"):
             # 上次关程序时还没收到回复: 1 分钟后让 (最后操作的) 设备再试一次
             self.cfg["retry"] = {"at": self._ms() - RETRY_GAP * 1000 + 60000, "n": int(rt.get("n") or 0)}
         self.reload_schedule("启动")
@@ -554,6 +554,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                     e["due"] = int(m["due"])
                 if m.get("reply_after"):
                     e["reply_after"] = int(m["reply_after"])
+                if m["role"] == "me" and m.get("no_reply"):
+                    e["no_reply"] = True
                 doc[f"m:{pid}:{m['uid']}"] = e
             if st["pro_key"]:
                 doc[f"pro:{pid}"] = st["pro_key"]
@@ -649,10 +651,19 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                 except (TypeError, ValueError):
                     continue
                 st, _d, known = st_of(pid)
-                if uid in known or ts <= st["clear_ts"] or val.get("role") not in ("me", "ai", "sys"):
+                if ts <= st["clear_ts"] or val.get("role") not in ("me", "ai", "sys"):
+                    continue
+                if uid in known:
+                    if val.get("role") == "me" and val.get("no_reply") is True:
+                        existing = next((m for m in st["messages"] if m["uid"] == uid and m["role"] == "me"), None)
+                        if existing is not None and not existing.get("no_reply"):
+                            existing["no_reply"] = True
+                            touched[pid][1] = True
                     continue
                 m = {"id": self._take_id(), "uid": uid, "role": val["role"], "text": str(val.get("text") or ""),
                      "at": str(val.get("at") or ""), "ts": ts}
+                if m["role"] == "me" and val.get("no_reply") is True:
+                    m["no_reply"] = True
                 if val.get("api"):
                     m["api"] = str(val["api"])
                 if isinstance(val.get("wait"), (int, float)) and 0 < val["wait"] <= WAIT_MAX_MIN:
@@ -1309,6 +1320,30 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             self.save_chat()
             self._changed()
             if self.leader() and not self._ai_problem():
+                self._ask_user()
+            return
+        if not err and kind in ("user", "retry", "proactive", "chase", "followup") and args_of(reply).get("silent") is True:
+            # 主动保持沉默是已处理，不沿用「暂时不便」的重试，也不结算情绪或提交工具操作。
+            self._reply_discard(batch)
+            self.error = ""
+            self._catchup = False
+            if kind in ("user", "retry"):
+                d = self._interaction_prepare()
+                for message in self.messages:
+                    if message["role"] == "me" and int(message.get("ts") or 0) <= self._req_ts:
+                        message["no_reply"] = True
+                        d["pending"].pop(message["uid"], None)
+                        self._music_discourtesy_uids.discard(message["uid"])
+                self._interaction_set(d)
+                if not self._newer_me(self._req_ts):
+                    self.cfg["retry"] = {}
+            self._active_reply_after = 0
+            self.save_cfg()
+            self.save_chat()
+            self._changed()
+            self._push()
+            again, self._again = self._again, False
+            if again and self.unanswered() and self.leader() and not self._ai_problem():
                 self._ask_user()
             return
         tension_reply = reply

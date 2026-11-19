@@ -67,6 +67,21 @@ class ToolProtocolTest {
         assertTrue(CommText.infoTags(reply).isEmpty())
     }
 
+    @Test fun silentReplyIsExclusive() {
+        for (protocol in listOf("openai", "anthropic", "gemini")) {
+            val reply = call("oit_reply", JSONObject().put("silent", true), protocol)
+            assertTrue(ToolProtocol.args(reply).getBoolean("silent"))
+            assertEquals("" to 0.0, CommText.cleanReply(reply))
+            assertFalse(CommText.isRefusal(reply))
+            for (extra in listOf("text" to "正文", "refuse" to true, "wait_minutes" to 1)) {
+                try {
+                    call("oit_reply", JSONObject().put("silent", true).put(extra.first, extra.second), protocol)
+                    fail("沉默不能同时提交正文或操作")
+                } catch (_: AiError) { }
+            }
+        }
+    }
+
     @Test fun leakedReplyMarkupShowsOnlyText() {
         val leaked = """<oit_reply
             text="Reply text"

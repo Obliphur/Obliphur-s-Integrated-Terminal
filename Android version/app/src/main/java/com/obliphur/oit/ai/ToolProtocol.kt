@@ -160,6 +160,7 @@ object ToolProtocol {
             val spec = (0 until specs.length()).map { specs.getJSONObject(it) }.firstOrNull { it.getString("name") == name } ?: error("未知工具")
             validate(args, spec.getJSONObject("parameters"))
             require(!args.optBoolean("refuse") || args.keys().asSequence().all { it == "refuse" || args.opt(it) == false || args.opt(it) == "" || (args.opt(it) as? JSONArray)?.length() == 0 }) { "拒绝回复不能同时提交正文或操作" }
+            require(!args.optBoolean("silent") || args.keys().asSequence().all { it == "silent" || args.opt(it) == false || args.opt(it) == "" || (args.opt(it) as? JSONArray)?.length() == 0 }) { "沉默回复不能同时提交正文或操作" }
             return pack(if (name == "oit_reply") cleanLeakedReply(args.optString("text")) else "", name, args, wire)
         } catch (e: AiError) { throw e }
         catch (e: Exception) { throw AiError("format", "工具参数格式错误，请检查模型的工具调用支持.") }

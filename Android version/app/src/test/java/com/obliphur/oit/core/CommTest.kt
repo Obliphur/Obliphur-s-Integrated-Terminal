@@ -125,6 +125,46 @@ class CommTest {
         c.flush(); c.voice.close()
     }
 
+    /** 客套收尾保持沉默，重启与同步不重试，新消息仍正常回复。 */
+    @Test fun silentReplySurvivesRestartAndSync() {
+        val tempRoot = File(System.getProperty("java.io.tmpdir"), "OIT").also { it.mkdirs() }
+        val td = Files.createTempDirectory(tempRoot.toPath(), "silent-").toFile()
+        val data = File(td, "d").also { it.mkdirs() }
+        val personas = File(td, "p")
+        val c = comm(data, personas)
+        c.set(persona = "Assistant.txt")
+        c.snapshot = { CommSnap("idle") }
+        script.add(ToolProtocol.pack(name = "oit_reply", args = JSONObject().put("silent", true)))
+        assertEquals("", c.send("好的")); wait(c)
+        assertEquals(1, calls.size)
+        assertEquals(1, c.visible().size)
+        assertTrue(c.messages.last().noReply)
+        val doc = c.syncDoc()
+        val key = doc.keys.first { it.startsWith("m:") }
+        val value = doc[key] as JSONObject
+        assertTrue(value.getBoolean("no_reply"))
+        val peer = comm(File(td, "peer").also { it.mkdirs() }, File(td, "peer-personas"))
+        peer.set(persona = "Assistant.txt")
+        val old = JSONObject(value.toString()).apply { remove("no_reply") }
+        peer.applyDoc(mapOf(key to old))
+        peer.applyDoc(mapOf(key to value))
+        peer.applyDoc(mapOf(key to old))
+        assertTrue(peer.messages.last().noReply)
+        c.flush()
+        val restored = comm(data, personas)
+        restored.snapshot = { CommSnap("idle") }
+        clock = clock.plusMinutes(11)
+        restored.tick(); c.tick()
+        assertFalse(restored.busy)
+        assertEquals(1, calls.size)
+        script.add(ToolProtocol.pack("我在听。", "oit_reply", JSONObject().put("text", "我在听。")))
+        assertEquals("", c.send("我有一个问题")); wait(c)
+        assertEquals("我在听。", c.visible().last().text)
+        assertFalse(c.messages.last { it.role == "me" }.noReply)
+        c.flush(); restored.flush(); peer.flush()
+        c.voice.close(); restored.voice.close(); peer.voice.close()
+    }
+
     /** 所有人设记录冒犯；Claudia门禁、清空保留和跨端原谅墓碑。 */
     @Test fun offensesAndRelationshipGates() {
         val tempRoot = File(System.getProperty("java.io.tmpdir"), "OIT").also { it.mkdirs() }
