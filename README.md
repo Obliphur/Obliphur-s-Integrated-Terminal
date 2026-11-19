@@ -82,6 +82,10 @@ python main.py
 
 各模块可单独自检,如 `python -m net_guard`, `python settings_manager.py`...
 
+## 许可证
+
+除另有说明外,本项目代码采用 [MIT License](LICENSE).第三方依赖和资源可能适用各自的许可证,请查看随附的许可文件.
+
 ### 项目结构
 
 ```text

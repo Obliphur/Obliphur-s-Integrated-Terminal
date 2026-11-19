@@ -80,6 +80,10 @@ Each time the program opens it checks for updates from the latest GitHub release
 
 Each module can run its own self-test, for example `python -m net_guard`, `python settings_manager.py`...
 
+## License
+
+Unless otherwise stated, the code in this project is licensed under the [MIT License](LICENSE). Third-party dependencies and assets may have their own licenses; see their accompanying license files.
+
 ### Project structure
 
 ```text
