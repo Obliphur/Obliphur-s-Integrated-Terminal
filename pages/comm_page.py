@@ -5,6 +5,7 @@
 
 import os
 import json
+import sys
 import tkinter as tk
 from datetime import datetime
 from tkinter import ttk
@@ -537,11 +538,11 @@ class CommPage(CommVoiceMixin, tk.Frame):
         return None
 
     def _review_performance(self):
-        """选择参考谱与演奏文件，先本机对齐 MIDI，再由独立评判模型整理后交给聊天模型。"""
+        """选择参考谱和演奏文件，或录制实时 MIDI，再交给现有评判流程。"""
         from tkinter import filedialog
         dlg = Modal(self.winfo_toplevel(), tr("演奏评判"), width=config.scaled(560), height=config.scaled(280))
         paths = {"reference": "", "performance": ""}
-        labels = {}
+        recorded_midi = None
         body = tk.Frame(dlg.body, bg=COLORS["bg"])
         body.pack(fill="both", expand=True)
         for col, (key, title) in enumerate((("reference", "参考乐谱 / MIDI"), ("performance", "演奏 MIDI / 音频"))):
@@ -553,19 +554,31 @@ class CommPage(CommVoiceMixin, tk.Frame):
             label = tk.Label(frame, text=tr("未选择"), bg=COLORS["bg"], fg=COLORS["text_dim"],
                              font=config.font("small"), anchor="w", wraplength=config.scaled(220), justify="left")
             label.pack(fill="x", pady=(0, 10))
-            labels[key] = label
             def choose(k=key, lab=label):
+                nonlocal recorded_midi
                 exts = "*.mid *.midi *.mp3 *.wav *.flac *.ogg *.png *.jpg *.jpeg *.pdf *.tif *.tiff *.bmp"
                 path = filedialog.askopenfilename(parent=dlg, title=tr("选择文件"),
                     filetypes=[(tr("支持的音乐文件"), exts), (tr("所有文件"), "*.*")])
                 if path:
                     paths[k] = path
+                    if k == "performance":
+                        recorded_midi = None
                     lab.config(text=os.path.basename(path))
             ttk.Button(frame, text=tr("选择文件"), command=choose).pack(anchor="w")
+            if key == "performance" and sys.platform == "win32":
+                def record(lab=label):
+                    nonlocal recorded_midi
+                    from pages.midi_input_dialog import record_midi
+                    data = record_midi(dlg)
+                    if data:
+                        recorded_midi = data
+                        paths["performance"] = ""
+                        lab.config(text=tr("已录制 MIDI"))
+                ttk.Button(frame, text=tr("录制 MIDI…"), command=record).pack(anchor="w", pady=(8, 0))
 
         def start():
-            if not paths["reference"] or not paths["performance"]:
-                toast.warn(tr("请先选择参考文件和演奏文件."))
+            if not paths["reference"] or not (paths["performance"] or recorded_midi):
+                toast.warn(tr("请先选择参考文件和演奏文件，或录制 MIDI."))
                 return
             target_pid = self.comm.pid
             target_config = self.comm.current_config()
@@ -589,7 +602,12 @@ class CommPage(CommVoiceMixin, tk.Frame):
                         music.convert(path, out)
                         return out
                     reference = as_midi(paths["reference"], "reference")
-                    performance = as_midi(paths["performance"], "performance")
+                    if recorded_midi:
+                        from pathlib import Path
+                        performance = Path(tmp, "performance.mid")
+                        performance.write_bytes(recorded_midi)
+                    else:
+                        performance = as_midi(paths["performance"], "performance")
                     data = music.compare_midi(reference, performance)
                     ai_assist.check_profile(review_profile)
                     review = ai_assist.chat_messages(review_profile,
@@ -789,7 +807,7 @@ class CommPage(CommVoiceMixin, tk.Frame):
                 ("🕰", "起点平移", "请求对方平移日程起点, 允许范围由人设模板决定, 同意后明天起生效."),
                 ("📎", "图片消息", "选择图片，或在输入框按 Ctrl+V 粘贴剪贴板图片，然后随消息发送."),
                 ("🖼", "识别字体", "选一张图片，把识别出的文字放进聊天框供你编辑；用 📎 发送图片本身."),
-                ("🎼", "演奏评判", "左边选参考乐谱或 MIDI，右边选演奏 MIDI 或音频；分析摘要会交给聊天对象."),
+                ("🎼", "演奏评判", "左边选参考乐谱或 MIDI，右边选演奏文件或录制 MIDI。分析摘要会交给聊天对象."),
                 ("🤝", "联合行动", "邀请对方一起做一次合约: 在合约页选词条, 输入开始时间; 对方回 [Yes] 就按约开始."))
         area = ScrollArea(dlg.body, height=config.scaled(400), bg=bg)
         area.pack(fill="both", expand=True)

@@ -17,6 +17,15 @@ def notes(path):
                    int(note["track"]) if "track" in fields else 0) for note in array)
 
 
+def from_first_note(events):
+    """移除开头的等待时间，保留首音以后的停顿与各音时值。"""
+    if not events:
+        return []
+    start = events[0][0]
+    return [(onset - start, duration, pitch, velocity, track)
+            for onset, duration, pitch, velocity, track in events]
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--reference", required=True)
@@ -24,6 +33,9 @@ def main():
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
     ref, perf = notes(args.reference), notes(args.performance)
+    file_duration = max(max((n[0] + n[1] for n in perf), default=0),
+                        mido.MidiFile(args.performance).length)
+    ref, perf = from_first_note(ref), from_first_note(perf)
     ref_duration = max((n[0] + n[1] for n in ref), default=0)
     perf_duration = max((n[0] + n[1] for n in perf), default=0)
     tempo_ratio = perf_duration / ref_duration if ref_duration and perf_duration else 1.0
@@ -48,7 +60,7 @@ def main():
         "schema": 1,
         "summary": {"reference_notes": len(ref), "performance_notes": len(perf),
                     "matched": len(matched), "missing": len(missing), "extra": len(extras),
-                    "performance_duration_ms": round(max(perf_duration, mido.MidiFile(args.performance).length) * 1000),
+                    "performance_duration_ms": round(file_duration * 1000),
                     "tempo_ratio_percent": round(tempo_ratio * 100),
                     "onset_error_ms_mean": round(sum(onset) / len(onset) * 1000) if onset else None,
                     "onset_error_ms_abs_mean": round(sum(abs(v) for v in onset) / len(onset) * 1000) if onset else None,

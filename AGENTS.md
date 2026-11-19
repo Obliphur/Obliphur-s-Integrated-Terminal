@@ -54,6 +54,7 @@ python release.py               # 发布（PyInstaller）
 | `_music_tools_check.py` | 音乐工具统一接口、安装状态与重入、转换链路、Partitura MIDI 事件探测、MP3 演奏渲染、失败保留原文件、目录锁、官方资产和 MSI 解包 | `music_tools.py`、`music_install.py`、`music_worker.py` |
 | `_music_library_check.py` | 32首常驻曲目、4首关系及Valence门槛曲目、上传去重、元数据、选曲、MIDI / MP3缓存、播放门禁与数据清除后恢复 | `music_library.py`、`music_playback.py`、`defaults/music_library/` |
 | `_music_humanize_check.py` | 演奏 MIDI 起音/力度/松键微差、速度映射、重触保护、鼓与踏板保留、缓存签名及失败原子保护 | `music_humanize.py`、`music_tools.py` 的演奏导出、`config.py` 的 `MUSIC_HUMANIZE_*` |
+| `_midi_input_check.py` | 实时 MIDI 首音启动、松键与踏板、录制窗口取消及重试、输入上限、评判首音对齐 | `music_midi_input.py`、`pages/midi_input_dialog.py`、`music_compare_worker.py` |
 | `_joint_invite_check.py` | AI 发起联合行动的邀请模式 | `pages/contract_page.py` 邀请、`app_comm._joint_invite_watch` |
 | `_focus_check.py` | 焦点设备（提示音 / 刻痕）的「最后操作时刻」：Windows 全系统输入、只前进、取不到时不动 | `app/app_sync.py` 的 `system_idle_ms` / `_note_input`、`sync_local.py` 的 `status()` |
 | `_temp_check.py` | 临时文件都在 `%TEMP%\OIT` 里：启动清旧（含旧版本散落的 `oit*` 与顶层 `tmp*` 自检残留）、自检自动开会话退出即删、开会话清 1 小时前残留、重置 / 卸载删干净 | `tempstore.py`、`recorder/`、`updater.py`、`setup.py`、`netproxy/sitescan.py` |
