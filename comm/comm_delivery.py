@@ -8,6 +8,7 @@ from .comm_reply import to_halfwidth
 from .comm_util import is_claudia
 
 MESSAGE_BREAK = "<oit_message>"
+_MESSAGE_BREAK_RE = re.compile(r"(?:<\s*oit[_-]message\s*>|&lt;\s*oit[_-]message\s*&gt;)", re.IGNORECASE)
 
 
 class ReplyParts:
@@ -26,19 +27,25 @@ class ReplyParts:
         for line in lines:
             stripped = line.strip()
             fence = re.match(r"^(`{3,}|~{3,})", stripped)
-            if not self.fence and stripped == MESSAGE_BREAK:
-                text = "\n".join(self.lines).strip()
-                if text:
-                    out.append(text)
-                self.lines = []
-                continue
             if fence:
                 marker = fence[1]
                 if not self.fence:
                     self.fence = marker
                 elif marker[0] == self.fence[0] and len(marker) >= len(self.fence) and not stripped[len(marker):].strip():
                     self.fence = ""
-            self.lines.append(line.rstrip("\r"))
+            clean_line = line.rstrip("\r")
+            if self.fence:
+                self.lines.append(clean_line)
+                continue
+            start = 0
+            for match in _MESSAGE_BREAK_RE.finditer(clean_line):
+                self.lines.append(clean_line[start:match.start()])
+                text = "\n".join(self.lines).strip()
+                if text:
+                    out.append(text)
+                self.lines = []
+                start = match.end()
+            self.lines.append(clean_line[start:])
         if final:
             text = "\n".join(self.lines).strip()
             if text:

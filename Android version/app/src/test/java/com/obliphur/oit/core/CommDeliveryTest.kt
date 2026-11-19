@@ -65,7 +65,10 @@ class CommDeliveryTest {
     @Test fun messageBoundaries() {
         assertEquals(listOf("甲\n\n乙"), ReplyParts.split("甲\n\n乙"))
         assertEquals(listOf("甲", "乙"), ReplyParts.split("<oit_message>\n甲\r\n<oit_message>\r\n\n<oit_message>\n乙\n<oit_message>"))
+        assertEquals(listOf("甲", "乙", "丙"), ReplyParts.split("甲<oit_message>乙 <OIT-MESSAGE> 丙"))
+        assertEquals(listOf("甲", "乙", "丙"), ReplyParts.split("甲&lt; oit_message &gt;乙<oit_message   >丙"))
         assertEquals(listOf("```txt\n<oit_message>\n```", "乙"), ReplyParts.split("```txt\n<oit_message>\n```\n<oit_message>\n乙"))
+        assertEquals(listOf("```txt\n正文 <oit_message> 仍在代码块\n```\n甲", "乙"), ReplyParts.split("```txt\n正文 <oit_message> 仍在代码块\n```\n甲<oit_message>乙"))
         val parts = ReplyParts()
         assertTrue(parts.feed("甲\n<oit_mes").isEmpty())
         assertEquals(listOf("甲"), parts.feed("sage>\n乙"))

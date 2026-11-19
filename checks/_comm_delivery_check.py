@@ -65,7 +65,10 @@ def main():
         # 普通换行、空段、跨传输片段、CRLF 和代码块。
         assert reply_parts("甲\n\n乙") == ["甲\n\n乙"]
         assert reply_parts("<oit_message>\n甲\r\n<oit_message>\r\n\n<oit_message>\n乙\n<oit_message>") == ["甲", "乙"]
+        assert reply_parts("甲<oit_message>乙 <OIT-MESSAGE> 丙") == ["甲", "乙", "丙"]
+        assert reply_parts("甲&lt; oit_message &gt;乙<oit_message   >丙") == ["甲", "乙", "丙"]
         assert reply_parts("```txt\n<oit_message>\n```\n<oit_message>\n乙") == ["```txt\n<oit_message>\n```", "乙"]
+        assert reply_parts("```txt\n正文 <oit_message> 仍在代码块\n```\n甲<oit_message>乙") == ["```txt\n正文 <oit_message> 仍在代码块\n```\n甲", "乙"]
         parser = ReplyParts()
         assert parser.feed("甲\n<oit_mes") == []
         assert parser.feed("sage>\n乙") == ["甲"]
