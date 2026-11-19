@@ -40,20 +40,26 @@ class MidiInputDialog(Modal):
         except (OSError, music_midi_input.MidiInputError) as error:
             message = tr("无法读取 MIDI 输入设备: {error}").format(error=error)
         # 序号区分 Windows 返回同名的端口。
-        self.device["values"] = [f"{i + 1}. {name}" for i, name in self.devices]
+        self.device["values"] = [
+            f"{i + 1}. {tr('Windows MIDI: {name}').format(name=device.name)}"
+            if device.backend == "winrt" else f"{i + 1}. {device.name}"
+            for i, device in enumerate(self.devices)
+        ]
         if self.devices:
             self.device.current(0)
         else:
             self.device.set("")
         self.record.config(state="normal" if self.devices else "disabled")
-        self.status.config(text=message)
+        status = music_midi_input.BLUETOOTH_MIDI_STATUS
+        self.status.config(text=status or message)
 
     def _start(self):
         index = self.device.current()
         if index < 0:
             return
         try:
-            self.recorder = music_midi_input.MidiInput(self.devices[index][0])
+            device = self.devices[index]
+            self.recorder = music_midi_input.MidiInput(device.device_id, backend=device.backend)
         except (OSError, music_midi_input.MidiInputError) as error:
             self.status.config(text=str(error))
             return

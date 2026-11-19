@@ -84,6 +84,7 @@ fun CommScreen(go: (String) -> Unit) {
     }
     var askClear by remember { mutableStateOf(false) }
     var help by remember { mutableStateOf(false) }
+    var musicReview by remember { mutableStateOf(false) }
     var coAlarm by remember { mutableStateOf(false) }                           // 共时闹钟的弹窗
     var shiftDlg by remember { mutableStateOf(false) }                          // 起点平移的弹窗
     var shiftAsk by remember { mutableStateOf(comm.shiftAsking()) }              // 请求了起点平移, 等对方回复 (⏳)
@@ -273,6 +274,7 @@ fun CommScreen(go: (String) -> Unit) {
             TextButton({ if (!ocrBusy) pickOcr.launch("image/*") }, contentPadding = tight) { Text(if (ocrBusy) "…" else "🖼", fontSize = 18.sp) }
             TextButton({ if (!ocrBusy) pickChatImage.launch("image/*") }, contentPadding = tight) { Text("📎", fontSize = 18.sp) }
             TextButton({ pickScore.launch(arrayOf("*/*")) }, contentPadding = tight) { Text("🎼", fontSize = 18.sp) }
+            TextButton({ musicReview = true }, contentPadding = tight) { Text("🎹", fontSize = 18.sp) }
             // ⏰ 共时闹钟: 闹钟的时间跟随这个对象的实际起床时间, 手动选响铃的设备; ⏰ = 现在这个对象是共时闹钟 / ⏲ 不是
             TextButton({ coAlarm = true }, contentPadding = tight) {
                 Text(if (comm.coAlarmPid().isNotEmpty() && comm.coAlarmPid() == comm.pid) "⏰" else "⏲", fontSize = 18.sp)
@@ -324,6 +326,7 @@ fun CommScreen(go: (String) -> Unit) {
         }
     }
     if (help) HelpDialog { help = false }
+    if (musicReview) MusicReviewDialog(comm) { musicReview = false }
     if (coAlarm) CoAlarmDialog { coAlarm = false }
     if (shiftDlg) ShiftDialog(comm.shiftStart() ?: CommShift.LO, comm.shiftRange() ?: (0 to 1439), { shiftDlg = false }) { minutes ->
         val why = comm.shiftRequest(minutes)
@@ -652,4 +655,111 @@ private fun SwitchRow(label: String, value: Boolean, onChange: (Boolean) -> Unit
         Text(label, color = o.text, modifier = Modifier.weight(1f))
         Switch(value, onChange, colors = SwitchDefaults.colors(checkedTrackColor = o.accent, checkedThumbColor = o.onAccent))
     }
+}
+
+@Composable
+private fun MusicReviewDialog(comm: Comm, onDismiss: () -> Unit) {
+    val o = LocalOit.current
+    val ctx = LocalContext.current
+    val input = remember { comm.musicInput() }
+    var reference by remember { mutableStateOf<java.io.File?>(null) }
+    var performance by remember { mutableStateOf<java.io.File?>(null) }
+    var recorded by remember { mutableStateOf<ByteArray?>(null) }
+    var ports by remember { mutableStateOf(input.ports()) }
+    var recording by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf("") }
+    val pickReference = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) Thread {
+            val target = java.io.File(ctx.cacheDir, "music-review-reference.${ctx.contentResolver.getType(uri)?.substringAfter('/') ?: "mid"}")
+            try { ctx.contentResolver.openInputStream(uri)?.use { it.copyTo(target.outputStream()) }; reference = target; status = "" }
+            catch (e: Exception) { status = e.message.orEmpty() }
+        }.apply { isDaemon = true; start() }
+    }
+    val pickPerformance = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) Thread {
+            val ext = ctx.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                if (c.moveToFirst()) c.getString(0)?.substringAfterLast('.', "mid") else "mid"
+            } ?: "mid"
+            val target = java.io.File(ctx.cacheDir, "music-review-performance.$ext")
+            try { ctx.contentResolver.openInputStream(uri)?.use { it.copyTo(target.outputStream()) }; performance = target; recorded = null; status = "" }
+            catch (e: Exception) { status = e.message.orEmpty() }
+        }.apply { isDaemon = true; start() }
+    }
+    val requestBluetooth = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        status = if (input.scanBluetooth()) tr("正在搜索蓝牙 MIDI 设备") else tr("无法搜索蓝牙 MIDI 设备")
+    }
+    LaunchedEffect(Unit) {
+        while (true) {
+            ports = input.ports()
+            if (input.error.isNotEmpty()) status = input.error
+            kotlinx.coroutines.delay(500)
+        }
+    }
+    DisposableEffect(Unit) { onDispose { input.close() } }
+    AlertDialog(onDismissRequest = { if (!busy) onDismiss() }, containerColor = o.bg,
+        title = { Text(tr("演奏评判"), color = o.text) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                OutlinedButton({ pickReference.launch(arrayOf("audio/midi", "audio/x-midi", "audio/*", "application/xml", "application/vnd.recordare.musicxml+xml", "application/vnd.recordare.musicxml")) }, enabled = !busy) {
+                    Text(reference?.name ?: comm.selectedScore()?.optString("title")?.takeIf { it.isNotEmpty() }?.let { tr("当前选曲: {title}", "title" to it) } ?: tr("选择参考 MIDI 或 MusicXML"))
+                }
+                OutlinedButton({ pickPerformance.launch(arrayOf("audio/*")) }, enabled = !busy) {
+                    Text(performance?.name ?: tr("选择演奏 MIDI 或录音"))
+                }
+                if (!recording) {
+                    androidx.compose.foundation.layout.Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton({
+                            val permissions = if (android.os.Build.VERSION.SDK_INT >= 31)
+                                listOf(android.Manifest.permission.BLUETOOTH_SCAN, android.Manifest.permission.BLUETOOTH_CONNECT)
+                            else listOf(android.Manifest.permission.ACCESS_FINE_LOCATION)
+                            if (android.os.Build.VERSION.SDK_INT >= 23) {
+                                val missing = permissions
+                                    .filter { androidx.core.content.ContextCompat.checkSelfPermission(ctx, it) != android.content.pm.PackageManager.PERMISSION_GRANTED }
+                                if (missing.isEmpty()) { input.scanBluetooth(); status = tr("正在搜索蓝牙 MIDI 设备") }
+                                else requestBluetooth.launch(missing.toTypedArray())
+                            } else { input.scanBluetooth(); status = tr("正在搜索蓝牙 MIDI 设备") }
+                        }, enabled = !busy) { Text(tr("扫描蓝牙 MIDI")) }
+                    }
+                    ports.forEach { port ->
+                        TextButton({
+                            input.start(port); recording = input.recording; status = if (input.recording) tr("等待 MIDI 首音") else input.error
+                        }, enabled = !busy) { Text(tr("录制: {name}", "name" to port.name), color = o.accent) }
+                    }
+                } else {
+                    Text(tr("MIDI 首音数: {count}", "count" to input.noteCount), color = o.text)
+                    OutlinedButton({
+                        try {
+                            recorded = input.stop()
+                            performance = java.io.File(ctx.cacheDir, "music-review-recording.mid").also { it.writeBytes(recorded!!) }
+                            recording = false; status = tr("MIDI 录制完成")
+                        } catch (e: Exception) { recording = false; status = e.message.orEmpty() }
+                    }) { Text(tr("停止录制")) }
+                }
+                if (status.isNotEmpty()) Text(status, color = o.dim, fontSize = 12.sp)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                if (busy) return@TextButton
+                val score = reference ?: comm.selectedScore()?.optString("path")?.takeIf { it.isNotEmpty() }?.let { java.io.File(it) }
+                val played = performance
+                if (score == null || played == null) { status = tr("请选择参考曲目和演奏文件，或录制 MIDI"); return@TextButton }
+                busy = true; status = tr("正在分析演奏")
+                Thread {
+                    var reply = ""; var wait = 0L; var failure = ""
+                    try { val result = comm.evaluateMusic(score, played, recorded); reply = result.first; wait = result.second }
+                    catch (e: Exception) { failure = e.message.orEmpty() }
+                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                        busy = false
+                        if (failure.isNotEmpty()) status = failure
+                        else {
+                            val sent = comm.send(reply, wait)
+                            if (sent.isNotEmpty()) status = tr(sent) else onDismiss()
+                        }
+                    }
+                }.apply { isDaemon = true; start() }
+            }, enabled = !busy && !recording) { Text(if (busy) tr("正在分析…") else tr("开始评判"), color = o.accent) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss, enabled = !busy) { Text(tr("取消"), color = o.dim) } })
 }

@@ -52,7 +52,7 @@
 发布 (Release) 里除了手机的 `OIT.apk`, 电脑版以一个 **`setup.exe`** 提供 (`setup.py` + 程序文件打成 `payload.zip`, 用 PyInstaller 打包成一个 exe, `release.py` 编译并上传). 它做的事:
 - **依赖库**: OIT 本体是 Python 程序, 需要 Python 3.10+ (带 tkinter 等标准库). setup 先找电脑上有没有 (注册表 PEP 514 / `py -0p` / PATH, 挑版本最高且能 `import tkinter, sqlite3, ssl, ctypes, winreg` 的);
   没有就从 python.org 下载官方安装包 (固定版本 `PYTHON_VERSION`), **核对数字签名有效且签名人是 Python Software Foundation 才运行**, 静默安装 (所有用户, 不改 PATH, 不装 py 启动器, 不抢 `.py` 的关联).
-  可选库 pywin32 用 `pip install` 装 (OIT 没有它也能用, 装不上只提示; 界面里可以取消勾选). 找到的 / 装好的 Python 记在 `install.json`.
+  可选库 pywin32 用 `pip install` 装。安装器也可选装蓝牙 MIDI 所需的 PyWinRT 组件（Python 3.11+）；未安装时 OIT 仍可接收 WinMM 输入端口。两者失败均不阻止安装，也可在安装界面取消勾选。找到的 / 装好的 Python 记在 `install.json`.
 - **安装**: 程序文件 (git 里跟踪的, 不含安卓版) 复制到安装位置 (默认 `C:\Program Files\OIT`, 可改) 并预编译 `.pyc`. 同一个位置再装一遍 = 升级, 数据 (在 `AppData\LocalLow`) 不动.
   OIT 正在运行时不装 (关闭 OIT 会断网 / 恢复网络, 实例互斥体见 3.5), 提示先退出; 升级也可以用 OIT 自带的更新 (上面). 目标文件夹是 git 仓库 (开发版本) 时拒绝.
 - **注册成软件** (`registration.py`): 在 `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\ObliphurIntegratedTerminal` 写名称, 版本, 发布者, 安装位置, 图标, 大小,
@@ -63,7 +63,7 @@
 - **图标**: `oit.ico` / `oit.png` 由 `make_icon.py` 画出来 (纯几何: 蓝色圆角方块 + 缺口的计时圆环 + 终端提示符 `>_` + 琥珀色圆点, 没有位图素材), 同一份几何也生成手机的启动图标
   (`ic_fg.xml` 前景 + `ic_bg.xml` 渐变背景, 自适应图标) 和通知栏的单色小图标 (`ic_stat.xml`). 用在: OIT 的窗口 / 任务栏 (进程用单独的 AppUserModelID, 不和别的 Python 程序混在一起),
   桌面 / 开始菜单快捷方式, "已安装的应用" 里的图标, setup.exe 自己. 改图标就改 `make_icon.py` 里的常数, 再运行 `python make_icon.py`.
-- **命令行**: `setup.exe /S` 静默安装 (日志在 `%TEMP%\oit-setup.log`), `/D=路径` 指定位置, `/nodesktop` `/nostart` `/nopython` `/nopip` `/run`.
+- **命令行**: `setup.exe /S` 静默安装 (日志在 `%TEMP%\oit-setup.log`), `/D=路径` 指定位置, `/nodesktop` `/nostart` `/nopython` `/nopip` `/nobluetoothmidi` `/run`.
 - 注意: 自己打包的 exe 有时会被杀毒软件误报; 也可以不用 setup.exe, 照旧解压源码 / 压缩包后 `python main.py` 运行.
 
 ---

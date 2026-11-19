@@ -37,7 +37,7 @@
   },
   {
     "name": "oit_music_generate_midi",
-    "description": "将已选本机乐谱导出为带轻微起音、力度与松键变化的演奏 MIDI；须在本轮先选择，或已是当前选曲。需要 Windows 已部署 MuseScore。仅生成 MIDI 文件，不播放，也不代表 MP3 已生成。",
+    "description": "将本机已选乐谱转换为带轻微起音、力度与松键变化的演奏 MIDI；须先在本轮选择曲目，或使用当前选曲。安卓支持内置曲库和 MusicXML；用户上传的 MuseScore 格式需先在 Windows 转换。仅生成 MIDI 文件，不播放。",
     "parameters": {
       "type": "object",
       "properties": {
@@ -49,7 +49,7 @@
   },
   {
     "name": "oit_music_perform",
-    "description": "按用户明确的演奏请求，准备已选曲目的本机MP3演奏。须先在本轮通过oit_music_select选择，或使用当前已选曲目。仅Windows已部署MuseScore且用户空闲或休息时可用；Claudia还要求当前VALENCE>=30。音频准备好后待正式回复显示时开始播放。",
+    "description": "按用户明确的演奏请求准备并播放已选曲目。须先在本轮通过oit_music_select选择，或使用当前已选曲目。仅用户空闲或休息时可用；Claudia还要求当前VALENCE>=30且没有未原谅的冒犯。音频准备好后待正式回复显示时才开始播放。",
     "parameters": {
       "type": "object",
       "properties": {

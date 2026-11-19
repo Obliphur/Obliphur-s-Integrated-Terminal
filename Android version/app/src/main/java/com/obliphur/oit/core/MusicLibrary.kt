@@ -13,6 +13,7 @@ import java.util.zip.ZipInputStream
 
 /** 本地乐谱列表；默认文件随应用资源安装，用户文件留在数据目录。 */
 class MusicLibrary(private val dataDir: File, private val assets: AssetManager) {
+    private val generationLock = Any()
     private val root = File(dataDir, "music_library")
     private val defaults = File(root, "defaults")
     private val uploads = File(root, "uploads")
@@ -128,6 +129,50 @@ class MusicLibrary(private val dataDir: File, private val assets: AssetManager) 
         if (!file.isFile || (0 until allowed.length()).none { allowed.getJSONObject(it).optString("id") == state.optString("id") }) null
         else state.put("path", file.absolutePath)
     }.getOrNull()
+
+    /** 内置精确 MIDI 随包提供；上传 MusicXML 使用本机转换器。参数改变时重建演奏副本。 */
+    fun generateMidi(id: String, persona: String, related: Boolean, valence: Double, tools: MusicTools): JSONObject = synchronized(generationLock) {
+        val (item, source) = get(id, persona, related, valence) ?: error("乐谱不属于当前人设的曲库")
+        val folder = File(stateDir(persona), "generated").also { it.mkdirs() }
+        val target = File(folder, "$id.mid"); val receipt = File(folder, "$id.mid.json")
+        val signature = MusicTools.sha(source.readBytes()) + ":kotlin:" + listOf(Cfg.MUSIC_HUMANIZE_VERSION,
+            Cfg.MUSIC_HUMANIZE_DRIFT_MS, Cfg.MUSIC_HUMANIZE_DRIFT_BEATS, Cfg.MUSIC_HUMANIZE_GROUP_MS,
+            Cfg.MUSIC_HUMANIZE_FINGER_MS, Cfg.MUSIC_HUMANIZE_RELEASE_MS, Cfg.MUSIC_HUMANIZE_VELOCITY,
+            Cfg.MUSIC_HUMANIZE_SIGMA_LIMIT, Cfg.MUSIC_HUMANIZE_IOI_FRACTION, Cfg.MUSIC_HUMANIZE_RELEASE_FRACTION).joinToString(":")
+        val current = runCatching { val info = JSONObject(receipt.readText()); info.optString("signature") == signature &&
+            info.optString("sha256") == MusicTools.sha(target.readBytes()) && MusicMidi.notes(MusicMidi.read(target.readBytes())).isNotEmpty() }.getOrDefault(false)
+        if (!current) {
+            val raw = if (!id.startsWith("upload-")) assets.open("music_library/midi/$id.mid").use { it.readBytes() } else tools.midi(source)
+            val bytes = MusicMidi.humanize(raw)
+            MusicTools.atomic(target, bytes)
+            MusicTools.atomic(receipt, JSONObject().put("signature", signature).put("sha256", MusicTools.sha(bytes)).toString().toByteArray())
+        }
+        JSONObject().put("id", id).put("title", item.optString("title")).put("path", target.absolutePath).put("humanized", true).put("format", "midi")
+    }
+
+    fun preparePerformance(id: String, persona: String, related: Boolean, valence: Double, tools: MusicTools): JSONObject = synchronized(generationLock) {
+        val result = generateMidi(id, persona, related, valence, tools)
+        val midi = File(result.getString("path"))
+        val target = File(midi.parentFile, "$id.wav"); val receipt = File(midi.parentFile, "$id.wav.json")
+        val signature = MusicTools.sha(midi.readBytes()) + ":fluidsynth-2.6.2:" + Cfg.MUSIC_RENDER_VERSION + ":" + MusicTools.sha(tools.asset("piano.sf2").readBytes())
+        val current = runCatching { val info = JSONObject(receipt.readText()); info.optString("signature") == signature && target.length() > 44 &&
+            info.optString("sha256") == MusicTools.sha(target.readBytes()) }.getOrDefault(false)
+        if (!current) {
+            tools.render(midi, target)
+            MusicTools.atomic(receipt, JSONObject().put("signature", signature).put("sha256", MusicTools.sha(target.readBytes())).toString().toByteArray())
+        }
+        result.put("path", target.absolutePath).put("format", "wav")
+    }
+
+    fun referenceMidi(source: File, tools: MusicTools): ByteArray {
+        if (source.extension.lowercase() in setOf("mscx", "mscz")) {
+            val item = (0 until manifest.length()).map { manifest.getJSONObject(it) }
+                .firstOrNull { source.name == it.optString("file") } ?: throw IllegalArgumentException(
+                    "安卓评判请使用 MIDI 或 MusicXML；用户上传的 MuseScore 文件请先在电脑转换")
+            return assets.open("music_library/midi/${item.getString("id")}.mid").use { it.readBytes() }
+        }
+        return tools.midi(source)
+    }
 
     private fun metadata(file: File): Pair<String, String> {
         var title = ""

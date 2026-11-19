@@ -41,13 +41,71 @@ class Driver:
         self.callback(1, midi._MIM_DATA, 0, status | (key << 8) | (value << 16), timestamp)
 
 
+class WinRtDriver:
+    ports = []
+
+    class DeviceInfo:
+        def __init__(self, device_id, name):
+            self.id, self.name = device_id, name
+
+    class MidiInPort:
+        @staticmethod
+        def get_device_selector():
+            return "midi-input-selector"
+
+        @staticmethod
+        async def from_id_async(device_id):
+            port = WinRtDriver.Port(device_id)
+            WinRtDriver.ports.append(port)
+            return port
+
+    class Port:
+        def __init__(self, device_id):
+            self.device_id = device_id
+            self.callback = None
+            self.closed = False
+            self.removed = False
+
+        def add_message_received(self, callback):
+            self.callback = callback
+            return "token"
+
+        def remove_message_received(self, token):
+            assert token == "token"
+            self.removed = True
+
+        def close(self):
+            self.closed = True
+
+        def send(self, data):
+            reader = SimpleNamespace(
+                read_bytes=lambda out: out.__setitem__(slice(None), data),
+                close=lambda: None,
+            )
+            with patch.object(midi, "_winrt_modules", return_value=(None, None, SimpleNamespace(
+                    from_buffer=lambda _: reader))):
+                self.callback(None, SimpleNamespace(message=SimpleNamespace(
+                    raw_data=SimpleNamespace(length=len(data)))))
+
+    class DataReader:
+        @staticmethod
+        def find_all_async(*args):
+            assert args == ("midi-input-selector", None)
+            return WinRtDriver._find()
+
+    @staticmethod
+    async def _find():
+        return [WinRtDriver.DeviceInfo("ble-id", "Bluetooth Piano")]
+
+
 def main():
     work = Path(tempstore.autosession())
     root = tk.Tk()
     root.geometry("320x200+-3000+-3000")
     api = Driver()
+    device = midi.MidiDevice("winmm", 0, "Test instrument")
     with patch.object(midi, "_winmm", return_value=api), patch.object(
-            midi, "input_devices", return_value=[(0, "Test instrument")]):
+            midi, "input_devices", return_value=[device]):
         dlg = MidiInputDialog(root)
         dlg._start()
         api.send(25, 0xF8)
@@ -112,6 +170,31 @@ def main():
         assert summary["tempo_ratio_percent"] == 100 and summary["onset_error_ms_abs_mean"] == 0
         assert summary["performance_duration_ms"] == round(length * 1000)
     assert worker.from_first_note([]) == []
+
+    # 蓝牙后端运行 WinRT 枚举、打开、消息回调和清理，不经过 WinMM 句柄。
+    class NoDevices:
+        def midiInGetNumDevs(self):
+            return 0
+
+    def winrt_modules():
+        return (SimpleNamespace(find_all_async=WinRtDriver.DataReader.find_all_async),
+                WinRtDriver.MidiInPort, WinRtDriver.DataReader)
+
+    with patch.object(midi, "_winmm", return_value=NoDevices()), patch.object(
+            midi, "_winrt_modules", side_effect=winrt_modules):
+        devices = midi.input_devices()
+        assert devices == [midi.MidiDevice("winrt", "ble-id", "Bluetooth Piano")]
+        recorder = midi.MidiInput("ble-id", backend="winrt")
+        port = WinRtDriver.ports[-1]
+        port.send(bytes((0x90, 60, 90)))
+        port.send(bytes((0x80, 60, 0)))
+        raw = recorder.finish()
+        assert port.closed and port.removed
+        assert b"\x00\x90\x3c\x5a" in raw and b"\x00\x80\x3c\x00" in raw
+    with patch.object(midi, "_winmm", return_value=NoDevices()), patch.object(
+            midi, "_winrt_modules", side_effect=ImportError):
+        assert midi.input_devices() == []
+        assert "未安装" in midi.BLUETOOTH_MIDI_STATUS
     print("MIDI input check OK")
 
 

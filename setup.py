@@ -5,7 +5,7 @@ release 里的 setup.exe 就是这个文件用 PyInstaller 打包出来的 (rele
 运行 setup.exe:
   1. 要管理员权限 (写 Program Files 和注册表; OIT 本身也要管理员);
   2. 检查依赖: OIT 需要 Python 3.10+ (带 tkinter). 电脑上没有就从 python.org 下载官方安装包 (核对数字签名是 Python Software Foundation 才运行),
-     静默装一份 (所有用户, 不改 PATH, 不抢 .py 的关联); 可选库 pywin32 用 pip 装 (装不上不影响使用);
+     静默装一份 (所有用户, 不改 PATH, 不抢 .py 的关联); pywin32 和蓝牙 MIDI 支持用 pip 按需安装;
   3. 把程序文件复制到安装位置 (默认 C:\\Program Files\\OIT; 同一个位置再装一遍 = 升级, 数据不动) 并预编译;
   4. 注册成系统里的软件 (registration.py): 设置 → 应用 里有 OIT, 卸载按钮运行 uninstall.py; 可选桌面 / 开始菜单快捷方式;
   5. 可选: 装完直接打开 OIT.
@@ -13,7 +13,8 @@ OIT 正在运行时不装 (关闭 OIT 会断网又恢复, 升级请用 OIT 自�
 
     setup.exe                        图形界面
     setup.exe /S [/D=安装位置]       静默安装 (没有界面, 日志在 %TEMP%\\oit-setup.log)
-      选项  /nodesktop /nostart 不建桌面 / 开始菜单快捷方式   /nopython 没有 Python 也不去下载   /nopip 不装 pywin32   /run 装完打开 OIT
+      选项  /nodesktop /nostart 不建桌面 / 开始菜单快捷方式   /nopython 没有 Python 也不去下载   /nopip 不装可选依赖
+             /nobluetoothmidi 不装蓝牙 MIDI 支持   /run 装完打开 OIT
     python setup.py --selftest       自检 (不真的安装)
     python setup.py --payload 文件   用 git 里跟踪的文件打出 payload.zip (release.py 用)
 """
@@ -40,6 +41,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 APP_NAME = "Obliphur's Integrated Terminal"
 DEFAULT_DIR = os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "OIT")
 PYTHON_VERSION = "3.13.17"
+BLUETOOTH_MIDI_PACKAGES = (
+    "winrt-runtime==4.2.0",
+    "winrt-Windows.Devices.Midi==4!10.0.28000.2957",
+    "winrt-Windows.Devices.Enumeration==4!10.0.28000.2957",
+)
 PYTHON_URL = f"https://www.python.org/ftp/python/{PYTHON_VERSION}/python-{PYTHON_VERSION}-amd64.exe"
 PYTHON_SIGNER = "Python Software Foundation"
 MIN_PYTHON = (3, 10)
@@ -59,6 +65,7 @@ TEXT = {
     "desktop": ("桌面快捷方式", "Desktop shortcut"),
     "start": ("开始菜单快捷方式", "Start menu shortcut"),
     "pywin32": ("安装可选依赖库 pywin32 (需要联网, 装不上不影响使用)", "Install optional library pywin32 (needs internet; OK if it fails)"),
+    "bluetooth_midi": ("安装蓝牙 MIDI 支持 (需要 Python 3.11+, 可稍后重装启用)", "Install Bluetooth MIDI support (requires Python 3.11+; can be enabled later)"),
     "run": ("安装完成后打开 OIT", "Launch OIT when finished"),
     "install": ("安装", "Install"),
     "close": ("关闭", "Close"),
@@ -77,6 +84,9 @@ TEXT = {
     "py_install": ("安装 Python (几分钟) …", "Installing Python (a few minutes) …"),
     "py_fail": ("没能安装 Python ({e}). 请手动安装 Python {p}+ (勾选 tcl/tk) 后再运行安装程序.", "Could not install Python ({e}). Install Python {p}+ (with tcl/tk) yourself and run setup again."),
     "step_pip": ("安装可选依赖库 pywin32 …", "Installing optional library pywin32 …"),
+    "step_bluetooth_midi": ("安装 Windows 蓝牙 MIDI 支持 …", "Installing Windows Bluetooth MIDI support …"),
+    "bluetooth_midi_fail": ("蓝牙 MIDI 支持没装上 (普通 MIDI 输入仍可用).", "Bluetooth MIDI support was not installed; other MIDI inputs remain available."),
+    "bluetooth_midi_python": ("蓝牙 MIDI 支持需要 Python 3.11+; 当前版本不安装.", "Bluetooth MIDI support requires Python 3.11+; skipped for this Python version."),
     "token_fail": ("没能留下\"这是安装\"的令牌: 第一次启动时 OIT 会把这次安装当成源码被改过, 清掉数据! 请先备份数据文件夹, 或把这条日志发给开发者.",
                    "Could not leave the \"this is an install\" token: on first start OIT will treat this install as modified source and wipe its data! Back up the data folder first, or send this log to the developer."),
     "pip_fail": ("pywin32 没装上 (不影响使用).", "pywin32 was not installed (OIT works without it)."),
@@ -348,6 +358,24 @@ def ensure_python(opts: dict, log, progress, tmp: str):
     return found[0], True
 
 
+def install_bluetooth_midi(python: str, log, run=subprocess.run) -> bool:
+    """PyWinRT 仅支持 Python 3.11+，安装失败不影响其他 MIDI 输入。"""
+    info = python_info(python)
+    if not info or info[:2] < (3, 11):
+        log(t("bluetooth_midi_python"))
+        return False
+    log(t("step_bluetooth_midi"))
+    try:
+        result = run([python, "-m", "pip", "install", "--disable-pip-version-check",
+                      *BLUETOOTH_MIDI_PACKAGES], capture_output=True, timeout=600, creationflags=NO_WINDOW)
+        if result.returncode == 0:
+            return True
+    except Exception:
+        pass
+    log(t("bluetooth_midi_fail"))
+    return False
+
+
 # ---------- 注册 / 快捷方式 ----------
 
 def oit_running() -> bool:
@@ -396,6 +424,8 @@ def install(opts: dict, log=print, progress=lambda n: None, zip_path: str = None
                     log(t("pip_fail"))
             except Exception:
                 log(t("pip_fail"))
+            if opts.get("bluetooth_midi", True):
+                install_bluetooth_midi(python, log)
         log(t("step_copy", d=dest))
         n = extract(zip_path, dest, log)
         log(f"{n} files")
@@ -438,7 +468,8 @@ def install(opts: dict, log=print, progress=lambda n: None, zip_path: str = None
 # ---------- 命令行 / 界面 ----------
 
 def parse_args(argv) -> dict:
-    o = {"silent": False, "dir": None, "desktop": True, "start": True, "pip": True, "python": True, "run": False}
+    o = {"silent": False, "dir": None, "desktop": True, "start": True, "pip": True,
+         "bluetooth_midi": True, "python": True, "run": False}
     for a in argv:
         low = a.lower()
         if low in ("/s", "/silent", "/quiet", "-s"):
@@ -451,6 +482,8 @@ def parse_args(argv) -> dict:
             o["start"] = False
         elif low == "/nopip":
             o["pip"] = False
+        elif low == "/nobluetoothmidi":
+            o["bluetooth_midi"] = False
         elif low == "/nopython":
             o["python"] = False
         elif low == "/run":
@@ -514,8 +547,11 @@ def run_gui(opts: dict):
     ttk.Entry(row, textvariable=var_dir, width=52).pack(side="left", padx=8)
     ttk.Button(row, text=t("browse"), command=lambda: var_dir.set(os.path.normpath(filedialog.askdirectory(initialdir=var_dir.get()) or var_dir.get()))).pack(side="left")
     v_desktop, v_start = tk.BooleanVar(value=opts["desktop"]), tk.BooleanVar(value=opts["start"])
-    v_pip, v_run = tk.BooleanVar(value=opts["pip"]), tk.BooleanVar(value=True)
-    for text, var in ((t("desktop"), v_desktop), (t("start"), v_start), (t("pywin32"), v_pip), (t("run"), v_run)):
+    v_pip, v_bluetooth_midi, v_run = (
+        tk.BooleanVar(value=opts["pip"]), tk.BooleanVar(value=opts["bluetooth_midi"]), tk.BooleanVar(value=True)
+    )
+    for text, var in ((t("desktop"), v_desktop), (t("start"), v_start), (t("pywin32"), v_pip),
+                      (t("bluetooth_midi"), v_bluetooth_midi), (t("run"), v_run)):
         ttk.Checkbutton(root, text=text, variable=var).pack(anchor="w", **pad)
     bar = ttk.Progressbar(root, mode="indeterminate", length=600)
     bar.pack(pady=(10, 4), **pad)
@@ -550,7 +586,8 @@ def run_gui(opts: dict):
     def start():
         go.configure(state="disabled")
         bar.start(12)
-        o = dict(opts, dir=var_dir.get(), desktop=v_desktop.get(), start=v_start.get(), pip=v_pip.get(), run=v_run.get())
+        o = dict(opts, dir=var_dir.get(), desktop=v_desktop.get(), start=v_start.get(), pip=v_pip.get(),
+                 bluetooth_midi=v_bluetooth_midi.get(), run=v_run.get())
         last = {"n": -1}
 
         def log(s):
@@ -626,8 +663,9 @@ def _selftest():
         except SetupError:
             pass
         # 命令行
-        o = parse_args(["/S", "/D=C:\\x y\\OIT", "/nodesktop", "/nopip", "/run"])
-        assert o["silent"] and o["dir"] == "C:\\x y\\OIT" and not o["desktop"] and o["start"] and not o["pip"] and o["run"]
+        o = parse_args(["/S", "/D=C:\\x y\\OIT", "/nodesktop", "/nopip", "/nobluetoothmidi", "/run"])
+        assert o["silent"] and o["dir"] == "C:\\x y\\OIT" and not o["desktop"] and o["start"] and not o["pip"]
+        assert not o["bluetooth_midi"] and o["run"]
         # Python 检测: 当前解释器可用; 假的不可用
         found = find_python([sys.executable])
         assert found is None or found[1] >= MIN_PYTHON
@@ -645,6 +683,20 @@ def _selftest():
             return subprocess.CompletedProcess(a, 9009, b"", b"Python was not found")
         assert python_info(fake_py, run_old) is None and python_info(fake_py, run_stub) is None
         assert python_info(fake_py, run_ok) == (3, 12, fake_py)
+        install_logs = []
+        pip_command = []
+
+        def pip_run(args, **kwargs):
+            pip_command.extend(args)
+            return subprocess.CompletedProcess(args, 0)
+
+        assert install_bluetooth_midi(sys.executable, install_logs.append, pip_run)
+        assert pip_command[-len(BLUETOOTH_MIDI_PACKAGES):] == list(BLUETOOTH_MIDI_PACKAGES)
+        old_logs = []
+        assert not install_bluetooth_midi(
+            "python-3.10.exe", old_logs.append,
+            lambda *a, **k: (_ for _ in ()).throw(AssertionError("pip must not run")))
+        assert old_logs == [t("bluetooth_midi_python")]
         open(os.path.join(d, "pythonw.exe"), "w").close()
         assert find_python([fake_py], run_ok) == (fake_py, (3, 12))
         # 签名检查: 只认有效 + Python Software Foundation

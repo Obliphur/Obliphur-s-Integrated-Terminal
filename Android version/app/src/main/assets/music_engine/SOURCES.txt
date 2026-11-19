@@ -1,0 +1,7 @@
+FluidSynth v2.6.2 (LGPL-2.1): https://github.com/FluidSynth/fluidsynth/tree/v2.6.2
+Official Android libraries, unmodified. Dependencies and their licenses are listed in FluidSynth's Android release archive.
+Verovio 6.4.1 (LGPL-3.0): https://github.com/rism-digital/verovio/tree/version-6.4.1
+Official JavaScript toolkit, unmodified; source/build instructions at the URL above.
+Spotify Basic Pitch 0.4.0 (Apache-2.0): https://github.com/spotify/basic-pitch/tree/v0.4.0
+TimGM6mb 1.3 (GPL-2.0): https://deb.debian.org/debian/pool/main/t/timgm6mb-soundfont/
+Score licenses and source attribution: ../music_library/*-LICENSE.txt and catalog.json.

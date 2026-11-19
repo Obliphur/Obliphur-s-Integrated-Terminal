@@ -9,6 +9,22 @@ import kotlin.math.ln
 
 /** 不在设置页里的固定数值 (对应桌面版 config.py). 可调的数值见 Settings.kt. */
 object Cfg {
+    const val MUSIC_MAX_BYTES = 50 * 1024 * 1024
+    const val MUSIC_MAX_EVENTS = 500000
+    const val MUSIC_MIDI_INPUT_MAX_EVENTS = 250000
+    const val MUSIC_CPU_THREADS = 2
+    const val MUSIC_TRANSCRIBE_MAX_SECONDS = 600
+    const val MUSIC_RENDER_VERSION = 1
+    const val MUSIC_HUMANIZE_VERSION = 1
+    const val MUSIC_HUMANIZE_DRIFT_MS = 12.0
+    const val MUSIC_HUMANIZE_DRIFT_BEATS = 8.0
+    const val MUSIC_HUMANIZE_GROUP_MS = 3.0
+    const val MUSIC_HUMANIZE_FINGER_MS = 5.0
+    const val MUSIC_HUMANIZE_RELEASE_MS = 8.0
+    const val MUSIC_HUMANIZE_VELOCITY = 2.0
+    const val MUSIC_HUMANIZE_SIGMA_LIMIT = 2.0
+    const val MUSIC_HUMANIZE_IOI_FRACTION = 0.2
+    const val MUSIC_HUMANIZE_RELEASE_FRACTION = 0.15
     const val COMM_SCENARIO_UNLOCK = 200
     const val COMM_SPLIT_INTERVAL_SECONDS = 5 // 分条续发固定等待时间（秒）
     const val COMM_TOOL_ROUNDS = 6 // 单次沟通最多进行的查询 / 联合行动工具轮数

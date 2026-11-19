@@ -1291,7 +1291,54 @@ class Comm(
         require(owner.isNotEmpty()) { "请先选择一个人设，再导入乐谱" }
         return musicLibrary.add(source, owner)
     }
+    fun evaluateMusic(reference: File, performance: File, recorded: ByteArray? = null): Pair<String, Long> {
+        val referenceMidi = musicLibrary.referenceMidi(reference, musicTools)
+        val performanceMidi = recorded ?: musicTools.midi(performance)
+        val data = MusicMidi.compare(referenceMidi, performanceMidi)
+        val cfg = aiConfig()
+        val profile = cfg.taskProfile("review", cfg.configFor(personaName()))
+        val review = Ai.chatMessages(profile,
+            "你是独立的音乐演奏分析器。根据结构化音符差异，用中文写出简短、具体、克制的练习建议；不臆测音色、力度或踏板。",
+            listOf("user" to data.toString()), maxTokens = 500, temperature = 0.2, timeoutMs = 120_000)
+        val prompt = "请结合独立评判和结构化演奏差异，以你平常的语气自然评判用户演奏，并给出简洁建议。" +
+            "额外留意用户对这一首的处理意图：根据整体速度比例、起音与时值误差、漏音/多音分布及独立评判，" +
+            "谨慎判断是否存在连贯且有依据的有意处理；证据不足时不要推测。\n独立评判：\n$review\n结构化差异：\n$data"
+        val duration = data.getJSONObject("summary").optLong("performance_duration_ms").coerceAtLeast(0L)
+        return prompt to (60_000L + duration)
+    }
     fun selectedScore() = musicLibrary.selection(personaName(), related(), interactionPrepare().valence)
+    private val musicTools by lazy { MusicTools(com.obliphur.oit.OitApp.instance, dir) }
+    private val musicPlayback by lazy { MusicPlayback(com.obliphur.oit.OitApp.instance) }
+    private val pendingMusic = LinkedHashMap<String, JSONObject>()
+    private val musicDiscourtesyUids = HashSet<String>()
+    fun musicInput() = MusicMidiInput(com.obliphur.oit.OitApp.instance)
+    private fun musicAllowed(id: String = ""): Boolean = blocked().isEmpty() && !hardBlock() && stateFn() in listOf("idle", "break") &&
+        (!personaTitle(personaName()).equals("Claudia", true) || interactionPrepare().valence >= 30.0 || id.isEmpty()) &&
+        !(personaTitle(personaName()).equals("Claudia", true) && offenseBlocked())
+    private fun stopMusic() { pendingMusic.clear(); if (com.obliphur.oit.OitApp.isInitialized()) musicPlayback.stop() }
+    private fun musicTick() {
+        if (!com.obliphur.oit.OitApp.isInitialized()) return
+        if (musicPlayback.playing && !musicAllowed(musicPlayback.activeId)) { musicPlayback.stop(); return }
+        val iterator = pendingMusic.iterator()
+        while (iterator.hasNext()) {
+            val (uid, action) = iterator.next()
+            val message = messages.firstOrNull { it.uid == uid }
+            if (message == null || (message.pendingReply == null && !message.hold)) {
+                iterator.remove()
+                if (message != null && personaName() == action.optString("owner") && action.optString("type") == "perform" &&
+                    musicAllowed(action.optString("id"))) musicPlayback.play(action.optString("id"), File(action.getString("path"))) {
+                    personaName() == action.optString("owner") && musicAllowed(action.optString("id"))
+                }
+            }
+        }
+    }
+    private fun musicDiscourtesy(): Boolean {
+        if (!com.obliphur.oit.OitApp.isInitialized() || !personaTitle(personaName()).equals("Claudia", true) || !musicPlayback.playing) return false
+        val rule = CommRules.valence(readPersonaFull(personaName()))["music_discourtesy"] ?: return false
+        interactionSet(interactionPrepare().addValence(listOf("music_discourtesy" to (rule.first ?: -40)), nowMs(),
+            CommRules.valenceBurst(readPersonaFull(personaName())).rate))
+        return true
+    }
     companion object {
         val toolsLocal = ThreadLocal<Boolean>()
         val deltaLocal = ThreadLocal<((String) -> Unit)?>()
@@ -1601,8 +1648,8 @@ class Comm(
         var shift: List<ShiftRec> = emptyList()
     }
     private data class MemoryEdit(val action: String, val target: String, val text: String)
-    private data class ToolOutcome(val plan: JointPlan?, val reply: String, val musicId: String, val memoryEdit: MemoryEdit?)
-    private class Result(val kind: String, val extra: Extra?, val reply: String, val err: String, val epoch: Int, val op: JointPlan? = null, val musicId: String = "", val batch: ReplyBatch? = null, val memoryEdit: MemoryEdit? = null)
+    private data class ToolOutcome(val plan: JointPlan?, val reply: String, val musicId: String, val memoryEdit: MemoryEdit?, val musicAction: JSONObject? = null)
+    private class Result(val kind: String, val extra: Extra?, val reply: String, val err: String, val epoch: Int, val op: JointPlan? = null, val musicId: String = "", val batch: ReplyBatch? = null, val memoryEdit: MemoryEdit? = null, val musicAction: JSONObject? = null)
     private class MemResult(val reply: String, val err: String, val upto: Long, val owner: String)
     private val results = ConcurrentLinkedQueue<Result>()
     private val replyEvents = ConcurrentLinkedQueue<Pair<ReplyBatch, String>>()
@@ -1821,6 +1868,7 @@ class Comm(
         val np = pidOf(name)
         if (np == pid) { persona = name; return }
         voice.stop()
+        stopMusic()
         if (busy) replyDiscard(replyBatch)
         replyRewrite = false
         others[pid] = activeState()
@@ -3489,6 +3537,7 @@ class Comm(
     }
 
     private fun interactionSent(text: String, message: ChatMsg? = null) {
+        if (text.isNotBlank() && message != null && musicDiscourtesy()) musicDiscourtesyUids.add(message.uid)
         val d = interactionPrepare()
         val special = specialPeriod(otherStatus())
         val pending = if (message != null && text.isNotBlank()) d.pending + (message.uid to special) else d.pending
@@ -3547,6 +3596,11 @@ class Comm(
                     if (special && d.tension > Cfg.COMM_TENSION_CAP && gain > 0) burst = true
                 }
                 d = d.addValence(CommInteraction.valenceEvents(reply, i + 1, interactionValenceRules), at, interactionValenceBurst.rate)
+                if (uid in musicDiscourtesyUids) {
+                    val rule = CommRules.valence(readPersonaFull(personaName()))["music_discourtesy"]
+                    if (rule != null) d = d.addValence(listOf("music_discourtesy" to (rule.first ?: -40)), at, interactionValenceBurst.rate)
+                    musicDiscourtesyUids.remove(uid)
+                }
                 pending.remove(uid)
             }
         }
@@ -4405,7 +4459,7 @@ class Comm(
 
     @Synchronized
     fun setViewing(on: Boolean) {
-        if (!on) voice.stop()
+        if (!on) { musicDiscourtesy(); stopMusic(); voice.stop() }
         if (viewing && !on) saveCfg()
         viewing = on
         if (on && unread != 0) { unread = 0; changed() }
@@ -4882,12 +4936,13 @@ class Comm(
         var musicId = ""
         var musicIds = emptySet<String>()
         var memoryEdit: MemoryEdit? = null
+        var musicAction: JSONObject? = null
         var slots: List<OpSlot>? = null
         var last = emptyList<String>()
         repeat(Cfg.COMM_TOOL_ROUNDS + 1) { round ->
-            val envelope = ToolProtocol.unpack(reply) ?: return ToolOutcome(plan, reply, musicId, memoryEdit)
+            val envelope = ToolProtocol.unpack(reply) ?: return ToolOutcome(plan, reply, musicId, memoryEdit, musicAction)
             val name = envelope.optString("name")
-            if (name.isEmpty() || name == "oit_reply") return ToolOutcome(plan, reply, musicId, memoryEdit)
+            if (name.isEmpty() || name == "oit_reply") return ToolOutcome(plan, reply, musicId, memoryEdit, musicAction)
             if (round >= Cfg.COMM_TOOL_ROUNDS) throw AiError("format", "工具调用轮次超限")
             if (ep != epoch || hardBlock()) throw AiError("format", "工具请求已失效")
             val args = envelope.getJSONObject("arguments")
@@ -4944,10 +4999,31 @@ class Comm(
                             .put("status", "queued_until_message_visible").put("next", "在oit_reply中自然回复；正式回复显示时该曲目才成为当前选曲，尚未播放")
                     } else result = JSONObject().put("ok", false).put("error", "请先查询曲库，并选择本轮目录里仍存在的一首曲目")
                 }
-                "oit_music_generate_midi" -> result = JSONObject().put("ok", false)
-                    .put("error", "安卓端暂不支持生成 MIDI；请在 Windows 安装 MuseScore 后重试。MIDI 不是 MP3。")
-                "oit_music_perform", "oit_music_stop" -> result = JSONObject().put("ok", false)
-                    .put("error", "安卓端暂不支持本机演奏；请在 Windows 安装 MuseScore 后请求演奏。")
+                "oit_music_generate_midi", "oit_music_perform" -> {
+                    val id = args.optString("id")
+                    val owner = personaName()
+                    val selected = musicId.ifEmpty { selectedScore()?.optString("id").orEmpty() }
+                    result = runCatching {
+                        require(id.isNotEmpty() && id == selected && (id in musicIds || selectedScore()?.optString("id") == id)) {
+                            "请先选择本轮目录中的曲目或当前选曲"
+                        }
+                        val allowed = musicLibrary.catalog(owner, related(), interactionPrepare().valence)
+                        require((0 until allowed.length()).any { allowed.getJSONObject(it).optString("id") == id }) { "曲目当前不可用" }
+                        val data = if (name == "oit_music_perform") {
+                            require(kind in setOf("user", "retry", "followup") && musicAction == null && musicAllowed(id)) { "当前状态不允许演奏" }
+                            musicLibrary.preparePerformance(id, owner, related(), interactionPrepare().valence, musicTools).also {
+                                check(ep == epoch && owner == personaName()) { "工具请求已失效" }
+                                musicAction = JSONObject(it.toString()).put("type", "perform").put("owner", owner)
+                            }
+                        } else musicLibrary.generateMidi(id, owner, related(), interactionPrepare().valence, musicTools)
+                        JSONObject().put("ok", true).put("data", data).put("status", if (name == "oit_music_perform") "queued_until_message_visible" else "generated")
+                            .put("next", "生成 MIDI 不等于播放；演奏仅在正式回复显示并复核条件后开始")
+                    }.getOrElse { JSONObject().put("ok", false).put("error", it.message.orEmpty()) }
+                }
+                "oit_music_stop" -> if (kind in setOf("user", "retry", "followup") && musicAction == null) {
+                    musicAction = JSONObject().put("type", "stop").put("owner", personaName())
+                    result = JSONObject().put("ok", true).put("status", "queued_until_reply")
+                }
                 "oit_joint_offer" -> {
                     val why = if (kind !in CommText.OP_KINDS) "此类请求不能发起联合行动" else jointBlock().ifEmpty { if (jointLive()) "正在联合行动同步" else "" }
                     slots = if (why.isEmpty()) opSlots(now()) else null
@@ -5073,12 +5149,14 @@ class Comm(
                 var op: JointPlan? = null
                 var musicId = ""
                 var memoryEdit: MemoryEdit? = null
+                var musicAction: JSONObject? = null
                 if (ToolProtocol.unpack(reply) != null) {
                     val handled = toolRounds(profile, system, convo, reply, kind, ep)
                     op = handled.plan
                     reply = handled.reply
                     musicId = handled.musicId
                     memoryEdit = handled.memoryEdit
+                    musicAction = handled.musicAction
                 }
                 if (ToolProtocol.unpack(reply) == null && CommText.OP_RE.containsMatchIn(reply)) {
                     if (kind in CommText.OP_KINDS) {
@@ -5125,9 +5203,10 @@ class Comm(
                     reply = handled.reply
                     musicId = musicId.ifEmpty { handled.musicId }
                     memoryEdit = memoryEdit ?: handled.memoryEdit
+                    musicAction = musicAction ?: handled.musicAction
                 }
                 log("REQ $kind ok ${(System.currentTimeMillis() - started) / 1000.0}s reply_chars=${reply.length}")
-                Result(kind, extra, reply, "", ep, op, musicId, batch, memoryEdit)
+                Result(kind, extra, reply, "", ep, op, musicId, batch, memoryEdit, musicAction)
             } catch (e: AiError) {
                 log("REQ $kind FAIL ${(System.currentTimeMillis() - started) / 1000.0}s ${e.kind}: ${e.message}")
                 Result(kind, extra, "", e.message ?: "", ep, batch = batch)
@@ -5145,7 +5224,7 @@ class Comm(
         replyDrain()
         result.batch?.finished = true
         val tensionReply = result.reply
-        val r = Result(result.kind, result.extra, CommInteraction.cleanTension(result.reply), result.err, result.epoch, result.op, result.musicId, result.batch, result.memoryEdit)
+        val r = Result(result.kind, result.extra, CommInteraction.cleanTension(result.reply), result.err, result.epoch, result.op, result.musicId, result.batch, result.memoryEdit, result.musicAction)
         busy = false
         busySince = 0L
         if (hardBlock()) { replyDiscard(r.batch); again = false; if (r.kind == "share_ask") shareAskEnd("{name} 没有回复, share data 没有打开"); if (r.kind == "shift_ask") shiftAskEnd("{name} 没有回复, 起点没有平移"); changed(); return }       // 等回复的时候"无言为真"生效了: 这条回复不要了
@@ -5253,6 +5332,10 @@ class Comm(
             if (r.musicId.isNotEmpty()) runCatching {
                 musicLibrary.select(r.musicId, personaName(), related(), interactionPrepare().valence)
             }
+            r.musicAction?.takeIf { it.optString("owner") == personaName() }?.let {
+                if (it.optString("type") == "stop") stopMusic()
+                else pendingMusic[m.uid] = it
+            }
             if (shareInvite) { m.shareInvite = true; deliverInvites(m) }
             delivered = true
             deliveredId = m.id
@@ -5291,6 +5374,7 @@ class Comm(
         while (true) bgFinish(bgResults.poll() ?: break)
         while (true) memFinish(memResults.poll() ?: break)
         releaseHeld()
+        musicTick()
         jointTick(now())
         rtTick()
         condTick()

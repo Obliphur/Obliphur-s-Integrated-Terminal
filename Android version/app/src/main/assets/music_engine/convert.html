@@ -1,0 +1,16 @@
+<!doctype html><meta charset="utf-8"><script src="verovio-toolkit.js"></script><script>
+let completed = false;
+function convert() {
+  if (completed) return; completed = true;
+  try {
+    const toolkit = new verovio.toolkit();
+    toolkit.setOptions({inputFrom: "musicxml", midiNoCue: true});
+    const xml = new TextDecoder().decode(Uint8Array.from(atob(OitScore.source()), c => c.charCodeAt(0)));
+    if (!toolkit.loadData(xml)) throw new Error("MusicXML ????");
+    const midi = toolkit.renderToMIDI(); toolkit.destroy();
+    if (!midi || midi.startsWith("data:")) throw new Error("MusicXML ????");
+    OitScore.finish(btoa(Array.from(new TextEncoder().encode(midi), b => String.fromCharCode(b)).join("")), "");
+  } catch (error) { OitScore.finish("", String(error)); }
+}
+if (verovio.module.calledRun) convert(); else verovio.module.onRuntimeInitialized = convert;
+</script>

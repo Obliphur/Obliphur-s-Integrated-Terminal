@@ -20,7 +20,7 @@ object EnStrings {
         "保存 MIDI 文件" to "Save MIDI file",
         "演奏 MIDI 需要乐谱输入和 .mid 或 .midi 输出." to "Performance MIDI requires a score input and a .mid or .midi output.",
         "MIDI 人性化处理失败，请重新导出有效乐谱." to "MIDI humanization failed. Export again from a valid score.",
-        "安卓端暂不支持生成 MIDI；请在 Windows 安装 MuseScore 后重试。MIDI 不是 MP3。" to "MIDI generation is not available on Android. Install MuseScore on Windows and try again. MIDI is not MP3.",
+        "安卓上传乐谱请使用 MusicXML 或 MXL；MuseScore 文件请先在电脑导出为 MusicXML" to "On Android, upload MusicXML or MXL scores. Export MuseScore files as MusicXML on a computer first.",
         "工具调用缺少执行结果" to "A tool call is missing its result.",
         "每次只能调用一个 OIT 工具" to "Only one OIT tool may be called at a time.",
         "工具参数格式错误" to "Invalid tool arguments.",

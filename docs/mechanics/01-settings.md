@@ -67,9 +67,9 @@ Windows x64 的「额外功能」提供 Microsoft OpenJDK 17 安装入口，供 
 
 电脑基本设置的「外部软件」可手动选择本机已有文件夹，作为之后部署外部软件和下载模型的根目录；此位置只保存在本机，不随设备同步，修改位置不自动搬动已有软件。部署或模型下载期间暂不能更换位置。Process Lasso 的部署入口位于「额外功能」页；在部署本地模型时，建议使用该软件。它从 Bitsum 官方 HTTPS 地址下载，验证有效的 Bitsum 数字签名后静默安装到 `Process Lasso/`，以服务启动调度引擎。OIT 管理独立的 `oit-config/prolasso.ini` 和日志目录；重新部署时备份旧配置并重写保护规则，不继承旧的限核、节流或终止规则。ProBalance 与 SmartTrim 排除 `python*.exe`、`torchrun*.exe`、OIT、OITLink 和当前解释器，覆盖 Python 虚拟环境与 PyTorch 子进程。SmartTrim 只在内存占用达 80% 时整理工作集大于 512 MiB 的其他进程，间隔至少 15 分钟，不清空待机列表或文件缓存。
 
-「额外功能」独立设置页放在沟通之后，两端均把 AI 语音入口移到此页，语音配置和同步规则不变。电脑的「音乐工具」统一提供 Audiveris、MuseScore Studio、Spotify Basic Pitch 钢琴音频转 MIDI 和 Partitura MIDI 分析环境的状态、单项安装与一键安装，并提供文件转换。Audiveris 识别图片/PDF 为 MusicXML，MuseScore 导出 MIDI/MSCZ，Basic Pitch 把录音转 MIDI；Partitura 支持参考与演奏 MIDI 差异分析。安装与调用接口见 [音乐工具接口](../music-tools.md)，原生音乐组件仅支持 Windows x64，环境与结果不随设备同步。
+「额外功能」独立设置页放在沟通之后，两端均把 AI 语音入口移到此页，语音配置和同步规则不变。电脑的「音乐工具」统一提供 Audiveris、MuseScore Studio、Spotify Basic Pitch 钢琴音频转 MIDI 和 Partitura MIDI 分析环境；安卓在应用资源中带有 FluidSynth、Basic Pitch、Verovio 和钢琴音色，可离线播放、转换 MusicXML、转录录音和评判演奏。图片/PDF 识谱只在电脑提供；安卓曲库内置谱预先生成 MIDI，用户上传 MuseScore 谱需先在电脑转换。详细安装、运行和许可见 [音乐工具接口](../music-tools.md) 及安卓音乐资源清单。
 
-AI 模型配置单列设置页，按新增/修改配置、聊天主模型、图片、识字、评判分项管理。后三类任务未单独指定时跟随聊天主模型；图片消息优先使用当前聊天配置，若服务商明确拒绝图像输入且配置了图片模型，再自动回退。规则页的 AI 建议使用聊天主模型，原模型入口会跳转到 Assistant 并预填配置请求。桌面演奏评判复用额外功能里的本机音乐组件，安卓提供图片消息，不部署该套音乐环境。
+AI 模型配置单列设置页，按新增/修改配置、聊天主模型、图片、识字、评判分项管理。后三类任务未单独指定时跟随聊天主模型；图片消息优先使用当前聊天配置，若服务商明确拒绝图像输入且配置了图片模型，再自动回退。规则页的 AI 建议使用聊天主模型，原模型入口会跳转到 Assistant 并预填配置请求。两端的演奏评判均使用本机 MIDI 分析并调用独立评判配置生成建议。
 
 钢琴音频转 MIDI 使用 Spotify Basic Pitch 0.4.0（Apache 2.0），安装到所选目录的 `BasicPitch/`。运行环境是隔离 Python 3.11，模型随 Basic Pitch 软件包本地提供，ONNX Runtime 使用 CPU；不再下载旧 Zenodo 权重、PyTorch 或 CUDA。为避免 Basic Pitch 在 Python 3.11 上声明的 TensorFlow 依赖，安装时单独安装 Basic Pitch 包并从 PyPI 安装锁定的其余推理依赖。安装检查实际加载模型并确认 CPU provider 后写就绪标记；旧版本标记不兼容时重新部署，新版本不读取或自动删除旧 `PianoTranscription/` 文件。Python、pip 和依赖下载只使用批准的官方源，失败时复用用户原有上游代理。全部音乐任务串行，期间不能切换安装目录或部署 Process Lasso；任务跨页面重建保留，转换失败保留原有输出。安装时刷新 OIT 管理的 Lasso 排除规则，新增 Java、Audiveris、MuseScore 进程保护。
 

@@ -32,6 +32,7 @@ class OitApp : Application(), Host {
     companion object {
         lateinit var instance: OitApp
             private set
+        fun isInitialized() = ::instance.isInitialized
     }
 
     lateinit var core: Core
