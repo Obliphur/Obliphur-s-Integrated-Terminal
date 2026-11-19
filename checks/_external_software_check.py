@@ -8,20 +8,15 @@ tempstore.session("external_software_check")
 
 import configparser
 import fnmatch
-import io
-import hashlib
 from pathlib import Path
 import subprocess
 import threading
 import tkinter as tk
 from tkinter import ttk
 from unittest.mock import patch
-import urllib.request
 
 import config
 import external_software as E
-import piano_model as P
-import updater as U
 import i18n
 from pages.settings_page import SettingsPage
 from settings_manager import SettingsManager
@@ -49,15 +44,6 @@ for url in ("http://bitsum.com/x", "https://bitsum.com.evil.test/x", "https://ev
         raise AssertionError("不能重定向到非官方地址")
     except ValueError:
         pass
-
-class Response(io.BytesIO):
-    def __init__(self, data, length=None):
-        super().__init__(data)
-        self.headers = {"Content-Length": str(len(data) if length is None else length)}
-
-    def geturl(self):
-        return "https://dl.bitsum.com/files/processlassosetup64.exe"
-
 
 download = base / "installer.exe"
 def fake_unified_download(source, destination, **kwargs):
@@ -148,90 +134,6 @@ with patch.object(E, "download_installer", fake_download), patch.object(E, "sign
     other._deploy(str(base / "missing-program"))
 assert other.state == "error" and not other.installed
 
-# 模型下载只替换校验成功的文件；失败保留原模型，跨盘落盘在目标目录原子替换。
-payload = b"model-fixture"
-model = P.manager(str(base), u)
-assert P.manager(str(base), u) is model
-for url in ("http://zenodo.org/x", "https://zenodo.org.evil.test/x", "https://user@zenodo.org/x"):
-    assert not P._allowed(url)
-
-class ModelResponse(Response):
-    def geturl(self):
-        return P.MODEL_URL
-
-real_replace = os.replace
-def local_replace(src, dest):
-    assert Path(src).parent == Path(dest).parent, "必须在目标磁盘进行最终替换"
-    return real_replace(src, dest)
-
-with patch.object(P, "MODEL_SIZE", len(payload)), patch.object(P, "MODEL_MD5", hashlib.md5(payload).hexdigest()), \
-        patch("updater.upstream_proxy", return_value=None), patch("urllib.request.build_opener") as op:
-    op.return_value.open.return_value = ModelResponse(payload)
-    with patch.object(P.os, "replace", local_replace):
-        model._download()
-    assert model.state == "ready" and model.ready
-    assert Path(model.path).read_bytes() == payload
-    with patch.object(model, "_md5", side_effect=AssertionError("轮询不能重复计算哈希")):
-        assert model.ready
-    op.return_value.open.return_value = ModelResponse(b"broken")
-    model._download()
-    assert model.state == "error" and Path(model.path).read_bytes() == payload
-    assert not Path(model.path + ".part").exists()
-
-# 模型接入共用分段下载，进度即时更新；分段连接失败时回退完整下载。
-with patch.object(P, "MODEL_SIZE", len(payload)), patch.object(P, "MODEL_MD5", hashlib.md5(payload).hexdigest()), \
-        patch.object(U, "MIN_PARALLEL", 1), patch.object(U, "upstream_proxy", return_value=None), \
-        patch("urllib.request.build_opener") as op:
-    def model_response(*args, **kwargs):
-        response = ModelResponse(payload)
-        response.status = 206
-        response.headers["Content-Range"] = f"bytes 0-0/{len(payload)}"
-        return response
-
-    op.return_value.open.side_effect = model_response
-
-    def model_ranges(new_conn, target, size, path, headers, *, progress, workers, seg):
-        assert size == len(payload) and "4034264" in target
-        assert workers == config.PIANO_MODEL_CONNECTIONS and seg == config.PIANO_MODEL_SEGMENT
-        Path(path).write_bytes(payload)
-        progress(size)
-
-    with patch.object(U, "_fetch_ranges", model_ranges), patch.object(P.os, "replace", local_replace):
-        model._download()
-    assert model.state == "ready" and model.progress == 100 and model.ready
-    with patch.object(U, "_fetch_ranges", side_effect=OSError("分段连接中断")) as ranges:
-        model._download()
-    assert ranges.call_count == 1 and model.state == "ready" and model.progress == 100
-
-    # 统一音乐安装持有目录锁时，权重适配器不能提前释放它。
-    model.external.model_busy = True
-    model._download(release_location=False)
-    assert model.external.model_busy and model.ready
-    model.external.model_busy = False
-
-started.clear()
-finish.clear()
-def blocked_model():
-    started.set()
-    finish.wait(5)
-    model.external.model_busy = False
-    model.state = "idle"
-
-with patch.object(model, "_download", blocked_model):
-    assert model.download() and started.wait(2)
-    assert not model.download()
-    assert not u.deploy()
-    assert not u.deploy()
-    original_path = model.path
-    model.refresh()
-    assert model.path == original_path
-    try:
-        u.select_root(str(base))
-        raise AssertionError("模型下载期间不能改安装根目录")
-    except ValueError:
-        pass
-    finish.set()
-
 # 基本设置目录入口与额外功能部署入口可用；任务状态即时更新；切换语言后仍可使用。
 root = tk.Tk()
 root.geometry("700x650+5000+5000")
@@ -261,7 +163,6 @@ try:
         assert page.music_install.winfo_ismapped()
         assert page.java_install.winfo_ismapped()
         assert i18n.tr("Android 构建 Java") in label_texts(page.areas["extra"])
-        assert page.music.model is P.manager(str(base / "ui-data"), page.external)
         assert i18n.tr("音乐工具") in label_texts(page.areas["extra"])
         assert not page.external_choose.instate(["disabled"])
         page.external.state = "downloading"

@@ -163,8 +163,6 @@ class ExtraSettingsMixin:
         selected = self.music_library.selection(persona) if persona else None
         for key, info in statuses.items():
             state = tr("已就绪") if info["ready"] else tr("未安装")
-            if key == "piano" and info["weights_ready"] and not info["ready"]:
-                state = tr("权重已下载，运行环境未安装")
             cfg(self.music_labels[key], text=tr("{tool}: {state}", tool=tr(info["name"]), state=state))
             self.music_buttons[key].state(["disabled"] if blocked or info["ready"] else ["!disabled"])
         self.music_install.state(["disabled"] if blocked or all(s["ready"] for s in statuses.values()) else ["!disabled"])
@@ -186,7 +184,7 @@ class ExtraSettingsMixin:
         m = self.music
         if m.busy:
             name = tr(music_tools.TOOLS[m.current].name) if m.current in music_tools.TOOLS else ""
-            progress = m.model.progress if m.current == "piano" and m.model.busy else m.progress
+            progress = m.progress
             if m.state == "installing":
                 text = tr("正在安装 {tool}… {n}%", tool=name, n=progress) if 0 < progress < 100 else tr("正在安装 {tool}…", tool=name)
             else:

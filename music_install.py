@@ -96,27 +96,21 @@ def _pip_source():
 def _install_piano(manager, work):
     folder = manager._directory("piano")
     folder.mkdir(parents=True, exist_ok=True)
-    manager.model.refresh()
-    if not manager.model.ready:
-        # 调用既有同步下载实现，不再另起线程争抢外部目录锁。
-        manager.model.state, manager.model.error, manager.model.progress = "downloading", "", 0
-        manager.model._download(release_location=False)
-        if not manager.model.ready:
-            raise MusicError(manager.model.error or tr("音乐工具没有生成有效输出."))
     runtime = folder / "runtime"
     python = runtime / "python.exe"
     version = config.MUSIC_PYTHON_VERSION
     runtime_marker = runtime / "oit-python-version.txt"
     ready_marker = runtime / "oit-python-ready.txt"
     complete = (runtime_marker.is_file() and runtime_marker.read_text(encoding="utf-8") == version
-                and ready_marker.is_file() and ready_marker.read_text(encoding="utf-8") == version)
+                and ready_marker.is_file()
+                and ready_marker.read_text(encoding="utf-8") == config.MUSIC_BASIC_PITCH_VERSION)
     if not python.is_file() or not complete:
         source = {"url": f"https://www.python.org/ftp/python/{version}/python-{version}-embed-amd64.zip",
                   "accept": updater.ACCEPT_FILE, "size": config.MUSIC_PYTHON_SIZE}
         archive = work / "python.zip"
         updater.download_file(source, str(archive), allowed_hosts={"www.python.org"},
                               max_download=config.MUSIC_PYTHON_MAX, progress=_progress(manager, source),
-                              workers=config.PIANO_MODEL_CONNECTIONS, segment=config.PIANO_MODEL_SEGMENT)
+                              workers=config.MUSIC_DOWNLOAD_CONNECTIONS, segment=config.MUSIC_DOWNLOAD_SEGMENT)
         extract_zip(archive, runtime)
     site = runtime / "Lib" / "site-packages"
     site.mkdir(parents=True, exist_ok=True)
@@ -144,27 +138,17 @@ def _install_piano(manager, work):
                 raise
             run_process(common + ["--proxy", f"http://{proxy[0]}:{proxy[1]}"] + packages,
                         cwd=str(work), env={**env, "NO_PROXY": ""}, timeout=config.MUSIC_INSTALL_TIMEOUT)
-    torch_package = "torch==" + config.MUSIC_TORCH_VERSION
-    torch_source = {"url": config.MUSIC_TORCH_WHEEL_URL, "accept": updater.ACCEPT_FILE,
-                    "size": config.MUSIC_TORCH_WHEEL_SIZE, "sha256": config.MUSIC_TORCH_WHEEL_SHA256}
-    torch_wheel = work / "torch-2.5.1+cpu-cp311-cp311-win_amd64.whl"
-    updater.download_file(torch_source, str(torch_wheel), allowed_hosts={"download-r2.pytorch.org"},
-                          max_download=config.MUSIC_INSTALLER_MAX, progress=_progress(manager, torch_source),
-                          workers=config.PIANO_MODEL_CONNECTIONS, segment=config.PIANO_MODEL_SEGMENT)
-    run_process([str(python), "-X", "utf8", "-m", "pip", "--isolated", "install", "--no-index", "--no-deps",
-                 str(torch_wheel)], cwd=str(work), env=env, timeout=config.MUSIC_INSTALL_TIMEOUT)
-    constraints = work / "constraints.txt"
-    constraints.write_text(torch_package + "\n", encoding="utf-8")
-    pip_install(["--index-url", "https://pypi.org/simple", "-c", str(constraints),
-                 *config.MUSIC_PIANO_SUPPORT_PACKAGES])
-    pip_install(["--index-url", "https://pypi.org/simple", "-c", str(constraints), *config.MUSIC_PIANO_PACKAGES])
-    smoke = ("import numpy as n; n.float=float; n.int=int; n.complex=complex; import torch,librosa,soundfile; "
-             "from piano_transcription_inference import PianoTranscription, sample_rate; assert not torch.cuda.is_available()")
+    index = ["--index-url", "https://pypi.org/simple"]
+    pip_install(index + ["--no-deps", "basic-pitch==" + config.MUSIC_BASIC_PITCH_VERSION])
+    pip_install(index + list(config.MUSIC_BASIC_PITCH_PACKAGES[1:]))
+    smoke = ("import basic_pitch,onnxruntime; from basic_pitch import ICASSP_2022_MODEL_PATH,ONNX_PRESENT,TF_PRESENT; "
+             "from basic_pitch.inference import Model; assert ONNX_PRESENT and not TF_PRESENT; "
+             "assert Model(ICASSP_2022_MODEL_PATH).model.get_providers()[0]=='CPUExecutionProvider'")
     run_process([str(python), "-X", "utf8", "-c", smoke],
                 cwd=str(work), env=env)
     runtime_marker.write_text(version, encoding="utf-8")
-    ready_marker.write_text(version, encoding="utf-8")
-    _receipt(folder, python, "piano-transcription-inference 0.0.6 / torch " + config.MUSIC_TORCH_VERSION)
+    ready_marker.write_text(config.MUSIC_BASIC_PITCH_VERSION, encoding="utf-8")
+    _receipt(folder, python, "Spotify Basic Pitch " + config.MUSIC_BASIC_PITCH_VERSION)
 
 
 def _install_partitura(manager, work):
@@ -180,7 +164,7 @@ def _install_partitura(manager, work):
         archive = work / "partitura-python.zip"
         updater.download_file(source, str(archive), allowed_hosts={"www.python.org"},
                               max_download=config.MUSIC_PYTHON_MAX, progress=_progress(manager, source),
-                              workers=config.PIANO_MODEL_CONNECTIONS, segment=config.PIANO_MODEL_SEGMENT)
+                              workers=config.MUSIC_DOWNLOAD_CONNECTIONS, segment=config.MUSIC_DOWNLOAD_SEGMENT)
         extract_zip(archive, runtime)
     (runtime / "python311._pth").write_text("python311.zip\n.\nLib/site-packages\nimport site\n", encoding="utf-8")
     site = runtime / "Lib" / "site-packages"
@@ -223,7 +207,8 @@ def install_tool(manager, tool):
     arch = os.environ.get("PROCESSOR_ARCHITEW6432") or os.environ.get("PROCESSOR_ARCHITECTURE") or platform.machine()
     if arch.lower() not in ("amd64", "x86_64"):
         raise MusicError(tr("音乐工具自动部署目前仅支持 Windows x64."))
-    required_free = config.MUSIC_PARTITURA_FREE if tool == "partitura" else config.MUSIC_INSTALL_FREE
+    required_free = {"partitura": config.MUSIC_PARTITURA_FREE, "piano": config.MUSIC_BASIC_PITCH_FREE}.get(
+        tool, config.MUSIC_INSTALL_FREE)
     if shutil.disk_usage(manager.external.root).free < required_free:
         raise MusicError(tr("外部软件目录可用空间不足，请至少预留 {size} MiB.", size=required_free // (1024 * 1024)))
     if manager.external.installed:

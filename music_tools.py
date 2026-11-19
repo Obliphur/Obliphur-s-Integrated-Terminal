@@ -14,7 +14,6 @@ import zipfile
 from contextlib import nullcontext
 
 import config
-import piano_model
 import tempstore
 from i18n import tr
 
@@ -123,7 +122,6 @@ class MusicTools:
 
     def __init__(self, data_dir, external):
         self.external = external
-        self.model = piano_model.manager(data_dir, external)
         self.state, self.error, self.current, self.progress = "idle", "", "", 0
         self.result = None
         self._lock = threading.Lock()
@@ -139,7 +137,7 @@ class MusicTools:
         if tool not in TOOLS:
             raise MusicError(tr("未知音乐工具: {tool}", tool=tool))
         return Path(self.external.root) / {"audiveris": "Audiveris", "musescore": "MuseScore",
-                                           "piano": "PianoTranscription", "partitura": "Partitura"}[tool]
+                                           "piano": "BasicPitch", "partitura": "Partitura"}[tool]
 
     def _receipt(self, tool):
         if not self.external.root:
@@ -165,19 +163,17 @@ class MusicTools:
         if tool is None:
             return {key: self.status(key) for key in TOOLS}
         self._directory(tool)
-        self.model.refresh()
         exe = self.executable(tool) if self.external.root else ""
         ready = bool(exe)
-        weights = self.model.ready if tool == "piano" else None
         if tool == "piano":
             runtime = self._directory(tool) / "runtime"
             try:
                 complete = (runtime / "oit-python-version.txt").read_text(encoding="utf-8") == config.MUSIC_PYTHON_VERSION
-                complete = complete and (runtime / "oit-python-ready.txt").read_text(encoding="utf-8") == config.MUSIC_PYTHON_VERSION
+                complete = complete and (runtime / "oit-python-ready.txt").read_text(encoding="utf-8") == config.MUSIC_BASIC_PITCH_VERSION
             except OSError:
                 complete = False
-            ready = ready and bool(weights) and complete
-        return {"id": tool, "name": TOOLS[tool].name, "ready": ready, "weights_ready": weights,
+            ready = ready and complete
+        return {"id": tool, "name": TOOLS[tool].name, "ready": ready,
                 "executable": exe, "version": self._receipt(tool).get("version", "")}
 
     def _begin(self, state):
@@ -422,7 +418,7 @@ class MusicTools:
         exe = self._require("piano")
         worker = Path(__file__).with_name("music_worker.py")
         run_process([exe, "-X", "utf8", str(worker), "--audio", str(source), "--midi", str(target),
-                     "--checkpoint", self.model.path, "--threads", str(config.MUSIC_CPU_THREADS)],
+                     "--threads", str(config.MUSIC_CPU_THREADS)],
                     cwd=str(target.parent))
 
 

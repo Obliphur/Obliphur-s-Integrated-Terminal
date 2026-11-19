@@ -51,12 +51,13 @@ for value in ([], {"executable": "../outside.exe"}, {"executable": 3}, {"executa
 def fake_install(manager, tool):
     path = manager._directory(tool)
     path.mkdir(parents=True, exist_ok=True)
-    executable = path / ("python.exe" if tool == "piano" else tool + ".exe")
+    executable = path / ("python.exe" if tool in ("piano", "partitura") else tool + ".exe")
     executable.write_bytes(b"MZ")
-    if tool == "piano":
+    if tool in ("piano", "partitura"):
         (path / "runtime").mkdir(exist_ok=True)
         (path / "runtime" / "oit-python-version.txt").write_text(config.MUSIC_PYTHON_VERSION, encoding="utf-8")
-        (path / "runtime" / "oit-python-ready.txt").write_text(config.MUSIC_PYTHON_VERSION, encoding="utf-8")
+        ready = config.MUSIC_BASIC_PITCH_VERSION if tool == "piano" else config.MUSIC_PARTITURA_VERSION
+        (path / "runtime" / "oit-python-ready.txt").write_text(ready, encoding="utf-8")
     if tool == "partitura":
         (path / "runtime").mkdir(exist_ok=True)
         (path / "runtime" / "oit-python-version.txt").write_text(config.MUSIC_PYTHON_VERSION, encoding="utf-8")
@@ -64,7 +65,7 @@ def fake_install(manager, tool):
     I._receipt(path, executable, "test")
 
 
-with patch.object(type(music.model), "ready", new=property(lambda _: True)), patch.object(I, "install_tool", side_effect=fake_install) as install:
+with patch.object(I, "install_tool", side_effect=fake_install) as install:
     assert all(s["ready"] for s in music.install().values())
     assert [call.args[1] for call in install.call_args_list] == list(M.TOOLS)
     music.install()
@@ -106,7 +107,7 @@ with patch.object(type(music.model), "ready", new=property(lambda _: True)), pat
         audio = base / "钢琴.mp3"
         audio.write_bytes(b"audio")
         music.transcribe(audio, dest)
-        assert len(calls) == 1 and "--checkpoint" in calls[0][0]
+        assert len(calls) == 1 and "--checkpoint" not in calls[0][0]
         assert any(str(arg).endswith("music_worker.py") for arg in calls[0][0])
     assert not external.location_busy
 
@@ -155,7 +156,6 @@ with patch.object(type(music.model), "ready", new=property(lambda _: True)), pat
         assert entered.wait(10)
         assert music.busy and external.location_busy
         fails(lambda: music.start_install())
-        fails(lambda: music.model.download(), ValueError)
         fails(lambda: external.select_root(str(base)), ValueError)
         assert external.deploy() is False
         release.set()
@@ -193,44 +193,36 @@ with patch.object(I, "release_asset", return_value=("test", {"size": 100})), pat
     I._install_msi(music, "musescore", work)
     assert download.call_count == 1 and music.status("musescore")["ready"]
 
-# CPU 环境只用专属 Python；显式固定 PyTorch 并隔离用户 pip 配置和缓存。
+# Basic Pitch 使用隔离 Python、ONNX Runtime CPU，并通过 PyPI 安装。
 piano_calls = []
 download_sources = []
 def fake_file(source, destination, **kwargs):
     download_sources.append(source)
-    if "torch-" in str(destination):
-        with open(destination, "wb") as f:
-            f.write(b"wheel")
-        return
     with zipfile.ZipFile(destination, "w") as package:
         package.writestr("python.exe" if str(destination).endswith("python.zip") else "pip/__init__.py", b"test")
 def piano_process(args, **kwargs):
     piano_calls.append((args, kwargs))
     assert args[0] == str(music._directory("piano") / "runtime" / "python.exe")
-    if "--no-index" in args:
-        return 0
     if "pip" in args:
         assert "--isolated" in args and "--no-cache-dir" in args and "--only-binary=:all:" in args
         assert kwargs["env"]["TEMP"] == str(work)
         assert kwargs["env"]["NO_PROXY"] == "*"
-    if str(args[-1]).startswith("import numpy"):
-        assert "n.complex=complex" in args[-1]
+    if str(args[-1]).startswith("import basic_pitch"):
+        assert "ONNX_PRESENT and not TF_PRESENT" in args[-1]
     return 0
-with patch.object(type(music.model), "ready", new=property(lambda _: True)), \
-        patch.object(I.updater, "download_file", side_effect=fake_file), \
+with patch.object(I.updater, "download_file", side_effect=fake_file), \
         patch.object(I.updater, "upstream_proxy", return_value=("127.0.0.1", 7890)), \
-        patch.object(I, "_pip_source", return_value={"size": 100}), patch.object(I, "run_process", side_effect=piano_process):
+        patch.object(I, "_pip_source", return_value={"url": "https://files.pythonhosted.org/pip.whl", "size": 100}), \
+        patch.object(I, "run_process", side_effect=piano_process):
     I._install_piano(music, work)
     (music._directory("piano") / "runtime" / "oit-python-version.txt").write_text(config.MUSIC_PYTHON_VERSION, encoding="utf-8")
-    (music._directory("piano") / "runtime" / "oit-python-ready.txt").write_text(config.MUSIC_PYTHON_VERSION, encoding="utf-8")
+    (music._directory("piano") / "runtime" / "oit-python-ready.txt").write_text(config.MUSIC_BASIC_PITCH_VERSION, encoding="utf-8")
     assert music.status("piano")["ready"]
-assert "torch-2.5.1+cpu-cp311-cp311-win_amd64.whl" in piano_calls[0][0][-1]
-torch_source = next(source for source in download_sources if "download-r2.pytorch.org" in source.get("url", ""))
-assert torch_source["size"] == config.MUSIC_TORCH_WHEEL_SIZE
-assert torch_source["sha256"] == config.MUSIC_TORCH_WHEEL_SHA256
-assert "--no-index" in piano_calls[0][0]
-assert "setuptools==75.6.0" in piano_calls[1][0]
-assert "-c" in piano_calls[2][0] and "--proxy" not in piano_calls[1][0]
+assert len(download_sources) == 2 and all("python.org" in source.get("url", "") or "files.pythonhosted.org" in source.get("url", "") for source in download_sources)
+assert "basic-pitch==" + config.MUSIC_BASIC_PITCH_VERSION in piano_calls[0][0]
+assert "--no-deps" in piano_calls[0][0]
+assert config.MUSIC_BASIC_PITCH_PACKAGES[1] in piano_calls[1][0]
+assert "--proxy" not in piano_calls[1][0]
 
 # Partitura 独立安装，并通过 MIDI 样本确认可读取音符事件。
 partitura_folder = music._directory("partitura")
@@ -259,8 +251,7 @@ assert "partitura==" + config.MUSIC_PARTITURA_VERSION in partitura_calls[0][0]
 assert music.status("partitura")["ready"]
 assert music._directory("partitura") not in [music._directory(key) for key in M.CONVERTERS]
 assert M.musescore_env()["QT_QPA_PLATFORM"] == "windows"
-with patch.object(type(music.model), "ready", new=property(lambda _: True)), \
-        patch.object(I.updater, "download_file", side_effect=fake_file), \
+with patch.object(I.updater, "download_file", side_effect=fake_file), \
         patch.object(I.updater, "upstream_proxy", return_value=("127.0.0.1", 7890)), \
         patch.object(I, "_pip_source", return_value={"size": 100}), \
         patch.object(I, "run_process", side_effect=[0, M.MusicError("direct failed"), 0, 0, 0]) as fallback:
@@ -274,7 +265,7 @@ with patch.object(M.subprocess, "run", return_value=subprocess.CompletedProcess(
 with patch.object(M.subprocess, "run", side_effect=subprocess.TimeoutExpired("tool", 1)):
     fails(lambda: M.run_process(["tool"]), subprocess.TimeoutExpired)
 
-runtime_bin = str(base / "PianoTranscription" / "runtime")
+runtime_bin = str(base / "BasicPitch" / "runtime")
 runtime_prefix = os.path.normcase(os.path.abspath(runtime_bin)).rstrip("\\") + "\\"
 assert runtime_prefix not in bypassguard._exempt_prefixes()
 with bypassguard.allow_path_prefix(runtime_bin):

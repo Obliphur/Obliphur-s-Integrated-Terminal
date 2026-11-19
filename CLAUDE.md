@@ -39,7 +39,7 @@ python release.py               # 发布（PyInstaller）
 | `_comm_tools_check.py` | 原生工具协议：三种接口往返、参数校验、正文不执行标记、查询及提交、过期请求、冒犯账本 / 原谅 / 效价倍率 / 演奏与告白门禁、双端协议一致性 | `ai_assist/ai_tools.py`、`comm/comm_tools.py`、`defaults/comm_tools.json`、`defaults/comm_protocol.txt`、安卓 `ToolProtocol.kt` |
 | `_comm_delivery_check.py` | 分隔符分条、完整气泡延时、插话撤销及改写、断流、重启与跨午夜队列 | `comm/comm_delivery.py`、`comm/comm_flow.py`、`comm/comm_chat.py`、安卓 `CommDelivery.kt` / `Comm.kt` |
 | `_voice_check.py` | AI 语音协议、官方型号获取、音色设计 / 上传 / 克隆、生成去重、缓存复用、播放记录、跨设备音频与已听状态同步、未播队列、并发清空与配置窗口 | `ai_voice.py`、`ai_voice_design.py`、`pages/voice_dialogs.py`、`pages/voice_design.py`、`pages/comm_voice.py`、沟通语音入口 |
-| `_external_software_check.py` | 外部目录、Process Lasso 下载与签名校验、静默安装参数、Python / PyTorch 保护规则、模型下载校验与跨盘落盘、额外功能页面 | `external_software.py`、`piano_model.py`、`pages/settings_page/settings_external.py`、`pages/settings_page/settings_extra.py` |
+| `_external_software_check.py` | 外部目录、Process Lasso 下载与签名校验、静默安装参数、Python 保护规则、额外功能页面 | `external_software.py`、`pages/settings_page/settings_external.py`、`pages/settings_page/settings_extra.py` |
 | `_music_tools_check.py` | 音乐工具统一接口、安装状态与重入、转换链路、Partitura MIDI 事件探测、MP3 演奏渲染、失败保留原文件、目录锁、官方资产和 MSI 解包 | `music_tools.py`、`music_install.py`、`music_worker.py` |
 | `_music_library_check.py` | 32首常驻曲目、4首关系及Valence门槛曲目、上传去重、元数据、选曲、MIDI / MP3缓存、播放门禁与数据清除后恢复 | `music_library.py`、`music_playback.py`、`defaults/music_library/` |
 | `_music_humanize_check.py` | 演奏 MIDI 起音/力度/松键微差、速度映射、重触保护、鼓与踏板保留、缓存签名及失败原子保护 | `music_humanize.py`、`music_tools.py` 的演奏导出、`config.py` 的 `MUSIC_HUMANIZE_*` |
