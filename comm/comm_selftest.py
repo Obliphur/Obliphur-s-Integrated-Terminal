@@ -31,6 +31,8 @@ def _selftest():
     assert "只禁止浪漫关系称呼" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
     assert "MODE=情景模拟" in BUILTIN_PERSONAS[DEFAULT_PERSONA] and "EFFECTIVE_STAGE=90+" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
     assert "不要说'接住'" in BUILTIN_PERSONAS[DEFAULT_PERSONA]
+    with open(os.path.join(os.path.dirname(os.path.dirname(__file__)), "personas", DEFAULT_EXAMPLE), encoding="utf-8") as f:
+        assert BUILTIN_PERSONAS[DEFAULT_EXAMPLE].strip() == f.read().strip(), "内置范例与仓库原文一致"
     p = prefix_prompt()
     assert p.startswith("[OIT_SYSTEM_MESSAGES]")
     assert not re.search(r"(?m)^[IVX]+\.", p)
@@ -329,7 +331,7 @@ def _selftest():
     assert read_persona(fresh_personas, "Claudia.txt").startswith("你将扮演一位文静,冷淡")
     assert read_persona(fresh_personas, "Assistant.txt").startswith("你是名为 Assistant 的 AI 助手")
     cf.set_cfg(persona="")
-    for name in ("Claudia.txt", "Claudia_background.txt", "Claudia_templates.txt", "Assistant.txt"):
+    for name in ("Claudia.txt", "Claudia_background.txt", "Claudia_example.txt", "Claudia_templates.txt", "Assistant.txt"):
         os.remove(os.path.join(fresh_personas, name))
     cf.flush()
     cf2 = Comm(fresh_dir, fresh_personas, now=lambda: clock[0], chat_fn=fake)
@@ -1829,6 +1831,11 @@ def _selftest():
     assert cc.claudia_differs(), "背景文件被改过: 显示还原按钮"
     cc.restore_claudia()
     assert not cc.claudia_differs() and read_persona(cpersonas, "Claudia_background.txt") == BUILTIN_PERSONAS[DEFAULT_BACKGROUND].strip()
+    with open(os.path.join(cpersonas, DEFAULT_EXAMPLE), "a", encoding="utf-8") as f:
+        f.write("用户修改")
+    assert cc.claudia_differs(), "范例文件被改过: 显示还原按钮"
+    cc.restore_claudia()
+    assert read_persona(cpersonas, DEFAULT_EXAMPLE) == BUILTIN_PERSONAS[DEFAULT_EXAMPLE].strip()
     os.remove(os.path.join(cpersonas, "Claudia_templates.txt"))
     assert cc.claudia_differs(), "缺文件也算和默认人设不一样"
     cc.restore_claudia()
@@ -3061,14 +3068,15 @@ def _selftest():
     cr.ai.set_profile("deepseek", api_key="k")
     cr.ai.provider = "deepseek"
     assert cr.persona_name() == "Claudia.txt" and list_personas(rt_personas) == ["Assistant.txt", "Claudia.txt"], "Claudia_templates 是配套文件, 不是人设"
-    assert companion_files(rt_personas) == ["Claudia_background.txt", "Claudia_templates.txt"] and routine_name_of(rt_personas, "Claudia.txt") == "Claudia_templates.txt"
+    assert companion_files(rt_personas) == ["Claudia_background.txt", "Claudia_example.txt", "Claudia_templates.txt"] and routine_name_of(rt_personas, "Claudia.txt") == "Claudia_templates.txt"
     assert is_companion_name(rt_personas, "Claudia_templates.txt") and is_companion_name(rt_personas, "Claudia_background.txt") and not is_companion_name(rt_personas, "Claudia.txt")
     assert base_persona_of(rt_personas, "Claudia_templates.txt") == "Claudia.txt" and base_persona_of(rt_personas, "Claudia_background.txt") == "Claudia.txt"
-    assert companions_of(rt_personas, "Claudia.txt") == ["Claudia_background.txt", "Claudia_templates.txt"] and companions_of(rt_personas, "Assistant.txt") == []
+    assert companions_of(rt_personas, "Claudia.txt") == ["Claudia_background.txt", "Claudia_example.txt", "Claudia_templates.txt"] and companions_of(rt_personas, "Assistant.txt") == []
     full = read_persona_full(rt_personas, "Claudia.txt")
     assert full.startswith("你将扮演一位文静") and "初始起点:6:30" in full and "联网时间理由列表" in full, "routine 拼在人设后面发给模型"
     assert "这里是你的身份背景" in full and full.index("这里是你的身份背景") < full.index("初始起点:6:30"), "背景文件也合并进去, 按文件名顺序: 背景在日程前面"
-    assert full == "\n\n".join([read_persona(rt_personas, n) for n in ("Claudia.txt", "Claudia_background.txt", "Claudia_templates.txt")])
+    assert "Claudia 对话范例库" in full
+    assert full == "\n\n".join([read_persona(rt_personas, n) for n in ("Claudia.txt", "Claudia_background.txt", "Claudia_example.txt", "Claudia_templates.txt")])
     # 配套文件: X_任意名字; 没有 X.txt 的 X_名字.txt 是普通人设; 取最长的 X; readme 不算
     cp = os.path.join(td, "companion_personas")
     os.makedirs(cp)
@@ -3079,7 +3087,7 @@ def _selftest():
     assert base_persona_of(cp, "Ann_Bob_x.txt") == "Ann_Bob.txt" and base_persona_of(cp, "Zed_note.txt") == ""
     assert read_persona_full(cp, "Ann.txt") == "A\n\nB\n\nD"
     assert read_persona_full(rt_personas, "Assistant.txt") == read_persona(rt_personas, "Assistant.txt")
-    assert "Claudia_templates.txt" in cr.persona_doc() and "Claudia.txt" in cr.persona_doc(), "日程文件随设备同步"
+    assert "Claudia_templates.txt" in cr.persona_doc() and "Claudia_example.txt" in cr.persona_doc() and "Claudia.txt" in cr.persona_doc(), "日程和范例文件随设备同步"
     cr.reload_schedule("test")
     assert cr._rt is not None and cr._entries() == [] and cr._segments() == []
     assert cr.pro_percent("idle") == 20.0 and cr.pro_percent("sleep") == 50.0, "概率从日程文件里读"
@@ -3439,6 +3447,7 @@ def _selftest():
     assert read_persona(up_personas, "Claudia.txt") == BUILTIN_PERSONAS[DEFAULT_PERSONA].strip()
     assert read_persona(up_personas, "Claudia_templates.txt") == BUILTIN_PERSONAS[DEFAULT_ROUTINE].strip(), "升级时补上日程文件"
     assert read_persona(up_personas, "Claudia_background.txt") == BUILTIN_PERSONAS[DEFAULT_BACKGROUND].strip(), "升级时补上背景文件"
+    assert read_persona(up_personas, DEFAULT_EXAMPLE) == BUILTIN_PERSONAS[DEFAULT_EXAMPLE].strip(), "升级时补上对话范例"
     assert "Claudia_background.txt" not in list_personas(up_personas) and read_persona_full(up_personas, "Claudia.txt").count("这里是你的身份背景") == 1
     cu.reload_schedule("test")
     assert cu._rt is not None
@@ -3474,10 +3483,14 @@ def _selftest():
     assert read_persona(mod_personas, "Claudia.txt") == "我自己改过的 Claudia", "改过的 Claudia 不动"
     assert read_persona(mod_personas, "Claudia_templates.txt") == BUILTIN_PERSONAS[DEFAULT_ROUTINE].strip(), "Claudia 改过, 日程文件也要补上"
     assert read_persona(mod_personas, "Claudia_background.txt") == BUILTIN_PERSONAS[DEFAULT_BACKGROUND].strip(), "Claudia 改过, 背景文件也要补上"
+    assert read_persona(mod_personas, DEFAULT_EXAMPLE) == BUILTIN_PERSONAS[DEFAULT_EXAMPLE].strip(), "Claudia 改过, 对话范例也要补上"
     assert cm.check_persona_changes() is None, "补上日程文件不弹修改人设"
     open(os.path.join(mod_personas, "Claudia_background.txt"), "w", encoding="utf-8", newline="\n").write(BUILTIN_PERSONAS[DEFAULT_BACKGROUND] + "我的背景")
     cm._upgrade_background()
     assert read_persona(mod_personas, "Claudia_background.txt").endswith("我的背景"), "用户改过的背景文件不被覆盖"
+    open(os.path.join(mod_personas, DEFAULT_EXAMPLE), "w", encoding="utf-8").write("用户改过的范例")
+    cm._upgrade_example()
+    assert read_persona(mod_personas, DEFAULT_EXAMPLE) == "用户改过的范例", "用户改过的对话范例不被覆盖"
     cm.flush()
     open(os.path.join(mod_personas, "Claudia_templates.txt"), "w", encoding="utf-8", newline="\n").write(TEST_OLD_ROUTINE)
     cm2 = Comm(mod_dir, mod_personas, now=lambda: clock[0], chat_fn=fake)

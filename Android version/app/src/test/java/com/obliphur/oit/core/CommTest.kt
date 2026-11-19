@@ -1435,6 +1435,10 @@ class CommTest {
         assertTrue("背景文件被改过: 显示还原按钮", c.claudiaDiffers())
         c.restoreClaudia()
         assertFalse(c.claudiaDiffers())
+        File(cp, BuiltinPersonas.EXAMPLE).appendText("用户修改")
+        assertTrue("范例文件被改过: 显示还原按钮", c.claudiaDiffers())
+        c.restoreClaudia()
+        assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.EXAMPLE).trim(), c.readPersona(BuiltinPersonas.EXAMPLE))
         File(cp, "Claudia_templates.txt").delete()
         assertTrue("缺文件也算和默认人设不一样", c.claudiaDiffers())
         c.restoreClaudia()
@@ -1519,6 +1523,7 @@ class CommTest {
         File(td, "pp/Claudia.txt").delete()
         File(td, "pp/Claudia_templates.txt").delete()
         File(td, "pp/Claudia_background.txt").delete()
+        File(td, "pp/Claudia_example.txt").delete()
         File(td, "pp/Assistant.txt").delete()
         c.flush()
         val c2 = Comm(dir, File(td, "pp"), { clock }) { _, _, _ -> "" }
@@ -3478,17 +3483,18 @@ class CommTest {
         val c = comm(dir, File(td, "p"))
         assertEquals("Claudia.txt", c.personaName())
         assertEquals(listOf("Assistant.txt", "Claudia.txt"), c.listPersonas())              // Claudia_templates 是配套文件, 不是人设
-        assertEquals(listOf("Claudia_background.txt", "Claudia_templates.txt"), c.companionFiles())
+        assertEquals(listOf("Claudia_background.txt", "Claudia_example.txt", "Claudia_templates.txt"), c.companionFiles())
         assertEquals("Claudia_templates.txt", c.routineNameOf("Claudia.txt"))
         assertTrue(c.isCompanionName("Claudia_templates.txt") && c.isCompanionName("Claudia_background.txt") && !c.isCompanionName("Claudia.txt"))
         assertEquals("Claudia.txt", c.baseOfCompanion("Claudia_templates.txt"))
         assertEquals("Claudia.txt", c.baseOfCompanion("Claudia_background.txt"))
-        assertEquals(listOf("Claudia_background.txt", "Claudia_templates.txt"), c.companionsOf("Claudia.txt"))
+        assertEquals(listOf("Claudia_background.txt", "Claudia_example.txt", "Claudia_templates.txt"), c.companionsOf("Claudia.txt"))
         assertTrue(c.companionsOf("Assistant.txt").isEmpty())
         val full = c.readPersonaFull("Claudia.txt")
         assertTrue(full.startsWith("你将扮演一位文静") && "初始起点:6:30" in full && "联网时间理由列表" in full)
         assertTrue("这里是你的身份背景" in full && full.indexOf("这里是你的身份背景") < full.indexOf("初始起点:6:30"))     // 背景在日程前面 (按文件名顺序)
-        assertEquals(listOf("Claudia.txt", "Claudia_background.txt", "Claudia_templates.txt").joinToString("\n\n") { c.readPersona(it) }, full)
+        assertTrue("Claudia 对话范例库" in full)
+        assertEquals(listOf("Claudia.txt", "Claudia_background.txt", "Claudia_example.txt", "Claudia_templates.txt").joinToString("\n\n") { c.readPersona(it) }, full)
         // 配套文件: X_任意名字; 没有 X.txt 的 X_名字.txt 是普通人设; 取最长的 X; 下划线开头 / 结尾不算
         val cpd = File(td, "cp").also { it.mkdirs() }
         for ((n, t) in listOf("Ann.txt" to "A", "Ann_diary.md" to "D", "Ann_Bob.txt" to "B", "Ann_Bob_x.txt" to "X", "Zed_note.txt" to "Z", "Ann_.txt" to "E", "_x.txt" to "Q"))
@@ -3501,7 +3507,7 @@ class CommTest {
         assertEquals("", cc.baseOfCompanion("Zed_note.txt"))
         assertEquals("A\n\nB\n\nD", cc.readPersonaFull("Ann.txt"))
         assertEquals(c.readPersona("Assistant.txt"), c.readPersonaFull("Assistant.txt"))
-        assertTrue("Claudia_templates.txt" in c.personaDoc() && "Claudia.txt" in c.personaDoc())    // 日程文件随设备同步
+        assertTrue("Claudia_templates.txt" in c.personaDoc() && "Claudia_example.txt" in c.personaDoc() && "Claudia.txt" in c.personaDoc())    // 日程和范例文件随设备同步
         c.reloadSchedule("test")
         assertEquals(20.0 to 50.0, c.proPercent("idle") to c.proPercent("sleep"))            // 概率从日程文件里读
         val spec = Routine.parse(c.readRoutine("Claudia.txt"))!!
@@ -3600,6 +3606,7 @@ class CommTest {
         assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).trim(), cu.readPersona("Claudia.txt"))
         assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE).trim(), cu.readPersona("Claudia_templates.txt"))   // 升级时补上日程文件
         assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.BACKGROUND).trim(), cu.readPersona("Claudia_background.txt"))   // 升级时补上背景文件
+        assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.EXAMPLE).trim(), cu.readPersona(BuiltinPersonas.EXAMPLE))
         assertTrue("Claudia_background.txt" !in cu.listPersonas())
         cu.reloadSchedule("test")
         assertNotNull(cu.routineInfo("timer"))
@@ -3612,7 +3619,11 @@ class CommTest {
         assertEquals("我自己改过的 Claudia", cm.readPersona("Claudia.txt"))
         assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE).trim(), cm.readPersona("Claudia_templates.txt"))   // Claudia 改过, 日程文件也要补上
         assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.BACKGROUND).trim(), cm.readPersona("Claudia_background.txt"))   // Claudia 改过, 背景文件也要补上
+        assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.EXAMPLE).trim(), cm.readPersona(BuiltinPersonas.EXAMPLE))
         assertNull(cm.checkPersonaChanges())                                                                              // 补上日程 / 背景文件不弹修改人设
+        File(mp, BuiltinPersonas.EXAMPLE).writeText("用户改过的范例")
+        comm(md, mp)
+        assertEquals("用户改过的范例", cm.readPersona(BuiltinPersonas.EXAMPLE))
         File(mp, "Claudia_templates.txt").writeText(TEST_OLD_ROUTINE)
         comm(md, mp)
         assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE).trim(), cm.readPersona("Claudia_templates.txt"))   // 更早的内置日程文件换成当前版本
