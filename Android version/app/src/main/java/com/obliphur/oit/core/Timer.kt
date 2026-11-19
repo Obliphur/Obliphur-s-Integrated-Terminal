@@ -894,6 +894,8 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
             closeFocusPause()
             offlineEndFocus(elapsed); return
         }
+        val focused = core.isLatestActive()
+        if (!focused) closeCheck()              // 焦点转移只撤窗, 不算用户确认, 不改提醒期限
         if (focusPaused) {
             if (mono() - focusSaved >= Cfg.FOCUS_ALIVE_EVERY) saveState()
             return
@@ -905,7 +907,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
             if (autoOk()) autoEndFocus(mark + Cfg.FOCUS_CHECK_GRACE)
             return
         }
-        if (el >= mark && checkId == null) {
+        if (focused && el >= mark && checkId == null) {
             val due = LocalDateTime.now().plusSec(mark + Cfg.FOCUS_CHECK_GRACE - el)
             // 合约专注: 写准确的分钟数 (间隔是随机的); 黑雾时不写专注了多久 (18.3), 其余照常显示
             val spent = when {

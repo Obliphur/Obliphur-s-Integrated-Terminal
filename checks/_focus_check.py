@@ -4,6 +4,7 @@
 - Windows 上取的是全系统的键盘 / 鼠标输入时间 (别的程序里在用电脑也算), 不是只认 OIT 窗口;
 - 取不到系统输入时间 (非 Windows / 调用失败) 时不更新 —— 免得把一台没人用的设备误判成一直在用;
 - 操作时刻只往前走, 不会因为更早的输入倒退.
+- 专注确认窗只在焦点设备显示, 切换焦点不算确认、不延后期限; 手动确认照常同步.
 不开窗口, 不碰真实数据.
 """
 import os
@@ -129,10 +130,84 @@ def test_schedule_follows_focus_instead_of_chat_leader():
     assert asked == [("rest", "rest")]
 
 
+def test_focus_check_follows_focus():
+    """两台设备间转移提醒, 撤窗不确认; 确认同步后不重弹, 非焦点仍处理超时."""
+    from datetime import datetime
+    from types import SimpleNamespace
+    from unittest.mock import Mock, patch
+    import config
+    from app.app_timer import TimerMixin
+
+    class App(TimerMixin):
+        pass
+
+    def make_app(focused):
+        a = App()
+        a.state = config.RUNNING
+        a.start_mono = time.monotonic() - 65
+        a.start_wall = datetime.now()
+        a._close_pending = a._pause_mono = a._check_win = None
+        a._focus_checks = a._focus_ok = 0
+        a._focus_saved = 0
+        a.sync = SimpleNamespace(peers=lambda: ["peer"], is_latest_active=lambda: focused[0])
+        a.contract = SimpleNamespace(focus_tag=lambda start: False)
+        a._end_rewound_focus = lambda: False
+        a._offline_secs = lambda start: 0
+        a._timer_auto_ok = lambda: True
+        a._check_mark = lambda n: 60 * n
+        a._focus_elapsed = lambda: 65
+        a._save_timer_state = Mock()
+        a._mine = Mock()
+        a._auto_end_focus = Mock()
+        return a
+
+    pc_focus, phone_focus = [True], [False]
+    pc, phone = make_app(pc_focus), make_app(phone_focus)
+    with patch("app.app_timer.toast.notice") as notice:
+        def window(*args):
+            w = SimpleNamespace(open=True)
+            w.alive = lambda: w.open
+            w.close = lambda: setattr(w, "open", False)
+            return w
+
+        notice.side_effect = window
+        pc._check_focus()
+        phone._check_focus()
+        old = pc._check_win
+        assert old is not None and phone._check_win is None
+        phone._save_timer_state.assert_called()  # 非焦点仍定时保存
+        pc_focus[0], phone_focus[0] = False, True
+        pc._check_focus()
+        phone._check_focus()
+        assert not old.alive() and pc._check_win is None and phone._check_win is not None
+        pc._check_focus()
+        assert pc._focus_checks == phone._focus_checks == 0
+        pc._mine.assert_not_called()
+        phone._check_win.close()                 # 用户手动确认
+        phone._check_focus()
+        assert phone._focus_checks == 1 and phone._focus_ok == 65
+        phone._mine.assert_called_once()
+
+        # 同一段专注从远端同步确认次数, 焦点切回来也不重弹
+        live = {"state": "running", "start": "same", "checks": 1, "ok": 65, "owner": "phone"}
+        pc.timer_live = lambda: {"state": "running", "start": "same"}
+        S.SyncMixin.adopt_timer(pc, live)
+        pc_focus[0], phone_focus[0] = True, False
+        pc._check_focus()
+        assert pc._check_win is None and pc._focus_checks == 1
+
+        # 焦点转移不延后原期限, 且超时仍由计时器主人处理
+        phone._focus_elapsed = lambda: 120 + float(config.FOCUS_CHECK_GRACE)
+        phone._check_focus()
+        phone._auto_end_focus.assert_called_once_with(120 + float(config.FOCUS_CHECK_GRACE))
+        assert notice.call_count == 2
+
+
 test_system_idle()
 test_note_input()
 test_status_refreshes()
 test_comm_notices_follow_focus()
 test_break_notice_follows_focus()
 test_schedule_follows_focus_instead_of_chat_leader()
-print("focus device check OK (全系统输入时间 / 只前进 / 取不到时不动)")
+test_focus_check_follows_focus()
+print("focus device check OK (全系统输入 / 专注提醒随焦点转移 / 确认同步 / 超时)")

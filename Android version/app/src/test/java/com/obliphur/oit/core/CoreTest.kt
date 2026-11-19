@@ -17,6 +17,56 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 
 class CoreTest {
+    /** 提醒只在焦点显示, 焦点转移不确认, 手动确认同步后不重弹。 */
+    @Test
+    fun focusCheckFollowsFocus() {
+        val pc = Core(tmp(), NoHost) { 1000.0 }
+        val phone = Core(tmp(), NoHost) { 1000.0 }
+        var pcFocused = true
+        pc.isLatestActive = { pcFocused }
+        phone.isLatestActive = { !pcFocused }
+        val start = LocalDateTime.now().minusSeconds(Cfg.FOCUS_CHECK_EVERY.toLong() + 60)
+        val live = JSONObject().put("state", "running").put("owner", "")
+            .put("start", start.iso()).put("checks", 0).put("ok", 0)
+        pc.timer.adopt(live)
+        phone.timer.adopt(live)
+        pc.timer.check()
+        phone.timer.check()
+        val originalMessage = pc.notices.single { it.tag == "check" }.message
+        assertTrue(phone.notices.none { it.tag == "check" })
+        pcFocused = false
+        pc.timer.check()
+        phone.timer.check()
+        pc.timer.check()
+        assertTrue(pc.notices.none { it.tag == "check" })
+        assertEquals(0, pc.timer.liveState().getInt("checks"))
+        assertEquals(0, phone.timer.liveState().getInt("checks"))
+        val reminder = phone.notices.single { it.tag == "check" }
+        assertEquals(originalMessage, reminder.message)
+        phone.closeNotice(reminder.id, "ok")
+        assertEquals(1, phone.timer.liveState().getInt("checks"))
+        pc.timer.adopt(phone.timer.liveState())
+        pcFocused = true
+        pc.timer.check()
+        phone.timer.check()
+        assertTrue(pc.notices.none { it.tag == "check" })
+        assertTrue(phone.notices.none { it.tag == "check" })
+    }
+
+    /** 非焦点的计时器主人仍按原期限自动结束未确认的专注。 */
+    @Test
+    fun focusCheckTimeoutWithoutFocus() {
+        val core = Core(tmp(), NoHost) { 1000.0 }
+        core.isLatestActive = { false }
+        val seconds = Cfg.FOCUS_CHECK_EVERY + Cfg.FOCUS_CHECK_GRACE + 60
+        core.timer.adopt(JSONObject().put("state", "running").put("owner", "")
+            .put("start", LocalDateTime.now().minusSeconds(seconds.toLong()).iso())
+            .put("checks", 0).put("ok", 0))
+        core.timer.check()
+        assertEquals(TState.IDLE, core.timer.state)
+        assertTrue(core.notices.none { it.tag == "check" })
+    }
+
     /** 请求处理端不是焦点时不弹, 提示同步给焦点设备且只显示一次。 */
     @Test
     fun commNoticesFollowFocus() {

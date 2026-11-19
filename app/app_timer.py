@@ -734,6 +734,9 @@ class TimerMixin:
             self._focus_checks += 1
             self._focus_ok = self._focus_elapsed()
             self._save_timer_state()
+        focused = self.sync.is_latest_active()
+        if not focused:
+            self._close_check_win()            # 焦点转移只撤窗, 不算用户确认, 不改提醒期限
         if self._pause_mono is not None:
             # 暂停中: 不弹"还在吗", 专注时间按倍率倒退着走 (MECHANICS 6.9)
             every = float(config.FOCUS_ALIVE_EVERY if self.sync.peers() else config.FOCUS_SAVE_EVERY)
@@ -747,7 +750,7 @@ class TimerMixin:
             if self._timer_auto_ok():          # 别的设备是主人时等它结束, 结果同步过来
                 self._auto_end_focus(mark + grace)
             return
-        if elapsed >= mark and self._check_win is None:
+        if focused and elapsed >= mark and self._check_win is None:
             due = datetime.now() + timedelta(seconds=mark + grace - elapsed)
             # 合约专注: 写准确的分钟数 (间隔是随机的); 黑雾时不写专注了多久 (18.3)
             if not self.contract.focus_tag(self.start_wall):
