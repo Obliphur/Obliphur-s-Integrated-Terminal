@@ -11,6 +11,8 @@ import { createSegmenter, splitAssistTokens, placeTokens, tokenStyle, assistActi
 
 const INK = 'hsl(40, 8%, 16%)';
 const INK2 = 'hsl(40, 5%, 48%)';
+// 独自阅读沿用同一书库, 不启动人设会话或锁定 OIT 沟通页.
+const READ_TOGETHER = new URL(window.location.href).searchParams.get('reading_mode') !== 'solo';
 
 const COREAD_POP_CSS = `
 .coread-study {
@@ -1005,7 +1007,7 @@ const StudyApp: React.FC = () => {
         const requestId = ++openRequest.current;
         window.dispatchEvent(new Event('coread-pause'));
         oitChatSessionRef.current = '';
-        try {
+        if (READ_TOGETHER) try {
             const personaPid = new URL(window.location.href).searchParams.get('persona_pid') || '';
             const session: any = await api.oitChat('start', { persona_pid: personaPid });
             oitChatSessionRef.current = session.session_id || '';
@@ -1910,7 +1912,7 @@ const StudyApp: React.FC = () => {
     const backToShelf = () => {
         ++openRequest.current;
         window.dispatchEvent(new Event('coread-pause'));
-        api.oitChat('end', { session_id: oitChatSessionRef.current }).catch(() => {});
+        if (oitChatSessionRef.current) api.oitChat('end', { session_id: oitChatSessionRef.current }).catch(() => {});
         oitChatSessionRef.current = '';
         setOitChatOpen(false);
         setMode('shelf'); setActiveBook(null); setParagraphs([]); setComments([]);
@@ -1920,7 +1922,7 @@ const StudyApp: React.FC = () => {
     };
 
     useEffect(() => {
-        if (mode !== 'reading') return;
+        if (mode !== 'reading' || !READ_TOGETHER) return;
         let alive = true;
         const poll = async () => {
             try {
@@ -2200,12 +2202,12 @@ const StudyApp: React.FC = () => {
     return (
         <div className="xiaowo-study coread-study" style={{ height: '100%', width: '100%', display: 'flex', flexDirection: 'column', background: mode === 'reading' ? (readerNightMode ? '#1a1a1a' : '#fffcf3') : 'linear-gradient(145deg, #fbf9f6, #f5f1ee)', position: 'relative', overflow: 'hidden', filter: mode === 'reading' && readerBrightness < 100 ? `brightness(${readerBrightness / 100})` : undefined }}>
             <style>{`${STUDY_THEME_CSS}\n${COREAD_POP_CSS}\n@keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.05); } }`}</style>
-            {mode === 'reading' && (
+            {mode === 'reading' && READ_TOGETHER && (
                 <button onClick={() => setOitChatOpen(value => !value)} style={{ position: 'absolute', right: 68, bottom: 30, zIndex: 18, border: '1px solid rgba(60,55,45,.14)', borderRadius: 22, padding: '10px 14px', cursor: 'pointer', color: readerNightMode ? '#ddd' : INK, background: readerNightMode ? 'rgba(40,40,40,.8)' : 'rgba(255,255,255,.85)', boxShadow: '0 2px 12px rgba(30,26,20,.12)' }}>
                     {oitChatOpen ? '收起聊天' : '💬 聊天'}
                 </button>
             )}
-            {mode === 'reading' && oitChatOpen && (
+            {mode === 'reading' && READ_TOGETHER && oitChatOpen && (
                 <section onClick={e => e.stopPropagation()} style={{ position: 'absolute', zIndex: 40, right: 12, top: 'calc(48px + env(safe-area-inset-top))', bottom: 84, width: 'min(390px, calc(100% - 24px))', display: 'flex', flexDirection: 'column', borderRadius: 18, overflow: 'hidden', color: readerNightMode ? '#eee' : INK, background: readerNightMode ? 'rgba(27,27,27,.96)' : 'rgba(255,255,255,.96)', border: '1px solid rgba(100,90,70,.16)', boxShadow: '0 10px 35px rgba(0,0,0,.2)' }}>
                     <header style={{ padding: '12px 14px', fontWeight: 650, borderBottom: '1px solid rgba(100,90,70,.14)' }}>
                         OIT · {oitChatMessages.length ? '共同阅读' : '沟通'}

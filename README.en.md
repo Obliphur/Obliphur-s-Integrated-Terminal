@@ -39,6 +39,7 @@ However, all data transfers in this project happen on the local network and are 
 | **Network** | Request-based network access: connects automatically after a cooling-off period, cuts off at the deadline; also quick access and emergency loans; the "📁 File Channel" transfers files / images between a bound phone and computer |
 | **Rules** | Website / app blacklist and whitelist in Proxy mode (a blocked program's window is closed as soon as it comes to the foreground); AI can suggest entries; a bilibili.com entry can be expanded to allow / block by uploader |
 | **Chat** | Chat with a persona AI with schedule-based status and proactive messages. OIT automatically reads encrypted Claudia persona files. Optional MiniMax voice profiles per persona, cached audio, manual playback or automatic playback of recent unheard messages, and setup help for model and voice configurations. |
+| **Reading (Chat)** | Choose solo reading or start coread to read, chat and annotate with the current character; Windows hosts the local library, also accessible from paired Android devices over the LAN |
 | **Performance review (Windows)** | Import a performance file or record directly from a USB or Bluetooth MIDI instrument in Chat, then compare it with a reference score for AI feedback |
 | **Hour Log** | Prompts you every hour to record what you did in the previous hour |
 | **Calendar** | Study time by day |

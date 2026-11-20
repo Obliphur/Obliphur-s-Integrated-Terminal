@@ -146,16 +146,17 @@ class CoReadService:
         if os.name != "nt" or (os.environ.get("PROCESSOR_ARCHITEW6432") or os.environ.get("PROCESSOR_ARCHITECTURE", "")).lower() not in ("amd64", "x86_64"):
             raise RuntimeError(tr("自动安装 Node.js 需要 Windows x64."))
         os.makedirs(self.root, exist_ok=True)
-        archive = tempstore.path("update", f"node-v{NODE_VERSION}-win-x64.zip")
-        self.progress = tr("下载 Node.js…")
-        updater.download_file({"url": NODE_ARCHIVE, "accept": updater.ACCEPT_FILE,
-                               "sha256": NODE_SHA256}, archive, allowed_hosts=NODE_HOSTS,
-                              max_download=NODE_MAX_DOWNLOAD)
-        stage = os.path.join(tempstore.path("misc"), f"coread-node-{secrets.token_hex(5)}")
-        os.makedirs(stage, exist_ok=True)
+        stage = tempstore.mkdtemp("update", prefix="coread-node-")
+        archive = os.path.join(stage, f"node-v{NODE_VERSION}-win-x64.zip")
         try:
+            self.progress = tr("下载 Node.js…")
+            updater.download_file({"url": NODE_ARCHIVE, "accept": updater.ACCEPT_FILE,
+                                   "sha256": NODE_SHA256}, archive, allowed_hosts=NODE_HOSTS,
+                                  max_download=NODE_MAX_DOWNLOAD)
             with zipfile.ZipFile(archive) as package:
                 for info in package.infolist():
+                    if info.is_dir():
+                        continue
                     clean = os.path.normpath(info.filename).replace("/", os.sep)
                     if os.path.isabs(clean) or clean == ".." or clean.startswith(".." + os.sep):
                         raise RuntimeError("Node.js 安装包包含无效路径")
@@ -167,7 +168,6 @@ class CoReadService:
                     os.makedirs(os.path.dirname(target), exist_ok=True)
                     with package.open(info) as src, open(target, "wb") as dst:
                         shutil.copyfileobj(src, dst)
-            os.makedirs(self.node_root, exist_ok=True)
             source_root = os.path.join(stage, f"node-v{NODE_VERSION}-win-x64")
             os.makedirs(self.node_root, exist_ok=True)
             shutil.copy2(os.path.join(source_root, "node.exe"), os.path.join(self.node_root, "node.exe"))

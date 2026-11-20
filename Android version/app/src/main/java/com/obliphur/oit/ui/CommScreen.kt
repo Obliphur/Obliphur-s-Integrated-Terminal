@@ -133,12 +133,17 @@ fun CommScreen(go: (String) -> Unit) {
         }
         onDispose { comm.onCoreadEnd = null }
     }
-    fun openCoread() {
-        if (comm.coreadUrl.isBlank() || comm.coreadAccessKey.isBlank()) {
-            core.toast(tr("请先在 Windows 的共读页启动共读服务."), "warn")
+    fun openCoread(together: Boolean = true) {
+        if (together && comm.pid.isBlank()) {
+            core.toast(tr("请先选择聊天对象，再开始共读."), "warn")
             return
         }
-        val url = "${comm.coreadUrl.trimEnd('/')}/?owner_key=${comm.coreadAccessKey}&access_key=${comm.coreadAccessKey}&persona_pid=${java.net.URLEncoder.encode(comm.pid, "UTF-8")}"
+        if (comm.coreadUrl.isBlank() || comm.coreadAccessKey.isBlank()) {
+            core.toast(tr("请先在 Windows 的沟通页点击「阅读」启动阅读服务."), "warn")
+            return
+        }
+        val mode = if (together) "coread" else "solo"
+        val url = "${comm.coreadUrl.trimEnd('/')}/?reading_mode=$mode&owner_key=${comm.coreadAccessKey}&access_key=${comm.coreadAccessKey}&persona_pid=${java.net.URLEncoder.encode(comm.pid, "UTF-8")}"
         runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))) }
             .onFailure { core.toast(tr("无法打开共读网页."), "warn") }
     }
@@ -152,6 +157,7 @@ fun CommScreen(go: (String) -> Unit) {
     }
     var askClear by remember { mutableStateOf(false) }
     var help by remember { mutableStateOf(false) }
+    var readingChoice by remember { mutableStateOf(false) }
     var musicReview by remember { mutableStateOf(false) }
     var coAlarm by remember { mutableStateOf(false) }                           // 共时闹钟的弹窗
     var shiftDlg by remember { mutableStateOf(false) }                          // 起点平移的弹窗
@@ -330,7 +336,7 @@ fun CommScreen(go: (String) -> Unit) {
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
             // ❓ 帮助 (最左边): 解释每个按钮的作用
             TextButton({ help = true }, contentPadding = tight) { Text("❓", fontSize = 18.sp) }
-            TextButton(::openCoread, contentPadding = tight) { Text("📚", fontSize = 18.sp) }
+            TextButton({ readingChoice = true }, contentPadding = tight) { Text(tr("阅读")) }
             // 当前聊天模式，与其他功能一起放在输入框上方。
             TextButton({ comm.setScenario(!comm.scenarioOn()) }, contentPadding = tight) {
                 Text(if (comm.scenarioOn()) "🎭" else "📱", fontSize = 18.sp)
@@ -432,6 +438,15 @@ fun CommScreen(go: (String) -> Unit) {
         }
     }
     if (help) HelpDialog { help = false }
+    if (readingChoice) AlertDialog(onDismissRequest = { readingChoice = false }, containerColor = o.bg,
+        title = { Text(tr("阅读")) },
+        text = {
+            Column {
+                TextButton({ readingChoice = false; openCoread(false) }) { Text(tr("自己阅读"), color = o.accent) }
+                TextButton({ readingChoice = false; openCoread(true) }) { Text(tr("发起 coread"), color = o.accent) }
+            }
+        },
+        confirmButton = { TextButton({ readingChoice = false }) { Text(tr("取消"), color = o.dim) } })
     if (musicReview) MusicReviewDialog(comm) { musicReview = false }
     if (coAlarm) CoAlarmDialog { coAlarm = false }
     if (shiftDlg) ShiftDialog(comm.shiftStart() ?: CommShift.LO, comm.shiftRange() ?: (0 to 1439), { shiftDlg = false }) { minutes ->
@@ -473,6 +488,7 @@ private fun HelpDialog(onDismiss: () -> Unit) {
     val o = LocalOit.current
     val rows = listOf(
         Triple("❓", tr("帮助"), tr("打开这个说明.")),
+        Triple("📚", tr("阅读"), tr("选择「自己阅读」可独自打开书库；选择「发起 coread」可与当前聊天对象共读、聊天和批注。共读期间请在阅读网页聊天，结束后恢复沟通。手机需连接 Windows 的阅读服务。")),
         Triple("💬", tr("说教"), tr("你可以请求对方针对现实中想改变的状态、行为、习惯或语言进行说教，分条分析问题与解决方案；主题会简短记入记忆卡，实际完成改变后才移除。")),
         Triple("📱 / 🎭", tr("聊天模式"), tr("输入框上方的 📱 / 🎭 按钮切换软件聊天与情景模拟。📱 = 软件聊天，不描写动作；🎭 = 情景模拟，按当前时段与状态描写虚构动作。模式按聊天对象保存。")),
         Triple("👀 / 🙈", tr("分享数据"), tr("点一下切换 (👀 = 打开, 要先征得对方同意; ⏳ = 等对方回复). 打开后去别的页面, 对方会收到那一页上你们的数据; 回到沟通自动关闭. 对方也可以发邀请, 点「接受」才会打开.")),

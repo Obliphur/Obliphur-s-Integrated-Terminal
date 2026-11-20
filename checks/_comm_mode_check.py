@@ -2,6 +2,8 @@
 import os
 import sys
 import tkinter as tk
+from types import SimpleNamespace
+from unittest.mock import Mock
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -58,6 +60,20 @@ try:
             config.UI_SCALE = scale
             page = CommPage(root, c)
             page.pack(fill="both", expand=True)
+            # 阅读入口的两个选择和关闭行为, 中英文均走真实按钮回调。
+            assert page.btn_coread.cget("text") == i18n.tr("阅读")
+            opened = page.on_coread = Mock()
+            for label, value in (("自己阅读", False), ("发起 coread", True)):
+                def choose(dlg, label=label, value=value):
+                    button = next(w for w in descendants(dlg) if "text" in w.keys() and w.cget("text") == i18n.tr(label))
+                    button.invoke()
+                    return dlg.result
+                with patch.object(Modal, "wait", choose):
+                    page.btn_coread.invoke()
+                opened.assert_called_with(together=value)
+            with patch.object(Modal, "wait", lambda dlg: dlg.cancel()):
+                page.btn_coread.invoke()
+            assert opened.call_count == 2
             c.cfg["msg_gone"] = 199
             c.cfg["mem_fixed"] = []
             c._interaction_set({"scenario_mode": False})
@@ -109,6 +125,7 @@ try:
                 text = "\n".join(str(w.cget("text")) for w in descendants(dlg) if "text" in w.keys())
                 assert i18n.tr("聊天模式") in text and "📱 / 🎭" in text
                 assert i18n.tr("说教") in text
+                assert i18n.tr("阅读") in text and "coread" in text
                 assert i18n.tr("你可以请求对方针对现实中想改变的状态、行为、习惯或语言进行说教，分条分析问题与解决方案；主题会简短记入记忆卡，实际完成改变后才移除。") in text
                 assert "200" not in text
                 area = next(w for w in descendants(dlg) if isinstance(w, ScrollArea))
@@ -143,6 +160,34 @@ try:
             if page._resize_job:
                 page.after_cancel(page._resize_job)
             page.destroy()
+    # 服务启动必须在 Tk 主线程反馈结果, 独自阅读不要求先选择人设。
+    from app.app_comm import CommMixin
+    class ReadingApp(CommMixin):
+        pass
+    reading_app = ReadingApp()
+    reading_app.root = root
+    reading_app.dm = SimpleNamespace(data_dir=folder)
+    reading_app.comm = SimpleNamespace(pid="", set_cfg=Mock())
+    reading_app._log_window = Mock()
+    for states, error, together in ((["stopped", "ready"], "", False),
+                                    (["stopped", "error"], "test startup failure", True)):
+        service = Mock(access_key="test-key", progress="preparing", error=error)
+        service.refresh.side_effect = states
+        service.lan_hosts.return_value = ["192.0.2.1"]
+        service.url.side_effect = lambda host="127.0.0.1": f"http://{host}:3000/?access_key=test-key"
+        reading_app.coread_service = service
+        reading_app.comm.pid = "character" if together else ""
+        with patch("coread_service.OitChatBridge"), patch("webbrowser.open", return_value=True) as browser, \
+                patch("app.app_comm.toast.warn") as warning:
+            reading_app._open_coread(together=together)
+            if error:
+                browser.assert_not_called()
+                assert error in warning.call_args.args[0]
+            else:
+                assert browser.call_args.args[0].startswith("http://127.0.0.1:")
+                assert "reading_mode=solo" in browser.call_args.args[0]
+                assert "192.0.2.1" in reading_app.comm.set_cfg.call_args.kwargs["coread_link"]["url"]
+                warning.assert_not_called()
 finally:
     config.COMM_SHOW_TENSION = original_show_tension
     config.UI_SCALE = original_scale

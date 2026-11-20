@@ -79,15 +79,17 @@ def main():
     if os.name == "nt":
         root = tempstore.mkdtemp(prefix="coread-runtime-")
         def download_runtime(_spec, destination, **_kwargs):
+            assert not os.path.isdir(destination), "下载目标必须是文件, 不能用 tempstore.path 创建同名目录"
             os.makedirs(os.path.dirname(destination), exist_ok=True)
             prefix = f"node-v{coread_service.NODE_VERSION}-win-x64/"
             with zipfile.ZipFile(destination, "w") as package:
                 package.writestr(prefix + "node.exe", b"local test runtime")
                 package.writestr(prefix + "node_modules/npm/bin/npm-cli.js", b"// local test npm")
+                package.writestr(prefix + "node_modules/npm/", b"")
                 package.writestr(prefix + "LICENSE", b"test license")
         try:
             with patch.object(coread_service.updater, "download_file", side_effect=download_runtime) as download, \
-                    patch.object(coread_service.tempstore, "path", side_effect=lambda *parts: str(Path(root, "temp", *parts))):
+                    patch.object(coread_service.tempstore, "root", return_value=str(Path(root, "temp"))):
                 service = CoReadService(root)
                 node, npm = service._install_node()
                 assert Path(node) == Path(service.node_root) / "node.exe"

@@ -3,6 +3,12 @@ package com.obliphur.oit.core
 /** 英文界面文字. 由 gen_en.py 从桌面版 i18n.py 和补充的译文生成; 键是中文原文. */
 object EnStrings {
     val MAP: Map<String, String> = hashMapOf(
+        "阅读" to "Reading",
+        "自己阅读" to "Read on my own",
+        "发起 coread" to "Start coread",
+        "请先选择聊天对象，再开始共读." to "Select a character before starting co-reading.",
+        "请先在 Windows 的沟通页点击「阅读」启动阅读服务." to "Click Reading on the Windows Chat page to start the reading service first.",
+        "选择「自己阅读」可独自打开书库；选择「发起 coread」可与当前聊天对象共读、聊天和批注。共读期间请在阅读网页聊天，结束后恢复沟通。手机需连接 Windows 的阅读服务。" to "Choose Read on my own to open the library, or Start coread to read, chat and annotate with the current character. Use the reader's chat during co-reading; regular chat resumes when it ends. Phones connect to the Windows reading service.",
         "正在共读，请在阅读网页里的聊天框继续沟通。" to "Co-reading is active. Continue the conversation in the reader's chat panel.",
         "结束阅读并恢复沟通" to "End reading and return to chat",
         "我想邀请你一起阅读" to "I would like to invite you to read together.",

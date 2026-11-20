@@ -113,7 +113,7 @@ class CommPage(CommVoiceMixin, tk.Frame):
         self.btn_image.pack(side="left", padx=(4, 0))
         self.btn_review = ttk.Button(tools, text="🎼", width=3, command=self._review_performance)
         self.btn_review.pack(side="left", padx=(4, 0))
-        self.btn_coread = ttk.Button(tools, text="📚", width=3, command=self.on_coread or (lambda: None))
+        self.btn_coread = ttk.Button(tools, text=tr("阅读"), command=self._reading)
         self.btn_coread.pack(side="left", padx=(4, 0))
         self.coread_btns = tk.Frame(tools, bg=bg)
         self.lbl_coread_inv = tk.Label(self.coread_btns, text="", bg=bg, fg=COLORS["accent"], font=config.font("small"))
@@ -187,6 +187,15 @@ class CommPage(CommVoiceMixin, tk.Frame):
             self._reading_lock = None
         if enabled:
             self._reading_lock.lift()
+
+    def _reading(self):
+        """先选独自阅读或共读, 再交给本机阅读服务打开网页."""
+        dlg = Modal(self.winfo_toplevel(), tr("阅读"), width=config.scaled(340), height=config.scaled(180))
+        for label, together in (("自己阅读", False), ("发起 coread", True)):
+            ttk.Button(dlg.body, text=tr(label), command=lambda value=together: dlg.finish(value)).pack(fill="x", pady=8)
+        result = dlg.wait()
+        if result is not None and self.on_coread:
+            self.on_coread(together=result)
 
     def _coread_respond(self, accept):
         why = self.comm.coread_offer_respond(accept)
@@ -844,6 +853,7 @@ class CommPage(CommVoiceMixin, tk.Frame):
         dlg = Modal(self.winfo_toplevel(), tr("帮助"), width=width, height=config.scaled(400))
         bg = COLORS["bg"]
         rows = (("❓", "帮助", "打开这个说明."),
+                ("📚", "阅读", "选择「自己阅读」可独自打开书库；选择「发起 coread」可与当前聊天对象共读、聊天和批注。共读期间请在阅读网页聊天，结束后恢复沟通。手机需连接 Windows 的阅读服务。"),
                 ("💬", "说教", "你可以请求对方针对现实中想改变的状态、行为、习惯或语言进行说教，分条分析问题与解决方案；主题会简短记入记忆卡，实际完成改变后才移除。"),
                 ("📱 / 🎭", "聊天模式", "输入框上方的 📱 / 🎭 按钮切换软件聊天与情景模拟。📱 = 软件聊天，不描写动作；🎭 = 情景模拟，按当前时段与状态描写虚构动作。模式按聊天对象保存。"),
                 ("👀 / 🙈", "分享数据 (share data)", "点一下切换 (👀 = 打开, 要先征得对方同意; ⏳ = 等对方回复). 打开后去别的页面, 对方会收到那一页上你们的数据; 回到沟通自动关闭. 对方也可以发邀请, 点「接受」才会打开."),

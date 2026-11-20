@@ -16,13 +16,13 @@ from i18n import tr
 
 
 class CommMixin:
-    def _open_coread(self):
-        """打开本机的共读室网页; 阅读页聊天通过本机沟通对象发送."""
+    def _open_coread(self, together=True):
+        """显示服务启动进度, 就绪后按所选模式打开本机阅读网页."""
         try:
             import webbrowser
             from urllib.parse import quote
             from coread_service import OitChatBridge, manager
-            if not self.comm.pid:
+            if together and not self.comm.pid:
                 toast.warn(tr("请先选择聊天对象，再开始共读."))
                 return
             self.comm.on_coread_open = self._open_coread
@@ -40,10 +40,50 @@ class CommMixin:
                 host = hosts[0] if hosts else "127.0.0.1"
                 self.comm.set_cfg(coread_link={"url": service.url(host).split("/?", 1)[0],
                                                "access_key": service.access_key})
-                url = service.url(host).replace("/?", f"/?persona_pid={quote(self.comm.pid)}&")
-                webbrowser.open(url, new=2)
+                mode = "coread" if together else "solo"
+                url = service.url().replace("/?", f"/?reading_mode={mode}&persona_pid={quote(self.comm.pid)}&")
+                if not webbrowser.open(url, new=2):
+                    raise RuntimeError(tr("无法打开共读网页."))
 
-            service.open(lambda: self.root.after(0, open_page))
+            if service.refresh() != "ready":
+                import tkinter as tk
+                from tkinter import ttk
+                from pages.widgets import Modal
+                from config import COLORS
+                dlg = Modal(self.root, tr("阅读"), width=config.scaled(460), height=config.scaled(190))
+                status = tk.Label(dlg.body, text=tr("准备 coread 服务…"), bg=COLORS["bg"],
+                                  fg=COLORS["text"], font=config.font("body"), wraplength=config.scaled(400))
+                status.pack(fill="both", expand=True)
+                ttk.Button(dlg.buttons, text=tr("取消"), command=dlg.cancel).pack(side="right")
+
+                poll_job = None
+
+                def poll():
+                    nonlocal poll_job
+                    poll_job = None
+                    state = service.refresh()
+                    if state == "ready":
+                        dlg.finish(True)
+                    elif state in ("error", "stopped"):
+                        dlg.finish(False)
+                    else:
+                        status.configure(text=service.progress or tr("准备 coread 服务…"))
+                        poll_job = dlg.after(250, poll)
+
+                try:
+                    service.start()
+                    poll_job = dlg.after(0, poll)
+                    ready = dlg.wait()
+                finally:
+                    if poll_job is not None:
+                        self.root.after_cancel(poll_job)
+                    if dlg.winfo_exists():
+                        dlg.destroy()
+                if ready is None:
+                    return
+                if not ready:
+                    raise RuntimeError(service.error or tr("共读服务启动失败，请查看 OIT 日志."))
+            open_page()
         except Exception as exc:
             self._log_window(f"ERROR    coread start {type(exc).__name__}: {exc}")
             toast.warn(tr("启动共读室失败: {error}", error=str(exc)))

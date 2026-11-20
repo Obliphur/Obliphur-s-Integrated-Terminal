@@ -2,6 +2,11 @@
 
 
 EN = {
+    "阅读": "Reading",
+    "自己阅读": "Read on my own",
+    "发起 coread": "Start coread",
+    "请先在 Windows 的沟通页点击「阅读」启动阅读服务.": "Click Reading on the Windows Chat page to start the reading service first.",
+    "选择「自己阅读」可独自打开书库；选择「发起 coread」可与当前聊天对象共读、聊天和批注。共读期间请在阅读网页聊天，结束后恢复沟通。手机需连接 Windows 的阅读服务。": "Choose Read on my own to open the library, or Start coread to read, chat and annotate with the current character. Use the reader's chat during co-reading; regular chat resumes when it ends. Phones connect to the Windows reading service.",
     "正在共读，请在阅读网页里的聊天框继续沟通。": "Co-reading is active. Continue the conversation in the reader's chat panel.",
     "正在共读，请在阅读网页里的聊天框继续沟通.": "Co-reading is active. Continue the conversation in the reader's chat panel.",
     "结束阅读并恢复沟通": "End reading and return to chat",
