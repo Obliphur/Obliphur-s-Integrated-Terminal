@@ -6,7 +6,7 @@ Claudia 的休息结算沿用沟通配置的 `joint`：`scheduled_reward` 标记
 
 数据目录: `%USERPROFILE%\AppData\LocalLow\Obliphur's Integrated Terminal\`
 
-共同阅读在 `comm_config.json` 的 `coread_link` 保存本地 Windows 服务地址和访问密钥，`coread_offer` 保存邀请编号、人设、状态、修改时刻和关联消息编号。`coread/` 保存 Node 运行时、组件源码与依赖；`coread/data/` 保存共读数据库和阅读室状态，`coread/service.json` 保存服务访问密钥与端口，`coread/server.log` 为服务日志。运行中的共读会话及活动重叠累计仅在内存中保存，重启不恢复旧会话。书库由配对设备通过局域网共用，不复制到安卓聊天存档（24.22）。
+共同阅读在 `comm_config.json` 的 `coread_link` 保存本地 Windows 服务地址和访问密钥，`coread_offer` 保存邀请编号、人设、状态、修改时刻和关联消息编号。`coread/` 保存 Node 运行时、组件源码与依赖；`coread/data/` 保存共读数据库和阅读室状态，`coread/service.json` 保存服务访问密钥与端口，`coread/server.log` 为服务日志。通过官方来源获取的书籍在书籍正文中附来源 URL、SHA-256 与校验范围，随本地书库备份保留。运行中的共读会话及活动重叠累计仅在内存中保存，重启不恢复旧会话。书库由配对设备通过局域网共用，不复制到安卓聊天存档（24.22）。
 
 | 文件 | 内容 | 保留范围 |
 | --- | --- | --- |

@@ -150,6 +150,36 @@ def main():
     assert seconds == 620
     assert COREAD_ACTIVITY_BUDGET == 600
 
+    source = ("Title: Verified Book\n[ebook #123]\n\n*** START OF THE PROJECT GUTENBERG EBOOK VERIFIED BOOK ***\n"
+              "Complete book text.\n*** END OF THE PROJECT GUTENBERG EBOOK VERIFIED BOOK ***\n")
+    service = CoReadService.__new__(CoReadService)
+    service._book_lock = threading.Lock()
+    service.books = lambda: []
+    saved = []
+    def request_book(path, method="GET", data=None):
+        saved.append((path, method, data))
+        return {"ok": True, "book_id": 7, "title": data["title"]}
+    service._request = request_book
+    def download_book(_spec, destination, **_kwargs):
+        with open(destination, "wb") as stream:
+            stream.write(source.encode("utf-8"))
+    with patch.object(coread_service.updater, "download_file", side_effect=download_book):
+        acquired = service.acquire_book("https://www.gutenberg.org/ebooks/123")
+        assert acquired["ok"] and acquired["integrity"] == "source_edition_markers_checked"
+        assert "SHA-256:" in saved[0][2]["content"] and "Complete book text." in saved[0][2]["content"]
+        try:
+            service.acquire_book("https://example.com/ebooks/123")
+            raise AssertionError("untrusted source was accepted")
+        except ValueError:
+            pass
+        saved.clear()
+        try:
+            service.acquire_book("https://www.gutenberg.org/ebooks/123", valid=lambda: False)
+            raise AssertionError("inactive session was allowed to add a book")
+        except ValueError:
+            pass
+        assert not saved
+
     app = FakeApp()
     bridge = app.bridge = OitChatBridge(app, "local-test-key")
     bridge.start()

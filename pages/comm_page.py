@@ -302,7 +302,7 @@ class CommPage(CommVoiceMixin, tk.Frame):
         cfg(self.btn_share, text="👀" if c.share_on() else ("⏳" if c.share_asking() else "🙈"))      # ⏳ = 等对方同意
         cfg(self.btn_shift, text="⏳" if c.shift_asking() else "🕰")
         if c.coread_offer():
-            cfg(self.lbl_coread_inv, text=tr("{name} 想和你共同阅读", name=c.share_ai_name()))
+            cfg(self.lbl_coread_inv, text=tr("📚 {name} 想和你共同阅读", name=c.share_ai_name()))
             if self.coread_btns.winfo_manager() != "pack":
                 self.coread_btns.pack(side="left", padx=(8, 0))
         elif self.coread_btns.winfo_manager() == "pack":

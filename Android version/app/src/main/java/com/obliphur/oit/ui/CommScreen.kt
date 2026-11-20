@@ -384,7 +384,7 @@ fun CommScreen(go: (String) -> Unit) {
         }
         if (coreadInv) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.padding(start = 8.dp)) {
-            Text(tr("${comm.aiName()} 想和你共同阅读"), color = o.accent, fontSize = 12.sp)
+            Text(tr("📚 ${comm.aiName()} 想和你共同阅读"), color = o.accent, fontSize = 12.sp)
             AccentButton(tr("接受")) {
                 comm.coreadRespond(true).let { if (it.isNotEmpty()) core.toast(tr(it), "warn") }
                 coreadInv = comm.coreadInvite()
@@ -452,7 +452,7 @@ fun CommScreen(go: (String) -> Unit) {
                 TextButton({
                     readingChoice = false
                     comm.toggleRequestDraft("coread").let { if (it.isNotEmpty()) core.toast(tr(it), "warn") }
-                }) { Text(tr("发起 coread"), color = o.accent) }
+                }) { Text(tr("📚 发起 coread"), color = o.accent) }
             }
         },
         confirmButton = { TextButton({ readingChoice = false }) { Text(tr("取消"), color = o.dim) } })

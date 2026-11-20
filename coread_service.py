@@ -6,6 +6,7 @@ import http.server
 import hashlib
 import os
 import queue
+import re
 import secrets
 import shutil
 import socket
@@ -75,6 +76,7 @@ class CoReadService:
         self.config_path = os.path.join(self.root, "service.json")
         self.log_path = os.path.join(self.root, "server.log")
         self._lock = threading.RLock()
+        self._book_lock = threading.Lock()
         self.state = "stopped"
         self.error = ""
         self.progress = ""
@@ -298,6 +300,53 @@ class CoReadService:
     def books(self):
         return self._request("/v1/books").get("books", [])
 
+    def acquire_book(self, source_url, valid=lambda: True):
+        """仅从 Gutenberg 官方取全文；校验失败不写库，出处随正文备份。"""
+        source = urllib.parse.urlsplit(str(source_url))
+        match = re.fullmatch(r"/ebooks/([1-9]\d{0,6})/?", source.path)
+        if (source.scheme != "https" or source.netloc not in ("www.gutenberg.org", "gutenberg.org")
+                or source.query or source.fragment or not match):
+            raise ValueError("请提供 Project Gutenberg 官方书目地址 https://www.gutenberg.org/ebooks/编号；其他来源尚不能自动核验")
+        book_id = match[1]
+        canonical = f"https://www.gutenberg.org/ebooks/{book_id}"
+        download = f"https://www.gutenberg.org/cache/epub/{book_id}/pg{book_id}.txt"
+        with self._book_lock:
+            for book in self.books():
+                first = self._request(f"/v1/books/{int(book['id'])}?page=1").get("paragraphs", [])
+                if first and str(first[0].get("content", "")).startswith(f"OIT 书籍来源: {canonical}\n"):
+                    return {"ok": True, "book_id": book["id"], "title": book["title"], "source_url": canonical, "existing": True}
+            stage = tempstore.mkdtemp("misc", prefix="coread-book-")
+            try:
+                filename = os.path.join(stage, "book.txt")
+                updater.download_file({"url": download, "accept": updater.ACCEPT_FILE}, filename,
+                                      allowed_hosts={"www.gutenberg.org", "gutenberg.org"},
+                                      max_download=config.COREAD_BOOK_MAX_BYTES, workers=1)
+                with open(filename, "rb") as stream:
+                    raw = stream.read(config.COREAD_BOOK_MAX_BYTES + 1)
+                if len(raw) > config.COREAD_BOOK_MAX_BYTES:
+                    raise ValueError("书籍文件超过大小上限")
+                text = raw.decode("utf-8-sig").replace("\r\n", "\n")
+                start = re.search(r"^\*\*\* START OF (?:THE|THIS) PROJECT GUTENBERG EBOOK .+?\*\*\*\s*$", text, re.M)
+                end = re.search(r"^\*\*\* END OF (?:THE|THIS) PROJECT GUTENBERG EBOOK .+?\*\*\*\s*$", text, re.M)
+                header = text[:start.start()] if start else ""
+                title = re.search(r"^Title:\s*(.+)$", header, re.M)
+                identity = re.search(r"\[\s*e-?book\s*#\s*" + book_id + r"\s*\]", header, re.I)
+                if not start or not end or end.start() <= start.end() or not title or not identity:
+                    raise ValueError("未通过全文校验：缺少对应书号、书名或完整首尾标记")
+                content = text[start.end():end.start()].strip()
+                if not content or "\x00" in content or re.search(r"<(?:!doctype|html)\b", content, re.I):
+                    raise ValueError("下载结果不是可验证的完整书籍文本")
+                digest = hashlib.sha256(raw).hexdigest()
+                provenance = (f"OIT 书籍来源: {canonical}\n下载地址: {download}\nSHA-256: {digest}\n"
+                              "校验: 官方 HTTPS 来源、书号、UTF-8 文本及全文首尾标记。完整性限于此来源版本，不保证与其他版本一致。\n"
+                              "授权: Project Gutenberg 电子书；具体使用条件见文件末尾许可。")
+                if not valid():
+                    raise ValueError("共读会话已结束，未加入书库")
+                result = self._request("/v1/books", "POST", {"title": title[1].strip(), "content": provenance + "\n\n" + text})
+                return {**result, "source_url": canonical, "sha256": digest, "integrity": "source_edition_markers_checked"}
+            finally:
+                shutil.rmtree(stage, ignore_errors=True)
+
     def read_book(self, book_id, page=1):
         book_id, page = int(book_id), int(page)
         if book_id < 1 or page < 1:
@@ -390,15 +439,23 @@ class OitChatBridge:
                 op = "state" if self.command == "GET" else parsed.path.strip("/")
                 if self.command == "GET":
                     body = {"session_id": urllib.parse.parse_qs(parsed.query).get("session_id", [""])[0]}
-                if op not in ("state", "start", "heartbeat", "send", "end"):
+                if op not in ("state", "start", "heartbeat", "send", "end", "acquire"):
                     self._send(404, {"error": "not_found"})
                     return
                 item = {"op": op, "body": body, "done": threading.Event()}
                 bridge.requests.put(item)
-                if not item["done"].wait(20):
+                if not item["done"].wait(180 if op == "acquire" else 20):
                     self._send(503, {"error": "oit_unavailable"})
                     return
-                self._send(item.get("status", 200), item.get("result") or {})
+                if op == "acquire" and item.get("result", {}).get("ok"):
+                    try:
+                        result = bridge.app.coread_service.acquire_book(body.get("source_url", ""),
+                            valid=lambda: bridge._matches_session(bridge.app.comm, body))
+                        self._send(200, result)
+                    except Exception as exc:
+                        self._send(400, {"ok": False, "error": str(exc)[:500]})
+                else:
+                    self._send(item.get("status", 200), item.get("result") or {})
 
             do_GET = _handle
             do_POST = _handle
@@ -479,7 +536,7 @@ class OitChatBridge:
                         page.set_reading_mode(True)
                     item["result"] = {"ok": True, "session_id": self.session_id,
                                        "persona": comm.persona_name()}
-                elif item["op"] == "heartbeat":
+                elif item["op"] in ("heartbeat", "acquire"):
                     if not self._matches_session(comm, item["body"]):
                         item["status"], item["result"] = 409, self._inactive_result()
                     else:

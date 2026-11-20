@@ -221,7 +221,7 @@ OUTING_MAX_HOURS = 24 * 7
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.621"                  # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.622"                  # 和 GitHub 上发布的版本号比较 (见 updater.py)
 AI_VOICE_GAP = 1.0                       # 两条语音之间的默认间隔（秒）
 COMM_SPLIT_INTERVAL_SECONDS = 5          # 分条续发固定等待时间（秒）
 COMM_REWARD_CARRY_PERCENT = 85          # Claudia 完成奖励填满循环后，剩余休息的结转百分比
@@ -229,6 +229,7 @@ COMM_TOOL_ROUNDS = 6                     # 单次沟通最多进行的查询 / �
 COMM_COREAD_QUOTE_SECONDS = 30 * 60      # 共读申请引用的用户原话有效期
 COMM_COREAD_OFFER_SECONDS = 5 * 60       # 共读邀请展示后的有效期
 COMM_COREAD_ACTIVITY_SECONDS = 10 * 60   # 每次共读与循环专注、重要活动、睡眠重叠的合计上限
+COREAD_BOOK_MAX_BYTES = 16 * 1024 * 1024  # 自动获取书籍的下载上限
 COMM_SHOW_TENSION = False                # 联网冷静期口令切换，仅本次运行显示张力，不保存或同步
 COMM_SCENARIO_UNLOCK = 200               # 情景模拟解锁的有效消息数
 COMM_TENSION_MAX = 100

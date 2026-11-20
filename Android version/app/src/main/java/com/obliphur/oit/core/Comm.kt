@@ -2111,7 +2111,7 @@ class Comm(
 
         val conn = java.net.URL("${coreadUrl.trimEnd('/')}$path").openConnection() as java.net.HttpURLConnection
         return try {
-            conn.connectTimeout = 3500; conn.readTimeout = 6000
+            conn.connectTimeout = 3500; conn.readTimeout = if (path == "/v1/oit-chat/acquire") 185000 else 6000
             conn.requestMethod = method
             conn.setRequestProperty("x-coread-key", coreadAccessKey)
             conn.setRequestProperty("x-owner-key", coreadAccessKey)
@@ -5461,10 +5461,12 @@ class Comm(
                     musicAction = JSONObject().put("type", "stop").put("owner", personaName())
                     result = JSONObject().put("ok", true).put("status", "queued_until_reply")
                 }
-                "oit_reading_books", "oit_reading_page", "oit_reading_comment" -> {
+                "oit_reading_books", "oit_reading_page", "oit_reading_comment", "oit_reading_acquire" -> {
                     result = runCatching {
                         check(ep == epoch) { "工具请求已失效" }
                         val data: Any = when (name) {
+                            "oit_reading_acquire" -> coreadApi("/v1/oit-chat/acquire", "POST",
+                                JSONObject().put("source_url", args.getString("source_url")).put("session_id", coreadSessionId))
                             "oit_reading_books" -> (coreadApi("/v1/books").optJSONArray("books") ?: JSONArray()).also { books ->
                                 coreadBookIds = (0 until books.length()).map { books.getJSONObject(it).optInt("id") }.filter { it > 0 }.toSet()
                             }

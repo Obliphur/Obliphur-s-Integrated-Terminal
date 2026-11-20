@@ -99,14 +99,14 @@ export async function handleRequest(req, res, opts = {}) {
     try {
       const url = new URL(req.url, 'http://localhost');
       const action = url.pathname.slice('/v1/oit-chat/'.length);
-      if (!['state', 'start', 'heartbeat', 'send', 'end'].includes(action)) { json(res, 404, { error: 'not found' }); return true; }
+      if (!['state', 'start', 'heartbeat', 'send', 'end', 'acquire'].includes(action)) { json(res, 404, { error: 'not found' }); return true; }
       const headers = { 'x-coread-key': COREAD_ACCESS_KEY };
       let body;
       if (req.method === 'POST') { body = await readBody(req); headers['content-type'] = 'application/json'; }
       else if (req.method !== 'GET' || action !== 'state') { json(res, 405, { error: 'method not allowed' }); return true; }
       const response = await fetch(`http://127.0.0.1:${bridgePort}/${action}${action === 'state' ? url.search : ''}`, {
         method: req.method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-        signal: AbortSignal.timeout(21000),
+        signal: AbortSignal.timeout(action === 'acquire' ? 180000 : 21000),
       });
       const payload = await response.json();
       json(res, response.status, payload);

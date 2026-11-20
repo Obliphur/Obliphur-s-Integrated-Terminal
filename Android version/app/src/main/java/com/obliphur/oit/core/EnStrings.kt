@@ -13,6 +13,8 @@ object EnStrings {
         "阅读" to "Reading",
         "自己阅读" to "Read on my own",
         "发起 coread" to "Start coread",
+        "📚 {name} 想和你共同阅读" to "📚 {name} wants to read with you",
+        "📚 发起 coread" to "📚 Start coread",
         "🙈 share data" to "🙈 Share data",
         "📚 共读" to "📚 Co-reading",
         "🎼 演奏评判" to "🎼 Performance review",

@@ -275,6 +275,7 @@ class BreakTimerApp(CommMixin, SyncMixin, ContractMixin, ContractMediaMixin,
         # 沟通 (MECHANICS 24): 人设文件夹和数据文件夹并排, 不加密
         self.comm = comm_mod.Comm(self.dm.data_dir, os.path.join(self.dm.low_dir, "OIT_personas"))
         self.comm.coread_books_fn = self._coread_books
+        self.comm.coread_acquire_fn = lambda url, valid: self._coread_manager().acquire_book(url, valid)
         self.comm.on_coread_open = self._open_coread
         self.comm.coread_read_fn = self._coread_read
         self.comm.coread_comment_fn = self._coread_comment

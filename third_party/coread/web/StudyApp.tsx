@@ -902,12 +902,34 @@ const StudyApp: React.FC = () => {
         return () => document.removeEventListener('selectionchange', handler);
     }, [mode]);
 
-    const loadBooks = async () => {
-        setLoading(true); setError('');
+    const loadBooks = async (silent = false) => {
+        if (!silent) setLoading(true);
+        setError('');
         try { const d = await api.fetchBooks(); setBooks(d.books || []); }
         catch (e: any) { setError(e.message); }
         setLoading(false);
     };
+
+    useEffect(() => {
+        if (!READ_TOGETHER || (mode !== 'shelf' && mode !== 'reading')) return;
+        let alive = true;
+        const start = async () => {
+            if (oitChatSessionRef.current) return;
+            try {
+                const personaPid = new URL(window.location.href).searchParams.get('persona_pid') || '';
+                const session: any = await api.oitChat('start', { persona_pid: personaPid });
+                if (alive) oitChatSessionRef.current = session.session_id || '';
+            } catch (e: any) { if (alive) setOitChatStatus(`OIT 沟通连接失败: ${e.message}`); }
+        };
+        start();
+        return () => { alive = false; };
+    }, [mode]);
+
+    useEffect(() => {
+        if (mode !== 'shelf' || !READ_TOGETHER) return;
+        const timer = window.setInterval(() => loadBooks(true), 5000);
+        return () => window.clearInterval(timer);
+    }, [mode]);
 
     const loadDoor = async () => {
         try { const d = await api.fetchRoomDoor(); setDoorLocked(!!d.locked); } catch {}
@@ -1007,18 +1029,8 @@ const StudyApp: React.FC = () => {
     const openBook = async (book: Book) => {
         const requestId = ++openRequest.current;
         window.dispatchEvent(new Event('coread-pause'));
-        oitChatSessionRef.current = '';
-        if (READ_TOGETHER) try {
-            const personaPid = new URL(window.location.href).searchParams.get('persona_pid') || '';
-            const session: any = await api.oitChat('start', { persona_pid: personaPid });
-            oitChatSessionRef.current = session.session_id || '';
-            if (!oitChatSessionRef.current) throw new Error('OIT 未返回阅读会话');
-            setOitChatStatus('');
-        } catch (e: any) {
-            setOitChatStatus(`OIT 沟通连接失败: ${e.message}`);
-            toast(e.message || '无法开始共读');
-            return;
-        }
+        if (READ_TOGETHER && !oitChatSessionRef.current) { toast('请等待 OIT 沟通连接就绪后重试'); return; }
+        setOitChatStatus('');
         if (requestId !== openRequest.current) return;
         api.touchBookOpen(book.id).catch(() => {});
         setActiveBook(book); setMode('reading');
@@ -1913,8 +1925,6 @@ const StudyApp: React.FC = () => {
     const backToShelf = () => {
         ++openRequest.current;
         window.dispatchEvent(new Event('coread-pause'));
-        if (oitChatSessionRef.current) api.oitChat('end', { session_id: oitChatSessionRef.current }).catch(() => {});
-        oitChatSessionRef.current = '';
         setOitChatOpen(false);
         setMode('shelf'); setActiveBook(null); setParagraphs([]); setComments([]);
         setActiveComments([]); setSelRange(null); setFloatingBar(null); setShowToc(false); setTocChapters([]);
@@ -1923,7 +1933,7 @@ const StudyApp: React.FC = () => {
     };
 
     useEffect(() => {
-        if (mode !== 'reading' || !READ_TOGETHER) return;
+        if ((mode !== 'reading' && mode !== 'shelf') || !READ_TOGETHER) return;
         let alive = true;
         const poll = async () => {
             try {
@@ -1966,8 +1976,8 @@ const StudyApp: React.FC = () => {
         if (!text || oitChatBusy) return;
         const visible = [...pageFragments, ...pageFragmentsRight];
         const context = [
-            `书名: ${activeBook?.title || ''}`,
-            `当前页: ${page}${spread && page < totalPages ? `-${page + 1}` : ''} / ${totalPages}`,
+            activeBook ? `书名: ${activeBook.title}` : '当前位于选书页面，协助讨论候选书目。',
+            ...(activeBook ? [`当前页: ${page}${spread && page < totalPages ? `-${page + 1}` : ''} / ${totalPages}`] : []),
             ...visible.map(fragment => {
                 const comments = commentsForPara(fragment.idx);
                 return `[段落 ${fragment.idx}] ${fragment.content}` + comments.map(comment =>
@@ -2203,12 +2213,12 @@ const StudyApp: React.FC = () => {
     return (
         <div className="xiaowo-study coread-study" style={{ height: '100%', width: '100%', display: 'flex', flexDirection: 'column', background: mode === 'reading' ? (readerNightMode ? '#1a1a1a' : '#fffcf3') : 'linear-gradient(145deg, #fbf9f6, #f5f1ee)', position: 'relative', overflow: 'hidden', filter: mode === 'reading' && readerBrightness < 100 ? `brightness(${readerBrightness / 100})` : undefined }}>
             <style>{`${STUDY_THEME_CSS}\n${COREAD_POP_CSS}\n@keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.05); } }`}</style>
-            {mode === 'reading' && READ_TOGETHER && (
+            {READ_TOGETHER && (mode === 'reading' || mode === 'shelf') && (
                 <button onClick={() => setOitChatOpen(value => !value)} style={{ position: 'absolute', right: 68, bottom: 30, zIndex: 18, border: '1px solid rgba(60,55,45,.14)', borderRadius: 22, padding: '10px 14px', cursor: 'pointer', color: readerNightMode ? '#ddd' : INK, background: readerNightMode ? 'rgba(40,40,40,.8)' : 'rgba(255,255,255,.85)', boxShadow: '0 2px 12px rgba(30,26,20,.12)' }}>
                     {oitChatOpen ? '收起聊天' : '💬 聊天'}
                 </button>
             )}
-            {mode === 'reading' && READ_TOGETHER && oitChatOpen && (
+            {READ_TOGETHER && (mode === 'reading' || mode === 'shelf') && oitChatOpen && (
                 <section onClick={e => e.stopPropagation()} style={{ position: 'absolute', zIndex: 40, right: 12, top: 'calc(48px + env(safe-area-inset-top))', bottom: 84, width: 'min(390px, calc(100% - 24px))', display: 'flex', flexDirection: 'column', borderRadius: 18, overflow: 'hidden', color: readerNightMode ? '#eee' : INK, background: readerNightMode ? 'rgba(27,27,27,.96)' : 'rgba(255,255,255,.96)', border: '1px solid rgba(100,90,70,.16)', boxShadow: '0 10px 35px rgba(0,0,0,.2)' }}>
                     <header style={{ padding: '12px 14px', fontWeight: 650, borderBottom: '1px solid rgba(100,90,70,.14)' }}>
                         OIT · {oitChatMessages.length ? '共同阅读' : '沟通'}
@@ -2324,7 +2334,7 @@ const StudyApp: React.FC = () => {
                 ) : error ? (
                     <div style={{ textAlign: 'center', padding: '60px 20px' }}>
                         <div style={{ fontSize: 13, color: '#e88', marginBottom: 12 }}>{error}</div>
-                        <button onClick={loadBooks} style={{ background: 'none', border: '1px solid hsla(40,8%,16%,0.18)', borderRadius: 12, padding: '8px 20px', fontSize: 12, color: INK, cursor: 'pointer' }}>重试</button>
+                        <button onClick={() => loadBooks()} style={{ background: 'none', border: '1px solid hsla(40,8%,16%,0.18)', borderRadius: 12, padding: '8px 20px', fontSize: 12, color: INK, cursor: 'pointer' }}>重试</button>
                     </div>
                 ) : mode === 'shelf' ? (
                     <>

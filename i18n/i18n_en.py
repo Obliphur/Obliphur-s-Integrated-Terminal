@@ -12,6 +12,8 @@ EN = {
     "阅读": "Reading",
     "自己阅读": "Read on my own",
     "发起 coread": "Start coread",
+    "📚 {name} 想和你共同阅读": "📚 {name} wants to read with you",
+    "📚 发起 coread": "📚 Start coread",
     "🙈 share data": "🙈 Share data",
     "📚 共读": "📚 Co-reading",
     "🎼 演奏评判": "🎼 Performance review",

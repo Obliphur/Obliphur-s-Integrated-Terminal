@@ -61,6 +61,12 @@ class ToolsMixin:
                         self.log(f"TOOL query {module} FAIL {type(e).__name__}")
                         values[module] = {"available": False, "error": "unavailable"}
                 result = {"ok": True, "data": values, "note": "own_data属于你，不是用户；reference_template仅参考格式与占位符，非真实数据。不可用数据不要编造。"}
+            elif name == "oit_reading_acquire" and getattr(self, "reading_mode", False):
+                try:
+                    result = self.coread_acquire_fn(args["source_url"],
+                        lambda: self._epoch == epoch and getattr(self, "reading_mode", False) and not self.hard_block())
+                except Exception as e:
+                    result = {"ok": False, "error": str(e)[:500]}
             elif name == "oit_reading_books" and getattr(self, "reading_mode", False):
                 try:
                     result = {"ok": True, "books": self.coread_books_fn()}
