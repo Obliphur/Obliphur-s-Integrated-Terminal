@@ -67,7 +67,7 @@ def char_delay(text: str) -> float:
 
 
 from .comm_util import (OIT_TAG, COND_TAG, WEEKDAY, MAX_MSG_CHARS, HISTORY_SENT, HISTORY_STEP, HISTORY_CHARS,
-                       is_claudia, is_refusal, stamp, urlsplit_host, info_tags, joint_answer, _joint_time, clip_message,
+                       is_claudia, is_refusal, stamp, urlsplit_host, info_tags, joint_answer, native_answer, _joint_time, clip_message,
                        cache_layout, oit_text, first_turn, api_messages, sanitize_mem)
 
 def follow_delay(profile: dict, override: float = None) -> float:
@@ -1437,15 +1437,15 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         catchup = bool(extra) and CATCHUP_TAG in str(extra[0])          # 这是补问 (见 CATCHUP_BODY)
         joint_ans = ""                                          # 对联合行动邀请的回复 [Yes] / [No]
         if not err and not refused and not queried and kind in ("user", "retry") and self._joint().get("state") == "wait":
-            joint_ans = joint_answer(reply)
+            joint_ans = native_answer(reply)
             if joint_ans and not text:                          # 只回了 [Yes] / [No]: 聊天里写一行结果 (不然这条邀请像是没人回, 重开程序还会再问一次)
                 text = tr("✓ 接受了联合行动") if joint_ans == "yes" else tr("✗ 拒绝了联合行动")
         share_ans = ""                                          # 对 share data 请求的回复 [Yes] / [No]
-        coread_ans = joint_answer(reply) if coread_wait and not err and not refused and not queried else ""
+        coread_ans = native_answer(reply) if coread_wait and not err and not refused and not queried else ""
         if coread_ans and not text:
             text = tr("✓ 同意了共同阅读") if coread_ans == "yes" else tr("✗ 拒绝了共同阅读")
         if (kind == "share_ask" or (kind in ("user", "retry") and self.share_asking())) and not err and not refused and not queried:
-            share_ans = joint_answer(reply)
+            share_ans = native_answer(reply)
             if share_ans and not text:                          # 只回了 [Yes] / [No]: 聊天里写一行结果
                 text = tr("✓ 同意了 share data") if share_ans == "yes" else tr("✗ 拒绝了 share data")
         shift_ans = ""                                          # 对起点平移请求的回复 [Yes] / [No]

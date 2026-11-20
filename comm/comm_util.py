@@ -70,6 +70,15 @@ def joint_answer(reply: str) -> str:
     return "yes" if "[yes]" in t else ""
 
 
+def native_answer(reply: str) -> str:
+    """读取原生 oit_reply.answer; 非工具回复不视为同意或拒绝。"""
+    from ai_assist.ai_tools import unpack, args_of
+    if unpack(reply) is None:
+        return ""
+    answer = str(args_of(reply).get("answer") or "").strip().lower()
+    return answer if answer in ("yes", "no") else ""
+
+
 def _joint_time(v) -> datetime:
     return v if isinstance(v, datetime) else datetime.fromisoformat(str(v))
 

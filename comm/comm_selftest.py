@@ -83,6 +83,11 @@ def _selftest():
     clock = [datetime(2026, 11, 2, 9, 0, 0)]
     calls = []
     script = []
+    def tool_reply(text="", answer=None):
+        args = {"text": text}
+        if answer is not None:
+            args["answer"] = answer
+        return ai_assist.ai_tools.pack(text=text, name="oit_reply", arguments=args)
     follow, follow_calls = [], []          # 第二次调用 (规则 VIII) 单独记: 不占 script / calls, 没有安排的回 [refuse to reply]
     mem_script, mem_calls = [], []         # 整理记忆卡: 没有安排就回空 (当失败)
     think_log = []                         # 每次调用有没有带 think=True
@@ -2105,6 +2110,7 @@ def _selftest():
 
     JTXT = "你是联合.\n12:30-13:00:空闲\n[循环 14:00-18:00][100min]\n23:30-6:30:睡眠\n"
     assert joint_answer("[Yes] 好") == "yes" and joint_answer(" [ no ] ") == "no" and joint_answer("[yes][no]") == "no"
+    assert native_answer("[Yes] 好") == "" and native_answer(ai_assist.ai_tools.pack(text="", name="oit_reply", arguments={"answer": "yes"})) == "yes"
     assert joint_answer("好的") == "" and joint_answer("") == "" and joint_answer("[Yes") == ""
     day = datetime(2026, 12, 10)
     clock[0] = day.replace(hour=13)
@@ -2125,7 +2131,7 @@ def _selftest():
     assert cj.joint_label() == "" and cj.send("") == "empty"
     assert cj.set_joint_draft(["long1"], day.replace(hour=14)) == ""
     # 发出去: 聊天里一行说明 + 文字, 发给对方的是 合约基础规则 + 词条 + 开始 / 结束时间; 对方回 [Yes] 就是接受 ([Yes] 不显示)
-    script.append("[Yes] 好的,到时见.")
+    script.append(tool_reply("好的,到时见.", "yes"))
     assert cj.send("一起吧") == "" and not cj.joint_draft
     wait(cj)
     mine = [m for m in cj.messages if m["role"] == "me"][-1]
@@ -2389,12 +2395,12 @@ def _selftest():
     clock[0] = day.replace(hour=13)
     cn = joint_comm("联合四", JTXT)
     assert cn.set_joint_draft(["long1"], day.replace(hour=14)) == ""
-    script.append("[No]")
+    script.append(tool_reply(answer="no"))
     assert cn.send("") == ""
     wait(cn)
     assert cn.visible()[-1]["text"] == "✗ 拒绝了联合行动" and cn._joint()["state"] == "no" and not cn.joint_busy()
     assert cn.set_joint_draft(["long1"], day.replace(hour=15)) == "" and cn.joint_label()
-    script.extend([REFUSE, "[yes]"])
+    script.extend([REFUSE, tool_reply(answer="yes")])
     assert cn.send("再来一次") == ""
     wait(cn)
     assert cn._joint()["state"] == "wait" and cn.unanswered() and cn.visible()[-1]["role"] == "me", "对方不方便: 邀请留着"
@@ -2405,7 +2411,7 @@ def _selftest():
     # 回 [refuse to reply] 同时带了 [Yes]: 当作不方便
     cn._joint_set({"state": "wait"})
     cn._add("me", "x")
-    script.append("[refuse to reply][Yes]")
+    script.append(REFUSE)
     cn._request("user")
     wait(cn)
     assert cn._joint()["state"] == "wait"
@@ -2417,7 +2423,7 @@ def _selftest():
     assert cn._joint()["state"] == "missed" and cn.joint_status_text().endswith("已错过") and not cn.joint_busy()
     cn._joint_set({"state": "wait"})
     cn._add("me", "y")
-    script.append("[Yes]")
+    script.append(tool_reply(answer="yes"))
     cn._request("user")
     wait(cn)
     assert cn._joint()["state"] == "missed", "回复的时候约定的开始时间已经过了"
@@ -3591,8 +3597,9 @@ def _selftest():
     cs.on_share_open = lambda: opened.append(1)
     cs.on_share_notice = notices.append
 
-    def share_open(c, reply="[Yes]"):
+    def share_open(c, reply=None):
         """用户点 share data: 先问对方, 对方回 reply (默认 [Yes]) 才打开."""
+        reply = tool_reply(answer="yes") if reply is None else reply
         script.append(reply)
         assert c.share_enable(True) == "" and c.share_asking() and not c.share_on()
         c.tick()
@@ -3676,7 +3683,7 @@ def _selftest():
     n_calls = len(calls)
     notices.clear()
     opened.clear()
-    script.append("[No]")
+    script.append(tool_reply(answer="no"))
     assert cs.share_enable(True) == "" and cs.share_asking() and not cs.share_on() and len(calls) == n_calls
     cs.tick()
     assert cs.busy
@@ -3684,14 +3691,14 @@ def _selftest():
     ask_body = calls[-1][1][-1]["content"]
     assert len(calls) == n_calls + 1 and "用户想打开 share data" in ask_body and 'answer="yes"' in ask_body and 'answer="no"' in ask_body, ask_body
     assert not cs.share_asking() and not cs.share_on() and notices == [f"{cs.share_ai_name()} 拒绝了 share data"] and cs.visible()[-1]["text"] == "✗ 拒绝了 share data"
-    script.append("[Yes] 可以.")
+    script.append(tool_reply("可以.", "yes"))
     assert cs.share_enable(True) == ""
     cs.tick()
     wait(cs)
     assert cs.share_on() and not cs.share_asking() and opened == [1] and cs.visible()[-1]["text"] == "可以.", "回 [Yes]: 打开, 并跳到有数据的页"
     cs.share_enable(False)
     opened.clear()
-    for reply, note in (("嗯.", "{name} 没有明确同意, share data 没有打开"), ("[Yes][No]", "{name} 拒绝了 share data"), (REFUSE, "{name} 现在不方便, share data 没有打开")):
+    for reply, note in (("嗯.", "{name} 没有明确同意, share data 没有打开"), (tool_reply(answer="no"), "{name} 拒绝了 share data"), (REFUSE, "{name} 现在不方便, share data 没有打开")):
         notices.clear()
         script.append(reply)
         assert cs.share_enable(True) == ""

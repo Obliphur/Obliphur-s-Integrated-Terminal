@@ -37,6 +37,12 @@ class CommTest {
     /** 每次调用有没有带联网搜索 (限时网络, Comm.webLocal). */
     private val webLog = mutableListOf<Boolean>()
 
+    private fun reply(text: String = "", answer: String? = null): String {
+        val args = JSONObject().put("text", text)
+        if (answer != null) args.put("answer", answer)
+        return ToolProtocol.pack(text, "oit_reply", args)
+    }
+
     private fun seedTestTension(file: File) {
         val builtin = BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE)
         if ("[tension]" !in PersonaCodec.read(file)) PersonaCodec.write(file, PersonaCodec.read(file) + "\n[tension]\n" +
@@ -2404,6 +2410,8 @@ class CommTest {
         assertEquals("no", CommText.jointAnswer("[yes][no]"))
         assertEquals("", CommText.jointAnswer("好的"))
         assertEquals("", CommText.jointAnswer("[Yes"))
+        assertEquals("", CommText.nativeAnswer("[Yes] 好"))
+        assertEquals("yes", CommText.nativeAnswer(reply(answer = "yes")))
         val day = LocalDateTime.of(2026, 12, 10, 0, 0)
         clock = day.withHour(13)
         val cj = mk("联合")
@@ -2424,7 +2432,7 @@ class CommTest {
         assertEquals("empty", cj.send(""))
         assertEquals("", cj.setJointDraft(listOf("long1"), day.withHour(14)))
         // 发出去: 聊天里一行说明 + 文字; 发给对方的是 合约基础规则 + 词条 + 开始 / 结束时间; 对方回 [Yes] 就是接受 ([Yes] 不显示)
-        script.add("[Yes] 好的,到时见.")
+        script.add(reply("好的,到时见.", "yes"))
         assertEquals("", cj.send("一起吧")); wait(cj)
         assertNull(cj.jointDraft)
         val mine = cj.messages.last { it.role == "me" }
@@ -2509,7 +2517,7 @@ class CommTest {
         val cj2 = mk("联合二")
         cj2.stateFn = { "break" }
         clock = day.withHour(12).withMinute(1)
-        script.add("[Yes]"); cj2.setJointDraft(listOf("long1"), day.withHour(12).withMinute(2))
+        script.add(reply(answer = "yes")); cj2.setJointDraft(listOf("long1"), day.withHour(12).withMinute(2))
         assertEquals("", cj2.send("")); wait(cj2)
         clock = day.withHour(12).withMinute(2)
         assertTrue(cj2.jointStarted(listOf("long1"), "c9", day.withHour(16)))
@@ -2523,7 +2531,7 @@ class CommTest {
         clock = day.withHour(13)
         val cj3 = mk("联合三")
         cj3.stateFn = { "break" }
-        script.add("[Yes]")
+        script.add(reply(answer = "yes"))
         cj3.setJointDraft(listOf("long1"), day.withHour(14))
         assertEquals("", cj3.send("")); wait(cj3)
         clock = day.withHour(14)
@@ -2539,7 +2547,7 @@ class CommTest {
             clock = day.withHour(13)
             val c = mk(name)
             c.stateFn = { "focus" }
-            script.add("[Yes]")
+            script.add(reply(answer = "yes"))
             c.setJointDraft(listOf("long1"), day.withHour(14))
             assertEquals("", c.send("")); wait(c)
             clock = day.withHour(14)
@@ -2621,12 +2629,12 @@ class CommTest {
         clock = day.withHour(13)
         val cn = mk("联合四")
         assertEquals("", cn.setJointDraft(listOf("long1"), day.withHour(14)))
-        script.add("[No]")
+        script.add(reply(answer = "no"))
         assertEquals("", cn.send("")); wait(cn)
         assertEquals("✗ 拒绝了联合行动", cn.visible().last().text)
         assertFalse(cn.jointBusy())
         assertEquals("", cn.setJointDraft(listOf("long1"), day.withHour(15)))
-        script.addAll(listOf(CommText.REFUSE, "[yes]"))
+        script.addAll(listOf(CommText.REFUSE, reply(answer = "yes")))
         assertEquals("", cn.send("再来一次")); wait(cn)
         assertEquals("wait", Joint.parse(cn.syncDoc()["joint"] as JSONObject)!!.state)
         assertTrue(cn.visible().last().role == "me")                  // 对方不方便: 邀请留着
@@ -2646,7 +2654,7 @@ class CommTest {
         val ca = mk("联合五")
         val cb = comm(File(td, "dB").also { it.mkdirs() }, File(td, "p"))
         cb.set(persona = "联合五.txt")
-        script.add("[Yes]")
+        script.add(reply(answer = "yes"))
         ca.setJointDraft(listOf("long1"), day.withHour(16))
         assertEquals("", ca.send("")); wait(ca)
         cb.applyDoc(mapOf("joint" to ca.syncDoc()["joint"]))
@@ -3398,8 +3406,8 @@ class CommTest {
         c.onShareOpen = { opened++ }
         val notices = ArrayList<String>()
         c.onShareNotice = { notices.add(it) }
-        fun shareOpen(reply: String = "[Yes]") {                       // 用户点 share data: 先问对方, 对方回 reply (默认 [Yes]) 才打开
-            script.add(reply)
+        fun shareOpen(response: String = reply(answer = "yes")) {       // 用户点 share data: 先问对方, 对方回 answer 才打开
+            script.add(response)
             assertEquals("", c.shareEnable(true)); assertTrue(c.shareAsking() && !c.shareOn())
             c.tick(); assertTrue(c.busy); wait(c)
             opened = 0
@@ -3455,17 +3463,17 @@ class CommTest {
         // 用户发起 share data: 先争取对方同意, 回 [Yes] 才打开, 回 [No] / 没表态 / 不方便都不开 (MECHANICS 24.12)
         val n2 = calls.size
         notices.clear(); opened = 0
-        script.add("[No]")
+        script.add(reply(answer = "no"))
         assertEquals("", c.shareEnable(true)); assertTrue(c.shareAsking() && !c.shareOn() && calls.size == n2)
         c.tick(); assertTrue(c.busy); wait(c)
         val askBody = calls.last().second.last().second
         assertTrue(askBody, calls.size == n2 + 1 && "用户想打开 share data" in askBody && "answer=\"yes\"" in askBody && "answer=\"no\"" in askBody)
         assertTrue(!c.shareAsking() && !c.shareOn() && notices == listOf("${c.aiName()} 拒绝了 share data") && c.visible().last().text == "✗ 拒绝了 share data")
-        script.add("[Yes] 可以.")
+        script.add(reply("可以.", "yes"))
         assertEquals("", c.shareEnable(true)); c.tick(); wait(c)
         assertTrue(c.shareOn() && !c.shareAsking() && opened == 1 && c.visible().last().text == "可以.")      // 回 [Yes]: 打开, 并跳到有数据的页
         c.shareEnable(false); opened = 0
-        for ((reply, note) in listOf("嗯." to "{name} 没有明确同意, share data 没有打开", "[Yes][No]" to "{name} 拒绝了 share data",
+        for ((reply, note) in listOf("嗯." to "{name} 没有明确同意, share data 没有打开", reply(answer = "no") to "{name} 拒绝了 share data",
                 CommText.REFUSE to "{name} 现在不方便, share data 没有打开")) {
             notices.clear(); script.add(reply)
             assertEquals("", c.shareEnable(true)); c.tick(); wait(c)

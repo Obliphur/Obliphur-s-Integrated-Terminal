@@ -1046,6 +1046,12 @@ object CommText {
         return if ("[no]" in t) "no" else if ("[yes]" in t) "yes" else ""
     }
 
+    /** 读取原生 oit_reply.answer; 非工具回复不视为同意或拒绝. */
+    fun nativeAnswer(reply: String): String {
+        if (ToolProtocol.unpack(reply) == null) return ""
+        return ToolProtocol.args(reply).optString("answer").lowercase().takeIf { it == "yes" || it == "no" } ?: ""
+    }
+
     /** 对方这次回复是在要资料吗: 有 [模块名] (不分大小写和空格; 有没有 [refuse to reply] 都算) → 要的资料列表. */
     private val CUT_RE = Regex("""[\[［]\s*cut\s*off\s*[\]］]""", RegexOption.IGNORE_CASE)
     private val CUT_N_RE = Regex("""^\s*(?:[:：]\s*)?[\[［]?\s*(\d+(?:\.\d+)?)""")
@@ -4668,7 +4674,7 @@ class Comm(
     /** 首次初始化默认头像；升级只替换指纹一致的旧内置图，自选或移除的头像保持不动。 */
     fun seedDefaultAvatar(main: ByteArray?, full: ByteArray?) {
         val priorVersion = defaultAvatarVersion
-        if (priorVersion >= 2) return
+        if (priorVersion >= 3) return
         if (main == null || full == null) return
         val name = "Claudia.txt"
         if (listPersonas().contains(name)) {
@@ -4689,7 +4695,7 @@ class Comm(
             }
             if (copied.isFailure) return
         }
-        defaultAvatarVersion = 2
+        defaultAvatarVersion = 3
         saveCfg()
     }
 
@@ -5790,15 +5796,15 @@ class Comm(
         val isCatchup = r.extra?.body?.contains(CATCHUP_TAG) == true          // 这是补问 (见 CATCHUP_BODY)
         var jointAns = ""                                                     // 对联合行动邀请的回复 [Yes] / [No]
         if (r.err.isEmpty() && !refused && !queried && r.kind in FOLLOW_KINDS && curJoint()?.state == "wait") {
-            jointAns = CommText.jointAnswer(r.reply)
+            jointAns = CommText.nativeAnswer(r.reply)
             if (jointAns.isNotEmpty() && text.isEmpty())              // 只回了 [Yes] / [No]: 聊天里写一行结果 (不然这条邀请像是没人回, 重开程序还会再问一次)
                 text = tr(if (jointAns == "yes") "✓ 接受了联合行动" else "✗ 拒绝了联合行动")
         }
         var shareAns = ""                                                     // 对 share data 请求的回复 [Yes] / [No]
-        val coreadAns = if (coreadWait && r.err.isEmpty() && !refused && !queried) CommText.jointAnswer(r.reply) else ""
+        val coreadAns = if (coreadWait && r.err.isEmpty() && !refused && !queried) CommText.nativeAnswer(r.reply) else ""
         if (coreadAns.isNotEmpty() && text.isEmpty()) text = tr(if (coreadAns == "yes") "✓ 同意了共同阅读" else "✗ 拒绝了共同阅读")
         if ((r.kind == "share_ask" || r.kind in listOf("user", "retry") && shareAsking()) && r.err.isEmpty() && !refused && !queried) {
-            shareAns = CommText.jointAnswer(r.reply)
+            shareAns = CommText.nativeAnswer(r.reply)
             if (shareAns.isNotEmpty() && text.isEmpty())              // 只回了 [Yes] / [No]: 聊天里写一行结果
                 text = tr(if (shareAns == "yes") "✓ 同意了 share data" else "✗ 拒绝了 share data")
         }
