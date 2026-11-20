@@ -895,8 +895,8 @@ private fun MusicReviewDialog(comm: Comm, onDismiss: () -> Unit) {
                         busy = false
                         if (failure.isNotEmpty()) status = failure
                         else {
-                            val sent = comm.send(reply, wait)
-                            if (sent.isNotEmpty()) status = tr(sent) else onDismiss()
+                            comm.setMusicReviewDraft(reply, wait)
+                            onDismiss()
                         }
                     }
                 }.apply { isDaemon = true; start() }

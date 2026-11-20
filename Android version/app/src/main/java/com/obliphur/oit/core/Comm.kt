@@ -1629,6 +1629,7 @@ class Comm(
     @Volatile var jointDraft: JointDraft? = null; private set
     @Volatile private var shareRequestDraft = false
     @Volatile private var coreadRequestDraft = false
+    @Volatile private var musicReviewDraft: Pair<String, Long>? = null
     @Volatile var onCoreadOpen: (() -> Unit)? = null
     /** 联合行动约定的开始时间到了 (对方已接受, 还没开始合约): Core 接上, 提示用户去开始. */
     var onJointDue: (Joint) -> Unit = {}
@@ -4328,15 +4329,22 @@ class Comm(
     }
 
     fun requestDraftLabels(): List<String> = buildList {
-        if (shareRequestDraft) add(tr("🙈 share data 请求"))
-        if (coreadRequestDraft) add(tr("📚 coread 请求"))
+        if (shareRequestDraft) add(tr("🙈 share data"))
+        if (coreadRequestDraft) add(tr("📚 共读"))
+        if (musicReviewDraft != null) add(tr("🎼 演奏评判"))
     }
 
     fun packageDraftLabel(): String = (listOf(jointLabel()) + requestDraftLabels()).filter { it.isNotBlank() }.joinToString(" · ")
 
+    @Synchronized
+    fun setMusicReviewDraft(text: String, replyDelayMs: Long) {
+        musicReviewDraft = text.trim() to replyDelayMs.coerceAtLeast(0L)
+        changed()
+    }
+
     fun clearPackageDrafts() {
         jointDraft = null
-        shareRequestDraft = false; coreadRequestDraft = false
+        shareRequestDraft = false; coreadRequestDraft = false; musicReviewDraft = null
         changed()
     }
 
@@ -4941,10 +4949,11 @@ class Comm(
         val jd = jointDraft
         val shareReq = shareRequestDraft
         val coreadReq = coreadRequestDraft
-        if (text.isEmpty() && jd == null && !shareReq && !coreadReq) return "empty"
+        val musicReq = musicReviewDraft
+        if (text.isEmpty() && jd == null && !shareReq && !coreadReq && musicReq == null) return "empty"
         if (text.lowercase() == "/clear") { clear(); return "" }
-        if ((jd != null || shareReq || coreadReq) && replyDelayMs <= 0L && pendingImage == null) {
-            val r = sendPackage(jd, text, shareReq, coreadReq)
+        if ((jd != null || shareReq || coreadReq || musicReq != null) && replyDelayMs <= 0L && pendingImage == null) {
+            val r = sendPackage(jd, text, shareReq, coreadReq, musicReq)
             if (r.isEmpty()) clearPackageDrafts()
             return r
         }
@@ -4976,7 +4985,7 @@ class Comm(
 
     /** 一条带联合行动邀请的消息 (jd). 聊天里只显示说明, 邀请的内容附在发给模型的内容里. */
     @Synchronized
-    private fun sendPackage(jd: JointDraft?, text0: String, shareReq: Boolean, coreadReq: Boolean): String {
+    private fun sendPackage(jd: JointDraft?, text0: String, shareReq: Boolean, coreadReq: Boolean, musicReq: Pair<String, Long>?): String {
         val why = problem(true)
         if (why.isNotEmpty()) return why
         val shown = ArrayList<String>()
@@ -4985,22 +4994,27 @@ class Comm(
             val w = jointBlock()
             if (w.isNotEmpty()) return w
             shown.add(CommData.jointLabel(jd.terms, jd.start, jd.end, now().toLocalDate()))
-            parts.add(CommData.jointText(jd.terms, jd.start, jd.end))
+            parts.add(CommText.oitText(CommData.jointText(jd.terms, jd.start, jd.end)))
         }
         if (shareReq) {
             if (share.on || shareAsking()) return tr("share data 已开启或正在等待回复")
             awayKind().let { if (it.isNotEmpty()) return tr("{name} {st}, 现在没法征求同意", "name" to aiName(), "st" to tr(if (it == "sleep") "睡眠中" else "专注中")) }
-            shown.add(tr("🙈 share data 请求"))
-            parts.add("[OIT_SYSTEM_MESSAGES]\n用户请求打开 share data。请按人设判断是否同意：同意填写oit_reply.answer=\"yes\"，不同意填写answer=\"no\"；可在text中自然回复。只有你明确同意后，OIT才会分享数据。")
+            shown.add(tr("🙈 share data"))
+            parts.add(CommText.oitText("这是用户发来的 share data 请求。请按人设与实时状态判断是否同意：同意填写oit_reply.answer=\"yes\"，不同意填写answer=\"no\"，可附text。只有明确同意后，OIT才会开始分享；开始前不得声称已读取数据。仅对此请求填写answer。"))
         }
         if (coreadReq) {
             if (coreadAskPid == pid) return tr("⏳ 等待共读同意")
-            shown.add(tr("📚 coread 请求"))
-            parts.add("[OIT_SYSTEM_MESSAGES]\n用户请求与你共同阅读。请按人设判断是否同意：明确同意填写oit_reply.answer=\"yes\"，不同意填写answer=\"no\"；可在text中自然回复。只有明确同意后，共读室才会打开。")
+            shown.add(tr("📚 共读"))
+            parts.add(CommText.oitText("这是用户发来的共同阅读请求。请按人设与实时状态决定是否接受：明确同意填写oit_reply.answer=\"yes\"，拒绝填写answer=\"no\"，可附text。只有明确同意后才会打开共读室；用户还须在OIT接受你的主动申请才会打开。进入共读后围绕当前书籍、页码和批注交流，循环专注、重要活动和睡眠的累计重叠最多10分钟；Claudia可说明结束原因后调用oit_reading_end，结束说明显示后才结束会话。仅对此请求填写answer。"))
+        }
+        if (musicReq != null) {
+            shown.add(tr("🎼 演奏评判"))
+            parts.add(CommText.oitText(musicReq.first))
         }
         val text = text0.trim()
         if (text.isNotEmpty()) { shown.add(text); parts.add(text) }
         val message = add("me", shown.joinToString("\n"), compose(now(), parts.joinToString("\n\n")))
+        if (musicReq != null && musicReq.second > 0L) message.replyAfter = nowMs() + musicReq.second
         interactionSent(text, message)
         if (jd != null) {
             jointLast = jd.terms

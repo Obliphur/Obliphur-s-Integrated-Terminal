@@ -129,10 +129,12 @@ class CommPage(CommVoiceMixin, tk.Frame):
         self.lbl_share_inv.pack(side="left")
         ttk.Button(self.share_btns, text=tr("接受"), width=6, command=lambda: self._share_respond(True)).pack(side="left", padx=(6, 0))
         ttk.Button(self.share_btns, text=tr("拒绝"), width=6, command=lambda: self._share_respond(False)).pack(side="left", padx=(4, 0))
-        # 联合行动: 选好的 (还没发, 带 ✕ 可以取消) 或发出去之后的进展; 结束时间自动算好写在这里 (聊天框上方)
-        self.lbl_joint = tk.Label(tools, text="", bg=bg, fg=COLORS["accent"], font=config.font("small"))
-        self.lbl_joint.pack(side="left", padx=(8, 0))
-        self.btn_joint_x = tk.Label(tools, text="✕", bg=bg, fg=COLORS["text_dim"], font=config.font("small"), cursor="hand2")
+        # 草稿附件和联合行动状态放在工具栏下方。
+        draft_row = tk.Frame(self, bg=bg)
+        draft_row.pack(fill="x", padx=28, pady=(2, 0))
+        self.lbl_joint = tk.Label(draft_row, text="", bg=bg, fg=COLORS["accent"], font=config.font("small"), anchor="w")
+        self.lbl_joint.pack(side="left")
+        self.btn_joint_x = tk.Label(draft_row, text="✕", bg=bg, fg=COLORS["text_dim"], font=config.font("small"), cursor="hand2")
         self.btn_joint_x.bind("<Button-1>", lambda _e: self._clear_package_drafts())
         # 对方发起的联合行动: 等用户点 接受 / 拒绝 (只有 invite 的时候显示)
         self.joint_btns = tk.Frame(tools, bg=bg)
@@ -705,11 +707,8 @@ class CommPage(CommVoiceMixin, tk.Frame):
                     if self.comm.pid != target_pid or self.comm.current_config() != target_config:
                         toast.warn(tr("聊天对象或模型已更改，评判结果未发送."))
                         return
-                    why = self.comm.send(outcome[1], reply_delay_seconds=outcome[2])
-                    if why:
-                        toast.warn(tr(why))
-                    else:
-                        self.refresh(force=True)
+                    self.comm.set_music_review_draft(outcome[1], outcome[2])
+                    self.refresh(force=True)
             import threading
             threading.Thread(target=work, daemon=True).start()
 

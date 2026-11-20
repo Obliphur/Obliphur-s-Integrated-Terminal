@@ -149,10 +149,17 @@ class JointMixin:
         """返回待发送请求附件的界面标签。"""
         labels = []
         if self.request_draft.get("share"):
-            labels.append(tr("🙈 share data 请求"))
+            labels.append(tr("🙈 share data"))
         if self.request_draft.get("coread"):
-            labels.append(tr("📚 coread 请求"))
+            labels.append(tr("📚 共读"))
+        if self.request_draft.get("music"):
+            labels.append(tr("🎼 演奏评判"))
         return labels
+
+    def set_music_review_draft(self, text: str, reply_delay_seconds: float = 0) -> None:
+        """暂存演奏评判结果, 随下一条用户消息发送。"""
+        self.request_draft["music"] = {"text": str(text or "").strip(), "delay": max(0, float(reply_delay_seconds))}
+        self._changed()
 
     def joint_label(self) -> str:
         """聊天框上方: 选好、还没发出去的联合行动 (开始 - 结束时间)."""

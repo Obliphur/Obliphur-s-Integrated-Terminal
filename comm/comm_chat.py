@@ -281,7 +281,7 @@ class ChatMixin:
         return ""
 
     def _send_package(self, joint, text: str = "", requests=None) -> str:
-        """一条带联合行动 / share data / 共读附件的消息, 附件内容只发给模型."""
+        """一条带联合行动 / share data / 共读 / 演奏评判附件的消息, 附件内容只发给模型."""
         from comm import comm_data
         requests = requests or {}
         if not joint and not any(requests.values()):
@@ -296,26 +296,32 @@ class ChatMixin:
                 return why
             start, end = _joint_time(joint["start"]), _joint_time(joint["end"])
             shown.append(comm_data.joint_label(joint["terms"], start, end, self.now().date()))
-            parts.append(comm_data.joint_text(joint["terms"], start, end))
+            parts.append(oit_text(comm_data.joint_text(joint["terms"], start, end)))
         if requests.get("share"):
             if self.share["on"] or self.share_asking():
                 return tr("share data 已开启或正在等待回复")
             status = self.other_status()
             if status and status.get("kind") in HELD_KINDS and not status.get("joint"):
                 return tr("{name} {st}, 现在没法征求同意", name=self.share_ai_name(), st=tr(STATUS_TEXT[status["kind"]]))
-            shown.append(tr("🙈 share data 请求"))
-            parts.append(oit_text("用户请求打开 share data。请按人设判断是否同意：同意填写oit_reply.answer=\"yes\"，不同意填写answer=\"no\"；可在text中自然回复。只有你明确同意后，OIT才会分享数据。"))
+            shown.append(tr("🙈 share data"))
+            parts.append(oit_text("这是用户发来的 share data 请求。请按人设与实时状态判断是否同意：同意填写oit_reply.answer=\"yes\"，不同意填写answer=\"no\"，可附text。只有明确同意后，OIT才会开始分享；开始前不得声称已读取数据。仅对此请求填写answer。"))
         if requests.get("coread"):
             if self.coread_ask and self.coread_ask.get("pid") == self.pid:
                 return tr("⏳ 等待共读同意")
-            shown.append(tr("📚 coread 请求"))
-            parts.append(oit_text("用户请求与你共同阅读。请按人设判断是否同意：明确同意填写oit_reply.answer=\"yes\"，不同意填写answer=\"no\"；可在text中自然回复。只有明确同意后，共读室才会打开。"))
+            shown.append(tr("📚 共读"))
+            parts.append(oit_text("这是用户发来的共同阅读请求。请按人设与实时状态决定是否接受：明确同意填写oit_reply.answer=\"yes\"，拒绝填写answer=\"no\"，可附text。只有明确同意后才会打开共读室；用户还须在OIT接受你的主动申请才会打开。进入共读后围绕当前书籍、页码和批注交流，循环专注、重要活动和睡眠的累计重叠最多10分钟；Claudia可说明结束原因后调用oit_reading_end，结束说明显示后才结束会话。仅对此请求填写answer。"))
+        music = requests.get("music")
+        if music:
+            shown.append(tr("🎼 演奏评判"))
+            parts.append(oit_text(str(music.get("text", "")).strip()))
         now = self.now()
         text = str(text or "").strip()
         if text:
             shown.append(text)
             parts.append(text)
         message = self._add("me", "\n".join(shown), self._compose(now, "\n\n".join(parts)))
+        if music and music.get("delay", 0) > 0:
+            message["reply_after"] = self._ms() + int(float(music["delay"]) * 1000)
         if text and self._music_discourtesy():
             self._music_discourtesy_uids.add(message["uid"])
         self._interaction_sent(text, message)

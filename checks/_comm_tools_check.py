@@ -478,7 +478,17 @@ def request_attachment_checks():
     assert not any(c.request_draft.values()) and not c.request_draft_labels()
     sent = next(m["content"] for m in packets[0] if m["role"] == "user")
     assert "共同阅读" in sent and "share data" in sent and "只有明确同意后" in sent
-    assert c.visible()[0]["text"] == "🙈 share data 请求\n📚 coread 请求"
+    assert c.visible()[0]["text"] == "🙈 share data\n📚 共读"
+
+    c.set_music_review_draft("请评判演奏。", 0)
+    assert c.request_draft_labels() == ["🎼 演奏评判"]
+    assert c.send("这是我的演奏") == ""
+    until = time.monotonic() + 5
+    while c.busy and time.monotonic() < until:
+        time.sleep(0.01); c.tick()
+    message = c.visible()[-1]["text"]
+    assert message == "🎼 演奏评判\n这是我的演奏"
+    assert "请评判演奏。" in next(m["api"] for m in reversed(c.messages) if m["role"] == "me")
 
     replies.append(call("oit_reply", {"text": "可以。", "answer": "yes"}))
     assert c.toggle_request_draft("coread") == ""
@@ -742,6 +752,8 @@ if __name__ == "__main__":
     tool = next(s for s in specs if s["name"] == "oit_reply")
     assert "聊天只显示text" in protocol and "wait_minutes" in tool["description"] and "不会显示给用户" in tool["description"]
     assert "network_now" in tool["parameters"]["properties"] and "最多3分钟" in protocol
+    for prompt in ("用户在OIT沟通栏选择", "收到系统的联合行动邀请", "Claudia的合约奖励由OIT排入", "邀请分享数据用share_data=true"):
+        assert prompt not in protocol, prompt
     legacy = "先输入[messages]查询；回复 [Yes]；结尾写 [waiting for reply]:[5]\n[condition]\nmessages:2\n[/condition]\n"
     migrated = comm.native_persona_text(legacy)
     assert "输入[messages]" not in migrated and 'answer="yes"' in migrated and "wait_minutes" in migrated

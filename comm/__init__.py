@@ -150,7 +150,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         self._focus_notice_seen = set()
         self.shift_ask = None          # 用户请求平移对方的日程起点, 等对方回 [Yes] / [No]: {"pid", "ts", "sent", "to"}; 本机界面状态, 不存盘 / 不同步 (结果记进聊天状态里的 shift, 同步)
         self.share_ask = None          # 用户点了 share data, 等对方回 [Yes] / [No]: {"pid", "ts", "sent"}; 本机界面状态, 不存盘 / 不同步
-        self.request_draft = {"share": False, "coread": False}  # 待随下一条用户消息发送的请求附件, 仅本机
+        self.request_draft = {"share": False, "coread": False, "music": False}  # 待随下一条用户消息发送的请求附件, 仅本机
         self.coread_ask = None       # 用户发起共读, 等人设明确同意; 仅本机
         self._share_end = ""           # 排着的"总结这次 share data"请求 (对方正在回别的话时等一等)
         self.on_change = None          # 界面线程里调用
