@@ -6,6 +6,7 @@ comm.py 的 `class Comm` 继承这个 mixin, 外面看到的还是同一个类.
 """
 
 import json
+import hashlib
 import os
 import random
 import re
@@ -30,6 +31,14 @@ from comm.comm_persona import SHIFT_LO, SHIFT_HI, SHIFT_KEEP, MAX_PERSONA, MEM_M
 from comm.comm_util import (OIT_TAG, COND_TAG, WEEKDAY, MAX_MSG_CHARS, HISTORY_SENT, HISTORY_STEP, HISTORY_CHARS,
                        is_claudia, is_refusal, stamp, urlsplit_host, info_tags, joint_answer, _joint_time, clip_message,
                        cache_layout, oit_text, first_turn, api_messages, sanitize_mem)
+
+_LEGACY_CLAUDIA_AVATAR = "2708f7409a1c79a562af8cc9635edb30a9e8c415034f102faaf7cfaa2e788c21"
+_LEGACY_CLAUDIA_FULL = "00eeccf953e568441cf8cb9e8e8ebe36d0f6010862fb543123f61a713e454341"
+
+
+def _avatar_hash(path):
+    with open(path, "rb") as source:
+        return hashlib.sha256(source.read()).hexdigest()
 
 
 class ChatMixin:
@@ -56,28 +65,40 @@ class ChatMixin:
             pass
 
     def _seed_default_avatars(self):
-        """自带人设的默认头像 (1.0.426): 第一次运行 (或重置后) 放一份到 avatars, 之后不再自动更新 (1.0.434).
-        用户自己换过 / 删过的不动."""
-        if self.cfg.get("default_avatars"):
+        """首次初始化默认头像；升级只替换指纹一致的旧内置图，不覆盖自选或恢复已移除的头像。"""
+        version = int(self.cfg.get("default_avatars") or 0)
+        if version >= 2:
             return
         names = set(list_personas(self.personas))
+        complete = True
         for persona, file in DEFAULT_AVATARS.items():
             if persona not in names:
                 continue
-            src = os.path.join(HERE, "defaults", "avatars", file)
+            source_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            src = os.path.join(source_root, "defaults", "avatars", file)
             dst = os.path.join(self.dir, "avatars", self._avatar_name("ai", persona))
-            if os.path.exists(dst) or not os.path.isfile(src):
+            if not os.path.isfile(src):
+                complete = False
                 continue
             try:
+                initial = version == 0 and not os.path.exists(dst)
                 os.makedirs(os.path.dirname(dst), exist_ok=True)
-                shutil.copyfile(src, dst)
-                full_src = src[:-4] + ".full.png"
-                if os.path.isfile(full_src):
-                    shutil.copyfile(full_src, dst[:-4] + ".full.png")
+                for source, target, old_hash in (
+                        (src, dst, _LEGACY_CLAUDIA_AVATAR),
+                        (src[:-4] + ".full.png", dst[:-4] + ".full.png", _LEGACY_CLAUDIA_FULL)):
+                    legacy = (persona == "Claudia.txt" and os.path.isfile(target)
+                              and _avatar_hash(target) == old_hash)
+                    if not (initial and not os.path.exists(target) or legacy):
+                        continue
+                    if not os.path.isfile(source):
+                        complete = False
+                        continue
+                    shutil.copyfile(source, target)
             except OSError:
-                pass
-        self.cfg["default_avatars"] = True
-        self.save_cfg()
+                complete = False
+        if complete:
+            self.cfg["default_avatars"] = 2
+            self.save_cfg()
 
     def avatar_path(self, who: str) -> str:
         p = self.avatar_dest(who)

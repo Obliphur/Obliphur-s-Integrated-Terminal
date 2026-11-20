@@ -4610,20 +4610,31 @@ class Comm(
         }
     }
 
-    /** 自带人设的默认头像 (1.0.426): 第一次运行 (或重置后) 放一份, 之后不再自动更新 (1.0.434); 用户自己换过 / 删过的不动. */
+    /** 首次初始化默认头像；升级只替换指纹一致的旧内置图，自选或移除的头像保持不动。 */
     fun seedDefaultAvatar(main: ByteArray?, full: ByteArray?) {
-        if (defaultAvatarVersion >= 1) return
+        val priorVersion = defaultAvatarVersion
+        if (priorVersion >= 2) return
+        if (main == null || full == null) return
         val name = "Claudia.txt"
         if (listPersonas().contains(name)) {
             val dst = File(File(dir, "avatars"), avatarName("ai", name))
-            val dstFull = avatarFullFile("ai")
-            runCatching {
+            val dstFull = File(dst.parentFile, dst.name.replace(".png", ".full.png"))
+            val copied = runCatching {
                 dst.parentFile?.mkdirs()
-                if (!dst.exists() && main != null) dst.writeBytes(main)
-                if (!dstFull.exists() && full != null) dstFull.writeBytes(full)
+                fun matches(file: File, sha256: String) = file.isFile &&
+                    java.security.MessageDigest.getInstance("SHA-256").digest(file.readBytes())
+                        .joinToString("") { "%02x".format(it) } == sha256
+                val oldMain = "2708f7409a1c79a562af8cc9635edb30a9e8c415034f102faaf7cfaa2e788c21"
+                val oldFull = "00eeccf953e568441cf8cb9e8e8ebe36d0f6010862fb543123f61a713e454341"
+                val initial = priorVersion == 0 && !dst.exists()
+                if ((initial && !dst.exists()) || matches(dst, oldMain))
+                    dst.writeBytes(main)
+                if ((initial && !dstFull.exists()) || matches(dstFull, oldFull))
+                    dstFull.writeBytes(full)
             }
+            if (copied.isFailure) return
         }
-        defaultAvatarVersion = 1
+        defaultAvatarVersion = 2
         saveCfg()
     }
 
