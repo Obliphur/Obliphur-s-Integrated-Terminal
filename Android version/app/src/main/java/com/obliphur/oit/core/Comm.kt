@@ -1555,7 +1555,7 @@ class Comm(
         const val RETRY_MAX = 12
         const val HISTORY_SENT = 200                    // 每次请求最多带多少条 (本地存 600 条, 带的取最近 200 条)
         const val HISTORY_CHARS = 120000                // 带的聊天记录总共最多多少字 (超了从最老的开始不带)
-        const val MAX_MSG_CHARS = 8000                  // 单条消息超过这么多字: 只截掉中间 (发给模型的那份, 本地记录不动)
+        const val MAX_MSG_CHARS = 8000                  // 模型上下文中单条 AI / 系统消息的裁剪上限
         const val MEM_EVERY = 40                        // 每这么多条新消息, 让模型整理一次"记忆卡"
         const val MEM_GAP = 3 * 3600                    // 两次整理至少隔这么久 (秒)
         const val MEM_MAX = 2000                        // 记忆卡 (手写 + 自动) 各自最多多少字
@@ -4899,14 +4899,18 @@ class Comm(
         val out = ArrayList<Pair<String, String>>()
         val lastAi = src.indexOfLast { it.role == "ai" && it.pendingReply == null }
         val conversation = src.withIndex().filter { (i, m) -> m.pendingReply == null && (m.role == "me" || m.role == "ai" || includeLatestApi && i > lastAi && m.role == "sys" && m.api.isNotEmpty()) }
-        // 总字数太多时从最老的开始不带 (至少带最新的一条)
-        var total = 0
         // 超过条数上限后按 HISTORY_STEP 批量淘汰, 让窗口起点保持稳定
         var kept = if (conversation.size > HISTORY_SENT) conversation.drop(-Math.floorDiv(-(conversation.size - HISTORY_SENT), HISTORY_STEP) * HISTORY_STEP) else conversation
-        while (kept.size > 1 && kept.sumOf { (i, m) -> (if (includeLatestApi && i > lastAi && (m.role == "me" || m.role == "sys")) m.api.ifEmpty { m.text } else m.text).length } > HISTORY_CHARS) kept = kept.drop(minOf(HISTORY_CHAR_STEP, kept.size - 1))
+        // 本轮系统消息排在用户后面时，裁剪历史也要保留最新用户原文。
+        val lastUser = if (includeLatestApi) kept.indexOfLast { (i, m) -> i > lastAi && m.role == "me" } else -1
+        val keep = if (lastUser >= 0) kept.size - lastUser else 1
+        while (kept.size > keep && kept.sumOf { (i, m) -> (if (includeLatestApi && i > lastAi && (m.role == "me" || m.role == "sys")) m.api.ifEmpty { m.text } else m.text).length } > HISTORY_CHARS) {
+            kept = kept.drop(minOf(HISTORY_CHAR_STEP, kept.size - keep))
+        }
         for ((i, m) in kept) {
             val role = if (m.role == "ai") "assistant" else "user"
-            val text = clipMessage(if (includeLatestApi && i > lastAi && (m.role == "me" || m.role == "sys")) m.api.ifEmpty { m.text } else m.text)
+            val body = if (includeLatestApi && i > lastAi && (m.role == "me" || m.role == "sys")) m.api.ifEmpty { m.text } else m.text
+            val text = if (m.role == "me") body else clipMessage(body)
             if (text.isEmpty()) continue
             if (out.isNotEmpty() && out.last().first == role) out[out.size - 1] = role to (out.last().second + "\n\n" + text)
             else out.add(role to text)

@@ -2225,7 +2225,7 @@ class CommTest {
         assertTrue("新对话: 人设改过的日程马上生效", "SCHEDULE 新对话: 空闲 2 段, 休息 1 段, 专注 1 段, 睡眠 0 段" in log())
     }
 
-    /** 窗口最多 200 条, 超过上限后每次丢 30 条; 单条太长只截中间 (发给模型的那份). */
+    /** 历史窗口分批丢旧消息，本轮用户长文保留原文。 */
     @Test
     fun windowAndClip() {
         val td = Files.createTempDirectory("oit").toFile()
@@ -2240,10 +2240,12 @@ class CommTest {
         assertEquals(setOf("m60"), (231..260).map { c.apiMessages(many.take(it)).first().second }.toSet())
         val charLimited = (0 until 25).map { ChatMsg(it, if (it % 2 == 0) "me" else "ai", "x".repeat(5000), "", "", "c$it", it.toLong()) }
         assertEquals(15, c.apiMessages(charLimited).size)
-        val long = "HEAD" + "x".repeat(20000) + "TAIL"
-        val one = c.apiMessages(listOf(ChatMsg(1, "me", long, "", "", "u", 1L)))[0].second
-        assertTrue(one.startsWith("HEAD") && one.endsWith("TAIL") && "中间省略" in one)
-        assertTrue(one.length < Comm.MAX_MSG_CHARS + 100)
+        val long = "开头" + "长文".repeat(65000) + "结尾"
+        val user = ChatMsg(2, "me", long, "", api = "[时间]\n$long", uid = "u", ts = 2L)
+        val history = listOf(ChatMsg(1, "ai", "旧回复", "", "", "a", 1L), user)
+        assertEquals(listOf("user" to long), c.apiMessages(history))
+        val current = history + ChatMsg(3, "sys", "", "", api = "系统提示", uid = "s", ts = 3L)
+        assertEquals(listOf("user" to "[时间]\n$long\n\n系统提示"), c.apiMessages(current, includeLatestApi = true))
         val textOnly = c.apiMessages(listOf(
             ChatMsg(1, "me", "可见正文", "旧接口提示", "", "u1", 1L),
             ChatMsg(2, "sys", "旧系统提示", "", "", "u2", 2L),

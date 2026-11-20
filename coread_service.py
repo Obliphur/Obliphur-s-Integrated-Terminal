@@ -34,6 +34,7 @@ NODE_MAX_DOWNLOAD = 50 * 1024 * 1024
 COREAD_HTTP_PORTS = range(3000, 3010)
 API_TIMEOUT = 15
 BRIDGE_BODY_MAX = 24 * 1024
+BRIDGE_CHAT_BODY_MAX = 4 * 1024 * 1024  # 共读聊天的 HTTP 请求大小保护，包含正文和阅读上下文
 
 
 def _copy_source(source: str, target: str):
@@ -422,11 +423,14 @@ class OitChatBridge:
                 if not secrets.compare_digest(self.headers.get("x-coread-key", ""), bridge.access_key):
                     self._send(401, {"error": "access_denied"})
                     return
+                parsed = urllib.parse.urlsplit(self.path)
+                op = "state" if self.command == "GET" else parsed.path.strip("/")
                 body = {}
                 if self.command == "POST":
                     try:
                         size = int(self.headers.get("Content-Length", "0"))
-                        if size < 0 or size > BRIDGE_BODY_MAX:
+                        limit = BRIDGE_CHAT_BODY_MAX if op == "send" else BRIDGE_BODY_MAX
+                        if size < 0 or size > limit:
                             self._send(413, {"error": "request_too_large"})
                             return
                         body = json.loads(self.rfile.read(size).decode("utf-8")) if size else {}
@@ -435,8 +439,6 @@ class OitChatBridge:
                     except (ValueError, UnicodeError, json.JSONDecodeError):
                         self._send(400, {"error": "invalid_json"})
                         return
-                parsed = urllib.parse.urlsplit(self.path)
-                op = "state" if self.command == "GET" else parsed.path.strip("/")
                 if self.command == "GET":
                     body = {"session_id": urllib.parse.parse_qs(parsed.query).get("session_id", [""])[0]}
                 if op not in ("state", "start", "heartbeat", "send", "end", "acquire"):
@@ -548,7 +550,7 @@ class OitChatBridge:
                     else:
                         text = str(item["body"].get("text") or "").strip()
                         context = str(item["body"].get("context") or "")[:18000]
-                        if not text or len(text) > 5000:
+                        if not text:
                             item["status"], item["result"] = 400, {"error": "message_required"}
                         else:
                             why = comm.send(text, reading_context=context, from_reader=True)

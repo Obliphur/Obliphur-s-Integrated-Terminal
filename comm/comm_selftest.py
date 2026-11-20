@@ -1466,10 +1466,13 @@ def _selftest():
     assert a_old[0]["content"] == a_new[0]["content"], "新增一条消息不改变请求的开头"
     char_limited = [{"role": "me" if i % 2 == 0 else "ai", "text": "x" * 5000} for i in range(25)]
     assert len(api_messages(char_limited)) == 15, "字数上限仍每次只裁剪 10 条"
-    # 单条超长 (粘贴 / 附件): 只截中间, 头和尾都留着
-    long_text = "HEAD" + "x" * 20000 + "TAIL"
-    one = api_messages([{"role": "me", "text": long_text}])[0]["content"]
-    assert len(one) < MAX_MSG_CHARS + 100 and one.startswith("HEAD") and one.endswith("TAIL") and "中间省略" in one
+    # 用户原文超过历史预算时，先淘汰旧消息，仍把最新消息和本轮提示完整交给模型。
+    long_text = "开头" + "长文" * 65000 + "结尾"
+    history = [{"role": "ai", "text": "旧回复"}, {"role": "me", "text": long_text}]
+    assert api_messages(history) == [{"role": "user", "content": long_text}]
+    history[-1]["api"] = "[时间]\n" + long_text
+    history.append({"role": "sys", "api": "系统提示"})
+    assert api_messages(history, include_latest_api=True) == [{"role": "user", "content": "[时间]\n" + long_text + "\n\n系统提示"}]
     assert clip_message("短") == "短"
     assert ai_assist.usage_of({"usage": {"input_tokens": 10, "cache_read_input_tokens": 90, "cache_creation_input_tokens": 5}}) == (105, 90)
     assert ai_assist.usage_of({"usage": {"prompt_tokens": 200, "prompt_cache_hit_tokens": 150}}) == (200, 150)

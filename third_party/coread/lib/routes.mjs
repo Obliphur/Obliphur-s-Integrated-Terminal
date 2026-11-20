@@ -66,6 +66,7 @@ function cors(res) {
 async function readBody(req) {
   return new Promise((resolve, reject) => {
     let data = '';
+    req.setEncoding('utf8');
     req.on('data', c => data += c);
     req.on('end', () => { try { resolve(JSON.parse(data)); } catch { reject(new Error('Invalid JSON')); } });
     req.on('error', reject);

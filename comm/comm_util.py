@@ -14,7 +14,7 @@ HISTORY_SENT = 200                    # 每次请求最多带多少条聊天记�
 HISTORY_CHARS = 120000                # 带的聊天记录总共最多多少字 (超了从最老的开始不带)
 HISTORY_STEP = 30                     # 超过条数上限后一次淘汰 30 条, 保持历史前缀稳定
 HISTORY_CHAR_STEP = 10                # 超字数上限时小步裁剪, 避免一次丢太多历史
-MAX_MSG_CHARS = 8000                  # 单条消息超过这么多字: 只截掉中间 (发给模型的那份, 本地记录不动), 免得一次粘贴 / 一个附件吃掉整个窗口
+MAX_MSG_CHARS = 8000                  # 模型上下文中单条 AI / 系统消息的裁剪上限
 COND_TAG = "condition"               # 人设里的判定交给 OIT: 对方输入 [condition], OIT 算出用户当前的进度和每个条件满足没有, 再调用一次 (1.0.392)
 WEEKDAY = "一二三四五六日"
 
@@ -140,12 +140,18 @@ def api_messages(msgs: list, include_latest_api: bool = False) -> list:
     if len(msgs) > HISTORY_SENT:                      # 起点按 HISTORY_STEP 一格一格挪: 中间的每一次请求, 开头都和上一次一模一样
         drop = -(-(len(msgs) - HISTORY_SENT) // HISTORY_STEP) * HISTORY_STEP
         msgs = msgs[drop:]
-    while len(msgs) > 1 and sum(len(str((m.get("api") if i > last_ai and m.get("role") in ("me", "sys") else "") or m.get("text") or "")) for m, i in msgs) > HISTORY_CHARS:
-        msgs = msgs[min(HISTORY_CHAR_STEP, len(msgs) - 1):]
+    keep = 1
+    if include_latest_api:
+        # 本轮系统消息排在用户后面时，裁剪历史也要保留最新用户原文。
+        keep = next((n for n, (m, i) in enumerate(reversed(msgs), 1) if i > last_ai and m.get("role") == "me"), 1)
+    while len(msgs) > keep and sum(len(str((m.get("api") if i > last_ai and m.get("role") in ("me", "sys") else "") or m.get("text") or "")) for m, i in msgs) > HISTORY_CHARS:
+        msgs = msgs[min(HISTORY_CHAR_STEP, len(msgs) - keep):]
     out = []
     for m, i in msgs:
         role = "assistant" if m.get("role") == "ai" else "user"
-        text = clip_message(str((m.get("api") if i > last_ai and m.get("role") in ("me", "sys") else "") or m.get("text") or ""))
+        text = str((m.get("api") if i > last_ai and m.get("role") in ("me", "sys") else "") or m.get("text") or "")
+        if m.get("role") != "me":
+            text = clip_message(text)
         if not text:
             continue
         if out and out[-1]["role"] == role:

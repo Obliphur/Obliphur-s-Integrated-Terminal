@@ -213,11 +213,11 @@ def main():
         status, state = request(bridge.port, "local-test-key", f"state?session_id={session}")
         assert status == 200 and state["messages"][0]["text"] == "Hello"
 
+        text = "开头" + "请讨论这页原文。" * 3000 + "结尾"
         status, sent = request(bridge.port, "local-test-key", "send", "POST",
-                               {"session_id": session, "text": "Discuss this page",
-                                "context": "Book, page 3"})
+                               {"session_id": session, "text": text, "context": "Book, page 3"})
         assert status == 200 and sent["ok"]
-        assert app.comm.sent == [("Discuss this page", {
+        assert app.comm.sent == [(text, {
             "reading_context": "Book, page 3", "from_reader": True})]
 
         assert request(bridge.port, "local-test-key", "start", "POST", {})[0] == 200
