@@ -158,6 +158,10 @@ object ToolProtocol {
             require(calls.size == 1) { "每次只能调用一个OIT工具" }
             val (name, args) = calls.single()
             val spec = (0 until specs.length()).map { specs.getJSONObject(it) }.firstOrNull { it.getString("name") == name } ?: error("未知工具")
+            if (name == "oit_reading_offer") {
+                if (!args.has("free_statement")) args.put("free_statement", "")
+                if (!args.has("request_statement")) args.put("request_statement", "")
+            }
             validate(args, spec.getJSONObject("parameters"))
             require(!args.optBoolean("refuse") || args.keys().asSequence().all { it == "refuse" || args.opt(it) == false || args.opt(it) == "" || (args.opt(it) as? JSONArray)?.length() == 0 }) { "拒绝回复不能同时提交正文或操作" }
             require(!args.optBoolean("silent") || args.keys().asSequence().all { it == "silent" || args.opt(it) == false || args.opt(it) == "" || (args.opt(it) as? JSONArray)?.length() == 0 }) { "沉默回复不能同时提交正文或操作" }

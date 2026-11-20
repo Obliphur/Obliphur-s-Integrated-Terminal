@@ -150,6 +150,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         self._focus_notice_seen = set()
         self.shift_ask = None          # 用户请求平移对方的日程起点, 等对方回 [Yes] / [No]: {"pid", "ts", "sent", "to"}; 本机界面状态, 不存盘 / 不同步 (结果记进聊天状态里的 shift, 同步)
         self.share_ask = None          # 用户点了 share data, 等对方回 [Yes] / [No]: {"pid", "ts", "sent"}; 本机界面状态, 不存盘 / 不同步
+        self.request_draft = {"share": False, "coread": False}  # 待随下一条用户消息发送的请求附件, 仅本机
         self._share_end = ""           # 排着的"总结这次 share data"请求 (对方正在回别的话时等一等)
         self.on_change = None          # 界面线程里调用
         self._lock = threading.Lock()
@@ -1335,6 +1336,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             self._again = False
             if kind == "share_ask":
                 self._share_ask_end("{name} 没有回复, share data 没有打开")
+            elif kind in ("user", "retry") and self.share_asking():
+                self._share_ask_end("{name} 没有回复, share data 没有打开")
             if kind == "shift_ask":
                 self._shift_ask_end("{name} 没有回复, 起点没有平移")
             self._changed()
@@ -1431,7 +1434,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             if joint_ans and not text:                          # 只回了 [Yes] / [No]: 聊天里写一行结果 (不然这条邀请像是没人回, 重开程序还会再问一次)
                 text = tr("✓ 接受了联合行动") if joint_ans == "yes" else tr("✗ 拒绝了联合行动")
         share_ans = ""                                          # 对 share data 请求的回复 [Yes] / [No]
-        if kind == "share_ask" and not err and not refused and not queried:
+        if (kind == "share_ask" or (kind in ("user", "retry") and self.share_asking())) and not err and not refused and not queried:
             share_ans = joint_answer(reply)
             if share_ans and not text:                          # 只回了 [Yes] / [No]: 聊天里写一行结果
                 text = tr("✓ 同意了 share data") if share_ans == "yes" else tr("✗ 拒绝了 share data")
@@ -1462,6 +1465,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                     self._love_set(no=self._ms() + LOVE_NO_DAYS * 86400 * 1000)
                     self.log(f"LOVE 对方判断不合适, 没有告白 ({LOVE_NO_DAYS} 天内不再判定)")
             if kind == "share_ask":                     # 出错 / 对方不方便 / 没回: 这次请求作废 (不重试)
+                self._share_ask_end("{name} 现在不方便, share data 没有打开" if refused else "{name} 没有回复, share data 没有打开")
+            elif kind in ("user", "retry") and self.share_asking():
                 self._share_ask_end("{name} 现在不方便, share data 没有打开" if refused else "{name} 没有回复, share data 没有打开")
             if kind == "shift_ask":
                 self._shift_ask_end("{name} 现在不方便, 起点没有平移" if refused else "{name} 没有回复, 起点没有平移")
@@ -1532,7 +1537,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                 self._love_confirm("user")              # 记入系统: 以后每次请求都会告诉对方 (长期记忆里的「系统记录」)
             if kind == "love" and not self.offense_blocked():
                 self._love_set(inv=self._ms())          # 告白发出去了: 聊天页上等用户点 接受 / 拒绝
-            if kind == "share_ask":
+            if kind == "share_ask" or (kind in ("user", "retry") and self.share_asking()):
                 self._share_answer(share_ans)
             if kind == "shift_ask":
                 self._shift_answer(shift_ans)

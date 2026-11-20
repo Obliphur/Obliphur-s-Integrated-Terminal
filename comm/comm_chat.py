@@ -247,15 +247,18 @@ class ChatMixin:
         if getattr(self, "reading_mode", False) and not from_reader:
             return "reading_mode"
         text = str(text or "").strip()
-        if not text and not image and not self.joint_draft:
+        request_draft = dict(getattr(self, "request_draft", {}))
+        has_requests = any(request_draft.values())
+        if not text and not image and not self.joint_draft and not has_requests:
             return "empty"
         if text.lower() == "/clear":
             self.clear()
             return ""
-        if self.joint_draft and reply_delay_seconds <= 0 and not image:  # 评判结果和图片作为普通聊天消息发送
-            why = self._send_package(self.joint_draft, text)
+        if (self.joint_draft or has_requests) and reply_delay_seconds <= 0 and not image:
+            why = self._send_package(self.joint_draft, text, request_draft)
             if not why:
                 self.joint_draft = {}
+                self.clear_request_draft()
             return why
         why = self.problem()
         if why:
@@ -277,10 +280,11 @@ class ChatMixin:
             self._ask_user()
         return ""
 
-    def _send_package(self, joint, text: str = "") -> str:
-        """一条带联合行动邀请的消息 (joint = {terms, start, end}). 聊天里只显示说明, 邀请的内容附在发给模型的内容里."""
+    def _send_package(self, joint, text: str = "", requests=None) -> str:
+        """一条带联合行动 / share data / 共读附件的消息, 附件内容只发给模型."""
         from comm import comm_data
-        if not joint:
+        requests = requests or {}
+        if not joint and not any(requests.values()):
             return "empty"
         why = self.problem()
         if why:
@@ -293,6 +297,17 @@ class ChatMixin:
             start, end = _joint_time(joint["start"]), _joint_time(joint["end"])
             shown.append(comm_data.joint_label(joint["terms"], start, end, self.now().date()))
             parts.append(comm_data.joint_text(joint["terms"], start, end))
+        if requests.get("share"):
+            if self.share["on"] or self.share_asking():
+                return tr("share data 已开启或正在等待回复")
+            status = self.other_status()
+            if status and status.get("kind") in HELD_KINDS and not status.get("joint"):
+                return tr("{name} {st}, 现在没法征求同意", name=self.share_ai_name(), st=tr(STATUS_TEXT[status["kind"]]))
+            shown.append(tr("🙈 share data 请求"))
+            parts.append(oit_text("用户请求打开 share data。请按人设判断是否同意：同意填写oit_reply.answer=\"yes\"，不同意填写answer=\"no\"；可在text中自然回复。只有用户明确同意后，OIT才会分享数据。"))
+        if requests.get("coread"):
+            shown.append(tr("📚 coread 请求"))
+            parts.append(oit_text("用户已主动发起共同阅读，共读室由用户直接打开，无需你同意或接受。请将其视为已经开始；可在text中自然回应。之后用户会在阅读网页中与你讨论书籍。"))
         now = self.now()
         text = str(text or "").strip()
         if text:
@@ -306,8 +321,15 @@ class ChatMixin:
             self.cfg["joint_last"] = list(joint["terms"])
             self._joint_set({"id": f"{self._ms()}", "pid": self.pid, "state": "wait", "terms": list(joint["terms"]),
                              "start": joint["start"], "end": joint["end"]}, replace=True)
+        if requests.get("share"):
+            self.share_ask = {"pid": self.pid, "ts": self._ms(), "sent": True}
         self._sent()
         self._ask_user()
+        if requests.get("coread") and self.on_coread_open:
+            try:
+                self.on_coread_open()
+            except Exception as error:
+                self.log(f"COREAD open FAIL {type(error).__name__}: {error}")
         return ""
 
     def _away_kind(self) -> str:

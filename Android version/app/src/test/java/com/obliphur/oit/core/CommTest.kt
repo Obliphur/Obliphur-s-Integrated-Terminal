@@ -161,6 +161,25 @@ class CommTest {
         c.flush(); c.voice.close()
     }
 
+    @Test fun requestAttachmentsAndUserStartedCoread() {
+        val td = Files.createTempDirectory("oit-request-attachments").toFile()
+        val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
+        c.set(persona = "Assistant.txt", splitSend = false)
+        c.snapshot = { CommSnap("idle") }
+        var opened = 0
+        c.onCoreadOpen = { opened++ }
+        script.add(ToolProtocol.pack("好。", "oit_reply", JSONObject().put("text", "好。").put("answer", "no")))
+        assertEquals("", c.toggleRequestDraft("coread"))
+        assertEquals("", c.toggleRequestDraft("share"))
+        assertEquals(2, c.requestDraftLabels().size)
+        assertEquals("", c.send("")); wait(c)
+        assertEquals(1, opened)
+        assertFalse(c.shareOn())
+        assertTrue(calls.last().second.last().second.contains("无需你同意或接受"))
+        assertTrue(c.visible().first().text.contains("coread 请求"))
+        assertTrue(c.packageDraftLabel().isEmpty())
+    }
+
     /** 客套收尾保持沉默，重启与同步不重试，新消息仍正常回复。 */
     @Test fun silentReplySurvivesRestartAndSync() {
         val tempRoot = File(System.getProperty("java.io.tmpdir"), "OIT").also { it.mkdirs() }

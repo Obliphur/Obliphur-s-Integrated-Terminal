@@ -22,6 +22,17 @@ class ToolProtocolTest {
 
     private fun call(name: String, args: JSONObject, protocol: String = "openai"): String = ToolProtocol.parse(response(protocol, name, args), protocol) { "" }
 
+    @Test fun readingOfferAllowsEitherSourceQuote() {
+        for (protocol in listOf("openai", "anthropic", "gemini")) {
+            val direct = ToolProtocol.unpack(call("oit_reading_offer", JSONObject().put("request_statement", "我们现在一起读吧。"), protocol))!!.getJSONObject("arguments")
+            assertEquals("", direct.optString("free_statement"))
+            assertEquals("我们现在一起读吧。", direct.optString("request_statement"))
+            val free = ToolProtocol.unpack(call("oit_reading_offer", JSONObject().put("free_statement", "我现在有空。"), protocol))!!.getJSONObject("arguments")
+            assertEquals("我现在有空。", free.optString("free_statement"))
+            assertEquals("", free.optString("request_statement"))
+        }
+    }
+
     @Test fun nativeRoundTrip() {
         for (protocol in listOf("openai", "anthropic", "gemini")) {
             val query = call("oit_query", JSONObject().put("modules", JSONArray().put("timer")), protocol)

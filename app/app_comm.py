@@ -41,7 +41,9 @@ class CommMixin:
                 self.comm.set_cfg(coread_link={"url": service.url(host).split("/?", 1)[0],
                                                "access_key": service.access_key})
                 mode = "coread" if together else "solo"
-                url = service.url().replace("/?", f"/?reading_mode={mode}&persona_pid={quote(self.comm.pid)}&")
+                persona_name = quote(self.comm.share_ai_name()) if together else ""
+                name_arg = f"&persona_name={persona_name}" if persona_name else ""
+                url = service.url().replace("/?", f"/?reading_mode={mode}&persona_pid={quote(self.comm.pid)}{name_arg}&")
                 if not webbrowser.open(url, new=2):
                     raise RuntimeError(tr("无法打开共读网页."))
 

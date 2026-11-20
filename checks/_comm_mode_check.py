@@ -63,17 +63,22 @@ try:
             # 阅读入口的两个选择和关闭行为, 中英文均走真实按钮回调。
             assert page.btn_coread.cget("text") == "📚"
             opened = page.on_coread = Mock()
-            for label, value in (("自己阅读", False), ("发起 coread", True)):
-                def choose(dlg, label=label, value=value):
-                    button = next(w for w in descendants(dlg) if "text" in w.keys() and w.cget("text") == i18n.tr(label))
-                    button.invoke()
-                    return dlg.result
-                with patch.object(Modal, "wait", choose):
-                    page.btn_coread.invoke()
-                opened.assert_called_with(together=value)
+            with patch.object(c, "toggle_request_draft", return_value="") as stage:
+                for label, value in (("自己阅读", False), ("发起 coread", True)):
+                    def choose(dlg, label=label, value=value):
+                        button = next(w for w in descendants(dlg) if "text" in w.keys() and w.cget("text") == i18n.tr(label))
+                        button.invoke()
+                        return dlg.result
+                    with patch.object(Modal, "wait", choose):
+                        page.btn_coread.invoke()
+                    if value:
+                        stage.assert_called_with("coread")
+                    else:
+                        opened.assert_called_with(together=False)
+                assert opened.call_count == 1
             with patch.object(Modal, "wait", lambda dlg: dlg.cancel()):
                 page.btn_coread.invoke()
-            assert opened.call_count == 2
+            assert opened.call_count == 1
             c.cfg["msg_gone"] = 199
             c.cfg["mem_fixed"] = []
             c._interaction_set({"scenario_mode": False})

@@ -13,6 +13,7 @@ const INK = 'hsl(40, 8%, 16%)';
 const INK2 = 'hsl(40, 5%, 48%)';
 // 独自阅读沿用同一书库, 不启动人设会话或锁定 OIT 沟通页.
 const READ_TOGETHER = new URL(window.location.href).searchParams.get('reading_mode') !== 'solo';
+const COREAD_PERSONA_NAME = READ_TOGETHER ? (new URL(window.location.href).searchParams.get('persona_name') || 'AI') : '';
 
 const COREAD_POP_CSS = `
 .coread-study {
@@ -481,7 +482,7 @@ const StudyApp: React.FC = () => {
     const [showBar, setShowBar] = useState(false);
     const [fabVisible, setFabVisible] = useState(false);
     const [humanName, setHumanName] = useState(() => localStorage.getItem('coread-human-name') || 'human');
-    const [aiName, setAiName] = useState(() => localStorage.getItem('coread-ai-name') || 'AI');
+    const [aiName, setAiName] = useState(() => COREAD_PERSONA_NAME || localStorage.getItem('coread-ai-name') || 'AI');
     const [showSettings, setShowSettings] = useState(false);
     const [showMenu, setShowMenu] = useState(false);
     const [menuPhase, setMenuPhase] = useState<'closed' | 'anim' | 'open' | 'closing'>('closed');
@@ -3298,9 +3299,9 @@ const StudyApp: React.FC = () => {
                         <label style={{ fontSize: 12, color: INK2, display: 'block', marginBottom: 6 }}>我的名字</label>
                         <input value={humanName} onChange={e => { setHumanName(e.target.value); localStorage.setItem('coread-human-name', e.target.value); }}
                             style={{ ...vdInput, margin: '0 0 12px' }} />
-                        <label style={{ fontSize: 12, color: INK2, display: 'block', marginBottom: 6 }}>AI的名字</label>
-                        <input value={aiName} onChange={e => { setAiName(e.target.value); localStorage.setItem('coread-ai-name', e.target.value); }}
-                            style={{ ...vdInput, margin: '0 0 12px' }} />
+                        <label style={{ fontSize: 12, color: INK2, display: 'block', marginBottom: 6 }}>{COREAD_PERSONA_NAME ? 'AI的名字（当前人设）' : 'AI的名字'}</label>
+                        <input value={aiName} readOnly={Boolean(COREAD_PERSONA_NAME)} onChange={e => { setAiName(e.target.value); localStorage.setItem('coread-ai-name', e.target.value); }}
+                            style={{ ...vdInput, margin: '0 0 12px', ...(COREAD_PERSONA_NAME ? { opacity: 0.65, cursor: 'default' } : {}) }} />
                         <button onClick={() => setShowSettings(false)} style={{ ...vdCta, margin: '8px 0 0' }}>完成</button>
                     </div>
                 </>

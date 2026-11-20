@@ -143,9 +143,14 @@ fun CommScreen(go: (String) -> Unit) {
             return
         }
         val mode = if (together) "coread" else "solo"
-        val url = "${comm.coreadUrl.trimEnd('/')}/?reading_mode=$mode&owner_key=${comm.coreadAccessKey}&access_key=${comm.coreadAccessKey}&persona_pid=${java.net.URLEncoder.encode(comm.pid, "UTF-8")}"
+        val personaName = if (together) "&persona_name=${java.net.URLEncoder.encode(comm.aiName(), "UTF-8")}" else ""
+        val url = "${comm.coreadUrl.trimEnd('/')}/?reading_mode=$mode&owner_key=${comm.coreadAccessKey}&access_key=${comm.coreadAccessKey}&persona_pid=${java.net.URLEncoder.encode(comm.pid, "UTF-8")}$personaName"
         runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))) }
             .onFailure { core.toast(tr("无法打开共读网页."), "warn") }
+    }
+    DisposableEffect(comm) {
+        comm.onCoreadOpen = { openCoread(true) }
+        onDispose { comm.onCoreadOpen = null }
     }
     DisposableEffect(Unit) { comm.setViewing(true); onDispose { comm.voice.stop(); comm.setViewing(false) } }
     var input by rememberSaveable { mutableStateOf("") }
@@ -163,10 +168,10 @@ fun CommScreen(go: (String) -> Unit) {
     var shiftDlg by remember { mutableStateOf(false) }                          // 起点平移的弹窗
     var shiftAsk by remember { mutableStateOf(comm.shiftAsking()) }              // 请求了起点平移, 等对方回复 (⏳)
     var jointAsk by remember { mutableStateOf(core.jointAsk) }                  // 合约页选好词条回来了: 输入开始时间
-    var jointLine by remember { mutableStateOf(comm.jointLabel() to comm.jointStatusText()) }
+    var jointLine by remember { mutableStateOf(comm.packageDraftLabel() to comm.jointStatusText()) }
     var invite by remember { mutableStateOf(comm.jointInvite() != null) }          // 对方发起的联合行动: 等用户点 接受 / 拒绝
     var shareOn by remember { mutableStateOf(comm.shareOn()) }                     // share data 开着吗
-    var shareAsk by remember { mutableStateOf(comm.shareAsking()) }                 // 点了 share data, 等对方同意 (⏳)
+    var shareAsk by remember { mutableStateOf(comm.shareAsking()) }                 // 已发送 share data 请求, 等对方同意 (⏳)
     var shareInv by remember { mutableStateOf(comm.shareInvite()) }                // 对方发了 [share data]: 等用户点 接受 / 拒绝
     var loveInv by remember { mutableStateOf(comm.loveInvite()) }                  // 对方告白了: 等用户点 接受 / 拒绝
     var coreadInv by remember { mutableStateOf(comm.coreadInvite()) }
@@ -245,7 +250,7 @@ fun CommScreen(go: (String) -> Unit) {
             if (kind != otherStatusKind) otherStatusKind = kind
             comm.tensionDisplay(core.settings.showTension).let { if (it != tensionText) tensionText = it }
             if (core.jointAsk != jointAsk) jointAsk = core.jointAsk
-            (comm.jointLabel() to comm.jointStatusText()).let { if (it != jointLine) jointLine = it }
+            (comm.packageDraftLabel() to comm.jointStatusText()).let { if (it != jointLine) jointLine = it }
             (comm.jointInvite() != null).let { if (it != invite) invite = it }
             comm.shareOn().let { if (it != shareOn) shareOn = it }
             comm.shareAsking().let { if (it != shareAsk) shareAsk = it }
@@ -366,7 +371,8 @@ fun CommScreen(go: (String) -> Unit) {
             }, contentPadding = tight) { Text(if (shiftAsk) "⏳" else "🕰", fontSize = 18.sp) }
             // share data: 打开后离开沟通页, 在别的页面里对方能看到那一页上你们的数据, 页面下方有聊天悬浮窗; 回到沟通自动关闭
             TextButton({
-                comm.shareEnable(!(shareOn || shareAsk)).let { if (it.isNotEmpty()) core.toast(tr(it), "warn") }      // 等对方同意的时候再点 = 取消
+                val why = if (shareOn || shareAsk) comm.shareEnable(false) else comm.toggleRequestDraft("share")
+                if (why.isNotEmpty()) core.toast(tr(why), "warn")
                 shareOn = comm.shareOn(); shareAsk = comm.shareAsking()
             }, contentPadding = tight) { Text(if (shareOn) "👀" else if (shareAsk) "⏳" else "🙈", fontSize = 18.sp) }          // 👀 share data 开着 / ⏳ 等对方同意 / 🙈 关着
         }
@@ -394,10 +400,10 @@ fun CommScreen(go: (String) -> Unit) {
             AccentButton(tr("接受")) { comm.loveRespond(true).let { if (it.isNotEmpty()) core.toast(tr(it), "warn") } }
             TextButton({ comm.loveRespond(false).let { if (it.isNotEmpty()) core.toast(tr(it), "warn") } }) { Text(tr("拒绝"), color = o.dim) }
         }
-        // 选好、还没发出去的联合行动 (开始 - 结束时间, 结束时间自动算好) 或发出去之后的进展; 📎 勾选的数据
+        // 选好、还没发出去的联合行动 / share data / coread 附件, 或发出去之后的进展
         if (jointLine.first.isNotEmpty()) Row(verticalAlignment = Alignment.CenterVertically) {
             Text(jointLine.first, color = o.accent, fontSize = 12.sp, modifier = Modifier.weight(1f, false).padding(start = 8.dp))
-            TextButton({ comm.clearJointDraft() }, contentPadding = tight) { Text("✕", color = o.dim, fontSize = 14.sp) }
+            TextButton({ comm.clearPackageDrafts() }, contentPadding = tight) { Text("✕", color = o.dim, fontSize = 14.sp) }
         } else if (jointLine.second.isNotEmpty())
             Text(jointLine.second, color = o.dim, fontSize = 12.sp, modifier = Modifier.padding(start = 8.dp))
         if (invite) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -443,7 +449,10 @@ fun CommScreen(go: (String) -> Unit) {
         text = {
             Column {
                 TextButton({ readingChoice = false; openCoread(false) }) { Text(tr("自己阅读"), color = o.accent) }
-                TextButton({ readingChoice = false; openCoread(true) }) { Text(tr("发起 coread"), color = o.accent) }
+                TextButton({
+                    readingChoice = false
+                    comm.toggleRequestDraft("coread").let { if (it.isNotEmpty()) core.toast(tr(it), "warn") }
+                }) { Text(tr("发起 coread"), color = o.accent) }
             }
         },
         confirmButton = { TextButton({ readingChoice = false }) { Text(tr("取消"), color = o.dim) } })
@@ -488,10 +497,10 @@ private fun HelpDialog(onDismiss: () -> Unit) {
     val o = LocalOit.current
     val rows = listOf(
         Triple("❓", tr("帮助"), tr("打开这个说明.")),
-        Triple("📚", tr("阅读"), tr("选择「自己阅读」可独自打开书库；选择「发起 coread」可与当前聊天对象共读、聊天和批注。共读期间请在阅读网页聊天，结束后恢复沟通。手机需连接 Windows 的阅读服务。")),
+        Triple("📚", tr("阅读"), tr("选择「自己阅读」可独自打开书库；选择「发起 coread」会作为附件加入待发送内容，随下一条消息发送并直接打开共读室，无需对方接受。共读期间请在阅读网页聊天，结束后恢复沟通。手机需连接 Windows 的阅读服务。")),
         Triple("💬", tr("说教"), tr("你可以请求对方针对现实中想改变的状态、行为、习惯或语言进行说教，分条分析问题与解决方案；主题会简短记入记忆卡，实际完成改变后才移除。")),
         Triple("📱 / 🎭", tr("聊天模式"), tr("输入框上方的 📱 / 🎭 按钮切换软件聊天与情景模拟。📱 = 软件聊天，不描写动作；🎭 = 情景模拟，按当前时段与状态描写虚构动作。模式按聊天对象保存。")),
-        Triple("👀 / 🙈", tr("分享数据"), tr("点一下切换 (👀 = 打开, 要先征得对方同意; ⏳ = 等对方回复). 打开后去别的页面, 对方会收到那一页上你们的数据; 回到沟通自动关闭. 对方也可以发邀请, 点「接受」才会打开.")),
+        Triple("👀 / 🙈", tr("分享数据"), tr("🙈 会把请求作为附件加入待发送内容，随下一条消息询问对方；同意后才打开. 👀 表示已打开，去别的页面时对方会收到那一页上你们的数据；回到沟通自动关闭. 对方也可以发邀请，点「接受」才会打开.")),
         Triple("🔔 / 🔕", tr("主动发起"), tr("🔔 = 允许这个对象主动找你, 🔕 = 禁止.")),
         Triple("⏰ / ⏲", tr("共时闹钟"), tr("⏰ = 闹钟跟随这个对象的起床时间; 响铃的设备手动选, 一次只能有一个对象.")),
         Triple("🕰", tr("起点平移"), tr("请求对方平移日程起点, 允许范围由人设模板决定, 同意后明天起生效.")),

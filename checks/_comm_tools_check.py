@@ -37,6 +37,11 @@ def call(name, args, protocol="openai"):
 
 def transport_checks():
     for protocol in ("openai", "anthropic", "gemini"):
+        normalized = tools.unpack(call("oit_reading_offer", {"request_statement": "我们现在一起读吧。"}, protocol))["arguments"]
+        assert normalized == {"free_statement": "", "request_statement": "我们现在一起读吧。"}
+        normalized = tools.unpack(call("oit_reading_offer", {"free_statement": "我现在有空。"}, protocol))["arguments"]
+        assert normalized == {"free_statement": "我现在有空。", "request_statement": ""}
+    for protocol in ("openai", "anthropic", "gemini"):
         p = {"provider": "custom", "protocol": protocol, "base_url": "http://localhost:1", "model": "test", "api_key": "local"}
         packets = []
         scripted = [response(protocol, "oit_query", {"modules": ["timer", "condition"]}),
@@ -277,6 +282,7 @@ def state_checks():
         raise AssertionError("硬限制下仍执行工具")
     c.flush()
 
+
     c2 = comm.Comm(str(root / "data-delay"), str(root / "personas-delay"), chat_fn=fake)
     c2.ai.set_profile("deepseek", api_key="local")
     c2.ai.provider = "deepseek"
@@ -441,6 +447,48 @@ def music_tool_checks():
         access._tool_rounds(lambda history: seen.append(history) or replies.pop(0), [],
                            tools.pack(name="oit_music_perform", arguments={"id": catalog[6]["id"]}), "user", 7)
     assert not prepare.called and "尚未原谅" in seen[0][-1]["content"]
+
+
+def request_attachment_checks():
+    """请求附件随下一条消息提交；用户发起共读立即打开，不等待模型接受。"""
+    root = Path(tempstore.mkdtemp("comm-request-attachments"))
+    packets, replies = [], []
+    def fake(_profile, _system, messages, **_kwargs):
+        packets.append([dict(m) for m in messages])
+        return replies.pop(0)
+    c = comm.Comm(str(root / "data"), str(root / "personas"), chat_fn=fake)
+    c.ai.set_profile("deepseek", api_key="local")
+    c.ai.provider = "deepseek"
+    c.set_cfg(persona="Assistant.txt", split_send=False)
+    c.state_fn = lambda: "idle"
+    c._away_kind = lambda: ""
+    opened = []
+    c.on_coread_open = lambda: opened.append("opened")
+    replies.append(call("oit_reply", {"text": "好。", "answer": "no"}))
+    assert c.toggle_request_draft("coread") == ""
+    assert c.toggle_request_draft("share") == ""
+    assert c.request_draft_labels()
+    assert c.send("") == ""
+    until = time.monotonic() + 5
+    while c.busy and time.monotonic() < until:
+        time.sleep(0.01); c.tick()
+    assert not c.busy and not c.error, c.error
+    assert opened == ["opened"], "用户主动发起的共读不等待模型同意"
+    assert not c.share_on(), "share data 仍须明确同意"
+    assert not any(c.request_draft.values()) and not c.request_draft_labels()
+    sent = next(m["content"] for m in packets[0] if m["role"] == "user")
+    assert "共同阅读" in sent and "share data" in sent and "无需你同意或接受" in sent
+    assert c.visible()[0]["text"] == "🙈 share data 请求\n📚 coread 请求"
+
+    c.on_share_open = lambda: opened.append("share")
+    replies.append(call("oit_reply", {"text": "可以。", "answer": "yes"}))
+    assert c.toggle_request_draft("share") == ""
+    assert c.send("") == ""
+    until = time.monotonic() + 5
+    while c.busy and time.monotonic() < until:
+        time.sleep(0.01); c.tick()
+    assert not c.busy and c.share_on() and opened[-1] == "share"
+    c.flush()
 
 
 def memory_tool_checks():
@@ -671,6 +719,7 @@ if __name__ == "__main__":
     transport_checks()
     silence_checks()
     state_checks()
+    request_attachment_checks()
     memory_tool_checks()
     offense_checks()
     music_tool_checks()

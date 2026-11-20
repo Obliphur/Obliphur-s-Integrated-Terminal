@@ -133,7 +133,7 @@ class CommPage(CommVoiceMixin, tk.Frame):
         self.lbl_joint = tk.Label(tools, text="", bg=bg, fg=COLORS["accent"], font=config.font("small"))
         self.lbl_joint.pack(side="left", padx=(8, 0))
         self.btn_joint_x = tk.Label(tools, text="✕", bg=bg, fg=COLORS["text_dim"], font=config.font("small"), cursor="hand2")
-        self.btn_joint_x.bind("<Button-1>", lambda _e: self.comm.clear_joint_draft())
+        self.btn_joint_x.bind("<Button-1>", lambda _e: self._clear_package_drafts())
         # 对方发起的联合行动: 等用户点 接受 / 拒绝 (只有 invite 的时候显示)
         self.joint_btns = tk.Frame(tools, bg=bg)
         ttk.Button(self.joint_btns, text=tr("接受"), width=6, command=lambda: self._joint_respond(True)).pack(side="left")
@@ -194,8 +194,13 @@ class CommPage(CommVoiceMixin, tk.Frame):
         for label, together in (("自己阅读", False), ("发起 coread", True)):
             ttk.Button(dlg.body, text=tr(label), command=lambda value=together: dlg.finish(value)).pack(fill="x", pady=8)
         result = dlg.wait()
-        if result is not None and self.on_coread:
-            self.on_coread(together=result)
+        if result is True:
+            why = self.comm.toggle_request_draft("coread")
+            if why:
+                toast.warn(tr(why))
+            self.refresh(force=True)
+        elif result is False and self.on_coread:
+            self.on_coread(together=False)
 
     def _coread_respond(self, accept):
         why = self.comm.coread_offer_respond(accept)
@@ -273,8 +278,10 @@ class CommPage(CommVoiceMixin, tk.Frame):
         cfg(self.btn_mute, text="🔕" if c.is_muted() else "🔔")
         cfg(self.btn_alarm, text="⏰" if c.co_alarm_pid() and c.co_alarm_pid() == c.pid else "⏲")
         draft = c.joint_label()
-        cfg(self.lbl_joint, text=draft or c.joint_status_text(), fg=COLORS["accent"] if draft else COLORS["text_dim"])
-        if draft:
+        requests = c.request_draft_labels()
+        pending = " · ".join(([draft] if draft else []) + requests)
+        cfg(self.lbl_joint, text=pending or c.joint_status_text(), fg=COLORS["accent"] if pending else COLORS["text_dim"])
+        if pending:
             if self.btn_joint_x.winfo_manager() != "pack":
                 self.btn_joint_x.pack(side="left", padx=(6, 0))
         elif self.btn_joint_x.winfo_manager() == "pack":
@@ -719,9 +726,17 @@ class CommPage(CommVoiceMixin, tk.Frame):
 
     # ---- share data ----
     def _toggle_share(self):
-        why = self.comm.share_enable(not (self.comm.share_on() or self.comm.share_asking()))      # 等对方同意的时候再点 = 取消
+        if self.comm.share_on() or self.comm.share_asking():
+            why = self.comm.share_enable(False)
+        else:
+            why = self.comm.toggle_request_draft("share")
         if why:
             toast.warn(tr(why))
+        self.refresh(force=True)
+
+    def _clear_package_drafts(self):
+        self.comm.clear_joint_draft()
+        self.comm.clear_request_draft()
         self.refresh(force=True)
 
     # ---- 起点平移 ----
@@ -853,10 +868,10 @@ class CommPage(CommVoiceMixin, tk.Frame):
         dlg = Modal(self.winfo_toplevel(), tr("帮助"), width=width, height=config.scaled(400))
         bg = COLORS["bg"]
         rows = (("❓", "帮助", "打开这个说明."),
-                ("📚", "阅读", "选择「自己阅读」可独自打开书库；选择「发起 coread」可与当前聊天对象共读、聊天和批注。共读期间请在阅读网页聊天，结束后恢复沟通。手机需连接 Windows 的阅读服务。"),
+                ("📚", "阅读", "选择「自己阅读」可独自打开书库；选择「发起 coread」会作为附件加入待发送内容，随下一条消息发送并直接打开共读室，无需对方接受。共读期间请在阅读网页聊天，结束后恢复沟通。手机需连接 Windows 的阅读服务。"),
                 ("💬", "说教", "你可以请求对方针对现实中想改变的状态、行为、习惯或语言进行说教，分条分析问题与解决方案；主题会简短记入记忆卡，实际完成改变后才移除。"),
                 ("📱 / 🎭", "聊天模式", "输入框上方的 📱 / 🎭 按钮切换软件聊天与情景模拟。📱 = 软件聊天，不描写动作；🎭 = 情景模拟，按当前时段与状态描写虚构动作。模式按聊天对象保存。"),
-                ("👀 / 🙈", "分享数据 (share data)", "点一下切换 (👀 = 打开, 要先征得对方同意; ⏳ = 等对方回复). 打开后去别的页面, 对方会收到那一页上你们的数据; 回到沟通自动关闭. 对方也可以发邀请, 点「接受」才会打开."),
+                ("👀 / 🙈", "分享数据 (share data)", "🙈 会把请求作为附件加入待发送内容，随下一条消息询问对方；同意后才打开. 👀 表示已打开，去别的页面时对方会收到那一页上你们的数据；回到沟通自动关闭. 对方也可以发邀请，点「接受」才会打开."),
                 ("🔔 / 🔕", "主动发起", "🔔 = 允许这个对象主动找你, 🔕 = 禁止."),
                 ("⏰ / ⏲", "共时闹钟", "⏰ = 闹钟跟随这个对象的起床时间; 响铃的设备手动选, 一次只能有一个对象."),
                 ("🕰", "起点平移", "请求对方平移日程起点, 允许范围由人设模板决定, 同意后明天起生效."),

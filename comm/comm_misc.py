@@ -81,6 +81,7 @@ class MiscMixin:
         if jj and (not jj.get("pid") or jj.get("pid") == self.pid):     # 新对话: 联合行动也作废 (别的设备一起); 清空的是别的对象的聊天 (联合行动属于另一个对象) 不动它 (1.0.404)
             self.cfg["joint"] = {"ts": max(self._ms(), int(jj.get("ts") or 0) + 1)}
         self.joint_draft = {}
+        self.clear_request_draft()
         if self.cfg.get("net"):                            # 新对话: 限时网络也作废 (别的设备一起)
             self.cfg["net"] = {"ts": max(self._ms(), int(self.cfg["net"].get("ts") or 0) + 1)}
         self.save_cfg()

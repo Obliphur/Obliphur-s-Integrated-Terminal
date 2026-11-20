@@ -1625,6 +1625,9 @@ class Comm(
     /** 联合行动: 选好了词条和开始时间, 还没发出去 (结束时间 = 开始时间 + 这些词条的合约时长). */
     class JointDraft(val terms: List<String>, val start: LocalDateTime, val end: LocalDateTime)
     @Volatile var jointDraft: JointDraft? = null; private set
+    @Volatile private var shareRequestDraft = false
+    @Volatile private var coreadRequestDraft = false
+    @Volatile var onCoreadOpen: (() -> Unit)? = null
     /** 联合行动约定的开始时间到了 (对方已接受, 还没开始合约): Core 接上, 提示用户去开始. */
     var onJointDue: (Joint) -> Unit = {}
     private var jointDueId = ""
@@ -4293,6 +4296,31 @@ class Comm(
     /** 聊天框上方: 选好、还没发出去的联合行动 (开始 - 结束时间). */
     fun jointLabel(): String = jointDraft?.let { CommData.jointLabel(it.terms, it.start, it.end, now().toLocalDate()) } ?: ""
 
+    fun toggleRequestDraft(kind: String): String {
+        if (kind !in listOf("share", "coread")) return "未知的请求附件"
+        val why = problem()
+        if (why.isNotEmpty()) return why
+        if (kind == "coread" && pid.isBlank()) return "请先选择聊天对象，再开始共读."
+        if (kind == "share") shareRequestDraft = !shareRequestDraft else coreadRequestDraft = !coreadRequestDraft
+        changed()
+        return ""
+    }
+
+    fun requestDraftLabels(): List<String> = buildList {
+        if (shareRequestDraft) add(tr("🙈 share data 请求"))
+        if (coreadRequestDraft) add(tr("📚 coread 请求"))
+    }
+
+    fun packageDraftLabel(): String = (listOf(jointLabel()) + requestDraftLabels()).filter { it.isNotBlank() }.joinToString(" · ")
+
+    fun clearPackageDrafts() {
+        jointDraft = null
+        shareRequestDraft = false; coreadRequestDraft = false
+        shareRequestDraft = false
+        coreadRequestDraft = false
+        changed()
+    }
+
     /** 聊天框上方: 发出去的联合行动现在怎么样了 ("" = 没有 / 已经过去很久). */
     fun jointStatusText(): String {
         val j = curJoint() ?: return ""
@@ -4892,11 +4920,13 @@ class Comm(
         if (readingMode) return "正在共读，请在阅读网页里的聊天框继续沟通。"
         val text = text0.trim()
         val jd = jointDraft
-        if (text.isEmpty() && jd == null) return "empty"
+        val shareReq = shareRequestDraft
+        val coreadReq = coreadRequestDraft
+        if (text.isEmpty() && jd == null && !shareReq && !coreadReq) return "empty"
         if (text.lowercase() == "/clear") { clear(); return "" }
-        if (jd != null && replyDelayMs <= 0L && pendingImage == null) { // 评判结果和图片作为普通聊天消息发送
-            val r = sendPackage(jd, text)
-            if (r.isEmpty()) { jointDraft = null; changed() }
+        if ((jd != null || shareReq || coreadReq) && replyDelayMs <= 0L && pendingImage == null) {
+            val r = sendPackage(jd, text, shareReq, coreadReq)
+            if (r.isEmpty()) clearPackageDrafts()
             return r
         }
         val why = problem(true)
@@ -4927,23 +4957,39 @@ class Comm(
 
     /** 一条带联合行动邀请的消息 (jd). 聊天里只显示说明, 邀请的内容附在发给模型的内容里. */
     @Synchronized
-    private fun sendPackage(jd: JointDraft, text0: String): String {
+    private fun sendPackage(jd: JointDraft?, text0: String, shareReq: Boolean, coreadReq: Boolean): String {
         val why = problem(true)
         if (why.isNotEmpty()) return why
         val shown = ArrayList<String>()
         val parts = ArrayList<String>()
-        val w = jointBlock()
-        if (w.isNotEmpty()) return w
-        shown.add(CommData.jointLabel(jd.terms, jd.start, jd.end, now().toLocalDate()))
-        parts.add(CommData.jointText(jd.terms, jd.start, jd.end))
+        if (jd != null) {
+            val w = jointBlock()
+            if (w.isNotEmpty()) return w
+            shown.add(CommData.jointLabel(jd.terms, jd.start, jd.end, now().toLocalDate()))
+            parts.add(CommData.jointText(jd.terms, jd.start, jd.end))
+        }
+        if (shareReq) {
+            if (share.on || shareAsking()) return tr("share data 已开启或正在等待回复")
+            awayKind().let { if (it.isNotEmpty()) return tr("{name} {st}, 现在没法征求同意", "name" to aiName(), "st" to tr(if (it == "sleep") "睡眠中" else "专注中")) }
+            shown.add(tr("🙈 share data 请求"))
+            parts.add("[OIT_SYSTEM_MESSAGES]\n用户请求打开 share data。请按人设判断是否同意：同意填写oit_reply.answer=\"yes\"，不同意填写answer=\"no\"；可在text中自然回复。只有用户明确同意后，OIT才会分享数据。")
+        }
+        if (coreadReq) {
+            shown.add(tr("📚 coread 请求"))
+            parts.add("[OIT_SYSTEM_MESSAGES]\n用户已主动发起共同阅读，共读室由用户直接打开，无需你同意或接受。请将其视为已经开始；可在text中自然回应。之后用户会在阅读网页中与你讨论书籍。")
+        }
         val text = text0.trim()
         if (text.isNotEmpty()) { shown.add(text); parts.add(text) }
         val message = add("me", shown.joinToString("\n"), compose(now(), parts.joinToString("\n\n")))
         interactionSent(text, message)
-        jointLast = jd.terms
-        jointSet(Joint(nowMs().toString(), pid, "wait", jd.terms, jd.start.iso(), jd.end.iso(), 0L))
+        if (jd != null) {
+            jointLast = jd.terms
+            jointSet(Joint(nowMs().toString(), pid, "wait", jd.terms, jd.start.iso(), jd.end.iso(), 0L))
+        }
+        if (shareReq) { shareAskPid = pid; shareAskTs = nowMs(); shareAskSent = true }
         sentOut()
         askUser()
+        if (coreadReq) runCatching { onCoreadOpen?.invoke() }
         return ""
     }
 
@@ -5710,7 +5756,7 @@ class Comm(
                 text = tr(if (jointAns == "yes") "✓ 接受了联合行动" else "✗ 拒绝了联合行动")
         }
         var shareAns = ""                                                     // 对 share data 请求的回复 [Yes] / [No]
-        if (r.kind == "share_ask" && r.err.isEmpty() && !refused && !queried) {
+        if ((r.kind == "share_ask" || r.kind in listOf("user", "retry") && shareAsking()) && r.err.isEmpty() && !refused && !queried) {
             shareAns = CommText.jointAnswer(r.reply)
             if (shareAns.isNotEmpty() && text.isEmpty())              // 只回了 [Yes] / [No]: 聊天里写一行结果
                 text = tr(if (shareAns == "yes") "✓ 同意了 share data" else "✗ 拒绝了 share data")
@@ -5738,7 +5784,8 @@ class Comm(
                 if (r.err.isNotEmpty()) loveUnmark()           // 出错: 这次的判定作废, 下一轮 tick 再来 (这一段特殊空闲里)
                 else { loveSet(no = nowMs() + LOVE_NO_DAYS * 86_400_000L); log("LOVE 对方判断不合适, 没有告白 ($LOVE_NO_DAYS 天内不再判定)") }       // 对方回了 [refuse to reply]: 进入冷却
             }
-            if (r.kind == "share_ask") shareAskEnd(if (refused) "{name} 现在不方便, share data 没有打开" else "{name} 没有回复, share data 没有打开")      // 出错 / 对方不方便 / 没回: 这次请求作废 (不重试)
+            if (r.kind == "share_ask" || r.kind in listOf("user", "retry") && shareAsking())
+                shareAskEnd(if (refused) "{name} 现在不方便, share data 没有打开" else "{name} 没有回复, share data 没有打开")
             if (r.kind == "shift_ask") shiftAskEnd(if (refused) "{name} 现在不方便, 起点没有平移" else "{name} 没有回复, 起点没有平移")
             if (refused && (unanswered() || isCatchup)) {
                 if (isCatchup) catchup = true                 // 回复已经显示过, unanswered() 为假: 重试要靠这个记号
@@ -5784,7 +5831,7 @@ class Comm(
             if (jointAns.isNotEmpty() && !drop) jointAnswer(jointAns)
             if (accept && !drop) loveConfirm("user")              // 记入系统: 以后每次请求都会告诉对方 (长期记忆里的「系统记录」)
             if (r.kind == "love" && !offenseBlocked()) loveSet(inv = nowMs())          // 告白发出去了: 聊天页上等用户点 接受 / 拒绝
-            if (r.kind == "share_ask") shareAnswer(shareAns)
+            if (r.kind == "share_ask" || r.kind in listOf("user", "retry") && shareAsking()) shareAnswer(shareAns)
             if (r.kind == "shift_ask") shiftAnswer(shiftAns)
             if (waitMin > 0 && r.kind != "chase") m.wait = waitMin          // 追问的回复里再写 [waiting for reply] 不算: 一条消息最多追问一次
             val held = m.hold

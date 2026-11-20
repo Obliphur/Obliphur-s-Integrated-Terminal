@@ -121,6 +121,39 @@ class JointMixin:
             self.joint_draft = {}
             self._changed()
 
+    def toggle_request_draft(self, kind: str) -> str:
+        """切换待随下一条用户消息发送的 share data / 共读请求附件。"""
+        if kind not in ("share", "coread"):
+            return "未知的请求附件"
+        why = self.problem()
+        if why:
+            return why
+        if kind == "coread" and not self.pid:
+            return "请先选择聊天对象，再开始共读."
+        self.request_draft[kind] = not self.request_draft[kind]
+        self._changed()
+        return ""
+
+    def clear_request_draft(self, kind: str = ""):
+        """移除一个或全部待发送请求附件。"""
+        keys = (kind,) if kind in self.request_draft else tuple(self.request_draft)
+        changed = False
+        for key in keys:
+            if self.request_draft[key]:
+                self.request_draft[key] = False
+                changed = True
+        if changed:
+            self._changed()
+
+    def request_draft_labels(self) -> list:
+        """返回待发送请求附件的界面标签。"""
+        labels = []
+        if self.request_draft.get("share"):
+            labels.append(tr("🙈 share data 请求"))
+        if self.request_draft.get("coread"):
+            labels.append(tr("📚 coread 请求"))
+        return labels
+
     def joint_label(self) -> str:
         """聊天框上方: 选好、还没发出去的联合行动 (开始 - 结束时间)."""
         d = self.joint_draft

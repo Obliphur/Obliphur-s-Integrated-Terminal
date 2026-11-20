@@ -186,6 +186,9 @@ def _parse_response(data, protocol, plain_text):
     try:
         if name not in BY_NAME:
             raise ValueError("未知工具")
+        if name == "oit_reading_offer" and isinstance(args, dict):
+            args.setdefault("free_statement", "")
+            args.setdefault("request_statement", "")
         validate(args, BY_NAME[name]["parameters"])
         if name == "oit_reply":
             for exclusive in ("refuse", "silent"):
