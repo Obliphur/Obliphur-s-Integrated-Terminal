@@ -29,12 +29,16 @@ LOAD_MORE = 40           # 每次往上翻到顶, 多加载多少条
 
 class CommPage(CommVoiceMixin, tk.Frame):
 
-    def __init__(self, master, comm, username=None, on_open_settings=None, on_joint=None):
+    def __init__(self, master, comm, username=None, on_open_settings=None, on_joint=None, on_coread=None,
+                 on_coread_end=None):
         super().__init__(master, bg=COLORS["bg"])
         self.comm = comm
         self.username = username or (lambda: "")
         self.on_open_settings = on_open_settings
         self.on_joint = on_joint            # 🤝 联合行动: 界面移到合约页选词条 (app._joint_pick_start)
+        self.on_coread = on_coread
+        self.on_coread_end = on_coread_end
+        self._reading_lock = None
         self._ver = -1
         self._blocked = ""
         self._resize_job = None
@@ -109,6 +113,15 @@ class CommPage(CommVoiceMixin, tk.Frame):
         self.btn_image.pack(side="left", padx=(4, 0))
         self.btn_review = ttk.Button(tools, text="🎼", width=3, command=self._review_performance)
         self.btn_review.pack(side="left", padx=(4, 0))
+        self.btn_coread = ttk.Button(tools, text="📚", width=3, command=self.on_coread or (lambda: None))
+        self.btn_coread.pack(side="left", padx=(4, 0))
+        self.coread_btns = tk.Frame(tools, bg=bg)
+        self.lbl_coread_inv = tk.Label(self.coread_btns, text="", bg=bg, fg=COLORS["accent"], font=config.font("small"))
+        self.lbl_coread_inv.pack(side="left")
+        ttk.Button(self.coread_btns, text=tr("接受"), width=6,
+                   command=lambda: self._coread_respond(True)).pack(side="left", padx=(6, 0))
+        ttk.Button(self.coread_btns, text=tr("拒绝"), width=6,
+                   command=lambda: self._coread_respond(False)).pack(side="left", padx=(4, 0))
         self._pending_image = ""
         # 对方发了 [share data]: 等用户点 接受 / 拒绝
         self.share_btns = tk.Frame(tools, bg=bg)
@@ -157,6 +170,29 @@ class CommPage(CommVoiceMixin, tk.Frame):
     def hide(self):
         self._voice_cancel()
         self.comm.set_viewing(False)
+
+    def set_reading_mode(self, enabled):
+        """阅读网页聊天独占当前人设时, 遮住原沟通页直到结束阅读."""
+        enabled = bool(enabled)
+        if enabled and self._reading_lock is None:
+            lock = self._reading_lock = tk.Frame(self, bg=COLORS["bg"])
+            tk.Label(lock, text=tr("正在共读，请在阅读网页里的聊天框继续沟通。"),
+                     bg=COLORS["bg"], fg=COLORS["text"], font=config.font("h2", bold=True),
+                     wraplength=config.scaled(520)).pack(padx=24, pady=(32, 16))
+            ttk.Button(lock, text=tr("结束阅读并恢复沟通"), command=self.on_coread_end or (lambda: None)).pack(pady=(0, 28))
+            lock.place(x=0, y=0, relwidth=1, relheight=1)
+            lock.lift()
+        elif not enabled and self._reading_lock is not None:
+            self._reading_lock.destroy()
+            self._reading_lock = None
+        if enabled:
+            self._reading_lock.lift()
+
+    def _coread_respond(self, accept):
+        why = self.comm.coread_offer_respond(accept)
+        if why:
+            toast.warn(tr(why))
+        self.refresh(force=True)
 
     def _on_resize(self, _event):
         if self._resize_job:
@@ -247,6 +283,12 @@ class CommPage(CommVoiceMixin, tk.Frame):
             self.love_btns.pack_forget()
         cfg(self.btn_share, text="👀" if c.share_on() else ("⏳" if c.share_asking() else "🙈"))      # ⏳ = 等对方同意
         cfg(self.btn_shift, text="⏳" if c.shift_asking() else "🕰")
+        if c.coread_offer():
+            cfg(self.lbl_coread_inv, text=tr("{name} 想和你共同阅读", name=c.share_ai_name()))
+            if self.coread_btns.winfo_manager() != "pack":
+                self.coread_btns.pack(side="left", padx=(8, 0))
+        elif self.coread_btns.winfo_manager() == "pack":
+            self.coread_btns.pack_forget()
         if c.share_invite():
             cfg(self.lbl_share_inv, text=tr("{name} 想看你们的数据", name=c.share_ai_name()))
             if self.share_btns.winfo_manager() != "pack":
@@ -483,6 +525,9 @@ class CommPage(CommVoiceMixin, tk.Frame):
             self.on_open_settings()
 
     def _send(self):
+        if getattr(self.comm, "reading_mode", False):
+            toast.info(tr("正在共读，请在阅读网页里的聊天框继续沟通."))
+            return
         text = self.entry.get("1.0", "end").strip()
         image = None
         if self._pending_image:
@@ -808,7 +853,7 @@ class CommPage(CommVoiceMixin, tk.Frame):
                 ("📎", "图片消息", "选择图片，或在输入框按 Ctrl+V 粘贴剪贴板图片，然后随消息发送."),
                 ("🖼", "识别字体", "选一张图片，把识别出的文字放进聊天框供你编辑；用 📎 发送图片本身."),
                 ("🎼", "演奏评判", "左边选参考乐谱或 MIDI，右边选演奏文件或录制 MIDI。分析摘要会交给聊天对象."),
-                ("🤝", "联合行动", "邀请对方一起做一次合约: 在合约页选词条, 输入开始时间; 对方回 [Yes] 就按约开始."))
+                ("🤝", "联合行动", "邀请对方一起做一次合约: 在合约页选词条, 输入开始时间; 对方回 [Yes] 就按约开始. Claudia 的剩余休息按她的日程接续和结转。"))
         area = ScrollArea(dlg.body, height=config.scaled(400), bg=bg)
         area.pack(fill="both", expand=True)
         cols = tk.Frame(area.inner, bg=bg)

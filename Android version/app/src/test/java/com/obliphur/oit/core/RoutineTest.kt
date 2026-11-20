@@ -13,6 +13,53 @@ import java.time.LocalDateTime
 
 /** 日程引擎 (MECHANICS 24.11). 对应桌面版 routine.py 的 _selftest; 下面的期望值是桌面版算出来的 (电脑和手机必须一样). */
 class RoutineTest {
+    @Test
+    fun contractRewardRest() {
+        val r = Routine.parse("初始起点:7:00\n[循环 300min][100min]\n60min:空闲\n[循环 300min][100min]\n30min:特殊空闲")!!
+        val day = LocalDate.of(2026, 11, 20)
+        fun at(h: Int, m: Int = 0) = day.atTime(h, m)
+        val base = Routine.planBetween(r, at(7), at(19), "reward", false)
+        val old = base.filter { it.kind == "focus" }
+        val delayed = Routine.applyContractRest(base, listOf(at(6) to 1800L))
+        val fresh = delayed.filter { it.kind == "focus" }
+        assertEquals(old[0], fresh[0])
+        assertEquals(old[1].start.plusMinutes(30), fresh[1].start)
+        assertEquals(base.last().end, delayed.last().end)
+        assertTrue(delayed.zipWithNext().all { (a, b) -> a.end == b.start })
+        fun follow(h: Int, m: Int, seconds: Long, completed: Boolean) =
+            Routine.applyContractRest(base, emptyList(), continuations = listOf(Routine.RestContinuation(at(h, m), seconds, completed)))
+        val joint = follow(10, 30, 1800, true)
+        assertEquals("rest", Routine.statusIn(joint, at(10, 45))!!.kind)
+        assertEquals(at(11), Routine.statusIn(joint, at(11))!!.start)
+        assertEquals("focus", Routine.statusIn(joint, at(11))!!.kind)
+        val failed = follow(11, 40, 1500, false)
+        assertEquals("rest", Routine.statusIn(failed, at(11, 59))!!.kind)
+        assertEquals("idle", Routine.statusIn(failed, at(12))!!.kind)
+        val second = base.filter { it.loop == 2 && it.kind == "focus" }
+        val failedSecond = failed.filter { it.loop == 2 && it.kind == "focus" }
+        assertEquals(second[0], failedSecond[0])
+        assertEquals(second[1].start.plusMinutes(5), failedSecond[1].start)
+        val completed = follow(11, 40, 1500, true).filter { it.loop == 2 && it.kind == "focus" }
+        assertEquals(second[1].start.plusSeconds(255), completed[1].start)
+        val late = Routine.applyContractRest(base, listOf(at(9, 30) to 600L))
+        assertEquals(old.take(2), late.filter { it.kind == "focus" }.take(2))
+        val idle = follow(12, 30, 600, true).filter { it.loop == 2 && it.kind == "focus" }
+        assertEquals(second[1].start.plusMinutes(10), idle[1].start)
+        val busy = Routine.applyContractRest(base, listOf(at(6) to 600L), listOf(at(7) to at(12)))
+        assertEquals(base.filter { it.loop == 0 }, busy.filter { it.loop == 0 })
+        val night = Routine.parse("初始起点:20:00\n[循环 300min][100min]\n30min:特殊空闲\n[循环 300min][100min]")!!
+        val nightBase = Routine.planBetween(night, at(20), at(20).plusHours(12), "reward", false)
+        val nightPlan = Routine.applyContractRest(nightBase, emptyList(), continuations =
+            listOf(Routine.RestContinuation(at(23, 40), 5400, false)))
+        assertEquals("rest", Routine.statusIn(nightPlan, day.plusDays(1).atTime(0, 59))!!.kind)
+        val special = nightPlan.first { it.label == "特殊空闲" }
+        assertEquals(day.plusDays(1).atTime(1, 0), special.start)
+        assertEquals(special.start.plusMinutes(30), special.end)
+        val record = (0L..13L).firstNotNullOf { Routine.contractForDay(r, day.plusDays(it), "reward") }
+        val terms = record.getJSONArray("terms").let { a -> (0 until a.length()).map { a.getString(it) } }
+        assertEquals(Contract.restReward(record.getInt("level"), terms), record.getInt("reward"))
+    }
+
     // 起床波动是 [-5,0]; 这里仍用 [-20,10] 测 (期望值是按它算的, 电脑和手机必须一样), 新范围见 CommTest.coAlarm
     private val text = BuiltinPersonas.ALL.getValue(BuiltinPersonas.ROUTINE).also { assertTrue("睡眠结束时间波动:[-5,0]" in it) }.replace("睡眠结束时间波动:[-5,0]", "睡眠结束时间波动:[-20,10]")
     private val spec = Routine.parse(text)!!

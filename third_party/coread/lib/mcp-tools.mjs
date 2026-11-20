@@ -1,0 +1,357 @@
+import { matchQuote } from './quote-match.mjs';
+import { getDb, getImageDir } from './db.mjs';
+import { aiReadingSeconds } from './reading-stats.mjs';
+import { parseEpub, extractImages, extractCover, smartSplit } from './epub.mjs';
+import {
+  displayPageForParagraph,
+  getPageFragments,
+  positionForDisplayPage,
+  resolvePagination,
+} from './pagination.mjs';
+import { isValidDate, calculateStreaks, mergeReadingBooks } from './reading-stats.mjs';
+import fs from 'fs';
+import path from 'path';
+
+// One read_book call = one reading_log row; rows under 10 minutes apart share a session. Timing: see aiReadingSeconds.
+function logAiReading(bookId, title, paragraphs, chars) {
+  const db = getDb();
+  try {
+    const now = new Date();
+    const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const last = db.prepare(`SELECT session_id, (julianday('now') - julianday(created_at)) * 86400 AS gap FROM reading_log
+      WHERE reader = 'ai' AND book_id = ? AND reading_date = ?
+      AND created_at >= datetime('now', '-10 minutes') ORDER BY id DESC LIMIT 1`).get(bookId, date);
+    db.prepare(`INSERT INTO reading_log (reader, session_id, book_id, book_title, reading_date, start_min, paragraphs, chars, seconds)
+      VALUES ('ai', ?, ?, ?, ?, ?, ?, ?, ?)`).run(last?.session_id || `ai-${now.getTime()}`, bookId, title, date,
+      now.getHours() * 60 + now.getMinutes(), paragraphs, chars, aiReadingSeconds(chars, last ? last.gap : null));
+  } catch (e) { console.error('logAiReading failed:', e.message); }
+  finally { db.close(); }
+}
+
+const CHAPTER_RE = /^第[\d一二三四五六七八九十百千万]+[章节回]|^#|^Chapter\s+\d/i;
+
+const ROOM_LOCK_PATH = process.env.ROOM_LOCK_PATH || path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'data', 'reading-room-lock.json');
+function roomLocked() {
+  try { return !!JSON.parse(fs.readFileSync(ROOM_LOCK_PATH, 'utf8')).locked; } catch { return false; }
+}
+const DOOR_CLOSED = { error: 'door_locked', message: '🔒 The reading room is locked by its owner. Ask the owner to unlock it; do not try to bypass the lock.' };
+const GATED_TOOLS = new Set(['read_book', 'add_comment', 'update_progress', 'import_book', 'get_reading_stats', 'add_reading_note']);
+
+export const tools = [
+  {
+    name: 'list_books',
+    description: 'List all books in the co-reading library',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'read_book',
+    description: 'Read a book page using the latest pagination measured by the reader browser',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        book_id: { type: 'number', description: 'Book ID' },
+        page: { type: 'number', description: 'Display page number from the reader browser (default 1)' },
+        per_page: { type: 'number', description: 'Deprecated/ignored: the browser page table is used when available' },
+      },
+      required: ['book_id'],
+    },
+  },
+  {
+    name: 'add_comment',
+    description: 'Add a comment/annotation to a paragraph in a book',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        book_id: { type: 'number', description: 'Book ID' },
+        paragraph_idx: { type: 'number', description: 'Paragraph index to comment on' },
+        content: { type: 'string', description: 'Comment text' },
+        from_who: { type: 'string', description: 'Who is commenting (default: "ai")' },
+        selected_text: { type: 'string', description: 'Optional: text to highlight, copied verbatim from the paragraph (keep the original quote marks and punctuation)' },
+        reply_to: { type: 'number', description: 'Optional: comment ID to reply to' },
+      },
+      required: ['book_id', 'paragraph_idx', 'content'],
+    },
+  },
+  {
+    name: 'list_comments',
+    description: 'List all comments for a book',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        book_id: { type: 'number', description: 'Book ID' },
+      },
+      required: ['book_id'],
+    },
+  },
+  {
+    name: 'get_toc',
+    description: 'Get the table of contents for a book',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        book_id: { type: 'number', description: 'Book ID' },
+      },
+      required: ['book_id'],
+    },
+  },
+  {
+    name: 'import_book',
+    description: 'Import a book from text content or epub (base64)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Book title' },
+        content: { type: 'string', description: 'Plain text content (for text import)' },
+        format: { type: 'string', description: '"epub" for epub import' },
+        data: { type: 'string', description: 'Base64-encoded epub file data' },
+      },
+      required: ['title'],
+    },
+  },
+  {
+    name: 'delete_comment',
+    description: 'Delete a comment by ID',
+    inputSchema: {
+      type: 'object',
+      properties: { comment_id: { type: 'number', description: 'Comment ID to delete' } },
+      required: ['comment_id'],
+    },
+  },
+  {
+    name: 'update_progress',
+    description: 'Update reading progress using a display page from the reader browser',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        book_id: { type: 'number', description: 'Book ID' },
+        page: { type: 'number', description: 'Current display page number from the reader browser' },
+      },
+      required: ['book_id', 'page'],
+    },
+  },
+  {
+    name: 'get_reading_stats',
+    description: 'Read the human reader’s daily time, streaks, finished books, and notes on their reading record',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        today: { type: 'string', description: 'Reader local date in YYYY-MM-DD format; used to calculate the current streak' },
+        book_id: { type: 'number', description: 'Optional book ID to limit book totals and notes' },
+      },
+      required: ['today'],
+    },
+  },
+  {
+    name: 'add_reading_note',
+    description: 'Add an AI note to the overall reading record, a particular book, a particular date, or both',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        content: { type: 'string', description: 'Note text' },
+        book_id: { type: 'number', description: 'Optional book ID' },
+        reading_date: { type: 'string', description: 'Optional reader local date in YYYY-MM-DD format' },
+        from_who: { type: 'string', description: 'Note author (default: ai)' },
+      },
+      required: ['content'],
+    },
+  },
+];
+
+export function handleTool(name, args) {
+  if (GATED_TOOLS.has(name) && roomLocked()) return DOOR_CLOSED;
+  switch (name) {
+    case 'list_books': {
+      const db = getDb(true);
+      const books = db.prepare('SELECT b.id, b.title, b.total_paragraphs, b.created_at, b.cover_image, p.page as current_paragraph_idx, COALESCE(p.paragraph_offset, 0) as current_paragraph_offset FROM books b LEFT JOIN book_progress p ON b.id = p.book_id ORDER BY b.created_at DESC').all();
+      const counts = db.prepare('SELECT book_id, COUNT(*) as count FROM book_comments GROUP BY book_id').all();
+      const countMap = {};
+      for (const c of counts) countMap[c.book_id] = c.count;
+      const result = books.map(b => {
+        const pagination = resolvePagination(db, b.id);
+        const displayPage = b.current_paragraph_idx == null
+          ? null
+          : displayPageForParagraph(pagination, b.current_paragraph_idx, b.current_paragraph_offset);
+        return {
+          ...b,
+          current_page: displayPage,
+          current_display_page: displayPage,
+          total_pages: pagination.totalPages,
+          pagination_source: pagination.source,
+          comment_count: countMap[b.id] || 0,
+        };
+      });
+      db.close();
+      return result;
+    }
+    case 'read_book': {
+      const { book_id, page = 1 } = args;
+      const db = getDb(true);
+      const book = db.prepare('SELECT * FROM books WHERE id = ?').get(book_id);
+      if (!book) { db.close(); return { error: 'Book not found' }; }
+      const pagination = resolvePagination(db, book_id);
+      const totalPages = pagination.totalPages;
+      const p = Math.max(1, Math.min(Number(page) || 1, totalPages));
+      const pageParas = getPageFragments(db, book_id, pagination, p);
+      const idxSet = new Set(pageParas.map(x => x.idx));
+      const comments = db.prepare('SELECT * FROM book_comments WHERE book_id = ? ORDER BY paragraph_idx, created_at').all(book_id)
+        .filter(c => idxSet.has(c.paragraph_idx));
+      db.close();
+      logAiReading(book_id, book.title, pageParas.length, pageParas.reduce((n, x) => n + String(x.content).length, 0));
+      const text = pageParas.map(x => `[${x.idx}:${x.start_offset}-${x.end_offset}] ${x.content}`).join('\n\n');
+      const commentText = comments.length ? '\n---\nComments on this page:\n' + comments.map(c => `  [${c.from_who}@${c.paragraph_idx}] ${c.selected_text ? `"${c.selected_text}" → ` : ''}${c.content}`).join('\n') : '';
+      return {
+        book: book.title,
+        page: p,
+        totalPages,
+        pagination_source: pagination.source,
+        pagination_viewport: pagination.viewport || null,
+        text: text + commentText,
+      };
+    }
+    case 'add_comment': {
+      const { book_id, content, from_who = 'ai', reply_to } = args;
+      let { paragraph_idx, selected_text } = args;
+      const db = getDb();
+      let startIdx = null, endIdx = null, note;
+      if (selected_text) {
+        const m = matchQuote(db, book_id, paragraph_idx, selected_text);
+        if (!m.ok) { db.close(); return { ok: false, error: m.reason, ...(m.paragraph ? { paragraph: m.paragraph.slice(0, 800) } : {}) }; }
+        ({ paragraph_idx, text: selected_text, start: startIdx, end: endIdx, note } = m);
+      }
+      const result = db.prepare('INSERT INTO book_comments (book_id, paragraph_idx, sel_start_idx, sel_end_idx, selected_text, from_who, content, reply_to) VALUES (?,?,?,?,?,?,?,?)').run(book_id, paragraph_idx, startIdx, endIdx, selected_text || null, from_who, content, reply_to || null);
+      db.close();
+      return { ok: true, id: Number(result.lastInsertRowid), ...(note ? { note } : {}) };
+    }
+    case 'list_comments': {
+      const { book_id } = args;
+      const db = getDb(true);
+      const comments = db.prepare('SELECT * FROM book_comments WHERE book_id = ? ORDER BY paragraph_idx, created_at').all(book_id);
+      db.close();
+      return comments;
+    }
+    case 'get_toc': {
+      const { book_id } = args;
+      const db = getDb(true);
+      const pagination = resolvePagination(db, book_id);
+      const paras = db.prepare('SELECT idx, substr(content, 1, 100) as content FROM book_paragraphs WHERE book_id = ? ORDER BY idx').all(book_id);
+      const chapters = [];
+      for (const p of paras) {
+        if (CHAPTER_RE.test(p.content.trim())) {
+          chapters.push({
+            idx: p.idx,
+            page: displayPageForParagraph(pagination, p.idx) || 1,
+            title: p.content.trim().split('\n')[0].replace(/^#+\s*/, '').slice(0, 60),
+          });
+        }
+      }
+      db.close();
+      return chapters;
+    }
+    case 'import_book': {
+      const { title, content, format, data } = args;
+      let paragraphs = [];
+      let epubResult = null;
+      if (format === 'epub' && data) { epubResult = parseEpub(data); paragraphs = epubResult.paragraphs; }
+      else if (content) { paragraphs = smartSplit(content); }
+      else return { error: 'content or epub data required' };
+      if (!paragraphs.length) return { error: 'no paragraphs extracted' };
+      const db = getDb();
+      const r = db.prepare('INSERT INTO books (title, total_paragraphs) VALUES (?, ?)').run(title, paragraphs.length);
+      const bookId = Number(r.lastInsertRowid);
+      const ins = db.prepare('INSERT INTO book_paragraphs (book_id, idx, content) VALUES (?, ?, ?)');
+      db.transaction(() => { for (let i = 0; i < paragraphs.length; i++) ins.run(bookId, i, paragraphs[i]); })();
+      db.close();
+      if (epubResult) {
+        const imgDir = getImageDir(bookId);
+        const images = extractImages(epubResult.zip, epubResult.epubImageMap, paragraphs);
+        for (const [fname, d] of images) fs.writeFileSync(path.join(imgDir, fname), d);
+        const cover = extractCover(epubResult.zip, epubResult.epubCoverFile);
+        if (cover) {
+          fs.writeFileSync(path.join(imgDir, cover.name), cover.data);
+          const db2 = getDb();
+          db2.prepare('UPDATE books SET cover_image = ? WHERE id = ?').run(cover.name, bookId);
+          db2.close();
+        }
+      }
+      return { ok: true, book_id: bookId, paragraphs: paragraphs.length };
+    }
+    case 'delete_comment': {
+      const db = getDb();
+      db.prepare('DELETE FROM book_comments WHERE id = ?').run(args.comment_id);
+      db.close();
+      return { ok: true };
+    }
+    case 'update_progress': {
+      const db = getDb();
+      const book = db.prepare('SELECT id FROM books WHERE id = ?').get(args.book_id);
+      if (!book) { db.close(); return { error: 'Book not found' }; }
+      const pagination = resolvePagination(db, args.book_id);
+      const displayPage = Math.max(1, Math.min(Number(args.page) || 1, pagination.totalPages));
+      const position = positionForDisplayPage(pagination, displayPage);
+      if (!position) { db.close(); return { error: 'Book has no readable paragraphs' }; }
+      db.prepare("INSERT INTO book_progress (book_id, page, paragraph_offset, updated_at) VALUES (?, ?, ?, datetime('now')) ON CONFLICT(book_id) DO UPDATE SET page = excluded.page, paragraph_offset = excluded.paragraph_offset, updated_at = datetime('now')").run(args.book_id, position.paragraph_idx, position.offset);
+      db.close();
+      return {
+        ok: true,
+        page: displayPage,
+        paragraph_idx: position.paragraph_idx,
+        paragraph_offset: position.offset,
+        pagination_source: pagination.source,
+      };
+    }
+    case 'get_reading_stats': {
+      const today = String(args.today || '');
+      if (!isValidDate(today)) return { error: 'today must use a valid YYYY-MM-DD date' };
+      const bookId = args.book_id == null ? null : Number(args.book_id);
+      const db = getDb(true);
+      const daily = bookId == null
+        ? db.prepare('SELECT reading_date, SUM(seconds) AS seconds FROM reading_daily GROUP BY reading_date ORDER BY reading_date DESC').all()
+        : db.prepare('SELECT reading_date, seconds FROM reading_daily WHERE book_id = ? ORDER BY reading_date DESC').all(bookId);
+      const bookTimes = bookId == null
+        ? db.prepare(`SELECT d.book_id AS id, COALESCE(MAX(b.title), MAX(d.book_title), '已删除书籍') AS title, SUM(d.seconds) AS total_seconds, MAX(d.updated_at) AS last_read_at FROM reading_daily d LEFT JOIN books b ON b.id = d.book_id GROUP BY d.book_id`).all()
+        : db.prepare(`SELECT d.book_id AS id, COALESCE(MAX(b.title), MAX(d.book_title), '已删除书籍') AS title, SUM(d.seconds) AS total_seconds, MAX(d.updated_at) AS last_read_at FROM reading_daily d LEFT JOIN books b ON b.id = d.book_id WHERE d.book_id = ? GROUP BY d.book_id`).all(bookId);
+      const finishes = bookId == null
+        ? db.prepare('SELECT book_id AS id, book_title AS title, finished_at FROM reading_finished').all()
+        : db.prepare('SELECT book_id AS id, book_title AS title, finished_at FROM reading_finished WHERE book_id = ?').all(bookId);
+      const notes = bookId == null
+        ? db.prepare('SELECT n.*, COALESCE(b.title, n.book_title) AS book_title FROM reading_record_notes n LEFT JOIN books b ON b.id = n.book_id ORDER BY n.created_at DESC, n.id DESC').all()
+        : db.prepare('SELECT n.*, COALESCE(b.title, n.book_title) AS book_title FROM reading_record_notes n LEFT JOIN books b ON b.id = n.book_id WHERE n.book_id = ? ORDER BY n.created_at DESC, n.id DESC').all(bookId);
+      db.close();
+      const streak = calculateStreaks(daily, today);
+      const books = mergeReadingBooks(bookTimes, finishes);
+      return {
+        today,
+        today_seconds: Number(daily.find(x => x.reading_date === today)?.seconds || 0),
+        total_seconds: daily.reduce((sum, x) => sum + Number(x.seconds || 0), 0),
+        current_streak: streak.currentStreak,
+        longest_streak: streak.longestStreak,
+        reading_days: streak.readingDays,
+        daily,
+        books,
+        notes,
+      };
+    }
+    case 'add_reading_note': {
+      const content = String(args.content || '').trim();
+      const bookId = args.book_id == null ? null : Number(args.book_id);
+      const readingDate = args.reading_date == null || args.reading_date === '' ? null : String(args.reading_date);
+      if (!content) return { error: 'content required' };
+      if (readingDate && !isValidDate(readingDate)) return { error: 'reading_date must use a valid YYYY-MM-DD date' };
+      if (bookId != null && !Number.isInteger(bookId)) return { error: 'book_id must be an integer' };
+      const db = getDb();
+      let bookTitle = null;
+      if (bookId != null) {
+        const live = db.prepare('SELECT title FROM books WHERE id = ?').get(bookId);
+        const finished = db.prepare('SELECT book_title AS title FROM reading_finished WHERE book_id = ?').get(bookId);
+        const timed = db.prepare('SELECT book_title AS title FROM reading_daily WHERE book_id = ? AND book_title IS NOT NULL LIMIT 1').get(bookId);
+        bookTitle = live?.title || finished?.title || timed?.title || null;
+        if (!bookTitle) { db.close(); return { error: 'Book not found' }; }
+      }
+      const result = db.prepare('INSERT INTO reading_record_notes (book_id, book_title, reading_date, from_who, content) VALUES (?, ?, ?, ?, ?)').run(bookId, bookTitle, readingDate, String(args.from_who || 'ai'), content);
+      db.close();
+      return { ok: true, id: Number(result.lastInsertRowid) };
+    }
+    default:
+      return { error: `Unknown tool: ${name}` };
+  }
+}

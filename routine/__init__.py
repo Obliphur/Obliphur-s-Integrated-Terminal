@@ -73,6 +73,7 @@ from .routine_plan import (
 )
 from .routine_store import (
     Store,
+    reward_plan,
 )
 from .routine_query import (
     contract_for_day,
@@ -271,4 +272,63 @@ def _selftest():
         recs = contracts_before(r, datetime(2026, 4, 1), seed, days=60)
         assert recs and all(20 <= x["level"] <= 30 and not (set(x["terms"]) & banned) for x in recs), [x["level"] for x in recs]
         assert all(_dt(x["end"]) <= datetime(2026, 4, 1) for x in recs)
+    _rest_reward_selftest()
     print("routine selftest OK")
+
+
+def _rest_reward_selftest():
+    """奖励延后、边界结转与共同休息接续的回归。"""
+    from .routine_plan import apply_contract_rest
+    from .routine_query import contract_for_day
+    import contract as C
+    r = parse("初始起点:7:00\n[循环 300min][100min]\n60min:空闲\n[循环 300min][100min]\n30min:特殊空闲")
+    day = datetime(2026, 11, 20)
+    at = lambda h, m=0: day.replace(hour=h, minute=m)
+    base = plan_between(r, at(7), at(19), "reward", fluct=False)
+    delayed = apply_contract_rest(base, [(at(6), 30 * 60)])
+    old = [s for s in base if s["kind"] == "focus"]
+    new = [s for s in delayed if s["kind"] == "focus"]
+    assert new[0] == old[0], "奖励不能延后首段专注"
+    assert new[1]["start"] == old[1]["start"] + timedelta(minutes=30)
+    assert delayed[-1]["end"] == base[-1]["end"]
+    assert all(a["end"] == b["start"] for a, b in zip(delayed, delayed[1:]))
+    # 10:00 合约结束，共同休息到 10:30，再接 30 分钟。
+    joint = apply_contract_rest(base, [], continuations=[(at(10, 30), 1800, True)])
+    assert status_in(joint, at(10, 45))["kind"] == "rest"
+    assert status_in(joint, at(11))["kind"] == "focus"
+    assert status_in(joint, at(11))["start"] == at(11)
+    # 失败结算的 25 分钟：先用 20 分钟填到 12:00，5 分钟原样用于下一循环第一次休息。
+    failed = apply_contract_rest(base, [], continuations=[(at(11, 40), 1500, False)])
+    assert status_in(failed, at(11, 59))["kind"] == "rest"
+    assert status_in(failed, at(12))["kind"] == "idle"
+    second = [s for s in base if s["loop"] == 2 and s["kind"] == "focus"]
+    failed_second = [s for s in failed if s["loop"] == 2 and s["kind"] == "focus"]
+    assert failed_second[0] == second[0]
+    assert failed_second[1]["start"] == second[1]["start"] + timedelta(minutes=5)
+    completed = apply_contract_rest(base, [], continuations=[(at(11, 40), 1500, True)])
+    completed_second = [s for s in completed if s["loop"] == 2 and s["kind"] == "focus"]
+    assert completed_second[1]["start"] == second[1]["start"] + timedelta(seconds=255), "完成奖励余量只打折一次"
+    # 到账时已在专注，不倒改已发生的时间；空闲时到账则等下一循环第一次休息。
+    late = apply_contract_rest(base, [(at(9, 30), 600)])
+    assert [s for s in late if s["kind"] == "focus"][:2] == old[:2]
+    idle = apply_contract_rest(base, [], continuations=[(at(12, 30), 600, True)])
+    assert [s for s in idle if s["loop"] == 2 and s["kind"] == "focus"][1]["start"] == second[1]["start"] + timedelta(minutes=10)
+    blocked = apply_contract_rest(base, [(at(6), 600)], busy=[(at(7), at(12))])
+    assert [s for s in blocked if s["loop"] == 0] == [s for s in base if s["loop"] == 0]
+    # 跨午夜、末尾波动及特殊空闲边界。
+    night = parse("初始起点:20:00\n[循环 300min][100min]\n30min:特殊空闲\n[循环 300min][100min]")
+    nightbase = plan_between(night, at(20), at(20) + timedelta(hours=12), "reward", fluct=False)
+    midnight = at(23, 40)
+    nightplan = apply_contract_rest(nightbase, [], continuations=[(midnight, 90 * 60, False)])
+    assert status_in(nightplan, day + timedelta(days=1, minutes=59))["kind"] == "rest"
+    special = next(s for s in nightplan if s["label"] == "特殊空闲")
+    assert special["start"] == day + timedelta(days=1, hours=1)
+    assert special["end"] - special["start"] == timedelta(minutes=30)
+    # 自主合约的记录必须携带实际奖励秒数。
+    for i in range(14):
+        rec = contract_for_day(r, day.date() + timedelta(days=i), "reward")
+        if rec:
+            assert rec["reward"] == C.rest_reward(rec["level"], rec["terms"]) > 0
+            break
+    else:
+        raise AssertionError("测试种子应当生成合约")

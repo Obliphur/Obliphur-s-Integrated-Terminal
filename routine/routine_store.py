@@ -25,10 +25,50 @@ from routine.routine_plan import (
     fluct_list,
     pick,
     chat_pct,
+    apply_contract_rest,
+    plan_between,
 )
 from routine.routine_query import (
     contracts_before,
+    generated_rest,
 )
+
+def reward_plan(r: Routine, a: datetime, b: datetime, seed: str, now: datetime, joint=(), busy=()) -> list:
+    """回放保留的日程，包含跨午夜的循环与已到账的奖励。"""
+    if a >= b:
+        return []
+    first = a.date() - timedelta(days=KEEP_DAYS)
+    awards = []
+    continuations = []
+    windows = list(busy)
+    for rec in joint:
+        try:
+            end = _dt(rec["end"])
+            start = _dt(rec["began"])
+            seconds = int(rec["scheduled_reward"])
+            resume = _dt(rec.get("rest_until") or rec["end"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if end <= now:
+            continuations.append((resume, max(0, seconds), rec.get("result") == "completed"))
+            windows.append((start, resume))
+            first = min(first, start.date())
+    d = first - timedelta(days=1)
+    while d <= min(b, now).date():
+        event = generated_rest(r, d, seed)
+        if event and event[0] <= now:
+            awards.append(event)
+        d += timedelta(days=1)
+    cache = r.__dict__.setdefault("_reward_plans", {})
+    key = (first, b.date(), seed, tuple(awards), tuple(continuations), tuple(windows))
+    if key not in cache:
+        if len(cache) >= 4:
+            cache.clear()
+        end = datetime.combine(b.date() + timedelta(days=2), datetime.min.time())
+        segs = plan_between(r, datetime.combine(first, datetime.min.time()), end, seed)
+        cache[key] = apply_contract_rest(segs, awards, windows, continuations)
+    return [s for s in cache[key] if s["end"] > a and s["start"] < b]
+
 
 class Store:
     """对方这个人设的"实际发生过的"数据: 时间线 (一段段 [kind, 开始, 结束, 名字]) 和整点记录的格子. 随 data_dir 存盘."""
@@ -67,8 +107,15 @@ class Store:
     # ---- 真的完成过的联合行动 ----
     def add_joint(self, rec: dict) -> bool:
         """记一条真实完成的联合行动合约 (rec["id"] 去重). 返回是不是新记的."""
-        if not rec.get("id") or any(x.get("id") == rec["id"] for x in self.joint):
+        if not rec.get("id"):
             return False
+        existing = next((x for x in self.joint if x.get("id") == rec["id"]), None)
+        if existing is not None:
+            if rec == existing:
+                return False
+            existing.update(rec)
+            self.dirty = True
+            return True
         self.joint.append(dict(rec))
         self.joint = sorted(self.joint, key=lambda x: x["end"])[-KEEP_JOINT:]
         self.dirty = True
@@ -76,7 +123,7 @@ class Store:
 
     def recent_contracts(self, now: datetime, n: int = 5) -> list:
         """合约记录 (最近完成的 n 个, 从新到旧): 真的一起完成过的联合行动排在前面, 不够的用按日程生成的补."""
-        real = sorted((x for x in self.joint if _dt(x["end"]) <= now), key=lambda x: x["end"], reverse=True)
+        real = sorted((x for x in self.joint if x.get("result") == "completed" and _dt(x["end"]) <= now), key=lambda x: x["end"], reverse=True)
         return (real + contracts_before(self.r, now, self.seed))[:n]
 
     # ---- 时间线 ----

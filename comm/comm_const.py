@@ -119,7 +119,7 @@ THINK_KINDS = ("proactive", "joint_reply", "chase", "love", "love_reply")      #
 THINK_NEW_AFTER = 180                                    # 对方此刻按日程该在专注 / 睡眠, 而用户这时开始一段新的谈话 (上一条对方的消息已经是 3 分钟以前): 要判断回不回
 
 
-DEFAULTS = {"persona": "", "show_avatar": True,
+DEFAULTS = {"persona": "", "show_avatar": True, "coread_link": {}, "coread_offer": {},
             "avatar_me": "", "avatar_ai": "", "default_avatars": 0, "pro_key": "", "retry": {}, "clear_ts": 0, "seeded": False, "assistant_seeded": False,
             "claudia_migrated": False, "claudia_modified": False, "claudia_notified": "", "claudia_base": "", "routine_base": "", "background_base": "",
             "legacy_done": False, "joint_last": [], "user_profile": "",

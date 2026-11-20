@@ -42,6 +42,8 @@ from .comm_schedule import PROACTIVE_P, seg_kind, seg_detail, schedule_entries, 
 from .comm_reply import CUT_DEFAULT_MIN, CUT_MAX_MIN, HALFWIDTH_SYMBOLS, NET_DEFAULT_MIN, NET_MAX_MIN, WAIT_MAX_MIN, _BRACKET_RE, _CUT_N_RE, _CUT_RE, _EMPTY_WRAP_RE, _NET_RE, _WAIT_RE, clean_reply, cut_minutes, net_minutes, to_halfwidth
 from .persona_codec import read_file, write_file, migrate_folder, migrate_file, decode as decode_persona
 from .comm_builtin import BUILTIN_PERSONAS, DEFAULT_PERSONA, DEFAULT_BACKGROUND, DEFAULT_ROUTINE, DEFAULT_EXAMPLE, ASSISTANT_PERSONA, ASSISTANT_DETAIL_LINE, BACKGROUND_LEGACIES, ASSISTANT_SLEEP_LINE, ASSISTANT_TITLE
+from .comm_builtin import DEFAULT_PROFILE
+from .comm_persona import is_profile_name, profile_files
 from .comm_prompt import REFUSE, SHIFT_TAG, MSGS_TAG, THINK_LONG, THINK_WORDS, THINK_TIME_RE, think_text_reason, JOINT_RULE, rest_function_text, prefix_prompt, native_persona_text
 from .comm_persona import SHIFT_LO, SHIFT_HI, SHIFT_KEEP, MAX_PERSONA, MEM_MAX, PERSONA_EXT, readme_text, pid_of, love_norm, love_line, shift_norm, shift_pairs, hm_text, shift_line, mem_fields, seed_builtin, ensure_personas, list_personas, persona_title, uses_prefix, system_head, PERSONA_HEAD, persona_system, persona_labels, read_persona, ROUTINE_SUFFIX, ROUTINE_OLD_SUFFIX, COMPANION_SEP, companion_base, is_companion_name, companion_files, companions_of, routine_name_of, read_routine, read_persona_full, import_persona
 
@@ -53,6 +55,7 @@ from .comm_chat import ChatMixin
 from .comm_flow import FlowMixin
 from .comm_sched import SchedMixin
 from .comm_share import ShareMixin
+from .comm_coread import CoReadMixin
 from .comm_rt import RtMixin
 from .comm_misc import MiscMixin
 
@@ -80,7 +83,7 @@ from .comm_delivery import DeliveryMixin, reply_parts
 from ai_assist.ai_tools import unpack, args_of, text_of
 
 
-class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, FlowMixin, SchedMixin, ShareMixin, RtMixin, MiscMixin):
+class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin, ChatMixin, FlowMixin, SchedMixin, ShareMixin, CoReadMixin, RtMixin, MiscMixin):
     """聊天记录, 设置, 发请求 (线程), 主动发消息, 对方不方便时的重试, 设备同步. 界面线程每秒调一次 tick().
 
     设备同步 (MECHANICS 24.6): 聊天记录 / 清空 / "30 分钟内不重复"的记录 / 重试状态 / 主动消息的标记随设备同步 (文档 comm);
@@ -106,6 +109,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         self.version = 0              # 聊天记录 / 状态变了就加一, 页面据此重画
         self.unread = 0
         self.viewing = False
+        self.reading_mode = False
+        self.coread_session_id = ""
         self.user_day_fn = lambda day: None      # (日期) → (专注秒数, 空闲秒数) 或 None; app 接上 (dm.day_kinds), [condition] 判定用
         self._cond_next = 0.0
         self.break_end_fn = lambda: None     # 用户这次休息真正结束的时刻 (datetime; 没在休息 = None); app 接上, 联合行动结束后对方的休息跟着它
@@ -209,6 +214,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         self._upgrade_routine()
         self._upgrade_background()
         self._upgrade_example()
+        if os.path.isfile(self._claudia_path()):
+            seed_builtin(self.personas, DEFAULT_PROFILE)
         self._note_builtin_base()
         migrate_folder(self.personas)
         migrate_folder(self._persona_backup_dir)
@@ -515,6 +522,10 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         doc = {f"notice:{key}": dict(val) for key, val in self.focus_notices.items()
                if 0 <= self._ms() - val["ts"] <= 90_000}
         doc["voice"] = self.voice.sync_doc()
+        if isinstance(self.cfg.get("coread_link"), dict) and self.cfg["coread_link"].get("url"):
+            doc["coread"] = dict(self.cfg["coread_link"])
+        if isinstance(self.cfg.get("coread_offer"), dict) and self.cfg["coread_offer"].get("ts"):
+            doc["coread_offer"] = dict(self.cfg["coread_offer"])
         if self.cfg.get("user_profile"):
             doc["profile"] = self.cfg["user_profile"]
         doc["think"] = self.think_auto()                # 自动开思考的开关: 同上
@@ -591,6 +602,24 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             if key == "voice":
                 self.voice.apply_doc(val)
                 self._changed()
+                continue
+            if key == "coread" and isinstance(val, dict):
+                url = str(val.get("url") or "")[:1000]
+                access_key = str(val.get("access_key") or "")[:200]
+                if url.startswith("http://") and access_key and self.cfg.get("coread_link") != {"url": url, "access_key": access_key}:
+                    self.cfg["coread_link"] = {"url": url, "access_key": access_key}
+                    self.save_cfg()
+                continue
+            if key == "coread_offer" and isinstance(val, dict):
+                state = str(val.get("state") or "")
+                pid = str(val.get("pid") or "")[:32]
+                ts = int(val.get("ts") or 0)
+                if state in ("queued", "invite", "") and pid and ts > int((self.cfg.get("coread_offer") or {}).get("ts") or 0):
+                    self.cfg["coread_offer"] = {"id": str(val.get("id") or "")[:64], "pid": pid,
+                                                 "state": state, "ts": ts,
+                                                 "message": str(val.get("message") or "")[:128]}
+                    self.save_cfg()
+                    self._changed()
                 continue
             if kind == "notice":
                 if isinstance(val, dict) and isinstance(val.get("text"), str) and isinstance(val.get("ts"), (int, float)):
@@ -1040,6 +1069,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                 write_file(bpath, BUILTIN_PERSONAS[DEFAULT_BACKGROUND])
             if force:
                 write_file(os.path.join(self.personas, DEFAULT_EXAMPLE), BUILTIN_PERSONAS[DEFAULT_EXAMPLE])
+                seed_builtin(self.personas, DEFAULT_PROFILE)
         except (OSError, ValueError):
             pass
 
@@ -1206,17 +1236,18 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         return read_persona(self.personas, name) == BUILTIN_PERSONAS[ASSISTANT_PERSONA].strip()
 
     # ---- 人设文件本身: 随设备同步 (每 2 分钟检查一次变化; README 不同步, 各设备按界面语言生成) ----
-    def persona_doc(self) -> dict:
+    def persona_doc(self, profiles: bool = False) -> dict:
         """人设文件夹里的 .txt / .md (文件名 → 全文), 给设备同步用."""
         out = {}
-        for name in list_personas(self.personas) + companion_files(self.personas):
+        names = profile_files(self.personas) if profiles else list_personas(self.personas) + companion_files(self.personas)
+        for name in names:
             try:
                 out[name] = read_file(os.path.join(self.personas, name))
             except (OSError, ValueError):
                 pass
         return out
 
-    def apply_persona_doc(self, changes: dict):
+    def apply_persona_doc(self, changes: dict, profiles: bool = False):
         """别的设备同步来的人设文件: 新增 / 覆盖 / 删除 (None). 现在选着的人设受影响时重新读日程."""
         try:
             os.makedirs(self.personas, exist_ok=True)
@@ -1225,6 +1256,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         dirty = False
         for name, text in dict(changes or {}).items():
             if not isinstance(name, str) or not name or name != os.path.basename(name):
+                continue
+            if is_profile_name(name) != profiles:
                 continue
             if os.path.splitext(name)[1].lower() not in PERSONA_EXT or name.lower() == "readme.md":
                 continue
@@ -1249,6 +1282,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                     dirty = True
                 else:
                     migrate_file(path)
+                if profiles:
+                    continue
                 try:
                     bk = read_file(self._persona_backup_path(name))
                 except (OSError, ValueError):
@@ -1258,8 +1293,9 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             except (OSError, ValueError):
                 pass
         if dirty:
-            self._seg_sig = None
-            self.reload_schedule("同步人设")
+            if not profiles:
+                self._seg_sig = None
+                self.reload_schedule("同步人设")
             self._changed()
 
     # ---- 发消息 ----
@@ -1382,6 +1418,10 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                 text = tr("演奏已停止")
             elif isinstance(op, dict) and op.get("type") == "memory_event":
                 text = tr("已更新记忆卡")
+            elif isinstance(op, dict) and op.get("type") == "coread_offer":
+                text = tr("我想邀请你一起阅读")
+            elif isinstance(op, dict) and op.get("type") == "coread_end":
+                text = tr("我想结束这次共同阅读")
             else:
                 text = tr("🤝  联合行动邀请") if op else tr("share data 邀请")
         catchup = bool(extra) and CATCHUP_TAG in str(extra[0])          # 这是补问 (见 CATCHUP_BODY)
@@ -1476,6 +1516,10 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                     self._music_actions.clear()
                 elif isinstance(op, dict) and op.get("type") == "memory_event":
                     self._memory_event_apply(op)
+                elif isinstance(op, dict) and op.get("type") == "coread_offer":
+                    self._coread_offer_apply(op, m)
+                elif isinstance(op, dict) and op.get("type") == "coread_end":
+                    self._coread_end_apply(op, m)
                 else:
                     self._op_apply(op, m)
             if share_invite:
@@ -1538,6 +1582,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         self._rt_tick()
         self._cond_tick()
         self._share_tick()
+        self._coread_offer_tick()
         self._shift_tick()
         self._sf_tick()
         if self.busy or not self.leader() or any("pending_reply" in m for m in self.messages):

@@ -332,6 +332,8 @@ class ShareMixin:
 
     def _deliver_invites(self, message):
         """邀请随消息展示生效；share data 仍只属于生成邀请的本机。"""
+        self._coread_offer_deliver(message)
+        self._coread_end_deliver(message)
         if not message.get("hold") and message.pop("share_invite", False):
             self._share_invite_make()
 

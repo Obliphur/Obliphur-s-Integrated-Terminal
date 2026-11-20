@@ -1,8 +1,12 @@
 # 10. 数据文件
 
+Claudia 的休息结算沿用沟通配置的 `joint`：`scheduled_reward` 标记独立日程结算，`rest_s` 为奖励秒数，`rest_until` 为剩余共同休息结束时刻，`rest_history` 保留最近 120 笔结算（含 pid、id、began、end、result、scheduled_reward 秒数与 rest_until）。`routine_<编号>.json` 的 `joint` 同时保留事件用于重放，失败事件仅用于休息结转，不计入顺利完成的合约记录。自主合约的奖励由日期和人设确定性重建，不另建可被重复累加的余额（24.11）。
+
 [← 返回目录](../../MECHANICS.md)
 
 数据目录: `%USERPROFILE%\AppData\LocalLow\Obliphur's Integrated Terminal\`
+
+共同阅读在 `comm_config.json` 的 `coread_link` 保存本地 Windows 服务地址和访问密钥，`coread_offer` 保存邀请编号、人设、状态、修改时刻和关联消息编号。`coread/` 保存 Node 运行时、组件源码与依赖；`coread/data/` 保存共读数据库和阅读室状态，`coread/service.json` 保存服务访问密钥与端口，`coread/server.log` 为服务日志。运行中的共读会话及活动重叠累计仅在内存中保存，重启不恢复旧会话。书库由配对设备通过局域网共用，不复制到安卓聊天存档（24.22）。
 
 | 文件 | 内容 | 保留范围 |
 | --- | --- | --- |

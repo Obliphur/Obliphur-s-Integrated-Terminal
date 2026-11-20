@@ -406,7 +406,8 @@ class WindowMixin:
         yield
         self.pages["comm"] = CommPage(
             self.content, self.comm, username=lambda: self.dm.username,
-            on_open_settings=self._open_comm_settings, on_joint=self._joint_pick_start)
+            on_open_settings=self._open_comm_settings, on_joint=self._joint_pick_start,
+            on_coread=self._open_coread, on_coread_end=self._end_coread_session)
         self._prepare_page(self.pages["comm"])
         yield
         self.pages["net"] = tk.Frame(self.content, bg=bg)

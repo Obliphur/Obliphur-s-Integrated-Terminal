@@ -7,7 +7,7 @@ import math
 from datetime import datetime
 
 import config
-from comm.comm_rules import tension_rules, tension_event, valence_rules, valence_initial, valence_burst_rules
+from comm.comm_rules import tension_rules, tension_event, valence_rules, valence_initial, valence_event, valence_burst_rules
 import routine
 from i18n import tr
 from .comm_const import KEEP
@@ -304,6 +304,16 @@ def interaction_prompt(d, total, special, rules=None, burst_rules=None, sleep=Fa
 
 
 class InteractionMixin:
+    def _interaction_joint_completed(self, pid, name):
+        """结算真实完成奖励，按联合行动对象入账，不走模型条件冷却。"""
+        from comm.comm_persona import read_persona_full
+        gain = valence_event(read_persona_full(self.personas, name), "joint_completed")
+        if not gain:
+            return
+        d = self._interaction_prepare(pid)
+        d["valence"] = interaction_valence(d["valence"] + int(gain * offenses_rate(d)))
+        self._interaction_set(d, pid)
+
     def _music_discourtesy(self):
         from .comm_util import is_claudia
         if not is_claudia(self.persona_name()) or not self.music_player.is_playing:

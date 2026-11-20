@@ -59,6 +59,17 @@ def valence_initial(text):
     return value if math.isfinite(value) and -100.0 <= value <= 100.0 else 0.0
 
 
+def valence_event(text, event):
+    """真实联合行动完成奖励；缺省或格式错误时不加值。"""
+    out = {}
+    for line in rule_lines(text, "valence:events"):
+        match = re.fullmatch(r"(joint_completed)\s*[:：]\s*([+]?\d{1,3})", line)
+        if not match or match[1] in out or not 0 <= int(match[2]) <= 100:
+            return 0
+        out[match[1]] = int(match[2])
+    return out.get(event, 0)
+
+
 def valence_burst_rules(text):
     """读取可选爆发联动参数；格式错误时使用中性默认值。"""
     lines = rule_lines(text, "valence:burst")

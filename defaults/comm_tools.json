@@ -5,11 +5,28 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "action": { "type": "string", "enum": ["add", "correct", "remove"] },
-        "target": { "type": "string", "maxLength": 200 },
-        "text": { "type": "string", "maxLength": 200 }
+        "action": {
+          "type": "string",
+          "enum": [
+            "add",
+            "correct",
+            "remove"
+          ]
+        },
+        "target": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 200
+        }
       },
-      "required": ["action", "target", "text"],
+      "required": [
+        "action",
+        "target",
+        "text"
+      ],
       "additionalProperties": false
     }
   },
@@ -29,9 +46,14 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "id": { "type": "string", "maxLength": 80 }
+        "id": {
+          "type": "string",
+          "maxLength": 80
+        }
       },
-      "required": ["id"],
+      "required": [
+        "id"
+      ],
       "additionalProperties": false
     }
   },
@@ -41,9 +63,14 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "id": { "type": "string", "maxLength": 80 }
+        "id": {
+          "type": "string",
+          "maxLength": 80
+        }
       },
-      "required": ["id"],
+      "required": [
+        "id"
+      ],
       "additionalProperties": false
     }
   },
@@ -53,9 +80,14 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "id": { "type": "string", "maxLength": 80 }
+        "id": {
+          "type": "string",
+          "maxLength": 80
+        }
       },
-      "required": ["id"],
+      "required": [
+        "id"
+      ],
       "additionalProperties": false
     }
   },
@@ -168,7 +200,9 @@
           "minimum": 1,
           "maximum": 30
         },
-        "network_now": { "type": "boolean" },
+        "network_now": {
+          "type": "boolean"
+        },
         "share_data": {
           "type": "boolean"
         },
@@ -188,12 +222,34 @@
           "items": {
             "type": "object",
             "properties": {
-              "index": { "type": "integer", "minimum": 1, "maximum": 99999 },
-              "action": { "type": "string", "enum": ["add", "forgive"] },
-              "target": { "type": "string", "maxLength": 120 },
-              "reason": { "type": "string", "minLength": 1, "maxLength": 120 }
+              "index": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 99999
+              },
+              "action": {
+                "type": "string",
+                "enum": [
+                  "add",
+                  "forgive"
+                ]
+              },
+              "target": {
+                "type": "string",
+                "maxLength": 120
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              }
             },
-            "required": ["index", "action", "target", "reason"],
+            "required": [
+              "index",
+              "action",
+              "target",
+              "reason"
+            ],
             "additionalProperties": false
           },
           "minItems": 0,
@@ -237,11 +293,26 @@
           "items": {
             "type": "object",
             "properties": {
-              "index": { "type": "integer", "minimum": 1, "maximum": 99999 },
-              "condition": { "type": "string", "maxLength": 32 },
-              "shift": { "type": "integer", "minimum": -40, "maximum": 40 }
+              "index": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 99999
+              },
+              "condition": {
+                "type": "string",
+                "maxLength": 32
+              },
+              "shift": {
+                "type": "integer",
+                "minimum": -40,
+                "maximum": 40
+              }
             },
-            "required": ["index", "condition", "shift"],
+            "required": [
+              "index",
+              "condition",
+              "shift"
+            ],
             "additionalProperties": false
           },
           "minItems": 0,
@@ -266,6 +337,105 @@
       "required": [
         "query"
       ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "oit_reading_books",
+    "description": "仅在用户已接受共读并且阅读模式已启动时，浏览本机书架。",
+    "parameters": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "oit_reading_page",
+    "description": "在已启动的共读中读取本机书籍指定页；book_id须来自oit_reading_books。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "book_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "page": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "book_id",
+        "page"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "oit_reading_comment",
+    "description": "在已启动的共读中为当前书籍段落添加批注；paragraph_idx须来自当前页，selected_text可为空。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "book_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "paragraph_idx": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 5000
+        },
+        "selected_text": {
+          "type": "string",
+          "maxLength": 3000
+        }
+      },
+      "required": [
+        "book_id",
+        "paragraph_idx",
+        "content",
+        "selected_text"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "oit_reading_offer",
+    "description": "为Claudia申请共同阅读。由你结合完整对话判断用户是否明确表示此刻有空，或是否直接邀请共读；不要按关键词判断。主动消息只能依据用户近30分钟内明确表示此刻有空的原话申请；其他请求可依据近30分钟内的直接邀请/要求或明确空闲表述。提供支持判断的用户原话。程序只核验引文来源和时间，不判断语义。用户须在OIT聊天栏接受后才会打开阅读室。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "free_statement": {
+          "type": "string",
+          "maxLength": 300,
+          "description": "根据完整上下文判断用户明确表示此刻没有其他事情或安排时，逐字引用近30分钟内支持该判断的用户原话。程序只核验来源和时间。"
+        },
+        "request_statement": {
+          "type": "string",
+          "maxLength": 300,
+          "description": "用户直接邀请或要求共读时，逐字引用近30分钟内支持该判断的原话。程序只核验来源和时间。"
+        }
+      },
+      "required": [
+        "free_statement",
+        "request_statement"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "oit_reading_end",
+    "description": "结束当前进行中的共同阅读。先提交自然的结束说明，只有正文实际显示时才结束阅读并恢复OIT聊天。",
+    "parameters": {
+      "type": "object",
+      "properties": {},
+      "required": [],
       "additionalProperties": false
     }
   }

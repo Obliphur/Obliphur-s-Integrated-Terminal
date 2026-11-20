@@ -122,6 +122,7 @@ class SettingsMixin:
             except Exception:
                 pass
         self.sync.stop()
+        self._stop_coread()
         # 关闭程序时开发者模式自动关掉, 否则 shutdown 不断网 (fail-closed 失效); 子端也跟着关
         # (本地开发版本的自动开发者模式例外: 关掉 / 重启测试用的实例不能把网断了, 下次打开时照样自动开)
         if config.dev_mode_enabled() and config.dev_auto():

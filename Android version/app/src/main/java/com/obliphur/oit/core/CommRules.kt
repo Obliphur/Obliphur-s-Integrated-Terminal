@@ -46,6 +46,20 @@ object CommRules {
 
     data class ValenceBurst(val rate: Double = 1.0, val endShift: Int = 0)
 
+    /** 真实联合行动完成奖励；缺省或格式错误时不加值。 */
+    fun valenceEvent(text: String, event: String): Int {
+        val out = mutableMapOf<String, Int>()
+        val pattern = Regex("""(joint_completed)\s*[:：]\s*([+]?\d{1,3})""")
+        for (line in lines(text, "valence:events")) {
+            val match = pattern.matchEntire(line) ?: return 0
+            val name = match.groupValues[1]
+            val gain = match.groupValues[2].toInt()
+            if (name in out || gain !in 0..100) return 0
+            out[name] = gain
+        }
+        return out[event] ?: 0
+    }
+
     fun valenceBurst(text: String): ValenceBurst {
         val entries = lines(text, "valence:burst")
         if (entries.isEmpty()) return ValenceBurst()

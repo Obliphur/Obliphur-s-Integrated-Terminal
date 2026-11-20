@@ -61,6 +61,48 @@ class ToolsMixin:
                         self.log(f"TOOL query {module} FAIL {type(e).__name__}")
                         values[module] = {"available": False, "error": "unavailable"}
                 result = {"ok": True, "data": values, "note": "own_data属于你，不是用户；reference_template仅参考格式与占位符，非真实数据。不可用数据不要编造。"}
+            elif name == "oit_reading_books" and getattr(self, "reading_mode", False):
+                try:
+                    result = {"ok": True, "books": self.coread_books_fn()}
+                except Exception as e:
+                    result = {"ok": False, "error": str(e)[:500]}
+            elif name == "oit_reading_page" and getattr(self, "reading_mode", False):
+                try:
+                    result = {"ok": True, "page": self.coread_read_fn(args["book_id"], args["page"])}
+                except Exception as e:
+                    result = {"ok": False, "error": str(e)[:500]}
+            elif name == "oit_reading_comment" and getattr(self, "reading_mode", False):
+                try:
+                    result = self.coread_comment_fn(args["book_id"], args["paragraph_idx"],
+                                                    args["content"], args.get("selected_text", ""))
+                except Exception as e:
+                    result = {"ok": False, "error": str(e)[:500]}
+            elif name == "oit_reading_end":
+                if not getattr(self, "reading_mode", False):
+                    result = {"ok": False, "error": "当前没有正在进行的共同阅读"}
+                elif kind not in OP_KINDS or op is not None:
+                    result = {"ok": False, "error": "当前请求不能结束共同阅读"}
+                else:
+                    op = {"type": "coread_end", "session": self.coread_session_id}
+                    result = {"ok": True, "status": "queued_until_message_visible",
+                              "next": "先用oit_reply提交自然的结束说明；正文实际显示后共同阅读才结束"}
+            elif name == "oit_reading_offer":
+                if kind not in OP_KINDS:
+                    result = {"ok": False, "error": "此类请求不能发起共同阅读"}
+                elif not is_claudia(self.persona_name()):
+                    result = {"ok": False, "error": "只有 Claudia 可以发起共同阅读申请"}
+                elif getattr(self, "reading_mode", False) or self.coread_offer():
+                    result = {"ok": False, "error": "已有共同阅读或待处理的申请"}
+                elif (kind == "proactive" and not self._coread_quote_is_recent(args.get("free_statement", ""))):
+                    result = {"ok": False, "error": "主动申请需要引用用户近30分钟内的原话"}
+                elif (kind != "proactive" and not any(self._coread_quote_is_recent(args.get(field, ""))
+                                                       for field in ("free_statement", "request_statement"))):
+                    result = {"ok": False, "error": "申请需要引用用户近30分钟内的原话"}
+                else:
+                    op = {"type": "coread_offer", "free_statement": args.get("free_statement", ""),
+                          "request_statement": args.get("request_statement", "")}
+                    result = {"ok": True, "status": "queued_until_message_visible",
+                              "next": "在oit_reply中自然邀请用户共同阅读；用户同意后才能打开阅读室"}
             elif name == "oit_music_catalog":
                 try:
                     library = music_library.manager(self.dir)

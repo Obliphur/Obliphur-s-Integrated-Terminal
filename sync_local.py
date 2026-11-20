@@ -39,20 +39,19 @@ class PcLocal:
 
     def __init__(self, app):
         self.app = app
-        self._personas_doc = None
-        self._personas_at = 0.0
+        self._persona_docs = {}
 
-    def _personas(self) -> dict:
+    def _personas(self, profiles: bool = False) -> dict:
         """人设文件 (每 2 分钟读一次; 中间一直用缓存, 免得每次 20 秒同步都读一遍)."""
         now = time.monotonic()
-        if self._personas_doc is None or now - self._personas_at >= PERSONA_SYNC_EVERY:
+        at, doc = self._persona_docs.get(profiles, (float("-inf"), {}))
+        if now - at >= PERSONA_SYNC_EVERY:
             try:
-                doc = self.app.comm.persona_doc()
+                doc = self.app.comm.persona_doc(profiles)
             except Exception:       # noqa: BLE001
                 return {}
-            self._personas_doc = doc
-            self._personas_at = now
-        return dict(self._personas_doc)
+            self._persona_docs[profiles] = (now, doc)
+        return dict(doc)
 
     # ---- 基本 ----
 
@@ -297,7 +296,7 @@ class PcLocal:
         return {"settings": settings, "hours": hours, "timer": timer, "achievements": a.ach.doc(),
                 "contract": a.contract.doc(), "behavior": a.behavior.doc(),
                 "prescript": a.prescripts.sync_doc(), "comm": a.comm.sync_doc(),
-                "personas": self._personas(), "ai": self._ai_doc()}
+                "personas": self._personas(), "persona_profiles": self._personas(True), "ai": self._ai_doc()}
 
     def apply(self, doc: str, changes: dict):
         a = self.app
@@ -424,12 +423,12 @@ class PcLocal:
             if isinstance(active, str) and active in cfg.profiles:
                 cfg.set_active(active)
             cfg.save()
-        elif doc == "personas":
+        elif doc in ("personas", "persona_profiles"):
+            profiles = doc == "persona_profiles"
             try:
-                a.comm.apply_persona_doc(changes)
+                a.comm.apply_persona_doc(changes, profiles)
             finally:
-                self._personas_doc = None          # 刚并进来的内容: 下次读盘 (不会把旧内容又发回去)
-                self._personas_at = 0.0
+                self._persona_docs.pop(profiles, None)  # 刚并进来的内容: 下次读盘
 
     # ---- 绑定请求 ----
 

@@ -334,6 +334,9 @@ def _selftest():
         with open(os.path.join(fresh_personas, name), encoding="utf-8") as f:
             assert f.read(len(MAGIC)) == MAGIC
         assert cf.persona_doc()[name] == BUILTIN_PERSONAS[name]
+    from comm.comm_persona import read_profile
+    assert cf.persona_doc(profiles=True)[DEFAULT_PROFILE] == BUILTIN_PERSONAS[DEFAULT_PROFILE]
+    assert read_profile(fresh_personas, DEFAULT_PERSONA) not in persona_system(fresh_personas, DEFAULT_PERSONA)
     assert not cf.claudia_differs() and cf.check_persona_changes() is None
     cf.set_cfg(persona="")
     for name in ("Claudia.txt", "Claudia_background.txt", "Claudia_example.txt", "Claudia_templates.txt", "Assistant.txt"):
@@ -1880,6 +1883,7 @@ def _selftest():
     config.save_json_file(os.path.join(edir, "comm_config.json"), {"seeded": True, "persona": "Claudia.txt"})
     ec = Comm(edir, epersonas, now=lambda: clock[0], chat_fn=fake)
     assert "我的改动" in read_persona(epersonas, "Claudia.txt"), "更新上来: 改过的人设不能被覆盖"
+    assert read_profile(epersonas, DEFAULT_PERSONA) == BUILTIN_PERSONAS[DEFAULT_PROFILE].strip()
     echg = ec.check_persona_changes()
     assert echg and echg["name"] == "Claudia.txt", "更新上来: 改过的人设要提醒"
     ec.flush()
@@ -1893,6 +1897,33 @@ def _selftest():
     doc = ps.persona_doc()
     assert doc["甲.txt"] == "你是甲" and "README.md" not in doc
     assert ps.check_persona_changes() is None                   # 第一次见到: 记下备份
+    ps.apply_persona_doc({"甲_profile.txt": "不应通过旧文档写入"})
+    assert read_profile(psf, "甲.txt") == ""
+    ps.apply_persona_doc({"甲_profile.txt": "简介私有标记"}, profiles=True)
+    assert read_profile(psf, "甲.txt") == "简介私有标记"
+    assert "简介私有标记" not in persona_system(psf, "甲.txt")
+    assert not read_persona_full(psf, "甲_profile.txt") and "甲_profile.txt" not in ps.persona_doc()
+    write_file(os.path.join(psf, "甲_profile.txt"), "修改简介不清聊天")
+    assert ps.check_persona_changes() is None
+    ps.apply_persona_doc({"甲_profile.txt": None}, profiles=True)
+    assert read_profile(psf, "甲.txt") == ""
+
+    from comm import comm_author
+    def fake_author(_profile, system, messages, **_kw):
+        assert "编写助手" in system
+        body = messages[0]["content"]
+        assert BUILTIN_PERSONAS[DEFAULT_PERSONA] in body and prefix_prompt() in body
+        assert "学习大提琴" in body and "手写标记" not in body
+        return '{"persona":"你是乙","templates":"生效规则","profile":"AI 简介"}'
+
+    model = {"base_url": "https://example.com", "model": "test", "api_key": "k"}
+    auto = comm_author.generate(model, "丙", "学习大提琴", "", chat=fake_author)
+    assert auto.profile == "AI 简介"
+    manual = comm_author.generate(model, "丁", "学习大提琴", "手写标记", chat=fake_author)
+    saved = comm_author.save(psf, "丁", manual)
+    assert saved in list_personas(psf) and read_profile(psf, saved) == "手写标记"
+    packed = persona_system(psf, saved)
+    assert "生效规则" in packed and "手写标记" not in packed and "AI 简介" not in packed
     # 老版本留下的旧备份 (文件和同步来的内容一样, 备份是旧的): 同步一次就修好, 重启也不弹
     ps._write_backup_text("甲.txt", "很旧的备份")
     ps._persona_sig.clear()

@@ -14,7 +14,8 @@ import java.time.temporal.ChronoUnit
 
 /** 日程里的一段 (绝对时间). kind = focus / rest / idle / sleep; loop = 第几个循环段生成的 (-1 没有); gap = 睡眠延迟留下的空档; n = 循环的每轮专注分钟. */
 data class RtSeg(val kind: String, val start: LocalDateTime, val end: LocalDateTime, val label: String,
-                 val loop: Int = -1, val gap: Boolean = false, val n: Double = 0.0, val fm: Double = 0.0)
+                 val loop: Int = -1, val gap: Boolean = false, val n: Double = 0.0, val fm: Double = 0.0,
+                 val loopEnd: LocalDateTime? = null)
 
 class RtItem(val isLoop: Boolean, val dur: Double, val label: String = "", val focus: Double = 0.0)
 
@@ -34,6 +35,8 @@ class RoutineSpec {
     var skipTerms: List<String> = emptyList()
     var badTerms: List<String> = emptyList()
     internal val plans = HashMap<String, List<RtSeg>>()
+    internal val contractRest = HashMap<Pair<LocalDate, String>, Pair<LocalDateTime, Long>?>()
+    internal val restPlans = HashMap<List<Any>, List<RtSeg>>()
     /** 起点平移 (1.0.402): (生效日期, 分钟) 按日期排, 从那一天起起点换成这个分钟数; 记在聊天状态里, 不改日程文件. */
     var shifts: List<Pair<LocalDate, Int>> = emptyList()
         private set
@@ -52,6 +55,7 @@ class RoutineSpec {
         if (sh == shifts) return false
         shifts = sh
         plans.clear()
+        restPlans.clear()
         return true
     }
 }
@@ -241,7 +245,7 @@ object Routine {
     fun dayPlan(r: RoutineSpec, d: LocalDate, seed: String, fluct: Boolean = true): List<RtSeg> {
         val ck = "$d|$seed|$fluct"
         r.plans[ck]?.let { return it }
-        if (r.plans.size > 12) r.plans.clear()
+        if (r.plans.size > 64) r.plans.clear()
         return computeDay(r, d, seed, fluct).also { r.plans[ck] = it }
     }
 
@@ -264,7 +268,7 @@ object Routine {
                 val extra = if (next != null && !next.isLoop && specialLabel(next.label)) 0L else minOf(rint("$seed|le|$d|$idx", lo, hi).toLong(), room)
                 if (!c.isBefore(end)) { c = end; continue }
                 val part = loopSegs(c, end, it.focus, idx, extra)
-                segs.addAll(part)
+                segs.addAll(part.map { it.copy(loopEnd = nominal) })
                 if (part.isNotEmpty()) end = part.last().end
             }
             c = end
@@ -321,6 +325,126 @@ object Routine {
             uniq.add(s); last = s
         }
         return uniq
+    }
+
+    /** 按到账时间使用完成奖励 (秒)。只延长循环内的休息，余量带到后续循环。 */
+    data class RestContinuation(val at: LocalDateTime, val seconds: Long, val completed: Boolean)
+
+    internal fun applyContractRest(segs: List<RtSeg>, awards: List<Pair<LocalDateTime, Long>>,
+                                   busy: List<Pair<LocalDateTime, LocalDateTime>> = emptyList(),
+                                   continuations: List<RestContinuation> = emptyList()): List<RtSeg> {
+        val pending = awards.sortedBy { it.first }
+        val continuing = continuations.sortedBy { it.at }
+        var next = 0
+        var follow = 0
+        var balance = 0L
+        var idleFrom: LocalDateTime? = null
+        val out = ArrayList<RtSeg>()
+        var index = 0
+        while (index < segs.size) {
+            val end = segs[index].loopEnd
+            if (end == null) {
+                val s = segs[index++]
+                out.add(if (idleFrom != null && s.kind == "idle") s.copy(start = idleFrom) else s)
+                idleFrom = null
+                continue
+            }
+            val cycle = ArrayList<RtSeg>()
+            while (index < segs.size && segs[index].loopEnd == end) cycle.add(segs[index++])
+            idleFrom = null
+            val first = cycle.first().start
+            var skipFocus = false
+            var i = 0
+            while (i < cycle.size) {
+                val piece = cycle[i]
+                val start = piece.start
+                while (next < pending.size && !pending[next].first.isAfter(start)) balance += pending[next++].second
+                while (follow < continuing.size && !continuing[follow].at.isAfter(first)) balance += continuing[follow++].seconds
+                val following = continuing.getOrNull(follow)
+                val event: RestContinuation
+                if (following != null && first < following.at && following.at <= start && start < end) {
+                    event = following.copy(seconds = following.seconds + balance)
+                    balance = 0
+                    follow++
+                } else if (!skipFocus && i > 0 && piece.kind == "focus" && start < end && cycle[i - 1].kind == "rest" &&
+                           balance > 0 && busy.none { (a, b) -> !start.isBefore(a) && start.isBefore(b) }) {
+                    event = RestContinuation(start, balance, true)
+                    balance = 0
+                } else if (following != null && start < following.at && following.at < minOf(piece.end, end)) {
+                    event = following.copy(seconds = following.seconds + balance)
+                    balance = 0
+                    follow++
+                } else {
+                    skipFocus = false
+                    i++
+                    continue
+                }
+                var reward = event.seconds
+                while (next < pending.size && !pending[next].first.isAfter(event.at)) reward += pending[next++].second
+                val at = event.at
+                val resume = minOf(end, at.plusSeconds(reward))
+                val remainder = reward - ChronoUnit.SECONDS.between(at, resume)
+                balance += if (event.completed) remainder * Cfg.COMM_REWARD_CARRY_PERCENT / 100 else remainder
+                val extra = ChronoUnit.MINUTES.between(end, cycle.last().end)
+                if (at > start) {
+                    cycle[i] = piece.copy(end = at)
+                    i++
+                }
+                if (resume > at) {
+                    if (i > 0 && cycle[i - 1].kind == "rest" && cycle[i - 1].end == at) cycle[i - 1] = cycle[i - 1].copy(end = resume)
+                    else {
+                        cycle.add(i, piece.copy(kind = "rest", label = "休息", start = at, end = resume))
+                        i++
+                    }
+                }
+                cycle.subList(i, cycle.size).clear()
+                if (resume >= end) {
+                    idleFrom = end
+                    break
+                }
+                val tail = loopSegs(resume, end, piece.n, piece.loop, extra).map { it.copy(loopEnd = end) }
+                cycle.addAll(tail)
+                if (tail.isNotEmpty()) skipFocus = true
+            }
+            out.addAll(cycle)
+        }
+        return out
+    }
+
+    fun rewardPlan(r: RoutineSpec, a: LocalDateTime, b: LocalDateTime, seed: String, now: LocalDateTime,
+                   joint: Collection<JSONObject>, busy: List<Pair<LocalDateTime, LocalDateTime>>): List<RtSeg> {
+        if (a >= b) return emptyList()
+        var first = a.toLocalDate().minusDays(KEEP_DAYS.toLong())
+        val awards = ArrayList<Pair<LocalDateTime, Long>>()
+        val continuations = ArrayList<RestContinuation>()
+        val windows = busy.toMutableList()
+        for (rec in joint) {
+            if (!rec.has("scheduled_reward")) continue
+            val begin = runCatching { LocalDateTime.parse(rec.getString("began")) }.getOrNull() ?: continue
+            val end = runCatching { LocalDateTime.parse(rec.getString("end")) }.getOrNull() ?: continue
+            if (end.isAfter(now)) continue
+            val resume = runCatching { LocalDateTime.parse(rec.optString("rest_until").ifEmpty { rec.getString("end") }) }.getOrNull() ?: continue
+            continuations.add(RestContinuation(resume, maxOf(0L, rec.optLong("scheduled_reward")), rec.optString("result") == "completed"))
+            windows.add(begin to resume)
+            first = minOf(first, begin.toLocalDate())
+        }
+        var d = first.minusDays(1)
+        while (d <= minOf(b, now).toLocalDate()) {
+            val key = d to seed
+            if (key !in r.contractRest) {
+                if (r.contractRest.size > 64) r.contractRest.clear()
+                r.contractRest[key] = contractForDay(r, d, seed)?.let { LocalDateTime.parse(it.getString("end")) to it.getLong("reward") }
+            }
+            r.contractRest[key]?.takeIf { !it.first.isAfter(now) }?.let { awards.add(it) }
+            d = d.plusDays(1)
+        }
+        val key = listOf(first, b.toLocalDate(), seed, awards, continuations, windows)
+        val plan = r.restPlans.getOrPut(key) {
+            if (r.restPlans.size >= 4) r.restPlans.clear()
+            val segs = planBetween(r, first.atStartOfDay(), b.toLocalDate().plusDays(2).atStartOfDay(), seed)
+            applyContractRest(segs, awards, windows, continuations)
+        }
+        return plan.filter { it.end.isAfter(a) && it.start.isBefore(b) }
     }
 
     /** 联合行动之后休息结束的时刻 t 落在某个循环里: 从 t 起"立即开始专注", 到那个循环结束; 落在循环外不影响. */
@@ -430,7 +554,7 @@ object Routine {
         val mins = 10 * 60 + rint("$seed|ct|$d|t", 0.0, 11.0 * 60)
         val end = d.atStartOfDay().plusMinutes(mins.toLong())
         return JSONObject().put("result", "completed").put("end", iso(end)).put("level", lv).put("orig_level", lv)
-            .put("orig", JSONArray(terms)).put("terms", JSONArray(terms)).put("rand", JSONArray())
+            .put("orig", JSONArray(terms)).put("terms", JSONArray(terms)).put("rand", JSONArray()).put("reward", Contract.restReward(lv, terms))
     }
 
     /** 最近 days 天里已经结束的合约记录 (从新到旧). */
@@ -483,7 +607,14 @@ class RoutineStore(val file: File, var r: RoutineSpec, val seed: String) {
     /** 记一条真实完成的联合行动合约 (id 去重). 返回是不是新记的. */
     fun addJoint(rec: JSONObject): Boolean {
         val id = rec.optString("id")
-        if (id.isEmpty() || joint.any { it.optString("id") == id }) return false
+        if (id.isEmpty()) return false
+        val existing = joint.firstOrNull { it.optString("id") == id }
+        if (existing != null) {
+            if (existing.toString() == rec.toString()) return false
+            for (key in rec.keys()) existing.put(key, rec.get(key))
+            dirty = true
+            return true
+        }
         joint = (joint + rec).sortedBy { it.getString("end") }.takeLast(Routine.KEEP_JOINT)
         dirty = true
         return true
@@ -491,7 +622,7 @@ class RoutineStore(val file: File, var r: RoutineSpec, val seed: String) {
 
     /** 合约记录 (最近完成的 n 个, 从新到旧): 真的一起完成过的联合行动排在前面, 不够的用按日程生成的补. */
     fun recentContracts(now: LocalDateTime, n: Int = 5): List<JSONObject> {
-        val real = joint.filter { !LocalDateTime.parse(it.getString("end")).isAfter(now) }.sortedByDescending { it.getString("end") }
+        val real = joint.filter { it.optString("result") == "completed" && !LocalDateTime.parse(it.getString("end")).isAfter(now) }.sortedByDescending { it.getString("end") }
         return (real + Routine.contractsBefore(r, now, seed)).take(n)
     }
 

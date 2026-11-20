@@ -114,6 +114,11 @@ class DeliveryMixin:
         joint = self._joint()
         if joint.get("state") == "queued" and any(id(m) in doomed and m["uid"] == joint.get("message") for m in candidates):
             self._joint_set({"state": ""})
+        offer = self.cfg.get("coread_offer") or {}
+        if offer.get("state") == "queued" and any(
+                id(m) in doomed and m.get("uid") == offer.get("message") for m in candidates):
+            self.cfg["coread_offer"] = {}
+            self.save_cfg()
 
     def _reply_interrupt(self):
         """用户插话只撤销未发出的气泡，已显示的保留；旧回调随后失效。"""

@@ -1,0 +1,4 @@
+﻿Upstream: https://github.com/meowmana/coread
+Commit: 11292ef7624261c81658aec1e7f292efe6bdff88
+License: MIT (see LICENSE)
+Local changes: OIT integration, access-key checks for HTTP API requests, and API key hand-off from URL to local browser storage.

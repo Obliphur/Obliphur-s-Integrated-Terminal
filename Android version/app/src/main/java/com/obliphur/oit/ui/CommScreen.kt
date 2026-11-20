@@ -19,6 +19,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -36,6 +39,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -56,6 +60,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withContext
 import com.obliphur.oit.OitApp
 import com.obliphur.oit.ai.Ai
 import com.obliphur.oit.core.ChatMsg
@@ -74,6 +82,66 @@ fun CommScreen(go: (String) -> Unit) {
     val o = LocalOit.current
     val core = OitApp.instance.core
     val comm = core.comm
+    val context = LocalContext.current
+    var readingSession by remember { mutableStateOf(false) }
+    var readingSessionId by remember { mutableStateOf("") }
+    LaunchedEffect(comm.coreadUrl, comm.coreadAccessKey) {
+        while (isActive) {
+            val bridgeState = if (comm.coreadUrl.isNotEmpty() && comm.coreadAccessKey.isNotEmpty()) withContext(Dispatchers.IO) {
+                runCatching {
+                    val priorSession = readingSessionId
+                    if (priorSession.isNotEmpty()) {
+                        val heartbeat = java.net.URL("${comm.coreadUrl.trimEnd('/')}/v1/oit-chat/heartbeat").openConnection() as java.net.HttpURLConnection
+                        heartbeat.connectTimeout = 1800; heartbeat.readTimeout = 1800
+                        heartbeat.requestMethod = "POST"; heartbeat.doOutput = true
+                        heartbeat.setRequestProperty("Content-Type", "application/json")
+                        heartbeat.setRequestProperty("x-coread-key", comm.coreadAccessKey)
+                        heartbeat.outputStream.use { it.write(org.json.JSONObject().put("session_id", priorSession).toString().toByteArray()) }
+                        heartbeat.inputStream.close(); heartbeat.disconnect()
+                    }
+                    val connection = java.net.URL("${comm.coreadUrl.trimEnd('/')}/v1/oit-chat/state").openConnection() as java.net.HttpURLConnection
+                    connection.connectTimeout = 1800; connection.readTimeout = 1800
+                    connection.setRequestProperty("x-coread-key", comm.coreadAccessKey)
+                    try { org.json.JSONObject(connection.inputStream.bufferedReader().use { it.readText() }) }
+                    finally { connection.disconnect() }
+                }.getOrNull()
+            } else null
+            readingSessionId = bridgeState?.optString("session_id").orEmpty()
+            val active = (bridgeState?.optBoolean("active") ?: false) &&
+                bridgeState?.optString("persona_pid") == comm.pid
+            readingSession = active
+            comm.readingMode = active
+            comm.coreadSessionId = if (active) readingSessionId else ""
+            delay(1600)
+        }
+    }
+    DisposableEffect(comm) {
+        comm.onCoreadEnd = {
+            val sessionId = readingSessionId
+            val url = comm.coreadUrl
+            val key = comm.coreadAccessKey
+            Thread {
+                runCatching {
+                    val connection = java.net.URL("${url.trimEnd('/')}/v1/oit-chat/end").openConnection() as java.net.HttpURLConnection
+                    connection.requestMethod = "POST"; connection.doOutput = true
+                    connection.setRequestProperty("Content-Type", "application/json")
+                    connection.setRequestProperty("x-coread-key", key)
+                    connection.outputStream.use { it.write(org.json.JSONObject().put("session_id", sessionId).toString().toByteArray()) }
+                    connection.inputStream.close(); connection.disconnect()
+                }
+            }.apply { isDaemon = true }.start()
+        }
+        onDispose { comm.onCoreadEnd = null }
+    }
+    fun openCoread() {
+        if (comm.coreadUrl.isBlank() || comm.coreadAccessKey.isBlank()) {
+            core.toast(tr("请先在 Windows 的共读页启动共读服务."), "warn")
+            return
+        }
+        val url = "${comm.coreadUrl.trimEnd('/')}/?owner_key=${comm.coreadAccessKey}&access_key=${comm.coreadAccessKey}&persona_pid=${java.net.URLEncoder.encode(comm.pid, "UTF-8")}"
+        runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))) }
+            .onFailure { core.toast(tr("无法打开共读网页."), "warn") }
+    }
     DisposableEffect(Unit) { comm.setViewing(true); onDispose { comm.voice.stop(); comm.setViewing(false) } }
     var input by rememberSaveable { mutableStateOf("") }
     LaunchedEffect(OitApp.instance.commDraft) {
@@ -95,6 +163,7 @@ fun CommScreen(go: (String) -> Unit) {
     var shareAsk by remember { mutableStateOf(comm.shareAsking()) }                 // 点了 share data, 等对方同意 (⏳)
     var shareInv by remember { mutableStateOf(comm.shareInvite()) }                // 对方发了 [share data]: 等用户点 接受 / 拒绝
     var loveInv by remember { mutableStateOf(comm.loveInvite()) }                  // 对方告白了: 等用户点 接受 / 拒绝
+    var coreadInv by remember { mutableStateOf(comm.coreadInvite()) }
     var ocrBusy by remember { mutableStateOf(false) }                          // 识别字体进行中
     val ocrCtx = androidx.compose.ui.platform.LocalContext.current
     // 🖼 识别字体: 选一张图片, 让模型读出上面的文字, 放进聊天框 (图片本身不会发出去, 也不会保存)
@@ -164,6 +233,7 @@ fun CommScreen(go: (String) -> Unit) {
             if ((comm.blocked().isNotEmpty() || !comm.voice.playAllowed()) && comm.voice.state in listOf("playing", "loading")) comm.voice.stop()
             if (!comm.voice.playAllowed() && voiceAutoRunning) { voiceSession++; voiceAutoRunning = false }
             if (comm.version != ver) ver = comm.version
+            if (coreadInv != comm.coreadInvite()) coreadInv = comm.coreadInvite()
             val (text, kind) = comm.otherStatusDisplay()
             if (text != otherStatus) otherStatus = text
             if (kind != otherStatusKind) otherStatusKind = kind
@@ -260,6 +330,7 @@ fun CommScreen(go: (String) -> Unit) {
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
             // ❓ 帮助 (最左边): 解释每个按钮的作用
             TextButton({ help = true }, contentPadding = tight) { Text("❓", fontSize = 18.sp) }
+            TextButton(::openCoread, contentPadding = tight) { Text("📚", fontSize = 18.sp) }
             // 当前聊天模式，与其他功能一起放在输入框上方。
             TextButton({ comm.setScenario(!comm.scenarioOn()) }, contentPadding = tight) {
                 Text(if (comm.scenarioOn()) "🎭" else "📱", fontSize = 18.sp)
@@ -299,6 +370,18 @@ fun CommScreen(go: (String) -> Unit) {
             AccentButton(tr("接受")) { comm.shareRespond(true).let { if (it.isNotEmpty()) core.toast(tr(it), "warn") } }
             TextButton({ comm.shareRespond(false).let { if (it.isNotEmpty()) core.toast(tr(it), "warn") } }) { Text(tr("拒绝"), color = o.dim) }
         }
+        if (coreadInv) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(start = 8.dp)) {
+            Text(tr("${comm.aiName()} 想和你共同阅读"), color = o.accent, fontSize = 12.sp)
+            AccentButton(tr("接受")) {
+                comm.coreadRespond(true).let { if (it.isNotEmpty()) core.toast(tr(it), "warn") }
+                coreadInv = comm.coreadInvite()
+                if (comm.coreadUrl.isNotBlank()) openCoread()
+            }
+            TextButton({ comm.coreadRespond(false).let { if (it.isNotEmpty()) core.toast(tr(it), "warn") }; coreadInv = comm.coreadInvite() }) {
+                Text(tr("拒绝"), color = o.dim)
+            }
+        }
         if (loveInv) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.padding(start = 8.dp)) {
             Text(tr("{name} 向你告白", "name" to comm.aiName()), color = o.accent, fontSize = 12.sp)
@@ -323,6 +406,29 @@ fun CommScreen(go: (String) -> Unit) {
                 val why = comm.send(input)
                 if (why.isEmpty()) input = "" else if (why != "empty") report(why)
             }
+        }
+    }
+    if (readingSession) Dialog(onDismissRequest = {}) {
+        Column(Modifier.fillMaxWidth().background(o.card, RoundedCornerShape(18.dp)).padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Text(tr("正在共读，请在阅读网页里的聊天框继续沟通。"), color = o.text)
+            TextButton({
+                val url = comm.coreadUrl
+                val key = comm.coreadAccessKey
+                Thread {
+                    runCatching {
+                        val connection = java.net.URL("${url.trimEnd('/')}/v1/oit-chat/end").openConnection() as java.net.HttpURLConnection
+                        connection.requestMethod = "POST"; connection.doOutput = true
+                        connection.setRequestProperty("Content-Type", "application/json")
+                        connection.setRequestProperty("x-coread-key", key)
+                        connection.outputStream.use {
+                            it.write(org.json.JSONObject().put("session_id", readingSessionId).toString().toByteArray())
+                        }
+                        connection.inputStream.close(); connection.disconnect()
+                    }
+                }.apply { isDaemon = true }.start()
+                readingSession = false; comm.readingMode = false; comm.coreadSessionId = ""; readingSessionId = ""
+            }) { Text(tr("结束阅读并恢复沟通"), color = o.accent) }
         }
     }
     if (help) HelpDialog { help = false }
@@ -374,7 +480,7 @@ private fun HelpDialog(onDismiss: () -> Unit) {
         Triple("⏰ / ⏲", tr("共时闹钟"), tr("⏰ = 闹钟跟随这个对象的起床时间; 响铃的设备手动选, 一次只能有一个对象.")),
         Triple("🕰", tr("起点平移"), tr("请求对方平移日程起点, 允许范围由人设模板决定, 同意后明天起生效.")),
         Triple("🖼", tr("识别字体"), tr("选一张图片, 把上面的文字读出来放进聊天框. OCR 不发送图片; 也可以用 📎 把图片发给聊天 AI.")),
-        Triple("🤝", tr("联合行动"), tr("邀请对方一起做一次合约: 在合约页选词条, 输入开始时间; 对方回 [Yes] 就按约开始.")),
+        Triple("🤝", tr("联合行动"), tr("邀请对方一起做一次合约: 在合约页选词条, 输入开始时间; 对方回 [Yes] 就按约开始. Claudia 的剩余休息按她的日程接续和结转。")),
     )
     val half = (rows.size + 1) / 2                                    // 左栏先排满, 剩下的放第二栏
     @Composable
@@ -540,6 +646,8 @@ fun CommSettings() {
     val core = OitApp.instance.core
     val comm = core.comm
     var readme by remember { mutableStateOf(false) }
+    var personaProfile by remember { mutableStateOf<String?>(null) }
+    var author by remember { mutableStateOf(false) }
     var avatarWho by remember { mutableStateOf("me") }
     var cropUri by remember { mutableStateOf<android.net.Uri?>(null) }
     val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri -> if (uri != null) cropUri = uri }
@@ -566,10 +674,21 @@ fun CommSettings() {
         if (names.isNotEmpty()) Box(Modifier.padding(top = 8.dp)) {
             Segmented(names, comm.personaName()) { comm.set(persona = it) }
         }
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            val selected = comm.personaName()
+            if (selected.isNotEmpty()) PlainButton(tr("打开人设简介")) { personaProfile = comm.readPersonaProfile(selected) }
+            PlainButton(tr("创建人设")) { author = true }
+        }
         if (comm.claudiaDiffers()) Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {   // 选着 Claudia 而内容和默认人设不一样
             Text(tr("Claudia 的内容和默认人设不一样"), color = o.dim, fontSize = 12.sp, modifier = Modifier.weight(1f))
             PlainButton(tr("还原")) { comm.restoreClaudia(); core.toast(tr("已还原默认人设")) }
         }
+    }
+
+    personaProfile?.let { PersonaProfileDialog(it) { personaProfile = null } }
+    if (author) PersonaAuthorDialog(comm, { author = false }) {
+        comm.set(persona = it)
+        author = false
     }
 
     OitCard {

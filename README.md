@@ -47,6 +47,8 @@ Windows x64 可在「设置 → 额外功能」安装 Microsoft JDK 17，用于 
 | **Settings** | 按模块分页的可调参数；额外功能页提供 AI 语音、Android 构建用 JDK 17、Process Lasso 和音乐工具部署与转换 |
 | **Reset** | 恢复网络并清理数据 |
 
+在设置 → 沟通 → 人设可以查看当前人设的简介，也可以用 AI 协助创建新人设。
+
 断网有两种方式:**Adapter** 直接禁用网卡;**Proxy** 通过系统代理过滤,不读取系统代理的程序不受其限制.
 
 ---
@@ -85,6 +87,8 @@ python main.py
 ## 许可证
 
 除另有说明外,本项目代码采用 [MIT License](LICENSE).第三方依赖和资源可能适用各自的许可证,请查看随附的许可文件.
+
+共同阅读组件 coread 的上游作者为 meowmana，源码及 MIT 许可保留在 `third_party/coread/`，OIT 集成改动见其中的 `OIT-INTEGRATION.txt`。
 
 ### 项目结构
 
@@ -193,5 +197,3 @@ obliphur_terminal/
       ├─ ai/Ai.kt        AI 名单建议
       └─ ui/             各页面 (Jetpack Compose)
 ```
-
-对了,Claudia的默认头像取自https://www.pixiv.net/artworks/150995828.

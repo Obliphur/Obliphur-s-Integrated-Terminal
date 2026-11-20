@@ -161,7 +161,8 @@ class ShareDock(tk.Frame):
                               relief="flat", highlightthickness=1, highlightbackground=COLORS["border"], highlightcolor=COLORS["accent"])
         self.entry.pack(side="left", fill="x", expand=True, ipady=3)
         self.entry.bind("<Return>", lambda _e: self._send())
-        ttk.Button(row, text=tr("发送"), style="Accent.TButton", command=self._send).pack(side="left", padx=(6, 0))
+        self.btn_send = ttk.Button(row, text=tr("发送"), style="Accent.TButton", command=self._send)
+        self.btn_send.pack(side="left", padx=(6, 0))
 
     def _fold(self):
         self._folded = not self._folded
@@ -176,6 +177,8 @@ class ShareDock(tk.Frame):
         self.on_view()
 
     def _send(self):
+        if getattr(self.comm, "reading_mode", False):
+            return
         text = self.entry.get().strip()
         if not text:
             return
@@ -191,6 +194,9 @@ class ShareDock(tk.Frame):
     def refresh(self, has_ai: bool = False):
         """has_ai: 这一页能看 AI 的数据 (有切换按钮)."""
         c = self.comm
+        locked = bool(getattr(c, "reading_mode", False))
+        self.entry.config(state="disabled" if locked else "normal")
+        self.btn_send.config(state="disabled" if locked else "normal")
         page = c.share_page()
         name = comm_mod_names().get(page, page)
         cfg(self.lbl_title, text="💬  " + tr("share data") + " · " + tr(name))

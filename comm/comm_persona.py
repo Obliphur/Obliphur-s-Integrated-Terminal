@@ -149,7 +149,7 @@ def ensure_personas(folder: str):
 def list_personas(folder: str) -> list:
     try:
         names = [n for n in os.listdir(folder)
-                 if n.lower().endswith(PERSONA_EXT) and n.lower() != "readme.md"
+                 if n.lower().endswith(PERSONA_EXT) and n.lower() != "readme.md" and not is_profile_name(n)
                  and os.path.isfile(os.path.join(folder, n))]
     except OSError:
         return []
@@ -194,11 +194,31 @@ def read_persona(folder: str, name: str) -> str:
 ROUTINE_SUFFIX = "_templates"         # 模板文件: 人设 X.txt 的配套文件 X_templates.txt
 ROUTINE_OLD_SUFFIX = "_routine"       # 旧版日程文件名, 读取时兼容
 COMPANION_SEP = "_"                    # 配套文件: 人设 X.txt 旁边的 X_名字.txt (不出现在人设列表里, 最后和 X.txt 合并成一份关于 X 的文件发给模型)
+PROFILE_SUFFIX = "_profile.txt"
+
+
+def is_profile_name(name: str) -> bool:
+    return name.lower().endswith(PROFILE_SUFFIX)
+
+
+def read_profile(folder: str, name: str) -> str:
+    """读取供用户查看的简介，独立于提示词与模板。"""
+    if not name or name != os.path.basename(name) or is_profile_name(name):
+        return ""
+    return read_persona(folder, persona_title(name) + PROFILE_SUFFIX)
+
+
+def profile_files(folder: str) -> list:
+    try:
+        return sorted(n for n in os.listdir(folder) if is_profile_name(n)
+                      and os.path.isfile(os.path.join(folder, n)))
+    except OSError:
+        return []
 
 
 def companion_base(folder: str, name: str) -> str:
     """配套文件 X_名字.txt → 它的人设文件名 X.txt / X.md (同文件夹里真的有才算; 有好几个可能时取最长的 X; 不是配套文件 = "")."""
-    if not name or name != os.path.basename(name) or name.lower() == "readme.md":
+    if not name or name != os.path.basename(name) or name.lower() == "readme.md" or is_profile_name(name):
         return ""
     stem, ext = os.path.splitext(name)
     if ext.lower() not in PERSONA_EXT:
@@ -212,7 +232,7 @@ def companion_base(folder: str, name: str) -> str:
             continue
         for e in PERSONA_EXT:
             cand = stem[:i] + e
-            if os.path.isfile(os.path.join(folder, cand)):
+            if not is_profile_name(cand) and os.path.isfile(os.path.join(folder, cand)):
                 return cand
 
 
@@ -260,6 +280,8 @@ def read_routine(folder: str, name: str) -> str:
 
 def read_persona_full(folder: str, name: str) -> str:
     """发给模型的人设: 人设本体 + 它所有的配套文件 (背景 / 日程 ...), 按文件名顺序合并成一份."""
+    if is_profile_name(name):
+        return ""
     parts = [read_persona(folder, name)] + [read_persona(folder, n) for n in companions_of(folder, name)]
     return "\n\n".join(x for x in parts if x)
 
@@ -268,7 +290,7 @@ def import_persona(folder: str, src: str) -> str:
     """把外面的一个文件复制进人设文件夹, 返回新的文件名 (重名时加序号); 不是 .txt / .md 返回 ""."""
     base = os.path.basename(src)
     stem, ext = os.path.splitext(base)
-    if ext.lower() not in PERSONA_EXT or base.lower() == "readme.md":
+    if ext.lower() not in PERSONA_EXT or base.lower() == "readme.md" or is_profile_name(base):
         return ""
     ensure_personas(folder)
     name, n = base, 1

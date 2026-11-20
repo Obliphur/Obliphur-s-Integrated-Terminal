@@ -49,7 +49,20 @@ def contract_for_day(r: Routine, d: _date, seed: str):
     lv = C.level_of(terms)
     mins = 10 * 60 + rint(f"{seed}|ct|{d}|t", 0, 11 * 60)
     end = datetime.combine(d, datetime.min.time()) + timedelta(minutes=mins)
-    return {"result": "completed", "end": _iso(end), "level": lv, "orig_level": lv, "orig": list(terms), "terms": list(terms), "rand": []}
+    return {"result": "completed", "end": _iso(end), "level": lv, "orig_level": lv, "orig": list(terms), "terms": list(terms),
+            "rand": [], "reward": C.rest_reward(lv, terms)}
+
+
+def generated_rest(r: Routine, d: _date, seed: str):
+    """当天确定性生成的奖励到账事件，避免每次推算日程都重新选词条。"""
+    cache = r.__dict__.setdefault("_contract_rest", {})
+    key = (d, seed)
+    if key not in cache:
+        if len(cache) > 64:
+            cache.clear()
+        rec = contract_for_day(r, d, seed)
+        cache[key] = (_dt(rec["end"]), rec["reward"]) if rec else None
+    return cache[key]
 
 
 def banned_ids(r: Routine) -> set:

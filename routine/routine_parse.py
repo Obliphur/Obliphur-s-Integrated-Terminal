@@ -58,6 +58,7 @@ class Routine:
             return False
         self.shifts = sh
         self.__dict__.pop("_plans", None)
+        self.__dict__.pop("_reward_plans", None)
         return True
 
 

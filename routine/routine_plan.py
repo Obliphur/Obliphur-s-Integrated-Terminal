@@ -5,6 +5,7 @@
 
 import math
 import re
+from itertools import groupby
 from datetime import datetime, timedelta, date as _date
 import config
 
@@ -115,7 +116,7 @@ def day_plan(r: Routine, d: _date, seed: str, fluct: bool = True) -> list:
     ck = (d, seed, bool(fluct))
     if ck in cache:
         return cache[ck]
-    if len(cache) > 12:
+    if len(cache) > 64:
         cache.clear()
     cache[ck] = out = _day_plan(r, d, seed, fluct)
     return out
@@ -144,6 +145,7 @@ def _day_plan(r: Routine, d: _date, seed: str, fluct: bool) -> list:
             part = loop_segs(c, end, it["focus"], extra)
             for s in part:
                 s["loop"] = idx
+                s["loop_end"] = nominal
                 s["n"] = it["focus"]
                 segs.append(s)
             if part:
@@ -203,6 +205,85 @@ def plan_between(r: Routine, a: datetime, b: datetime, seed: str, fluct: bool = 
         uniq.append(s)
         last = s
     return uniq
+
+
+def apply_contract_rest(segs: list, awards: list, busy: list = (), continuations: list = ()) -> list:
+    """按到账时间使用完成奖励 (秒)。只延长循环内的休息，余量带到后续循环。"""
+    awards = iter(sorted(awards))
+    pending = next(awards, None)
+    continuing = iter(sorted(continuations))
+    follow = next(continuing, None)
+    balance = 0
+    out = []
+    idle_from = None
+    for end, pieces in groupby(segs, key=lambda s: s.get("loop_end")):
+        cycle = list(pieces)
+        if end is None:
+            if idle_from is not None and cycle[0]["kind"] == "idle":
+                cycle[0] = dict(cycle[0], start=idle_from)
+            idle_from = None
+            out.extend(cycle)
+            continue
+        idle_from = None
+        first = cycle[0]["start"]
+        skip_focus = False
+        i = 0
+        while i < len(cycle):
+            piece = cycle[i]
+            start = piece["start"]
+            while pending and pending[0] <= start:
+                balance += pending[1]
+                pending = next(awards, None)
+            while follow and follow[0] <= first:
+                balance += follow[1]
+                follow = next(continuing, None)
+            if follow and first < follow[0] <= start < end:
+                at, reward, completed = follow
+                follow = next(continuing, None)
+                reward += balance
+                balance = 0
+            elif (not skip_focus and i > 0 and piece["kind"] == "focus" and start < end
+                  and cycle[i - 1]["kind"] == "rest" and balance > 0
+                  and not any(a <= start < b for a, b in busy)):
+                at, reward, completed = start, balance, True
+                balance = 0
+            elif follow and start < follow[0] < min(piece["end"], end):
+                at, reward, completed = follow
+                follow = next(continuing, None)
+                reward += balance
+                balance = 0
+            else:
+                skip_focus = False
+                i += 1
+                continue
+
+            while pending and pending[0] <= at:
+                reward += pending[1]
+                pending = next(awards, None)
+            resume = min(end, at + timedelta(seconds=reward))
+            remainder = reward - (resume - at).total_seconds()
+            balance += remainder * config.COMM_REWARD_CARRY_PERCENT // 100 if completed else remainder
+            actual_end = cycle[-1]["end"]
+            if at > start:
+                cycle[i] = dict(piece, end=at)
+                i += 1
+            if resume > at:
+                if i > 0 and cycle[i - 1]["kind"] == "rest" and cycle[i - 1]["end"] == at:
+                    cycle[i - 1] = dict(cycle[i - 1], end=resume)
+                else:
+                    cycle.insert(i, dict(piece, kind="rest", label="休息", start=at, end=resume))
+                    i += 1
+            if resume >= end:
+                idle_from = end
+                del cycle[i:]
+                break
+            tail = loop_segs(resume, end, piece["n"], actual_end - end)
+            cycle[i:] = [dict(s, loop=piece["loop"], loop_end=end, n=piece["n"]) for s in tail]
+            if tail:
+                # 不在刚推后的同一段专注上再次动用已有余额。
+                skip_focus = True
+        out.extend(cycle)
+    return out
 
 
 def shift_for_joint(segs: list, t: datetime, now: datetime) -> list:

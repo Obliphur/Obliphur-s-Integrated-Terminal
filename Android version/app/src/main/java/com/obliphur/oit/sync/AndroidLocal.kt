@@ -21,17 +21,16 @@ import java.time.LocalDateTime
 /** 设备同步: 本机数据 <-> 同步的文档 / 账 / 状态 (同桌面版 sync_local.py). 都在界面线程里调用. */
 class AndroidLocal(private val app: OitApp) : SyncLocal {
     private val core get() = app.core
-    private var personaCache: Map<String, String>? = null
-    private var personaAt = 0L
+    private val personaCache = mutableMapOf<Boolean, Pair<Long, Map<String, String>>>()
 
     /** 人设文件 (每 2 分钟读一次; 中间一直用缓存, 免得每次 20 秒同步都读一遍). */
-    private fun personas(): Map<String, String> {
+    private fun personas(profiles: Boolean = false): Map<String, String> {
         val now = android.os.SystemClock.elapsedRealtime()
-        if (personaCache == null || now - personaAt >= 120_000L) {
-            personaCache = runCatching { core.comm.personaDoc() }.getOrDefault(emptyMap())
-            personaAt = now
-        }
-        return personaCache ?: emptyMap()
+        val cached = personaCache[profiles]
+        if (cached != null && now - cached.first < 120_000L) return cached.second
+        val doc = runCatching { core.comm.personaDoc(profiles) }.getOrDefault(emptyMap())
+        personaCache[profiles] = now to doc
+        return doc
     }
 
     /** 手机上两种断网方式都是代理 (全屏蔽 / 规则过滤), 局域网都保留, 所以都可以同步. */
@@ -257,6 +256,7 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
         return mapOf("settings" to settings, "hours" to hours, "timer" to timer, "achievements" to core.ach.doc(),
             "contract" to core.contract.doc(), "behavior" to core.behavior.doc(),
             "prescript" to core.prescript.syncDoc(), "comm" to core.comm.syncDoc(), "personas" to personas(),
+            "persona_profiles" to personas(true),
             "ai" to aiDoc())
     }
 
@@ -374,10 +374,10 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
                 cfg.save()
             }
             "comm" -> core.comm.applyDoc(changes)
-            "personas" -> {
-                core.comm.applyPersonaDoc(changes)
-                personaCache = null          // 刚并进来的内容: 下次读盘 (不会把旧内容又发回去)
-                personaAt = 0L
+            "personas", "persona_profiles" -> {
+                val profiles = doc == "persona_profiles"
+                core.comm.applyPersonaDoc(changes, profiles)
+                personaCache.remove(profiles)   // 刚并进来的内容: 下次读盘
             }
         }
         core.changed()

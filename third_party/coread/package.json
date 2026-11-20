@@ -1,0 +1,44 @@
+{
+  "name": "coread",
+  "version": "0.1.0",
+  "description": "共读室 — AI与人类的共读批注系统 / Co-reading room with shared annotations between AI and humans",
+  "type": "module",
+  "main": "server.mjs",
+  "bin": {
+    "coread": "./cli.mjs"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "npx vite",
+    "build": "npx vite build",
+    "test": "node --test",
+    "check": "tsc -p web/tsconfig.json --noEmit && node --check server.mjs && node --check lib/backup.mjs && node --check lib/reading-events.mjs",
+    "mcp": "node mcp-stdio.mjs",
+    "mcp:sse": "node mcp-sse.mjs"
+  },
+  "keywords": [
+    "mcp",
+    "co-reading",
+    "epub",
+    "annotations",
+    "ai"
+  ],
+  "license": "MIT",
+  "allowScripts": {
+    "better-sqlite3@12.11.1": true
+  },
+  "dependencies": {
+    "adm-zip": "^0.5.10",
+    "archiver": "^7.0.0",
+    "better-sqlite3": "^12.11.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.16",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.2",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.16"
+  }
+}

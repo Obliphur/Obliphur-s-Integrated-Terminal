@@ -37,7 +37,7 @@ class RtMixin:
     def _rt_joint_t(self):
         """联合行动之后休息结束的时刻 (循环里的"立即开始专注"用); 没有 = None."""
         j = self._joint()
-        if j.get("state") != "rest":
+        if j.get("state") != "rest" or j.get("scheduled_reward"):
             return None
         try:
             return _joint_time(j["rest_until"])
@@ -51,6 +51,25 @@ class RtMixin:
             return []
         seed = seed or self.pid
         t = self._rt_joint_t() if joint and rt is self._rt else None
+        if any(pid_of(name) == seed and is_claudia(name) for name in (self.persona_name(), *list_personas(self.personas))):
+            st = self._rt_store_get() if seed == self.pid else None
+            records = {rec["id"]: rec for rec in st.joint} if st else {}
+            j = self.cfg.get("joint") or {}
+            for rec in j.get("rest_history", []):
+                if isinstance(rec, dict) and rec.get("pid") == seed and rec.get("id"):
+                    records[rec["id"]] = rec
+            busy = []
+            if j.get("pid") == seed:
+                rec = self._rt_joint_entry(j)
+                if rec and rec.get("scheduled_reward") is not None:
+                    records[rec["id"]] = rec
+                if j.get("state") == "run":
+                    try:
+                        busy.append((_joint_time(j["began"]), _joint_time(j["until"])))
+                    except (KeyError, TypeError, ValueError):
+                        pass
+            segs = routine.reward_plan(rt, a, b, seed, self.now(), records.values(), busy)
+            return routine.shift_for_joint(segs, t, self.now()) if t else segs
         if t is None:
             return routine.plan_between(rt, a, b, seed)
         segs = routine.shift_for_joint(routine.plan_between(rt, a - timedelta(hours=12), b + timedelta(hours=12), seed), t, self.now())
@@ -141,17 +160,25 @@ class RtMixin:
     def _rt_joint_record(self, st):
         """和用户一起顺利完成的联合行动 (state=rest, result=completed): 把这次真实的合约 (词条 / 等级 / 结束时间) 记进对方的合约记录.
         联合行动的状态会随设备同步, 所以哪台设备都能记; 失败 / 提前终止的不算"顺利完成"."""
-        j = self._joint()
-        if j.get("state") != "rest" or j.get("result") != "completed":
+        rec = self._rt_joint_entry(self._joint())
+        if rec:
+            st.add_joint(rec)
+
+    @staticmethod
+    def _rt_joint_entry(j):
+        if j.get("state") != "rest" or (j.get("result") != "completed" and not j.get("scheduled_reward")):
             return
         import contract as C
         terms = C.clean_terms(j.get("terms") or [])
         ended = j.get("ended")
-        if not terms or not ended:
+        if not ended:
             return
         lv = C.level_of(terms)
-        st.add_joint({"id": str(j.get("cid") or j.get("id") or ended), "result": "completed", "end": str(ended)[:19], "level": lv,
-                      "orig_level": lv, "orig": list(terms), "terms": list(terms), "rand": []})
+        rec = {"id": str(j.get("cid") or j.get("id") or ended), "result": j.get("result"), "end": str(ended)[:19], "level": lv,
+               "orig_level": lv, "orig": list(terms), "terms": list(terms), "rand": []}
+        if j.get("scheduled_reward"):
+            rec.update(began=j.get("began"), rest_until=j.get("rest_until"), scheduled_reward=j.get("rest_s") or 0)
+        return rec
 
     def _cond_days(self, refresh: bool = True) -> dict:
         """{日期: [专注秒, 空闲秒]}: 用户的计时记录只留最近 7 天, 所以最近 7 天每次都重算存下来, 更早的用以前存的."""

@@ -1,0 +1,7 @@
+﻿node_modules/
+test-results/
+data/
+public/assets/*.map
+shen.db
+*.db-shm
+*.db-wal

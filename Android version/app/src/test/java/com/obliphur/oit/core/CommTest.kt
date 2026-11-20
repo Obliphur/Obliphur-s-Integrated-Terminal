@@ -122,6 +122,42 @@ class CommTest {
         assertEquals("invite", c.jointState())
         assertEquals("一起行动吧", c.visible().last().text)
         assertTrue(calls.last().second.toString(), "queued_until_message_visible" in calls.last().second.last().second)
+
+        // 程序只检查引文来源和时间；句子是否表示有空由模型结合上下文判断。
+        val reading = comm(File(td, "coread-data").also { it.mkdirs() }, File(td, "coread-personas"))
+        reading.set(persona = "Claudia.txt", splitSend = false)
+        val quoteTime = nowForTest()
+        reading.messages.add(ChatMsg(1, "me", "我现在没空，刚才只是转述‘我今天有空’。", "", uid = "quote", ts = quoteTime))
+        assertTrue(reading.coreadQuoteIsRecent("我今天有空"))
+        reading.messages.clear()
+        reading.messages.add(ChatMsg(2, "ai", "我今天有空", "", uid = "ai-quote", ts = quoteTime))
+        assertFalse(reading.coreadQuoteIsRecent("我今天有空"))
+        reading.messages.clear()
+        reading.messages.add(ChatMsg(3, "me", "我今天有空", "", uid = "old-quote", ts = quoteTime - 1_800_001L))
+        assertFalse(reading.coreadQuoteIsRecent("我今天有空"))
+        var ended = 0
+        reading.onCoreadEnd = { ended++ }
+        reading.readingMode = true
+        reading.coreadSessionId = "new-session"
+        val endMessage = ChatMsg(4, "ai", "先读到这里", "", uid = "end-message")
+        assertFalse(reading.coreadEndApply("old-session", endMessage))
+        assertTrue(reading.readingMode)
+        assertEquals(0, ended)
+        assertTrue(reading.coreadEndApply("new-session", endMessage))
+        assertFalse(reading.readingMode)
+        assertEquals("", reading.coreadSessionId)
+        assertEquals(1, ended)
+        // 延时消息属于旧阅读室时，显示后也不能结束后来新开的阅读室。
+        reading.readingMode = true
+        reading.coreadSessionId = "delayed-session"
+        endMessage.hold = true
+        assertTrue(reading.coreadEndApply("delayed-session", endMessage))
+        reading.coreadSessionId = "later-session"
+        endMessage.hold = false
+        Comm::class.java.getDeclaredMethod("coreadEndDeliver", ChatMsg::class.java).also { it.isAccessible = true }.invoke(reading, endMessage)
+        assertTrue(reading.readingMode)
+        assertEquals(1, ended)
+        reading.flush(); reading.voice.close()
         c.flush(); c.voice.close()
     }
 
@@ -1380,6 +1416,17 @@ class CommTest {
         c.set(persona = "甲.txt")
         assertEquals("你是甲", c.personaDoc()["甲.txt"])
         assertNull(c.checkPersonaChanges())                          // 第一次见到: 记下备份
+        c.applyPersonaDoc(mapOf("甲_profile.txt" to "旧文档不应写入简介"))
+        assertEquals("", c.readPersonaProfile("甲.txt"))
+        c.applyPersonaDoc(mapOf("甲_profile.txt" to "简介私有标记"), profiles = true)
+        assertEquals("简介私有标记", c.readPersonaProfile("甲.txt"))
+        assertEquals("你是甲", c.readPersonaFull("甲.txt"))
+        assertEquals("", c.readPersonaFull("甲_profile.txt"))
+        assertTrue("甲_profile.txt" !in c.personaDoc())
+        File(td, "p/甲_profile.txt").writeText("修改简介")
+        assertNull(c.checkPersonaChanges())
+        c.applyPersonaDoc(mapOf("甲_profile.txt" to null), profiles = true)
+        assertEquals("", c.readPersonaProfile("甲.txt"))
         File(td, "d/persona_backup/甲.txt").writeText("很旧的备份")        // 老版本留下的旧备份: 文件和同步来的内容一样, 同步一次就修好
         c.applyPersonaDoc(mapOf<String, Any?>("甲.txt" to "你是甲"))
         assertEquals("你是甲", File(td, "d/persona_backup/甲.txt").readText())
@@ -1391,6 +1438,19 @@ class CommTest {
         assertTrue("乙.txt" in c.listPersonas() && "甲.txt" !in c.listPersonas())
         assertEquals("你是乙", c.readPersona("乙.txt"))
         assertTrue("README.md" !in c.personaDoc())
+    }
+
+    @Test
+    fun personaDraftKeepsTheProfileSeparate() {
+        val td = Files.createTempDirectory("oit").toFile()
+        val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))
+        val response = """{"persona":"你是乙","templates":"配套规则","profile":"AI 简介"}"""
+        assertEquals("AI 简介", PersonaAuthor.parse(response, "").profile)
+        val draft = PersonaAuthor.parse(response, "手写简介")
+        val name = c.saveNewPersona("乙", draft)
+        assertTrue(name in c.listPersonas())
+        assertEquals("你是乙\n\n配套规则", c.readPersonaFull(name))
+        assertEquals("手写简介", c.readPersonaProfile(name))
     }
 
     /** 特例: 名字是 Assistant 且提示词没改过 → 专注时也能用. */
@@ -1568,6 +1628,10 @@ class CommTest {
             assertTrue(File(td, "pp/$name").readText().startsWith(PersonaCodec.MAGIC))
             assertEquals(BuiltinPersonas.ALL.getValue(name), c.personaDoc()[name])
         }
+        val profile = BuiltinPersonas.ALL.getValue(BuiltinPersonas.PROFILE)
+        assertEquals(profile, c.personaDoc(profiles = true)[BuiltinPersonas.PROFILE])
+        assertEquals(profile.trim(), c.readPersonaProfile(BuiltinPersonas.DEFAULT))
+        assertFalse(profile.trim() in c.readPersonaFull(BuiltinPersonas.DEFAULT))
         assertFalse(c.claudiaDiffers())
         assertNull(c.checkPersonaChanges())
         c.set(persona = "")

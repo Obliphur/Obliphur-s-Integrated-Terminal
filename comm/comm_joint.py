@@ -39,8 +39,18 @@ class JointMixin:
         return j if isinstance(j, dict) and j.get("state") and j.get("pid") == self.pid else {}
 
     def _joint_set(self, changes: dict, replace: bool = False):
-        j = {} if replace else dict(self.cfg.get("joint") or {})
+        previous = self.cfg.get("joint") or {}
+        history = {str(x.get("pid")) + ":" + str(x.get("id")): x
+                   for x in previous.get("rest_history", []) if isinstance(x, dict)}
+        j = {} if replace else dict(previous)
         j.update(changes)
+        for source in (previous, j):
+            rec = self._rt_joint_entry(source)
+            if rec and source.get("scheduled_reward"):
+                rec["pid"] = source.get("pid")
+                history[str(rec["pid"]) + ":" + rec["id"]] = rec
+        if history:
+            j["rest_history"] = sorted(history.values(), key=lambda x: x["end"])[-routine.KEEP_JOINT:]
         j["ts"] = max(self._ms(), int(j.get("ts") or 0) + 1)       # 后改的为准 (设备同步)
         self.cfg["joint"] = j
         self.save_cfg()
@@ -198,23 +208,34 @@ class JointMixin:
         now = self.now()
         rest_s = max(0, int(reward_s or 0))
         until = now + timedelta(seconds=rest_s)
-        be = self._user_break_end(now)
-        if be is not None:                                    # 合约结束时用户正在休息 (这次休息接着休息): 对方休息到用户这次休息结束
-            until = be
+        name = next((name for name in list_personas(self.personas) if pid_of(name) == j.get("pid")), "")
+        scheduled = is_claudia(name) and bool(routine.parse(read_routine(self.personas, name)))
+        if scheduled:
+            until = self._user_break_end(now) or now
+        else:
+            until = self._user_break_end(now) or until
+        settlement = {"state": "rest", "result": str(result), "ended": now.isoformat(timespec="seconds"),
+                      "rest_s": rest_s, "rest_until": until.isoformat(timespec="seconds"), "hp": []}
+        if scheduled:
+            settlement["scheduled_reward"] = True
         if foreign:
-            self._joint_set({"state": "rest", "result": str(result), "ended": now.isoformat(timespec="seconds"),
-                             "rest_s": rest_s, "rest_until": until.isoformat(timespec="seconds"), "hp": []})
+            self._joint_set(settlement)
+            if result == "completed":
+                self._interaction_joint_completed(j["pid"], name)
             return True
         self._rt_sync_safe()                                  # 联合行动期间的状态按用户的专注 / 休息记下来
         lost = self._joint_hp_text(j)
-        self._joint_set({"state": "rest", "result": str(result), "ended": now.isoformat(timespec="seconds"),
-                         "rest_s": rest_s, "rest_until": until.isoformat(timespec="seconds"), "hp": []})
+        self._joint_set(settlement)
+        if result == "completed":
+            self._interaction_joint_completed(j["pid"], name)
         if self._rt:                                          # 顺利完成的: 马上记进对方的合约记录 (别的设备在下一次整理数据时从同步来的联合行动状态里记)
             try:
                 self._rt_sync()
             except Exception as e:      # noqa: BLE001
                 self.log(f"ROUTINE joint record FAIL {type(e).__name__}: {e}")
         rest = f"你与用户一起得到了 {rest_s // 60} 分钟休息, 休息到 {until:%H:%M} 结束, 之后你需要重新计算日程." if rest_s > 0 else             "这次没有得到休息时间, 你立即重新计算日程."
+        if scheduled:
+            rest = f"你还有 {rest_s // 60} 分钟休息，已计入你的日程，从 {until:%H:%M} 共同休息结束后接续，最多休息到当前循环结束，余量结转。"
         tail = (" " + lost) if lost else ""
         if result == "completed":
             self._joint_note(f"联合行动顺利完成了. {rest}{tail}")
@@ -280,6 +301,10 @@ class JointMixin:
         was = _joint_time(j["rest_until"])
         self._rt_sync_safe()
         self._joint_set({"rest_until": now.isoformat(timespec="seconds")})
+        if j.get("scheduled_reward"):
+            self._rt_sync_safe()
+            self._joint_note(f"共同休息在 {now:%H:%M} 结束，你从此刻接续自己的剩余休息，按 OIT 实时日程为准。")
+            return True
         self._joint_note(f"用户 {now:%H:%M} 结束了休息 (原定休息到 {was:%H:%M}), 你也跟着结束休息, 现在需要重新计算日程.")
         return True
 
@@ -305,6 +330,8 @@ class JointMixin:
     def _joint_follow(self, j: dict, now):
         """联合行动结束后的同步阶段 (state=rest): 对方继续跟着用户 —— 用户还在专注 / 睡眠: 一直顺延 (用户的休息结束才结束, 最长 JOINT_FOLLOW_CAP);
         用户正在休息: 休息到用户这次休息真正结束 (不再按合约给的那几分钟算). 用户空闲: 不顺延, 到时间就结束."""
+        if j.get("scheduled_reward"):
+            return
         try:
             until, ended = _joint_time(j["rest_until"]), _joint_time(j["ended"])
         except (KeyError, TypeError, ValueError):
@@ -383,7 +410,7 @@ class JointMixin:
         """联合行动之后休息结束的时刻 T: T 落在人设的某个循环段里, 那一段从 T 起"立即开始专注"重新计算, 直到那个循环结束 (之后又是原来的日程);
         T 落在循环外 (和原来的空闲 / 睡眠 / 吃饭重叠) 则不影响. 返回 {"entries": 重新计算后的完整日程, "loop": 重新生成的那几段, "until": 循环结束的时刻} 或 None."""
         j = self._joint()
-        if j.get("state") != "rest":
+        if j.get("state") != "rest" or j.get("scheduled_reward"):
             return None
         try:
             t = _joint_time(j["rest_until"])

@@ -16,6 +16,89 @@ from i18n import tr
 
 
 class CommMixin:
+    def _open_coread(self):
+        """打开本机的共读室网页; 阅读页聊天通过本机沟通对象发送."""
+        try:
+            import webbrowser
+            from urllib.parse import quote
+            from coread_service import OitChatBridge, manager
+            if not self.comm.pid:
+                toast.warn(tr("请先选择聊天对象，再开始共读."))
+                return
+            self.comm.on_coread_open = self._open_coread
+            service = getattr(self, "coread_service", None)
+            if service is None:
+                service = self.coread_service = manager(self.dm.data_dir)
+            bridge = getattr(self, "coread_bridge", None)
+            if bridge is None:
+                bridge = self.coread_bridge = OitChatBridge(self, service.access_key)
+                bridge.start()
+            service.bridge_port = bridge.port
+
+            def open_page():
+                hosts = service.lan_hosts()
+                host = hosts[0] if hosts else "127.0.0.1"
+                self.comm.set_cfg(coread_link={"url": service.url(host).split("/?", 1)[0],
+                                               "access_key": service.access_key})
+                url = service.url(host).replace("/?", f"/?persona_pid={quote(self.comm.pid)}&")
+                webbrowser.open(url, new=2)
+
+            service.open(lambda: self.root.after(0, open_page))
+        except Exception as exc:
+            self._log_window(f"ERROR    coread start {type(exc).__name__}: {exc}")
+            toast.warn(tr("启动共读室失败: {error}", error=str(exc)))
+
+    def _coread_manager(self, start=False):
+        from coread_service import manager
+        service = getattr(self, "coread_service", None)
+        if service is None:
+            service = self.coread_service = manager(self.dm.data_dir)
+        if start and service.refresh() != "ready":
+            raise RuntimeError(tr("本机共读服务没有运行."))
+        return service
+
+    def _coread_books(self):
+        return self._coread_manager(start=True).books()
+
+    def _coread_read(self, book_id, page):
+        return self._coread_manager(start=True).read_book(book_id, page)
+
+    def _coread_comment(self, book_id, paragraph_idx, content, selected_text=""):
+        return self._coread_manager(start=True).add_comment(
+            book_id, paragraph_idx, content, selected_text, self.comm.share_ai_name())
+
+    def _coread_offer_respond(self, accept):
+        why = self.comm.coread_offer_respond(bool(accept))
+        if why:
+            toast.warn(tr(why))
+        page = getattr(self, "pages", {}).get("comm")
+        if page is not None:
+            page.refresh(force=True)
+
+    def _end_coread_session(self, reason=""):
+        """离开阅读页时解除原沟通页的输入锁."""
+        self.comm.reading_mode = False
+        self.comm.coread_session_id = ""
+        self.comm._coread_pending_end = None
+        bridge = getattr(self, "coread_bridge", None)
+        if bridge is not None:
+            bridge.clear_session(reason)
+        page = getattr(self, "pages", {}).get("comm")
+        if page is not None:
+            page.set_reading_mode(False)
+        if reason:
+            toast.info(tr(reason))
+
+    def _stop_coread(self):
+        self._end_coread_session()
+        service = getattr(self, "coread_service", None)
+        if service is not None:
+            service.stop()
+        bridge = getattr(self, "coread_bridge", None)
+        if bridge is not None:
+            bridge.close()
+            self.coread_bridge = None
+
     # ---- 沟通 (MECHANICS 24) ----
 
     def _comm_state(self) -> str:
@@ -190,6 +273,10 @@ class CommMixin:
         if self.dm.resetting:
             return
         try:
+            bridge = getattr(self, "coread_bridge", None)
+            if bridge is not None:
+                bridge.pump()
+                bridge.watchdog()
             self._joint_break_watch()
             self.comm.tick()
             for text in self.comm.take_focus_notices():

@@ -73,6 +73,11 @@ class CommSettingsMixin:
         self.cb_persona = ttk.Combobox(fr, textvariable=self.comm_persona, state="readonly", width=40)
         self.cb_persona.pack(fill="x", padx=12, pady=(2, 10))
         self.cb_persona.bind("<<ComboboxSelected>>", lambda _e: self._comm_pick_persona())
+        actions = tk.Frame(fr, bg=card)
+        actions.pack(fill="x", padx=12, pady=(0, 10))
+        self.btn_persona_profile = ttk.Button(actions, text=tr("打开人设简介"), command=self._comm_open_persona_profile)
+        self.btn_persona_profile.pack(side="left", padx=(0, 6))
+        ttk.Button(actions, text=tr("创建人设"), command=self._comm_create_persona).pack(side="left")
         # 选着 Claudia 而它的内容和默认人设不一样时, 显示"还原"
         self.row_restore = tk.Frame(fr, bg=card)
         tk.Label(self.row_restore, text=tr("Claudia 的内容和默认人设不一样"), bg=card, fg=COLORS["text_dim"], font=small,
@@ -162,6 +167,18 @@ class CommSettingsMixin:
         folder = self.comm.personas
         os.makedirs(folder, exist_ok=True)
         self._open_uri(folder)
+
+    def _comm_open_persona_profile(self):
+        from comm.comm_persona import read_profile
+        from .. import persona_dialogs
+        persona_dialogs.open_profile(self.winfo_toplevel(), read_profile(self.comm.personas, self.comm.persona_name()))
+
+    def _comm_create_persona(self):
+        from .. import persona_dialogs
+        name = persona_dialogs.create_persona(self.winfo_toplevel(), self.comm)
+        if name:
+            self.comm.set_cfg(persona=name)
+            self._refresh_comm()
 
     def _comm_import(self):
         import comm as comm_mod
@@ -261,6 +278,7 @@ class CommSettingsMixin:
         self._persona_labels = comm_mod.persona_labels(comm_mod.list_personas(c.personas))
         self.cb_persona.config(values=[lab for _n, lab in self._persona_labels])
         cur = c.persona_name()
+        cfg(self.btn_persona_profile, state="normal" if cur else "disabled")
         if hasattr(self, "_voice_settings_refresh"):
             self._voice_settings_refresh()
         set_var(self.comm_persona, next((lab for n, lab in self._persona_labels if n == cur), ""))

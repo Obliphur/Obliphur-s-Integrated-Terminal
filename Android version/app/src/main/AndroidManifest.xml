@@ -40,6 +40,7 @@
 
     <application
         android:name=".OitApp"
+        android:usesCleartextTraffic="true"
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="false"

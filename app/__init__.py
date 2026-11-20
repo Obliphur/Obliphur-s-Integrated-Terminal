@@ -274,6 +274,10 @@ class BreakTimerApp(CommMixin, SyncMixin, ContractMixin, ContractMediaMixin,
         self.prescript_job = None
         # 沟通 (MECHANICS 24): 人设文件夹和数据文件夹并排, 不加密
         self.comm = comm_mod.Comm(self.dm.data_dir, os.path.join(self.dm.low_dir, "OIT_personas"))
+        self.comm.coread_books_fn = self._coread_books
+        self.comm.on_coread_open = self._open_coread
+        self.comm.coread_read_fn = self._coread_read
+        self.comm.coread_comment_fn = self._coread_comment
         # 闹钟 (1.0.359, MECHANICS 25): 本机的闹钟配置 / 响铃线程; 共时闹钟的设置在 comm 里 (随设备同步)
         self.alarm = alarm_mod.Alarm(self.dm.data_dir)
         self.ringer = alarm_mod.Ringer(self.dm.data_dir)

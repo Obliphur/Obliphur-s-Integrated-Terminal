@@ -251,7 +251,7 @@ class FlowMixin:
         self._changed()
         self._push()
 
-    def _request(self, kind: str, extra=None):
+    def _request(self, kind: str, extra=None, reading_context: str = ""):
         if self.busy:
             self._again = True
             return
@@ -269,6 +269,13 @@ class FlowMixin:
         if who and first_turn(self.messages):              # 身份背景: 只在这段对话的第一轮发一次
             dynamic += "\n\n以下是用户的身份背景(用户自己填写):\n" + who
         msgs = api_messages(self.messages, include_latest_api=True)
+        reading_context = str(reading_context or "").strip()[:18000]
+        if reading_context:
+            context = oit_text("当前 OIT 共读阅读上下文 (来自本机书库的当前可见页; 仅用于本轮回答, 不要伪称读过全书):\n" + reading_context)
+            if msgs and msgs[-1]["role"] == "user":
+                msgs[-1]["content"] += "\n\n" + context
+            else:
+                msgs.append({"role": "user", "content": context})
         system, msgs = cache_layout(profile, system, dynamic, msgs)     # Gemini: 动态块贴到最后一条用户消息 (system 要逐字节不变)
         if extra:
             if msgs and msgs[-1]["role"] == "user":

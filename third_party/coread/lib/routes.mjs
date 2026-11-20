@@ -1,0 +1,818 @@
+import { matchQuote } from './quote-match.mjs';
+import fs from 'fs';
+import path from 'path';
+import { createRequire } from 'module';
+import { execFile } from 'child_process';
+import { fileURLToPath } from 'url';
+import { getDb, getDbPath, getImageDir } from './db.mjs';
+import { parseEpub, extractImages, extractCover, smartSplit } from './epub.mjs';
+import { isValidDate, calculateStreaks, mergeReadingBooks } from './reading-stats.mjs';
+import { recordCheckpoint } from './reading-events.mjs';
+import { handleBackupRequest, handleStoredBackupRequest } from './backup-routes.mjs';
+import { safeAssetName } from './backup.mjs';
+import {
+  clearBrowserPagination,
+  displayPageForParagraph,
+  getPageFragments,
+  resolvePagination,
+  saveBrowserPagination,
+} from './pagination.mjs';
+const require = createRequire(import.meta.url);
+
+// 书架封面缩略图：和 book-images 并列放在 book-thumbs/<bookId>/，
+// 不能放进 book-images——导出 EPUB 和备份会把那个目录整个打包
+const COVER_THUMB_SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), 'cover-thumb.py');
+const thumbDir = (bookId) => path.join(path.dirname(getDbPath()), 'book-thumbs', String(bookId));
+// 生成失败过的原图：同一个解释器、原图没变时 10 分钟内不再反复调 python（没装 Pillow 时书架不用每次都等一轮）
+const thumbFailed = new Map();
+const THUMB_RETRY_MS = 10 * 60 * 1000;
+
+const CHAPTER_RE = /^第[\d一二三四五六七八九十百千万]+[章节回]|^#|^Chapter\s+\d/i;
+
+// ─── 共读室关门锁 ───
+const ROOM_LOCK_PATH = process.env.ROOM_LOCK_PATH || path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'data', 'reading-room-lock.json');
+const ROOM_OWNER_KEY = process.env.ROOM_OWNER_KEY || '';
+const COREAD_ACCESS_KEY = process.env.COREAD_ACCESS_KEY || '';
+function readRoomLock() {
+  try {
+    const s = JSON.parse(fs.readFileSync(ROOM_LOCK_PATH, 'utf8'));
+    return { locked: !!s.locked, at: s.at || null, note: typeof s.note === 'string' ? s.note : '' };
+  } catch { return { locked: false, at: null, note: '' }; }
+}
+function writeRoomLock(locked, note) {
+  const state = { locked: !!locked, at: new Date().toISOString(), note: String(note || '').slice(0, 120) };
+  fs.mkdirSync(path.dirname(ROOM_LOCK_PATH), { recursive: true });
+  fs.writeFileSync(ROOM_LOCK_PATH, JSON.stringify(state));
+  return state;
+}
+function roomGate(req, res) {
+  if (!readRoomLock().locked) return false;
+  if ((req.headers['x-owner-key'] || '') === ROOM_OWNER_KEY) return false;
+  json(res, 423, { error: 'door_locked', message: '共读室已关门，需要 owner key 才能进入。' });
+  return true;
+}
+
+function json(res, status, data) {
+  res.writeHead(status, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+  res.end(JSON.stringify(data));
+}
+
+function cors(res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-owner-key, x-coread-key');
+}
+
+async function readBody(req) {
+  return new Promise((resolve, reject) => {
+    let data = '';
+    req.on('data', c => data += c);
+    req.on('end', () => { try { resolve(JSON.parse(data)); } catch { reject(new Error('Invalid JSON')); } });
+    req.on('error', reject);
+  });
+}
+
+function readRawBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    req.on('data', c => chunks.push(c));
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+
+function decodeText(buf) {
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(buf); } catch {}
+  try { return new TextDecoder('gbk').decode(buf); } catch {}
+  return buf.toString('utf8');
+}
+
+export async function handleRequest(req, res, opts = {}) {
+  if (COREAD_ACCESS_KEY && req.url?.startsWith('/v1/') &&
+      req.headers['x-coread-key'] !== COREAD_ACCESS_KEY) {
+    json(res, 401, { error: 'access_denied', message: '共读室需要有效的本地访问密钥。' });
+    return true;
+  }
+  if (req.url?.startsWith('/v1/oit-chat/')) {
+    const bridgePort = Number(process.env.COREAD_OIT_BRIDGE_PORT || 0);
+    if (!bridgePort) { json(res, 503, { error: 'OIT chat bridge is not running' }); return true; }
+    try {
+      const url = new URL(req.url, 'http://localhost');
+      const action = url.pathname.slice('/v1/oit-chat/'.length);
+      if (!['state', 'start', 'heartbeat', 'send', 'end'].includes(action)) { json(res, 404, { error: 'not found' }); return true; }
+      const headers = { 'x-coread-key': COREAD_ACCESS_KEY };
+      let body;
+      if (req.method === 'POST') { body = await readBody(req); headers['content-type'] = 'application/json'; }
+      else if (req.method !== 'GET' || action !== 'state') { json(res, 405, { error: 'method not allowed' }); return true; }
+      const response = await fetch(`http://127.0.0.1:${bridgePort}/${action}${action === 'state' ? url.search : ''}`, {
+        method: req.method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        signal: AbortSignal.timeout(21000),
+      });
+      const payload = await response.json();
+      json(res, response.status, payload);
+    } catch (e) { json(res, 503, { error: e.message || 'OIT chat unavailable' }); }
+    return true;
+  }
+  if (req.url?.startsWith('/v1/coread-backup/')) return handleStoredBackupRequest(req, res, ROOM_OWNER_KEY);
+  if (req.url?.startsWith('/v1/backup/')) {
+    if (roomGate(req, res)) return true;
+    return handleBackupRequest(req, res);
+  }
+  if (req.method === 'OPTIONS') {
+    cors(res);
+    res.writeHead(204);
+    res.end();
+    return true;
+  }
+
+  cors(res);
+  const port = opts.port || 3000;
+  if (req.method === 'GET' && req.url === '/v1/reading-state') {
+    const db = getDb(true);
+    try { json(res, 200, { generation: db.prepare('SELECT value FROM config WHERE key = ?').get('library_generation')?.value || 'initial' }); }
+    finally { db.close(); }
+    return true;
+  }
+
+  if (req.method === 'GET' && req.url === '/v1/reading-room/door') {
+    json(res, 200, readRoomLock()); return true;
+  }
+
+  // Anyone may lock; unlocking needs the owner key when ROOM_OWNER_KEY is set.
+  if (req.method === 'POST' && req.url === '/v1/reading-room/door') {
+    try {
+      const body = await readBody(req);
+      const locked = !!body.locked;
+      if (!locked && (req.headers['x-owner-key'] || '') !== ROOM_OWNER_KEY) {
+        json(res, 403, { error: 'owner_key_required', message: 'Only the owner can unlock the reading room.' }); return true;
+      }
+      json(res, 200, { ok: true, ...writeRoomLock(locked, body.note) });
+    } catch (e) { json(res, 500, { error: e.message }); }
+    return true;
+  }
+
+  // GET /v1/reading-stats — aggregate reading time, streaks, finishes and AI notes
+  if (req.method === 'GET' && (req.url === '/v1/reading-stats' || req.url.startsWith('/v1/reading-stats?'))) {
+    if (roomGate(req, res)) return true;
+    try {
+      const url = new URL(req.url, `http://localhost:${port}`);
+      const requestedToday = url.searchParams.get('today') || '';
+      const today = isValidDate(requestedToday) ? requestedToday : new Date().toISOString().slice(0, 10);
+      const reader = url.searchParams.get('reader');
+      const db = getDb(true);
+
+      // AI reader: query reading_log table instead of reading_daily
+      const dailySrc = reader === 'ai'
+        ? `(SELECT book_id, MAX(book_title) AS book_title, reading_date, SUM(seconds) AS seconds FROM reading_log WHERE reader = 'ai' GROUP BY book_id, reading_date)`
+        : 'reading_daily';
+      const sessionSrc = reader === 'ai'
+        ? `(SELECT session_id, book_id, reading_date, MIN(start_min) AS start_min, CAST(SUM(seconds) * 1000 AS INTEGER) AS elapsed_ms FROM reading_log WHERE reader = 'ai' GROUP BY session_id, reading_date)`
+        : 'reading_checkpoints';
+
+      const daily = db.prepare(`
+        SELECT reading_date, SUM(seconds) AS seconds
+        FROM ${dailySrc}
+        GROUP BY reading_date
+        ORDER BY reading_date DESC
+      `).all();
+      const bookTimes = db.prepare(`
+        SELECT d.book_id AS id, COALESCE(MAX(b.title), MAX(d.book_title), '已删除书籍') AS title,
+               SUM(d.seconds) AS total_seconds, MIN(d.reading_date) AS first_read_at, MAX(d.reading_date) AS last_read_at
+        FROM ${dailySrc} d
+        LEFT JOIN books b ON b.id = d.book_id
+        GROUP BY d.book_id
+      `).all();
+      const finishes = db.prepare('SELECT book_id AS id, book_title AS title, finished_at FROM reading_finished').all();
+      const byDay = db.prepare(`SELECT d.reading_date, d.book_id, COALESCE(b.title, d.book_title, '已删除书籍') AS title, d.seconds
+        FROM ${dailySrc} d LEFT JOIN books b ON b.id = d.book_id ORDER BY d.reading_date DESC`).all();
+      const sessions = db.prepare(`SELECT session_id, book_id, reading_date, start_min, elapsed_ms FROM ${sessionSrc} ORDER BY reading_date DESC`).all();
+      const notes = db.prepare(`
+        SELECT n.*, COALESCE(b.title, n.book_title) AS book_title
+        FROM reading_record_notes n
+        LEFT JOIN books b ON b.id = n.book_id
+        ORDER BY n.created_at DESC, n.id DESC
+      `).all();
+      db.close();
+      const streaks = calculateStreaks(daily, today);
+      const totalSeconds = daily.reduce((sum, row) => sum + Number(row.seconds || 0), 0);
+      const todaySeconds = Number(daily.find(row => row.reading_date === today)?.seconds || 0);
+      const books = mergeReadingBooks(bookTimes, finishes);
+      json(res, 200, { today, today_seconds: todaySeconds, total_seconds: totalSeconds, ...streaks, daily, books, notes, by_day: byDay, sessions });
+    } catch (e) { json(res, 500, { error: e.message }); }
+    return true;
+  }
+
+  // POST /v1/books/:id/reading-time — foreground-only heartbeat from the reader
+  if (req.method === 'POST' && req.url.match(/^\/v1\/books\/\d+\/reading-time$/)) {
+    if (roomGate(req, res)) return true;
+    try {
+      const id = parseInt(req.url.split('/')[3]);
+      const body = await readBody(req);
+      if (body.session_id) {
+        const db = getDb();
+        try { json(res, 200, recordCheckpoint(db, id, body)); }
+        catch (e) { json(res, e.status || 500, { error: e.message }); }
+        finally { db.close(); }
+        return true;
+      }
+      const seconds = Math.floor(Number(body.seconds));
+      const readingDate = String(body.reading_date || '');
+      if (!isValidDate(readingDate) || !Number.isFinite(seconds) || seconds < 1 || seconds > 120) {
+        json(res, 400, { error: 'valid reading_date and 1-120 seconds required' }); return true;
+      }
+      const db = getDb();
+      const book = db.prepare('SELECT id, title FROM books WHERE id = ?').get(id);
+      if (!book) {
+        db.close(); json(res, 404, { error: 'book not found' }); return true;
+      }
+      db.prepare(`
+        INSERT INTO reading_daily (book_id, book_title, reading_date, seconds, updated_at)
+        VALUES (?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(book_id, reading_date) DO UPDATE SET
+          seconds = seconds + excluded.seconds,
+          book_title = COALESCE(excluded.book_title, reading_daily.book_title),
+          updated_at = datetime('now')
+      `).run(id, book.title, readingDate, seconds);
+      db.close();
+      json(res, 200, { ok: true });
+    } catch (e) { json(res, 500, { error: e.message }); }
+    return true;
+  }
+
+  // POST /v1/ai-reading-time — record AI reading session
+  if (req.method === 'POST' && req.url === '/v1/ai-reading-time') {
+    if (roomGate(req, res)) return true;
+    try {
+      const body = await readBody(req);
+      const { book_id, session_id, reading_date, start_min, paragraphs, chars, seconds } = body;
+      if (!book_id || !session_id || !isValidDate(reading_date)) {
+        json(res, 400, { error: 'book_id, session_id, reading_date required' }); return true;
+      }
+      const secs = Number(seconds) || 0;
+      if (secs < 0 || secs > 86400) { json(res, 400, { error: 'seconds must be 0-86400' }); return true; }
+      const db = getDb();
+      const book = db.prepare('SELECT id, title FROM books WHERE id = ?').get(book_id);
+      db.prepare(`INSERT INTO reading_log (reader, session_id, book_id, book_title, reading_date, start_min, paragraphs, chars, seconds)
+        VALUES ('ai', ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        session_id, book_id, book?.title || '', reading_date,
+        start_min ?? null, paragraphs || 0, chars || 0, secs
+      );
+      db.close();
+      json(res, 200, { ok: true });
+    } catch (e) { json(res, 500, { error: e.message }); }
+    return true;
+  }
+
+  // POST /v1/books/:id/finish — preserve the first date a book was finished
+  if (req.method === 'POST' && req.url.match(/^\/v1\/books\/\d+\/finish$/)) {
+    if (roomGate(req, res)) return true;
+    try {
+      const id = parseInt(req.url.split('/')[3]);
+      const body = await readBody(req);
+      const finishedDate = String(body.finished_date || '');
+      if (!isValidDate(finishedDate)) { json(res, 400, { error: 'valid finished_date required' }); return true; }
+      const db = getDb();
+      const book = db.prepare('SELECT id, title FROM books WHERE id = ?').get(id);
+      if (!book) {
+        db.close(); json(res, 404, { error: 'book not found' }); return true;
+      }
+      db.prepare(`
+        INSERT INTO book_progress (book_id, finished_at)
+        VALUES (?, ?)
+        ON CONFLICT(book_id) DO UPDATE SET finished_at = COALESCE(book_progress.finished_at, excluded.finished_at)
+      `).run(id, finishedDate);
+      db.prepare(`
+        INSERT INTO reading_finished (book_id, book_title, finished_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(book_id) DO UPDATE SET
+          book_title = excluded.book_title,
+          finished_at = MIN(reading_finished.finished_at, excluded.finished_at)
+      `).run(id, book.title, finishedDate);
+      const finishedAt = db.prepare('SELECT finished_at FROM reading_finished WHERE book_id = ?').get(id)?.finished_at;
+      db.close();
+      json(res, 200, { ok: true, finished_at: finishedAt });
+    } catch (e) { json(res, 500, { error: e.message }); }
+    return true;
+  }
+
+  // POST /v1/reading-notes — comments attached to a reading day or a book
+  if (req.method === 'POST' && req.url === '/v1/reading-notes') {
+    if (roomGate(req, res)) return true;
+    try {
+      const body = await readBody(req);
+      const content = String(body.content || '').trim();
+      const bookId = body.book_id == null ? null : Number(body.book_id);
+      const readingDate = body.reading_date == null || body.reading_date === '' ? null : String(body.reading_date);
+      const fromWho = String(body.from_who || 'ai').trim() || 'ai';
+      if (!content || (readingDate && !isValidDate(readingDate)) || (bookId != null && !Number.isInteger(bookId))) {
+        json(res, 400, { error: 'content and valid optional target required' }); return true;
+      }
+      const db = getDb();
+      let bookTitle = null;
+      if (bookId != null) {
+        const book = db.prepare('SELECT title FROM books WHERE id = ?').get(bookId);
+        const archived = db.prepare('SELECT book_title AS title FROM reading_finished WHERE book_id = ?').get(bookId);
+        const timed = db.prepare('SELECT book_title AS title FROM reading_daily WHERE book_id = ? AND book_title IS NOT NULL LIMIT 1').get(bookId);
+        bookTitle = book?.title || archived?.title || timed?.title || null;
+        if (!bookTitle) { db.close(); json(res, 404, { error: 'book not found' }); return true; }
+      }
+      const result = db.prepare('INSERT INTO reading_record_notes (book_id, book_title, reading_date, from_who, content) VALUES (?, ?, ?, ?, ?)').run(bookId, bookTitle, readingDate, fromWho, content);
+      db.close();
+      json(res, 200, { ok: true, id: Number(result.lastInsertRowid) });
+    } catch (e) { json(res, 500, { error: e.message }); }
+    return true;
+  }
+
+  // GET /v1/books
+  if (req.method === 'GET' && req.url === '/v1/books') {
+    try {
+      const db = getDb(true);
+      const books = db.prepare("SELECT b.id, b.title, b.total_paragraphs, b.created_at, b.cover_image, p.page as current_paragraph_idx, COALESCE(p.paragraph_offset, 0) as current_paragraph_offset, p.updated_at as last_read_at, p.last_opened_at as last_opened_at FROM books b LEFT JOIN book_progress p ON b.id = p.book_id ORDER BY MAX(COALESCE(p.last_opened_at, ''), b.created_at) DESC, b.id DESC").all();
+      const commentCounts = db.prepare('SELECT book_id, COUNT(*) as count FROM book_comments GROUP BY book_id').all();
+      const countMap = {};
+      for (const c of commentCounts) countMap[c.book_id] = c.count;
+      const result = books.map(b => {
+        const pagination = resolvePagination(db, b.id);
+        const displayPage = b.current_paragraph_idx == null ? null : displayPageForParagraph(pagination, b.current_paragraph_idx, b.current_paragraph_offset);
+        return {
+          ...b,
+          current_page: displayPage,
+          current_display_page: displayPage,
+          total_pages: pagination.totalPages,
+          pagination_source: pagination.source,
+          comment_count: countMap[b.id] || 0,
+        };
+      });
+      db.close();
+      json(res, 200, { books: result });
+    } catch (e) { json(res, 500, { error: e.message }); }
+    return true;
+  }
+
+  // POST /v1/books/:id/pagination — save the real page table measured by the active browser.
+  // The database bookmark remains a stable paragraph index; this table only maps it to display pages.
+  if (req.method === 'POST' && req.url.match(/^\/v1\/books\/\d+\/pagination$/)) {
+    if (roomGate(req, res)) return true;
+    try {
+      const id = parseInt(req.url.split('/')[3]);
+      const body = await readBody(req);
+      const db = getDb();
+      const saved = saveBrowserPagination(db, id, body);
+      db.close();
+      json(res, 200, {
+        ok: true,
+        total_pages: saved.breaks.length,
+        pagination_source: 'browser',
+        updated_at: saved.updated_at,
+      });
+    } catch (e) { json(res, 400, { error: e.message }); }
+    return true;
+  }
+
+  // GET /v1/books/:id/slice
+  if (req.method === 'GET' && req.url.match(/^\/v1\/books\/\d+\/slice/)) {
+    if (roomGate(req, res)) return true;
+    try {
+      const urlObj = new URL(req.url, `http://localhost:${port}`);
+      const id = parseInt(req.url.split('/')[3]);
+      const start = parseInt(urlObj.searchParams.get('start') || '0');
+      const count = parseInt(urlObj.searchParams.get('count') || '30');
+      const db = getDb(true);
+      const book = db.prepare('SELECT * FROM books WHERE id = ?').get(id);
+      if (!book) { db.close(); json(res, 404, { error: 'not found' }); return true; }
+      const paragraphs = db.prepare('SELECT idx, content FROM book_paragraphs WHERE book_id = ? AND idx >= ? ORDER BY idx LIMIT ?').all(id, start, count);
+      const minIdx = paragraphs.length ? paragraphs[0].idx : start;
+      const maxIdx = paragraphs.length ? paragraphs[paragraphs.length - 1].idx : start;
+      const comments = paragraphs.length ? db.prepare('SELECT * FROM book_comments WHERE book_id = ? AND paragraph_idx BETWEEN ? AND ? ORDER BY paragraph_idx, created_at').all(id, minIdx, maxIdx) : [];
+      db.close();
+      json(res, 200, { book, paragraphs, comments, total: book.total_paragraphs });
+    } catch (e) { json(res, 500, { error: e.message }); }
+    return true;
+  }
+
+  // GET /v1/books/:id
+  if (req.method === 'GET' && req.url.match(/^\/v1\/books\/\d+(\?|$)/)) {
+    if (roomGate(req, res)) return true;
+    try {
+      const url = new URL(req.url, `http://localhost:${port}`);
+      const id = parseInt(url.pathname.split('/')[3]);
+      const page = parseInt(url.searchParams.get('page') || '1');
+      const db = getDb(true);
+      const book = db.prepare('SELECT * FROM books WHERE id = ?').get(id);
+      if (!book) { db.close(); json(res, 404, { error: 'book not found' }); return true; }
+      const pagination = resolvePagination(db, id);
+      const totalPages = pagination.totalPages;
+      const clampedPage = Math.max(1, Math.min(page, totalPages));
+      const paragraphs = getPageFragments(db, id, pagination, clampedPage);
+      const comments = db.prepare('SELECT * FROM book_comments WHERE book_id = ? ORDER BY paragraph_idx, created_at').all(id);
+      const progress = db.prepare("SELECT page, COALESCE(paragraph_offset, 0) AS paragraph_offset FROM book_progress WHERE book_id = ?").get(id);
+      const progressPage = progress?.page == null ? null : displayPageForParagraph(pagination, progress.page, progress.paragraph_offset);
+      db.close();
+      json(res, 200, {
+        book,
+        paragraphs,
+        comments,
+        pagination: { page: clampedPage, totalPages, total: book.total_paragraphs, source: pagination.source, viewport: pagination.viewport || null },
+        progress: { paragraph_idx: progress?.page ?? null, paragraph_offset: progress?.paragraph_offset ?? 0, display_page: progressPage },
+      });
+    } catch (e) { json(res, 500, { error: e.message }); }
+    return true;
+  }
+
+  // POST /v1/books/:id/comment
+  if (req.method === 'POST' && req.url.match(/^\/v1\/books\/\d+\/comment$/)) {
+    if (roomGate(req, res)) return true;
+    try {
+      const id = parseInt(req.url.split('/')[3]);
+      const body = await readBody(req);
+      const { content, from_who, sel_start_idx, sel_end_idx, sel_end_para_idx, reply_to } = body;
+      let { paragraph_idx, selected_text } = body;
+      if (paragraph_idx === undefined || !content) { json(res, 400, { error: 'paragraph_idx and content required' }); return true; }
+      const db = getDb();
+      db.pragma('foreign_keys = OFF');
+      const author = from_who || 'human';
+      let startIdx = sel_start_idx ?? null, endIdx = sel_end_idx ?? null, note;
+      if (selected_text && startIdx == null) {
+        const m = matchQuote(db, id, paragraph_idx, selected_text);
+        if (!m.ok) { db.close(); json(res, 400, { error: m.reason, ...(m.paragraph ? { paragraph: m.paragraph.slice(0, 800) } : {}) }); return true; }
+        ({ paragraph_idx, text: selected_text, start: startIdx, end: endIdx, note } = m);
+      }
+      const result = db.prepare('INSERT INTO book_comments (book_id, paragraph_idx, sel_start_idx, sel_end_idx, sel_end_para_idx, selected_text, from_who, content, reply_to) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, paragraph_idx, startIdx, endIdx, sel_end_para_idx ?? null, selected_text || null, author, content, reply_to ?? null);
+      db.close();
+      json(res, 200, { ok: true, id: Number(result.lastInsertRowid), ...(note ? { note } : {}) });
+      if (opts.onComment) opts.onComment({ book_id: id, from_who: author, content });
+    } catch (e) { json(res, 500, { error: e.message }); }
+    return true;
+  }
+
+  // DELETE /v1/books/comment/:id
+  if (req.method === 'DELETE' && req.url.match(/^\/v1\/books\/comment\/\d+$/)) {
+    try {
+      const commentId = parseInt(req.url.split('/').pop());
+      const db = getDb();
+      db.prepare('DELETE FROM book_comments WHERE id = ?').run(commentId);
+      db.close();
+      json(res, 200, { ok: true });
+    } catch (e) { json(res, 500, { error: e.message }); }
+    return true;
+  }
+
+  // GET /v1/books/:id/new-replies
+  if (req.method === 'GET' && req.url.match(/^\/v1\/books\/\d+\/new-replies/)) {
+    try {
+      const urlObj = new URL(req.url, 'http://localhost');
+      const id = parseInt(req.url.split('/')[3]);
+      const lastSeen = parseInt(urlObj.searchParams.get('since') || '0');
+      const db = getDb(true);
+      const replies = db.prepare(
+        `SELECT c.id, c.paragraph_idx, c.content, c.created_at, c.reply_to,
+                c.from_who, c.sel_start_idx, c.sel_end_idx, c.selected_text,
+                p.content as parent_content, p.from_who as parent_from, p.id as parent_id
+         FROM book_comments c
+         LEFT JOIN book_comments p ON c.reply_to = p.id
+         WHERE c.book_id = ? AND c.id > ?
+         ORDER BY c.id DESC LIMIT 20`
+      ).all(id, lastSeen);
+      db.close();
+      json(res, 200, { replies });
+    } catch (e) { json(res, 500, { error: e.message }); }
+    return true;
+  }
+
+  // GET /v1/books/:id/reader-state
+  if (req.method === 'GET' && req.url.match(/^\/v1\/books\/\d+\/reader-state/)) {
+    if (roomGate(req, res)) return true;
+    try {
+      const urlObj = new URL(req.url, 'http://localhost');
+      const id = parseInt(req.url.split('/')[3]);
+      const lastCommentId = parseInt(urlObj.searchParams.get('since') || '0');
+      const db = getDb(true);
+      const progress = db.prepare("SELECT page FROM book_progress WHERE book_id = ?").get(id);
+      const position = progress?.page || 0;
+      const around = 3;
+      const paras = db.prepare('SELECT idx, content FROM book_paragraphs WHERE book_id = ? AND idx >= ? AND idx < ? ORDER BY idx').all(id, Math.max(0, position - around), position + 10 + around);
+      const newComments = db.prepare('SELECT id, paragraph_idx, from_who, content, reply_to, created_at FROM book_comments WHERE book_id = ? AND id > ? ORDER BY id').all(id, lastCommentId);
+      const visibleComments = db.prepare('SELECT id, paragraph_idx, sel_start_idx, sel_end_idx, selected_text, from_who, content, reply_to, created_at FROM book_comments WHERE book_id = ? AND paragraph_idx >= ? AND paragraph_idx < ? ORDER BY paragraph_idx, created_at').all(id, Math.max(0, position), position + 10);
+      db.close();
+      json(res, 200, { position, paragraphs: paras, newComments, visibleComments });
+    } catch (e) { json(res, 500, { error: e.message }); }
+    return true;
+  }
+
+  // PATCH /v1/books/:id/progress
+  if (req.method === 'PATCH' && req.url.match(/^\/v1\/books\/\d+\/progress$/)) {
+    if (roomGate(req, res)) return true;
+    try {
+      const id = parseInt(req.url.split('/')[3]);
+      const body = await readBody(req);
+      const paragraphIdx = Number(body.paragraph_idx ?? body.page);
+      const paragraphOffset = Number(body.paragraph_offset ?? 0);
+      if (!Number.isInteger(paragraphIdx) || paragraphIdx < 0) { json(res, 400, { error: 'paragraph_idx required' }); return true; }
+      if (!Number.isInteger(paragraphOffset) || paragraphOffset < 0) { json(res, 400, { error: 'paragraph_offset must be a non-negative integer' }); return true; }
+      const db = getDb();
+      const paragraph = db.prepare('SELECT content FROM book_paragraphs WHERE book_id = ? AND idx = ?').get(id, paragraphIdx);
+      if (!paragraph) { db.close(); json(res, 400, { error: 'unknown paragraph_idx' }); return true; }
+      if (paragraphOffset > String(paragraph.content).length) { db.close(); json(res, 400, { error: 'paragraph_offset exceeds paragraph length' }); return true; }
+      db.prepare("INSERT INTO book_progress (book_id, page, paragraph_offset, updated_at) VALUES (?, ?, ?, datetime('now')) ON CONFLICT(book_id) DO UPDATE SET page = excluded.page, paragraph_offset = excluded.paragraph_offset, updated_at = datetime('now')").run(id, paragraphIdx, paragraphOffset);
+      const pagination = resolvePagination(db, id);
+      const displayPage = displayPageForParagraph(pagination, paragraphIdx, paragraphOffset);
+      db.close();
+      json(res, 200, { ok: true, paragraph_idx: paragraphIdx, paragraph_offset: paragraphOffset, display_page: displayPage, pagination_source: pagination.source });
+    } catch (e) { json(res, 500, { error: e.message }); }
+    return true;
+  }
+
+  // POST /v1/books/:id/open — 只写last_opened_at，不动page/updated_at，没读过的书不伪造进度
+  if (req.method === 'POST' && req.url.match(/^\/v1\/books\/\d+\/open$/)) {
+    if (roomGate(req, res)) return true;
+    try {
+      const id = parseInt(req.url.split('/')[3]);
+      const db = getDb();
+      db.prepare("INSERT INTO book_progress (book_id, page, last_opened_at) VALUES (?, NULL, datetime('now')) ON CONFLICT(book_id) DO UPDATE SET last_opened_at = datetime('now')").run(id);
+      db.close();
+      json(res, 200, { ok: true });
+    } catch (e) { json(res, 500, { error: e.message }); }
+    return true;
+  }
+
+  // POST /v1/books — create book
+  // 两种形态：JSON {title, content|data:base64}（旧客户端兼容）；
+  // 二进制 Content-Type: application/octet-stream，body=文件原始字节，title/format走query
+  if (req.method === 'POST' && (req.url === '/v1/books' || req.url.startsWith('/v1/books?'))) {
+    if (roomGate(req, res)) return true;
+    try {
+      let title, content, format, fileBuf = null;
+      if (String(req.headers['content-type'] || '').startsWith('application/octet-stream')) {
+        const q = new URL(req.url, `http://localhost:${port}`).searchParams;
+        title = q.get('title') || '';
+        format = (q.get('format') || '').toLowerCase();
+        fileBuf = await readRawBody(req);
+        if (!fileBuf.length) { json(res, 400, { error: 'empty file body' }); return true; }
+      } else {
+        const body = await readBody(req);
+        title = body.title; content = body.content; format = body.format;
+        if (body.data) fileBuf = Buffer.from(body.data, 'base64');
+      }
+      if (!title) { json(res, 400, { error: 'title required' }); return true; }
+
+      let paragraphs = [];
+      let epubResult = null;
+
+      if (format === 'epub' && fileBuf) {
+        epubResult = parseEpub(fileBuf);
+        paragraphs = epubResult.paragraphs;
+      } else if (content || (fileBuf && format !== 'pdf')) {
+        paragraphs = smartSplit(content || decodeText(fileBuf));
+      } else {
+        json(res, 400, { error: 'content or epub data required' }); return true;
+      }
+
+      if (paragraphs.length === 0) { json(res, 400, { error: 'no paragraphs extracted' }); return true; }
+
+      const db = getDb();
+      const bookResult = db.prepare('INSERT INTO books (title, total_paragraphs) VALUES (?, ?)').run(title, paragraphs.length);
+      const bookId = Number(bookResult.lastInsertRowid);
+      const ins = db.prepare('INSERT INTO book_paragraphs (book_id, idx, content) VALUES (?, ?, ?)');
+      db.transaction(() => { for (let i = 0; i < paragraphs.length; i++) ins.run(bookId, i, paragraphs[i]); })();
+      db.close();
+
+      if (epubResult) {
+        const imgDir = getImageDir(bookId);
+        const images = extractImages(epubResult.zip, epubResult.epubImageMap, paragraphs);
+        for (const [fname, data] of images) {
+          fs.writeFileSync(path.join(imgDir, fname), data);
+        }
+        const cover = extractCover(epubResult.zip, epubResult.epubCoverFile);
+        if (cover) {
+          fs.writeFileSync(path.join(imgDir, cover.name), cover.data);
+          const db2 = getDb();
+          db2.prepare('UPDATE books SET cover_image = ? WHERE id = ?').run(cover.name, bookId);
+          db2.close();
+        }
+      }
+
+      json(res, 201, { ok: true, book_id: bookId, title, paragraphs: paragraphs.length });
+    } catch (e) {
+      console.error('Book create error:', e);
+      json(res, 500, { error: e.message });
+    }
+    return true;
+  }
+
+  // GET /v1/books/:id/toc
+  if (req.method === 'GET' && req.url.match(/^\/v1\/books\/\d+\/toc/)) {
+    try {
+      const id = parseInt(req.url.split('/')[3]);
+      const db = getDb(true);
+      const pagination = resolvePagination(db, id);
+      const paras = db.prepare('SELECT idx, substr(content, 1, 100) as content FROM book_paragraphs WHERE book_id = ? ORDER BY idx').all(id);
+      db.close();
+      const chapters = [];
+      for (const p of paras) {
+        if (CHAPTER_RE.test(p.content.trim())) {
+          const title = p.content.trim().split('\n')[0].replace(/^#+\s*/, '').slice(0, 60);
+          chapters.push({ idx: p.idx, page: displayPageForParagraph(pagination, p.idx) || 1, title });
+        }
+      }
+      json(res, 200, { chapters, totalPages: pagination.totalPages, pagination_source: pagination.source });
+    } catch (e) { json(res, 500, { error: e.message }); }
+    return true;
+  }
+
+  // GET /v1/books/:id/export
+  if (req.method === 'GET' && req.url.match(/^\/v1\/books\/\d+\/export/)) {
+    if (roomGate(req, res)) return true;
+    try {
+      const urlObj = new URL(req.url, `http://localhost:${port}`);
+      const id = parseInt(urlObj.pathname.split('/')[3]);
+      const format = urlObj.searchParams.get('format') || 'epub';
+      const db = getDb(true);
+      const book = db.prepare('SELECT * FROM books WHERE id = ?').get(id);
+      if (!book) { db.close(); json(res, 404, { error: 'book not found' }); return true; }
+      const paras = db.prepare('SELECT idx, content FROM book_paragraphs WHERE book_id = ? ORDER BY idx').all(id);
+      const comments = db.prepare('SELECT * FROM book_comments WHERE book_id = ? ORDER BY paragraph_idx, sel_start_idx, created_at').all(id);
+      db.close();
+
+      const commentsByPara = {};
+      for (const c of comments) {
+        if (!commentsByPara[c.paragraph_idx]) commentsByPara[c.paragraph_idx] = [];
+        commentsByPara[c.paragraph_idx].push(c);
+      }
+
+      if (format === 'md') {
+        let md = `# ${book.title}\n\n`;
+        for (const para of paras) {
+          md += para.content + '\n\n';
+          const pComments = commentsByPara[para.idx];
+          if (pComments?.length) {
+            for (const c of pComments) {
+              if (c.selected_text) md += `> **${c.from_who}** highlighted "${c.selected_text}": ${c.content}\n>\n`;
+              else md += `> **${c.from_who}**: ${c.content}\n>\n`;
+            }
+            md += '\n';
+          }
+        }
+        cors(res);
+        res.writeHead(200, { 'Content-Type': 'text/markdown; charset=utf-8', 'Content-Disposition': `attachment; filename="${encodeURIComponent(book.title)}.md"` });
+        res.end(md);
+        return true;
+      }
+
+      // EPUB export
+      const archiver = require('archiver');
+      const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      const epubId = `book-${id}-${Date.now()}`;
+      const chapterRe = /^第[\d一二三四五六七八九十百千万]+[章节回]|^#|^Chapter\s+\d/i;
+      const chapters = [];
+      let curChapter = { title: book.title, paras: [] };
+      for (const p of paras) {
+        const t = p.content.trim();
+        if (chapterRe.test(t) && curChapter.paras.length > 0) {
+          chapters.push(curChapter);
+          curChapter = { title: t.split('\n')[0].replace(/^#+\s*/, '').slice(0, 80), paras: [] };
+        }
+        curChapter.paras.push(p);
+      }
+      if (curChapter.paras.length > 0) chapters.push(curChapter);
+
+      const style = `body{font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",serif;line-height:1.85;color:#333;margin:1em}h1{text-align:center;font-size:1.4em;margin:2em 0 1em;color:#222}p{text-indent:1.5em;margin:.6em 0}.ann{background:#f8f0f0;border-left:3px solid #d4a0a0;border-radius:8px;padding:8px 12px;margin:8px 0;font-size:.9em}.ann-author{font-weight:bold;color:#8b6b6b}.ann-quote{font-style:italic;color:#888;margin-bottom:4px}`;
+
+      const imgDir = getImageDir(id);
+      const exportImages = new Map();
+      const assetDb = getDb(true);
+      try {
+        const restored = JSON.parse(assetDb.prepare('SELECT value FROM config WHERE key = ?').get('backup_asset_mode')?.value || '[]').includes(id);
+        if (!restored) for (const f of fs.readdirSync(imgDir)) if (safeAssetName(f) && fs.lstatSync(path.join(imgDir, f)).isFile()) exportImages.set(f, fs.readFileSync(path.join(imgDir, f)));
+        for (const asset of assetDb.prepare('SELECT name, data FROM backup_assets WHERE book_id = ?').all(id)) exportImages.set(asset.name, asset.data);
+      } finally { assetDb.close(); }
+
+      const buildChapterXhtml = (ch, idx) => {
+        let body = '';
+        if (idx > 0 || chapterRe.test(ch.paras[0]?.content?.trim() || '')) body += `<h1>${esc(ch.title)}</h1>\n`;
+        for (const p of ch.paras) {
+          const t = p.content.trim();
+          const imgMatch = t.match(/^\[IMG:([^\]]+)\]$/);
+          if (imgMatch) { body += `<div style="text-align:center;margin:1em 0"><img src="images/${esc(imgMatch[1])}" style="max-width:100%"/></div>\n`; continue; }
+          if (chapterRe.test(t) && body.includes('</h1>')) {} else {
+            const isH = t.startsWith('#');
+            const display = t.replace(/^#+\s*/, '');
+            if (isH) body += `<h1>${esc(display)}</h1>\n`;
+            else body += `<p>${display.replace(/\[IMG:([^\]]+)\]/g, (_, f) => `</p><div style="text-align:center;margin:1em 0"><img src="images/${esc(f)}" style="max-width:100%"/></div><p>`)}</p>\n`;
+          }
+          const pComments = commentsByPara[p.idx];
+          if (pComments?.length) {
+            for (const c of pComments) {
+              body += `<div class="ann">`;
+              if (c.selected_text) body += `<div class="ann-quote">"${esc(c.selected_text.slice(0, 200))}"</div>`;
+              body += `<span class="ann-author">${esc(c.from_who)}</span>: ${esc(c.content)}</div>\n`;
+            }
+          }
+        }
+        return `<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" xml:lang="zh"><head><meta charset="utf-8"/><title>${esc(ch.title)}</title><link rel="stylesheet" type="text/css" href="style.css"/></head><body>${body}</body></html>`;
+      };
+
+      let manifest = '', spine = '', navPoints = '';
+      for (let i = 0; i < chapters.length; i++) {
+        manifest += `<item id="ch${i}" href="ch${i}.xhtml" media-type="application/xhtml+xml"/>\n`;
+        spine += `<itemref idref="ch${i}"/>\n`;
+        navPoints += `<navPoint id="nav${i}" playOrder="${i+1}"><navLabel><text>${esc(chapters[i].title)}</text></navLabel><content src="ch${i}.xhtml"/></navPoint>\n`;
+      }
+
+      const mimeTypes = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', svg: 'image/svg+xml', webp: 'image/webp' };
+      let imgManifest = '', coverMeta = '';
+      let imgIdx = 0;
+      for (const [fname] of exportImages) {
+        const ext = fname.split('.').pop().toLowerCase();
+        const mime = mimeTypes[ext] || 'image/jpeg';
+        const imgId = `img${imgIdx++}`;
+        imgManifest += `<item id="${imgId}" href="images/${esc(fname)}" media-type="${mime}"${fname.startsWith('cover.') ? ' properties="cover-image"' : ''}/>\n`;
+        if (fname.startsWith('cover.')) coverMeta = `<meta name="cover" content="${imgId}"/>`;
+      }
+
+      cors(res);
+      res.writeHead(200, { 'Content-Type': 'application/epub+zip', 'Content-Disposition': `attachment; filename="${encodeURIComponent(book.title)}.epub"` });
+      const archive = archiver('zip', { zlib: { level: 9 } });
+      archive.pipe(res);
+      archive.append('application/epub+zip', { name: 'mimetype', store: true });
+      archive.append(`<?xml version="1.0" encoding="UTF-8"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`, { name: 'META-INF/container.xml' });
+      archive.append(`<?xml version="1.0" encoding="utf-8"?><package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid" version="2.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>${esc(book.title)}</dc:title><dc:language>zh</dc:language><dc:identifier id="bookid">${epubId}</dc:identifier><dc:creator>coread</dc:creator>${coverMeta}</metadata><manifest><item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/><item id="css" href="style.css" media-type="text/css"/>${manifest}${imgManifest}</manifest><spine toc="ncx">${spine}</spine></package>`, { name: 'OEBPS/content.opf' });
+      archive.append(`<?xml version="1.0" encoding="utf-8"?><ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1"><head><meta name="dtb:uid" content="${epubId}"/></head><docTitle><text>${esc(book.title)}</text></docTitle><navMap>${navPoints}</navMap></ncx>`, { name: 'OEBPS/toc.ncx' });
+      archive.append(style, { name: 'OEBPS/style.css' });
+      for (let i = 0; i < chapters.length; i++) archive.append(buildChapterXhtml(chapters[i], i), { name: `OEBPS/ch${i}.xhtml` });
+      for (const [fname, data] of exportImages) archive.append(data, { name: `OEBPS/images/${fname}` });
+      archive.finalize();
+    } catch (e) { json(res, 500, { error: e.message }); }
+    return true;
+  }
+
+  // DELETE /v1/books/:id
+  if (req.method === 'DELETE' && req.url.match(/^\/v1\/books\/\d+$/)) {
+    try {
+      const id = parseInt(req.url.split('/')[3]);
+      const db = getDb();
+      const book = db.prepare('SELECT id FROM books WHERE id = ?').get(id);
+      if (!book) { db.close(); json(res, 404, { error: 'book not found' }); return true; }
+      db.prepare('DELETE FROM book_comments WHERE book_id = ?').run(id);
+      db.prepare('DELETE FROM book_paragraphs WHERE book_id = ?').run(id);
+      db.prepare('DELETE FROM book_progress WHERE book_id = ?').run(id);
+      clearBrowserPagination(db, id);
+      db.prepare('DELETE FROM books WHERE id = ?').run(id);
+      db.close();
+      try { fs.rmSync(thumbDir(id), { recursive: true, force: true }); } catch {}
+      json(res, 200, { ok: true, deleted: id });
+    } catch (e) { json(res, 500, { error: e.message }); }
+    return true;
+  }
+
+  // GET /v1/book-images/:bookId/:filename[?thumb=1]
+  const imgMatch = req.url?.match(/^\/v1\/book-images\/(\d+)\/([^?]+)(\?.*)?$/);
+  if (req.method === 'GET' && imgMatch) {
+    const notFound = () => { res.writeHead(404); res.end('not found'); };
+    const send = (data, mime) => {
+      cors(res);
+      res.writeHead(200, { 'Content-Type': mime, 'Cache-Control': 'no-cache', 'Content-Security-Policy': "default-src 'none'; sandbox", 'X-Content-Type-Options': 'nosniff' });
+      res.end(data);
+    };
+    try {
+      const bookId = Number(imgMatch[1]);
+      const name = decodeURIComponent(imgMatch[2]);
+      if (!safeAssetName(name)) throw new Error('Invalid image name');
+      const db = getDb(true);
+      let stored, restored;
+      try {
+        stored = db.prepare('SELECT data FROM backup_assets WHERE book_id = ? AND name = ?').get(bookId, name);
+        restored = JSON.parse(db.prepare('SELECT value FROM config WHERE key = ?').get('backup_asset_mode')?.value || '[]').includes(bookId);
+      } finally { db.close(); }
+      if (!stored && restored) throw new Error('Image not in restored backup');
+      const srcPath = path.join(getImageDir(bookId), name);
+      const data = stored?.data || fs.readFileSync(srcPath);
+      const ext = path.extname(name).toLowerCase();
+      const mimeMap = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml' };
+      const mime = mimeMap[ext] || 'application/octet-stream';
+      // 缩略图有就用、没有就算：只缩磁盘上的图（备份恢复进数据库的图、svg 不缩），任何一步不成都发原图
+      const wantThumb = new URLSearchParams(imgMatch[3] || '').get('thumb') === '1';
+      if (!wantThumb || stored || ext === '.svg') { send(data, mime); return true; }
+      const sendThumbOrOriginal = (thumbPath) => {
+        let thumb = null;
+        try { thumb = thumbPath ? fs.readFileSync(thumbPath) : null; } catch {}
+        if (thumb && thumb.length) send(thumb, 'image/jpeg'); else send(data, mime);
+      };
+      const srcMtime = fs.statSync(srcPath).mtimeMs;
+      const thumbPath = path.join(thumbDir(bookId), `${name}.jpg`);
+      try { if (fs.statSync(thumbPath).mtimeMs >= srcMtime) { sendThumbOrOriginal(thumbPath); return true; } } catch {}
+      const python = process.env.COREAD_PYTHON || 'python3';
+      const failKey = `${python}\0${srcPath}`;
+      const failed = thumbFailed.get(failKey);
+      if (failed && failed.mtime === srcMtime && Date.now() - failed.at < THUMB_RETRY_MS) { send(data, mime); return true; }
+      try { fs.mkdirSync(path.dirname(thumbPath), { recursive: true }); } catch { send(data, mime); return true; }
+      execFile(python, [COVER_THUMB_SCRIPT, srcPath, thumbPath], { timeout: 20000 }, (err) => {
+        if (err) { thumbFailed.set(failKey, { mtime: srcMtime, at: Date.now() }); sendThumbOrOriginal(null); return; }
+        thumbFailed.delete(failKey);
+        sendThumbOrOriginal(thumbPath);
+      });
+    } catch { notFound(); }
+    return true;
+  }
+
+  return false;
+}

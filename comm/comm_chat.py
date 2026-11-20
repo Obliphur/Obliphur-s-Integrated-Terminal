@@ -220,8 +220,11 @@ class ChatMixin:
         self._changed()
         self._push()
 
-    def send(self, text: str, image: bytes = None, reply_delay_seconds: float = 0) -> str:
+    def send(self, text: str, image: bytes = None, reply_delay_seconds: float = 0,
+             reading_context: str = "", from_reader: bool = False) -> str:
         """用户发一条. 返回 "" = 已发出, 否则是不能发的原因."""
+        if getattr(self, "reading_mode", False) and not from_reader:
+            return "reading_mode"
         text = str(text or "").strip()
         if not text and not image and not self.joint_draft:
             return "empty"
@@ -247,7 +250,10 @@ class ChatMixin:
             message["reply_after"] = self._ms() + int(reply_delay_seconds * 1000)
         self._interaction_sent(text, message)
         self._sent()
-        self._ask_user()
+        if reading_context:
+            self._ask_user(reading_context=reading_context)
+        else:
+            self._ask_user()
         return ""
 
     def _send_package(self, joint, text: str = "") -> str:
@@ -290,13 +296,20 @@ class ChatMixin:
         k = (self.other_status() or {}).get("kind")
         return k if k in HELD_KINDS else ""
 
-    def _ask_user(self):
+    def _ask_user(self, reading_context: str = ""):
         """用户发了消息之后: 对方在专注 / 睡眠就不调用接口, 消息 (连同发送时间, 已经在每条的开头) 先存着, 记下 hold,
         对方第一次空闲 / 休息时 tick() 一次性发给它; 否则马上请求."""
         kind = self._away_kind()
         if not kind:
-            self._request("user")
+            self._request("user", reading_context=reading_context)
             return
+        if reading_context:
+            for message in reversed(self.messages):
+                if message.get("role") == "me":
+                    message["api"] = str(message.get("api") or "") + "\n\n" + oit_text(
+                        "当前 OIT 共读阅读上下文:\n" + str(reading_context)[:18000])
+                    self.save_chat()
+                    break
         since = self._ms()                                           # 存着的起点: 对方最后一条回复之后, 用户的第一条消息 (发消息时 _sent 已经清过 retry, 所以不能看旧的 hold)
         for m in reversed(self.messages):
             if m["role"] == "ai":

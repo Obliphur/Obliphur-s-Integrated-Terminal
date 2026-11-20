@@ -28,6 +28,9 @@ object Cfg {
     const val COMM_SCENARIO_UNLOCK = 200
     const val COMM_SPLIT_INTERVAL_SECONDS = 5 // 分条续发固定等待时间（秒）
     const val COMM_TOOL_ROUNDS = 6 // 单次沟通最多进行的查询 / 联合行动工具轮数
+    const val COMM_COREAD_QUOTE_SECONDS = 30 * 60 // 共读申请引用的用户原话有效期
+    const val COMM_COREAD_OFFER_SECONDS = 5 * 60 // 共读邀请展示后的有效期
+    const val COMM_COREAD_ACTIVITY_SECONDS = 10 * 60 // 每次共读受限活动重叠的合计上限
     const val COMM_TENSION_MAX = 100
     const val COMM_TENSION_LOW = 50
     const val COMM_TENSION_CAP = 90
@@ -44,6 +47,7 @@ object Cfg {
     const val COMM_TENSION_RELEASE = 20
     const val COMM_SPECIAL_LURE_DELAY_SECONDS = 7 * 60 // 特殊空闲前七分钟无正向条件时主动挑起话题
     const val COMM_SPECIAL_MINUTES = 30 // 特殊空闲固定时长，前一循环的休息波动不得挤占
+    const val COMM_REWARD_CARRY_PERCENT = 85 // Claudia 完成奖励填满循环后，剩余休息的结转百分比
     const val COMM_TENSION_BURST_GAIN_SECONDS = 24 * 60 * 60
     const val COMM_TENSION_BURST_GAIN_RATE = 0.5
     const val COMM_VALENCE_MAX = 100
