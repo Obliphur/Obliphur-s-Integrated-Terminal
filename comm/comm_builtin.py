@@ -695,6 +695,13 @@ DEFAULT_BACKGROUND = "Claudia_background.txt"          # 默认人设的配套�
 DEFAULT_ROUTINE = "Claudia_templates.txt"                # 默认人设的统一模板文件（日程、数据、张力、关系条件）
 DEFAULT_PROFILE = "Claudia_profile.txt"
 DEFAULT_EXAMPLE = "Claudia_example.txt"                  # 默认人设的对话范例库
+# 旧桌面版漏读 example_base；只凭已发布原文的摘要补救，不覆盖用户改稿。
+EXAMPLE_LEGACY_HASHES = frozenset({
+    "974910106394fab130caec531867425a0b19a0c54ccc9e13eefe666329fb5525",
+    "e85c16fabbaddf01279c1d7de0b3f7bd22722e33a76586dc9430b4ccef9686b7",
+    "dec12c75609523f9b70a57900feb1c01a073560ab480db135e22e3d93f587014",
+    "387c98e19ae3e274c3ae81180a4da8322b51c271838e94ffc4d5698b144c50f4",
+})
 ASSISTANT_PERSONA = "Assistant.txt"
 ASSISTANT_DETAIL_LINE = ("你会把回答写得尽量详细: 先给结论, 再说明依据 / 步骤 / 注意事项, 必要时举例或分点; "
                          "不要只用一句结论敷衍, 也不要为了简短省略关键内容, 但不要用空话凑长度.\n")

@@ -1858,6 +1858,44 @@ def _selftest():
     assert not cc.claudia_differs(), "没选 Claudia: 不显示"
     cc.set_cfg(persona="Claudia.txt")
     cc.flush()
+    # 范例与简介的内置基线重启后仍可读取，连续更新不误报修改、不清聊天。
+    vd, vp = os.path.join(td, "companion_upgrade"), os.path.join(td, "companion_upgrade_personas")
+    current_files = {name: BUILTIN_PERSONAS[name] for name in (DEFAULT_EXAMPLE, DEFAULT_PROFILE)}
+    try:
+        for name, text in current_files.items():
+            BUILTIN_PERSONAS[name] = text + "\n上一版内置内容"
+        previous = Comm(vd, vp, now=lambda: clock[0], chat_fn=fake)
+        previous.messages.append(previous._mk("ai", "升级保留的聊天"))
+        previous.save_chat()
+        previous.flush()
+    finally:
+        BUILTIN_PERSONAS.update(current_files)
+    upgraded = Comm(vd, vp, now=lambda: clock[0], chat_fn=fake)
+    assert not upgraded.claudia_differs() and upgraded.check_persona_changes() is None
+    assert upgraded.messages[-1]["text"] == "升级保留的聊天"
+    assert read_profile(vp, DEFAULT_PERSONA) == BUILTIN_PERSONAS[DEFAULT_PROFILE].strip()
+    upgraded.flush()
+    restarted = Comm(vd, vp, now=lambda: clock[0], chat_fn=fake)
+    assert restarted.cfg["example_base"] == restarted._text_crc(BUILTIN_PERSONAS[DEFAULT_EXAMPLE])
+    assert restarted.cfg["profile_base"] == restarted._text_crc(BUILTIN_PERSONAS[DEFAULT_PROFILE])
+    restarted.flush()
+    for broken in ("", " \n\t", "OIT-PERSONA-ENC:1\n损坏密文"):
+        with open(os.path.join(vp, DEFAULT_PROFILE), "w", encoding="utf-8") as f:
+            f.write(broken)
+        repaired = Comm(vd, vp, now=lambda: clock[0], chat_fn=fake)
+        assert read_profile(vp, DEFAULT_PERSONA) == BUILTIN_PERSONAS[DEFAULT_PROFILE].strip()
+        assert repaired.check_persona_changes() is None and repaired.messages[-1]["text"] == "升级保留的聊天"
+        repaired.flush()
+    write_file(os.path.join(vp, DEFAULT_PROFILE), "我自己写的简介")
+    write_file(os.path.join(vp, DEFAULT_EXAMPLE), "我自己写的范例")
+    custom = Comm(vd, vp, now=lambda: clock[0], chat_fn=fake)
+    assert read_profile(vp, DEFAULT_PERSONA) == "我自己写的简介"
+    assert read_persona(vp, DEFAULT_EXAMPLE) == "我自己写的范例" and custom.claudia_differs()
+    custom.restore_claudia()
+    assert not custom.claudia_differs() and custom.check_persona_changes() is None
+    assert read_profile(vp, DEFAULT_PERSONA) == BUILTIN_PERSONAS[DEFAULT_PROFILE].strip()
+    assert custom.messages[-1]["text"] == "升级保留的聊天"
+    custom.flush()
     # 更早版本没改过的 Claudia 都自动升级; 改过的不动
     for i, legacy_claudia in enumerate(CLAUDIA_LEGACIES):
         udir, upersonas = os.path.join(td, f"claudia_up{i}"), os.path.join(td, f"claudia_up{i}_personas")

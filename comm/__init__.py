@@ -30,6 +30,7 @@ import re
 import shutil
 import threading
 import zlib
+from hashlib import sha256
 from datetime import datetime, timedelta
 
 import ai_assist
@@ -42,7 +43,7 @@ from .comm_schedule import PROACTIVE_P, seg_kind, seg_detail, schedule_entries, 
 from .comm_reply import CUT_DEFAULT_MIN, CUT_MAX_MIN, HALFWIDTH_SYMBOLS, NET_DEFAULT_MIN, NET_MAX_MIN, WAIT_MAX_MIN, _BRACKET_RE, _CUT_N_RE, _CUT_RE, _EMPTY_WRAP_RE, _NET_RE, _WAIT_RE, clean_reply, cut_minutes, net_minutes, to_halfwidth
 from .persona_codec import read_file, write_file, migrate_folder, migrate_file, decode as decode_persona
 from .comm_builtin import BUILTIN_PERSONAS, DEFAULT_PERSONA, DEFAULT_BACKGROUND, DEFAULT_ROUTINE, DEFAULT_EXAMPLE, ASSISTANT_PERSONA, ASSISTANT_DETAIL_LINE, BACKGROUND_LEGACIES, ASSISTANT_SLEEP_LINE, ASSISTANT_TITLE
-from .comm_builtin import DEFAULT_PROFILE
+from .comm_builtin import DEFAULT_PROFILE, EXAMPLE_LEGACY_HASHES
 from .comm_persona import is_profile_name, profile_files
 from .comm_prompt import REFUSE, SHIFT_TAG, MSGS_TAG, THINK_LONG, THINK_WORDS, THINK_TIME_RE, think_text_reason, JOINT_RULE, rest_function_text, prefix_prompt, native_persona_text
 from .comm_persona import SHIFT_LO, SHIFT_HI, SHIFT_KEEP, MAX_PERSONA, MEM_MAX, PERSONA_EXT, readme_text, pid_of, love_norm, love_line, shift_norm, shift_pairs, hm_text, shift_line, mem_fields, seed_builtin, ensure_personas, list_personas, persona_title, uses_prefix, system_head, PERSONA_HEAD, persona_system, persona_labels, read_persona, ROUTINE_SUFFIX, ROUTINE_OLD_SUFFIX, COMPANION_SEP, companion_base, is_companion_name, companion_files, companions_of, routine_name_of, read_routine, read_persona_full, import_persona
@@ -216,8 +217,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         self._upgrade_routine()
         self._upgrade_background()
         self._upgrade_example()
-        if os.path.isfile(self._claudia_path()):
-            seed_builtin(self.personas, DEFAULT_PROFILE)
+        self._upgrade_profile()
         self._note_builtin_base()
         migrate_folder(self.personas)
         migrate_folder(self._persona_backup_dir)
@@ -1072,7 +1072,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                 write_file(bpath, BUILTIN_PERSONAS[DEFAULT_BACKGROUND])
             if force:
                 write_file(os.path.join(self.personas, DEFAULT_EXAMPLE), BUILTIN_PERSONAS[DEFAULT_EXAMPLE])
-                seed_builtin(self.personas, DEFAULT_PROFILE)
+                write_file(os.path.join(self.personas, DEFAULT_PROFILE), BUILTIN_PERSONAS[DEFAULT_PROFILE])
         except (OSError, ValueError):
             pass
 
@@ -1135,9 +1135,12 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         self._upgrade_companion(DEFAULT_BACKGROUND, BACKGROUND_LEGACIES, "background_base", "BACKGROUND 背景文件")
 
     def _upgrade_example(self):
-        self._upgrade_companion(DEFAULT_EXAMPLE, (), "example_base", "EXAMPLE 范例文件")
+        self._upgrade_companion(DEFAULT_EXAMPLE, (), "example_base", "EXAMPLE 范例文件", EXAMPLE_LEGACY_HASHES)
 
-    def _upgrade_companion(self, fname: str, legacies: tuple, key: str, label: str):
+    def _upgrade_profile(self):
+        self._upgrade_companion(DEFAULT_PROFILE, (), "profile_base", "PROFILE 简介文件")
+
+    def _upgrade_companion(self, fname: str, legacies: tuple, key: str, label: str, legacy_hashes=()):
         """Claudia 的配套文件自己升级, 不看 Claudia.txt 有没有被改过: 缺 / 空白 → 补上当前内置版本;
         是更早的内置版本 (用户没改过) → 换成当前内置版本; 用户改过的不动. Claudia.txt 不在时不补 (不然它会被当成人设)."""
         if not os.path.isfile(self._claudia_path()):
@@ -1145,7 +1148,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         cur = self._read_persona_raw(fname)
         builtin = BUILTIN_PERSONAS[fname]
         if cur is not None and cur.strip() and (cur.strip() == builtin.strip() or (
-                cur.strip() not in {x.strip() for x in legacies} and self._text_crc(cur) != self.cfg.get(key))):
+                cur.strip() not in {x.strip() for x in legacies} and self._text_crc(cur) != self.cfg.get(key)
+                and sha256(cur.replace("\r\n", "\n").strip().encode("utf-8")).hexdigest() not in legacy_hashes)):
             return
         try:
             write_file(os.path.join(self.personas, fname), builtin)
@@ -1164,7 +1168,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         之后程序更新了内置版本, 文件只要还是 (或者用户改过又改回了) 这个旧版本, 就当没改过, 自动换成新版 ——
         不管中间弹窗点过什么, 也不用每个旧版本都进升级链."""
         changed = False
-        for name, key in ((DEFAULT_PERSONA, "claudia_base"), (DEFAULT_ROUTINE, "routine_base"), (DEFAULT_BACKGROUND, "background_base"), (DEFAULT_EXAMPLE, "example_base")):
+        for name, key in ((DEFAULT_PERSONA, "claudia_base"), (DEFAULT_ROUTINE, "routine_base"), (DEFAULT_BACKGROUND, "background_base"), (DEFAULT_EXAMPLE, "example_base"), (DEFAULT_PROFILE, "profile_base")):
             cur = self._read_persona_raw(name)
             if cur is not None and cur.strip() == BUILTIN_PERSONAS[name].strip() and self.cfg.get(key) != self._text_crc(cur):
                 self.cfg[key] = self._text_crc(cur)

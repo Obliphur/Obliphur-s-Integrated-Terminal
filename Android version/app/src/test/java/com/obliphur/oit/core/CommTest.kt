@@ -1445,6 +1445,51 @@ class CommTest {
 
     /** 人设文件本身随设备同步: 新增 / 覆盖 / 删除 (README 不同步). */
     @Test
+    fun companionUpgradeAndProfileRepair() {
+        val td = Files.createTempDirectory("oit").toFile()
+        try {
+            val dir = File(td, "d").also { it.mkdirs() }
+            val personas = File(td, "p")
+            val c = comm(dir, personas)
+            c.checkPersonaChanges()
+            c.flush()
+            val oldExample = BuiltinPersonas.ALL.getValue(BuiltinPersonas.EXAMPLE) + "\n上一版内置内容"
+            val oldProfile = "上一版内置简介"
+            fun crc(text: String) = "%08x".format(java.util.zip.CRC32().apply { update(text.trim().toByteArray(Charsets.UTF_8)) }.value)
+            val cfgFile = File(dir, "comm_config.json")
+            val cfg = JSONObject(cfgFile.readText()).put("example_base", crc(oldExample)).put("profile_base", crc(oldProfile))
+            cfgFile.writeText(cfg.toString())
+            PersonaCodec.write(File(personas, BuiltinPersonas.EXAMPLE), oldExample)
+            PersonaCodec.write(File(personas, BuiltinPersonas.PROFILE), oldProfile)
+            val upgraded = comm(dir, personas)
+            assertFalse(upgraded.claudiaDiffers())
+            assertNull(upgraded.checkPersonaChanges())
+            assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.PROFILE).trim(), upgraded.readPersonaProfile(BuiltinPersonas.DEFAULT))
+            upgraded.flush()
+            for (broken in listOf("", " \n\t", "OIT-PERSONA-ENC:1\n损坏密文")) {
+                File(personas, BuiltinPersonas.PROFILE).writeText(broken)
+                val repaired = comm(dir, personas)
+                assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.PROFILE).trim(), repaired.readPersonaProfile(BuiltinPersonas.DEFAULT))
+                assertNull(repaired.checkPersonaChanges())
+                repaired.flush()
+            }
+            PersonaCodec.write(File(personas, BuiltinPersonas.PROFILE), "我自己写的简介")
+            PersonaCodec.write(File(personas, BuiltinPersonas.EXAMPLE), "我自己写的范例")
+            val custom = comm(dir, personas)
+            assertEquals("我自己写的简介", custom.readPersonaProfile(BuiltinPersonas.DEFAULT))
+            assertEquals("我自己写的范例", custom.readPersona(BuiltinPersonas.EXAMPLE))
+            assertTrue(custom.claudiaDiffers())
+            custom.restoreClaudia()
+            assertFalse(custom.claudiaDiffers())
+            assertNull(custom.checkPersonaChanges())
+            assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.PROFILE).trim(), custom.readPersonaProfile(BuiltinPersonas.DEFAULT))
+            custom.flush()
+        } finally {
+            td.deleteRecursively()
+        }
+    }
+
+    @Test
     fun personaFilesSync() {
         val td = Files.createTempDirectory("oit").toFile()
         val c = comm(File(td, "d").also { it.mkdirs() }, File(td, "p"))

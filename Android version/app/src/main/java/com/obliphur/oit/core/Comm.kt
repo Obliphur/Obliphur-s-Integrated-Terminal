@@ -811,6 +811,13 @@ uumVdkU/8qskKNZroA==
     var CLAUDIA_LEGACIES = emptyList<String>()
     var ROUTINE_LEGACIES = listOf<String>()
     var BACKGROUND_LEGACIES = listOf<String>()
+    // 旧桌面版漏读 example_base，双端只迁移已发布原文的摘要。
+    val EXAMPLE_LEGACY_HASHES = setOf(
+        "974910106394fab130caec531867425a0b19a0c54ccc9e13eefe666329fb5525",
+        "e85c16fabbaddf01279c1d7de0b3f7bd22722e33a76586dc9430b4ccef9686b7",
+        "dec12c75609523f9b70a57900feb1c01a073560ab480db135e22e3d93f587014",
+        "387c98e19ae3e274c3ae81180a4da8322b51c271838e94ffc4d5698b144c50f4",
+    )
 }
 
 object CommText {
@@ -1689,6 +1696,7 @@ class Comm(
     private var routineBase = ""        // 同上, Claudia_templates.txt
     private var backgroundBase = ""     // 同上, Claudia_background.txt
     private var exampleBase = ""
+    private var profileBase = ""
     private var claudiaSig: String? = null
     private val personaSig = HashMap<String, String>()      // 人设文件名 → 修改时间+大小
     private var personaPending: String? = null               // 正在等用户决定的人设修改
@@ -1824,7 +1832,7 @@ class Comm(
         upgradeRoutine()
         upgradeBackground()
         upgradeExample()
-        seedClaudiaProfile()
+        upgradeProfile()
         noteBuiltinBase()
         PersonaCodec.migrate(personas)
         PersonaCodec.migrate(personaBackupDir())
@@ -1986,6 +1994,7 @@ class Comm(
             routineBase = d.optString("routine_base", "")
             backgroundBase = d.optString("background_base", "")
             exampleBase = d.optString("example_base", "")
+            profileBase = d.optString("profile_base", "")
             legacyDone = d.optBoolean("legacy_done", false)
             // 旧版本这几项存在设置里 (所有对象共用): 迁移时归给现在选着的对象
             proKey = d.optString("pro_key", "")
@@ -2028,6 +2037,7 @@ class Comm(
             .put("user_profile", userProfile).put("seeded", seeded).put("assistant_seeded", assistantSeeded)
             .put("claudia_migrated", claudiaMigrated).put("claudia_modified", claudiaModified)
             .put("claudia_notified", claudiaNotified).put("claudia_base", claudiaBase).put("routine_base", routineBase).put("background_base", backgroundBase).put("example_base", exampleBase)
+            .put("profile_base", profileBase)
             .put("legacy_done", legacyDone).put("think_auto", thinkAuto).put("sched_follow", schedFollow).put("pro_lang", proLang)
             .put("bg_pro", bgPro).put("mute_pro", JSONArray(muted.toList()))
             .put("idle_use", JSONObject().put("d", idleDay).put("s", idleSec))
@@ -2972,13 +2982,6 @@ class Comm(
         if (current != original || template != previous) saveCfg()
     }
 
-    private fun seedClaudiaProfile() {
-        val profile = File(personas, BuiltinPersonas.PROFILE)
-        if (claudiaFile().isFile && !profile.exists()) runCatching {
-            PersonaCodec.write(profile, BuiltinPersonas.ALL.getValue(BuiltinPersonas.PROFILE))
-        }
-    }
-
     private fun writeClaudiaBuiltin(force: Boolean = true) {
         runCatching {
             personas.mkdirs()
@@ -2993,7 +2996,7 @@ class Comm(
                 PersonaCodec.write(bf, BuiltinPersonas.ALL.getValue(BuiltinPersonas.BACKGROUND))
             if (force) {
                 PersonaCodec.write(File(personas, BuiltinPersonas.EXAMPLE), BuiltinPersonas.ALL.getValue(BuiltinPersonas.EXAMPLE))
-                seedClaudiaProfile()
+                PersonaCodec.write(File(personas, BuiltinPersonas.PROFILE), BuiltinPersonas.ALL.getValue(BuiltinPersonas.PROFILE))
             }
             backupPersonaFile(BuiltinPersonas.DEFAULT)
             backupPersonaFile(BuiltinPersonas.ROUTINE)
@@ -3040,17 +3043,20 @@ class Comm(
 
     private fun upgradeRoutine() = upgradeCompanion(BuiltinPersonas.ROUTINE, BuiltinPersonas.ROUTINE_LEGACIES, routineBase, "ROUTINE 日程文件")
     private fun upgradeBackground() = upgradeCompanion(BuiltinPersonas.BACKGROUND, BuiltinPersonas.BACKGROUND_LEGACIES, backgroundBase, "BACKGROUND 背景文件")
-    private fun upgradeExample() = upgradeCompanion(BuiltinPersonas.EXAMPLE, emptyList(), exampleBase, "EXAMPLE 范例文件")
+    private fun upgradeExample() = upgradeCompanion(BuiltinPersonas.EXAMPLE, emptyList(), exampleBase, "EXAMPLE 范例文件", BuiltinPersonas.EXAMPLE_LEGACY_HASHES)
+    private fun upgradeProfile() = upgradeCompanion(BuiltinPersonas.PROFILE, emptyList(), profileBase, "PROFILE 简介文件")
 
     /** Claudia 的配套文件自己升级, 不看 Claudia.txt 有没有被改过: 缺 / 空白 → 补上当前内置版本;
      *  是更早的内置版本 (用户没改过) → 换成当前内置版本; 用户改过的不动. Claudia.txt 不在时不补 (不然它会被当成人设). */
-    private fun upgradeCompanion(fname: String, legacies: List<String>, base: String, label: String) {
+    private fun upgradeCompanion(fname: String, legacies: List<String>, base: String, label: String, legacyHashes: Set<String> = emptySet()) {
         if (!claudiaFile().isFile) return
         val rf = File(personas, fname)
         val cur = if (rf.isFile) runCatching { PersonaCodec.read(rf) }.getOrNull() else null
         val builtin = BuiltinPersonas.ALL.getValue(fname)
         if (cur != null && cur.isNotBlank() && (cur.trim() == builtin.trim() ||
-                (cur.trim() !in legacies.map { it.trim() } && textCrc(cur) != base))) return
+                (cur.trim() !in legacies.map { it.trim() } && textCrc(cur) != base &&
+                    java.security.MessageDigest.getInstance("SHA-256").digest(cur.replace("\r\n", "\n").trim().toByteArray(Charsets.UTF_8))
+                        .joinToString("") { "%02x".format(it) } !in legacyHashes))) return
         if (runCatching { PersonaCodec.write(rf, builtin) }.isFailure) return
         backupPersonaFile(fname)          // 记成"上次看到的样子": 不弹"修改人设"
         claudiaSig = null
@@ -3072,6 +3078,8 @@ class Comm(
         if (bg != null && bg.trim() == BuiltinPersonas.ALL.getValue(BuiltinPersonas.BACKGROUND).trim() && backgroundBase != textCrc(bg)) { backgroundBase = textCrc(bg); changed = true }
         val example = readPersonaRaw(BuiltinPersonas.EXAMPLE)
         if (example != null && example.trim() == BuiltinPersonas.ALL.getValue(BuiltinPersonas.EXAMPLE).trim() && exampleBase != textCrc(example)) { exampleBase = textCrc(example); changed = true }
+        val profile = readPersonaRaw(BuiltinPersonas.PROFILE)
+        if (profile != null && profile.trim() == BuiltinPersonas.ALL.getValue(BuiltinPersonas.PROFILE).trim() && profileBase != textCrc(profile)) { profileBase = textCrc(profile); changed = true }
         if (changed) saveCfg()
     }
 
