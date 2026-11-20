@@ -304,10 +304,12 @@ class ChatMixin:
             if status and status.get("kind") in HELD_KINDS and not status.get("joint"):
                 return tr("{name} {st}, 现在没法征求同意", name=self.share_ai_name(), st=tr(STATUS_TEXT[status["kind"]]))
             shown.append(tr("🙈 share data 请求"))
-            parts.append(oit_text("用户请求打开 share data。请按人设判断是否同意：同意填写oit_reply.answer=\"yes\"，不同意填写answer=\"no\"；可在text中自然回复。只有用户明确同意后，OIT才会分享数据。"))
+            parts.append(oit_text("用户请求打开 share data。请按人设判断是否同意：同意填写oit_reply.answer=\"yes\"，不同意填写answer=\"no\"；可在text中自然回复。只有你明确同意后，OIT才会分享数据。"))
         if requests.get("coread"):
+            if self.coread_ask and self.coread_ask.get("pid") == self.pid:
+                return tr("⏳ 等待共读同意")
             shown.append(tr("📚 coread 请求"))
-            parts.append(oit_text("用户已主动发起共同阅读，共读室由用户直接打开，无需你同意或接受。请将其视为已经开始；可在text中自然回应。之后用户会在阅读网页中与你讨论书籍。"))
+            parts.append(oit_text("用户请求与你共同阅读。请按人设判断是否同意：明确同意填写oit_reply.answer=\"yes\"，不同意填写answer=\"no\"；可在text中自然回复。只有明确同意后，共读室才会打开。"))
         now = self.now()
         text = str(text or "").strip()
         if text:
@@ -323,13 +325,10 @@ class ChatMixin:
                              "start": joint["start"], "end": joint["end"]}, replace=True)
         if requests.get("share"):
             self.share_ask = {"pid": self.pid, "ts": self._ms(), "sent": True}
+        if requests.get("coread"):
+            self.coread_ask = {"pid": self.pid, "ts": message["ts"]}
         self._sent()
         self._ask_user()
-        if requests.get("coread") and self.on_coread_open:
-            try:
-                self.on_coread_open()
-            except Exception as error:
-                self.log(f"COREAD open FAIL {type(error).__name__}: {error}")
         return ""
 
     def _away_kind(self) -> str:

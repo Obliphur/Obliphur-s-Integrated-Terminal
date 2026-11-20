@@ -173,11 +173,15 @@ class CommTest {
         assertEquals("", c.toggleRequestDraft("share"))
         assertEquals(2, c.requestDraftLabels().size)
         assertEquals("", c.send("")); wait(c)
-        assertEquals(1, opened)
+        assertEquals(0, opened)
         assertFalse(c.shareOn())
-        assertTrue(calls.last().second.last().second.contains("无需你同意或接受"))
+        assertTrue(calls.last().second.last().second.contains("只有明确同意后"))
         assertTrue(c.visible().first().text.contains("coread 请求"))
         assertTrue(c.packageDraftLabel().isEmpty())
+        script.add(ToolProtocol.pack("可以。", "oit_reply", JSONObject().put("text", "可以。").put("answer", "yes")))
+        assertEquals("", c.toggleRequestDraft("coread"))
+        assertEquals("", c.send("")); wait(c)
+        assertEquals(1, opened)
     }
 
     /** 客套收尾保持沉默，重启与同步不重试，新消息仍正常回复。 */

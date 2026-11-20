@@ -2,6 +2,13 @@
 
 
 EN = {
+    "启动共读室失败.": "Could not start the co-reading room.",
+    "⏳ 等待共读同意": "Waiting for agreement to co-read",
+    "{name} 拒绝了共同阅读": "{name} declined co-reading",
+    "{name} 没有明确同意, 共读室没有打开": "{name} did not explicitly agree; the co-reading room was not opened",
+    "{name} 没有回复, 共读室没有打开": "{name} did not reply; the co-reading room was not opened",
+    "✓ 同意了共同阅读": "✓ Agreed to co-read",
+    "✗ 拒绝了共同阅读": "✗ Declined co-reading",
     "阅读": "Reading",
     "自己阅读": "Read on my own",
     "发起 coread": "Start coread",
@@ -11,7 +18,7 @@ EN = {
     "未知的请求附件": "Unknown request attachment",
     "请先在 Windows 的沟通页点击「阅读」启动阅读服务.": "Click Reading on the Windows Chat page to start the reading service first.",
     "选择「自己阅读」可独自打开书库；选择「发起 coread」可与当前聊天对象共读、聊天和批注。共读期间请在阅读网页聊天，结束后恢复沟通。手机需连接 Windows 的阅读服务。": "Choose Read on my own to open the library, or Start coread to read, chat and annotate with the current character. Use the reader's chat during co-reading; regular chat resumes when it ends. Phones connect to the Windows reading service.",
-    "选择「自己阅读」可独自打开书库；选择「发起 coread」会作为附件加入待发送内容，随下一条消息发送并直接打开共读室，无需对方接受。共读期间请在阅读网页聊天，结束后恢复沟通。手机需连接 Windows 的阅读服务。": "Choose Read on my own to open the library. Start coread adds a request to the outgoing message; sending it opens the room immediately without requiring the character's acceptance. Use the reader's chat during co-reading; regular chat resumes when it ends. Phones connect to the Windows service.",
+    "选择「自己阅读」可独自打开书库；选择「发起 coread」会作为附件加入待发送内容，随下一条消息发送，待对方明确同意后才打开共读室。共读期间请在阅读网页聊天，结束后恢复沟通。手机需连接 Windows 的阅读服务。": "Choose Read on my own to open the library. Start coread adds a request to the outgoing message; the room opens only after the character explicitly agrees. Use the reader's chat during co-reading; regular chat resumes when it ends. Phones connect to the Windows service.",
     "正在共读，请在阅读网页里的聊天框继续沟通。": "Co-reading is active. Continue the conversation in the reader's chat panel.",
     "正在共读，请在阅读网页里的聊天框继续沟通.": "Co-reading is active. Continue the conversation in the reader's chat panel.",
     "结束阅读并恢复沟通": "End reading and return to chat",

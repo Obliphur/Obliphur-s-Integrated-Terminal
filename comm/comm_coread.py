@@ -14,6 +14,41 @@ COREAD_ACTIVITY_BUDGET = config.COMM_COREAD_ACTIVITY_SECONDS
 
 
 class CoReadMixin:
+    def _coread_asking(self):
+        ask = self.coread_ask
+        return bool(ask and ask.get("pid") == self.pid and int(ask["ts"]) <= self._req_ts)
+
+    def _coread_ask_end(self, notice: str = ""):
+        self.coread_ask = None
+        if notice:
+            notice = tr(notice, name=self.share_ai_name())
+            self.log("COREAD ask: " + notice)
+            if self.on_share_notice:
+                try:
+                    self.on_share_notice(notice)
+                except Exception:
+                    pass
+        self._changed()
+
+    def _coread_answer(self, answer: str):
+        if not self._coread_asking():
+            return
+        if self._ms() - int(self.coread_ask["ts"]) >= COREAD_OFFER_TTL:
+            self._coread_ask_end("{name} 没有回复, 共读室没有打开")
+            return
+        if answer == "yes":
+            self._coread_ask_end()
+            if self.on_coread_open:
+                try:
+                    self.on_coread_open()
+                except Exception as error:
+                    self.log(f"COREAD open FAIL {type(error).__name__}: {error}")
+                    self._coread_ask_end("启动共读室失败.")
+        elif answer == "no":
+            self._coread_ask_end("{name} 拒绝了共同阅读")
+        else:
+            self._coread_ask_end("{name} 没有明确同意, 共读室没有打开")
+
     def _coread_end_apply(self, op, message):
         self._coread_pending_end = {"session": str(op.get("session") or ""),
                                     "message": str(message.get("uid") or ""),
@@ -127,6 +162,9 @@ class CoReadMixin:
         self._push()
 
     def _coread_offer_tick(self):
+        ask = self.coread_ask
+        if ask and (ask.get("pid") != self.pid or self._ms() - int(ask.get("ts") or 0) >= config.COMM_COREAD_OFFER_SECONDS * 1000):
+            self._coread_ask_end("{name} 没有回复, 共读室没有打开")
         offer = self.cfg.get("coread_offer") or {}
         if offer.get("state") == "queued":
             uid = str(offer.get("message") or "")

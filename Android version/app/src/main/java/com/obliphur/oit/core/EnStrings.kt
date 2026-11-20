@@ -3,6 +3,13 @@ package com.obliphur.oit.core
 /** 英文界面文字. 由 gen_en.py 从桌面版 i18n.py 和补充的译文生成; 键是中文原文. */
 object EnStrings {
     val MAP: Map<String, String> = hashMapOf(
+        "启动共读室失败." to "Could not start the co-reading room.",
+        "⏳ 等待共读同意" to "Waiting for agreement to co-read",
+        "{name} 拒绝了共同阅读" to "{name} declined co-reading",
+        "{name} 没有明确同意, 共读室没有打开" to "{name} did not explicitly agree; the co-reading room was not opened",
+        "{name} 没有回复, 共读室没有打开" to "{name} did not reply; the co-reading room was not opened",
+        "✓ 同意了共同阅读" to "✓ Agreed to co-read",
+        "✗ 拒绝了共同阅读" to "✗ Declined co-reading",
         "阅读" to "Reading",
         "自己阅读" to "Read on my own",
         "发起 coread" to "Start coread",
@@ -13,7 +20,7 @@ object EnStrings {
         "请先选择聊天对象，再开始共读." to "Select a character before starting co-reading.",
         "请先在 Windows 的沟通页点击「阅读」启动阅读服务." to "Click Reading on the Windows Chat page to start the reading service first.",
         "选择「自己阅读」可独自打开书库；选择「发起 coread」可与当前聊天对象共读、聊天和批注。共读期间请在阅读网页聊天，结束后恢复沟通。手机需连接 Windows 的阅读服务。" to "Choose Read on my own to open the library, or Start coread to read, chat and annotate with the current character. Use the reader's chat during co-reading; regular chat resumes when it ends. Phones connect to the Windows reading service.",
-        "选择「自己阅读」可独自打开书库；选择「发起 coread」会作为附件加入待发送内容，随下一条消息发送并直接打开共读室，无需对方接受。共读期间请在阅读网页聊天，结束后恢复沟通。手机需连接 Windows 的阅读服务。" to "Choose Read on my own to open the library. Start coread adds a request to the outgoing message; sending it opens the room immediately without requiring the character's acceptance. Use the reader's chat during co-reading; regular chat resumes when it ends. Phones connect to the Windows service.",
+        "选择「自己阅读」可独自打开书库；选择「发起 coread」会作为附件加入待发送内容，随下一条消息发送，待对方明确同意后才打开共读室。共读期间请在阅读网页聊天，结束后恢复沟通。手机需连接 Windows 的阅读服务。" to "Choose Read on my own to open the library. Start coread adds a request to the outgoing message; the room opens only after the character explicitly agrees. Use the reader's chat during co-reading; regular chat resumes when it ends. Phones connect to the Windows service.",
         "正在共读，请在阅读网页里的聊天框继续沟通。" to "Co-reading is active. Continue the conversation in the reader's chat panel.",
         "结束阅读并恢复沟通" to "End reading and return to chat",
         "🙈 会把请求作为附件加入待发送内容，随下一条消息询问对方；同意后才打开. 👀 表示已打开，去别的页面时对方会收到那一页上你们的数据；回到沟通自动关闭. 对方也可以发邀请，点「接受」才会打开." to "🙈 adds a request to your next outgoing message; sharing starts only if the character agrees. 👀 means sharing is active. On another page, the character receives your data from that page; returning to Chat turns it off. You can also accept an invitation from the character.",

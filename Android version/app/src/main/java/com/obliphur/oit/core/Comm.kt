@@ -1622,6 +1622,8 @@ class Comm(
     private var coreadEndMessage = ""
     private var coreadEndSession = ""
     private var coreadOffer = JSONObject()
+    private var coreadAskPid = ""
+    private var coreadAskTs = 0L
     /** 联合行动: 选好了词条和开始时间, 还没发出去 (结束时间 = 开始时间 + 这些词条的合约时长). */
     class JointDraft(val terms: List<String>, val start: LocalDateTime, val end: LocalDateTime)
     @Volatile var jointDraft: JointDraft? = null; private set
@@ -1992,6 +1994,7 @@ class Comm(
     private fun switchTo(name: String) {
         val np = pidOf(name)
         if (np == pid) { persona = name; return }
+        coreadAskEnd()
         voice.stop()
         stopMusic()
         if (busy) replyDiscard(replyBatch)
@@ -2040,6 +2043,24 @@ class Comm(
     fun coreadInvite(): Boolean = coreadOffer.optString("pid") == pid &&
         coreadOffer.optString("state") == "invite" && nowMs() - coreadOffer.optLong("ts") in 0L until Cfg.COMM_COREAD_OFFER_SECONDS * 1000L &&
         messages.any { it.uid == coreadOffer.optString("message") && !it.hold }
+
+    private fun coreadAsking(): Boolean = coreadAskPid.isNotEmpty() && coreadAskPid == pid && coreadAskTs <= reqTs
+
+    private fun coreadAskEnd(notice: String = "") {
+        coreadAskPid = ""
+        if (notice.isNotEmpty()) runCatching { onShareNotice?.invoke(tr(notice, "name" to aiName())) }
+        changed()
+    }
+
+    private fun coreadAnswer(answer: String) {
+        if (!coreadAsking()) return
+        if (nowMs() - coreadAskTs >= Cfg.COMM_COREAD_OFFER_SECONDS * 1000L) {
+            coreadAskEnd("{name} 没有回复, 共读室没有打开")
+        } else if (answer == "yes") {
+            coreadAskEnd()
+            runCatching { onCoreadOpen?.invoke() }.onFailure { coreadAskEnd("启动共读室失败.") }
+        } else coreadAskEnd(if (answer == "no") "{name} 拒绝了共同阅读" else "{name} 没有明确同意, 共读室没有打开")
+    }
 
     @Synchronized
     fun coreadRespond(accept: Boolean): String {
@@ -4316,8 +4337,6 @@ class Comm(
     fun clearPackageDrafts() {
         jointDraft = null
         shareRequestDraft = false; coreadRequestDraft = false
-        shareRequestDraft = false
-        coreadRequestDraft = false
         changed()
     }
 
@@ -4972,11 +4991,12 @@ class Comm(
             if (share.on || shareAsking()) return tr("share data 已开启或正在等待回复")
             awayKind().let { if (it.isNotEmpty()) return tr("{name} {st}, 现在没法征求同意", "name" to aiName(), "st" to tr(if (it == "sleep") "睡眠中" else "专注中")) }
             shown.add(tr("🙈 share data 请求"))
-            parts.add("[OIT_SYSTEM_MESSAGES]\n用户请求打开 share data。请按人设判断是否同意：同意填写oit_reply.answer=\"yes\"，不同意填写answer=\"no\"；可在text中自然回复。只有用户明确同意后，OIT才会分享数据。")
+            parts.add("[OIT_SYSTEM_MESSAGES]\n用户请求打开 share data。请按人设判断是否同意：同意填写oit_reply.answer=\"yes\"，不同意填写answer=\"no\"；可在text中自然回复。只有你明确同意后，OIT才会分享数据。")
         }
         if (coreadReq) {
+            if (coreadAskPid == pid) return tr("⏳ 等待共读同意")
             shown.add(tr("📚 coread 请求"))
-            parts.add("[OIT_SYSTEM_MESSAGES]\n用户已主动发起共同阅读，共读室由用户直接打开，无需你同意或接受。请将其视为已经开始；可在text中自然回应。之后用户会在阅读网页中与你讨论书籍。")
+            parts.add("[OIT_SYSTEM_MESSAGES]\n用户请求与你共同阅读。请按人设判断是否同意：明确同意填写oit_reply.answer=\"yes\"，不同意填写answer=\"no\"；可在text中自然回复。只有明确同意后，共读室才会打开。")
         }
         val text = text0.trim()
         if (text.isNotEmpty()) { shown.add(text); parts.add(text) }
@@ -4987,9 +5007,9 @@ class Comm(
             jointSet(Joint(nowMs().toString(), pid, "wait", jd.terms, jd.start.iso(), jd.end.iso(), 0L))
         }
         if (shareReq) { shareAskPid = pid; shareAskTs = nowMs(); shareAskSent = true }
+        if (coreadReq) { coreadAskPid = pid; coreadAskTs = message.ts }
         sentOut()
         askUser()
-        if (coreadReq) runCatching { onCoreadOpen?.invoke() }
         return ""
     }
 
@@ -5695,6 +5715,8 @@ class Comm(
         val r = Result(result.kind, result.extra, CommInteraction.cleanTension(result.reply), result.err, result.epoch, result.op, result.musicId, result.batch, result.memoryEdit, result.musicAction, result.coreadQuote, result.coreadEnd)
         busy = false
         busySince = 0L
+        val coreadWait = r.kind in listOf("user", "retry") && r.epoch == epoch && coreadAsking()
+        if (hardBlock() && coreadWait) coreadAskEnd("{name} 没有回复, 共读室没有打开")
         if (hardBlock()) { replyDiscard(r.batch); again = false; if (r.kind == "share_ask") shareAskEnd("{name} 没有回复, share data 没有打开"); if (r.kind == "shift_ask") shiftAskEnd("{name} 没有回复, 起点没有平移"); changed(); return }       // 等回复的时候"无言为真"生效了: 这条回复不要了
         if (r.epoch != epoch) {
             replyDiscard(r.batch)
@@ -5712,6 +5734,7 @@ class Comm(
             return
         }
         if (r.err.isEmpty() && r.kind in listOf("user", "retry", "proactive", "chase", "followup") && ToolProtocol.args(r.reply).optBoolean("silent")) {
+            if (coreadWait) coreadAskEnd("{name} 没有明确同意, 共读室没有打开")
             // 主动沉默不显示气泡、不重试，也不结算情绪或提交尚未生效的工具操作。
             replyDiscard(r.batch)
             error = ""; catchup = false
@@ -5756,6 +5779,8 @@ class Comm(
                 text = tr(if (jointAns == "yes") "✓ 接受了联合行动" else "✗ 拒绝了联合行动")
         }
         var shareAns = ""                                                     // 对 share data 请求的回复 [Yes] / [No]
+        val coreadAns = if (coreadWait && r.err.isEmpty() && !refused && !queried) CommText.jointAnswer(r.reply) else ""
+        if (coreadAns.isNotEmpty() && text.isEmpty()) text = tr(if (coreadAns == "yes") "✓ 同意了共同阅读" else "✗ 拒绝了共同阅读")
         if ((r.kind == "share_ask" || r.kind in listOf("user", "retry") && shareAsking()) && r.err.isEmpty() && !refused && !queried) {
             shareAns = CommText.jointAnswer(r.reply)
             if (shareAns.isNotEmpty() && text.isEmpty())              // 只回了 [Yes] / [No]: 聊天里写一行结果
@@ -5778,6 +5803,7 @@ class Comm(
         var delivered = false
         var deliveredId = 0
         if (r.err.isNotEmpty() || refused || drop || empty) {
+            if (coreadWait) coreadAskEnd("{name} 没有明确同意, 共读室没有打开")
             replyDiscard(r.batch)
             error = r.err
             if (r.kind == "love") {
@@ -5833,6 +5859,7 @@ class Comm(
             if (r.kind == "love" && !offenseBlocked()) loveSet(inv = nowMs())          // 告白发出去了: 聊天页上等用户点 接受 / 拒绝
             if (r.kind == "share_ask" || r.kind in listOf("user", "retry") && shareAsking()) shareAnswer(shareAns)
             if (r.kind == "shift_ask") shiftAnswer(shiftAns)
+            if (coreadWait) coreadAnswer(coreadAns)
             if (waitMin > 0 && r.kind != "chase") m.wait = waitMin          // 追问的回复里再写 [waiting for reply] 不算: 一条消息最多追问一次
             val held = m.hold
             if (!viewing && !held && m !in alreadyShown) unread++
@@ -5854,6 +5881,8 @@ class Comm(
     /** 大约每秒调用一次 (Core.tick). */
     @Synchronized
     fun tick() {
+        if (coreadAskPid.isNotEmpty() && (coreadAskPid != pid || nowMs() - coreadAskTs >= Cfg.COMM_COREAD_OFFER_SECONDS * 1000L))
+            coreadAskEnd("{name} 没有回复, 共读室没有打开")
         if (personaName().isNotEmpty()) interactionPrepare()
         countIdle()
         val interrupted = replyInterrupt()
@@ -6333,6 +6362,8 @@ class Comm(
      */
     @Synchronized
     fun clear() {
+        coreadAskEnd()
+        clearPackageDrafts()
         voice.clear(personaName())
         clearTs = maxOf(nowMs(), lastTs)
         messages.clear(); unread = 0; retryAt = 0; retryN = 0; error = ""; catchup = false; replyRewrite = false

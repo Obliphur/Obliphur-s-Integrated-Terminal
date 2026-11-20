@@ -82,6 +82,7 @@ class MiscMixin:
             self.cfg["joint"] = {"ts": max(self._ms(), int(jj.get("ts") or 0) + 1)}
         self.joint_draft = {}
         self.clear_request_draft()
+        self.coread_ask = None
         if self.cfg.get("net"):                            # 新对话: 限时网络也作废 (别的设备一起)
             self.cfg["net"] = {"ts": max(self._ms(), int(self.cfg["net"].get("ts") or 0) + 1)}
         self.save_cfg()

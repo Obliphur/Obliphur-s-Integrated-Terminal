@@ -151,6 +151,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         self.shift_ask = None          # 用户请求平移对方的日程起点, 等对方回 [Yes] / [No]: {"pid", "ts", "sent", "to"}; 本机界面状态, 不存盘 / 不同步 (结果记进聊天状态里的 shift, 同步)
         self.share_ask = None          # 用户点了 share data, 等对方回 [Yes] / [No]: {"pid", "ts", "sent"}; 本机界面状态, 不存盘 / 不同步
         self.request_draft = {"share": False, "coread": False}  # 待随下一条用户消息发送的请求附件, 仅本机
+        self.coread_ask = None       # 用户发起共读, 等人设明确同意; 仅本机
         self._share_end = ""           # 排着的"总结这次 share data"请求 (对方正在回别的话时等一等)
         self.on_change = None          # 界面线程里调用
         self._lock = threading.Lock()
@@ -349,6 +350,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         self.voice.stop()
         self.music_player.stop()
         self._music_actions.clear()
+        self.coread_ask = None
         if self.busy:
             self._reply_discard(self._reply_batch)
         self._reply_rewrite = False
@@ -1331,7 +1333,10 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             batch.finished = True
         self.busy = False
         self.busy_since = 0.0
+        coread_wait = kind in ("user", "retry") and epoch == self._epoch and self._coread_asking()
         if self.hard_block():                           # 等回复的时候"无言为真"生效了: 这条回复不要了
+            if coread_wait:
+                self._coread_ask_end("{name} 没有回复, 共读室没有打开")
             self._reply_discard(batch)
             self._again = False
             if kind == "share_ask":
@@ -1362,6 +1367,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                 self._ask_user()
             return
         if not err and kind in ("user", "retry", "proactive", "chase", "followup") and args_of(reply).get("silent") is True:
+            if coread_wait:
+                self._coread_ask_end("{name} 没有明确同意, 共读室没有打开")
             # 主动保持沉默是已处理，不沿用「暂时不便」的重试，也不结算情绪或提交工具操作。
             self._reply_discard(batch)
             self.error = ""
@@ -1434,6 +1441,9 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             if joint_ans and not text:                          # 只回了 [Yes] / [No]: 聊天里写一行结果 (不然这条邀请像是没人回, 重开程序还会再问一次)
                 text = tr("✓ 接受了联合行动") if joint_ans == "yes" else tr("✗ 拒绝了联合行动")
         share_ans = ""                                          # 对 share data 请求的回复 [Yes] / [No]
+        coread_ans = joint_answer(reply) if coread_wait and not err and not refused and not queried else ""
+        if coread_ans and not text:
+            text = tr("✓ 同意了共同阅读") if coread_ans == "yes" else tr("✗ 拒绝了共同阅读")
         if (kind == "share_ask" or (kind in ("user", "retry") and self.share_asking())) and not err and not refused and not queried:
             share_ans = joint_answer(reply)
             if share_ans and not text:                          # 只回了 [Yes] / [No]: 聊天里写一行结果
@@ -1456,6 +1466,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             self.log(f"REPLY refused ({kind}): 对方回了 [refuse to reply], 不显示" + (", 稍后重试" if self.unanswered() or catchup else ""))
         delivered = False
         if err or refused or drop or empty:
+            if coread_wait:
+                self._coread_ask_end("{name} 没有明确同意, 共读室没有打开")
             self._reply_discard(batch)
             self.error = err
             if kind == "love":
@@ -1541,6 +1553,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                 self._share_answer(share_ans)
             if kind == "shift_ask":
                 self._shift_answer(shift_ans)
+            if coread_wait:
+                self._coread_answer(coread_ans)
             if wait_min and kind != "chase":                    # 追问的回复里再写 [waiting for reply] 不算: 一条消息最多追问一次
                 m["wait"] = wait_min
             held = m.get("hold")

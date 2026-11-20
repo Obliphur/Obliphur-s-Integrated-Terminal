@@ -450,7 +450,7 @@ def music_tool_checks():
 
 
 def request_attachment_checks():
-    """请求附件随下一条消息提交；用户发起共读立即打开，不等待模型接受。"""
+    """请求附件随下一条消息提交；用户发起共读须经人设明确同意。"""
     root = Path(tempstore.mkdtemp("comm-request-attachments"))
     packets, replies = [], []
     def fake(_profile, _system, messages, **_kwargs):
@@ -473,12 +473,21 @@ def request_attachment_checks():
     while c.busy and time.monotonic() < until:
         time.sleep(0.01); c.tick()
     assert not c.busy and not c.error, c.error
-    assert opened == ["opened"], "用户主动发起的共读不等待模型同意"
+    assert opened == [], "拒绝共读后不得打开阅读室"
     assert not c.share_on(), "share data 仍须明确同意"
     assert not any(c.request_draft.values()) and not c.request_draft_labels()
     sent = next(m["content"] for m in packets[0] if m["role"] == "user")
-    assert "共同阅读" in sent and "share data" in sent and "无需你同意或接受" in sent
+    assert "共同阅读" in sent and "share data" in sent and "只有明确同意后" in sent
     assert c.visible()[0]["text"] == "🙈 share data 请求\n📚 coread 请求"
+
+    replies.append(call("oit_reply", {"text": "可以。", "answer": "yes"}))
+    assert c.toggle_request_draft("coread") == ""
+    assert c.send("") == ""
+    until = time.monotonic() + 5
+    while c.busy and time.monotonic() < until:
+        time.sleep(0.01); c.tick()
+    assert not c.busy and not c.error, c.error
+    assert opened == ["opened"], "只有明确同意后才打开共读室"
 
     c.on_share_open = lambda: opened.append("share")
     replies.append(call("oit_reply", {"text": "可以。", "answer": "yes"}))
