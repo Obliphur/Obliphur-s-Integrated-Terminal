@@ -61,7 +61,7 @@ try:
             page = CommPage(root, c)
             page.pack(fill="both", expand=True)
             # 阅读入口的两个选择和关闭行为, 中英文均走真实按钮回调。
-            assert page.btn_coread.cget("text") == i18n.tr("阅读")
+            assert page.btn_coread.cget("text") == "📚"
             opened = page.on_coread = Mock()
             for label, value in (("自己阅读", False), ("发起 coread", True)):
                 def choose(dlg, label=label, value=value):

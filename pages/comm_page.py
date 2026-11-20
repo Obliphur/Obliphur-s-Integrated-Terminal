@@ -113,7 +113,7 @@ class CommPage(CommVoiceMixin, tk.Frame):
         self.btn_image.pack(side="left", padx=(4, 0))
         self.btn_review = ttk.Button(tools, text="🎼", width=3, command=self._review_performance)
         self.btn_review.pack(side="left", padx=(4, 0))
-        self.btn_coread = ttk.Button(tools, text=tr("阅读"), command=self._reading)
+        self.btn_coread = ttk.Button(tools, text="📚", width=3, command=self._reading)
         self.btn_coread.pack(side="left", padx=(4, 0))
         self.coread_btns = tk.Frame(tools, bg=bg)
         self.lbl_coread_inv = tk.Label(self.coread_btns, text="", bg=bg, fg=COLORS["accent"], font=config.font("small"))

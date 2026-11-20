@@ -336,7 +336,7 @@ fun CommScreen(go: (String) -> Unit) {
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
             // ❓ 帮助 (最左边): 解释每个按钮的作用
             TextButton({ help = true }, contentPadding = tight) { Text("❓", fontSize = 18.sp) }
-            TextButton({ readingChoice = true }, contentPadding = tight) { Text(tr("阅读")) }
+            TextButton({ readingChoice = true }, contentPadding = tight) { Text("📚", fontSize = 18.sp) }
             // 当前聊天模式，与其他功能一起放在输入框上方。
             TextButton({ comm.setScenario(!comm.scenarioOn()) }, contentPadding = tight) {
                 Text(if (comm.scenarioOn()) "🎭" else "📱", fontSize = 18.sp)
