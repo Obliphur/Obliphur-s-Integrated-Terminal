@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""选头像: 资源管理器里选一张图 → 拖动 / 缩放, 圆框里的就是头像 (逻辑在 avatar.py)."""
+"""选头像: 资源管理器里选一张图 → 拖动 / 缩放, 方框里的就是头像 (逻辑在 avatar.py)."""
 
 import os
 import tkinter as tk
@@ -18,7 +18,7 @@ ZOOM_MAX = 0.1          # 缩到最小时, 取景框边长是图片短边的 10%
 
 
 def pick_avatar(parent, dest: str) -> bool:
-    """选图 + 截取, 圆形 PNG 存到 dest. 保存了返回 True."""
+    """选图 + 截取正方形 PNG 存到 dest. 保存了返回 True."""
     path = filedialog.askopenfilename(
         parent=parent, title=tr("选择头像"),
         filetypes=[(tr("图片"), "*.png *.jpg *.jpeg *.bmp *.gif *.tif *.tiff"), (tr("所有文件"), "*.*")])
@@ -31,7 +31,7 @@ def pick_avatar(parent, dest: str) -> bool:
         return False
 
     S = config.scaled(340)                  # 取景区的边长 (像素)
-    R = S * 0.46                            # 圆框半径
+    Q = S * 0.82                            # 方框边长
     dlg = Modal(parent, tr("截取头像"), width=S + 50, height=S + config.scaled(150))
     st = {"cx": w / 2, "cy": h / 2, "z": 0.0, "job": None, "photo": None, "drag": None, "ok": False}
     base = float(min(w, h))
@@ -44,11 +44,8 @@ def pick_avatar(parent, dest: str) -> bool:
                    highlightbackground=COLORS["border"])
     cv.pack()
     img_id = cv.create_image(0, 0, anchor="nw")
-    # 圆框外变暗: 一个很粗的圆环盖住四个角
-    ring = (S / 2) * 1.6
-    cv.create_oval(S / 2 - R - ring / 2, S / 2 - R - ring / 2, S / 2 + R + ring / 2, S / 2 + R + ring / 2,
-                   outline="#000000", width=ring, outlinestipple="gray50")
-    cv.create_oval(S / 2 - R, S / 2 - R, S / 2 + R, S / 2 + R, outline="#ffffff", width=2)
+    cv.create_rectangle(S / 2 - Q / 2, S / 2 - Q / 2, S / 2 + Q / 2, S / 2 + Q / 2,
+                        outline="#ffffff", width=2)
 
     def redraw():
         st["job"] = None
@@ -92,9 +89,9 @@ def pick_avatar(parent, dest: str) -> bool:
               command=lambda v: (st.__setitem__("z", float(v) / 100), later())).pack(fill="x", pady=(10, 0))
 
     def save():
-        crop = side() * (2 * R) / S                       # 圆框直径对应的源图边长
+        crop = side() * Q / S                             # 方框对应的源图边长
         try:
-            avatar.render(path, dest, st["cx"], st["cy"], crop, OUT_PX, circle=True)
+            avatar.render(path, dest, st["cx"], st["cy"], crop, OUT_PX, circle=False)
             avatar.render_full(path, avatar.full_path(dest), 4096)     # 点开时看的是整张原图 (不裁, 保持原分辨率)
         except OSError:
             toast.warn(tr("保存头像失败."))

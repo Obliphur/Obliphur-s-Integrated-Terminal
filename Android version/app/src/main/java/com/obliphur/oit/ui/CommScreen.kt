@@ -625,7 +625,7 @@ private fun Bubble(m: ChatMsg, play: (() -> Unit)? = null) {
     }
 }
 
-/** 头像: 选过图片就显示图片 (聊天里是圆形), 否则是名字的第一个字. 点对方的头像可以看完整的大图 (不是圆的). */
+/** 头像: 选过图片就显示图片 (聊天里是方形), 否则是名字的第一个字. 点对方的头像可以看完整的大图. */
 @Composable
 private fun Avatar(who: String, fallback: String, size: Int) {
     val o = LocalOit.current
@@ -652,10 +652,11 @@ private fun Avatar(who: String, fallback: String, size: Int) {
     }
     if (image != null) {
         val click = if (mine) Modifier else Modifier.clickable { full = true }
-        androidx.compose.foundation.Image(image, null, Modifier.size(size.dp).clip(CircleShape).then(click))
+        androidx.compose.foundation.Image(image, null,
+            Modifier.size(size.dp).border(1.dp, o.border).then(click))
         return
     }
-    Box(Modifier.size(size.dp).background(if (mine) o.accent else o.card, CircleShape).border(1.dp, o.border, CircleShape),
+    Box(Modifier.size(size.dp).background(if (mine) o.accent else o.card).border(1.dp, o.border),
         contentAlignment = Alignment.Center) {
         Text(fallback, color = if (mine) o.onAccent else o.text, fontWeight = FontWeight.Bold, fontSize = 14.sp)
     }

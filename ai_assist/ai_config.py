@@ -91,10 +91,11 @@ class AIConfig:
                     out["api_key"] = ""
                 fam = self._norm_family(preset, out)
                 out["family"] = fam
-                if preset == "claude_code":
-                    out["kind"], out["protocol"], out["family"] = "cli", "cli", "claude"
+                if preset in CLI_PROVIDERS:
+                    out["kind"], out["protocol"] = "cli", "cli"
                     out["base_url"], out["api_key"] = "", ""
-                    out["command"] = out.get("command") or "claude"
+                    out["family"] = PROVIDERS[preset].get("family") or "other"
+                    out["command"] = out.get("command") or PROVIDERS[preset].get("command", "")
                 else:
                     out["kind"] = "api"
                     out["protocol"] = (out.get("protocol") if preset == "custom" and out.get("protocol") in PROTOCOLS and out.get("protocol") != "cli"
@@ -137,11 +138,12 @@ class AIConfig:
     def _ensure_managed_profiles(self):
         """已安装的本地客户端始终出现在模型配置里，卸载后才允许删除。"""
         from .ai_cli import installed
-        if not installed({"command": "claude"}) or "claude_code" in self.profiles:
-            return
-        self.profiles["claude_code"] = default_profile("claude_code")
-        self.names["claude_code"] = PROVIDERS["claude_code"]["label"]
-        self.order.insert(0, "claude_code")
+        for preset in CLI_PROVIDERS:
+            if preset in self.profiles or not installed({"command": PROVIDERS[preset].get("command", "")}):
+                continue
+            self.profiles[preset] = default_profile(preset)
+            self.names[preset] = PROVIDERS[preset]["label"]
+            self.order.insert(0, preset)
 
     def _trim(self):
         """最多 MAX_CONFIGS 份: 默认配置一定留着."""
@@ -165,8 +167,8 @@ class AIConfig:
             self.provider = self.order[0]
 
     def _norm_family(self, preset: str, prof: dict) -> str:
-        if preset == "claude_code":
-            return "claude"
+        if preset in CLI_PROVIDERS:
+            return PROVIDERS[preset].get("family") or "other"
         if preset in FAMILY_PROTOCOL:
             return preset
         fam = str(prof.get("family") or "")
@@ -258,7 +260,7 @@ class AIConfig:
         if cid not in self.profiles or len(self.order) <= 1:
             return False
         prof = self.profiles.get(cid) or {}
-        if prof.get("kind") == "cli" or prof.get("preset") == "claude_code":
+        if prof.get("kind") == "cli" or prof.get("preset") in CLI_PROVIDERS:
             from .ai_cli import installed
             if installed(prof):
                 return False
@@ -337,13 +339,13 @@ class AIConfig:
             prof["preset"] = fields["preset"]
         preset = prof.get("preset") or "custom"
         # 预设协议固定; 自定义中转可独立选协议, 切换模型类型时默认匹配该类型。
-        if preset == "claude_code":
+        if preset in CLI_PROVIDERS:
             prof["kind"] = "cli"
-            prof["family"] = "claude"
+            prof["family"] = PROVIDERS[preset].get("family") or "other"
             prof["protocol"] = "cli"
             prof["base_url"] = ""
             prof["api_key"] = ""
-            prof["command"] = prof.get("command") or "claude"
+            prof["command"] = prof.get("command") or PROVIDERS[preset].get("command", "")
             return
         prof["kind"] = "api"
         if preset in FAMILY_PROTOCOL:

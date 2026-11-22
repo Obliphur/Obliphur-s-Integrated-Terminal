@@ -55,6 +55,16 @@ PROVIDERS = {
         "family": "claude",
         "effort": "auto",
     },
+    "antigravity": {
+        "label": "Antigravity",
+        "protocol": "cli",
+        "model": "订阅模型",
+        "models": ["订阅模型"],
+        "kind": "cli",
+        "command": "agy",
+        "family": "gemini",
+        "effort": "auto",
+    },
     "claude": {
         "label": "Claude",
         "base_url": "https://api.anthropic.com",
@@ -93,7 +103,10 @@ PROVIDERS = {
 }
 
 
-PROVIDER_ORDER = ("claude_code", "claude", "chatgpt", "gemini", "deepseek", "custom")
+CLI_PROVIDERS = ("claude_code", "antigravity")
+
+
+PROVIDER_ORDER = ("claude_code", "antigravity", "claude", "chatgpt", "gemini", "deepseek", "custom")
 
 
 ANTHROPIC_VERSION = "2023-06-01"
@@ -235,6 +248,7 @@ __all__ = [
     "FAMILY_LABELS",
     "FAMILY_PROTOCOL",
     "PROVIDERS",
+    "CLI_PROVIDERS",
     "PROVIDER_ORDER",
     "ANTHROPIC_VERSION",
     "MAX_ITEMS",

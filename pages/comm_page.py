@@ -341,21 +341,22 @@ class CommPage(CommVoiceMixin, tk.Frame):
         img = self.comm.avatar_path("me" if mine else "ai")
         photo = self._photo(img, size) if img else None
         if photo is not None:
-            lab = tk.Label(parent, image=photo, bg=COLORS["bg"], bd=0)
+            lab = tk.Label(parent, image=photo, bg=COLORS["bg"], bd=0,
+                           highlightthickness=1, highlightbackground=COLORS["border"])
             if not mine:
                 lab.configure(cursor="hand2")
                 lab.bind("<Button-1>", lambda e: self._show_avatar())
             return lab
         cv = tk.Canvas(parent, width=size, height=size, bg=COLORS["bg"], highlightthickness=0)
-        cv.create_oval(1, 1, size - 1, size - 1, outline=COLORS["border"],
-                       fill=COLORS.get("accent_fill", COLORS["accent"]) if mine else COLORS["bg_card"])
+        cv.create_rectangle(1, 1, size - 1, size - 1, outline=COLORS["border"],
+                            fill=COLORS.get("accent_fill", COLORS["accent"]) if mine else COLORS["bg_card"])
         cv.create_text(size // 2, size // 2, text=text,
                        fill=COLORS.get("on_accent_fill", COLORS["on_accent"]) if mine else COLORS["text"],
                        font=config.font("body", bold=True))
         return cv
 
     def _show_avatar(self):
-        """点对方的头像: 弹窗显示完整原图 (不裁, 等比缩到屏幕放得下; 老头像没有完整图就显示圆形那份)."""
+        """点对方的头像: 弹窗显示完整原图 (不裁, 等比缩到屏幕放得下; 老头像没有完整图就显示方形那份)."""
         c = self.comm
         cur = c.avatar_path("ai")
         if not cur:

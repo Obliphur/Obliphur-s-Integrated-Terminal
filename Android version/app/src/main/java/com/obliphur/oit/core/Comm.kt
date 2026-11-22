@@ -4747,7 +4747,7 @@ class Comm(
     /** 聊天页顶上那一行 (没有前缀 / 修饰 / 结束时间, 前面加什么颜色的小圆点看 kind). */
     fun otherStatusText(): String = otherStatusDisplay().first
 
-    // ---- 头像: 圆形 PNG (ui/AvatarCrop.kt 里选图并截取); 对方的头像跟着人设走 ----
+    // ---- 头像: 方形 PNG (ui/AvatarCrop.kt 里选图并截取); 对方的头像跟着人设走 ----
 
     private fun avatarName(who: String, persona: String): String {
         val crc = java.util.zip.CRC32().apply { update(personaTitle(persona).toByteArray(Charsets.UTF_8)) }
@@ -4773,7 +4773,7 @@ class Comm(
     /** 首次初始化默认头像；升级只替换指纹一致的旧内置图，自选或移除的头像保持不动。 */
     fun seedDefaultAvatar(main: ByteArray?, full: ByteArray?) {
         val priorVersion = defaultAvatarVersion
-        if (priorVersion >= 3) return
+        if (priorVersion >= 4) return
         if (main == null || full == null) return
         val name = "Claudia.txt"
         if (listPersonas().contains(name)) {
@@ -4794,11 +4794,11 @@ class Comm(
             }
             if (copied.isFailure) return
         }
-        defaultAvatarVersion = 3
+        defaultAvatarVersion = 4
         saveCfg()
     }
 
-    /** 完整 (没裁成圆形) 的头像文件: 点开对方头像时显示的那份 (1.0.430). */
+    /** 完整 (没裁剪) 的头像文件: 点开对方头像时显示的那份 (1.0.430). */
     fun avatarFullFile(who: String): File =
         File(File(dir, "avatars"), avatarName(who, personaName()).replace(".png", ".full.png"))
 

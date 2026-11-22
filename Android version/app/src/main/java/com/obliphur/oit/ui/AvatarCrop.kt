@@ -22,10 +22,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.PathFillType
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
@@ -39,7 +36,7 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 private const val OUT_PX = 256
-private const val ZOOM_RANGE = 8f           // 最多放大到刚好盖住圆框的 8 倍
+private const val ZOOM_RANGE = 8f           // 最多放大到刚好盖住方框的 8 倍
 
 /** 把相册 / 文件管理器里选的图读成不太大的 Bitmap (按 EXIF 转正). */
 private fun decode(ctx: android.content.Context, uri: Uri, maxSide: Int): Bitmap? = runCatching {
@@ -50,7 +47,7 @@ private fun decode(ctx: android.content.Context, uri: Uri, maxSide: Int): Bitmap
     }
 }.getOrNull()
 
-/** 截取头像: 拖动 / 双指缩放, 圆框里的就是头像. onDone(裁剪后的圆图, 整张原图) = 取消时两个都是 null. */
+/** 截取头像: 拖动 / 双指缩放, 方框里的就是头像. onDone(裁剪后的方图, 整张原图) = 取消时两个都是 null. */
 @Composable
 fun AvatarCropDialog(uri: Uri, onDone: (Bitmap?, Bitmap?) -> Unit) {
     val o = LocalOit.current
@@ -62,8 +59,8 @@ fun AvatarCropDialog(uri: Uri, onDone: (Bitmap?, Bitmap?) -> Unit) {
     }
     val box = 300.dp
     val boxPx = with(LocalDensity.current) { box.toPx() }
-    val r = boxPx * 0.46f
-    val minScale = 2f * r / min(src.width, src.height)
+    val q = boxPx * 0.82f
+    val minScale = q / min(src.width, src.height)
     var scale by remember { mutableFloatStateOf(minScale) }
     var cx by remember { mutableFloatStateOf(src.width / 2f) }
     var cy by remember { mutableFloatStateOf(src.height / 2f) }
@@ -71,7 +68,7 @@ fun AvatarCropDialog(uri: Uri, onDone: (Bitmap?, Bitmap?) -> Unit) {
 
     fun clamp() {
         scale = scale.coerceIn(minScale, minScale * ZOOM_RANGE)
-        val half = r / scale
+        val half = q / (2f * scale)
         cx = cx.coerceIn(half, src.width - half)
         cy = cy.coerceIn(half, src.height - half)
     }
@@ -93,14 +90,18 @@ fun AvatarCropDialog(uri: Uri, onDone: (Bitmap?, Bitmap?) -> Unit) {
                         translate(boxPx / 2 - cx * scale, boxPx / 2 - cy * scale)
                         scale(scale, scale, pivot = Offset.Zero)
                     }) { drawImage(image) }
-                    val c = Offset(boxPx / 2, boxPx / 2)
-                    val hole = Path().apply {
-                        fillType = PathFillType.EvenOdd
-                        addRect(Rect(0f, 0f, boxPx, boxPx))
-                        addOval(Rect(c.x - r, c.y - r, c.x + r, c.y + r))
-                    }
-                    drawPath(hole, Color.Black.copy(alpha = 0.55f))
-                    drawCircle(Color.White, r, c, style = Stroke(2f))
+                    val left = (boxPx - q) / 2f
+                    val shade = Color.Black.copy(alpha = 0.55f)
+                    drawRect(shade, topLeft = Offset(0f, 0f),
+                        size = androidx.compose.ui.geometry.Size(boxPx, left))
+                    drawRect(shade, topLeft = Offset(0f, boxPx - left),
+                        size = androidx.compose.ui.geometry.Size(boxPx, left))
+                    drawRect(shade, topLeft = Offset(0f, left),
+                        size = androidx.compose.ui.geometry.Size(left, q))
+                    drawRect(shade, topLeft = Offset(boxPx - left, left),
+                        size = androidx.compose.ui.geometry.Size(left, q))
+                    drawRect(Color.White, topLeft = Offset(left, left),
+                        size = androidx.compose.ui.geometry.Size(q, q), style = Stroke(2f))
                 }
                 Slider(scale, { scale = it; clamp() }, valueRange = minScale..(minScale * ZOOM_RANGE),
                     colors = SliderDefaults.colors(thumbColor = o.accent, activeTrackColor = o.accent),
@@ -112,7 +113,7 @@ fun AvatarCropDialog(uri: Uri, onDone: (Bitmap?, Bitmap?) -> Unit) {
                 clamp()
                 val out = Bitmap.createBitmap(OUT_PX, OUT_PX, Bitmap.Config.ARGB_8888)
                 val canvas = android.graphics.Canvas(out)
-                val half = r / scale
+                val half = q / (2f * scale)
                 val rect = android.graphics.Rect((cx - half).roundToInt(), (cy - half).roundToInt(),
                     (cx + half).roundToInt(), (cy + half).roundToInt())
                 canvas.drawBitmap(src, rect, android.graphics.Rect(0, 0, OUT_PX, OUT_PX),

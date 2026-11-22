@@ -1,7 +1,7 @@
-"""Claude Code 本地 CLI 适配器.
+"""订阅客户端本地 CLI 适配器.
 
 CLI 会话只保存会话 id；OIT 的可见聊天仍由 comm 自己存档。每次调用只把本轮
-最后一条用户消息交给 Claude Code，历史由 CLI 会话负责保留。
+最后一条用户消息交给本地 CLI，历史由 CLI 会话负责保留。
 """
 
 import json
@@ -51,21 +51,30 @@ def capabilities(profile: dict = None) -> dict:
         return dict(flags)
 
 
-def _error(text: str) -> AIError:
+def _label(profile: dict) -> str:
+    return "Antigravity" if (str(profile.get("provider") or "") == "antigravity"
+                              or os.path.basename(str(profile.get("command") or "")) == "agy") else "Claude Code"
+
+
+def _error(profile: dict, text: str) -> AIError:
     msg = (text or "").strip().replace("\x00", "")
     low = msg.lower()
     if any(x in low for x in ("login", "authenticate", "auth", "subscription")):
-        return AIError("auth", "Claude Code 尚未登录，请先在终端运行 claude 完成登录.")
-    return AIError("network", "Claude Code 调用失败" + (": " + msg[-300:] if msg else "."))
+        command = str(profile.get("command") or "claude")
+        name = _label(profile)
+        return AIError("auth", f"{name} 尚未登录，请先在终端运行 {command} 完成登录.")
+    command = str(profile.get("command") or "claude")
+    name = _label(profile)
+    return AIError("network", f"{name} 调用失败" + (": " + msg[-300:] if msg else "."))
 
 
 def chat_messages(profile: dict, system: str, messages: list, timeout: float = 240.0,
                   max_tokens: int = 4096, session_store=None, session_key: str = "",
                   **_kwargs) -> str:
-    """以 print/json 模式调用 Claude Code，并在 session_store 中续接会话。"""
+    """以 JSON 模式调用订阅客户端，并在 session_store 中续接会话。"""
     path = command_path(profile)
     if not path:
-        raise AIError("config", "没有找到 Claude Code，请先安装并登录.")
+        raise AIError("config", f"没有找到{_label(profile)}，请先安装并登录.")
     if not messages:
         raise AIError("format", "没有要发送的消息")
     store = session_store if isinstance(session_store, dict) else {}
@@ -73,6 +82,7 @@ def chat_messages(profile: dict, system: str, messages: list, timeout: float = 2
     state = store.get(key) if isinstance(store.get(key), dict) else {}
     sid = str(state.get("id") or "")
     # 首次建立会话时用 OIT 的干净历史重建；之后历史留在 Claude Code 会话里。
+    is_antigravity = (_label(profile) == "Antigravity")
     if sid:
         prompt = str(messages[-1].get("content") or "").strip()
     else:
@@ -83,12 +93,14 @@ def chat_messages(profile: dict, system: str, messages: list, timeout: float = 2
             if content:
                 lines.append(f"{role}: {content}")
         prompt = "\n\n".join(lines)
+        if is_antigravity and system:
+            prompt = "【OIT 前置协议】\n" + str(system).strip() + "\n\n【OIT 对话】\n" + prompt
     if not prompt:
         raise AIError("format", "没有要发送的消息")
     args = [path, "-p", prompt, "--output-format", "json"]
     caps = capabilities(profile)
     requested_effort = str(profile.get("effort") or "auto").lower()
-    if requested_effort not in ("low", "medium", "high", "max"):
+    if requested_effort not in ("low", "medium", "high", "xhigh", "max"):
         requested_effort = "medium" if _kwargs.get("think") else "low"
     if caps.get("effort"):
         args[1:1] = ["--effort", requested_effort]
@@ -96,21 +108,21 @@ def chat_messages(profile: dict, system: str, messages: list, timeout: float = 2
     if caps.get("model") and model and model not in ("订阅模型", "subscription", "auto"):
         args[1:1] = ["--model", model]
     if sid:
-        args[1:1] = ["--resume", sid]
-    if system and not sid:
+        args[1:1] = (["--conversation", sid] if is_antigravity else ["--resume", sid])
+    if system and not sid and not is_antigravity:
         args[1:1] = ["--system-prompt", system]
     try:
         proc = subprocess.run(args, capture_output=True, text=True, encoding="utf-8",
                               errors="replace", timeout=max(10.0, float(timeout)),
                               stdin=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except FileNotFoundError:
-        raise AIError("config", "没有找到 Claude Code，请先安装并登录.")
+        raise AIError("config", f"没有找到{_label(profile)}，请先安装并登录.")
     except subprocess.TimeoutExpired:
-        raise AIError("network", "Claude Code 响应超时.")
+        raise AIError("network", f"{_label(profile)} 响应超时.")
     if proc.returncode:
         # CLI 失败后丢弃会话 id；下一轮由 OIT 回退或新建会话。
         store.pop(key, None)
-        raise _error(proc.stderr or proc.stdout)
+        raise _error(profile, proc.stderr or proc.stdout)
     raw = (proc.stdout or "").strip()
     data = None
     try:
@@ -120,13 +132,13 @@ def chat_messages(profile: dict, system: str, messages: list, timeout: float = 2
         if raw:
             return raw
     if not isinstance(data, dict):
-        raise AIError("format", "Claude Code 返回了无法识别的内容.")
-    if data.get("is_error") or data.get("error"):
-        raise _error(str(data.get("error") or data.get("result") or ""))
-    result = str(data.get("result") or data.get("text") or "").strip()
+        raise AIError("format", f"{_label(profile)} 返回了无法识别的内容.")
+    if data.get("is_error") or data.get("error") or str(data.get("status") or "").upper() not in ("", "SUCCESS"):
+        raise _error(profile, str(data.get("error") or data.get("result") or data.get("response") or ""))
+    result = str(data.get("result") or data.get("response") or data.get("text") or "").strip()
     if not result:
-        raise AIError("format", "Claude Code 没有返回内容.")
-    new_id = str(data.get("session_id") or data.get("sessionId") or sid or "")
+        raise AIError("format", f"{_label(profile)} 没有返回内容.")
+    new_id = str(data.get("session_id") or data.get("sessionId") or data.get("conversation_id") or sid or "")
     if new_id:
         store[key] = {"id": new_id, "updated": int(time.time())}
     return result

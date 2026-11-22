@@ -67,7 +67,7 @@ class ChatMixin:
     def _seed_default_avatars(self):
         """首次初始化默认头像；升级只替换指纹一致的旧内置图，不覆盖自选或恢复已移除的头像。"""
         version = int(self.cfg.get("default_avatars") or 0)
-        if version >= 3:
+        if version >= 4:
             return
         names = set(list_personas(self.personas))
         complete = True
@@ -97,7 +97,7 @@ class ChatMixin:
             except OSError:
                 complete = False
         if complete:
-            self.cfg["default_avatars"] = 3
+            self.cfg["default_avatars"] = 4
             self.save_cfg()
 
     def avatar_path(self, who: str) -> str:

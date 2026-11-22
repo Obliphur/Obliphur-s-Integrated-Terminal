@@ -146,7 +146,8 @@ class CommSettingsMixin:
             self._track(tk.Label(row, text=tr(text), bg=card, fg=COLORS["text"], font=config.font("body"),
                                  width=6, anchor="w"), text).pack(side="left")
             prev = tk.Label(row, text="", bg=card, fg=COLORS["text_dim"], font=config.font("body"),
-                            width=5, anchor="center")
+                            width=5, anchor="center", highlightthickness=1,
+                            highlightbackground=COLORS["border"])
             prev.pack(side="left", padx=(0, 8))
             self.avatar_prev[who] = prev
             self._track(ttk.Button(row, text=tr("选择"), command=lambda w=who: self._comm_pick_avatar(w)),

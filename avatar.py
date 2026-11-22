@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-头像: 从资源管理器选一张图, 截取一个圆形区域 (沟通页 / 设置 → 沟通)
+头像: 从资源管理器选一张图, 截取一个正方形区域 (沟通页 / 设置 → 沟通)
 ──────────────────────────────────────────────────────────────────
-没有 Pillow, 也不想为这个多装依赖: 读图 / 缩放 / 圆形裁剪 / 存 PNG 都交给 Windows 自带的 GDI+ (gdiplus.dll, ctypes 直接调),
-能打开 png / jpg / bmp / gif / tiff. 界面在 pages/avatar_dialog.py (拖动 + 缩放, 圆框里的就是头像).
+没有 Pillow, 也不想为这个多装依赖: 读图 / 缩放 / 方形裁剪 / 存 PNG 都交给 Windows 自带的 GDI+ (gdiplus.dll, ctypes 直接调),
+能打开 png / jpg / bmp / gif / tiff. 界面在 pages/avatar_dialog.py (拖动 + 缩放, 方框里的就是头像).
 
     python avatar.py     自检 (只在 Windows 上, 用临时文件夹)
 """
@@ -207,7 +207,7 @@ def pixel(path: str, x: int, y: int) -> int:
 
 
 def full_path(master: str) -> str:
-    """完整 (没有裁成圆形) 的那份头像: 和圆形的那份放在一起, 叫 xxx.full.png."""
+    """完整 (没有裁剪) 的那份头像: 和方形头像放在一起, 叫 xxx.full.png."""
     return (master[:-4] if master.lower().endswith(".png") else master) + ".full.png"
 
 
@@ -255,7 +255,7 @@ def fit(master: str, max_side: int) -> str:
 
 
 def sized(master: str, px: int) -> str:
-    """头像 (圆形 PNG) 缩到 px × px 的缓存文件, 主文件更新了就重画; 返回路径."""
+    """头像 (方形 PNG) 缩到 px × px 的缓存文件, 主文件更新了就重画; 返回路径."""
     out = f"{master}.{px}.png"
     try:
         if os.path.exists(out) and os.path.getmtime(out) >= os.path.getmtime(master):
