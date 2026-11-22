@@ -140,7 +140,7 @@ DEFAULTS = {"persona": "", "show_avatar": True, "coread_link": {}, "coread_offer
 # (claudia_base / routine_base / background_base) 判断, 以后改默认人设再按需往里放.
 CLAUDIA_LEGACIES = ()
 ROUTINE_LEGACIES = ()
-CHAT_KEYS = ("interaction", "clear_ts", "retry", "pro_key", "mem_auto", "mem_live", "mem_fixed", "mem_upto", "mem_ts", "cut_until", "love", "msg_gone", "shift")   # 跟着聊天对象走的几项 (存在各自的聊天文件里)
+CHAT_KEYS = ("interaction", "clear_ts", "retry", "pro_key", "mem_auto", "mem_live", "mem_fixed", "mem_upto", "mem_ts", "cut_until", "love", "msg_gone", "shift", "subagents")   # 跟着聊天对象走的几项 (存在各自的聊天文件里)
 
 
 

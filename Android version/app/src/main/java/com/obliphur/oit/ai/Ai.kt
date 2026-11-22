@@ -29,6 +29,19 @@ class AiError(val kind: String, message: String) : Exception(message)
 data class Provider(val label: String, val baseUrl: String, val protocol: String, val model: String, val models: List<String>)
 
 object Ai {
+    private const val SUBJECT_SYSTEM = "你是独立的数学、物理、化学教育子代理。只处理给定题目和本子代理会话中的相关追问，不要假设聊天人设或其他聊天上下文。核对单位、符号和计算；返回简洁、可核验的答案，包含最终结论和必要的关键步骤。不要输出隐藏思维过程，不要调用工具。"
+    private const val MUSIC_REVIEW_SYSTEM = "你是独立的音乐演奏分析子代理。根据结构化演奏数据和本子代理会话中的历史评判，用中文给出简短、具体、克制的练习建议；不臆测音色、力度、踏板或用户意图，证据不足就明确说明。"
+
+    /** 标准化短期子代理接口；调用方只传入该子代理会话最近五轮。 */
+    fun subagent(profile: Profile, role: String, task: String, history: List<Pair<String, String>> = emptyList(),
+                 maxTokens: Int = 700, temperature: Double = 0.2, timeoutMs: Int = 120_000): String {
+        require(role == "subject" || role == "music_review") { "未知子代理类型" }
+        val trimmed = history.takeLast(5).flatMap { listOf("user" to it.first.take(8000), "assistant" to it.second.take(8000)) }
+        val prompt = task.trim().take(8000)
+        require(prompt.isNotEmpty()) { "子代理任务为空" }
+        return chatMessages(profile, if (role == "subject") SUBJECT_SYSTEM else MUSIC_REVIEW_SYSTEM,
+            trimmed + ("user" to prompt), maxTokens, temperature, timeoutMs, cache = false)
+    }
     val PROVIDERS = linkedMapOf(
         "claude" to Provider("Claude", "https://api.anthropic.com", "anthropic", "claude-sonnet-5-5",
             listOf("claude-sonnet-5-5", "claude-haiku-5-5", "claude-opus-5-5")),
@@ -1257,7 +1270,7 @@ class AiConfig(private val file: File) {
             while (keys.hasNext()) {
                 val role = keys.next()
                 val id = tasks.optString(role, "")
-                if (role in setOf("vision", "ocr", "review") && id in profiles) taskAssign[role] = id
+                if (role in setOf("ocr", "review", "subject") && id in profiles) taskAssign[role] = id
             }
         }
     }
@@ -1294,7 +1307,7 @@ class AiConfig(private val file: File) {
     fun taskProfile(role: String, fallback: String = provider): Profile = profile(taskAssign[role] ?: fallback)
 
     fun assignTask(role: String, id: String) {
-        if (role !in setOf("vision", "ocr", "review") || id.isNotEmpty() && id !in profiles) return
+        if (role !in setOf("ocr", "review", "subject") || id.isNotEmpty() && id !in profiles) return
         if (id.isEmpty()) taskAssign.remove(role) else taskAssign[role] = id
     }
 

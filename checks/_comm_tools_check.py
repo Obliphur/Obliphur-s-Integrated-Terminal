@@ -315,22 +315,13 @@ def state_checks():
     assert not review_reply.get("hold")
     c2.flush()
 
-    vision_calls = []
-    vision_analysis_calls = []
-    old_vision_chat = ai_assist.chat_messages
-    ai_assist.chat_messages = lambda profile, system, messages, **kwargs: (
-        vision_analysis_calls.append((profile["config_id"], messages)) or "检测到一张图片")
-    def vision_fake(profile, system, messages, **kwargs):
-        vision_calls.append((profile["config_id"], messages[-1]["content"]))
-        if len(vision_calls) == 1:
-            raise ai_assist.AIError("http", "服务商返回 400: image input unsupported")
+    image_calls = []
+    def image_fake(profile, system, messages, **kwargs):
+        image_calls.append((profile["config_id"], messages[-1]["content"]))
         return "我看到了图片内容"
-    c3 = comm.Comm(str(root / "data-vision"), str(root / "personas-vision"), chat_fn=vision_fake)
+    c3 = comm.Comm(str(root / "data-vision"), str(root / "personas-vision"), chat_fn=image_fake)
     c3.ai.set_profile("deepseek", api_key="local")
     c3.ai.provider = "deepseek"
-    vision_id = c3.ai.add_config("视觉回退")
-    c3.ai.set_profile(vision_id, base_url="http://localhost:1", model="vision-test", api_key="local", protocol="anthropic")
-    c3.ai.assign_task("vision", vision_id)
     c3.set_cfg(persona="Assistant.txt", split_send=False)
     c3._away_kind = lambda: ""
     image_data = b"\x89PNG\r\n\x1a\n" + b"0" * 64
@@ -339,12 +330,8 @@ def state_checks():
     while c3.busy and time.monotonic() < until:
         time.sleep(0.01)
         c3.tick()
-    assert [x[0] for x in vision_calls] == ["deepseek", "deepseek"]
-    assert len(vision_analysis_calls) == 1 and vision_analysis_calls[0][0] == vision_id
-    assert len(vision_analysis_calls[0][1]) == 1 and not c3.error
-    assert vision_analysis_calls[0][1][-1]["content"][0]["type"] == "image"
-    assert "独立图片分析" in vision_calls[1][1]
-    ai_assist.chat_messages = old_vision_chat
+    assert [x[0] for x in image_calls] == ["deepseek"]
+    assert len(image_calls) == 1 and not c3.error
     c3.flush()
 
 

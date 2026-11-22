@@ -51,6 +51,7 @@ from .ai_web import (
     SEARCH_HOSTS, SEARCH_RESULTS, SEARCH_UA, SEARCH_URL, _bing_url, _clean_html, _open_search, parse_search,
     web_local, web_mode, web_search
 )
+from .ai_subagent import MAX_TURNS as SUBAGENT_MAX_TURNS, SYSTEMS as SUBAGENT_SYSTEMS, invoke as subagent_invoke, record as subagent_record
 
 from . import ai_http as _ai_http, ai_key as _ai_key, ai_web as _ai_web
 

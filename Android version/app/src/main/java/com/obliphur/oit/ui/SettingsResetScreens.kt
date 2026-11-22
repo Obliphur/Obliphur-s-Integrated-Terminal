@@ -80,9 +80,9 @@ fun SettingsScreen(tab: String, setTab: (String) -> Unit, act: MainActivity) {
             var modelRevision by remember { mutableIntStateOf(0) }
             if (aiSettings) AiSettingsDialog { aiSettings = false; modelRevision++ }
             ModelAssignmentRow("main", "聊天模型（主模型）", modelRevision) { modelRevision++ }
-            ModelAssignmentRow("vision", "图片模型", modelRevision) { modelRevision++ }
             ModelAssignmentRow("ocr", "识字模型", modelRevision) { modelRevision++ }
             ModelAssignmentRow("review", "评判模型", modelRevision) { modelRevision++ }
+            ModelAssignmentRow("subject", "数学/物理/化学模型", modelRevision) { modelRevision++ }
             return@PageColumn
         }
 

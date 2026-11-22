@@ -1,5 +1,28 @@
 [
   {
+    "name": "oit_subject",
+    "description": "委托独立的数学、物理或化学教育子代理。子代理不接收聊天人设，只使用本工具的题目和同一会话最近五轮上下文；返回结果后由聊天模型负责风格化表达。需要追问时沿用session，换题时使用新的session。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "domain": {
+          "type": "string",
+          "enum": ["math", "physics", "chemistry"]
+        },
+        "session": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "question": {
+          "type": "string",
+          "maxLength": 8000
+        }
+      },
+      "required": ["domain", "session", "question"],
+      "additionalProperties": false
+    }
+  },
+  {
     "name": "oit_memory_edit",
     "description": "新增、修正或删除记忆卡中的实时事件。action为add/correct/remove；target逐字匹配现有实时事件，add时为空；text为新内容，remove时为空。随正式回复显示生效。",
     "parameters": {

@@ -123,7 +123,7 @@ class AIConfig:
         tasks = data.get("tasks")
         if isinstance(tasks, dict):
             self.task_assign = {role: cid for role, cid in tasks.items()
-                                if role in ("vision", "ocr", "review") and cid in self.profiles}
+                                if role in ("ocr", "review", "subject") and cid in self.profiles}
         self._trim()
 
     def _trim(self):
@@ -294,7 +294,7 @@ class AIConfig:
         return self.profile(self.task_assign.get(role) or fallback or self.provider)
 
     def assign_task(self, role: str, cid: str = "") -> bool:
-        if role not in ("vision", "ocr", "review") or (cid and cid not in self.profiles):
+        if role not in ("ocr", "review", "subject") or (cid and cid not in self.profiles):
             return False
         if cid:
             self.task_assign[role] = cid

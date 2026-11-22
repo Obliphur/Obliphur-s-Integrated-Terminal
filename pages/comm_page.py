@@ -645,7 +645,6 @@ class CommPage(CommVoiceMixin, tk.Frame):
                 return
             target_pid = self.comm.pid
             target_config = self.comm.current_config()
-            review_profile = self.comm.ai.task_profile("review", fallback=target_config)
             dlg.finish(True)
             toast.info(tr("正在分析演奏文件…"))
             def work():
@@ -672,11 +671,11 @@ class CommPage(CommVoiceMixin, tk.Frame):
                     else:
                         performance = as_midi(paths["performance"], "performance")
                     data = music.compare_midi(reference, performance)
-                    ai_assist.check_profile(review_profile)
-                    review = ai_assist.chat_messages(review_profile,
-                        "你是独立的音乐演奏分析器。根据结构化音符差异，用中文写出简短、具体、克制的练习建议；不臆测音色、力度或踏板。",
-                        [{"role": "user", "content": json.dumps(data, ensure_ascii=False, separators=(",", ":"))}],
-                        max_tokens=500, temperature=0.2, cache=False, timeout=120)
+                    session = "music:" + self.comm.persona_name()[:40] + ":" + os.path.basename(paths["reference"] or "reference")[:80]
+                    review = self.comm.subagent_call(
+                        "music_review", session,
+                        "本次结构化演奏差异:\n" + json.dumps(data, ensure_ascii=False, separators=(",", ":")),
+                        max_tokens=500, temperature=0.2, timeout=120)
                     duration = max(0, int(data.get("summary", {}).get("performance_duration_ms") or 0)) / 1000
                     if os.path.splitext(paths["performance"])[1].lower() in (".mp3", ".wav", ".flac", ".ogg"):
                         duration = max(duration, music.audio_duration(paths["performance"]))

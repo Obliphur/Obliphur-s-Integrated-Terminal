@@ -29,7 +29,8 @@ class CommSettingsMixin:
         ttk.Button(fr, text=tr("选择"), command=lambda: self._pick_task_model("main", "聊天模型（主模型）"))\
             .pack(anchor="w", padx=12, pady=(0, 10))
 
-        for role, title in (("vision", "图片模型"), ("ocr", "识字模型"), ("review", "评判模型")):
+        for role, title in (("ocr", "识字模型"), ("review", "评判模型"),
+                            ("subject", "数学/物理/化学模型")):
             fr, _head = self._card(body, title)
             label = tk.Label(fr, text="", bg=COLORS["bg_card"], fg=COLORS["text"],
                              font=config.font("small"), anchor="w")
@@ -50,7 +51,7 @@ class CommSettingsMixin:
         main_id = model_cfg.provider
         main = f"{model_cfg.config_name(main_id)} · {model_cfg.profile(main_id).get('model') or '—'}"
         cfg(self.lbl_main_model, text=main)
-        for role in ("vision", "ocr", "review"):
+        for role in ("ocr", "review", "subject"):
             cid = model_cfg.task_assign.get(role, "")
             text = tr("跟随聊天模型") if not cid else \
                 f"{model_cfg.config_name(cid)} · {model_cfg.profile(cid).get('model') or '—'}"

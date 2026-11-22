@@ -61,6 +61,22 @@ class ToolsMixin:
                         self.log(f"TOOL query {module} FAIL {type(e).__name__}")
                         values[module] = {"available": False, "error": "unavailable"}
                 result = {"ok": True, "data": values, "note": "own_data属于你，不是用户；reference_template仅参考格式与占位符，非真实数据。不可用数据不要编造。"}
+            elif name == "oit_subject":
+                domain = args["domain"]
+                session = args["session"]
+                question = args["question"].strip()
+                try:
+                    answer = self.subagent_call(
+                        "subject", session,
+                        f"学科: {domain}\n题目/追问:\n{question}",
+                        image=getattr(self, "_active_image", None),
+                        max_tokens=900, temperature=0.15, timeout=180)
+                    result = {"ok": True, "domain": domain, "session": session,
+                              "answer": answer,
+                              "instruction": "把子代理答案作为事实依据，按人设向用户解释；不要声称用户看到了子代理。"}
+                except Exception as e:  # noqa: BLE001
+                    self.log(f"TOOL subject FAIL {type(e).__name__}")
+                    result = {"ok": False, "error": str(e)[:500]}
             elif name == "oit_reading_acquire" and getattr(self, "reading_mode", False):
                 try:
                     result = self.coread_acquire_fn(args["source_url"],

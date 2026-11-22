@@ -98,6 +98,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         self.now = now
         self.chat_fn = chat_fn or ai_assist.chat_messages
         self._request_image = None
+        self._active_image = None       # 当前聊天请求附带的图片，供教育子代理按需复用
         self._active_reply_after = 0
         self.cfg_path = os.path.join(data_dir, "comm_config.json")
         self.legacy_chat_path = os.path.join(data_dir, "comm_chat.json")      # 以前所有对象共用的一份
@@ -433,6 +434,24 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         self.log(f"OCR ok {time.monotonic() - started:.1f}s chars={len(text)}")
         return text
 
+    def subagent_call(self, role: str, session: str, task: str, *, image=None,
+                      max_tokens: int = 700, temperature: float = 0.2,
+                      timeout: float = CHAT_TIMEOUT) -> str:
+        """标准化短期子代理：每个人设/会话只保留最近五轮，不发送聊天历史。"""
+        session = str(session or "default").strip()[:80] or "default"
+        role = str(role or "").strip()
+        agents = self.cfg.setdefault("subagents", {})
+        sessions = agents.setdefault(role, {})
+        history = sessions.get(session, []) if isinstance(sessions, dict) else []
+        profile_role = "review" if role == "music_review" else role
+        profile = self.ai.task_profile(profile_role, fallback=self.ai.config_for(self.persona_name()))
+        result = ai_assist.subagent_invoke(profile, role, task, history, image=image,
+                                           max_tokens=max_tokens, temperature=temperature,
+                                           timeout=timeout, cache=False, chat=self.chat_fn)
+        sessions[session] = ai_assist.subagent_record(history, task, result)
+        self.save_chat()
+        return result
+
     def _write_loop(self):
         while True:
             with self._wlock:
@@ -582,6 +601,9 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             d = interaction_norm(st.get("interaction"))
             if d["ts"]:
                 doc[f"interaction:{pid}"] = dict(d, clear=st["clear_ts"])
+            agents = mem_fields(st).get("subagents") or {}
+            if agents:
+                doc[f"subagent:{pid}"] = agents
             for n in mem_fields(st)["mem_fixed"]:
                 doc[f"milestone:{pid}:{n}"] = {"clear": st["clear_ts"]}
             for m in [x for x in st["messages"] if "pending_reply" not in x][-SYNC_N:]:
@@ -671,6 +693,13 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                 if merged != current:
                     merged["ts"] = max(merged["ts"], st["clear_ts"] + 1)
                     st["interaction"] = merged
+                    touched[rest][1] = True
+                continue
+            if kind == "subagent" and isinstance(val, dict):
+                st = st_of(rest)[0]
+                incoming = mem_fields({"subagents": val})["subagents"]
+                if incoming != mem_fields(st)["subagents"]:
+                    st["subagents"] = incoming
                     touched[rest][1] = True
                 continue
             if kind == "milestone" and isinstance(val, dict):

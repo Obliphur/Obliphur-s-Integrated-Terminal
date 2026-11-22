@@ -16,7 +16,7 @@ import java.util.concurrent.TimeUnit
 
 /** 分隔符完整气泡、字数延时、插话改写和本机待发存档。 */
 class CommDeliveryTest {
-    @Test fun visionAnalysisIsNotAReplySegment() {
+    @Test fun imageUsesTheChatModelDirectly() {
         val root = Files.createTempDirectory("oit").toFile()
         val dir = File(root, "d").also { it.mkdirs() }
         val personas = File(root, "p").also { it.mkdirs() }
@@ -24,26 +24,16 @@ class CommDeliveryTest {
         AiConfig(File(dir, "ai_config.json")).also {
             it.provider = "custom"
             it.profiles["custom"] = Profile("custom", "http://localhost:1/v1", "openai", "chat", "")
-            it.profiles["claude"] = Profile("claude", "http://localhost:2/v1", "openai", "vision", "")
-            it.assignTask("vision", "claude")
             it.save()
         }
         val oldDelay = Comm.charDelay
         val oldCjk = Comm.charDelayCjk
         var calls = 0
-        var analysisIsolated = false
         val c = Comm(dir, personas, { LocalDateTime.of(2026, 11, 18, 12, 0) }) { profile, _, _ ->
             calls++
-            if (profile.model == "vision") {
-                analysisIsolated = Comm.deltaLocal.get() == null
-                Comm.deltaLocal.get()?.invoke("分析草稿")
-                "分析草稿"
-            } else {
-                if (calls == 1) throw AiError("http", "服务商返回 400")
-                val text = "正文第一条\n<oit_message>\n正文第二条"
-                Comm.deltaLocal.get()!!(text)
-                ToolProtocol.pack(text = text)
-            }
+            val text = "正文第一条\n<oit_message>\n正文第二条"
+            Comm.deltaLocal.get()!!(text)
+            ToolProtocol.pack(text = text)
         }
         try {
             Comm.charDelay = 0.0; Comm.charDelayCjk = 0.0
@@ -53,8 +43,7 @@ class CommDeliveryTest {
             do { c.tick(); Thread.sleep(5) } while (c.busy && System.nanoTime() < until)
             assertFalse(c.busy)
             assertTrue(c.error.isEmpty())
-            assertEquals(3, calls)
-            assertTrue(analysisIsolated)
+            assertEquals(1, calls)
             assertEquals(listOf("正文第一条", "正文第二条"), c.visible().filter { it.role == "ai" }.map { it.text })
         } finally {
             Comm.charDelay = oldDelay; Comm.charDelayCjk = oldCjk

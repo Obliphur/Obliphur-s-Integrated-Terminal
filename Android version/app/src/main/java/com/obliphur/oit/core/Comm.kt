@@ -1439,6 +1439,38 @@ class Comm(
             tools = Comm.toolsLocal.get() == true, onDelta = Comm.deltaLocal.get()) },
 ) {
     private val musicLibrary by lazy { MusicLibrary(dir, com.obliphur.oit.OitApp.instance.assets) }
+    private val musicReviewHistory = LinkedHashMap<String, MutableList<Pair<String, String>>>()
+    private val subagentSessions = loadSubagentHistory()
+    private val subagentHistoryFile get() = File(dir, "subagent_context.json")
+
+    private fun loadSubagentHistory(): LinkedHashMap<String, MutableList<Pair<String, String>>> {
+        val out = LinkedHashMap<String, MutableList<Pair<String, String>>>()
+        val root = Store.readObj(File(dir, "subagent_context.json")) ?: return out
+        for (key in root.keys()) {
+            val rows = root.optJSONArray(key) ?: continue
+            val list = ArrayList<Pair<String, String>>()
+            for (i in 0 until rows.length()) {
+                val row = rows.optJSONObject(i) ?: continue
+                val user = row.optString("user", "").take(8000)
+                val assistant = row.optString("assistant", "").take(8000)
+                if (user.isNotBlank() && assistant.isNotBlank()) list += user to assistant
+            }
+            if (list.isNotEmpty()) out[key] = list.takeLast(5).toMutableList()
+        }
+        return out
+    }
+
+    private fun saveSubagentHistory() {
+        val root = JSONObject()
+        subagentSessions.forEach { (key, rows) ->
+            val a = JSONArray()
+            rows.takeLast(5).forEach { (user, assistant) ->
+                a.put(JSONObject().put("user", user.take(8000)).put("assistant", assistant.take(8000)))
+            }
+            root.put(key, a)
+        }
+        Store.write(subagentHistoryFile, root)
+    }
     fun importScore(source: File, owner: String = personaName()): JSONObject {
         require(owner.isNotEmpty()) { "请先选择一个人设，再导入乐谱" }
         return musicLibrary.add(source, owner)
@@ -1449,9 +1481,13 @@ class Comm(
         val data = MusicMidi.compare(referenceMidi, performanceMidi)
         val cfg = aiConfig()
         val profile = cfg.taskProfile("review", cfg.configFor(personaName()))
-        val review = Ai.chatMessages(profile,
-            "你是独立的音乐演奏分析器。根据结构化音符差异，用中文写出简短、具体、克制的练习建议；不臆测音色、力度或踏板。",
-            listOf("user" to data.toString()), maxTokens = 500, temperature = 0.2, timeoutMs = 120_000)
+        val session = "music:" + personaTitle(personaName()).take(40) + ":" + reference.name.take(80)
+        val history = musicReviewHistory[session] ?: subagentSessions["music_review:$session"].orEmpty()
+        val task = "本次结构化演奏差异:\n$data"
+        val review = Ai.subagent(profile, "music_review", task, history, maxTokens = 500, temperature = 0.2, timeoutMs = 120_000)
+        musicReviewHistory[session] = (history + (task to review)).takeLast(5).toMutableList()
+        subagentSessions["music_review:$session"] = musicReviewHistory[session]!!
+        saveSubagentHistory()
         val prompt = "请结合独立评判和结构化演奏差异，以你平常的语气自然评判用户演奏，并给出简洁建议。" +
             "额外留意用户对这一首的处理意图：根据整体速度比例、起音与时值误差、漏音/多音分布及独立评判，" +
             "谨慎判断是否存在连贯且有依据的有意处理；证据不足时不要推测。\n独立评判：\n$review\n结构化差异：\n$data"
@@ -5476,6 +5512,21 @@ class Comm(
                     }
                     result = JSONObject().put("ok", true).put("data", values).put("note", "own_data属于你，不是用户；reference_template仅参考格式与占位符，非真实数据。不可用数据不要编造。")
                 }
+                "oit_subject" -> {
+                    result = runCatching {
+                        val domain = args.getString("domain")
+                        val session = args.getString("session").take(80)
+                        val question = args.getString("question").take(8000)
+                        val key = "subject:${personaTitle(personaName())}:$session"
+                        val history = subagentSessions[key].orEmpty()
+                        val answer = Ai.subagent(aiConfig().taskProfile("subject", aiConfig().configFor(personaName())), "subject",
+                            "学科: $domain\n题目/追问:\n$question", history, maxTokens = 900, temperature = 0.15, timeoutMs = 180_000)
+                        subagentSessions[key] = (history + (("学科: $domain\n题目/追问:\n$question") to answer)).takeLast(5).toMutableList()
+                        saveSubagentHistory()
+                        JSONObject().put("ok", true).put("domain", domain).put("session", session).put("answer", answer)
+                            .put("instruction", "把子代理答案作为事实依据，按人设向用户解释；不要声称用户看到了子代理。")
+                    }.getOrElse { JSONObject().put("ok", false).put("error", it.message.orEmpty()) }
+                }
                 "oit_memory_edit" -> {
                     val action = args.optString("action")
                     val target = args.optString("target").trim()
@@ -5699,26 +5750,7 @@ class Comm(
             if (image != null) Ai.imageLocal.set(image)
             val res = try {
                 var convo = msgs.toMutableList()
-                var reply = try {
-                    chatFn(profile, system, convo)
-                } catch (error: AiError) {
-                    val cfg = aiConfig()
-                    val fallbackId = cfg.taskAssign["vision"]
-                    if (image == null || error.kind != "http" || !error.message.orEmpty().contains("返回 400") ||
-                        fallbackId.isNullOrEmpty() || fallbackId == cfg.configFor(personaName())) throw error
-                    val fallback = cfg.profile(fallbackId)
-                    log("REQ image fallback to configured vision model")
-                    Ai.imageLocal.set(image)
-                    val replyDelta = Comm.deltaLocal.get()
-                    Comm.deltaLocal.remove()                    // 图片分析不属于正式回复，不能混入分条缓冲。
-                    val visual = try {
-                        chatFn(fallback, "你是独立的图片分析器。只描述图片中可确认的内容，简短回答；不要推断聊天背景。",
-                            listOf("user" to "请描述这张图片中与用户消息相关的信息。"))
-                    } finally { Ai.imageLocal.remove(); Comm.deltaLocal.set(replyDelta) }
-                    val lastUser = convo.indexOfLast { it.first == "user" }
-                    if (lastUser >= 0) convo[lastUser] = "user" to (convo[lastUser].second + "\n\n[独立图片分析] " + visual.trim())
-                    chatFn(profile, system, convo)
-                }
+                var reply = chatFn(profile, system, convo)
                 var op: JointPlan? = null
                 var musicId = ""
                 var memoryEdit: MemoryEdit? = null
