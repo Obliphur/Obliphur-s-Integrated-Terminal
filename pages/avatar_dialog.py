@@ -30,8 +30,8 @@ def pick_avatar(parent, dest: str) -> bool:
         toast.warn(tr("打不开这张图片."))
         return False
 
-    S = config.scaled(340)                  # 取景区的边长 (像素)
-    Q = S * 0.82                            # 方框边长
+    S = config.scaled(400)                  # 取景区的边长 (像素)
+    Q = S                                   # 最大视野可完整包含正方形原图
     dlg = Modal(parent, tr("截取头像"), width=S + 50, height=S + config.scaled(150))
     st = {"cx": w / 2, "cy": h / 2, "z": 0.0, "job": None, "photo": None, "drag": None, "ok": False}
     base = float(min(w, h))
