@@ -11,6 +11,7 @@ import subprocess
 import sys
 import threading
 import urllib.parse
+import webbrowser
 from pathlib import Path
 
 import config
@@ -21,6 +22,13 @@ NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 HOSTS = {"bitsum.com", "www.bitsum.com", "dl.bitsum.com"}
 JAVA_URL = "https:" + "/" * 2 + "aka.ms/download-jdk/microsoft-jdk-17-windows-x64.zip"
 JAVA_HOSTS = {"aka.ms", "download.visualstudio.microsoft.com"}
+
+CLI_INSTALLERS = {
+    "claude_code": ("Claude Code", "@anthropic-ai/claude-code", "claude"),
+    "codex": ("Codex", "@openai/codex", "codex"),
+    # Antigravity CLI 随官方安装器发布，不存在可验证的官方 npm 包。
+    "antigravity": ("Antigravity", None, "agy"),
+}
 
 
 def _official_url(url):
@@ -312,6 +320,72 @@ class ExternalSoftware:
         subprocess.Popen([os.path.join(self.installed_dir, "ProcessLasso.exe"),
                           "/ConfigFolder=" + os.path.join(self.installed_dir, "oit-config"), "/ShowWindow"],
                          creationflags=NO_WINDOW)
+
+
+class CliInstallManager:
+    """额外功能页中的订阅 CLI 安装器；只调用用户本机的 npm。"""
+    def __init__(self):
+        self.states = {key: {"state": "idle", "progress": 0, "error": ""} for key in CLI_INSTALLERS}
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def _installed(command):
+        from ai_assist.ai_cli import command_path
+        return bool(command_path({"command": command}))
+
+    def status(self):
+        with self._lock:
+            out = {key: dict(value) for key, value in self.states.items()}
+        for key, value in out.items():
+            value["installed"] = self._installed(CLI_INSTALLERS[key][2])
+        return out
+
+    def start(self, key):
+        if key not in CLI_INSTALLERS:
+            raise ValueError(tr("未知的 CLI."))
+        with self._lock:
+            if self.states[key]["state"] == "installing":
+                return
+            self.states[key] = {"state": "installing", "progress": 0, "error": ""}
+        threading.Thread(target=self._install, args=(key,), daemon=True).start()
+
+    def _install(self, key):
+        name, package, command = CLI_INSTALLERS[key]
+        try:
+            if package is None:
+                if not webbrowser.open("https://antigravity.google/download", new=2):
+                    raise RuntimeError(tr("无法打开 Antigravity 官方下载页面."))
+                with self._lock:
+                    self.states[key] = {"state": "manual", "progress": 0, "error": ""}
+                return
+            npm = shutil.which("npm") or shutil.which("npm.cmd")
+            if not npm:
+                raise RuntimeError(tr("未找到 npm，请先安装 Node.js."))
+            proc = subprocess.run([npm, "install", "--global", package], capture_output=True,
+                                  text=True, encoding="utf-8", errors="replace", timeout=900,
+                                  creationflags=NO_WINDOW)
+            if proc.returncode:
+                detail = (proc.stderr or proc.stdout or "").strip()[-400:]
+                raise RuntimeError(tr("{name} 安装失败", name=name) + (": " + detail if detail else "."))
+            if not self._installed(command):
+                raise RuntimeError(tr("安装完成，但找不到 {name} 命令.", name=name))
+            with self._lock:
+                self.states[key] = {"state": "ready", "progress": 100, "error": ""}
+        except Exception as exc:  # noqa: BLE001
+            with self._lock:
+                self.states[key] = {"state": "error", "progress": 0, "error": str(exc)}
+
+
+_CLI_MANAGER = None
+_CLI_LOCK = threading.Lock()
+
+
+def cli_manager():
+    global _CLI_MANAGER
+    with _CLI_LOCK:
+        if _CLI_MANAGER is None:
+            _CLI_MANAGER = CliInstallManager()
+        return _CLI_MANAGER
 
 
 @functools.lru_cache(maxsize=8)

@@ -98,6 +98,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         self.personas = personas
         self.now = now
         self.chat_fn = chat_fn or ai_assist.chat_messages
+        self.remote_chat = None       # 设备代理请求回调 (由桌面 app 接入)
         self._request_image = None
         self._active_image = None       # 当前聊天请求附带的图片，供教育子代理按需复用
         self._active_reply_after = 0

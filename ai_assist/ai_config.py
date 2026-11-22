@@ -35,6 +35,15 @@ def default_profile(provider: str = "custom") -> dict:
             "preset": provider if provider in PROVIDERS else "custom"}
 
 
+def device_profile(device_id: str, device_name: str) -> dict:
+    """构造一份不含密钥的设备代理配置。"""
+    name = str(device_name or device_id or "设备").strip()[:80] or "设备"
+    return {"base_url": "", "model": f"由{name}处理", "protocol": "device",
+            "api_key": "", "family": "other", "kind": "device", "command": "",
+            "effort": "auto", "preset": "device", "target_device": str(device_id or ""),
+            "target_name": name}
+
+
 class AIConfig:
     """最多 MAX_CONFIGS 份命名的 API 配置 (各有一份 Base URL / 型号 / Key), 互相独立.
 
@@ -79,7 +88,7 @@ class AIConfig:
                     continue
                 preset = self._profile_preset(k, prof)
                 out = default_profile(preset)
-                for field in ("base_url", "model", "protocol", "api_key", "family", "kind", "command", "effort", "preset"):
+                for field in ("base_url", "model", "protocol", "api_key", "family", "kind", "command", "effort", "preset", "target_device", "target_name"):
                     if isinstance(prof.get(field), str):
                         out[field] = prof[field]
                 enc = prof.get("api_key_enc")
@@ -97,6 +106,12 @@ class AIConfig:
                     out["base_url"], out["api_key"] = "", ""
                     out["family"] = PROVIDERS[preset].get("family") or "other"
                     out["command"] = out.get("command") or PROVIDERS[preset].get("command", "")
+                elif preset == "device":
+                    out["kind"], out["protocol"] = "device", "device"
+                    out["api_key"], out["base_url"] = "", ""
+                    out["target_device"] = str(out.get("target_device") or "")
+                    out["target_name"] = str(out.get("target_name") or out.get("model") or "设备")
+                    out["model"] = f"由{out['target_name']}处理"
                 else:
                     out["kind"] = "api"
                     out["protocol"] = (out.get("protocol") if preset == "custom" and out.get("protocol") in PROTOCOLS and out.get("protocol") != "cli"
@@ -145,6 +160,8 @@ class AIConfig:
     def _profile_preset(key: str, prof: dict) -> str:
         """从存档恢复预设；旧版自动生成的 CLI 配置可能没有 preset 字段。"""
         saved = prof.get("preset")
+        if saved == "device" or prof.get("kind") == "device" or prof.get("protocol") == "device":
+            return "device"
         if saved in CLI_PROVIDERS:
             return saved
         if key in CLI_PROVIDERS:
@@ -210,6 +227,47 @@ class AIConfig:
             self.provider = self.order[0]
         if self.provider not in self.profiles:
             self.provider = self.order[0]
+
+    def refresh_devices(self, devices) -> bool:
+        """按当前绑定设备刷新代理配置；设备解绑或消失后立即移除。"""
+        wanted = {}
+        for item in devices or ():
+            if isinstance(item, dict):
+                did, name = item.get("id"), item.get("name")
+            elif isinstance(item, (tuple, list)) and item:
+                did, name = item[0], item[1] if len(item) > 1 else item[0]
+            else:
+                continue
+            did = str(did or "").strip()
+            if did:
+                wanted[f"device_{did}"] = (did, str(name or did).strip()[:80] or did)
+        changed = False
+        for cid in list(self.profiles):
+            prof = self.profiles.get(cid) or {}
+            if self._profile_preset(cid, prof) == "device" and cid not in wanted:
+                self.profiles.pop(cid, None)
+                self.names.pop(cid, None)
+                self.order = [key for key in self.order if key != cid]
+                self.assign = {p: c for p, c in self.assign.items() if c != cid}
+                self.task_assign = {r: c for r, c in self.task_assign.items() if c != cid}
+                changed = True
+        for cid, (did, name) in wanted.items():
+            prof = self.profiles.get(cid)
+            fresh = device_profile(did, name)
+            if not isinstance(prof, dict):
+                self.profiles[cid] = fresh
+                self.names[cid] = f"由{name}处理"
+                self.order.append(cid)
+                changed = True
+                continue
+            if prof.get("target_name") != name or prof.get("model") != fresh["model"]:
+                prof.update(fresh)
+                self.names[cid] = f"由{name}处理"
+                changed = True
+        self._trim()
+        if changed:
+            self.save()
+        return changed
 
     def _norm_family(self, preset: str, prof: dict) -> str:
         if preset in CLI_PROVIDERS:
@@ -305,9 +363,9 @@ class AIConfig:
         if cid not in self.profiles or len(self.order) <= 1:
             return False
         prof = self.profiles.get(cid) or {}
-        if prof.get("kind") == "cli" or prof.get("preset") in CLI_PROVIDERS:
+        if prof.get("kind") in ("cli", "device") or prof.get("preset") in CLI_PROVIDERS or prof.get("preset") == "device":
             from .ai_cli import installed
-            if installed(prof):
+            if prof.get("kind") == "device" or installed(prof):
                 return False
         self.order.remove(cid)
         self.profiles.pop(cid, None)
@@ -391,6 +449,9 @@ class AIConfig:
             prof["base_url"] = ""
             prof["api_key"] = ""
             prof["command"] = prof.get("command") or PROVIDERS[preset].get("command", "")
+            return
+        if preset == "device":
+            prof.update(device_profile(prof.get("target_device", ""), prof.get("target_name", "设备")))
             return
         prof["kind"] = "api"
         if preset in FAMILY_PROTOCOL:

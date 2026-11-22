@@ -6,6 +6,7 @@ from tkinter import filedialog, ttk
 import config
 import music_tools
 import music_library
+import external_software
 import toast
 from config import COLORS
 from i18n import tr
@@ -19,6 +20,7 @@ class ExtraSettingsMixin:
             build_voice_settings(self, body)
         self._build_external_lasso_card(body)
         self._build_java_card(body)
+        self._build_cli_card(body)
         self.music = music_tools.manager(self.data_dir or config.app_data_dir(), self.external)
         self.music_library = music_library.manager(self.data_dir or config.app_data_dir())
         card = COLORS["bg_card"]
@@ -52,6 +54,35 @@ class ExtraSettingsMixin:
         self._poll_extra_page()
         self.areas["extra"].bind_children()
         self.bind("<Destroy>", self._stop_extra_poll, add="+")
+
+    def _build_cli_card(self, body):
+        card = COLORS["bg_card"]
+        frame = tk.Frame(body, bg=card, highlightbackground=COLORS["border"], highlightthickness=1)
+        frame.pack(fill="x", pady=(2, 8))
+        tk.Label(frame, text=tr("订阅 CLI"), bg=card, fg=COLORS["text"],
+                 font=config.font("body", bold=True)).pack(anchor="w", padx=12, pady=(10, 4))
+        self.cli_manager = external_software.cli_manager()
+        self.cli_labels, self.cli_buttons = {}, {}
+        for key, spec in external_software.CLI_INSTALLERS.items():
+            label = tk.Label(frame, bg=card, fg=COLORS["text_dim"], font=config.font("body"),
+                             anchor="w", justify="left")
+            label.pack(fill="x", padx=12, pady=(7, 2))
+            wrap_label(label, 24)
+            button = ttk.Button(frame, text=tr("安装 {name}", name=tr(spec[0])),
+                                command=lambda k=key: self._install_cli(k))
+            button.pack(anchor="w", padx=12, pady=2)
+            self.cli_labels[key], self.cli_buttons[key] = label, button
+        self.cli_status = tk.Label(frame, bg=card, fg=COLORS["text_dim"], font=config.font("small"),
+                                   anchor="w", justify="left")
+        self.cli_status.pack(fill="x", padx=12, pady=(4, 10))
+        wrap_label(self.cli_status, 24)
+
+    def _install_cli(self, key):
+        try:
+            self.cli_manager.start(key)
+        except (OSError, ValueError, RuntimeError) as error:
+            toast.warn(str(error))
+        self._refresh_extra_page()
 
     def _stop_extra_poll(self, event):
         if event.widget is self:
@@ -157,6 +188,26 @@ class ExtraSettingsMixin:
             return
         if hasattr(self, "_voice_settings_refresh"):
             self._voice_settings_refresh()
+        if hasattr(self, "cli_manager"):
+            statuses = self.cli_manager.status()
+            errors = []
+            for key, info in statuses.items():
+                name = tr(external_software.CLI_INSTALLERS[key][0])
+                if info["installed"]:
+                    text, enabled = tr("{name}: 已安装", name=name), False
+                elif info["state"] == "installing":
+                    text, enabled = tr("{name}: 安装中…", name=name), False
+                elif info["state"] == "manual":
+                    text, enabled = tr("{name}: 已打开官方下载页面", name=name), True
+                elif info["state"] == "error":
+                    text, enabled = tr("{name}: 安装失败: {error}", name=name, error=info["error"]), True
+                    errors.append(info["error"])
+                else:
+                    text, enabled = tr("{name}: 未安装", name=name), True
+                cfg(self.cli_labels[key], text=text)
+                self.cli_buttons[key].state(["!disabled"] if enabled else ["disabled"])
+            cfg(self.cli_status, text=tr("安装后请在终端完成对应客户端的登录.") if not errors else "\n".join(errors),
+                fg=COLORS["warn"] if errors else COLORS["text_dim"])
         statuses = self.music.status()
         blocked = self.external.location_busy
         persona = self.comm.persona_name() if self.comm is not None else ""

@@ -30,7 +30,7 @@ MODE_BLACKLIST = "blacklist"
 MODE_WHITELIST = "whitelist"
 
 
-PROTOCOLS = ("openai", "anthropic", "gemini", "cli")
+PROTOCOLS = ("openai", "anthropic", "gemini", "cli", "device")
 
 
 FAMILIES = ("claude", "chatgpt", "gemini", "deepseek", "other")
@@ -74,6 +74,14 @@ PROVIDERS = {
         "command": "agy",
         "family": "gemini",
         "effort": "auto",
+    },
+    "device": {
+        "label": "设备代理",
+        "protocol": "device",
+        "model": "由设备处理",
+        "models": [],
+        "kind": "device",
+        "family": "other",
     },
     "claude": {
         "label": "Claude",

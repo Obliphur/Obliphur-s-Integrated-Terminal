@@ -8,6 +8,7 @@ import time
 from datetime import datetime, timedelta
 
 import comm as comm_mod
+import ai_assist
 from comm import comm_data
 import config
 import toast
@@ -16,6 +17,57 @@ from i18n import tr
 
 
 class CommMixin:
+    def _comm_remote_chat(self, profile, system, messages, **kwargs):
+        """把设备代理配置转成一次加密请求；回复仍由当前 Comm 继续处理。"""
+        target = str(profile.get("target_device") or "")
+        if not target:
+            raise ai_assist.AIError("config", "没有选择设备代理目标.")
+        allowed = {"timeout", "max_tokens", "temperature", "cache", "think", "web", "tools"}
+        body = {"system": str(system or ""), "messages": messages,
+                "session_key": str(profile.get("_session_key") or profile.get("config_id") or "default"),
+                "kwargs": {k: v for k, v in kwargs.items() if k in allowed and isinstance(v, (str, int, float, bool))}}
+        try:
+            result = self.sync.request_ai(target, body, read_timeout=max(60.0, float(kwargs.get("timeout") or 240.0) + 30.0))
+        except Exception as exc:  # noqa: BLE001
+            raise ai_assist.AIError("network", f"设备代理请求失败: {exc}") from exc
+        if result.get("error"):
+            raise ai_assist.AIError(str(result.get("kind") or "network"), str(result["error"]))
+        reply = str(result.get("reply") or "").strip()
+        if not reply:
+            raise ai_assist.AIError("format", "设备没有返回内容.")
+        return reply
+
+    def _comm_ai_request(self, body):
+        """设备端处理远程请求时使用本机当前模型配置和订阅会话。"""
+        source = str(body.get("source") or "peer")
+        system = str(body.get("system") or "")
+        messages = body.get("messages") if isinstance(body.get("messages"), list) else []
+        if not messages:
+            raise ValueError("empty messages")
+        kwargs = body.get("kwargs") if isinstance(body.get("kwargs"), dict) else {}
+        session_key = str(body.get("session_key") or "default")[:160]
+
+        def prepare():
+            profile = self.comm.profile()
+            if profile.get("kind") == "device":
+                fallback = next((cid for cid in self.comm.ai.order
+                                 if self.comm.ai.profile(cid).get("kind") != "device"), "")
+                if fallback:
+                    profile = self.comm.ai.profile(fallback)
+            sessions = self.comm.cfg.setdefault("cli_sessions", {})
+            profile["_session_store"] = sessions
+            profile["_session_key"] = f"remote:{source}:{session_key}"
+            return profile
+
+        profile = self.sync_runner.call(prepare, timeout=8.0)
+        reply = ai_assist.chat_messages(profile, system, messages,
+                                         timeout=float(kwargs.get("timeout") or 240.0),
+                                         max_tokens=int(kwargs.get("max_tokens") or 4096),
+                                         temperature=float(kwargs.get("temperature") or 0.2),
+                                         cache=bool(kwargs.get("cache")), think=bool(kwargs.get("think")),
+                                         web=bool(kwargs.get("web")), tools=bool(kwargs.get("tools")))
+        self.sync_runner.call(self.comm.save_chat, timeout=8.0)
+        return {"reply": reply}
     def _open_coread(self, together=True):
         """显示服务启动进度, 就绪后按所选模式打开本机阅读网页."""
         try:

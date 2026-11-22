@@ -234,7 +234,7 @@ class PcLocal:
     # ---- 文档 ----
 
     def _ai_doc(self) -> dict:
-        """API 配置 (1.0.443): 最多 10 份命名配置 + 默认配置 + 每个 AI 用哪份. Key 在同步通道里由配对密钥封着传,
+        """API 配置: 最多 20 份命名配置 + 默认配置 + 每个 AI 用哪份. Key 在同步通道里由配对密钥封着传,
         落到对方设备后再用本机的 DPAPI 加密保存; 空 Key 不往外发 (免得未配置的设备把另一台的 Key 冲掉)."""
         cfg = self.app.comm.ai
         out = {"provider": cfg.provider, "order": ",".join(cfg.order)}
@@ -244,6 +244,9 @@ class PcLocal:
             out[f"{cid}/family"] = str(prof.get("family") or "")
             out[f"{cid}/base_url"] = str(prof.get("base_url") or "")
             out[f"{cid}/model"] = str(prof.get("model") or "")
+            out[f"{cid}/kind"] = str(prof.get("kind") or "api")
+            out[f"{cid}/target_device"] = str(prof.get("target_device") or "")
+            out[f"{cid}/target_name"] = str(prof.get("target_name") or "")
             if prof.get("api_key"):
                 out[f"{cid}/api_key"] = str(prof.get("api_key") or "")
             out[f"names/{cid}"] = cfg.config_name(cid)
@@ -396,7 +399,7 @@ class PcLocal:
                 cfg.assign = {p: c for p, c in cfg.assign.items() if c in cfg.order}
                 if cfg.order and cfg.provider not in cfg.order:
                     cfg.provider = cfg.order[0]
-            allowed = ("preset", "family", "base_url", "model", "api_key")
+            allowed = ("preset", "family", "base_url", "model", "api_key", "kind", "target_device", "target_name")
             for key, val in items.items():
                 text = "" if val is None else str(val)
                 if key.startswith("names/"):
@@ -421,6 +424,8 @@ class PcLocal:
                 elif field == "family":
                     if text not in ai_assist.FAMILY_PROTOCOL:
                         continue
+                elif field == "kind" and text not in ("api", "cli", "device"):
+                    continue
                 elif text == "" and str(cfg.profiles[cid].get(field) or ""):
                     continue          # 空值不覆盖已有的: 没配置过的设备不会把另一台的型号 / Key 冲掉
                 cfg.set_profile(cid, **{field: text})

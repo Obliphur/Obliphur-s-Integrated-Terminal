@@ -338,7 +338,8 @@ class FlowMixin:
                           cache=True, on_usage=used, tools=True, **think_kw)
             if self.chat_fn is ai_assist.chat_messages:
                 kwargs["on_delta"] = stream_delta
-            return self.chat_fn(profile, system, m, **kwargs)
+            fn = self.remote_chat if profile.get("kind") == "device" and callable(self.remote_chat) else self.chat_fn
+            return fn(profile, system, m, **kwargs)
 
         def work():
             try:

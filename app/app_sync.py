@@ -42,6 +42,10 @@ class SyncMixin:
         if self.shutting_down:
             return
         self.sync_runner.pump()
+        try:
+            self.comm.ai.refresh_devices(self.sync.device_states())
+        except Exception:
+            pass
         self.sync_job = self.root.after(100, self._pump_sync)
 
     # ---- 设备同步: 计时器此刻的状态 (MECHANICS 15.2) ----

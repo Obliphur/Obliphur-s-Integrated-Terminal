@@ -33,7 +33,7 @@ def _label(parent, text, dim=False, small=False, **kw):
 
 
 def _provider_label(key: str) -> str:
-    return tr(ai_assist.PROVIDERS[key]["label"])
+    return tr(ai_assist.PROVIDERS.get(key, {}).get("label") or key)
 
 
 def _host(url: str) -> str:
@@ -97,8 +97,11 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
     box, rbox = two_col(tr("名称"), tr("预设"))
     var_name = tk.StringVar()
     ttk.Entry(box, textvariable=var_name).pack(fill="x", pady=(2, 0))
+    preset_keys = list(ai_assist.PROVIDER_ORDER)
+    if any((cfg.profile(c["id"]).get("kind") == "device") for c in cfg.configs()):
+        preset_keys.append("device")
     cb_preset = ttk.Combobox(rbox, state="readonly",
-                             values=[_provider_label(k) for k in ai_assist.PROVIDER_ORDER])
+                             values=[_provider_label(k) for k in preset_keys])
     cb_preset.pack(fill="x", pady=(2, 0))
 
     url_box = tk.Frame(b, bg=COLORS["bg"])
@@ -147,7 +150,7 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
         ent_proto.config(state="readonly" if preset_key() == "custom" else "disabled")
 
     def preset_key() -> str:
-        return ai_assist.PROVIDER_ORDER[max(0, cb_preset.current())]
+        return preset_keys[max(0, cb_preset.current())]
 
     def family_of_ui() -> str:
         return state.get("family") or "other"
@@ -160,6 +163,18 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
         else:
             url_box.pack(fill="x", pady=(0, 8), before=box)
             key_box.pack(fill="x", before=note)
+
+    def device_fields(on: bool):
+        if on:
+            url_box.pack_forget()
+            key_box.pack_forget()
+            cb_family.config(state="disabled")
+            ent_proto.config(state="disabled")
+            effort_label.pack_forget()
+            effort_box.pack_forget()
+            btn_fetch.state(["disabled"])
+        else:
+            cb_family.config(state="readonly")
 
     def list_ids() -> list:
         return [c["id"] for c in cfg.configs()]
@@ -200,8 +215,7 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
         preset = prof.get("provider") or "custom"
         state["family"] = prof.get("family") or "other"
         var_name.set(cfg.config_name(cid))
-        cb_preset.current(ai_assist.PROVIDER_ORDER.index(preset) if preset in ai_assist.PROVIDER_ORDER
-                          else ai_assist.PROVIDER_ORDER.index("custom"))
+        cb_preset.current(preset_keys.index(preset) if preset in preset_keys else preset_keys.index("custom"))
         var_url.set(prof["base_url"])
         cb_model.config(values=ai_assist.models_for(prof))
         cb_model.set(prof["model"])
@@ -210,7 +224,11 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
         cb_family.config(state="readonly" if preset == "custom" else "disabled")
         set_proto(prof["protocol"])
         ent_url.config(state="normal" if preset == "custom" else "readonly")
-        if preset in ai_assist.CLI_PROVIDERS:
+        if preset == "device":
+            device_fields(True)
+            note.config(text=tr("请求会先交给 {name} 处理；该设备使用自己的模型配置和登录状态.")
+                        .format(name=prof.get("target_name") or "目标设备"))
+        elif preset in ai_assist.CLI_PROVIDERS:
             effort_label.pack(fill="x", pady=(2, 0))
             effort_box.pack(fill="x", pady=(2, 8))
             cb_model.config(values=[tr("订阅模型")])
@@ -228,7 +246,7 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
             btn_fetch.state(["!disabled"])
             cli_fields(False)
         var_key.set(prof["api_key"])
-        if preset not in ai_assist.CLI_PROVIDERS:
+        if preset not in ai_assist.CLI_PROVIDERS and preset != "device":
             filled = "" if preset == "custom" else tr("已填入 {name} 的官方地址.").format(name=_provider_label(preset))
             note.config(text=(filled + "\n" if filled else "")
                         + tr("API Key 加密保存在本机,只会发给上面填的 Base URL."))
@@ -245,25 +263,28 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
 
     def on_preset(_e=None):
         k = preset_key()
-        prof = ai_assist.default_profile(k)
+        prof = ai_assist.device_profile("", "设备") if k == "device" else ai_assist.default_profile(k)
         state["family"] = prof["family"]
         var_url.set(prof["base_url"])
         cb_family.set(tr(ai_assist.FAMILY_LABELS[state["family"]]))
         cb_family.config(state="readonly" if k == "custom" else "disabled")
-        set_proto("cli" if k in ai_assist.CLI_PROVIDERS else ai_assist.FAMILY_PROTOCOL[state["family"]])
+        set_proto("device" if k == "device" else ("cli" if k in ai_assist.CLI_PROVIDERS else ai_assist.FAMILY_PROTOCOL[state["family"]]))
         cb_model.config(values=ai_assist.models_for(dict(prof, provider=k)))
         cb_model.set(prof["model"])
         effort_var.set(prof.get("effort") or "auto")
         ent_url.config(state="normal" if k == "custom" else "readonly")
-        if k in ai_assist.CLI_PROVIDERS:
+        if k == "device":
+            device_fields(True)
+        elif k in ai_assist.CLI_PROVIDERS:
             effort_label.pack(fill="x", pady=(2, 0))
             effort_box.pack(fill="x", pady=(2, 8))
         else:
             effort_label.pack_forget()
             effort_box.pack_forget()
-        ent_key.config(state="disabled" if k in ai_assist.CLI_PROVIDERS else "normal")
-        btn_fetch.state(["disabled"] if k in ai_assist.CLI_PROVIDERS else ["!disabled"])
-        cli_fields(k in ai_assist.CLI_PROVIDERS)
+        ent_key.config(state="disabled" if k in ai_assist.CLI_PROVIDERS or k == "device" else "normal")
+        btn_fetch.state(["disabled"] if k in ai_assist.CLI_PROVIDERS or k == "device" else ["!disabled"])
+        if k != "device":
+            cli_fields(k in ai_assist.CLI_PROVIDERS)
 
     def on_family(_e=None):
         idx = cb_family.current()

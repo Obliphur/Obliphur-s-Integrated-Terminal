@@ -51,6 +51,7 @@ object Ai {
         "deepseek" to Provider("DeepSeek", "https://api.deepseek.com", "openai", "deepseek-chat",
             listOf("deepseek-chat", "deepseek-reasoner")),
         "custom" to Provider("自定义供应商", "", "openai", "", emptyList()),
+        "device" to Provider("设备代理", "", "device", "由设备处理", emptyList()),
     )
 
     /** 模型类型 (family): 决定接口协议和提示缓存的策略, 一个类型只走自己的那一条路. 自定义供应商必须由用户明确选 (同 ai_assist.FAMILIES). */
@@ -61,7 +62,7 @@ object Ai {
         "deepseek" to "openai", "other" to "openai")
 
     const val MAX_ITEMS = 30
-    const val MAX_CONFIGS = 10          // 最多 10 份 API 配置 (同 desktop ai_assist.MAX_CONFIGS)
+    const val MAX_CONFIGS = 20          // 最多 20 份 API 配置 (同 desktop ai_assist.MAX_CONFIGS)
     const val MAX_EXTRA_DOMAINS = 12
     const val REASON_LEN = 30
     const val MAX_TOKENS = 1500
@@ -1182,7 +1183,8 @@ object Ai {
 }
 
 data class Profile(val provider: String, val baseUrl: String, val protocol: String, val model: String, val apiKey: String,
-                   val family: String = "", val preset: String = "")
+                   val family: String = "", val preset: String = "", val kind: String = "api",
+                   val targetDevice: String = "", val targetName: String = "")
 
 data class AiCfg(val id: String, val name: String)
 
@@ -1204,6 +1206,7 @@ class AiConfig(private val file: File) {
 
     private fun defaults() {
         for ((k, def) in Ai.PROVIDERS) {
+            if (k == "device") continue
             val fam = if (k in Ai.FAMILY_PROTOCOL) k else "other"
             profiles[k] = Profile(k, def.baseUrl, Ai.FAMILY_PROTOCOL[fam]!!, def.model, "", fam, k)
             order.add(k)
@@ -1219,6 +1222,9 @@ class AiConfig(private val file: File) {
             while (keys.hasNext()) {
                 val k = keys.next()
                 val o = ps.optJSONObject(k) ?: continue
+                // 桌面专用订阅 CLI 不在 Android 上显示；避免被旧版解析成自定义 API。
+                if (k in setOf("claude_code", "codex", "antigravity") ||
+                    o.optString("preset", "") in setOf("claude_code", "codex", "antigravity")) continue
                 val preset = o.optString("preset", "").takeIf { it in Ai.PROVIDERS }
                     ?: if (k in Ai.PROVIDERS) k else "custom"
                 val def = Ai.PROVIDERS[preset] ?: Ai.PROVIDERS["custom"]!!
@@ -1231,8 +1237,10 @@ class AiConfig(private val file: File) {
                     base.contains("deepseek.com") -> "deepseek"
                     else -> "other"
                 }
-                profiles[k] = Profile(preset, base, if (preset == "custom") o.optString("protocol").takeIf { it in listOf("openai", "anthropic", "gemini") } ?: Ai.FAMILY_PROTOCOL[fam]!! else Ai.FAMILY_PROTOCOL[fam]!!,
-                    o.optString("model", def.model), Ai.decryptKey(o.optString("api_key", "")), fam, preset)
+                val device = preset == "device" || o.optString("kind") == "device"
+                profiles[k] = Profile(preset, base, if (device) "device" else if (preset == "custom") o.optString("protocol").takeIf { it in listOf("openai", "anthropic", "gemini") } ?: Ai.FAMILY_PROTOCOL[fam]!! else Ai.FAMILY_PROTOCOL[fam]!!,
+                    o.optString("model", def.model), Ai.decryptKey(o.optString("api_key", "")), fam, preset,
+                    if (device) "device" else o.optString("kind", "api"), o.optString("target_device", ""), o.optString("target_name", ""))
             }
         }
         if (profiles.isEmpty()) { defaults(); return }
@@ -1369,6 +1377,11 @@ class AiConfig(private val file: File) {
         if (id !in profiles) return
         val preset = p.preset.ifEmpty { if (id in Ai.PROVIDERS) id else "custom" }
             .takeIf { it in Ai.PROVIDERS } ?: "custom"
+        if (preset == "device") {
+            profiles[id] = p.copy(provider = preset, preset = preset, protocol = "device", kind = "device",
+                baseUrl = "", apiKey = "", model = p.model.ifBlank { "由${p.targetName.ifBlank { "设备" }}处理" })
+            return
+        }
         val fam = (if (preset in Ai.FAMILY_PROTOCOL) preset else p.family)
             .takeIf { it in Ai.FAMILY_PROTOCOL } ?: "other"
         var base = p.baseUrl.trim()
@@ -1382,6 +1395,7 @@ class AiConfig(private val file: File) {
         val ps = JSONObject()
         for ((k, p) in profiles) ps.put(k, JSONObject().put("base_url", p.baseUrl).put("protocol", p.protocol)
             .put("model", p.model).put("family", p.family).put("preset", p.preset)
+            .put("kind", p.kind).put("target_device", p.targetDevice).put("target_name", p.targetName)
             .put("api_key", runCatching { Ai.encryptKey(p.apiKey) }.getOrDefault("")))
         val ord = JSONArray()
         order.forEach { ord.put(it) }

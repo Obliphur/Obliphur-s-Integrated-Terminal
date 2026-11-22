@@ -375,6 +375,8 @@ def _make_handler(svc):
                 return self._send(*svc._on_pair(body, self.client_address[0]))
             if self.path == "/oit/v1/sync":
                 return self._send(*svc._on_sync(body))
+            if self.path == "/oit/v1/ai_request":
+                return self._send(*svc._on_ai_request(body))
             if self.path == "/oit/v1/unpair":
                 return self._send(*svc._on_unpair(body))
             if self.path == "/oit/v1/wipe":

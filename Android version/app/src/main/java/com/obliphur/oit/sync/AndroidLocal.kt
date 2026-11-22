@@ -201,7 +201,7 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
         else v?.toString() ?: ""
     }
 
-    /** API 配置 (1.0.443): 最多 10 份命名配置 + 默认配置 + 每个 AI 用哪份. Key 在同步通道里由配对密钥封着传,
+    /** API 配置: 最多 20 份命名配置 + 默认配置 + 每个 AI 用哪份. Key 在同步通道里由配对密钥封着传,
      *  落到对方设备后再用本机的 Keystore 加密保存; 空 Key 不往外发 (免得未配置的设备把另一台的 Key 冲掉). */
     private fun aiDoc(): Map<String, Any?> {
         val cfg = AiConfig(java.io.File(core.dir, "ai_config.json"))
@@ -214,6 +214,9 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
             out["$id/family"] = p.family
             out["$id/base_url"] = p.baseUrl
             out["$id/model"] = p.model
+            out["$id/kind"] = p.kind
+            out["$id/target_device"] = p.targetDevice
+            out["$id/target_name"] = p.targetName
             if (p.apiKey.isNotEmpty()) out["$id/api_key"] = p.apiKey
             out["names/$id"] = cfg.configName(id)
         }
@@ -370,6 +373,9 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
                         "base_url" -> if (text.isEmpty() && cur.baseUrl.isNotEmpty()) cur else cur.copy(baseUrl = text)
                         "model" -> if (text.isEmpty() && cur.model.isNotEmpty()) cur else cur.copy(model = text)
                         "api_key" -> if (text.isEmpty() && cur.apiKey.isNotEmpty()) cur else cur.copy(apiKey = text)
+                        "kind" -> if (text in setOf("api", "device")) cur.copy(kind = text) else cur
+                        "target_device" -> cur.copy(targetDevice = text)
+                        "target_name" -> cur.copy(targetName = text)
                         else -> cur
                     }
                     if (next != cur) cfg.putProfile(id, next)

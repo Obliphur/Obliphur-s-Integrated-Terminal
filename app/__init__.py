@@ -296,7 +296,10 @@ class BreakTimerApp(CommMixin, SyncMixin, ContractMixin, ContractMediaMixin,
         # 设备同步 (MECHANICS 24.6): 聊天记录随同步; 只有最后有人操作的设备调用 AI
         self.comm.device = lambda: self.sync.my_id
         self.comm.leader = self._comm_leader
+        self.comm.remote_chat = self._comm_remote_chat
+        self.sync.ai_request_handler = self._comm_ai_request
         self.comm.on_sync = lambda: self.sync.sync_now() if self.sync.peers() else None
+        self.comm.ai.refresh_devices(self.sync.device_states())
         self.comm.fog = lambda: bool(self.contract.fog())
         # 用户只能在休息 / 空闲时用沟通 (专注 / 睡眠 / 外出中不能用); 对方在用户睡眠时仍可主动发, 只是先藏起来
         self.comm.blocked = self._comm_blocked

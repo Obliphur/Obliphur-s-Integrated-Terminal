@@ -137,6 +137,7 @@ class SyncService(DiscoverMixin, PairMixin, WipeMixin, LinkMixin, DocSyncMixin, 
         self._offline = {}
         self._started_ms = _now_ms()
         self.firewall = None      # 本机防火墙检查的结果 (firewall.check, 由 app 在后台填)
+        self.ai_request_handler = None  # (body) -> {reply}，由桌面沟通模块接入
         self.state = self._load()
         if not self.state.get("device"):
             self.state["device"] = {"id": secrets.token_hex(6),
@@ -240,6 +241,45 @@ class SyncService(DiscoverMixin, PairMixin, WipeMixin, LinkMixin, DocSyncMixin, 
             return r.status, payload
         finally:
             conn.close()
+
+    def request_ai(self, peer_id: str, body: dict, timeout: float = 8.0, read_timeout: float = 300.0) -> dict:
+        """向绑定设备发送一次加密 AI 请求，返回目标设备的加密回复。"""
+        peer = self.peers().get(str(peer_id))
+        if not peer:
+            raise RuntimeError("unpaired")
+        env = seal(bytes.fromhex(peer["key"]), self.my_id, {"ai": body})
+        st, reply = self._http(peer["addr"], peer["port"], "POST", "/oit/v1/ai_request", env,
+                               timeout=timeout, read_timeout=read_timeout)
+        if st != 200:
+            raise RuntimeError(str(reply.get("error") or f"HTTP {st}"))
+        try:
+            return unseal(bytes.fromhex(peer["key"]), reply).get("result") or {}
+        except (KeyError, TypeError, ValueError, SealError) as exc:
+            raise RuntimeError("invalid ai response") from exc
+
+    def _on_ai_request(self, env: dict):
+        if not self.proxy_ok():
+            return 409, {"error": "not-proxy"}
+        if _call(self, "away", False):
+            return 503, {"error": "away"}
+        sender = str(env.get("from") or "")
+        peer = self.peers().get(sender)
+        if not peer:
+            return 401, {"error": "unpaired"}
+        try:
+            body = unseal(bytes.fromhex(peer["key"]), env)
+        except (KeyError, ValueError, SealError):
+            return 403, {"error": "bad-signature"}
+        request = body.get("ai") if isinstance(body, dict) else None
+        if not isinstance(request, dict) or not callable(self.ai_request_handler):
+            return 400, {"error": "ai-unavailable"}
+        try:
+            result = self.ai_request_handler(dict(request, source=sender))
+            if not isinstance(result, dict):
+                result = {"reply": str(result or "")}
+            return 200, seal(bytes.fromhex(peer["key"]), self.my_id, {"result": result})
+        except Exception as exc:  # noqa: BLE001
+            return 500, {"error": str(exc) or type(exc).__name__}
 
     # ---- 绑定: 发起方 ----
 
