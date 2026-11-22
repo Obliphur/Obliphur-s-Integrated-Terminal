@@ -1027,6 +1027,12 @@ def _selftest():
         key_out = f"{day:%Y-%m-%d}/{(day.hour + 5) % 24}"
         assert sc._wins("hours", key_in, t0 - 2_000_000, "study", (t0 - 700_000, "play"), win, None), "外出期间的那一小时"
         assert not sc._wins("hours", key_out, t0 - 2_000_000, "study", (t0 - 700_000, "play"), win, None), "不在外出期间的小时"
+        # 外出设备的睡眠账进入 peer ledger 后, 接收端的动态自动内容可能从「分心」变成「睡眠」;
+        # 本机之前自动填的「分心」仍是自动内容, 不能挡住同步来的「睡眠」.
+        lc.auto_text = lambda: "Distracted"
+        lc.auto_text_for = lambda _key: "Sleeping"
+        assert sc._wins("hours", key_in, t0 - 2_000_000, "Sleeping", (t0 - 700_000, "Distracted"), win, None), \
+            "睡眠同步不能被先前自动填的分心挡住"
         assert _away_win([t0 - 3_600_000, t0]) == (t0 - 3_600_000, t0) and _away_win([5, 3]) is None and _away_win(None) is None
         sc.merge({"status": {"pY": {"ts": t0 + 2, "timer": "idle", "away": [t0 - 3_600_000, t0 - 600_000]}}, "device": {"id": "pY"}})
         assert sc.pop_away_prio() == [("pY", t0 - 3_600_000, t0 - 600_000)] and sc.pop_away_prio() == []

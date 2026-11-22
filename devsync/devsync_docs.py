@@ -57,7 +57,12 @@ class DocSyncMixin:
             # 超时自动记录的内容永远让位给自己填写的内容 (行为模式按小时有不同的自动内容)
             auto = _call(self.local, "auto_text_for", None, key) or self.local.auto_text()
             norm = getattr(self.local, "auto_norm", None) or (lambda t: t)       # Sleeping / 睡眠 算同一项
-            r_auto, l_auto = norm(val) == auto, norm(cur_val) == auto
+            # 同步进来的睡眠 / 外出账会先进入 peer ledger, 使 auto_text_for(key)
+            # 在合并这一格时发生变化. 本机原先由默认 AUTO_TEXT 自动填的内容
+            # (例如「分心」) 也仍然是自动内容, 不能因此被误判成手工填写.
+            base_auto = _call(self.local, "auto_text", None) or self.local.auto_text()
+            auto_names = {norm(auto), norm(base_auto)}
+            r_auto, l_auto = norm(val) in auto_names, norm(cur_val) in auto_names
             if r_auto and cur_val and not l_auto:
                 return False
             if l_auto and val and not r_auto:

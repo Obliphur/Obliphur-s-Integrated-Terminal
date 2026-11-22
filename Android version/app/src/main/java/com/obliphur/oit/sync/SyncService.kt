@@ -1433,8 +1433,13 @@ class SyncService(
         if (doc == "hours") {
             // 超时自动记录的内容永远让位给自己填写的内容 (行为模式按小时有不同的自动内容)
             val auto = local.autoTextFor(key)
-            val rAuto = local.autoNorm(v?.toString() ?: "") == auto
-            val lAuto = local.autoNorm(cur.second?.toString() ?: "") == auto
+            // 同步进来的睡眠 / 外出账会先进入 peer ledger, 使 autoTextFor(key)
+            // 在合并这一格时发生变化. 本机原先由默认 AUTO_TEXT 自动填的内容
+            // (例如「分心」) 也仍然是自动内容, 不能因此被误判成手工填写.
+            val baseAuto = local.autoText()
+            val autoNames = setOf(local.autoNorm(auto), local.autoNorm(baseAuto))
+            val rAuto = local.autoNorm(v?.toString() ?: "") in autoNames
+            val lAuto = local.autoNorm(cur.second?.toString() ?: "") in autoNames
             val lHas = cur.second != null && cur.second.toString().isNotEmpty()
             val rHas = v != null && v.toString().isNotEmpty()
             if (rAuto && lHas && !lAuto) return false
