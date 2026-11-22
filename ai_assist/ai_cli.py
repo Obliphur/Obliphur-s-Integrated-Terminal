@@ -46,14 +46,24 @@ def capabilities(profile: dict = None) -> dict:
             text = (p.stdout or "") + "\n" + (p.stderr or "")
         except (OSError, subprocess.TimeoutExpired):
             text = ""
-        flags = {"effort": "--effort" in text, "model": "--model" in text}
+        flags = {"effort": "--effort" in text or "model_reasoning_effort" in text or _is_codex(profile or {}),
+                 "model": "--model" in text}
         _HELP[path] = flags
         return dict(flags)
 
 
 def _label(profile: dict) -> str:
-    return "Antigravity" if (str(profile.get("provider") or "") == "antigravity"
-                              or os.path.basename(str(profile.get("command") or "")) == "agy") else "Claude Code"
+    provider = str(profile.get("provider") or "")
+    command = os.path.basename(str(profile.get("command") or ""))
+    if provider == "antigravity" or command == "agy":
+        return "Antigravity"
+    if provider == "codex" or command == "codex":
+        return "Codex"
+    return "Claude Code"
+
+
+def _is_codex(profile: dict) -> bool:
+    return _label(profile) == "Codex"
 
 
 def _error(profile: dict, text: str) -> AIError:
@@ -83,6 +93,7 @@ def chat_messages(profile: dict, system: str, messages: list, timeout: float = 2
     sid = str(state.get("id") or "")
     # 首次建立会话时用 OIT 的干净历史重建；之后历史留在 Claude Code 会话里。
     is_antigravity = (_label(profile) == "Antigravity")
+    is_codex = _is_codex(profile)
     if sid:
         prompt = str(messages[-1].get("content") or "").strip()
     else:
@@ -93,23 +104,32 @@ def chat_messages(profile: dict, system: str, messages: list, timeout: float = 2
             if content:
                 lines.append(f"{role}: {content}")
         prompt = "\n\n".join(lines)
-        if is_antigravity and system:
+        if (is_antigravity or is_codex) and system:
             prompt = "【OIT 前置协议】\n" + str(system).strip() + "\n\n【OIT 对话】\n" + prompt
     if not prompt:
         raise AIError("format", "没有要发送的消息")
-    args = [path, "-p", prompt, "--output-format", "json"]
+    if is_codex:
+        args = [path, "exec"]
+        if sid:
+            args += ["resume", sid]
+        args += ["--json", "--skip-git-repo-check", prompt]
+    else:
+        args = [path, "-p", prompt, "--output-format", "json"]
     caps = capabilities(profile)
     requested_effort = str(profile.get("effort") or "auto").lower()
     if requested_effort not in ("low", "medium", "high", "xhigh", "max"):
         requested_effort = "medium" if _kwargs.get("think") else "low"
     if caps.get("effort"):
-        args[1:1] = ["--effort", requested_effort]
+        if is_codex:
+            args[1:1] = ["-c", f'model_reasoning_effort="{requested_effort}"']
+        else:
+            args[1:1] = ["--effort", requested_effort]
     model = str(profile.get("model") or "").strip()
     if caps.get("model") and model and model not in ("订阅模型", "subscription", "auto"):
         args[1:1] = ["--model", model]
-    if sid:
+    if sid and not is_codex:
         args[1:1] = (["--conversation", sid] if is_antigravity else ["--resume", sid])
-    if system and not sid and not is_antigravity:
+    if system and not sid and not is_antigravity and not is_codex:
         args[1:1] = ["--system-prompt", system]
     try:
         proc = subprocess.run(args, capture_output=True, text=True, encoding="utf-8",
@@ -128,7 +148,22 @@ def chat_messages(profile: dict, system: str, messages: list, timeout: float = 2
     try:
         data = json.loads(raw)
     except (TypeError, ValueError):
-        # 某些版本即使要求 json 仍可能只输出正文。
+        if is_codex:
+            texts, thread_id = [], ""
+            for line in raw.splitlines():
+                try:
+                    event = json.loads(line)
+                except (TypeError, ValueError):
+                    continue
+                thread_id = thread_id or str(event.get("thread_id") or event.get("threadId") or "")
+                item = event.get("item") if isinstance(event.get("item"), dict) else {}
+                if item.get("type") in ("agent_message", "message"):
+                    text = item.get("text") or item.get("content") or ""
+                    if text:
+                        texts.append(str(text))
+            if texts:
+                store[key] = {"id": thread_id, "updated": int(time.time())}
+                return "\n".join(texts).strip()
         if raw:
             return raw
     if not isinstance(data, dict):
@@ -138,7 +173,8 @@ def chat_messages(profile: dict, system: str, messages: list, timeout: float = 2
     result = str(data.get("result") or data.get("response") or data.get("text") or "").strip()
     if not result:
         raise AIError("format", f"{_label(profile)} 没有返回内容.")
-    new_id = str(data.get("session_id") or data.get("sessionId") or data.get("conversation_id") or sid or "")
+    new_id = str(data.get("session_id") or data.get("sessionId") or data.get("conversation_id")
+                 or data.get("thread_id") or data.get("threadId") or sid or "")
     if new_id:
         store[key] = {"id": new_id, "updated": int(time.time())}
     return result

@@ -77,9 +77,9 @@ class AIConfig:
             for k, prof in saved.items():
                 if not isinstance(k, str) or not isinstance(prof, dict):
                     continue
-                preset = prof.get("preset") if prof.get("preset") in PROVIDERS else (k if k in PROVIDERS else "custom")
+                preset = self._profile_preset(k, prof)
                 out = default_profile(preset)
-                for field in ("base_url", "model", "protocol", "api_key", "family", "kind", "command", "effort"):
+                for field in ("base_url", "model", "protocol", "api_key", "family", "kind", "command", "effort", "preset"):
                     if isinstance(prof.get(field), str):
                         out[field] = prof[field]
                 enc = prof.get("api_key_enc")
@@ -91,6 +91,7 @@ class AIConfig:
                     out["api_key"] = ""
                 fam = self._norm_family(preset, out)
                 out["family"] = fam
+                out["preset"] = preset
                 if preset in CLI_PROVIDERS:
                     out["kind"], out["protocol"] = "cli", "cli"
                     out["base_url"], out["api_key"] = "", ""
@@ -101,6 +102,10 @@ class AIConfig:
                     out["protocol"] = (out.get("protocol") if preset == "custom" and out.get("protocol") in PROTOCOLS and out.get("protocol") != "cli"
                                        else FAMILY_PROTOCOL[fam])
                 self.profiles[k] = out
+            if isinstance(data.get("order"), list) and not data.get("order") and not self.profiles:
+                self.order = self._available_order()
+                self.profiles = {k: default_profile(k) for k in self.order}
+                self.names = {k: PROVIDERS[k]["label"] for k in self.order}
         # 列表顺序: 新格式存了 order; 老格式按预设的固定顺序, 然后是文件里多出来的
         order = data.get("order")
         if isinstance(order, list):
@@ -133,7 +138,24 @@ class AIConfig:
             self.task_assign = {role: cid for role, cid in tasks.items()
                                 if role in ("ocr", "review", "subject") and cid in self.profiles}
         self._ensure_managed_profiles()
+        self._remove_unavailable_cli()
         self._trim()
+
+    @staticmethod
+    def _profile_preset(key: str, prof: dict) -> str:
+        """从存档恢复预设；旧版自动生成的 CLI 配置可能没有 preset 字段。"""
+        saved = prof.get("preset")
+        if saved in CLI_PROVIDERS:
+            return saved
+        if key in CLI_PROVIDERS:
+            return key
+        command = str(prof.get("command") or "").strip().lower()
+        for preset in CLI_PROVIDERS:
+            if command == str(PROVIDERS[preset].get("command") or "").lower():
+                return preset
+        if saved in PROVIDERS:
+            return saved
+        return key if key in PROVIDERS else "custom"
 
     def _ensure_managed_profiles(self):
         """已安装的本地客户端始终出现在模型配置里，卸载后才允许删除。"""
@@ -144,6 +166,29 @@ class AIConfig:
             self.profiles[preset] = default_profile(preset)
             self.names[preset] = PROVIDERS[preset]["label"]
             self.order.insert(0, preset)
+
+    @staticmethod
+    def _available_order():
+        from .ai_cli import installed
+        return [k for k in PROVIDER_ORDER
+                if k not in CLI_PROVIDERS or installed({"command": PROVIDERS[k].get("command", "")})]
+
+    def _remove_unavailable_cli(self):
+        """CLI 被卸载后不显示其托管配置；重新安装时由上面的补齐逻辑恢复。"""
+        from .ai_cli import installed
+        gone = []
+        for cid, prof in list(self.profiles.items()):
+            preset = self._profile_preset(cid, prof)
+            if preset in CLI_PROVIDERS and not installed({"command": PROVIDERS[preset].get("command", "")}):
+                gone.append(cid)
+        if not gone:
+            return
+        for cid in gone:
+            self.profiles.pop(cid, None)
+            self.names.pop(cid, None)
+            self.assign = {p: c for p, c in self.assign.items() if c != cid}
+            self.task_assign = {r: c for r, c in self.task_assign.items() if c != cid}
+        self.order = [cid for cid in self.order if cid not in gone]
 
     def _trim(self):
         """最多 MAX_CONFIGS 份: 默认配置一定留着."""
@@ -157,9 +202,9 @@ class AIConfig:
             self.assign = {p: c for p, c in self.assign.items() if c != victim}
             self.task_assign = {role: cid for role, cid in self.task_assign.items() if cid != victim}
         if not self.order:                        # 配置被删光了: 回到预设
-            self.order = list(PROVIDER_ORDER)
-            self.profiles = {k: default_profile(k) for k in PROVIDER_ORDER}
-            self.names = {k: PROVIDERS[k]["label"] for k in PROVIDER_ORDER}
+            self.order = self._available_order()
+            self.profiles = {k: default_profile(k) for k in self.order}
+            self.names = {k: PROVIDERS[k]["label"] for k in self.order}
             self.assign = {}
             self.task_assign = {}
             self.provider = self.order[0]
@@ -236,7 +281,7 @@ class AIConfig:
         return True
 
     def add_config(self, name: str = "") -> str:
-        """新建一份空白配置 (自定义类型), 返回 id; 已经 10 份 = ""."""
+        """新建一份空白配置 (自定义类型), 返回 id; 已经达到上限 = ""."""
         if len(self.order) >= MAX_CONFIGS:
             return ""
         cid = "cfg%06x" % random.getrandbits(24)
@@ -312,8 +357,8 @@ class AIConfig:
         """一份配置的接口参数 (provider 是它的预设类型, 用来决定 Key 只能发往哪 / 缓存方式; config_id 是配置 id)."""
         cid = cid or self.provider
         prof = self.profiles.get(cid) or default_profile()
-        preset = prof.get("preset") if prof.get("preset") in PROVIDERS else "custom"
-        return dict(prof, provider=preset, config_id=cid)
+        preset = self._profile_preset(cid, prof)
+        return dict(prof, preset=preset, provider=preset, config_id=cid)
 
     def task_profile(self, role: str, fallback: str = None) -> dict:
         """返回视觉/OCR/评判专用配置；未指定时沿用聊天当前配置。"""

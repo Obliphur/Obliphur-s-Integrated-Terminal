@@ -259,6 +259,13 @@ def _selftest():
     assert c.profile("deepseek")["base_url"] == "https://api.deepseek.com"
     assert c.profile("custom")["base_url"] == "" and c.profile("custom")["model"] == ""
     assert c.profile("gemini")["family"] == "gemini" and c.profile("gemini")["protocol"] == "gemini"
+    for cli in CLI_PROVIDERS:
+        if cli in c.profiles:
+            assert c.profile(cli)["provider"] == cli and c.profile(cli)["preset"] == cli
+    legacy_cli = AIConfig(os.path.join(tempfile.mkdtemp(), "legacy-cli.json"))
+    legacy_cli.profiles["claude_code"] = dict(legacy_cli.profiles.get("claude_code") or default_profile("claude_code"))
+    legacy_cli.profiles["claude_code"].pop("preset", None)
+    assert legacy_cli.profile("claude_code")["provider"] == "claude_code"
     c.set_profile("deepseek", base_url="", api_key=" sk-x ")
     assert c.profile("deepseek")["base_url"] == "https://api.deepseek.com"
     assert c.profile("deepseek")["api_key"] == "sk-x"
@@ -274,7 +281,7 @@ def _selftest():
     assert AIConfig(c.path).profile()["api_key"] == "sk-x"
     assert AIConfig(c.path).profile("custom")["family"] == "other", "模型类型要存下来"
 
-    # 命名配置: 最多 10 份, 互相独立, 每个 AI 各选一份
+    # 命名配置: 最多 MAX_CONFIGS 份, 互相独立, 每个 AI 各选一份
     c2 = AIConfig(os.path.join(tempfile.mkdtemp(), "ai2.json"))
     cid = c2.add_config("备用")
     assert cid and c2.config_name(cid) == "备用" and c2.profile(cid)["provider"] == "custom"
@@ -317,14 +324,17 @@ def _selftest():
     assert c3.rename_config("deepseek", "保留的预设")
     assert c3.save()
     reopened = AIConfig(c3.path, template=DEFAULT_TEMPLATE)
-    assert reopened.order == c3.order, "删除的默认 AI 配置不应在重启后重新生成"
-    assert reopened.profiles == c3.profiles and reopened.names == c3.names
-    assert reopened.provider == c3.provider and reopened.assign == c3.assign
+    expected_c3 = [k for k in c3.order if k not in CLI_PROVIDERS or cli_installed({"command": PROVIDERS[k].get("command", "")})]
+    assert reopened.order == expected_c3, "删除的默认 AI 配置不应在重启后重新生成"
+    assert all(reopened.profiles[k] == c3.profiles[k] for k in expected_c3) and all(k in c3.profiles for k in expected_c3)
+    expected_provider = c3.provider if c3.provider in expected_c3 else expected_c3[0]
+    expected_assign = {p: cid for p, cid in c3.assign.items() if cid in expected_c3}
+    assert reopened.provider == expected_provider and reopened.assign == expected_assign
     assert reopened.config_for("删除.txt") == reopened.provider
 
-    # 只保留自建配置并填满 10 份, 重启不能让恢复的预设挤掉自建项。
+    # 只保留自建配置并填满上限, 重启不能让恢复的预设挤掉自建项。
     for preset in PROVIDER_ORDER:
-        if preset in c3.profiles:
+        if preset in c3.profiles and not (preset in CLI_PROVIDERS and cli_installed({"command": PROVIDERS[preset].get("command", "")})):
             assert c3.remove_config(preset)
     while c3.add_config("自建"):
         pass
@@ -340,7 +350,9 @@ def _selftest():
     empty_path = os.path.join(tempfile.mkdtemp(), "empty.json")
     with securefile.open(empty_path, "w", encoding="utf-8") as f:
         json.dump({"order": [], "profiles": {}}, f)
-    assert AIConfig(empty_path).order == list(PROVIDER_ORDER)
+    expected_order = [k for k in PROVIDER_ORDER
+                      if k not in CLI_PROVIDERS or cli_installed({"command": PROVIDERS[k].get("command", "")})]
+    assert AIConfig(empty_path).order == expected_order
 
     assert endpoint({"base_url": "https://api.openai.com/v1", "protocol": "openai"}) \
         == "https://api.openai.com/v1/chat/completions"
@@ -776,7 +788,9 @@ def _selftest():
                 "api_key": "sk-plain-777"}}}, f)
         m = AIConfig(path)
         assert m.profile("deepseek")["api_key"] == "sk-plain-777"
-        assert m.order == list(PROVIDER_ORDER), "旧版稀疏配置仍补齐服务商预设"
+        expected_sparse = [k for k in PROVIDER_ORDER
+                           if k not in CLI_PROVIDERS or cli_installed({"command": PROVIDERS[k].get("command", "")})]
+        assert m.order == expected_sparse, "旧版稀疏配置仍补齐服务商预设"
         txt = open(path, encoding="utf-8").read()
         assert "sk-plain-777" not in txt and "dpapi:" in txt, "旧明文 Key 应被加密改存"
         assert AIConfig(path).profile("deepseek")["api_key"] == "sk-plain-777"

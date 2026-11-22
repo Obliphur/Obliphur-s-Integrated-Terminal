@@ -55,6 +55,16 @@ PROVIDERS = {
         "family": "claude",
         "effort": "auto",
     },
+    "codex": {
+        "label": "Codex",
+        "protocol": "cli",
+        "model": "订阅模型",
+        "models": ["订阅模型"],
+        "kind": "cli",
+        "command": "codex",
+        "family": "chatgpt",
+        "effort": "auto",
+    },
     "antigravity": {
         "label": "Antigravity",
         "protocol": "cli",
@@ -103,10 +113,10 @@ PROVIDERS = {
 }
 
 
-CLI_PROVIDERS = ("claude_code", "antigravity")
+CLI_PROVIDERS = ("claude_code", "codex", "antigravity")
 
 
-PROVIDER_ORDER = ("claude_code", "antigravity", "claude", "chatgpt", "gemini", "deepseek", "custom")
+PROVIDER_ORDER = ("claude_code", "codex", "antigravity", "claude", "chatgpt", "gemini", "deepseek", "custom")
 
 
 ANTHROPIC_VERSION = "2023-06-01"
@@ -124,7 +134,7 @@ REASON_LEN = 30
 MAX_TOKENS = 1500
 
 
-MAX_CONFIGS = 10                # 最多能建多少份 API 配置 (沟通页每个 AI 各选一份, 其余功能用默认的那份)
+MAX_CONFIGS = 20                # 最多能建多少份 AI 配置 (沟通页每个 AI 各选一份, 其余功能用默认的那份)
 
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))      # 仓库根 (ai_assist 的上一级)

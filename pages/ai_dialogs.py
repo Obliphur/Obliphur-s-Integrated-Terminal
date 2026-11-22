@@ -101,10 +101,12 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
                              values=[_provider_label(k) for k in ai_assist.PROVIDER_ORDER])
     cb_preset.pack(fill="x", pady=(2, 0))
 
-    _label(b, tr("Base URL")).pack(fill="x")
+    url_box = tk.Frame(b, bg=COLORS["bg"])
+    url_box.pack(fill="x", pady=(0, 8))
+    _label(url_box, tr("Base URL")).pack(fill="x")
     var_url = tk.StringVar()
-    ent_url = ttk.Entry(b, textvariable=var_url)
-    ent_url.pack(fill="x", pady=(2, 8))
+    ent_url = ttk.Entry(url_box, textvariable=var_url)
+    ent_url.pack(fill="x", pady=(2, 0))
 
     box, rbox = two_col(tr("模型类型"), tr("接口协议"))
     cb_family = ttk.Combobox(box, state="readonly",
@@ -126,12 +128,14 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
     effort_box = ttk.Combobox(b, textvariable=effort_var,
                               values=["auto", "low", "medium", "high", "xhigh", "max"], state="readonly")
 
-    _label(b, tr("API Key")).pack(fill="x")
+    key_box = tk.Frame(b, bg=COLORS["bg"])
+    key_box.pack(fill="x")
+    _label(key_box, tr("API Key")).pack(fill="x")
     var_key = tk.StringVar()
-    ent_key = ttk.Entry(b, textvariable=var_key, show="•")
+    ent_key = ttk.Entry(key_box, textvariable=var_key, show="•")
     ent_key.pack(fill="x", pady=(2, 2))
     var_show = tk.BooleanVar(value=False)
-    ttk.Checkbutton(b, text=tr("显示 Key"), variable=var_show,
+    ttk.Checkbutton(key_box, text=tr("显示 Key"), variable=var_show,
                     command=lambda: ent_key.config(show="" if var_show.get() else "•")
                     ).pack(anchor="w")
     note = _label(b, "", dim=True, small=True)
@@ -147,6 +151,15 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
 
     def family_of_ui() -> str:
         return state.get("family") or "other"
+
+    def cli_fields(on: bool):
+        """CLI 不需要也不显示 API 地址和 Key，避免误导用户。"""
+        if on:
+            url_box.pack_forget()
+            key_box.pack_forget()
+        else:
+            url_box.pack(fill="x", pady=(0, 8), before=box)
+            key_box.pack(fill="x", before=note)
 
     def list_ids() -> list:
         return [c["id"] for c in cfg.configs()]
@@ -204,12 +217,16 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
             cb_model.set(tr("订阅模型"))
             ent_key.config(state="disabled")
             ent_url.config(state="disabled")
+            btn_fetch.state(["disabled"])
+            cli_fields(True)
             note.config(text=tr("使用本机 {name} 的订阅登录状态；请先安装并在终端完成登录。")
                         .format(name=_provider_label(preset)))
         else:
             effort_label.pack_forget()
             effort_box.pack_forget()
             ent_key.config(state="normal")
+            btn_fetch.state(["!disabled"])
+            cli_fields(False)
         var_key.set(prof["api_key"])
         if preset not in ai_assist.CLI_PROVIDERS:
             filled = "" if preset == "custom" else tr("已填入 {name} 的官方地址.").format(name=_provider_label(preset))
@@ -245,6 +262,8 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
             effort_label.pack_forget()
             effort_box.pack_forget()
         ent_key.config(state="disabled" if k in ai_assist.CLI_PROVIDERS else "normal")
+        btn_fetch.state(["disabled"] if k in ai_assist.CLI_PROVIDERS else ["!disabled"])
+        cli_fields(k in ai_assist.CLI_PROVIDERS)
 
     def on_family(_e=None):
         idx = cb_family.current()
