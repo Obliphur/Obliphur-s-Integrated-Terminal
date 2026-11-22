@@ -26,7 +26,8 @@ from comm.comm_const import *
 from comm.comm_schedule import PROACTIVE_P, seg_kind, seg_detail, schedule_entries, schedule_loops, loop_entries, schedule_segments, pro_pct, persona_probs
 from comm.comm_reply import CUT_DEFAULT_MIN, CUT_MAX_MIN, HALFWIDTH_SYMBOLS, NET_DEFAULT_MIN, NET_MAX_MIN, WAIT_MAX_MIN, _BRACKET_RE, _CUT_N_RE, _CUT_RE, _EMPTY_WRAP_RE, _NET_RE, _WAIT_RE, clean_reply, cut_minutes, net_minutes, to_halfwidth
 from comm.comm_builtin import BUILTIN_PERSONAS, DEFAULT_PERSONA, DEFAULT_BACKGROUND, DEFAULT_ROUTINE, ASSISTANT_PERSONA, ASSISTANT_DETAIL_LINE, BACKGROUND_LEGACIES, ASSISTANT_SLEEP_LINE, ASSISTANT_TITLE
-from comm.comm_prompt import REFUSE, SHIFT_TAG, MSGS_TAG, THINK_LONG, THINK_WORDS, THINK_TIME_RE, think_text_reason, JOINT_RULE, rest_function_text, prefix_prompt
+from comm.comm_prompt import (REFUSE, SHIFT_TAG, MSGS_TAG, CONSENT_TUTORIAL, THINK_LONG, THINK_WORDS,
+                              THINK_TIME_RE, think_text_reason, JOINT_RULE, rest_function_text, prefix_prompt)
 from comm.comm_persona import SHIFT_LO, SHIFT_HI, SHIFT_KEEP, MAX_PERSONA, MEM_MAX, PERSONA_EXT, readme_text, pid_of, love_norm, love_line, shift_norm, shift_pairs, hm_text, shift_line, mem_fields, seed_builtin, ensure_personas, list_personas, persona_title, uses_prefix, system_head, PERSONA_HEAD, persona_system, persona_labels, read_persona, ROUTINE_SUFFIX, COMPANION_SEP, companion_base, is_companion_name, companion_files, companions_of, routine_name_of, read_routine, read_persona_full, import_persona
 from comm.comm_util import (OIT_TAG, COND_TAG, WEEKDAY, MAX_MSG_CHARS, HISTORY_SENT, HISTORY_STEP, HISTORY_CHARS,
                        is_claudia, is_refusal, stamp, urlsplit_host, info_tags, joint_answer, _joint_time, clip_message,
@@ -293,7 +294,7 @@ class ShareMixin:
                 self._share_ask_end("{name} 没有回复, share data 没有打开")
             elif not a.get("sent") and not self.busy and not self._ai_problem() and self.leader():
                 a["sent"] = True
-                self._trigger("share_ask", (f"{SHARE_TAG} 用户想打开 share data: 打开之后, 用户在 OIT 各个页面时, 会把那一页上用户和你自己的数据发给你, "
+                self._trigger("share_ask", (f"{CONSENT_TUTORIAL}\n\n{SHARE_TAG} 用户想打开 share data: 打开之后, 用户在 OIT 各个页面时, 会把那一页上用户和你自己的数据发给你, "
                                             '页面下方还有一个聊天悬浮窗. 这需要你的同意: 同意就在oit_reply中填写answer="yes",不同意填写answer="no" '
                                             f"(后面可以按人设加一句text); 如果实在不方便回答, 调用oit_reply(refuse=true)."))
                 return

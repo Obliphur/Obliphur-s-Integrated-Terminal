@@ -26,7 +26,8 @@ from comm.comm_const import *
 from comm.comm_schedule import PROACTIVE_P, seg_kind, seg_detail, schedule_entries, schedule_loops, loop_entries, schedule_segments, pro_pct, persona_probs
 from comm.comm_reply import CUT_DEFAULT_MIN, CUT_MAX_MIN, HALFWIDTH_SYMBOLS, NET_DEFAULT_MIN, NET_MAX_MIN, WAIT_MAX_MIN, _BRACKET_RE, _CUT_N_RE, _CUT_RE, _EMPTY_WRAP_RE, _NET_RE, _WAIT_RE, clean_reply, cut_minutes, net_minutes, to_halfwidth
 from comm.comm_builtin import BUILTIN_PERSONAS, DEFAULT_PERSONA, DEFAULT_BACKGROUND, DEFAULT_ROUTINE, ASSISTANT_PERSONA, ASSISTANT_DETAIL_LINE, BACKGROUND_LEGACIES, ASSISTANT_SLEEP_LINE, ASSISTANT_TITLE
-from comm.comm_prompt import REFUSE, SHIFT_TAG, MSGS_TAG, THINK_LONG, THINK_WORDS, THINK_TIME_RE, think_text_reason, JOINT_RULE, rest_function_text, prefix_prompt
+from comm.comm_prompt import (REFUSE, SHIFT_TAG, MSGS_TAG, CONSENT_TUTORIAL, THINK_LONG, THINK_WORDS,
+                              THINK_TIME_RE, think_text_reason, JOINT_RULE, rest_function_text, prefix_prompt)
 from comm.comm_persona import SHIFT_LO, SHIFT_HI, SHIFT_KEEP, MAX_PERSONA, MEM_MAX, PERSONA_EXT, readme_text, pid_of, love_norm, love_line, shift_norm, shift_pairs, hm_text, shift_line, mem_fields, seed_builtin, ensure_personas, list_personas, persona_title, uses_prefix, system_head, PERSONA_HEAD, persona_system, persona_labels, read_persona, ROUTINE_SUFFIX, COMPANION_SEP, companion_base, is_companion_name, companion_files, companions_of, routine_name_of, read_routine, read_persona_full, import_persona
 from comm.comm_util import (OIT_TAG, COND_TAG, WEEKDAY, MAX_MSG_CHARS, HISTORY_SENT, HISTORY_STEP, HISTORY_CHARS,
                        is_claudia, is_refusal, stamp, urlsplit_host, info_tags, joint_answer, _joint_time, clip_message,
@@ -304,12 +305,12 @@ class ChatMixin:
             if status and status.get("kind") in HELD_KINDS and not status.get("joint"):
                 return tr("{name} {st}, 现在没法征求同意", name=self.share_ai_name(), st=tr(STATUS_TEXT[status["kind"]]))
             shown.append(tr("🙈 share data"))
-            parts.append(oit_text("这是用户发来的 share data 请求。请按人设与实时状态判断是否同意：同意填写oit_reply.answer=\"yes\"，不同意填写answer=\"no\"，可附text。只有明确同意后，OIT才会开始分享；开始前不得声称已读取数据。仅对此请求填写answer。"))
+            parts.append(oit_text(CONSENT_TUTORIAL + "\n\n这是用户发来的 share data 请求。请按人设与实时状态判断是否同意：只有明确同意后，OIT才会开始分享；开始前不得声称已读取数据。仅对此请求填写answer。"))
         if requests.get("coread"):
             if self.coread_ask and self.coread_ask.get("pid") == self.pid:
                 return tr("⏳ 等待共读同意")
             shown.append(tr("📚 共读"))
-            parts.append(oit_text("这是用户发来的共同阅读请求。请按人设与实时状态决定是否接受：明确同意填写oit_reply.answer=\"yes\"，拒绝填写answer=\"no\"，可附text。只有明确同意后才会打开共读室；用户还须在OIT接受你的主动申请才会打开。进入共读后围绕当前书籍、页码和批注交流，循环专注、重要活动和睡眠的累计重叠最多10分钟；Claudia可说明结束原因后调用oit_reading_end，结束说明显示后才结束会话。仅对此请求填写answer。"))
+            parts.append(oit_text(CONSENT_TUTORIAL + "\n\n这是用户发来的共同阅读请求。请按人设与实时状态决定是否接受：只有明确同意后才会打开共读室；用户还须在OIT接受你的主动申请才会打开。进入共读后围绕当前书籍、页码和批注交流，循环专注、重要活动和睡眠的累计重叠最多10分钟；Claudia可说明结束原因后调用oit_reading_end，结束说明显示后才结束会话。仅对此请求填写answer。"))
         music = requests.get("music")
         if music:
             shown.append(tr("🎼 演奏评判"))

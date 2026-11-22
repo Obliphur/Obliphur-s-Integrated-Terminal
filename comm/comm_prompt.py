@@ -31,6 +31,9 @@ def native_control_text(text: str) -> str:
 REFUSE = "[refuse to reply]"
 SHIFT_TAG = "[系统·平移]"              # 起点平移的系统消息 (不是 "[系统]" 开头: 不算主动消息)
 MSGS_TAG = "messages"                 # 对方输入 [messages]: OIT 告诉它和用户的聊天记录数 (1.0.402)
+CONSENT_TUTORIAL = ("【接受/拒绝接口教程】这是一个需要明确同意的请求。请使用原生 oit_reply 接口处理："
+                    "接受时调用 oit_reply(answer=\"yes\", text=\"...\")，拒绝时调用 oit_reply(answer=\"no\", text=\"...\")；"
+                    "只写普通文字，或在正文里写 yes/no，都不算接受或拒绝。answer 只能用于本次请求。")
 THINK_LONG = 80                                          # 用户这次说的话超过这么多字
 THINK_WORDS = (
     # 问对方的日程 / 状态 / 有没有空 (不主动透露日程, 只在用户问起时如实回答)

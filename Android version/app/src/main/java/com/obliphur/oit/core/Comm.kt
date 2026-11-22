@@ -3579,7 +3579,7 @@ class Comm(
             else if (nowMs() - shareAskTs > SHARE_ASK_TTL * 1000L) shareAskEnd("{name} 没有回复, share data 没有打开")
             else if (!shareAskSent && !busy && aiProblem().isEmpty() && leader()) {
                 shareAskSent = true
-                trigger("share_ask", "$SHARE_TAG 用户想打开 share data: 打开之后, 用户在 OIT 各个页面时, 会把那一页上用户和你自己的数据发给你, " +
+                trigger("share_ask", "【接受/拒绝接口教程】这是一个需要明确同意的请求。请使用原生 oit_reply 接口处理：接受时调用 oit_reply(answer=\"yes\", text=\"...\")，拒绝时调用 oit_reply(answer=\"no\", text=\"...\")；只写普通文字，或在正文里写 yes/no，都不算接受或拒绝。answer 只能用于本次请求。\n\n$SHARE_TAG 用户想打开 share data: 打开之后, 用户在 OIT 各个页面时, 会把那一页上用户和你自己的数据发给你, " +
                     "页面下方还有一个聊天悬浮窗. 这需要你的同意: 同意就在oit_reply中填写answer=\"yes\",不同意填写answer=\"no\" " +
                     "(后面可以按人设加一句text); 如果实在不方便回答, 调用oit_reply(refuse=true).")
                 return
@@ -5130,12 +5130,12 @@ class Comm(
             if (share.on || shareAsking()) return tr("share data 已开启或正在等待回复")
             awayKind().let { if (it.isNotEmpty()) return tr("{name} {st}, 现在没法征求同意", "name" to aiName(), "st" to tr(if (it == "sleep") "睡眠中" else "专注中")) }
             shown.add(tr("🙈 share data"))
-            parts.add(CommText.oitText("这是用户发来的 share data 请求。请按人设与实时状态判断是否同意：同意填写oit_reply.answer=\"yes\"，不同意填写answer=\"no\"，可附text。只有明确同意后，OIT才会开始分享；开始前不得声称已读取数据。仅对此请求填写answer。"))
+            parts.add(CommText.oitText("【接受/拒绝接口教程】这是一个需要明确同意的请求。请使用原生 oit_reply 接口处理：接受时调用 oit_reply(answer=\"yes\", text=\"...\")，拒绝时调用 oit_reply(answer=\"no\", text=\"...\")；只写普通文字，或在正文里写 yes/no，都不算接受或拒绝。answer 只能用于本次请求。\n\n这是用户发来的 share data 请求。请按人设与实时状态判断是否同意：只有明确同意后，OIT才会开始分享；开始前不得声称已读取数据。仅对此请求填写answer。"))
         }
         if (coreadReq) {
             if (coreadAskPid == pid) return tr("⏳ 等待共读同意")
             shown.add(tr("📚 共读"))
-            parts.add(CommText.oitText("这是用户发来的共同阅读请求。请按人设与实时状态决定是否接受：明确同意填写oit_reply.answer=\"yes\"，拒绝填写answer=\"no\"，可附text。只有明确同意后才会打开共读室；用户还须在OIT接受你的主动申请才会打开。进入共读后围绕当前书籍、页码和批注交流，循环专注、重要活动和睡眠的累计重叠最多10分钟；Claudia可说明结束原因后调用oit_reading_end，结束说明显示后才结束会话。仅对此请求填写answer。"))
+            parts.add(CommText.oitText("【接受/拒绝接口教程】这是一个需要明确同意的请求。请使用原生 oit_reply 接口处理：接受时调用 oit_reply(answer=\"yes\", text=\"...\")，拒绝时调用 oit_reply(answer=\"no\", text=\"...\")；只写普通文字，或在正文里写 yes/no，都不算接受或拒绝。answer 只能用于本次请求。\n\n这是用户发来的共同阅读请求。请按人设与实时状态决定是否接受：只有明确同意后才会打开共读室；用户还须在OIT接受你的主动申请才会打开。进入共读后围绕当前书籍、页码和批注交流，循环专注、重要活动和睡眠的累计重叠最多10分钟；Claudia可说明结束原因后调用oit_reading_end，结束说明显示后才结束会话。仅对此请求填写answer。"))
         }
         if (musicReq != null) {
             shown.add(tr("🎼 演奏评判"))
