@@ -54,6 +54,13 @@ THINK_WORDS = (
     "[refuse", "[cut off", "[operation", "[waiting", "[循环",
 )
 THINK_TIME_RE = re.compile(r"\d{1,2}\s*[:：]\s*\d{2}|\d{1,2}\s*点")        # 提到具体的时刻 (安排 / 约定)
+MENTAL_WORDS = (
+    "心理", "情绪", "心情", "感受", "难受", "痛苦", "绝望", "崩溃", "焦虑", "抑郁", "恐慌", "惊恐",
+    "压力", "内耗", "自责", "羞耻", "孤独", "寂寞", "无助", "无望", "空虚", "麻木", "创伤", "阴影",
+    "失控", "伤害自己", "自残", "自杀", "轻生", "不想活", "活着没意义", "想消失", "suicide", "suicidal",
+    "self-harm", "self harm", "depress", "anxiety", "panic attack", "trauma", "hopeless", "worthless",
+    "lonely", "孤单",
+)
 
 
 def think_text_reason(text: str) -> str:
@@ -73,6 +80,14 @@ def think_text_reason(text: str) -> str:
     if len(t) >= THINK_LONG:
         return "很长"
     return ""
+
+
+def mental_text_reason(text: str) -> str:
+    """判断用户发言是否需要先交给心理子代理；只返回命中的词，不做风险结论。"""
+    low = str(text or "").strip().lower()
+    if not low:
+        return ""
+    return next((word for word in MENTAL_WORDS if word.lower() in low), "")
 JOINT_RULE = ("X.用户可能发起“合约”(联合行动;含起止时间与所选词条)."
               '时间不撞重要时间(吃饭/睡觉等)且你现在能回→调用oit_reply(answer="yes"),否则answer="no".\n'
               "合约期间专注/休息与用户同步;结束后所得休息也同步,休完重算日程"

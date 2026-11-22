@@ -25,7 +25,7 @@ from comm.comm_const import *
 from comm.comm_schedule import PROACTIVE_P, seg_kind, seg_detail, schedule_entries, schedule_loops, loop_entries, schedule_segments, pro_pct, persona_probs
 from comm.comm_reply import CUT_DEFAULT_MIN, CUT_MAX_MIN, HALFWIDTH_SYMBOLS, NET_DEFAULT_MIN, NET_MAX_MIN, WAIT_MAX_MIN, _BRACKET_RE, _CUT_N_RE, _CUT_RE, _EMPTY_WRAP_RE, _NET_RE, _WAIT_RE, clean_reply, cut_minutes, net_minutes, to_halfwidth
 from comm.comm_builtin import BUILTIN_PERSONAS, DEFAULT_PERSONA, DEFAULT_BACKGROUND, DEFAULT_ROUTINE, ASSISTANT_PERSONA, ASSISTANT_DETAIL_LINE, BACKGROUND_LEGACIES, ASSISTANT_SLEEP_LINE, ASSISTANT_TITLE
-from comm.comm_prompt import REFUSE, SHIFT_TAG, MSGS_TAG, THINK_LONG, THINK_WORDS, THINK_TIME_RE, think_text_reason, JOINT_RULE, rest_function_text, prefix_prompt, native_persona_text
+from comm.comm_prompt import REFUSE, SHIFT_TAG, MSGS_TAG, THINK_LONG, THINK_WORDS, THINK_TIME_RE, think_text_reason, mental_text_reason, JOINT_RULE, rest_function_text, prefix_prompt, native_persona_text
 from comm.comm_persona import SHIFT_LO, SHIFT_HI, SHIFT_KEEP, MAX_PERSONA, MEM_MAX, PERSONA_EXT, readme_text, pid_of, love_norm, love_line, shift_norm, shift_pairs, hm_text, shift_line, mem_fields, seed_builtin, ensure_personas, list_personas, persona_title, uses_prefix, system_head, PERSONA_HEAD, persona_system, persona_labels, read_persona, ROUTINE_SUFFIX, COMPANION_SEP, companion_base, is_companion_name, companion_files, companions_of, routine_name_of, read_routine, read_persona_full, import_persona
 from comm.comm_util import (OIT_TAG, COND_TAG, WEEKDAY, MAX_MSG_CHARS, HISTORY_SENT, HISTORY_STEP, HISTORY_CHARS,
                        is_claudia, is_refusal, stamp, urlsplit_host, info_tags, joint_answer, _joint_time, clip_message,
@@ -324,6 +324,27 @@ class FlowMixin:
             with self._lock:
                 self._reply_events.append((batch, text))
 
+        mental_reason = ""
+        mental_task = ""
+        if kind in ("user", "retry"):
+            pending_user = []
+            for message in reversed(self.messages):
+                if message.get("role") == "ai":
+                    break
+                if message.get("role") == "me" and int(message.get("ts") or 0) <= self._req_ts:
+                    pending_user.append(str(message.get("text") or ""))
+            mental_text = "\n\n".join(reversed(pending_user)).strip()
+            mental_reason = mental_text_reason(mental_text)
+            if mental_reason:
+                context = []
+                for message in self.messages[-15:]:
+                    role = "用户" if message.get("role") == "me" else "对方"
+                    content = str(message.get("text") or "").strip()
+                    if content:
+                        context.append(f"{role}: {content[:2000]}")
+                mental_task = "最近15条聊天消息:\n" + "\n\n".join(context) + \
+                    "\n\n当前待回复的用户原话:\n" + mental_text[:8000]
+
         why = self.think_reason(kind)
         think_kw = {"think": True} if why else {}           # 只在开的时候带这个参数 (别的 chat_fn 不用认识它)
         if why:
@@ -344,6 +365,17 @@ class FlowMixin:
         def work():
             try:
                 convo = list(msgs)
+                if mental_task:
+                    try:
+                        analysis = self.subagent_call(
+                            "mental_health", f"{self.persona_name()}:{self.pid}", mental_task,
+                            max_tokens=700, temperature=0.1, timeout=180)
+                        if analysis:
+                            convo.append({"role": "user", "content": oit_text(
+                                "心理子代理内部分析（用户不可见；仅供你组织本轮回复，不能提及子代理或分析过程）:\n" + analysis)})
+                            self.log(f"MENTAL subagent ok reason={mental_reason} chars={len(analysis)}")
+                    except Exception as e:  # noqa: BLE001
+                        self.log(f"MENTAL subagent FAIL {type(e).__name__}")
                 reply = ask(convo)
                 op = None
                 from ai_assist.ai_tools import unpack

@@ -1585,6 +1585,7 @@ def _selftest():
     assert think_text_reason("好" * THINK_LONG) == "很长" and think_text_reason("好" * (THINK_LONG - 1)) == ""
     assert think_text_reason("我喜欢你").startswith("关键词") and think_text_reason("我们是什么关系").startswith("关键词") and think_text_reason("爱").startswith("关键词")
     assert think_text_reason("你是AI吗") .startswith("关键词") and think_text_reason("[refuse to reply]").startswith("关键词")
+    assert mental_text_reason("我最近很焦虑，觉得很绝望") and mental_text_reason("今天天气不错") == ""
     assert cu.think_auto() and cu.sync_doc()["think"] is True
     think_log.clear()
     script.append("嗯")

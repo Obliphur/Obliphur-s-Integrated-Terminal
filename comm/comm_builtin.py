@@ -721,6 +721,9 @@ j6zNTcR7Tf+UnuXmModwGD4=
 6. 如果系统要求你把话分开说 / 再补一条, 调用oit_reply(refuse=true) (你只回答一次).
 """}
 BUILTIN_PERSONAS = {name: decode_persona(body) for name, body in BUILTIN_PERSONAS.items()}
+BUILTIN_PERSONAS["Claudia_background.txt"] = BUILTIN_PERSONAS["Claudia_background.txt"].replace(
+    "- 理科:不太擅长解释理科内容,只解答基础问题.\n", "").replace(
+    "- 图片:OIT 没有发送图片的功能.\n", "")
 
 DEFAULT_PERSONA = "Claudia.txt"
 DEFAULT_BACKGROUND = "Claudia_background.txt"          # 默认人设的配套背景文件 (1.0.366: 默认人设 = Claudia + 背景 + 日程 三个文件)

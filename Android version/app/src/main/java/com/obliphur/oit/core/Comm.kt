@@ -834,7 +834,11 @@ lc61I4B1iDRfaRQNjAywrsFfvTtdq/rVUs3k0MMTg5YtqfmABAm7BSskJWAm2uwmPJtb5u5lvSykWaMT
 4. 可以在适合时追问或提出后续建议.
 5. 不要主动透露日程; 只有用户直接问起, 才用一句话如实回答.
 6. 如果系统要求你把话分开说 / 再补一条, 返回 [refuse to reply] (你只回答一次).
-""")
+    """).let { all ->
+        all + (BACKGROUND to all.getValue(BACKGROUND)
+            .replace("- 理科:不太擅长解释理科内容,只解答基础问题.\n", "")
+            .replace("- 图片:OIT 没有发送图片的功能.\n", ""))
+    }
 
     /** 更早版本内置过的文本 (升级时判断文件是不是没被用户改过, 一字不差才换成当前版本).
      *  1.0.442 起升级链清空: 代码里不再保留旧的默认人设文本; 没改过的旧文件靠 comm_config.json 里上一次见到的内置版本
@@ -912,6 +916,14 @@ object CommText {
     /** 提到具体的时刻 (安排 / 约定). */
     val THINK_TIME_RE = Regex("""\d{1,2}\s*[:：]\s*\d{2}|\d{1,2}\s*点""")
 
+    val MENTAL_WORDS = listOf(
+        "心理", "情绪", "心情", "感受", "难受", "痛苦", "绝望", "崩溃", "焦虑", "抑郁", "恐慌", "惊恐",
+        "压力", "内耗", "自责", "羞耻", "孤独", "寂寞", "无助", "无望", "空虚", "麻木", "创伤", "阴影",
+        "失控", "伤害自己", "自残", "自杀", "轻生", "不想活", "活着没意义", "想消失", "suicide", "suicidal",
+        "self-harm", "self harm", "depress", "anxiety", "panic attack", "trauma", "hopeless", "worthless",
+        "lonely", "孤单"
+    )
+
     /** 用户这次说的话要不要让模型先思考: 返回原因 ("" = 不用). 关键词 (不分大小写) / 具体的时刻 / 英文为主 (要指出不自然、错误的地方) / 很长. */
     fun thinkTextReason(text: String): String {
         val t = text.trim()
@@ -923,6 +935,10 @@ object CommText {
         if (letters >= 8 && letters >= 0.5 * t.length) return "英文"
         if (t.length >= THINK_LONG) return "很长"
         return ""
+    }
+    fun mentalTextReason(text: String): String {
+        val low = text.trim().lowercase()
+        return MENTAL_WORDS.firstOrNull { it.lowercase() in low } ?: ""
     }
     /** 主动发起的对话回了 [refuse to reply] 以后, 再要求一次时说的话. */
     const val PRO_NO_REFUSE = "(OIT 系统提供, 用户看不到) 这是你主动发起的对话, 不能返回$REFUSE. 请按人设主动给用户发一条消息, 话题自己找 (不要透露日程)."
@@ -5755,6 +5771,33 @@ class Comm(
             if (image != null) Ai.imageLocal.set(image)
             val res = try {
                 var convo = msgs.toMutableList()
+                if (kind == "user" || kind == "retry") {
+                    val mentalParts = messages.asReversed().takeWhile { it.role != "ai" }
+                        .filter { it.role == "me" && it.ts <= reqTs }
+                        .asReversed().map { it.text }.filter { it.isNotBlank() }
+                    val mentalText = mentalParts.joinToString("\n\n")
+                    val mentalReason = CommText.mentalTextReason(mentalText)
+                    if (mentalReason.isNotEmpty()) {
+                        try {
+                            val key = "mental_health:${personaTitle(personaName())}:$pid"
+                            val history = subagentSessions[key].orEmpty()
+                            val context = messages.takeLast(15).mapNotNull { message ->
+                                val content = message.text.trim()
+                                if (content.isEmpty()) null else (if (message.role == "me") "用户" else "对方") + ": " + content.take(2000)
+                            }.joinToString("\n\n")
+                            val task = "最近15条聊天消息:\n$context\n\n当前待回复的用户原话:\n" + mentalText.take(8000)
+                            val analysis = Ai.subagent(profile, "mental_health", task, history,
+                                maxTokens = 700, temperature = 0.1, timeoutMs = 180_000)
+                            subagentSessions[key] = (history + (task to analysis)).takeLast(5).toMutableList()
+                            saveSubagentHistory()
+                            if (analysis.isNotBlank()) convo.add("user" to CommText.oitText(
+                                "心理子代理内部分析（用户不可见；仅供你组织本轮回复，不能提及子代理或分析过程）:\n$analysis"))
+                            log("MENTAL subagent ok reason=$mentalReason chars=${analysis.length}")
+                        } catch (e: Exception) {
+                            log("MENTAL subagent FAIL ${e.javaClass.simpleName}")
+                        }
+                    }
+                }
                 var reply = chatFn(profile, system, convo)
                 var op: JointPlan? = null
                 var musicId = ""

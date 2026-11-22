@@ -29,17 +29,23 @@ class AiError(val kind: String, message: String) : Exception(message)
 data class Provider(val label: String, val baseUrl: String, val protocol: String, val model: String, val models: List<String>)
 
 object Ai {
+    private const val MENTAL_HEALTH_SYSTEM = "你是独立的心理与情绪分析子代理。只分析用户明确写出的心理困扰、情绪、需求和可观察的风险信号，不做临床诊断，不编造用户没有说过的经历，不输出给用户的成品回复。请用简洁的中文列出：事实与情绪、用户可能需要的回应重点、是否出现需要优先关注的自伤或即时安全信号；证据不足就明确写未知。不要机械套用危机热线或免责声明模板，也不要输出隐藏思维过程。"
     private const val SUBJECT_SYSTEM = "你是独立的数学、物理、化学教育子代理。只处理给定题目和本子代理会话中的相关追问，不要假设聊天人设或其他聊天上下文。核对单位、符号和计算；返回简洁、可核验的答案，包含最终结论和必要的关键步骤。不要输出隐藏思维过程，不要调用工具。"
     private const val MUSIC_REVIEW_SYSTEM = "你是独立的音乐演奏分析子代理。根据结构化演奏数据和本子代理会话中的历史评判，用中文给出简短、具体、克制的练习建议；不臆测音色、力度、踏板或用户意图，证据不足就明确说明。"
 
     /** 标准化短期子代理接口；调用方只传入该子代理会话最近五轮。 */
     fun subagent(profile: Profile, role: String, task: String, history: List<Pair<String, String>> = emptyList(),
                  maxTokens: Int = 700, temperature: Double = 0.2, timeoutMs: Int = 120_000): String {
-        require(role == "subject" || role == "music_review") { "未知子代理类型" }
+        require(role == "subject" || role == "music_review" || role == "mental_health") { "未知子代理类型" }
         val trimmed = history.takeLast(5).flatMap { listOf("user" to it.first.take(8000), "assistant" to it.second.take(8000)) }
         val prompt = task.trim().take(8000)
         require(prompt.isNotEmpty()) { "子代理任务为空" }
-        return chatMessages(profile, if (role == "subject") SUBJECT_SYSTEM else MUSIC_REVIEW_SYSTEM,
+        val promptSystem = when (role) {
+            "subject" -> SUBJECT_SYSTEM
+            "music_review" -> MUSIC_REVIEW_SYSTEM
+            else -> MENTAL_HEALTH_SYSTEM
+        }
+        return chatMessages(profile, promptSystem,
             trimmed + ("user" to prompt), maxTokens, temperature, timeoutMs, cache = false)
     }
     val PROVIDERS = linkedMapOf(
