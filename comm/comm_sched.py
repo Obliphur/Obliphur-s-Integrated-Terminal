@@ -123,7 +123,7 @@ class SchedMixin:
 
     def _bg_finish(self, pid, kind, extra, reply, err, clear0, burst=0):
         self._bg_busy = None
-        if self.hard_block():
+        if self.hard_block() or not self.leader():
             return
         st = self._state_of(pid)
         if int(st["clear_ts"]) != clear0 or err:

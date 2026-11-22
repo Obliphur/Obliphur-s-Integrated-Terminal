@@ -40,6 +40,8 @@ interface SyncLocal {
     fun status(): JSONObject
     /** 本机刚从自由学习的外出回来, 还没同步上: (开始毫秒, 结束毫秒). 这段时间本机的记录在同步里有优先权 (MECHANICS 21.6). */
     fun awayWindow(): Pair<Long, Long>? = null
+    /** 外出设备回来后的首次同步: 它在外出期间的聊天记录优先. */
+    fun awayPriority(sender: String, startMs: Long, endMs: Long) {}
     fun pairRequest(req: PairRequest)
     fun changed()
     fun appVersion(): String = ""
@@ -1597,6 +1599,7 @@ class SyncService(
             if (state.optJSONObject("away_prio") == null) state.put("away_prio", JSONObject())
             state.getJSONObject("away_prio").put(sender, JSONArray().put(winR.first).put(winR.second))
         }
+        winR?.let { runner.call { local.awayPriority(sender, it.first, it.second) } }
         val remote = snap.optJSONObject("docs") ?: JSONObject()
         for (doc in remote.keys()) {
             if (doc !in localDocs) continue

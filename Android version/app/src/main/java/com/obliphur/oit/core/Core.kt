@@ -570,6 +570,8 @@ class Core(val dir: File, val host: Host, val mono: () -> Double) {
 
     /** 本机是不是聊天的主端: 最晚的一条消息是本机写的 (MECHANICS 24.6). 主端不在线 / 还没有消息时, 看谁最后有人操作. */
     private fun commLeader(): Boolean {
+        val outing = behavior.away()
+        if (outing != null && outing.owner != myId()) return false
         if (!hasPeers()) return true
         val mid = comm.lastAuthor()
         if (mid.isEmpty()) return isLatestActive()

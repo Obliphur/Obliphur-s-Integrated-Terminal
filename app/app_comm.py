@@ -299,6 +299,11 @@ class CommMixin:
 
     def _comm_leader(self) -> bool:
         """本机是不是聊天的主端: 最晚的一条消息是本机写的 (MECHANICS 24.6). 主端不在线 / 还没有消息时, 看谁最后有人操作."""
+        # 自由学习的外出由另一台设备持有时, 家里的设备不能替用户调用 API.
+        # 外出记录会先同步过来; 由外出设备回来后再恢复主端竞争.
+        outing = self.behavior.away()
+        if outing is not None and str(outing.get("owner") or "") != str(self.sync.my_id or ""):
+            return False
         if not self.sync.peers():
             return True
         mid = self.comm.last_author()

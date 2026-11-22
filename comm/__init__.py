@@ -173,6 +173,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         self._follow_msg = ""         # 第一条回复的消息 id: 等它显示出来 (打字延时走完 / 被藏起来也算) 才调用第二次
         self._next_id = 1
         self._last_ts = 0
+        self._away_chat_prio = None  # (设备 id 前缀, 外出开始毫秒, 结束毫秒)
         self._seg_sig = None          # 人设文件的 (名字, 修改时间, 大小): 变了才重新读日程
         self._claudia_sig = None      # Claudia 文件的 (修改时间, 大小): 变了才重新检查有没有被手动改过
         self._persona_sig = {}        # 人设文件名 → (修改时间, 大小): 变了才检查有没有被手动改过
@@ -496,6 +497,35 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             return (self.now() - datetime.fromisoformat(m["at"])).total_seconds()
         except (KeyError, ValueError, TypeError):
             return 1e9
+
+    def away_priority(self, sender: str, start_ms: int, end_ms: int):
+        """外出设备回来后的首次同步: 外出期间它写的聊天记录优先.
+
+        家中设备可能已经在这段时间里为旧上下文调用 API。删除这段时间内由其他设备
+        写入的消息，避免它们按较晚的时间戳排在用户实际聊天后面；保留优先设备的消息。
+        """
+        prefix = str(sender or "")[:4]
+        try:
+            start_ms, end_ms = int(start_ms), int(end_ms)
+        except (TypeError, ValueError):
+            return
+        if not prefix or end_ms <= start_ms:
+            return
+        self._away_chat_prio = (prefix, start_ms, end_ms)
+        changed = False
+        for pid in self.chat_pids():
+            st = self._state_of(pid)
+            kept = [m for m in st["messages"]
+                    if not (start_ms <= int(m.get("ts") or 0) <= end_ms
+                            and m.get("uid", "").rpartition("-")[2] != prefix)]
+            if len(kept) != len(st["messages"]):
+                st["messages"][:] = kept
+                changed = True
+                if pid == self.pid:
+                    self._last_ts = max([int(m.get("ts") or 0) for m in kept] + [0])
+                self._store(pid, st)
+        if changed:
+            self._changed()
 
     # ---- 设备同步 ----
     def voice_files(self):
@@ -1337,6 +1367,11 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             batch.finished = True
         self.busy = False
         self.busy_since = 0.0
+        if not self.leader():                            # 外出设备正在实际聊天: 家中设备的在途回复丢弃
+            self._reply_discard(batch)
+            self._again = False
+            self._changed()
+            return
         coread_wait = kind in ("user", "retry") and epoch == self._epoch and self._coread_asking()
         if self.hard_block():                           # 等回复的时候"无言为真"生效了: 这条回复不要了
             if coread_wait:

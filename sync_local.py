@@ -136,6 +136,10 @@ class PcLocal:
         """整点记录里这一格的自动填充内容 (行为模式会按小时变, MECHANICS 21)."""
         return self.app.dm.auto_text_for_key(key)
 
+    def away_priority(self, sender: str, start_ms: int, end_ms: int):
+        """外出设备回来后的首次同步: 它在外出期间的聊天记录优先."""
+        self.app.comm.away_priority(sender, start_ms, end_ms)
+
     def changed(self):
         try:
             self.app.on_sync_changed()

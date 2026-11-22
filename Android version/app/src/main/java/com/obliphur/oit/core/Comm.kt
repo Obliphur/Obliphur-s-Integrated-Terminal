@@ -2248,7 +2248,29 @@ class Comm(
     @Synchronized
     fun lastAuthor(): String {
         val last = messages.maxWithOrNull(compareBy({ it.ts }, { it.uid })) ?: return ""
+        awayChatPrio?.let { (prefix, start, end) ->
+            if (last.ts <= end && messages.any { it.ts in start..end && it.uid.substringAfterLast('-') == prefix }) return prefix
+        }
         return if ('-' in last.uid) last.uid.substringAfterLast('-') else ""
+    }
+
+    private var awayChatPrio: Triple<String, Long, Long>? = null
+
+    /** 外出设备回来后的首次同步: 丢掉其他设备在外出期间为旧上下文生成的回复. */
+    @Synchronized
+    fun awayPriority(sender: String, startMs: Long, endMs: Long) {
+        val prefix = sender.take(4)
+        if (prefix.isEmpty() || endMs <= startMs) return
+        awayChatPrio = Triple(prefix, startMs, endMs)
+        for (p in chatPids()) {
+            val st = stateOf(p)
+            val kept = st.messages.filterNot { it.ts in startMs..endMs && it.uid.substringAfterLast('-') != prefix }
+            if (kept.size == st.messages.size) continue
+            st.messages.clear(); st.messages.addAll(kept)
+            if (p == pid) lastTs = messages.maxOfOrNull { it.ts } ?: 0L
+            storeState(p, st)
+        }
+        changed()
     }
 
     /** 随设备同步的内容: 每个对象各自最近 SYNC_N 条消息 (键里带对象的编号 pid), 再早的是各设备自己留着的; 掉出窗口不算删除. */
@@ -2707,6 +2729,7 @@ class Comm(
     private fun memFinish(r: MemResult) {
         memBusy = false
         if (r.owner != pid) return                                  // 整理期间换了聊天对象: 这份不知道是谁的, 丢掉
+        if (!leader()) return                                      // 外出设备回来前, 家中设备的旧请求不再写回记忆卡
         if (r.err.isNotEmpty() || r.reply.isEmpty()) { memNext = nowMs() + 30 * 60 * 1000L; return }
         if (clearTs > r.upto) { memNext = nowMs() + MEM_GAP * 1000L; return }
         val text = CommText.sanitizeMem(r.reply)
@@ -5781,6 +5804,7 @@ class Comm(
         val r = Result(result.kind, result.extra, CommInteraction.cleanTension(result.reply), result.err, result.epoch, result.op, result.musicId, result.batch, result.memoryEdit, result.musicAction, result.coreadQuote, result.coreadEnd)
         busy = false
         busySince = 0L
+        if (!leader()) { replyDiscard(r.batch); again = false; changed(); return }  // 外出设备正在实际聊天: 家中设备的在途回复丢弃
         val coreadWait = r.kind in listOf("user", "retry") && r.epoch == epoch && coreadAsking()
         if (hardBlock() && coreadWait) coreadAskEnd("{name} 没有回复, 共读室没有打开")
         if (hardBlock()) { replyDiscard(r.batch); again = false; if (r.kind == "share_ask") shareAskEnd("{name} 没有回复, share data 没有打开"); if (r.kind == "shift_ask") shiftAskEnd("{name} 没有回复, 起点没有平移"); changed(); return }       // 等回复的时候"无言为真"生效了: 这条回复不要了
@@ -6400,7 +6424,7 @@ class Comm(
 
     private fun bgFinish(r: BgResult) {
         bgBusy = null
-        if (hardBlock()) return
+        if (hardBlock() || !leader()) return
         val st = stateOf(r.pid)
         if (st.clearTs != r.clear0 || r.err.isNotEmpty()) return
         val reply = CommInteraction.cleanTension(r.reply)

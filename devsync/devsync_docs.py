@@ -152,6 +152,7 @@ class DocSyncMixin:
         if win_r:
             with self.lock:
                 self.state.setdefault("away_prio", {})[sender] = list(win_r)
+            _call(self.local, "away_priority", None, sender, win_r[0], win_r[1])
         for doc, entries in (snap.get("docs") or {}).items():
             if doc not in local or not isinstance(entries, dict):
                 continue

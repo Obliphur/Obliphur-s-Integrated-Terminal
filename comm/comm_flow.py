@@ -233,6 +233,8 @@ class FlowMixin:
         self._mem_busy = False
         if pid != self.pid:                                        # 整理期间换了聊天对象: 这份不知道是谁的, 丢掉
             return
+        if not self.leader():                                      # 外出设备回来前, 家中设备的旧请求不再写回记忆卡
+            return
         if err or not reply:
             self._mem_next = self._ms() + 30 * 60 * 1000           # 失败: 半小时后再试, 不轰炸
             return

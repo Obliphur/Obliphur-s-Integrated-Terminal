@@ -176,6 +176,15 @@ class StatusMixin:
         别的设备从它同步. 谁最后发了消息 (用户在那台上发的, 或者那台上 AI 回复的), 谁就是主端."""
         if not self.messages:
             return ""
+        if self._away_chat_prio:
+            prefix, start_ms, end_ms = self._away_chat_prio
+            normal = max(self.messages, key=lambda m: (int(m["ts"]), m["uid"]))
+            if int(normal.get("ts") or 0) <= end_ms:
+                own = [m for m in self.messages
+                       if start_ms <= int(m.get("ts") or 0) <= end_ms
+                       and m.get("uid", "").rpartition("-")[2] == prefix]
+                if own:
+                    return prefix
         last = max(self.messages, key=lambda m: (int(m["ts"]), m["uid"]))
         return last["uid"].rpartition("-")[2] if "-" in last["uid"] else ""
 

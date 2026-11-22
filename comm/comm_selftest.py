@@ -1239,6 +1239,15 @@ def _selftest():
     assert A.visible() == [] and B.visible() == []
     pull(A, B)
     assert B.visible() == []
+    # 外出设备回来时, 同一外出窗口内由家中设备生成的旧 API 回复不能覆盖外出设备的实际聊天.
+    start = int(clock[0].timestamp() * 1000)
+    remote = A._mk("me", "外出期间的真实消息")
+    A.messages.append(remote)
+    stale = dict(A._mk("ai", "家中设备的旧回复"), uid=f"{int(remote['ts']) + 1}-bbbb", ts=int(remote["ts"]) + 1)
+    A.messages.append(stale)
+    A.away_priority("aaaa", start, int(stale["ts"]))
+    assert any(m["text"] == "外出期间的真实消息" for m in A.messages)
+    assert not any(m["text"] == "家中设备的旧回复" for m in A.messages)
     # 主动消息: 同一段空闲只有一台发一次 (标记同步)
     b = (clock[0] + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
     open(os.path.join(folder, "同步.txt"), "w", encoding="utf-8").write(

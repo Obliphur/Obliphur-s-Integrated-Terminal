@@ -166,6 +166,10 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
         }.getOrNull()
     }
 
+    override fun awayPriority(sender: String, startMs: Long, endMs: Long) {
+        core.comm.awayPriority(sender, startMs, endMs)
+    }
+
     override fun status(): JSONObject {
         val t = core.timer
         val n = core.net
