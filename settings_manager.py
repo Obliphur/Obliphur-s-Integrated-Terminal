@@ -341,6 +341,22 @@ SETTINGS_SCHEMA = [
         "fmt": lambda v: "ON" if v else "OFF",
         "desc": "即时生效.发现新版本时自动下载并安装, 重启后生效.",
     },
+    {
+        "key": "CLI_SUBSCRIPTION_ENABLED", "label": "直接在 OIT 使用 CLI 的订阅额度",
+        "kind": "choice", "apply": APPLY_INSTANT,
+        "choices": [("1", "开启 (ON)"), ("0", "关闭 (OFF)")],
+        "fmt": lambda v: "ON" if v else "OFF",
+        "desc": "开启后 OIT 会直接调用本机已登录的 CLI 并消耗其订阅额度; 这可能违反服务商规则并导致账号封禁.",
+        "page": "models",
+    },
+    {
+        "key": "AI_CHAT_TAKEOVER", "label": "由 Antigravity 桌面版接管",
+        "kind": "choice", "apply": APPLY_INSTANT,
+        "choices": [("", "关闭"), ("antigravity", "开启")],
+        "fmt": lambda v: "ON" if v else "OFF",
+        "desc": "开启后聊天固定由 Antigravity 接管；桌面版接管项互斥。",
+        "page": "models",
+    },
 
 ]
 
@@ -884,6 +900,12 @@ def _selftest():
     m = SettingsManager(tmp, delay_hours=48)
     assert m.fresh, "还没有设置文件 = 第一次打开"
     assert m.value("DAILY_LIMIT") == DEFAULT_SETTINGS["DAILY_LIMIT"]
+    assert m.value("AI_CHAT_TAKEOVER") == ""
+    assert m.label_for("AI_CHAT_TAKEOVER", "antigravity") == "开启"
+    assert m.stage("AI_CHAT_TAKEOVER", "antigravity")[0] == "instant"
+    assert m.value("AI_CHAT_TAKEOVER") == "antigravity"
+    assert m.stage("AI_CHAT_TAKEOVER", "")[0] == "instant"
+    assert m.value("AI_CHAT_TAKEOVER") == ""
     assert not m.is_staged("DAILY_LIMIT") and not m.in_setup()
 
     # 没有"首次修改免等待"了: 第一次改也要等

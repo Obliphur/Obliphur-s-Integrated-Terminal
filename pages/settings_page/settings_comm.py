@@ -26,8 +26,9 @@ class CommSettingsMixin:
         self.lbl_main_model = tk.Label(fr, text="", bg=COLORS["bg_card"], fg=COLORS["text"],
                                        font=config.font("small"), anchor="w")
         self.lbl_main_model.pack(fill="x", padx=12, pady=(2, 4))
-        ttk.Button(fr, text=tr("选择"), command=lambda: self._pick_task_model("main", "聊天模型（主模型）"))\
-            .pack(anchor="w", padx=12, pady=(0, 10))
+        self.btn_main_model = ttk.Button(
+            fr, text=tr("选择"), command=lambda: self._pick_task_model("main", "聊天模型（主模型）"))
+        self.btn_main_model.pack(anchor="w", padx=12, pady=(0, 10))
 
         for role, title in (("ocr", "识字模型"), ("review", "评判模型"),
                             ("subject", "数学/物理/化学模型")):
@@ -48,11 +49,18 @@ class CommSettingsMixin:
         if self.comm is None or not hasattr(self, "lbl_main_model"):
             return
         model_cfg = self.comm.ai
-        main_id = model_cfg.provider
-        main = f"{model_cfg.config_name(main_id)} · {model_cfg.profile(main_id).get('model') or '—'}"
+        main_id = model_cfg.config_for("")
+        if host := model_cfg.takeover():
+            main = tr("由 {host} 桌面版接管", host=host)
+            self.btn_main_model.state(["disabled"])
+        else:
+            main = f"{model_cfg.config_name(main_id)} · {model_cfg.profile(main_id).get('model') or '—'}"
+            self.btn_main_model.state(["!disabled"])
         cfg(self.lbl_main_model, text=main)
         for role in ("ocr", "review", "subject"):
             cid = model_cfg.task_assign.get(role, "")
+            if cid and cid not in {item["id"] for item in model_cfg.configs()}:
+                cid = ""
             text = tr("跟随聊天模型") if not cid else \
                 f"{model_cfg.config_name(cid)} · {model_cfg.profile(cid).get('model') or '—'}"
             cfg(getattr(self, f"lbl_{role}_model"), text=text)

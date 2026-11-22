@@ -97,7 +97,9 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
     box, rbox = two_col(tr("名称"), tr("预设"))
     var_name = tk.StringVar()
     ttk.Entry(box, textvariable=var_name).pack(fill="x", pady=(2, 0))
-    preset_keys = list(ai_assist.PROVIDER_ORDER)
+    cli_enabled = ai_assist.cli_subscription_enabled()
+    preset_keys = [k for k in ai_assist.PROVIDER_ORDER
+                   if cli_enabled or k not in ai_assist.CLI_PROVIDERS]
     if any((cfg.profile(c["id"]).get("kind") == "device") for c in cfg.configs()):
         preset_keys.append("device")
     cb_preset = ttk.Combobox(rbox, state="readonly",
@@ -433,7 +435,7 @@ def open_task_model_settings(parent, cfg: "ai_assist.AIConfig", role: str, title
         options = [{"id": "", "name": tr("跟随聊天模型")}] + options
     ids = [item["id"] for item in options]
     labels = [item["name"] for item in options]
-    selected_id = cfg.provider if role == "main" else cfg.task_assign.get(role, "")
+    selected_id = cfg.config_for("") if role == "main" else cfg.task_assign.get(role, "")
     selected = tk.StringVar(value=labels[ids.index(selected_id)] if selected_id in ids else labels[0])
     _label(dlg.body, tr("模型配置")).pack(fill="x", pady=(0, 4))
     ttk.Combobox(dlg.body, textvariable=selected, values=labels, state="readonly").pack(fill="x")

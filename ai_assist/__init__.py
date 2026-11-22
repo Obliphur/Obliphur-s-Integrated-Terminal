@@ -38,7 +38,7 @@ from .ai_key import (
 )
 from .ai_config import (
     AIConfig, _ADAPTIVE_NAME_RE, _ADAPTIVE_RE, _CONFIGS, adaptive_thinking, cache_key, cache_plan,
-    check_profile, default_profile, family_of, is_deepseek, shared_config, think_on_field
+    check_profile, cli_subscription_enabled, default_profile, family_of, is_deepseek, shared_config, think_on_field
 )
 from .ai_http import (
     MODEL_CACHE, _DIRECT, _Fresh, _NoRedirect, _OPENER, _THINK_BLOCK_RE, _THINK_CLOSE_RE, _THINK_OPEN_RE,
@@ -283,6 +283,18 @@ def _selftest():
 
     # 命名配置: 最多 MAX_CONFIGS 份, 互相独立, 每个 AI 各选一份
     c2 = AIConfig(os.path.join(tempfile.mkdtemp(), "ai2.json"))
+    import config as _config
+    old_takeover = _config.AI_CHAT_TAKEOVER
+    try:
+        _config.AI_CHAT_TAKEOVER = "antigravity"
+        assert c2.config_for("任意人设.txt") == "antigravity"
+        assert c2.profile(c2.config_for("任意人设.txt"))["provider"] == "antigravity"
+        assert c2.takeover() == "Antigravity"
+        assert not c2.set_active("deepseek")
+        _config.AI_CHAT_TAKEOVER = "claude"
+        assert c2.config_for("任意人设.txt") != "antigravity", "未实现的宿主不能意外接管"
+    finally:
+        _config.AI_CHAT_TAKEOVER = old_takeover
     cid = c2.add_config("备用")
     assert cid and c2.config_name(cid) == "备用" and c2.profile(cid)["provider"] == "custom"
     assert not c2.rename_config(cid, "Claude") and c2.rename_config(cid, "备用2")

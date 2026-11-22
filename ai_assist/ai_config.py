@@ -20,6 +20,25 @@ from ai_assist.ai_common import *
 _CONFIGS = {}
 
 
+def cli_subscription_enabled() -> bool:
+    """是否允许在 OIT 内调用本机 CLI 消耗订阅额度。"""
+    try:
+        import config
+        return bool(getattr(config, "CLI_SUBSCRIPTION_ENABLED", 0))
+    except Exception:
+        return False
+
+
+def chat_takeover() -> str:
+    """返回当前接管端；单值配置保证未来选项互斥。"""
+    try:
+        import config
+        value = str(getattr(config, "AI_CHAT_TAKEOVER", "") or "")
+        return value if value == "antigravity" else ""
+    except Exception:
+        return ""
+
+
 _ADAPTIVE_RE = re.compile(r"claude[-_ ]?(opus|sonnet|haiku)[-_ ]?(\d+)(?:[-_.](\d{1,2})(?!\d))?", re.I)
 
 
@@ -178,6 +197,12 @@ class AIConfig:
 
     def _ensure_managed_profiles(self):
         """已安装的本地客户端始终出现在模型配置里，卸载后才允许删除。"""
+        if chat_takeover() == "antigravity" and "antigravity" not in self.profiles:
+            self.profiles["antigravity"] = default_profile("antigravity")
+            self.names["antigravity"] = PROVIDERS["antigravity"]["label"]
+            self.order.insert(0, "antigravity")
+        if not cli_subscription_enabled():
+            return
         from .ai_cli import installed
         for preset in CLI_PROVIDERS:
             if preset in self.profiles or not installed({"command": PROVIDERS[preset].get("command", "")}):
@@ -229,6 +254,22 @@ class AIConfig:
             self.provider = self.order[0]
         if self.provider not in self.profiles:
             self.provider = self.order[0]
+
+    def _visible(self, cid: str) -> bool:
+        prof = self.profiles.get(cid) or {}
+        preset = self._profile_preset(cid, prof)
+        return (cli_subscription_enabled() or preset not in CLI_PROVIDERS
+                or (chat_takeover() == "antigravity" and preset == "antigravity"))
+
+    def _visible_ids(self) -> list:
+        self._ensure_managed_profiles()
+        return [cid for cid in self.order if cid in self.profiles and self._visible(cid)]
+
+    def _visible_default(self) -> str:
+        ids = self._visible_ids()
+        if self.provider in ids:
+            return self.provider
+        return ids[0] if ids else ""
 
     def refresh_devices(self, devices) -> bool:
         """按当前绑定设备刷新代理配置；设备解绑或消失后立即移除。"""
@@ -310,20 +351,27 @@ class AIConfig:
     def configs(self) -> list:
         """[(id, 名字, 型号)] 按界面上的顺序; 名字不会重复."""
         return [{"id": k, "name": self.names.get(k) or k, "model": self.profiles[k].get("model") or ""}
-                for k in self.order]
+                for k in self._visible_ids()]
 
     def config_name(self, cid: str = None) -> str:
-        cid = cid or self.provider
+        cid = cid or self._visible_default()
         return self.names.get(cid) or (PROVIDERS.get(cid) or {}).get("label") or cid or ""
 
     def config_for(self, persona: str) -> str:
         """这个人设用哪一份配置: 沟通页单独选的, 没选过就用默认的."""
+        self._ensure_managed_profiles()
+        takeover = chat_takeover()
+        if takeover == "antigravity":
+            return "antigravity"
         cid = self.assign.get(persona or "")
-        if cid in self.profiles:
+        if cid in self.profiles and self._visible(cid):
             return cid
-        if self.provider in self.profiles:
-            return self.provider
-        return self.order[0] if self.order else ""
+        return self._visible_default()
+
+    def takeover(self) -> str:
+        """返回聊天接管端的显示名称。"""
+        host = chat_takeover()
+        return "Antigravity" if host == "antigravity" else ""
 
     def assign_config(self, persona: str, cid: str):
         if not persona or cid not in self.profiles:
@@ -334,7 +382,9 @@ class AIConfig:
             self.assign[persona] = cid
 
     def set_active(self, cid: str) -> bool:
-        if cid not in self.profiles:
+        if chat_takeover():
+            return False
+        if cid not in self.profiles or not self._visible(cid):
             return False
         self.provider = cid
         self.assign = {p: c for p, c in self.assign.items() if c != cid}
@@ -375,7 +425,7 @@ class AIConfig:
         self.assign = {p: c for p, c in self.assign.items() if c != cid}
         self.task_assign = {role: value for role, value in self.task_assign.items() if value != cid}
         if self.provider == cid:
-            self.provider = self.order[0]
+            self.provider = self._visible_default()
         return True
 
     def save(self) -> bool:
@@ -416,14 +466,17 @@ class AIConfig:
     # ---- 单份配置 ----
     def profile(self, cid: str = None) -> dict:
         """一份配置的接口参数 (provider 是它的预设类型, 用来决定 Key 只能发往哪 / 缓存方式; config_id 是配置 id)."""
-        cid = cid or self.provider
+        cid = cid or self._visible_default()
         prof = self.profiles.get(cid) or default_profile()
         preset = self._profile_preset(cid, prof)
         return dict(prof, preset=preset, provider=preset, config_id=cid)
 
     def task_profile(self, role: str, fallback: str = None) -> dict:
         """返回视觉/OCR/评判专用配置；未指定时沿用聊天当前配置。"""
-        return self.profile(self.task_assign.get(role) or fallback or self.provider)
+        cid = self.task_assign.get(role) or fallback or self._visible_default()
+        if cid not in self.profiles or not self._visible(cid):
+            cid = self._visible_default()
+        return self.profile(cid)
 
     def assign_task(self, role: str, cid: str = "") -> bool:
         if role not in ("ocr", "review", "subject") or (cid and cid not in self.profiles):

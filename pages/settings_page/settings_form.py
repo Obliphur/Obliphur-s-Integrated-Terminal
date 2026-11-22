@@ -321,6 +321,9 @@ class FormMixin:
 
     def _stage_now(self, key: str):
         value = self._widget_value(key)
+        if not self._confirm_setting_change(key, value):
+            self._sync_widget(key)
+            return
         if not self._adapter_ok(key, value):
             return
         if key in EVENTS:
@@ -338,6 +341,15 @@ class FormMixin:
                 return
         if status in ("instant", "staged", "nochange"):
             toast.info(tr(msg))
+
+    def _confirm_setting_change(self, key: str, value) -> bool:
+        """启用本机 CLI 订阅时明确提示风险。"""
+        if key not in ("CLI_SUBSCRIPTION_ENABLED", "AI_CHAT_TAKEOVER") or not bool(value) or bool(self.sm.value(key)):
+            return True
+        return toast.ask(
+            tr("直接在 OIT 使用 CLI 的订阅额度可能违反服务商规则并导致账号封禁,确定要开启吗?"),
+            title=tr("CLI 订阅额度风险"), ok_text=tr("继续开启"),
+            cancel_text=tr("取消"), danger=True)
 
     def _run_ui_hooks(self, keys) -> bool:
         """语言 / 字号 / 主题改动后需要重建整个界面. 重建会销毁本页,
@@ -389,6 +401,9 @@ class FormMixin:
                 continue
             if spec["apply"] == APPLY_INSTANT:
                 if value != self.sm.value(key):
+                    if not self._confirm_setting_change(key, value):
+                        self._sync_widget(key)
+                        continue
                     self.sm.stage(key, value)
                     instant += 1
                     ui_keys.append(key)

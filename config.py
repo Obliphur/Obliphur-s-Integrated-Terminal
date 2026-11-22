@@ -221,7 +221,7 @@ OUTING_MAX_HOURS = 24 * 7
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.640"                  # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.641"                  # 和 GitHub 上发布的版本号比较 (见 updater.py)
 AI_VOICE_GAP = 1.0                       # 两条语音之间的默认间隔（秒）
 COMM_SPLIT_INTERVAL_SECONDS = 5          # 分条续发固定等待时间（秒）
 COMM_REWARD_CARRY_PERCENT = 85          # Claudia 完成奖励填满循环后，剩余休息的结转百分比
@@ -267,6 +267,8 @@ AI_VOICE_CLAUDIA_ID = "claudia1999"       # Claudia 专用音色；voice_id 区�
 UPDATE_CHECK = 1                              # 打开程序时检查更新
 FULLSCREEN_DEFAULT = 0                        # 打开程序时默认全屏 (设置 → 基本设置, 仅电脑, 不同步; F11 随时切换)
 UPDATE_AUTO = 1                               # 发现新版本时自动下载安装
+CLI_SUBSCRIPTION_ENABLED = 0                  # 是否允许 OIT 直接调用本机 CLI 消耗订阅额度
+AI_CHAT_TAKEOVER = ""                         # 聊天由哪个桌面版接管；单值枚举以保证互斥
 
 # 外部软件：Process Lasso 的保守内存整理与下载上限（只在电脑生效）。
 EXTERNAL_DOWNLOAD_MAX = 64 * 1024 * 1024
@@ -559,6 +561,8 @@ DEFAULT_SETTINGS = {
     "UPDATE_CHECK": UPDATE_CHECK,
     "FULLSCREEN_DEFAULT": FULLSCREEN_DEFAULT,
     "UPDATE_AUTO": UPDATE_AUTO,
+    "CLI_SUBSCRIPTION_ENABLED": CLI_SUBSCRIPTION_ENABLED,
+    "AI_CHAT_TAKEOVER": AI_CHAT_TAKEOVER,
     "THEME": "classic",
     "CONTRACT_THEME": "ops",
     "REC_FOCUS_ONLY": 1,
