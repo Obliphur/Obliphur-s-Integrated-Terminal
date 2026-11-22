@@ -28,9 +28,10 @@ _ADAPTIVE_NAME_RE = re.compile(r"claude[-_ ]?(fable|mythos)", re.I)
 
 def default_profile(provider: str = "custom") -> dict:
     p = PROVIDERS.get(provider, PROVIDERS["custom"])
-    fam = provider if provider in FAMILY_PROTOCOL else "other"
-    return {"base_url": p["base_url"], "model": p["model"],
+    fam = p.get("family") or (provider if provider in FAMILY_PROTOCOL else "other")
+    return {"base_url": p.get("base_url", ""), "model": p["model"],
             "protocol": p["protocol"], "api_key": "", "family": fam,
+            "kind": p.get("kind", "api"), "command": p.get("command", ""), "effort": p.get("effort", "auto"),
             "preset": provider if provider in PROVIDERS else "custom"}
 
 
@@ -45,12 +46,12 @@ class AIConfig:
     def __init__(self, path: str, template: str = None):
         self.path = path
         self.template = template
-        self.provider = PROVIDER_ORDER[0]
+        self.provider = "claude" if "claude" in PROVIDER_ORDER else PROVIDER_ORDER[0]
         self.order = list(PROVIDER_ORDER)
-        self.names = {k: PROVIDERS[k]["label"] for k in PROVIDER_ORDER}
+        self.names = {k: PROVIDERS[k]["label"] for k in self.order}
         self.assign = {}
         self.task_assign = {}
-        self.profiles = {k: default_profile(k) for k in PROVIDER_ORDER}
+        self.profiles = {k: default_profile(k) for k in self.order}
         self.needs_migration = False
         self.load()
         if self.needs_migration and ai_key.can_encrypt():
@@ -78,7 +79,7 @@ class AIConfig:
                     continue
                 preset = prof.get("preset") if prof.get("preset") in PROVIDERS else (k if k in PROVIDERS else "custom")
                 out = default_profile(preset)
-                for field in ("base_url", "model", "protocol", "api_key", "family"):
+                for field in ("base_url", "model", "protocol", "api_key", "family", "kind", "command", "effort"):
                     if isinstance(prof.get(field), str):
                         out[field] = prof[field]
                 enc = prof.get("api_key_enc")
@@ -90,8 +91,14 @@ class AIConfig:
                     out["api_key"] = ""
                 fam = self._norm_family(preset, out)
                 out["family"] = fam
-                out["protocol"] = (out.get("protocol") if preset == "custom" and out.get("protocol") in PROTOCOLS
-                                   else FAMILY_PROTOCOL[fam])
+                if preset == "claude_code":
+                    out["kind"], out["protocol"], out["family"] = "cli", "cli", "claude"
+                    out["base_url"], out["api_key"] = "", ""
+                    out["command"] = out.get("command") or "claude"
+                else:
+                    out["kind"] = "api"
+                    out["protocol"] = (out.get("protocol") if preset == "custom" and out.get("protocol") in PROTOCOLS and out.get("protocol") != "cli"
+                                       else FAMILY_PROTOCOL[fam])
                 self.profiles[k] = out
         # 列表顺序: 新格式存了 order; 老格式按预设的固定顺序, 然后是文件里多出来的
         order = data.get("order")
@@ -124,7 +131,17 @@ class AIConfig:
         if isinstance(tasks, dict):
             self.task_assign = {role: cid for role, cid in tasks.items()
                                 if role in ("ocr", "review", "subject") and cid in self.profiles}
+        self._ensure_managed_profiles()
         self._trim()
+
+    def _ensure_managed_profiles(self):
+        """已安装的本地客户端始终出现在模型配置里，卸载后才允许删除。"""
+        from .ai_cli import installed
+        if not installed({"command": "claude"}) or "claude_code" in self.profiles:
+            return
+        self.profiles["claude_code"] = default_profile("claude_code")
+        self.names["claude_code"] = PROVIDERS["claude_code"]["label"]
+        self.order.insert(0, "claude_code")
 
     def _trim(self):
         """最多 MAX_CONFIGS 份: 默认配置一定留着."""
@@ -148,6 +165,8 @@ class AIConfig:
             self.provider = self.order[0]
 
     def _norm_family(self, preset: str, prof: dict) -> str:
+        if preset == "claude_code":
+            return "claude"
         if preset in FAMILY_PROTOCOL:
             return preset
         fam = str(prof.get("family") or "")
@@ -238,6 +257,11 @@ class AIConfig:
     def remove_config(self, cid: str) -> bool:
         if cid not in self.profiles or len(self.order) <= 1:
             return False
+        prof = self.profiles.get(cid) or {}
+        if prof.get("kind") == "cli" or prof.get("preset") == "claude_code":
+            from .ai_cli import installed
+            if installed(prof):
+                return False
         self.order.remove(cid)
         self.profiles.pop(cid, None)
         self.names.pop(cid, None)
@@ -313,6 +337,15 @@ class AIConfig:
             prof["preset"] = fields["preset"]
         preset = prof.get("preset") or "custom"
         # 预设协议固定; 自定义中转可独立选协议, 切换模型类型时默认匹配该类型。
+        if preset == "claude_code":
+            prof["kind"] = "cli"
+            prof["family"] = "claude"
+            prof["protocol"] = "cli"
+            prof["base_url"] = ""
+            prof["api_key"] = ""
+            prof["command"] = prof.get("command") or "claude"
+            return
+        prof["kind"] = "api"
         if preset in FAMILY_PROTOCOL:
             fam = preset
         else:
@@ -321,7 +354,7 @@ class AIConfig:
                 fam = "other"
         prof["family"] = fam
         protocol = fields.get("protocol")
-        if preset == "custom" and protocol in PROTOCOLS:
+        if preset == "custom" and protocol in PROTOCOLS and protocol != "cli":
             prof["protocol"] = protocol
         elif preset != "custom" or "family" in fields:
             prof["protocol"] = FAMILY_PROTOCOL[fam]
@@ -382,6 +415,11 @@ def cache_key(system: str, model: str = "") -> str:
 
 def check_profile(profile: dict):
     """配置不完整 / 不安全就抛 AIError(config).API Key 绝不通过明文 http 发出去(本机地址除外)."""
+    if str(profile.get("kind") or "") == "cli" or str(profile.get("protocol") or "") == "cli":
+        from .ai_cli import installed
+        if not installed(profile):
+            raise AIError("config", "没有找到 Claude Code，请先安装并登录.")
+        return
     url = (profile.get("base_url") or "").strip()
     if not url:
         raise AIError("config", "Base URL 为空")

@@ -128,7 +128,7 @@ DEFAULTS = {"persona": "", "show_avatar": True, "coread_link": {}, "coread_offer
             "shift": [],                                     # 起点平移记录 (跟着聊天对象走, 同步; 不改人设文件)
             "love": {}, "msg_gone": 0,                       # 亲密关系状态 (跟着聊天对象走, 同步) / 被 KEEP 砍掉的信息条数 (本机)
             "alarm_co": {},                                  # 共时闹钟 (1.0.359): {pid, devs: [响铃的设备 id], ts}; pid 为空 = 关闭
-            "net": {}}                                       # 限时网络 (规则 XIV): {ts, pid, n, due, until, cool, st: wait | on | cool, tries}
+            "net": {}, "cli_sessions": {}}                   # Claude Code 本地会话: {配置/人设: {id, updated}}
 
 
 # ══════════════ 前置 prompt 与 README ══════════════
@@ -140,7 +140,7 @@ DEFAULTS = {"persona": "", "show_avatar": True, "coread_link": {}, "coread_offer
 # (claudia_base / routine_base / background_base) 判断, 以后改默认人设再按需往里放.
 CLAUDIA_LEGACIES = ()
 ROUTINE_LEGACIES = ()
-CHAT_KEYS = ("interaction", "clear_ts", "retry", "pro_key", "mem_auto", "mem_live", "mem_fixed", "mem_upto", "mem_ts", "cut_until", "love", "msg_gone", "shift", "subagents")   # 跟着聊天对象走的几项 (存在各自的聊天文件里)
+CHAT_KEYS = ("interaction", "clear_ts", "retry", "pro_key", "mem_auto", "mem_live", "mem_fixed", "mem_upto", "mem_ts", "cut_until", "love", "msg_gone", "shift", "subagents", "cli_sessions")   # 跟着聊天对象走的几项 (存在各自的聊天文件里)
 
 
 

@@ -30,7 +30,7 @@ MODE_BLACKLIST = "blacklist"
 MODE_WHITELIST = "whitelist"
 
 
-PROTOCOLS = ("openai", "anthropic", "gemini")
+PROTOCOLS = ("openai", "anthropic", "gemini", "cli")
 
 
 FAMILIES = ("claude", "chatgpt", "gemini", "deepseek", "other")
@@ -45,6 +45,16 @@ FAMILY_PROTOCOL = {"claude": "anthropic", "chatgpt": "openai", "gemini": "gemini
 
 
 PROVIDERS = {
+    "claude_code": {
+        "label": "Claude Code",
+        "protocol": "cli",
+        "model": "订阅模型",
+        "models": ["订阅模型"],
+        "kind": "cli",
+        "command": "claude",
+        "family": "claude",
+        "effort": "auto",
+    },
     "claude": {
         "label": "Claude",
         "base_url": "https://api.anthropic.com",
@@ -83,7 +93,7 @@ PROVIDERS = {
 }
 
 
-PROVIDER_ORDER = ("claude", "chatgpt", "gemini", "deepseek", "custom")
+PROVIDER_ORDER = ("claude_code", "claude", "chatgpt", "gemini", "deepseek", "custom")
 
 
 ANTHROPIC_VERSION = "2023-06-01"

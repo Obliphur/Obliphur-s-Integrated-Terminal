@@ -69,7 +69,7 @@ Windows x64 的「额外功能」提供 Microsoft OpenJDK 17 安装入口，供 
 
 「额外功能」独立设置页放在沟通之后，两端均把 AI 语音入口移到此页，语音配置和同步规则不变。电脑的「音乐工具」统一提供 Audiveris、MuseScore Studio、Spotify Basic Pitch 钢琴音频转 MIDI 和 Partitura MIDI 分析环境；安卓的 FluidSynth、Basic Pitch 模型、Verovio、钢琴音色、曲库 MIDI 与对应 ABI 原生库改为从额外功能可选下载，按设备架构单独打包并校验；ONNX Runtime 随 APK 提供。安装音乐资源后可离线播放、转换 MusicXML、转录录音和评判演奏。图片/PDF 识谱只在电脑提供；用户上传 MuseScore 谱需先在电脑转换。详细安装、运行和许可见 [音乐工具接口](../music-tools.md) 及安卓音乐资源清单。
 
-AI 模型配置单列设置页，按新增/修改配置、聊天主模型、图片、识字、评判分项管理。后三类任务未单独指定时跟随聊天主模型；图片消息优先使用当前聊天配置，若服务商明确拒绝图像输入且配置了图片模型，再自动回退。规则页的 AI 建议使用聊天主模型，原模型入口会跳转到 Assistant 并预填配置请求。两端的演奏评判均使用本机 MIDI 分析并调用独立评判配置生成建议。
+AI 模型配置单列设置页，按新增/修改配置、聊天主模型、图片、识字、评判分项管理。除 API 外，已安装并登录的 Claude Code 作为本机订阅配置出现；它以独立会话承接聊天，不重复发送完整历史，卸载程序后才允许删除该配置。Claude Code 的型号默认交给订阅客户端选择；OIT 通过 `claude --help` 检测 `--model` 与 `--effort` 是否可用，思考强度默认自动选择，普通聊天按 low、主动发起等需要判断的请求按 medium。OIT 不读取订阅额度或伪造模型列表。后三类任务未单独指定时跟随聊天主模型；图片消息优先使用当前聊天配置，若服务商明确拒绝图像输入且配置了图片模型，再自动回退。规则页的 AI 建议使用聊天主模型，原模型入口会跳转到 Assistant 并预填配置请求。两端的演奏评判均使用本机 MIDI 分析并调用独立评判配置生成建议。
 
 钢琴音频转 MIDI 使用 Spotify Basic Pitch 0.4.0（Apache 2.0），安装到所选目录的 `BasicPitch/`。运行环境是隔离 Python 3.11，模型随 Basic Pitch 软件包本地提供，ONNX Runtime 使用 CPU；不再下载旧 Zenodo 权重、PyTorch 或 CUDA。为避免 Basic Pitch 在 Python 3.11 上声明的 TensorFlow 依赖，安装时单独安装 Basic Pitch 包并从 PyPI 安装锁定的其余推理依赖。安装检查实际加载模型并确认 CPU provider 后写就绪标记；旧版本标记不兼容时重新部署，新版本不读取或自动删除旧 `PianoTranscription/` 文件。Python、pip 和依赖下载只使用批准的官方源，失败时复用用户原有上游代理。全部音乐任务串行，期间不能切换安装目录或部署 Process Lasso；任务跨页面重建保留，转换失败保留原有输出。安装时刷新 OIT 管理的 Lasso 排除规则，新增 Java、Audiveris、MuseScore 进程保护。
 

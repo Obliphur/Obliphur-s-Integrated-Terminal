@@ -121,6 +121,11 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
     btn_fetch = ttk.Button(mrow, text=tr("获取模型列表"))
     btn_fetch.pack(side="left", padx=(8, 0))
 
+    effort_label = _label(b, tr("Claude Code 思考强度"))
+    effort_var = tk.StringVar(value="auto")
+    effort_box = ttk.Combobox(b, textvariable=effort_var,
+                              values=["auto", "low", "medium", "high", "max"], state="readonly")
+
     _label(b, tr("API Key")).pack(fill="x")
     var_key = tk.StringVar()
     ent_key = ttk.Entry(b, textvariable=var_key, show="•")
@@ -170,7 +175,8 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
         if name and name != cfg.config_name(cid):
             cfg.rename_config(cid, name)
         cfg.set_profile(cid, preset=preset_key(), base_url=var_url.get(), model=cb_model.get(),
-                        api_key=var_key.get(), family=family_of_ui(), protocol=ent_proto.get())
+                        api_key=var_key.get(), family=family_of_ui(), protocol=ent_proto.get(),
+                        effort=effort_var.get())
 
     def load():
         cid = state["cid"]
@@ -185,13 +191,27 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
         var_url.set(prof["base_url"])
         cb_model.config(values=ai_assist.models_for(prof))
         cb_model.set(prof["model"])
+        effort_var.set(prof.get("effort") or "auto")
         cb_family.set(tr(ai_assist.FAMILY_LABELS[state["family"]]))
         cb_family.config(state="readonly" if preset == "custom" else "disabled")
         set_proto(prof["protocol"])
         ent_url.config(state="normal" if preset == "custom" else "readonly")
+        if preset == "claude_code":
+            effort_label.pack(fill="x", pady=(2, 0))
+            effort_box.pack(fill="x", pady=(2, 8))
+            cb_model.config(values=[tr("订阅模型")])
+            cb_model.set(tr("订阅模型"))
+            ent_key.config(state="disabled")
+            ent_url.config(state="disabled")
+            note.config(text=tr("使用本机 Claude Code 的订阅登录状态；请先安装并在终端完成登录。"))
+        else:
+            effort_label.pack_forget()
+            effort_box.pack_forget()
+            ent_key.config(state="normal")
         var_key.set(prof["api_key"])
-        filled = "" if preset == "custom" else tr("已填入 {name} 的官方地址.").format(name=_provider_label(preset))
-        note.config(text=(filled + "\n" if filled else "")
+        if preset != "claude_code":
+            filled = "" if preset == "custom" else tr("已填入 {name} 的官方地址.").format(name=_provider_label(preset))
+            note.config(text=(filled + "\n" if filled else "")
                         + tr("API Key 加密保存在本机,只会发给上面填的 Base URL."))
         state["loading"] = False
 
@@ -211,10 +231,18 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
         var_url.set(prof["base_url"])
         cb_family.set(tr(ai_assist.FAMILY_LABELS[state["family"]]))
         cb_family.config(state="readonly" if k == "custom" else "disabled")
-        set_proto(ai_assist.FAMILY_PROTOCOL[state["family"]])
+        set_proto("cli" if k == "claude_code" else ai_assist.FAMILY_PROTOCOL[state["family"]])
         cb_model.config(values=ai_assist.models_for(dict(prof, provider=k)))
         cb_model.set(prof["model"])
+        effort_var.set(prof.get("effort") or "auto")
         ent_url.config(state="normal" if k == "custom" else "readonly")
+        if k == "claude_code":
+            effort_label.pack(fill="x", pady=(2, 0))
+            effort_box.pack(fill="x", pady=(2, 8))
+        else:
+            effort_label.pack_forget()
+            effort_box.pack_forget()
+        ent_key.config(state="disabled" if k == "claude_code" else "normal")
 
     def on_family(_e=None):
         idx = cb_family.current()
@@ -229,6 +257,11 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
         cid = state["cid"]
         prof = cfg.profile(cid)
         btn_fetch.config(state="disabled")
+
+        if ai_assist.is_cli_profile(prof):
+            btn_fetch.config(state="disabled")
+            toast.info(tr("Claude Code 使用订阅模型，不需要获取模型列表."))
+            return
 
         def work():
             try:

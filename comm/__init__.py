@@ -23,6 +23,7 @@
 """
 
 import json
+import copy
 import os
 import random
 import time
@@ -104,7 +105,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         self.legacy_chat_path = os.path.join(data_dir, "comm_chat.json")      # 以前所有对象共用的一份
         self.ai = ai_assist.shared_config(os.path.join(data_dir, "ai_config.json"),
                                           template=ai_assist.DEFAULT_TEMPLATE)
-        self.cfg = dict(DEFAULTS)
+        self.cfg = copy.deepcopy(DEFAULTS)
         self.pid = ""                 # 现在聊的对象的编号
         self._others = {}             # 其他对象的聊天状态 (读过的)
         self.messages = []
@@ -397,7 +398,15 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
     # ---- AI 配置 (每个 AI 各用一份; 规则页的 AI 建议用默认的那份) ----
     def profile(self, persona: str = None) -> dict:
         """这个人设现在用的 API 配置的接口参数."""
-        return self.ai.profile(self.ai.config_for(persona or self.persona_name()))
+        persona = persona or self.persona_name()
+        cid = self.ai.config_for(persona)
+        prof = self.ai.profile(cid)
+        if ai_assist.is_cli_profile(prof):
+            # 会话存档跟着聊天对象走；OIT 仍只显示自己的干净消息记录。
+            sessions = self.cfg.setdefault("cli_sessions", {})
+            prof["_session_store"] = sessions
+            prof["_session_key"] = f"{persona}:{cid}"
+        return prof
 
     def config_options(self) -> list:
         """沟通页下拉框: [{"id", "name", "model"}]."""

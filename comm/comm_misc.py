@@ -67,6 +67,8 @@ class MiscMixin:
         self.error = ""
         self._catchup = False
         self.cfg["retry"] = {}
+        # Claude Code 的影子会话不能跨越用户明确清空的聊天。
+        self.cfg["cli_sessions"] = {}
         self.cfg["mem_auto"] = ""          # 记忆卡跟着聊天一起清掉
         self.cfg["mem_live"] = ""
         old_interaction = mem_fields(self.cfg)["interaction"]

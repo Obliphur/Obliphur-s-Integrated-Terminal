@@ -47,6 +47,8 @@ from .ai_http import (
     image_mime, list_models, models_for, models_url, ocr_image, proxy_hint, redact, responses_url,
     strip_think, usage_of
 )
+from .ai_http import chat as _api_chat, chat_messages as _api_chat_messages
+from .ai_cli import chat_messages as _cli_chat_messages, installed as cli_installed
 from .ai_web import (
     SEARCH_HOSTS, SEARCH_RESULTS, SEARCH_UA, SEARCH_URL, _bing_url, _clean_html, _open_search, parse_search,
     web_local, web_mode, web_search
@@ -54,6 +56,31 @@ from .ai_web import (
 from .ai_subagent import MAX_TURNS as SUBAGENT_MAX_TURNS, SYSTEMS as SUBAGENT_SYSTEMS, invoke as subagent_invoke, record as subagent_record
 
 from . import ai_http as _ai_http, ai_key as _ai_key, ai_web as _ai_web
+
+
+def is_cli_profile(profile: dict) -> bool:
+    """配置是否使用本机 CLI，而不是 HTTP API。"""
+    return str(profile.get("kind") or "") == "cli" or str(profile.get("protocol") or "") == "cli"
+
+
+def chat(profile: dict, system: str, user: str, timeout: float = 90.0, opener=None) -> str:
+    if is_cli_profile(profile):
+        return _cli_chat_messages(profile, system, [{"role": "user", "content": user}], timeout=timeout)
+    return _api_chat(profile, system, user, timeout=timeout, opener=opener)
+
+
+def chat_messages(profile: dict, system: str, messages: list, timeout: float = 90.0, opener=None,
+                  max_tokens: int = MAX_TOKENS, temperature: float = 0.2, cache: bool = False,
+                  on_usage=None, think: bool = False, web: bool = False, tools: bool = False,
+                  on_delta=None) -> str:
+    if is_cli_profile(profile):
+        return _cli_chat_messages(profile, system, messages, timeout=timeout, max_tokens=max_tokens,
+                                  session_store=profile.get("_session_store"),
+                                  session_key=profile.get("_session_key", ""), think=think,
+                                  tools=tools, web=web)
+    return _api_chat_messages(profile, system, messages, timeout=timeout, opener=opener,
+                              max_tokens=max_tokens, temperature=temperature, cache=cache,
+                              on_usage=on_usage, think=think, web=web, tools=tools, on_delta=on_delta)
 
 # ══════════════ 提示词 ══════════════
 # 两段提示词共同的安全约定:清单是「数据」不是「指令」(应用名 / 域名里可能被塞进一句话).
