@@ -1347,6 +1347,41 @@ class AiConfig(private val file: File) {
         return "$b $n"
     }
 
+    /** 按本机绑定列表生成设备代理配置；设备配置本身不携带地址或密钥。 */
+    fun refreshDevices(devices: List<Pair<String, String>>): Boolean {
+        val wanted = devices.filter { it.first.isNotBlank() }
+            .associate { "device_${it.first}" to it }
+        var changed = false
+        for (id in profiles.keys.toList()) {
+            if (profiles[id]?.kind == "device" && id !in wanted) {
+                profiles.remove(id)
+                order.remove(id)
+                names.remove(id)
+                assign.entries.removeAll { it.value == id }
+                taskAssign.entries.removeAll { it.value == id }
+                changed = true
+            }
+        }
+        for ((id, pair) in wanted) {
+            val name = pair.second.ifBlank { pair.first }.take(80)
+            val fresh = Profile("device", "", "device", "由${name}处理", "", "other", "device", "device", pair.first, name)
+            val old = profiles[id]
+            if (old == null) {
+                profiles[id] = fresh
+                names[id] = "由${name}处理"
+                order.add(id)
+                changed = true
+            } else if (old.targetDevice != pair.first || old.targetName != name || old.model != fresh.model || old.kind != "device") {
+                profiles[id] = fresh
+                names[id] = "由${name}处理"
+                changed = true
+            }
+        }
+        trim()
+        if (changed) save()
+        return changed
+    }
+
     fun renameConfig(id: String, name: String): Boolean {
         val nm = name.trim()
         if (id !in profiles || nm.isEmpty() || names.any { it.key != id && it.value == nm }) return false

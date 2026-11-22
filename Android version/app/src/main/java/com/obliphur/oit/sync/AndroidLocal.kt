@@ -206,9 +206,10 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
     private fun aiDoc(): Map<String, Any?> {
         val cfg = AiConfig(java.io.File(core.dir, "ai_config.json"))
         val out = LinkedHashMap<String, Any?>()
-        out["provider"] = cfg.provider
-        out["order"] = cfg.order.joinToString(",")
-        for (id in cfg.order) {
+        val sharedOrder = cfg.order.filter { cfg.profiles[it]?.kind != "device" }
+        out["provider"] = if (cfg.provider in sharedOrder) cfg.provider else sharedOrder.firstOrNull().orEmpty()
+        out["order"] = sharedOrder.joinToString(",")
+        for (id in sharedOrder) {
             val p = cfg.profiles[id] ?: continue
             out["$id/preset"] = p.preset
             out["$id/family"] = p.family
@@ -343,8 +344,10 @@ class AndroidLocal(private val app: OitApp) : SyncLocal {
                     }
                     cfg.order.clear()
                     cfg.order.addAll(ids.filter { it in cfg.profiles }.take(Ai.MAX_CONFIGS))
+                    val localDeviceIds = cfg.profiles.filterValues { it.kind == "device" }.keys
+                    for (id in localDeviceIds) if (id !in cfg.order) cfg.order.add(id)
                     for (id in cfg.profiles.keys.toList()) {
-                        if (id !in cfg.order) { cfg.profiles.remove(id); cfg.names.remove(id) }
+                        if (id !in cfg.order && id !in localDeviceIds) { cfg.profiles.remove(id); cfg.names.remove(id) }
                     }
                     cfg.assign.entries.removeAll { it.value !in cfg.order }
                     if (cfg.order.isNotEmpty() && cfg.provider !in cfg.order) cfg.provider = cfg.order.first()

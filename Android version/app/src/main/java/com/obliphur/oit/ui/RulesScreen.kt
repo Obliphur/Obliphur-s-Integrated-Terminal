@@ -433,7 +433,7 @@ fun AppPicker(onDismiss: () -> Unit, onPick: (String) -> Unit) {
 
 // ════════════════ AI 名单建议 (MECHANICS 5) ════════════════
 
-private fun aiConfig() = AiConfig(File(OitApp.instance.core.dir, "ai_config.json"))
+private fun aiConfig() = OitApp.instance.core.comm.aiConfig()
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -499,11 +499,14 @@ fun AiSettingsDialog(onDismiss: () -> Unit) {
                 Text(tr("预设"), color = o.dim, fontSize = 12.sp)
                 Segmented(Ai.PROVIDERS.map { it.key to tr(it.value.label) }, p.preset.ifEmpty { p.provider }) { k ->
                     val def = Ai.PROVIDERS[k]!!
-                    p = Profile(k, def.baseUrl, def.protocol, def.model, p.apiKey,
+                    p = if (k == "device") Profile(k, "", "device", p.model.ifBlank { def.model }, "", "other", k,
+                        "device", p.targetDevice, p.targetName)
+                    else Profile(k, def.baseUrl, def.protocol, def.model, p.apiKey,
                         if (k in Ai.FAMILY_PROTOCOL) k else "other", k)
                 }
-                val custom = p.preset.ifEmpty { p.provider } == "custom"
-                OutlinedTextField(p.baseUrl, { if (custom) p = p.copy(baseUrl = it) }, enabled = custom,
+                val device = p.kind == "device" || p.preset == "device" || p.provider == "device"
+                val custom = !device && p.preset.ifEmpty { p.provider } == "custom"
+                if (!device) OutlinedTextField(p.baseUrl, { if (custom) p = p.copy(baseUrl = it) }, enabled = custom,
                     label = { Text("Base URL") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 if (custom) {
                     Text(tr("模型类型"), color = o.dim, fontSize = 12.sp)
@@ -515,12 +518,16 @@ fun AiSettingsDialog(onDismiss: () -> Unit) {
                         p = p.copy(protocol = proto)
                     }
                 }
-                OutlinedTextField(p.model, { p = p.copy(model = it) }, label = { Text(tr("模型")) }, singleLine = true,
-                    modifier = Modifier.fillMaxWidth())
-                ModelPicker({ p.copy(provider = p.preset.ifEmpty { p.provider }) }) { p = p.copy(model = it) }
-                OutlinedTextField(p.apiKey, { p = p.copy(apiKey = it.trim()) }, label = { Text("API Key") }, singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth())
+                if (!device) {
+                    OutlinedTextField(p.model, { p = p.copy(model = it) }, label = { Text(tr("模型")) }, singleLine = true,
+                        modifier = Modifier.fillMaxWidth())
+                    ModelPicker({ p.copy(provider = p.preset.ifEmpty { p.provider }) }) { p = p.copy(model = it) }
+                    OutlinedTextField(p.apiKey, { p = p.copy(apiKey = it.trim()) }, label = { Text("API Key") }, singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth())
+                } else {
+                    Text(tr("请求会交给目标设备处理；目标设备使用自己的模型配置和登录状态."), color = o.dim, fontSize = 12.sp)
+                }
             }
         },
         confirmButton = {

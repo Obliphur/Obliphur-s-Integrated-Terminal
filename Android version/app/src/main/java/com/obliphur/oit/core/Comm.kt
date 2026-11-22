@@ -3283,7 +3283,12 @@ class Comm(
 
     // ---- 状态 ----
 
-    fun aiConfig() = AiConfig(File(dir, "ai_config.json"))
+    fun aiConfig(): AiConfig {
+        val cfg = AiConfig(File(dir, "ai_config.json"))
+        // deviceList 的第一项是本机；代理目标只列出其他绑定设备。
+        cfg.refreshDevices(devices().drop(1))
+        return cfg
+    }
 
     /** 现在不能聊天的原因 ("" = 可以). */
     fun problem(fresh: Boolean = false): String {

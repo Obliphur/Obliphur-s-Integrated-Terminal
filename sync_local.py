@@ -237,8 +237,10 @@ class PcLocal:
         """API 配置: 最多 20 份命名配置 + 默认配置 + 每个 AI 用哪份. Key 在同步通道里由配对密钥封着传,
         落到对方设备后再用本机的 DPAPI 加密保存; 空 Key 不往外发 (免得未配置的设备把另一台的 Key 冲掉)."""
         cfg = self.app.comm.ai
-        out = {"provider": cfg.provider, "order": ",".join(cfg.order)}
-        for cid in cfg.order:
+        shared_order = [cid for cid in cfg.order if (cfg.profiles.get(cid) or {}).get("kind") != "device"]
+        out = {"provider": cfg.provider if cfg.provider in shared_order else (shared_order[0] if shared_order else ""),
+               "order": ",".join(shared_order)}
+        for cid in shared_order:
             prof = cfg.profiles[cid]
             out[f"{cid}/preset"] = str(prof.get("preset") or "custom")
             out[f"{cid}/family"] = str(prof.get("family") or "")
@@ -397,6 +399,11 @@ class PcLocal:
                         cfg.profiles.pop(cid, None)
                         cfg.names.pop(cid, None)
                 cfg.assign = {p: c for p, c in cfg.assign.items() if c in cfg.order}
+                # 设备代理只由本机绑定列表生成，不能被另一台设备的配置快照删除。
+                local_devices = [cid for cid, prof in cfg.profiles.items() if prof.get("kind") == "device"]
+                for cid in local_devices:
+                    if cid not in cfg.order:
+                        cfg.order.append(cid)
                 if cfg.order and cfg.provider not in cfg.order:
                     cfg.provider = cfg.order[0]
             allowed = ("preset", "family", "base_url", "model", "api_key", "kind", "target_device", "target_name")
