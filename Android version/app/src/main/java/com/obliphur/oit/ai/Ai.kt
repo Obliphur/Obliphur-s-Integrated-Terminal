@@ -1210,6 +1210,7 @@ data class AiCfg(val id: String, val name: String)
  *  provider = 默认配置的 id (AI 名单建议等用它); assign = {人设文件名: 配置 id} (沟通页每个 AI 各选一份). */
 class AiConfig(private val file: File) {
     var provider = "deepseek"                       // 默认配置的 id
+    var modelHelpSeen = false
     val profiles = LinkedHashMap<String, Profile>()
     val order = ArrayList<String>()
     val names = HashMap<String, String>()
@@ -1234,6 +1235,7 @@ class AiConfig(private val file: File) {
     }
 
     private fun load(raw: JSONObject) {
+        modelHelpSeen = raw.optBoolean("model_help_seen", false)
         val ps = raw.optJSONObject("profiles")
         if (ps != null) {
             val keys = ps.keys()
@@ -1454,6 +1456,7 @@ class AiConfig(private val file: File) {
         order.forEach { ord.put(it) }
         return Store.write(file, JSONObject().put("provider", provider).put("order", ord)
             .put("names", JSONObject(names as Map<*, *>)).put("profiles", ps)
-            .put("assign", JSONObject(assign as Map<*, *>)).put("tasks", JSONObject(taskAssign as Map<*, *>)))
+            .put("assign", JSONObject(assign as Map<*, *>)).put("tasks", JSONObject(taskAssign as Map<*, *>))
+            .put("model_help_seen", modelHelpSeen))
     }
 }

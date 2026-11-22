@@ -231,8 +231,9 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
         elif preset in ai_assist.CLI_PROVIDERS:
             effort_label.pack(fill="x", pady=(2, 0))
             effort_box.pack(fill="x", pady=(2, 8))
-            cb_model.config(values=[tr("订阅模型")])
-            cb_model.set(tr("订阅模型"))
+            current_model = prof.get("model") or tr("订阅模型")
+            cb_model.config(values=list(dict.fromkeys([current_model, tr("订阅模型")])))
+            cb_model.set(current_model)
             ent_key.config(state="disabled")
             ent_url.config(state="disabled")
             btn_fetch.state(["disabled"])
@@ -395,6 +396,13 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
     ttk.Button(dlg.buttons, text=tr("取消"), command=dlg.cancel).pack(side="right", padx=(0, 8))
     area.bind_children()          # 动态加进来的控件也要能滚
     area.scroll_to_top()
+
+    # 第一次打开模型配置时先给出完整说明；之后仍可从右上角的帮助按钮打开。
+    if not getattr(cfg, "model_help_seen", False):
+        cfg.model_help_seen = True
+        cfg.save()
+        from .voice_dialogs import open_help
+        open_help(dlg)
 
     # 内容放得下就别留一大截空白: 按实际高度收一下窗口 (仍然不超过屏幕)
     dlg.update_idletasks()

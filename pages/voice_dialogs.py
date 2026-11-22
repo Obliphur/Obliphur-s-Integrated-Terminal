@@ -18,6 +18,7 @@ from .voice_design import open_voice_design
 
 
 MODEL_HELP = "1. 先注册一个提供 AI 服务的网站，充值后创建 API Key（相当于调用 AI 的密码）。\n2. 点「新建」，名称随便写，方便自己认出。用中转站就选「自定义」，Base URL 照网站的 API 文档复制。\n3. 按网站说明选择模型类型和接口协议；不确定时先用网站的 OpenAI 兼容协议。\n4. 点「获取模型列表」选择网站支持的模型，或复制网站给的模型名称。\n5. 把 API Key 粘贴进来并保存。之后在「设置 → 模型」里选择聊天主模型；规则页的 AI 建议使用该主模型。"
+MODEL_CLI_HELP = "6. 可以使用对应工具接入订阅额度：选择 Claude Code、Codex 或 Antigravity 预设后，OIT 会调用本机已安装并登录的对应 CLI，使用该工具自己的订阅额度，不需要填写 API Key。\n7. OIT 使用工具的默认模型：CLI 配置中的「订阅模型」表示沿用工具当前默认模型；OIT 不会替换它。模型栏也可以手动填写模型 ID，保存后会在 CLI 支持时传入指定模型。\n8. 如何切换 Claude Code/Codex/Antigravity CLI 的默认模型：先在对应 CLI 的终端命令或官方配置中切换默认模型；也可以在这里的「型号」栏直接填写模型 ID 并保存。若该 CLI 不支持 --model 参数，只能使用 CLI 自己的切换方式。"
 VOICE_HELP = "1. 打开 MiniMax 平台，注册并开通语音服务，创建 API Key。\n2. 点「新建」，模板选 MiniMax，选择一个语音模型。HD 音质更好，Turbo 更快；费用以平台为准。\n3. 从平台的音色列表复制音色 ID；这是 voice_id，不是文件编号 file_id。尚无音色时，点「音色合成」，用提示词描述声音，或上传录音进行克隆。自定义音色需要当前 API 账号拥有使用权限。\n4. 粘贴 MiniMax 的 API Key。国内账号用国内 API 地址，国际账号用国际地址，不要填写平台网页地址。\n5. 保存后回到「设置 → 额外功能」，为当前聊天对象选择这份语音配置。开启语音后，新消息会立即生成语音，点消息框左下角贴边的播放图标。语音文件与已听状态会在绑定设备间同步。\nClaudia 默认配置只给 Claudia 使用，音色已填好；仍需填写有权使用该音色的 API Key。"
 
 
@@ -25,7 +26,8 @@ def open_help(parent, voice=False):
     dlg = Modal(parent, tr("帮助"), width=580, height=min(610, int(parent.winfo_screenheight() * .8)))
     area = ScrollArea(dlg.body)
     area.pack(fill="both", expand=True)
-    label = tk.Label(area.inner, text=tr(VOICE_HELP if voice else MODEL_HELP), wraplength=510,
+    help_text = tr(VOICE_HELP) if voice else tr(MODEL_HELP) + "\n\n" + tr(MODEL_CLI_HELP)
+    label = tk.Label(area.inner, text=help_text, wraplength=510,
                      justify="left", anchor="w", bg=COLORS["bg"], fg=COLORS["text"], font=config.font("body"))
     label.pack(fill="x", pady=(0, 14))
     if voice:

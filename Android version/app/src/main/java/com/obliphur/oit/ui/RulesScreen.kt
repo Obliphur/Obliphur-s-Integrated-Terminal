@@ -441,8 +441,12 @@ fun AiSettingsDialog(onDismiss: () -> Unit) {
     val o = LocalOit.current
     val core = OitApp.instance.core
     val cfg = remember { aiConfig() }
-    var configHelp by remember { mutableStateOf(false) }
-    if (configHelp) ConfigHelpDialog(false) { configHelp = false }
+    var configHelp by remember { mutableStateOf(!cfg.modelHelpSeen) }
+    if (configHelp) ConfigHelpDialog(false) {
+        configHelp = false
+        cfg.modelHelpSeen = true
+        cfg.save()
+    }
     var sel by remember { mutableStateOf(cfg.configFor("").ifEmpty { cfg.order.firstOrNull() ?: "" }) }
     var name by remember { mutableStateOf(cfg.configName(sel)) }
     var p by remember { mutableStateOf(cfg.profile(sel)) }

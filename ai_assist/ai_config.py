@@ -60,6 +60,7 @@ class AIConfig:
         self.names = {k: PROVIDERS[k]["label"] for k in self.order}
         self.assign = {}
         self.task_assign = {}
+        self.model_help_seen = False
         self.profiles = {k: default_profile(k) for k in self.order}
         self.needs_migration = False
         self.load()
@@ -152,6 +153,7 @@ class AIConfig:
         if isinstance(tasks, dict):
             self.task_assign = {role: cid for role, cid in tasks.items()
                                 if role in ("ocr", "review", "subject") and cid in self.profiles}
+        self.model_help_seen = bool(data.get("model_help_seen"))
         self._ensure_managed_profiles()
         self._remove_unavailable_cli()
         self._trim()
@@ -395,7 +397,8 @@ class AIConfig:
                 profiles[k] = out
             with securefile.open(tmp, "w", encoding="utf-8") as f:
                 json.dump({"provider": self.provider, "order": list(self.order), "names": dict(self.names),
-                           "profiles": profiles, "assign": dict(self.assign), "tasks": dict(self.task_assign)},
+                           "profiles": profiles, "assign": dict(self.assign), "tasks": dict(self.task_assign),
+                           "model_help_seen": bool(self.model_help_seen)},
                           f, ensure_ascii=False, indent=1)
             try:
                 os.chmod(tmp, 0o600)
