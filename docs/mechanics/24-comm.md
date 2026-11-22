@@ -254,7 +254,7 @@ Claudia 可通过 `oit_reading_offer` 申请共读。是否明确表示当前没
   5. 对方此刻按日程该在**专注 / 睡眠**, 而用户这时开始一段新的谈话 (对方上一条消息是 3 分钟以前, `THINK_NEW_AFTER`): 要判断回不回. 正在进行的谈话里 (3 分钟内) 不因为这一条开.
 - **开思考的请求体** (`ai_assist._build_body` / `Ai.chatOnce`): Anthropic 协议 `thinking: {type: enabled, budget_tokens: 1024}` (不带 temperature, `max_tokens` 4096 > 1024); OpenAI 协议同样的字段且不带 temperature; **Claude 4.6 及以后的模型** (opus / sonnet / haiku 含 5.x, fable / mythos; `ai_assist.adaptive_thinking` / `Ai.adaptiveThinking`, 按模型名认) 不认 budget_tokens (Haiku 5.5 等直接 400), 改发 `thinking: {type: adaptive}` (1.0.352); DeepSeek 官方地址用它自己的 (`thinking: {type: enabled}` / `reasoning: {effort: medium}`).
   服务商回 400 (不认这个字段) 时这一次改回不开思考重试, 并记住这个地址 (`THINK_ON_REJECT`, 只在内存里) 不再开. 回复里的思考块不进聊天记录.
-  **1.0.412**: 思考字段严格按模型类型发 —— Claude 走 `thinking`, DeepSeek 官方地址走 `reasoning` / `thinking`, 中转 ("其他") 默认带 `thinking: disabled` (不认就 400 重试); **ChatGPT 与 Gemini 不带任何思考字段** (OpenAI 不认 `thinking`, 以前要白费一次 400; Gemini 由模型自己决定思考, 原生请求里没有这个开关), `think=True` 对它们没有作用.
+  **1.0.412**: 思考字段严格按模型类型发 —— Claude 走 `thinking`, DeepSeek 官方地址走 `reasoning` / `thinking`, 中转 ("其他") 默认带 `thinking: disabled` (不认就 400 重试); ChatGPT 不带任何思考字段 (OpenAI 不认 `thinking`). 原生 Gemini 4 按沟通旧规则在 `generationConfig.thinkingConfig.thinkingLevel` 显式映射：日常请求 `low`，触发思考时 Carbon 为 `medium`、Neon / Hydrogen 为 `high`；其他 Gemini 4 型号触发时用 `medium`，旧版 Gemini 不发送该字段。
    **1.0.427**: Anthropic 协议关思考时**完全不写 `thinking`** (新版 Claude 会把 `disabled` 当错误请求, 直接 400); 另外中转拒绝 `cache_control` 时去掉缓存标记重试一次.
 - 请求日志 (`comm.log`) 里开了思考的写 `THINK <kind> on: <原因>`.
 - **费用**: 输出 token 变多 (思考最多 1024), 估计触发的请求输出 5 到 20 倍, 总费用在触发比例 15% 到 20% 时约涨 20% 到 40%; 每次回复慢几秒.

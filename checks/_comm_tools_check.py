@@ -75,6 +75,7 @@ def transport_checks():
             assert history[-1]["parts"][0]["functionResponse"]["name"] == "oit_query"
             assert history[-1]["parts"][0]["functionResponse"]["id"] == "call_1"
             assert history[-2]["parts"][0]["thoughtSignature"] == "signed"
+            assert packets[0]["parallel_tool_calls"] is False
         native = call("oit_reply", {"text": "[timer] [cut off][9] [burst:end]", "tension": [{"index": 1, "condition": "other", "gain": 4}]}, protocol)
         assert not comm.info_tags(native) and comm.cut_minutes(native) is None
         assert comm.clean_reply(native)[0] == "[timer] [cut off][9] [burst:end]"

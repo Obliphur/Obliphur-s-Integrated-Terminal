@@ -118,7 +118,7 @@ object ToolProtocol {
             if (blocks.length() > 0) blocks.getJSONObject(blocks.length() - 1).put("cache_control", JSONObject().put("type", "ephemeral"))
         }
         body.put("tools", declarations(protocol, search))
-        if (protocol == "openai") body.put("parallel_tool_calls", false)
+        if (protocol == "openai" || protocol == "gemini") body.put("parallel_tool_calls", false)
         return body
     }
 

@@ -329,9 +329,19 @@ object Ai {
     // 中转可能把无标签分析混进 text, 用明确的正文边界提取, 不猜测语言或段落。
     private const val GEMINI_FINAL_RULE = "\n输出格式:将本次唯一的正式回复(包括所需控制标记、JSON等)完整放在<oit_final>和</oit_final>之间;思考、分析、计划和模拟的后续回复不得放在其中.OIT会移除这层标签后使用正文;后续API调用由OIT单独发起."
 
+    /** Gemini 4 的思考档位沿用沟通模块的旧规则; 旧版 Gemini 不发送该字段. */
+    private fun geminiThinkingLevel(p: Profile, thinkOn: Boolean): String? {
+        val model = p.model.lowercase()
+        if (!Regex("gemini[-_ /]*4(?:\\D|$)").containsMatchIn(model)) return null
+        if (!thinkOn) return "low"
+        if (model.contains("carbon")) return "medium"
+        if (model.contains("neon") || model.contains("hydrogen")) return "high"
+        return "medium"
+    }
+
     /** 原生 Gemini 的请求体: 隐式缓存由 Google 按完全相同的 systemInstruction 建, 请求里不用标缓存位置. */
     private fun geminiBody(p: Profile, system: String, messages: List<Pair<String, String>>,
-                           maxTokens: Int, temperature: Double): JSONObject {
+                           maxTokens: Int, temperature: Double, thinkOn: Boolean = false): JSONObject {
         val contents = JSONArray()
         for ((i, m) in messages.withIndex()) {
             val (role, content) = m
@@ -343,16 +353,18 @@ object Ai {
             } else parts.put(JSONObject().put("text", content))
             contents.put(JSONObject().put("role", if (role == "assistant") "model" else "user").put("parts", parts))
         }
+        val generation = JSONObject().put("maxOutputTokens", maxTokens).put("temperature", temperature)
+        geminiThinkingLevel(p, thinkOn)?.let { generation.put("thinkingConfig", JSONObject().put("thinkingLevel", it)) }
         return JSONObject()
             .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", system + GEMINI_FINAL_RULE))))
             .put("contents", contents)
-            .put("generationConfig", JSONObject().put("maxOutputTokens", maxTokens).put("temperature", temperature))
+            .put("generationConfig", generation)
     }
 
     internal fun buildBody(p: Profile, system: String, messages: List<Pair<String, String>>, maxTokens: Int, temperature: Double,
                           cache: Boolean, thinkOff: Boolean, thinkOn: Boolean): JSONObject {
         val fam = familyOf(p)
-        if (p.protocol == "gemini") return geminiBody(p, system, messages, maxTokens, temperature)
+        if (p.protocol == "gemini") return geminiBody(p, system, messages, maxTokens, temperature, thinkOn)
         val arr = JSONArray()
         if (p.protocol == "anthropic") {
             val body = JSONObject().put("model", p.model).put("max_tokens", maxTokens)

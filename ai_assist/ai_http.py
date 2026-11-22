@@ -157,13 +157,31 @@ def _gemini_parts(content) -> list:
     return [{"text": str(content)}]
 
 
-def _gemini_body(profile: dict, system: str, messages: list, max_tokens: int, temperature: float) -> dict:
+def _gemini_thinking_level(profile: dict, think_on: bool):
+    """Gemini 4 的思考档位沿用沟通模块的旧规则；旧版 Gemini 不发送该字段。"""
+    model = str(profile.get("model") or "").lower()
+    if not re.search(r"gemini[-_ /]*4(?:\D|$)", model):
+        return None
+    if not think_on:
+        return "low"
+    if "carbon" in model:
+        return "medium"
+    if "neon" in model or "hydrogen" in model:
+        return "high"
+    return "medium"
+
+
+def _gemini_body(profile: dict, system: str, messages: list, max_tokens: int, temperature: float,
+                 think_on: bool = False) -> dict:
     """原生 Gemini (generateContent). 隐式缓存由 Google 按完全相同的 systemInstruction 建,
     请求里不用标缓存位置; 所以 system 里不能放会变的东西 (动态内容由 comm 贴到最后一条用户消息)."""
     contents = [{"role": "model" if m.get("role") == "assistant" else "user",
                  "parts": _gemini_parts(m.get("content"))} for m in messages]
-    body = {"contents": contents,
-            "generationConfig": {"maxOutputTokens": max_tokens, "temperature": temperature}}
+    generation = {"maxOutputTokens": max_tokens, "temperature": temperature}
+    thinking_level = _gemini_thinking_level(profile, think_on)
+    if thinking_level:
+        generation["thinkingConfig"] = {"thinkingLevel": thinking_level}
+    body = {"contents": contents, "generationConfig": generation}
     body["systemInstruction"] = {"parts": [{"text": (system or "") + _GEMINI_FINAL_RULE}]}
     return body
 
@@ -175,7 +193,7 @@ def _build_body(profile: dict, system: str, messages: list, max_tokens: int, tem
     Gemini 用原生 generateContent, 隐式缓存不用在请求里标; DeepSeek / 中转才要 thinking 开关."""
     fam = family_of(profile)
     if profile["protocol"] == "gemini":
-        return _gemini_body(profile, system, messages, max_tokens, temperature)
+        return _gemini_body(profile, system, messages, max_tokens, temperature, think_on)
     if profile["protocol"] == "anthropic":
         sys_field, msgs = system, list(messages)
         if cache:
@@ -705,7 +723,7 @@ def _web_chat(profile: dict, system: str, messages: list, timeout: float, opener
         used(data)
         text = _responses_text(data)
     elif mode == "gemini":                                # 原生 Gemini: 服务端 google_search 工具
-        body = _gemini_body(profile, system, messages, max_tokens, temperature)
+        body = _gemini_body(profile, system, messages, max_tokens, temperature, False)
         body["tools"] = [{"google_search": {}}]
         data = _send(profile, body, timeout, opener)
         used(data)

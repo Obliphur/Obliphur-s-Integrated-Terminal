@@ -139,7 +139,7 @@ def apply_body(body, protocol, messages, search=False):
             if last["content"]:
                 last["content"][-1]["cache_control"] = {"type": "ephemeral"}
     body["tools"] = declarations(protocol, search)
-    if protocol == "openai":
+    if protocol in ("openai", "gemini"):
         body["parallel_tool_calls"] = False
     return body
 

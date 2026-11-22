@@ -515,6 +515,13 @@ def _selftest():
         assert b["contents"] == [{"role": "user", "parts": [{"text": "hi"}]}]
         assert b["generationConfig"] == {"maxOutputTokens": 4096, "temperature": 0.9}
         assert "thinking" not in b and "cache_control" not in json.dumps(b)
+        for variant, level in (("neon", "high"), ("hydrogen", "high"), ("carbon", "medium")):
+            g4 = dict(gm, model=f"gemini-4-{variant}")
+            assert _build_body(g4, "SYS", mm, 4096, 0.9, True)["generationConfig"]["thinkingConfig"] == \
+                {"thinkingLevel": "low"}
+            assert _build_body(g4, "SYS", mm, 4096, 0.9, True, False, True)["generationConfig"]["thinkingConfig"] == \
+                {"thinkingLevel": level}
+        assert "thinkingConfig" not in _build_body(gm, "SYS", mm, 4096, 0.9, True)["generationConfig"]
         assert _gemini_text({"candidates": [{"content": {"parts": [{"text": "分析\n<oit_final>a"}, {"text": "想", "thought": True}, {"text": "b</oit_final>"}]}}]}) == "ab"
         for raw, expected in [("分析中引用<oit_final>示例</oit_final>\n<oit_final>[refuse to reply]</oit_final>", "[refuse to reply]"),
                               ('<oit_final>{"answer":1}</oit_final>', '{"answer":1}')]:
