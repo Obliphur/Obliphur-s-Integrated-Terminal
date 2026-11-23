@@ -38,6 +38,18 @@ _ROLE_TASK_KEY = {
 }
 
 
+def _display_persona_name(comm_obj) -> str:
+    """返回不含 .txt 等扩展名的人设显示名。"""
+    raw = comm_obj.persona_name() if hasattr(comm_obj, "persona_name") else ""
+    if not raw:
+        return ""
+    try:
+        from comm.comm_persona import persona_title
+        return str(persona_title(raw) or raw)
+    except Exception:
+        return os.path.splitext(str(raw))[0]
+
+
 def _now_ms() -> int:
     return int(time.time() * 1000)
 
@@ -361,7 +373,7 @@ class OitMcpBridge:
                 "protocol": BRIDGE_PROTOCOL,
                 "takeover": str(getattr(config, "AI_CHAT_TAKEOVER", "") or ""),
                 "persona_id": getattr(self.comm, "pid", ""),
-                "persona_name": self.comm.persona_name() if hasattr(self.comm, "persona_name") else "",
+                "persona_name": _display_persona_name(self.comm),
                 "hard_block": bool(self.comm.hard_block()) if callable(getattr(self.comm, "hard_block", None)) else False,
             }
         return self._call_main(work)
@@ -382,7 +394,7 @@ class OitMcpBridge:
                 "ok": True,
                 "conversation_id": cid,
                 "persona_id": pid,
-                "persona_name": self.comm.persona_name() if hasattr(self.comm, "persona_name") else "",
+                "persona_name": _display_persona_name(self.comm),
                 "host": host,
                 "subagent_routes": self._subagent_routes(host),
             }
@@ -403,7 +415,7 @@ class OitMcpBridge:
             return {
                 "ok": True,
                 "persona_id": pid,
-                "persona_name": name,
+                "persona_name": _display_persona_name(self.comm),
                 "system_prompt": system,
                 "memory_block": mem,
             }
@@ -439,7 +451,7 @@ class OitMcpBridge:
                     self._recent_user_ms[cid] = _now_ms()
 
             routes = self._subagent_routes(eff_host)
-            lines = [f"[OIT动态状态] 时间: {now:%Y-%m-%d %H:%M} | 人设: {self.comm.persona_name()}"]
+            lines = [f"[OIT动态状态] 时间: {now:%Y-%m-%d %H:%M} | 人设: {_display_persona_name(self.comm)}"]
             if snap:
                 lines.append(f"用户当前状态: {snap.get('state') or snap.get('kind') or 'unknown'}")
             if state_txt:
@@ -700,7 +712,7 @@ class OitMcpBridge:
                 "ok": True,
                 "batch_id": batch_id,
                 "persona_id": pid,
-                "persona_name": persona,
+                "persona_name": _display_persona_name(self.comm),
                 "items": items,
             }
         return self._call_main(work)
@@ -744,7 +756,7 @@ class OitMcpBridge:
             return {
                 "ok": True,
                 "persona_id": pid,
-                "persona_name": self.comm.persona_name() if hasattr(self.comm, "persona_name") else "",
+                "persona_name": _display_persona_name(self.comm),
                 "cursor": len(self.comm.messages),
                 "messages": msgs,
                 "pending": pending,
@@ -1073,8 +1085,9 @@ def antigravity_help_text(en: bool = False) -> str:
             "2. Open OIT Chat in Antigravity App\n"
             "   • Open Antigravity App and create a dedicated conversation for each persona.\n"
             "   • Open the right-hand side pane '+' menu and choose [OIT Chat] (or send one message to auto-open it).\n"
+            "   • Tip (Key!): Click the Maximize Pane icon in the top-right corner of the side pane (or press Ctrl+Shift+M) to expand OIT Chat full-screen and hide the left engine chat!\n"
             "   • Chat directly in the OIT Chat side pane for staged bubble delays, interrupt-to-cancel, voice playback, and toolbar toggles.\n"
-            "   • To send images to the model, drag or paste them into the left native Antigravity input box.\n\n"
+            "   • To send images to the model, restore the pane and drag or paste them into the left native Antigravity input box.\n\n"
             "3. Enable Proactive Messaging (One Manual Step)\n"
             "   • Antigravity requires users to manually enable Sidecars.\n"
             "   • Open Antigravity's Automations / Sidecars dashboard, enable [OIT Proactive Bridge] (oit/oit-proactive), and choose your target project.\n"
@@ -1097,9 +1110,10 @@ def antigravity_help_text(en: bool = False) -> str:
         "二、在 Antigravity 桌面端打开 OIT Chat 侧栏\n"
         "  1. 打开 Antigravity 桌面端，新建一个对话（建议一个人设对应一个独立对话）。\n"
         "  2. 点击右侧辅面板的「+」菜单选择「OIT Chat」（或在主对话框发一句话自动弹出）。\n"
-        "  3. 日常纯文字聊天直接在右侧 OIT Chat 输入框发送即可，自动享受分条延时气泡、中途插话撤销、语音播放与工具栏开关；\n"
+        "  3. ★ 关键技巧：点击侧栏右上角的最大化图标（或按快捷键 Ctrl+Shift+M）即可将 OIT Chat 一键全屏最大化，彻底隐藏左侧主对话区，获得纯净 IM 聊天界面！\n"
+        "  4. 日常纯文字聊天直接在 OIT Chat 输入框发送即可，自动享受分条延时气泡、中途插话撤销、语音播放与工具栏开关；\n"
         "     点击 🤝 / 🕰 / 🎼 / 📚 / 🖼 会自动拉起 OIT 原生弹窗（合约词条板、MIDI 录制评判、共读阅读室、独立识字）。\n"
-        "  4. 需要发图片给 AI 看时，直接将图片拖入或粘贴到左侧 Antigravity 原生输入框。\n\n"
+        "  5. 需要发图片给 AI 看时，取消最大化后将图片拖入或粘贴到左侧 Antigravity 原生输入框。\n\n"
         "三、手动开启主动对话（唯一需在 Antigravity 内点一下的步骤）\n"
         "  出于官方安全策略，Sidecar 必须由用户手动启用：\n"
         "  1. 在 Antigravity 打开 Automations / Sidecars 面板；\n"

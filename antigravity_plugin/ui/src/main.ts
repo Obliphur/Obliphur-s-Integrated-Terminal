@@ -187,7 +187,9 @@ function renderBanners(banners?: UiState["banners"]) {
 }
 
 function applyState(state: UiState) {
-  if (state.persona_name) elPersona.textContent = state.persona_name;
+  if (state.persona_name) {
+    elPersona.textContent = state.persona_name.replace(/\.(txt|md|oitp)$/i, "");
+  }
   elStatus.textContent = state.status_kind ? `状态: ${state.status_kind}` : "在线";
   if (typeof state.cursor === "number" && state.cursor > cursor) {
     cursor = state.cursor;

@@ -17,8 +17,8 @@ from i18n import tr
 
 
 class CommMixin:
-    def _sync_mcp_bridge(self):
-        """按 AI_CHAT_TAKEOVER 启停本地 MCP HTTP/SSE Bridge。"""
+    def _sync_mcp_bridge(self, silent_deploy: bool = False):
+        """按 AI_CHAT_TAKEOVER 启停本地 MCP HTTP/SSE Bridge；启动时若已开启接管则后台静默自动部署以同步更新。"""
         bridge = getattr(self, "mcp_bridge", None)
         want = str(getattr(config, "AI_CHAT_TAKEOVER", "") or "") == "antigravity"
         if want:
@@ -31,6 +31,21 @@ class CommMixin:
                 )
             bridge.start()
             self.comm.mcp_bridge = bridge
+            if silent_deploy and not getattr(self, "_mcp_silent_deployed", False):
+                self._mcp_silent_deployed = True
+                import threading
+
+                def _bg_deploy():
+                    try:
+                        from mcp_bridge import deploy_antigravity_plugin
+                        res = deploy_antigravity_plugin(self.dm.data_dir)
+                        if hasattr(self.comm, "log"):
+                            self.comm.log(f"MCP silent deploy {'ok' if res.get('ok') else 'FAIL ' + str(res.get('error', ''))}")
+                    except Exception as exc:  # noqa: BLE001
+                        if hasattr(self.comm, "log"):
+                            self.comm.log(f"MCP silent deploy FAIL {type(exc).__name__}: {exc}")
+
+                threading.Thread(target=_bg_deploy, daemon=True, name="oit-mcp-silent-deploy").start()
         else:
             if bridge is not None:
                 bridge.stop()

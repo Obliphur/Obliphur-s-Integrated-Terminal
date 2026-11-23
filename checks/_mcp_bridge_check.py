@@ -57,6 +57,7 @@ def main():
 
         health = _http_json(port, bridge.token, "/health")
         assert health["ok"] and health["takeover"] == "antigravity"
+        assert not health["persona_name"].lower().endswith(".txt"), f"人设名不应带 .txt 后缀: {health['persona_name']}"
 
         # 2. 会话绑定 + SSE 订阅 + 主动事件推送与原子消费
         bind = _http_json(port, bridge.token, "/session/bind", {"conversation_id": "conv-1", "host": "antigravity"})
@@ -198,8 +199,8 @@ def main():
         assert any("validate" in a for a in cmds) and any("install" in a for a in cmds)
         with open(os.path.join(mock_plugin, ".oit_data_dir"), "r", encoding="utf-8") as fh:
             assert os.path.abspath(fh.read().strip()) == os.path.abspath(tmp)
-        assert "自动部署" in antigravity_help_text(en=False)
-        assert "Auto-Deploy" in antigravity_help_text(en=True)
+        assert "自动部署" in antigravity_help_text(en=False) and "Ctrl+Shift+M" in antigravity_help_text(en=False)
+        assert "Auto-Deploy" in antigravity_help_text(en=True) and "Ctrl+Shift+M" in antigravity_help_text(en=True)
 
         # 9. 设置页「帮助」弹窗实际打开验证（离屏 tkinter）
         import tkinter as tk
