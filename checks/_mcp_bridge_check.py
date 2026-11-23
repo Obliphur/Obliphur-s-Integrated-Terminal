@@ -338,6 +338,21 @@ def main():
         t_sse2.join(timeout=4)
         assert len(new_sse) == 1 and new_sse[0]["conversation_id"] == "" and new_sse[0]["text"] == "清空后的第一句新消息"
 
+        # 9f. 重启竞态回归验证：旧 Bridge stop() 不得误删新 Bridge 的 mcp_bridge.json，且误删后 ensure_discovery() 自愈
+        bridge2 = OitMcpBridge(c, tmp)
+        try:
+            bridge2.start()
+            bridge.stop()
+            assert os.path.isfile(bridge2.discovery_path), "旧 Bridge stop() 不得删除新 Bridge 的 mcp_bridge.json"
+            with open(bridge2.discovery_path, "r", encoding="utf-8") as fh:
+                assert json.load(fh)["token"] == bridge2.token
+            os.remove(bridge2.discovery_path)
+            bridge2.ensure_discovery()
+            assert os.path.isfile(bridge2.discovery_path), "ensure_discovery() 应自动恢复缺失的 mcp_bridge.json"
+        finally:
+            bridge2.stop()
+        bridge = None
+
         # 10. 设置页「帮助」弹窗实际打开验证（离屏 tkinter）
         import tkinter as tk
         from pages.settings_page.settings_form import FormMixin

@@ -288,9 +288,22 @@ class OitMcpBridge:
                 pass
         try:
             if os.path.isfile(self.discovery_path):
-                os.remove(self.discovery_path)
-        except OSError:
+                with open(self.discovery_path, "r", encoding="utf-8") as fh:
+                    cur = json.load(fh)
+                if cur.get("token") == self.token and int(cur.get("pid") or 0) == os.getpid():
+                    os.remove(self.discovery_path)
+        except Exception:
             pass
+
+    def ensure_discovery(self):
+        """若运行中发现 mcp_bridge.json 被外部误删，自动补写恢复。"""
+        if not self._running or not self.port or not self.data_dir:
+            return
+        if not os.path.isfile(self.discovery_path):
+            try:
+                self._write_discovery()
+            except OSError:
+                pass
 
     def _write_discovery(self):
         if not self.data_dir:

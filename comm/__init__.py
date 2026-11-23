@@ -1655,6 +1655,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
 
     # ---- 每秒一次 ----
     def tick(self):
+        if getattr(self, "mcp_bridge", None) is not None:
+            self.mcp_bridge.ensure_discovery()
         if self.persona_name():
             self._interaction_prepare()
         self._count_idle()
