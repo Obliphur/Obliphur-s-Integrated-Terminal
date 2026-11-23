@@ -864,13 +864,18 @@ class OitMcpBridge:
                     cleaned.append(p)
 
             batch_id = f"b_{_now_ms()}_{secrets.token_hex(4)}"
+            req_ts = max([int(x.get("ts") or 0) for x in self.comm.messages if x.get("role") == "me"] or [0])
+            now_ts = _now_ms()
+            cum_ms = 0
             items = []
             for idx, part in enumerate(cleaned):
                 delay_ms = _bubble_delay_ms(self.comm, part, idx)
+                cum_ms += delay_ms
                 m = self.comm._add("ai", part)
-                m["pending_reply"] = batch_id
+                m["pending_reply"] = req_ts
+                m["reply_ready"] = True
                 m["hold"] = True
-                m["due"] = _now_ms() + delay_ms
+                m["due"] = now_ts + cum_ms
                 items.append({
                     "id": str(m.get("uid") or m.get("id") or f"{batch_id}_{idx}"),
                     "text": part,
@@ -1271,14 +1276,12 @@ def antigravity_help_text(en: bool = False) -> str:
             "   • Install & build the TypeScript MCP Server and single-file OIT Chat side pane UI (if not built yet);\n"
             "   • Validate and install the 'oit' plugin via official `agy plugin validate` and `agy plugin install`;\n"
             "   • Turn on Antigravity takeover and start OIT's local loopback HTTP/SSE Bridge.\n\n"
-            "2. Bind a Conversation to a Persona & Open OIT Chat\n"
+            "2. Bind a Conversation to a Persona & Chat in OIT (Recommended)\n"
             "   • Unbound Antigravity conversations are completely isolated from OIT so you can freely use Antigravity for coding or other work.\n"
             "   • To bind a persona: create a new conversation in Antigravity App and tell the agent, e.g. 'Bind this conversation to Claudia' (or 'Bind OIT persona <name>').\n"
             "   • The agent calls oit_bind_persona to create a strict 1-to-1 binding (one persona cannot be bound to two conversations at once; if you want to move a persona to a new conversation, explicitly ask to 'force rebind <name> here').\n"
-            "   • Once bound, the agent replies via oit_reply and automatically opens the right-hand [OIT Chat] side pane (or click the side pane '+' menu → OIT Chat).\n"
-            "   • Tip (Key!): Click the Maximize Pane icon in the top-right corner of the side pane (or press Ctrl+Shift+M) to expand OIT Chat full-screen and hide the left engine chat!\n"
-            "   • Chat directly in the OIT Chat side pane for staged bubble delays, interrupt-to-cancel, voice playback, and toolbar toggles.\n"
-            "   • To send images to the model, restore the pane and drag or paste them into the left native Antigravity input box.\n\n"
+            "   • Recommended workflow: Keep chatting directly inside OIT's native Chat page (full support for staged bubbles, interrupt-to-cancel, voice, avatars, toolbar dialogs, and Android sync), and turn off system notifications in Antigravity Settings → Notifications to avoid duplicate alerts.\n"
+            "   • Note on Antigravity's [OIT Chat] side pane: It is an optional auxiliary view and its adaptation may be incomplete; please rely on OIT's native chat window for the complete experience. (If you do use the side pane, Ctrl+Shift+M maximizes it.)\n\n"
             "3. Enable Proactive Messaging (One Manual Step)\n"
             "   • Antigravity requires users to manually enable Sidecars.\n"
             "   • Open Antigravity's Automations / Sidecars dashboard, enable [OIT Proactive Bridge] (oit/oit-proactive), and choose your target project.\n"
@@ -1298,17 +1301,15 @@ def antigravity_help_text(en: bool = False) -> str:
         "  2. 检测并构建 TypeScript MCP Server 与单文件 OIT Chat 侧栏 UI（已构建则自动跳过）；\n"
         "  3. 调用官方 agy plugin validate 与 agy plugin install 校验并安装 oit 插件；\n"
         "  4. 自动开启「由 Antigravity 桌面版接管」并启动 OIT 本地 HTTP/SSE Bridge。\n\n"
-        "二、绑定对话与人设，并打开 OIT Chat 侧栏\n"
+        "二、绑定对话与人设（推荐继续在 OIT 原生界面聊天）\n"
         "  • 隔离说明：未绑定的普通 Antigravity 对话与 OIT 完全隔离，平时写代码/处理其他工作不受任何影响。\n"
         "  1. 在 Antigravity 桌面端新建一个对话，在左侧输入框直接发一句：「绑定 Claudia」（或「绑定 OIT 人设 <人设名>」）。\n"
         "  2. 模型会调用 oit_bind_persona 建立严格 1 对 1 排斥绑定：\n"
         "     - 同一个人设同一时间只能绑定一个对话，防止两个对话串台；\n"
         "     - 若想把某个人设迁移到新对话，明确说「强制把 <人设名> 改绑到当前对话」即可自动解绑旧对话。\n"
-        "  3. 绑定完成后模型调用 oit_reply 打招呼时会自动打开右侧「OIT Chat」侧栏（也可手动点侧栏顶部「+」→ OIT Chat）。\n"
-        "  4. ★ 关键技巧：点击侧栏右上角的最大化图标（或按快捷键 Ctrl+Shift+M）即可将 OIT Chat 一键全屏最大化，彻底隐藏左侧主对话区，获得纯净 IM 聊天界面！\n"
-        "  5. 日常纯文字聊天直接在 OIT Chat 输入框发送即可，自动享受分条延时气泡、中途插话撤销、语音播放与工具栏开关；\n"
-        "     点击 🤝 / 🕰 / 🎼 / 📚 / 🖼 会自动拉起 OIT 原生弹窗（合约词条板、MIDI 录制评判、共读阅读室、独立识字）。\n"
-        "  6. 需要发图片给 AI 看时，取消最大化后将图片拖入或粘贴到左侧 Antigravity 原生输入框。\n\n"
+        "  3. ★ 推荐用法：绑定好并开启下方 Sidecar 后，直接留在 OIT 原生沟通页聊天即可（完整保留分条延时、插话撤销、语音、头像、工具栏与手机同步）；\n"
+        "     建议在 Antigravity 的「Settings → Notifications」中关闭系统通知，避免重复提醒。\n"
+        "  4. 注意：Antigravity 内的「OIT Chat」侧栏界面适配可能不完全，仅作可选辅助视图，请以 OIT 原生聊天界面为准（如需使用侧栏，可按 Ctrl+Shift+M 全屏最大化）。\n\n"
         "三、手动开启主动对话（唯一需在 Antigravity 内点一下的步骤）\n"
         "  出于官方安全策略，Sidecar 必须由用户手动启用：\n"
         "  1. 在 Antigravity 打开 Automations / Sidecars 面板；\n"
