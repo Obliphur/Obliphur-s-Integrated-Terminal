@@ -1441,6 +1441,8 @@ def antigravity_help_text(en: bool = False) -> str:
             "4. Chat Directly in OIT\n"
             "   • Stay in OIT's native Chat window for all features (staged bubbles, interrupt-to-cancel,\n"
             "     voice, Joint / Share Data / CoRead / Shift / MIDI Review, proactive messages, Android sync).\n"
+            "   • Switching model & thinking effort: Change them directly inside that persona's bound\n"
+            "     conversation in Antigravity.\n"
             "   • Optional: Assign an external HTTP API to any subagent role in Settings → Models; otherwise\n"
             "     native Antigravity subagents are used.\n"
             "   • After updating OIT, click [Auto-Deploy] again and Restart 'oit' under MCP Servers."
@@ -1461,6 +1463,7 @@ def antigravity_help_text(en: bool = False) -> str:
         "4. 回到 OIT 原生界面正常聊天\n"
         "   • 日常收发消息、分条延时、插话撤销、语音、联合行动 / Share Data / 共读 / 起点平移 / 演奏评判\n"
         "     与手机同步全部留在 OIT 沟通页操作即可。\n"
+        "   • 切换模型与思考强度：需要在 Antigravity 中进入该人设已绑定的对话进行操作。\n"
         "   • 可选：在「设置 → 模型」给单个子代理指定外部 HTTP API，未指定则默认走 Antigravity 原生子代理。\n"
         "   • 更新 OIT 后如插件未生效，重点「自动部署」并在 MCP Servers 中 Restart oit。"
     )
