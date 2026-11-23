@@ -188,6 +188,8 @@ def main():
         tools = {t["name"]: t for t in tools_res["result"]["tools"]}
         assert "oit_reply" in tools and tools["oit_reply"]["_meta"]["ui"]["resourceUri"] == "ui://oit/chat.html"
         assert tools["oit_reply"]["_meta"]["com.google.antigravity/ui"]["entrypoints"][0]["type"] == "aux_pane"
+        aux_entries = [t for t in tools.values() if (t.get("_meta") or {}).get("com.google.antigravity/ui")]
+        assert len(aux_entries) == 1, f"只能有 1 个 aux_pane 入口，避免菜单出现两个 OIT Chat: {[t['name'] for t in aux_entries]}"
         assert tools["oit_ui_state"]["_meta"]["ui"]["visibility"] == ["app"]
         assert "oit_get_turn_context" in tools and "oit_memory_save_auto" in tools
 

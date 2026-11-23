@@ -1004,9 +1004,9 @@ class OitMcpBridge:
             return {"ok": True, "skipped": True}
 
         def work():
-            if cid and not self.is_bound_conversation(cid):
+            if not cid or not self.is_bound_conversation(cid):
                 return {"ok": True, "skipped": "unbound_conversation"}
-            pid = self._ensure_persona_for_conversation(cid) if cid else self._persona_for_conversation(cid)
+            pid = self._ensure_persona_for_conversation(cid)
             now_ts = _now_ms()
             with self._lock:
                 recent = max(

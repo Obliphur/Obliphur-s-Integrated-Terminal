@@ -4,7 +4,7 @@
 import json
 import os
 
-from hook_common import bridge_post, read_stdin_json, write_stdout_json
+from hook_common import bridge_get, bridge_post, read_stdin_json, write_stdout_json
 
 
 def _last_planner_text(transcript_path: str) -> tuple[str, bool]:
@@ -37,12 +37,24 @@ def _last_planner_text(transcript_path: str) -> tuple[str, bool]:
 
 def main():
     payload = read_stdin_json()
+    cid = str(payload.get("conversationId") or "").strip()
+    if not cid:
+        write_stdout_json({})
+        return
+    try:
+        chk = bridge_get("/session/check", {"conversation_id": cid})
+        if not chk.get("bound"):
+            write_stdout_json({})
+            return
+    except Exception:
+        write_stdout_json({})
+        return
     tpath = str(payload.get("transcriptPath") or "")
     text, called = _last_planner_text(tpath)
     if text and not called:
         try:
             bridge_post("/turn/fallback_sync", {
-                "conversation_id": str(payload.get("conversationId") or ""),
+                "conversation_id": cid,
                 "text": text,
             })
         except Exception:

@@ -53,8 +53,7 @@ function buildTools(): ToolSpec[] {
     {
       name: "oit_bind_persona",
       description:
-        "将当前对话与指定 OIT 人设严格 1 对 1 绑定（不传 persona_name 则绑定当前活跃人设），并自动拉起右侧 OIT Chat 面板。",
-      _meta: AUX_PANE_META,
+        "将当前对话与指定 OIT 人设严格 1 对 1 绑定（不传 persona_name 则绑定当前活跃人设）。绑定后请再调用 oit_reply 与用户打招呼以自动打开 OIT Chat。",
       inputSchema: {
         type: "object",
         properties: {
