@@ -51,6 +51,20 @@ const AUX_PANE_META = {
 function buildTools(): ToolSpec[] {
   return [
     {
+      name: "oit_bind_persona",
+      description:
+        "将当前对话与指定 OIT 人设严格 1 对 1 绑定（不传 persona_name 则绑定当前活跃人设），并自动拉起右侧 OIT Chat 面板。",
+      _meta: AUX_PANE_META,
+      inputSchema: {
+        type: "object",
+        properties: {
+          persona_name: { type: "string", maxLength: 120 },
+          conversation_id: { type: "string", maxLength: 120 },
+        },
+        additionalProperties: false,
+      },
+    },
+    {
       name: "oit_get_turn_context",
       description:
         "获取当前 OIT 动态状态（时间、用户专注/休息状态、人设日程、情绪张力、子代理路由表及待处理主动触发事件）。不支持 PreInvocation Hook 的宿主（Claude Desktop / ChatGPT）应在每轮回复前调用。",

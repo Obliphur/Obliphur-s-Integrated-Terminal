@@ -142,6 +142,8 @@ class OitMcpBridge:
                     try:
                         if path == "/health":
                             res = bridge.handle_health()
+                        elif path == "/session/check":
+                            res = bridge.handle_session_check(qs)
                         elif path == "/turn/context":
                             res = bridge.handle_turn_context(qs)
                         elif path == "/ui/state":
@@ -324,6 +326,45 @@ class OitMcpBridge:
             sessions = self.comm.cfg["mcp_sessions"] = {}
         return sessions
 
+    def _persona_name_by_pid(self, pid: str) -> str:
+        if not pid or not hasattr(self.comm, "personas"):
+            return ""
+        try:
+            from comm.comm_persona import list_personas, pid_of
+            for name in list_personas(self.comm.personas):
+                if pid_of(name) == pid:
+                    return name
+        except Exception:
+            pass
+        return ""
+
+    def _resolve_persona_name(self, query: str) -> str:
+        q = str(query or "").strip()
+        if not q or not hasattr(self.comm, "personas"):
+            return ""
+        try:
+            from comm.comm_persona import list_personas, persona_title, pid_of
+            names = list_personas(self.comm.personas)
+            for name in names:
+                if name == q or persona_title(name) == q or pid_of(name) == q:
+                    return name
+            ql = q.lower()
+            for name in names:
+                if name.lower() == ql or persona_title(name).lower() == ql:
+                    return name
+        except Exception:
+            pass
+        return ""
+
+    def _ensure_persona_for_conversation(self, conversation_id: str) -> str:
+        """若该 conversation_id 已绑定人设且与 OIT 当前人设不同，自动切换 OIT 到绑定人设，避免切对话串台。"""
+        pid = self._persona_for_conversation(conversation_id)
+        if pid and pid != getattr(self.comm, "pid", "") and hasattr(self.comm, "set_persona"):
+            name = self._persona_name_by_pid(pid)
+            if name:
+                self.comm.set_persona(name)
+        return str(getattr(self.comm, "pid", "") or pid)
+
     def _conversation_for_persona(self, persona_id: str) -> str:
         sessions = self._sessions_map()
         pid = persona_id or getattr(self.comm, "pid", "")
@@ -378,18 +419,61 @@ class OitMcpBridge:
             }
         return self._call_main(work)
 
+    def is_bound_conversation(self, conversation_id: str) -> bool:
+        cid = str(conversation_id or "").strip()
+        if not cid:
+            return False
+        meta = self._sessions_map().get(cid)
+        return isinstance(meta, dict) and bool(meta.get("persona_id"))
+
+    def handle_session_check(self, qs: dict) -> dict:
+        cid = str(qs.get("conversation_id") or "").strip()
+
+        def work():
+            if not self.is_bound_conversation(cid):
+                return {"ok": True, "bound": False, "conversation_id": cid}
+            pid = self._ensure_persona_for_conversation(cid)
+            return {
+                "ok": True,
+                "bound": True,
+                "conversation_id": cid,
+                "persona_id": pid,
+                "persona_name": _display_persona_name(self.comm),
+            }
+        return self._call_main(work)
+
     def handle_session_bind(self, body: dict) -> dict:
         cid = str(body.get("conversation_id") or "").strip()
         if not cid:
             return {"ok": False, "error": "conversation_id required"}
         host = str(body.get("host") or "antigravity").strip()
+        req_name = str(body.get("persona_name") or "").strip()
+        req_pid = str(body.get("persona_id") or "").strip()
+        force = bool(body.get("force"))
 
         def work():
-            pid = str(body.get("persona_id") or getattr(self.comm, "pid", "") or "").strip()
             sessions = self._sessions_map()
-            sessions[cid] = {"persona_id": pid, "host": host, "ts": _now_ms()}
-            if hasattr(self.comm, "save_cfg"):
-                self.comm.save_cfg()
+            existing = sessions.get(cid) if isinstance(sessions.get(cid), dict) else None
+            # 严格 1:1 绑定：已绑定过的会话在未指定 force 且未显式指定新人设时，保持原绑定并切回对应人设
+            if existing and existing.get("persona_id") and not force and not req_name and not req_pid:
+                pid = str(existing["persona_id"])
+                self._ensure_persona_for_conversation(cid)
+            else:
+                target_name = self._resolve_persona_name(req_name) if req_name else ""
+                if target_name and hasattr(self.comm, "set_persona"):
+                    self.comm.set_persona(target_name)
+                if req_pid and not target_name:
+                    pname = self._persona_name_by_pid(req_pid)
+                    if pname and hasattr(self.comm, "set_persona"):
+                        self.comm.set_persona(pname)
+                pid = req_pid or str(getattr(self.comm, "pid", "") or "").strip()
+                # 保证 1:1：移除该人设此前绑定的旧会话
+                for old_cid in [k for k, v in sessions.items()
+                                if k != cid and isinstance(v, dict) and v.get("persona_id") == pid]:
+                    sessions.pop(old_cid, None)
+                sessions[cid] = {"persona_id": pid, "host": host, "ts": _now_ms()}
+                if hasattr(self.comm, "save_cfg"):
+                    self.comm.save_cfg()
             return {
                 "ok": True,
                 "conversation_id": cid,
@@ -424,11 +508,19 @@ class OitMcpBridge:
     def handle_turn_context(self, qs: dict) -> dict:
         cid = str(qs.get("conversation_id") or "").strip()
         consume = str(qs.get("consume_trigger") or "1") not in ("0", "false", "False")
+        only_bound = str(qs.get("only_bound") or "0") in ("1", "true", "True")
         host = str(qs.get("host") or "").strip()
         last_input = str(qs.get("last_user_input") or "")
 
         def work():
-            pid = self._persona_for_conversation(cid)
+            if only_bound and not self.is_bound_conversation(cid):
+                return {
+                    "ok": True,
+                    "bound": False,
+                    "conversation_id": cid,
+                    "system_message": "",
+                }
+            pid = self._ensure_persona_for_conversation(cid)
             sess_meta = self._sessions_map().get(cid) if cid else None
             eff_host = host or (sess_meta.get("host") if isinstance(sess_meta, dict) else "") or "antigravity"
             now = self.comm.now() if callable(getattr(self.comm, "now", None)) else datetime.now()
@@ -510,6 +602,32 @@ class OitMcpBridge:
         def work():
             if not name:
                 return {"ok": False, "error": "tool name required"}
+            if cid:
+                self._ensure_persona_for_conversation(cid)
+            if name == "oit_bind_persona":
+                target_cid = str(args.get("conversation_id") or cid or "").strip()
+                target_name = str(args.get("persona_name") or "").strip()
+                if target_name:
+                    resolved = self._resolve_persona_name(target_name)
+                    if not resolved:
+                        from comm.comm_persona import list_personas, persona_title
+                        avail = [persona_title(n) for n in list_personas(self.comm.personas)]
+                        return {"ok": False, "error": f"未找到人设 {target_name}", "available_personas": avail}
+                    self.comm.set_persona(resolved)
+                pid = str(getattr(self.comm, "pid", "") or "")
+                if target_cid:
+                    sessions = self._sessions_map()
+                    for old_cid in [k for k, v in sessions.items()
+                                    if k != target_cid and isinstance(v, dict) and v.get("persona_id") == pid]:
+                        sessions.pop(old_cid, None)
+                    sessions[target_cid] = {"persona_id": pid, "host": host, "ts": _now_ms()}
+                    self.comm.save_cfg()
+                return {
+                    "ok": True,
+                    "persona_id": pid,
+                    "persona_name": _display_persona_name(self.comm),
+                    "conversation_id": target_cid,
+                }
             if self.comm.hard_block():
                 return {"ok": False, "error": "当前处于禁止沟通状态"}
 
@@ -650,7 +768,7 @@ class OitMcpBridge:
             if self.comm.hard_block():
                 return {"ok": False, "error": "当前处于禁止沟通状态"}
             cid = str(body.get("conversation_id") or "").strip()
-            pid = self._persona_for_conversation(cid)
+            pid = self._ensure_persona_for_conversation(cid) if cid else self._persona_for_conversation(cid)
             if body.get("silent"):
                 return {"ok": True, "silent": True, "batch_id": "", "items": []}
             if body.get("refuse"):
@@ -886,7 +1004,9 @@ class OitMcpBridge:
             return {"ok": True, "skipped": True}
 
         def work():
-            pid = self._persona_for_conversation(cid)
+            if cid and not self.is_bound_conversation(cid):
+                return {"ok": True, "skipped": "unbound_conversation"}
+            pid = self._ensure_persona_for_conversation(cid) if cid else self._persona_for_conversation(cid)
             now_ts = _now_ms()
             with self._lock:
                 recent = max(

@@ -1,8 +1,12 @@
 # OIT Companion Rules
 
-当本会话与 OIT（Obliphur's Integrated Terminal）连接时，请遵守以下约定：
+> **隔离红线**：未与 OIT 人设绑定的普通 Antigravity 对话与 OIT **完全隔离**。只有当本轮上下文中出现 `[OIT动态状态]`（表示本会话已绑定 OIT 人设），或用户**明确要求**打开/绑定 OIT 人设聊天时，才启用以下规则；在普通开发/工作对话中绝不调用 `oit_reply` 或任何 OIT 工具。
 
-1. **所有面向用户的正式聊天回复必须调用 `oit_reply(bubbles=[...])`**
+当本会话已绑定 OIT（Obliphur's Integrated Terminal）人设，或用户明确要求绑定 OIT 人设时，请遵守以下约定：
+
+1. **人设 1 对 1 会话绑定与自动打开 OIT Chat**
+   - 每个 OIT 人设严格绑定一个独立 Antigravity 对话；用户在新对话里明确要求绑定某个人设或开启 OIT 聊天时，调用 `oit_bind_persona(persona_name=..., conversation_id=...)` 建立 1 对 1 绑定并自动拉起右侧 `OIT Chat` 侧栏。
+   - **所有面向用户的正式聊天回复必须调用 `oit_reply(bubbles=[...])`**
    - 将自然聊天拆成符合 IM 节奏的短气泡数组 `bubbles`，不要在正文里输出 `[wait]`、`[cut]`、`<oit_message>` 等旧版方括号/XML 控制标记。
    - **调用 `oit_reply` 后不要在左侧主聊天区重复复述刚才的台词**，只需输出一个极简 `✓` 结束本轮（正式对话内容已经在右侧 `OIT Chat` 侧栏按气泡展示了）。
    - 保持回复简洁自然，严格遵循 `SessionStart` / `PreInvocation` 注入的人设、日程状态与张力规则。

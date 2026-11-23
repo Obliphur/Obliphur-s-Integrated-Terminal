@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
-"""SessionStart Hook: bind Antigravity conversationId to OIT and inject static persona once."""
+"""SessionStart Hook: only inject OIT persona when this conversationId is already bound to an OIT persona.
 
-from hook_common import bridge_get, bridge_post, read_stdin_json, write_stdout_json
+Unbound conversations remain completely isolated from OIT so users can use Antigravity for other tasks freely.
+"""
+
+from hook_common import bridge_get, read_stdin_json, write_stdout_json
 
 
 def main():
@@ -11,7 +14,10 @@ def main():
         write_stdout_json({})
         return
     try:
-        bridge_post("/session/bind", {"conversation_id": cid, "host": "antigravity"})
+        chk = bridge_get("/session/check", {"conversation_id": cid})
+        if not chk.get("bound"):
+            write_stdout_json({})
+            return
         persona = bridge_get("/persona/active")
         parts = []
         if persona.get("system_prompt"):

@@ -59,9 +59,17 @@ def main():
         assert health["ok"] and health["takeover"] == "antigravity"
         assert not health["persona_name"].lower().endswith(".txt"), f"人设名不应带 .txt 后缀: {health['persona_name']}"
 
-        # 2. 会话绑定 + SSE 订阅 + 主动事件推送与原子消费
+        # 2. 会话绑定 + 1对1人设自动切换验证 + SSE 订阅 + 主动事件推送与原子消费
+        with open(os.path.join(personas_dir, "Beta.txt"), "w", encoding="utf-8") as fh:
+            fh.write("你是 Beta。")
+        first_pid = c.pid
         bind = _http_json(port, bridge.token, "/session/bind", {"conversation_id": "conv-1", "host": "antigravity"})
         assert bind["ok"] and bind["subagent_routes"]["subject"]["mode"] == "host_subagent"
+        bind2 = _http_json(port, bridge.token, "/session/bind", {"conversation_id": "conv-2", "persona_name": "Beta", "host": "antigravity"})
+        assert bind2["ok"] and bind2["persona_name"] == "Beta" and c.pid == bind2["persona_id"]
+        # 切回 conv-1 时自动切回第一个人设，不串台
+        ctx_back = _http_json(port, bridge.token, "/turn/context?conversation_id=conv-1&consume_trigger=0")
+        assert ctx_back["persona_id"] == first_pid and c.pid == first_pid, "切换绑定对话应自动切回对应人设"
 
         sse_events = []
 
@@ -134,6 +142,23 @@ def main():
             capture_output=True, text=True, encoding="utf-8", env=hook_env, timeout=10, check=True,
         )
         assert json.loads(p2.stdout) == {}, "invocationNum != 1 不应重复注入"
+
+        # 6b. 未绑定对话必须与 OIT 完全隔离（SessionStart / PreInvocation / fallback_sync 均不注入不同步）
+        ss_script = os.path.join(ROOT, "antigravity_plugin", "scripts", "hook_session_start.py")
+        p_unb_ss = subprocess.run(
+            [sys.executable, ss_script],
+            input=json.dumps({"conversationId": "conv-unbound"}),
+            capture_output=True, text=True, encoding="utf-8", env=hook_env, timeout=10, check=True,
+        )
+        assert json.loads(p_unb_ss.stdout) == {}, "未绑定对话不应触发 SessionStart 注入"
+        p_unb_pre = subprocess.run(
+            [sys.executable, hook_script],
+            input=json.dumps({"conversationId": "conv-unbound", "invocationNum": 1, "lastUserInput": "写一段 Python"}),
+            capture_output=True, text=True, encoding="utf-8", env=hook_env, timeout=10, check=True,
+        )
+        assert json.loads(p_unb_pre.stdout) == {}, "未绑定对话不应触发 PreInvocation 注入"
+        fb_unb = _http_json(port, bridge.token, "/turn/fallback_sync", {"conversation_id": "conv-unbound", "text": "普通工作回答"})
+        assert fb_unb.get("skipped") == "unbound_conversation"
 
         # 7. TypeScript MCP Server (stdio) 端到端协议与资源验证
         server_js = os.path.join(ROOT, "antigravity_plugin", "server", "dist", "index.js")

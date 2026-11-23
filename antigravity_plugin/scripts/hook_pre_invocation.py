@@ -15,9 +15,13 @@ def main():
         res = bridge_get("/turn/context", {
             "conversation_id": cid,
             "host": "antigravity",
+            "only_bound": "1",
             "consume_trigger": "1",
             "last_user_input": last_input[:1000],
         })
+        if res.get("bound") is False:
+            write_stdout_json({})
+            return
         sys_msg = str(res.get("system_message") or "").strip()
         if sys_msg:
             write_stdout_json({

@@ -43,9 +43,17 @@ const elReadonlyHint = document.getElementById("readonlyHint") as HTMLDivElement
 
 const renderedIds = new Set<string>();
 const scheduledTimers = new Map<string, number>();
+let activePersonaId = "";
 let cursor = 0;
 let polling = false;
 let canSendMessage = false;
+const elMaxHint = document.getElementById("maxHint") as HTMLSpanElement | null;
+
+function updateMaxHint() {
+  if (!elMaxHint) return;
+  elMaxHint.style.display = window.innerWidth >= 760 ? "none" : "inline";
+}
+window.addEventListener("resize", updateMaxHint);
 
 function fmtTime(ts?: number): string {
   if (!ts) return "";
@@ -187,6 +195,21 @@ function renderBanners(banners?: UiState["banners"]) {
 }
 
 function applyState(state: UiState) {
+  const incomingPid = String(state.persona_id || "");
+  if (incomingPid && activePersonaId && incomingPid !== activePersonaId) {
+    // 切换到了另一位人设的绑定对话：清空旧 DOM 与去重集，重新拉取新人设完整消息与头像
+    activePersonaId = incomingPid;
+    clearPendingTimers();
+    renderedIds.clear();
+    elMessages.innerHTML = "";
+    cursor = 0;
+    void loadAvatar();
+    void pollState(true);
+    return;
+  }
+  if (incomingPid && !activePersonaId) {
+    activePersonaId = incomingPid;
+  }
   if (state.persona_name) {
     elPersona.textContent = state.persona_name.replace(/\.(txt|md|oitp)$/i, "");
   }
@@ -204,11 +227,12 @@ function applyState(state: UiState) {
   renderBanners(state.banners);
 }
 
-async function pollState() {
-  if (polling) return;
+async function pollState(forceReset = false) {
+  if (polling && !forceReset) return;
   polling = true;
   try {
-    const state = (await callAppTool("oit_ui_state", { cursor })) as unknown as UiState;
+    const reqCursor = forceReset ? 0 : cursor;
+    const state = (await callAppTool("oit_ui_state", { cursor: reqCursor })) as unknown as UiState;
     applyState(state);
   } catch {
     elStatus.textContent = "等待 OIT 连接…";
@@ -315,6 +339,7 @@ async function boot() {
   if (ctx?.styles?.variables) applyHostStyleVariables(ctx.styles.variables);
 
   refreshCapabilities();
+  updateMaxHint();
 
   await pollState();
   void loadAvatar();
