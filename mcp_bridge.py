@@ -1008,12 +1008,31 @@ def deploy_antigravity_plugin(data_dir: str, on_progress=None, plugin_dir: str =
 
         report("正在安装插件到 Antigravity…")
         ok, out = run([agy_exe, "plugin", "install", staged], staged, 60)
-        if not ok and ("Access is denied" in out or "already installed" in out.lower()):
-            time.sleep(0.8)
-            ok, out = run([agy_exe, "plugin", "install", staged], staged, 60)
+        if not ok and ("Access is denied" in out or "moving the installed plugin" in out):
+            # Windows 上 Antigravity 正在运行已安装的 oit 插件时，会锁住 plugins/oit 目录导致 rename 失败；
+            # 此时改为原地更新已通过 agy plugin validate 的文件（node 已把 JS 读入内存，单文件覆盖不会冲突）。
+            installed_dir = os.path.join(os.path.expanduser("~"), ".gemini", "config", "plugins", "oit")
+            if os.path.isdir(installed_dir):
+                try:
+                    for root_d, _dirs, files in os.walk(staged):
+                        rel_d = os.path.relpath(root_d, staged)
+                        dst_d = installed_dir if rel_d == "." else os.path.join(installed_dir, rel_d)
+                        os.makedirs(dst_d, exist_ok=True)
+                        for fname in files:
+                            shutil.copy2(os.path.join(root_d, fname), os.path.join(dst_d, fname))
+                    ok = True
+                    steps_done.append("检测到插件运行中，已原地更新 oit 插件（在 Antigravity MCP Servers 点 Restart 生效）")
+                except OSError as exc:
+                    return {"ok": False, "error": f"插件正在运行且原地更新失败（请先在 Antigravity 暂停/重启插件后重试）：\n{exc}"}
+            else:
+                time.sleep(0.8)
+                ok, out = run([agy_exe, "plugin", "install", staged], staged, 60)
+                if ok:
+                    steps_done.append("已安装插件 oit 到 Antigravity")
+        elif ok:
+            steps_done.append("已安装插件 oit 到 Antigravity")
         if not ok:
             return {"ok": False, "error": f"插件安装失败：\n{out[-600:]}"}
-        steps_done.append("已安装插件 oit 到 Antigravity")
     finally:
         shutil.rmtree(stage_root, ignore_errors=True)
 
