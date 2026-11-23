@@ -570,17 +570,35 @@ class CommPage(CommVoiceMixin, tk.Frame):
             return
         self.entry.delete("1.0", "end")
         self._pending_image = ""
-        self.btn_image.config(text="📎")
         self.refresh(force=True)
+
+    def _set_pending_image(self, path: str) -> bool:
+        """暂存待发送图片；附件按钮始终保持 📎，避免和识字按钮混淆。"""
+        try:
+            if not os.path.isfile(path):
+                return False
+            if os.path.getsize(path) > ai_assist.OCR_MAX_BYTES:
+                toast.warn(tr("图片太大了 (最大 4.5 MB)"))
+                return False
+            with open(path, "rb") as stream:
+                data = stream.read()
+            if not ai_assist.image_mime(data):
+                toast.warn(tr("只支持 PNG / JPG / WEBP / GIF 图片"))
+                return False
+        except OSError:
+            toast.warn(tr("打不开这张图片."))
+            return False
+        self._pending_image = path
+        self.btn_image.config(text="📎")
+        self.entry.focus_set()
+        return True
 
     def _pick_image(self):
         from tkinter import filedialog
         path = filedialog.askopenfilename(parent=self.winfo_toplevel(), title=tr("选择图片"),
                 filetypes=[(tr("图片"), "*.png *.jpg *.jpeg *.webp *.gif"), (tr("所有文件"), "*.*")])
         if path:
-            self._pending_image = path
-            self.btn_image.config(text="🖼")
-            self.entry.focus_set()
+            self._set_pending_image(path)
 
     def _paste_image(self, _event=None):
         try:
@@ -588,14 +606,13 @@ class CommPage(CommVoiceMixin, tk.Frame):
             path = next((p for p in candidates if os.path.splitext(p)[1].lower() in
                          (".png", ".jpg", ".jpeg", ".webp", ".gif")), "")
             if path:
-                self._pending_image = path
-                self.btn_image.config(text="🖼")
-                return "break"
-            from tempstore import path as temp_path
-            target = temp_path("misc", "comm-paste.png")
-            if avatar_mod.clipboard_image(target):
-                self._pending_image = target
-                self.btn_image.config(text="🖼")
+                if self._set_pending_image(path):
+                    return "break"
+            from tempstore import mkstemp
+            fd, target = mkstemp("misc", prefix="comm-paste-", suffix=".png")
+            os.close(fd)
+            os.unlink(target)
+            if avatar_mod.clipboard_image(target) and self._set_pending_image(target):
                 return "break"
         except Exception:
             return None

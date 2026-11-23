@@ -60,6 +60,22 @@ try:
             config.UI_SCALE = scale
             page = CommPage(root, c)
             page.pack(fill="both", expand=True)
+            # 图片附件按钮始终是 📎；剪贴板位图写入的是临时文件而不是目录。
+            image_file = os.path.join(folder, "paste.png")
+            with open(image_file, "wb") as stream:
+                stream.write(b"\x89PNG\r\n\x1a\n" + b"test")
+            assert page._set_pending_image(image_file)
+            assert page.btn_image.cget("text") == "📎"
+            def copy_bitmap(target):
+                with open(target, "wb") as stream:
+                    stream.write(b"\x89PNG\r\n\x1a\n" + b"test")
+                return target
+            with patch("pages.comm_page.avatar_mod.clipboard_paths", return_value=[]), \
+                    patch("pages.comm_page.avatar_mod.clipboard_image", side_effect=copy_bitmap) as copy_image:
+                assert page._paste_image() == "break"
+                assert os.path.isfile(copy_image.call_args.args[0])
+                assert page.btn_image.cget("text") == "📎"
+            page._pending_image = ""
             # 阅读入口的两个选择和关闭行为, 中英文均走真实按钮回调。
             assert page.btn_coread.cget("text") == "📚"
             opened = page.on_coread = Mock()
