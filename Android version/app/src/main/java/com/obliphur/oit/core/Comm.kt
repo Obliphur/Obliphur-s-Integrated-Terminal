@@ -4801,7 +4801,7 @@ class Comm(
     /** 首次初始化默认头像；升级只替换指纹一致的旧内置图，自选或移除的头像保持不动。 */
     fun seedDefaultAvatar(main: ByteArray?, full: ByteArray?) {
         val priorVersion = defaultAvatarVersion
-        if (priorVersion >= 4) return
+        if (priorVersion >= 5) return
         if (main == null || full == null) return
         val name = "Claudia.txt"
         if (listPersonas().contains(name)) {
@@ -4809,11 +4809,17 @@ class Comm(
             val dstFull = File(dst.parentFile, dst.name.replace(".png", ".full.png"))
             val copied = runCatching {
                 dst.parentFile?.mkdirs()
-                fun matches(file: File, sha256: String) = file.isFile &&
+                fun matches(file: File, sha256s: Set<String>) = file.isFile &&
                     java.security.MessageDigest.getInstance("SHA-256").digest(file.readBytes())
-                        .joinToString("") { "%02x".format(it) } == sha256
-                val oldMain = "2708f7409a1c79a562af8cc9635edb30a9e8c415034f102faaf7cfaa2e788c21"
-                val oldFull = "00eeccf953e568441cf8cb9e8e8ebe36d0f6010862fb543123f61a713e454341"
+                        .joinToString("") { "%02x".format(it) } in sha256s
+                val oldMain = setOf(
+                    "2708f7409a1c79a562af8cc9635edb30a9e8c415034f102faaf7cfaa2e788c21",
+                    "243cbbdeed7d22a6a2d671eca2e7e41c3cebebc83e83141004128c46e4c1712f",
+                )
+                val oldFull = setOf(
+                    "00eeccf953e568441cf8cb9e8e8ebe36d0f6010862fb543123f61a713e454341",
+                    "243cbbdeed7d22a6a2d671eca2e7e41c3cebebc83e83141004128c46e4c1712f",
+                )
                 val initial = priorVersion == 0 && !dst.exists()
                 if ((initial && !dst.exists()) || matches(dst, oldMain))
                     dst.writeBytes(main)
@@ -4822,7 +4828,7 @@ class Comm(
             }
             if (copied.isFailure) return
         }
-        defaultAvatarVersion = 4
+        defaultAvatarVersion = 5
         saveCfg()
     }
 

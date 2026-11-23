@@ -33,8 +33,14 @@ from comm.comm_util import (OIT_TAG, COND_TAG, WEEKDAY, MAX_MSG_CHARS, HISTORY_S
                        is_claudia, is_refusal, stamp, urlsplit_host, info_tags, joint_answer, _joint_time, clip_message,
                        cache_layout, oit_text, first_turn, api_messages, sanitize_mem)
 
-_LEGACY_CLAUDIA_AVATAR = "2708f7409a1c79a562af8cc9635edb30a9e8c415034f102faaf7cfaa2e788c21"
-_LEGACY_CLAUDIA_FULL = "00eeccf953e568441cf8cb9e8e8ebe36d0f6010862fb543123f61a713e454341"
+_LEGACY_CLAUDIA_AVATARS = {
+    "2708f7409a1c79a562af8cc9635edb30a9e8c415034f102faaf7cfaa2e788c21",
+    "243cbbdeed7d22a6a2d671eca2e7e41c3cebebc83e83141004128c46e4c1712f",
+}
+_LEGACY_CLAUDIA_FULLS = {
+    "00eeccf953e568441cf8cb9e8e8ebe36d0f6010862fb543123f61a713e454341",
+    "243cbbdeed7d22a6a2d671eca2e7e41c3cebebc83e83141004128c46e4c1712f",
+}
 
 
 def _avatar_hash(path):
@@ -68,7 +74,7 @@ class ChatMixin:
     def _seed_default_avatars(self):
         """首次初始化默认头像；升级只替换指纹一致的旧内置图，不覆盖自选或恢复已移除的头像。"""
         version = int(self.cfg.get("default_avatars") or 0)
-        if version >= 4:
+        if version >= 5:
             return
         names = set(list_personas(self.personas))
         complete = True
@@ -84,11 +90,11 @@ class ChatMixin:
             try:
                 initial = version == 0 and not os.path.exists(dst)
                 os.makedirs(os.path.dirname(dst), exist_ok=True)
-                for source, target, old_hash in (
-                        (src, dst, _LEGACY_CLAUDIA_AVATAR),
-                        (src[:-4] + ".full.png", dst[:-4] + ".full.png", _LEGACY_CLAUDIA_FULL)):
+                for source, target, old_hashes in (
+                        (src, dst, _LEGACY_CLAUDIA_AVATARS),
+                        (src[:-4] + ".full.png", dst[:-4] + ".full.png", _LEGACY_CLAUDIA_FULLS)):
                     legacy = (persona == "Claudia.txt" and os.path.isfile(target)
-                              and _avatar_hash(target) == old_hash)
+                              and _avatar_hash(target) in old_hashes)
                     if not (initial and not os.path.exists(target) or legacy):
                         continue
                     if not os.path.isfile(source):
@@ -98,7 +104,7 @@ class ChatMixin:
             except OSError:
                 complete = False
         if complete:
-            self.cfg["default_avatars"] = 4
+            self.cfg["default_avatars"] = 5
             self.save_cfg()
 
     def avatar_path(self, who: str) -> str:
