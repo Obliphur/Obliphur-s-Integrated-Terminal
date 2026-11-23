@@ -320,6 +320,24 @@ class OitMcpBridge:
         self._emit_sse("proactive", event)
         return event
 
+    def push_user_message(self, persona_id: str, text: str) -> bool:
+        """用户在 OIT 桌面端或同步手机端直接发消息时，转发给 Sidecar 唤醒对应 Antigravity 对话；返回是否有活跃 Sidecar 接收。"""
+        cid = self._conversation_for_persona(persona_id)
+        if not cid or not str(text or "").strip():
+            return False
+        with self._lock:
+            has_client = bool(self._sse_clients)
+        if not has_client:
+            return False
+        self._emit_sse("user_message", {
+            "event": "user_message",
+            "persona_id": persona_id,
+            "conversation_id": cid,
+            "text": str(text).strip(),
+            "ts": _now_ms(),
+        })
+        return True
+
     def _sessions_map(self) -> dict:
         sessions = self.comm.cfg.setdefault("mcp_sessions", {})
         if not isinstance(sessions, dict):

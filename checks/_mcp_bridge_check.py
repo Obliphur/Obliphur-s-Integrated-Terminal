@@ -87,6 +87,14 @@ def main():
         # 切回 conv-1 供后续步骤使用
         _http_json(port, bridge.token, "/turn/context?conversation_id=conv-1&consume_trigger=0")
 
+        # 2b. Antigravity 接管模式下在 OIT 内直接 send() 绝不调用 agy CLI（无 Sidecar 时给出友好提示）
+        cli_called = []
+        c.chat_fn = lambda *a, **kw: cli_called.append((a, kw)) or ""
+        c.send("在 OIT 里直接发一条")
+        c._request("chat")
+        assert not cli_called, "Antigravity 接管模式下绝不能再调用 CLI/chat_fn"
+        assert "Antigravity" in c.error, f"无活跃 Sidecar 时应给出友好提示，实际: {c.error}"
+
         sse_events = []
 
         def read_sse():

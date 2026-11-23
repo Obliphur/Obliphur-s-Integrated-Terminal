@@ -47,8 +47,13 @@ def load_bridge() -> dict:
 
 def dispatch_event(event: dict):
     cid = str(event.get("conversation_id") or "").strip()
+    kind = str(event.get("kind") or event.get("event") or "proactive")
+    if kind == "user_message":
+        text = str(event.get("text") or "").strip()
+        if cid and text:
+            subprocess.run(["agentapi", "send-message", cid, text], check=False)
+        return
     display_time = str(event.get("display_time") or "...").strip()
-    kind = str(event.get("kind") or "proactive")
     if kind == "memory_compact":
         subprocess.run(
             ["agentapi", "new-conversation", "--", "请使用 oit-memory-compact 子代理整理当前 OIT 记忆卡并通过 oit_memory_save_auto 写回。"],
@@ -73,7 +78,7 @@ def consume_sse(cfg: dict):
                 if data_lines:
                     try:
                         payload = json.loads("\n".join(data_lines))
-                        if event_name == "proactive" or payload.get("event") == "proactive":
+                        if event_name in ("proactive", "user_message") or payload.get("event") in ("proactive", "user_message"):
                             dispatch_event(payload)
                     except Exception as exc:
                         sys.stderr.write(f"[oit-sidecar] event error: {exc}\n")

@@ -1955,4 +1955,7 @@ EN = {
     "1. 新建对话，点右侧辅面板「+」打开 OIT Chat；": "1. Start a new conversation and open OIT Chat from the right side pane '+' menu;",
     "2. 若需主动对话，请在 Automations / Sidecars 手动开启 OIT Proactive Bridge 并选择目标项目。": "2. For proactive messaging, manually enable OIT Proactive Bridge in Automations / Sidecars and select a project.",
     "Antigravity 自动部署完成.": "Antigravity auto-deploy completed.",
+    "已由 Antigravity 桌面版接管，但本地 MCP Bridge 未启动；请在设置中重新开启接管或点击自动部署。": "Taken over by Antigravity Desktop, but the local MCP Bridge is not running. Re-enable takeover or click Auto-Deploy in Settings.",
+    "已由 Antigravity 桌面版接管：请先在 Antigravity 中新建对话并绑定此人设，再在 OIT Chat 中对话。": "Taken over by Antigravity Desktop: create a conversation in Antigravity, bind this persona, and chat via OIT Chat.",
+    "已由 Antigravity 桌面版接管：未检测到运行中的 OIT Proactive Bridge，请在 Antigravity 的 OIT Chat 侧栏发送消息，或在 Automations 中开启该 Sidecar。": "Taken over by Antigravity Desktop: OIT Proactive Bridge is not running. Send messages in the OIT Chat side pane or enable the Sidecar in Automations.",
 }

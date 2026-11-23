@@ -254,6 +254,31 @@ class FlowMixin:
         self._push()
 
     def _request(self, kind: str, extra=None, reading_context: str = ""):
+        if ai_assist.ai_config.chat_takeover() == "antigravity":
+            bridge = getattr(self, "mcp_bridge", None)
+            if bridge is None:
+                self.error = tr("已由 Antigravity 桌面版接管，但本地 MCP Bridge 未启动；请在设置中重新开启接管或点击自动部署。")
+                self._changed()
+                return
+            cid = bridge._conversation_for_persona(self.pid)
+            if not cid:
+                self.error = tr("已由 Antigravity 桌面版接管：请先在 Antigravity 中新建对话并绑定此人设，再在 OIT Chat 中对话。")
+                self._changed()
+                return
+            if extra:
+                bridge.push_proactive(self.pid, str(extra[0] or ""), kind=kind)
+                self.error = ""
+                self._changed()
+                return
+            last_me = next((str(m.get("text") or "").strip() for m in reversed(self.messages)
+                            if m.get("role") == "me" and str(m.get("text") or "").strip()), "")
+            if last_me:
+                if bridge.push_user_message(self.pid, last_me):
+                    self.error = ""
+                else:
+                    self.error = tr("已由 Antigravity 桌面版接管：未检测到运行中的 OIT Proactive Bridge，请在 Antigravity 的 OIT Chat 侧栏发送消息，或在 Automations 中开启该 Sidecar。")
+                self._changed()
+            return
         if self.busy:
             self._again = True
             return
