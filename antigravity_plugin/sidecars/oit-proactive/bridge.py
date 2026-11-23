@@ -88,7 +88,7 @@ def dispatch_event(event: dict):
     if kind == "user_message":
         text = str(event.get("text") or "").strip()
         if cid and text:
-            _run_agentapi(["agentapi", "send-message", cid, "--", text])
+            _run_agentapi(["agentapi", "send-message", cid, text])
         return
     display_time = str(event.get("display_time") or "...").strip()
     if kind == "memory_compact":
@@ -98,7 +98,7 @@ def dispatch_event(event: dict):
         ])
         return
     if cid:
-        _run_agentapi(["agentapi", "send-message", cid, "--", display_time])
+        _run_agentapi(["agentapi", "send-message", cid, display_time])
     else:
         _run_agentapi(["agentapi", "new-conversation", "--", display_time])
 

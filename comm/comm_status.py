@@ -200,6 +200,12 @@ class StatusMixin:
 
     def _profile_problem(self) -> str:
         """API / 人设没配置好的原因 ("" = 可以)."""
+        if ai_assist.ai_config.chat_takeover() == "antigravity":
+            if getattr(self, "mcp_bridge", None) is None:
+                return "Antigravity 本地桥接未启动"
+            if not self.persona_name():
+                return "还没有选人设"
+            return ""
         try:
             ai_assist.check_profile(self.profile())
         except ai_assist.AIError as e:

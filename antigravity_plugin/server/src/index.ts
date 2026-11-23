@@ -382,7 +382,7 @@ function createOitServer(): Server {
       if (name === "oit_get_turn_context") {
         const res = await bridgeGet("/turn/context", {
           conversation_id: args.conversation_id as string | undefined,
-          host: (args.host as string | undefined) || "generic",
+          host: args.host as string | undefined,
           consume_trigger: args.consume_trigger === false ? "0" : "1",
         });
         return {
