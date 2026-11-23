@@ -14,6 +14,18 @@
         "timeout": 10
       }
     ],
+    "PreToolUse": [
+      {
+        "matcher": "call_mcp_tool|.*oit_.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python ./scripts/hook_pre_tool_use.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "type": "command",

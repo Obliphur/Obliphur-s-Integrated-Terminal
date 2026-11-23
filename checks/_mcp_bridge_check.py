@@ -70,6 +70,22 @@ def main():
         # 切回 conv-1 时自动切回第一个人设，不串台
         ctx_back = _http_json(port, bridge.token, "/turn/context?conversation_id=conv-1&consume_trigger=0")
         assert ctx_back["persona_id"] == first_pid and c.pid == first_pid, "切换绑定对话应自动切回对应人设"
+        # 严格排斥：conv-3 试图重复绑定已绑给 conv-2 的 Beta（未传 force=True）必须被拒绝
+        conflict = _http_json(port, bridge.token, "/tool/execute", {
+            "name": "oit_bind_persona",
+            "arguments": {"persona_name": "Beta", "conversation_id": "conv-3"},
+        })
+        assert conflict["ok"] is False and conflict.get("conflict") is True and conflict.get("bound_conversation_id") == "conv-2"
+        # 显式传 force=True 才允许解绑旧对话并迁移绑定
+        rebind = _http_json(port, bridge.token, "/tool/execute", {
+            "name": "oit_bind_persona",
+            "arguments": {"persona_name": "Beta", "conversation_id": "conv-3", "force": True},
+        })
+        assert rebind["ok"] is True
+        chk_old = _http_json(port, bridge.token, "/session/check?conversation_id=conv-2")
+        assert chk_old["bound"] is False, "强制改绑后旧对话应解除绑定"
+        # 切回 conv-1 供后续步骤使用
+        _http_json(port, bridge.token, "/turn/context?conversation_id=conv-1&consume_trigger=0")
 
         sse_events = []
 

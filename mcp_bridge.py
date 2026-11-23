@@ -460,16 +460,42 @@ class OitMcpBridge:
                 self._ensure_persona_for_conversation(cid)
             else:
                 target_name = self._resolve_persona_name(req_name) if req_name else ""
+                if req_name and not target_name:
+                    return {"ok": False, "error": f"未找到人设 {req_name}"}
+                if req_pid and not target_name:
+                    target_name = self._persona_name_by_pid(req_pid)
+                if target_name:
+                    from comm.comm_persona import pid_of
+                    pid = pid_of(target_name)
+                else:
+                    pid = req_pid or str(getattr(self.comm, "pid", "") or "").strip()
+
+                # 严格 1:1 排斥：若该人设已绑定到其他对话且未传 force=True，拒绝重复绑定
+                other_cids = [k for k, v in sessions.items()
+                              if k != cid and isinstance(v, dict) and v.get("persona_id") == pid]
+                if other_cids and not force:
+                    disp = _display_persona_name(self.comm)
+                    if target_name:
+                        from comm.comm_persona import persona_title
+                        disp = persona_title(target_name)
+                    return {
+                        "ok": False,
+                        "conflict": True,
+                        "persona_id": pid,
+                        "bound_conversation_id": other_cids[0],
+                        "error": f"人设「{disp}」已绑定到另一个对话（{other_cids[0]}），不能同时绑定多个对话；请切回原对话，或传入 force=true 强制解绑旧对话并改绑到当前对话。",
+                    }
+                if existing and existing.get("persona_id") and existing.get("persona_id") != pid and not force:
+                    return {
+                        "ok": False,
+                        "conflict": True,
+                        "conversation_id": cid,
+                        "bound_persona_id": existing.get("persona_id"),
+                        "error": "当前对话已绑定其他人设；请新建对话，或传入 force=true 改绑。",
+                    }
                 if target_name and hasattr(self.comm, "set_persona"):
                     self.comm.set_persona(target_name)
-                if req_pid and not target_name:
-                    pname = self._persona_name_by_pid(req_pid)
-                    if pname and hasattr(self.comm, "set_persona"):
-                        self.comm.set_persona(pname)
-                pid = req_pid or str(getattr(self.comm, "pid", "") or "").strip()
-                # 保证 1:1：移除该人设此前绑定的旧会话
-                for old_cid in [k for k, v in sessions.items()
-                                if k != cid and isinstance(v, dict) and v.get("persona_id") == pid]:
+                for old_cid in other_cids:
                     sessions.pop(old_cid, None)
                 sessions[cid] = {"persona_id": pid, "host": host, "ts": _now_ms()}
                 if hasattr(self.comm, "save_cfg"):
@@ -607,21 +633,46 @@ class OitMcpBridge:
             if name == "oit_bind_persona":
                 target_cid = str(args.get("conversation_id") or cid or "").strip()
                 target_name = str(args.get("persona_name") or "").strip()
+                force = bool(args.get("force"))
+                if not target_cid:
+                    return {"ok": False, "error": "缺少 conversation_id，无法建立 1 对 1 绑定。"}
                 if target_name:
                     resolved = self._resolve_persona_name(target_name)
                     if not resolved:
                         from comm.comm_persona import list_personas, persona_title
                         avail = [persona_title(n) for n in list_personas(self.comm.personas)]
                         return {"ok": False, "error": f"未找到人设 {target_name}", "available_personas": avail}
+                else:
+                    resolved = self.comm.persona_name() if hasattr(self.comm, "persona_name") else ""
+                from comm.comm_persona import persona_title, pid_of
+                pid = pid_of(resolved) if resolved else str(getattr(self.comm, "pid", "") or "")
+                sessions = self._sessions_map()
+                other_cids = [k for k, v in sessions.items()
+                              if k != target_cid and isinstance(v, dict) and v.get("persona_id") == pid]
+                if other_cids and not force:
+                    disp = persona_title(resolved) if resolved else _display_persona_name(self.comm)
+                    return {
+                        "ok": False,
+                        "conflict": True,
+                        "persona_id": pid,
+                        "bound_conversation_id": other_cids[0],
+                        "error": f"人设「{disp}」已绑定到另一个对话（{other_cids[0]}），不能同时绑定多个对话；请切回原对话，或传入 force=true 强制解绑旧对话并改绑到当前对话。",
+                    }
+                existing = sessions.get(target_cid) if isinstance(sessions.get(target_cid), dict) else None
+                if existing and existing.get("persona_id") and existing.get("persona_id") != pid and not force:
+                    return {
+                        "ok": False,
+                        "conflict": True,
+                        "conversation_id": target_cid,
+                        "bound_persona_id": existing.get("persona_id"),
+                        "error": "当前对话已绑定其他人设；请新建对话，或传入 force=true 改绑。",
+                    }
+                if resolved and hasattr(self.comm, "set_persona"):
                     self.comm.set_persona(resolved)
-                pid = str(getattr(self.comm, "pid", "") or "")
-                if target_cid:
-                    sessions = self._sessions_map()
-                    for old_cid in [k for k, v in sessions.items()
-                                    if k != target_cid and isinstance(v, dict) and v.get("persona_id") == pid]:
-                        sessions.pop(old_cid, None)
-                    sessions[target_cid] = {"persona_id": pid, "host": host, "ts": _now_ms()}
-                    self.comm.save_cfg()
+                for old_cid in other_cids:
+                    sessions.pop(old_cid, None)
+                sessions[target_cid] = {"persona_id": pid, "host": host, "ts": _now_ms()}
+                self.comm.save_cfg()
                 return {
                     "ok": True,
                     "persona_id": pid,

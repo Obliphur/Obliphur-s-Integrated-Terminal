@@ -53,12 +53,13 @@ function buildTools(): ToolSpec[] {
     {
       name: "oit_bind_persona",
       description:
-        "将当前对话与指定 OIT 人设严格 1 对 1 绑定（不传 persona_name 则绑定当前活跃人设）。绑定后请再调用 oit_reply 与用户打招呼以自动打开 OIT Chat。",
+        "将当前对话与指定 OIT 人设严格 1 对 1 排斥绑定（同一人设不能同时绑定两个对话；若目标人设已绑定其他对话会返回冲突错误，仅当用户明确要求解绑旧对话并迁移时才传 force=true）。绑定后再调用 oit_reply 与用户打招呼即可自动打开 OIT Chat。",
       inputSchema: {
         type: "object",
         properties: {
           persona_name: { type: "string", maxLength: 120 },
           conversation_id: { type: "string", maxLength: 120 },
+          force: { type: "boolean", description: "仅当用户明确要求解除旧对话绑定并迁移到当前对话时设为 true。" },
         },
         additionalProperties: false,
       },
