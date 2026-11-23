@@ -3,6 +3,7 @@
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -50,15 +51,34 @@ def _log(msg: str):
     sys.stderr.flush()
 
 
+def _find_agentapi() -> str:
+    for name in ("agentapi", "agentapi.exe", "agentapi.cmd", "agentapi.bat"):
+        found = shutil.which(name)
+        if found:
+            return found
+    for env_key in ("AGENTAPI_PATH", "ANTIGRAVITY_AGENTAPI"):
+        val = os.environ.get(env_key, "").strip()
+        if val and os.path.isfile(val):
+            return val
+    return ""
+
+
 def _run_agentapi(args: list):
+    exe = _find_agentapi()
+    if not exe:
+        _log(f"agentapi not found in PATH={os.environ.get('PATH', '')[:500]}")
+        return
+    cmd = [exe] + list(args[1:])
+    if os.name == "nt" and exe.lower().endswith((".cmd", ".bat")):
+        cmd = ["cmd.exe", "/c"] + cmd
     try:
-        proc = subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
         if proc.returncode != 0:
-            _log(f"agentapi failed rc={proc.returncode} args={args[:3]} err={(proc.stderr or proc.stdout).strip()[:300]}")
+            _log(f"agentapi failed rc={proc.returncode} exe={exe} args={args[:3]} err={(proc.stderr or proc.stdout).strip()[:300]}")
         else:
-            _log(f"agentapi ok args={args[:3]}")
+            _log(f"agentapi ok exe={exe} args={args[:3]}")
     except Exception as exc:
-        _log(f"agentapi exception: {exc}")
+        _log(f"agentapi exception exe={exe}: {exc}")
 
 
 def dispatch_event(event: dict):
