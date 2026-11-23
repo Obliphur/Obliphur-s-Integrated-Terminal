@@ -219,7 +219,18 @@ def main():
         aux_entries = [t for t in tools.values() if (t.get("_meta") or {}).get("com.google.antigravity/ui")]
         assert len(aux_entries) == 1, f"只能有 1 个 aux_pane 入口，避免菜单出现两个 OIT Chat: {[t['name'] for t in aux_entries]}"
         assert tools["oit_ui_state"]["_meta"]["ui"]["visibility"] == ["app"]
-        assert "oit_get_turn_context" in tools and "oit_memory_save_auto" in tools
+        assert "oit_get_turn_context" in tools and "oit_memory_save_auto" in tools and "oit_claudia_reference" in tools
+        assert tools["oit_claudia_reference"]["annotations"]["readOnlyHint"] is True
+
+        claudia_res = rpc({
+            "jsonrpc": "2.0", "id": 5, "method": "tools/call",
+            "params": {"name": "oit_claudia_reference", "arguments": {}},
+        })
+        assert not claudia_res["result"].get("isError")
+        cfiles = claudia_res["result"]["structuredContent"]["files"]
+        for req_name in ("Claudia.txt", "Claudia_background.txt", "Claudia_example.txt", "Claudia_templates.txt", "Claudia_profile.txt"):
+            assert req_name in cfiles and cfiles[req_name].strip(), f"应返回已解密的 {req_name}"
+            assert not cfiles[req_name].startswith("OIT-PERSONA-ENC:"), f"{req_name} 必须先解密再返回"
 
         res_read = rpc({"jsonrpc": "2.0", "id": 3, "method": "resources/read", "params": {"uri": "ui://oit/chat.html"}})
         html = res_read["result"]["contents"][0]["text"]
@@ -362,6 +373,9 @@ def main():
             assert "用完删除" in takeover_feature_help_text(feat, en=False)
             assert "Delete the temporary conversation" in takeover_feature_help_text(feat, en=True)
             assert takeover_feature_prompt(feat, en=False) and takeover_feature_prompt(feat, en=True)
+        assert "oit_claudia_reference" in takeover_feature_prompt("persona", en=False)
+        assert "简略" in takeover_feature_prompt("persona", en=False) and "详细" in takeover_feature_prompt("persona", en=False)
+        assert "Brief" in takeover_feature_prompt("persona", en=True) and "Detailed" in takeover_feature_prompt("persona", en=True)
         root = tk.Tk()
         root.withdraw()
         try:

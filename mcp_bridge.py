@@ -189,6 +189,8 @@ class OitMcpBridge:
                             res = bridge.handle_ui_media(qs)
                         elif path == "/persona/active":
                             res = bridge.handle_persona_active(qs)
+                        elif path == "/persona/claudia_reference":
+                            res = bridge.handle_claudia_reference()
                         else:
                             self._send_json(404, {"ok": False, "error": "not_found"})
                             return
@@ -634,6 +636,22 @@ class OitMcpBridge:
                 "persona_name": _display_persona_name(self.comm),
                 "system_prompt": system,
                 "memory_block": mem,
+            }
+        return self._call_main(work)
+
+    def handle_claudia_reference(self) -> dict:
+        """解密并返回目前存在的所有 Claudia 参考文件与 OIT 前置协议，供人设编写参考。"""
+        def work():
+            from comm.comm_author import claudia_reference_files
+            from comm.comm_prompt import prefix_prompt
+            folder = str(getattr(self.comm, "personas", "") or "")
+            files = claudia_reference_files(folder)
+            return {
+                "ok": True,
+                "personas_dir": folder,
+                "file_names": list(files.keys()),
+                "files": files,
+                "prefix_prompt": prefix_prompt(),
             }
         return self._call_main(work)
 
@@ -1485,12 +1503,16 @@ def takeover_feature_prompt(feature: str, en: bool = False) -> str:
     if en:
         return (
             "Bind the OIT Persona Authoring feature for this temporary conversation "
-            "(do not bind any persona). Please help me design and write an OIT persona file "
-            "(and optional routine/template) following OIT's persona format."
+            "(do not bind any persona). First call oit_claudia_reference to decrypt and read all existing "
+            "Claudia reference files; then ask me whether I want 'Brief' or 'Detailed' mode "
+            "(Detailed: as comprehensive as Claudia's files; Brief: only define the core persona without "
+            "detailed scenario rules, and keep the example file casual/lightweight) before drafting."
         )
     return (
         "为当前临时对话绑定 OIT「人设编写」功能（不要绑定人设）。"
-        "请按照 OIT 的人设文件与日程/模板格式，根据我接下来提供的设定要求帮我编写人设草稿。"
+        "请先调用 oit_claudia_reference 解密并读取目前存在的所有 Claudia 参考文件；"
+        "然后先询问我需要「简略」还是「详细」模式（详细：和 Claudia 人设一样面面俱到；"
+        "简略：不详细规定情景，只规定基础人设，example 文件随便写写），等我选定后再按 OIT 格式开始编写。"
     )
 
 
@@ -1510,7 +1532,7 @@ def takeover_feature_help_text(feature: str, en: bool = False) -> str:
             + (
                 "   • Describe what sites/apps you want to block or allow, review the suggestions, and add them in OIT Rules.\n\n"
                 if is_suggest else
-                "   • Describe your persona requirements, review the generated persona/routine files, and import them into OIT.\n\n"
+                "   • The AI will decrypt and reference all existing Claudia files, then ask whether you want 'Brief' or 'Detailed' mode before drafting.\n\n"
             )
             + "3. Delete the temporary conversation when done\n"
             "   • Once finished, simply delete that temporary conversation in Antigravity to keep your workspace clean.\n\n"
@@ -1529,7 +1551,7 @@ def takeover_feature_help_text(feature: str, en: bool = False) -> str:
         + (
             "   • 告诉模型你的专注目标或想拦截/放行的网站与应用，确认建议后在 OIT 规则页添加即可。\n\n"
             if is_suggest else
-            "   • 告诉模型人设名称、性格、语言风格与日程要求，确认草稿后导入到 OIT 人设文件夹即可。\n\n"
+            "   • 模型会先解密并参考目前存在的所有 Claudia 文件，并询问你需要「简略」还是「详细」模式，确认草稿后导入 OIT 人设文件夹即可。\n\n"
         )
         + "3. 用完删除临时对话\n"
         "   • 完成后直接在 Antigravity 中删除这个临时对话，保持会话列表整洁。\n\n"

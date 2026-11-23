@@ -175,6 +175,13 @@ function buildTools(): ToolSpec[] {
       },
     },
     {
+      name: "oit_claudia_reference",
+      description:
+        "解密并读取目前存在的所有 Claudia 参考文件（主设定、背景、对话范例、模板与简介）以及 OIT 聊天前置协议，供编写新 OIT 人设时参考。",
+      annotations: READONLY_ANNOTATIONS,
+      inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    },
+    {
       name: "oit_subject",
       description:
         "当用户为学科子代理单独配置了外部 API 时，委托 OIT 后端执行数理化教育子代理；若未配置外部 API，会返回路由提示以改用宿主原生子代理 oit-subject。",
@@ -379,6 +386,25 @@ function createOitServer(): Server {
     const args = (req.params.arguments || {}) as Record<string, unknown>;
 
     try {
+      if (name === "oit_claudia_reference") {
+        const res = await bridgeGet("/persona/claudia_reference");
+        const files = (res.files || {}) as Record<string, string>;
+        const sections = Object.entries(files).map(
+          ([fname, body]) => `=== ${fname} ===\n${body}`
+        );
+        const text = [
+          res.personas_dir ? `OIT_personas 目录: ${res.personas_dir}` : "",
+          res.prefix_prompt ? `=== OIT 前置协议 ===\n${res.prefix_prompt}` : "",
+          ...sections,
+        ]
+          .filter(Boolean)
+          .join("\n\n");
+        return {
+          content: [{ type: "text", text }],
+          structuredContent: res,
+        };
+      }
+
       if (name === "oit_get_turn_context") {
         const res = await bridgeGet("/turn/context", {
           conversation_id: args.conversation_id as string | undefined,

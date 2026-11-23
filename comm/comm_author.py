@@ -7,10 +7,33 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import ai_assist
-from .comm_builtin import BUILTIN_PERSONAS, DEFAULT_PERSONA, DEFAULT_BACKGROUND, DEFAULT_EXAMPLE, DEFAULT_ROUTINE
+from .comm_builtin import BUILTIN_PERSONAS, DEFAULT_PERSONA, DEFAULT_BACKGROUND, DEFAULT_EXAMPLE, DEFAULT_ROUTINE, DEFAULT_PROFILE
 from .comm_persona import PROFILE_SUFFIX, ROUTINE_SUFFIX, companion_base, list_personas
 from .comm_prompt import prefix_prompt
-from .persona_codec import MAX_PERSONA, encode
+from .persona_codec import MAX_PERSONA, decode, encode, protected_name, read_file as read_persona_file
+
+
+def claudia_reference_files(folder: str = "") -> dict[str, str]:
+    """读取并解密目前存在的所有 Claudia 参考文件（磁盘优先，缺失项回退内置文件）。"""
+    out: dict[str, str] = {}
+    if folder:
+        root = Path(folder)
+        if root.is_dir():
+            for path in sorted(root.iterdir(), key=lambda p: p.name.casefold()):
+                if not path.is_file() or path.name.lower().endswith(".bak"):
+                    continue
+                if protected_name(path.name):
+                    try:
+                        out[path.name] = read_persona_file(str(path))
+                    except (OSError, ValueError):
+                        pass
+    for name in (DEFAULT_PERSONA, DEFAULT_BACKGROUND, DEFAULT_EXAMPLE, DEFAULT_ROUTINE, DEFAULT_PROFILE):
+        if name not in out and name in BUILTIN_PERSONAS:
+            try:
+                out[name] = decode(BUILTIN_PERSONAS[name])
+            except ValueError:
+                pass
+    return out
 
 
 @dataclass(frozen=True)
@@ -32,7 +55,8 @@ def generate(profile, title: str, requirements: str, manual_profile: str,
     """只发送创作要求和内置参考，手写简介留在本机。"""
     ai_assist.check_profile(profile)
     system = (Path(__file__).resolve().parent.parent / "defaults" / "persona_author.txt").read_text(encoding="utf-8")
-    refs = [BUILTIN_PERSONAS[name] for name in (DEFAULT_PERSONA, DEFAULT_BACKGROUND, DEFAULT_EXAMPLE, DEFAULT_ROUTINE)]
+    claudia_files = claudia_reference_files()
+    refs = [f"=== {name} ===\n{content}" for name, content in claudia_files.items()]
     request = json.dumps({"name": title, "requirements": requirements.strip(),
                           "generate_profile": not manual_profile.strip()}, ensure_ascii=False)
     body = "\n\n".join(("【OIT 聊天前置协议】", prefix_prompt(), "【Claudia 参考文件】", *refs,
