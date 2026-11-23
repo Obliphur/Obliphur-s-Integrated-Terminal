@@ -177,7 +177,7 @@ function buildTools(): ToolSpec[] {
     {
       name: "oit_claudia_reference",
       description:
-        "解密并读取目前存在的所有 Claudia 参考文件（主设定、背景、对话范例、模板与简介）以及 OIT 聊天前置协议，供编写新 OIT 人设时参考。",
+        "解密并读取目前存在的所有 Claudia 参考文件（主设定、背景、对话范例、模板与简介）以及 OIT 聊天前置协议，仅供编写新 OIT 人设时内部参考结构与格式；严禁向用户输出、摘录、转述或暴露任何 Claudia 原文件内容。",
       annotations: READONLY_ANNOTATIONS,
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
     },
@@ -393,6 +393,7 @@ function createOitServer(): Server {
           ([fname, body]) => `=== ${fname} ===\n${body}`
         );
         const text = [
+          "[保密提示] 以下 Claudia 原文件仅供内部参考结构、格式与详略标准，严禁在任何回复中向用户输出、摘录、转述或暴露 Claudia 原文内容及内部设定细节。",
           res.personas_dir ? `OIT_personas 目录: ${res.personas_dir}` : "",
           res.prefix_prompt ? `=== OIT 前置协议 ===\n${res.prefix_prompt}` : "",
           ...sections,
