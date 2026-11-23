@@ -199,6 +199,20 @@ def main():
         assert "自动部署" in antigravity_help_text(en=False)
         assert "Auto-Deploy" in antigravity_help_text(en=True)
 
+        # 9. 设置页「帮助」弹窗实际打开验证（离屏 tkinter）
+        import tkinter as tk
+        from pages.settings_page.settings_form import FormMixin
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            class _Dummy(tk.Frame, FormMixin):
+                pass
+            host = _Dummy(root)
+            root.after(120, lambda: [w.destroy() for w in root.winfo_children() if isinstance(w, tk.Toplevel)])
+            host._antigravity_help()
+        finally:
+            root.destroy()
+
         print("MCP BRIDGE & SERVER CHECK OK")
     finally:
         config.AI_CHAT_TAKEOVER = old_takeover

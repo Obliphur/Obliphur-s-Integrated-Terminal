@@ -14,6 +14,7 @@ import secrets
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.parse
@@ -970,21 +971,51 @@ def deploy_antigravity_plugin(data_dir: str, on_progress=None, plugin_dir: str =
     else:
         steps_done.append("MCP Server 与侧栏 UI 已就绪")
 
-    # 3. 使用官方 agy CLI 校验并安装插件
+    # 3. 打包精简插件目录（排除 node_modules 与源码，避免 Windows Defender 锁文件导致 rename Access is denied）
     if not agy_exe:
         return {"ok": False, "error": "未检测到官方 agy 命令，请先安装 Antigravity 桌面版 / CLI 后重试。"}
 
-    report("正在校验 Antigravity 插件…")
-    ok, out = run([agy_exe, "plugin", "validate", pdir], pdir, 60)
-    if not ok:
-        return {"ok": False, "error": f"插件校验失败：\n{out[-600:]}"}
-    steps_done.append("已通过 agy plugin validate 校验")
+    stage_root = tempfile.mkdtemp(prefix="oit_ag_plugin_")
+    staged = os.path.join(stage_root, "oit")
+    try:
+        os.makedirs(staged, exist_ok=True)
+        for fname in ("plugin.json", "mcp_config.json", "hooks.json", "README.md", ".oit_data_dir"):
+            src = os.path.join(pdir, fname)
+            if os.path.isfile(src):
+                shutil.copy2(src, os.path.join(staged, fname))
+        for dname in ("rules", "agents", "scripts", "sidecars"):
+            src = os.path.join(pdir, dname)
+            if os.path.isdir(src):
+                shutil.copytree(src, os.path.join(staged, dname),
+                                ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        for rel in (os.path.join("server", "dist", "index.js"), os.path.join("ui", "dist", "index.html")):
+            src = os.path.join(pdir, rel)
+            if os.path.isfile(src):
+                dst = os.path.join(staged, rel)
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                shutil.copy2(src, dst)
+        # 仅当单文件 bundle 尚未启用时才兜底保留 server/package.json，防止 ESM import 识别异常
+        srv_pkg = os.path.join(staged, "server", "package.json")
+        os.makedirs(os.path.dirname(srv_pkg), exist_ok=True)
+        with open(srv_pkg, "w", encoding="utf-8") as fh:
+            json.dump({"type": "module"}, fh)
 
-    report("正在安装插件到 Antigravity…")
-    ok, out = run([agy_exe, "plugin", "install", pdir], pdir, 60)
-    if not ok:
-        return {"ok": False, "error": f"插件安装失败：\n{out[-600:]}"}
-    steps_done.append("已安装插件 oit 到 Antigravity")
+        report("正在校验 Antigravity 插件…")
+        ok, out = run([agy_exe, "plugin", "validate", staged], staged, 60)
+        if not ok:
+            return {"ok": False, "error": f"插件校验失败：\n{out[-600:]}"}
+        steps_done.append("已通过 agy plugin validate 校验")
+
+        report("正在安装插件到 Antigravity…")
+        ok, out = run([agy_exe, "plugin", "install", staged], staged, 60)
+        if not ok and ("Access is denied" in out or "already installed" in out.lower()):
+            time.sleep(0.8)
+            ok, out = run([agy_exe, "plugin", "install", staged], staged, 60)
+        if not ok:
+            return {"ok": False, "error": f"插件安装失败：\n{out[-600:]}"}
+        steps_done.append("已安装插件 oit 到 Antigravity")
+    finally:
+        shutil.rmtree(stage_root, ignore_errors=True)
 
     return {"ok": True, "steps": steps_done, "plugin_dir": pdir}
 

@@ -433,11 +433,12 @@ class FormMixin:
             self.after(0, lambda: finish(res))
 
         threading.Thread(target=worker, daemon=True, name="ag-auto-deploy").start()
+        dlg.wait()
 
     def _antigravity_help(self):
         """展示基于自动部署的 Antigravity 接管详细帮助。"""
         from mcp_bridge import antigravity_help_text
-        en = i18n.get_lang() == "en"
+        en = i18n.get_language() == "en"
         dlg = Modal(self.winfo_toplevel(), tr("Antigravity 接管帮助"),
                     width=config.scaled(640), height=config.scaled(520))
         area = ScrollArea(dlg.body, bg=COLORS["bg"])
@@ -448,6 +449,7 @@ class FormMixin:
         lbl.pack(fill="x", padx=4, pady=4)
         area.bind_children()
         ttk.Button(dlg.buttons, text=tr("关闭"), command=dlg.cancel).pack(side="right")
+        dlg.wait()
 
     def _run_ui_hooks(self, keys) -> bool:
         """语言 / 字号 / 主题改动后需要重建整个界面. 重建会销毁本页,
