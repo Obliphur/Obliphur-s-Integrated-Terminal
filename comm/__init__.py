@@ -1208,6 +1208,13 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         self._upgrade_companion(DEFAULT_EXAMPLE, (), "example_base", "EXAMPLE 范例文件", EXAMPLE_LEGACY_HASHES)
 
     def _upgrade_profile(self):
+        # 简介是用户可编辑的元数据；profile_base 只有摘要，无法区分旧内置文本和用户文本。
+        # 因此只补齐缺失、空白或无法读取的文件，任何可读取的非空简介都原样保留。
+        if not os.path.isfile(self._claudia_path()):
+            return
+        current = self._read_persona_raw(DEFAULT_PROFILE)
+        if current is not None and current.strip():
+            return
         self._upgrade_companion(DEFAULT_PROFILE, (), "profile_base", "PROFILE 简介文件")
 
     def _upgrade_companion(self, fname: str, legacies: tuple, key: str, label: str, legacy_hashes=()):

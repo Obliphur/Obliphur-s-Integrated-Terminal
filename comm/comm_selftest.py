@@ -1886,11 +1886,12 @@ def _selftest():
     upgraded = Comm(vd, vp, now=lambda: clock[0], chat_fn=fake)
     assert not upgraded.claudia_differs() and upgraded.check_persona_changes() is None
     assert upgraded.messages[-1]["text"] == "升级保留的聊天"
-    assert read_profile(vp, DEFAULT_PERSONA) == BUILTIN_PERSONAS[DEFAULT_PROFILE].strip()
+    previous_profile = current_files[DEFAULT_PROFILE] + "\n上一版内置内容"
+    assert read_profile(vp, DEFAULT_PERSONA) == previous_profile.strip()
     upgraded.flush()
     restarted = Comm(vd, vp, now=lambda: clock[0], chat_fn=fake)
     assert restarted.cfg["example_base"] == restarted._text_crc(BUILTIN_PERSONAS[DEFAULT_EXAMPLE])
-    assert restarted.cfg["profile_base"] == restarted._text_crc(BUILTIN_PERSONAS[DEFAULT_PROFILE])
+    assert restarted.cfg["profile_base"] == restarted._text_crc(previous_profile)
     restarted.flush()
     for broken in ("", " \n\t", "OIT-PERSONA-ENC:1\n损坏密文"):
         with open(os.path.join(vp, DEFAULT_PROFILE), "w", encoding="utf-8") as f:

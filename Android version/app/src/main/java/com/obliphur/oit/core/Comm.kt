@@ -3151,7 +3151,14 @@ class Comm(
     private fun upgradeRoutine() = upgradeCompanion(BuiltinPersonas.ROUTINE, BuiltinPersonas.ROUTINE_LEGACIES, routineBase, "ROUTINE 日程文件")
     private fun upgradeBackground() = upgradeCompanion(BuiltinPersonas.BACKGROUND, BuiltinPersonas.BACKGROUND_LEGACIES, backgroundBase, "BACKGROUND 背景文件")
     private fun upgradeExample() = upgradeCompanion(BuiltinPersonas.EXAMPLE, emptyList(), exampleBase, "EXAMPLE 范例文件", BuiltinPersonas.EXAMPLE_LEGACY_HASHES)
-    private fun upgradeProfile() = upgradeCompanion(BuiltinPersonas.PROFILE, emptyList(), profileBase, "PROFILE 简介文件")
+    private fun upgradeProfile() {
+        // 简介是用户可编辑的元数据；摘要无法区分旧内置文本和用户文本。
+        // 只补齐缺失、空白或无法读取的文件，任何可读取的非空简介都原样保留。
+        val file = File(personas, BuiltinPersonas.PROFILE)
+        val current = if (file.isFile) runCatching { PersonaCodec.read(file) }.getOrNull() else null
+        if (current != null && current.isNotBlank()) return
+        upgradeCompanion(BuiltinPersonas.PROFILE, emptyList(), profileBase, "PROFILE 简介文件")
+    }
 
     /** Claudia 的配套文件自己升级, 不看 Claudia.txt 有没有被改过: 缺 / 空白 → 补上当前内置版本;
      *  是更早的内置版本 (用户没改过) → 换成当前内置版本; 用户改过的不动. Claudia.txt 不在时不补 (不然它会被当成人设). */

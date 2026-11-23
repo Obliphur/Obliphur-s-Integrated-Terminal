@@ -1464,7 +1464,7 @@ class CommTest {
             val upgraded = comm(dir, personas)
             assertFalse(upgraded.claudiaDiffers())
             assertNull(upgraded.checkPersonaChanges())
-            assertEquals(BuiltinPersonas.ALL.getValue(BuiltinPersonas.PROFILE).trim(), upgraded.readPersonaProfile(BuiltinPersonas.DEFAULT))
+            assertEquals(oldProfile, upgraded.readPersonaProfile(BuiltinPersonas.DEFAULT))
             upgraded.flush()
             for (broken in listOf("", " \n\t", "OIT-PERSONA-ENC:1\n损坏密文")) {
                 File(personas, BuiltinPersonas.PROFILE).writeText(broken)
