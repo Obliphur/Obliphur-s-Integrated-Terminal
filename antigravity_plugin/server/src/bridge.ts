@@ -29,6 +29,8 @@ function candidateDiscoveryPaths(): string[] {
   } catch {
     // Ignore unreadable marker.
   }
+  const localLow = path.join(os.homedir(), "AppData", "LocalLow", "Obliphur's Integrated Terminal");
+  out.push(path.join(localLow, "mcp_bridge.json"));
   const appData = process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming");
   out.push(path.join(appData, "OIT", "mcp_bridge.json"));
   out.push(path.join(os.homedir(), ".oit", "mcp_bridge.json"));

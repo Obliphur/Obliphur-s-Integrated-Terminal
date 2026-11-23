@@ -41,6 +41,7 @@ def load_bridge() -> dict:
                 candidates.append(os.path.join(d, "mcp_bridge.json"))
         except Exception:
             pass
+    candidates.append(os.path.join(os.path.expanduser("~"), "AppData", "LocalLow", "Obliphur's Integrated Terminal", "mcp_bridge.json"))
     appdata = os.environ.get("APPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Roaming")
     candidates.append(os.path.join(appdata, "OIT", "mcp_bridge.json"))
     candidates.append(os.path.join(os.path.expanduser("~"), ".oit", "mcp_bridge.json"))
