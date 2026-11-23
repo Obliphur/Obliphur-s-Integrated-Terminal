@@ -338,6 +338,8 @@ class FormMixin:
             toast.warn(msg)
             return
         self.refresh()
+        if key == "AI_CHAT_TAKEOVER":
+            self._refresh_models_page()
         if status in ("instant", "staged"):
             if self.on_changed:
                 self.on_changed(status, key)
