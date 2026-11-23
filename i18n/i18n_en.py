@@ -1958,4 +1958,9 @@ EN = {
     "已由 Antigravity 桌面版接管，但本地 MCP Bridge 未启动；请在设置中重新开启接管或点击自动部署。": "Taken over by Antigravity Desktop, but the local MCP Bridge is not running. Re-enable takeover or click Auto-Deploy in Settings.",
     "已由 Antigravity 桌面版接管：请先在 Antigravity 中新建对话并绑定此人设，再在 OIT Chat 中对话。": "Taken over by Antigravity Desktop: create a conversation in Antigravity, bind this persona, and chat via OIT Chat.",
     "已由 Antigravity 桌面版接管：未检测到运行中的 OIT Proactive Bridge，请在 Antigravity 的 OIT Chat 侧栏发送消息，或在 Automations 中开启该 Sidecar。": "Taken over by Antigravity Desktop: OIT Proactive Bridge is not running. Send messages in the OIT Chat side pane or enable the Sidecar in Automations.",
+    "Antigravity 接管 · 名单推荐帮助": "Antigravity Takeover · Rule List Suggestion Help",
+    "Antigravity 接管 · 人设编写帮助": "Antigravity Takeover · Persona Authoring Help",
+    "复制提示词": "Copy Prompt",
+    "已复制绑定提示词，请粘贴到 Antigravity 新建的临时对话中.": "Prompt copied. Paste it into a new temporary Antigravity conversation.",
+    "复制失败.": "Copy failed.",
 }

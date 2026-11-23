@@ -1468,3 +1468,71 @@ def antigravity_help_text(en: bool = False) -> str:
         "   • 更新 OIT 后如插件未生效，重点「自动部署」并在 MCP Servers 中 Restart oit。"
     )
 
+
+def takeover_feature_prompt(feature: str, en: bool = False) -> str:
+    """在 Antigravity 临时对话中用于绑定单次功能的快捷提示词。"""
+    if feature == "suggest":
+        if en:
+            return (
+                "Bind the OIT Rule List Suggestion feature for this temporary conversation "
+                "(do not bind any persona). Please call oit_query(modules=[\"rules\"]) to inspect my "
+                "current blacklist/whitelist, then suggest websites/apps to add or adjust based on my goals."
+            )
+        return (
+            "为当前临时对话绑定 OIT 规则页「名单推荐」功能（不要绑定人设）。"
+            "请先调用 oit_query(modules=[\"rules\"]) 读取我当前的黑白名单，再根据我接下来描述的需求给出增删建议。"
+        )
+    if en:
+        return (
+            "Bind the OIT Persona Authoring feature for this temporary conversation "
+            "(do not bind any persona). Please help me design and write an OIT persona file "
+            "(and optional routine/template) following OIT's persona format."
+        )
+    return (
+        "为当前临时对话绑定 OIT「人设编写」功能（不要绑定人设）。"
+        "请按照 OIT 的人设文件与日程/模板格式，根据我接下来提供的设定要求帮我编写人设草稿。"
+    )
+
+
+def takeover_feature_help_text(feature: str, en: bool = False) -> str:
+    """Antigravity 接管模式下规则名单推荐 / 人设编写的临时绑定使用帮助。"""
+    is_suggest = feature == "suggest"
+    if en:
+        name = "Rule List Suggestion" if is_suggest else "Persona Authoring"
+        return (
+            f"Using [{name}] under Antigravity Desktop Takeover\n\n"
+            f"When Antigravity Desktop Takeover is enabled, OIT does not call external CLIs directly,\n"
+            f"so the built-in {name} popup is unavailable. Use a temporary Antigravity conversation instead:\n\n"
+            "1. Create a temporary conversation in Antigravity Desktop\n"
+            "   • Do NOT reuse a persona-bound conversation.\n"
+            "   • Click [Copy Prompt] below and paste it into the new conversation to bind this feature.\n\n"
+            "2. Finish your task\n"
+            + (
+                "   • Describe what sites/apps you want to block or allow, review the suggestions, and add them in OIT Rules.\n\n"
+                if is_suggest else
+                "   • Describe your persona requirements, review the generated persona/routine files, and import them into OIT.\n\n"
+            )
+            + "3. Delete the temporary conversation when done\n"
+            "   • Once finished, simply delete that temporary conversation in Antigravity to keep your workspace clean.\n\n"
+            "Tip: If you prefer OIT's built-in popup, temporarily disable Antigravity takeover in Settings → Models\n"
+            "and select a standard external HTTP API model."
+        )
+    name = "规则页名单推荐" if is_suggest else "人设编写"
+    return (
+        f"Antigravity 接管模式下使用「{name}」\n\n"
+        f"开启「由 Antigravity 桌面版接管」后，OIT 不再直接调用外部 CLI，原内置「{name}」弹窗不可用。\n"
+        "请改用 Antigravity 临时对话完成，用完即删：\n\n"
+        "1. 在 Antigravity 新建一个临时对话并绑定此功能\n"
+        "   • 不要在已绑定人设的聊天对话里操作，避免污染人设上下文；\n"
+        "   • 点击下方「复制提示词」，粘贴发送到新对话即可临时绑定该功能。\n\n"
+        "2. 完成操作\n"
+        + (
+            "   • 告诉模型你的专注目标或想拦截/放行的网站与应用，确认建议后在 OIT 规则页添加即可。\n\n"
+            if is_suggest else
+            "   • 告诉模型人设名称、性格、语言风格与日程要求，确认草稿后导入到 OIT 人设文件夹即可。\n\n"
+        )
+        + "3. 用完删除临时对话\n"
+        "   • 完成后直接在 Antigravity 中删除这个临时对话，保持会话列表整洁。\n\n"
+        "提示：如果仍想直接使用 OIT 原生弹窗，可在「设置 → 模型」暂时关闭 Antigravity 接管并配置常规外部 HTTP API。"
+    )
+

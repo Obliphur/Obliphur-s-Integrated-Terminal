@@ -353,9 +353,15 @@ def main():
             bridge2.stop()
         bridge = None
 
-        # 10. 设置页「帮助」弹窗实际打开验证（离屏 tkinter）
+        # 10. 设置页「帮助」与接管功能帮助弹窗实际打开验证（离屏 tkinter）
         import tkinter as tk
         from pages.settings_page.settings_form import FormMixin
+        from pages.ai_dialogs import open_takeover_feature_help
+        from mcp_bridge import takeover_feature_help_text, takeover_feature_prompt
+        for feat in ("suggest", "persona"):
+            assert "用完删除" in takeover_feature_help_text(feat, en=False)
+            assert "Delete the temporary conversation" in takeover_feature_help_text(feat, en=True)
+            assert takeover_feature_prompt(feat, en=False) and takeover_feature_prompt(feat, en=True)
         root = tk.Tk()
         root.withdraw()
         try:
@@ -364,6 +370,10 @@ def main():
             host = _Dummy(root)
             root.after(120, lambda: [w.destroy() for w in root.winfo_children() if isinstance(w, tk.Toplevel)])
             host._antigravity_help()
+            root.after(120, lambda: [w.destroy() for w in root.winfo_children() if isinstance(w, tk.Toplevel)])
+            open_takeover_feature_help(root, "suggest")
+            root.after(120, lambda: [w.destroy() for w in root.winfo_children() if isinstance(w, tk.Toplevel)])
+            open_takeover_feature_help(root, "persona")
         finally:
             root.destroy()
 

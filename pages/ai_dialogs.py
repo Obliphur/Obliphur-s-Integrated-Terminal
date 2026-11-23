@@ -457,9 +457,43 @@ def open_task_model_settings(parent, cfg: "ai_assist.AIConfig", role: str, title
     dlg.wait()
 
 
+# ══════════════ Antigravity 接管功能帮助 ══════════════
+def open_takeover_feature_help(parent, feature: str):
+    """Antigravity 接管模式下，提示用户通过临时对话绑定规则名单推荐 / 人设编写，用完删除。"""
+    import i18n
+    from mcp_bridge import takeover_feature_help_text, takeover_feature_prompt
+    en = i18n.get_language() == "en"
+    title = tr("Antigravity 接管 · 名单推荐帮助") if feature == "suggest" else tr("Antigravity 接管 · 人设编写帮助")
+    dlg = Modal(parent, title, width=min(620, parent.winfo_screenwidth() - 40),
+                height=min(460, parent.winfo_screenheight() - 100))
+    area = ScrollArea(dlg.body, bg=COLORS["bg"])
+    area.pack(fill="both", expand=True)
+    lbl = tk.Label(area.inner, text=takeover_feature_help_text(feature, en=en),
+                   bg=COLORS["bg"], fg=COLORS["text"], font=config.font("body"),
+                   justify="left", anchor="nw", wraplength=config.scaled(560))
+    lbl.pack(fill="x", padx=4, pady=4)
+    area.bind_children()
+
+    def copy_prompt():
+        try:
+            dlg.clipboard_clear()
+            dlg.clipboard_append(takeover_feature_prompt(feature, en=en))
+            toast.success(tr("已复制绑定提示词，请粘贴到 Antigravity 新建的临时对话中."))
+        except tk.TclError:
+            toast.warn(tr("复制失败."))
+
+    ttk.Button(dlg.buttons, text=tr("关闭"), command=dlg.cancel).pack(side="right")
+    ttk.Button(dlg.buttons, text=tr("复制提示词"), style="Accent.TButton",
+               command=copy_prompt).pack(side="right", padx=(0, 8))
+    dlg.wait()
+
+
 # ══════════════ AI 建议 ══════════════
 def open_suggest(parent, cfg: "ai_assist.AIConfig", rules, mode: str, on_done=None):
     """mode: ai_assist.MODE_BLACKLIST / MODE_WHITELIST."""
+    if ai_assist.ai_config.chat_takeover() == "antigravity":
+        open_takeover_feature_help(parent, "suggest")
+        return
     black = mode != ai_assist.MODE_WHITELIST
     prof = cfg.profile()
     try:

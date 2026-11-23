@@ -36,6 +36,10 @@ def open_profile(parent, text):
 
 
 def create_persona(parent, comm):
+    if ai_assist.ai_config.chat_takeover() == "antigravity":
+        from . import ai_dialogs
+        ai_dialogs.open_takeover_feature_help(parent, "persona")
+        return
     dlg = Modal(parent, tr("创建人设"), min(710, parent.winfo_screenwidth() - 40),
                 min(620, parent.winfo_screenheight() - 100))
     area = ScrollArea(dlg.body)
