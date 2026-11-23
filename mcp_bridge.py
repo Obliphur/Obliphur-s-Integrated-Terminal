@@ -11,6 +11,8 @@ import mimetypes
 import os
 import queue
 import secrets
+import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -870,3 +872,174 @@ class OitMcpBridge:
                 self.comm._push()
             return {"ok": True, "synced": True}
         return self._call_main(work)
+
+
+def plugin_root_dir() -> str:
+    """定位随仓库/程序附带的 antigravity_plugin 目录。"""
+    base = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base, "antigravity_plugin")
+
+
+def _find_tool(name: str, extra_paths=()) -> str:
+    found = shutil.which(name)
+    if found:
+        return found
+    for path in extra_paths:
+        if path and os.path.isfile(path):
+            return path
+    return ""
+
+
+def _run_step(args: list, cwd: str, timeout: int = 300) -> tuple[bool, str]:
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        proc = subprocess.run(
+            args, cwd=cwd, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL,
+            timeout=timeout, creationflags=flags,
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"命令超时: {' '.join(args[:3])}"
+    except OSError as exc:
+        return False, f"无法启动命令: {exc}"
+    out = (proc.stdout or "").strip()
+    err = (proc.stderr or "").strip()
+    detail = "\n".join(x for x in (out, err) if x)
+    return proc.returncode == 0, detail
+
+
+def deploy_antigravity_plugin(data_dir: str, on_progress=None, plugin_dir: str = "",
+                              runner=None) -> dict:
+    """自动完成 Antigravity 插件的本地构建、校验、安装与数据目录绑定。
+
+    绝不修改用户 ~/.gemini/config/config.json 强行开启 Sidecar；Sidecar 由用户在 Antigravity 面板手动开启。
+    """
+    report = on_progress or (lambda _msg: None)
+    run = runner or _run_step
+    pdir = plugin_dir or plugin_root_dir()
+    if not os.path.isdir(pdir) or not os.path.isfile(os.path.join(pdir, "plugin.json")):
+        return {"ok": False, "error": f"未找到 Antigravity 插件目录：{pdir}"}
+
+    # 1. 绑定 OIT 数据目录，使 MCP Server / Hooks / Sidecar 免配环境变量即可找到 mcp_bridge.json
+    if data_dir:
+        report("正在绑定 OIT 数据目录…")
+        try:
+            with open(os.path.join(pdir, ".oit_data_dir"), "w", encoding="utf-8") as fh:
+                fh.write(os.path.abspath(data_dir))
+        except OSError as exc:
+            return {"ok": False, "error": f"写入数据目录标记失败：{exc}"}
+
+    # 2. 检测 Node / npm / agy
+    local_app = os.environ.get("LOCALAPPDATA") or ""
+    agy_exe = _find_tool("agy", [
+        os.path.join(local_app, "agy", "bin", "agy.exe") if local_app else "",
+        os.path.join(os.path.expanduser("~"), "AppData", "Local", "agy", "bin", "agy.exe"),
+    ])
+    npm_exe = _find_tool("npm.cmd" if os.name == "nt" else "npm", [_find_tool("npm")])
+    node_exe = _find_tool("node")
+
+    server_dir = os.path.join(pdir, "server")
+    ui_dir = os.path.join(pdir, "ui")
+    need_server = not os.path.isfile(os.path.join(server_dir, "dist", "index.js"))
+    need_ui = not os.path.isfile(os.path.join(ui_dir, "dist", "index.html"))
+    steps_done = ["已绑定 OIT 数据目录"]
+
+    if need_server or need_ui:
+        if not node_exe or not npm_exe:
+            return {"ok": False, "error": "未检测到 Node.js / npm，请先安装 Node.js 20+ 后重试自动部署。"}
+        if need_server:
+            report("正在安装并构建 MCP Server（TypeScript）…")
+            if not os.path.isdir(os.path.join(server_dir, "node_modules")):
+                ok, out = run([npm_exe, "install", "--no-audit", "--no-fund"], server_dir, 300)
+                if not ok:
+                    return {"ok": False, "error": f"MCP Server 依赖安装失败：\n{out[-600:]}"}
+            ok, out = run([npm_exe, "run", "build"], server_dir, 180)
+            if not ok:
+                return {"ok": False, "error": f"MCP Server 构建失败：\n{out[-600:]}"}
+            steps_done.append("已构建 MCP Server")
+        if need_ui:
+            report("正在安装并构建 OIT Chat 侧栏 UI…")
+            if not os.path.isdir(os.path.join(ui_dir, "node_modules")):
+                ok, out = run([npm_exe, "install", "--no-audit", "--no-fund"], ui_dir, 300)
+                if not ok:
+                    return {"ok": False, "error": f"OIT Chat UI 依赖安装失败：\n{out[-600:]}"}
+            ok, out = run([npm_exe, "run", "build"], ui_dir, 180)
+            if not ok:
+                return {"ok": False, "error": f"OIT Chat UI 构建失败：\n{out[-600:]}"}
+            steps_done.append("已构建 OIT Chat 侧栏 UI")
+    else:
+        steps_done.append("MCP Server 与侧栏 UI 已就绪")
+
+    # 3. 使用官方 agy CLI 校验并安装插件
+    if not agy_exe:
+        return {"ok": False, "error": "未检测到官方 agy 命令，请先安装 Antigravity 桌面版 / CLI 后重试。"}
+
+    report("正在校验 Antigravity 插件…")
+    ok, out = run([agy_exe, "plugin", "validate", pdir], pdir, 60)
+    if not ok:
+        return {"ok": False, "error": f"插件校验失败：\n{out[-600:]}"}
+    steps_done.append("已通过 agy plugin validate 校验")
+
+    report("正在安装插件到 Antigravity…")
+    ok, out = run([agy_exe, "plugin", "install", pdir], pdir, 60)
+    if not ok:
+        return {"ok": False, "error": f"插件安装失败：\n{out[-600:]}"}
+    steps_done.append("已安装插件 oit 到 Antigravity")
+
+    return {"ok": True, "steps": steps_done, "plugin_dir": pdir}
+
+
+def antigravity_help_text(en: bool = False) -> str:
+    """基于自动部署的 Antigravity 接管详细使用帮助。"""
+    if en:
+        return (
+            "Antigravity Desktop Takeover Guide (Based on Auto-Deploy)\n\n"
+            "1. One-Click Auto-Deploy in OIT\n"
+            "   Click [Auto-Deploy] below 'Take over with Antigravity Desktop'. OIT will automatically:\n"
+            "   • Bind the current OIT data directory so MCP Server / Hooks / Sidecar find mcp_bridge.json without extra env vars;\n"
+            "   • Install & build the TypeScript MCP Server and single-file OIT Chat side pane UI (if not built yet);\n"
+            "   • Validate and install the 'oit' plugin via official `agy plugin validate` and `agy plugin install`;\n"
+            "   • Turn on Antigravity takeover and start OIT's local loopback HTTP/SSE Bridge.\n\n"
+            "2. Open OIT Chat in Antigravity App\n"
+            "   • Open Antigravity App and create a dedicated conversation for each persona.\n"
+            "   • Open the right-hand side pane '+' menu and choose [OIT Chat] (or send one message to auto-open it).\n"
+            "   • Chat directly in the OIT Chat side pane for staged bubble delays, interrupt-to-cancel, voice playback, and toolbar toggles.\n"
+            "   • To send images to the model, drag or paste them into the left native Antigravity input box.\n\n"
+            "3. Enable Proactive Messaging (One Manual Step)\n"
+            "   • Antigravity requires users to manually enable Sidecars.\n"
+            "   • Open Antigravity's Automations / Sidecars dashboard, enable [OIT Proactive Bridge] (oit/oit-proactive), and choose your target project.\n"
+            "   • Once enabled, OIT pushes proactive triggers over local SSE with zero idle token usage.\n\n"
+            "4. Optional: Separate External API for Subagents\n"
+            "   • By default, Subject / Mental Health / Music Review / Memory Compact run as isolated native Antigravity subagents.\n"
+            "   • If you assign an external HTTP API config to a specific role in Settings → Models, OIT automatically routes that role to your external API.\n\n"
+            "5. Troubleshooting\n"
+            "   • If the side pane stays on 'Waiting for OIT...', make sure OIT is running with takeover enabled.\n"
+            "   • After updating OIT, click [Auto-Deploy] again and click Restart next to 'oit' in Antigravity → Customizations → MCP Servers."
+        )
+    return (
+        "Antigravity 桌面版接管使用指南（基于「自动部署」）\n\n"
+        "一、在 OIT 中一键自动部署\n"
+        "  点击「由 Antigravity 桌面版接管」下方的「自动部署」，程序会自动完成以下步骤：\n"
+        "  1. 绑定当前 OIT 数据目录，让插件、Hooks 和 Sidecar 免配环境变量自动找到 mcp_bridge.json；\n"
+        "  2. 检测并构建 TypeScript MCP Server 与单文件 OIT Chat 侧栏 UI（已构建则自动跳过）；\n"
+        "  3. 调用官方 agy plugin validate 与 agy plugin install 校验并安装 oit 插件；\n"
+        "  4. 自动开启「由 Antigravity 桌面版接管」并启动 OIT 本地 HTTP/SSE Bridge。\n\n"
+        "二、在 Antigravity 桌面端打开 OIT Chat 侧栏\n"
+        "  1. 打开 Antigravity 桌面端，新建一个对话（建议一个人设对应一个独立对话）。\n"
+        "  2. 点击右侧辅面板的「+」菜单选择「OIT Chat」（或在主对话框发一句话自动弹出）。\n"
+        "  3. 日常纯文字聊天直接在右侧 OIT Chat 输入框发送即可，自动享受分条延时气泡、中途插话撤销、语音播放与工具栏开关；\n"
+        "     点击 🤝 / 🕰 / 🎼 / 📚 / 🖼 会自动拉起 OIT 原生弹窗（合约词条板、MIDI 录制评判、共读阅读室、独立识字）。\n"
+        "  4. 需要发图片给 AI 看时，直接将图片拖入或粘贴到左侧 Antigravity 原生输入框。\n\n"
+        "三、手动开启主动对话（唯一需在 Antigravity 内点一下的步骤）\n"
+        "  出于官方安全策略，Sidecar 必须由用户手动启用：\n"
+        "  1. 在 Antigravity 打开 Automations / Sidecars 面板；\n"
+        "  2. 找到「OIT Proactive Bridge」（oit/oit-proactive），打开开关并选择目标项目（projectId）；\n"
+        "  3. 开启后平时 0 token 消耗，OIT 命中主动对话条件时会自动唤醒对应会话并弹出气泡。\n\n"
+        "四、可选：给单个子代理独立配置外部 API\n"
+        "  • 默认情况下，数理化 / 心理分析 / 演奏评判 / 记忆整理均自动走 Antigravity 原生隔离子代理；\n"
+        "  • 若你在「设置 → 模型」里给某个子代理（如数理化或评判）单独指定了外部 HTTP API，该子代理会自动改走外部 API，其余角色继续走原生子代理。\n\n"
+        "五、常见问题排查\n"
+        "  • 侧栏一直显示「等待 OIT 连接…」：确认 OIT 正在运行且已开启「由 Antigravity 桌面版接管」；\n"
+        "  • 更新 OIT 后插件未生效：重新点一次「自动部署」，并在 Antigravity「Customizations → MCP Servers」里点 oit 右侧的 Restart。"
+    )
+

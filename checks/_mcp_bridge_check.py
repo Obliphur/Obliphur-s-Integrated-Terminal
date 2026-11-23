@@ -176,6 +176,29 @@ def main():
         mcp_proc.terminate()
         mcp_proc.wait(timeout=5)
 
+        # 8. 自动部署辅助函数与帮助文案验证（使用 mock runner，绝不改动用户全局 config.json）
+        from mcp_bridge import antigravity_help_text, deploy_antigravity_plugin
+        mock_plugin = os.path.join(tmp, "mock_plugin")
+        os.makedirs(os.path.join(mock_plugin, "server", "dist"), exist_ok=True)
+        os.makedirs(os.path.join(mock_plugin, "ui", "dist"), exist_ok=True)
+        with open(os.path.join(mock_plugin, "plugin.json"), "w", encoding="utf-8") as fh:
+            fh.write('{"name": "oit"}')
+        with open(os.path.join(mock_plugin, "server", "dist", "index.js"), "w", encoding="utf-8") as fh:
+            fh.write("// ok")
+        with open(os.path.join(mock_plugin, "ui", "dist", "index.html"), "w", encoding="utf-8") as fh:
+            fh.write("<html></html>")
+        cmds = []
+        dep = deploy_antigravity_plugin(
+            tmp, plugin_dir=mock_plugin,
+            runner=lambda args, cwd, timeout=60: (cmds.append(args), (True, "ok"))[1],
+        )
+        assert dep["ok"], f"自动部署应成功: {dep}"
+        assert any("validate" in a for a in cmds) and any("install" in a for a in cmds)
+        with open(os.path.join(mock_plugin, ".oit_data_dir"), "r", encoding="utf-8") as fh:
+            assert os.path.abspath(fh.read().strip()) == os.path.abspath(tmp)
+        assert "自动部署" in antigravity_help_text(en=False)
+        assert "Auto-Deploy" in antigravity_help_text(en=True)
+
         print("MCP BRIDGE & SERVER CHECK OK")
     finally:
         config.AI_CHAT_TAKEOVER = old_takeover

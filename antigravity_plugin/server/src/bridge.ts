@@ -1,6 +1,9 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __bridgeDir = path.dirname(fileURLToPath(import.meta.url));
 
 export interface BridgeConfig {
   port: number;
@@ -16,6 +19,15 @@ function candidateDiscoveryPaths(): string[] {
   }
   if (process.env.OIT_DATA_DIR) {
     out.push(path.join(process.env.OIT_DATA_DIR, "mcp_bridge.json"));
+  }
+  try {
+    const marker = path.resolve(__bridgeDir, "..", "..", ".oit_data_dir");
+    if (fs.existsSync(marker)) {
+      const dir = fs.readFileSync(marker, "utf-8").trim();
+      if (dir) out.push(path.join(dir, "mcp_bridge.json"));
+    }
+  } catch {
+    // Ignore unreadable marker.
   }
   const appData = process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming");
   out.push(path.join(appData, "OIT", "mcp_bridge.json"));

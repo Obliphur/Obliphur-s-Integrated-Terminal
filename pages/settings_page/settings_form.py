@@ -3,10 +3,12 @@
 从 pages/settings_page.py 拆出来的 mixin; 依赖方向: settings_page.py 导入它们, 它们从不导入 settings_page.py.
 """
 
+import threading
 import tkinter as tk
 from tkinter import filedialog
 from tkinter import ttk
 import config
+import i18n
 import toast
 from config import COLORS
 from i18n import tr
@@ -16,7 +18,7 @@ from settings_manager import page_specs
 from settings_manager import chime_name
 from sound_effects import EVENTS, display as sound_display
 
-from ..widgets import (frozen, set_var)
+from ..widgets import (Modal, ScrollArea, frozen, set_var)
 
 
 class FormMixin:
@@ -216,7 +218,13 @@ class FormMixin:
         if key == "AI_CHAT_TAKEOVER":
             tk.Label(inner, text=tr(spec["desc"]), bg=card, fg=COLORS["text_dim"],
                      font=config.font("small"), anchor="w", justify="left", wraplength=620).pack(
-                fill="x", padx=12, pady=(0, 8))
+                fill="x", padx=12, pady=(0, 6))
+            ag_actions = tk.Frame(inner, bg=card)
+            ag_actions.pack(fill="x", padx=12, pady=(0, 8))
+            self._track(ttk.Button(ag_actions, text=tr("自动部署"), style="Accent.TButton",
+                                   command=self._antigravity_auto_deploy), "自动部署").pack(side="left")
+            self._track(ttk.Button(ag_actions, text=tr("帮助"),
+                                   command=self._antigravity_help), "帮助").pack(side="left", padx=(8, 0))
 
         pending = tk.Frame(inner, bg=card)
         pending.pack(fill="x", padx=12, pady=(0, 8))
@@ -357,6 +365,89 @@ class FormMixin:
             tr("直接在 OIT 使用 CLI 的订阅额度可能违反服务商规则并导致账号封禁,确定要开启吗?"),
             title=tr("CLI 订阅额度风险"), ok_text=tr("继续开启"),
             cancel_text=tr("取消"), danger=True)
+
+    def _antigravity_auto_deploy(self):
+        """自动构建/校验/安装 Antigravity 插件并开启接管与本地 Bridge。"""
+        if getattr(self, "_ag_deploying", False):
+            return
+        self._ag_deploying = True
+        data_dir = getattr(self.comm, "dir", "") if getattr(self, "comm", None) else ""
+        dlg = Modal(self.winfo_toplevel(), tr("Antigravity 自动部署"),
+                    width=config.scaled(520), height=config.scaled(260))
+        status_var = tk.StringVar(value=tr("正在准备自动部署…"))
+        lbl = tk.Label(dlg.body, textvariable=status_var, bg=COLORS["bg"], fg=COLORS["text"],
+                       font=config.font("body"), justify="left", anchor="nw",
+                       wraplength=config.scaled(460))
+        lbl.pack(fill="both", expand=True)
+        btn_close = ttk.Button(dlg.buttons, text=tr("关闭"), command=dlg.cancel)
+        btn_close.pack(side="right")
+        btn_close.state(["disabled"])
+
+        def set_status(text: str):
+            try:
+                if dlg.winfo_exists():
+                    status_var.set(text)
+            except tk.TclError:
+                pass
+
+        def finish(res: dict):
+            self._ag_deploying = False
+            try:
+                if dlg.winfo_exists():
+                    btn_close.state(["!disabled"])
+            except tk.TclError:
+                pass
+            if not res.get("ok"):
+                err = str(res.get("error") or tr("自动部署失败"))
+                set_status(tr("自动部署失败：") + "\n" + err)
+                toast.warn(tr("Antigravity 自动部署未完成."))
+                return
+
+            if str(self.sm.value("AI_CHAT_TAKEOVER") or "") != "antigravity":
+                self.sm.stage("AI_CHAT_TAKEOVER", "antigravity")
+                if self.on_changed:
+                    self.on_changed("instant", "AI_CHAT_TAKEOVER")
+            elif self.on_changed:
+                self.on_changed("instant", "AI_CHAT_TAKEOVER")
+            self.refresh()
+            if hasattr(self, "_refresh_models_page"):
+                self._refresh_models_page()
+
+            done_lines = "\n".join(f"• {s}" for s in (res.get("steps") or []))
+            summary = (
+                tr("自动部署已完成：") + "\n" + done_lines + "\n• "
+                + tr("已开启 Antigravity 桌面版接管并启动本地 Bridge") + "\n\n"
+                + tr("接下来只需在 Antigravity 桌面端完成两步：") + "\n"
+                + tr("1. 新建对话，点右侧辅面板「+」打开 OIT Chat；") + "\n"
+                + tr("2. 若需主动对话，请在 Automations / Sidecars 手动开启 OIT Proactive Bridge 并选择目标项目。")
+            )
+            set_status(summary)
+            toast.success(tr("Antigravity 自动部署完成."))
+
+        def worker():
+            from mcp_bridge import deploy_antigravity_plugin
+            res = deploy_antigravity_plugin(
+                data_dir,
+                on_progress=lambda msg: self.after(0, lambda m=msg: set_status(tr(m))),
+            )
+            self.after(0, lambda: finish(res))
+
+        threading.Thread(target=worker, daemon=True, name="ag-auto-deploy").start()
+
+    def _antigravity_help(self):
+        """展示基于自动部署的 Antigravity 接管详细帮助。"""
+        from mcp_bridge import antigravity_help_text
+        en = i18n.get_lang() == "en"
+        dlg = Modal(self.winfo_toplevel(), tr("Antigravity 接管帮助"),
+                    width=config.scaled(640), height=config.scaled(520))
+        area = ScrollArea(dlg.body, bg=COLORS["bg"])
+        area.pack(fill="both", expand=True)
+        lbl = tk.Label(area.inner, text=antigravity_help_text(en=en),
+                       bg=COLORS["bg"], fg=COLORS["text"], font=config.font("body"),
+                       justify="left", anchor="nw", wraplength=config.scaled(580))
+        lbl.pack(fill="x", padx=4, pady=4)
+        area.bind_children()
+        ttk.Button(dlg.buttons, text=tr("关闭"), command=dlg.cancel).pack(side="right")
 
     def _run_ui_hooks(self, keys) -> bool:
         """语言 / 字号 / 主题改动后需要重建整个界面. 重建会销毁本页,

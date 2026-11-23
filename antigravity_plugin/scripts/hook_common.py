@@ -32,6 +32,15 @@ def load_bridge() -> dict:
         candidates.append(os.environ["OIT_BRIDGE_FILE"])
     if os.environ.get("OIT_DATA_DIR"):
         candidates.append(os.path.join(os.environ["OIT_DATA_DIR"], "mcp_bridge.json"))
+    marker = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".oit_data_dir"))
+    if os.path.isfile(marker):
+        try:
+            with open(marker, "r", encoding="utf-8") as fh:
+                d = fh.read().strip()
+            if d:
+                candidates.append(os.path.join(d, "mcp_bridge.json"))
+        except Exception:
+            pass
     appdata = os.environ.get("APPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Roaming")
     candidates.append(os.path.join(appdata, "OIT", "mcp_bridge.json"))
     candidates.append(os.path.join(os.path.expanduser("~"), ".oit", "mcp_bridge.json"))
