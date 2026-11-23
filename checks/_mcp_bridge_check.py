@@ -298,6 +298,20 @@ def main():
         assert r_sh_no["ok"] and r_sh_no["applied"].get("share") == "no"
         assert c.share["on"] is False and c.share_ask is None and any("拒绝了 share data" in n for n in notices)
 
+        # 9d. 多气泡释放顺序与 wait_minutes 追问保留回归验证（防止 Bubble 0 覆盖 Bubble 1 顺序导致 wait 丢失）
+        rep_w = _http_json(port, bridge.token, "/reply/submit", {
+            "conversation_id": "conv-1",
+            "bubbles": ["第一条说明", "第二条带追问"],
+            "wait_minutes": 1,
+        })
+        assert rep_w["ok"] and len(rep_w["items"]) == 2
+        b0_id, b1_id = rep_w["items"][0]["id"], rep_w["items"][1]["id"]
+        assert _http_json(port, bridge.token, "/ui/delivered", {"msg_id": b0_id})["ok"]
+        assert _http_json(port, bridge.token, "/ui/delivered", {"msg_id": b1_id})["ok"]
+        ai_tail = [m for m in c.messages if m.get("role") == "ai"][-2:]
+        assert [m["text"] for m in ai_tail] == ["第一条说明", "第二条带追问"], f"气泡顺序不应倒置: {[m['text'] for m in ai_tail]}"
+        assert ai_tail[-1].get("wait") == 1.0 and ai_tail[-1].get("shown"), "最后一条气泡应保留 wait 且记录 shown"
+
         # 10. 设置页「帮助」弹窗实际打开验证（离屏 tkinter）
         import tkinter as tk
         from pages.settings_page.settings_form import FormMixin

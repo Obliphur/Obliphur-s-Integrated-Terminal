@@ -98,7 +98,8 @@ def dispatch_event(event: dict):
         ])
         return
     if cid:
-        _run_agentapi(["agentapi", "send-message", cid, display_time])
+        prompt = f"[OIT {display_time}] 收到 OIT 主动对话/追问触发（kind={kind}），请先调用 oit_get_turn_context 获取本轮触发详情，再用 oit_reply 回复。"
+        _run_agentapi(["agentapi", "send-message", cid, prompt])
     else:
         _run_agentapi(["agentapi", "new-conversation", "--", display_time])
 

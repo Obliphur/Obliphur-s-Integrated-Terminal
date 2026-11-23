@@ -1073,11 +1073,21 @@ class OitMcpBridge:
             if not msg_id:
                 return {"ok": False, "error": "msg_id required"}
             found = False
+            now_ms = self.comm._ms() if hasattr(self.comm, "_ms") else _now_ms()
             for m in self.comm.messages:
                 if str(m.get("uid") or m.get("id") or "") == msg_id:
                     m.pop("hold", None)
-                    m.pop("pending_reply", None)
+                    pending = m.pop("pending_reply", None) is not None
+                    m.pop("reply_ready", None)
                     m.pop("due", None)
+                    m["shown"] = now_ms
+                    if pending:
+                        m["at"] = datetime.fromtimestamp(now_ms / 1000).isoformat(timespec="seconds")
+                        last_ts = int(getattr(self.comm, "_last_ts", 0) or 0)
+                        new_ts = max(now_ms, last_ts + 1)
+                        self.comm._last_ts = m["ts"] = new_ts
+                        self.comm.messages.remove(m)
+                        self.comm.messages.append(m)
                     if hasattr(self.comm, "_deliver_invites"):
                         self.comm._deliver_invites(m)
                     found = True
