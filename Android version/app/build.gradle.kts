@@ -14,11 +14,11 @@ android {
         targetSdk = 35
         // 发布单体 APK 只带手机常用的 ARM ABI；模拟器可通过 Android Studio 部署对应构建。
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
-        versionCode = 675
+        versionCode = 676
         // 开发者模式只在本地构建里有; 公开发布版 (release.py 用 -PpublicRelease=true 编译) 没有 (MECHANICS 3.5)
         buildConfigField("boolean", "DEV_BUILD", (project.findProperty("publicRelease") != "true").toString())
         // 和 GitHub 上发布的版本号比较 (见 service/Updater.kt); 桌面版是 config.APP_VERSION
-        versionName = "1.0.675"
+        versionName = "1.0.676"
     }
 
     buildTypes {

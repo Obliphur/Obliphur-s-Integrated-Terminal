@@ -1504,13 +1504,16 @@ def takeover_feature_prompt(feature: str, en: bool = False) -> str:
         return (
             "Bind the OIT Persona Authoring feature for this temporary conversation "
             "(do not bind any persona). First call oit_claudia_reference to decrypt and read all existing "
-            "Claudia reference files; then ask me whether I want 'Brief' or 'Detailed' mode "
-            "(Detailed: as comprehensive as Claudia's files; Brief: only define the core persona without "
+            "Claudia reference files; note that language style and most settings (such as scenario-mode "
+            "action restrictions) do NOT need to match Claudia—especially the example file, which should "
+            "fit the new character rather than copy Claudia. Then ask me whether I want 'Brief' or 'Detailed' "
+            "mode (Detailed: as comprehensive as Claudia's files; Brief: only define the core persona without "
             "detailed scenario rules, and keep the example file casual/lightweight) before drafting."
         )
     return (
         "为当前临时对话绑定 OIT「人设编写」功能（不要绑定人设）。"
-        "请先调用 oit_claudia_reference 解密并读取目前存在的所有 Claudia 参考文件；"
+        "请先调用 oit_claudia_reference 解密并读取目前存在的所有 Claudia 参考文件（注意：语言风格和大部分设定"
+        "不必与 Claudia 相同，例如情景模式的动作限制等，特别是 example 文件应贴合新角色本身而不要照搬 Claudia）；"
         "然后先询问我需要「简略」还是「详细」模式（详细：和 Claudia 人设一样面面俱到；"
         "简略：不详细规定情景，只规定基础人设，example 文件随便写写），等我选定后再按 OIT 格式开始编写。"
     )
