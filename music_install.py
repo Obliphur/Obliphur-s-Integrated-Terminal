@@ -103,7 +103,7 @@ def _install_piano(manager, work):
     ready_marker = runtime / "oit-python-ready.txt"
     complete = (runtime_marker.is_file() and runtime_marker.read_text(encoding="utf-8") == version
                 and ready_marker.is_file()
-                and ready_marker.read_text(encoding="utf-8") == config.MUSIC_BASIC_PITCH_VERSION)
+                and ready_marker.read_text(encoding="utf-8") == config.MUSIC_BASIC_PITCH_READY)
     if not python.is_file() or not complete:
         source = {"url": f"https://www.python.org/ftp/python/{version}/python-{version}-embed-amd64.zip",
                   "accept": updater.ACCEPT_FILE, "size": config.MUSIC_PYTHON_SIZE}
@@ -141,13 +141,13 @@ def _install_piano(manager, work):
     index = ["--index-url", "https://pypi.org/simple"]
     pip_install(index + ["--no-deps", "basic-pitch==" + config.MUSIC_BASIC_PITCH_VERSION])
     pip_install(index + list(config.MUSIC_BASIC_PITCH_PACKAGES[1:]))
-    smoke = ("import basic_pitch,onnxruntime; from basic_pitch import ICASSP_2022_MODEL_PATH,ONNX_PRESENT,TF_PRESENT; "
+    smoke = ("import basic_pitch,onnxruntime,pkg_resources; from basic_pitch import ICASSP_2022_MODEL_PATH,ONNX_PRESENT,TF_PRESENT; "
              "from basic_pitch.inference import Model; assert ONNX_PRESENT and not TF_PRESENT; "
              "assert Model(ICASSP_2022_MODEL_PATH).model.get_providers()[0]=='CPUExecutionProvider'")
     run_process([str(python), "-X", "utf8", "-c", smoke],
                 cwd=str(work), env=env)
     runtime_marker.write_text(version, encoding="utf-8")
-    ready_marker.write_text(config.MUSIC_BASIC_PITCH_VERSION, encoding="utf-8")
+    ready_marker.write_text(config.MUSIC_BASIC_PITCH_READY, encoding="utf-8")
     _receipt(folder, python, "Spotify Basic Pitch " + config.MUSIC_BASIC_PITCH_VERSION)
 
 

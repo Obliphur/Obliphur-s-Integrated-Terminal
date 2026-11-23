@@ -45,7 +45,7 @@ Windows x64 可在「设置 → 额外功能」安装 Microsoft JDK 17，用于 
 | **Calendar** | 按日查看学习时长 |
 | **Statistics** | 活动, 联网理由, 各程序前台时间的分布, 最近顺利完成的合约与最近的违规记录 |
 | **Contract** | 合约: 选词条加难度的限时挑战|
-| **Settings** | 按模块分页的可调参数；额外功能页提供 AI 语音、Claude Code / Codex / Antigravity CLI、Android 构建用 JDK 17、Process Lasso 和音乐工具部署与转换 |
+| **Settings** | 按模块分页的可调参数；额外功能页提供 AI 语音、Claude Code / Codex / Antigravity CLI、Android 构建用 JDK 17、Process Lasso 和音乐工具部署与转换（含钢琴录音转 MIDI） |
 | **Reset** | 恢复网络并清理数据 |
 
 在设置 → 沟通 → 人设可以查看当前人设的简介，也可以用 AI 协助创建新人设。Claudia 默认头像在桌面和 Android 使用同一套资源；未修改的内置人设配套文件会随更新升级，缺失或损坏的默认简介在启动时自动补齐。

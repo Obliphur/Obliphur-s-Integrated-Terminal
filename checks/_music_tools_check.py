@@ -56,7 +56,7 @@ def fake_install(manager, tool):
     if tool in ("piano", "partitura"):
         (path / "runtime").mkdir(exist_ok=True)
         (path / "runtime" / "oit-python-version.txt").write_text(config.MUSIC_PYTHON_VERSION, encoding="utf-8")
-        ready = config.MUSIC_BASIC_PITCH_VERSION if tool == "piano" else config.MUSIC_PARTITURA_VERSION
+        ready = config.MUSIC_BASIC_PITCH_READY if tool == "piano" else config.MUSIC_PARTITURA_VERSION
         (path / "runtime" / "oit-python-ready.txt").write_text(ready, encoding="utf-8")
     if tool == "partitura":
         (path / "runtime").mkdir(exist_ok=True)
@@ -209,6 +209,7 @@ def piano_process(args, **kwargs):
         assert kwargs["env"]["NO_PROXY"] == "*"
     if str(args[-1]).startswith("import basic_pitch"):
         assert "ONNX_PRESENT and not TF_PRESENT" in args[-1]
+        assert "import basic_pitch,onnxruntime,pkg_resources" in args[-1]
     return 0
 with patch.object(I.updater, "download_file", side_effect=fake_file), \
         patch.object(I.updater, "upstream_proxy", return_value=("127.0.0.1", 7890)), \
@@ -216,12 +217,16 @@ with patch.object(I.updater, "download_file", side_effect=fake_file), \
         patch.object(I, "run_process", side_effect=piano_process):
     I._install_piano(music, work)
     (music._directory("piano") / "runtime" / "oit-python-version.txt").write_text(config.MUSIC_PYTHON_VERSION, encoding="utf-8")
-    (music._directory("piano") / "runtime" / "oit-python-ready.txt").write_text(config.MUSIC_BASIC_PITCH_VERSION, encoding="utf-8")
+    (music._directory("piano") / "runtime" / "oit-python-ready.txt").write_text(config.MUSIC_BASIC_PITCH_READY, encoding="utf-8")
     assert music.status("piano")["ready"]
+    (music._directory("piano") / "runtime" / "oit-python-ready.txt").write_text(config.MUSIC_BASIC_PITCH_VERSION, encoding="utf-8")
+    assert not music.status("piano")["ready"]
+    (music._directory("piano") / "runtime" / "oit-python-ready.txt").write_text(config.MUSIC_BASIC_PITCH_READY, encoding="utf-8")
 assert len(download_sources) == 2 and all("python.org" in source.get("url", "") or "files.pythonhosted.org" in source.get("url", "") for source in download_sources)
 assert "basic-pitch==" + config.MUSIC_BASIC_PITCH_VERSION in piano_calls[0][0]
 assert "--no-deps" in piano_calls[0][0]
 assert config.MUSIC_BASIC_PITCH_PACKAGES[1] in piano_calls[1][0]
+assert "setuptools==75.8.0" in piano_calls[1][0]
 assert "--proxy" not in piano_calls[1][0]
 
 # Partitura 独立安装，并通过 MIDI 样本确认可读取音符事件。

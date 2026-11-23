@@ -169,7 +169,7 @@ class MusicTools:
             runtime = self._directory(tool) / "runtime"
             try:
                 complete = (runtime / "oit-python-version.txt").read_text(encoding="utf-8") == config.MUSIC_PYTHON_VERSION
-                complete = complete and (runtime / "oit-python-ready.txt").read_text(encoding="utf-8") == config.MUSIC_BASIC_PITCH_VERSION
+                complete = complete and (runtime / "oit-python-ready.txt").read_text(encoding="utf-8") == config.MUSIC_BASIC_PITCH_READY
             except OSError:
                 complete = False
             ready = ready and complete

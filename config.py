@@ -221,7 +221,7 @@ OUTING_MAX_HOURS = 24 * 7
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.669"                  # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.670"                  # 和 GitHub 上发布的版本号比较 (见 updater.py)
 AI_VOICE_GAP = 1.0                       # 两条语音之间的默认间隔（秒）
 COMM_SPLIT_INTERVAL_SECONDS = 5          # 分条续发固定等待时间（秒）
 COMM_REWARD_CARRY_PERCENT = 85          # Claudia 完成奖励填满循环后，剩余休息的结转百分比
@@ -309,9 +309,10 @@ MUSIC_INSTALL_FREE = 3 * 1024 * 1024 * 1024
 MUSIC_PYTHON_VERSION = "3.11.9"
 MUSIC_PIP_VERSION = "24.3.1"
 MUSIC_BASIC_PITCH_VERSION = "0.4.0"
+MUSIC_BASIC_PITCH_READY = "0.4.0;setuptools=75.8.0"
 MUSIC_BASIC_PITCH_PACKAGES = ("basic-pitch==0.4.0", "onnxruntime==1.20.1", "numpy==1.26.4",
                               "librosa==0.10.2.post1", "mir-eval==0.8.2", "pretty-midi==0.2.11.post0",
-                              "resampy==0.4.2", "scikit-learn==1.6.1", "scipy==1.15.2",
+                              "resampy==0.4.2", "scikit-learn==1.6.1", "scipy==1.15.2", "setuptools==75.8.0",
                               "soundfile==0.13.1")
 OLD_APP_DIR = "mrsTimer"
 FILL_WINDOW = timedelta(hours=1)              

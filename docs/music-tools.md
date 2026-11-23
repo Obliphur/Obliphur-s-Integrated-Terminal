@@ -44,6 +44,6 @@ Partitura 是可单独安装的 MIDI 分析依赖，使用独立 Python 环境�
 
 Audiveris 5.11.0 与 MuseScore Studio 4.7.7 从官方 GitHub Release 获取 x64 MSI，统一下载器核对大小及 SHA-256，再用 MSI 行政解包部署至 `Audiveris/`、`MuseScore/`。Audiveris 自带 Java。调用命令行探测通过后才写 `oit-install.json`，该收据保存组件版本及目录内相对可执行路径。安装不改系统文件关联。两个项目均免费；其开源许可及组件许可保留在官方分发包中。
 
-钢琴转录组件安装到 `BasicPitch/`，部署独立 Python 3.11 环境和指定版本的 Spotify Basic Pitch、ONNX Runtime CPU 及运行依赖；使用 Basic Pitch 随包提供的模型，不另行下载权重，不安装 PyTorch 或 CUDA，也不使用系统 Python。Python 来自 python.org，pip 与组件来自 PyPI；下载和 pip 安装复用用户原有代理，避开 OIT 过滤代理。Windows 使用 ONNX 推理，因此安装时跳过 Basic Pitch 在 Python 3.11 上声明的可选 TensorFlow 依赖。音乐工具启动隔离 Python 子进程时，OIT 仅在该进程存活期间豁免其可执行文件目录，退出即撤销。只有依赖导入、模型加载和 CPU provider 检查通过后才写入就绪标记。运行通过独立 `music_worker.py`；安装失败可重试，不把半成品标记为就绪。旧版 `PianoTranscription/` 文件不会被新版本读取或自动删除。
+钢琴转录组件安装到 `BasicPitch/`，部署独立 Python 3.11 环境和指定版本的 Spotify Basic Pitch、ONNX Runtime CPU 及运行依赖；其中固定安装 setuptools，为 resampy 提供 `pkg_resources`。使用 Basic Pitch 随包提供的模型，不另行下载权重，不安装 PyTorch 或 CUDA，也不使用系统 Python。Python 来自 python.org，pip 与组件来自 PyPI；下载和 pip 安装复用用户原有代理，避开 OIT 过滤代理。Windows 使用 ONNX 推理，因此安装时跳过 Basic Pitch 在 Python 3.11 上声明的可选 TensorFlow 依赖。音乐工具启动隔离 Python 子进程时，OIT 仅在该进程存活期间豁免其可执行文件目录，退出即撤销。只有依赖导入（包括 `pkg_resources`）、模型加载和 CPU provider 检查通过后才写入就绪标记。运行通过独立 `music_worker.py`；安装失败可重试，不把半成品标记为就绪。运行依赖修订变化会使旧环境失效并在下一次安装时更新；旧版 `PianoTranscription/` 文件不会被新版本读取或自动删除。
 
 Process Lasso 保护规则同时排除 Python、torchrun、Java、Audiveris、MuseScore 与 OIT；已有 OIT 管理的 Lasso 配置会在安装音乐组件时备份后刷新。目录、环境、收据、权重和转换结果均不随设备同步。Android 保留原有 AI 语音入口，本套原生音乐工具部署仅在 Windows 提供。

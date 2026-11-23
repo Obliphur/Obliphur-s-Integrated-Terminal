@@ -71,7 +71,7 @@ Windows x64 的「额外功能」提供 Microsoft OpenJDK 17 安装入口，供 
 
 AI 模型配置单列设置页，按新增/修改配置、聊天主模型、图片、识字、评判分项管理。桌面端默认关闭“直接在 OIT 使用 CLI 的订阅额度”；开启时会警告这可能违反服务商规则并导致账号封禁。开启后，已安装并登录的 Claude Code、Codex、Antigravity 作为本机订阅配置出现；关闭时这些预设以及使用它们的已保存配置都隐藏，主模型和任务模型自动回退到可用配置。CLI 以独立会话承接聊天，不重复发送完整历史；卸载程序后才允许删除该配置。CLI 的型号默认交给订阅客户端选择；OIT 通过客户端帮助检测可用参数，思考强度默认自动选择，普通聊天按 low、主动发起等需要判断的请求按 medium。OIT 不读取订阅额度或伪造模型列表。后三类任务未单独指定时跟随聊天主模型；图片消息优先使用当前聊天配置，若服务商明确拒绝图像输入且配置了图片模型，再自动回退。规则页的 AI 建议使用聊天主模型，原模型入口会跳转到 Assistant 并预填配置请求。两端的演奏评判均使用本机 MIDI 分析并调用独立评判配置生成建议。
 
-钢琴音频转 MIDI 使用 Spotify Basic Pitch 0.4.0（Apache 2.0），安装到所选目录的 `BasicPitch/`。运行环境是隔离 Python 3.11，模型随 Basic Pitch 软件包本地提供，ONNX Runtime 使用 CPU；不再下载旧 Zenodo 权重、PyTorch 或 CUDA。为避免 Basic Pitch 在 Python 3.11 上声明的 TensorFlow 依赖，安装时单独安装 Basic Pitch 包并从 PyPI 安装锁定的其余推理依赖。安装检查实际加载模型并确认 CPU provider 后写就绪标记；旧版本标记不兼容时重新部署，新版本不读取或自动删除旧 `PianoTranscription/` 文件。Python、pip 和依赖下载只使用批准的官方源，失败时复用用户原有上游代理。全部音乐任务串行，期间不能切换安装目录或部署 Process Lasso；任务跨页面重建保留，转换失败保留原有输出。安装时刷新 OIT 管理的 Lasso 排除规则，新增 Java、Audiveris、MuseScore 进程保护。
+钢琴音频转 MIDI 使用 Spotify Basic Pitch 0.4.0（Apache 2.0），安装到所选目录的 `BasicPitch/`。运行环境是隔离 Python 3.11，模型随 Basic Pitch 软件包本地提供，ONNX Runtime 使用 CPU；不再下载旧 Zenodo 权重、PyTorch 或 CUDA。为避免 Basic Pitch 在 Python 3.11 上声明的 TensorFlow 依赖，安装时单独安装 Basic Pitch 包并从 PyPI 安装锁定的其余推理依赖，其中固定 setuptools 以提供 resampy 所需的 `pkg_resources`。安装检查导入全部依赖、实际加载模型并确认 CPU provider 后写就绪标记；运行依赖修订变化会使旧环境失效并在下一次安装时更新，新版本不读取或自动删除旧 `PianoTranscription/` 文件。Python、pip 和依赖下载只使用批准的官方源，失败时复用用户原有上游代理。全部音乐任务串行，期间不能切换安装目录或部署 Process Lasso；任务跨页面重建保留，转换失败保留原有输出。安装时刷新 OIT 管理的 Lasso 排除规则，新增 Java、Audiveris、MuseScore 进程保护。
 
 界面语言这一项不管当前是哪种语言都显示为 "Language", 看不懂当前语言的人也能找到它.
 
