@@ -25,6 +25,7 @@ import music_library
 
 
 BRIDGE_FILE = "mcp_bridge.json"
+SESSIONS_FILE = "mcp_sessions.json"
 BRIDGE_PROTOCOL = 1
 BODY_MAX = 4 * 1024 * 1024
 SSE_HEARTBEAT_S = 15.0
@@ -87,10 +88,46 @@ class OitMcpBridge:
         self._last_batch = {}           # persona_id -> {"batch_id": str, "items": list}
         self._last_reply_ms = {}        # conversation_id/persona_id -> int
         self._running = False
+        self._load_sessions()
 
     @property
     def discovery_path(self) -> str:
         return os.path.join(self.data_dir, BRIDGE_FILE)
+
+    @property
+    def sessions_path(self) -> str:
+        return os.path.join(self.data_dir, SESSIONS_FILE)
+
+    def _load_sessions(self):
+        """启动时从 mcp_sessions.json 恢复 1:1 绑定表，保证重启 OIT 或 Antigravity 后绑定不丢失。"""
+        if not self.data_dir or not os.path.isfile(self.sessions_path):
+            return
+        try:
+            with open(self.sessions_path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            if isinstance(data, dict):
+                sessions = self.comm.cfg.setdefault("mcp_sessions", {})
+                if not isinstance(sessions, dict):
+                    sessions = self.comm.cfg["mcp_sessions"] = {}
+                for cid, meta in data.items():
+                    if isinstance(cid, str) and isinstance(meta, dict) and meta.get("persona_id"):
+                        sessions[cid] = meta
+        except Exception:
+            pass
+
+    def _save_sessions(self):
+        """同步原子落盘 mcp_sessions.json，避免异步写入在快速重启时丢失绑定。"""
+        if not self.data_dir:
+            return
+        try:
+            os.makedirs(self.data_dir, exist_ok=True)
+            sessions = self._sessions_map()
+            tmp = self.sessions_path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(sessions, fh, ensure_ascii=False, indent=2)
+            os.replace(tmp, self.sessions_path)
+        except OSError:
+            pass
 
     def start(self) -> int:
         with self._lock:
@@ -516,6 +553,7 @@ class OitMcpBridge:
                 for old_cid in other_cids:
                     sessions.pop(old_cid, None)
                 sessions[cid] = {"persona_id": pid, "host": host, "ts": _now_ms()}
+                self._save_sessions()
                 if hasattr(self.comm, "save_cfg"):
                     self.comm.save_cfg()
             return {
@@ -690,6 +728,7 @@ class OitMcpBridge:
                 for old_cid in other_cids:
                     sessions.pop(old_cid, None)
                 sessions[target_cid] = {"persona_id": pid, "host": host, "ts": _now_ms()}
+                self._save_sessions()
                 self.comm.save_cfg()
                 return {
                     "ok": True,

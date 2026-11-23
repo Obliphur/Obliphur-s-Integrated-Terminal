@@ -128,7 +128,7 @@ DEFAULTS = {"persona": "", "show_avatar": True, "coread_link": {}, "coread_offer
             "shift": [],                                     # 起点平移记录 (跟着聊天对象走, 同步; 不改人设文件)
             "love": {}, "msg_gone": 0,                       # 亲密关系状态 (跟着聊天对象走, 同步) / 被 KEEP 砍掉的信息条数 (本机)
             "alarm_co": {},                                  # 共时闹钟 (1.0.359): {pid, devs: [响铃的设备 id], ts}; pid 为空 = 关闭
-            "net": {}, "cli_sessions": {}}                   # Claude Code 本地会话: {配置/人设: {id, updated}}
+            "net": {}, "cli_sessions": {}, "mcp_sessions": {}}  # 本地会话与 Antigravity MCP 1:1 绑定
 
 
 # ══════════════ 前置 prompt 与 README ══════════════

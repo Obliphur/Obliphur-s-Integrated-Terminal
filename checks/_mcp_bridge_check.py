@@ -84,6 +84,10 @@ def main():
         assert rebind["ok"] is True
         chk_old = _http_json(port, bridge.token, "/session/check?conversation_id=conv-2")
         assert chk_old["bound"] is False, "强制改绑后旧对话应解除绑定"
+        # 重启持久化验证：新建 Comm + OitMcpBridge 后绑定不丢失
+        c_restarted = comm.Comm(tmp, personas_dir)
+        b_restarted = OitMcpBridge(c_restarted, tmp)
+        assert b_restarted.is_bound_conversation("conv-1") and b_restarted.is_bound_conversation("conv-3"), "重启 OIT 后 1:1 绑定必须持久保留"
         # 切回 conv-1 供后续步骤使用
         _http_json(port, bridge.token, "/turn/context?conversation_id=conv-1&consume_trigger=0")
 
