@@ -373,12 +373,15 @@ class FormMixin:
         self._ag_deploying = True
         data_dir = getattr(self.comm, "dir", "") if getattr(self, "comm", None) else ""
         dlg = Modal(self.winfo_toplevel(), tr("Antigravity 自动部署"),
-                    width=config.scaled(520), height=config.scaled(260))
+                    width=config.scaled(540), height=config.scaled(360))
+        area = ScrollArea(dlg.body, bg=COLORS["bg"])
+        area.pack(fill="both", expand=True)
         status_var = tk.StringVar(value=tr("正在准备自动部署…"))
-        lbl = tk.Label(dlg.body, textvariable=status_var, bg=COLORS["bg"], fg=COLORS["text"],
+        lbl = tk.Label(area.inner, textvariable=status_var, bg=COLORS["bg"], fg=COLORS["text"],
                        font=config.font("body"), justify="left", anchor="nw",
-                       wraplength=config.scaled(460))
-        lbl.pack(fill="both", expand=True)
+                       wraplength=config.scaled(470))
+        lbl.pack(fill="x", padx=4, pady=4)
+        area.bind_children()
         btn_close = ttk.Button(dlg.buttons, text=tr("关闭"), command=dlg.cancel)
         btn_close.pack(side="right")
         btn_close.state(["disabled"])
@@ -387,6 +390,7 @@ class FormMixin:
             try:
                 if dlg.winfo_exists():
                     status_var.set(text)
+                    area.canvas.yview_moveto(0.0)
             except tk.TclError:
                 pass
 
