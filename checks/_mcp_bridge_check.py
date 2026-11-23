@@ -106,8 +106,10 @@ def main():
         first_id = rep["items"][0]["id"]
         d1 = _http_json(port, bridge.token, "/ui/delivered", {"msg_id": first_id})
         assert d1["ok"]
+        fb = _http_json(port, bridge.token, "/turn/fallback_sync", {"conversation_id": "conv-1", "text": "重复的未分段回复"})
+        assert fb.get("skipped") == "already_replied_via_oit_reply", f"刚走完 oit_reply 后 fallback_sync 应跳过: {fb}"
         intr = _http_json(port, bridge.token, "/ui/interrupt", {"user_text": "我打断一下"})
-        assert intr["ok"] and intr["cancelled"] == 2
+        assert intr["ok"] and intr["cancelled"] == 2 and intr.get("msg_id")
         ctx4 = _http_json(port, bridge.token, "/turn/context?conversation_id=conv-1&consume_trigger=1")
         assert ctx4["interrupted"]["count"] == 2 and "2 条待发气泡" in ctx4["system_message"]
 

@@ -237,6 +237,13 @@ async function triggerAction(action: string, params?: Record<string, unknown>) {
   }
 }
 
+function refreshCapabilities() {
+  const caps = app.getHostCapabilities();
+  canSendMessage = Boolean(caps && (caps as Record<string, unknown>).message);
+  elComposer.style.display = canSendMessage ? "flex" : "none";
+  elReadonlyHint.style.display = canSendMessage ? "none" : "block";
+}
+
 async function sendUserMessage() {
   const text = elInput.value.trim();
   if (!text || !canSendMessage) return;
@@ -244,8 +251,9 @@ async function sendUserMessage() {
   elSend.disabled = true;
   try {
     clearPendingTimers();
-    await callAppTool("oit_ui_interrupt", { user_text: text });
-    appendBubble({ id: `local_${Date.now()}`, role: "me", text, ts: Date.now() });
+    const res = await callAppTool("oit_ui_interrupt", { user_text: text });
+    const realId = String(res?.msg_id || `local_${Date.now()}`);
+    appendBubble({ id: realId, role: "me", text, ts: Date.now() });
     await app.sendMessage({
       role: "user",
       content: [{ type: "text", text }],
@@ -261,6 +269,7 @@ app.ontoolinput = () => {
 };
 
 app.ontoolresult = (result) => {
+  refreshCapabilities();
   const sc = result.structuredContent as Record<string, unknown> | undefined;
   if (sc && Array.isArray(sc.items)) {
     schedulePending(
@@ -278,6 +287,7 @@ app.ontoolresult = (result) => {
 app.onhostcontextchanged = (ctx) => {
   if (ctx.theme) applyDocumentTheme(ctx.theme);
   if (ctx.styles?.variables) applyHostStyleVariables(ctx.styles.variables);
+  refreshCapabilities();
 };
 
 // Bind toolbar buttons
@@ -302,10 +312,7 @@ async function boot() {
   if (ctx?.theme) applyDocumentTheme(ctx.theme);
   if (ctx?.styles?.variables) applyHostStyleVariables(ctx.styles.variables);
 
-  const caps = app.getHostCapabilities();
-  canSendMessage = Boolean(caps && (caps as Record<string, unknown>).message);
-  elComposer.style.display = canSendMessage ? "flex" : "none";
-  elReadonlyHint.style.display = canSendMessage ? "none" : "block";
+  refreshCapabilities();
 
   await pollState();
   void loadAvatar();

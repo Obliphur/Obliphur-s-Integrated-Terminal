@@ -113,8 +113,8 @@
       line-height: 1.45;
     }
     .row.me .bubble {
-      background: var(--color-background-info, #2d5bd1);
-      color: var(--color-text-inverse, #fff);
+      background: #2563eb;
+      color: #ffffff;
       border-bottom-right-radius: 4px;
     }
     .row.ai .bubble {
@@ -199,7 +199,7 @@
       <textarea id="input" rows="1" placeholder="输入消息，Enter 发送（中途发送会撤销未弹出气泡）"></textarea>
       <button id="btnSend" class="send-btn">发送</button>
     </div>
-    <div id="readonlyHint" class="hint" style="display:none">当前视图不支持直接发消息，请在主聊天栏输入。</div>
+    <div id="readonlyHint" class="hint" style="display:none">当前尚未进入具体对话，请先在左侧发送第一条消息建立会话后即可在此输入。</div>
   </div>
   <script type="module" src="/src/main.ts"></script>
 </body>

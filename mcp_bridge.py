@@ -73,6 +73,7 @@ class OitMcpBridge:
         self._uploads = {}              # upload_id -> {"path": str, "mime": str, "name": str}
         self._recent_user_ms = {}       # conversation_id -> int
         self._last_batch = {}           # persona_id -> {"batch_id": str, "items": list}
+        self._last_reply_ms = {}        # conversation_id/persona_id -> int
         self._running = False
 
     @property
@@ -687,6 +688,12 @@ class OitMcpBridge:
 
             with self._lock:
                 self._last_batch[pid] = {"batch_id": batch_id, "items": items}
+                now_ts = _now_ms()
+                if cid:
+                    self._last_reply_ms[cid] = now_ts
+                if pid:
+                    self._last_reply_ms[pid] = now_ts
+                self._last_reply_ms["*"] = now_ts
             self.comm.save_chat()
             self.comm._changed()
             return {
@@ -789,13 +796,15 @@ class OitMcpBridge:
                 with self._lock:
                     prev = self._interrupted.get(pid, {}).get("count", 0)
                     self._interrupted[pid] = {"count": prev + len(doomed), "ts": _now_ms()}
+            added_id = ""
             if user_text:
-                self.comm._add("me", user_text)
+                um = self.comm._add("me", user_text)
+                added_id = str(um.get("uid") or um.get("id") or "")
             self.comm.save_chat()
             self.comm._changed()
             if hasattr(self.comm, "_push"):
                 self.comm._push()
-            return {"ok": True, "cancelled": len(doomed)}
+            return {"ok": True, "cancelled": len(doomed), "msg_id": added_id}
         return self._call_main(work)
 
     def handle_ui_action(self, body: dict) -> dict:
@@ -858,12 +867,23 @@ class OitMcpBridge:
         return self._call_main(work)
 
     def handle_fallback_sync(self, body: dict) -> dict:
-        """Stop Hook 兜底同步：模型未调用 oit_reply 而直接输出纯文本时写入 OIT。"""
+        """Stop Hook 兜底同步：仅当本轮确实未调用 oit_reply 时才写入纯文本。"""
         text = str(body.get("text") or "").strip()
-        if not text:
+        cid = str(body.get("conversation_id") or "").strip()
+        if not text or text in ("✓", "✔", "ok", "OK", "已发送"):
             return {"ok": True, "skipped": True}
 
         def work():
+            pid = self._persona_for_conversation(cid)
+            now_ts = _now_ms()
+            with self._lock:
+                recent = max(
+                    self._last_reply_ms.get(cid, 0),
+                    self._last_reply_ms.get(pid, 0),
+                    self._last_reply_ms.get("*", 0),
+                )
+            if now_ts - recent < 60_000:
+                return {"ok": True, "skipped": "already_replied_via_oit_reply"}
             if self.comm.messages and self.comm.messages[-1].get("role") == "ai" and self.comm.messages[-1].get("text") == text:
                 return {"ok": True, "dedup": True}
             self.comm._add("ai", text)

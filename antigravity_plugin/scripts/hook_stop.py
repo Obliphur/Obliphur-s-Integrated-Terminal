@@ -24,10 +24,12 @@ def _last_planner_text(transcript_path: str) -> tuple[str, bool]:
                 break
             if step.get("type") == "PLANNER_RESPONSE":
                 for tc in step.get("tool_calls") or []:
-                    if "oit_reply" in str(tc.get("name") or ""):
+                    if "oit_reply" in json.dumps(tc, ensure_ascii=False):
                         called_oit_reply = True
                 if not last_text and step.get("content"):
                     last_text = str(step["content"]).strip()
+            elif "oit_reply" in line:
+                called_oit_reply = True
     except Exception:
         return "", False
     return last_text, called_oit_reply

@@ -2,8 +2,9 @@
 
 当本会话与 OIT（Obliphur's Integrated Terminal）连接时，请遵守以下约定：
 
-1. **所有面向用户的正式聊天回复优先调用 `oit_reply(bubbles=[...])`**
+1. **所有面向用户的正式聊天回复必须调用 `oit_reply(bubbles=[...])`**
    - 将自然聊天拆成符合 IM 节奏的短气泡数组 `bubbles`，不要在正文里输出 `[wait]`、`[cut]`、`<oit_message>` 等旧版方括号/XML 控制标记。
+   - **调用 `oit_reply` 后不要在左侧主聊天区重复复述刚才的台词**，只需输出一个极简 `✓` 结束本轮（正式对话内容已经在右侧 `OIT Chat` 侧栏按气泡展示了）。
    - 保持回复简洁自然，严格遵循 `SessionStart` / `PreInvocation` 注入的人设、日程状态与张力规则。
 2. **动态状态来源**
    - 在 Antigravity 中，`PreInvocation` Hook 每轮已自动注入 `[OIT动态状态]`（含时间、用户专注/休息状态、日程、张力、主动触发说明及插话撤销提示），无需重复调用 `oit_get_turn_context`。

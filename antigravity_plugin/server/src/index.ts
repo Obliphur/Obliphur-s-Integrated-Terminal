@@ -381,7 +381,7 @@ function createOitServer(): Server {
         const res = await bridgePost("/reply/submit", args);
         const items = Array.isArray(res.items) ? res.items : [];
         const summary = items.length
-          ? `已提交 ${items.length} 条气泡到 OIT Chat（batch=${res.batch_id}）。`
+          ? `已提交 ${items.length} 条气泡到 OIT Chat 侧栏（batch=${res.batch_id}）。请勿在主聊天区重复复述这些内容，直接回复 ✓ 结束本轮即可。`
           : res.silent
             ? "本轮保持静默。"
             : res.refuse
