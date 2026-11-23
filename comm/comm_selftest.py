@@ -2188,7 +2188,7 @@ def _selftest():
     mine = [m for m in cj.messages if m["role"] == "me"][-1]
     assert mine["text"].startswith("🤝 联合行动 14:00 - ") and mine["text"].endswith("一起吧")
     body = calls[-1][1][-1]["content"]
-    assert "【合约的基础规则】" in body and "持久战-I(环境, 等级1)" in body and "开始时间 2026-12-10 14:00" in body and 'answer="yes"' in body
+    assert "【接受/拒绝接口教程】" in body and "【合约的基础规则】" in body and "持久战-I(环境, 等级1)" in body and "开始时间 2026-12-10 14:00" in body and 'answer="yes"' in body
     assert body.index("【合约的基础规则】") < body.index("【联合行动】") < body.index("【选择的词条】") < body.index("一起吧")
     assert cj.visible()[-1]["text"] == "好的,到时见." and cj._joint()["state"] == "yes", cj._joint()
     assert "已接受" in cj.joint_status_text() and cj.joint_busy()
@@ -3807,7 +3807,7 @@ def _selftest():
     cs.tick()
     wait(cs)
     assert len(calls) == n_calls + 2, "[messages] 查询那一轮 + 回复那一轮"
-    assert OIT_TAG in calls[-2][1][-1]["content"] and "从 6:30 平移到 7:00" in calls[-2][1][-1]["content"] and 'answer="yes"' in calls[-2][1][-1]["content"]
+    assert "【接受/拒绝接口教程】" in calls[-2][1][-1]["content"] and OIT_TAG in calls[-2][1][-1]["content"] and "从 6:30 平移到 7:00" in calls[-2][1][-1]["content"] and 'answer="yes"' in calls[-2][1][-1]["content"]
     assert "聊天记录数: 共" in calls[-1][1][-1]["content"] and f"共 {cs.msg_total() - 1} 条" in calls[-1][1][-1]["content"], calls[-1][1][-1]["content"]
     assert not cs.shift_asking() and cs.visible()[-1]["text"] == "行." and notices == [f"{cs.share_ai_name()} 同意了, 日程起点明天起平移到 7:00"], notices
     assert cs.shifts() == [{"ts": cs.shifts()[0]["ts"], "d": "2027-07-02", "s": 420, "f": base_start}]

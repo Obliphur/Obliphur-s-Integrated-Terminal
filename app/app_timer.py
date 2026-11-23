@@ -732,7 +732,7 @@ class TimerMixin:
             self._check_win = None             # 被手动关掉了 = 人还在
             self._mine()
             self._focus_checks += 1
-            self._focus_ok = self._focus_elapsed()
+            self._focus_ok = max(self._focus_ok, self._focus_elapsed())
             self._save_timer_state()
         focused = self.sync.is_latest_active()
         if not focused:

@@ -193,7 +193,7 @@ class ShareMixin:
                 return
             cur = self.shift_start()
             a["sent"] = True
-            self._trigger("shift_ask", (f"{SHIFT_TAG} 用户请求把你的日程起点 (初始起点) 从 {hm_text(cur if cur is not None else 0)} 平移到 {hm_text(a['to'])}: "
+            self._trigger("shift_ask", (f"{CONSENT_TUTORIAL}\n\n{SHIFT_TAG} 用户请求把你的日程起点 (初始起点) 从 {hm_text(cur if cur is not None else 0)} 平移到 {hm_text(a['to'])}: "
                                         f"新起点从明天起生效 (今天的日程不变), 只改日程, 不改你的人设; 起点允许的范围是 {hm_text(bounds[0])} - {hm_text(bounds[1])} (起点大于终点表示跨午夜), "
                                         '之后的各项活动照常从新起点往后排. 请按人设判断是否同意: 同意就在oit_reply中填写answer="yes",不同意填写answer="no" '
                                         f"(后面可以按人设加一句text); 如果实在不方便回答, 调用oit_reply(refuse=true)."))

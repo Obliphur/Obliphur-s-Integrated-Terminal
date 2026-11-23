@@ -132,6 +132,7 @@ object CommData {
             lines.add("- ${t.name.substringAfter(':')}($kind, 等级${t.level}): ${t.desc}".replace("\n", " "))
         }
         lines.add("")
+        lines.add("【接受/拒绝接口教程】这是一个需要明确同意的请求。请使用原生 oit_reply 接口处理：接受时调用 oit_reply(answer=\"yes\", text=\"...\")，拒绝时调用 oit_reply(answer=\"no\", text=\"...\")；只写普通文字，或在正文里写 yes/no，都不算接受或拒绝。answer 只能用于本次请求。")
         lines.add("请按规则 X 回复: 接受就在oit_reply中填写answer=\"yes\",不接受填写answer=\"no\" (后面可以同时提供text).")
         return lines.joinToString("\n")
     }

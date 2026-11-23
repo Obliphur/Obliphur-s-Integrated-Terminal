@@ -3492,7 +3492,7 @@ class Comm(
             if (!CommRules.shiftAllows(bounds, shiftAskTo)) { shiftAskEnd("起点没有平移 (日程文件变了)"); return }
             val cur = shiftStart() ?: 0
             shiftAskSent = true
-            trigger("shift_ask", "${CommShift.TAG} 用户请求把你的日程起点 (初始起点) 从 ${CommShift.hm(cur)} 平移到 ${CommShift.hm(shiftAskTo)}: " +
+            trigger("shift_ask", "【接受/拒绝接口教程】这是一个需要明确同意的请求。请使用原生 oit_reply 接口处理：接受时调用 oit_reply(answer=\"yes\", text=\"...\")，拒绝时调用 oit_reply(answer=\"no\", text=\"...\")；只写普通文字，或在正文里写 yes/no，都不算接受或拒绝。answer 只能用于本次请求。\n\n${CommShift.TAG} 用户请求把你的日程起点 (初始起点) 从 ${CommShift.hm(cur)} 平移到 ${CommShift.hm(shiftAskTo)}: " +
                 "新起点从明天起生效 (今天的日程不变), 只改日程, 不改你的人设; 起点允许的范围是 ${CommShift.hm(bounds!!.first)} - ${CommShift.hm(bounds.second)} (起点大于终点表示跨午夜), " +
                 "之后的各项活动照常从新起点往后排. 请按人设判断是否同意: 同意就在oit_reply中填写answer=\"yes\",不同意填写answer=\"no\" " +
                 "(后面可以按人设加一句text); 如果实在不方便回答, 调用oit_reply(refuse=true).")

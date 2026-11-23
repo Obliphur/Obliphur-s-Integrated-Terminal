@@ -17,9 +17,9 @@ root = tk.Tk()
 root.geometry("1280x860+5000+5000")
 root.update()
 c = C.Contract(tempfile.mkdtemp())
-state = {"why": "", "starts": 0}
+state = {"why": "", "starts": 0, "joint_accepted": False}
 page = ContractPage(root, c, on_start=lambda terms: state.__setitem__("starts", state["starts"] + 1),
-                    blocked=lambda: state["why"])
+                    blocked=lambda: state["why"], locked_fn=lambda: state["joint_accepted"])
 page.pack(fill="both", expand=True)
 page.refresh()
 root.update_idletasks()
@@ -50,6 +50,17 @@ assert page.lbl_block.winfo_manager() == "", "休息结束后提示应该消失"
 page.btn_start.event_generate("<Button-1>")
 root.update()
 assert state["starts"] == 1, "按钮恢复后可以开始合约"
+
+# 联合行动已接受: 词条板和清空入口锁定, 开始行动仍可用
+state["joint_accepted"] = True
+c.set_draft(["short1"])
+page.refresh()
+page._click("move")
+page._clear()
+assert c.draft == ["short1"] and not page.btn_clear.winfo_manager()
+assert page.btn_start.winfo_manager() == "pack"
+state["joint_accepted"] = False
+page.refresh()
 
 # 合约进行中: 没有提示, 只有提前结束
 c.start([], owner="me")

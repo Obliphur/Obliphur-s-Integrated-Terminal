@@ -122,7 +122,7 @@ class ContractPage(tk.Frame):
 
     def __init__(self, master, contract, on_start=None, on_abandon=None, net_used=None, on_change=None,
                  blocked=None, rec_text=None, on_stop_screen=None, on_close_rand=None, on_lift_ban=None,
-                 on_pick=None, on_joint_pick=None, invite_fn=None, on_invite=None):
+                 on_pick=None, on_joint_pick=None, invite_fn=None, on_invite=None, locked_fn=None):
         self.P = P = palette()
         self.theme = theme()
         super().__init__(master, bg=P["bg"])
@@ -141,6 +141,7 @@ class ContractPage(tk.Frame):
         self._joint_pick = False                      # 联合行动选词条中: 开始行动的按钮换成"确定选择", 不开始合约
         self.invite_fn = invite_fn or (lambda: {})    # 对方 (AI) 发起的联合行动邀请 ({} = 没有): 词条是对方选的, 右下角换成"拒绝"和"接受"
         self.on_invite = on_invite                    # 点了"拒绝" (False) / "接受" (True)
+        self.locked_fn = locked_fn or (lambda: False)  # 已接受、尚未开始的联合行动: 词条保持不变
         self._inv = {}                                # refresh() 时读到的邀请
         self._hover = ""
         self._list_key = None
@@ -430,8 +431,11 @@ class ContractPage(tk.Frame):
         """现在是不是在回复对方发起的联合行动: 词条是对方选的, 只能看, 不能改."""
         return bool(self._inv) and not self.c.active
 
+    def _terms_locked(self) -> bool:
+        return not self.c.active and (self._inv_on() or self.locked_fn())
+
     def _click(self, tid: str):
-        if self._inv_on():
+        if self._terms_locked():
             self._enter(tid)
             return
         if self.c.active:
@@ -458,7 +462,7 @@ class ContractPage(tk.Frame):
         self._hover = tid
         rand = self.c.active and tid in self.c.rand
         ban = self.c.can_lift(tid)
-        self.canvas.configure(cursor="hand2" if rand or ban or not (self.c.active or self._inv_on()) else "arrow")
+        self.canvas.configure(cursor="hand2" if rand or ban or not (self.c.active or self._terms_locked()) else "arrow")
         text = f"{marks(C.BY_ID[tid][2])}  {term_name(tid)} : {term_desc(tid)}"
         if rand:
             text += "   " + tr("[未知变量选中 · 点击关闭, 算一次违反]")
@@ -641,7 +645,7 @@ class ContractPage(tk.Frame):
                               fill=P["level"] if i < n else P["clear"], outline="")
 
     def _clear(self):
-        if not self.c.active and not self._inv_on():
+        if not self.c.active and not self._terms_locked():
             self.c.set_draft([])
             self.refresh()
             self.on_change()
@@ -772,7 +776,7 @@ class ContractPage(tk.Frame):
             show_pack(self.lbl_warn, side="right", padx=(0, 16))
         else:
             hide_pack(self.lbl_warn)
-        if active or inv:                                   # 对方选的词条不能清空
+        if active or self._terms_locked():                  # 联合行动约定的词条不能清空
             hide_pack(self.btn_clear)
         else:
             show_pack(self.btn_clear, side="left", before=self.lbl_level.master)

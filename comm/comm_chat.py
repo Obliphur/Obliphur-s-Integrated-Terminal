@@ -297,7 +297,7 @@ class ChatMixin:
                 return why
             start, end = _joint_time(joint["start"]), _joint_time(joint["end"])
             shown.append(comm_data.joint_label(joint["terms"], start, end, self.now().date()))
-            parts.append(oit_text(comm_data.joint_text(joint["terms"], start, end)))
+            parts.append(oit_text(CONSENT_TUTORIAL + "\n\n" + comm_data.joint_text(joint["terms"], start, end)))
         if requests.get("share"):
             if self.share["on"] or self.share_asking():
                 return tr("share data 已开启或正在等待回复")

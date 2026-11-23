@@ -924,7 +924,7 @@ class TimerEngine(private val core: Core, dir: File, private val mono: () -> Dou
                 // 被手动关掉了 = 人还在
                 mine()
                 focusChecks += 1
-                focusOk = elapsed
+                focusOk = maxOf(focusOk, elapsed)
                 saveState()
                 if (action == "end") onAction()
             }

@@ -282,6 +282,7 @@ fun ContractScreen() {
     val active = c.active
     // 对方 (AI) 发起的联合行动: 词条是对方选的 (只能看), 右下角换成"拒绝"和"接受"; null = 没有
     val invite = if (active) null else core.jointInviteHint()
+    val jointAccepted = !active && core.comm.jointState() == "yes"
     val now = LocalDateTime.now()
     var tapped by rememberSaveable { mutableStateOf("") }
     var tappedCombo by rememberSaveable { mutableStateOf("") }     // 组合页点过的组合: 效果写在词条板下面一行
@@ -404,6 +405,7 @@ fun ContractScreen() {
                                     .clickable {
                                         tapped = t.id
                                         if (invite != null) return@clickable          // 对方选的词条: 只能看说明, 不能改
+                                        if (jointAccepted) return@clickable          // 已接受的词条保持不变
                                         if (active) {
                                             if (picked) ask = "close:" + t.id
                                             else if (ban) ask = "lift:" + t.id
@@ -530,7 +532,7 @@ fun ContractScreen() {
         val orig = if (active) c.origLevel else level
         Row(Modifier.fillMaxWidth().background(p.bar).padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically) {
-            if (!active && invite == null) Text(tr("🗑  清空"), color = p.clearText, fontWeight = FontWeight.Bold,
+            if (!active && invite == null && !jointAccepted) Text(tr("🗑  清空"), color = p.clearText, fontWeight = FontWeight.Bold,
                 modifier = Modifier.background(p.clear, RoundedCornerShape(2.dp))
                     .clickable { c.setDraft(emptyList()); core.changed() }.padding(horizontal = 14.dp, vertical = 8.dp))
             Column(Modifier.padding(start = 16.dp)) {

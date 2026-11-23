@@ -375,7 +375,8 @@ class WindowMixin:
                                               on_close_rand=self.close_random_term,
                                               on_lift_ban=self.lift_net_ban,
                                               on_pick=self._warn_pick_term, on_joint_pick=self._joint_pick_done,
-                                              invite_fn=self._joint_invite_info, on_invite=self._joint_invite_respond)
+                                              invite_fn=self._joint_invite_info, on_invite=self._joint_invite_respond,
+                                              locked_fn=lambda: self.comm.joint_state() == "yes")
         self._prepare_page(self.pages["contract"])
         self.pages["settings"] = SettingsPage(
             self.content, self.settings,

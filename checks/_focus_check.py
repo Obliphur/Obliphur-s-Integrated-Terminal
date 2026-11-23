@@ -184,8 +184,10 @@ def test_focus_check_follows_focus():
         assert pc._focus_checks == phone._focus_checks == 0
         pc._mine.assert_not_called()
         phone._check_win.close()                 # 用户手动确认
+        phone._focus_ok = 90                      # 之前确认过的有效专注时间
+        phone._focus_elapsed = lambda: 65         # 暂停倒退后低于之前的确认值
         phone._check_focus()
-        assert phone._focus_checks == 1 and phone._focus_ok == 65
+        assert phone._focus_checks == 1 and phone._focus_ok == 90
         phone._mine.assert_called_once()
 
         # 同一段专注从远端同步确认次数, 焦点切回来也不重弹
