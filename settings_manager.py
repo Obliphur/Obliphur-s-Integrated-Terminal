@@ -354,7 +354,7 @@ SETTINGS_SCHEMA = [
         "kind": "choice", "apply": APPLY_INSTANT,
         "choices": [("", "关闭"), ("antigravity", "开启")],
         "fmt": lambda v: "ON" if v else "OFF",
-        "desc": "开启后聊天固定由 Antigravity 接管；桌面版接管项互斥。",
+        "desc": "聊天交给 Antigravity 桌面版处理，可使用该桌面账户的订阅额度；通过桌面版原生 MCP 集成接入，不调用 CLI，不适用 CLI 订阅警告。",
         "page": "models",
     },
 

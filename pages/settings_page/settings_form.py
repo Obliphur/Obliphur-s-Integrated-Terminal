@@ -213,6 +213,11 @@ class FormMixin:
                                      command=lambda k=key: self._stage(k)), "提交修改")
         btn.pack(side="left", padx=(8, 0))
 
+        if key == "AI_CHAT_TAKEOVER":
+            tk.Label(inner, text=tr(spec["desc"]), bg=card, fg=COLORS["text_dim"],
+                     font=config.font("small"), anchor="w", justify="left", wraplength=620).pack(
+                fill="x", padx=12, pady=(0, 8))
+
         pending = tk.Frame(inner, bg=card)
         pending.pack(fill="x", padx=12, pady=(0, 8))
         lbl_pending = tk.Label(
@@ -344,7 +349,7 @@ class FormMixin:
 
     def _confirm_setting_change(self, key: str, value) -> bool:
         """启用本机 CLI 订阅时明确提示风险。"""
-        if key not in ("CLI_SUBSCRIPTION_ENABLED", "AI_CHAT_TAKEOVER") or not bool(value) or bool(self.sm.value(key)):
+        if key != "CLI_SUBSCRIPTION_ENABLED" or not bool(value) or bool(self.sm.value(key)):
             return True
         return toast.ask(
             tr("直接在 OIT 使用 CLI 的订阅额度可能违反服务商规则并导致账号封禁,确定要开启吗?"),

@@ -628,7 +628,7 @@ EN = {
     "AI 模型设置": "AI model settings",
     "由 Antigravity 桌面版接管": "Hand over to Antigravity desktop",
     "由 {host} 桌面版接管": "Handled by {host} desktop",
-    "开启后聊天固定由 Antigravity 接管；桌面版接管项互斥。": "When enabled, Antigravity handles all chat. Only one desktop takeover can be active at a time.",
+    "聊天交给 Antigravity 桌面版处理，可使用该桌面账户的订阅额度；通过桌面版原生 MCP 集成接入，不调用 CLI，不适用 CLI 订阅警告。": "Chat is handled by the Antigravity desktop app and can use that account's subscription through its native MCP integration. OIT does not invoke the CLI, so the CLI subscription warning does not apply.",
     "直接在 OIT 使用 CLI 的订阅额度": "Use CLI subscription quota directly in OIT",
     "开启后 OIT 会直接调用本机已登录的 CLI 并消耗其订阅额度; 这可能违反服务商规则并导致账号封禁.": "When enabled, OIT directly calls a signed-in local CLI and spends its subscription quota; this may violate the provider's rules and get your account banned.",
     "直接在 OIT 使用 CLI 的订阅额度可能违反服务商规则并导致账号封禁,确定要开启吗?": "Using CLI subscription quota directly in OIT may violate the provider's rules and get your account banned. Do you want to enable it?",
