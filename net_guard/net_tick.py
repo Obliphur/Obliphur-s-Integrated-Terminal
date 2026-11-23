@@ -91,6 +91,8 @@ class TickMixin:
         try:
             want = want and self._guard_wanted() and bool(getattr(config, "BYPASS_GUARD", True))
             if want:
+                self.bypass.trusted_exes = {"antigravity.exe"} if str(
+                    getattr(config, "AI_CHAT_TAKEOVER", "") or "") == "antigravity" else set()
                 if not self._bp_init:
                     self._bp_init = True
                     self.bypass.clear_all()
@@ -102,6 +104,7 @@ class TickMixin:
                     self.bypass.clear_all()
                     self._bp_clean = True
             else:
+                self.bypass.trusted_exes = set()
                 self.bypass.clear_all()
                 self._bp_clean = True
         except Exception as e:

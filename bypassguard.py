@@ -213,6 +213,7 @@ class BypassGuard(appban.AppBan):
         self._allow = allow
         self._exes = exes
         self._prefixes = prefixes
+        self.trusted_exes = set()             # 桌面版接管宿主的 exe 名; 由 NetGuard 动态更新
         self.clock = clock
         self.rules = {}
         self.seen = set()                       # 已经提示过的程序
@@ -235,7 +236,7 @@ class BypassGuard(appban.AppBan):
         p = os.path.normcase(path)
         if p in (self._exes if self._exes is not None else own_exes()) or p in upstream_paths:
             return True
-        if os.path.basename(p) in self.allow():
+        if os.path.basename(p) in self.allow() or os.path.basename(p) in self.trusted_exes:
             return True
         return any(p.startswith(pre) for pre in (self._prefixes if self._prefixes is not None else _exempt_prefixes()))
 
@@ -270,6 +271,10 @@ class BypassGuard(appban.AppBan):
         """找出直连的连接, 封锁 (掐断 + "这个程序 → 这个地址"的防火墙规则). 返回 [(路径, 掐断的连接数, 这个程序是不是第一次被提示)]."""
         now = self.clock()
         groups, _ = self.find()
+        # 接管开关可能在上一轮扫描后才开启; 立即撤掉旧的同程序规则, 不等待 RULE_TTL.
+        for path, ip in list(self.rules):
+            if os.path.basename(os.path.normcase(path)) in self.trusted_exes:
+                self._delete(path, ip)
         self.last = [(p, len(cs)) for p, cs in groups.items()]
         out = []
         for path, cs in sorted(groups.items()):
@@ -373,6 +378,9 @@ def _selftest():
     assert len(dels) == 2 and all(f"program={GAME}" in c and any(x.startswith("remoteip=") for x in c) for c in dels), dels
     assert not any(p == GAME for p, _ in g.rules) and GAME not in g.paths
     assert (V6, "2606:4700::1111") in g.rules
+    g.trusted_exes = {"antigravity.exe"}
+    ag = r"C:\Program Files\Antigravity\Antigravity.exe"
+    assert g.exempt(ag, set()), "接管开启时 Antigravity 本体及其子进程不应被直连封锁"
     rows[:] = saved
     # 防火墙规则加不上: 不记, 下一轮再试
     g2 = mk(lambda a, timeout=30: (1, "denied"), upstream=lambda: None, allow=[], exes=set(), prefixes=[])

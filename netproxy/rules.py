@@ -188,6 +188,9 @@ class RuleStore:
         # AI 接口的域名 (当前服务商 Base URL 的主机): 名单 / 代理-全屏蔽都放行 (合约网络禁令仍然优先).
         # 由 app.py 每秒按 ai_config.json 更新.
         self.api_hosts = set()
+        # 接管宿主的程序 (例如 Antigravity 桌面端): 网络和应用名单都放行, 合约网络禁令仍然优先.
+        # 由 app.py 随接管设置即时更新.
+        self.trusted_exes = set()
         # 合约的网络禁令 (MECHANICS 18.3): 这些程序禁止联网 (联网会话 / 提前启动都不放行). app.py 每秒更新.
         self.banned = set()
         self.banned_domains = set()              # 同上: 这些网站 (含子域名) 也封锁
@@ -522,6 +525,8 @@ class RuleStore:
             return False, "ban"              # 合约的网络禁令: 什么时候都不放行 (MECHANICS 18.3)
         if self.banned_domains and any(domain_match(host, d) for d in self.banned_domains):
             return False, "ban"              # 网络禁令的网站: 联网会话 / 白名单 / 提前启动都放行不了
+        if exe and norm_app(exe) in self.trusted_exes:
+            return True, "takeover"          # 桌面版接管宿主: 所有网络模式都放行 (合约禁令已在上面处理)
         if self.api_hosts and any(domain_match(host, h) for h in self.api_hosts):
             return True, "api"              # AI 接口: 名单 / 代理-全屏蔽都放行 (聊天 / 名单建议要用)
         if any(domain_match(host, d) for d in CLAUDE_CODE_DOMAINS):
@@ -585,6 +590,8 @@ class RuleStore:
         s = self._snap
         if exe and (exe in self.exempt or self._grace_new(exe, mode)):
             return True, "prestart"         # 提前启动的程序 / 空窗期新启动的程序: 不看名单 (MECHANICS 20)
+        if exe and norm_app(exe) in self.trusted_exes:
+            return True, "takeover"          # 桌面版接管宿主不受应用名单限制
         if rest:
             return True, "rest"
         if mode == MODE_WHITELIST:
@@ -699,6 +706,14 @@ def _selftest():
     assert rs.app_allowed("steam.exe", False, MODE_BLACKLIST) == (True, "prestart")
     assert rs.app_allowed("steam.exe", False, MODE_WHITELIST) == (True, "prestart")
     assert rs.app_allowed("chrome.exe", False, MODE_WHITELIST) == (False, "not-whitelisted")
+    rs.exempt = set()
+    rs.trusted_exes = {"antigravity.exe"}
+    assert rs.decide("anything.example", "Antigravity.exe", False, MODE_BLOCKALL) == (True, "takeover")
+    assert rs.decide("anything.example", "Antigravity.exe", False, MODE_WHITELIST) == (True, "takeover")
+    assert rs.app_allowed("Antigravity.exe", False, MODE_WHITELIST) == (True, "takeover")
+    rs.banned = {"antigravity.exe"}
+    assert rs.decide("anything.example", "Antigravity.exe", False, MODE_BLOCKALL) == (False, "ban"), "合约网络禁令优先于接管豁免"
+    rs.banned = set()
     # 合约的网络禁令: 联网中 / 提前启动也拦
     rs.banned = {"steam.exe"}
     assert rs.decide("store.steampowered.com", "steam.exe", True, MODE_BLACKLIST) == (False, "ban")

@@ -422,6 +422,8 @@ class DailyMixin:
             rules = self.net.proxy.rules
             running = self.state == RUNNING
             rules.exempt = self.prestart.exe_names() if running else set()
+            rules.trusted_exes = {"antigravity.exe"} if str(
+                getattr(config, "AI_CHAT_TAKEOVER", "") or "") == "antigravity" else set()
             # 操作空窗期: 新启动的程序 (开始时没在运行的) 不受应用 / 网站名单限制; 原来就开着的照旧
             rules.open_new_except = self.prestart.baseline_exes if running and self.prestart.in_grace else None
             rules.api_hosts = self._api_hosts()

@@ -169,6 +169,8 @@ class SettingsMixin:
             self._log_notice(f"NET_MODE -> {self.net.net_mode}")
         if key in ("AI_CHAT_TAKEOVER", None):
             self._sync_mcp_bridge()
+            # 接管宿主同时进入过滤代理 / 应用名单的动态白名单, 设置切换后立即生效.
+            self._sync_prestart_exempt()
         if status != "instant":
             return
         if key == "FULLSCREEN_DEFAULT":
