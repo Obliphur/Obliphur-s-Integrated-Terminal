@@ -323,6 +323,31 @@ def main():
         assert [m["text"] for m in ai_tail] == ["第一条说明", "第二条带追问"], f"气泡顺序不应倒置: {[m['text'] for m in ai_tail]}"
         assert ai_tail[-1].get("wait") == 1.0 and ai_tail[-1].get("shown"), "最后一条气泡应保留 wait 且记录 shown"
 
+        # 9d-2. Tension / Valence 自动判断提示注入与结算回归验证
+        tv_persona = os.path.join(personas_dir, "TVTest.txt")
+        tv_tpl = os.path.join(personas_dir, "TVTest_templates.txt")
+        with open(tv_persona, "w", encoding="utf-8") as fh:
+            fh.write("你是测试角色 TVTest。")
+        with open(tv_tpl, "w", encoding="utf-8") as fh:
+            fh.write("[tension]\nclose:[12] 用户表达亲近\n[/tension]\n\n[valence]\nwarm:[+10] 用户表达善意\n[/valence]\n")
+        orig_persona = c.persona_name()
+        c.set_persona("TVTest.txt")
+        _http_json(port, bridge.token, "/session/bind", {"conversation_id": "conv-tv", "persona_name": "TVTest", "host": "antigravity"})
+        um_tv = c._add("me", "今天也很想你呀")
+        c._interaction_sent(um_tv["text"], um_tv)
+        ctx_tv = _http_json(port, bridge.token, "/turn/context?conversation_id=conv-tv&consume_trigger=1")
+        assert "close:[12]" in ctx_tv["system_message"] and "warm" in ctx_tv["system_message"], "应注入 [tension]/[valence] 判断规则与待评消息"
+        assert "今天也很想你呀" in ctx_tv["system_message"]
+        rep_tv = _http_json(port, bridge.token, "/reply/submit", {
+            "conversation_id": "conv-tv",
+            "bubbles": ["嗯，我也在。"],
+            "tension": [{"index": 1, "condition": "close", "gain": 12}],
+            "valence": [{"index": 1, "condition": "warm", "shift": 10}],
+        })
+        assert rep_tv["ok"] and rep_tv["applied"]["tension"] > 0 and rep_tv["applied"]["valence"] > 0, f"应结算张力与效价: {rep_tv}"
+        c.set_persona(orig_persona)
+        _http_json(port, bridge.token, "/session/bind", {"conversation_id": "conv-1", "persona_id": c.pid, "host": "antigravity", "force": True})
+
         # 9e. 清空对话应解绑旧会话，且下次发消息时推送空 conversation_id 由 Sidecar 懒创建新会话
         c.clear()
         assert not bridge.is_bound_conversation("conv-1"), "clear() 后旧会话应自动解绑"

@@ -87,6 +87,7 @@ class OitMcpBridge:
         self._recent_user_ms = {}       # conversation_id -> int
         self._last_batch = {}           # persona_id -> {"batch_id": str, "items": list}
         self._last_reply_ms = {}        # conversation_id/persona_id -> int
+        self._turn_interaction = {}     # persona_id -> {"burst_until": int, "shame": bool}
         self._running = False
         self._load_sessions()
 
@@ -700,6 +701,17 @@ class OitMcpBridge:
                 lines.append(state_txt.strip())
             if inter_note:
                 lines.append(inter_note.strip())
+            if hasattr(self.comm, "_interaction_prepare") and hasattr(self.comm, "_interaction_judge_note"):
+                d_inter = self.comm._interaction_prepare(pid, status)
+                with self._lock:
+                    self._turn_interaction[pid] = {
+                        "burst_until": int(d_inter.get("burst_until") or 0),
+                        "shame": bool(d_inter.get("shame_turns")),
+                    }
+                judge_kind = "user" if (not trigger or trigger.get("kind") == "user_attachment") else "proactive"
+                judge_note = self.comm._interaction_judge_note(judge_kind)
+                if judge_note:
+                    lines.append(judge_note.strip())
             if rt_note:
                 lines.append(rt_note.strip())
             if interrupted and interrupted.get("count"):
@@ -1047,6 +1059,31 @@ class OitMcpBridge:
             if hasattr(self.comm, "_coread_asking") and self.comm._coread_asking():
                 self.comm._coread_answer(ans)
                 applied["coread"] = ans or "none"
+
+            # 结算 Tension / Valence / Offenses / Burst
+            if hasattr(self.comm, "_interaction_judged") and hasattr(self.comm, "_interaction_prepare"):
+                from ai_assist.ai_tools import pack as _pack_tool
+                d_cur = self.comm._interaction_prepare(pid)
+                if not getattr(self.comm, "_interaction_candidates", None) and d_cur.get("pending"):
+                    if hasattr(self.comm, "_interaction_judge_note"):
+                        self.comm._interaction_judge_note("user")
+                packed_reply = _pack_tool("\n".join(cleaned), "oit_reply", body)
+                judged_burst = self.comm._interaction_judged(packed_reply)
+                now_dt = self.comm.now() if callable(getattr(self.comm, "now", None)) else datetime.now()
+                cur_status = self.comm.other_status(now_dt) if hasattr(self.comm, "other_status") else {}
+                special_now = self.comm._interaction_special(cur_status) if hasattr(self.comm, "_interaction_special") else False
+                until_ms = int(cur_status["end"].timestamp() * 1000) if special_now and cur_status.get("end") else 0
+                with self._lock:
+                    snap_meta = self._turn_interaction.pop(pid, {})
+                burst_before = int(snap_meta.get("burst_until") or d_cur.get("burst_until") or 0)
+                shame_before = bool(snap_meta.get("shame"))
+                if hasattr(self.comm, "_interaction_reply"):
+                    self.comm._interaction_reply(special_now, judged_burst, until_ms, shame=shame_before, pid=pid)
+                if hasattr(self.comm, "_interaction_end"):
+                    self.comm._interaction_end(packed_reply, burst_before, pid=pid)
+                d_after = self.comm._interaction_prepare(pid)
+                applied["tension"] = round(float(d_after.get("tension") or 0), 2)
+                applied["valence"] = round(float(d_after.get("valence") or 0), 2)
 
             with self._lock:
                 self._last_batch[pid] = {"batch_id": batch_id, "items": items}

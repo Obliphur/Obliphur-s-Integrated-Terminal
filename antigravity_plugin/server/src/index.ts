@@ -104,9 +104,49 @@ function buildTools(): ToolSpec[] {
           answer: { type: "string", enum: ["yes", "no"] },
           accept_relationship: { type: "boolean" },
           end_burst: { type: "boolean" },
-          offenses: { type: "array", items: { type: "object" } },
-          tension: { type: "array", items: { type: "object" } },
-          valence: { type: "array", items: { type: "object" } },
+          offenses: {
+            type: "array",
+            description: "本轮待判断用户消息引起的冒犯或已决定的原谅。",
+            items: {
+              type: "object",
+              properties: {
+                index: { type: "integer", minimum: 1, maximum: 99999 },
+                action: { type: "string", enum: ["add", "forgive"] },
+                target: { type: "string", maxLength: 120 },
+                reason: { type: "string", minLength: 1, maxLength: 120 },
+              },
+              required: ["index", "action", "target", "reason"],
+              additionalProperties: false,
+            },
+          },
+          tension: {
+            type: "array",
+            description: "按人设 [tension] 模板判断的用户消息张力基础增量列表。",
+            items: {
+              type: "object",
+              properties: {
+                index: { type: "integer", minimum: 1, maximum: 99999 },
+                condition: { type: "string", maxLength: 32 },
+                gain: { type: "integer", minimum: 0, maximum: 40 },
+              },
+              required: ["index", "condition", "gain"],
+              additionalProperties: false,
+            },
+          },
+          valence: {
+            type: "array",
+            description: "按人设 [valence] 模板判断的用户消息效价有符号变化量列表。",
+            items: {
+              type: "object",
+              properties: {
+                index: { type: "integer", minimum: 1, maximum: 99999 },
+                condition: { type: "string", maxLength: 32 },
+                shift: { type: "integer", minimum: -40, maximum: 40 },
+              },
+              required: ["index", "condition", "shift"],
+              additionalProperties: false,
+            },
+          },
         },
         additionalProperties: false,
       },
