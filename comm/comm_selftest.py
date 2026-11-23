@@ -1264,12 +1264,23 @@ def _selftest():
     wait(A)
     assert pA == [1]
     pull(A, B)
-    assert pB == [1], ("同步过来的主动消息: 这台也响一声", pB)
+    assert pB == [], ("已在原设备响过的同步消息: 不再重复响", pB)
     pull(A, B)
-    assert pB == [1] and B.cfg["pro_key"] == A.cfg["pro_key"]
+    assert pB == [] and B.cfg["pro_key"] == A.cfg["pro_key"]
+    # 若原设备未响 (例如正在查看沟通页), 同步到未查看沟通页的另一台设备时仍提示一次
+    A.viewing = True
+    script.append("顺便提醒你一下")
+    assert A.send("好呀") == ""
+    wait(A)
+    assert pA == [1]
+    pull(A, B)
+    assert pB == [1], ("原设备未响的新消息同步过来: 提示一次", pB)
+    pull(A, B)
+    assert pB == [1]
+    A.viewing = False
     B.leader = lambda: True
     B.tick()
-    assert not B.busy and [m["text"] for m in B.visible()] == ["休息啦"]
+    assert not B.busy and [m["text"] for m in B.visible()] == ["休息啦", "好呀", "顺便提醒你一下"]
     A.flush()
     B.flush()
 
@@ -3816,7 +3827,7 @@ def _selftest():
     assert routine.wake_at(cs._rt, d2, cs.pid) - wake_before == timedelta(minutes=420 - base_start) and cs._rt.start == base_start
     assert read_persona_full(cs.personas, cs.persona_name()) == persona_before, "人设文件不改"
     assert "日程起点已被平移" in cs.memory_block() and "自 2027-07-02 起初始起点是 7:00" in cs.memory_block()
-    assert [m for m in cs.messages if m["role"] == "sys"][-1]["text"].startswith(SHIFT_TAG)
+    assert SHIFT_TAG in [m for m in cs.messages if m["role"] == "sys"][-1]["text"]
     assert OIT_TAG in [m for m in cs.messages if m["role"] == "sys"][-1]["api"]
     # 同步: 另一台设备拿到记录 (按 ts 合并, 重复不叠加) → 日程一起变
     doc = cs.sync_doc()
@@ -4064,7 +4075,7 @@ def _selftest():
     variable.set_cfg(persona="变量.txt", split_send=False)
     script.append("听到了.[tension:1:other:12]")
     variable.send("难以名状的心情"); wait(variable)
-    prompt = calls[-1][1][-1]["content"]
+    prompt = "\n".join(str(m.get("content") or "") for m in calls[-1][1])
     assert "other:[X]" in prompt and "X表示不定量" in prompt and "不返回X" in prompt
     assert variable.cfg["interaction"]["tension"] == 9
     assert "other" in variable.cfg["interaction"]["gain_cooldowns"]

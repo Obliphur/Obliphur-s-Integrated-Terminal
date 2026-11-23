@@ -1199,6 +1199,7 @@ class OitMcpBridge:
             if not msg_id:
                 return {"ok": False, "error": "msg_id required"}
             found = False
+            delivered_msg = None
             now_ms = self.comm._ms() if hasattr(self.comm, "_ms") else _now_ms()
             for m in self.comm.messages:
                 if str(m.get("uid") or m.get("id") or "") == msg_id:
@@ -1216,16 +1217,18 @@ class OitMcpBridge:
                         self.comm.messages.append(m)
                     if hasattr(self.comm, "_deliver_invites"):
                         self.comm._deliver_invites(m)
+                    delivered_msg = m
                     found = True
                     break
             if not found:
                 return {"ok": False, "error": "message not found"}
+            if hasattr(self.comm, "_ping") and delivered_msg is not None and not delivered_msg.get("pinged"):
+                if self.comm._ping():
+                    delivered_msg["pinged"] = True
             self.comm.save_chat()
             self.comm._changed()
             if hasattr(self.comm, "_push"):
                 self.comm._push()
-            if hasattr(self.comm, "_ping"):
-                self.comm._ping()
             return {"ok": True, "msg_id": msg_id}
         return self._call_main(work)
 

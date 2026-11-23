@@ -161,15 +161,17 @@ class StatusMixin:
         self._segments()
         return pro_pct(self._pro_cache, kind)
 
-    def _ping(self):
+    def _ping(self) -> bool:
         """有新消息, 而用户不在沟通页面: 柔和的提示音 (在页面上看着就不用响; 不能用沟通的时候也不响)."""
         if self.viewing:
-            return
+            return False
         if self.on_proactive and not self.blocked():
             try:
                 self.on_proactive()
             except Exception:       # noqa: BLE001
                 pass
+            return True
+        return False
 
     def last_author(self) -> str:
         """最晚的一条消息是哪台设备写的 (设备 id 的前 4 位; 旧记录 / 没有记录 = ""): 这台设备是聊天的主端 —— 调用 AI, 主动发, 重试都由它做,

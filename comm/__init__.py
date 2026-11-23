@@ -631,6 +631,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                     e["due"] = int(m["due"])
                 if m.get("reply_after"):
                     e["reply_after"] = int(m["reply_after"])
+                if m.get("pinged"):
+                    e["pinged"] = True
                 if m["role"] == "me" and m.get("no_reply"):
                     e["no_reply"] = True
                 doc[f"m:{pid}:{m['uid']}"] = e
@@ -761,6 +763,11 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                         if existing is not None and not existing.get("no_reply"):
                             existing["no_reply"] = True
                             touched[pid][1] = True
+                    if val.get("pinged") is True:
+                        existing = next((m for m in st["messages"] if m["uid"] == uid and not m.get("pinged")), None)
+                        if existing is not None:
+                            existing["pinged"] = True
+                            touched[pid][1] = True
                     continue
                 m = {"id": self._take_id(), "uid": uid, "role": val["role"], "text": str(val.get("text") or ""),
                      "at": str(val.get("at") or ""), "ts": ts}
@@ -780,6 +787,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                     m["due"] = int(val["due"])
                 if isinstance(val.get("reply_after"), (int, float)):
                     m["reply_after"] = int(val["reply_after"])
+                if val.get("pinged") is True:
+                    m["pinged"] = True
                 st["messages"].append(m)
                 fresh.append((pid, m))
                 known.add(uid)
@@ -927,12 +936,16 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         self._synced_ping([m for pid, m in fresh if pid == self.pid])
 
     def _synced_ping(self, fresh: list):
-        """别的设备刚收到的新消息同步过来了: 这台不在沟通页面的话也提示一声."""
+        """别的设备刚收到的新消息同步过来了: 还没在原设备响过且这台不在沟通页面的话提示一声."""
         now = self._ms()
-        for m in fresh:
-            if m["role"] == "ai" and now - int(m["ts"]) <= 90 * 1000:
-                self._ping()
-                return
+        eligible = [
+            m for m in fresh
+            if m["role"] == "ai" and not m.get("hold") and not m.get("pinged") and now - int(m["ts"]) <= 90 * 1000
+        ]
+        if eligible and self._ping():
+            for m in eligible:
+                m["pinged"] = True
+            self.save_chat()
 
     # ---- 状态 ----
     def persona_name(self) -> str:
@@ -1647,7 +1660,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             if not self.viewing and not held and id(m) not in already_shown:
                 self.unread += 1
             if not held and id(m) not in already_shown:
-                self._ping()                                # 不在沟通页面: 任何新消息都提示一声 (在页面上看着就不响)
+                if not m.get("pinged") and self._ping():    # 不在沟通页面: 任何新消息都提示一声 (在页面上看着就不响)
+                    m["pinged"] = True
         self.save_chat()
         self._changed()
         self._push()

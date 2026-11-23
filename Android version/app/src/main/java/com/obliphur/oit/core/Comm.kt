@@ -30,9 +30,10 @@ class ChatMsg(val id: Int, val role: String, val text: String, var at: String, v
     var noReply = false
     /** 对方在专注期间发的: 推迟到下一个空闲 / 休息开始 (due) 才显示, 到点时把 at / ts 改成那个时刻 (MECHANICS 24.3.9). */
     var late = false
-    /** 规则 IX: 对方在这条消息末尾写了 [waiting for reply]:[N], 等用户回复的分钟数 (0 = 没有); chased: 已经追问过了; shown: 藏着的消息显示出来的时刻. */
+    /** 规则 IX: 对方在这条消息末尾写了 [waiting for reply]:[N], 等用户回复的分钟数 (0 = 没有); chased: 已经追问过了; shown: 藏着的消息显示出来的时刻; pinged: 已在某台设备响过提示音. */
     var wait = 0.0
     var chased = false
+    var pinged = false
     var shown = 0L
 }
 
@@ -1952,17 +1953,28 @@ class Comm(
     private fun parseState(o: JSONObject?): ChatState {
         val st = ChatState()
         val arr = o?.optJSONArray("messages")
+        val usedIds = HashSet<Int>()
+        var maxId = 0
         if (arr != null) for (i in 0 until arr.length()) {
             val m = arr.optJSONObject(i) ?: continue
             val role = m.optString("role")
             if (role !in listOf("me", "ai", "sys")) continue
             if (m.has("pending_reply") && !m.optBoolean("reply_ready")) continue
-            val id = m.optInt("id")
+            val rawId = m.optInt("id")
+            val id = if (rawId > 0 && usedIds.add(rawId)) {
+                if (rawId > maxId) maxId = rawId
+                rawId
+            } else {
+                var fresh = maxId + 1
+                while (!usedIds.add(fresh)) fresh++
+                maxId = fresh
+                fresh
+            }
             val at = m.optString("at")
             val ts = m.optLong("ts", 0L).takeIf { it != 0L }
                 ?: parseIso(at)?.atZone(java.time.ZoneId.systemDefault())?.toInstant()?.toEpochMilli() ?: 0L     // 旧版本的记录没有 uid / ts
             st.messages.add(ChatMsg(id, role, m.optString("text"), at, m.optString("api"), m.optString("uid").ifEmpty { "L$id" }, ts)
-                .also { it.hold = m.optBoolean("hold"); it.due = m.optLong("due"); it.replyAfter = m.optLong("reply_after"); it.noReply = role == "me" && m.optBoolean("no_reply"); it.late = m.optBoolean("late"); it.wait = m.optDouble("wait", 0.0); it.chased = m.optBoolean("chased"); it.shown = m.optLong("shown"); it.shareInvite = m.optBoolean("share_invite"); it.pendingReply = if (m.has("pending_reply")) m.optLong("pending_reply") else null; it.replyReady = m.optBoolean("reply_ready") })
+                .also { it.hold = m.optBoolean("hold"); it.due = m.optLong("due"); it.replyAfter = m.optLong("reply_after"); it.noReply = role == "me" && m.optBoolean("no_reply"); it.late = m.optBoolean("late"); it.wait = m.optDouble("wait", 0.0); it.chased = m.optBoolean("chased"); it.shown = m.optLong("shown"); it.shareInvite = m.optBoolean("share_invite"); it.pinged = m.optBoolean("pinged"); it.pendingReply = if (m.has("pending_reply")) m.optLong("pending_reply") else null; it.replyReady = m.optBoolean("reply_ready") })
         }
         st.messages.sortWith(compareBy({ it.ts }, { it.uid }))
         st.clearTs = o?.optLong("clear_ts", 0L) ?: 0L
@@ -1989,6 +2001,7 @@ class Comm(
                 if (m.api.isNotEmpty()) put("api", m.api); if (m.hold) put("hold", true); if (m.due != 0L) put("due", m.due); if (m.replyAfter != 0L) put("reply_after", m.replyAfter); if (m.late) put("late", true)
                 if (m.wait > 0) put("wait", m.wait); if (m.chased) put("chased", true); if (m.shown != 0L) put("shown", m.shown)
                 if (m.shareInvite) put("share_invite", true)
+                if (m.pinged) put("pinged", true)
                 if (m.role == "me" && m.noReply) put("no_reply", true)
                 m.pendingReply?.let { put("pending_reply", it); put("reply_ready", m.replyReady) }
             })
@@ -2393,6 +2406,7 @@ class Comm(
                     .apply {
                         if (m.api.isNotEmpty()) put("api", m.api); if (m.wait > 0) put("wait", m.wait)
                         if (m.hold) put("hold", true); if (m.late) put("late", true); if (m.due != 0L) put("due", m.due); if (m.replyAfter != 0L) put("reply_after", m.replyAfter)
+                        if (m.pinged) put("pinged", true)
                         if (m.role == "me" && m.noReply) put("no_reply", true)
                     }
             }
@@ -2520,9 +2534,17 @@ class Comm(
                                 tc.dirty = true
                             }
                         }
+                        if (v.optBoolean("pinged", false)) {
+                            tc.st.messages.firstOrNull { it.uid == uid && !it.pinged }?.let {
+                                it.pinged = true
+                                tc.dirty = true
+                            }
+                        }
                         continue
                     }
-                    val msg = ChatMsg(nextId++, role, v.optString("text"), v.optString("at"), v.optString("api"), uid, ts)
+                    val msgId = maxOf(nextId, (tc.st.messages.maxOfOrNull { it.id } ?: 0) + 1)
+                    nextId = msgId + 1
+                    val msg = ChatMsg(msgId, role, v.optString("text"), v.optString("at"), v.optString("api"), uid, ts)
                     msg.noReply = role == "me" && v.optBoolean("no_reply")
                     v.optDouble("wait", 0.0).let { if (it > 0 && it <= CommText.WAIT_MAX_MIN) msg.wait = it }
                     if (role == "ai" && blocked().isNotEmpty()) msg.hold = true       // 不能用沟通的时候同步来的也先藏起来
@@ -2530,6 +2552,7 @@ class Comm(
                     if (v.optBoolean("late", false)) msg.late = true
                     if (v.has("due")) msg.due = v.optLong("due", 0L)
                     if (v.has("reply_after")) msg.replyAfter = v.optLong("reply_after", 0L)
+                    if (v.optBoolean("pinged", false)) msg.pinged = true
                     tc.st.messages.add(msg)
                     if (p == pid) fresh.add(msg)
                     tc.known.add(uid)
@@ -2589,22 +2612,25 @@ class Comm(
         syncedPing(fresh)
     }
 
-    /** 别的设备刚收到的新消息同步过来了: 这台不在沟通页面的话也提示一声. */
+    /** 别的设备刚收到的新消息同步过来了: 还没在原设备响过且这台不在沟通页面的话提示一声. */
     private fun syncedPing(fresh: List<ChatMsg>) {
         val t = nowMs()
-        for (m in fresh) {
-            if (m.role == "ai" && t - m.ts <= 90_000L) {
-                ping()
-                return
-            }
+        val eligible = fresh.filter { it.role == "ai" && !it.hold && !it.pinged && t - it.ts <= 90_000L }
+        if (eligible.isNotEmpty() && ping()) {
+            eligible.forEach { it.pinged = true }
+            saveChat()
         }
     }
 
     /** 收到主动消息的提示音 (不能用沟通的时候, 例如已经开始专注了, 不响). */
     /** 有新消息, 而用户不在沟通页面: 柔和的提示音 (在页面上看着 / 不能用沟通时不响). */
-    private fun ping() {
-        if (viewing) return
-        if (blocked().isEmpty()) runCatching { onProactive() }
+    private fun ping(): Boolean {
+        if (viewing) return false
+        if (blocked().isEmpty()) {
+            runCatching { onProactive() }
+            return true
+        }
+        return false
     }
 
     /** 主动发消息的概率 (%): kind = "idle" 人设的空闲段前 / "rest" 人设的休息段前. 写在人设里, 没写用默认. */
@@ -4974,7 +5000,8 @@ class Comm(
         }
         if (!viewing) {
             unread += held.size
-            ping()                                               // 不在沟通页面: 藏着的消息现在显示, 提示一声
+            val unpinged = held.filter { !it.pinged }
+            if (unpinged.isNotEmpty() && ping()) unpinged.forEach { it.pinged = true }   // 不在沟通页面: 藏着的消息现在显示, 提示一声
         }
         saveChat(); changed(); push()
     }
@@ -6046,7 +6073,7 @@ class Comm(
             if (waitMin > 0 && r.kind != "chase") m.wait = waitMin          // 追问的回复里再写 [waiting for reply] 不算: 一条消息最多追问一次
             val held = m.hold
             if (!viewing && !held && m !in alreadyShown) unread++
-            if (!held && m !in alreadyShown) ping()                                    // 不在沟通页面: 任何新消息都提示一声 (在页面上看着就不响)
+            if (!held && m !in alreadyShown && !m.pinged && ping()) m.pinged = true     // 不在沟通页面: 任何新消息都提示一声 (在页面上看着就不响)
         }
         saveChat(); changed(); push()
         if (again) {
@@ -6532,10 +6559,10 @@ class Comm(
         if (parts.isEmpty()) return
         if (waitMin > 0 && r.kind != "chase") parts.last().wait = waitMin
         st.messages.add(sysm); st.messages.addAll(parts)
-        val shown = parts.count { !it.hold }
-        if (shown > 0) {
-            if (!(viewing && r.pid == pid)) unread += shown
-            ping()                                               // 不在沟通页面: 新消息提示一声
+        val shown = parts.filter { !it.hold }
+        if (shown.isNotEmpty()) {
+            if (!(viewing && r.pid == pid)) unread += shown.size
+            if (ping()) shown.forEach { it.pinged = true }       // 不在沟通页面: 新消息提示一声
         }
         storeState(r.pid, st)
         changed(); push()

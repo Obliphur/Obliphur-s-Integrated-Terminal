@@ -332,7 +332,7 @@ fun CommScreen(go: (String) -> Unit) {
         LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list, reverseLayout = true,
             contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 64.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(msgs.asReversed(), key = { it.id }) { m -> Bubble(m) { if (comm.voice.playAllowed()) { voiceSession++; comm.voice.play(comm.personaName(), m) } else core.toast(tr("仅可在空闲或休息期间播放语音."), "warn") } }
+            items(msgs.asReversed(), key = { "${it.id}:${it.uid}" }) { m -> Bubble(m) { if (comm.voice.playAllowed()) { voiceSession++; comm.voice.play(comm.personaName(), m) } else core.toast(tr("仅可在空闲或休息期间播放语音."), "warn") } }
         }
         val blocked = comm.blocked()
         if (blocked.isNotEmpty() || comm.error.isNotEmpty()) Text(blocked.ifEmpty { tr(comm.error) }, color = o.danger, fontSize = 12.sp,

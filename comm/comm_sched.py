@@ -156,7 +156,9 @@ class SchedMixin:
         if shown:
             if not (self.viewing and pid == self.pid):
                 self.unread += len(shown)
-            self._ping()                                    # 不在沟通页面: 新消息提示一声 (在页面上看着就不响)
+            if self._ping():                                # 不在沟通页面: 新消息提示一声 (在页面上看着就不响)
+                for m in shown:
+                    m["pinged"] = True
         self._store(pid, st)
         self._changed()
         self._push()

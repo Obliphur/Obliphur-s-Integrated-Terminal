@@ -1820,12 +1820,23 @@ class CommTest {
         wait(a)
         assertEquals(listOf(1), pa)
         pull(a, b)
-        assertEquals(listOf(1), pb)                      // 同步过来的主动消息: 这台也响一声
+        assertEquals(emptyList<Int>(), pb)               // 已在原设备响过的同步消息: 不再重复响
+        pull(a, b)
+        assertEquals(emptyList<Int>(), pb)
+        // 原设备未响 (例如正在查看沟通页) 时, 同步到未查看沟通页的另一台设备仍提示一次
+        a.setViewing(true)
+        script.add("顺便提醒你一下")
+        assertEquals("", a.send("好呀"))
+        wait(a)
+        assertEquals(listOf(1), pa)
         pull(a, b)
         assertEquals(listOf(1), pb)
+        pull(a, b)
+        assertEquals(listOf(1), pb)
+        a.setViewing(false)
         b.leader = { true }
         b.tick(); assertFalse(b.busy)
-        assertEquals(listOf("休息啦"), b.visible().map { it.text })
+        assertEquals(listOf("休息啦", "好呀", "顺便提醒你一下"), b.visible().map { it.text })
     }
 
     @Test

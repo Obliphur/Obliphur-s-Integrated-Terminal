@@ -180,7 +180,10 @@ class ChatMixin:
             self._music_deliver(m)
         if not self.viewing:
             self.unread += len(held)
-            self._ping()
+            unpinged = [m for m in held if not m.get("pinged")]
+            if unpinged and self._ping():
+                for m in unpinged:
+                    m["pinged"] = True
         self.save_chat()
         self._changed()
         self._push()
