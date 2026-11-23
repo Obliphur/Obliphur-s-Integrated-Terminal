@@ -67,8 +67,13 @@ class MiscMixin:
         self.error = ""
         self._catchup = False
         self.cfg["retry"] = {}
-        # Claude Code 的影子会话不能跨越用户明确清空的聊天。
+        # Claude Code 的影子会话与 Antigravity 的 1:1 绑定会话都不能跨越用户明确清空的聊天。
         self.cfg["cli_sessions"] = {}
+        if getattr(self, "mcp_bridge", None) is not None:
+            try:
+                self.mcp_bridge.unbind_persona(self.pid)
+            except Exception:
+                pass
         self.cfg["mem_auto"] = ""          # 记忆卡跟着聊天一起清掉
         self.cfg["mem_live"] = ""
         old_interaction = mem_fields(self.cfg)["interaction"]

@@ -260,11 +260,6 @@ class FlowMixin:
                 self.error = tr("已由 Antigravity 桌面版接管，但本地 MCP Bridge 未启动；请在设置中重新开启接管或点击自动部署。")
                 self._changed()
                 return
-            cid = bridge._conversation_for_persona(self.pid)
-            if not cid:
-                self.error = tr("已由 Antigravity 桌面版接管：请先在 Antigravity 中新建对话并绑定此人设，再在 OIT Chat 中对话。")
-                self._changed()
-                return
             if extra:
                 self._req_ts = max([int(m.get("ts") or 0) for m in self.messages if m.get("role") == "me"] or [0])
                 bridge.push_proactive(self.pid, str(extra[0] or ""), kind=kind)
@@ -286,7 +281,7 @@ class FlowMixin:
                 if bridge.push_user_message(self.pid, last_me, api_context="\n\n".join(api_parts)):
                     self.error = ""
                 else:
-                    self.error = tr("已由 Antigravity 桌面版接管：未检测到运行中的 OIT Proactive Bridge，请在 Antigravity 的 OIT Chat 侧栏发送消息，或在 Automations 中开启该 Sidecar。")
+                    self.error = tr("已由 Antigravity 桌面版接管：未检测到运行中的 OIT Proactive Bridge，请在 Antigravity 的 Customizations 中启用 OIT Companion 插件，或手动新建对话并绑定此人设。")
                 self._changed()
             return
         if self.busy:

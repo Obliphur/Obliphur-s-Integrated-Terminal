@@ -349,6 +349,7 @@ class OitMcpBridge:
         event = {
             "event": "proactive",
             "persona_id": persona_id,
+            "persona_name": self._persona_name_by_pid(persona_id) or _display_persona_name(self.comm),
             "conversation_id": cid,
             "kind": kind,
             "display_time": display_time,
@@ -357,15 +358,40 @@ class OitMcpBridge:
         self._emit_sse("proactive", event)
         return event
 
+    def unbind_persona(self, persona_id: str) -> list:
+        """清空对话时解绑该人设的旧 Antigravity 会话并清理暂存状态，下次发言由 Sidecar 懒创建全新会话。"""
+        pid = str(persona_id or getattr(self.comm, "pid", "") or "").strip()
+        if not pid:
+            return []
+        sessions = self._sessions_map()
+        removed = [cid for cid, meta in list(sessions.items())
+                   if isinstance(meta, dict) and meta.get("persona_id") == pid]
+        for cid in removed:
+            sessions.pop(cid, None)
+        with self._lock:
+            for key in (*removed, pid):
+                self._pending_triggers.pop(key, None)
+                self._last_reply_ms.pop(key, None)
+                self._recent_user_ms.pop(key, None)
+            self._interrupted.pop(pid, None)
+            self._last_batch.pop(pid, None)
+        if removed:
+            self._save_sessions()
+            if hasattr(self.comm, "save_cfg"):
+                self.comm.save_cfg()
+        return removed
+
     def push_user_message(self, persona_id: str, text: str, api_context: str = "") -> bool:
-        """用户在 OIT 桌面端或同步手机端直接发消息时，转发给 Sidecar 唤醒对应 Antigravity 对话；返回是否有活跃 Sidecar 接收。"""
-        cid = self._conversation_for_persona(persona_id)
-        if not cid or not str(text or "").strip():
+        """用户在 OIT 桌面端或同步手机端直接发消息时，转发给 Sidecar 唤醒对应 Antigravity 对话（未绑定时由 Sidecar 自动新建会话并绑定）；返回是否有活跃 Sidecar 接收。"""
+        if not str(text or "").strip():
             return False
+        cid = self._conversation_for_persona(persona_id)
+        pname = _display_persona_name(self.comm) or self._persona_name_by_pid(persona_id)
         with self._lock:
             has_client = bool(self._sse_clients)
             if api_context and str(api_context).strip():
-                self._pending_triggers[cid] = {
+                key = cid or persona_id or "*"
+                self._pending_triggers[key] = {
                     "persona_id": persona_id,
                     "conversation_id": cid,
                     "kind": "user_attachment",
@@ -379,6 +405,7 @@ class OitMcpBridge:
         self._emit_sse("user_message", {
             "event": "user_message",
             "persona_id": persona_id,
+            "persona_name": pname,
             "conversation_id": cid,
             "text": str(text).strip(),
             "ts": _now_ms(),

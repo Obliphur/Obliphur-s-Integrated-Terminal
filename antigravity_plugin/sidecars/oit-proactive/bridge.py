@@ -84,11 +84,22 @@ def _run_agentapi(args: list):
 def dispatch_event(event: dict):
     cid = str(event.get("conversation_id") or "").strip()
     kind = str(event.get("kind") or event.get("event") or "proactive")
-    _log(f"dispatch kind={kind} cid={cid or '(new)'}")
+    persona_name = str(event.get("persona_name") or "").strip()
+    _log(f"dispatch kind={kind} cid={cid or '(new)'} persona={persona_name or '?'}")
     if kind == "user_message":
         text = str(event.get("text") or "").strip()
-        if cid and text:
+        if not text:
+            return
+        if cid:
             _run_agentapi(["agentapi", "send-message", cid, text])
+        else:
+            who = persona_name or "当前 OIT 人设"
+            prompt = (
+                f"这是 OIT 人设「{who}」的新对话首条消息。请先调用 oit_bind_persona"
+                f"（persona_name={who!r}, force=true）将本对话与该人设 1 对 1 绑定，"
+                f"再调用 oit_get_turn_context 获取本轮状态，最后用 oit_reply 回复以下用户消息：\n{text}"
+            )
+            _run_agentapi(["agentapi", "new-conversation", "--", prompt])
         return
     display_time = str(event.get("display_time") or "...").strip()
     if kind == "memory_compact":
@@ -101,7 +112,13 @@ def dispatch_event(event: dict):
         prompt = f"[OIT {display_time}] 收到 OIT 主动对话/追问触发（kind={kind}），请先调用 oit_get_turn_context 获取本轮触发详情，再用 oit_reply 回复。"
         _run_agentapi(["agentapi", "send-message", cid, prompt])
     else:
-        _run_agentapi(["agentapi", "new-conversation", "--", display_time])
+        who = persona_name or "当前 OIT 人设"
+        prompt = (
+            f"[OIT {display_time}] 收到 OIT 人设「{who}」的主动对话触发（kind={kind}）。"
+            f"请先调用 oit_bind_persona（persona_name={who!r}, force=true）将本对话与该人设绑定，"
+            f"再调用 oit_get_turn_context 获取本轮触发详情，并用 oit_reply 回复。"
+        )
+        _run_agentapi(["agentapi", "new-conversation", "--", prompt])
 
 
 def consume_sse(cfg: dict, boot_mtime: float):

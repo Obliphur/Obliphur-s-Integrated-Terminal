@@ -312,6 +312,32 @@ def main():
         assert [m["text"] for m in ai_tail] == ["第一条说明", "第二条带追问"], f"气泡顺序不应倒置: {[m['text'] for m in ai_tail]}"
         assert ai_tail[-1].get("wait") == 1.0 and ai_tail[-1].get("shown"), "最后一条气泡应保留 wait 且记录 shown"
 
+        # 9e. 清空对话应解绑旧会话，且下次发消息时推送空 conversation_id 由 Sidecar 懒创建新会话
+        c.clear()
+        assert not bridge.is_bound_conversation("conv-1"), "clear() 后旧会话应自动解绑"
+        ctx_after_clear = _http_json(port, bridge.token, "/turn/context?conversation_id=conv-1&only_bound=1")
+        assert ctx_after_clear.get("bound") is False, "解绑后的旧会话应恢复与 OIT 隔离"
+        new_sse = []
+
+        def read_new_sse():
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{port}/events/stream",
+                headers={"Authorization": f"Bearer {bridge.token}"},
+            )
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                for raw in resp:
+                    line = raw.decode("utf-8").strip()
+                    if line.startswith("data:"):
+                        new_sse.append(json.loads(line[5:].strip()))
+                        break
+
+        t_sse2 = threading.Thread(target=read_new_sse, daemon=True)
+        t_sse2.start()
+        time.sleep(0.2)
+        assert bridge.push_user_message(c.pid, "清空后的第一句新消息") is True
+        t_sse2.join(timeout=4)
+        assert len(new_sse) == 1 and new_sse[0]["conversation_id"] == "" and new_sse[0]["text"] == "清空后的第一句新消息"
+
         # 10. 设置页「帮助」弹窗实际打开验证（离屏 tkinter）
         import tkinter as tk
         from pages.settings_page.settings_form import FormMixin
