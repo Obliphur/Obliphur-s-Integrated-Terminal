@@ -345,6 +345,15 @@ def main():
             "valence": [{"index": 1, "condition": "warm", "shift": 10}],
         })
         assert rep_tv["ok"] and rep_tv["applied"]["tension"] > 0 and rep_tv["applied"]["valence"] > 0, f"应结算张力与效价: {rep_tv}"
+
+        # 9d-3. Share Data 页面数据增量下发回归验证（确保 AI 能看到各页共享数据且不重复下发）
+        c.share_fn = lambda page: ("计时器", "今天专注 90 分钟", "对方专注 60 分钟")
+        c._share_send("timer")
+        ctx_sd1 = _http_json(port, bridge.token, "/turn/context?conversation_id=conv-tv&consume_trigger=1")
+        assert "[OIT共享数据]" in ctx_sd1["system_message"] and "今天专注 90 分钟" in ctx_sd1["system_message"]
+        ctx_sd2 = _http_json(port, bridge.token, "/turn/context?conversation_id=conv-tv&consume_trigger=1")
+        assert "[OIT共享数据]" not in ctx_sd2["system_message"], "已下发过的共享数据不应重复占用上下文"
+
         c.set_persona(orig_persona)
         _http_json(port, bridge.token, "/session/bind", {"conversation_id": "conv-1", "persona_id": c.pid, "host": "antigravity", "force": True})
 

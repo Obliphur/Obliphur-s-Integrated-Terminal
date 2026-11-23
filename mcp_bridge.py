@@ -88,6 +88,7 @@ class OitMcpBridge:
         self._last_batch = {}           # persona_id -> {"batch_id": str, "items": list}
         self._last_reply_ms = {}        # conversation_id/persona_id -> int
         self._turn_interaction = {}     # persona_id -> {"burst_until": int, "shame": bool}
+        self._share_sent_ts = {}        # persona_id -> int (已下发给 Antigravity 的最新共享数据 sys 消息 ts)
         self._running = False
         self._load_sessions()
 
@@ -391,6 +392,7 @@ class OitMcpBridge:
                 self._recent_user_ms.pop(key, None)
             self._interrupted.pop(pid, None)
             self._last_batch.pop(pid, None)
+            self._share_sent_ts.pop(pid, None)
         if removed:
             self._save_sessions()
             if hasattr(self.comm, "save_cfg"):
@@ -714,6 +716,33 @@ class OitMcpBridge:
                     lines.append(judge_note.strip())
             if rt_note:
                 lines.append(rt_note.strip())
+
+            # 增量下发尚未送达 Antigravity 的 share data 页面数据（role="sys"），供悬浮窗聊天与结束总结使用
+            from comm.comm_const import SHARE_TAG
+            with self._lock:
+                last_share_ts = int(self._share_sent_ts.get(pid) or 0)
+            share_chunks = []
+            max_share_ts = last_share_ts
+            for m in self.comm.messages:
+                if m.get("role") != "sys":
+                    continue
+                mts = int(m.get("ts") or 0)
+                if mts <= last_share_ts:
+                    continue
+                mtxt = str(m.get("text") or "")
+                mapi = str(m.get("api") or "")
+                if mtxt.startswith("共享数据·") or SHARE_TAG in mapi:
+                    payload_txt = (mapi or mtxt).strip()
+                    if payload_txt:
+                        share_chunks.append(payload_txt)
+                        if mts > max_share_ts:
+                            max_share_ts = mts
+            if share_chunks:
+                lines.append("[OIT共享数据]\n" + "\n\n".join(share_chunks))
+                if consume:
+                    with self._lock:
+                        self._share_sent_ts[pid] = max_share_ts
+
             if interrupted and interrupted.get("count"):
                 lines.append(
                     f"[OIT插话撤销] 上一轮回复有 {interrupted['count']} 条待发气泡尚未弹出即被用户新消息打断并作废，请勿假设用户看到了未发出的内容。"
