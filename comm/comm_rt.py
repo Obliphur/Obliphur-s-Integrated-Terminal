@@ -724,6 +724,8 @@ class RtMixin:
             self.log(f"PRO{who} {key} p={p:.2f} → 让对方发" + (f" (语言 {lang})" if lang else ""))
             bridge = getattr(self, "mcp_bridge", None)
             if bridge is not None and ai_assist.ai_config.chat_takeover() == "antigravity":
+                if ctx:
+                    self._bg_last = self._ms()
                 pid = ctx["pid"] if ctx else self.pid
                 bridge.push_proactive(pid, body, kind="proactive", extra={"key": key, "bg": bool(ctx)})
             elif ctx:

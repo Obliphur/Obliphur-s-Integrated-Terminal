@@ -351,6 +351,8 @@ class OitMcpBridge:
         now = self.comm.now() if callable(getattr(self.comm, "now", None)) else datetime.now()
         display_time = f"{now:%H:%M}"
         cid = self._conversation_for_persona(persona_id)
+        if (extra or {}).get("bg") and not cid:
+            return {"event": "proactive", "skipped": "unbound_background_persona", "persona_id": persona_id}
         key = cid or persona_id or "*"
         entry = {
             "persona_id": persona_id,

@@ -73,6 +73,11 @@ class SchedMixin:
 
     def _bg_request(self, ctx, kind: str, body: str):
         """为非正在聊天的对象发一次请求 (主动发 / 追问); 回复由 tick 收进它的聊天记录, 没有第二次调用, 也没有要资料的轮次."""
+        bridge = getattr(self, "mcp_bridge", None)
+        if bridge is not None and ai_assist.ai_config.chat_takeover() == "antigravity":
+            self._bg_last = self._ms()
+            bridge.push_proactive(ctx["pid"], body, kind=kind, extra={"bg": True})
+            return
         pid, st = ctx["pid"], ctx["st"]
         profile = self.profile(ctx["name"])
         system = persona_system(self.personas, ctx["name"], self.split_on())
