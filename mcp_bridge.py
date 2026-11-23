@@ -1535,7 +1535,8 @@ def takeover_feature_help_text(feature: str, en: bool = False) -> str:
             + (
                 "   • Describe what sites/apps you want to block or allow, review the suggestions, and add them in OIT Rules.\n\n"
                 if is_suggest else
-                "   • The AI will decrypt and reference all existing Claudia files, then ask whether you want 'Brief' or 'Detailed' mode before drafting.\n\n"
+                "   • The AI will decrypt and reference all existing Claudia files, then ask whether you want 'Brief' or 'Detailed' mode before drafting.\n"
+                "   • Tip: You can also reference external websites for character info (e.g. Moegirlpedia).\n\n"
             )
             + "3. Delete the temporary conversation when done\n"
             "   • Once finished, simply delete that temporary conversation in Antigravity to keep your workspace clean.\n\n"
@@ -1554,7 +1555,8 @@ def takeover_feature_help_text(feature: str, en: bool = False) -> str:
         + (
             "   • 告诉模型你的专注目标或想拦截/放行的网站与应用，确认建议后在 OIT 规则页添加即可。\n\n"
             if is_suggest else
-            "   • 模型会先解密并参考目前存在的所有 Claudia 文件，并询问你需要「简略」还是「详细」模式，确认草稿后导入 OIT 人设文件夹即可。\n\n"
+            "   • 模型会先解密并参考目前存在的所有 Claudia 文件，并询问你需要「简略」还是「详细」模式，确认草稿后导入 OIT 人设文件夹即可。\n"
+            "   • 提示：编写人设时可以引用外部网站进行参考（比如萌娘百科）。\n\n"
         )
         + "3. 用完删除临时对话\n"
         "   • 完成后直接在 Antigravity 中删除这个临时对话，保持会话列表整洁。\n\n"

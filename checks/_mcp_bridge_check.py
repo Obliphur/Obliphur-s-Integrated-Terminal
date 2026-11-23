@@ -376,6 +376,34 @@ def main():
         assert "oit_claudia_reference" in takeover_feature_prompt("persona", en=False)
         assert "简略" in takeover_feature_prompt("persona", en=False) and "详细" in takeover_feature_prompt("persona", en=False)
         assert "Brief" in takeover_feature_prompt("persona", en=True) and "Detailed" in takeover_feature_prompt("persona", en=True)
+        assert "萌娘百科" in takeover_feature_help_text("persona", en=False)
+        assert "Moegirlpedia" in takeover_feature_help_text("persona", en=True)
+
+        # 10a. API 版 5 文件人设生成、修改与保存验证
+        from comm import comm_author
+        fake_prof = {"provider": "openai", "protocol": "openai", "api_key": "sk-test", "base_url": "https://api.example.com/v1", "model": "gpt-4o"}
+        def _fake_chat(_prof, _sys, msgs, **_kw):
+            payload = msgs[-1]["content"]
+            assert "OIT-PERSONA-ENC:" not in payload, "发给 API 的 Claudia 参考必须已解密"
+            if "revision_instruction" in payload:
+                return json.dumps({
+                    "persona": "修改后的主人设", "background": "修改后的背景",
+                    "example": "用户：早\n角色：早安。", "templates": "[schedule]\n08:00-09:00 idle",
+                    "profile": "修改后的简介",
+                }, ensure_ascii=False)
+            return json.dumps({
+                "persona": "初始主人设", "background": "初始背景",
+                "example": "用户：你好\n角色：你好呀。", "templates": "",
+                "profile": "初始简介",
+            }, ensure_ascii=False)
+        d0 = comm_author.generate(fake_prof, "测试角色五件套", "轻松温柔", "", chat=_fake_chat, mode="brief", folder=personas_dir)
+        assert d0.persona == "初始主人设" and d0.background == "初始背景" and d0.example
+        d1 = comm_author.revise(fake_prof, "测试角色五件套", d0, "把语气改得更活泼", chat=_fake_chat, mode="brief", folder=personas_dir)
+        assert d1.persona == "修改后的主人设" and d1.templates
+        saved_base = comm_author.save(personas_dir, "测试角色五件套", d1)
+        assert saved_base == "测试角色五件套.txt"
+        for fn in ("测试角色五件套.txt", "测试角色五件套_background.txt", "测试角色五件套_example.txt", "测试角色五件套_templates.txt", "测试角色五件套_profile.txt"):
+            assert os.path.isfile(os.path.join(personas_dir, fn)), f"应保存 {fn}"
         root = tk.Tk()
         root.withdraw()
         try:
