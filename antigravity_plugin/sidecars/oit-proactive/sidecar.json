@@ -1,0 +1,23 @@
+{
+  "display_name": "OIT Proactive Bridge",
+  "description": "Listens to OIT local SSE events and wakes the bound Antigravity conversation via agentapi.",
+  "command": "python",
+  "args": ["bridge.py"],
+  "restart_policy": "always",
+  "agent_permissions": {
+    "access_grants": [
+      "mcp(oit_oit/oit_reply)",
+      "mcp(oit_oit/oit_query)",
+      "mcp(oit_oit/oit_memory_edit)",
+      "mcp(oit_oit/oit_memory_save_auto)",
+      "mcp(oit_oit/oit_joint_offer)",
+      "mcp(oit_oit/oit_music_catalog)",
+      "mcp(oit_oit/oit_music_select)",
+      "mcp(oit_oit/oit_music_stop)",
+      "mcp(oit_oit/oit_reading_books)",
+      "mcp(oit_oit/oit_reading_page)",
+      "mcp(oit_oit/oit_reading_comment)",
+      "mcp(oit_oit/oit_reading_end)"
+    ]
+  }
+}

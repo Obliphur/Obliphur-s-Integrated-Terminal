@@ -312,6 +312,7 @@ class BreakTimerApp(CommMixin, SyncMixin, ContractMixin, ContractMediaMixin,
         self.comm.on_joint_due = self._joint_due
         self.comm.contract_fn = lambda: self.contract.active       # 日程跟随: 合约期间自动关闭
         self.comm.on_sf = self._sf_ask
+        self._sync_mcp_bridge()
         self._sf_win = None              # 日程跟随: 正在显示的提示窗
         self._joint_pick = False        # 联合行动: 正在合约页选词条 (点"确定选择"回到沟通页)
         self._joint_break_prev = None    # 联合行动: 上一秒用户是不是在休息 (None = 还没看过): 开始 / 结束休息时通知对方

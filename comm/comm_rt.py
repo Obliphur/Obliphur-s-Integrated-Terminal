@@ -722,7 +722,11 @@ class RtMixin:
             if lang:
                 body += PRO_LANG_NOTE.replace("{lang}", lang)        # 只加在这一条触发消息里: 之后的对话 (用户说的话) 不受影响
             self.log(f"PRO{who} {key} p={p:.2f} → 让对方发" + (f" (语言 {lang})" if lang else ""))
-            if ctx:
+            bridge = getattr(self, "mcp_bridge", None)
+            if bridge is not None and ai_assist.ai_config.chat_takeover() == "antigravity":
+                pid = ctx["pid"] if ctx else self.pid
+                bridge.push_proactive(pid, body, kind="proactive", extra={"key": key, "bg": bool(ctx)})
+            elif ctx:
                 self._bg_request(ctx, "proactive", body)
             else:
                 self._trigger("proactive", body)

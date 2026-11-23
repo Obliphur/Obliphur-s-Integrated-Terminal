@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "oit": {
+      "command": "node",
+      "args": ["${PLUGIN_ROOT}/server/dist/index.js", "--transport", "stdio"]
+    }
+  }
+}

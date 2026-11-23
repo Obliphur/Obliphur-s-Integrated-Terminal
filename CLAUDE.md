@@ -51,6 +51,7 @@ python release.py               # 发布（PyInstaller）
 | `_focus_check.py` | 焦点设备的全系统输入时间、只前进、取不到时不动；专注确认窗随焦点转移、确认同步及超时 | `app/app_sync.py` 的 `system_idle_ms` / `_note_input` / `adopt_timer`、`sync_local.py` 的 `status()`、`app/app_timer.py` 的 `_check_focus` |
 | `_temp_check.py` | 临时文件都在 `%TEMP%\OIT` 里：启动清旧（含旧版本散落的 `oit*` 与顶层 `tmp*` 自检残留）、自检自动开会话退出即删、开会话清 1 小时前残留、重置 / 卸载删干净 | `tempstore.py`、`recorder/`、`updater.py`、`setup.py`、`netproxy/sitescan.py` |
 | `_pause_check.py` | 专注暂停：专注时长按 `PAUSE_REWIND` 倒退（下限 1）、退到 0 自动结束并弹窗、暂停时段记成 `p=true` 的空闲却仍算专注（`day_intervals` / `pause_as_idle=False`）、暂停状态随同步恢复 | `app/app_timer.py` 的 `_focus_elapsed` / `_pause_focus` / `_close_focus_pause` / `_end_rewound_focus` / `_enter_focus`、`app/app_sync.py`、`data_manager/data_focus.py`、`settings_manager.py` 的 `PAUSE_REWIND` |
+| `_mcp_bridge_check.py` | OIT 本地 MCP HTTP/SSE Bridge、Bearer 鉴权、主动触发 SSE 与原子消费、子代理双路由（外部 API vs 宿主原生）、分条气泡送达与插话撤销、Hooks 注入、TypeScript MCP Server（stdio）与 `aux_pane` 单文件资源 | `mcp_bridge.py`、`antigravity_plugin/`、`comm/comm_rt.py`、`app/app_comm.py` |
 
 **规矩**：
 

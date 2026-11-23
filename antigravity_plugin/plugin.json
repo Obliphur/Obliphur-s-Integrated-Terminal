@@ -1,0 +1,11 @@
+{
+  "$schema": "https://antigravity.google/schemas/v1/plugin.json",
+  "name": "oit",
+  "displayName": "OIT Companion",
+  "version": "1.0.0",
+  "description": "Connects Obliphur's Integrated Terminal (OIT) to Antigravity via MCP, aux_pane chat UI, lifecycle hooks, proactive sidecar, and isolated subagents.",
+  "suggestedPrompts": [
+    "打开 OIT Chat 侧栏并查看当前人设和状态",
+    "查询我今天的 OIT 专注统计与日程安排"
+  ]
+}

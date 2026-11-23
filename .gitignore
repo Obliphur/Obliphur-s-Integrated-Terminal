@@ -10,6 +10,7 @@ ENV/
 .python-version
 build/
 dist/
+node_modules/
 *.egg-info/
 *.egg
 .eggs/

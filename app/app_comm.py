@@ -17,6 +17,56 @@ from i18n import tr
 
 
 class CommMixin:
+    def _sync_mcp_bridge(self):
+        """按 AI_CHAT_TAKEOVER 启停本地 MCP HTTP/SSE Bridge。"""
+        bridge = getattr(self, "mcp_bridge", None)
+        want = str(getattr(config, "AI_CHAT_TAKEOVER", "") or "") == "antigravity"
+        if want:
+            if bridge is None:
+                from mcp_bridge import OitMcpBridge
+                bridge = self.mcp_bridge = OitMcpBridge(
+                    self.comm, self.dm.data_dir,
+                    call_main=lambda fn: self.sync_runner.call(fn, timeout=10.0),
+                    open_native_dialog=self._mcp_native_dialog,
+                )
+            bridge.start()
+            self.comm.mcp_bridge = bridge
+        else:
+            if bridge is not None:
+                bridge.stop()
+                self.mcp_bridge = None
+            self.comm.mcp_bridge = None
+
+    def _mcp_native_dialog(self, kind: str, params: dict = None):
+        """由 MCP App 侧栏触发，拉起 OIT 原生弹窗或执行审批横幅回调。"""
+        params = params or {}
+        page = self.pages.get("comm")
+        if page is None:
+            return {"ok": False, "error": "comm page not ready"}
+        self.root.deiconify()
+        self.root.lift()
+        actions = {
+            "joint": getattr(page, "_joint", None),
+            "shift": getattr(page, "_shift", None),
+            "review": getattr(page, "_review_performance", None),
+            "coread": getattr(page, "_reading", None),
+            "ocr": getattr(page, "_ocr", None),
+            "pick_image": getattr(page, "_pick_image", None),
+        }
+        if kind in actions and callable(actions[kind]):
+            self.root.after(10, actions[kind])
+            return {"opened": kind}
+        responders = {
+            "respond_coread": getattr(page, "_coread_respond", None),
+            "respond_share": getattr(page, "_share_respond", None),
+            "respond_joint": getattr(page, "_joint_respond", None),
+            "respond_love": getattr(page, "_love_respond", None),
+        }
+        if kind in responders and callable(responders[kind]):
+            responders[kind](bool(params.get("accept")))
+            return {"responded": kind, "accept": bool(params.get("accept"))}
+        return {"ok": False, "error": f"unsupported dialog: {kind}"}
+
     def _comm_remote_chat(self, profile, system, messages, **kwargs):
         """把设备代理配置转成一次加密请求；回复仍由当前 Comm 继续处理。"""
         target = str(profile.get("target_device") or "")
