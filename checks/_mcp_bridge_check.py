@@ -254,10 +254,51 @@ def main():
         assert any("validate" in a for a in cmds) and any("install" in a for a in cmds)
         with open(os.path.join(mock_plugin, ".oit_data_dir"), "r", encoding="utf-8") as fh:
             assert os.path.abspath(fh.read().strip()) == os.path.abspath(tmp)
-        assert "自动部署" in antigravity_help_text(en=False) and "Ctrl+Shift+M" in antigravity_help_text(en=False)
-        assert "Auto-Deploy" in antigravity_help_text(en=True) and "Ctrl+Shift+M" in antigravity_help_text(en=True)
+        assert "自动部署" in antigravity_help_text(en=False) and "以 OIT 为主聊天界面" in antigravity_help_text(en=False)
+        assert "Auto-Deploy" in antigravity_help_text(en=True) and "Chatting Directly in OIT" in antigravity_help_text(en=True)
 
-        # 9. 设置页「帮助」弹窗实际打开验证（离屏 tkinter）
+        # 9. 请求类事件（coread / share data）接受与拒绝回归验证
+        coread_opened = []
+        share_opened = []
+        notices = []
+        c.on_coread_open = lambda: coread_opened.append(True)
+        c.on_share_open = lambda: share_opened.append(True)
+        c.on_share_notice = lambda msg: notices.append(msg)
+
+        c.coread_ask = {"pid": c.pid, "ts": c._ms()}
+        c._req_ts = 0  # 故意清零，验证 handle_reply_submit 会正确更新 _req_ts
+        bridge.push_user_message(c.pid, "📚 共读\n一起看书吗", api_context="这是用户发来的共同阅读请求。仅对此请求填写answer。")
+        ctx_cr = _http_json(port, bridge.token, "/turn/context?conversation_id=conv-1&consume_trigger=1")
+        assert "[OIT本轮附加请求]" in ctx_cr["system_message"] and "[OIT待答复请求]" in ctx_cr["system_message"]
+        r_cr_yes = _http_json(port, bridge.token, "/reply/submit", {
+            "conversation_id": "conv-1", "bubbles": ["好啊，一起看吧。"], "answer": "yes",
+        })
+        assert r_cr_yes["ok"] and r_cr_yes["applied"].get("coread") == "yes"
+        assert coread_opened == [True] and c.coread_ask is None, "同意共读后应触发 on_coread_open 并清空 coread_ask"
+
+        c.coread_ask = {"pid": c.pid, "ts": c._ms()}
+        r_cr_no = _http_json(port, bridge.token, "/reply/submit", {
+            "conversation_id": "conv-1", "bubbles": ["现在不太方便。"], "answer": "no",
+        })
+        assert r_cr_no["ok"] and r_cr_no["applied"].get("coread") == "no"
+        assert c.coread_ask is None and any("拒绝了共同阅读" in n for n in notices)
+
+        c.share_ask = {"pid": c.pid, "ts": c._ms(), "sent": True}
+        r_sh_yes = _http_json(port, bridge.token, "/reply/submit", {
+            "conversation_id": "conv-1", "bubbles": ["可以，看看吧。"], "answer": "yes",
+        })
+        assert r_sh_yes["ok"] and r_sh_yes["applied"].get("share") == "yes"
+        assert c.share["on"] is True and share_opened == [True] and c.share_ask is None
+        c.share["on"] = False
+
+        c.share_ask = {"pid": c.pid, "ts": c._ms(), "sent": True}
+        r_sh_no = _http_json(port, bridge.token, "/reply/submit", {
+            "conversation_id": "conv-1", "bubbles": ["这次先不了。"], "answer": "no",
+        })
+        assert r_sh_no["ok"] and r_sh_no["applied"].get("share") == "no"
+        assert c.share["on"] is False and c.share_ask is None and any("拒绝了 share data" in n for n in notices)
+
+        # 10. 设置页「帮助」弹窗实际打开验证（离屏 tkinter）
         import tkinter as tk
         from pages.settings_page.settings_form import FormMixin
         root = tk.Tk()

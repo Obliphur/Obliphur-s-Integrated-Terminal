@@ -357,13 +357,23 @@ class OitMcpBridge:
         self._emit_sse("proactive", event)
         return event
 
-    def push_user_message(self, persona_id: str, text: str) -> bool:
+    def push_user_message(self, persona_id: str, text: str, api_context: str = "") -> bool:
         """用户在 OIT 桌面端或同步手机端直接发消息时，转发给 Sidecar 唤醒对应 Antigravity 对话；返回是否有活跃 Sidecar 接收。"""
         cid = self._conversation_for_persona(persona_id)
         if not cid or not str(text or "").strip():
             return False
         with self._lock:
             has_client = bool(self._sse_clients)
+            if api_context and str(api_context).strip():
+                self._pending_triggers[cid] = {
+                    "persona_id": persona_id,
+                    "conversation_id": cid,
+                    "kind": "user_attachment",
+                    "body": str(api_context).strip(),
+                    "display_time": "",
+                    "ts": _now_ms(),
+                    "extra": {},
+                }
         if not has_client:
             return False
         self._emit_sse("user_message", {
@@ -639,7 +649,27 @@ class OitMcpBridge:
                     f"[OIT插话撤销] 上一轮回复有 {interrupted['count']} 条待发气泡尚未弹出即被用户新消息打断并作废，请勿假设用户看到了未发出的内容。"
                 )
             if trigger and trigger.get("body"):
-                lines.append(f"[OIT主动触发] {trigger['body']}")
+                if trigger.get("kind") == "user_attachment":
+                    lines.append(f"[OIT本轮附加请求]\n{trigger['body']}")
+                else:
+                    lines.append(f"[OIT主动触发] {trigger['body']}")
+
+            pending_asks = []
+            if hasattr(self.comm, "share_asking") and self.comm.share_asking():
+                pending_asks.append("share data 请求")
+            if hasattr(self.comm, "shift_asking") and self.comm.shift_asking():
+                pending_asks.append("日程起点平移请求")
+            coread_ask = getattr(self.comm, "coread_ask", None)
+            if isinstance(coread_ask, dict) and coread_ask.get("pid") == pid:
+                pending_asks.append("共同阅读 (coread) 请求")
+            joint_cur = self.comm.cfg.get("joint") or {}
+            if isinstance(joint_cur, dict) and joint_cur.get("state") == "wait" and joint_cur.get("pid") == pid:
+                pending_asks.append("联合行动邀请")
+            if pending_asks:
+                lines.append(
+                    f"[OIT待答复请求] 当前有用户发来的 {' / '.join(pending_asks)} 正在等待你明确表态："
+                    '请在调用 oit_reply 时务必填写 answer="yes"（同意）或 answer="no"（拒绝），未填写 answer 将视为未明确同意。'
+                )
 
             # 心理风险信号检测与子代理路由指示
             mental_hint = ""
@@ -905,6 +935,7 @@ class OitMcpBridge:
             batch_id = f"b_{_now_ms()}_{secrets.token_hex(4)}"
             req_ts = max([int(x.get("ts") or 0) for x in self.comm.messages if x.get("role") == "me"] or [0])
             now_ts = _now_ms()
+            self.comm._req_ts = max(int(getattr(self.comm, "_req_ts", 0) or 0), req_ts, now_ts)
             cum_ms = 0
             items = []
             for idx, part in enumerate(cleaned):
@@ -921,13 +952,43 @@ class OitMcpBridge:
                     "delay_ms": delay_ms,
                 })
 
-            # 处理常用即时控制字段
+            # 处理控制字段与请求类事件（coread / share data / shift / joint / love / share_invite）
+            applied = {}
             if body.get("wait_minutes") and items:
                 self.comm.messages[-1]["wait"] = float(body["wait_minutes"])
             if body.get("cut_minutes"):
                 mins = max(1.0, min(1440.0, float(body["cut_minutes"])))
                 self.comm.cfg["cut_until"] = _now_ms() + int(mins * 60 * 1000)
                 self.comm.save_cfg()
+                applied["cut_minutes"] = mins
+
+            if body.get("share_data") and items:
+                self.comm.messages[-1]["share_invite"] = True
+                if hasattr(self.comm, "_deliver_invites"):
+                    self.comm._deliver_invites(self.comm.messages[-1])
+                applied["share_data"] = True
+
+            if body.get("accept_relationship") and hasattr(self.comm, "_love_confirm"):
+                self.comm._love_confirm("user")
+                applied["accept_relationship"] = True
+
+            ans = str(body.get("answer") or "").strip().lower()
+            if ans not in ("yes", "no"):
+                ans = ""
+            joint_cur = self.comm.cfg.get("joint") or {}
+            if isinstance(joint_cur, dict) and joint_cur.get("state") == "wait" and joint_cur.get("pid") == pid and ans:
+                if hasattr(self.comm, "_joint_answer"):
+                    self.comm._joint_answer(ans)
+                    applied["joint"] = ans
+            if hasattr(self.comm, "share_asking") and self.comm.share_asking():
+                self.comm._share_answer(ans)
+                applied["share"] = ans or "none"
+            if hasattr(self.comm, "shift_asking") and self.comm.shift_asking():
+                self.comm._shift_answer(ans)
+                applied["shift"] = ans or "none"
+            if hasattr(self.comm, "_coread_asking") and self.comm._coread_asking():
+                self.comm._coread_answer(ans)
+                applied["coread"] = ans or "none"
 
             with self._lock:
                 self._last_batch[pid] = {"batch_id": batch_id, "items": items}
@@ -939,12 +1000,15 @@ class OitMcpBridge:
                 self._last_reply_ms["*"] = now_ts
             self.comm.save_chat()
             self.comm._changed()
+            if hasattr(self.comm, "_push"):
+                self.comm._push()
             return {
                 "ok": True,
                 "batch_id": batch_id,
                 "persona_id": pid,
                 "persona_name": _display_persona_name(self.comm),
                 "items": items,
+                "applied": applied,
             }
         return self._call_main(work)
 
@@ -972,10 +1036,10 @@ class OitMcpBridge:
                     msgs.append(item)
 
             banners = []
-            if getattr(self.comm, "coread_ask", None):
+            if hasattr(self.comm, "coread_offer") and self.comm.coread_offer():
                 banners.append({"kind": "coread", "label": "对方邀请你共同阅读"})
-            if getattr(self.comm, "share_ask", None):
-                banners.append({"kind": "share", "label": "对方请求查看你的数据"})
+            if hasattr(self.comm, "share_invite") and self.comm.share_invite():
+                banners.append({"kind": "share", "label": "对方邀请你开启 share data"})
             joint = self.comm.cfg.get("joint") or {}
             if joint.get("state") == "invite":
                 banners.append({"kind": "joint", "label": "对方发起了联合行动邀请"})
@@ -1014,6 +1078,8 @@ class OitMcpBridge:
                     m.pop("hold", None)
                     m.pop("pending_reply", None)
                     m.pop("due", None)
+                    if hasattr(self.comm, "_deliver_invites"):
+                        self.comm._deliver_invites(m)
                     found = True
                     break
             if not found:
@@ -1305,61 +1371,87 @@ def deploy_antigravity_plugin(data_dir: str, on_progress=None, plugin_dir: str =
 
 
 def antigravity_help_text(en: bool = False) -> str:
-    """基于自动部署的 Antigravity 接管详细使用帮助。"""
+    """以 OIT 原生界面为聊天主线的 Antigravity 桌面版接管详细使用帮助。"""
     if en:
         return (
-            "Antigravity Desktop Takeover Guide (Based on Auto-Deploy)\n\n"
+            "Antigravity Desktop Takeover Guide (Chatting Directly in OIT)\n\n"
+            "Core Idea\n"
+            "  Keep chatting inside OIT's native Chat window as usual (full support for staged bubbles,\n"
+            "  interrupt-to-cancel, voice playback, avatars, toolbar requests like Joint / Share Data / CoRead /\n"
+            "  Shift / MIDI Review, proactive alerts, and Android sync). Antigravity stays in the background as\n"
+            "  the compliant model engine.\n\n"
             "1. One-Click Auto-Deploy in OIT\n"
             "   Click [Auto-Deploy] below 'Take over with Antigravity Desktop'. OIT will automatically:\n"
-            "   • Bind the current OIT data directory so MCP Server / Hooks / Sidecar find mcp_bridge.json without extra env vars;\n"
-            "   • Install & build the TypeScript MCP Server and single-file OIT Chat side pane UI (if not built yet);\n"
+            "   • Bind your OIT data directory so the plugin finds mcp_bridge.json without extra env vars;\n"
+            "   • Build the TypeScript MCP Server and UI bundle (skipped automatically if already built);\n"
             "   • Validate and install the 'oit' plugin via official `agy plugin validate` and `agy plugin install`;\n"
-            "   • Turn on Antigravity takeover and start OIT's local loopback HTTP/SSE Bridge.\n\n"
-            "2. Bind a Conversation to a Persona & Chat in OIT (Recommended)\n"
-            "   • Unbound Antigravity conversations are completely isolated from OIT so you can freely use Antigravity for coding or other work.\n"
-            "   • To bind a persona: create a new conversation in Antigravity App and tell the agent, e.g. 'Bind this conversation to Claudia' (or 'Bind OIT persona <name>').\n"
-            "   • The agent calls oit_bind_persona to create a strict 1-to-1 binding (one persona cannot be bound to two conversations at once; if you want to move a persona to a new conversation, explicitly ask to 'force rebind <name> here').\n"
-            "   • Recommended workflow: Keep chatting directly inside OIT's native Chat page (full support for staged bubbles, interrupt-to-cancel, voice, avatars, toolbar dialogs, and Android sync), and turn off system notifications in Antigravity Settings → Notifications to avoid duplicate alerts.\n"
-            "   • Note on Antigravity's [OIT Chat] side pane: It is an optional auxiliary view and its adaptation may be incomplete; please rely on OIT's native chat window for the complete experience. (If you do use the side pane, Ctrl+Shift+M maximizes it.)\n\n"
-            "3. Enable Proactive Messaging (Plugin Sidecar)\n"
-            "   • Note: Antigravity's 'Automations' tab only lists cron schedules; plugin Sidecars are managed under Customizations → Installed → [OIT Companion].\n"
-            "   • Enabling and approving the OIT Companion plugin automatically starts [OIT Proactive Bridge] (oit/oit-proactive).\n"
-            "   • (Optional) To manually toggle it or set a default projectId for new conversations, edit ~/.gemini/config/config.json under \"sidecars\": {\"oit/oit-proactive\": {\"enabled\": true}}.\n"
-            "   • Once running, OIT pushes user messages and proactive triggers over local SSE with zero idle token usage.\n\n"
-            "4. Optional: Separate External API for Subagents\n"
-            "   • By default, Subject / Mental Health / Music Review / Memory Compact run as isolated native Antigravity subagents.\n"
-            "   • If you assign an external HTTP API config to a specific role in Settings → Models, OIT automatically routes that role to your external API.\n\n"
-            "5. Troubleshooting\n"
-            "   • If the side pane stays on 'Waiting for OIT...', make sure OIT is running with takeover enabled.\n"
-            "   • After updating OIT, click [Auto-Deploy] again and click Restart next to 'oit' in Antigravity → Customizations → MCP Servers."
+            "   • Enable Antigravity takeover and start OIT's local loopback HTTP/SSE Bridge.\n\n"
+            "2. Enable the Plugin & Sidecar in Antigravity\n"
+            "   • Open Antigravity Desktop → Customizations → Installed → [OIT Companion].\n"
+            "   • Enable the plugin and approve its permissions. This automatically starts the background\n"
+            "     [OIT Proactive Bridge] Sidecar (oit/oit-proactive) that forwards OIT messages and proactive\n"
+            "     triggers over local SSE with zero idle token usage.\n"
+            "   • Note: Antigravity's 'Automations' tab only lists cron schedules; plugin Sidecars are managed\n"
+            "     under Customizations → Installed (or optionally via ~/.gemini/config/config.json under\n"
+            "     \"sidecars\": {\"oit/oit-proactive\": {\"enabled\": true}}).\n"
+            "   • Recommended: Turn off system notifications in Antigravity Settings → Notifications so you only\n"
+            "     get clean alerts from OIT.\n\n"
+            "3. Bind Each Persona 1-to-1 (One Time per Persona)\n"
+            "   • Unbound Antigravity conversations stay 100% isolated from OIT so normal coding chats are unaffected.\n"
+            "   • Create a dedicated conversation in Antigravity and tell the agent: 'Bind Claudia' (or\n"
+            "     'Bind OIT persona <name>'). It calls oit_bind_persona to establish a strict 1-to-1 binding.\n"
+            "   • To move a persona to a different conversation later, explicitly say 'Force rebind <name> here'.\n\n"
+            "4. Return to OIT & Chat Normally\n"
+            "   • Once bound, minimize or leave Antigravity running in the background and chat directly in OIT.\n"
+            "   • Messages, attachments (CoRead, Share Data, Joint Contract, Schedule Shift, MIDI Review),\n"
+            "     proactive triggers, and Android sync all flow automatically between OIT and Antigravity.\n"
+            "   • (Optional) Antigravity's right-side [OIT Chat] pane is only an auxiliary view and may have\n"
+            "     incomplete layout adaptation; use OIT's native Chat page as your primary interface.\n\n"
+            "5. Optional Subagent External API & Troubleshooting\n"
+            "   • By default, Subject / Mental Health / Music Review / Memory Compact use isolated native\n"
+            "     Antigravity subagents; assigning an external HTTP API to any role in Settings → Models routes\n"
+            "     that role to your external API automatically.\n"
+            "   • If OIT shows 'Proactive Bridge not detected': check that OIT Companion is enabled in\n"
+            "     Antigravity Customizations → Installed and the target persona is bound.\n"
+            "   • After updating OIT, click [Auto-Deploy] again and click Restart next to 'oit' in Antigravity →\n"
+            "     Customizations → MCP Servers."
         )
     return (
-        "Antigravity 桌面版接管使用指南（基于「自动部署」）\n\n"
+        "Antigravity 桌面版接管使用指南（以 OIT 为主聊天界面）\n\n"
+        "核心思路\n"
+        "  日常聊天完全留在 OIT 原生沟通页进行（完整保留分条延时气泡、中途插话撤销、语音播放、头像、\n"
+        "  联合行动 / Share Data / 共读 / 起点平移 / 演奏评判等全部工具栏功能，以及主动提醒和手机同步）；\n"
+        "  Antigravity 只需挂在后台充当合规的模型推理引擎，平时无需切过去操作。\n\n"
         "一、在 OIT 中一键自动部署\n"
-        "  点击「由 Antigravity 桌面版接管」下方的「自动部署」，程序会自动完成以下步骤：\n"
-        "  1. 绑定当前 OIT 数据目录，让插件、Hooks 和 Sidecar 免配环境变量自动找到 mcp_bridge.json；\n"
-        "  2. 检测并构建 TypeScript MCP Server 与单文件 OIT Chat 侧栏 UI（已构建则自动跳过）；\n"
+        "  点击「由 Antigravity 桌面版接管」下方的「自动部署」，程序会自动完成：\n"
+        "  1. 绑定当前 OIT 数据目录，让插件免配环境变量即可找到 mcp_bridge.json；\n"
+        "  2. 检测并构建 TypeScript MCP Server 与配套资源（已构建则自动跳过）；\n"
         "  3. 调用官方 agy plugin validate 与 agy plugin install 校验并安装 oit 插件；\n"
         "  4. 自动开启「由 Antigravity 桌面版接管」并启动 OIT 本地 HTTP/SSE Bridge。\n\n"
-        "二、绑定对话与人设（推荐继续在 OIT 原生界面聊天）\n"
-        "  • 隔离说明：未绑定的普通 Antigravity 对话与 OIT 完全隔离，平时写代码/处理其他工作不受任何影响。\n"
-        "  1. 在 Antigravity 桌面端新建一个对话，在左侧输入框直接发一句：「绑定 Claudia」（或「绑定 OIT 人设 <人设名>」）。\n"
-        "  2. 模型会调用 oit_bind_persona 建立严格 1 对 1 排斥绑定：\n"
-        "     - 同一个人设同一时间只能绑定一个对话，防止两个对话串台；\n"
-        "     - 若想把某个人设迁移到新对话，明确说「强制把 <人设名> 改绑到当前对话」即可自动解绑旧对话。\n"
-        "  3. ★ 推荐用法：绑定好并开启下方 Sidecar 后，直接留在 OIT 原生沟通页聊天即可（完整保留分条延时、插话撤销、语音、头像、工具栏与手机同步）；\n"
-        "     建议在 Antigravity 的「Settings → Notifications」中关闭系统通知，避免重复提醒。\n"
-        "  4. 注意：Antigravity 内的「OIT Chat」侧栏界面适配可能不完全，仅作可选辅助视图，请以 OIT 原生聊天界面为准（如需使用侧栏，可按 Ctrl+Shift+M 全屏最大化）。\n\n"
-        "三、开启主动对话与 OIT 原生消息转发（插件 Sidecar）\n"
-        "  注意：Antigravity 左侧的「Automations」只显示定时任务，插件附带的 Sidecar 不在那里设置：\n"
-        "  1. 打开左侧「Customizations → Installed → OIT Companion」，启用插件并确认权限后，后台会自动启动「OIT Proactive Bridge」（oit/oit-proactive）；\n"
-        "  2. （可选）如需手动开关或为新建会话指定 projectId，可编辑 ~/.gemini/config/config.json，在 \"sidecars\" 中配置 \"oit/oit-proactive\": {\"enabled\": true}；\n"
-        "  3. 运行后平时 0 token 消耗，OIT 命中主动对话或你在 OIT 窗口发消息时都会通过本地 SSE 立即唤醒对应会话。\n\n"
-        "四、可选：给单个子代理独立配置外部 API\n"
-        "  • 默认情况下，数理化 / 心理分析 / 演奏评判 / 记忆整理均自动走 Antigravity 原生隔离子代理；\n"
-        "  • 若你在「设置 → 模型」里给某个子代理（如数理化或评判）单独指定了外部 HTTP API，该子代理会自动改走外部 API，其余角色继续走原生子代理。\n\n"
-        "五、常见问题排查\n"
-        "  • 侧栏一直显示「等待 OIT 连接…」：确认 OIT 正在运行且已开启「由 Antigravity 桌面版接管」；\n"
-        "  • 更新 OIT 后插件未生效：重新点一次「自动部署」，并在 Antigravity「Customizations → MCP Servers」里点 oit 右侧的 Restart。"
+        "二、在 Antigravity 中启用插件与后台桥接（Sidecar）\n"
+        "  1. 打开 Antigravity 桌面端，进入左侧「Customizations → Installed → OIT Companion」，\n"
+        "     启用插件并确认权限；后台会自动启动「OIT Proactive Bridge」（oit/oit-proactive），\n"
+        "     负责将 OIT 里发送的消息和主动触发事件通过本地 SSE 实时送进对应会话（空闲时 0 token 消耗）。\n"
+        "  2. 说明：Antigravity 左侧「Automations」只管定时任务，插件 Sidecar 在上述插件页管理\n"
+        "     （也可按需在 ~/.gemini/config/config.json 的 \"sidecars\" 中手动配置 \"oit/oit-proactive\": {\"enabled\": true}）。\n"
+        "  3. 推荐：在 Antigravity「Settings → Notifications」中关闭系统通知，避免与 OIT 重复弹窗响铃。\n\n"
+        "三、为每个人设建立 1 对 1 会话绑定（每人设只需做一次）\n"
+        "  • 隔离保证：未绑定的普通 Antigravity 对话与 OIT 完全隔离，平时写代码/办公不受任何影响。\n"
+        "  1. 在 Antigravity 新建一个专属对话，直接发送：「绑定 Claudia」（或「绑定 OIT 人设 <人设名>」）。\n"
+        "  2. 模型调用 oit_bind_persona 建立严格 1 对 1 排斥绑定（绑定信息会持久保存在本地，重启不丢）。\n"
+        "  3. 以后若想把人设迁移到新对话，明确说「强制把 <人设名> 改绑到当前对话」即可自动解绑旧对话。\n\n"
+        "四、回到 OIT 原生沟通页正常聊天\n"
+        "  1. 绑定完成后，把 Antigravity 最小化留在后台，直接回到 OIT 沟通页照常收发消息即可。\n"
+        "  2. OIT 沟通栏里的全部功能（🤝 联合行动、🙈 Share Data、📚 共读、🕰 起点平移、🎼 MIDI 演奏评判、\n"
+        "     🖼 独立识字、主动对话与手机端同步）都会自动经由本地 Bridge 与 Antigravity 协同完成。\n"
+        "  3. （附注）Antigravity 右侧的「OIT Chat」侧栏仅作可选辅助视图，界面适配可能不完全，\n"
+        "     日常请直接以 OIT 原生聊天界面为准。\n\n"
+        "五、可选配置与常见问题排查\n"
+        "  • 子代理独立外置 API：默认数理化 / 心理分析 / 演奏评判 / 记忆整理均自动走 Antigravity 原生隔离子代理；\n"
+        "    若在 OIT「设置 → 模型」为某个角色单独指定了外部 HTTP API，该角色会自动改走外部 API。\n"
+        "  • 发送消息提示「未检测到运行中的 OIT Proactive Bridge」：检查 Antigravity 中 OIT Companion\n"
+        "    插件是否已启用并授权，以及当前人设是否已绑定会话。\n"
+        "  • 更新 OIT 后插件未生效：重新点一次「自动部署」，并在 Antigravity「Customizations → MCP Servers」\n"
+        "    里点 oit 右侧的 Restart。"
     )
 

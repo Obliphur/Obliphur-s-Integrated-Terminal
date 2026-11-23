@@ -266,14 +266,24 @@ class FlowMixin:
                 self._changed()
                 return
             if extra:
+                self._req_ts = max([int(m.get("ts") or 0) for m in self.messages if m.get("role") == "me"] or [0])
                 bridge.push_proactive(self.pid, str(extra[0] or ""), kind=kind)
                 self.error = ""
                 self._changed()
                 return
-            last_me = next((str(m.get("text") or "").strip() for m in reversed(self.messages)
-                            if m.get("role") == "me" and str(m.get("text") or "").strip()), "")
-            if last_me:
-                if bridge.push_user_message(self.pid, last_me):
+            self._req_ts = max([int(m.get("ts") or 0) for m in self.messages if m.get("role") == "me"] or [0])
+            last_msg = next((m for m in reversed(self.messages)
+                             if m.get("role") == "me" and str(m.get("text") or "").strip()), None)
+            if last_msg:
+                last_me = str(last_msg.get("text") or "").strip()
+                api_parts = []
+                api_txt = str(last_msg.get("api") or "").strip()
+                if api_txt and api_txt != last_me:
+                    api_parts.append(api_txt)
+                rc = str(reading_context or "").strip()[:18000]
+                if rc:
+                    api_parts.append(oit_text("当前 OIT 共读阅读上下文 (来自本机书库的当前可见页; 仅用于本轮回答, 不要伪称读过全书):\n" + rc))
+                if bridge.push_user_message(self.pid, last_me, api_context="\n\n".join(api_parts)):
                     self.error = ""
                 else:
                     self.error = tr("已由 Antigravity 桌面版接管：未检测到运行中的 OIT Proactive Bridge，请在 Antigravity 的 OIT Chat 侧栏发送消息，或在 Automations 中开启该 Sidecar。")
