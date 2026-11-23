@@ -2,7 +2,7 @@
   "display_name": "OIT Proactive Bridge",
   "description": "Listens to OIT local SSE events and wakes the bound Antigravity conversation via agentapi.",
   "command": "python",
-  "args": ["bridge.py"],
+  "args": ["-u", "bridge.py"],
   "restart_policy": "always",
   "agent_permissions": {
     "access_grants": [

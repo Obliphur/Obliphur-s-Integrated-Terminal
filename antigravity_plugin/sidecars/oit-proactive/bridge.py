@@ -45,34 +45,59 @@ def load_bridge() -> dict:
     return {}
 
 
+def _log(msg: str):
+    sys.stderr.write(f"[oit-sidecar] {msg}\n")
+    sys.stderr.flush()
+
+
+def _run_agentapi(args: list):
+    try:
+        proc = subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+        if proc.returncode != 0:
+            _log(f"agentapi failed rc={proc.returncode} args={args[:3]} err={(proc.stderr or proc.stdout).strip()[:300]}")
+        else:
+            _log(f"agentapi ok args={args[:3]}")
+    except Exception as exc:
+        _log(f"agentapi exception: {exc}")
+
+
 def dispatch_event(event: dict):
     cid = str(event.get("conversation_id") or "").strip()
     kind = str(event.get("kind") or event.get("event") or "proactive")
+    _log(f"dispatch kind={kind} cid={cid or '(new)'}")
     if kind == "user_message":
         text = str(event.get("text") or "").strip()
         if cid and text:
-            subprocess.run(["agentapi", "send-message", cid, text], check=False)
+            _run_agentapi(["agentapi", "send-message", cid, "--", text])
         return
     display_time = str(event.get("display_time") or "...").strip()
     if kind == "memory_compact":
-        subprocess.run(
-            ["agentapi", "new-conversation", "--", "请使用 oit-memory-compact 子代理整理当前 OIT 记忆卡并通过 oit_memory_save_auto 写回。"],
-            check=False,
-        )
+        _run_agentapi([
+            "agentapi", "new-conversation", "--",
+            "请使用 oit-memory-compact 子代理整理当前 OIT 记忆卡并通过 oit_memory_save_auto 写回。",
+        ])
         return
     if cid:
-        subprocess.run(["agentapi", "send-message", cid, display_time], check=False)
+        _run_agentapi(["agentapi", "send-message", cid, "--", display_time])
     else:
-        subprocess.run(["agentapi", "new-conversation", "--", display_time], check=False)
+        _run_agentapi(["agentapi", "new-conversation", "--", display_time])
 
 
-def consume_sse(cfg: dict):
+def consume_sse(cfg: dict, boot_mtime: float):
     url = f"http://127.0.0.1:{cfg['port']}/events/stream"
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {cfg['token']}"})
+    _log(f"connecting SSE port={cfg['port']}")
     with urllib.request.urlopen(req, timeout=60) as resp:
+        _log("SSE connected")
         event_name = ""
         data_lines = []
         for raw in resp:
+            try:
+                if os.path.getmtime(__file__) != boot_mtime:
+                    _log("bridge.py updated on disk; exiting for clean auto-restart")
+                    sys.exit(0)
+            except OSError:
+                pass
             line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
             if not line:
                 if data_lines:
@@ -81,7 +106,7 @@ def consume_sse(cfg: dict):
                         if event_name in ("proactive", "user_message") or payload.get("event") in ("proactive", "user_message"):
                             dispatch_event(payload)
                     except Exception as exc:
-                        sys.stderr.write(f"[oit-sidecar] event error: {exc}\n")
+                        _log(f"event error: {exc}")
                 event_name = ""
                 data_lines = []
                 continue
@@ -94,15 +119,25 @@ def consume_sse(cfg: dict):
 
 
 def main():
+    try:
+        boot_mtime = os.path.getmtime(__file__)
+    except OSError:
+        boot_mtime = 0.0
     while True:
+        try:
+            if boot_mtime and os.path.getmtime(__file__) != boot_mtime:
+                _log("bridge.py updated on disk; exiting for clean auto-restart")
+                sys.exit(0)
+        except OSError:
+            pass
         cfg = load_bridge()
         if not cfg:
             time.sleep(3.0)
             continue
         try:
-            consume_sse(cfg)
+            consume_sse(cfg, boot_mtime)
         except Exception as exc:
-            sys.stderr.write(f"[oit-sidecar] reconnect after error: {exc}\n")
+            _log(f"reconnect after error: {exc}")
             time.sleep(3.0)
 
 
