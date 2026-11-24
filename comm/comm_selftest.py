@@ -10,7 +10,7 @@
 def _selftest():
     import tempfile
     import time
-    from comm.comm_rules import tension_rules, valence_rules, condition_rules, shift_range, shift_allows
+    from comm.comm_rules import tension_rules, valence_rules, condition_rules, shift_range, shift_allows, typing_delay_rules
     from functools import partial
     builtin_rules = BUILTIN_PERSONAS[DEFAULT_ROUTINE]
     test_tension = "\n[tension]\n" + "\n".join(f"{k}:[{v[0] if v[0] is not None else 'X'}] {v[1]}" for k, v in tension_rules(builtin_rules).items()) + "\n[/tension]\n[tension:events]\njoint_hp_loss:[violation,15]\n[/tension:events]\n"
@@ -3167,6 +3167,41 @@ def _selftest():
     wait(cda)
     assert [m["role"] for m in cda.visible()] == ["me", "ai"] and not any(m.get("hold") for m in cda.messages), "Assistant: 回复马上显示, 不等打字延时"
     cda.flush()
+    assert typing_delay_rules("[typing]\nchar:0.15\ncjk:0.3\n[/typing]") == (0.15, 0.3)
+    assert typing_delay_rules("[typing]\ncjk:0.5\n[/typing]") == (None, 0.5)
+    assert typing_delay_rules("[typing]\nchar:0\ncjk:0\n[/typing]") == (0.0, 0.0)
+    assert typing_delay_rules("[typing]\nchar:6\n[/typing]") == (None, None)
+    assert typing_delay_rules("[typing]\nchar:0.1\nchar:0.2\n[/typing]") == (None, None)
+    assert typing_delay_rules("[typing]\nother:0.1\n[/typing]") == (None, None)
+    assert typing_delay_rules(BUILTIN_PERSONAS[DEFAULT_ROUTINE]) == (0.15, 0.3)
+    ddp = os.path.join(td, "dd_personas")
+    os.makedirs(ddp)
+    open(os.path.join(ddp, "小春.txt"), "w", encoding="utf-8").write("你是小春.")
+    open(os.path.join(ddp, "小春_templates.txt"), "w", encoding="utf-8").write("[typing]\nchar:0.25\ncjk:0.5\n[/typing]\n")
+    os.makedirs(os.path.join(td, "dd_tpl"))
+    cdp = Comm(os.path.join(td, "dd_tpl"), ddp, now=lambda: clock[0], chat_fn=fake)
+    cdp.ai.set_profile("deepseek", api_key="k")
+    cdp.ai.provider = "deepseek"
+    cdp.snapshot = lambda: snap
+    cdp.set_cfg(persona="小春.txt", split_send=False)
+    m_ov = cdp._add("ai", "中a")
+    assert m_ov.get("hold") and m_ov["due"] - cdp._ms() == 750
+    open(os.path.join(ddp, "小春_templates.txt"), "w", encoding="utf-8").write("[typing]\nchar:0\ncjk:0\n[/typing]\n")
+    m_zero = cdp._add("ai", "立刻")
+    assert not m_zero.get("hold") and "due" not in m_zero
+    cdp.flush()
+    saved_clock = clock[0]
+    clock[0] = datetime(2026, 11, 2, 6, 45)
+    os.makedirs(os.path.join(td, "dd3"))
+    cdc = Comm(os.path.join(td, "dd3"), os.path.join(td, "cld_personas"), now=lambda: clock[0], chat_fn=fake)
+    cdc.ai.set_profile("deepseek", api_key="k")
+    cdc.ai.provider = "deepseek"
+    cdc.snapshot = lambda: snap
+    cdc.set_cfg(persona=DEFAULT_PERSONA, split_send=False)
+    m_cl = cdc._add("ai", "中文ab")
+    assert not m_cl.get("late") and m_cl.get("hold") and m_cl["due"] - cdc._ms() == 900
+    cdc.flush()
+    clock[0] = saved_clock
     CHAR_DELAY = CHAR_DELAY_CJK = 0.0
     cd.flush()
 

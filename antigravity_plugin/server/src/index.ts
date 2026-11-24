@@ -452,9 +452,10 @@ function createOitServer(): Server {
           host: args.host as string | undefined,
           consume_trigger: args.consume_trigger === false ? "0" : "1",
         });
+        const { system_message: _sm, ...meta } = res as Record<string, unknown>;
         return {
           content: [{ type: "text", text: String(res.system_message || JSON.stringify(res)) }],
-          structuredContent: res,
+          structuredContent: meta,
         };
       }
 

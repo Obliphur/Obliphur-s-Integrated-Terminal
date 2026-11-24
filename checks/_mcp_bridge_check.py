@@ -237,6 +237,13 @@ def main():
         html = res_read["result"]["contents"][0]["text"]
         assert "OIT Chat" in html and len(html) > 2000, "应返回打包后的单文件 aux_pane HTML"
 
+        ctx_mcp = rpc({
+            "jsonrpc": "2.0", "id": 6, "method": "tools/call",
+            "params": {"name": "oit_get_turn_context", "arguments": {"conversation_id": "conv-1", "consume_trigger": False}},
+        })
+        assert not ctx_mcp["result"].get("isError")
+        assert "system_message" not in (ctx_mcp["result"].get("structuredContent") or {}), "structuredContent 不应重复传一份 system_message"
+
         call_res = rpc({
             "jsonrpc": "2.0", "id": 4, "method": "tools/call",
             "params": {"name": "oit_reply", "arguments": {"bubbles": ["来自 MCP stdio 的测试气泡"]}},
@@ -411,7 +418,7 @@ def main():
             c._away_kind = orig_away
             c.ai_free_at = orig_free
 
-        # 9d-2. Tension / Valence 自动判断提示注入与结算回归验证
+        # 9d-2. 精简上下文、Break datetime 序列化、Tension / Valence 自动判断与防重复回归验证
         tv_persona = os.path.join(personas_dir, "TVTest.txt")
         tv_tpl = os.path.join(personas_dir, "TVTest_templates.txt")
         with open(tv_persona, "w", encoding="utf-8") as fh:
@@ -419,31 +426,125 @@ def main():
         with open(tv_tpl, "w", encoding="utf-8") as fh:
             fh.write("[tension]\nclose:[12] 用户表达亲近\n[/tension]\n\n[valence]\nwarm:[+10] 用户表达善意\n[/valence]\n")
         orig_persona = c.persona_name()
-        c.set_persona("TVTest.txt")
-        _http_json(port, bridge.token, "/session/bind", {"conversation_id": "conv-tv", "persona_name": "TVTest", "host": "antigravity"})
-        um_tv = c._add("me", "今天也很想你呀")
-        c._interaction_sent(um_tv["text"], um_tv)
-        ctx_tv = _http_json(port, bridge.token, "/turn/context?conversation_id=conv-tv&consume_trigger=1")
-        assert "close:[12]" in ctx_tv["system_message"] and "warm" in ctx_tv["system_message"], "应注入 [tension]/[valence] 判断规则与待评消息"
-        assert "今天也很想你呀" in ctx_tv["system_message"]
-        rep_tv = _http_json(port, bridge.token, "/reply/submit", {
-            "conversation_id": "conv-tv",
-            "bubbles": ["嗯，我也在。"],
-            "tension": [{"index": 1, "condition": "close", "gain": 12}],
-            "valence": [{"index": 1, "condition": "warm", "shift": 10}],
-        })
-        assert rep_tv["ok"] and rep_tv["applied"]["tension"] > 0 and rep_tv["applied"]["valence"] > 0, f"应结算张力与效价: {rep_tv}"
+        orig_snap = c.snapshot
+        try:
+            # (a) 休息中 snapshot 含 break_start: datetime 不得再 500 崩溃；主动触发无待评消息时输出必须高度精简
+            c.snapshot = lambda: {"state": "break", "break_start": datetime(2026, 11, 27, 12, 35, 0), "rest_left_min": 10.0}
+            bridge.push_proactive(c.pid, "休息一下吧", kind="proactive")
+            ctx_pro = _http_json(port, bridge.token, "/turn/context?conversation_id=conv-1&consume_trigger=1")
+            assert ctx_pro["ok"] is True and ctx_pro["snapshot"]["break_start"] == "2026-11-27T12:35:00"
+            sys_pro = ctx_pro["system_message"]
+            assert len(sys_pro) < 550, f"主动触发上下文过大 ({len(sys_pro)} 字): {sys_pro}"
+            assert sys_pro.count("(OIT 系统提供, 用户看不到)") == 0 and "日程:" in sys_pro
+            assert "效价代表角色当前的正负情绪倾向" not in sys_pro
+            assert "本次无需判断张力增量" not in sys_pro
+            assert "[OIT子代理路由] subject=external_api" in sys_pro and "host_subagent" not in sys_pro, "仅输出非默认子代理路由"
+            c.ai.assign_task("subject", "")
+            bridge.push_proactive(c.pid, "全默认测试", kind="proactive")
+            ctx_pro_def = _http_json(port, bridge.token, "/turn/context?conversation_id=conv-1&consume_trigger=1")
+            assert "[OIT子代理路由]" not in ctx_pro_def["system_message"], "全默认 host_subagent 时不应赘述路由行"
 
-        # 9d-3. Share Data 页面数据增量下发回归验证（确保 AI 能看到各页共享数据且不重复下发）
-        c.share_fn = lambda page: ("计时器", "今天专注 90 分钟", "对方专注 60 分钟")
-        c._share_send("timer")
-        ctx_sd1 = _http_json(port, bridge.token, "/turn/context?conversation_id=conv-tv&consume_trigger=1")
-        assert "[OIT共享数据]" in ctx_sd1["system_message"] and "今天专注 90 分钟" in ctx_sd1["system_message"]
-        ctx_sd2 = _http_json(port, bridge.token, "/turn/context?conversation_id=conv-tv&consume_trigger=1")
-        assert "[OIT共享数据]" not in ctx_sd2["system_message"], "已下发过的共享数据不应重复占用上下文"
+            # (b) 正常用户消息不得在 [OIT本轮附加请求] 中重复回显原文
+            c.send("你好呀")
+            ctx_plain = _http_json(port, bridge.token, "/turn/context?conversation_id=conv-1&consume_trigger=1")
+            assert "[OIT本轮附加请求]" not in ctx_plain["system_message"]
 
-        c.set_persona(orig_persona)
-        _http_json(port, bridge.token, "/session/bind", {"conversation_id": "conv-1", "persona_id": c.pid, "host": "antigravity", "force": True})
+            # (c) 带 [tension]/[valence] 条件的用户轮：规则仅出现一次且仍可正常结算
+            c.set_persona("TVTest.txt")
+            _http_json(port, bridge.token, "/session/bind", {"conversation_id": "conv-tv", "persona_name": "TVTest", "host": "antigravity"})
+            um_tv = c._add("me", "今天也很想你呀")
+            c._interaction_sent(um_tv["text"], um_tv)
+            ctx_tv = _http_json(port, bridge.token, "/turn/context?conversation_id=conv-tv&consume_trigger=1")
+            sys_tv = ctx_tv["system_message"]
+            assert sys_tv.count("close:[12]") == 1 and sys_tv.count("warm:[+10]") == 1, f"规则不应重复: {sys_tv}"
+            assert "今天也很想你呀" in sys_tv
+            rep_tv = _http_json(port, bridge.token, "/reply/submit", {
+                "conversation_id": "conv-tv",
+                "bubbles": ["嗯，我也在。"],
+                "tension": [{"index": 1, "condition": "close", "gain": 12}],
+                "valence": [{"index": 1, "condition": "warm", "shift": 10}],
+            })
+            assert rep_tv["ok"] and rep_tv["applied"]["tension"] > 0 and rep_tv["applied"]["valence"] > 0, f"应结算张力与效价: {rep_tv}"
+
+            # 9d-3. Share Data 页面数据增量下发回归验证（确保 AI 能看到各页共享数据且不重复下发）
+            c.share_fn = lambda page: ("计时器", "今天专注 90 分钟", "对方专注 60 分钟")
+            c._share_send("timer")
+            ctx_sd1 = _http_json(port, bridge.token, "/turn/context?conversation_id=conv-tv&consume_trigger=1")
+            assert "[OIT共享数据]" in ctx_sd1["system_message"] and "今天专注 90 分钟" in ctx_sd1["system_message"]
+            ctx_sd2 = _http_json(port, bridge.token, "/turn/context?conversation_id=conv-tv&consume_trigger=1")
+            assert "[OIT共享数据]" not in ctx_sd2["system_message"], "已下发过的共享数据不应重复占用上下文"
+
+            # 9d-4. AI 忙碌（专注/睡眠）期间用户消息汇总推送 + 无 Sidecar 兜底回归验证
+            orig_other = c.other_status
+            orig_away2 = c._away_kind
+            orig_now2 = c.now
+            try:
+                busy_clock = [datetime(2026, 11, 27, 11, 39, 0)]
+                busy_state = ["focus"]
+                c.now = lambda: busy_clock[0]
+                c.other_status = lambda now=None, ctx=None: (
+                    {"kind": "focus", "label": "学习", "detail": "", "begin": busy_clock[0], "end": busy_clock[0] + timedelta(minutes=15)}
+                    if busy_state[0] == "focus" else
+                    {"kind": "rest", "label": "休息", "detail": "", "begin": datetime(2026, 11, 27, 11, 54, 0), "end": datetime(2026, 11, 27, 12, 2, 0)}
+                )
+                c._away_kind = lambda: "focus" if busy_state[0] == "focus" else ""
+
+                assert c.send("你在忙吗") == ""
+                busy_clock[0] = datetime(2026, 11, 27, 11, 45, 0)
+                assert c.send("忙完告诉我") == ""
+                assert c.cfg["retry"].get("hold") is True
+
+                held_sse = []
+
+                def read_held_sse():
+                    req = urllib.request.Request(
+                        f"http://127.0.0.1:{port}/events/stream",
+                        headers={"Authorization": f"Bearer {bridge.token}"},
+                    )
+                    with urllib.request.urlopen(req, timeout=8) as resp:
+                        for raw in resp:
+                            line = raw.decode("utf-8").strip()
+                            if line.startswith("data:"):
+                                held_sse.append(json.loads(line[5:].strip()))
+                                break
+
+                t_sse_held = threading.Thread(target=read_held_sse, daemon=True)
+                t_sse_held.start()
+                time.sleep(0.2)
+
+                # AI 转为空闲/休息时 tick 触发 retry -> SSE 收到 user_message 且 turn/context 按用户消息做情绪判定
+                busy_clock[0] = datetime(2026, 11, 27, 11, 54, 0)
+                busy_state[0] = "rest"
+                c.tick()
+                t_sse_held.join(timeout=4)
+                assert len(held_sse) == 1 and held_sse[0]["event"] == "user_message", f"应推送忙碌期间汇总用户消息: {held_sse}"
+                assert "你在忙吗" in held_sse[0]["text"] and "忙完告诉我" in held_sse[0]["text"]
+
+                ctx_retry = _http_json(port, bridge.token, "/turn/context?conversation_id=conv-tv&consume_trigger=1")
+                assert "[OIT延迟回复说明]" in ctx_retry["system_message"]
+                assert "[OIT忙碌期间用户消息]" not in ctx_retry["system_message"], "SSE 已直接送达时不重复塞入 context"
+                assert "你在忙吗" in ctx_retry["system_message"] and "忙完告诉我" in ctx_retry["system_message"], "retry 应把两句都纳入待评消息"
+
+                # 无 SSE 客户端连接时的兜底：turn/context 仍能把忙碌期间留言带给 AI
+                with bridge._lock:
+                    bridge._sse_clients.clear()
+                busy_clock[0] = datetime(2026, 11, 27, 12, 10, 0)
+                busy_state[0] = "focus"
+                assert c.send("没开Sidecar时发一句") == ""
+                busy_clock[0] = datetime(2026, 11, 27, 12, 20, 0)
+                busy_state[0] = "rest"
+                c.tick()
+                ctx_nosse = _http_json(port, bridge.token, "/turn/context?conversation_id=conv-tv&consume_trigger=1")
+                assert "[OIT忙碌期间用户消息]" in ctx_nosse["system_message"]
+                assert "没开Sidecar时发一句" in ctx_nosse["system_message"]
+            finally:
+                c.other_status = orig_other
+                c._away_kind = orig_away2
+                c.now = orig_now2
+        finally:
+            c.snapshot = orig_snap
+            c.set_persona(orig_persona)
+            _http_json(port, bridge.token, "/session/bind", {"conversation_id": "conv-1", "persona_id": c.pid, "host": "antigravity", "force": True})
 
         # 9e. 清空对话应解绑旧会话，且下次发消息时推送空 conversation_id 由 Sidecar 懒创建新会话
         c.clear()

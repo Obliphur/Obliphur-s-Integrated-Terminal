@@ -74,8 +74,8 @@ CATCHUP_TAG = "[系统·补]"             # 回复显示之后才发现用户在
 CATCHUP_BODY = (CATCHUP_TAG + " 你上一条回复发出的时候, 用户又发来了新消息 (上面用户那一轮里靠后的几条); 你的上一条回复没有针对它们. "
                 "请现在回复这些新消息 (不要重复上一条回复的内容); 如果仍然不方便, 返回" + REFUSE + ".")
 FOLLOW_DELAY = config.COMM_SPLIT_INTERVAL_SECONDS  # 分条续发固定等待时间（秒）
-CHAR_DELAY = 0.1                      # 对方发来的消息: 英文 / 数字 / 符号每个字符晚这么多秒才显示 (像在打字; 排在前一条后面)
-CHAR_DELAY_CJK = 0.2                  # 中文字符每个晚这么多秒 (Assistant 是助理, 不装打字, 见 _mk)
+CHAR_DELAY = 0.2                      # 对方发来的消息: 英文 / 数字 / 符号每个字符晚这么多秒才显示 (像在打字; 排在前一条后面)
+CHAR_DELAY_CJK = 0.4                  # 中文字符每个晚这么多秒 (可在模板 [typing] 覆写; Assistant 是助理, 不装打字, 见 _mk)
 _CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 
 

@@ -50,6 +50,7 @@ from .comm_prompt import REFUSE, SHIFT_TAG, MSGS_TAG, THINK_LONG, THINK_WORDS, T
 from .comm_persona import SHIFT_LO, SHIFT_HI, SHIFT_KEEP, MAX_PERSONA, MEM_MAX, PERSONA_EXT, readme_text, pid_of, love_norm, love_line, shift_norm, shift_pairs, hm_text, shift_line, mem_fields, seed_builtin, ensure_personas, list_personas, persona_title, uses_prefix, system_head, PERSONA_HEAD, persona_system, persona_labels, read_persona, ROUTINE_SUFFIX, ROUTINE_OLD_SUFFIX, COMPANION_SEP, companion_base, is_companion_name, companion_files, companions_of, routine_name_of, read_routine, read_persona_full, import_persona
 
 from .comm_const import *
+from .comm_rules import typing_delay_rules
 
 from .comm_joint import JointMixin
 from .comm_status import StatusMixin
@@ -61,11 +62,13 @@ from .comm_coread import CoReadMixin
 from .comm_rt import RtMixin
 from .comm_misc import MiscMixin
 
-def char_delay(text: str) -> float:
-    """一条消息的打字延时 (秒): 中文每个 0.2, 其他每个 0.1."""
+def char_delay(text: str, per_char: float = None, per_cjk: float = None) -> float:
+    """一条消息的打字延时 (秒): 默认中文每字 CHAR_DELAY_CJK, 其他每字 CHAR_DELAY."""
     s = str(text or "")
     n = len(_CJK_RE.findall(s))
-    return n * CHAR_DELAY_CJK + (len(s) - n) * CHAR_DELAY
+    p_char = CHAR_DELAY if per_char is None else per_char
+    p_cjk = CHAR_DELAY_CJK if per_cjk is None else per_cjk
+    return n * p_cjk + (len(s) - n) * p_char
 
 
 from .comm_util import (OIT_TAG, COND_TAG, WEEKDAY, MAX_MSG_CHARS, HISTORY_SENT, HISTORY_STEP, HISTORY_CHARS,
@@ -1396,6 +1399,10 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             self._changed()
 
     # ---- 发消息 ----
+    def _typing_delay(self, text: str, persona: str = None) -> float:
+        ov_char, ov_cjk = typing_delay_rules(read_persona_full(self.personas, persona or self.persona_name()))
+        return char_delay(text, CHAR_DELAY if ov_char is None else ov_char, CHAR_DELAY_CJK if ov_cjk is None else ov_cjk)
+
     def _mk(self, role: str, text: str, api: str = "", delay: bool = False, persona=None) -> dict:
         """造一条消息 (还没放进任何聊天记录)."""
         if role == "ai":
@@ -1414,10 +1421,12 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             m["hold"] = True
             m["late"] = True
             m["due"] = max([int(free.timestamp() * 1000)] + [int(x.get("due") or 0) for x in self.messages if x.get("hold")])
-        elif delay and role == "ai" and text and (CHAR_DELAY > 0 or CHAR_DELAY_CJK > 0) and uses_prefix(self.persona_name()):   # 打字延时: 中文每字 0.2 s, 其他每字 0.1 s, 接在前一条还没显示的后面 (Assistant 是助理, 不装打字: 详细回答一等就是几分钟, 1.0.407)
-            base = max([self._ms()] + [int(x.get("due") or 0) for x in self.messages if x.get("hold")])
-            m["due"] = base + int(char_delay(text) * 1000)
-            m["hold"] = True
+        elif delay and role == "ai" and text and (CHAR_DELAY > 0 or CHAR_DELAY_CJK > 0) and uses_prefix(self.persona_name()):   # 打字延时: 缺省中文每字 CHAR_DELAY_CJK, 其他每字 CHAR_DELAY (可在模板 [typing] 覆写; Assistant 是助理, 不装打字: 1.0.407)
+            d = self._typing_delay(text, persona if persona is not None else self.persona_name())
+            if d > 0:
+                base = max([self._ms()] + [int(x.get("due") or 0) for x in self.messages if x.get("hold")])
+                m["due"] = base + round(d * 1000)
+                m["hold"] = True
         self.voice.request(persona if persona is not None else self.persona_name(), m)
         return m
 
@@ -1682,7 +1691,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             self._interaction_prepare()
         self._count_idle()
         interrupted = self._reply_interrupt()
-        if (interrupted or self._reply_rewrite) and not self.busy and self.leader() and not self._ai_problem() and not self._away_kind():
+        if ((interrupted or self._reply_rewrite) and not self.busy and self.leader()
+                and not self._ai_problem() and not self._away_kind() and not (self.cfg.get("retry") or {}).get("hold")):
             self._ask_user()
         self._reply_drain()
         with self._lock:
@@ -1724,6 +1734,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                 self.save_cfg()
                 if any(m["role"] == "me" and int(m["ts"]) >= int(rt.get("since") or 0) for m in self.messages):
                     self.log("HOLD 对方空闲 / 休息了: 把存着的消息一次性发给它")
+                    self._retry_since = int(rt.get("since") or 0)
                     self._trigger("retry", f"现在是 {stamp(now)}. 你刚从专注 / 睡眠里出来. 用户在你忙的时候发来了上面的消息 (每条前面写着发送时间), "
                                            f"请现在一次性处理并回复; 如果仍然不方便, 返回{REFUSE}.")
                     return
@@ -1732,6 +1743,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             self.save_cfg()
             if self.unanswered() or self._catchup:
                 self._catchup = False
+                self._retry_since = 0
                 self._trigger("retry", f"现在是 {stamp(now)}. 用户之前发来的消息你还没有回复, 请现在一次性处理并回复; "
                                        f"如果仍然不方便, 返回{REFUSE}.")
                 return
