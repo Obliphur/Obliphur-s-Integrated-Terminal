@@ -82,7 +82,7 @@ fun SettingsScreen(tab: String, setTab: (String) -> Unit, act: MainActivity) {
             ModelAssignmentRow("main", "聊天模型（主模型）", modelRevision) { modelRevision++ }
             ModelAssignmentRow("ocr", "识字模型", modelRevision) { modelRevision++ }
             ModelAssignmentRow("review", "评判模型", modelRevision) { modelRevision++ }
-            ModelAssignmentRow("subject", "数学/物理/化学模型", modelRevision) { modelRevision++ }
+            ModelAssignmentRow("subject", "解题模型", modelRevision) { modelRevision++ }
             return@PageColumn
         }
 

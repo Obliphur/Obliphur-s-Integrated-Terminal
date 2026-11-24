@@ -62,7 +62,7 @@ EN = {
     "专用模型": "Task-specific models",
     "识字模型": "OCR model",
     "评判模型": "Review model",
-    "数学/物理/化学模型": "Math / physics / chemistry model",
+    "解题模型": "Problem-solving model",
     "跟随聊天模型": "Use chat model",
     "演奏评判": "Performance review",
     "演奏音频需要有效的 MIDI 文件和不同的输出位置.": "Performance audio requires a valid MIDI file and a different output location.",

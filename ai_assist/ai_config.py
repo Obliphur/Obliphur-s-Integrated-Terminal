@@ -472,7 +472,7 @@ class AIConfig:
         return dict(prof, preset=preset, provider=preset, config_id=cid)
 
     def task_profile(self, role: str, fallback: str = None) -> dict:
-        """返回视觉/OCR/评判专用配置；未指定时沿用聊天当前配置。"""
+        """返回识字、评判或解题专用配置；未指定时沿用聊天当前配置。"""
         cid = self.task_assign.get(role) or fallback or self._visible_default()
         if cid not in self.profiles or not self._visible(cid):
             cid = self._visible_default()

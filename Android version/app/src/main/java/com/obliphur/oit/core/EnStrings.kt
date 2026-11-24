@@ -1363,7 +1363,7 @@ object EnStrings {
         "视觉模型" to "Vision model",
         "识字模型" to "OCR model",
         "评判模型" to "Review model",
-        "数学/物理/化学模型" to "Math / physics / chemistry model",
+        "解题模型" to "Problem-solving model",
         "跟随聊天模型" to "Use chat model",
         "配置 (最多 {n} 个)" to "Configs (up to {n})",
         "配置 {n}" to "Config {n}",

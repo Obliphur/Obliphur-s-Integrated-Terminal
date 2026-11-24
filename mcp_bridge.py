@@ -1126,7 +1126,7 @@ class OitMcpBridge:
                         "excluded_tactics": exclusions(knowledge),
                         "thought_reference": bool(knowledge.config.get("thought_reference", False)),
                         "generality_instruction": generality_instruction(knowledge),
-                        "instruction": "当前未为学科子代理单独配置外部 API，请改用宿主原生子代理 oit-subject（或按客观步骤直接推导），并按当前人设语气风格化改写；解答图片模式开启时，在 oit_reply 前调用 oit_answer_image 提交原始解答和人设风格化解答。",
+                        "instruction": "当前未为解题子代理单独配置外部 API，请改用宿主原生子代理 oit-subject；知识库处理始终交给解题子代理，由它调用 oit_kb_* 工具。将结果按当前人设语气风格化改写；解答图片模式开启时，在 oit_reply 前调用 oit_answer_image 提交原始解答和人设风格化解答。",
                     }
                 answer, citations = self.comm._knowledge_subject(domain, session, question, image)
                 ctx["answer"] = answer

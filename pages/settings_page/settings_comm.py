@@ -31,7 +31,7 @@ class CommSettingsMixin:
         self.btn_main_model.pack(anchor="w", padx=12, pady=(0, 10))
 
         for role, title in (("ocr", "识字模型"), ("review", "评判模型"),
-                            ("subject", "数学/物理/化学模型")):
+                            ("subject", "解题模型")):
             fr, _head = self._card(body, title)
             label = tk.Label(fr, text="", bg=COLORS["bg_card"], fg=COLORS["text"],
                              font=config.font("small"), anchor="w")

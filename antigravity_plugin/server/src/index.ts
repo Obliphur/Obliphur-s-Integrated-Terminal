@@ -243,7 +243,7 @@ function buildTools(): ToolSpec[] {
     {
       name: "oit_subject",
       description:
-        "委托数理化子代理。桌面端自动检索本机技巧库并返回探索/保守模式及排除技巧；宿主原生 oit-subject 应先看图提取特征并调用 oit_kb_search。遵守其模式和排除设置，实际引用卡片通过 kb_citations 传给 oit_reply。解答图片模式开启时，风格化后必须调用 oit_answer_image，再用自然简洁且不含 Markdown / LaTeX 源码的可见正文提交 oit_reply。",
+        "委托解题子代理，统一负责数理化解题和知识库处理；分类、整理、补齐、复盘与提案始终交给它。桌面端自动检索本机技巧库并返回探索/保守模式及排除技巧；宿主原生 oit-subject 应先看图提取特征并调用 oit_kb_search。遵守其模式和排除设置，实际引用卡片通过 kb_citations 传给 oit_reply。解答图片模式开启时，风格化后必须调用 oit_answer_image，再用自然简洁且不含 Markdown / LaTeX 源码的可见正文提交 oit_reply。",
       inputSchema: {
         type: "object",
         properties: {

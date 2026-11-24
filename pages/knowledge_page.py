@@ -148,13 +148,13 @@ class KnowledgePage(tk.Frame):
                 self._jobs.put((done, None, error))
         threading.Thread(target=run, daemon=True).start()
 
-    def call_ai(self, prompt, *, image=None, timeout=90, role="subject"):
+    def call_ai(self, prompt, *, image=None, timeout=90):
         if not self.comm:
             raise ValueError(tr("请先配置 AI 模型"))
         # Independent invocation: editing notes never contaminates solver session history.
         from ai_assist.ai_subagent import invoke
         profile = self.comm.ai.task_profile("subject", fallback=self.comm.ai.config_for(self.comm.persona_name()))
-        return invoke(profile, role, prompt, image=image, max_tokens=2400, temperature=.1, timeout=timeout, chat=self.comm.chat_fn)
+        return invoke(profile, "subject", prompt, image=image, max_tokens=2400, temperature=.1, timeout=timeout, chat=self.comm.chat_fn)
 
     def active_tab(self):
         return list(self.lists)[self.tabs.index("current")]
@@ -468,8 +468,7 @@ class KnowledgePage(tk.Frame):
                 return
             start_button.state(["disabled"])
             status.configure(text=tr("正在扫描并生成卡片…"))
-            self.background(lambda: auto_generate(self.kb,
-                lambda prompt, **kwargs: self.call_ai(prompt, role="knowledge_import", **kwargs), root, types), done)
+            self.background(lambda: auto_generate(self.kb, self.call_ai, root, types), done)
         def done(report):
             status.configure(text=tr("自动生成完成：扫描 {files} 个文件，处理 {groups} 组，创建 {created} 张概念卡，生成 {proposals} 个技巧提案，跳过重复 {duplicates} 项，忽略 {ignored} 组，失败 {errors} 组。", **report))
             start_button.state(["!disabled"])

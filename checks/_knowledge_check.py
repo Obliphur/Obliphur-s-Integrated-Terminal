@@ -5,6 +5,8 @@ import sqlite3
 import sys
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tempstore
@@ -59,7 +61,43 @@ def classifier(prompt, **kwargs):
 task, selected = prepare_subject(kb, classifier, "math", "分析一个三角形比例关系")
 assert "需要书写过程" in task and "通用性筛选" in task
 assert all(item["card_id"] != special["id"] for item in selected)
-assert calls and calls[0][1].get("role") == "knowledge_classify"
+assert calls and "role" not in calls[0][1], "分类任务应沿用统一的解题子代理入口"
+
+# 两个知识库入口都使用解题配置与同一子代理，且不携带聊天或解题会话历史。
+from ai_assist.ai_subagent import SYSTEMS
+from comm.comm_tools import ToolsMixin
+from pages.knowledge_page import KnowledgePage
+from knowledge.kb_ai import classify_problem, complete_card, import_previews
+
+agent_calls = []
+def subject_profile(role, fallback=None):
+    assert role == "subject" and fallback == "chat-model"
+    return {"config_id": "solver-model"}
+
+def subject_chat(profile, system, messages, **kwargs):
+    assert profile["config_id"] == "solver-model" and system == SYSTEMS["subject"]
+    assert len(messages) == 1 and messages[0]["role"] == "user"
+    prompt = messages[0]["content"]
+    agent_calls.append(prompt)
+    if "problem_mode" in prompt:
+        return '{"problem_mode":"requires_working"}'
+    if "used_card_ids" in prompt:
+        return '{"used_card_ids":[],"failed_card_ids":[],"proposals":[]}'
+    card = {"kind": "conceptual", "title": "比例定义", "body": "由定义说明比例。"}
+    return json.dumps([card] if "JSON 数组" in prompt else card)
+
+context = SimpleNamespace(ai=SimpleNamespace(task_profile=subject_profile, config_for=lambda _: "chat-model"),
+                          persona_name=lambda: "测试人设", chat_fn=subject_chat)
+notes = base / "routing.md"
+notes.write_text("比例的定义。", encoding="utf-8")
+for call in (lambda *a, **k: ToolsMixin._knowledge_call(context, *a, **k),
+             lambda *a, **k: KnowledgePage.call_ai(SimpleNamespace(comm=context), *a, **k)):
+    assert classify_problem(call, "分析三角形") == "requires_working"
+    assert complete_card(kb, call, {"kind": "conceptual", "subject": "math"})["title"] == "比例定义"
+    assert import_previews(kb, call, [notes])[0]["title"] == "比例定义"
+    with patch("knowledge.kb_ai.threading.Thread", side_effect=lambda target, **_: SimpleNamespace(start=target)):
+        finish_subject(kb, call, "math", "分析比例", "按定义逐步计算。" * 100, [])
+assert len(agent_calls) == 8
 
 
 source = base / "source"

@@ -15,10 +15,10 @@ from comm.comm_util import is_claudia
 
 
 class ToolsMixin:
-    def _knowledge_call(self, task, *, image=None, timeout=90, role="subject"):
+    def _knowledge_call(self, task, *, image=None, timeout=90):
         from ai_assist.ai_subagent import invoke
         profile = self.ai.task_profile("subject", fallback=self.ai.config_for(self.persona_name()))
-        return invoke(profile, role, task, image=image, max_tokens=1600, temperature=.1,
+        return invoke(profile, "subject", task, image=image, max_tokens=1600, temperature=.1,
                       timeout=timeout, chat=self.chat_fn)
 
     def _knowledge_subject(self, domain, session, question, image=None):

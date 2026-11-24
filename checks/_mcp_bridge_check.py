@@ -758,9 +758,12 @@ def main():
         with open(os.path.join(ROOT, "antigravity_plugin", "agents", "oit-subject.md"), "r", encoding="utf-8") as fh:
             subj_md = fh.read()
         assert "read_file" in subj_md and "推导过程" in subj_md
+        assert "统一负责" in subj_md and "知识库处理" in subj_md
         with open(os.path.join(ROOT, "antigravity_plugin", "rules", "AGENTS.md"), "r", encoding="utf-8") as fh:
             rules_md = fh.read()
         assert "oit-subject" in rules_md and "read_file" in rules_md
+        assert "知识库处理始终交给解题子代理" in rules_md
+        assert "父代理不自行整理知识库或提交技巧提案" in rules_md
 
         # 9e-4. Sidecar 热更新退出时机：收到 SSE 事件时应先完成 dispatch_event 再退出自重启，不得丢事件
         class _FakeResp:
