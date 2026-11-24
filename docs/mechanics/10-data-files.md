@@ -6,6 +6,8 @@ Claudia 的休息结算沿用沟通配置的 `joint`：`scheduled_reward` 标记
 
 数据目录: `%USERPROFILE%\AppData\LocalLow\Obliphur's Integrated Terminal\`
 
+`ui_prefs.json` 保存桌面侧边栏顺序、分隔线位置和本机知识库 Vault 路径。Vault 下的 `.oit_kb/config.json` 保存学科、探索 / 保守模式、排除技巧等设置；`index.json` 是可由 Markdown 重建的技巧索引，`stats.json` 与 `audit.jsonl` 保存技巧使用频次和权重，`proposals/` 保存等待用户审核的正文提案。概念笔记只保存在 `概念性/`，不会建立检索或统计条目。Vault 可位于默认数据目录之外；这些 UI 与知识库数据仅在本机，不随设备同步。
+
 共同阅读在 `comm_config.json` 的 `coread_link` 保存本地 Windows 服务地址和访问密钥，`coread_offer` 保存邀请编号、人设、状态、修改时刻和关联消息编号。`coread/` 保存 Node 运行时、组件源码与依赖；`coread/data/` 保存共读数据库和阅读室状态，`coread/service.json` 保存服务访问密钥与端口，`coread/server.log` 为服务日志。通过官方来源获取的书籍在书籍正文中附来源 URL、SHA-256 与校验范围，随本地书库备份保留。运行中的共读会话及活动重叠累计仅在内存中保存，重启不恢复旧会话。书库由配对设备通过局域网共用，不复制到安卓聊天存档（24.22）。
 
 | 文件 | 内容 | 保留范围 |
@@ -24,7 +26,7 @@ Claudia 的休息结算沿用沟通配置的 `joint`：`scheduled_reward` 标记
 | `ai_config.json` | AI 服务商配置、按任务分配的视觉 / OCR / 评判模型 (API Key 用 DPAPI 加密保存); 设置随绑定同步 (Key 到对方设备后用对方的 DPAPI 重新加密) | 永久 |
 | `comm_chat_<人设编号>.json` | 各对象的聊天记录、情景模式与情绪张力 `interaction`（含爆发状态 `burst_until`（非零表示持续，兼容旧时间戳，由模型结束）、爆发后的 24 小时增长减半截止时间 `gain_until`、最近两个爆发触发日期 `burst_days` 和早间必谈触发日期 `morning_day`、爆发后睡眠必谈的待触发边界 `burst_sleep_after`，以及待模型判断的消息 UID 与发送时段 `pending`、按条件保存的张力增长冷却 `gain_cooldowns`、条件连锁一小时倍率截止时刻 `gain_chain_until`、高张力特殊空闲结束时刻 `special_until`、用户发言标记 `special_spoke`、特殊空闲入场段起点 `last_special_begin` / 入场张力 `special_entry_tension` / 前七分钟正向条件次数 `special_7m_gain_count` / 单段引诱去重 `special_7m_lured_seg`、衰减结算时刻 `decay_at` 与豁免截止时刻 `decay_hold_until`（旧 `skip_decay` 迁移为 24 小时豁免），24.20）、独立冒犯账本 `interaction.offenses`（时间与简短原因，原谅后擦除原因并留同步墓碑；普通清空聊天保留，24.21）、模型摘要 `mem_auto`、系统固定消息门槛 `mem_fixed`（24.2.4）、本机等待展示的 share data 邀请标记（24.12）、待发回复的本机 `pending_reply` / `reply_ready` 标记（24.3.4；未发片段不进入设备同步，重启仅恢复已校验队列） | 跟随设备同步；冒犯账本仅原谅或完整重置清除，其余清空对应聊天或重置时删除 |
 | `ai_voice.json` | MiniMax 语音配置、按人设分配、开关与自动播放间隔；API Key 在本机加密，配置随绑定同步（24.1） | 永久；重置删除 |
-| `external_software.json` | 本机选择的外部软件目录、Process Lasso 安装位置 | 永久；不随设备同步 |
+| `external_software.json` | 本机选择的外部软件目录、Process Lasso 安装位置、Obsidian 安装根目录（`obsidian`） | 永久；不随设备同步 |
 | `music_library/generated/` | 演奏 MIDI 与 MuseScore 渲染的 MP3 缓存，源谱或 MIDI 更新、缓存损坏时重新生成 | 本机缓存；不随设备同步；重置删除 |
 | `music_library/defaults/`、`music_library/uploads/<人设哈希>/`、`music_library/personas/<人设哈希>/selection.json` | 默认曲库只属于 Claudia；上传和选曲按人设文件名 SHA256 前20位隔离。旧共享上传和根目录选曲归 Claudia。UI 不展示或编辑曲目，只允许上传增加 | 本机；不随设备同步；重置删除上传及选曲，只恢复 Claudia 默认曲库 |
 | `BasicPitch/runtime/` | Basic Pitch、ONNX Runtime CPU 和隔离 Python 推理环境；`oit-install.json` 记录版本和相对可执行路径 | 用户选择的外部软件目录；不随同步，不自动搬移或卸载 |

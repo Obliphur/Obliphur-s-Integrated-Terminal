@@ -27,7 +27,7 @@ CLI_INSTALLERS = {
     "claude_code": ("Claude Code", "@anthropic-ai/claude-code", "claude"),
     "codex": ("Codex", "@openai/codex", "codex"),
     # Antigravity CLI 随官方安装器发布，不存在可验证的官方 npm 包。
-    "antigravity": ("Antigravity", None, "agy"),
+    "antigravity": ("Antigravity CLI", None, "agy"),
 }
 
 
@@ -205,6 +205,47 @@ class ExternalSoftware:
     def installed(self):
         return bool(self.installed_dir and all(os.path.isfile(os.path.join(self.installed_dir, name))
                     for name in ("ProcessLasso.exe", "ProcessGovernor.exe")))
+
+    @property
+    def obsidian_dir(self):
+        """优先使用手选目录，再检查 Windows 的用户级和系统级默认位置。"""
+        candidates = [self.data.get("obsidian")]
+        for variable, suffixes in (
+                ("LOCALAPPDATA", ("Obsidian", os.path.join("Programs", "Obsidian"))),
+                ("ProgramFiles", ("Obsidian",)),
+                ("ProgramW6432", ("Obsidian",)),
+                ("ProgramFiles(x86)", ("Obsidian",))):
+            base = os.environ.get(variable)
+            if base:
+                candidates.extend(os.path.join(base, suffix) for suffix in suffixes)
+        return next((str(path) for path in candidates
+                     if path and os.path.isfile(os.path.join(path, "Obsidian.exe"))), "")
+
+    def select_obsidian_dir(self, path):
+        path = os.path.normpath(str(path).strip())
+        if (not os.path.isabs(path) or path.startswith("\\\\")
+                or any(c in path for c in '\r\n\x00"')
+                or not os.path.isfile(os.path.join(path, "Obsidian.exe"))):
+            raise ValueError(tr("请选择包含 Obsidian.exe 的安装目录。"))
+        with self._lock:
+            data = {**self.data, "obsidian": path}
+            if not config.save_json_file(self.path, data):
+                raise OSError(tr("保存失败."))
+            self.data = data
+
+    def open_obsidian(self, path=None):
+        """直接启动识别到的程序；非默认安装仍可通过已注册的 URI 打开。"""
+        uri = "obsidian://open"
+        if path is not None:
+            uri += "?path=" + urllib.parse.quote(str(Path(path).resolve()), safe="")
+        directory = self.obsidian_dir
+        if directory:
+            subprocess.Popen([os.path.join(directory, "Obsidian.exe"), uri], creationflags=NO_WINDOW)
+            return
+        try:
+            os.startfile(uri)
+        except OSError as error:
+            raise OSError(tr("无法打开 Obsidian，请在「额外功能」中选择安装目录。")) from error
 
     def select_root(self, path):
         with self._lock:

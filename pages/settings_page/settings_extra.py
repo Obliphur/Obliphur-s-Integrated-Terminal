@@ -21,6 +21,7 @@ class ExtraSettingsMixin:
         self._build_external_lasso_card(body)
         self._build_java_card(body)
         self._build_cli_card(body)
+        self._build_obsidian_card(body)
         self.music = music_tools.manager(self.data_dir or config.app_data_dir(), self.external)
         self.music_library = music_library.manager(self.data_dir or config.app_data_dir())
         card = COLORS["bg_card"]
@@ -55,12 +56,47 @@ class ExtraSettingsMixin:
         self.areas["extra"].bind_children()
         self.bind("<Destroy>", self._stop_extra_poll, add="+")
 
+    def _build_obsidian_card(self, body):
+        import webbrowser
+        frame = tk.Frame(body, bg=COLORS["bg_card"], highlightbackground=COLORS["border"], highlightthickness=1)
+        frame.pack(fill="x", pady=(2, 8))
+        tk.Label(frame, text="Obsidian", bg=COLORS["bg_card"], fg=COLORS["text"], font=config.font("body", bold=True)).pack(anchor="w", padx=12, pady=(10, 4))
+        self.obsidian_status = tk.Label(frame, bg=COLORS["bg_card"], fg=COLORS["text_dim"],
+                                       font=config.font("body"), anchor="w", justify="left")
+        self.obsidian_status.pack(fill="x", padx=12, pady=4)
+        wrap_label(self.obsidian_status, 24)
+        ttk.Button(frame, text=tr("选择 Obsidian 安装目录…"), command=self._choose_obsidian_dir).pack(anchor="w", padx=12, pady=4)
+        ttk.Button(frame, text=tr("下载 Obsidian"), command=lambda: webbrowser.open("https://obsidian.md/download")).pack(anchor="w", padx=12, pady=4)
+        ttk.Button(frame, text=tr("打开 Obsidian"), command=self._open_obsidian).pack(anchor="w", padx=12, pady=(4, 10))
+
+    def _choose_obsidian_dir(self):
+        path = filedialog.askdirectory(parent=self, title=tr("选择 Obsidian 安装目录"),
+                                       initialdir=self.external.obsidian_dir or None, mustexist=True)
+        if not path:
+            return
+        try:
+            self.external.select_obsidian_dir(path)
+        except (OSError, ValueError) as error:
+            toast.warn(str(error))
+        self._refresh_extra_page()
+
+    def _open_obsidian(self):
+        from knowledge import get_knowledge
+        try:
+            self.external.open_obsidian(get_knowledge(self.data_dir or config.app_data_dir()).root)
+        except (OSError, ValueError) as error:
+            toast.warn(str(error))
+
     def _build_cli_card(self, body):
         card = COLORS["bg_card"]
         frame = tk.Frame(body, bg=card, highlightbackground=COLORS["border"], highlightthickness=1)
         frame.pack(fill="x", pady=(2, 8))
         tk.Label(frame, text=tr("订阅 CLI"), bg=card, fg=COLORS["text"],
                  font=config.font("body", bold=True)).pack(anchor="w", padx=12, pady=(10, 4))
+        distinction = tk.Label(frame, text=tr("Antigravity CLI 是命令行工具，与普通的 Antigravity 桌面客户端不是同一个东西。"),
+                               bg=card, fg=COLORS["text"], font=config.font("body"), anchor="w", justify="left")
+        distinction.pack(fill="x", padx=12, pady=4)
+        wrap_label(distinction, 24)
         self.cli_manager = external_software.cli_manager()
         self.cli_labels, self.cli_buttons = {}, {}
         for key, spec in external_software.CLI_INSTALLERS.items():
@@ -186,6 +222,10 @@ class ExtraSettingsMixin:
     def _refresh_extra_page(self):
         if not hasattr(self, "music"):
             return
+        if hasattr(self, "obsidian_status"):
+            directory = self.external.obsidian_dir
+            cfg(self.obsidian_status, text=tr("Obsidian 安装目录: {path}", path=directory)
+                if directory else tr("未识别到 Obsidian，请选择安装目录。"))
         if hasattr(self, "_voice_settings_refresh"):
             self._voice_settings_refresh()
         if hasattr(self, "cli_manager"):

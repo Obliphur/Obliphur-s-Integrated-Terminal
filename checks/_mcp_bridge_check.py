@@ -289,6 +289,20 @@ def main():
         tools_res = rpc({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
         tools = {t["name"]: t for t in tools_res["result"]["tools"]}
         assert "oit_answer_image" in tools
+        assert "Standard Ebooks" in tools["oit_reading_acquire"]["description"]
+        backup_url = "https://standardebooks.org/ebooks/jane-austen/pride-and-prejudice"
+        acquired_urls = []
+        def acquire_backup(url, valid):
+            assert valid()
+            acquired_urls.append(url)
+            return {"ok": True, "source_url": url, "integrity": "source_edition_structure_checked"}
+        c.coread_acquire_fn = acquire_backup
+        c.reading_mode = True
+        backup_result = bridge.handle_tool_execute({"name": "oit_reading_acquire", "arguments": {"source_url": backup_url}})
+        assert backup_result["ok"] and acquired_urls == [backup_url]
+        c.reading_mode = False
+        assert not bridge.handle_tool_execute({"name": "oit_reading_acquire", "arguments": {"source_url": backup_url}})["ok"]
+        assert acquired_urls == [backup_url]
         assert "oit_reply" in tools and tools["oit_reply"]["_meta"]["ui"]["resourceUri"] == "ui://oit/chat.html"
         assert tools["oit_reply"]["_meta"]["com.google.antigravity/ui"]["entrypoints"][0]["type"] == "aux_pane"
         aux_entries = [t for t in tools.values() if (t.get("_meta") or {}).get("com.google.antigravity/ui")]

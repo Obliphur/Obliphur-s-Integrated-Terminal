@@ -432,6 +432,7 @@ class FlowMixin:
         self._request_image_path = ""
         self._active_image = image
         self._answer_image_pending = None
+        self._kb_citations_pending = []
         if image and msgs and msgs[-1]["role"] == "user":
             mime = ai_assist.image_mime(image)
             if mime:

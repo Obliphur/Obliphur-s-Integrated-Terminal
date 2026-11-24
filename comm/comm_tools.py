@@ -15,6 +15,24 @@ from comm.comm_util import is_claudia
 
 
 class ToolsMixin:
+    def _knowledge_call(self, task, *, image=None, timeout=90):
+        from ai_assist.ai_subagent import invoke
+        profile = self.ai.task_profile("subject", fallback=self.ai.config_for(self.persona_name()))
+        return invoke(profile, "subject", task, image=image, max_tokens=1600, temperature=.1,
+                      timeout=timeout, chat=self.chat_fn)
+
+    def _knowledge_subject(self, domain, session, question, image=None):
+        from knowledge import get_knowledge
+        from knowledge.kb_ai import prepare_subject, finish_subject
+        kb = get_knowledge(self.dir)
+        epoch = self._epoch
+        task, hits = prepare_subject(kb, self._knowledge_call, domain, question, image)
+        answer = self.subagent_call("subject", session, task, image=image,
+                                   max_tokens=1400, temperature=.15, timeout=180)
+        clean, citations = finish_subject(kb, self._knowledge_call, domain, question, answer, hits,
+                                          valid=lambda: self._epoch == epoch)
+        return clean, citations
+
     def _music_access(self):
         return self.related(), self._interaction_prepare()["valence"]
 
@@ -25,6 +43,9 @@ class ToolsMixin:
         for round_index in range(config.COMM_TOOL_ROUNDS + 1):
             data = unpack(reply)
             if data is None or data["name"] in ("", "oit_reply"):
+                if data and data["name"] == "oit_reply" and data["arguments"].get("kb_citations"):
+                    from knowledge import get_knowledge
+                    self._kb_citations_pending = get_knowledge(self.dir).resolve_citations(data["arguments"]["kb_citations"])
                 return op, reply
             if round_index >= config.COMM_TOOL_ROUNDS:
                 raise AIError("format", "工具调用轮次超限")
@@ -32,7 +53,14 @@ class ToolsMixin:
                 raise AIError("format", "工具请求已失效")
             name, args = data["name"], data["arguments"]
             result = {"ok": False, "error": "当前不允许此工具"}
-            if name == "oit_memory_edit" and op is None:
+            if name in ("oit_kb_search", "oit_kb_trace", "oit_kb_record_use", "oit_kb_propose"):
+                from knowledge import get_knowledge
+                from knowledge.kb_ai import bridge_tool
+                try:
+                    result = bridge_tool(get_knowledge(self.dir), name, args)
+                except (ValueError, TypeError, OSError) as error:
+                    result = {"ok": False, "error": str(error)[:500]}
+            elif name == "oit_memory_edit" and op is None:
                 action, target, content = args["action"], args["target"].strip(), args["text"].strip()
                 entries = [line[2:].strip() for line in str(self.cfg.get("mem_live") or "").splitlines()
                            if line.strip().startswith("- ")]
@@ -67,11 +95,8 @@ class ToolsMixin:
                 session = args["session"]
                 question = args["question"].strip()
                 try:
-                    answer = self.subagent_call(
-                        "subject", session,
-                        f"学科: {domain}\n题目/追问:\n{question}",
-                        image=getattr(self, "_active_image", None),
-                        max_tokens=900, temperature=0.15, timeout=180)
+                    answer, citations = self._knowledge_subject(domain, session, question, getattr(self, "_active_image", None))
+                    self._kb_citations_pending = citations
                     img_on = self.answer_images_on()
                     if img_on:
                         self._answer_image_pending = {
@@ -85,6 +110,7 @@ class ToolsMixin:
                     )
                     result = {"ok": True, "domain": domain, "session": session,
                               "answer": answer, "answer_image_mode": img_on,
+                              "kb_citations": citations,
                               "instruction": instruction}
                 except Exception as e:  # noqa: BLE001
                     self.log(f"TOOL subject FAIL {type(e).__name__}")
@@ -348,6 +374,9 @@ class ToolsMixin:
                 if self._epoch != epoch or not self.answer_images_on():
                     return
                 import answer_images
+                citations = message.get("kb_citations", [])
+                if citations:
+                    formatted += "\n\n" + tr("引用技巧") + ": " + "; ".join(c["title"] + " ← " + " ← ".join(p["title"] for p in c.get("lineage", [])) for c in citations)
                 data = answer_images.render(formatted, pending.get("image"), title=f"{pending.get('domain') or '学科'}解答")
                 if not data:
                     detail = answer_images.last_error() if hasattr(answer_images, "last_error") else ""

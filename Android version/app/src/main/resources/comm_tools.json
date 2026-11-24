@@ -23,6 +23,26 @@
     }
   },
   {
+    "name": "oit_kb_search",
+    "description": "查询 OIT 本地个人技巧库，概念性笔记绝不检索。先看返回的 excluded_tactics 并遵守不考虑的技巧设置；只在前提满足时引用技巧。需要溯源时随后调用 oit_kb_trace。引用结论时在最终 oit_reply 的 kb_citations 中传卡片 ID。",
+    "parameters": {"type":"object","properties":{"domain":{"type":"string","enum":["math","physics","chemistry"]},"query":{"type":"string","maxLength":12000},"top_k":{"type":"integer","minimum":1,"maximum":20}},"required":["domain","query"],"additionalProperties":false}
+  },
+  {
+    "name": "oit_kb_trace",
+    "description": "读取技巧卡片的父结论链、适用前提和熟练度；概念卡不可查询。",
+    "parameters": {"type":"object","properties":{"card_id":{"type":"string","maxLength":120}},"required":["card_id"],"additionalProperties":false}
+  },
+  {
+    "name": "oit_kb_record_use",
+    "description": "记录本题实际使用或确认失败的技巧卡片及题目摘要；只统计已检索到的技巧。",
+    "parameters": {"type":"object","properties":{"used_card_ids":{"type":"array","items":{"type":"string"},"maxItems":20},"failed_card_ids":{"type":"array","items":{"type":"string"},"maxItems":20},"problem_summary":{"type":"string","maxLength":600}},"additionalProperties":false}
+  },
+  {
+    "name": "oit_kb_propose",
+    "description": "提交技巧库正文提案，需经用户审核后才合入。先调用 oit_kb_search 读取 excluded_tactics；符合排除描述的技巧不得提案。调用前原样填写 exclusions_considered。",
+    "parameters": {"type":"object","properties":{"action":{"type":"string","enum":["ADD_CARD","ADD_DERIVED","UPDATE_CARD","MERGE_ALIAS","REPARENT"]},"subject":{"type":"string","enum":["math","physics","chemistry"]},"title":{"type":"string","maxLength":300},"target_card_id":{"type":"string","maxLength":120},"parent_ids":{"type":"array","items":{"type":"string"},"maxItems":20},"proposed_card":{"type":"object","properties":{"topic":{"type":"string","maxLength":300},"aliases":{"type":"array","items":{"type":"string","maxLength":300},"maxItems":40},"triggers":{"type":"array","items":{"type":"string","maxLength":600},"maxItems":40},"statement":{"type":"string","maxLength":6000},"preconditions":{"type":"string","maxLength":6000},"proof_sketch":{"type":"string","maxLength":6000},"examples":{"type":"array","items":{"type":"string","maxLength":1500},"maxItems":20},"parent_ids":{"type":"array","items":{"type":"string","maxLength":120},"maxItems":20}},"additionalProperties":false},"summary":{"type":"string","maxLength":1500},"evidence":{"type":"array","items":{"type":"object","properties":{"ts":{"type":"string","maxLength":40},"problem":{"type":"string","maxLength":1200},"reason":{"type":"string","maxLength":1200}},"additionalProperties":false},"maxItems":20},"exclusions_considered":{"type":"string","maxLength":8000}},"required":["action","subject","title"],"additionalProperties":false}
+  },
+  {
     "name": "oit_answer_image",
     "description": "在解答图片模式开启、完成 oit_subject 且按人设风格化改写后调用，用于登记生成解答图片。成功后紧接着调用 oit_reply（气泡正文不含 Markdown/LaTeX 源码），图片将作为独立气泡发送，可在发图前后各加一句话（用 <oit_message> 分条并用独占一行的 <oit_answer_image> 指定发图位置）；解答图片模式关闭时无需调用。",
     "parameters": {
@@ -308,6 +328,7 @@
         "end_burst": {
           "type": "boolean"
         },
+        "kb_citations": {"type":"array","items":{"type":"string"},"maxItems":20,"description":"OIT技巧库中的已引用卡片 ID；OIT 会转换为可点击的结论溯源胶囊。"},
         "tension": {
           "type": "array",
           "items": {
@@ -392,14 +413,14 @@
   },
   {
     "name": "oit_reading_acquire",
-    "description": "仅在共读模式且网络已开通时，从 Project Gutenberg（https://www.gutenberg.org/ebooks/）获取公版书并导入本机书架。",
+    "description": "仅在共读模式且网络已开通时，从 Project Gutenberg 或备用 Standard Ebooks（https://standardebooks.org/ebooks）获取公版书并导入本机书架；古登堡不可用时改搜 Standard Ebooks。",
     "parameters": {
       "type": "object",
       "properties": {
         "source_url": {
           "type": "string",
           "maxLength": 200,
-          "description": "有效的 Project Gutenberg 书籍页面 URL。"
+          "description": "Project Gutenberg 的 /ebooks/编号 或 Standard Ebooks 的 /ebooks/作者/书名 官方书目 URL（部分版本还有译者等路径）。"
         }
       },
       "required": [

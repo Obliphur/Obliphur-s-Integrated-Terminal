@@ -3,7 +3,8 @@
 
 from hook_common import read_stdin_json, write_stdout_json
 
-TARGET_TOOLS = {"oit_bind_persona", "oit_reply", "oit_get_turn_context", "oit_subject", "oit_answer_image"}
+TARGET_TOOLS = {"oit_bind_persona", "oit_reply", "oit_get_turn_context", "oit_subject", "oit_answer_image",
+                "oit_kb_search", "oit_kb_trace", "oit_kb_record_use", "oit_kb_propose"}
 
 
 def main():

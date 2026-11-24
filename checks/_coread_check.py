@@ -180,6 +180,68 @@ def main():
             pass
         assert not saved
 
+    backup_url = "https://standardebooks.org/ebooks/jane-austen/pride-and-prejudice"
+    backup = (f'<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">'
+              f'<head><title>Pride and Prejudice</title><link rel="canonical" href="{backup_url}/text/single-page"/></head>'
+              '<body><section epub:type="bodymatter chapter"><h2>Chapter 1</h2>'
+              '<p>Complete <em>book</em> text &amp; dialogue.</p><p>Next paragraph.</p></section>'
+              f'<section epub:type="backmatter colophon"><a href="{backup_url}">Source edition</a></section>'
+              '<section epub:type="backmatter copyright-page"><p>License text.</p></section></body></html>')
+    def download_backup(spec, destination, **kwargs):
+        assert spec["url"] == backup_url + "/text/single-page"
+        assert kwargs["allowed_hosts"] == {"standardebooks.org"}
+        assert kwargs["max_download"] == coread_service.config.COREAD_BOOK_MAX_BYTES
+        Path(destination).write_bytes(backup.encode("utf-8"))
+    with patch.object(coread_service.updater, "download_file", side_effect=download_backup) as download:
+        saved.clear()
+        acquired = service.acquire_book(backup_url + "/")
+        assert acquired["integrity"] == "source_edition_structure_checked"
+        content = saved[0][2]["content"]
+        assert "Complete book text & dialogue.\n\nNext paragraph." in content
+        assert "SHA-256:" in content and "License text." in content and "<html" not in content
+        saved.clear()
+        try:
+            service.acquire_book(backup_url, valid=lambda: False)
+            raise AssertionError("inactive session accepted backup book")
+        except ValueError:
+            pass
+        assert not saved
+        service.books = lambda: [{"id": 7, "title": "Pride and Prejudice"}]
+        service._request = lambda *_args: {"paragraphs": [{"content": content}]}
+        download.reset_mock()
+        assert service.acquire_book(backup_url)["existing"]
+        download.assert_not_called()
+    service.books = lambda: []
+    service._request = request_book
+    invalid_documents = [backup[:-7], backup.replace(backup_url, backup_url + "-wrong"),
+                         backup.replace("bodymatter chapter", "frontmatter"),
+                         backup.replace("copyright-page", "other"),
+                         '<html><head><title>Blocked</title></head><body>Try later</body></html>',
+                         backup.replace("Complete", "&missing;"),
+                         backup.replace("<html ", '<!DOCTYPE html [<!ENTITY x "entity">]><html ')]
+    for invalid in invalid_documents:
+        saved.clear()
+        with patch.object(coread_service.updater, "download_file",
+                          side_effect=lambda _spec, dest, **_kw: Path(dest).write_text(invalid, encoding="utf-8")):
+            try:
+                service.acquire_book(backup_url)
+                raise AssertionError("invalid backup text accepted")
+            except ValueError:
+                pass
+            assert not saved
+    for invalid_url in (backup_url + "?download=1", backup_url + "/text/single-page",
+                        backup_url + "/downloads/book.epub",
+                        backup_url.replace("https:", "http:"), backup_url.replace(".org", ".org.evil.test"),
+                        backup_url.replace("standardebooks.org", "user@standardebooks.org"),
+                        backup_url.replace("standardebooks.org", "standardebooks.org:444")):
+        with patch.object(coread_service.updater, "download_file") as download:
+            try:
+                service.acquire_book(invalid_url)
+                raise AssertionError("untrusted backup URL accepted")
+            except ValueError:
+                pass
+            download.assert_not_called()
+
     app = FakeApp()
     bridge = app.bridge = OitChatBridge(app, "local-test-key")
     bridge.start()

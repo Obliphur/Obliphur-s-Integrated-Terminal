@@ -955,7 +955,6 @@ class OitMcpBridge:
                 lines.append(f"[OIT子代理路由] {', '.join(non_default_routes)}")
             answer_images = callable(getattr(self.comm, "answer_images_on", None)) and self.comm.answer_images_on()
             lines.append(f"[OIT解答图片模式] {'开启' if answer_images else '关闭'}。")
-
             return {
                 "ok": True,
                 "conversation_id": cid,
@@ -1033,6 +1032,13 @@ class OitMcpBridge:
                 }
             if self.comm.hard_block():
                 return {"ok": False, "error": "当前处于禁止沟通状态"}
+            if name in ("oit_kb_search", "oit_kb_trace", "oit_kb_record_use", "oit_kb_propose"):
+                from knowledge import get_knowledge
+                from knowledge.kb_ai import bridge_tool
+                try:
+                    return bridge_tool(get_knowledge(self.comm.dir), name, args)
+                except (ValueError, TypeError, OSError) as error:
+                    return {"ok": False, "error": str(error)[:500]}
 
             if name == "oit_query":
                 from comm.comm_prompt import native_persona_text
@@ -1108,17 +1114,23 @@ class OitMcpBridge:
                        "answer": "", "image": image, "ts": _now_ms()}
                 self._answer_image_context[(cid, session)] = ctx
                 if route.get("mode") != "external_api":
+                    from knowledge import get_knowledge
+                    from knowledge.kb_ai import mode_prompt, exclusion_prompt, exclusions
+                    knowledge = get_knowledge(self.comm.dir)
                     return {
                         "ok": False,
                         "route": route.get("mode", "host_subagent"),
                         "target": route.get("agent", "oit-subject"),
+                        "solver_mode": knowledge.config.get("solver_mode", "exploration"),
+                        "mode_instruction": mode_prompt(knowledge),
+                        "excluded_tactics": exclusions(knowledge),
                         "instruction": "当前未为学科子代理单独配置外部 API，请改用宿主原生子代理 oit-subject（或按客观步骤直接推导），并按当前人设语气风格化改写；解答图片模式开启时，在 oit_reply 前调用 oit_answer_image 提交原始解答和人设风格化解答。",
                     }
-                answer = self.comm.subagent_call(
-                    "subject", session, f"学科: {domain}\n题目/追问:\n{question}",
-                    image=image, max_tokens=900, temperature=0.15, timeout=180)
+                answer, citations = self.comm._knowledge_subject(domain, session, question, image)
                 ctx["answer"] = answer
-                return {"ok": True, "domain": domain, "session": session, "answer": answer}
+                ctx["kb_citations"] = citations
+                return {"ok": True, "domain": domain, "session": session, "answer": answer, "kb_citations": citations,
+                        "instruction": "核对 kb_citations 中技巧的适用前提；若需要将来源 ID 传给 oit_reply 或 oit_answer_image，请传入 kb_citations。若输出 <!-- kb_discovery -->，后台会检查已证明的库外技巧并尝试提交待审提案。不得提交符合 excluded_tactics 的技巧。"}
 
             if name == "oit_answer_image":
                 enabled = callable(getattr(self.comm, "answer_images_on", None)) and self.comm.answer_images_on()
@@ -1138,6 +1150,15 @@ class OitMcpBridge:
                 if use_external and not context:
                     return {"ok": False, "error": "请先在本轮调用 oit_subject，再生成对应解答图片"}
                 source_image = context.get("image") if context else _latest_user_image()
+                from knowledge import get_knowledge, strip_citations
+                kb = get_knowledge(self.comm.dir)
+                original, raw_ids = strip_citations(original)
+                styled, styled_ids = strip_citations(styled)
+                supplied_ids = args.get("kb_citations", [])
+                if not isinstance(supplied_ids, list):
+                    supplied_ids = []
+                citations = kb.resolve_citations(supplied_ids + raw_ids + styled_ids +
+                                                 [c["card_id"] for c in context.get("kb_citations", [])])
                 try:
                     if use_external:
                         prompt = (
@@ -1156,6 +1177,8 @@ class OitMcpBridge:
                             else styled
                         )
                     import answer_images
+                    if citations:
+                        formatted += "\n\n引用技巧: " + "; ".join(c["title"] + " ← " + " ← ".join(p["title"] for p in c["lineage"]) for c in citations)
                     data = answer_images.render(formatted, source_image, title=f"{domain}解答")
                     if not data:
                         detail = answer_images.last_error() if hasattr(answer_images, "last_error") else ""
@@ -1164,6 +1187,7 @@ class OitMcpBridge:
                     self._pending_answer_images[cid] = {
                         "data": data, "ts": _now_ms(), "session": session,
                         "text": styled or original,
+                        "kb_citations": citations,
                     }
                     self._answer_image_context.pop((cid, session), None)
                     return {"ok": True, "ready": True,
@@ -1260,8 +1284,13 @@ class OitMcpBridge:
             from comm.comm_util import is_claudia
 
             persona = self.comm.persona_name() if hasattr(self.comm, "persona_name") else ""
+            from knowledge import get_knowledge, strip_citations
+            kb = get_knowledge(self.comm.dir)
+            citation_ids = list(body.get("kb_citations", [])) if isinstance(body.get("kb_citations", []), list) else []
             cleaned = []
             for p in parts:
+                p, raw_ids = strip_citations(p)
+                citation_ids.extend(raw_ids)
                 p = tension_clean(p).strip()
                 if is_claudia(persona):
                     p = to_halfwidth(p)
@@ -1274,6 +1303,12 @@ class OitMcpBridge:
             self.comm._req_ts = max(int(getattr(self.comm, "_req_ts", 0) or 0), req_ts, now_ts)
             blocked_now = bool(callable(getattr(self.comm, "blocked", None)) and self.comm.blocked())
             answer_image = self._pending_answer_images.pop(cid, None)
+            if answer_image:
+                citation_ids.extend(c["card_id"] for c in answer_image.get("kb_citations", []))
+            for (context_cid, _), context in self._answer_image_context.items():
+                if context_cid == cid and _now_ms() - context.get("ts", 0) <= 600000:
+                    citation_ids.extend(c["card_id"] for c in context.get("kb_citations", []))
+            citations = kb.resolve_citations(citation_ids)
             attach_answer_image = bool(
                 answer_image and
                 now_ts - int(answer_image.get("ts") or 0) <= 10 * 60 * 1000 and
@@ -1305,6 +1340,8 @@ class OitMcpBridge:
                     delay_ms = _bubble_delay_ms(self.comm, part, idx)
                 cum_ms += delay_ms
                 m = self.comm._add("ai", part)
+                if citations:
+                    m["kb_citations"] = citations
                 created_msgs.append(m)
                 is_late = bool(m.get("late"))
                 m["hold"] = True
@@ -1326,6 +1363,9 @@ class OitMcpBridge:
                     "delay_ms": delay_ms,
                 })
             held_reply = bool(blocked_now or any(m.get("late") for m in created_msgs))
+            if citations:
+                for item in items:
+                    item["kb_citations"] = citations
             if attach_answer_image and 0 <= img_slot_index < len(created_msgs):
                 try:
                     target_msg = created_msgs[img_slot_index]
@@ -1451,6 +1491,8 @@ class OitMcpBridge:
                     item["image_id"] = os.path.basename(str(m["img"]))
                 if m.get("answer_image"):
                     item["answer_image"] = True
+                if m.get("kb_citations"):
+                    item["kb_citations"] = m["kb_citations"]
                 if is_held:
                     if next_cursor is None:
                         next_cursor = idx

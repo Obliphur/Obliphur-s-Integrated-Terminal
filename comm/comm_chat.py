@@ -311,6 +311,7 @@ class ChatMixin:
     def _sent(self):
         """用户发出一条之后的收尾."""
         self._reply_interrupt()
+        self._kb_citations_pending = []
         self.error = ""
         self._catchup = False
         self.cfg["retry"] = {}

@@ -195,6 +195,31 @@ private fun ModelAssignmentRow(role: String, title: String, revision: Int, chang
 private fun ExtraSettings() {
     VoiceSettingsCard()
     MusicEngineCard()
+    ObsidianCard()
+}
+
+@Composable
+private fun ObsidianCard() {
+    val ctx = LocalContext.current
+    val o = LocalOit.current
+    fun open(download: Boolean) {
+        try {
+            ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(if (download) "https://obsidian.md/download" else "obsidian://open")))
+        } catch (_: android.content.ActivityNotFoundException) {
+            if (!download) {
+                try {
+                    ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://obsidian.md/download")))
+                } catch (_: android.content.ActivityNotFoundException) {
+                    OitApp.instance.core.toast(tr("无法打开 Obsidian 下载页面"), "warn")
+                }
+            } else OitApp.instance.core.toast(tr("无法打开 Obsidian 下载页面"), "warn")
+        }
+    }
+    OitCard {
+        Text("Obsidian", fontWeight = FontWeight.Bold, color = o.text)
+        PlainButton(tr("打开 Obsidian")) { open(false) }
+        PlainButton(tr("下载 Obsidian")) { open(true) }
+    }
 }
 
 @Composable

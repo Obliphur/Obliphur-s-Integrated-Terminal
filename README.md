@@ -39,13 +39,14 @@ Windows x64 可在「设置 → 额外功能」安装 Microsoft JDK 17，用于 
 | **Network** | 申请制联网:冷静期后自动联网,到点断网;另有快速访问与紧急借贷; "📁 文件通道" 在绑定的手机和电脑之间传文件 / 图片 |
 | **Rules** | Proxy 模式下的网站 / 应用黑白名单 (被禁用的程序窗口一到前台就关掉),可让 AI 给出建议;bilibili.com 条目可再点开,按 UP 主放行 / 拦截 |
 | **Chat** | 和人设 AI 聊天，支持 API；直接在 OIT 使用 Claude Code / Codex / Antigravity CLI 订阅需要单独确认。也可由 Antigravity 桌面版原生 MCP 集成接管聊天并使用桌面账户订阅（接管时其程序和网络连接自动放行），或把请求交给绑定设备处理。沟通页支持拍照；数理化子代理可按设置生成只显示最终图片的解答长图。 |
-| **阅读（沟通页）** | 可选择自己阅读，或随消息附加 coread 请求，经当前人设同意后共同阅读、聊天和批注；Windows 提供本地书库，配对的 Android 设备可通过局域网访问；共读选书支持聊天与获取经校验的 Project Gutenberg 全文 |
+| **阅读（沟通页）** | 可选择自己阅读，或随消息附加 coread 请求，经当前人设同意后共同阅读、聊天和批注；Windows 提供本地书库，配对的 Android 设备可通过局域网访问；共读选书支持聊天与获取经校验的 Project Gutenberg / Standard Ebooks 全文，古登堡不可用时可改用备用书源 |
 | **演奏评判** | Windows 支持导入谱面图片/PDF 及 USB / 蓝牙 MIDI；安卓支持 USB / 蓝牙 MIDI，首次使用时可从额外功能下载演奏资源。独立评判子代理按曲目保留最近五次结果，AI 可自行搜索参考乐谱并比较演奏 |
 | **Hour Log** | 每个整点提示记录上一小时做了什么 |
 | **Calendar** | 按日查看学习时长 |
 | **Statistics** | 活动, 联网理由, 各程序前台时间的分布, 最近顺利完成的合约与最近的违规记录 |
 | **Contract** | 合约: 选词条加难度的限时挑战|
-| **Settings** | 按模块分页的可调参数；额外功能页提供 AI 语音、Claude Code / Codex / Antigravity CLI、Android 构建用 JDK 17、Process Lasso 和音乐工具部署与转换（含钢琴录音转 MIDI） |
+| **Knowledge** | 桌面端以 Obsidian Markdown Vault 管理技巧与概念笔记，支持检索、引用溯源、探索 / 保守解题模式和待审技巧提案；概念笔记与解题 AI 隔离 |
+| **Settings** | 按模块分页的可调参数；额外功能页提供 AI 语音、Obsidian（桌面支持手选安装目录和默认路径识别）、Claude Code / Codex / Antigravity CLI（命令行工具，与普通桌面客户端不同）、Android 构建用 JDK 17、Process Lasso 和音乐工具部署与转换（含钢琴录音转 MIDI） |
 | **Reset** | 恢复网络并清理数据 |
 
 在设置 → 沟通 → 人设可以查看当前人设的简介，也可以用 AI 协助创建新人设。Claudia 默认头像在桌面和 Android 使用同一套资源；未修改的内置人设配套文件会随更新升级，缺失或损坏的默认简介在启动时自动补齐。

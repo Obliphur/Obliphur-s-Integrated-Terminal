@@ -87,11 +87,20 @@ class DeliveryMixin:
         return max(0, round(d * 1000))
 
     def _reply_queue(self, text, batch, ready=False):
+        from knowledge.kb_trace import strip_citations
+        text, ids = strip_citations(text)
+        if not text:
+            return None
         is_img_slot = (str(text or "").strip() == ANSWER_IMAGE_TOKEN)
         pending = getattr(self, "_answer_image_pending", None) if is_img_slot else None
         if is_img_slot and not pending:
             return None
         m = self._add("ai", "[图片]" if is_img_slot else text)
+        if ids:
+            from knowledge import get_knowledge
+            self._kb_citations_pending = get_knowledge(self.dir).resolve_citations(ids)
+        if getattr(self, "_kb_citations_pending", None):
+            m["kb_citations"] = self._kb_citations_pending
         # 未发出的正文仅本机持有；发送时才进入跨设备历史。
         m["pending_reply"] = batch.source
         m["reply_ready"] = ready

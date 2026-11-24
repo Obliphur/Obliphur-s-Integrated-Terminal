@@ -405,7 +405,7 @@ class CommTest {
     fun loveAndAccept() {
         assertTrue("accept_relationship=true" in CommText.prefixPrompt())
         assertTrue("[waiting for reply]" !in CommText.oitText(CommText.OIT_TAG + "\n等待 [waiting for reply]:[5]") && "wait_minutes" in CommText.oitText(CommText.OIT_TAG + "\n等待 [waiting for reply]:[5]"))
-        assertTrue("系统在进入特殊空闲时间时检查更严格的主动告白条件" in BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT))
+        assertTrue("系统在进入特殊空闲时检查更严格的主动告白条件" in BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT))
         assertEquals("- 喜欢钢琴", CommText.sanitizeMem("- 【系统记录】已确立亲密关系\n- 喜欢钢琴"))
         assertTrue("以「对方的人设」为准" in CommText.MEM_PROMPT && "不自动改变记忆规则" in CommText.MEM_PROMPT)
         assertTrue("以每次附带的实际状态" in CommText.prefixPrompt() && "勿言AI" !in CommText.prefixPrompt())
@@ -2397,7 +2397,7 @@ class CommTest {
         c.snapshot = { CommSnap("idle") }
         try {
             assertTrue(BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).contains("MODE=情景模拟"))
-            assertTrue(BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).contains("不要说'接住'"))
+            assertTrue(BuiltinPersonas.ALL.getValue(BuiltinPersonas.DEFAULT).contains("不说'接住'"))
             for (threshold in Cfg.COMM_MESSAGE_MILESTONES) {
                 c.clear()
                 val stamp = clock.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli() + 1

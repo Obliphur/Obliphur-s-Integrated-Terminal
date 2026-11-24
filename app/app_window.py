@@ -21,9 +21,11 @@ from pages import (AchievementsPage, CalendarPage, CommPage, ContractPage, HourL
                    PrescriptPage, SettingsPage, StatsPage)
 from pages.share_dock import AiDataView, ShareDock
 from pages.widgets import LoadingCover, cfg, frozen
+from pages.knowledge_page import KnowledgePage
+from .app_sidebar import SidebarMixin
 
 
-class WindowMixin:
+class WindowMixin(SidebarMixin):
     def _work_area(self):
         """主屏幕去掉任务栏之后的区域 (左, 上, 右, 下); 取不到就用整个屏幕."""
         if sys.platform == "win32":
@@ -300,23 +302,21 @@ class WindowMixin:
             "cal": tr("📅  日历"),
             "stats": tr("📊  统计"),
             "contract": tr("⚔  合约"),
+            "knowledge": tr("📚  知识库"),
             "settings": tr("⚙  设置"),
             "comm": tr("💬  沟通"),
             "reset": tr("🔄  重置")
         })
         for key, label in self.nav_labels.items():
-            if key == "comm":                    # 沟通和重置一起放在最下面 (和设置之间空开)
-
-                tk.Frame(side, bg=card).pack(fill="both", expand=True)
             b = tk.Button(
                 side, text=label, anchor="w", width=15,
                 font=config.font("nav"), relief="flat", bd=0,
                 padx=14, pady=12, cursor="hand2",
-                command=lambda k=key: self.show_page(k)
+                takefocus=True
             )
             b.pack(fill="x", pady=(0, 2))
             self.nav_btns[key] = b
-
+        self._build_sidebar_order()
 
         self.content = tk.Frame(self.shell, bg=bg)
         self.content.pack(side="left", fill="both", expand=True)
@@ -324,6 +324,8 @@ class WindowMixin:
         self.content.grid_columnconfigure(0, weight=1)
 
         self.pages = {}
+        self.pages["knowledge"] = KnowledgePage(self.content, self.dm.data_dir, self.comm, self.show_page)
+        self._prepare_page(self.pages["knowledge"])
         if self._prescript_enabled():
             # 指令页整页盖在窗口上 (遮住侧边栏), 不放进 content 的 grid.
             self.pages["prescript"] = PrescriptPage(
@@ -409,6 +411,7 @@ class WindowMixin:
             self.content, self.comm, username=lambda: self.dm.username,
             on_open_settings=self._open_comm_settings, on_joint=self._joint_pick_start,
             on_coread=self._open_coread, on_coread_end=self._end_coread_session)
+        self.pages["comm"].open_knowledge_card = self.pages["knowledge"].open_card
         self._prepare_page(self.pages["comm"])
         yield
         self.pages["net"] = tk.Frame(self.content, bg=bg)
@@ -606,7 +609,7 @@ class WindowMixin:
                 )
             else:
                 cfg(b,
-                    bg=COLORS["bg_card"], fg=COLORS["text"],
+                    bg=COLORS["bg_card"], fg=self._nav_color(k, COLORS["text"], COLORS["bg_card"]),
                     activebackground=COLORS["border"], activeforeground=COLORS["text"]
                 )
         # 合约页连侧边栏字体也用自己的默认字体, 不跟界面主题的像素字体.
@@ -647,6 +650,8 @@ class WindowMixin:
             self.pages["comm"].show()
         elif key == "log":
             self.pages["log"].show()
+        elif key == "knowledge":
+            self.pages["knowledge"].show()
         elif key == "settings":
             self.pages["settings"].refresh()
         elif key == "ach":

@@ -631,6 +631,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                     e["img"] = os.path.basename(str(m["img"]))
                 if m.get("answer_image"):
                     e["answer_image"] = True
+                if m.get("kb_citations"):
+                    e["kb_citations"] = m["kb_citations"]
                 if m.get("wait"):
                     e["wait"] = m["wait"]
                 if m.get("hold"):
@@ -789,6 +791,8 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                     m["img"] = os.path.basename(str(val["img"]))
                 if val.get("answer_image"):
                     m["answer_image"] = True
+                if isinstance(val.get("kb_citations"), list):
+                    m["kb_citations"] = val["kb_citations"]
                 if isinstance(val.get("wait"), (int, float)) and 0 < val["wait"] <= WAIT_MAX_MIN:
                     m["wait"] = float(val["wait"])
                 if m["role"] == "ai" and self.blocked():       # 不能用沟通的时候同步来的也先藏起来

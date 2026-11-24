@@ -60,6 +60,12 @@ class CommMixin:
             return {"ok": False, "error": "comm page not ready"}
         self.root.deiconify()
         self.root.lift()
+        if kind == "kb_trace":
+            from knowledge import get_knowledge
+            from pages.knowledge_page import show_trace
+            show_trace(self.root, str(params.get("card_id", "")), get_knowledge(self.dm.data_dir),
+                       self.pages["knowledge"].open_card)
+            return {"opened": kind}
         actions = {
             "joint": getattr(page, "_joint", None),
             "shift": getattr(page, "_shift", None),

@@ -40,6 +40,8 @@ python release.py               # 发布（PyInstaller）
 | `_prestart_check.py` | 提前启动：挑选/搜索/去重逻辑，弹窗 | `prestart.py`、`pages/prestart_dialog.py` |
 | `_hold_check.py` | 休息 / 外出 / 联网时不能开始合约（`contract_block`） | `app.contract_block`、合约开始入口 |
 | `_ui_check.py` | 合约页底部按钮：变灰 + 上方提示 + 恢复 | `pages/contract_page.py` 的 `_build_bar` / `refresh` |
+| `_sidebar_check.py` | 侧边栏顺序归一化、分隔线淡化、点击阈值、重排持久化 | `app/app_sidebar.py`、`app/app_window.py`、`app/app_pages.py` |
+| `_knowledge_check.py` | Obsidian Markdown 保留与概念隔离、技巧检索排名 / 溯源、提案审核、探索 / 保守模式与排除门控 | `knowledge/` |
 | `_contract_board_check.py` | 词条板分页 / 翻页 / 组合页排版 / 锁定描述 | `contract/contract_rules.py` 的 `TERMS`、`PAGES`、`LAYOUT`；`_draw_*` 在 `pages/contract_page.py` |
 | `_stats_ui_check.py` | 统计页：合约记录、违规记录、黑雾、等级写法 | `pages/stats_page.py`、`contract.level_label` |
 | `_behavior_check.py` | 行为模式 / 外出与数据叠加 | `behavior.py`、`data_manager/` |
@@ -80,6 +82,7 @@ python release.py               # 发布（PyInstaller）
 | `app/app_base.py` | — | 无状态小工具：`ALARM_WAV` / `_play_audio_file` / `tired_text` / 颜色混合 |
 | `app/app_window.py` | WindowMixin | 窗口与主题、布局、重建界面、页面切换（`show_page`） |
 | `app/app_pages.py` | PagesMixin | 日程跟随、闹钟、规则弹窗、侧边栏、计时页 UI 与按钮状态 |
+| `app/app_sidebar.py` | SidebarMixin | 侧边栏排序和分隔线持久化、鼠标拖拽和淡化样式 |
 | `app/app_guard.py` | GuardMixin | 窗口事件与 5 秒心跳、窗口守护、自启、网卡重叠/应用规则/窗口使用时间 |
 | `app/app_timer.py` | TimerMixin | 状态机入口、专注存档恢复、结算、每秒 tick、跨天/整点、提示音 |
 | `app/app_break.py` | BreakMixin | 奖励休息、开始/暂停休息、结转、休息后提醒 |

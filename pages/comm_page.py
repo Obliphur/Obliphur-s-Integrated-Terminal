@@ -581,6 +581,16 @@ class CommPage(CommVoiceMixin, tk.Frame):
             if not thumb_loaded and img_path and os.path.isfile(img_path):
                 text_label.config(cursor="hand2")
                 text_label.bind("<Button-1>", lambda _e, p=img_path: self._show_image(p))
+        if not mine and m.get("kb_citations"):
+            from .knowledge_page import show_trace
+            from knowledge import get_knowledge
+            kb = get_knowledge(c.dir)
+            for citation in m["kb_citations"]:
+                if not isinstance(citation, dict) or not kb.resolve_trace(citation.get("card_id", "")):
+                    continue
+                tk.Button(bubble, text=tr("结论溯源") + ": " + citation.get("title", ""),
+                          command=lambda key=citation["card_id"]: show_trace(self, key, kb, self._open_knowledge_card),
+                          bg=fill, fg=COLORS["accent"], relief="flat", font=config.font("small"), cursor="hand2").pack(anchor="w", padx=6, pady=2)
         if not mine and c.voice.data["enabled"]:
             tk.Button(bubble, text="▶", command=lambda: self._voice_manual(m), bg=fill, fg=COLORS["text_dim"],
                       activebackground=fill, activeforeground=COLORS["accent"], relief="flat", bd=0,
@@ -600,6 +610,11 @@ class CommPage(CommVoiceMixin, tk.Frame):
             w._oit_wheel = True
         for ch in w.winfo_children():
             self._bind_wheel(ch)
+
+    def _open_knowledge_card(self, card_id):
+        callback = getattr(self, "open_knowledge_card", None)
+        if callback:
+            callback(card_id)
 
     def _near_end(self) -> bool:
         """视野离最新一条不远 (3 屏之内): 新消息来了才自动滑下去; 正在往上翻很早的记录就不打断."""

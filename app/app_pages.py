@@ -249,18 +249,30 @@ class PagesMixin:
         side_bg = P["side"] if on else COLORS["bg_card"]
         cfg(self.sidebar, bg=side_bg, highlightbackground=P["side_rim"] if on else COLORS["border"])
         for w in self.sidebar.winfo_children():
-            if isinstance(w, tk.Frame):
+            if isinstance(w, tk.Frame) and w is not getattr(self, "_nav_indicator", None):
                 cfg(w, bg=side_bg)
         cfg(self.topbar, bg=P.get("topbar", P["line"]) if on else COLORS.get("topbar", COLORS["accent"]))
         for k, b in self.nav_btns.items():
             if not on:
-                break
+                look = "settings" if self.current_page == "ach" else self.current_page
+                if k == look:
+                    cfg(b, bg=COLORS.get("accent_fill", COLORS["accent"]), fg=COLORS.get("on_accent_fill", COLORS["on_accent"]),
+                        activebackground=COLORS.get("accent_fill_hover", COLORS["accent_hover"]),
+                        activeforeground=COLORS.get("on_accent_fill", COLORS["on_accent"]))
+                else:
+                    normal_fg = self._nav_color(k, COLORS["text"], side_bg)
+                    cfg(b, bg=side_bg, fg=normal_fg, activebackground=COLORS["border"], activeforeground=normal_fg)
+                continue
             if k == self.current_page:
                 cfg(b, bg=P["side_on"], fg=P["side_on_text"], activebackground=P["side_on"],
                     activeforeground=P["side_on_text"])
             else:
-                cfg(b, bg=P["side"], fg=P["side_text"], activebackground=P["side_hover"],
+                cfg(b, bg=P["side"], fg=self._nav_color(k, P["side_text"], P["side"]), activebackground=P["side_hover"],
                     activeforeground=P["side_on_text"])
+        if hasattr(self, "nav_line"):
+            cfg(self.nav_line, bg=P["side_rim"] if on else COLORS["text_dim"])
+        if hasattr(self, "_nav_indicator"):
+            cfg(self._nav_indicator, bg=P.get("line", COLORS["accent"]) if on else COLORS["accent"])
 
     def _build_timer_page(self, body):
         bg, card = COLORS["bg"], COLORS["bg_card"]

@@ -62,6 +62,7 @@ object ToolProtocol {
         for (i in 0 until specs.length()) {
             val spec = specs.getJSONObject(i)
             if (!search && spec.getString("name") == "oit_search") continue
+            if (spec.getString("name").startsWith("oit_kb_")) continue // The Obsidian knowledge vault is desktop-only.
             list.put(when (protocol) {
                 "anthropic" -> JSONObject().put("name", spec.getString("name")).put("description", spec.getString("description")).put("input_schema", spec.getJSONObject("parameters"))
                 "gemini" -> subset(spec)

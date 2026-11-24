@@ -221,7 +221,10 @@ OUTING_MAX_HOURS = 24 * 7
 
 
 APP_NAME = "Obliphur's Integrated Terminal"
-APP_VERSION = "1.0.705"                  # 和 GitHub 上发布的版本号比较 (见 updater.py)
+APP_VERSION = "1.0.707"                  # 和 GitHub 上发布的版本号比较 (见 updater.py)
+KB_MIN_MATCH_THRESHOLD = 0.15
+KB_REVIEW_MIN_CHARS = 360
+KB_IMPORT_MAX_BYTES = 2 * 1024 * 1024
 AI_VOICE_GAP = 1.0                       # 两条语音之间的默认间隔（秒）
 COMM_SPLIT_INTERVAL_SECONDS = 5          # 分条续发固定等待时间（秒）
 COMM_REWARD_CARRY_PERCENT = 85          # Claudia 完成奖励填满循环后，剩余休息的结转百分比

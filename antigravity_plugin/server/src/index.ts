@@ -51,6 +51,24 @@ const AUX_PANE_META = {
 function buildTools(): ToolSpec[] {
   return [
     {
+      name: "oit_kb_search", description: "查询个人技巧库（绝不读取概念库）。返回技巧溯源、探索/保守模式与不考虑的技巧。看图提取特征后再检索。",
+      annotations: READONLY_ANNOTATIONS,
+      inputSchema: { type: "object", properties: { domain: { type: "string" }, query: { type: "string", maxLength: 12000 }, top_k: { type: "integer", minimum: 1, maximum: 20 }, conversation_id: { type: "string" } }, required: ["domain", "query"], additionalProperties: false },
+    },
+    {
+      name: "oit_kb_trace", description: "查询技巧卡片的完整祖先推导链、熟练度、前提禁区与 Obsidian URI。无权查询概念卡。",
+      annotations: READONLY_ANNOTATIONS,
+      inputSchema: { type: "object", properties: { card_id: { type: "string", maxLength: 120 }, conversation_id: { type: "string" } }, required: ["card_id"], additionalProperties: false },
+    },
+    {
+      name: "oit_kb_record_use", description: "解题后记录实际采纳或确认套错的技巧，更新独立统计。未使用的候选不计数。",
+      inputSchema: { type: "object", properties: { used_card_ids: { type: "array", items: { type: "string" }, maxItems: 20 }, failed_card_ids: { type: "array", items: { type: "string" }, maxItems: 20 }, problem_summary: { type: "string", maxLength: 600 }, conversation_id: { type: "string" } }, additionalProperties: false },
+    },
+    {
+      name: "oit_kb_propose", description: "提交待用户审核的技巧正文提案（禁止直写）。先参考 oit_kb_search 的 excluded_tactics，符合排除描述的不得提交；exclusions_considered 原样填写该设置。",
+      inputSchema: { type: "object", properties: { action: { type: "string", enum: ["ADD_CARD", "ADD_DERIVED", "UPDATE_CARD", "MERGE_ALIAS", "REPARENT"] }, subject: { type: "string", enum: ["math", "physics", "chemistry"] }, title: { type: "string", maxLength: 300 }, target_card_id: { type: "string", maxLength: 120 }, parent_ids: { type: "array", items: { type: "string" }, maxItems: 20 }, proposed_card: { type: "object", properties: { topic: { type: "string", maxLength: 300 }, aliases: { type: "array", items: { type: "string", maxLength: 300 }, maxItems: 40 }, triggers: { type: "array", items: { type: "string", maxLength: 600 }, maxItems: 40 }, statement: { type: "string", maxLength: 6000 }, preconditions: { type: "string", maxLength: 6000 }, proof_sketch: { type: "string", maxLength: 6000 }, examples: { type: "array", items: { type: "string", maxLength: 1500 }, maxItems: 20 }, parent_ids: { type: "array", items: { type: "string", maxLength: 120 }, maxItems: 20 } }, additionalProperties: false }, summary: { type: "string", maxLength: 1500 }, evidence: { type: "array", items: { type: "object", properties: { ts: { type: "string", maxLength: 40 }, problem: { type: "string", maxLength: 1200 }, reason: { type: "string", maxLength: 1200 } }, additionalProperties: false }, maxItems: 20 }, exclusions_considered: { type: "string", maxLength: 8000 }, conversation_id: { type: "string" } }, required: ["action", "subject", "title"], additionalProperties: false },
+    },
+    {
       name: "oit_bind_persona",
       description:
         "将当前对话与指定 OIT 人设严格 1 对 1 排斥绑定（同一人设不能同时绑定两个对话；若目标人设已绑定其他对话会返回冲突错误，仅当用户明确要求解绑旧对话并迁移时才传 force=true）。绑定后再调用 oit_reply 与用户打招呼即可自动打开 OIT Chat。",
@@ -93,6 +111,7 @@ function buildTools(): ToolSpec[] {
             description: "按 IM 聊天节奏拆分的多条气泡正文。",
           },
           text: { type: "string", maxLength: 32000 },
+          kb_citations: { type: "array", items: { type: "string" }, maxItems: 20 },
           conversation_id: { type: "string" },
           refuse: { type: "boolean" },
           silent: { type: "boolean" },
@@ -224,7 +243,7 @@ function buildTools(): ToolSpec[] {
     {
       name: "oit_subject",
       description:
-        "委托数理化子代理。解答图片模式开启时，风格化后必须调用 oit_answer_image，再用自然简洁且不含 Markdown / LaTeX 源码的可见正文提交 oit_reply。",
+        "委托数理化子代理。桌面端自动检索本机技巧库并返回探索/保守模式及排除技巧；宿主原生 oit-subject 应先看图提取特征并调用 oit_kb_search。遵守其模式和排除设置，实际引用卡片通过 kb_citations 传给 oit_reply。解答图片模式开启时，风格化后必须调用 oit_answer_image，再用自然简洁且不含 Markdown / LaTeX 源码的可见正文提交 oit_reply。",
       inputSchema: {
         type: "object",
         properties: {
@@ -248,6 +267,7 @@ function buildTools(): ToolSpec[] {
           session: { type: "string", maxLength: 80 },
           answer: { type: "string", maxLength: 8000, description: "学科子代理返回的原始答案。" },
           styled_answer: { type: "string", maxLength: 8000, description: "聊天 AI 按人设风格化改写后的完整解答版本。" },
+          kb_citations: { type: "array", items: { type: "string" }, maxItems: 20 },
           conversation_id: { type: "string", maxLength: 120 },
         },
         required: ["domain", "session", "answer", "styled_answer"],
@@ -295,10 +315,10 @@ function buildTools(): ToolSpec[] {
     {
       name: "oit_reading_acquire",
       description:
-        "仅在共读模式且网络已开通时，从 Project Gutenberg 获取公版书并导入本机书架。",
+        "仅在共读模式且网络已开通时，从 Project Gutenberg 或备用 Standard Ebooks（https://standardebooks.org/ebooks）获取公版书并导入本机书架；古登堡不可用时改搜 Standard Ebooks。",
       inputSchema: {
         type: "object",
-        properties: { source_url: { type: "string", maxLength: 200 } },
+        properties: { source_url: { type: "string", maxLength: 200, description: "Project Gutenberg 或 Standard Ebooks 官方书目 URL。" } },
         required: ["source_url"],
         additionalProperties: false,
       },

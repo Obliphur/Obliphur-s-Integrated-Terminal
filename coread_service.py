@@ -22,6 +22,7 @@ from datetime import datetime
 import config
 import tempstore
 import updater
+from coread_sources import book_source, verified_book
 from i18n import tr
 
 
@@ -302,15 +303,8 @@ class CoReadService:
         return self._request("/v1/books").get("books", [])
 
     def acquire_book(self, source_url, valid=lambda: True):
-        """仅从 Gutenberg 官方取全文；校验失败不写库，出处随正文备份。"""
-        source = urllib.parse.urlsplit(str(source_url))
-        match = re.fullmatch(r"/ebooks/([1-9]\d{0,6})/?", source.path)
-        if (source.scheme != "https" or source.netloc not in ("www.gutenberg.org", "gutenberg.org")
-                or source.query or source.fragment or not match):
-            raise ValueError("请提供 Project Gutenberg 官方书目地址 https://www.gutenberg.org/ebooks/编号；其他来源尚不能自动核验")
-        book_id = match[1]
-        canonical = f"https://www.gutenberg.org/ebooks/{book_id}"
-        download = f"https://www.gutenberg.org/cache/epub/{book_id}/pg{book_id}.txt"
+        """从受支持的官方书源取全文；校验失败不写库，出处随正文备份。"""
+        canonical, download, hosts, book_id = book_source(source_url)
         with self._book_lock:
             for book in self.books():
                 first = self._request(f"/v1/books/{int(book['id'])}?page=1").get("paragraphs", [])
@@ -320,31 +314,21 @@ class CoReadService:
             try:
                 filename = os.path.join(stage, "book.txt")
                 updater.download_file({"url": download, "accept": updater.ACCEPT_FILE}, filename,
-                                      allowed_hosts={"www.gutenberg.org", "gutenberg.org"},
+                                      allowed_hosts=hosts,
                                       max_download=config.COREAD_BOOK_MAX_BYTES, workers=1)
                 with open(filename, "rb") as stream:
                     raw = stream.read(config.COREAD_BOOK_MAX_BYTES + 1)
                 if len(raw) > config.COREAD_BOOK_MAX_BYTES:
-                    raise ValueError("书籍文件超过大小上限")
-                text = raw.decode("utf-8-sig").replace("\r\n", "\n")
-                start = re.search(r"^\*\*\* START OF (?:THE|THIS) PROJECT GUTENBERG EBOOK .+?\*\*\*\s*$", text, re.M)
-                end = re.search(r"^\*\*\* END OF (?:THE|THIS) PROJECT GUTENBERG EBOOK .+?\*\*\*\s*$", text, re.M)
-                header = text[:start.start()] if start else ""
-                title = re.search(r"^Title:\s*(.+)$", header, re.M)
-                identity = re.search(r"\[\s*e-?book\s*#\s*" + book_id + r"\s*\]", header, re.I)
-                if not start or not end or end.start() <= start.end() or not title or not identity:
-                    raise ValueError("未通过全文校验：缺少对应书号、书名或完整首尾标记")
-                content = text[start.end():end.start()].strip()
-                if not content or "\x00" in content or re.search(r"<(?:!doctype|html)\b", content, re.I):
-                    raise ValueError("下载结果不是可验证的完整书籍文本")
+                    raise ValueError(tr("书籍文件超过大小上限"))
+                title, text, integrity, verification, license_text = verified_book(raw, canonical, book_id)
                 digest = hashlib.sha256(raw).hexdigest()
                 provenance = (f"OIT 书籍来源: {canonical}\n下载地址: {download}\nSHA-256: {digest}\n"
-                              "校验: 官方 HTTPS 来源、书号、UTF-8 文本及全文首尾标记。完整性限于此来源版本，不保证与其他版本一致。\n"
-                              "授权: Project Gutenberg 电子书；具体使用条件见文件末尾许可。")
+                              f"校验: {verification}完整性限于此来源版本，不保证与其他版本一致。\n"
+                              f"授权: {license_text}")
                 if not valid():
-                    raise ValueError("共读会话已结束，未加入书库")
-                result = self._request("/v1/books", "POST", {"title": title[1].strip(), "content": provenance + "\n\n" + text})
-                return {**result, "source_url": canonical, "sha256": digest, "integrity": "source_edition_markers_checked"}
+                    raise ValueError(tr("共读会话已结束，未加入书库"))
+                result = self._request("/v1/books", "POST", {"title": title, "content": provenance + "\n\n" + text})
+                return {**result, "source_url": canonical, "sha256": digest, "integrity": integrity}
             finally:
                 shutil.rmtree(stage, ignore_errors=True)
 

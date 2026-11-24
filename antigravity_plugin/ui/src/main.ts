@@ -14,6 +14,7 @@ interface ChatMsg {
   image_id?: string;
   answer_image?: boolean;
   delay_ms?: number;
+  kb_citations?: Array<{ card_id: string; title: string; familiarity: string }>;
 }
 
 interface UiState {
@@ -99,6 +100,13 @@ function appendBubble(m: ChatMsg) {
     bubble.appendChild(text);
   }
   row.appendChild(bubble);
+  for (const citation of m.kb_citations || []) {
+    const link = document.createElement("button");
+    link.className = "tbtn";
+    link.textContent = `结论溯源：${citation.title}${citation.familiarity === "unfamiliar" ? "（未用过）" : ""} ↗`;
+    link.onclick = () => { void callAppTool("oit_ui_action", { action: "open_native_dialog", params: { kind: "kb_trace", card_id: citation.card_id } }); };
+    bubble.appendChild(link);
+  }
 
   const meta = document.createElement("div");
   meta.className = "meta";

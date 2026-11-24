@@ -35,6 +35,23 @@ except ValueError:
 u.select_root(str(root_dir))
 assert E.ExternalSoftware(str(base / "data")).root == str(root_dir)
 
+obsidian_dir = base / "Obsidian"
+obsidian_dir.mkdir()
+(obsidian_dir / "Obsidian.exe").write_bytes(b"MZ")
+try:
+    u.select_obsidian_dir("relative")
+    raise AssertionError("Obsidian 安装目录必须是包含 Obsidian.exe 的绝对路径")
+except ValueError:
+    pass
+u.select_obsidian_dir(str(obsidian_dir))
+assert u.obsidian_dir == str(obsidian_dir)
+local_default = base / "LocalAppData" / "Programs" / "Obsidian"
+local_default.mkdir(parents=True)
+(local_default / "Obsidian.exe").write_bytes(b"MZ")
+auto_obsidian = E.ExternalSoftware(str(base / "auto-data"))
+with patch.dict(os.environ, {"LOCALAPPDATA": str(base / "LocalAppData")}, clear=False):
+    assert auto_obsidian.obsidian_dir == str(local_default)
+
 for url in ("http://bitsum.com/x", "https://bitsum.com.evil.test/x", "https://evil.test/x", "https://user@bitsum.com/x"):
     assert not E._official_url(url)
     try:
