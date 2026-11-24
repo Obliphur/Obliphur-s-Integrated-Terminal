@@ -1155,9 +1155,11 @@ class OitMcpBridge:
                             if len(styled) < 40 and len(original) > len(styled) * 2
                             else styled
                         )
-                    from answer_images import render
-                    data = render(formatted, source_image, title=f"{domain}解答")
+                    import answer_images
+                    data = answer_images.render(formatted, source_image, title=f"{domain}解答")
                     if not data:
+                        detail = answer_images.last_error() if hasattr(answer_images, "last_error") else ""
+                        self.comm.log(f"MCP ANSWER_IMAGE renderer unavailable: {detail}" if detail else "MCP ANSWER_IMAGE renderer unavailable")
                         return {"ok": False, "error": "本机无法生成解答图片；请正常提交文字回复。"}
                     self._pending_answer_images[cid] = {"data": data, "ts": _now_ms(), "session": session}
                     self._answer_image_context.pop((cid, session), None)

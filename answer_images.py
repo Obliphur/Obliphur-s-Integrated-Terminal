@@ -6,25 +6,50 @@
 import base64
 import html
 import os
+from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 
 import tempstore
 
+_LAST_ERROR = ""
 
-def _browser():
+
+def last_error() -> str:
+    return _LAST_ERROR
+
+
+def _browsers() -> list[str]:
+    local_app = os.environ.get("LOCALAPPDATA", "")
     candidates = [
         os.environ.get("OIT_BROWSER", ""),
-        r"C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
-        r"C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
-        r"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        os.path.join(local_app, "Microsoft", "Edge", "Application", "msedge.exe") if local_app else "",
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        os.path.join(local_app, "Google", "Chrome", "Application", "chrome.exe") if local_app else "",
         "msedge", "chrome", "chromium", "chromium-browser",
     ]
+    found, seen = [], set()
     for candidate in candidates:
-        if candidate and (os.path.isfile(candidate) or shutil.which(candidate)):
-            return candidate
-    return ""
+        if not candidate:
+            continue
+        resolved = candidate if os.path.isfile(candidate) else (shutil.which(candidate) or "")
+        if not resolved:
+            continue
+        key = os.path.normcase(os.path.abspath(resolved))
+        if key not in seen:
+            seen.add(key)
+            found.append(resolved)
+    return found
+
+
+def _browser() -> str:
+    found = _browsers()
+    return found[0] if found else ""
 
 
 def _inline(value: str) -> str:
@@ -93,8 +118,11 @@ def _markdown(text: str) -> str:
 
 def render(answer: str, source_image: bytes = None, title: str = "解答") -> bytes:
     """返回一张可发送的长 PNG；浏览器不可用或截图失败时返回空字节。"""
-    browser = _browser()
-    if not browser or not str(answer or "").strip():
+    global _LAST_ERROR
+    _LAST_ERROR = ""
+    browsers = _browsers()
+    if not browsers or not str(answer or "").strip():
+        _LAST_ERROR = "no browser found" if not browsers else "empty answer"
         return b""
     work = tempstore.mkdtemp("misc", prefix="answer-image-")
     page = os.path.join(work, "answer.html")
@@ -125,21 +153,47 @@ code{{padding:1px 7px}} pre{{padding:18px 22px;white-space:pre-wrap;font-size:25
 .math{{font-family:Cambria,"Times New Roman",serif;font-style:italic}} .math math{{font-size:1.12em}} .math math mfrac{{display:inline-table;vertical-align:middle;text-align:center}} .math math mfrac > *{{display:block;padding:0 4px}} .math math mfrac > :first-child{{border-bottom:1px solid #20242b}} .source{{margin:0 0 34px;padding-bottom:24px;border-bottom:2px solid #c9d3df}}
 .source img{{display:block;max-width:956px;max-height:900px;margin:0 auto;border:1px solid #c9d3df}}
 </style>{source}<h1>{html.escape(title)}</h1><main>{body}</main>'''
+    run_kw = {"stdout": subprocess.DEVNULL, "stderr": subprocess.PIPE, "timeout": 30, "check": False}
+    if sys.platform == "win32":
+        run_kw["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    errors = []
     try:
         with open(page, "w", encoding="utf-8") as stream:
             stream.write(document)
-        cmd = [browser, "--headless", "--disable-gpu", "--hide-scrollbars", "--no-first-run",
-               "--no-default-browser-check", "--allow-file-access-from-files", f"--window-size=1100,{shot_height}",
-               f"--screenshot={shot}", "--virtual-time-budget=1200", "--run-all-compositor-stages-before-draw",
-               "file:///" + page.replace("\\", "/")]
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30, check=False)
-        if os.path.isfile(shot) and os.path.getsize(shot) > 100:
-            with open(shot, "rb") as stream:
-                return stream.read()
-    except (OSError, subprocess.SubprocessError):
-        pass
+        page_uri = Path(page).resolve().as_uri()
+        for idx, browser in enumerate(browsers):
+            profile_dir = os.path.join(work, f"profile-{idx}")
+            for headless_flag in ("--headless=new", "--headless"):
+                try:
+                    if os.path.isfile(shot):
+                        os.remove(shot)
+                except OSError:
+                    pass
+                cmd = [
+                    browser, headless_flag,
+                    f"--user-data-dir={profile_dir}",
+                    "--no-sandbox", "--disable-gpu", "--disable-extensions",
+                    "--disable-background-networking", "--disable-sync",
+                    "--hide-scrollbars", "--no-first-run", "--no-default-browser-check",
+                    "--allow-file-access-from-files",
+                    f"--window-size=1100,{shot_height}",
+                    f"--screenshot={shot}",
+                    "--virtual-time-budget=1200",
+                    "--run-all-compositor-stages-before-draw",
+                    page_uri,
+                ]
+                try:
+                    proc = subprocess.run(cmd, **run_kw)
+                    if os.path.isfile(shot) and os.path.getsize(shot) > 100:
+                        with open(shot, "rb") as stream:
+                            return stream.read()
+                    err = (proc.stderr or b"").decode("utf-8", "replace").strip().replace("\r", " ").replace("\n", " ")
+                    errors.append(f"{os.path.basename(browser)}({headless_flag}) rc={proc.returncode} {err[:180]}")
+                except (OSError, subprocess.SubprocessError) as exc:
+                    errors.append(f"{os.path.basename(browser)}({headless_flag}) {type(exc).__name__}: {exc}")
     finally:
         shutil.rmtree(work, ignore_errors=True)
+    _LAST_ERROR = " | ".join(errors[:4])
     return b""
 
 

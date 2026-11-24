@@ -307,10 +307,11 @@ class ToolsMixin:
                     max_tokens=1400, temperature=0.1, timeout=180)
                 if self._epoch != epoch or not self.answer_images_on():
                     return
-                from answer_images import render
-                data = render(formatted, pending.get("image"), title=f"{pending.get('domain') or '学科'}解答")
+                import answer_images
+                data = answer_images.render(formatted, pending.get("image"), title=f"{pending.get('domain') or '学科'}解答")
                 if not data:
-                    self.log("ANSWER_IMAGE renderer unavailable")
+                    detail = answer_images.last_error() if hasattr(answer_images, "last_error") else ""
+                    self.log(f"ANSWER_IMAGE renderer unavailable: {detail}" if detail else "ANSWER_IMAGE renderer unavailable")
                     return
                 name = self._save_chat_image(message["uid"] + "-answer", data)
                 if name and self._epoch == epoch:
