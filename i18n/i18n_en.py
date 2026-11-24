@@ -1832,6 +1832,7 @@ EN = {
     "图片上没有识别到文字.": "No text found on the image.",
     "文字已放进聊天框.": "The text was put into the chat box.",
     "图片太大了 (最大 4.5 MB)": "The image is too large (4.5 MB at most)",
+    "📎 剪贴板图片": "📎 Clipboard image",
     "只支持 PNG / JPG / WEBP / GIF 图片": "Only PNG / JPG / WEBP / GIF images are supported",
     "等 {name} 回复": "waiting for {name} to reply",
     "{name} 已接受, 到点后在合约页开始行动": "{name} accepted; start the operation on the Contract page when it's time",

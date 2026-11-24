@@ -60,12 +60,15 @@ try:
             config.UI_SCALE = scale
             page = CommPage(root, c)
             page.pack(fill="both", expand=True)
-            # 图片附件按钮始终是 📎；剪贴板位图写入的是临时文件而不是目录。
+            # 图片附件按钮始终是 📎；待发区展示附件名称与取消按钮，剪贴板位图写入临时文件，并监听 <<Paste>>。
+            assert page.entry.bind("<<Paste>>")
             image_file = os.path.join(folder, "paste.png")
             with open(image_file, "wb") as stream:
                 stream.write(b"\x89PNG\r\n\x1a\n" + b"test")
             assert page._set_pending_image(image_file)
             assert page.btn_image.cget("text") == "📎"
+            assert page.lbl_joint.cget("text") == "📎 paste.png"
+            assert page.btn_joint_x.winfo_manager() == "pack"
             def copy_bitmap(target):
                 with open(target, "wb") as stream:
                     stream.write(b"\x89PNG\r\n\x1a\n" + b"test")
@@ -75,7 +78,11 @@ try:
                 assert page._paste_image() == "break"
                 assert os.path.isfile(copy_image.call_args.args[0])
                 assert page.btn_image.cget("text") == "📎"
-            page._pending_image = ""
+                assert page.lbl_joint.cget("text") == i18n.tr("📎 剪贴板图片")
+                assert page.btn_joint_x.winfo_manager() == "pack"
+            page._clear_package_drafts()
+            assert page._pending_image == ""
+            assert page.btn_joint_x.winfo_manager() != "pack"
             # 阅读入口的两个选择和关闭行为, 中英文均走真实按钮回调。
             assert page.btn_coread.cget("text") == "📚"
             opened = page.on_coread = Mock()

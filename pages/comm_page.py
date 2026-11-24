@@ -157,7 +157,7 @@ class CommPage(CommVoiceMixin, tk.Frame):
         ttk.Button(row, text=tr("发送"), style="Accent.TButton", command=self._send).pack(
             side="left", padx=(8, 0), anchor="s")
         self.entry.bind("<Return>", self._on_return)
-        self.entry.bind("<Control-v>", self._paste_image, add="+")
+        self.entry.bind("<<Paste>>", self._paste_image)
 
     # ---- 显示 ----
 
@@ -281,7 +281,8 @@ class CommPage(CommVoiceMixin, tk.Frame):
         cfg(self.btn_alarm, text="⏰" if c.co_alarm_pid() and c.co_alarm_pid() == c.pid else "⏲")
         draft = c.joint_label()
         requests = c.request_draft_labels()
-        pending = " · ".join(([draft] if draft else []) + requests)
+        img_label = self._pending_image_label()
+        pending = " · ".join(([draft] if draft else []) + requests + ([img_label] if img_label else []))
         cfg(self.lbl_joint, text=pending or c.joint_status_text(), fg=COLORS["accent"] if pending else COLORS["text_dim"])
         if pending:
             if self.btn_joint_x.winfo_manager() != "pack":
@@ -572,6 +573,14 @@ class CommPage(CommVoiceMixin, tk.Frame):
         self._pending_image = ""
         self.refresh(force=True)
 
+    def _pending_image_label(self) -> str:
+        if not self._pending_image:
+            return ""
+        name = os.path.basename(self._pending_image)
+        if name.startswith("comm-paste-"):
+            return tr("📎 剪贴板图片")
+        return f"📎 {name}"
+
     def _set_pending_image(self, path: str) -> bool:
         """暂存待发送图片；附件按钮始终保持 📎，避免和识字按钮混淆。"""
         try:
@@ -590,6 +599,7 @@ class CommPage(CommVoiceMixin, tk.Frame):
             return False
         self._pending_image = path
         self.btn_image.config(text="📎")
+        self.refresh(force=True)
         self.entry.focus_set()
         return True
 
@@ -612,7 +622,12 @@ class CommPage(CommVoiceMixin, tk.Frame):
             fd, target = mkstemp("misc", prefix="comm-paste-", suffix=".png")
             os.close(fd)
             os.unlink(target)
-            if avatar_mod.clipboard_image(target) and self._set_pending_image(target):
+            if avatar_mod.clipboard_image(target):
+                if not self._set_pending_image(target):
+                    try:
+                        os.unlink(target)
+                    except OSError:
+                        pass
                 return "break"
         except Exception:
             return None
@@ -753,6 +768,7 @@ class CommPage(CommVoiceMixin, tk.Frame):
     def _clear_package_drafts(self):
         self.comm.clear_joint_draft()
         self.comm.clear_request_draft()
+        self._pending_image = ""
         self.refresh(force=True)
 
     # ---- 起点平移 ----
