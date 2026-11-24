@@ -102,13 +102,44 @@ def test_setup_log():
 
 
 def test_sweep():
-    old = tempstore.mkdtemp("rec", prefix="old-")
+    old = tempfile.mkdtemp(prefix="old-", dir=tempstore.path("rec"))
     keep = tempstore.mkdtemp("rec", prefix="keep-")
+    bucket = tempfile.mkdtemp(prefix="sweep-nested-", dir=tempstore.root())
+    stale_parent = os.path.join(bucket, "stale-parent")
+    stale = os.path.join(stale_parent, "stale-child")
+    fresh = os.path.join(bucket, "fresh-parent")
+    os.makedirs(stale)
+    os.makedirs(fresh)
+    with open(os.path.join(stale, "large.tmp"), "wb") as f:
+        f.write(b"stale")
+    os.utime(os.path.join(stale, "large.tmp"), (time.time() - 2 * tempstore.KEEP,) * 2)
+    with open(os.path.join(fresh, "keep.tmp"), "wb") as f:
+        f.write(b"fresh")
+    old_time = time.time() - 2 * tempstore.TEST_KEEP
+    os.utime(stale, (old_time, old_time))
+    os.utime(stale_parent, (old_time, old_time))
+    os.utime(bucket, (time.time(), time.time()))  # 新父目录不能遮住里面的旧残留
     os.utime(old, (time.time() - 2 * tempstore.KEEP,) * 2)
-    n = tempstore.sweep()
+    n = tempstore.sweep(older_than=tempstore.TEST_KEEP)
     assert n >= 1 and not os.path.exists(old), "一天前没动过的要清掉"
     assert os.path.isdir(keep), "新的不能清"
+    assert not os.path.exists(stale_parent), "较新的父目录里，过期的子目录和文件也要清"
+    assert os.path.isfile(os.path.join(fresh, "keep.tmp")), "新的嵌套文件不能清"
     os.rmdir(keep)
+
+    root_old = tempfile.mkdtemp(prefix="root-stale-", dir=tempstore.root())
+    os.utime(root_old, (time.time() - 2 * tempstore.TEST_KEEP,) * 2)
+    tempstore.sweep()
+    assert not os.path.exists(root_old), "OIT 根下的一次性临时目录一小时后要清"
+
+    active = tempstore.mkdtemp("active-check", prefix="keep-active-")
+    active_file = os.path.join(active, "in-use.tmp")
+    open(active_file, "wb").close()
+    os.utime(active_file, (time.time() - 2 * tempstore.KEEP,) * 2)
+    tempstore.sweep()
+    assert os.path.exists(active_file), "当前会话中的临时文件不能被 sweep 删除"
+    tempstore._clean_session_dirs()
+    assert not os.path.exists(active), "会话退出清理要删除显式创建的临时目录"
 
 
 def test_session():
@@ -125,7 +156,7 @@ def test_session():
 
 def test_session_sweeps_stale():
     # 上次被强杀 / 断电留下的测试目录: 下次开会话时清掉 (免得越攒越多)
-    stale = tempstore.mkdtemp("misc", prefix="stale-")
+    stale = tempfile.mkdtemp(prefix="stale-", dir=tempstore.path("misc"))
     os.utime(stale, (time.time() - 2 * tempstore.TEST_KEEP,) * 2)
     d = tempstore.session("stale_check")
     try:

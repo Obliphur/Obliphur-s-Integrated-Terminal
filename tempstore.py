@@ -20,7 +20,7 @@
   config.py 导入时已经把这个进程的默认临时目录指到 misc, 所以第三方库写的也跟着进来;
 - 直接 `python xxx.py` 跑自检 / 工具脚本: config.py 导入时自动开 session (见 autosession),
   这个进程的临时文件全在一个子目录里, 退出时整个删掉; 检查脚本也可以开头自己调 session("名字");
-- 程序启动时 sweep() 清掉一天前没动过的东西, 每次开会话时再清掉一小时前的 misc 残留
+- 程序启动时 sweep() 递归清掉固定目录里一天前的东西、根目录用途子目录里一小时前的东西; 每次开会话时再清掉一小时前的 misc 残留
   (上次被强杀 / 断电留下的); sweep_orphans() 清 %TEMP% 顶层老版本 / 没走 config 的模块
   自检留下的 tmp?????? 目录 (只认得出是 OIT 的), 所以它不会越攒越多;
 - 想看看占了多大 / 手动清空: `python tempstore.py --status` / `python tempstore.py --clean`.
@@ -44,6 +44,7 @@ PRODUCTION = ("main.py", "setup.py", "release.py", "uninstall.py", "tempstore.py
 _SYS_TEMP = tempfile.gettempdir()   # 改 tempfile.tempdir 之前先记下系统的临时目录
 _session = ""                    # session() 给的本次运行目录 (有它就不再退回 misc)
 _rec_dirs = set()                # 会话里用过的录像工作目录 (OIT\rec\<tag>), 退出时删掉
+_session_dirs = set()            # 会话里用 mkdtemp() 建的其它目录, 退出时也删掉
 
 
 def root() -> str:
@@ -62,7 +63,10 @@ def path(*parts: str) -> str:
 
 def mkdtemp(*parts: str, prefix: str = "tmp") -> str:
     """在 root()/parts 下面建一个临时目录 (用完自己删, 或者留给 sweep 清)."""
-    return tempfile.mkdtemp(prefix=prefix, dir=path(*parts))
+    d = tempfile.mkdtemp(prefix=prefix, dir=path(*parts))
+    if _session:
+        _session_dirs.add(os.path.abspath(d))
+    return d
 
 
 def mkstemp(*parts: str, prefix: str = "tmp", suffix: str = ""):
@@ -95,6 +99,13 @@ def _clean_rec_dirs():
         pass
 
 
+def _clean_session_dirs():
+    """删掉本次会话用 mkdtemp() 建的 OIT 子目录 (包括非固定用途目录)."""
+    for p in list(_session_dirs):
+        shutil.rmtree(p, ignore_errors=True)
+    _session_dirs.clear()
+
+
 def _drop_empty_root():
     """会话目录删完之后: OIT 临时文件夹空了就一起删掉 (别留下空目录)."""
     for sub in SUBDIRS:
@@ -123,6 +134,7 @@ def session(tag: str) -> str:
     atexit.register(_drop_empty_root)            # 最后: OIT 文件夹空了就删掉它 (空的 rec 也删)
     atexit.register(shutil.rmtree, d, True)      # 不注册 onerror: 删不掉的留给 sweep
     atexit.register(_clean_rec_dirs)             # 这次用过录像工作目录 (OIT\rec\<tag>) 也删掉
+    atexit.register(_clean_session_dirs)         # 这次显式建的其它临时目录也删掉
     return d
 
 
@@ -150,7 +162,12 @@ def _old(p: str, cutoff: float) -> bool:
 
 
 def _remove(p: str) -> bool:
-    if os.path.isdir(p):
+    if os.path.islink(p):
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+    elif os.path.isdir(p):
         shutil.rmtree(p, ignore_errors=True)
     else:
         try:
@@ -160,10 +177,59 @@ def _remove(p: str) -> bool:
     return not os.path.exists(p)
 
 
+def _in_active_session(p: str) -> bool:
+    """清理时保护当前进程的会话目录及其中内容。"""
+    active = ([os.path.abspath(_session)] if _session else []) + list(_session_dirs) + list(_rec_dirs)
+    target = os.path.abspath(p)
+    for d in active:
+        try:
+            if os.path.commonpath((target, d)) == d:
+                return True
+        except (OSError, ValueError):
+            continue
+    return False
+
+
+def _sweep_tree(p: str, cutoff: float, *, preserve: bool = False) -> int:
+    """递归清理旧的临时文件。
+
+    不能只看父目录的时间：父目录会因今天新建的子目录而保持很新，里面的旧检查
+    残留却永远不会被 sweep。固定目录本身保留，里面的旧内容照常清理。
+    """
+    if _in_active_session(p):
+        return 0
+    if os.path.islink(p):
+        return 1 if _old(p, cutoff) and _remove(p) else 0
+    if not os.path.isdir(p):
+        if not os.path.isdir(p) and _old(p, cutoff):
+            return 1 if _remove(p) else 0
+        return 0
+    stale = _old(p, cutoff)
+    n = 0
+    try:
+        children = os.listdir(p)
+    except OSError:
+        return 0
+    for name in children:
+        c = os.path.join(p, name)
+        if _in_active_session(c):
+            continue
+        n += _sweep_tree(c, cutoff)
+    # 目录的时间戳不会因文件内容写入而更新，先检查并清理子项，再清空的旧目录。
+    if not preserve and stale:
+        try:
+            os.rmdir(p)
+            n += 1
+        except OSError:
+            pass
+    return n
+
+
 def sweep(older_than: float = KEEP, only=None) -> int:
-    """删掉 OIT 临时文件夹里 older_than 秒没动过的东西, 返回删掉的个数 (程序启动时调用).
+    """递归清理过期的 OIT 临时文件, 返回删掉的个数 (程序启动时调用).
 
     固定子目录 (rec / scan / update / setup / misc) 自己保留, 只清里面的东西;
+    固定目录默认保留一天; OIT 根下其它临时用途目录默认保留一小时;
     only: 只清这几个子目录 (开会话时只清 misc, 不碰正在录的 rec);
     正在用的文件 (录像 / 播放器占着) 多半删不掉, 留给下一次.
     """
@@ -177,19 +243,13 @@ def sweep(older_than: float = KEEP, only=None) -> int:
     for name in names:
         p = os.path.join(root(), name)
         if name in subs:
-            if os.path.isdir(p):
-                try:
-                    kids = os.listdir(p)
-                except OSError:
-                    continue
-                for kid in kids:
-                    c = os.path.join(p, kid)
-                    if _old(c, cutoff) and _remove(c):
-                        n += 1
-            elif _old(p, cutoff) and _remove(p):
-                n += 1
-        elif only is None and _old(p, cutoff) and _remove(p):
-            n += 1
+            # 固定目录保留，任意层级的旧内容都清理。直接建在 OIT 根下的用途目录
+            # 只用于临时操作 / 自检，按测试残留时限清理，避免占用一天。
+            child_cutoff = cutoff if name in SUBDIRS else time.time() - min(older_than, TEST_KEEP)
+            n += _sweep_tree(p, child_cutoff, preserve=name in SUBDIRS)
+        elif only is None:
+            # OIT 根下的用途目录均为临时操作 / 自检产物，过期一小时就清理。
+            n += _sweep_tree(p, time.time() - min(older_than, TEST_KEEP))
     return n
 
 
@@ -383,18 +443,28 @@ def sweep_legacy(older_than: float = KEEP) -> int:
 
 
 def report() -> list:
-    """每个固定子目录的占用: [(名字, 文件数, 字节数)], 给 --status 用."""
+    """OIT 临时文件夹每个顶层目录的占用: [(名字, 文件数, 字节数)], 给 --status 用."""
     out = []
-    for name in SUBDIRS:
+    try:
+        names = os.listdir(root())
+    except OSError:
+        return out
+    for name in sorted(set(SUBDIRS) | set(names)):
         p = os.path.join(root(), name)
         n = b = 0
-        for dirpath, _dirs, files in os.walk(p):
-            for f in files:
-                try:
-                    b += os.path.getsize(os.path.join(dirpath, f))
-                except OSError:
-                    continue
-                n += 1
+        if os.path.isdir(p):
+            for dirpath, _dirs, files in os.walk(p):
+                for f in files:
+                    try:
+                        b += os.path.getsize(os.path.join(dirpath, f))
+                    except OSError:
+                        continue
+                    n += 1
+        else:
+            try:
+                b, n = os.path.getsize(p), 1
+            except OSError:
+                pass
         out.append((name, n, b))
     return out
 
@@ -440,7 +510,7 @@ def _selftest():
     assert os.path.dirname(p) == path("misc") and os.path.exists(f)
 
     # sweep 只清老的, 新的留着
-    old = mkdtemp("misc", prefix="selftest-old-")
+    old = tempfile.mkdtemp(prefix="selftest-old-", dir=path("misc"))
     os.utime(old, (time.time() - 2 * KEEP,) * 2)
     n = sweep()
     assert n >= 1 and not os.path.exists(old), (n, old)
@@ -489,7 +559,7 @@ def _selftest():
         shutil.rmtree(probe, ignore_errors=True)
 
     # session 开会话时先清 misc 里一小时前的残留 (上次被强杀 / 断电留下的测试目录)
-    stale = mkdtemp("misc", prefix="selftest-stale-")
+    stale = tempfile.mkdtemp(prefix="selftest-stale-", dir=path("misc"))
     os.utime(stale, (time.time() - 2 * TEST_KEEP,) * 2)
     s2 = session("stale-check")
     try:

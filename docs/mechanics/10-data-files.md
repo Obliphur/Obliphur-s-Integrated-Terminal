@@ -72,7 +72,7 @@ OIT 自己的临时文件都在 `%TEMP%\OIT\` 一个文件夹里 (`tempstore.py`
 | `misc\` | 其它: 自检 / 检查脚本, 头像临时图, 历史库副本, 主题预览 …… | 脚本退出时删自己那份; 开会话时清掉 1 小时前的残留; 启动时清超过 1 天的 |
 
 - `config.py` 导入时把本进程的默认临时目录指到 `misc\`, 所以 `tempfile.mkdtemp()` 和第三方库写的临时文件也落在 OIT 里.
-- 每次启动 (`main.py`) 调 `tempstore.sweep()`: 清掉 `%TEMP%\OIT` 里一天前没动过的, 所以它不会越攒越多.
+- 每次启动 (`main.py`) 调 `tempstore.sweep()`: 固定用途目录里递归清掉一天前没动过的文件和空目录; 直接建在 `%TEMP%\OIT` 根下的临时用途目录按 1 小时清理. 父目录即使刚有新内容, 里面旧的临时文件也会正常清理.
 - 旧版本直接把临时文件扔在 `%TEMP%` 顶层 (`oit_rec` / `oit_play` / `oit-scan-*` / `oit-*.zip` / 自检留下的一堆 `oit?????` 目录), 升级后第一次启动时由 `tempstore.sweep_legacy()` 清掉 (只认 `%TEMP%` 顶层 `oit` 开头的名字, 一天内动过的先不动).
 - 自检 / 工具脚本 (`python xxx.py`): `config.py` 导入时调 `tempstore.autosession()`, 自动开一个会话目录, 退出时整个删掉
   (`main.py` / `setup.py` / `release.py` / `uninstall.py` 不开: 安装日志和更新包退出后还要能看; 打包后的 exe 也不会开).
@@ -84,9 +84,8 @@ OIT 自己的临时文件都在 `%TEMP%\OIT\` 一个文件夹里 (`tempstore.py`
   (或 JSON 结构 / 内容对得上) 的; 旧版 recorder 留在顶层的 `rec<数字>` / `rec-data<数字>` 工作目录
   (里面只有 `recordings/` 和 mp4 / `.oitv`) 也一起清; 现在的录像工作文件都在 `OIT\rec` 里.
   别的程序的临时目录、没有权限读的目录 (别的账户建的) 不碰.
-- 自检 / 工具脚本开会话时 (`autosession` / `session`), 用过的录像工作目录 `OIT\rec\<tag>` 退出时一起删
-  (`tempstore.path` 自动记下来), 空的 `rec` / `OIT` 目录也一并去掉; 所以反复跑 `python -m recorder` 不会留下空目录.
-- 想看占了多大 / 手动清空: `python tempstore.py --status` (含顶层 `tmp*` 残留的个数和大小) / `python tempstore.py --clean`.
+- 自检 / 工具脚本开会话时 (`autosession` / `session`), 用过的录像工作目录 `OIT\rec\<tag>` 和经 `tempstore.mkdtemp(...)` 建的其它目录退出时一起删; 空的 `rec` / `OIT` 目录也一并去掉.
+- 想看占了多大 / 手动清空: `python tempstore.py --status` (显示 OIT 根目录下各用途目录及顶层 `tmp*` 残留的个数和大小) / `python tempstore.py --clean`.
 - 新代码要临时目录就用 `tempstore.path(...)` / `tempstore.mkdtemp(...)`, 不要自己拼 `tempfile.gettempdir()`.
 
 
