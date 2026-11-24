@@ -92,9 +92,9 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
         c.pack(side="left", fill="x", expand=True)
         _label(a, left).pack(fill="x")
         _label(c, right).pack(fill="x")
-        return a, c
+        return r, a, c
 
-    box, rbox = two_col(tr("名称"), tr("预设"))
+    _name_row, box, rbox = two_col(tr("名称"), tr("预设"))
     var_name = tk.StringVar()
     ttk.Entry(box, textvariable=var_name).pack(fill="x", pady=(2, 0))
     cli_enabled = ai_assist.cli_subscription_enabled()
@@ -113,7 +113,7 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
     ent_url = ttk.Entry(url_box, textvariable=var_url)
     ent_url.pack(fill="x", pady=(2, 0))
 
-    box, rbox = two_col(tr("模型类型"), tr("接口协议"))
+    model_row, box, rbox = two_col(tr("模型类型"), tr("接口协议"))
     cb_family = ttk.Combobox(box, state="readonly",
                              values=[tr(ai_assist.FAMILY_LABELS[f]) for f in ai_assist.FAMILIES])
     cb_family.pack(fill="x", pady=(2, 0))
@@ -160,16 +160,16 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
     def cli_fields(on: bool):
         """CLI 不使用 API Key；Base URL 保留显示，避免配置字段随预设消失。"""
         if on:
-            url_box.pack(fill="x", pady=(0, 8), before=box)
+            url_box.pack(fill="x", pady=(0, 8), before=model_row)
             ent_url.config(state="disabled")
             key_box.pack_forget()
         else:
-            url_box.pack(fill="x", pady=(0, 8), before=box)
+            url_box.pack(fill="x", pady=(0, 8), before=model_row)
             key_box.pack(fill="x", before=note)
 
     def device_fields(on: bool):
         if on:
-            url_box.pack(fill="x", pady=(0, 8), before=box)
+            url_box.pack(fill="x", pady=(0, 8), before=model_row)
             ent_url.config(state="disabled")
             key_box.pack_forget()
             cb_family.config(state="disabled")

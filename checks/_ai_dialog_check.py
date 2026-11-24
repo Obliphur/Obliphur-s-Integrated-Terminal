@@ -24,6 +24,7 @@ root.geometry("1280x860+5000+5000")
 root.update()
 
 cfg = ai_assist.AIConfig(os.path.join(tempfile.mkdtemp(), "ai_config.json"))
+assert cfg.set_active("custom")
 seen = {}
 
 
@@ -35,6 +36,11 @@ def fake_wait(self):
     seen.update(viewport=area.canvas.winfo_height(), content=y1,
                 inner=area.inner.winfo_reqheight(), height=self.winfo_height(),
                 screen=self.winfo_screenheight())
+    seen["base_url"] = any(
+        child.winfo_class() == "Label" and child.cget("text") == "Base URL"
+        for block in area.inner.winfo_children()
+        for child in block.winfo_children()
+    )
     self.destroy()
 
 
@@ -55,6 +61,7 @@ try:
         assert seen["content"] >= seen["inner"] - 2, (scale, seen)     # 滚动区包住全部内容
         assert seen["viewport"] > 0, (scale, seen)
         assert seen["height"] <= seen["screen"] * 0.9, (scale, seen)   # 不能高过屏幕
+        assert seen["base_url"], (scale, seen)                         # Base URL 不能因重排消失
         if scale >= 1.5:
             # 字号很大时一定放不下: 这时才真的在测滚动
             assert seen["content"] > seen["viewport"], (scale, seen)
