@@ -2,6 +2,7 @@
 """沟通工具调度；查询即时返回，写操作在回复提交时由主线程复核。"""
 
 import json
+import threading
 import config
 import music_library
 from i18n import tr
@@ -71,12 +72,18 @@ class ToolsMixin:
                         f"学科: {domain}\n题目/追问:\n{question}",
                         image=getattr(self, "_active_image", None),
                         max_tokens=900, temperature=0.15, timeout=180)
+                    if self.answer_images_on():
+                        self._answer_image_pending = {
+                            "answer": answer, "image": getattr(self, "_active_image", None),
+                            "domain": domain, "session": session, "epoch": epoch,
+                        }
                     result = {"ok": True, "domain": domain, "session": session,
                               "answer": answer,
                               "instruction": "把子代理答案作为事实依据，按人设向用户解释；不要声称用户看到了子代理。"}
                 except Exception as e:  # noqa: BLE001
                     self.log(f"TOOL subject FAIL {type(e).__name__}")
                     result = {"ok": False, "error": str(e)[:500]}
+
             elif name == "oit_reading_acquire" and getattr(self, "reading_mode", False):
                 try:
                     result = self.coread_acquire_fn(args["source_url"],
@@ -276,3 +283,43 @@ class ToolsMixin:
             for message in self.messages:
                 if message["id"] in self._music_actions:
                     self._music_deliver(message)
+
+    def _answer_image_after_reply(self, message, pending):
+        """聊天 AI 的风格化回复完成后，再让学科子代理整理成排版稿并截图。"""
+        if not pending or not self.answer_images_on():
+            return
+        epoch = int(pending.get("epoch") or 0)
+        original = str(pending.get("answer") or "")[:8000]
+        styled = str(message.get("text") or "")[:8000]
+        if not original or not styled:
+            return
+
+        def work():
+            try:
+                prompt = (
+                    "请根据下面的原始学科解答和聊天 AI 已经写好的用户可见版本，生成一份最终的解答图片排版稿。"
+                    "保留原始解答中可核验的关键逻辑、步骤与结论；以聊天 AI 的语言风格为准。"
+                    "使用 Markdown 标题、列表和 LaTeX 公式，内容完整但紧凑；不要输出解释、代码围栏或隐藏思维过程。\n\n"
+                    f"原始学科解答:\n{original}\n\n聊天 AI 风格化版本:\n{styled}"
+                )
+                formatted = self.subagent_call(
+                    "subject", f"answer-image:{pending.get('session') or self.persona_name()}", prompt,
+                    max_tokens=1400, temperature=0.1, timeout=180)
+                if self._epoch != epoch or not self.answer_images_on():
+                    return
+                from answer_images import render
+                data = render(formatted, pending.get("image"), title=f"{pending.get('domain') or '学科'}解答")
+                if not data:
+                    self.log("ANSWER_IMAGE renderer unavailable")
+                    return
+                name = self._save_chat_image(message["uid"] + "-answer", data)
+                if name and self._epoch == epoch:
+                    message["img"] = name
+                    message["answer_image"] = True
+                    self.save_chat()
+                    self._changed()
+                    self._push()
+            except Exception as e:  # noqa: BLE001
+                self.log(f"ANSWER_IMAGE FAIL {type(e).__name__}: {e}")
+
+        threading.Thread(target=work, daemon=True).start()

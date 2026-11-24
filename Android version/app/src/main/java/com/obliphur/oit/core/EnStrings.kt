@@ -1806,5 +1806,14 @@ object EnStrings {
         "未允许精确闹钟: 熄屏后可能不能准点响铃." to "Exact alarms are not allowed: the alarm may not ring on time with the screen off.",
         "系统默认闹钟铃声" to "System default alarm ringtone",
         "响铃时会把手机的闹钟音量拉到最大, 这里的音量是在此基础上的比例; 响完恢复." to "While ringing, the phone's alarm volume is raised to maximum and the volume here is a fraction of that; it is restored afterwards.",
+        "🧾  解答图片" to "🧾  Answer images",
+        "数学、物理、化学子代理的解答先由聊天 AI 风格化, 再排版成可滑动的长图." to "Math, physics, and chemistry sub-agent answers are styled by the chat AI and laid out as a scrollable long image.",
+        "使用解答图片模式" to "Use answer image mode",
+        "解答图片" to "Answer images",
+        "开启设置中的解答图片模式后, 数学、物理、化学子代理的解答会由聊天 AI 风格化, 再生成一张可滑动长图." to "When answer image mode is enabled, math, physics, and chemistry sub-agent answers are styled by the chat AI and rendered as a scrollable long image.",
+        "拍照" to "Take a photo",
+        "打开手机系统相机拍一张照片, 然后作为图片消息发送." to "Open the phone camera and send the photo as an image message.",
+        "使用本机摄像头拍一张照片，放入待发送图片；手机端会打开系统相机." to "Take a photo with this device's camera and add it as a pending image; the phone opens the system camera.",
+        "使用本机摄像头拍一张照片, 放入待发送图片; 手机端会打开系统相机." to "Take a photo with this device's camera and add it as a pending image; the phone opens the system camera.",
     )
 }

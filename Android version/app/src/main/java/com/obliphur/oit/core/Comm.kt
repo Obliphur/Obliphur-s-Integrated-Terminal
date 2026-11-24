@@ -1695,6 +1695,7 @@ class Comm(
     private val legacyChatFile = File(dir, "comm_chat.json")           // 以前所有对象共用的一份
     var persona = ""; private set
     var showAvatar = true; private set
+    var answerImages = false; private set
     var avatarMe = ""; private set
     var avatarAi = ""; private set
     var defaultAvatarVersion = 0; private set
@@ -2061,6 +2062,7 @@ class Comm(
         Store.readObj(cfgFile)?.let { d ->
             persona = d.optString("persona", "")
             showAvatar = d.optBoolean("show_avatar", true)
+            answerImages = d.optBoolean("answer_images", false)
             avatarMe = d.optString("avatar_me", "")
             avatarAi = d.optString("avatar_ai", "")
             defaultAvatarVersion = when (val v = d.opt("default_avatars")) {
@@ -2134,6 +2136,7 @@ class Comm(
     private fun saveCfg() {
         val o = JSONObject().put("persona", persona)
             .put("show_avatar", showAvatar).put("avatar_me", avatarMe).put("avatar_ai", avatarAi).put("default_avatars", defaultAvatarVersion)
+            .put("answer_images", answerImages)
             .put("user_profile", userProfile).put("seeded", seeded).put("assistant_seeded", assistantSeeded)
             .put("claudia_migrated", claudiaMigrated).put("claudia_modified", claudiaModified)
             .put("claudia_notified", claudiaNotified).put("claudia_base", claudiaBase).put("routine_base", routineBase).put("background_base", backgroundBase).put("example_base", exampleBase)
@@ -2395,6 +2398,7 @@ class Comm(
         doc["sfollow"] = schedFollow                                // 日程跟随的开关: 提示在主端弹, 两台设备要一致
         doc["prolang"] = proLang                                    // 主动谈话语言: 调用 AI 的是主端, 两台设备要一致
         doc["avatar"] = showAvatar                                  // 显示头像: 设置页的开关也同步
+        doc["answer_images"] = answerImages
         if (idleDay.isNotEmpty()) doc["idle"] = JSONObject().put("d", idleDay).put("s", idleSec)      // 两台设备共用一份额度 (各自累计的取大的)
         if (joint != null || jointTs != 0L) doc["joint"] = jointJson()                                // 联合行动: 后改的为准
         if (net.ts != 0L) doc["net"] = net.json()                                                    // 限时网络: 后改的为准
@@ -2492,6 +2496,7 @@ class Comm(
                 key == "sfollow" && v is Boolean -> if (v != schedFollow) { schedFollow = v; saveCfg(); changed() }
                 key == "bgpro" && v is Boolean -> if (v != bgPro) { bgPro = v; saveCfg(); changed() }
                 key == "avatar" && v is Boolean -> if (v != showAvatar) { showAvatar = v; saveCfg(); changed() }
+                key == "answer_images" && v is Boolean -> if (v != answerImages) { answerImages = v; saveCfg(); changed() }
                 kind == "mute" && v is Boolean -> if (v != (rest in muted)) { if (v) muted.add(rest) else muted.remove(rest); saveCfg(); changed() }
                 key == "profile" -> {
                     val n = (v as? String ?: "").take(MAX_PROFILE)
@@ -2644,7 +2649,7 @@ class Comm(
 
     @Synchronized
     fun set(persona: String? = null, showAvatar: Boolean? = null,
-            avatarMe: String? = null, avatarAi: String? = null, userProfile: String? = null, splitSend: Boolean? = null, splitInterval: Int? = null, bgPro: Boolean? = null, thinkAuto: Boolean? = null, schedFollow: Boolean? = null, proLang: String? = null) {
+            avatarMe: String? = null, avatarAi: String? = null, userProfile: String? = null, splitSend: Boolean? = null, splitInterval: Int? = null, bgPro: Boolean? = null, thinkAuto: Boolean? = null, schedFollow: Boolean? = null, proLang: String? = null, answerImages: Boolean? = null) {
         persona?.let { switchTo(it); saveChat() }
         proLang?.let { this.proLang = it.trim().take(MAX_PRO_LANG) }
         userProfile?.let { this.userProfile = it.trim().take(MAX_PROFILE) }
@@ -2652,11 +2657,12 @@ class Comm(
         thinkAuto?.let { this.thinkAuto = it }
         bgPro?.let { this.bgPro = it }
         schedFollow?.let { this.schedFollow = it }
+        answerImages?.let { this.answerImages = it }
         avatarMe?.let { this.avatarMe = it.trim().take(4) }
         avatarAi?.let { this.avatarAi = it.trim().take(4) }
         saveCfg()
         changed()
-        if (thinkAuto != null || bgPro != null || showAvatar != null || schedFollow != null || proLang != null) push()
+        if (thinkAuto != null || bgPro != null || showAvatar != null || schedFollow != null || proLang != null || answerImages != null) push()
     }
 
     /** 这一次请求要不要开思考 (第一层: 只看规则, 不额外调用 API; 同 comm.py 的 think_reason): 返回原因, "" = 不开.

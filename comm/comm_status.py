@@ -33,6 +33,10 @@ from comm.comm_util import (OIT_TAG, COND_TAG, WEEKDAY, MAX_MSG_CHARS, HISTORY_S
 
 
 class StatusMixin:
+    def answer_images_on(self) -> bool:
+        """设置 → 沟通 → 解答图片是否开启。"""
+        return self.cfg.get("answer_images") is True
+
     def bg_on(self) -> bool:
         """允许非正在聊天的人 (聊过天的其他对象) 发起对话吗. 默认开; 随设备同步."""
         return self.cfg.get("bg_pro") is not False

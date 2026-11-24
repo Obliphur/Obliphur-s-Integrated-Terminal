@@ -21,6 +21,12 @@ from i18n import tr
 from .widgets import Modal, ScrollArea, cfg, focus_name
 from .comm_voice import CommVoiceMixin
 
+
+def _take_camera_photo():
+    """后台拍一张桌面摄像头照片，返回 PNG 字节。"""
+    from camera_capture import capture
+    return capture()
+
 # 这些原因是"还没配置好", 提示之后直接带去 设置 → 沟通
 NEEDS_SETUP = ("还没有选人设",)
 RENDER_MAX = 80          # 打开聊天页时画最近多少条 (全部画出来要等一阵); 往上翻到顶会再接着加载更早的
@@ -111,6 +117,8 @@ class CommPage(CommVoiceMixin, tk.Frame):
         self.btn_ocr.pack(side="left", padx=(4, 0))
         self.btn_image = ttk.Button(tools, text="📎", width=3, command=self._pick_image)
         self.btn_image.pack(side="left", padx=(4, 0))
+        self.btn_camera = ttk.Button(tools, text="📷", width=3, command=self._take_photo)
+        self.btn_camera.pack(side="left", padx=(4, 0))
         self.btn_review = ttk.Button(tools, text="🎼", width=3, command=self._review_performance)
         self.btn_review.pack(side="left", padx=(4, 0))
         self.btn_coread = ttk.Button(tools, text="📚", width=3, command=self._reading)
@@ -654,6 +662,41 @@ class CommPage(CommVoiceMixin, tk.Frame):
         if path:
             self._set_pending_image(path)
 
+    def _take_photo(self):
+        """使用本机摄像头拍照并放入待发送附件。"""
+        if self._pending_image:
+            toast.info(tr("已有待发送图片."))
+            return
+        self.btn_camera.state(["disabled"])
+        def work():
+            try:
+                data = _take_camera_photo()
+                if not data:
+                    raise RuntimeError("没有找到可用的摄像头或拍照组件")
+                from tempstore import mkstemp
+                fd, path = mkstemp("misc", prefix="comm-camera-", suffix=".png")
+                os.close(fd)
+                with open(path, "wb") as stream:
+                    stream.write(data)
+                self.after(0, lambda: self._camera_done(path))
+            except Exception as error:  # noqa: BLE001
+                message = str(error)
+                self.after(0, lambda message=message: self._camera_failed(message))
+        import threading
+        threading.Thread(target=work, daemon=True).start()
+
+    def _camera_done(self, path):
+        self.btn_camera.state(["!disabled"])
+        if not self._set_pending_image(path):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+    def _camera_failed(self, message):
+        self.btn_camera.state(["!disabled"])
+        toast.warn(tr(message))
+
     def _paste_image(self, _event=None):
         try:
             candidates = avatar_mod.clipboard_paths()
@@ -952,7 +995,9 @@ class CommPage(CommVoiceMixin, tk.Frame):
                 ("⏰ / ⏲", "共时闹钟", "⏰ = 闹钟跟随这个对象的起床时间; 响铃的设备手动选, 一次只能有一个对象."),
                 ("🕰", "起点平移", "请求对方平移日程起点, 允许范围由人设模板决定, 同意后明天起生效."),
                 ("📎", "图片消息", "选择图片，或在输入框按 Ctrl+V 粘贴剪贴板图片，然后随消息发送."),
+                ("📷", "拍照", "使用本机摄像头拍一张照片，放入待发送图片；手机端会打开系统相机."),
                 ("🖼", "识别字体", "选一张图片，把识别出的文字放进聊天框供你编辑；用 📎 发送图片本身."),
+                ("🧾", "解答图片", "开启设置中的解答图片模式后，数学、物理、化学子代理的解答会由聊天 AI 风格化，再生成一张可滑动长图."),
                 ("🎼", "演奏评判", "左边选参考乐谱或 MIDI，右边选演奏文件或录制 MIDI。分析摘要会交给聊天对象."),
                 ("🤝", "联合行动", "邀请对方一起做一次合约: 在合约页选词条, 输入开始时间; 对方回 [Yes] 就按约开始. Claudia 的剩余休息按她的日程接续和结转。"))
         area = ScrollArea(dlg.body, height=config.scaled(400), bg=bg)

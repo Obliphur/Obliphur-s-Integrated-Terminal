@@ -106,6 +106,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         self._request_image = None
         self._request_image_path = ""
         self._active_image = None       # 当前聊天请求附带的图片，供教育子代理按需复用
+        self._answer_image_pending = None
         self._active_reply_after = 0
         self.cfg_path = os.path.join(data_dir, "comm_config.json")
         self.legacy_chat_path = os.path.join(data_dir, "comm_chat.json")      # 以前所有对象共用的一份
@@ -507,7 +508,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         self.cfg.update(kw)
         self.save_cfg()
         self._changed()
-        if "think_auto" in kw or "bg_pro" in kw or "mute_pro" in kw or "show_avatar" in kw or "sched_follow" in kw or "pro_lang" in kw:
+        if "think_auto" in kw or "bg_pro" in kw or "mute_pro" in kw or "show_avatar" in kw or "sched_follow" in kw or "pro_lang" in kw or "answer_images" in kw:
             self._push()
 
     def _changed(self):
@@ -600,6 +601,7 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
         doc["sfollow"] = self.sf_on()                   # 日程跟随的开关: 提示在主端弹, 两台设备要一致
         doc["prolang"] = self.pro_lang()                # 主动谈话语言: 调用 AI 的是主端, 两台设备要一致
         doc["avatar"] = bool(self.cfg.get("show_avatar"))      # 显示头像: 设置页的开关也同步
+        doc["answer_images"] = self.answer_images_on()
         rec = self.cfg.get("idle_use") or {}
         if rec.get("d"):
             doc["idle"] = {"d": rec["d"], "s": float(rec.get("s") or 0)}      # 两台设备共用一份额度 (各自累计的取大的)
@@ -625,6 +627,10 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                 e = {"role": m["role"], "text": m["text"], "at": m["at"], "ts": int(m["ts"])}
                 if m.get("api"):
                     e["api"] = m["api"]
+                if m.get("img"):
+                    e["img"] = os.path.basename(str(m["img"]))
+                if m.get("answer_image"):
+                    e["answer_image"] = True
                 if m.get("wait"):
                     e["wait"] = m["wait"]
                 if m.get("hold"):
@@ -779,6 +785,10 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                     m["no_reply"] = True
                 if val.get("api"):
                     m["api"] = str(val["api"])
+                if val.get("img"):
+                    m["img"] = os.path.basename(str(val["img"]))
+                if val.get("answer_image"):
+                    m["answer_image"] = True
                 if isinstance(val.get("wait"), (int, float)) and 0 < val["wait"] <= WAIT_MAX_MIN:
                     m["wait"] = float(val["wait"])
                 if m["role"] == "ai" and self.blocked():       # 不能用沟通的时候同步来的也先藏起来
@@ -868,6 +878,11 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             elif key == "avatar" and isinstance(val, bool):
                 if val != bool(self.cfg.get("show_avatar")):
                     self.cfg["show_avatar"] = val
+                    self.save_cfg()
+                    self._changed()
+            elif key == "answer_images" and isinstance(val, bool):
+                if val != self.answer_images_on():
+                    self.cfg["answer_images"] = val
                     self.save_cfg()
                     self._changed()
             elif key == "profile":
@@ -1626,6 +1641,10 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
                 self.save_chat()
                 self._changed()
                 return
+            pending_image = self._answer_image_pending
+            self._answer_image_pending = None
+            if pending_image and m.get("role") == "ai":
+                self._answer_image_after_reply(m, pending_image)
             if op:
                 if isinstance(op, dict) and op.get("type") == "music_select":
                     try:

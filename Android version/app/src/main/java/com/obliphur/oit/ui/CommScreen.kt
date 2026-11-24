@@ -64,6 +64,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.util.UUID
 import com.obliphur.oit.OitApp
 import com.obliphur.oit.ai.Ai
 import com.obliphur.oit.core.ChatMsg
@@ -202,6 +204,31 @@ fun CommScreen(go: (String) -> Unit) {
             if (why.isNotEmpty() && why != "empty") core.toast(tr(why), "warn") else if (why.isEmpty()) input = ""
         } catch (error: Exception) {
             core.toast(tr(error.message ?: "打不开这张图片."), "warn")
+        }
+    }
+    var cameraFile by remember { mutableStateOf<File?>(null) }
+    val takePicture = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
+        val file = cameraFile
+        cameraFile = null
+        try {
+            if (ok && file != null && file.isFile) {
+                val why = comm.sendImage(file.readBytes(), input)
+                if (why.isNotEmpty() && why != "empty") core.toast(tr(why), "warn") else if (why.isEmpty()) input = ""
+            }
+        } catch (error: Exception) {
+            core.toast(tr(error.message ?: "拍照失败."), "warn")
+        } finally { file?.delete() }
+    }
+    fun openCamera() {
+        try {
+            val dir = File(context.cacheDir, "comm_camera").apply { mkdirs() }
+            val file = File(dir, "camera-${UUID.randomUUID()}.jpg")
+            val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.files", file)
+            cameraFile = file
+            takePicture.launch(uri)
+        } catch (error: Exception) {
+            cameraFile = null
+            core.toast(tr(error.message ?: "无法打开相机."), "warn")
         }
     }
     val pickScore = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -355,6 +382,7 @@ fun CommScreen(go: (String) -> Unit) {
             // 🖼 独立识字; 📎 将图片作为聊天消息发送
             TextButton({ if (!ocrBusy) pickOcr.launch("image/*") }, contentPadding = tight) { Text(if (ocrBusy) "…" else "🖼", fontSize = 18.sp) }
             TextButton({ if (!ocrBusy) pickChatImage.launch("image/*") }, contentPadding = tight) { Text("📎", fontSize = 18.sp) }
+            TextButton({ openCamera() }, contentPadding = tight) { Text("📷", fontSize = 18.sp) }
             TextButton({ pickScore.launch(arrayOf("*/*")) }, contentPadding = tight) { Text("🎼", fontSize = 18.sp) }
             TextButton({ musicReview = true }, contentPadding = tight) { Text("🎹", fontSize = 18.sp) }
             // ⏰ 共时闹钟: 闹钟的时间跟随这个对象的实际起床时间, 手动选响铃的设备; ⏰ = 现在这个对象是共时闹钟 / ⏲ 不是
@@ -505,6 +533,8 @@ private fun HelpDialog(onDismiss: () -> Unit) {
         Triple("⏰ / ⏲", tr("共时闹钟"), tr("⏰ = 闹钟跟随这个对象的起床时间; 响铃的设备手动选, 一次只能有一个对象.")),
         Triple("🕰", tr("起点平移"), tr("请求对方平移日程起点, 允许范围由人设模板决定, 同意后明天起生效.")),
         Triple("🖼", tr("识别字体"), tr("选一张图片, 把上面的文字读出来放进聊天框. OCR 不发送图片; 也可以用 📎 把图片发给聊天 AI.")),
+        Triple("📷", tr("拍照"), tr("打开手机系统相机拍一张照片, 然后作为图片消息发送.")),
+        Triple("🧾", tr("解答图片"), tr("开启设置中的解答图片模式后, 数学、物理、化学子代理的解答会由聊天 AI 风格化, 再生成一张可滑动长图.")),
         Triple("🤝", tr("联合行动"), tr("邀请对方一起做一次合约: 在合约页选词条, 输入开始时间; 对方回 [Yes] 就按约开始. Claudia 的剩余休息按她的日程接续和结转。")),
     )
     val half = (rows.size + 1) / 2                                    // 左栏先排满, 剩下的放第二栏
@@ -725,6 +755,11 @@ fun CommSettings() {
             modifier = Modifier.fillMaxWidth().padding(top = 6.dp), minLines = 3, maxLines = 8)
         Text(tr("只在这段对话的第一轮发送, 改动在下一段对话生效."), color = o.dim, fontSize = 12.sp,
             modifier = Modifier.padding(top = 4.dp))
+    }
+
+    OitCard {
+        Text(tr("🧾  解答图片"), fontWeight = FontWeight.Bold, color = o.text)
+        SwitchRow(tr("使用解答图片模式"), comm.answerImages) { comm.set(answerImages = it) }
     }
 
     OitCard {
