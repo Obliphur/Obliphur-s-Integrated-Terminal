@@ -56,6 +56,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -178,6 +179,8 @@ fun CommScreen(go: (String) -> Unit) {
     var loveInv by remember { mutableStateOf(comm.loveInvite()) }                  // 对方告白了: 等用户点 接受 / 拒绝
     var coreadInv by remember { mutableStateOf(comm.coreadInvite()) }
     var ocrBusy by remember { mutableStateOf(false) }                          // 识别字体进行中
+    var pendingImage by remember { mutableStateOf<ByteArray?>(null) }
+    val pendingPreview = remember(pendingImage) { pendingImage?.let(::decodePreviewImage) }
     val ocrCtx = androidx.compose.ui.platform.LocalContext.current
     // 🖼 识别字体: 选一张图片, 让模型读出上面的文字, 放进聊天框 (图片本身不会发出去, 也不会保存)
     val pickOcr = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -200,8 +203,7 @@ fun CommScreen(go: (String) -> Unit) {
     val pickChatImage = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         try {
-            val why = comm.sendImage(loadOcrImage(ocrCtx, uri), input)
-            if (why.isNotEmpty() && why != "empty") core.toast(tr(why), "warn") else if (why.isEmpty()) input = ""
+            pendingImage = loadOcrImage(ocrCtx, uri)
         } catch (error: Exception) {
             core.toast(tr(error.message ?: "打不开这张图片."), "warn")
         }
@@ -212,8 +214,7 @@ fun CommScreen(go: (String) -> Unit) {
         cameraFile = null
         try {
             if (ok && file != null && file.isFile) {
-                val why = comm.sendImage(file.readBytes(), input)
-                if (why.isNotEmpty() && why != "empty") core.toast(tr(why), "warn") else if (why.isEmpty()) input = ""
+                pendingImage = file.readBytes()
             }
         } catch (error: Exception) {
             core.toast(tr(error.message ?: "拍照失败."), "warn")
@@ -439,12 +440,20 @@ fun CommScreen(go: (String) -> Unit) {
             AccentButton(tr("接受")) { comm.jointRespond(true).let { if (it.isNotEmpty()) core.toast(tr(it), "warn") } }
             TextButton({ comm.jointRespond(false).let { if (it.isNotEmpty()) core.toast(tr(it), "warn") } }) { Text(tr("拒绝"), color = o.dim) }
         }
+        if (pendingImage != null) Row(verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(start = 8.dp, bottom = 4.dp)) {
+            if (pendingPreview != null) androidx.compose.foundation.Image(pendingPreview, tr("待发送图片预览"),
+                Modifier.size(96.dp, 72.dp).clip(RoundedCornerShape(4.dp)).border(1.dp, o.border, RoundedCornerShape(4.dp)),
+                contentScale = ContentScale.Fit)
+            else Text("📎", color = o.dim)
+            TextButton({ pendingImage = null }, contentPadding = tight) { Text("✕", color = o.dim, fontSize = 16.sp) }
+        }
         Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.Bottom,
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(input, { input = it }, modifier = Modifier.weight(1f), maxLines = 4, enabled = blocked.isEmpty())
             AccentButton(tr("发送"), enabled = blocked.isEmpty()) {
-                val why = comm.send(input)
-                if (why.isEmpty()) input = "" else if (why != "empty") report(why)
+                val why = pendingImage?.let { comm.sendImage(it, input) } ?: comm.send(input)
+                if (why.isEmpty()) { input = ""; pendingImage = null } else if (why != "empty") report(why)
             }
         }
     }
@@ -520,6 +529,16 @@ private fun loadOcrImage(ctx: android.content.Context, uri: android.net.Uri): By
     } finally { bmp.recycle() }
 }
 
+private fun decodePreviewImage(data: ByteArray): androidx.compose.ui.graphics.ImageBitmap? {
+    val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    android.graphics.BitmapFactory.decodeByteArray(data, 0, data.size, bounds)
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+    var sample = 1
+    while (maxOf(bounds.outWidth, bounds.outHeight) / sample > 480) sample *= 2
+    return android.graphics.BitmapFactory.decodeByteArray(data, 0, data.size,
+        android.graphics.BitmapFactory.Options().apply { inSampleSize = sample })?.asImageBitmap()
+}
+
 @Composable
 private fun HelpDialog(onDismiss: () -> Unit) {
     val o = LocalOit.current
@@ -533,7 +552,7 @@ private fun HelpDialog(onDismiss: () -> Unit) {
         Triple("⏰ / ⏲", tr("共时闹钟"), tr("⏰ = 闹钟跟随这个对象的起床时间; 响铃的设备手动选, 一次只能有一个对象.")),
         Triple("🕰", tr("起点平移"), tr("请求对方平移日程起点, 允许范围由人设模板决定, 同意后明天起生效.")),
         Triple("🖼", tr("识别字体"), tr("选一张图片, 把上面的文字读出来放进聊天框. OCR 不发送图片; 也可以用 📎 把图片发给聊天 AI.")),
-        Triple("📷", tr("拍照"), tr("打开手机系统相机拍一张照片, 然后作为图片消息发送.")),
+        Triple("📷", tr("拍照"), tr("打开手机系统相机拍照，预览后点发送作为图片消息发出.")),
         Triple("🧾", tr("解答图片"), tr("开启设置中的解答图片模式后, 数学、物理、化学子代理的解答会由聊天 AI 风格化, 再生成一张可滑动长图.")),
         Triple("🤝", tr("联合行动"), tr("邀请对方一起做一次合约: 在合约页选词条, 输入开始时间; 对方回 [Yes] 就按约开始. Claudia 的剩余休息按她的日程接续和结转。")),
     )

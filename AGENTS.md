@@ -268,6 +268,7 @@ python release.py               # 发布（PyInstaller）
 6. 开发者模式只在 git 开发版存在。
 7. 修改内置人设时，同步仓库 `personas/` 的实际文本与文件名、桌面 `comm/comm_builtin.py` 和安卓内置文本；不能只改内置字符串或启动迁移。
 8. GitHub 文件下载统一走 `updater.download()`，不要另写下载循环；发布附件优先用 `asset_source()` 提供的 API 地址、大小和 SHA-256。其他官方来源复用 `updater.download_file()`，显式指定主机白名单和大小上限；不扩大 GitHub 入口的来源范围。安卓沿用 `service/Updater.kt` 的统一下载流程。
+9. 沟通工具或协议变更除桌面 / 安卓双端外，还要检查 MCP Bridge 与宿主插件（`mcp_bridge.py`、`antigravity_plugin/server/src/index.ts`、Hooks 和配套规则），同步更新 `_mcp_bridge_check.py` 并运行检查。
 
 ## 架构
 

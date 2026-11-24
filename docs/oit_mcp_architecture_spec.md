@@ -97,14 +97,14 @@ flowchart TB
 | :--- | :--- | :--- |
 | `GET /health` | MCP / Sidecar / Hooks | 健康检查，返回 OIT 版本、当前活跃 `persona_id`、是否处于硬屏蔽（`hard_block`） |
 | `POST /session/bind` | `SessionStart` Hook / MCP | 绑定 `{"conversation_id", "persona_id", "host"}`（支持一人设一会话） |
-| `GET /turn/context?conversation_id=...&consume_trigger=1` | `PreInvocation` Hook / `oit_get_turn_context` | 返回此刻精简动态状态（时间、用户专注/休息、对方日程段、张力、冷却、上轮未发完被撤销摘要）；若存在待消费的 `pending_trigger`，一并返回并原子清空 |
-| `POST /tool/execute` | MCP Server | 执行 [comm_tools.py](file:///e:/obliphur_terminal/comm/comm_tools.py) 现有业务工具（`name`, `arguments`, `conversation_id`），返回统一 JSON 结果 |
-| `POST /reply/submit` | MCP Server (`oit_reply`) | 接收回复（`bubbles` 或 `text`）及控制字段（`wait_minutes`/`cut_minutes`/`network_minutes`/`offenses`/`tension`/`valence` 等），写入待发队列 `ReplyBatch`，返回 `{batch_id, items: [{id, text, delay_ms}]}` |
+| `GET /turn/context?conversation_id=...&consume_trigger=1` | `PreInvocation` Hook / `oit_get_turn_context` | 返回此刻精简动态状态（时间、对方日程段、张力、冷却、share data 增量、上轮未发完被撤销摘要）；不返回用户计时器、整点记录、日历或统计数据，这些数据只通过 share data 提供；若存在待消费的 `pending_trigger`，一并返回并原子清空 |
+| `POST /tool/execute` | MCP Server | 执行业务工具（`name`, `arguments`, `conversation_id`）；`oit_answer_image` 在解答图片模式开启时接收子代理原始答案与风格化文本，生成待附加的 PNG |
+| `POST /reply/submit` | MCP Server (`oit_reply`) | 接收回复（`bubbles` 或 `text`）及控制字段（`wait_minutes`/`cut_minutes`/`network_minutes`/`offenses`/`tension`/`valence` 等），写入待发队列 `ReplyBatch`；若之前成功调用 `oit_answer_image`，将图片附加到最后一条回复气泡，返回 `{batch_id, items: [{id, text, delay_ms}]}` |
 | `GET /ui/state?persona_id=...&cursor=...` | `aux_pane` App（经 app-only 工具） | 返回增量聊天记录、当前待发队列、人设基础信息、张力/专注状态栏数据 |
 | `POST /ui/delivered` | `aux_pane` App（经 app-only 工具） | 标记某气泡 `msg_id` 已真正弹出：正式写入 OIT 历史、触发音效提示、推送安卓同步 |
 | `POST /ui/interrupt` | `aux_pane` App（经 app-only 工具） | 用户即将发新消息：立即作废当前 `ReplyBatch` 中尚未弹出的气泡，记录撤销条数供下一轮上下文使用 |
 | `POST /ui/action` | `aux_pane` App（经 app-only 工具） | 执行聊天栏工具开关、底部审批横幅（接受/拒绝）、或拉起 OIT 原生硬件/弹窗（联合行动词条板、起点平移、MIDI 演奏评判、共读、OCR、选图） |
-| `GET /ui/media?kind=avatar\|voice&id=...` | `aux_pane` App（经 app-only 工具） | 返回头像或语音的 `data:<mime>;base64,...`（规避 MCP App CSP 外链限制） |
+| `GET /ui/media?kind=avatar\|voice\|chat_image&id=...` | `aux_pane` App（经 app-only 工具） | 返回头像、语音或聊天图片的 `data:<mime>;base64,...`（规避 MCP App CSP 外链限制）；图片 id 仅按聊天图片目录中的 basename 读取 |
 | `POST /turn/fallback_sync` | `Stop` Hook | 兜底同步：当模型未调 `oit_reply` 直接输出纯文本时，把提取出的纯文本记入 OIT |
 | `GET /events/stream` | Sidecar（SSE） | 服务端事件推送：OIT 判定主动触发后推送 `{"event": "proactive", "persona_id", "conversation_id", "display_time": "14:35"}` |
 

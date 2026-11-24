@@ -3,6 +3,7 @@
 
 from datetime import datetime, timedelta
 import json
+import base64
 import os
 import shutil
 import subprocess
@@ -12,6 +13,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from unittest.mock import patch
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
@@ -134,6 +136,35 @@ def main():
         ctx3 = _http_json(port, bridge.token, "/turn/context?conversation_id=conv-1&consume_trigger=0")
         assert ctx3["subagent_routes"]["subject"]["mode"] == "external_api"
         assert ctx3["subagent_routes"]["mental_health"]["mode"] == "host_subagent"
+        assert "[OIT解答图片模式]" in ctx3["system_message"] and c.answer_images_on()
+        answer_session = "mcp-answer-image-check"
+        answer_input = {"conversation_id": "conv-1", "name": "oit_subject",
+                        "arguments": {"domain": "math", "session": answer_session, "question": "求 1+1"}}
+        png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/n6sAAAAASUVORK5CYII=")
+        with patch.object(c, "subagent_call", return_value="原始解答: 1+1=2"), \
+                patch("answer_images.render", return_value=png):
+            subject_result = _http_json(port, bridge.token, "/tool/execute", answer_input)
+            assert subject_result["ok"] and subject_result["answer"] == "原始解答: 1+1=2"
+            image_result = _http_json(port, bridge.token, "/tool/execute", {
+                "conversation_id": "conv-1", "name": "oit_answer_image",
+                "arguments": {"domain": "math", "session": answer_session,
+                              "answer": subject_result["answer"], "styled_answer": "我们可以直接相加，结果是 2。"},
+            })
+        assert image_result["ok"] and image_result["ready"]
+        image_reply = _http_json(port, bridge.token, "/reply/submit", {
+            "conversation_id": "conv-1", "bubbles": ["答案是 2。"],
+        })
+        assert image_reply["ok"]
+        image_message = c.messages[-1]
+        assert image_message.get("answer_image") and os.path.isfile(c.chat_image_path(image_message.get("img", ""))), \
+            "MCP 解答图应附加到后续 oit_reply 的最后一条 OIT 气泡"
+        image_item = image_reply["items"][0]
+        assert image_item.get("image_id") == image_message["img"] and image_item.get("answer_image")
+        image_media = _http_json(port, bridge.token,
+                                 f"/ui/media?kind=chat_image&id={image_item['image_id']}")
+        assert image_media["ok"] and image_media["data_uri"].startswith("data:image/png;base64,")
+        image_delivered = _http_json(port, bridge.token, "/ui/delivered", {"msg_id": image_reply["items"][0]["id"]})
+        assert image_delivered["ok"]
 
         # 4. 分条气泡提交 -> 逐条确认送达 -> 中途插话撤销
         rep = _http_json(port, bridge.token, "/reply/submit", {
@@ -156,7 +187,7 @@ def main():
         assert act["ok"] and opened and opened[-1][0] == "review"
 
         # 6. PreInvocation Hook 验证（invocationNum == 1 注入，invocationNum == 2 跳过）
-        hook_env = dict(os.environ, OIT_BRIDGE_FILE=bridge.discovery_path)
+        hook_env = dict(os.environ, OIT_BRIDGE_FILE=bridge.discovery_path, PYTHONUTF8="1")
         hook_script = os.path.join(ROOT, "antigravity_plugin", "scripts", "hook_pre_invocation.py")
         p1 = subprocess.run(
             [sys.executable, hook_script],
@@ -171,6 +202,14 @@ def main():
             capture_output=True, text=True, encoding="utf-8", env=hook_env, timeout=10, check=True,
         )
         assert json.loads(p2.stdout) == {}, "invocationNum != 1 不应重复注入"
+        tool_hook_script = os.path.join(ROOT, "antigravity_plugin", "scripts", "hook_pre_tool_use.py")
+        p_tool = subprocess.run(
+            [sys.executable, tool_hook_script],
+            input=json.dumps({"conversationId": "conv-1", "toolCall": {"name": "oit_answer_image", "args": {"domain": "math"}}}),
+            capture_output=True, text=True, encoding="utf-8", env=hook_env, timeout=10, check=True,
+        )
+        assert json.loads(p_tool.stdout)["overwrite"]["conversation_id"] == "conv-1", \
+            "MCP 解答图片工具须注入当前会话 id"
 
         # 6b. 未绑定对话必须与 OIT 完全隔离（SessionStart / PreInvocation / fallback_sync 均不注入不同步）
         ss_script = os.path.join(ROOT, "antigravity_plugin", "scripts", "hook_session_start.py")
@@ -215,6 +254,7 @@ def main():
 
         tools_res = rpc({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
         tools = {t["name"]: t for t in tools_res["result"]["tools"]}
+        assert "oit_answer_image" in tools
         assert "oit_reply" in tools and tools["oit_reply"]["_meta"]["ui"]["resourceUri"] == "ui://oit/chat.html"
         assert tools["oit_reply"]["_meta"]["com.google.antigravity/ui"]["entrypoints"][0]["type"] == "aux_pane"
         aux_entries = [t for t in tools.values() if (t.get("_meta") or {}).get("com.google.antigravity/ui")]
@@ -428,13 +468,15 @@ def main():
         orig_persona = c.persona_name()
         orig_snap = c.snapshot
         try:
-            # (a) 休息中 snapshot 含 break_start: datetime 不得再 500 崩溃；主动触发无待评消息时输出必须高度精简
-            c.snapshot = lambda: {"state": "break", "break_start": datetime(2026, 11, 27, 12, 35, 0), "rest_left_min": 10.0}
+            # (a) turn context 不得读取或直接返回用户计时器数据；用户数据只由 share data 提供
+            snapshot_calls = []
+            c.snapshot = lambda: snapshot_calls.append(True) or {"state": "break", "break_start": datetime(2026, 11, 27, 12, 35, 0), "rest_left_min": 10.0}
             bridge.push_proactive(c.pid, "休息一下吧", kind="proactive")
             ctx_pro = _http_json(port, bridge.token, "/turn/context?conversation_id=conv-1&consume_trigger=1")
-            assert ctx_pro["ok"] is True and ctx_pro["snapshot"]["break_start"] == "2026-11-27T12:35:00"
+            assert ctx_pro["ok"] is True and not snapshot_calls and "snapshot" not in ctx_pro
             sys_pro = ctx_pro["system_message"]
             assert len(sys_pro) < 550, f"主动触发上下文过大 ({len(sys_pro)} 字): {sys_pro}"
+            assert "用户:break" not in sys_pro and "用户:" not in sys_pro
             assert sys_pro.count("(OIT 系统提供, 用户看不到)") == 0 and "日程:" in sys_pro
             assert "效价代表角色当前的正负情绪倾向" not in sys_pro
             assert "本次无需判断张力增量" not in sys_pro

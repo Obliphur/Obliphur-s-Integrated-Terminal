@@ -124,7 +124,7 @@ DEFAULTS = {"persona": "", "show_avatar": True, "coread_link": {}, "coread_offer
             "claudia_migrated": False, "claudia_modified": False, "claudia_notified": "", "claudia_base": "", "routine_base": "", "background_base": "", "example_base": "", "profile_base": "",
             "legacy_done": False, "joint_last": [], "user_profile": "",
             "bg_pro": True, "mute_pro": [], "idle_use": {}, "joint": {}, "sched_follow": False, "pro_lang": "",
-            "answer_images": False,                         # 学科子代理回答是否生成可滑动长图
+            "answer_images": True,                          # 学科子代理回答是否生成可滑动长图
             "mem_auto": "", "mem_live": "", "mem_fixed": [], "mem_upto": 0, "mem_ts": 0,  # 长期摘要、实时事件与系统固定记录
             "shift": [],                                     # 起点平移记录 (跟着聊天对象走, 同步; 不改人设文件)
             "love": {}, "msg_gone": 0,                       # 亲密关系状态 (跟着聊天对象走, 同步) / 被 KEEP 砍掉的信息条数 (本机)

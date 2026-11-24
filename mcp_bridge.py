@@ -226,6 +226,8 @@ class OitMcpBridge:
         self._last_reply_ms = {}        # conversation_id/persona_id -> int
         self._turn_interaction = {}     # persona_id -> {"burst_until": int, "shame": bool}
         self._share_sent_ts = {}        # persona_id -> int (已下发给 Antigravity 的最新共享数据 sys 消息 ts)
+        self._answer_image_context = {} # (conversation_id, subject session) -> original answer and source image
+        self._pending_answer_images = {} # conversation_id -> rendered bytes awaiting oit_reply
         self._running = False
         self._load_sessions()
 
@@ -550,6 +552,9 @@ class OitMcpBridge:
         now_ms = self.comm._ms() if hasattr(self.comm, "_ms") else _now_ms()
         img_path = str(image_path or "").strip()
         with self._lock:
+            self._pending_answer_images.pop(cid, None)
+            for key in [key for key in self._answer_image_context if key[0] == cid]:
+                self._answer_image_context.pop(key, None)
             has_client = bool(self._sse_clients)
             body_txt = str(api_context or "").strip()
             if img_path and img_path not in body_txt:
@@ -834,11 +839,6 @@ class OitMcpBridge:
             sess_meta = self._sessions_map().get(cid) if cid else None
             eff_host = host or (sess_meta.get("host") if isinstance(sess_meta, dict) else "") or "antigravity"
             now = self.comm.now() if callable(getattr(self.comm, "now", None)) else datetime.now()
-            snap = self.comm.snapshot() if callable(getattr(self.comm, "snapshot", None)) else {}
-            clean_snap = {
-                k: (v.isoformat(timespec="seconds") if isinstance(v, datetime) else v)
-                for k, v in (snap or {}).items()
-            }
             status = self.comm.other_status(now) if hasattr(self.comm, "other_status") else {}
 
             trigger = None
@@ -852,10 +852,7 @@ class OitMcpBridge:
                     self._recent_user_ms[cid] = _now_ms()
 
             routes = self._subagent_routes(eff_host)
-            user_st = str(clean_snap.get("state") or clean_snap.get("kind") or "").strip()
             head = f"[OIT动态状态] {now:%Y-%m-%d %H:%M} | {_display_persona_name(self.comm)}"
-            if user_st:
-                head += f" | 用户:{user_st}"
             lines = [head, _compact_schedule_line(self.comm, now, status)]
             if hasattr(self.comm, "_interaction_prepare"):
                 d_inter = self.comm._interaction_prepare(pid, status)
@@ -956,13 +953,14 @@ class OitMcpBridge:
             ]
             if non_default_routes:
                 lines.append(f"[OIT子代理路由] {', '.join(non_default_routes)}")
+            answer_images = callable(getattr(self.comm, "answer_images_on", None)) and self.comm.answer_images_on()
+            lines.append(f"[OIT解答图片模式] {'开启' if answer_images else '关闭'}。")
 
             return {
                 "ok": True,
                 "conversation_id": cid,
                 "persona_id": pid,
                 "now": now.isoformat(timespec="seconds"),
-                "snapshot": clean_snap,
                 "status": {k: (v.isoformat(timespec="seconds") if isinstance(v, datetime) else v) for k, v in (status or {}).items()},
                 "trigger": trigger,
                 "interrupted": interrupted,
@@ -974,7 +972,8 @@ class OitMcpBridge:
     def handle_tool_execute(self, body: dict) -> dict:
         name = str(body.get("name") or "").strip()
         args = body.get("arguments") if isinstance(body.get("arguments"), dict) else {}
-        cid = str(body.get("conversation_id") or "").strip()
+        cid = str(body.get("conversation_id") or args.get("conversation_id") or
+                  self._conversation_for_persona(getattr(self.comm, "pid", "")) or "").strip()
         host = str(body.get("host") or "antigravity").strip()
 
         def work():
@@ -1090,20 +1089,70 @@ class OitMcpBridge:
             if name == "oit_subject":
                 routes = self._subagent_routes(host)
                 route = routes.get("subject", {})
+                domain = str(args.get("domain") or "math")
+                session = str(args.get("session") or "default")
+                question = str(args.get("question") or "").strip()
+                last_user = next((m for m in reversed(self.comm.messages) if m.get("role") == "me"), {})
+                image = None
+                img_name = str(last_user.get("img") or "")
+                if img_name and hasattr(self.comm, "chat_image_path"):
+                    try:
+                        with open(self.comm.chat_image_path(img_name), "rb") as stream:
+                            image = stream.read()
+                    except OSError:
+                        image = None
+                ctx = {"domain": domain, "session": session, "question": question,
+                       "answer": "", "image": image, "ts": _now_ms()}
+                self._answer_image_context[(cid, session)] = ctx
                 if route.get("mode") != "external_api":
                     return {
                         "ok": False,
                         "route": route.get("mode", "host_subagent"),
                         "target": route.get("agent", "oit-subject"),
-                        "instruction": "当前未为学科子代理单独配置外部 API，请改用宿主原生子代理 oit-subject（或按客观步骤直接推导）并风格化回复。",
+                        "instruction": "当前未为学科子代理单独配置外部 API，请改用宿主原生子代理 oit-subject（或按客观步骤直接推导）并风格化回复；解答图片模式开启时，在 oit_reply 前调用 oit_answer_image 提交原始解答和风格化解答。",
                     }
-                domain = str(args.get("domain") or "math")
-                session = str(args.get("session") or "default")
-                question = str(args.get("question") or "").strip()
                 answer = self.comm.subagent_call(
                     "subject", session, f"学科: {domain}\n题目/追问:\n{question}",
-                    max_tokens=900, temperature=0.15, timeout=180)
+                    image=image, max_tokens=900, temperature=0.15, timeout=180)
+                ctx["answer"] = answer
                 return {"ok": True, "domain": domain, "session": session, "answer": answer}
+
+            if name == "oit_answer_image":
+                enabled = callable(getattr(self.comm, "answer_images_on", None)) and self.comm.answer_images_on()
+                if not enabled:
+                    return {"ok": True, "enabled": False, "instruction": "解答图片模式已关闭；请仅提交文字回复。"}
+                domain = str(args.get("domain") or "math")
+                session = str(args.get("session") or "default")
+                original = str(args.get("answer") or "").strip()[:8000]
+                styled = str(args.get("styled_answer") or "").strip()[:8000]
+                if not original or not styled:
+                    return {"ok": False, "error": "answer 和 styled_answer 均不能为空"}
+                context = self._answer_image_context.get((cid, session), {})
+                if context and context.get("domain") != domain:
+                    return {"ok": False, "error": "domain 与本轮 oit_subject 不匹配"}
+                if not context:
+                    return {"ok": False, "error": "请先在本轮调用 oit_subject，再生成对应解答图片"}
+                prompt = (
+                    "请根据原始学科解答与聊天 AI 已完成的用户可见版本，生成最终的解答图片排版稿。"
+                    "保留原始解答中可核验的关键逻辑、步骤与结论；以聊天 AI 的语言风格为准。"
+                    "使用 Markdown 标题、列表和 LaTeX 公式，内容完整但紧凑；不要输出解释、代码围栏或隐藏思维过程。\n\n"
+                    f"原始学科解答:\n{original}\n\n聊天 AI 风格化版本:\n{styled}"
+                )
+                try:
+                    formatted = self.comm.subagent_call(
+                        "subject", f"answer-image:{session}", prompt, image=context.get("image"),
+                        max_tokens=1400, temperature=0.1, timeout=180)
+                    from answer_images import render
+                    data = render(formatted, context.get("image"), title=f"{domain}解答")
+                    if not data:
+                        return {"ok": False, "error": "本机无法生成解答图片；请正常提交文字回复。"}
+                    self._pending_answer_images[cid] = {"data": data, "ts": _now_ms(), "session": session}
+                    self._answer_image_context.pop((cid, session), None)
+                    return {"ok": True, "ready": True,
+                            "instruction": "解答图片已准备好；请随即调用 oit_reply，图片会附加到最后一条气泡。"}
+                except Exception as error:  # noqa: BLE001
+                    self.comm.log(f"MCP ANSWER_IMAGE FAIL {type(error).__name__}: {error}")
+                    return {"ok": False, "error": "解答图片生成失败；请正常提交文字回复。"}
 
             if name == "oit_music_catalog":
                 related, valence = self.comm._music_access()
@@ -1171,11 +1220,14 @@ class OitMcpBridge:
         def work():
             if self.comm.hard_block():
                 return {"ok": False, "error": "当前处于禁止沟通状态"}
-            cid = str(body.get("conversation_id") or "").strip()
+            cid = str(body.get("conversation_id") or
+                      self._conversation_for_persona(getattr(self.comm, "pid", "")) or "").strip()
             pid = self._ensure_persona_for_conversation(cid) if cid else self._persona_for_conversation(cid)
             if body.get("silent"):
+                self._pending_answer_images.pop(cid, None)
                 return {"ok": True, "silent": True, "batch_id": "", "items": []}
             if body.get("refuse"):
+                self._pending_answer_images.pop(cid, None)
                 return {"ok": True, "refuse": True, "batch_id": "", "items": []}
 
             raw_bubbles = body.get("bubbles")
@@ -1231,6 +1283,19 @@ class OitMcpBridge:
                     "delay_ms": delay_ms,
                 })
             held_reply = bool(blocked_now or any(m.get("late") for m in created_msgs))
+            answer_image = self._pending_answer_images.pop(cid, None)
+            if (answer_image and created_msgs and
+                    now_ts - int(answer_image.get("ts") or 0) <= 10 * 60 * 1000 and
+                    callable(getattr(self.comm, "answer_images_on", None)) and self.comm.answer_images_on()):
+                try:
+                    image_name = self.comm._save_chat_image(created_msgs[-1]["uid"] + "-answer", answer_image["data"])
+                    if image_name:
+                        created_msgs[-1]["img"] = image_name
+                        created_msgs[-1]["answer_image"] = True
+                        items[-1]["image_id"] = image_name
+                        items[-1]["answer_image"] = True
+                except Exception as error:  # noqa: BLE001
+                    self.comm.log(f"MCP ANSWER_IMAGE SAVE FAIL {type(error).__name__}: {error}")
 
             # 处理控制字段与请求类事件（coread / share data / shift / joint / love / share_invite）
             applied = {}
@@ -1340,6 +1405,10 @@ class OitMcpBridge:
                     "ts": int(m.get("ts") or 0),
                     "has_voice": bool(m.get("voice")),
                 }
+                if m.get("img"):
+                    item["image_id"] = os.path.basename(str(m["img"]))
+                if m.get("answer_image"):
+                    item["answer_image"] = True
                 if is_held:
                     if next_cursor is None:
                         next_cursor = idx
@@ -1452,6 +1521,12 @@ class OitMcpBridge:
                 with self._lock:
                     prev = self._interrupted.get(pid, {}).get("count", 0)
                     self._interrupted[pid] = {"count": prev + len(doomed), "ts": _now_ms()}
+            cid = self._conversation_for_persona(pid)
+            if cid:
+                with self._lock:
+                    self._pending_answer_images.pop(cid, None)
+                    for key in [key for key in self._answer_image_context if key[0] == cid]:
+                        self._answer_image_context.pop(key, None)
             added_id = ""
             if user_text:
                 um = self.comm._add("me", user_text)
@@ -1514,6 +1589,8 @@ class OitMcpBridge:
                 path = str(self.comm.avatar_path() or "")
             elif kind == "voice" and hasattr(self.comm, "voice"):
                 path = str(self.comm.voice.cached_path(mid) or "") if hasattr(self.comm.voice, "cached_path") else ""
+            elif kind == "chat_image" and hasattr(self.comm, "chat_image_path"):
+                path = str(self.comm.chat_image_path(os.path.basename(mid)) or "")
             if not path or not os.path.isfile(path):
                 return {"ok": False, "error": "media not found"}
             mime = mimetypes.guess_type(path)[0] or "application/octet-stream"

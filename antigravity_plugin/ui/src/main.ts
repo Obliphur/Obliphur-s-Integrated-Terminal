@@ -11,6 +11,8 @@ interface ChatMsg {
   at?: string;
   ts?: number;
   has_voice?: boolean;
+  image_id?: string;
+  answer_image?: boolean;
   delay_ms?: number;
 }
 
@@ -77,7 +79,25 @@ function appendBubble(m: ChatMsg) {
 
   const bubble = document.createElement("div");
   bubble.className = "bubble";
-  bubble.textContent = m.text;
+  if (m.image_id) {
+    const image = document.createElement("img");
+    image.className = "bubble-image";
+    image.alt = m.answer_image ? "解答图片" : "聊天图片";
+    image.loading = "lazy";
+    image.tabIndex = 0;
+    image.onclick = () => { if (image.src) window.open(image.src, "_blank", "noopener"); };
+    bubble.appendChild(image);
+    void callAppTool("oit_ui_media", { kind: "chat_image", id: m.image_id }).then((media) => {
+      const uri = String(media?.data_uri || "");
+      if (uri) image.src = uri;
+    });
+  }
+  if (m.text && !(m.image_id && m.text === "[图片]")) {
+    const text = document.createElement("div");
+    text.className = "bubble-text";
+    text.textContent = m.text;
+    bubble.appendChild(text);
+  }
   row.appendChild(bubble);
 
   const meta = document.createElement("div");
@@ -309,6 +329,8 @@ app.ontoolresult = (result) => {
         id: String(x.id || ""),
         role: "ai",
         text: String(x.text || ""),
+        image_id: typeof x.image_id === "string" ? x.image_id : undefined,
+        answer_image: Boolean(x.answer_image),
         at: typeof x.at === "string" ? x.at : undefined,
         ts: typeof x.ts === "number" ? x.ts : undefined,
         delay_ms: Number(x.delay_ms || 0),

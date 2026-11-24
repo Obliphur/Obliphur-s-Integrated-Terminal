@@ -38,6 +38,7 @@ root = tk.Tk()
 root.geometry("980x680+5000+5000")
 folder = tempstore.mkdtemp("comm_mode")
 c = Comm(os.path.join(folder, "data"), os.path.join(folder, "personas"))
+assert c.answer_images_on(), "解答图片模式默认开启"
 original_scale = config.UI_SCALE
 original_language = i18n.get_language()
 original_show_tension = config.COMM_SHOW_TENSION
@@ -69,7 +70,7 @@ try:
             config.UI_SCALE = scale
             page = CommPage(root, c)
             page.pack(fill="both", expand=True)
-            # 图片附件按钮始终是 📎；待发区展示附件名称与取消按钮，剪贴板位图写入临时文件，并监听 <<Paste>>。
+            # 图片附件按钮始终是 📎；待发区展示缩略图和独立取消按钮，剪贴板位图写入临时文件，并监听 <<Paste>>。
             assert page.entry.bind("<<Paste>>")
             image_file = os.path.join(folder, "paste.png")
             png_bytes = _valid_png()
@@ -77,8 +78,9 @@ try:
                 stream.write(png_bytes)
             assert page._set_pending_image(image_file)
             assert page.btn_image.cget("text") == "📎"
-            assert page.lbl_joint.cget("text") == "📎 paste.png"
-            assert page.btn_joint_x.winfo_manager() == "pack"
+            assert page.lbl_pending_image.cget("image")
+            assert page.btn_pending_image_x.winfo_manager() == "pack"
+            assert page.btn_joint_x.winfo_manager() != "pack"
             def copy_bitmap(target):
                 with open(target, "wb") as stream:
                     stream.write(png_bytes)
@@ -88,10 +90,12 @@ try:
                 assert page._paste_image() == "break"
                 assert os.path.isfile(copy_image.call_args.args[0])
                 assert page.btn_image.cget("text") == "📎"
-                assert page.lbl_joint.cget("text") == i18n.tr("📎 剪贴板图片")
-                assert page.btn_joint_x.winfo_manager() == "pack"
+                assert page.lbl_pending_image.cget("image")
+                assert page.btn_pending_image_x.winfo_manager() == "pack"
+                assert page.btn_joint_x.winfo_manager() != "pack"
             page._clear_package_drafts()
             assert page._pending_image == ""
+            assert page.btn_pending_image_x.winfo_manager() != "pack"
             assert page.btn_joint_x.winfo_manager() != "pack"
             # 发出的图片消息应保存本地文件、在气泡中渲染缩略图且点击可打开大图弹窗。
             assert page._set_pending_image(image_file)

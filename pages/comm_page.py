@@ -131,6 +131,7 @@ class CommPage(CommVoiceMixin, tk.Frame):
         ttk.Button(self.coread_btns, text=tr("拒绝"), width=6,
                    command=lambda: self._coread_respond(False)).pack(side="left", padx=(4, 0))
         self._pending_image = ""
+        self._pending_image_photo = None
         # 对方发了 [share data]: 等用户点 接受 / 拒绝
         self.share_btns = tk.Frame(tools, bg=bg)
         self.lbl_share_inv = tk.Label(self.share_btns, text="", bg=bg, fg=COLORS["accent"], font=config.font("small"))
@@ -142,6 +143,8 @@ class CommPage(CommVoiceMixin, tk.Frame):
         draft_row.pack(fill="x", padx=28, pady=(2, 0))
         self.lbl_joint = tk.Label(draft_row, text="", bg=bg, fg=COLORS["accent"], font=config.font("small"), anchor="w")
         self.lbl_joint.pack(side="left")
+        self.lbl_pending_image = tk.Label(draft_row, text="", bg=bg, fg=COLORS["text_dim"], font=config.font("small"), anchor="w")
+        self.btn_pending_image_x = ttk.Button(draft_row, text="✕", width=2, command=self._clear_pending_image)
         self.btn_joint_x = tk.Label(draft_row, text="✕", bg=bg, fg=COLORS["text_dim"], font=config.font("small"), cursor="hand2")
         self.btn_joint_x.bind("<Button-1>", lambda _e: self._clear_package_drafts())
         # 对方发起的联合行动: 等用户点 接受 / 拒绝 (只有 invite 的时候显示)
@@ -290,13 +293,30 @@ class CommPage(CommVoiceMixin, tk.Frame):
         draft = c.joint_label()
         requests = c.request_draft_labels()
         img_label = self._pending_image_label()
-        pending = " · ".join(([draft] if draft else []) + requests + ([img_label] if img_label else []))
+        pending = " · ".join(([draft] if draft else []) + requests)
         cfg(self.lbl_joint, text=pending or c.joint_status_text(), fg=COLORS["accent"] if pending else COLORS["text_dim"])
         if pending:
             if self.btn_joint_x.winfo_manager() != "pack":
                 self.btn_joint_x.pack(side="left", padx=(6, 0))
         elif self.btn_joint_x.winfo_manager() == "pack":
             self.btn_joint_x.pack_forget()
+        if self._pending_image:
+            try:
+                thumb_side = config.scaled(72)
+                preview = tk.PhotoImage(file=avatar_mod.fit(self._pending_image, thumb_side))
+                self._pending_image_photo = preview
+                self.lbl_pending_image.config(image=preview, text="")
+            except (OSError, tk.TclError):
+                self._pending_image_photo = None
+                self.lbl_pending_image.config(image="", text=img_label)
+            if self.lbl_pending_image.winfo_manager() != "pack":
+                self.lbl_pending_image.pack(side="left", padx=(8, 0))
+            if self.btn_pending_image_x.winfo_manager() != "pack":
+                self.btn_pending_image_x.pack(side="left", padx=(2, 0))
+        else:
+            self._pending_image_photo = None
+            self.lbl_pending_image.pack_forget()
+            self.btn_pending_image_x.pack_forget()
         if c.joint_invite():
             if self.joint_btns.winfo_manager() != "pack":
                 self.joint_btns.pack(side="left", padx=(8, 0))
@@ -623,6 +643,7 @@ class CommPage(CommVoiceMixin, tk.Frame):
             return
         self.entry.delete("1.0", "end")
         self._pending_image = ""
+        self._pending_image_photo = None
         self.refresh(force=True)
 
     def _pending_image_label(self) -> str:
@@ -632,6 +653,11 @@ class CommPage(CommVoiceMixin, tk.Frame):
         if name.startswith("comm-paste-"):
             return tr("📎 剪贴板图片")
         return f"📎 {name}"
+
+    def _clear_pending_image(self):
+        self._pending_image = ""
+        self._pending_image_photo = None
+        self.refresh(force=True)
 
     def _set_pending_image(self, path: str) -> bool:
         """暂存待发送图片；附件按钮始终保持 📎，避免和识字按钮混淆。"""
@@ -856,6 +882,7 @@ class CommPage(CommVoiceMixin, tk.Frame):
         self.comm.clear_joint_draft()
         self.comm.clear_request_draft()
         self._pending_image = ""
+        self._pending_image_photo = None
         self.refresh(force=True)
 
     # ---- 起点平移 ----
@@ -995,7 +1022,7 @@ class CommPage(CommVoiceMixin, tk.Frame):
                 ("⏰ / ⏲", "共时闹钟", "⏰ = 闹钟跟随这个对象的起床时间; 响铃的设备手动选, 一次只能有一个对象."),
                 ("🕰", "起点平移", "请求对方平移日程起点, 允许范围由人设模板决定, 同意后明天起生效."),
                 ("📎", "图片消息", "选择图片，或在输入框按 Ctrl+V 粘贴剪贴板图片，然后随消息发送."),
-                ("📷", "拍照", "使用本机摄像头拍一张照片，放入待发送图片；手机端会打开系统相机."),
+                ("📷", "拍照", "使用本机摄像头拍照并预览，确认后随消息发送；手机端会打开系统相机."),
                 ("🖼", "识别字体", "选一张图片，把识别出的文字放进聊天框供你编辑；用 📎 发送图片本身."),
                 ("🧾", "解答图片", "开启设置中的解答图片模式后，数学、物理、化学子代理的解答会由聊天 AI 风格化，再生成一张可滑动长图."),
                 ("🎼", "演奏评判", "左边选参考乐谱或 MIDI，右边选演奏文件或录制 MIDI。分析摘要会交给聊天对象."),

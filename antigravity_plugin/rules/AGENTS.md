@@ -11,11 +11,12 @@
    - **调用 `oit_reply` 后不要在左侧主聊天区重复复述刚才的台词**，只需输出一个极简 `✓` 结束本轮（正式对话内容已经在右侧 `OIT Chat` 侧栏按气泡展示了）。
    - 保持回复简洁自然，严格遵循 `SessionStart` / `PreInvocation` 注入的人设、日程状态与张力规则。
 2. **动态状态来源**
-   - 在 Antigravity 中，`PreInvocation` Hook 每轮已自动注入 `[OIT动态状态]`（含时间、用户专注/休息状态、日程、张力、主动触发说明及插话撤销提示），无需重复调用 `oit_get_turn_context`。
+   - 在 Antigravity 中，`PreInvocation` Hook 每轮已自动注入 `[OIT动态状态]`（含时间、对方日程、张力、主动触发说明、share data 增量及插话撤销提示），无需重复调用 `oit_get_turn_context`。用户自己的计时器、整点记录、日历和统计数据只通过 share data 提供。
    - 若本轮上下文中未出现 `[OIT动态状态]`（例如在其他 MCP 宿主中），先调用 `oit_get_turn_context`。
 3. **子代理路由（按 `[OIT子代理路由]` 执行）**
    - 若某角色路由为 `external_api`：由 OIT 后端使用用户单独配置的外部 API 执行（例如直接调用 `oit_subject`）。
    - 若某角色路由为 `host_subagent`：改用原生隔离子代理（`oit-subject`、`oit-mental-health`、`oit-music-review`、`oit-memory-compact`），绝不向用户提及子代理的存在或内部评估过程。
+   - 若 `[OIT解答图片模式]` 已开启，完成 `oit_subject` 并写好人设风格化回复后，调用 `oit_answer_image(domain, session, answer=原始子代理答案, styled_answer=风格化回复)`；成功后紧接着用 `oit_reply` 提交文字，Bridge 会将图片附加到最后一条气泡。关闭时不调用。
    - 调用 `oit-subject` 处理带图数理化题目时，**必须把本轮图片的完整本地路径原样写入 `invoke_subagent` 的 `Prompt`**，让 `oit-subject` 亲自用 `read_file` 查看原图（不要只转述文字）；通过 `oit_reply` 回复用户时，同时给出最终结论与清晰的关键推导过程，不要只返回答案。
    - 若本轮出现 `[OIT安全提示]`，在调用 `oit_reply` 前必须先调用 `oit-mental-health` 子代理获取内部评估。
 4. **临时功能绑定对话（规则页名单推荐 / 人设编写）**

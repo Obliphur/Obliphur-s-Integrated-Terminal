@@ -1813,6 +1813,9 @@ object EnStrings {
         "开启设置中的解答图片模式后, 数学、物理、化学子代理的解答会由聊天 AI 风格化, 再生成一张可滑动长图." to "When answer image mode is enabled, math, physics, and chemistry sub-agent answers are styled by the chat AI and rendered as a scrollable long image.",
         "拍照" to "Take a photo",
         "打开手机系统相机拍一张照片, 然后作为图片消息发送." to "Open the phone camera and send the photo as an image message.",
+        "打开手机系统相机拍照，预览后点发送作为图片消息发出." to "Take a photo with the system camera, preview it, then tap Send to send it as an image message.",
+        "待发送图片预览" to "Pending image preview",
+        "使用本机摄像头拍照并预览，确认后随消息发送；手机端会打开系统相机." to "Take a photo with this device's camera and preview it before sending; the phone opens the system camera.",
         "使用本机摄像头拍一张照片，放入待发送图片；手机端会打开系统相机." to "Take a photo with this device's camera and add it as a pending image; the phone opens the system camera.",
         "使用本机摄像头拍一张照片, 放入待发送图片; 手机端会打开系统相机." to "Take a photo with this device's camera and add it as a pending image; the phone opens the system camera.",
     )

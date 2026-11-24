@@ -67,7 +67,7 @@ function buildTools(): ToolSpec[] {
     {
       name: "oit_get_turn_context",
       description:
-        "获取当前 OIT 动态状态（时间、用户专注/休息状态、人设日程、情绪张力、子代理路由表及待处理主动触发事件）。不支持 PreInvocation Hook 的宿主（Claude Desktop / ChatGPT）应在每轮回复前调用。",
+        "获取当前 OIT 动态状态（时间、人设日程、情绪张力、子代理路由表、share data 增量及待处理主动触发事件）。用户自己的计时器、整点记录、日历和统计数据只通过 share data 提供。不支持 PreInvocation Hook 的宿主（Claude Desktop / ChatGPT）应在每轮回复前调用。",
       annotations: READONLY_ANNOTATIONS,
       inputSchema: {
         type: "object",
@@ -224,15 +224,33 @@ function buildTools(): ToolSpec[] {
     {
       name: "oit_subject",
       description:
-        "当用户为学科子代理单独配置了外部 API 时，委托 OIT 后端执行数理化教育子代理；若未配置外部 API，会返回路由提示以改用宿主原生子代理 oit-subject。",
+        "委托数理化子代理。解答图片模式开启时，风格化后必须调用 oit_answer_image，再用自然简洁且不含 Markdown / LaTeX 源码的可见正文提交 oit_reply。",
       inputSchema: {
         type: "object",
         properties: {
           domain: { type: "string", enum: ["math", "physics", "chemistry"] },
           session: { type: "string", maxLength: 80 },
           question: { type: "string", maxLength: 8000 },
+          conversation_id: { type: "string", maxLength: 120 },
         },
         required: ["domain", "session", "question"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "oit_answer_image",
+      description:
+        "在 oit_subject 完成且聊天 AI 已风格化回答后生成解答图片。成功后必须随即调用 oit_reply，图片会附加到最后一条气泡；关闭解答图片模式时无需调用。",
+      inputSchema: {
+        type: "object",
+        properties: {
+          domain: { type: "string", enum: ["math", "physics", "chemistry"] },
+          session: { type: "string", maxLength: 80 },
+          answer: { type: "string", maxLength: 8000, description: "oit_subject 返回的原始答案。" },
+          styled_answer: { type: "string", maxLength: 8000, description: "聊天 AI 已写好的用户可见版本。" },
+          conversation_id: { type: "string", maxLength: 120 },
+        },
+        required: ["domain", "session", "answer", "styled_answer"],
         additionalProperties: false,
       },
     },

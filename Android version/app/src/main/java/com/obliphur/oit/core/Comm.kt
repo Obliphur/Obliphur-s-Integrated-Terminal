@@ -1695,7 +1695,7 @@ class Comm(
     private val legacyChatFile = File(dir, "comm_chat.json")           // 以前所有对象共用的一份
     var persona = ""; private set
     var showAvatar = true; private set
-    var answerImages = false; private set
+    var answerImages = true; private set
     var avatarMe = ""; private set
     var avatarAi = ""; private set
     var defaultAvatarVersion = 0; private set
@@ -2062,7 +2062,7 @@ class Comm(
         Store.readObj(cfgFile)?.let { d ->
             persona = d.optString("persona", "")
             showAvatar = d.optBoolean("show_avatar", true)
-            answerImages = d.optBoolean("answer_images", false)
+            answerImages = d.optBoolean("answer_images", true)
             avatarMe = d.optString("avatar_me", "")
             avatarAi = d.optString("avatar_ai", "")
             defaultAvatarVersion = when (val v = d.opt("default_avatars")) {
