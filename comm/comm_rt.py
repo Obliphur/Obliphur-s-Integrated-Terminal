@@ -726,6 +726,9 @@ class RtMixin:
             if bridge is not None and ai_assist.ai_config.chat_takeover() == "antigravity":
                 if ctx:
                     self._bg_last = self._ms()
+                    ctx["st"]["messages"].append(self._mk("sys", body, persona=ctx["name"]))
+                else:
+                    self.messages.append(self._mk("sys", body))
                 pid = ctx["pid"] if ctx else self.pid
                 bridge.push_proactive(pid, body, kind="proactive", extra={"key": key, "bg": bool(ctx)})
             elif ctx:

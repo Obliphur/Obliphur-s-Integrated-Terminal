@@ -685,6 +685,45 @@ def main():
             f"热更新退出前应先分发完已到达的 SSE 事件: {dispatched_hot}"
         assert exited == [0], f"分发完事件后应退出以触发自动重启: {exited}"
 
+        # 9e-5. 接管模式下主动触发应记录 sys 冷却标记，使 PROACTIVE_GAP (10 分钟) 内同段/相邻段不再连发
+        pro_clock = [datetime(2026, 11, 24, 14, 35, 0)]
+        orig_now_pro = c.now
+        orig_msgs_pro = list(c.messages)
+        orig_pro_key = c.cfg.get("pro_key", "")
+        pushed_pro = []
+        orig_push_pro = bridge.push_proactive
+        try:
+            c.now = lambda: pro_clock[0]
+            c.messages = []
+            c.cfg["pro_key"] = ""
+            bridge.push_proactive = lambda pid, body, kind="proactive", extra=None: pushed_pro.append((pid, kind, extra)) or True
+            c._pro_fire("S2026-11-24T14:38r", pro_clock[0], pro_clock[0], 1.0, "[系统] 开始前触发", None)
+            assert len(pushed_pro) == 1
+            assert any(m["role"] == "sys" and str(m.get("text") or "").startswith("[系统]") for m in c.messages)
+            pro_clock[0] = datetime(2026, 11, 24, 14, 39, 0)  # +4 分钟 < 10 分钟：应被 PROACTIVE_GAP 拦下
+            c._pro_fire("F2026-11-24T14:38", pro_clock[0], pro_clock[0], 1.0, "[系统] 开始后触发", None)
+            assert len(pushed_pro) == 1, f"10 分钟内不应再次主动发消息: {pushed_pro}"
+            pro_clock[0] = datetime(2026, 11, 24, 14, 46, 0)  # +11 分钟 > 10 分钟：恢复允许
+            c._pro_fire("S2026-11-24T14:48r", pro_clock[0], pro_clock[0], 1.0, "[系统] 间隔足够触发", None)
+            assert len(pushed_pro) == 2
+
+            # 后台对象 ctx 路径同样应写入 ctx["st"]["messages"] 并遵守 PROACTIVE_GAP
+            bg_st = {"messages": [], "clear_ts": 0, "retry": {}, "pro_key": ""}
+            bg_ctx = {"pid": "bg-test", "name": "Beta.txt", "st": bg_st, "probs": {}, "entries": None, "segs": [], "rt": None}
+            pro_clock[0] = datetime(2026, 11, 24, 15, 0, 0)
+            c._pro_fire("S2026-11-24T15:03r", pro_clock[0], pro_clock[0], 1.0, "[系统] 后台触发", bg_ctx)
+            assert len(pushed_pro) == 3
+            assert any(m["role"] == "sys" and str(m.get("text") or "").startswith("[系统]") for m in bg_st["messages"])
+            pro_clock[0] = datetime(2026, 11, 24, 15, 4, 0)
+            c._pro_fire("F2026-11-24T15:03", pro_clock[0], pro_clock[0], 1.0, "[系统] 后台连发", bg_ctx)
+            assert len(pushed_pro) == 3, f"后台对象 10 分钟内不应再次主动发消息: {pushed_pro}"
+        finally:
+            bridge.push_proactive = orig_push_pro
+            c.now = orig_now_pro
+            c.messages = orig_msgs_pro
+            c.cfg["pro_key"] = orig_pro_key
+            c._others.pop("bg-test", None)
+
         # 9f. 重启竞态回归验证：旧 Bridge stop() 不得误删新 Bridge 的 mcp_bridge.json，且误删后 ensure_discovery() 自愈
         bridge2 = OitMcpBridge(c, tmp)
         try:
