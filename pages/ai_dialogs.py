@@ -158,9 +158,10 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
         return state.get("family") or "other"
 
     def cli_fields(on: bool):
-        """CLI 不需要也不显示 API 地址和 Key，避免误导用户。"""
+        """CLI 不使用 API Key；Base URL 保留显示，避免配置字段随预设消失。"""
         if on:
-            url_box.pack_forget()
+            url_box.pack(fill="x", pady=(0, 8), before=box)
+            ent_url.config(state="disabled")
             key_box.pack_forget()
         else:
             url_box.pack(fill="x", pady=(0, 8), before=box)
@@ -168,7 +169,8 @@ def open_model_settings(parent, cfg: "ai_assist.AIConfig") -> bool:
 
     def device_fields(on: bool):
         if on:
-            url_box.pack_forget()
+            url_box.pack(fill="x", pady=(0, 8), before=box)
+            ent_url.config(state="disabled")
             key_box.pack_forget()
             cb_family.config(state="disabled")
             ent_proto.config(state="disabled")
