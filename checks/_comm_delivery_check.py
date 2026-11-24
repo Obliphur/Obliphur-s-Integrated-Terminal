@@ -195,6 +195,45 @@ def main():
         pump(lambda: fresh["ready"].is_set())
         end(fresh)
         assert [m["text"] for m in c.visible()] == ["新会话问题", "新会话回复"]
+
+        # 用户处于无法接收消息的状态（睡眠 / 专注）时完成或多气泡队列被打断阻断，恢复后保留原定发送时间而非解锁时刻。
+        c.set_persona("小夏.txt")
+        c.clear()
+        clock[0] = datetime(2026, 11, 24, 6, 30, 0)
+        blocked_state = ["sleep"]
+        c.blocked = lambda: "睡眠中不能使用沟通" if blocked_state[0] else ""
+        c.snapshot = lambda: {"state": blocked_state[0] or "idle"}
+        sleep_reply = task("早上好\n<oit_message>\n记得吃早饭")
+        c._request("proactive", ("[系统] 6:30 主动触发", ""))
+        assert sleep_reply["ready"].wait(3)
+        end(sleep_reply)
+        assert c.visible() == []
+        clock[0] = datetime(2026, 11, 24, 7, 5, 0)
+        blocked_state[0] = ""
+        c.tick()
+        vis_sleep = [m for m in c.visible() if m["role"] == "ai"]
+        assert [m["text"] for m in vis_sleep] == ["早上好", "记得吃早饭"]
+        assert all(m["at"].startswith("2026-11-24T06:30:") for m in vis_sleep), f"睡醒后应保留 06:30 时间: {vis_sleep}"
+        assert all(m.get("shown") == int(clock[0].timestamp() * 1000) for m in vis_sleep)
+
+        # 未阻塞时生成多条气泡，尚在打字延时队列中即进入专注；解除专注后仍保留 06:30 时间。
+        c.clear()
+        clock[0] = datetime(2026, 11, 24, 6, 30, 0)
+        focus_reply = task("第一段消息\n<oit_message>\n第二段消息")
+        start(focus_reply, "在吗")
+        end(focus_reply)
+        assert any("pending_reply" in m for m in c.messages)
+        blocked_state[0] = "focus"
+        c.blocked = lambda: "专注中不能使用沟通" if blocked_state[0] else ""
+        clock[0] = datetime(2026, 11, 24, 6, 32, 0)
+        c.tick()
+        assert [m["text"] for m in c.visible()] == ["在吗"]
+        clock[0] = datetime(2026, 11, 24, 7, 5, 0)
+        blocked_state[0] = ""
+        c.tick()
+        vis_focus = [m for m in c.visible() if m["role"] == "ai"]
+        assert [m["text"] for m in vis_focus] == ["第一段消息", "第二段消息"]
+        assert all(m["at"].startswith("2026-11-24T06:30:") for m in vis_focus), f"退出专注后应保留 06:30 时间: {vis_focus}"
     finally:
         for item in all_tasks:
             item["done"].set()

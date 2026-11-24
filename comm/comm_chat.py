@@ -135,9 +135,40 @@ class ChatMixin:
         """最近一次请求发出之后, 用户又发了消息 (那次请求里没带上)."""
         return any(m.get("role") == "me" and int(m.get("ts") or 0) > int(ts) for m in self.messages)
 
+    def _settle_blocked_pending(self):
+        """用户无法接收消息期间完成并到达原定发送时刻的待发气泡，转为普通 hold 消息并保留原定时间，避免卡住后续流程与同步。"""
+        if not self.leader():
+            return
+        now = self._ms()
+        changed = False
+        for m in self.messages:
+            if not m.get("hold") or "pending_reply" not in m:
+                continue
+            if not m.get("reply_ready"):
+                break
+            due = max(int(m.get("due") or 0), int(m.get("reply_after") or 0))
+            if due > now:
+                break
+            m.pop("pending_reply", None)
+            m.pop("reply_ready", None)
+            send_at = int(m.pop("send_at", 0) or 0)
+            if not m.get("late"):
+                send_ms = send_at or (due if due > 0 else int(m.get("ts") or 0))
+                if send_ms > 0:
+                    m["at"] = datetime.fromtimestamp(send_ms / 1000).isoformat(timespec="seconds")
+                    m["ts"] = max(send_ms, int(m.get("ts") or 0))
+                    self._last_ts = max(self._last_ts, m["ts"])
+            changed = True
+        if changed:
+            self.save_chat()
+            self._push()
+
     def _release_held(self):
         """回到休息 / 空闲: 藏着的消息现在显示 (未读 +N; 不在沟通页面的话响一声). 带 due 的 (CHAR_DELAY 的打字延时) 到点才显示, 按顺序一条一条出来."""
-        if not any(m.get("hold") for m in self.messages) or self.blocked():
+        if not any(m.get("hold") for m in self.messages):
+            return
+        if self.blocked():
+            self._settle_blocked_pending()
             return
         now = self._ms()
         away = self._away_kind()                           # 对方此刻 (按日程, 合约进行中 / 合约后的同步休息按合约) 还在专注 / 睡眠吗
@@ -157,25 +188,36 @@ class ChatMixin:
             held.append(m)
             due = due_of(m)
             if "pending_reply" in m and due > 0 and now > due:
-                # 心跳迟到、阻塞或离线恢复后仍保留气泡之间的等待，不一口气倾倒整个队列。
+                # 心跳迟到、阻塞或离线恢复后仍保留气泡之间的等待，但保留原本应发送的时间戳，不一口气倾倒整个队列。
                 for following in self.messages[index + 1:]:
                     if "pending_reply" in following and int(following.get("due") or 0) >= due:
+                        if not following.get("send_at") and int(following.get("due") or 0) > 0:
+                            following["send_at"] = int(following["due"])
                         following["due"] += now - due
         if not held:
             return
+        prev_ts = 0
         for m in held:
-            del m["hold"]
             due = due_of(m)
+            del m["hold"]
             m.pop("due", None)
             m["shown"] = now                               # 等用户回复的时间从这时候算起 (规则 IX)
             pending = m.pop("pending_reply", None) is not None
             m.pop("reply_ready", None)
+            send_at = int(m.pop("send_at", 0) or 0)
             late = m.pop("late", False)
-            if late or pending:                            # 本机待发消息发布时重盖时间；日程延迟保留约定的空闲起点。
-                m["at"] = datetime.fromtimestamp((due if late else now) / 1000).isoformat(timespec="seconds")
+            if late:                                       # 对方专注时发的: 发送时间改成下一个空闲 / 休息开始的时刻, 排到最后 (还没同步给别的设备, 改 ts 没关系)
+                m["at"] = datetime.fromtimestamp(due / 1000).isoformat(timespec="seconds")
                 self._last_ts = m["ts"] = max(self._ms(), self._last_ts + 1)
                 self.messages.remove(m)
                 self.messages.append(m)
+            elif pending:                                  # 本机待发消息发布时按原定发送时刻写回时间 (阻塞恢复后不覆盖为当前时刻)
+                send_ms = send_at or (due if due > 0 else int(m.get("ts") or now))
+                m["at"] = datetime.fromtimestamp(send_ms / 1000).isoformat(timespec="seconds")
+                ts_val = max(send_ms, int(m.get("ts") or 0), prev_ts + 1 if prev_ts else 0)
+                m["ts"] = ts_val
+                prev_ts = ts_val
+                self._last_ts = max(self._last_ts, ts_val)
             self._deliver_invites(m)
             self._music_deliver(m)
         if not self.viewing:

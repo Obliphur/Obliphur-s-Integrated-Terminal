@@ -354,13 +354,14 @@ class OitMcpBridge:
         if (extra or {}).get("bg") and not cid:
             return {"event": "proactive", "skipped": "unbound_background_persona", "persona_id": persona_id}
         key = cid or persona_id or "*"
+        entry_ts = self.comm._ms() if hasattr(self.comm, "_ms") else _now_ms()
         entry = {
             "persona_id": persona_id,
             "conversation_id": cid,
             "kind": kind,
             "body": str(body or ""),
             "display_time": display_time,
-            "ts": _now_ms(),
+            "ts": entry_ts,
             "extra": dict(extra or {}),
         }
         with self._lock:
@@ -1033,25 +1034,39 @@ class OitMcpBridge:
                 if p:
                     cleaned.append(p)
 
-            batch_id = f"b_{_now_ms()}_{secrets.token_hex(4)}"
+            now_ts = self.comm._ms() if hasattr(self.comm, "_ms") else _now_ms()
+            batch_id = f"b_{now_ts}_{secrets.token_hex(4)}"
             req_ts = max([int(x.get("ts") or 0) for x in self.comm.messages if x.get("role") == "me"] or [0])
-            now_ts = _now_ms()
             self.comm._req_ts = max(int(getattr(self.comm, "_req_ts", 0) or 0), req_ts, now_ts)
+            blocked_now = bool(callable(getattr(self.comm, "blocked", None)) and self.comm.blocked())
             cum_ms = 0
             items = []
+            created_msgs = []
             for idx, part in enumerate(cleaned):
                 delay_ms = _bubble_delay_ms(self.comm, part, idx)
                 cum_ms += delay_ms
                 m = self.comm._add("ai", part)
-                m["pending_reply"] = req_ts
-                m["reply_ready"] = True
+                created_msgs.append(m)
+                is_late = bool(m.get("late"))
                 m["hold"] = True
-                m["due"] = now_ts + cum_ms
+                if not is_late:
+                    m["due"] = max(int(m.get("due") or 0), now_ts + cum_ms)
+                if not blocked_now:
+                    m["pending_reply"] = req_ts
+                    m["reply_ready"] = True
+                item_ts = int(m.get("due") or m.get("ts") or now_ts) if is_late else int(m.get("ts") or now_ts)
+                item_at = (
+                    datetime.fromtimestamp(item_ts / 1000).isoformat(timespec="seconds")
+                    if is_late else str(m.get("at") or "")
+                )
                 items.append({
                     "id": str(m.get("uid") or m.get("id") or f"{batch_id}_{idx}"),
                     "text": part,
+                    "at": item_at,
+                    "ts": item_ts,
                     "delay_ms": delay_ms,
                 })
+            held_reply = bool(blocked_now or any(m.get("late") for m in created_msgs))
 
             # 处理控制字段与请求类事件（coread / share data / shift / joint / love / share_invite）
             applied = {}
@@ -1133,6 +1148,7 @@ class OitMcpBridge:
                 "batch_id": batch_id,
                 "persona_id": pid,
                 "persona_name": _display_persona_name(self.comm),
+                "held": held_reply,
                 "items": items,
                 "applied": applied,
             }
@@ -1142,24 +1158,34 @@ class OitMcpBridge:
         def work():
             pid = str(qs.get("persona_id") or getattr(self.comm, "pid", "") or "")
             cursor = int(qs.get("cursor") or 0)
+            now_ms = self.comm._ms() if hasattr(self.comm, "_ms") else _now_ms()
+            blocked = bool(callable(getattr(self.comm, "blocked", None)) and self.comm.blocked())
             msgs = []
             pending = []
+            next_cursor = None
             for idx, m in enumerate(self.comm.messages):
                 if m.get("role") not in ("me", "ai"):
                     continue
+                is_held = bool(m.get("hold") or "pending_reply" in m)
                 item = {
                     "idx": idx,
                     "id": str(m.get("uid") or m.get("id") or idx),
                     "role": m.get("role"),
                     "text": str(m.get("text") or ""),
+                    "at": str(m.get("at") or ""),
                     "ts": int(m.get("ts") or 0),
                     "has_voice": bool(m.get("voice")),
                 }
-                if m.get("hold") or m.get("pending_reply"):
-                    item["delay_ms"] = max(0, int(m.get("due") or 0) - _now_ms())
-                    pending.append(item)
+                if is_held:
+                    if next_cursor is None:
+                        next_cursor = idx
+                    if not blocked and not m.get("late"):
+                        item["delay_ms"] = max(0, int(m.get("due") or 0) - now_ms)
+                        pending.append(item)
                 elif idx >= cursor:
                     msgs.append(item)
+            if next_cursor is None:
+                next_cursor = len(self.comm.messages)
 
             banners = []
             if hasattr(self.comm, "coread_offer") and self.comm.coread_offer():
@@ -1178,7 +1204,8 @@ class OitMcpBridge:
                 "ok": True,
                 "persona_id": pid,
                 "persona_name": _display_persona_name(self.comm),
-                "cursor": len(self.comm.messages),
+                "cursor": next_cursor,
+                "blocked": blocked,
                 "messages": msgs,
                 "pending": pending,
                 "toolbar": {
@@ -1198,23 +1225,40 @@ class OitMcpBridge:
         def work():
             if not msg_id:
                 return {"ok": False, "error": "msg_id required"}
+            if callable(getattr(self.comm, "blocked", None)) and self.comm.blocked():
+                return {"ok": False, "blocked": True, "error": self.comm.blocked()}
             found = False
             delivered_msg = None
             now_ms = self.comm._ms() if hasattr(self.comm, "_ms") else _now_ms()
+            away = self.comm._away_kind() if hasattr(self.comm, "_away_kind") else ""
             for m in self.comm.messages:
                 if str(m.get("uid") or m.get("id") or "") == msg_id:
+                    if not m.get("hold") and "pending_reply" not in m:
+                        return {"ok": True, "msg_id": msg_id, "already_delivered": True}
+                    due = int(m.get("due") or 0)
+                    if m.get("late") and away and due > now_ms:
+                        return {"ok": False, "held": True, "error": "message still deferred"}
                     m.pop("hold", None)
                     pending = m.pop("pending_reply", None) is not None
                     m.pop("reply_ready", None)
                     m.pop("due", None)
+                    send_at = int(m.pop("send_at", 0) or 0)
+                    late = bool(m.pop("late", False))
                     m["shown"] = now_ms
-                    if pending:
-                        m["at"] = datetime.fromtimestamp(now_ms / 1000).isoformat(timespec="seconds")
+                    if late:
+                        eff = min(due, now_ms) if (not away and due > 0) else (due or now_ms)
+                        m["at"] = datetime.fromtimestamp(eff / 1000).isoformat(timespec="seconds")
                         last_ts = int(getattr(self.comm, "_last_ts", 0) or 0)
                         new_ts = max(now_ms, last_ts + 1)
                         self.comm._last_ts = m["ts"] = new_ts
                         self.comm.messages.remove(m)
                         self.comm.messages.append(m)
+                    elif pending:
+                        send_ms = send_at or (due if due > 0 else int(m.get("ts") or now_ms))
+                        m["at"] = datetime.fromtimestamp(send_ms / 1000).isoformat(timespec="seconds")
+                        m["ts"] = max(send_ms, int(m.get("ts") or 0))
+                        last_ts = int(getattr(self.comm, "_last_ts", 0) or 0)
+                        self.comm._last_ts = max(last_ts, m["ts"])
                     if hasattr(self.comm, "_deliver_invites"):
                         self.comm._deliver_invites(m)
                     delivered_msg = m
@@ -1237,7 +1281,7 @@ class OitMcpBridge:
 
         def work():
             pid = str(body.get("persona_id") or getattr(self.comm, "pid", "") or "")
-            doomed = [m for m in self.comm.messages if m.get("pending_reply") or m.get("hold")]
+            doomed = [m for m in self.comm.messages if "pending_reply" in m]
             if doomed:
                 doomed_ids = {id(m) for m in doomed}
                 self.comm.messages[:] = [m for m in self.comm.messages if id(m) not in doomed_ids]

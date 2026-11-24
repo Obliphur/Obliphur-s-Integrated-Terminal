@@ -4032,6 +4032,62 @@ class CommTest {
         assertNull(c.avatarPath("ai"))          // 标志记住了: 删掉的不会再放回来
         c.flush()
     }
+
+    /** 用户在睡眠 / 专注等无法接收消息时段触发或排队的多气泡回复，解除限制推送后仍保留原定发送时间而非解锁时刻. */
+    @Test
+    fun delayedReceivePreservesTimestamp() {
+        val td = Files.createTempDirectory("oit").toFile()
+        val p = File(td, "p").also { it.mkdirs() }
+        File(p, "小满.txt").writeText("你是小满.\n06:30-07:00:空闲\n空闲发起谈话概率:100%\n")
+        val oldDelay = Comm.charDelay
+        val oldCjk = Comm.charDelayCjk
+        Comm.charDelay = 0.1
+        Comm.charDelayCjk = 0.2
+        val c = comm(File(td, "d").also { it.mkdirs() }, p)
+        try {
+            c.set(persona = "小满.txt", splitSend = false)
+            c.stateFn = { "sleep" }
+            c.blocked = { "睡眠中不能使用沟通" }
+            c.aiBlocked = { "" }
+            c.snapshot = { CommSnap("sleep") }
+
+            // 1. 睡眠中触发主动回复（含分条气泡） -> 07:05 醒来释放，时间仍显示触发时刻而非 07:05
+            script.add("早上好\n<oit_message>\n记得吃早饭")
+            assertNotNull("睡眠时对方仍会主动触发", fireBefore(c, LocalDateTime.of(2026, 11, 24, 6, 30, 0)))
+            wait(c)
+            val sentPrefix = clock.format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:"))
+            assertTrue(c.visible().isEmpty() && c.messages.any { it.hold })
+            clock = LocalDateTime.of(2026, 11, 24, 7, 5, 0)
+            c.stateFn = { "idle" }; c.blocked = { "" }
+            c.tick()
+            val sleepAi = c.visible().filter { it.role == "ai" }
+            assertEquals(listOf("早上好", "记得吃早饭"), sleepAi.map { it.text })
+            assertTrue("醒来后应保留触发时刻 $sentPrefix: ${sleepAi.map { it.at }}", sleepAi.all { it.at.startsWith(sentPrefix) })
+            assertTrue("醒来后不应变成解锁时刻 07:05: ${sleepAi.map { it.at }}", sleepAi.none { it.at.startsWith("2026-11-24T07:05:") })
+
+            // 2. 空闲时生成多气泡（带 pendingReply 与打字延时），尚未到点即进入专注 -> 07:05 退出专注释放仍保留 06:30
+            c.clear()
+            clock = LocalDateTime.of(2026, 11, 24, 6, 30, 0)
+            script.add("第一段回复\n<oit_message>\n第二段回复")
+            assertEquals("", c.send("早"))
+            wait(c)
+            assertTrue(c.messages.any { it.pendingReply != null })
+            c.stateFn = { "focus" }; c.blocked = { "专注中不能使用沟通" }
+            clock = LocalDateTime.of(2026, 11, 24, 6, 32, 0)
+            c.tick()
+            assertEquals(listOf("早"), c.visible().map { it.text })
+            clock = LocalDateTime.of(2026, 11, 24, 7, 5, 0)
+            c.stateFn = { "idle" }; c.blocked = { "" }
+            c.tick()
+            val focusAi = c.visible().filter { it.role == "ai" }
+            assertEquals(listOf("第一段回复", "第二段回复"), focusAi.map { it.text })
+            assertTrue("退出专注后应保留 06:30 时间: ${focusAi.map { it.at }}", focusAi.all { it.at.startsWith("2026-11-24T06:30:") })
+            c.flush()
+        } finally {
+            Comm.charDelay = oldDelay
+            Comm.charDelayCjk = oldCjk
+        }
+    }
 }
 
 /** 只给测试用: 一份带完整日程的老格式人设 (日程写在提示词里). */

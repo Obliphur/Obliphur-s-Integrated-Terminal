@@ -21,6 +21,7 @@ class ChatMsg(val id: Int, val role: String, val text: String, var at: String, v
     /** 未发送的本机回复及完整响应校验标记，不进入设备同步或 API 历史。 */
     internal var pendingReply: Long? = null
     internal var replyReady = false
+    internal var sendAt = 0L
     /** 本机 share data 邀请等消息实际展示再生效；不随消息同步。 */
     var shareInvite = false
     /** 打字延时 (Comm.charDelay): 对方的消息每个字符晚这么多秒才显示; 到这个时刻 (毫秒) 前一直 hold. 0 = 没有. */
@@ -1974,7 +1975,7 @@ class Comm(
             val ts = m.optLong("ts", 0L).takeIf { it != 0L }
                 ?: parseIso(at)?.atZone(java.time.ZoneId.systemDefault())?.toInstant()?.toEpochMilli() ?: 0L     // 旧版本的记录没有 uid / ts
             st.messages.add(ChatMsg(id, role, m.optString("text"), at, m.optString("api"), m.optString("uid").ifEmpty { "L$id" }, ts)
-                .also { it.hold = m.optBoolean("hold"); it.due = m.optLong("due"); it.replyAfter = m.optLong("reply_after"); it.noReply = role == "me" && m.optBoolean("no_reply"); it.late = m.optBoolean("late"); it.wait = m.optDouble("wait", 0.0); it.chased = m.optBoolean("chased"); it.shown = m.optLong("shown"); it.shareInvite = m.optBoolean("share_invite"); it.pinged = m.optBoolean("pinged"); it.pendingReply = if (m.has("pending_reply")) m.optLong("pending_reply") else null; it.replyReady = m.optBoolean("reply_ready") })
+                .also { it.hold = m.optBoolean("hold"); it.due = m.optLong("due"); it.replyAfter = m.optLong("reply_after"); it.noReply = role == "me" && m.optBoolean("no_reply"); it.late = m.optBoolean("late"); it.wait = m.optDouble("wait", 0.0); it.chased = m.optBoolean("chased"); it.shown = m.optLong("shown"); it.shareInvite = m.optBoolean("share_invite"); it.pinged = m.optBoolean("pinged"); it.pendingReply = if (m.has("pending_reply")) m.optLong("pending_reply") else null; it.replyReady = m.optBoolean("reply_ready"); it.sendAt = m.optLong("send_at") })
         }
         st.messages.sortWith(compareBy({ it.ts }, { it.uid }))
         st.clearTs = o?.optLong("clear_ts", 0L) ?: 0L
@@ -2004,6 +2005,7 @@ class Comm(
                 if (m.pinged) put("pinged", true)
                 if (m.role == "me" && m.noReply) put("no_reply", true)
                 m.pendingReply?.let { put("pending_reply", it); put("reply_ready", m.replyReady) }
+                if (m.sendAt != 0L) put("send_at", m.sendAt)
             })
         return JSONObject().put("interaction", st.interaction.json()).put("messages", arr).put("clear_ts", st.clearTs).put("retry_at", st.retryAt)
             .put("retry_n", st.retryN).put("pro_key", st.proKey)
@@ -4951,7 +4953,15 @@ class Comm(
             if (sent.isNotEmpty()) return sent.last()
         }
         for (part in parts.drop(batch.messages.size)) replyQueue(part, batch, ready = true)
-        batch.messages.filter { it.pendingReply != null }.forEach { it.replyReady = true }
+        val isBlocked = blocked().isNotEmpty()
+        batch.messages.filter { it.pendingReply != null }.forEach {
+            if (isBlocked) {
+                it.pendingReply = null
+                it.replyReady = false
+            } else {
+                it.replyReady = true
+            }
+        }
         return batch.messages.lastOrNull()
     }
 
@@ -4964,10 +4974,50 @@ class Comm(
     /** 最近一次请求发出之后, 用户又发了消息 (那次请求里没带上). */
     private fun newerMe(ts: Long) = messages.any { it.role == "me" && it.ts > ts }
 
+    /** 用户无法接收消息期间完成并到达原定发送时刻的待发气泡，转为普通 hold 消息并保留原定时间，避免卡住后续流程与同步。 */
+    private fun settleBlockedPending() {
+        if (!leader()) return
+        val now = nowMs()
+        var dirty = false
+        var prevTs = 0L
+        for (m in messages) {
+            if (!m.hold || m.pendingReply == null) continue
+            if (!m.replyReady) break
+            val due = maxOf(m.due, m.replyAfter)
+            if (due > now) break
+            m.pendingReply = null
+            m.replyReady = false
+            val sendAt = m.sendAt
+            m.sendAt = 0L
+            if (!m.late) {
+                val sendMs = when {
+                    sendAt > 0L -> sendAt
+                    due > 0L -> due
+                    else -> m.ts
+                }
+                if (sendMs > 0L) {
+                    m.at = java.time.Instant.ofEpochMilli(sendMs).atZone(java.time.ZoneId.systemDefault()).toLocalDateTime().iso()
+                    val tsVal = maxOf(sendMs, m.ts, if (prevTs > 0L) prevTs + 1L else 0L)
+                    m.ts = tsVal
+                    prevTs = tsVal
+                    lastTs = maxOf(lastTs, tsVal)
+                }
+            }
+            dirty = true
+        }
+        if (dirty) {
+            saveChat()
+            push()
+        }
+    }
+
     /** 回到休息 / 空闲: 藏着的消息现在显示 (未读 +N, 前 5 分钟没聊过的话响一声). */
     private fun releaseHeld() {
-        if (blocked().isNotEmpty()) return
         if (messages.none { it.hold }) return
+        if (blocked().isNotEmpty()) {
+            settleBlockedPending()
+            return
+        }
         val now = nowMs()
         val away = awayKind()                                                 // 对方此刻 (按日程, 合约进行中 / 合约后的同步休息按合约) 还在专注 / 睡眠吗
         // 对方专注时发的, 现在已经不在专注了 (日程到了 / 合约让对方休息了): 不用再等原来排的时刻
@@ -4978,22 +5028,39 @@ class Comm(
             val due = dueOf(m)
             if (due > now || m.pendingReply != null && !leader()) break
             held.add(m)
-            // 心跳迟到或恢复时，仍保留后续气泡之间的等待。
+            // 心跳迟到或恢复时，仍保留后续气泡之间的等待，但记住原本应发送的时间戳。
             if (m.pendingReply != null && due > 0L && now > due) {
-                messages.drop(index + 1).filter { it.pendingReply != null && it.due >= due }.forEach { it.due += now - due }
+                messages.drop(index + 1).filter { it.pendingReply != null && it.due >= due }.forEach {
+                    if (it.sendAt == 0L && it.due > 0L) it.sendAt = it.due
+                    it.due += now - due
+                }
             }
         }
         if (held.isEmpty()) return
+        var prevTs = 0L
         held.forEach {
             val due = dueOf(it)
             it.hold = false; it.shown = now                                   // 等用户回复的时间从这时候算起 (规则 IX)
             val pending = it.pendingReply != null
             it.pendingReply = null; it.replyReady = false
-            if (it.late || pending) {                                                    // 对方专注时发的: 发送时间改成下一个空闲 / 休息开始的时刻, 排到最后 (还没同步给别的设备, 改 ts 没关系)
-                it.at = java.time.Instant.ofEpochMilli(if (it.late) due else now).atZone(java.time.ZoneId.systemDefault()).toLocalDateTime().iso()
+            val sendAt = it.sendAt; it.sendAt = 0L
+            val late = it.late; it.late = false
+            if (late) {                                                                  // 对方专注时发的: 发送时间改成下一个空闲 / 休息开始的时刻, 排到最后 (还没同步给别的设备, 改 ts 没关系)
+                it.at = java.time.Instant.ofEpochMilli(due).atZone(java.time.ZoneId.systemDefault()).toLocalDateTime().iso()
                 lastTs = maxOf(nowMs(), lastTs + 1); it.ts = lastTs
-                it.late = false
                 messages.remove(it); messages.add(it)
+            } else if (pending) {                                                        // 本机待发消息发布时按原定发送时刻写回时间 (阻塞恢复后不覆盖为当前时刻)
+                val sendMs = when {
+                    sendAt > 0L -> sendAt
+                    due > 0L -> due
+                    it.ts > 0L -> it.ts
+                    else -> now
+                }
+                it.at = java.time.Instant.ofEpochMilli(sendMs).atZone(java.time.ZoneId.systemDefault()).toLocalDateTime().iso()
+                val tsVal = maxOf(sendMs, it.ts, if (prevTs > 0L) prevTs + 1L else 0L)
+                it.ts = tsVal
+                prevTs = tsVal
+                lastTs = maxOf(lastTs, tsVal)
             }
             it.due = 0L
             deliverInvites(it)

@@ -149,7 +149,12 @@ class DeliveryMixin:
                 return sent[-1]
         for part in parts[len(batch.messages):]:
             self._reply_queue(part, batch, ready=True)
+        blocked = bool(self.blocked())
         for m in batch.messages:
             if "pending_reply" in m:
-                m["reply_ready"] = True
+                if blocked:
+                    m.pop("pending_reply", None)
+                    m.pop("reply_ready", None)
+                else:
+                    m["reply_ready"] = True
         return batch.messages[-1] if batch.messages else None

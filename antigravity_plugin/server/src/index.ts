@@ -462,7 +462,9 @@ function createOitServer(): Server {
         const res = await bridgePost("/reply/submit", args);
         const items = Array.isArray(res.items) ? res.items : [];
         const summary = items.length
-          ? `已提交 ${items.length} 条气泡到 OIT Chat 侧栏（batch=${res.batch_id}）。请勿在主聊天区重复复述这些内容，直接回复 ✓ 结束本轮即可。`
+          ? (res.held
+              ? `已提交 ${items.length} 条气泡（当前用户暂不可接收或日程延后，待恢复后推送；batch=${res.batch_id}）。请勿在主聊天区重复复述这些内容，直接回复 ✓ 结束本轮即可。`
+              : `已提交 ${items.length} 条气泡到 OIT Chat 侧栏（batch=${res.batch_id}）。请勿在主聊天区重复复述这些内容，直接回复 ✓ 结束本轮即可。`)
           : res.silent
             ? "本轮保持静默。"
             : res.refuse

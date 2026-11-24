@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """端到端检查：OIT MCP Bridge（HTTP + SSE）、子代理双路由、Antigravity Hooks、TypeScript MCP Server（stdio + Streamable HTTP）与 aux_pane 资源。"""
 
+from datetime import datetime, timedelta
 import json
 import os
 import shutil
@@ -41,7 +42,7 @@ def main():
     http_proc = None
     try:
         config.AI_CHAT_TAKEOVER = "antigravity"
-        c = comm.Comm(tmp, personas_dir)
+        c = comm.Comm(tmp, personas_dir, now=lambda: datetime(2026, 11, 24, 12, 40, 0))
         opened = []
         bridge = OitMcpBridge(c, tmp, open_native_dialog=lambda kind, p: opened.append((kind, p)) or {"ok": True})
         c.mcp_bridge = bridge
@@ -322,6 +323,93 @@ def main():
         ai_tail = [m for m in c.messages if m.get("role") == "ai"][-2:]
         assert [m["text"] for m in ai_tail] == ["第一条说明", "第二条带追问"], f"气泡顺序不应倒置: {[m['text'] for m in ai_tail]}"
         assert ai_tail[-1].get("wait") == 1.0 and ai_tail[-1].get("shown"), "最后一条气泡应保留 wait 且记录 shown"
+
+        # 9d-1b. 接管模式延时接收回归：用户睡眠 / 专注期间触发的回复在恢复后必须显示 06:30 而非 07:05
+        orig_now = c.now
+        orig_blocked = c.blocked
+        orig_away = c._away_kind
+        orig_free = c.ai_free_at
+        try:
+            # 先把前面 12:40 测试遗留的待发气泡排空，后续按递增日期 11-25 / 11-26 / 11-27 推进
+            sim_clock = [datetime(2026, 11, 24, 12, 45, 0)]
+            sim_blocked = [""]
+            c.now = lambda: sim_clock[0]
+            c.blocked = lambda: sim_blocked[0]
+            while any(m.get("hold") for m in c.messages):
+                sim_clock[0] += timedelta(seconds=10)
+                c.tick()
+
+            # (a) 睡眠阻塞：06:30 主动触发并由 oit_reply 提交 -> 07:05 起床推送，消息仍显示 06:30
+            sim_clock[0] = datetime(2026, 11, 25, 6, 30, 0)
+            sim_blocked[0] = "睡眠中不能使用沟通"
+            cursor_before_sleep = _http_json(port, bridge.token, "/ui/state", None)["cursor"]
+            bridge.push_proactive(c.pid, "早安触发", kind="proactive")
+            rep_sleep = _http_json(port, bridge.token, "/reply/submit", {
+                "conversation_id": "conv-1",
+                "bubbles": ["早安,睡醒了吗?", "昨晚休息得怎么样?"],
+            })
+            assert rep_sleep["ok"] and rep_sleep.get("held") is True
+            assert [it["text"] for it in rep_sleep["items"]] == ["早安,睡醒了吗?", "昨晚休息得怎么样?"]
+            assert all(it["at"].startswith("2026-11-25T06:30:") for it in rep_sleep["items"])
+
+            st_sleep = _http_json(port, bridge.token, f"/ui/state?cursor={cursor_before_sleep}")
+            assert st_sleep["blocked"] is True and st_sleep["pending"] == [] and st_sleep["messages"] == [], st_sleep
+            assert st_sleep["cursor"] == cursor_before_sleep, "用户阻塞期间 cursor 不得跳过待显示消息"
+
+            b_sleep_id = rep_sleep["items"][0]["id"]
+            deliv_blocked = _http_json(port, bridge.token, "/ui/delivered", {"msg_id": b_sleep_id})
+            assert deliv_blocked["ok"] is False and deliv_blocked.get("blocked") is True
+
+            # 07:05 醒来：tick 释放消息，at 仍停在 06:30，且 aux_pane 用原 cursor 能完整拉出
+            sim_clock[0] = datetime(2026, 11, 25, 7, 5, 0)
+            sim_blocked[0] = ""
+            c.tick()
+            sleep_ai = [m for m in c.visible() if m.get("role") == "ai"][-2:]
+            assert [m["text"] for m in sleep_ai] == ["早安,睡醒了吗?", "昨晚休息得怎么样?"]
+            assert all(m["at"].startswith("2026-11-25T06:30:") for m in sleep_ai), f"睡醒后应显示 06:30: {sleep_ai}"
+            st_awake = _http_json(port, bridge.token, f"/ui/state?cursor={cursor_before_sleep}")
+            assert [m["text"] for m in st_awake["messages"][-2:]] == ["早安,睡醒了吗?", "昨晚休息得怎么样?"]
+            assert all(m["at"].startswith("2026-11-25T06:30:") for m in st_awake["messages"][-2:])
+
+            # (b) 专注中提交 + /ui/delivered 也保留 06:30
+            sim_clock[0] = datetime(2026, 11, 26, 6, 30, 0)
+            sim_blocked[0] = "专注中不能使用沟通"
+            rep_focus = _http_json(port, bridge.token, "/reply/submit", {
+                "conversation_id": "conv-1",
+                "bubbles": ["专注中先别看手机"],
+            })
+            assert rep_focus["ok"] and rep_focus.get("held") is True
+            assert _http_json(port, bridge.token, "/ui/delivered", {"msg_id": rep_focus["items"][0]["id"]})["ok"] is False
+            sim_clock[0] = datetime(2026, 11, 26, 7, 5, 0)
+            sim_blocked[0] = ""
+            c.tick()
+            assert c.visible()[-1]["text"] == "专注中先别看手机"
+            assert c.visible()[-1]["at"].startswith("2026-11-26T06:30:"), f"结束专注后应显示 06:30: {c.visible()[-1]}"
+
+            # (c) AI 在专注中 (ai_free_at = 06:30) 且用户在睡眠 (06:28 -> 07:05)：不得被打字延时覆盖成 06:28 或 07:05
+            free_0630 = datetime(2026, 11, 27, 6, 30, 0)
+            sim_clock[0] = datetime(2026, 11, 27, 6, 28, 0)
+            sim_blocked[0] = "睡眠中不能使用沟通"
+            c._away_kind = lambda now=None: "focus"
+            c.ai_free_at = lambda now=None: free_0630
+            rep_late = _http_json(port, bridge.token, "/reply/submit", {
+                "conversation_id": "conv-1",
+                "bubbles": ["我刚结束专注"],
+            })
+            assert rep_late["ok"] and rep_late.get("held") is True
+            assert rep_late["items"][0]["at"] == "2026-11-27T06:30:00"
+            c._away_kind = lambda now=None: ""
+            c.ai_free_at = lambda now=None: None
+            sim_clock[0] = datetime(2026, 11, 27, 7, 5, 0)
+            sim_blocked[0] = ""
+            c.tick()
+            assert c.visible()[-1]["text"] == "我刚结束专注"
+            assert c.visible()[-1]["at"] == "2026-11-27T06:30:00", f"late 消息应显示 06:30:00: {c.visible()[-1]}"
+        finally:
+            c.now = orig_now
+            c.blocked = orig_blocked
+            c._away_kind = orig_away
+            c.ai_free_at = orig_free
 
         # 9d-2. Tension / Valence 自动判断提示注入与结算回归验证
         tv_persona = os.path.join(personas_dir, "TVTest.txt")

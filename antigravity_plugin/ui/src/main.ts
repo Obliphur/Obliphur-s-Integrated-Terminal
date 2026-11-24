@@ -8,6 +8,7 @@ interface ChatMsg {
   id: string;
   role: "me" | "ai";
   text: string;
+  at?: string;
   ts?: number;
   has_voice?: boolean;
   delay_ms?: number;
@@ -17,6 +18,7 @@ interface UiState {
   persona_id?: string;
   persona_name?: string;
   cursor?: number;
+  blocked?: boolean;
   messages?: ChatMsg[];
   pending?: ChatMsg[];
   toolbar?: {
@@ -55,7 +57,11 @@ function updateMaxHint() {
 }
 window.addEventListener("resize", updateMaxHint);
 
-function fmtTime(ts?: number): string {
+function fmtTime(at?: string, ts?: number): string {
+  if (at) {
+    const match = at.match(/T(\d{2}:\d{2})/);
+    if (match) return match[1];
+  }
   if (!ts) return "";
   const d = new Date(ts);
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
@@ -76,7 +82,7 @@ function appendBubble(m: ChatMsg) {
 
   const meta = document.createElement("div");
   meta.className = "meta";
-  const t = fmtTime(m.ts || Date.now());
+  const t = fmtTime(m.at, m.ts || Date.now());
   if (t) {
     const span = document.createElement("span");
     span.textContent = t;
@@ -139,7 +145,7 @@ function schedulePending(items: ChatMsg[]) {
     const delay = cumulative;
     const timer = window.setTimeout(async () => {
       scheduledTimers.delete(item.id);
-      appendBubble({ ...item, role: "ai", ts: Date.now() });
+      appendBubble({ ...item, role: "ai", at: item.at, ts: item.ts || Date.now() });
       try {
         await callAppTool("oit_ui_mark_delivered", { msg_id: item.id });
       } catch {
@@ -297,12 +303,14 @@ app.ontoolinput = () => {
 app.ontoolresult = (result) => {
   refreshCapabilities();
   const sc = result.structuredContent as Record<string, unknown> | undefined;
-  if (sc && Array.isArray(sc.items)) {
+  if (sc && Array.isArray(sc.items) && !sc.held) {
     schedulePending(
       sc.items.map((x: any) => ({
         id: String(x.id || ""),
         role: "ai",
         text: String(x.text || ""),
+        at: typeof x.at === "string" ? x.at : undefined,
+        ts: typeof x.ts === "number" ? x.ts : undefined,
         delay_ms: Number(x.delay_ms || 0),
       }))
     );
