@@ -386,6 +386,21 @@ def main():
                 sim_clock[0] += timedelta(seconds=10)
                 c.tick()
 
+            # 回复已排队后用户进入专注，侧栏不可先显示；解除阻塞后同一条仍可送达。
+            sim_clock[0] = datetime(2026, 11, 24, 12, 50, 0)
+            race_reply = _http_json(port, bridge.token, "/reply/submit", {
+                "conversation_id": "conv-1", "bubbles": ["进入专注前排队的回复"],
+            })
+            assert race_reply["ok"] and not race_reply["held"]
+            race_id = race_reply["items"][0]["id"]
+            sim_blocked[0] = "专注中不能使用沟通"
+            assert _http_json(port, bridge.token, "/ui/delivered", {"msg_id": race_id}).get("blocked") is True
+            assert all(m.get("uid") != race_id or m.get("hold") for m in c.messages), "阻塞期间消息必须仍在待发队列"
+            sim_blocked[0] = ""
+            state_after_race = _http_json(port, bridge.token, "/ui/state", None)
+            assert any(m["id"] == race_id for m in state_after_race["pending"]), "解除阻塞后应重新排队"
+            assert _http_json(port, bridge.token, "/ui/delivered", {"msg_id": race_id})["ok"]
+
             # (a) 睡眠阻塞：06:30 主动触发并由 oit_reply 提交 -> 07:05 起床推送，消息仍显示 06:30
             sim_clock[0] = datetime(2026, 11, 25, 6, 30, 0)
             sim_blocked[0] = "睡眠中不能使用沟通"

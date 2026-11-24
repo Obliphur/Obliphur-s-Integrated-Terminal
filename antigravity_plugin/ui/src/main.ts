@@ -165,9 +165,11 @@ function schedulePending(items: ChatMsg[]) {
     const delay = cumulative;
     const timer = window.setTimeout(async () => {
       scheduledTimers.delete(item.id);
-      appendBubble({ ...item, role: "ai", at: item.at, ts: item.ts || Date.now() });
       try {
-        await callAppTool("oit_ui_mark_delivered", { msg_id: item.id });
+        const result = await callAppTool("oit_ui_mark_delivered", { msg_id: item.id });
+        if (result.ok) {
+          appendBubble({ ...item, role: "ai", at: item.at, ts: item.ts || Date.now() });
+        }
       } catch {
         // Retry on next poll if needed.
       }
