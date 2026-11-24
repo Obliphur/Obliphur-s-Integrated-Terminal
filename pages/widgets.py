@@ -59,24 +59,16 @@ class ScrollArea(tk.Frame):
         bg = bg or COLORS["bg"]
         super().__init__(master, bg=bg, **kw)
         self.canvas = tk.Canvas(self, bg=bg, highlightthickness=0, height=height)
-        self.scroll = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.scroll = ttk.Scrollbar(self, orient="vertical")
         self.canvas.configure(yscrollcommand=self.scroll.set)
         self.scroll.pack(side="right", fill="y")
         self.canvas.pack(side="left", fill="both", expand=True)
 
         self.inner = tk.Frame(self.canvas, bg=bg)
         self._win = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
-        self.inner.bind(
-            "<Configure>",
-            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-        )
-        self.canvas.bind(
-            "<Configure>",
-            lambda e: self.canvas.itemconfig(self._win, width=e.width)
-        )
+        self._scroller = attach_smooth_scroll(self.canvas, self.scroll, self.inner, self._win)
         self._wheel_bound = set()       # 兼容: 以前按 winfo_id 记绑定, 现在用控件上的 _oit_wheel
         self.bind_children()
-        self.canvas.bind("<MouseWheel>", self._wheel)
 
     def bind_children(self):
         """给 inner 里现有的所有控件绑上滚轮 (动态加进来的控件要再调一次).
@@ -95,18 +87,17 @@ class ScrollArea(tk.Frame):
         walk(self.inner)
 
     def _wheel(self, event):
-        self.canvas.yview_scroll(int(-event.delta / 120), "units")
-        return "break"
+        return self._scroller.on_wheel(event)
 
     def scroll_to_top(self):
-        self.canvas.yview_moveto(0.0)
+        self._scroller.moveto(0.0)
 
     def scroll_to(self, widget):
         """滚到 widget (inner 里直接放着的一块) 的顶部."""
         try:
             self.update_idletasks()
             total = max(1, self.inner.winfo_height())
-            self.canvas.yview_moveto(max(0.0, widget.winfo_y() - 4) / total)
+            self._scroller.moveto(max(0.0, widget.winfo_y() - 4) / total)
         except Exception:
             pass
 
@@ -211,6 +202,9 @@ def flavor(parent, text: str, bg: str = None, pad: int = 24):
         w = fr.master
         while w is not None:
             if isinstance(w, tk.Canvas) and str(w.cget("yscrollcommand")):
+                fn = getattr(w, "_oit_wheel_fn", None)
+                if fn is not None:
+                    return fn(e)
                 w.yview_scroll(int(-e.delta / 120), "units")
                 break
             w = w.master
@@ -330,6 +324,8 @@ class _Snapshot:
             u.UpdateLayeredWindow.restype = wt.BOOL
             u.ShowWindow.argtypes = [wt.HWND, ctypes.c_int]
             u.DestroyWindow.argtypes = [wt.HWND]
+            u.GetSystemMetrics.argtypes = [ctypes.c_int]
+            u.GetSystemMetrics.restype = ctypes.c_int
             g.CreateCompatibleDC.argtypes = [H]
             g.CreateCompatibleDC.restype = H
             g.CreateCompatibleBitmap.argtypes = [H, ctypes.c_int, ctypes.c_int]
@@ -349,13 +345,23 @@ class _Snapshot:
             cls._api = False
         return cls._api or None
 
+    @staticmethod
+    def _on_screen(u, pt, w, h) -> bool:
+        vx = u.GetSystemMetrics(76)     # SM_XVIRTUALSCREEN
+        vy = u.GetSystemMetrics(77)     # SM_YVIRTUALSCREEN
+        vw = u.GetSystemMetrics(78)     # SM_CXVIRTUALSCREEN
+        vh = u.GetSystemMetrics(79)     # SM_CYVIRTUALSCREEN
+        if vw <= 0 or vh <= 0:
+            return True
+        return not (pt.x + w <= vx or pt.x >= vx + vw or pt.y + h <= vy or pt.y >= vy + vh)
+
     def __init__(self, top):
         self.hwnd = None
         api = self.api()
         if api is None:
             return
         ctypes, wt, u, g, k, _d = api
-        hdc = mem = bmp = old = None
+        client = hdc = mem = bmp = old = None
         try:
             client = int(top.winfo_id())
             owner = u.GetAncestor(client, 2)            # GA_ROOT: 带标题栏的外层窗口
@@ -368,12 +374,17 @@ class _Snapshot:
                 return
             pt = wt.POINT(0, 0)
             u.ClientToScreen(client, ctypes.byref(pt))
+            if not self._on_screen(u, pt, w, h):
+                return
 
-            hdc = u.GetDC(None)                         # 截屏幕上实际看到的样子
+            # 直接从窗口自身的 DWM 重定向表面截取: 不受其他遮挡窗口影响, 也不会在提权桌面下 GetDC(None) 失败
+            hdc = u.GetDC(client)
+            if not hdc:
+                return
             mem = g.CreateCompatibleDC(hdc)
             bmp = g.CreateCompatibleBitmap(hdc, w, h)
             old = g.SelectObject(mem, bmp)
-            if not g.BitBlt(mem, 0, 0, w, h, hdc, pt.x, pt.y, 0x00CC0020):   # SRCCOPY
+            if not g.BitBlt(mem, 0, 0, w, h, hdc, 0, 0, 0x00CC0020):       # SRCCOPY
                 return
             ex = 0x00080000 | 0x00000080 | 0x08000000 | 0x00000020
             #    LAYERED      TOOLWINDOW   NOACTIVATE   TRANSPARENT(鼠标穿透)
@@ -384,7 +395,7 @@ class _Snapshot:
                 return
             size = wt.SIZE(w, h)
             src = wt.POINT(0, 0)
-            if not u.UpdateLayeredWindow(ov, hdc, ctypes.byref(pt), ctypes.byref(size),
+            if not u.UpdateLayeredWindow(ov, None, ctypes.byref(pt), ctypes.byref(size),
                                          mem, ctypes.byref(src), 0, None,
                                          0x00000004):              # ULW_OPAQUE
                 u.DestroyWindow(ov)
@@ -401,8 +412,8 @@ class _Snapshot:
                     g.DeleteObject(bmp)
                 if mem:
                     g.DeleteDC(mem)
-                if hdc:
-                    u.ReleaseDC(None, hdc)
+                if hdc and client:
+                    u.ReleaseDC(client, hdc)
             except Exception:
                 pass
 
@@ -422,6 +433,289 @@ class _Snapshot:
         except Exception:
             pass
         self.hwnd = None
+
+
+class _RegionCover:
+    """可复用的局部双缓冲盖板: 滚动 Canvas 期间盖住旧画面, 等所有子控件完整画完再一次性揭开.
+
+    与 _Snapshot 原理相同, 但复用了底层分层窗口与兼容位图, 避免滚动时反复创建/销毁 HWND 和 GDI 对象;
+    控件销毁时自动释放全部句柄.
+    """
+
+    def __init__(self, widget):
+        self.widget = widget
+        self._ov = None
+        self._mem = None
+        self._bmp = None
+        self._old = None
+        self._size = None
+        self._active = False
+        try:
+            widget.bind("<Destroy>", self._on_destroy, add="+")
+        except Exception:
+            pass
+
+    def _on_destroy(self, event):
+        if event.widget is self.widget:
+            self.close()
+
+    def capture(self) -> bool:
+        if self._active:
+            return True
+        api = _Snapshot.api()
+        if api is None:
+            return False
+        w_obj = self.widget
+        try:
+            if not w_obj.winfo_exists() or not w_obj.winfo_ismapped():
+                return False
+            top = w_obj.winfo_toplevel()
+            if _freeze_depth.get(str(top), 0) > 0:
+                return False
+            hwnd = int(w_obj.winfo_id())
+        except Exception:
+            return False
+
+        ctypes, wt, u, g, k, _d = api
+        hdc = None
+        try:
+            owner = u.GetAncestor(hwnd, 2)              # GA_ROOT
+            if not owner or not u.IsWindowVisible(owner) or u.IsIconic(owner):
+                return False
+            rc = wt.RECT()
+            u.GetClientRect(hwnd, ctypes.byref(rc))
+            w, h = rc.right - rc.left, rc.bottom - rc.top
+            if w <= 0 or h <= 0:
+                return False
+            pt = wt.POINT(0, 0)
+            u.ClientToScreen(hwnd, ctypes.byref(pt))
+            if not _Snapshot._on_screen(u, pt, w, h):
+                return False
+
+            hdc = u.GetDC(hwnd)
+            if not hdc:
+                return False
+            if self._mem is None:
+                self._mem = g.CreateCompatibleDC(hdc)
+                if not self._mem:
+                    return False
+            if self._size != (w, h) or not self._bmp:
+                if self._old and self._mem:
+                    g.SelectObject(self._mem, self._old)
+                    self._old = None
+                if self._bmp:
+                    g.DeleteObject(self._bmp)
+                    self._bmp = None
+                self._bmp = g.CreateCompatibleBitmap(hdc, w, h)
+                if not self._bmp:
+                    return False
+                self._old = g.SelectObject(self._mem, self._bmp)
+                self._size = (w, h)
+
+            if not g.BitBlt(self._mem, 0, 0, w, h, hdc, 0, 0, 0x00CC0020):
+                return False
+            if not self._ov:
+                ex = 0x00080000 | 0x00000080 | 0x08000000 | 0x00000020
+                self._ov = u.CreateWindowExW(ex, "STATIC", None, 0x80000000,
+                                             pt.x, pt.y, w, h, owner, None,
+                                             k.GetModuleHandleW(None), None)
+                if not self._ov:
+                    return False
+            size = wt.SIZE(w, h)
+            src = wt.POINT(0, 0)
+            if not u.UpdateLayeredWindow(self._ov, None, ctypes.byref(pt), ctypes.byref(size),
+                                         self._mem, ctypes.byref(src), 0, None,
+                                         0x00000004):
+                return False
+            u.ShowWindow(self._ov, 4)                   # SW_SHOWNOACTIVATE
+            self._active = True
+            return True
+        except Exception:
+            return False
+        finally:
+            if hdc:
+                try:
+                    u.ReleaseDC(hwnd, hdc)
+                except Exception:
+                    pass
+
+    def release(self):
+        if not self._active:
+            return
+        self._active = False
+        api = _Snapshot.api()
+        if api is None or not self._ov:
+            return
+        _ctypes, _wt, u, g, _k, d = api
+        try:
+            g.GdiFlush()
+            if d is not None:
+                d.DwmFlush()
+        except Exception:
+            pass
+        try:
+            u.ShowWindow(self._ov, 0)                   # SW_HIDE
+        except Exception:
+            pass
+
+    def close(self):
+        self._active = False
+        api = _Snapshot.api()
+        if api is None:
+            self._ov = self._mem = self._bmp = self._old = self._size = None
+            return
+        _ctypes, _wt, u, g, _k, _d = api
+        try:
+            if self._ov:
+                u.DestroyWindow(self._ov)
+        except Exception:
+            pass
+        try:
+            if self._old and self._mem:
+                g.SelectObject(self._mem, self._old)
+            if self._bmp:
+                g.DeleteObject(self._bmp)
+            if self._mem:
+                g.DeleteDC(self._mem)
+        except Exception:
+            pass
+        self._ov = self._mem = self._bmp = self._old = self._size = None
+
+
+class _SmoothScroll:
+    """把 Canvas + Scrollbar + inner Frame 的滚动合并成按帧双缓冲切换:
+    1) inner 仅在宽高变化时才更新 scrollregion (滚动引起的 y 位移不反复算 bbox);
+    2) 高频滚轮 / 拖拽滚动条合并到单次 idle 刷新, 避免事件积压;
+    3) 每次实际滚动用 _RegionCover 盖住旧画面, 后台画完所有子控件后再整帧切出, 消除分块渲染.
+    """
+
+    def __init__(self, canvas: tk.Canvas, scrollbar, inner: tk.Frame, win_id: int):
+        self.canvas = canvas
+        self.scrollbar = scrollbar
+        self.inner = inner
+        self.win_id = win_id
+        self._cover = _RegionCover(canvas)
+        self._inner_size = None
+        self._canvas_width = None
+        self._pending_yview = None
+        self._pending_wheel = 0
+        self._wheel_accum = 0
+        self._scroll_job = None
+
+        scrollbar.configure(command=self.on_yview)
+        inner.bind("<Configure>", self._on_inner_configure, add="+")
+        canvas.bind("<Configure>", self._on_canvas_configure, add="+")
+        canvas.bind("<MouseWheel>", self.on_wheel, add="+")
+        canvas._oit_wheel_fn = self.on_wheel
+
+    def _on_inner_configure(self, event):
+        sz = (event.width, event.height)
+        if sz != self._inner_size:
+            self._inner_size = sz
+            try:
+                self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+            except Exception:
+                pass
+
+    def _on_canvas_configure(self, event):
+        if event.width != self._canvas_width:
+            self._canvas_width = event.width
+            try:
+                self.canvas.itemconfig(self.win_id, width=event.width)
+            except Exception:
+                pass
+
+    def on_yview(self, *args):
+        if not args:
+            return self.canvas.yview()
+        if args[0] == "scroll" and len(args) >= 3 and self._pending_yview \
+                and self._pending_yview[0] == "scroll" and self._pending_yview[2] == args[2]:
+            try:
+                n = int(self._pending_yview[1]) + int(args[1])
+                self._pending_yview = ("scroll", str(n), args[2])
+            except Exception:
+                self._pending_yview = args
+        else:
+            self._pending_yview = args
+        self._schedule()
+
+    def on_wheel(self, event):
+        try:
+            lo, hi = self.canvas.yview()
+            if lo <= 0.0 and hi >= 1.0:
+                return "break"
+        except Exception:
+            pass
+        delta = getattr(event, "delta", 0)
+        if not delta:
+            return "break"
+        self._wheel_accum += -delta
+        steps = int(self._wheel_accum / 120)
+        if steps == 0:
+            return "break"
+        self._wheel_accum -= steps * 120
+        self._pending_wheel += steps
+        self._schedule()
+        return "break"
+
+    def moveto(self, fraction: float):
+        self._cancel_pending()
+        self._apply_covered(lambda: self.canvas.yview_moveto(fraction))
+
+    def _cancel_pending(self):
+        self._pending_yview = None
+        self._pending_wheel = 0
+        self._wheel_accum = 0
+        if self._scroll_job is not None:
+            try:
+                self.canvas.after_cancel(self._scroll_job)
+            except Exception:
+                pass
+            self._scroll_job = None
+
+    def _schedule(self):
+        if self._scroll_job is None:
+            try:
+                self._scroll_job = self.canvas.after_idle(self._flush)
+            except Exception:
+                self._scroll_job = None
+
+    def _apply_covered(self, action):
+        covered = self._cover.capture()
+        try:
+            action()
+            if covered:
+                settle(self.canvas, passes=2)
+        finally:
+            if covered:
+                self._cover.release()
+
+    def _flush(self):
+        self._scroll_job = None
+        yv = self._pending_yview
+        wh = self._pending_wheel
+        self._pending_yview = None
+        self._pending_wheel = 0
+        if yv is None and not wh:
+            return
+        try:
+            if not self.canvas.winfo_exists():
+                return
+        except Exception:
+            return
+
+        def do():
+            if yv is not None:
+                self.canvas.yview(*yv)
+            if wh:
+                self.canvas.yview_scroll(wh, "units")
+
+        self._apply_covered(do)
+
+
+def attach_smooth_scroll(canvas: tk.Canvas, scrollbar, inner: tk.Frame, win_id: int) -> _SmoothScroll:
+    """给任意 Canvas + Scrollbar + inner Frame 装上双缓冲防分块滚动."""
+    return _SmoothScroll(canvas, scrollbar, inner, win_id)
 
 
 def _client_hwnd(top):

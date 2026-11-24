@@ -8,7 +8,7 @@ import config
 import i18n
 from config import COLORS
 from i18n import tr
-from .widgets import cfg
+from .widgets import attach_smooth_scroll, cfg
 
 
 # 黑雾 (MECHANICS 18.3) 时盖住的格子里的假内容: 动词 + 量词 + 名词 拼起来 (中文每个词两个字).
@@ -165,21 +165,14 @@ class HourLogPage(tk.Frame):
         body = tk.Frame(self, bg=bg, highlightbackground=COLORS["border"], highlightthickness=1)
         body.pack(fill="both", expand=True, padx=26, pady=(0, 18))
         self.canvas = tk.Canvas(body, bg=bg, highlightthickness=0, height=270, yscrollincrement=30)
-        sb = ttk.Scrollbar(body, orient="vertical", command=self.canvas.yview)
+        sb = ttk.Scrollbar(body, orient="vertical")
         self.canvas.configure(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
         self.canvas.pack(side="left", fill="both", expand=True)
         self.inner = tk.Frame(self.canvas, bg=bg)
         self.win = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
-        self.inner.bind(
-            "<Configure>",
-            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-        )
-        self.canvas.bind(
-            "<Configure>",
-            lambda e: self.canvas.itemconfig(self.win, width=e.width)
-        )
-        self.canvas.bind("<MouseWheel>", self._on_wheel)
+        self._scroller = attach_smooth_scroll(self.canvas, sb, self.inner, self.win)
+        self.inner.bind("<MouseWheel>", self._on_wheel, add="+")
 
         # 第 i 行 = 以 i:00 结束的那一小时 (左边写起点); 最上面一行是昨天 23:00–24:00.
         for h in range(24):
@@ -214,6 +207,8 @@ class HourLogPage(tk.Frame):
             ent2.bind("<Return>", lambda e, h=h: self._on_return(h, 1))
             ent2.bind("<KP_Enter>", lambda e, h=h: self._on_return(h, 1))
             ent2.bind("<FocusOut>", lambda e, h=h: self._commit(h, 1))
+            for w in (row, lbl, ent, ent2):
+                w.bind("<MouseWheel>", self._on_wheel, add="+")
             self.rows[h] = (lbl, ent, var)
             self.halves[h] = (ent2, var2)
 
@@ -222,7 +217,7 @@ class HourLogPage(tk.Frame):
             self.on_open_settings()
 
     def _on_wheel(self, e):
-        self.canvas.yview_scroll(int(-e.delta / 120), "units")
+        return self._scroller.on_wheel(e)
 
     def _slot_start(self, row: int) -> datetime:
         """第 row 行对应那一小时的开始时刻(数据按开始时刻存)."""

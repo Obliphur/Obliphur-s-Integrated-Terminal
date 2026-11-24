@@ -18,7 +18,7 @@ import config
 import toast
 from config import COLORS
 from i18n import tr
-from .widgets import Modal, ScrollArea, cfg, focus_name
+from .widgets import Modal, ScrollArea, cfg, focus_name, frozen
 from .comm_voice import CommVoiceMixin
 
 
@@ -525,12 +525,13 @@ class CommPage(CommVoiceMixin, tk.Frame):
         if not older:
             return
         top = canvas.yview()[0] * total
-        for m in reversed(older):
-            self._rows.insert(0, self._add_row(m, before=self._rows[0]))
-            self._rendered.insert(0, m["id"])
-        self._cap += len(older)
-        inner.update_idletasks()
-        canvas.yview_moveto((top + (inner.winfo_height() - total)) / max(1, inner.winfo_height()))
+        with frozen(self):
+            for m in reversed(older):
+                self._rows.insert(0, self._add_row(m, before=self._rows[0]))
+                self._rendered.insert(0, m["id"])
+            self._cap += len(older)
+            inner.update_idletasks()
+            canvas.yview_moveto((top + (inner.winfo_height() - total)) / max(1, inner.winfo_height()))
 
     def _add_row(self, m, before=None):
         c = self.comm
