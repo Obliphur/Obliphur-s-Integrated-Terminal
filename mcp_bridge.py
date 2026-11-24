@@ -1086,21 +1086,24 @@ class OitMcpBridge:
                 self.comm._changed()
                 return {"ok": True}
 
+            def _latest_user_image():
+                last_user = next((m for m in reversed(self.comm.messages) if m.get("role") == "me"), {})
+                img_name = str(last_user.get("img") or "")
+                if img_name and hasattr(self.comm, "chat_image_path"):
+                    try:
+                        with open(self.comm.chat_image_path(img_name), "rb") as stream:
+                            return stream.read()
+                    except OSError:
+                        return None
+                return None
+
             if name == "oit_subject":
                 routes = self._subagent_routes(host)
                 route = routes.get("subject", {})
                 domain = str(args.get("domain") or "math")
                 session = str(args.get("session") or "default")
                 question = str(args.get("question") or "").strip()
-                last_user = next((m for m in reversed(self.comm.messages) if m.get("role") == "me"), {})
-                image = None
-                img_name = str(last_user.get("img") or "")
-                if img_name and hasattr(self.comm, "chat_image_path"):
-                    try:
-                        with open(self.comm.chat_image_path(img_name), "rb") as stream:
-                            image = stream.read()
-                    except OSError:
-                        image = None
+                image = _latest_user_image()
                 ctx = {"domain": domain, "session": session, "question": question,
                        "answer": "", "image": image, "ts": _now_ms()}
                 self._answer_image_context[(cid, session)] = ctx
@@ -1109,7 +1112,7 @@ class OitMcpBridge:
                         "ok": False,
                         "route": route.get("mode", "host_subagent"),
                         "target": route.get("agent", "oit-subject"),
-                        "instruction": "当前未为学科子代理单独配置外部 API，请改用宿主原生子代理 oit-subject（或按客观步骤直接推导）并风格化回复；解答图片模式开启时，在 oit_reply 前调用 oit_answer_image 提交原始解答和风格化解答。",
+                        "instruction": "当前未为学科子代理单独配置外部 API，请改用宿主原生子代理 oit-subject（或按客观步骤直接推导），并按当前人设语气风格化改写；解答图片模式开启时，在 oit_reply 前调用 oit_answer_image 提交原始解答和人设风格化解答。",
                     }
                 answer = self.comm.subagent_call(
                     "subject", session, f"学科: {domain}\n题目/追问:\n{question}",
@@ -1121,6 +1124,8 @@ class OitMcpBridge:
                 enabled = callable(getattr(self.comm, "answer_images_on", None)) and self.comm.answer_images_on()
                 if not enabled:
                     return {"ok": True, "enabled": False, "instruction": "解答图片模式已关闭；请仅提交文字回复。"}
+                routes = self._subagent_routes(host)
+                use_external = routes.get("subject", {}).get("mode") == "external_api"
                 domain = str(args.get("domain") or "math")
                 session = str(args.get("session") or "default")
                 original = str(args.get("answer") or "").strip()[:8000]
@@ -1130,20 +1135,28 @@ class OitMcpBridge:
                 context = self._answer_image_context.get((cid, session), {})
                 if context and context.get("domain") != domain:
                     return {"ok": False, "error": "domain 与本轮 oit_subject 不匹配"}
-                if not context:
+                if use_external and not context:
                     return {"ok": False, "error": "请先在本轮调用 oit_subject，再生成对应解答图片"}
-                prompt = (
-                    "请根据原始学科解答与聊天 AI 已完成的用户可见版本，生成最终的解答图片排版稿。"
-                    "保留原始解答中可核验的关键逻辑、步骤与结论；以聊天 AI 的语言风格为准。"
-                    "使用 Markdown 标题、列表和 LaTeX 公式，内容完整但紧凑；不要输出解释、代码围栏或隐藏思维过程。\n\n"
-                    f"原始学科解答:\n{original}\n\n聊天 AI 风格化版本:\n{styled}"
-                )
+                source_image = context.get("image") if context else _latest_user_image()
                 try:
-                    formatted = self.comm.subagent_call(
-                        "subject", f"answer-image:{session}", prompt, image=context.get("image"),
-                        max_tokens=1400, temperature=0.1, timeout=180)
+                    if use_external:
+                        prompt = (
+                            "请根据原始学科解答与聊天 AI 已完成的用户可见版本，生成最终的解答图片排版稿。"
+                            "保留原始解答中可核验的关键逻辑、步骤与结论；以聊天 AI 的语言风格为准。"
+                            "使用 Markdown 标题、列表和 LaTeX 公式，内容完整但紧凑；不要输出解释、代码围栏或隐藏思维过程。\n\n"
+                            f"原始学科解答:\n{original}\n\n聊天 AI 风格化版本:\n{styled}"
+                        )
+                        formatted = self.comm.subagent_call(
+                            "subject", f"answer-image:{session}", prompt, image=source_image,
+                            max_tokens=1400, temperature=0.1, timeout=180)
+                    else:
+                        formatted = (
+                            f"{styled}\n\n## 详细推导\n\n{original}"
+                            if len(styled) < 40 and len(original) > len(styled) * 2
+                            else styled
+                        )
                     from answer_images import render
-                    data = render(formatted, context.get("image"), title=f"{domain}解答")
+                    data = render(formatted, source_image, title=f"{domain}解答")
                     if not data:
                         return {"ok": False, "error": "本机无法生成解答图片；请正常提交文字回复。"}
                     self._pending_answer_images[cid] = {"data": data, "ts": _now_ms(), "session": session}

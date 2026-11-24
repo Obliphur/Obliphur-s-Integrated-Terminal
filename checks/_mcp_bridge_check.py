@@ -166,6 +166,34 @@ def main():
         image_delivered = _http_json(port, bridge.token, "/ui/delivered", {"msg_id": image_reply["items"][0]["id"]})
         assert image_delivered["ok"]
 
+        # 3b. host_subagent 路由下不先调用 oit_subject、不调用外部 subagent_call 也能直接生成解答图片
+        c.ai.assign_task("subject", "")
+        ctx3b = _http_json(port, bridge.token, "/turn/context?conversation_id=conv-1&consume_trigger=0")
+        assert ctx3b["subagent_routes"]["subject"]["mode"] == "host_subagent"
+        captured_render = []
+        def _fake_render(text, source_image=None, title="解答"):
+            captured_render.append((text, source_image, title))
+            return png
+        with patch.object(c, "subagent_call", side_effect=AssertionError("host_subagent 不应调用外部 subagent_call")), \
+                patch("answer_images.render", side_effect=_fake_render):
+            host_img_res = _http_json(port, bridge.token, "/tool/execute", {
+                "conversation_id": "conv-1", "name": "oit_answer_image",
+                "arguments": {
+                    "domain": "physics",
+                    "session": "host-native-session",
+                    "answer": "原始解答：F = ma，代入得 a = g/5。",
+                    "styled_answer": "这道题其实抓住分离条件就好：\n\n- 初始平衡：$kx_0 = 3mg$\n- 分离瞬间：$F - mg = ma$，所以 $F = 6mg/5$。",
+                },
+            })
+        assert host_img_res["ok"] and host_img_res["ready"], f"host_subagent 解答图片应直接成功: {host_img_res}"
+        assert len(captured_render) == 1 and "分离条件" in captured_render[0][0]
+        host_img_reply = _http_json(port, bridge.token, "/reply/submit", {
+            "conversation_id": "conv-1", "bubbles": ["做好了，答案选 ABD，步骤我画在图里了。"],
+        })
+        assert host_img_reply["ok"] and c.messages[-1].get("answer_image")
+        assert _http_json(port, bridge.token, "/ui/delivered", {"msg_id": host_img_reply["items"][0]["id"]})["ok"]
+        c.ai.assign_task("subject", cid_ext)
+
         # 4. 分条气泡提交 -> 逐条确认送达 -> 中途插话撤销
         rep = _http_json(port, bridge.token, "/reply/submit", {
             "conversation_id": "conv-1",

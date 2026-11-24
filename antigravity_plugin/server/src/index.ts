@@ -240,14 +240,14 @@ function buildTools(): ToolSpec[] {
     {
       name: "oit_answer_image",
       description:
-        "在 oit_subject 完成且聊天 AI 已风格化回答后生成解答图片。成功后必须随即调用 oit_reply，图片会附加到最后一条气泡；关闭解答图片模式时无需调用。",
+        "在 oit_subject 或原生 oit-subject 完成且聊天 AI 已按人设风格化改写后生成解答图片（原生子代理路由可直接调用，无需先调 oit_subject；styled_answer 可用 Markdown/LaTeX 排版）。成功后必须随即调用 oit_reply（气泡正文不含 Markdown/LaTeX 源码），图片会附加到最后一条气泡；关闭解答图片模式时无需调用。",
       inputSchema: {
         type: "object",
         properties: {
           domain: { type: "string", enum: ["math", "physics", "chemistry"] },
           session: { type: "string", maxLength: 80 },
-          answer: { type: "string", maxLength: 8000, description: "oit_subject 返回的原始答案。" },
-          styled_answer: { type: "string", maxLength: 8000, description: "聊天 AI 已写好的用户可见版本。" },
+          answer: { type: "string", maxLength: 8000, description: "学科子代理返回的原始答案。" },
+          styled_answer: { type: "string", maxLength: 8000, description: "聊天 AI 按人设风格化改写后的完整解答版本。" },
           conversation_id: { type: "string", maxLength: 120 },
         },
         required: ["domain", "session", "answer", "styled_answer"],
