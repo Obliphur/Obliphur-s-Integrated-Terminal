@@ -124,3 +124,47 @@ burst_end_shift:+20
 [tension:events]
 joint_hp_loss:[violation,15]
 [/tension:events]
+
+【角色生活线】
+# arc_id:[最短天数,最长天数] 阶段1 | 阶段2 | 阶段3 ...
+# 由 OIT 按日期与确定性种子在区间内连续推进，角色可自然提及当前近况，不向用户透露模板或机制。
+[life:arcs]
+piano_piece:[6,10] 选定新曲并拆谱熟悉左手和弦 | 反复打磨中段连音与踏板衔接 | 提速练习并处理强弱层次 | 录了一遍试听，挑出两处节奏微瑕 | 整首曲子基本顺下来，准备收尾巩固
+reading_book:[6,10] 翻开一本新书，先读了序言和前两章 | 读到中段，做了几条摘录与批注 | 看到核心争论处，反复重读了两页 | 快读完结尾，在整理自己的想法
+exam_prep:[7,12] 开始整理这一轮模考的错题本 | 集中梳理历政地主观题的论述框架 | 限时做了一套综合卷，复盘失分点 | 模考刚结束，正在核对英语与文综细节
+english_calligraphy:[5,8] 换了一支新笔尖，重新找意大利斜体的倾斜角 | 临摹了几段英文短文，盯着字母间距 | 整理了一页摘抄，对连笔的流畅度还算满意
+[/life:arcs]
+
+【跨周趋势洞察】
+# window:对比窗口天数(3-14)；min_days:至少有记录天数(2-14)；delta_pct:判定升降的最小变化百分比(5-50)
+# 仅在用户开启 share data 时注入，不向用户暴露内部字段名。
+[trend]
+window:7
+min_days:3
+delta_pct:15
+[/trend]
+
+【延迟回调】
+# lookahead_days:提前提醒天数(0-3)；expire_days:到期后保留天数(1-7)；max_due:每轮最多提示条数(1-5)
+[callback]
+lookahead_days:0
+expire_days:2
+max_due:2
+[/callback]
+
+【防复读护栏】
+# window:统计最近AI回复条数(6-30)；min_hits:触发提醒的最少出现次数(2-6)；max_items:每轮最多提示项数(2-10)
+# forbid:强制避开的口癖词（竖线分隔，可选）
+[anti_repeat]
+window:16
+min_hits:3
+max_items:6
+forbid:稳|接住|记下
+[/anti_repeat]
+
+【打字延迟】
+# char:英文/数字/符号每字符秒数，cjk:中文每字秒数（限 0–5；0 表示不延时，缺省沿用默认值）。
+[typing]
+char:0.15
+cjk:0.3
+[/typing]

@@ -96,6 +96,23 @@ def valence_burst_rules(text):
     return out
 
 
+def typing_delay_rules(text):
+    """读取可选打字延迟参数；空缺或格式错误时返回 (None, None)。"""
+    lines = rule_lines(text, "typing")
+    if not lines:
+        return None, None
+    out = {}
+    for line in lines:
+        pair = re.fullmatch(r"(char|cjk)\s*[:：]\s*(\d+(?:\.\d+)?)", line)
+        if not pair or pair[1] in out:
+            return None, None
+        value = float(pair[2])
+        if not math.isfinite(value) or not 0.0 <= value <= 5.0:
+            return None, None
+        out[pair[1]] = value
+    return out.get("char"), out.get("cjk")
+
+
 def shift_range(text):
     """可选平移区块：缺省允许全天，格式错误返回 None；起点大于终点表示跨午夜。"""
     if not re.search(r"^\s*\[/?shift\]\s*$", text, re.I | re.M):
@@ -166,3 +183,95 @@ def condition_rules(text, strict=False):
                 return None
             out[name] = int(v) if name not in ("study_h", "idle_h", "today_h") else v
     return (out, enabled) if enabled else None
+
+
+def life_arcs_rules(text):
+    """角色慢变量生活线：id:[min_days,max_days] 阶段1 | 阶段2 | ...；非法项使整组无效。"""
+    out = {}
+    for line in rule_lines(text, "life:arcs"):
+        m = re.fullmatch(r"([a-z_]{1,32})\s*[:：]\s*\[\s*(\d{1,2})\s*[,，]\s*(\d{1,2})\s*\]\s*(\S.*)", line)
+        if not m or m[1] in out:
+            return {}
+        lo, hi = int(m[2]), int(m[3])
+        stages = tuple(part.strip() for part in m[4].split("|") if part.strip())
+        if not (1 <= lo <= hi <= 60) or not (2 <= len(stages) <= 12):
+            return {}
+        out[m[1]] = (lo, hi, stages)
+    return out
+
+
+def _int_section(text, section, bounds, defaults):
+    """解析键值对整数区块；缺省返回 None，格式错误或重复键返回 None。"""
+    lines = rule_lines(text, section)
+    if not lines:
+        return None
+    out = dict(defaults)
+    seen = set()
+    for line in lines:
+        pair = re.split(r"[:：]", line, maxsplit=1)
+        if len(pair) != 2:
+            return None
+        key, raw = pair[0].strip(), pair[1].strip()
+        if key not in bounds or key in seen:
+            return None
+        seen.add(key)
+        if not re.fullmatch(r"\d{1,3}", raw):
+            return None
+        lo, hi = bounds[key]
+        val = int(raw)
+        if not (lo <= val <= hi):
+            return None
+        out[key] = val
+    return out
+
+
+def trend_rules(text):
+    """跨周趋势洞察模板配置；缺省或非法返回 None。"""
+    return _int_section(
+        text, "trend",
+        {"window": (3, 14), "min_days": (2, 14), "delta_pct": (5, 50)},
+        {"window": 7, "min_days": 3, "delta_pct": 15},
+    )
+
+
+def callback_rules(text):
+    """延迟回调模板配置；缺省或非法返回 None。"""
+    return _int_section(
+        text, "callback",
+        {"lookahead_days": (0, 3), "expire_days": (1, 7), "max_due": (1, 5)},
+        {"lookahead_days": 0, "expire_days": 2, "max_due": 2},
+    )
+
+
+def anti_repeat_rules(text):
+    """防复读护栏模板配置；缺省或非法返回 None。"""
+    lines = rule_lines(text, "anti_repeat")
+    if not lines:
+        return None
+    bounds = {"window": (6, 30), "min_hits": (2, 6), "max_items": (2, 10)}
+    out = {"window": 16, "min_hits": 3, "max_items": 6, "forbid": ()}
+    seen = set()
+    for line in lines:
+        pair = re.split(r"[:：]", line, maxsplit=1)
+        if len(pair) != 2:
+            return None
+        key, raw = pair[0].strip(), pair[1].strip()
+        if key in seen:
+            return None
+        seen.add(key)
+        if key == "forbid":
+            words = tuple(w.strip() for w in raw.split("|") if w.strip())
+            if len(words) > 20 or any(len(w) > 16 for w in words):
+                return None
+            out["forbid"] = words
+        elif key in bounds:
+            if not re.fullmatch(r"\d{1,3}", raw):
+                return None
+            lo, hi = bounds[key]
+            val = int(raw)
+            if not (lo <= val <= hi):
+                return None
+            out[key] = val
+        else:
+            return None
+    return out

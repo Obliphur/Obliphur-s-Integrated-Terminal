@@ -538,3 +538,19 @@ class InteractionMixin:
         from .comm_util import is_claudia
         sleep = is_claudia(owner_name) and bool(status) and status.get("kind") == "sleep"
         return interaction_prompt(d, total, self._interaction_special(status), valence_rules(text), valence_burst_rules(text), sleep)
+
+    def realism_note(self, pid=None):
+        """拼装角色慢变量生活线、延迟回调、跨周趋势与工程层防复读提醒。"""
+        from comm.comm_persona import read_persona_full, list_personas, pid_of
+        from comm.comm_realism import realism_note as build_realism_note
+        target_pid = pid or self.pid
+        owner_name = next((name for name in list_personas(self.personas) if pid_of(name) == target_pid), self.persona_name())
+        if not owner_name:
+            return ""
+        text = read_persona_full(self.personas, owner_name)
+        st = self._state_of(target_pid)
+        msgs = self.messages if target_pid == self.pid else st.get("messages", [])
+        mem_live = str(self.cfg.get("mem_live") if target_pid == self.pid else st.get("mem_live") or "")
+        share_on = bool(self.share_on()) if hasattr(self, "share_on") else False
+        cond_days = self._cond_days(refresh=False) if hasattr(self, "_cond_days") else (self.cfg.get("cond_days") or {})
+        return build_realism_note(text, owner_name, self.now().date(), msgs, mem_live, cond_days, share_on)

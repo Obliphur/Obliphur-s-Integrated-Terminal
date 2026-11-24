@@ -18,7 +18,7 @@ import tempfile
 import threading
 import time
 import urllib.parse
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import config
 import music_library
@@ -55,16 +55,153 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def _json_default(obj):
+    if isinstance(obj, datetime):
+        return obj.isoformat(timespec="seconds")
+    return str(obj)
+
+
+def _compact_schedule_line(comm_obj, now: datetime, status: dict) -> str:
+    """将日程与循环状态压成单行，避免 state_text + _rt_note 重复冗长文本。"""
+    if not status:
+        return "日程: 空闲 (无固定结束时间)"
+    from i18n import tr
+    import routine
+    from comm.comm_const import STATUS_TEXT
+
+    kind = status.get("kind") or "idle"
+    label = str(status.get("label") or "").strip()
+    detail = str(status.get("detail") or "").strip()
+    name = f"{label}({detail})" if detail else label
+    base = tr(STATUS_TEXT.get(kind, "空闲")).rstrip("中")
+    if status.get("joint"):
+        nature = f"联合行动 · {base}"
+    elif kind == "idle":
+        nature = base if routine.seg_class(status) == "special" else (name or base)
+    elif kind == "special":
+        nature = base
+    else:
+        nature = f"{base}({name})" if name and name != base else base
+
+    begin, end = status.get("begin"), status.get("end")
+    if begin and end:
+        left = max(0, int((end - now).total_seconds() // 60))
+        out = f"日程: {nature} ({begin:%H:%M}-{end:%H:%M}, 剩{left}分)"
+    elif begin:
+        out = f"日程: {nature} (自{begin:%H:%M}, 结束时间未定)"
+    else:
+        out = f"日程: {nature} (结束时间未定)"
+
+    if getattr(comm_obj, "_rt", None) and not status.get("joint") and hasattr(comm_obj, "_rt_segs"):
+        try:
+            segs = comm_obj._rt_segs(
+                now - timedelta(hours=14), now + timedelta(hours=2),
+                comm_obj._rt, comm_obj.pid, joint=True,
+            )
+            cur = routine.status_in(segs, now)
+            if cur:
+                if cur.get("loop") is not None:
+                    same = [
+                        x for x in segs
+                        if x.get("loop") == cur["loop"] and abs((x["start"] - cur["start"]).total_seconds()) < 12 * 3600
+                    ]
+                    if same:
+                        nr = max((x.get("fm") or 0) for x in same) or (cur.get("n") or 100)
+                        out += f"; 循环{min(x['start'] for x in same):%H:%M}起每轮{nr:g}分"
+                        fm = cur.get("fm") or 0
+                        if fm and fm < nr - 0.5:
+                            out += f"(本轮提前结束,{fm:g}分)"
+                nxt = next((s for s in segs if s["start"] >= cur["end"] and s["kind"] in ("focus", "sleep")), None)
+                if nxt and (nxt["start"] - now).total_seconds() <= 5 * 60:
+                    nxt_name = tr(STATUS_TEXT[nxt["kind"]]).rstrip("中")
+                    out += f"; {nxt_name}将于{nxt['start']:%H:%M}开始"
+        except Exception:
+            pass
+    return out
+
+
+def _compact_interaction_lines(comm_obj, pid: str, status: dict, judge_kind: str) -> list:
+    """精简版状态行与按需情绪判定提示：无待评消息时不注入长篇模板说明，有待评消息时不重复输出规则全文。"""
+    from comm.comm_interaction import interaction_valence_baseline, offenses_active, offenses_rate
+    from comm.comm_persona import read_persona_full
+    from comm.comm_rules import tension_rules, valence_rules, valence_burst_rules
+
+    d = comm_obj._interaction_prepare(pid, status)
+    special = comm_obj._interaction_special(status) if hasattr(comm_obj, "_interaction_special") else False
+    eff_special = bool(special or d["burst_until"])
+    total = comm_obj.msg_total() if hasattr(comm_obj, "msg_total") else 0
+    mode = "情景模拟" if d["scenario_mode"] and total >= config.COMM_SCENARIO_UNLOCK else "软件聊天"
+    effective = d["tension"] if eff_special and d["burst_until"] else min(d["tension"], config.COMM_TENSION_CAP)
+    stage = "0-50" if effective < config.COMM_TENSION_LOW else "50-90" if effective <= config.COMM_TENSION_CAP else "90+"
+
+    status_line = (
+        f"[OIT_STATUS: MODE={mode}, TENSION={d['tension']}, EFFECTIVE_STAGE={stage}, "
+        f"VALENCE={d['valence']}, INITIAL_VALENCE={interaction_valence_baseline(d)}, "
+        f"OFFENSE_COUNT={len(offenses_active(d))}, VALENCE_RISE_RATE={offenses_rate(d):g}, "
+        f"BURST={'YES' if d['burst_until'] else 'NO'}, PERIOD={'特殊空闲' if eff_special else '日常'}, "
+        f"SHAME_AFTERMATH={'YES' if d['shame_turns'] else 'NO'}]"
+    )
+    lines = [status_line]
+    if mode == "软件聊天" or not eff_special or stage == "0-50":
+        lines.append("规则: 禁动作描写，勿透露机制。")
+    else:
+        lines.append("规则: 情景模拟虚构动作须守边界，括号仅写动作（想法直说），勿透露机制。")
+    if d["burst_until"]:
+        lines.append("爆发中: 决定结束时填 oit_reply.end_burst=true（后降为20并进2轮冷静期）。")
+    if d["shame_turns"]:
+        lines.append("冷静期中: 遵守动作限制。")
+
+    candidates = [
+        (m["uid"], d["pending"][m["uid"]], m["text"], m["uid"] in d["pending_sleep"])
+        for m in comm_obj.messages
+        if judge_kind in ("user", "retry") and m.get("role") == "me" and m.get("uid") in d["pending"]
+    ]
+    comm_obj._interaction_candidates = candidates
+    if not candidates:
+        return lines
+
+    persona_text = read_persona_full(comm_obj.personas, comm_obj.persona_name())
+    rules = tension_rules(persona_text)
+    e_rules = valence_rules(persona_text)
+    burst_rules = valence_burst_rules(persona_text)
+    comm_obj._interaction_rules = rules
+    comm_obj._interaction_valence_rules = e_rules
+    comm_obj._interaction_burst_rules = burst_rules
+
+    if rules or e_rules:
+        lines.append(
+            f"[OIT情绪判断] 按条件为待评消息填 oit_reply.tension=[{{index,condition,gain}}](0~{config.COMM_TENSION_GAIN_MAX})、"
+            f"valence=[{{index,condition,shift}}](-40~40)及offenses，普通交流省略；报原始整数，系统结算倍率与冷却（X为不定量，不返回X）。"
+        )
+        if rules:
+            lines.append("[tension] " + " | ".join(
+                f"{k}:[{g if g is not None else 'X'}] {desc}" for k, (g, desc) in rules.items()
+            ))
+        if e_rules:
+            lines.append("[valence] " + " | ".join(
+                f"{k}:[{f'{g:+d}' if g is not None else 'X'}] {desc}" for k, (g, desc) in e_rules.items()
+            ))
+        items = [
+            {"index": i, "text": text, **({"sleep": True} if sleep else {})}
+            for i, (_uid, _sp, text, sleep) in enumerate(candidates, 1)
+        ]
+        lines.append("待评消息: " + json.dumps(items, ensure_ascii=False))
+    return lines
+
+
 def _bubble_delay_ms(comm_obj, text: str, index: int) -> int:
     """按 OIT 字数节奏计算气泡延时（毫秒）；首条立即可见，后续气泡带自然停顿。"""
     if index <= 0:
         return 0
     try:
-        from comm import char_delay
-        sec = float(char_delay(text))
+        if hasattr(comm_obj, "_typing_delay"):
+            sec = float(comm_obj._typing_delay(text))
+        else:
+            from comm import char_delay
+            sec = float(char_delay(text))
     except Exception:
         sec = max(0.8, len(str(text or "")) * 0.12)
-    return max(600, min(8000, int(sec * 1000)))
+    return max(600, min(8000, round(sec * 1000)))
 
 
 class OitMcpBridge:
@@ -148,7 +285,7 @@ class OitMcpBridge:
                     return auth == f"Bearer {bridge.token}"
 
                 def _send_json(self, code: int, payload: dict):
-                    raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+                    raw = json.dumps(payload, ensure_ascii=False, default=_json_default).encode("utf-8")
                     self.send_response(code)
                     self.send_header("Content-Type", "application/json; charset=utf-8")
                     self.send_header("Content-Length", str(len(raw)))
@@ -402,23 +539,29 @@ class OitMcpBridge:
                 self.comm.save_cfg()
         return removed
 
-    def push_user_message(self, persona_id: str, text: str, api_context: str = "") -> bool:
+    def push_user_message(self, persona_id: str, text: str, api_context: str = "",
+                          trigger_kind: str = "user_attachment", held_messages: str = "") -> bool:
         """用户在 OIT 桌面端或同步手机端直接发消息时，转发给 Sidecar 唤醒对应 Antigravity 对话（未绑定时由 Sidecar 自动新建会话并绑定）；返回是否有活跃 Sidecar 接收。"""
         if not str(text or "").strip():
             return False
         cid = self._conversation_for_persona(persona_id)
         pname = _display_persona_name(self.comm) or self._persona_name_by_pid(persona_id)
+        now_ms = self.comm._ms() if hasattr(self.comm, "_ms") else _now_ms()
         with self._lock:
             has_client = bool(self._sse_clients)
-            if api_context and str(api_context).strip():
+            body_txt = str(api_context or "").strip()
+            held_txt = str(held_messages or "").strip()
+            if body_txt or held_txt:
                 key = cid or persona_id or "*"
                 self._pending_triggers[key] = {
                     "persona_id": persona_id,
                     "conversation_id": cid,
-                    "kind": "user_attachment",
-                    "body": str(api_context).strip(),
+                    "kind": str(trigger_kind or "user_attachment"),
+                    "body": body_txt,
+                    "held_messages": held_txt,
+                    "delivered_via_sse": has_client,
                     "display_time": "",
-                    "ts": _now_ms(),
+                    "ts": now_ms,
                     "extra": {},
                 }
         if not has_client:
@@ -429,7 +572,7 @@ class OitMcpBridge:
             "persona_name": pname,
             "conversation_id": cid,
             "text": str(text).strip(),
-            "ts": _now_ms(),
+            "ts": now_ms,
         })
         return True
 
@@ -681,12 +824,11 @@ class OitMcpBridge:
             eff_host = host or (sess_meta.get("host") if isinstance(sess_meta, dict) else "") or "antigravity"
             now = self.comm.now() if callable(getattr(self.comm, "now", None)) else datetime.now()
             snap = self.comm.snapshot() if callable(getattr(self.comm, "snapshot", None)) else {}
+            clean_snap = {
+                k: (v.isoformat(timespec="seconds") if isinstance(v, datetime) else v)
+                for k, v in (snap or {}).items()
+            }
             status = self.comm.other_status(now) if hasattr(self.comm, "other_status") else {}
-            state_txt = self.comm.state_text() if hasattr(self.comm, "state_text") else ""
-            inter_note = self.comm.interaction_note(status, pid) if hasattr(self.comm, "interaction_note") else ""
-            rt_note = ""
-            if getattr(self.comm, "_rt", None) and hasattr(self.comm, "_rt_note") and not status.get("joint"):
-                rt_note = self.comm._rt_note(now)
 
             trigger = None
             with self._lock:
@@ -699,26 +841,28 @@ class OitMcpBridge:
                     self._recent_user_ms[cid] = _now_ms()
 
             routes = self._subagent_routes(eff_host)
-            lines = [f"[OIT动态状态] 时间: {now:%Y-%m-%d %H:%M} | 人设: {_display_persona_name(self.comm)}"]
-            if snap:
-                lines.append(f"用户当前状态: {snap.get('state') or snap.get('kind') or 'unknown'}")
-            if state_txt:
-                lines.append(state_txt.strip())
-            if inter_note:
-                lines.append(inter_note.strip())
-            if hasattr(self.comm, "_interaction_prepare") and hasattr(self.comm, "_interaction_judge_note"):
+            user_st = str(clean_snap.get("state") or clean_snap.get("kind") or "").strip()
+            head = f"[OIT动态状态] {now:%Y-%m-%d %H:%M} | {_display_persona_name(self.comm)}"
+            if user_st:
+                head += f" | 用户:{user_st}"
+            lines = [head, _compact_schedule_line(self.comm, now, status)]
+            if hasattr(self.comm, "_interaction_prepare"):
                 d_inter = self.comm._interaction_prepare(pid, status)
                 with self._lock:
                     self._turn_interaction[pid] = {
                         "burst_until": int(d_inter.get("burst_until") or 0),
                         "shame": bool(d_inter.get("shame_turns")),
                     }
-                judge_kind = "user" if (not trigger or trigger.get("kind") == "user_attachment") else "proactive"
-                judge_note = self.comm._interaction_judge_note(judge_kind)
-                if judge_note:
-                    lines.append(judge_note.strip())
-            if rt_note:
-                lines.append(rt_note.strip())
+                judge_kind = (
+                    "user"
+                    if (not trigger or trigger.get("kind") in ("user_attachment", "user", "retry"))
+                    else "proactive"
+                )
+                lines.extend(_compact_interaction_lines(self.comm, pid, status, judge_kind))
+                if hasattr(self.comm, "realism_note"):
+                    r_note = self.comm.realism_note(pid)
+                    if r_note:
+                        lines.append(r_note)
 
             # 增量下发尚未送达 Antigravity 的 share data 页面数据（role="sys"），供悬浮窗聊天与结束总结使用
             from comm.comm_const import SHARE_TAG
@@ -750,11 +894,17 @@ class OitMcpBridge:
                 lines.append(
                     f"[OIT插话撤销] 上一轮回复有 {interrupted['count']} 条待发气泡尚未弹出即被用户新消息打断并作废，请勿假设用户看到了未发出的内容。"
                 )
-            if trigger and trigger.get("body"):
-                if trigger.get("kind") == "user_attachment":
-                    lines.append(f"[OIT本轮附加请求]\n{trigger['body']}")
-                else:
-                    lines.append(f"[OIT主动触发] {trigger['body']}")
+            if trigger:
+                if trigger.get("held_messages") and not trigger.get("delivered_via_sse"):
+                    lines.append(f"[OIT忙碌期间用户消息]\n{trigger['held_messages']}")
+                if trigger.get("body"):
+                    tkind = trigger.get("kind")
+                    if tkind == "user_attachment":
+                        lines.append(f"[OIT本轮附加请求]\n{trigger['body']}")
+                    elif tkind == "retry":
+                        lines.append(f"[OIT延迟回复说明] {trigger['body']}")
+                    else:
+                        lines.append(f"[OIT主动触发] {trigger['body']}")
 
             pending_asks = []
             if hasattr(self.comm, "share_asking") and self.comm.share_asking():
@@ -790,16 +940,19 @@ class OitMcpBridge:
                         )
                         lines.append(mental_hint)
 
-            route_summary = ", ".join(f"{r}={v['mode']}" for r, v in routes.items())
-            lines.append(f"[OIT子代理路由] {route_summary}")
+            non_default_routes = [
+                f"{r}={v['mode']}" for r, v in routes.items() if v.get("mode") != "host_subagent"
+            ]
+            if non_default_routes:
+                lines.append(f"[OIT子代理路由] {', '.join(non_default_routes)}")
 
             return {
                 "ok": True,
                 "conversation_id": cid,
                 "persona_id": pid,
                 "now": now.isoformat(timespec="seconds"),
-                "snapshot": snap,
-                "status": {k: (v.isoformat() if isinstance(v, datetime) else v) for k, v in (status or {}).items()},
+                "snapshot": clean_snap,
+                "status": {k: (v.isoformat(timespec="seconds") if isinstance(v, datetime) else v) for k, v in (status or {}).items()},
                 "trigger": trigger,
                 "interrupted": interrupted,
                 "subagent_routes": routes,

@@ -79,6 +79,29 @@ object CommRules {
         return ValenceBurst(rate, endShift)
     }
 
+    data class TypingDelay(val char: Double? = null, val cjk: Double? = null)
+
+    /** 读取可选打字延迟参数（秒/字符，限 0–5）；空缺或格式错误时回退默认。 */
+    fun typingDelay(text: String): TypingDelay {
+        val entries = lines(text, "typing")
+        if (entries.isEmpty()) return TypingDelay()
+        var perChar: Double? = null
+        var perCjk: Double? = null
+        val seen = mutableSetOf<String>()
+        val pattern = Regex("""(char|cjk)\s*[:：]\s*(\d+(?:\.\d+)?)""")
+        for (line in entries) {
+            val m = pattern.matchEntire(line) ?: return TypingDelay()
+            val key = m.groupValues[1]
+            val value = m.groupValues[2].toDoubleOrNull()?.takeIf { it.isFinite() && it in 0.0..5.0 } ?: return TypingDelay()
+            if (!seen.add(key)) return TypingDelay()
+            when (key) {
+                "char" -> perChar = value
+                "cjk" -> perCjk = value
+            }
+        }
+        return TypingDelay(perChar, perCjk)
+    }
+
     fun event(text: String, event: String): Pair<String, Int>? {
         val rules = tension(text)
         val out = mutableMapOf<String, Pair<String, Int>>()
@@ -148,5 +171,96 @@ object CommRules {
             }
         }
         return if (enabled.isEmpty()) null else Conditions(out, enabled)
+    }
+
+    data class LifeArc(val minDays: Int, val maxDays: Int, val stages: List<String>)
+    data class TrendConfig(val window: Int = 7, val minDays: Int = 3, val deltaPct: Int = 15)
+    data class CallbackConfig(val lookaheadDays: Int = 0, val expireDays: Int = 2, val maxDue: Int = 2)
+    data class AntiRepeatConfig(val window: Int = 16, val minHits: Int = 3, val maxItems: Int = 6, val forbid: List<String> = emptyList())
+
+    /** 角色慢变量生活线：id:[min_days,max_days] 阶段1 | 阶段2 | ...；非法项使整组无效。 */
+    fun lifeArcs(text: String): Map<String, LifeArc> {
+        val out = linkedMapOf<String, LifeArc>()
+        val pattern = Regex("""([a-z_]{1,32})\s*[:：]\s*\[\s*(\d{1,2})\s*[,，]\s*(\d{1,2})\s*\]\s*(\S.*)""")
+        for (line in lines(text, "life:arcs")) {
+            val m = pattern.matchEntire(line) ?: return emptyMap()
+            val id = m.groupValues[1]
+            if (id in out) return emptyMap()
+            val lo = m.groupValues[2].toInt()
+            val hi = m.groupValues[3].toInt()
+            val stages = m.groupValues[4].split('|').map { it.trim() }.filter { it.isNotEmpty() }
+            if (lo !in 1..60 || hi !in lo..60 || stages.size !in 2..12) return emptyMap()
+            out[id] = LifeArc(lo, hi, stages)
+        }
+        return out
+    }
+
+    private fun intSection(text: String, section: String, bounds: Map<String, IntRange>, defaults: Map<String, Int>): Map<String, Int>? {
+        val entries = lines(text, section)
+        if (entries.isEmpty()) return null
+        val out = defaults.toMutableMap()
+        val seen = mutableSetOf<String>()
+        for (line in entries) {
+            val pair = line.split(Regex("[:：]"), limit = 2).map { it.trim() }
+            if (pair.size != 2) return null
+            val (key, raw) = pair
+            val range = bounds[key] ?: return null
+            if (!seen.add(key) || !Regex("""\d{1,3}""").matches(raw)) return null
+            val value = raw.toInt()
+            if (value !in range) return null
+            out[key] = value
+        }
+        return out
+    }
+
+    fun trend(text: String): TrendConfig? {
+        val m = intSection(
+            text, "trend",
+            mapOf("window" to 3..14, "min_days" to 2..14, "delta_pct" to 5..50),
+            mapOf("window" to 7, "min_days" to 3, "delta_pct" to 15)
+        ) ?: return null
+        return TrendConfig(m.getValue("window"), m.getValue("min_days"), m.getValue("delta_pct"))
+    }
+
+    fun callback(text: String): CallbackConfig? {
+        val m = intSection(
+            text, "callback",
+            mapOf("lookahead_days" to 0..3, "expire_days" to 1..7, "max_due" to 1..5),
+            mapOf("lookahead_days" to 0, "expire_days" to 2, "max_due" to 2)
+        ) ?: return null
+        return CallbackConfig(m.getValue("lookahead_days"), m.getValue("expire_days"), m.getValue("max_due"))
+    }
+
+    fun antiRepeat(text: String): AntiRepeatConfig? {
+        val entries = lines(text, "anti_repeat")
+        if (entries.isEmpty()) return null
+        val bounds = mapOf("window" to 6..30, "min_hits" to 2..6, "max_items" to 2..10)
+        var window = 16
+        var minHits = 3
+        var maxItems = 6
+        var forbid = emptyList<String>()
+        val seen = mutableSetOf<String>()
+        for (line in entries) {
+            val pair = line.split(Regex("[:：]"), limit = 2).map { it.trim() }
+            if (pair.size != 2) return null
+            val (key, raw) = pair
+            if (!seen.add(key)) return null
+            if (key == "forbid") {
+                val words = raw.split('|').map { it.trim() }.filter { it.isNotEmpty() }
+                if (words.size > 20 || words.any { it.length > 16 }) return null
+                forbid = words
+            } else {
+                val range = bounds[key] ?: return null
+                if (!Regex("""\d{1,3}""").matches(raw)) return null
+                val value = raw.toInt()
+                if (value !in range) return null
+                when (key) {
+                    "window" -> window = value
+                    "min_hits" -> minHits = value
+                    "max_items" -> maxItems = value
+                }
+            }
+        }
+        return AntiRepeatConfig(window, minHits, maxItems, forbid)
     }
 }

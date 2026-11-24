@@ -90,6 +90,9 @@ class SchedMixin:
         system, msgs = cache_layout(profile, system, dynamic, msgs)
         status = self.other_status(self.now(), ctx)
         note = oit_text(self.state_text(ctx) + "\n" + self.interaction_note(status, pid))
+        r_note = self.realism_note(pid) if hasattr(self, "realism_note") else ""
+        if r_note:
+            note += "\n" + r_note
         if ctx.get("rt") and not status.get("joint"):
             note += "\n" + self._rt_note(self.now(), ctx["rt"], pid)
         outgoing = api + "\n\n" + note

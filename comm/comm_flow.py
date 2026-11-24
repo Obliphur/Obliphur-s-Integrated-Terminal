@@ -253,7 +253,19 @@ class FlowMixin:
         self._changed()
         self._push()
 
+    @staticmethod
+    def _extra_api_only(api_txt: str, plain_txt: str) -> str:
+        """仅当用户消息携带额外系统上下文（如邀请/共读页面等）时才附带 api 文本，避免普通聊天消息在接管上下文中重复。"""
+        api_s = str(api_txt or "").strip()
+        if not api_s or api_s == plain_txt:
+            return ""
+        if OIT_TAG in api_s or not api_s.endswith("\n" + plain_txt):
+            return api_s
+        return ""
+
     def _request(self, kind: str, extra=None, reading_context: str = ""):
+        retry_since = int(getattr(self, "_retry_since", 0) or 0)
+        self._retry_since = 0
         if ai_assist.ai_config.chat_takeover() == "antigravity":
             bridge = getattr(self, "mcp_bridge", None)
             if bridge is None:
@@ -261,6 +273,53 @@ class FlowMixin:
                 self._changed()
                 return
             if extra:
+                if kind in ("retry", "user"):
+                    self._req_ts = max([int(m.get("ts") or 0) for m in self.messages if m.get("role") == "me"] or [0])
+                    if retry_since > 0:
+                        pending_me = [
+                            m for m in self.messages
+                            if m.get("role") == "me" and not m.get("no_reply") and int(m.get("ts") or 0) >= retry_since
+                        ]
+                    else:
+                        pending_me = []
+                        for m in reversed(self.messages):
+                            if m.get("role") == "ai" and not m.get("hold") and "pending_reply" not in m:
+                                break
+                            if m.get("role") == "me" and not m.get("no_reply"):
+                                pending_me.append(m)
+                        pending_me.reverse()
+                    if pending_me:
+                        user_lines, api_parts = [], []
+                        for m in pending_me:
+                            txt = str(m.get("text") or "").strip()
+                            at_s = str(m.get("at") or "").replace("T", " ")[:16]
+                            if txt:
+                                user_lines.append(f"[{at_s}] {txt}" if at_s else txt)
+                            extra_api = self._extra_api_only(str(m.get("api") or ""), txt)
+                            if extra_api:
+                                api_parts.append(extra_api)
+                        held_block = "\n".join(user_lines)
+                        retry_note = str(extra[0] or "").strip()
+                        if retry_note:
+                            api_parts.append(retry_note)
+                        if held_block or api_parts:
+                            push_txt = (
+                                f"[OIT 忙碌期间留言 · 请先调用 oit_get_turn_context 再用 oit_reply 回复]\n{held_block}"
+                                if held_block else (retry_note or "请处理用户消息")
+                            )
+                            if bridge.push_user_message(
+                                self.pid,
+                                push_txt,
+                                api_context="\n\n".join(api_parts),
+                                trigger_kind=kind,
+                                held_messages=held_block,
+                            ):
+                                self.error = ""
+                            else:
+                                self.error = tr("已由 Antigravity 桌面版接管：未检测到运行中的 OIT Proactive Bridge，请在 Antigravity 的 Customizations 中启用 OIT Companion 插件，或手动新建对话并绑定此人设。")
+                            self._reply_rewrite = False
+                            self._changed()
+                            return
                 self._req_ts = max([int(m.get("ts") or 0) for m in self.messages if m.get("role") == "me"] or [0])
                 bridge.push_proactive(self.pid, str(extra[0] or ""), kind=kind)
                 self.error = ""
@@ -272,9 +331,9 @@ class FlowMixin:
             if last_msg:
                 last_me = str(last_msg.get("text") or "").strip()
                 api_parts = []
-                api_txt = str(last_msg.get("api") or "").strip()
-                if api_txt and api_txt != last_me:
-                    api_parts.append(api_txt)
+                extra_api = self._extra_api_only(str(last_msg.get("api") or ""), last_me)
+                if extra_api:
+                    api_parts.append(extra_api)
                 rc = str(reading_context or "").strip()[:18000]
                 if rc:
                     api_parts.append(oit_text("当前 OIT 共读阅读上下文 (来自本机书库的当前可见页; 仅用于本轮回答, 不要伪称读过全书):\n" + rc))
@@ -282,6 +341,7 @@ class FlowMixin:
                     self.error = ""
                 else:
                     self.error = tr("已由 Antigravity 桌面版接管：未检测到运行中的 OIT Proactive Bridge，请在 Antigravity 的 Customizations 中启用 OIT Companion 插件，或手动新建对话并绑定此人设。")
+                self._reply_rewrite = False
                 self._changed()
             return
         if self.busy:
@@ -326,6 +386,9 @@ class FlowMixin:
         self._interaction_turn = (self._interaction_special(status),
                                   int(status["end"].timestamp() * 1000) if status.get("end") else 0, bool(d["shame_turns"]))
         note = oit_text(self.state_text() + "\n" + self.interaction_note(status) + "\n" + self._interaction_judge_note(kind))
+        r_note = self.realism_note() if hasattr(self, "realism_note") else ""
+        if r_note:
+            note += "\n" + r_note
         if self._rt:
             note += "\n" + self._rt_note(self.now())
         if msgs and msgs[-1]["role"] == "user":
