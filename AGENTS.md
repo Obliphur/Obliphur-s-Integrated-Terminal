@@ -41,7 +41,7 @@ python release.py               # 发布（PyInstaller）
 | `_hold_check.py` | 休息 / 外出 / 联网时不能开始合约（`contract_block`） | `app.contract_block`、合约开始入口 |
 | `_ui_check.py` | 合约页底部按钮：变灰 + 上方提示 + 恢复 | `pages/contract_page.py` 的 `_build_bar` / `refresh` |
 | `_sidebar_check.py` | 侧边栏顺序归一化、分隔线淡化、点击阈值、重排持久化 | `app/app_sidebar.py`、`app/app_window.py`、`app/app_pages.py` |
-| `_knowledge_check.py` | Obsidian Markdown 保留与概念隔离、技巧检索排名 / 溯源、提案审核、探索 / 保守模式与排除门控 | `knowledge/` |
+| `_knowledge_check.py` | 知识卡通用性字段 / 题型筛选 / 思路参考、图片与 Anki 自动导入配对、去重与卡片 / 提案生成 | `knowledge/`、`pages/knowledge_page.py`、沟通解题知识库调用 |
 | `_contract_board_check.py` | 词条板分页 / 翻页 / 组合页排版 / 锁定描述 | `contract/contract_rules.py` 的 `TERMS`、`PAGES`、`LAYOUT`；`_draw_*` 在 `pages/contract_page.py` |
 | `_stats_ui_check.py` | 统计页：合约记录、违规记录、黑雾、等级写法 | `pages/stats_page.py`、`contract.level_label` |
 | `_behavior_check.py` | 行为模式 / 外出与数据叠加 | `behavior.py`、`data_manager/` |
@@ -53,6 +53,7 @@ python release.py               # 发布（PyInstaller）
 | `_comm_delivery_check.py` | 分隔符分条、完整气泡延时、插话撤销及改写、断流、重启与跨午夜队列 | `comm/comm_delivery.py`、`comm/comm_flow.py`、`comm/comm_chat.py`、安卓 `CommDelivery.kt` / `Comm.kt` |
 | `_voice_check.py` | AI 语音协议、官方型号获取、音色设计 / 上传 / 克隆、生成去重、缓存复用、播放记录、跨设备音频与已听状态同步、未播队列、并发清空与配置窗口 | `ai_voice.py`、`ai_voice_design.py`、`pages/voice_dialogs.py`、`pages/voice_design.py`、`pages/comm_voice.py`、沟通语音入口 |
 | `_external_software_check.py` | 外部目录、Process Lasso 下载与签名校验、静默安装参数、Python 保护规则、额外功能页面 | `external_software.py`、`pages/settings_page/settings_external.py`、`pages/settings_page/settings_extra.py` |
+| `_knowledge_check.py` | 知识卡通用性字段 / 题型筛选 / 思路参考、图片与 Anki 自动导入配对、去重与卡片 / 提案生成 | `knowledge/`、`pages/knowledge_page.py`、沟通解题知识库调用 |
 | `_music_tools_check.py` | 音乐工具统一接口、安装状态与重入、转换链路、Partitura MIDI 事件探测、MP3 演奏渲染、失败保留原文件、目录锁、官方资产和 MSI 解包 | `music_tools.py`、`music_install.py`、`music_worker.py` |
 | `_music_library_check.py` | 32首常驻曲目、4首关系及Valence门槛曲目、上传去重、元数据、选曲、MIDI / MP3缓存、播放门禁与数据清除后恢复 | `music_library.py`、`music_playback.py`、`defaults/music_library/` |
 | `_music_humanize_check.py` | 演奏 MIDI 起音/力度/松键微差、速度映射、重触保护、鼓与踏板保留、缓存签名及失败原子保护 | `music_humanize.py`、`music_tools.py` 的演奏导出、`config.py` 的 `MUSIC_HUMANIZE_*` |

@@ -7,7 +7,7 @@ from .kb_store import read_json, write_json, atomic_text, read_card, serialize, 
 from .kb_stats import now
 
 ACTIONS = {"ADD_CARD", "ADD_DERIVED", "UPDATE_CARD", "MERGE_ALIAS", "REPARENT"}
-FIELDS = {"topic", "aliases", "triggers", "statement", "preconditions", "proof_sketch", "examples", "parent_ids"}
+FIELDS = {"topic", "aliases", "triggers", "statement", "preconditions", "proof_sketch", "examples", "parent_ids", "generality"}
 
 
 class ProposalMixin:
@@ -32,6 +32,8 @@ class ProposalMixin:
                 if key in ("aliases", "triggers", "parent_ids"):
                     if not isinstance(value, list) or any(not isinstance(x, str) for x in value):
                         raise ValueError("提案列表字段无效")
+                elif key == "generality" and value not in {"universal", "explain_first", "non_universal"}:
+                    raise ValueError("通用性无效")
                 elif not isinstance(value, (str, list)):
                     raise ValueError("提案字段无效")
             parents = parent_ids if parent_ids is not None else (parents if parents is not None else changes.get("parent_ids", []))

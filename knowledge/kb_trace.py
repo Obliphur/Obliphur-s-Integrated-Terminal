@@ -27,6 +27,7 @@ def trace(cards, stats, card_id):
     return {"card_id": card_id, "title": card.get("title", ""), "subject": card.get("subject", ""),
             "familiarity": "unfamiliar" if freq == 0 else "learning" if freq < 3 else "familiar",
             "freq": freq, "unverified": bool(card.get("unverified")),
+            "generality": card.get("generality", "explain_first"),
             **{key: card.get(key, "") for key in ("statement", "preconditions", "proof_sketch", "file_path")},
             "lineage": [{"card_id": key, "title": cards[key].get("title", ""), "depth": depth(cards, key)}
                         for key in ancestors(cards, card_id)],

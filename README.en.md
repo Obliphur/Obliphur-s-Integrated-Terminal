@@ -45,6 +45,7 @@ However, all data transfers in this project happen on the local network and are 
 | **Calendar** | Study time by day |
 | **Statistics** | Distribution of activities, network reasons, and foreground time per program; recent completed contracts and recent violations |
 | **Contract** | Contracts: time-limited challenges where you pick terms and add difficulty |
+| **Knowledge** | Desktop Obsidian Markdown Vault for tactical and conceptual notes, with generality filtering, idea reference, auto-generated imports, citation tracing, exploration/conservative solver modes, and review proposals; conceptual notes stay isolated from the solving AI |
 | **Settings** | Adjustable parameters, grouped into pages; Extra features contains AI voice settings, Microsoft JDK 17 for Android builds, Process Lasso, music conversion tools, Partitura MIDI analysis setup, and a local score library with import and expressive MIDI export using subtle timing, velocity and release variation |
 | **Reset** | Restore networking and clear data |
 

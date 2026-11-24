@@ -1115,7 +1115,7 @@ class OitMcpBridge:
                 self._answer_image_context[(cid, session)] = ctx
                 if route.get("mode") != "external_api":
                     from knowledge import get_knowledge
-                    from knowledge.kb_ai import mode_prompt, exclusion_prompt, exclusions
+                    from knowledge.kb_ai import mode_prompt, exclusion_prompt, exclusions, generality_instruction
                     knowledge = get_knowledge(self.comm.dir)
                     return {
                         "ok": False,
@@ -1124,6 +1124,8 @@ class OitMcpBridge:
                         "solver_mode": knowledge.config.get("solver_mode", "exploration"),
                         "mode_instruction": mode_prompt(knowledge),
                         "excluded_tactics": exclusions(knowledge),
+                        "thought_reference": bool(knowledge.config.get("thought_reference", False)),
+                        "generality_instruction": generality_instruction(knowledge),
                         "instruction": "当前未为学科子代理单独配置外部 API，请改用宿主原生子代理 oit-subject（或按客观步骤直接推导），并按当前人设语气风格化改写；解答图片模式开启时，在 oit_reply 前调用 oit_answer_image 提交原始解答和人设风格化解答。",
                     }
                 answer, citations = self.comm._knowledge_subject(domain, session, question, image)

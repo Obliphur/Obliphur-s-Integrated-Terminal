@@ -289,6 +289,10 @@ def main():
         tools_res = rpc({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
         tools = {t["name"]: t for t in tools_res["result"]["tools"]}
         assert "oit_answer_image" in tools
+        kb_search_fields = tools["oit_kb_search"]["inputSchema"]["properties"]
+        assert kb_search_fields["problem_mode"]["enum"] == ["answer_only", "requires_working"]
+        kb_proposal_fields = tools["oit_kb_propose"]["inputSchema"]["properties"]["proposed_card"]["properties"]
+        assert kb_proposal_fields["generality"]["enum"] == ["universal", "explain_first", "non_universal"]
         assert "Standard Ebooks" in tools["oit_reading_acquire"]["description"]
         backup_url = "https://standardebooks.org/ebooks/jane-austen/pride-and-prejudice"
         acquired_urls = []

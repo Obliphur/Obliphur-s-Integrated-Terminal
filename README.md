@@ -45,7 +45,7 @@ Windows x64 可在「设置 → 额外功能」安装 Microsoft JDK 17，用于 
 | **Calendar** | 按日查看学习时长 |
 | **Statistics** | 活动, 联网理由, 各程序前台时间的分布, 最近顺利完成的合约与最近的违规记录 |
 | **Contract** | 合约: 选词条加难度的限时挑战|
-| **Knowledge** | 桌面端以 Obsidian Markdown Vault 管理技巧与概念笔记，支持检索、引用溯源、探索 / 保守解题模式和待审技巧提案；概念笔记与解题 AI 隔离 |
+| **Knowledge** | 桌面端以 Obsidian Markdown Vault 管理技巧与概念笔记，支持通用性筛选、思路参考、自动生成导入、引用溯源、探索 / 保守解题模式和待审技巧提案；概念笔记与解题 AI 隔离 |
 | **Settings** | 按模块分页的可调参数；额外功能页提供 AI 语音、Obsidian（桌面支持手选安装目录和默认路径识别）、Claude Code / Codex / Antigravity CLI（命令行工具，与普通桌面客户端不同）、Android 构建用 JDK 17、Process Lasso 和音乐工具部署与转换（含钢琴录音转 MIDI） |
 | **Reset** | 恢复网络并清理数据 |
 

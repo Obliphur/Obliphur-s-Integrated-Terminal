@@ -125,4 +125,5 @@ def safe_name(title):
 
 def read_card(path):
     meta, body, front = parse_markdown(Path(path).read_text(encoding="utf-8-sig"))
-    return {**section_fields(body), **meta, "body": body, "_front": front, "file_path": str(path)}
+    return {**section_fields(body), **meta, "generality": meta.get("generality", "explain_first"),
+            "body": body, "_front": front, "file_path": str(path)}
