@@ -71,6 +71,7 @@ fun VoiceSettingsCard() {
             Text(tr("开启"), modifier = Modifier.weight(1f), color = o.text)
             androidx.compose.material3.Switch(enabled, { enabled = it; save("enabled" to it) })
         }
+        Dim(tr("暂未找到适合的音色，默认音色可能达不到预期。"), size = 13)
         if (enabled) {
             PlainButton(tr("AI 语音配置")) { dialog = true }
             val ps = voice.profiles().filter { it.optString("id") != Voice.CLAUDIA || Voice.isClaudia(comm.personaName()) }

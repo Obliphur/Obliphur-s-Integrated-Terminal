@@ -12,7 +12,7 @@ import ai_voice
 import toast
 from config import COLORS
 from i18n import tr
-from .widgets import Modal, ScrollArea
+from .widgets import Modal, ScrollArea, wrap_label
 from .model_fetch import auto_models
 from .voice_design import open_voice_design
 
@@ -201,6 +201,11 @@ def build_voice_settings(page, body):
                        bg=COLORS["bg_card"], fg=COLORS["text"], selectcolor=COLORS["bg_card"],
                        font=config.font("body")).pack(anchor="w", padx=12, pady=4)
     check(fr, "开启", enabled)
+    hint = tk.Label(fr, text=tr("暂未找到适合的音色，默认音色可能达不到预期。"),
+                    bg=COLORS["bg_card"], fg=COLORS["text_dim"],
+                    font=config.font("small"), anchor="w", justify="left")
+    hint.pack(fill="x", padx=12, pady=(0, 6))
+    wrap_label(hint, 24)
     ttk.Button(details, text=tr("AI 语音配置"), command=settings).pack(anchor="w", pady=4)
     picker = ttk.Combobox(details, textvariable=selected, state="readonly")
     picker.pack(fill="x", pady=4)
