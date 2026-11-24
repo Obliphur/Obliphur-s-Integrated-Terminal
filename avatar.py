@@ -257,8 +257,8 @@ def full_path(master: str) -> str:
     return (master[:-4] if master.lower().endswith(".png") else master) + ".full.png"
 
 
-def render_full(src: str, out: str, max_side: int = 0):
-    """整张图 (不裁) 存成 PNG: 最长边超过 max_side 时等比缩小, 0 = 保持原分辨率."""
+def render_full(src: str, out: str, max_side: int = 0, max_w: int = 0):
+    """整张图 (不裁) 存成 PNG: 最长边超过 max_side 或宽超过 max_w 时等比缩小, 0 = 保持原分辨率."""
     g = _gdi()
     img = _load(src)
     dst = c_void_p()
@@ -268,7 +268,12 @@ def render_full(src: str, out: str, max_side: int = 0):
         g.GdipGetImageWidth(img, byref(w))
         g.GdipGetImageHeight(img, byref(h))
         w0, h0 = int(w.value), int(h.value)
-        scale = min(1.0, max_side / max(w0, h0)) if max_side else 1.0
+        if max_w:
+            scale = min(1.0, max_w / max(1, w0))
+        elif max_side:
+            scale = min(1.0, max_side / max(1, max(w0, h0)))
+        else:
+            scale = 1.0
         tw, th = max(1, int(round(w0 * scale))), max(1, int(round(h0 * scale)))
         _ok(g.GdipCreateBitmapFromScan0(tw, th, 0, _FORMAT_ARGB, None, byref(dst)), "create")
         _ok(g.GdipGetImageGraphicsContext(dst, byref(gr)), "context")
@@ -297,6 +302,18 @@ def fit(master: str, max_side: int) -> str:
     except OSError:
         pass
     render_full(master, out, max_side)
+    return out
+
+
+def fit_width(master: str, max_w: int) -> str:
+    """长图阅读用: 只按最大宽度 max_w 等比缩放 (不压扁高度), 缓存成 PNG. 原图更新了重画."""
+    out = f"{master}.fitw{max_w}.png"
+    try:
+        if os.path.exists(out) and os.path.getmtime(out) >= os.path.getmtime(master):
+            return out
+    except OSError:
+        pass
+    render_full(master, out, max_w=max_w)
     return out
 
 

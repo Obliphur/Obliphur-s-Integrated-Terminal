@@ -112,7 +112,7 @@ class ToolsMixin:
                             "epoch": epoch,
                         }
                         result = {"ok": True, "ready": True,
-                                  "instruction": "解答图片已登记；请随即调用 oit_reply 提交自然简洁且不含 Markdown/LaTeX 源码的聊天文字，图片会附加到最后一条气泡。"}
+                                  "instruction": "解答图片已登记；请随即调用 oit_reply，图片将作为独立气泡发送（可在 text 中用 <oit_message> 分条并用独占一行的 <oit_answer_image> 指定发图位置，发图前后均可各加一句话作为独立气泡；气泡正文不要输出 Markdown/LaTeX 源码）。"}
 
             elif name == "oit_reading_acquire" and getattr(self, "reading_mode", False):
                 try:

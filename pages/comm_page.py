@@ -407,12 +407,19 @@ class CommPage(CommVoiceMixin, tk.Frame):
         dlg.wait()
 
     def _show_image(self, path: str):
-        """点开聊天记录里的图片: 弹窗显示完整大图 (不裁); GDI+ 打不开的格式 (如 WEBP) 交给系统查看."""
+        """点开聊天记录里的图片: 长图按阅读宽度缩放并提供垂直滚动条, 普通图自适应弹窗; 打不开则交给系统查看."""
         if not path or not os.path.isfile(path):
             return
-        max_side = max(200, min(self.winfo_screenwidth() - 160, self.winfo_screenheight() - 220))
+        max_w = max(360, min(config.scaled(900), self.winfo_screenwidth() - 180))
+        max_h = max(300, self.winfo_screenheight() - 220)
         try:
-            fitted = avatar_mod.fit(path, max_side)
+            ow, oh = avatar_mod.image_size(path)
+            scaled_h = int(round(oh * min(1.0, max_w / max(1, ow))))
+            tall = scaled_h > max_h
+            if tall:
+                fitted = avatar_mod.fit_width(path, max_w)
+            else:
+                fitted = avatar_mod.fit(path, max(200, min(max_w, max_h)))
             iw, ih = avatar_mod.image_size(fitted)
             photo = tk.PhotoImage(file=fitted)
         except (OSError, tk.TclError):
@@ -422,8 +429,24 @@ class CommPage(CommVoiceMixin, tk.Frame):
                 except OSError:
                     pass
             return
-        dlg = Modal(self.winfo_toplevel(), tr("图片"), width=iw + 48, height=ih + 104)
-        tk.Label(dlg.body, image=photo, bg=COLORS["bg"], bd=0).pack(expand=True)
+        if tall:
+            win_w = min(max(iw + 68, config.scaled(420)), self.winfo_screenwidth() - 100)
+            win_h = max_h + 104
+            dlg = Modal(self.winfo_toplevel(), tr("图片"), width=win_w, height=win_h)
+            area = ScrollArea(dlg.body, height=max_h, bg=COLORS["bg"])
+            area.pack(fill="both", expand=True)
+            lab = tk.Label(area.inner, image=photo, bg=COLORS["bg"], bd=0)
+            lab.pack(anchor="n")
+            lab.bind("<MouseWheel>", area._wheel, add="+")
+            area.inner.bind("<MouseWheel>", area._wheel, add="+")
+            dlg.bind("<MouseWheel>", area._wheel, add="+")
+            dlg.bind("<Up>", lambda _e: area.canvas.yview_scroll(-3, "units"), add="+")
+            dlg.bind("<Down>", lambda _e: area.canvas.yview_scroll(3, "units"), add="+")
+            dlg.bind("<Prior>", lambda _e: area.canvas.yview_scroll(-1, "pages"), add="+")
+            dlg.bind("<Next>", lambda _e: area.canvas.yview_scroll(1, "pages"), add="+")
+        else:
+            dlg = Modal(self.winfo_toplevel(), tr("图片"), width=iw + 48, height=ih + 104)
+            tk.Label(dlg.body, image=photo, bg=COLORS["bg"], bd=0).pack(expand=True)
         dlg._photo = photo
         ttk.Button(dlg.buttons, text=tr("关闭"), command=dlg.cancel).pack(side="right")
         dlg.wait()

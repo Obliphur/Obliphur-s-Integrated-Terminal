@@ -1644,7 +1644,23 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             pending_image = self._answer_image_pending
             self._answer_image_pending = None
             if pending_image and m.get("role") == "ai":
-                self._answer_image_after_reply(m, pending_image)
+                candidates = list(batch.messages) if batch and batch.messages else [m]
+                img_msg = next((x for x in candidates if x.pop("_answer_image_slot", False)), None)
+                if img_msg is None:
+                    # 模型未写 <oit_answer_image> 占位时，在文字气泡后自动追加一条独立图片气泡
+                    fallback_styled = str(pending_image.get("styled_answer") or m.get("text") or "")
+                    if fallback_styled and not pending_image.get("styled_answer"):
+                        pending_image["styled_answer"] = fallback_styled
+                    self._answer_image_pending = pending_image
+                    img_msg = self._reply_queue("<oit_answer_image>", batch or ReplyBatch(self._epoch, self._req_ts, 0), ready=True)
+                    self._answer_image_pending = None
+                    if img_msg is not None:
+                        img_msg.pop("_answer_image_slot", None)
+                        if self.blocked():
+                            img_msg.pop("pending_reply", None)
+                            img_msg.pop("reply_ready", None)
+                if img_msg is not None:
+                    self._answer_image_after_reply(img_msg, pending_image)
             if op:
                 if isinstance(op, dict) and op.get("type") == "music_select":
                     try:

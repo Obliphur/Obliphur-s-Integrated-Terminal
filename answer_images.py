@@ -74,6 +74,7 @@ def _inline(value: str) -> str:
     value = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"<em>\1</em>", value)
     value = re.sub(r"\\\[([\s\S]+?)\\\]", lambda m: _math(m.group(1), True), value)
     value = re.sub(r"\$\$([^$]+?)\$\$", lambda m: _math(m.group(1), True), value)
+    value = re.sub(r"\\\((.+?)\\\)", lambda m: _math(m.group(1), False), value)
     value = re.sub(r"(?<!\\)\$([^$\n]+?)\$", lambda m: _math(m.group(1), False), value)
     return value
 
@@ -83,16 +84,25 @@ def _math(source: str, display: bool) -> str:
     symbols = {"pi": "π", "theta": "θ", "alpha": "α", "beta": "β", "gamma": "γ", "Delta": "Δ",
                "infty": "∞", "cdot": "·", "times": "×", "le": "≤", "leq": "≤", "ge": "≥",
                "geq": "≥", "neq": "≠", "pm": "±", "sum": "∑", "int": "∫", "rightarrow": "→",
-               "approx": "≈", "mu": "μ", "left": "", "right": "", "quad": "　", "mathrm": ""}
+               "Rightarrow": "⇒", "implies": "⇒", "approx": "≈", "mu": "μ", "circ": "°",
+               "sin": "sin", "cos": "cos", "tan": "tan", "ln": "ln", "log": "log",
+               "left": "", "right": "", "quad": "　", "qquad": "　　", "mathrm": "", "rm": ""}
     escaped = html.escape(str(source or "").strip(), quote=False)
-    escaped = re.sub(r"\\(?:d?frac|tfrac)\s*\{([^{}]+)\}\s*\{([^{}]+)\}",
-                     lambda m: f"<mfrac><mrow>{m.group(1)}</mrow><mrow>{m.group(2)}</mrow></mfrac>", escaped)
-    escaped = re.sub(r"\\sqrt\s*\{([^{}]+)\}", r"<msqrt><mrow>\1</mrow></msqrt>", escaped)
+    escaped = re.sub(r"\\[,;:! ]", " ", escaped)
+    escaped = re.sub(r"\\boxed\s*\{([^{}]+)\}", r"\1", escaped)
+    escaped = re.sub(r"\\mathrm\s*\{([^{}]+)\}", r"<mtext>\1</mtext>", escaped)
     escaped = re.sub(r"\\text\s*\{([^{}]+)\}", r"<mtext>\1</mtext>", escaped)
+    for _ in range(3):
+        prev = escaped
+        escaped = re.sub(r"\\(?:d?frac|tfrac)\s*\{([^{}]+)\}\s*\{([^{}]+)\}",
+                         lambda m: f"<mfrac><mrow>{m.group(1)}</mrow><mrow>{m.group(2)}</mrow></mfrac>", escaped)
+        escaped = re.sub(r"\\sqrt\s*\{([^{}]+)\}", r"<msqrt><mrow>\1</mrow></msqrt>", escaped)
+        if escaped == prev:
+            break
     escaped = re.sub(r"\\([A-Za-z]+)", lambda m: html.escape(symbols.get(m.group(1), m.group(1))), escaped)
     escaped = re.sub(r"([A-Za-z0-9])\^\{([^{}]+)\}", r"<msup><mi>\1</mi><mn>\2</mn></msup>", escaped)
     escaped = re.sub(r"([A-Za-z0-9])_\{([^{}]+)\}", r"<msub><mi>\1</mi><mn>\2</mn></msub>", escaped)
-    escaped = re.sub(r"([A-Za-z0-9])\^([A-Za-z0-9])", r"<msup><mi>\1</mi><mn>\2</mn></msup>", escaped)
+    escaped = re.sub(r"([A-Za-z0-9])\^([A-Za-z0-9°])", r"<msup><mi>\1</mi><mn>\2</mn></msup>", escaped)
     escaped = re.sub(r"([A-Za-z0-9])_([A-Za-z0-9])", r"<msub><mi>\1</mi><mn>\2</mn></msub>", escaped)
     tag = "div" if display else "span"
     return f'<{tag} class="math"><math xmlns="http://www.w3.org/1998/Math/MathML">{escaped}</math></{tag}>'
@@ -101,9 +111,11 @@ def _math(source: str, display: bool) -> str:
 def _markdown(text: str) -> str:
     lines = str(text or "").replace("\r\n", "\n").split("\n")
     out, in_code, code = [], False, []
+    in_math, math_end, math_buf = False, "", []
     for raw in lines:
         line = raw.rstrip()
-        if line.strip().startswith("```"):
+        stripped = line.strip()
+        if stripped.startswith("```"):
             if in_code:
                 out.append("<pre><code>" + html.escape("\n".join(code)) + "</code></pre>")
                 code, in_code = [], False
@@ -113,7 +125,28 @@ def _markdown(text: str) -> str:
         if in_code:
             code.append(line)
             continue
-        if not line.strip():
+        if in_math:
+            if stripped == math_end or stripped.endswith(math_end):
+                tail = stripped[:-len(math_end)].strip()
+                if tail:
+                    math_buf.append(tail)
+                out.append(_math(" ".join(math_buf), True))
+                in_math, math_end, math_buf = False, "", []
+            else:
+                math_buf.append(stripped)
+            continue
+        if stripped in (r"\[", "$$"):
+            in_math = True
+            math_end = r"\]" if stripped == r"\[" else "$$"
+            math_buf = []
+            continue
+        if stripped.startswith(r"\[") and not stripped.endswith(r"\]"):
+            in_math, math_end, math_buf = True, r"\]", [stripped[2:].strip()]
+            continue
+        if stripped.startswith("$$") and len(stripped) > 2 and not stripped.endswith("$$"):
+            in_math, math_end, math_buf = True, "$$", [stripped[2:].strip()]
+            continue
+        if not stripped:
             out.append("<div class=gap></div>")
             continue
         match = re.match(r"^\s*(#{1,3})\s+(.+)$", line)
@@ -126,6 +159,8 @@ def _markdown(text: str) -> str:
             out.append("<div class=list-item><span class=bullet>•</span>" + _inline(match.group(1)) + "</div>")
             continue
         out.append("<p>" + _inline(line) + "</p>")
+    if in_math and math_buf:
+        out.append(_math(" ".join(math_buf), True))
     if in_code:
         out.append("<pre><code>" + html.escape("\n".join(code)) + "</code></pre>")
     return "\n".join(out)

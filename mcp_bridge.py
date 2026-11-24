@@ -1161,10 +1161,13 @@ class OitMcpBridge:
                         detail = answer_images.last_error() if hasattr(answer_images, "last_error") else ""
                         self.comm.log(f"MCP ANSWER_IMAGE renderer unavailable: {detail}" if detail else "MCP ANSWER_IMAGE renderer unavailable")
                         return {"ok": False, "error": "本机无法生成解答图片；请正常提交文字回复。"}
-                    self._pending_answer_images[cid] = {"data": data, "ts": _now_ms(), "session": session}
+                    self._pending_answer_images[cid] = {
+                        "data": data, "ts": _now_ms(), "session": session,
+                        "text": styled or original,
+                    }
                     self._answer_image_context.pop((cid, session), None)
                     return {"ok": True, "ready": True,
-                            "instruction": "解答图片已准备好；请随即调用 oit_reply，图片会附加到最后一条气泡。"}
+                            "instruction": "解答图片已准备好；请随即调用 oit_reply，图片会作为独立气泡发送（可在 bubbles 中用 \"<oit_answer_image>\" 指定发图位置，前后均可加一句话作为独立气泡）。"}
                 except Exception as error:  # noqa: BLE001
                     self.comm.log(f"MCP ANSWER_IMAGE FAIL {type(error).__name__}: {error}")
                     return {"ok": False, "error": "解答图片生成失败；请正常提交文字回复。"}
@@ -1270,11 +1273,36 @@ class OitMcpBridge:
             req_ts = max([int(x.get("ts") or 0) for x in self.comm.messages if x.get("role") == "me"] or [0])
             self.comm._req_ts = max(int(getattr(self.comm, "_req_ts", 0) or 0), req_ts, now_ts)
             blocked_now = bool(callable(getattr(self.comm, "blocked", None)) and self.comm.blocked())
+            answer_image = self._pending_answer_images.pop(cid, None)
+            attach_answer_image = bool(
+                answer_image and
+                now_ts - int(answer_image.get("ts") or 0) <= 10 * 60 * 1000 and
+                callable(getattr(self.comm, "answer_images_on", None)) and self.comm.answer_images_on()
+            )
+            image_token = "<oit_answer_image>"
+            slots = []  # list of (text, is_image_bubble)
+            img_inserted = False
+            for part in cleaned:
+                if part.strip() == image_token:
+                    if attach_answer_image and not img_inserted:
+                        slots.append(("[图片]", True))
+                        img_inserted = True
+                    continue
+                slots.append((part, False))
+            if attach_answer_image and not img_inserted:
+                slots.append(("[图片]", True))
+            img_src_text = str(answer_image.get("text") or "") if attach_answer_image else ""
+
             cum_ms = 0
             items = []
             created_msgs = []
-            for idx, part in enumerate(cleaned):
-                delay_ms = _bubble_delay_ms(self.comm, part, idx)
+            img_slot_index = -1
+            for idx, (part, is_img_bubble) in enumerate(slots):
+                if is_img_bubble:
+                    delay_ms = round(_bubble_delay_ms(self.comm, img_src_text or part, idx) * 0.2)
+                    img_slot_index = idx
+                else:
+                    delay_ms = _bubble_delay_ms(self.comm, part, idx)
                 cum_ms += delay_ms
                 m = self.comm._add("ai", part)
                 created_msgs.append(m)
@@ -1298,17 +1326,16 @@ class OitMcpBridge:
                     "delay_ms": delay_ms,
                 })
             held_reply = bool(blocked_now or any(m.get("late") for m in created_msgs))
-            answer_image = self._pending_answer_images.pop(cid, None)
-            if (answer_image and created_msgs and
-                    now_ts - int(answer_image.get("ts") or 0) <= 10 * 60 * 1000 and
-                    callable(getattr(self.comm, "answer_images_on", None)) and self.comm.answer_images_on()):
+            if attach_answer_image and 0 <= img_slot_index < len(created_msgs):
                 try:
-                    image_name = self.comm._save_chat_image(created_msgs[-1]["uid"] + "-answer", answer_image["data"])
+                    target_msg = created_msgs[img_slot_index]
+                    target_item = items[img_slot_index]
+                    image_name = self.comm._save_chat_image(target_msg["uid"] + "-answer", answer_image["data"])
                     if image_name:
-                        created_msgs[-1]["img"] = image_name
-                        created_msgs[-1]["answer_image"] = True
-                        items[-1]["image_id"] = image_name
-                        items[-1]["answer_image"] = True
+                        target_msg["img"] = image_name
+                        target_msg["answer_image"] = True
+                        target_item["image_id"] = image_name
+                        target_item["answer_image"] = True
                 except Exception as error:  # noqa: BLE001
                     self.comm.log(f"MCP ANSWER_IMAGE SAVE FAIL {type(error).__name__}: {error}")
 

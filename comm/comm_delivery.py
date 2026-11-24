@@ -67,20 +67,44 @@ class ReplyBatch:
         self.finished = False
 
 
+ANSWER_IMAGE_TOKEN = "<oit_answer_image>"
+
+
 class DeliveryMixin:
     def _reply_begin(self):
         batch = ReplyBatch(self._epoch, self._req_ts, self._active_reply_after)
         self._reply_batch = batch
         return batch
 
+    def _answer_image_delay_ms(self, pending: dict) -> int:
+        if not pending or not uses_prefix(self.persona_name()):
+            return 0
+        src = str(pending.get("styled_answer") or pending.get("answer") or "")
+        if not src:
+            return 0
+        d = self._typing_delay(src, self.persona_name()) * 0.2
+        return max(0, round(d * 1000))
+
     def _reply_queue(self, text, batch, ready=False):
-        m = self._add("ai", text)
+        is_img_slot = (str(text or "").strip() == ANSWER_IMAGE_TOKEN)
+        pending = getattr(self, "_answer_image_pending", None) if is_img_slot else None
+        if is_img_slot and not pending:
+            return None
+        m = self._add("ai", "[图片]" if is_img_slot else text)
         # 未发出的正文仅本机持有；发送时才进入跨设备历史。
         m["pending_reply"] = batch.source
         m["reply_ready"] = ready
         m["hold"] = True
         m["reply_after"] = batch.after
-        m["due"] = max(int(m.get("due") or 0), batch.after)
+        if is_img_slot:
+            m["_answer_image_slot"] = True
+            if not m.get("late"):
+                prev_due = max([self._ms()] + [int(x.get("due") or 0) for x in self.messages if x is not m and x.get("hold")])
+                m["due"] = max(prev_due + self._answer_image_delay_ms(pending), batch.after)
+            else:
+                m["due"] = max(int(m.get("due") or 0), batch.after)
+        else:
+            m["due"] = max(int(m.get("due") or 0), batch.after)
         batch.messages.append(m)
         return m
 
@@ -139,7 +163,7 @@ class DeliveryMixin:
         """校验完整响应后补入尾段，已入队或已发出的前段不重复添加。"""
         batch = batch or ReplyBatch(self._epoch, self._req_ts, self._active_reply_after)
         parts = reply_parts(text)
-        existing = [m["text"] for m in batch.messages]
+        existing = [ANSWER_IMAGE_TOKEN if m.get("_answer_image_slot") else m["text"] for m in batch.messages]
         if parts[:len(existing)] != existing:
             # 服务商改写了已预发的正文时，不把冲突内容追加为第二份回复。
             sent = [m for m in batch.messages if "pending_reply" not in m]

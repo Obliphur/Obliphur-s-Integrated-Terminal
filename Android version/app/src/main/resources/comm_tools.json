@@ -24,7 +24,7 @@
   },
   {
     "name": "oit_answer_image",
-    "description": "在解答图片模式开启、完成 oit_subject 且按人设风格化改写后调用，用于登记生成解答图片。成功后紧接着调用 oit_reply（气泡正文不含 Markdown/LaTeX 源码），图片会附加到最后一条气泡；解答图片模式关闭时无需调用。",
+    "description": "在解答图片模式开启、完成 oit_subject 且按人设风格化改写后调用，用于登记生成解答图片。成功后紧接着调用 oit_reply（气泡正文不含 Markdown/LaTeX 源码），图片将作为独立气泡发送，可在发图前后各加一句话（用 <oit_message> 分条并用独占一行的 <oit_answer_image> 指定发图位置）；解答图片模式关闭时无需调用。",
     "parameters": {
       "type": "object",
       "properties": {

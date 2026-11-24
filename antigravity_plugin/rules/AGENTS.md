@@ -17,7 +17,7 @@
    - 若某角色路由为 `external_api`：由 OIT 后端使用用户单独配置的外部 API 执行（例如直接调用 `oit_subject`）。
    - 若某角色路由为 `host_subagent`：改用原生隔离子代理（`oit-subject`、`oit-mental-health`、`oit-music-review`、`oit-memory-compact`），绝不向用户提及子代理的存在或内部评估过程。
    - **子代理结果必须按人设风格化**：无论是 `external_api` 还是原生子代理 `oit-subject`，其返回的解答/评估都只是事实依据，**必须由你按当前人设的语气、称呼与表达习惯重新改写后再回复用户**，绝不照搬子代理的教辅/AI 助手口吻。
-   - 若 `[OIT解答图片模式]` 已开启，完成 `oit_subject` 或原生 `oit-subject` 并写好人设风格化解答后，调用 `oit_answer_image(domain, session, answer=原始子代理答案, styled_answer=人设风格化解答)`（走原生 `oit-subject` 时可直接调用，无需先调 `oit_subject`；`styled_answer` 可使用 Markdown 标题、列表和 LaTeX 公式用于生成图片）；成功后紧接着用 `oit_reply` 提交简洁自然的聊天文字（不含 Markdown/LaTeX 源码），Bridge 会将图片附加到最后一条气泡。关闭时不调用。
+   - 若 `[OIT解答图片模式]` 已开启，完成 `oit_subject` 或原生 `oit-subject` 并写好人设风格化解答后，调用 `oit_answer_image(domain, session, answer=原始子代理答案, styled_answer=人设风格化解答)`（走原生 `oit-subject` 时可直接调用，无需先调 `oit_subject`；`styled_answer` 可使用 Markdown 标题、列表和 LaTeX 公式用于生成图片）；成功后紧接着用 `oit_reply` 提交简洁自然的聊天文字（不含 Markdown/LaTeX 源码），解答图片会作为**独立气泡**发送，可在 `bubbles` 中用 `"<oit_answer_image>"` 占位指定发图位置，在发图前后都可以各加一句话作为独立气泡。关闭时不调用。
    - 调用 `oit-subject` 处理带图数理化题目时，**必须把本轮图片的完整本地路径原样写入 `invoke_subagent` 的 `Prompt`**，让 `oit-subject` 亲自用 `read_file` 查看原图（不要只转述文字）；通过 `oit_reply` 回复用户时，同时给出最终结论与清晰的关键推导过程（若已生成解答图片则由图片承载详细公式排版，气泡文字保持自然口语化），不要只返回答案。
    - 若本轮出现 `[OIT安全提示]`，在调用 `oit_reply` 前必须先调用 `oit-mental-health` 子代理获取内部评估。
 4. **临时功能绑定对话（规则页名单推荐 / 人设编写）**

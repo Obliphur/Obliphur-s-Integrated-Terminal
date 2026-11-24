@@ -154,19 +154,20 @@ def main():
         image_reply = _http_json(port, bridge.token, "/reply/submit", {
             "conversation_id": "conv-1", "bubbles": ["答案是 2。"],
         })
-        assert image_reply["ok"]
+        assert image_reply["ok"] and len(image_reply["items"]) == 2, f"应拆成文字与独立图片两条气泡: {image_reply}"
         image_message = c.messages[-1]
         assert image_message.get("answer_image") and os.path.isfile(c.chat_image_path(image_message.get("img", ""))), \
-            "MCP 解答图应附加到后续 oit_reply 的最后一条 OIT 气泡"
-        image_item = image_reply["items"][0]
+            "MCP 解答图应作为独立气泡发送"
+        image_item = image_reply["items"][1]
         assert image_item.get("image_id") == image_message["img"] and image_item.get("answer_image")
+        assert not image_reply["items"][0].get("answer_image")
         image_media = _http_json(port, bridge.token,
                                  f"/ui/media?kind=chat_image&id={image_item['image_id']}")
         assert image_media["ok"] and image_media["data_uri"].startswith("data:image/png;base64,")
-        image_delivered = _http_json(port, bridge.token, "/ui/delivered", {"msg_id": image_reply["items"][0]["id"]})
-        assert image_delivered["ok"]
+        for it in image_reply["items"]:
+            assert _http_json(port, bridge.token, "/ui/delivered", {"msg_id": it["id"]})["ok"]
 
-        # 3b. host_subagent 路由下不先调用 oit_subject、不调用外部 subagent_call 也能直接生成解答图片
+        # 3b. host_subagent 路由下不先调用 oit_subject、不调用外部 subagent_call 也能直接生成解答图片，且支持发图前后各一句话独立气泡
         c.ai.assign_task("subject", "")
         ctx3b = _http_json(port, bridge.token, "/turn/context?conversation_id=conv-1&consume_trigger=0")
         assert ctx3b["subagent_routes"]["subject"]["mode"] == "host_subagent"
@@ -188,10 +189,15 @@ def main():
         assert host_img_res["ok"] and host_img_res["ready"], f"host_subagent 解答图片应直接成功: {host_img_res}"
         assert len(captured_render) == 1 and "分离条件" in captured_render[0][0]
         host_img_reply = _http_json(port, bridge.token, "/reply/submit", {
-            "conversation_id": "conv-1", "bubbles": ["做好了，答案选 ABD，步骤我画在图里了。"],
+            "conversation_id": "conv-1",
+            "bubbles": ["先看下我整理的步骤", "<oit_answer_image>", "答案选 ABD，有不懂再问我。"],
         })
-        assert host_img_reply["ok"] and c.messages[-1].get("answer_image")
-        assert _http_json(port, bridge.token, "/ui/delivered", {"msg_id": host_img_reply["items"][0]["id"]})["ok"]
+        assert host_img_reply["ok"] and len(host_img_reply["items"]) == 3
+        assert not host_img_reply["items"][0].get("answer_image")
+        assert host_img_reply["items"][1].get("answer_image") and host_img_reply["items"][1].get("image_id")
+        assert not host_img_reply["items"][2].get("answer_image")
+        for it in host_img_reply["items"]:
+            assert _http_json(port, bridge.token, "/ui/delivered", {"msg_id": it["id"]})["ok"]
         c.ai.assign_task("subject", cid_ext)
 
         # 4. 分条气泡提交 -> 逐条确认送达 -> 中途插话撤销
