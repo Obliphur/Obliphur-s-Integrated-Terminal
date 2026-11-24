@@ -612,6 +612,79 @@ def main():
         assert saved_img_path in ctx_img["system_message"] and "read_file" in ctx_img["system_message"], \
             f"/turn/context 应包含图片路径与 read_file 提示: {ctx_img['system_message']}"
 
+        # 9e-3. Proactive Sidecar 分发带换行/图片的消息时对 Windows .bat/.cmd 参数剥离换行，并校验子代理读图与推导规范
+        import importlib.util
+        bridge_mod_path = os.path.join(ROOT, "antigravity_plugin", "sidecars", "oit-proactive", "bridge.py")
+        spec = importlib.util.spec_from_file_location("oit_proactive_bridge_test", bridge_mod_path)
+        sidecar_mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sidecar_mod)
+        bat_calls = []
+        orig_find = sidecar_mod._find_agentapi
+        orig_run = sidecar_mod.subprocess.run
+        try:
+            sidecar_mod._find_agentapi = lambda: "C:/bin/agentapi.BAT"
+            def fake_run(cmd, **_kw):
+                bat_calls.append(cmd)
+                class _P:
+                    returncode = 0
+                    stdout = ""
+                    stderr = ""
+                return _P()
+            sidecar_mod.subprocess.run = fake_run
+            sidecar_mod.dispatch_event({
+                "event": "user_message",
+                "conversation_id": "conv-1",
+                "text": "[图片]\n请看这题",
+                "image_path": saved_img_path,
+            })
+        finally:
+            sidecar_mod._find_agentapi = orig_find
+            sidecar_mod.subprocess.run = orig_run
+        assert len(bat_calls) == 1
+        cmd = bat_calls[0]
+        if os.name == "nt":
+            assert cmd[:5] == ["cmd.exe", "/c", "C:/bin/agentapi.BAT", "send-message", "conv-1"], f"意外的 cmd: {cmd}"
+            assert all("\n" not in a and "\r" not in a for a in cmd), f"cmd 参数不得包含换行: {cmd}"
+        assert saved_img_path in cmd[-1] and "oit-subject" in cmd[-1], f"应把图片路径和子代理指令传给对话: {cmd}"
+        with open(os.path.join(ROOT, "antigravity_plugin", "agents", "oit-subject.md"), "r", encoding="utf-8") as fh:
+            subj_md = fh.read()
+        assert "read_file" in subj_md and "推导过程" in subj_md
+        with open(os.path.join(ROOT, "antigravity_plugin", "rules", "AGENTS.md"), "r", encoding="utf-8") as fh:
+            rules_md = fh.read()
+        assert "oit-subject" in rules_md and "read_file" in rules_md
+
+        # 9e-4. Sidecar 热更新退出时机：收到 SSE 事件时应先完成 dispatch_event 再退出自重启，不得丢事件
+        class _FakeResp:
+            def __init__(self, lines):
+                self._lines = lines
+            def __enter__(self):
+                return self
+            def __exit__(self, *_a):
+                return False
+            def __iter__(self):
+                return iter(self._lines)
+        dispatched_hot = []
+        orig_urlopen = sidecar_mod.urllib.request.urlopen
+        orig_disp = sidecar_mod.dispatch_event
+        exited = []
+        try:
+            sidecar_mod.urllib.request.urlopen = lambda *_a, **_kw: _FakeResp([
+                b"event: user_message\n",
+                b'data: {"event":"user_message","conversation_id":"conv-1","text":"[\xe5\x9b\xbe\xe7\x89\x87]","image_path":"C:/tmp/a.png"}\n',
+                b"\n",
+            ])
+            sidecar_mod.dispatch_event = lambda ev: dispatched_hot.append(ev)
+            try:
+                sidecar_mod.consume_sse({"port": 1, "token": "t"}, boot_mtime=-1.0)
+            except SystemExit as exc:
+                exited.append(exc.code)
+        finally:
+            sidecar_mod.urllib.request.urlopen = orig_urlopen
+            sidecar_mod.dispatch_event = orig_disp
+        assert len(dispatched_hot) == 1 and dispatched_hot[0].get("image_path") == "C:/tmp/a.png", \
+            f"热更新退出前应先分发完已到达的 SSE 事件: {dispatched_hot}"
+        assert exited == [0], f"分发完事件后应退出以触发自动重启: {exited}"
+
         # 9f. 重启竞态回归验证：旧 Bridge stop() 不得误删新 Bridge 的 mcp_bridge.json，且误删后 ensure_discovery() 自愈
         bridge2 = OitMcpBridge(c, tmp)
         try:

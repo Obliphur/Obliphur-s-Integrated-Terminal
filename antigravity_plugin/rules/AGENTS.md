@@ -16,6 +16,7 @@
 3. **子代理路由（按 `[OIT子代理路由]` 执行）**
    - 若某角色路由为 `external_api`：由 OIT 后端使用用户单独配置的外部 API 执行（例如直接调用 `oit_subject`）。
    - 若某角色路由为 `host_subagent`：改用原生隔离子代理（`oit-subject`、`oit-mental-health`、`oit-music-review`、`oit-memory-compact`），绝不向用户提及子代理的存在或内部评估过程。
+   - 调用 `oit-subject` 处理带图数理化题目时，**必须把本轮图片的完整本地路径原样写入 `invoke_subagent` 的 `Prompt`**，让 `oit-subject` 亲自用 `read_file` 查看原图（不要只转述文字）；通过 `oit_reply` 回复用户时，同时给出最终结论与清晰的关键推导过程，不要只返回答案。
    - 若本轮出现 `[OIT安全提示]`，在调用 `oit_reply` 前必须先调用 `oit-mental-health` 子代理获取内部评估。
 4. **临时功能绑定对话（规则页名单推荐 / 人设编写）**
    - 当用户在新对话中明确要求临时绑定 OIT 的**规则页名单推荐**或**人设编写**功能时，**不要调用 `oit_bind_persona` 或 `oit_reply`**，直接以普通助手身份在当前对话中协助用户完成，并在完成后提示用户可直接删除该临时对话。

@@ -3,6 +3,7 @@
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -69,9 +70,9 @@ def _run_agentapi(args: list):
     if not exe:
         _log(f"agentapi not found in PATH={os.environ.get('PATH', '')[:500]}")
         return
-    cmd = [exe] + list(args[1:])
-    if os.name == "nt" and exe.lower().endswith((".cmd", ".bat")):
-        cmd = ["cmd.exe", "/c"] + cmd
+    is_batch = os.name == "nt" and exe.lower().endswith((".cmd", ".bat"))
+    clean = [re.sub(r"[\r\n]+", " ", str(a)).strip() if is_batch else str(a) for a in args[1:]]
+    cmd = (["cmd.exe", "/c", exe] if is_batch else [exe]) + clean
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
         if proc.returncode != 0:
@@ -93,7 +94,7 @@ def dispatch_event(event: dict):
         if not text:
             return
         if image_path:
-            text += f"\n[附件图片: {image_path}]（请先调用 read_file 查看该图片，再用 oit_reply 回复）"
+            text += f" [附件图片: {image_path}]（请先调用 read_file 查看该图片；若涉及数理化题目并调用 oit-subject 子代理，必须把该图片路径原样传入子代理 Prompt 让其亲自 read_file 查看原图，最后用 oit_reply 返回含推导过程的回复）"
         if cid:
             _run_agentapi(["agentapi", "send-message", cid, text])
         else:
@@ -101,7 +102,7 @@ def dispatch_event(event: dict):
             prompt = (
                 f"这是 OIT 人设「{who}」的新对话首条消息。请先调用 oit_bind_persona"
                 f"（persona_name={who!r}, force=true）将本对话与该人设 1 对 1 绑定，"
-                f"再调用 oit_get_turn_context 获取本轮状态，最后用 oit_reply 回复以下用户消息：\n{text}"
+                f"再调用 oit_get_turn_context 获取本轮状态，最后用 oit_reply 回复以下用户消息：{text}"
             )
             _run_agentapi(["agentapi", "new-conversation", "--", prompt])
         return
@@ -125,6 +126,17 @@ def dispatch_event(event: dict):
         _run_agentapi(["agentapi", "new-conversation", "--", prompt])
 
 
+def _exit_if_updated(boot_mtime: float):
+    if not boot_mtime:
+        return
+    try:
+        if os.path.getmtime(__file__) != boot_mtime:
+            _log("bridge.py updated on disk; exiting for clean auto-restart")
+            sys.exit(0)
+    except OSError:
+        pass
+
+
 def consume_sse(cfg: dict, boot_mtime: float):
     url = f"http://127.0.0.1:{cfg['port']}/events/stream"
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {cfg['token']}"})
@@ -134,12 +146,6 @@ def consume_sse(cfg: dict, boot_mtime: float):
         event_name = ""
         data_lines = []
         for raw in resp:
-            try:
-                if os.path.getmtime(__file__) != boot_mtime:
-                    _log("bridge.py updated on disk; exiting for clean auto-restart")
-                    sys.exit(0)
-            except OSError:
-                pass
             line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
             if not line:
                 if data_lines:
@@ -151,8 +157,11 @@ def consume_sse(cfg: dict, boot_mtime: float):
                         _log(f"event error: {exc}")
                 event_name = ""
                 data_lines = []
+                _exit_if_updated(boot_mtime)
                 continue
             if line.startswith(":"):
+                if not data_lines and not event_name:
+                    _exit_if_updated(boot_mtime)
                 continue
             if line.startswith("event:"):
                 event_name = line[6:].strip()
@@ -166,12 +175,7 @@ def main():
     except OSError:
         boot_mtime = 0.0
     while True:
-        try:
-            if boot_mtime and os.path.getmtime(__file__) != boot_mtime:
-                _log("bridge.py updated on disk; exiting for clean auto-restart")
-                sys.exit(0)
-        except OSError:
-            pass
+        _exit_if_updated(boot_mtime)
         cfg = load_bridge()
         if not cfg:
             time.sleep(3.0)

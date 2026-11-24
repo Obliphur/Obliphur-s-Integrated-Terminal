@@ -553,7 +553,12 @@ class OitMcpBridge:
             has_client = bool(self._sse_clients)
             body_txt = str(api_context or "").strip()
             if img_path and img_path not in body_txt:
-                img_note = f"用户随本条消息发送了一张图片文件：{img_path}\n请先使用 read_file 工具查看该图片内容，再按人设自然回复用户。"
+                img_note = (
+                    f"用户随本条消息发送了一张图片文件：{img_path}\n"
+                    "请先使用 read_file 工具查看该图片内容。若涉及数理化题目并需要调用 oit-subject 子代理，"
+                    "必须将该图片完整路径一并写入子代理 Prompt，要求子代理亲自调用 read_file 查看原图，"
+                    "不要仅转述文字；回复用户时保留清晰的关键推导过程。"
+                )
                 body_txt = f"{body_txt}\n\n{img_note}".strip() if body_txt else img_note
             held_txt = str(held_messages or "").strip()
             if body_txt or held_txt:

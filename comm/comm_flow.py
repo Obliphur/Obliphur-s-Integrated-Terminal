@@ -312,7 +312,7 @@ class FlowMixin:
                         if held_images:
                             api_parts.append(oit_text(
                                 "用户在上述消息中发送了图片文件：\n" + "\n".join(held_images)
-                                + "\n请先使用 read_file 工具查看图片内容，再按人设自然回复用户。"
+                                + "\n请先使用 read_file 工具查看图片内容。若涉及数理化题目并需要调用 oit-subject 子代理，必须将该图片完整路径一并写入子代理 Prompt，要求子代理亲自调用 read_file 查看原图，不要仅转述文字；回复用户时保留清晰的关键推导过程。"
                             ))
                         last_held_img = held_images[-1] if held_images else ""
                         if held_block or api_parts:
@@ -360,7 +360,12 @@ class FlowMixin:
                 if extra_api:
                     api_parts.append(extra_api)
                 if img_path:
-                    api_parts.append(oit_text(f"用户随本条消息发送了一张图片文件：{img_path}\n请先使用 read_file 工具查看该图片内容，再按人设自然回复用户。"))
+                    api_parts.append(oit_text(
+                        f"用户随本条消息发送了一张图片文件：{img_path}\n"
+                        "请先使用 read_file 工具查看该图片内容。若涉及数理化题目并需要调用 oit-subject 子代理，"
+                        "必须将该图片完整路径一并写入子代理 Prompt，要求子代理亲自调用 read_file 查看原图，"
+                        "不要仅转述文字；回复用户时保留清晰的关键推导过程。"
+                    ))
                 rc = str(reading_context or "").strip()[:18000]
                 if rc:
                     api_parts.append(oit_text("当前 OIT 共读阅读上下文 (来自本机书库的当前可见页; 仅用于本轮回答, 不要伪称读过全书):\n" + rc))
