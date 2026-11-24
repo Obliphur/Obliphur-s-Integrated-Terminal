@@ -5667,8 +5667,13 @@ class Comm(
                         subagentSessions[key] = (history + (("学科: $domain\n题目/追问:\n$question") to answer)).takeLast(5).toMutableList()
                         saveSubagentHistory()
                         JSONObject().put("ok", true).put("domain", domain).put("session", session).put("answer", answer)
-                            .put("instruction", "把子代理答案作为事实依据，按人设向用户解释；不要声称用户看到了子代理。")
+                            .put("answer_image_mode", false)
+                            .put("instruction", "把子代理答案作为事实依据，按人设向用户解释；不要声称用户看到了子代理。当前手机端不支持本地生成解答图片，请直接用 oit_reply 提交风格化文字回复。")
                     }.getOrElse { JSONObject().put("ok", false).put("error", it.message.orEmpty()) }
+                }
+                "oit_answer_image" -> {
+                    result = JSONObject().put("ok", true).put("enabled", false)
+                        .put("instruction", "当前手机端不支持本地生成解答图片；请直接调用 oit_reply 提交风格化文字回复。")
                 }
                 "oit_memory_edit" -> {
                     val action = args.optString("action")

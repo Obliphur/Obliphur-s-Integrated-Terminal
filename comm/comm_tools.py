@@ -72,17 +72,47 @@ class ToolsMixin:
                         f"学科: {domain}\n题目/追问:\n{question}",
                         image=getattr(self, "_active_image", None),
                         max_tokens=900, temperature=0.15, timeout=180)
-                    if self.answer_images_on():
+                    img_on = self.answer_images_on()
+                    if img_on:
                         self._answer_image_pending = {
                             "answer": answer, "image": getattr(self, "_active_image", None),
                             "domain": domain, "session": session, "epoch": epoch,
                         }
+                    instruction = (
+                        "把子代理答案作为事实依据，按人设风格化改写；不要声称用户看到了子代理。"
+                        + ("当前解答图片模式已开启：请在 oit_reply 前调用 oit_answer_image(domain, session, answer, styled_answer)，再用简洁自然且不含 Markdown/LaTeX 源码的文字调用 oit_reply。"
+                           if img_on else "当前解答图片模式已关闭：请直接用 oit_reply 提交风格化文字回复。")
+                    )
                     result = {"ok": True, "domain": domain, "session": session,
-                              "answer": answer,
-                              "instruction": "把子代理答案作为事实依据，按人设向用户解释；不要声称用户看到了子代理。"}
+                              "answer": answer, "answer_image_mode": img_on,
+                              "instruction": instruction}
                 except Exception as e:  # noqa: BLE001
                     self.log(f"TOOL subject FAIL {type(e).__name__}")
                     result = {"ok": False, "error": str(e)[:500]}
+
+            elif name == "oit_answer_image":
+                if not self.answer_images_on():
+                    result = {"ok": True, "enabled": False,
+                              "instruction": "解答图片模式已关闭；请仅调用 oit_reply 提交文字回复。"}
+                else:
+                    domain = str(args.get("domain") or "math")
+                    session = str(args.get("session") or "default")
+                    original = str(args.get("answer") or "").strip()[:8000]
+                    styled = str(args.get("styled_answer") or "").strip()[:8000]
+                    if not original or not styled:
+                        result = {"ok": False, "error": "answer 和 styled_answer 均不能为空"}
+                    else:
+                        prev = self._answer_image_pending if isinstance(self._answer_image_pending, dict) else {}
+                        self._answer_image_pending = {
+                            "answer": original,
+                            "styled_answer": styled,
+                            "image": prev.get("image") if prev else getattr(self, "_active_image", None),
+                            "domain": domain,
+                            "session": session,
+                            "epoch": epoch,
+                        }
+                        result = {"ok": True, "ready": True,
+                                  "instruction": "解答图片已登记；请随即调用 oit_reply 提交自然简洁且不含 Markdown/LaTeX 源码的聊天文字，图片会附加到最后一条气泡。"}
 
             elif name == "oit_reading_acquire" and getattr(self, "reading_mode", False):
                 try:
@@ -290,7 +320,7 @@ class ToolsMixin:
             return
         epoch = int(pending.get("epoch") or 0)
         original = str(pending.get("answer") or "")[:8000]
-        styled = str(message.get("text") or "")[:8000]
+        styled = str(pending.get("styled_answer") or message.get("text") or "")[:8000]
         if not original or not styled:
             return
 
@@ -302,9 +332,17 @@ class ToolsMixin:
                     "使用 Markdown 标题、列表和 LaTeX 公式，内容完整但紧凑；不要输出解释、代码围栏或隐藏思维过程。\n\n"
                     f"原始学科解答:\n{original}\n\n聊天 AI 风格化版本:\n{styled}"
                 )
-                formatted = self.subagent_call(
-                    "subject", f"answer-image:{pending.get('session') or self.persona_name()}", prompt,
-                    max_tokens=1400, temperature=0.1, timeout=180)
+                try:
+                    formatted = self.subagent_call(
+                        "subject", f"answer-image:{pending.get('session') or self.persona_name()}", prompt,
+                        max_tokens=1400, temperature=0.1, timeout=180)
+                except Exception as sub_err:  # noqa: BLE001
+                    self.log(f"ANSWER_IMAGE format fallback ({type(sub_err).__name__}): {sub_err}")
+                    formatted = (
+                        f"{styled}\n\n## 详细推导\n\n{original}"
+                        if len(styled) < 40 and len(original) > len(styled) * 2
+                        else styled
+                    )
                 if self._epoch != epoch or not self.answer_images_on():
                     return
                 import answer_images
