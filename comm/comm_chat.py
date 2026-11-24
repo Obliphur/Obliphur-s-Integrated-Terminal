@@ -209,7 +209,7 @@ class ChatMixin:
         for index, m in enumerate(self.messages):
             if not m.get("hold"):
                 continue
-            if due_of(m) > now or ("pending_reply" in m and not self.leader()):
+            if due_of(m) > now or int(m.get("_img_wait_until") or 0) > now or ("pending_reply" in m and not self.leader()):
                 break
             held.append(m)
             due = due_of(m)

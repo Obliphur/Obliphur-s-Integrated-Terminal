@@ -234,6 +234,31 @@ def main():
         vis_focus = [m for m in c.visible() if m["role"] == "ai"]
         assert [m["text"] for m in vis_focus] == ["第一段消息", "第二段消息"]
         assert all(m["at"].startswith("2026-11-24T06:30:") for m in vis_focus), f"退出专注后应保留 06:30 时间: {vis_focus}"
+
+        # 独立解答图片气泡：前文 -> <oit_answer_image> -> 后文，延迟各自计算（图片按 0.2 倍），且不遗留 _answer_image_slot
+        import base64
+        from unittest.mock import patch
+        c.clear()
+        clock[0] = datetime(2026, 11, 24, 8, 0, 0)
+        png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/n6sAAAAASUVORK5CYII=")
+        c._answer_image_pending = {
+            "answer": "原始解答" * 20,
+            "styled_answer": "风格化解答内容" * 20,
+            "image": None, "domain": "physics", "session": "s1", "epoch": c._epoch,
+        }
+        with patch.object(c, "subagent_call", return_value="## 解答\n\n结果是 2"), \
+                patch("answer_images.render", return_value=png):
+            c._finish("user", None, "先看步骤\n<oit_message>\n<oit_answer_image>\n<oit_message>\n不懂再问我", "", epoch=c._epoch, batch=None)
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                if any(m.get("answer_image") and m.get("img") for m in c.messages):
+                    break
+                time.sleep(0.05)
+        ai_msgs = [m for m in c.messages if m["role"] == "ai"]
+        assert [m["text"] for m in ai_msgs] == ["先看步骤", "[图片]", "不懂再问我"], ai_msgs
+        assert all("_answer_image_slot" not in m for m in ai_msgs), ai_msgs
+        assert ai_msgs[1].get("answer_image") and ai_msgs[1].get("img"), ai_msgs[1]
+        assert int(ai_msgs[0]["due"]) < int(ai_msgs[1]["due"]) < int(ai_msgs[2]["due"]), ai_msgs
     finally:
         for item in all_tasks:
             item["done"].set()

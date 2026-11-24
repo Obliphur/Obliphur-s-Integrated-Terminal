@@ -84,7 +84,7 @@ def follow_delay(profile: dict, override: float = None) -> float:
 # ══════════════ 管理器 ══════════════
 from .comm_interaction import InteractionMixin, interaction_norm, tension_clean
 from .comm_tools import ToolsMixin
-from .comm_delivery import DeliveryMixin, reply_parts
+from .comm_delivery import DeliveryMixin, ReplyBatch, reply_parts
 from ai_assist.ai_tools import unpack, args_of, text_of
 
 
@@ -1644,8 +1644,10 @@ class Comm(DeliveryMixin, ToolsMixin, InteractionMixin, JointMixin, StatusMixin,
             pending_image = self._answer_image_pending
             self._answer_image_pending = None
             if pending_image and m.get("role") == "ai":
-                candidates = list(batch.messages) if batch and batch.messages else [m]
-                img_msg = next((x for x in candidates if x.pop("_answer_image_slot", False)), None)
+                img_msg = next(
+                    (x for x in reversed(self.messages) if x.get("role") == "ai" and x.pop("_answer_image_slot", False)),
+                    None,
+                )
                 if img_msg is None:
                     # 模型未写 <oit_answer_image> 占位时，在文字气泡后自动追加一条独立图片气泡
                     fallback_styled = str(pending_image.get("styled_answer") or m.get("text") or "")

@@ -323,8 +323,10 @@ class ToolsMixin:
         styled = str(pending.get("styled_answer") or message.get("text") or "")[:8000]
         if not original or not styled:
             return
+        message["_img_wait_until"] = self._ms() + 30000
 
         def work():
+            attached = False
             try:
                 prompt = (
                     "请根据下面的原始学科解答和聊天 AI 已经写好的用户可见版本，生成一份最终的解答图片排版稿。"
@@ -355,10 +357,18 @@ class ToolsMixin:
                 if name and self._epoch == epoch:
                     message["img"] = name
                     message["answer_image"] = True
+                    attached = True
                     self.save_chat()
-                    self._changed()
                     self._push()
             except Exception as e:  # noqa: BLE001
                 self.log(f"ANSWER_IMAGE FAIL {type(e).__name__}: {e}")
+            finally:
+                message.pop("_img_wait_until", None)
+                if not attached and message.get("hold") and message.get("text") == "[图片]" and not message.get("img"):
+                    try:
+                        self.messages.remove(message)
+                    except ValueError:
+                        pass
+                self._changed()
 
         threading.Thread(target=work, daemon=True).start()

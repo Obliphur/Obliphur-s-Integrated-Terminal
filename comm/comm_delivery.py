@@ -4,6 +4,7 @@
 import re
 
 from .comm_interaction import tension_clean
+from .comm_persona import uses_prefix
 from .comm_reply import to_halfwidth
 from .comm_util import is_claudia
 
