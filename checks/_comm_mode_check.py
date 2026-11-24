@@ -2,6 +2,7 @@
 import os
 import sys
 import tkinter as tk
+import zlib
 from types import SimpleNamespace
 from unittest.mock import Mock
 from unittest.mock import patch
@@ -17,6 +18,14 @@ from pages.comm_page import CommPage
 from pages.settings_page import SettingsPage
 from settings_manager import SettingsManager
 from pages.widgets import Modal, ScrollArea
+
+
+def _valid_png(w=8, h=8, rgb=(40, 120, 220)):
+    raw = b"".join(b"\x00" + bytes(rgb) * w for _ in range(h))
+    def chunk(tag, data):
+        return len(data).to_bytes(4, "big") + tag + data + zlib.crc32(tag + data).to_bytes(4, "big")
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", w.to_bytes(4, "big") + h.to_bytes(4, "big") + bytes([8, 2, 0, 0, 0]))
+            + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
 
 
 def descendants(widget):
@@ -63,15 +72,16 @@ try:
             # 图片附件按钮始终是 📎；待发区展示附件名称与取消按钮，剪贴板位图写入临时文件，并监听 <<Paste>>。
             assert page.entry.bind("<<Paste>>")
             image_file = os.path.join(folder, "paste.png")
+            png_bytes = _valid_png()
             with open(image_file, "wb") as stream:
-                stream.write(b"\x89PNG\r\n\x1a\n" + b"test")
+                stream.write(png_bytes)
             assert page._set_pending_image(image_file)
             assert page.btn_image.cget("text") == "📎"
             assert page.lbl_joint.cget("text") == "📎 paste.png"
             assert page.btn_joint_x.winfo_manager() == "pack"
             def copy_bitmap(target):
                 with open(target, "wb") as stream:
-                    stream.write(b"\x89PNG\r\n\x1a\n" + b"test")
+                    stream.write(png_bytes)
                 return target
             with patch("pages.comm_page.avatar_mod.clipboard_paths", return_value=[]), \
                     patch("pages.comm_page.avatar_mod.clipboard_image", side_effect=copy_bitmap) as copy_image:
@@ -83,6 +93,26 @@ try:
             page._clear_package_drafts()
             assert page._pending_image == ""
             assert page.btn_joint_x.winfo_manager() != "pack"
+            # 发出的图片消息应保存本地文件、在气泡中渲染缩略图且点击可打开大图弹窗。
+            assert page._set_pending_image(image_file)
+            with patch.object(c, "problem", return_value=""), patch.object(c, "_ask_user"):
+                page._send()
+            assert page._pending_image == ""
+            saved_img = c.chat_image_path(c.messages[-1]["img"])
+            assert os.path.isfile(saved_img)
+            root.update()
+            thumb_labels = [w for w in descendants(page.area.inner) if isinstance(w, tk.Label) and str(w.cget("image"))]
+            assert thumb_labels, "发出的图片消息应渲染气泡缩略图"
+            opened_imgs = []
+            def inspect_viewer(dlg):
+                imgs = [w for w in descendants(dlg.body) if isinstance(w, tk.Label) and str(w.cget("image"))]
+                opened_imgs.append(len(imgs))
+                dlg.cancel()
+            with patch.object(Modal, "wait", inspect_viewer):
+                page._show_image(saved_img)
+            assert opened_imgs == [1], "点击气泡图片应打开预览大图弹窗"
+            c.messages.clear()
+            page.refresh(force=True)
             # 阅读入口的两个选择和关闭行为, 中英文均走真实按钮回调。
             assert page.btn_coread.cget("text") == "📚"
             opened = page.on_coread = Mock()

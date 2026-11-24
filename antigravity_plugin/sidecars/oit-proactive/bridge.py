@@ -89,8 +89,11 @@ def dispatch_event(event: dict):
     _log(f"dispatch kind={kind} cid={cid or '(new)'} persona={persona_name or '?'}")
     if kind == "user_message":
         text = str(event.get("text") or "").strip()
+        image_path = str(event.get("image_path") or "").strip()
         if not text:
             return
+        if image_path:
+            text += f"\n[附件图片: {image_path}]（请先调用 read_file 查看该图片，再用 oit_reply 回复）"
         if cid:
             _run_agentapi(["agentapi", "send-message", cid, text])
         else:

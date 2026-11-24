@@ -41,6 +41,12 @@ _LEGACY_CLAUDIA_FULLS = {
     "00eeccf953e568441cf8cb9e8e8ebe36d0f6010862fb543123f61a713e454341",
     "243cbbdeed7d22a6a2d671eca2e7e41c3cebebc83e83141004128c46e4c1712f",
 }
+_IMAGE_EXT = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
 
 
 def _avatar_hash(path):
@@ -56,6 +62,26 @@ class ChatMixin:
     def avatar_dest(self, who: str) -> str:
         """who: "me" / "ai". 我的头像和对方的头像都跟着人设走 (每个聊天对象各自设置, 换人设就换头像)."""
         return os.path.join(self.dir, "avatars", self._avatar_name(who, self.persona_name()))
+
+    def chat_image_path(self, name: str) -> str:
+        if not name:
+            return ""
+        return os.path.join(self.dir, "chat_images", os.path.basename(str(name)))
+
+    def _save_chat_image(self, uid: str, data: bytes) -> str:
+        mime = ai_assist.image_mime(data)
+        if not mime:
+            return ""
+        ext = _IMAGE_EXT.get(mime, ".png")
+        name = f"{uid}{ext}"
+        dest = self.chat_image_path(name)
+        try:
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with open(dest, "wb") as stream:
+                stream.write(data)
+            return name
+        except OSError:
+            return ""
 
     def _migrate_avatars(self):
         """以前"我"的头像只有一个 (me.png): 复制给现有的每个人设各一份, 然后删掉它 (只做一次, 之后各自设置)."""
@@ -322,6 +348,14 @@ class ChatMixin:
             self._music_discourtesy_uids.add(message["uid"])
         if image:
             self._request_image = image
+            img_name = self._save_chat_image(message["uid"], image)
+            if img_name:
+                message["img"] = img_name
+                self._request_image_path = self.chat_image_path(img_name)
+            else:
+                self._request_image_path = ""
+        else:
+            self._request_image_path = ""
         if reply_delay_seconds > 0:
             message["reply_after"] = self._ms() + int(reply_delay_seconds * 1000)
         self._interaction_sent(text, message)

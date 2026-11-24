@@ -289,12 +289,19 @@ class FlowMixin:
                                 pending_me.append(m)
                         pending_me.reverse()
                     if pending_me:
-                        user_lines, api_parts = [], []
+                        user_lines, api_parts, held_images = [], [], []
                         for m in pending_me:
                             txt = str(m.get("text") or "").strip()
                             at_s = str(m.get("at") or "").replace("T", " ")[:16]
-                            if txt:
-                                user_lines.append(f"[{at_s}] {txt}" if at_s else txt)
+                            img_name = str(m.get("img") or "").strip()
+                            img_file = self.chat_image_path(img_name) if img_name and hasattr(self, "chat_image_path") else ""
+                            if not (img_file and os.path.isfile(img_file)):
+                                img_file = ""
+                            if img_file:
+                                held_images.append(img_file)
+                            line_txt = f"{txt} [图片文件: {img_file}]" if (img_file and txt) else (f"[图片文件: {img_file}]" if img_file else txt)
+                            if line_txt:
+                                user_lines.append(f"[{at_s}] {line_txt}" if at_s else line_txt)
                             extra_api = self._extra_api_only(str(m.get("api") or ""), txt)
                             if extra_api:
                                 api_parts.append(extra_api)
@@ -302,7 +309,15 @@ class FlowMixin:
                         retry_note = str(extra[0] or "").strip()
                         if retry_note:
                             api_parts.append(retry_note)
+                        if held_images:
+                            api_parts.append(oit_text(
+                                "用户在上述消息中发送了图片文件：\n" + "\n".join(held_images)
+                                + "\n请先使用 read_file 工具查看图片内容，再按人设自然回复用户。"
+                            ))
+                        last_held_img = held_images[-1] if held_images else ""
                         if held_block or api_parts:
+                            self._request_image = None
+                            self._request_image_path = ""
                             push_txt = (
                                 f"[OIT 忙碌期间留言 · 请先调用 oit_get_turn_context 再用 oit_reply 回复]\n{held_block}"
                                 if held_block else (retry_note or "请处理用户消息")
@@ -313,6 +328,7 @@ class FlowMixin:
                                 api_context="\n\n".join(api_parts),
                                 trigger_kind=kind,
                                 held_messages=held_block,
+                                image_path=last_held_img,
                             ):
                                 self.error = ""
                             else:
@@ -326,18 +342,29 @@ class FlowMixin:
                 self._changed()
                 return
             self._req_ts = max([int(m.get("ts") or 0) for m in self.messages if m.get("role") == "me"] or [0])
+            img_path = str(getattr(self, "_request_image_path", "") or "")
+            self._request_image = None
+            self._request_image_path = ""
             last_msg = next((m for m in reversed(self.messages)
                              if m.get("role") == "me" and str(m.get("text") or "").strip()), None)
             if last_msg:
                 last_me = str(last_msg.get("text") or "").strip()
+                if (not img_path or not os.path.isfile(img_path)) and last_msg.get("img") and hasattr(self, "chat_image_path"):
+                    cand = self.chat_image_path(last_msg["img"])
+                    if cand and os.path.isfile(cand):
+                        img_path = cand
+                if img_path and not os.path.isfile(img_path):
+                    img_path = ""
                 api_parts = []
                 extra_api = self._extra_api_only(str(last_msg.get("api") or ""), last_me)
                 if extra_api:
                     api_parts.append(extra_api)
+                if img_path:
+                    api_parts.append(oit_text(f"用户随本条消息发送了一张图片文件：{img_path}\n请先使用 read_file 工具查看该图片内容，再按人设自然回复用户。"))
                 rc = str(reading_context or "").strip()[:18000]
                 if rc:
                     api_parts.append(oit_text("当前 OIT 共读阅读上下文 (来自本机书库的当前可见页; 仅用于本轮回答, 不要伪称读过全书):\n" + rc))
-                if bridge.push_user_message(self.pid, last_me, api_context="\n\n".join(api_parts)):
+                if bridge.push_user_message(self.pid, last_me, api_context="\n\n".join(api_parts), image_path=img_path):
                     self.error = ""
                 else:
                     self.error = tr("已由 Antigravity 桌面版接管：未检测到运行中的 OIT Proactive Bridge，请在 Antigravity 的 Customizations 中启用 OIT Companion 插件，或手动新建对话并绑定此人设。")
@@ -397,6 +424,7 @@ class FlowMixin:
             msgs.append({"role": "user", "content": note})
         image = self._request_image
         self._request_image = None
+        self._request_image_path = ""
         self._active_image = image
         if image and msgs and msgs[-1]["role"] == "user":
             mime = ai_assist.image_mime(image)

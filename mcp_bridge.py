@@ -540,16 +540,21 @@ class OitMcpBridge:
         return removed
 
     def push_user_message(self, persona_id: str, text: str, api_context: str = "",
-                          trigger_kind: str = "user_attachment", held_messages: str = "") -> bool:
+                          trigger_kind: str = "user_attachment", held_messages: str = "",
+                          image_path: str = "") -> bool:
         """用户在 OIT 桌面端或同步手机端直接发消息时，转发给 Sidecar 唤醒对应 Antigravity 对话（未绑定时由 Sidecar 自动新建会话并绑定）；返回是否有活跃 Sidecar 接收。"""
         if not str(text or "").strip():
             return False
         cid = self._conversation_for_persona(persona_id)
         pname = _display_persona_name(self.comm) or self._persona_name_by_pid(persona_id)
         now_ms = self.comm._ms() if hasattr(self.comm, "_ms") else _now_ms()
+        img_path = str(image_path or "").strip()
         with self._lock:
             has_client = bool(self._sse_clients)
             body_txt = str(api_context or "").strip()
+            if img_path and img_path not in body_txt:
+                img_note = f"用户随本条消息发送了一张图片文件：{img_path}\n请先使用 read_file 工具查看该图片内容，再按人设自然回复用户。"
+                body_txt = f"{body_txt}\n\n{img_note}".strip() if body_txt else img_note
             held_txt = str(held_messages or "").strip()
             if body_txt or held_txt:
                 key = cid or persona_id or "*"
@@ -572,6 +577,7 @@ class OitMcpBridge:
             "persona_name": pname,
             "conversation_id": cid,
             "text": str(text).strip(),
+            "image_path": img_path,
             "ts": now_ms,
         })
         return True

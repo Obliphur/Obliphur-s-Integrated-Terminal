@@ -378,6 +378,28 @@ class CommPage(CommVoiceMixin, tk.Frame):
         ttk.Button(dlg.buttons, text=tr("关闭"), command=dlg.cancel).pack(side="right")
         dlg.wait()
 
+    def _show_image(self, path: str):
+        """点开聊天记录里的图片: 弹窗显示完整大图 (不裁); GDI+ 打不开的格式 (如 WEBP) 交给系统查看."""
+        if not path or not os.path.isfile(path):
+            return
+        max_side = max(200, min(self.winfo_screenwidth() - 160, self.winfo_screenheight() - 220))
+        try:
+            fitted = avatar_mod.fit(path, max_side)
+            iw, ih = avatar_mod.image_size(fitted)
+            photo = tk.PhotoImage(file=fitted)
+        except (OSError, tk.TclError):
+            if sys.platform == "win32":
+                try:
+                    os.startfile(path)
+                except OSError:
+                    pass
+            return
+        dlg = Modal(self.winfo_toplevel(), tr("图片"), width=iw + 48, height=ih + 104)
+        tk.Label(dlg.body, image=photo, bg=COLORS["bg"], bd=0).pack(expand=True)
+        dlg._photo = photo
+        ttk.Button(dlg.buttons, text=tr("关闭"), command=dlg.cancel).pack(side="right")
+        dlg.wait()
+
     def _pad_height(self) -> int:
         return max(40, int(self.area.canvas.winfo_height() * 0.45))      # 上下各留半屏左右的空白: 第一条 / 最后一条也能继续滑过去
 
@@ -481,10 +503,32 @@ class CommPage(CommVoiceMixin, tk.Frame):
             fill, fg, rim = COLORS["bg_card"], COLORS["text"], COLORS["border"]
         bubble = tk.Frame(box, bg=fill, highlightthickness=1 if rim else 0, highlightbackground=rim or fill)
         bubble.pack(anchor="e" if mine else "w")
-        text_label = tk.Label(bubble, text=m["text"], bg=fill, fg=fg, font=config.font("body"), justify="left",
-                              anchor="w", wraplength=self._wrap(), padx=12, pady=8,
-                              highlightthickness=0)
-        text_label.pack(anchor="e" if mine else "w")
+        img_name = str(m.get("img") or "").strip()
+        img_path = c.chat_image_path(img_name) if img_name else ""
+        thumb_loaded = False
+        if img_path and os.path.isfile(img_path):
+            thumb_side = config.scaled(220)
+            key = f"msg:{m.get('uid') or m.get('id')}:{thumb_side}"
+            photo = self._photos.get(key)
+            if photo is None:
+                try:
+                    thumb_path = avatar_mod.fit(img_path, thumb_side)
+                    photo = self._photos[key] = tk.PhotoImage(file=thumb_path)
+                except (OSError, tk.TclError):
+                    photo = None
+            if photo is not None:
+                thumb_loaded = True
+                img_lab = tk.Label(bubble, image=photo, bg=fill, bd=0, cursor="hand2")
+                img_lab.pack(anchor="e" if mine else "w", padx=6, pady=(6, 4 if m["text"] != "[图片]" else 6))
+                img_lab.bind("<Button-1>", lambda _e, p=img_path: self._show_image(p))
+        if not thumb_loaded or m["text"] != "[图片]":
+            text_label = tk.Label(bubble, text=m["text"], bg=fill, fg=fg, font=config.font("body"), justify="left",
+                                  anchor="w", wraplength=self._wrap(), padx=12, pady=8,
+                                  highlightthickness=0)
+            text_label.pack(anchor="e" if mine else "w")
+            if not thumb_loaded and img_path and os.path.isfile(img_path):
+                text_label.config(cursor="hand2")
+                text_label.bind("<Button-1>", lambda _e, p=img_path: self._show_image(p))
         if not mine and c.voice.data["enabled"]:
             tk.Button(bubble, text="▶", command=lambda: self._voice_manual(m), bg=fill, fg=COLORS["text_dim"],
                       activebackground=fill, activeforeground=COLORS["accent"], relief="flat", bd=0,

@@ -572,6 +572,46 @@ def main():
         t_sse2.join(timeout=4)
         assert len(new_sse) == 1 and new_sse[0]["conversation_id"] == "" and new_sse[0]["text"] == "清空后的第一句新消息"
 
+        # 9e-2. 接管模式下发送图片消息：保存原图、SSE 附带 image_path、/turn/context 携带图片路径与 read_file 提示
+        import zlib
+        _http_json(port, bridge.token, "/session/bind", {"conversation_id": "conv-1", "persona_id": c.pid, "host": "antigravity", "force": True})
+        def _chunk(tag, payload):
+            return len(payload).to_bytes(4, "big") + tag + payload + zlib.crc32(tag + payload).to_bytes(4, "big")
+        raw_px = b"".join(b"\x00" + bytes((10, 20, 30)) * 4 for _ in range(4))
+        png_bytes = (
+            b"\x89PNG\r\n\x1a\n"
+            + _chunk(b"IHDR", (4).to_bytes(4, "big") + (4).to_bytes(4, "big") + bytes([8, 2, 0, 0, 0]))
+            + _chunk(b"IDAT", zlib.compress(raw_px))
+            + _chunk(b"IEND", b"")
+        )
+        img_sse = []
+
+        def read_img_sse():
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{port}/events/stream",
+                headers={"Authorization": f"Bearer {bridge.token}"},
+            )
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                for raw in resp:
+                    line = raw.decode("utf-8").strip()
+                    if line.startswith("data:"):
+                        img_sse.append(json.loads(line[5:].strip()))
+                        break
+
+        t_sse_img = threading.Thread(target=read_img_sse, daemon=True)
+        t_sse_img.start()
+        time.sleep(0.2)
+        assert c.send("看图", image=png_bytes) == ""
+        t_sse_img.join(timeout=4)
+        saved_img_name = str(c.messages[-1].get("img") or "")
+        saved_img_path = c.chat_image_path(saved_img_name)
+        assert saved_img_name and os.path.isfile(saved_img_path), f"应保存聊天图片文件: {saved_img_path}"
+        assert len(img_sse) == 1 and img_sse[0]["event"] == "user_message", f"应收到图片 user_message SSE: {img_sse}"
+        assert img_sse[0].get("image_path") == saved_img_path, f"SSE 应附带 image_path: {img_sse}"
+        ctx_img = _http_json(port, bridge.token, "/turn/context?conversation_id=conv-1&consume_trigger=1")
+        assert saved_img_path in ctx_img["system_message"] and "read_file" in ctx_img["system_message"], \
+            f"/turn/context 应包含图片路径与 read_file 提示: {ctx_img['system_message']}"
+
         # 9f. 重启竞态回归验证：旧 Bridge stop() 不得误删新 Bridge 的 mcp_bridge.json，且误删后 ensure_discovery() 自愈
         bridge2 = OitMcpBridge(c, tmp)
         try:
