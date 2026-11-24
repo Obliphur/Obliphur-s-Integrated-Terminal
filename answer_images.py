@@ -4,6 +4,7 @@
 """
 
 import base64
+import ctypes
 import html
 import os
 from pathlib import Path
@@ -11,6 +12,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 
 import tempstore
 
@@ -19,6 +21,19 @@ _LAST_ERROR = ""
 
 def last_error() -> str:
     return _LAST_ERROR
+
+
+def _long_path(path: str) -> str:
+    if sys.platform != "win32" or not path:
+        return path
+    try:
+        buf = ctypes.create_unicode_buffer(4096)
+        n = ctypes.windll.kernel32.GetLongPathNameW(str(path), buf, len(buf))
+        if 0 < n < len(buf):
+            return buf.value
+    except Exception:
+        pass
+    return path
 
 
 def _browsers() -> list[str]:
@@ -124,7 +139,7 @@ def render(answer: str, source_image: bytes = None, title: str = "解答") -> by
     if not browsers or not str(answer or "").strip():
         _LAST_ERROR = "no browser found" if not browsers else "empty answer"
         return b""
-    work = tempstore.mkdtemp("misc", prefix="answer-image-")
+    work = _long_path(tempstore.mkdtemp("misc", prefix="answer-image-"))
     page = os.path.join(work, "answer.html")
     shot = os.path.join(work, "answer.png")
     source = ""
@@ -163,6 +178,7 @@ code{{padding:1px 7px}} pre{{padding:18px 22px;white-space:pre-wrap;font-size:25
         page_uri = Path(page).resolve().as_uri()
         for idx, browser in enumerate(browsers):
             profile_dir = os.path.join(work, f"profile-{idx}")
+            os.makedirs(profile_dir, exist_ok=True)
             for headless_flag in ("--headless=new", "--headless"):
                 try:
                     if os.path.isfile(shot):
@@ -171,6 +187,7 @@ code{{padding:1px 7px}} pre{{padding:18px 22px;white-space:pre-wrap;font-size:25
                     pass
                 cmd = [
                     browser, headless_flag,
+                    "--do-not-de-elevate",
                     f"--user-data-dir={profile_dir}",
                     "--no-sandbox", "--disable-gpu", "--disable-extensions",
                     "--disable-background-networking", "--disable-sync",
@@ -184,6 +201,17 @@ code{{padding:1px 7px}} pre{{padding:18px 22px;white-space:pre-wrap;font-size:25
                 ]
                 try:
                     proc = subprocess.run(cmd, **run_kw)
+                    if not (os.path.isfile(shot) and os.path.getsize(shot) > 100) and proc.returncode == 0:
+                        # 某些浏览器在管理员进程下仍可能通过 Shell 降权异步启动，等待截图落盘
+                        deadline = time.monotonic() + 8.0
+                        last_size = -1
+                        while time.monotonic() < deadline:
+                            if os.path.isfile(shot):
+                                size = os.path.getsize(shot)
+                                if size > 100 and size == last_size:
+                                    break
+                                last_size = size
+                            time.sleep(0.2)
                     if os.path.isfile(shot) and os.path.getsize(shot) > 100:
                         with open(shot, "rb") as stream:
                             return stream.read()
