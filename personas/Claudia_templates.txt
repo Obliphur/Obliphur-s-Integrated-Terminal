@@ -159,7 +159,7 @@ max_due:2
 window:16
 min_hits:3
 max_items:6
-forbid:稳|接住|记下
+forbid:接住|记下
 [/anti_repeat]
 
 【打字延迟】

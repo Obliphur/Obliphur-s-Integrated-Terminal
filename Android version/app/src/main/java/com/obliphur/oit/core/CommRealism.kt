@@ -173,7 +173,7 @@ object CommRealism {
                 }
                 for (run in runs) {
                     val rlen = run.length
-                    for (n in 2..4) {
+                    for (n in 3..4) {
                         if (rlen < n) continue
                         for (i in 0..(rlen - n)) {
                             val gram = run.substring(i, i + n)
@@ -198,8 +198,9 @@ object CommRealism {
         }
         keptPhrases.sortWith(compareByDescending<Pair<String, Int>> { it.second }.thenByDescending { it.first.length }.thenBy { it.first })
 
-        val topOpens = openCounts.entries.filter { it.value >= cfg.minHits }.sortedByDescending { it.value }
-        val topEnds = endCounts.entries.filter { it.value >= cfg.minHits }.sortedByDescending { it.value }
+        val edgeMin = cfg.minHits + 1
+        val topOpens = openCounts.entries.filter { it.value >= edgeMin }.sortedByDescending { it.value }
+        val topEnds = endCounts.entries.filter { it.value >= edgeMin }.sortedByDescending { it.value }
 
         val hints = mutableListOf<String>()
         val openKeys = topOpens.take(2).map { it.key }

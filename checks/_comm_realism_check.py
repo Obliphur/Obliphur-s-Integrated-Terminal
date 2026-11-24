@@ -38,7 +38,7 @@ def main():
     assert trend_rules(tmpl) == {"window": 7, "min_days": 3, "delta_pct": 15}
     assert callback_rules(tmpl) == {"lookahead_days": 0, "expire_days": 2, "max_due": 2}
     ar = anti_repeat_rules(tmpl)
-    assert ar == {"window": 16, "min_hits": 3, "max_items": 6, "forbid": ("稳", "接住", "记下")}
+    assert ar == {"window": 16, "min_hits": 3, "max_items": 6, "forbid": ("接住", "记下")}
 
     # 非法格式整组拒绝
     assert life_arcs_rules("[life:arcs]\nbad:[9,5] a | b\n[/life:arcs]") == {}
@@ -89,25 +89,26 @@ def main():
     assert "钢琴汇报演出" not in cb_note, "未到 lookahead 不应提前提醒"
     assert "已过期可清理" in cb_note and "上周旧事项" in cb_note
 
-    # 5. 工程层防复读：高频开头 / 高频短语 / 禁用词命中 / 无复读静默
+    # 5. 工程层防复读：不误报 2 字正常话题词与「稳定」，只抓高频 3-4 字套话 / 4+次开头 / 禁用词
     clean_msgs = [
-        {"role": "ai", "text": "先去洗把脸，清醒一点再坐回来。"},
-        {"role": "ai", "text": "这段谱子的左手伴奏太赶了。"},
-        {"role": "ai", "text": "咖啡凉了就别喝，重新冲一杯。"},
+        {"role": "ai", "text": "先去洗把脸，保持稳定再继续专注。"},
+        {"role": "ai", "text": "这段钢琴谱子的左手伴奏太赶了，专注一点。"},
+        {"role": "ai", "text": "钢琴练完记得休息，今天专注还算平稳。"},
+        {"role": "ai", "text": "钢琴音色比昨天好，专注时长也够了。"},
     ]
-    assert anti_repeat_note(tmpl, clean_msgs) == "", "无复读且无禁用词时不应输出噪音"
+    assert anti_repeat_note(tmpl, clean_msgs) == "", "正常2字话题词与「稳定」不应误报"
 
     rep_msgs = [
         {"role": "ai", "text": "既然如此，先把桌上的书理干净，端正态度。"},
         {"role": "ai", "text": "既然答应了，就按计划走，端正态度。"},
-        {"role": "ai", "text": "既然已经开始，别东张西望，端正态度，保持稳妥。"},
+        {"role": "ai", "text": "既然已经开始，别东张西望，端正态度，我能接住你的节奏。"},
         {"role": "ai", "text": "既然没睡好，今晚早点收尾。"},
     ]
     ar_note = anti_repeat_note(tmpl, rep_msgs)
     assert "[OIT_ANTI_REPEAT:" in ar_note, ar_note
     assert "开头「既然」×4" in ar_note, ar_note
     assert "端正态度" in ar_note, ar_note
-    assert "禁用词(稳×1" in ar_note, ar_note
+    assert "禁用词(接住×1" in ar_note, ar_note
 
     # 6. Comm 实例端到端整合检查（使用临时目录，不碰真实数据）
     with tempfile.TemporaryDirectory() as tmp:

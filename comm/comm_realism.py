@@ -207,7 +207,7 @@ def anti_repeat_note(text: str, messages: list) -> str:
                     msg_ends.add(tail)
             for run in runs:
                 rlen = len(run)
-                for n in (2, 3, 4):
+                for n in (3, 4):
                     if rlen < n:
                         continue
                     for i in range(rlen - n + 1):
@@ -232,8 +232,9 @@ def anti_repeat_note(text: str, messages: list) -> str:
         kept_phrases.append((p, c))
     kept_phrases.sort(key=lambda kv: (-kv[1], -len(kv[0]), kv[0]))
 
-    top_opens = [(k, c) for k, c in open_counts.most_common() if c >= min_hits]
-    top_ends = [(k, c) for k, c in end_counts.most_common() if c >= min_hits]
+    edge_min = min_hits + 1
+    top_opens = [(k, c) for k, c in open_counts.most_common() if c >= edge_min]
+    top_ends = [(k, c) for k, c in end_counts.most_common() if c >= edge_min]
 
     hints = []
     for k, c in top_opens[:2]:
