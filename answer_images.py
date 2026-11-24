@@ -80,32 +80,66 @@ def _inline(value: str) -> str:
 
 
 def _math(source: str, display: bool) -> str:
-    """将常见 LaTeX 片段转换为浏览器原生 MathML，公式始终只进入截图。"""
-    symbols = {"pi": "π", "theta": "θ", "alpha": "α", "beta": "β", "gamma": "γ", "Delta": "Δ",
-               "infty": "∞", "cdot": "·", "times": "×", "le": "≤", "leq": "≤", "ge": "≥",
-               "geq": "≥", "neq": "≠", "pm": "±", "sum": "∑", "int": "∫", "rightarrow": "→",
-               "Rightarrow": "⇒", "implies": "⇒", "approx": "≈", "mu": "μ", "circ": "°",
-               "sin": "sin", "cos": "cos", "tan": "tan", "ln": "ln", "log": "log",
-               "left": "", "right": "", "quad": "　", "qquad": "　　", "mathrm": "", "rm": ""}
+    """将常见 LaTeX 片段转换为纯 HTML/CSS 排版，避免 Chromium MathML 吞掉裸文本字符。"""
+    symbols = {
+        "pi": "π", "theta": "θ", "alpha": "α", "beta": "β", "gamma": "γ", "delta": "δ",
+        "Delta": "Δ", "omega": "ω", "Omega": "Ω", "lambda": "λ", "phi": "φ", "rho": "ρ",
+        "sigma": "σ", "tau": "τ", "eta": "η", "xi": "ξ", "mu": "μ",
+        "infty": "∞", "cdot": "·", "times": "×", "div": "÷", "pm": "±", "mp": "∓",
+        "le": "≤", "leq": "≤", "ge": "≥", "geq": "≥", "neq": "≠", "ne": "≠",
+        "approx": "≈", "equiv": "≡", "propto": "∝", "sim": "∼",
+        "sum": "∑", "prod": "∏", "int": "∫", "partial": "∂", "nabla": "∇",
+        "rightarrow": "→", "to": "→", "leftarrow": "←", "Rightarrow": "⇒", "implies": "⇒",
+        "Leftarrow": "⇐", "Leftrightarrow": "⇔", "iff": "⇔",
+        "because": "∵", "therefore": "∴", "forall": "∀", "exists": "∃",
+        "in": "∈", "notin": "∉", "subset": "⊂", "subseteq": "⊆", "cup": "∪", "cap": "∩",
+        "angle": "∠", "perp": "⊥", "parallel": "∥", "triangle": "△", "circ": "°", "degree": "°",
+        "sin": "sin", "cos": "cos", "tan": "tan", "cot": "cot", "sec": "sec", "csc": "csc",
+        "arcsin": "arcsin", "arccos": "arccos", "arctan": "arctan",
+        "ln": "ln", "log": "log", "lg": "lg", "exp": "exp", "lim": "lim", "max": "max", "min": "min",
+        "left": "", "right": "", "big": "", "Big": "", "bigg": "", "Bigg": "",
+        "displaystyle": "", "textstyle": "", "quad": "　", "qquad": "　　",
+        "mathrm": "", "rm": "", "mathbf": "", "boldsymbol": "", "vec": "",
+    }
     escaped = html.escape(str(source or "").strip(), quote=False)
     escaped = re.sub(r"\\[,;:! ]", " ", escaped)
-    escaped = re.sub(r"\\boxed\s*\{([^{}]+)\}", r"\1", escaped)
-    escaped = re.sub(r"\\mathrm\s*\{([^{}]+)\}", r"<mtext>\1</mtext>", escaped)
-    escaped = re.sub(r"\\text\s*\{([^{}]+)\}", r"<mtext>\1</mtext>", escaped)
-    for _ in range(3):
+    escaped = re.sub(r"\\(?:left|right)\s*([()\[\]|.])", lambda m: "" if m.group(1) == "." else m.group(1), escaped)
+    escaped = re.sub(r"\\(?:left|right)\\([{}])", r"\1", escaped)
+    escaped = re.sub(r"\\([{}])", r"\1", escaped)
+    escaped = re.sub(r"\\boxed\s*\{([^{}]+)\}", r'<span class="boxed">\1</span>', escaped)
+    escaped = re.sub(r"\\(?:mathrm|text|operatorname|rm)\s*\{([^{}]+)\}", r'<span class="rm">\1</span>', escaped)
+    escaped = re.sub(r"\\(?:mathbf|boldsymbol|bm)\s*\{([^{}]+)\}", r'<span class="bf">\1</span>', escaped)
+    escaped = re.sub(r"\\vec\s*\{([^{}]+)\}", r'<span class="vec">\1</span>', escaped)
+    for _ in range(4):
         prev = escaped
-        escaped = re.sub(r"\\(?:d?frac|tfrac)\s*\{([^{}]+)\}\s*\{([^{}]+)\}",
-                         lambda m: f"<mfrac><mrow>{m.group(1)}</mrow><mrow>{m.group(2)}</mrow></mfrac>", escaped)
-        escaped = re.sub(r"\\sqrt\s*\{([^{}]+)\}", r"<msqrt><mrow>\1</mrow></msqrt>", escaped)
+        escaped = re.sub(
+            r"\\(?:d?frac|tfrac)\s*\{([^{}]+)\}\s*\{([^{}]+)\}",
+            r'<span class="frac"><span class="num">\1</span><span class="den">\2</span></span>',
+            escaped,
+        )
+        escaped = re.sub(
+            r"\\sqrt\s*\[([^\[\]]+)\]\s*\{([^{}]+)\}",
+            r'<span class="sqrt"><sup class="root-n">\1</sup><span class="rad">√</span><span class="rad-body">\2</span></span>',
+            escaped,
+        )
+        escaped = re.sub(
+            r"\\sqrt\s*\{([^{}]+)\}",
+            r'<span class="sqrt"><span class="rad">√</span><span class="rad-body">\1</span></span>',
+            escaped,
+        )
         if escaped == prev:
             break
     escaped = re.sub(r"\\([A-Za-z]+)", lambda m: html.escape(symbols.get(m.group(1), m.group(1))), escaped)
-    escaped = re.sub(r"([A-Za-z0-9])\^\{([^{}]+)\}", r"<msup><mi>\1</mi><mn>\2</mn></msup>", escaped)
-    escaped = re.sub(r"([A-Za-z0-9])_\{([^{}]+)\}", r"<msub><mi>\1</mi><mn>\2</mn></msub>", escaped)
-    escaped = re.sub(r"([A-Za-z0-9])\^([A-Za-z0-9°])", r"<msup><mi>\1</mi><mn>\2</mn></msup>", escaped)
-    escaped = re.sub(r"([A-Za-z0-9])_([A-Za-z0-9])", r"<msub><mi>\1</mi><mn>\2</mn></msub>", escaped)
+    # 先处理花括号上下标，再处理单字符上下标（支持同时带上下标如 x_0^2）
+    escaped = re.sub(r"\^\s*\{([^{}]+)\}", r"<sup>\1</sup>", escaped)
+    escaped = re.sub(r"_\s*\{([^{}]+)\}", r"<sub>\1</sub>", escaped)
+    escaped = re.sub(r"\^\s*([A-Za-z0-9°′'+-])", r"<sup>\1</sup>", escaped)
+    escaped = re.sub(r"_\s*([A-Za-z0-9])", r"<sub>\1</sub>", escaped)
+    # 清理残余分组花括号
+    escaped = escaped.replace("{", "").replace("}", "")
+    cls = "math math-block" if display else "math math-inline"
     tag = "div" if display else "span"
-    return f'<{tag} class="math"><math xmlns="http://www.w3.org/1998/Math/MathML">{escaped}</math></{tag}>'
+    return f'<{tag} class="{cls}">{escaped}</{tag}>'
 
 
 def _markdown(text: str) -> str:
@@ -156,7 +190,7 @@ def _markdown(text: str) -> str:
             continue
         match = re.match(r"^\s*(?:[-*]|\d+[.)])\s+(.+)$", line)
         if match:
-            out.append("<div class=list-item><span class=bullet>•</span>" + _inline(match.group(1)) + "</div>")
+            out.append("<div class=list-item><span class=bullet>•</span><div class=li-body>" + _inline(match.group(1)) + "</div></div>")
             continue
         out.append("<p>" + _inline(line) + "</p>")
     if in_math and math_buf:
@@ -197,10 +231,18 @@ def render(answer: str, source_image: bytes = None, title: str = "解答") -> by
 body{{width:1100px;min-height:100vh;padding:54px 72px 80px;font-family:"Segoe UI","Microsoft YaHei",sans-serif;font-size:30px;line-height:1.58}}
 h1{{font-size:48px;margin:0 0 25px;border-bottom:3px solid #c9d3df;padding-bottom:18px}}
 h2{{font-size:34px;margin:30px 0 14px;color:#315b82}} h3{{font-size:30px;margin:24px 0 10px}}
-p{{margin:9px 0;white-space:pre-wrap}} .gap{{height:10px}} .list-item{{display:flex;margin:8px 0;padding-left:18px}}
-.bullet{{width:32px;color:#477da7}} code,pre{{font-family:Consolas,monospace;background:#e9eef3;border-radius:6px}}
+p{{margin:9px 0;white-space:pre-wrap}} .gap{{height:10px}} .list-item{{display:flex;align-items:flex-start;margin:10px 0;padding-left:14px}}
+.bullet{{flex:0 0 28px;color:#477da7}} .li-body{{flex:1;min-width:0}} code,pre{{font-family:Consolas,monospace;background:#e9eef3;border-radius:6px}}
 code{{padding:1px 7px}} pre{{padding:18px 22px;white-space:pre-wrap;font-size:25px;line-height:1.45}}
-.math{{font-family:Cambria,"Times New Roman",serif;font-style:italic}} .math math{{font-size:1.12em}} .math math mfrac{{display:inline-table;vertical-align:middle;text-align:center}} .math math mfrac > *{{display:block;padding:0 4px}} .math math mfrac > :first-child{{border-bottom:1px solid #20242b}} .source{{margin:0 0 34px;padding-bottom:24px;border-bottom:2px solid #c9d3df}}
+.math{{font-family:"Cambria Math",Cambria,"Times New Roman",serif;font-style:normal;letter-spacing:.01em}}
+.math-inline{{display:inline;padding:0 2px}} .math-block{{margin:14px 0;padding:10px 18px;text-align:center;font-size:1.08em;background:#eef2f7;border-radius:10px}}
+.math .rm{{font-family:"Segoe UI","Microsoft YaHei",sans-serif;font-style:normal}} .math .bf{{font-weight:700}} .math .boxed{{border:1.5px solid #20242b;padding:2px 8px;border-radius:4px}}
+.math sup,.math sub{{font-size:0.72em;line-height:0}} .math sup{{vertical-align:super}} .math sub{{vertical-align:sub}}
+.math .frac{{display:inline-flex;flex-direction:column;align-items:center;vertical-align:middle;margin:0 4px;line-height:1.15;font-size:0.92em}}
+.math .frac .num{{padding:0 5px 2px;border-bottom:1.8px solid #20242b}} .math .frac .den{{padding:2px 5px 0}}
+.math .sqrt{{display:inline-flex;align-items:baseline;vertical-align:middle}} .math .rad{{font-size:1.08em;margin-right:1px}}
+.math .rad-body{{border-top:1.8px solid #20242b;padding:0 4px}} .math .root-n{{font-size:0.65em;margin-right:-2px}}
+.source{{margin:0 0 34px;padding-bottom:24px;border-bottom:2px solid #c9d3df}}
 .source img{{display:block;max-width:956px;max-height:900px;margin:0 auto;border:1px solid #c9d3df}}
 </style>{source}<h1>{html.escape(title)}</h1><main>{body}</main>'''
     run_kw = {"stdout": subprocess.DEVNULL, "stderr": subprocess.PIPE, "timeout": 30, "check": False}
